@@ -72,7 +72,18 @@ defmodule Ezagent.Agent.CredentialAdapter do
                 optional(:expires_at) => integer() | nil
               }
 
-  @optional_callbacks [refresh_test_credentials: 3, credential_status: 2]
+  @doc """
+  #1201 A② (installer host-login inheritance) — the flavor's HOST login home on
+  THIS node: where the flavor's CLI keeps the interactive operator login when no
+  per-agent env var redirects it (cc: `$CLAUDE_CONFIG_DIR` else `~/.claude`;
+  codex: `$CODEX_HOME` else `~/.codex`). Returns `nil` when the node has no
+  such home. SEPARATE from the declarative all-or-none group — a flavor may
+  declare the credential identity without exposing a host-login concept
+  (the installer-inheritance seam then no-ops for it).
+  """
+  @callback host_login_dir() :: String.t() | nil
+
+  @optional_callbacks [refresh_test_credentials: 3, credential_status: 2, host_login_dir: 0]
 
   @declarative_callbacks [
     {:credential_env_var, 0},
@@ -96,5 +107,32 @@ defmodule Ezagent.Agent.CredentialAdapter do
     Enum.all?(@declarative_callbacks, fn {name, arity} ->
       function_exported?(class_module, name, arity)
     end)
+  end
+
+  @doc """
+  #1201 A② — the flavor's USABLE host-login source dir on this node, or `:none`.
+
+  `{:ok, dir}` iff `class_module` is a credentialled flavor that exposes
+  `host_login_dir/0`, the dir exists, AND it currently holds at least one of the
+  flavor's `secret_relpaths/0` (a host home with no secret is "not logged in" —
+  selecting it would reproduce the exact empty-credential symptom this seam
+  exists to fix). Everything else — credential-less flavors (py/curl), flavors
+  without a host-login concept, a missing/empty host home — is `:none`, so the
+  installer-inheritance seam no-ops cleanly (DoD 4).
+  """
+  @spec host_login_source_dir(module()) :: {:ok, String.t()} | :none
+  def host_login_source_dir(class_module) when is_atom(class_module) do
+    Code.ensure_loaded(class_module)
+
+    with true <- credentialled?(class_module),
+         true <- function_exported?(class_module, :host_login_dir, 0),
+         dir when is_binary(dir) and dir != "" <- class_module.host_login_dir(),
+         true <- File.dir?(dir),
+         true <-
+           Enum.any?(class_module.secret_relpaths(), &File.exists?(Path.join(dir, &1))) do
+      {:ok, dir}
+    else
+      _ -> :none
+    end
   end
 end

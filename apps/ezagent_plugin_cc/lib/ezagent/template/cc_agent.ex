@@ -220,6 +220,14 @@ defmodule Ezagent.PluginCc.Template.CcAgent do
   def auth_failure_signals,
     do: [~r/Please run \/login/, "API Error: 403", ~r/API Error: 401/, ~r/Invalid API key/]
 
+  # #1201 A② — the node's HOST claude login home (`$CLAUDE_CONFIG_DIR` else
+  # `~/.claude`, claude's own resolution order). Consumed only through
+  # `CredentialAdapter.host_login_source_dir/1`, which additionally requires a
+  # present secret before the dir is usable as a source.
+  @impl Ezagent.Agent.CredentialAdapter
+  def host_login_dir,
+    do: Ezagent.Credential.HomeRuntime.host_login_dir("CLAUDE_CONFIG_DIR", ".claude")
+
   # #17 PR-E — test/E2E credential provisioning (refresh-if-expired + copy). Delegates to
   # EzagentPluginCc.CredentialRefresh. Production users log in interactively, so this is
   # only invoked by the test/E2E harness.
@@ -237,11 +245,20 @@ defmodule Ezagent.PluginCc.Template.CcAgent do
   def credential_status(home, opts \\ []) do
     {status, detail} =
       case EzagentPluginCc.CredentialFreshness.status(home, opts) do
-        :fresh -> {:authenticated, nil}
-        {:stale, :expiring_soon} -> {:expiring, "OAuth token expiring soon — re-`claude /login`"}
-        {:stale, :expired} -> {:expired, "OAuth token expired — run `claude /login` in the agent's config dir"}
-        :missing -> {:missing, "No `.credentials.json` — the agent has never logged in (`claude /login`)"}
-        :unknown -> {:unknown, nil}
+        :fresh ->
+          {:authenticated, nil}
+
+        {:stale, :expiring_soon} ->
+          {:expiring, "OAuth token expiring soon — re-`claude /login`"}
+
+        {:stale, :expired} ->
+          {:expired, "OAuth token expired — run `claude /login` in the agent's config dir"}
+
+        :missing ->
+          {:missing, "No `.credentials.json` — the agent has never logged in (`claude /login`)"}
+
+        :unknown ->
+          {:unknown, nil}
       end
 
     %{
