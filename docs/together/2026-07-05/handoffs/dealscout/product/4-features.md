@@ -1,5 +1,10 @@
 # dealscout · 产品文档 4：具体功能点（F 层）
 
+> **⚠️ 返工修订（2026-07-06 用户拍板，覆盖本文中一切相抵触的旧文；完整 banner 见同目录 spec.md / plan.md 顶部）**
+>
+> 层级 **plugin → socialware → ezagent**。DealScout 是 **socialware（纯配置组合）**，唯一真 plugin = 爬取后台。职责重划：**dealscout = 后台数据 + 更新信号**（爬取 plugin + 它的 agent 爬完注入新线索后 emit `__dealscout_update__`，`Ezagent.ActionSet.DealScoutCrawl.update_signal/0`，像 kanban 的 `__done__`）；**hello = 显示 + concierge**（hello 的 agent 收信号更新 json-render 页）。**dealscout 不声明任何 view / render**——下文凡出现 `DealScoutRender` / `DealScoutView` / "dealscout 自己的发现流 SessionView / world tab" 的设计**已删除、作废**（原 I-5 显示件归 hello；I-8 / F-4 world-tab 议题随之消失）。DealScout Definition（Stage D 已落地 `apps/ezagent_plugin_dealscout/lib/ezagent_plugin_dealscout/definition_seed.ex`）：`uses: ["hello","dealscout"]`、`views: [Ezagent.ActionSet.HelloRender]`（hello `PageView` 以此认领渲染，零改 hello）、`routing_rules` 用 `text_contains("__dealscout_update__")` → 已声明角色 `"page"`（内容协议 routing 像 kanban relay，零实例 URI）。下文与此抵触处一律按本 banner 为准。
+
+
 > **一句话**：dealscout 是"帮找机会的人对接"的 AI 网络，两条价值腿——**发现腿（地基·找）**和**撮合腿（亮点·涌现）**。本文把这两条腿拆成 **13 个功能锚点**：发现腿 7 个（F-1..F-7），撮合腿 6 个（F-8..F-13）。每个功能锚点 `↑` 上游一个 V（视图与操作），再拆成 2-4 个**具体功能点**，每点都标清"复用现有能力 `file:line`"还是"要新建"、以及它属于 dealscout plugin 的哪一块。
 >
 > **两条腿**（对齐 `../README.md §3.5`）：

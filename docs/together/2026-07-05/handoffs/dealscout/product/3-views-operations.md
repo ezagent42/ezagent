@@ -1,5 +1,10 @@
 # dealscout 产品文档 3：视图与操作（V 层）
 
+> **⚠️ 返工修订（2026-07-06 用户拍板，覆盖本文中一切相抵触的旧文；完整 banner 见同目录 spec.md / plan.md 顶部）**
+>
+> 层级 **plugin → socialware → ezagent**。DealScout 是 **socialware（纯配置组合）**，唯一真 plugin = 爬取后台。职责重划：**dealscout = 后台数据 + 更新信号**（爬取 plugin + 它的 agent 爬完注入新线索后 emit `__dealscout_update__`，`Ezagent.ActionSet.DealScoutCrawl.update_signal/0`，像 kanban 的 `__done__`）；**hello = 显示 + concierge**（hello 的 agent 收信号更新 json-render 页）。**dealscout 不声明任何 view / render**——下文凡出现 `DealScoutRender` / `DealScoutView` / "dealscout 自己的发现流 SessionView / world tab" 的设计**已删除、作废**（原 I-5 显示件归 hello；I-8 / F-4 world-tab 议题随之消失）。DealScout Definition（Stage D 已落地 `apps/ezagent_plugin_dealscout/lib/ezagent_plugin_dealscout/definition_seed.ex`）：`uses: ["hello","dealscout"]`、`views: [Ezagent.ActionSet.HelloRender]`（hello `PageView` 以此认领渲染，零改 hello）、`routing_rules` 用 `text_contains("__dealscout_update__")` → 已声明角色 `"page"`（内容协议 routing 像 kanban relay，零实例 URI）。下文与此抵触处一律按本 banner 为准。
+
+
 > **一句话**：把用户旅程（J 层）落成 **9 个能看能点的界面**，按**两条腿**组织——**发现腿（地基·找）**：千人千面发现流、单条深挖追问、配置面板、主动搜索面板、下载区；**撮合腿（亮点·涌现）**：公开机会页、公开面聊天、founder 身份看板、invite 深聊面。撮合机制不是"申请加入你的 session + owner 审核 pending"，而是 **hello 公开面聊天**——DealScout 组合 hello 拿到公开面 + concierge 客服 agent；**登录用户**在公开面**自助 join、发消息供线索**，非 owner member 永远路由到 concierge 客服（`router.ex:13-14` 结构性规定，访客到不了 builder、不为访客发 LLM 调用）；**匿名只读**看渲染好的公开快照、不能写；**founder 本人**在同一 session **全量白板互见**、看到发言者身份，想深聊就**主动 invite** 对上的人进私有 session。
 >
 > **追溯**：本文是编号树的 **V 层**，每个视图锚点 `↑` 指向 `../README.md §3.3` 的某个 J 阶段（发现腿 J-1..J-5 + 撮合腿 J-6..J-9）；本文的下游是 `product/4-features.md` 的 F 功能点（F-x `↑` V-x）。**严格单亲树**：每个视图恰一个 J 父、每个子元素恰一个 `↑`（同层视图锚点或对应 J 步）——2026-07-05 找为主重构后**需求/供给降级为贯穿颜色属性**，不再有多父弥合节点（弥合概念保留、交汇内化进撮合腿，见 `../README.md §3.8`）。编号规则见 `../README.md §3.1`：`V-层.序`，V-n 是视图锚点，V-n.1/V-n.2… 是该视图的具体元素/操作。

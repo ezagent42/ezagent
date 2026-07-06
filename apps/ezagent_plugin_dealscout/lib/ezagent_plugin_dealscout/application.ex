@@ -32,11 +32,14 @@ defmodule EzagentPluginDealScout.Application do
 
   `plugin_info/0` + `children/0`（爬取 `Poller` + `RetentionSweeper`）+ `roles/0`
   （发现腿 recipes）。不声明 `behaviors/0` / view —— 其余 `Ezagent.Plugin`
-  callback 保持 `use`-macro 默认（`[]` / `nil` / `:ok`）。
+  callback 保持 `use`-macro 默认（`[]` / `nil` / `:ok`）。boot 时另 code-seed
+  `socialware:dealscout` Definition（`DefinitionSeed`，纯配置组合，Stage D）。
   """
 
   use Application
   use Ezagent.Plugin
+
+  require Logger
 
   # Compile-time env (works in stripped OTP releases where `Mix` is unavailable).
   @compile_env Mix.env()
@@ -45,7 +48,33 @@ defmodule EzagentPluginDealScout.Application do
   def start(_type, _args) do
     # 不注册任何 SessionView / render ActionSet —— 显示归 hello（见 moduledoc
     # 职责边界）。本 plugin 只 boot 爬取后台。
-    Ezagent.Plugin.boot(__MODULE__)
+    result = Ezagent.Plugin.boot(__MODULE__)
+    :ok = maybe_seed_dealscout_definition()
+    result
+  end
+
+  # Code-seed the `dealscout` socialware Definition at boot (mirrors kanban's
+  # `maybe_seed_kanban_team` / hello's demo publish). Skipped in `:test` — the
+  # DB write at plugin boot contends with the per-test Ecto sandbox (ExUnit
+  # seeds inside a checked-out sandbox instead, see `DealScoutConformanceTest`).
+  # Boot-safe: any seed failure downgrades to a log and NEVER crashes boot.
+  defp maybe_seed_dealscout_definition do
+    if @compile_env == :test do
+      :ok
+    else
+      case EzagentPluginDealScout.DefinitionSeed.seed_definition() do
+        {:ok, _} ->
+          :ok
+
+        {:error, reason} ->
+          Logger.warning("dealscout definition seed failed (boot-safe): #{inspect(reason)}")
+          :ok
+      end
+    end
+  rescue
+    e ->
+      Logger.warning("dealscout definition seed raised (boot-safe): #{inspect(e)}")
+      :ok
   end
 
   @impl Ezagent.Plugin
