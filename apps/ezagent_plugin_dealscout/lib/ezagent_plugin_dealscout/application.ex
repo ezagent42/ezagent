@@ -31,7 +31,18 @@ defmodule EzagentPluginDealScout.Application do
   @compile_env Mix.env()
 
   @impl Application
-  def start(_type, _args), do: Ezagent.Plugin.boot(__MODULE__)
+  def start(_type, _args) do
+    result = Ezagent.Plugin.boot(__MODULE__)
+
+    # Register the discovery-feed SessionView (DECLARE, self-contained). The
+    # registry is init'd by `ezagent_domain_ui`, which boots before this plugin
+    # (a declared dep). world renders any registered SessionView generically —
+    # no world edit here. "Surfacing it as a switchable world tab" is the
+    # world-views branch's job (platform layer), NOT this plugin.
+    _ = Ezagent.UI.SessionViewRegistry.register(EzagentPluginDealScout.DealScoutView)
+
+    result
+  end
 
   @impl Ezagent.Plugin
   def plugin_info do
@@ -51,7 +62,7 @@ defmodule EzagentPluginDealScout.Application do
     if Application.get_env(:ezagent_plugin_dealscout, :skip_poller, @compile_env == :test) do
       []
     else
-      [EzagentPluginDealScout.Poller]
+      [EzagentPluginDealScout.Poller, EzagentPluginDealScout.RetentionSweeper]
     end
   end
 
@@ -60,4 +71,13 @@ defmodule EzagentPluginDealScout.Application do
   # per-agent on the Definition role-slot (a later Stage), never on the recipe.
   @impl Ezagent.Plugin
   def roles, do: EzagentPluginDealScout.Recipes.all()
+
+  # Register the `<sw>_render` view read ActionSet's `:dealscout_render` action on
+  # the Session Kind (cap-only, `dispatchable? false`). Writes only the
+  # `{Session, :dealscout_render}` cap subject — no dispatch route. This is the cap
+  # `Ezagent.UI.SessionView.authorize_view/3` checks for the DealScout feed view.
+  @impl Ezagent.Plugin
+  def behaviors do
+    [{Ezagent.Entity.Session, :dealscout_render, Ezagent.ActionSet.DealScoutRender}]
+  end
 end
