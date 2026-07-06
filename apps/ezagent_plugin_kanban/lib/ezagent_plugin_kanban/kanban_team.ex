@@ -89,7 +89,14 @@ defmodule EzagentPluginKanban.KanbanTeam do
       uses: ["kanban"],
       bases: [Ezagent.ActionSet.Session],
       shape: [],
-      views: [],
+      # S4 — the board view (declaration side). The plugin ships the cap-only
+      # `KanbanRender` view read ActionSet + the `BoardView` SessionView; this
+      # field is how the Definition CLAIMS that view (conformance assertions
+      # 2/9 then require the `{Session, :kanban_render}` cap to be registered,
+      # which `Application.behaviors/0` does). Rendering is picked up by world's
+      # generic SessionViewRegistry consumption (world-views #1192/#1199) —
+      # zero world changes.
+      views: [Ezagent.ActionSet.KanbanRender],
       # Exactly TWO agent role-slots — the session participants. Both cc-headless
       # (active real-brain), so both pass the RF-6 join gate and really
       # `session.join` at materialize. The board (`kanban-manager`) is NOT here —

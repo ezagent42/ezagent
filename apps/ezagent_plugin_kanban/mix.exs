@@ -62,7 +62,13 @@ defmodule EzagentPluginKanban.MixProject do
       # lib/ (boot code-seed of the kanban-team Definition, mirrors hello's
       # declared prod dep on domain_session). Undeclared it is a latent
       # "module not available" hazard (#57 arch gate).
-      {:ezagent_domain_session, in_umbrella: true}
+      {:ezagent_domain_session, in_umbrella: true},
+      # kanban board view (S4): domain_ui owns the `Ezagent.UI.SessionView`
+      # contract + `SessionViewRegistry` that `BoardView` implements/registers
+      # into (and brings Phoenix.Component for the internal render). PROD dep so
+      # the registry ETS table is init'd before this plugin registers (mirrors
+      # hello + the world-views ordering note in hello's `Application.start/2`).
+      {:ezagent_domain_ui, in_umbrella: true}
     ]
   end
 end
