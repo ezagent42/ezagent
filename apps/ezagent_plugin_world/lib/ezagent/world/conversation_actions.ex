@@ -494,21 +494,37 @@ defmodule Ezagent.World.ConversationActions do
     :exit, reason -> {:error, {:create_session_exit, reason}}
   end
 
-  @doc "Switch the active conversation sub-view (`chat` or `pty`)."
+  @doc """
+  Switch the active session view. The whitelist is the caller-aware registry set
+  (`ConversationData.session_view_ids/2`) — the SAME source that produces the
+  visible tabs — so a view a caller can't see is neither a tab nor switchable-to
+  (no bypass of the `authorize_view/3` cap gate). An id outside that set is
+  rejected with `error:bad_view`.
+  """
   @spec switch_view(Phoenix.LiveView.Socket.t(), URI.t(), String.t()) ::
           {:noreply, Phoenix.LiveView.Socket.t()}
-  # "page" (TEMPORARY): the hello operator page-preview view. Proper world
-  # surfacing of registered SessionViews is Phase 3; this just toggles the
-  # active view so the React UI can embed the customer surface.
-  def switch_view(socket, %URI{} = _session_uri, view) when view in ["chat", "pty", "page"] do
-    {:noreply, push_world_state(socket, %{"active_view" => view})}
+  def switch_view(socket, %URI{} = session_uri, view) when is_binary(view) do
+    caller = socket.assigns.current_entity_uri
+
+    if view in ConversationData.session_view_ids(session_uri, caller) do
+      {:noreply, push_world_state(socket, %{"active_view" => view})}
+    else
+      {:noreply, assign(socket, :last_dispatch_status, "error:bad_view")}
+    end
   end
 
-  def switch_view(socket, %URI{}, _view) do
-    {:noreply, assign(socket, :last_dispatch_status, "error:bad_view")}
-  end
+  @doc """
+  Switch the conversation panel to the PTY view for a member agent.
 
-  @doc "Switch the conversation panel to the PTY view for a member agent."
+  This is the ONE path besides `switch_view/3` that sets `active_view`, and it is
+  hard-wired to `"pty"` only. That is safe today because the pty view
+  (`EzagentDomainUi.Pty.TerminalView`) declares no `view_behavior/0` — it is never
+  cap-gated — and the React client only activates ids present in the enumerated
+  `views` (falling back otherwise), so no gated view can be exposed through here.
+  If pty ever GROWS a `view_behavior`, this must route through
+  `ConversationData.session_view_ids/2` like `switch_view/3`
+  (`view_cap_gate_regression_test.exs` locks that assumption).
+  """
   @spec switch_to_pty(Phoenix.LiveView.Socket.t(), URI.t(), String.t()) ::
           {:noreply, Phoenix.LiveView.Socket.t()}
   def switch_to_pty(socket, %URI{} = _session_uri, agent_str) when is_binary(agent_str) do

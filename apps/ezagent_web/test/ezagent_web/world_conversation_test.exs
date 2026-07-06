@@ -660,6 +660,13 @@ defmodule EzagentWeb.WorldConversationTest do
     assert install.content_hash == object.content_hash
   end
 
+  # Stage 1/2 (world-views) INTENDED behavior change: the switch whitelist is
+  # no longer a hard-coded tab list — it is the caller-aware registry set
+  # (`ConversationData.session_view_ids/2`), the SAME source that produces the
+  # visible tabs. So a registry-applicable view ("conversation") switches, and
+  # an id outside that set is rejected with `error:bad_view` instead of being
+  # blindly activated (the old always-switchable "pty" assertion asserted the
+  # retired hard-coded behavior).
   test "PR-4: conversation view switch pushes active view state", %{conn: conn} do
     session_uri = world_session_uri()
     encoded = session_uri |> URI.to_string() |> URI.encode_www_form()
@@ -670,10 +677,26 @@ defmodule EzagentWeb.WorldConversationTest do
     |> element("#world-root")
     |> render_hook("world:dispatch", %{
       "action" => "session.view.switch",
-      "args" => %{"session_uri" => URI.to_string(session_uri), "view" => "pty"}
+      "args" => %{"session_uri" => URI.to_string(session_uri), "view" => "conversation"}
     })
 
-    assert_push_event(view, "world:state", %{"active_view" => "pty"})
+    assert_push_event(view, "world:state", %{"active_view" => "conversation"})
+
+    # An id not in the registry-driven set for this session is rejected —
+    # no active_view push, dispatch status surfaces the reject.
+    html =
+      view
+      |> element("#world-root")
+      |> render_hook("world:dispatch", %{
+        "action" => "session.view.switch",
+        "args" => %{
+          "session_uri" => URI.to_string(session_uri),
+          "view" => "not_a_registered_view"
+        }
+      })
+
+    assert html =~ ~s(data-last-dispatch="error:bad_view")
+    refute_push_event(view, "world:state", %{"active_view" => "not_a_registered_view"}, 100)
   end
 
   test "PR-4: switching to a member PTY records the active agent", %{conn: conn} do

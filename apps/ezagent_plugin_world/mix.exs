@@ -45,6 +45,10 @@ defmodule EzagentPluginWorld.MixProject do
       {:ezagent_domain_identity, in_umbrella: true},
       {:ezagent_domain_session, in_umbrella: true},
       {:ezagent_domain_workspace, in_umbrella: true},
+      # SessionView registry owner (Ezagent.UI.SessionViewRegistry). world consumes
+      # it to enumerate the session's caller-visible views into dynamic tabs; this
+      # is an in-umbrella REFERENCE only (world does not modify ezagent_domain_ui).
+      {:ezagent_domain_ui, in_umbrella: true},
       # Operator console ensures a hello session created from a PUBLISHED template
       # gets its @hello builder (the generic create path installs behaviours + the
       # seeded page but not the per-session builder). world already integrates the
