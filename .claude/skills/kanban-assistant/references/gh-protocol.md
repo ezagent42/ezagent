@@ -39,7 +39,7 @@ When the `dev-together` member finishes a `dive` and is preparing to `return`:
    `kanban-team-collaboration.md` §d — one dispatch to the board URI):
 
    ```bash
-   mix ezagent agent register_pr --agent="<board-uri>" --id=<card> --pr=<PR-URL>
+   scripts/kanban-cli.sh register_pr '{"id":"<card>","pr":"<PR-URL>"}'
    ```
 
    The URL passed here MUST be the one `gh pr create` actually printed — never
@@ -65,7 +65,7 @@ On reviewing a return (after the `__done__` signal, see §5):
 3. **Pin the reviewed commit** with a permanent blob link:
 
    ```bash
-   mix ezagent agent attach_code_file --agent="<board-uri>" --id=<card> --sha=<headRefOid> --path=<file>
+   scripts/kanban-cli.sh attach_code_file '{"id":"<card>","sha":"<headRefOid>","path":"<file>"}'
    ```
 
 ## (4) Failure awareness — never swallow gh errors
