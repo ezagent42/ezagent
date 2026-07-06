@@ -165,7 +165,7 @@ defmodule EzagentDomainIdentity.Application do
     # config-eval / before `Application.start`) and correctly migrates.
     path = Ezagent.System.FsResolver.path!(Ezagent.URI.system("credentials", "smtp_config.json"))
 
-    with false <- Ezagent.AppSettings.smtp_configured?(),
+    with false <- Ezagent.AppSettings.mail_configured?(),
          {:ok, body} <- File.read(path),
          {:ok, %{} = cfg} <- Jason.decode(body) do
       Ezagent.AppSettings.put("smtp_config", cfg)

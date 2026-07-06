@@ -93,4 +93,69 @@ defmodule Ezagent.AppSettingsTest do
       end
     end
   end
+
+  describe "mail_api_configured?/0 — email.ezagent.chat REST shape" do
+    test "false until base_url + api_key are both non-empty" do
+      refute AppSettings.mail_api_configured?()
+
+      :ok = AppSettings.put("smtp_config", %{"base_url" => "https://email.ezagent.chat"})
+      refute AppSettings.mail_api_configured?()
+
+      :ok =
+        AppSettings.put("smtp_config", %{
+          "from_address" => "auth@ezagent.chat",
+          "base_url" => "https://email.ezagent.chat",
+          "api_key" => "emk_x"
+        })
+
+      assert AppSettings.mail_api_configured?()
+    end
+
+    test "empty base_url or api_key → false" do
+      :ok = AppSettings.put("smtp_config", %{"base_url" => "", "api_key" => "emk_x"})
+      refute AppSettings.mail_api_configured?()
+
+      :ok = AppSettings.put("smtp_config", %{"base_url" => "https://x", "api_key" => ""})
+      refute AppSettings.mail_api_configured?()
+    end
+
+    test "a complete SMTP-relay config does NOT satisfy the REST check" do
+      :ok =
+        AppSettings.put("smtp_config", %{
+          "host" => "smtp.x.com",
+          "port" => "587",
+          "username" => "u",
+          "password" => "p",
+          "from_address" => "a@x.com"
+        })
+
+      refute AppSettings.mail_api_configured?()
+    end
+  end
+
+  describe "mail_configured?/0 — transport-agnostic readiness" do
+    test "true for a complete SMTP config OR a complete REST config" do
+      refute AppSettings.mail_configured?()
+
+      :ok =
+        AppSettings.put("smtp_config", %{
+          "host" => "smtp.x.com",
+          "port" => "587",
+          "username" => "u",
+          "password" => "p",
+          "from_address" => "a@x.com"
+        })
+
+      assert AppSettings.mail_configured?()
+
+      :ok =
+        AppSettings.put("smtp_config", %{
+          "from_address" => "auth@ezagent.chat",
+          "base_url" => "https://email.ezagent.chat",
+          "api_key" => "emk_x"
+        })
+
+      assert AppSettings.mail_configured?()
+    end
+  end
 end

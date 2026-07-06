@@ -218,7 +218,7 @@ defmodule EzagentWeb.SessionController do
     # task #87: magic-link is shown ONLY when SMTP is configured (Allen),
     # otherwise the section is hidden entirely.
     email_section =
-      if Ezagent.AppSettings.smtp_configured?() do
+      if Ezagent.AppSettings.mail_configured?() do
         @email_form
         |> String.replace("{{CSRF}}", Plug.CSRFProtection.get_csrf_token())
         |> String.replace("{{T_OR}}", esc(gettext("or")))
@@ -305,10 +305,10 @@ defmodule EzagentWeb.SessionController do
     ip = conn.remote_ip |> :inet.ntoa() |> to_string()
 
     cond do
-      not Ezagent.AppSettings.smtp_configured?() ->
+      not Ezagent.AppSettings.mail_configured?() ->
         Logger.warning(
-          "magic_link silent_drop reason=smtp_not_configured email=#{email} ip=#{ip} — " <>
-            "admin must configure SMTP at /admin/settings before any sign-in email can send"
+          "magic_link silent_drop reason=mail_not_configured email=#{email} ip=#{ip} — " <>
+            "admin must configure mail (SMTP or REST) at /admin/settings before any sign-in email can send"
         )
 
         :ok

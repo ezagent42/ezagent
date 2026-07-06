@@ -132,11 +132,16 @@ config :mime, :types, %{
   "text/event-stream" => ["event-stream"]
 }
 
-# Username & Auth M2 — Swoosh. SMTP relay/credentials are supplied at
-# deliver-time from Ezagent.AppSettings (runtime, admin-configured), so
-# only the adapter is fixed here. api_client: false — SMTP only, no HTTP
-# API adapters, so no hackney/finch dependency is pulled in.
-config :ezagent_web, EzagentWeb.Mailer, adapter: Swoosh.Adapters.SMTP
+# Username & Auth M2 — Swoosh. Mail transport config (base_url/api_key, or
+# SMTP relay/credentials) is supplied at deliver-time from Ezagent.AppSettings
+# (runtime, admin-configured / boot-seeded), so only the adapter is fixed here.
+#
+# Prod auth mail (magic-link / confirm / reset) goes through
+# `email.ezagent.chat` — Cloudflare Email Sending, REST only (POST /api/send),
+# NOT an SMTP relay — so ezagent_web uses the REST adapter. It calls stdlib
+# `:httpc` directly, so `api_client: false` (below) stays correct: no
+# hackney/finch dependency is pulled in.
+config :ezagent_web, EzagentWeb.Mailer, adapter: Ezagent.Mail.EzagentChatAdapter
 config :ezagent_plugin_email, Ezagent.Email.Mailer, adapter: Swoosh.Adapters.SMTP
 
 config :ezagent_plugin_email, :verification_base_url, "https://app.ezagent.chat"

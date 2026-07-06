@@ -134,10 +134,14 @@ defmodule EzagentWeb.Mailer do
     end
   end
 
-  # Local (dev/test) adapter is always ready; SMTP needs smtp_config.
+  # Readiness by adapter:
+  #   - Local (dev/test): always ready — never touches the DB.
+  #   - EzagentChatAdapter (prod, REST): needs base_url + api_key in smtp_config.
+  #   - SMTP: needs the full host/port/... smtp_config.
   defp mail_ready? do
     case configured_adapter() do
       Swoosh.Adapters.Local -> true
+      Ezagent.Mail.EzagentChatAdapter -> Ezagent.AppSettings.mail_api_configured?()
       _ -> Ezagent.AppSettings.smtp_configured?()
     end
   end
@@ -146,6 +150,10 @@ defmodule EzagentWeb.Mailer do
     case configured_adapter() do
       Swoosh.Adapters.Local ->
         deliver(email)
+
+      Ezagent.Mail.EzagentChatAdapter ->
+        cfg = Ezagent.AppSettings.get("smtp_config") || %{}
+        deliver(email, base_url: cfg["base_url"], api_key: cfg["api_key"])
 
       _ ->
         deliver(email, smtp_runtime_config(Ezagent.AppSettings.get("smtp_config")))
