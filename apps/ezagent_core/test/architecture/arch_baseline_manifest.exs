@@ -261,7 +261,13 @@
   #   plugin cannot call a private domain helper under the plugin-only boundary,
   #   so the fork is forced; a future domain-side public helper would collapse
   #   it back. 43→44.
-  cross_file_duplicate_fn_groups: 44,
+  # - arch-cap-bump: +3 #1191 — Demo.DealScout mirrors the sanctioned #162
+  #   golden-template boot-publish skeleton of Demo.Hello: publish/0,
+  #   admin_ctx/2 and already_public?/1 are intentionally isomorphic.
+  #   (arch-allow line markers can't be used — mix format moves trailing
+  #   comments off `do` lines.) 44→47. NOTE merge-order coupling: #1190
+  #   bumps the same cap for Demo.Kanban; whichever lands second re-measures.
+  cross_file_duplicate_fn_groups: 47,
   # FF-4 (cleanup-1): distinct non-agent_bridge/non-test lib files still
   # referencing a `/cc_socket` deprecation-shim module
   # (EzagentPluginCc.{BridgeRegistry,Socket,Channel,TokenStore}). Cleanup-3
