@@ -135,6 +135,28 @@ defmodule Ezagent.Entity.AgentTemplateSpawnSandboxMaterializationTest do
     # PendingDelivery and delivered once the agent flips `:ready`.
     assert Ezagent.PendingDelivery.buffer_size(agent_uri) >= 1,
            "expected the sandbox.update_config cast to be buffered for later delivery"
+
+    # Now DELIVER it (what `ReadyTransition` does when the agent flips `:ready`)
+    # and assert it lands WITHOUT crashing the agent Kind. Regression guard: the
+    # cast ctx MUST carry `reply: :ignore`, else `Kind.Server.handle_cast`'s
+    # unconditional `Invocation.reply/2` raises FunctionClause on the missing
+    # `:reply` key and kills the agent — which broke the whole hello install.
+    {:ok, agent_pid} = Ezagent.KindRegistry.lookup(agent_uri)
+
+    :ready =
+      Ezagent.Kind.ReadyTransition.drain_pending_then_mark_ready(
+        URI.to_string(agent_uri),
+        agent_pid
+      )
+
+    # The agent survived the delivery (no reply crash) and the sandbox slice now
+    # carries the respawn data (a subsequent `:call` is processed AFTER the cast).
+    assert Process.alive?(agent_pid)
+    assert Ezagent.PendingDelivery.buffer_size(agent_uri) == 0
+    assert {:ok, sandbox_slice} = Ezagent.Kind.get_slice(agent_uri, :sandbox)
+    sandbox = Ezagent.Kind.normalize_slice_view(sandbox_slice)
+    assert sandbox.config_dir_path != nil
+    assert is_map(sandbox.respawn_template_data) and map_size(sandbox.respawn_template_data) > 0
   end
 
   test "spawn skips sandbox.update_config dispatch when sandbox was initialized by Kind spawn args" do

@@ -677,7 +677,12 @@ defmodule Ezagent.Entity.Agent.TemplateSpawn do
             },
             ctx: %{
               caller: worker_uri,
-              caps: [sandbox_update_config_self_cap(worker_uri)]
+              caps: [sandbox_update_config_self_cap(worker_uri)],
+              # `:ignore` — nobody awaits this write. `Kind.Server.handle_cast`
+              # unconditionally calls `Invocation.reply(inv.ctx, ...)`, which
+              # requires a `:reply` key (an absent key raises FunctionClause);
+              # `:ignore` is the no-op reply target for fire-and-forget.
+              reply: :ignore
             }
           })
 
