@@ -11,7 +11,22 @@ defmodule EzagentPluginWorld.Application do
   use Ezagent.Plugin
 
   @impl Application
-  def start(_type, _args), do: Ezagent.Plugin.boot(__MODULE__)
+  def start(_type, _args) do
+    with {:ok, pid} <- Ezagent.Plugin.boot(__MODULE__) do
+      register_session_views()
+      {:ok, pid}
+    end
+  end
+
+  # world consumes the SessionView registry (owned by ezagent_domain_ui, a
+  # declared dep). Registering ConversationView here makes chat a first-class
+  # registry view, enumerated alongside pty / hello-page / … via
+  # `Ezagent.UI.SessionViewRegistry.applicable_views/2` — no hard-coded chat tab.
+  defp register_session_views do
+    :ok = Ezagent.UI.SessionViewRegistry.init()
+    :ok = Ezagent.UI.SessionViewRegistry.register(Ezagent.World.ConversationView)
+    :ok
+  end
 
   @impl Ezagent.Plugin
   def plugin_info do

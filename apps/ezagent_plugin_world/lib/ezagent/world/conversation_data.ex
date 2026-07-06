@@ -13,6 +13,12 @@ defmodule Ezagent.World.ConversationData do
 
   @message_limit 50
 
+  # world-native React renderers keyed by SessionView id → the render mode the
+  # React side draws with. Any other view classifies by its declared target
+  # (external json-render surface) or falls through to "unsupported" (honest
+  # placeholder, never silently hidden).
+  @native_react_ids %{conversation: "chat", pty: "pty"}
+
   @doc """
   Build the React `conversation` island state for a session.
 
@@ -47,28 +53,69 @@ defmodule Ezagent.World.ConversationData do
       "human_role_slots" => human_role_slots(session_uri),
       "routing_rules" => list_session_routing_rules(session_uri),
       "sessions" => sessions,
-      # Whether to show the right-side rendered-Page pane. A hello/socialware page
-      # session is detected by its `:surface` slice — NOT by a `/hello/` URI
-      # segment, so a session created from a PUBLISHED hello template (whose URI
-      # carries the template's name, e.g. `session://ws/my-template/1`) is still
-      # recognized as a page session and gets the Page tab.
-      "is_hello" => page_session?(session_uri)
+      # Registry-driven view tabs (Ezagent.UI.SessionViewRegistry). Each entry is
+      # %{"id","label","icon","mode"}; mode ∈ chat|pty|external|unsupported. This
+      # replaces the hard-coded chat/pty segment + the old `is_hello` page probe:
+      # chat/pty/hello-page are now all enumerated through the caller-aware
+      # `applicable_views/2`, so a cap-gated view a caller can't see emits no tab.
+      "views" => session_views(session_uri, caller_uri)
     }
   end
 
-  # A page (hello/socialware) session carries a `:surface` slice (the
-  # `Behavior.Surface` state). Falls back to the legacy `/hello/` URI check when
-  # the session Kind isn't live to read. Core-only (no socialware dependency).
-  defp page_session?(%URI{} = session_uri) do
-    has_surface_slice?(session_uri) or String.contains?(URI.to_string(session_uri), "/hello/")
+  @doc """
+  The registry-driven view tabs for `session_uri` visible to `caller_uri`.
+
+  Delegates enumeration + `applies_to?` + the cap gate to
+  `Ezagent.UI.SessionViewRegistry.applicable_views/2` (the SAME caller-aware path
+  that already runs `authorize_view/3`), so world never re-computes or bypasses
+  visibility. world only classifies each returned view into a render `mode` the
+  React side knows how to draw.
+  """
+  @spec session_views(URI.t(), URI.t() | nil) :: [map()]
+  def session_views(%URI{} = session_uri, caller_uri) do
+    session_uri
+    |> Ezagent.UI.SessionViewRegistry.applicable_views(view_caller(caller_uri))
+    |> Enum.map(fn %{id: id, label: label, icon: icon, module: mod} ->
+      %{
+        "id" => Atom.to_string(id),
+        "label" => label,
+        "icon" => icon,
+        "mode" => render_mode(id, mod)
+      }
+    end)
   end
 
-  defp has_surface_slice?(session_uri) do
-    case Ezagent.Kind.get_slice(session_uri, :surface) do
-      {:ok, slice} when is_map(slice) and map_size(slice) > 0 -> true
-      _ -> false
+  @doc """
+  The visible view id strings for `session_uri`/`caller_uri` — the SINGLE source
+  the `switch_view` whitelist reads from, so a tab a caller can't see also can't
+  be switched to (no bypass; gate and visibility are same-source).
+  """
+  @spec session_view_ids(URI.t(), URI.t() | nil) :: [String.t()]
+  def session_view_ids(%URI{} = session_uri, caller_uri) do
+    session_uri |> session_views(caller_uri) |> Enum.map(& &1["id"])
+  end
+
+  # Classify a registered view into a world React render mode. `:conversation`
+  # and `:pty` have world-native React renderers; `:page`/`:hello_page` and any
+  # view declaring an external render target draw through the external surface
+  # (iframe); everything else is an honest "unsupported" placeholder.
+  defp render_mode(id, mod) do
+    cond do
+      Map.has_key?(@native_react_ids, id) -> Map.fetch!(@native_react_ids, id)
+      id in [:page, :hello_page] -> "external"
+      external_render_view?(mod) -> "external"
+      true -> "unsupported"
     end
   end
+
+  defp external_render_view?(mod) do
+    Ezagent.UI.SessionViewRegistry.external_render?(mod)
+  rescue
+    _ -> false
+  end
+
+  defp view_caller(%URI{} = caller), do: caller
+  defp view_caller(_), do: nil
 
   @doc """
   Routing rules scoped to `session_uri`, shaped for the conversation island.
