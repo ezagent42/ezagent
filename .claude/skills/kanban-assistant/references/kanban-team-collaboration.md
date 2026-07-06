@@ -121,7 +121,9 @@ URI as-is and appends `?action=kanban.<action>` — the kanban behavior's slice 
 `kanban`). The board is an `Entity.Agent`, so the CLI kind segment is `agent`:
 
 ```bash
-mix ezagent agent <action> --agent="entity://<ws>/agent/<uuid>" [--<arg>=<value> …]
+# kanban 动作是 per-instance 挂载的(K5),不进全局 `mix ezagent agent` 命令树。
+# 用本 skill 自带的 dispatch 脚本(同 identity→URI→Router.dispatch 机制,CapBAC 不绕):
+scripts/kanban-cli.sh <action> '{"<arg>":"<value>", …}'   # 板 URI 与身份来自 EZAGENT_* env
 ```
 
 **Find the board URI** (never create it yourself — §a0): ask the owner which
@@ -134,7 +136,7 @@ is a `kanban-manager` agent, so that lookup returns exactly the boards.
 
 1. **Read the board** — `kanban.get_tree` returns the whole node tree, the stage
    chain, and per-node artifacts. Start every turn here.
-   `mix ezagent agent get_tree --agent="<board-uri>"`
+   `scripts/kanban-cli.sh get_tree '{}'`
 2. **Create a card** — `kanban.add_node --parent_id=<pid|""> --title="…"`
    (`parent_id=""` builds a root card; building a root is admin-gated, adding a
    child needs the parent's owner or admin).
