@@ -56,10 +56,10 @@ defmodule EzagentPluginKanban.MixProject do
       # is registered before this plugin's `Ezagent.Plugin.boot/1` seeds its role
       # (the seam is no-op if unregistered — the dep removes that race).
       {:ezagent_domain_agent, in_umbrella: true},
-      # kanban-team socialware (S2): domain_session is a PROD dep, not test-only —
-      # `KanbanTeam.seed_definition/1` hard-refs
-      # `Ezagent.Socialware.DefinitionRegistry.seed_definition_if_absent/2` in
-      # lib/ (boot code-seed of the kanban-team Definition, mirrors hello's
+      # kanban socialware boot-publish: domain_session is a PROD dep, not
+      # test-only — `EzagentPluginKanban.Demo.publish/0` hard-refs
+      # `Ezagent.Socialware.{ManifestResolver,ConfigGovernance.Socialware}` in
+      # lib/ (boot governance publish of the kanban Definition, mirrors hello's
       # declared prod dep on domain_session). Undeclared it is a latent
       # "module not available" hazard (#57 arch gate).
       {:ezagent_domain_session, in_umbrella: true},
