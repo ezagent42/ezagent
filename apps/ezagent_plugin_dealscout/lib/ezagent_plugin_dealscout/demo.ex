@@ -50,15 +50,18 @@ defmodule EzagentPluginDealScout.Demo do
   hello 自己的页面前台（`orch_<name>` orchestrator）**不是 role 槽**：它由
   hello 命令式按名重挂（`EzagentPluginHello.App.ensure_session_orchestrator`），
   hello 自己的 Definition `roles: []`。所以这里不声明（也声明不了）那个
-  orchestrator；改为声明一个 `"page"` 角色槽（`hello.builder` recipe ×
-  `native` flavor —— hello 真实声明的页面生成 recipe），作为更新信号的声明式
-  receiver —— conformance `routing_receivers_resolve`（只认已声明角色名）下
-  最干净的写法。
+  orchestrator；改为声明一个 `"page"` 角色槽（× `native` flavor），作为更新
+  信号的声明式 receiver —— conformance `routing_receivers_resolve`（只认已
+  声明角色名）下最干净的写法。
 
-  **已知 runtime 缺口（诚实标）**：今天 `HelloBuilder.handle_receive` 有
-  `from_user?` 门（只对 USER-sender 消息触发生成，防自环），而更新信号的
-  sender 是爬取 agent —— 信号到达 "page" 成员后今天不会自动触发页面重建。
-  信号→页面刷新的 runtime 腿是 Stage E 的 e2e 活，**不在本 Stage 私改 hello**。
+  **【显式临时 ALT】page 槽当前指 `dealscout-page-alt`**（本插件自己的
+  `Ezagent.ActionSet.DealScoutPageRefreshAlt`：收信号 → 调 hello 公开生成入口
+  `EzagentPluginHello.Generator.start/2` 重建页面）。本意的写法是 hello 真实
+  声明的页面生成 recipe `hello.builder`，但 `HelloBuilder.handle_receive` 的
+  `from_user?` 门（防自环）会丢弃 agent-sender 的更新信号（A①，#1201 ③——
+  hello 作者认领"放行带标记信号"，未落地）。**A① 落地后：删除 ALT
+  ActionSet + `dealscout-page-alt` recipe，page 槽一行回切 `hello.builder`**
+  （槽声明处的注释）。不在本插件私改 hello（自包含红线）。
 
   ## Where it publishes
 
@@ -109,8 +112,9 @@ defmodule EzagentPluginDealScout.Demo do
     * `:flavor` — the flavor the `discover` agent role-slot materializes on
       (default `"cc-headless"`; integration tests can swap in a bare-spawn
       stub so no cc SDK sidecar starts). The `page` slot is NOT swapped — it
-      is pinned `hello.builder × native` by the hello composition (unlike
-      kanban, where BOTH slots are cc-headless and both swap).
+      is pinned `dealscout-page-alt × native`（临时 ALT，A① 落地后回切
+      `hello.builder`，moduledoc §The "page" role slot）(unlike kanban,
+      where BOTH slots are cc-headless and both swap).
 
   The returned map is `ManifestResolver.resolve/1`-ready (name refs, not
   modules): `views: ["hello_render"]` resolves through hello's registered
@@ -154,11 +158,16 @@ defmodule EzagentPluginDealScout.Demo do
         },
         # hello 页面 agent 槽：更新信号的声明式 receiver（moduledoc §The
         # "page" role slot —— hello 的 orch_<name> 前台是命令式 ensure，不走
-        # role 槽；这里声明的是 hello.builder 页面生成 recipe）。
+        # role 槽）。
+        # 【显式临时 ALT】hello builder 的 `from_user?` 门会丢弃 agent-sender
+        # 的更新信号（A①，#1201 ③ 未落地），所以槽先指本插件的 ALT recipe
+        # （收信号 → 调 `EzagentPluginHello.Generator.start/2` 重建页面）。
+        # A① 落地后一行回切（并删除 ALT ActionSet + recipe）：
+        #   "recipe" => "hello.builder",
         %{
           "role_name" => @page_role,
           "fill" => "agent",
-          "recipe" => "hello.builder",
+          "recipe" => "dealscout-page-alt",
           "flavor" => "native"
         }
       ],

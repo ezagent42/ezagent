@@ -2,17 +2,22 @@ defmodule EzagentPluginDealScout.RecipesTest do
   use ExUnit.Case, async: true
   alias EzagentPluginDealScout.Recipes
 
-  test "declares the four discovery-leg recipes with caps + three-part shape" do
+  # 发现腿 4 个（LLM-driven，有 prompt/caps、无 code behaviors）。
+  @discovery_names [
+    "dealscout-discover",
+    "dealscout-followup",
+    "dealscout-organize",
+    "dealscout-search"
+  ]
+
+  test "declares the four discovery-leg recipes plus the temporary page-alt (A① 落地后删)" do
     names = Recipes.all() |> Enum.map(& &1.name) |> Enum.sort()
 
-    assert names == [
-             "dealscout-discover",
-             "dealscout-followup",
-             "dealscout-organize",
-             "dealscout-search"
-           ]
+    assert names == Enum.sort(@discovery_names ++ ["dealscout-page-alt"])
+  end
 
-    for r <- Recipes.all() do
+  test "discovery-leg recipes carry prompt + caps and NO code behaviors" do
+    for r <- Recipes.all(), r.name in @discovery_names do
       assert is_binary(r.prompt) and r.prompt != ""
       assert is_list(r.requested_caps) and r.requested_caps != []
       assert r.behaviors == []
@@ -25,6 +30,21 @@ defmodule EzagentPluginDealScout.RecipesTest do
 
     assert crawl_cap in by_name["dealscout-discover"].requested_caps
     assert crawl_cap in by_name["dealscout-search"].requested_caps
+  end
+
+  test "the page-alt recipe is code-driven (照 hello.builder 形状：ALT ActionSet + 自己的 :receive cap，无 prompt)" do
+    # 【显式临时 ALT】A①（#1201 ③）落地后本 recipe 随 DealScoutPageRefreshAlt
+    # 一起整体删除，Demo page 槽回切 hello.builder。
+    alt = Enum.find(Recipes.all(), &(&1.name == "dealscout-page-alt"))
+    assert alt
+
+    assert alt.behaviors == [Ezagent.ActionSet.DealScoutPageRefreshAlt]
+
+    assert alt.requested_caps == [
+             %{behavior: Ezagent.ActionSet.DealScoutPageRefreshAlt, action: :receive}
+           ]
+
+    refute Map.has_key?(alt, :prompt)
   end
 
   test "every recipe is a flavor-agnostic, boot-seedable Ezagent.Agent.Recipe" do
