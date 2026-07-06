@@ -25,14 +25,14 @@ kanban 从 kanban-as-role 迁成可安装的 socialware：**Definition（2 角�
 - **现状**：kanban 动作按 K5 设计 per-instance 挂载（`application.ex:272` 刻意删了全局 behaviors/0），CLI 全局命令树从 `BehaviorRegistry.list_all()` 派生（`exec.ex:257`）——所以 skill §d 教的 `mix ezagent agent add_node …` 实际派生不出。r2 用同 identity→URI→`Router.dispatch` 的脚本走通（同机制同 CapBAC）。
 - **动作**：我们把 skill §d 改成 dispatch 式用法（本 PR 内修正）。**可选平台项**：CLI 要不要长 per-instance 动作面——不阻塞，若你觉得值得我们再提。
 
-### G3 — Definition 物化的 caps 锁不到"晚建的板"（系统级，详见 #1201 ②'）
-- kanban 侧现象：materialize 铸的 kanban caps instance 指向助手自身而非板（板是 owner 后建的），owner 需逐个补 grant。机制层 `GrantRecipeCaps/4` 的 `instance_overrides` 已存在（T7g，`grant_recipe_caps_board_scope_test.exs`），断在 Definition 物化路径传不了晚建 URI——**这是平台表达力问题，已作为精确条目递 #1201**，kanban 侧用 §a0 的 owner 补 grant 顶住。
+### G3 — Definition 物化的 caps 锁不到"晚建的板"（系统级，详见 #1201 ⑤）
+- kanban 侧现象：materialize 铸的 kanban caps instance 指向助手自身而非板（板是 owner 后建的），owner 需逐个补 grant。机制层 `GrantRecipeCaps/4` 的 `instance_overrides` 已存在（T7g，`grant_recipe_caps_board_scope_test.exs`），断在 Definition 物化路径传不了晚建 URI——**这是平台表达力问题，已作为 #1201 ⑤ 递交**，kanban 侧用 §a0 的 owner 补 grant 顶住。
 
 ### G4 — R1 链约束把根卡永锁 positioning（小，设计确认）
 - r2 实测：R1"stage ≥ 父 ≤ 子"下根节点没法离开首阶段（任何子节点都 ≥ 它）。是有意如此（根=定位卡不动）还是要给根开口？一句话确认即可。
 
 ## S5 建议：关闭
-S5 原定"join/admission + relay 硬锁"（gated on 你的 Q3）。现在：admission 平台侧 **#1178 已落 main**（owner-approval-to-mount，kanban 无需自做）；relay 硬锁 = #1201 ⑤ from-role condition（已定论待实施，落地后我们一行加固）。**S5 作为独立 stage 已无剩余工作，建议关闭**——除非你想要 kanban 特有的 join 策略（如 dev 槽 cross-owner 加入需助手审批），那是新需求另立。
+S5 原定"join/admission + relay 硬锁"（gated on 你的 Q3）。现在：admission 平台侧 **#1178 已落 main**（owner-approval-to-mount，kanban 无需自做）；relay 硬锁 = #1201 ⑥ from-role condition（已定论待实施，落地后我们一行加固）。**S5 作为独立 stage 已无剩余工作，建议关闭**——除非你想要 kanban 特有的 join 策略（如 dev 槽 cross-owner 加入需助手审批），那是新需求另立。
 
 ## 其余小项（record only）
 - creds watcher 竞态（config_dir 先于 watcher 出现被跳过）——A②（#1201 ②）落地后整个 watcher 删除，不修。
