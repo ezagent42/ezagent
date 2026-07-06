@@ -5,7 +5,9 @@
 implementation plan; milestones at the end are sequencing sketches only.
 rev1 codex architecture review: UNSOUND (1 BLOCKER: `requires` vs (session,ref)
 install identity; 2 MAJOR: role namespace contradiction, from_role staleness;
-1 MINOR: hop-state home) — all four resolved in rev2, marked `[A‑n]`.
+1 MINOR: hop-state home) — all four resolved, marked `[A‑n]`. rev3: A-2 upgraded
+per Allen's decision — install-time auto-prefix (`hello:advisor`) makes role
+collisions impossible by construction instead of rejected-at-install.
 **Lineage:** role-slot P1–P3 (#1180/#1185/#1194) · hello substrate migration B'
 (#1208 + its spec) · manifest track (#1164) + manifest-YAML spec
 (`2026-07-06-config-governance-unify-and-manifest-yaml.md`) · jjkysy #1201 findings
@@ -224,16 +226,33 @@ New Definition field `requires: [socialware-name]` (distinct from `uses:`
   against the new revision before flipping — a repoint that would break a
   dependent fails closed with the dependent named. No new lock identity is
   introduced; the invariant + two checks are the whole mechanism.
-- **Namespace `[A‑2]` — roles are a SHARED session-global namespace, not
-  per-definition.** (rev1 claimed `(definition, role_name)` identity; that
-  contradicts shipped semantics — role slots are plain `role_name` and session
-  membership enforces per-session role-name uniqueness. rev2 adopts reality.)
-  Composition therefore means: the merged role set of all composed definitions
-  must be collision-free — **duplicate `role_name` across composed definitions is
-  an install-time Conformance rejection** (the author renames). The flip side is
-  a feature: because the namespace is shared, S's rules may route TO a role R
-  declares (cross-socialware addressing by role name) with zero extra mechanism —
-  which is exactly what `requires orchestrator` is for.
+- **Namespace `[A‑2]` (Allen 2026-07-06, rev3) — install-time AUTO-PREFIX:
+  collisions impossible by construction.** The session role namespace stays a
+  flat plain-string namespace (shipped semantics: role slots are plain
+  `role_name`, per-session uniqueness enforced — rev1's `(definition,
+  role_name)` tuple claim withdrawn). But instead of rev2's "duplicate name =
+  reject, author renames", the framework derives the namespace: **authors write
+  SHORT names (`advisor`); install/materialization prefixes them with the
+  definition name (`hello:advisor`)**. `hello:advisor` and `kanban:advisor`
+  coexist as ordinary distinct role_name strings — uniqueness, role-on-edge,
+  `assign_role` all work unchanged.
+  - Authors cannot forge another socialware's prefix: the prefix is
+    framework-derived from the definition name, which the registry already
+    keeps unique.
+  - **Short name = local reference; prefixed name = cross-socialware
+    reference.** hello routing to the orchestrator's role writes
+    `orchestrator:coordinator` — cross-boundary references become syntactically
+    explicit, and Conformance verifies the `required` socialware actually
+    declares that role (this gives the G⑩ "from 非一等" concern its structure).
+  - Rule references and role declarations live in the same Definition, so the
+    install-time prefixing of both is a symmetric name→name rewrite — STABLE
+    across re-assignment (unlike the withdrawn name→URI rewrite of rev1 A-3;
+    prefixing rewrites to another NAME, which `from_role` still resolves at
+    runtime).
+  - Impl-constraints (builder-verify, not design): existing sessions carry
+    unprefixed member-edge role names — prefix derivation is deterministic, so
+    a dual-read compat window suffices; UI displays short name + source badge
+    rather than the full `hello:advisor`.
 - Rule sets merge for the session table; the merged set goes through the §3.2
   conflict analysis at install.
 - **Failure mode:** missing/unpublishable required socialware ⇒ install fails
