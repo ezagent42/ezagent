@@ -1,12 +1,13 @@
 # ConfigGovernance unification (#158) + Manifest YAML serialization (Q2b) — Design
 
-**Status:** rev3 — rev1 review: UNSOUND (8 findings, fixed as `[R‑n]`); rev2 re-review:
-UNSOUND (2 new BLOCKERs against the rev2 fixes themselves, fixed as `[R2‑n]`):
-conformance needed a candidate-aware mode (a first import can't pass a
-registry-lookup-based check before it is published), and bases/shape must BE
-YAML-authorable (no `uses`→shape expansion exists; installation derives behaviors
-from `views ++ shape ++ bases`, definition.ex:117). For final re-review, then codex
-implementation handoff.
+**Status:** rev5 — rev1 review: UNSOUND (8 findings, fixed as `[R‑n]`); rev2 re-review:
+UNSOUND (2 new BLOCKERs, fixed as `[R2‑n]`); rev3 review: 1 MAJOR + 2 MINOR (fixed as
+`[R3‑n]`); rev4 delta review: **SOUND** (zero findings, 3 builder-verify notes).
+rev5 (post-SOUND scope decision, Allen 2026-07-06): two former deferrals folded in —
+`.Socialware` alias rename → PR-A, boot deploy-seed scan (local priv/ lane) → PR-B —
+and the substrate rename promoted from open-ended follow-up to a triggered **PR-C**.
+Architecture unchanged from the SOUND rev4; the folds reuse already-reviewed patterns
+(the PR-A mechanical-rename sweep; the hello boot-publish chain generalized).
 **Lineage:** `2026-07-03-socialware-manifest-design.md` (on main) — this spec executes its
 two remaining engineering items: the #158 governance refactor and open question Q2.
 Decisions locked by Allen 2026-07-06: **Q2 = (b)** YAML as interchange format only,
@@ -69,14 +70,13 @@ File moves to `apps/ezagent_domain_identity/lib/ezagent/config_governance/store.
   `open/stage_item/publish/reject/preview/fetch` (socialware.ex:44+), plus the test
   suites of both. The rename is mechanical but repo-wide; do it with a global
   search-replace + compile, not by hand-editing "3 places".
-- `[R‑8]` **Explicit non-goal:** the deeper substrate modules the Store aliases —
-  `Ezagent.Socialware.{ConfigChangeItem, ConfigChangeRequest, ConfigObject,
-  ConfigStore}` (config_change_store.ex:36) — also live in the identity app under the
-  `Socialware.*` namespace and carry the same layer/scope misnaming. They are **NOT**
-  renamed in this PR (blast radius spans the whole T1/T2 config land). This is a
-  conscious scope decision, registered as follow-up §7.4, not an oversight: PR-A fixes
-  the *workflow-store* symbol the two governance paths share; the substrate rename
-  rides a future churn window.
+- `[R‑8]` **Not in PR-A — but a committed PR-C, not an open-ended defer:** the deeper
+  substrate modules the Store aliases — `Ezagent.Socialware.{ConfigChangeItem,
+  ConfigChangeRequest, ConfigObject, ConfigStore}` (config_change_store.ex:36) — carry
+  the same layer/scope misnaming and get their honest names in **PR-C** (§7.4: target
+  names + explicit trigger). They stay out of PR-A only because a repo-wide rename of
+  the T1/T2 config land must not collide with the teammate branches currently open on
+  the same files; PR-C runs the same mechanical sweep once those land.
 - Gate: `git grep -l "Socialware.ConfigChangeStore"` over `apps/` returns empty
   (tests updated too); full suite green.
 
@@ -123,11 +123,12 @@ socialware manage-cap/admin/public-scope moderation + retract/restore.
   computed repoint sets, error terms). Anything that touches `ctx`, sibling-slice
   reads, dispatch, or effect emission stays in the ActionSet. If a candidate function
   can't be made pure without changing call order, it does not move.
-- **`Ezagent.Socialware.ConfigGovernance.Socialware`** → keeps its public API
-  (`open_cr/stage_definition/publish_cr/publish_or_upgrade/retract/restore/reject_cr`
-  are called by seeds, world, tests) but internally uses the shared helpers + renamed
-  Store. Optional alias-module rename to `Ezagent.ConfigGovernance.Socialware` is
-  **deferred** (blast radius: many call sites; zero behavioral value now).
+- **`Ezagent.Socialware.ConfigGovernance.Socialware` → `Ezagent.ConfigGovernance.Socialware`**
+  (rev5, was deferred — Allen 2026-07-06: solvable now, fold in). Same public API
+  (`open_cr/stage_definition/publish_cr/publish_or_upgrade/retract/restore/reject_cr`),
+  internals use the shared helpers + renamed Store. This is the SAME mechanical
+  global-rename pass PR-A already performs for the Store — one more symbol in the
+  same sweep, plain module (no dispatch surface), call sites are seeds/world/tests.
 
 ### A4. Gates (PR-A)
 
@@ -283,7 +284,19 @@ registry fetch → `render`.
   outcome (`:published | :upgraded | :exists` or the conformance failure list) and
   exits non-zero on any error.
 
-Boot-time deploy-seed directory scan is a **follow-up slice**, not this PR.
+**Boot deploy-seed scan — IN SCOPE** (rev5, was deferred — Allen 2026-07-06: the
+local channel doesn't need registry P1). At application boot, behind a config
+flag (default on in dev/prod, off in test), scan
+`priv/socialware/*/manifest.yaml` and run each through the SAME import chain
+(parse → resolve → check_candidate → publish_or_upgrade) under the operator
+admin ctx — exactly the hello boot-publish pattern generalized from one
+hardcoded module to a directory convention. Idempotency is free
+(`publish_or_upgrade` → `{:ok, :exists}` on unchanged re-boot; fail-loud on a
+broken manifest crashes the boot rather than silently skipping — hello.ex:44-46
+precedent). Gate: boot-twice test asserts single publish then `:exists`; a
+deliberately broken manifest in the scan dir fails the boot. (The REMOTE
+config-repo channel still waits on registry P1 — only the local priv/ lane
+lands here.)
 
 ### B5. Dogfood = the acceptance gate
 
@@ -342,19 +355,33 @@ the whole PR (a test that fails when the goal is unmet).
 
 PR-A and PR-B are independent (different apps, different files; PR-B's only touch of
 governance is calling the *public* `publish_or_upgrade`). Codex may land them in
-either order; each is a bounded sub-step with its own gates. Target branch owned by
-codex; coordinator (Claude) validates gates + merges per team process.
+either order; each is a bounded sub-step with its own gates. **PR-C** (substrate
+rename, §7.4) is sequenced strictly LAST and additionally gated on the open
+socialware-area teammate branches having merged (trigger named in §7.4) — codex
+should confirm the trigger with the coordinator before starting it. Target branch
+owned by codex; coordinator (Claude) validates gates + merges per team process.
 
 ## 7. Follow-ups registered (out of scope here)
 
 1. Assets ingestion pipeline (`Definition.assets` → install-time materialization) —
-   unlocks full autoservice/hello pure-manifest re-expression.
-2. Boot deploy-seed scan of `priv/socialware/*/manifest.yaml` (config-repo channel).
-3. Optional `Ezagent.ConfigGovernance.Socialware` alias rename (defer until a natural
-   churn window).
-4. `[R‑8]` Substrate namespace honesty: `Ezagent.Socialware.{ConfigChangeItem,
-   ConfigChangeRequest, ConfigObject, ConfigStore}` (identity app) carry the same
-   `Socialware.*` misnaming as the Store did — rename in a dedicated churn window
-   (touches the whole T1/T2 config land).
+   unlocks full autoservice/hello pure-manifest re-expression. NOT folded into
+   PR-B (Allen probed 2026-07-06; holds): it is a different problem class — needs
+   its own design pass (asset addressing/content-hash couples to the registry P0
+   identity model, per-flavor materialization semantics), and folding it would
+   double PR-B beyond a bounded codex sub-step.
+2. ~~Boot deploy-seed scan~~ — **folded into PR-B** (rev5), local priv/ lane only;
+   remote config-repo channel still follows registry P1.
+3. ~~`.Socialware` alias rename~~ — **folded into PR-A** (rev5).
+4. `[R‑8]` Substrate namespace honesty → **promoted to a concrete PR-C** (§6a):
+   `Ezagent.Socialware.{ConfigChangeRequest, ConfigChangeItem}` →
+   `Ezagent.ConfigGovernance.{ChangeRequest, ChangeItem}` (governance rows join
+   their Store); `Ezagent.Socialware.{ConfigStore, ConfigObject}` →
+   `Ezagent.Config.{Store, Object}` (subject-agnostic config land). Purely
+   mechanical, no schema/table changes. **Sequenced LAST with an explicit
+   trigger, not an open-ended defer**: execute after the currently-open
+   socialware-area branches land (#1190 kanban, #1191 dealscout, this spec's
+   PR-A/PR-B) — a repo-wide rename while four teammate branches touch the same
+   land would tax every one of them with conflicts; the trigger is team traffic,
+   not difficulty. Announce + team-rebase note on merge day.
 5. Name-ref extension for `bases`/`shape` (registered contribution ids → modules),
    making shape-bearing socialwares YAML-authorable.

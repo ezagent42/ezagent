@@ -42,8 +42,12 @@ DoD:
       config_governance.ex:45,209,340).
 - [ ] New invariance test: agent-path AND socialware-path publish both land CR rows
       through `Ezagent.ConfigGovernance.Store`.
+- [ ] `Ezagent.Socialware.ConfigGovernance.Socialware` → `Ezagent.ConfigGovernance.Socialware`
+      (rev5 fold-in): same mechanical global-rename sweep as the Store; public API
+      unchanged; all call sites (seeds/world/tests) updated in the same pass.
 - [ ] Substrate modules (`ConfigChangeItem/ConfigChangeRequest/ConfigObject/ConfigStore`)
-      NOT renamed (explicit non-goal, spec R-8).
+      NOT renamed in PR-A — they are PR-C (sub-step 3), which has a merge-traffic
+      trigger; do not start PR-C without coordinator confirmation.
 
 Gates: full suite green · `mix compile --warnings-as-errors` · `mix format
 --check-formatted` · `check_invariants` + arch gates · grep gate above.
@@ -88,6 +92,13 @@ DoD:
       `publish_or_upgrade`'s actual validation at implementation). Legacy
       `package.yaml` untouched except a header comment pointing at `manifest.yaml`;
       persona/kb stay with the seed script (spec B6 non-goals).
+- [ ] Boot deploy-seed scan (rev5 fold-in, spec B4): at application boot, behind a
+      config flag (on in dev/prod, off in test), scan `priv/socialware/*/manifest.yaml`
+      through the SAME import chain under the operator admin ctx — the hello
+      boot-publish pattern generalized to a directory convention. Fail-loud on a
+      broken manifest (boot crashes, hello.ex:44-46 precedent). Tests: boot-twice →
+      publish then `{:ok, :exists}`; broken manifest in scan dir → boot fails.
+      LOCAL priv/ lane only (remote config-repo channel = registry P1 follow-up).
 - [ ] **Acceptance e2e (the completion gate):** import → conformance passes →
       publish → `DefinitionRegistry.list/1` shows it → install into a session →
       declared agents materialize → routing delivers per `routing_rules`. PLUS the
@@ -95,6 +106,22 @@ DoD:
 
 Gates: full suite green · warnings-as-errors · format · `check_invariants` +
 `mix ezagent.socialware.check` · the acceptance e2e above.
+
+## Sub-step 3 — PR-C: substrate namespace rename (TRIGGERED — do not start unprompted)
+
+Scope: spec §7.4. Purely mechanical, no schema/table changes, sequenced strictly
+after PR-A + PR-B **and** after the open socialware-area teammate branches merge
+(#1190 kanban, #1191 dealscout) — the coordinator confirms the trigger.
+
+DoD:
+- [ ] `Ezagent.Socialware.{ConfigChangeRequest, ConfigChangeItem}` →
+      `Ezagent.ConfigGovernance.{ChangeRequest, ChangeItem}` (governance rows join
+      their Store).
+- [ ] `Ezagent.Socialware.{ConfigStore, ConfigObject}` → `Ezagent.Config.{Store, Object}`
+      (subject-agnostic config land).
+- [ ] Repo-wide sweep incl. tests; grep gates: zero remaining old symbols.
+- [ ] Full suite green; zero behavior change (no test assertion edits).
+- [ ] Merge-day team note (everyone rebases once).
 
 ## Builder-verify notes (from the final SOUND review — verify during implementation, not spec issues)
 
