@@ -7,7 +7,7 @@
 > **PR:** #1188 — https://github.com/ezagent42/ezagent/pull/1188
 > **Source task:** PR #1149 zyli-developer items #5-#10
 > **Dev:** Codex
-> **returned_at:** 2026-07-06 10:50 +0800
+> **returned_at:** 2026-07-06 16:42 +0800
 
 ## What Landed
 
@@ -41,20 +41,20 @@
 
 ## Validation
 
+Post-rebase validation after replaying #1188 onto `work/world-ui-user-surface-main-0702` at `50379176`:
+
+- `git diff --check`
+  - Result: passed.
 - `node apps/ezagent_plugin_world/assets/test/world_ui_structure_test.mjs`
+  - Result: passed.
+- `node apps/ezagent_plugin_world/assets/test/world_ia_test.mjs`
   - Result: passed.
 - `corepack pnpm run check:mounts`
   - Result: passed.
 - `corepack pnpm run build`
-  - Result: passed.
-- `POSTGRES_PORT=5432 mix test apps/ezagent_plugin_world/test/ezagent/world/slot_mount_gate_test.exs`
-  - Result: passed, 4 tests / 0 failures.
-- `POSTGRES_PORT=5432 mix test apps/ezagent_web/test/ezagent_web/world_conversation_test.exs`
-  - Result: passed, 40 tests / 0 failures.
-- `POSTGRES_PORT=5432 mix test apps/ezagent_domain_workspace/test/integration/plugin_isolation_workspace_test.exs`
-  - Result: passed, 5 tests / 0 failures.
-- `PATH=/tmp/ezagent-pg-wrap-bin:$PATH POSTGRES_PORT=5432 mix precommit`
-  - Result: passed, exit 0.
+  - Result: passed after installing this fresh worktree's assets dependencies from the local pnpm cache with `corepack pnpm install --frozen-lockfile --offline`.
+- `POSTGRES_PORT=5432 mix test apps/ezagent_plugin_world/test/ezagent/world/slot_mount_gate_test.exs apps/ezagent_web/test/ezagent_web/world_conversation_test.exs apps/ezagent_domain_workspace/test/integration/plugin_isolation_workspace_test.exs`
+  - Result: not rerun in this fresh #1188 worktree because Elixir `deps/` were absent. Per operator instruction, local precommit/CI is skipped; GitHub CI is the source of truth for the post-push gate.
 
 ## Runtime Notes
 
@@ -71,12 +71,12 @@
 
 ## Branch And Gate Status
 
-- **Returned head:** `195ce4f0fd2281b6ca0a48af68bc563fd32a39e3`
-- **Base head observed:** `f379557b` on `work/world-ui-user-surface-main-0702`
-- **Local full gate:** passed — `PATH=/tmp/ezagent-pg-wrap-bin:$PATH POSTGRES_PORT=5432 mix precommit`, exit 0.
-- **GitHub PR:** #1188 is open as draft at return time.
+- **Post-rebase base:** `50379176` on `work/world-ui-user-surface-main-0702`.
+- **Post-rebase commits:** #1188 now replays only the polish commit plus this return documentation on top of #1128.
+- **Local full gate:** intentionally skipped per operator instruction; monitor GitHub CI after push.
+- **GitHub PR:** #1188 remains open against `work/world-ui-user-surface-main-0702`.
 
 ## Merge Request
 
-- Review and merge PR #1188 into `work/world-ui-user-surface-main-0702` after
-  the post-return CI run is green and the UI behavior is accepted.
+- Review GitHub CI for PR #1188 after the force-with-lease push.
+- Merge PR #1188 into `work/world-ui-user-surface-main-0702` once CI is green and the UI behavior is accepted.
