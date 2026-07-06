@@ -60,11 +60,19 @@ DoD:
       as module-name strings, R2-2), `import/2` (parse → `ManifestResolver.resolve` →
       `Conformance.check_candidate` → `publish_or_upgrade`; R-1/R2-1, R-3),
       `export/2` (registry fetch → render).
-- [ ] `Conformance.check_candidate/2` (R2-1): same check list as `check/2`, but
-      `check_install_resolves` + `check_template_installable` resolve the candidate's
-      own name to the in-memory candidate (injected lookup fn); other names still hit
-      the real registry; `check/2` post-publish semantics unchanged. Unit test: a
-      valid UNPUBLISHED definition passes `check_candidate` and fails `check`.
+- [ ] `Conformance.check_candidate/2` (R2-1) + lookup-aware `Installation` variants
+      (R3-1): add `Installation.resolved_template_installs/3` and
+      `behavior_set_for_template/3` taking `lookup_fun:` (default
+      `&DefinitionRegistry.lookup/2`), threaded through `resolve_definitions/3` and
+      unpinned `resolve_install/3` (installation.ex:58,:475); existing arity-2 heads
+      delegate with the default (all current callers byte-compatible).
+      `check_candidate/2` runs the same check list via the arity-3 variants with the
+      candidate's own name resolving in-memory; other names hit the real registry;
+      `check/2` post-publish semantics unchanged. Unit test: a valid UNPUBLISHED
+      definition passes `check_candidate` and fails `check`.
+      Completeness bar (R3-2): import enforces `check_candidate` ONLY — do NOT add
+      `DefinitionEditor.validate_definition(complete: true)` (that's the form's UX
+      contract; `publish_or_upgrade` never ran it for any caller).
 - [ ] NO library function accepts a filesystem path (R-3).
 - [ ] `mix ezagent.socialware.import <file> [--workspace <ws>]` + `export` twin:
       `File.read!` at task layer only; ctx = hello `admin_ctx/2` precedent

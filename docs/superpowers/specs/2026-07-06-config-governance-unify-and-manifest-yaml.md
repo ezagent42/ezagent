@@ -151,7 +151,9 @@ schema, no legacy-format compatibility. The legacy autoservice `package.yaml` fo
 is **not** supported — it gets superseded (§B5).
 
 `[R2‑2]` **bases/shape ARE YAML-authorable — as fully-qualified module-name
-strings** (e.g. `shape: ["Ezagent.Behavior.Turn", ...]`). Rev2 tried to exclude
+strings** (e.g. `shape: ["Ezagent.ActionSet.Turn", ...]` — `[R3‑3]` note the real
+module family is `Ezagent.ActionSet.*`, e.g. behavior/turn.ex:1; the dogfood
+manifest must name the actual modules, verified by the parser itself). Rev2 tried to exclude
 them, which is inconsistent with reality: no `uses`→shape expansion exists
 (`ManifestResolver.resolve/1` only validates `uses` and resolves `views`,
 manifest_resolver.ex:15), runtime installation derives its behavior set from
@@ -222,12 +224,30 @@ is a four-stage fail-closed chain:
    `DefinitionRegistry.lookup(ws, name)` (conformance.ex:247) and
    `check_template_installable` resolves through the registry-backed install path
    (conformance.ex:254 → installation.ex:58) — a valid FIRST import would always be
-   rejected. Mechanism: `check_candidate/2` runs the same check list, but the two
-   registry-dependent checks resolve the candidate's OWN name to the in-memory
-   candidate definition (inject a lookup fn: `fn ws, ^name -> {:ok, candidate, nil};
+   rejected. Mechanism: `check_candidate/2` runs the same check list with a
+   candidate-aware lookup (`fn ws, ^name -> {:ok, candidate, nil};
    ws, other -> DefinitionRegistry.lookup(ws, other) end`), so cross-references to
-   OTHER definitions still hit the real registry. `check/2` keeps its current
-   post-publish semantics unchanged (it backs `mix ezagent.socialware.check`).
+   OTHER definitions still hit the real registry. `[R3‑1]` **This requires
+   lookup-aware `Installation` variants, not just a Conformance change** —
+   `check_template_installable` reaches the registry through
+   `Installation.resolved_template_installs/2` and `behavior_set_for_template/2`
+   (conformance.ex:254), whose private `resolve_definitions/2` hard-calls
+   `DefinitionRegistry.lookup/2` for unpinned installs (installation.ex:58, :475).
+   PR-B therefore adds `Installation.resolved_template_installs/3` and
+   `Installation.behavior_set_for_template/3` taking `lookup_fun:` (default
+   `&DefinitionRegistry.lookup/2`), threaded through `resolve_definitions/3` and the
+   unpinned `resolve_install/3`; the existing arity-2 heads delegate with the
+   default, so every current caller is byte-compatible. `Conformance.check_candidate/2`
+   calls the arity-3 variants. `check/2` keeps its current post-publish semantics
+   unchanged (it backs `mix ezagent.socialware.check`).
+   `[R3‑2]` **Completeness bar = conformance, deliberately NOT the editor's
+   `complete: true` check.** `publish_or_upgrade/2` itself only normalizes via
+   `Definition.new/1` (socialware.ex:116→:265) — it never ran
+   `DefinitionEditor.validate_definition(complete: true)` (definition_editor.ex:284)
+   for ANY caller; that check is the declarative FORM's UX contract (a human can't
+   save a half-filled form). Import files may be legitimately minimal (e.g. no
+   `prompt_templates` when unused); what import guarantees is MATERIALIZABILITY,
+   which is exactly `check_candidate/2`.
    `{:error, failures}` aborts the import — **nothing is published**. (The hello
    boot-publish skips conformance only because its manifest is code-controlled;
    arbitrary imported files get no such trust.)
