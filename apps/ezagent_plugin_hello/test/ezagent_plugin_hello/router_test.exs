@@ -32,4 +32,40 @@ defmodule EzagentPluginHello.RouterTest do
       assert Generator.interpret_intent("garbled model output") == :builder
     end
   end
+
+  describe "should_route?/2 (loop + multi-agent guard)" do
+    setup do
+      session = Ezagent.URI.session("system", :hello, "guard-demo")
+      %{session: session}
+    end
+
+    test "ignores the orchestrator's own outbound", %{session: session} do
+      self_uri = EzagentPluginHello.App.orchestrator_uri(session)
+      refute EzagentPluginHello.Router.should_route?(session, self_uri)
+    end
+
+    test "ignores its own builder member", %{session: session} do
+      refute EzagentPluginHello.Router.should_route?(
+               session,
+               EzagentPluginHello.App.builder_uri(session)
+             )
+    end
+
+    test "ignores its own concierge member", %{session: session} do
+      refute EzagentPluginHello.Router.should_route?(
+               session,
+               EzagentPluginHello.App.concierge_uri(session)
+             )
+    end
+
+    test "routes a user message", %{session: session} do
+      user = Ezagent.URI.user("system", "admin")
+      assert EzagentPluginHello.Router.should_route?(session, user)
+    end
+
+    test "routes an EXTERNAL agent message (multi-agent, not human-only)", %{session: session} do
+      external = Ezagent.URI.entity("system", :agent, "some-other-agent")
+      assert EzagentPluginHello.Router.should_route?(session, external)
+    end
+  end
 end

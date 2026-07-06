@@ -24,21 +24,46 @@ defmodule EzagentPluginHello.Router do
 
   @doc """
   Route `user_text` (sent by `sender`) in `session_uri` to the builder or concierge.
-  Spawns a supervised Task; returns its `{:ok, pid}` (fire-and-forget).
+  Spawns a supervised Task; returns its `{:ok, pid}` (fire-and-forget). No-ops
+  (`:ignored`) when `should_route?/2` rejects the sender (the orchestrator's own
+  outbound or one of its own builder/concierge members) — the loop guard.
   """
-  @spec route(URI.t(), String.t(), URI.t()) :: {:ok, pid()} | {:error, term()}
+  @spec route(URI.t(), String.t(), URI.t()) :: {:ok, pid()} | {:error, term()} | :ignored
   def route(%URI{} = session_uri, user_text, %URI{} = sender) when is_binary(user_text) do
-    Task.Supervisor.start_child(EzagentPluginHello.TaskSupervisor, fn ->
-      case decide(owner?(session_uri, sender), user_text) do
-        :builder ->
-          _ = App.ensure_session_builder(session_uri)
-          Generator.generate(session_uri, user_text)
+    if should_route?(session_uri, sender) do
+      Task.Supervisor.start_child(EzagentPluginHello.TaskSupervisor, fn ->
+        case decide(owner?(session_uri, sender), user_text) do
+          :builder ->
+            _ = App.ensure_session_builder(session_uri)
+            Generator.generate(session_uri, user_text)
 
-        :concierge ->
-          _ = App.ensure_session_concierge(session_uri)
-          Generator.concierge_answer(session_uri, user_text, App.concierge_uri(session_uri))
-      end
-    end)
+          :concierge ->
+            _ = App.ensure_session_concierge(session_uri)
+            Generator.concierge_answer(session_uri, user_text, App.concierge_uri(session_uri))
+        end
+      end)
+    else
+      :ignored
+    end
+  end
+
+  @doc """
+  Loop + multi-agent guard. Route a message UNLESS its sender is the
+  orchestrator itself or one of its own managed members (builder / concierge) —
+  those are the orchestrator's OWN workers, whose output must never re-route
+  (loop). Every other sender — a user OR an external agent — IS routed, which is
+  how the orchestrator accepts more than human messages.
+  """
+  @spec should_route?(URI.t(), URI.t()) :: boolean()
+  def should_route?(%URI{} = session_uri, %URI{} = sender) do
+    own =
+      MapSet.new([
+        URI.to_string(App.orchestrator_uri(session_uri)),
+        URI.to_string(App.builder_uri(session_uri)),
+        URI.to_string(App.concierge_uri(session_uri))
+      ])
+
+    not MapSet.member?(own, URI.to_string(sender))
   end
 
   @doc """

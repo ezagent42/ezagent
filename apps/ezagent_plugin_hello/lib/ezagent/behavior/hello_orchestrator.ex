@@ -19,8 +19,11 @@ defmodule Ezagent.ActionSet.HelloOrchestrator do
   class: the adapter returns the message inputs, `Agent.Receive` re-dispatches them
   to the flavor behaviour's `:sync_result`. That is this action.
 
-  Loop-safe by construction: `Agent.Receive` drops the agent's own outbound
-  messages before delivery, and the Router only acts on USER-sender messages.
+  Loop-safe + multi-agent by construction: `Agent.Receive` drops the agent's own
+  outbound before delivery, and `EzagentPluginHello.Router.should_route?/2`
+  additionally ignores any message whose sender is the orchestrator itself or one
+  of its own builder/concierge members — so the orchestrator routes every OTHER
+  sender (users AND external agents) without ever re-routing its own workers.
 
   It is a `hello.orchestrator` role on the unified `Ezagent.Entity.Agent`, hosted by
   the `"hello"` flavor. `create/1` stores `flavor: "hello"` so the delivery flavor
