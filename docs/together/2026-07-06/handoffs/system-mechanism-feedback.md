@@ -11,7 +11,7 @@
 | 系统需要支持 | 为了达到 | 今天断在 | 条目 |
 |---|---|---|---|
 | **cc agent 能撑过真实工作回合** | agent 真干活（长回合必然产生大量 TUI 输出） | PTY 侧车长回合必崩，回合全丢 | **①（最高优先）** |
-| **物化出的 agent 能思考**（继承宿主登录） | agent 不是空壳 | 凭证不注入，"Not logged in" | ②（你已认领） |
+| **物化出的 agent 能思考**（继承宿主登录） | agent 不是空壳 | ~~凭证不注入~~ **#1209 已修，验收通过** | ②（已结案） |
 | **agent 的产出能到达页面** | "后台干完活→用户看到更新"闭环 | hello builder 丢弃 agent 消息 | ③（hello 作者已认领走 a） |
 
 **第二层**：组合出来的 socialware 可信、可用——协作的自然写法能用、gate 真兜住且不误伤（④⑤⑥⑦）。
@@ -27,8 +27,8 @@
 - **问题**：**所有 cc agent 的真实工作回合都过不去**——比凭证注入更靠前的阻断（creds 手动拷通过了，死在干活时）。修复一行级：regex 去 `/u` 或先 scrub，或 trim 对齐码点边界。domain 代码我们没私改。
 - **旁证（r2 实证根因）**：round-2 e2e 用短回合策略（单指令一条命令、最长回合 43s，buffer 不到 64KB 截断线）跑完全链路 **0 次崩溃**——同环境同 agent 只改回合长度就零崩，反证截断线就是唯一元凶。但这只是绕，不是解。
 
-### ② cc-flavor agent 凭证注入 —— ✅ **你已认领（installer 继承宿主登录，覆盖所有 flavor）**
-- **现在**：物化生成的 `CLAUDE_CONFIG_DIR` 不注入 `.credentials.json`，TUI "Not logged in"；手动拷宿主 creds 后立即认证成功（e2e 实证）。落地后我们重跑零手动全链路 e2e。
+### ② cc-flavor agent 凭证注入 —— ✅✅ **#1209 已落地，我们零手动 e2e 验收通过（2026-07-07）**
+- **验收实证**（独立冷库、不拷 creds、不跑 watcher）：auto-adopt 指针 1 行→durable grant 2 行→§D6 secret-only copy（config_dir 自动出现 `.credentials.json`，sha256 与宿主逐字节一致、0600）→双 PTY banner `Claude Max`、"Not logged in" 0 次→8s 真思考回复落库；`CLAUDE_CONFIG_DIR` 隔离未破。证据：#1190 `docs/e2e/2026-07-07/a2-zero-manual-creds/`。**本条结案**。
 
 ### ③ hello 页面重建入口对组合者开放 —— ✅ **hello 作者已认领走 (a)**
 - **现在**（`49f0167f` 重验）：#1208 重构了 hello 但 `hello_builder.ex:55,74` 的 `from_user?` 门未动——agent sender 的消息仍被丢弃。路由层反而更通了（#1208 后 orchestrator 路由所有其他 sender 含 agent），**builder 的门成了最后一关**。落地后 dealscout"爬完→页面自动刷新"即闭环（信号 `__dealscout_update__` 已按内容协议就位）。
