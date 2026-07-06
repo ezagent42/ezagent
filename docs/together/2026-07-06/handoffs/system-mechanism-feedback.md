@@ -25,7 +25,7 @@
 - **需要**：cc-flavor agent 的 PTY 侧车撑过一个真思考的长回合（分钟级、大量 TUI box-art 输出）。
 - **现在**（`49f0167f` 重验仍在）：`ezagent_domain_pty/server.ex:313`/`:816` 用 `binary_part` **裸字节**截断 buffer，会切裂多字节 UTF-8 码点（claude TUI 大量 3 字节 box-art `─`）；随后每个 stdout chunk 都跑的 `normalize_ws`（`:794`）`String.replace(s, ~r/\s+/u, " ")` 对 invalid UTF-8 **raise** → GenServer 死 → respawn claude → **进行中的回合整个丢失**。活跃回合几分钟积满 64KB ⇒ 必死循环。e2e 实测 6 连崩、0 次成功回合（取证：#1190 `docs/e2e/2026-07-06/kanban-full-loop/04-pty-crash-forensics.txt`）。
 - **问题**：**所有 cc agent 的真实工作回合都过不去**——比凭证注入更靠前的阻断（creds 手动拷通过了，死在干活时）。修复一行级：regex 去 `/u` 或先 scrub，或 trim 对齐码点边界。domain 代码我们没私改。
-- **旁证**：重启对话（respawn）后 buffer 清零可暂时续命——我们 round-2 e2e 用"短回合+崩了重发"绕行，但这只是绕，不是解。
+- **旁证（r2 实证根因）**：round-2 e2e 用短回合策略（单指令一条命令、最长回合 43s，buffer 不到 64KB 截断线）跑完全链路 **0 次崩溃**——同环境同 agent 只改回合长度就零崩，反证截断线就是唯一元凶。但这只是绕，不是解。
 
 ### ② cc-flavor agent 凭证注入 —— ✅ **你已认领（installer 继承宿主登录，覆盖所有 flavor）**
 - **现在**：物化生成的 `CLAUDE_CONFIG_DIR` 不注入 `.credentials.json`，TUI "Not logged in"；手动拷宿主 creds 后立即认证成功（e2e 实证）。落地后我们重跑零手动全链路 e2e。
@@ -37,6 +37,12 @@
 - **需要**：成员能 `@kanban-assistant` 按**角色名**提到 role-slot 物化的 agent（协作的自然写法）。
 - **现在**（`49f0167f` 重验仍在）：物化 URI 仍是随机 uuid（`definition_agents.ex:350` `Ecto.UUID.generate()`），display_name 也是 uuid；world `conversation_data.ex:771-776` 的解析只走 URI 末段/display_name 两条腿 → 裸名 `mentions: []` **静默不路由**。全 URI mention 可用（e2e workaround）。
 - **修法先例已在 main**：#1208 的 `EzagentPluginHello.Members.role_uri/2` 就是按 role_name facet 解析成员的现成查询——mention 解析器补第三条腿照它做即可。
+- **运行时复现（r2，`49f0167f`）**：裸名发送 `mentions:[]` 静默、autocomplete 真键盘不弹、成员列表显示名=uuid——探针三件套在 #1190 `docs/e2e/2026-07-06/kanban-full-loop-r2/03a-*`。
+
+### ②' Definition 物化的 caps 锁不到"晚建的实例"（r2 新发现，已查验）
+- **需要**：socialware 里"角色 A 的 caps 该锁到共享 actor B"——而 B（如 kanban 板）是安装后 owner 才建的。
+- **现在**：机制层**已有**精确解——`GrantRecipeCaps.grant_recipe_caps/4` 的 `instance_overrides`（T7g Part A，`grant_recipe_caps_board_scope_test.exs` 原文就是"pm 的 kanban caps 该锁板不锁 pm"）。断在 **Definition 物化路径**：`definition_agents.ex:303` 调 3 参版传不了 override——声明期实例 URI 不存在（与 #1180 禁实例 URI 同根）。物化铸出的 caps instance 全指向 agent 自身，owner 需逐个补 grant（kanban r2 实测）。
+- **问题**：任何"角色要操作晚建共享 actor"的 socialware 都撞。方向候选：Definition caps 支持符号化 instance 引用（如 `{:created_by_role, ...}` 延迟解析），或安装后首次 grant 的钩子。不阻塞（owner 补 grant 顶得住），但和 ⑤ 同属"声明层表达不了运行期实体"一族。
 
 ### ⑤ routing condition 支持按 role 配 from（已定论待实施）
 - 2026-07-06 讨论已定论：condition 里按角色符号配 from，运行期按成员边（role_name facet）解析。落地后我们两条线各一行加固（kanban relay 加 from=dev-together；dealscout 更新加 from=discover）。冲突场景后续经配置 orchestrator/显式 workflow 解，现在不立项。
