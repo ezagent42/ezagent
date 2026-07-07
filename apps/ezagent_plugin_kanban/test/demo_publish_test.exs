@@ -86,7 +86,8 @@ defmodule EzagentPluginKanban.DemoPublishTest do
 
     # Materializable: all 12 conformance assertions green — the same guarantee
     # `mix ezagent.socialware.check kanban` gives, proving install works.
-    assert length(Conformance.assertions()) == 12
+    # 13 = 原 12 + #1212 的 role-DAG conformance 断言
+      assert length(Conformance.assertions()) == 13
 
     assert {:ok, %Definition{name: "kanban"} = definition, _obj} =
              DefinitionRegistry.lookup(ws, "kanban")

@@ -106,8 +106,14 @@ defmodule EzagentPluginKanban.DemoTest do
     assert [rule] = definition.routing_rules
 
     matcher = Map.get(rule, "matcher") || Map.get(rule, :matcher)
-    assert (matcher["type"] || matcher[:type]) == "text_contains"
-    arg = to_string(matcher["arg"] || matcher[:arg])
+    assert (matcher["type"] || matcher[:type]) == "and"
+      # #1212 from_role 硬锁：and(text_contains __done__, from_role dev-together)
+      items = matcher["items"] || matcher[:items]
+      assert %{"type" => "text_contains", "arg" => "__done__"} in items
+      assert %{"type" => "from_role", "arg" => "dev-together"} in items
+    # 内容标记腿的 arg = 契约点字面（零 URI）
+    tc = Enum.find(items, &((&1["type"] || &1[:type]) == "text_contains"))
+    arg = to_string(tc["arg"] || tc[:arg])
     assert arg == Demo.relay_done_marker()
     refute String.contains?(arg, "://")
 
