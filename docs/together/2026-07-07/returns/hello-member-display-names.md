@@ -37,4 +37,4 @@
 
 ## Merge request
 
-Please review and merge PR #1216 when the remaining self-hosted macOS full-suite check completes, assuming it stays green. The PR is draft-created and includes the follow-up fix for selected mention insertion.
+Allen, PR #1216 is ready for approval/merge: it is no longer draft, all current GitHub checks are green, and it includes the follow-up fix so selected mentions insert parser-safe role/name tokens such as @orchestrator instead of UUID segments.
