@@ -40,4 +40,5 @@ Commit: `feat(socialware): add manifest yaml interchange` (this return file is i
 
 ## CI
 
-- Remote CI: pending branch push.
+- Branch pushed: `origin/work/crgov-manifest-yaml`.
+- Remote checks: GitHub check suite queued for the pushed branch head; no check runs had materialized at handoff time.

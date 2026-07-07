@@ -33,4 +33,5 @@ Commit: `880334be6 refactor(config-governance): unify change request layering`
 
 ## CI
 
-- Remote CI: pending branch push.
+- Branch pushed: `origin/work/crgov-manifest-yaml`.
+- Remote checks: GitHub check suite queued for the pushed branch head; no check runs had materialized at handoff time.
