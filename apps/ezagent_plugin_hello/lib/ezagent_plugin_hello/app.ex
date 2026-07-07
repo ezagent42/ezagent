@@ -131,7 +131,8 @@ defmodule EzagentPluginHello.App do
       roles: [
         %{role_name: "orchestrator", fill: :agent, recipe: "hello.orchestrator", flavor: "hello"},
         %{role_name: "builder", fill: :agent, recipe: "hello.builder", flavor: "native"},
-        %{role_name: "concierge", fill: :agent, recipe: "hello.concierge", flavor: "native"}
+        %{role_name: "concierge", fill: :agent, recipe: "hello.concierge", flavor: "native"},
+        %{role_name: "llm", fill: :agent, recipe: "hello.llm", flavor: "curl"}
       ],
       routing_rules: [
         %{

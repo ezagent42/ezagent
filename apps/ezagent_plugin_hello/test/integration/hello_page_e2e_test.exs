@@ -29,6 +29,10 @@ defmodule EzagentPluginHello.Integration.HelloPageE2ETest do
     # seeds it, but that write is outside this DataCase sandbox transaction (and the
     # ETS cache can be flushed by another test) — so seed the roles here (idempotent).
     {:ok, _} = Application.ensure_all_started(:ezagent_domain_agent)
+    # The `hello.llm` role materializes as a "curl" flavor agent — the flavor is
+    # boot-registered by the curl_agent plugin's `agent_flavors/0`, so it must be
+    # started here (it is not a transitive dep of anything else this test starts).
+    {:ok, _} = Application.ensure_all_started(:ezagent_plugin_curl_agent)
 
     Enum.each(EzagentPluginHello.Application.roles(), fn recipe ->
       {:ok, _} = Ezagent.Agent.RecipeRegistry.seed_role_if_absent(recipe)
@@ -131,6 +135,18 @@ defmodule EzagentPluginHello.Integration.HelloPageE2ETest do
     assert Ezagent.ActionSet.Turn in behaviors
     assert Ezagent.ActionSet.Surface in behaviors
     assert Ezagent.ActionSet.Publisher.SessionImpl in behaviors
+  end
+
+  test "INV-CC ②: a session with the curl llm member is created even with NO credential source" do
+    # A fresh workspace in this test env has no DeepSeek credential source
+    # provisioned — this is exactly the deployment shape `credential_optional`
+    # (Task 1) exists to keep working.
+    ws = "hello-e2e-llm-#{System.unique_integer([:positive])}"
+    {:ok, _ws_pid} = Workspace.create(ws, %{})
+
+    assert {:ok, session_uri, _orch} = App.ensure_app(ws, "llm-keyless")
+    # llm curl member materialized (keyless — did not crash session-create).
+    assert {:ok, %URI{}} = EzagentPluginHello.Members.role_uri(session_uri, "llm")
   end
 
   # --- helpers ---------------------------------------------------------------
