@@ -258,10 +258,19 @@ New Definition field `requires: [socialware-name]` (distinct from `uses:`
 - **Failure mode:** missing/unpublishable required socialware ⇒ install fails
   closed (same posture as `uses` plugin checks today).
 
-Out of scope here (registered open question): cross-socialware CONTENT protocol
-(when S's role wants to address R's role directly — the G⑩ collaboration-protocol
-layering). The `requires` mechanism must not accidentally answer it; first
-version composes installation + table, nothing more.
+**Cross-socialware communication needs NO new protocol** (Allen 2026-07-07,
+settled): composed socialwares share ONE session, so cross-socialware messaging
+IS the session's existing machinery end to end — `session.send` → the merged
+routing table → role receivers; addressing = prefixed role names (A-2); sender
+matching = `from_role`/tags (A-3/§3.1); visibility = `:internal` + projection
+(§5). Nothing new at runtime. G⑩'s original pain ("from 非一等" content-protocol
+soft-locks) dissolves under A-2 + A-3: `from` becomes first-class at the role
+level. The only residual is OPTIONAL and declarative, not protocol: a required
+socialware's roles MAY declare the tags they accept, letting Conformance check a
+cross-reference statically (pure Definition data; decide after the M3 dogfood
+shows whether it earns its place). Scope boundary of this claim: composition =
+one session. CROSS-SESSION app-to-app communication is a different, existing
+problem with its own primitives (sender-rule relays) and is not `requires`.
 
 ## 7. What exists vs. what's new (delta table)
 
@@ -310,7 +319,7 @@ version composes installation + table, nothing more.
   `orchestrator_template_uri` decision item from #1208 — the field retires with
   the path.)
 - **M3 — `requires`:** field + install composition + merged conflict analysis +
-  pin/repoint semantics. (G⑨ mechanism half; G⑩ content protocol stays open.)
+  pin/repoint semantics. (G⑨ mechanism half; G⑩ dissolved under A-2/A-3 — see §6; optional accepted-tags declaration decided after dogfood.)
 - **Dogfood throughout:** hello re-expressed per §1 at each milestone boundary;
   its manifest.yaml (the #158+Q2 spec's import lane) is the distribution vehicle.
 
@@ -335,6 +344,6 @@ against code, zero findings). Builder-verify notes for the planning/impl pass:
 ## 11. Explicit non-goals
 
 - Per-message LLM routing in the table (never).
-- Solving the G⑩ cross-socialware content/addressing protocol here.
+- Inventing any NEW cross-socialware runtime protocol — §6: composition reuses the session machinery wholesale; the optional accepted-tags declaration is deferred to post-M3-dogfood evidence.
 - Renaming/moving routing substrate modules (works as-is).
 - Retiring free-text matchers (tags are additive).
