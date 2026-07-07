@@ -23,10 +23,20 @@ defmodule Ezagent.World.ConversationSessionState do
   def list_sessions(_), do: []
 
   @doc false
-  @spec rows_for_workspace(URI.t() | term()) :: [map()]
-  def rows_for_workspace(workspace_uri) do
+  @spec list_sessions(URI.t() | term(), URI.t() | term()) :: [URI.t()]
+  def list_sessions(%URI{scheme: "workspace"} = workspace_uri, %URI{} = caller_uri) do
+    EzagentDomainInstanceMessage.list_sessions(workspace_uri, caller_uri)
+  rescue
+    _ -> []
+  end
+
+  def list_sessions(_, _), do: []
+
+  @doc false
+  @spec rows_for_workspace(URI.t() | term(), URI.t() | term()) :: [map()]
+  def rows_for_workspace(workspace_uri, caller_uri) do
     workspace_uri
-    |> list_sessions()
+    |> list_sessions(caller_uri)
     |> Enum.map(&session_row/1)
   end
 
@@ -46,11 +56,14 @@ defmodule Ezagent.World.ConversationSessionState do
   @doc false
   @spec state_for(URI.t(), Phoenix.LiveView.Socket.t()) :: map()
   def state_for(%URI{} = session_uri, socket) do
+    workspace_uri = socket.assigns.current_workspace_uri
+    caller_uri = socket.assigns.current_entity_uri
+
     ConversationData.state_for(session_uri, %{
-      caller_uri: socket.assigns.current_entity_uri,
+      caller_uri: caller_uri,
       caller_caps: Map.get(socket.assigns, :current_caps, MapSet.new()),
-      workspace_uri: socket.assigns.current_workspace_uri,
-      sessions: rows_for_workspace(socket.assigns.current_workspace_uri)
+      workspace_uri: workspace_uri,
+      sessions: rows_for_workspace(workspace_uri, caller_uri)
     })
   end
 
