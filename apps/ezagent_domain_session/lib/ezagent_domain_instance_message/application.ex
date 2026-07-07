@@ -159,7 +159,15 @@ defmodule EzagentDomainInstanceMessage.Application do
 
         :ok = seed_builtin_socialware_definitions()
         :ok = seed_manifest_boot_recipes()
-        :ok = Ezagent.Socialware.ManifestSeed.scan_boot_manifests!()
+
+        # sw-home lane (2026-07-07) — the early domain_session-priv-only
+        # `ManifestSeed` scan was DELETED. All local socialware manifests
+        # (deployment dir + every started app's priv/socialware, incl. this
+        # app's autoservice seed) are collected by ONE late scan,
+        # `Ezagent.Socialware.ManifestSeed.scan_all!/1`, triggered from
+        # `EzagentWeb.Application` after every plugin has booted — manifests
+        # may reference plugin-registered views/recipes, which do not exist
+        # yet at this point of the boot sequence.
 
         # Plugin authoring contract PR-5 codex HIGH-2 — the default
         # agent is NO LONGER seeded here. Seeding it from chat's
