@@ -22,6 +22,20 @@ defmodule Ezagent.ActionSet.DealScoutCrawl do
   页。**零实例 URI、不数据直推、dealscout 自己不渲染**——显示是 hello 的活。
   信号 dispatch 失败同样 fail-loud（`[:dealscout, :update_signal, :error]`）。
 
+  ## 页面重建的直接 dispatch 腿（v2，绕 #1201 ②）
+
+  真 e2e 实测：上面的 chat 信号腿到 native page 成员是断的 —— canonical
+  `agent.receive` 只会把投递塞 bridge，native flavor 无 bridge 必丢。所以在
+  发完更新信号之后，再走一条 **kanban caller-dispatch 同款**的直接腿
+  （#1190 r2 pm→board 已证）：按 `role_name` facet 从 `:session` sibling
+  slice（`reads_siblings [:session]`，本 handler 跑在 session Kind 上，不能
+  `Kind.get_slice` 自呼死锁）解析出 `page_role/0`（`"page"`）成员的实例
+  URI，直接 dispatch `:refresh_page`（`Ezagent.ActionSet
+  .DealScoutPageRefreshAlt`）—— dispatch 按 action 在实例行为集解析直接跑
+  handler，不经 bridge。找不到 page 成员 / dispatch 失败 → fail-loud
+  （`[:dealscout, :page_refresh, :error]` telemetry + warning），不静默。
+  chat 信号腿保留（会话内可见的声明式痕迹 + A① 落地后回切 receive 式的靶子）。
+
   ## source/token 自动分流（Stage B 接线，live 路径）
 
   `:crawl_now` 走 `Fetch.crawl_auto/1`（source 有无自动分流的决策点，spec
@@ -40,9 +54,23 @@ defmodule Ezagent.ActionSet.DealScoutCrawl do
   # 内容协议标记（像 kanban 的 __done__）：routing 规则按文本命中，不带任何实例 URI。
   @update_signal "__dealscout_update__"
 
+  # page 角色槽名（单一契约点，照 update_signal/0）：Demo 的角色槽声明 + 直接
+  # dispatch 腿的 role_name 解析都从这里取。
+  @page_role "page"
+
   @doc "更新信号的内容标记（Definition routing_rules 的 `text_contains` 靶子）。"
   @spec update_signal() :: String.t()
   def update_signal, do: @update_signal
+
+  @doc "page 角色槽名（Demo 角色槽声明 + 直接 dispatch 腿共用的单一契约点）。"
+  @spec page_role() :: String.t()
+  def page_role, do: @page_role
+
+  # 直接 dispatch 腿要按 role_name 解析 page 成员 —— members 住 session Kind 的
+  # `:session` slice（`Ezagent.ActionSet.Session` 的 members map）。本 handler
+  # 跑在 session Kind 进程内，`Kind.get_slice`（GenServer.call）会自呼死锁，
+  # 走 sanctioned 的 sibling-slice 声明（runtime 注入只读 `ctx.siblings`）。
+  reads_siblings([:session])
 
   # `action/2` 宏声明（照 `Ezagent.ActionSet.Kanban`）：`actions/0` /
   # `cap_subjects/0` / `required_caps/0` / `interface/0` 全由宏生成——
@@ -84,6 +112,7 @@ defmodule Ezagent.ActionSet.DealScoutCrawl do
       end)
 
     emit_update_signal(ctx.session_uri, injected, "crawl", ctx)
+    dispatch_page_refresh(ctx, injected, "crawl")
     {:ok, %{injected: injected}, []}
   end
 
@@ -107,6 +136,7 @@ defmodule Ezagent.ActionSet.DealScoutCrawl do
       end)
 
     emit_update_signal(ctx.session_uri, injected, "search", ctx)
+    dispatch_page_refresh(ctx, injected, "search")
     {:ok, %{injected: injected}, []}
   end
 
@@ -141,6 +171,75 @@ defmodule Ezagent.ActionSet.DealScoutCrawl do
 
         :ok
     end
+  end
+
+  # 页面重建的直接 dispatch 腿（moduledoc §直接 dispatch 腿）：injected > 0 才发
+  # （与更新信号同门）。mode `:call`（kanban 板动作同款）—— 同步拿到
+  # `{:ok, _}` / `{:error, _}`，失败 fail-loud。目标是 page 成员的 agent Kind
+  # （另一进程），无自呼死锁；handler 只 spawn supervised Task，秒回。
+  defp dispatch_page_refresh(_ctx, 0, _origin), do: :ok
+
+  defp dispatch_page_refresh(ctx, injected, origin) do
+    case page_member_uri(ctx) do
+      {:ok, %URI{} = page_uri} ->
+        target = Ezagent.URI.with_action(page_uri, :dealscout, :refresh_page)
+
+        cmd = %Ezagent.Invocation{
+          target: target,
+          mode: :call,
+          args: %{
+            summary: "新线索 #{injected} 条（#{origin}）",
+            # 宿主是 agent Kind，`ctx.session_uri` 在那边派生不出来 —— 走 args
+            # 显式传（DealScoutPageRefreshAlt moduledoc）。
+            session_uri: URI.to_string(ctx.session_uri)
+          },
+          ctx: delegated_ctx(ctx)
+        }
+
+        case dispatch_fun().(cmd) do
+          :ok -> :ok
+          {:ok, _} -> :ok
+          other -> page_refresh_error(other, injected, origin)
+        end
+
+      {:error, reason} ->
+        page_refresh_error(reason, injected, origin)
+    end
+  end
+
+  # 按 role_name facet 解析 page 成员（照 hello `Members.role_uri/2` 的查询模式，
+  # 但读 sibling slice 而非 `Kind.get_slice` —— 本 handler 就跑在 session Kind
+  # 进程内）。`Ezagent.ActionSet.Session.Members.role_name_to_uri/2` 是 canonical
+  # 的 role_name → uri 解析器（domain_session 是已声明 umbrella dep）。
+  defp page_member_uri(ctx) do
+    case ctx[:siblings] do
+      %{session: session_slice} when is_map(session_slice) ->
+        members = Map.get(session_slice, :members, %{})
+
+        case Ezagent.ActionSet.Session.Members.role_name_to_uri(members, @page_role) do
+          %URI{} = uri -> {:ok, uri}
+          nil -> {:error, :no_page_member}
+        end
+
+      _ ->
+        {:error, :members_unreadable}
+    end
+  end
+
+  # 谁会知道原则：page 成员缺失 / dispatch 失败都有人知道（telemetry + warning），
+  # 不静默吞 —— 页面不刷新时运维能从日志定位到这条腿。
+  defp page_refresh_error(reason, injected, origin) do
+    :telemetry.execute([:dealscout, :page_refresh, :error], %{count: 1}, %{
+      injected: injected,
+      origin: origin,
+      reason: reason
+    })
+
+    Logger.warning(
+      "DealScout page refresh dispatch failed (no one else would know): #{inspect(reason)}"
+    )
+
+    :ok
   end
 
   defp inject(session_uri, item, ctx) do
