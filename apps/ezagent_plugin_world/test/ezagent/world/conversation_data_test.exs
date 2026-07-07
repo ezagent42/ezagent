@@ -21,6 +21,12 @@ defmodule Ezagent.World.ConversationDataTest do
   defp parsed(text),
     do: text |> ConversationData.parse_mentions(members()) |> Enum.map(&URI.to_string/1)
 
+  defp parsed(text, members, open_role_slots \\ []),
+    do:
+      text
+      |> ConversationData.parse_mentions(members, open_role_slots)
+      |> Enum.map(&URI.to_string/1)
+
   test "explicit @entity:// URI mention resolves" do
     assert parsed("hey @entity://system/agent/codex-1 look") == ["entity://system/agent/codex-1"]
   end
@@ -40,6 +46,140 @@ defmodule Ezagent.World.ConversationDataTest do
 
   test "unknown @name resolves to nothing" do
     assert parsed("@nobody here") == []
+  end
+
+  test "bare @role_name resolves to the member carrying that role facet" do
+    members = [
+      %{
+        "uri" => "entity://system/agent/536d2bb2-58f1-47cc-ac65-cb9ec16be9bf",
+        "display_name" => "536d2bb2-58f1-47cc-ac65-cb9ec16be9bf",
+        "role_name" => "advisor"
+      }
+    ]
+
+    assert parsed("ping @advisor", members) == [
+             "entity://system/agent/536d2bb2-58f1-47cc-ac65-cb9ec16be9bf"
+           ]
+  end
+
+  test "role_name beats display_name when both match" do
+    members = [
+      %{
+        "uri" => "entity://system/agent/role-holder",
+        "display_name" => "536d2bb2-58f1-47cc-ac65-cb9ec16be9bf",
+        "role_name" => "advisor"
+      },
+      %{
+        "uri" => "entity://system/agent/display-holder",
+        "display_name" => "advisor",
+        "role_name" => "builder"
+      }
+    ]
+
+    assert parsed("@advisor", members) == ["entity://system/agent/role-holder"]
+  end
+
+  test "URI path segment beats role_name when both match" do
+    members = [
+      %{
+        "uri" => "entity://system/agent/advisor",
+        "display_name" => "Named Advisor",
+        "role_name" => "owner"
+      },
+      %{
+        "uri" => "entity://system/agent/role-holder",
+        "display_name" => "536d2bb2-58f1-47cc-ac65-cb9ec16be9bf",
+        "role_name" => "advisor"
+      }
+    ]
+
+    assert parsed("@advisor", members) == ["entity://system/agent/advisor"]
+  end
+
+  test "unfilled role name stays plain text" do
+    assert parsed("@builder", members()) == []
+  end
+
+  test "duplicate role_name resolves to nothing" do
+    members = [
+      %{
+        "uri" => "entity://system/agent/advisor-a",
+        "display_name" => "Advisor A",
+        "role_name" => "advisor"
+      },
+      %{
+        "uri" => "entity://system/agent/advisor-b",
+        "display_name" => "Advisor B",
+        "role_name" => "advisor"
+      }
+    ]
+
+    assert parsed("@advisor", members) == []
+  end
+
+  test "colon role_name resolves by exact full token" do
+    members = [
+      %{
+        "uri" => "entity://system/agent/role-holder",
+        "display_name" => "536d2bb2-58f1-47cc-ac65-cb9ec16be9bf",
+        "role_name" => "hello:advisor"
+      }
+    ]
+
+    assert parsed("@hello:advisor", members) == ["entity://system/agent/role-holder"]
+  end
+
+  test "colon used as punctuation behaves like the head token" do
+    members = [
+      %{
+        "uri" => "entity://system/agent/advisor",
+        "display_name" => "Advisor",
+        "role_name" => "reviewer"
+      }
+    ]
+
+    assert parsed("@advisor: hi", members) == ["entity://system/agent/advisor"]
+  end
+
+  test "pre-A-2 colon token falls back to the head when no colon role names exist" do
+    members = [
+      %{
+        "uri" => "entity://system/agent/hello",
+        "display_name" => "Hello",
+        "role_name" => "greeter"
+      }
+    ]
+
+    assert parsed("@hello:advisor", members) == ["entity://system/agent/hello"]
+  end
+
+  test "filled colon role in the session suppresses head fallback" do
+    members = [
+      %{
+        "uri" => "entity://system/agent/hello",
+        "display_name" => "Hello",
+        "role_name" => "greeter"
+      },
+      %{
+        "uri" => "entity://system/agent/builder",
+        "display_name" => "Builder",
+        "role_name" => "hello:builder"
+      }
+    ]
+
+    assert parsed("@hello:advisor", members) == []
+  end
+
+  test "open colon role slot suppresses head fallback even when unfilled" do
+    members = [
+      %{
+        "uri" => "entity://system/agent/hello",
+        "display_name" => "Hello",
+        "role_name" => "greeter"
+      }
+    ]
+
+    assert parsed("@hello:advisor", members, [%{"role_name" => "hello:advisor"}]) == []
   end
 
   test "multiple + duplicate mentions dedupe, preserving distinct recipients" do
