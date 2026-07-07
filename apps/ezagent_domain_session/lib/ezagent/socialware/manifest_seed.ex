@@ -105,11 +105,22 @@ defmodule Ezagent.Socialware.ManifestSeed do
 
   defp deploy_sources(opts) do
     dir =
-      Keyword.get_lazy(opts, :deploy_dir, fn ->
-        # OI-3: node-global deployment artifact — resolved through the
-        # hardened system:// seam, not raw Ezagent.Home.
-        Ezagent.System.FsResolver.path!(Ezagent.URI.system_principal("socialware"))
-      end)
+      case Keyword.fetch(opts, :deploy_dir) do
+        {:ok, override} ->
+          # Tests inject an explicit dir — do NOT seed the real deployment home.
+          override
+
+        :error ->
+          # Boot fallback (deploy-seed SPEC §4): CI/dev that never ran
+          # `mix ezagent.home.init` still gets the shipped flagships into the
+          # deployment dir. Idempotent FS copy (respects operator edits); runs
+          # ahead of resolving + scanning the dir. `Ezagent.Home.SocialwareSeed`
+          # lives in ezagent_core (domain_session → core dependency is valid).
+          _ = Ezagent.Home.SocialwareSeed.seed!()
+          # OI-3: node-global deployment artifact — resolved through the
+          # hardened system:// seam, not raw Ezagent.Home.
+          Ezagent.System.FsResolver.path!(Ezagent.URI.system_principal("socialware"))
+      end
 
     if File.dir?(dir), do: [{"deploy", dir}], else: []
   end
