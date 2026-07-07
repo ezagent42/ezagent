@@ -1,6 +1,7 @@
 # Native-role reachability — the two-surface model, hello `rebuild`, and the composite-responder question
 
-**Status:** rev1 — design spec (not an implementation plan). Settles #1201 item ②
+**Status:** rev2 — design spec (not an implementation plan), codex-adversarially
+reviewed SOUND (§9). Settles #1201 item ②
 as a DESIGN DECISION (already made by the lead; recorded and elaborated here, not
 relitigated), turns item ③ into a concrete hello action, and folds item ⑦ in for
 analysis with one explicit lead-decision box (§4.3).
@@ -42,7 +43,7 @@ A session member is reachable on up to two surfaces:
 | surface | what it is | who has it | mechanism |
 |---|---|---|---|
 | **Dispatch** | invocation of a DECLARED action of the member's composed behavior set, by name, with typed args | **every member, any flavor** (guaranteed once T1 lands — §2) | `Ezagent.Router.dispatch(%Cmd{})` / `Ezagent.Invocation.dispatch/1`; agent-facing via manifest action tools (`Ezagent.AgentManifest.Tools.dispatch_action/4`); authorized by capabilities on the `:agent` axis |
-| **Delivery (`:receive`)** | the session chat fan-out — free-text messages routed by the session table and handed to the member for INTERPRETATION | **adapter-flavor members only, by design** — flavors that register an `Ezagent.AgentBridge.Adapter` (today: `cc`/`cc-headless`, `codex`, `py`, `curl`, `hello`) | `chat.send` → routing table → `agent.receive` → `Ezagent.ActionSet.Agent.Receive` (hardwired on the unified `Entity.Agent`) → per-flavor `AgentBridge` adapter → the flavor's runtime |
+| **Delivery (`:receive`)** | the session chat fan-out — free-text messages routed by the session table and handed to the member for INTERPRETATION | **adapter-flavor members only, by design** — flavors that register an `Ezagent.AgentBridge.Adapter` (today: `cc`/`cc-headless`, `codex`, `codex-remote`, `py`, `curl`, `hello`) `[R-1]` | `chat.send` → routing table → `agent.receive` → `Ezagent.ActionSet.Agent.Receive` (hardwired on the unified `Entity.Agent`) → per-flavor `AgentBridge` adapter → the flavor's runtime |
 
 ### 1.1 The invariant
 
@@ -299,9 +300,14 @@ delivery —
 
 Delivery-time semantics: resolve `{:role, builder}` on the member edge as
 today, then instead of `agent.receive`, dispatch the named action with args
-projected from the message envelope, under a cap MINTED TO THE RULE at install
-(the Definition, being the installed authority, is the grantable principal —
-this is where ⑤'s symbolic-instance work and this follow-up meet). That gives
+projected from the message envelope, under a cap minted to the rule at install.
+`[R-1]` The "rule/Definition as grantable principal" is itself an OPEN CapBAC
+design point, not assumed substrate: today's dispatch authorization accepts
+`ctx.caps` or entity-held caps whose grant chain traces through a real entity
+(`granted_by_entity?` — `kind/runtime.ex:545`, `kind.ex:236`), and the grant
+facade targets an entity URI (`identity.ex:209`) — a Definition is not currently
+such a principal. That principal model is part of the follow-up's own design
+scope; it is where ⑤'s symbolic-instance work and this follow-up meet. That gives
 native members TABLE reachability without ever giving them a delivery surface —
 I-1 survives intact; the table stays model-free; the imperative caller-dispatch
 of §3 becomes the compatible degenerate case. To be designed in its own spec
@@ -362,6 +368,16 @@ story making every such edge at least audit-visible even though table-invisible.
 - **BV-7:** the demo hello Definition (`socialware/demo/hello.ex`) declares
   builder/responser as `"py"` flavor while the plugin's own roles run native —
   T-1 must pin WHICH shape it materializes and assert against that one.
+- **BV-8 `[R-1]`:** §3.2's cap wording names the workspace path
+  (RoleStep → `CapMint.mint`, `role_step.ex:168`); the socialware Definition
+  path mints via `GrantRecipeCaps.grant_recipe_caps/3` after spawn/join
+  (`definition_agents.ex:167,336`). Same `kind: :agent` cap shape on both —
+  verify the `rebuild` requested_cap flows through BOTH mint paths at impl.
+- **BV-9 `[R-1]`:** T-2 asserts the "no delivery surface for native" CLASS,
+  not one exact drop atom — the bridge has both `:no_sandbox_respawn_state`
+  and no-adapter drop paths (`agent_bridge.ex:258,288`); the invariant is
+  route-hit + delivery-dropped + `handle_receive` not run, whichever atom the
+  drop reports.
 
 ## 8. Non-goals
 
@@ -377,4 +393,11 @@ story making every such edge at least audit-visible even though table-invisible.
 
 ## 9. Review status
 
-rev1 — pending codex adversarial review (architecture-level).
+**codex-adversarially-reviewed 2026-07-07 (architecture-level), verdict SOUND
+at rev1** — zero BLOCKER, zero MAJOR; 2 MINOR (both folded as `[R-1]`: the §5
+rule-as-principal caveat, the `codex-remote` flavor in §1's adapter list) and
+2 BUILDER-VERIFY (recorded as BV-8/BV-9). Reviewer's overall assessment: the
+two-surface model is coherent with shipped role-slot semantics (`role_name` on
+the member edge, runtime `from_role`) and with the orchestration reference
+design's endpoint-judgment rule — native roles expose verbs, adapter roles
+interpret chat.
