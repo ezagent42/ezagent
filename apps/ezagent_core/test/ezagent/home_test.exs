@@ -35,7 +35,8 @@ defmodule Ezagent.HomeTest do
   end
 
   test "skeleton_dirs lists the documented sub-dirs" do
-    assert Ezagent.Home.skeleton_dirs() == [:credentials, :db, :snapshots, :logs, :plugins]
+    assert Ezagent.Home.skeleton_dirs() ==
+             [:credentials, :db, :snapshots, :logs, :plugins, :socialware]
   end
 
   test "mix ezagent.home.init creates the documented skeleton", %{tmp: tmp} do
@@ -43,7 +44,7 @@ defmodule Ezagent.HomeTest do
 
     profile = Path.join(tmp, "default")
 
-    for dir <- [:credentials, :db, :snapshots, :logs, :plugins] do
+    for dir <- [:credentials, :db, :snapshots, :logs, :plugins, :socialware] do
       path = Path.join(profile, Atom.to_string(dir))
       assert File.dir?(path), "missing skeleton dir: #{path}"
     end
