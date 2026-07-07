@@ -277,8 +277,8 @@ defmodule Ezagent.World.ConversationData do
   @doc """
   Parse @mentions in `text` into recipient entity URIs, against `members`
   (`member_options/1` rows). Recognizes explicit `@entity://...` URIs and bare
-  `@name` tokens resolved by URI path segment then display name (unique match
-  only). Port of the LiveView parser against survivors — world carries no
+  `@name` tokens resolved by URI path segment, role name, then display name
+  (unique match only). Port of the LiveView parser against survivors — world carries no
   reference to the LV plugin. The result is what the domain's recipient
   resolver consumes (`msg.mentions`), so this is the load-bearing piece, not
   the autocomplete UI.
@@ -792,15 +792,19 @@ defmodule Ezagent.World.ConversationData do
     |> Enum.flat_map(&resolve_member_name(&1, members))
   end
 
-  # Bare @name resolves by URI path segment first, then by display name —
-  # unique match only (an ambiguous name resolves to nothing, never a guess).
+  # Bare @name resolves by URI path segment first, then by role name,
+  # then by display name - unique match only (ambiguous names resolve to nothing).
   defp resolve_member_name(name, members) do
     by_segment = Enum.filter(members, &(uri_path_segment(Map.get(&1, "uri")) == name))
+    by_role = Enum.filter(members, &(Map.get(&1, "role_name") == name))
+    by_display = Enum.filter(members, &(Map.get(&1, "display_name") == name))
 
     candidates =
-      if by_segment != [],
-        do: by_segment,
-        else: Enum.filter(members, &(Map.get(&1, "display_name") == name))
+      cond do
+        by_segment != [] -> by_segment
+        by_role != [] -> by_role
+        true -> by_display
+      end
 
     case candidates |> Enum.map(&Map.get(&1, "uri")) |> Enum.reject(&is_nil/1) |> Enum.uniq() do
       [uri_str] -> safe_uri(uri_str)

@@ -255,8 +255,8 @@ export function Conversation({
   }, [newSessionTemplate, templates])
 
   // @mention autocomplete: the open token is the @word immediately before the
-  // caret. Inserting the member's URI path segment keeps it a single bare
-  // token the server-side parser resolves (display names may contain spaces).
+  // caret. Insert a human-readable token when it is parser-safe; fall back to
+  // the URI segment when a display label contains spaces or punctuation.
   const mentionMatches = React.useMemo(() => {
     if (mentionQuery === null) return []
     const q = mentionQuery.toLowerCase()
@@ -265,7 +265,8 @@ export function Conversation({
         const seg = uriSegment(m.uri).toLowerCase()
         const label = memberLabel(m).toLowerCase()
         const role = (m.role_name || "").toLowerCase()
-        return q === "" || seg.includes(q) || label.includes(q) || role.includes(q)
+        const token = mentionToken(m).toLowerCase()
+        return q === "" || seg.includes(q) || label.includes(q) || role.includes(q) || token.includes(q)
       })
       .slice(0, 6)
   }, [mentionQuery, members])
@@ -282,7 +283,7 @@ export function Conversation({
     const caret = el ? el.selectionStart : text.length
     const upto = text.slice(0, caret)
     const rest = text.slice(caret)
-    const replaced = upto.replace(/@([A-Za-z0-9._-]*)$/u, `@${uriSegment(member.uri)} `)
+    const replaced = upto.replace(/@([A-Za-z0-9._-]*)$/u, `@${mentionToken(member)} `)
     const next = replaced + rest
     setText(next)
     setMentionQuery(null)
@@ -786,7 +787,7 @@ export function Conversation({
                   <ul className="absolute bottom-[calc(100%+6px)] left-0 right-0 z-20 m-0 max-h-[220px] list-none overflow-y-auto rounded-lg border border-border bg-card p-1 shadow-xl" role="listbox" aria-label="提及成员">
                     {mentionMatches.map((member) => {
                       const label = memberLabel(member)
-                      const token = uriSegment(member.uri)
+                      const token = mentionToken(member)
 
                       return (
                         <li key={member.uri}>
@@ -1231,6 +1232,20 @@ function humanizeSessionName(value: string) {
 function memberLabel(member: MemberRow) {
   if (member.display_name && member.display_name.trim()) return member.display_name
   return uriSegment(member.uri)
+}
+
+function mentionToken(member: MemberRow) {
+  const role = member.role_name?.trim()
+  if (role && isMentionToken(role)) return role
+
+  const label = memberLabel(member).trim()
+  if (label && isMentionToken(label)) return label
+
+  return uriSegment(member.uri)
+}
+
+function isMentionToken(value: string) {
+  return /^[A-Za-z0-9][A-Za-z0-9._-]*$/.test(value)
 }
 
 function inviteCandidateLabel(candidate: InviteCandidateRow) {
