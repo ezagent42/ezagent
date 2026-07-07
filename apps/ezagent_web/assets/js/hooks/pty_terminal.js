@@ -1,3 +1,6 @@
+import {Terminal} from "xterm"
+import {FitAddon} from "xterm-addon-fit"
+
 // PTY terminal — xterm.js LiveView hook.
 //
 // Mounts an xterm.js Terminal inside `this.el`, subscribes to PubSub
@@ -17,13 +20,13 @@
 // will fail that test.
 export const PtyTerminal = {
   mounted() {
-    const term = new window.Terminal({
+    const term = new Terminal({
       fontFamily: '"SF Mono", Menlo, Consolas, "DejaVu Sans Mono", monospace',
       fontSize: 13,
       theme: {background: "#1e1e1e", foreground: "#d4d4d4"},
       cursorBlink: true
     })
-    const fitAddon = new window.FitAddon.FitAddon()
+    const fitAddon = new FitAddon()
     term.loadAddon(fitAddon)
     term.open(this.el)
     fitAddon.fit()

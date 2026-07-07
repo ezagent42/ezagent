@@ -112,9 +112,7 @@ defmodule EzagentWeb.AuthBoundaryLayout do
     <title>{{TITLE}}</title>
     <meta charset="utf-8">
     <meta name="viewport" content="width=device-width, initial-scale=1">
-    <link rel="preconnect" href="https://fonts.googleapis.com">
-    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
-    <link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Inter:wght@400;450;500;600;700;800&family=Noto+Sans+SC:wght@400;500;600;700&family=Noto+Serif+SC:wght@600;700&family=Space+Mono:wght@400;700&display=swap">
+    <link rel="stylesheet" href="/assets/css/local_fonts.css">
     <style>
       :root {
         --font-sans: 'Inter', 'Noto Sans SC', 'Noto Sans CJK SC', 'WenQuanYi Micro Hei', 'PingFang SC', 'Microsoft YaHei', ui-sans-serif, system-ui, -apple-system, sans-serif;
