@@ -3,7 +3,7 @@
 - **Date**: 2026-07-07
 - **Authority**: `docs/together/2026-07-06/handoffs/system-mechanism-feedback.md` items ⑧, ⑨ + Appendix B (coordinator re-verified at main `bd5c6b5`); jjkysy #1201.
 - **Scope**: one small PR. Three fixes + three invariant tests. No new subsystems.
-- **Status**: draft — pending codex adversarial review
+- **Status**: revised — codex r1 MAJOR resolved (§2 catalog ownership); pending r2
 
 ## 0. Re-grounding vs #1213 (read this first)
 
@@ -117,59 +117,117 @@ choice; keep it one file).
 
 ### 2.1 X (why)
 
-The FsResolver type allowlist is immutable at boot by design (`registry.ex:373-385`) —
-but a catalog that must be maintained by hand, with no invariant tying it to the set of
-flavors that declare a namespace, WILL drift. It already has: `cc-headless` shipped a
-`config_dir_namespace/0` and nobody re-derived the catalog. Result: materializing any
-Definition role slot on the stock `cc-headless` flavor crashes at config-dir resolution
+Config-dir resource types (`"cc-agents"`, `"cc-headless-agents"`, etc.) are currently
+hand-maintained in core's `@config_dir_namespaces` (`registry.ex:386`). But these are
+**plugin-owned concepts** (each namespace is declared by a Template Class inside a
+plugin), and a core-owned list with no invariant tying it to the plugins WILL drift. It
+already has: `cc-headless` shipped a `config_dir_namespace/0` (`cc_headless_agent.ex:18`)
+and nobody re-derived the core catalog. Result: materializing any Definition role slot
+on the stock `cc-headless` flavor crashes at config-dir resolution
 (`ConfigDir.path/2` → `resource://<ws>/cc-headless-agents/<name>` → no registered type).
-Catalog completeness must be a test, not a review-time memory.
+
+Root cause: **catalog ownership is wrong.** The architecture already has the correct
+mechanism — `Ezagent.Plugin`'s `resource_types/0` callback (`plugin.ex:241`), which each
+plugin can implement to declare its FsResolver types. Boot Phase 2
+(`plugin.ex:516`) passes `plugin_module.resource_types()` to
+`FsResolver.Registry.register_all/1`, with write-once-on-both-axes semantics and restart
+self-heal (init-replay at `registry.ex:76-104`, tested at
+`fs_resolver_test.exs:555`). The hand-maintained core list is a **duplicate source of
+truth** — the plugin already declares the namespace via `config_dir_namespace/0` and the
+core list must be manually kept in sync. The missing `"cc-headless"` token is a
+symptom of this duplication, not the disease.
 
 ### 2.2 Current state (verified)
 
 - `fs_resolver/registry.ex:386` — `@config_dir_namespaces ["cc", "codex", "codex-remote", "py"]`.
+  These are converted to `{"<ns>-agents", %{backend_component: "<ns>-agents", authority:
+  &config_dir_authority/2}}` tuples in `boot_registrations/0` (`registry.ex:397-407`).
+- The plugin `resource_types/0` callback exists and is fully plumbed (boot Phase 2 +
+  restart self-heal + idempotent re-registration on OTP release double-call), but
+  **no plugin currently implements it** for config-dir types — they all return the
+  default `[]` from `use Ezagent.Plugin`.
 - Declarers of `config_dir_namespace/0`: `cc_agent.ex:200` → `"cc"`,
   `cc_headless_agent.ex:18` → `"cc-headless"` (module
   `Ezagent.PluginCc.Template.CcHeadlessAgent`, registered in the cc plugin's
   `template_classes/0`, `plugin_cc/application.ex:93-97`), `codex_agent.ex:23`,
   `codex_remote_agent.ex:21`, `py_agent.ex:75`. **`"cc-headless"` is absent from the
-  catalog.**
+  core catalog.**
 - Namespace resolution seam: `Ezagent.Kind.Template.namespace_of/1`
   (`kind/template.ex:333-343`) — explicit callback, else `template_name/0` minus
   `.agent` suffix. Config-dir-owning detection:
   `RecipeMaterializer.config_dir_flavor?/1` (`recipe_materializer.ex:224-227`) =
   exports `config_dir_namespace/0` **or** `CredentialAdapter.credentialled?/1`.
+- Start-ordering is already handled by the `resource_types/0` contract: on OTP release,
+  plugin apps are loaded before any are started, so init-replay discovers their
+  `resource_types/0`; on dev `iex -S mix`, plugins publish via Phase 2. Idempotent
+  re-registration handles the release double-call. Core non-plugin types (`"uploads"`)
+  are applied FIRST, so plugins can never shadow/alias them.
 
-### 2.3 Design
+### 2.3 Design — move config-dir types to plugin `resource_types/0`
 
-1. Add `"cc-headless"` to `@config_dir_namespaces` (one token). Boot registration then
-   yields the `"cc-headless-agents"` type with the same `config_dir_authority/2`.
-2. **Catalog-completeness invariant** (the actual fix — the token is just today's
-   instance): a test that enumerates every registered Template Class and asserts each
-   config-dir-owning flavor's namespace is served by the resolver. See §2.4.
+Instead of adding one token to a core-owned list and papering over the duplication with
+an invariant test, **eliminate the duplication** by using the existing plugin contract:
 
-Keep the catalog static (do NOT derive it at boot from plugin modules): the allowlist
-being independent of plugin Application start-ordering is a load-bearing property the
-comment at `registry.ex:379-384` already documents. The invariant test closes the drift
-gap without giving up boot-immutability.
+1. **Each config-dir-owning plugin implements `resource_types/0`** returning its
+   config-dir type declarations. Using the cc plugin as the example:
+
+   ```elixir
+   def resource_types do
+     [
+       {"cc-agents",
+        %{backend_component: "cc-agents",
+          authority: &Ezagent.Resource.FsResolver.config_dir_authority/2}},
+       {"cc-headless-agents",
+        %{backend_component: "cc-headless-agents",
+          authority: &Ezagent.Resource.FsResolver.config_dir_authority/2}}
+     ]
+   end
+   ```
+
+   Same pattern for codex (`"codex-agents"`, `"codex-remote-agents"`), py
+   (`"py-agents"`). Each plugin declares only its own types — no cross-plugin coupling.
+
+2. **Remove `@config_dir_namespaces` from core** (`registry.ex:386`). The config-dir
+   loop in `boot_registrations/0` (`registry.ex:397-407`) is deleted. Non-plugin types
+   (`"uploads"`) stay in `boot_registrations/0`.
+
+3. No new infrastructure. `resource_types/0` is an existing optional callback (default
+   `[]`), registered at boot Phase 2 via `register_all/1` with write-once semantics,
+   and replayed on restart via init discovery. The idempotency design (identical
+   re-registration is a no-op) already handles OTP release double-call.
+
+4. **The invariant test (§2.4) is the gate**, not the mechanism. The mechanism is "each
+   plugin declares its own types"; the test verifies this declaration stays complete.
+
+This is the structural fix codex adversarial review identified: the missing token is a
+catalog-ownership smell, not a one-line omission. Config-dir types are plugin-owned
+concepts; they should live in plugin code, governed by the same `resource_types/0`
+contract that already handles boot ordering, write-once safety, and restart self-heal.
 
 ### 2.4 Invariant test (⑨-i)
 
-**T9a — namespace catalog completeness**: for every plugin's `template_classes/0`
-(union over the started plugin apps; start them the way `check.ex` starts
-`@reference_apps`), filter `config_dir_flavor?/1`-true classes, map
-`Template.namespace_of/1`, and assert `FsResolver` serves type `"<ns>-agents"` (probe
-via a `FsResolver.resolve/2` of a synthetic `resource://<ws>/<ns>-agents/<name>` URI, or
-via the registry's non-prod introspection — builder's choice; the assertion is
-"resolves/registered", not string-list equality, so the test exercises the real
-boundary). This test is **red on current main** (cc-headless) and goes red again the
-day flavor N+1 forgets the token — the "NEXT flavor can't be forgotten" requirement.
+**T9a — plugin resource_types completeness**: for every config-dir-owning plugin
+(identified by having template classes where `config_dir_flavor?/1` is true), assert
+that plugin's `resource_types/0` list contains a type `"<ns>-agents"` for each distinct
+`Template.namespace_of/1` among its config-dir-owning template classes. The assertion is
+structural (check the callback return value directly, not FsResolver resolve — the
+resolve probe is the integration-level gate at T9a-ii below). This test is **red on
+current main** (the cc plugin has `CcHeadlessAgent`'s `"cc-headless"` namespace in its
+template classes but returns `resource_types/0` → `[]`) and goes red again the day a
+plugin adds a config-dir-owning flavor without declaring its resource type.
+
+- **T9a-ii — end-to-end resolution probe**: for each config-dir namespace, assert
+  `FsResolver.resolve/2` of `resource://<ws>/<ns>-agents/<name>` succeeds (does not
+  return `:none`). This exercises the real registration path (Phase 2 →
+  `register_all/1` → ETS insert → `resolve/2` lookup). Redundant with T9a in steady
+  state but acts as the integration tripwire.
 
 Note `config_dir_flavor?/1` is deliberately the broader predicate (credentialled
 flavors without an explicit namespace derive one via `namespace_of/1`) — matching what
 materialization will actually request at spawn time, which is the invariant that
-matters. Test lives in `ezagent_core` or a cross-app integration suite — builder
-placement, but it must see the plugin apps (same pattern as existing cross-app tests).
+matters. Test lives in `ezagent_core` (reads plugin callbacks via the same
+Application-env mechanism the Registry init-replay uses, `registry.ex:76-104`), or in a
+cross-app integration suite — builder placement.
 
 ## 3. Item ⑨(ii) — install must be transactional-in-effect
 
@@ -299,10 +357,23 @@ Impl residue deliberately left to the builder — verify at build time:
    conventions (`definition_registry.ex:20-24`) rather than inventing a second
    tombstone dialect; confirm `resolve/4` surfaces enough of the current body to test
    tombstone-ness cheaply.
-5. T9a probe mechanics: prefer `FsResolver.resolve/2` against a synthetic URI over the
-   non-prod `register_for_test` introspection if both work; assert failure mode is a
-   loud `{:error, ...}`/raise, not a nil.
-6. Line numbers cited here were verified at `dcabf6174`; re-verify on rebase.
+5. T9a probe mechanics: T9a (structural) reads `resource_types/0` return values via the
+   same Application-env mechanism `Registry` init-replay uses (`registry.ex:76-104`).
+   T9a-ii (integration) probes `FsResolver.resolve/2` against a synthetic
+   `resource://<ws>/<ns>-agents/<name>` URI; assert failure mode is
+   `{:error, ...}`/raise, not nil. Prefer resolve over `register_for_test`
+   introspection since the resolve path exercises the real ETS lookup.
+6. Plugin `resource_types/0` implementation: the cc plugin currently returns `[]`
+   (default). The builder must add declarations for both `"cc-agents"` and
+   `"cc-headless-agents"`; same for codex (`"codex-agents"`, `"codex-remote-agents"`),
+   py (`"py-agents"`). Each declaration reuses the existing
+   `&FsResolver.config_dir_authority/2` authority function. The `backend_component`
+   MUST match the type string exactly (byte-identical to `ConfigDir.path/2`'s
+   `Home.path("<ns>-agents")/<ws>/<name>` layout — Locked-contract #7).
+7. After plugins implement `resource_types/0`, remove `@config_dir_namespaces` and the
+   config-dir loop in `boot_registrations/0` (`registry.ex:386`, `registry.ex:397-407`).
+   Non-plugin types (`"uploads"`) stay in `boot_registrations/0` unchanged.
+8. Line numbers cited here were verified at `dcabf6174`; re-verify on rebase.
 
 ## 6. Out of scope
 
