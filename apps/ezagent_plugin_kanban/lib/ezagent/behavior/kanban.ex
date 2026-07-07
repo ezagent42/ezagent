@@ -412,17 +412,18 @@ defmodule Ezagent.ActionSet.Kanban do
   defp stage_index(stages, s), do: Enum.find_index(stages, &(&1 == s)) || 0
 
   # R1.1（固定接力链）：stage 是结构事实非自由属性，沿固定棒链推进——
-  # 根固定链首棒；非根只能是"父棒"或"父棒+1"（不能跳棒、不能回退、不能乱设）；
+  # 非根只能是"父棒"或"父棒+1"（不能跳棒、不能回退、不能乱设）；
   # 对称地，每个子只能是"本棒"或"本棒+1"。这把"随意改 stage"收死成相邻棒推进。
+  # 根无父约束、只受子侧相邻棒约束（G4 拍板 2026-07-07：原"根钉死链首棒"
+  # 把根永锁 positioning，改为根随子推进——全部子到位后根才进得了下一棒）。
   defp stage_fits?(stages, nodes, id, s) do
     node = nodes[id]
     si = stage_index(stages, s)
-    first_stage = List.first(stages)
 
     parent_ok =
       case node.parent_id do
         nil ->
-          s == first_stage
+          true
 
         pid ->
           pi = stage_index(stages, nodes[pid].stage)

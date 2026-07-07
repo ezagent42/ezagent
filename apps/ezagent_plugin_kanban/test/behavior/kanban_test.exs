@@ -230,10 +230,10 @@ defmodule Ezagent.ActionSet.KanbanTest do
                Kanban.handle_set_stage(%{id: c, stage: "nope"}, admin_ctx(t))
     end
 
-    test "set_stage R1.1：stage 沿固定链推进（只父棒或父棒+1，根固定链首，不能跳棒）", %{} do
+    test "set_stage R1.1：stage 沿固定链推进（只父棒或父棒+1，根随子推进，不能跳棒）", %{} do
       {t, r, c} = seed()
 
-      # 根固定链首：设成第二棒 → 拒
+      # 根（G4 拍板后无父约束、只受子约束）：子 c 还在链首 → 根设第二棒被子侧拒
       assert {:error, {:stage_order_violation, _}} =
                Kanban.handle_set_stage(%{id: r, stage: to_string(@second_stage)}, admin_ctx(t))
 
@@ -241,6 +241,15 @@ defmodule Ezagent.ActionSet.KanbanTest do
       assert {:ok, %{}, e1} =
                Kanban.handle_set_stage(%{id: c, stage: to_string(@second_stage)}, admin_ctx(t))
       assert committed(e1).nodes[c].stage == @second_stage
+
+      # G4 开口：子到位（第二棒）后，根可推进到第二棒（不再钉死链首）
+      assert {:ok, %{}, er} =
+               Kanban.handle_set_stage(
+                 %{id: r, stage: to_string(@second_stage)},
+                 admin_ctx(committed(e1))
+               )
+
+      assert committed(er).nodes[r].stage == @second_stage
 
       # 子 c：设第三棒(2=父+2) → 拒（跳棒）
       assert {:error, {:stage_order_violation, _}} =
