@@ -136,7 +136,10 @@ defmodule EzagentPluginHello.Application do
     %{
       name: "hello.builder",
       behaviors: [Ezagent.ActionSet.HelloBuilder],
-      requested_caps: [%{behavior: Ezagent.ActionSet.HelloBuilder, action: :receive}]
+      requested_caps: [
+        %{behavior: Ezagent.ActionSet.HelloBuilder, action: :receive},
+        %{behavior: Ezagent.ActionSet.HelloBuilder, action: :rebuild}
+      ]
     }
   end
 

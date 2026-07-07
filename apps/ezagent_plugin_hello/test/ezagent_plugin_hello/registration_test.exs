@@ -60,15 +60,21 @@ defmodule EzagentPluginHello.RegistrationTest do
     assert {:ok, %Recipe{} = role} = Recipe.new(HelloApp.hello_builder_recipe())
 
     assert role.name == "hello.builder"
-    # Behaviors is EXACTLY [Behavior.HelloBuilder] — its :receive page-gen hook.
+    assert :rebuild in HelloBuilder.actions()
+    # Behaviors is EXACTLY [Behavior.HelloBuilder] — receive delivery + rebuild dispatch.
     assert role.behaviors == [HelloBuilder]
     # NOT passive — the builder is a chat principal (receives fan-out, @-mentionable).
     refute role.passive
 
     # requested_caps: atom-keyed cap-template MAP {behavior, action}, no `kind`
     # materialization axis (Recipe.CapMint injects `:agent` per the native flavor).
-    assert [%{behavior: HelloBuilder, action: :receive} = cap] = role.requested_caps
-    refute Map.has_key?(cap, :kind)
+    assert [
+             %{behavior: HelloBuilder, action: :receive} = receive_cap,
+             %{behavior: HelloBuilder, action: :rebuild} = rebuild_cap
+           ] = role.requested_caps
+
+    refute Map.has_key?(receive_cap, :kind)
+    refute Map.has_key?(rebuild_cap, :kind)
   end
 
   test "hello.concierge recipe — behaviors + caps + non-passive (combined gate)" do

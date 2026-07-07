@@ -360,6 +360,7 @@ defmodule Ezagent.Socialware.Conformance do
       |> maybe_warn(:predicated_cycle, predicated_cycle(edges))
       |> maybe_warn(:double_delivery, double_delivery(edges))
       |> warn_dead_roles(declared, edges)
+      |> warn_mute_composite(definition)
       |> Enum.reverse()
 
     {failures, warnings}
@@ -477,6 +478,58 @@ defmodule Ezagent.Socialware.Conformance do
     end
   end
 
+  defp warn_mute_composite(warnings, %Definition{roles: roles, routing_rules: rules}) do
+    human_roles =
+      roles
+      |> Enum.filter(&(&1.fill == :human))
+      |> Enum.map(& &1.role_name)
+
+    if human_roles == [] do
+      warnings
+    else
+      roles_by_name = Map.new(roles, &{&1.role_name, &1})
+
+      adapter_receiver_roles =
+        rules
+        |> Enum.flat_map(fn rule ->
+          Map.get(rule, :receivers) || Map.get(rule, "receivers") || []
+        end)
+        |> Enum.map(&receiver_role/1)
+        |> Enum.reject(&is_nil/1)
+        |> Enum.uniq()
+        |> Enum.filter(fn role_name ->
+          case Map.get(roles_by_name, role_name) do
+            %{fill: :agent, flavor: flavor} -> adapter_flavor?(flavor)
+            _ -> false
+          end
+        end)
+
+      case adapter_receiver_roles do
+        [] ->
+          [
+            {:routing_role_dag,
+             {:mute_composite,
+              %{human_roles: human_roles, adapter_receiver_roles: adapter_receiver_roles}}}
+            | warnings
+          ]
+
+        _ ->
+          warnings
+      end
+    end
+  end
+
+  defp adapter_flavor?(flavor) when is_binary(flavor) and flavor != "" do
+    case Ezagent.AgentBridge.AdapterRegistry.lookup(flavor) do
+      {:ok, _adapter} -> true
+      :error -> false
+    end
+  catch
+    :exit, _ -> false
+  end
+
+  defp adapter_flavor?(_), do: false
+
   defp maybe_warn(warnings, _kind, nil), do: warnings
   defp maybe_warn(warnings, kind, detail), do: [{:routing_role_dag, {kind, detail}} | warnings]
 
@@ -526,5 +579,6 @@ defmodule Ezagent.Socialware.Conformance do
   defp to_uri(%URI{} = uri), do: uri
   defp to_uri(str) when is_binary(str), do: Ezagent.URI.new!(str)
 
-  defp same_workspace?(left, right), do: URI.to_string(to_uri(left)) == URI.to_string(to_uri(right))
+  defp same_workspace?(left, right),
+    do: URI.to_string(to_uri(left)) == URI.to_string(to_uri(right))
 end

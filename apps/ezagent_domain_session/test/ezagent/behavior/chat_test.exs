@@ -40,19 +40,21 @@ defmodule Ezagent.ActionSet.ChatTest do
   defp with_member_cap(ctx) do
     caller = Map.fetch!(ctx, :caller)
 
-    cap = %Capability{
+    Map.put(ctx, :siblings, %{identity: %{caps: MapSet.new([member_cap(caller)])}})
+  end
+
+  defp member_cap(session_uri) do
+    %Capability{
       Capability.cap(
         :session,
         Ezagent.ActionSet.Session,
         :receive,
-        caller,
-        Capability.workspace_of(caller)
+        session_uri,
+        Capability.workspace_of(session_uri)
       )
       | granted_by: URI.new!("entity://system/user/owner"),
         granted_at: DateTime.utc_now()
     }
-
-    Map.put(ctx, :siblings, %{identity: %{caps: MapSet.new([cap])}})
   end
 
   describe "Behavior contract surface" do
@@ -425,6 +427,89 @@ defmodule Ezagent.ActionSet.ChatTest do
 
       assert [%{rule_id: "no_match", hop: 0, drop_reason: "hop_exhausted"}] =
                Trace.journey(loop_msg.id)
+    end
+
+    test "native agent matched by routing is not delivered to role receive" do
+      test_table = :"native_no_receive_#{System.unique_integer([:positive])}"
+      :ok = Ezagent.RoutingRegistry.declare_table(test_table, key_uniqueness: :duplicate)
+
+      original = Application.get_env(:ezagent_core, :routing_tables)
+      Application.put_env(:ezagent_core, :routing_tables, [test_table])
+
+      on_exit(fn ->
+        if original do
+          Application.put_env(:ezagent_core, :routing_tables, original)
+        else
+          Application.delete_env(:ezagent_core, :routing_tables)
+        end
+      end)
+
+      n = System.unique_integer([:positive])
+      session_uri = URI.new!("session://team-alpha/default/native-no-receive-#{n}")
+      bind_to_default(session_uri)
+
+      viewer = URI.new!("entity://team-alpha/user/viewer-#{n}")
+      native_agent = URI.new!("entity://team-alpha/agent/native-builder-#{n}")
+
+      {:ok, _pid} =
+        Ezagent.Kind.spawn(Ezagent.Entity.Agent, %{
+          uri: native_agent,
+          initial_caps: MapSet.new([member_cap(session_uri)])
+        })
+
+      :ok = Ezagent.AgentFlavorAttributes.put(native_agent, "native")
+      on_exit(fn -> Ezagent.AgentFlavorAttributes.delete(native_agent) end)
+
+      handler_id = {__MODULE__, self(), make_ref()}
+
+      :telemetry.attach(
+        handler_id,
+        [:ezagent, :agent_bridge, :deliver, :dropped],
+        fn _event, _measurements, metadata, pid ->
+          send(pid, {:agent_bridge_dropped, metadata})
+        end,
+        self()
+      )
+
+      on_exit(fn -> :telemetry.detach(handler_id) end)
+
+      :ok =
+        Ezagent.RoutingRegistry.put(
+          test_table,
+          Matcher.from_role("viewer"),
+          rule_value("viewer-to-native", [Receiver.role("builder")])
+        )
+
+      members = %{
+        viewer => %{online: true, role_name: "viewer"},
+        native_agent => %{online: true, role_name: "builder"}
+      }
+
+      msg = Message.new(viewer, %{text: "please rebuild", attachments: []})
+      slice = %{members: members, monitors: %{}, last_seen: %{}}
+      ctx = %{self_uri: session_uri, kind_module: Ezagent.Entity.Session, caller: viewer}
+
+      assert {:ok, _slice, %{stored: true}} =
+               EzagentDomainInstanceMessage.Test.BehaviorInvoker.invoke(
+                 Ezagent.ActionSet.Session,
+                 :send,
+                 slice,
+                 %{message: msg},
+                 ctx
+               )
+
+      assert [%{rule_id: "viewer-to-native", receivers: [native_agent_str]}] =
+               Trace.journey(msg.id)
+
+      assert native_agent_str == URI.to_string(native_agent)
+
+      assert_receive {:agent_bridge_dropped, %{recipient: ^native_agent, reason: reason}}, 500
+
+      assert reason in [
+               :no_sandbox_respawn_state,
+               {:no_adapter, "native"},
+               {:heal_failed, :no_sandbox_respawn_state}
+             ]
     end
   end
 
