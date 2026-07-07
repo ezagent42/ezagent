@@ -75,6 +75,10 @@ legends:
       - page
     bound_rule_set: dealscout-update
     fold: false
+    # 协作协议速查（行话翻译，给不认识 dealscout 的人/agent 进场就能懂）。
+    # legend 机制只读 member_set/bound_rule_set/fold，多余 key 原样随行——
+    # protocol 是纯说明数据，不参与路由。
+    protocol: "协作协议速查：discover（发现角色）每次爬完并注入新线索后，会自动触发 page 角色重建公开线索页——页面自己会刷新，不用任何人催。人类成员或新进成员想立刻再爬一轮，就在会话里触发 crawl_now（装在本会话上的爬取动作，爬完同样自动刷新页面）。消息里出现 \"__dealscout_update__\" 标记 = discover 在报告\"有新线索已入库\"的更新信号；本 legend 绑定的 dealscout-update 规则只认 discover 发出的这个标记，其他成员发同样文字不会误触发页面重建。"
 adapters:
   - adapter_id: external_feed
     role: customer
