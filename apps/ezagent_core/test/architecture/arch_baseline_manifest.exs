@@ -417,7 +417,9 @@
   #   `def detached(_state, _ctx), do: :ok` default INSIDE the quote — exactly
   #   like its siblings `activated/2`/`deactivate/2`/`create/1`, which are also
   #   counted-undocumented quote defaults. +1 symmetric with them. 393→394.
-  undocumented_public_defs: 394,
+  # +1 #1217: list_sessions/2 catch-all clause in conversation_session_state.ex
+  # (rescue wrapper as public API surface). 394→395.
+  undocumented_public_defs: 395,
   # dynamic_public_def_heads — `def unquote(name)(...)` heads whose function name
   #   is only known at macro-expansion, so they cannot become a documented
   #   {name, arity} entry. ENFORCED at 0 (the tree has none): adding any new

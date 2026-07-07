@@ -171,6 +171,31 @@ defmodule Ezagent.Socialware.Installation do
 
   def pin_installs_from_session(_session_uri, content), do: content
 
+  @doc """
+  Retract every per-session install pointer for `session_uri`.
+
+  Rollback keeps ConfigStore append-only: each current `install:<ref>` pointer is
+  advanced to a tombstone object instead of deleting rows. A later fresh create
+  can then seed the same ref again to the current published definition.
+  """
+  @spec retract_session_installs(URI.t(), URI.t() | String.t()) :: :ok | {:error, term()}
+  def retract_session_installs(%URI{scheme: "session"} = session_uri, actor_uri) do
+    workspace = Ezagent.URI.workspace_of(session_uri)
+
+    session_uri
+    |> ConfigStore.list_keys_for_subject()
+    |> Enum.filter(&String.starts_with?(&1, @install_key_prefix))
+    |> Enum.reduce_while(:ok, fn key, :ok ->
+      case retract_session_install(session_uri, workspace, key, actor_uri) do
+        {:ok, _object} -> {:cont, :ok}
+        :ok -> {:cont, :ok}
+        {:error, reason} -> {:halt, {:error, reason}}
+      end
+    end)
+  end
+
+  def retract_session_installs(_session_uri, _actor_uri), do: :ok
+
   defp pin_install_from_session_record(%URI{} = session_uri, install) do
     workspace = Ezagent.URI.workspace_of(session_uri)
     key = install_key(install.ref)
@@ -329,13 +354,7 @@ defmodule Ezagent.Socialware.Installation do
   @doc "Return true when `session_uri` has a current install record for `ref`."
   @spec installed?(URI.t(), String.t()) :: boolean()
   def installed?(%URI{scheme: "session"} = session_uri, ref) when is_binary(ref) do
-    workspace = Ezagent.URI.workspace_of(session_uri)
-    key = install_key(ref)
-
-    match?(
-      {:ok, %ConfigObject{}},
-      ConfigStore.resolve(@install_layer, workspace, session_uri, key)
-    )
+    install_state(session_uri, ref) == :installed
   end
 
   def installed?(_session_uri, _ref), do: false
@@ -397,6 +416,39 @@ defmodule Ezagent.Socialware.Installation do
 
   def installed_definitions(_), do: []
 
+  defp retract_session_install(
+         %URI{scheme: "session"} = session_uri,
+         workspace_uri,
+         @install_key_prefix <> ref = key,
+         actor_uri
+       ) do
+    case ConfigStore.resolve(@install_layer, workspace_uri, session_uri, key) do
+      {:ok, %ConfigObject{body: %{"removed" => true}} = object} ->
+        {:ok, object}
+
+      {:ok, %ConfigObject{}} ->
+        ConfigStore.write_and_point(%{
+          layer: @install_layer,
+          workspace_uri: workspace_uri,
+          subject_uri: session_uri,
+          key: key,
+          body: %{
+            ref: ref,
+            removed: true
+          },
+          actor_uri: actor_uri,
+          source_turn_id: unique_source_turn_id("socialware-install-retract", session_uri, ref)
+        })
+        |> case do
+          {:ok, %{object: object}} -> {:ok, object}
+          {:error, reason} -> {:error, reason}
+        end
+
+      :none ->
+        :ok
+    end
+  end
+
   defp installed_definition(%ConfigObject{body: body}) do
     with config_id when is_binary(config_id) <- Map.get(body, "definition_config_id"),
          {:ok, %ConfigObject{} = object} <- ConfigStore.fetch_object(config_id),
@@ -427,10 +479,25 @@ defmodule Ezagent.Socialware.Installation do
     # def, not a collision. Re-seeding an already-installed ref is therefore a
     # no-op that HOLDS the frozen revision (freeze-pin §4): only the explicit
     # `repoint_template_installs/4` upgrade path advances a running install.
-    if installed?(session_uri, ref) do
-      {:ok, :exists}
-    else
-      do_seed_install(session_uri, workspace_uri, definition, object, install, actor_uri)
+    case install_state(session_uri, ref) do
+      :installed ->
+        {:ok, :exists}
+
+      :removed ->
+        point_session_install(session_uri, workspace_uri, install, definition, object, actor_uri)
+
+      :none ->
+        do_seed_install(session_uri, workspace_uri, definition, object, install, actor_uri)
+    end
+  end
+
+  defp install_state(%URI{scheme: "session"} = session_uri, ref) when is_binary(ref) do
+    workspace = Ezagent.URI.workspace_of(session_uri)
+
+    case ConfigStore.resolve(@install_layer, workspace, session_uri, install_key(ref)) do
+      {:ok, %ConfigObject{body: %{"removed" => true}}} -> :removed
+      {:ok, %ConfigObject{}} -> :installed
+      :none -> :none
     end
   end
 

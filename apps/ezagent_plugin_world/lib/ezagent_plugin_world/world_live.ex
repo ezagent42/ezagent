@@ -24,7 +24,7 @@ defmodule EzagentPluginWorld.WorldLive do
     caller = Map.get(socket.assigns, :current_entity_uri)
     workspace = Map.get(socket.assigns, :current_workspace_uri)
     caps = Map.get(socket.assigns, :current_caps, MapSet.new())
-    sessions = ConversationSessionState.list_sessions(workspace)
+    sessions = ConversationSessionState.list_sessions(workspace, caller)
     current_session_uri = List.first(sessions)
 
     socket = assign(socket, :subscribed_topics, MapSet.new())
@@ -579,8 +579,10 @@ defmodule EzagentPluginWorld.WorldLive do
 
   defp state_for_route(%{component: "sessions_table"}, socket, layout) do
     sessions =
-      socket.assigns.current_workspace_uri
-      |> ConversationSessionState.list_sessions()
+      ConversationSessionState.list_sessions(
+        socket.assigns.current_workspace_uri,
+        socket.assigns.current_entity_uri
+      )
 
     current_session_uri = socket.assigns.current_session_uri || List.first(sessions)
 

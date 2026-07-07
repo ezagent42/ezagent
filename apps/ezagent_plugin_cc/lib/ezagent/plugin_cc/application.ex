@@ -130,6 +130,14 @@ defmodule EzagentPluginCc.Application do
   def roles, do: [Ezagent.Orchestrator.OrchestratorRecipe.recipe()]
 
   @impl Ezagent.Plugin
+  def resource_types do
+    Ezagent.Resource.FsResolver.config_dir_resource_types([
+      Ezagent.PluginCc.Template.CcAgent,
+      Ezagent.PluginCc.Template.CcHeadlessAgent
+    ])
+  end
+
+  @impl Ezagent.Plugin
   def config_surface do
     %{kind: :flavor, flavor: "cc", label: "Claude Code Agents"}
   end
