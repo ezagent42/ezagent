@@ -1,5 +1,7 @@
 # kanban 全链路真 e2e — round 2(2026-07-06 晚)— 短回合策略,PTY 0 崩,板走到流程终点
 
+> 精简注记：creds_watcher.sh 已过时删除（#1209 后无需手动凭证）；每步只留一张最有证明力的图（mention 探针留 no-reply+txt、分支证据留 GitHub 服务端图、终板留 board-tab+tree）。
+
 **结论一句话**:分支 `feat/sw-kanban` @ `4e8f633b8`(rebase 到 main `49f0167f` 含 #1208)上,发布 cc 变体 → 建会话 → 两真 cc agent 认证 → relay 规则落库 → owner 建板 → **agent 真驱动建卡/认领/推进两档** → dev 真 push GitHub 分支 → `__done__` 内容协议 relay 回助手 → 助手 gh 服务端复核 sha → 两次 set_stage 推进,**全部真通**;**PTY-bug 崩溃 0 次**(上轮 6 连崩的绕法 = 短回合策略,见下)。唯一没做成的是**真 PR**:本机 gh fine-grained PAT 无 `createPullRequest` 权限(API 403)、https push 403(SSH push 可用)、Chrome 未登录 GitHub —— 环境凭证缺口,如实降级为"真分支 push + 服务端 sha 复核",**未伪造任何 URL**,`register_pr` 一步如实跳过。
 
 > 上轮(kanban-full-loop/)阻断根因是 PtyServer 64KB buffer UTF-8 截断崩溃;本轮
