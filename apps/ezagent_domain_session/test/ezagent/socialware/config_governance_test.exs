@@ -1,7 +1,7 @@
 defmodule Ezagent.Socialware.ConfigGovernanceTest do
   use EzagentCore.DataCase, async: false
 
-  alias Ezagent.Socialware.ConfigGovernance.Socialware, as: Governance
+  alias Ezagent.ConfigGovernance.Socialware, as: Governance
   alias Ezagent.Socialware.DefinitionRegistry
 
   @owner Ezagent.URI.new!("entity://team-alpha/user/owner")

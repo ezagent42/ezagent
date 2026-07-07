@@ -34,13 +34,16 @@ defmodule Ezagent.ActionSet.ConfigGovernance do
   published) pointer object into the config_dir. The pointer flip ALONE does NOT
   materialize — the effect emission is mandatory.
 
-  Owns NO persistent state — the CR/item rows live in `ConfigChangeStore`.
+  Owns NO persistent state — the CR/item rows live in `Ezagent.ConfigGovernance.Store`.
   """
 
   use Ezagent.Lifecycle
 
   alias Ezagent.ActionSet.ConfigEvolve
-  alias Ezagent.Socialware.{ConfigChangeStore, ConfigProjection}
+  alias Ezagent.ConfigGovernance
+  alias Ezagent.ConfigGovernance.Agent, as: AgentPolicy
+  alias Ezagent.ConfigGovernance.Store
+  alias Ezagent.Socialware.ConfigProjection
 
   # Read the agent's OWN Sandbox + Identity siblings — IDENTICAL to ConfigEvolve.
   # `:sandbox` so publish/rollback can compute the deferred materialization
@@ -134,7 +137,7 @@ defmodule Ezagent.ActionSet.ConfigGovernance do
   end
 
   # The agent owns its own CR-governance state (none persistent here; the data
-  # lives in ConfigChangeStore). Mirrors ConfigEvolve.data_owner/1.
+  # lives in Store). Mirrors ConfigEvolve.data_owner/1.
   @spec data_owner(URI.t() | :any | term()) :: URI.t() | :any | :no_owner
   def data_owner(%URI{scheme: "entity"} = agent_uri), do: Ezagent.URI.instance(agent_uri)
   def data_owner(:any), do: :any
@@ -153,9 +156,9 @@ defmodule Ezagent.ActionSet.ConfigGovernance do
 
     # v1 agent-subject only — the subject IS this agent (self-bound); a non-agent
     # subject would have no agent handler to dispatch publish/rollback to.
-    with :ok <- assert_agent_subject(self_uri),
+    with :ok <- AgentPolicy.assert_agent_subject(self_uri),
          {:ok, cr} <-
-           ConfigChangeStore.open(%{
+           Store.open(%{
              workspace_uri: workspace,
              subject_uri: self_uri,
              opened_by: ctx.caller,
@@ -171,7 +174,7 @@ defmodule Ezagent.ActionSet.ConfigGovernance do
   def handle_stage_item(args, ctx) do
     with {:ok, _cr} <- fetch_self_cr(args, ctx),
          {:ok, item} <-
-           ConfigChangeStore.stage_item(%{
+           Store.stage_item(%{
              change_request_id: Map.fetch!(args, :change_request_id),
              layer: Map.get(args, :layer) || :user,
              key: Map.get(args, :key) || @default_cascade_key,
@@ -188,7 +191,7 @@ defmodule Ezagent.ActionSet.ConfigGovernance do
   def handle_unstage_item(args, ctx) do
     with {:ok, _cr} <- fetch_self_cr(args, ctx),
          {:ok, :unstaged} <-
-           ConfigChangeStore.unstage_item(%{
+           Store.unstage_item(%{
              change_request_id: Map.fetch!(args, :change_request_id),
              layer: Map.get(args, :layer) || :user,
              key: Map.get(args, :key) || @default_cascade_key
@@ -201,7 +204,7 @@ defmodule Ezagent.ActionSet.ConfigGovernance do
   @spec handle_preview_cr(map(), map()) :: {:ok, map(), [term()]} | {:error, term()}
   def handle_preview_cr(args, ctx) do
     with {:ok, _cr} <- fetch_self_cr(args, ctx),
-         {:ok, diffs} <- ConfigChangeStore.preview(Map.fetch!(args, :change_request_id)) do
+         {:ok, diffs} <- Store.preview(Map.fetch!(args, :change_request_id)) do
       {:ok, %{items: Enum.map(diffs, &with_soul_diff/1)}, []}
     end
   end
@@ -216,7 +219,7 @@ defmodule Ezagent.ActionSet.ConfigGovernance do
 
     with {:ok, cr} <- fetch_self_cr(args, ctx),
          {:ok, %{cr: published, items: items}} <-
-           ConfigChangeStore.publish(%{change_request_id: cr_id, published_by: ctx.caller}) do
+           Store.publish(%{change_request_id: cr_id, published_by: ctx.caller}) do
       {:ok,
        %{
          cr_id: published.id,
@@ -230,7 +233,7 @@ defmodule Ezagent.ActionSet.ConfigGovernance do
   @spec handle_reject_cr(map(), map()) :: {:ok, map(), [term()]} | {:error, term()}
   def handle_reject_cr(args, ctx) do
     with {:ok, _cr} <- fetch_self_cr(args, ctx),
-         {:ok, rejected} <- ConfigChangeStore.reject(Map.fetch!(args, :change_request_id)) do
+         {:ok, rejected} <- Store.reject(Map.fetch!(args, :change_request_id)) do
       {:ok, %{cr_id: rejected.id, status: rejected.status}, []}
     end
   end
@@ -257,7 +260,7 @@ defmodule Ezagent.ActionSet.ConfigGovernance do
     cr_id = Map.fetch!(args, :change_request_id)
 
     with {:ok, cr} <- fetch_self_cr_status(args, ctx, "published"),
-         {:ok, %{cr: rolled_back, items: items}} <- ConfigChangeStore.mark_rolled_back(cr_id),
+         {:ok, %{cr: rolled_back, items: items}} <- Store.mark_rolled_back(cr_id),
          {:ok, effects} <- repoint_prior(cr, items, ctx) do
       {:ok, %{cr_id: rolled_back.id, status: rolled_back.status}, effects}
     end
@@ -268,35 +271,20 @@ defmodule Ezagent.ActionSet.ConfigGovernance do
   # Fetch the CR and assert it targets THIS agent (CE-1). A caller managing
   # agent A cannot drive a CR whose subject is agent B.
   defp fetch_self_cr(args, ctx) do
-    case ConfigChangeStore.fetch(Map.fetch!(args, :change_request_id)) do
-      {:ok, cr} ->
-        if same_uri?(cr.subject_uri, ctx.self_uri),
-          do: {:ok, cr},
-          else: {:error, :subject_not_self}
-
-      :none ->
-        {:error, :cr_not_found}
+    with {:ok, cr} <- ConfigGovernance.fetch_cr(Map.fetch!(args, :change_request_id)),
+         :ok <- AgentPolicy.assert_self_cr(cr, ctx.self_uri) do
+      {:ok, cr}
     end
   end
 
   defp fetch_self_cr_status(args, ctx, status) do
     with {:ok, cr} <- fetch_self_cr(args, ctx) do
-      if cr.status == status,
-        do: {:ok, cr},
-        else: {:error, {:cr_status, %{want: status, got: cr.status}}}
+      case ConfigGovernance.assert_status(cr, status) do
+        :ok -> {:ok, cr}
+        {:error, {:status_mismatch, detail}} -> {:error, {:cr_status, detail}}
+      end
     end
   end
-
-  defp assert_agent_subject(self_uri) do
-    case Ezagent.URI.type(self_uri) do
-      {:ok, "agent"} -> :ok
-      _ -> {:error, :non_agent_subject}
-    end
-  end
-
-  defp same_uri?(a, b), do: uri_string(a) == uri_string(b)
-  defp uri_string(%URI{} = uri), do: URI.to_string(uri)
-  defp uri_string(other), do: other
 
   # ---- rollback repoints (reuse ConfigEvolve.handle_repoint_config/2) -------
 

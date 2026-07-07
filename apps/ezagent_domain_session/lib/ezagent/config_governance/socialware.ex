@@ -1,6 +1,6 @@
-defmodule Ezagent.Socialware.ConfigGovernance.Socialware do
+defmodule Ezagent.ConfigGovernance.Socialware do
   @moduledoc """
-  Socialware-specific ConfigChangeStore governance.
+  Socialware-specific config-change governance.
 
   Socialware definitions are ConfigStore subjects (`socialware:<name>`), not
   live Kinds. This module is therefore a thin function boundary over the shared
@@ -8,7 +8,9 @@ defmodule Ezagent.Socialware.ConfigGovernance.Socialware do
   workspace binding, and public-listing admin gate.
   """
 
-  alias Ezagent.Socialware.{ConfigChangeStore, Definition, DefinitionRegistry}
+  alias Ezagent.ConfigGovernance
+  alias Ezagent.ConfigGovernance.Store
+  alias Ezagent.Socialware.{Definition, DefinitionRegistry}
 
   @layer :workspace
   @key DefinitionRegistry.definition_key()
@@ -41,7 +43,7 @@ defmodule Ezagent.Socialware.ConfigGovernance.Socialware do
   def open_cr(%{name: name}, ctx) when is_binary(name) and name != "" do
     with :ok <- authorize_manage(name, ctx),
          {:ok, cr} <-
-           ConfigChangeStore.open(%{
+           Store.open(%{
              workspace_uri: workspace_uri(ctx),
              subject_uri: subject(name),
              opened_by: Map.fetch!(ctx, :caller),
@@ -65,7 +67,7 @@ defmodule Ezagent.Socialware.ConfigGovernance.Socialware do
          {:ok, %Definition{} = definition} <- normalize_definition(definition_or_attrs),
          :ok <- assert_definition_subject(definition, name),
          {:ok, item} <-
-           ConfigChangeStore.stage_item(%{
+           Store.stage_item(%{
              change_request_id: cr_id,
              layer: @layer,
              key: @key,
@@ -85,7 +87,7 @@ defmodule Ezagent.Socialware.ConfigGovernance.Socialware do
          :ok <- assert_workspace(cr, ctx),
          :ok <- authorize_public_scope(cr_id, ctx),
          {:ok, %{cr: published}} <-
-           ConfigChangeStore.publish(%{
+           Store.publish(%{
              change_request_id: cr_id,
              published_by: Map.fetch!(ctx, :caller)
            }) do
@@ -189,13 +191,13 @@ defmodule Ezagent.Socialware.ConfigGovernance.Socialware do
          {:ok, name} <- subject_name(cr.subject_uri),
          :ok <- authorize_manage(name, ctx),
          :ok <- assert_workspace(cr, ctx),
-         {:ok, rejected} <- ConfigChangeStore.reject(cr_id) do
+         {:ok, rejected} <- Store.reject(cr_id) do
       {:ok, %{cr_id: rejected.id, status: rejected.status}}
     end
   end
 
   defp authorize_public_scope(cr_id, ctx) do
-    with {:ok, diffs} <- ConfigChangeStore.preview(cr_id) do
+    with {:ok, diffs} <- Store.preview(cr_id) do
       if Enum.any?(diffs, &public_definition?/1) do
         authorize_admin(ctx)
       else
@@ -241,19 +243,18 @@ defmodule Ezagent.Socialware.ConfigGovernance.Socialware do
   end
 
   defp fetch_cr(cr_id) do
-    case ConfigChangeStore.fetch(cr_id) do
-      {:ok, cr} -> {:ok, cr}
-      :none -> {:error, :cr_not_found}
-    end
+    ConfigGovernance.fetch_cr(cr_id)
   end
 
   defp assert_workspace(cr, ctx) do
-    if cr.workspace_uri == workspace_uri(ctx) do
-      :ok
-    else
-      {:error,
-       {:cross_workspace_socialware_cr_denied,
-        %{cr_workspace_uri: cr.workspace_uri, caller_workspace_uri: workspace_uri(ctx)}}}
+    case ConfigGovernance.assert_workspace(cr, ctx) do
+      :ok ->
+        :ok
+
+      {:error, {:workspace_mismatch, cr_workspace, caller_workspace}} ->
+        {:error,
+         {:cross_workspace_socialware_cr_denied,
+          %{cr_workspace_uri: cr_workspace, caller_workspace_uri: caller_workspace}}}
     end
   end
 

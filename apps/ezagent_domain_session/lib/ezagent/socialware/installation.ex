@@ -46,8 +46,15 @@ defmodule Ezagent.Socialware.Installation do
   @spec resolved_template_installs(map(), URI.t() | String.t()) ::
           {:ok, [{Definition.t(), ConfigObject.t(), install_spec()}]} | {:error, term()}
   def resolved_template_installs(content, workspace_uri) when is_map(content) do
+    resolved_template_installs(content, workspace_uri, lookup_fun: &DefinitionRegistry.lookup/2)
+  end
+
+  @doc "Resolve installs using a caller-supplied definition lookup function."
+  @spec resolved_template_installs(map(), URI.t() | String.t(), keyword()) ::
+          {:ok, [{Definition.t(), ConfigObject.t() | nil, install_spec()}]} | {:error, term()}
+  def resolved_template_installs(content, workspace_uri, opts) when is_map(content) do
     with {:ok, installs} <- parsed_installs_from_template(content),
-         {:ok, definitions} <- resolve_definitions(installs, workspace_uri) do
+         {:ok, definitions} <- resolve_definitions(installs, workspace_uri, opts) do
       {:ok, definitions}
     end
   end
@@ -56,8 +63,18 @@ defmodule Ezagent.Socialware.Installation do
   @spec behavior_set_for_template(map(), URI.t() | String.t()) ::
           {:ok, [module()]} | {:error, term()}
   def behavior_set_for_template(content, workspace_uri) when is_map(content) do
+    behavior_set_for_template(content, workspace_uri, lookup_fun: &DefinitionRegistry.lookup/2)
+  end
+
+  def behavior_set_for_template(_content, workspace_uri),
+    do: behavior_set_for_template(%{}, workspace_uri)
+
+  @doc "Resolve a SessionTemplate's behavior set using a caller-supplied definition lookup."
+  @spec behavior_set_for_template(map(), URI.t() | String.t(), keyword()) ::
+          {:ok, [module()]} | {:error, term()}
+  def behavior_set_for_template(content, workspace_uri, opts) when is_map(content) do
     with {:ok, installs} <- parse_installs(installs_from_template(content)),
-         {:ok, definitions} <- resolve_definitions(installs, workspace_uri) do
+         {:ok, definitions} <- resolve_definitions(installs, workspace_uri, opts) do
       definitions
       |> Enum.flat_map(fn {definition, _object, _install} -> Definition.behaviors(definition) end)
       |> Enum.uniq()
@@ -68,8 +85,8 @@ defmodule Ezagent.Socialware.Installation do
     end
   end
 
-  def behavior_set_for_template(_content, workspace_uri),
-    do: behavior_set_for_template(%{}, workspace_uri)
+  def behavior_set_for_template(_content, workspace_uri, opts),
+    do: behavior_set_for_template(%{}, workspace_uri, opts)
 
   @doc """
   Freeze-pin (SPEC §4.1/§4.4, Decision A) — the single shared freeze step.
@@ -445,9 +462,11 @@ defmodule Ezagent.Socialware.Installation do
     }
   end
 
-  defp resolve_definitions(installs, workspace_uri) do
+  defp resolve_definitions(installs, workspace_uri, opts \\ []) do
+    lookup_fun = Keyword.get(opts, :lookup_fun, &DefinitionRegistry.lookup/2)
+
     Enum.reduce_while(installs, {:ok, []}, fn install, {:ok, acc} ->
-      case resolve_install(install, workspace_uri) do
+      case resolve_install(install, workspace_uri, lookup_fun) do
         {:ok, definition, object} -> {:cont, {:ok, [{definition, object, install} | acc]}}
         :error -> {:halt, {:error, {:unknown_socialware_install, install.ref}}}
       end
@@ -462,7 +481,7 @@ defmodule Ezagent.Socialware.Installation do
   # EXACT immutable revision via `ConfigStore.fetch_object/1`; only an unpinned
   # (`config_id == nil`) install falls back to the live current-pointer
   # `DefinitionRegistry.lookup/2`.
-  defp resolve_install(%{config_id: config_id} = _install, _workspace_uri)
+  defp resolve_install(%{config_id: config_id} = _install, _workspace_uri, _lookup_fun)
        when is_binary(config_id) do
     with {:ok, %ConfigObject{} = object} <- ConfigStore.fetch_object(config_id),
          {:ok, %Definition{} = definition} <- Definition.new(object.body) do
@@ -472,8 +491,8 @@ defmodule Ezagent.Socialware.Installation do
     end
   end
 
-  defp resolve_install(install, workspace_uri) do
-    case DefinitionRegistry.lookup(workspace_uri, install.ref) do
+  defp resolve_install(install, workspace_uri, lookup_fun) do
+    case lookup_fun.(workspace_uri, install.ref) do
       {:ok, definition, object} -> {:ok, definition, object}
       :error -> :error
     end
@@ -484,7 +503,7 @@ defmodule Ezagent.Socialware.Installation do
   # idempotency); a fresh entry records the resolved `object.id` + `content_hash`.
   defp freeze_installs(installs, workspace_uri) do
     Enum.reduce_while(installs, {:ok, []}, fn install, {:ok, acc} ->
-      case resolve_install(install, workspace_uri) do
+      case resolve_install(install, workspace_uri, &DefinitionRegistry.lookup/2) do
         {:ok, _definition, %ConfigObject{} = object} ->
           frozen = %{
             ref: install.ref,

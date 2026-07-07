@@ -5,7 +5,7 @@ defmodule Ezagent.Socialware.Demo.Hello do
 
   Task #162 (Allen 2026-07-04). A fresh stack ships a discoverable, installable
   **hello** demo socialware, but seeded by DOGFOODING the real publish path
-  (`Ezagent.Socialware.ConfigGovernance.Socialware`: `open_cr → stage_definition
+  (`Ezagent.ConfigGovernance.Socialware`: `open_cr → stage_definition
   → publish_cr`), NOT a hard-coded direct ConfigStore write. Every boot exercises
   the real governance flow, so a broken publish path fails LOUD at boot.
 
@@ -47,7 +47,7 @@ defmodule Ezagent.Socialware.Demo.Hello do
   """
 
   alias Ezagent.Socialware.{Definition, DefinitionRegistry, ManifestResolver}
-  alias Ezagent.Socialware.ConfigGovernance.Socialware, as: Governance
+  alias Ezagent.ConfigGovernance.Socialware, as: Governance
 
   @name "hello"
   @recipe "np"
