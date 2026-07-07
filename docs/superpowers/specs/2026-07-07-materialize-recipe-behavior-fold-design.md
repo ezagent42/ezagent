@@ -241,7 +241,7 @@ short-circuits per behavior (`mount_detach.ex:78-79`).
 |---|---|---|
 | **native** | base Agent set only (nil `:kind_base`, `native_agent.ex:46`) | **The fix.** `recipe.behaviors` mount; declared actions resolve per-instance (`behavior_set.ex:268-271`). |
 | **cc / cc-headless / codex / codex-remote** | flavor wiring via their own Template Classes + bridge adapters (`plugin_cc/application.ex:103-116`); recipe actions for engine-roles execute through the engine/bridge, and shipped engine-role recipes declare no Elixir `behaviors` | Composed set = flavor set ∪ ∅ ⊆ live → **no-op**. A future engine-role recipe that DOES declare Elixir behaviors gets them mounted — forward-consistent with RF-5b (role-on-file-flavor, still deferred on the agent_create side: `role_step.ex:70-76` still fails loud there; this spec does not change that gate). |
-| **py** | dedicated Kind → its nil-capture default is the py behavior base; role script rides the template config channel (`agent_create.ex:336-364`) | Base already live → fold adds only role-extra behaviors, if a py recipe ever declares them. Benign. |
+| **py** | unified `Entity.Agent` with `instance_behaviors` + bridge adapter (`py_agent.ex:130` — spawns base Agent behaviors + `PyAgent`; `plugin_py/application.ex:105` — `instance_behaviors` registration) | Flavor set already live; fold adds only role-extra behaviors if a py recipe ever declares them. Benign (mount idempotence + `Compose` dedup at `compose.ex:66`). |
 | **hello (adapter flavor)** | `instance_behaviors` thunk (`plugin_hello/application.ex:101-103`) — the thunk set is exactly what `fold/2` computes as flavor set | Composed ⊇ live only by the recipe's own behaviors → correct mounts, no duplication (`Enum.uniq` at `compose.ex:66` + mount idempotence). |
 | **curl (no template class on the recipe path)** | n/a — `RecipeMaterializer.template_content` fails loud at `template_class_for/1` (`agent_flavor_registry.ex:122-128`) for a flavor without one | Unreachable; unchanged. |
 
@@ -330,13 +330,27 @@ the #1191 e2e probe.
 
 T2 (caller-dispatch adoption for ②③ — native chat delivery and the hello
 rebuild entry gate) **depends on this spec landing**. The interface T2 relies
-on, stated as a contract:
+on, stated as a contract `[R‑1]`:
 
-> **A materialized member's recipe-declared actions are dispatchable at its
-> member URI** — immediately after `materialize_definition_agents/4` returns,
-> for every materialization path and flavor, `BehaviorSet.resolve_action/3`
-> resolves every action declared by the role's recipe behaviors (no
-> `{:unknown_action, _}`).
+> **A freshly materialized member's recipe-declared actions are dispatchable
+> at its member URI** — after `materialize_definition_agents/4` returns FOR A
+> FRESHLY CREATED MEMBER, `BehaviorSet.resolve_action/3` resolves every action
+> declared by the role's recipe behaviors (no `{:unknown_action, _}`).
+
+This contract explicitly EXCLUDES:
+- **Adopted/reuse members** (`definition_agents.ex:101` — `:ok` without repair
+  when the member URI already exists). These were created by a prior call (or a
+  pre-fix version of this code) and MAY lack behaviors — a caller dispatching
+  to them should handle `{:unknown_action, _}` gracefully (the choice in D3: no
+  forced retrofit). Operator `Kind.mount/3` is the repair path.
+- **Legacy members** from pre-fix sessions (cold agents originated through the
+  template path before this spec landed). These need the operator repair path;
+  they are NOT silently fixed by materialization.
+
+`[R‑1]` T2's invariant test must therefore use a freshly created member — not a
+reuse or legacy agent — when asserting dispatchability after materialization. A
+follow-up can add a Conformance/policy check for "member exists but behaviors
+incomplete," but it does not belong in T1 or T2's scope.
 
 T2 may then route deliveries to role members by dispatching recipe actions
 directly, without assuming a bridge adapter exists (the ② native-delivery fix
