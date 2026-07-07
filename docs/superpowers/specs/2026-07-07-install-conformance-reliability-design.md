@@ -3,7 +3,7 @@
 - **Date**: 2026-07-07
 - **Authority**: `docs/together/2026-07-06/handoffs/system-mechanism-feedback.md` items ⑧, ⑨ + Appendix B (coordinator re-verified at main `bd5c6b5`); jjkysy #1201.
 - **Scope**: one small PR. Three fixes + three invariant tests. No new subsystems.
-- **Status**: revised — codex r1 MAJOR resolved (§2 catalog ownership); pending r2
+- **Status**: SOUND — codex r2 pass (zero BLOCKER/MAJOR)
 
 ## 0. Re-grounding vs #1213 (read this first)
 
