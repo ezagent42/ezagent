@@ -42,6 +42,12 @@ defmodule Mix.Tasks.Ezagent.Home.Init do
     ensure_credential_template(:"cc-channels", cc_channels_template())
     ensure_credentials_readme()
 
+    # Deploy-seed SPEC §4: idempotently install shipped socialware packages into
+    # the deployment dir (`socialware/`). Pure FS copy — no Repo/dispatch, so it
+    # is safe in this Category-A bootstrap; the governed publish happens later at
+    # boot via `Ezagent.Socialware.ManifestSeed.scan_all!`.
+    Ezagent.Home.SocialwareSeed.seed!()
+
     print_summary()
   end
 
