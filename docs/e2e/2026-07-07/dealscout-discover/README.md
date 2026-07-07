@@ -1,5 +1,7 @@
 # dealscout 发现腿真浏览器 e2e（2026-07-07 凌晨）— 真爬通了，ALT 闭环在 bridge 断点如实卡住
 
+> **注（2026-07-07 收口）**：本轮(v1)的常规流程截图已被 `../dealscout-refresh-v2/`（ALT v2 闭环终轮）取代删除；本目录保留的是 **gap 取证链**——02a（cc-headless 物化崩，#1201 ⑨）、04/04a/04b（bridge 丢弃断点，#1201 ②）、05*（D⑦ 组合会话零响应 + owner 禁言，#1201 ⑦）、06（匿名公开面，撮合面证据）。
+
 **结论一句话**：分支 `feat/sw-dealscout` 上，冷起 → boot 自动发布 dealscout（下拉可见）→ world 装 dealscout 建 session → operator dispatch `crawl_now` **真 `:httpc` 出网抓 HN front-page，20 条真线索 + 1 条 `__dealscout_update__` 信号全部落库**，信号经 Definition routing 规则命中 `page` 槽 agent（authz granted、read_marker delivered）——但在 **AgentBridge 投递层被丢**（`native` flavor 无 adapter，`:no_sandbox_respawn_state`），ALT 的 `handle_receive` 在 live 运行时**根本没有可达路径** → 页面自动重建未发生。本轮把 5 个"单测 stub 掩盖的 live 断点"修在插件自身内（每个都先真跑撞到再修，61/61 绿），并把 4 个平台级断点如实记成 gap（零私改 hello/core/domain）。
 
 ## 环境（复跑指引）
