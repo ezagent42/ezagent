@@ -233,6 +233,29 @@ defmodule Ezagent.Resource.FsResolver do
   end
 
   @doc """
+  Builds FsResolver resource-type declarations for per-agent config-dir template
+  classes.
+
+  Plugins own the declaration source (`resource_types/0`) and call this helper
+  with their config-dir-backed template classes. The resulting type name and
+  backend component are both `<config_dir_namespace>-agents`, guarded by
+  `config_dir_authority/2`.
+  """
+  @spec config_dir_resource_types([module()]) :: [{String.t(), type_spec()}]
+  def config_dir_resource_types(template_classes) when is_list(template_classes) do
+    Enum.map(template_classes, fn template_class ->
+      namespace = template_class.config_dir_namespace()
+      type = "#{namespace}-agents"
+
+      {type,
+       %{
+         backend_component: type,
+         authority: &__MODULE__.config_dir_authority/2
+       }}
+    end)
+  end
+
+  @doc """
   Authority for the `uploads` type (Resource-unification P2b). Asserts the URI's
   structural `<ws>` segment equals the caller's authenticated `scope.workspace` —
   the workspace-isolation boundary for chat-attachment downloads.
