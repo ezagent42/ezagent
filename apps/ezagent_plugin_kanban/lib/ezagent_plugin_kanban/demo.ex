@@ -137,7 +137,15 @@ defmodule EzagentPluginKanban.Demo do
       # `always → chat` rule (handoff red line).
       "routing_rules" => [
         %{
-          "matcher" => %{"type" => "text_contains", "arg" => @relay_done_marker},
+          # #1212 from_role 落地后的硬锁加固（#1201 ⑥ 预案）：内容标记（软锁）
+          # AND 发件人必须是 dev-together 角色成员——其他成员发同标记不再误触发。
+          "matcher" => %{
+            "type" => "and",
+            "items" => [
+              %{"type" => "text_contains", "arg" => @relay_done_marker},
+              %{"type" => "from_role", "arg" => @dev_role}
+            ]
+          },
           "receivers" => [@pm_role],
           "rule_set" => @relay_rule_set,
           "position" => 0
