@@ -33,10 +33,19 @@ defmodule EzagentPluginHello.RegistrationTest do
     refute :grant_cap in Ezagent.ActionSet.Identity.actions()
   end
 
-  test "all three hello role recipes are published in roles/0" do
+  test "all four hello role recipes are published in roles/0" do
     assert HelloApp.hello_orchestrator_recipe() in HelloApp.roles()
     assert HelloApp.hello_builder_recipe() in HelloApp.roles()
     assert HelloApp.hello_concierge_recipe() in HelloApp.roles()
+    assert HelloApp.hello_llm_recipe() in HelloApp.roles()
+  end
+
+  test "hello.llm curl recipe carries provider/model + credential_optional in config" do
+    recipe = EzagentPluginHello.Application.hello_llm_recipe()
+    assert recipe.name == "hello.llm"
+    assert recipe.config.provider == "deepseek"
+    assert recipe.config.model == "deepseek-chat"
+    assert recipe.config.credential_optional == true
   end
 
   test "hello.orchestrator recipe — behaviors + caps + non-passive (combined gate)" do
@@ -113,16 +122,25 @@ defmodule EzagentPluginHello.RegistrationTest do
              RecipeRegistry.lookup("hello.concierge")
   end
 
-  test "hello Definition declares the orchestrator/builder/concierge roles + inbound rule" do
+  test "hello Definition declares the orchestrator/builder/concierge/llm roles + inbound rule" do
     attrs = EzagentPluginHello.App.hello_definition_attrs("hello-demo")
     {:ok, defn} = Ezagent.Socialware.Definition.new(attrs)
 
     role_names = Enum.map(defn.roles, & &1.role_name) |> Enum.sort()
-    assert role_names == ["builder", "concierge", "orchestrator"]
+    assert role_names == ["builder", "concierge", "llm", "orchestrator"]
     assert Enum.all?(defn.roles, &(&1.fill == :agent))
     assert Enum.find(defn.roles, &(&1.role_name == "orchestrator")).flavor == "hello"
 
     assert [rule] = defn.routing_rules
     assert (rule[:receivers] || rule["receivers"]) == ["orchestrator"]
+  end
+
+  test "hello Definition declares the llm curl member" do
+    attrs = EzagentPluginHello.App.hello_definition_attrs("hello-demo")
+    {:ok, defn} = Ezagent.Socialware.Definition.new(attrs)
+    llm = Enum.find(defn.roles, &(&1.role_name == "llm"))
+    assert llm.fill == :agent
+    assert llm.flavor == "curl"
+    assert llm.recipe == "hello.llm"
   end
 end
