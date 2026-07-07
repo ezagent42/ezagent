@@ -1,7 +1,7 @@
 # Bare @mention resolution by role facet — design
 
-**Date**: 2026-07-07 · **Status**: DRAFT rev5 (T3, from jjkysy #1201 handoff item ④, coordinator-verified HOLDS)
-**Review**: codex adversarial R3 = NOT SOUND (1 MAJOR) — R2 fix verified but incomplete: F2 guard checked only filled member rows, missing unfilled colon-bearing role slots (open slot has no member row). Fixed: guard now consults combined role-name set (filled member-edge `role_name` + open slot `role_name` from `human_role_slots/1`). T7e added for the open-slot counterexample. §3.1 "no new data plumbing" claim updated to note the one exception.
+**Date**: 2026-07-07 · **Status**: SOUND (T3, from jjkysy #1201 handoff item ④, coordinator-verified HOLDS)
+**Review**: codex adversarial R4 = SOUND (zero BLOCKER, zero MAJOR). Review trail: R1=3 MAJOR (Feishu scope, public-view, U2/F4) → all fixed; R2=1 MAJOR (F2 fallback guard member-rows-only) → fixed; R3=1 MAJOR (F2 guard missed unfilled open slots) → fixed via combined role-name set; R4 confirmed internally consistent across all 8 rules, 8 tests, 4 forward-compat claims. 4 MINOR polish applied (T7 case count, T7c wording, §7 harness seam, §3.1 surface count).
 **Scope**: session-domain / world plugin only. Independent of T1/T2. Forward-compat contract with orchestration spec A-2 (auto-prefix) declared in §5.
 **Authority**: `docs/together/2026-07-06/handoffs/system-mechanism-feedback.md` item ④ + Appendix B row ④; role-slot model `docs/superpowers/specs/2026-07-05-socialware-role-slot-model-design.md` (P2: role lives ONLY on the membership edge); orchestration spec `docs/superpowers/specs/2026-07-06-orchestration-as-socialware-design.md` (A-2 install-time auto-prefix).
 
@@ -96,7 +96,8 @@ tier 3: display_name == token          (unchanged, demoted below role)
 
 Minimal data plumbing: `member_options/1` rows already carry `"role_name"` from
 the membership-edge facet. The change is confined to the private resolver in
-`conversation_data.ex` plus the two UI surfaces (§6). One exception: the F2
+`conversation_data.ex` plus the S2 UI surface (plus optional S3 parity if
+retained, §6). One exception: the F2
 head-fallback guard (§5) needs the **open role slot names** from
 `human_role_slots/1` (already in the world view-model) passed alongside member
 rows — this lets the guard detect colon-bearing role names that are declared
@@ -307,7 +308,10 @@ consequences this design absorbs **now** so prefixed names cannot break it:
 
 Home: `apps/ezagent_plugin_world/test/ezagent/world/conversation_data_test.exs`
 (pure, DB-free, async — same harness as the existing parse pins; fixture rows
-gain `"role_name"` keys). These are the "fails when the goal is unmet" gates:
+gain `"role_name"` keys; the F2 guard tests (T7c-T7e) require a second
+fixture parameter: the combined set of open-slot role names, mirroring
+`human_role_slots/1` passed at `build_message/4` call site). These are the
+"fails when the goal is unmet" gates:
 
 - **T1 — Role resolves (the headline invariant)**: member row with
   `role_name: "advisor"` (display_name a UUID string, segment a UUID) ⇒
@@ -322,14 +326,16 @@ gain `"role_name"` keys). These are the "fails when the goal is unmet" gates:
 - **T5 — R5 defensive guard**: two rows sharing a role_name ⇒ `[]`.
 - **T6 — Backward compat**: every existing test in the module passes
   unmodified (segment and display legs byte-identical for role-less rows).
-- **T7 — F2 tokenizer + head-fallback guard**: four sub-cases:
+- **T7 — F2 tokenizer + head-fallback guard**: five sub-cases:
   - T7a: member with edge `role_name: "hello:advisor"` ⇒ `@hello:advisor`
     resolves it (full colon-token match, tier 2).
   - T7b: `@advisor: hi` (trailing punctuation) ⇒ behaves exactly as
     `@advisor` (regex never captures the colon — no word char after it).
-  - T7c: pre-A-2 guard — zero members with colon-bearing role_name, no
-    member matches `hello:advisor`, but a member resolves as `hello` via
-    segment or display ⇒ `@hello:advisor` falls back to the `hello` head.
+    - T7c: pre-A-2 guard — zero colon-bearing role names in the combined
+    set (no filled member role_name with `:`, no open slot role_name with
+    `:`), no member matches `hello:advisor`, but a member resolves as
+    `hello` via segment or display ⇒ `@hello:advisor` falls back to the
+    `hello` head (safe — no role reference can be misinterpreted).
   - T7d: post-A-2 filled guard — at least one member has a colon-bearing
     role_name (e.g. `role_name: "hello:builder"`), no member has
     `role_name: "hello:advisor"`, but a member resolves as `hello` via
