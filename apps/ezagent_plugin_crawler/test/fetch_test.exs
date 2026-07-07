@@ -1,6 +1,6 @@
-defmodule EzagentPluginDealScout.FetchTest do
+defmodule EzagentPluginCrawler.FetchTest do
   use ExUnit.Case, async: true
-  alias EzagentPluginDealScout.Fetch
+  alias EzagentPluginCrawler.Fetch
 
   test "parse_items tags each item with the given source_type and keeps UTF-8 titles intact" do
     body = ~s([{"title":"某基金完成融资","url":"https://x/1","summary":"摘要"}])

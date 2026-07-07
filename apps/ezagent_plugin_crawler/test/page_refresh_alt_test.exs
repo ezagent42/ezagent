@@ -1,4 +1,4 @@
-defmodule EzagentPluginDealScout.PageRefreshAltTest do
+defmodule EzagentPluginCrawler.PageRefreshAltTest do
   @moduledoc """
   【显式临时 ALT 的单测 —— A①（#1201 ③，hello 暴露 dispatchable rebuild
   action）落地后随 `Ezagent.ActionSet.DealScoutPageRefreshAlt` 一起整体删除。】
@@ -28,12 +28,12 @@ defmodule EzagentPluginDealScout.PageRefreshAltTest do
   setup do
     parent = self()
 
-    Application.put_env(:ezagent_plugin_dealscout, :page_refresh_fun, fn session_uri, text ->
+    Application.put_env(:ezagent_plugin_crawler, :page_refresh_fun, fn session_uri, text ->
       send(parent, {:page_refresh, session_uri, text})
       {:ok, parent}
     end)
 
-    on_exit(fn -> Application.delete_env(:ezagent_plugin_dealscout, :page_refresh_fun) end)
+    on_exit(fn -> Application.delete_env(:ezagent_plugin_crawler, :page_refresh_fun) end)
     :ok
   end
 
@@ -85,11 +85,11 @@ defmodule EzagentPluginDealScout.PageRefreshAltTest do
   end
 
   test "缺省 seam 指向 hello 的公开生成入口 Generator.start/2（A① 落地后整段删）" do
-    Application.delete_env(:ezagent_plugin_dealscout, :page_refresh_fun)
+    Application.delete_env(:ezagent_plugin_crawler, :page_refresh_fun)
 
     default =
       Application.get_env(
-        :ezagent_plugin_dealscout,
+        :ezagent_plugin_crawler,
         :page_refresh_fun,
         &EzagentPluginHello.Generator.start/2
       )

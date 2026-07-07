@@ -1,7 +1,7 @@
-defmodule EzagentPluginDealScout.DemoTest do
+defmodule EzagentPluginCrawler.DemoTest do
   @moduledoc """
   Shape gate for the dealscout demo socialware manifest
-  (`EzagentPluginDealScout.Demo` — the boot-publish one-source-of-truth, the
+  (`EzagentPluginCrawler.Demo` — the boot-publish one-source-of-truth, the
   hello #162 / kanban golden-template play). Proves the config-authored
   manifest resolves through `Ezagent.Socialware.ManifestResolver.resolve/1`
   (the fail-closed authoring boundary), composes hello's public face
@@ -16,9 +16,9 @@ defmodule EzagentPluginDealScout.DemoTest do
   """
   use ExUnit.Case, async: true
 
-  alias Ezagent.ActionSet.DealScoutCrawl
+  alias Ezagent.ActionSet.Crawler
   alias Ezagent.Socialware.{Definition, ManifestResolver}
-  alias EzagentPluginDealScout.Demo
+  alias EzagentPluginCrawler.Demo
 
   defp resolve!(opts \\ []) do
     assert {:ok, %Definition{} = definition} = ManifestResolver.resolve(Demo.manifest_attrs(opts))
@@ -28,8 +28,9 @@ defmodule EzagentPluginDealScout.DemoTest do
   test "manifest resolves through ManifestResolver (string name-refs → Definition)" do
     definition = resolve!()
     assert definition.name == "dealscout"
-    # uses 声明依赖两个 plugin（hello 渲染面 + dealscout 爬取后台）
-    assert definition.uses == ["hello", "dealscout"]
+
+    # uses 声明依赖两个 plugin（hello 渲染面 + crawler 爬取后台——rename 后的通用能力名）
+    assert definition.uses == ["hello", "crawler"]
     # `"hello_render"` resolved through hello's registered PageView to the
     # backing view read ActionSet — dealscout declares NO view/render of its own.
     assert definition.views == [Ezagent.ActionSet.HelloRender]
@@ -52,8 +53,8 @@ defmodule EzagentPluginDealScout.DemoTest do
 
     # 2026-07-07 真浏览器 e2e 修正：session 本体是 `:crawl_now` 的宿主
     # （handler 读 ctx.session_uri + session config slice），shape 必须带
-    # DealScoutCrawl,否则 live dispatch `{:unknown_action, :crawl_now}`。
-    assert DealScoutCrawl in definition.shape
+    # Crawler,否则 live dispatch `{:unknown_action, :crawl_now}`。
+    assert Crawler in definition.shape
 
     assert Enum.any?(definition.adapters, fn a ->
              (a[:adapter_id] || a["adapter_id"]) == "external_feed"
@@ -96,7 +97,7 @@ defmodule EzagentPluginDealScout.DemoTest do
 
   test "role-slot recipes resolve to plugin-declared recipe names (config references real recipes)" do
     declared =
-      Enum.map(EzagentPluginDealScout.Recipes.all(), & &1.name) ++
+      Enum.map(EzagentPluginCrawler.Recipes.all(), & &1.name) ++
         Enum.map(EzagentPluginHello.Application.roles(), & &1.name)
 
     definition = resolve!()
@@ -111,7 +112,7 @@ defmodule EzagentPluginDealScout.DemoTest do
     assert (matcher["type"] || matcher[:type]) == "text_contains"
     # 标记从 update_signal/0 取（单一契约点），不硬编码字面量。
     arg = to_string(matcher["arg"] || matcher[:arg])
-    assert arg == DealScoutCrawl.update_signal()
+    assert arg == Crawler.update_signal()
     refute String.contains?(arg, "://")
 
     # 已声明角色名（conformance `routing_receivers_resolve` 只认这个），非 URI。

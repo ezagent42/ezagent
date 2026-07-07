@@ -1,4 +1,4 @@
-defmodule EzagentPluginDealScout.Fetch do
+defmodule EzagentPluginCrawler.Fetch do
   @moduledoc """
   自建入站源 client（**别误用 socialware `:pull` 出站投影** —— 那是"外部来读
   ezagent session"，跟"ezagent 去抓外网"语义相反）。
@@ -47,7 +47,7 @@ defmodule EzagentPluginDealScout.Fetch do
         {:error, {:http_status, code}}
 
       {:error, reason} ->
-        Logger.warning("DealScout.Fetch: request failed: #{inspect(reason)}")
+        Logger.warning("Crawler.Fetch: request failed: #{inspect(reason)}")
         {:error, reason}
     end
   end
@@ -59,12 +59,12 @@ defmodule EzagentPluginDealScout.Fetch do
   """
   @spec fetch_directed(String.t(), String.t()) :: {:ok, [item]} | {:error, :no_token}
   def fetch_directed(url, source) when is_binary(url) and is_binary(source) do
-    case EzagentPluginDealScout.Config.read_token(source) do
+    case EzagentPluginCrawler.Config.read_token(source) do
       {:ok, token} ->
         fetch(url, [{"Authorization", "Bearer #{token}"}], :directed)
 
       :error ->
-        :telemetry.execute([:dealscout, :fetch, :skipped_no_token], %{count: 1}, %{source: source})
+        :telemetry.execute([:crawler, :fetch, :skipped_no_token], %{count: 1}, %{source: source})
 
         {:error, :no_token}
     end
@@ -172,5 +172,5 @@ defmodule EzagentPluginDealScout.Fetch do
   # inject a canned reply so directed/auto-routing paths run without real
   # network. Defaults to real `:httpc` in dev/prod.
   defp http_request_fun,
-    do: Application.get_env(:ezagent_plugin_dealscout, :http_request_fun, &:httpc.request/4)
+    do: Application.get_env(:ezagent_plugin_crawler, :http_request_fun, &:httpc.request/4)
 end

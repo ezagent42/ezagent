@@ -1,6 +1,6 @@
-defmodule EzagentPluginDealScout.Config do
+defmodule EzagentPluginCrawler.Config do
   @moduledoc """
-  DealScout 的运行期配置层。
+  Crawler 的运行期配置层（通用能力层，与业务无关）。
 
   ## 两类配置，两条存储路径
 
@@ -15,7 +15,7 @@ defmodule EzagentPluginDealScout.Config do
       `EzagentPluginKanban.Github.write_creds/1` / `read_creds/0` 的 sanctioned
       idiom（`github.ex:19-52`）：写 `FsResolver.path!` + `File.write` + `chmod
       0o600`，读 `FsResolver.read_yaml`。每个源一个文件
-      `system://credentials/dealscout_<source>.yaml`。**只调 core 公开 API，不改
+      `system://credentials/crawler_<source>.yaml`。**只调 core 公开 API，不改
       core。**
 
   token 缺失一律 **fail-closed**（`read_token/1` 返回 `:error`），供 `Fetch`
@@ -28,7 +28,7 @@ defmodule EzagentPluginDealScout.Config do
   # 每源一个凭证文件；`system://credentials/<name>` 的 `<name>` 段照 kanban
   # `github.yaml` 先例（`.yaml` 后缀合法、非路径分隔）。
   @creds_type "credentials"
-  @creds_prefix "dealscout_"
+  @creds_prefix "crawler_"
 
   # --- profile / keywords → state slice effect --------------------------------
 
@@ -106,10 +106,10 @@ defmodule EzagentPluginDealScout.Config do
 
   defp normalize_source(_), do: :invalid
 
-  # --- token → system://credentials/dealscout_<source>.yaml -------------------
+  # --- token → system://credentials/crawler_<source>.yaml -------------------
 
   @doc """
-  写某定向源的 token 到 `system://credentials/dealscout_<source>.yaml`（admin-gated
+  写某定向源的 token 到 `system://credentials/crawler_<source>.yaml`（admin-gated
   文件层，照 kanban `Github.write_creds/1`：`path!` + `File.write` + `chmod 0o600`）。
   """
   @spec write_token(String.t(), String.t()) :: :ok | {:error, term()}

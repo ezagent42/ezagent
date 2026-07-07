@@ -261,7 +261,8 @@
   #   plugin cannot call a private domain helper under the plugin-only boundary,
   #   so the fork is forced; a future domain-side public helper would collapse
   #   it back. 43→44.
-  # - arch-cap-bump: +3 #1191 — Demo.DealScout mirrors the sanctioned #162
+  # - arch-cap-bump: +3 #1191 — the crawler plugin's dealscout Demo (前名
+  #   Demo.DealScout) mirrors the sanctioned #162
   #   golden-template boot-publish skeleton of Demo.Hello: publish/0,
   #   admin_ctx/2 and already_public?/1 are intentionally isomorphic.
   #   (arch-allow line markers can't be used — mix format moves trailing

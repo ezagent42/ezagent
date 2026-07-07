@@ -1,7 +1,7 @@
-defmodule EzagentPluginDealScout.DemoPublishTest do
+defmodule EzagentPluginCrawler.DemoPublishTest do
   @moduledoc """
   Boot-publish gate for the dealscout demo socialware
-  (`EzagentPluginDealScout.Demo`), the hello #162 / kanban golden-template play
+  (`EzagentPluginCrawler.Demo`), the hello #162 / kanban golden-template play
   — ExUnit drives the SAME `publish/0` the boot call site runs (skipped in
   `:test` for Ecto-sandbox reasons, exactly hello's `maybe_publish_hello_demo`
   split), inside a checked-out sandbox:
@@ -18,7 +18,7 @@ defmodule EzagentPluginDealScout.DemoPublishTest do
   Environment mirrors the `mix ezagent.socialware.check` setup: domain_session
   （socialware 生命周期宿主）+ domain_socialware（注册 `external_feed`
   adapter）+ plugin_hello（注册 HelloRender 的 `{Session, :hello_render}`
-  render cap + hello.* recipes）+ plugin_dealscout（dealscout recipes）；
+  render cap + hello.* recipes）+ plugin_crawler（dealscout demo recipes）；
   code-seed 两家 recipe 进 `workspace://system`（`RoleSeedHook` skips in
   test）；DataCase DB sandbox.
   """
@@ -27,14 +27,14 @@ defmodule EzagentPluginDealScout.DemoPublishTest do
   alias Ezagent.Agent.RecipeRegistry
   alias Ezagent.Socialware.ConfigGovernance.Socialware, as: Governance
   alias Ezagent.Socialware.{Conformance, Definition, DefinitionRegistry, ManifestResolver}
-  alias EzagentPluginDealScout.Demo
+  alias EzagentPluginCrawler.Demo
 
   setup do
     for app <- [
           :ezagent_domain_session,
           :ezagent_domain_socialware,
           :ezagent_plugin_hello,
-          :ezagent_plugin_dealscout
+          :ezagent_plugin_crawler
         ] do
       {:ok, _} = Elixir.Application.ensure_all_started(app)
     end
@@ -46,7 +46,7 @@ defmodule EzagentPluginDealScout.DemoPublishTest do
     # 角色槽当前都引自家 recipe（dealscout-discover + 临时 ALT
     # dealscout-page-alt）；hello 家照旧一起 seed（A① 落地后 page 槽回切
     # hello.builder 时这里不用再动）。
-    recipes = EzagentPluginDealScout.Recipes.all() ++ EzagentPluginHello.Application.roles()
+    recipes = EzagentPluginCrawler.Recipes.all() ++ EzagentPluginHello.Application.roles()
 
     Enum.each(recipes, fn recipe ->
       assert {:ok, _} = RecipeRegistry.seed_role_if_absent(recipe)
