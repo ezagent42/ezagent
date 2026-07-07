@@ -1,8 +1,11 @@
 defmodule EzagentPluginKanban.DemoTest do
   @moduledoc """
-  Shape gate for the kanban demo socialware manifest (`EzagentPluginKanban.Demo`
-  — the boot-publish one-source-of-truth, the hello #162 golden-template play).
-  Proves the config-authored manifest resolves through
+  Shape gate for the kanban demo socialware manifest — since the #1213 YAML
+  migration the one-source-of-truth is `priv/socialware/kanban/manifest.yaml`,
+  loaded by the `EzagentPluginKanban.Demo` thin loader via
+  `Ezagent.Socialware.ManifestYaml.parse/1` (the hello #162 golden-template
+  play, now as a config FILE). Proves the YAML file exists + parses, that the
+  parsed manifest resolves through
   `Ezagent.Socialware.ManifestResolver.resolve/1` (the fail-closed authoring
   boundary), declares exactly the TWO agent role-slots (`kanban-assistant` +
   `dev-together`, both cc-headless active) with zero participant instance URIs
@@ -25,12 +28,30 @@ defmodule EzagentPluginKanban.DemoTest do
   """
   use ExUnit.Case, async: true
 
-  alias Ezagent.Socialware.{Definition, ManifestResolver}
+  alias Ezagent.Socialware.{Definition, ManifestResolver, ManifestYaml}
   alias EzagentPluginKanban.Demo
 
   defp resolve!(opts \\ []) do
     assert {:ok, %Definition{} = definition} = ManifestResolver.resolve(Demo.manifest_attrs(opts))
     definition
+  end
+
+  test "the manifest source is the priv YAML file: exists, parses, and IS manifest_attrs/0" do
+    path = Demo.manifest_path()
+    assert File.exists?(path)
+    assert String.ends_with?(path, "priv/socialware/kanban/manifest.yaml")
+
+    # `manifest_attrs/0` (no overrides) is EXACTLY the parsed YAML — the loader
+    # adds nothing, so the config file is the one source of truth (#1213).
+    assert {:ok, parsed} = ManifestYaml.parse(File.read!(path))
+    assert parsed == Demo.manifest_attrs()
+
+    # field equivalence with the retired code-attrs shape (string-keyed,
+    # resolver-ready): stable name + the parse-normalized module list.
+    assert parsed["name"] == "kanban"
+    assert parsed["uses"] == ["kanban"]
+    assert parsed["bases"] == [Ezagent.ActionSet.Session]
+    assert parsed["views"] == ["kanban_render"]
   end
 
   test "manifest resolves through ManifestResolver (string name-refs → Definition)" do
@@ -107,10 +128,10 @@ defmodule EzagentPluginKanban.DemoTest do
 
     matcher = Map.get(rule, "matcher") || Map.get(rule, :matcher)
     assert (matcher["type"] || matcher[:type]) == "and"
-      # #1212 from_role 硬锁：and(text_contains __done__, from_role dev-together)
-      items = matcher["items"] || matcher[:items]
-      assert %{"type" => "text_contains", "arg" => "__done__"} in items
-      assert %{"type" => "from_role", "arg" => "dev-together"} in items
+    # #1212 from_role 硬锁：and(text_contains __done__, from_role dev-together)
+    items = matcher["items"] || matcher[:items]
+    assert %{"type" => "text_contains", "arg" => "__done__"} in items
+    assert %{"type" => "from_role", "arg" => "dev-together"} in items
     # 内容标记腿的 arg = 契约点字面（零 URI）
     tc = Enum.find(items, &((&1["type"] || &1[:type]) == "text_contains"))
     arg = to_string(tc["arg"] || tc[:arg])

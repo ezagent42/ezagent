@@ -1,9 +1,12 @@
 defmodule EzagentPluginKanban.DemoPublishTest do
   @moduledoc """
-  Boot-publish gate for the kanban demo socialware (`EzagentPluginKanban.Demo`),
-  the hello #162 golden-template play — ExUnit drives the SAME `publish/0` the
-  boot call site runs (skipped in `:test` for Ecto-sandbox reasons, exactly
-  hello's `maybe_publish_hello_demo` split), inside a checked-out sandbox:
+  Boot-publish gate for the kanban demo socialware (`EzagentPluginKanban.Demo`,
+  since #1213 a thin loader over `priv/socialware/kanban/manifest.yaml` walking
+  the `ManifestYaml.import/2` chain: parse → resolve → check_candidate →
+  publish_or_upgrade), the hello #162 golden-template play — ExUnit drives the
+  SAME `publish/0` the boot call site runs (skipped in `:test` for Ecto-sandbox
+  reasons, exactly hello's `maybe_publish_hello_demo` split), inside a
+  checked-out sandbox:
 
     * **idempotency three-state** (P0 §5 `publish_or_upgrade/2`): first publish
       `:published` → unchanged redeploy `:exists` (NO new CR / revision) →
@@ -21,7 +24,7 @@ defmodule EzagentPluginKanban.DemoPublishTest do
   use EzagentCore.DataCase, async: false
 
   alias Ezagent.Agent.RecipeRegistry
-  alias Ezagent.Socialware.ConfigGovernance.Socialware, as: Governance
+  alias Ezagent.ConfigGovernance.Socialware, as: Governance
   alias Ezagent.Socialware.{Conformance, Definition, DefinitionRegistry, ManifestResolver}
   alias EzagentPluginKanban.Demo
 
@@ -87,7 +90,7 @@ defmodule EzagentPluginKanban.DemoPublishTest do
     # Materializable: all 12 conformance assertions green — the same guarantee
     # `mix ezagent.socialware.check kanban` gives, proving install works.
     # 13 = 原 12 + #1212 的 role-DAG conformance 断言
-      assert length(Conformance.assertions()) == 13
+    assert length(Conformance.assertions()) == 13
 
     assert {:ok, %Definition{name: "kanban"} = definition, _obj} =
              DefinitionRegistry.lookup(ws, "kanban")

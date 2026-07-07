@@ -265,9 +265,15 @@
   #   golden-template boot-publish skeleton of Demo.Hello: publish/0,
   #   admin_ctx/2 and already_public?/1 are intentionally isomorphic.
   #   (arch-allow line markers can't be used — mix format moves trailing
-  #   comments off `do` lines.) 44→47. NOTE merge-order coupling: #1191
-  #   bumps the same cap for Demo.DealScout; whichever lands second re-measures.
-  cross_file_duplicate_fn_groups: 47,
+  #   comments off `do` lines.) 44→47.
+  # - arch-cap-ratchet: -1 kanban YAML-manifest migration (#1213 mechanism) —
+  #   Demo.Kanban shrank to a thin priv/manifest.yaml loader; its publish/0 now
+  #   walks the ManifestYaml.import chain (adds check_candidate) and no longer
+  #   mirrors Demo.Hello's golden-template publish body. admin_ctx/2 +
+  #   already_public?/1 remain intentionally isomorphic (the remaining two
+  #   groups of the #1190 bump). 47→46. NOTE merge-order coupling: #1191 bumps
+  #   the same cap for Demo.DealScout; whichever lands second re-measures.
+  cross_file_duplicate_fn_groups: 46,
   # FF-4 (cleanup-1): distinct non-agent_bridge/non-test lib files still
   # referencing a `/cc_socket` deprecation-shim module
   # (EzagentPluginCc.{BridgeRegistry,Socket,Channel,TokenStore}). Cleanup-3
