@@ -17,6 +17,7 @@ ROOT="$(cd "$(dirname "$0")/../../../.." && pwd)"
 PM_PROTO="$ROOT/.claude/skills/kanban-assistant/references/kanban-team-collaboration.md"
 DEV_OVERLAY="$ROOT/.claude/skills/kanban-assistant/references/dev-together-relay-overlay.md"
 KANBAN_TEAM="$ROOT/apps/ezagent_plugin_kanban/lib/ezagent_plugin_kanban/demo.ex"
+MANIFEST_YAML="$ROOT/apps/ezagent_plugin_kanban/priv/socialware/kanban/manifest.yaml"
 
 fail() { echo "relay-signal-check FAIL: $1" >&2; exit 1; }
 
@@ -27,7 +28,11 @@ grep -qF "$MARKER" "$DEV_OVERLAY" || fail "marker '$MARKER' missing from $DEV_OV
 if [ -f "$KANBAN_TEAM" ]; then
   grep -qF "\"$MARKER\"" "$KANBAN_TEAM" \
     || fail "marker '$MARKER' missing from routing_rules in $KANBAN_TEAM (S3 contract point)"
-  echo "relay-signal-check OK: '$MARKER' aligned across pm protocol, dev overlay, and Definition."
+  if [ -f "$MANIFEST_YAML" ]; then
+    grep -qF "\"$MARKER\"" "$MANIFEST_YAML" \
+      || fail "marker '$MARKER' missing from $MANIFEST_YAML (YAML manifest, 4th contract point)"
+  fi
+  echo "relay-signal-check OK: '$MARKER' aligned across pm protocol, dev overlay, Definition, and YAML manifest."
 else
   echo "relay-signal-check OK: '$MARKER' aligned across pm protocol + dev overlay (Definition lands in S3)."
 fi

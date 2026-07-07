@@ -57,6 +57,13 @@ legends:
       - dev-together
     bound_rule_set: relay-back
     fold: false
+  collaboration:
+    protocol: >-
+      协作行话速查（进场必读，人类成员/新 agent 同样适用）：dev 只做开发不碰看板——
+      接活后干完，在消息里发 "__done__" 并带上 PR 链接，路由会自动转给看板助手
+      （只有 dev-together 槽的成员发才有效）。看板助手统一管卡：建卡、指派、收到
+      "__done__" 后登记 PR、用 gh 验证 CI 绿再推进阶段。不知道怎么做时 @看板助手问。
+    fold: false
 visibility_policy:
   scope: public
   publish_policy: supervised
