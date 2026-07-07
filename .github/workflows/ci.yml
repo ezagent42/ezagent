@@ -192,7 +192,12 @@ jobs:
     permissions: { contents: read }
     steps:
       - uses: actions/checkout@v4
-        with: { fetch-depth: 0 }
-      - uses: gitleaks/gitleaks-action@v2
-        env:
-          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+      # Bare gitleaks CLI (MIT), not gitleaks-action: the action demands a paid
+      # license for org repos. Working-tree scan (--no-git) by design — this
+      # gate guards NEW additions; history is handled separately (rewrite +
+      # rotation). Allowlist rationale lives in .gitleaks.toml.
+      - name: Scan working tree for secrets
+        run: |
+          docker run --rm -v "$PWD:/repo" -w /repo \
+            ghcr.io/gitleaks/gitleaks:latest \
+            detect --source /repo --no-git --config /repo/.gitleaks.toml --redact

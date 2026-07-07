@@ -11,7 +11,23 @@
 useDefault = true
 
 [allowlist]
-description = "Historical dev-together manuscripts (handled by separate history rewrite)"
+description = "Known-benign classes; every entry has a rationale below"
 paths = [
+  # Historical dev-together manuscripts (handled by separate history rewrite).
   '''docs/together/.*''',
+  # Third-party build deps (never committed; present only in local worktrees —
+  # sqlite amalgamation, phoenix/plug_crypto/swoosh docstrings trip generic-api-key).
+  '''deps/.*''',
+  '''_build/.*''',
+  # Dev/test-only fixed secrets, committed by design (standard Phoenix
+  # dev secret_key_base + test signing salts). prod/runtime configs stay guarded.
+  '''config/dev\.exs''',
+  '''config/test\.exs''',
+  # Test fixtures: repo policy is self-minted fake credentials in tests
+  # (api_keys_test / app_settings_test fixture tokens).
+  '''apps/[^/]+/test/.*''',
+  '''tests/fixture/.*''',
+  # Documentation examples (illustrative keys in skill docs / scenario scripts).
+  '''\.claude/skills/elixir-phoenix-helper/SKILL\.md''',
+  '''docs/scenarios/08-4agent-comprehensive/scenario\.md''',
 ]
