@@ -1,33 +1,41 @@
 defmodule Ezagent.Socialware.Demo.HelloTest do
+  @moduledoc """
+  Shape gate for the LEGACY single-agent fixture branch of
+  `Ezagent.Socialware.Demo.Hello.manifest_attrs/1` (the `:role_name` option) —
+  the pure-`code` shape older materialization tests still use.
+
+  The reference (3-role) shape is now CONFIG shipped in
+  `apps/ezagent_web/priv/socialware_seed/hello/manifest.yaml`, so its drift gate
+  lives in `ezagent_web` (where the shipping app + file are loaded). This
+  domain_session-local test cannot see the web-shipped file (`:ezagent_web` is
+  not a dep here), so it locks only the branch that stays code in this layer.
+  """
   use ExUnit.Case, async: true
 
   alias Ezagent.Socialware.Demo.Hello
 
-  test "default manifest is the declarative hello reference routing shape" do
-    attrs = Hello.manifest_attrs()
+  test "legacy :role_name branch emits the single-agent fixture shape" do
+    attrs =
+      Hello.manifest_attrs(name: "hello-fixture", recipe_name: "np", role_name: "hello-helper")
 
-    assert Enum.sort(Enum.map(attrs["roles"], & &1["role_name"])) == [
-             "builder",
-             "responser",
-             "viewer"
+    assert attrs["name"] == "hello-fixture"
+
+    assert attrs["roles"] == [
+             %{
+               "role_name" => "hello-helper",
+               "fill" => "agent",
+               "recipe" => "np",
+               "flavor" => "py"
+             }
            ]
 
-    assert %{"role_name" => "viewer", "fill" => "human"} in attrs["roles"]
+    assert attrs["prompt_templates"] == %{"hello" => "Say hello: {body}"}
 
     assert [
              %{
-               "matcher" => %{"type" => "from_role", "arg" => "viewer"},
-               "receivers" => ["responser"]
-             },
-             %{
-               "matcher" => %{
-                 "type" => "and",
-                 "items" => [
-                   %{"type" => "from_role", "arg" => "responser"},
-                   %{"type" => "text_matches", "arg" => "^\\[need-build\\]"}
-                 ]
-               },
-               "receivers" => ["builder"]
+               "matcher" => %{"type" => "always"},
+               "receivers" => ["hello-helper"],
+               "prompt_template_ref" => "hello"
              }
            ] = attrs["routing_rules"]
   end
