@@ -11,13 +11,16 @@ defmodule EzagentPluginHello.RouterTest do
   alias EzagentPluginHello.{App, Generator, Members, Router}
   alias EzagentPluginHello.Application, as: HelloApp
 
-  describe "decide/2 — identity is the security boundary" do
+  describe "decide/3 — identity is the security boundary" do
     test "a NON-owner is ALWAYS routed to the concierge, whatever they type" do
       # The page-edit boundary: even an explicit build request from a non-owner
-      # must NOT reach the builder. No LLM is consulted for non-owners.
-      assert Router.decide(false, "make the title red") == :concierge
-      assert Router.decide(false, "generate a whole new landing page") == :concierge
-      assert Router.decide(false, "") == :concierge
+      # must NOT reach the builder. No LLM is consulted for non-owners, so the
+      # session_uri is never dereferenced on this branch (a dummy URI is fine).
+      session = Ezagent.URI.session("system", :hello, "decide-nonowner")
+
+      assert Router.decide(false, session, "make the title red") == :concierge
+      assert Router.decide(false, session, "generate a whole new landing page") == :concierge
+      assert Router.decide(false, session, "") == :concierge
     end
   end
 
