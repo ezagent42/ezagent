@@ -373,11 +373,10 @@ defmodule EzagentPluginCc.SdkSidecar do
   defp maybe_json_env(env, key, value),
     do: [{key, value |> Jason.encode!() |> String.to_charlist()} | env]
 
-  defp trim_output(output) when byte_size(output) > 8192 do
-    binary_part(output, byte_size(output), -8192)
-  end
-
-  defp trim_output(output), do: output
+  # #1201 ①: codepoint-boundary-aware — a raw binary_part tail can start
+  # mid-codepoint on CJK-heavy sidecar output and hand invalid UTF-8 to
+  # whoever renders/logs this accumulated output.
+  defp trim_output(output), do: Ezagent.Utf8Tail.tail(output, 8192)
 
   defp new_session_id do
     "ezagent-cc-" <> Base.encode16(:crypto.strong_rand_bytes(16), case: :lower)

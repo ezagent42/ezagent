@@ -174,9 +174,7 @@ defmodule EzagentPluginCodex.AppServer do
     end
   end
 
-  defp trim_output(output) when byte_size(output) > 8192 do
-    binary_part(output, byte_size(output), -8192)
-  end
-
-  defp trim_output(output), do: output
+  # #1201 ①: codepoint-boundary-aware — a raw binary_part tail can start
+  # mid-codepoint on CJK-heavy sidecar output.
+  defp trim_output(output), do: Ezagent.Utf8Tail.tail(output, 8192)
 end

@@ -63,6 +63,7 @@ defmodule Ezagent.Domain.Pty.Server do
   require Logger
 
   alias Ezagent.AnsiStrip
+  alias Ezagent.Utf8Tail
 
   defstruct [
     :agent_uri,
@@ -308,14 +309,10 @@ defmodule Ezagent.Domain.Pty.Server do
           state = :sys.get_state(pid, 500)
           buf = state.pty_buffer
 
-          tail =
-            if byte_size(buf) > max_bytes do
-              binary_part(buf, byte_size(buf) - max_bytes, max_bytes)
-            else
-              buf
-            end
-
-          {:ok, tail}
+          # #1201 ①: codepoint-boundary-aware cut — a raw binary_part
+          # tail can start mid-codepoint and break downstream consumers
+          # (PubSub replay / LiveView render) on CJK-heavy output.
+          {:ok, Utf8Tail.tail(buf, max_bytes)}
         catch
           _, _ -> :error
         end
@@ -789,9 +786,20 @@ defmodule Ezagent.Domain.Pty.Server do
   def matches?(needles, stripped) when is_list(needles),
     do: Enum.all?(needles, &matches?(&1, stripped))
 
-  def matches?(%Regex{} = re, stripped), do: Regex.match?(re, stripped)
+  def matches?(%Regex{} = re, stripped), do: Regex.match?(re, scrub_invalid(stripped))
 
-  defp normalize_ws(s) when is_binary(s), do: String.replace(s, ~r/\s+/u, " ")
+  defp normalize_ws(s) when is_binary(s),
+    do: String.replace(scrub_invalid(s), ~r/\s+/u, " ")
+
+  # #1201 ① defense-in-depth at the point the buffer enters regex scanning:
+  # `~r/…/u` RAISES ArgumentError on invalid UTF-8. Boundary-aware trimming
+  # (Utf8Tail) keeps a valid stream valid, but a PTY can emit genuinely
+  # invalid bytes, and a chunk boundary can transiently split a codepoint
+  # (the raw buffer self-heals when the next chunk appends the rest — so we
+  # scrub only this scan-side copy, never the buffer itself).
+  defp scrub_invalid(s) when is_binary(s) do
+    if String.valid?(s), do: s, else: String.replace_invalid(s)
+  end
 
   defp fire_prompt(prompt, state) do
     Logger.info(
@@ -810,10 +818,16 @@ defmodule Ezagent.Domain.Pty.Server do
 
   # Keep the prompt-detection buffer bounded so it doesn't grow
   # unbounded over long-running sessions.
+  #
+  # #1201 ①: the cut MUST be codepoint-boundary-aware. A raw
+  # `binary_part/3` cut can split a multi-byte UTF-8 codepoint, leaving
+  # the buffer starting with a continuation byte; the next chunk's scan
+  # then feeds invalid UTF-8 into `normalize_ws/1`'s `/u` regex, which
+  # raises and crashes this server. Long CJK-heavy turns died reliably.
   defp trim_buffer_only(%__MODULE__{pty_buffer: buf} = state) do
     buf2 =
       if byte_size(buf) > 64 * 1024 do
-        binary_part(buf, byte_size(buf) - 16 * 1024, 16 * 1024)
+        Utf8Tail.tail(buf, 16 * 1024)
       else
         buf
       end
