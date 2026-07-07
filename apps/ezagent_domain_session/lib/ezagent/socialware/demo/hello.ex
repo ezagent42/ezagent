@@ -93,6 +93,7 @@ defmodule Ezagent.Socialware.Demo.Hello do
       "title" => "Pure-config hello",
       "description" => "Hello socialware authored as a manifest.",
       "uses" => ["hello"],
+      "requires" => ["orchestrator"],
       "bases" => [
         "Elixir.Ezagent.ActionSet.Session",
         "Elixir.Ezagent.ActionSet.Publisher.SessionImpl"

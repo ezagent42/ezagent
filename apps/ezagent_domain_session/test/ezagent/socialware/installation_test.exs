@@ -163,6 +163,115 @@ defmodule Ezagent.Socialware.InstallationTest do
     assert pointed_definition_id(session_uri, name) == second_object.id
   end
 
+  test "installing an entry socialware recursively installs required socialwares first" do
+    n = System.unique_integer([:positive])
+    dep_name = "install-required-dep-#{n}"
+    app_name = "install-required-app-#{n}"
+    session_uri = Ezagent.URI.session(:system, :socialware, "requires-#{n}")
+
+    _dep_object = write_definition!(dep_name, "dep")
+    _app_object = write_definition!(app_name, "app", requires: [dep_name])
+
+    assert :ok =
+             Installation.install_template_installs(
+               session_uri,
+               @workspace_uri,
+               %{installs: [app_name]},
+               @actor_uri
+             )
+
+    assert Installation.installed?(session_uri, dep_name)
+    assert Installation.installed?(session_uri, app_name)
+  end
+
+  test "re-seeding an already installed dependent still ensures newly added requirements" do
+    n = System.unique_integer([:positive])
+    dep_name = "install-idem-dep-#{n}"
+    app_name = "install-idem-app-#{n}"
+    session_uri = Ezagent.URI.session(:system, :socialware, "requires-idem-#{n}")
+
+    _dep_object = write_definition!(dep_name, "dep")
+    _app_v1_object = write_definition!(app_name, "app-v1")
+
+    assert :ok =
+             Installation.install_template_installs(
+               session_uri,
+               @workspace_uri,
+               %{installs: [app_name]},
+               @actor_uri
+             )
+
+    refute Installation.installed?(session_uri, dep_name)
+
+    _app_v2_object = write_definition!(app_name, "app-v2", requires: [dep_name])
+
+    assert :ok =
+             Installation.repoint_template_installs(
+               session_uri,
+               @workspace_uri,
+               %{installs: [app_name]},
+               @actor_uri
+             )
+
+    assert :ok =
+             Installation.install_template_installs(
+               session_uri,
+               @workspace_uri,
+               %{installs: [app_name]},
+               @actor_uri
+             )
+
+    assert Installation.installed?(session_uri, dep_name)
+    assert Installation.installed?(session_uri, app_name)
+  end
+
+  test "repoint preflights reverse dependents and rejects before flipping incompatible dependency" do
+    n = System.unique_integer([:positive])
+    dep_name = "install-repoint-dep-#{n}"
+    app_name = "install-repoint-app-#{n}"
+    session_uri = Ezagent.URI.session(:system, :socialware, "requires-repoint-#{n}")
+
+    dep_r1 =
+      write_definition!(dep_name, "dep-r1",
+        roles: [%{role_name: "#{dep_name}:worker", fill: :human}]
+      )
+
+    _app_object =
+      write_definition!(app_name, "app",
+        requires: [dep_name],
+        roles: [%{role_name: "#{app_name}:entry", fill: :human}],
+        routing_rules: [
+          %{
+            matcher: %{"type" => "from_role", "arg" => "#{app_name}:entry"},
+            receivers: ["#{dep_name}:worker"]
+          }
+        ]
+      )
+
+    assert :ok =
+             Installation.install_template_installs(
+               session_uri,
+               @workspace_uri,
+               %{installs: [app_name]},
+               @actor_uri
+             )
+
+    assert pointed_definition_id(session_uri, dep_name) == dep_r1.id
+    _dep_r2 = write_definition!(dep_name, "dep-r2", roles: [])
+
+    assert {:error, {:repoint_blocked, ^dep_name, blocked}} =
+             Installation.repoint_template_installs(
+               session_uri,
+               @workspace_uri,
+               %{installs: [dep_name]},
+               @actor_uri
+             )
+
+    assert [{^app_name, failures}] = blocked
+    assert Enum.any?(failures, &match?({:routing_receivers_resolve, _}, &1))
+    assert pointed_definition_id(session_uri, dep_name) == dep_r1.id
+  end
+
   test "session rollback removes rule rows and retracts install pointers for the session" do
     name = "rollback-install-#{System.unique_integer([:positive])}"
     session_uri = Ezagent.URI.session(:system, :socialware, "rollback-#{name}")
@@ -216,13 +325,17 @@ defmodule Ezagent.Socialware.InstallationTest do
     end
   end
 
-  defp write_definition!(name, marker) do
-    {:ok, definition} =
-      Definition.new(%{
+  defp write_definition!(name, marker, overrides \\ []) do
+    attrs =
+      %{
         name: name,
         bases: [Ezagent.ActionSet.Session],
         prompt_templates: %{"marker" => marker}
-      })
+      }
+      |> Map.merge(Map.new(overrides))
+
+    {:ok, definition} =
+      Definition.new(attrs)
 
     {:ok, object} =
       DefinitionRegistry.write_definition(definition,

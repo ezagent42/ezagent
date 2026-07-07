@@ -1,7 +1,7 @@
 defmodule Ezagent.Socialware.ManifestResolverTest do
-  use ExUnit.Case, async: false
+  use EzagentCore.DataCase, async: false
 
-  alias Ezagent.Socialware.{Definition, ManifestResolver}
+  alias Ezagent.Socialware.{Definition, DefinitionRegistry, ManifestResolver, ManifestYaml}
 
   defmodule RenderBehavior do
     @moduledoc false
@@ -73,6 +73,7 @@ defmodule Ezagent.Socialware.ManifestResolverTest do
     Ezagent.UI.SessionViewRegistry.init()
     :ok = Ezagent.UI.SessionViewRegistry.register(PageView)
     :ok = Ezagent.PluginRegistry.register(FixturePlugin)
+    :ok = seed_builtins()
     on_exit(fn -> Ezagent.PluginRegistry.unregister("resolver-fixture") end)
     :ok
   end
@@ -88,6 +89,47 @@ defmodule Ezagent.Socialware.ManifestResolverTest do
 
     assert definition.views == [RenderBehavior]
     assert definition.uses == ["resolver-fixture"]
+  end
+
+  test "resolves requires into Definition and body/hash identity" do
+    assert {:ok, %Definition{} = definition} =
+             ManifestResolver.resolve(%{
+               name: "manifest-requires",
+               requires: ["orchestrator"],
+               workspace_uri: Ezagent.URI.workspace(:system)
+             })
+
+    assert Map.get(definition, :requires) == ["orchestrator"]
+    assert Definition.body(definition).requires == ["orchestrator"]
+  end
+
+  test "fails closed when a required socialware is not published" do
+    missing = "missing-required-#{System.unique_integer([:positive])}"
+
+    assert {:error, {:unknown_socialware_requires, ^missing}} =
+             ManifestResolver.resolve(%{
+               name: "manifest-requires-missing",
+               requires: [missing],
+               workspace_uri: Ezagent.URI.workspace(:system)
+             })
+  end
+
+  test "canonical YAML preserves requires between uses and bases" do
+    assert {:ok, definition} =
+             Definition.new(%{
+               name: "manifest-requires-yaml",
+               uses: ["resolver-fixture"],
+               requires: ["orchestrator"],
+               bases: [Ezagent.ActionSet.Session]
+             })
+
+    assert {:ok, yaml} = ManifestYaml.render(definition)
+    assert yaml =~ "uses:\n"
+    assert yaml =~ "requires:\n"
+    assert yaml =~ "bases:\n"
+    assert String.contains?(yaml, "- \"orchestrator\"")
+    assert {:ok, parsed} = ManifestYaml.parse(yaml)
+    assert parsed["requires"] == ["orchestrator"]
   end
 
   test "fails closed when a used plugin is not installed" do
@@ -115,5 +157,12 @@ defmodule Ezagent.Socialware.ManifestResolverTest do
              })
 
     assert name_authored == code_authored
+  end
+
+  defp seed_builtins do
+    case DefinitionRegistry.seed_builtin_definitions() do
+      :ok -> :ok
+      {:error, {:socialware_definition_seed_collision, _}} -> :ok
+    end
   end
 end
