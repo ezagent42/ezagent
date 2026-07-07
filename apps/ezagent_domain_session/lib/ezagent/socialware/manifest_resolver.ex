@@ -7,7 +7,7 @@ defmodule Ezagent.Socialware.ManifestResolver do
   references, so this is the explicit fail-closed boundary between the two.
   """
 
-  alias Ezagent.Socialware.Definition
+  alias Ezagent.Socialware.{Definition, ManifestViews}
 
   @doc "Resolve manifest name refs into a validated Definition."
   @spec resolve(map()) :: {:ok, Definition.t()} | {:error, term()}
@@ -71,7 +71,7 @@ defmodule Ezagent.Socialware.ManifestResolver do
   defp resolve_view(mod) when is_atom(mod), do: {:ok, mod}
 
   defp resolve_view(ref) when is_binary(ref) do
-    with {:ok, registry} <- session_view_registry() do
+    with {:ok, registry} <- ManifestViews.session_view_registry() do
       apply(registry, :init, [])
     end
 
@@ -102,7 +102,7 @@ defmodule Ezagent.Socialware.ManifestResolver do
   defp resolve_view(other), do: {:error, {:unknown_socialware_view_ref, other}}
 
   defp view_modules do
-    with {:ok, registry} <- session_view_registry(),
+    with {:ok, registry} <- ManifestViews.session_view_registry(),
          table <- apply(registry, :table, []),
          true <- :ets.whereis(table) != :undefined do
       table
@@ -124,17 +124,6 @@ defmodule Ezagent.Socialware.ManifestResolver do
     end
   rescue
     _ -> nil
-  end
-
-  defp session_view_registry do
-    module = Module.concat([Ezagent, UI, SessionViewRegistry])
-
-    if Code.ensure_loaded?(module) and function_exported?(module, :table, 0) and
-         function_exported?(module, :init, 0) do
-      {:ok, module}
-    else
-      :error
-    end
   end
 
   defp session_view_contract do

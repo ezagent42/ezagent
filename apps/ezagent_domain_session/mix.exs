@@ -66,6 +66,7 @@ defmodule EzagentDomainInstanceMessage.MixProject do
       # agent-flavor resolver `delivery.ex` still calls — is the one allowlisted
       # cross-edge the acyclic gate tracks (shrunk by 9c).
       {:ezagent_domain_agent, in_umbrella: true},
+      {:yaml_elixir, "~> 2.9"},
       # Phase 7 completion PR-5: the orchestrator MCP transport bridge's
       # BEAM endpoint is a Phoenix.Socket + Phoenix.Channel
       # (Ezagent.Orchestrator.McpSocket / McpChannel). Declared

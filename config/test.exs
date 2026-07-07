@@ -82,3 +82,7 @@ config :ezagent_plugin_email, Ezagent.Email.Mailer, adapter: Swoosh.Adapters.Tes
 
 # task #87 — tests use no cookie domain (host-bound session cookie).
 config :ezagent_web, :session_cookie_domain, nil
+
+# Manifest deploy-seed scan is a dev/prod boot lane. Tests exercise it directly
+# with temp priv dirs so boot remains deterministic.
+config :ezagent_domain_session, :socialware_manifest_boot_scan, false

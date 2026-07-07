@@ -1,4 +1,7 @@
-# AutoService Tier-1 — socialware package (DEFINITION DATA).
+# AutoService Tier-1 — legacy socialware package.
+#
+# Canonical socialware manifest fields now live in ./manifest.yaml. This legacy
+# package stays for persona/kb seed data until the assets pipeline lands.
 #
 # This package is the PRODUCT DEFINITION of the AutoService Tier-1 socialware
 # app. The installer (scripts/autoservice_tier1_seed.exs — transitional; the

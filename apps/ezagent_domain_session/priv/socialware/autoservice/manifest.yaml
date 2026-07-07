@@ -1,0 +1,27 @@
+name: autoservice-tier1
+version: "0.1.0"
+title: "AutoService Tier-1"
+description: "A public first-line support session with a declared service agent."
+bases:
+  - Ezagent.ActionSet.Session
+shape:
+  - Ezagent.ActionSet.Turn
+  - Ezagent.ActionSet.Surface
+roles:
+  - role_name: autoservice
+    fill: agent
+    recipe: autoservice-agent
+    flavor: native
+routing_rules:
+  - matcher:
+      type: always
+    receivers:
+      - autoservice
+    rule_set: default
+    position: 0
+visibility_policy:
+  scope: public
+  publish_policy: auto
+  web_anon_access: true
+owner_policy:
+  type: installer

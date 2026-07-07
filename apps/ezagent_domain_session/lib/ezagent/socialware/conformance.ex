@@ -35,7 +35,7 @@ defmodule Ezagent.Socialware.Conformance do
   """
   @spec check(Definition.t(), URI.t() | String.t()) :: :ok | {:error, [failure()]}
   def check(%Definition{} = definition, workspace_uri) do
-    case check_with_warnings(definition, workspace_uri) do
+    case check_with_lookup(definition, workspace_uri, &DefinitionRegistry.lookup/2) do
       {:ok, _warnings} -> :ok
       {:error, failures, _warnings} -> {:error, failures}
     end
@@ -50,6 +50,37 @@ defmodule Ezagent.Socialware.Conformance do
   @spec check_with_warnings(Definition.t(), URI.t() | String.t()) ::
           {:ok, [warning()]} | {:error, [failure()], [warning()]}
   def check_with_warnings(%Definition{} = definition, workspace_uri) do
+    check_with_lookup(definition, workspace_uri, &DefinitionRegistry.lookup/2)
+  end
+
+  @doc """
+  Run every conformance assertion against a not-yet-published candidate.
+
+  The candidate's own name resolves in-memory for installability checks; all
+  other definition refs still resolve through the real registry. Fail-closed
+  like `check/2`: role-DAG warnings are discarded here — the import path
+  surfaces failures only.
+  """
+  @spec check_candidate(Definition.t(), URI.t() | String.t()) :: :ok | {:error, [failure()]}
+  def check_candidate(%Definition{name: name} = definition, workspace_uri) do
+    lookup_fun = fn lookup_ws, lookup_name ->
+      if same_workspace?(lookup_ws, workspace_uri) and lookup_name == name do
+        {:ok, definition, nil}
+      else
+        DefinitionRegistry.lookup(lookup_ws, lookup_name)
+      end
+    end
+
+    case check_with_lookup(definition, workspace_uri, lookup_fun) do
+      {:ok, _warnings} -> :ok
+      {:error, failures, _warnings} -> {:error, failures}
+    end
+  end
+
+  # Single internal pipeline: `lookup_fun` parameterizes registry access
+  # (candidate-aware for imports, real registry otherwise); the return shape
+  # always carries the role-DAG warnings for callers that surface them.
+  defp check_with_lookup(%Definition{} = definition, workspace_uri, lookup_fun) do
     ws = to_uri(workspace_uri)
     {role_dag_failures, role_dag_warnings} = check_role_dag(definition)
 
@@ -65,8 +96,8 @@ defmodule Ezagent.Socialware.Conformance do
         :orchestrator_uri_parses,
         check_orchestrator_uri(definition.orchestrator_template_uri)
       )
-      |> add(:install_resolves, check_install_resolves(definition, ws))
-      |> add(:template_installable, check_template_installable(definition, ws))
+      |> add(:install_resolves, check_install_resolves(definition, ws, lookup_fun))
+      |> add(:template_installable, check_template_installable(definition, ws, lookup_fun))
       |> add(:routing_receivers_resolve, check_routing_receivers(definition))
       |> add(:routing_role_dag, role_dag_failures)
       |> add(:prompt_template_refs_valid, check_prompt_template_refs(definition))
@@ -267,18 +298,20 @@ defmodule Ezagent.Socialware.Conformance do
 
   # --- 7: definition is installable (resolvable in the registry) -----------
 
-  defp check_install_resolves(%Definition{name: name}, ws) do
-    case DefinitionRegistry.lookup(ws, name) do
+  defp check_install_resolves(%Definition{name: name}, ws, lookup_fun) do
+    case lookup_fun.(ws, name) do
       {:ok, _def, _obj} -> :ok
       :error -> {:error, {:unknown_socialware_install, name}}
     end
   end
 
-  defp check_template_installable(%Definition{name: name}, ws) do
+  defp check_template_installable(%Definition{name: name}, ws, lookup_fun) do
     content = %{installs: [name]}
 
-    with {:ok, _resolved} <- Installation.resolved_template_installs(content, ws),
-         {:ok, _behaviors} <- Installation.behavior_set_for_template(content, ws) do
+    with {:ok, _resolved} <-
+           Installation.resolved_template_installs(content, ws, lookup_fun: lookup_fun),
+         {:ok, _behaviors} <-
+           Installation.behavior_set_for_template(content, ws, lookup_fun: lookup_fun) do
       :ok
     else
       {:error, reason} -> {:error, reason}
@@ -492,4 +525,6 @@ defmodule Ezagent.Socialware.Conformance do
 
   defp to_uri(%URI{} = uri), do: uri
   defp to_uri(str) when is_binary(str), do: Ezagent.URI.new!(str)
+
+  defp same_workspace?(left, right), do: URI.to_string(to_uri(left)) == URI.to_string(to_uri(right))
 end

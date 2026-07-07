@@ -158,6 +158,8 @@ defmodule EzagentDomainInstanceMessage.Application do
         :ok = ensure_system_workspace()
 
         :ok = seed_builtin_socialware_definitions()
+        :ok = seed_manifest_boot_recipes()
+        :ok = Ezagent.Socialware.ManifestSeed.scan_boot_manifests!()
 
         # Plugin authoring contract PR-5 codex HIGH-2 — the default
         # agent is NO LONGER seeded here. Seeding it from chat's
@@ -477,6 +479,21 @@ defmodule EzagentDomainInstanceMessage.Application do
           raise "EzagentDomainInstanceMessage boot aborted — built-in socialware " <>
                   "definitions could not be persisted: #{inspect(reason)}"
         end
+    end
+  end
+
+  defp seed_manifest_boot_recipes do
+    if Ezagent.Socialware.ManifestSeed.enabled?() do
+      case Ezagent.Agent.RecipeRegistry.seed_role_if_absent(%{name: "autoservice-agent"}) do
+        {:ok, _} ->
+          :ok
+
+        {:error, reason} ->
+          raise "EzagentDomainInstanceMessage boot aborted — local socialware manifest " <>
+                  "recipe seeds could not be persisted: #{inspect(reason)}"
+      end
+    else
+      :ok
     end
   end
 
