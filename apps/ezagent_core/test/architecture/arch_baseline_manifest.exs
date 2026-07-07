@@ -390,14 +390,14 @@
   #   Gate-first: starts RED at 1 (autoservice still in domain_session priv);
   #   goes to 0 once autoservice migrates to the deploy-seed source.
   socialware_priv_manifest_files: 0,
-  # socialware_self_publish_unsanctioned — RATCHET (burn-down to 0). Non-framework
+  # socialware_self_publish_unsanctioned — 0 (hard). Non-framework
   #   `publish_or_upgrade(` self-publish-at-boot call sites (the `Demo.publish`
   #   shape). Only the framework import lane (`manifest_yaml.ex`) is sanctioned.
-  #   Current offender: the hello demo (`socialware/demo/hello.ex`, published at
-  #   boot by the `ezagent_plugin_hello` plugin). kanban/dealscout are the same
-  #   shape but live on their own branches. Burn-down: each plugin drops its
-  #   self-publish when it migrates onto the deploy-seed lane; this ratchets to 0.
-  socialware_self_publish_unsanctioned: 1,
+  #   Burn-down complete: the hello demo's `Demo.Hello.publish/0` primitive is
+  #   DELETED — hello (production AND tests) now publishes only through the
+  #   deploy-seed lane (`SocialwareSeed.seed!` → `ManifestSeed.scan_dir!` →
+  #   `ManifestYaml.import`). No self-publisher remains; any new one trips this.
+  socialware_self_publish_unsanctioned: 0,
   # Documentation-coverage gate (2026-06-13, Allen) — RATCHET-DOWN counters.
   # Backed by `Mix.Tasks.Ezagent.Doc.Scan`; enforced by
   # test/architecture/doc_coverage_test.exs. Calibrated GREEN at the CURRENT
