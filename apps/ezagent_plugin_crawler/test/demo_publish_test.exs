@@ -1,10 +1,12 @@
 defmodule EzagentPluginCrawler.DemoPublishTest do
   @moduledoc """
   Boot-publish gate for the dealscout demo socialware
-  (`EzagentPluginCrawler.Demo`), the hello #162 / kanban golden-template play
-  — ExUnit drives the SAME `publish/0` the boot call site runs (skipped in
-  `:test` for Ecto-sandbox reasons, exactly hello's `maybe_publish_hello_demo`
-  split), inside a checked-out sandbox:
+  (`EzagentPluginCrawler.Demo`, since #1213 a thin loader over
+  `priv/socialware/dealscout/manifest.yaml` walking the `ManifestYaml.import/2`
+  chain: parse → resolve → check_candidate → publish_or_upgrade), the hello
+  #162 / kanban golden-template play — ExUnit drives the SAME `publish/0` the
+  boot call site runs (skipped in `:test` for Ecto-sandbox reasons, exactly
+  hello's `maybe_publish_hello_demo` split), inside a checked-out sandbox:
 
     * **idempotency three-state** (P0 §5 `publish_or_upgrade/2`): first publish
       `:published` → unchanged redeploy `:exists` (NO new CR / revision) →
@@ -26,7 +28,7 @@ defmodule EzagentPluginCrawler.DemoPublishTest do
   use EzagentCore.DataCase, async: false
 
   alias Ezagent.Agent.RecipeRegistry
-  alias Ezagent.Socialware.ConfigGovernance.Socialware, as: Governance
+  alias Ezagent.ConfigGovernance.Socialware, as: Governance
   alias Ezagent.Socialware.{Conformance, Definition, DefinitionRegistry, ManifestResolver}
   alias EzagentPluginCrawler.Demo
 

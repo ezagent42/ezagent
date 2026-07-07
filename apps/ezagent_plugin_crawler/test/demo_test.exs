@@ -1,9 +1,13 @@
 defmodule EzagentPluginCrawler.DemoTest do
   @moduledoc """
-  Shape gate for the dealscout demo socialware manifest
-  (`EzagentPluginCrawler.Demo` — the boot-publish one-source-of-truth, the
-  hello #162 / kanban golden-template play). Proves the config-authored
-  manifest resolves through `Ezagent.Socialware.ManifestResolver.resolve/1`
+  Shape gate for the dealscout demo socialware manifest — since the #1213 YAML
+  migration the one-source-of-truth is
+  `priv/socialware/dealscout/manifest.yaml`, loaded by the
+  `EzagentPluginCrawler.Demo` thin loader via
+  `Ezagent.Socialware.ManifestYaml.parse/1` (the hello #162 / kanban
+  golden-template play, now as a config FILE). Proves the YAML file exists +
+  parses, that the parsed manifest resolves through
+  `Ezagent.Socialware.ManifestResolver.resolve/1`
   (the fail-closed authoring boundary), composes hello's public face
   (Surface+Turn shape, `hello_render` view, `external_feed` adapter,
   anon-readable), declares exactly the `discover` + `page` agent role-slots
@@ -17,12 +21,31 @@ defmodule EzagentPluginCrawler.DemoTest do
   use ExUnit.Case, async: true
 
   alias Ezagent.ActionSet.Crawler
-  alias Ezagent.Socialware.{Definition, ManifestResolver}
+  alias Ezagent.Socialware.{Definition, ManifestResolver, ManifestYaml}
   alias EzagentPluginCrawler.Demo
 
   defp resolve!(opts \\ []) do
     assert {:ok, %Definition{} = definition} = ManifestResolver.resolve(Demo.manifest_attrs(opts))
     definition
+  end
+
+  test "the manifest source is the priv YAML file: exists, parses, and IS manifest_attrs/0" do
+    path = Demo.manifest_path()
+    assert File.exists?(path)
+    assert String.ends_with?(path, "priv/socialware/dealscout/manifest.yaml")
+
+    # `manifest_attrs/0` (no overrides) is EXACTLY the parsed YAML — the loader
+    # adds nothing, so the config file is the one source of truth (#1213).
+    assert {:ok, parsed} = ManifestYaml.parse(File.read!(path))
+    assert parsed == Demo.manifest_attrs()
+
+    # field equivalence with the retired code-attrs shape (string-keyed,
+    # resolver-ready): stable name + the parse-normalized module list.
+    assert parsed["name"] == "dealscout"
+    assert parsed["uses"] == ["hello", "crawler"]
+    assert Ezagent.ActionSet.Session in parsed["bases"]
+    assert Crawler in parsed["shape"]
+    assert parsed["views"] == ["hello_render"]
   end
 
   test "manifest resolves through ManifestResolver (string name-refs → Definition)" do

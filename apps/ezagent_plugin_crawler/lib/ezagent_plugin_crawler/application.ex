@@ -58,9 +58,11 @@ defmodule EzagentPluginCrawler.Application do
     # dealscout AND every boot dogfoods the publish path (a broken publish path
     # fails LOUD here at boot). This REPLACES the earlier imperative
     # `DefinitionSeed.seed_definition` code-seed (`seed_definition_if_absent`):
-    # publish is the only boot seeding path now (hello/kanban parity). Runs in
-    # `start/2` AFTER `Ezagent.Plugin.boot/1` — the publish resolves
-    # `uses: ["hello", "dealscout"]` + the `hello_render` view, which need THIS
+    # publish is the only boot seeding path now (hello/kanban parity). Since
+    # #1213 the manifest is CONFIG (`priv/socialware/dealscout/manifest.yaml`;
+    # `Demo` is a thin loader walking the `ManifestYaml.import/2` chain). Runs
+    # in `start/2` AFTER `Ezagent.Plugin.boot/1` — the publish resolves
+    # `uses: ["hello", "crawler"]` + the `hello_render` view, which need THIS
     # plugin's plugin_info registered (hello booted earlier as a declared dep).
     # Idempotent (`publish_or_upgrade`: :published / :exists / :upgraded);
     # fail-loud in dev/prod (mirrors hello `maybe_publish_hello_demo` / kanban
