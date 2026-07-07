@@ -155,6 +155,9 @@ defmodule EzagentWeb.MixProject do
         "esbuild.install --if-missing"
       ],
       "assets.build": [
+        "cmd mkdir -p priv/static/assets/css priv/static/assets/fonts",
+        "cmd cp assets/css/local_fonts.css priv/static/assets/css/local_fonts.css",
+        "cmd cp -R assets/static/fonts/. priv/static/assets/fonts",
         "tailwind ezagent_web",
         "tailwind ezagent_web_viewer",
         "cmd --cd ../ezagent_plugin_world/assets npm run build",
@@ -162,6 +165,9 @@ defmodule EzagentWeb.MixProject do
         "esbuild ezagent_web"
       ],
       "assets.deploy": [
+        "cmd mkdir -p priv/static/assets/css priv/static/assets/fonts",
+        "cmd cp assets/css/local_fonts.css priv/static/assets/css/local_fonts.css",
+        "cmd cp -R assets/static/fonts/. priv/static/assets/fonts",
         "tailwind ezagent_web --minify",
         "tailwind ezagent_web_viewer --minify",
         "cmd --cd ../ezagent_plugin_world/assets npm run build",
