@@ -178,7 +178,9 @@ defmodule Ezagent.Socialware.ManifestYamlTest do
     assert result in [:published, :exists]
 
     assert Enum.any?(DefinitionRegistry.list(@workspace), &(&1.name == definition.name))
-    assert {:ok, %Definition{name: name}, _object} = DefinitionRegistry.lookup(@workspace, definition.name)
+
+    assert {:ok, %Definition{name: name}, _object} =
+             DefinitionRegistry.lookup(@workspace, definition.name)
 
     template_name = "autoservice-yaml-#{uniq()}"
     content = %{name: template_name, installs: [name]}
@@ -246,9 +248,11 @@ defmodule Ezagent.Socialware.ManifestYamlTest do
   end
 
   defp autoservice_manifest_path do
-    :ezagent_domain_session
+    # Deploy-seed SPEC §6: autoservice now ships in the ezagent_web assembly
+    # app's socialware_seed source, not domain_session priv.
+    :ezagent_web
     |> :code.priv_dir()
-    |> Path.join("socialware/autoservice/manifest.yaml")
+    |> Path.join("socialware_seed/autoservice/manifest.yaml")
   end
 
   defp role_member_uri(session_uri, role_name) do

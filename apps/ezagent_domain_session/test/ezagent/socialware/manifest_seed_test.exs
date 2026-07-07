@@ -99,31 +99,35 @@ defmodule Ezagent.Socialware.ManifestSeedTest do
       assert {:ok, %{}, _} = DefinitionRegistry.lookup(@workspace, app_name)
     end
 
-    test "publishes autoservice from domain_session priv via default app enumeration" do
+    test "publishes autoservice from the deploy-seed dir" do
       enable_scan!()
       # the recipe the autoservice manifest's role slot references — seeded at
       # domain_session boot in dev/prod (seed_manifest_boot_recipes).
       {:ok, _} = RecipeRegistry.seed_role_if_absent(%{name: "autoservice-agent"})
 
-      missing_deploy = Path.join(System.tmp_dir!(), "manifest-seed-nodeploy-#{uniq()}")
-      refute File.dir?(missing_deploy)
+      # Deploy-seed SPEC §6: autoservice moved out of domain_session priv into
+      # the ezagent_web socialware_seed source; it is published via the
+      # deployment directory, not app-priv enumeration.
+      deploy_root = tmp_root()
+      copy_autoservice_seed!(deploy_root)
 
-      assert :ok = ManifestSeed.scan_all!(deploy_dir: missing_deploy)
+      assert :ok = ManifestSeed.scan_all!(deploy_dir: deploy_root)
 
       assert {:ok, %{}, _object} = DefinitionRegistry.lookup(@workspace, "autoservice-tier1")
     end
 
-    test "collects the deploy dir ahead of app privs when it exists" do
+    test "collects multiple manifests from the deploy dir in one lane" do
       enable_scan!()
       {:ok, _} = RecipeRegistry.seed_role_if_absent(%{name: "autoservice-agent"})
       deploy_root = tmp_root()
       recipe = seed_recipe()
       name = "seed-yaml-deploy-first-#{uniq()}"
       write_manifest(deploy_root, "one", manifest_yaml(name, recipe))
+      copy_autoservice_seed!(deploy_root)
 
       assert :ok = ManifestSeed.scan_all!(deploy_dir: deploy_root)
 
-      # deploy-dir manifest AND the app-priv autoservice both landed in one lane
+      # the hand-written deploy manifest AND the seeded autoservice both landed
       assert {:ok, %{}, _} = DefinitionRegistry.lookup(@workspace, name)
       assert {:ok, %{}, _} = DefinitionRegistry.lookup(@workspace, "autoservice-tier1")
     end
@@ -167,6 +171,13 @@ defmodule Ezagent.Socialware.ManifestSeedTest do
     on_exit(fn ->
       Application.put_env(:ezagent_domain_session, :socialware_manifest_boot_scan, prev)
     end)
+  end
+
+  # Copy the shipped autoservice seed package (ezagent_web socialware_seed
+  # source) into a deployment dir, mirroring Ezagent.Home.SocialwareSeed.seed!/0.
+  defp copy_autoservice_seed!(deploy_root) do
+    src = Path.join(List.to_string(:code.priv_dir(:ezagent_web)), "socialware_seed/autoservice")
+    File.cp_r!(src, Path.join(deploy_root, "autoservice"))
   end
 
   defp write_manifest(root, dir, yaml) do
