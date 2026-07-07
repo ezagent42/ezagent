@@ -1,6 +1,7 @@
 # Bare @mention resolution by role facet — design
 
-**Date**: 2026-07-07 · **Status**: DRAFT (T3, from jjkysy #1201 handoff item ④, coordinator-verified HOLDS)
+**Date**: 2026-07-07 · **Status**: DRAFT rev3 (T3, from jjkysy #1201 handoff item ④, coordinator-verified HOLDS)
+**Review**: codex adversarial R2 — R1 WAS NOT SOUND (3 MAJOR), all three fixed: [M-1] Feishu scope contradiction resolved — S5 confirmed OUT OF SCOPE for this round, its session-aware post-extraction path documented in §3.5 as follow-on; [M-2] external/public-view semantics added as R8; [M-3] A-2 autocomplete insert-vs-display clarified — U2 inserts edge value (full `@<role_name>`), F4 is dropdown display only.
 **Scope**: session-domain / world plugin only. Independent of T1/T2. Forward-compat contract with orchestration spec A-2 (auto-prefix) declared in §5.
 **Authority**: `docs/together/2026-07-06/handoffs/system-mechanism-feedback.md` item ④ + Appendix B row ④; role-slot model `docs/superpowers/specs/2026-07-05-socialware-role-slot-model-design.md` (P2: role lives ONLY on the membership edge); orchestration spec `docs/superpowers/specs/2026-07-06-orchestration-as-socialware-design.md` (A-2 install-time auto-prefix).
 
@@ -139,6 +140,26 @@ messages' `mentions` keep the old occupant's URI: mentions are historical
 facts about who was addressed, not live role pointers. This matches receiver
 behavior (resolution at send time) and needs no new storage.
 
+### 3.5 Feishu mention pipeline — out of scope for this round, documented for follow-on
+
+S5 (Feishu channel mention parse, `mention_parser.ex`) is **OUT OF SCOPE**
+for this design round — it resolves `@name` against live `KindRegistry` agent
+names, a different data source from the session member rows S1-S4 use. The
+S5 table row and non-goals are correct as written.
+
+However, codex R1 correctly identified that Feishu's mention pipeline is NOT
+purely pre-session: `inbound_dispatcher.ex` extracts mentions before session
+lookup (~:89), then **re-extracts after session is known** for legend-aware
+mentions (~:278-283, ~:317-329). The session-aware re-extraction path
+already resolves session legends (`mention_parser.ex` ~:108-129) — it has
+the session context needed to resolve role names from member rows.
+
+**Follow-on**: after this world-plugin work lands, the same `role_name`
+member-edge facet can be plumbed into Feishu's session-aware re-extraction
+path. The data source is identical (membership-edge `role_name`), only the
+parser function differs (`mention_parser.ex` vs `conversation_data.ex`).
+Builder-verify note V8 records the exact code locations.
+
 ## 4. Precedence and ambiguity rules (normative)
 
 - **R1 — Tier order**: segment > role_name > display_name. First tier with ≥1
@@ -180,6 +201,20 @@ behavior (resolution at send time) and needs no new storage.
   legend. Builder-verify confirms no interference (§9-V5); a uniqueness check
   between the two namespaces is out of scope (would belong to Definition
   conformance, cross-referenced not designed here).
+- **R8 — External/public-view path is a different surface**: R6 applies to
+  the world composer path (S1, `conversation_data.ex` `resolve_member_name/2`).
+  The public/external socialware posting path (`SessionFeedChannel`,
+  `session_feed_channel.ex`) does NOT go through S1's parser. Read-only
+  adapters return explicit errors before mention resolution (~:42-45);
+  participatory posts go through adapter fallback (~:230-249, ~:279-282)
+  with a default fallback that forcibly addresses the orchestrator by role
+  (~:352-374). An anonymous/public visitor typing `@builder` therefore never
+  reaches `resolve_member_name/2` — the existing adapter-fallback routing
+  handles it. The role leg added in this spec has zero effect on the
+  external path. If role-aware addressing is later desired for public
+  visitors, the work belongs to Feishu's session-aware re-extraction path
+  (§3.5 follow-on) or a dedicated SessionFeedChannel role resolver — not this
+  world-plugin change.
 
 ## 5. Forward-compat with orchestration A-2 (install-time auto-prefix)
 
@@ -222,9 +257,15 @@ consequences this design absorbs **now** so prefixed names cannot break it:
   matched by segment/display render as today. Badge presentation follows the
   A-2 impl-constraint (short name + source badge; post-A-2 the badge carries
   the definition source, e.g. `hello`).
-- **U2 — Insertion prefers the role token**: selecting a role-matched entry
-  inserts `@<role_name>` — the human-legible, role-slot-canonical form —
-  instead of today's `@<uuid-segment>`.
+- **U2 — Insertion inserts the edge value verbatim**: selecting a role-matched
+  entry inserts `@<role_name>` where `<role_name>` is the exact string on the
+  membership edge — the human-legible, role-slot-canonical form. Pre-A-2 this
+  is the short name (e.g. `@advisor`); post-A-2 the edge carries the prefixed
+  form and the text inserted is `@hello:advisor`. The resolver matches the
+  same edge value (F1), so insertion and resolution stay byte-identical. The
+  **autocomplete dropdown display** (F4) may show the short name with a source
+  badge for readability, but what lands in the composer text is the full edge
+  value — the same string the resolver sees.
 - **U3 — Shadow check before inserting a role token**: the client replays the
   §4 tiers over the member rows it already holds; if `@<role_name>` would NOT
   resolve to the selected member (R4 shadow by someone's segment), insert the
@@ -284,8 +325,12 @@ supports it, else covered by T8 + builder-verify V3.
 ## 9. Builder-verify notes
 
 - **V1 — Line anchors**: all file:line cites verified on main `dcabf6174`
-  (2026-07-07) but WILL drift; anchor by function name (`resolve_member_name/2`,
-  `parse_bare_mentions/2`, `member_options/1`, `mentionMatches`, `uriSegment`).
+  (2026-07-07) but WILL drift; anchor by function name. Codex R1 verified:
+  world resolver body is `conversation_data.ex:770-778` (not :768); React
+  insertion is `Conversation.tsx:278-283` (`uriSegment` at :1268-1272); LV
+  hook filters at `mention_autocomplete.js:71-76`, inserts full URI at
+  `:154-178`. Anchor by: `resolve_member_name/2`, `parse_bare_mentions/2`,
+  `member_options/1`, `mentionMatches`, `uriSegment`.
 - **V2 — role_name reaches the client**: confirm `"role_name"` survives both
   member-row transports — the initial `data-world-state` embed and the
   `members:update` push (`conversation_actions.ex` `push_members/1`) — and is
@@ -308,3 +353,11 @@ supports it, else covered by T8 + builder-verify V3.
 - **V7 — T8 fixture**: build the E2E on a definition-materialized session
   (PLANNED-URI member with a role facet), not a hand-joined member with a
   pretty name — the latter passes through the display leg and proves nothing.
+- **V8 — Feishu follow-on (§3.5)**: after this world-plugin work lands,
+  plumb `role_name` into Feishu's session-aware re-extraction path:
+  `inbound_dispatcher.ex` ~:278-283 and ~:317-329 (post-session legend-aware
+  mention re-extraction) + `mention_parser.ex` ~:108-129 (session legend
+  resolution). The membership-edge `role_name` is the same data source;
+  resolution logic mirrors the world tier but operates on Feishu's parser
+  member representation (not `member_options/1` rows). Defer to a separate
+  task — this spec does not design the Feishu change.
