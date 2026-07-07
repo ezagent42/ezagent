@@ -1,7 +1,7 @@
 # Bare @mention resolution by role facet — design
 
-**Date**: 2026-07-07 · **Status**: DRAFT rev3 (T3, from jjkysy #1201 handoff item ④, coordinator-verified HOLDS)
-**Review**: codex adversarial R2 — R1 WAS NOT SOUND (3 MAJOR), all three fixed: [M-1] Feishu scope contradiction resolved — S5 confirmed OUT OF SCOPE for this round, its session-aware post-extraction path documented in §3.5 as follow-on; [M-2] external/public-view semantics added as R8; [M-3] A-2 autocomplete insert-vs-display clarified — U2 inserts edge value (full `@<role_name>`), F4 is dropdown display only.
+**Date**: 2026-07-07 · **Status**: DRAFT rev4 (T3, from jjkysy #1201 handoff item ④, coordinator-verified HOLDS)
+**Review**: codex adversarial R2 = NOT SOUND (1 MAJOR) — R1 fixes all verified; [M-4] F2 head-fallback could misaddress post-A-2 when a colon-bearing role is unfilled but the head matches. Fixed with session-local guard: head fallback suppressed when ANY member carries a colon-bearing role_name (A-2 active → colon token = role reference → unresolved = plain text, R6). T7d tests the guard.
 **Scope**: session-domain / world plugin only. Independent of T1/T2. Forward-compat contract with orchestration spec A-2 (auto-prefix) declared in §5.
 **Authority**: `docs/together/2026-07-06/handoffs/system-mechanism-feedback.md` item ④ + Appendix B row ④; role-slot model `docs/superpowers/specs/2026-07-05-socialware-role-slot-model-design.md` (P2: role lives ONLY on the membership edge); orchestration spec `docs/superpowers/specs/2026-07-06-orchestration-as-socialware-design.md` (A-2 install-time auto-prefix).
 
@@ -232,12 +232,20 @@ consequences this design absorbs **now** so prefixed names cannot break it:
   excludes `:`. Design: extend to an **optional single colon-joined tail** —
   `@([A-Za-z0-9][A-Za-z0-9._-]*(?::[A-Za-z0-9][A-Za-z0-9._-]*)?)` — and
   resolve **longest-token-first**: try the full colon-bearing token through
-  the tiers; if nothing resolves, retry with the pre-colon head. Properties:
-  `@advisor: hi` (punctuation) never captures the colon (no word char after
-  it) — today's behavior intact; `@hello:advisor` pre-A-2 falls back to the
-  `hello` head (today's exact behavior); post-A-2 the full token wins.
-  Deterministic, no flag day. The same longest-first rule applies in the
-  autocomplete filter.
+  the tiers; if nothing resolves, retry with the pre-colon head.
+  **Head-fallback guard (R2 fix)**: the head fallback is ONLY active when
+  zero members in the session carry a colon-bearing `role_name`. If any
+  member's `role_name` contains `:` (A-2 active in this session), a
+  colon-bearing token is a role-name reference — no head fallback; if
+  unresolved it stays plain text (R6). Properties: `@advisor: hi`
+  (punctuation) never captures the colon (no word char after it) — today's
+  behavior intact; `@hello:advisor` pre-A-2 (no colon-bearing roles in
+  session) falls back to the `hello` head (today's exact behavior, safe
+  because no role reference can be misinterpreted); post-A-2
+  `@hello:advisor` resolves the full prefixed edge value if filled, stays
+  plain text if unfilled/typoed (R6, no silent misfire). Deterministic,
+  no flag day, session-local guard requires no cross-session state. The
+  same longest-first rule and guard apply in the autocomplete filter.
 - **F3 — Short-name dual-read is an A-2-time decision, not this design**:
   A-2's compat window ("dual-read… prefix derivation is deterministic")
   implies `@advisor` may later need to resolve a uniquely-suffix-matching
@@ -301,10 +309,21 @@ gain `"role_name"` keys). These are the "fails when the goal is unmet" gates:
 - **T5 — R5 defensive guard**: two rows sharing a role_name ⇒ `[]`.
 - **T6 — Backward compat**: every existing test in the module passes
   unmodified (segment and display legs byte-identical for role-less rows).
-- **T7 — F2 tokenizer**: member with edge `role_name: "hello:advisor"` ⇒
-  `@hello:advisor` resolves it; absent such a member but with a member
-  resolvable as `hello`, `@hello:advisor` resolves the `hello` head;
-  `@advisor: hi` (trailing punctuation) behaves exactly as `@advisor`.
+- **T7 — F2 tokenizer + head-fallback guard**: four sub-cases:
+  - T7a: member with edge `role_name: "hello:advisor"` ⇒ `@hello:advisor`
+    resolves it (full colon-token match, tier 2).
+  - T7b: `@advisor: hi` (trailing punctuation) ⇒ behaves exactly as
+    `@advisor` (regex never captures the colon — no word char after it).
+  - T7c: pre-A-2 guard — zero members with colon-bearing role_name, no
+    member matches `hello:advisor`, but a member resolves as `hello` via
+    segment or display ⇒ `@hello:advisor` falls back to the `hello` head.
+  - T7d: post-A-2 guard — at least one member has a colon-bearing
+    role_name (e.g. `role_name: "hello:builder"`), no member has
+    `role_name: "hello:advisor"`, but a member resolves as `hello` via
+    segment ⇒ `@hello:advisor` ⇒ `[]` (plain text — colon token is a
+    role reference, head fallback suppressed, R6). This is the R2 fix
+    preventing silent misfire when someone types a colon-bearing role
+    name that is unfilled.
 - **T8 — E2E (one, thin)**: re-run the #1190 r2 probe shape — a role-slot
   materialized session, `@<role_name>` from the world composer, assert the
   stored message's `mentions` contains the materialized agent URI and the
@@ -361,3 +380,15 @@ supports it, else covered by T8 + builder-verify V3.
   resolution logic mirrors the world tier but operates on Feishu's parser
   member representation (not `member_options/1` rows). Defer to a separate
   task — this spec does not design the Feishu change.
+- **V9 — A-2 from_role routing validation (cross-spec, codex R2)**: world
+  routing's `valid_role_name?/1` in `conversation_routing_form.ex` ~:146
+  currently rejects `:` — A-2's `hello:advisor` role names require
+  widening the validator. This is an A-2 implementation concern (the
+  orchestration spec's builder owns it), but the mention-resolution SPEC
+  depends on the widened validator for `{:role, "hello:advisor"}` receivers
+  to route correctly. Cross-reference in the A-2 impl plan.
+- **V10 — U2 post-A-2 insertion test (codex R2)**: §7 tests parser behavior
+  and broad E2E; add an explicit assertion or UI-level check that post-A-2
+  the autocomplete inserts the full `@hello:advisor` edge value (not the
+  short name). If the React harness supports it, a component test; otherwise
+  covered by T8 E2E with a colon-bearing role definition.
