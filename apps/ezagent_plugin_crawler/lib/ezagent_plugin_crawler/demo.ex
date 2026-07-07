@@ -39,9 +39,10 @@ defmodule EzagentPluginCrawler.Demo do
       本 socialware 的名字）+ `discover` 角色槽（`dealscout-discover` recipe
       × `cc-headless`，持 crawl cap 的发现副驾）。
     * **routing_rules** —— ONLY the content-triggered update-signal rule
-      (`text_contains "__dealscout_update__"` → the `page` role, like the
-      kanban `__done__` relay)。**绝不带 hello 的 `always → chat` 规则**
-      （kanban handoff 同款红线）。
+      (`and(text_contains "__dealscout_update__", from_role "discover")` →
+      the `page` role, like the kanban `__done__` relay；from_role 硬锁是
+      #1212 落地后的 #1201 ⑥ 预案加固)。**绝不带 hello 的 `always → chat`
+      规则**（kanban handoff 同款红线）。
     * **visibility_policy** —— `scope: public` + `publish_policy: supervised`
       像 hello/kanban，且 `web_anon_access: true`（**与 kanban 的 false 不同**：
       dealscout 的公开面是给匿名访客看的线索页，产品语义要匿名可读）。
@@ -188,11 +189,25 @@ defmodule EzagentPluginCrawler.Demo do
       # ONLY the content-triggered update rule（kanban relay `__done__` 同款）：
       # 爬完的更新信号 → "page" 角色。标记从 update_signal/0 取（单一契约点），
       # 不硬编码。NEVER hello's `always → chat` rule.
+      #
+      # 注意：page 槽当前走 ALT v2 的 **dispatch 直呼腿**（crawl 完成后按
+      # role_name 直接 dispatch `:refresh_page`，不经这条 routing）——本规则是
+      # **声明痕迹 + A① 落地后回切 receive 式的靶子**（Crawler moduledoc
+      # §页面重建的直接 dispatch 腿），加固照做以免回切时才补硬锁。
       "routing_rules" => [
         %{
+          # #1212 from_role 落地后的硬锁加固（#1201 ⑥ 预案，kanban 同款）：
+          # 内容标记（软锁）AND 发件人必须是 discover 角色成员——其他成员
+          # 发同标记不再误触发。
           "matcher" => %{
-            "type" => "text_contains",
-            "arg" => Ezagent.ActionSet.Crawler.update_signal()
+            "type" => "and",
+            "items" => [
+              %{
+                "type" => "text_contains",
+                "arg" => Ezagent.ActionSet.Crawler.update_signal()
+              },
+              %{"type" => "from_role", "arg" => @discover_role}
+            ]
           },
           "receivers" => [@page_role],
           "rule_set" => @update_rule_set,
