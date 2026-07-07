@@ -65,12 +65,14 @@ defmodule Ezagent.Home.SocialwareSeedTest do
     end
   end
 
-  describe "source_dir/0" do
-    test "resolves to ezagent_web priv/socialware_seed (deploy-seed source of truth)" do
-      dir = SocialwareSeed.source_dir()
-      assert is_binary(dir)
-      assert String.ends_with?(dir, Path.join("priv", "socialware_seed"))
-      assert dir =~ "ezagent_web"
+  describe "source_dirs/0" do
+    test "enumerates loaded apps' priv/socialware_seed (incl. ezagent_web, the shipped source)" do
+      dirs = SocialwareSeed.source_dirs()
+      assert is_list(dirs)
+
+      assert Enum.any?(dirs, fn d ->
+               String.ends_with?(d, Path.join("priv", "socialware_seed")) and d =~ "ezagent_web"
+             end)
     end
   end
 end
