@@ -30,6 +30,7 @@ defmodule Ezagent.World.ConversationSessionState do
     _ -> []
   end
 
+  @doc false
   def list_sessions(_, _), do: []
 
   @doc false
