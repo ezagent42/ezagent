@@ -14,6 +14,8 @@ hello 的 HTTP LLM 后端目前**要求运维在部署环境 export 一个 key**
 - **`claude_code` 后端一字不改**(`call_llm/2` 的 `"claude_code" ->` 分支 `generator.ex:477`)。默认后端选择机制不变。你现在跑的 server 就是 claude_code,零影响。
 - 生成管线保持**同步**(`call_llm/2` 仍返回 `{:ok, %{content}}` → `Spec.extract/validate` → `TurnDriver.drive`)。
 
+**INV-CC(硬不变量,一等验收):claude_code 部署绝对零影响。** 具体可测:(1) `HELLO_LLM_BACKEND=claude_code` 时,所有 LLM 调用行为**与本改动前逐字节一致**(走 `ClaudeCode.chat`,curl 成员从不被调用);(2) **没配 DeepSeek 凭证源的部署,建 hello session 必须照常成功**(curl "llm" 成员 keyless spawn,不得让 session-create 失败)。这条不变量约束了 §①b 的 `credential_optional` 设计。验证隔离依据:`call_llm/2` 的 claude_code 分支走独立的 `ClaudeCode.chat`(自读 `HELLO_CLAUDE_BIN`/`HELLO_LLM_MODEL`,`claude_code.ex:88,95`);`api_key/api_url/model/ApiClient` 只在 HTTP 分支(`generator.ex:482-487`),删除不触及 claude_code(已 grep 证实)。
+
 ## 为什么是 X2b(而非 X1 / X2a)
 
 - **X1(hello 读 curl agent 的 key 自己打)** 被否:破坏"key 只在 agent 手里"的凭证边界,hello 会摸到别的 agent 的密钥。
@@ -46,6 +48,14 @@ end
 - **flavor 参数**:首版固定 `"curl"`(唯一同步返回真 LLM 补全的 flavor,`plugin_curl_agent/bridge_adapter.ex:111-112`;其它 `:in_process_sync` flavor 的 deliver 只回 echo/routing shape)。将来可从 `AgentFlavorAttributes` 解析,首版不做(YAGNI)。
 - **模块位置**:`ezagent_domain_agent`(`Entity.Agent` / `ActionSet.CurlAgent` 同层)。函数名/归属最终由林懿伦定。
 
+### ①b 第二处 domain 改动:content 级 `credential_optional` 覆盖(保 claude_code 零影响的关键)
+
+**背景(验证发现的真风险):** curl 是 `:slice` 凭证 flavor,**凭证默认 required**(`cascade.ex:149` `credential_required_by_default?(:slice)→true`)。Definition.roles 物化给成员穿 `source_template_uri`(`%URI{}`,`definition_agents.ex:211`)→ `default_cascade_configured?(:slice,_,%URI{})→true` → 触发 cascade → 无凭证源时 `resolver.ex:217` `{:error, :no_credential_source}` 冒泡 → **curl 成员 spawn 失败 → session-create 失败**。**没配 DeepSeek key 的 claude_code 部署会因此建 session 直接崩**——违反"claude_code 绝对零影响"硬约束。
+
+**改法(小):** credential-optional 的**下游管线其实已经通**——`resolver.ex:158` 与 `cascade_runtime.ex:66` 都已尊重 `credential_required?: false`。**唯一写死的是 `cascade.ex:87`** 那一行 `credential_required?: credential_required_by_default?(credential_adapter)`。只需让它读一个 content 级覆盖(如 `content_field(content, :credential_optional) == true → false`,`content_field` helper 已存在)。**~1-2 行 domain 改动**,不动下游。
+
+**为什么放心:** 覆盖后无源 → `resolver` 返回 `{:ok, nil}`(不报错)→ `put_default_cascade_if_source_present` 的 `%{secret_source: nil}` 分支(`cascade.ex:110-118`)→ `{:ok, content}` 无 cascade_resolution → `materialize_credential_slice` `:skip`(`curl_agent.ex:61-63`)→ keyless 成员正常起。全程无报错、claude_code 模式下它永不被调用。
+
 ### ② 授权模型 —— 林懿伦 拍板项(X2b 引入的新授权面)
 
 `complete/2` 绕过 session/dispatch 直接问 agent 的 transport,是**第三条 agent 交互路径**(T2 只有 dispatch + chat-delivery)。谁有权让一个 agent 补全?两个候选,请林懿伦定:
@@ -60,7 +70,8 @@ hello 的 Generator 已在 admin 权威下跑(`TurnDriver` 用 `admin_genesis_ca
 **声明成员**(复用 B'-direct 的 `Definition.roles` + `Members.role_uri`):
 - hello 的 Definition.roles 增加一项 `%{role_name: "llm", fill: :agent, recipe: "hello.llm", flavor: "curl"}`。
 - 新写一个 curl recipe `hello.llm`(`Application.roles/0`),含 `config: %{provider: "deepseek", api_url: ..., model: ...}`(`RecipeMaterializer.template_content` 会 thread `config`,Explore 证实)。curl 行为来自 `"curl"` flavor 的 `instance_behaviors`(`curl_behaviors`),不放 recipe.behaviors(Definition.roles 路径丢弃)。
-- 成员的 **key**:由 #17 credential cascade 在物化时从平台 credential 源(user-default / workspace-shared 的 DeepSeek 凭证)拷进它的 `:api_keys` slice(`CredentialSliceAdapter.materialize_credential_slice`,`curl_agent.ex:60-76`)。**运维在平台凭证面板配一次,不再 export env。**
+- **成员声明为 `credential_optional`(见 §①b + INV-CC)** —— 这样没配 DeepSeek key 的部署(claude_code 部署正是这种)也能 keyless spawn,不会把 session-create 搞崩。
+- 成员的 **key**:有源时,由 #17 credential cascade 在物化时从平台 credential 源(user-default / workspace-shared 的 DeepSeek 凭证)拷进它的 `:api_keys` slice(`CredentialSliceAdapter.materialize_credential_slice`,`curl_agent.ex:60-76`)。**运维在平台凭证面板配一次,不再 export env。** 无源时 `materialize_credential_slice` 优雅 `:skip`(`curl_agent.ex:61-63`),成员空 `:api_keys` slice 正常起、休眠。
 
 **换 call_llm/2**(`generator.ex:476-498`,只改非-claude_code 分支):
 ```elixir
@@ -96,28 +107,34 @@ end
 | curl 凭证-slice 读 + HTTP | **已存在** | `plugin_curl_agent/bridge_adapter.ex:73-138` |
 | 无 env 的 key provision | **已存在** | #17 cascade `CredentialSliceAdapter.materialize_credential_slice`,`curl_agent.ex:60-76` |
 | 按 role_name 解析成员 | **已存在**(#1208) | `EzagentPluginHello.Members.role_uri/2` |
+| credential-optional 下游管线 | **已存在** | `resolver.ex:158`、`cascade_runtime.ex:66` 已尊重 `credential_required?: false` |
 | `Ezagent.Agent.complete/2` | **新增(domain,薄封装)** | 本 spec ① |
-| curl recipe `hello.llm` + Definition 成员 | **新增(插件)** | 本 spec ③ |
+| content 级 `credential_optional` 覆盖(`cascade.ex:87`) | **新增(domain,~1-2 行)** | 本 spec ①b |
+| curl recipe `hello.llm` + Definition 成员(credential-optional) | **新增(插件)** | 本 spec ③ |
 | `call_llm/2` HTTP 分支改写 + 删 env/ApiClient | **改(插件)** | 本 spec ③ |
 
 ## 林懿伦 sign-off gate(实施前必过)
 
+两处 domain 改动都要过你:
+
 1. **`Ezagent.Agent.complete/2` 这条"同步问 agent 拿结果"的 domain 路径可接受吗?**(T2 是异步 doctrine;这条正交、T2 自己不提供同步选项,但它是新增交互面,归你的 agent 模型。)
 2. **授权模型选 (A) cap-gated 还是 (B) admin/system-only?**(§②)
-3. 函数归属/命名(`Ezagent.Agent.complete/2` vs 别的),你定。
-4. 这是否该做成**全平台共享能力**(dealscout 等都用),还是先 hello-local?(倾向共享——item 2 的痛是所有组合方共有的。)
+3. **§①b 的 content 级 `credential_optional` 覆盖(`cascade.ex:87`)可接受吗?** 这是保 INV-CC(claude_code 部署 keyless spawn 不崩)的关键。下游管线已支持 `credential_required?: false`,只差这一个覆盖入口。命名/形状你定。
+4. 函数归属/命名(`Ezagent.Agent.complete/2` vs 别的),你定。
+5. 这是否该做成**全平台共享能力**(dealscout 等都用),还是先 hello-local?(倾向共享——item 2 的痛是所有组合方共有的。)
 
 ## 验收(e2e)
 
 1. 平台凭证面板配一个 DeepSeek 凭证源(不 export env)→ 新建的 hello session 的 "llm" curl 成员 `:api_keys` slice 有 key。
 2. `HELLO_LLM_BACKEND` **不设** claude_code → owner 发"改标题" → hello 经 `Agent.complete(llm_curl, ...)` 拿到补全 → 页面更新(Surface put_version)。**全程无 env key、hello 不碰 key。**
-3. `HELLO_LLM_BACKEND=claude_code` → 行为**与现在完全一致**(回归)。
-4. 没配 key → 可见 `{:error}`,不静默。
-5. `mix precommit` + `mix ezagent.check_invariants` 绿(注意 CjkLiteralGate、cross_file_duplicate:删掉 hello 的 ApiClient 拷贝反而**减**一个重复组,可能要下调 baseline)。
+3. **INV-CC ①**:`HELLO_LLM_BACKEND=claude_code` → 行为**与本改动前完全一致**(回归;curl 成员从不被调用)。
+4. **INV-CC ②(关键回归)**:**没配任何 DeepSeek 凭证源**的部署 → 建 hello session **照常成功**,"llm" curl 成员 keyless 起、`:api_keys` 空、不报错、session 可用。**这条专门守住"claude_code 部署零影响"。**
+5. HTTP 模式但没配 key(keyless llm 成员被调用)→ 可见 `{:error}`,不静默、不崩 session。
+6. `mix precommit` + `mix ezagent.check_invariants` 绿(注意 CjkLiteralGate、cross_file_duplicate:删掉 hello 的 ApiClient 拷贝反而**减**一个重复组,可能要下调 baseline)。
 
 ## 风险 / 待实施核实
 
-1. **curl 成员经 Definition.roles 物化时,config(provider/url/model)是否真的 thread 到 curl Template Class**——`RecipeMaterializer` thread `config`,但 curl 的 config_schema 要求 provider/api_url/model 必填(`curl_agent.ex:101-128`);要确认 Definition.roles 路径(非 Template instantiate 路径)会应用这个 config。
+1. **curl 成员经 Definition.roles 物化时,config(provider/url/model)+ `credential_optional` 标记是否真的 thread 到 cascade content**——`RecipeMaterializer` thread `config`,但 curl 的 config_schema 要求 provider/api_url/model 必填(`curl_agent.ex:101-128`);且 `credential_optional` 要从 recipe 一路 thread 到 `cascade.ex:87` 读到的 content(`content_field`)。要确认 Definition.roles 路径(非 Template instantiate 路径)会应用这两者。**这是实施第一步就要验的**(否则 INV-CC ② 保不住)。
 2. **system prompt 折叠**:hello 多场景各有 system prompt(page-gen / concierge / classify / theme / card),curl 单 prompt 接口——是每次合并进 prompt,还是给这个 llm 成员的 `system_prompt` config 设一个通用值 + 各场景 prompt 前缀。实施时定。
 3. **删 ApiClient 影响面**:确认没有别处依赖 hello 的 ApiClient / 三个 env 读。
 4. **credential 源前提**:X2b 的"免 env"依赖平台先配好一个 DeepSeek credential 源(user-default/workspace-shared);没源则 cascade skip、curl 无 key。这是运维一次性动作,doc 要写清。
