@@ -12,6 +12,11 @@ defmodule Ezagent.World.ConversationDataTest do
   defp members do
     [
       %{"uri" => "entity://system/agent/codex-1", "display_name" => "Codex One"},
+      %{
+        "uri" => "entity://system/agent/9c0ed922-be7d-cab0-274e-930d08173e41",
+        "display_name" => "Orchestrator Agent",
+        "role_name" => "orchestrator"
+      },
       %{"uri" => "entity://system/user/admin", "display_name" => "Admin"},
       %{"uri" => "entity://system/user/alice", "display_name" => "Alice"},
       %{"uri" => "entity://system/user/bob", "display_name" => "Alice"}
@@ -37,6 +42,12 @@ defmodule Ezagent.World.ConversationDataTest do
 
   test "bare @name resolves by unique display name" do
     assert parsed("hi @Admin") == ["entity://system/user/admin"]
+  end
+
+  test "bare @name resolves by unique role name" do
+    assert parsed("ping @orchestrator") == [
+             "entity://system/agent/9c0ed922-be7d-cab0-274e-930d08173e41"
+           ]
   end
 
   test "ambiguous display name resolves to nothing (no guess)" do

@@ -270,9 +270,8 @@ export function Conversation({
   }, [newSessionTemplate, templates])
 
   // @mention autocomplete: the open token is the @word immediately before the
-  // caret. Role matches insert the membership-edge role_name when it resolves
-  // back to the clicked member; otherwise the full URI keeps the address
-  // unambiguous.
+  // caret. Matches consider URI segment, role_name, display_name, and
+  // colon-role fallback; insertion prefers parser-safe human-readable tokens.
   const mentionMatches = React.useMemo(() => {
     if (mentionQuery === null) return []
     const q = mentionQuery.toLowerCase()
@@ -800,30 +799,34 @@ export function Conversation({
             <form className="flex items-end gap-2.5 border-t border-border bg-[#fafafa] px-4 py-3" onSubmit={submit}>
               <div className="relative flex-1">
                 {mentionMatches.length > 0 && (
-                  <ul className="absolute bottom-[calc(100%+6px)] left-0 right-0 z-20 m-0 max-h-[220px] list-none overflow-y-auto rounded-lg border border-border bg-card p-1 shadow-xl" role="listbox" aria-label="提及成员">
-                    {mentionMatches.map((match) => (
-                      <li key={match.member.uri}>
-                        <button
-                          type="button"
-                          className="flex w-full items-baseline gap-2 rounded-md px-2.5 py-1.5 text-left text-foreground hover:bg-muted"
-                          onMouseDown={(event) => {
-                            // mousedown (not click) so the textarea doesn't blur first
-                            event.preventDefault()
-                            insertMention(match)
-                          }}
-                        >
-                          <span className="font-mono text-[12.5px] font-semibold text-emerald-700 dark:text-emerald-300">@{match.label}</span>
-                          {match.badge && (
-                            <span className="rounded bg-muted px-1.5 py-0.5 text-[10px] font-semibold uppercase text-muted-foreground">
-                              {match.badge}
-                            </span>
-                          )}
-                          {match.member.display_name && match.member.display_name !== match.label && (
-                            <span className="text-xs text-muted-foreground">{match.member.display_name}</span>
-                          )}
-                        </button>
-                      </li>
-                    ))}
+                  <ul className="absolute bottom-[calc(100%+6px)] left-0 right-0 z-20 m-0 max-h-[220px] list-none overflow-y-auto rounded-lg border border-border bg-card p-1 shadow-xl" role="listbox" aria-label="mention members">
+                    {mentionMatches.map((match) => {
+                      const token = match.insertText
+
+                      return (
+                        <li key={match.member.uri}>
+                          <button
+                            type="button"
+                            className="flex w-full min-w-0 items-baseline gap-2 rounded-md px-2.5 py-1.5 text-left text-foreground hover:bg-muted"
+                            onMouseDown={(event) => {
+                              // mousedown (not click) so the textarea doesn't blur first
+                              event.preventDefault()
+                              insertMention(match)
+                            }}
+                          >
+                            <span className="min-w-0 flex-1 overflow-hidden text-ellipsis whitespace-nowrap text-[12.5px] font-semibold text-foreground">{match.label}</span>
+                            {match.badge && (
+                              <span className="shrink-0 rounded bg-muted px-1.5 py-0.5 text-[10px] font-semibold uppercase text-muted-foreground">
+                                {match.badge}
+                              </span>
+                            )}
+                            {match.label !== token && (
+                              <span className="shrink-0 max-w-[48%] overflow-hidden text-ellipsis whitespace-nowrap font-mono text-[11.5px] text-muted-foreground">@{token}</span>
+                            )}
+                          </button>
+                        </li>
+                      )
+                    })}
                   </ul>
                 )}
                 <textarea
@@ -1250,17 +1253,16 @@ function mentionMatch(member: MemberRow, q: string, members: MemberRow[], openRo
   if (!source) return []
 
   const roleName = member.role_name?.trim()
-  const insertText =
-    source === "role" && roleName && resolveMemberToken(roleName, members, openRoleSlots)[0] === member.uri
-      ? roleName
-      : uriMentionToken(member.uri)
+  const roleDisplay = source === "role" && roleName ? roleMentionDisplay(roleName) : null
 
-  if (source === "role" && roleName) {
-    const {label, badge} = roleMentionDisplay(roleName)
-    return [{member, label, badge, insertText}]
-  }
-
-  return [{member, label: uriSegment(member.uri), insertText}]
+  return [
+    {
+      member,
+      label: memberLabel(member),
+      badge: roleDisplay?.badge,
+      insertText: mentionToken(member, members, openRoleSlots),
+    },
+  ]
 }
 
 function memberMentionSource(member: MemberRow, query: string): "segment" | "role" | "display" | null {
@@ -1333,6 +1335,28 @@ function uriMentionToken(uri: string) {
 function memberLabel(member: MemberRow) {
   if (member.display_name && member.display_name.trim()) return member.display_name
   return uriSegment(member.uri)
+}
+
+function mentionToken(member: MemberRow, members: MemberRow[] = [member], openRoleSlots: HumanRoleSlotRow[] = []) {
+  const role = member.role_name?.trim()
+  if (role && isMentionToken(role) && tokenResolvesToMember(role, member, members, openRoleSlots)) return role
+
+  const label = memberLabel(member).trim()
+  if (label && isMentionToken(label) && tokenResolvesToMember(label, member, members, openRoleSlots)) return label
+
+  const segment = uriSegment(member.uri)
+  if (segment && tokenResolvesToMember(segment, member, members, openRoleSlots)) return segment
+
+  return uriMentionToken(member.uri)
+}
+
+function tokenResolvesToMember(token: string, member: MemberRow, members: MemberRow[], openRoleSlots: HumanRoleSlotRow[]) {
+  const resolved = resolveMemberToken(token, members, openRoleSlots)
+  return resolved.length === 1 && resolved[0] === member.uri
+}
+
+function isMentionToken(value: string) {
+  return /^[A-Za-z0-9][A-Za-z0-9._-]*(?::[A-Za-z0-9][A-Za-z0-9._-]*)?$/.test(value)
 }
 
 function inviteCandidateLabel(candidate: InviteCandidateRow) {
