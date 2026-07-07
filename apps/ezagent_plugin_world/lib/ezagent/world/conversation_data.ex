@@ -178,13 +178,14 @@ defmodule Ezagent.World.ConversationData do
     |> Enum.sort()
     |> Enum.map(fn uri ->
       meta = Map.get(member_meta, uri, %{})
+      kind = sender_kind(uri)
 
       %{
         "uri" => uri,
-        "display_name" => Map.get(display_map, uri, uri),
+        "display_name" => member_display_name(uri, meta, display_map, kind),
         "online" => is_map(meta) and Map.get(meta, :online, false) == true,
         "role_name" => if(is_map(meta), do: Map.get(meta, :role_name), else: nil),
-        "kind" => sender_kind(uri)
+        "kind" => kind
       }
     end)
   end
@@ -542,6 +543,32 @@ defmodule Ezagent.World.ConversationData do
         %{}
     end
   end
+
+  defp member_display_name(uri, meta, display_map, kind) do
+    display_name = Map.get(display_map, uri, uri)
+    role_name = member_role_name(meta)
+    fallback = uri_display_fallback(uri)
+
+    if kind == "agent" and non_empty_string?(role_name) and display_name in [uri, fallback] do
+      role_name
+    else
+      display_name
+    end
+  end
+
+  defp member_role_name(meta) when is_map(meta),
+    do: Map.get(meta, :role_name) || Map.get(meta, "role_name")
+
+  defp member_role_name(_meta), do: nil
+
+  defp uri_display_fallback(uri) when is_binary(uri) do
+    case Ezagent.URI.parse(uri) do
+      {:ok, %URI{} = parsed} -> uri_name(parsed) || uri
+      _ -> uri
+    end
+  end
+
+  defp non_empty_string?(value), do: is_binary(value) and String.trim(value) != ""
 
   defp entity_options(caller_uri, workspace_uri) do
     uri_options = Module.concat([Ezagent.UI, UriOptions])
