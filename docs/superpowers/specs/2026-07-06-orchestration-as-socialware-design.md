@@ -7,7 +7,9 @@ rev1 codex architecture review: UNSOUND (1 BLOCKER: `requires` vs (session,ref)
 install identity; 2 MAJOR: role namespace contradiction, from_role staleness;
 1 MINOR: hop-state home) — all four resolved, marked `[A‑n]`. rev3: A-2 upgraded
 per Allen's decision — install-time auto-prefix (`hello:advisor`) makes role
-collisions impossible by construction instead of rejected-at-install.
+collisions impossible by construction instead of rejected-at-install. rev4
+(Allen 2026-07-07): cross-socialware communication settled as NO new protocol —
+§6 reuses the session machinery wholesale; G⑩ dissolves under A-2/A-3.
 **Lineage:** role-slot P1–P3 (#1180/#1185/#1194) · hello substrate migration B'
 (#1208 + its spec) · manifest track (#1164) + manifest-YAML spec
 (`2026-07-06-config-governance-unify-and-manifest-yaml.md`) · jjkysy #1201 findings
