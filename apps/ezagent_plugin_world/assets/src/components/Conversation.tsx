@@ -62,6 +62,7 @@ type SessionRow = {
 type MemberRow = {
   uri: string
   display_name?: string | null
+  role_name?: string | null
   online?: boolean
   kind?: string | null
 }
@@ -262,8 +263,9 @@ export function Conversation({
     return members
       .filter((m) => {
         const seg = uriSegment(m.uri).toLowerCase()
-        const name = (m.display_name || "").toLowerCase()
-        return q === "" || seg.includes(q) || name.includes(q)
+        const label = memberLabel(m).toLowerCase()
+        const role = (m.role_name || "").toLowerCase()
+        return q === "" || seg.includes(q) || label.includes(q) || role.includes(q)
       })
       .slice(0, 6)
   }, [mentionQuery, members])
@@ -782,24 +784,29 @@ export function Conversation({
               <div className="relative flex-1">
                 {mentionMatches.length > 0 && (
                   <ul className="absolute bottom-[calc(100%+6px)] left-0 right-0 z-20 m-0 max-h-[220px] list-none overflow-y-auto rounded-lg border border-border bg-card p-1 shadow-xl" role="listbox" aria-label="提及成员">
-                    {mentionMatches.map((member) => (
-                      <li key={member.uri}>
-                        <button
-                          type="button"
-                          className="flex w-full items-baseline gap-2 rounded-md px-2.5 py-1.5 text-left text-foreground hover:bg-muted"
-                          onMouseDown={(event) => {
-                            // mousedown (not click) so the textarea doesn't blur first
-                            event.preventDefault()
-                            insertMention(member)
-                          }}
-                        >
-                          <span className="font-mono text-[12.5px] font-semibold text-emerald-700 dark:text-emerald-300">@{uriSegment(member.uri)}</span>
-                          {member.display_name && member.display_name !== uriSegment(member.uri) && (
-                            <span className="text-xs text-muted-foreground">{member.display_name}</span>
-                          )}
-                        </button>
-                      </li>
-                    ))}
+                    {mentionMatches.map((member) => {
+                      const label = memberLabel(member)
+                      const token = uriSegment(member.uri)
+
+                      return (
+                        <li key={member.uri}>
+                          <button
+                            type="button"
+                            className="flex w-full min-w-0 items-baseline gap-2 rounded-md px-2.5 py-1.5 text-left text-foreground hover:bg-muted"
+                            onMouseDown={(event) => {
+                              // mousedown (not click) so the textarea doesn't blur first
+                              event.preventDefault()
+                              insertMention(member)
+                            }}
+                          >
+                            <span className="min-w-0 flex-1 overflow-hidden text-ellipsis whitespace-nowrap text-[12.5px] font-semibold text-foreground">{label}</span>
+                            {label !== token && (
+                              <span className="shrink-0 font-mono text-[11.5px] text-muted-foreground">@{token}</span>
+                            )}
+                          </button>
+                        </li>
+                      )
+                    })}
                   </ul>
                 )}
                 <textarea
