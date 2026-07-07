@@ -18,6 +18,7 @@ defmodule EzagentDomainInstanceMessage.Integration.DefinitionAgentsMaterializeTe
   alias Ezagent.ActionSet.Session, as: SessionBehavior
   alias Ezagent.Entity.Session
   alias Ezagent.KindRegistry
+  alias EzagentDomainInstanceMessage.MaterializedRoleTestBehavior
   alias EzagentDomainInstanceMessage.SessionCreator.DefinitionAgents
 
   defmodule StubTemplate do
@@ -98,6 +99,22 @@ defmodule EzagentDomainInstanceMessage.Integration.DefinitionAgentsMaterializeTe
         name: name,
         requested_caps: [
           %{behavior: Ezagent.ActionSet.Identity, action: :list_caps}
+        ]
+      })
+
+    name
+  end
+
+  defp seed_recipe_with_behavior(n) do
+    name = "t2-behavior-#{n}"
+    RecipeRegistry.invalidate(RecipeRegistry.system_workspace_uri(), name)
+
+    {:ok, _} =
+      RecipeRegistry.seed_role_if_absent(%{
+        name: name,
+        behaviors: [MaterializedRoleTestBehavior],
+        requested_caps: [
+          %{behavior: MaterializedRoleTestBehavior, action: :ping}
         ]
       })
 
@@ -196,6 +213,41 @@ defmodule EzagentDomainInstanceMessage.Integration.DefinitionAgentsMaterializeTe
     assert Enum.any?(caps, fn cap ->
              cap.behavior == Ezagent.ActionSet.Identity and cap.action == :list_caps
            end)
+  end
+
+  test "fresh materialized role member dispatches recipe-declared behavior action" do
+    n = uniq()
+    session_uri = live_session(n)
+    recipe_name = seed_recipe_with_behavior(n)
+    role_name = "behavior-member-#{n}"
+    flavor = register_stub_flavor(n)
+
+    assert :ok =
+             DefinitionAgents.materialize_definition_agents(
+               session_uri,
+               @workspace_uri,
+               @owner_uri,
+               [%{recipe: recipe_name, role_name: role_name, flavor: flavor}]
+             )
+
+    members = members_of(session_uri)
+    planned = SessionBehavior.role_name_to_uri(members, role_name)
+    on_exit(fn -> terminate(planned) end)
+
+    assert {:ok, _pid} = KindRegistry.lookup(planned)
+    assert {:ok, %{pinged: false}} = Ezagent.Kind.get_slice(planned, :materialized_role_test)
+
+    target = Ezagent.URI.with_action(planned, :materialized_role_test, :ping)
+
+    assert {:ok, %{pong: true}} =
+             Ezagent.Router.dispatch(
+               Ezagent.Cmd.new(target, :ping, %{}, %{
+                 mode: :call,
+                 caller: @owner_uri,
+                 caps: MapSet.new([Ezagent.Capability.admin_genesis_cap()]),
+                 reply: {:caller_inbox, self()}
+               })
+             )
   end
 
   test "reuse install choice joins the selected recipe-matching agent through the edge role" do
