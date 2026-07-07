@@ -1,4 +1,4 @@
-defmodule Ezagent.Socialware.ConfigChangeStore do
+defmodule Ezagent.ConfigGovernance.Store do
   @moduledoc """
   Thin store for CR (change-request) config governance (SPEC
   `docs/together/2026-06-26/specs/cr-config-governance.md`, rev 3). Owns ONLY

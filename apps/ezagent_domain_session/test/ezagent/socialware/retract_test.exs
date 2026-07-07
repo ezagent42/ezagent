@@ -9,7 +9,7 @@ defmodule Ezagent.Socialware.RetractTest do
   # `fetch_object/1`, never re-running the name-`lookup` retract makes fail.
   use EzagentCore.DataCase, async: false
 
-  alias Ezagent.Socialware.ConfigGovernance.Socialware, as: Governance
+  alias Ezagent.ConfigGovernance.Socialware, as: Governance
   alias Ezagent.Socialware.{Definition, DefinitionRegistry, Installation}
 
   @owner Ezagent.URI.new!("entity://team-ret/user/owner")

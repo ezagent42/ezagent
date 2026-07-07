@@ -19,7 +19,7 @@ defmodule EzagentWeb.WorldConversationTest do
   alias Ezagent.Routing.Matcher
   alias Ezagent.Routing.RuleStore
   alias Ezagent.Socialware.{AnonBinding, AnonUser, ExternalFeed}
-  alias Ezagent.Socialware.ConfigGovernance.Socialware, as: SocialwareGovernance
+  alias Ezagent.ConfigGovernance.Socialware, as: SocialwareGovernance
   alias EzagentDomainInstanceMessage.Routing.MentionRouting
 
   setup do

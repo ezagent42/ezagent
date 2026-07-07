@@ -13,7 +13,7 @@ defmodule Ezagent.Socialware.ContentHashInstallTest do
   # pin thread it through the existing freeze-pin machinery.
   use EzagentCore.DataCase, async: false
 
-  alias Ezagent.Socialware.ConfigGovernance.Socialware, as: Governance
+  alias Ezagent.ConfigGovernance.Socialware, as: Governance
   alias Ezagent.Socialware.{Definition, DefinitionRegistry, Installation}
 
   @actor Ezagent.URI.new!("entity://cid-pub/user/author")
