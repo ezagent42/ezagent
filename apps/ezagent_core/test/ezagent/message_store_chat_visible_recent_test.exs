@@ -87,6 +87,15 @@ defmodule Ezagent.MessageStoreChatVisibleRecentTest do
       [row] = MessageStore.chat_visible_recent(s, 10)
       assert %DateTime{} = row.routed_at
     end
+
+    test "persists message hop budget with default of eight", %{session: s} do
+      default_msg = write(s, "default hops")
+      assert default_msg.hops == 8
+
+      custom_msg = Message.new(sender(), %{text: "custom hops", attachments: []}, hops: 3)
+      {:ok, written} = MessageStore.write(custom_msg, s)
+      assert written.hops == 3
+    end
   end
 
   # NOTE: the prior "multi-session routing: routed_at per-session for the SAME

@@ -66,7 +66,12 @@ defmodule EzagentDomainUi.Routing.RoutingViewTest do
         %{
           id: 42,
           table_name: "Elixir.EzagentDomainInstanceMessage.Routing.MentionRouting",
-          matcher: {:and, [{:in_session, "session://system/default/main"}, {:mention, "entity://team-alpha/agent/cc_demo"}]},
+          matcher:
+            {:and,
+             [
+               {:in_session, "session://system/default/main"},
+               {:mention, "entity://team-alpha/agent/cc_demo"}
+             ]},
           matcher_repr:
             "{:and, [{:in_session, \"session://system/default/main\"}, {:mention, \"entity://team-alpha/agent/cc_demo\"}]}",
           receivers: ["entity://team-alpha/agent/py_default"],
@@ -156,6 +161,18 @@ defmodule EzagentDomainUi.Routing.RoutingViewTest do
       assert html =~ ~s(name="rule[receivers]")
       assert html =~ "Add rule"
       assert html =~ "+ Add session-scoped rule"
+    end
+
+    test "renders role-aware matcher and receiver authoring affordances" do
+      html =
+        render_component(&RoutingView.render/1,
+          session_uri: Ezagent.URI.new!("session://system/default/main"),
+          session_routing_rules: []
+        )
+
+      assert html =~ ~s(<option value="from_role">from_role</option>)
+      assert html =~ ~s(data-allow-freetext="true")
+      assert html =~ "role:builder"
     end
 
     test "renders gracefully with nil session_uri" do

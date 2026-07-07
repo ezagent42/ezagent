@@ -13,6 +13,9 @@ defmodule Ezagent.World.ConversationRoutingForm do
       {"from", text} when is_binary(text) and text != "" ->
         {:ok, Ezagent.Routing.Matcher.from(text)}
 
+      {"from_role", text} when is_binary(text) and text != "" ->
+        build_from_role_matcher(text)
+
       {"text_contains", text} when is_binary(text) and text != "" ->
         {:ok, Ezagent.Routing.Matcher.text_contains(text)}
 
@@ -26,6 +29,16 @@ defmodule Ezagent.World.ConversationRoutingForm do
 
   def build_matcher(_), do: {:error, :invalid_matcher_form}
 
+  defp build_from_role_matcher(text) do
+    role_name = String.trim(text)
+
+    if valid_role_name?(role_name) do
+      {:ok, Ezagent.Routing.Matcher.from_role(role_name)}
+    else
+      {:error, :invalid_matcher_form}
+    end
+  end
+
   @doc false
   def parse_receivers(value) do
     values =
@@ -35,10 +48,9 @@ defmodule Ezagent.World.ConversationRoutingForm do
         true -> []
       end
 
-    for item <- values,
-        text = String.trim(to_string(item)),
-        text != "",
-        do: text
+    values
+    |> Enum.map(&parse_receiver/1)
+    |> Enum.reject(&is_nil/1)
   end
 
   @doc false
@@ -55,13 +67,21 @@ defmodule Ezagent.World.ConversationRoutingForm do
   @doc false
   def revalidate_receivers(socket, receivers) do
     Enum.reduce_while(receivers, :ok, fn receiver, :ok ->
-      if Ezagent.Routing.Resolver.magic_token?(receiver) do
-        {:cont, :ok}
-      else
-        case revalidate_uris(socket, [receiver], [:entity, :session]) do
-          :ok -> {:cont, :ok}
-          {:error, _} = err -> {:halt, err}
-        end
+      case receiver do
+        {:role, role_name} when is_binary(role_name) ->
+          if valid_role_name?(role_name),
+            do: {:cont, :ok},
+            else: {:halt, {:error, {:invalid_role, role_name}}}
+
+        receiver when is_binary(receiver) ->
+          if Ezagent.Routing.Resolver.magic_token?(receiver) do
+            {:cont, :ok}
+          else
+            case revalidate_uris(socket, [receiver], [:entity, :session]) do
+              :ok -> {:cont, :ok}
+              {:error, _} = err -> {:halt, err}
+            end
+          end
       end
     end)
   end
@@ -100,5 +120,30 @@ defmodule Ezagent.World.ConversationRoutingForm do
           leaf
         ])
     end
+  end
+
+  defp parse_receiver(value) do
+    text = String.trim(to_string(value))
+
+    cond do
+      text == "" ->
+        nil
+
+      String.starts_with?(text, "role:") ->
+        text
+        |> String.trim_leading("role:")
+        |> String.trim()
+        |> role_receiver()
+
+      true ->
+        text
+    end
+  end
+
+  defp role_receiver(""), do: nil
+  defp role_receiver(role_name), do: Ezagent.Routing.Receiver.role(role_name)
+
+  defp valid_role_name?(role_name) when is_binary(role_name) do
+    role_name != "" and Regex.match?(~r/^[A-Za-z0-9_.-]+$/, role_name)
   end
 end

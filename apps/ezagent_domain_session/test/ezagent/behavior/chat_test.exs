@@ -13,6 +13,7 @@ defmodule Ezagent.ActionSet.ChatTest do
   alias Ezagent.{Capability, Message, MessageStore}
   alias Ezagent.ActionSet.Session, as: SessionBehavior
   alias Ezagent.InterfaceValidator
+  alias Ezagent.Routing.{Matcher, Receiver, Trace}
   # `Repo` is aliased by `use EzagentCore.DataCase`; no explicit alias needed (#92).
 
   setup do
@@ -40,7 +41,13 @@ defmodule Ezagent.ActionSet.ChatTest do
     caller = Map.fetch!(ctx, :caller)
 
     cap = %Capability{
-      Capability.cap(:session, Ezagent.ActionSet.Session, :receive, caller, Capability.workspace_of(caller))
+      Capability.cap(
+        :session,
+        Ezagent.ActionSet.Session,
+        :receive,
+        caller,
+        Capability.workspace_of(caller)
+      )
       | granted_by: URI.new!("entity://system/user/owner"),
         granted_at: DateTime.utc_now()
     }
@@ -278,6 +285,158 @@ defmodule Ezagent.ActionSet.ChatTest do
                  ctx
                )
     end
+
+    test "hop-exhausted messages are stored but not routed and leave trace" do
+      session_uri =
+        URI.new!("session://team-alpha/default/chat-hop-#{System.unique_integer([:positive])}")
+
+      bind_to_default(session_uri)
+      sender = URI.new!("entity://system/user/admin")
+      msg = Message.new(sender, %{text: "loop stop", attachments: []}, hops: 0)
+
+      slice = %{members: %{sender => %{online: true}}, monitors: %{}, last_seen: %{}}
+      ctx = %{self_uri: session_uri, kind_module: Ezagent.Entity.Session, caller: sender}
+
+      assert {:ok, _, %{stored: true, dropped: :hop_exhausted}} =
+               EzagentDomainInstanceMessage.Test.BehaviorInvoker.invoke(
+                 Ezagent.ActionSet.Session,
+                 :send,
+                 slice,
+                 %{message: msg},
+                 ctx
+               )
+
+      assert [%{rule_id: "no_match", hop: 0, drop_reason: "hop_exhausted"}] =
+               Trace.journey(msg.id)
+    end
+
+    test "declarative hello chain routes by role, traces decisions, and keeps internal relay private" do
+      test_table = :"hello_orchestration_m1_#{System.unique_integer([:positive])}"
+      :ok = Ezagent.RoutingRegistry.declare_table(test_table, key_uniqueness: :duplicate)
+
+      original = Application.get_env(:ezagent_core, :routing_tables)
+      Application.put_env(:ezagent_core, :routing_tables, [test_table])
+
+      on_exit(fn ->
+        if original do
+          Application.put_env(:ezagent_core, :routing_tables, original)
+        else
+          Application.delete_env(:ezagent_core, :routing_tables)
+        end
+      end)
+
+      session_uri =
+        URI.new!("session://team-alpha/default/hello-m1-#{System.unique_integer([:positive])}")
+
+      bind_to_default(session_uri)
+
+      viewer = URI.new!("entity://team-alpha/user/viewer")
+      responser = URI.new!("entity://team-alpha/agent/responser")
+      builder = URI.new!("entity://team-alpha/agent/builder")
+
+      members = %{
+        viewer => %{online: true, role_name: "viewer"},
+        responser => %{online: true, role_name: "responser"},
+        builder => %{online: true, role_name: "builder"}
+      }
+
+      :ok =
+        Ezagent.RoutingRegistry.put(
+          test_table,
+          Matcher.from_role("viewer"),
+          rule_value("viewer-to-responser", [Receiver.role("responser")])
+        )
+
+      :ok =
+        Ezagent.RoutingRegistry.put(
+          test_table,
+          Matcher.all_of([
+            Matcher.from_role("responser"),
+            Matcher.text_matches("^\\[need-build\\]")
+          ]),
+          rule_value("responser-to-builder", [Receiver.role("builder")])
+        )
+
+      :ok =
+        Ezagent.RoutingRegistry.put(
+          test_table,
+          Matcher.from_role("builder"),
+          rule_value("builder-loop", [Receiver.role("responser")])
+        )
+
+      slice = %{members: members, monitors: %{}, last_seen: %{}}
+      ctx = %{self_uri: session_uri, kind_module: Ezagent.Entity.Session, caller: viewer}
+
+      viewer_msg = Message.new(viewer, %{text: "hello", attachments: []})
+
+      assert {:ok, _slice, %{stored: true}} =
+               EzagentDomainInstanceMessage.Test.BehaviorInvoker.invoke(
+                 Ezagent.ActionSet.Session,
+                 :send,
+                 slice,
+                 %{message: viewer_msg},
+                 ctx
+               )
+
+      assert [%{rule_id: "viewer-to-responser", receivers: [responser_str], hop: 8}] =
+               Trace.journey(viewer_msg.id)
+
+      assert responser_str == URI.to_string(responser)
+
+      relay_msg =
+        Message.new(
+          responser,
+          %{text: "[need-build] render the page", attachments: []},
+          visibility: :internal
+        )
+
+      assert {:ok, _slice, %{stored: true}} =
+               EzagentDomainInstanceMessage.Test.BehaviorInvoker.invoke(
+                 Ezagent.ActionSet.Session,
+                 :send,
+                 slice,
+                 %{message: relay_msg},
+                 ctx
+               )
+
+      assert [%{rule_id: "responser-to-builder", receivers: [builder_str], hop: 8}] =
+               Trace.journey(relay_msg.id)
+
+      assert builder_str == URI.to_string(builder)
+
+      visible_texts =
+        session_uri
+        |> MessageStore.chat_visible_recent(10)
+        |> Enum.map(& &1.body["text"])
+
+      refute "[need-build] render the page" in visible_texts
+
+      loop_msg =
+        Message.new(builder, %{text: "loop", attachments: []}, hops: 0, visibility: :internal)
+
+      assert {:ok, _slice, %{stored: true, dropped: :hop_exhausted}} =
+               EzagentDomainInstanceMessage.Test.BehaviorInvoker.invoke(
+                 Ezagent.ActionSet.Session,
+                 :send,
+                 slice,
+                 %{message: loop_msg},
+                 ctx
+               )
+
+      assert [%{rule_id: "no_match", hop: 0, drop_reason: "hop_exhausted"}] =
+               Trace.journey(loop_msg.id)
+    end
+  end
+
+  defp rule_value(rule_id, receivers) do
+    %{
+      receivers: receivers,
+      applies_to_users: [],
+      workspace_uri: nil,
+      rule_id: rule_id,
+      rule_set: "hello",
+      prompt_template_ref: nil
+    }
   end
 
   describe "invoke(:send, ...)" do
@@ -807,7 +966,9 @@ defmodule Ezagent.ActionSet.ChatTest do
       msg = Message.new(sender, %{text: "reply incoming", attachments: []})
 
       slice = %{}
-      ctx = with_member_cap(%{self_uri: user_uri, kind_module: Ezagent.Entity.User, caller: sender})
+
+      ctx =
+        with_member_cap(%{self_uri: user_uri, kind_module: Ezagent.Entity.User, caller: sender})
 
       assert {:ok, new_slice} =
                EzagentDomainInstanceMessage.Test.BehaviorInvoker.invoke(
@@ -842,7 +1003,9 @@ defmodule Ezagent.ActionSet.ChatTest do
       msg = Message.new(sender, %{text: "hi agent", attachments: []})
 
       slice = %{}
-      ctx = with_member_cap(%{self_uri: agent_uri, kind_module: Ezagent.Entity.Agent, caller: sender})
+
+      ctx =
+        with_member_cap(%{self_uri: agent_uri, kind_module: Ezagent.Entity.Agent, caller: sender})
 
       assert {:ok, ^slice} =
                EzagentDomainInstanceMessage.Test.BehaviorInvoker.invoke(
@@ -879,7 +1042,12 @@ defmodule Ezagent.ActionSet.ChatTest do
         Ezagent.AgentFlavorAttributes.delete(agent_uri)
       end)
 
-      ctx = with_member_cap(%{self_uri: agent_uri, kind_module: Ezagent.Entity.Agent, caller: session_uri})
+      ctx =
+        with_member_cap(%{
+          self_uri: agent_uri,
+          kind_module: Ezagent.Entity.Agent,
+          caller: session_uri
+        })
 
       EzagentDomainInstanceMessage.Test.BehaviorInvoker.invoke(
         Ezagent.ActionSet.Agent.Receive,
@@ -934,7 +1102,12 @@ defmodule Ezagent.ActionSet.ChatTest do
         Ezagent.AgentFlavorAttributes.delete(agent_uri)
       end)
 
-      ctx = with_member_cap(%{self_uri: agent_uri, kind_module: Ezagent.Entity.Agent, caller: session_uri})
+      ctx =
+        with_member_cap(%{
+          self_uri: agent_uri,
+          kind_module: Ezagent.Entity.Agent,
+          caller: session_uri
+        })
 
       EzagentDomainInstanceMessage.Test.BehaviorInvoker.invoke(
         Ezagent.ActionSet.Agent.Receive,
@@ -991,7 +1164,12 @@ defmodule Ezagent.ActionSet.ChatTest do
         Ezagent.AgentFlavorAttributes.delete(agent_uri)
       end)
 
-      ctx = with_member_cap(%{self_uri: agent_uri, kind_module: Ezagent.Entity.Agent, caller: session_uri})
+      ctx =
+        with_member_cap(%{
+          self_uri: agent_uri,
+          kind_module: Ezagent.Entity.Agent,
+          caller: session_uri
+        })
 
       EzagentDomainInstanceMessage.Test.BehaviorInvoker.invoke(
         Ezagent.ActionSet.Agent.Receive,

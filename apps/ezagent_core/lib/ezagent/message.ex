@@ -18,6 +18,7 @@ defmodule Ezagent.Message do
       ref_id:      String.t() | nil     # ^reply-to 另一条 message id
       inserted_at: DateTime.t()
       visibility: :external_visible | :internal
+      hops:        non_neg_integer()
 
   Message is session-internal data, not a dispatchable Kind. The previous
   `message://<uuid>` URI shape was retired in PR #149 / SPEC v2 §5.13 — the
@@ -37,6 +38,7 @@ defmodule Ezagent.Message do
   - `:inserted_at` — `DateTime.t()`,默认 `DateTime.utc_now()`
   - `:id` — 重写 id(测试 / replay 用,正常不传)
   - `:visibility` — `:external_visible | :internal`, default `:external_visible`
+  - `:hops` — non-negative routing hop budget, default `8`
 
   ## Phase 2 边界
 
@@ -70,7 +72,8 @@ defmodule Ezagent.Message do
           body: body_shape(),
           ref_id: String.t() | nil,
           inserted_at: DateTime.t(),
-          visibility: :external_visible | :internal
+          visibility: :external_visible | :internal,
+          hops: non_neg_integer()
         }
 
   # `id` is the primary key (plain UUID hex); ecto_sqlite3 stores it as TEXT.
@@ -119,6 +122,8 @@ defmodule Ezagent.Message do
       values: [:external_visible, :internal],
       default: :external_visible
 
+    field :hops, :integer, default: 8
+
     # The ROUTE-INTO-THIS-SESSION timestamp — set fresh at `MessageStore.write/2`
     # (= when the message entered THIS session). After the message
     # session-scoping collapse (2026-06-21, multi-routing removed) this is a REAL
@@ -148,7 +153,8 @@ defmodule Ezagent.Message do
       body: Map.put_new(body, :attachments, []),
       ref_id: Keyword.get(opts, :ref_id),
       inserted_at: Keyword.get(opts, :inserted_at, DateTime.utc_now()),
-      visibility: Keyword.get(opts, :visibility, :external_visible)
+      visibility: Keyword.get(opts, :visibility, :external_visible),
+      hops: Keyword.get(opts, :hops, 8)
     }
   end
 

@@ -59,6 +59,26 @@ defmodule Ezagent.Routing.MatcherTest do
     end
   end
 
+  describe "from_role/1" do
+    test "matches when the message sender currently holds the role" do
+      sender = URI.new!("entity://system/agent/responser")
+      m = msg(sender: sender)
+
+      assert Matcher.match?(Matcher.from_role("responser"), m, %{
+               members: %{sender => %{role_name: "responser"}}
+             })
+    end
+
+    test "does not match stale role assignments" do
+      sender = URI.new!("entity://system/agent/old-responser")
+      m = msg(sender: sender)
+
+      refute Matcher.match?(Matcher.from_role("responser"), m, %{
+               members: %{sender => %{role_name: "builder"}}
+             })
+    end
+  end
+
   describe "text_contains/1" do
     test "matches substring case-sensitive" do
       m = msg(text: "system is URGENT down")
@@ -101,10 +121,11 @@ defmodule Ezagent.Routing.MatcherTest do
   end
 
   describe "to_json/1 + from_json/1 round-trip" do
-    test "all 5 matchers round-trip cleanly" do
+    test "all leaf matchers round-trip cleanly" do
       cases = [
         Matcher.mention("entity://system/user/admin"),
         Matcher.from("entity://team-alpha/agent/test_cc-builder"),
+        Matcher.from_role("responser"),
         Matcher.text_contains("hi"),
         Matcher.text_matches("^cmd"),
         Matcher.always()
