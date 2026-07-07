@@ -222,6 +222,34 @@ defmodule Ezagent.Socialware.ConformanceTest do
     assert Enum.any?(warnings, &match?({:routing_role_dag, {:dead_role, _}}, &1))
   end
 
+  test "composite human socialware with no adapter-flavor receiver warns but remains installable" do
+    n = uniq()
+    native_recipe = seed_recipe("native-#{n}")
+
+    definition =
+      write_def(%{
+        name: "t2-conf-mute-composite-#{n}",
+        roles: [
+          %{role_name: "viewer-#{n}", fill: :human},
+          %{role_name: "builder-#{n}", fill: :agent, recipe: native_recipe, flavor: "native"}
+        ],
+        routing_rules: [
+          %{
+            matcher: %{"type" => "from_role", "arg" => "viewer-#{n}"},
+            receivers: ["builder-#{n}"]
+          }
+        ]
+      })
+
+    assert :ok = Conformance.check(definition, @workspace_uri)
+    assert {:ok, warnings} = Conformance.check_with_warnings(definition, @workspace_uri)
+
+    assert Enum.any?(
+             warnings,
+             &match?({:routing_role_dag, {:mute_composite, _}}, &1)
+           )
+  end
+
   test "missing manifest uses plugin fails uses_plugins_installed" do
     n = uniq()
 

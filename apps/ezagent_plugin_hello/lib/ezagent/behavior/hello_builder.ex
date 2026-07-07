@@ -37,11 +37,20 @@ defmodule Ezagent.ActionSet.HelloBuilder do
     description: "Generate a page from an inbound user request"
   )
 
+  action(:rebuild,
+    args: %{session_uri: :string, instruction: :string},
+    returns: %{},
+    caps: [:rebuild],
+    modes: [:cast],
+    description: "Regenerate the hello page for the target session"
+  )
+
   # No hand-written `required_caps`: this behavior now runs on the unified
   # `Ezagent.Entity.Agent` (as a `hello.builder` role on the `native` flavor), so
-  # the Lifecycle macro derives the `:receive` cap on the `:agent` axis — the axis
-  # the role's minted caps use (RoleStep mints `kind: :agent`). Mirrors the kanban
-  # role behavior, which likewise declares only the `action/3` `caps:`.
+  # the Lifecycle macro derives the `:receive` / `:rebuild` caps on the `:agent`
+  # axis — the axis the role's minted caps use (RoleStep mints `kind: :agent`).
+  # Mirrors the kanban role behavior, which likewise declares only the `action/3`
+  # `caps:`.
 
   @impl Ezagent.Lifecycle
   def create(_args), do: {:ok, %{}}
@@ -55,10 +64,26 @@ defmodule Ezagent.ActionSet.HelloBuilder do
     with true <- from_user?(msg),
          %URI{} = session_uri <- session_from_ctx(ctx),
          text when is_binary(text) and text != "" <- extract_text(msg.body) do
-      _ = EzagentPluginHello.Generator.start(session_uri, text)
+      _ = generator_start(session_uri, text)
     end
 
     {:ok, %{}, []}
+  end
+
+  @doc """
+  Dispatchable rebuild entry for native hello builders.
+
+  Chat delivery to native members intentionally stops at `agent.receive` →
+  `AgentBridge`; callers that want the deterministic builder to act must dispatch
+  this named action with the matching caller-held cap.
+  """
+  def handle_rebuild(args, ctx) when is_map(args) and is_map(ctx) do
+    with {:ok, session_uri} <- rebuild_session_uri(args),
+         {:ok, instruction} <- rebuild_instruction(args),
+         :ok <- ensure_self_member(session_uri, ctx) do
+      _ = generator_start(session_uri, instruction)
+      {:ok, %{}, []}
+    end
   end
 
   # caps-data-ownership — admin-only Behavior; no per-entity owner.
@@ -77,6 +102,50 @@ defmodule Ezagent.ActionSet.HelloBuilder do
   defp extract_text(%{text: t}) when is_binary(t), do: t
   defp extract_text(%{"text" => t}) when is_binary(t), do: t
   defp extract_text(_), do: ""
+
+  defp rebuild_session_uri(args) do
+    case Map.get(args, :session_uri) || Map.get(args, "session_uri") do
+      %URI{} = uri ->
+        {:ok, uri}
+
+      uri when is_binary(uri) ->
+        {:ok, Ezagent.URI.new!(uri)}
+
+      _ ->
+        {:error, :invalid_rebuild_args}
+    end
+  rescue
+    ArgumentError -> {:error, :invalid_rebuild_args}
+  end
+
+  defp rebuild_instruction(args) do
+    case Map.get(args, :instruction) || Map.get(args, "instruction") do
+      instruction when is_binary(instruction) ->
+        instruction = String.trim(instruction)
+        if instruction == "", do: {:error, :invalid_rebuild_args}, else: {:ok, instruction}
+
+      _ ->
+        {:error, :invalid_rebuild_args}
+    end
+  end
+
+  defp ensure_self_member(%URI{} = session_uri, %{self_uri: %URI{} = self_uri}) do
+    members = Ezagent.Orchestrator.Tools.read_members(session_uri)
+
+    if Map.has_key?(members, Ezagent.URI.instance(self_uri)) or Map.has_key?(members, self_uri) do
+      :ok
+    else
+      {:error, {:builder_not_session_member, session_uri, self_uri}}
+    end
+  end
+
+  defp ensure_self_member(_session_uri, _ctx), do: {:error, :missing_builder_uri}
+
+  defp generator_start(%URI{} = session_uri, instruction) when is_binary(instruction) do
+    :ezagent_plugin_hello
+    |> Application.get_env(:generator_start, &EzagentPluginHello.Generator.start/2)
+    |> then(& &1.(session_uri, instruction))
+  end
 
   # For the session→member fan-out, ctx.caller is the originating session URI.
   defp session_from_ctx(%{caller: %URI{} = u}), do: u
