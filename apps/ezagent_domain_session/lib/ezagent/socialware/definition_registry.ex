@@ -283,6 +283,23 @@ defmodule Ezagent.Socialware.DefinitionRegistry do
         visibility_policy: %{publish_policy: :auto, web_anon_access: false}
       },
       %Definition{
+        name: "orchestrator",
+        title: "Orchestrator",
+        description: "Stock cc orchestrator team front desk.",
+        uses: ["cc"],
+        roles: [
+          %{
+            role_name: "orchestrator",
+            fill: :agent,
+            recipe: "orchestrator",
+            flavor: "cc"
+          }
+        ],
+        views: [],
+        routing_rules: [],
+        visibility_policy: %{publish_policy: :auto, web_anon_access: false}
+      },
+      %Definition{
         name: "socialware",
         bases: [
           Ezagent.ActionSet.Session,

@@ -39,6 +39,25 @@ defmodule Ezagent.Socialware.InstallationTest do
     assert behaviors == Session.socialware_behaviors()
   end
 
+  test "seeds orchestrator as a built-in socialware Definition using the cc plugin" do
+    assert {:ok, definition, _object} =
+             DefinitionRegistry.lookup(Ezagent.URI.workspace(:system), "orchestrator")
+
+    assert definition.uses == ["cc"]
+    assert definition.views == []
+    assert definition.routing_rules == []
+    assert definition.orchestrator_template_uri == nil
+
+    assert [
+             %{
+               role_name: "orchestrator",
+               fill: :agent,
+               recipe: "orchestrator",
+               flavor: "cc"
+             }
+           ] = definition.roles
+  end
+
   test "rejects unknown installs fail-loud" do
     assert {:error, {:unknown_socialware_install, "bogus"}} =
              Installation.behavior_set_for_template(

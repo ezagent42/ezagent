@@ -1,11 +1,9 @@
 defmodule Ezagent.Orchestrator.McpServer.ToolCatalog do
   @moduledoc false
 
-  @doc """
-  The MCP `tools/list`-shaped descriptor for all orchestrator tools.
-  """
-  @spec tool_schemas() :: [map()]
-  def tool_schemas do
+  @doc false
+  @spec raw_tool_schemas() :: [map()]
+  def raw_tool_schemas do
     [
       %{
         "name" => "add_managed_member",
@@ -35,6 +33,33 @@ defmodule Ezagent.Orchestrator.McpServer.ToolCatalog do
             }
           },
           "required" => ["source_agent_template_uri", "role_name"]
+        }
+      },
+      %{
+        "name" => "add_participant",
+        "description" =>
+          "Adopt an existing agent into your session as a MEMBER with a " <>
+            "stable role_name. Use this only when the worker already exists; " <>
+            "new managed workers should use add_managed_member.",
+        "inputSchema" => %{
+          "type" => "object",
+          "properties" => %{
+            "ref" => %{
+              "type" => "string",
+              "description" => "Existing agent URI to join to this session."
+            },
+            "role_name" => %{
+              "type" => "string",
+              "description" =>
+                "Stable per-session alias for this member (rules/legends target it)."
+            },
+            "in_session_template" => %{
+              "type" => "boolean",
+              "description" =>
+                "Whether this member is captured in a SessionTemplate snapshot. Defaults to true."
+            }
+          },
+          "required" => ["ref", "role_name"]
         }
       },
       %{
@@ -281,6 +306,15 @@ defmodule Ezagent.Orchestrator.McpServer.ToolCatalog do
         }
       }
     ]
+  end
+
+  @doc """
+  The MCP `tools/list`-shaped descriptor for all recipe-contributed
+  orchestrator tools.
+  """
+  @spec tool_schemas() :: [map()]
+  def tool_schemas do
+    Ezagent.Orchestrator.OrchestratorRecipe.tool_schemas()
   end
 
   @doc "The MCP tool names this catalog exposes."
