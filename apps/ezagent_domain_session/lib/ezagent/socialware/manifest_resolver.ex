@@ -7,16 +7,19 @@ defmodule Ezagent.Socialware.ManifestResolver do
   references, so this is the explicit fail-closed boundary between the two.
   """
 
-  alias Ezagent.Socialware.{Definition, ManifestViews}
+  alias Ezagent.Socialware.{Definition, DefinitionRegistry, ManifestViews}
 
   @doc "Resolve manifest name refs into a validated Definition."
   @spec resolve(map()) :: {:ok, Definition.t()} | {:error, term()}
   def resolve(attrs) when is_map(attrs) do
     with {:ok, uses} <- uses(attrs),
          :ok <- ensure_plugins_installed(uses),
+         {:ok, requires} <- requires(attrs),
+         :ok <- ensure_required_published(attrs, requires),
          {:ok, views} <- resolve_views(attrs) do
       attrs
       |> put_value(:uses, uses)
+      |> put_value(:requires, requires)
       |> put_value(:views, views)
       |> Definition.new()
     end
@@ -41,6 +44,31 @@ defmodule Ezagent.Socialware.ManifestResolver do
   defp ensure_plugins_installed(uses) do
     missing = Enum.reject(uses, &plugin_installed?/1)
     if missing == [], do: :ok, else: {:error, {:missing_socialware_plugins, missing}}
+  end
+
+  defp requires(attrs) do
+    case get(attrs, :requires, []) do
+      list when is_list(list) ->
+        if Enum.all?(list, &(is_binary(&1) and &1 != "")) do
+          {:ok, list}
+        else
+          {:error, {:invalid_socialware_manifest_field, :requires, list}}
+        end
+
+      other ->
+        {:error, {:invalid_socialware_manifest_field, :requires, other}}
+    end
+  end
+
+  defp ensure_required_published(_attrs, []), do: :ok
+
+  defp ensure_required_published(attrs, requires) do
+    workspace_uri = workspace_uri(attrs)
+
+    case Enum.find(requires, &(DefinitionRegistry.lookup(workspace_uri, &1) == :error)) do
+      nil -> :ok
+      missing -> {:error, {:unknown_socialware_requires, missing}}
+    end
   end
 
   defp plugin_installed?(slug) do
@@ -144,5 +172,13 @@ defmodule Ezagent.Socialware.ManifestResolver do
 
   defp get(map, key, default) do
     Map.get(map, key, Map.get(map, Atom.to_string(key), default))
+  end
+
+  defp workspace_uri(attrs) do
+    case get(attrs, :workspace_uri, Ezagent.URI.workspace(:system)) do
+      %URI{} = uri -> uri
+      value when is_binary(value) -> Ezagent.URI.new!(value)
+      value when is_atom(value) -> Ezagent.URI.workspace(value)
+    end
   end
 end
