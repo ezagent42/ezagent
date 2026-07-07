@@ -172,6 +172,14 @@ em{font-style:normal;color:var(--accent)}
 .mk-foot a{color:var(--accent-press);text-decoration:underline;text-underline-offset:2px}
 .toast{position:fixed;left:50%;bottom:28px;transform:translateX(-50%) translateY(20px);background:var(--ink);color:var(--card);font-size:13.5px;font-family:var(--font-cn-ui);padding:12px 20px;border-radius:var(--r-pill);box-shadow:var(--shadow-card);z-index:90;opacity:0;pointer-events:none;transition:all .25s var(--ease-out)}
 .toast.show{opacity:1;transform:translateX(-50%) translateY(0)}
+/* 招进后引导进 world 的常驻底栏 */
+.wsbar{position:fixed;left:50%;bottom:24px;transform:translateX(-50%) translateY(160%);z-index:80;display:flex;align-items:center;gap:16px;background:var(--stage);color:#F4F2EC;border-radius:var(--r-pill);box-shadow:var(--shadow-card);padding:11px 12px 11px 22px;transition:transform .42s var(--ease-out);max-width:calc(100vw - 28px)}
+.wsbar.show{transform:translateX(-50%) translateY(0)}
+.wsbar-txt{font-family:var(--font-cn-ui);font-size:13.5px;line-height:1.35}
+.wsbar-txt b{color:#fff;font-weight:600}
+.wsbar-cta{font-family:var(--font-cn-ui);font-weight:600;font-size:13px;color:var(--on-accent);background:var(--accent);padding:9px 16px;border-radius:var(--r-pill);white-space:nowrap;cursor:pointer;transition:background .15s;box-shadow:var(--shadow-accent)}
+.wsbar-cta:hover{background:var(--accent-hover)}
+@media(max-width:520px){.wsbar{flex-direction:column;gap:9px;padding:14px 18px;bottom:14px;text-align:center}}
 </style>
 </head>
 <body data-ez-nav="">
@@ -256,6 +264,10 @@ em{font-style:normal;color:var(--accent)}
 </div>
 
 <div class="toast" id="toast"></div>
+<div class="wsbar" id="wsBar">
+  <span class="wsbar-txt">你把「<b id="wsbarName"></b>」招进了 workspace</span>
+  <a class="wsbar-cta" id="wsbarGo" href="#">进 world 看看 TA 在做什么 →</a>
+</div>
 
 <script src="demo-state.js"></script>
 <script src="site-nav.js"></script>
@@ -483,7 +495,12 @@ function renderFeed(){
       (a.samp?`<div class="a-samp">${a.samp}</div>`:'')+
       `<div class="a-tags">${a.tags.map(t=>`<span class="a-tag">${t}</span>`).join('')}</div>`+
       `<div class="a-foot"><span class="a-stat">招过 <b>${a.hires}</b> 次 · 好评 <b>${a.rate}</b></span><button class="a-hire">招进 workspace</button></div>`;
-    el.querySelector('.a-hire').onclick=(e)=>{ e.target.textContent='已招进 ✓'; e.target.classList.add('done'); toast(`「${a.t}」已招进你的 workspace · demo`); };
+    el.querySelector('.a-hire').onclick=(e)=>{
+      e.target.textContent='已招进 ✓'; e.target.classList.add('done');
+      $('#wsbarName').textContent=a.t;
+      $('#wsbarGo').setAttribute('href','world-workspace.html?role='+mkRole+'&t='+encodeURIComponent(a.t)+'&by='+encodeURIComponent(a.by));
+      $('#wsBar').classList.add('show');
+    };
     feed.appendChild(el);
   });
 }
