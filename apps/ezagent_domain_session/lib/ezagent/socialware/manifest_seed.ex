@@ -11,13 +11,18 @@ defmodule Ezagent.Socialware.ManifestSeed do
     1. the deployment-level seed directory — `system://socialware`
        (`$EZAGENT_HOME/<profile>/socialware/*/manifest.yaml`), resolved
        through `Ezagent.System.FsResolver` (never raw `Ezagent.Home`);
-       silently skipped when the directory does not exist;
+       silently skipped when the directory does not exist. Shipped flagships
+       are seeded here from `ezagent_web/priv/socialware_seed/<name>/` by
+       `Ezagent.Home.SocialwareSeed` (home.init + a boot fallback); this is the
+       **canonical** socialware home (deploy-seed SPEC §4);
     2. every started OTP app's `priv/socialware/*/manifest.yaml`, apps
        sorted by name (apps without a priv dir are skipped).
 
-  Plugin-author experience: drop a `manifest.yaml` under your app's
-  `priv/socialware/<name>/` and it is collected — zero loader code. A name
-  published by more than one source settles via the
+  The deployment directory is the canonical socialware home. The app-priv
+  `priv/socialware/<name>/manifest.yaml` authoring lane (source 2) is
+  **DEPRECATED** (deploy-seed SPEC §2) and forbidden by the
+  `socialware_priv_manifest_files` arch gate — the scan code path stays until a
+  cleaner retires it. A name published by more than one source settles via the
   `ConfigGovernance.Socialware.publish_or_upgrade/2` idempotency
   (`:published` / `:upgraded` / `:exists`).
 
