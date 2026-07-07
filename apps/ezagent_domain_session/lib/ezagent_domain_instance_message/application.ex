@@ -253,7 +253,8 @@ defmodule EzagentDomainInstanceMessage.Application do
       # `session://default/system/main` URI shape that ~10 test suites
       # assert against.
       result =
-        with :ok <- ensure_system_workspace_seeded_for_tests() do
+        with :ok <- ensure_system_workspace_seeded_for_tests(),
+             :ok <- maybe_seed_stock_orchestrator_recipe_for_tests() do
           Ezagent.Workspace.create_session(
             Ezagent.URI.workspace(:system),
             %{short_name: "main", template_name: "default"},
@@ -295,6 +296,22 @@ defmodule EzagentDomainInstanceMessage.Application do
     Code.ensure_loaded?(Mix) and Mix.env() == :test
   rescue
     _ -> false
+  end
+
+  defp maybe_seed_stock_orchestrator_recipe_for_tests do
+    module = Module.concat([Ezagent, Orchestrator, OrchestratorRecipe])
+
+    if Code.ensure_loaded?(module) and function_exported?(module, :recipe, 0) do
+      module
+      |> apply(:recipe, [])
+      |> Ezagent.Agent.RecipeRegistry.seed_role_if_absent()
+      |> case do
+        {:ok, _} -> :ok
+        {:error, reason} -> {:error, reason}
+      end
+    else
+      :ok
+    end
   end
 
   defp ensure_system_workspace_seeded_for_tests do
@@ -407,14 +424,10 @@ defmodule EzagentDomainInstanceMessage.Application do
   # system-owned template or failing with
   # `{:session_template_not_found, "default", "team-alpha"}`.
   #
-  # Minimal-viable config: empty `members` (no worker agents — just the
-  # orchestrator), empty `routing_rules` (no auto-routing),
-  # `orchestrator_template_uri` pointing at the cc-orchestrator
-  # AgentTemplate seeded in `seed_cc_orchestrator_template/0` above. A
-  # session instantiated from this template spawns only the orchestrator —
-  # the orchestrator then composes its team via its member + rule-set tools
-  # (`add_managed_member` / `define_rule_set_rule` / `define_legend`,
-  # team-routing-unification §3.8).
+  # Minimal-viable config: no legacy `members`, empty `routing_rules` (no
+  # auto-routing), and installs `chat` + `orchestrator`. The orchestrator is a
+  # stock socialware Definition materialized through the same install path as
+  # every other default contribution.
   #
   # ## Idempotency (content-addressable)
   #
@@ -581,37 +594,6 @@ defmodule EzagentDomainInstanceMessage.Application do
 
   defp do_seed_default_session_template(%URI{scheme: "workspace"} = workspace_uri) do
     workspace_name = Ezagent.URI.workspace_name!(workspace_uri)
-    # Task #90 / rev6 — the orchestrator is a normal declared role member.
-    orchestrator_template_uri =
-      case Application.get_env(:ezagent_domain_session, :default_orchestrator_template_uri) do
-        %URI{} = uri -> uri
-        s when is_binary(s) and s != "" -> Ezagent.URI.new!(s)
-        _ -> nil
-      end
-
-    members =
-      case orchestrator_template_uri do
-        %URI{} = uri ->
-          [
-            # recipe-responsibility-split (2026-06-27, §1.3 conflation point #3) —
-            # `role_name` (session RESPONSIBILITY, axis B) and the orchestrator
-            # RECIPE (`source_template_uri`, axis A) are TWO INDEPENDENT fields
-            # that happen to coincide on the literal "orchestrator" by SEED
-            # CONVENTION ONLY. Nothing derives one from the other: change this
-            # `role_name` to "lead" and the recipe pointed at by
-            # `source_template_uri` is untouched — only the routing label moves.
-            # Keep them decoupled (recipe_responsibility_lockin_test.exs §T3); do
-            # not introduce code that forces `role_name` == the recipe name.
-            %{
-              role_name: "orchestrator",
-              source_template_uri: uri,
-              in_session_template: true
-            }
-          ]
-
-        _ ->
-          []
-      end
 
     content = %{
       name: "default",
@@ -624,11 +606,11 @@ defmodule EzagentDomainInstanceMessage.Application do
       # team-routing-unification §3.7 (PR-7) — SessionTemplate content carries
       # `members` (in_session_template members) / `prompt_templates` / `legends`;
       # `agent_slots` is NO LONGER a content field (PR-8 removes the slot tools).
-      # The default template is orchestrator-only. The orchestrator is declared
-      # as a role member and provisioned lazily by routing.
-      members: members,
+      # The default template delegates stock front-desk provisioning to the
+      # orchestrator socialware Definition; legacy `members` stays empty.
+      members: [],
       prompt_templates: %{},
-      installs: ["chat"],
+      installs: ["chat", "orchestrator"],
       legends: %{},
       routing_rules: [],
       default_workspace_uri: workspace_uri,

@@ -140,6 +140,11 @@ defmodule Ezagent.PluginCc.Template.OrchestratorRecipeInstallTest do
       {:ok, _} = Application.ensure_all_started(:ezagent_domain_agent)
       name = OrchestratorRecipe.name()
       :ok = Ezagent.Agent.RecipeRegistry.flush_cache()
+      :ok = Ezagent.Agent.RecipeRegistry.retire_role(name)
+
+      on_exit(fn ->
+        _ = Ezagent.Agent.RecipeRegistry.seed_role_if_absent(OrchestratorRecipe.recipe())
+      end)
 
       assert {:error, {:role_unresolved, {:role_not_registered, ^name}}} =
                Bootstrap.resolve_orchestrator_recipe()

@@ -44,6 +44,7 @@ defmodule EzagentDomainInstanceMessage.SessionCreator.DefinitionAgents do
 
   alias Ezagent.Agent.RecipeRegistry
   alias Ezagent.ActionSet.Session.Members
+  alias Ezagent.Entity.Session.Orchestrator, as: SessionOrchestrator
   alias Ezagent.Invocation
   alias Ezagent.Orchestrator.Tools.Participants
   alias EzagentDomainInstanceMessage.SessionCreator
@@ -99,32 +100,38 @@ defmodule EzagentDomainInstanceMessage.SessionCreator.DefinitionAgents do
     role_name = role_name_of(agent)
 
     case existing_member_for_role(session_uri, role_name) do
-      %URI{} ->
+      %URI{} = existing_uri ->
         # Idempotent re-materialize (repair/restart) — the role is already
-        # joined. Skip (do not re-spawn / re-grant).
-        :ok
+        # joined. Do not re-spawn; do re-run post materialization hooks because
+        # they are idempotent and may be absent on legacy sessions.
+        maybe_after_materialize(session_uri, workspace_uri, granted_by, agent, existing_uri)
 
       nil ->
-        case install_mode_of(agent) do
-          :reuse ->
-            reuse_existing_agent(
-              session_uri,
-              workspace_uri,
-              granted_by,
-              agent,
-              recipe_name,
-              role_name
-            )
+        with {:ok, agent_uri} <-
+               (case install_mode_of(agent) do
+                  :reuse ->
+                    reuse_existing_agent(
+                      session_uri,
+                      workspace_uri,
+                      granted_by,
+                      agent,
+                      recipe_name,
+                      role_name
+                    )
 
-          :fresh ->
-            materialize_fresh_agent(
-              session_uri,
-              workspace_uri,
-              granted_by,
-              agent,
-              recipe_name,
-              role_name
-            )
+                  :fresh ->
+                    materialize_fresh_agent(
+                      session_uri,
+                      workspace_uri,
+                      granted_by,
+                      agent,
+                      recipe_name,
+                      role_name
+                    )
+                end),
+             :ok <-
+               maybe_after_materialize(session_uri, workspace_uri, granted_by, agent, agent_uri) do
+          :ok
         end
     end
   end
@@ -165,7 +172,7 @@ defmodule EzagentDomainInstanceMessage.SessionCreator.DefinitionAgents do
              flavor
            ),
          :ok <- grant_recipe_caps(planned_uri, recipe) do
-      :ok
+      {:ok, planned_uri}
     end
   end
 
@@ -180,12 +187,62 @@ defmodule EzagentDomainInstanceMessage.SessionCreator.DefinitionAgents do
              session_uri: session_uri,
              in_session_template: true
            ) do
-      :ok
+      {:ok, agent_uri}
     else
       nil -> {:error, {:invalid_reuse_agent_uri, role_name}}
       {:error, _} = error -> error
       other -> {:error, {:reuse_agent_join_failed, role_name, other}}
     end
+  end
+
+  defp maybe_after_materialize(session_uri, workspace_uri, granted_by, agent, agent_uri) do
+    if orchestrator_recipe_slot?(agent) do
+      parent_template_uri = parent_template_uri_for(session_uri)
+
+      with :ok <-
+             SessionOrchestrator.grant_orchestrator_scoped_caps(
+               agent_uri,
+               session_uri,
+               granted_by
+             ),
+           :ok <-
+             SessionOrchestrator.register_orchestrator_mcp_context(
+               agent_uri,
+               session_uri,
+               workspace_uri,
+               granted_by,
+               parent_template_uri
+             ) do
+        :ok
+      end
+    else
+      :ok
+    end
+  end
+
+  defp orchestrator_recipe_slot?(agent) do
+    role_name_of(agent) == "orchestrator" and lookup_ref(recipe_of(agent)) == "orchestrator"
+  end
+
+  defp parent_template_uri_for(%URI{} = session_uri) do
+    case SessionOrchestrator.read_template_working_copy(session_uri) do
+      %{session_template_uri: %URI{} = uri} ->
+        uri
+
+      %{"session_template_uri" => %URI{} = uri} ->
+        uri
+
+      %{session_template_uri: uri} when is_binary(uri) and uri != "" ->
+        Ezagent.URI.new!(uri)
+
+      %{"session_template_uri" => uri} when is_binary(uri) and uri != "" ->
+        Ezagent.URI.new!(uri)
+
+      _ ->
+        Ezagent.URI.template(:system, :session, "default")
+    end
+  rescue
+    _ -> Ezagent.URI.template(:system, :session, "default")
   end
 
   defp ensure_reuse_recipe_match(%URI{} = agent_uri, recipe_name, role_name) do

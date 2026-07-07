@@ -121,6 +121,19 @@ defmodule EzagentDomainInstanceMessage.Integration.DefinitionAgentsMaterializeTe
     name
   end
 
+  defp ensure_orchestrator_recipe do
+    case RecipeRegistry.lookup(RecipeRegistry.system_workspace_uri(), "orchestrator") do
+      {:ok, _recipe} ->
+        :ok
+
+      :error ->
+        case RecipeRegistry.seed_role_if_absent(%{name: "orchestrator", requested_caps: []}) do
+          {:ok, _} -> :ok
+          {:error, reason} -> {:error, reason}
+        end
+    end
+  end
+
   defp live_agent(n, recipe_name) do
     agent_uri = Ezagent.URI.agent("system", "reusable-#{n}")
 
@@ -248,6 +261,74 @@ defmodule EzagentDomainInstanceMessage.Integration.DefinitionAgentsMaterializeTe
                  reply: {:caller_inbox, self()}
                })
              )
+  end
+
+  test "orchestrator role materialization grants scoped delegation caps" do
+    n = uniq()
+    session_uri = live_session(n)
+    role_name = "orchestrator"
+    flavor = register_stub_flavor(n)
+
+    :ok = ensure_orchestrator_recipe()
+
+    assert :ok =
+             DefinitionAgents.materialize_definition_agents(
+               session_uri,
+               @workspace_uri,
+               @owner_uri,
+               [%{recipe: "orchestrator", role_name: role_name, flavor: flavor}]
+             )
+
+    members = members_of(session_uri)
+    orchestrator_uri = SessionBehavior.role_name_to_uri(members, role_name)
+    on_exit(fn -> terminate(orchestrator_uri) end)
+
+    caps = Ezagent.Identity.list_caps_for(orchestrator_uri)
+
+    assert Enum.any?(caps, fn cap ->
+             cap.kind == :session and cap.instance == {:within_session, session_uri}
+           end)
+
+    assert Enum.any?(caps, fn cap ->
+             cap.kind == :agent and cap.instance == {:spawned_by, orchestrator_uri}
+           end)
+  end
+
+  test "ensure_orchestrator adopts a legacy planned orchestrator into Definition membership" do
+    n = uniq()
+    session_uri = live_session(n)
+
+    orchestrator_uri =
+      Ezagent.Entity.Session.Orchestrator.planned_orchestrator_uri(session_uri, @workspace_uri)
+
+    :ok = ensure_orchestrator_recipe()
+
+    {:ok, _pid} =
+      Ezagent.Kind.spawn(Ezagent.Entity.Agent, %{
+        uri: orchestrator_uri,
+        behaviors: Ezagent.Entity.Agent.base_behaviors()
+      })
+
+    :ok = Ezagent.WorkspaceRegistry.bind(orchestrator_uri, @workspace_uri)
+    :ok = Ezagent.AgentLineage.record(orchestrator_uri, @owner_uri)
+    :ok = Ezagent.AgentRecipeAttributes.put(orchestrator_uri, "orchestrator")
+    on_exit(fn -> terminate(orchestrator_uri) end)
+
+    assert {:ok, ^orchestrator_uri, :already_present} =
+             Ezagent.Entity.Session.Orchestrator.ensure_orchestrator(
+               session_uri,
+               @workspace_uri,
+               @owner_uri
+             )
+
+    assert SessionBehavior.role_name_to_uri(members_of(session_uri), "orchestrator") ==
+             orchestrator_uri
+
+    caps = Ezagent.Identity.list_caps_for(orchestrator_uri)
+
+    assert Enum.any?(caps, fn cap ->
+             cap.kind == :session and cap.instance == {:within_session, session_uri}
+           end)
   end
 
   test "reuse install choice joins the selected recipe-matching agent through the edge role" do

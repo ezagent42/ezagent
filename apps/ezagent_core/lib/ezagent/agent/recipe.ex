@@ -52,6 +52,7 @@ defmodule Ezagent.Agent.Recipe do
             script: nil,
             behaviors: [],
             requested_caps: [],
+            contributions: %{},
             session_template: nil,
             config: %{}
 
@@ -68,6 +69,7 @@ defmodule Ezagent.Agent.Recipe do
           script: String.t() | nil,
           behaviors: [module()],
           requested_caps: [cap_template()],
+          contributions: map(),
           session_template: String.t() | URI.t() | nil,
           config: map()
         }
@@ -104,6 +106,7 @@ defmodule Ezagent.Agent.Recipe do
           script: get(recipe, :script, nil),
           behaviors: get(recipe, :behaviors, []),
           requested_caps: get(recipe, :requested_caps, []),
+          contributions: get(recipe, :contributions, %{}),
           session_template: get(recipe, :session_template, nil),
           config: get(recipe, :config, %{})
         })
@@ -125,6 +128,7 @@ defmodule Ezagent.Agent.Recipe do
          :ok <- string_list_field(role.plugins, :plugins),
          {:ok, behaviors} <- behaviors_field(role.behaviors),
          {:ok, requested_caps} <- caps_field(role.requested_caps),
+         {:ok, contributions} <- contributions_field(role.contributions),
          :ok <- ref_field(role.prompt, :prompt),
          :ok <- ref_field(role.script, :script),
          :ok <- ref_field(role.session_template, :session_template),
@@ -137,9 +141,49 @@ defmodule Ezagent.Agent.Recipe do
          | passive: passive,
            behaviors: behaviors,
            requested_caps: requested_caps,
+           contributions: contributions,
            config: config
        }}
     end
+  end
+
+  # Contribution declarations are recipe-owned extension points consumed by
+  # plugin transports. Keep the core boundary shape-only: concrete contribution
+  # semantics belong to the declaring plugin.
+  defp contributions_field(nil), do: {:ok, %{}}
+
+  defp contributions_field(value) when is_map(value) do
+    tools = Map.get(value, :tools) || Map.get(value, "tools") || []
+
+    cond do
+      tools == [] and map_size(value) == 0 ->
+        {:ok, %{}}
+
+      is_list(tools) and Enum.all?(tools, &tool_contribution?/1) ->
+        {:ok, %{tools: Enum.map(tools, &canon_tool_contribution/1)}}
+
+      true ->
+        {:error, {:invalid_role_field, :contributions, value}}
+    end
+  end
+
+  defp contributions_field(value), do: {:error, {:invalid_role_field, :contributions, value}}
+
+  defp tool_contribution?(value) when is_map(value) do
+    tool_name = Map.get(value, :name) || Map.get(value, "name")
+    schema = Map.get(value, :schema) || Map.get(value, "schema")
+
+    (is_atom(tool_name) or is_binary(tool_name)) and is_map(schema)
+  end
+
+  defp tool_contribution?(_), do: false
+
+  defp canon_tool_contribution(value) do
+    %{
+      name: Map.get(value, :name) || Map.get(value, "name"),
+      schema: Map.get(value, :schema) || Map.get(value, "schema"),
+      mcp: Map.get(value, :mcp) || Map.get(value, "mcp") || false
+    }
   end
 
   # `config` is the layer-2 business-config bag a recipe may carry for its

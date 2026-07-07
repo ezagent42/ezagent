@@ -228,6 +228,13 @@ defmodule Ezagent.PluginCc.Integration.SocialwareCcCredentialInheritTest do
     test "cc role materialized by the host operator inherits the HOST login (fails on unfixed main)",
          %{n: n, project_cwd: project_cwd, host_token: host_token, admin_uri: admin_uri} do
       ws_name = Ezagent.URI.workspace_name!(@workspace_uri)
+      default_source_id = UserDefaultSource.id(URI.to_string(admin_uri), ws_name, "cc")
+
+      case Repo.get(UserDefaultSource, default_source_id) do
+        nil -> :ok
+        row -> Repo.delete!(row)
+      end
+
       assert UserDefaultSource.resolve(URI.to_string(admin_uri), ws_name, "cc") == nil
 
       session_uri = live_session("host-#{n}")

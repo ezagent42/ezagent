@@ -55,19 +55,21 @@ defmodule Ezagent.Entity.Session.Orchestrator.Caps do
     desired = build_desired_caps(orchestrator_uri, session_uri, owner_uri, session_workspace)
     current = Ezagent.Entity.Session.list_caps_for_materialization(orchestrator_uri)
 
-    to_grant =
+    {genesis_caps, rule_caps} =
       desired
+      |> Enum.split_with(&orchestrator_delegation_cap?/1)
+
+    to_grant =
+      rule_caps
       |> Enum.filter(&Ezagent.ActionSet.IdentityAdmin.rule_cap_bounded?/1)
+      |> Kernel.++(genesis_caps)
       |> Enum.reject(fn want ->
         Enum.any?(current, &cap_equal_ignoring_metadata?(&1, want))
       end)
 
-    # Fail-closed policy: role requested caps may only mint rule-bounded
-    # capabilities here. Cross-behavior wildcards are deliberately dropped
-    # instead of falling through a genesis/admin carve-out.
     results =
       Enum.map(to_grant, fn want ->
-        Ezagent.Identity.Grant.grant_cap(orchestrator_uri, want, tag_for(want, owner_uri))
+        Ezagent.Identity.Grant.grant_cap(orchestrator_uri, want, grant_tag_for(want, owner_uri))
       end)
 
     case Enum.reject(results, &(&1 == :ok)) do
@@ -104,19 +106,44 @@ defmodule Ezagent.Entity.Session.Orchestrator.Caps do
     desired = build_desired_caps(orchestrator_uri, session_uri, owner_uri, workspace_uri)
 
     desired
-    |> Enum.filter(&Ezagent.ActionSet.IdentityAdmin.rule_cap_bounded?/1)
+    |> Enum.filter(fn cap ->
+      orchestrator_delegation_cap?(cap) or
+        Ezagent.ActionSet.IdentityAdmin.rule_cap_bounded?(cap)
+    end)
     |> Enum.each(fn cap ->
-      _ = Ezagent.Identity.Grant.revoke_cap(orchestrator_uri, cap, tag_for(cap, owner_uri))
+      _ = Ezagent.Identity.Grant.revoke_cap(orchestrator_uri, cap, grant_tag_for(cap, owner_uri))
     end)
 
     :ok
   end
 
-  # Authorization tag for the retained role caps. Callers filter through
-  # `rule_cap_bounded?/1` before reaching this point, so requested caps cannot
-  # borrow genesis authority by widening to behavior/action wildcards.
-  defp tag_for(%Ezagent.Capability{}, %URI{} = owner_uri),
+  defp grant_tag_for(%Ezagent.Capability{} = cap, %URI{} = owner_uri) do
+    if orchestrator_delegation_cap?(cap) do
+      {:genesis, owner_uri}
+    else
+      tag_for_rule(owner_uri)
+    end
+  end
+
+  # Authorization tag for retained rule-bounded template caps. Orchestrator's
+  # two delegation caps are bounded by session/spawn lineage but intentionally
+  # behavior-wildcard; those use the genesis fallback above without widening the
+  # generic rule-grant predicate.
+  defp tag_for_rule(%URI{} = owner_uri),
     do: {:rule, :template_materialize, owner_uri}
+
+  defp orchestrator_delegation_cap?(%Ezagent.Capability{
+         kind: kind,
+         behavior: :any,
+         action: :any,
+         instance: instance
+       })
+       when kind in [:session, :agent] and
+              (is_tuple(instance) and tuple_size(instance) == 2) do
+    elem(instance, 0) in [:within_session, :spawned_by] and match?(%URI{}, elem(instance, 1))
+  end
+
+  defp orchestrator_delegation_cap?(_), do: false
 
   defp build_desired_caps(
          %URI{} = orchestrator_uri,
