@@ -1,7 +1,7 @@
-defmodule EzagentPluginDealScout.FetchDirectedTest do
+defmodule EzagentPluginCrawler.FetchDirectedTest do
   # async: false — token creds + injected http seam via app env (shared).
   use ExUnit.Case, async: false
-  alias EzagentPluginDealScout.{Config, Fetch}
+  alias EzagentPluginCrawler.{Config, Fetch}
 
   # Canned :httpc.request/4 reply carrying a JSON body, so no real network.
   defp stub_http(body) do
@@ -12,7 +12,7 @@ defmodule EzagentPluginDealScout.FetchDirectedTest do
 
   setup do
     on_exit(fn ->
-      Application.delete_env(:ezagent_plugin_dealscout, :http_request_fun)
+      Application.delete_env(:ezagent_plugin_crawler, :http_request_fun)
       Config.delete_token("acme")
     end)
 
@@ -24,7 +24,7 @@ defmodule EzagentPluginDealScout.FetchDirectedTest do
       :ok = Config.write_token("acme", "tok-xyz")
 
       Application.put_env(
-        :ezagent_plugin_dealscout,
+        :ezagent_plugin_crawler,
         :http_request_fun,
         stub_http(~s([{"title":"定向线索","url":"u","summary":"s"}]))
       )
@@ -43,7 +43,7 @@ defmodule EzagentPluginDealScout.FetchDirectedTest do
   describe "crawl_auto/1 — the source/token auto-routing decision point (Stage A gap)" do
     test "no configured sources: crawls public only, all items :public" do
       Application.put_env(
-        :ezagent_plugin_dealscout,
+        :ezagent_plugin_crawler,
         :http_request_fun,
         stub_http(~s([{"title":"公开线索","url":"u","summary":"s"}]))
       )
@@ -57,7 +57,7 @@ defmodule EzagentPluginDealScout.FetchDirectedTest do
       :ok = Config.write_token("acme", "tok-xyz")
 
       Application.put_env(
-        :ezagent_plugin_dealscout,
+        :ezagent_plugin_crawler,
         :http_request_fun,
         stub_http(~s([{"title":"线索","url":"u","summary":"s"}]))
       )
@@ -71,7 +71,7 @@ defmodule EzagentPluginDealScout.FetchDirectedTest do
       assert :error = Config.read_token("acme")
 
       Application.put_env(
-        :ezagent_plugin_dealscout,
+        :ezagent_plugin_crawler,
         :http_request_fun,
         stub_http(~s([{"title":"公开线索","url":"u","summary":"s"}]))
       )

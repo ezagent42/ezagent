@@ -17,9 +17,9 @@ defmodule Ezagent.ActionSet.DealScoutPageRefreshAlt do
   ## 干什么
 
   一个挂在 `native` flavor role agent 上的 ActionSet（recipe
-  `"dealscout-page-alt"`，`EzagentPluginDealScout.Recipes`）。声明单个
+  `"dealscout-page-alt"`，`EzagentPluginCrawler.Recipes`）。声明单个
   dispatchable action `:refresh_page`（caps 形状照 kanban 板动作）：
-  `Ezagent.ActionSet.DealScoutCrawl` 在爬完注入新线索后，按 `role_name`
+  `Ezagent.ActionSet.Crawler` 在爬完注入新线索后，按 `role_name`
   facet 解析出本 agent 的实例 URI，直接 dispatch 过来。handler 调 hello 的
   公开生成入口 `EzagentPluginHello.Generator.start/2`（supervised Task 里
   跑 LLM → TurnDriver → Surface）触发页面重建。
@@ -47,7 +47,7 @@ defmodule Ezagent.ActionSet.DealScoutPageRefreshAlt do
     description: "ALT: rebuild the hello page for the given session (caller-dispatched)"
   )
 
-  # 无 durable state：触发方（DealScoutCrawl）显式带全部输入，生成入口是
+  # 无 durable state：触发方（Crawler）显式带全部输入，生成入口是
   # hello 的公开模块。空 slice 即可（照 HelloBuilder）。
   @impl Ezagent.Lifecycle
   def create(_args), do: {:ok, %{}}
@@ -105,7 +105,7 @@ defmodule Ezagent.ActionSet.DealScoutPageRefreshAlt do
 
   defp page_refresh_fun do
     Application.get_env(
-      :ezagent_plugin_dealscout,
+      :ezagent_plugin_crawler,
       :page_refresh_fun,
       &EzagentPluginHello.Generator.start/2
     )

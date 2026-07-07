@@ -1,6 +1,6 @@
-defmodule EzagentPluginDealScout.RetentionSweeper do
+defmodule EzagentPluginCrawler.RetentionSweeper do
   @moduledoc """
-  DealScout 数据保留 sweeper（周期 GenServer，照 `Ezagent.Email.Inbound` 的
+  Crawler 数据保留 sweeper（通用能力层）（周期 GenServer，照 `Ezagent.Email.Inbound` 的
   `schedule` + `handle_info` 循环 + `Ezagent.Idempotency.Sweeper` 的定时清理先例）。
 
   仓里没有 cron 框架，`Process.send_after(self(), :sweep, interval)` 是标准写法。
@@ -57,7 +57,7 @@ defmodule EzagentPluginDealScout.RetentionSweeper do
   跑一次保留清理。运行期读发现流批次 slice → `prune` → 写回。当前发现流条目走
   `session.send` 历史注入、尚无独立 durable 批次 slice（later wiring），故此处为
   安全 no-op（返回 `:ok`），slice reader 接线后填充。**不 silent 失败**：一旦接线，
-  写回失败记 `[:dealscout, :sweep, :error]` telemetry。
+  写回失败记 `[:crawler, :sweep, :error]` telemetry。
   """
   @spec sweep_once() :: :ok
   def sweep_once, do: :ok
@@ -65,5 +65,5 @@ defmodule EzagentPluginDealScout.RetentionSweeper do
   defp schedule_sweep, do: Process.send_after(self(), :sweep, interval_ms())
 
   defp interval_ms,
-    do: Application.get_env(:ezagent_plugin_dealscout, :sweep_interval_ms, @default_interval_ms)
+    do: Application.get_env(:ezagent_plugin_crawler, :sweep_interval_ms, @default_interval_ms)
 end
