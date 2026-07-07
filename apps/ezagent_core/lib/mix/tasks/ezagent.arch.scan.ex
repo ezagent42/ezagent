@@ -62,6 +62,18 @@ defmodule Mix.Tasks.Ezagent.Arch.Scan do
     # on-chokepoint delegate).
   ]
 
+  # socialware-seed-path gate (2026-07-07, deploy-seed SPEC §5b). The ONLY
+  # sanctioned `ConfigGovernance.Socialware.publish_or_upgrade(` call site is the
+  # framework's generic governed import lane (`ManifestYaml.import/2`) — the
+  # chokepoint the deployment-directory seed scan (`ManifestSeed.scan_all!`)
+  # flows through. Every OTHER `publish_or_upgrade(` call is a plugin/socialware
+  # self-publish at boot (the retired `Demo.publish` shape — hello/kanban/
+  # dealscout), which must migrate onto the deploy-seed lane. Plugin
+  # self-publishers are NOT on this list, so they trip the gate.
+  @socialware_publish_sanctioned_files [
+    "apps/ezagent_domain_session/lib/ezagent/socialware/manifest_yaml.ex"
+  ]
+
   @spawn_fresh_sanctioned [
     # PR-2 config-evolve — shifted +6 by adding `Ezagent.ActionSet.ConfigEvolve`
     # (+ its comment block) to `Agent.behaviors/0`; same sanctioned defs/call.
@@ -367,7 +379,9 @@ defmodule Mix.Tasks.Ezagent.Arch.Scan do
       cold_restart_respawn_round_trip_drift: cold_restart_respawn_round_trip_drift(),
       raw_port_spawn_executable: raw_port_spawn_executable(),
       resource_kind_as_genserver: resource_kind_as_genserver(),
-      hardcoded_deploy_domain_hosts: hardcoded_deploy_domain_hosts()
+      hardcoded_deploy_domain_hosts: hardcoded_deploy_domain_hosts(),
+      socialware_priv_manifest_files: socialware_priv_manifest_files(),
+      socialware_self_publish_unsanctioned: socialware_self_publish_unsanctioned()
     ]
   end
 
@@ -394,6 +408,52 @@ defmodule Mix.Tasks.Ezagent.Arch.Scan do
         not comment_line?(line) and
         Regex.match?(@hardcoded_deploy_domain_regex, line)
     end)
+  end
+
+  # Socialware deploy-seed gate (2026-07-07, SPEC §5). Two shapes:
+  #
+  #   (a) `socialware_priv_manifest_files` — any `apps/*/priv/socialware/*/
+  #       manifest.yaml` on disk. The plugin/domain-priv authoring lane is
+  #       DEPRECATED (design §2): the canonical socialware home is the
+  #       deployment directory (`$EZAGENT_HOME/<profile>/socialware/`), seeded
+  #       from `ezagent_web/priv/socialware_seed/<name>/` via
+  #       `Ezagent.Home.SocialwareSeed`. TARGET-ZERO — a manifest under
+  #       `priv/socialware/` must move to the deploy-seed source. (NOTE the
+  #       source dir name is `socialware_seed`, NOT `socialware`, so seed
+  #       sources never trip this glob.) This shape uses a filesystem glob, not
+  #       the `lib/**` scanner, because manifests are priv assets.
+  #
+  #   (b) `socialware_self_publish_unsanctioned` — non-framework
+  #       `ConfigGovernance.Socialware.publish_or_upgrade(` call sites (the
+  #       `Demo.publish` self-publish-at-boot shape). Only the framework import
+  #       lane (`manifest_yaml.ex`, `@socialware_publish_sanctioned_files`) is
+  #       allowed; every plugin self-publisher trips it. AST-based (parens-only
+  #       remote calls), so the `@spec`/`def publish_or_upgrade` in
+  #       `config_governance/socialware.ex` and doc mentions are NOT counted.
+  defp socialware_priv_manifest_files do
+    repo_root()
+    |> Path.join("apps/*/priv/socialware/*/manifest.yaml")
+    |> Path.wildcard()
+    |> length()
+  end
+
+  defp socialware_self_publish_unsanctioned do
+    ast_call_hits(fn _last_segment, fun -> fun == :publish_or_upgrade end)
+    |> Enum.reject(fn {file, _line, _} -> file in @socialware_publish_sanctioned_files end)
+    |> length()
+  end
+
+  @doc """
+  Testable entry for `socialware_self_publish_unsanctioned`: count
+  `publish_or_upgrade` remote-call sites in a SOURCE STRING (no sanctioned
+  reject — the fixture asserts the raw AST hit count). Proves the gate matches a
+  parenthesized `Governance.publish_or_upgrade(x, y)` call while a
+  `&Mod.publish_or_upgrade/2` capture, the `@spec`/`def` head, and doc mentions
+  are NOT counted.
+  """
+  @spec count_socialware_self_publish_in_source(String.t()) :: non_neg_integer()
+  def count_socialware_self_publish_in_source(source) when is_binary(source) do
+    count_calls_in_source(source, fn _last_segment, fun -> fun == :publish_or_upgrade end)
   end
 
   # kanban-as-role K5 (2026-06-25) — resource-only-files gate (cap 0). `resource://`
