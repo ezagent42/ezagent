@@ -185,3 +185,19 @@ jobs:
           "$PG_BIN/pg_ctl" -D "$PGDATA_CI" -m immediate stop 2>/dev/null || true
           lsof -ti tcp:"$POSTGRES_PORT" | xargs -r kill -9 2>/dev/null || true
           rm -rf "$PGDATA_CI"
+
+  gitleaks:
+    name: gitleaks secret scan
+    runs-on: ubuntu-latest
+    permissions: { contents: read }
+    steps:
+      - uses: actions/checkout@v4
+      # Bare gitleaks CLI (MIT), not gitleaks-action: the action demands a paid
+      # license for org repos. Working-tree scan (--no-git) by design — this
+      # gate guards NEW additions; history is handled separately (rewrite +
+      # rotation). Allowlist rationale lives in .gitleaks.toml.
+      - name: Scan working tree for secrets
+        run: |
+          docker run --rm -v "$PWD:/repo" -w /repo \
+            ghcr.io/gitleaks/gitleaks:latest \
+            detect --source /repo --no-git --config /repo/.gitleaks.toml --redact

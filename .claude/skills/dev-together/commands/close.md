@@ -4,7 +4,7 @@ Process the merge stack: review/test each entry, then merge to `main`. **This is
 the only path to `main`.**
 
 > ## ⚠️ Deploy pointers — `beta` / `release` are NOT task branches
-> The deploy flow (`docs/superpowers/specs/2026-06-25-deploy-flow-design.md`) keeps
+> The deploy flow keeps
 > three long-lived refs that are **promotion pointers into `main`'s history**, not
 > developer work:
 > - **`main`** — the trunk + the **only** merge target for task branches (= the
