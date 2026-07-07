@@ -1,0 +1,8 @@
+%{
+  mount: :ok,
+  kind_base_after: {:ok,
+   %{
+     behaviors: [Ezagent.ActionSet.Identity, Ezagent.ActionSet.Sandbox, Ezagent.ActionSet.ApiKeys, Ezagent.ActionSet.CredentialGrant,
+      Ezagent.ActionSet.ConfigEvolve, Ezagent.ActionSet.ConfigGovernance, Ezagent.ActionSet.DealScoutPageRefreshAlt]
+   }}
+}
