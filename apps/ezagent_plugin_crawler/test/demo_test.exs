@@ -184,4 +184,21 @@ defmodule EzagentPluginCrawler.DemoTest do
     assert legend["bound_rule_set"] == "dealscout-update"
     assert legend["fold"] == false
   end
+
+  test "legends carry the 协作协议速查 (protocol) — the in-band lingo card for newcomers" do
+    definition = resolve!()
+    protocol = definition.legends["dealscout"]["protocol"]
+    assert is_binary(protocol)
+
+    # 讲清三件事：discover 爬完自动触发页面刷新；手动触发用 crawl_now；
+    # __dealscout_update__ 更新信号标记的含义（与 update_signal/0 契约点一致）。
+    assert protocol =~ "discover"
+    assert protocol =~ "crawl_now"
+    assert protocol =~ Crawler.update_signal()
+
+    # 纯说明数据：legend 机制只读 member_set/bound_rule_set/fold，protocol
+    # 不参与路由——机制字段仍原样在场（上一测试锁了值）。
+    assert Map.take(definition.legends["dealscout"], ["member_set", "bound_rule_set", "fold"])
+           |> map_size() == 3
+  end
 end
