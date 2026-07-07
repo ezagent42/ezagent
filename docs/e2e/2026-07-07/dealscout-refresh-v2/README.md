@@ -1,5 +1,7 @@
 # dealscout "爬完→页面自动刷新" v2 复验（2026-07-07）— ALT caller-dispatch 式闭环打通（LLM 段 seam 代跑，如实标注）
 
+> 精简注记：页面前后对比保留 03a(前) vs 03c(后,外部渲染)一对；03b/03d 为同一事实的重复角度已删。
+
 **结论一句话**：分支 `feat/sw-dealscout`（ALT v2 commit `9b36d3b`）上，冷起独立库 → 装 dealscout（3 成员）→ 真爬 HN Algolia 20 条落库 → crawl 完成**自动 dispatch `refresh_page`**（`:call`、authz granted、invocations 审计三行实锤）→ ALT handler 真跑（日志）→ 生成入口被调 → **真 TurnDriver turn-1 settle → Surface approved → 真浏览器渲出重建页面**（`/socialware/external`）。v1 卡死的 bridge 断点（gap ⑧）被 v2 caller-dispatch 腿**绕过成功**；但撞出一个**新平台 gap ⑬**（socialware role-slot 模板 spawn 不把 recipe `behaviors` 捕进 agent `:kind_base`，首次 dispatch `{:unknown_action}` fail-loud），本轮用 **sanctioned core 公开 API `Ezagent.Kind.mount/3`**（RF-2/RF-3 运行时 mount，持久化）操作员侧补挂后闭环；LLM 生成段因 env 无 key（gap ⑨ 原样）用**已有 app-env seam 注入 fake generator 代跑**，页面内容里明写代跑事实。**本轮零代码改动**（纯复验 + 证据 + 两个操作员脚本）。
 
 ## v2 vs v1 对照（任务三问）
