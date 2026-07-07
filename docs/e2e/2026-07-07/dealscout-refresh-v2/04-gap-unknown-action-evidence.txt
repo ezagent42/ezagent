@@ -1,0 +1,9 @@
+=== 第一次 crawl_now 后的直接 dispatch 腿(fail-loud 证据) ===
+1631:[warning] DealScout page refresh dispatch failed (no one else would know): {:error, {:unknown_action, :refresh_page}}
+1633:INSERT INTO "invocations" ("args","caller","result","exception","target","action","workspace_uri","inserted_at","authz","duration_us","trace_id") VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11),($12,$13,$14,$15,$16,$17,$18,$19,$20,$21,$22),($23,$24,$25,$26,$27,$28,$29,$30,$31,$32,$33) [nil, "entity://system/user/admin", nil, "{\"reason\":\"{:unknown_action, :refresh_page}\"}", "entity://system/agent/2ceaf36b-a95e-45ac-9073-5201f27bb918?action=dealscout.refresh_page", nil, "workspace://system", ~U[2026-07-07 01:19:42.065815Z], "n/a", 156, nil, nil, "entity://system/user/admin", nil, nil, "session://system/socialware-install-dealscout/dealscout-v2?action=dealscout_crawl.crawl_now", "crawl_now", "workspace://system", ~U[2026-07-07 01:19:42.066373Z], "granted", 689989, nil, nil, "entity://system/user/admin", nil, nil, "session://system/socialware-install-dealscout/dealscout-v2?action=session.send", "send", "workspace://system", ~U[2026-07-07 01:19:42.066728Z], "granted", 0, nil]
+
+=== 两个 agent 的 kind_base 捕获(erpc 探针) ===
+%{a2ceaf: {:ok, %{behaviors: nil}}, a7751: {:ok, %{behaviors: nil}}}
+
+=== install 时已 grant 的 refresh_page cap(invocations 审计,双 agent) ===
+2
