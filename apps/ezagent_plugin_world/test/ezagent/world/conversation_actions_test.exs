@@ -2,6 +2,7 @@ defmodule Ezagent.World.ConversationActionsTest do
   use ExUnit.Case, async: true
 
   alias Ezagent.World.ConversationActions
+  alias Ezagent.World.ConversationRoutingForm
 
   test "create_session_result converts create_session exits into errors" do
     workspace_uri = Ezagent.URI.workspace(:system)
@@ -15,6 +16,24 @@ defmodule Ezagent.World.ConversationActionsTest do
                "default",
                fn _workspace_uri, _params, _ctx -> exit({:timeout, self()}) end
              )
+  end
+
+  describe "routing receiver form parsing" do
+    test "normalizes role receivers to tagged resolver receivers" do
+      assert [
+               "entity://system/user/admin",
+               {:role, "builder"}
+             ] =
+               ConversationRoutingForm.parse_receivers([
+                 "entity://system/user/admin",
+                 "role:builder"
+               ])
+    end
+
+    test "keeps magic receivers and rejects empty role receivers" do
+      assert ["$session_members"] =
+               ConversationRoutingForm.parse_receivers(["$session_members", "role:"])
+    end
   end
 
   # F3: every session-create failure must map to a non-empty operator-facing

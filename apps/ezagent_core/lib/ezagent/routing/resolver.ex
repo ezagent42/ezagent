@@ -197,9 +197,10 @@ defmodule Ezagent.Routing.Resolver do
     passive? = Keyword.get(opts, :passive?, fn _uri -> false end)
     current_str = URI.to_string(current_session_uri)
     sender_str = uri_to_string(message.sender)
+    matcher_ctx = %{members: Keyword.get(opts, :members_snapshot, %{})}
 
     Application.get_env(:ezagent_core, :routing_tables, @default_routing_tables)
-    |> Enum.flat_map(&query_table_with_ctx(&1, message, workspace_uri))
+    |> Enum.flat_map(&query_table_with_ctx(&1, message, workspace_uri, matcher_ctx))
     |> Enum.flat_map(fn {receiver, ctx} ->
       expand_receiver(
         receiver,
@@ -250,7 +251,7 @@ defmodule Ezagent.Routing.Resolver do
   # that rule's ctx, so `resolve_with_ctx/4` can thread matched-rule context
   # (rule_id / prompt_template_ref) through to delivery. (Replaces the old
   # receiver-only `query_table/3`; `resolve/4` now maps ctx off.)
-  defp query_table_with_ctx(table_name, message, workspace_uri_str) do
+  defp query_table_with_ctx(table_name, message, workspace_uri_str, matcher_ctx) do
     case safe_list_all(table_name) do
       [] ->
         []
@@ -260,7 +261,7 @@ defmodule Ezagent.Routing.Resolver do
 
         rows
         |> Enum.filter(fn {matcher_tuple, _value} ->
-          Matcher.match?(matcher_tuple, message)
+          Matcher.match?(matcher_tuple, message, matcher_ctx)
         end)
         |> Enum.filter(fn {_matcher, value} ->
           applies_to_sender?(value, sender_str)

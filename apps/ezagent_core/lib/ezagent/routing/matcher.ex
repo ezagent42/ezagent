@@ -44,11 +44,12 @@ defmodule Ezagent.Routing.Matcher do
   # Phase 4-completion Spec 05 Part B B.1: combinator clauses use
   # `match?/2` recursively in `:and` / `:or` / `:not` clauses. Exclude
   # Kernel.match?/2 to avoid the new conflict-warning in Elixir 1.18+.
-  import Kernel, except: [match?: 2]
+  import Kernel, except: [match?: 2, match?: 3]
 
   @type matcher ::
           {:mention, String.t()}
           | {:from, String.t()}
+          | {:from_role, String.t()}
           | {:text_contains, String.t()}
           | {:text_matches, String.t()}
           | {:in_session, String.t()}
@@ -68,6 +69,11 @@ defmodule Ezagent.Routing.Matcher do
   @spec from(URI.t() | String.t()) :: matcher()
   def from(%URI{} = uri), do: {:from, URI.to_string(uri)}
   def from(uri) when is_binary(uri), do: {:from, uri}
+
+  @doc "Match if message.sender currently holds a session role."
+  @spec from_role(String.t()) :: matcher()
+  def from_role(role_name) when is_binary(role_name) and role_name != "",
+    do: {:from_role, role_name}
 
   @doc "Match if message.body.text contains substring."
   @spec text_contains(String.t()) :: matcher()
@@ -139,7 +145,17 @@ defmodule Ezagent.Routing.Matcher do
   regex if profiling shows.
   """
   @spec match?(matcher(), Ezagent.Message.t()) :: boolean()
-  def match?({:mention, token}, %Ezagent.Message{} = msg) do
+  def match?(matcher, %Ezagent.Message{} = msg), do: match?(matcher, msg, %{})
+
+  @doc """
+  Evaluate a matcher against a Message plus pure routing context.
+
+  Context keys:
+    * `:members` — current session member snapshot, keyed by member URI, whose
+      values may carry `:role_name` or `"role_name"` facets.
+  """
+  @spec match?(matcher(), Ezagent.Message.t(), map()) :: boolean()
+  def match?({:mention, token}, %Ezagent.Message{} = msg, _ctx) do
     # A `mention(token)` matcher fires when `token` is in `message.mentions`
     # (concrete agent/user URIs — the usual case) OR in
     # `message.legend_triggers` (team-routing §3.6, PR-6 — the SYMBOLIC legend
@@ -152,14 +168,18 @@ defmodule Ezagent.Routing.Matcher do
       legend_trigger_match?(Map.get(msg, :legend_triggers) || [], token)
   end
 
-  def match?({:from, uri_str}, %Ezagent.Message{sender: sender}) do
+  def match?({:from, uri_str}, %Ezagent.Message{sender: sender}, _ctx) do
     case sender do
       %URI{} = u -> URI.to_string(u) == uri_str
       s when is_binary(s) -> s == uri_str
     end
   end
 
-  def match?({:in_session, session_str}, %Ezagent.Message{session_uri: session_uri}) do
+  def match?({:from_role, role_name}, %Ezagent.Message{sender: sender}, ctx) do
+    sender_role?(sender, role_name, Map.get(ctx, :members, %{}))
+  end
+
+  def match?({:in_session, session_str}, %Ezagent.Message{session_uri: session_uri}, _ctx) do
     case session_uri do
       %URI{} = u -> URI.to_string(u) == session_str
       s when is_binary(s) -> s == session_str
@@ -167,14 +187,14 @@ defmodule Ezagent.Routing.Matcher do
     end
   end
 
-  def match?({:text_contains, sub}, %Ezagent.Message{body: body}) do
+  def match?({:text_contains, sub}, %Ezagent.Message{body: body}, _ctx) do
     case extract_text(body) do
       text when is_binary(text) -> String.contains?(text, sub)
       _ -> false
     end
   end
 
-  def match?({:text_matches, re_str}, %Ezagent.Message{body: body}) do
+  def match?({:text_matches, re_str}, %Ezagent.Message{body: body}, _ctx) do
     case extract_text(body) do
       text when is_binary(text) ->
         {:ok, re} = Regex.compile(re_str)
@@ -185,19 +205,19 @@ defmodule Ezagent.Routing.Matcher do
     end
   end
 
-  def match?({:always}, _msg), do: true
+  def match?({:always}, _msg, _ctx), do: true
 
   # Combinators
-  def match?({:and, sub_matchers}, %Ezagent.Message{} = msg) when is_list(sub_matchers) do
-    Enum.all?(sub_matchers, &match?(&1, msg))
+  def match?({:and, sub_matchers}, %Ezagent.Message{} = msg, ctx) when is_list(sub_matchers) do
+    Enum.all?(sub_matchers, &match?(&1, msg, ctx))
   end
 
-  def match?({:or, sub_matchers}, %Ezagent.Message{} = msg) when is_list(sub_matchers) do
-    Enum.any?(sub_matchers, &match?(&1, msg))
+  def match?({:or, sub_matchers}, %Ezagent.Message{} = msg, ctx) when is_list(sub_matchers) do
+    Enum.any?(sub_matchers, &match?(&1, msg, ctx))
   end
 
-  def match?({:not, sub_matcher}, %Ezagent.Message{} = msg) do
-    not match?(sub_matcher, msg)
+  def match?({:not, sub_matcher}, %Ezagent.Message{} = msg, ctx) do
+    not match?(sub_matcher, msg, ctx)
   end
 
   # --- JSON serde (Decision #42 / DECISIONS P3-D impl Matcher AST) ------
@@ -211,6 +231,7 @@ defmodule Ezagent.Routing.Matcher do
   @spec to_json(matcher()) :: map()
   def to_json({:mention, uri_str}), do: %{"type" => "mention", "arg" => uri_str}
   def to_json({:from, uri_str}), do: %{"type" => "from", "arg" => uri_str}
+  def to_json({:from_role, role_name}), do: %{"type" => "from_role", "arg" => role_name}
   def to_json({:text_contains, sub}), do: %{"type" => "text_contains", "arg" => sub}
   def to_json({:text_matches, re}), do: %{"type" => "text_matches", "arg" => re}
   def to_json({:always}), do: %{"type" => "always"}
@@ -236,6 +257,9 @@ defmodule Ezagent.Routing.Matcher do
 
   def from_json(%{"type" => "from", "arg" => uri}) when is_binary(uri),
     do: {:ok, from(uri)}
+
+  def from_json(%{"type" => "from_role", "arg" => role_name}) when is_binary(role_name),
+    do: {:ok, from_role(role_name)}
 
   def from_json(%{"type" => "text_contains", "arg" => sub}) when is_binary(sub),
     do: {:ok, text_contains(sub)}
@@ -294,6 +318,24 @@ defmodule Ezagent.Routing.Matcher do
   defp extract_text(%{text: t}) when is_binary(t), do: t
   defp extract_text(%{"text" => t}) when is_binary(t), do: t
   defp extract_text(_), do: nil
+
+  defp sender_role?(sender, role_name, members) when is_map(members) do
+    sender_str = uri_to_string(sender)
+
+    Enum.any?(members, fn {member_uri, meta} ->
+      uri_to_string(member_uri) == sender_str and role_name_of(meta) == role_name
+    end)
+  end
+
+  defp sender_role?(_sender, _role_name, _members), do: false
+
+  defp role_name_of(%{role_name: role_name}) when is_binary(role_name), do: role_name
+  defp role_name_of(%{"role_name" => role_name}) when is_binary(role_name), do: role_name
+  defp role_name_of(_), do: nil
+
+  defp uri_to_string(%URI{} = uri), do: URI.to_string(uri)
+  defp uri_to_string(uri) when is_binary(uri), do: uri
+  defp uri_to_string(_), do: nil
 
   # Concrete-URI mention match (the usual `@agent` path).
   defp mention_match?(mentions, token) when is_list(mentions) do

@@ -51,7 +51,9 @@ defmodule Ezagent.Socialware.Demo.Hello do
 
   @name "hello"
   @recipe "np"
-  @role "hello-helper"
+  @builder_role "builder"
+  @responser_role "responser"
+  @viewer_role "viewer"
 
   @doc "The stable demo socialware name (`\"hello\"`)."
   @spec name() :: String.t()
@@ -67,8 +69,8 @@ defmodule Ezagent.Socialware.Demo.Hello do
   Options (all default to the stable demo values):
     * `:name` — the socialware/definition name (default `"hello"`)
     * `:recipe_name` — the agent recipe the definition materializes (default `"np"`)
-    * `:role_name` — the per-session routing role of the materialized agent
-      (default `"hello-helper"`)
+    * `:role_name` — when present, emit the legacy single-agent fixture shape
+      used by older materialization tests.
 
   The returned map is `ManifestResolver.resolve/1`-ready (name refs, not modules).
   """
@@ -76,8 +78,15 @@ defmodule Ezagent.Socialware.Demo.Hello do
   def manifest_attrs(opts \\ []) do
     name = Keyword.get(opts, :name, @name)
     recipe_name = Keyword.get(opts, :recipe_name, @recipe)
-    role_name = Keyword.get(opts, :role_name, @role)
 
+    if Keyword.has_key?(opts, :role_name) do
+      legacy_manifest_attrs(name, recipe_name, Keyword.fetch!(opts, :role_name))
+    else
+      reference_manifest_attrs(name, recipe_name)
+    end
+  end
+
+  defp base_manifest_attrs(name) do
     %{
       "name" => name,
       "version" => "0.1.0",
@@ -94,6 +103,66 @@ defmodule Ezagent.Socialware.Demo.Hello do
         "Elixir.Ezagent.ActionSet.SupervisorApproval"
       ],
       "views" => ["hello_render"],
+      "visibility_policy" => %{
+        "scope" => "public",
+        "publish_policy" => "supervised",
+        "web_anon_access" => true
+      }
+    }
+  end
+
+  defp reference_manifest_attrs(name, recipe_name) do
+    base_manifest_attrs(name)
+    |> Map.merge(%{
+      "roles" => [
+        %{
+          "role_name" => @builder_role,
+          "fill" => "agent",
+          "recipe" => recipe_name,
+          "flavor" => "py"
+        },
+        %{
+          "role_name" => @responser_role,
+          "fill" => "agent",
+          "recipe" => recipe_name,
+          "flavor" => "py"
+        },
+        %{"role_name" => @viewer_role, "fill" => "human"}
+      ],
+      "prompt_templates" => %{},
+      "legends" => %{
+        "hello" => %{
+          "member_set" => [@viewer_role, @responser_role, @builder_role],
+          "bound_rule_set" => "default",
+          "fold" => false
+        }
+      },
+      "routing_rules" => [
+        %{
+          "matcher" => %{"type" => "from_role", "arg" => @viewer_role},
+          "receivers" => [@responser_role],
+          "rule_set" => "default",
+          "position" => 0
+        },
+        %{
+          "matcher" => %{
+            "type" => "and",
+            "items" => [
+              %{"type" => "from_role", "arg" => @responser_role},
+              %{"type" => "text_matches", "arg" => "^\\[need-build\\]"}
+            ]
+          },
+          "receivers" => [@builder_role],
+          "rule_set" => "default",
+          "position" => 1
+        }
+      ]
+    })
+  end
+
+  defp legacy_manifest_attrs(name, recipe_name, role_name) do
+    base_manifest_attrs(name)
+    |> Map.merge(%{
       "roles" => [
         %{"role_name" => role_name, "fill" => "agent", "recipe" => recipe_name, "flavor" => "py"}
       ],
@@ -113,13 +182,8 @@ defmodule Ezagent.Socialware.Demo.Hello do
           "position" => 0,
           "prompt_template_ref" => "hello"
         }
-      ],
-      "visibility_policy" => %{
-        "scope" => "public",
-        "publish_policy" => "supervised",
-        "web_anon_access" => true
-      }
-    }
+      ]
+    })
   end
 
   @doc """

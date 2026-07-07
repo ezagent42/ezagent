@@ -152,6 +152,76 @@ defmodule Ezagent.Socialware.ConformanceTest do
            )
   end
 
+  test "role-DAG rejects unpredicated cycles" do
+    n = uniq()
+
+    definition =
+      write_def(%{
+        name: "t2-conf-hard-cycle-#{n}",
+        roles: [
+          %{role_name: "viewer-#{n}", fill: :human},
+          %{role_name: "responser-#{n}", fill: :human}
+        ],
+        routing_rules: [
+          %{
+            matcher: %{"type" => "from_role", "arg" => "viewer-#{n}"},
+            receivers: ["responser-#{n}"]
+          },
+          %{
+            matcher: %{"type" => "from_role", "arg" => "responser-#{n}"},
+            receivers: ["viewer-#{n}"]
+          }
+        ]
+      })
+
+    assert {:error, failures} = Conformance.check(definition, @workspace_uri)
+
+    assert Enum.any?(
+             failures,
+             &match?({:routing_role_dag, {:unpredicated_cycle, _}}, &1)
+           )
+  end
+
+  test "role-DAG warns on predicated cycles, double delivery, and dead roles" do
+    n = uniq()
+
+    definition =
+      write_def(%{
+        name: "t2-conf-warn-dag-#{n}",
+        roles: [
+          %{role_name: "viewer-#{n}", fill: :human},
+          %{role_name: "responser-#{n}", fill: :human},
+          %{role_name: "builder-#{n}", fill: :human},
+          %{role_name: "dead-#{n}", fill: :human}
+        ],
+        routing_rules: [
+          %{
+            matcher: %{"type" => "from_role", "arg" => "viewer-#{n}"},
+            receivers: ["responser-#{n}"]
+          },
+          %{
+            matcher: %{
+              "type" => "and",
+              "items" => [
+                %{"type" => "from_role", "arg" => "responser-#{n}"},
+                %{"type" => "text_matches", "arg" => "^\\[need-build\\]"}
+              ]
+            },
+            receivers: ["viewer-#{n}"]
+          },
+          %{
+            matcher: %{"type" => "from_role", "arg" => "responser-#{n}"},
+            receivers: ["builder-#{n}"]
+          }
+        ]
+      })
+
+    assert {:ok, warnings} = Conformance.check_with_warnings(definition, @workspace_uri)
+    assert Enum.any?(warnings, &match?({:routing_role_dag, {:predicated_cycle, _}}, &1))
+    assert Enum.any?(warnings, &match?({:routing_role_dag, {:double_delivery, _}}, &1))
+    assert Enum.any?(warnings, &match?({:routing_role_dag, {:dead_role, _}}, &1))
+  end
+
   test "missing manifest uses plugin fails uses_plugins_installed" do
     n = uniq()
 

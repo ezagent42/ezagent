@@ -199,6 +199,38 @@ defmodule Ezagent.Routing.ResolverTest do
   end
 
   describe "tagged receivers" do
+    test "from_role matcher evaluates against the current session member snapshot", %{table: t} do
+      responser = URI.new!("entity://system/agent/hello_responser")
+      builder = URI.new!("entity://system/agent/hello_builder")
+      session_uri = Ezagent.URI.session(:system, :default, "hello")
+
+      :ok =
+        RoutingRegistry.put(t, Matcher.from_role("responser"), %{
+          receivers: [Ezagent.Routing.Receiver.role("builder")],
+          applies_to_users: [],
+          rule_id: 12
+        })
+
+      message = Message.new(responser, %{text: "[need-build] hi", attachments: []})
+      members = %{responser => %{role_name: "responser"}, builder => %{role_name: "builder"}}
+
+      assert [{^builder, %{rule_id: 12}}] =
+               Resolver.resolve_with_ctx(message, session_uri, Map.keys(members),
+                 members_snapshot: members,
+                 role_resolver: fn
+                   "builder", _ctx -> builder
+                 end
+               )
+
+      reassigned = %{responser => %{role_name: "observer"}, builder => %{role_name: "builder"}}
+
+      assert [] =
+               Resolver.resolve_with_ctx(message, session_uri, Map.keys(reassigned),
+                 members_snapshot: reassigned,
+                 role_resolver: fn "builder", _ctx -> builder end
+               )
+    end
+
     test "tagged role receivers resolve through the route-time role resolver", %{table: t} do
       role_target = Ezagent.URI.agent(:team_alpha, "cc_orchestrator")
       session_uri = Ezagent.URI.session(:team_alpha, :default, "main")

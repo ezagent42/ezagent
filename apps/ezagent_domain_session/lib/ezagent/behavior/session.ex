@@ -131,7 +131,7 @@ defmodule Ezagent.ActionSet.Session do
     Teardown
   }
 
-  alias Ezagent.Routing.Legend
+  alias Ezagent.Routing.{Legend, Trace}
 
   # PR-N3 r4 ring depth + `recent_messages_ring_depth/0` MOVED to
   # `Ezagent.ActionSet.User.Receive` (PR-2 split) — the `:recent_messages`
@@ -587,101 +587,142 @@ defmodule Ezagent.ActionSet.Session do
             :error -> nil
           end
 
-        # team-routing-unification §3.4/§3.5 (PR-4b): resolve WITH matched-rule
-        # ctx so the per-recipient delivery can render that rule's prompt
-        # template. The bare URI list (for notify_dropped_mentions) is mapped
-        # off; ctx is threaded into the dispatch loop below.
-        provision_key = {__MODULE__, :route_time_provision_effects}
-        Process.put(provision_key, [])
+        if msg.hops <= 0 do
+          record_routing_trace(msg, workspace_uri, "no_match", [], :hop_exhausted)
+          send_success(msg, session_uri, ctx, %{stored: true, dropped: :hop_exhausted}, [])
+        else
+          # team-routing-unification §3.4/§3.5 (PR-4b): resolve WITH matched-rule
+          # ctx so the per-recipient delivery can render that rule's prompt
+          # template. The bare URI list (for notify_dropped_mentions) is mapped
+          # off; ctx is threaded into the dispatch loop below.
+          provision_key = {__MODULE__, :route_time_provision_effects}
+          Process.put(provision_key, [])
 
-        {recipients_with_ctx, provision_effects} =
-          try do
-            recipients =
-              Ezagent.Routing.Resolver.resolve_with_ctx(
-                msg,
-                session_uri,
-                in_session_members,
-                workspace_uri: workspace_uri,
-                role_resolver: fn role_name, _route_ctx ->
-                  RoleResolver.resolve(role_name, workspace_uri, ctx, provision_key, __MODULE__)
-                end,
-                # RF-6: inject the passive-actor predicate (parallel to
-                # `role_resolver`) so the resolver's universal final-output gate
-                # drops any PASSIVE data actor a rule resolved to (any rule type).
-                passive?: &passive_actor?/1
-              )
+          {recipients_with_ctx, provision_effects} =
+            try do
+              recipients =
+                Ezagent.Routing.Resolver.resolve_with_ctx(
+                  msg,
+                  session_uri,
+                  in_session_members,
+                  workspace_uri: workspace_uri,
+                  members_snapshot: members_map,
+                  role_resolver: fn role_name, _route_ctx ->
+                    RoleResolver.resolve(role_name, workspace_uri, ctx, provision_key, __MODULE__)
+                  end,
+                  # RF-6: inject the passive-actor predicate (parallel to
+                  # `role_resolver`) so the resolver's universal final-output gate
+                  # drops any PASSIVE data actor a rule resolved to (any rule type).
+                  passive?: &passive_actor?/1
+                )
 
-            {recipients, Process.get(provision_key, [])}
-          after
-            Process.delete(provision_key)
+              {recipients, Process.get(provision_key, [])}
+            after
+              Process.delete(provision_key)
+            end
+
+          recipients = Enum.map(recipients_with_ctx, fn {uri, _ctx} -> uri end)
+          prompt_templates = ctx[:read].(:prompt_templates, %{})
+          record_routing_traces(msg, workspace_uri, recipients_with_ctx)
+
+          # Allen 2026-05-26: surface "mention dropped — target not in
+          # session" as a notification to the sender. Without this, the
+          # operator types `@curl_test_alpha hello` and gets no feedback
+          # if curl_test_alpha is not a session member — silent drop.
+          #
+          # Discriminator: `msg.mentions` is already filtered by the
+          # mention parser to URIs that resolve to real entities. The
+          # rejected-from-recipients set tells us which resolved entities
+          # the Resolver dropped (via `valid_member?` membership filter).
+          # Random `@text` (no URI match) never enters `msg.mentions`
+          # and is silent — exactly what users want for casual @ usage.
+          Delivery.notify_dropped_mentions(msg, recipients, session_uri, ctx, __MODULE__)
+
+          # PR-3 of Read Receipts rollout: dispatch + (on success only)
+          # mark `:delivered`. We need the dispatch result to gate the
+          # mark, so this stays in-handler (effect grammar discards
+          # dispatch return values). Cross-session forwarding does not
+          # need a ReadMarker side effect.
+          for {recipient, rule_ctx} <- recipients_with_ctx do
+            forwarded_msg = decrement_hops(msg)
+
+            if recipient.scheme == "session" do
+              Delivery.dispatch_cross_session_call(recipient, forwarded_msg, session_uri)
+            else
+              # Path-A delivery transform (§3.4): render the matched rule's
+              # prompt template into THIS recipient's message (no template →
+              # unchanged). Applies to agent + user recipients alike.
+              delivered =
+                render_for_delivery(forwarded_msg, rule_ctx, prompt_templates, session_uri)
+
+              Delivery.dispatch_receive_call(recipient, delivered, session_uri)
+            end
           end
 
-        recipients = Enum.map(recipients_with_ctx, fn {uri, _ctx} -> uri end)
-        prompt_templates = ctx[:read].(:prompt_templates, %{})
-
-        # Allen 2026-05-26: surface "mention dropped — target not in
-        # session" as a notification to the sender. Without this, the
-        # operator types `@curl_test_alpha hello` and gets no feedback
-        # if curl_test_alpha is not a session member — silent drop.
-        #
-        # Discriminator: `msg.mentions` is already filtered by the
-        # mention parser to URIs that resolve to real entities. The
-        # rejected-from-recipients set tells us which resolved entities
-        # the Resolver dropped (via `valid_member?` membership filter).
-        # Random `@text` (no URI match) never enters `msg.mentions`
-        # and is silent — exactly what users want for casual @ usage.
-        Delivery.notify_dropped_mentions(msg, recipients, session_uri, ctx, __MODULE__)
-
-        # PR-3 of Read Receipts rollout: dispatch + (on success only)
-        # mark `:delivered`. We need the dispatch result to gate the
-        # mark, so this stays in-handler (effect grammar discards
-        # dispatch return values). Cross-session forwarding does not
-        # need a ReadMarker side effect.
-        for {recipient, rule_ctx} <- recipients_with_ctx do
-          if recipient.scheme == "session" do
-            Delivery.dispatch_cross_session_call(recipient, msg, session_uri)
-          else
-            # Path-A delivery transform (§3.4): render the matched rule's
-            # prompt template into THIS recipient's message (no template →
-            # unchanged). Applies to agent + user recipients alike.
-            delivered = render_for_delivery(msg, rule_ctx, prompt_templates, session_uri)
-            Delivery.dispatch_receive_call(recipient, delivered, session_uri)
-          end
+          send_success(msg, session_uri, ctx, %{stored: true}, provision_effects)
         end
-
-        # PR-EM-6-PRE (Allen 2026-05-25) — mutate the slice so the
-        # SliceChange hook in `Kind.Runtime` fires for every send. See
-        # `init_slice/1` for the three-field rationale (HIGH-1 +
-        # HIGH-2 from codex r1 2026-05-25).
-        prev_cursor = ctx[:read].(:send_cursor, 0)
-
-        # In-session broadcast for LV chat stream is a :notify effect
-        # (the executor calls the PubSub broadcast for us).
-        #
-        # `session_uri` here is `ctx[:self_uri]`, which — when the
-        # inbound target was built via stdlib `URI.parse/1` — carries the
-        # deprecated `:authority` field. The broadcast payload is the
-        # subscriber-facing value (LV chat stream + tests pattern-match
-        # on `{:chat_message, session_uri, _}`), and a consumer comparing
-        # it to a canonical `Ezagent.URI.new!(...)` URI (authority: nil)
-        # would not `==`-match. Canonicalize the broadcast URI so the
-        # payload always carries the RFC-3986 `authority: nil` shape.
-        canonical_session_uri = Ezagent.URI.new!(URI.to_string(session_uri))
-
-        {:ok, %{stored: true},
-         provision_effects ++
-           [
-             {:set, :last_message_id, msg.id},
-             {:set, :last_message, msg},
-             {:set, :send_cursor, prev_cursor + 1},
-             {:notify, session_events_topic(session_uri),
-              {:chat_message, canonical_session_uri, msg}}
-           ]}
 
       {:error, reason} ->
         {:error, {:message_store_write_failed, reason}}
     end
   end
+
+  defp send_success(%Message{} = msg, session_uri, ctx, result, provision_effects) do
+    # PR-EM-6-PRE (Allen 2026-05-25) — mutate the slice so the
+    # SliceChange hook in `Kind.Runtime` fires for every send.
+    prev_cursor = ctx[:read].(:send_cursor, 0)
+    canonical_session_uri = Ezagent.URI.new!(URI.to_string(session_uri))
+
+    {:ok, result,
+     provision_effects ++
+       [
+         {:set, :last_message_id, msg.id},
+         {:set, :last_message, msg},
+         {:set, :send_cursor, prev_cursor + 1},
+         {:notify, session_events_topic(session_uri), {:chat_message, canonical_session_uri, msg}}
+       ]}
+  end
+
+  defp decrement_hops(%Message{hops: hops} = msg) when is_integer(hops) and hops > 0 do
+    %{msg | hops: hops - 1}
+  end
+
+  defp decrement_hops(%Message{} = msg), do: %{msg | hops: 0}
+
+  defp record_routing_traces(%Message{} = msg, workspace_uri, []) do
+    record_routing_trace(msg, workspace_uri, "no_match", [], :no_match)
+  end
+
+  defp record_routing_traces(%Message{} = msg, workspace_uri, recipients_with_ctx) do
+    recipients_with_ctx
+    |> Enum.group_by(fn {_uri, ctx} -> rule_id(ctx) end, fn {uri, _ctx} -> uri end)
+    |> Enum.each(fn {rule_id, receivers} ->
+      record_routing_trace(msg, workspace_uri, rule_id, receivers, nil)
+    end)
+  end
+
+  defp record_routing_trace(%Message{} = msg, workspace_uri, rule_id, receivers, drop_reason) do
+    workspace_uri = workspace_uri || msg.workspace_uri || Ezagent.URI.workspace(:system)
+
+    case Trace.record(%{
+           message_id: msg.id,
+           workspace_uri: workspace_uri,
+           rule_id: rule_id,
+           receivers: receivers,
+           hop: msg.hops,
+           drop_reason: drop_reason
+         }) do
+      {:ok, _} ->
+        :ok
+
+      {:error, changeset} ->
+        Logger.warning("routing trace write failed: #{inspect(changeset.errors)}")
+    end
+  end
+
+  defp rule_id(%{rule_id: nil}), do: "no_match"
+  defp rule_id(%{rule_id: id}), do: id
+  defp rule_id(_), do: "no_match"
 
   # --- :receive ----------------------------------------------------------
   #
