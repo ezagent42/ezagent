@@ -75,29 +75,25 @@ defmodule Mix.Tasks.Ezagent.Socialware.Check do
   end
 
   defp resolve_definitions([], workspace_uri) do
-    DefinitionRegistry
-    |> all_definition_names(workspace_uri)
-    |> Enum.flat_map(fn name ->
+    workspace_uri
+    |> all_definition_names()
+    |> Enum.map(fn name ->
       case DefinitionRegistry.lookup(workspace_uri, name) do
-        {:ok, %Definition{} = definition, _obj} -> [{name, definition}]
-        :error -> []
+        {:ok, %Definition{} = definition, _obj} ->
+          {name, definition}
+
+        :error ->
+          Mix.raise(
+            "listed socialware definition #{inspect(name)} did not resolve in #{URI.to_string(workspace_uri)}"
+          )
       end
     end)
   end
 
-  defp all_definition_names(_registry, workspace_uri) do
-    cond do
-      function_exported?(DefinitionRegistry, :list_names, 1) ->
-        apply(DefinitionRegistry, :list_names, [workspace_uri])
-
-      function_exported?(DefinitionRegistry, :list, 1) ->
-        workspace_uri
-        |> DefinitionRegistry.list()
-        |> Enum.map(& &1.name)
-
-      true ->
-        ["chat", "socialware"]
-    end
+  defp all_definition_names(workspace_uri) do
+    workspace_uri
+    |> DefinitionRegistry.list()
+    |> Enum.map(& &1.name)
   end
 
   defp seed_builtins do
