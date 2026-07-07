@@ -1,7 +1,7 @@
 # Bare @mention resolution by role facet — design
 
-**Date**: 2026-07-07 · **Status**: DRAFT rev4 (T3, from jjkysy #1201 handoff item ④, coordinator-verified HOLDS)
-**Review**: codex adversarial R2 = NOT SOUND (1 MAJOR) — R1 fixes all verified; [M-4] F2 head-fallback could misaddress post-A-2 when a colon-bearing role is unfilled but the head matches. Fixed with session-local guard: head fallback suppressed when ANY member carries a colon-bearing role_name (A-2 active → colon token = role reference → unresolved = plain text, R6). T7d tests the guard.
+**Date**: 2026-07-07 · **Status**: DRAFT rev5 (T3, from jjkysy #1201 handoff item ④, coordinator-verified HOLDS)
+**Review**: codex adversarial R3 = NOT SOUND (1 MAJOR) — R2 fix verified but incomplete: F2 guard checked only filled member rows, missing unfilled colon-bearing role slots (open slot has no member row). Fixed: guard now consults combined role-name set (filled member-edge `role_name` + open slot `role_name` from `human_role_slots/1`). T7e added for the open-slot counterexample. §3.1 "no new data plumbing" claim updated to note the one exception.
 **Scope**: session-domain / world plugin only. Independent of T1/T2. Forward-compat contract with orchestration spec A-2 (auto-prefix) declared in §5.
 **Authority**: `docs/together/2026-07-06/handoffs/system-mechanism-feedback.md` item ④ + Appendix B row ④; role-slot model `docs/superpowers/specs/2026-07-05-socialware-role-slot-model-design.md` (P2: role lives ONLY on the membership edge); orchestration spec `docs/superpowers/specs/2026-07-06-orchestration-as-socialware-design.md` (A-2 install-time auto-prefix).
 
@@ -94,9 +94,14 @@ tier 2: role_name == token             (NEW)
 tier 3: display_name == token          (unchanged, demoted below role)
 ```
 
-No new data plumbing: `member_options/1` rows already carry `"role_name"` from
+Minimal data plumbing: `member_options/1` rows already carry `"role_name"` from
 the membership-edge facet. The change is confined to the private resolver in
-`conversation_data.ex` plus the two UI surfaces (§6).
+`conversation_data.ex` plus the two UI surfaces (§6). One exception: the F2
+head-fallback guard (§5) needs the **open role slot names** from
+`human_role_slots/1` (already in the world view-model) passed alongside member
+rows — this lets the guard detect colon-bearing role names that are declared
+but unfilled. The resolver does not match against unfilled slots; the extra
+data is consumed only by the F2 guard predicate.
 
 ### 3.2 Why tiers, not a pooled match
 
@@ -233,19 +238,27 @@ consequences this design absorbs **now** so prefixed names cannot break it:
   `@([A-Za-z0-9][A-Za-z0-9._-]*(?::[A-Za-z0-9][A-Za-z0-9._-]*)?)` — and
   resolve **longest-token-first**: try the full colon-bearing token through
   the tiers; if nothing resolves, retry with the pre-colon head.
-  **Head-fallback guard (R2 fix)**: the head fallback is ONLY active when
-  zero members in the session carry a colon-bearing `role_name`. If any
-  member's `role_name` contains `:` (A-2 active in this session), a
-  colon-bearing token is a role-name reference — no head fallback; if
-  unresolved it stays plain text (R6). Properties: `@advisor: hi`
-  (punctuation) never captures the colon (no word char after it) — today's
-  behavior intact; `@hello:advisor` pre-A-2 (no colon-bearing roles in
-  session) falls back to the `hello` head (today's exact behavior, safe
-  because no role reference can be misinterpreted); post-A-2
-  `@hello:advisor` resolves the full prefixed edge value if filled, stays
-  plain text if unfilled/typoed (R6, no silent misfire). Deterministic,
-  no flag day, session-local guard requires no cross-session state. The
-  same longest-first rule and guard apply in the autocomplete filter.
+  **Head-fallback guard (R2/R3 fix)**: the head fallback is ONLY active
+  when the session's **combined role-name set** (filled member-edge
+  `role_name` values PLUS open human-slot `role_name` values from installed
+  definitions, surfaced via `human_role_slots/1` at
+  `conversation_data.ex:192-214`) contains ZERO colon-bearing strings. If
+  ANY role_name (filled or unfilled) contains `:`, the session is in A-2
+  mode — colon-bearing tokens are role-name references — no head fallback;
+  unresolved stays plain text (R6). This closes the R3 counterexample:
+  `hello:advisor` is an unfilled open slot (no member row), `hello` member
+  exists → F2 guard sees the open slot's `:` → head fallback suppressed →
+  `@hello:advisor` → plain text (correct — the user meant the role, not
+  `hello`). Properties: `@advisor: hi` (punctuation) never captures the
+  colon (no word char after it) — today's behavior intact;
+  `@hello:advisor` pre-A-2 (no colon-bearing roles anywhere in session)
+  falls back to the `hello` head (today's exact behavior, safe because no
+  role reference can be misinterpreted); post-A-2 `@hello:advisor` resolves
+  the full prefixed edge value if filled, stays plain text if unfilled/
+  typoed (R6, no silent misfire). Guard is session-local, requires no
+  cross-session state; open slot names are already in the world view-model
+  (`human_role_slots/1`). The same longest-first rule and guard apply in
+  the autocomplete filter.
 - **F3 — Short-name dual-read is an A-2-time decision, not this design**:
   A-2's compat window ("dual-read… prefix derivation is deterministic")
   implies `@advisor` may later need to resolve a uniquely-suffix-matching
@@ -317,13 +330,19 @@ gain `"role_name"` keys). These are the "fails when the goal is unmet" gates:
   - T7c: pre-A-2 guard — zero members with colon-bearing role_name, no
     member matches `hello:advisor`, but a member resolves as `hello` via
     segment or display ⇒ `@hello:advisor` falls back to the `hello` head.
-  - T7d: post-A-2 guard — at least one member has a colon-bearing
+  - T7d: post-A-2 filled guard — at least one member has a colon-bearing
     role_name (e.g. `role_name: "hello:builder"`), no member has
     `role_name: "hello:advisor"`, but a member resolves as `hello` via
-    segment ⇒ `@hello:advisor` ⇒ `[]` (plain text — colon token is a
-    role reference, head fallback suppressed, R6). This is the R2 fix
-    preventing silent misfire when someone types a colon-bearing role
-    name that is unfilled.
+    segment ⇒ `@hello:advisor` ⇒ `[]` (colon token is a role reference,
+    head fallback suppressed, R6).
+  - T7e: post-A-2 unfilled guard (R3 fix) — zero members carry a
+    colon-bearing `role_name`, but an open human slot has
+    `role_name: "hello:advisor"` (from an installed definition, surfaced
+    via `human_role_slots/1`), a member resolves as `hello` via segment
+    ⇒ `@hello:advisor` ⇒ `[]` (guard sees the open slot's `:` →
+    head fallback suppressed → plain text). This closes the
+    counterexample where the R2 guard (member-rows-only) would have
+    permitted the fallback.
 - **T8 — E2E (one, thin)**: re-run the #1190 r2 probe shape — a role-slot
   materialized session, `@<role_name>` from the world composer, assert the
   stored message's `mentions` contains the materialized agent URI and the
@@ -392,3 +411,10 @@ supports it, else covered by T8 + builder-verify V3.
   the autocomplete inserts the full `@hello:advisor` edge value (not the
   short name). If the React harness supports it, a component test; otherwise
   covered by T8 E2E with a colon-bearing role definition.
+- **V11 — Autocomplete F2 guard parity (codex R3)**: F2 states the
+  longest-first rule and head-fallback guard also apply in the autocomplete
+  filter, but §7 only pins parser T7 and U3 shadow-check. Either add a
+  component test for the autocomplete-side F2 guard, or explicitly mark as
+  builder-verify (manual probe or covered by T8 E2E). Also: no explicit
+  segment-tier ambiguity test (R2 unique-or-nothing within segment tier);
+  today's existing parse tests may cover this — builder confirms.
