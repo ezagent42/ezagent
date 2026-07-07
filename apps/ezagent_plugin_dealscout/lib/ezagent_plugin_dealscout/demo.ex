@@ -55,13 +55,16 @@ defmodule EzagentPluginDealScout.Demo do
   声明角色名）下最干净的写法。
 
   **【显式临时 ALT】page 槽当前指 `dealscout-page-alt`**（本插件自己的
-  `Ezagent.ActionSet.DealScoutPageRefreshAlt`：收信号 → 调 hello 公开生成入口
+  `Ezagent.ActionSet.DealScoutPageRefreshAlt`，v2 caller-dispatch 式：crawl
+  完成后直接 dispatch `:refresh_page` 到 page 成员 → 调 hello 公开生成入口
   `EzagentPluginHello.Generator.start/2` 重建页面）。本意的写法是 hello 真实
-  声明的页面生成 recipe `hello.builder`，但 `HelloBuilder.handle_receive` 的
-  `from_user?` 门（防自环）会丢弃 agent-sender 的更新信号（A①，#1201 ③——
-  hello 作者认领"放行带标记信号"，未落地）。**A① 落地后：删除 ALT
-  ActionSet + `dealscout-page-alt` recipe，page 槽一行回切 `hello.builder`**
-  （槽声明处的注释）。不在本插件私改 hello（自包含红线）。
+  声明的页面生成 recipe `hello.builder`，但真 e2e 实测 receive 腿到 native
+  成员是断的（#1201 ② —— canonical `agent.receive` 只塞 bridge，native 无
+  bridge 必丢），且 `HelloBuilder.handle_receive` 的 `from_user?` 门也会丢
+  agent-sender 信号（#1201 ③）。**A①（hello 暴露 dispatchable rebuild
+  action）落地后：删除 ALT ActionSet + `dealscout-page-alt` recipe，page 槽
+  一行回切 `hello.builder`**（槽声明处的注释）。不在本插件私改 hello
+  （自包含红线）。routing_rules 的更新信号规则保留（会话内可见的声明式痕迹）。
 
   ## Where it publishes
 
@@ -91,7 +94,9 @@ defmodule EzagentPluginDealScout.Demo do
 
   @name "dealscout"
   @discover_role "discover"
-  @page_role "page"
+  # page 角色槽名从 DealScoutCrawl.page_role/0 取（单一契约点，照
+  # update_signal/0）—— crawl 的直接 dispatch 腿按同一个名字解析 page 成员。
+  @page_role Ezagent.ActionSet.DealScoutCrawl.page_role()
   @default_discover_flavor "cc-headless"
   @update_rule_set "dealscout-update"
 
@@ -163,13 +168,14 @@ defmodule EzagentPluginDealScout.Demo do
           "recipe" => "dealscout-discover",
           "flavor" => flavor
         },
-        # hello 页面 agent 槽：更新信号的声明式 receiver（moduledoc §The
-        # "page" role slot —— hello 的 orch_<name> 前台是命令式 ensure，不走
-        # role 槽）。
-        # 【显式临时 ALT】hello builder 的 `from_user?` 门会丢弃 agent-sender
-        # 的更新信号（A①，#1201 ③ 未落地），所以槽先指本插件的 ALT recipe
-        # （收信号 → 调 `EzagentPluginHello.Generator.start/2` 重建页面）。
-        # A① 落地后一行回切（并删除 ALT ActionSet + recipe）：
+        # hello 页面 agent 槽：页面重建的宿主（moduledoc §The "page" role
+        # slot —— hello 的 orch_<name> 前台是命令式 ensure，不走 role 槽）。
+        # 【显式临时 ALT，v2 caller-dispatch 式】receive 腿到 native 成员是
+        # 断的（#1201 ②），所以槽指本插件的 ALT recipe：crawl 完成后按
+        # role_name 解析本槽成员，直接 dispatch `:refresh_page`（→ 调
+        # `EzagentPluginHello.Generator.start/2` 重建页面）。
+        # A①（hello 暴露 dispatchable rebuild action）落地后一行回切
+        # （并删除 ALT ActionSet + recipe）：
         #   "recipe" => "hello.builder",
         %{
           "role_name" => @page_role,

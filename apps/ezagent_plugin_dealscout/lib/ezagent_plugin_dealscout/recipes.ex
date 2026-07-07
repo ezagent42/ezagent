@@ -28,7 +28,10 @@ defmodule EzagentPluginDealScout.Recipes do
   # 形状 `%{behavior: <ActionSet>, action: <atom>}`，照 orchestrator_recipe。
   @send_cap %{behavior: Ezagent.ActionSet.Session, action: :send}
   @crawl_cap %{behavior: Ezagent.ActionSet.DealScoutCrawl, action: :crawl_now}
-  @page_refresh_cap %{behavior: Ezagent.ActionSet.DealScoutPageRefreshAlt, action: :receive}
+  # v2 dispatch 式（ALT moduledoc）：ALT 的 action 从 `:receive` 改成
+  # `:refresh_page`。dispatch 方要持这个 cap —— 触发爬取的 discover / search
+  # recipe 也 request 它（crawl handler 用触发者的 delegated caps dispatch）。
+  @page_refresh_cap %{behavior: Ezagent.ActionSet.DealScoutPageRefreshAlt, action: :refresh_page}
 
   @doc "全部 recipe 声明数据（`roles/0` 的 seed 源）：发现腿 4 个 + 临时 ALT 1 个。"
   @spec all() :: [map()]
@@ -45,7 +48,9 @@ defmodule EzagentPluginDealScout.Recipes do
         "你是 DealScout 的发现副驾。读用户 profile + 新抓回的线索条目，按千人千面匹配" <>
           "挑出高分机会，主动推进发现流（可触发 crawl_now 主动爬取）；每条机会保留来源" <>
           "类型（public / directed）标注。",
-      requested_caps: [@send_cap, @crawl_cap]
+      # @page_refresh_cap：crawl 完成后的直接 dispatch 腿以触发者身份 dispatch
+      # `:refresh_page` 到 page 成员（CapBAC-honest —— 触发者没 cap 就被拒）。
+      requested_caps: [@send_cap, @crawl_cap, @page_refresh_cap]
     }
   end
 
@@ -55,7 +60,8 @@ defmodule EzagentPluginDealScout.Recipes do
       name: "dealscout-search",
       behaviors: [],
       prompt: "你把用户的 query 转成对全网 / 指定源的检索，汇总候选，注入发现流并标记为搜索结果。",
-      requested_caps: [@send_cap, @crawl_cap]
+      # 同 discover：search 完成后同样触发直接 dispatch 腿。
+      requested_caps: [@send_cap, @crawl_cap, @page_refresh_cap]
     }
   end
 
@@ -79,11 +85,13 @@ defmodule EzagentPluginDealScout.Recipes do
     }
   end
 
-  # ⑤ 【显式临时 ALT，非发现腿】page 槽的更新信号 receiver：收到带
-  # `__dealscout_update__` 的消息 → 调 hello 公开生成入口重建页面
+  # ⑤ 【显式临时 ALT，非发现腿】page 槽的 dispatchable 重建入口（v2
+  # caller-dispatch 式，ALT moduledoc）：crawl 完成后直接 dispatch
+  # `:refresh_page` 过来 → 调 hello 公开生成入口重建页面
   # （`Ezagent.ActionSet.DealScoutPageRefreshAlt`）。code-driven（照
-  # `hello.builder` recipe 的形状：无 prompt，behaviors 挂 ActionSet，
-  # requested_caps 只有自己的 `:receive`）。**A①（#1201 ③）落地后随 ALT
+  # `hello.builder` recipe 的形状：无 prompt，behaviors 挂 ActionSet ——
+  # recipe-loaded behavior 进实例行为集，dispatch 按 action 解析直达）。
+  # **A①（#1201 ③，hello 暴露 dispatchable rebuild action）落地后随 ALT
   # ActionSet 一起整体删除，Demo 的 page 槽回切 `hello.builder`。**
   defp page_refresh_alt do
     %{

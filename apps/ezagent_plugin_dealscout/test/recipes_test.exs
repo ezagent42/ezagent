@@ -24,24 +24,30 @@ defmodule EzagentPluginDealScout.RecipesTest do
     end
   end
 
-  test "the crawl-driving agents (discover / search) hold the :crawl_now cap" do
+  test "the crawl-driving agents (discover / search) hold the :crawl_now + :refresh_page caps" do
     crawl_cap = %{behavior: Ezagent.ActionSet.DealScoutCrawl, action: :crawl_now}
+    # v2 caller-dispatch：crawl 完成后以触发者身份直接 dispatch :refresh_page
+    # 到 page 成员 —— 触发爬取的 recipe 必须持这个 cap（CapBAC-honest）。
+    refresh_cap = %{behavior: Ezagent.ActionSet.DealScoutPageRefreshAlt, action: :refresh_page}
     by_name = Map.new(Recipes.all(), &{&1.name, &1})
 
     assert crawl_cap in by_name["dealscout-discover"].requested_caps
     assert crawl_cap in by_name["dealscout-search"].requested_caps
+    assert refresh_cap in by_name["dealscout-discover"].requested_caps
+    assert refresh_cap in by_name["dealscout-search"].requested_caps
   end
 
-  test "the page-alt recipe is code-driven (照 hello.builder 形状：ALT ActionSet + 自己的 :receive cap，无 prompt)" do
-    # 【显式临时 ALT】A①（#1201 ③）落地后本 recipe 随 DealScoutPageRefreshAlt
-    # 一起整体删除，Demo page 槽回切 hello.builder。
+  test "the page-alt recipe is code-driven (照 hello.builder 形状：ALT ActionSet + 自己的 :refresh_page cap，无 prompt)" do
+    # 【显式临时 ALT】A①（#1201 ③，hello 暴露 dispatchable rebuild action）
+    # 落地后本 recipe 随 DealScoutPageRefreshAlt 一起整体删除，Demo page 槽
+    # 回切 hello.builder。
     alt = Enum.find(Recipes.all(), &(&1.name == "dealscout-page-alt"))
     assert alt
 
     assert alt.behaviors == [Ezagent.ActionSet.DealScoutPageRefreshAlt]
 
     assert alt.requested_caps == [
-             %{behavior: Ezagent.ActionSet.DealScoutPageRefreshAlt, action: :receive}
+             %{behavior: Ezagent.ActionSet.DealScoutPageRefreshAlt, action: :refresh_page}
            ]
 
     refute Map.has_key?(alt, :prompt)
