@@ -158,7 +158,13 @@ defmodule EzagentPluginKanban.Integration.KanbanTeamRelayBackTest do
     table = Resolver.default_routing_table()
     rule = RuleStore.find_by_identity(table, session_uri, "relay-back", 0)
     assert %RuleStore{} = rule
-    assert rule.matcher_data == %{"type" => "text_contains", "arg" => "__done__"}
+    assert rule.matcher_data == %{
+               "type" => "and",
+               "items" => [
+                 %{"type" => "text_contains", "arg" => "__done__"},
+                 %{"type" => "from_role", "arg" => "dev-together"}
+               ]
+             }
 
     assert Enum.map(rule.receivers, &Receiver.decode_from_store/1) == [
              {:role, "kanban-assistant"}
@@ -173,8 +179,14 @@ defmodule EzagentPluginKanban.Integration.KanbanTeamRelayBackTest do
 
     # the matcher fires on the `__done__` marker, not on a plain message.
     {:ok, matcher} = Matcher.from_json(rule.matcher_data)
-    assert Matcher.match?(matcher, msg(dev_uri, "card 3 → test __done__"))
-    refute Matcher.match?(matcher, msg(dev_uri, "still working"))
+    # #1212 from_role 腿需要 ctx.members（运行期由 Resolver 注入成员边；测试手工给）
+    ctx = %{members: %{dev_uri => %{role_name: "dev-together"}}}
+    assert Matcher.match?(matcher, msg(dev_uri, "card 3 → test __done__"), ctx)
+    refute Matcher.match?(matcher, msg(dev_uri, "still working"), ctx)
+    # 硬锁验证：非 dev-together 角色成员发同标记不触发
+    refute Matcher.match?(matcher, msg(dev_uri, "card 3 → test __done__"), %{
+             members: %{dev_uri => %{role_name: "kanban-assistant"}}
+           })
 
     # (b) end-to-end: a `__done__` message resolves to the pm role; a plain one
     # does not. The {:role, "kanban-assistant"} receiver expands via the runtime
@@ -185,7 +197,15 @@ defmodule EzagentPluginKanban.Integration.KanbanTeamRelayBackTest do
     # The installed rule is workspace-scoped (workspace://system); pass the
     # session's workspace so the workspace filter admits it — exactly what the
     # domain's `session.send` does (via `WorkspaceRegistry.lookup`).
-    resolve_opts = [workspace_uri: @workspace, role_resolver: role_resolver]
+    # #1212: from_role 腿靠 members_snapshot（生产由 session.send 注入成员边）
+    resolve_opts = [
+      workspace_uri: @workspace,
+      role_resolver: role_resolver,
+      members_snapshot: %{
+        dev_uri => %{role_name: "dev-together"},
+        pm_uri => %{role_name: "kanban-assistant"}
+      }
+    ]
 
     done_recipients =
       Resolver.resolve(
