@@ -1,6 +1,6 @@
-defmodule EzagentPluginDealScout.RetentionSweeperTest do
+defmodule EzagentPluginCrawler.RetentionSweeperTest do
   use ExUnit.Case, async: true
-  alias EzagentPluginDealScout.RetentionSweeper
+  alias EzagentPluginCrawler.RetentionSweeper
 
   test "prune keeps the 10 most recent batches plus any pinned older batch" do
     batches = for i <- 1..15, do: %{id: "b#{i}", seq: i}

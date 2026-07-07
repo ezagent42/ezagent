@@ -1,4 +1,4 @@
-defmodule EzagentPluginDealScout.Demo do
+defmodule EzagentPluginCrawler.Demo do
   @moduledoc """
   The **dealscout demo socialware** — the one source of truth for the dealscout
   manifest and its boot-time publish (the hello #162 golden-template play, the
@@ -9,7 +9,7 @@ defmodule EzagentPluginDealScout.Demo do
   .ConfigGovernance.Socialware`: `open_cr → stage_definition → publish_cr`),
   NOT a hard-coded direct ConfigStore write. Every boot exercises the real
   governance flow, so a broken publish path fails LOUD at boot. This module
-  supersedes the retired `EzagentPluginDealScout.DefinitionSeed` imperative
+  supersedes the retired `EzagentPluginCrawler.DefinitionSeed` imperative
   code-seed (`DefinitionRegistry.seed_definition_if_absent`) — publish is now
   the ONLY boot seeding path (hello/kanban parity).
 
@@ -34,8 +34,9 @@ defmodule EzagentPluginDealScout.Demo do
       的 `PageView` 以 `"hello" in definition.uses or HelloRender in
       definition.views` 认领渲染（`page_view.ex` `manifest_installed_hello?`），
       dealscout 自己**不声明任何 view / render**。
-    * **声明 dealscout 后台** —— `uses: ["hello", "dealscout"]`（依赖两个
-      plugin 已装，非组合轴）+ `discover` 角色槽（`dealscout-discover` recipe
+    * **声明爬取后台** —— `uses: ["hello", "crawler"]`（依赖两个 plugin 已装，
+      非组合轴；rename 后爬取 plugin 的 slug 是 `crawler`，"dealscout" 只是
+      本 socialware 的名字）+ `discover` 角色槽（`dealscout-discover` recipe
       × `cc-headless`，持 crawl cap 的发现副驾）。
     * **routing_rules** —— ONLY the content-triggered update-signal rule
       (`text_contains "__dealscout_update__"` → the `page` role, like the
@@ -94,9 +95,9 @@ defmodule EzagentPluginDealScout.Demo do
 
   @name "dealscout"
   @discover_role "discover"
-  # page 角色槽名从 DealScoutCrawl.page_role/0 取（单一契约点，照
+  # page 角色槽名从 Crawler.page_role/0 取（单一契约点，照
   # update_signal/0）—— crawl 的直接 dispatch 腿按同一个名字解析 page 成员。
-  @page_role Ezagent.ActionSet.DealScoutCrawl.page_role()
+  @page_role Ezagent.ActionSet.Crawler.page_role()
   @default_discover_flavor "cc-headless"
   @update_rule_set "dealscout-update"
 
@@ -124,7 +125,7 @@ defmodule EzagentPluginDealScout.Demo do
   The returned map is `ManifestResolver.resolve/1`-ready (name refs, not
   modules): `views: ["hello_render"]` resolves through hello's registered
   `PageView` to `Ezagent.ActionSet.HelloRender`; `uses: ["hello",
-  "dealscout"]` requires both plugins registered — true once both apps booted
+  "crawler"]` requires both plugins registered — true once both apps booted
   (hello is a declared dep of this plugin).
   """
   @spec manifest_attrs(keyword()) :: map()
@@ -137,7 +138,7 @@ defmodule EzagentPluginDealScout.Demo do
       "version" => "0.1.0",
       "title" => "DealScout",
       "description" => "商业/投融资线索侦察：AI 千人千面发现 deal + 组合 hello 公开面撮合。",
-      "uses" => ["hello", "dealscout"],
+      "uses" => ["hello", "crawler"],
       # hello 公开面配置逐项复制（hello `app.ex` `seed_hello_definition`）：
       # 会话有 Surface（页面）+ Turn（生成回合）→ 是 page session。
       "bases" => [
@@ -150,10 +151,10 @@ defmodule EzagentPluginDealScout.Demo do
         # 2026-07-07 真浏览器 e2e 发现并修正：`:crawl_now` 的 handler 读
         # `ctx.session_uri`（只在 session:// 目标上派生）+ `ctx[:read]`（session
         # 的 config slice）→ 宿主必须是 **session 本体**。此前 shape 没带
-        # DealScoutCrawl，任何 live dispatch 都 `{:unknown_action, :crawl_now}`
+        # Crawler，任何 live dispatch 都 `{:unknown_action, :crawl_now}`
         # （发现 recipe 的 `requested_caps` 只管 agent 作为 caller 的持权，不给
         # session 装 handler）。单测直接调 handle_crawl_now 掩盖了这个缺口。
-        "Elixir.Ezagent.ActionSet.DealScoutCrawl"
+        "Elixir.Ezagent.ActionSet.Crawler"
       ],
       # 显示归 hello：引 hello 的 render view（页面读权限门），dealscout 无
       # 自有 view / render。
@@ -191,7 +192,7 @@ defmodule EzagentPluginDealScout.Demo do
         %{
           "matcher" => %{
             "type" => "text_contains",
-            "arg" => Ezagent.ActionSet.DealScoutCrawl.update_signal()
+            "arg" => Ezagent.ActionSet.Crawler.update_signal()
           },
           "receivers" => [@page_role],
           "rule_set" => @update_rule_set,

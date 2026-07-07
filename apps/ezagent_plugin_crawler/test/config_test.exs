@@ -1,8 +1,8 @@
-defmodule EzagentPluginDealScout.ConfigTest do
+defmodule EzagentPluginCrawler.ConfigTest do
   # async: false — token round-trip writes a real `system://credentials/*.yaml`
   # file through the FsResolver seam (shared FS), so keep it serial.
   use ExUnit.Case, async: false
-  alias EzagentPluginDealScout.Config
+  alias EzagentPluginCrawler.Config
 
   describe "config slice effects (profile / keywords)" do
     test "set_profile returns a {:set, :profile, value} slice effect" do

@@ -1,6 +1,14 @@
-defmodule Ezagent.ActionSet.DealScoutCrawl do
+defmodule Ezagent.ActionSet.Crawler do
   @moduledoc """
-  手动触发爬取的 ActionSet（`:crawl_now`）。
+  手动触发爬取的 ActionSet（`:crawl_now` / `:search`）。
+
+  ## 分层（2026-07-07 rename 拍板）
+
+  本模块属 **通用能力层**（`:ezagent_plugin_crawler`，爬取能力，与业务无关）；
+  "dealscout" 是**组合本能力的 socialware 的名字**（纯配置，见
+  `EzagentPluginCrawler.Demo`）。判据："换个 socialware 还能原样用吗"——
+  crawl_now/search/信号 emit/page 直呼腿都能，留在这里；投融资 prompt、
+  Definition、routing 规则等业务件留在 Demo/Recipes 的 dealscout 命名侧。
 
   轮询（`Poller`）和手动触发走同一注入路径：抓回条目经 P14 的 legacy 路
   `Ezagent.Invocation.dispatch/1`（本模块构造 `%Ezagent.Invocation{}`；
@@ -9,18 +17,19 @@ defmodule Ezagent.ActionSet.DealScoutCrawl do
   `?action=`）。
 
   注入点问"失败了谁知道"（Ezagent 是 router 不是 req/resp app）：dispatch 失败
-  记 `[:dealscout, :inject, :error]` telemetry + warning，不 silent drop。
+  记 `[:crawler, :inject, :error]` telemetry + warning，不 silent drop。
 
   ## 更新信号（内容协议，像 kanban 的 `__done__`）
 
   爬完/搜完**注入了新线索**（injected > 0）时，除了逐条 `session.send` 注入，
-  再 emit 一条**内容标记**消息 `update_signal/0`（`"__dealscout_update__"`）到
-  同一会话。它是 agent 间的**内容协议**：DealScout Definition（Stage D，纯配置）
-  的 routing_rules 用 `text_contains("__dealscout_update__")` matcher
-  （`apps/ezagent_core/lib/ezagent/routing/matcher.ex:74`）命中它 → receiver
-  `{:role, <hello 页面 agent 角色>}` → hello 的 agent 收信号后更新 json-render
-  页。**零实例 URI、不数据直推、dealscout 自己不渲染**——显示是 hello 的活。
-  信号 dispatch 失败同样 fail-loud（`[:dealscout, :update_signal, :error]`）。
+  再 emit 一条**内容标记**消息（缺省 `update_signal/0` = `"__dealscout_update__"`，
+  socialware 可经 config slice 的 `:update_signal` key 覆写——见
+  `@update_signal` 注释）到同一会话。它是 agent 间的**内容协议**：dealscout
+  Definition（纯配置）的 routing_rules 用 `text_contains("__dealscout_update__")`
+  matcher（`apps/ezagent_core/lib/ezagent/routing/matcher.ex:74`）命中它 →
+  receiver `{:role, <hello 页面 agent 角色>}` → hello 的 agent 收信号后更新
+  json-render 页。**零实例 URI、不数据直推、本插件自己不渲染**——显示是
+  hello 的活。信号 dispatch 失败同样 fail-loud（`[:crawler, :update_signal, :error]`）。
 
   ## 页面重建的直接 dispatch 腿（v2，绕 #1201 ②）
 
@@ -33,7 +42,7 @@ defmodule Ezagent.ActionSet.DealScoutCrawl do
   URI，直接 dispatch `:refresh_page`（`Ezagent.ActionSet
   .DealScoutPageRefreshAlt`）—— dispatch 按 action 在实例行为集解析直接跑
   handler，不经 bridge。找不到 page 成员 / dispatch 失败 → fail-loud
-  （`[:dealscout, :page_refresh, :error]` telemetry + warning），不静默。
+  （`[:crawler, :page_refresh, :error]` telemetry + warning），不静默。
   chat 信号腿保留（会话内可见的声明式痕迹 + A① 落地后回切 receive 式的靶子）。
 
   ## source/token 自动分流（Stage B 接线，live 路径）
@@ -52,13 +61,23 @@ defmodule Ezagent.ActionSet.DealScoutCrawl do
   require Logger
 
   # 内容协议标记（像 kanban 的 __done__）：routing 规则按文本命中，不带任何实例 URI。
+  #
+  # 归属说明（2026-07-07 rename）：这是**缺省信号名**。字面量带 "dealscout" 是
+  # 历史沿用（dealscout socialware 的 Definition / 演示 / 证据都引用它，改字面量
+  # 会破内容协议），不代表本模块属业务层。常量留在这里而不挪去 Demo 的理由：
+  # emit 方是本 handler，挪去 Demo 会让通用层反向依赖业务配置层（层次倒置）；
+  # Demo 经 `update_signal/0` 函数引用，单一契约点不变。别的 socialware 组合本
+  # 能力时可在 session config slice 写 `:update_signal` key 覆写（emit 侧经
+  # `ctx[:read]` 读，见 `signal_marker/1`），并在自己的 routing_rules 里声明
+  # 匹配的 matcher。
   @update_signal "__dealscout_update__"
 
   # page 角色槽名（单一契约点，照 update_signal/0）：Demo 的角色槽声明 + 直接
-  # dispatch 腿的 role_name 解析都从这里取。
+  # dispatch 腿的 role_name 解析都从这里取。"page" 本身是通用词（任何组合本
+  # 能力的 socialware 声明一个 "page" 角色槽即可接上直呼腿）。
   @page_role "page"
 
-  @doc "更新信号的内容标记（Definition routing_rules 的 `text_contains` 靶子）。"
+  @doc "更新信号的**缺省**内容标记（Definition routing_rules 的 `text_contains` 靶子；socialware 可经 config slice `:update_signal` 覆写）。"
   @spec update_signal() :: String.t()
   def update_signal, do: @update_signal
 
@@ -150,7 +169,7 @@ defmodule Ezagent.ActionSet.DealScoutCrawl do
     cmd = %Ezagent.Invocation{
       target: target,
       mode: :cast,
-      args: send_args("#{@update_signal} 新线索 #{injected} 条（#{origin}）", ctx),
+      args: send_args("#{signal_marker(ctx)} 新线索 #{injected} 条（#{origin}）", ctx),
       ctx: delegated_ctx(ctx)
     }
 
@@ -159,14 +178,14 @@ defmodule Ezagent.ActionSet.DealScoutCrawl do
         :ok
 
       other ->
-        :telemetry.execute([:dealscout, :update_signal, :error], %{count: 1}, %{
+        :telemetry.execute([:crawler, :update_signal, :error], %{count: 1}, %{
           injected: injected,
           origin: origin,
           reason: other
         })
 
         Logger.warning(
-          "DealScout update signal dispatch failed (no one else would know): #{inspect(other)}"
+          "Crawler update signal dispatch failed (no one else would know): #{inspect(other)}"
         )
 
         :ok
@@ -182,7 +201,10 @@ defmodule Ezagent.ActionSet.DealScoutCrawl do
   defp dispatch_page_refresh(ctx, injected, origin) do
     case page_member_uri(ctx) do
       {:ok, %URI{} = page_uri} ->
-        target = Ezagent.URI.with_action(page_uri, :dealscout, :refresh_page)
+        # 行为段 `:crawler` 只是 `?action=<behavior>.<action>` 的命名段——runtime
+        # 解析只按 action 原子在实例行为集找 handler（BehaviorSet.resolve_action），
+        # 去业务词后不影响解析（rename 前是 :dealscout）。
+        target = Ezagent.URI.with_action(page_uri, :crawler, :refresh_page)
 
         cmd = %Ezagent.Invocation{
           target: target,
@@ -229,14 +251,14 @@ defmodule Ezagent.ActionSet.DealScoutCrawl do
   # 谁会知道原则：page 成员缺失 / dispatch 失败都有人知道（telemetry + warning），
   # 不静默吞 —— 页面不刷新时运维能从日志定位到这条腿。
   defp page_refresh_error(reason, injected, origin) do
-    :telemetry.execute([:dealscout, :page_refresh, :error], %{count: 1}, %{
+    :telemetry.execute([:crawler, :page_refresh, :error], %{count: 1}, %{
       injected: injected,
       origin: origin,
       reason: reason
     })
 
     Logger.warning(
-      "DealScout page refresh dispatch failed (no one else would know): #{inspect(reason)}"
+      "Crawler page refresh dispatch failed (no one else would know): #{inspect(reason)}"
     )
 
     :ok
@@ -257,12 +279,12 @@ defmodule Ezagent.ActionSet.DealScoutCrawl do
         true
 
       other ->
-        :telemetry.execute([:dealscout, :inject, :error], %{count: 1}, %{
+        :telemetry.execute([:crawler, :inject, :error], %{count: 1}, %{
           item: item,
           reason: other
         })
 
-        Logger.warning("DealScout inject failed (no one else would know): #{inspect(other)}")
+        Logger.warning("Crawler inject failed (no one else would know): #{inspect(other)}")
         false
     end
   end
@@ -300,12 +322,27 @@ defmodule Ezagent.ActionSet.DealScoutCrawl do
     "[#{st}]#{origin_tag} #{t} — #{s} (#{u})"
   end
 
+  # 更新信号标记：config slice 的 `:update_signal` key 可覆写（socialware 级
+  # 配置，@update_signal 注释）；未配置 / 无 reader / 非法值回落缺省标记。
+  defp signal_marker(ctx) do
+    case ctx[:read] do
+      read when is_function(read, 2) ->
+        case read.(:update_signal, @update_signal) do
+          marker when is_binary(marker) and marker != "" -> marker
+          _ -> @update_signal
+        end
+
+      _ ->
+        @update_signal
+    end
+  end
+
   # 定向源清单从 config slice 读（framework 经 `ctx[:read]` 注入 slice reader，
   # plugin 作者不见底层存储）。无 reader（如裸测试 ctx）降级为 []（纯公开爬）。
   defp config_sources(ctx) do
     case ctx[:read] do
       read when is_function(read, 2) ->
-        EzagentPluginDealScout.Config.normalize_sources(read.(:sources, []))
+        EzagentPluginCrawler.Config.normalize_sources(read.(:sources, []))
 
       _ ->
         []
@@ -315,18 +352,18 @@ defmodule Ezagent.ActionSet.DealScoutCrawl do
   defp fetch_fun,
     do:
       Application.get_env(
-        :ezagent_plugin_dealscout,
+        :ezagent_plugin_crawler,
         :fetch_fun,
-        &EzagentPluginDealScout.Fetch.crawl_auto/1
+        &EzagentPluginCrawler.Fetch.crawl_auto/1
       )
 
   defp search_fun,
-    do: Application.get_env(:ezagent_plugin_dealscout, :search_fun, &default_search/1)
+    do: Application.get_env(:ezagent_plugin_crawler, :search_fun, &default_search/1)
 
   # 参数化搜索：把 query 转成对公开搜索源的检索（HN Algolia，公开、无 token），
   # 结果标 `:public`。指定源检索走 `Fetch.fetch_directed/2`（Task 5 token 注入）。
   defp default_search(query),
-    do: EzagentPluginDealScout.Fetch.fetch(search_url(query), [], :public)
+    do: EzagentPluginCrawler.Fetch.fetch(search_url(query), [], :public)
 
   defp search_url(query),
     do: "https://hn.algolia.com/api/v1/search?query=#{URI.encode(query)}"
@@ -339,7 +376,7 @@ defmodule Ezagent.ActionSet.DealScoutCrawl do
   defp dispatch_fun,
     do:
       Application.get_env(
-        :ezagent_plugin_dealscout,
+        :ezagent_plugin_crawler,
         :dispatch_fun,
         &Ezagent.Invocation.dispatch/1
       )

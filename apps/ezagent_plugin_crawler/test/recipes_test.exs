@@ -1,6 +1,6 @@
-defmodule EzagentPluginDealScout.RecipesTest do
+defmodule EzagentPluginCrawler.RecipesTest do
   use ExUnit.Case, async: true
-  alias EzagentPluginDealScout.Recipes
+  alias EzagentPluginCrawler.Recipes
 
   # 发现腿 4 个（LLM-driven，有 prompt/caps、无 code behaviors）。
   @discovery_names [
@@ -25,7 +25,7 @@ defmodule EzagentPluginDealScout.RecipesTest do
   end
 
   test "the crawl-driving agents (discover / search) hold the :crawl_now + :refresh_page caps" do
-    crawl_cap = %{behavior: Ezagent.ActionSet.DealScoutCrawl, action: :crawl_now}
+    crawl_cap = %{behavior: Ezagent.ActionSet.Crawler, action: :crawl_now}
     # v2 caller-dispatch：crawl 完成后以触发者身份直接 dispatch :refresh_page
     # 到 page 成员 —— 触发爬取的 recipe 必须持这个 cap（CapBAC-honest）。
     refresh_cap = %{behavior: Ezagent.ActionSet.DealScoutPageRefreshAlt, action: :refresh_page}

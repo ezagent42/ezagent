@@ -1,6 +1,14 @@
-defmodule EzagentPluginDealScout.Recipes do
+defmodule EzagentPluginCrawler.Recipes do
   @moduledoc """
-  DealScout 发现腿的 **recipe 集**（AI 千人千面发现流的 agent 配方）。
+  dealscout demo socialware 的 **recipe 集**（AI 千人千面发现流的 agent 配方）。
+
+  ## 分层（2026-07-07 rename 拍板）
+
+  这些 recipe 是 **dealscout 业务配置**（投融资线索的 persona prompt），不是
+  通用能力——判据"换个 socialware 还能原样用吗"：prompt 全是投融资措辞，不能。
+  所以 recipe **名字保留 dealscout-*** 前缀，随 demo socialware 一起 ship 在
+  本（通用 crawler）plugin 里；真正的通用件是 recipe 挂的能力面——
+  `Ezagent.ActionSet.Crawler` 的 crawl/search cap。
 
   每个 recipe 三要素照 `Ezagent.Orchestrator.OrchestratorRecipe.recipe/0`
   （`orchestrator_recipe.ex:64-79`）：`prompt`（persona）+ `requested_caps`
@@ -16,7 +24,7 @@ defmodule EzagentPluginDealScout.Recipes do
   （`%{role_name, fill: :agent, recipe, flavor}`，#1180 role-slot）—— Definition
   seed 是后续 Stage 的活，本 Stage 只出 flavor-agnostic recipe。
 
-  这些 recipe 经 `EzagentPluginDealScout.Application.roles/0` 声明进插件契约，
+  这些 recipe 经 `EzagentPluginCrawler.Application.roles/0` 声明进插件契约，
   boot 时按 `name` 注册进 `Ezagent.Agent.RecipeRegistry`。
 
   另有一个**显式临时 ALT** recipe（`page_refresh_alt/0`，非发现腿）：A①
@@ -27,7 +35,7 @@ defmodule EzagentPluginDealScout.Recipes do
   # caps 只在这里（recipe 的 requested_caps 是 caps 的唯一来源）。cap-template
   # 形状 `%{behavior: <ActionSet>, action: <atom>}`，照 orchestrator_recipe。
   @send_cap %{behavior: Ezagent.ActionSet.Session, action: :send}
-  @crawl_cap %{behavior: Ezagent.ActionSet.DealScoutCrawl, action: :crawl_now}
+  @crawl_cap %{behavior: Ezagent.ActionSet.Crawler, action: :crawl_now}
   # v2 dispatch 式（ALT moduledoc）：ALT 的 action 从 `:receive` 改成
   # `:refresh_page`。dispatch 方要持这个 cap —— 触发爬取的 discover / search
   # recipe 也 request 它（crawl handler 用触发者的 delegated caps dispatch）。

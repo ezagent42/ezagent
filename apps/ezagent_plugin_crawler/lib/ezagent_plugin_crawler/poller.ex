@@ -1,4 +1,4 @@
-defmodule EzagentPluginDealScout.Poller do
+defmodule EzagentPluginCrawler.Poller do
   @moduledoc """
   周期爬取 GenServer（照 `Ezagent.Email.Inbound` 的 poll 循环）。
 
@@ -8,7 +8,7 @@ defmodule EzagentPluginDealScout.Poller do
     * `:fetch_fun`（默认 `Fetch.crawl_auto/1`，收 sources 列表）—— 一次爬取动作；
     * `:sources`（默认 `[]`）—— 定向源清单（每项 `%{url, source}`）。
 
-  轮询走跟手动触发（`DealScoutCrawl` `:crawl_now`）同一个 `Fetch.crawl_auto/1`
+  轮询走跟手动触发（`Crawler` `:crawl_now`）同一个 `Fetch.crawl_auto/1`
   分流决策点（配了源 = 公开 + 定向；没配 = 纯公开）。差异只在 sources 的来源：
   ActionSet 路有 session ctx，从 **config slice** 读（`ctx[:read]`）；Poller 是
   无 session 的全局 timer，读 **operator 级 app env `:sources`**（同形状，经
@@ -47,7 +47,7 @@ defmodule EzagentPluginDealScout.Poller do
         :ok
 
       {:error, reason} ->
-        Logger.warning("DealScout.Poller: crawl failed (recoverable): #{inspect(reason)}")
+        Logger.warning("Crawler.Poller: crawl failed (recoverable): #{inspect(reason)}")
         :ok
     end
   end
@@ -55,21 +55,21 @@ defmodule EzagentPluginDealScout.Poller do
   defp schedule_poll, do: Process.send_after(self(), :poll, interval_ms())
 
   defp interval_ms,
-    do: Application.get_env(:ezagent_plugin_dealscout, :poll_interval_ms, @default_interval_ms)
+    do: Application.get_env(:ezagent_plugin_crawler, :poll_interval_ms, @default_interval_ms)
 
   # operator 级定向源清单（moduledoc：Poller 无 session ctx，读 app env 而非
   # config slice）。归一同一形状，坏条目丢弃。
   defp configured_sources do
-    EzagentPluginDealScout.Config.normalize_sources(
-      Application.get_env(:ezagent_plugin_dealscout, :sources, [])
+    EzagentPluginCrawler.Config.normalize_sources(
+      Application.get_env(:ezagent_plugin_crawler, :sources, [])
     )
   end
 
   defp fetch_fun,
     do:
       Application.get_env(
-        :ezagent_plugin_dealscout,
+        :ezagent_plugin_crawler,
         :fetch_fun,
-        &EzagentPluginDealScout.Fetch.crawl_auto/1
+        &EzagentPluginCrawler.Fetch.crawl_auto/1
       )
 end
