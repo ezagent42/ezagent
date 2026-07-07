@@ -2,6 +2,7 @@
 
 Date: 2026-07-07
 Returned at: 2026-07-07T09:37:08Z
+E2E updated at: 2026-07-07T10:02:00Z
 Branch: `fix/local-assets-performance`
 Base: `origin/main` at `1a5f0e93f`
 Implementation commit: `8b846c27b`
@@ -34,6 +35,22 @@ Passed locally in the isolated worktree:
 - `mix test --failed` follow-up:
   - `ezagent_core` failed test from precommit reran PASS
   - `ezagent_domain_session` failed test from precommit reran PASS
+- Docker deployment E2E in a fresh temporary stack PASS:
+  - Built `ezagent-local-assets-e2e:latest` from this worktree with `docker/Dockerfile.dev`.
+  - The image build ran `cd apps/ezagent_web && mix assets.setup && mix assets.build`; `app.js` and the world bundle were produced successfully.
+  - Started an isolated compose project `ezagent-local-assets-e2e` on host port `10444`, with an internal disposable Postgres service and fresh Docker volumes. Existing dev/stable/beta/nightly containers were not touched.
+  - Created `session://system/default/local-assets-e2e` through the sanctioned CLI path:
+    `mix ezagent.workspace.create_session system local-assets-e2e --template default`.
+  - Used `agent-browser` against `http://world.localhost:10444` to log in as the temporary admin, enter the session deep link, and send:
+    `E2E local asset verification message from agent-browser`.
+  - Confirmed the sent message rendered in the session UI.
+- Docker E2E network/static asset evidence:
+  - `agent-browser network requests` during login/session/message flow showed local requests for `/assets/css/local_fonts.css`, `/assets/css/app.css`, `/assets/js/app.js`, and `/assets/fonts/*.woff2`.
+  - No `fonts.googleapis.com`, `fonts.gstatic.com`, or `cdn.jsdelivr.net` requests were observed.
+  - The dev-mode Docker stack also served world React modules from the local Vite server at `localhost:5173`; these are local development requests, not third-party CDN/font requests.
+  - Inside the running container, `grep -R "cdn.jsdelivr\|fonts.googleapis\|fonts.gstatic" apps/ezagent_web/priv/static/assets` produced no matches.
+  - Inside the running container, `apps/ezagent_web/priv/static/assets/js/app.js` contains bundled xterm code, including `node_modules/xterm/lib/xterm.js`.
+  - Font files were present under `apps/ezagent_web/priv/static/assets/fonts/`.
 
 ## Gate Status
 
