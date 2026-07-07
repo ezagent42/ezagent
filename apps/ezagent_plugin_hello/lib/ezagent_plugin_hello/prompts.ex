@@ -318,7 +318,7 @@ defmodule EzagentPluginHello.Prompts do
   json-render FRAGMENT (a table/dashboard/form) for a chat bubble — composite when
   the ask is compound, and INTERACTIVE when the data is operable (an `on.<event>`
   fires a chat message as the user, rendered by the producer-free render transport
-  in `feed_encoding`). The producer that calls `Generator.render_card/2` posts the
+  in `feed_encoding`). The producer that calls `Generator.render_card/3` posts the
   fragment as a message; this prompt only shapes the fragment, no persona coupling.
   """
   def card_gen_system do

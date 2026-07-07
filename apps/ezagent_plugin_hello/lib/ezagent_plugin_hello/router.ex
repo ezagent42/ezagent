@@ -13,7 +13,7 @@ defmodule EzagentPluginHello.Router do
     * **Non-owner** member → ALWAYS `concierge`. The page-edit boundary is
       structural: a visitor can never reach the builder, regardless of what they
       type, and no LLM call is made for them.
-    * **Owner** → intent classification (`Generator.classify_intent/1`): a
+    * **Owner** → intent classification (`Generator.classify_intent/2`): a
       change/create request → `builder`; a question / navigation → `concierge`.
 
   Runs off the Behavior process in a supervised Task (the owner intent LLM call +
@@ -34,7 +34,7 @@ defmodule EzagentPluginHello.Router do
   def route(%URI{} = session_uri, user_text, %URI{} = sender) when is_binary(user_text) do
     if should_route?(session_uri, sender) do
       Task.Supervisor.start_child(EzagentPluginHello.TaskSupervisor, fn ->
-        case decide(owner?(session_uri, sender), user_text) do
+        case decide(owner?(session_uri, sender), session_uri, user_text) do
           :builder ->
             Generator.generate(session_uri, user_text)
 
@@ -83,9 +83,11 @@ defmodule EzagentPluginHello.Router do
   (build vs ask). Pure w.r.t. identity so the boundary is unit-testable; the
   owner branch delegates to the LLM classifier.
   """
-  @spec decide(boolean(), String.t()) :: :builder | :concierge
-  def decide(false = _owner?, _user_text), do: :concierge
-  def decide(true = _owner?, user_text), do: Generator.classify_intent(user_text)
+  @spec decide(boolean(), URI.t(), String.t()) :: :builder | :concierge
+  def decide(false = _owner?, _session_uri, _user_text), do: :concierge
+
+  def decide(true = _owner?, %URI{} = session_uri, user_text),
+    do: Generator.classify_intent(session_uri, user_text)
 
   # Read the session's owner from its `:session` slice (same source
   # `EzagentWeb.Socialware.SessionFeedChannel` uses). When an owner IS set, enforce
