@@ -10,6 +10,8 @@ defmodule Ezagent.Agent.RecipeMaterializer do
   """
 
   alias Ezagent.Agent.DefaultAgentSeed
+  alias Ezagent.Agent.Recipe
+  alias Ezagent.Agent.RecipeBehaviorFold
 
   @type build_opts :: %{
           required(:recipe_name) => String.t(),
@@ -96,7 +98,9 @@ defmodule Ezagent.Agent.RecipeMaterializer do
       )
       when is_map(recipe) and is_binary(recipe_name) and is_binary(role_name) and
              is_binary(flavor) do
-    with {:ok, content} <- materializer_content(opts),
+    with {:ok, %Recipe{} = recipe} <- normalize_recipe(recipe),
+         {:ok, materialized} <- RecipeBehaviorFold.fold(recipe, flavor),
+         {:ok, content} <- materializer_content(%{opts | recipe: recipe}),
          {:ok, outcome} <-
            spawn_from_content(
              content,
@@ -109,7 +113,8 @@ defmodule Ezagent.Agent.RecipeMaterializer do
                opts,
                :source_template_uri,
                Ezagent.URI.template(:system, :agent, recipe_name)
-             )
+             ),
+             Map.fetch!(materialized, :behaviors)
            ),
          :ok <- record_launch_attributes(agent_uri, recipe_name, recipe) do
       {:ok, outcome}
@@ -147,7 +152,8 @@ defmodule Ezagent.Agent.RecipeMaterializer do
              workspace_uri,
              caller,
              caps,
-             source_template_uri
+             source_template_uri,
+             Keyword.get(opts, :behavior_overlay, [])
            ),
          :ok <- record_launch_attributes(agent_uri, content_role(content), content) do
       {:ok, outcome}
@@ -176,12 +182,14 @@ defmodule Ezagent.Agent.RecipeMaterializer do
          workspace_uri,
          caller,
          caps,
-         source_template_uri
+         source_template_uri,
+         behavior_overlay
        ) do
     opts = [
       caller: caller,
       caps: caps,
-      source_template_uri: source_template_uri
+      source_template_uri: source_template_uri,
+      behavior_overlay: behavior_overlay
     ]
 
     case Ezagent.Entity.Agent.spawn_from_template_content(
@@ -197,6 +205,10 @@ defmodule Ezagent.Agent.RecipeMaterializer do
       {:error, _} = err -> err
     end
   end
+
+  defp normalize_recipe(%Recipe{} = recipe), do: {:ok, recipe}
+  defp normalize_recipe(recipe) when is_map(recipe), do: Recipe.new(recipe)
+  defp normalize_recipe(recipe), do: {:error, {:invalid_recipe, recipe}}
 
   # Records BUILD PROVENANCE (the recipe name) on the agent — never a session
   # role. Session role_name is set on the (entity × session) membership edge by
