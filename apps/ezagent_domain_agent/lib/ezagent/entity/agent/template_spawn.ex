@@ -246,6 +246,8 @@ defmodule Ezagent.Entity.Agent.TemplateSpawn do
         opts
       )
       when is_map(template_content_map) and is_list(opts) do
+    behavior_overlay = Keyword.get(opts, :behavior_overlay, [])
+
     with {:ok, template_class} <-
            Ezagent.Entity.AgentTemplate.resolve_template_class(template_content_map),
          {:ok, flavor} <- template_content_flavor(template_content_map),
@@ -275,7 +277,8 @@ defmodule Ezagent.Entity.Agent.TemplateSpawn do
              instance_uri,
              spawned_by_uri,
              workspace_uri,
-             flavor
+             flavor,
+             behavior_overlay
            ) do
       {:ok, result}
     end
@@ -363,7 +366,8 @@ defmodule Ezagent.Entity.Agent.TemplateSpawn do
          instance_uri,
          spawned_by_uri,
          workspace_uri,
-         flavor
+         flavor,
+         behavior_overlay
        ) do
     with {:ok, data} <-
            Ezagent.Entity.AgentTemplate.to_template_data(template_content_map, instance_uri),
@@ -442,7 +446,8 @@ defmodule Ezagent.Entity.Agent.TemplateSpawn do
         # leaks because `Sandbox.invoke(:destroy, ...)` would never run
         # (the agent never even came up).
         with :ok <- establish_post_spawn_obligations(workers, spawned_by_uri, workspace_uri),
-             :ok <- record_sandbox_state(workers, instantiate_meta, template_class) do
+             :ok <- record_sandbox_state(workers, instantiate_meta, template_class),
+             :ok <- mount_behavior_overlay(workers, behavior_overlay) do
           :ok = Ezagent.AgentFlavorAttributes.put(instance_uri, flavor)
           {:ok, Map.merge(%{workers: workers, fresh?: fresh?}, role_degraded_passthrough)}
         else
@@ -479,6 +484,32 @@ defmodule Ezagent.Entity.Agent.TemplateSpawn do
         Ezagent.AgentFlavorAttributes.delete(instance_uri)
         err
     end
+  end
+
+  defp mount_behavior_overlay(_workers, []), do: :ok
+
+  defp mount_behavior_overlay(workers, behaviors) when is_list(workers) and is_list(behaviors) do
+    Enum.reduce_while(workers, :ok, fn worker_uri, :ok ->
+      case mount_behaviors(worker_uri, behaviors) do
+        :ok -> {:cont, :ok}
+        {:error, reason} -> {:halt, {:error, reason}}
+      end
+    end)
+  end
+
+  defp mount_behavior_overlay(_workers, overlay),
+    do: {:error, {:invalid_behavior_overlay, overlay}}
+
+  defp mount_behaviors(worker_uri, behaviors) do
+    Enum.reduce_while(behaviors, :ok, fn behavior, :ok ->
+      case Ezagent.Kind.mount(worker_uri, behavior, %{}) do
+        :ok ->
+          {:cont, :ok}
+
+        {:error, reason} ->
+          {:halt, {:error, {:behavior_overlay_mount_failed, worker_uri, behavior, reason}}}
+      end
+    end)
   end
 
   # codex r5 HIGH — best-effort HARD-delete of the #17 credential grant for an

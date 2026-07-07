@@ -67,6 +67,18 @@ type MemberRow = {
   kind?: string | null
 }
 
+type HumanRoleSlotRow = {
+  role_name?: string | null
+  assigned_uri?: string | null
+}
+
+type MentionMatch = {
+  member: MemberRow
+  label: string
+  badge?: string
+  insertText: string
+}
+
 type InviteCandidateRow = {
   uri: string
   display_name?: string | null
@@ -119,6 +131,7 @@ export type ConversationState = {
   members?: MemberRow[]
   invite_candidates?: InviteCandidateRow[]
   routing_entity_candidates?: InviteCandidateRow[]
+  human_role_slots?: HumanRoleSlotRow[]
   views?: ViewTab[]
 }
 
@@ -191,6 +204,7 @@ export function Conversation({
   const isHelloSession = state.is_hello === true || sessionUri.includes("/hello/")
 
   const [members, setMembers] = React.useState<MemberRow[]>(state.members || [])
+  const [humanRoleSlots, setHumanRoleSlots] = React.useState<HumanRoleSlotRow[]>(state.human_role_slots || [])
   const [inviteCandidates, setInviteCandidates] = React.useState<InviteCandidateRow[]>(state.invite_candidates || [])
   const [routingEntityCandidates, setRoutingEntityCandidates] = React.useState<InviteCandidateRow[]>(state.routing_entity_candidates || [])
   const [messages, setMessages] = React.useState<MessageRow[]>(state.messages || [])
@@ -231,6 +245,7 @@ export function Conversation({
 
   React.useEffect(() => {
     setMembers(state.members || [])
+    setHumanRoleSlots(state.human_role_slots || [])
     setInviteCandidates(state.invite_candidates || [])
     setRoutingEntityCandidates(state.routing_entity_candidates || [])
     setMessages(state.messages || [])
@@ -255,35 +270,29 @@ export function Conversation({
   }, [newSessionTemplate, templates])
 
   // @mention autocomplete: the open token is the @word immediately before the
-  // caret. Insert a human-readable token when it is parser-safe; fall back to
-  // the URI segment when a display label contains spaces or punctuation.
+  // caret. Matches consider URI segment, role_name, display_name, and
+  // colon-role fallback; insertion prefers parser-safe human-readable tokens.
   const mentionMatches = React.useMemo(() => {
     if (mentionQuery === null) return []
     const q = mentionQuery.toLowerCase()
     return members
-      .filter((m) => {
-        const seg = uriSegment(m.uri).toLowerCase()
-        const label = memberLabel(m).toLowerCase()
-        const role = (m.role_name || "").toLowerCase()
-        const token = mentionToken(m).toLowerCase()
-        return q === "" || seg.includes(q) || label.includes(q) || role.includes(q) || token.includes(q)
-      })
+      .flatMap((member) => mentionMatch(member, q, members, humanRoleSlots))
       .slice(0, 6)
-  }, [mentionQuery, members])
+  }, [mentionQuery, members, humanRoleSlots])
 
   const onComposerChange = (value: string, caret: number) => {
     setText(value)
     const upto = value.slice(0, caret)
-    const m = upto.match(/(?:^|[^\p{L}\p{N}_])@([A-Za-z0-9._-]*)$/u)
-    setMentionQuery(m ? m[1] : null)
+    const m = upto.match(/(?:^|[^\p{L}\p{N}_])@([A-Za-z0-9][A-Za-z0-9._-]*(?::[A-Za-z0-9][A-Za-z0-9._-]*)?)?$/u)
+    setMentionQuery(m ? m[1] || "" : null)
   }
 
-  const insertMention = (member: MemberRow) => {
+  const insertMention = (match: MentionMatch) => {
     const el = inputRef.current
     const caret = el ? el.selectionStart : text.length
     const upto = text.slice(0, caret)
     const rest = text.slice(caret)
-    const replaced = upto.replace(/@([A-Za-z0-9._-]*)$/u, `@${mentionToken(member)} `)
+    const replaced = upto.replace(/@([A-Za-z0-9][A-Za-z0-9._-]*(?::[A-Za-z0-9][A-Za-z0-9._-]*)?)?$/u, `@${match.insertText} `)
     const next = replaced + rest
     setText(next)
     setMentionQuery(null)
@@ -316,8 +325,14 @@ export function Conversation({
     })
 
     onServerEvent("members:update", (payload) => {
-      const next = payload as {members?: MemberRow[]; invite_candidates?: InviteCandidateRow[]; routing_entity_candidates?: InviteCandidateRow[]}
+      const next = payload as {
+        members?: MemberRow[]
+        human_role_slots?: HumanRoleSlotRow[]
+        invite_candidates?: InviteCandidateRow[]
+        routing_entity_candidates?: InviteCandidateRow[]
+      }
       if (next.members) setMembers(next.members)
+      if (next.human_role_slots) setHumanRoleSlots(next.human_role_slots)
       if (next.invite_candidates) setInviteCandidates(next.invite_candidates)
       if (next.routing_entity_candidates) setRoutingEntityCandidates(next.routing_entity_candidates)
     })
@@ -784,25 +799,29 @@ export function Conversation({
             <form className="flex items-end gap-2.5 border-t border-border bg-[#fafafa] px-4 py-3" onSubmit={submit}>
               <div className="relative flex-1">
                 {mentionMatches.length > 0 && (
-                  <ul className="absolute bottom-[calc(100%+6px)] left-0 right-0 z-20 m-0 max-h-[220px] list-none overflow-y-auto rounded-lg border border-border bg-card p-1 shadow-xl" role="listbox" aria-label="提及成员">
-                    {mentionMatches.map((member) => {
-                      const label = memberLabel(member)
-                      const token = mentionToken(member)
+                  <ul className="absolute bottom-[calc(100%+6px)] left-0 right-0 z-20 m-0 max-h-[220px] list-none overflow-y-auto rounded-lg border border-border bg-card p-1 shadow-xl" role="listbox" aria-label="mention members">
+                    {mentionMatches.map((match) => {
+                      const token = match.insertText
 
                       return (
-                        <li key={member.uri}>
+                        <li key={match.member.uri}>
                           <button
                             type="button"
                             className="flex w-full min-w-0 items-baseline gap-2 rounded-md px-2.5 py-1.5 text-left text-foreground hover:bg-muted"
                             onMouseDown={(event) => {
                               // mousedown (not click) so the textarea doesn't blur first
                               event.preventDefault()
-                              insertMention(member)
+                              insertMention(match)
                             }}
                           >
-                            <span className="min-w-0 flex-1 overflow-hidden text-ellipsis whitespace-nowrap text-[12.5px] font-semibold text-foreground">{label}</span>
-                            {label !== token && (
-                              <span className="shrink-0 font-mono text-[11.5px] text-muted-foreground">@{token}</span>
+                            <span className="min-w-0 flex-1 overflow-hidden text-ellipsis whitespace-nowrap text-[12.5px] font-semibold text-foreground">{match.label}</span>
+                            {match.badge && (
+                              <span className="shrink-0 rounded bg-muted px-1.5 py-0.5 text-[10px] font-semibold uppercase text-muted-foreground">
+                                {match.badge}
+                              </span>
+                            )}
+                            {match.label !== token && (
+                              <span className="shrink-0 max-w-[48%] overflow-hidden text-ellipsis whitespace-nowrap font-mono text-[11.5px] text-muted-foreground">@{token}</span>
                             )}
                           </button>
                         </li>
@@ -1229,23 +1248,115 @@ function humanizeSessionName(value: string) {
     .replace(/\b([a-z])/g, (match) => match.toUpperCase())
 }
 
+function mentionMatch(member: MemberRow, q: string, members: MemberRow[], openRoleSlots: HumanRoleSlotRow[]): MentionMatch[] {
+  const source = memberMentionSource(member, q) || fallbackMemberMentionSource(member, q, members, openRoleSlots)
+  if (!source) return []
+
+  const roleName = member.role_name?.trim()
+  const roleDisplay = source === "role" && roleName ? roleMentionDisplay(roleName) : null
+
+  return [
+    {
+      member,
+      label: memberLabel(member),
+      badge: roleDisplay?.badge,
+      insertText: mentionToken(member, members, openRoleSlots),
+    },
+  ]
+}
+
+function memberMentionSource(member: MemberRow, query: string): "segment" | "role" | "display" | null {
+  if (query === "") return "segment"
+
+  const q = query.toLowerCase()
+  const seg = uriSegment(member.uri).toLowerCase()
+  const role = (member.role_name || "").toLowerCase()
+  const name = (member.display_name || "").toLowerCase()
+
+  if (seg.includes(q)) return "segment"
+  if (role.includes(q)) return "role"
+  if (name.includes(q)) return "display"
+  return null
+}
+
+function fallbackMemberMentionSource(
+  member: MemberRow,
+  query: string,
+  members: MemberRow[],
+  openRoleSlots: HumanRoleSlotRow[],
+): "segment" | "role" | "display" | null {
+  if (!query.includes(":") || colonRoleNamePresent(members, openRoleSlots)) return null
+  return memberMentionSource(member, query.split(":", 1)[0])
+}
+
+function roleMentionDisplay(roleName: string) {
+  const [source, shortName] = roleName.split(":", 2)
+  if (source && shortName) return {label: shortName, badge: source}
+  return {label: roleName, badge: "role"}
+}
+
+function resolveMemberToken(token: string, members: MemberRow[], openRoleSlots: HumanRoleSlotRow[]) {
+  const fullMatch = resolveMemberName(token, members)
+  if (fullMatch.length > 0) return fullMatch
+
+  if (token.includes(":") && !colonRoleNamePresent(members, openRoleSlots)) {
+    return resolveMemberName(token.split(":", 1)[0], members)
+  }
+
+  return []
+}
+
+function resolveMemberName(name: string, members: MemberRow[]) {
+  const tiers = [
+    members.filter((member) => uriSegment(member.uri) === name),
+    members.filter((member) => member.role_name === name),
+    members.filter((member) => member.display_name === name),
+  ]
+
+  for (const tier of tiers) {
+    if (tier.length === 0) continue
+    const uris = [...new Set(tier.map((member) => member.uri).filter(Boolean))]
+    return uris.length === 1 ? uris : []
+  }
+
+  return []
+}
+
+function colonRoleNamePresent(members: MemberRow[], openRoleSlots: HumanRoleSlotRow[]) {
+  return [...members.map((member) => member.role_name), ...openRoleSlots.map((slot) => slot.role_name)].some(
+    (roleName) => typeof roleName === "string" && roleName.includes(":"),
+  )
+}
+
+function uriMentionToken(uri: string) {
+  return uri.includes("://") ? uri : uriSegment(uri)
+}
+
 function memberLabel(member: MemberRow) {
   if (member.display_name && member.display_name.trim()) return member.display_name
   return uriSegment(member.uri)
 }
 
-function mentionToken(member: MemberRow) {
+function mentionToken(member: MemberRow, members: MemberRow[] = [member], openRoleSlots: HumanRoleSlotRow[] = []) {
   const role = member.role_name?.trim()
-  if (role && isMentionToken(role)) return role
+  if (role && isMentionToken(role) && tokenResolvesToMember(role, member, members, openRoleSlots)) return role
 
   const label = memberLabel(member).trim()
-  if (label && isMentionToken(label)) return label
+  if (label && isMentionToken(label) && tokenResolvesToMember(label, member, members, openRoleSlots)) return label
 
-  return uriSegment(member.uri)
+  const segment = uriSegment(member.uri)
+  if (segment && tokenResolvesToMember(segment, member, members, openRoleSlots)) return segment
+
+  return uriMentionToken(member.uri)
+}
+
+function tokenResolvesToMember(token: string, member: MemberRow, members: MemberRow[], openRoleSlots: HumanRoleSlotRow[]) {
+  const resolved = resolveMemberToken(token, members, openRoleSlots)
+  return resolved.length === 1 && resolved[0] === member.uri
 }
 
 function isMentionToken(value: string) {
-  return /^[A-Za-z0-9][A-Za-z0-9._-]*$/.test(value)
+  return /^[A-Za-z0-9][A-Za-z0-9._-]*(?::[A-Za-z0-9][A-Za-z0-9._-]*)?$/.test(value)
 }
 
 function inviteCandidateLabel(candidate: InviteCandidateRow) {
