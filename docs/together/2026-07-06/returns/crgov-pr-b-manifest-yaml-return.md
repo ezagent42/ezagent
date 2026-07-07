@@ -35,6 +35,8 @@ Commit: `feat(socialware): add manifest yaml interchange` (this return file is i
 - `mix ezagent.socialware.check` passed and included `autoservice-tier1`, `chat`, `hello`, and `socialware`.
 - `mix ezagent.socialware.export autoservice-tier1` passed and emitted YAML.
 - `mix ezagent.socialware.import apps/ezagent_domain_session/priv/socialware/autoservice/manifest.yaml` passed with `exists`.
+- `routing_traces` invariant categorization added after the full precommit exposed the runtime trace table; schema inspection showed `workspace_uri NOT NULL`.
+- Post-rebase full gate: `mix precommit` passed.
 
 ## CI
 

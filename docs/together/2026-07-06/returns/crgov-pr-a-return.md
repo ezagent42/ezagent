@@ -1,7 +1,7 @@
 # ConfigGovernance PR-A Return
 
 Branch: `work/crgov-manifest-yaml`
-Commit: `12f0cc513 refactor(config-governance): unify change request layering`
+Commit: `880334be6 refactor(config-governance): unify change request layering`
 
 ## DoD Reconciliation
 
@@ -29,6 +29,7 @@ Commit: `12f0cc513 refactor(config-governance): unify change request layering`
 - `mix ezagent.arch.scan` passed.
 - `mix ezagent.doc.scan` passed.
 - `mix ezagent.uri_query.scan --hard-fail` passed.
+- Post-rebase full gate: `mix precommit` passed.
 
 ## CI
 
