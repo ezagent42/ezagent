@@ -9,8 +9,9 @@ defmodule EzagentPluginCrawler.DemoPublishTest do
     * **idempotency three-state** (P0 §5 `publish_or_upgrade/2`): first publish
       `:published` → unchanged redeploy `:exists` (NO new CR / revision) →
       EDITED manifest `:upgraded` (a new immutable revision).
-    * **conformance**: the PUBLISHED definition passes all 12
-      `Ezagent.Socialware.Conformance` assertions — the same guarantee
+    * **conformance**: the PUBLISHED definition passes all 13
+      `Ezagent.Socialware.Conformance` assertions (12 + #1212 的
+      `:routing_role_dag`) — the same guarantee
       `mix ezagent.socialware.check dealscout` gives.
     * **PUBLIC + cross-workspace discoverable** via `DefinitionRegistry.list/1`
       from a DIFFERENT workspace (the "Socialware 下拉" listing).
@@ -83,7 +84,7 @@ defmodule EzagentPluginCrawler.DemoPublishTest do
     assert obj_v2.content_hash == Definition.content_hash(Definition.body(def_v2))
   end
 
-  test "published dealscout is PUBLIC, cross-workspace discoverable, and passes all 12 conformance assertions",
+  test "published dealscout is PUBLIC, cross-workspace discoverable, and passes all 13 conformance assertions",
        %{ws: ws} do
     assert {:ok, :published} = Demo.publish()
 
@@ -96,9 +97,10 @@ defmodule EzagentPluginCrawler.DemoPublishTest do
              row.name == "dealscout" and row.public? == true
            end)
 
-    # Materializable: all 12 conformance assertions green — the same guarantee
+    # Materializable: all 13 conformance assertions green — the same guarantee
     # `mix ezagent.socialware.check dealscout` gives, proving install works.
-    assert length(Conformance.assertions()) == 12
+    # 13 = 原 12 + #1212 的 role-DAG conformance 断言（kanban 同款随行更新）。
+    assert length(Conformance.assertions()) == 13
 
     assert {:ok, %Definition{name: "dealscout"} = definition, _obj} =
              DefinitionRegistry.lookup(ws, "dealscout")

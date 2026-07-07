@@ -109,11 +109,23 @@ defmodule EzagentPluginCrawler.DemoTest do
     assert [rule] = definition.routing_rules
 
     matcher = Map.get(rule, "matcher") || Map.get(rule, :matcher)
-    assert (matcher["type"] || matcher[:type]) == "text_contains"
-    # 标记从 update_signal/0 取（单一契约点），不硬编码字面量。
-    arg = to_string(matcher["arg"] || matcher[:arg])
+    # #1212 from_role 硬锁（#1201 ⑥ 预案，kanban 同款）：
+    # and(text_contains __dealscout_update__, from_role discover)
+    assert (matcher["type"] || matcher[:type]) == "and"
+    items = matcher["items"] || matcher[:items]
+    assert %{"type" => "text_contains", "arg" => "__dealscout_update__"} in items
+    assert %{"type" => "from_role", "arg" => "discover"} in items
+
+    # 内容标记腿的 arg 从 update_signal/0 取（单一契约点），零 URI。
+    tc = Enum.find(items, &((&1["type"] || &1[:type]) == "text_contains"))
+    arg = to_string(tc["arg"] || tc[:arg])
     assert arg == Crawler.update_signal()
     refute String.contains?(arg, "://")
+
+    # from_role 硬锁的 arg 是已声明的 discover 角色名（非 URI）——其他成员
+    # 发同标记不再误触发（负例断言在 matcher 语义层，core matcher_test 已锁）。
+    fr = Enum.find(items, &((&1["type"] || &1[:type]) == "from_role"))
+    assert to_string(fr["arg"] || fr[:arg]) == "discover"
 
     # 已声明角色名（conformance `routing_receivers_resolve` 只认这个），非 URI。
     assert (Map.get(rule, "receivers") || Map.get(rule, :receivers)) == ["page"]
