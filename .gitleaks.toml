@@ -1,0 +1,17 @@
+# gitleaks config for the ezagent public repo.
+#
+# The `gitleaks` CI job (.github/workflows/ci.yml) exists to guard against NEW
+# secret additions. Historical manuscripts under `docs/together/**` are
+# dev-together working notes and evidence logs; any secret-shaped strings there
+# are handled separately (history rewrite + credential rotation), NOT by this
+# gate. They are allowlisted so a legacy-history match cannot block PRs — the
+# gate's job is to stop new leaks, not to retro-clean history.
+
+[extend]
+useDefault = true
+
+[allowlist]
+description = "Historical dev-together manuscripts (handled by separate history rewrite)"
+paths = [
+  '''docs/together/.*''',
+]

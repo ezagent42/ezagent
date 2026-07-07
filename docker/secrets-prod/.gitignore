@@ -1,3 +1,0 @@
-# never commit prod secrets
-*
-!.gitignore
