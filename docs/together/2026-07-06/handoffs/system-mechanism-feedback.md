@@ -28,12 +28,14 @@
 ### ② native flavor 角色收不到 chat 投递 —— 路由通、行为层永远不跑
 - **需要**：Definition routing 把消息路由给 native flavor 角色成员时，成员 recipe 行为的 `:receive` 真的执行。
 - **现在**（dealscout e2e 实测）：路由全通（规则命中 `$role:page`、`agent.receive` authz granted、read_marker delivered），但 **`AgentBridge deliver dropped :no_sandbox_respawn_state`**（`agent_bridge.ex:270`）——native 无 bridge adapter，投递在 bridge 层丢弃。插件自注册 flavor 的路被 `sync_result_action/1` 硬编码堵住，插件侧无解。
-- **问题**：所有"native 角色做接收方"的组合都断在这，**且 ③ 的门单独放行也不够**（hello.builder 本身就是 native）。请裁决：(a) core/bridge 给 native 开 in-process receive 通路（无 sidecar 直接跑 recipe 行为）；(b) 约定接收方槽必须用有 adapter 的 flavor（那 hello.builder 也要动）。
-- **证据**：#1191 `docs/e2e/2026-07-07/dealscout-discover/`（04a/04b + README gap ⑧）。
+- **已证的替代模式（重要，降低本条紧迫度）**：**caller-dispatch 不经 bridge、直接跑实例行为 handler**——kanban 生产已证（pm dispatch 板动作）+ dealscout v2 e2e 再证（crawl 完成 dispatch `refresh_page` → handler 真跑 → 页面重建，`dealscout-refresh-v2/`）。
+- **问题收窄为设计澄清**：native 角色的"chat 投递"语义到底该不该存在？若答案是"接收方本就该暴露 dispatchable action（kanban 模式）"，本条变成文档/约定问题 + ③ 应走 (b)；若 chat 投递该通，则需给 native 开 in-process receive。请拍。
+- **证据**：断点 #1191 `dealscout-discover/`（04a/04b）；通路 `dealscout-refresh-v2/`（README 有 v2 vs v1 对照）。
 
 ### ③ hello 页面重建入口对组合者开放 —— ✅ hello 作者已认领走 (a)，**与 ② 需一起看**
 - **现在**：#1208 重构了 hello 但 `hello_builder.ex:55,74` 的 `from_user?` 门未动——agent sender 消息仍被丢弃。且 ② 表明：即便门放行，消息也到不了 native builder 的行为层。
-- **我们的过渡**：dealscout 已落显式 ALT（`DealScoutPageRefreshAlt`，收更新信号直调 `Generator.start/2`），③+② 打通后整删、page 槽一行回切。
+- **建议改走 (b)**：我们已用 (b) 模式自证——v2 把"页面刷新"做成 dispatchable action 后全链真通（爬完自动 dispatch → handler → Generator → 浏览器渲出重建页）。**hello 直接暴露 dispatchable rebuild action（原 (b) 案）优于开门 (a)**：(a) 即便落地仍撞 ② 的 bridge 丢弃。
+- **我们的过渡**：dealscout 的显式 ALT（`DealScoutPageRefreshAlt` v2 dispatch 式），hello (b) 落地后整删、一行改调 hello 的 action。
 
 ### ④ role-slot agent 的裸名 @mention 解析不到
 - **需要**：成员能 `@kanban-assistant` 按角色名提到 role-slot 物化的 agent（协作的自然写法）。
@@ -64,6 +66,12 @@
 - cap probe p4 撞 cap-only view 形态——已按 HelloRender 先例给 `kanban_render.ex` 加单文件 allowlist（test-only），请 review 或让 probe 原生豁免 `view_behavior` 形态；
 - duplicate-fn 的 `# arch-allow:` 与 `mix format` 不兼容（尾注释被挪离 `do` 行→豁免失效），黄金样板同形只能 cap bump——若 marker 也认 def 上一行会好用很多。
 
+### ⑬ role-slot 模板 spawn 不捕 recipe behaviors —— dispatch 面残缺（v2 e2e 新发现，已查验）
+- **需要**：Definition 角色槽物化出的 agent，其 recipe 声明的 `behaviors` 真挂在实例上（否则对它 dispatch 任何 recipe 动作都 `:unknown_action`）。
+- **现在**：两条物化路不对称——`agent_create --role` 路走 `Recipe.Compose`（`compose.ex:9-10`：role behaviors ∪ flavor behaviors 折进 spawn `:behaviors`，`agent_create.ex:47`）；**socialware 模板路**（`template_team.ex`→TemplateSpawn）**没有这步**，探针实锤 `:kind_base` `behaviors: nil`。caps 有 grant、行为无捕获。首次 dispatch fail-loud `{:unknown_action, :refresh_page}`。
+- **过渡**：sanctioned 公开 API `Ezagent.Kind.mount/3` 操作员侧补挂（持久化，v2 e2e 用它闭环）。**收编**：spawn 时穿 behaviors（照 Compose）或 install 后自动 mount，任一落地即零手工。
+- **证据**：#1191 `dealscout-refresh-v2/`（探针 + mount 补挂记录）。
+
 ## 抽象提案（非阻塞）
 
 ### ⑪ per-socialware「协作协议」缺常驻注入点
@@ -87,4 +95,4 @@
 
 ---
 
-**优先级建议**：①② >> ③（已有主，与②联动） > ④⑦⑧⑨ > ⑤⑥ > ⑩ > ⑪⑫。①② 是"agent 真干活 + 产出真到达"的两块基石。
+**优先级建议**：① >> ⑬②③（三条同族：role-slot 的 dispatch/投递面——⑬ 是硬缺、②③ 是设计澄清+建议走 (b)） > ④⑦⑧⑨ > ⑤⑥ > ⑩ > ⑪⑫。① 仍是"agent 真干活"的第一块石头；⑬ 修了之后 role-slot socialware 的 dispatch 闭环零手工。
