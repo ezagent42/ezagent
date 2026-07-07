@@ -1,5 +1,7 @@
 # A² 验收 e2e — #1209 物化 agent 自动继承 installer host 登录(零手动 creds、零 watcher)
 
+> 常规流程截图（登录/建会话/成员）与 kanban-full-loop-r2 重复已删；本目录只留 A²(#1209) 零手动验收的独有证据（03* 凭证链 + 04* 真思考）。
+
 **验收结论:通**。分支 `feat/sw-kanban`(rebase 到 main `03136e446` = PR #1209)上,独立冷库、
 **全程不手动拷任何 credentials、不跑 creds watcher**:发布 cc 变体 → UI 建会话 → 两个 cc agent
 materialize 后 config_dir **自动**出现 `.credentials.json`(sha256 与 host `~/.claude/.credentials.json`
