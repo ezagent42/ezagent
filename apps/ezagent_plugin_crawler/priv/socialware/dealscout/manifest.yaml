@@ -1,0 +1,87 @@
+# dealscout demo socialware — the #1213 config-file form of the boot-publish
+# manifest (formerly inline `EzagentPluginCrawler.Demo.manifest_attrs/1` code).
+# Loaded at plugin boot by `EzagentPluginCrawler.Demo` through the SAME chain
+# as `Ezagent.Socialware.ManifestYaml.import/2`
+# (parse → ManifestResolver.resolve → Conformance.check_candidate →
+# publish_or_upgrade). Semantics are the judge: this file must resolve to the
+# exact Definition the retired code attrs produced (conformance 13/13 green).
+#
+# Shape notes (what dealscout composes — 职责重划 2026-07-06 拍板):
+#   * dealscout = 后台数据（爬取 plugin `crawler` + discover agent 用 crawl
+#     能力爬线索），hello = 显示 + concierge。本文件是把两者组合成一个
+#     socialware 的那份纯数据：bases/shape 复制 hello 的公开面配置
+#     （Session + Publisher.SessionImpl / Turn + Surface），`views:
+#     [hello_render]` 经 hello registered `PageView` 解析到
+#     `Ezagent.ActionSet.HelloRender` — dealscout 自己不声明任何 view/render。
+#   * shape 带 Crawler — 2026-07-07 真浏览器 e2e 修正：`:crawl_now` 的
+#     handler 读 `ctx.session_uri` + session 的 config slice → 宿主必须是
+#     session 本体，否则 live dispatch `{:unknown_action, :crawl_now}`。
+#   * roles — discover（`dealscout-discover` × cc-headless，持 crawl cap 的
+#     发现副驾）+ page（页面重建宿主）。hello 自己的 orch_<name> 前台是命令式
+#     ensure，不走 role 槽。【显式临时 ALT】page 槽当前指 `dealscout-page-alt`
+#     （receive 腿到 native 成员是断的，#1201 ②）；A①（hello 暴露
+#     dispatchable rebuild action）落地后一行回切 `hello.builder` 并删 ALT。
+#   * routing_rules — ONLY the content-triggered update-signal rule,
+#     #1212-hardened to and(text_contains "__dealscout_update__", from_role
+#     discover). NEVER hello's `always → chat` rule (kanban-handoff red line).
+#     The "__dealscout_update__" literal is the single contract point — it MUST
+#     stay byte-identical to `Ezagent.ActionSet.Crawler.update_signal/0`
+#     (locked by `demo_test.exs`); the `page` receiver name likewise mirrors
+#     `Crawler.page_role/0`.
+#   * visibility_policy — public + supervised like hello/kanban, and
+#     web_anon_access: true（与 kanban 的 false 不同：dealscout 的公开面是给
+#     匿名访客看的线索页，产品语义要匿名可读）。
+name: dealscout
+version: "0.1.0"
+title: "DealScout"
+description: "商业/投融资线索侦察：AI 千人千面发现 deal + 组合 hello 公开面撮合。"
+uses:
+  - hello
+  - crawler
+bases:
+  - Ezagent.ActionSet.Session
+  - Ezagent.ActionSet.Publisher.SessionImpl
+shape:
+  - Ezagent.ActionSet.Turn
+  - Ezagent.ActionSet.Surface
+  - Ezagent.ActionSet.Crawler
+views:
+  - hello_render
+roles:
+  - role_name: discover
+    fill: agent
+    recipe: dealscout-discover
+    flavor: cc-headless
+  - role_name: page
+    fill: agent
+    recipe: dealscout-page-alt
+    flavor: native
+routing_rules:
+  - matcher:
+      type: and
+      items:
+        - type: text_contains
+          arg: "__dealscout_update__"
+        - type: from_role
+          arg: discover
+    receivers:
+      - page
+    rule_set: dealscout-update
+    position: 0
+legends:
+  dealscout:
+    member_set:
+      - discover
+      - page
+    bound_rule_set: dealscout-update
+    fold: false
+adapters:
+  - adapter_id: external_feed
+    role: customer
+    config: {}
+visibility_policy:
+  scope: public
+  publish_policy: supervised
+  web_anon_access: true
+owner_policy:
+  type: installer
