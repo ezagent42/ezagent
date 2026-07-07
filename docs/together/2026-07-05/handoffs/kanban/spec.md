@@ -1,5 +1,7 @@
 # kanban 迁 socialware Definition — Dev Spec
 
+
+> **收口注记（2026-07-07）**：配套的 plan.md（任务清单，已全部执行）与 restart-review（过程文档）已删——实施结果与偏差以 `../../2026-07-07/handoffs/kanban-wrapup-and-gaps.md` 与 PR body 为准。本文件保留作设计依据。
 > **实施对齐说明（2026-07-06 收口）**：本文档是开工时的 point-in-time 规划。实施与之的偏差以代码与 PR body 为准：①角色槽收敛为 2（kanban-assistant + dev-together），board=workspace 级 URI-dispatch actor 不进 roles（RF-6）；②pm-coordinator 更名 kanban-assistant；③gh 连接器整体退役（联通=agent 用 gh/git CLI 的行为，协议在 kanban-assistant skill 的 gh-protocol 模块）；④新增 boot-publish（Demo 照 #162 黄金样板）与 BoardView/KanbanRender view 声明侧。
 
 > **日期：** 2026-07-05 · **分支：** `feat/sw-kanban` · **基准代码：** `upstream/main`（本 worktree `feat/sw-kanban` 代码字节一致）
