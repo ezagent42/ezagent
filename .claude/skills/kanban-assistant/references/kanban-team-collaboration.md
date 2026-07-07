@@ -13,6 +13,19 @@
 > literal below MUST be byte-identical to the kanban-team Definition's
 > `routing_rules` matcher `arg` (spec §4.2).
 
+## (a-1) Division of labor — the assistant manages ALL cards (拍板 2026-07-07)
+
+**dev 只做 dev 的活**：接活 → dive 干活 → push → 在 `__done__` 消息里带上产出
+（PR URL 等）。**dev 不做任何看板操作**（不建卡、不认领、不 register、不推进）。
+
+**助手统一管卡**：建卡、把卡 assign 给 dev（`update_node` 设 owner——问责标记）、
+收到 `__done__` 后 register_pr、验证、`set_stage` 推进，全部由助手 dispatch。
+
+**权限前提**（owner 在 §a0 建板后一次性做）：把板的 kanban 动作 **wildcard cap**
+grant 给助手——per-node owner 门（admin 或节点 owner 才能改卡）之下，助手凭
+admin-wildcard 推进任何人认领的卡。没有这张 cap 时助手推 dev 的卡会 `:forbidden`，
+把这一条报给 owner 补 grant，不要让 dev 自己推卡绕过。
+
 ## (a0) The board is NOT a team member — it is created by the world/owner
 
 The kanban board (`kanban-manager`, a `native` **passive** board actor) is a

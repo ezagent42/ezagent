@@ -35,16 +35,20 @@ When the `dev-together` member finishes a `dive` and is preparing to `return`:
    ```
 
 3. **Pin the real URL onto the card's artifacts** via the board's
-   `kanban.register_pr` action (the same CLI action-face as
-   `kanban-team-collaboration.md` §d — one dispatch to the board URI):
+   putting the URL **in the `__done__` message body**（分工拍板 2026-07-07：
+   dev 不做看板操作——register 由助手做）。The URL MUST be the one
+   `gh pr create` actually printed — never guessed or constructed.
+
+## (2b) assistant side — register the PR on the card
+
+   On receiving `__done__` with a PR URL, the assistant records it:
 
    ```bash
    scripts/kanban-cli.sh register_pr '{"id":"<card>","pr":"<PR-URL>"}'
    ```
 
-   The URL passed here MUST be the one `gh pr create` actually printed — never
-   a guessed or constructed URL. `register_pr` only RECORDS the reference as
-   node data (no outbound GitHub call, §d step 5).
+   `register_pr` only RECORDS the reference as node data (no outbound
+   GitHub call, §d step 5).
 
 ## (3) assistant side — verify with gh, THEN advance
 
