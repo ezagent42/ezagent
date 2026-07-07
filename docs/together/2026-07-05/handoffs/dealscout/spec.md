@@ -1,5 +1,7 @@
 # dealscout (DealScout) socialware — Dev Spec
 
+> **收口注记（2026-07-07）**：配套的 plan.md（任务清单，已全部执行）已删——实施结果与偏差以 PR body 与 `../../2026-07-06/returns/dealscout-stages-a-to-d.md` 为准。本文件保留作设计依据。实施期落定的两个大偏差先记在此：① **rename**：真 plugin 层改名 `ezagent_plugin_crawler`（通用爬取能力，与业务无关）；"dealscout" 只是 socialware（纯配置组合）的名字——下文凡写 `ezagent_plugin_dealscout` / "dealscout plugin" 处按此理解。② manifest 已迁 #1213 官方 YAML 车道（`priv/socialware/dealscout/manifest.yaml`，`Demo` 缩为薄加载器）。
+
 > **⚠️ 返工修订（2026-07-06 用户拍板，覆盖本 spec 与 plan 中一切相抵触的旧文）**
 >
 > 层级 **plugin → socialware → ezagent**。DealScout 是 **socialware（纯配置组合）**，唯一真 plugin = **爬取后台**。职责重划：
