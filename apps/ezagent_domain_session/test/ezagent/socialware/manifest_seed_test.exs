@@ -127,6 +127,37 @@ defmodule Ezagent.Socialware.ManifestSeedTest do
       assert {:ok, %{}, _} = DefinitionRegistry.lookup(@workspace, name)
       assert {:ok, %{}, _} = DefinitionRegistry.lookup(@workspace, "autoservice-tier1")
     end
+
+    test "boot fallback: scan_all! without a deploy_dir override seeds the deploy dir first" do
+      enable_scan!()
+      {:ok, _} = RecipeRegistry.seed_role_if_absent(%{name: "autoservice-agent"})
+
+      tmp = Path.join(System.tmp_dir!(), "sw-boot-fallback-#{uniq()}")
+      File.rm_rf!(tmp)
+      prev_home = System.get_env("EZAGENT_HOME")
+      System.put_env("EZAGENT_HOME", tmp)
+
+      on_exit(fn ->
+        if prev_home,
+          do: System.put_env("EZAGENT_HOME", prev_home),
+          else: System.delete_env("EZAGENT_HOME")
+
+        File.rm_rf!(tmp)
+      end)
+
+      deploy_dir = Ezagent.System.FsResolver.path!(Ezagent.URI.system_principal("socialware"))
+      refute File.dir?(deploy_dir)
+
+      # No :deploy_dir override → the default path runs the deploy-seed fallback
+      # (Ezagent.Home.SocialwareSeed.seed!/0) before resolving + scanning it.
+      assert :ok = ManifestSeed.scan_all!()
+
+      # the fallback created (seeded) the deployment dir ahead of the scan
+      assert File.dir?(deploy_dir)
+      # autoservice-tier1 is published (via the deploy-seed dir once migrated;
+      # via app-priv enumeration until then) — the flagship lands either way
+      assert {:ok, %{}, _} = DefinitionRegistry.lookup(@workspace, "autoservice-tier1")
+    end
   end
 
   defp enable_scan! do
