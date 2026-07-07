@@ -6,15 +6,15 @@ defmodule Ezagent.Entity.Agent.TemplateSpawn.Cascade do
   # this bridge resolves them immediately before the Template Class sees data, so normal
   # spawn paths do not need to hand-author `tmpl["cascade"]`.
   def resolve_content(
-         content,
-         template_class,
-         agent_uri,
-         spawned_by_uri,
-         workspace_uri,
-         flavor,
-         opts
-       )
-       when is_map(content) do
+        content,
+        template_class,
+        agent_uri,
+        spawned_by_uri,
+        workspace_uri,
+        flavor,
+        opts
+      )
+      when is_map(content) do
     cond do
       is_map(content_field(content, :cascade)) ->
         {:ok, content}
@@ -84,7 +84,7 @@ defmodule Ezagent.Entity.Agent.TemplateSpawn.Cascade do
         workspace_uri: workspace_uri,
         workspace_layer_uri: source_template_uri,
         flavor: flavor,
-        credential_required?: credential_required_by_default?(credential_adapter),
+        credential_required?: credential_required?(credential_adapter, content),
         explicit_source: Keyword.get(opts, :explicit_source)
       }
 
@@ -148,6 +148,17 @@ defmodule Ezagent.Entity.Agent.TemplateSpawn.Cascade do
 
   defp credential_required_by_default?(:slice), do: true
   defp credential_required_by_default?(:file), do: false
+
+  # A member may opt OUT of the required-by-default credential (e.g. a curl LLM
+  # member declared credential_optional so it keyless-spawns in deployments with
+  # no credential source). Authored under recipe.config → content.credential_optional.
+  defp credential_required?(adapter, content) do
+    if content_field(content, :credential_optional) in [true, "true"] do
+      false
+    else
+      credential_required_by_default?(adapter)
+    end
+  end
 
   defp default_cascade_configured?(:slice, _content, %URI{}), do: true
   defp default_cascade_configured?(:slice, _content, _), do: false
@@ -487,5 +498,4 @@ defmodule Ezagent.Entity.Agent.TemplateSpawn.Cascade do
         meta
     end
   end
-
 end
