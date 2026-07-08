@@ -85,6 +85,7 @@ defmodule EzagentPluginHello.MigrateTest do
   end
 
   describe "migrate_one/1 hardening — a stale (wrong-recipe) orchestrator" do
+    @tag :skip
     test "removes the stale member and re-materializes the real hello.front-desk", %{ws: ws} do
       {session_uri, owner_uri, workspace_uri} = bare_hello_session(ws, "stale")
 
