@@ -80,13 +80,15 @@ defmodule Ezagent.AgentBridge do
   """
   @spec complete(URI.t(), String.t()) :: {:ok, String.t()} | {:error, term()}
   def complete(%URI{} = agent_uri, prompt) when is_binary(prompt) do
+    agent_uri_str = URI.to_string(agent_uri)
+
     payload = %Payload{
       message_id: "complete-" <> Integer.to_string(System.unique_integer([:positive])),
       session_uri: nil,
       sender_uri: agent_uri,
       text: prompt,
       event_type: :system,
-      meta: %{"agent_uri" => URI.to_string(agent_uri)}
+      meta: %{"agent_uri" => agent_uri_str}
     }
 
     case deliver_with_flavor(agent_uri, payload, "curl") do
@@ -94,6 +96,8 @@ defmodule Ezagent.AgentBridge do
       {:error, _} = err -> err
       other -> {:error, {:unexpected_complete_result, other}}
     end
+  rescue
+    e -> {:error, {:complete_raise, e}}
   end
 
   @default_ready_timeout_ms 15_000
