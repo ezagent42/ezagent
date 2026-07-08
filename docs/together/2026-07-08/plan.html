@@ -83,8 +83,9 @@
 <p style="font-size:12px;color:#6b7280">每行 = 一个自含闭环 track；stable 依赖链由 lead 内部串行推进（合 #1235 → 部署 → 验证），下游验证在 stable 绿后分派。</p>
 <div class="scroll"><table>
 <tr><th>开发者</th><th>feishu</th><th>本日 track</th><th>闭环/依赖说明</th></tr>
-<tr><td><b>allenwoods</b></td><td>林懿伦（lead）</td><td><span class="pr1">#1235 已合 ✓ → stable 带修复重新部署</span> → 主目标 socialware load/create/delete + M3 requires 冒烟 + M2 default-template 验证；<b>结构项：seed 三态契约下沉 + CI reflow 闸</b>（见 §1）</td><td>依赖链持有者，context 在本人（原则①闭环）；stable 绿后可分派下游；结构项独立于 stable 链，可穿插推进</td></tr>
-<tr><td><b>zhaomaota97</b></td><td>张宁</td><td><b>官网全流程</b>：运行网站 socialware，验证全体成员可回复网站操作</td><td>前端/官网底座持有者；依赖 stable 绿 + credential cascade</td></tr>
+<tr><td><b>allenwoods</b></td><td>林懿伦（lead）</td><td><span class="pr1">#1235 已合 ✓ → stable 带修复重新部署</span> → 主目标 socialware load/create/delete + M3 requires 冒烟 + M2 default-template 验证；<b>结构项：seed 三态契约下沉 + CI reflow 闸</b>（见 §1）；<b>nightly 自动触发 + 内测 playground 指定</b>：① main 合并 → nightly 自动部署（现仅 19:00 UTC 定时/手动 dispatch；如 ezagent CI main push → repository_dispatch → ezagent-deploy，保持 no-pull_request 安全约束）② 定内测 playground 渠道（nightly 最新但不稳 vs beta 晋级版；给出推荐并配置）</td><td>依赖链持有者，context 在本人（原则①闭环）；stable 绿后可分派下游；结构项/nightly 项独立于 stable 链，可穿插推进</td></tr>
+<tr><td><b>zhaomaota97</b></td><td>张宁</td><td><b>官网全流程</b>：运行网站 socialware，验证全体成员可回复网站操作。（follow-up：<b>hello 纯 manifest 重表达</b>——hello 开发归属本人，官网全流程后跟进）</td><td>前端/官网底座持有者；依赖 stable 绿 + credential cascade</td></tr>
+<tr><td><b>gagameow</b></td><td>黄佳佳</td><td><b>ezagent-in-ezagent 自举能力审计（dogfooding）</b>：验证「在 ezagent 里开发 ezagent」今天是否可行，三个面逐一验证：① <b>改代码库 + 提 PR</b>——ezagent session 内的 agent 修改 esr-ng 仓库并提交 PR；② <b>产出 plugin</b>——从内部开发一个新 ezagent 插件；③ <b>生成 socialware</b>——从内部编写 + 发布 + 安装一个新 socialware。<b>交付物 = 验证报告</b>：每个面「今天能跑通什么 / 哪里断 / 缺口在哪」</td><td>自含闭环（审计 + 报告同一人）；不依赖 stable 链，可立即开工</td></tr>
 <tr><td><b>jjkysy</b></td><td>姚升悦</td><td>deploy-seed 车道 PR CI re-run → 合入（C2）；socialware boot 时序面支持</td><td>自含闭环；CI 重跑后 lead 合入</td></tr>
 <tr><td><b>zyli-developer</b></td><td>李震宇</td><td>协助主目标 E2E：agent-browser socialware 安装/卸载场景脚本化 + UI 呈现校验</td><td>依赖 stable 绿；E2E 强项</td></tr>
 </table></div>
@@ -96,6 +97,7 @@
 <li><b>链尾并行</b>：stable 绿后，socialware 验证（allen/zyli）与官网全流程（zhaomaota97）可并行——共享 stable 环境但操作面不同。</li>
 <li><b>deploy-seed 车道（C2）</b>独立于 stable 链，可提前推进 CI re-run。</li>
 <li><b>结构项（seed 三态契约 + reflow 闸）</b>独立于 stable 链，allenwoods 可在链首等待窗口穿插推进；reflow 闸落地后反过来保护后续所有部署。</li>
+<li><b>自举审计（gagameow）</b>独立于 stable 链（在现有环境验证三个面），可立即开工、全程并行。</li>
 </ul>
 
 <h2>§5 out-of-scope（登记）</h2>
