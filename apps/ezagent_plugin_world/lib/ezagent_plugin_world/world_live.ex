@@ -260,7 +260,7 @@ defmodule EzagentPluginWorld.WorldLive do
     WorkspacePluginActions.handle_dispatch(socket, action, args)
   end
 
-  @conversation_actions ~w(chat.send chat.load_older chat.mark_displayed session.switch session.invite session.remove_participant session.create session.view.switch session.pty.open session.orchestrator.restart session.routing.add session.routing.toggle)
+  @conversation_actions ~w(chat.send chat.load_older chat.mark_displayed session.switch session.invite session.remove_participant session.socialware.uninstall session.create session.view.switch session.pty.open session.orchestrator.restart session.routing.add session.routing.toggle)
   def handle_event("world:dispatch", %{"action" => action, "args" => args}, socket)
       when action in @conversation_actions and is_map(args) do
     ConversationActions.handle_dispatch(socket, action, args)
