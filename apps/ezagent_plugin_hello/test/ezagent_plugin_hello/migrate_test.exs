@@ -56,7 +56,7 @@ defmodule EzagentPluginHello.MigrateTest do
       assert {:ok, ^orch_uri} = Members.role_uri(session_uri, "front-desk")
       assert {:ok, ^builder_uri} = Members.role_uri(session_uri, "builder")
       assert {:ok, ^concierge_uri} = Members.role_uri(session_uri, "concierge")
-      assert {:ok, "hello.front-desk"} = Ezagent.AgentRecipeAttributes.fetch(orch_uri)
+      assert {:ok, "hello.front-desk"} = Ezagent.Agent.RecipeAttributes.fetch(orch_uri)
 
       # And migrate_all/0 (the boot entry point) reports it migrated, not failed.
       report = Migrate.migrate_all()
@@ -80,7 +80,7 @@ defmodule EzagentPluginHello.MigrateTest do
       assert {:ok, orch_uri} = Members.role_uri(session_uri, "front-desk")
       assert {:ok, _builder_uri} = Members.role_uri(session_uri, "builder")
       assert {:ok, _concierge_uri} = Members.role_uri(session_uri, "concierge")
-      assert {:ok, "hello.front-desk"} = Ezagent.AgentRecipeAttributes.fetch(orch_uri)
+      assert {:ok, "hello.front-desk"} = Ezagent.Agent.RecipeAttributes.fetch(orch_uri)
     end
   end
 
@@ -110,7 +110,7 @@ defmodule EzagentPluginHello.MigrateTest do
                )
 
       assert {:ok, stale_uri} = Members.role_uri(session_uri, "front-desk")
-      assert {:ok, "hello.builder"} = Ezagent.AgentRecipeAttributes.fetch(stale_uri)
+      assert {:ok, "hello.builder"} = Ezagent.Agent.RecipeAttributes.fetch(stale_uri)
       # builder/concierge were never materialized in this bare fixture.
       assert :error = Members.role_uri(session_uri, "builder")
       assert :error = Members.role_uri(session_uri, "concierge")
@@ -120,7 +120,7 @@ defmodule EzagentPluginHello.MigrateTest do
       assert {:ok, fresh_uri} = Members.role_uri(session_uri, "front-desk")
       # The stale agent's Kind may still be alive (idempotent spawn), so the URI
       # might not change. The key assertion: recipe was corrected to hello.front-desk.
-      assert {:ok, "hello.front-desk"} = Ezagent.AgentRecipeAttributes.fetch(fresh_uri)
+      assert {:ok, "hello.front-desk"} = Ezagent.Agent.RecipeAttributes.fetch(fresh_uri)
 
       # Re-running is now a no-op (the correct recipe short-circuits the check).
       assert {:ok, ^session_uri} = Migrate.migrate_one(session_uri)

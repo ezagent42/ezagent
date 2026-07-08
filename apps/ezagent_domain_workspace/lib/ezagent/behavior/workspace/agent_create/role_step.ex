@@ -120,7 +120,7 @@ defmodule Ezagent.ActionSet.Workspace.AgentCreate.RoleStep do
   was RF-7 `:role`) the host merges into `Sandbox.create/1`'s args — both
   snapshot-backed in the `:sandbox` slice (the cold-restart source for the
   `:passive`/`:recipe` UriQuery resolvers +
-  `Ezagent.AgentRecipeResolver.list_by_recipe/2`). A no-recipe create
+  `Ezagent.Agent.RecipeResolver.list_by_recipe/2`). A no-recipe create
   (`nil` materialized) contributes nothing → the slice's defaults.
   """
   @spec spawn_marker_args(map() | nil) :: map()
@@ -142,9 +142,9 @@ defmodule Ezagent.ActionSet.Workspace.AgentCreate.RoleStep do
 
   The `:sandbox`-slice `:recipe` field (threaded via the spawn args by the host)
   is the snapshot-backed source of truth for
-  `Ezagent.AgentRecipeResolver.list_by_recipe/2` + the `:recipe` UriQuery
+  `Ezagent.Agent.RecipeResolver.list_by_recipe/2` + the `:recipe` UriQuery
   resolver. This ALSO primes the volatile ETS fast path
-  (`Ezagent.AgentRecipeAttributes`) so the per-URI `:recipe` resolver answers
+  (`Ezagent.Agent.RecipeAttributes`) so the per-URI `:recipe` resolver answers
   correctly BEFORE the first snapshot. A no-recipe create (`nil` materialized or
   an unnamed recipe) writes nothing — an absent ETS entry + a `nil` slice field
   both resolve to "no recipe provenance". This records BUILD PROVENANCE only,
@@ -155,7 +155,7 @@ defmodule Ezagent.ActionSet.Workspace.AgentCreate.RoleStep do
 
   def grant_recipe_marker(%URI{} = agent_uri, %{recipe: recipe})
       when is_binary(recipe) and recipe != "" do
-    Ezagent.AgentRecipeAttributes.put(agent_uri, recipe)
+    Ezagent.Agent.RecipeAttributes.put(agent_uri, recipe)
   end
 
   def grant_recipe_marker(_agent_uri, _materialized), do: :ok

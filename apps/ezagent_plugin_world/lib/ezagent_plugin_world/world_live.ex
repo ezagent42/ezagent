@@ -797,7 +797,7 @@ defmodule EzagentPluginWorld.WorldLive do
 
   defp agent_options_for_recipe(recipe, %URI{} = workspace_uri)
        when is_binary(recipe) and recipe != "" do
-    uris = Ezagent.AgentRecipeResolver.list_by_recipe(recipe, workspace_uri)
+    uris = Ezagent.Agent.RecipeResolver.list_by_recipe(recipe, workspace_uri)
     display_map = Ezagent.EntityPresenter.display_many(Enum.map(uris, &URI.to_string/1))
 
     Enum.map(uris, fn uri ->

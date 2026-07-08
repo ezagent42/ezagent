@@ -1,4 +1,4 @@
-defmodule Ezagent.AgentRecipeResolver do
+defmodule Ezagent.Agent.RecipeResolver do
   @moduledoc """
   P2 recipe-provenance list read model + the per-URI `:recipe` durable-snapshot fallback (was RF-7 role).
 
@@ -12,7 +12,7 @@ defmodule Ezagent.AgentRecipeResolver do
 
   ## Why the LIST is sourced from snapshots, not ETS
 
-  The ETS fast path (`Ezagent.AgentRecipeAttributes`) is keyed `stable_key → role
+  The ETS fast path (`Ezagent.Agent.RecipeAttributes`) is keyed `stable_key → role
   name`; it can answer a per-URI lookup but CANNOT enumerate agents-by-role (the
   list output is agent URIs; the value is a bare role name, and the table is
   volatile — empty after a restart). The persisted `kind_snapshots` rows carry
@@ -69,7 +69,7 @@ defmodule Ezagent.AgentRecipeResolver do
       require Logger
 
       Logger.warning(
-        "AgentRecipeResolver.list_by_recipe/2: snapshot scan failed for role=#{role_name}: " <>
+        "Agent.RecipeResolver.list_by_recipe/2: snapshot scan failed for role=#{role_name}: " <>
           inspect(error.__struct__)
       )
 
@@ -102,7 +102,7 @@ defmodule Ezagent.AgentRecipeResolver do
       require Logger
 
       Logger.warning(
-        "AgentRecipeResolver.recipe_from_durable_snapshot/1: failed for " <>
+        "Agent.RecipeResolver.recipe_from_durable_snapshot/1: failed for " <>
           "#{URI.to_string(agent_uri)}: " <> inspect(error.__struct__)
       )
 

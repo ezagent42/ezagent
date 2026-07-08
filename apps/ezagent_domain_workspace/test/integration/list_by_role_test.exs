@@ -1,6 +1,6 @@
 defmodule Ezagent.Integration.ListByRoleTest do
   @moduledoc """
-  RF-7 acceptance — list-by-role read model (`Ezagent.AgentRecipeResolver`).
+  RF-7 acceptance — list-by-role read model (`Ezagent.Agent.RecipeResolver`).
 
   Proves the two RF-7 requirements:
 
@@ -26,8 +26,8 @@ defmodule Ezagent.Integration.ListByRoleTest do
 
   alias Ezagent.{
     AgentFlavorRegistry,
-    AgentRecipeAttributes,
-    AgentRecipeResolver,
+    Agent.RecipeAttributes,
+    Agent.RecipeResolver,
     Agent.RecipeRegistry,
     UriQuery
   }
@@ -123,8 +123,8 @@ defmodule Ezagent.Integration.ListByRoleTest do
       assert {:ok, @role_a} = UriQuery.resolve(:recipe, a1)
       assert {:ok, @role_b} = UriQuery.resolve(:recipe, b1)
 
-      role_a = AgentRecipeResolver.list_by_recipe(@role_a, workspace_uri) |> uri_set()
-      role_b = AgentRecipeResolver.list_by_recipe(@role_b, workspace_uri) |> uri_set()
+      role_a = RecipeResolver.list_by_recipe(@role_a, workspace_uri) |> uri_set()
+      role_b = RecipeResolver.list_by_recipe(@role_b, workspace_uri) |> uri_set()
 
       assert role_a == uri_set([a1, a2, a3]),
              "list_by_recipe(role_a) must be EXACTLY the 3 role-A agents; got #{inspect(MapSet.to_list(role_a))}"
@@ -133,7 +133,7 @@ defmodule Ezagent.Integration.ListByRoleTest do
              "list_by_recipe(role_b) must be EXACTLY the 2 role-B agents"
 
       # The roleless agent is in NEITHER list.
-      assert AgentRecipeResolver.list_by_recipe("no-such-role", workspace_uri) == []
+      assert RecipeResolver.list_by_recipe("no-such-role", workspace_uri) == []
     end)
   end
 
@@ -151,8 +151,8 @@ defmodule Ezagent.Integration.ListByRoleTest do
       ws2_uri = URI.new!("workspace://#{ws2_name}")
       a_ws2 = create_role_agent(ws2_name, ws2_uri, admin_ctx, @role_a)
 
-      ws1_list = AgentRecipeResolver.list_by_recipe(@role_a, workspace_uri)
-      ws2_list = AgentRecipeResolver.list_by_recipe(@role_a, ws2_uri)
+      ws1_list = RecipeResolver.list_by_recipe(@role_a, workspace_uri)
+      ws2_list = RecipeResolver.list_by_recipe(@role_a, ws2_uri)
 
       # K4's board for ws1 must see ws1's manager and NOT ws2's (cross-tenant
       # leak + unbounded scan) — and vice versa.
@@ -170,14 +170,14 @@ defmodule Ezagent.Integration.ListByRoleTest do
     skip_if_no_entity_spawn(fn ->
       agent_uri = create_role_agent(ws_name, workspace_uri, admin_ctx, @role_a)
 
-      assert agent_uri in AgentRecipeResolver.list_by_recipe(@role_a, workspace_uri)
+      assert agent_uri in RecipeResolver.list_by_recipe(@role_a, workspace_uri)
       assert {:ok, @role_a} = UriQuery.resolve(:recipe, agent_uri)
 
       # Simulate a COLD restart: clear the volatile ETS fast path AND terminate
       # the live Kind. The ONLY surviving record of the role is now the persisted
       # `:sandbox` snapshot slice.
-      :ok = AgentRecipeAttributes.delete(agent_uri)
-      assert :none = AgentRecipeAttributes.fetch(agent_uri)
+      :ok = RecipeAttributes.delete(agent_uri)
+      assert :none = RecipeAttributes.fetch(agent_uri)
 
       _ = Ezagent.Kind.terminate(agent_uri)
 
@@ -187,7 +187,7 @@ defmodule Ezagent.Integration.ListByRoleTest do
       # THE RF-7 INVARIANT: with ETS empty and the Kind not spawned, the agent
       # MUST still enumerate by role — recovered from the durable snapshot. A
       # KindRegistry-sourced list returns [] here (the board vanishes).
-      listed = AgentRecipeResolver.list_by_recipe(@role_a, workspace_uri)
+      listed = RecipeResolver.list_by_recipe(@role_a, workspace_uri)
 
       assert agent_uri in listed,
              "DORMANT role agent did NOT enumerate after cold restart — list_by_recipe " <>

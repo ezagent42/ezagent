@@ -30,7 +30,7 @@ defmodule Ezagent.ActionSet.Kanban.Shared do
   # 本模块在运行时 read-through 经 `RecipeRegistry.lookup/1` 读回——Behavior 不硬编码
   # 任何具体棒名。两条路径：
   #
-  #   * 生产：dispatch ctx 带 `:self_uri`（agent URI）→ `AgentRecipeAttributes.fetch/1`
+  #   * 生产：dispatch ctx 带 `:self_uri`（agent URI）→ `Agent.RecipeAttributes.fetch/1`
   #     （ETS 快径，spawn 时由 role_step 写入）拿 role 名 → `RecipeRegistry.lookup/1`
   #     拿 `%Recipe{config: %{stages: [...], ci_stage:, import_default_stage:}}`。
   #   * 测试：单元测试用桩 ctx 直接注入 `:stages` / `:import_default_stage` /
@@ -120,9 +120,9 @@ defmodule Ezagent.ActionSet.Kanban.Shared do
   # role 名：ETS 快径（spawn 时 role_step.grant_recipe_marker 写入）→ durable 快照兜底。
   # 两者都无（无 self_uri / 未起活）→ :none，调用方退 default。
   defp role_of(%URI{} = uri) do
-    case Ezagent.AgentRecipeAttributes.fetch(uri) do
+    case Ezagent.Agent.RecipeAttributes.fetch(uri) do
       {:ok, role_name} -> {:ok, role_name}
-      :none -> Ezagent.AgentRecipeResolver.recipe_from_durable_snapshot(uri)
+      :none -> Ezagent.Agent.RecipeResolver.recipe_from_durable_snapshot(uri)
     end
   end
 
