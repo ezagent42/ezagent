@@ -63,6 +63,32 @@ defmodule EzagentDomainAgent.Application do
     # HERE (the host is up before any package install call).
     :ok = Ezagent.Plugin.SeedHook.register(Ezagent.Agent.PackageSeedHook)
 
+    # Test-only: register the per-boot role-seed registry reset so the shared
+    # `EzagentCore.DataCase` clears it between tests (one test == one fresh boot).
+    # Core must not name `RecipeRegistry` (the `no_role_concept_in_core` gate), so
+    # the reset is registered HERE into a plain-atom persistent_term hook list that
+    # core drains without referencing the domain layer.
+    if test_env?() do
+      register_boot_seed_reset_hook()
+    end
+
     result
+  end
+
+  defp register_boot_seed_reset_hook do
+    hooks = :persistent_term.get(:ezagent_test_boot_reset_hooks, [])
+
+    :persistent_term.put(
+      :ezagent_test_boot_reset_hooks,
+      Enum.uniq([(&Ezagent.Agent.RecipeRegistry.reset_boot_seed_registry/0) | hooks])
+    )
+
+    :ok
+  end
+
+  defp test_env? do
+    Code.ensure_loaded?(Mix) and Mix.env() == :test
+  rescue
+    _ -> false
   end
 end
