@@ -33,7 +33,10 @@ defmodule EzagentDomainInstanceMessage.Integration.SendEchoDecoupleTest do
   alias Ezagent.RoutingRegistry
 
   @slow_spawn_ms 1_200
-  @fast_ms 500
+  # Echo-latency bound: RELATIVE to the injected spawn delay (codex MED-3 —
+  # wall-clock assertions flake on a loaded runner; what we actually assert is
+  # echo_time << slow_spawn_ms, i.e. the echo did NOT wait for the slow spawn).
+  @fast_ms div(@slow_spawn_ms, 2)
 
   defp u(prefix), do: "#{prefix}-#{System.unique_integer([:positive])}"
 
@@ -103,15 +106,36 @@ defmodule EzagentDomainInstanceMessage.Integration.SendEchoDecoupleTest do
   # Spawn a real echo agent member, join it, then make its spawn slow and
   # terminate it → a COLD-but-durable member whose `ensure_live` revival blocks
   # @slow_spawn_ms. Restores the original entity spawn fn on exit.
-  defp join_cold_slow_member(session) do
+  #
+  # `mode:`
+  #   * `:every` — every spawn of the member sleeps (dead-member simulation).
+  #   * `:once`  — ONLY the first spawn call sleeps (and it messages
+  #     `notify_pid` `:slow_spawn_entered` BEFORE sleeping). Used by the
+  #     recipient-ordering test: delivery job #1 is slow, job #2 fast — the
+  #     exact interleave codex HIGH-1 proved reorders per-recipient delivery
+  #     without a per-recipient serialized queue.
+  defp join_cold_slow_member(session, mode \\ :every, notify_pid \\ nil) do
     member = Ezagent.URI.new!("entity://team-alpha/agent/slow_np_#{u("m")}")
     {:ok, _} = Ezagent.TestSupport.TemplateAgentSpawn.spawn_agent(member, "echo")
     join(session, member)
 
     [{"entity", original_entity_fn}] = :ets.lookup(SpawnRegistry.table(), "entity")
+    once_guard = :atomics.new(1, [])
 
     slow_fn = fn %URI{} = uri ->
-      if URI.to_string(uri) == URI.to_string(member), do: Process.sleep(@slow_spawn_ms)
+      if URI.to_string(uri) == URI.to_string(member) do
+        case mode do
+          :every ->
+            Process.sleep(@slow_spawn_ms)
+
+          :once ->
+            if :atomics.add_get(once_guard, 1, 1) == 1 do
+              if is_pid(notify_pid), do: send(notify_pid, :slow_spawn_entered)
+              Process.sleep(@slow_spawn_ms)
+            end
+        end
+      end
+
       original_entity_fn.(uri)
     end
 
@@ -130,13 +154,16 @@ defmodule EzagentDomainInstanceMessage.Integration.SendEchoDecoupleTest do
     :ok = Phoenix.PubSub.subscribe(EzagentCore.PubSub, Delivery.session_events_topic(session))
   end
 
-  # Wait for every in-flight background delivery Task to finish BEFORE the test
-  # returns, so the slow cold-member spawn (which reads/writes snapshots) does
-  # not race the sandbox owner teardown. Test-hygiene only — it runs AFTER the
-  # timing assertions have already captured the (fast) echo latency.
+  # Wait for every queued + in-flight background delivery to finish BEFORE the
+  # test returns, so the slow cold-member spawn (which reads/writes snapshots)
+  # does not race the sandbox owner teardown. Test-hygiene only — it runs AFTER
+  # the timing assertions have already captured the (fast) echo latency.
   defp drain_delivery_tasks do
     wait_until(
-      fn -> Task.Supervisor.children(Ezagent.Session.DeliverySupervisor) == [] end,
+      fn ->
+        Ezagent.Session.DeliveryQueue.idle?() and
+          Task.Supervisor.children(Ezagent.Session.DeliverySupervisor) == []
+      end,
       200
     )
   end
@@ -232,5 +259,78 @@ defmodule EzagentDomainInstanceMessage.Integration.SendEchoDecoupleTest do
              "async fan-out must not reorder the sender-visible feed"
 
     drain_delivery_tasks()
+  end
+
+  # ── codex HIGH-1 regression — PER-RECIPIENT delivery order ──────────────
+  #
+  # One unserialized Task per delivery gives NO cross-task ordering: two rapid
+  # sends to the SAME recipient race, and if msg2's task wins, the recipient
+  # observes [msg2, msg1] (wrong `last_received` / `recent_messages` order,
+  # ReadMarker's monotonic cursor records "delivered up to msg2" and DISCARDS
+  # msg1's later marker as stale). The fix: `Delivery.deliver_async/5` enqueues
+  # into `Ezagent.Session.DeliveryQueue` — per-recipient-key FIFO, ONE in-flight
+  # job per key — so a recipient always observes messages in send order while a
+  # dead member still only ever blocks its OWN key (Prong B intact).
+  #
+  # Determinism: the slow spawn (`:once` mode) signals `:slow_spawn_entered`
+  # BEFORE sleeping; the test sends msg2 only after that signal, so on the
+  # unserialized code msg2's delivery ALWAYS overtakes msg1's (task 1 is
+  # provably parked in the spawn sleep when msg2's job starts).
+  #
+  # Observation channel: `{Entity.Agent, :receive}` is swapped to the REAL
+  # `Ezagent.ActionSet.User.Receive` (production behavior, same cap-exempt +
+  # in-handler member-cap authorization contract) purely because it records
+  # arrivals observably — `last_received` + the newest-first `recent_messages`
+  # ring on the recipient's `:session` slice (exactly codex's harm (a)).
+  test "per-recipient delivery order — a slow first delivery must not let a later send overtake it" do
+    session = spawn_session()
+    sender = Ezagent.URI.new!("entity://team-alpha/user/#{u("sender")}")
+    {:ok, _} = SpawnRegistry.spawn(sender)
+    join(session, sender)
+
+    member = join_cold_slow_member(session, :once, self())
+
+    # Swap the agent-Kind receive behavior for the observable production
+    # User.Receive; restore the original on exit.
+    {:ok, original_receive} = Ezagent.BehaviorRegistry.lookup(Ezagent.Entity.Agent, :receive)
+
+    :ok =
+      Ezagent.BehaviorRegistry.register(
+        Ezagent.Entity.Agent,
+        :receive,
+        Ezagent.ActionSet.User.Receive
+      )
+
+    on_exit(fn ->
+      Ezagent.BehaviorRegistry.register(Ezagent.Entity.Agent, :receive, original_receive)
+    end)
+
+    subscribe(session)
+
+    # msg1 — its delivery job enters the slow cold-member spawn.
+    {id1, _} = send_and_time(session, sender, "recipient-order msg1")
+    assert_receive :slow_spawn_entered, @slow_spawn_ms
+
+    # msg2 — sent while msg1's delivery is provably parked in the spawn sleep.
+    {id2, _} = send_and_time(session, sender, "recipient-order msg2")
+
+    drain_delivery_tasks()
+
+    {:ok, slice} = Ezagent.Kind.get_slice(member, :session)
+    state = Map.get(slice, :state, slice)
+
+    ring_ids =
+      state
+      |> Map.get(:recent_messages, [])
+      |> Enum.map(fn {_cursor, msg_id} -> msg_id end)
+
+    assert ring_ids == [id2, id1],
+           "recipient ring (newest-first) is #{inspect(ring_ids)}, expected " <>
+             "#{inspect([id2, id1])} — msg2's delivery overtook msg1's (per-recipient " <>
+             "delivery is not serialized in send order)"
+
+    assert %{message_id: ^id2} = Map.get(state, :last_received),
+           "recipient last_received is #{inspect(Map.get(state, :last_received))}, " <>
+             "expected msg2 (#{id2}) as the LAST arrival — arrival order was inverted"
   end
 end
