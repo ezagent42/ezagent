@@ -33,14 +33,17 @@ defmodule Ezagent.ActionSet.PyAgentTest do
   end
 
   describe "macro-derived metadata" do
-    test "exactly the 3 py-namespaced actions" do
+    test "exactly the 4 py-namespaced actions" do
+      # :py_ensure_alive added in PR #1259 (item 1b — the async adopt-path
+      # provision retry).
       assert MapSet.new(PyAgent.actions()) ==
-               MapSet.new([:py_sync_result, :py_reset, :py_configure])
+               MapSet.new([:py_sync_result, :py_reset, :py_configure, :py_ensure_alive])
     end
 
-    test "required_caps/0 — :py_sync_result on :agent axis, :py_reset/:py_configure on :any" do
+    test "required_caps/0 — :py_sync_result/:py_ensure_alive on :agent axis, :py_reset/:py_configure on :any" do
       caps = PyAgent.required_caps()
       assert caps.py_sync_result.kind == :agent
+      assert caps.py_ensure_alive.kind == :agent
       assert caps.py_reset.kind == :any
       assert caps.py_configure.kind == :any
     end

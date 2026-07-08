@@ -158,14 +158,29 @@ defmodule Ezagent.Template.PyAgent do
       # messages buffer via `PendingDelivery` until the subprocess flips
       # `:ready`. A `:uv_not_found` / cold-provision failure now surfaces in
       # `activate/2` (which keeps the Kind alive in a DEGRADED, no-subprocess
-      # state, FAIL-LOUD-AT-USE via the next `:receive` → `:not_alive`), and the
-      # `ensure_subprocess_alive/2` self-heal callback (CascadeRuntime) revives a
-      # later-dead subprocess on the adopted path.
+      # state, records the durable `:last_error {:provision_failed, _}` marker,
+      # and FAIL-LOUD-AT-USE via the next `:receive` → `:not_alive`).
+      #
+      # PR #1259 codex review item 1b — the ADOPT arm (`:already_started`) must
+      # not report success over a ZOMBIE: if the adopted agent's subprocess is
+      # dead (a prior provision failed), RETRY the provision — asynchronously
+      # (a fire-and-forget `:py_ensure_alive` cast into the agent's own Kind),
+      # never blocking this create path. When the underlying failure has
+      # cleared (network back, uv installed), the retry recovers the member
+      # and clears the `:last_error` marker.
       case Ezagent.Kind.spawn(Ezagent.Entity.Agent, init_args) do
         {:ok, _pid} ->
           {:ok, [agent_uri], %{fresh?: true, config_dir_path: config_dir}}
 
         {:error, {:already_started, _pid}} ->
+          _ = async_reensure_if_dead(agent_uri)
+          {:ok, [agent_uri], %{fresh?: false, config_dir_path: config_dir}}
+
+        {:error, {:already_registered, _}} ->
+          # Same adopt case surfaced through the KindRegistry race arm (the
+          # cc/SessionCreator spawn paths handle both shapes; py previously
+          # only matched `:already_started` and ERRORED an idempotent adopt).
+          _ = async_reensure_if_dead(agent_uri)
           {:ok, [agent_uri], %{fresh?: false, config_dir_path: config_dir}}
 
         {:error, reason} ->
@@ -174,7 +189,56 @@ defmodule Ezagent.Template.PyAgent do
     end
   end
 
+
   def instantiate(_tmpl_name, tmpl, _workspace_uri), do: {:error, {:invalid_template, tmpl}}
+
+  # Adopt-path zombie guard (PR #1259 item 1b). `Domain.Python.alive?/1` is a
+  # cheap Registry lookup; when the subprocess is dead, dispatch the agent's
+  # own `:py_ensure_alive` as a fire-and-forget `:cast` so the provision retry
+  # runs in the AGENT's process, off the creator's path. A cast landing while
+  # the agent is still `:not_ready` (first provision still running) buffers via
+  # PendingDelivery and drains after — a harmless idempotent re-check.
+  #
+  # Self-authority (#154): `caller: agent_uri` dispatching to its OWN
+  # `py_ensure_alive` with the inline self-scoped cap (the step-5.5
+  # `granted_via_ctx_caps?` authorizer) — same idiom as
+  # `TemplateSpawn.sandbox_update_config_self_cap/1`; never persisted through
+  # `Ezagent.Identity.Grant`.
+  defp async_reensure_if_dead(%URI{} = agent_uri) do
+    if Ezagent.Domain.Python.alive?(agent_uri) do
+      :ok
+    else
+      target = Ezagent.URI.new!("#{URI.to_string(agent_uri)}?action=py_agent.py_ensure_alive")
+
+      _ =
+        Ezagent.Invocation.dispatch(%Ezagent.Invocation{
+          target: target,
+          mode: :cast,
+          args: %{},
+          ctx: %{
+            caller: agent_uri,
+            caps: [py_ensure_alive_self_cap(agent_uri)],
+            reply: :ignore
+          }
+        })
+
+      :ok
+    end
+  end
+
+  defp py_ensure_alive_self_cap(%URI{} = agent_uri) do
+    %Ezagent.Capability{
+      Ezagent.Capability.cap(
+        :agent,
+        Ezagent.ActionSet.PyAgent,
+        :py_ensure_alive,
+        Ezagent.URI.instance(agent_uri),
+        Ezagent.Capability.workspace_of(agent_uri)
+      )
+      | granted_by: agent_uri,
+        granted_at: DateTime.utc_now()
+    }
+  end
 
   # The domain MUST have allocated the config_dir (the template carries a
   # `"config_dir"` reference → `provision_and_instantiate` injected

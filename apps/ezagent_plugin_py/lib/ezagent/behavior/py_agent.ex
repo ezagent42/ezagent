@@ -99,6 +99,17 @@ defmodule Ezagent.ActionSet.PyAgent do
         "(immutable post-create, spec §5)"
   )
 
+  action(:py_ensure_alive,
+    args: %{},
+    returns: %{ok: :boolean},
+    caps: [:py_ensure_alive],
+    modes: [:cast],
+    description:
+      "Retry the Python subprocess provision from durable script_path/cwd " <>
+        "(PR #1259 item 1b — the async adopt-path retry; sets/clears the " <>
+        ":last_error {:provision_failed, _} marker)"
+  )
+
   # P4b — PyAgent folded onto the UNIFIED Entity.Agent Kind. Every action is
   # py-NAMESPACED (cc-headless precedent) because the {Kind, action} → Behavior
   # map is global per Kind and curl already owns generic `:configure`/
@@ -113,7 +124,10 @@ defmodule Ezagent.ActionSet.PyAgent do
     %{
       py_reset: Ezagent.Capability.cap(:any, __MODULE__, :py_reset),
       py_configure: Ezagent.Capability.cap(:any, __MODULE__, :py_configure),
-      py_sync_result: Ezagent.Capability.cap(:agent, __MODULE__, :py_sync_result)
+      py_sync_result: Ezagent.Capability.cap(:agent, __MODULE__, :py_sync_result),
+      # PR #1259 item 1b — self-authority retry (the adopt path dispatches it
+      # with an inline self-cap, mirroring sandbox.update_config).
+      py_ensure_alive: Ezagent.Capability.cap(:agent, __MODULE__, :py_ensure_alive)
     }
   end
 
@@ -175,6 +189,44 @@ defmodule Ezagent.ActionSet.PyAgent do
   @doc false
   def handle_py_reset(_args, _ctx) do
     {:ok, %{ok: true}, set_last(nil, nil, nil)}
+  end
+
+  # PR #1259 item 1b — asynchronous provision retry. Dispatched as a
+  # fire-and-forget `:cast` by `Template.PyAgent.instantiate/3`'s adopt arm
+  # when it finds the adopted agent's subprocess DEAD (a prior provision
+  # failed), so an adopt RETRIES instead of reporting success over a zombie.
+  # Runs in the agent's own Kind process (same blocking profile as
+  # `activate/2`'s provision — the agent's mailbox waits, never the creator).
+  # Sets/clears the `{:provision_failed, _}` `:last_error` marker (item 1a).
+  @doc false
+  def handle_py_ensure_alive(_args, ctx) do
+    self_uri = Map.get(ctx, :self_uri)
+    script_path = ctx[:read].(:script_path, nil)
+    cwd = ctx[:read].(:cwd, nil)
+
+    cond do
+      not is_struct(self_uri, URI) ->
+        {:ok, %{ok: false}, []}
+
+      not (is_binary(script_path) and script_path != "") or not (is_binary(cwd) and cwd != "") ->
+        # No installed script yet (pre-instantiate) — nothing to provision.
+        {:ok, %{ok: false}, []}
+
+      true ->
+        case ensure_python_alive(self_uri, script_path, cwd) do
+          :ok ->
+            effects =
+              case ctx[:read].(:last_error, nil) do
+                {:provision_failed, _} -> [{:set, :last_error, nil}]
+                _ -> []
+              end
+
+            {:ok, %{ok: true}, effects}
+
+          {:error, reason} ->
+            {:ok, %{ok: false}, [{:set, :last_error, {:provision_failed, reason}}]}
+        end
+    end
   end
 
   # The `last_input / last_result / last_error` observability triple is always
@@ -277,6 +329,8 @@ defmodule Ezagent.ActionSet.PyAgent do
     script_path = Map.get(state, :script_path)
     cwd = Map.get(state, :cwd)
 
+    transients = %{phase_subscription: phase_subscription}
+
     cond do
       not is_struct(self_uri, URI) ->
         Logger.warning(
@@ -284,18 +338,38 @@ defmodule Ezagent.ActionSet.PyAgent do
             "#{inspect(self_uri)} — skipping subprocess re-spawn"
         )
 
+        {:ok, transients}
+
       not (is_binary(script_path) and script_path != "") or not (is_binary(cwd) and cwd != "") ->
         # Demand-spawn / pre-instantiate: no installed script yet. The phase
         # subscription is in place; the Template's instantiate (or a later
         # ensure) brings the subprocess up.
-        :ok
+        {:ok, transients}
 
       true ->
-        _ = ensure_python_alive(self_uri, script_path, cwd)
-    end
+        # PR #1259 codex review item 1a — a provision failure must be VISIBLY
+        # recorded, not just logged: persist the `{:provision_failed, reason}`
+        # marker into the durable `:last_error` (the same observability field
+        # the receive path uses), and clear a stale provision marker on a
+        # successful (re)provision. Operators/tests can read the slice instead
+        # of tailing logs; the adopt path (`Template.PyAgent.instantiate/3`
+        # `:already_started` arm) retries a dead subprocess asynchronously via
+        # `:py_ensure_alive`.
+        case ensure_python_alive(self_uri, script_path, cwd) do
+          :ok ->
+            {:ok, transients, clear_provision_failure(state)}
 
-    {:ok, %{phase_subscription: phase_subscription}}
+          {:error, reason} ->
+            {:ok, transients, Map.put(state, :last_error, {:provision_failed, reason})}
+        end
+    end
   end
+
+  # Clear ONLY a provision-failure marker (never a receive-path last_error).
+  defp clear_provision_failure(%{last_error: {:provision_failed, _}} = state),
+    do: %{state | last_error: nil}
+
+  defp clear_provision_failure(state), do: state
 
   # Build py's OWN %Spec{} (caller-owned, per the AgentLifecycle contract) and
   # delegate the alive-check + start to the shared helper.
