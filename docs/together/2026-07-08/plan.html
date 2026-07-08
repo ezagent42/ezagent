@@ -1,0 +1,166 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>dev-together 计划 — 2026-07-08</title>
+<style>
+  body{font:14px/1.6 -apple-system,"Segoe UI",Roboto,"PingFang SC","Microsoft YaHei",sans-serif;color:#1a1a1a;max-width:1100px;margin:24px auto;padding:0 20px;background:#fff}
+  h1{font-size:24px;border-bottom:3px solid #059669;padding-bottom:8px}
+  h2{font-size:19px;margin-top:30px;color:#047857;border-left:4px solid #059669;padding-left:10px}
+  h3{font-size:15px;margin-top:18px;color:#374151}
+  table{border-collapse:collapse;width:100%;margin:12px 0;font-size:13px}
+  .scroll{overflow-x:auto}
+  th,td{border:1px solid #d1d5db;padding:7px 9px;text-align:left;vertical-align:top}
+  th{background:#ecfdf5;font-weight:600}
+  tr:nth-child(even){background:#f9fafb}
+  .meta{background:#f0fdf4;border:1px solid #bbf7d0;border-radius:8px;padding:10px 16px;margin:12px 0;font-size:13px}
+  .gate{background:#fffbeb;border:1px solid #fde68a;border-radius:8px;padding:12px 16px;margin:14px 0}
+  .chain{font-family:ui-monospace,SFMono-Regular,Menlo,monospace;font-size:13px;line-height:1.9;white-space:pre;overflow-x:auto;background:#f8fafc;border:1px solid #e2e8f0;border-radius:8px;padding:12px 16px;margin:10px 0}
+  .gap{background:#fef2f2;border-left:3px solid #ef4444;padding:8px 14px;margin:8px 0}
+  code{background:#f1f5f9;padding:1px 5px;border-radius:4px;font-size:12px}
+  .pr1{color:#047857;font-weight:600}.defer{color:#b45309;font-weight:600}
+  ol.steps{margin:6px 0 6px 22px}ol.steps li{margin:3px 0}
+</style>
+</head>
+<body>
+<h1>dev-together 计划 · 2026-07-08</h1>
+<div class="meta">
+<b>lead_confirmed:</b> true（2026-07-08，GMT+9）<br>
+<b>本周目标:</b> 编排线落成后，<b>在新部署的 stable（app.ezagent.chat）上验证 socialware 全生命周期</b>，并打通<b>官网全流程</b>（全体成员可回复网站操作）。<br>
+<b>方向:</b> 昨日 M1→M2→M3 代码全量合入 → 本日转向<b>在稳定环境上验证能力可用</b>（load/create/delete + requires 自动装齐 + 官网成员响应）。
+</div>
+
+<h2>§0 关键依赖链——primary 目标是被 gate 的</h2>
+<div class="gate">
+<b>primary 目标不是「立即可执行的并行项」，而是一条串行依赖链。</b><code>#1235</code> <b>已合入</b>（2026-07-08 02:27 UTC，修复 land），但 stable 尚未带该修复重新部署跑通（见 07-07 review 事故 B）。<b>当前链首 = stable 重新部署 boot 绿</b>；链首未通前，下游验证无法开始：
+<div class="chain">#1235 已合入 ✓（2026-07-08 02:27 UTC，seed upgrade 对 source_turn_id 冲突幂等）
+   └─→ stable 带 #1235 重新部署，boot 绿（health 通过）  ← 当前链首（在途）
+          ├─→ socialware load / create / delete 验证
+          ├─→ M3 requires 冒烟（装依赖编排器的 socialware → 自动装齐）
+          ├─→ M2 default-template 编排器安装验证
+          └─→ 官网全流程（全体成员可回复网站操作）</div>
+</div>
+
+<h2>§1 本日目标与缺口</h2>
+
+<h3>主目标 — stable 上 socialware load / create / delete 验证</h3>
+<p><b>前置</b>：#1235 已合入 ✓ → stable 带 #1235 重新部署 boot 绿（当前链首，在途）。<b>验证步骤（agent-browser，面向真实生产流程）：</b></p>
+<ol class="steps">
+<li>agent-browser 以 admin 登录 <code>app.ezagent.chat</code>；</li>
+<li>在一个 session 中<b>列出</b>已安装 socialware；</li>
+<li><b>安装</b>一个 socialware（hello，或经 manifest import）；</li>
+<li>验证<b>物化</b>：成员出现、views 挂载；</li>
+<li><b>卸载/移除</b>，验证<b>干净移除</b>：无残留 rule（T4 #1221 修复的正是这条）；</li>
+<li><b>M3 requires 冒烟</b>：安装一个 requires 编排器的 socialware → 验证编排器<b>自动装齐</b>。</li>
+</ol>
+
+<h3>次目标 — 官网（official website）全流程</h3>
+<div class="gap">运行网站 socialware，验证<b>全体团队成员都能回复网站操作</b>（A② host-login 继承修复 + credential cascade 应让成员 agent 正常响应）。</div>
+
+<h3>结构项 — seed 框架三态契约 + CI reflow 闸（lead 批准新增 · assignee: allenwoods）</h3>
+<div class="gate">
+<b>背景证据</b>：今晚三次部署失败（#1235 source_turn_id 重试冲突、role_seed_collision 误诊、definition upgrade）<b>全部通过了 fresh-DB CI，却在带旧版本 seed 数据的 nightly reflow 上崩溃</b>——同一个结构缺口的三次显形，做一次结构性修复而非继续逐点补：
+<ol class="steps">
+<li><b>seed 三态契约下沉</b>：把三态契约（<b>absent→write / same→skip / outdated→UPGRADE</b>）下沉到 ConfigStore 的 seed 原语层，让每个 built-in seed 调用方（DefinitionRegistry、RecipeRegistry、未来新增）<b>统一获得 upgrade 语义</b>，而不是各自手搓幂等。</li>
+<li><b>CI reflow 彩排闸</b>：新增 CI 闸——用<b>带上一版本 seed 数据的 DB</b>（而非仅 fresh-DB）boot 新镜像，专抓「第三态」（outdated→UPGRADE）类 bug。</li>
+</ol>
+这是 07-07 review 事故 B 教训（「persistence-shape 变更需要 reflow 彩排」）的制度化落地。
+</div>
+
+<h3>延后项 — git-filter-repo 历史重写</h3>
+<p>对 tunnel UUID / CF account id / KV namespace id / Tailscale IP / test key 的历史重写——<span class="defer">仅在 dev 窗口冻结时执行</span>（按迁移计划）。本日不做，除非明确进入冻结窗口。</p>
+
+<h2>§2 结转项（stable 打通后验证）</h2>
+<div class="scroll"><table>
+<tr><th>#</th><th>结转项</th><th>来源</th><th>验证点</th></tr>
+<tr><td>C1</td><td>T2 spec ⑦ M2-follow-up 一致性 warn</td><td>#1225 已合</td><td>在 stable 上确认 conformance warn 行为</td></tr>
+<tr><td>C2</td><td>deploy-seed 车道</td><td>jjkysy 的 PR，pending CI re-run</td><td>CI 重跑后合入</td></tr>
+<tr><td>C3</td><td>M2 default-template 编排器安装</td><td>#1223 已合</td><td>stable 上默认模板自动装编排器</td></tr>
+</table></div>
+
+<h2>§3 按开发者规划</h2>
+<p style="font-size:12px;color:#6b7280">每行 = 一个自含闭环 track；stable 依赖链由 lead 内部串行推进（合 #1235 → 部署 → 验证），下游验证在 stable 绿后分派。</p>
+<div class="scroll"><table>
+<tr><th>开发者</th><th>feishu</th><th>本日 track</th><th>闭环/依赖说明</th></tr>
+<tr><td><b>allenwoods</b></td><td>林懿伦（lead）</td><td><span class="pr1">#1235 已合 ✓ → stable 带修复重新部署</span> → 主目标 socialware load/create/delete + M3 requires 冒烟 + M2 default-template 验证；<b>结构项：seed 三态契约下沉 + CI reflow 闸</b>（见 §1）；<b>nightly 自动触发 + 内测 playground 指定</b>：① main 合并 → nightly 自动部署（现仅 19:00 UTC 定时/手动 dispatch；如 ezagent CI main push → repository_dispatch → ezagent-deploy，保持 no-pull_request 安全约束）② 定内测 playground 渠道（nightly 最新但不稳 vs beta 晋级版；给出推荐并配置）</td><td>依赖链持有者，context 在本人（原则①闭环）；stable 绿后可分派下游；结构项/nightly 项独立于 stable 链，可穿插推进</td></tr>
+<tr><td><b>zhaomaota97</b></td><td>张宁</td><td><b>官网全流程</b>：运行网站 socialware，验证全体成员可回复网站操作。<b>子项：hello 页面路径可达性测试</b>——验证 hello 页面在 <code>app.ezagent.chat/hello/xxx</code> 路径下的对外可达性（Cloudflare 固定 hostname + 路径路由，非通配子域——域名走 Cloudflare tunnel 固定 hostname ingress，通配子域不可行）。（follow-up：<b>hello 纯 manifest 重表达</b>——hello 开发归属本人，官网全流程后跟进）</td><td>前端/官网底座持有者；依赖 stable 绿 + credential cascade</td></tr>
+<tr><td><b>gagameow</b></td><td>黄佳佳</td><td><b>ezagent-in-ezagent 自举能力审计（dogfooding）</b>：验证「在 ezagent 里开发 ezagent」今天是否可行，三个面逐一验证：① <b>改代码库 + 提 PR</b>——ezagent session 内的 agent 修改 esr-ng 仓库并提交 PR；② <b>产出 plugin</b>——从内部开发一个新 ezagent 插件；③ <b>生成 socialware</b>——从内部编写 + 发布 + 安装一个新 socialware。<b>交付物 = 验证报告</b>：每个面「今天能跑通什么 / 哪里断 / 缺口在哪」</td><td>自含闭环（审计 + 报告同一人）；不依赖 stable 链，可立即开工</td></tr>
+<tr><td><b>jjkysy</b></td><td>姚升悦</td><td>deploy-seed 车道 PR CI re-run → 合入（C2）；socialware boot 时序面支持</td><td>自含闭环；CI 重跑后 lead 合入</td></tr>
+<tr><td><b>zyli-developer</b></td><td>李震宇</td><td>协助主目标 E2E：agent-browser socialware 安装/卸载场景脚本化 + UI 呈现校验</td><td>依赖 stable 绿；E2E 强项</td></tr>
+<tr><td><b>ruihuachen-designer</b></td><td>陈瑞华</td><td><b>探索式玩法测试（play-testing）</b>：在新部署的 stable 上以真实用户视角自由探索平台各项玩法——session、agent、socialware 体验（hello / kanban / dealscout / autoservice）、按角色名 @mention（T3 新功能）、magic-link 登录流、world UI。<b>非脚本化 E2E</b>——像真实用户一样玩，报告任何困惑、损坏或惊喜之处。<b>交付物 = 非正式发现清单</b>：试了什么 / 什么出乎意料 / 什么坏了</td><td>依赖 stable 绿；用户视角/产品 sense 强项，与脚本化 E2E（zyli）互补</td></tr>
+</table></div>
+<p style="font-size:12px;color:#6b7280"><b>开工前必读</b>：<code>docs/together/contributing/</code> + 各自 handoff。先讨论确认范围再开工；返还前 rebase 到 current main + 自测绿（precommit + check_invariants）+ 附 contributing_read_through。</p>
+
+<h2>§4 依赖与顺序 / 并行</h2>
+<ul>
+<li><b>强串行链首</b>：#1235 已合 ✓ → stable 带修复重新部署绿（当前链首）。链首未通，主目标与官网全流程都不能开始（见 §0）。lead 内部串行推进链首。</li>
+<li><b>链尾并行</b>：stable 绿后，socialware 验证（allen/zyli）、官网全流程（zhaomaota97）与探索式玩法测试（ruihua）可并行——共享 stable 环境但操作面不同。</li>
+<li><b>deploy-seed 车道（C2）</b>独立于 stable 链，可提前推进 CI re-run。</li>
+<li><b>结构项（seed 三态契约 + reflow 闸）</b>独立于 stable 链，allenwoods 可在链首等待窗口穿插推进；reflow 闸落地后反过来保护后续所有部署。</li>
+<li><b>自举审计（gagameow）</b>独立于 stable 链（在现有环境验证三个面），可立即开工、全程并行。</li>
+</ul>
+
+<h2>§5 out-of-scope（登记）</h2>
+<ul>
+<li><b>git-filter-repo 历史重写</b>：迁移计划内、需 dev 窗口冻结——本日不执行（延后项，非偏离）。</li>
+<li>backlog（未排）：待 stable 验证暴露的问题按需开 issue。</li>
+</ul>
+
+<h2>§6 协作约束</h2>
+<ul>
+<li>CI 闸：进 main 的 PR 需 <code>precommit + check_invariants</code> 绿 + rebase；返还前自测绿。</li>
+<li>评审基准 = <code>origin/main</code>（禁读陈旧工作树）。</li>
+<li>验证面向真实生产流程（app.ezagent.chat），非改测试 harness。</li>
+<li>UI 验证优先 agent-browser 截图，再看日志。</li>
+</ul>
+
+<h2>§7 开工 prompts（每人一段，点击复制转发）</h2>
+<p style="font-size:12px;color:#6b7280">lead 可将下列 prompt 逐个复制转发给对应人/agent 开工。每段自含：背景、任务、可演示 DoD、汇报处。依赖 stable 绿的任务，转发时机 = lead 宣布 stable 部署绿之后。</p>
+<div class="scroll"><table>
+<tr><th>对象</th><th>任务摘要</th><th>开工</th></tr>
+<tr><td><b>allenwoods</b><br>林懿伦（lead）</td><td>seed 三态契约下沉 + CI reflow 闸；nightly 自动触发 + 内测 playground 指定</td><td><button class="copy" data-p="【dev-together 2026-07-08 · allenwoods】
+背景：今晚三次部署失败（#1235 source_turn_id 重试、role_seed_collision 误诊、definition upgrade）全部 fresh-DB CI 绿、reflow 崩——同一结构缺口；另 nightly 目前仅 19:00 UTC 定时/手动 dispatch，无 main 合并自动触发。
+任务：① seed 三态契约下沉——把 absent→write / same→skip / outdated→UPGRADE 下沉到 ConfigStore seed 原语层，DefinitionRegistry / RecipeRegistry / 未来调用方统一获得 upgrade 语义，不再各自手搓幂等；② CI reflow 彩排闸——CI 增加「带上一版本 seed 数据的 DB boot 新镜像」场景，专抓第三态 bug；③ nightly 自动触发（main 合并 → repository_dispatch → ezagent-deploy，保持 no-pull_request 安全约束）+ 指定内测 playground 渠道（nightly vs beta，给出推荐并配置）。
+DoD（可演示）：① 一个会在「旧 seed 数据 + 新镜像」下失败、修复后转绿的 CI 用例（invariant test）；② 三个既有 seed 调用方全部改走原语层（grep 无残留手搓幂等）；③ 演示一次 main 合并自动触发 nightly 部署 + playground 渠道公告。
+汇报：returns/allenwoods-seed-contract-nightly.md + Feishu 群。返还前 rebase 到 current main + precommit/check_invariants 绿。">复制开工 prompt</button></td></tr>
+<tr><td><b>zhaomaota97</b><br>张宁</td><td>官网全流程 + hello 路径可达性（app.ezagent.chat/hello/xxx）+ follow-up manifest 重表达</td><td><button class="copy" data-p="【dev-together 2026-07-08 · zhaomaota97】
+背景：stable（app.ezagent.chat）带 #1235 重新部署后（等 lead 宣布绿），官网 socialware 要走全流程；hello 页面对外可达性走路径路由（Cloudflare tunnel 固定 hostname，通配子域不可行）。
+任务：① 官网全流程——运行网站 socialware，验证全体团队成员都能回复网站操作（A② host-login 继承 + credential cascade 生效）；② hello 页面路径可达性——验证 hello 页面在 app.ezagent.chat/hello/xxx 路径下对外可达（固定 hostname + 路径路由）；③ follow-up（本日排不下则顺延登记）：hello 纯 manifest 重表达。
+DoD（可演示）：① 每位成员至少一条对网站操作的回复（截图/记录逐人列出）；② 未登录浏览器直接打开 app.ezagent.chat/hello/xxx 页面截图；③ follow-up 完成或在 return 中登记顺延。
+汇报：returns/zhaomaota97-website-fullloop.md + Feishu 群。agent-browser 截图为准；开工前必读 docs/together/contributing/。">复制开工 prompt</button></td></tr>
+<tr><td><b>gagameow</b><br>黄佳佳</td><td>ezagent-in-ezagent 自举审计（改码+PR / plugin / socialware 三面，works/breaks/gaps 报告）</td><td><button class="copy" data-p="【dev-together 2026-07-08 · gagameow】
+背景：dogfooding/自举能力审计——「在 ezagent 里开发 ezagent」今天是否可行。不依赖 stable 链，可立即开工。
+任务：三个面逐一验证：① 改代码库 + 提 PR——在 ezagent session 内让 agent 修改 esr-ng 仓库并提交一个真实 PR；② 产出 plugin——从内部开发一个新 ezagent 插件；③ 生成 socialware——从内部编写 + 发布 + 安装一个新 socialware。
+DoD（可演示）：一份验证报告，每个面三栏——「今天能跑通什么（附证据：PR 链接 / 插件运行截图 / socialware 安装截图）/ 哪里断（复现步骤）/ 缺口在哪（结构性归因）」。跑通即贴证据，跑不通即贴断点，两者都算完成——这是审计不是修复。
+汇报：returns/gagameow-dogfooding-audit.md + Feishu 群。开工前必读 docs/together/contributing/。">复制开工 prompt</button></td></tr>
+<tr><td><b>jjkysy</b><br>姚升悦</td><td>deploy-seed 车道 PR CI re-run → 请 lead 合入</td><td><button class="copy" data-p="【dev-together 2026-07-08 · jjkysy】
+背景：deploy-seed 车道 PR 此前被 CI 队列停摆（runner 事故，已由 #1237 解阻）挡住，pending CI re-run。
+任务：deploy-seed 车道 PR——rebase 到 current main → CI re-run → 绿后请 lead 合入；顺带作为 socialware boot 时序面（sw-home 晚扫）的支持人，解答 stable 验证中冒出的 boot 时序问题。
+DoD（可演示）：PR CI 全绿（precommit + check_invariants）+ rebase 到 current main + 在 PR 上留言请求合入。
+汇报：returns/jjkysy-deploy-seed-lane.md + Feishu 群。开工前必读 docs/together/contributing/。">复制开工 prompt</button></td></tr>
+<tr><td><b>zyli-developer</b><br>李震宇</td><td>agent-browser socialware 安装/卸载 E2E 脚本化（app.ezagent.chat，依赖 stable 绿）</td><td><button class="copy" data-p="【dev-together 2026-07-08 · zyli-developer】
+背景：stable（app.ezagent.chat）带 #1235 重新部署绿后（等 lead 宣布），主目标 socialware load/create/delete 验证需要可复跑的 E2E 场景。
+任务：用 agent-browser 把 socialware 安装/卸载 E2E 场景脚本化（沉淀到 docs/e2e/，agent 可照着自动跑）：admin 登录 → session 内列出已装 socialware → 安装（hello 或 manifest import）→ 验证物化（成员出现、views 挂载，截图）→ 卸载 → 验证干净移除（无残留 rule，T4 #1221 的保证）→ M3 requires 冒烟（装依赖编排器的 socialware → 编排器自动装齐）。同时校验各步 UI 呈现。
+DoD（可演示）：docs/e2e/ 新场景文档 + 全流程 agent-browser 截图链（每步一张）+ 残留 rule 检查证据；发现的问题逐条开 issue。
+汇报：returns/zyli-socialware-e2e.md + Feishu 群。UI 验证 agent-browser 截图第一、日志第二；开工前必读 docs/together/contributing/。">复制开工 prompt</button></td></tr>
+<tr><td><b>ruihuachen-designer</b><br>陈瑞华</td><td>stable 探索式玩法测试，非正式发现清单</td><td><button class="copy" data-p="【dev-together 2026-07-08 · ruihua】
+背景：stable（app.ezagent.chat）带 #1235 重新部署绿后（等 lead 宣布），需要真实用户视角的探索式玩法测试——不是脚本化 E2E，像真实用户一样玩。
+任务：自由探索平台各项玩法：session、agent、socialware 体验（hello / kanban / dealscout / autoservice）、按角色名 @mention（T3 新功能）、magic-link 登录流、world UI。任何困惑、损坏或惊喜之处都记下来。
+DoD（可演示）：一份非正式发现清单——试了什么 / 什么出乎意料（好的坏的都算）/ 什么坏了（附截图和大致步骤即可，不必精确复现）。
+汇报：清单发 Feishu 群（或交 lead 代填 returns/ruihua-playtesting.md）。无需读代码、无需 rebase——用户视角就是价值。">复制开工 prompt</button></td></tr>
+</table></div>
+<script>
+document.querySelectorAll('button.copy').forEach(function(b){
+  b.addEventListener('click',function(){
+    navigator.clipboard.writeText(b.dataset.p).then(function(){
+      var t=b.textContent; b.textContent='已复制 ✓'; b.style.background='#bbf7d0';
+      setTimeout(function(){b.textContent=t; b.style.background='';},1500);
+    });
+  });
+});
+</script>
+
+<p style="margin-top:24px;color:#9ca3af;font-size:12px">本计划面向全体开发者。模版可复用：下日换数据/任务即可。</p>
+</body>
+</html>
