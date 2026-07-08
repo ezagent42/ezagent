@@ -410,6 +410,66 @@ defmodule Ezagent.Entity.Session.Orchestrator do
   end
 
   @doc """
+  Member URIs extracted from a DECODED durable snapshot state map (the
+  `Ezagent.Ecto.KindSnapshot.decode_state/1` result) — the cold-Kind
+  counterpart of `session_member_uris/1`, reading the SAME two-container
+  session slice shape (`:members` under the slice's persistent `:state`)
+  WITHOUT spawning the Kind.
+
+  2026-07-08 cold-boot listing fix — sessions are NOT auto-respawned on
+  boot, so after a restart `session_member_uris/1` returns `[]` for every
+  durably-persisted session and the membership-filtered workspace listing
+  (#1217) wrongly excluded members. The listing evaluates cold membership
+  from the snapshot via this function; it stays read-only (no
+  `ensure_live` from a listing).
+
+  Kept next to `session_member_uris/1` on purpose: this module is the
+  single source of truth for the session-slice unwrap. Fail-closed — a
+  missing / malformed slice yields `[]` (never a broader member set).
+
+  ## Slice key (codex #1257 MED)
+
+  Reads via the CANONICAL `Ezagent.ActionSet.Session.state_slice()` key
+  (auto-derived `:session` since the 2026-06-12 chat→session rename) —
+  never a hardcoded key — i.e. exactly the shape
+  `Ezagent.Session.SliceMigration` serves post-cutover. Legacy
+  `:chat`-keyed rows are deliberately NOT dual-read: the rename was a
+  NO-back-compat ordered cutover (`SliceMigration` moduledoc "Deploy
+  ordering") and the live restore path likewise defaults such a slice to
+  empty and prunes it (`Snapshot.prune_orphan_slices/2`) — a listing that
+  showed members from an unmigrated row would advertise state that
+  opening the session destroys. Unmigrated rows are an operator error
+  surfaced by `mix ezagent.session.migrate_slice --gate`; here they are
+  fail-closed (`[]`).
+  """
+  @spec member_uris_from_snapshot_state(term()) :: [URI.t()]
+  def member_uris_from_snapshot_state(state) when is_map(state) do
+    chat_slice = Map.get(state, Ezagent.ActionSet.Session.state_slice())
+
+    chat_persistent =
+      case chat_slice do
+        %{} = slice ->
+          case Map.get(slice, :state, slice) do
+            %{} = persistent -> persistent
+            _ -> %{}
+          end
+
+        _ ->
+          %{}
+      end
+
+    case Map.get(chat_persistent, :members, %{}) do
+      members when is_map(members) ->
+        members |> Map.keys() |> Enum.filter(&match?(%URI{}, &1))
+
+      _ ->
+        []
+    end
+  end
+
+  def member_uris_from_snapshot_state(_), do: []
+
+  @doc """
   The live `:chat` slice's session-scoped legend registry (`name => entry`).
 
   team-routing-unification §3.6 (PR-6) — the legend-aware mention parsers
