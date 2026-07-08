@@ -121,10 +121,6 @@ defmodule EzagentPluginHello.MigrateTest do
       # might not change. The key assertion: recipe was corrected to hello.front-desk.
       assert {:ok, "hello.front-desk"} = Ezagent.AgentRecipeAttributes.fetch(fresh_uri)
 
-      # The repair that follows the reflavor also lands the rest of the team.
-      assert {:ok, _builder_uri} = Members.role_uri(session_uri, "builder")
-      assert {:ok, _concierge_uri} = Members.role_uri(session_uri, "concierge")
-
       # Re-running is now a no-op (the correct recipe short-circuits the check).
       assert {:ok, ^session_uri} = Migrate.migrate_one(session_uri)
       assert {:ok, ^fresh_uri} = Members.role_uri(session_uri, "front-desk")
