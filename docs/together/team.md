@@ -1,6 +1,6 @@
 # Dev Together Team
 
-_Last checked: 2026-07-02_
+_Last checked: 2026-07-08_
 
 The durable roster for `dev-together`. **Row identity = `github_username`** (the
 canonical key; it joins to PR authorship). `dev-together plan` reads this file,
@@ -14,13 +14,13 @@ it exists so the long GitHub key joins to the short name plans cite.
 
 | github_username | short_name | role | feishu_name | current_track | latest_return | timezone | github_lookup |
 |---|---|---|---|---|---|---|---|
-| `zyli-developer` | zyli | human-dev | 李震宇 | 0701 World UI shell polish aligned to ruihua direction | `2026-06-30/stack.md` | GMT+8 | verified org member |
-| `gagameow` | gaga | human-dev | 黄佳佳 | 0703 Agent Console /overview + lifecycle + route tests (#1131/#1132/#1133) — rebase onto post-T1/T2 main, fix #1132 ActionSet prose, stack in author order | `2026-06-30/stack.md` | GMT+8 | verified |
-| `zhaomaota97` | zhaomato | human-dev | 张宁 | 0703 Hello concierge + publish-template (#1134) — BLOCKED on 导游/客服 design; then rename-migrate off pre-T1 symbols + merge | `2026-06-30/stack.md` | GMT+8 | verified org member |
+| `zyli-developer` | zyli | human-dev | 李震宇 | 0709 #1245 卸载 UI 浏览器路径绿态收尾（#1259 已解阻冷 provision） | `2026-07-08/returns/socialware-uninstall-ui-agent-browser.md` | GMT+8 | verified org member |
+| `gagameow` | gaga | human-dev | 黄佳佳 | 0709 自举 Track C 修通（socialware author/install + @mention :unauthorized）+ #1256 agent×flavor 设计续 | n/a（#1247 审计草稿 + #1256，无 return 文件——07-08 流程债） | GMT+8 | verified |
+| `zhaomaota97` | zhaomato | human-dev | 张宁 | 0709 官网 hello session 重建（#1243 后：归档旧 → 新 Definition 重建 → greeter + curl-llm E2E） | n/a（#1243 已合，无 return 文件——07-08 流程债） | GMT+8 | verified org member |
 | `FatNine` | fatnine | human-dev | 戴明 | 0701 Agent Console one complete prototype path | `2026-06-30/returns/fatnine-agent-console-completeness-ia.md` | GMT+8 | verified |
-| `allenwoods` | allen | lead | 林懿伦 | dev-together lead (plan/handoff/close/review) + own tracks | n/a | GMT+9 | verified |
-| `jjkysy` | jjkysy | human-dev | 姚升悦 | 0701 split #1110 into reviewable PRs | `2026-07-01/handoffs/jjkysy-split-pr-1110.md` | GMT+8 | verified |
-| `ruihuachen-designer` | ruihua | designer | 陈瑞华 | 0703 官网 journey scenarios (#1129) — rebase onto post-T1/T2 main + merge | n/a | GMT+8 | verified |
+| `allenwoods` | allen | lead | 林懿伦 | dev-together lead (plan/handoff/close/review) + own tracks；**07-09 缺席，事项委派 jjkysy 代理** | n/a | GMT+9 | verified |
+| `jjkysy` | jjkysy | human-dev | 姚升悦 | 0709 Allen 代理日：P1-P3 合入定夺 + stable 晋级 + #1255 命名裁定 + seed-loader 去重（deploy-seed 车道 07-08 全量 DONE） | `2026-07-08/returns/kanban-deploy-seed-migration.md` | GMT+8 | verified |
+| `ruihuachen-designer` | ruihua | designer | 陈瑞华 | 0709 刷新后 nightly/stable 探索式测试 + WorldConversationTest flaky 复现 | n/a | GMT+8 | verified |
 | `claude` | claude | agent | — | off-plan support (orchestration / fixes on request) | n/a | — | n/a |
 | `codex` | codex | agent | — | off-plan support (bounded verifiable sub-tasks) | n/a | — | n/a |
 
