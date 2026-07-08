@@ -20,7 +20,7 @@ defmodule Ezagent.ActionSet.KanbanRender do
       string-keyed map（hello `@json-render` spec 的 string-key 约定）；
       `external_tree/1` 是 per-session 读入口 —— board 是 workspace 级 actor
       （非 session 成员，S2 建模修正），按 session 的 workspace 经
-      `AgentRecipeResolver.list_by_recipe("kanban-manager", ws)` 枚举（快照来源，
+      `Agent.RecipeResolver.list_by_recipe("kanban-manager", ws)` 枚举（快照来源，
       覆盖 dormant；`Ezagent.World.KanbanData.list_instances` 同款），取首个
       board 读它的 `:kanban` slice。**零写**：无 `{:set, ...}`、无 dispatch 写
       action —— 这是投影，不是操作面（操作面是 pm 持 kanban action caps 对 board
@@ -89,7 +89,7 @@ defmodule Ezagent.ActionSet.KanbanRender do
 
   @doc """
   本 session workspace 的 kanban-manager board URIs（字典序，确定性首选）。
-  `AgentRecipeResolver.list_by_recipe/2` 是快照来源 —— dormant board 仍枚举得到
+  `Agent.RecipeResolver.list_by_recipe/2` 是快照来源 —— dormant board 仍枚举得到
   （HIGH-3 同款理由：否则 BEAM 重启后 board view 静默变空）。fail-safe `[]`。
   """
   @spec boards_for(URI.t() | term()) :: [URI.t()]
@@ -97,7 +97,7 @@ defmodule Ezagent.ActionSet.KanbanRender do
     case Ezagent.URI.workspace_of(session_uri) do
       %URI{} = ws ->
         @board_role
-        |> Ezagent.AgentRecipeResolver.list_by_recipe(ws)
+        |> Ezagent.Agent.RecipeResolver.list_by_recipe(ws)
         |> Enum.sort_by(&URI.to_string/1)
 
       _ ->
