@@ -83,6 +83,13 @@ defmodule Ezagent.Agent.RecipeRegistry do
   # workspace-scoped reusable recipe; user/session layers are not meaningful).
   @recipe_layer "workspace"
 
+  # The SEED-FAMILY `source_turn_id` prefix: the deterministic first-seed turn
+  # (`role-seed:…`) and a self-upgrade turn (`role-seed-upgrade:…`) both start with
+  # it. `ConfigStore.seed_object_upsert/1` uses it as the branch-3-vs-4 upgrade
+  # gate; `retire_role/1` uses it to refuse retiring a tenant override. A user/CR
+  # override carries a DIFFERENT prefix so it is never clobbered / retired.
+  @seed_family_prefix "role-seed"
+
   @doc "Return the ETS table name (used by `EzagentCore.EtsOwner`)."
   @spec table() :: atom()
   def table, do: @table
@@ -303,80 +310,39 @@ defmodule Ezagent.Agent.RecipeRegistry do
           collision
 
         :ok ->
-          result = seed_or_upgrade(ws, subject, name, body, actor, new_hash)
+          # The three-state seed contract now lives in the ConfigStore primitive
+          # (`seed_object_upsert/1`): resolve → hash-compare → seed-family-check →
+          # upgrade → retry-tolerance. `:seed_family_prefix` makes it OVERRIDE-SAFE
+          # (§4.2) — a user/CR override (a non-`role-seed` turn) survives untouched.
+          result =
+            ConfigStore.seed_object_upsert(%{
+              layer: @recipe_layer,
+              workspace_uri: ws,
+              subject_uri: subject,
+              key: @recipe_key,
+              body: body,
+              actor_uri: actor,
+              source_turn_id: seed_source_turn_id(ws, name),
+              upgrade_source_turn_id: upgrade_source_turn_id(ws, name, new_hash),
+              collision_tag: {:role_seed_collision, name},
+              seed_family_prefix: @seed_family_prefix
+            })
+
           record_boot_seed(name, new_hash, result)
+          # A new object was pointed (first seed OR upgrade) — drop any stale
+          # read-through cache entry so the next `lookup/2` re-resolves. Idempotent
+          # (nothing is cached on a first seed); a no-op re-seed leaves the pointer
+          # unmoved so the cache stays valid.
+          maybe_invalidate(ws, name, result)
           result
       end
     end
   end
 
-  # Resolve the current pointed object, then seed / no-op / upgrade / preserve.
-  defp seed_or_upgrade(ws, subject, name, body, actor, new_hash) do
-    case ConfigStore.resolve(@recipe_layer, ws, subject, @recipe_key) do
-      :none ->
-        ConfigStore.seed_object_if_no_pointer(%{
-          layer: @recipe_layer,
-          workspace_uri: ws,
-          subject_uri: subject,
-          key: @recipe_key,
-          body: body,
-          actor_uri: actor,
-          source_turn_id: seed_source_turn_id(ws, name),
-          collision_tag: {:role_seed_collision, name}
-        })
+  defp maybe_invalidate(ws, name, {:ok, result}) when result in [:seeded, :already_upgraded],
+    do: invalidate(ws, name)
 
-      {:ok, %ConfigObject{} = pointed} ->
-        cond do
-          # `pointed.content_hash` is the stored column; `new_hash` is
-          # `ContentHash.of(body)` — the SAME canonical (key-sorted, stringified)
-          # hash, so a logically-identical body matches regardless of atom-vs-JSON
-          # representation.
-          pointed.content_hash == new_hash ->
-            {:ok, :exists}
-
-          seed_family_turn?(pointed.source_turn_id) ->
-            upgrade_role(ws, subject, name, body, actor, new_hash)
-
-          true ->
-            # A user/CR override owns the pointer — never clobber it.
-            {:ok, :exists}
-        end
-    end
-  end
-
-  # Write the new body + repoint (append-only), stamped with a hash-carrying
-  # upgrade turn id so the write is idempotent under the entrypoint retry loop.
-  defp upgrade_role(ws, subject, name, body, actor, new_hash) do
-    ConfigStore.write_and_point(%{
-      layer: @recipe_layer,
-      workspace_uri: ws,
-      subject_uri: subject,
-      key: @recipe_key,
-      body: body,
-      actor_uri: actor,
-      source_turn_id: upgrade_source_turn_id(ws, name, new_hash)
-    })
-    |> case do
-      {:ok, _write_result} ->
-        invalidate(ws, name)
-        {:ok, :seeded}
-
-      # Same guard as #1235: a prior boot already wrote this exact upgrade (the
-      # unique `(workspace, subject, key, source_turn_id)` index) before a crash;
-      # the retry re-hits the same turn id. Report idempotent success so the
-      # entrypoint retry loop survives.
-      {:error, %Ecto.Changeset{errors: errors}} ->
-        if Keyword.has_key?(errors, :source_turn_id) do
-          invalidate(ws, name)
-          {:ok, :already_upgraded}
-        else
-          {:error, {:role_seed_upgrade_failed, name, errors}}
-        end
-
-      {:error, reason} ->
-        {:error, {:role_seed_upgrade_failed, name, reason}}
-    end
-  end
+  defp maybe_invalidate(_ws, _name, _result), do: :ok
 
   @doc """
   Reset the per-boot role-seed registry — the in-memory `{name → body_hash}` map
@@ -417,7 +383,9 @@ defmodule Ezagent.Agent.RecipeRegistry do
   # a built-in self-upgrade turn (`role-seed-upgrade:…`). A user/CR override
   # carries a DIFFERENT prefix (`override-…`, `cr-publish:…`, a fork/repoint turn),
   # so it is NOT seed-family and its pointer is never clobbered by a re-seed.
-  defp seed_family_turn?(turn) when is_binary(turn), do: String.starts_with?(turn, "role-seed")
+  defp seed_family_turn?(turn) when is_binary(turn),
+    do: String.starts_with?(turn, @seed_family_prefix)
+
   defp seed_family_turn?(_), do: false
 
   @doc """
