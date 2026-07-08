@@ -367,7 +367,13 @@
   #   helper line (3 sites, not 12), plus {:set, :timeout_ms} (configure) and
   #   {:set, :python_phase} (handle_signal). 3 irreducible new sites (cross-slice
   #   stays 0); net +3.
-  set_effect_sites: 131,
+  # arch-cap-bump: dealscout(crawler) rebase — the ezagent_plugin_crawler plugin's
+  #   EzagentPluginCrawler.Config set-effect helpers (set_profile / set_keywords /
+  #   pin_batch / set_sources, each with a matching @spec line the scanner also
+  #   counts) contribute the crawler's Lifecycle-slice writes. This is the NET after
+  #   the Demo code-seed→YAML manifest migration (#1213) deleted the old self-publish
+  #   primitives' `{:set, …}` sites; measured 131 → 133 (cross-slice stays 0); net +2.
+  set_effect_sites: 133,
   cross_slice_set_violations: 0,
   missing_cap_check_mutating_actions: 0,
   kind_runtime_ordering_violations: 0,
