@@ -67,7 +67,7 @@ defmodule EzagentPluginHello.Migrate do
   # so it does not collide with the recipe-sense identifier the no-recipe-sense-role
   # invariant gate forbids; this value is the routing role_name, which is preserved.
   @orch_role_name "orchestrator"
-  @orchestrator_recipe "hello.orchestrator"
+  @orchestrator_recipe "hello.front-desk"
 
   @type report :: %{migrated: [String.t()], skipped: [String.t()], failed: [{String.t(), term()}]}
 

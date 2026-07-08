@@ -349,25 +349,17 @@ defmodule EzagentWeb.Socialware.SessionFeedChannel do
     end
   end
 
-  # EVERY user message goes to the invisible ORCHESTRATOR (the `hello.orchestrator`
-  # front-desk agent). It — not this web layer — decides per message, by intent ×
-  # identity, whether the message goes to the page builder or the read-only
-  # concierge (owner-vs-visitor is read from the session slice inside the
-  # orchestrator's `EzagentPluginHello.Router`). The chat fan-out is mention-gated
-  # (`Behavior.Session` §:send), so mentioning exactly the orchestrator is the whole
-  # ingress; builder/concierge never receive the user message directly.
-  #
-  # The orchestrator is a PLANNED-URI member (materialized via `Definition.roles`,
-  # `EzagentPluginHello.Members`) — there is no `orch_<name>` convention URI to
-  # derive anymore. Resolve it by `role_name` off the session's live membership
-  # slice. `Definition.routing_rules`' `{:always} -> {:role, "orchestrator"}` rule
-  # is the belt to this mention's suspenders: even an empty `mentions: []` (the
-  # `:error` case, e.g. the orchestrator not yet materialized) still delivers via
-  # that rule.
+  # EVERY user message goes to the invisible FRONT-DESK (the `hello.front-desk`
+  # chat relay agent). It — not this web layer — decides per message, by intent ×
+  # identity, whether to dispatch to the page builder (`:rebuild`) or the read-only
+  # concierge (`:answer`). The chat fan-out is mention-gated
+  # (`Behavior.Session` §:send); `Definition.routing_rules`'
+  # `{:always} -> {:role, "front-desk"}` rule is the primary delivery path — this
+  # mention is the belt to its suspenders.
   defp dispatch_post(session_uri, %URI{} = principal, text) do
     mentions =
-      case EzagentPluginHello.Members.role_uri(session_uri, "orchestrator") do
-        {:ok, orch_uri} -> [orch_uri]
+      case EzagentPluginHello.Members.role_uri(session_uri, "front-desk") do
+        {:ok, fd_uri} -> [fd_uri]
         :error -> []
       end
 

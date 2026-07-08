@@ -93,17 +93,17 @@ defmodule EzagentPluginHello.Application do
   @impl Ezagent.Plugin
   def roles,
     do: [
-      hello_orchestrator_recipe(),
+      hello_front_desk_recipe(),
       hello_builder_recipe(),
       hello_concierge_recipe(),
       hello_llm_recipe()
     ]
 
-  @doc "The `hello.orchestrator` role — the invisible per-session front-desk router (`Behavior.HelloOrchestrator`)."
-  @spec hello_orchestrator_recipe() :: map()
-  def hello_orchestrator_recipe do
+  @doc "The `hello.front-desk` role — the invisible per-session chat relay that dispatches to builder/concierge via their dispatchable actions."
+  @spec hello_front_desk_recipe() :: map()
+  def hello_front_desk_recipe do
     %{
-      name: "hello.orchestrator",
+      name: "hello.front-desk",
       behaviors: [Ezagent.ActionSet.HelloOrchestrator],
       requested_caps: [
         %{behavior: Ezagent.ActionSet.HelloOrchestrator, action: :hello_sync_result}
@@ -130,7 +130,10 @@ defmodule EzagentPluginHello.Application do
     %{
       name: "hello.concierge",
       behaviors: [Ezagent.ActionSet.HelloConcierge],
-      requested_caps: [%{behavior: Ezagent.ActionSet.HelloConcierge, action: :receive}]
+      requested_caps: [
+        %{behavior: Ezagent.ActionSet.HelloConcierge, action: :receive},
+        %{behavior: Ezagent.ActionSet.HelloConcierge, action: :answer}
+      ]
     }
   end
 
