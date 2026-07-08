@@ -60,8 +60,10 @@ defmodule Ezagent.PluginCc.Template.OrchestratorBootstrap do
 
   require Logger
 
+  alias Ezagent.SkillRegistry
   alias Ezagent.Orchestrator.OrchestratorRecipe
 
+  @compile_env Mix.env()
   @orchestrator_skill_ref "ezagent-session-orchestrator"
   @skills_relroot ".claude/skills"
   @orchestrator_skill_marker_relpath "SKILL.md"
@@ -257,11 +259,11 @@ defmodule Ezagent.PluginCc.Template.OrchestratorBootstrap do
 
   def role_name(_), do: nil
 
-  @doc "Locate the orchestrator skill source dir: the `:ezagent_plugin_cc, :orchestrator_skill_source` config override if set + present, else a search up from the plugin's `priv` dir. `{:error, _}` if neither resolves. Equivalent to `resolve_skill_source/1` for the orchestrator skill ref."
+  @doc "Locate the orchestrator skill source dir: the `:ezagent_plugin_cc, :orchestrator_skill_source` config override if set + present, else `Ezagent.SkillRegistry.resolve/1`. In dev only, a registry miss falls back to the old repo walk-up. `{:error, _}` if neither resolves. Equivalent to `resolve_skill_source/1` for the orchestrator skill ref."
   @spec resolve_orchestrator_skill_source() :: {:ok, String.t()} | {:error, term()}
   def resolve_orchestrator_skill_source, do: resolve_skill_source(@orchestrator_skill_ref)
 
-  @doc "Locate a skill `ref`'s source dir: the orchestrator skill honors the `:ezagent_plugin_cc, :orchestrator_skill_source` config override (if set + present); otherwise (and for any other ref) a search up from the plugin's `priv` dir for `.claude/skills/<ref>/SKILL.md`. `{:error, _}` if neither resolves."
+  @doc "Locate a skill `ref`'s source dir: config overrides are honored as test seams; otherwise the generic `Ezagent.SkillRegistry` resolves the release-bundled source. In dev only, a registry miss falls back to walking up from the plugin `priv` dir for `.claude/skills/<ref>/SKILL.md`. `{:error, _}` if neither resolves."
   @spec resolve_skill_source(String.t()) :: {:ok, String.t()} | {:error, term()}
   def resolve_skill_source(ref) when is_binary(ref) do
     override = skill_source_override(ref)
@@ -273,7 +275,7 @@ defmodule Ezagent.PluginCc.Template.OrchestratorBootstrap do
           else: {:error, {:skill_source_missing, override}}
 
       true ->
-        search_skill_source(ref)
+        resolve_skill_source_from_registry(ref)
     end
   end
 
@@ -304,6 +306,16 @@ defmodule Ezagent.PluginCc.Template.OrchestratorBootstrap do
     case Application.get_env(:ezagent_plugin_cc, :role_skill_sources) do
       %{} = map -> Map.get(map, ref)
       _ -> nil
+    end
+  end
+
+  defp resolve_skill_source_from_registry(ref) do
+    case SkillRegistry.resolve(ref) do
+      {:ok, {source_dir, _hash}} ->
+        {:ok, source_dir}
+
+      {:error, {:skill_source_not_found, ^ref}} = error ->
+        if @compile_env == :dev, do: search_skill_source(ref), else: error
     end
   end
 
