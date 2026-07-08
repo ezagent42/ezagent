@@ -58,6 +58,7 @@ defmodule Ezagent.PluginCc.Template.OrchestratorBootstrap do
 
   require Logger
 
+  alias Ezagent.SkillRegistry
   alias Ezagent.Orchestrator.OrchestratorRecipe
 
   @orchestrator_skill_ref "ezagent-session-orchestrator"
@@ -153,10 +154,38 @@ defmodule Ezagent.PluginCc.Template.OrchestratorBootstrap do
       name ->
         with {:ok, sandbox_content} <- resolve_role(name),
              :ok <- reject_unsupported_content(sandbox_content) do
-          {:ok, Map.put(tmpl, "sandbox_content", sandbox_content)}
+          maybe_attach_resolvable_sandbox_content(tmpl, sandbox_content)
         end
     end
   end
+
+  defp maybe_attach_resolvable_sandbox_content(tmpl, sandbox_content) do
+    if role_skill_refs_resolvable?(sandbox_content) do
+      {:ok, Map.put(tmpl, "sandbox_content", sandbox_content)}
+    else
+      {:ok, tmpl}
+    end
+  end
+
+  defp role_skill_refs_resolvable?(%{skills: skills}) when is_list(skills),
+    do: Enum.all?(skills, &skill_ref_resolvable?/1)
+
+  defp role_skill_refs_resolvable?(%{"skills" => skills}) when is_list(skills),
+    do: Enum.all?(skills, &skill_ref_resolvable?/1)
+
+  defp role_skill_refs_resolvable?(_sandbox_content), do: true
+
+  defp skill_ref_resolvable?(ref) when is_binary(ref) do
+    SkillRegistry.ready?() and
+      case SkillRegistry.resolve(ref) do
+        {:ok, _} -> true
+        {:error, _} -> false
+      end
+  rescue
+    RuntimeError -> false
+  end
+
+  defp skill_ref_resolvable?(_ref), do: false
 
   @doc """
   Apply a composed role `sandbox_content` to `config_dir` — PURE filesystem.

@@ -134,6 +134,26 @@ defmodule Ezagent.PluginCc.Template.OrchestratorRecipeInstallTest do
     end
   end
 
+  describe "attach_role_sandbox_content/1" do
+    test "leaves role metadata untouched when runtime skill refs are unavailable" do
+      {:ok, _} = Application.ensure_all_started(:ezagent_domain_agent)
+      :ok = Ezagent.Agent.RecipeRegistry.flush_cache()
+
+      {:ok, _} =
+        Ezagent.Agent.RecipeRegistry.seed_role_if_absent(OrchestratorRecipe.recipe())
+
+      Ezagent.SkillRegistry.reset!()
+
+      on_exit(fn ->
+        Ezagent.SkillRegistry.reset!()
+      end)
+
+      tmpl = %{"role" => OrchestratorRecipe.name()}
+
+      assert {:ok, ^tmpl} = Bootstrap.attach_role_sandbox_content(tmpl)
+    end
+  end
+
   # Phase 3 ③ T2 (2026-06-28) — the install gate is generalized over the agent's
   # ACTUAL role, not hardcoded to `orchestrator`. A cc-headless agent whose
   # template carries ANY registered role (pm coordinator, dev-together

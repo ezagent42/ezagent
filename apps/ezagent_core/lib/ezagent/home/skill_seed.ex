@@ -18,7 +18,6 @@ defmodule Ezagent.Home.SkillSeed do
   @layer "workspace"
   @key "skill"
   @seed_family_prefix "skill-seed"
-  @actor "entity://system/user/admin"
 
   @doc """
   Run the boot skill lane: recover crash residue, seed/upgrade bytes, then scan
@@ -196,7 +195,7 @@ defmodule Ezagent.Home.SkillSeed do
            subject_uri: subject_uri(ref),
            key: @key,
            body: body,
-           actor_uri: @actor,
+           actor_uri: actor_uri(),
            source_turn_id: "#{@seed_family_prefix}:#{system_workspace_uri()}:#{ref}",
            upgrade_source_turn_id:
              "#{@seed_family_prefix}-upgrade:#{system_workspace_uri()}:#{ref}:#{content_hash}:#{shipped_hash}",
@@ -216,6 +215,8 @@ defmodule Ezagent.Home.SkillSeed do
       _ -> nil
     end
   end
+
+  defp actor_uri, do: Ezagent.URI.user(:system, :admin) |> Ezagent.URI.stable_key()
 
   defp warn_skipped_upgrade(ref, on_disk_hash, shipped_hash, release_hash) do
     Logger.warning(
