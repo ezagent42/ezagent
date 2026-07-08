@@ -5,6 +5,128 @@ defmodule Ezagent.ActionSet.Session.Delivery do
 
   alias Ezagent.{Cmd, Message, MessageStore}
 
+  @doc """
+  Fan ONE recipient's delivery OFF the `handle_send` hot path
+  (send-echo-decouple, 2026-07-08; per-recipient serialization per codex
+  HIGH-1 rework).
+
+  Enqueues the delivery into `Ezagent.Session.DeliveryQueue`, keyed by the
+  recipient's instance URI (for a cross-session forward the recipient IS the
+  target session URI — same key derivation). The queue runs ONE job per key at
+  a time, FIFO, each in an unlinked Task under
+  `Ezagent.Session.DeliverySupervisor`:
+
+  - **Sender echo (Prong A)** — the Session Kind emits its
+    `{:notify, :chat_message}` feed broadcast the moment `handle_send` returns;
+    delivery never runs in-handler, so the echo is fast even when a member is
+    dead.
+  - **Per-recipient ORDER (codex HIGH-1)** — the Session Kind processes sends
+    serially and enqueues in that order; one-in-flight-per-key means a
+    recipient observes messages in exactly send order (`last_received` /
+    `recent_messages` / ReadMarker's monotonic cursor / agent-bridge pushes
+    all stay msg1-before-msg2).
+  - **Dead-member isolation (Prong B)** — each recipient's FULL delivery
+    (cold-member `ensure_live` revival + the `:receive`/cross-session dispatch
+    + the ReadMarker) runs under its OWN key; a dead/slow member backs up its
+    own queue only and can never delay a sibling, the pipeline, or the next
+    send. A crashing delivery cannot touch the Session Kind.
+
+  ## Delivery contract — at-most-once, loudly attributed (codex MED-2)
+
+  Fire-and-forget: `handle_send` already emitted its effects, so a delivery can
+  return nothing to anyone. There is NO retry: a job that raises is logged with
+  full attribution (recipient + message id + session) plus a best-effort
+  `Ezagent.Routing.Trace` `delivery_failed` row, then its key advances (one
+  poisoned message never wedges its recipient's queue). Queued jobs are held in
+  memory — a node restart drops them; message durability is `MessageStore`
+  (history / replay-on-join), exactly the pre-decouple contract.
+
+  A delivery job can OUTLIVE its source session (session destroyed while the
+  job waits/runs). Safe by construction: `:receive` authorization is the
+  recipient's OWN held member-cap checked in-handler at delivery time, so a
+  destroyed session's revoked members simply fail authorization.
+  """
+  @spec deliver_async(URI.t(), map() | nil, Message.t(), map(), URI.t()) :: :ok
+  def deliver_async(
+        %URI{} = recipient,
+        rule_ctx,
+        %Message{} = msg,
+        prompt_templates,
+        %URI{} = session_uri
+      )
+      when is_map(prompt_templates) do
+    key = URI.to_string(recipient)
+
+    Ezagent.Session.DeliveryQueue.enqueue(key, fn ->
+      try do
+        deliver_now(recipient, rule_ctx, msg, prompt_templates, session_uri)
+      catch
+        kind, reason ->
+          # codex MED-2 — a background delivery failure is post-success (the
+          # sender already saw the message land), so it MUST be loudly
+          # attributable: recipient + message + session, plus a routing-trace
+          # row so `Trace.journey(msg.id)` shows the drop.
+          Logger.error(
+            "Ezagent.ActionSet.Session.Delivery: delivery FAILED (at-most-once, no retry) " <>
+              "recipient=#{key} message_id=#{msg.id} " <>
+              "session=#{URI.to_string(session_uri)} " <>
+              Exception.format(kind, reason, __STACKTRACE__)
+          )
+
+          record_delivery_failed_trace(msg, key, session_uri, {kind, reason})
+      end
+    end)
+  end
+
+  # Best-effort `routing_traces` row for a failed background delivery (codex
+  # MED-2). Never raises — the Logger.error above is the guaranteed signal.
+  defp record_delivery_failed_trace(%Message{} = msg, recipient_str, session_uri, failure) do
+    workspace_uri =
+      case Ezagent.WorkspaceRegistry.lookup(session_uri) do
+        {:ok, uri} -> uri
+        :error -> nil
+      end
+
+    _ =
+      Ezagent.Routing.Trace.record(%{
+        message_id: msg.id,
+        workspace_uri: workspace_uri,
+        rule_id: "delivery_failed",
+        receivers: [recipient_str],
+        hop: msg.hops,
+        drop_reason: inspect(failure)
+      })
+
+    :ok
+  catch
+    _, _ -> :ok
+  end
+
+  @doc """
+  Deliver a single already-routed recipient SYNCHRONOUSLY (cross-session forward
+  or per-recipient `:receive` fan-out with the §3.4 Path-A render). Normally run
+  inside a `deliver_async/5` Task; exposed for direct/testing use.
+  """
+  @spec deliver_now(URI.t(), map() | nil, Message.t(), map(), URI.t()) :: term()
+  def deliver_now(
+        %URI{} = recipient,
+        rule_ctx,
+        %Message{} = msg,
+        prompt_templates,
+        %URI{} = session_uri
+      )
+      when is_map(prompt_templates) do
+    if recipient.scheme == "session" do
+      dispatch_cross_session_call(recipient, msg, session_uri)
+    else
+      # Path-A delivery transform (§3.4): render the matched rule's prompt
+      # template into THIS recipient's message (no template → unchanged).
+      # Applies to agent + user recipients alike.
+      delivered = render_for_delivery(msg, rule_ctx, prompt_templates, session_uri)
+      dispatch_receive_call(recipient, delivered, session_uri)
+    end
+  end
+
   @doc "PubSub topic for in-session events (chat stream feed)."
   @spec session_events_topic(URI.t() | String.t()) :: String.t()
   def session_events_topic(%URI{} = uri), do: session_events_topic(URI.to_string(uri))

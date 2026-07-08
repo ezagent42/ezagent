@@ -109,7 +109,17 @@ defmodule EzagentDomainInstanceMessage.Application do
       # it by orchestrator URI (cc reaches it by URI, no compile dep); the
       # DynamicSupervisor owns the per-session processes.
       {Registry, keys: :unique, name: Ezagent.Session.SessionManagerRegistry},
-      {DynamicSupervisor, name: Ezagent.Session.SessionManagerSupervisor, strategy: :one_for_one}
+      {DynamicSupervisor, name: Ezagent.Session.SessionManagerSupervisor, strategy: :one_for_one},
+      # send-echo-decouple (2026-07-08) — per-recipient message delivery runs
+      # OFF the Session Kind's hot path in an UNLINKED supervised Task, so one
+      # dead/slow member (e.g. a cold np-flavor agent whose `ensure_live` spawn
+      # blocks ~5s) never delays the sender echo, the pipeline, or other members.
+      # `Ezagent.ActionSet.Session.Delivery.deliver_async/5` enqueues into the
+      # DeliveryQueue (per-recipient FIFO, ONE in-flight job per key — codex
+      # HIGH-1 ordering fix), which runs each job as a Task under this
+      # supervisor. Supervisor first: the queue starts Tasks under it.
+      {Task.Supervisor, name: Ezagent.Session.DeliverySupervisor},
+      {Ezagent.Session.DeliveryQueue, []}
     ]
 
     case Supervisor.start_link(children, strategy: :one_for_one, name: __MODULE__) do
