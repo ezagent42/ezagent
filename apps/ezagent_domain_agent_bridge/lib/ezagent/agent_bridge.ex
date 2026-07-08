@@ -75,8 +75,10 @@ defmodule Ezagent.AgentBridge do
   the agent's OWN `:api_keys` + `:curl_agent` snapshot slices and does the HTTP
   round-trip — the CALLER never sees the API key.
 
-  NOTE (authz): v1 is UNGUARDED — any caller holding the agent URI can invoke a
-  completion. Cap-gating vs admin/system-only is a pending 林懿伦 decision.
+  The PUBLIC entry is `Ezagent.Entity.Agent.complete/3` — it enforces the
+  cap-gate (caller == agent owner OR caller holds `cap(Complete, :complete,
+  agent_uri, ws)`, per lead #1239 finalize ①). This function is the THIN
+  TRANSPORT body called from that gate.
   """
   @spec complete(URI.t(), String.t()) :: {:ok, String.t()} | {:error, term()}
   def complete(%URI{} = agent_uri, prompt) when is_binary(prompt) do
