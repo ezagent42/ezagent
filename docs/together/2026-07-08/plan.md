@@ -36,6 +36,15 @@ primary 目标不是「立即可执行的并行项」，而是一条**串行依�
 
 运行网站 socialware，验证**全体团队成员都能回复网站操作**（A② host-login 继承修复 + credential cascade 应让成员 agent 正常响应）。
 
+### 结构项 — seed 框架三态契约 + CI reflow 闸（lead 批准新增，assignee: allenwoods）
+
+**背景证据**：今晚三次部署失败（#1235 source_turn_id 重试冲突、role_seed_collision 误诊、definition upgrade）**全部通过了 fresh-DB CI，却在带旧版本 seed 数据的 nightly reflow 上崩溃**——同一个结构缺口的三次显形，做一次结构性修复而非继续逐点补：
+
+1. **seed 三态契约下沉**：把三态契约（**absent→write / same→skip / outdated→UPGRADE**）下沉到 ConfigStore 的 seed 原语层，让每个 built-in seed 调用方（DefinitionRegistry、RecipeRegistry、未来新增）**统一获得 upgrade 语义**，而不是各自手搓幂等。
+2. **CI reflow 彩排闸**：新增 CI 闸——用**带上一版本 seed 数据的 DB**（而非仅 fresh-DB）boot 新镜像，专抓「第三态」（outdated→UPGRADE）类 bug。
+
+这是 07-07 review 事故 B 教训（「persistence-shape 变更需要 reflow 彩排」）的制度化落地。
+
 ### 延后项 — git-filter-repo 历史重写
 
 对 tunnel UUID / CF account id / KV namespace id / Tailscale IP / test key 的历史重写——**仅在 dev 窗口冻结时执行**（按迁移计划）。本日不做，除非明确进入冻结窗口。
@@ -54,7 +63,7 @@ primary 目标不是「立即可执行的并行项」，而是一条**串行依�
 
 | 开发者 | feishu | 本日 track | 闭环/依赖说明 |
 |---|---|---|---|
-| allenwoods | 林懿伦（lead） | #1235 已合 ✓ → stable 带修复重新部署 → 主目标 socialware load/create/delete + M3 requires 冒烟 + M2 default-template 验证 | 依赖链持有者，context 在本人（原则①闭环）；stable 绿后可分派下游 |
+| allenwoods | 林懿伦（lead） | #1235 已合 ✓ → stable 带修复重新部署 → 主目标 socialware load/create/delete + M3 requires 冒烟 + M2 default-template 验证；**结构项：seed 三态契约下沉 + CI reflow 闸**（见 §1） | 依赖链持有者，context 在本人（原则①闭环）；stable 绿后可分派下游；结构项独立于 stable 链，可穿插推进 |
 | zhaomaota97 | 张宁 | **官网全流程**：运行网站 socialware，验证全体成员可回复网站操作 | 前端/官网底座持有者；依赖 stable 绿 + credential cascade |
 | jjkysy | 姚升悦 | deploy-seed 车道 PR CI re-run → 合入（C2）；socialware boot 时序面支持 | 自含闭环；CI 重跑后 lead 合入 |
 | zyli-developer | 李震宇 | 协助主目标 E2E：agent-browser socialware 安装/卸载场景脚本化 + UI 呈现校验 | 依赖 stable 绿；E2E 强项 |
@@ -66,6 +75,7 @@ primary 目标不是「立即可执行的并行项」，而是一条**串行依�
 - **强串行链首**：#1235 已合 ✓ → stable 带修复重新部署绿（当前链首）。链首未通，主目标与官网全流程都不能开始（见 §0）。lead 内部串行推进链首。
 - **链尾并行**：stable 绿后，socialware 验证（allen/zyli）与官网全流程（zhaomaota97）可并行——两者共享 stable 环境但操作面不同。
 - **deploy-seed 车道（C2）**独立于 stable 链，可提前推进 CI re-run。
+- **结构项（seed 三态契约 + reflow 闸）**独立于 stable 链，allenwoods 可在链首等待窗口穿插推进；reflow 闸落地后反过来保护后续所有部署。
 
 ## §5 out-of-scope（登记）
 
