@@ -11,7 +11,7 @@ defmodule Ezagent.Agent.RecipeRegistryTest do
   use EzagentCore.DataCase, async: false
 
   alias Ezagent.Agent.RecipeRegistry
-  alias Ezagent.Socialware.{ConfigObject, ConfigStore}
+  alias Ezagent.Socialware.{ConfigObject, ConfigStore, ContentHash}
 
   setup do
     # Each test uses a UNIQUE role name so the shared ETS cache + the appended
@@ -25,6 +25,24 @@ defmodule Ezagent.Agent.RecipeRegistryTest do
 
   defp resolve_role_object(ws, name) do
     ConfigStore.resolve("workspace", ws, role_subject(ws, name), RecipeRegistry.recipe_key())
+  end
+
+  # Reproduce a PRIOR-boot DB row: `prompt` written with the DETERMINISTIC seed
+  # source_turn_id, DIRECTLY (bypasses seed_role_if_absent so the per-boot registry
+  # stays empty — exactly a reflow-carried DB from an EARLIER deploy/boot).
+  defp seed_prior_boot!(ws, name, prompt) do
+    {:ok, %{object: object}} =
+      ConfigStore.write_and_point(%{
+        layer: "workspace",
+        workspace_uri: ws,
+        subject_uri: role_subject(ws, name),
+        key: "recipe",
+        body: %{"name" => name, "prompt" => prompt},
+        actor_uri: "entity://system/user/admin",
+        source_turn_id: "role-seed:#{ws}:#{name}"
+      })
+
+    object
   end
 
   # ---- §8.1 role is its OWN subject; seed writes CONFIG (not just ETS) -------
@@ -200,12 +218,86 @@ defmodule Ezagent.Agent.RecipeRegistryTest do
 
   # ---- §8.6 seed collision (two plugins, same name, different body) ----------
 
-  test "two different bodies under the same role name fail loud at seed",
+  test "two different bodies under the same role name fail loud at seed (SAME boot)",
        %{name: name} do
     assert {:ok, :seeded} = RecipeRegistry.seed_role_if_absent(%{name: name, prompt: "a"})
 
+    # No boot reset between the two seeds → a genuine two-plugins-one-name
+    # collision (NOT a cross-version upgrade), caught by the per-boot registry.
     assert {:error, {:role_seed_collision, ^name}} =
              RecipeRegistry.seed_role_if_absent(%{name: name, prompt: "DIFFERENT"})
+  end
+
+  # ---- #1223 M2 reflow — cross-version SELF-UPGRADE (not a collision) ---------
+
+  describe "cross-version self-upgrade (reflow-carried DB, #1223 M2)" do
+    test "a NEW body over a PRIOR-boot seed (same deterministic turn) UPGRADES, not collides",
+         %{name: name, system_ws: ws} do
+      %ConfigObject{id: v1_id} = seed_prior_boot!(ws, name, "v1")
+
+      # New-version boot: the plugin ships a DIFFERENT body. PRE-FIX this hit
+      # `seed_branch` case 2 (body differs + same seed turn id) → collision.
+      # POST-FIX it UPGRADES (writes a new object + repoints, append-only).
+      assert {:ok, :seeded} = RecipeRegistry.seed_role_if_absent(%{name: name, prompt: "v2"})
+
+      assert {:ok, %ConfigObject{id: v2_id, source_turn_id: turn}} =
+               resolve_role_object(ws, name)
+
+      assert v2_id != v1_id
+      assert String.starts_with?(turn, "role-seed-upgrade:")
+
+      :ok = RecipeRegistry.flush_cache()
+      assert {:ok, %Ezagent.Agent.Recipe{prompt: "v2"}} = RecipeRegistry.lookup(ws, name)
+    end
+
+    test "the upgrade is idempotent under an entrypoint retry (crash → restart re-seeds)",
+         %{name: name, system_ws: ws} do
+      seed_prior_boot!(ws, name, "v1")
+
+      assert {:ok, :seeded} = RecipeRegistry.seed_role_if_absent(%{name: name, prompt: "v2"})
+      {:ok, %ConfigObject{id: upgraded_id}} = resolve_role_object(ws, name)
+
+      # Crash-restart: a FRESH boot (registry cleared) re-runs the SAME seed. The
+      # body already matches → no new object, pointer unmoved.
+      :ok = RecipeRegistry.reset_boot_seed_registry()
+      assert {:ok, :exists} = RecipeRegistry.seed_role_if_absent(%{name: name, prompt: "v2"})
+
+      {:ok, %ConfigObject{id: same_id}} = resolve_role_object(ws, name)
+      assert same_id == upgraded_id
+    end
+
+    test "a torn upgrade write (upgrade object already present) resolves :already_upgraded",
+         %{name: name, system_ws: ws} do
+      seed_prior_boot!(ws, name, "v1")
+
+      # v2 as seed_role_if_absent stores it — recipe_body always adds `behaviors`,
+      # so pass it explicitly to make the persisted body (and thus the hash-carrying
+      # upgrade turn id) deterministic.
+      v2_body = %{"name" => name, "prompt" => "v2", "behaviors" => []}
+      upgrade_turn = "role-seed-upgrade:#{ws}:#{name}:#{ContentHash.of(v2_body)}"
+
+      # A PRIOR boot wrote the upgrade OBJECT but crashed before repointing (the
+      # object exists, the pointer still aims at v1). Insert it directly (no
+      # pointer) to reproduce the torn state.
+      {:ok, _} =
+        %{
+          id: Ecto.UUID.generate(),
+          workspace_uri: ws,
+          subject_uri: RecipeRegistry.recipe_subject_uri(ws, name),
+          key: "recipe",
+          body: v2_body,
+          content_hash: ContentHash.of(v2_body),
+          created_by: "entity://system/user/admin",
+          source_turn_id: upgrade_turn
+        }
+        |> ConfigObject.changeset()
+        |> EzagentCore.Repo.insert()
+
+      # The retry re-hits the unique (ws, subject, key, source_turn_id) index →
+      # idempotent success (the entrypoint retry loop survives, same as #1235).
+      assert {:ok, :already_upgraded} =
+               RecipeRegistry.seed_role_if_absent(%{name: name, prompt: "v2", behaviors: []})
+    end
   end
 
   # ---- §8.3 cross-workspace fallback (tenant sees system built-in; forks) ----

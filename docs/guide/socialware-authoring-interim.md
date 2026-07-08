@@ -70,7 +70,9 @@ visibility_policy`.
 ## Skeleton (autoservice, modernized)
 
 The shipped example is
-`apps/ezagent_domain_session/priv/socialware/autoservice/package.yaml`. It still
+`apps/ezagent_web/priv/socialware_seed/autoservice/package.yaml` (moved out of
+domain_session priv by deploy-seed SPEC §6; the deployment directory is now the
+canonical socialware home). It still
 uses the OLD shape (`roles:` with inline `requested_caps`, and the pre-T1 Behavior-namespaced Kb module — now `Ezagent.ActionSet.Kb`).
 Modernized to the `Definition` field shape it reads as data:
 

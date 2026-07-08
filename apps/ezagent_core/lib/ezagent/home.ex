@@ -63,6 +63,12 @@ defmodule Ezagent.Home do
     File.dir?(profile_dir()) and File.dir?(path(:credentials)) and File.dir?(path(:db))
   end
 
-  @doc "List of profile sub-directories the init task creates."
-  def skeleton_dirs, do: [:credentials, :db, :snapshots, :logs, :plugins]
+  @doc """
+  List of profile sub-directories the init task creates.
+
+  `:socialware` is the canonical deployment home for non-framework socialware
+  (deploy-seed SPEC §4); `Ezagent.Home.SocialwareSeed` seeds shipped packages
+  into it at init time.
+  """
+  def skeleton_dirs, do: [:credentials, :db, :snapshots, :logs, :plugins, :socialware]
 end

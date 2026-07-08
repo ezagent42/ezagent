@@ -14,6 +14,14 @@ defmodule Ezagent.Socialware.DefinitionRegistry do
   @definition_key "socialware"
   @definition_layer "workspace"
 
+  # The built-in definition SEED-FAMILY `source_turn_id` prefix. The deterministic
+  # first-seed turn is `<prefix>:<ws>:<name>`; a content-hash-carrying self-upgrade
+  # turn is `<prefix>-upgrade:<ws>:<name>:<hash>`. Both feed the ConfigStore
+  # `seed_object_upsert/1` primitive (definitions pass NO `:seed_family_prefix`, so
+  # they ALWAYS-UPGRADE on a hash difference — §5.2 — but the turn ids stay stable
+  # so a reboot re-seed is deterministically idempotent).
+  @definition_seed_prefix "socialware-definition-seed"
+
   # P0 §6/§11.2 (D-4) — the def-level RETRACT marker. A SEPARATE ConfigStore key
   # under the SAME `socialware:<name>` subject + `"workspace"` layer, keyed by
   # `(name, workspace)`. Keeping it OUT of the def `body` (its own key) means a
@@ -223,7 +231,7 @@ defmodule Ezagent.Socialware.DefinitionRegistry do
         key: @definition_key,
         body: Definition.body(definition),
         actor_uri: actor,
-        source_turn_id: "socialware-definition-seed:#{workspace_uri}:#{definition.name}",
+        source_turn_id: "#{@definition_seed_prefix}:#{workspace_uri}:#{definition.name}",
         collision_tag: {:socialware_definition_seed_collision, definition.name}
       })
     end
@@ -507,37 +515,31 @@ defmodule Ezagent.Socialware.DefinitionRegistry do
   defp caller_uri(_), do: nil
 
   # Built-in direct-write fast path applying the SHARED idempotency RULE (P0 §5,
-  # D-2): no CR at boot, but the SAME hash-comparison as the governance path —
-  # with the former `builtin_seed_object?` PROVENANCE GUARD DELETED (§5.2). An
-  # edited built-in manifest re-promotes purely on a content-hash difference;
-  # provenance no longer gates the upgrade.
+  # D-2), now via the ConfigStore three-state seed primitive
+  # (`seed_object_upsert/1`). NO `:seed_family_prefix` is passed → the §5.2
+  # ALWAYS-UPGRADE contract is preserved (the `builtin_seed_object?` provenance
+  # guard stays DELETED: an edited built-in manifest re-promotes purely on a
+  # content-hash difference; provenance does not gate the upgrade). The primitive
+  # owns resolve → hash-compare → upgrade → unique-`source_turn_id` retry
+  # tolerance (`{:ok, :already_upgraded}`, the #1235 crash-restart guard).
   defp seed_builtin_definition(%Definition{} = definition, opts) do
     workspace_uri = opts |> Keyword.fetch!(:workspace_uri) |> uri_string()
     subject = definition_subject_uri(workspace_uri, definition.name)
-    new_hash = Definition.content_hash(Definition.body(definition))
+    body = Definition.body(definition)
+    new_hash = Definition.content_hash(body)
 
-    case ConfigStore.resolve(@definition_layer, workspace_uri, subject, @definition_key) do
-      :none ->
-        seed_definition_if_absent(definition, workspace_uri: workspace_uri)
-
-      {:ok, %ConfigObject{} = object} ->
-        if Definition.content_hash(object.body) == new_hash do
-          {:ok, :exists}
-        else
-          write_definition(definition,
-            workspace_uri: workspace_uri,
-            actor_uri: default_seed_actor(),
-            caller_workspace_uri: workspace_uri,
-            authority: :system_seed,
-            source_turn_id:
-              builtin_upgrade_source_turn_id(workspace_uri, definition.name, new_hash)
-          )
-          |> case do
-            {:ok, _object} -> {:ok, :seeded}
-            {:error, reason} -> {:error, reason}
-          end
-        end
-    end
+    ConfigStore.seed_object_upsert(%{
+      layer: @definition_layer,
+      workspace_uri: workspace_uri,
+      subject_uri: subject,
+      key: @definition_key,
+      body: body,
+      actor_uri: default_seed_actor(),
+      source_turn_id: "#{@definition_seed_prefix}:#{workspace_uri}:#{definition.name}",
+      upgrade_source_turn_id:
+        builtin_upgrade_source_turn_id(workspace_uri, definition.name, new_hash),
+      collision_tag: {:socialware_definition_seed_collision, definition.name}
+    })
   end
 
   defp default_seed_actor, do: Ezagent.URI.user(:system, :admin) |> URI.to_string()
@@ -546,7 +548,7 @@ defmodule Ezagent.Socialware.DefinitionRegistry do
   defp uri_string(uri) when is_binary(uri), do: uri
 
   defp builtin_upgrade_source_turn_id(workspace_uri, name, hash) do
-    "socialware-definition-seed-upgrade:#{workspace_uri}:#{name}:#{hash}"
+    "#{@definition_seed_prefix}-upgrade:#{workspace_uri}:#{name}:#{hash}"
   end
 
   defp unique_source_turn_id(workspace_uri, name) do

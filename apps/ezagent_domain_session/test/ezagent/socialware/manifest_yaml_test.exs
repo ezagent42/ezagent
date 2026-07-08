@@ -6,7 +6,14 @@ defmodule Ezagent.Socialware.ManifestYamlTest do
   alias Ezagent.Entity.SessionTemplate
   alias Ezagent.Invocation
   alias Ezagent.Message
-  alias Ezagent.Socialware.{Conformance, Definition, DefinitionRegistry, ManifestYaml}
+
+  alias Ezagent.Socialware.{
+    Conformance,
+    Definition,
+    DefinitionRegistry,
+    Installation,
+    ManifestYaml
+  }
 
   defmodule RenderBehavior do
     @moduledoc false
@@ -167,6 +174,31 @@ defmodule Ezagent.Socialware.ManifestYamlTest do
     assert {:ok, %Definition{name: ^name}, _object} = DefinitionRegistry.lookup(@workspace, name)
   end
 
+  test "requires manifest imports, publishes, and installs transitive dependencies" do
+    dep_name = "yaml-requires-dep-#{uniq()}"
+    app_name = "yaml-requires-app-#{uniq()}"
+    session_uri = Ezagent.URI.session(:system, :socialware, "yaml-requires-#{uniq()}")
+
+    assert {:ok, :published} = ManifestYaml.import(minimal_yaml(dep_name), admin_ctx(dep_name))
+
+    assert {:ok, :published} =
+             ManifestYaml.import(
+               minimal_yaml(app_name, requires: [dep_name]),
+               admin_ctx(app_name)
+             )
+
+    assert :ok =
+             Installation.install_template_installs(
+               session_uri,
+               @workspace,
+               %{installs: [app_name]},
+               @admin
+             )
+
+    assert Installation.installed?(session_uri, dep_name)
+    assert Installation.installed?(session_uri, app_name)
+  end
+
   test "autoservice manifest imports, publishes, installs, materializes agents, and routes" do
     :ok = seed_autoservice_recipe()
     yaml = File.read!(autoservice_manifest_path())
@@ -178,7 +210,9 @@ defmodule Ezagent.Socialware.ManifestYamlTest do
     assert result in [:published, :exists]
 
     assert Enum.any?(DefinitionRegistry.list(@workspace), &(&1.name == definition.name))
-    assert {:ok, %Definition{name: name}, _object} = DefinitionRegistry.lookup(@workspace, definition.name)
+
+    assert {:ok, %Definition{name: name}, _object} =
+             DefinitionRegistry.lookup(@workspace, definition.name)
 
     template_name = "autoservice-yaml-#{uniq()}"
     content = %{name: template_name, installs: [name]}
@@ -225,6 +259,30 @@ defmodule Ezagent.Socialware.ManifestYamlTest do
     """
   end
 
+  defp minimal_yaml(name, opts \\ []) do
+    requires = Keyword.get(opts, :requires, [])
+
+    requires_block =
+      if requires == [] do
+        ""
+      else
+        "requires:\n" <> Enum.map_join(requires, "", &"  - #{&1}\n")
+      end
+
+    """
+    name: #{name}
+    version: "0.1.0"
+    title: "Minimal #{name}"
+    bases:
+      - Ezagent.ActionSet.Session
+    visibility_policy:
+      scope: private
+      publish_policy: auto
+      web_anon_access: false
+    #{requires_block}
+    """
+  end
+
   defp seed_recipe(label) do
     name = "yaml-recipe-#{label}-#{uniq()}"
     RecipeRegistry.invalidate(RecipeRegistry.system_workspace_uri(), name)
@@ -246,9 +304,11 @@ defmodule Ezagent.Socialware.ManifestYamlTest do
   end
 
   defp autoservice_manifest_path do
-    :ezagent_domain_session
+    # Deploy-seed SPEC §6: autoservice now ships in the ezagent_web assembly
+    # app's socialware_seed source, not domain_session priv.
+    :ezagent_web
     |> :code.priv_dir()
-    |> Path.join("socialware/autoservice/manifest.yaml")
+    |> Path.join("socialware_seed/autoservice/manifest.yaml")
   end
 
   defp role_member_uri(session_uri, role_name) do

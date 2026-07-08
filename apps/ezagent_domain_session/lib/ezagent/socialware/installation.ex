@@ -7,7 +7,13 @@ defmodule Ezagent.Socialware.Installation do
   threads the definitions' behavior union into the Session's `:kind_base`.
   """
 
-  alias Ezagent.Socialware.{ConfigObject, ConfigStore, Definition, DefinitionRegistry}
+  alias Ezagent.Socialware.{
+    ConfigObject,
+    ConfigStore,
+    Conformance,
+    Definition,
+    DefinitionRegistry
+  }
 
   @default_installs ["chat"]
   @install_layer "session"
@@ -223,7 +229,7 @@ defmodule Ezagent.Socialware.Installation do
         actor_uri
       ) do
     with {:ok, installs} <- parse_installs(installs_from_template(content)),
-         {:ok, definitions} <- resolve_definitions(installs, workspace_uri) do
+         {:ok, definitions} <- resolve_direct_definitions(installs, workspace_uri) do
       Enum.reduce_while(definitions, :ok, fn {definition, object, install}, :ok ->
         case seed_install(session_uri, workspace_uri, definition, object, install, actor_uri) do
           {:ok, _} -> {:cont, :ok}
@@ -246,7 +252,8 @@ defmodule Ezagent.Socialware.Installation do
     # frozen pin and re-resolves each ref to the CURRENT published revision, so an
     # install advances forward (a pin-honoring resolve here would no-op).
     with {:ok, definitions} <-
-           resolved_template_installs(strip_install_pins(content), workspace_uri) do
+           resolved_template_installs(strip_install_pins(content), workspace_uri),
+         :ok <- preflight_repoint(session_uri, workspace_uri, definitions) do
       Enum.reduce_while(definitions, :ok, fn {definition, object, install}, :ok ->
         case point_session_install(
                session_uri,
@@ -459,6 +466,12 @@ defmodule Ezagent.Socialware.Installation do
     end
   end
 
+  defp installed_definition_map(%URI{} = session_uri) do
+    session_uri
+    |> installed_definitions()
+    |> Map.new(&{&1.name, &1})
+  end
+
   defp supervised?(%Definition{visibility_policy: policy}) do
     Map.get(policy, :publish_policy, :auto) == :supervised
   end
@@ -481,13 +494,71 @@ defmodule Ezagent.Socialware.Installation do
     # `repoint_template_installs/4` upgrade path advances a running install.
     case install_state(session_uri, ref) do
       :installed ->
-        {:ok, :exists}
+        with :ok <- ensure_requirements(session_uri, workspace_uri, definition, actor_uri) do
+          {:ok, :exists}
+        end
 
       :removed ->
-        point_session_install(session_uri, workspace_uri, install, definition, object, actor_uri)
+        with :ok <- ensure_requirements(session_uri, workspace_uri, definition, actor_uri) do
+          point_session_install(
+            session_uri,
+            workspace_uri,
+            install,
+            definition,
+            object,
+            actor_uri
+          )
+        end
 
       :none ->
-        do_seed_install(session_uri, workspace_uri, definition, object, install, actor_uri)
+        with :ok <- ensure_requirements(session_uri, workspace_uri, definition, actor_uri) do
+          do_seed_install(session_uri, workspace_uri, definition, object, install, actor_uri)
+        end
+    end
+  end
+
+  defp ensure_requirements(_session_uri, _workspace_uri, %Definition{requires: []}, _actor_uri),
+    do: :ok
+
+  defp ensure_requirements(session_uri, workspace_uri, %Definition{} = definition, actor_uri) do
+    with {:ok, requirement_installs} <- required_installs(definition, workspace_uri),
+         :ok <- ensure_no_installed_conflict(session_uri, workspace_uri, definition) do
+      Enum.reduce_while(requirement_installs, :ok, fn {required_definition, object, install},
+                                                      :ok ->
+        case seed_install(
+               session_uri,
+               workspace_uri,
+               required_definition,
+               object,
+               install,
+               actor_uri
+             ) do
+          {:ok, _} -> {:cont, :ok}
+          {:error, reason} -> {:halt, {:error, reason}}
+        end
+      end)
+    end
+  end
+
+  defp ensure_no_installed_conflict(session_uri, workspace_uri, %Definition{} = definition) do
+    installed_map = installed_definition_map(session_uri)
+
+    case Conformance.check_against_installed(
+           definition,
+           workspace_uri,
+           Map.put(installed_map, definition.name, definition)
+         ) do
+      :ok ->
+        :ok
+
+      {:error, _failures} ->
+        conflict =
+          definition.requires
+          |> Enum.find(fn required ->
+            Map.has_key?(installed_map, required)
+          end)
+
+        {:error, {:version_conflict, conflict || definition.name, [definition.name]}}
     end
   end
 
@@ -529,7 +600,16 @@ defmodule Ezagent.Socialware.Installation do
     }
   end
 
-  defp resolve_definitions(installs, workspace_uri, opts \\ []) do
+  defp resolve_definitions(installs, workspace_uri, opts) do
+    lookup_fun = Keyword.get(opts, :lookup_fun, &DefinitionRegistry.lookup/2)
+
+    with {:ok, expanded_installs} <-
+           expand_installs_with_requires(installs, workspace_uri, lookup_fun) do
+      resolve_direct_definitions(expanded_installs, workspace_uri, lookup_fun: lookup_fun)
+    end
+  end
+
+  defp resolve_direct_definitions(installs, workspace_uri, opts \\ []) do
     lookup_fun = Keyword.get(opts, :lookup_fun, &DefinitionRegistry.lookup/2)
 
     Enum.reduce_while(installs, {:ok, []}, fn install, {:ok, acc} ->
@@ -541,6 +621,88 @@ defmodule Ezagent.Socialware.Installation do
     |> case do
       {:ok, defs} -> {:ok, Enum.reverse(defs)}
       error -> error
+    end
+  end
+
+  defp required_installs(%Definition{} = definition, workspace_uri) do
+    definition.requires
+    |> Enum.map(&%{ref: &1, config: %{}, config_id: nil, content_hash: nil})
+    |> expand_installs_with_requires(workspace_uri, &DefinitionRegistry.lookup/2)
+    |> case do
+      {:ok, installs} -> resolve_direct_definitions(installs, workspace_uri)
+      {:error, reason} -> {:error, reason}
+    end
+  end
+
+  defp expand_installs_with_requires(installs, workspace_uri, lookup_fun) do
+    explicit_by_ref = Map.new(installs, &{&1.ref, &1})
+
+    installs
+    |> Enum.reduce_while({:ok, [], MapSet.new()}, fn install, {:ok, acc, seen} ->
+      case expand_install_with_requires(
+             install,
+             workspace_uri,
+             lookup_fun,
+             explicit_by_ref,
+             acc,
+             seen
+           ) do
+        {:ok, next_acc, next_seen} -> {:cont, {:ok, next_acc, next_seen}}
+        {:error, _} = error -> {:halt, error}
+      end
+    end)
+    |> case do
+      {:ok, expanded, _seen} -> {:ok, Enum.reverse(expanded)}
+      {:error, _} = error -> error
+    end
+  end
+
+  defp expand_install_with_requires(
+         install,
+         workspace_uri,
+         lookup_fun,
+         explicit_by_ref,
+         acc,
+         seen
+       ) do
+    if MapSet.member?(seen, install.ref) do
+      {:ok, acc, seen}
+    else
+      case resolve_install(install, workspace_uri, lookup_fun) do
+        {:ok, %Definition{} = definition, _object} ->
+          Enum.reduce_while(
+            definition.requires,
+            {:ok, acc, MapSet.put(seen, install.ref)},
+            fn ref, {:ok, req_acc, req_seen} ->
+              required_install =
+                Map.get(explicit_by_ref, ref, %{
+                  ref: ref,
+                  config: %{},
+                  config_id: nil,
+                  content_hash: nil
+                })
+
+              case expand_install_with_requires(
+                     required_install,
+                     workspace_uri,
+                     lookup_fun,
+                     explicit_by_ref,
+                     req_acc,
+                     req_seen
+                   ) do
+                {:ok, next_acc, next_seen} -> {:cont, {:ok, next_acc, next_seen}}
+                {:error, _} = error -> {:halt, error}
+              end
+            end
+          )
+          |> case do
+            {:ok, req_acc, req_seen} -> {:ok, [install | req_acc], req_seen}
+            {:error, _} = error -> error
+          end
+
+        :error ->
+          {:error, {:unknown_socialware_install, install.ref}}
+      end
     end
   end
 
@@ -569,6 +731,13 @@ defmodule Ezagent.Socialware.Installation do
   # spec map. An entry already pinned (`config_id != nil`) keeps its pin (§4.1
   # idempotency); a fresh entry records the resolved `object.id` + `content_hash`.
   defp freeze_installs(installs, workspace_uri) do
+    with {:ok, expanded_installs} <-
+           expand_installs_with_requires(installs, workspace_uri, &DefinitionRegistry.lookup/2) do
+      freeze_expanded_installs(expanded_installs, workspace_uri)
+    end
+  end
+
+  defp freeze_expanded_installs(installs, workspace_uri) do
     Enum.reduce_while(installs, {:ok, []}, fn install, {:ok, acc} ->
       case resolve_install(install, workspace_uri, &DefinitionRegistry.lookup/2) do
         {:ok, _definition, %ConfigObject{} = object} ->
@@ -591,6 +760,61 @@ defmodule Ezagent.Socialware.Installation do
       {:ok, frozen} -> {:ok, Enum.reverse(frozen)}
       error -> error
     end
+  end
+
+  defp preflight_repoint(session_uri, workspace_uri, definitions) do
+    repointed_refs =
+      MapSet.new(definitions, fn {_definition, _object, install} -> install.ref end)
+
+    installed_map = installed_definition_map(session_uri)
+
+    proposed_map =
+      Enum.reduce(definitions, installed_map, fn {definition, _object, install}, acc ->
+        Map.put(acc, install.ref, definition)
+      end)
+
+    blocked =
+      installed_map
+      |> Enum.reject(fn {name, _definition} -> MapSet.member?(repointed_refs, name) end)
+      |> Enum.flat_map(fn {name, definition} ->
+        if requires_any?(definition, repointed_refs, proposed_map, MapSet.new()) do
+          case Conformance.check_against_installed(definition, workspace_uri, proposed_map) do
+            :ok -> []
+            {:error, failures} -> [{name, failures}]
+          end
+        else
+          []
+        end
+      end)
+
+    case blocked do
+      [] ->
+        :ok
+
+      [{_blocked_name, _failures} | _] ->
+        {:error, {:repoint_blocked, List.first(MapSet.to_list(repointed_refs)), blocked}}
+    end
+  end
+
+  defp requires_any?(%Definition{requires: requires}, targets, definitions, visited) do
+    Enum.any?(requires, fn required ->
+      cond do
+        MapSet.member?(targets, required) ->
+          true
+
+        MapSet.member?(visited, required) ->
+          false
+
+        true ->
+          case Map.get(definitions, required) do
+            %Definition{} = definition ->
+              requires_any?(definition, targets, definitions, MapSet.put(visited, required))
+
+            _ ->
+              false
+          end
+      end
+    end)
   end
 
   # Drop frozen pins back to bare refs so a re-resolve advances to the current

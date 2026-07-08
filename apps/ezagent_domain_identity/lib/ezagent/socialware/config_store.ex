@@ -9,7 +9,7 @@ defmodule Ezagent.Socialware.ConfigStore do
   import Ecto.Query
 
   alias Ecto.Multi
-  alias Ezagent.Socialware.{ConfigObject, ConfigPointer}
+  alias Ezagent.Socialware.{ConfigObject, ConfigPointer, ContentHash}
   alias EzagentCore.Repo
 
   @layers ~w(workspace user session)
@@ -231,6 +231,127 @@ defmodule Ezagent.Socialware.ConfigStore do
     subject_uri = attrs |> Map.fetch!(:subject_uri) |> uri_string!()
     key = Map.fetch!(attrs, :key)
     ConfigPointer.id(layer, workspace_uri, subject_uri, key)
+  end
+
+  @doc """
+  Three-state seed UPSERT primitive — the FULL boot-seed contract a
+  reflow-carrying deploy needs, folding the hand-rolled resolve → hash-compare →
+  seed-family-check → upgrade → retry-tolerance pattern (shipped independently in
+  `Ezagent.Socialware.DefinitionRegistry.seed_builtin_definition/2` (#1235) and
+  `Ezagent.Agent.RecipeRegistry.seed_role_if_absent/2` (#1240)) into ONE place.
+
+  `seed_object_if_no_pointer/1` covers only the TWO states a first-boot DB holds
+  (no pointer → seed; same body → no-op) plus the same-boot collision guard. This
+  adds the missing THIRD state — the DB already holds an OLDER version of this
+  exact seed (every reflow-carrying deploy) — resolving `(layer, workspace,
+  subject, key)` and branching on FOUR states:
+
+    1. NO pointer yet → atomic seed-once (delegates to the race-safe
+       `seed_object_if_no_pointer/1`) → `{:ok, :seeded}`.
+    2. pointer exists, SAME body (content-hash) → `{:ok, :exists}` (idempotent
+       re-seed / reboot no-op).
+    3. pointer exists, body DIFFERS, and the pointed object is UPGRADABLE (see
+       `:seed_family_prefix`) → UPGRADE: append a new object + repoint under the
+       caller's `:upgrade_source_turn_id` → `{:ok, :seeded}`. A retry that
+       re-hits that unique turn id (a prior boot wrote it, then crashed before the
+       retry) → `{:ok, :already_upgraded}` — the crash-restart idempotency #1235
+       needs (the unique `(workspace, subject, key, source_turn_id)` index).
+    4. pointer exists, body DIFFERS, NOT upgradable (a user/CR OVERRIDE owns the
+       pointer) → `{:ok, :exists}` — the override SURVIVES the re-seed.
+
+  UPGRADABILITY (`:seed_family_prefix`, the branch-3-vs-4 discriminator):
+
+    * a STRING (e.g. `"role-seed"`) → OVERRIDE-SAFE: the pointed object is
+      upgradable IFF its `source_turn_id` starts with that prefix (a first-seed
+      `<prefix>:…` or a self-upgrade `<prefix>-upgrade:…` turn). A user/CR
+      override carries a different prefix → branch 4 (preserve). This is the
+      `RecipeRegistry` contract (role-as-data SPEC §4.2).
+    * ABSENT / `nil` → ALWAYS-UPGRADE on a hash difference, regardless of the
+      pointed object's provenance. This is the `DefinitionRegistry` §5.2 contract
+      (the `builtin_seed_object?` provenance guard was deliberately deleted: an
+      edited built-in manifest re-promotes purely on a content-hash difference).
+      Branch 4 is dormant for this caller — an admin-edited system-ws definition
+      is still re-promoted to the built-in on the next boot, unchanged from today.
+
+  A SAME-BOOT two-plugins-one-name collision (two DIFFERENT plugins claim the same
+  slot with different bodies in ONE boot) is NOT this primitive's concern: at the
+  DB layer it is indistinguishable from a cross-version upgrade (both are "pointer
+  exists, body differs, seed-family turn"). The caller that needs it keeps a
+  per-boot registry (`RecipeRegistry`) and checks BEFORE calling here.
+
+  `attrs` requires the `write_and_point/1` shape (`:layer, :workspace_uri,
+  :subject_uri, :key, :body, :actor_uri`) plus:
+    * `:source_turn_id` — the deterministic FIRST-seed turn (branch 1).
+    * `:upgrade_source_turn_id` — the (hash-carrying, deterministic) UPGRADE turn
+      the caller stamps on branch-3 repoints (its uniqueness makes the upgrade
+      idempotent under the entrypoint retry loop).
+    * `:collision_tag` — the loud term `seed_object_if_no_pointer/1` returns on a
+      concurrent divergent-body seed race (branch 1 only).
+    * `:seed_family_prefix` — optional; see UPGRADABILITY above.
+  """
+  @spec seed_object_upsert(map()) ::
+          {:ok, :seeded | :exists | :already_upgraded} | {:error, term()}
+  def seed_object_upsert(attrs) when is_map(attrs) do
+    layer = attrs |> Map.fetch!(:layer) |> normalize_layer!()
+    workspace = attrs |> Map.fetch!(:workspace_uri) |> uri_string!()
+    subject = attrs |> Map.fetch!(:subject_uri) |> uri_string!()
+    key = Map.fetch!(attrs, :key)
+
+    # Hash the SAME stringified body `object_attrs/1` persists, so this matches
+    # the pointed object's stored `content_hash` column regardless of atom-vs-JSON
+    # representation (P0 §3.2 round-trip stability).
+    new_hash = attrs |> Map.fetch!(:body) |> stringify_keys() |> ContentHash.of()
+    prefix = Map.get(attrs, :seed_family_prefix)
+
+    case resolve(layer, workspace, subject, key) do
+      :none ->
+        seed_object_if_no_pointer(attrs)
+
+      {:ok, %ConfigObject{content_hash: ^new_hash}} ->
+        {:ok, :exists}
+
+      {:ok, %ConfigObject{source_turn_id: turn}} ->
+        if upgradable?(turn, prefix) do
+          upgrade_object(attrs)
+        else
+          {:ok, :exists}
+        end
+    end
+  end
+
+  # Branch-3-vs-4 discriminator: a nil prefix means always-upgrade on a hash
+  # difference (DefinitionRegistry §5.2); a string prefix gates the upgrade on
+  # seed-family provenance (RecipeRegistry override-safety §4.2).
+  defp upgradable?(_turn, nil), do: true
+
+  defp upgradable?(turn, prefix) when is_binary(turn) and is_binary(prefix),
+    do: String.starts_with?(turn, prefix)
+
+  defp upgradable?(_turn, _prefix), do: false
+
+  # Append the new immutable object + repoint under the caller's deterministic,
+  # hash-carrying upgrade turn id. A prior boot that already wrote this exact turn
+  # id (then crashed before the retry) makes the object insert hit the unique
+  # `(workspace, subject, key, source_turn_id)` index → report `:already_upgraded`
+  # so the entrypoint retry loop is idempotent (#1235).
+  defp upgrade_object(attrs) do
+    attrs
+    |> Map.put(:source_turn_id, Map.fetch!(attrs, :upgrade_source_turn_id))
+    |> write_and_point()
+    |> case do
+      {:ok, _write_result} ->
+        {:ok, :seeded}
+
+      {:error, %Ecto.Changeset{errors: errors}} ->
+        if Keyword.has_key?(errors, :source_turn_id) do
+          {:ok, :already_upgraded}
+        else
+          {:error, {:seed_upgrade_failed, errors}}
+        end
+
+      {:error, reason} ->
+        {:error, {:seed_upgrade_failed, reason}}
+    end
   end
 
   @doc """

@@ -114,12 +114,23 @@ jobs:
           apps/ezagent_domain_identity/test/invariants
           apps/ezagent_domain_session/test/invariants
 
+      # Reflow-rehearsal gate: seed definitions/recipes with SIMULATED OLD bodies
+      # (what a reflow-carried DB holds), then boot the CURRENT seed paths and
+      # assert zero raises + the third-state UPGRADE applied. Deterministic (no
+      # docker / external services), so it belongs in the ubuntu gate. Catches the
+      # #1235/#1240 third-state seed regression class the three deploys hit.
+      - name: Reflow-rehearsal (third-state seed contract)
+        run: >-
+          mix test --include reflow_rehearsal
+          apps/ezagent_domain_identity/test/ezagent/socialware/config_store_seed_upsert_test.exs
+          apps/ezagent_domain_session/test/integration/reflow_rehearsal_test.exs
+
   full-suite:
     name: full-suite (self-hosted macOS)
     needs: [gate]
     # Same self-hosted macOS runner label as deploy.yml. Runs the full
     # concurrent suite on the green-reliable OS, gated behind `gate`.
-    runs-on: [self-hosted, macos, ezagent-deploy]
+    runs-on: [self-hosted, macOS, ARM64]
     # Hard ceiling so a hung test (e.g. an outbound network call that stalls
     # with no proxy — the BEAM's inet_gethost blocks forever) fails the job in
     # minutes instead of pinning the runner for hours. The full suite finishes
@@ -201,3 +212,29 @@ jobs:
           docker run --rm -v "$PWD:/repo" -w /repo \
             ghcr.io/gitleaks/gitleaks:latest \
             detect --source /repo --no-git --config /repo/.gitleaks.toml --redact
+
+  # main-merge → nightly 自动部署(2026-07-08 plan, allenwoods)。
+  # 需要 secret DEPLOY_DISPATCH_TOKEN:fine-grained PAT,Hyprial/ezagent-deploy
+  # 的 contents:read + actions:write(或 classic repo scope)。secret 缺失时
+  # 静默跳过(dispatch job 是 best-effort,不 gate 任何合并)。
+  # 部署仓库侧只进 nightly;beta/stable 仍人工晋级。
+  dispatch-nightly:
+    name: dispatch nightly deploy
+    if: github.event_name == 'push' && github.ref == 'refs/heads/main'
+    runs-on: ubuntu-latest
+    permissions: { contents: read }
+    steps:
+      - name: Fire repository_dispatch (main-merged)
+        env:
+          TOKEN: ${{ secrets.DEPLOY_DISPATCH_TOKEN }}
+        run: |
+          if [ -z "$TOKEN" ]; then
+            echo "DEPLOY_DISPATCH_TOKEN not set — skipping auto-deploy dispatch."
+            exit 0
+          fi
+          curl -sf -X POST \
+            -H "Authorization: Bearer $TOKEN" \
+            -H "Accept: application/vnd.github+json" \
+            https://api.github.com/repos/Hyprial/ezagent-deploy/dispatches \
+            -d "{\"event_type\":\"main-merged\",\"client_payload\":{\"sha\":\"${{ github.sha }}\"}}" \
+            && echo "dispatched main-merged sha=${{ github.sha }}"
