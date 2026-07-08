@@ -29,6 +29,33 @@ defmodule EzagentCore.DataCase do
 
   setup tags do
     EzagentCore.DataCase.setup_sandbox(tags)
+    EzagentCore.DataCase.reset_boot_seed_registry()
+    :ok
+  end
+
+  @doc """
+  Run every registered per-boot reset hook so one test behaves as one fresh VM
+  boot.
+
+  Downstream apps keep VM-global (persistent_term) per-boot state that survives a
+  test's DB rollback — e.g. `ezagent_domain_agent`'s role-seed registry, the
+  `{name → body_hash}` map that distinguishes a genuine same-boot
+  two-plugins-one-name collision from a cross-version reboot UPGRADE. Without a
+  per-test reset a fixed-name seed in one test would spuriously collide with a
+  differing-body seed of the same name in another.
+
+  The hooks are registered (0-arity funs) into a PLAIN-ATOM persistent_term list
+  by the owning app at boot, and drained here — so `ezagent_core` names NO
+  downstream module (the `no_role_concept_in_core` layering gate), takes no
+  compile dependency on the domain layer, and is a no-op in suites that register
+  none.
+  """
+  @spec reset_boot_seed_registry() :: :ok
+  def reset_boot_seed_registry do
+    :ezagent_test_boot_reset_hooks
+    |> :persistent_term.get([])
+    |> Enum.each(fn hook -> hook.() end)
+
     :ok
   end
 
