@@ -33,8 +33,7 @@ export type KanbanState = {
   statuses?: string[]
   miro_board_url?: string | null
   miro?: {configured?: boolean; board_id?: string | null}
-  github?: {configured?: boolean; repo?: string | null}
-  // 每图独立配置（github 仓库 + miro 板名；token 在全局配置页）
+  // 每图独立配置（github 仓库=纯数据拼 git 链接 + miro 板名；GitHub 主动连接器已退役）
   config?: {github_repo?: string | null; miro_board?: string | null}
   last_dispatch_status?: string | null
 }
@@ -69,14 +68,12 @@ export function Kanban({
 // 插件配置页 = 只配 Miro 凭证（不在这编辑导图——编辑在会话内 Kanban 子视图）。
 function KanbanList({state, onAction}: {state: KanbanState; onAction: Act}) {
   const [token, setToken] = useState("")
-  const [ghToken, setGhToken] = useState("")
   const configured = state.miro?.configured
-  const ghConfigured = state.github?.configured
   return (
     <div className="flex max-w-2xl flex-col gap-4 p-6">
       <div>
         <h2 className="text-lg font-semibold text-foreground">看板 · 配置</h2>
-        <p className="text-sm text-muted-foreground">配置出站连接器凭证（Miro / GitHub）。<strong>建树/认领/编辑在会话(session)里的 Kanban 子视图</strong>，本页只配置。</p>
+        <p className="text-sm text-muted-foreground">配置出站连接器凭证（Miro）。<strong>建树/认领/编辑在会话(session)里的 Kanban 子视图</strong>，本页只配置。</p>
       </div>
       <div className="flex flex-col gap-3 rounded-md border border-border bg-card p-4">
         <div className="flex items-center gap-2">
@@ -98,27 +95,7 @@ function KanbanList({state, onAction}: {state: KanbanState; onAction: Act}) {
         </div>
       </div>
 
-      <div className="flex flex-col gap-3 rounded-md border border-border bg-card p-4">
-        <div className="flex items-center gap-2">
-          <span className="font-medium text-foreground">GitHub Access Token</span>
-          {ghConfigured ? (
-            <span className="rounded bg-muted px-1.5 py-0.5 text-xs text-green-600 dark:text-green-400">已配置 ✓</span>
-          ) : (
-            <span className="rounded bg-muted px-1.5 py-0.5 text-xs text-muted-foreground">未配置</span>
-          )}
-        </div>
-        <label className="flex flex-col gap-1 text-xs text-muted-foreground">
-          Access Token (PAT)
-          <input type="password" className={`${inputCls} w-full`} placeholder="粘贴 GitHub PAT" value={ghToken} onChange={(e) => setGhToken(e.target.value)} />
-        </label>
-        <div>
-          <Button type="button" size="sm" onClick={() => ghToken.trim() && onAction("kanban.save_github_creds", {access_token: ghToken.trim()})}>
-            保存 Token
-          </Button>
-        </div>
-        <p className="text-xs text-muted-foreground">仓库（owner/name）<strong>按图配</strong>——进某张图右上角「本图配置」填。Token 在这（以后上线每人配自己的）。</p>
-      </div>
-      <p className="text-xs text-muted-foreground">凭证存到 system://credentials/*.yaml（节点级，0600，仅 admin 可改，不写死）。节点上「出站到 GitHub」建 issue。</p>
+      <p className="text-xs text-muted-foreground">凭证存到 system://credentials/*.yaml（节点级，0600，仅 admin 可改，不写死）。GitHub 出站已退役——gh 连通是 agent 的 CLI 行为。</p>
       <Status state={state} />
     </div>
   )
@@ -178,9 +155,6 @@ function KanbanDetail({state, onAction, onShare, onShareArtifact, onUploadFile}:
           )}
           <Button type="button" size="sm" variant="secondary" title="同步到 Miro（建/复用本图对应的板）" onClick={() => onAction("kanban.sync_miro", {kanban_uri: uri})}>
             <RefreshCw className="h-4 w-4" /> Miro
-          </Button>
-          <Button type="button" size="sm" variant="secondary" title="同步 PR 状态：轮询登记过的 PR，merged/closed 自动推进到 done" onClick={() => onAction("kanban.sync_prs", {kanban_uri: uri})}>
-            <GitPullRequest className="h-4 w-4" /> PR
           </Button>
         </div>
       </div>
@@ -303,7 +277,6 @@ function NodePanel({node, args, stages, statuses, onAction, onShareArtifact, onU
   onUploadFile?: UploadFn
 }) {
   const owner = node.owner ? node.owner.split("/").pop() : null
-  const hasPr = (node.artifacts ?? []).some((a) => (a as {kind?: string}).kind === "pr")
   const selectCls = "rounded border border-border bg-background px-1 py-0.5 text-xs text-muted-foreground"
   // issue2: inline content 用 textarea 编辑器(替 window.prompt 单行 hack)
   const [editing, setEditing] = useState(false)
@@ -499,41 +472,19 @@ function NodePanel({node, args, stages, statuses, onAction, onShareArtifact, onU
         </Suspense>
       )}
       <div className="flex flex-wrap gap-2 border-t border-border pt-2 text-xs">
-        {/* issue 棒：登记 issue（建 GitHub issue，非必须） */}
-        {node.stage === "issue" && (
+        {/* pr 棒：登记 PR（纯数据：把 PR 链接挂到节点；GitHub 主动出站已退役） */}
+        {node.stage === "pr" && (
           <button
             type="button"
             className="inline-flex items-center gap-1 text-primary hover:underline"
-            title="在配置的 GitHub 仓库建一个 issue（把本节点出站）"
-            onClick={() => onAction("kanban.sync_github", args)}
+            title="登记一个已开的 PR 到本节点（拼链接挂节点，不出站）"
+            onClick={() => {
+              const pr = window.prompt("已开 PR 的编号（如 42）")
+              if (pr && pr.trim()) onAction("kanban.register_pr", {...args, pr: pr.trim()})
+            }}
           >
-            <GitPullRequest className="h-3 w-3" /> 登记 issue
+            <GitPullRequest className="h-3 w-3" /> 登记 PR
           </button>
-        )}
-        {/* pr 棒：登记 PR + 出站 GitHub（出站=把需求摘要推到 PR 给 CI；没登记不能出站，这是验证） */}
-        {node.stage === "pr" && (
-          <>
-            <button
-              type="button"
-              className="inline-flex items-center gap-1 text-primary hover:underline"
-              title="登记一个已开的 PR 到本节点"
-              onClick={() => {
-                const pr = window.prompt("已开 PR 的编号（如 42）")
-                if (pr && pr.trim()) onAction("kanban.register_pr", {...args, pr: pr.trim()})
-              }}
-            >
-              <GitPullRequest className="h-3 w-3" /> 登记 PR
-            </button>
-            <button
-              type="button"
-              disabled={!hasPr}
-              className={`inline-flex items-center gap-1 ${hasPr ? "text-primary hover:underline" : "cursor-not-allowed text-muted-foreground/50"}`}
-              title={hasPr ? "把产品需求摘要出站留言到登记的 PR（给 CI）" : "先登记 PR 才能出站"}
-              onClick={() => hasPr && onAction("kanban.push_pr", args)}
-            >
-              <GitPullRequest className="h-3 w-3" /> 出站 GitHub
-            </button>
-          </>
         )}
         <button
           type="button"
@@ -585,13 +536,8 @@ const DISPATCH_ERR: Record<string, string> = {
   name_required: "名称不能为空",
   invalid_workspace: "工作区无效",
   access_token_required: "缺 Miro access token",
-  github_token_missing: "GitHub 凭证未配置：去插件配置页填 access token",
-  github_repo_missing: "GitHub 仓库未配置：去插件配置页填 owner/name（先定位仓库）",
-  github_unauthorized: "GitHub 拒绝（401/403）：token 无效或权限不足",
-  github_not_found: "GitHub 404：仓库或 PR/issue 不存在（确认 owner/name 和编号）",
-  github_unreachable: "连不上 GitHub：检查网络（用 REST API，不需要装 gh / 不走 ssh）",
+  github_repo_missing: "GitHub 仓库未配置：去本图配置填 owner/name（拼链接用）",
   bad_pr_number: "PR 号无效：填数字，如 42",
-  no_pr_registered: "先登记 PR 才能出站",
 }
 function dispatchError(status?: string | null): string | null {
   if (!status || !status.startsWith("error:")) return null

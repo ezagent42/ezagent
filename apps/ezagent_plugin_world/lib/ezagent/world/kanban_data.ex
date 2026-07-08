@@ -20,9 +20,10 @@ defmodule Ezagent.World.KanbanData do
       = `entity://<ws>/agent/<id>?action=kanban.<action>`，**带登录者身份/caps**
       （R3：caller=人类用户，per-node owner 授权在 Behavior 内如实判）。
 
-  连接器配置（github_repo/miro 板名）、Miro/GitHub 凭证连接状态、pr 节点的 CI 评价，
+  连接器配置（github_repo/miro 板名）、Miro 凭证连接状态、pr 节点的 CI 评价，
   全部由 `:get_tree` dispatch 一并返回（Behavior 内只读投影），world 不直引 kanban
-  plugin 任何模块。dormant 的 passive kanban-manager 经 `ensure_spawned/1`
+  plugin 任何模块。GitHub 主动连接器已退役（gh 连通是 agent 的 CLI 行为），
+  `github` 连接状态字段随之退役；`config.github_repo` 仍是纯数据（拼 git 链接用）。dormant 的 passive kanban-manager 经 `ensure_spawned/1`
   （`SpawnRegistry.spawn` 从快照 rehydrate）先起活，再 dispatch（HIGH-3 liveness）。
 
   写动作在 `Ezagent.World.KanbanActions`；本模块只读。
@@ -59,7 +60,6 @@ defmodule Ezagent.World.KanbanData do
       "stages" => stages_from_recipe(),
       "statuses" => @statuses,
       "miro" => (snapshot && snapshot["miro"]) || %{"configured" => false},
-      "github" => (snapshot && snapshot["github"]) || %{"configured" => false},
       "config" => snapshot && snapshot["config"],
       "last_dispatch_status" => nil
     }
@@ -96,7 +96,6 @@ defmodule Ezagent.World.KanbanData do
       "instances" => list_instances(ctx),
       "config" => snapshot["config"],
       "miro" => snapshot["miro"],
-      "github" => snapshot["github"],
       "last_dispatch_status" => "ok"
     }
   end
@@ -122,7 +121,7 @@ defmodule Ezagent.World.KanbanData do
 
   @doc """
   一次 `:get_tree` dispatch 拿全量看板快照：`tree`（JSON-safe 富树，pr 节点附 ci）+
-  `config`（本图连接器配置）+ `miro`/`github`（凭证连接状态）。Behavior 内只读投影，
+  `config`（本图连接器配置）+ `miro`（凭证连接状态）。Behavior 内只读投影，
   world 不再直引 kanban plugin 的连接器模块。
   """
   @spec board_snapshot(URI.t(), map()) :: map()
@@ -153,8 +152,7 @@ defmodule Ezagent.World.KanbanData do
           # 找不到回 recipe 直读（详情页冷启动场景）。
           "stages" => stages_from_res(res) || stages_from_recipe(),
           "config" => jsonable_config(Map.get(res, :config)),
-          "miro" => jsonable_status(Map.get(res, :miro)),
-          "github" => jsonable_status(Map.get(res, :github))
+          "miro" => jsonable_status(Map.get(res, :miro))
         }
 
       _ ->
@@ -162,8 +160,7 @@ defmodule Ezagent.World.KanbanData do
           "tree" => %{"nodes" => %{}, "root_id" => nil, "drops" => []},
           "stages" => stages_from_recipe(),
           "config" => %{"github_repo" => nil, "miro_board" => nil},
-          "miro" => %{"configured" => false},
-          "github" => %{"configured" => false}
+          "miro" => %{"configured" => false}
         }
     end
   end

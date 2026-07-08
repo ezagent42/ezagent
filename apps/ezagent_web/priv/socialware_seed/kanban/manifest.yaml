@@ -1,0 +1,76 @@
+# kanban demo socialware — a deploy-seed package (mirrors autoservice / hello).
+# Production carries this file in the release box; on a fresh stack
+# `Ezagent.Home.SocialwareSeed` copies it into the deployment home
+# (`$EZAGENT_HOME/<profile>/socialware/kanban/`) and the late boot scan
+# `Ezagent.Socialware.ManifestSeed.scan_all!/1` resolves + publishes it through
+# the governed import lane (parse → ManifestResolver.resolve →
+# Conformance.check_candidate → publish_or_upgrade). There is ZERO self-publish
+# from the kanban plugin's boot; `EzagentPluginKanban.Demo` remains only as a
+# test driver over this SAME file. Semantics are the judge: this file must
+# resolve to the exact Definition the retired code attrs produced (conformance
+# 15/15 green).
+#
+# Shape notes (the three data diffs vs hello, per the kanban handoff):
+#   * roles — exactly TWO agent role-slots (kanban-assistant + dev-together,
+#     both cc-headless). NOT a `kanban-manager` slot: that recipe is
+#     `passive: true` and the RF-6 passive-join gate rejects it at materialize;
+#     the board stays a workspace-level URI-dispatch actor (the S2 fix).
+#   * routing_rules — ONLY the #1190 relay-back rule, #1212-hardened to
+#     and(text_contains "__done__", from_role dev-together). NEVER hello's
+#     `always → chat` rule (handoff red line). The "__done__" literal is the
+#     spec §4.2 contract point — byte-identical to the marker in
+#     `.claude/skills/kanban-assistant/references/*` (locked by
+#     `relay-signal-check.sh` + `EzagentPluginKanban.Demo.relay_done_marker/0`).
+#   * visibility_policy — public + supervised like hello, but
+#     web_anon_access: false (a kanban board is not an anonymous public page).
+name: kanban
+version: "0.1.0"
+title: "Kanban 看板团队"
+description: "看板团队 socialware：kanban-assistant 协调 + dev-together 开发 + workspace 看板数据，__done__ 内容触发 relay-back。"
+uses:
+  - kanban
+bases:
+  - Ezagent.ActionSet.Session
+views:
+  - kanban_render
+roles:
+  - role_name: kanban-assistant
+    fill: agent
+    recipe: kanban-assistant
+    flavor: cc-headless
+  - role_name: dev-together
+    fill: agent
+    recipe: dev-together
+    flavor: cc-headless
+routing_rules:
+  - matcher:
+      type: and
+      items:
+        - type: text_contains
+          arg: "__done__"
+        - type: from_role
+          arg: dev-together
+    receivers:
+      - kanban-assistant
+    rule_set: relay-back
+    position: 0
+legends:
+  kanban:
+    member_set:
+      - kanban-assistant
+      - dev-together
+    bound_rule_set: relay-back
+    fold: false
+  collaboration:
+    protocol: >-
+      协作行话速查（进场必读，人类成员/新 agent 同样适用）：dev 只做开发不碰看板——
+      接活后干完，在消息里发 "__done__" 并带上 PR 链接，路由会自动转给看板助手
+      （只有 dev-together 槽的成员发才有效）。看板助手统一管卡：建卡、指派、收到
+      "__done__" 后登记 PR、用 gh 验证 CI 绿再推进阶段。不知道怎么做时 @看板助手问。
+    fold: false
+visibility_policy:
+  scope: public
+  publish_policy: supervised
+  web_anon_access: false
+owner_policy:
+  type: installer
