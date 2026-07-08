@@ -1,24 +1,23 @@
 defmodule Ezagent.PluginCc.Template.OrchestratorBootstrap do
   @moduledoc """
-  Install a **role** into a cc agent's `config_dir` (task #54 PR-2; generalized
+  Apply a role's cc-specific config_dir hints (task #54 PR-2/P3; generalized
   for ANY role by Phase 3 ③ T2, 2026-06-28).
 
-  This is the cc-flavor *loader* for a role: it takes the flavor-agnostic role
-  recipe (composed via the `Ezagent.Agent.Recipe` core primitives) and writes its
-  sandbox **content** into whatever `config_dir` the cc flavor allocated —
-  flavor-blind by construction, so the same role would compose against a future
-  `codex`/`curl` flavor.
+  This is the cc-flavor hint hook for a role: it takes the flavor-agnostic role
+  recipe (composed via the `Ezagent.Agent.Recipe` core primitives) and writes only
+  cc-specific guidance into whatever `config_dir` the cc flavor allocated. Skill
+  bytes are materialized by `Ezagent.Credential.HomeRuntime` inside the atomic
+  config_dir swap.
 
   ## Generalized over the agent's actual role (T2)
 
   `bootstrap/2` keys off the template's `"role"` field (NOT a hardcoded
   `"orchestrator"` literal): it looks the agent's actual role up BY NAME in
-  `Ezagent.Agent.RecipeRegistry` and installs whatever skills that recipe yields.
+  `Ezagent.Agent.RecipeRegistry` and reads whatever skills that recipe yields.
   The orchestrator is now just the role whose name is `"orchestrator"` — it
-  resolves + installs through the SAME path as a `pm`/`dev-together`/any-other cc
+  resolves through the SAME path as a `pm`/`dev-together`/any-other cc
   role. An absent / `"default"` role is a `:ok` no-op (every legacy cc agent
-  unaffected). This generalizes the **skill-install half only** — any role's
-  `skills` now land in `config_dir`.
+  unaffected).
 
   ⚠️ NOT end-to-end yet: the template-VALIDATE gate `CcAgent.check_role`
   (`cc_agent.ex:352`) still accepts only `default`/`orchestrator`, so a cc
@@ -39,17 +38,16 @@ defmodule Ezagent.PluginCc.Template.OrchestratorBootstrap do
     persisted `template://system/recipe/<name>` Template without touching the
     installer. `resolve_orchestrator_recipe/0` is the back-compat alias
     (`resolve_role(OrchestratorRecipe.name())`).
-  - `install_role_sandbox/2` — PURE filesystem: for each `skills` ref, resolve its
-    source dir + copy it into `config_dir/skills/<ref>`, then append the cc
-    skill-load hint to `CLAUDE.md`. No hardcoded skill: it installs whatever the
-    composed role yields (already role-agnostic pre-T2).
+  - `install_role_sandbox/2` — PURE filesystem: append the cc skill-load hint to
+    `CLAUDE.md` when the composed role includes the orchestrator skill. No skill
+    bytes are copied here; `HomeRuntime` owns that inside the atomic swap.
 
   The role's `prompt` (the persona) is **not** installed here — it rides the
   agent's seed sandbox `CLAUDE.md`, which `Ezagent.Credential.HomeRuntime` copies
   into each per-agent `config_dir`; writing it here would duplicate it.
 
-  A `nil` config_dir or an absent / `"default"` role is a `:ok` no-op. A copy /
-  source-resolution / recipe failure returns `{:error, _}` (see `try_apply/3` for
+  A `nil` config_dir or an absent / `"default"` role is a `:ok` no-op. A recipe /
+  hint-write failure returns `{:error, _}` (see `try_apply/3` for
   the best-effort spawn-path wrapper).
 
   ## Deferred (PR-2 scope)
@@ -60,13 +58,9 @@ defmodule Ezagent.PluginCc.Template.OrchestratorBootstrap do
 
   require Logger
 
-  alias Ezagent.SkillRegistry
   alias Ezagent.Orchestrator.OrchestratorRecipe
 
-  @compile_env Mix.env()
   @orchestrator_skill_ref "ezagent-session-orchestrator"
-  @skills_relroot ".claude/skills"
-  @orchestrator_skill_marker_relpath "SKILL.md"
   @orchestrator_hint_line "## Use the ezagent-session-orchestrator skill for all session coordination work."
 
   @doc """
@@ -76,9 +70,9 @@ defmodule Ezagent.PluginCc.Template.OrchestratorBootstrap do
   Reads the role NAME from the template's `"role"` field (`role_name/1`): an
   absent / `"default"` role is a `:ok` no-op (legacy cc agents). Any named role
   (`orchestrator`, `pm`, `dev-together`, …) composes its recipe (`resolve_role/1`)
-  → resolves + copies its skills + appends the cc skill-load hint. A `nil`
-  config_dir is also a no-op. Returns `{:error, _}` on a recipe / copy /
-  source-resolution failure (see `try_apply/3` for the best-effort wrapper).
+  and appends the cc skill-load hint when applicable. A `nil` config_dir is also a
+  no-op. Returns `{:error, _}` on a recipe / hint-write failure (see `try_apply/3`
+  for the best-effort wrapper).
   """
   @spec bootstrap(map(), String.t() | nil) :: :ok | {:error, term()}
   def bootstrap(_tmpl, nil), do: :ok
@@ -142,15 +136,39 @@ defmodule Ezagent.PluginCc.Template.OrchestratorBootstrap do
   def resolve_orchestrator_recipe, do: resolve_role(OrchestratorRecipe.name())
 
   @doc """
-  Install a composed role `sandbox_content` into `config_dir` — PURE filesystem.
+  Attach the template role's composed `sandbox_content` for config_dir
+  materialization.
+
+  `Ezagent.Credential.HomeRuntime` lives in `ezagent_core`, so it cannot look up
+  role recipes from `ezagent_domain_agent` directly. The cc flavor resolves the
+  role at its boundary and passes the flavor-independent `sandbox_content`
+  through the template data for the core materializer to consume.
+  """
+  @spec attach_role_sandbox_content(map()) :: {:ok, map()} | {:error, term()}
+  def attach_role_sandbox_content(tmpl) when is_map(tmpl) do
+    case role_name(tmpl) do
+      nil ->
+        {:ok, tmpl}
+
+      name ->
+        with {:ok, sandbox_content} <- resolve_role(name),
+             :ok <- reject_unsupported_content(sandbox_content) do
+          {:ok, Map.put(tmpl, "sandbox_content", sandbox_content)}
+        end
+    end
+  end
+
+  @doc """
+  Apply a composed role `sandbox_content` to `config_dir` — PURE filesystem.
 
   Consumes the full `%{skills, plugins, prompt}` contract:
 
-  - `skills` — for each ref: resolve its source dir + copy it into
-    `config_dir/skills/<ref>` (idempotent — an existing dir is left untouched).
+  - `skills` — not copied here. `Ezagent.Credential.HomeRuntime` consumes the same
+    recipe-produced list during config_dir materialization and copies
+    `skills/<ref>` inside the atomic swap.
   - the cc skill-load **hint** is appended to `CLAUDE.md` only when the
-    `ezagent-session-orchestrator` skill is among the installed skills — the
-    hint is derived from the resolved skills, NOT hardcoded, so an empty or
+    `ezagent-session-orchestrator` skill is among the declared skills — the
+    hint is derived from the recipe skills, NOT hardcoded, so an empty or
     different skills list leaves no stale orchestrator hint.
   - `plugins` — **fail-closed**: a non-empty list returns
     `{:error, {:unsupported_role_content, :plugins}}`. Plugin install is a PR-2
@@ -160,14 +178,12 @@ defmodule Ezagent.PluginCc.Template.OrchestratorBootstrap do
     orchestrator's seed sandbox `CLAUDE.md`, which `Ezagent.Credential.HomeRuntime`
     copies into each per-agent `config_dir`; writing it here would duplicate it.
 
-  Returns `{:error, _}` on the first skill that cannot be resolved/copied, or on
-  unsupported role content.
+  Returns `{:error, _}` on unsupported role content or a failed hint write.
   """
   @spec install_role_sandbox(map(), String.t()) :: :ok | {:error, term()}
   def install_role_sandbox(%{skills: skills} = sandbox_content, config_dir)
       when is_list(skills) and is_binary(config_dir) do
     with :ok <- reject_unsupported_content(sandbox_content),
-         :ok <- install_skills(skills, config_dir),
          :ok <- maybe_append_orchestrator_hint(skills, config_dir) do
       :ok
     end
@@ -259,125 +275,9 @@ defmodule Ezagent.PluginCc.Template.OrchestratorBootstrap do
 
   def role_name(_), do: nil
 
-  @doc "Locate the orchestrator skill source dir: the `:ezagent_plugin_cc, :orchestrator_skill_source` config override if set + present, else `Ezagent.SkillRegistry.resolve/1`. In dev only, a registry miss falls back to the old repo walk-up. `{:error, _}` if neither resolves. Equivalent to `resolve_skill_source/1` for the orchestrator skill ref."
-  @spec resolve_orchestrator_skill_source() :: {:ok, String.t()} | {:error, term()}
-  def resolve_orchestrator_skill_source, do: resolve_skill_source(@orchestrator_skill_ref)
-
-  @doc "Locate a skill `ref`'s source dir: config overrides are honored as test seams; otherwise the generic `Ezagent.SkillRegistry` resolves the release-bundled source. In dev only, a registry miss falls back to walking up from the plugin `priv` dir for `.claude/skills/<ref>/SKILL.md`. `{:error, _}` if neither resolves."
-  @spec resolve_skill_source(String.t()) :: {:ok, String.t()} | {:error, term()}
-  def resolve_skill_source(ref) when is_binary(ref) do
-    override = skill_source_override(ref)
-
-    cond do
-      is_binary(override) and override != "" ->
-        if File.dir?(override),
-          do: {:ok, override},
-          else: {:error, {:skill_source_missing, override}}
-
-      true ->
-        resolve_skill_source_from_registry(ref)
-    end
-  end
-
-  @doc "Walk UP the directory tree from `start_dir` looking for the orchestrator skill's `.claude/skills/ezagent-session-orchestrator/SKILL.md` marker; returns the skill dir or `{:error, {:skill_source_not_found, attempted_paths}}`."
-  @spec search_orchestrator_skill_source_from(String.t()) ::
-          {:ok, String.t()} | {:error, {:skill_source_not_found, [String.t()]}}
-  def search_orchestrator_skill_source_from(start_dir) when is_binary(start_dir) do
-    walk_for_skill(start_dir, @orchestrator_skill_ref, [])
-  end
-
   @doc "The CLAUDE.md hint line `bootstrap/2` appends for orchestrator agents (directs the agent to the ezagent-session-orchestrator skill). Exposed so callers/tests can assert on it."
   @spec hint_line() :: String.t()
   def hint_line, do: @orchestrator_hint_line
-
-  # Skill source is overridable per deployment (and per test). The orchestrator
-  # skill keeps its dedicated single-ref override for back-compat; ANY ref (incl.
-  # the orchestrator) may also be pointed at a source via the generic
-  # `:role_skill_sources` map (ref => abs-path). Absent an override, a ref
-  # resolves purely by the walk-upward search.
-  defp skill_source_override(@orchestrator_skill_ref) do
-    Application.get_env(:ezagent_plugin_cc, :orchestrator_skill_source) ||
-      generic_skill_source_override(@orchestrator_skill_ref)
-  end
-
-  defp skill_source_override(ref), do: generic_skill_source_override(ref)
-
-  defp generic_skill_source_override(ref) do
-    case Application.get_env(:ezagent_plugin_cc, :role_skill_sources) do
-      %{} = map -> Map.get(map, ref)
-      _ -> nil
-    end
-  end
-
-  defp resolve_skill_source_from_registry(ref) do
-    case SkillRegistry.resolve(ref) do
-      {:ok, {source_dir, _hash}} ->
-        {:ok, source_dir}
-
-      {:error, {:skill_source_not_found, ^ref}} = error ->
-        if @compile_env == :dev, do: search_skill_source(ref), else: error
-    end
-  end
-
-  defp search_skill_source(ref) do
-    case :code.priv_dir(:ezagent_plugin_cc) do
-      priv when is_list(priv) ->
-        priv
-        |> to_string()
-        |> Path.expand()
-        |> then(&walk_for_skill(&1, ref, []))
-
-      _ ->
-        {:error, {:skill_source_not_found, []}}
-    end
-  end
-
-  defp walk_for_skill(dir, ref, attempted) do
-    candidate = Path.join([dir, @skills_relroot, ref])
-    marker = Path.join(candidate, @orchestrator_skill_marker_relpath)
-    attempted = [candidate | attempted]
-
-    cond do
-      File.regular?(marker) ->
-        {:ok, candidate}
-
-      Path.dirname(dir) == dir ->
-        {:error, {:skill_source_not_found, Enum.reverse(attempted)}}
-
-      true ->
-        walk_for_skill(Path.dirname(dir), ref, attempted)
-    end
-  end
-
-  defp install_skills(skills, config_dir) do
-    Enum.reduce_while(skills, :ok, fn ref, :ok ->
-      with {:ok, source} <- resolve_skill_source(ref),
-           :ok <- copy_skill(ref, source, config_dir) do
-        {:cont, :ok}
-      else
-        {:error, _} = err -> {:halt, err}
-      end
-    end)
-  end
-
-  defp copy_skill(ref, source_dir, config_dir) do
-    skills_root = Path.join(config_dir, "skills")
-    dest_dir = Path.join(skills_root, ref)
-
-    cond do
-      File.dir?(dest_dir) ->
-        :ok
-
-      true ->
-        with :ok <- File.mkdir_p(skills_root),
-             {:ok, _} <- File.cp_r(source_dir, dest_dir) do
-          :ok
-        else
-          {:error, reason} -> {:error, {:skill_copy_failed, reason}}
-          err -> {:error, {:skill_copy_failed, err}}
-        end
-    end
-  end
 
   defp append_orchestrator_claude_md_hint(config_dir) do
     claude_md = Path.join(config_dir, "CLAUDE.md")

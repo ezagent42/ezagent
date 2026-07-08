@@ -160,10 +160,12 @@ defmodule Ezagent.PluginCc.Template.CcAgent.Spawn do
           # the failure independent of caller wiring. The PTY itself MUST
           # still come up — only role-bootstrap is best-effort, the rest
           # (config_dir, PTY) stays load-bearing.
+          tmpl_for_materialization = materialization_template(tmpl)
+
           with {:ok, materialized_config_dir, grant_ctx} <-
-                 create_agent_config_dir_with_grant(agent_uri, tmpl),
+                 create_agent_config_dir_with_grant(agent_uri, tmpl_for_materialization),
                tmpl_with_dir =
-                 tmpl
+                 tmpl_for_materialization
                  |> put_agent_config_dir(materialized_config_dir)
                  |> Map.put_new("flavor", "cc"),
                {:ok, role_meta} <-
@@ -214,6 +216,13 @@ defmodule Ezagent.PluginCc.Template.CcAgent.Spawn do
       Ezagent.PluginCc.Template.CcAgent,
       config_home_opts()
     )
+  end
+
+  defp materialization_template(tmpl) do
+    case CcAgent.attach_role_sandbox_content(tmpl) do
+      {:ok, tmpl_with_sandbox_content} -> tmpl_with_sandbox_content
+      {:error, _reason} -> tmpl
+    end
   end
 
   # #17 cascade PR-2 (codex CRITICAL §5.1) — second grant re-validation, run IMMEDIATELY
@@ -382,8 +391,8 @@ defmodule Ezagent.PluginCc.Template.CcAgent.Spawn do
   # Provisioner opts (OAuth `http_post` + `now_ms` clock) for the respawn-time
   # re-provision. PRODUCTION → `[]` (the provisioner uses real `:httpc` + the
   # system clock). TESTS inject a stubbed `http_post`/`now_ms` via the established
-  # `:ezagent_plugin_cc` app-env seam (same pattern as `:orchestrator_skill_source`,
-  # `:mcp_config_dir`, `:ws_url`) so the PATH-LEVEL respawn test can drive an
+  # `:ezagent_plugin_cc` app-env seam (same pattern as `:mcp_config_dir`, `:ws_url`)
+  # so the PATH-LEVEL respawn test can drive an
   # EXPIRED→refreshed source through `ensure_subprocess_alive/2` WITHOUT hitting the
   # network or rotating a real token. No data shim — the injection never rides in
   # `respawn_template_data`.

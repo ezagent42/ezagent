@@ -206,8 +206,11 @@ defmodule Ezagent.Credential.HomeRuntime do
        when is_map(tmpl) do
     with :ok <- recover_orphaned_or_fail(target) do
       case Map.get(tmpl, "cascade") do
-        %{} = cascade -> materialize_cascade(agent_uri, target, cascade, template_module, opts)
-        _ -> materialize_single_reference(target, reference_dir, tmpl, template_module, opts)
+        %{} = cascade ->
+          materialize_cascade(agent_uri, target, cascade, tmpl, template_module, opts)
+
+        _ ->
+          materialize_single_reference(target, reference_dir, tmpl, template_module, opts)
       end
     end
   end
@@ -220,7 +223,7 @@ defmodule Ezagent.Credential.HomeRuntime do
     end
   end
 
-  defp materialize_cascade(%URI{} = agent_uri, target, cascade, template_module, opts) do
+  defp materialize_cascade(%URI{} = agent_uri, target, cascade, tmpl, template_module, opts) do
     marker = Path.join(target, @config_complete_marker)
     staging = "#{target}.staging-#{System.unique_integer([:positive])}"
     _ = File.rm_rf(staging)
@@ -230,6 +233,7 @@ defmodule Ezagent.Credential.HomeRuntime do
 
     result =
       with :ok <- Ezagent.Agent.Materializer.merge_layers(staging, layer_dirs),
+           :ok <- materialize_sandbox_skills(staging, tmpl),
            :ok <- File.chmod(staging, 0o700),
            :ok <- File.write(Path.join(staging, Path.basename(marker)), "ok\n") do
         Ezagent.Agent.Materializer.materialize_with_grant(%{
@@ -285,6 +289,7 @@ defmodule Ezagent.Credential.HomeRuntime do
          {:ok, _} <- File.cp_r(reference_dir, staging),
          :ok <- maybe_overlay(Keyword.get(swap_opts, :overlay), staging),
          :ok <- apply_derived_config(staging, tmpl),
+         :ok <- materialize_sandbox_skills(staging, tmpl),
          :ok <- File.chmod(staging, 0o700),
          :ok <- chmod_credential_files(staging, template_module, opts),
          :ok <- File.write(Path.join(staging, marker_name), "ok\n"),
@@ -314,6 +319,86 @@ defmodule Ezagent.Credential.HomeRuntime do
     case Map.get(tmpl, "claude_md") do
       body when is_binary(body) -> File.write(Path.join(staging, "CLAUDE.md"), body)
       _ -> :ok
+    end
+  end
+
+  defp materialize_sandbox_skills(staging, tmpl) when is_map(tmpl) do
+    case sandbox_skill_refs(tmpl) do
+      :absent ->
+        :ok
+
+      {:ok, skills} ->
+        skills_root = Path.join(staging, "skills")
+
+        with {:ok, _} <- File.rm_rf(skills_root),
+             :ok <- maybe_mkdir_skills_root(skills_root, skills) do
+          copy_sandbox_skills(skills, skills_root)
+        end
+
+      {:error, _} = error ->
+        error
+    end
+  end
+
+  defp sandbox_skill_refs(tmpl) do
+    cond do
+      Map.has_key?(tmpl, "sandbox_content") ->
+        skill_refs_from_sandbox_content(Map.get(tmpl, "sandbox_content"))
+
+      Map.has_key?(tmpl, :sandbox_content) ->
+        skill_refs_from_sandbox_content(Map.get(tmpl, :sandbox_content))
+
+      true ->
+        :absent
+    end
+  end
+
+  defp skill_refs_from_sandbox_content(%{} = sandbox_content) do
+    case Map.fetch(sandbox_content, :skills) do
+      {:ok, skills} -> normalize_skill_refs(skills)
+      :error -> sandbox_content |> Map.get("skills", :absent) |> normalize_skill_refs()
+    end
+  end
+
+  defp skill_refs_from_sandbox_content(other), do: {:error, {:invalid_sandbox_content, other}}
+
+  defp normalize_skill_refs(:absent), do: :absent
+
+  defp normalize_skill_refs(skills) when is_list(skills) do
+    if Enum.all?(skills, &is_binary/1) do
+      {:ok, Enum.uniq(skills)}
+    else
+      {:error, {:invalid_sandbox_skills, skills}}
+    end
+  end
+
+  defp normalize_skill_refs(other), do: {:error, {:invalid_sandbox_skills, other}}
+
+  defp maybe_mkdir_skills_root(_skills_root, []), do: :ok
+  defp maybe_mkdir_skills_root(skills_root, _skills), do: File.mkdir_p(skills_root)
+
+  defp copy_sandbox_skills(skills, skills_root) do
+    Enum.reduce_while(skills, :ok, fn ref, :ok ->
+      case copy_sandbox_skill(ref, skills_root) do
+        :ok -> {:cont, :ok}
+        {:error, _} = error -> {:halt, error}
+      end
+    end)
+  end
+
+  defp copy_sandbox_skill(ref, skills_root) do
+    with {:ok, {source_dir, _hash}} <- Ezagent.SkillRegistry.resolve(ref),
+         {:ok, _} <- File.cp_r(source_dir, Path.join(skills_root, ref)) do
+      :ok
+    else
+      {:error, {:skill_source_not_found, ^ref}} = error ->
+        error
+
+      {:error, reason, path} ->
+        {:error, {:skill_copy_failed, ref, path, reason}}
+
+      {:error, reason} ->
+        {:error, {:skill_copy_failed, ref, reason}}
     end
   end
 
