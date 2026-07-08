@@ -261,18 +261,17 @@
   #   plugin cannot call a private domain helper under the plugin-only boundary,
   #   so the fork is forced; a future domain-side public helper would collapse
   #   it back. 43→44.
-  # - arch-cap-bump: +3 #1190 — Demo.Kanban mirrors the sanctioned #162
-  #   golden-template boot-publish skeleton of Demo.Hello: publish/0,
-  #   admin_ctx/2 and already_public?/1 are intentionally isomorphic.
-  #   (arch-allow line markers can't be used — mix format moves trailing
-  #   comments off `do` lines.) 44→47.
-  # - arch-cap-ratchet: -1 kanban YAML-manifest migration (#1213 mechanism) —
-  #   Demo.Kanban shrank to a thin priv/manifest.yaml loader; its publish/0 now
-  #   walks the ManifestYaml.import chain (adds check_candidate) and no longer
-  #   mirrors Demo.Hello's golden-template publish body. admin_ctx/2 +
-  #   already_public?/1 remain intentionally isomorphic (the remaining two
-  #   groups of the #1190 bump). 47→46. NOTE merge-order coupling: #1191 bumps
-  #   the same cap for Demo.DealScout; whichever lands second re-measures.
+  # - arch-cap-bump: +2 kanban socialware deploy-seed migration — Demo.Kanban is
+  #   now a thin socialware_seed YAML loader (its self-publish primitives
+  #   publish/0 / admin_ctx/2 / already_public?/1 were DELETED in the migration,
+  #   publish now goes through the deploy-seed lane). Its remaining loader /
+  #   override functions are cross-file isomorphic with Demo.Hello's same-shape
+  #   test-driver loader (both read their shipped manifest via SocialwareSeed) →
+  #   2 new duplicate-fn groups. main carries only Hello's half (44); adding
+  #   Kanban's makes 46. (The earlier #1190 "+3 publish golden-template" /
+  #   #1213 "-1 ratchet" narrative is OBSOLETE — those self-publish bodies no
+  #   longer exist.) 44→46. NOTE merge-order coupling: dealscout adds
+  #   Demo.Crawler's same-shape loader; whichever lands re-measures.
   cross_file_duplicate_fn_groups: 46,
   # FF-4 (cleanup-1): distinct non-agent_bridge/non-test lib files still
   # referencing a `/cc_socket` deprecation-shim module
