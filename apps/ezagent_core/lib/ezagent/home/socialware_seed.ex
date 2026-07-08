@@ -25,8 +25,6 @@ defmodule Ezagent.Home.SocialwareSeed do
 
   require Logger
 
-  alias Ezagent.Home
-
   @source_rel "socialware_seed"
 
   @doc """
@@ -59,15 +57,21 @@ defmodule Ezagent.Home.SocialwareSeed do
   Options (tests only):
 
     * `:source` — override with a single source dir (skips enumeration);
-    * `:dest` — override the deployment dir (default:
-      `Ezagent.Home.path("socialware")`).
+    * `:dest` — override the deployment dir (default: the `system://socialware`
+      deploy dir resolved via `Ezagent.System.FsResolver`).
 
   Only directory children are seeded; a package whose dest already exists is
   skipped (`File.exists?`), respecting operator edits.
   """
   @spec seed!(keyword()) :: :ok
   def seed!(opts \\ []) do
-    dest = Keyword.get(opts, :dest, Home.path("socialware"))
+    dest =
+      Keyword.get_lazy(opts, :dest, fn ->
+        # Resolve the node-global deploy dir through the sanctioned system://
+        # seam (Ezagent.System.FsResolver), NOT raw Ezagent.Home — same
+        # chokepoint ManifestSeed.deploy_sources uses, so seed dest == scan dir.
+        Ezagent.System.FsResolver.path!(Ezagent.URI.system_principal("socialware"))
+      end)
 
     sources =
       case Keyword.get(opts, :source) do
