@@ -88,13 +88,14 @@
 <tr><td><b>gagameow</b></td><td>黄佳佳</td><td><b>ezagent-in-ezagent 自举能力审计（dogfooding）</b>：验证「在 ezagent 里开发 ezagent」今天是否可行，三个面逐一验证：① <b>改代码库 + 提 PR</b>——ezagent session 内的 agent 修改 esr-ng 仓库并提交 PR；② <b>产出 plugin</b>——从内部开发一个新 ezagent 插件；③ <b>生成 socialware</b>——从内部编写 + 发布 + 安装一个新 socialware。<b>交付物 = 验证报告</b>：每个面「今天能跑通什么 / 哪里断 / 缺口在哪」</td><td>自含闭环（审计 + 报告同一人）；不依赖 stable 链，可立即开工</td></tr>
 <tr><td><b>jjkysy</b></td><td>姚升悦</td><td>deploy-seed 车道 PR CI re-run → 合入（C2）；socialware boot 时序面支持</td><td>自含闭环；CI 重跑后 lead 合入</td></tr>
 <tr><td><b>zyli-developer</b></td><td>李震宇</td><td>协助主目标 E2E：agent-browser socialware 安装/卸载场景脚本化 + UI 呈现校验</td><td>依赖 stable 绿；E2E 强项</td></tr>
+<tr><td><b>ruihuachen-designer</b></td><td>陈瑞华</td><td><b>探索式玩法测试（play-testing）</b>：在新部署的 stable 上以真实用户视角自由探索平台各项玩法——session、agent、socialware 体验（hello / kanban / dealscout / autoservice）、按角色名 @mention（T3 新功能）、magic-link 登录流、world UI。<b>非脚本化 E2E</b>——像真实用户一样玩，报告任何困惑、损坏或惊喜之处。<b>交付物 = 非正式发现清单</b>：试了什么 / 什么出乎意料 / 什么坏了</td><td>依赖 stable 绿；用户视角/产品 sense 强项，与脚本化 E2E（zyli）互补</td></tr>
 </table></div>
 <p style="font-size:12px;color:#6b7280"><b>开工前必读</b>：<code>docs/together/contributing/</code> + 各自 handoff。先讨论确认范围再开工；返还前 rebase 到 current main + 自测绿（precommit + check_invariants）+ 附 contributing_read_through。</p>
 
 <h2>§4 依赖与顺序 / 并行</h2>
 <ul>
 <li><b>强串行链首</b>：#1235 已合 ✓ → stable 带修复重新部署绿（当前链首）。链首未通，主目标与官网全流程都不能开始（见 §0）。lead 内部串行推进链首。</li>
-<li><b>链尾并行</b>：stable 绿后，socialware 验证（allen/zyli）与官网全流程（zhaomaota97）可并行——共享 stable 环境但操作面不同。</li>
+<li><b>链尾并行</b>：stable 绿后，socialware 验证（allen/zyli）、官网全流程（zhaomaota97）与探索式玩法测试（ruihua）可并行——共享 stable 环境但操作面不同。</li>
 <li><b>deploy-seed 车道（C2）</b>独立于 stable 链，可提前推进 CI re-run。</li>
 <li><b>结构项（seed 三态契约 + reflow 闸）</b>独立于 stable 链，allenwoods 可在链首等待窗口穿插推进；reflow 闸落地后反过来保护后续所有部署。</li>
 <li><b>自举审计（gagameow）</b>独立于 stable 链（在现有环境验证三个面），可立即开工、全程并行。</li>

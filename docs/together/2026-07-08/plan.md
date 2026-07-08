@@ -68,13 +68,14 @@ primary 目标不是「立即可执行的并行项」，而是一条**串行依�
 | gagameow | 黄佳佳 | **ezagent-in-ezagent 自举能力审计（dogfooding）**：验证「在 ezagent 里开发 ezagent」今天是否可行，三个面逐一验证：① **改代码库 + 提 PR**——ezagent session 内的 agent 修改 esr-ng 仓库并提交 PR；② **产出 plugin**——从内部开发一个新 ezagent 插件；③ **生成 socialware**——从内部编写 + 发布 + 安装一个新 socialware。**交付物 = 验证报告**：每个面「今天能跑通什么 / 哪里断 / 缺口在哪」 | 自含闭环（审计 + 报告同一人）；不依赖 stable 链，可立即开工 |
 | jjkysy | 姚升悦 | deploy-seed 车道 PR CI re-run → 合入（C2）；socialware boot 时序面支持 | 自含闭环；CI 重跑后 lead 合入 |
 | zyli-developer | 李震宇 | 协助主目标 E2E：agent-browser socialware 安装/卸载场景脚本化 + UI 呈现校验 | 依赖 stable 绿；E2E 强项 |
+| ruihuachen-designer | 陈瑞华 | **探索式玩法测试（play-testing）**：在新部署的 stable 上以真实用户视角自由探索平台各项玩法——session、agent、socialware 体验（hello / kanban / dealscout / autoservice）、按角色名 @mention（T3 新功能）、magic-link 登录流、world UI。**非脚本化 E2E**——像真实用户一样玩，报告任何困惑、损坏或惊喜之处。**交付物 = 非正式发现清单**：试了什么 / 什么出乎意料 / 什么坏了 | 依赖 stable 绿；用户视角/产品 sense 强项，与脚本化 E2E（zyli）互补 |
 
 > **开工前必读**：`docs/together/contributing/` + 各自 handoff。先讨论确认范围再开工；返还前 rebase 到 current main + 自测绿（precommit + check_invariants）+ 附 contributing_read_through。
 
 ## §4 依赖与顺序 / 并行
 
 - **强串行链首**：#1235 已合 ✓ → stable 带修复重新部署绿（当前链首）。链首未通，主目标与官网全流程都不能开始（见 §0）。lead 内部串行推进链首。
-- **链尾并行**：stable 绿后，socialware 验证（allen/zyli）与官网全流程（zhaomaota97）可并行——两者共享 stable 环境但操作面不同。
+- **链尾并行**：stable 绿后，socialware 验证（allen/zyli）、官网全流程（zhaomaota97）与探索式玩法测试（ruihua）可并行——共享 stable 环境但操作面不同。
 - **deploy-seed 车道（C2）**独立于 stable 链，可提前推进 CI re-run。
 - **结构项（seed 三态契约 + reflow 闸）**独立于 stable 链，allenwoods 可在链首等待窗口穿插推进；reflow 闸落地后反过来保护后续所有部署。
 - **自举审计（gagameow）**独立于 stable 链（在现有环境验证三个面），可立即开工、全程并行。
