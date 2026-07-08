@@ -35,9 +35,12 @@ defmodule EzagentPluginCrawler.Application do
   `plugin_info/0` + `children/0`（爬取 `Poller` + `RetentionSweeper`）+ `roles/0`
   （dealscout 业务 recipes——demo socialware 的 agent 配方，随 demo 一起
   ship 在本 plugin）。不声明 `behaviors/0` / view —— 其余 `Ezagent.Plugin`
-  callback 保持 `use`-macro 默认（`[]` / `nil` / `:ok`）。boot 时经真 governance
-  flow **publish** dealscout demo socialware（`Demo.publish/0`，hello #162 /
-  kanban 黄金样板 —— 取代了早期 imperative `DefinitionSeed` code-seed）。
+  callback 保持 `use`-macro 默认（`[]` / `nil` / `:ok`）。dealscout demo
+  socialware **不在本 plugin boot 发布**：它以 deploy-seed 包形式随发布箱走
+  （`apps/ezagent_web/priv/socialware_seed/dealscout/manifest.yaml`，与
+  autoservice / hello / kanban 同架），由 `Ezagent.Home.SocialwareSeed` 拷进
+  部署 home、late boot scan `Ezagent.Socialware.ManifestSeed.scan_all!/1` 经
+  governed import lane 发布（hello #162 / kanban deploy-seed 迁移套路）。
   """
 
   use Application
@@ -52,43 +55,18 @@ defmodule EzagentPluginCrawler.Application do
     # 职责边界）。本 plugin 只 boot 爬取后台。
     result = Ezagent.Plugin.boot(__MODULE__)
 
-    # Boot-publish the dealscout DEMO socialware as a PUBLIC catalog entry via
-    # the REAL governance flow (`ConfigGovernance.Socialware`), the hello #162
-    # golden-template play — a fresh stack ships a discoverable/installable
-    # dealscout AND every boot dogfoods the publish path (a broken publish path
-    # fails LOUD here at boot). This REPLACES the earlier imperative
-    # `DefinitionSeed.seed_definition` code-seed (`seed_definition_if_absent`):
-    # publish is the only boot seeding path now (hello/kanban parity). Since
-    # #1213 the manifest is CONFIG (`priv/socialware/dealscout/manifest.yaml`;
-    # `Demo` is a thin loader walking the `ManifestYaml.import/2` chain). Runs
-    # in `start/2` AFTER `Ezagent.Plugin.boot/1` — the publish resolves
-    # `uses: ["hello", "crawler"]` + the `hello_render` view, which need THIS
-    # plugin's plugin_info registered (hello booted earlier as a declared dep).
-    # Idempotent (`publish_or_upgrade`: :published / :exists / :upgraded);
-    # fail-loud in dev/prod (mirrors hello `maybe_publish_hello_demo` / kanban
-    # `maybe_publish_kanban_demo`), skipped in `:test` (the DB write at plugin
-    # boot contends with the per-test Ecto sandbox — ExUnit drives
-    # `Demo.publish/0` inside a checked-out sandbox instead, see
-    # `demo_publish_test.exs`).
-    :ok = maybe_publish_dealscout_demo()
-
+    # NOTE: the dealscout DEMO socialware is NOT published here. It ships as a
+    # deploy-seed package (`apps/ezagent_web/priv/socialware_seed/dealscout/
+    # manifest.yaml`, like `autoservice` / `hello` / `kanban`):
+    # `Ezagent.Home.SocialwareSeed` copies it into the deployment home and the
+    # late boot scan `Ezagent.Socialware.ManifestSeed.scan_all!/1` (run from the
+    # last-booting transport app, AFTER this plugin + hello registered their
+    # plugin_info + `PageView` so `uses: ["hello", "crawler"]` + the
+    # `hello_render` view resolve) publishes it through the governed import lane.
+    # Zero call from this plugin's boot; `EzagentPluginCrawler.Demo` remains only
+    # as a test driver over the SAME shipped file (deploy-seed SPEC §2/§4, the
+    # hello #162 play).
     result
-  end
-
-  defp maybe_publish_dealscout_demo do
-    if @compile_env == :test do
-      :ok
-    else
-      case EzagentPluginCrawler.Demo.publish() do
-        {:ok, _published_exists_or_upgraded} ->
-          :ok
-
-        {:error, reason} ->
-          raise "EzagentPluginCrawler boot aborted — the dealscout demo socialware " <>
-                  "could not be published via the governance flow (fail-loud dogfood, " <>
-                  "hello #162 play): #{inspect(reason)}"
-      end
-    end
   end
 
   @impl Ezagent.Plugin

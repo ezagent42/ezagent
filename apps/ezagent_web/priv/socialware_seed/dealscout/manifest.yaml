@@ -1,10 +1,14 @@
-# dealscout demo socialware — the #1213 config-file form of the boot-publish
-# manifest (formerly inline `EzagentPluginCrawler.Demo.manifest_attrs/1` code).
-# Loaded at plugin boot by `EzagentPluginCrawler.Demo` through the SAME chain
-# as `Ezagent.Socialware.ManifestYaml.import/2`
-# (parse → ManifestResolver.resolve → Conformance.check_candidate →
-# publish_or_upgrade). Semantics are the judge: this file must resolve to the
-# exact Definition the retired code attrs produced (conformance 13/13 green).
+# dealscout demo socialware — a deploy-seed package (mirrors autoservice / hello
+# / kanban). Production carries this file in the release box; on a fresh stack
+# `Ezagent.Home.SocialwareSeed` copies it into the deployment home
+# (`$EZAGENT_HOME/<profile>/socialware/dealscout/`) and the late boot scan
+# `Ezagent.Socialware.ManifestSeed.scan_all!/1` resolves + publishes it through
+# the governed import lane (parse → ManifestResolver.resolve →
+# Conformance.check_candidate → publish_or_upgrade). There is ZERO self-publish
+# from the crawler plugin's boot; `EzagentPluginCrawler.Demo` remains only as a
+# test driver over this SAME file. Semantics are the judge: this file must
+# resolve to the exact Definition the retired code attrs produced (conformance
+# 13/13 green).
 #
 # Shape notes (what dealscout composes — 职责重划 2026-07-06 拍板):
 #   * dealscout = 后台数据（爬取 plugin `crawler` + discover agent 用 crawl
