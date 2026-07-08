@@ -7,6 +7,9 @@ defmodule Ezagent.AgentBridge.CompleteTest do
   end
 
   test "complete/2 exists with the documented arity/spec" do
+    # function_exported? never loads — force-load so an umbrella-root run
+    # (module not yet touched by another test) can't flake on order.
+    assert Code.ensure_loaded!(Ezagent.AgentBridge)
     assert function_exported?(Ezagent.AgentBridge, :complete, 2)
   end
 
@@ -19,6 +22,7 @@ defmodule Ezagent.AgentBridge.CompleteTest do
   end
 
   test "complete/3 exists with the documented arity/spec" do
+    assert Code.ensure_loaded!(Ezagent.Entity.Agent)
     assert function_exported?(Ezagent.Entity.Agent, :complete, 3)
   end
 end
