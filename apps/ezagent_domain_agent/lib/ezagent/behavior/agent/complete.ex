@@ -20,12 +20,16 @@ defmodule Ezagent.ActionSet.Agent.Complete do
   )
 
   @impl Ezagent.Lifecycle
+  @doc false
   def create(_args), do: {:ok, %{}}
 
   @doc false
   def handle_complete(_args, _ctx), do: {:ok, %{}, []}
 
-  # caps-data-ownership — this Behavior is cap-only; no per-entity data.
+  # caps-data-ownership — cap-only Behavior; no per-entity data.
+  @doc false
   def data_owner(:any), do: :any
+
+  @doc false
   def data_owner(_), do: :no_owner
 end

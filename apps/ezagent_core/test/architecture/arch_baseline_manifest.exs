@@ -436,7 +436,11 @@
   #   counted-undocumented quote defaults. +1 symmetric with them. 393→394.
   # +1 #1217: list_sessions/2 catch-all clause in conversation_session_state.ex
   # (rescue wrapper as public API surface). 394→395.
-  undocumented_public_defs: 395,
+  # - arch-cap-bump: +3 #1239/#1243 — new `Ezagent.ActionSet.Agent.Complete`
+  #   cap-only Lifecycle module for the :complete cap subject. Adds standard
+  #   boilerplate (create/1, data_owner/1, data_owner/2 — all @doc false now)
+  #   plus Lifecycle macro-generated structural fns. 395→398.
+  undocumented_public_defs: 398,
   # dynamic_public_def_heads — `def unquote(name)(...)` heads whose function name
   #   is only known at macro-expansion, so they cannot become a documented
   #   {name, arity} entry. ENFORCED at 0 (the tree has none): adding any new
