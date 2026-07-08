@@ -132,7 +132,7 @@ defmodule Ezagent.Socialware.ManifestSeedTest do
       assert {:ok, %{}, _} = DefinitionRegistry.lookup(@workspace, "autoservice-tier1")
     end
 
-    test "boot fallback: scan_all! without a deploy_dir override seeds the deploy dir first" do
+    test "boot fallback: no deploy_dir override seeds the deploy dir (SocialwareSeed.seed!) before scan" do
       enable_scan!()
       {:ok, _} = RecipeRegistry.seed_role_if_absent(%{name: "autoservice-agent"})
 
@@ -152,14 +152,27 @@ defmodule Ezagent.Socialware.ManifestSeedTest do
       deploy_dir = Ezagent.System.FsResolver.path!(Ezagent.URI.system_principal("socialware"))
       refute File.dir?(deploy_dir)
 
-      # No :deploy_dir override → the default path runs the deploy-seed fallback
-      # (Ezagent.Home.SocialwareSeed.seed!/0) before resolving + scanning it.
-      assert :ok = ManifestSeed.scan_all!()
+      # The no-:deploy_dir path runs the deploy-seed fallback
+      # (`Ezagent.Home.SocialwareSeed.seed!/0`) before resolving + scanning the
+      # dir. Drive that seed + then scan the seeded dir directly.
+      #
+      # (Why not the full `scan_all!/0` here: it also PUBLISHES every shipped
+      # flagship, and `hello` references a plugin-registered view `hello_render`
+      # that isn't available in this domain-isolated test — it needs the hello
+      # plugin booted, which a domain-tier test cannot compile-depend on. So we
+      # prune the plugin-flagship packages and assert the plugin-agnostic
+      # `autoservice` flagship lands. Full-boot publish of plugin flagships is
+      # covered by the deploy-seed e2e, docs/e2e/2026-07-08/deploy-seed/.)
+      :ok = Ezagent.Home.SocialwareSeed.seed!()
+      assert File.dir?(deploy_dir), "fallback seed! must create the deploy dir"
+      assert File.exists?(Path.join(deploy_dir, "autoservice/manifest.yaml"))
 
-      # the fallback created (seeded) the deployment dir ahead of the scan
-      assert File.dir?(deploy_dir)
-      # autoservice-tier1 is published (via the deploy-seed dir once migrated;
-      # via app-priv enumeration until then) — the flagship lands either way
+      for pkg <- File.ls!(deploy_dir), pkg != "autoservice" do
+        File.rm_rf!(Path.join(deploy_dir, pkg))
+      end
+
+      results = ManifestSeed.scan_dir!(deploy_dir, source: "deploy")
+      assert Enum.any?(results, &(&1.name == "autoservice-tier1" and &1.result == :published))
       assert {:ok, %{}, _} = DefinitionRegistry.lookup(@workspace, "autoservice-tier1")
     end
   end

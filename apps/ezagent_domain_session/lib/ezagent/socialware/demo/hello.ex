@@ -1,23 +1,31 @@
 defmodule Ezagent.Socialware.Demo.Hello do
   @moduledoc """
-  The **hello demo socialware** — the one source of truth for the hello manifest
-  and its boot-time publish.
+  Thin YAML loader + **test driver** for the hello demo socialware.
 
-  Task #162 (Allen 2026-07-04). A fresh stack ships a discoverable, installable
-  **hello** demo socialware, but seeded by DOGFOODING the real publish path
-  (`Ezagent.ConfigGovernance.Socialware`: `open_cr → stage_definition
-  → publish_cr`), NOT a hard-coded direct ConfigStore write. Every boot exercises
-  the real governance flow, so a broken publish path fails LOUD at boot.
+  ## Production publishes via the deploy-seed lane (NOT this module)
 
-  ## One definition of truth
+  The hello manifest is CONFIG — `apps/ezagent_web/priv/socialware_seed/hello/
+  manifest.yaml` — carried in the release box exactly like `autoservice`. On a
+  fresh stack `Ezagent.Home.SocialwareSeed` idempotently copies that package
+  into the canonical deployment home (`$EZAGENT_HOME/<profile>/socialware/
+  hello/`), and the late boot scan `Ezagent.Socialware.ManifestSeed.scan_all!/1`
+  (run from the last-booting transport app) resolves + publishes it through the
+  governed import lane. There is **zero boot-time call into this module** — the
+  former `EzagentPluginHello.Application` self-publish is gone (deploy-seed SPEC
+  §2/§4).
 
-  `manifest_attrs/1` returns the config-authored manifest shape (the same shape
-  that previously lived only as the `hello_manifest_attrs` test fixture in
-  `EzagentWeb.WorldConversationTest`). The acceptance test now sources its
-  manifest from here with unique per-run names (parallel-test isolation); the
-  boot path calls it with the stable demo defaults (`name: "hello"`, `recipe:
-  "np"`, `role: "hello-helper"`). Same source → the fixture and the boot demo can
-  never drift.
+  ## What this module is for
+
+  A test driver. `manifest_attrs/1` (no `:role_name`) loads the SAME shipped YAML
+  via `Ezagent.Socialware.ManifestYaml.parse/1`, so tests exercise the exact
+  manifest production ships — the file is the one source of truth and the shape
+  gate (`demo_hello_test.exs`) locks it against drift. `publish/0` /
+  `published?/0` walk the real governance flow so acceptance tests can drive a
+  publish inside a checked-out Ecto sandbox (the boot lane skips `:test`).
+
+  The `:role_name` option keeps the legacy single-agent fixture shape (`code`,
+  not YAML) used by older materialization tests — it is a test fixture only,
+  never a production shape.
 
   ## Where it publishes
 
@@ -29,7 +37,7 @@ defmodule Ezagent.Socialware.Demo.Hello do
 
   ## Authority
 
-  Mirrors the acceptance test's publish ctx: `caller` = the bootstrap admin URI
+  Mirrors the operator seed ctx: `caller` = the bootstrap admin URI
   (`user://system/admin`), `caps` = the socialware `manage` cap for `hello` in
   the system workspace + `Ezagent.Capability.admin_genesis_cap/0` (the admin gate
   `publish_cr/2` requires for a `:public` scope).
@@ -38,22 +46,17 @@ defmodule Ezagent.Socialware.Demo.Hello do
 
   `publish/0` routes through the shared idempotency RULE
   (`ConfigGovernance.Socialware.publish_or_upgrade/2`, P0 §5): an unchanged
-  redeploy no-ops to `{:ok, :exists}` WITHOUT opening a CR, so a re-boot /
-  supervisor restart never re-opens a change request or writes a duplicate; an
-  EDITED manifest re-promotes to `{:ok, :upgraded}` (the old existence-check
-  silently swallowed manifest edits — R-2, §5.2). Combined with the fail-loud
-  boot guard at the call site, a partial publish crashes the boot rather than
-  silently accumulating CRs.
+  redeploy no-ops to `{:ok, :exists}` WITHOUT opening a CR; an EDITED manifest
+  re-promotes to `{:ok, :upgraded}` (the old existence-check silently swallowed
+  manifest edits — R-2, §5.2).
   """
 
-  alias Ezagent.Socialware.{Definition, DefinitionRegistry, ManifestResolver}
+  alias Ezagent.Socialware.{Definition, DefinitionRegistry, ManifestResolver, ManifestYaml}
   alias Ezagent.ConfigGovernance.Socialware, as: Governance
 
   @name "hello"
   @recipe "np"
-  @builder_role "builder"
-  @responser_role "responser"
-  @viewer_role "viewer"
+  @manifest_relpath "hello/manifest.yaml"
 
   @doc "The stable demo socialware name (`\"hello\"`)."
   @spec name() :: String.t()
@@ -64,25 +67,59 @@ defmodule Ezagent.Socialware.Demo.Hello do
   def owner_workspace_uri, do: DefinitionRegistry.system_workspace_uri()
 
   @doc """
-  The hello demo manifest attributes (config-authored, string module-refs).
+  Absolute path of the shipped hello manifest YAML, discovered generically
+  through `Ezagent.Home.SocialwareSeed.source_dirs/0` (every loaded OTP app's
+  `priv/socialware_seed`) — the SAME discovery the deploy-seed lane uses. Today
+  the package ships in `ezagent_web`, but this names no app: whichever app ships
+  it is found. `nil` when no loaded app carries the package.
+  """
+  @spec manifest_path() :: Path.t() | nil
+  def manifest_path do
+    Ezagent.Home.SocialwareSeed.source_dirs()
+    |> Enum.map(&Path.join(&1, @manifest_relpath))
+    |> Enum.find(&File.exists?/1)
+  end
 
-  Options (all default to the stable demo values):
-    * `:name` — the socialware/definition name (default `"hello"`)
-    * `:recipe_name` — the agent recipe the definition materializes (default `"np"`)
+  @doc """
+  The hello demo manifest attributes.
+
+  With NO `:role_name`, the reference (3-role) shape is loaded from the shipped
+  `manifest.yaml` via `ManifestYaml.parse/1` — the file production ships is the
+  one source of truth. Fail-loud: a missing or unparseable manifest raises.
+
+  Options:
+    * `:name` — override the socialware/definition name (tests pass per-run
+      unique names for parallel-test isolation; default `"hello"`)
+    * `:recipe_name` — the agent recipe (legacy branch only; default `"np"`)
     * `:role_name` — when present, emit the legacy single-agent fixture shape
-      used by older materialization tests.
+      (`code`, not YAML) used by older materialization tests.
 
   The returned map is `ManifestResolver.resolve/1`-ready (name refs, not modules).
   """
   @spec manifest_attrs(keyword()) :: map()
   def manifest_attrs(opts \\ []) do
-    name = Keyword.get(opts, :name, @name)
-    recipe_name = Keyword.get(opts, :recipe_name, @recipe)
-
     if Keyword.has_key?(opts, :role_name) do
+      name = Keyword.get(opts, :name, @name)
+      recipe_name = Keyword.get(opts, :recipe_name, @recipe)
       legacy_manifest_attrs(name, recipe_name, Keyword.fetch!(opts, :role_name))
     else
-      reference_manifest_attrs(name, recipe_name)
+      reference_manifest_attrs(Keyword.get(opts, :name, @name))
+    end
+  end
+
+  # Load the shipped reference manifest from YAML and apply the `:name` override.
+  defp reference_manifest_attrs(name) do
+    path =
+      manifest_path() ||
+        raise "hello manifest.yaml not found in any loaded app's priv/socialware_seed " <>
+                "(expected #{@manifest_relpath}); is the shipping app (ezagent_web) loaded?"
+
+    case ManifestYaml.parse(File.read!(path)) do
+      {:ok, attrs} ->
+        Map.put(attrs, "name", name)
+
+      {:error, reason} ->
+        raise "hello manifest.yaml failed to parse (#{path}): #{inspect(reason)}"
     end
   end
 
@@ -110,55 +147,6 @@ defmodule Ezagent.Socialware.Demo.Hello do
         "web_anon_access" => true
       }
     }
-  end
-
-  defp reference_manifest_attrs(name, recipe_name) do
-    base_manifest_attrs(name)
-    |> Map.merge(%{
-      "roles" => [
-        %{
-          "role_name" => @builder_role,
-          "fill" => "agent",
-          "recipe" => recipe_name,
-          "flavor" => "py"
-        },
-        %{
-          "role_name" => @responser_role,
-          "fill" => "agent",
-          "recipe" => recipe_name,
-          "flavor" => "py"
-        },
-        %{"role_name" => @viewer_role, "fill" => "human"}
-      ],
-      "prompt_templates" => %{},
-      "legends" => %{
-        "hello" => %{
-          "member_set" => [@viewer_role, @responser_role, @builder_role],
-          "bound_rule_set" => "default",
-          "fold" => false
-        }
-      },
-      "routing_rules" => [
-        %{
-          "matcher" => %{"type" => "from_role", "arg" => @viewer_role},
-          "receivers" => [@responser_role],
-          "rule_set" => "default",
-          "position" => 0
-        },
-        %{
-          "matcher" => %{
-            "type" => "and",
-            "items" => [
-              %{"type" => "from_role", "arg" => @responser_role},
-              %{"type" => "text_matches", "arg" => "^\\[need-build\\]"}
-            ]
-          },
-          "receivers" => [@builder_role],
-          "rule_set" => "default",
-          "position" => 1
-        }
-      ]
-    })
   end
 
   defp legacy_manifest_attrs(name, recipe_name, role_name) do
