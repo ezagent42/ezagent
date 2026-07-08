@@ -71,32 +71,15 @@ defmodule Ezagent.Socialware.ManifestSeedTest do
     end
   end
 
-  describe "scan_all!/1 — one late lane over deploy dir + started app privs" do
+  describe "scan_all!/1 — one late lane over the single deploy dir" do
     test "no-op when boot scanning is disabled (test default)" do
       root = tmp_root()
       name = "seed-yaml-disabled-#{uniq()}"
       recipe = seed_recipe()
       write_manifest(root, "one", manifest_yaml(name, recipe))
 
-      assert :ok = ManifestSeed.scan_all!(sources: [{"deploy", root}])
+      assert :ok = ManifestSeed.scan_all!(deploy_dir: root)
       assert :error = DefinitionRegistry.lookup(@workspace, name)
-    end
-
-    test "sweeps explicitly injected sources in order" do
-      enable_scan!()
-      deploy_root = tmp_root()
-      app_root = tmp_root()
-      recipe = seed_recipe()
-      deploy_name = "seed-yaml-deploy-#{uniq()}"
-      app_name = "seed-yaml-app-#{uniq()}"
-      write_manifest(deploy_root, "one", manifest_yaml(deploy_name, recipe))
-      write_manifest(app_root, "two", manifest_yaml(app_name, recipe))
-
-      assert :ok =
-               ManifestSeed.scan_all!(sources: [{"deploy", deploy_root}, {"some_app", app_root}])
-
-      assert {:ok, %{}, _} = DefinitionRegistry.lookup(@workspace, deploy_name)
-      assert {:ok, %{}, _} = DefinitionRegistry.lookup(@workspace, app_name)
     end
 
     test "publishes autoservice from the deploy-seed dir" do

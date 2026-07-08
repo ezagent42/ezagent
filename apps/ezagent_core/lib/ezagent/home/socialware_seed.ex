@@ -17,10 +17,9 @@ defmodule Ezagent.Home.SocialwareSeed do
   manifests through the governed import lane afterwards.
 
   Layer-clean: `ezagent_core` names NO higher-layer app. Sources are discovered
-  generically by scanning every loaded OTP app's `priv/socialware_seed` — the
-  same app-enumeration shape `Ezagent.Socialware.ManifestSeed` uses for its
-  `app_sources` — so whichever app ships a package (today `ezagent_web`) is found
-  without a hardcoded reference.
+  generically by scanning every loaded OTP app's `priv/socialware_seed` — so
+  whichever app ships a package (today `ezagent_web`) is found without a
+  hardcoded reference.
   """
 
   require Logger
@@ -69,7 +68,7 @@ defmodule Ezagent.Home.SocialwareSeed do
       Keyword.get_lazy(opts, :dest, fn ->
         # Resolve the node-global deploy dir through the sanctioned system://
         # seam (Ezagent.System.FsResolver), NOT raw Ezagent.Home — same
-        # chokepoint ManifestSeed.deploy_sources uses, so seed dest == scan dir.
+        # chokepoint ManifestSeed.deploy_dir uses, so seed dest == scan dir.
         Ezagent.System.FsResolver.path!(Ezagent.URI.system_principal("socialware"))
       end)
 

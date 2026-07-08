@@ -1,28 +1,25 @@
 defmodule Ezagent.Socialware.ManifestSeed do
   @moduledoc """
-  Late boot-time socialware manifest scanner — ONE lane for every local
-  manifest source (sw-home lane, 2026-07-07; supersedes the early
-  domain_session-priv-only scan).
+  Late boot-time socialware manifest scanner — ONE lane over the single
+  deployment-level seed directory (sw-home lane, 2026-07-07; supersedes the
+  early domain_session-priv-only scan).
 
   `scan_all!/1` runs once, AFTER every umbrella app has started (triggered
   from the last-booting transport app, `EzagentWeb.Application`), and sweeps
-  in deterministic order:
+  the deployment-level seed directory — `system://socialware`
+  (`$EZAGENT_HOME/<profile>/socialware/*/manifest.yaml`), resolved through
+  `Ezagent.System.FsResolver` (never raw `Ezagent.Home`); silently skipped
+  when the directory does not exist. Shipped flagships are seeded here from
+  `ezagent_web/priv/socialware_seed/<name>/` by `Ezagent.Home.SocialwareSeed`
+  (home.init + a boot fallback); this is the **canonical and only** socialware
+  home (deploy-seed SPEC §4).
 
-    1. the deployment-level seed directory — `system://socialware`
-       (`$EZAGENT_HOME/<profile>/socialware/*/manifest.yaml`), resolved
-       through `Ezagent.System.FsResolver` (never raw `Ezagent.Home`);
-       silently skipped when the directory does not exist. Shipped flagships
-       are seeded here from `ezagent_web/priv/socialware_seed/<name>/` by
-       `Ezagent.Home.SocialwareSeed` (home.init + a boot fallback); this is the
-       **canonical** socialware home (deploy-seed SPEC §4);
-    2. every started OTP app's `priv/socialware/*/manifest.yaml`, apps
-       sorted by name (apps without a priv dir are skipped).
-
-  The deployment directory is the canonical socialware home. The app-priv
-  `priv/socialware/<name>/manifest.yaml` authoring lane (source 2) is
-  **DEPRECATED** (deploy-seed SPEC §2) and forbidden by the
-  `socialware_priv_manifest_files` arch gate — the scan code path stays until a
-  cleaner retires it. A name published by more than one source settles via the
+  Single-source contract: the deployment directory is the sole manifest
+  source. The former app-priv `priv/socialware/<name>/manifest.yaml` authoring
+  lane was retired by the deploy-seed migration (autoservice #1231, hello
+  #1233) and is forbidden by the `socialware_priv_manifest_files` arch gate
+  (#1246); its now-dead boot-scan branch was removed in #1227. A name
+  published by more than one manifest under the deploy dir settles via the
   `ConfigGovernance.Socialware.publish_or_upgrade/2` idempotency
   (`:published` / `:upgraded` / `:exists`).
 
@@ -55,11 +52,11 @@ defmodule Ezagent.Socialware.ManifestSeed do
   end
 
   @doc """
-  Sweep every local manifest source through the governed import lane.
+  Sweep the single deployment-level manifest source through the governed
+  import lane.
 
-  No-op when `enabled?/0` is false (test default). Options (tests only):
+  No-op when `enabled?/0` is false (test default). Option (tests only):
 
-    * `:sources` — override the collected `[{source_label, dir}]` list;
     * `:deploy_dir` — override the deployment-level directory (default:
       `system://socialware` via `Ezagent.System.FsResolver`).
 
@@ -68,9 +65,8 @@ defmodule Ezagent.Socialware.ManifestSeed do
   @spec scan_all!(keyword()) :: :ok
   def scan_all!(opts \\ []) do
     if enabled?() do
-      opts
-      |> Keyword.get_lazy(:sources, fn -> default_sources(opts) end)
-      |> Enum.each(fn {source, dir} -> _ = scan_dir!(dir, source: source) end)
+      dir = deploy_dir(opts)
+      if File.dir?(dir), do: scan_dir!(dir, source: "deploy")
     end
 
     :ok
@@ -102,48 +98,24 @@ defmodule Ezagent.Socialware.ManifestSeed do
     end)
   end
 
-  # Deterministic source order: deployment-level dir first, then every started
-  # OTP app's priv/socialware, apps sorted by name.
-  defp default_sources(opts) do
-    deploy_sources(opts) ++ app_sources()
-  end
+  # The single manifest source: the deployment-level seed directory.
+  defp deploy_dir(opts) do
+    case Keyword.fetch(opts, :deploy_dir) do
+      {:ok, override} ->
+        # Tests inject an explicit dir — do NOT seed the real deployment home.
+        override
 
-  defp deploy_sources(opts) do
-    dir =
-      case Keyword.fetch(opts, :deploy_dir) do
-        {:ok, override} ->
-          # Tests inject an explicit dir — do NOT seed the real deployment home.
-          override
-
-        :error ->
-          # Boot fallback (deploy-seed SPEC §4): CI/dev that never ran
-          # `mix ezagent.home.init` still gets the shipped flagships into the
-          # deployment dir. Idempotent FS copy (respects operator edits); runs
-          # ahead of resolving + scanning the dir. `Ezagent.Home.SocialwareSeed`
-          # lives in ezagent_core (domain_session → core dependency is valid).
-          _ = Ezagent.Home.SocialwareSeed.seed!()
-          # OI-3: node-global deployment artifact — resolved through the
-          # hardened system:// seam, not raw Ezagent.Home.
-          Ezagent.System.FsResolver.path!(Ezagent.URI.system_principal("socialware"))
-      end
-
-    if File.dir?(dir), do: [{"deploy", dir}], else: []
-  end
-
-  defp app_sources do
-    Application.started_applications()
-    |> Enum.map(fn {app, _desc, _vsn} -> app end)
-    |> Enum.sort()
-    |> Enum.flat_map(fn app ->
-      case :code.priv_dir(app) do
-        {:error, :bad_name} ->
-          []
-
-        priv ->
-          dir = Path.join(List.to_string(priv), "socialware")
-          if File.dir?(dir), do: [{Atom.to_string(app), dir}], else: []
-      end
-    end)
+      :error ->
+        # Boot fallback (deploy-seed SPEC §4): CI/dev that never ran
+        # `mix ezagent.home.init` still gets the shipped flagships into the
+        # deployment dir. Idempotent FS copy (respects operator edits); runs
+        # ahead of resolving + scanning the dir. `Ezagent.Home.SocialwareSeed`
+        # lives in ezagent_core (domain_session → core dependency is valid).
+        _ = Ezagent.Home.SocialwareSeed.seed!()
+        # OI-3: node-global deployment artifact — resolved through the
+        # hardened system:// seam, not raw Ezagent.Home.
+        Ezagent.System.FsResolver.path!(Ezagent.URI.system_principal("socialware"))
+    end
   end
 
   defp import_manifest_path(path) do
