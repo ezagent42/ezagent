@@ -56,12 +56,12 @@ defmodule EzagentPluginKanban.MixProject do
       # is registered before this plugin's `Ezagent.Plugin.boot/1` seeds its role
       # (the seam is no-op if unregistered — the dep removes that race).
       {:ezagent_domain_agent, in_umbrella: true},
-      # kanban socialware boot-publish: domain_session is a PROD dep, not
-      # test-only — `EzagentPluginKanban.Demo.publish/0` hard-refs
-      # `Ezagent.Socialware.{ManifestResolver,ConfigGovernance.Socialware}` in
-      # lib/ (boot governance publish of the kanban Definition, mirrors hello's
-      # declared prod dep on domain_session). Undeclared it is a latent
-      # "module not available" hazard (#57 arch gate).
+      # kanban socialware: domain_session is a PROD dep, not test-only —
+      # `EzagentPluginKanban.Demo` hard-refs `Ezagent.Socialware.ManifestYaml`
+      # in lib/ (the thin loader over the shipped deploy-seed manifest; the
+      # governed publish now runs on the deploy-seed lane, not this plugin's
+      # boot). Undeclared it is a latent "module not available" hazard (#57 arch
+      # gate).
       {:ezagent_domain_session, in_umbrella: true},
       # kanban board view (S4): domain_ui owns the `Ezagent.UI.SessionView`
       # contract + `SessionViewRegistry` that `BoardView` implements/registers
