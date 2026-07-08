@@ -1,11 +1,13 @@
 defmodule EzagentPluginCrawler.DemoTest do
   @moduledoc """
-  Shape gate for the dealscout demo socialware manifest — since the #1213 YAML
-  migration the one-source-of-truth is
-  `priv/socialware/dealscout/manifest.yaml`, loaded by the
-  `EzagentPluginCrawler.Demo` thin loader via
-  `Ezagent.Socialware.ManifestYaml.parse/1` (the hello #162 / kanban
-  golden-template play, now as a config FILE). Proves the YAML file exists +
+  Shape gate for the dealscout demo socialware manifest — the one-source-of-truth
+  is the deploy-seed package `apps/ezagent_web/priv/socialware_seed/dealscout/
+  manifest.yaml` (carried in the release box like `autoservice` / `hello` /
+  `kanban`), loaded by the `EzagentPluginCrawler.Demo` thin test driver via
+  `Ezagent.Socialware.ManifestYaml.parse/1`. Production publishes this SAME file
+  through the deploy-seed lane (`Ezagent.Home.SocialwareSeed` copy →
+  `Ezagent.Socialware.ManifestSeed` scan/publish), not this module. Proves the
+  YAML file exists +
   parses, that the parsed manifest resolves through
   `Ezagent.Socialware.ManifestResolver.resolve/1`
   (the fail-closed authoring boundary), composes hello's public face
@@ -29,13 +31,13 @@ defmodule EzagentPluginCrawler.DemoTest do
     definition
   end
 
-  test "the manifest source is the priv YAML file: exists, parses, and IS manifest_attrs/0" do
+  test "the manifest source is the deploy-seed YAML file: exists, parses, and IS manifest_attrs/0" do
     path = Demo.manifest_path()
     assert File.exists?(path)
-    assert String.ends_with?(path, "priv/socialware/dealscout/manifest.yaml")
+    assert String.ends_with?(path, "priv/socialware_seed/dealscout/manifest.yaml")
 
     # `manifest_attrs/0` (no overrides) is EXACTLY the parsed YAML — the loader
-    # adds nothing, so the config file is the one source of truth (#1213).
+    # adds nothing, so the config file is the one source of truth.
     assert {:ok, parsed} = ManifestYaml.parse(File.read!(path))
     assert parsed == Demo.manifest_attrs()
 
