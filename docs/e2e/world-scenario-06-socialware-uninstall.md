@@ -1,6 +1,6 @@
 # World 场景 06(执行记录):成员移除与 Socialware 卸载
 
-- 状态: pending, waiting for agent-browser run on a live server
+- 状态: partial, agent-browser authenticated run captured; uninstall panel still needs follow-up
 - 验证面: world UI / session management panel / socialware uninstall
 - 执行人: Codex + agent-browser
 - 环境: branch work/sw-uninstall-ui, server http://world.localhost:10042
@@ -18,6 +18,15 @@
 - 创建一个安装 socialware 的 session 后,成员面板按 socialware 显示已装项。
 - 点击已装项的卸载按钮并确认后,该 session 的 socialware 成员、session-created routing rules、socialware view tabs 全部消失。
 
+## 2026-07-08 agent-browser run
+
+- auth profile: `ezagent-world-local`
+- target: `http://world.localhost:10042`
+- evidence:
+  - `docs/e2e/evidence/world-scenario-06-socialware-uninstall/world-s06-step01-authenticated-sessions.png`
+  - `docs/e2e/evidence/world-scenario-06-socialware-uninstall/world-s06-step02-installed-socialware-panel.png`
+- backend/LV validation: `mix test apps/ezagent_web/test/ezagent_web/world_conversation_test.exs` -> `41 tests, 0 failures`
+- current browser finding: authenticated navigation worked, and the backend socialware install pointer existed for `session://system/socialware-install-socialware/world-e2e-socialware-setup`; however `[data-world-socialware-uninstall-panel]` and `[data-world-socialware-uninstall-button]` were both `0` in the live DOM, so the final uninstall click screenshot remains pending.
 ## 自动化运行(agent-browser runbook)
 
 - 入口 URL: http://world.localhost:10042/sessions
