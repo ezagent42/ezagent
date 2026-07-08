@@ -12,6 +12,16 @@
 > one-line status. Conservative rule applied: RESOLVED only with concrete
 > code/PR/test evidence; otherwise left open.
 
+## 2026-07-09 plan input — 官网 session 重建 (Allen 2026-07-08)
+
+- **官网 hello session 重建** — the live golive hello sessions are stale
+  instances of the OLD hello Definition (created 2026-07-06, before #1243's
+  front-desk relay + curl-llm delegation + `requires: ["orchestrator"]`).
+  After #1243 lands: delete/archive the old website sessions → re-run hello
+  `ensure_app`/instantiate from the new Definition → verify greeter +
+  curl-llm reply E2E on the deployed channel. Owner: zhaomato (官网 full-loop
+  track). MUST appear in the 2026-07-09 together plan.
+
 ## 2026-07-05 — #161 A2 deferrals (membership-cap receive/read/removal cutover)
 
 A2 (receive/read/removal held-cap cutover) landed the load-bearing security
