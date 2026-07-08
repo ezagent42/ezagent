@@ -8,6 +8,11 @@
 > 变动,派生*输出*在此重新核对)。命名对齐 GLOSSARY **决策 #161**(声明/内容分层词:
 > `Registry`=运行时索引,`Seed`=安装通道,`Materializer`/原子换入=声明→artifact)。
 > seed 对账沿用 **#1242** 的三/四态 `seed_object_upsert` 契约。
+> Rev 2(本 SPEC 经 codex 对抗评审 NEEDS-CHANGES → 已修):HIGH-1 —— P2
+> seed/升级改为**原子**(staging 兄弟目录 + rename,boot 恢复删 `*.staging-*`;
+> §4.1.6 + 崩溃恢复 gate);MED-2 —— P2 新增**全新-home 启动顺序 gate**,切换在
+> P2 内自证、不推给 P3(§4.2);实现约束:IC-1 mode 归一化为 exec 位 + 空目录
+> 说明;IC-4 命名 `mix ezagent.skills.regen_seed`。
 
 ---
 
@@ -95,7 +100,8 @@ orchestrator(或任何 recipe 引用的 skill)必须能在**已部署节点**上
    (部署/装配顶层 app),对齐 `socialware_seed`:`mix release` 只打包各 app `priv/`,故字节必须
    在某 app `priv/` 下,`ezagent_web` 即 socialware 所选同一 app。目录名 `skills_seed`(≠ `skills`)
    使其不被将来的 `skills` 运行时扫描二次扫到。此落地是派生**产出**的源内容,非手列 —— codex
-   跑派生(遍历 `roles/0`)并拷每个派生 ref 的 dev-tree 闭包来重生成。
+   经专用 **`mix ezagent.skills.regen_seed`** 任务(IC-4)重生成:跑派生(遍历 `roles/0`)
+   并拷每个派生 ref 的 dev-tree 闭包。
 2. **`Ezagent.SkillRegistry`**(`Registry` 层,GLOSSARY #161)—— `ref → {source_dir,
    content_hash}` 索引。**P1 里直接读打包源**:枚举每个已加载 app 的 `priv/skills_seed/<ref>/`
    (通用扫描,`SocialwareSeed.source_dirs/0` 手法 —— 无硬编码 app ref),对每个目录闭包做 hash
@@ -188,7 +194,21 @@ walk-up 禁用而 session-create 绿;`1d5aeca` 无害冗余,待协调者退役�
    release upgrade` 触发,说明因部署目录副本被运维改过而扣留了一次 release skill 升级。要取 release 版:
    备份并删 `$EZAGENT_HOME/<profile>/skills/<ref>/`,再跑 boot seed(或 `mix ezagent.home.init`)——
    它从 `priv/skills_seed` 重种并 bump 索引。"*
-6. **权威保持 system-vetted(设计 §5.3)。** 无运行时可写发布面。store 仅由 `home.init`/boot seed 与
+6. **原子目录物化 —— 崩溃安全的 seed/升级(codex 评审 HIGH-1)。** §4.1.5 矩阵只覆盖
+   **完整**目录;拷贝/升级中途崩溃绝不能让 `$EZAGENT_HOME/<profile>/skills/<ref>/` 半填充
+   —— P2 已把 registry 重指该单一源,半成品目录会被 hash 并**误判为运维改过**(永久保留)
+   或干脆坏掉。中断以结构化方式处理,用与 **`HomeRuntime.stage_and_swap` 相同的全新-staging
+   手法**(`home_runtime.ex:279` / `Materializer.atomic_replace`):
+   - **写临时兄弟目录,rename 入位。** 每次 seed 与升级先拷进
+     `<deploy_dir>/<ref>.staging-<nonce>`(同文件系统 → 同设备 rename),再原子 rename 为
+     `<deploy_dir>/<ref>`(升级:先移开/删旧目录,再 rename staging 入位 —— 若
+     `Ezagent.Agent.Materializer.atomic_replace/2` 契约合适则复用,否则本地同款两步)。
+   - **boot 恢复规则。** registry 扫描前,`SkillSeed` **删除** skills 部署目录下所有残留
+     `*.staging-*` 目录。被中断的 seed/升级因此只会留下**旧的完整目录**或**新的完整目录**
+     —— 绝无半成品 —— hash 矩阵只见完整闭包。
+   - **registry 卫生。** `SkillRegistry` 扫描防御性**跳过 `*.staging-*` 名**(staging 目录
+     绝不入索引)。
+7. **权威保持 system-vetted(设计 §5.3)。** 无运行时可写发布面。store 仅由 `home.init`/boot seed 与
    有节点权限的运维写。未知/未授权 ref **大声**失败(`{:skill_source_not_found, ref}` → `role_degraded`
    + telemetry),绝不静默跳过。
 
@@ -199,6 +219,14 @@ walk-up 禁用而 session-create 绿;`1d5aeca` 无害冗余,待协调者退役�
   `Logger.warning` 串 + telemetry 事件触发**,经 `:telemetry_test` handler)。
 - **`skill_registry_test.exs` 扩展**:seed 后 `resolve/1` 读 `$EZAGENT_HOME` 源;运维投放的 `<ref>`
   目录在下次扫描注册;索引对账正确命中 `:seeded` / `:exists` / 升级。
+- **崩溃恢复 gate(HIGH-1)**:模拟被中断的物化 —— 在部署目录种一个内容**不完整**的
+  `<ref>.staging-<nonce>` 目录(第二个用例:旧的完整 `<ref>` 目录旁有陈旧 staging)→ 走 boot
+  seed 路径 → 断言 staging 残留被**删除**、seed **完成**、`SkillRegistry.resolve/1` 返回该 ref 的
+  **完整**闭包(hash 正确,无"运维改过"误判)。
+- **全新-home 启动顺序 gate(MED-2)**:从**全新 `$EZAGENT_HOME`** 起步(测试内任何地方都不手调
+  `seed!`),按 **application supervisor 实际接线顺序**走 seed + registry 路径(含无 `home.init` 的
+  boot 兜底),断言**每个派生 `Recipe.skills` ref 在任何消费者读 registry 之前均可解析**。这证明
+  P2 可独立部署 —— 全新-home 切换不得等到 P3 的冷 spawn 测试。
 - **`fs_resolver` / `home` 测试**:`skills` 类型解析到部署目录;骨架 mkdir 在。
 - 常规 gate(§3.2)绿 —— 注意 `arch.scan` 可能需像 `socialware` 那样认可 `skills` 类型。
 
@@ -206,6 +234,8 @@ walk-up 禁用而 session-create 绿;`1d5aeca` 无害冗余,待协调者退役�
 
 运维投放/更新 `$EZAGENT_HOME/<profile>/skills/<ref>/`,下次 boot 注册/升级;随包默认在 release bump
 时自升级,**除非**被运维改过(此时跳过被大声信号);未知 ref 大声降级。唯一运行时源;resolver 无 overlay 逻辑。
+全新 `$EZAGENT_HOME` 无需任何手动步骤即 boot 到全可解析的 registry(MED-2 gate);被中断的
+seed/升级绝不会在源里留下半成品目录(HIGH-1)。
 
 ---
 
@@ -252,11 +282,15 @@ walk-up 禁用而 session-create 绿;`1d5aeca` 无害冗余,待协调者退役�
 ## 6. 实现约束(来自设计 §7 —— 有约束力)
 
 - **IC-1 —— 目录-hash 语义(已选定,非可选)。** skill 目录内容 hash 覆盖**目录闭包**,计算为:枚举目录下
-  所有文件,构建 **`{relpath, mode, content_digest}` 元组的排序集**(relpath = 相对 skill 根的
-  POSIX 归一化路径;`mode` = 文件权限位,**exec 位为输入之一**;`content_digest` = 文件字节的 SHA-256),
-  对该排序集的规范序列化取 SHA-256。后果(全部必需):**重命名**改 relpath → hash 变;**删除**移除元组 →
-  hash 变;**chmod +x** 改 mode → hash 变。**Symlink** hash 其**链接目标路径**(作 `content_digest` 输入),
-  不跟随。(后续租户 store 须直接**拒绝** symlink 作逃逸向量 —— 为那阶段记,此处不实现。)此语义是 P2 索引契约
+  所有文件,构建 **`{relpath, exec_bit, content_digest}` 元组的排序集**(relpath = 相对 skill 根的
+  POSIX 归一化路径;`exec_bit` = 文件 mode **刻意归一化为单一 owner-executable 布尔** —— 完整权限位
+  **有意排除**:macOS 与 Linux 的拷贝/umask 语义在其余位上可能不同,会产生虚假的"运维改过"分类;对
+  skill 脚本唯一有语义分量的就是 exec 位;`content_digest` = 文件字节的 SHA-256),对该排序集的规范
+  序列化取 SHA-256。后果(全部必需):**重命名**改 relpath → hash 变;**删除**移除元组 → hash 变;
+  **chmod +x** 翻 `exec_bit` → hash 变;只动非-exec 位的 chmod **不**变 hash(有意)。**空目录不影响
+  hash**(只有文件贡献元组)—— 可接受且有意:种源内容 git 托管,git 本身不跟踪空目录,故任何随包闭包
+  不可能只差一个空目录。**Symlink** hash 其**链接目标路径**(作 `content_digest` 输入),不跟随。
+  (后续租户 store 须直接**拒绝** symlink 作逃逸向量 —— 为那阶段记,此处不实现。)此语义是 P2 索引契约
   的硬前置;实现为单一 `Ezagent.SkillRegistry.dir_hash/1`(或小 `Ezagent.Skill.ContentHash`),供 `SkillSeed`
   (shipped-hash)与索引共用。
 - **IC-2 —— 升级正确性需 P3。** 拷贝搬进 `stage_and_swap`(P3,每次物化全新 staging)之前,已物化 agent 永不
@@ -264,6 +298,12 @@ walk-up 禁用而 session-create 绿;`1d5aeca` 无害冗余,待协调者退役�
   ops runbook**(与 §4.1.5 runbook 行并列)。
 - **IC-3 —— 运行时子集派生,非手枚举。** P1 种子清单与 P1 不变量测试都从**全 `roles/0` 种子的
   `Recipe.skills`**计算(§2)。任何地方无手维护清单。
+- **IC-4 —— 具名的种子包重生成 helper(本 SPEC)。** 入库的 `priv/skills_seed` 包由专用 mix 任务
+  重生成 —— **`mix ezagent.skills.regen_seed`**(dev-only,与既有 `ezagent.*` 任务同在
+  `apps/ezagent_core/lib/mix/tasks/`):跑 §2 派生遍历每个 `roles/0` 种子,把每个派生 ref 的
+  dev-tree 闭包(`.claude/skills/<ref>/`)拷进 `apps/ezagent_web/priv/skills_seed/<ref>/`,并打印
+  派生集 + hash。codex 在 P1 实现此任务(它是工作项 §3.1.1 的*产出方式*,非手拷),使包永不偏离
+  派生规则;P1 prod 形态不变量测试是执法,此任务是补救。
 
 ### 6.1 待加 runbook 行(ops)
 
@@ -290,7 +330,7 @@ walk-up 禁用而 session-create 绿;`1d5aeca` 无害冗余,待协调者退役�
 | 子步 | 落地 | 关键 gate(行为变更处先红) |
 |---|---|---|
 | **P1** | `priv/skills_seed`(派生集)+ `Ezagent.SkillRegistry` 读打包源 + `resolve_skill_source` 重接、walk-up `:dev`-gate | `skill_distribution_prod_shape_test`(红→绿);`skill_registry_test` |
-| **P2** | `skills` 进 FsResolver/Home + `Home.SkillSeed`(shipped-hash 三态 + 两侧都变大声信号)+ registry 重指 `$EZAGENT_HOME` 源 + ConfigObject 索引(`seed_object_upsert`) | `skill_seed_test`(四态矩阵含 telemetry/log 断言) |
+| **P2** | `skills` 进 FsResolver/Home + `Home.SkillSeed`(shipped-hash 三态 + 两侧都变大声信号;**原子 staging-再-rename + boot 恢复**,HIGH-1)+ registry 重指 `$EZAGENT_HOME` 源 + ConfigObject 索引(`seed_object_upsert`) | `skill_seed_test`(四态矩阵含 telemetry/log 断言);**崩溃恢复 gate**;**全新-home 启动顺序 gate**(MED-2) |
 | **P3** | 拷贝折进 `HomeRuntime.stage_and_swap`;独立拷贝 + walk-up 删除 | `skill_cold_spawn_regression_test`(红→绿);IC-2 升级拾新字节 |
 
 **每个**子步的常规 gate:`mix format`、`mix compile --warnings-as-errors --force`、

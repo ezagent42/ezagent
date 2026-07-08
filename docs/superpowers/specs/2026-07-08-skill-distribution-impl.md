@@ -11,6 +11,12 @@
 > `Registry` = runtime index, `Seed` = install channel, `Materializer`/atomic-swap
 > = declaration→artifact). The seed reconcile mirrors **#1242**'s three/four-state
 > `seed_object_upsert` contract.
+> Rev 2 (post codex adversarial review of this SPEC, NEEDS-CHANGES → fixed):
+> HIGH-1 — P2 seed/upgrade is now **atomic** (staging-sibling + rename, boot
+> recovery deletes `*.staging-*`; §4.1.6 + crash-recovery gate); MED-2 — P2 gains a
+> **fresh-home boot-order gate** so the switchover is proven inside P2, not
+> deferred to P3 (§4.2); impl-constraints: IC-1 mode normalized to the exec bit +
+> empty-dir note; IC-4 names `mix ezagent.skills.regen_seed`.
 
 ---
 
@@ -118,8 +124,9 @@ to a dev-only fallback; the orchestrator ref stops being special-cased.
    must live in *some* app's `priv/`, and `ezagent_web` is the same app socialware
    chose. The dir name `skills_seed` (≠ `skills`) keeps it out of any future
    `skills` runtime scan. The staging is source content the derivation **produces**,
-   not a hand-list — codex regenerates it by running the derivation over `roles/0`
-   and copying each derived ref's dev-tree closure.
+   not a hand-list — codex regenerates it via the dedicated
+   **`mix ezagent.skills.regen_seed`** task (IC-4), which runs the derivation over
+   `roles/0` and copies each derived ref's dev-tree closure.
 2. **`Ezagent.SkillRegistry`** (`Registry` layer, GLOSSARY #161) — a
    `ref → {source_dir, content_hash}` index. In **P1 it reads the bundled origin
    directly**: enumerate every loaded app's `priv/skills_seed/<ref>/` (generic scan,
@@ -241,7 +248,28 @@ seed-once-then-single-source lane — **not** a dual-origin overlay.
    To take the release version: back up and remove
    `$EZAGENT_HOME/<profile>/skills/<ref>/`, then re-run the boot seed (or `mix
    ezagent.home.init`) — it re-seeds from `priv/skills_seed` and bumps the index."*
-6. **Authority stays system-vetted (design §5.3).** No runtime-writable publish
+6. **Atomic directory materialization — crash-safe seed/upgrade (codex review
+   HIGH-1).** The §4.1.5 matrix covers only **complete** dirs; a crash mid-copy or
+   mid-upgrade must never leave `$EZAGENT_HOME/<profile>/skills/<ref>/`
+   half-populated — since P2 re-points the registry at that single origin, a
+   partial dir would be hashed and **misclassified as operator-edited** (preserved
+   forever) or simply broken. Interruption is handled structurally, with the
+   **same fresh-staging idiom as `HomeRuntime.stage_and_swap`**
+   (`home_runtime.ex:279` / `Materializer.atomic_replace`):
+   - **Write to a temp sibling, rename into place.** Every seed and every upgrade
+     copies into `<deploy_dir>/<ref>.staging-<nonce>` (same filesystem → same-device
+     rename), then atomically renames it to `<deploy_dir>/<ref>` (for upgrade:
+     remove/rename the old dir aside, then rename the staging in — reuse
+     `Ezagent.Agent.Materializer.atomic_replace/2` if its contract fits, else the
+     same two-step locally).
+   - **Boot recovery rule.** Before the registry scan, `SkillSeed` **deletes any
+     leftover `*.staging-*` dirs** under the skills deploy dir. An interrupted
+     seed/upgrade therefore leaves either the **old complete dir** or the **new
+     complete dir** — never a partial — so the hash matrix only ever sees complete
+     closures.
+   - **Registry hygiene.** The `SkillRegistry` scan **skips `*.staging-*` names**
+     defensively (a staging dir is never indexed).
+7. **Authority stays system-vetted (design §5.3).** No runtime-writable publish
    surface. The store is written only by the `home.init`/boot seed and by operators
    with node access. Unknown/unauthorized refs fail **loudly**
    (`{:skill_source_not_found, ref}` → `role_degraded` + telemetry), never a silent
@@ -257,6 +285,18 @@ seed-once-then-single-source lane — **not** a dual-origin overlay.
 - **`skill_registry_test.exs` extended**: after seed, `resolve/1` reads the
   `$EZAGENT_HOME` origin; an operator-dropped `<ref>` dir registers on the next scan;
   index reconcile hits `:seeded` / `:exists` / upgrade correctly.
+- **Crash-recovery gate (HIGH-1)**: simulate an interrupted materialization — plant
+  a `<ref>.staging-<nonce>` dir with **incomplete** content in the deploy dir (plus,
+  in a second case, a stale staging next to a complete old `<ref>` dir) → boot the
+  seed path → assert the staging leftovers are **deleted**, the seed **completes**,
+  and `SkillRegistry.resolve/1` returns the ref's **complete** closure (correct
+  hash, no misclassification as operator-edited).
+- **Fresh-home boot-order gate (MED-2)**: start from a **fresh `$EZAGENT_HOME`**
+  (no manual `seed!` call anywhere in the test), boot the seed + registry path **in
+  the exact order the application supervisor wires it** (`home.init`-absent boot
+  fallback included), and assert **every derived `Recipe.skills` ref resolves
+  before any consumer reads** the registry. This proves P2 is independently
+  deployable — the fresh-home switchover must not wait for P3's cold-spawn test.
 - **`fs_resolver` / `home` tests**: `skills` type resolves to the deploy dir; skeleton
   mkdir present.
 - Standing gates (§3.2) green — note `arch.scan` may need the `skills` type
@@ -267,7 +307,9 @@ seed-once-then-single-source lane — **not** a dual-origin overlay.
 An operator drops/updates `$EZAGENT_HOME/<profile>/skills/<ref>/` and the next boot
 registers/upgrades it; a shipped default upgrades itself on a release bump **unless**
 operator-edited (in which case the skip is loudly signalled); an unknown ref degrades
-loudly. One runtime origin; resolver has no overlay logic.
+loudly. One runtime origin; resolver has no overlay logic. A fresh `$EZAGENT_HOME`
+boots to a fully-resolvable registry with no manual step (MED-2 gate), and an
+interrupted seed/upgrade can never leave a partial dir in the origin (HIGH-1).
 
 ---
 
@@ -329,18 +371,26 @@ agent is correct via fresh staging; the walk-up no longer exists in the codebase
 
 - **IC-1 — directory-hash semantics (PICKED, not optional).** The content hash of a
   skill dir is over the **directory closure**, computed as: enumerate all files
-  under the dir, build the **sorted set of `{relpath, mode, content_digest}`
-  tuples** (relpath = POSIX-normalized path relative to the skill root; `mode` = the
-  file's permission bits, so the **executable bit is part of the input**;
-  `content_digest` = SHA-256 of file bytes), and SHA-256 the canonical serialization
-  of that sorted set. Consequences (all required): a **rename** changes a relpath →
-  hash changes; a **deletion** removes a tuple → hash changes; a **chmod +x** changes
-  a mode → hash changes. **Symlinks** hash their **link target path** (as the
-  `content_digest` input) rather than following the link. (The later-phase tenant
-  store must *reject* symlinks outright as an escape vector — noted for that phase,
-  not implemented here.) This semantics is a hard prerequisite for the P2 index
-  contract; implement it as a single `Ezagent.SkillRegistry.dir_hash/1` (or a small
-  `Ezagent.Skill.ContentHash`) used by both `SkillSeed` (shipped-hash) and the index.
+  under the dir, build the **sorted set of `{relpath, exec_bit, content_digest}`
+  tuples** (relpath = POSIX-normalized path relative to the skill root;
+  `exec_bit` = the file mode **deliberately normalized down to a single
+  owner-executable boolean** — full permission bits are **excluded on purpose**,
+  because macOS vs Linux copy/umask semantics can differ on the other bits and
+  would produce spurious "operator-edited" classifications; only the exec bit is
+  semantically load-bearing for a skill script; `content_digest` = SHA-256 of file
+  bytes), and SHA-256 the canonical serialization of that sorted set. Consequences
+  (all required): a **rename** changes a relpath → hash changes; a **deletion**
+  removes a tuple → hash changes; a **chmod +x** flips `exec_bit` → hash changes; a
+  chmod that touches only non-exec bits does **not** change the hash (intended).
+  **Empty directories do not affect the hash** (only files contribute tuples) —
+  acceptable and intended: the seed content is git-backed, and git itself does not
+  track empty dirs, so no shipped closure can differ by one. **Symlinks** hash
+  their **link target path** (as the `content_digest` input) rather than following
+  the link. (The later-phase tenant store must *reject* symlinks outright as an
+  escape vector — noted for that phase, not implemented here.) This semantics is a
+  hard prerequisite for the P2 index contract; implement it as a single
+  `Ezagent.SkillRegistry.dir_hash/1` (or a small `Ezagent.Skill.ContentHash`) used
+  by both `SkillSeed` (shipped-hash) and the index.
 - **IC-2 — upgrade correctness needs P3.** Until the copy moves into `stage_and_swap`
   (P3, fresh staging per materialization), an already-materialized agent never picks
   up a skill upgrade/removal (`copy_skill/3` skips an existing dest). Between P2 and
@@ -349,6 +399,16 @@ agent is correct via fresh staging; the walk-up no longer exists in the codebase
 - **IC-3 — the runtime subset is derived, not hand-enumerated.** Both the P1
   seed-bundle list and the P1 invariant test are **computed from `Recipe.skills`
   across all `roles/0` seeds** (§2). No hand-maintained list anywhere.
+- **IC-4 — named seed-bundle regeneration helper (this SPEC).** The checked-in
+  `priv/skills_seed` bundle is regenerated by a dedicated mix task —
+  **`mix ezagent.skills.regen_seed`** (dev-only, alongside the existing
+  `ezagent.*` tasks in `apps/ezagent_core/lib/mix/tasks/`): it runs the §2
+  derivation over every `roles/0` seed, copies each derived ref's dev-tree
+  closure (`.claude/skills/<ref>/`) into
+  `apps/ezagent_web/priv/skills_seed/<ref>/`, and prints the derived set + hashes.
+  Codex implements this task in P1 (it is *how* work-item §3.1.1 is produced, not
+  a manual copy) so the bundle can never drift from the derivation rule; the P1
+  prod-shape invariant test is the enforcement, this task is the remediation.
 
 ### 6.1 Runbook lines to add (ops)
 
@@ -380,7 +440,7 @@ agent is correct via fresh staging; the walk-up no longer exists in the codebase
 | Sub-step | Lands | Key gate (failing-first where behavior changes) |
 |---|---|---|
 | **P1** | `priv/skills_seed` (derived set) + `Ezagent.SkillRegistry` reading the bundled origin + `resolve_skill_source` rewired, walk-up `:dev`-gated | `skill_distribution_prod_shape_test` (red→green); `skill_registry_test` |
-| **P2** | `skills` in FsResolver/Home + `Home.SkillSeed` (shipped-hash three-way + loud both-sides-changed signal) + registry re-pointed at `$EZAGENT_HOME` origin + ConfigObject index (`seed_object_upsert`) | `skill_seed_test` (four-way matrix incl. telemetry/log assertion) |
+| **P2** | `skills` in FsResolver/Home + `Home.SkillSeed` (shipped-hash three-way + loud both-sides-changed signal; **atomic staging-then-rename + boot recovery**, HIGH-1) + registry re-pointed at `$EZAGENT_HOME` origin + ConfigObject index (`seed_object_upsert`) | `skill_seed_test` (four-way matrix incl. telemetry/log assertion); **crash-recovery gate**; **fresh-home boot-order gate** (MED-2) |
 | **P3** | copy folded into `HomeRuntime.stage_and_swap`; separate copy + walk-up deleted | `skill_cold_spawn_regression_test` (red→green); IC-2 upgrade-picks-up-new-bytes |
 
 Standing gates on **every** sub-step: `mix format`,
