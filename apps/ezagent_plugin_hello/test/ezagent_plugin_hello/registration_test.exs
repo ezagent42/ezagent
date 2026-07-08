@@ -34,7 +34,7 @@ defmodule EzagentPluginHello.RegistrationTest do
   end
 
   test "all four hello role recipes are published in roles/0" do
-    assert HelloApp.hello_orchestrator_recipe() in HelloApp.roles()
+    assert HelloApp.hello_front_desk_recipe() in HelloApp.roles()
     assert HelloApp.hello_builder_recipe() in HelloApp.roles()
     assert HelloApp.hello_concierge_recipe() in HelloApp.roles()
     assert HelloApp.hello_llm_recipe() in HelloApp.roles()
@@ -49,7 +49,7 @@ defmodule EzagentPluginHello.RegistrationTest do
   end
 
   test "hello.orchestrator recipe — behaviors + caps + non-passive (combined gate)" do
-    assert {:ok, %Recipe{} = role} = Recipe.new(HelloApp.hello_orchestrator_recipe())
+    assert {:ok, %Recipe{} = role} = Recipe.new(HelloApp.hello_front_desk_recipe())
 
     assert role.name == "hello.front-desk"
     assert role.behaviors == [HelloOrchestrator]
@@ -93,7 +93,7 @@ defmodule EzagentPluginHello.RegistrationTest do
     assert role.behaviors == [HelloConcierge]
     refute role.passive
 
-    assert [%{behavior: HelloConcierge, action: :receive} = cap] = role.requested_caps
+    assert %{behavior: HelloConcierge, action: :receive} in role.requested_caps
     refute Map.has_key?(cap, :kind)
   end
 

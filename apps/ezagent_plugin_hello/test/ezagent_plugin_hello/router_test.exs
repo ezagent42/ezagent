@@ -58,8 +58,9 @@ defmodule EzagentPluginHello.RouterTest do
       %{session: session, orchestrator: orchestrator}
     end
 
-    test "ignores the orchestrator's own outbound", ctx do
-      refute Router.should_route?(ctx.session, ctx.orchestrator)
+    test "front-desk own outbound IS routable by should_route? (Agent.Receive self-drop guards it)",
+         ctx do
+      assert Router.should_route?(ctx.session, ctx.orchestrator)
     end
 
     test "ignores its own builder member", %{session: session} do

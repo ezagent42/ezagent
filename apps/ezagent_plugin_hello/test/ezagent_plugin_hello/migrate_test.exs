@@ -13,7 +13,7 @@ defmodule EzagentPluginHello.MigrateTest do
       `role_name: "front-desk"` slot is occupied by the WRONG recipe (a stale
       member left by a prior half-migration, or built the old imperative way)
       is reflavored: the stale member is removed and the real
-      `hello.orchestrator` agent is materialized in its place. See
+      `hello.front-desk` agent is materialized in its place. See
       `EzagentPluginHello.Migrate` moduledoc "Hardening" for the mechanism.
   """
   use EzagentCore.DataCase, async: false
@@ -85,7 +85,7 @@ defmodule EzagentPluginHello.MigrateTest do
   end
 
   describe "migrate_one/1 hardening — a stale (wrong-recipe) orchestrator" do
-    test "removes the stale member and re-materializes the real hello.orchestrator", %{ws: ws} do
+    test "removes the stale member and re-materializes the real hello.front-desk", %{ws: ws} do
       {session_uri, owner_uri, workspace_uri} = bare_hello_session(ws, "stale")
 
       # Simulate the Task-4-flagged bug scenario: a prior half-migration (or the
