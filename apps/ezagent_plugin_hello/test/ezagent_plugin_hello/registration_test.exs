@@ -129,7 +129,7 @@ defmodule EzagentPluginHello.RegistrationTest do
     {:ok, defn} = Ezagent.Socialware.Definition.new(attrs)
 
     role_names = Enum.map(defn.roles, & &1.role_name) |> Enum.sort()
-    assert role_names == ["builder", "concierge", "llm", "front-desk"]
+    assert role_names == ["builder", "concierge", "front-desk", "llm"]
     assert Enum.all?(defn.roles, &(&1.fill == :agent))
     assert Enum.find(defn.roles, &(&1.role_name == "front-desk")).flavor == "hello"
 
