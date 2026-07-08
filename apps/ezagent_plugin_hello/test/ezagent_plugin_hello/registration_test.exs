@@ -93,7 +93,9 @@ defmodule EzagentPluginHello.RegistrationTest do
     assert role.behaviors == [HelloConcierge]
     refute role.passive
 
-    assert %{behavior: HelloConcierge, action: :receive} in role.requested_caps
+    cap = Enum.find(role.requested_caps, &(&1.action == :receive))
+    assert %{behavior: HelloConcierge, action: :receive} = cap
+    assert %{behavior: HelloConcierge, action: :answer} in role.requested_caps
     refute Map.has_key?(cap, :kind)
   end
 
