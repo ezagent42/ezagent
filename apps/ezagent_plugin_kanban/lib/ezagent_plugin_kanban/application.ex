@@ -37,44 +37,17 @@ defmodule EzagentPluginKanban.Application do
     # ezagent_domain_ui, which boots before this plugin (a declared dep).
     _ = Ezagent.UI.SessionViewRegistry.register(EzagentPluginKanban.BoardView)
 
-    # Boot-publish the kanban DEMO socialware as a PUBLIC catalog entry via the
-    # REAL governance flow (`ConfigGovernance.Socialware`), the hello #162
-    # golden-template play — a fresh stack ships a discoverable/installable
-    # kanban AND every boot dogfoods the publish path (a broken publish path
-    # fails LOUD here at boot). This REPLACES the earlier imperative
-    # `KanbanTeam.seed_definition` code-seed (`seed_definition_if_absent`):
-    # publish is the only boot seeding path now (hello parity — hello only
-    # publishes too). Runs in `start/2` AFTER the `BoardView` register above +
-    # `Ezagent.Plugin.boot/1` — the publish resolves `uses: ["kanban"]` + the
-    # `kanban_render` view, which only exist once THIS plugin registered its
-    # plugin_info + BoardView. Idempotent (`publish_or_upgrade`: :published /
-    # :exists / :upgraded); fail-loud in dev/prod (mirrors hello's
-    # `maybe_publish_hello_demo`), skipped in `:test` (the DB write at plugin
-    # boot contends with the per-test Ecto sandbox — the same reason
-    # `RoleSeedHook` skips in test; ExUnit drives `Demo.publish/0` inside a
-    # checked-out sandbox with per-run unique fixture names instead).
-    :ok = maybe_publish_kanban_demo()
-
+    # NOTE: the kanban DEMO socialware is NOT published here. It ships as a
+    # deploy-seed package (`apps/ezagent_web/priv/socialware_seed/kanban/
+    # manifest.yaml`, like `autoservice` / `hello`): `Ezagent.Home.SocialwareSeed`
+    # copies it into the deployment home and the late boot scan
+    # `Ezagent.Socialware.ManifestSeed.scan_all!/1` (run from the last-booting
+    # transport app, AFTER this plugin registered its plugin_info + `BoardView`
+    # so `uses: ["kanban"]` + the `kanban_render` view resolve) publishes it
+    # through the governed import lane. Zero call from this plugin's boot;
+    # `EzagentPluginKanban.Demo` remains only as a test driver over the SAME
+    # shipped file (deploy-seed SPEC §2/§4, the hello #162 play).
     result
-  end
-
-  # Compile-time env (works in stripped OTP releases where `Mix` is unavailable).
-  @compile_env Mix.env()
-
-  defp maybe_publish_kanban_demo do
-    if @compile_env == :test do
-      :ok
-    else
-      case EzagentPluginKanban.Demo.publish() do
-        {:ok, _published_exists_or_upgraded} ->
-          :ok
-
-        {:error, reason} ->
-          raise "EzagentPluginKanban boot aborted — the kanban demo socialware could " <>
-                  "not be published via the governance flow (fail-loud dogfood, " <>
-                  "hello #162 play): #{inspect(reason)}"
-      end
-    end
   end
 
   @impl Ezagent.Plugin
