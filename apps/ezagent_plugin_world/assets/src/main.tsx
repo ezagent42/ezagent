@@ -400,6 +400,12 @@ function WorldApp({layout, state: initialState, pluginNav, caller, pushEvent, on
                     args: {session_uri: sessionUri, participant},
                   })
                 },
+                onUninstallSocialware: (sessionUri, ref) => {
+                  pushEvent?.("world:dispatch", {
+                    action: "session.socialware.uninstall",
+                    args: {session_uri: sessionUri, ref},
+                  })
+                },
                 onSessionViewSwitch: (sessionUri, view) => {
                   pushEvent?.("world:dispatch", {
                     action: "session.view.switch",
@@ -890,6 +896,7 @@ type RenderContext = {
   onInvite: (sessionUri: string, member: string) => void
   onAssignRole: (sessionUri: string, member: string, roleName: string) => void
   onRemoveParticipant: (sessionUri: string, participant: string) => void
+  onUninstallSocialware: (sessionUri: string, ref: string) => void
   onPtyInput: (bytes: string) => void
   onPtyResize: (size: {cols: number; rows: number}) => void
   onServerEvent?: (event: string, callback: (payload: unknown) => void) => void
@@ -932,6 +939,7 @@ function renderLayoutComponent(component: NonNullable<WorldLayout["components"]>
           onInvite={context.onInvite}
           onAssignRole={context.onAssignRole}
           onRemoveParticipant={context.onRemoveParticipant}
+          onUninstallSocialware={context.onUninstallSocialware}
           onPtyInput={context.onPtyInput}
           onPtyResize={context.onPtyResize}
           onServerEvent={context.onServerEvent}

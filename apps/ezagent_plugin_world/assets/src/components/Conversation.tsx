@@ -72,6 +72,18 @@ type HumanRoleSlotRow = {
   assigned_uri?: string | null
 }
 
+type InstalledSocialwareRoleRow = {
+  role_name?: string | null
+  fill?: string | null
+}
+
+type InstalledSocialwareRow = {
+  name: string
+  title?: string | null
+  description?: string | null
+  roles?: InstalledSocialwareRoleRow[]
+}
+
 type MentionMatch = {
   member: MemberRow
   label: string
@@ -132,6 +144,7 @@ export type ConversationState = {
   invite_candidates?: InviteCandidateRow[]
   routing_entity_candidates?: InviteCandidateRow[]
   human_role_slots?: HumanRoleSlotRow[]
+  installed_socialwares?: InstalledSocialwareRow[]
   views?: ViewTab[]
 }
 
@@ -150,6 +163,7 @@ type Props = {
   onMarkDisplayed: (sessionUri: string, msgId: string) => void
   onInvite: (sessionUri: string, member: string) => void
   onRemoveParticipant: (sessionUri: string, participant: string) => void
+  onUninstallSocialware: (sessionUri: string, ref: string) => void
   onPtyInput: (bytes: string) => void
   onPtyResize: (size: {cols: number; rows: number}) => void
   onServerEvent?: (event: string, callback: (payload: unknown) => void) => void
@@ -170,6 +184,7 @@ export function Conversation({
   onForkConfig,
   onOpenPty,
   onRemoveParticipant,
+  onUninstallSocialware,
   onRestartOrchestrator,
   onSend,
   onSwitch,
@@ -188,6 +203,7 @@ export function Conversation({
   const sessions = state.sessions || []
   const templates = state.templates && state.templates.length > 0 ? state.templates : ["default"]
   const routingRules = state.routing_rules || []
+  const installedSocialwares = state.installed_socialwares || []
   const fallbackViews: ViewTab[] = [{id: "conversation", label: "对话", icon: "message-square", mode: "chat"}]
   const sourceViews = state.views && state.views.length > 0 ? state.views : fallbackViews
   const visibleViews = sourceViews.filter((v) => v.id !== "pty" && v.mode !== "pty")
@@ -1016,7 +1032,13 @@ export function Conversation({
                       type="button"
                       size="sm"
                       variant="ghost"
-                      onClick={() => sessionUri && onRemoveParticipant(sessionUri, member.uri)}
+                      onClick={() => {
+                        if (!sessionUri) return
+                        if (window.confirm("确定移除 " + label + "？")) {
+                          onRemoveParticipant(sessionUri, member.uri)
+                        }
+                      }}
+                      data-world-remove-member
                       aria-label={`移除 ${label}`}
                       title="从会话移除"
                     >
@@ -1028,6 +1050,57 @@ export function Conversation({
             })
           )}
         </ul>
+
+        {installedSocialwares.length > 0 && (
+          <section className="border-t border-border px-2 py-3" data-world-socialware-uninstall-panel>
+            <div className="mb-2 flex items-center justify-between gap-2 px-2">
+              <span className="text-sm font-medium text-muted-foreground">已装 Socialware</span>
+              <span className="rounded-full border border-border px-1.5 py-0.5 text-[11px] text-muted-foreground">{installedSocialwares.length}</span>
+            </div>
+            <div className="grid gap-1.5">
+              {installedSocialwares.map((socialware) => {
+                const title = socialware.title || socialware.name
+                const roles = (socialware.roles || []).map((role) => role.role_name).filter(Boolean).join(", ") || "无角色"
+
+                return (
+                  <div
+                    key={socialware.name}
+                    className="rounded-md border border-border bg-card px-2.5 py-2"
+                    data-world-socialware-install={socialware.name}
+                  >
+                    <div className="flex items-start justify-between gap-2">
+                      <div className="min-w-0">
+                        <strong className="block overflow-hidden text-ellipsis whitespace-nowrap text-[13px] font-semibold text-foreground">
+                          {title}
+                        </strong>
+                        <span className="block overflow-hidden text-ellipsis whitespace-nowrap text-[11px] text-muted-foreground">
+                          {roles}
+                        </span>
+                      </div>
+                      <Button
+                        type="button"
+                        size="sm"
+                        variant="secondary"
+                        onClick={() => {
+                          if (!sessionUri) return
+                          if (window.confirm("确定卸载 " + title + "？")) {
+                            onUninstallSocialware(sessionUri, socialware.name)
+                          }
+                        }}
+                        data-world-socialware-uninstall-button
+                        aria-label={"卸载 " + title}
+                        title="卸载 socialware"
+                      >
+                        <X aria-hidden="true" />
+                        卸载
+                      </Button>
+                    </div>
+                  </div>
+                )
+              })}
+            </div>
+          </section>
+        )}
 
         <details className="border-t border-border px-2 py-3" data-world-routing-drawer>
           <summary className="flex cursor-pointer list-none items-center justify-between gap-2 rounded-md px-2 py-1.5 text-sm font-medium text-muted-foreground hover:bg-muted hover:text-foreground">

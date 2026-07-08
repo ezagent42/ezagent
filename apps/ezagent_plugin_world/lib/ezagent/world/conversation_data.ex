@@ -54,6 +54,7 @@ defmodule Ezagent.World.ConversationData do
       "oldest_cursor" => oldest_cursor_iso(messages),
       "members" => members,
       "human_role_slots" => human_role_slots(session_uri),
+      "installed_socialwares" => installed_socialwares(session_uri),
       "invite_candidates" => invite_candidates(session_uri, caller_uri, workspace_uri, members),
       "routing_entity_candidates" =>
         routing_entity_candidates(caller_uri, workspace_uri, members),
@@ -224,6 +225,43 @@ defmodule Ezagent.World.ConversationData do
   rescue
     _ -> []
   end
+
+  @doc "Socialware definitions currently installed on this session, shaped for the management panel."
+  @spec installed_socialwares(URI.t()) :: [map()]
+  def installed_socialwares(%URI{} = session_uri) do
+    session_uri
+    |> Ezagent.Socialware.Installation.installed_definitions()
+    |> Enum.map(fn definition ->
+      %{
+        "name" => definition.name,
+        "title" => definition.title,
+        "description" => definition.description,
+        "roles" => socialware_role_rows(definition.roles)
+      }
+    end)
+    |> Enum.sort_by(& &1["name"])
+  rescue
+    _ -> []
+  end
+
+  def installed_socialwares(_), do: []
+
+  defp socialware_role_rows(roles) when is_list(roles) do
+    roles
+    |> Enum.map(fn role ->
+      %{
+        "role_name" => Map.get(role, :role_name),
+        "fill" => role |> Map.get(:fill) |> socialware_fill_name()
+      }
+    end)
+    |> Enum.filter(&non_empty_string?(&1["role_name"]))
+  end
+
+  defp socialware_role_rows(_), do: []
+
+  defp socialware_fill_name(fill) when is_atom(fill), do: Atom.to_string(fill)
+  defp socialware_fill_name(fill) when is_binary(fill), do: fill
+  defp socialware_fill_name(_), do: nil
 
   @doc """
   Entity rows the current caller can invite into `session_uri`.

@@ -70,6 +70,17 @@ defmodule Ezagent.World.ConversationActions do
 
   def handle_dispatch(
         socket,
+        "session.socialware.uninstall",
+        %{"session_uri" => sid, "ref" => ref}
+      )
+      when is_binary(ref) do
+    with_session(socket, sid, fn session_uri ->
+      uninstall_socialware(socket, session_uri, ref)
+    end)
+  end
+
+  def handle_dispatch(
+        socket,
         "session.assign_role",
         %{"session_uri" => sid, "member" => member, "role_name" => role_name}
       )
@@ -785,6 +796,103 @@ defmodule Ezagent.World.ConversationActions do
       :error ->
         {:noreply, assign(socket, :last_dispatch_status, "error:bad_member_uri")}
     end
+  end
+
+  @doc "Uninstall session socialware materialization from the management panel."
+  @spec uninstall_socialware(Phoenix.LiveView.Socket.t(), URI.t(), String.t()) ::
+          {:noreply, Phoenix.LiveView.Socket.t()}
+  def uninstall_socialware(socket, %URI{} = session_uri, ref) when is_binary(ref) do
+    caller = socket.assigns.current_entity_uri
+    actor = caller || Ezagent.Entity.User.admin_uri()
+    caps = Map.get(socket.assigns, :current_caps, MapSet.new())
+
+    definitions = Ezagent.Socialware.Installation.installed_definitions(session_uri)
+
+    case Enum.find(definitions, fn definition -> definition.name == ref end) do
+      nil ->
+        {:noreply, assign(socket, :last_dispatch_status, "error:unknown_socialware_install")}
+
+      _definition ->
+        with true <- match?(%URI{}, caller),
+             :ok <- remove_socialware_members(session_uri, definitions, caller, caps),
+             :ok <- Ezagent.ActionSet.Session.RoutingPrune.prune_all_for_session(session_uri),
+             :ok <- Ezagent.Socialware.Installation.retract_session_installs(session_uri, actor) do
+          socket =
+            socket
+            |> assign(:last_dispatch_status, "ok")
+            |> push_session_management_state(session_uri)
+
+          {:noreply, socket}
+        else
+          false ->
+            {:noreply, assign(socket, :last_dispatch_status, "error:missing_caller")}
+
+          {:error, reason} ->
+            {:noreply, assign(socket, :last_dispatch_status, "error:#{reason(reason)}")}
+        end
+    end
+  end
+
+  defp remove_socialware_members(%URI{} = session_uri, definitions, %URI{} = caller, caps) do
+    role_names =
+      definitions
+      |> List.wrap()
+      |> Enum.flat_map(fn definition -> List.wrap(definition.roles) end)
+      |> Enum.map(fn role -> Map.get(role, :role_name) end)
+      |> Enum.filter(fn role -> is_binary(role) and String.trim(role) != "" end)
+      |> Enum.uniq()
+
+    with {:ok, %{members: members}} when is_map(members) <-
+           Ezagent.Kind.get_slice(session_uri, :session) do
+      Enum.reduce_while(role_names, :ok, fn role_name, :ok ->
+        case member_for_role(members, role_name) do
+          nil ->
+            {:cont, :ok}
+
+          %URI{} = member_uri ->
+            case Ezagent.Session.Participants.remove_participant(session_uri, member_uri, %{
+                   caller: caller,
+                   caps: caps
+                 }) do
+              {:ok, _result} -> {:cont, :ok}
+              {:error, reason} -> {:halt, {:error, reason}}
+            end
+        end
+      end)
+    else
+      _ -> :ok
+    end
+  end
+
+  defp member_for_role(members, role_name) when is_map(members) do
+    Enum.find_value(members, fn {uri, meta} ->
+      if member_role_name(meta) == role_name, do: uri, else: nil
+    end)
+  end
+
+  defp member_role_name(meta) when is_map(meta),
+    do: Map.get(meta, :role_name) || Map.get(meta, "role_name")
+
+  defp member_role_name(_), do: nil
+
+  defp push_session_management_state(socket, %URI{} = session_uri) do
+    members = ConversationData.member_options(session_uri)
+    caller = socket.assigns.current_entity_uri
+    workspace = socket.assigns.current_workspace_uri
+
+    payload = %{
+      "members" => members,
+      "human_role_slots" => ConversationData.human_role_slots(session_uri),
+      "installed_socialwares" => ConversationData.installed_socialwares(session_uri),
+      "routing_rules" => ConversationData.list_session_routing_rules(session_uri),
+      "routing_entity_candidates" =>
+        ConversationData.routing_entity_candidates(caller, workspace, members),
+      "invite_candidates" =>
+        ConversationData.invite_candidates(session_uri, caller, workspace, members),
+      "views" => ConversationData.session_views(session_uri, caller)
+    }
+
+    if connected?(socket), do: push_event(socket, "world:state", payload), else: socket
   end
 
   @doc """

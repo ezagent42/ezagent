@@ -629,6 +629,64 @@ defmodule EzagentWeb.WorldConversationTest do
     assert Ezagent.Socialware.Installation.installed?(new_uri, "socialware")
   end
 
+  test "session.socialware.uninstall clears install records and session-scoped rules", %{
+    conn: conn
+  } do
+    :ok = Ezagent.Socialware.DefinitionRegistry.seed_builtin_definitions()
+    short_name = "world-uninstall-#{System.unique_integer([:positive])}"
+
+    {:ok, view, _html} = live(admin_conn(conn), "/sessions")
+
+    render_hook(element(view, "#world-root"), "world:dispatch", %{
+      "action" => "session.create",
+      "args" => %{
+        "short_name" => short_name,
+        "template_name" => "default",
+        "socialware_ref" => "socialware"
+      }
+    })
+
+    template_name = "socialware-install-socialware"
+    new_uri = Ezagent.URI.new!("session://system/#{template_name}/#{short_name}")
+    encoded = URI.encode_www_form(URI.to_string(new_uri))
+
+    assert_patch(view, "/sessions?session=#{encoded}")
+    assert_push_event(view, "world:state", %{"component" => "conversation"})
+
+    {:ok, %{id: _rule_id}} =
+      RuleStore.add(
+        MentionRouting,
+        Matcher.always(),
+        [URI.to_string(Ezagent.Entity.User.admin_uri())],
+        new_uri
+      )
+
+    assert Ezagent.Socialware.Installation.installed?(new_uri, "socialware")
+
+    assert Enum.any?(RuleStore.list(MentionRouting), fn row ->
+             row.created_by == URI.to_string(new_uri)
+           end)
+
+    html =
+      render_hook(element(view, "#world-root"), "world:dispatch", %{
+        "action" => "session.socialware.uninstall",
+        "args" => %{"session_uri" => URI.to_string(new_uri), "ref" => "socialware"}
+      })
+
+    assert html =~ ~s(data-last-dispatch="ok")
+
+    assert_push_event(view, "world:state", %{
+      "installed_socialwares" => [],
+      "routing_rules" => []
+    })
+
+    refute Ezagent.Socialware.Installation.installed?(new_uri, "socialware")
+
+    refute Enum.any?(RuleStore.list(MentionRouting), fn row ->
+             row.created_by == URI.to_string(new_uri)
+           end)
+  end
+
   test "O-1: session.create with socialware_config_id pins the EXACT revision (content-hash-addressed install)",
        %{conn: conn} do
     # Proves the dispatch-glue (`socialware_config_id`/`socialware_content_hash`
