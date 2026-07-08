@@ -42,3 +42,10 @@ Allen #1226 拍板方案 3：非框架 socialware 的 canonical 住址 = `$EZAGE
 
 - 按 **①#1231 → ②#1233 → ③（待开）** 顺序合并。②/③ 跨 fork 栈，diff 在前序合入前累积；前序合了各自 rebase 即只剩 delta。
 - 本栈内闭环 autoservice + hello 两个 flagship 迁移；kanban/dealscout 迁移是后续（rebase 采纳本 lane）。
+
+## 更新（2026-07-08 09:14）
+
+- 三栈已 **rebase 到 `403a7e2ee`**（含 #1230 requires + #1234 entrypoint）。新 sha：① `736521fd6`(#1231) / ② `e2547f3b6`(#1233) / ③ 本分支(#1236)。
+- **整合 #1230**：hello YAML + drift 冻结 shape 补 `requires:[orchestrator]`（rebase 时 git 无文本冲突但语义漏，现读补回）；#162 40/0 证带 requires 经车道 publish 正常。
+- **机器返还闸**：三栈 rebased on main ✓；CI 快速 check（gate deterministic/gitleaks/…）全 pass，**full-suite pending**（Monitor 盯着）。
+- **补齐 dev-together**：①#1231 / ②#1233 已各补 per-PR return（`returns/socialware-deploy-seed-{mechanism,hello}.md`）；此前 subagent 提交未走 return 流程，本轮按纪律补齐。
