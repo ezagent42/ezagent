@@ -55,11 +55,13 @@ defmodule Ezagent.Socialware.ManifestSeedTest do
       name = "seed-yaml-missing-plugin-#{uniq()}"
       recipe = seed_recipe()
 
+      # A guaranteed-never-installed plugin slug — NOT a real plugin's slug (e.g.
+      # "crawler" is now the dealscout plugin, so it can't stand in for "missing").
       yaml =
         manifest_yaml(name, recipe)
-        |> String.replace("- manifest-yaml-fixture", "- crawler")
+        |> String.replace("- manifest-yaml-fixture", "- no-such-plugin")
 
-      write_manifest(root, "needs-crawler", yaml)
+      write_manifest(root, "needs-missing-plugin", yaml)
 
       err =
         assert_raise RuntimeError, fn ->
@@ -67,7 +69,7 @@ defmodule Ezagent.Socialware.ManifestSeedTest do
         end
 
       assert err.message =~ "socialware manifest #{name}"
-      assert err.message =~ ~s(requires plugin "crawler" which is not installed)
+      assert err.message =~ ~s(requires plugin "no-such-plugin" which is not installed)
     end
   end
 
