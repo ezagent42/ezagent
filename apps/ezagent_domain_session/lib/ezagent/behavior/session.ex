@@ -643,20 +643,34 @@ defmodule Ezagent.ActionSet.Session do
           # mark, so this stays in-handler (effect grammar discards
           # dispatch return values). Cross-session forwarding does not
           # need a ReadMarker side effect.
+          # send-echo-decouple (2026-07-08) — fan each recipient's delivery OFF
+          # this hot path into an UNLINKED supervised Task (`deliver_async/5`),
+          # so `handle_send` returns immediately after persist + route. Two
+          # properties fall out:
+          #   Prong A — `Kind.Runtime` applies `send_success/5`'s
+          #     `{:notify, :chat_message}` feed broadcast WITHOUT waiting on any
+          #     member delivery, so the sender's echo is fast regardless of a
+          #     dead member. Feed ORDER is preserved: the Session Kind processes
+          #     sends serially and returns each notify effect before the next.
+          #   Prong B — one dead/slow member (e.g. a cold np-flavor agent whose
+          #     `ensure_live` spawn blocks ~5s) is isolated to its OWN Task and
+          #     can never delay another member, the pipeline, or the next send.
+          # The per-recipient §3.4 Path-A prompt-template render moves INTO the
+          # Task (it is pure). `{:dispatch_after_commit, cmd}` was NOT used: its
+          # deferred cmds run sequentially on the Session Kind's own `handle_info`
+          # turn (`DeferredDispatch.run/1` `Enum.each`), so a slow member would
+          # still block siblings + the next send (Prong B fails) — and it bypasses
+          # the `ensure_live` cold-member revival that fan-out delivery needs.
           for {recipient, rule_ctx} <- recipients_with_ctx do
             forwarded_msg = decrement_hops(msg)
 
-            if recipient.scheme == "session" do
-              Delivery.dispatch_cross_session_call(recipient, forwarded_msg, session_uri)
-            else
-              # Path-A delivery transform (§3.4): render the matched rule's
-              # prompt template into THIS recipient's message (no template →
-              # unchanged). Applies to agent + user recipients alike.
-              delivered =
-                render_for_delivery(forwarded_msg, rule_ctx, prompt_templates, session_uri)
-
-              Delivery.dispatch_receive_call(recipient, delivered, session_uri)
-            end
+            Delivery.deliver_async(
+              recipient,
+              rule_ctx,
+              forwarded_msg,
+              prompt_templates,
+              session_uri
+            )
           end
 
           send_success(msg, session_uri, ctx, %{stored: true}, provision_effects)

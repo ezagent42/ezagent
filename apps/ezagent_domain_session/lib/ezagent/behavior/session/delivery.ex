@@ -5,6 +5,79 @@ defmodule Ezagent.ActionSet.Session.Delivery do
 
   alias Ezagent.{Cmd, Message, MessageStore}
 
+  # send-echo-decouple (2026-07-08) — the `Task.Supervisor` that owns each
+  # per-recipient delivery Task. Started as a child of the session app
+  # (`EzagentDomainInstanceMessage.Application`).
+  @delivery_supervisor Ezagent.Session.DeliverySupervisor
+
+  @doc """
+  Fan ONE recipient's delivery OFF the `handle_send` hot path into an UNLINKED
+  supervised Task (send-echo-decouple, 2026-07-08).
+
+  The Session Kind emits its `{:notify, :chat_message}` feed broadcast the moment
+  `handle_send` returns; because delivery no longer runs in-handler, the sender's
+  echo is fast even when a member is dead (Prong A). Each recipient's FULL
+  delivery — cold-member `ensure_live` revival + the `:receive` / cross-session
+  dispatch + the ReadMarker — runs in its own unlinked Task, so one dead/slow
+  member (e.g. a cold np-flavor agent whose spawn blocks ~5s) can never delay a
+  sibling, the pipeline, or the next send, and its crash cannot touch the Session
+  Kind (Prong B).
+
+  Fire-and-forget: the caller (`handle_send`) already emitted its effects, so a
+  delivery can return nothing to anyone. A failure to start the child is logged,
+  never raised — a delivery hiccup must not fail the send.
+  """
+  @spec deliver_async(URI.t(), map() | nil, Message.t(), map(), URI.t()) :: :ok
+  def deliver_async(
+        %URI{} = recipient,
+        rule_ctx,
+        %Message{} = msg,
+        prompt_templates,
+        %URI{} = session_uri
+      )
+      when is_map(prompt_templates) do
+    case Task.Supervisor.start_child(@delivery_supervisor, fn ->
+           deliver_now(recipient, rule_ctx, msg, prompt_templates, session_uri)
+         end) do
+      {:ok, _pid} ->
+        :ok
+
+      {:error, reason} ->
+        Logger.error(
+          "Ezagent.ActionSet.Session.Delivery.deliver_async: could not start delivery " <>
+            "Task for recipient=#{URI.to_string(recipient)} reason=#{inspect(reason)} — " <>
+            "message persisted + broadcast, but this member was not delivered to"
+        )
+
+        :ok
+    end
+  end
+
+  @doc """
+  Deliver a single already-routed recipient SYNCHRONOUSLY (cross-session forward
+  or per-recipient `:receive` fan-out with the §3.4 Path-A render). Normally run
+  inside a `deliver_async/5` Task; exposed for direct/testing use.
+  """
+  @spec deliver_now(URI.t(), map() | nil, Message.t(), map(), URI.t()) :: term()
+  def deliver_now(
+        %URI{} = recipient,
+        rule_ctx,
+        %Message{} = msg,
+        prompt_templates,
+        %URI{} = session_uri
+      )
+      when is_map(prompt_templates) do
+    if recipient.scheme == "session" do
+      dispatch_cross_session_call(recipient, msg, session_uri)
+    else
+      # Path-A delivery transform (§3.4): render the matched rule's prompt
+      # template into THIS recipient's message (no template → unchanged).
+      # Applies to agent + user recipients alike.
+      delivered = render_for_delivery(msg, rule_ctx, prompt_templates, session_uri)
+      dispatch_receive_call(recipient, delivered, session_uri)
+    end
+  end
+
   @doc "PubSub topic for in-session events (chat stream feed)."
   @spec session_events_topic(URI.t() | String.t()) :: String.t()
   def session_events_topic(%URI{} = uri), do: session_events_topic(URI.to_string(uri))
