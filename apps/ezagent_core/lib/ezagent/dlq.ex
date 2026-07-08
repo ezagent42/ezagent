@@ -12,6 +12,8 @@ defmodule Ezagent.DLQ do
   - `:unroutable` — zero matchers / `:no_such_actor`
   - `:no_actor` — `KindRegistry.lookup` returned `:error`
   - `:idempotency_duplicate_marker` — saw a key whose result was lost
+  - `:buffer_full` — `:cast` to a `:not_ready` target whose `PendingDelivery`
+    buffer is at cap (Decision #67 "overflow falls to DLQ", wired in PR #1259)
 
   ## Phase 1 scope
 
@@ -21,7 +23,13 @@ defmodule Ezagent.DLQ do
   so the unbounded-table risk is acceptable in the short term.
   """
 
-  @reasons [:behavior_exception, :unroutable, :no_actor, :idempotency_duplicate_marker]
+  @reasons [
+    :behavior_exception,
+    :unroutable,
+    :no_actor,
+    :idempotency_duplicate_marker,
+    :buffer_full
+  ]
 
   @doc """
   Append a row to the DLQ. `payload` is the original invocation (or

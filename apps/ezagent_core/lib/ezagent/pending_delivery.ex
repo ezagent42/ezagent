@@ -13,9 +13,10 @@ defmodule Ezagent.PendingDelivery do
 
   ## Phase 1 scope
 
-  Step 1 ships buffer/flush. Overflow → DLQ wiring lands in step 3
-  once `Ezagent.DLQ` exists. Until then, overflow returns `{:error,
-  :buffer_full}` to the caller.
+  Step 1 ships buffer/flush. Overflow returns `{:error, :buffer_full}` to the
+  caller; the dispatch-layer caller (`Ezagent.Invocation`) records the dropped
+  invocation to `Ezagent.DLQ` reason `:buffer_full` and surfaces the error
+  (PR #1259 — the Decision #67 "overflow falls to DLQ" wiring).
   """
 
   @table :ezagent_pending_delivery
