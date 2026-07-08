@@ -144,7 +144,7 @@ defmodule EzagentDomainInstanceMessage.Integration.DefinitionAgentsMaterializeTe
       })
 
     :ok = Ezagent.WorkspaceRegistry.bind(agent_uri, @workspace_uri)
-    :ok = Ezagent.AgentRecipeAttributes.put(agent_uri, recipe_name)
+    :ok = Ezagent.Agent.RecipeAttributes.put(agent_uri, recipe_name)
     on_exit(fn -> terminate(agent_uri) end)
     agent_uri
   end
@@ -212,7 +212,7 @@ defmodule EzagentDomainInstanceMessage.Integration.DefinitionAgentsMaterializeTe
     # RECIPE name), NOT the session role. Here recipe_name ("#{recipe_name}")
     # and role_name ("#{role_name}") DIVERGE, proving the de-bake — the session
     # role_name lives only on the membership edge (asserted below).
-    assert {:ok, ^recipe_name} = Ezagent.AgentRecipeAttributes.fetch(planned)
+    assert {:ok, ^recipe_name} = Ezagent.Agent.RecipeAttributes.fetch(planned)
 
     assert {:ok, sandbox_slice} = Ezagent.Kind.get_slice(planned, :sandbox)
     sandbox = Ezagent.Kind.normalize_slice_view(sandbox_slice)
@@ -311,7 +311,7 @@ defmodule EzagentDomainInstanceMessage.Integration.DefinitionAgentsMaterializeTe
 
     :ok = Ezagent.WorkspaceRegistry.bind(orchestrator_uri, @workspace_uri)
     :ok = Ezagent.AgentLineage.record(orchestrator_uri, @owner_uri)
-    :ok = Ezagent.AgentRecipeAttributes.put(orchestrator_uri, "orchestrator")
+    :ok = Ezagent.Agent.RecipeAttributes.put(orchestrator_uri, "orchestrator")
     on_exit(fn -> terminate(orchestrator_uri) end)
 
     assert {:ok, ^orchestrator_uri, :already_present} =

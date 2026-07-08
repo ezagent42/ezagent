@@ -398,6 +398,16 @@
   #   deploy-seed lane (`SocialwareSeed.seed!` → `ManifestSeed.scan_dir!` →
   #   `ManifestYaml.import`). No self-publisher remains; any new one trips this.
   socialware_self_publish_unsanctioned: 0,
+  # concatenated_namespace_modules — 0 (hard). Namespace-dot convention gate
+  #   (2026-07-08, GLOSSARY Decision #161 follow-up). A single-segment
+  #   `defmodule Ezagent.XyzAbc` where `Ezagent.Xyz` is a namespace with dotted
+  #   children in the SAME app (parent+child glued — should be `Xyz.Abc`), minus
+  #   the `@concatenated_namespace_allowlist` of sanctioned single-concept
+  #   compounds. The two real offenders (`AgentRecipeResolver`,
+  #   `AgentRecipeAttributes`) were renamed to `Ezagent.Agent.Recipe*` (joining
+  #   the existing dotted `Ezagent.Agent.Recipe*` cluster); any NEW glued module
+  #   that is not sanctioned trips this.
+  concatenated_namespace_modules: 0,
   # Documentation-coverage gate (2026-06-13, Allen) — RATCHET-DOWN counters.
   # Backed by `Mix.Tasks.Ezagent.Doc.Scan`; enforced by
   # test/architecture/doc_coverage_test.exs. Calibrated GREEN at the CURRENT

@@ -11,7 +11,7 @@ defmodule Ezagent.World.KanbanData do
   （role `kanban-manager` × flavor `native`）。board = 该 agent 的 `:kanban` snapshot
   slice。本读模型据此重接两处（spec §3.5 / plan K4）：
 
-    * **list_instances** ——`Ezagent.AgentRecipeResolver.list_by_recipe("kanban-manager",
+    * **list_instances** ——`Ezagent.Agent.RecipeResolver.list_by_recipe("kanban-manager",
       workspace_uri)`（RF-7，**快照来源**，覆盖 live + dormant，冷启动仍枚举），
       不再 `EzagentDomainUi.AutoDerive.list_instances(:kanban)`（按 Kind 类型，
       kanban-manager 的 Kind 是 `Entity.Agent` → 类型匹配为假）。返回的 URI 即
@@ -68,7 +68,7 @@ defmodule Ezagent.World.KanbanData do
   @doc """
   列出本 workspace 的 kanban-manager agents（role `kanban-manager`）。
 
-  RF-7 `Ezagent.AgentRecipeResolver.list_by_recipe/2` ——**快照来源**，覆盖 live +
+  RF-7 `Ezagent.Agent.RecipeResolver.list_by_recipe/2` ——**快照来源**，覆盖 live +
   dormant：一个 passive 的 kanban-manager 在 BEAM 重启后即便没 live 仍枚举得到
   （否则 board 会从 UI 静默消失，HIGH-3）。`workspace_uri`（ctx 携带）把扫描限定
   在本 tenant，不跨租户泄漏。返回的 URI 即 `entity://<ws>/agent/<id>` ——既是列表项
@@ -77,7 +77,7 @@ defmodule Ezagent.World.KanbanData do
   @spec list_instances(map()) :: [map()]
   def list_instances(ctx) do
     "kanban-manager"
-    |> Ezagent.AgentRecipeResolver.list_by_recipe(workspace_scope(ctx))
+    |> Ezagent.Agent.RecipeResolver.list_by_recipe(workspace_scope(ctx))
     |> Enum.map(fn %URI{} = uri ->
       %{"uri" => encode_uri(uri), "name" => uri_name(uri), "path" => detail_path(uri)}
     end)

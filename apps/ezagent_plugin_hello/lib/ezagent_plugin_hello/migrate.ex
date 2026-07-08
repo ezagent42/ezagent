@@ -27,7 +27,7 @@ defmodule EzagentPluginHello.Migrate do
   never get the real hello-flavored front desk.
 
   `migrate_one/1` therefore READ-ONLY-detects the current orchestrator's
-  build-provenance recipe (`Ezagent.AgentRecipeAttributes.fetch/1` → the durable
+  build-provenance recipe (`Ezagent.Agent.RecipeAttributes.fetch/1` → the durable
   `Ezagent.UriQuery.resolve(:recipe, _)` fallback — the same two-step lookup
   `DefinitionAgents.agent_recipe/1` uses internally) BEFORE delegating to
   `repair_orchestrator/1`. A mismatch (or unresolvable recipe) removes that
@@ -134,10 +134,10 @@ defmodule EzagentPluginHello.Migrate do
 
   # The same ETS-fast-path → durable-resolver layering
   # `SessionCreator.DefinitionAgents.agent_recipe/1` uses internally — both
-  # `Ezagent.AgentRecipeAttributes` and `Ezagent.UriQuery` are public core/domain
+  # `Ezagent.Agent.RecipeAttributes` and `Ezagent.UriQuery` are public core/domain
   # read APIs (consumed, not modified).
   defp agent_recipe(%URI{} = agent_uri) do
-    case Ezagent.AgentRecipeAttributes.fetch(agent_uri) do
+    case Ezagent.Agent.RecipeAttributes.fetch(agent_uri) do
       {:ok, recipe} -> {:ok, recipe}
       :none -> Ezagent.UriQuery.resolve(:recipe, agent_uri)
     end

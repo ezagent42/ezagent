@@ -55,7 +55,7 @@ defmodule Ezagent.ActionSet.Sandbox do
                                                    # membership edge; Gate B). The create step
                                                    # writes it from the materialized recipe
                                                    # (`role.name`); the `:recipe` UriQuery resolver
-                                                   # + `Ezagent.AgentRecipeResolver.list_by_recipe/2`
+                                                   # + `Ezagent.Agent.RecipeResolver.list_by_recipe/2`
                                                    # read it from this slice (snapshot-backed) so
                                                    # a DORMANT provenance agent (e.g. the
                                                    # kanban-manager) still enumerates by recipe
@@ -226,7 +226,7 @@ defmodule Ezagent.ActionSet.Sandbox do
        # `:recipe` into the spawn args from the materialized recipe; an absent
        # value (every non-recipe agent) is `nil`. A snapshot rehydrate shadows
        # this on cold-load, so it survives a restart — the `:recipe` UriQuery
-       # resolver + `Ezagent.AgentRecipeResolver.list_by_recipe/2` read it from the
+       # resolver + `Ezagent.Agent.RecipeResolver.list_by_recipe/2` read it from the
        # persisted slice, so a DORMANT provenance agent still enumerates by
        # recipe after a BEAM restart. NOT a session role (Gate B).
        recipe: validate_recipe(Map.get(args, :recipe))
