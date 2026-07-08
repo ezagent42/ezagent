@@ -1,30 +1,28 @@
 defmodule EzagentPluginCrawler.Demo do
   @moduledoc """
-  Thin YAML loader for the **dealscout demo socialware** boot publish.
+  Thin YAML loader + **test fixture source** for the dealscout demo socialware.
 
-  #1213 landed the official config-file manifest lane
-  (`Ezagent.Socialware.ManifestYaml` + the `priv/socialware/*/manifest.yaml`
-  boot scan). This module's former inline `manifest_attrs/1` code map is now
-  CONFIG — `priv/socialware/dealscout/manifest.yaml` in THIS plugin's priv
-  (see the file's header for what dealscout composes: hello 公开面 + crawler
-  爬取后台 + 临时 ALT page 槽 + update-signal routing) — and this module
-  shrinks to the loader that publishes it at plugin boot through the SAME
-  chain as `ManifestYaml.import/2`:
+  ## Production publishes via the deploy-seed lane (NOT this module)
 
-      parse → ManifestResolver.resolve → Conformance.check_candidate
-            → ConfigGovernance.Socialware.publish_or_upgrade
+  The dealscout manifest is CONFIG — `apps/ezagent_web/priv/socialware_seed/
+  dealscout/manifest.yaml` — carried in the release box exactly like
+  `autoservice` / `hello` / `kanban`. On a fresh stack
+  `Ezagent.Home.SocialwareSeed` idempotently copies that package into the
+  canonical deployment home (`$EZAGENT_HOME/<profile>/socialware/dealscout/`)
+  and the late boot scan (`Ezagent.Socialware.ManifestSeed.scan_all!/1`, run
+  from the last-booting transport app AFTER the crawler plugin + hello
+  registered their plugin_info + `PageView` so `uses: ["hello", "crawler"]` +
+  the `hello_render` view resolve) publishes it through the governed import
+  lane. There is **zero self-publish** in this module — the former
+  `EzagentPluginCrawler.Application` boot publish AND the old `Demo.publish/0`
+  primitive are both gone (deploy-seed SPEC §2/§4).
 
-  ## Why not the `ManifestSeed` boot-scan lane directly
+  ## What this module is for
 
-  `Ezagent.Socialware.ManifestSeed.scan_boot_manifests!/0` only scans the
-  `:ezagent_domain_session` priv dir, and it runs at domain boot — BEFORE this
-  plugin's `Application.start/2` registered its plugin_info / recipes (and
-  before hello registered its `PageView`, which `resolve` + `check_candidate`
-  need for `hello_render`). So the dealscout manifest lives in the plugin's
-  own priv and this loader runs in the plugin's own boot (after
-  `Ezagent.Plugin.boot/1`). Once the deploy-seed lane is extended to scan
-  plugin privs post-boot, this loader can shrink further to a pure path
-  declaration.
+  A test-fixture source. `manifest_attrs/1` loads the SAME shipped YAML via
+  `Ezagent.Socialware.ManifestYaml.parse/1`, so tests exercise the exact
+  manifest production ships — the file is the one source of truth and the shape
+  gate locks it against drift.
 
   ## The e2e variant seam
 
@@ -34,19 +32,10 @@ defmodule EzagentPluginCrawler.Demo do
   bare-spawn stub so no cc SDK sidecar starts; unlike kanban, where BOTH slots
   swap, the `page` slot stays pinned `dealscout-page-alt × native`, the
   explicit temporary ALT that flips back to `hello.builder` once A①/#1201 ③
-  lands). Same YAML source → the fixtures and the boot demo can never drift.
-
-  ## Idempotency / failure semantics (unchanged)
-
-  `publish/0` routes through the shared idempotency RULE
-  (`publish_or_upgrade/2`, P0 §5): `:published` → unchanged redeploy
-  `:exists` (no CR) → edited manifest `:upgraded`. The boot call site
-  (`EzagentPluginCrawler.Application.maybe_publish_dealscout_demo/0`) stays
-  fail-loud in dev/prod and skipped in `:test`.
+  lands). Same YAML source → the fixtures and the deploy-seed publish can never
+  drift.
   """
 
-  alias Ezagent.ConfigGovernance.Socialware, as: Governance
-  alias Ezagent.Socialware.{Conformance, Definition, DefinitionRegistry, ManifestResolver}
   alias Ezagent.Socialware.ManifestYaml
 
   @name "dealscout"
@@ -54,26 +43,29 @@ defmodule EzagentPluginCrawler.Demo do
   # native 的页面刷新腿，不随 stub 换）。
   @discover_role "discover"
 
-  @manifest_relpath "socialware/dealscout/manifest.yaml"
+  @manifest_relpath "dealscout/manifest.yaml"
 
   @doc "The stable demo socialware name (`\"dealscout\"`)."
   @spec name() :: String.t()
   def name, do: @name
 
-  @doc "The owner workspace URI string the demo publishes into (`workspace://system`)."
-  @spec owner_workspace_uri() :: String.t()
-  def owner_workspace_uri, do: DefinitionRegistry.system_workspace_uri()
-
-  @doc "Absolute path of the shipped dealscout manifest YAML (this plugin's priv)."
-  @spec manifest_path() :: Path.t()
+  @doc """
+  Absolute path of the shipped dealscout manifest YAML, discovered generically
+  through `Ezagent.Home.SocialwareSeed.source_dirs/0` (every loaded OTP app's
+  `priv/socialware_seed`) — the SAME discovery the deploy-seed lane uses. Today
+  the package ships in `ezagent_web`, but this names no app: whichever app ships
+  it is found. `nil` when no loaded app carries the package.
+  """
+  @spec manifest_path() :: Path.t() | nil
   def manifest_path do
-    Application.app_dir(:ezagent_plugin_crawler, "priv")
-    |> Path.join(@manifest_relpath)
+    Ezagent.Home.SocialwareSeed.source_dirs()
+    |> Enum.map(&Path.join(&1, @manifest_relpath))
+    |> Enum.find(&File.exists?/1)
   end
 
   @doc """
-  The dealscout demo manifest attributes, loaded from
-  `priv/socialware/dealscout/manifest.yaml` via `ManifestYaml.parse/1`
+  The dealscout demo manifest attributes, loaded from the shipped
+  `priv/socialware_seed/dealscout/manifest.yaml` via `ManifestYaml.parse/1`
   (config-authored, string name-refs, `ManifestResolver.resolve/1`-ready).
 
   Options (the e2e/test variant seam; both default to the shipped YAML values):
@@ -86,49 +78,26 @@ defmodule EzagentPluginCrawler.Demo do
       moduledoc §The e2e variant seam）(unlike kanban, where BOTH slots are
       cc-headless and both swap).
 
-  Fail-loud: a missing or unparseable manifest file raises (the boot publish
-  must never silently proceed on a broken config file).
+  Fail-loud: a missing or unparseable manifest file raises (a broken config file
+  must never silently produce empty attrs).
   """
   @spec manifest_attrs(keyword()) :: map()
   def manifest_attrs(opts \\ []) do
-    yaml = File.read!(manifest_path())
+    path =
+      manifest_path() ||
+        raise "dealscout manifest.yaml not found in any loaded app's priv/socialware_seed " <>
+                "(expected #{@manifest_relpath}); is the shipping app (ezagent_web) loaded?"
 
-    case ManifestYaml.parse(yaml) do
+    case ManifestYaml.parse(File.read!(path)) do
       {:ok, attrs} ->
         attrs
         |> override_name(Keyword.get(opts, :name))
         |> override_flavor(Keyword.get(opts, :flavor))
 
       {:error, reason} ->
-        raise "dealscout manifest.yaml failed to parse (#{manifest_path()}): #{inspect(reason)}"
+        raise "dealscout manifest.yaml failed to parse (#{path}): #{inspect(reason)}"
     end
   end
-
-  @doc """
-  Publish the dealscout demo as a PUBLIC socialware in `workspace://system` via
-  the real governance flow, walking the SAME chain as `ManifestYaml.import/2`
-  (resolve → check_candidate → publish_or_upgrade) through the shared
-  idempotency RULE (P0 §5): first publish `:published`, unchanged redeploy
-  `:exists` (no CR opened), edited manifest `:upgraded`.
-  """
-  @spec publish() :: {:ok, :published | :upgraded | :exists} | {:error, term()}
-  def publish do
-    ws = Ezagent.URI.workspace(:system)
-    admin = Ezagent.URI.user(:system, :admin)
-    ctx = admin_ctx(admin, ws)
-
-    with {:ok, %Definition{} = definition} <- ManifestResolver.resolve(manifest_attrs()),
-         :ok <- Conformance.check_candidate(definition, ws) do
-      Governance.publish_or_upgrade(definition, ctx)
-    end
-  end
-
-  @doc """
-  Whether the dealscout demo is already present as a PUBLIC definition (the
-  idempotency predicate).
-  """
-  @spec published?() :: boolean()
-  def published?, do: already_public?(Ezagent.URI.workspace(:system))
 
   defp override_name(attrs, nil), do: attrs
   defp override_name(attrs, name) when is_binary(name), do: Map.put(attrs, "name", name)
@@ -145,24 +114,5 @@ defmodule EzagentPluginCrawler.Demo do
           slot
       end)
     end)
-  end
-
-  defp admin_ctx(admin, ws) do
-    %{
-      caller: admin,
-      workspace_uri: ws,
-      caps:
-        MapSet.new([
-          Governance.manage_cap(@name, ws, admin),
-          Ezagent.Capability.admin_genesis_cap()
-        ])
-    }
-  end
-
-  defp already_public?(ws) do
-    case DefinitionRegistry.lookup(ws, @name) do
-      {:ok, %Definition{visibility_policy: %{scope: :public}}, _object} -> true
-      _ -> false
-    end
   end
 end
