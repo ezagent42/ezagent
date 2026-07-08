@@ -1,19 +1,20 @@
 defmodule EzagentPluginCrawler.DemoPublishTest do
   @moduledoc """
-  Boot-publish gate for the dealscout demo socialware
-  (`EzagentPluginCrawler.Demo`, since #1213 a thin loader over
-  `priv/socialware/dealscout/manifest.yaml` walking the `ManifestYaml.import/2`
-  chain: parse → resolve → check_candidate → publish_or_upgrade), the hello
-  #162 / kanban golden-template play — ExUnit drives the SAME `publish/0` the
-  boot call site runs (skipped in `:test` for Ecto-sandbox reasons, exactly
-  hello's `maybe_publish_hello_demo` split), inside a checked-out sandbox:
+  Deploy-seed publish gate for the dealscout demo socialware — the acceptance
+  test for the migration off the crawler plugin boot self-publish onto the
+  deploy-seed lane (deploy-seed SPEC §2/§4, mirroring hello / kanban). It drives
+  the EXACT production lane: `Ezagent.Home.SocialwareSeed.seed!/1` copies the
+  shipped `ezagent_web/priv/socialware_seed/dealscout/` package into a temp
+  deployment dir, then `Ezagent.Socialware.ManifestSeed.scan_dir!/2` resolves +
+  publishes it through the governed import lane (parse → resolve → conformance →
+  `ConfigGovernance.Socialware.publish_or_upgrade`). No `Demo.publish` primitive
+  is involved anymore — production has none.
 
-    * **idempotency three-state** (P0 §5 `publish_or_upgrade/2`): first publish
-      `:published` → unchanged redeploy `:exists` (NO new CR / revision) →
-      EDITED manifest `:upgraded` (a new immutable revision).
-    * **conformance**: the PUBLISHED definition passes all 13
-      `Ezagent.Socialware.Conformance` assertions (12 + #1212 的
-      `:routing_role_dag`) — the same guarantee
+    * **idempotency three-state** (P0 §5 `publish_or_upgrade/2`): first scan
+      `:published` → unchanged re-scan `:exists` (NO new CR / revision) → EDITED
+      manifest `:upgraded` (a new immutable revision).
+    * **conformance**: the PUBLISHED definition passes all 15
+      `Ezagent.Socialware.Conformance` assertions — the same guarantee
       `mix ezagent.socialware.check dealscout` gives.
     * **PUBLIC + cross-workspace discoverable** via `DefinitionRegistry.list/1`
       from a DIFFERENT workspace (the "Socialware 下拉" listing).
@@ -23,14 +24,15 @@ defmodule EzagentPluginCrawler.DemoPublishTest do
   adapter）+ plugin_hello（注册 HelloRender 的 `{Session, :hello_render}`
   render cap + hello.* recipes）+ plugin_crawler（dealscout demo recipes）；
   code-seed 两家 recipe 进 `workspace://system`（`RoleSeedHook` skips in
-  test）；DataCase DB sandbox.
+  test）；DataCase DB sandbox. Only the dealscout package is scanned — the
+  sibling flagships (`hello` / `autoservice` / `kanban`) seeded into the same
+  temp dir are pruned first, since they reference plugin views / recipes not
+  booted in this domain+hello+crawler env (the manifest_seed boot-fallback play).
   """
   use EzagentCore.DataCase, async: false
 
   alias Ezagent.Agent.RecipeRegistry
-  alias Ezagent.ConfigGovernance.Socialware, as: Governance
-  alias Ezagent.Socialware.{Conformance, Definition, DefinitionRegistry, ManifestResolver}
-  alias EzagentPluginCrawler.Demo
+  alias Ezagent.Socialware.{Conformance, Definition, DefinitionRegistry, ManifestSeed}
 
   setup do
     for app <- [
@@ -61,34 +63,40 @@ defmodule EzagentPluginCrawler.DemoPublishTest do
   end
 
   test "idempotency three-state: :published → :exists (no new revision) → :upgraded", %{ws: ws} do
-    # 1) first publish through the REAL governance flow (open_cr → stage →
-    #    publish) — the exact call the boot site makes.
-    assert {:ok, :published} = Demo.publish()
-    assert Demo.published?()
+    dir = seed_dealscout_only!()
+
+    # 1) first publish through the REAL deploy-seed lane (seed! → scan_dir!) —
+    #    the exact call the boot fallback + `mix ezagent.home.init` make.
+    assert [%{name: "dealscout", result: :published}] =
+             ManifestSeed.scan_dir!(dir, source: "deploy")
+
     assert {:ok, _definition, obj_v1} = DefinitionRegistry.lookup(ws, "dealscout")
 
-    # 2) unchanged redeploy (a re-boot / supervisor restart) no-ops: NO new CR,
-    #    NO new revision minted.
-    assert {:ok, :exists} = Demo.publish()
+    # 2) unchanged re-scan (a re-boot / re-seed) no-ops: NO new CR, NO new
+    #    revision minted.
+    assert [%{name: "dealscout", result: :exists}] =
+             ManifestSeed.scan_dir!(dir, source: "deploy")
+
     assert {:ok, _definition, obj_after} = DefinitionRegistry.lookup(ws, "dealscout")
     assert obj_after.id == obj_v1.id
 
     # 3) an EDITED manifest re-promotes (:upgraded, killing the R-2 silent
-    #    swallow) — same admin authority the boot publish uses.
-    edited =
-      Map.put(Demo.manifest_attrs(), "description", "edited dealscout manifest (upgrade)")
+    #    swallow) — the same governed lane, a new immutable revision.
+    edit_manifest_description!(dir, "edited dealscout manifest (upgrade)")
 
-    assert {:ok, %Definition{} = def_v2} = ManifestResolver.resolve(edited)
-    assert {:ok, :upgraded} = Governance.publish_or_upgrade(def_v2, admin_ctx(ws))
+    assert [%{name: "dealscout", result: :upgraded}] =
+             ManifestSeed.scan_dir!(dir, source: "deploy")
 
     assert {:ok, _definition, obj_v2} = DefinitionRegistry.lookup(ws, "dealscout")
     refute obj_v2.id == obj_v1.id
-    assert obj_v2.content_hash == Definition.content_hash(Definition.body(def_v2))
   end
 
-  test "published dealscout is PUBLIC, cross-workspace discoverable, and passes all 13 conformance assertions",
+  test "published dealscout is PUBLIC, cross-workspace discoverable, and passes all 15 conformance assertions",
        %{ws: ws} do
-    assert {:ok, :published} = Demo.publish()
+    dir = seed_dealscout_only!()
+
+    assert [%{name: "dealscout", result: :published}] =
+             ManifestSeed.scan_dir!(dir, source: "deploy")
 
     # PUBLIC + discoverable from a DIFFERENT workspace via the normal listing.
     other_ws_name = "dealscout-discoverer-#{System.unique_integer([:positive])}"
@@ -99,10 +107,9 @@ defmodule EzagentPluginCrawler.DemoPublishTest do
              row.name == "dealscout" and row.public? == true
            end)
 
-    # Materializable: all 13 conformance assertions green — the same guarantee
+    # Materializable: all 15 conformance assertions green — the same guarantee
     # `mix ezagent.socialware.check dealscout` gives, proving install works.
-    # 13 = 原 12 + #1212 的 role-DAG conformance 断言（kanban 同款随行更新）。
-    assert length(Conformance.assertions()) == 13
+    assert length(Conformance.assertions()) == 15
 
     assert {:ok, %Definition{name: "dealscout"} = definition, _obj} =
              DefinitionRegistry.lookup(ws, "dealscout")
@@ -114,19 +121,41 @@ defmodule EzagentPluginCrawler.DemoPublishTest do
              1
   end
 
-  # Mirrors `Demo`'s private `admin_ctx/2` (kept private there, hello parity) —
-  # the bootstrap admin + manage cap + the public-scope admin genesis gate.
-  defp admin_ctx(ws) do
-    admin = Ezagent.URI.user(:system, :admin)
+  # Seed the shipped dealscout deploy-seed package into a fresh temp deployment
+  # dir (the exact `Ezagent.Home.SocialwareSeed.seed!/0` copy), then prune every
+  # sibling flagship so only the dealscout package is scanned.
+  defp seed_dealscout_only! do
+    dir = Path.join(System.tmp_dir!(), "dealscout-seed-#{System.unique_integer([:positive])}")
+    File.rm_rf!(dir)
+    on_exit(fn -> File.rm_rf!(dir) end)
 
-    %{
-      caller: admin,
-      workspace_uri: ws,
-      caps:
-        MapSet.new([
-          Governance.manage_cap("dealscout", ws, admin),
-          Ezagent.Capability.admin_genesis_cap()
-        ])
-    }
+    :ok = Ezagent.Home.SocialwareSeed.seed!(dest: dir)
+
+    for pkg <- File.ls!(dir), pkg != "dealscout" do
+      File.rm_rf!(Path.join(dir, pkg))
+    end
+
+    assert File.exists?(Path.join(dir, "dealscout/manifest.yaml")),
+           "seed! must have copied the shipped dealscout package"
+
+    dir
+  end
+
+  # Edit the seeded manifest's description in place so the next scan sees new
+  # content (→ `:upgraded`). The `description:` scalar is unique in the file.
+  defp edit_manifest_description!(dir, new_description) do
+    path = Path.join(dir, "dealscout/manifest.yaml")
+    yaml = File.read!(path)
+
+    edited =
+      String.replace(
+        yaml,
+        ~r/^description: .*$/m,
+        "description: #{inspect(new_description)}",
+        global: false
+      )
+
+    assert edited != yaml, "the description line must have been rewritten"
+    File.write!(path, edited)
   end
 end
