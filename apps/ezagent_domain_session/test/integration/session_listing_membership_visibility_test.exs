@@ -57,12 +57,21 @@ defmodule EzagentDomainInstanceMessage.Integration.SessionListingMembershipVisib
     uri
   end
 
-  defp wait_until(fun, retries \\ 50) do
-    if fun.() or retries <= 0 do
-      true
-    else
-      Process.sleep(10)
-      wait_until(fun, retries - 1)
+  # codex #1257 MED follow-up: the original helper returned `true` on retry
+  # exhaustion, so `assert wait_until(...)` could pass VACUOUSLY (it did —
+  # masking a wrong slice key in wait_snapshot_members/2). Exhaustion now
+  # returns the final condition result so the assertion is real.
+  defp wait_until(fun, retries \\ 200) do
+    cond do
+      fun.() ->
+        true
+
+      retries <= 0 ->
+        false
+
+      true ->
+        Process.sleep(10)
+        wait_until(fun, retries - 1)
     end
   end
 
@@ -169,20 +178,24 @@ defmodule EzagentDomainInstanceMessage.Integration.SessionListingMembershipVisib
            "session Kind did not go cold"
   end
 
-  # Wait until the durable snapshot row exists AND its :chat slice members
+  # Wait until the durable snapshot row exists AND its session-slice members
   # include `member_uri` — the state a node restart preserves. Inline slice
-  # unwrap on purpose (independent of the code under test).
+  # unwrap on purpose (independent of the listing code under test), but via
+  # the CANONICAL `Ezagent.ActionSet.Session.state_slice()` key (codex #1257 MED:
+  # a hardcoded key here silently diverges from what production reads —
+  # the 2026-06-12 chat→session rename made `:chat` a dead key).
   defp wait_snapshot_members(session_uri, member_uri) do
     member_str = URI.to_string(member_uri)
+    slice_key = Ezagent.ActionSet.Session.state_slice()
 
     wait_until(fn ->
       with row when not is_nil(row) <-
              Ezagent.Ecto.KindSnapshot.get(URI.to_string(session_uri)),
            {:ok, state} <- Ezagent.Ecto.KindSnapshot.decode_state(row) do
-        chat_slice = Map.get(state, :chat, %{})
-        chat_persistent = Map.get(chat_slice, :state, chat_slice)
+        session_slice = Map.get(state, slice_key, %{})
+        session_persistent = Map.get(session_slice, :state, session_slice)
 
-        chat_persistent
+        session_persistent
         |> Map.get(:members, %{})
         |> Map.keys()
         |> Enum.any?(fn
@@ -193,6 +206,25 @@ defmodule EzagentDomainInstanceMessage.Integration.SessionListingMembershipVisib
         _ -> false
       end
     end)
+  end
+
+  # Insert a synthetic durable session snapshot row (no live Kind) — the
+  # cold-fixture builder for the era / malformed coverage below.
+  defp upsert_snapshot_row(session_uri, state) when is_map(state) do
+    upsert_snapshot_binary(session_uri, :erlang.term_to_binary(state))
+  end
+
+  defp upsert_snapshot_binary(session_uri, binary) when is_binary(binary) do
+    {:ok, _row} =
+      Ezagent.Test.SnapshotFixtures.upsert_kind_snapshot(
+        URI.to_string(session_uri),
+        "session",
+        binary,
+        0,
+        URI.to_string(@workspace_uri)
+      )
+
+    :ok
   end
 
   describe "cold-boot durable session listing" do
@@ -270,6 +302,119 @@ defmodule EzagentDomainInstanceMessage.Integration.SessionListingMembershipVisib
       assert session_uri in EzagentDomainInstanceMessage.list_sessions(@workspace_uri, owner)
 
       refute session_uri in EzagentDomainInstanceMessage.list_sessions(@workspace_uri, stranger)
+    end
+
+    # codex #1257 MED (c) — both-era slice-key coverage. Current-era rows are
+    # `:session`-keyed (the 2026-06-12 chat→session rename; ActionSet.Session's
+    # `state_slice/0` auto-derives `:session`). Legacy `:chat`-keyed rows are
+    # served ONLY after the sanctioned `Ezagent.Session.SliceMigration` ordered
+    # cutover (NO dual-read shim — its moduledoc "Deploy ordering": a new-code
+    # node must not serve `:chat` rows at all; the live restore path would
+    # default such a slice to empty and prune it). So the contract this test
+    # pins is: current-era cold row → member LISTED; legacy row → fail-closed
+    # (excluded, no raise) UNTIL migrated, then LISTED.
+    test "both-era slice keys: :session-keyed cold row lists the member; legacy :chat row is fail-closed until migrated" do
+      owner = make_user("era_owner")
+      stranger = make_user("era_stranger")
+
+      # Current era — synthetic :session-keyed cold row (two-container shape,
+      # same as the runtime persists; no live Kind exists for this URI).
+      current_uri =
+        Ezagent.URI.new!(
+          "session://system/default/era-session-#{System.unique_integer([:positive])}"
+        )
+
+      :ok =
+        upsert_snapshot_row(current_uri, %{
+          session: %{state: %{members: %{owner => %{"role" => "member"}}}, transients: %{}}
+        })
+
+      assert current_uri in EzagentDomainInstanceMessage.list_sessions(@workspace_uri, owner)
+
+      # Legacy era — :chat-keyed row (pre-2026-06-12 shape).
+      legacy_uri =
+        Ezagent.URI.new!(
+          "session://system/default/era-chat-#{System.unique_integer([:positive])}"
+        )
+
+      legacy_state = %{
+        chat: %{state: %{members: %{owner => %{"role" => "member"}}}, transients: %{}}
+      }
+
+      :ok = upsert_snapshot_row(legacy_uri, legacy_state)
+
+      # Pre-migration: fail-closed for the member (no raise, excluded) — the
+      # listing must not advertise membership the restore path would wipe.
+      pre_migration = EzagentDomainInstanceMessage.list_sessions(@workspace_uri, owner)
+      refute legacy_uri in pre_migration
+
+      # Sanctioned cutover: the SliceMigration transform makes the row
+      # servable — the SAME member is then listed.
+      {:renamed, migrated_state} =
+        Ezagent.Session.SliceMigration.rename_slice_key(legacy_state)
+
+      :ok = upsert_snapshot_row(legacy_uri, migrated_state)
+
+      assert legacy_uri in EzagentDomainInstanceMessage.list_sessions(@workspace_uri, owner)
+
+      # Tenant invariant holds across both eras: a non-member sees neither.
+      stranger_sessions =
+        EzagentDomainInstanceMessage.list_sessions(@workspace_uri, stranger)
+
+      refute current_uri in stranger_sessions
+      refute legacy_uri in stranger_sessions
+    end
+
+    # codex #1257 — malformed-snapshot fail-closed binding test: an
+    # undecodable state_binary and a non-URI/non-map members shape must never
+    # raise out of the listing and must never surface the session to a
+    # non-member caller.
+    test "malformed snapshots are fail-closed: listing does not raise, session excluded" do
+      caller = make_user("mal_caller")
+
+      garbage_uri =
+        Ezagent.URI.new!(
+          "session://system/default/mal-garbage-#{System.unique_integer([:positive])}"
+        )
+
+      # Undecodable state_binary (not a term_to_binary payload).
+      :ok = upsert_snapshot_binary(garbage_uri, <<1, 2, 3>>)
+
+      nonmap_members_uri =
+        Ezagent.URI.new!(
+          "session://system/default/mal-nonmap-#{System.unique_integer([:positive])}"
+        )
+
+      :ok =
+        upsert_snapshot_row(nonmap_members_uri, %{
+          session: %{state: %{members: "not-a-map"}, transients: %{}}
+        })
+
+      nonuri_members_uri =
+        Ezagent.URI.new!(
+          "session://system/default/mal-nonuri-#{System.unique_integer([:positive])}"
+        )
+
+      :ok =
+        upsert_snapshot_row(nonuri_members_uri, %{
+          session: %{
+            state: %{members: %{"not-a-uri-key" => %{}, 42 => %{}}},
+            transients: %{}
+          }
+        })
+
+      # Must not raise…
+      sessions = EzagentDomainInstanceMessage.list_sessions(@workspace_uri, caller)
+      assert is_list(sessions)
+
+      # …and none of the malformed rows may surface for a non-member.
+      refute garbage_uri in sessions
+      refute nonmap_members_uri in sessions
+      refute nonuri_members_uri in sessions
+
+      # The base enumeration (no membership filter) also survives them.
+      persisted = EzagentDomainInstanceMessage.list_persisted_sessions(@workspace_uri)
+      assert is_list(persisted)
     end
   end
 end

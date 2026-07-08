@@ -101,11 +101,15 @@ defmodule EzagentDomainInstanceMessage.SessionCreator.Listing do
   def list_persisted_sessions(_), do: []
 
   # The live ∪ durable base enumeration `list_sessions/2` and
-  # `list_persisted_sessions/1` share. Returns `{session_uri, :live}` or
-  # `{session_uri, {:cold, snapshot_row}}` sorted by URI string — the row
-  # travels with the cold entry so membership decode needs no further
-  # queries (no N+1). Read-only: never spawns/rehydrates a Kind.
-  @spec persisted_session_entries(URI.t()) :: [{URI.t(), :live | {:cold, struct()}}]
+  # `list_persisted_sessions/1` share. Returns `{session_uri, {:live, row_or_nil}}`
+  # or `{session_uri, {:cold, snapshot_row}}` sorted by URI string — the durable
+  # row travels with BOTH entry kinds: cold entries decode membership from it
+  # with no further queries (no N+1), and live-tagged entries keep it so a Kind
+  # that dies between this scan and the membership read still resolves durably
+  # (codex #1257 LOW — live/cold race) instead of vanishing for its member.
+  # Read-only: never spawns/rehydrates a Kind.
+  @spec persisted_session_entries(URI.t()) ::
+          [{URI.t(), {:live, struct() | nil} | {:cold, struct()}}]
   defp persisted_session_entries(%URI{scheme: "workspace"} = workspace_uri) do
     workspace_name = Ezagent.URI.name!(workspace_uri)
 
@@ -115,12 +119,18 @@ defmodule EzagentDomainInstanceMessage.SessionCreator.Listing do
 
     live_set = MapSet.new(live, &URI.to_string/1)
 
-    cold =
-      workspace_uri
-      |> persisted_session_rows(workspace_name)
-      |> Enum.reject(fn {uri, _row} -> MapSet.member?(live_set, URI.to_string(uri)) end)
+    rows = persisted_session_rows(workspace_uri, workspace_name)
+    rows_by_uri = Map.new(rows, fn {uri, row} -> {URI.to_string(uri), row} end)
 
-    (Enum.map(live, &{&1, :live}) ++ Enum.map(cold, fn {uri, row} -> {uri, {:cold, row}} end))
+    cold =
+      Enum.reject(rows, fn {uri, _row} -> MapSet.member?(live_set, URI.to_string(uri)) end)
+
+    live_entries =
+      Enum.map(live, fn uri -> {uri, {:live, Map.get(rows_by_uri, URI.to_string(uri))}} end)
+
+    cold_entries = Enum.map(cold, fn {uri, row} -> {uri, {:cold, row}} end)
+
+    (live_entries ++ cold_entries)
     |> Enum.sort_by(fn {uri, _liveness} -> URI.to_string(uri) end)
   end
 
@@ -153,9 +163,32 @@ defmodule EzagentDomainInstanceMessage.SessionCreator.Listing do
   # live read; cold sessions read the durable `:members` from the
   # already-fetched snapshot row. Fail-closed: an undecodable row has no
   # members.
-  defp member_uris(session_uri, :live), do: Session.session_member_uris(session_uri)
+  #
+  # Live/cold race (codex #1257 LOW): a Kind tagged live at scan time can
+  # die before this membership read; `session_member_uris/1` then returns
+  # `[]` (its not-live contract). Only in that case — empty AND the Kind
+  # verifiably gone from the registry — fall back to the durable row the
+  # scan already carried. A genuinely-live session's empty roster is NOT
+  # overridden (the registry lookup still succeeds), so live semantics are
+  # unchanged.
+  defp member_uris(session_uri, {:live, row}) do
+    case Session.session_member_uris(session_uri) do
+      [] ->
+        case KindRegistry.lookup(session_uri) do
+          :error -> cold_member_uris(row)
+          {:ok, _pid} -> []
+        end
 
-  defp member_uris(_session_uri, {:cold, row}) do
+      members ->
+        members
+    end
+  end
+
+  defp member_uris(_session_uri, {:cold, row}), do: cold_member_uris(row)
+
+  defp cold_member_uris(nil), do: []
+
+  defp cold_member_uris(row) do
     case Ezagent.Ecto.KindSnapshot.decode_state(row) do
       {:ok, state} -> Session.member_uris_from_snapshot_state(state)
       _ -> []
