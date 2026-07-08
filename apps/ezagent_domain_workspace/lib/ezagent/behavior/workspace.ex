@@ -655,29 +655,46 @@ defmodule Ezagent.ActionSet.Workspace do
   defp create_session_via_class(class_name, class_module, short_name, workspace_uri, caller) do
     tmpl = %{"class" => class_name, "session_name" => short_name}
 
+    # `Ezagent.Kind.Template.instantiate/3` declares BOTH a 2-element
+    # `{:ok, [URI.t()]}` and a 3-element `{:ok, [URI.t()], meta}` success
+    # (template.ex `@callback instantiate`). `GenericSession.instantiate/3`
+    # returns the 2-element form — matching ONLY the 3-element head here crashed
+    # every `generic` create with `{:case_clause, {:ok, [%URI{}]}}` (the list is
+    # the multi-URI instantiate return; we take the session head). Accept both
+    # arities, and mirror the "instantiated no session" guard for each.
     case class_module.instantiate(class_name, tmpl, workspace_uri) do
+      {:ok, [%URI{} = session_uri | _]} ->
+        finish_class_session(session_uri, workspace_uri, caller)
+
       {:ok, [%URI{} = session_uri | _], meta} when is_map(meta) ->
-        with :ok <-
-               Ezagent.Workspace.grant_creator_manage_cap(
-                 :session,
-                 session_uri,
-                 workspace_uri,
-                 caller
-               ) do
-          {:ok,
-           %{
-             session_uri: session_uri,
-             orchestrator_uri: nil,
-             orchestrator_status: :ready,
-             orchestrator_error: nil
-           }, []}
-        end
+        finish_class_session(session_uri, workspace_uri, caller)
+
+      {:ok, _non_session} ->
+        {:error, {:class_instantiated_no_session, class_name}}
 
       {:ok, _non_session, _meta} ->
         {:error, {:class_instantiated_no_session, class_name}}
 
       {:error, reason} ->
         {:error, reason}
+    end
+  end
+
+  defp finish_class_session(%URI{} = session_uri, %URI{} = workspace_uri, caller) do
+    with :ok <-
+           Ezagent.Workspace.grant_creator_manage_cap(
+             :session,
+             session_uri,
+             workspace_uri,
+             caller
+           ) do
+      {:ok,
+       %{
+         session_uri: session_uri,
+         orchestrator_uri: nil,
+         orchestrator_status: :ready,
+         orchestrator_error: nil
+       }, []}
     end
   end
 

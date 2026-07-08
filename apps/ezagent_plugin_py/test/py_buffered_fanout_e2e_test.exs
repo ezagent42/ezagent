@@ -1,16 +1,18 @@
-defmodule Ezagent.PluginPy.EchoEquivalentSessionTest do
+defmodule Ezagent.PluginPy.BufferedFanoutE2ETest do
   @moduledoc """
-  P2 headline test — echo-equivalence through a SESSION (not a direct
-  `Python.call`). Proves the deleted echo plugin's behavior is now
-  reproducible as an operator-script py-agent running the shipped
-  `priv/python/echo.py`:
+  PR #1259 codex review item 3 — the buffered-then-drained fan-out END-TO-END:
 
-      user --chat.send--> session --chat.receive--> py-agent (echo.py)
-        --reply--> chat.send back into the session --> user sees the same text
+      session.send → :not-ready py member (cold provision still running)
+        → receive cast BUFFERED via PendingDelivery
+        → member flips :ready (subprocess up)
+        → buffer DRAINS → the member processes the message
+        → its reply lands back in the session.
 
-  This is the real verification of echo retirement: a chat round-trip, the same
-  flow the OpenAI `/v1/chat/completions` default path and the world session UI
-  exercise — NOT a synchronous `Python.call`.
+  This is the full production shape of fix Ⓑ: create returns before the
+  member's subprocess exists, a first message routed in that window is not
+  lost, and it is answered by a LIVE subprocess after the drain. The cold
+  provision is stood in by a script that sleeps before serving `python.ping`
+  (deterministic; no dependency download).
 
   `:uv`-tagged — needs a real Domain.Python subprocess.
   """
@@ -24,13 +26,28 @@ defmodule Ezagent.PluginPy.EchoEquivalentSessionTest do
 
   @moduletag :uv
 
-  @echo_py File.read!(
-             Path.join([
-               :code.priv_dir(:ezagent_plugin_py),
-               "python",
-               "echo.py"
-             ])
-           )
+  # Sleeps BEFORE registering the ping handler — the not-ready window a first
+  # message must survive. 6s: comfortably longer than the join+send setup.
+  @slow_reply_py """
+  # /// script
+  # requires-python = ">=3.11"
+  # dependencies = []
+  # ///
+  import os, sys, time
+
+  time.sleep(6)
+  sys.path.insert(0, os.environ["EZAGENT_PYTHON_LIB_DIR"])
+  from ezagent_python import method, run
+
+
+  @method("receive")
+  def receive(params):
+      return {"text": "drained:" + params.get("text", "")}
+
+
+  if __name__ == "__main__":
+      run()
+  """
 
   setup do
     case System.find_executable("uv") do
@@ -38,7 +55,21 @@ defmodule Ezagent.PluginPy.EchoEquivalentSessionTest do
         {:skip, "uv not on PATH"}
 
       _ ->
-        ws_name = "py-echo-#{System.unique_integer([:positive])}"
+        # Prod-like readiness budget (500ms default; test.exs sets 5s) so
+        # `create_agent` returns fast and the send lands INSIDE the ~6s
+        # not-ready provision window.
+        prev_budget = Application.get_env(:ezagent_core, :spawn_await_ready_ms)
+        Application.put_env(:ezagent_core, :spawn_await_ready_ms, 200)
+
+        on_exit(fn ->
+          if is_nil(prev_budget) do
+            Application.delete_env(:ezagent_core, :spawn_await_ready_ms)
+          else
+            Application.put_env(:ezagent_core, :spawn_await_ready_ms, prev_budget)
+          end
+        end)
+
+        ws_name = "py-drain-#{System.unique_integer([:positive])}"
         {:ok, _ws_pid} = Workspace.create(ws_name, %{})
         workspace_uri = URI.new!("workspace://#{ws_name}")
 
@@ -57,15 +88,15 @@ defmodule Ezagent.PluginPy.EchoEquivalentSessionTest do
     end
   end
 
-  test "an echo.py py-agent echoes a chat message back into the session",
+  test "a message sent while the py member is provisioning buffers, drains on ready, and is answered",
        %{
          ws_name: ws_name,
          workspace_uri: workspace_uri,
          admin_uri: admin_uri,
          admin_ctx: admin_ctx
        } do
-    # ---- 1. Create the echo-equivalent py-agent via the REAL path -------
-    name = "echobot#{System.unique_integer([:positive])}"
+    # ---- 1. Create the slow-provisioning py member (returns FAST) -------
+    name = "drainbot#{System.unique_integer([:positive])}"
 
     assert {:ok, %{agent_uri: %URI{} = agent_uri}} =
              Workspace.create_agent(
@@ -75,7 +106,7 @@ defmodule Ezagent.PluginPy.EchoEquivalentSessionTest do
                  name: name,
                  cwd: "",
                  with_pty: false,
-                 flavor_config: %{"script" => @echo_py, "timeout_ms" => "10000"}
+                 flavor_config: %{"script" => @slow_reply_py, "timeout_ms" => "10000"}
                },
                admin_ctx
              )
@@ -85,12 +116,10 @@ defmodule Ezagent.PluginPy.EchoEquivalentSessionTest do
       _ = Ezagent.Kind.terminate(agent_uri)
     end)
 
-    # Async provision (fix Ⓑ): `instantiate/3` defers subprocess start to
-    # `activate/2`, so poll for liveness rather than asserting it synchronously.
-    assert wait_alive(agent_uri, 30_000)
+    # ---- 2. Session + members, INSIDE the provision window --------------
+    session_uri =
+      URI.new!("session://#{ws_name}/default/drain-#{System.unique_integer([:positive])}")
 
-    # ---- 2. Stand up a session + join admin + the py-agent --------------
-    session_uri = URI.new!("session://#{ws_name}/default/echo-#{System.unique_integer([:positive])}")
     {:ok, _} = Ezagent.SpawnRegistry.spawn(session_uri)
     :ok = Ezagent.WorkspaceRegistry.bind(session_uri, workspace_uri)
     on_exit(fn -> Ezagent.WorkspaceRegistry.unbind(session_uri) end)
@@ -103,12 +132,18 @@ defmodule Ezagent.PluginPy.EchoEquivalentSessionTest do
     join(session_uri, admin_uri)
     join(session_uri, agent_uri)
 
-    # ---- 3. Subscribe to the session stream BEFORE the send -------------
     session_topic = SessionBehavior.session_events_topic(session_uri)
     :ok = Phoenix.PubSub.subscribe(EzagentCore.PubSub, session_topic)
 
-    # ---- 4. admin sends a chat message mentioning the py-agent ----------
-    inbound_text = "hello-py-echo-#{System.unique_integer([:positive])}"
+    # ---- 3. Send while the member is still NOT ready --------------------
+    # The buffering precondition (what makes this the buffered-then-drained
+    # path, not a plain delivery): the member's subprocess is still inside
+    # its ~6s sleep, so its Kind is :not_ready and the receive cast buffers.
+    assert Ezagent.ReadyGate.status(agent_uri) == :not_ready,
+           "test invariant: the send must land inside the provision window " <>
+             "(agent already #{inspect(Ezagent.ReadyGate.status(agent_uri))})"
+
+    inbound_text = "buffered-hello-#{System.unique_integer([:positive])}"
 
     inbound_msg =
       Message.new(admin_uri, %{text: inbound_text, attachments: []}, mentions: [agent_uri])
@@ -121,12 +156,16 @@ defmodule Ezagent.PluginPy.EchoEquivalentSessionTest do
         ctx: %{caller: admin_uri, caps: admin_ctx.caps, reply: :ignore}
       })
 
-    # ---- 5. The py-agent's reply (the SAME text) appears on the stream --
-    reply_text = wait_for_sender_reply(agent_uri, inbound_text, 60_000)
+    # ---- 4. The member becomes ready AFTERWARDS and the reply arrives ----
+    reply_text = wait_for_sender_reply(agent_uri, "drained:" <> inbound_text, 60_000)
 
-    assert reply_text == inbound_text,
-           "the echo.py py-agent must echo #{inspect(inbound_text)} back into the " <>
-             "session; got #{inspect(reply_text)}"
+    assert reply_text == "drained:" <> inbound_text,
+           "the message sent during the not-ready window must be buffered, " <>
+             "drained on ready, and answered; got #{inspect(reply_text)}"
+
+    # The member did flip ready (drain precondition held end-to-end).
+    assert Ezagent.ReadyGate.status(agent_uri) == :ready
+    assert Python.alive?(agent_uri)
   end
 
   # --- helpers ---------------------------------------------------------------
@@ -176,17 +215,4 @@ defmodule Ezagent.PluginPy.EchoEquivalentSessionTest do
   defp body_text(%{text: t}) when is_binary(t), do: t
   defp body_text(%{"text" => t}) when is_binary(t), do: t
   defp body_text(_), do: ""
-
-  defp wait_alive(uri, timeout_ms) do
-    deadline = System.monotonic_time(:millisecond) + timeout_ms
-    do_wait_alive(uri, deadline)
-  end
-
-  defp do_wait_alive(uri, deadline) do
-    cond do
-      Python.alive?(uri) -> true
-      System.monotonic_time(:millisecond) >= deadline -> false
-      true -> Process.sleep(200) && do_wait_alive(uri, deadline)
-    end
-  end
 end
