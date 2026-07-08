@@ -119,7 +119,7 @@ jobs:
     needs: [gate]
     # Same self-hosted macOS runner label as deploy.yml. Runs the full
     # concurrent suite on the green-reliable OS, gated behind `gate`.
-    runs-on: [self-hosted, macos, ezagent-deploy]
+    runs-on: [self-hosted, macOS, ARM64]
     # Hard ceiling so a hung test (e.g. an outbound network call that stalls
     # with no proxy — the BEAM's inet_gethost blocks forever) fails the job in
     # minutes instead of pinning the runner for hours. The full suite finishes
