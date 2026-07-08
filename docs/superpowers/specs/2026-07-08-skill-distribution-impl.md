@@ -17,6 +17,14 @@
 > **fresh-home boot-order gate** so the switchover is proven inside P2, not
 > deferred to P3 (§4.2); impl-constraints: IC-1 mode normalized to the exec bit +
 > empty-dir note; IC-4 names `mix ezagent.skills.regen_seed`.
+> Rev 3 (codex round-2 verify): §4.1.6 upgrade pinned to the exact three-step
+> rename sequence (`<ref>→.old-<nonce>` → staging→`<ref>` → delete `.old`) with a
+> **no-concurrent-reader boot-window invariant** closing the between-renames
+> window structurally, an extended recovery rule (restore `.old` when `<ref>`
+> missing; drop `.old` when both present), and a **crash-point table** codex tests
+> row-by-row; §4.2 gates named concretely (`skill_seed_crash_recovery_test.exs`,
+> `skill_seed_boot_order_test.exs` with pinned observer, no retry/sleep); §4.3
+> exit claim reworded to match.
 
 ---
 
@@ -258,17 +266,46 @@ seed-once-then-single-source lane — **not** a dual-origin overlay.
    (`home_runtime.ex:279` / `Materializer.atomic_replace`):
    - **Write to a temp sibling, rename into place.** Every seed and every upgrade
      copies into `<deploy_dir>/<ref>.staging-<nonce>` (same filesystem → same-device
-     rename), then atomically renames it to `<deploy_dir>/<ref>` (for upgrade:
-     remove/rename the old dir aside, then rename the staging in — reuse
-     `Ezagent.Agent.Materializer.atomic_replace/2` if its contract fits, else the
-     same two-step locally).
-   - **Boot recovery rule.** Before the registry scan, `SkillSeed` **deletes any
-     leftover `*.staging-*` dirs** under the skills deploy dir. An interrupted
-     seed/upgrade therefore leaves either the **old complete dir** or the **new
-     complete dir** — never a partial — so the hash matrix only ever sees complete
-     closures.
-   - **Registry hygiene.** The `SkillRegistry` scan **skips `*.staging-*` names**
-     defensively (a staging dir is never indexed).
+     rename). **Fresh seed** (no existing `<ref>`): one atomic
+     `rename(<ref>.staging-<nonce> → <ref>)`. **Upgrade — the exact three-step
+     sequence, named intermediates, in this order:**
+     1. `rename(<ref> → <ref>.old-<nonce>)` — atomic; the old closure stays
+        **complete at a path** throughout;
+     2. `rename(<ref>.staging-<nonce> → <ref>)` — atomic; the new closure
+        appears complete;
+     3. `delete <ref>.old-<nonce>`.
+   - **No-concurrent-reader invariant (closes the between-renames window
+     structurally, not probabilistically).** Between upgrade steps 1 and 2 the
+     path `<ref>` is briefly **absent**. This is harmless **by construction**,
+     and the SPEC pins why: seed/upgrade materialization runs **only during
+     boot, strictly before the registry's first scan** — the registry scan is
+     the **sole reader** of the deploy dir, and the supervisor wires `SkillSeed`
+     (boot recovery + seed/upgrade) **before** the registry scan/ready, so the
+     window is single-threaded and no reader exists to observe the absent path.
+     There are no mid-flight runtime upgrades in P2 (the store is written only
+     by the boot seed and operators, §4.1.7); an operator drop takes effect on
+     the **next boot**, inside the same single-threaded window.
+   - **Boot recovery rule — repairs EVERY crash residue, runs before seeding:**
+     1. **always** delete every `*.staging-*` dir;
+     2. if `<ref>` **missing** and `<ref>.old-<nonce>` present →
+        `rename(<ref>.old-<nonce> → <ref>)` — restore the old complete closure
+        (the interrupted upgrade simply **re-applies** during this same boot's
+        seed run);
+     3. if **both** `<ref>` and `<ref>.old-*` present → delete `<ref>.old-*`
+        (rename-in had completed; this finishes the interrupted step 3).
+   - **Crash-point table** — every crash point lands in a state the recovery
+     provably repairs; codex writes a test case per row:
+
+     | crash point | residue on disk | recovery → post-boot state |
+     |---|---|---|
+     | mid-copy into staging | partial `.staging-*` (+ old complete `<ref>` if upgrade) | staging deleted; old dir (or absence) intact; seed/upgrade re-runs this boot |
+     | staging complete, before upgrade step 1 | complete `.staging-*` + old complete `<ref>` | staging deleted (cheap re-copy); upgrade re-runs this boot |
+     | between upgrade steps 1 and 2 | `<ref>` **missing**; `.old-<nonce>` + `.staging-*` present | staging deleted; `.old` renamed back to `<ref>`; upgrade re-runs this boot |
+     | between upgrade steps 2 and 3 | new complete `<ref>` + `.old-<nonce>` present | `.old` deleted; new closure stands |
+     | mid-fresh-seed rename | `<ref>` either absent or complete (rename is atomic) | leftover staging deleted if any; seed re-runs if absent |
+
+   - **Registry hygiene.** The `SkillRegistry` scan **skips `*.staging-*` and
+     `*.old-*` names** defensively (an intermediate dir is never indexed).
 7. **Authority stays system-vetted (design §5.3).** No runtime-writable publish
    surface. The store is written only by the `home.init`/boot seed and by operators
    with node access. Unknown/unauthorized refs fail **loudly**
@@ -285,18 +322,35 @@ seed-once-then-single-source lane — **not** a dual-origin overlay.
 - **`skill_registry_test.exs` extended**: after seed, `resolve/1` reads the
   `$EZAGENT_HOME` origin; an operator-dropped `<ref>` dir registers on the next scan;
   index reconcile hits `:seeded` / `:exists` / upgrade correctly.
-- **Crash-recovery gate (HIGH-1)**: simulate an interrupted materialization — plant
-  a `<ref>.staging-<nonce>` dir with **incomplete** content in the deploy dir (plus,
-  in a second case, a stale staging next to a complete old `<ref>` dir) → boot the
-  seed path → assert the staging leftovers are **deleted**, the seed **completes**,
-  and `SkillRegistry.resolve/1` returns the ref's **complete** closure (correct
-  hash, no misclassification as operator-edited).
-- **Fresh-home boot-order gate (MED-2)**: start from a **fresh `$EZAGENT_HOME`**
-  (no manual `seed!` call anywhere in the test), boot the seed + registry path **in
-  the exact order the application supervisor wires it** (`home.init`-absent boot
-  fallback included), and assert **every derived `Recipe.skills` ref resolves
-  before any consumer reads** the registry. This proves P2 is independently
-  deployable — the fresh-home switchover must not wait for P3's cold-spawn test.
+- **Crash-recovery gate (HIGH-1)** — `test/.../home/skill_seed_crash_recovery_test.exs`:
+  **one test case per row of the §4.1.6 crash-point table** — plant that row's
+  exact residue in the deploy dir (partial staging; complete staging + old
+  `<ref>`; `<ref>` missing + `.old-<nonce>` + staging; new `<ref>` + `.old-<nonce>`;
+  leftover staging alone) → run the boot recovery + seed path → assert the
+  table's post-boot state: intermediates gone, `SkillRegistry.resolve/1` returns
+  the ref's **complete** closure with the correct hash, and **no
+  operator-edited misclassification** (the reconcile classifies the recovered
+  dir by its true hash, never by a partial one).
+- **Fresh-home boot-order gate (MED-2)** —
+  `test/.../home/skill_seed_boot_order_test.exs`, test description:
+  `"fresh $EZAGENT_HOME: every derived Recipe.skills ref resolves on the FIRST
+  registry read after boot (SkillSeed strictly before first scan)"`. Start from
+  a **fresh `$EZAGENT_HOME`** (no manual `seed!` call anywhere in the test),
+  drive the seed + registry path **in the exact order the application
+  supervisor wires it** (`home.init`-absent boot fallback included). The
+  "before any consumer reads" claim is pinned to a concrete observer, both
+  directions:
+  - **order**: assert the registry's scan/ready step (its ETS table population
+    or ready event) happens **only after** `SkillSeed` completes — enforced by
+    the supervisor child order, asserted by the test observing that order (e.g.
+    the registry's ETS table does not exist / is empty until `SkillSeed` has
+    returned);
+  - **first-read success**: assert `SkillRegistry.resolve/1` succeeds for
+    **every derived `Recipe.skills` ref on the first call after boot**, with
+    **NO retry, NO `Process.sleep`, NO eventually-consistent polling** anywhere
+    in the test — deterministic on the first read, or the gate is red.
+  This proves P2 is independently deployable — the fresh-home switchover must
+  not wait for P3's cold-spawn test.
 - **`fs_resolver` / `home` tests**: `skills` type resolves to the deploy dir; skeleton
   mkdir present.
 - Standing gates (§3.2) green — note `arch.scan` may need the `skills` type
@@ -308,8 +362,13 @@ An operator drops/updates `$EZAGENT_HOME/<profile>/skills/<ref>/` and the next b
 registers/upgrades it; a shipped default upgrades itself on a release bump **unless**
 operator-edited (in which case the skip is loudly signalled); an unknown ref degrades
 loudly. One runtime origin; resolver has no overlay logic. A fresh `$EZAGENT_HOME`
-boots to a fully-resolvable registry with no manual step (MED-2 gate), and an
-interrupted seed/upgrade can never leave a partial dir in the origin (HIGH-1).
+boots to a fully-resolvable registry with no manual step, deterministically on the
+first read (MED-2 gate). Crash-safety (HIGH-1): at every instant **outside the
+single-threaded boot window**, `<ref>` on disk is either the old complete closure
+or the new complete closure — never partial, never absent; **inside** the boot
+window the brief absent state during the upgrade rename pair is unobservable
+because no reader exists until `SkillSeed` completes, and the boot recovery rule
+repairs every crash residue per the §4.1.6 table.
 
 ---
 

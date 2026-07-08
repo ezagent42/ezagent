@@ -13,6 +13,12 @@
 > §4.1.6 + 崩溃恢复 gate);MED-2 —— P2 新增**全新-home 启动顺序 gate**,切换在
 > P2 内自证、不推给 P3(§4.2);实现约束:IC-1 mode 归一化为 exec 位 + 空目录
 > 说明;IC-4 命名 `mix ezagent.skills.regen_seed`。
+> Rev 3(codex 二轮 verify):§4.1.6 升级钉为精确三步 rename 序列
+> (`<ref>→.old-<nonce>` → staging→`<ref>` → 删 `.old`)+ **无并发读者 boot 窗口
+> 不变量**结构化关掉两次 rename 之间的窗口 + 扩展恢复规则(`<ref>` 缺失时还原
+> `.old`;两者都在时删 `.old`)+ codex 逐行测试的**崩溃点表**;§4.2 gate 具名
+> (`skill_seed_crash_recovery_test.exs`、`skill_seed_boot_order_test.exs`,观察者
+> 钉死、无 retry/sleep);§4.3 出口措辞同步。
 
 ---
 
@@ -200,14 +206,37 @@ walk-up 禁用而 session-create 绿;`1d5aeca` 无害冗余,待协调者退役�
    或干脆坏掉。中断以结构化方式处理,用与 **`HomeRuntime.stage_and_swap` 相同的全新-staging
    手法**(`home_runtime.ex:279` / `Materializer.atomic_replace`):
    - **写临时兄弟目录,rename 入位。** 每次 seed 与升级先拷进
-     `<deploy_dir>/<ref>.staging-<nonce>`(同文件系统 → 同设备 rename),再原子 rename 为
-     `<deploy_dir>/<ref>`(升级:先移开/删旧目录,再 rename staging 入位 —— 若
-     `Ezagent.Agent.Materializer.atomic_replace/2` 契约合适则复用,否则本地同款两步)。
-   - **boot 恢复规则。** registry 扫描前,`SkillSeed` **删除** skills 部署目录下所有残留
-     `*.staging-*` 目录。被中断的 seed/升级因此只会留下**旧的完整目录**或**新的完整目录**
-     —— 绝无半成品 —— hash 矩阵只见完整闭包。
-   - **registry 卫生。** `SkillRegistry` 扫描防御性**跳过 `*.staging-*` 名**(staging 目录
-     绝不入索引)。
+     `<deploy_dir>/<ref>.staging-<nonce>`(同文件系统 → 同设备 rename)。**首次 seed**
+     (无既有 `<ref>`):一次原子 `rename(<ref>.staging-<nonce> → <ref>)`。**升级 ——
+     精确三步序列,具名中间态,按此顺序:**
+     1. `rename(<ref> → <ref>.old-<nonce>)` —— 原子;旧闭包全程**在某路径上保持完整**;
+     2. `rename(<ref>.staging-<nonce> → <ref>)` —— 原子;新闭包完整出现;
+     3. `delete <ref>.old-<nonce>`。
+   - **无并发读者不变量(结构化、非概率地关掉两次 rename 之间的窗口)。** 升级步 1 与步 2
+     之间路径 `<ref>` 短暂**缺席**。这**按构造**无害,SPEC 钉明原因:seed/升级物化**只在
+     boot 期运行,严格早于 registry 首次扫描** —— registry 扫描是部署目录的**唯一读者**,
+     supervisor 把 `SkillSeed`(boot 恢复 + seed/升级)接线在 registry scan/ready **之前**,
+     故窗口单线程、不存在任何能观察到缺席路径的读者。P2 无运行中升级(store 仅由 boot
+     seed 与运维写,§4.1.7);运维投放在**下次 boot** 生效,落在同一单线程窗口内。
+   - **boot 恢复规则 —— 修复每一种崩溃残留,在 seeding 前运行:**
+     1. **总是**删除所有 `*.staging-*` 目录;
+     2. 若 `<ref>` **缺失**且 `<ref>.old-<nonce>` 在 →
+        `rename(<ref>.old-<nonce> → <ref>)` —— 还原旧完整闭包(被中断的升级在本次 boot
+        的 seed run 里**重新应用**);
+     3. 若 `<ref>` 与 `<ref>.old-*` **都在** → 删 `<ref>.old-*`(rename 入位已完成;补完
+        被中断的步 3)。
+   - **崩溃点表** —— 每个崩溃点都落在恢复可证修复的状态;codex 每行写一个测试用例:
+
+     | 崩溃点 | 磁盘残留 | 恢复 → boot 后状态 |
+     |---|---|---|
+     | 拷入 staging 中途 | 半成品 `.staging-*`(升级时另有旧完整 `<ref>`) | 删 staging;旧目录(或缺席)原样;本次 boot 重跑 seed/升级 |
+     | staging 完整、升级步 1 前 | 完整 `.staging-*` + 旧完整 `<ref>` | 删 staging(重拷便宜);本次 boot 重跑升级 |
+     | 升级步 1 与步 2 之间 | `<ref>` **缺失**;`.old-<nonce>` + `.staging-*` 在 | 删 staging;`.old` rename 回 `<ref>`;本次 boot 重跑升级 |
+     | 升级步 2 与步 3 之间 | 新完整 `<ref>` + `.old-<nonce>` 在 | 删 `.old`;新闭包成立 |
+     | 首次 seed rename 中(不可能中断,rename 原子) | `<ref>` 或缺席或完整 | 残留 staging(如有)删除;缺席则本次 boot 重跑 seed |
+
+   - **registry 卫生。** `SkillRegistry` 扫描防御性**跳过 `*.staging-*` 与 `*.old-*` 名**
+     (中间态目录绝不入索引)。
 7. **权威保持 system-vetted(设计 §5.3)。** 无运行时可写发布面。store 仅由 `home.init`/boot seed 与
    有节点权限的运维写。未知/未授权 ref **大声**失败(`{:skill_source_not_found, ref}` → `role_degraded`
    + telemetry),绝不静默跳过。
@@ -219,14 +248,26 @@ walk-up 禁用而 session-create 绿;`1d5aeca` 无害冗余,待协调者退役�
   `Logger.warning` 串 + telemetry 事件触发**,经 `:telemetry_test` handler)。
 - **`skill_registry_test.exs` 扩展**:seed 后 `resolve/1` 读 `$EZAGENT_HOME` 源;运维投放的 `<ref>`
   目录在下次扫描注册;索引对账正确命中 `:seeded` / `:exists` / 升级。
-- **崩溃恢复 gate(HIGH-1)**:模拟被中断的物化 —— 在部署目录种一个内容**不完整**的
-  `<ref>.staging-<nonce>` 目录(第二个用例:旧的完整 `<ref>` 目录旁有陈旧 staging)→ 走 boot
-  seed 路径 → 断言 staging 残留被**删除**、seed **完成**、`SkillRegistry.resolve/1` 返回该 ref 的
-  **完整**闭包(hash 正确,无"运维改过"误判)。
-- **全新-home 启动顺序 gate(MED-2)**:从**全新 `$EZAGENT_HOME`** 起步(测试内任何地方都不手调
-  `seed!`),按 **application supervisor 实际接线顺序**走 seed + registry 路径(含无 `home.init` 的
-  boot 兜底),断言**每个派生 `Recipe.skills` ref 在任何消费者读 registry 之前均可解析**。这证明
-  P2 可独立部署 —— 全新-home 切换不得等到 P3 的冷 spawn 测试。
+- **崩溃恢复 gate(HIGH-1)** —— `test/.../home/skill_seed_crash_recovery_test.exs`:
+  **§4.1.6 崩溃点表每行一个测试用例** —— 在部署目录种该行的精确残留(半成品 staging;完整
+  staging + 旧 `<ref>`;`<ref>` 缺失 + `.old-<nonce>` + staging;新 `<ref>` + `.old-<nonce>`;
+  仅残留 staging)→ 跑 boot 恢复 + seed 路径 → 断言表中 boot 后状态:中间态清空、
+  `SkillRegistry.resolve/1` 返回该 ref **完整**闭包且 hash 正确、**无"运维改过"误判**
+  (对账按恢复后目录的真实 hash 分类,绝不按半成品)。
+- **全新-home 启动顺序 gate(MED-2)** ——
+  `test/.../home/skill_seed_boot_order_test.exs`,测试描述:
+  `"fresh $EZAGENT_HOME: every derived Recipe.skills ref resolves on the FIRST
+  registry read after boot (SkillSeed strictly before first scan)"`。从**全新
+  `$EZAGENT_HOME`** 起步(测试内任何地方都不手调 `seed!`),按 **application supervisor
+  实际接线顺序**走 seed + registry 路径(含无 `home.init` 的 boot 兜底)。"任何消费者读之前"
+  钉到具体观察者,双向:
+  - **顺序**:断言 registry 的 scan/ready 步(其 ETS 表填充或 ready 事件)**仅在**
+    `SkillSeed` 完成之后发生 —— 由 supervisor 子进程顺序强制,测试观察该顺序断言
+    (如 `SkillSeed` 返回前 registry ETS 表不存在/为空);
+  - **首读即成**:断言 boot 后**首次调用** `SkillRegistry.resolve/1` 即对**每个派生
+    `Recipe.skills` ref** 成功,测试内**无 retry、无 `Process.sleep`、无最终一致轮询**
+    —— 首读确定性成功,否则 gate 红。
+  这证明 P2 可独立部署 —— 全新-home 切换不得等到 P3 的冷 spawn 测试。
 - **`fs_resolver` / `home` 测试**:`skills` 类型解析到部署目录;骨架 mkdir 在。
 - 常规 gate(§3.2)绿 —— 注意 `arch.scan` 可能需像 `socialware` 那样认可 `skills` 类型。
 
@@ -234,8 +275,11 @@ walk-up 禁用而 session-create 绿;`1d5aeca` 无害冗余,待协调者退役�
 
 运维投放/更新 `$EZAGENT_HOME/<profile>/skills/<ref>/`,下次 boot 注册/升级;随包默认在 release bump
 时自升级,**除非**被运维改过(此时跳过被大声信号);未知 ref 大声降级。唯一运行时源;resolver 无 overlay 逻辑。
-全新 `$EZAGENT_HOME` 无需任何手动步骤即 boot 到全可解析的 registry(MED-2 gate);被中断的
-seed/升级绝不会在源里留下半成品目录(HIGH-1)。
+全新 `$EZAGENT_HOME` 无需任何手动步骤即 boot 到全可解析的 registry,且首读确定性成功
+(MED-2 gate)。崩溃安全(HIGH-1):在**单线程 boot 窗口之外**的任何时刻,磁盘上的 `<ref>`
+要么是旧完整闭包、要么是新完整闭包 —— 绝无半成品、绝无缺席;boot 窗口**之内**升级 rename
+对之间的短暂缺席态不可被观察(`SkillSeed` 完成前不存在任何读者),且 boot 恢复规则按
+§4.1.6 表修复每一种崩溃残留。
 
 ---
 
