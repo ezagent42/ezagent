@@ -76,6 +76,11 @@ defmodule EzagentPluginHello.MixProject do
       # `Ezagent.AgentFlavorAttributes` (flavor attribute store, read by the
       # orchestrator migration + the hello.agent Template Class) lives here.
       {:ezagent_domain_agent, in_umbrella: true},
+      # hello's `hello.llm` role materializes as a "curl" flavor agent (an HTTP
+      # LLM backend, credential-optional) — this dep guarantees the "curl"
+      # flavor is boot-registered wherever hello boots, same rationale as the
+      # `ezagent_plugin_native` dep above.
+      {:ezagent_plugin_curl_agent, in_umbrella: true},
       # i18n (#91, Allen 2026-06-23) — the builder narration (`Generator` turn
       # progress strings) is user-facing copy; it goes through the plugin-owned
       # `EzagentPluginHello.Gettext` backend (per-OTP-app translation namespace,

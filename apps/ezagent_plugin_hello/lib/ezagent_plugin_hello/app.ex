@@ -91,19 +91,19 @@ defmodule EzagentPluginHello.App do
              owner_uri,
              content
            ),
-         {:ok, orch_uri} <- resolve_orchestrator(session_uri) do
-      {:ok, session_uri, orch_uri}
+         {:ok, front_desk_uri} <- resolve_front_desk(session_uri) do
+      {:ok, session_uri, front_desk_uri}
     end
   end
 
-  # Resolve the orchestrator member URI by its `role_name` facet (the framework
+  # Resolve the front-desk member URI by its `role_name` facet (the framework
   # materialization assigns a PLANNED UUID URI — it is NOT derivable from the
-  # session name). A missing orchestrator after a successful materialize is a
+  # session name). A missing front-desk after a successful materialize is a
   # fail-loud bug, not a silent nil.
-  defp resolve_orchestrator(%URI{} = session_uri) do
-    case Members.role_uri(session_uri, "orchestrator") do
+  defp resolve_front_desk(%URI{} = session_uri) do
+    case Members.role_uri(session_uri, "front-desk") do
       {:ok, %URI{} = uri} -> {:ok, uri}
-      :error -> {:error, {:orchestrator_not_materialized, session_uri}}
+      :error -> {:error, {:front_desk_not_materialized, session_uri}}
     end
   end
 
@@ -129,18 +129,23 @@ defmodule EzagentPluginHello.App do
         Ezagent.ActionSet.Surface
       ],
       roles: [
-        %{role_name: "orchestrator", fill: :agent, recipe: "hello.orchestrator", flavor: "hello"},
+        %{role_name: "front-desk", fill: :agent, recipe: "hello.front-desk", flavor: "hello"},
         %{role_name: "builder", fill: :agent, recipe: "hello.builder", flavor: "native"},
-        %{role_name: "concierge", fill: :agent, recipe: "hello.concierge", flavor: "native"}
+        %{role_name: "concierge", fill: :agent, recipe: "hello.concierge", flavor: "native"},
+        %{role_name: "llm", fill: :agent, recipe: "hello.llm", flavor: "curl"}
       ],
       routing_rules: [
         %{
           "matcher" => %{"type" => "always"},
-          "receivers" => ["orchestrator"],
+          "receivers" => ["front-desk"],
           "rule_set" => "default",
           "position" => 0
         }
       ],
+      # M3 #1230: the platform stock cc-orchestrator is auto-installed per-session
+      # (A-1 single-instance guarantee). This replaces the retired hello-owned
+      # orchestrator stub with the fully-wired cc orchestrator (credentials + tools).
+      requires: ["orchestrator"],
       prompt_templates: %{},
       legends: %{},
       adapters: [%{adapter_id: "external_feed", role: :customer, config: %{}}],

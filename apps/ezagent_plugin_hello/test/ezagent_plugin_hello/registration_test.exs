@@ -33,16 +33,25 @@ defmodule EzagentPluginHello.RegistrationTest do
     refute :grant_cap in Ezagent.ActionSet.Identity.actions()
   end
 
-  test "all three hello role recipes are published in roles/0" do
-    assert HelloApp.hello_orchestrator_recipe() in HelloApp.roles()
+  test "all four hello role recipes are published in roles/0" do
+    assert HelloApp.hello_front_desk_recipe() in HelloApp.roles()
     assert HelloApp.hello_builder_recipe() in HelloApp.roles()
     assert HelloApp.hello_concierge_recipe() in HelloApp.roles()
+    assert HelloApp.hello_llm_recipe() in HelloApp.roles()
+  end
+
+  test "hello.llm curl recipe carries provider/model + credential_optional in config" do
+    recipe = EzagentPluginHello.Application.hello_llm_recipe()
+    assert recipe.name == "hello.llm"
+    assert recipe.config.provider == "deepseek"
+    assert recipe.config.model == "deepseek-chat"
+    assert recipe.config.credential_optional == true
   end
 
   test "hello.orchestrator recipe — behaviors + caps + non-passive (combined gate)" do
-    assert {:ok, %Recipe{} = role} = Recipe.new(HelloApp.hello_orchestrator_recipe())
+    assert {:ok, %Recipe{} = role} = Recipe.new(HelloApp.hello_front_desk_recipe())
 
-    assert role.name == "hello.orchestrator"
+    assert role.name == "hello.front-desk"
     assert role.behaviors == [HelloOrchestrator]
     # NOT passive — the orchestrator is the chat front desk (receives the fan-out).
     refute role.passive
@@ -84,7 +93,9 @@ defmodule EzagentPluginHello.RegistrationTest do
     assert role.behaviors == [HelloConcierge]
     refute role.passive
 
-    assert [%{behavior: HelloConcierge, action: :receive} = cap] = role.requested_caps
+    cap = Enum.find(role.requested_caps, &(&1.action == :receive))
+    assert %{behavior: HelloConcierge, action: :receive} = cap
+    assert %{behavior: HelloConcierge, action: :answer} in role.requested_caps
     refute Map.has_key?(cap, :kind)
   end
 
@@ -103,8 +114,8 @@ defmodule EzagentPluginHello.RegistrationTest do
     :ok = RecipeRegistry.flush_cache()
 
     assert {:ok,
-            %Recipe{name: "hello.orchestrator", behaviors: [HelloOrchestrator], passive: false}} =
-             RecipeRegistry.lookup("hello.orchestrator")
+            %Recipe{name: "hello.front-desk", behaviors: [HelloOrchestrator], passive: false}} =
+             RecipeRegistry.lookup("hello.front-desk")
 
     assert {:ok, %Recipe{name: "hello.builder", behaviors: [HelloBuilder], passive: false}} =
              RecipeRegistry.lookup("hello.builder")
@@ -113,16 +124,25 @@ defmodule EzagentPluginHello.RegistrationTest do
              RecipeRegistry.lookup("hello.concierge")
   end
 
-  test "hello Definition declares the orchestrator/builder/concierge roles + inbound rule" do
+  test "hello Definition declares the orchestrator/builder/concierge/llm roles + inbound rule" do
     attrs = EzagentPluginHello.App.hello_definition_attrs("hello-demo")
     {:ok, defn} = Ezagent.Socialware.Definition.new(attrs)
 
     role_names = Enum.map(defn.roles, & &1.role_name) |> Enum.sort()
-    assert role_names == ["builder", "concierge", "orchestrator"]
+    assert role_names == ["builder", "concierge", "front-desk", "llm"]
     assert Enum.all?(defn.roles, &(&1.fill == :agent))
-    assert Enum.find(defn.roles, &(&1.role_name == "orchestrator")).flavor == "hello"
+    assert Enum.find(defn.roles, &(&1.role_name == "front-desk")).flavor == "hello"
 
     assert [rule] = defn.routing_rules
-    assert (rule[:receivers] || rule["receivers"]) == ["orchestrator"]
+    assert (rule[:receivers] || rule["receivers"]) == ["front-desk"]
+  end
+
+  test "hello Definition declares the llm curl member" do
+    attrs = EzagentPluginHello.App.hello_definition_attrs("hello-demo")
+    {:ok, defn} = Ezagent.Socialware.Definition.new(attrs)
+    llm = Enum.find(defn.roles, &(&1.role_name == "llm"))
+    assert llm.fill == :agent
+    assert llm.flavor == "curl"
+    assert llm.recipe == "hello.llm"
   end
 end

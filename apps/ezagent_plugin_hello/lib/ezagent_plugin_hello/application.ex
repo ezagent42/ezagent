@@ -91,13 +91,19 @@ defmodule EzagentPluginHello.Application do
   # `agent_flavors`/own-Kind revival registration is needed. Not `passive`: the
   # builder/concierge are chat principals (@-mentionable + joinable).
   @impl Ezagent.Plugin
-  def roles, do: [hello_orchestrator_recipe(), hello_builder_recipe(), hello_concierge_recipe()]
+  def roles,
+    do: [
+      hello_front_desk_recipe(),
+      hello_builder_recipe(),
+      hello_concierge_recipe(),
+      hello_llm_recipe()
+    ]
 
-  @doc "The `hello.orchestrator` role — the invisible per-session front-desk router (`Behavior.HelloOrchestrator`)."
-  @spec hello_orchestrator_recipe() :: map()
-  def hello_orchestrator_recipe do
+  @doc "The `hello.front-desk` role — the invisible per-session chat relay that dispatches to builder/concierge via their dispatchable actions."
+  @spec hello_front_desk_recipe() :: map()
+  def hello_front_desk_recipe do
     %{
-      name: "hello.orchestrator",
+      name: "hello.front-desk",
       behaviors: [Ezagent.ActionSet.HelloOrchestrator],
       requested_caps: [
         %{behavior: Ezagent.ActionSet.HelloOrchestrator, action: :hello_sync_result}
@@ -124,7 +130,29 @@ defmodule EzagentPluginHello.Application do
     %{
       name: "hello.concierge",
       behaviors: [Ezagent.ActionSet.HelloConcierge],
-      requested_caps: [%{behavior: Ezagent.ActionSet.HelloConcierge, action: :receive}]
+      requested_caps: [
+        %{behavior: Ezagent.ActionSet.HelloConcierge, action: :receive},
+        %{behavior: Ezagent.ActionSet.HelloConcierge, action: :answer}
+      ]
+    }
+  end
+
+  @doc "The `hello.llm` role — a curl LLM agent hello delegates HTTP-backend generation to (credential-optional so it keyless-spawns; key comes from the platform credential cascade)."
+  @spec hello_llm_recipe() :: map()
+  def hello_llm_recipe do
+    %{
+      name: "hello.llm",
+      # curl behaviors come from the "curl" flavor's instance_behaviors, NOT here
+      # (Definition.roles materialize drops recipe.behaviors).
+      requested_caps: [],
+      config: %{
+        provider: "deepseek",
+        api_url: "https://api.deepseek.com/chat/completions",
+        model: "deepseek-chat",
+        # opt out of the required-by-default :slice credential (Task 1) so a
+        # deployment with no DeepSeek credential source still spawns this member.
+        credential_optional: true
+      }
     }
   end
 

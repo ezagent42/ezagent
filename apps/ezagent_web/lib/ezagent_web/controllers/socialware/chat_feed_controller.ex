@@ -79,6 +79,23 @@ defmodule EzagentWeb.Socialware.ChatFeedController do
 
   def show(conn, _params), do: bad_request(conn, "missing session_uri")
 
+  @doc """
+  Path-route hello pages: `GET /hello/:session_name` serves
+  `session://<hello_workspace>/hello/<name>`.
+
+  Works like `show/2` but builds the session URI from a fixed workspace
+  (application config `:ezagent_web, :hello_workspace`, default `"demo"`)
+  and the `:hello` template type. The full socialware anonymous-access
+  pipeline runs unchanged — this is just a short URL entry.
+  """
+  def show_by_name(conn, %{"session_name" => name}) when is_binary(name) and name != "" do
+    ws = Application.get_env(:ezagent_web, :hello_workspace, "demo")
+    session_uri = Ezagent.URI.session(ws, :hello, name)
+    resolve_caller(conn, session_uri)
+  end
+
+  def show_by_name(conn, _params), do: bad_request(conn, "missing session_name")
+
   defp resolve_caller(conn, session_uri) do
     case AnonIngress.resolve_caller(conn, session_uri) do
       {:ok, conn, %{caller: caller_uri}} -> render_spa(conn, session_uri, caller_uri)

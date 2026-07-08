@@ -59,14 +59,14 @@ defmodule EzagentPluginHello.Template.HelloSessionTest do
       # so members are resolved by role, not name). Materialization is synchronous
       # (no deadlock materializing inside the workspace process — the standard
       # socialware create path does the same), so the team is present on return.
-      assert {:ok, orch_uri} = Members.role_uri(session_uri, "orchestrator")
+      assert {:ok, orch_uri} = Members.role_uri(session_uri, "front-desk")
       assert {:ok, _builder_uri} = Members.role_uri(session_uri, "builder")
       assert {:ok, _concierge_uri} = Members.role_uri(session_uri, "concierge")
 
       assert match?({:ok, _}, Ezagent.KindRegistry.lookup(orch_uri)),
              "the orchestrator should be live"
 
-      assert %{^orch_uri => %{role_name: "orchestrator"}} =
+      assert %{^orch_uri => %{role_name: "front-desk"}} =
                Ezagent.Orchestrator.Tools.read_members(session_uri)
 
       # The orchestrator holds no within-session orchestrator cap (it is a plain

@@ -30,7 +30,7 @@ defmodule EzagentPluginHello.MembersTest do
   test "role_uri resolves a joined member by role_name", %{ws: ws} do
     {:ok, session_uri, orch_uri} = App.ensure_app(ws, "members-demo", defer_orchestrator: false)
 
-    assert {:ok, ^orch_uri} = Members.role_uri(session_uri, "orchestrator")
+    assert {:ok, ^orch_uri} = Members.role_uri(session_uri, "front-desk")
     assert {:ok, %URI{}} = Members.role_uri(session_uri, "builder")
     assert {:ok, %URI{}} = Members.role_uri(session_uri, "concierge")
     assert :error = Members.role_uri(session_uri, "nope")

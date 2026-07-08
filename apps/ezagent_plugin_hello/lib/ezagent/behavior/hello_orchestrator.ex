@@ -1,17 +1,21 @@
 defmodule Ezagent.ActionSet.HelloOrchestrator do
   @moduledoc """
-  The hello ORCHESTRATOR agent Behavior — the invisible per-session front desk.
+  The hello FRONT-DESK agent Behavior — the invisible per-session chat relay.
 
-  Every user message in a hello session is delivered to THIS agent (the session's
-  chat fan-out mentions only the orchestrator, or fans out to it as the sole agent
-  member). Chat arrives on the `"hello"` FLAVOR's in-process AgentBridge adapter
-  (`EzagentPluginHello.BridgeAdapter`), which `Agent.Receive` re-dispatches into
-  this behaviour's `:sync_result` action. The handler hands the message off to
-  `EzagentPluginHello.Router`, which decides — per message, by intent × identity —
-  whether it goes to the page `builder` or the read-only `concierge`, and triggers
-  its generation.
+  Every user message in a hello session is delivered to THIS agent (the routing
+  rule `{:always} -> ["front-desk"]`). Chat arrives on the `"hello"` FLAVOR's
+  in-process AgentBridge adapter (`EzagentPluginHello.BridgeAdapter`), which
+  `Agent.Receive` re-dispatches into this behaviour's `:hello_sync_result` action.
+  The handler hands the message off to `EzagentPluginHello.Router`, which decides
+  — per message, by intent × identity — whether to DISPATCH `:rebuild` to the
+  page builder or `:answer` to the read-only concierge (both native-flavor — they
+  receive via dispatch, not chat delivery, per T2 I-1).
 
-  ## Why `:sync_result`, not `:receive`
+  The platform orchestrator (`requires: ["orchestrator"]`, cc flavor) handles
+  team management (template ops, member management). This agent handles ONLY
+  per-message routing — it is the chat→dispatch relay.
+
+  ## Why `:hello_sync_result`, not `:receive`
 
   `:receive` on `Entity.Agent` is owned by the flavor-blind `Agent.Receive` (the
   AgentBridge seam) and cannot be overridden by a role behaviour. The supported way
@@ -21,11 +25,11 @@ defmodule Ezagent.ActionSet.HelloOrchestrator do
 
   Loop-safe + multi-agent by construction: `Agent.Receive` drops the agent's own
   outbound before delivery, and `EzagentPluginHello.Router.should_route?/2`
-  additionally ignores any message whose sender is the orchestrator itself or one
-  of its own builder/concierge members — so the orchestrator routes every OTHER
+  additionally ignores any message whose sender is the front-desk itself or one
+  of its own builder/concierge workers — so the front-desk routes every OTHER
   sender (users AND external agents) without ever re-routing its own workers.
 
-  It is a `hello.orchestrator` role on the unified `Ezagent.Entity.Agent`, hosted by
+  It is a `hello.front-desk` role on the unified `Ezagent.Entity.Agent`, hosted by
   the `"hello"` flavor. `create/1` stores `flavor: "hello"` so the delivery flavor
   resolves from the durable snapshot after a cold restart.
   """

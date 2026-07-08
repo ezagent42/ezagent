@@ -69,6 +69,39 @@ defmodule Ezagent.AgentBridge do
     end
   end
 
+  @doc """
+  Synchronously ask a `curl`-flavor agent for an LLM completion and return the
+  text. Reuses the `:in_process_sync` deliver primitive: the curl adapter reads
+  the agent's OWN `:api_keys` + `:curl_agent` snapshot slices and does the HTTP
+  round-trip — the CALLER never sees the API key.
+
+  The PUBLIC entry is `Ezagent.Entity.Agent.complete/3` — it enforces the
+  cap-gate (caller == agent owner OR caller holds `cap(Complete, :complete,
+  agent_uri, ws)`, per lead #1239 finalize ①). This function is the THIN
+  TRANSPORT body called from that gate.
+  """
+  @spec complete(URI.t(), String.t()) :: {:ok, String.t()} | {:error, term()}
+  def complete(%URI{} = agent_uri, prompt) when is_binary(prompt) do
+    agent_uri_str = URI.to_string(agent_uri)
+
+    payload = %Payload{
+      message_id: "complete-" <> Integer.to_string(System.unique_integer([:positive])),
+      session_uri: nil,
+      sender_uri: agent_uri,
+      text: prompt,
+      event_type: :system,
+      meta: %{"agent_uri" => agent_uri_str}
+    }
+
+    case deliver_with_flavor(agent_uri, payload, "curl") do
+      {:ok, %{content: content}} when is_binary(content) -> {:ok, content}
+      {:error, _} = err -> err
+      other -> {:error, {:unexpected_complete_result, other}}
+    end
+  rescue
+    e -> {:error, {:complete_raise, e}}
+  end
+
   @default_ready_timeout_ms 15_000
 
   @doc """

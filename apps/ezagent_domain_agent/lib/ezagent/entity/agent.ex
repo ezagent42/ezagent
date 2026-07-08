@@ -477,6 +477,51 @@ defmodule Ezagent.Entity.Agent do
     end
   end
 
+  @doc """
+  Synchronously ask a curl-flavor agent for an LLM completion and return the
+  text. Authorized by cap (lead #1239 finalize ①): the `caller_uri` must
+  either be the agent's **owner** (`AgentLineage.spawned_by` — always
+  passes), or hold a `cap(:agent, ActionSet.Agent.Complete, :complete,
+  agent_uri, workspace_uri)` granted by the agent's owner (#161 owner-authority
+  chain — no unowned caps).
+
+  Reuses `Ezagent.AgentBridge.deliver_with_flavor/3` synchronously — the curl
+  adapter reads the agent's `:api_keys` + `:curl_agent` snapshot slices and
+  does the HTTP round-trip. The CALLER never sees the API key.
+  """
+  @spec complete(URI.t(), URI.t(), String.t()) :: {:ok, String.t()} | {:error, term()}
+  def complete(%URI{} = caller_uri, %URI{} = agent_uri, prompt)
+      when is_binary(prompt) do
+    ws = Ezagent.Capability.workspace_of(agent_uri)
+
+    with {:ok, owner} <- Ezagent.AgentLineage.lookup(agent_uri),
+         :ok <- authorize_complete(caller_uri, owner, agent_uri, ws) do
+      Ezagent.AgentBridge.complete(agent_uri, prompt)
+    else
+      :error -> {:error, :agent_owner_unresolvable}
+      {:error, _} = err -> err
+    end
+  end
+
+  defp authorize_complete(caller, owner, _agent_uri, _ws) when caller == owner, do: :ok
+
+  defp authorize_complete(caller, _owner, agent_uri, ws) do
+    needed =
+      Ezagent.Capability.cap(
+        :agent,
+        Ezagent.ActionSet.Agent.Complete,
+        :complete,
+        agent_uri,
+        ws
+      )
+
+    if Ezagent.Kind.holds_cap?(__MODULE__, caller, needed) do
+      :ok
+    else
+      {:error, :unauthorized}
+    end
+  end
+
   defdelegate spawn_from_template_content(content, instance_uri, spawned_by, workspace_uri),
     to: Ezagent.Entity.Agent.TemplateSpawn
 
