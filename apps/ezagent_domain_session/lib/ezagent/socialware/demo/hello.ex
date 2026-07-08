@@ -1,58 +1,34 @@
 defmodule Ezagent.Socialware.Demo.Hello do
   @moduledoc """
-  Thin YAML loader + **test driver** for the hello demo socialware.
+  Thin YAML loader + **test fixture source** for the hello demo socialware.
 
-  ## Production publishes via the deploy-seed lane (NOT this module)
+  ## Production AND tests publish via the deploy-seed lane (NOT this module)
 
   The hello manifest is CONFIG — `apps/ezagent_web/priv/socialware_seed/hello/
   manifest.yaml` — carried in the release box exactly like `autoservice`. On a
   fresh stack `Ezagent.Home.SocialwareSeed` idempotently copies that package
   into the canonical deployment home (`$EZAGENT_HOME/<profile>/socialware/
-  hello/`), and the late boot scan `Ezagent.Socialware.ManifestSeed.scan_all!/1`
-  (run from the last-booting transport app) resolves + publishes it through the
-  governed import lane. There is **zero boot-time call into this module** — the
-  former `EzagentPluginHello.Application` self-publish is gone (deploy-seed SPEC
-  §2/§4).
+  hello/`), and the manifest scan (`Ezagent.Socialware.ManifestSeed.scan_dir!/1`,
+  or `scan_all!/1` at boot from the last-booting transport app) resolves +
+  publishes it through the governed import lane. There is **zero self-publish**
+  in this module — the former `EzagentPluginHello.Application` boot publish AND
+  the old `Demo.Hello.publish/0` primitive are both gone (deploy-seed SPEC
+  §2/§4). The acceptance test (#162) seeds a temp deploy dir and scans it,
+  exercising the exact production lane.
 
   ## What this module is for
 
-  A test driver. `manifest_attrs/1` (no `:role_name`) loads the SAME shipped YAML
-  via `Ezagent.Socialware.ManifestYaml.parse/1`, so tests exercise the exact
-  manifest production ships — the file is the one source of truth and the shape
-  gate (`demo_hello_test.exs`) locks it against drift. `publish/0` /
-  `published?/0` walk the real governance flow so acceptance tests can drive a
-  publish inside a checked-out Ecto sandbox (the boot lane skips `:test`).
+  A test-fixture source. `manifest_attrs/1` (no `:role_name`) loads the SAME
+  shipped YAML via `Ezagent.Socialware.ManifestYaml.parse/1`, so tests exercise
+  the exact manifest production ships — the file is the one source of truth and
+  the shape gate (`demo_hello_test.exs`) locks it against drift.
 
   The `:role_name` option keeps the legacy single-agent fixture shape (`code`,
   not YAML) used by older materialization tests — it is a test fixture only,
   never a production shape.
-
-  ## Where it publishes
-
-  Into `workspace://system` (where the built-in `chat`/`socialware` definitions
-  live) as a `scope: :public` definition. Public scope makes it cross-workspace
-  discoverable via `DefinitionRegistry.list/1` from EVERY workspace — no
-  pre-install into any workspace; users self-install through the normal
-  discover→install flow.
-
-  ## Authority
-
-  Mirrors the operator seed ctx: `caller` = the bootstrap admin URI
-  (`user://system/admin`), `caps` = the socialware `manage` cap for `hello` in
-  the system workspace + `Ezagent.Capability.admin_genesis_cap/0` (the admin gate
-  `publish_cr/2` requires for a `:public` scope).
-
-  ## Idempotency
-
-  `publish/0` routes through the shared idempotency RULE
-  (`ConfigGovernance.Socialware.publish_or_upgrade/2`, P0 §5): an unchanged
-  redeploy no-ops to `{:ok, :exists}` WITHOUT opening a CR; an EDITED manifest
-  re-promotes to `{:ok, :upgraded}` (the old existence-check silently swallowed
-  manifest edits — R-2, §5.2).
   """
 
-  alias Ezagent.Socialware.{Definition, DefinitionRegistry, ManifestResolver, ManifestYaml}
-  alias Ezagent.ConfigGovernance.Socialware, as: Governance
+  alias Ezagent.Socialware.ManifestYaml
 
   @name "hello"
   @recipe "np"
@@ -61,10 +37,6 @@ defmodule Ezagent.Socialware.Demo.Hello do
   @doc "The stable demo socialware name (`\"hello\"`)."
   @spec name() :: String.t()
   def name, do: @name
-
-  @doc "The owner workspace URI string the demo publishes into (`workspace://system`)."
-  @spec owner_workspace_uri() :: String.t()
-  def owner_workspace_uri, do: DefinitionRegistry.system_workspace_uri()
 
   @doc """
   Absolute path of the shipped hello manifest YAML, discovered generically
@@ -173,49 +145,5 @@ defmodule Ezagent.Socialware.Demo.Hello do
         }
       ]
     })
-  end
-
-  @doc """
-  Publish the hello demo as a PUBLIC socialware in `workspace://system` via the
-  real governance flow, through the shared idempotency RULE (P0 §5): a first
-  publish is `:published`, an unchanged redeploy no-ops to `:exists` (no CR
-  opened), and an EDITED manifest re-promotes to `:upgraded` (killing R-2 — the
-  old existence-check silently swallowed manifest edits, §5.2/§5.3).
-  """
-  @spec publish() :: {:ok, :published | :upgraded | :exists} | {:error, term()}
-  def publish do
-    ws = Ezagent.URI.workspace(:system)
-    admin = Ezagent.URI.user(:system, :admin)
-    ctx = admin_ctx(admin, ws)
-
-    with {:ok, %Definition{} = definition} <- ManifestResolver.resolve(manifest_attrs()) do
-      Governance.publish_or_upgrade(definition, ctx)
-    end
-  end
-
-  @doc """
-  Whether the hello demo is already present as a PUBLIC definition (the
-  idempotency predicate).
-  """
-  @spec published?() :: boolean()
-  def published?, do: already_public?(Ezagent.URI.workspace(:system))
-
-  defp admin_ctx(admin, ws) do
-    %{
-      caller: admin,
-      workspace_uri: ws,
-      caps:
-        MapSet.new([
-          Governance.manage_cap(@name, ws, admin),
-          Ezagent.Capability.admin_genesis_cap()
-        ])
-    }
-  end
-
-  defp already_public?(ws) do
-    case DefinitionRegistry.lookup(ws, @name) do
-      {:ok, %Definition{visibility_policy: %{scope: :public}}, _object} -> true
-      _ -> false
-    end
   end
 end

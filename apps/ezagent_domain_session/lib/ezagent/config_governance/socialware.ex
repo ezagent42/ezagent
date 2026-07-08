@@ -110,8 +110,9 @@ defmodule Ezagent.ConfigGovernance.Socialware do
 
   Publish/upgrade run the full `open_cr → stage_definition → publish_cr` flow, so
   the public-scope admin gate and CR audit trail are preserved. This is the
-  primitive `Demo.Hello.publish/0` (and the P3 deploy-seed) call — an edited
-  first-party manifest re-promotes, killing R-2.
+  primitive the deploy-seed lane (`ManifestSeed.scan_dir!` →
+  `ManifestYaml.import`) calls — an edited first-party manifest re-promotes,
+  killing R-2.
   """
   @spec publish_or_upgrade(Definition.t() | map(), ctx()) ::
           {:ok, :published | :upgraded | :exists} | {:error, term()}

@@ -1459,7 +1459,7 @@ defmodule EzagentWeb.WorldConversationTest do
     assert rendered =~ "Pure-config hello"
   end
 
-  test "#162: Demo.Hello.publish/0 boot-publishes hello as PUBLIC, cross-workspace discoverable, materializable, idempotent" do
+  test "#162: hello publishes as PUBLIC via the deploy-seed lane, cross-workspace discoverable, materializable, idempotent" do
     :ok = ensure_manifest_reference_apps_started()
     # The demo references the stable `np` py-role recipe; `RoleSeedHook` skips
     # in :test, so seed it explicitly (same as the acceptance test seeds its
@@ -1472,9 +1472,21 @@ defmodule EzagentWeb.WorldConversationTest do
     {:ok, _} = Ezagent.Workspace.create(other_ws_name, %{})
     other_ws = Ezagent.URI.workspace(other_ws_name)
 
-    # DOGFOOD the real governance flow (open_cr → stage → publish).
-    assert {:ok, :published} = Ezagent.Socialware.Demo.Hello.publish()
-    assert Ezagent.Socialware.Demo.Hello.published?()
+    # DOGFOOD the real deploy-seed lane: copy every app's shipped
+    # `priv/socialware_seed/*` package into a temp deployment dir, then scan it
+    # through the governed import lane (parse → resolve → conformance → publish).
+    tmp = Path.join(System.tmp_dir!(), "hello-seed-#{n}")
+    on_exit(fn -> File.rm_rf(tmp) end)
+    :ok = Ezagent.Home.SocialwareSeed.seed!(dest: tmp)
+
+    # Keep only the hello package — other shipped packages (e.g. autoservice)
+    # reference recipes not seeded in :test; this test isolates the hello lane.
+    for dir <- Path.wildcard(Path.join(tmp, "*")),
+        Path.basename(dir) != "hello",
+        do: File.rm_rf!(dir)
+
+    results = Ezagent.Socialware.ManifestSeed.scan_dir!(tmp)
+    assert %{result: :published} = Enum.find(results, &(&1.name == "hello"))
 
     # PUBLIC + discoverable from a DIFFERENT workspace via the normal listing.
     assert Enum.any?(Ezagent.Socialware.DefinitionRegistry.list(other_ws), fn row ->
@@ -1488,9 +1500,10 @@ defmodule EzagentWeb.WorldConversationTest do
 
     assert :ok = Ezagent.Socialware.Conformance.check(definition, system_ws)
 
-    # Idempotent: a second publish opens NO new CR — it returns :exists via the
-    # already-public guard, so re-boots never accumulate duplicate CRs.
-    assert {:ok, :exists} = Ezagent.Socialware.Demo.Hello.publish()
+    # Idempotent: a second scan opens NO new CR — an unchanged manifest returns
+    # :exists via the content-hash guard, so re-runs never accumulate duplicates.
+    results2 = Ezagent.Socialware.ManifestSeed.scan_dir!(tmp)
+    assert %{result: :exists} = Enum.find(results2, &(&1.name == "hello"))
 
     # Still exactly one public `hello` entry (no duplicate definition).
     hello_rows =
