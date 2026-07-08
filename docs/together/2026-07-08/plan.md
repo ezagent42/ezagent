@@ -1,0 +1,84 @@
+# dev-together 计划 · 2026-07-08
+
+**lead_confirmed**: true（2026-07-08，GMT+9）
+**本周目标**：编排线（orchestration-as-socialware）落成后，**在新部署的 stable（app.ezagent.chat）上验证 socialware 全生命周期**，并打通**官网全流程**（全体成员可回复网站操作）。
+**方向**：昨日 M1→M2→M3 代码全量合入 → 本日转向**在稳定环境上验证能力可用**（load/create/delete + requires 自动装齐 + 官网成员响应）。
+
+## §0 关键依赖链（primary 目标是被 gate 的——先打通再验证）
+
+primary 目标不是「立即可执行的并行项」，而是一条**串行依赖链**：
+
+```
+#1235 已合入 ✓（2026-07-08 02:27 UTC，seed upgrade 对 source_turn_id 冲突幂等）
+   └─→ stable 带 #1235 重新部署，boot 绿（health 通过）  ← 当前链首（在途）
+          └─→ socialware load / create / delete 验证
+          └─→ M3 requires 冒烟（装依赖编排器的 socialware → 编排器自动装齐）
+          └─→ M2 default-template 编排器安装验证
+          └─→ 官网全流程（全体成员可回复网站操作）
+```
+
+**#1235 已合入（修复 land），但 stable 尚未带该修复重新部署跑通**（见 07-07 review 事故 B）。**当前链首 = stable 重新部署 boot 绿**；链首未通前，下游验证无法开始——本 plan 把它写成显式链条，避免误读为可立即执行。
+
+## §1 本日目标与缺口
+
+### 主目标 — stable 上 socialware load / create / delete 验证
+
+**前置**：#1235 已合入 ✓ → stable 带 #1235 重新部署 boot 绿（当前链首，在途）。
+**验证步骤**（agent-browser，面向真实生产流程）：
+1. agent-browser 以 admin 登录 app.ezagent.chat；
+2. 在一个 session 中**列出**已安装 socialware；
+3. **安装**一个 socialware（hello，或经 manifest import）；
+4. 验证**物化**：成员出现、views 挂载；
+5. **卸载/移除**，验证**干净移除**：无残留 rule（T4 #1221 修复的正是这条）；
+6. **M3 requires 冒烟**：安装一个 requires 编排器的 socialware → 验证编排器**自动装齐**。
+
+### 次目标 — 官网（official website）全流程
+
+运行网站 socialware，验证**全体团队成员都能回复网站操作**（A② host-login 继承修复 + credential cascade 应让成员 agent 正常响应）。
+
+### 延后项 — git-filter-repo 历史重写
+
+对 tunnel UUID / CF account id / KV namespace id / Tailscale IP / test key 的历史重写——**仅在 dev 窗口冻结时执行**（按迁移计划）。本日不做，除非明确进入冻结窗口。
+
+## §2 结转项（carry-over，stable 打通后验证）
+
+| # | 结转项 | 来源 | 验证点 |
+|---|---|---|---|
+| C1 | T2 spec ⑦ M2-follow-up 一致性 warn | #1225 已合 | 在 stable 上确认 conformance warn 行为 |
+| C2 | deploy-seed 车道 | jjkysy 的 PR，pending CI re-run | CI 重跑后合入 |
+| C3 | M2 default-template 编排器安装 | #1223 已合 | stable 上默认模板自动装编排器 |
+
+## §3 按开发者规划
+
+> 每行 = 一个自含闭环 track；stable 依赖链由 lead 内部串行推进（合 #1235 → 部署 → 验证），下游验证在 stable 绿后分派。
+
+| 开发者 | feishu | 本日 track | 闭环/依赖说明 |
+|---|---|---|---|
+| allenwoods | 林懿伦（lead） | #1235 已合 ✓ → stable 带修复重新部署 → 主目标 socialware load/create/delete + M3 requires 冒烟 + M2 default-template 验证 | 依赖链持有者，context 在本人（原则①闭环）；stable 绿后可分派下游 |
+| zhaomaota97 | 张宁 | **官网全流程**：运行网站 socialware，验证全体成员可回复网站操作 | 前端/官网底座持有者；依赖 stable 绿 + credential cascade |
+| jjkysy | 姚升悦 | deploy-seed 车道 PR CI re-run → 合入（C2）；socialware boot 时序面支持 | 自含闭环；CI 重跑后 lead 合入 |
+| zyli-developer | 李震宇 | 协助主目标 E2E：agent-browser socialware 安装/卸载场景脚本化 + UI 呈现校验 | 依赖 stable 绿；E2E 强项 |
+
+> **开工前必读**：`docs/together/contributing/` + 各自 handoff。先讨论确认范围再开工；返还前 rebase 到 current main + 自测绿（precommit + check_invariants）+ 附 contributing_read_through。
+
+## §4 依赖与顺序 / 并行
+
+- **强串行链首**：#1235 已合 ✓ → stable 带修复重新部署绿（当前链首）。链首未通，主目标与官网全流程都不能开始（见 §0）。lead 内部串行推进链首。
+- **链尾并行**：stable 绿后，socialware 验证（allen/zyli）与官网全流程（zhaomaota97）可并行——两者共享 stable 环境但操作面不同。
+- **deploy-seed 车道（C2）**独立于 stable 链，可提前推进 CI re-run。
+
+## §5 out-of-scope（登记）
+
+- **git-filter-repo 历史重写**：迁移计划内、需 dev 窗口冻结——本日不执行（延后项，非偏离）。
+- backlog（未排）：待 stable 验证暴露的问题按需开 issue。
+
+## §6 协作约束
+
+- CI 闸：进 main 的 PR 需 `precommit + check_invariants` 绿 + rebase；返还前自测绿。
+- 评审基准 = `origin/main`（禁读陈旧工作树）。
+- 验证面向真实生产流程（app.ezagent.chat），非改测试 harness。
+- UI 验证优先 agent-browser 截图，再看日志。
+
+---
+
+本计划面向全体开发者。团队向 HTML 版见 `plan.html`。
