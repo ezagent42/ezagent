@@ -61,6 +61,10 @@ Seven notes have bilingual `.zh_cn.md` companions (marked **[zh]** below).
 - [Grill report — IDE-shell prototype brief](prototype-design-prompt.ide-shell.grill.md) — grill review of the IDE-shell prototype brief.
 - [Frontend: replace LiveView so admin becomes "a socialware"? (2026-06-19)](2026-06-19-frontend-socialware-unification-research.md) — research: thesis does NOT hold (rev8 dual-surface already decided admin=LiveView, customer=React+json-render); json-render is display-only (can't express admin UI); `/api/v1`+`lv_cli_parity` is the real UI-agnostic contract; if any JS, React-SPA not Next.js; loom investment belongs on the agent-generated customer surface.
 
+## Design research
+
+- [Skill distribution to deployed agents (2026-07-08)](skill-distribution-design.md) — **[zh]** how agent SKILLS reach deployed agents, governed by the **recipe** layer (Allen: "由 recipe 去管理"). Root cause: `mix release` packages only `priv/`, so the repo-root `.claude/skills/` walk-up in `OrchestratorBootstrap` finds nothing in a release image → session-create dead on every channel. Maps the (already-landed) `Recipe.skills` declaration + `RecipeRegistry`/`ConfigStore` three/four-state seed contract + np-uv and socialware `$EZAGENT_HOME` reference models; the gap is a skill **content backend** (the `SkillRegistry` mirror of `RecipeRegistry`). Recommends **hybrid** (bundled `priv/` defaults + `$EZAGENT_HOME` overlay, content-hash reconcile) over pure-store (reintroduces the incident) or pure-bundle (no post-deploy add); phased migration (P1 retires the point-fix + generic resolver + runtime-vs-dev skill subset; P2 overlay+seed; P3 walk-up dies). Pushes back on async materialization (skill copy is KB text — sync, folded into `HomeRuntime.stage_and_swap`).
+
 ## Stress / capacity tests
 
 - [V1 stress-test results (2026-05-22)](v1-stress-test-results-2026-05-22.md) — **[zh]** measured answers to the agents-per-session / max-sessions / max-users questions at a Raspberry-Pi (`+S 4:4`, ~4 GB) resource profile; which bottleneck bit first.
