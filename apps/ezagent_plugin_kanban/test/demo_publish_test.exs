@@ -1,32 +1,35 @@
 defmodule EzagentPluginKanban.DemoPublishTest do
   @moduledoc """
-  Boot-publish gate for the kanban demo socialware (`EzagentPluginKanban.Demo`,
-  since #1213 a thin loader over `priv/socialware/kanban/manifest.yaml` walking
-  the `ManifestYaml.import/2` chain: parse → resolve → check_candidate →
-  publish_or_upgrade), the hello #162 golden-template play — ExUnit drives the
-  SAME `publish/0` the boot call site runs (skipped in `:test` for Ecto-sandbox
-  reasons, exactly hello's `maybe_publish_hello_demo` split), inside a
-  checked-out sandbox:
+  Deploy-seed publish gate for the kanban demo socialware — the acceptance test
+  for the migration off the plugin boot self-publish onto the deploy-seed lane
+  (deploy-seed SPEC §2/§4, mirroring hello). It drives the EXACT production
+  lane: `Ezagent.Home.SocialwareSeed.seed!/1` copies the shipped
+  `ezagent_web/priv/socialware_seed/kanban/` package into a temp deployment dir,
+  then `Ezagent.Socialware.ManifestSeed.scan_dir!/2` resolves + publishes it
+  through the governed import lane (parse → resolve → conformance →
+  `ConfigGovernance.Socialware.publish_or_upgrade`). No `Demo.publish` primitive
+  is involved anymore — production has none.
 
-    * **idempotency three-state** (P0 §5 `publish_or_upgrade/2`): first publish
-      `:published` → unchanged redeploy `:exists` (NO new CR / revision) →
-      EDITED manifest `:upgraded` (a new immutable revision).
-    * **conformance**: the PUBLISHED definition passes all 12
+    * **idempotency three-state** (P0 §5 `publish_or_upgrade/2`): first scan
+      `:published` → unchanged re-scan `:exists` (NO new CR / revision) → EDITED
+      manifest `:upgraded` (a new immutable revision).
+    * **conformance**: the PUBLISHED definition passes all 15
       `Ezagent.Socialware.Conformance` assertions — the same guarantee
       `mix ezagent.socialware.check kanban` gives.
     * **PUBLIC + cross-workspace discoverable** via `DefinitionRegistry.list/1`
       from a DIFFERENT workspace (the "Socialware 下拉" listing).
 
   Environment mirrors the `mix ezagent.socialware.check` setup: domain_session +
-  kanban plugin started, the kanban recipes code-seeded into
-  `workspace://system` (`RoleSeedHook` skips in test), DataCase DB sandbox.
+  kanban plugin started, the kanban recipes code-seeded into `workspace://system`
+  (`RoleSeedHook` skips in test), DataCase DB sandbox. Only the kanban package is
+  scanned — the sibling flagships (`hello` / `autoservice`) seeded into the same
+  temp dir are pruned first, since they reference plugin views / recipes not
+  booted in this domain+kanban-only env (the manifest_seed boot-fallback play).
   """
   use EzagentCore.DataCase, async: false
 
   alias Ezagent.Agent.RecipeRegistry
-  alias Ezagent.ConfigGovernance.Socialware, as: Governance
-  alias Ezagent.Socialware.{Conformance, Definition, DefinitionRegistry, ManifestResolver}
-  alias EzagentPluginKanban.Demo
+  alias Ezagent.Socialware.{Conformance, Definition, DefinitionRegistry, ManifestSeed}
 
   setup do
     {:ok, _} = Elixir.Application.ensure_all_started(:ezagent_domain_session)
@@ -51,32 +54,32 @@ defmodule EzagentPluginKanban.DemoPublishTest do
   end
 
   test "idempotency three-state: :published → :exists (no new revision) → :upgraded", %{ws: ws} do
-    # 1) first publish through the REAL governance flow (open_cr → stage →
-    #    publish) — the exact call the boot site makes.
-    assert {:ok, :published} = Demo.publish()
-    assert Demo.published?()
+    dir = seed_kanban_only!()
+
+    # 1) first publish through the REAL deploy-seed lane (seed! → scan_dir!) —
+    #    the exact call the boot fallback + `mix ezagent.home.init` make.
+    assert [%{name: "kanban", result: :published}] = ManifestSeed.scan_dir!(dir, source: "deploy")
     assert {:ok, _definition, obj_v1} = DefinitionRegistry.lookup(ws, "kanban")
 
-    # 2) unchanged redeploy (a re-boot / supervisor restart) no-ops: NO new CR,
-    #    NO new revision minted.
-    assert {:ok, :exists} = Demo.publish()
+    # 2) unchanged re-scan (a re-boot / re-seed) no-ops: NO new CR, NO new
+    #    revision minted.
+    assert [%{name: "kanban", result: :exists}] = ManifestSeed.scan_dir!(dir, source: "deploy")
     assert {:ok, _definition, obj_after} = DefinitionRegistry.lookup(ws, "kanban")
     assert obj_after.id == obj_v1.id
 
     # 3) an EDITED manifest re-promotes (:upgraded, killing the R-2 silent
-    #    swallow) — same admin authority the boot publish uses.
-    edited = Map.put(Demo.manifest_attrs(), "description", "edited kanban manifest (upgrade)")
-    assert {:ok, %Definition{} = def_v2} = ManifestResolver.resolve(edited)
-    assert {:ok, :upgraded} = Governance.publish_or_upgrade(def_v2, admin_ctx(ws))
+    #    swallow) — the same governed lane, a new immutable revision.
+    edit_manifest_description!(dir, "edited kanban manifest (upgrade)")
+    assert [%{name: "kanban", result: :upgraded}] = ManifestSeed.scan_dir!(dir, source: "deploy")
 
     assert {:ok, _definition, obj_v2} = DefinitionRegistry.lookup(ws, "kanban")
     refute obj_v2.id == obj_v1.id
-    assert obj_v2.content_hash == Definition.content_hash(Definition.body(def_v2))
   end
 
-  test "published kanban is PUBLIC, cross-workspace discoverable, and passes all 12 conformance assertions",
+  test "published kanban is PUBLIC, cross-workspace discoverable, and passes all 15 conformance assertions",
        %{ws: ws} do
-    assert {:ok, :published} = Demo.publish()
+    dir = seed_kanban_only!()
+    assert [%{name: "kanban", result: :published}] = ManifestSeed.scan_dir!(dir, source: "deploy")
 
     # PUBLIC + discoverable from a DIFFERENT workspace via the normal listing.
     other_ws_name = "kanban-discoverer-#{System.unique_integer([:positive])}"
@@ -87,10 +90,9 @@ defmodule EzagentPluginKanban.DemoPublishTest do
              row.name == "kanban" and row.public? == true
            end)
 
-    # Materializable: all 12 conformance assertions green — the same guarantee
+    # Materializable: all 15 conformance assertions green — the same guarantee
     # `mix ezagent.socialware.check kanban` gives, proving install works.
-    # 13 = 原 12 + #1212 的 role-DAG conformance 断言
-    assert length(Conformance.assertions()) == 13
+    assert length(Conformance.assertions()) == 15
 
     assert {:ok, %Definition{name: "kanban"} = definition, _obj} =
              DefinitionRegistry.lookup(ws, "kanban")
@@ -101,19 +103,41 @@ defmodule EzagentPluginKanban.DemoPublishTest do
     assert length(Enum.filter(DefinitionRegistry.list(other_ws), &(&1.name == "kanban"))) == 1
   end
 
-  # Mirrors `Demo`'s private `admin_ctx/2` (kept private there, hello parity) —
-  # the bootstrap admin + manage cap + the public-scope admin genesis gate.
-  defp admin_ctx(ws) do
-    admin = Ezagent.URI.user(:system, :admin)
+  # Seed the shipped kanban deploy-seed package into a fresh temp deployment dir
+  # (the exact `Ezagent.Home.SocialwareSeed.seed!/0` copy), then prune every
+  # sibling flagship so only the kanban package is scanned.
+  defp seed_kanban_only! do
+    dir = Path.join(System.tmp_dir!(), "kanban-seed-#{System.unique_integer([:positive])}")
+    File.rm_rf!(dir)
+    on_exit(fn -> File.rm_rf!(dir) end)
 
-    %{
-      caller: admin,
-      workspace_uri: ws,
-      caps:
-        MapSet.new([
-          Governance.manage_cap("kanban", ws, admin),
-          Ezagent.Capability.admin_genesis_cap()
-        ])
-    }
+    :ok = Ezagent.Home.SocialwareSeed.seed!(dest: dir)
+
+    for pkg <- File.ls!(dir), pkg != "kanban" do
+      File.rm_rf!(Path.join(dir, pkg))
+    end
+
+    assert File.exists?(Path.join(dir, "kanban/manifest.yaml")),
+           "seed! must have copied the shipped kanban package"
+
+    dir
+  end
+
+  # Edit the seeded manifest's description in place so the next scan sees new
+  # content (→ `:upgraded`). The `description:` scalar is unique in the file.
+  defp edit_manifest_description!(dir, new_description) do
+    path = Path.join(dir, "kanban/manifest.yaml")
+    yaml = File.read!(path)
+
+    edited =
+      String.replace(
+        yaml,
+        ~r/^description: .*$/m,
+        "description: #{inspect(new_description)}",
+        global: false
+      )
+
+    assert edited != yaml, "the description line must have been rewritten"
+    File.write!(path, edited)
   end
 end
