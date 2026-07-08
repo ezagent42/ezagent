@@ -171,6 +171,8 @@ Ezagent 项目的**单一真相源**(single source of truth)for:
 | 159 | **`config://` retired(T1);socialware 由 opaque ConfigStore subject `socialware:<name>` 寻址**(Allen 2026-07-03,SPEC 同上 §1;承 T1 `docs/together/2026-07-02/specs/T1-preprod-foundation.md`)— `config://` scheme 已 **retired**(codebase `apps/*/lib` 零引用,已核)。一个 socialware 用 opaque subject **`socialware:<name>`** 寻址(workspace 是 **单独的 field**,不拼进 subject);它是一个 **catalog / data key,NOT a routable URI scheme**(不在 6 个 Kind URI scheme 集内 —— 承 #155 术语表 L2 ConfigObject 条),只有 install 进一个 session 才变成 running actors | impl |
 | 160 | **`agents[].flavor` — socialware 声明的 agent 携带 flavor,经 `Recipe.Compose` 路由**(Allen 2026-07-03,SPEC 同上 §4)— 一个 socialware Definition 的 `agents[]` entry 目标形态携带 **`flavor`**(cc / codex / py / completion,author 之选);materialization 经 flavor-generic 的 **`Ezagent.Agent.Recipe.Compose`** 路由。**Today**:session materialization 走 cc-pinned 的 `DefaultAgentSeed`(flavor 硬编码 `"cc"`),`Recipe` 刻意不含 flavor field → 目前 **hard-pinned to cc**;fix = 给 `agents[]` 加 `flavor` + 让 materialization 走 `Recipe.Compose`(caps 仍只来自 recipe,Definition 不 override) | impl |
 
+| 161 | **declaration/content 四层词 convention:Definition / Recipe / Manifest / Registry 各占一层**(Allen 2026-07-08,起因:skill 分发设计 #1251 讨论)— **Definition** = 应用声明("这个 socialware 是什么")/ **Recipe** = 个体配方("这个 agent 怎么做出来")/ **Manifest** = 部署清单("这个部署环境装什么",$EZAGENT_HOME seed 输入)/ **Registry** = 运行时索引("按名字怎么找到",进程内 read-through)。辅助后缀:`*Store`(持久存储后端)/ `*Seed`(boot/deploy 安装通道)/ `*Resolver`(读侧 read-model)/ `*Materializer`(声明→运行时 artifact)。**新概念命名先对 §3 内部分层词表**;不做存量改名(现有模块经 grep 核对已各归其层;`Ezagent.Socialware.ConfigStore` 作 substrate seam 命名为 red-line 5 所许)。详见 §3 "内部分层词消歧" | impl |
+
 实施期决策(impl)将持续从 #114 起 append →
 > **编号注**:#153 由 PR #811(`feat/54-pr-a-manager-delegated-grant`,未 merge)占用 —— 见上文 #153 entry 在该分支的版本。本 #154 在 origin/main(#152 之后)直接 append;若 #811 先 merge,表尾按既有"parallel-squash rebases tail"惯例自动顺位,无冲突。
 
@@ -1207,6 +1209,24 @@ Ezagent domain 词跟外部世界(Phoenix / Elixir / 通用计算机科学)同�
 | **principal** | 发起 Invocation 的主体(Entity Kind 实例) | (Web 安全/auth 通用术语) | 含义大致一致,不太需要消歧 |
 | **transport** | Ezagent Adapter 的 wire 形态(WS/HTTP/stdio/MCP) | (网络栈 layer 4) | 上下文明确 |
 | **scope** | Cap 的三档(`:instance` / `:kind` / `:all`) | 通用术语(变量作用域 / 项目范围 / 等等) | 写 "cap scope" 明确 |
+| **manifest** | Ezagent 部署清单文件($EZAGENT_HOME deploy 目录里的 seed 输入,`Ezagent.Socialware.ManifestSeed` 扫描,"这个部署环境装什么") | Docker/K8s manifest / npm package manifest / MANIFEST.in | "Ezagent deploy manifest";只指 $EZAGENT_HOME seed 清单,不是容器编排文件 |
+
+### 内部分层词消歧(declaration/content 轴,Decision #161)
+
+上面的表消歧"Ezagent vs 外部世界";这一节消歧 **Ezagent 内部**四个易混层次词。每个词各占一层,新概念命名先对此表(Allen 2026-07-08,起因:skill 分发设计 #1251 讨论中 registry/manifest/definition 混淆):
+
+| 词 | 层 | 回答的问题 | 典型代表 |
+|---|---|---|---|
+| **Definition** | 应用声明(L2 data) | "这个 socialware 应用是什么"(roles / agents / views / routing) | `Ezagent.Socialware.Definition`,subject `socialware:<name>` |
+| **Recipe** | 个体配方(L2 data) | "这个 agent 怎么做出来"(flavor / skills / caps / 依赖) | `Ezagent.Agent.Recipe`,subject `recipe:<name>` |
+| **Manifest** | 部署清单($EZAGENT_HOME 文件) | "这个部署环境装什么"(deploy 侧 seed 的输入) | `Ezagent.Socialware.ManifestSeed` 扫描的 deploy 目录清单 |
+| **Registry** | 运行时索引(进程内 ETS/read-through) | "运行时按名字怎么找到"(name → pid/module/content) | `KindRegistry` / `RecipeRegistry` / (planned) `SkillRegistry` |
+
+**辅助后缀 convention**(围绕上述四层的既有命名习惯,新模块跟随):
+- **`*Store`** = 持久存储后端(Postgres/ETS 的写入面;`ConfigStore` 是 L2 ConfigObject 的 store,Registry 常是它的 read-through)
+- **`*Seed`** = boot/deploy 期安装通道(把 manifest/默认内容灌进 Store;`ManifestSeed` / `DefaultAgentSeed` / seed 三态契约 #1242)
+- **`*Resolver`** = 读侧查询/read-model(`AgentRecipeResolver` / `Template.Resolver`)
+- **`*Materializer`** = 把声明变成运行时 artifact(`RecipeMaterializer`:recipe × flavor → 落地的 agent)
 
 ### 命名 convention 总结
 
