@@ -47,6 +47,7 @@ defmodule Mix.Tasks.Ezagent.Home.Init do
     # is safe in this Category-A bootstrap; the governed publish happens later at
     # boot via `Ezagent.Socialware.ManifestSeed.scan_all!`.
     Ezagent.Home.SocialwareSeed.seed!()
+    Ezagent.Home.SkillSeed.seed!(index?: false)
 
     print_summary()
   end
@@ -159,7 +160,8 @@ defmodule Mix.Tasks.Ezagent.Home.Init do
          "Phoenix Repo target (dev). One-time: mix ezagent.home.adopt_db moves repo-root ezagent_core_dev.db here"},
         {"snapshots/", "Phase 4 Kind state snapshots"},
         {"logs/", "server logs"},
-        {"plugins/", "per-plugin non-secret tunables"}
+        {"plugins/", "per-plugin non-secret tunables"},
+        {"skills/", "deployment skill seed runtime origin"}
       ],
       fn {rel, note} ->
         full = Path.join(Home.profile_dir(), rel)

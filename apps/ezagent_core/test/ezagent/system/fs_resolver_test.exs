@@ -71,6 +71,12 @@ defmodule Ezagent.System.FsResolverTest do
       assert {:ok, path} = FsResolver.resolve(uri)
       assert path == Ezagent.Home.path("socialware")
     end
+
+    test "system://skills resolves to the deployment skill seed dir" do
+      uri = EzURI.system_principal("skills")
+      assert {:ok, path} = FsResolver.resolve(uri)
+      assert path == Ezagent.Home.path("skills")
+    end
   end
 
   describe "UriQuery seam" do

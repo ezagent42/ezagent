@@ -4,12 +4,13 @@ defmodule Ezagent.SkillRegistry do
 
   Skills referenced by `Ezagent.Agent.Recipe` declarations are content, not
   declaration authority. Recipes keep declaring refs in `skills`; this registry
-  resolves those refs to release-bundled skill source directories and their
-  directory-closure hashes.
+  resolves those refs to runtime skill source directories and their directory-
+  closure hashes.
 
-  P1 scans every loaded OTP app's `priv/skills_seed/<ref>/` generically. P2 will
-  re-point the backing origin to `$EZAGENT_HOME/<profile>/skills/` after the
-  boot seed lane populates it.
+  `priv/skills_seed/<ref>/` remains the shipped seed source. The registry itself
+  reads only the single runtime origin at `$EZAGENT_HOME/<profile>/skills/` after
+  `Ezagent.Home.SkillSeed` has populated it and `refresh!/1` has marked the
+  index ready.
   """
 
   import Bitwise
@@ -18,21 +19,66 @@ defmodule Ezagent.SkillRegistry do
 
   @source_rel "skills_seed"
   @marker "SKILL.md"
+  @entries_key {__MODULE__, :entries}
+  @ready_key {__MODULE__, :ready?}
 
   @doc """
-  Resolves `ref` to a shipped skill source directory and content hash.
+  Resolves `ref` to a runtime skill source directory and content hash.
 
-  The resolver scans the configured skill seed origins and returns the first
-  directory containing `SKILL.md`. Unknown refs fail loudly as
+  `refresh!/1` must run before the first call. A pre-ready call raises because
+  it indicates a boot-order bug; after ready, unknown refs fail loudly as
   `{:error, {:skill_source_not_found, ref}}`.
   """
   @spec resolve(String.t()) ::
           {:ok, {Path.t(), String.t()}} | {:error, {:skill_source_not_found, String.t()}}
   def resolve(ref) when is_binary(ref) do
-    case find_source_dir(ref) do
-      nil -> {:error, {:skill_source_not_found, ref}}
-      dir -> {:ok, {dir, dir_hash(dir)}}
+    unless ready?() do
+      raise RuntimeError,
+            "SkillRegistry is not ready; Ezagent.Home.SkillSeed.boot!/1 must run " <>
+              "before the first skill resolve"
     end
+
+    case Map.fetch(entries(), ref) do
+      {:ok, {_dir, _hash} = entry} -> {:ok, entry}
+      :error -> {:error, {:skill_source_not_found, ref}}
+    end
+  end
+
+  @doc """
+  Scan the single runtime origin into the read-through index and mark it ready.
+
+  Options:
+
+    * `:runtime_dir` — test seam for the deployment skills dir. Production code
+      leaves it unset, resolving `system://skills` through `Ezagent.System.FsResolver`.
+  """
+  @spec refresh!(keyword()) :: :ok
+  def refresh!(opts \\ []) do
+    runtime_dir = runtime_dir(opts)
+
+    entries =
+      runtime_dir
+      |> child_skill_refs()
+      |> Map.new(fn ref ->
+        dir = Path.expand(Path.join(runtime_dir, ref))
+        {ref, {dir, dir_hash(dir)}}
+      end)
+
+    :persistent_term.put(@entries_key, entries)
+    :persistent_term.put(@ready_key, true)
+    :ok
+  end
+
+  @doc "Whether the runtime skill index has completed its boot scan."
+  @spec ready?() :: boolean()
+  def ready?, do: :persistent_term.get(@ready_key, false)
+
+  @doc "Reset the runtime index. Intended for tests and boot reinitialization."
+  @spec reset!() :: :ok
+  def reset! do
+    :persistent_term.erase(@entries_key)
+    :persistent_term.put(@ready_key, false)
+    :ok
   end
 
   @doc """
@@ -43,7 +89,7 @@ defmodule Ezagent.SkillRegistry do
   """
   @spec seed_bundle_refs() :: [String.t()]
   def seed_bundle_refs do
-    source_dirs()
+    seed_source_dirs()
     |> Enum.flat_map(&child_skill_refs/1)
     |> Enum.uniq()
     |> Enum.sort()
@@ -85,8 +131,8 @@ defmodule Ezagent.SkillRegistry do
   The `:ezagent_core, :skill_registry_source_dirs` app env is a test seam for
   prod-shape resolver tests; production code should leave it unset.
   """
-  @spec source_dirs() :: [Path.t()]
-  def source_dirs do
+  @spec seed_source_dirs() :: [Path.t()]
+  def seed_source_dirs do
     case Application.get_env(:ezagent_core, :skill_registry_source_dirs) do
       dirs when is_list(dirs) ->
         dirs
@@ -101,6 +147,10 @@ defmodule Ezagent.SkillRegistry do
         end
     end
   end
+
+  @doc "Backward-compatible name for the shipped `priv/skills_seed` source dirs."
+  @spec source_dirs() :: [Path.t()]
+  def source_dirs, do: seed_source_dirs()
 
   @doc """
   Computes a deterministic hash over a skill directory closure.
@@ -123,25 +173,27 @@ defmodule Ezagent.SkillRegistry do
     |> sha256()
   end
 
-  defp find_source_dir(ref) do
-    Enum.find_value(source_dirs(), fn source ->
-      dir = Path.join(source, ref)
+  defp entries, do: :persistent_term.get(@entries_key, %{})
 
-      if File.regular?(Path.join(dir, @marker)) do
-        Path.expand(dir)
-      end
+  defp runtime_dir(opts) do
+    Keyword.get_lazy(opts, :runtime_dir, fn ->
+      Ezagent.System.FsResolver.path!(Ezagent.URI.system_principal("skills"))
     end)
   end
 
   defp child_skill_refs(source_dir) do
-    source_dir
-    |> File.ls!()
-    |> Enum.filter(fn child ->
-      path = Path.join(source_dir, child)
+    if File.dir?(source_dir) do
+      source_dir
+      |> File.ls!()
+      |> Enum.filter(fn child ->
+        path = Path.join(source_dir, child)
 
-      File.dir?(path) and not intermediate_name?(child) and
-        File.regular?(Path.join(path, @marker))
-    end)
+        File.dir?(path) and not intermediate_name?(child) and
+          File.regular?(Path.join(path, @marker))
+      end)
+    else
+      []
+    end
   end
 
   defp intermediate_name?(name),

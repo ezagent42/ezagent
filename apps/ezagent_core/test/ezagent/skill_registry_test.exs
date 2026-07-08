@@ -3,6 +3,15 @@ defmodule Ezagent.SkillRegistryTest do
 
   @skill_ref "ezagent-session-orchestrator"
 
+  setup do
+    registry = registry!()
+    registry.reset!()
+
+    on_exit(fn -> registry.reset!() end)
+
+    :ok
+  end
+
   defp registry! do
     assert {:module, Ezagent.SkillRegistry} = Code.ensure_loaded(Ezagent.SkillRegistry)
     Ezagent.SkillRegistry
@@ -34,20 +43,62 @@ defmodule Ezagent.SkillRegistryTest do
     assert registry.seed_bundle_refs() == registry.derived_recipe_skill_refs()
   end
 
-  test "resolve/1 returns the shipped seed dir and directory hash" do
+  test "resolve/1 reads the runtime origin after an explicit scan" do
     registry = registry!()
+    source = tmp_dir("runtime-origin")
 
-    assert {:ok, {dir, hash}} = registry.resolve(@skill_ref)
-    assert File.regular?(Path.join(dir, "SKILL.md"))
-    assert hash == registry.dir_hash(dir)
-    assert byte_size(hash) == 64
+    try do
+      write!(Path.join(source, "#{@skill_ref}/SKILL.md"), "runtime copy\n")
+
+      assert :ok = registry.refresh!(runtime_dir: source)
+      assert {:ok, {dir, hash}} = registry.resolve(@skill_ref)
+      assert dir == Path.expand(Path.join(source, @skill_ref))
+      assert File.regular?(Path.join(dir, "SKILL.md"))
+      assert hash == registry.dir_hash(dir)
+      assert byte_size(hash) == 64
+    after
+      File.rm_rf!(source)
+    end
   end
 
   test "resolve/1 returns a fail-loud miss for an unknown ref" do
     registry = registry!()
+    source = tmp_dir("runtime-empty")
     ref = "missing-skill-#{System.unique_integer([:positive])}"
 
-    assert {:error, {:skill_source_not_found, ^ref}} = registry.resolve(ref)
+    try do
+      File.mkdir_p!(source)
+      assert :ok = registry.refresh!(runtime_dir: source)
+      assert {:error, {:skill_source_not_found, ^ref}} = registry.resolve(ref)
+    after
+      File.rm_rf!(source)
+    end
+  end
+
+  test "resolve/1 raises before the registry has scanned its runtime origin" do
+    registry = registry!()
+
+    assert_raise RuntimeError, ~r/SkillRegistry is not ready/, fn ->
+      registry.resolve(@skill_ref)
+    end
+  end
+
+  test "operator-dropped skill dir registers on the next scan" do
+    registry = registry!()
+    source = tmp_dir("operator-drop")
+
+    try do
+      File.mkdir_p!(source)
+      assert :ok = registry.refresh!(runtime_dir: source)
+      assert {:error, {:skill_source_not_found, @skill_ref}} = registry.resolve(@skill_ref)
+
+      write!(Path.join(source, "#{@skill_ref}/SKILL.md"), "operator copy\n")
+      assert :ok = registry.refresh!(runtime_dir: source)
+      assert {:ok, {dir, _hash}} = registry.resolve(@skill_ref)
+      assert dir == Path.expand(Path.join(source, @skill_ref))
+    after
+      File.rm_rf!(source)
+    end
   end
 
   test "dir_hash/1 hashes relpath, owner exec bit, content, and symlink target" do
