@@ -161,11 +161,11 @@ defmodule EzagentDomainInstanceMessage.Application do
         :ok = seed_manifest_boot_recipes()
 
         # sw-home lane (2026-07-07) — the early domain_session-priv-only
-        # `ManifestSeed` scan was DELETED. All local socialware manifests
-        # (deployment dir + every started app's priv/socialware, incl. this
-        # app's autoservice seed) are collected by ONE late scan,
-        # `Ezagent.Socialware.ManifestSeed.scan_all!/1`, triggered from
-        # `EzagentWeb.Application` after every plugin has booted — manifests
+        # `ManifestSeed` scan was DELETED. All socialware manifests live in the
+        # single deployment seed directory (`$EZAGENT_HOME/<profile>/socialware`,
+        # seeded from `ezagent_web/priv/socialware_seed`) and are collected by
+        # ONE late scan, `Ezagent.Socialware.ManifestSeed.scan_all!/1`, triggered
+        # from `EzagentWeb.Application` after every plugin has booted — manifests
         # may reference plugin-registered views/recipes, which do not exist
         # yet at this point of the boot sequence.
 
