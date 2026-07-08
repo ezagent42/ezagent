@@ -64,7 +64,7 @@ primary 目标不是「立即可执行的并行项」，而是一条**串行依�
 | 开发者 | feishu | 本日 track | 闭环/依赖说明 |
 |---|---|---|---|
 | allenwoods | 林懿伦（lead） | #1235 已合 ✓ → stable 带修复重新部署 → 主目标 socialware load/create/delete + M3 requires 冒烟 + M2 default-template 验证；**结构项：seed 三态契约下沉 + CI reflow 闸**（见 §1）；**nightly 自动触发 + 内测 playground 指定**：① main 合并 → nightly 自动部署（现仅 19:00 UTC 定时/手动 dispatch；如 ezagent CI main push → repository_dispatch → ezagent-deploy，保持 no-pull_request 安全约束）② 定内测 playground 渠道（nightly 最新但不稳 vs beta 晋级版；给出推荐并配置） | 依赖链持有者，context 在本人（原则①闭环）；stable 绿后可分派下游；结构项/nightly 项独立于 stable 链，可穿插推进 |
-| zhaomaota97 | 张宁 | **官网全流程**：运行网站 socialware，验证全体成员可回复网站操作。**子项：hello 页面子域继承测试**——验证 hello socialware 的对外页面能否挂在 `*.ezagent.chat` 通配子域下对外服务（如 `hello-something.ezagent.chat` 或 `world.app.ezagent.chat` 模式）。（follow-up：**hello 纯 manifest 重表达**——hello 开发归属本人，官网全流程后跟进） | 前端/官网底座持有者；依赖 stable 绿 + credential cascade |
+| zhaomaota97 | 张宁 | **官网全流程**：运行网站 socialware，验证全体成员可回复网站操作。**子项：hello 页面路径可达性测试**——验证 hello 页面在 `app.ezagent.chat/hello/xxx` 路径下的对外可达性（Cloudflare 固定 hostname + 路径路由，非通配子域——域名走 Cloudflare tunnel 固定 hostname ingress，通配子域不可行）。（follow-up：**hello 纯 manifest 重表达**——hello 开发归属本人，官网全流程后跟进） | 前端/官网底座持有者；依赖 stable 绿 + credential cascade |
 | gagameow | 黄佳佳 | **ezagent-in-ezagent 自举能力审计（dogfooding）**：验证「在 ezagent 里开发 ezagent」今天是否可行，三个面逐一验证：① **改代码库 + 提 PR**——ezagent session 内的 agent 修改 esr-ng 仓库并提交 PR；② **产出 plugin**——从内部开发一个新 ezagent 插件；③ **生成 socialware**——从内部编写 + 发布 + 安装一个新 socialware。**交付物 = 验证报告**：每个面「今天能跑通什么 / 哪里断 / 缺口在哪」 | 自含闭环（审计 + 报告同一人）；不依赖 stable 链，可立即开工 |
 | jjkysy | 姚升悦 | deploy-seed 车道 PR CI re-run → 合入（C2）；socialware boot 时序面支持 | 自含闭环；CI 重跑后 lead 合入 |
 | zyli-developer | 李震宇 | 协助主目标 E2E：agent-browser socialware 安装/卸载场景脚本化 + UI 呈现校验 | 依赖 stable 绿；E2E 强项 |
