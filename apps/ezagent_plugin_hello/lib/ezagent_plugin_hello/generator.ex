@@ -17,7 +17,7 @@ defmodule EzagentPluginHello.Generator do
 
   `HELLO_LLM_BACKEND=claude_code` runs the local Claude Code CLI. Otherwise the
   HTTP branch delegates to the session's own curl "llm" member
-  (`EzagentPluginHello.Members.role_uri/2` + `Ezagent.AgentBridge.complete/2`) —
+  (`EzagentPluginHello.Members.role_uri/2` + `Ezagent.Entity.Agent.complete/3`) —
   the API key lives on that agent's own `:api_keys` slice and is never seen by
   this module.
   """
@@ -484,7 +484,11 @@ defmodule EzagentPluginHello.Generator do
       _ ->
         case EzagentPluginHello.Members.role_uri(session_uri, "llm") do
           {:ok, curl_uri} ->
-            case Ezagent.AgentBridge.complete(curl_uri, compose_prompt(system, user_text)) do
+            case Ezagent.Entity.Agent.complete(
+                   Ezagent.Entity.User.admin_uri(),
+                   curl_uri,
+                   compose_prompt(system, user_text)
+                 ) do
               {:ok, content} -> {:ok, %{content: content}}
               {:error, _} = err -> err
             end
