@@ -395,13 +395,13 @@ defmodule EzagentWeb.Socialware.ChatFeedControllerTest do
       assert redirected_to(conn) =~ "/login"
     end
 
-    test "missing / empty session_name → 400" do
+    test "missing / empty session_name → 404 (does not match the route)" do
       conn =
         build_conn()
         |> Plug.Test.init_test_session(%{})
         |> get("/hello/")
 
-      assert conn.status == 400
+      assert conn.status == 404
     end
   end
 end
