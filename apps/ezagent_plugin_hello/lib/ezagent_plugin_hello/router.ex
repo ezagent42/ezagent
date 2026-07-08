@@ -63,10 +63,12 @@ defmodule EzagentPluginHello.Router do
     target =
       Ezagent.URI.with_action(member_uri, :agent, action_atom)
 
+    session_uri_str = URI.to_string(session_uri)
+
     Ezagent.Invocation.dispatch(%Ezagent.Invocation{
       target: target,
       mode: :cast,
-      args: %{session_uri: URI.to_string(session_uri), instruction: user_text, text: user_text},
+      args: %{session_uri: session_uri_str, instruction: user_text, text: user_text},
       ctx: %{
         caller: Ezagent.Entity.User.admin_uri(),
         caps: MapSet.new([Ezagent.Capability.admin_genesis_cap()]),

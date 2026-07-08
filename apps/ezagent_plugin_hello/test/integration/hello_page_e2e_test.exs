@@ -110,7 +110,7 @@ defmodule EzagentPluginHello.Integration.HelloPageE2ETest do
   test "ensure_app joins the orchestrator front desk without minting a within-session cap", ctx do
     orchestrator = ctx.orchestrator
 
-    assert %{^orchestrator => %{role_name: "orchestrator"}} =
+    assert %{^orchestrator => %{role_name: "front-desk"}} =
              Ezagent.Orchestrator.Tools.read_members(ctx.session)
 
     {:ok, %{caps: caps}} = Ezagent.Kind.get_slice(ctx.orchestrator, :identity)

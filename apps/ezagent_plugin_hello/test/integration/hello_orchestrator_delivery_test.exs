@@ -61,7 +61,7 @@ defmodule EzagentPluginHello.Integration.HelloOrchestratorDeliveryTest do
     # orchestrator `App.ensure_app/2` joined (the role_name facet, not a
     # `orch_<name>` convention URI, which would resolve to a phantom entity now
     # that members are PLANNED-URI / framework-materialized).
-    assert {:ok, ^orch_uri} = EzagentPluginHello.Members.role_uri(session_uri, "orchestrator")
+    assert {:ok, ^orch_uri} = EzagentPluginHello.Members.role_uri(session_uri, "front-desk")
 
     sender = Ezagent.URI.entity(ws, :user, "operator")
 

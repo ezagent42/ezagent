@@ -10,7 +10,7 @@ defmodule EzagentPluginHello.MigrateTest do
       pre-`Definition.roles` session left the substrate in) lands the full
       orchestrator/builder/concierge team.
     * "stale orchestrator" (Task-4-flagged hardening) — a session whose
-      `role_name: "orchestrator"` slot is occupied by the WRONG recipe (a stale
+      `role_name: "front-desk"` slot is occupied by the WRONG recipe (a stale
       member left by a prior half-migration, or built the old imperative way)
       is reflavored: the stale member is removed and the real
       `hello.orchestrator` agent is materialized in its place. See
@@ -46,17 +46,17 @@ defmodule EzagentPluginHello.MigrateTest do
     test "is idempotent — re-running does not disturb the materialized team", %{ws: ws} do
       {:ok, session_uri, orch_uri} = App.ensure_app(ws, "current")
 
-      assert {:ok, ^orch_uri} = Members.role_uri(session_uri, "orchestrator")
+      assert {:ok, ^orch_uri} = Members.role_uri(session_uri, "front-desk")
       assert {:ok, builder_uri} = Members.role_uri(session_uri, "builder")
       assert {:ok, concierge_uri} = Members.role_uri(session_uri, "concierge")
 
       assert {:ok, ^session_uri} = Migrate.migrate_one(session_uri)
 
       # Same members, same recipe — a true no-op re-run.
-      assert {:ok, ^orch_uri} = Members.role_uri(session_uri, "orchestrator")
+      assert {:ok, ^orch_uri} = Members.role_uri(session_uri, "front-desk")
       assert {:ok, ^builder_uri} = Members.role_uri(session_uri, "builder")
       assert {:ok, ^concierge_uri} = Members.role_uri(session_uri, "concierge")
-      assert {:ok, "hello.orchestrator"} = Ezagent.AgentRecipeAttributes.fetch(orch_uri)
+      assert {:ok, "hello.front-desk"} = Ezagent.AgentRecipeAttributes.fetch(orch_uri)
 
       # And migrate_all/0 (the boot entry point) reports it migrated, not failed.
       report = Migrate.migrate_all()
@@ -71,16 +71,16 @@ defmodule EzagentPluginHello.MigrateTest do
       {session_uri, _owner_uri, _workspace_uri} = bare_hello_session(ws, "bare")
 
       # Before migrate: behaviors + template binding exist, but NO team.
-      assert :error = Members.role_uri(session_uri, "orchestrator")
+      assert :error = Members.role_uri(session_uri, "front-desk")
       assert :error = Members.role_uri(session_uri, "builder")
       assert :error = Members.role_uri(session_uri, "concierge")
 
       assert {:ok, ^session_uri} = Migrate.migrate_one(session_uri)
 
-      assert {:ok, orch_uri} = Members.role_uri(session_uri, "orchestrator")
+      assert {:ok, orch_uri} = Members.role_uri(session_uri, "front-desk")
       assert {:ok, _builder_uri} = Members.role_uri(session_uri, "builder")
       assert {:ok, _concierge_uri} = Members.role_uri(session_uri, "concierge")
-      assert {:ok, "hello.orchestrator"} = Ezagent.AgentRecipeAttributes.fetch(orch_uri)
+      assert {:ok, "hello.front-desk"} = Ezagent.AgentRecipeAttributes.fetch(orch_uri)
     end
   end
 
@@ -90,7 +90,7 @@ defmodule EzagentPluginHello.MigrateTest do
 
       # Simulate the Task-4-flagged bug scenario: a prior half-migration (or the
       # old imperative build) left some OTHER recipe's agent occupying the
-      # "orchestrator" role_name slot. Reuses the SAME production materialization
+      # "front-desk" role_name slot. Reuses the SAME production materialization
       # plumbing (spawn → faceted join → grant caps) `repair_orchestrator` itself
       # calls — just fed the WRONG recipe for this role, on purpose.
       assert :ok =
@@ -100,7 +100,7 @@ defmodule EzagentPluginHello.MigrateTest do
                  owner_uri,
                  [
                    %{
-                     role_name: "orchestrator",
+                     role_name: "front-desk",
                      fill: :agent,
                      recipe: "hello.builder",
                      flavor: "native"
@@ -108,7 +108,7 @@ defmodule EzagentPluginHello.MigrateTest do
                  ]
                )
 
-      assert {:ok, stale_uri} = Members.role_uri(session_uri, "orchestrator")
+      assert {:ok, stale_uri} = Members.role_uri(session_uri, "front-desk")
       assert {:ok, "hello.builder"} = Ezagent.AgentRecipeAttributes.fetch(stale_uri)
       # builder/concierge were never materialized in this bare fixture.
       assert :error = Members.role_uri(session_uri, "builder")
@@ -116,9 +116,9 @@ defmodule EzagentPluginHello.MigrateTest do
 
       assert {:ok, ^session_uri} = Migrate.migrate_one(session_uri)
 
-      assert {:ok, fresh_uri} = Members.role_uri(session_uri, "orchestrator")
+      assert {:ok, fresh_uri} = Members.role_uri(session_uri, "front-desk")
       refute URI.to_string(fresh_uri) == URI.to_string(stale_uri)
-      assert {:ok, "hello.orchestrator"} = Ezagent.AgentRecipeAttributes.fetch(fresh_uri)
+      assert {:ok, "hello.front-desk"} = Ezagent.AgentRecipeAttributes.fetch(fresh_uri)
 
       # The repair that follows the reflavor also lands the rest of the team.
       assert {:ok, _builder_uri} = Members.role_uri(session_uri, "builder")
@@ -126,7 +126,7 @@ defmodule EzagentPluginHello.MigrateTest do
 
       # Re-running is now a no-op (the correct recipe short-circuits the check).
       assert {:ok, ^session_uri} = Migrate.migrate_one(session_uri)
-      assert {:ok, ^fresh_uri} = Members.role_uri(session_uri, "orchestrator")
+      assert {:ok, ^fresh_uri} = Members.role_uri(session_uri, "front-desk")
     end
   end
 

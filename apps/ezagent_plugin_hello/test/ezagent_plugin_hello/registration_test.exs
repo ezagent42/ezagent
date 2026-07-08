@@ -51,7 +51,7 @@ defmodule EzagentPluginHello.RegistrationTest do
   test "hello.orchestrator recipe — behaviors + caps + non-passive (combined gate)" do
     assert {:ok, %Recipe{} = role} = Recipe.new(HelloApp.hello_orchestrator_recipe())
 
-    assert role.name == "hello.orchestrator"
+    assert role.name == "hello.front-desk"
     assert role.behaviors == [HelloOrchestrator]
     # NOT passive — the orchestrator is the chat front desk (receives the fan-out).
     refute role.passive
@@ -112,8 +112,8 @@ defmodule EzagentPluginHello.RegistrationTest do
     :ok = RecipeRegistry.flush_cache()
 
     assert {:ok,
-            %Recipe{name: "hello.orchestrator", behaviors: [HelloOrchestrator], passive: false}} =
-             RecipeRegistry.lookup("hello.orchestrator")
+            %Recipe{name: "hello.front-desk", behaviors: [HelloOrchestrator], passive: false}} =
+             RecipeRegistry.lookup("hello.front-desk")
 
     assert {:ok, %Recipe{name: "hello.builder", behaviors: [HelloBuilder], passive: false}} =
              RecipeRegistry.lookup("hello.builder")
@@ -127,12 +127,12 @@ defmodule EzagentPluginHello.RegistrationTest do
     {:ok, defn} = Ezagent.Socialware.Definition.new(attrs)
 
     role_names = Enum.map(defn.roles, & &1.role_name) |> Enum.sort()
-    assert role_names == ["builder", "concierge", "llm", "orchestrator"]
+    assert role_names == ["builder", "concierge", "llm", "front-desk"]
     assert Enum.all?(defn.roles, &(&1.fill == :agent))
-    assert Enum.find(defn.roles, &(&1.role_name == "orchestrator")).flavor == "hello"
+    assert Enum.find(defn.roles, &(&1.role_name == "front-desk")).flavor == "hello"
 
     assert [rule] = defn.routing_rules
-    assert (rule[:receivers] || rule["receivers"]) == ["orchestrator"]
+    assert (rule[:receivers] || rule["receivers"]) == ["front-desk"]
   end
 
   test "hello Definition declares the llm curl member" do
