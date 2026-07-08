@@ -117,16 +117,25 @@ defmodule EzagentDomainInstanceMessage.SessionCreator.Listing do
       list_sessions()
       |> Enum.filter(&session_in_workspace?(&1, workspace_name))
 
-    live_set = MapSet.new(live, &URI.to_string/1)
+    # Dedup keys are CANONICAL URI structs (`Ezagent.URI.canonical!/1`), not
+    # `URI.to_string` — string-keyed URI collections are the `uri_string_key`
+    # scan class (URI = opaque id; a URI reorder would silently split the
+    # live/cold join). Both sides normalize through the same fn, so struct
+    # equality is safe as a key.
+    live_set = MapSet.new(live, &Ezagent.URI.canonical!/1)
 
     rows = persisted_session_rows(workspace_uri, workspace_name)
-    rows_by_uri = Map.new(rows, fn {uri, row} -> {URI.to_string(uri), row} end)
+    rows_by_uri = Map.new(rows, fn {uri, row} -> {Ezagent.URI.canonical!(uri), row} end)
 
     cold =
-      Enum.reject(rows, fn {uri, _row} -> MapSet.member?(live_set, URI.to_string(uri)) end)
+      Enum.reject(rows, fn {uri, _row} ->
+        MapSet.member?(live_set, Ezagent.URI.canonical!(uri))
+      end)
 
     live_entries =
-      Enum.map(live, fn uri -> {uri, {:live, Map.get(rows_by_uri, URI.to_string(uri))}} end)
+      Enum.map(live, fn uri ->
+        {uri, {:live, Map.get(rows_by_uri, Ezagent.URI.canonical!(uri))}}
+      end)
 
     cold_entries = Enum.map(cold, fn {uri, row} -> {uri, {:cold, row}} end)
 
