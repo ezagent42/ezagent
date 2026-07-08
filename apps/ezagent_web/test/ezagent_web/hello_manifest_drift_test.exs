@@ -29,6 +29,7 @@ defmodule EzagentWeb.HelloManifestDriftTest do
     "title" => "Pure-config hello",
     "description" => "Hello socialware authored as a manifest.",
     "uses" => ["hello"],
+    "requires" => ["orchestrator"],
     "bases" => [Ezagent.ActionSet.Session, Ezagent.ActionSet.Publisher.SessionImpl],
     "shape" => [
       Ezagent.ActionSet.Turn,
