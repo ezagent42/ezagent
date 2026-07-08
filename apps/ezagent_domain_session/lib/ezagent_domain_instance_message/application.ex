@@ -643,7 +643,34 @@ defmodule EzagentDomainInstanceMessage.Application do
 
     case Ezagent.Entity.SessionTemplate.persist_version_as_system(content, workspace_uri) do
       {:ok, _uri} ->
-        :ok
+        # fix/template-name-resolution — repoint the `default`→`current`
+        # TemplateTag at the version just persisted, so name resolution
+        # takes the deterministic tag path (`TemplateResolver.find_session_
+        # template_uri` tries `TemplateTags.resolve(ws, "default", "current")`
+        # first) and the by-scan fallback is only ever a true fallback. When
+        # new code ships a new `default` version, THIS is the exact moment a
+        # new version is persisted, so it is the exact moment the tag must
+        # repoint. `put/5` is an unconditional upsert: idempotent when the
+        # hash is unchanged, upgrade-aware (repoint) when it changed.
+        #
+        # Log-and-continue on a tag-write failure: the scan fallback is now
+        # deterministic-newest, so a missing/stale tag degrades to correct
+        # (just slower) resolution rather than a boot crash.
+        case Ezagent.TemplateTags.put(workspace_uri, "default", "current", hash, nil) do
+          :ok ->
+            :ok
+
+          {:error, tag_reason} ->
+            require Logger
+
+            Logger.warning(
+              "seed_default_session_template: tag `default`→`current` write failed: " <>
+                "#{inspect(tag_reason)} (uri=#{URI.to_string(uri)}). Name resolution " <>
+                "falls back to the deterministic-newest scan; not fatal."
+            )
+
+            :ok
+        end
 
       {:error, reason} ->
         require Logger
