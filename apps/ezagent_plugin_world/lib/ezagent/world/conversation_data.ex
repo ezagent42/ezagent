@@ -178,13 +178,14 @@ defmodule Ezagent.World.ConversationData do
     |> Enum.sort()
     |> Enum.map(fn uri ->
       meta = Map.get(member_meta, uri, %{})
+      kind = sender_kind(uri)
 
       %{
         "uri" => uri,
-        "display_name" => Map.get(display_map, uri, uri),
+        "display_name" => member_display_name(uri, meta, display_map, kind),
         "online" => is_map(meta) and Map.get(meta, :online, false) == true,
         "role_name" => if(is_map(meta), do: Map.get(meta, :role_name), else: nil),
-        "kind" => sender_kind(uri)
+        "kind" => kind
       }
     end)
   end
@@ -276,19 +277,29 @@ defmodule Ezagent.World.ConversationData do
   @doc """
   Parse @mentions in `text` into recipient entity URIs, against `members`
   (`member_options/1` rows). Recognizes explicit `@entity://...` URIs and bare
-  `@name` tokens resolved by URI path segment then display name (unique match
-  only). Port of the LiveView parser against survivors — world carries no
-  reference to the LV plugin. The result is what the domain's recipient
-  resolver consumes (`msg.mentions`), so this is the load-bearing piece, not
-  the autocomplete UI.
+  `@name` tokens resolved by URI path segment, role name, then display name
+  (unique match only). `open_role_slots` is used only to suppress colon-token
+  head fallback when an unfilled A-2-style role exists. Port of the LiveView
+  parser against survivors - world carries no reference to the LV plugin. The
+  result is what the domain's recipient resolver consumes (`msg.mentions`), so
+  this is the load-bearing piece, not the autocomplete UI.
   """
   @spec parse_mentions(String.t(), [map()]) :: [URI.t()]
-  def parse_mentions(text, members) when is_binary(text) and is_list(members) do
-    (parse_uri_mentions(text) ++ parse_bare_mentions(text, members))
+  def parse_mentions(text, members), do: parse_mentions(text, members, [])
+
+  @doc """
+  Like `parse_mentions/2`, with the session's open human role slots included
+  for A-2 colon-role fallback suppression. Open slots are never resolved as
+  mentions; they only prevent `@source:role` from falling back to `@source`.
+  """
+  @spec parse_mentions(String.t(), [map()], [map() | String.t()]) :: [URI.t()]
+  def parse_mentions(text, members, open_role_slots)
+      when is_binary(text) and is_list(members) and is_list(open_role_slots) do
+    (parse_uri_mentions(text) ++ parse_bare_mentions(text, members, open_role_slots))
     |> Enum.uniq_by(&URI.to_string/1)
   end
 
-  def parse_mentions(_text, _members), do: []
+  def parse_mentions(_text, _members, _open_role_slots), do: []
 
   @doc """
   Fetch a page of messages older than `cursor` (ISO-8601), oldest-first.
@@ -328,7 +339,7 @@ defmodule Ezagent.World.ConversationData do
 
   def build_message(%URI{} = sender, text, %URI{} = session_uri, attachments)
       when is_binary(text) and is_list(attachments) do
-    mentions = parse_mentions(text, member_options(session_uri))
+    mentions = parse_mentions(text, member_options(session_uri), human_role_slots(session_uri))
     Ezagent.Message.new(sender, %{text: text, attachments: attachments}, mentions: mentions)
   end
 
@@ -543,6 +554,32 @@ defmodule Ezagent.World.ConversationData do
     end
   end
 
+  defp member_display_name(uri, meta, display_map, kind) do
+    display_name = Map.get(display_map, uri, uri)
+    role_name = member_role_name(meta)
+    fallback = uri_display_fallback(uri)
+
+    if kind == "agent" and non_empty_string?(role_name) and display_name in [uri, fallback] do
+      role_name
+    else
+      display_name
+    end
+  end
+
+  defp member_role_name(meta) when is_map(meta),
+    do: Map.get(meta, :role_name) || Map.get(meta, "role_name")
+
+  defp member_role_name(_meta), do: nil
+
+  defp uri_display_fallback(uri) when is_binary(uri) do
+    case Ezagent.URI.parse(uri) do
+      {:ok, %URI{} = parsed} -> uri_name(parsed) || uri
+      _ -> uri
+    end
+  end
+
+  defp non_empty_string?(value), do: is_binary(value) and String.trim(value) != ""
+
   defp entity_options(caller_uri, workspace_uri) do
     uri_options = Module.concat([Ezagent.UI, UriOptions])
 
@@ -755,26 +792,67 @@ defmodule Ezagent.World.ConversationData do
     |> Enum.flat_map(&safe_uri/1)
   end
 
-  defp parse_bare_mentions(_text, []), do: []
+  defp parse_bare_mentions(_text, [], _open_role_slots), do: []
 
-  defp parse_bare_mentions(text, members) do
-    ~r/(?<![\p{L}\p{N}_])@([A-Za-z0-9][A-Za-z0-9._-]*)/u
+  defp parse_bare_mentions(text, members, open_role_slots) do
+    ~r/(?<![\p{L}\p{N}_])@([A-Za-z0-9][A-Za-z0-9._-]*(?::[A-Za-z0-9][A-Za-z0-9._-]*)?)/u
     |> Regex.scan(text, capture: :all_but_first)
     |> List.flatten()
     |> Enum.uniq()
-    |> Enum.flat_map(&resolve_member_name(&1, members))
+    |> Enum.flat_map(&resolve_member_token(&1, members, open_role_slots))
   end
 
-  # Bare @name resolves by URI path segment first, then by display name —
-  # unique match only (an ambiguous name resolves to nothing, never a guess).
+  defp resolve_member_token(name, members, open_role_slots) do
+    case resolve_member_name(name, members) do
+      [] -> maybe_resolve_colon_head(name, members, open_role_slots)
+      uris -> uris
+    end
+  end
+
+  defp maybe_resolve_colon_head(name, members, open_role_slots) do
+    case String.split(name, ":", parts: 2) do
+      [head, _tail] ->
+        if colon_role_name_present?(members, open_role_slots) do
+          []
+        else
+          resolve_member_name(head, members)
+        end
+
+      _ ->
+        []
+    end
+  end
+
+  defp colon_role_name_present?(members, open_role_slots) do
+    members
+    |> Enum.map(&Map.get(&1, "role_name"))
+    |> Kernel.++(Enum.map(open_role_slots, &role_name_value/1))
+    |> Enum.any?(&(is_binary(&1) and String.contains?(&1, ":")))
+  end
+
+  defp role_name_value(%{"role_name" => role_name}), do: role_name
+  defp role_name_value(%{role_name: role_name}), do: role_name
+  defp role_name_value(role_name) when is_binary(role_name), do: role_name
+  defp role_name_value(_), do: nil
+
+  # Bare @name resolves by URI path segment, then role name, then display name -
+  # unique match only inside the deciding tier.
   defp resolve_member_name(name, members) do
-    by_segment = Enum.filter(members, &(uri_path_segment(Map.get(&1, "uri")) == name))
+    [
+      Enum.filter(members, &(uri_path_segment(Map.get(&1, "uri")) == name)),
+      Enum.filter(members, &(Map.get(&1, "role_name") == name)),
+      Enum.filter(members, &(Map.get(&1, "display_name") == name))
+    ]
+    |> Enum.reduce_while([], fn
+      [], acc ->
+        {:cont, acc}
 
-    candidates =
-      if by_segment != [],
-        do: by_segment,
-        else: Enum.filter(members, &(Map.get(&1, "display_name") == name))
+      candidates, _acc ->
+        {:halt, unique_candidate_uri(candidates)}
+    end)
+  end
 
+  defp unique_candidate_uri(candidates) do
     case candidates |> Enum.map(&Map.get(&1, "uri")) |> Enum.reject(&is_nil/1) |> Enum.uniq() do
       [uri_str] -> safe_uri(uri_str)
       _ -> []

@@ -283,6 +283,23 @@ defmodule Ezagent.Socialware.DefinitionRegistry do
         visibility_policy: %{publish_policy: :auto, web_anon_access: false}
       },
       %Definition{
+        name: "orchestrator",
+        title: "Orchestrator",
+        description: "Stock cc orchestrator team front desk.",
+        uses: ["cc"],
+        roles: [
+          %{
+            role_name: "orchestrator",
+            fill: :agent,
+            recipe: "orchestrator",
+            flavor: "cc"
+          }
+        ],
+        views: [],
+        routing_rules: [],
+        visibility_policy: %{publish_policy: :auto, web_anon_access: false}
+      },
+      %Definition{
         name: "socialware",
         bases: [
           Ezagent.ActionSet.Session,
@@ -507,16 +524,26 @@ defmodule Ezagent.Socialware.DefinitionRegistry do
         if Definition.content_hash(object.body) == new_hash do
           {:ok, :exists}
         else
+          upgrade_turn_id =
+            builtin_upgrade_source_turn_id(workspace_uri, definition.name, new_hash)
+
           write_definition(definition,
             workspace_uri: workspace_uri,
             actor_uri: default_seed_actor(),
             caller_workspace_uri: workspace_uri,
             authority: :system_seed,
-            source_turn_id:
-              builtin_upgrade_source_turn_id(workspace_uri, definition.name, new_hash)
+            source_turn_id: upgrade_turn_id
           )
           |> case do
             {:ok, _object} -> {:ok, :seeded}
+            # The unique source_turn_id constraint means a prior boot attempt
+            # already applied this upgrade before a subsequent crash — the
+            # upgrade is idempotent. This guards the retry loop in prod's
+            # entrypoint (crash → restart → same turn-id hits again).
+            {:error, %Ecto.Changeset{errors: [source_turn_id: {constraint_msg, _}]}}
+            when is_binary(constraint_msg) ->
+              {:ok, :already_upgraded}
+
             {:error, reason} -> {:error, reason}
           end
         end

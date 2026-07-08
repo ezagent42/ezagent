@@ -2,6 +2,7 @@ defmodule EzagentDomainInstanceMessage.SessionCreator.Listing do
   @moduledoc false
 
   alias Ezagent.Entity.Session
+  alias Ezagent.Identity
   alias Ezagent.KindRegistry
 
   @spec list_sessions :: [URI.t()]
@@ -23,6 +24,37 @@ defmodule EzagentDomainInstanceMessage.SessionCreator.Listing do
     list_sessions()
     |> Enum.filter(&session_in_workspace?(&1, workspace_name))
   end
+
+  @doc """
+  Workspace-scoped session listing filtered by membership.
+
+  Returns only sessions in `workspace_uri` where `caller_uri` is a member.
+  Admin callers (checked via `Ezagent.Identity.admin?/1`) bypass the
+  membership filter and see all sessions in the workspace — this supports
+  operator management surfaces without leaking cross-workspace data (the
+  workspace scope is still enforced).
+
+  A non-URI or `nil` caller is fail-closed (empty list) — anonymous or
+  unauthenticated callers cannot be members of any session.
+  """
+  @spec list_sessions(URI.t(), URI.t() | nil) :: [URI.t()]
+  def list_sessions(%URI{scheme: "workspace"} = workspace_uri, %URI{} = caller_uri) do
+    workspace_sessions = list_sessions(workspace_uri)
+
+    if Identity.admin?(caller_uri) do
+      workspace_sessions
+    else
+      caller_str = URI.to_string(caller_uri)
+
+      Enum.filter(workspace_sessions, fn session_uri ->
+        session_uri
+        |> Session.session_member_uris()
+        |> Enum.any?(&(URI.to_string(&1) == caller_str))
+      end)
+    end
+  end
+
+  def list_sessions(%URI{}, _caller_uri), do: []
 
   @doc """
   Live PLUS durably-persisted sessions in the workspace — the listing the world

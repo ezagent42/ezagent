@@ -53,6 +53,14 @@ defmodule EzagentPluginCodex.Application do
   def roles, do: [Ezagent.Orchestrator.OrchestratorRecipe.recipe()]
 
   @impl Ezagent.Plugin
+  def resource_types do
+    Ezagent.Resource.FsResolver.config_dir_resource_types([
+      Ezagent.PluginCodex.Template.CodexAgent,
+      Ezagent.PluginCodex.Template.CodexRemoteAgent
+    ])
+  end
+
+  @impl Ezagent.Plugin
   def config_surface do
     %{kind: :flavor, flavor: "codex", label: "Codex Agents"}
   end

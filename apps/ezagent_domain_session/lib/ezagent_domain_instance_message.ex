@@ -44,6 +44,9 @@ defmodule EzagentDomainInstanceMessage do
   @doc "List sessions in `workspace_uri`. Delegates to `SessionCreator`."
   defdelegate list_sessions(workspace_uri), to: SessionCreator
 
+  @doc "List sessions in `workspace_uri` filtered to those where `caller_uri` is a member (admin bypass). Delegates to `SessionCreator`."
+  defdelegate list_sessions(workspace_uri, caller_uri), to: SessionCreator
+
   @doc "Live + durably-persisted sessions in `workspace_uri` (world UI listing; survives cold restart)."
   defdelegate list_persisted_sessions(workspace_uri), to: SessionCreator
 

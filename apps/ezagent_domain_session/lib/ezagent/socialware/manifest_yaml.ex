@@ -7,6 +7,7 @@ defmodule Ezagent.Socialware.ManifestYaml do
   """
 
   alias Ezagent.ConfigGovernance.Socialware, as: Governance
+
   alias Ezagent.Socialware.{
     Conformance,
     Definition,
@@ -21,6 +22,7 @@ defmodule Ezagent.Socialware.ManifestYaml do
     "title",
     "description",
     "uses",
+    "requires",
     "bases",
     "shape",
     "views",
@@ -68,7 +70,10 @@ defmodule Ezagent.Socialware.ManifestYaml do
   @spec import(binary(), map()) :: {:ok, :published | :upgraded | :exists} | {:error, term()}
   def import(yaml_binary, ctx) when is_binary(yaml_binary) and is_map(ctx) do
     with {:ok, attrs} <- parse(yaml_binary),
-         {:ok, %Definition{} = definition} <- ManifestResolver.resolve(attrs),
+         {:ok, %Definition{} = definition} <-
+           attrs
+           |> Map.put("workspace_uri", Map.fetch!(ctx, :workspace_uri))
+           |> ManifestResolver.resolve(),
          :ok <- Conformance.check_candidate(definition, Map.fetch!(ctx, :workspace_uri)) do
       Governance.publish_or_upgrade(definition, ctx)
     end
@@ -257,7 +262,10 @@ defmodule Ezagent.Socialware.ManifestYaml do
 
   defp yaml_value(%URI{} = uri), do: URI.to_string(uri)
   defp yaml_value(value) when is_atom(value) and not is_nil(value), do: Atom.to_string(value)
-  defp yaml_value(value) when is_map(value), do: Map.new(value, fn {key, val} -> {to_string(key), yaml_value(val)} end)
+
+  defp yaml_value(value) when is_map(value),
+    do: Map.new(value, fn {key, val} -> {to_string(key), yaml_value(val)} end)
+
   defp yaml_value(value) when is_list(value), do: Enum.map(value, &yaml_value/1)
   defp yaml_value(value), do: value
 

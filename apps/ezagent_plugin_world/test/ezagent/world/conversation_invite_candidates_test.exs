@@ -93,6 +93,37 @@ defmodule Ezagent.World.ConversationInviteCandidatesTest do
     assert Enum.any?(candidates, &(&1["uri"] == URI.to_string(invitee)))
   end
 
+  test "member options use agent role name when display falls back to UUID" do
+    admin = User.admin_uri()
+    short = "world-agent-role-display-#{System.unique_integer([:positive])}"
+    role_name = "builder-#{System.unique_integer([:positive])}"
+
+    {:ok, session_uri, _meta} =
+      EzagentDomainInstanceMessage.SessionCreator.create_session(short, admin,
+        template_name: "default"
+      )
+
+    member_uri =
+      "entity://system/agent/#{Ecto.UUID.generate()}"
+      |> Ezagent.URI.new!()
+      |> register_member()
+
+    assert {:ok, _} =
+             join_call(session_uri, member_uri, %{
+               role_name: role_name,
+               in_session_template: true
+             })
+
+    row =
+      session_uri
+      |> ConversationData.member_options()
+      |> Enum.find(&(&1["uri"] == URI.to_string(member_uri)))
+
+    assert row["kind"] == "agent"
+    assert row["role_name"] == role_name
+    assert row["display_name"] == role_name
+  end
+
   defp create_read_only_user(uri, caps) do
     result =
       case Ezagent.Users.create_read_only(uri, caps) do
@@ -103,6 +134,37 @@ defmodule Ezagent.World.ConversationInviteCandidatesTest do
     with :ok <- result do
       Ezagent.Entity.spawn_principal(uri)
     end
+  end
+
+  defp join_call(session_uri, member_uri, facets) do
+    Ezagent.Invocation.dispatch(%Ezagent.Invocation{
+      target: URI.new!("#{URI.to_string(session_uri)}?action=session.join"),
+      mode: :call,
+      args: Map.put(facets, :member, member_uri),
+      ctx: %{
+        caller: User.admin_uri(),
+        caps: MapSet.new([Ezagent.Capability.admin_genesis_cap()]),
+        reply: {:caller_inbox, self()}
+      }
+    })
+  end
+
+  defp register_member(%URI{} = member_uri) do
+    test_pid = self()
+
+    pid =
+      spawn(fn ->
+        :ok = Ezagent.KindRegistry.put_new(member_uri)
+        send(test_pid, {:registered, member_uri})
+
+        receive do
+          :stop -> :ok
+        end
+      end)
+
+    assert_receive {:registered, ^member_uri}, 1_000
+    on_exit(fn -> if Process.alive?(pid), do: send(pid, :stop) end)
+    member_uri
   end
 
   defp wait_until(fun, retries \\ 100)

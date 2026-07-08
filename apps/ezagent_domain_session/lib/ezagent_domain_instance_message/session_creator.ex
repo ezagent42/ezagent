@@ -672,6 +672,9 @@ defmodule EzagentDomainInstanceMessage.SessionCreator do
   @spec list_sessions(URI.t()) :: [URI.t()]
   defdelegate list_sessions(workspace_uri), to: Listing
 
+  @spec list_sessions(URI.t(), URI.t() | nil) :: [URI.t()]
+  defdelegate list_sessions(workspace_uri, caller_uri), to: Listing
+
   @spec list_persisted_sessions(URI.t()) :: [URI.t()]
   defdelegate list_persisted_sessions(workspace_uri), to: Listing
 

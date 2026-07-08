@@ -36,6 +36,7 @@ defmodule Ezagent.Agent.Recipe.Compose do
 
   @type materialized :: %{
           behaviors: [module() | atom()],
+          contributions: map(),
           passive: boolean(),
           recipe: String.t() | nil,
           sandbox_content: %{
@@ -64,6 +65,7 @@ defmodule Ezagent.Agent.Recipe.Compose do
     # would couple it to cross-app module load-state for marginal defense.
     %{
       behaviors: Enum.uniq(role.behaviors ++ flavor_behaviors),
+      contributions: role.contributions,
       # RF-6: carry the role's non-principal (passive data-actor) marker through
       # to materialization so the create step can record it as a stored agent
       # attribute (RF-5a) — the routing/join/mention gates source `passive?` from

@@ -13,7 +13,9 @@ defmodule Ezagent.Orchestrator.OrchestratorRecipeTest do
   use EzagentCore.DataCase, async: false
 
   alias Ezagent.Orchestrator.CcOrchestratorSeed
+  alias Ezagent.Orchestrator.McpServer
   alias Ezagent.Orchestrator.OrchestratorRecipe
+  alias Ezagent.Orchestrator.Tools
   alias Ezagent.Agent.Recipe
   alias Ezagent.Agent.RecipeRegistry
 
@@ -37,6 +39,32 @@ defmodule Ezagent.Orchestrator.OrchestratorRecipeTest do
       {:ok, role} = Recipe.new(OrchestratorRecipe.recipe())
       assert role.prompt == OrchestratorRecipe.persona()
       assert is_binary(role.prompt) and role.prompt != ""
+    end
+
+    test "declares the orchestrator tool contribution as the single catalog source" do
+      {:ok, role} = Recipe.new(OrchestratorRecipe.recipe())
+
+      contribution_names = OrchestratorRecipe.tool_names()
+
+      assert contribution_names == [
+               "add_managed_member",
+               "add_participant",
+               "update_member_template",
+               "remove_member",
+               "define_rule_set_rule",
+               "define_prompt_template",
+               "define_legend",
+               "update_template",
+               "save_template_as",
+               "migrate_session",
+               "list_templates",
+               "kb_query",
+               "kb_ingest"
+             ]
+
+      assert get_in(role.contributions, [:tools]) == OrchestratorRecipe.tool_contributions()
+      assert Enum.map(Tools.tool_names(), &Atom.to_string/1) == contribution_names
+      assert McpServer.tool_names() == contribution_names
     end
 
     test "names no flavor (would re-entangle role with flavor)" do
