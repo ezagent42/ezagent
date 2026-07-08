@@ -51,7 +51,7 @@ defmodule EzagentPluginHello.Router do
 
   # Dispatch a named action to a session member by role_name. Builder + concierge
   # are ALWAYS-materialized members (`Definition.roles`); fail-loud if unresolved.
-  defp dispatch_to_member(session_uri, role_name, action, user_text) do
+  defp dispatch_to_member(session_uri, role_name, _action, user_text) do
     {:ok, member_uri} = Members.role_uri(session_uri, role_name)
 
     action_atom =
