@@ -19,6 +19,9 @@
 > `.old`;两者都在时删 `.old`)+ codex 逐行测试的**崩溃点表**;§4.2 gate 具名
 > (`skill_seed_crash_recovery_test.exs`、`skill_seed_boot_order_test.exs`,观察者
 > 钉死、无 retry/sleep);§4.3 出口措辞同步。
+> Rev 3.1(codex 三轮,SOUND-WITH-NOTES —— 已接受):ready 前 `resolve/1` 显式
+> fail-loud(raise、无目录回退;唯一读者 = 实现要求)+ 崩溃点表新增两个二次崩溃行
+> (恢复规则可重入);gate 相应扩展。
 
 ---
 
@@ -218,6 +221,12 @@ walk-up 禁用而 session-create 绿;`1d5aeca` 无害冗余,待协调者退役�
      supervisor 把 `SkillSeed`(boot 恢复 + seed/升级)接线在 registry scan/ready **之前**,
      故窗口单线程、不存在任何能观察到缺席路径的读者。P2 无运行中升级(store 仅由 boot
      seed 与运维写,§4.1.7);运维投放在**下次 boot** 生效,落在同一单线程窗口内。
+   - **ready 前准入(fail-loud,let-it-crash)。** 在 registry boot 扫描**完成之前**到达的
+     `SkillRegistry.resolve/1` 调用是 supervisor 接线 bug,不是可恢复的运行时状态:它
+     **raise**(registry-not-ready,消息点名所需接线顺序)—— 绝不阻塞、绝不返回半答案、
+     **绝不回退为直接读 skills 目录**。由此唯一读者规则成为**实现要求而非仅论证**:除
+     registry boot 扫描外,任何组件不得读 `$EZAGENT_HOME/<profile>/skills` —— 所有消费者
+     一律经 `resolve/1`,而 `resolve/1` 在扫描完成前拒绝作答。
    - **boot 恢复规则 —— 修复每一种崩溃残留,在 seeding 前运行:**
      1. **总是**删除所有 `*.staging-*` 目录;
      2. 若 `<ref>` **缺失**且 `<ref>.old-<nonce>` 在 →
@@ -234,6 +243,11 @@ walk-up 禁用而 session-create 绿;`1d5aeca` 无害冗余,待协调者退役�
      | 升级步 1 与步 2 之间 | `<ref>` **缺失**;`.old-<nonce>` + `.staging-*` 在 | 删 staging;`.old` rename 回 `<ref>`;本次 boot 重跑升级 |
      | 升级步 2 与步 3 之间 | 新完整 `<ref>` + `.old-<nonce>` 在 | 删 `.old`;新闭包成立 |
      | 首次 seed rename 中(不可能中断,rename 原子) | `<ref>` 或缺席或完整 | 残留 staging(如有)删除;缺席则本次 boot 重跑 seed |
+     | **二次崩溃:恢复中删 `.staging-*` 中途** | 删了一半的 `.staging-*` 仍在;主状态(`<ref>` / `.old`)未被该删除触及 | 恢复**可重入**:下次 boot 规则 1 再删(`rm_rf` 幂等);主状态规则 2/3 照常适用 |
+     | **二次崩溃:`.old → <ref>` 还原之后、重新 seed 应用之前** | 旧完整 `<ref>` 已归位;无 `.old-*`、无 `.staging-*` | 与正常升级前状态无法区分;本次(或下次)boot 的 seed run 重新检出未改+release 不同 → **升级重新应用**;无损失 |
+
+     恢复规则**可重入**:*恢复过程本身*的任何崩溃留下的残留,下次 boot 由同一套规则
+     修复 —— 不需要"恢复的恢复"机制。
 
    - **registry 卫生。** `SkillRegistry` 扫描防御性**跳过 `*.staging-*` 与 `*.old-*` 名**
      (中间态目录绝不入索引)。
@@ -251,7 +265,8 @@ walk-up 禁用而 session-create 绿;`1d5aeca` 无害冗余,待协调者退役�
 - **崩溃恢复 gate(HIGH-1)** —— `test/.../home/skill_seed_crash_recovery_test.exs`:
   **§4.1.6 崩溃点表每行一个测试用例** —— 在部署目录种该行的精确残留(半成品 staging;完整
   staging + 旧 `<ref>`;`<ref>` 缺失 + `.old-<nonce>` + staging;新 `<ref>` + `.old-<nonce>`;
-  仅残留 staging)→ 跑 boot 恢复 + seed 路径 → 断言表中 boot 后状态:中间态清空、
+  仅残留 staging;**外加两个二次崩溃行**:恢复被打断留下删了一半的 staging、旧 `<ref>` 已
+  还原且无中间态待升级重应用)→ 跑 boot 恢复 + seed 路径 → 断言表中 boot 后状态:中间态清空、
   `SkillRegistry.resolve/1` 返回该 ref **完整**闭包且 hash 正确、**无"运维改过"误判**
   (对账按恢复后目录的真实 hash 分类,绝不按半成品)。
 - **全新-home 启动顺序 gate(MED-2)** ——
@@ -266,7 +281,9 @@ walk-up 禁用而 session-create 绿;`1d5aeca` 无害冗余,待协调者退役�
     (如 `SkillSeed` 返回前 registry ETS 表不存在/为空);
   - **首读即成**:断言 boot 后**首次调用** `SkillRegistry.resolve/1` 即对**每个派生
     `Recipe.skills` ref** 成功,测试内**无 retry、无 `Process.sleep`、无最终一致轮询**
-    —— 首读确定性成功,否则 gate 红。
+    —— 首读确定性成功,否则 gate 红;
+  - **ready 前拒答**:registry ready **之前**的 `resolve/1` 尝试**干净失败**(按 §4.1.6
+    raise registry-not-ready),**绝不观察到半成品目录** —— 在本测试文件里作为独立用例断言。
   这证明 P2 可独立部署 —— 全新-home 切换不得等到 P3 的冷 spawn 测试。
 - **`fs_resolver` / `home` 测试**:`skills` 类型解析到部署目录;骨架 mkdir 在。
 - 常规 gate(§3.2)绿 —— 注意 `arch.scan` 可能需像 `socialware` 那样认可 `skills` 类型。

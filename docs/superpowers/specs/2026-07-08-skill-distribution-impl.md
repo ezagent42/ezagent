@@ -25,6 +25,10 @@
 > row-by-row; §4.2 gates named concretely (`skill_seed_crash_recovery_test.exs`,
 > `skill_seed_boot_order_test.exs` with pinned observer, no retry/sleep); §4.3
 > exit claim reworded to match.
+> Rev 3.1 (codex round-3, SOUND-WITH-NOTES — accepted): pre-ready `resolve/1`
+> made explicitly fail-loud (raise, no dir fallback; sole-reader = implementation
+> requirement) + two double-crash rows added to the crash-point table
+> (recovery rules are re-entrant); gates extended accordingly.
 
 ---
 
@@ -285,6 +289,16 @@ seed-once-then-single-source lane — **not** a dual-origin overlay.
      There are no mid-flight runtime upgrades in P2 (the store is written only
      by the boot seed and operators, §4.1.7); an operator drop takes effect on
      the **next boot**, inside the same single-threaded window.
+   - **Pre-ready admission (fail-loud, let-it-crash).** A `SkillRegistry.resolve/1`
+     call arriving **before the registry's boot scan has completed** is a
+     supervisor-wiring bug, not a recoverable runtime condition: it **raises**
+     (registry-not-ready, message naming the required wiring order) — it never
+     blocks, never returns a partial answer, and **never falls back to reading
+     the skills dir directly**. This makes the sole-reader rule an
+     **implementation requirement, not just an argument**: no component other
+     than the registry's boot scan may read `$EZAGENT_HOME/<profile>/skills` —
+     every consumer goes through `resolve/1`, and `resolve/1` refuses to answer
+     until the scan is done.
    - **Boot recovery rule — repairs EVERY crash residue, runs before seeding:**
      1. **always** delete every `*.staging-*` dir;
      2. if `<ref>` **missing** and `<ref>.old-<nonce>` present →
@@ -303,6 +317,12 @@ seed-once-then-single-source lane — **not** a dual-origin overlay.
      | between upgrade steps 1 and 2 | `<ref>` **missing**; `.old-<nonce>` + `.staging-*` present | staging deleted; `.old` renamed back to `<ref>`; upgrade re-runs this boot |
      | between upgrade steps 2 and 3 | new complete `<ref>` + `.old-<nonce>` present | `.old` deleted; new closure stands |
      | mid-fresh-seed rename | `<ref>` either absent or complete (rename is atomic) | leftover staging deleted if any; seed re-runs if absent |
+     | **double-crash: mid-delete of `.staging-*` during recovery** | partially-deleted `.staging-*` still present; main state (`<ref>` / `.old`) untouched by the delete | recovery **re-entrant**: next boot's rule 1 deletes it again (`rm_rf` is idempotent); main-state rules 2/3 then apply unchanged |
+     | **double-crash: after `.old → <ref>` restore, before the re-seed applies** | old complete `<ref>` back in place; no `.old-*`, no `.staging-*` | indistinguishable from a normal pre-upgrade state; this (or the next) boot's seed run re-detects untouched+release-differs → **upgrade re-applies**; nothing lost |
+
+     The recovery rules are **re-entrant**: any crash *during recovery itself*
+     leaves a residue that the same rules repair on the next boot — no
+     recovery-of-the-recovery mechanism is needed.
 
    - **Registry hygiene.** The `SkillRegistry` scan **skips `*.staging-*` and
      `*.old-*` names** defensively (an intermediate dir is never indexed).
@@ -326,7 +346,10 @@ seed-once-then-single-source lane — **not** a dual-origin overlay.
   **one test case per row of the §4.1.6 crash-point table** — plant that row's
   exact residue in the deploy dir (partial staging; complete staging + old
   `<ref>`; `<ref>` missing + `.old-<nonce>` + staging; new `<ref>` + `.old-<nonce>`;
-  leftover staging alone) → run the boot recovery + seed path → assert the
+  leftover staging alone; **plus the two double-crash rows**: partially-deleted
+  staging from an interrupted recovery, and restored-old-`<ref>` with no
+  intermediates awaiting the re-applied upgrade) → run the boot recovery + seed
+  path → assert the
   table's post-boot state: intermediates gone, `SkillRegistry.resolve/1` returns
   the ref's **complete** closure with the correct hash, and **no
   operator-edited misclassification** (the reconcile classifies the recovered
@@ -348,7 +371,10 @@ seed-once-then-single-source lane — **not** a dual-origin overlay.
   - **first-read success**: assert `SkillRegistry.resolve/1` succeeds for
     **every derived `Recipe.skills` ref on the first call after boot**, with
     **NO retry, NO `Process.sleep`, NO eventually-consistent polling** anywhere
-    in the test — deterministic on the first read, or the gate is red.
+    in the test — deterministic on the first read, or the gate is red;
+  - **pre-ready refusal**: a `resolve/1` attempt made **before** the registry is
+    ready **fails cleanly** (raises registry-not-ready per §4.1.6) and **never
+    observes a partial dir** — asserted as its own case in this test file.
   This proves P2 is independently deployable — the fresh-home switchover must
   not wait for P3's cold-spawn test.
 - **`fs_resolver` / `home` tests**: `skills` type resolves to the deploy dir; skeleton
