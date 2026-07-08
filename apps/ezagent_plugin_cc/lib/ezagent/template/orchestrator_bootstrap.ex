@@ -144,9 +144,22 @@ defmodule Ezagent.PluginCc.Template.OrchestratorBootstrap do
   role recipes from `ezagent_domain_agent` directly. The cc flavor resolves the
   role at its boundary and passes the flavor-independent `sandbox_content`
   through the template data for the core materializer to consume.
+
+  `agent_uri` (optional) attributes the loud-miss signal below; spawn-path
+  callers pass the agent's URI, legacy/test callers may omit it.
+
+  SPEC `2026-07-08-skill-distribution-impl.md` §4.1.7 — when the
+  `SkillRegistry` is READY but a recipe-declared ref does not resolve, the
+  skip is NEVER silent: this emits a `Logger.error` naming the agent, role,
+  and the exact unresolvable refs, fires `[:ezagent, :skill, :resolve_miss]`
+  telemetry, and stamps a `"skill_resolve_miss"` marker onto the template so
+  `try_apply/3` folds it into the existing `role_degraded` spawn meta. The
+  spawn itself stays non-fatal (the agent comes up without the skill bytes).
+  A NOT-ready registry keeps the historical quiet no-attach (test seam for
+  suites that never boot the registry).
   """
-  @spec attach_role_sandbox_content(map()) :: {:ok, map()} | {:error, term()}
-  def attach_role_sandbox_content(tmpl) when is_map(tmpl) do
+  @spec attach_role_sandbox_content(map(), URI.t() | nil) :: {:ok, map()} | {:error, term()}
+  def attach_role_sandbox_content(tmpl, agent_uri \\ nil) when is_map(tmpl) do
     case role_name(tmpl) do
       nil ->
         {:ok, tmpl}
@@ -154,26 +167,41 @@ defmodule Ezagent.PluginCc.Template.OrchestratorBootstrap do
       name ->
         with {:ok, sandbox_content} <- resolve_role(name),
              :ok <- reject_unsupported_content(sandbox_content) do
-          maybe_attach_resolvable_sandbox_content(tmpl, sandbox_content)
+          maybe_attach_resolvable_sandbox_content(tmpl, name, sandbox_content, agent_uri)
         end
     end
   end
 
-  defp maybe_attach_resolvable_sandbox_content(tmpl, sandbox_content) do
-    if role_skill_refs_resolvable?(sandbox_content) do
-      {:ok, Map.put(tmpl, "sandbox_content", sandbox_content)}
-    else
-      {:ok, tmpl}
+  defp maybe_attach_resolvable_sandbox_content(tmpl, role, sandbox_content, agent_uri) do
+    case unresolvable_skill_refs(sandbox_content) do
+      [] ->
+        {:ok, Map.put(tmpl, "sandbox_content", sandbox_content)}
+
+      refs ->
+        if SkillRegistry.ready?() do
+          # §4.1.7 — registry is READY yet a recipe-declared ref does not
+          # resolve (packaging drop / recipe gained a ref without regen_seed).
+          # Fail LOUDLY but keep the spawn non-fatal: signal here (immediate,
+          # attributable) and stamp the miss onto the template so `try_apply/3`
+          # surfaces it through the established `role_degraded` meta.
+          signal_skill_resolve_miss(role, refs, agent_uri)
+          {:ok, Map.put(tmpl, "skill_resolve_miss", %{role: role, refs: refs})}
+        else
+          # Registry never booted (legacy/test environments): keep the
+          # historical quiet no-attach — a pre-ready resolve is a wiring
+          # condition the boot-order gate owns, not a packaging drop.
+          {:ok, tmpl}
+        end
     end
   end
 
-  defp role_skill_refs_resolvable?(%{skills: skills}) when is_list(skills),
-    do: Enum.all?(skills, &skill_ref_resolvable?/1)
+  defp unresolvable_skill_refs(%{skills: skills}) when is_list(skills),
+    do: Enum.reject(skills, &skill_ref_resolvable?/1)
 
-  defp role_skill_refs_resolvable?(%{"skills" => skills}) when is_list(skills),
-    do: Enum.all?(skills, &skill_ref_resolvable?/1)
+  defp unresolvable_skill_refs(%{"skills" => skills}) when is_list(skills),
+    do: Enum.reject(skills, &skill_ref_resolvable?/1)
 
-  defp role_skill_refs_resolvable?(_sandbox_content), do: true
+  defp unresolvable_skill_refs(_sandbox_content), do: []
 
   defp skill_ref_resolvable?(ref) when is_binary(ref) do
     SkillRegistry.ready?() and
@@ -186,6 +214,26 @@ defmodule Ezagent.PluginCc.Template.OrchestratorBootstrap do
   end
 
   defp skill_ref_resolvable?(_ref), do: false
+
+  defp signal_skill_resolve_miss(role, refs, agent_uri) do
+    agent = if agent_uri, do: URI.to_string(agent_uri), else: "unknown"
+
+    Logger.error(
+      "cc.role: recipe skill refs did NOT resolve for role #{inspect(role)} " <>
+        "(agent=#{agent}): #{inspect(refs)} — sandbox_content NOT attached; " <>
+        "skill bytes will be MISSING from the materialized config_dir " <>
+        "(SPEC 2026-07-08-skill-distribution-impl §4.1.7: loud degrade, " <>
+        "spawn continues; regenerate the seed bundle via " <>
+        "`mix ezagent.skills.regen_seed` or restore the ref under " <>
+        "$EZAGENT_HOME/<profile>/skills/)"
+    )
+
+    :telemetry.execute(
+      [:ezagent, :skill, :resolve_miss],
+      %{count: 1},
+      %{role: role, refs: refs, agent_uri: agent_uri}
+    )
+  end
 
   @doc """
   Apply a composed role `sandbox_content` to `config_dir` — PURE filesystem.
@@ -238,8 +286,13 @@ defmodule Ezagent.PluginCc.Template.OrchestratorBootstrap do
 
   @doc """
   Best-effort wrapper around `bootstrap/2` for the spawn path: it NEVER fails the
-  spawn. On success returns `{:ok, %{}}`; on a bootstrap error it logs a warning,
-  emits `[:ezagent, :cc, :role_bootstrap, :failed]` telemetry, and returns
+  spawn. On success returns `{:ok, %{}}` — unless the template carries the
+  `"skill_resolve_miss"` marker stamped by `attach_role_sandbox_content/2`
+  (SPEC 2026-07-08 §4.1.7), in which case the returned meta is
+  `%{role_degraded: true, role_degraded_reason: {:skill_resolve_miss, miss}}` so
+  the unresolvable-skill degradation rides the SAME owner-surfacing idiom as a
+  bootstrap failure. On a bootstrap error it logs a warning, emits
+  `[:ezagent, :cc, :role_bootstrap, :failed]` telemetry, and returns
   `{:ok, %{role_degraded: true, role_degraded_reason: reason}}` so the agent spawns
   as a plain cc agent and the caller can surface the degraded status to the owner
   (SPEC 2026-05-26 Gap B). A failure to compose the role recipe is treated
@@ -249,7 +302,7 @@ defmodule Ezagent.PluginCc.Template.OrchestratorBootstrap do
   def try_apply(tmpl, config_dir, %URI{} = agent_uri) do
     case bootstrap(tmpl, config_dir) do
       :ok ->
-        {:ok, %{}}
+        {:ok, skill_resolve_miss_meta(tmpl)}
 
       {:error, reason} ->
         Logger.warning(
@@ -267,6 +320,19 @@ defmodule Ezagent.PluginCc.Template.OrchestratorBootstrap do
         )
 
         {:ok, %{role_degraded: true, role_degraded_reason: reason}}
+    end
+  end
+
+  # §4.1.7 — fold the attach-time unresolvable-refs marker into the spawn
+  # meta so the existing `role_degraded` surfacing (owner notification,
+  # Invariant #9) carries the skill miss; no second degradation channel.
+  defp skill_resolve_miss_meta(tmpl) do
+    case Map.get(tmpl, "skill_resolve_miss") do
+      %{role: _, refs: refs} = miss when is_list(refs) ->
+        %{role_degraded: true, role_degraded_reason: {:skill_resolve_miss, miss}}
+
+      _ ->
+        %{}
     end
   end
 

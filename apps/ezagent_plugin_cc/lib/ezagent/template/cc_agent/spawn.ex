@@ -160,7 +160,7 @@ defmodule Ezagent.PluginCc.Template.CcAgent.Spawn do
           # the failure independent of caller wiring. The PTY itself MUST
           # still come up — only role-bootstrap is best-effort, the rest
           # (config_dir, PTY) stays load-bearing.
-          tmpl_for_materialization = materialization_template(tmpl)
+          tmpl_for_materialization = materialization_template(tmpl, agent_uri)
 
           with {:ok, materialized_config_dir, grant_ctx} <-
                  create_agent_config_dir_with_grant(agent_uri, tmpl_for_materialization),
@@ -218,8 +218,8 @@ defmodule Ezagent.PluginCc.Template.CcAgent.Spawn do
     )
   end
 
-  defp materialization_template(tmpl) do
-    case CcAgent.attach_role_sandbox_content(tmpl) do
+  defp materialization_template(tmpl, agent_uri) do
+    case CcAgent.attach_role_sandbox_content(tmpl, agent_uri) do
       {:ok, tmpl_with_sandbox_content} -> tmpl_with_sandbox_content
       {:error, _reason} -> tmpl
     end

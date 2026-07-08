@@ -143,7 +143,8 @@ defmodule Ezagent.PluginCc.Template.CcHeadlessAgent do
     do: Ezagent.Credential.HomeRuntime.put_agent_config_dir(tmpl, dir)
 
   defp create_agent_config_dir_with_grant(agent_uri, tmpl) do
-    with {:ok, tmpl} <- Ezagent.PluginCc.Template.CcAgent.attach_role_sandbox_content(tmpl) do
+    with {:ok, tmpl} <-
+           Ezagent.PluginCc.Template.CcAgent.attach_role_sandbox_content(tmpl, agent_uri) do
       Ezagent.Credential.HomeRuntime.create_agent_config_dir_with_grant(
         agent_uri,
         tmpl,

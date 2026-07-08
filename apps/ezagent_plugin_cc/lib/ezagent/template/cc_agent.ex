@@ -498,9 +498,9 @@ defmodule Ezagent.PluginCc.Template.CcAgent do
   end
 
   @doc false
-  @spec attach_role_sandbox_content(map()) :: {:ok, map()} | {:error, term()}
-  def attach_role_sandbox_content(tmpl) when is_map(tmpl) do
-    Ezagent.PluginCc.Template.OrchestratorBootstrap.attach_role_sandbox_content(tmpl)
+  @spec attach_role_sandbox_content(map(), URI.t() | nil) :: {:ok, map()} | {:error, term()}
+  def attach_role_sandbox_content(tmpl, agent_uri \\ nil) when is_map(tmpl) do
+    Ezagent.PluginCc.Template.OrchestratorBootstrap.attach_role_sandbox_content(tmpl, agent_uri)
   end
 
   # codex PR #408 review HIGH-3 — wrap `apply_orchestrator_recipe_bootstrap/2`
@@ -921,7 +921,7 @@ defmodule Ezagent.PluginCc.Template.CcAgent do
   def create_agent_config_dir(%URI{} = agent_uri, tmpl) when is_map(tmpl) do
     reject_stale_config_dir_data_key!(tmpl)
 
-    with {:ok, tmpl} <- attach_role_sandbox_content(tmpl) do
+    with {:ok, tmpl} <- attach_role_sandbox_content(tmpl, agent_uri) do
       Ezagent.Credential.HomeRuntime.create_agent_config_dir(
         agent_uri,
         tmpl,
