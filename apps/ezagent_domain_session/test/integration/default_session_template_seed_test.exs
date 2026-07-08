@@ -277,6 +277,71 @@ defmodule EzagentDomainInstanceMessage.Integration.DefaultSessionTemplateSeedTes
     end
   end
 
+  # ── fix/template-name-resolution — Prong 2: the seed tags the version ──
+  #
+  # `do_seed_default_session_template` must write/repoint the
+  # `default`→`current` TemplateTag at the version it just persisted, so
+  # `TemplateResolver.find_session_template_uri` resolves via the
+  # deterministic tag path and the scan is only a true fallback.
+  describe "fix/template-name-resolution — seed writes the `default`→`current` tag" do
+    alias Ezagent.TemplateTags
+
+    test "after the default seed runs, `default`→`current` resolves to the seeded version" do
+      workspace_name = "tag-seed-#{System.unique_integer([:positive])}"
+      workspace_uri = Ezagent.URI.new!("workspace://#{workspace_name}")
+
+      assert :ok =
+               EzagentDomainInstanceMessage.Application.seed_default_session_template_now(
+                 workspace_uri
+               )
+
+      seeded_hash = seeded_default_hash(workspace_name)
+      assert is_binary(seeded_hash) and seeded_hash != ""
+
+      assert {:ok, ^seeded_hash} = TemplateTags.resolve(workspace_uri, "default", "current"),
+             "expected the `default`→`current` tag to point at the seeded version #{seeded_hash}"
+    end
+
+    test "re-seeding repoints the tag from a stale hash back to the current version" do
+      workspace_name = "tag-repoint-#{System.unique_integer([:positive])}"
+      workspace_uri = Ezagent.URI.new!("workspace://#{workspace_name}")
+
+      assert :ok =
+               EzagentDomainInstanceMessage.Application.seed_default_session_template_now(
+                 workspace_uri
+               )
+
+      current_hash = seeded_default_hash(workspace_name)
+
+      # Simulate a prior version's tag lingering on a stale hash.
+      stale_hash = :crypto.hash(:sha256, "stale-#{workspace_name}") |> Base.encode16(case: :lower)
+      refute stale_hash == current_hash
+      :ok = TemplateTags.put(workspace_uri, "default", "current", stale_hash, nil)
+      assert {:ok, ^stale_hash} = TemplateTags.resolve(workspace_uri, "default", "current")
+
+      # Re-running the seed (idempotent, content-addressed) must repoint the
+      # tag back at the current version — upgrade-aware, not append-only.
+      assert :ok =
+               EzagentDomainInstanceMessage.Application.seed_default_session_template_now(
+                 workspace_uri
+               )
+
+      assert {:ok, ^current_hash} = TemplateTags.resolve(workspace_uri, "default", "current")
+    end
+  end
+
+  # Read the seeded `default` version's `@<hash>` from its snapshot URI.
+  defp seeded_default_hash(workspace_name) do
+    prefix = default_template_uri_prefix(workspace_name)
+
+    KindSnapshot.list_in_workspace("workspace://#{workspace_name}")
+    |> Enum.find_value(fn snap ->
+      if is_binary(snap.uri) and String.starts_with?(snap.uri, prefix) do
+        String.replace_prefix(snap.uri, prefix, "")
+      end
+    end)
+  end
+
   defp default_template_uri_prefix(workspace_name),
     do: "template://#{workspace_name}/session/default@"
 
