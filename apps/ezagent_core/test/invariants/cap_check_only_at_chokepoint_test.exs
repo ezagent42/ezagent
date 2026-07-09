@@ -300,7 +300,13 @@ defmodule EzagentCore.Invariants.CapCheckOnlyAtChokepointTest do
         # Per-Kind authority genesis and explicit re-genesis are the one
         # canonical-admin root transition; this comparison is not a dispatch
         # authorization shortcut.
-        "apps/ezagent_core/lib/ezagent/cap/authority.ex"
+        "apps/ezagent_core/lib/ezagent/cap/authority.ex",
+        #   The arch scanner's `business_context_admin_checks` gate (admin/business
+        #   decoupling, 2026-07-09) EMBEDS this same comparison shape as a regex
+        #   literal (`@admin_uri_comparison_regex`) in order to flag it — the
+        #   enforcement tool matches the probe's pattern by construction, exactly
+        #   like this test file itself would.
+        "apps/ezagent_core/lib/mix/tasks/ezagent.arch.scan.ex"
       ]
     }
   ]

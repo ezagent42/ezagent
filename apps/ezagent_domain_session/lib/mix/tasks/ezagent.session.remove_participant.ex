@@ -79,8 +79,9 @@ defmodule Mix.Tasks.Ezagent.Session.RemoveParticipant do
     end
   end
 
-  # Operator ctx uses a target-issued narrow artifact. The handler's identity
-  # gate still enforces owner / self-leave / admin semantics for `--as`.
+  # Operator ctx uses a target-issued narrow artifact. The handler's authority
+  # gate still enforces owner / self-leave / genesis-wildcard-caps semantics for
+  # `--as` (the former identity `admin?` check migrated to caps 2026-07-09).
   defp operator_ctx(%URI{} = caller_uri, %URI{} = session_uri) do
     admin = Ezagent.Entity.User.admin_uri()
     target = Ezagent.URI.with_action(session_uri, :session, :remove_participant)

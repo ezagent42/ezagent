@@ -662,10 +662,13 @@ defmodule Ezagent.World.ConversationActions do
   end
 
   @doc """
-  Restart a session orchestrator for an admin caller.
+  Restart a session orchestrator for a session-member caller.
 
-  This avoids caller-side cap enumeration/matching; PR #154 keeps cap checks
-  at dispatch chokepoints, and this repair helper is not a dispatch action.
+  Authority is session MEMBERSHIP (admin/business decoupling, 2026-07-09) —
+  not an admin check and not caller-side cap enumeration (PR #154 keeps cap
+  checks at dispatch chokepoints, and this repair helper is not a dispatch
+  action). A member may repair the orchestrator of a session they belong to;
+  everyone else — including the genesis admin when not a member — is denied.
   """
   @spec restart_orchestrator(Phoenix.LiveView.Socket.t(), URI.t()) ::
           {:noreply, Phoenix.LiveView.Socket.t()}
@@ -1290,8 +1293,18 @@ defmodule Ezagent.World.ConversationActions do
     end
   end
 
-  defp caller_can_restart_orchestrator?(socket, %URI{}) do
-    Ezagent.Identity.admin?(socket.assigns.current_entity_uri)
+  # Membership gate (admin/business decoupling, 2026-07-09): restarting a
+  # session's orchestrator is a repair on a BUSINESS object, so authority is
+  # session membership — a member repairs their own session's plumbing; the
+  # genesis admin gets no bypass and repairs only sessions it is a member of
+  # (`business_context_admin_checks` arch gate). Fail-closed: a cold/unknown
+  # session has no live member list → unauthorized.
+  defp caller_can_restart_orchestrator?(socket, %URI{} = session_uri) do
+    caller_str = URI.to_string(socket.assigns.current_entity_uri)
+
+    session_uri
+    |> Ezagent.Entity.Session.session_member_uris()
+    |> Enum.any?(&(URI.to_string(&1) == caller_str))
   end
 
   defp safe_table_atom(s) when is_binary(s) do

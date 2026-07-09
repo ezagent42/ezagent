@@ -52,6 +52,18 @@ frontend-CI job likely belongs in `full-suite` or a new dedicated job. Relates
 to the two-layer typed-slot gate ([[reference_ezagent_static_gate_topology]],
 #1370 lockstep guard).
 
+## 2026-07-09 — admin/business decoupling follow-up
+
+- **Rename `Ezagent.Identity.admin?/1` → `genesis_admin?/1`** — the predicate
+  recognizes ONLY the genesis bootstrap singleton (`Entity.User.admin_uri/0`);
+  the honest name prevents it from ever being mistaken for a business
+  superuser check again. Deferred from the gate PR (fix/admin-business-
+  decoupling) to keep it bounded: the rename touches the definition + 5 config
+  call sites (live_auth, error_html — incl. `function_exported?` atoms —,
+  host_login_adopt, identity_data) + identity/chokepoint tests + the p13 probe
+  allowlist comments. The scope contract is documented on the predicate's
+  @doc and enforced by the `business_context_admin_checks` arch counter.
+
 ## 2026-07-09 plan input — 官网 session 重建 (Allen 2026-07-08)
 
 - **官网 hello session 重建** — the live golive hello sessions are stale

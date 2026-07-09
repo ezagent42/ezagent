@@ -394,6 +394,70 @@ defmodule Mix.Tasks.Ezagent.Arch.Scan do
     "Ezagent.EntityPresenter"
   ]
 
+  # Business-context admin-check gate (2026-07-09, admin/business decoupling).
+  # `Ezagent.Identity.admin?/1` recognizes ONLY the genesis bootstrap singleton
+  # (`Ezagent.Entity.User.admin_uri/0`) — it is a CONFIG/bootstrap authority
+  # predicate, NOT a business superuser check. In business paths (session
+  # listing, chat, message send/receive, conversation, uploads) authority comes
+  # from membership + caps at the dispatch chokepoint; an `admin?` branch there
+  # is the anti-pattern this gate locks out (it either never fires, or silently
+  # widens the genesis principal into a business superuser).
+  #
+  # `business_context_admin_checks` flags any lib call site of the identity-admin
+  # predicates (`Identity.admin?(…)` / `AdminAuthority.admin?(…)`, any alias
+  # tail) or a direct admin-URI comparison (`== admin_uri()` /
+  # `same_uri?(…, admin_uri())` — the evasion forms chokepoint probe p13 also
+  # locks) OUTSIDE this sanctioned CONFIG/bootstrap allowlist. Cap 0 (hard): a
+  # new admin check in business code fails the gate; a legitimately-new CONFIG
+  # surface adds itself here with a one-line reason.
+  @business_admin_check_sanctioned_files [
+    # The genesis-predicate DEFINITION — `Ezagent.Identity.admin?/1` is the one
+    # sanctioned home of the admin-URI comparison (chokepoint probe p13).
+    "apps/ezagent_domain_identity/lib/ezagent/identity.ex",
+    # Genesis bootstrap — the admin entity self-mints its genesis wildcard cap
+    # in `initial_caps_for_spawn/1` (#154 genesis collapse).
+    "apps/ezagent_domain_identity/lib/ezagent/entity/user.ex",
+    # Identity GOVERNANCE — `Authority.manages?/2` composes the admin union for
+    # "who may administer whom" (config authority, not a business path).
+    "apps/ezagent_domain_identity/lib/ezagent/identity/authority.ex",
+    # Bootstrap credential adoption — installer host-login inheritance (#1201)
+    # runs under the genesis admin's provisioning authority.
+    "apps/ezagent_domain_agent/lib/ezagent/agent/host_login_adopt.ex",
+    # Operator workspace listing (SPEC 2026-05-27-workspace-cap-based-visibility
+    # §3.3) — workspaces are CONFIG objects; the admin shortcut is the spec'd
+    # operator-visibility union, not a business bypass.
+    "apps/ezagent_domain_workspace/lib/ezagent/workspace/listing.ex",
+    # Config GOVERNANCE (#165) — approving a PUBLIC-scope socialware definition
+    # promotes it into the cross-tenant installable catalog: system-level
+    # governance authority, gated on the caps-based admin union.
+    "apps/ezagent_domain_session/lib/ezagent/config_governance/socialware.ex",
+    # Same #165 gate on the direct definition-registry write path (mirrors the
+    # ConfigGovernance CR path above; `:system_seed` boot authority is exempt).
+    "apps/ezagent_domain_session/lib/ezagent/socialware/definition_registry.ex",
+    # Workspace user-admin console — create user / set password / disable /
+    # enable are configuration ops (the admin's actual specialness).
+    "apps/ezagent_plugin_world/lib/ezagent/world/user_actions.ex",
+    # Agent API-key (credential CONFIG) edit affordance — mirrors the
+    # `Behavior.ApiKeys` data_owner-or-admin gate (identity admin op).
+    "apps/ezagent_plugin_world/lib/ezagent/world/identity_data.ex",
+    # /admin console mount gate + the `is_admin?` nav assign (admin drawer
+    # visibility) — gating the CONFIG console itself.
+    "apps/ezagent_web/lib/ezagent_web/live_auth.ex",
+    # Error-page debug-detail disclosure — operator diagnostics (observability),
+    # grants no business authority.
+    "apps/ezagent_web/lib/ezagent_web/controllers/error_html.ex"
+  ]
+
+  # The two line shapes the gate matches (both comment-skipped and
+  # `# arch-allow:`-suppressible):
+  #   (a) identity-admin predicate CALLS — qualified `Identity.admin?(…)` /
+  #       `AdminAuthority.admin?(…)`. Local `def admin?` heads and caps-local
+  #       helpers (e.g. kanban's `Shared.admin?/1`, a cap check) do NOT match.
+  #   (b) admin-URI comparisons — `== admin_uri()` / `!= admin_uri()` /
+  #       `same_uri?(…, admin_uri())` (the p13 evasion forms).
+  @business_admin_predicate_regex ~r/\b(?:Identity|AdminAuthority)\.admin\?\(/
+  @admin_uri_comparison_regex ~r/[=!]==?[^=]*\badmin_uri\(\)|\badmin_uri\(\)\s*[=!]==?|same_uri\?\([^)]*admin_uri\(\)/
+
   @impl Mix.Task
   def run(_args) do
     Mix.shell().info("ezagent.arch.scan — architecture fitness functions")
@@ -501,7 +565,8 @@ defmodule Mix.Tasks.Ezagent.Arch.Scan do
       hardcoded_deploy_domain_hosts: hardcoded_deploy_domain_hosts(),
       socialware_priv_manifest_files: socialware_priv_manifest_files(),
       socialware_self_publish_unsanctioned: socialware_self_publish_unsanctioned(),
-      concatenated_namespace_modules: concatenated_namespace_modules()
+      concatenated_namespace_modules: concatenated_namespace_modules(),
+      business_context_admin_checks: business_context_admin_checks()
     ]
   end
 
@@ -584,6 +649,68 @@ defmodule Mix.Tasks.Ezagent.Arch.Scan do
       end)
 
     found?
+  end
+
+  # Business-context admin-check gate (2026-07-09) — see
+  # `@business_admin_check_sanctioned_files` for the rationale. The counter is
+  # post-allowlist; on RED it prints every violating site (the worklist).
+  defp business_context_admin_checks do
+    violations = business_context_admin_check_violations()
+
+    Enum.each(violations, fn {file, line_no, text} ->
+      Mix.shell().error("  business_context_admin_checks: #{file}:#{line_no} — #{text}")
+    end)
+
+    length(violations)
+  end
+
+  @doc """
+  Post-allowlist `{file, line, text}` violations of the
+  `business_context_admin_checks` gate — every identity-admin predicate call /
+  admin-URI comparison in a module OUTSIDE the sanctioned CONFIG/bootstrap
+  allowlist. Empty when the tree is clean; the gate's red output is exactly
+  this list.
+  """
+  @spec business_context_admin_check_violations() :: [{String.t(), pos_integer(), String.t()}]
+  def business_context_admin_check_violations do
+    business_admin_check_offender_hits()
+    |> Enum.reject(fn {file, _line_no, _text} ->
+      file in @business_admin_check_sanctioned_files
+    end)
+  end
+
+  @doc """
+  Every lib hit of the identity-admin predicate/comparison shapes BEFORE the
+  sanctioned CONFIG/bootstrap allowlist is subtracted — exposed so the gate
+  test can prove the matcher has teeth on real code (the sanctioned
+  `live_auth.ex` admin-console gate must appear here) even when the
+  post-allowlist count is 0.
+  """
+  @spec business_admin_check_offender_hits() :: [{String.t(), pos_integer(), String.t()}]
+  def business_admin_check_offender_hits do
+    (grep(@business_admin_predicate_regex, skip_comment_lines?: true) ++
+       grep(@admin_uri_comparison_regex, skip_comment_lines?: true))
+    |> Enum.uniq()
+    |> Enum.sort()
+  end
+
+  @doc """
+  Testable line-classifier core of the `business_context_admin_checks` gate:
+  count the business-admin-check line shapes in a raw source string (comment
+  lines and `# arch-allow:`-suppressed lines excluded). The file-level CONFIG
+  allowlist (`@business_admin_check_sanctioned_files`) is applied by the
+  counter, not here — fixtures prove the classifier has teeth.
+  """
+  @spec count_business_admin_checks_in_source(String.t()) :: non_neg_integer()
+  def count_business_admin_checks_in_source(source) when is_binary(source) do
+    source
+    |> String.split("\n")
+    |> Enum.count(fn line ->
+      not String.contains?(line, "# arch-allow:") and
+        not comment_line?(line) and
+        (Regex.match?(@business_admin_predicate_regex, line) or
+           Regex.match?(@admin_uri_comparison_regex, line))
+    end)
   end
 
   # World host-scope config (2026-06-29) — deployment host literals belong in

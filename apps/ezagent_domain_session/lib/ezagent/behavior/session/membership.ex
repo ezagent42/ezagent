@@ -843,9 +843,12 @@ defmodule Ezagent.ActionSet.Session.Membership do
 
   # Owner URI equality only selects the owner branch; it never authorizes by
   # itself. The owner must pass the same current-generation tier-1 membership
-  # gate as every other session member. Self-leave and bootstrap admin retain
-  # their explicitly-scoped semantics, and both have already crossed the
-  # dispatch authorize/3 principal gate.
+  # gate as every other session member. Self-leave and the genesis-wildcard-caps
+  # escape hatch retain their explicitly-scoped semantics, and both have already
+  # crossed the dispatch authorize/3 principal gate. The former bootstrap-admin
+  # branch (`Ezagent.Identity.admin?/1`) was migrated to the caps-based
+  # recognizer (admin/business decoupling, 2026-07-09; `business_context_admin_checks`
+  # arch gate) — same principal set, authority now derived from the held cap.
   defp remove_participant_authorized?(
          %URI{} = caller,
          %URI{} = participant_uri,
@@ -855,7 +858,7 @@ defmodule Ezagent.ActionSet.Session.Membership do
     caller == participant_uri or
       (match?(%URI{}, owner_uri) and caller == owner_uri and
          owner_member_authorized?(caller, ctx)) or
-      Ezagent.Identity.admin?(caller)
+      caller_holds_genesis_admin_caps?(caller)
   end
 
   defp remove_participant_authorized?(_caller, _participant, _owner, _ctx), do: false
@@ -870,6 +873,28 @@ defmodule Ezagent.ActionSet.Session.Membership do
         ctx[:authenticated_principal]
       )
     )
+  end
+
+  # Caps-based replacement for the former `Ezagent.Identity.admin?/1`
+  # identity-equality check (admin/business decoupling, 2026-07-09;
+  # `business_context_admin_checks` arch gate): the SAME principal set stays
+  # authorized — only the genesis admin's DURABLE identity caps carry the
+  # bootstrap wildcard (#154 self-granted genesis trust root; the canonical
+  # `IdentityAdmin.holds_admin_caps?/1` recognizer) — but the authority is now
+  # derived from the CAP the caller holds (the K5 durable read
+  # `Authority.manages?/2` also uses), never from "is the caller THE admin".
+  # This keeps the operator escape hatch working: the
+  # `mix ezagent.session.remove_participant` default caller is `admin_uri`,
+  # whose identity slice holds the genesis wildcard.
+  #
+  # Deliberately NARROWER than `Authority.manages?/2` (which the join path's
+  # admission exemption uses): the manages? union adds system-URI/membership +
+  # workspace-admin + Manage-cap principals. Widening REMOVAL to those is a
+  # separate product decision — this migration is behavior-preserving.
+  defp caller_holds_genesis_admin_caps?(%URI{} = caller) do
+    caller
+    |> Ezagent.Identity.read_entity_caps()
+    |> Ezagent.ActionSet.IdentityAdmin.holds_admin_caps?()
   end
 
   defp do_remove_participant(%URI{} = participant_uri, participant_meta, ctx)

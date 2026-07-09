@@ -9,7 +9,11 @@ defmodule EzagentDomainInstanceMessage.Integration.SessionListingMembershipVisib
   This test proves:
     (a) A non-member CANNOT see a session they are not part of via list_sessions/2
     (b) A member CAN see their own session
-    (c) An admin CAN see all sessions (management bypass)
+    (c) The ADMIN gets NO bypass (admin/business decoupling, 2026-07-09):
+        session listing is a business path, so the genesis admin sees exactly
+        its own memberships — like any caller. The former `Identity.admin?/1`
+        bypass branch is deleted and locked out by the
+        `business_context_admin_checks` arch gate.
 
   The failing-first case (on unmodified main): list_sessions/1 returns ALL
   workspace sessions regardless of caller — any user sees every session.
@@ -106,7 +110,7 @@ defmodule EzagentDomainInstanceMessage.Integration.SessionListingMembershipVisib
       assert session_uri in owner_sessions
     end
 
-    test "admin bypass: admin can see all sessions in the workspace" do
+    test "NO admin bypass: a non-member admin does NOT see the session (admin/business decoupling)" do
       owner = make_user("owner")
       admin = User.admin_uri()
 
@@ -116,9 +120,18 @@ defmodule EzagentDomainInstanceMessage.Integration.SessionListingMembershipVisib
                session_uri in EzagentDomainInstanceMessage.list_sessions(@workspace_uri)
              end)
 
-      # Admin can see the session even though admin is not a member.
+      # The genesis admin is NOT a member of this session, so the
+      # membership-only listing must exclude it — admin is a CONFIG/bootstrap
+      # authority, not a business superuser (2026-07-09 settled design; the
+      # `business_context_admin_checks` gate locks the bypass out at the
+      # source level, this test pins the observable behavior).
       admin_sessions = EzagentDomainInstanceMessage.list_sessions(@workspace_uri, admin)
-      assert session_uri in admin_sessions
+      refute session_uri in admin_sessions
+
+      # Sanity: the owner (a member) still sees it — the exclusion above is
+      # membership-based, not a listing regression.
+      owner_sessions = EzagentDomainInstanceMessage.list_sessions(@workspace_uri, owner)
+      assert session_uri in owner_sessions
     end
 
     test "workspace scoping is preserved — different workspace returns empty" do

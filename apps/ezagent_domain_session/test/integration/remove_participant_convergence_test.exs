@@ -34,7 +34,7 @@ defmodule EzagentDomainInstanceMessage.Integration.RemoveParticipantConvergenceT
 
   # Operator ctx mirroring the CLI's `operator_ctx/2`: caller + an inline
   # `:remove_participant` cap so the dispatch clears the chokepoint. The handler's
-  # identity gate (owner / self / admin) is the real authorization keyed on caller.
+  # authority gate (owner / self / genesis-wildcard caps) is the real authorization keyed on caller.
   defp op_ctx(%URI{} = caller, %URI{} = session_uri) do
     cap =
       signed_required_cap!(
