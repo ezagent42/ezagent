@@ -19,16 +19,17 @@ defmodule Ezagent.Socialware.Demo.Hello do
   ## What this module is for
 
   A test-fixture source. `manifest_attrs/1` (no `:role_name`) loads the SAME
-  shipped YAML via `Ezagent.Socialware.ManifestYaml.parse/1`, so tests exercise
-  the exact manifest production ships — the file is the one source of truth and
-  the shape gate (`demo_hello_test.exs`) locks it against drift.
+  shipped YAML through the shared `Ezagent.Socialware.ShippedManifest` loader,
+  so tests exercise the exact manifest production ships — the file is the one
+  source of truth and the shape gate (`demo_hello_test.exs`) locks it against
+  drift.
 
   The `:role_name` option keeps the legacy single-agent fixture shape (`code`,
   not YAML) used by older materialization tests — it is a test fixture only,
   never a production shape.
   """
 
-  alias Ezagent.Socialware.ManifestYaml
+  alias Ezagent.Socialware.ShippedManifest
 
   @name "hello"
   @recipe "np"
@@ -39,25 +40,22 @@ defmodule Ezagent.Socialware.Demo.Hello do
   def name, do: @name
 
   @doc """
-  Absolute path of the shipped hello manifest YAML, discovered generically
-  through `Ezagent.Home.SocialwareSeed.source_dirs/0` (every loaded OTP app's
-  `priv/socialware_seed`) — the SAME discovery the deploy-seed lane uses. Today
-  the package ships in `ezagent_web`, but this names no app: whichever app ships
-  it is found. `nil` when no loaded app carries the package.
+  Absolute path of the shipped hello manifest YAML — see
+  `Ezagent.Socialware.ShippedManifest.path/2` (generic discovery over every
+  loaded OTP app's `priv/socialware_seed`; today the package ships in
+  `ezagent_web`, but this names no app). `nil` when no loaded app carries the
+  package.
   """
   @spec manifest_path() :: Path.t() | nil
-  def manifest_path do
-    Ezagent.Home.SocialwareSeed.source_dirs()
-    |> Enum.map(&Path.join(&1, @manifest_relpath))
-    |> Enum.find(&File.exists?/1)
-  end
+  def manifest_path, do: ShippedManifest.path(@manifest_relpath)
 
   @doc """
   The hello demo manifest attributes.
 
   With NO `:role_name`, the reference (3-role) shape is loaded from the shipped
-  `manifest.yaml` via `ManifestYaml.parse/1` — the file production ships is the
-  one source of truth. Fail-loud: a missing or unparseable manifest raises.
+  `manifest.yaml` via `Ezagent.Socialware.ShippedManifest.load!/2` — the file
+  production ships is the one source of truth. Fail-loud: a missing or
+  unparseable manifest raises.
 
   Options:
     * `:name` — override the socialware/definition name (tests pass per-run
@@ -75,23 +73,7 @@ defmodule Ezagent.Socialware.Demo.Hello do
       recipe_name = Keyword.get(opts, :recipe_name, @recipe)
       legacy_manifest_attrs(name, recipe_name, Keyword.fetch!(opts, :role_name))
     else
-      reference_manifest_attrs(Keyword.get(opts, :name, @name))
-    end
-  end
-
-  # Load the shipped reference manifest from YAML and apply the `:name` override.
-  defp reference_manifest_attrs(name) do
-    path =
-      manifest_path() ||
-        raise "hello manifest.yaml not found in any loaded app's priv/socialware_seed " <>
-                "(expected #{@manifest_relpath}); is the shipping app (ezagent_web) loaded?"
-
-    case ManifestYaml.parse(File.read!(path)) do
-      {:ok, attrs} ->
-        Map.put(attrs, "name", name)
-
-      {:error, reason} ->
-        raise "hello manifest.yaml failed to parse (#{path}): #{inspect(reason)}"
+      ShippedManifest.load!(@manifest_relpath, name: Keyword.get(opts, :name, @name))
     end
   end
 
