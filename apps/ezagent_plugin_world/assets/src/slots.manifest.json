@@ -54,6 +54,7 @@
       "plugins",
       "profile",
       "workspace_detail",
+      "workspace_template_new",
       "workspaces_list"
     ]
   },
@@ -194,6 +195,12 @@
       "data_source": "Ezagent.World.AdminData",
       "renderer_family": "admin",
       "title": "Settings"
+    },
+    "workspace_template_new": {
+      "category": "layout_slot",
+      "data_source": "Ezagent.World.WorkspacePluginData",
+      "renderer_family": "workspace_plugins",
+      "title": "New Template"
     },
     "authz_audit": {
       "category": "layout_slot",

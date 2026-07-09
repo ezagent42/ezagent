@@ -1,5 +1,5 @@
 import React from "react"
-import {BadgeCheck, Boxes, Cable, ChevronRight, Layers, Pencil, Plug, Save, Trash2, UserRound, X} from "lucide-react"
+import {BadgeCheck, Boxes, Cable, ChevronRight, Layers, Pencil, Plug, Plus, Save, Trash2, UserRound, X} from "lucide-react"
 
 import {Button, EmptyState, Input, Stat} from "./ui/primitives"
 
@@ -29,6 +29,7 @@ export type WorkspacePluginState = {
   routing_rules?: DataRow[]
   session_templates?: DataRow[]
   template_error?: string | null
+  template_mode?: string | null
   template_notice?: string | null
   title?: string
   uri?: string | null
@@ -53,6 +54,8 @@ const iconButtonClass =
 const actionLinkClass =
   "inline-flex w-fit items-center gap-1.5 rounded-md bg-primary px-3 py-1.5 text-sm font-medium text-primary-foreground transition hover:opacity-90"
 const fieldLabelClass = "grid gap-1 text-xs font-medium text-muted-foreground"
+const selectClass =
+  "h-9 rounded-md border border-input bg-background px-3 text-sm text-foreground outline-none transition focus:border-ring focus:ring-2 focus:ring-ring/30"
 
 export function WorkspacePluginSurface({
   state,
@@ -67,6 +70,7 @@ export function WorkspacePluginSurface({
 
   switch (state.component) {
     case "workspace_detail":
+    case "workspace_template_new":
       content = <WorkspaceDetail state={state} onAction={onAction} />
       break
     case "plugins":
@@ -204,6 +208,19 @@ function WorkspaceDetail({
     )
   }
 
+  const creatingTemplate = state.component === "workspace_template_new" || state.template_mode === "new"
+  const templateNewPath = workspaceTemplateNewPath(String(state.name || "system"))
+
+  if (creatingTemplate) {
+    return (
+      <section className={surfaceClass} data-world-component="workspace_template_new">
+        <Header eyebrow="Template" title="New template" icon={<Layers className="h-4 w-4" />} />
+        <code className={uriClass}>{state.uri}</code>
+        <SessionTemplatePanel state={state} onAction={onAction} focused />
+      </section>
+    )
+  }
+
   return (
     <section className={surfaceClass} data-world-component="workspace_detail">
       <Header eyebrow="Workspace" title={String(state.name || "Workspace")} icon={<Boxes className="h-4 w-4" />} />
@@ -213,6 +230,10 @@ function WorkspaceDetail({
         <Stat icon={<Cable className="h-4 w-4" />} label="Routing rules" value={(state.routing_rules || []).length} />
       </div>
       <code className={uriClass}>{state.uri}</code>
+      <a className={actionLinkClass} href={templateNewPath} data-world-template-new-entry>
+        <Plus size={16} />
+        New template
+      </a>
       <section className={subsectionClass} data-world-component="workspace-members">
         <Header eyebrow="List" title="Members" compact />
         <div className="space-y-1">
@@ -241,19 +262,29 @@ function WorkspaceDetail({
 function SessionTemplatePanel({
   state,
   onAction,
+  focused = false,
 }: {
   state: WorkspacePluginState
   onAction: (action: string, args: Record<string, unknown>) => void
+  focused?: boolean
 }) {
   const [name, setName] = React.useState("")
   const [description, setDescription] = React.useState("")
+  const [socialwareEnabled, setSocialwareEnabled] = React.useState(false)
   const [webAnonAccess, setWebAnonAccess] = React.useState(false)
+  const [roleName, setRoleName] = React.useState("orchestrator")
+  const [entityFill, setEntityFill] = React.useState<"agent" | "human">("agent")
+  const [recipe, setRecipe] = React.useState("orchestrator")
+  const [flavor, setFlavor] = React.useState("cc")
   const socialwareName = `${name.trim() || "socialware"}-app`
-  const publishPolicy = webAnonAccess ? "supervised" : "auto"
 
   return (
-    <section className={subsectionClass} data-world-component="workspace-templates">
-      <Header eyebrow="Config" title="Session templates" compact />
+    <section
+      className={subsectionClass}
+      data-world-component="workspace-templates"
+      data-world-template-new-entry={focused ? "true" : undefined}
+    >
+      <Header eyebrow="Config" title={focused ? "New template" : "Session templates"} compact />
       {state.template_notice && <p className="text-sm text-emerald-600 dark:text-emerald-400">{state.template_notice}</p>}
       {state.template_error && <p className="text-sm text-destructive">{state.template_error}</p>}
       <form
@@ -261,58 +292,24 @@ function SessionTemplatePanel({
         className="grid gap-3 sm:grid-cols-2"
         onSubmit={(event) => {
           event.preventDefault()
+          const role = {roleName, fill: entityFill, recipe, flavor}
+          const socialware = socialwareEnabled ? buildSocialwareDefinition({socialwareName, webAnonAccess, role}) : null
+          const template: Record<string, unknown> = {
+            name: name.trim(),
+            description,
+          }
+
+          if (socialware) {
+            template.installs = [socialwareName]
+            template.socialware = socialware
+          }
+
           onAction("workspace.template.save", {
-            template: {
-              name,
-              description,
-              installs: [socialwareName],
-              socialware: {
-                name: socialwareName,
-                bases: ["Ezagent.ActionSet.Session", "Ezagent.ActionSet.Publisher.SessionImpl"],
-                shape: ["Ezagent.ActionSet.Turn", "Ezagent.ActionSet.Surface"],
-                members: [
-                  {
-                    uri: "entity://system/agent/bot",
-                    role_name: "bot",
-                    in_session_template: true,
-                  },
-                ],
-                routing_rules: [
-                  {
-                    matcher: {type: "always"},
-                    receivers: ["bot"],
-                    rule_set: "default",
-                    position: 0,
-                    prompt_template_ref: "answer",
-                  },
-                ],
-                prompt_templates: {
-                  answer: "Answer from the socialware knowledge and session context.",
-                },
-                legends: {
-                  default: {
-                    member_set: ["bot"],
-                    bound_rule_set: "default",
-                    fold: false,
-                  },
-                },
-                adapters: [
-                  {
-                    adapter_id: "web_feed",
-                    role: webAnonAccess ? "customer" : "internal",
-                    config: {},
-                  },
-                ],
-                visibility_policy: {
-                  publish_policy: publishPolicy,
-                  web_anon_access: webAnonAccess,
-                },
-              },
-            },
+            template,
           })
         }}
       >
-        <label className={fieldLabelClass}>
+        <label className={fieldLabelClass} htmlFor="world-session-template-name">
           Name
           <Input
             id="world-session-template-name"
@@ -321,7 +318,7 @@ function SessionTemplatePanel({
             placeholder="public-demo"
           />
         </label>
-        <label className={fieldLabelClass}>
+        <label className={fieldLabelClass} htmlFor="world-session-template-description">
           Description
           <Input
             id="world-session-template-description"
@@ -330,15 +327,75 @@ function SessionTemplatePanel({
             placeholder="Public customer-facing session"
           />
         </label>
-        <label className="flex items-center gap-2 text-sm text-foreground">
+        <label className="flex items-center gap-2 text-sm text-foreground" htmlFor="world-session-template-socialware-enabled">
           <input
-            id="world-session-template-web-anon-access"
+            id="world-session-template-socialware-enabled"
             type="checkbox"
-            checked={webAnonAccess}
-            onChange={(event) => setWebAnonAccess(event.target.checked)}
+            checked={socialwareEnabled}
+            onChange={(event) => {
+              setSocialwareEnabled(event.target.checked)
+              if (!event.target.checked) setWebAnonAccess(false)
+            }}
           />
-          <span>Public socialware app</span>
+          <span>Socialware app</span>
         </label>
+        {socialwareEnabled && (
+          <div className="grid gap-3 rounded-md border border-border bg-background p-3 sm:col-span-2" data-world-template-role-config>
+            <Header eyebrow="Role" title="Role and Entity" compact />
+            <label className={fieldLabelClass} htmlFor="world-session-template-role-name">
+              Role
+              <Input
+                id="world-session-template-role-name"
+                value={roleName}
+                onChange={(event) => setRoleName(event.target.value)}
+                placeholder="orchestrator"
+              />
+            </label>
+            <label className={fieldLabelClass} htmlFor="world-session-template-role-entity">
+              Entity
+              <select
+                id="world-session-template-role-entity"
+                className={selectClass}
+                value={entityFill}
+                onChange={(event) => setEntityFill(event.target.value === "human" ? "human" : "agent")}
+              >
+                <option value="agent">Agent</option>
+                <option value="human">Human</option>
+              </select>
+            </label>
+            {entityFill === "agent" && (
+              <>
+                <label className={fieldLabelClass} htmlFor="world-session-template-role-recipe">
+                  Recipe
+                  <Input
+                    id="world-session-template-role-recipe"
+                    value={recipe}
+                    onChange={(event) => setRecipe(event.target.value)}
+                    placeholder="orchestrator"
+                  />
+                </label>
+                <label className={fieldLabelClass} htmlFor="world-session-template-role-flavor">
+                  Flavor
+                  <Input
+                    id="world-session-template-role-flavor"
+                    value={flavor}
+                    onChange={(event) => setFlavor(event.target.value)}
+                    placeholder="cc"
+                  />
+                </label>
+              </>
+            )}
+            <label className="flex items-center gap-2 text-sm text-foreground" htmlFor="world-session-template-web-anon-access">
+              <input
+                id="world-session-template-web-anon-access"
+                type="checkbox"
+                checked={webAnonAccess}
+                onChange={(event) => setWebAnonAccess(event.target.checked)}
+              />
+              <span>Allow anonymous web access</span>
+            </label>
+          </div>
+        )}
         <div className="sm:col-span-2">
           <Button variant="primary" type="submit">
             <Save size={16} />
@@ -349,6 +406,78 @@ function SessionTemplatePanel({
       <DataTable component="workspace-templates" title="Saved templates" rows={state.session_templates || []} nested />
     </section>
   )
+}
+
+type SocialwareRoleDraft = {
+  roleName: string
+  fill: "agent" | "human"
+  recipe: string
+  flavor: string
+}
+
+function buildSocialwareDefinition({
+  socialwareName,
+  webAnonAccess,
+  role,
+}: {
+  socialwareName: string
+  webAnonAccess: boolean
+  role: SocialwareRoleDraft
+}) {
+  const roleName = role.roleName.trim() || "orchestrator"
+  const publishPolicy = webAnonAccess ? "supervised" : "auto"
+  const roles =
+    role.fill === "human"
+      ? [{role_name: roleName, fill: "human"}]
+      : [
+          {
+            role_name: roleName,
+            fill: "agent",
+            recipe: role.recipe.trim() || roleName,
+            flavor: role.flavor.trim() || "cc",
+          },
+        ]
+
+  return {
+    name: socialwareName,
+    bases: ["Ezagent.ActionSet.Session", "Ezagent.ActionSet.Publisher.SessionImpl"],
+    shape: ["Ezagent.ActionSet.Turn", "Ezagent.ActionSet.Surface"],
+    roles: roles,
+    routing_rules: [
+      {
+        matcher: {type: "always"},
+        receivers: [roleName],
+        rule_set: "default",
+        position: 0,
+        prompt_template_ref: "answer",
+      },
+    ],
+    prompt_templates: {
+      answer: "Answer from the socialware knowledge and session context.",
+    },
+    legends: {
+      default: {
+        member_set: [roleName],
+        bound_rule_set: "default",
+        fold: false,
+      },
+    },
+    adapters: [
+      {
+        adapter_id: "web_feed",
+        role: webAnonAccess ? "customer" : "internal",
+        config: {},
+      },
+    ],
+    visibility_policy: {
+      publish_policy: publishPolicy,
+      web_anon_access: webAnonAccess,
+    },
+  }
+}
+
+function workspaceTemplateNewPath(workspaceName: string) {
+  return `/workspaces/${encodeURIComponent(workspaceName)}/templates/new`
 }
 
 function Plugins({state}: {state: WorkspacePluginState}) {

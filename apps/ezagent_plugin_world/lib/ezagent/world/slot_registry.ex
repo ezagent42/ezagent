@@ -63,6 +63,7 @@ defmodule Ezagent.World.SlotRegistry do
        [
          {"workspaces_list", "Workspaces"},
          {"workspace_detail", "Workspace Detail"},
+         {"workspace_template_new", "New Template"},
          {"plugins", "Plugins"},
          {"feishu_bindings", "Feishu Bindings"},
          {"auto_derive", "Auto Derive"},

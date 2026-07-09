@@ -347,12 +347,15 @@ defmodule Ezagent.World.ConversationActions do
   end
 
   defp do_create_session(socket, workspace_uri, caller, short_name, template_name) do
+    caps = Map.get(socket.assigns, :current_caps, MapSet.new())
+
     case create_session_result(
            workspace_uri,
            caller,
            short_name,
            template_name,
-           &Ezagent.Workspace.create_session/3
+           &Ezagent.Workspace.create_session/3,
+           caps
          ) do
       {:ok, %URI{} = session_uri} ->
         # A session created from a PUBLISHED hello template gets its DECLARED team
@@ -475,12 +478,28 @@ defmodule Ezagent.World.ConversationActions do
           (URI.t(), map(), map() -> term())
         ) ::
           {:ok, URI.t()} | {:error, term()}
-  def create_session_result(workspace_uri, caller, short_name, template_name, create)
+  @spec create_session_result(
+          URI.t(),
+          URI.t(),
+          String.t(),
+          String.t(),
+          (URI.t(), map(), map() -> term()),
+          MapSet.t() | list()
+        ) ::
+          {:ok, URI.t()} | {:error, term()}
+  def create_session_result(
+        workspace_uri,
+        caller,
+        short_name,
+        template_name,
+        create,
+        caps \\ MapSet.new()
+      )
       when is_function(create, 3) do
     case create.(
            workspace_uri,
            %{short_name: short_name, template_name: template_name},
-           %{caller: caller, caps: MapSet.new()}
+           %{caller: caller, caps: caps}
          ) do
       {:ok, %{session_uri: %URI{} = session_uri}} -> {:ok, session_uri}
       {:error, reason} -> {:error, reason}

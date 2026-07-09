@@ -73,6 +73,7 @@ defmodule Ezagent.World.Navigation do
         ~r{\A/identities/agents/[^/]+(?:/api-keys|/config|/extensions|/terminal)?\z},
         path
       ) or
+      Regex.match?(~r{\A/workspaces/[^/]+/templates/new\z}, path) or
       Regex.match?(~r{\A/workspaces/[^/]+\z}, path) or
       Regex.match?(~r{\A/plugins/kanban/[^/]+\z}, path) or
       Regex.match?(~r{\A/plugins/auto/[^/]+(?:/[^/]+)?\z}, path) or

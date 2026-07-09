@@ -18,6 +18,44 @@ defmodule Ezagent.World.ConversationActionsTest do
              )
   end
 
+  test "create_session_result forwards caller caps into the workspace create context" do
+    workspace_uri = Ezagent.URI.workspace(:system)
+    caller = Ezagent.Entity.User.admin_uri()
+
+    cap =
+      Ezagent.Capability.cap(
+        :workspace,
+        Ezagent.ActionSet.Workspace,
+        :create_session,
+        {:within_workspace, workspace_uri},
+        workspace_uri
+      )
+
+    caps = MapSet.new([cap])
+    session_uri = Ezagent.URI.session("system", "default", "world-create-with-caps")
+
+    assert {:ok, ^session_uri} =
+             ConversationActions.create_session_result(
+               workspace_uri,
+               caller,
+               "world-create-with-caps",
+               "default",
+               fn got_workspace_uri, got_params, got_ctx ->
+                 assert got_workspace_uri == workspace_uri
+
+                 assert got_params == %{
+                          short_name: "world-create-with-caps",
+                          template_name: "default"
+                        }
+
+                 assert got_ctx == %{caller: caller, caps: caps}
+
+                 {:ok, %{session_uri: session_uri}}
+               end,
+               caps
+             )
+  end
+
   describe "routing receiver form parsing" do
     test "normalizes role receivers to tagged resolver receivers" do
       assert [

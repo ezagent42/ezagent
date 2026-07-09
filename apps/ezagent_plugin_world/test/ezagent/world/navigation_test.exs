@@ -17,6 +17,11 @@ defmodule Ezagent.World.NavigationTest do
              {:ok, "/identities/agents/entity%3A%2F%2Fsystem%2Fagent%2Fdemo/api-keys"}
   end
 
+  test "returns patch target for workspace template creation paths" do
+    assert Navigation.patch_to("/workspaces/team-alpha/templates/new") ==
+             {:ok, "/workspaces/team-alpha/templates/new"}
+  end
+
   test "rejects external, protocol-relative, and hash targets" do
     assert Navigation.patch_to("https://example.com/sessions") == :error
     assert Navigation.patch_to("//example.com/sessions") == :error

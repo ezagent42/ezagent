@@ -41,13 +41,16 @@ defmodule Ezagent.World.WorkspacePluginData do
   end
 
   defp component_state(
-         %{component: "workspace_detail", name: name},
+         %{component: component, name: name},
          base,
          _workspace,
          _caller,
          _caps
-       ) do
-    Map.merge(base, workspace_detail(name))
+       )
+       when component in ["workspace_detail", "workspace_template_new"] do
+    base
+    |> Map.merge(workspace_detail(name))
+    |> maybe_put_template_mode(component)
   end
 
   defp component_state(%{component: "plugins"} = route, base, _workspace_uri, _caller, _caps) do
@@ -99,6 +102,11 @@ defmodule Ezagent.World.WorkspacePluginData do
   end
 
   defp component_state(_route, base, _workspace_uri, _caller, _caps), do: base
+
+  defp maybe_put_template_mode(state, "workspace_template_new"),
+    do: Map.put(state, "template_mode", "new")
+
+  defp maybe_put_template_mode(state, _component), do: state
 
   @doc "List Feishu open_id to entity bindings for the world bindings panel."
   @spec list_feishu_bindings() :: [map()]

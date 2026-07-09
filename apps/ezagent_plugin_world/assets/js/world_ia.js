@@ -105,6 +105,8 @@ export function pageTitleForComponent(component) {
       return "Workspaces"
     case "workspace_detail":
       return "Workspace detail"
+    case "workspace_template_new":
+      return "New template"
     case "plugins":
       return "Plugins"
     case "profile":
