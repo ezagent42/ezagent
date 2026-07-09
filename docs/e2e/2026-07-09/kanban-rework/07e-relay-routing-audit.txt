@@ -1,0 +1,48 @@
+# 07e relay-back 路由审计证据（路由层，如实标注：真脑 OAuth 401，见 README）
+
+## 1) 装入会话的 relay-back 规则（DB routing_rules，materialize 时从 manifest 装入）
+
+SELECT id, matcher_data, receivers, rule_set, position, enabled FROM routing_rules WHERE rule_set='relay-back';
+id           | 2
+matcher_data | {"type": "and", "items": [{"arg": "__done__", "type": "text_contains"}, {"arg": "dev-together", "type": "from_role"}]}
+receivers    | {$role:a2FuYmFuLWFzc2lzdGFudA}        -- base64("kanban-assistant")，零实例 URI（非 sender-lock）
+rule_set     | relay-back
+position     | 0
+enabled      | t
+
+与 manifest.yaml routing_rules 逐字一致（and(text_contains "__done__", from_role dev-together) → kanban-assistant）。
+
+## 2) 真 dispatch 触发（复刻 world conversation_actions.send_message 同构路径，erpc 进 server 节点）
+
+sender（message.from / ctx.caller）= dev-together 槽位成员 entity://system/agent/ad44d288-adbf-4b30-812b-a720e633bcb1
+session = session://system/socialware-install-kanban/kanban-rework-e2e
+mode=:cast, reply=:ignore（与 UI chat.send 一致）；caps 为管理注入（admin genesis，见 README 真脑/路由层标注）
+
+- 对照消息（无标记）："对照消息：登录表单模块开发中（无标记）" → {:ok, "96608262d374acc9"}
+- __done__ 消息："登录表单模块完成，PR https://example.test/pr/1 已开 __done__" → {:ok, "7d04653d9d0d3fa7"}
+
+## 3) routing_traces 审计行（DB，谁被路由到一目了然）
+
+SELECT * FROM routing_traces ORDER BY id;
+id=1  message_id=f8b43fff092e665c  rule_id=1  receivers={entity://system/agent/ad44d288-...}    -- ★ 负路径最硬一条：admin 发的消息字面量里就有 "__done__"
+                                                       -- （"@dev-together 请直接回复一条包含 __done__ 的消息"），只命中 rule 1 送 mention 对象，
+                                                       -- rule 2 未触发 = from_role dev-together 硬锁生效（#1212）
+id=2  message_id=355ae09109ae8268  rule_id=1  receivers={entity://system/user/admin}            -- dev-together 的 401 回复，正常回 admin
+id=3  message_id=96608262d374acc9  rule_id=1  receivers={entity://system/user/admin}            -- 对照：只命中默认规则($session_users)
+id=4  message_id=7d04653d9d0d3fa7  rule_id=1  receivers={entity://system/user/admin}
+id=5  message_id=7d04653d9d0d3fa7  rule_id=2  receivers={entity://system/agent/99acec87-4473-46ac-b325-71c46a24b957}
+                                                       -- ★ relay-back 命中：__done__ → kanban-assistant 槽位成员
+id=6  message_id=d88a7945d7a40b55  rule_id=1  receivers={entity://system/user/admin}
+                                                       -- kanban-assistant 收到后 sidecar 的回复消息（送达闭环）
+
+## 4) UI transcript（截图 07d）
+
+- ad44d288(dev-together)  "对照消息…（无标记）"      → kanban-assistant 无任何反应
+- ad44d288(dev-together)  "…已开 __done__"          → 8s 后 99acec87(kanban-assistant) 出现回复
+  （回复内容是 "Not logged in · Please run /login" —— cc OAuth 过期 401 的真脑错误，
+   但这条回复本身证明 relay-back 把 __done__ 消息真实送达 kanban-assistant 并触发了它的 sidecar）
+
+## 5) 负路径（真键盘 mention，截图 07a/07b/07c）
+
+admin 在 UI 用 @dev-together（autocomplete 结构化 mention）发含 "__done__" 字样的请求
+→ 只有 dev-together 回复；kanban-assistant 未被触发（from_role dev-together 硬锁：admin 发的 __done__ 不 relay）。

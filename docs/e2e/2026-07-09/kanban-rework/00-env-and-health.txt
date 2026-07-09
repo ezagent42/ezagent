@@ -1,0 +1,12 @@
+# 00 环境与健康检查（kanban rework 段4 e2e，2026-07-09）
+
+- 分支：feat/sw-kanban-rework（工作树 .claude/worktrees/sw-kanban-rework）
+- 工具链：mise exec elixir@1.18.4-otp-27 erlang@27.3.4.13 -- mix ...
+- DB：docker PG ezagent-pg-compat-audit-postgres（127.0.0.1:55432，库 ezagent_pg_compat_dev）
+  - 开测前 `mix ecto.reset`（drop+create+migrate+seed）清掉旧实验污染
+  - `mix run scripts/world_e2e_seed.exs` → admin@ezagent.chat / $ADMIN_PW（见 docs/guide/world-e2e-seed.md）
+- server：`mix phx.server`（后台，beam PID 39052，端口 10042）
+  - 健康：curl -fsS http://localhost:10042/_health → HTTP 200（起后 ~6s 即绿）
+- 浏览器：agent-browser（headless Chromium），一律 http://world.localhost:10042（HSTS 坑不用 world.ezagent.chat）
+- 环境搭建性修复（不涉库代码）：apps/ezagent_web/assets 缺 node_modules → pnpm install
+  （esbuild 报 Could not resolve "react" → React 岛挂不上，装完即好；同 2026-07-08 deploy-seed e2e 的 blocker 2）

@@ -1,0 +1,27 @@
+# 06f 板数据持久化交叉印证 — kanban.get_tree dispatch（erpc 进 server 节点，caller=admin）
+
+target: entity://system/agent/e2e-board?action=kanban.get_tree
+（板 = kanban-manager role × native flavor 的 agent，数据在其 :kanban snapshot slice）
+
+{:ok,
+ %{
+   config: %{github_repo: nil, miro_board: nil},
+   tree: %{
+     nodes: %{
+       "n1" => %{owner: nil, status: :unassigned, title: "kanban rework 段4 验证",
+                 stage: :positioning, order: 0, parent_id: nil, artifacts: [], metrics: []},
+       "n2" => %{owner: "entity://system/user/admin", status: :claimed, title: "登录表单模块",
+                 stage: :metric, order: 0, parent_id: "n1", artifacts: [], metrics: []}
+     },
+     root_id: "n1"
+   },
+   ci: %{},
+   stages: [:positioning, :metric, :pain, :anchor, :ux, :feature, :issue, :test, :pr],
+   drops: [],
+   miro: %{configured: true, board_id: nil}
+ }}
+
+对应 UI 动作（均 data-last-dispatch=ok，截图 06b/06c/06d/06e）：
+- kanban.add_node（建根 n1 + 加子 n2）
+- kanban.claim_node（n2 → claimed @admin）
+- kanban.set_stage（n2 定位 → 北极星/:metric）
