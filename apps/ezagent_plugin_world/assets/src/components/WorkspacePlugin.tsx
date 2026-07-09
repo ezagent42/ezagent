@@ -259,7 +259,7 @@ function WorkspaceDetail({
           {(state.members || []).length === 0 && <EmptyState label="No entries." />}
         </div>
       </section>
-      <SessionTemplateList state={state} templateNewPath={templateNewPath} />
+      <SessionTemplateList state={state} />
       <DataTable component="workspace-routing" title="Routing rules" rows={state.routing_rules || []} nested />
     </section>
   )
@@ -267,20 +267,12 @@ function WorkspaceDetail({
 
 function SessionTemplateList({
   state,
-  templateNewPath,
 }: {
   state: WorkspacePluginState
-  templateNewPath: string
 }) {
   return (
     <section className={subsectionClass} data-world-component="workspace-templates">
-      <div className="flex flex-wrap items-center justify-between gap-3">
-        <Header eyebrow="Templates" title="Session templates" compact />
-        <a className={actionLinkClass} href={templateNewPath} data-world-template-new-entry>
-          <Plus size={16} />
-          New template
-        </a>
-      </div>
+      <Header eyebrow="Templates" title="Session templates" compact />
       {state.template_notice && <p className="text-sm text-emerald-600 dark:text-emerald-400">{state.template_notice}</p>}
       {state.template_error && <p className="text-sm text-destructive">{state.template_error}</p>}
       <DataTable component="workspace-templates" title="Saved templates" rows={state.session_templates || []} nested />

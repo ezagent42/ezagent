@@ -11,6 +11,8 @@ const workspacePlugin = fs.readFileSync("apps/ezagent_plugin_world/assets/src/co
 const admin = fs.readFileSync("apps/ezagent_plugin_world/assets/src/components/Admin.tsx", "utf8")
 const overview = fs.readFileSync("apps/ezagent_plugin_world/assets/src/components/Overview.tsx", "utf8")
 
+const countOccurrences = (text, needle) => text.split(needle).length - 1
+
 assert.equal(main.includes('id="world-cmdk-open"'), false)
 assert.equal(main.includes('href="/profile"'), true)
 assert.equal(main.includes("My capabilities"), true)
@@ -146,6 +148,12 @@ assert.equal(workspacePlugin.includes("data-world-plugin-surface-table"), true)
 assert.equal(workspacePlugin.includes("route gap"), true)
 assert.equal(workspacePlugin.includes("workspace_template_new"), true)
 assert.equal(workspacePlugin.includes("data-world-template-new-entry"), true)
+assert.equal(
+  countOccurrences(workspacePlugin, '<a className={actionLinkClass} href={templateNewPath} data-world-template-new-entry>'),
+  1,
+)
+assert.equal(workspacePlugin.includes("<SessionTemplateList state={state} templateNewPath"), false)
+assert.equal(workspacePlugin.includes("<SessionTemplateList state={state} />"), true)
 assert.equal(workspacePlugin.includes("function SessionTemplateList"), true)
 assert.equal(workspacePlugin.includes("function TemplateBuilder"), true)
 assert.equal(workspacePlugin.includes("data-world-socialware-plugin-picker"), true)
