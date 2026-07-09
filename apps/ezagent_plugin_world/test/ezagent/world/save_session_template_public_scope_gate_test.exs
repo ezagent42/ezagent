@@ -11,7 +11,8 @@ defmodule Ezagent.World.SaveSessionTemplatePublicScopeGateTest do
 
   alias Ezagent.Capability
   alias Ezagent.Entity.User
-  alias Ezagent.Socialware.DefinitionRegistry
+  alias Ezagent.Socialware.{Definition, DefinitionRegistry}
+  alias Ezagent.TemplateTags
   alias Ezagent.World.WorkspacePluginActions
 
   setup do
@@ -74,6 +75,14 @@ defmodule Ezagent.World.SaveSessionTemplatePublicScopeGateTest do
   end
 
   defp save(workspace_uri, caller, caps, template_name, socialware_name) do
+    save_template_params(workspace_uri, caller, caps, %{
+      "name" => template_name,
+      "description" => "gate #{template_name}",
+      "socialware" => public_socialware_form(socialware_name)
+    })
+  end
+
+  defp save_template_params(workspace_uri, caller, caps, params) do
     WorkspacePluginActions.save_session_template(
       %Phoenix.LiveView.Socket{
         assigns: %{
@@ -84,13 +93,50 @@ defmodule Ezagent.World.SaveSessionTemplatePublicScopeGateTest do
           world_state: %{}
         }
       },
-      %{
-        "name" => template_name,
-        "description" => "gate #{template_name}",
-        "socialware" => public_socialware_form(socialware_name)
-      }
+      params
     )
   end
+
+  defp write_selectable_definition(workspace_uri, caller, caps, name, role_name) do
+    {:ok, definition} =
+      Definition.new(%{
+        name: name,
+        title: "Install app #{name}",
+        bases: [Ezagent.ActionSet.Session],
+        roles: [
+          %{
+            role_name: role_name,
+            fill: :agent,
+            recipe: "hello.front-desk",
+            flavor: "hello"
+          }
+        ],
+        visibility_policy: %{publish_policy: :auto, web_anon_access: true}
+      })
+
+    DefinitionRegistry.write_definition(definition,
+      workspace_uri: workspace_uri,
+      caller_workspace_uri: workspace_uri,
+      actor_uri: caller,
+      caps: caps
+    )
+  end
+
+  defp saved_content!(socket) do
+    {:ok, template_uri} = Ezagent.URI.parse(socket.assigns.world_state["last_template_uri"])
+    {:ok, content} = Ezagent.Entity.Session.read_template_content(template_uri)
+    content
+  end
+
+  defp install_refs(content) do
+    content
+    |> Map.get(:installs, Map.get(content, "installs", []))
+    |> Enum.map(&install_ref/1)
+  end
+
+  defp install_ref(ref) when is_binary(ref), do: ref
+  defp install_ref(%{"ref" => ref}), do: ref
+  defp install_ref(%{ref: ref}), do: ref
 
   test "non-admin operator CANNOT publish a public socialware app; admin CAN" do
     ws = "world165-#{uniq()}"
@@ -136,5 +182,167 @@ defmodule Ezagent.World.SaveSessionTemplatePublicScopeGateTest do
            "admin publish failed with #{inspect(allowed.assigns.world_state)}"
 
     assert {:ok, _def, _obj} = DefinitionRegistry.lookup(workspace_uri, allowed_app)
+  end
+
+  test "selected socialware install saves into the template manifest and publishes current tag" do
+    ws = "world-template-install-#{uniq()}"
+    workspace_uri = Ezagent.URI.workspace(ws)
+    operator = Ezagent.URI.user(ws, "operator")
+    socialware_name = "world-template-install-app-#{uniq()}"
+    template_name = "world-template-install-tmpl-#{uniq()}"
+
+    {:ok, _} = Ezagent.Workspace.create(ws, %{})
+    :ok = spawn_user(operator)
+    :ok = grant_add_template(operator, workspace_uri)
+
+    {:ok, definition} =
+      Definition.new(%{
+        name: socialware_name,
+        title: "Install app",
+        bases: [Ezagent.ActionSet.Session],
+        roles: [
+          %{
+            role_name: "front-desk",
+            fill: :agent,
+            recipe: "hello.front-desk",
+            flavor: "hello"
+          }
+        ],
+        visibility_policy: %{publish_policy: :auto, web_anon_access: true}
+      })
+
+    {:ok, _object} =
+      DefinitionRegistry.write_definition(definition,
+        workspace_uri: workspace_uri,
+        caller_workspace_uri: workspace_uri,
+        actor_uri: operator,
+        caps: MapSet.new([Capability.admin_genesis_cap()])
+      )
+
+    role_slots = [
+      %{"role_name" => "front-desk", "mode" => "fresh", "flavor" => "hello"}
+    ]
+
+    {:noreply, socket} =
+      WorkspacePluginActions.save_session_template(
+        %Phoenix.LiveView.Socket{
+          assigns: %{
+            __changed__: %{},
+            current_entity_uri: operator,
+            current_workspace_uri: workspace_uri,
+            current_caps: MapSet.new([Capability.admin_genesis_cap()]),
+            world_state: %{}
+          }
+        },
+        %{
+          "name" => template_name,
+          "description" => "template install",
+          "installs" => [
+            %{"ref" => socialware_name, "config" => %{"role_slots" => role_slots}}
+          ]
+        }
+      )
+
+    assert socket.assigns.last_dispatch_status == "ok",
+           "template save failed with #{inspect(socket.assigns.world_state)}"
+
+    assert socket.assigns.world_state["last_socialware_ref"] == socialware_name
+    assert socket.assigns.world_state["last_socialware_refs"] == [socialware_name]
+    assert {:ok, hash} = TemplateTags.resolve(workspace_uri, template_name, "current")
+    assert is_binary(hash) and hash != ""
+  end
+
+  test "multiple selected socialware installs save into one template manifest" do
+    ws = "world-template-multi-install-#{uniq()}"
+    workspace_uri = Ezagent.URI.workspace(ws)
+    operator = Ezagent.URI.user(ws, "operator")
+    caps = MapSet.new([Capability.admin_genesis_cap()])
+    first = "world-template-multi-a-#{uniq()}"
+    second = "world-template-multi-b-#{uniq()}"
+    template_name = "world-template-multi-tmpl-#{uniq()}"
+
+    {:ok, _} = Ezagent.Workspace.create(ws, %{})
+    :ok = spawn_user(operator)
+    :ok = grant_add_template(operator, workspace_uri)
+    {:ok, _} = write_selectable_definition(workspace_uri, operator, caps, first, "front-desk")
+    {:ok, _} = write_selectable_definition(workspace_uri, operator, caps, second, "builder")
+
+    {:noreply, socket} =
+      save_template_params(workspace_uri, operator, caps, %{
+        "name" => template_name,
+        "description" => "multi template install",
+        "installs" => [
+          %{
+            "ref" => first,
+            "config" => %{
+              "role_slots" => [
+                %{"role_name" => "front-desk", "mode" => "fresh", "flavor" => "hello"}
+              ]
+            }
+          },
+          %{
+            "ref" => second,
+            "config" => %{
+              "role_slots" => [
+                %{"role_name" => "builder", "mode" => "fresh", "flavor" => "hello"}
+              ]
+            }
+          }
+        ]
+      })
+
+    assert socket.assigns.last_dispatch_status == "ok",
+           "template save failed with #{inspect(socket.assigns.world_state)}"
+
+    assert socket.assigns.world_state["last_socialware_refs"] == [first, second]
+    assert install_refs(saved_content!(socket)) == [first, second]
+    assert {:ok, hash} = TemplateTags.resolve(workspace_uri, template_name, "current")
+    assert is_binary(hash) and hash != ""
+  end
+
+  test "empty socialware selection saves the same installs as the default template" do
+    ws = "world-template-default-install-#{uniq()}"
+    workspace_uri = Ezagent.URI.workspace(ws)
+    operator = Ezagent.URI.user(ws, "operator")
+    caps = MapSet.new([Capability.admin_genesis_cap()])
+
+    {:ok, _} = Ezagent.Workspace.create(ws, %{})
+    :ok = spawn_user(operator)
+    :ok = grant_add_template(operator, workspace_uri)
+
+    {:noreply, socket} =
+      save_template_params(workspace_uri, operator, caps, %{
+        "name" => "world-template-default-tmpl-#{uniq()}",
+        "description" => "default template install"
+      })
+
+    assert socket.assigns.last_dispatch_status == "ok",
+           "template save failed with #{inspect(socket.assigns.world_state)}"
+
+    assert socket.assigns.world_state["last_socialware_refs"] == []
+    assert install_refs(saved_content!(socket)) == ["chat", "orchestrator"]
+  end
+
+  test "successful save returns from template builder to the workspace detail route" do
+    ws = "world-template-return-#{uniq()}"
+    workspace_uri = Ezagent.URI.workspace(ws)
+    operator = Ezagent.URI.user(ws, "operator")
+    caps = MapSet.new([Capability.admin_genesis_cap()])
+
+    {:ok, _} = Ezagent.Workspace.create(ws, %{})
+    :ok = spawn_user(operator)
+    :ok = grant_add_template(operator, workspace_uri)
+
+    {:noreply, socket} =
+      save_template_params(workspace_uri, operator, caps, %{
+        "name" => "world-template-return-tmpl-#{uniq()}",
+        "description" => "return to workspace detail after save"
+      })
+
+    assert socket.assigns.last_dispatch_status == "ok",
+           "template save failed with #{inspect(socket.assigns.world_state)}"
+
+    assert socket.redirected ==
+             {:live, :patch, %{kind: :push, to: "/workspaces/#{URI.encode_www_form(ws)}"}}
   end
 end

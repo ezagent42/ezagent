@@ -186,7 +186,7 @@ defmodule Ezagent.PluginCodex.Template.CodexRemoteAgent do
 
   defp ensure_app_server(agent_uri, cwd, socket_path, codex_path, test_mode, tmpl) do
     if EzagentPluginCodex.AppServer.alive?(agent_uri) do
-      :ok
+      ensure_app_server_ready(agent_uri, socket_path, test_mode)
     else
       params =
         Ezagent.PluginCodex.Template.CodexAgent.build_app_server_params(
@@ -198,12 +198,21 @@ defmodule Ezagent.PluginCodex.Template.CodexRemoteAgent do
         )
 
       case EzagentPluginCodex.AppServer.start(agent_uri, params) do
-        {:ok, _pid} -> :ok
-        {:error, {:already_started, _pid}} -> :ok
-        {:error, reason} -> {:error, {:codex_app_server_start_failed, reason}}
+        {:ok, _pid} ->
+          ensure_app_server_ready(agent_uri, socket_path, test_mode)
+
+        {:error, {:already_started, _pid}} ->
+          ensure_app_server_ready(agent_uri, socket_path, test_mode)
+
+        {:error, reason} ->
+          {:error, {:codex_app_server_start_failed, reason}}
       end
     end
   end
+
+  @doc "Delegates to `Ezagent.PluginCodex.Template.CodexAgent.ensure_app_server_ready/3` (identical readiness wait)."
+  defdelegate ensure_app_server_ready(agent_uri, socket_path, test_mode),
+    to: Ezagent.PluginCodex.Template.CodexAgent
 
   defp ensure_bridge_sidecar(
          agent_uri,

@@ -28,6 +28,7 @@ defmodule EzagentPluginCodex.AppServer do
   defstruct [:agent_uri, :cwd, :socket_path, :exec_pid, :os_pid, :test_mode, output: ""]
 
   @compile_env Mix.env()
+  @ready_poll_ms 50
 
   @spec start(URI.t(), map()) :: DynamicSupervisor.on_start_child()
   def start(%URI{} = agent_uri, params) when is_map(params) do
@@ -51,6 +52,24 @@ defmodule EzagentPluginCodex.AppServer do
       {:ok, pid} -> Process.alive?(pid)
       :error -> false
     end
+  end
+
+  @doc "Recent buffered app-server output for `agent_uri`, or `\"\"` if it is not running."
+  @spec recent_output(URI.t()) :: String.t()
+  def recent_output(%URI{} = agent_uri) do
+    case lookup(agent_uri) do
+      {:ok, pid} -> GenServer.call(pid, :recent_output, 1_000)
+      :error -> ""
+    end
+  catch
+    _, _ -> ""
+  end
+
+  @doc "Blocks until the app-server unix socket at `socket_path` exists, or `timeout_ms` elapses."
+  @spec wait_until_ready(URI.t(), String.t(), non_neg_integer()) :: :ok | {:error, term()}
+  def wait_until_ready(%URI{} = agent_uri, socket_path, timeout_ms)
+      when is_binary(socket_path) and is_integer(timeout_ms) and timeout_ms >= 0 do
+    do_wait_until_ready(agent_uri, socket_path, System.monotonic_time(:millisecond) + timeout_ms)
   end
 
   @spec stop(URI.t()) :: :ok
@@ -97,6 +116,11 @@ defmodule EzagentPluginCodex.AppServer do
   end
 
   # ─── stdout: raw framing — accumulate chunks directly (no LineBuffer) ────
+
+  @impl true
+  def handle_call(:recent_output, _from, state) do
+    {:reply, state.output, state}
+  end
 
   @impl true
   def handle_info({:stdout, _os_pid, bytes}, state) when is_binary(bytes) do
@@ -171,6 +195,23 @@ defmodule EzagentPluginCodex.AppServer do
     case Map.get(args, :codex_path) || System.find_executable("codex") do
       path when is_binary(path) -> {:ok, path}
       nil -> {:error, :codex_not_found}
+    end
+  end
+
+  defp do_wait_until_ready(agent_uri, socket_path, deadline_ms) do
+    cond do
+      File.exists?(socket_path) ->
+        :ok
+
+      not alive?(agent_uri) ->
+        {:error, {:codex_app_server_exited_before_ready, socket_path, recent_output(agent_uri)}}
+
+      System.monotonic_time(:millisecond) >= deadline_ms ->
+        {:error, {:codex_app_server_socket_timeout, socket_path, recent_output(agent_uri)}}
+
+      true ->
+        Process.sleep(@ready_poll_ms)
+        do_wait_until_ready(agent_uri, socket_path, deadline_ms)
     end
   end
 

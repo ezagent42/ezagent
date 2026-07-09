@@ -1,5 +1,5 @@
 import React from "react"
-import {ArrowRight, Bot, Cable, Circle, MessageSquare, Plus, UserRound, X} from "lucide-react"
+import {ArrowRight, Bot, Cable, Circle, Loader2, MessageSquare, Plus, UserRound, X} from "lucide-react"
 
 import {Button, Input, Select} from "./ui/primitives"
 
@@ -53,6 +53,8 @@ type SessionsState = {
   socialwares?: SocialwareRow[]
   workspace_uri?: string | null
   create_error?: string
+  last_dispatch_status?: string | null
+  session_create_pending?: boolean
 }
 
 type SessionsTableProps = {
@@ -75,10 +77,21 @@ export function SessionsTable({state, onJoin, onCreate}: SessionsTableProps) {
   const selectedSession =
     sessions.find((session) => session.uri === currentSessionUri) || sessions[0] || null
   const selectedSocialware = socialwares.find((socialware) => socialware.name === socialwareRef) || null
+  const createPending = state?.session_create_pending === true
 
   React.useEffect(() => {
     if (!templates.includes(templateName)) setTemplateName(templates[0])
   }, [templateName, templates])
+
+  React.useEffect(() => {
+    if (!createPending && state?.last_dispatch_status === "ok") {
+      setShortName("")
+      setTemplateName(templates[0])
+      setSocialwareRef("")
+      setRoleChoices({})
+      setCreating(false)
+    }
+  }, [createPending, state?.last_dispatch_status, templates])
 
   React.useEffect(() => {
     if (!selectedSocialware) {
@@ -109,14 +122,9 @@ export function SessionsTable({state, onJoin, onCreate}: SessionsTableProps) {
     const trimmed = shortName.trim()
     const template = templateName.trim() || "default"
     const installRef = socialwareRef.trim()
-    if (!trimmed) return
+    if (!trimmed || createPending) return
     const createOptions = selectedSocialware ? createOptionsFor(selectedSocialware, roleChoices) : undefined
     onCreate?.(trimmed, template, installRef || undefined, createOptions)
-    setShortName("")
-    setTemplateName(templates[0])
-    setSocialwareRef("")
-    setRoleChoices({})
-    setCreating(false)
   }
 
   return (
@@ -168,6 +176,7 @@ export function SessionsTable({state, onJoin, onCreate}: SessionsTableProps) {
           <form
             className="m-3 grid gap-3 rounded-md border border-border bg-muted/30 p-3"
             id="world-session-create-form"
+            aria-busy={createPending}
             onSubmit={submit}
           >
             <label className="grid gap-1 text-xs font-medium text-muted-foreground" htmlFor="world-session-short-name">
@@ -241,9 +250,9 @@ export function SessionsTable({state, onJoin, onCreate}: SessionsTableProps) {
                 )}
               </div>
             )}
-            <Button type="submit" size="sm" disabled={!shortName.trim()}>
-              <Plus aria-hidden="true" />
-              创建
+            <Button type="submit" size="sm" disabled={createPending || !shortName.trim()}>
+              {createPending ? <Loader2 className="animate-spin" aria-hidden="true" /> : <Plus aria-hidden="true" />}
+              {createPending ? "创建中" : "创建"}
             </Button>
           </form>
         )}

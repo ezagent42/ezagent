@@ -102,7 +102,14 @@ defmodule Ezagent.PluginCurlAgent.Template do
     [
       %{key: "provider", type: :string, label: "Provider", required: true},
       %{key: "api_url", type: :string, label: "API URL", required: true},
-      %{key: "model", type: :string, label: "Model", required: true},
+      %{
+        key: "model",
+        type: :string,
+        label: "Model",
+        required: true,
+        placeholder: "deepseek-chat",
+        help: "Provider model id, for example deepseek-chat"
+      },
       %{key: "system_prompt", type: :text, label: "System prompt"},
       %{key: "max_history", type: :integer, label: "Max history", default: 20}
     ]

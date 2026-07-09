@@ -30,5 +30,6 @@ assert.equal(pageTitleForComponent("overview"), "Overview")
 assert.equal(pageTitleForComponent("sessions_table"), "Chat")
 assert.equal(pageTitleForComponent("conversation"), "Chat")
 assert.equal(pageTitleForComponent("profile"), "Profile")
+assert.equal(pageTitleForComponent("workspace_template_new"), "New template")
 
 console.log("world_ia_test: all assertions passed")

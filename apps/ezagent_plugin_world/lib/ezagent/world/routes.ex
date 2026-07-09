@@ -74,6 +74,17 @@ defmodule Ezagent.World.Routes do
           path: path
         }
 
+      match = Regex.run(~r{\A/workspaces/([^/]+)/templates/new\z}, path) ->
+        [_full, encoded] = match
+
+        %{
+          group: :workspace_plugins,
+          component: "workspace_template_new",
+          title: "New Template",
+          path: path,
+          name: URI.decode_www_form(encoded)
+        }
+
       match = Regex.run(~r{\A/workspaces/([^/]+)\z}, path) ->
         [_full, encoded] = match
 

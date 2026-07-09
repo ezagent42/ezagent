@@ -273,8 +273,8 @@ defmodule EzagentPluginWorld.WorldLive do
   end
 
   def handle_event("pty_input", %{"bytes" => bytes}, socket) when is_binary(bytes) do
-    case socket.assigns.world_state do
-      %{"component" => "pty_terminal", "agent_uri" => agent_uri_str} ->
+    case pty_agent_uri_str(socket.assigns.world_state) do
+      agent_uri_str when is_binary(agent_uri_str) ->
         with {:ok, agent_uri} <- parse_agent_uri(agent_uri_str),
              :ok <- dispatch_pty_input(socket, agent_uri, bytes) do
           {:noreply, socket}
@@ -296,6 +296,18 @@ defmodule EzagentPluginWorld.WorldLive do
   def handle_event("world:dispatch", _params, socket) do
     {:noreply, assign(socket, :last_dispatch_status, "error:unsupported_action")}
   end
+
+  defp pty_agent_uri_str(%{"component" => "pty_terminal", "agent_uri" => agent_uri_str}),
+    do: agent_uri_str
+
+  defp pty_agent_uri_str(%{
+         "component" => "conversation",
+         "active_view" => "pty",
+         "active_pty_agent_uri" => agent_uri_str
+       }),
+       do: agent_uri_str
+
+  defp pty_agent_uri_str(_), do: nil
 
   @impl true
   def render(assigns) do
@@ -680,7 +692,7 @@ defmodule EzagentPluginWorld.WorldLive do
       "layout" => layout,
       "can_manage_layout" => can_manage_layout?("sessions_table", workspace_uri, caps),
       "templates" => session_template_names(workspace_uri),
-      "socialwares" => socialware_rows(workspace_uri),
+      "socialwares" => Ezagent.World.WorkspacePluginData.socialware_rows(workspace_uri),
       "sessions" => Enum.map(sessions, &ConversationSessionState.session_row/1),
       # F3: explicitly clear any stale create_error — the React island merges
       # world:state ({...current, ...next}) and never remounts, so a previously
@@ -749,70 +761,6 @@ defmodule EzagentPluginWorld.WorldLive do
   defp put_command_palette(state, socket) do
     Map.put(state, "cmdk", CommandPaletteData.state(socket.assigns, "", false))
   end
-
-  defp socialware_rows(%URI{} = workspace_uri) do
-    workspace_uri
-    |> Ezagent.Socialware.DefinitionRegistry.list()
-    |> Enum.map(fn row ->
-      public? = Map.get(row, :public?, false)
-
-      %{
-        "name" => Map.get(row, :name),
-        "title" => Map.get(row, :title),
-        "description" => Map.get(row, :description),
-        "version" => Map.get(row, :version),
-        "config_id" => Map.get(row, :config_id),
-        "content_hash" => Map.get(row, :content_hash),
-        "roles" => socialware_role_rows(Map.get(row, :roles, []), workspace_uri),
-        "scope" => Map.get(row, :scope, if(public?, do: "public", else: "private")),
-        "workspace_uri" => encode_uri(Map.get(row, :workspace_uri)),
-        "public" => public?
-      }
-    end)
-  end
-
-  defp socialware_rows(_), do: []
-
-  defp socialware_role_rows(roles, %URI{} = workspace_uri) when is_list(roles) do
-    Enum.map(roles, fn
-      %{fill: :agent, role_name: role_name, recipe: recipe, flavor: flavor} ->
-        %{
-          "role_name" => role_name,
-          "fill" => "agent",
-          "recipe" => recipe,
-          "flavor" => flavor,
-          "agent_options" => agent_options_for_recipe(recipe, workspace_uri)
-        }
-
-      %{fill: :human, role_name: role_name} ->
-        %{"role_name" => role_name, "fill" => "human"}
-
-      _ ->
-        nil
-    end)
-    |> Enum.reject(&is_nil/1)
-  end
-
-  defp socialware_role_rows(_roles, _workspace_uri), do: []
-
-  defp agent_options_for_recipe(recipe, %URI{} = workspace_uri)
-       when is_binary(recipe) and recipe != "" do
-    uris = Ezagent.Agent.RecipeResolver.list_by_recipe(recipe, workspace_uri)
-    display_map = Ezagent.EntityPresenter.display_many(Enum.map(uris, &URI.to_string/1))
-
-    Enum.map(uris, fn uri ->
-      uri_str = URI.to_string(uri)
-
-      %{
-        "uri" => uri_str,
-        "display_name" => Map.get(display_map, uri_str, uri_str)
-      }
-    end)
-  rescue
-    _ -> []
-  end
-
-  defp agent_options_for_recipe(_recipe, _workspace_uri), do: []
 
   defp caller_payload(caller, workspace, caps, system_member?) do
     %{

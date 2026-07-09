@@ -51,6 +51,16 @@ defmodule Ezagent.World.RoutesTest do
     assert route.title == "Chat"
   end
 
+  test "workspace template creation route resolves to the focused new-template surface" do
+    route = Routes.route_for(%{}, "https://example.com/workspaces/team-alpha/templates/new")
+
+    assert route.group == :workspace_plugins
+    assert route.component == "workspace_template_new"
+    assert route.title == "New Template"
+    assert route.path == "/workspaces/team-alpha/templates/new"
+    assert route.name == "team-alpha"
+  end
+
   test "agent config sub-route resolves to agent_config component" do
     url = "https://example.com/identities/agents/#{@encoded}/config"
     route = Routes.route_for(%{}, url)

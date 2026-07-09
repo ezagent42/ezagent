@@ -62,6 +62,7 @@ defmodule Ezagent.PluginCc.Template.CcAgentSpawnInvariantTest do
   use ExUnit.Case, async: false
 
   alias Ezagent.PluginCc.Template.CcAgent
+  alias Ezagent.PluginCc.Template.SpawnPlan
 
   @agent_uri Ezagent.URI.new!("entity://system/agent/cc_spawn-invariant-test")
   @cwd System.tmp_dir!()
@@ -90,6 +91,19 @@ defmodule Ezagent.PluginCc.Template.CcAgentSpawnInvariantTest do
 
     File.write!(mock_path, """
     #!/usr/bin/env bash
+    if [ "$1" = "--help" ]; then
+      echo "Usage: claude [options]"
+      echo "  --dangerously-skip-permissions"
+      exit 0
+    fi
+    if [ "$1" = "--dangerously-load-development-channels" ]; then
+      shift 2
+      if [ "$1" = "--help" ]; then
+        echo "Usage: claude [options]"
+        exit 0
+      fi
+      exit 0
+    fi
     exit 0
     """)
 
@@ -99,7 +113,7 @@ defmodule Ezagent.PluginCc.Template.CcAgentSpawnInvariantTest do
     # may also be on PATH on the dev box).
     System.put_env("PATH", bin_dir <> ":" <> (original_path || ""))
 
-    {:ok, mock_claude_path: mock_path, bin_dir: bin_dir}
+    {:ok, mock_claude_path: mock_path, bin_dir: bin_dir, original_path: original_path || ""}
   end
 
   describe "build_claude_cmd/3 — production argv invariants" do
@@ -114,6 +128,7 @@ defmodule Ezagent.PluginCc.Template.CcAgentSpawnInvariantTest do
       [cmd | _rest] = argv
 
       assert is_binary(cmd)
+
       assert Path.type(cmd) == :absolute,
              "argv[0] must be an absolute path (erlexec list-form :exec.run runs " <>
                "execve(3) with no PATH search) — got #{inspect(cmd)}"
@@ -121,6 +136,14 @@ defmodule Ezagent.PluginCc.Template.CcAgentSpawnInvariantTest do
       assert cmd == mock_path,
              "argv[0] must be the PATH-resolved `claude` (the test installed a " <>
                "mock at #{mock_path}) — got #{inspect(cmd)}"
+    end
+
+    test "accepts dev-channel support even when --help omits the flag", %{
+      mock_claude_path: mock_path
+    } do
+      assert SpawnPlan.claude_dev_channels_supported?(mock_path)
+      assert :ok = SpawnPlan.ensure_dev_channels_supported(mock_path)
+      assert {:ok, {_argv, _env}} = CcAgent.build_claude_cmd(@agent_uri, @cwd, base_tmpl())
     end
 
     test "argv carries the bypass + dev-channels flags" do
@@ -261,6 +284,36 @@ defmodule Ezagent.PluginCc.Template.CcAgentSpawnInvariantTest do
       assert {:error, :claude_not_found} =
                CcAgent.build_claude_cmd(@agent_uri, @cwd, base_tmpl())
     end
+
+    test "returns a clear error when the installed claude lacks dev-channel support", %{
+      bin_dir: bin_dir,
+      original_path: original_path
+    } do
+      unsupported_dir = Path.join(bin_dir, "unsupported")
+      File.mkdir_p!(unsupported_dir)
+      unsupported_path = Path.join(unsupported_dir, "claude")
+
+      File.write!(unsupported_path, """
+      #!/usr/bin/env bash
+      if [ "$1" = "--dangerously-load-development-channels" ]; then
+        echo "error: unknown option --dangerously-load-development-channels"
+        exit 1
+      fi
+      if [ "$1" = "--help" ]; then
+        echo "Usage: claude [options]"
+        echo "  --dangerously-skip-permissions"
+        echo "  --mcp-config <file>"
+        exit 0
+      fi
+      exit 0
+      """)
+
+      File.chmod!(unsupported_path, 0o755)
+      System.put_env("PATH", unsupported_dir <> ":" <> original_path)
+
+      assert {:error, {:unsupported_claude_dev_channels, ^unsupported_path}} =
+               CcAgent.build_claude_cmd(@agent_uri, @cwd, base_tmpl())
+    end
   end
 
   describe "build_pty_params_for_env/4 — Domain.Pty Server boundary invariants" do
@@ -338,7 +391,12 @@ defmodule Ezagent.PluginCc.Template.CcAgentSpawnInvariantTest do
       # plugin's safety override appears LATER, so the safety wins).
       # With operator_settings_path set we should see TWO --settings
       # flags; assert the LAST value is the mandatory plugin path.
-      operator_settings = Path.join(System.tmp_dir!(), "operator-settings-#{System.unique_integer([:positive])}.json")
+      operator_settings =
+        Path.join(
+          System.tmp_dir!(),
+          "operator-settings-#{System.unique_integer([:positive])}.json"
+        )
+
       File.write!(operator_settings, "{}\n")
       on_exit(fn -> File.rm(operator_settings) end)
 

@@ -1,8 +1,9 @@
 import React from "react"
-import {Bug, Cable, CheckCircle2, ChevronUp, Copy, ExternalLink, LayoutGrid, Link2, Maximize2, MessageSquare, MoreHorizontal, Paperclip, PanelTop, Plus, RotateCcw, Route, Send, Sparkles, TerminalSquare, Upload, UserMinus, UserPlus, Users, X} from "lucide-react"
+import {Bug, Cable, CheckCircle2, ChevronUp, Copy, ExternalLink, LayoutGrid, Link2, Loader2, Maximize2, MessageSquare, MoreHorizontal, Paperclip, PanelTop, Plus, RotateCcw, Route, Send, Sparkles, TerminalSquare, Upload, UserMinus, UserPlus, Users, X} from "lucide-react"
 
 import {Button, Input, Modal, Select} from "./ui/primitives"
 import {JsonRenderBubble} from "./JsonRenderBubble"
+import {PtyTerminalSurface} from "./PtyTerminal"
 
 // Server-rendered attachment: an uploads URI carries a signed download `href`
 // (`message_row/2`); any other value renders as a plain label (`href: null`).
@@ -64,6 +65,7 @@ type MemberRow = {
   display_name?: string | null
   role_name?: string | null
   online?: boolean
+  pty_alive?: boolean
   kind?: string | null
 }
 
@@ -131,6 +133,7 @@ export type ConversationState = {
   session_uri?: string | null
   caller_uri?: string | null
   create_error?: string | null
+  last_dispatch_status?: string | null
   is_hello?: boolean | null
   messages?: MessageRow[]
   oldest_cursor?: string | null
@@ -140,6 +143,7 @@ export type ConversationState = {
   routing_rules?: RoutingRule[]
   sessions?: SessionRow[]
   templates?: string[]
+  session_create_pending?: boolean
   members?: MemberRow[]
   invite_candidates?: InviteCandidateRow[]
   routing_entity_candidates?: InviteCandidateRow[]
@@ -206,8 +210,7 @@ export function Conversation({
   const installedSocialwares = state.installed_socialwares || []
   const fallbackViews: ViewTab[] = [{id: "conversation", label: "对话", icon: "message-square", mode: "chat"}]
   const sourceViews = state.views && state.views.length > 0 ? state.views : fallbackViews
-  const visibleViews = sourceViews.filter((v) => v.id !== "pty" && v.mode !== "pty")
-  const views = visibleViews.length > 0 ? visibleViews : fallbackViews
+  const views = sourceViews.length > 0 ? sourceViews : fallbackViews
   const activeId = views.find((v) => v.id === state.active_view)?.id ?? views[0]?.id ?? "conversation"
   const activeMode = views.find((v) => v.id === activeId)?.mode ?? "chat"
   const viewLabel = (view: ViewTab) => (view.id === "conversation" ? "对话" : view.label)
@@ -218,6 +221,7 @@ export function Conversation({
   // template — whose URI carries the template name, not `/hello/` — still gets the
   // Page pane. Falls back to the URI check.
   const isHelloSession = state.is_hello === true || sessionUri.includes("/hello/")
+  const createPending = state.session_create_pending === true
 
   const [members, setMembers] = React.useState<MemberRow[]>(state.members || [])
   const [humanRoleSlots, setHumanRoleSlots] = React.useState<HumanRoleSlotRow[]>(state.human_role_slots || [])
@@ -258,6 +262,8 @@ export function Conversation({
   const currentSession = sessions.find((session) => session.uri === sessionUri) || null
   const sessionTitle = currentSession ? sessionLabel(currentSession) : sessionUri ? humanizeSessionName(uriSegment(sessionUri)) : "会话"
   const sessionMeta = [countLabel(members.length, "成员"), countLabel(messages.length, "轮次")].join(" · ")
+  const ptyMembers = members.filter((member) => member.kind === "agent" && member.pty_alive === true)
+  const activePtyAgentUri = state.agent_uri || state.active_pty_agent_uri || null
 
   React.useEffect(() => {
     setMembers(state.members || [])
@@ -284,6 +290,14 @@ export function Conversation({
   React.useEffect(() => {
     if (!templates.includes(newSessionTemplate)) setNewSessionTemplate(templates[0])
   }, [newSessionTemplate, templates])
+
+  React.useEffect(() => {
+    if (!createPending && state.last_dispatch_status === "ok") {
+      setNewSessionName("")
+      setNewSessionTemplate(templates[0])
+      setCreating(false)
+    }
+  }, [createPending, state.last_dispatch_status, templates])
 
   // @mention autocomplete: the open token is the @word immediately before the
   // caret. Matches consider URI segment, role_name, display_name, and
@@ -473,11 +487,8 @@ export function Conversation({
     event.preventDefault()
     const trimmed = newSessionName.trim()
     const template = newSessionTemplate.trim() || "default"
-    if (!trimmed) return
+    if (!trimmed || createPending) return
     onCreate?.(trimmed, template)
-    setNewSessionName("")
-    setNewSessionTemplate(templates[0])
-    setCreating(false)
   }
 
   const doPublish = () => {
@@ -560,6 +571,7 @@ export function Conversation({
           <form
             className="m-2.5 grid gap-2.5 rounded-lg border border-border bg-muted/30 p-3"
             id="world-session-create-form"
+            aria-busy={createPending}
             onSubmit={submitCreate}
           >
             <label className="grid gap-1 text-[11px] font-medium text-muted-foreground" htmlFor="world-conversation-session-name">
@@ -586,9 +598,9 @@ export function Conversation({
                 ))}
               </Select>
             </label>
-            <Button type="submit" size="sm" disabled={!newSessionName.trim()}>
-              <Plus aria-hidden="true" />
-              创建
+            <Button type="submit" size="sm" disabled={createPending || !newSessionName.trim()}>
+              {createPending ? <Loader2 className="animate-spin" aria-hidden="true" /> : <Plus aria-hidden="true" />}
+              {createPending ? "创建中" : "创建"}
             </Button>
           </form>
         )}
@@ -668,7 +680,16 @@ export function Conversation({
                     key={v.id}
                     type="button"
                     className={segmentClass(activeId === v.id)}
-                    onClick={() => sessionUri && onSwitchView(sessionUri, v.id)}
+                    onClick={() => {
+                      if (!sessionUri) return
+                      if (v.id === "pty" || v.mode === "pty") {
+                        const agent = activePtyAgentUri || ptyMembers[0]?.uri
+                        if (agent) onOpenPty(sessionUri, agent)
+                        else onSwitchView(sessionUri, v.id)
+                      } else {
+                        onSwitchView(sessionUri, v.id)
+                      }
+                    }}
                     aria-label={"显示" + label}
                   >
                     <Icon aria-hidden={true} className="h-[15px] w-[15px]" />
@@ -737,6 +758,17 @@ export function Conversation({
         </div>
 
         <div className="flex min-h-0 flex-1 overflow-hidden">
+          {activeMode === "pty" ? (
+            <div className="min-w-0 flex-1 overflow-y-auto bg-[#fafafa] p-4" data-world-subcomponent="pty">
+              <PtyTerminalSurface
+                state={{...state, agent_uri: activePtyAgentUri}}
+                onInput={onPtyInput}
+                onResize={onPtyResize}
+                onServerEvent={onServerEvent}
+              />
+            </div>
+          ) : (
+            <>
             <div className="flex min-w-0 flex-1 flex-col overflow-hidden">
             <div
               className="flex flex-1 flex-col gap-3.5 overflow-y-auto bg-[linear-gradient(#ffffff,#ffffff),repeating-linear-gradient(0deg,transparent,transparent_31px,rgba(23,32,42,0.04)_32px)] px-4 py-4"
@@ -916,6 +948,8 @@ export function Conversation({
                 <HelloPagePreview sessionUri={sessionUri} />
               </div>
             )}
+            </>
+          )}
           </div>
 
         {debugOpen && (
@@ -1026,6 +1060,23 @@ export function Conversation({
                     {label}
                   </span>
                   <span className="rounded-full border border-border px-1.5 py-0.5 text-[9.5px] font-semibold uppercase tracking-wide text-muted-foreground">{kindBadgeLabel(member.kind)}</span>
+
+                  {member.pty_alive === true && (
+                    <Button
+                      type="button"
+                      size="sm"
+                      variant="ghost"
+                      onClick={() => {
+                        if (!sessionUri) return
+                        onOpenPty(sessionUri, member.uri)
+                      }}
+                      data-world-member-pty
+                      aria-label={`打开 ${label} 的 PTY`}
+                      title="打开 PTY"
+                    >
+                      <TerminalSquare aria-hidden="true" />
+                    </Button>
+                  )}
 
                   {member.uri !== callerUri && (
                     <Button

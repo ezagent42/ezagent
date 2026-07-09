@@ -64,6 +64,15 @@ defmodule EzagentCore.Invariants.PluginWorkspaceLocalityContractTest do
       key: :genserver_to_pid,
       line_substring: "GenServer.call(pid, :recent_output, 1_000)",
       reason: "existing codex sidecar status call; sidecar has no workspace owner facade yet"
+    },
+    %{
+      path: "apps/ezagent_plugin_codex/lib/ezagent/plugin_codex/app_server.ex",
+      line: 61,
+      key: :genserver_to_pid,
+      line_substring: "GenServer.call(pid, :recent_output, 1_000)",
+      reason:
+        "existing codex app-server sidecar status call (per-agent AppServer GenServer, " <>
+          "same class as bridge_sidecar); sidecar has no workspace owner facade yet"
     }
   ]
 

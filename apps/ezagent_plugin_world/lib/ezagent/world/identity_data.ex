@@ -388,7 +388,27 @@ defmodule Ezagent.World.IdentityData do
   def create_error_message({:grant_failed, _cap, reason}),
     do: "授予 caps 失败：#{inspect(reason)}"
 
+  def create_error_message(
+        {:cascade_spawn_failed,
+         {:codex_app_server_not_ready,
+          {:codex_app_server_exited_before_ready, _socket_path, output}}}
+      ),
+      do: codex_app_server_error_message(output)
+
+  def create_error_message(
+        {:cascade_spawn_failed,
+         {:codex_app_server_not_ready, {:codex_app_server_socket_timeout, _socket_path, output}}}
+      ),
+      do: codex_app_server_error_message(output)
+
   def create_error_message(other), do: "创建失败：#{inspect(other)}"
+
+  defp codex_app_server_error_message(output) when is_binary(output) and output != "" do
+    "Codex app-server 启动失败：#{String.trim(output)}"
+  end
+
+  defp codex_app_server_error_message(_output),
+    do: "Codex app-server 启动失败：未能在限定时间内创建连接 socket"
 
   @doc "Preview an agent URI under the current workspace."
   @spec preview_agent_uri(URI.t() | nil, String.t()) :: String.t()
@@ -698,6 +718,8 @@ defmodule Ezagent.World.IdentityData do
     |> put_schema_string("key", Map.get(field, :key))
     |> put_schema_string("type", Map.get(field, :type) |> to_string())
     |> put_schema_string("label", Map.get(field, :label))
+    |> put_schema_string("help", Map.get(field, :help))
+    |> put_schema_string("placeholder", Map.get(field, :placeholder))
     |> put_schema_list("options", Map.get(field, :options))
     |> put_schema_any("default", Map.get(field, :default))
     |> put_schema_any("required", Map.get(field, :required))

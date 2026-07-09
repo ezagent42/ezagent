@@ -105,6 +105,7 @@ type WorldState = IdentitiesState & WorkspacePluginState & ConversationState & {
     name?: string | null
     workspace_uri?: string | null
   }>
+  session_create_pending?: boolean
   socialwares?: Array<{
     name: string
     title?: string | null
@@ -151,8 +152,13 @@ function WorldApp({layout, state: initialState, pluginNav, caller, pushEvent, on
 
     onServerEvent("world:state", (payload) => {
       const next = payload as WorldState
+      const clearSessionCreatePending =
+        "create_error" in next || "sessions" in next || "current_session_uri" in next
 
-      setState((current) => ({...current, ...next}))
+      setState((current) => {
+        const merged = {...current, ...next}
+        return clearSessionCreatePending ? {...merged, session_create_pending: false} : merged
+      })
       if (next.layout) setCurrentLayout(next.layout)
     })
 
@@ -274,6 +280,7 @@ function WorldApp({layout, state: initialState, pluginNav, caller, pushEvent, on
                   if (options?.role_slots) args.role_slots = options.role_slots
                   if (options?.socialware_config_id) args.socialware_config_id = options.socialware_config_id
                   if (options?.socialware_content_hash) args.socialware_content_hash = options.socialware_content_hash
+                  setState((current) => ({...current, session_create_pending: true, create_error: null}))
                   pushEvent?.("world:dispatch", {
                     action: "session.create",
                     args,

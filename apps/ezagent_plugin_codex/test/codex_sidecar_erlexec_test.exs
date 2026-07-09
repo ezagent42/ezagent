@@ -69,6 +69,52 @@ defmodule EzagentPluginCodex.CodexSidecarErlexecTest do
       :timer.sleep(50)
       refute AppServer.alive?(agent_uri)
     end
+
+    test "recent_output/1 returns empty string in test_mode" do
+      agent_uri = test_uri("app-server-output")
+
+      on_exit(fn -> ensure_stopped(AppServer, agent_uri) end)
+
+      assert {:ok, _pid} =
+               AppServer.start(agent_uri, %{
+                 cwd: System.tmp_dir!(),
+                 socket_path: "/tmp/codex_test_output.sock"
+               })
+
+      assert AppServer.recent_output(agent_uri) == ""
+    end
+  end
+
+  describe "AppServer readiness" do
+    test "wait_until_ready/3 fails fast when the process never creates its socket" do
+      agent_uri = test_uri("app-server-no-socket-#{System.unique_integer([:positive])}")
+
+      stub_path =
+        Path.join(System.tmp_dir!(), "stub_codex_no_socket_#{System.unique_integer([:positive])}")
+
+      socket_path =
+        Path.join(System.tmp_dir!(), "codex_no_socket_#{System.unique_integer([:positive])}.sock")
+
+      File.write!(stub_path, "#!/bin/sh\necho no-socket\nsleep 2\n")
+      File.chmod!(stub_path, 0o755)
+
+      on_exit(fn ->
+        ensure_stopped(AppServer, agent_uri)
+        File.rm(stub_path)
+        File.rm(socket_path)
+      end)
+
+      assert {:ok, _pid} =
+               AppServer.start(agent_uri, %{
+                 cwd: System.tmp_dir!(),
+                 socket_path: socket_path,
+                 codex_path: stub_path,
+                 test_mode: false
+               })
+
+      assert {:error, {:codex_app_server_socket_timeout, ^socket_path, _output}} =
+               AppServer.wait_until_ready(agent_uri, socket_path, 200)
+    end
   end
 
   describe "BridgeSidecar test_mode (no real python/uv binary needed)" do

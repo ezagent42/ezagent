@@ -41,13 +41,16 @@ defmodule Ezagent.World.WorkspacePluginData do
   end
 
   defp component_state(
-         %{component: "workspace_detail", name: name},
+         %{component: component, name: name},
          base,
          _workspace,
          _caller,
          _caps
-       ) do
-    Map.merge(base, workspace_detail(name))
+       )
+       when component in ["workspace_detail", "workspace_template_new"] do
+    base
+    |> Map.merge(workspace_detail(name))
+    |> maybe_put_template_mode(component)
   end
 
   defp component_state(%{component: "plugins"} = route, base, _workspace_uri, _caller, _caps) do
@@ -99,6 +102,11 @@ defmodule Ezagent.World.WorkspacePluginData do
   end
 
   defp component_state(_route, base, _workspace_uri, _caller, _caps), do: base
+
+  defp maybe_put_template_mode(state, "workspace_template_new"),
+    do: Map.put(state, "template_mode", "new")
+
+  defp maybe_put_template_mode(state, _component), do: state
 
   @doc "List Feishu open_id to entity bindings for the world bindings panel."
   @spec list_feishu_bindings() :: [map()]
@@ -153,7 +161,8 @@ defmodule Ezagent.World.WorkspacePluginData do
           "live" => workspace_live?(ws.uri),
           "members" => Enum.map(ws.members || [], &encode_uri/1),
           "session_templates" => template_rows(ws.session_templates || %{}, ws.name),
-          "routing_rules" => Enum.map(ws.routing_rules || [], &jsonable/1)
+          "routing_rules" => Enum.map(ws.routing_rules || [], &jsonable/1),
+          "socialwares" => socialware_rows(ws.uri)
         }
     end
   rescue
@@ -256,6 +265,74 @@ defmodule Ezagent.World.WorkspacePluginData do
   end
 
   def session_template_names(_), do: ["default"]
+
+  @doc "Installable socialware definitions visible to a workspace."
+  @spec socialware_rows(URI.t() | term()) :: [map()]
+  def socialware_rows(%URI{} = workspace_uri) do
+    workspace_uri
+    |> Ezagent.Socialware.DefinitionRegistry.list()
+    |> Enum.map(fn row ->
+      public? = Map.get(row, :public?, false)
+
+      %{
+        "name" => Map.get(row, :name),
+        "title" => Map.get(row, :title),
+        "description" => Map.get(row, :description),
+        "version" => Map.get(row, :version),
+        "config_id" => Map.get(row, :config_id),
+        "content_hash" => Map.get(row, :content_hash),
+        "roles" => socialware_role_rows(Map.get(row, :roles, []), workspace_uri),
+        "scope" => Map.get(row, :scope, if(public?, do: "public", else: "private")),
+        "workspace_uri" => encode_uri(Map.get(row, :workspace_uri)),
+        "public" => public?
+      }
+    end)
+  rescue
+    _ -> []
+  end
+
+  def socialware_rows(_), do: []
+
+  defp socialware_role_rows(roles, %URI{} = workspace_uri) when is_list(roles) do
+    Enum.map(roles, fn
+      %{fill: :agent, role_name: role_name, recipe: recipe, flavor: flavor} ->
+        %{
+          "role_name" => role_name,
+          "fill" => "agent",
+          "recipe" => recipe,
+          "flavor" => flavor,
+          "agent_options" => agent_options_for_recipe(recipe, workspace_uri)
+        }
+
+      %{fill: :human, role_name: role_name} ->
+        %{"role_name" => role_name, "fill" => "human"}
+
+      _ ->
+        nil
+    end)
+    |> Enum.reject(&is_nil/1)
+  end
+
+  defp socialware_role_rows(_roles, _workspace_uri), do: []
+
+  defp agent_options_for_recipe(recipe, %URI{} = workspace_uri)
+       when is_binary(recipe) and recipe != "" do
+    uris = Ezagent.Agent.RecipeResolver.list_by_recipe(recipe, workspace_uri)
+    display_map = Ezagent.EntityPresenter.display_many(Enum.map(uris, &URI.to_string/1))
+
+    Enum.map(uris, fn uri ->
+      uri_str = URI.to_string(uri)
+
+      %{
+        "uri" => uri_str,
+        "display_name" => Map.get(display_map, uri_str, uri_str)
+      }
+    end)
+  rescue
+    _ -> []
+  end
+
+  defp agent_options_for_recipe(_recipe, _workspace_uri), do: []
 
   # F3: a registered `session.<name>` Class is offered by the generic picker only
   # when its Template Class declares itself directly creatable (default true;
@@ -652,5 +729,6 @@ defmodule Ezagent.World.WorkspacePluginData do
   defp jsonable(other), do: other
 
   defp encode_uri(%URI{} = uri), do: URI.to_string(uri)
+  defp encode_uri(uri) when is_binary(uri), do: uri
   defp encode_uri(_), do: nil
 end

@@ -18,6 +18,32 @@ defmodule Ezagent.World.ConversationActionsTest do
              )
   end
 
+  test "create_session_result passes the baseline workspace create context" do
+    workspace_uri = Ezagent.URI.workspace(:system)
+    caller = Ezagent.Entity.User.admin_uri()
+    session_uri = Ezagent.URI.session("system", "default", "world-create-baseline")
+
+    assert {:ok, ^session_uri} =
+             ConversationActions.create_session_result(
+               workspace_uri,
+               caller,
+               "world-create-baseline",
+               "default",
+               fn got_workspace_uri, got_params, got_ctx ->
+                 assert got_workspace_uri == workspace_uri
+
+                 assert got_params == %{
+                          short_name: "world-create-baseline",
+                          template_name: "default"
+                        }
+
+                 assert got_ctx == %{caller: caller, caps: MapSet.new()}
+
+                 {:ok, %{session_uri: session_uri}}
+               end
+             )
+  end
+
   describe "routing receiver form parsing" do
     test "normalizes role receivers to tagged resolver receivers" do
       assert [
@@ -55,6 +81,18 @@ defmodule Ezagent.World.ConversationActionsTest do
     test "an unknown reason still produces a non-empty message (never a silent drop)" do
       msg = ConversationActions.session_create_error_message(:some_unmapped_reason)
       assert is_binary(msg) and msg != ""
+    end
+
+    test "unsupported Claude dev-channel errors get a concise operator message" do
+      msg =
+        ConversationActions.session_create_error_message(
+          {:agent_grant_recipe_caps_failed,
+           {:grant_failed, {:unsupported_claude_dev_channels, "/usr/bin/claude"}}}
+        )
+
+      assert msg =~ "Claude Code"
+      assert msg =~ "不支持"
+      refute msg =~ "agent_grant_recipe_caps_failed"
     end
   end
 

@@ -8,6 +8,7 @@ const WORLD_ROUTE_PATTERNS = [
   /^\/identities\/(?:users|agents)\/[^/]+\/caps$/,
   /^\/identities\/agents\/[^/]+(?:\/api-keys|\/config|\/extensions|\/terminal)?$/,
   /^\/workspaces$/,
+  /^\/workspaces\/[^/]+\/templates\/new$/,
   /^\/workspaces\/[^/]+$/,
   /^\/plugins$/,
   /^\/plugins\/feishu\/bindings$/,

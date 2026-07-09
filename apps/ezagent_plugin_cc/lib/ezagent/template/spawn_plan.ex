@@ -24,6 +24,8 @@ defmodule Ezagent.PluginCc.Template.SpawnPlan do
   @cli_user_token_env "EZAGENT_USER_TOKEN"
   @cli_entity_uri_env "EZAGENT_ENTITY_URI"
   @cli_identity_token_label "cc-cli-identity"
+  @dev_channels_flag "--dangerously-load-development-channels"
+  @dev_channels_server "server:esr-bridge"
 
   @doc false
   @spec build_pty_params(URI.t(), String.t(), map(), atom()) :: {:ok, map()} | {:error, term()}
@@ -54,10 +56,12 @@ defmodule Ezagent.PluginCc.Template.SpawnPlan do
 
   @doc false
   @spec build_claude_cmd(URI.t(), String.t(), map()) ::
-          {:ok, {[String.t()], map()}} | {:error, :claude_not_found}
+          {:ok, {[String.t()], map()}}
+          | {:error, :claude_not_found | {:unsupported_claude_dev_channels, String.t()}}
   def build_claude_cmd(%URI{} = agent_uri, agent_cwd, tmpl)
       when is_binary(agent_cwd) and is_map(tmpl) do
-    with {:ok, claude_path} <- resolve_claude_executable(agent_uri) do
+    with {:ok, claude_path} <- resolve_claude_executable(agent_uri),
+         :ok <- ensure_dev_channels_supported(claude_path) do
       config_home = CcAgent.resolve_config_home(agent_uri, tmpl)
 
       {:ok, _global_mcp_path, agent_token} =
@@ -79,8 +83,8 @@ defmodule Ezagent.PluginCc.Template.SpawnPlan do
         [
           claude_path,
           "--dangerously-skip-permissions",
-          "--dangerously-load-development-channels",
-          "server:esr-bridge"
+          @dev_channels_flag,
+          @dev_channels_server
         ] ++ settings_mcp_args
 
       base_env = %{
@@ -116,6 +120,69 @@ defmodule Ezagent.PluginCc.Template.SpawnPlan do
       claude_path ->
         {:ok, claude_path}
     end
+  end
+
+  @doc false
+  @spec ensure_dev_channels_supported(String.t()) ::
+          :ok | {:error, {:unsupported_claude_dev_channels, String.t()}}
+  def ensure_dev_channels_supported(claude_path) when is_binary(claude_path) do
+    case claude_dev_channel_probe(claude_path) do
+      :accepted ->
+        :ok
+
+      {:rejected, output} ->
+        Logger.error(
+          "cc.agent: `claude` at #{claude_path} rejects #{@dev_channels_flag}; " <>
+            "the cc bridge requires #{@dev_channels_flag} #{@dev_channels_server}. " <>
+            "Install a Claude Code build that accepts development channels or use a non-cc flavor. " <>
+            "probe_output=#{inspect(output)}"
+        )
+
+        {:error, {:unsupported_claude_dev_channels, claude_path}}
+
+      {:unknown, reason} ->
+        Logger.warning(
+          "cc.agent: could not conclusively verify #{@dev_channels_flag} support for " <>
+            "`claude` at #{claude_path}; continuing because the probe did not report an " <>
+            "unknown flag. reason=#{inspect(reason)}"
+        )
+
+        :ok
+    end
+  end
+
+  @doc false
+  @spec claude_dev_channels_supported?(String.t()) :: boolean()
+  def claude_dev_channels_supported?(claude_path) when is_binary(claude_path) do
+    case claude_dev_channel_probe(claude_path) do
+      {:rejected, _output} -> false
+      _ -> true
+    end
+  end
+
+  defp claude_dev_channel_probe(claude_path) do
+    probe_args = [@dev_channels_flag, @dev_channels_server, "--help"]
+
+    case System.cmd(claude_path, probe_args, stderr_to_stdout: true) do
+      {_output, 0} ->
+        :accepted
+
+      {output, status} when is_binary(output) ->
+        if unknown_dev_channels_flag?(output) do
+          {:rejected, output}
+        else
+          {:unknown, %{status: status, output: output}}
+        end
+    end
+  rescue
+    error in ErlangError -> {:unknown, Exception.message(error)}
+  end
+
+  defp unknown_dev_channels_flag?(output) when is_binary(output) do
+    Regex.match?(
+      ~r/(unknown|unrecognized|not recognized|invalid|unsupported|unexpected).{0,120}(option|flag|argument|arg)?.{0,120}--dangerously-load-development-channels|--dangerously-load-development-channels.{0,120}(unknown|unrecognized|not recognized|invalid|unsupported|unexpected)/i,
+      output
+    )
   end
 
   @doc false

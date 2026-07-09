@@ -4,9 +4,12 @@ defmodule Ezagent.World.WorkspacePluginActions do
   """
 
   import Phoenix.Component, only: [assign: 3]
-  import Phoenix.LiveView, only: [push_event: 3]
+  import Phoenix.LiveView, only: [push_event: 3, push_patch: 2]
 
   alias Ezagent.World.{CredentialCascade, WorkspacePluginData}
+
+  @default_world_template_installs ["chat", "orchestrator"]
+  @foundation_socialware_refs ["chat", "orchestrator", "socialware"]
 
   @doc "Route a workspace/plugin/profile world action to its handler."
   @spec handle_dispatch(Phoenix.LiveView.Socket.t(), String.t(), map()) ::
@@ -202,8 +205,10 @@ defmodule Ezagent.World.WorkspacePluginActions do
          %URI{scheme: "workspace"} = workspace_uri <- socket.assigns.current_workspace_uri,
          workspace_name <- Ezagent.URI.name!(workspace_uri),
          {:ok, socialware_definition} <- prepare_form_socialware(params),
-         socialware_ref <- socialware_ref(socialware_definition),
-         {:ok, content} <- session_template_content(params, workspace_uri, socialware_ref),
+         prepared_socialware_ref <- socialware_ref(socialware_definition),
+         selected_socialware_refs <- socialware_refs(prepared_socialware_ref, params),
+         {:ok, content} <-
+           session_template_content(params, workspace_uri, prepared_socialware_ref),
          :ok <- authorize_template_save(workspace_uri, caller, name, content),
          {:ok, _saved_socialware_ref} <-
            save_prepared_socialware(socialware_definition, workspace_uri, caller, caps),
@@ -221,10 +226,12 @@ defmodule Ezagent.World.WorkspacePluginActions do
           "template_notice" => "template_saved",
           "template_error" => nil,
           "last_template_uri" => uri_string(template_uri),
-          "last_socialware_ref" => socialware_ref
+          "last_socialware_ref" => List.first(selected_socialware_refs),
+          "last_socialware_refs" => selected_socialware_refs
         },
         "ok"
       )
+      |> patch_to_workspace_detail(workspace_name)
     else
       false ->
         put_world_state(
@@ -362,14 +369,50 @@ defmodule Ezagent.World.WorkspacePluginActions do
   defp socialware_ref(%Ezagent.Socialware.Definition{name: name}), do: name
   defp socialware_ref(nil), do: nil
 
+  defp socialware_refs(ref, _params) when is_binary(ref) and ref != "", do: [ref]
+  defp socialware_refs(_ref, params), do: authored_socialware_refs(params)
+
+  defp authored_socialware_refs(params) when is_map(params) do
+    params
+    |> Map.get("installs", Map.get(params, :installs, []))
+    |> case do
+      installs when is_list(installs) ->
+        installs |> Enum.map(&install_ref/1) |> Enum.reject(&is_nil/1)
+
+      _ ->
+        []
+    end
+    |> Enum.reject(&(&1 in @foundation_socialware_refs))
+  end
+
+  defp install_ref(ref) when is_binary(ref), do: ref
+  defp install_ref(%{"ref" => ref}) when is_binary(ref), do: ref
+  defp install_ref(%{ref: ref}) when is_binary(ref), do: ref
+  defp install_ref(_), do: nil
+
   defp session_template_content(params, %URI{} = workspace_uri, socialware_ref) do
     params
+    |> ensure_world_default_installs(socialware_ref)
     |> Map.put("default_workspace_uri", workspace_uri)
     |> Ezagent.Socialware.DefinitionEditor.composition_template_content(
       nil,
       workspace_uri,
       socialware_ref
     )
+  end
+
+  defp ensure_world_default_installs(params, socialware_ref)
+       when is_binary(socialware_ref) and socialware_ref != "",
+       do: params
+
+  defp ensure_world_default_installs(params, _socialware_ref) when is_map(params) do
+    case Map.get(params, "installs", Map.get(params, :installs)) do
+      installs when is_list(installs) and installs != [] ->
+        params
+
+      _ ->
+        Map.put(params, "installs", @default_world_template_installs)
+    end
   end
 
   defp publish_current_template(
@@ -426,6 +469,11 @@ defmodule Ezagent.World.WorkspacePluginActions do
      |> assign(:world_state_json, Jason.encode!(state))
      |> assign(:last_dispatch_status, status)
      |> push_event("world:state", updates)}
+  end
+
+  defp patch_to_workspace_detail({:noreply, socket}, workspace_name)
+       when is_binary(workspace_name) do
+    {:noreply, push_patch(socket, to: "/workspaces/#{URI.encode_www_form(workspace_name)}")}
   end
 
   defp valid_entity_uri?(caller, workspace, user_uri) do

@@ -4,7 +4,13 @@ defmodule Ezagent.PluginCodex.Template.CodexAgent.ConfigSchema do
   @doc false
   def fields do
     [
-      %{key: "model", type: :string, label: "Model"},
+      %{
+        key: "model",
+        type: :string,
+        label: "Model",
+        placeholder: "leave blank for Codex default",
+        help: "Optional; accepts a custom Codex model id"
+      },
       %{
         key: "approval_policy",
         type: :enum,

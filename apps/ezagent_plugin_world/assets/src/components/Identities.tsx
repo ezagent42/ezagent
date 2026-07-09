@@ -1,5 +1,5 @@
 import React from "react"
-import {Ban, CheckCircle2, FolderLock, HardDrive, KeyRound, Plus, RotateCcw, Save, UserRound, UsersRound} from "lucide-react"
+import {Ban, CheckCircle2, FolderLock, HardDrive, KeyRound, Loader2, Plus, RotateCcw, Save, TerminalSquare, UserRound, UsersRound} from "lucide-react"
 
 import {Button, EmptyState, Input, Select} from "./ui/primitives"
 
@@ -201,24 +201,24 @@ const agentTabs = ["Overview", "Config", "Keys", "Caps", "Extensions"] as const
 const defaultAgentFlavors = ["cc", "cc-headless", "codex", "codex-remote", "py", "curl", "native"]
 const defaultCreateSchema: Record<string, ConfigSchemaField[]> = {
   cc: [
-    {key: "model", type: "string", label: "model"},
+    {key: "model", type: "string", label: "model", placeholder: "claude-sonnet-4-6", help: "Example: claude-sonnet-4-6; leave blank for Claude Code default"},
     {key: "effort", type: "enum", label: "effort", options: ["default", "low", "medium", "high"]},
     {key: "permission_mode", type: "enum", label: "permission_mode", options: ["default", "acceptEdits", "bypassPermissions", "plan"]},
     {key: "allowed_tools", type: "string", label: "tools", help: "comma-separated list"},
   ],
   "cc-headless": [
-    {key: "model", type: "string", label: "model"},
+    {key: "model", type: "string", label: "model", placeholder: "claude-sonnet-4-6", help: "Example: claude-sonnet-4-6; leave blank for Claude Code default"},
     {key: "effort", type: "enum", label: "effort", options: ["default", "low", "medium", "high"]},
     {key: "permission_mode", type: "enum", label: "permission_mode", options: ["default", "acceptEdits", "bypassPermissions", "plan"]},
     {key: "allowed_tools", type: "string", label: "tools", help: "comma-separated list"},
   ],
   codex: [
-    {key: "model", type: "string", label: "model"},
+    {key: "model", type: "string", label: "model", placeholder: "leave blank for Codex default", help: "optional; accepts custom Codex model id"},
     {key: "approval_policy", type: "enum", label: "approval_policy", options: ["default", "on-request", "never"]},
     {key: "sandbox", type: "enum", label: "sandbox", options: ["default", "workspace-write", "read-only", "danger-full-access"]},
   ],
   "codex-remote": [
-    {key: "model", type: "string", label: "model"},
+    {key: "model", type: "string", label: "model", placeholder: "leave blank for Codex default", help: "optional; accepts custom Codex model id"},
     {key: "approval_policy", type: "enum", label: "approval_policy", options: ["default", "on-request", "never"]},
     {key: "sandbox", type: "enum", label: "sandbox", options: ["default", "workspace-write", "read-only", "danger-full-access"]},
   ],
@@ -226,7 +226,7 @@ const defaultCreateSchema: Record<string, ConfigSchemaField[]> = {
   curl: [
     {key: "provider", type: "string", label: "provider", required: true},
     {key: "api_url", type: "string", label: "api_url", required: true},
-    {key: "model", type: "string", label: "model", required: true},
+    {key: "model", type: "string", label: "model", required: true, placeholder: "deepseek-chat", help: "provider model id"},
   ],
   native: [{key: "role", type: "string", label: "role"}],
 }
@@ -833,6 +833,7 @@ function AgentDetail({state, onDeleteAgent}: {state: IdentitiesState; onDeleteAg
 
 function AgentNewForm({state, onCreateAgent}: {state: IdentitiesState; onCreateAgent?: (payload: Record<string, unknown>) => void}) {
   const flavors = allAgentFlavors(state)
+  const [creating, setCreating] = React.useState(false)
   const [form, setForm] = React.useState({
     flavor: state.default_flavor || flavors[0] || "cc",
     name: "",
@@ -868,9 +869,23 @@ function AgentNewForm({state, onCreateAgent}: {state: IdentitiesState; onCreateA
   // Light client validation; the authoritative parse runs server-side on submit.
   const capTokens = form.caps.split(",").map((c) => c.trim()).filter(Boolean)
   const capsInvalid = capTokens.some((t) => !/^[a-z][a-z0-9_]*\.[a-z][a-z0-9_]*$/.test(t))
+  const submitDisabled =
+    creating ||
+    !form.name ||
+    capsInvalid ||
+    customCwdUnavailable ||
+    customCwdMissing ||
+    missingRequiredConfigKeys.length > 0
+
+  React.useEffect(() => {
+    setCreating(false)
+  }, [state.create_error])
 
   const handleSubmit = (event: React.FormEvent) => {
     event.preventDefault()
+    if (submitDisabled) return
+    setCreating(true)
+
     // M4: submit flavor-specific config fields via A7 ingest pathway
     const cf = form.configFields || {}
     const filteredFields: Record<string, unknown> = {}
@@ -899,6 +914,7 @@ function AgentNewForm({state, onCreateAgent}: {state: IdentitiesState; onCreateA
       <form
         id="world-agent-new-form"
         data-world-agent-create-form
+        aria-busy={creating}
         className="grid gap-3 sm:grid-cols-2"
         onSubmit={handleSubmit}
       >
@@ -1005,6 +1021,27 @@ function AgentNewForm({state, onCreateAgent}: {state: IdentitiesState; onCreateA
           )}
         </div>
 
+        <label
+          className="grid min-h-[64px] grid-cols-[32px_minmax(0,1fr)_auto] items-center gap-3 rounded-md border border-border bg-background p-3 text-sm"
+          data-world-agent-create-pty
+          htmlFor="world-agent-with-pty"
+        >
+          <span className="flex size-8 items-center justify-center rounded-md border border-border bg-muted/40 text-muted-foreground">
+            <TerminalSquare className="size-4" aria-hidden="true" />
+          </span>
+          <span className="grid min-w-0 gap-1">
+            <span className="font-medium text-foreground">With PTY</span>
+            <span className="text-xs text-muted-foreground">Interactive terminal sidecar</span>
+          </span>
+          <input
+            id="world-agent-with-pty"
+            type="checkbox"
+            checked={form.with_pty}
+            onChange={(event) => setForm({...form, with_pty: event.target.checked})}
+            className="size-4 rounded border-border text-primary focus:ring-ring"
+          />
+        </label>
+
         {/* M4: Flavor-specific config fields from schema (A4/A7 enabled) */}
         {flavorSchema.filter(f => f.key !== "soul_md").length > 0 && (
           <div className="sm:col-span-2 border-t border-border pt-3">
@@ -1035,14 +1072,14 @@ function AgentNewForm({state, onCreateAgent}: {state: IdentitiesState; onCreateA
                       rows={2}
                       value={form.configFields[f.key] || ""}
                       onChange={(e) => setForm({...form, configFields: {...form.configFields, [f.key]: e.target.value}})}
-                      placeholder={String(f.default || "")}
+                      placeholder={fieldPlaceholder(f)}
                     />
                   ) : (
                     <Input
                       value={form.configFields[f.key] || ""}
                       onChange={(e) => setForm({...form, configFields: {...form.configFields, [f.key]: e.target.value}})}
                       className="font-mono text-xs"
-                      placeholder={String(f.default || "")}
+                      placeholder={fieldPlaceholder(f)}
                     />
                   )}
                 </label>
@@ -1064,16 +1101,15 @@ function AgentNewForm({state, onCreateAgent}: {state: IdentitiesState; onCreateA
           <code className={codeClass}>{preview}</code>
           <Button
             type="submit"
-            disabled={
-              !form.name ||
-              capsInvalid ||
-              customCwdUnavailable ||
-              customCwdMissing ||
-              missingRequiredConfigKeys.length > 0
-            }
+            data-world-agent-create-submit
+            disabled={submitDisabled}
           >
-            <Plus aria-hidden="true" />
-            Create
+            {creating ? (
+              <Loader2 className="animate-spin" aria-hidden="true" />
+            ) : (
+              <Plus aria-hidden="true" />
+            )}
+            {creating ? "Creating..." : "Create"}
           </Button>
         </div>
       </form>
@@ -1167,6 +1203,7 @@ type ConfigSchemaField = {
   label?: string
   options?: string[]
   default?: unknown
+  placeholder?: string
   required?: boolean
   help?: string
 }
@@ -1756,6 +1793,12 @@ function activeMatches(active: string, label: string) {
 
 function allAgentFlavors(state: IdentitiesState): string[] {
   return Array.from(new Set([...(state.flavors || []), ...defaultAgentFlavors]))
+}
+
+function fieldPlaceholder(field: ConfigSchemaField): string {
+  if (field.placeholder) return field.placeholder
+  if (field.default != null && field.default !== "") return String(field.default)
+  return ""
 }
 
 function createSchemaForFlavor(flavor: string, schema?: ConfigSchemaField[]): ConfigSchemaField[] {

@@ -47,6 +47,11 @@ assert.equal(
 )
 
 assert.equal(
+  worldNavigationTarget(click(anchor({href: "/workspaces/team-alpha/templates/new"})), root, current),
+  "/workspaces/team-alpha/templates/new"
+)
+
+assert.equal(
   worldNavigationTarget(click(anchor({href: "/sessions?session=session%3A%2F%2Fsystem%2Fdefault%2Fmain"})), root, current),
   "/sessions?session=session%3A%2F%2Fsystem%2Fdefault%2Fmain"
 )

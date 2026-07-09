@@ -53,6 +53,7 @@ defmodule EzagentWeb.Router do
         live "/identities/agents/:uri/terminal", WorldLive
         live "/identities/agents/:uri", WorldLive
         live "/workspaces", WorldLive
+        live "/workspaces/:name/templates/new", WorldLive
         live "/workspaces/:name", WorldLive
         live "/plugins", WorldLive
         live "/plugins/feishu/bindings", WorldLive
@@ -95,6 +96,7 @@ defmodule EzagentWeb.Router do
       live "/identities/agents/:uri/terminal", WorldLive
       live "/identities/agents/:uri", WorldLive
       live "/workspaces", WorldLive
+      live "/workspaces/:name/templates/new", WorldLive
       live "/workspaces/:name", WorldLive
       live "/plugins", WorldLive
       live "/plugins/feishu/bindings", WorldLive

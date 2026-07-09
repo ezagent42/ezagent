@@ -36,12 +36,15 @@ const ghostBtn =
 function RecommendedNext({
   sessions,
   templates,
+  workspaceUri,
 }: {
   sessions?: Array<{uri: string; name: string}>
   templates?: string[]
+  workspaceUri?: string | null
 }) {
   const continueSession = sessions?.[0]
   const templateCount = templates?.length ?? 0
+  const newTemplatePath = workspaceTemplateNewPath(workspaceUri)
 
   return (
     <section className={`${card} p-5`} aria-labelledby="recommended-title">
@@ -49,11 +52,6 @@ function RecommendedNext({
       <h2 id="recommended-title" className="mt-1 text-lg font-semibold text-foreground">
         {continueSession ? `进入「${continueSession.name}」` : "开始你的工作"}
       </h2>
-      <p className="mt-1 text-sm text-muted-foreground">
-        {continueSession
-          ? "从已有会话继续，或创建新 Agent 挂入协作。"
-          : "当前没有活跃会话，选择一个模板快速开始。"}
-      </p>
       <div className="mt-4 flex flex-wrap gap-2">
         {continueSession ? (
           <a
@@ -72,15 +70,23 @@ function RecommendedNext({
           <Activity className="h-4 w-4" />
           浏览 Sessions
         </a>
-        {templateCount > 0 ? (
-          <a className={ghostBtn} href="/sessions">
-            <LayoutDashboard className="h-4 w-4" />
-            新建 Session ({templateCount} 模板)
-          </a>
-        ) : null}
+        <a className={ghostBtn} href={newTemplatePath} title={`${templateCount} templates available`}>
+          <LayoutDashboard className="h-4 w-4" />
+          新建 Template
+        </a>
       </div>
     </section>
   )
+}
+
+function workspaceTemplateNewPath(workspaceUri?: string | null) {
+  const name = workspaceNameFromUri(workspaceUri) || "system"
+  return `/workspaces/${encodeURIComponent(name)}/templates/new`
+}
+
+function workspaceNameFromUri(workspaceUri?: string | null) {
+  if (!workspaceUri?.startsWith("workspace://")) return null
+  return workspaceUri.replace("workspace://", "").split("/")[0] || null
 }
 
 // ── Section 2: Key Status (upgraded KPI with product labels) ───────
@@ -152,7 +158,11 @@ export function Overview({state}: {state?: OverviewState}) {
 
   return (
     <div className="space-y-6" data-world-component="overview">
-      <RecommendedNext sessions={state?.available_sessions} templates={state?.session_template_names} />
+      <RecommendedNext
+        sessions={state?.available_sessions}
+        templates={state?.session_template_names}
+        workspaceUri={state?.workspace_uri}
+      />
       <KeyStatus kpis={kpis} />
       <ContinueSessions sessions={state?.available_sessions} />
     </div>

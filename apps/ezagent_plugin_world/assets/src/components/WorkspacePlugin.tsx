@@ -1,5 +1,5 @@
 import React from "react"
-import {BadgeCheck, Boxes, Cable, ChevronRight, Layers, Pencil, Plug, Save, Trash2, UserRound, X} from "lucide-react"
+import {BadgeCheck, Bot, Boxes, Cable, Check, ChevronRight, Layers, Pencil, Plug, Plus, Save, Trash2, UserRound, X} from "lucide-react"
 
 import {Button, EmptyState, Input, Stat} from "./ui/primitives"
 
@@ -28,7 +28,9 @@ export type WorkspacePluginState = {
   plugins?: DataRow[]
   routing_rules?: DataRow[]
   session_templates?: DataRow[]
+  socialwares?: DataRow[]
   template_error?: string | null
+  template_mode?: string | null
   template_notice?: string | null
   title?: string
   uri?: string | null
@@ -53,6 +55,8 @@ const iconButtonClass =
 const actionLinkClass =
   "inline-flex w-fit items-center gap-1.5 rounded-md bg-primary px-3 py-1.5 text-sm font-medium text-primary-foreground transition hover:opacity-90"
 const fieldLabelClass = "grid gap-1 text-xs font-medium text-muted-foreground"
+const selectClass =
+  "h-9 rounded-md border border-input bg-background px-3 text-sm text-foreground outline-none transition focus:border-ring focus:ring-2 focus:ring-ring/30"
 
 export function WorkspacePluginSurface({
   state,
@@ -67,6 +71,7 @@ export function WorkspacePluginSurface({
 
   switch (state.component) {
     case "workspace_detail":
+    case "workspace_template_new":
       content = <WorkspaceDetail state={state} onAction={onAction} />
       break
     case "plugins":
@@ -204,6 +209,24 @@ function WorkspaceDetail({
     )
   }
 
+  const creatingTemplate = state.component === "workspace_template_new" || state.template_mode === "new"
+  const templateNewPath = workspaceTemplateNewPath(String(state.name || "system"))
+
+  if (creatingTemplate) {
+    return (
+      <section className={surfaceClass} data-world-component="workspace_template_new">
+        <Header eyebrow="Template" title="New template" icon={<Layers className="h-4 w-4" />} />
+        <div className="flex flex-wrap items-center justify-between gap-3">
+          <code className={uriClass}>{state.uri}</code>
+          <a className="text-sm font-medium text-muted-foreground transition hover:text-foreground" href={`/workspaces/${encodeURIComponent(String(state.name || "system"))}`}>
+            Back to workspace
+          </a>
+        </div>
+        <TemplateBuilder state={state} onAction={onAction} />
+      </section>
+    )
+  }
+
   return (
     <section className={surfaceClass} data-world-component="workspace_detail">
       <Header eyebrow="Workspace" title={String(state.name || "Workspace")} icon={<Boxes className="h-4 w-4" />} />
@@ -213,6 +236,10 @@ function WorkspaceDetail({
         <Stat icon={<Cable className="h-4 w-4" />} label="Routing rules" value={(state.routing_rules || []).length} />
       </div>
       <code className={uriClass}>{state.uri}</code>
+      <a className={actionLinkClass} href={templateNewPath} data-world-template-new-entry>
+        <Plus size={16} />
+        New template
+      </a>
       <section className={subsectionClass} data-world-component="workspace-members">
         <Header eyebrow="List" title="Members" compact />
         <div className="space-y-1">
@@ -232,13 +259,55 @@ function WorkspaceDetail({
           {(state.members || []).length === 0 && <EmptyState label="No entries." />}
         </div>
       </section>
-      <SessionTemplatePanel state={state} onAction={onAction} />
+      <SessionTemplateList state={state} />
       <DataTable component="workspace-routing" title="Routing rules" rows={state.routing_rules || []} nested />
     </section>
   )
 }
 
-function SessionTemplatePanel({
+function SessionTemplateList({
+  state,
+}: {
+  state: WorkspacePluginState
+}) {
+  return (
+    <section className={subsectionClass} data-world-component="workspace-templates">
+      <Header eyebrow="Templates" title="Session templates" compact />
+      {state.template_notice && <p className="text-sm text-emerald-600 dark:text-emerald-400">{state.template_notice}</p>}
+      {state.template_error && <p className="text-sm text-destructive">{state.template_error}</p>}
+      <DataTable component="workspace-templates" title="Saved templates" rows={state.session_templates || []} nested />
+    </section>
+  )
+}
+
+type SocialwareRole = {
+  role_name: string
+  fill: "agent" | "human"
+  recipe?: string | null
+  flavor?: string | null
+  agent_options?: Array<{uri: string; display_name?: string | null}>
+}
+
+type SocialwareRow = DataRow & {
+  name?: string
+  title?: string | null
+  description?: string | null
+  roles?: SocialwareRole[]
+  public?: boolean
+  scope?: string | null
+}
+
+type RoleSlotChoice = {
+  role_name: string
+  mode: "fresh" | "reuse"
+  flavor?: string
+  agent_uri?: string
+}
+
+const FOUNDATION_SOCIALWARE_REFS = new Set(["chat", "orchestrator", "socialware"])
+const DEFAULT_TEMPLATE_INSTALLS = ["chat", "orchestrator"]
+
+function TemplateBuilder({
   state,
   onAction,
 }: {
@@ -247,108 +316,343 @@ function SessionTemplatePanel({
 }) {
   const [name, setName] = React.useState("")
   const [description, setDescription] = React.useState("")
-  const [webAnonAccess, setWebAnonAccess] = React.useState(false)
-  const socialwareName = `${name.trim() || "socialware"}-app`
-  const publishPolicy = webAnonAccess ? "supervised" : "auto"
+  const [selectedSocialwareRefs, setSelectedSocialwareRefs] = React.useState<string[]>([])
+  const [roleChoices, setRoleChoices] = React.useState<Record<string, RoleSlotChoice>>({})
+  const socialwares = React.useMemo(() => templateSocialwares(state), [state.socialwares])
+  const selectedSocialwares = React.useMemo(
+    () => socialwares.filter((socialware) => selectedSocialwareRefs.includes(String(socialware.name || ""))),
+    [socialwares, selectedSocialwareRefs],
+  )
+
+  React.useEffect(() => {
+    setRoleChoices((current) => {
+      const next: Record<string, RoleSlotChoice> = {}
+
+      for (const socialware of selectedSocialwares) {
+        for (const role of socialware.roles || []) {
+          if (role.fill !== "agent") continue
+          const key = roleChoiceKey(socialware, role)
+          next[key] = current[key] || {
+            role_name: role.role_name,
+            mode: "fresh",
+            flavor: role.flavor || undefined,
+          }
+        }
+      }
+
+      return next
+    })
+  }, [selectedSocialwares])
 
   return (
-    <section className={subsectionClass} data-world-component="workspace-templates">
-      <Header eyebrow="Config" title="Session templates" compact />
+    <section
+      className={subsectionClass}
+      data-world-component="workspace-template-builder"
+      data-world-template-new-entry="true"
+    >
+      <Header eyebrow="Builder" title="Template setup" compact />
       {state.template_notice && <p className="text-sm text-emerald-600 dark:text-emerald-400">{state.template_notice}</p>}
       {state.template_error && <p className="text-sm text-destructive">{state.template_error}</p>}
       <form
         id="world-session-template-form"
-        className="grid gap-3 sm:grid-cols-2"
+        className="grid gap-4"
         onSubmit={(event) => {
           event.preventDefault()
+          const template: Record<string, unknown> = {
+            name: name.trim(),
+            description,
+          }
+
+          const installs = selectedSocialwares.flatMap((socialware) => {
+            if (!socialware.name) return []
+            const config = installConfigForTemplate(socialware, roleChoices)
+            const install: Record<string, unknown> = {ref: socialware.name}
+
+            if (config.role_slots.length > 0) install.config = config
+            return [install]
+          })
+
+          template.installs = installs.length > 0 ? installs : DEFAULT_TEMPLATE_INSTALLS
+
           onAction("workspace.template.save", {
-            template: {
-              name,
-              description,
-              installs: [socialwareName],
-              socialware: {
-                name: socialwareName,
-                bases: ["Ezagent.ActionSet.Session", "Ezagent.ActionSet.Publisher.SessionImpl"],
-                shape: ["Ezagent.ActionSet.Turn", "Ezagent.ActionSet.Surface"],
-                members: [
-                  {
-                    uri: "entity://system/agent/bot",
-                    role_name: "bot",
-                    in_session_template: true,
-                  },
-                ],
-                routing_rules: [
-                  {
-                    matcher: {type: "always"},
-                    receivers: ["bot"],
-                    rule_set: "default",
-                    position: 0,
-                    prompt_template_ref: "answer",
-                  },
-                ],
-                prompt_templates: {
-                  answer: "Answer from the socialware knowledge and session context.",
-                },
-                legends: {
-                  default: {
-                    member_set: ["bot"],
-                    bound_rule_set: "default",
-                    fold: false,
-                  },
-                },
-                adapters: [
-                  {
-                    adapter_id: "web_feed",
-                    role: webAnonAccess ? "customer" : "internal",
-                    config: {},
-                  },
-                ],
-                visibility_policy: {
-                  publish_policy: publishPolicy,
-                  web_anon_access: webAnonAccess,
-                },
-              },
-            },
+            template,
           })
         }}
       >
-        <label className={fieldLabelClass}>
-          Name
-          <Input
-            id="world-session-template-name"
-            value={name}
-            onChange={(event) => setName(event.target.value)}
-            placeholder="public-demo"
-          />
-        </label>
-        <label className={fieldLabelClass}>
-          Description
-          <Input
-            id="world-session-template-description"
-            value={description}
-            onChange={(event) => setDescription(event.target.value)}
-            placeholder="Public customer-facing session"
-          />
-        </label>
-        <label className="flex items-center gap-2 text-sm text-foreground">
-          <input
-            id="world-session-template-web-anon-access"
-            type="checkbox"
-            checked={webAnonAccess}
-            onChange={(event) => setWebAnonAccess(event.target.checked)}
-          />
-          <span>Public socialware app</span>
-        </label>
-        <div className="sm:col-span-2">
+        <div className="grid gap-3 sm:grid-cols-2">
+          <label className={fieldLabelClass} htmlFor="world-session-template-name">
+            Name
+            <Input
+              id="world-session-template-name"
+              value={name}
+              onChange={(event) => setName(event.target.value)}
+              placeholder="support-team"
+            />
+          </label>
+          <label className={fieldLabelClass} htmlFor="world-session-template-description">
+            Description
+            <Input
+              id="world-session-template-description"
+              value={description}
+              onChange={(event) => setDescription(event.target.value)}
+              placeholder="Workspace template"
+            />
+          </label>
+        </div>
+
+        <div className="grid gap-3" data-world-socialware-plugin-picker>
+          <div className="flex items-center justify-between gap-3">
+            <Header eyebrow="Plugins" title="Socialware plugins" compact />
+            {selectedSocialwares.length > 0 && (
+              <button
+                className="text-xs font-medium text-muted-foreground transition hover:text-foreground"
+                type="button"
+                onClick={() => setSelectedSocialwareRefs([])}
+              >
+                Clear
+              </button>
+            )}
+          </div>
+          <div className="grid gap-2 sm:grid-cols-2 xl:grid-cols-3">
+            <button
+              className={
+                selectedSocialwares.length === 0
+                  ? "min-h-[96px] rounded-md border border-primary/50 bg-accent/70 p-3 text-left text-sm text-accent-foreground"
+                  : "min-h-[96px] rounded-md border border-border bg-background p-3 text-left text-sm text-foreground transition hover:border-primary/40 hover:bg-muted/40"
+              }
+              type="button"
+              onClick={() => setSelectedSocialwareRefs([])}
+              aria-pressed={selectedSocialwares.length === 0}
+            >
+              <span className="flex items-center justify-between gap-2 font-semibold">
+                <span className="flex min-w-0 items-center gap-2">
+                  <Layers className="h-4 w-4 flex-none" aria-hidden="true" />
+                  <span className="truncate">Default template</span>
+                </span>
+                {selectedSocialwares.length === 0 && <Check className="h-4 w-4 flex-none" aria-hidden="true" />}
+              </span>
+              <span className="mt-1 block text-xs text-muted-foreground">{DEFAULT_TEMPLATE_INSTALLS.join(", ")}</span>
+            </button>
+            {socialwares.map((socialware) => {
+              const ref = String(socialware.name || "")
+              const selected = selectedSocialwareRefs.includes(ref)
+
+              return (
+                <button
+                  className={
+                    selected
+                      ? "min-h-[96px] rounded-md border border-primary/50 bg-accent/70 p-3 text-left text-sm text-accent-foreground"
+                      : "min-h-[96px] rounded-md border border-border bg-background p-3 text-left text-sm text-foreground transition hover:border-primary/40 hover:bg-muted/40"
+                  }
+                  type="button"
+                  key={ref}
+                  onClick={() =>
+                    setSelectedSocialwareRefs((current) =>
+                      current.includes(ref) ? current.filter((item) => item !== ref) : [...current, ref],
+                    )
+                  }
+                  aria-pressed={selected}
+                  data-world-socialware-plugin-option={ref}
+                  data-world-socialware-plugin-selected={selected ? "true" : "false"}
+                >
+                  <span className="flex items-center justify-between gap-2 font-semibold">
+                    <span className="flex min-w-0 items-center gap-2">
+                      <Plug className="h-4 w-4 flex-none" aria-hidden="true" />
+                      <span className="truncate">{socialware.title || socialware.name}</span>
+                    </span>
+                    {selected && <Check className="h-4 w-4 flex-none" aria-hidden="true" />}
+                  </span>
+                  <span className="mt-1 line-clamp-2 block text-xs text-muted-foreground">{socialware.description || socialware.name}</span>
+                </button>
+              )
+            })}
+          </div>
+          {socialwares.length === 0 && <EmptyState label="No socialware plugins published." />}
+        </div>
+
+        {selectedSocialwares.length > 0 && (
+          <div className="grid gap-3 rounded-md border border-border bg-background p-3" data-world-template-role-entity-config>
+            <Header eyebrow="Roles" title="Role and Entity" compact />
+            {selectedSocialwares.map((socialware) => (
+              <div key={socialware.name} className="grid gap-2 rounded-md border border-border bg-card/60 p-3" data-world-template-selected-socialware={socialware.name}>
+                <div className="flex min-w-0 items-center gap-2">
+                  <Plug className="h-4 w-4 flex-none text-muted-foreground" aria-hidden="true" />
+                  <p className="truncate text-sm font-semibold text-foreground">{socialware.title || socialware.name}</p>
+                </div>
+                {(socialware.roles || []).length === 0 ? (
+                  <EmptyState label="No role slots declared." />
+                ) : (
+                  (socialware.roles || []).map((role) =>
+                    role.fill === "agent" ? (
+                      <TemplateAgentRoleSlot
+                        key={`${socialware.name}:${role.role_name}`}
+                        role={role}
+                        slotKey={roleDomId(socialware, role)}
+                        dataKey={`${socialware.name}:${role.role_name}`}
+                        choice={roleChoices[roleChoiceKey(socialware, role)]}
+                        onChange={(choice) =>
+                          setRoleChoices((current) => ({...current, [roleChoiceKey(socialware, role)]: choice}))
+                        }
+                      />
+                    ) : (
+                      <TemplateHumanRoleSlot
+                        key={`${socialware.name}:${role.role_name}`}
+                        role={role}
+                        dataKey={`${socialware.name}:${role.role_name}`}
+                      />
+                    ),
+                  )
+                )}
+              </div>
+            ))}
+          </div>
+        )}
+        <div>
           <Button variant="primary" type="submit">
             <Save size={16} />
             Save template
           </Button>
         </div>
       </form>
-      <DataTable component="workspace-templates" title="Saved templates" rows={state.session_templates || []} nested />
     </section>
   )
+}
+
+function templateSocialwares(state: WorkspacePluginState): SocialwareRow[] {
+  return (state.socialwares || [])
+    .map((row) => normalizeSocialwareRow(row))
+    .filter((row) => Boolean(row.name) && !FOUNDATION_SOCIALWARE_REFS.has(String(row.name)))
+}
+
+function normalizeSocialwareRow(row: DataRow): SocialwareRow {
+  return {
+    ...row,
+    name: typeof row.name === "string" ? row.name : undefined,
+    title: typeof row.title === "string" ? row.title : null,
+    description: typeof row.description === "string" ? row.description : null,
+    roles: Array.isArray(row.roles) ? (row.roles as SocialwareRole[]) : [],
+  }
+}
+
+function installConfigForTemplate(socialware: SocialwareRow, choices: Record<string, RoleSlotChoice>) {
+  const roleSlots = (socialware.roles || [])
+    .filter((role) => role.fill === "agent")
+    .map((role) => {
+      const choice = choices[roleChoiceKey(socialware, role)] || {
+        role_name: role.role_name,
+        mode: "fresh",
+        flavor: role.flavor || undefined,
+      }
+
+      return {
+        role_name: role.role_name,
+        mode: choice.mode,
+        flavor: choice.mode === "fresh" ? choice.flavor || role.flavor || undefined : undefined,
+        agent_uri: choice.mode === "reuse" ? choice.agent_uri : undefined,
+      }
+    })
+    .filter((choice) => choice.mode === "fresh" || Boolean(choice.agent_uri))
+
+  return {role_slots: roleSlots}
+}
+
+function roleChoiceKey(socialware: SocialwareRow, role: SocialwareRole) {
+  return `${String(socialware.name || "")}:${role.role_name}`
+}
+
+function roleDomId(socialware: SocialwareRow, role: SocialwareRole) {
+  return roleChoiceKey(socialware, role).replace(/[^a-zA-Z0-9_-]+/g, "-")
+}
+
+function TemplateAgentRoleSlot({
+  role,
+  slotKey,
+  dataKey,
+  choice,
+  onChange,
+}: {
+  role: SocialwareRole
+  slotKey: string
+  dataKey: string
+  choice?: RoleSlotChoice
+  onChange: (choice: RoleSlotChoice) => void
+}) {
+  const current = choice || {role_name: role.role_name, mode: "fresh", flavor: role.flavor || undefined}
+  const options = role.agent_options || []
+
+  return (
+    <div className="grid gap-2 rounded-md border border-border bg-card p-3" data-world-template-agent-role-slot={dataKey}>
+      <div className="flex min-w-0 items-center gap-2">
+        <Bot className="h-4 w-4 flex-none text-muted-foreground" aria-hidden="true" />
+        <div className="min-w-0 flex-1">
+          <p className="truncate text-sm font-semibold text-foreground">Role: {role.role_name}</p>
+          <p className="truncate text-xs text-muted-foreground">{role.recipe || "recipe"} · {role.flavor || "default"}</p>
+        </div>
+      </div>
+      <label className={fieldLabelClass} htmlFor={`template-role-entity-${slotKey}`}>
+        Entity
+        <select
+          id={`template-role-entity-${slotKey}`}
+          className={selectClass}
+          value={current.mode}
+          onChange={(event) => {
+            const mode = event.target.value === "reuse" ? "reuse" : "fresh"
+            onChange({
+              ...current,
+              mode,
+              agent_uri: mode === "reuse" ? current.agent_uri || options[0]?.uri : undefined,
+            })
+          }}
+        >
+          <option value="fresh">Create agent from role</option>
+          <option value="reuse" disabled={options.length === 0}>Reuse existing agent</option>
+        </select>
+      </label>
+      {current.mode === "fresh" ? (
+        <label className={fieldLabelClass} htmlFor={`template-role-flavor-${slotKey}`}>
+          Flavor
+          <Input
+            id={`template-role-flavor-${slotKey}`}
+            value={current.flavor || ""}
+            onChange={(event) => onChange({...current, flavor: event.target.value})}
+            placeholder={role.flavor || "default"}
+          />
+        </label>
+      ) : (
+        <label className={fieldLabelClass} htmlFor={`template-role-agent-${slotKey}`}>
+          Agent
+          <select
+            id={`template-role-agent-${slotKey}`}
+            className={selectClass}
+            value={current.agent_uri || options[0]?.uri || ""}
+            onChange={(event) => onChange({...current, mode: "reuse", agent_uri: event.target.value})}
+          >
+            {options.map((agent) => (
+              <option key={agent.uri} value={agent.uri}>
+                {agent.display_name || agent.uri}
+              </option>
+            ))}
+          </select>
+        </label>
+      )}
+    </div>
+  )
+}
+
+function TemplateHumanRoleSlot({role, dataKey}: {role: SocialwareRole; dataKey: string}) {
+  return (
+    <div className="flex min-w-0 items-center gap-2 rounded-md border border-dashed border-border bg-card p-3" data-world-template-human-role-slot={dataKey}>
+      <UserRound className="h-4 w-4 flex-none text-muted-foreground" aria-hidden="true" />
+      <div className="min-w-0 flex-1">
+        <p className="truncate text-sm font-semibold text-foreground">Role: {role.role_name}</p>
+        <p className="truncate text-xs text-muted-foreground">Entity: human slot</p>
+      </div>
+    </div>
+  )
+}
+
+function workspaceTemplateNewPath(workspaceName: string) {
+  return `/workspaces/${encodeURIComponent(workspaceName)}/templates/new`
 }
 
 function Plugins({state}: {state: WorkspacePluginState}) {

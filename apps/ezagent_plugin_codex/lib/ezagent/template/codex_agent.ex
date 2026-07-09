@@ -14,6 +14,7 @@ defmodule Ezagent.PluginCodex.Template.CodexAgent do
   require Logger
 
   @compile_env Mix.env()
+  @app_server_ready_wait_ms 5_000
   @thread_id_wait_ms 15_000
 
   @impl Ezagent.Kind.Template
@@ -302,16 +303,37 @@ defmodule Ezagent.PluginCodex.Template.CodexAgent do
 
   defp ensure_app_server(agent_uri, cwd, socket_path, codex_path, test_mode, tmpl) do
     if EzagentPluginCodex.AppServer.alive?(agent_uri) do
-      :ok
+      ensure_app_server_ready(agent_uri, socket_path, test_mode)
     else
       case EzagentPluginCodex.AppServer.start(
              agent_uri,
              build_app_server_params(cwd, socket_path, codex_path, test_mode, tmpl)
            ) do
-        {:ok, _pid} -> :ok
-        {:error, {:already_started, _pid}} -> :ok
-        {:error, reason} -> {:error, {:codex_app_server_start_failed, reason}}
+        {:ok, _pid} ->
+          ensure_app_server_ready(agent_uri, socket_path, test_mode)
+
+        {:error, {:already_started, _pid}} ->
+          ensure_app_server_ready(agent_uri, socket_path, test_mode)
+
+        {:error, reason} ->
+          {:error, {:codex_app_server_start_failed, reason}}
       end
+    end
+  end
+
+  # Shared by CodexRemoteAgent (via defdelegate) — same app-server readiness
+  # wait, so it lives here once rather than being copied into the remote flavor.
+  @doc false
+  def ensure_app_server_ready(_agent_uri, _socket_path, true), do: :ok
+
+  def ensure_app_server_ready(agent_uri, socket_path, false) do
+    case EzagentPluginCodex.AppServer.wait_until_ready(
+           agent_uri,
+           socket_path,
+           @app_server_ready_wait_ms
+         ) do
+      :ok -> :ok
+      {:error, reason} -> {:error, {:codex_app_server_not_ready, reason}}
     end
   end
 
