@@ -712,6 +712,12 @@ defmodule Ezagent.ActionSet.Workspace do
                    workspace_uri,
                    caller
                  ) do
+            # rev6 / #912 — the session is now durable and owner-only. Its
+            # declared agent role slots are an AGENT transaction: fire it off
+            # under its own supervisor and return immediately. A member that
+            # fails to start surfaces loudly there; it never fails this create
+            # nor rolls the session back.
+            trigger_socialware_install(facade, session_uri)
             {:ok, %{session_uri: session_uri}, []}
           end
 
@@ -719,6 +725,16 @@ defmodule Ezagent.ActionSet.Workspace do
           {:error, reason}
       end
     end
+  end
+
+  # The facade is runtime-resolved (see `resolve_session_facade/0`), so a test
+  # double without the install entry point simply skips the step.
+  defp trigger_socialware_install(facade, %URI{} = session_uri) do
+    if function_exported?(facade, :install_session_socialware_async, 1) do
+      facade.install_session_socialware_async(session_uri)
+    end
+
+    :ok
   end
 
   # SPEC `2026-05-26-session-create-orchestrator-unified` Gap C — DI

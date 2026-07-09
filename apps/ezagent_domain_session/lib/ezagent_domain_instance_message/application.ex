@@ -119,6 +119,11 @@ defmodule EzagentDomainInstanceMessage.Application do
       # HIGH-1 ordering fix), which runs each job as a Task under this
       # supervisor. Supervisor first: the queue starts Tasks under it.
       {Task.Supervisor, name: Ezagent.Session.DeliverySupervisor},
+      # rev6 / #912 — the post-create socialware-install transaction. Session
+      # creation is owner-only; agent role slots are materialized HERE, in a
+      # separate supervised transaction that can fail loudly without rolling
+      # the session back.
+      {Task.Supervisor, name: Ezagent.Session.SocialwareInstallSupervisor},
       {Ezagent.Session.DeliveryQueue, []}
     ]
 

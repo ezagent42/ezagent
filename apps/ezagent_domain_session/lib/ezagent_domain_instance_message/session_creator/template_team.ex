@@ -5,13 +5,18 @@ defmodule EzagentDomainInstanceMessage.SessionCreator.TemplateTeam do
   alias Ezagent.Socialware.DefinitionEditor
   alias EzagentDomainInstanceMessage.SessionCreator.DefinitionAgents
 
-  @spec materialize_template_team(URI.t(), URI.t(), URI.t(), map()) :: :ok | {:error, term()}
-  def materialize_template_team(
-        %URI{} = session_uri,
-        %URI{} = workspace_uri,
-        %URI{} = granted_by,
-        template_content
-      )
+  @doc """
+  Install the template's CONFIG into the session: prompt templates, legends and
+  routing rule sets. Spawns nothing.
+
+  This is the ONLY part of the old `materialize_template_team/4` the rev6 create
+  contract permits (`SessionCreator` moduledoc step 4 — "record the template
+  declaration and install template prompts/legends/rules"). Agent role slots are
+  materialized by `materialize_definition_agents/4`, which runs as its OWN
+  transaction AFTER create returns.
+  """
+  @spec materialize_template_config(URI.t(), URI.t(), map()) :: :ok | {:error, term()}
+  def materialize_template_config(%URI{} = session_uri, %URI{} = workspace_uri, template_content)
       when is_map(template_content) do
     with {:ok, socialware_config} <-
            DefinitionEditor.config_for_template(template_content, workspace_uri) do
@@ -25,21 +30,62 @@ defmodule EzagentDomainInstanceMessage.SessionCreator.TemplateTeam do
                workspace_uri,
                socialware_config,
                declared_roles
-             ),
-           # P1 — materialize the installed socialware Definitions' agent role
-           # slots (`%{recipe, role_name, flavor}`) as spawned session members with recipe
-           # caps. Runs on BOTH the fresh-create and repair paths (idempotent).
-           :ok <-
-             DefinitionAgents.materialize_definition_agents(
-               session_uri,
-               workspace_uri,
-               granted_by,
-               socialware_config
-               |> Map.get(:roles, [])
-               |> Enum.filter(&agent_role_slot?/1)
              ) do
         :ok
       end
+    end
+  end
+
+  def materialize_template_config(_session, _ws, _content), do: :ok
+
+  @doc """
+  Materialize the installed socialware Definitions' agent role slots
+  (`%{recipe, role_name, flavor}`) as spawned session members with recipe caps.
+
+  **This is an AGENT transaction and MUST NOT run inside the session-create
+  transaction** (rev6 / #912; regressed by #1140 + #1223). Callers: the post-create
+  socialware-install step, `repair_orchestrator/1`, and the plugin app-instantiate
+  paths. Idempotent — a role already joined is skipped.
+  """
+  @spec materialize_definition_agents(URI.t(), URI.t(), URI.t(), map()) :: :ok | {:error, term()}
+  def materialize_definition_agents(
+        %URI{} = session_uri,
+        %URI{} = workspace_uri,
+        %URI{} = granted_by,
+        template_content
+      )
+      when is_map(template_content) do
+    with {:ok, socialware_config} <-
+           DefinitionEditor.config_for_template(template_content, workspace_uri) do
+      DefinitionAgents.materialize_definition_agents(
+        session_uri,
+        workspace_uri,
+        granted_by,
+        socialware_config
+        |> Map.get(:roles, [])
+        |> Enum.filter(&agent_role_slot?/1)
+      )
+    end
+  end
+
+  def materialize_definition_agents(_session, _ws, _granted_by, _content), do: :ok
+
+  @doc """
+  Config + agents in one call. Used by the REPAIR path and by plugin
+  app-instantiate flows that create and populate a session as one operator
+  action. **Never call this from `SessionCreator.create_session/3`** — the arch
+  gate `session_create_no_agent_spawn_test` enforces that.
+  """
+  @spec materialize_template_team(URI.t(), URI.t(), URI.t(), map()) :: :ok | {:error, term()}
+  def materialize_template_team(
+        %URI{} = session_uri,
+        %URI{} = workspace_uri,
+        %URI{} = granted_by,
+        template_content
+      )
+      when is_map(template_content) do
+    with :ok <- materialize_template_config(session_uri, workspace_uri, template_content) do
+      materialize_definition_agents(session_uri, workspace_uri, granted_by, template_content)
     end
   end
 
