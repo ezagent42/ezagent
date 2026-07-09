@@ -698,6 +698,8 @@ defmodule Ezagent.World.IdentityData do
     |> put_schema_string("key", Map.get(field, :key))
     |> put_schema_string("type", Map.get(field, :type) |> to_string())
     |> put_schema_string("label", Map.get(field, :label))
+    |> put_schema_string("help", Map.get(field, :help))
+    |> put_schema_string("placeholder", Map.get(field, :placeholder))
     |> put_schema_list("options", Map.get(field, :options))
     |> put_schema_any("default", Map.get(field, :default))
     |> put_schema_any("required", Map.get(field, :required))

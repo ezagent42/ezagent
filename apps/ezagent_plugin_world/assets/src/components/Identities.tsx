@@ -201,24 +201,24 @@ const agentTabs = ["Overview", "Config", "Keys", "Caps", "Extensions"] as const
 const defaultAgentFlavors = ["cc", "cc-headless", "codex", "codex-remote", "py", "curl", "native"]
 const defaultCreateSchema: Record<string, ConfigSchemaField[]> = {
   cc: [
-    {key: "model", type: "string", label: "model"},
+    {key: "model", type: "string", label: "model", placeholder: "claude-sonnet-4-6", help: "Example: claude-sonnet-4-6; leave blank for Claude Code default"},
     {key: "effort", type: "enum", label: "effort", options: ["default", "low", "medium", "high"]},
     {key: "permission_mode", type: "enum", label: "permission_mode", options: ["default", "acceptEdits", "bypassPermissions", "plan"]},
     {key: "allowed_tools", type: "string", label: "tools", help: "comma-separated list"},
   ],
   "cc-headless": [
-    {key: "model", type: "string", label: "model"},
+    {key: "model", type: "string", label: "model", placeholder: "claude-sonnet-4-6", help: "Example: claude-sonnet-4-6; leave blank for Claude Code default"},
     {key: "effort", type: "enum", label: "effort", options: ["default", "low", "medium", "high"]},
     {key: "permission_mode", type: "enum", label: "permission_mode", options: ["default", "acceptEdits", "bypassPermissions", "plan"]},
     {key: "allowed_tools", type: "string", label: "tools", help: "comma-separated list"},
   ],
   codex: [
-    {key: "model", type: "string", label: "model"},
+    {key: "model", type: "string", label: "model", placeholder: "leave blank for Codex default", help: "optional; accepts custom Codex model id"},
     {key: "approval_policy", type: "enum", label: "approval_policy", options: ["default", "on-request", "never"]},
     {key: "sandbox", type: "enum", label: "sandbox", options: ["default", "workspace-write", "read-only", "danger-full-access"]},
   ],
   "codex-remote": [
-    {key: "model", type: "string", label: "model"},
+    {key: "model", type: "string", label: "model", placeholder: "leave blank for Codex default", help: "optional; accepts custom Codex model id"},
     {key: "approval_policy", type: "enum", label: "approval_policy", options: ["default", "on-request", "never"]},
     {key: "sandbox", type: "enum", label: "sandbox", options: ["default", "workspace-write", "read-only", "danger-full-access"]},
   ],
@@ -226,7 +226,7 @@ const defaultCreateSchema: Record<string, ConfigSchemaField[]> = {
   curl: [
     {key: "provider", type: "string", label: "provider", required: true},
     {key: "api_url", type: "string", label: "api_url", required: true},
-    {key: "model", type: "string", label: "model", required: true},
+    {key: "model", type: "string", label: "model", required: true, placeholder: "deepseek-chat", help: "provider model id"},
   ],
   native: [{key: "role", type: "string", label: "role"}],
 }
@@ -1035,14 +1035,14 @@ function AgentNewForm({state, onCreateAgent}: {state: IdentitiesState; onCreateA
                       rows={2}
                       value={form.configFields[f.key] || ""}
                       onChange={(e) => setForm({...form, configFields: {...form.configFields, [f.key]: e.target.value}})}
-                      placeholder={String(f.default || "")}
+                      placeholder={fieldPlaceholder(f)}
                     />
                   ) : (
                     <Input
                       value={form.configFields[f.key] || ""}
                       onChange={(e) => setForm({...form, configFields: {...form.configFields, [f.key]: e.target.value}})}
                       className="font-mono text-xs"
-                      placeholder={String(f.default || "")}
+                      placeholder={fieldPlaceholder(f)}
                     />
                   )}
                 </label>
@@ -1167,6 +1167,7 @@ type ConfigSchemaField = {
   label?: string
   options?: string[]
   default?: unknown
+  placeholder?: string
   required?: boolean
   help?: string
 }
@@ -1756,6 +1757,12 @@ function activeMatches(active: string, label: string) {
 
 function allAgentFlavors(state: IdentitiesState): string[] {
   return Array.from(new Set([...(state.flavors || []), ...defaultAgentFlavors]))
+}
+
+function fieldPlaceholder(field: ConfigSchemaField): string {
+  if (field.placeholder) return field.placeholder
+  if (field.default != null && field.default !== "") return String(field.default)
+  return ""
 }
 
 function createSchemaForFlavor(flavor: string, schema?: ConfigSchemaField[]): ConfigSchemaField[] {

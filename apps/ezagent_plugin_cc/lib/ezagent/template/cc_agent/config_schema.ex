@@ -4,7 +4,13 @@ defmodule Ezagent.PluginCc.Template.CcAgent.ConfigSchema do
   @doc false
   def fields do
     [
-      %{key: "model", type: :string, label: "Model"},
+      %{
+        key: "model",
+        type: :string,
+        label: "Model",
+        placeholder: "claude-sonnet-4-6",
+        help: "Example: claude-sonnet-4-6; leave blank for Claude Code default"
+      },
       %{
         key: "effort",
         type: :enum,
