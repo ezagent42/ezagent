@@ -62,6 +62,7 @@ defmodule Ezagent.PluginCc.Template.CcAgentSpawnInvariantTest do
   use ExUnit.Case, async: false
 
   alias Ezagent.PluginCc.Template.CcAgent
+  alias Ezagent.PluginCc.Template.SpawnPlan
 
   @agent_uri Ezagent.URI.new!("entity://system/agent/cc_spawn-invariant-test")
   @cwd System.tmp_dir!()
@@ -92,7 +93,15 @@ defmodule Ezagent.PluginCc.Template.CcAgentSpawnInvariantTest do
     #!/usr/bin/env bash
     if [ "$1" = "--help" ]; then
       echo "Usage: claude [options]"
-      echo "  --dangerously-load-development-channels <channel>"
+      echo "  --dangerously-skip-permissions"
+      exit 0
+    fi
+    if [ "$1" = "--dangerously-load-development-channels" ]; then
+      shift 2
+      if [ "$1" = "--help" ]; then
+        echo "Usage: claude [options]"
+        exit 0
+      fi
       exit 0
     fi
     exit 0
@@ -127,6 +136,14 @@ defmodule Ezagent.PluginCc.Template.CcAgentSpawnInvariantTest do
       assert cmd == mock_path,
              "argv[0] must be the PATH-resolved `claude` (the test installed a " <>
                "mock at #{mock_path}) — got #{inspect(cmd)}"
+    end
+
+    test "accepts dev-channel support even when --help omits the flag", %{
+      mock_claude_path: mock_path
+    } do
+      assert SpawnPlan.claude_dev_channels_supported?(mock_path)
+      assert :ok = SpawnPlan.ensure_dev_channels_supported(mock_path)
+      assert {:ok, {_argv, _env}} = CcAgent.build_claude_cmd(@agent_uri, @cwd, base_tmpl())
     end
 
     test "argv carries the bypass + dev-channels flags" do
@@ -278,6 +295,10 @@ defmodule Ezagent.PluginCc.Template.CcAgentSpawnInvariantTest do
 
       File.write!(unsupported_path, """
       #!/usr/bin/env bash
+      if [ "$1" = "--dangerously-load-development-channels" ]; then
+        echo "error: unknown option --dangerously-load-development-channels"
+        exit 1
+      fi
       if [ "$1" = "--help" ]; then
         echo "Usage: claude [options]"
         echo "  --dangerously-skip-permissions"

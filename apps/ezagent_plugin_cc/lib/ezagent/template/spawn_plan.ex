@@ -126,28 +126,63 @@ defmodule Ezagent.PluginCc.Template.SpawnPlan do
   @spec ensure_dev_channels_supported(String.t()) ::
           :ok | {:error, {:unsupported_claude_dev_channels, String.t()}}
   def ensure_dev_channels_supported(claude_path) when is_binary(claude_path) do
-    if claude_dev_channels_supported?(claude_path) do
-      :ok
-    else
-      Logger.error(
-        "cc.agent: `claude` at #{claude_path} does not support #{@dev_channels_flag}; " <>
-          "the cc bridge requires #{@dev_channels_flag} #{@dev_channels_server}. " <>
-          "Install a Claude Code build that supports development channels or use a non-cc flavor."
-      )
+    case claude_dev_channel_probe(claude_path) do
+      :accepted ->
+        :ok
 
-      {:error, {:unsupported_claude_dev_channels, claude_path}}
+      {:rejected, output} ->
+        Logger.error(
+          "cc.agent: `claude` at #{claude_path} rejects #{@dev_channels_flag}; " <>
+            "the cc bridge requires #{@dev_channels_flag} #{@dev_channels_server}. " <>
+            "Install a Claude Code build that accepts development channels or use a non-cc flavor. " <>
+            "probe_output=#{inspect(output)}"
+        )
+
+        {:error, {:unsupported_claude_dev_channels, claude_path}}
+
+      {:unknown, reason} ->
+        Logger.warning(
+          "cc.agent: could not conclusively verify #{@dev_channels_flag} support for " <>
+            "`claude` at #{claude_path}; continuing because the probe did not report an " <>
+            "unknown flag. reason=#{inspect(reason)}"
+        )
+
+        :ok
     end
   end
 
   @doc false
   @spec claude_dev_channels_supported?(String.t()) :: boolean()
   def claude_dev_channels_supported?(claude_path) when is_binary(claude_path) do
-    case System.cmd(claude_path, ["--help"], stderr_to_stdout: true) do
-      {output, _status} when is_binary(output) -> String.contains?(output, @dev_channels_flag)
-      _ -> false
+    case claude_dev_channel_probe(claude_path) do
+      {:rejected, _output} -> false
+      _ -> true
+    end
+  end
+
+  defp claude_dev_channel_probe(claude_path) do
+    probe_args = [@dev_channels_flag, @dev_channels_server, "--help"]
+
+    case System.cmd(claude_path, probe_args, stderr_to_stdout: true) do
+      {_output, 0} ->
+        :accepted
+
+      {output, status} when is_binary(output) ->
+        if unknown_dev_channels_flag?(output) do
+          {:rejected, output}
+        else
+          {:unknown, %{status: status, output: output}}
+        end
     end
   rescue
-    ErlangError -> false
+    error in ErlangError -> {:unknown, Exception.message(error)}
+  end
+
+  defp unknown_dev_channels_flag?(output) when is_binary(output) do
+    Regex.match?(
+      ~r/(unknown|unrecognized|not recognized|invalid|unsupported|unexpected).{0,120}(option|flag|argument|arg)?.{0,120}--dangerously-load-development-channels|--dangerously-load-development-channels.{0,120}(unknown|unrecognized|not recognized|invalid|unsupported|unexpected)/i,
+      output
+    )
   end
 
   @doc false

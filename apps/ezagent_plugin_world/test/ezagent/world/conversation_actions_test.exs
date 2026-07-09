@@ -18,45 +18,29 @@ defmodule Ezagent.World.ConversationActionsTest do
              )
   end
 
-  test "create_session_result forwards caller caps into the workspace create context" do
+  test "create_session_result passes the baseline workspace create context" do
     workspace_uri = Ezagent.URI.workspace(:system)
     caller = Ezagent.Entity.User.admin_uri()
-
-    cap =
-      Ezagent.Capability.cap(
-        :workspace,
-        Ezagent.ActionSet.Workspace,
-        :create_session,
-        {:within_workspace, workspace_uri},
-        workspace_uri
-      )
-
-    caps = MapSet.new([cap])
-    session_uri = Ezagent.URI.session("system", "default", "world-create-with-caps")
+    session_uri = Ezagent.URI.session("system", "default", "world-create-baseline")
 
     assert {:ok, ^session_uri} =
              ConversationActions.create_session_result(
                workspace_uri,
                caller,
-               "world-create-with-caps",
+               "world-create-baseline",
                "default",
                fn got_workspace_uri, got_params, got_ctx ->
                  assert got_workspace_uri == workspace_uri
 
                  assert got_params == %{
-                          short_name: "world-create-with-caps",
+                          short_name: "world-create-baseline",
                           template_name: "default"
                         }
 
-                 assert got_ctx == %{
-                          caller: caller,
-                          caps: caps,
-                          deadline_ms: ConversationActions.create_session_deadline_ms()
-                        }
+                 assert got_ctx == %{caller: caller, caps: MapSet.new()}
 
                  {:ok, %{session_uri: session_uri}}
-               end,
-               caps
+               end
              )
   end
 
