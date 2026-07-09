@@ -79,8 +79,12 @@ defmodule EzagentDomainUi.Routing.RoutingView do
           <code class="font-mono text-xs text-zinc-700 dark:text-zinc-300">
             {session_uri_string(@session_uri)}
           </code>
-          {gettext("via an in_session matcher. Global + workspace rules also fire for this session — see")}
-          <a href="/admin/routing" class="text-blue-600 dark:text-blue-400 hover:underline">/routing</a>
+          {gettext(
+            "via an in_session matcher. Global + workspace rules also fire for this session — see"
+          )}
+          <a href="/admin/routing" class="text-blue-600 dark:text-blue-400 hover:underline">
+            /routing
+          </a>
           {gettext("for all scopes.")}
         </p>
 
@@ -128,7 +132,9 @@ defmodule EzagentDomainUi.Routing.RoutingView do
             class="text-center py-8 text-sm text-zinc-500 dark:text-zinc-400 border border-dashed border-zinc-300 dark:border-zinc-700 rounded"
           >
             {gettext("No session-scoped rules. Add one below, or see")}
-            <a href="/admin/routing" class="text-blue-600 dark:text-blue-400 hover:underline">/routing</a>
+            <a href="/admin/routing" class="text-blue-600 dark:text-blue-400 hover:underline">
+              /routing
+            </a>
             {gettext("for workspace/global rules.")}
           </div>
         </div>
@@ -153,6 +159,7 @@ defmodule EzagentDomainUi.Routing.RoutingView do
               >
                 <option value="mention">mention</option>
                 <option value="from">from</option>
+                <option value="from_role">from_role</option>
                 <option value="text_contains">text_contains</option>
                 <option value="always">{gettext("always (any message in this session)")}</option>
               </select>
@@ -190,8 +197,9 @@ defmodule EzagentDomainUi.Routing.RoutingView do
                 mode={:multi}
                 kinds={[:entity, :session]}
                 options={@receiver_options}
+                allow_freetext={true}
                 label={gettext("Receivers")}
-                placeholder={gettext("add entities + sessions")}
+                placeholder={gettext("add entities, sessions, or role:builder")}
               />
             </div>
             <button

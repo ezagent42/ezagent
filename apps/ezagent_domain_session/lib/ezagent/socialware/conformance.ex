@@ -26,6 +26,7 @@ defmodule Ezagent.Socialware.Conformance do
   @session_kind Ezagent.Entity.Session
 
   @type failure :: {atom(), term()}
+  @type warning :: {atom(), term()}
 
   @doc """
   Run every conformance assertion against `definition` in `workspace_uri`.
@@ -34,11 +35,121 @@ defmodule Ezagent.Socialware.Conformance do
   """
   @spec check(Definition.t(), URI.t() | String.t()) :: :ok | {:error, [failure()]}
   def check(%Definition{} = definition, workspace_uri) do
+    case check_with_lookup(definition, workspace_uri, &DefinitionRegistry.lookup/2) do
+      {:ok, _warnings} -> :ok
+      {:error, failures, _warnings} -> {:error, failures}
+    end
+  end
+
+  @doc """
+  Run conformance assertions and return non-fatal warnings.
+
+  `check/2` remains the fail-closed compatibility API. This richer form is for
+  authoring surfaces that need to show conservative role-DAG diagnostics.
+  """
+  @spec check_with_warnings(Definition.t(), URI.t() | String.t()) ::
+          {:ok, [warning()]} | {:error, [failure()], [warning()]}
+  def check_with_warnings(%Definition{} = definition, workspace_uri) do
+    check_with_lookup(definition, workspace_uri, &DefinitionRegistry.lookup/2)
+  end
+
+  @doc """
+  Run every conformance assertion against a not-yet-published candidate.
+
+  The candidate's own name resolves in-memory for installability checks; all
+  other definition refs still resolve through the real registry. Fail-closed
+  like `check/2`: role-DAG warnings are discarded here — the import path
+  surfaces failures only.
+  """
+  @spec check_candidate(Definition.t(), URI.t() | String.t()) :: :ok | {:error, [failure()]}
+  def check_candidate(%Definition{name: name} = definition, workspace_uri) do
+    lookup_fun = fn lookup_ws, lookup_name ->
+      if same_workspace?(lookup_ws, workspace_uri) and lookup_name == name do
+        {:ok, definition, nil}
+      else
+        DefinitionRegistry.lookup(lookup_ws, lookup_name)
+      end
+    end
+
+    case check_with_lookup(definition, workspace_uri, lookup_fun) do
+      {:ok, _warnings} -> :ok
+      {:error, failures, _warnings} -> {:error, failures}
+    end
+  end
+
+  @doc """
+  Check a definition against a concrete installed-definition map.
+
+  Used by install/repoint preflight where a session may already carry pinned
+  revisions that are not the current published pointers.
+  """
+  @spec check_against_installed(Definition.t(), URI.t() | String.t(), %{
+          String.t() => Definition.t()
+        }) ::
+          :ok | {:error, [failure()]}
+  def check_against_installed(%Definition{name: name} = definition, workspace_uri, installed_map)
+      when is_map(installed_map) do
+    installed_by_name = Map.new(installed_map, fn {key, value} -> {to_string(key), value} end)
+
+    lookup_fun = fn lookup_ws, lookup_name ->
+      cond do
+        not same_workspace?(lookup_ws, workspace_uri) ->
+          DefinitionRegistry.lookup(lookup_ws, lookup_name)
+
+        Map.has_key?(installed_by_name, lookup_name) ->
+          {:ok, Map.fetch!(installed_by_name, lookup_name), nil}
+
+        lookup_name == name ->
+          {:ok, definition, nil}
+
+        true ->
+          DefinitionRegistry.lookup(lookup_ws, lookup_name)
+      end
+    end
+
+    case check_with_lookup(definition, workspace_uri, lookup_fun) do
+      {:ok, _warnings} -> :ok
+      {:error, failures, _warnings} -> {:error, failures}
+    end
+  end
+
+  @doc """
+  Run role-DAG checks against the merged role/routing graph of composed definitions.
+  """
+  @spec check_merged([Definition.t()], URI.t() | String.t()) ::
+          {:ok, [warning()]} | {:error, [failure()], [warning()]}
+  def check_merged(definitions, _workspace_uri) when is_list(definitions) do
+    collision_failures = role_name_collision_failures(definitions)
+
+    merged = %Definition{
+      name: "__merged__",
+      roles: Enum.flat_map(definitions, & &1.roles),
+      routing_rules: Enum.flat_map(definitions, & &1.routing_rules)
+    }
+
+    {role_dag_failure, warnings} = check_role_dag(merged)
+    failures = collision_failures ++ failure_list(role_dag_failure)
+
+    if failures == [] do
+      {:ok, warnings}
+    else
+      {:error, failures, warnings}
+    end
+  end
+
+  # Single internal pipeline: `lookup_fun` parameterizes registry access
+  # (candidate-aware for imports, real registry otherwise); the return shape
+  # always carries the role-DAG warnings for callers that surface them.
+  defp check_with_lookup(%Definition{} = definition, workspace_uri, lookup_fun) do
     ws = to_uri(workspace_uri)
+    declared = declared_role_names(definition, ws, lookup_fun)
+    {role_dag_failures, role_dag_warnings} = check_role_dag(definition, declared)
 
     failures =
       []
       |> add(:uses_plugins_installed, check_uses_plugins(definition.uses))
+      |> add(:requires_published, check_requires_published(definition, ws, lookup_fun))
+      |> add(:requires_cycle_free, check_requires_cycle_free(definition, ws, lookup_fun))
       |> add(:bases_shape_load, check_modules_load(definition.bases ++ definition.shape))
       |> add(:views_exist_caps_registered, check_views(definition.views))
       |> add(:agent_recipes_resolve, check_agent_recipes(definition.roles, ws))
@@ -48,14 +159,19 @@ defmodule Ezagent.Socialware.Conformance do
         :orchestrator_uri_parses,
         check_orchestrator_uri(definition.orchestrator_template_uri)
       )
-      |> add(:install_resolves, check_install_resolves(definition, ws))
-      |> add(:template_installable, check_template_installable(definition, ws))
-      |> add(:routing_receivers_resolve, check_routing_receivers(definition))
+      |> add(:install_resolves, check_install_resolves(definition, ws, lookup_fun))
+      |> add(:template_installable, check_template_installable(definition, ws, lookup_fun))
+      |> add(:routing_receivers_resolve, check_routing_receivers(definition, declared))
+      |> add(:routing_role_dag, role_dag_failures)
       |> add(:prompt_template_refs_valid, check_prompt_template_refs(definition))
       |> add(:view_caps_gate_ready, check_view_caps_gate_ready(definition.views))
       |> Enum.reverse()
 
-    if failures == [], do: :ok, else: {:error, failures}
+    if failures == [] do
+      {:ok, role_dag_warnings}
+    else
+      {:error, failures, role_dag_warnings}
+    end
   end
 
   @doc "The ordered list of assertion ids this checker enforces."
@@ -63,6 +179,8 @@ defmodule Ezagent.Socialware.Conformance do
   def assertions do
     [
       :uses_plugins_installed,
+      :requires_published,
+      :requires_cycle_free,
       :bases_shape_load,
       :views_exist_caps_registered,
       :agent_recipes_resolve,
@@ -72,6 +190,7 @@ defmodule Ezagent.Socialware.Conformance do
       :install_resolves,
       :template_installable,
       :routing_receivers_resolve,
+      :routing_role_dag,
       :prompt_template_refs_valid,
       :view_caps_gate_ready
     ]
@@ -94,6 +213,51 @@ defmodule Ezagent.Socialware.Conformance do
   end
 
   defp plugin_installed?(_), do: false
+
+  # --- 0b: requires[] socialwares are published and acyclic ----------------
+
+  defp check_requires_published(%Definition{requires: requires}, ws, lookup_fun) do
+    case Enum.find(requires, &(lookup_definition(ws, &1, lookup_fun) == :error)) do
+      nil -> :ok
+      missing -> {:error, {:unknown_socialware_requires, missing}}
+    end
+  end
+
+  defp check_requires_cycle_free(%Definition{} = definition, ws, lookup_fun) do
+    case requires_cycle(definition, ws, lookup_fun, [definition.name], MapSet.new()) do
+      nil -> :ok
+      cycle -> {:error, {:requires_cycle, cycle}}
+    end
+  end
+
+  defp requires_cycle(%Definition{} = definition, ws, lookup_fun, path, visited) do
+    Enum.find_value(definition.requires, fn required ->
+      cond do
+        required in path ->
+          path
+          |> Enum.reverse()
+          |> Kernel.++([required])
+
+        MapSet.member?(visited, required) ->
+          nil
+
+        true ->
+          case lookup_definition(ws, required, lookup_fun) do
+            {:ok, required_definition} ->
+              requires_cycle(
+                required_definition,
+                ws,
+                lookup_fun,
+                [required | path],
+                MapSet.put(visited, required)
+              )
+
+            :error ->
+              nil
+          end
+      end
+    end)
+  end
 
   # --- 1: bases/shape ActionSet modules load -------------------------------
 
@@ -244,18 +408,20 @@ defmodule Ezagent.Socialware.Conformance do
 
   # --- 7: definition is installable (resolvable in the registry) -----------
 
-  defp check_install_resolves(%Definition{name: name}, ws) do
-    case DefinitionRegistry.lookup(ws, name) do
+  defp check_install_resolves(%Definition{name: name}, ws, lookup_fun) do
+    case lookup_fun.(ws, name) do
       {:ok, _def, _obj} -> :ok
       :error -> {:error, {:unknown_socialware_install, name}}
     end
   end
 
-  defp check_template_installable(%Definition{name: name}, ws) do
+  defp check_template_installable(%Definition{name: name}, ws, lookup_fun) do
     content = %{installs: [name]}
 
-    with {:ok, _resolved} <- Installation.resolved_template_installs(content, ws),
-         {:ok, _behaviors} <- Installation.behavior_set_for_template(content, ws) do
+    with {:ok, _resolved} <-
+           Installation.resolved_template_installs(content, ws, lookup_fun: lookup_fun),
+         {:ok, _behaviors} <-
+           Installation.behavior_set_for_template(content, ws, lookup_fun: lookup_fun) do
       :ok
     else
       {:error, reason} -> {:error, reason}
@@ -265,9 +431,7 @@ defmodule Ezagent.Socialware.Conformance do
 
   # --- 8: routing_rules receivers resolve to declared roles ----------------
 
-  defp check_routing_receivers(%Definition{routing_rules: rules} = def) do
-    declared = declared_role_names(def)
-
+  defp check_routing_receivers(%Definition{routing_rules: rules}, declared) do
     Enum.reduce_while(rules, :ok, fn rule, :ok ->
       receivers = Map.get(rule, :receivers) || Map.get(rule, "receivers") || []
 
@@ -287,10 +451,268 @@ defmodule Ezagent.Socialware.Conformance do
 
   defp receiver_resolvable?(_r, _declared), do: false
 
+  # --- 9: role-DAG safety analysis ----------------------------------------
+
+  defp check_role_dag(%Definition{} = definition) do
+    declared = declared_role_names(definition)
+    check_role_dag(definition, declared)
+  end
+
+  defp check_role_dag(%Definition{} = definition, declared) do
+    edges = role_edges(definition.routing_rules, declared)
+
+    failures =
+      case unpredicated_cycle(edges) do
+        nil -> :ok
+        cycle -> {:error, {:unpredicated_cycle, cycle}}
+      end
+
+    warnings =
+      []
+      |> maybe_warn(:predicated_cycle, predicated_cycle(edges))
+      |> maybe_warn(:double_delivery, double_delivery(edges))
+      |> warn_dead_roles(declared, edges)
+      |> warn_mute_composite(definition)
+      |> Enum.reverse()
+
+    {failures, warnings}
+  end
+
+  defp role_edges(rules, declared) do
+    rules
+    |> Enum.with_index()
+    |> Enum.flat_map(fn {rule, index} ->
+      matcher = Map.get(rule, :matcher) || Map.get(rule, "matcher")
+      receivers = Map.get(rule, :receivers) || Map.get(rule, "receivers") || []
+
+      with source when is_binary(source) <- source_role(matcher),
+           true <- source in declared do
+        predicated? = predicated_matcher?(matcher)
+
+        receivers
+        |> Enum.map(&receiver_role/1)
+        |> Enum.filter(&(&1 in declared))
+        |> Enum.map(fn target ->
+          %{source: source, target: target, predicated?: predicated?, rule_index: index}
+        end)
+      else
+        _ -> []
+      end
+    end)
+  end
+
+  defp source_role(%{"type" => "from_role", "arg" => role}) when is_binary(role), do: role
+  defp source_role(%{type: :from_role, arg: role}) when is_binary(role), do: role
+  defp source_role({:from_role, role}) when is_binary(role), do: role
+
+  defp source_role(%{"type" => "and", "items" => items}) when is_list(items) do
+    Enum.find_value(items, &source_role/1)
+  end
+
+  defp source_role(%{type: :and, items: items}) when is_list(items) do
+    Enum.find_value(items, &source_role/1)
+  end
+
+  defp source_role({:and, items}) when is_list(items), do: Enum.find_value(items, &source_role/1)
+  defp source_role(_), do: nil
+
+  defp receiver_role({:role, role}) when is_binary(role), do: role
+  defp receiver_role(role) when is_binary(role), do: role
+  defp receiver_role(_), do: nil
+
+  defp predicated_matcher?(%{"type" => type})
+       when type in ["text_contains", "text_matches", "tag"],
+       do: true
+
+  defp predicated_matcher?(%{"type" => type, "items" => items}) when type in ["and", "or"] do
+    Enum.any?(items, &predicated_matcher?/1)
+  end
+
+  defp predicated_matcher?(%{"type" => "not", "item" => item}), do: predicated_matcher?(item)
+  defp predicated_matcher?({type, _}) when type in [:text_contains, :text_matches, :tag], do: true
+
+  defp predicated_matcher?({type, items}) when type in [:and, :or] and is_list(items),
+    do: Enum.any?(items, &predicated_matcher?/1)
+
+  defp predicated_matcher?({:not, item}), do: predicated_matcher?(item)
+  defp predicated_matcher?(_), do: false
+
+  defp unpredicated_cycle(edges) do
+    edges
+    |> Enum.reject(& &1.predicated?)
+    |> find_cycle()
+  end
+
+  defp predicated_cycle(edges), do: find_cycle(edges)
+
+  defp find_cycle(edges) do
+    nodes = edges |> Enum.flat_map(&[&1.source, &1.target]) |> Enum.uniq()
+    Enum.find_value(nodes, &cycle_from(&1, &1, edges, []))
+  end
+
+  defp cycle_from(start, current, edges, path) do
+    edges
+    |> Enum.filter(&(&1.source == current))
+    |> Enum.find_value(fn edge ->
+      cond do
+        edge.target == start ->
+          Enum.reverse([edge.target, current | path])
+
+        edge.target in path ->
+          nil
+
+        true ->
+          cycle_from(start, edge.target, edges, [current | path])
+      end
+    end)
+  end
+
+  defp double_delivery(edges) do
+    edges
+    |> Enum.group_by(& &1.source)
+    |> Enum.find_value(fn {source, source_edges} ->
+      case source_edges do
+        [_] -> nil
+        many -> %{source: source, rules: Enum.map(many, & &1.rule_index)}
+      end
+    end)
+  end
+
+  defp warn_dead_roles(warnings, declared, edges) do
+    live =
+      edges
+      |> Enum.flat_map(&[&1.source, &1.target])
+      |> MapSet.new()
+
+    case Enum.reject(declared, &MapSet.member?(live, &1)) do
+      [] -> warnings
+      dead -> [{:routing_role_dag, {:dead_role, dead}} | warnings]
+    end
+  end
+
+  defp warn_mute_composite(warnings, %Definition{roles: roles, routing_rules: rules}) do
+    human_roles =
+      roles
+      |> Enum.filter(&(&1.fill == :human))
+      |> Enum.map(& &1.role_name)
+
+    if human_roles == [] do
+      warnings
+    else
+      roles_by_name = Map.new(roles, &{&1.role_name, &1})
+
+      adapter_receiver_roles =
+        rules
+        |> Enum.flat_map(fn rule ->
+          Map.get(rule, :receivers) || Map.get(rule, "receivers") || []
+        end)
+        |> Enum.map(&receiver_role/1)
+        |> Enum.reject(&is_nil/1)
+        |> Enum.uniq()
+        |> Enum.filter(fn role_name ->
+          case Map.get(roles_by_name, role_name) do
+            %{fill: :agent, flavor: flavor} -> adapter_flavor?(flavor)
+            _ -> false
+          end
+        end)
+
+      case adapter_receiver_roles do
+        [] ->
+          [
+            {:routing_role_dag,
+             {:mute_composite,
+              %{human_roles: human_roles, adapter_receiver_roles: adapter_receiver_roles}}}
+            | warnings
+          ]
+
+        _ ->
+          warnings
+      end
+    end
+  end
+
+  defp adapter_flavor?(flavor) when is_binary(flavor) and flavor != "" do
+    case Ezagent.AgentBridge.AdapterRegistry.lookup(flavor) do
+      {:ok, _adapter} -> true
+      :error -> false
+    end
+  catch
+    :exit, _ -> false
+  end
+
+  defp adapter_flavor?(_), do: false
+
+  defp maybe_warn(warnings, _kind, nil), do: warnings
+  defp maybe_warn(warnings, kind, detail), do: [{:routing_role_dag, {kind, detail}} | warnings]
+
   defp declared_role_names(%Definition{roles: roles}) do
     roles
     |> Enum.map(& &1.role_name)
     |> Enum.uniq()
+  end
+
+  defp declared_role_names(%Definition{} = definition, ws, lookup_fun) do
+    definition
+    |> required_definitions(ws, lookup_fun)
+    |> Kernel.++([definition])
+    |> Enum.flat_map(&declared_role_names/1)
+    |> Enum.uniq()
+  end
+
+  defp required_definitions(%Definition{} = definition, ws, lookup_fun) do
+    required_definitions(definition, ws, lookup_fun, MapSet.new())
+  end
+
+  defp required_definitions(%Definition{requires: requires}, ws, lookup_fun, visited) do
+    requires
+    |> Enum.reduce([], fn required, acc ->
+      if MapSet.member?(visited, required) do
+        acc
+      else
+        case lookup_definition(ws, required, lookup_fun) do
+          {:ok, %Definition{} = required_definition} ->
+            nested =
+              required_definitions(
+                required_definition,
+                ws,
+                lookup_fun,
+                MapSet.put(visited, required)
+              )
+
+            [required_definition | nested] ++ acc
+
+          :error ->
+            acc
+        end
+      end
+    end)
+    |> Enum.reverse()
+  end
+
+  defp lookup_definition(ws, name, lookup_fun) do
+    case lookup_fun.(ws, name) do
+      {:ok, %Definition{} = definition, _object} -> {:ok, definition}
+      _ -> :error
+    end
+  end
+
+  defp role_name_collision_failures(definitions) do
+    definitions
+    |> Enum.flat_map(fn %Definition{name: definition_name, roles: roles} ->
+      Enum.map(roles, &{&1.role_name, definition_name})
+    end)
+    |> Enum.group_by(fn {role_name, _definition_name} -> role_name end, fn {_role, name} ->
+      name
+    end)
+    |> Enum.flat_map(fn {role_name, names} ->
+      uniq_names = Enum.uniq(names)
+
+      if length(uniq_names) > 1 do
+        [{:merged_role_names_unique, {:role_name_collision, role_name, uniq_names}}]
+      else
+        []
+      end
+    end)
   end
 
   defp agent_role_slots(roles), do: Enum.filter(roles, &(&1.fill == :agent))
@@ -329,7 +751,12 @@ defmodule Ezagent.Socialware.Conformance do
 
   defp add(failures, _id, :ok), do: failures
   defp add(failures, id, {:error, detail}), do: [{id, detail} | failures]
+  defp failure_list(:ok), do: []
+  defp failure_list({:error, detail}), do: [{:routing_role_dag, detail}]
 
   defp to_uri(%URI{} = uri), do: uri
   defp to_uri(str) when is_binary(str), do: Ezagent.URI.new!(str)
+
+  defp same_workspace?(left, right),
+    do: URI.to_string(to_uri(left)) == URI.to_string(to_uri(right))
 end

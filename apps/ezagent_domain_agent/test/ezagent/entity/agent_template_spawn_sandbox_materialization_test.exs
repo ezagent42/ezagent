@@ -2,6 +2,7 @@ defmodule Ezagent.Entity.AgentTemplateSpawnSandboxMaterializationTest do
   use EzagentCore.DataCase, async: false
 
   alias Ezagent.Entity.Agent.TemplateSpawn
+  alias Ezagent.Agent.TemplateOverlayTestBehavior
 
   defmodule PreinitializedSandboxTemplate do
     @behaviour Ezagent.Kind.Template
@@ -38,6 +39,9 @@ defmodule Ezagent.Entity.AgentTemplateSpawnSandboxMaterializationTest do
            %{fresh?: true, config_dir_path: config_dir, respawn_template_data: respawn_data}}
 
         {:error, {:already_started, _pid}} ->
+          {:ok, [agent_uri], %{fresh?: false}}
+
+        {:error, {:already_registered, _}} ->
           {:ok, [agent_uri], %{fresh?: false}}
 
         {:error, reason} ->
@@ -83,6 +87,9 @@ defmodule Ezagent.Entity.AgentTemplateSpawnSandboxMaterializationTest do
            %{fresh?: true, config_dir_path: config_dir, respawn_template_data: respawn_data}}
 
         {:error, {:already_started, _pid}} ->
+          {:ok, [agent_uri], %{fresh?: false}}
+
+        {:error, {:already_registered, _}} ->
           {:ok, [agent_uri], %{fresh?: false}}
 
         {:error, reason} ->
@@ -199,5 +206,132 @@ defmodule Ezagent.Entity.AgentTemplateSpawnSandboxMaterializationTest do
     assert sandbox.config_dir_path =~ "preinit-sandbox-#{unique}/preinit_sandbox"
     assert sandbox.template_class == PreinitializedSandboxTemplate
     assert sandbox.respawn_template_data["agent_config_dir"] == sandbox.config_dir_path
+  end
+
+  test "behavior_overlay mounts only for fresh template-spawned workers" do
+    unique = System.unique_integer([:positive])
+    flavor = "overlay-fresh"
+    agent_uri = Ezagent.URI.new!("entity://overlay-fresh-#{unique}/agent/overlay_fresh")
+    owner_uri = Ezagent.URI.new!("entity://overlay-fresh-#{unique}/user/owner")
+    workspace_uri = Ezagent.URI.new!("workspace://overlay-fresh-#{unique}")
+
+    :ok =
+      Ezagent.AgentFlavorRegistry.register(%{
+        flavor: flavor,
+        kind: Ezagent.Entity.Agent,
+        template_class: FallbackSandboxTemplate
+      })
+
+    on_exit(fn ->
+      _ = Ezagent.Kind.terminate(agent_uri)
+      :ok
+    end)
+
+    content = %{
+      flavor: flavor,
+      project_cwd: System.tmp_dir!(),
+      config_dir: Path.join(System.tmp_dir!(), "overlay-fresh-source-#{unique}")
+    }
+
+    assert {:ok, %{workers: [^agent_uri], fresh?: true}} =
+             TemplateSpawn.spawn_from_template_content(
+               content,
+               agent_uri,
+               owner_uri,
+               workspace_uri,
+               behavior_overlay: [TemplateOverlayTestBehavior]
+             )
+
+    assert {:ok, %{pinged: false}} = Ezagent.Kind.get_slice(agent_uri, :template_overlay_test)
+  end
+
+  test "behavior_overlay does not retrofit adopted workers" do
+    unique = System.unique_integer([:positive])
+    flavor = "overlay-adopted"
+    agent_uri = Ezagent.URI.new!("entity://overlay-adopted-#{unique}/agent/overlay_adopted")
+    owner_uri = Ezagent.URI.new!("entity://overlay-adopted-#{unique}/user/owner")
+    workspace_uri = Ezagent.URI.new!("workspace://overlay-adopted-#{unique}")
+
+    :ok =
+      Ezagent.AgentFlavorRegistry.register(%{
+        flavor: flavor,
+        kind: Ezagent.Entity.Agent,
+        template_class: FallbackSandboxTemplate
+      })
+
+    {:ok, _pid} =
+      Ezagent.Kind.spawn(Ezagent.Entity.Agent, %{
+        uri: agent_uri,
+        behaviors: Ezagent.Entity.Agent.base_behaviors()
+      })
+
+    on_exit(fn ->
+      _ = Ezagent.Kind.terminate(agent_uri)
+      :ok
+    end)
+
+    content = %{
+      flavor: flavor,
+      project_cwd: System.tmp_dir!(),
+      config_dir: Path.join(System.tmp_dir!(), "overlay-adopted-source-#{unique}")
+    }
+
+    assert {:ok, %{workers: [^agent_uri], fresh?: false}} =
+             TemplateSpawn.spawn_from_template_content(
+               content,
+               agent_uri,
+               owner_uri,
+               workspace_uri,
+               behavior_overlay: [TemplateOverlayTestBehavior]
+             )
+
+    assert {:ok, nil} = Ezagent.Kind.get_slice(agent_uri, :template_overlay_test)
+  end
+
+  test "behavior_overlay mount failure rolls back the fresh worker" do
+    unique = System.unique_integer([:positive])
+    flavor = "overlay-invalid"
+    agent_uri = Ezagent.URI.new!("entity://overlay-invalid-#{unique}/agent/overlay_invalid")
+    owner_uri = Ezagent.URI.new!("entity://overlay-invalid-#{unique}/user/owner")
+    workspace_uri = Ezagent.URI.new!("workspace://overlay-invalid-#{unique}")
+
+    :ok =
+      Ezagent.AgentFlavorRegistry.register(%{
+        flavor: flavor,
+        kind: Ezagent.Entity.Agent,
+        template_class: FallbackSandboxTemplate
+      })
+
+    content = %{
+      flavor: flavor,
+      project_cwd: System.tmp_dir!(),
+      config_dir: Path.join(System.tmp_dir!(), "overlay-invalid-source-#{unique}")
+    }
+
+    assert {:error,
+            {:behavior_overlay_mount_failed, ^agent_uri, String, {:not_a_behavior, String}}} =
+             TemplateSpawn.spawn_from_template_content(
+               content,
+               agent_uri,
+               owner_uri,
+               workspace_uri,
+               behavior_overlay: [String]
+             )
+
+    assert wait_until_deregistered(agent_uri)
+  end
+
+  defp wait_until_deregistered(uri, attempts \\ 50)
+  defp wait_until_deregistered(_uri, 0), do: false
+
+  defp wait_until_deregistered(uri, attempts) do
+    case Ezagent.KindRegistry.lookup(uri) do
+      :error ->
+        true
+
+      {:ok, _pid} ->
+        Process.sleep(10)
+        wait_until_deregistered(uri, attempts - 1)
+    end
   end
 end

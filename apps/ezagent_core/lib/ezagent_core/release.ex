@@ -2,7 +2,7 @@ defmodule EzagentCore.Release do
   @moduledoc """
   Release tasks for the prod OTP release (`mix release`). There is no Mix in a
   release, so migrations run via `bin/ezagent eval "EzagentCore.Release.migrate()"`
-  (see docker/entrypoint.prod.sh). dev/test still use `mix ecto.migrate`.
+  from the release entrypoint. dev/test still use `mix ecto.migrate`.
   """
   @app :ezagent_core
 

@@ -19,6 +19,7 @@ defmodule Ezagent.World.ConversationActions do
   alias Ezagent.ActionSet.Session.Membership
   alias Ezagent.Invocation
   alias Ezagent.World.ConversationData
+  alias Ezagent.World.ConversationRoutingForm
   alias EzagentDomainInstanceMessage.Routing.MentionRouting
 
   @doc """
@@ -49,8 +50,7 @@ defmodule Ezagent.World.ConversationActions do
 
   def handle_dispatch(socket, "session.switch", %{"session_uri" => sid}) do
     with_session(socket, sid, fn uri ->
-      to = "/sessions?session=" <> URI.encode_www_form(URI.to_string(uri))
-      {:noreply, push_patch(socket, to: to)}
+      Ezagent.World.ConversationSessionState.switch_session(socket, uri)
     end)
   end
 
@@ -66,6 +66,17 @@ defmodule Ezagent.World.ConversationActions do
       )
       when is_binary(participant) do
     with_session(socket, sid, &remove_participant(socket, &1, participant))
+  end
+
+  def handle_dispatch(
+        socket,
+        "session.socialware.uninstall",
+        %{"session_uri" => sid, "ref" => ref}
+      )
+      when is_binary(ref) do
+    with_session(socket, sid, fn session_uri ->
+      uninstall_socialware(socket, session_uri, ref)
+    end)
   end
 
   def handle_dispatch(
@@ -344,13 +355,11 @@ defmodule Ezagent.World.ConversationActions do
            &Ezagent.Workspace.create_session/3
          ) do
       {:ok, %URI{} = session_uri} ->
-        # A session created from a PUBLISHED hello template needs its invisible
-        # ORCHESTRATOR front desk — the generic create path installs the socialware
-        # behaviours + seeds the captured page, but does not spawn the per-session
-        # orchestrator (which then lazily spawns builder / concierge on demand).
-        # hello no-ops for a non-page session; best-effort so it never blocks create.
-        _ = ensure_hello_orchestrator(session_uri)
-
+        # A session created from a PUBLISHED hello template gets its DECLARED team
+        # (orchestrator + builder + concierge) for free: the generic create path
+        # (`Workspace.create_session/3` → `SessionCreator.create_session/3`) runs
+        # `materialize_template_team/4`, which materializes the socialware
+        # `Definition.roles` — no hello-specific orchestrator ensure is needed.
         {:noreply,
          socket
          |> assign(:last_dispatch_status, "ok")
@@ -359,21 +368,6 @@ defmodule Ezagent.World.ConversationActions do
       {:error, reason} ->
         {:noreply, push_session_create_error(socket, reason)}
     end
-  end
-
-  defp ensure_hello_orchestrator(%URI{} = session_uri) do
-    # The invisible front-desk orchestrator — ALL user messages route to it, and it
-    # spawns the owner-facing builder + read-only concierge on demand. No-op for a
-    # non-page session; best-effort.
-    _ = EzagentPluginHello.App.ensure_session_orchestrator(session_uri)
-    :ok
-  rescue
-    e ->
-      Logger.warning(
-        "world: hello orchestrator ensure failed for #{URI.to_string(session_uri)}: #{inspect(e)}"
-      )
-
-      :error
   end
 
   # Publish the current session as a reusable SessionTemplate (via the orchestrator
@@ -405,7 +399,11 @@ defmodule Ezagent.World.ConversationActions do
           {:noreply,
            socket
            |> assign(:last_dispatch_status, "ok")
-           |> push_event("world:state", %{"publish_notice" => "已发布为模板"})}
+           |> push_world_state(%{
+             "publish_notice" => "已发布为模板",
+             "templates" =>
+               Ezagent.World.WorkspacePluginData.session_template_names(workspace_uri)
+           })}
 
         {:error, reason} ->
           {:noreply,
@@ -659,12 +657,12 @@ defmodule Ezagent.World.ConversationActions do
   @spec add_routing_rule(Phoenix.LiveView.Socket.t(), URI.t(), map()) ::
           {:noreply, Phoenix.LiveView.Socket.t()}
   def add_routing_rule(socket, %URI{} = session_uri, params) when is_map(params) do
-    with {:ok, leaf_matcher} <- build_session_form_matcher(params),
+    with {:ok, leaf_matcher} <- ConversationRoutingForm.build_matcher(params),
          receivers when is_list(receivers) and receivers != [] <-
-           parse_session_receivers(Map.get(params, "receivers", "")),
-         :ok <- revalidate_session_matcher_arg(socket, params),
-         :ok <- revalidate_session_receivers(socket, receivers),
-         matcher = wrap_in_session(leaf_matcher, session_uri),
+           ConversationRoutingForm.parse_receivers(Map.get(params, "receivers", "")),
+         :ok <- ConversationRoutingForm.revalidate_matcher_arg(socket, params),
+         :ok <- ConversationRoutingForm.revalidate_receivers(socket, receivers),
+         matcher = ConversationRoutingForm.wrap_in_session(leaf_matcher, session_uri),
          {:ok, _} <-
            dispatch_session_routing(socket, session_uri, :add_rule, %{
              table: MentionRouting,
@@ -779,21 +777,122 @@ defmodule Ezagent.World.ConversationActions do
 
     case parse_member_uri(participant_str) do
       {:ok, %URI{} = participant_uri} ->
-        case Ezagent.Session.Participants.remove_participant(
-               session_uri,
-               participant_uri,
-               %{caller: caller, caps: caps}
-             ) do
-          {:ok, _result} ->
-            {:noreply, push_members(assign(socket, :last_dispatch_status, "ok"))}
+        if URI.to_string(participant_uri) == URI.to_string(caller) do
+          {:noreply, assign(socket, :last_dispatch_status, "error:self_remove_not_allowed")}
+        else
+          case Ezagent.Session.Participants.remove_participant(
+                 session_uri,
+                 participant_uri,
+                 %{caller: caller, caps: caps}
+               ) do
+            {:ok, _result} ->
+              {:noreply, push_members(assign(socket, :last_dispatch_status, "ok"))}
 
-          {:error, reason} ->
-            {:noreply, assign(socket, :last_dispatch_status, "error:#{reason(reason)}")}
+            {:error, reason} ->
+              {:noreply, assign(socket, :last_dispatch_status, "error:#{reason(reason)}")}
+          end
         end
 
       :error ->
         {:noreply, assign(socket, :last_dispatch_status, "error:bad_member_uri")}
     end
+  end
+
+  @doc "Uninstall session socialware materialization from the management panel."
+  @spec uninstall_socialware(Phoenix.LiveView.Socket.t(), URI.t(), String.t()) ::
+          {:noreply, Phoenix.LiveView.Socket.t()}
+  def uninstall_socialware(socket, %URI{} = session_uri, ref) when is_binary(ref) do
+    caller = socket.assigns.current_entity_uri
+    actor = caller || Ezagent.Entity.User.admin_uri()
+    caps = Map.get(socket.assigns, :current_caps, MapSet.new())
+
+    definitions = Ezagent.Socialware.Installation.installed_definitions(session_uri)
+
+    case Enum.find(definitions, fn definition -> definition.name == ref end) do
+      nil ->
+        {:noreply, assign(socket, :last_dispatch_status, "error:unknown_socialware_install")}
+
+      _definition ->
+        with true <- match?(%URI{}, caller),
+             :ok <- remove_socialware_members(session_uri, definitions, caller, caps),
+             :ok <- Ezagent.ActionSet.Session.RoutingPrune.prune_all_for_session(session_uri),
+             :ok <- Ezagent.Socialware.Installation.retract_session_installs(session_uri, actor) do
+          socket =
+            socket
+            |> assign(:last_dispatch_status, "ok")
+            |> push_session_management_state(session_uri)
+
+          {:noreply, socket}
+        else
+          false ->
+            {:noreply, assign(socket, :last_dispatch_status, "error:missing_caller")}
+
+          {:error, reason} ->
+            {:noreply, assign(socket, :last_dispatch_status, "error:#{reason(reason)}")}
+        end
+    end
+  end
+
+  defp remove_socialware_members(%URI{} = session_uri, definitions, %URI{} = caller, caps) do
+    role_names =
+      definitions
+      |> List.wrap()
+      |> Enum.flat_map(fn definition -> List.wrap(definition.roles) end)
+      |> Enum.map(fn role -> Map.get(role, :role_name) end)
+      |> Enum.filter(fn role -> is_binary(role) and String.trim(role) != "" end)
+      |> Enum.uniq()
+
+    with {:ok, %{members: members}} when is_map(members) <-
+           Ezagent.Kind.get_slice(session_uri, :session) do
+      Enum.reduce_while(role_names, :ok, fn role_name, :ok ->
+        case member_for_role(members, role_name) do
+          nil ->
+            {:cont, :ok}
+
+          %URI{} = member_uri ->
+            case Ezagent.Session.Participants.remove_participant(session_uri, member_uri, %{
+                   caller: caller,
+                   caps: caps
+                 }) do
+              {:ok, _result} -> {:cont, :ok}
+              {:error, reason} -> {:halt, {:error, reason}}
+            end
+        end
+      end)
+    else
+      _ -> :ok
+    end
+  end
+
+  defp member_for_role(members, role_name) when is_map(members) do
+    Enum.find_value(members, fn {uri, meta} ->
+      if member_role_name(meta) == role_name, do: uri, else: nil
+    end)
+  end
+
+  defp member_role_name(meta) when is_map(meta),
+    do: Map.get(meta, :role_name) || Map.get(meta, "role_name")
+
+  defp member_role_name(_), do: nil
+
+  defp push_session_management_state(socket, %URI{} = session_uri) do
+    members = ConversationData.member_options(session_uri)
+    caller = socket.assigns.current_entity_uri
+    workspace = socket.assigns.current_workspace_uri
+
+    payload = %{
+      "members" => members,
+      "human_role_slots" => ConversationData.human_role_slots(session_uri),
+      "installed_socialwares" => ConversationData.installed_socialwares(session_uri),
+      "routing_rules" => ConversationData.list_session_routing_rules(session_uri),
+      "routing_entity_candidates" =>
+        ConversationData.routing_entity_candidates(caller, workspace, members),
+      "invite_candidates" =>
+        ConversationData.invite_candidates(session_uri, caller, workspace, members),
+      "views" => ConversationData.session_views(session_uri, caller)
+    }
+
+    if connected?(socket), do: push_event(socket, "world:state", payload), else: socket
   end
 
   @doc """
@@ -843,9 +942,24 @@ defmodule Ezagent.World.ConversationActions do
     if connected?(socket) do
       case socket.assigns[:current_session_uri] do
         %URI{} = session_uri ->
+          members = ConversationData.member_options(session_uri)
+
           push_event(socket, "members:update", %{
-            "members" => ConversationData.member_options(session_uri),
-            "human_role_slots" => ConversationData.human_role_slots(session_uri)
+            "members" => members,
+            "human_role_slots" => ConversationData.human_role_slots(session_uri),
+            "invite_candidates" =>
+              ConversationData.invite_candidates(
+                session_uri,
+                socket.assigns.current_entity_uri,
+                socket.assigns.current_workspace_uri,
+                members
+              ),
+            "routing_entity_candidates" =>
+              ConversationData.routing_entity_candidates(
+                socket.assigns.current_entity_uri,
+                socket.assigns.current_workspace_uri,
+                members
+              )
           })
 
         _ ->
@@ -1008,100 +1122,6 @@ defmodule Ezagent.World.ConversationActions do
 
   defp caller_can_restart_orchestrator?(socket, %URI{}) do
     Ezagent.Identity.admin?(socket.assigns.current_entity_uri)
-  end
-
-  defp build_session_form_matcher(params) when is_map(params) do
-    type = Map.get(params, "matcher_type")
-    arg = Map.get(params, "matcher_arg")
-
-    case {type, arg} do
-      {"mention", text} when is_binary(text) and text != "" ->
-        {:ok, Ezagent.Routing.Matcher.mention(text)}
-
-      {"from", text} when is_binary(text) and text != "" ->
-        {:ok, Ezagent.Routing.Matcher.from(text)}
-
-      {"text_contains", text} when is_binary(text) and text != "" ->
-        {:ok, Ezagent.Routing.Matcher.text_contains(text)}
-
-      {"always", _} ->
-        {:ok, Ezagent.Routing.Matcher.always()}
-
-      _ ->
-        {:error, :invalid_matcher_form}
-    end
-  end
-
-  defp build_session_form_matcher(_), do: {:error, :invalid_matcher_form}
-
-  defp parse_session_receivers(value) do
-    values =
-      cond do
-        is_list(value) -> value
-        is_binary(value) -> String.split(value, ",", trim: true)
-        true -> []
-      end
-
-    for item <- values,
-        text = String.trim(to_string(item)),
-        text != "",
-        do: text
-  end
-
-  defp revalidate_session_matcher_arg(socket, %{
-         "matcher_type" => type,
-         "matcher_arg" => arg
-       })
-       when type in ["mention", "from"] and is_binary(arg) and arg != "" do
-    revalidate_session_uris(socket, [arg], [:entity])
-  end
-
-  defp revalidate_session_matcher_arg(_socket, _params), do: :ok
-
-  defp revalidate_session_receivers(socket, receivers) do
-    Enum.reduce_while(receivers, :ok, fn receiver, :ok ->
-      if Ezagent.Routing.Resolver.magic_token?(receiver) do
-        {:cont, :ok}
-      else
-        case revalidate_session_uris(socket, [receiver], [:entity, :session]) do
-          :ok -> {:cont, :ok}
-          {:error, _} = err -> {:halt, err}
-        end
-      end
-    end)
-  end
-
-  defp revalidate_session_uris(socket, uris, kinds) do
-    caller_uri = socket.assigns.current_entity_uri
-    workspace_uri = socket.assigns.current_workspace_uri
-
-    Enum.reduce_while(uris, :ok, fn uri, :ok ->
-      if uri_options_valid_for?(caller_uri, workspace_uri, uri, kinds) do
-        {:cont, :ok}
-      else
-        {:halt, {:error, {:invalid_uri, uri}}}
-      end
-    end)
-  end
-
-  defp uri_options_valid_for?(caller_uri, workspace_uri, uri, kinds) do
-    Module.concat([Ezagent.UI, UriOptions])
-    |> apply(:valid_for?, [caller_uri, workspace_uri, uri, kinds])
-  rescue
-    _ -> false
-  end
-
-  defp wrap_in_session(matcher, %URI{} = session_uri) do
-    case matcher do
-      {:in_session, _} ->
-        matcher
-
-      leaf ->
-        Ezagent.Routing.Matcher.all_of([
-          Ezagent.Routing.Matcher.in_session(session_uri),
-          leaf
-        ])
-    end
   end
 
   defp safe_table_atom(s) when is_binary(s) do

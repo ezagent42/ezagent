@@ -52,7 +52,7 @@ config :ezagent_web, EzagentWeb.Endpoint,
     # reparent 到 init 成孤儿、继续占 5173,下次启动 watcher 的 vite 撞端口 → :watcher_command_error。
     # node 直跑 vite = 单进程、BEAM 直接管,关闭即清,根治孤儿占端口。
     node: [
-      "node_modules/.bin/vite",
+      "node_modules/vite/bin/vite.js",
       "--host",
       "0.0.0.0",
       "--port",

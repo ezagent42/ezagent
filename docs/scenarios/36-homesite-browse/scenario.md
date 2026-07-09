@@ -142,7 +142,7 @@ in scenario 35, cross-referenced, not re-proven here):
   login.html, site-nav.js, worldcup.js, mock-ezagent-api.js).
 - Real-site build: `feat/website-framework-hello-prod-0630` (T4,
   `docs/together/2026-06-30/plan.md`); production target
-  `app.ezagent.chat` (`docs/guide/deploy-mac-stack.md`).
+  `app.ezagent.chat`.
 - Socialware external route: `/socialware/external`
   (`apps/ezagent_web/lib/ezagent_web/router.ex:157`).
 

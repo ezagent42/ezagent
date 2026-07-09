@@ -30,6 +30,7 @@ defmodule Ezagent.ActionSet.Workspace.AgentCreate.RoleStep do
   """
 
   alias Ezagent.Agent.Recipe
+  alias Ezagent.Agent.RecipeBehaviorFold
 
   # File-flavors whose create route is the template/cascade path (NOT
   # direct-spawn); a role on these is RF-5b (deferred) → rejected fail-loud.
@@ -90,10 +91,8 @@ defmodule Ezagent.ActionSet.Workspace.AgentCreate.RoleStep do
   def resolve(nil, _flavor), do: {:ok, nil}
 
   def resolve(role_name, flavor) when is_binary(role_name) and is_binary(flavor) do
-    with {:ok, recipe} <- lookup_role_recipe(role_name),
-         {:ok, decl} <- lookup_flavor_decl(flavor) do
-      flavor_behaviors = flavor_behavior_set(decl)
-      {:ok, Recipe.Compose.materialize(recipe, %{flavor_behaviors: flavor_behaviors})}
+    with {:ok, recipe} <- lookup_role_recipe(role_name) do
+      RecipeBehaviorFold.fold(recipe, flavor)
     end
   end
 
@@ -121,7 +120,7 @@ defmodule Ezagent.ActionSet.Workspace.AgentCreate.RoleStep do
   was RF-7 `:role`) the host merges into `Sandbox.create/1`'s args — both
   snapshot-backed in the `:sandbox` slice (the cold-restart source for the
   `:passive`/`:recipe` UriQuery resolvers +
-  `Ezagent.AgentRecipeResolver.list_by_recipe/2`). A no-recipe create
+  `Ezagent.Agent.RecipeResolver.list_by_recipe/2`). A no-recipe create
   (`nil` materialized) contributes nothing → the slice's defaults.
   """
   @spec spawn_marker_args(map() | nil) :: map()
@@ -143,9 +142,9 @@ defmodule Ezagent.ActionSet.Workspace.AgentCreate.RoleStep do
 
   The `:sandbox`-slice `:recipe` field (threaded via the spawn args by the host)
   is the snapshot-backed source of truth for
-  `Ezagent.AgentRecipeResolver.list_by_recipe/2` + the `:recipe` UriQuery
+  `Ezagent.Agent.RecipeResolver.list_by_recipe/2` + the `:recipe` UriQuery
   resolver. This ALSO primes the volatile ETS fast path
-  (`Ezagent.AgentRecipeAttributes`) so the per-URI `:recipe` resolver answers
+  (`Ezagent.Agent.RecipeAttributes`) so the per-URI `:recipe` resolver answers
   correctly BEFORE the first snapshot. A no-recipe create (`nil` materialized or
   an unnamed recipe) writes nothing — an absent ETS entry + a `nil` slice field
   both resolve to "no recipe provenance". This records BUILD PROVENANCE only,
@@ -156,7 +155,7 @@ defmodule Ezagent.ActionSet.Workspace.AgentCreate.RoleStep do
 
   def grant_recipe_marker(%URI{} = agent_uri, %{recipe: recipe})
       when is_binary(recipe) and recipe != "" do
-    Ezagent.AgentRecipeAttributes.put(agent_uri, recipe)
+    Ezagent.Agent.RecipeAttributes.put(agent_uri, recipe)
   end
 
   def grant_recipe_marker(_agent_uri, _materialized), do: :ok
@@ -181,7 +180,7 @@ defmodule Ezagent.ActionSet.Workspace.AgentCreate.RoleStep do
     role_name = Map.get(params, :role)
 
     with {:ok, recipe} <- lookup_role_recipe(role_name),
-         {:ok, decl} <- lookup_flavor_decl(flavor),
+         {:ok, decl} <- RecipeBehaviorFold.lookup_flavor_decl(flavor),
          {:ok, caller} <- require_caller(params) do
       case Map.get(decl, :cap_policy) do
         policy when is_function(policy, 1) ->
@@ -215,28 +214,6 @@ defmodule Ezagent.ActionSet.Workspace.AgentCreate.RoleStep do
     case Ezagent.Agent.RecipeRegistry.lookup(role_name) do
       {:ok, recipe} -> {:ok, recipe}
       :error -> {:error, {:unknown_role, role_name}}
-    end
-  end
-
-  defp lookup_flavor_decl(flavor) do
-    case Ezagent.AgentFlavorRegistry.lookup(flavor) do
-      {:ok, decl} -> {:ok, decl}
-      :error -> {:error, {:unknown_flavor_for_role, flavor}}
-    end
-  end
-
-  # The flavor's COMPLETE per-instance behavior set (rev2-review HIGH-1): the
-  # flavor's `:instance_behaviors` thunk when present (curl), else the Kind's
-  # nil-capture default (native → the base Agent set: Identity/Sandbox/ApiKeys/
-  # …). Recipe.Compose UNIONs role ++ this, and that union OVERRIDES the host's
-  # thunk-sourced `:behaviors` — so the role's behaviors AND the flavor base both
-  # reach `:kind_base` (without the base, no `:sandbox` slice to store
-  # `passive`/config_dir, no `:identity` slice to grant caps into — the agent
-  # would be structurally broken).
-  defp flavor_behavior_set(decl) do
-    case Map.get(decl, :instance_behaviors) do
-      thunk when is_function(thunk, 0) -> thunk.()
-      _ -> Ezagent.Kind.nil_capture_behavior_set(Map.fetch!(decl, :kind))
     end
   end
 

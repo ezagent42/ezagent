@@ -207,7 +207,7 @@ defmodule Ezagent.ActionSet.ConfigGovernanceTest do
 
     # Both items recorded published_prev_object_id (key A had none → nil; key B
     # had a prior → prior_b).
-    items = Ezagent.Socialware.ConfigChangeStore.items(cr_id)
+    items = Ezagent.ConfigGovernance.Store.items(cr_id)
     prevs = Map.new(items, &{&1.key, &1.published_prev_object_id})
     assert prevs[@cascade_key] == nil
     assert prevs["behavior.b"] == prior_b
@@ -602,7 +602,7 @@ defmodule Ezagent.ActionSet.ConfigGovernanceTest do
     manager = grant_manage_cap(agent, workspace)
 
     {:ok, %{cr_id: cr_id}} = dispatch(agent, :open_cr, %{}, manager)
-    {:ok, cr} = Ezagent.Socialware.ConfigChangeStore.fetch(cr_id)
+    {:ok, cr} = Ezagent.ConfigGovernance.Store.fetch(cr_id)
     assert cr.subject_uri == URI.to_string(agent)
   end
 

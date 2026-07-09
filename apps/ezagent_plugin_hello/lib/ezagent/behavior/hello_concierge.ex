@@ -3,78 +3,70 @@ defmodule Ezagent.ActionSet.HelloConcierge do
   The hello CONCIERGE agent Behavior — a READ-ONLY navigation/Q&A copilot for the
   public website (the §5.2 门户助手).
 
-  On `:receive` of a USER message (routed to it by `@`-mention when the sender is
-  NOT the session owner — see `EzagentWeb.Socialware.SessionFeedChannel`), it
-  answers grounded in the current page content via
-  `EzagentPluginHello.Generator.concierge_answer/3` and posts a chat reply. It
-  NEVER drives `Behavior.Surface` — it structurally cannot edit / generate /
-  publish the page (only the builder, `Ezagent.ActionSet.HelloBuilder`, does that).
-  That hard separation is the safety gate: even a prompt-injected concierge has no
-  page-write path.
+  Two entry points:
+  - `:receive` — chat delivery (dormant; the concierge is native-flavor, cannot
+    receive chat messages). Kept for future T2 §5 table-triggered dispatch.
+  - `:answer` — dispatchable action (the ACTIVE entry). Native-flavor members
+    cannot receive chat delivery, so the session front-desk dispatches here
+    instead of posting a chat message. Takes `session_uri` + `text`, runs the
+    concierge LLM pipeline, and posts the reply as a chat message.
 
-  Mirrors `Ezagent.ActionSet.HelloBuilder`'s `:receive` shape; no durable state.
+  NEVER drives `Behavior.Surface` — structurally cannot edit / generate / publish
+  the page (only the builder does that). This is the safety gate.
   """
 
   use Ezagent.Lifecycle
-
-  alias Ezagent.Message
 
   action(:receive,
     args: %{message: :map},
     returns: %{},
     caps: [:receive],
     modes: [:cast],
-    description: "Answer a visitor question about the site (read-only)"
+    description: "Answer a visitor question about the site (read-only, chat delivery)"
   )
 
-  # No hand-written `required_caps`: this behavior now runs on the unified
-  # `Ezagent.Entity.Agent` (a `hello.concierge` role on the `native` flavor), so
-  # the Lifecycle macro derives the `:receive` cap on the `:agent` axis (RoleStep
-  # mints `kind: :agent`). Mirrors the kanban role behavior.
+  action(:answer,
+    args: %{session_uri: :string, text: :string},
+    returns: %{},
+    caps: [:answer],
+    modes: [:cast],
+    description:
+      "Answer a visitor question about the hello page (dispatchable, for native flavor)"
+  )
 
   @impl Ezagent.Lifecycle
   def create(_args), do: {:ok, %{}}
 
   @doc """
-  On an inbound USER message, answer as the concierge (fire-and-forget Task).
-  Ignores non-user messages (other agents, its own output) so it never loops.
-  Emits no effects — the reply lands via `Generator.concierge_answer`'s `say`.
+  Dispatchable answer entry — the ACTIVE path for a native-flavor concierge.
+  Mirrors `HelloBuilder.handle_rebuild/2`.
   """
-  def handle_receive(%{message: %Message{} = msg}, ctx) do
-    with true <- from_user?(msg),
-         %URI{} = session_uri <- session_from_ctx(ctx),
-         text when is_binary(text) and text != "" <- extract_text(msg.body) do
-      _ =
-        EzagentPluginHello.Generator.concierge_start(
-          session_uri,
-          text,
-          EzagentPluginHello.App.concierge_uri(session_uri)
-        )
+  def handle_answer(%{session_uri: session_str, text: text}, _ctx)
+      when is_binary(session_str) and is_binary(text) and text != "" do
+    with {:ok, session_uri} <- parse_session_uri(session_str),
+         {:ok, concierge_uri} <- EzagentPluginHello.Members.role_uri(session_uri, "concierge") do
+      _ = EzagentPluginHello.Generator.concierge_start(session_uri, text, concierge_uri)
     end
 
     {:ok, %{}, []}
   end
 
+  def handle_answer(_args, _ctx), do: {:ok, %{}, []}
+
+  def handle_receive(_args, _ctx), do: {:ok, %{}, []}
+
   # caps-data-ownership — admin-only Behavior; no per-entity owner.
   def data_owner(:any), do: :any
   def data_owner(_), do: :no_owner
 
-  # --- internals (mirror HelloBuilder) ----------------------------------
+  # --- internals --------------------------------------------------------
 
-  defp from_user?(%Message{sender: %URI{} = uri}), do: Ezagent.URI.type?(uri, :user)
-  defp from_user?(_), do: false
-
-  defp extract_text(%{text: t}) when is_binary(t), do: t
-  defp extract_text(%{"text" => t}) when is_binary(t), do: t
-  defp extract_text(_), do: ""
-
-  defp session_from_ctx(%{caller: %URI{} = u}), do: u
-
-  defp session_from_ctx(%{caller: s}) when is_binary(s) do
-    Ezagent.URI.new!(s)
+  defp parse_session_uri(session_str) do
+    case Ezagent.URI.new!(session_str) do
+      %URI{scheme: "session"} = uri -> {:ok, uri}
+      _ -> :error
+    end
   rescue
-    ArgumentError -> nil
+    ArgumentError -> :error
   end
-
-  defp session_from_ctx(_), do: nil
 end

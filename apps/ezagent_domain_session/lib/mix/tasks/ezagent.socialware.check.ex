@@ -18,6 +18,7 @@ defmodule Mix.Tasks.Ezagent.Socialware.Check do
   """
   use Mix.Task
 
+  alias Mix.Tasks.Ezagent.Socialware.ManifestArgs
   alias Ezagent.Socialware.{Conformance, Definition, DefinitionRegistry}
 
   @requirements ["app.start"]
@@ -38,11 +39,7 @@ defmodule Mix.Tasks.Ezagent.Socialware.Check do
 
     # No silent default-workspace STRING fallback (#324): build the admin/system
     # workspace STRUCTURALLY when `--workspace` is omitted.
-    workspace_uri =
-      case Keyword.get(opts, :workspace) do
-        nil -> Ezagent.URI.workspace(:system)
-        ws when is_binary(ws) -> Ezagent.URI.new!(ws)
-      end
+    workspace_uri = ManifestArgs.workspace_uri(opts)
 
     for app <- @reference_apps, do: _ = Application.ensure_all_started(app)
     _ = seed_builtins()
@@ -78,24 +75,25 @@ defmodule Mix.Tasks.Ezagent.Socialware.Check do
   end
 
   defp resolve_definitions([], workspace_uri) do
-    DefinitionRegistry
-    |> all_definition_names(workspace_uri)
-    |> Enum.flat_map(fn name ->
+    workspace_uri
+    |> all_definition_names()
+    |> Enum.map(fn name ->
       case DefinitionRegistry.lookup(workspace_uri, name) do
-        {:ok, %Definition{} = definition, _obj} -> [{name, definition}]
-        :error -> []
+        {:ok, %Definition{} = definition, _obj} ->
+          {name, definition}
+
+        :error ->
+          Mix.raise(
+            "listed socialware definition #{inspect(name)} did not resolve in #{URI.to_string(workspace_uri)}"
+          )
       end
     end)
   end
 
-  defp all_definition_names(_registry, workspace_uri) do
-    if function_exported?(DefinitionRegistry, :list_names, 1) do
-      apply(DefinitionRegistry, :list_names, [workspace_uri])
-    else
-      # fall back to the seeded builtins (chat/socialware) when the registry
-      # exposes no enumeration.
-      ["chat", "socialware"]
-    end
+  defp all_definition_names(workspace_uri) do
+    workspace_uri
+    |> DefinitionRegistry.list()
+    |> Enum.map(& &1.name)
   end
 
   defp seed_builtins do

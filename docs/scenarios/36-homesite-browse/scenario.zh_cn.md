@@ -119,8 +119,7 @@ Selector 列给出**角色/文案**（契约）与结构提示（`—` 仅参考
 - 录制 mock：`docs/website-demo/v1/`（index.html、hello-demo.html、login.html、
   site-nav.js、worldcup.js、mock-ezagent-api.js）。
 - 真站构建：`feat/website-framework-hello-prod-0630`（T4，
-  `docs/together/2026-06-30/plan.md`）；生产目标 `app.ezagent.chat`
-  （`docs/guide/deploy-mac-stack.md`）。
+  `docs/together/2026-06-30/plan.md`）；生产目标 `app.ezagent.chat`。
 - Socialware 外链路由：`/socialware/external`
   （`apps/ezagent_web/lib/ezagent_web/router.ex:157`）。
 

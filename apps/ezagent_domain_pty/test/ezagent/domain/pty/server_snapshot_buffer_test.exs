@@ -44,14 +44,17 @@ defmodule Ezagent.Domain.Pty.Server.SnapshotBufferTest do
 
     test "tails to max_bytes", %{agent_uri: uri, pid: pid} do
       # Inject a known buffer via :sys.replace_state so the test isn't
-      # dependent on actual PTY output.
+      # dependent on actual PTY output. #1201 ①: the cut is now UTF-8
+      # codepoint-boundary-aware, so on random bytes the tail may shrink
+      # by up to 3 bytes (leading continuation-looking bytes are skipped).
       bigbuf = :crypto.strong_rand_bytes(200_000)
       :sys.replace_state(pid, fn s -> %{s | pty_buffer: bigbuf} end)
 
       assert {:ok, buf} = PtyServer.snapshot_buffer(uri, 4_096)
-      assert byte_size(buf) == 4_096
+      assert byte_size(buf) <= 4_096
+      assert byte_size(buf) >= 4_096 - 3
       # Must be the TAIL, not the head.
-      assert buf == binary_part(bigbuf, byte_size(bigbuf) - 4_096, 4_096)
+      assert buf == binary_part(bigbuf, byte_size(bigbuf) - byte_size(buf), byte_size(buf))
     end
 
     test "returns :error for unknown agent_uri" do

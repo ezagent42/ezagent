@@ -19,6 +19,7 @@ defmodule EzagentDomainInstanceMessage.Integration.SessionCreateOrchestratorDeco
   setup do
     _ = Ezagent.SpawnRegistry.spawn(User.admin_uri())
     :ok = EzagentDomainInstanceMessage.Application.seed_default_session_template_now()
+    :ok = seed_orchestrator_recipe()
 
     on_exit(fn ->
       table = Ezagent.Routing.Resolver.default_routing_table()
@@ -33,7 +34,7 @@ defmodule EzagentDomainInstanceMessage.Integration.SessionCreateOrchestratorDeco
     :ok
   end
 
-  test "default SessionTemplate declares orchestrator as a role member, not a special field" do
+  test "default SessionTemplate installs orchestrator socialware, not a legacy member" do
     {:ok, template_uri, content} =
       TemplateResolver.resolve_session_template!("default", Ezagent.URI.workspace(:system))
 
@@ -42,19 +43,13 @@ defmodule EzagentDomainInstanceMessage.Integration.SessionCreateOrchestratorDeco
     refute Map.has_key?(content, "orchestrator_template_uri")
 
     members = Map.get(content, :members) || Map.get(content, "members")
+    installs = Map.get(content, :installs) || Map.get(content, "installs")
 
-    assert [
-             %{
-               role_name: "orchestrator",
-               source_template_uri: %URI{} = source_template_uri,
-               in_session_template: true
-             }
-           ] = members
-
-    assert URI.to_string(source_template_uri) == "template://system/agent/cc-orchestrator"
+    assert members == []
+    assert installs == ["chat", "orchestrator"]
   end
 
-  test "create_session returns immediately usable session meta without eager orchestrator" do
+  test "create_session materializes the default orchestrator Definition" do
     short = "decouple-create-#{System.unique_integer([:positive])}"
 
     assert {:ok, session_uri, meta} =
@@ -72,14 +67,25 @@ defmodule EzagentDomainInstanceMessage.Integration.SessionCreateOrchestratorDeco
     owner = URI.to_string(User.admin_uri())
 
     assert wait_until(fn ->
-             Session.session_member_uris(session_uri)
-             |> Enum.map(&URI.to_string/1)
-             |> Kernel.==([owner])
+             member_uris =
+               Session.session_member_uris(session_uri)
+               |> Enum.map(&URI.to_string/1)
+
+             owner in member_uris and match?(%URI{}, member_role_uri(session_uri, "orchestrator"))
            end)
 
     wc = Session.read_template_working_copy(session_uri)
     assert Map.get(wc, :session_template_uri)
-    assert [%{role_name: "orchestrator"}] = Map.get(wc, :member_declarations)
+
+    assert [
+             %{
+               fill: :agent,
+               recipe: "orchestrator",
+               flavor: "cc",
+               role_name: "orchestrator"
+             }
+           ] = Map.get(wc, :member_declarations)
+
     refute Map.has_key?(wc, :orchestrator_uri)
     refute Map.has_key?(wc, :orchestrator_template_uri)
   end
@@ -238,8 +244,26 @@ defmodule EzagentDomainInstanceMessage.Integration.SessionCreateOrchestratorDeco
     working_copy = Map.fetch!(session_slice, :template_working_copy)
     assert %URI{} = Map.get(working_copy, :session_template_uri)
 
-    assert [%{role_name: "orchestrator", in_session_template: true}] =
-             Map.get(working_copy, :member_declarations)
+    assert [
+             %{
+               fill: :agent,
+               recipe: "orchestrator",
+               flavor: "cc",
+               role_name: "orchestrator"
+             }
+           ] = Map.get(working_copy, :member_declarations)
+  end
+
+  defp seed_orchestrator_recipe do
+    recipe =
+      [Ezagent, Orchestrator, OrchestratorRecipe]
+      |> Module.concat()
+      |> apply(:recipe, [])
+
+    case Ezagent.Agent.RecipeRegistry.seed_role_if_absent(recipe) do
+      {:ok, _} -> :ok
+      {:error, reason} -> {:error, reason}
+    end
   end
 
   defp seed_echo_agent_template(n) do
@@ -266,7 +290,9 @@ defmodule EzagentDomainInstanceMessage.Integration.SessionCreateOrchestratorDeco
         }
       })
 
-    on_exit(fn -> terminate_if_alive(EzagentDomainInstanceMessage.AgentTemplateSupervisor, uri) end)
+    on_exit(fn ->
+      terminate_if_alive(EzagentDomainInstanceMessage.AgentTemplateSupervisor, uri)
+    end)
 
     uri
   end

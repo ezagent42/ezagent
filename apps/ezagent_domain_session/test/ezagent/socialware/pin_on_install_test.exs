@@ -14,7 +14,7 @@ defmodule Ezagent.Socialware.PinOnInstallTest do
 
   # bases decide the resolved behavior set — R1 (Session only) vs R2 (Session +
   # Turn) so the two revisions are behaviorally distinguishable.
-  defp attrs(name, bases) do
+  defp attrs(name, bases, overrides) do
     %{
       name: name,
       title: "Pin #{name}",
@@ -22,10 +22,11 @@ defmodule Ezagent.Socialware.PinOnInstallTest do
       shape: [],
       visibility_policy: %{scope: :private, publish_policy: :auto, web_anon_access: false}
     }
+    |> Map.merge(overrides)
   end
 
-  defp write!(name, bases) do
-    {:ok, definition} = Definition.new(attrs(name, bases))
+  defp write!(name, bases, overrides \\ %{}) do
+    {:ok, definition} = Definition.new(attrs(name, bases, overrides))
 
     {:ok, object} =
       DefinitionRegistry.write_definition(definition,
@@ -175,5 +176,23 @@ defmodule Ezagent.Socialware.PinOnInstallTest do
     assert spec.config_id == r1.id
     assert spec.content_hash == r1.content_hash
     assert is_binary(spec.content_hash)
+  end
+
+  test "T-Pin-g: freeze expands and pins transitive requires closure" do
+    n = uniq()
+    dep_name = "pin-g-dep-#{n}"
+    app_name = "pin-g-app-#{n}"
+
+    dep = write!(dep_name, [Ezagent.ActionSet.Session])
+    app = write!(app_name, [Ezagent.ActionSet.Session], %{requires: [dep_name]})
+
+    assert {:ok, frozen} = Installation.freeze_template_installs(%{installs: [app_name]}, @ws)
+
+    refs_to_config_ids =
+      frozen
+      |> Map.fetch!(:installs)
+      |> Map.new(&{&1.ref, &1.config_id})
+
+    assert refs_to_config_ids == %{dep_name => dep.id, app_name => app.id}
   end
 end

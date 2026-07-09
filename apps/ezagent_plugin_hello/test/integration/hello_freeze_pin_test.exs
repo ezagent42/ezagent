@@ -54,8 +54,13 @@ defmodule EzagentPluginHello.Integration.HelloFreezePinTest do
     # the persisted template content carries a PINNED install (freeze ran here) —
     # a bare `installs: [ref]` would have no config_id.
     content = persisted_template_content(session_uri)
-    assert [install] = installs_of(content)
-    assert pin_of(install) == r1.id
+    # The template now carries hello + orchestrator installs (from `requires`);
+    # the hello install must be among them with the freeze pin.
+    installs = installs_of(content)
+    hello_install = Enum.find(installs, &(is_binary(pin_of(&1)) and pin_of(&1) == r1.id))
+
+    assert hello_install,
+           "hello install with pinned config_id #{r1.id} not found in #{inspect(installs)}"
 
     # publish a NEW hello revision R2 with an extra behavior (SupervisorApproval).
     {:ok, r2_def} =

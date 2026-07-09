@@ -128,6 +128,11 @@ defmodule EzagentPluginPy.Application do
   @impl Ezagent.Plugin
   def roles, do: [np_role_recipe()]
 
+  @impl Ezagent.Plugin
+  def resource_types do
+    Ezagent.Resource.FsResolver.config_dir_resource_types([PyAgentTemplate])
+  end
+
   @doc """
   The `np` py-role recipe — `py` flavor + the re-homed `np.py` script.
 

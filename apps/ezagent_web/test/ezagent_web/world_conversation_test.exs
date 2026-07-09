@@ -19,7 +19,7 @@ defmodule EzagentWeb.WorldConversationTest do
   alias Ezagent.Routing.Matcher
   alias Ezagent.Routing.RuleStore
   alias Ezagent.Socialware.{AnonBinding, AnonUser, ExternalFeed}
-  alias Ezagent.Socialware.ConfigGovernance.Socialware, as: SocialwareGovernance
+  alias Ezagent.ConfigGovernance.Socialware, as: SocialwareGovernance
   alias EzagentDomainInstanceMessage.Routing.MentionRouting
 
   setup do
@@ -77,7 +77,7 @@ defmodule EzagentWeb.WorldConversationTest do
       {:chat_message, session_uri, msg}
     )
 
-    assert_push_event(view, "chat:message", %{"message" => pushed})
+    assert_push_event(view, "chat:message", %{"message" => pushed}, 1_000)
     assert pushed["text"] == "inbound-via-pubsub"
     assert pushed["id"] == msg.id
   end
@@ -105,7 +105,7 @@ defmodule EzagentWeb.WorldConversationTest do
       {:chat_message, cold_uri, msg}
     )
 
-    assert_push_event(view, "chat:message", %{"message" => pushed})
+    assert_push_event(view, "chat:message", %{"message" => pushed}, 1_000)
     assert pushed["text"] == "cold-session-inbound"
   end
 
@@ -162,7 +162,7 @@ defmodule EzagentWeb.WorldConversationTest do
 
     # The cast'd message comes back via the inbound bridge (sender sees its
     # OWN message only through the broadcast).
-    assert_push_event(view, "chat:message", %{"message" => pushed})
+    assert_push_event(view, "chat:message", %{"message" => pushed}, 1_000)
     assert pushed["text"] == "hello world"
     assert pushed["sender"] == caller
   end
@@ -532,6 +532,33 @@ defmodule EzagentWeb.WorldConversationTest do
     refute invitee in Enum.map(Map.keys(members), &URI.to_string/1)
   end
 
+  test "session.remove_participant refuses to remove the current viewer from members", %{
+    conn: conn
+  } do
+    session_uri = world_session_uri()
+    encoded = session_uri |> URI.to_string() |> URI.encode_www_form()
+    caller_uri = Ezagent.Entity.User.admin_uri()
+
+    # Opening the conversation self-joins the current viewer; the members panel
+    # must not offer or accept the same remove action for that viewer.
+    {:ok, view, _html} = live(admin_conn(conn), "/sessions?session=#{encoded}")
+
+    html =
+      view
+      |> element("#world-root")
+      |> render_hook("world:dispatch", %{
+        "action" => "session.remove_participant",
+        "args" => %{
+          "session_uri" => URI.to_string(session_uri),
+          "participant" => URI.to_string(caller_uri)
+        }
+      })
+
+    assert html =~ ~s(data-last-dispatch="error:self_remove_not_allowed")
+    assert {:ok, %{members: members}} = Ezagent.Kind.get_slice(session_uri, :session)
+    assert URI.to_string(caller_uri) in Enum.map(Map.keys(members), &URI.to_string/1)
+  end
+
   test "PR-4: session.create persists a new session and opens its conversation", %{conn: conn} do
     short_name = "world-pr4-#{System.unique_integer([:positive])}"
 
@@ -554,6 +581,7 @@ defmodule EzagentWeb.WorldConversationTest do
 
     assert_push_event(view, "world:state", %{
       "component" => "conversation",
+      "create_error" => nil,
       "current_session_uri" => pushed_uri
     })
 
@@ -599,6 +627,64 @@ defmodule EzagentWeb.WorldConversationTest do
     assert {:ok, content} = Ezagent.Entity.Session.read_template_content(template_uri)
     assert Map.get(content, :installs) == ["socialware"]
     assert Ezagent.Socialware.Installation.installed?(new_uri, "socialware")
+  end
+
+  test "session.socialware.uninstall clears install records and session-scoped rules", %{
+    conn: conn
+  } do
+    :ok = Ezagent.Socialware.DefinitionRegistry.seed_builtin_definitions()
+    short_name = "world-uninstall-#{System.unique_integer([:positive])}"
+
+    {:ok, view, _html} = live(admin_conn(conn), "/sessions")
+
+    render_hook(element(view, "#world-root"), "world:dispatch", %{
+      "action" => "session.create",
+      "args" => %{
+        "short_name" => short_name,
+        "template_name" => "default",
+        "socialware_ref" => "socialware"
+      }
+    })
+
+    template_name = "socialware-install-socialware"
+    new_uri = Ezagent.URI.new!("session://system/#{template_name}/#{short_name}")
+    encoded = URI.encode_www_form(URI.to_string(new_uri))
+
+    assert_patch(view, "/sessions?session=#{encoded}")
+    assert_push_event(view, "world:state", %{"component" => "conversation"})
+
+    {:ok, %{id: _rule_id}} =
+      RuleStore.add(
+        MentionRouting,
+        Matcher.always(),
+        [URI.to_string(Ezagent.Entity.User.admin_uri())],
+        new_uri
+      )
+
+    assert Ezagent.Socialware.Installation.installed?(new_uri, "socialware")
+
+    assert Enum.any?(RuleStore.list(MentionRouting), fn row ->
+             row.created_by == URI.to_string(new_uri)
+           end)
+
+    html =
+      render_hook(element(view, "#world-root"), "world:dispatch", %{
+        "action" => "session.socialware.uninstall",
+        "args" => %{"session_uri" => URI.to_string(new_uri), "ref" => "socialware"}
+      })
+
+    assert html =~ ~s(data-last-dispatch="ok")
+
+    assert_push_event(view, "world:state", %{
+      "installed_socialwares" => [],
+      "routing_rules" => []
+    })
+
+    refute Ezagent.Socialware.Installation.installed?(new_uri, "socialware")
+
+    refute Enum.any?(RuleStore.list(MentionRouting), fn row ->
+             row.created_by == URI.to_string(new_uri)
+           end)
   end
 
   test "O-1: session.create with socialware_config_id pins the EXACT revision (content-hash-addressed install)",
@@ -852,9 +938,8 @@ defmodule EzagentWeb.WorldConversationTest do
     assert html =~ ~s(data-last-dispatch="error:empty_message")
   end
 
-  test "session.switch push_patches to the ?session= deep-link", %{conn: conn} do
+  test "session.switch pushes conversation state without a LiveView route remount", %{conn: conn} do
     session_uri = world_session_uri()
-    encoded = session_uri |> URI.to_string() |> URI.encode_www_form()
 
     {:ok, view, _html} = live(admin_conn(conn), "/sessions")
 
@@ -865,8 +950,41 @@ defmodule EzagentWeb.WorldConversationTest do
       "args" => %{"session_uri" => URI.to_string(session_uri)}
     })
 
-    assert_patch(view, "/sessions?session=#{encoded}")
-    assert has_element?(view, "#world-root[data-world-component='conversation']")
+    assert_push_event(view, "world:state", %{
+      "component" => "conversation",
+      "session_uri" => pushed_uri
+    })
+
+    assert pushed_uri == URI.to_string(session_uri)
+
+    assert_push_event(
+      view,
+      "world:url",
+      %{
+        "path" => pushed_path
+      },
+      1_000
+    )
+
+    assert pushed_path == "/sessions?session=#{URI.encode_www_form(URI.to_string(session_uri))}"
+  end
+
+  test "conversation route state includes the Chat path for primary nav highlighting", %{
+    conn: conn
+  } do
+    session_uri = world_session_uri()
+    encoded = session_uri |> URI.to_string() |> URI.encode_www_form()
+
+    {:ok, view, _html} = live(admin_conn(conn), "/sessions?session=#{encoded}")
+
+    assert_push_event(view, "world:state", %{
+      "component" => "conversation",
+      "session_uri" => pushed_uri,
+      "path" => "/sessions",
+      "title" => "Chat"
+    })
+
+    assert pushed_uri == URI.to_string(session_uri)
   end
 
   test "ConversationData.build_message embeds parsed mentions + verified attachments", %{
@@ -1107,7 +1225,7 @@ defmodule EzagentWeb.WorldConversationTest do
 
     for {type, envelope} <- envelopes do
       send(view.pid, envelope)
-      assert_push_event(view, "world:inbound", %{"type" => ^type})
+      assert_push_event(view, "world:inbound", %{"type" => ^type}, 1_000)
     end
   end
 
@@ -1353,7 +1471,7 @@ defmodule EzagentWeb.WorldConversationTest do
     # P2 (Gate B): the agent-level attribute records BUILD PROVENANCE (the recipe
     # name), NOT the session role_name — they diverge here. The session role_name
     # lives on the membership edge (asserted below via `members`).
-    assert {:ok, ^recipe_name} = Ezagent.AgentRecipeAttributes.fetch(planned_agent)
+    assert {:ok, ^recipe_name} = Ezagent.Agent.RecipeAttributes.fetch(planned_agent)
 
     assert {:ok, sandbox_slice} = Ezagent.Kind.get_slice(planned_agent, :sandbox)
     sandbox = Ezagent.Kind.normalize_slice_view(sandbox_slice)
@@ -1399,7 +1517,7 @@ defmodule EzagentWeb.WorldConversationTest do
     assert rendered =~ "Pure-config hello"
   end
 
-  test "#162: Demo.Hello.publish/0 boot-publishes hello as PUBLIC, cross-workspace discoverable, materializable, idempotent" do
+  test "#162: hello publishes as PUBLIC via the deploy-seed lane, cross-workspace discoverable, materializable, idempotent" do
     :ok = ensure_manifest_reference_apps_started()
     # The demo references the stable `np` py-role recipe; `RoleSeedHook` skips
     # in :test, so seed it explicitly (same as the acceptance test seeds its
@@ -1412,9 +1530,21 @@ defmodule EzagentWeb.WorldConversationTest do
     {:ok, _} = Ezagent.Workspace.create(other_ws_name, %{})
     other_ws = Ezagent.URI.workspace(other_ws_name)
 
-    # DOGFOOD the real governance flow (open_cr → stage → publish).
-    assert {:ok, :published} = Ezagent.Socialware.Demo.Hello.publish()
-    assert Ezagent.Socialware.Demo.Hello.published?()
+    # DOGFOOD the real deploy-seed lane: copy every app's shipped
+    # `priv/socialware_seed/*` package into a temp deployment dir, then scan it
+    # through the governed import lane (parse → resolve → conformance → publish).
+    tmp = Path.join(System.tmp_dir!(), "hello-seed-#{n}")
+    on_exit(fn -> File.rm_rf(tmp) end)
+    :ok = Ezagent.Home.SocialwareSeed.seed!(dest: tmp)
+
+    # Keep only the hello package — other shipped packages (e.g. autoservice)
+    # reference recipes not seeded in :test; this test isolates the hello lane.
+    for dir <- Path.wildcard(Path.join(tmp, "*")),
+        Path.basename(dir) != "hello",
+        do: File.rm_rf!(dir)
+
+    results = Ezagent.Socialware.ManifestSeed.scan_dir!(tmp)
+    assert %{result: :published} = Enum.find(results, &(&1.name == "hello"))
 
     # PUBLIC + discoverable from a DIFFERENT workspace via the normal listing.
     assert Enum.any?(Ezagent.Socialware.DefinitionRegistry.list(other_ws), fn row ->
@@ -1428,9 +1558,10 @@ defmodule EzagentWeb.WorldConversationTest do
 
     assert :ok = Ezagent.Socialware.Conformance.check(definition, system_ws)
 
-    # Idempotent: a second publish opens NO new CR — it returns :exists via the
-    # already-public guard, so re-boots never accumulate duplicate CRs.
-    assert {:ok, :exists} = Ezagent.Socialware.Demo.Hello.publish()
+    # Idempotent: a second scan opens NO new CR — an unchanged manifest returns
+    # :exists via the content-hash guard, so re-runs never accumulate duplicates.
+    results2 = Ezagent.Socialware.ManifestSeed.scan_dir!(tmp)
+    assert %{result: :exists} = Enum.find(results2, &(&1.name == "hello"))
 
     # Still exactly one public `hello` entry (no duplicate definition).
     hello_rows =

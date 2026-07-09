@@ -184,6 +184,13 @@ defmodule EzagentWeb.Router do
     # public-view check, NOT a plug). The live ChatMembership re-check at the
     # channel remains the authorization.
     get "/socialware/chat", Socialware.ChatFeedController, :show
+
+    # Path-route hello pages: `app.ezagent.chat/hello/<name>` serves the
+    # public page for `session://<hello_workspace>/hello/<name>`. The workspace
+    # comes from application config (default "demo" in dev); the full socialware
+    # anon-access pipeline (PublicView gate, anon minting, SPA shell) runs
+    # unchanged — this is just a short URL entry.
+    get "/hello/:session_name", Socialware.ChatFeedController, :show_by_name
   end
 
   # Plugin-package (Q1-C): hot-loaded plugins serve their frontend island

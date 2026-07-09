@@ -71,7 +71,13 @@
   #   File.exists?/expiresAt result into the normalized status enum for the
   #   credential-status view). One new public def; cap-gated read (owner/ws-admin
   #   only via read_credential_status/2). 50→51.
-  def_count_cc_agent: 51,
+  # arch-cap-bump: +1 #1201 A② — cc_agent adds the `host_login_dir/0`
+  #   CredentialAdapter optional callback (installer host-login inheritance for
+  #   socialware-materialized agents). One-line delegation to the SHARED
+  #   `Ezagent.Credential.HomeRuntime.host_login_dir/2` derivation (env override
+  #   else `~/.claude`), consumed only via
+  #   `CredentialAdapter.host_login_source_dir/1`. 51→52.
+  def_count_cc_agent: 52,
   def_count_orchestrator_tools: 35,
   # arch-cap-bump: PR #783 split steps 5-8 into `ensure_orchestrator_and_finalize/6`
   #   so the step-4.5 orchestrator pre-store can fail-fast ahead of the readiness
@@ -249,7 +255,24 @@
   #   duplicated anon lifecycle in chat/external feed controllers. 48→42.
   # - arch-cap-bump: PR #1168 (hello orchestrator + website work) — +1 duplicate
   #   group from the world console conversation/publish surface. 42→43.
-  cross_file_duplicate_fn_groups: 43,
+  # - arch-cap-bump: hello B'-direct substrate migration (#1208) — +1 duplicate
+  #   group: plugin `migrate.ex` `agent_recipe/1` mirrors the domain-PRIVATE
+  #   `DefinitionAgents.agent_recipe/1` (2-step ETS→durable recipe lookup). The
+  #   plugin cannot call a private domain helper under the plugin-only boundary,
+  #   so the fork is forced; a future domain-side public helper would collapse
+  #   it back. 43→44.
+  # - arch-cap-bump: +2 kanban socialware deploy-seed migration — Demo.Kanban is
+  #   now a thin socialware_seed YAML loader (its self-publish primitives
+  #   publish/0 / admin_ctx/2 / already_public?/1 were DELETED in the migration,
+  #   publish now goes through the deploy-seed lane). Its remaining loader /
+  #   override functions are cross-file isomorphic with Demo.Hello's same-shape
+  #   test-driver loader (both read their shipped manifest via SocialwareSeed) →
+  #   2 new duplicate-fn groups. main carries only Hello's half (44); adding
+  #   Kanban's makes 46. (The earlier #1190 "+3 publish golden-template" /
+  #   #1213 "-1 ratchet" narrative is OBSOLETE — those self-publish bodies no
+  #   longer exist.) 44→46. NOTE merge-order coupling: dealscout adds
+  #   Demo.Crawler's same-shape loader; whichever lands re-measures.
+  cross_file_duplicate_fn_groups: 46,
   # FF-4 (cleanup-1): distinct non-agent_bridge/non-test lib files still
   # referencing a `/cc_socket` deprecation-shim module
   # (EzagentPluginCc.{BridgeRegistry,Socket,Channel,TokenStore}). Cleanup-3
@@ -282,7 +305,13 @@
   #   docs (owner/ws-admin only via read_credential_status/2). Measured combined LOC
   #   1684→1721 (+37); genuine per-flavor probe logic in the plugin-isolation seam,
   #   not extractable duplication.
-  cc_codex_template_class_combined_loc: 1721,
+  # arch-cap-bump: +24 #1201 A② installer host-login inheritance — cc_agent +
+  #   codex_agent Template Classes add the `host_login_dir/0` CredentialAdapter
+  #   optional callback. Both are ONE-LINE delegations (env var + default dirname)
+  #   to the SHARED `Ezagent.Credential.HomeRuntime.host_login_dir/2` body — the
+  #   derivation logic itself is NOT duplicated per flavor; the +24 is the two
+  #   @impl defs + their doc comments. Measured 1721→1745.
+  cc_codex_template_class_combined_loc: 1745,
   # P3 (resource-unification, SPEC §10 OI-3): the population-3 outside-core
   # callers (agent_bridge token registry, identity smtp_config, feishu app-cred +
   # inbox + plugin config, python log) migrated behind the `UriQuery` seam
@@ -363,6 +392,33 @@
   # `host: "world."` router regression and app/world deploy host strings copied
   # into libraries. Email addresses/domains are not counted.
   hardcoded_deploy_domain_hosts: 0,
+  # Socialware deploy-seed gate (2026-07-07, deploy-seed SPEC §5). Two shapes.
+  #
+  # socialware_priv_manifest_files — TARGET-ZERO. The plugin/domain-priv
+  #   `priv/socialware/<name>/manifest.yaml` authoring lane is DEPRECATED (design
+  #   §2); the canonical home is the deployment directory, seeded from
+  #   `ezagent_web/priv/socialware_seed/<name>/` via `Ezagent.Home.SocialwareSeed`.
+  #   Gate-first: starts RED at 1 (autoservice still in domain_session priv);
+  #   goes to 0 once autoservice migrates to the deploy-seed source.
+  socialware_priv_manifest_files: 0,
+  # socialware_self_publish_unsanctioned — 0 (hard). Non-framework
+  #   `publish_or_upgrade(` self-publish-at-boot call sites (the `Demo.publish`
+  #   shape). Only the framework import lane (`manifest_yaml.ex`) is sanctioned.
+  #   Burn-down complete: the hello demo's `Demo.Hello.publish/0` primitive is
+  #   DELETED — hello (production AND tests) now publishes only through the
+  #   deploy-seed lane (`SocialwareSeed.seed!` → `ManifestSeed.scan_dir!` →
+  #   `ManifestYaml.import`). No self-publisher remains; any new one trips this.
+  socialware_self_publish_unsanctioned: 0,
+  # concatenated_namespace_modules — 0 (hard). Namespace-dot convention gate
+  #   (2026-07-08, GLOSSARY Decision #161 follow-up). A single-segment
+  #   `defmodule Ezagent.XyzAbc` where `Ezagent.Xyz` is a namespace with dotted
+  #   children in the SAME app (parent+child glued — should be `Xyz.Abc`), minus
+  #   the `@concatenated_namespace_allowlist` of sanctioned single-concept
+  #   compounds. The two real offenders (`AgentRecipeResolver`,
+  #   `AgentRecipeAttributes`) were renamed to `Ezagent.Agent.Recipe*` (joining
+  #   the existing dotted `Ezagent.Agent.Recipe*` cluster); any NEW glued module
+  #   that is not sanctioned trips this.
+  concatenated_namespace_modules: 0,
   # Documentation-coverage gate (2026-06-13, Allen) — RATCHET-DOWN counters.
   # Backed by `Mix.Tasks.Ezagent.Doc.Scan`; enforced by
   # test/architecture/doc_coverage_test.exs. Calibrated GREEN at the CURRENT
@@ -399,7 +455,13 @@
   #   `def detached(_state, _ctx), do: :ok` default INSIDE the quote — exactly
   #   like its siblings `activated/2`/`deactivate/2`/`create/1`, which are also
   #   counted-undocumented quote defaults. +1 symmetric with them. 393→394.
-  undocumented_public_defs: 394,
+  # +1 #1217: list_sessions/2 catch-all clause in conversation_session_state.ex
+  # (rescue wrapper as public API surface). 394→395.
+  # - arch-cap-bump: +3 #1239/#1243 — new `Ezagent.ActionSet.Agent.Complete`
+  #   cap-only Lifecycle module for the :complete cap subject. Adds standard
+  #   boilerplate (create/1, data_owner/1, data_owner/2 — all @doc false now)
+  #   plus Lifecycle macro-generated structural fns. 395→398.
+  undocumented_public_defs: 398,
   # dynamic_public_def_heads — `def unquote(name)(...)` heads whose function name
   #   is only known at macro-expansion, so they cannot become a documented
   #   {name, arity} entry. ENFORCED at 0 (the tree has none): adding any new

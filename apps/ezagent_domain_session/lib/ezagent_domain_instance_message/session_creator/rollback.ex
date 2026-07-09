@@ -25,16 +25,18 @@ defmodule EzagentDomainInstanceMessage.SessionCreator.Rollback do
       # PR-8 (transport #53) — route MCP unregister + live-join clear through
       # the session-owned port (no-op when cc is not loaded) instead of naming
       # the now-cc-resident `McpRegistry` / `LiveJoinRegistry`.
-      safe(fn -> Ezagent.Session.OrchestratorReadinessPort.unregister(orchestrator_uri) end)
+      safe(:orchestrator_readiness_unregister, fn ->
+        Ezagent.Session.OrchestratorReadinessPort.unregister(orchestrator_uri)
+      end)
 
       # Transport #53 Decision C (codex C-rC-P2) — stop the per-orchestrator
       # `SessionManager` GenServer (started at step-7 materialization). It is
       # independently supervised, so unregistering the transport alone would leak
       # it + leave a stale-bound executor a later recreate could reuse.
-      safe(fn -> Ezagent.Session.SessionManager.stop(orchestrator_uri) end)
+      safe(:session_manager_stop, fn -> Ezagent.Session.SessionManager.stop(orchestrator_uri) end)
 
       if match?(%URI{}, owner_uri) and match?(%URI{}, workspace_uri) do
-        safe(fn ->
+        safe(:revoke_orchestrator_scoped_caps, fn ->
           Session.revoke_orchestrator_scoped_caps(
             orchestrator_uri,
             session_uri,
@@ -44,26 +46,40 @@ defmodule EzagentDomainInstanceMessage.SessionCreator.Rollback do
         end)
       end
 
-      safe(fn -> Ezagent.Lifecycle.destroy(orchestrator_uri, :rollback) end)
-      safe(fn -> Ezagent.WorkspaceRegistry.unbind(orchestrator_uri) end)
+      safe(:destroy_orchestrator, fn -> Ezagent.Lifecycle.destroy(orchestrator_uri, :rollback) end)
+
+      safe(:unbind_orchestrator, fn -> Ezagent.WorkspaceRegistry.unbind(orchestrator_uri) end)
       forget_lineage(orchestrator_uri)
-      safe(fn -> Ezagent.Session.OrchestratorReadinessPort.clear(orchestrator_uri) end)
+
+      safe(:orchestrator_readiness_clear, fn ->
+        Ezagent.Session.OrchestratorReadinessPort.clear(orchestrator_uri)
+      end)
     end
 
     if match?(%URI{}, owner_uri) and match?(%URI{}, workspace_uri) do
-      safe(fn -> revoke_owner_orchestrator_admin_cap(session_uri, owner_uri, workspace_uri) end)
+      safe(:revoke_owner_orchestrator_admin_cap, fn ->
+        revoke_owner_orchestrator_admin_cap(session_uri, owner_uri, workspace_uri)
+      end)
     end
 
-    safe(fn -> delete_session_rule_rows(session_uri) end)
-    safe(fn -> Ezagent.Lifecycle.destroy(session_uri, :rollback) end)
-    safe(fn -> Ezagent.WorkspaceRegistry.unbind(session_uri) end)
+    safe(:delete_session_rule_rows, fn -> delete_session_rule_rows(session_uri) end)
+
+    safe(:retract_session_installs, fn ->
+      Ezagent.Socialware.Installation.retract_session_installs(
+        session_uri,
+        owner_uri || Ezagent.Entity.User.admin_uri()
+      )
+    end)
+
+    safe(:destroy_session, fn -> Ezagent.Lifecycle.destroy(session_uri, :rollback) end)
+    safe(:unbind_session, fn -> Ezagent.WorkspaceRegistry.unbind(session_uri) end)
     :ok
   end
 
   def compensate_spawned_members(spawned_uris) when is_list(spawned_uris) do
     Enum.each(spawned_uris, fn %URI{} = uri ->
-      safe(fn -> Ezagent.Lifecycle.destroy(uri, :rollback) end)
-      safe(fn -> Ezagent.WorkspaceRegistry.unbind(uri) end)
+      safe(:destroy_spawned_member, fn -> Ezagent.Lifecycle.destroy(uri, :rollback) end)
+      safe(:unbind_spawned_member, fn -> Ezagent.WorkspaceRegistry.unbind(uri) end)
       forget_lineage(uri)
     end)
 
@@ -77,17 +93,19 @@ defmodule EzagentDomainInstanceMessage.SessionCreator.Rollback do
     Ezagent.Routing.RuleStore.list(table)
     |> Enum.filter(fn row -> row.created_by == session_str end)
     |> Enum.each(fn row ->
-      safe(fn -> Ezagent.Routing.RuleStore.delete(row.id, force: true) end)
+      safe(:delete_session_rule_row, fn ->
+        Ezagent.Routing.RuleStore.delete(row.id, force: true)
+      end)
     end)
 
-    safe(fn -> Ezagent.Routing.RuleStore.load_into_registry(table) end)
+    safe(:load_routing_registry, fn -> Ezagent.Routing.RuleStore.load_into_registry(table) end)
     :ok
   end
 
   defp forget_lineage(%URI{} = uri) do
     if Code.ensure_loaded?(Ezagent.AgentLineage) and
          function_exported?(Ezagent.AgentLineage, :forget, 1) do
-      safe(fn -> Ezagent.AgentLineage.forget(uri) end)
+      safe(:forget_agent_lineage, fn -> Ezagent.AgentLineage.forget(uri) end)
     end
 
     :ok
@@ -124,11 +142,15 @@ defmodule EzagentDomainInstanceMessage.SessionCreator.Rollback do
     :ok
   end
 
-  defp safe(fun) do
+  defp safe(step, fun) do
     fun.()
   rescue
-    _ -> :error
+    e ->
+      Logger.error("rollback step #{step} failed: #{Exception.message(e)}")
+      :error
   catch
-    _, _ -> :error
+    kind, reason ->
+      Logger.error("rollback step #{step} #{kind}: #{inspect(reason)}")
+      :error
   end
 end

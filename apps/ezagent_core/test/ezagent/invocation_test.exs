@@ -151,6 +151,62 @@ defmodule Ezagent.InvocationTest do
       :ok = Ezagent.ReadyGate.mark_ready(uri)
     end
 
+    test ":not_ready + :cast at PendingDelivery cap → LOUD {:error, :buffer_full} + DLQ row (never a silent :ok)",
+         %{instance_uri: uri} do
+      # PR #1259 codex review item 2 — pre-fix, `dispatch/1` DISCARDED the
+      # `{:error, :buffer_full}` from `PendingDelivery.buffer/2` and returned
+      # `:ok`, so during a long `:not_ready` activation window (e.g. a py
+      # member's cold uv provision) message #101+ to one member vanished while
+      # upstream recorded it delivered. The overflow must be (a) loudly logged,
+      # (b) telemetry'd, (c) DLQ'd (Decision #67), and (d) SURFACED as
+      # `{:error, :buffer_full}` so delivery layers refuse the delivered-mark.
+      :ok = Ezagent.ReadyGate.put(uri, :not_ready)
+
+      # Fill the buffer to cap.
+      for i <- 1..Ezagent.PendingDelivery.max_per_uri() do
+        :ok = Ezagent.PendingDelivery.buffer(uri, {:filler, i})
+      end
+
+      test_pid = self()
+      ref = make_ref()
+
+      :telemetry.attach(
+        "overflow-test-#{System.unique_integer([:positive])}",
+        [:ezagent, :dispatch, :pending_delivery_overflow],
+        fn _event, _meas, meta, _config -> send(test_pid, {ref, meta}) end,
+        nil
+      )
+
+      inv = %Invocation{
+        target: Ezagent.URI.new!("#{URI.to_string(uri)}?action=test.noop"),
+        mode: :cast,
+        args: %{msg: "dropped"},
+        ctx: ctx_for(self())
+      }
+
+      log =
+        capture_log(fn ->
+          assert {:error, :buffer_full} = Invocation.dispatch(inv)
+        end)
+
+      assert log =~ "PendingDelivery buffer FULL"
+      assert log =~ URI.to_string(uri)
+
+      assert_receive {^ref, %{mode: :cast}}, 500
+
+      # The Decision #67 DLQ sink recorded the dropped invocation.
+      rows = EzagentCore.Repo.query!("SELECT reason FROM dlq ORDER BY id DESC LIMIT 1").rows
+      assert [["buffer_full"]] = rows
+
+      # The buffer itself was NOT disturbed (still exactly at cap).
+      assert Ezagent.PendingDelivery.buffer_size(uri) ==
+               Ezagent.PendingDelivery.max_per_uri()
+
+      # Restore.
+      _ = Ezagent.PendingDelivery.flush(uri)
+      :ok = Ezagent.ReadyGate.mark_ready(uri)
+    end
+
     test ":subscribe / :introspect return :unsupported_mode in Phase 1", %{target: target} do
       inv = %Invocation{
         target: target,

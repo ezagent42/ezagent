@@ -312,4 +312,96 @@ defmodule EzagentWeb.Socialware.ChatFeedControllerTest do
       assert conn.status == 400
     end
   end
+
+  describe "GET /hello/:session_name — path-route hello pages" do
+    setup do
+      Application.put_env(:ezagent_web, :hello_workspace, "team-alpha")
+      :ok
+    end
+
+    test "anonymous + public hello session → 200 SPA shell" do
+      # Create a hello-session at session://team-alpha/hello/test-site that is PUBLIC.
+      name = "hello-path-#{u()}"
+      session_uri = Ezagent.URI.session("team-alpha", :hello, name)
+
+      content = public_content("hpath-#{u()}", true)
+      {:ok, tmpl} = SessionTemplate.persist_version_as_system(content, "team-alpha")
+
+      {:ok, behaviors} =
+        Installation.behavior_set_for_template(content, Ezagent.URI.workspace("team-alpha"))
+
+      {:ok, _pid} = Ezagent.Kind.spawn(Session, %{uri: session_uri, behaviors: behaviors})
+
+      :ok =
+        Ezagent.WorkspaceRegistry.bind(session_uri, Ezagent.Capability.workspace_of(session_uri))
+
+      :ok =
+        Installation.install_template_installs(
+          session_uri,
+          Ezagent.URI.workspace("team-alpha"),
+          content,
+          Ezagent.Entity.User.admin_uri()
+        )
+
+      {:ok, _} = ConfigActions.system_set_working_copy(session_uri, %{session_template_uri: tmpl})
+
+      on_exit(fn -> terminate(session_uri) end)
+
+      conn =
+        build_conn()
+        |> Plug.Test.init_test_session(%{})
+        |> get("/hello/#{name}")
+
+      assert conn.status == 200
+      body = response(conn, 200)
+      # Renders the same SPA shell as /socialware/chat
+      assert body =~ ~s(data-socket-path="/socialware_chat_socket")
+      assert body =~ ~s(data-topic-prefix="socialware:chat_feed")
+      assert body =~ URI.to_string(session_uri)
+    end
+
+    test "anonymous + private hello session → bounce /login" do
+      name = "hello-priv-#{u()}"
+      session_uri = Ezagent.URI.session("team-alpha", :hello, name)
+
+      content = public_content("hpp-#{u()}", false)
+      {:ok, tmpl} = SessionTemplate.persist_version_as_system(content, "team-alpha")
+
+      {:ok, behaviors} =
+        Installation.behavior_set_for_template(content, Ezagent.URI.workspace("team-alpha"))
+
+      {:ok, _pid} = Ezagent.Kind.spawn(Session, %{uri: session_uri, behaviors: behaviors})
+
+      :ok =
+        Ezagent.WorkspaceRegistry.bind(session_uri, Ezagent.Capability.workspace_of(session_uri))
+
+      :ok =
+        Installation.install_template_installs(
+          session_uri,
+          Ezagent.URI.workspace("team-alpha"),
+          content,
+          Ezagent.Entity.User.admin_uri()
+        )
+
+      {:ok, _} = ConfigActions.system_set_working_copy(session_uri, %{session_template_uri: tmpl})
+
+      on_exit(fn -> terminate(session_uri) end)
+
+      conn =
+        build_conn()
+        |> Plug.Test.init_test_session(%{})
+        |> get("/hello/#{name}")
+
+      assert redirected_to(conn) =~ "/login"
+    end
+
+    test "missing / empty session_name → 404 (does not match the route)" do
+      conn =
+        build_conn()
+        |> Plug.Test.init_test_session(%{})
+        |> get("/hello/")
+
+      assert conn.status == 404
+    end
+  end
 end

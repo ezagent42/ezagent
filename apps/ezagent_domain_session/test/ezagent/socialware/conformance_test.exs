@@ -152,6 +152,104 @@ defmodule Ezagent.Socialware.ConformanceTest do
            )
   end
 
+  test "role-DAG rejects unpredicated cycles" do
+    n = uniq()
+
+    definition =
+      write_def(%{
+        name: "t2-conf-hard-cycle-#{n}",
+        roles: [
+          %{role_name: "viewer-#{n}", fill: :human},
+          %{role_name: "responser-#{n}", fill: :human}
+        ],
+        routing_rules: [
+          %{
+            matcher: %{"type" => "from_role", "arg" => "viewer-#{n}"},
+            receivers: ["responser-#{n}"]
+          },
+          %{
+            matcher: %{"type" => "from_role", "arg" => "responser-#{n}"},
+            receivers: ["viewer-#{n}"]
+          }
+        ]
+      })
+
+    assert {:error, failures} = Conformance.check(definition, @workspace_uri)
+
+    assert Enum.any?(
+             failures,
+             &match?({:routing_role_dag, {:unpredicated_cycle, _}}, &1)
+           )
+  end
+
+  test "role-DAG warns on predicated cycles, double delivery, and dead roles" do
+    n = uniq()
+
+    definition =
+      write_def(%{
+        name: "t2-conf-warn-dag-#{n}",
+        roles: [
+          %{role_name: "viewer-#{n}", fill: :human},
+          %{role_name: "responser-#{n}", fill: :human},
+          %{role_name: "builder-#{n}", fill: :human},
+          %{role_name: "dead-#{n}", fill: :human}
+        ],
+        routing_rules: [
+          %{
+            matcher: %{"type" => "from_role", "arg" => "viewer-#{n}"},
+            receivers: ["responser-#{n}"]
+          },
+          %{
+            matcher: %{
+              "type" => "and",
+              "items" => [
+                %{"type" => "from_role", "arg" => "responser-#{n}"},
+                %{"type" => "text_matches", "arg" => "^\\[need-build\\]"}
+              ]
+            },
+            receivers: ["viewer-#{n}"]
+          },
+          %{
+            matcher: %{"type" => "from_role", "arg" => "responser-#{n}"},
+            receivers: ["builder-#{n}"]
+          }
+        ]
+      })
+
+    assert {:ok, warnings} = Conformance.check_with_warnings(definition, @workspace_uri)
+    assert Enum.any?(warnings, &match?({:routing_role_dag, {:predicated_cycle, _}}, &1))
+    assert Enum.any?(warnings, &match?({:routing_role_dag, {:double_delivery, _}}, &1))
+    assert Enum.any?(warnings, &match?({:routing_role_dag, {:dead_role, _}}, &1))
+  end
+
+  test "composite human socialware with no adapter-flavor receiver warns but remains installable" do
+    n = uniq()
+    native_recipe = seed_recipe("native-#{n}")
+
+    definition =
+      write_def(%{
+        name: "t2-conf-mute-composite-#{n}",
+        roles: [
+          %{role_name: "viewer-#{n}", fill: :human},
+          %{role_name: "builder-#{n}", fill: :agent, recipe: native_recipe, flavor: "native"}
+        ],
+        routing_rules: [
+          %{
+            matcher: %{"type" => "from_role", "arg" => "viewer-#{n}"},
+            receivers: ["builder-#{n}"]
+          }
+        ]
+      })
+
+    assert :ok = Conformance.check(definition, @workspace_uri)
+    assert {:ok, warnings} = Conformance.check_with_warnings(definition, @workspace_uri)
+
+    assert Enum.any?(
+             warnings,
+             &match?({:routing_role_dag, {:mute_composite, _}}, &1)
+           )
+  end
+
   test "missing manifest uses plugin fails uses_plugins_installed" do
     n = uniq()
 
@@ -167,5 +265,133 @@ defmodule Ezagent.Socialware.ConformanceTest do
              failures,
              &match?({:uses_plugins_installed, {:missing_socialware_plugins, [_]}}, &1)
            )
+  end
+
+  test "candidate fails when a required socialware is not published" do
+    n = uniq()
+
+    {:ok, definition} =
+      Definition.new(%{
+        name: "t2-conf-requires-missing-#{n}",
+        requires: ["missing-required-#{n}"]
+      })
+
+    assert {:error, failures} = Conformance.check_candidate(definition, @workspace_uri)
+
+    assert Enum.any?(
+             failures,
+             &match?({:requires_published, {:unknown_socialware_requires, _}}, &1)
+           )
+  end
+
+  test "candidate rejects a transitive requires cycle before publish" do
+    n = uniq()
+    a_name = "t2-conf-cycle-a-#{n}"
+    b_name = "t2-conf-cycle-b-#{n}"
+
+    _b = write_def(%{name: b_name, requires: [a_name]})
+    {:ok, a} = Definition.new(%{name: a_name, requires: [b_name]})
+
+    assert {:error, failures} = Conformance.check_candidate(a, @workspace_uri)
+
+    assert Enum.any?(
+             failures,
+             &match?({:requires_cycle_free, {:requires_cycle, _}}, &1)
+           )
+  end
+
+  test "check_against_installed resolves required roles from installed revisions" do
+    n = uniq()
+    dep_name = "t2-conf-installed-dep-#{n}"
+    app_name = "t2-conf-installed-app-#{n}"
+
+    {:ok, dep} =
+      Definition.new(%{
+        name: dep_name,
+        roles: [%{role_name: "#{dep_name}:worker", fill: :human}]
+      })
+
+    {:ok, app} =
+      Definition.new(%{
+        name: app_name,
+        requires: [dep_name],
+        roles: [%{role_name: "#{app_name}:entry", fill: :human}],
+        routing_rules: [
+          %{
+            matcher: %{"type" => "from_role", "arg" => "#{app_name}:entry"},
+            receivers: ["#{dep_name}:worker"]
+          }
+        ]
+      })
+
+    assert :ok =
+             Conformance.check_against_installed(app, @workspace_uri, %{
+               dep_name => dep,
+               app_name => app
+             })
+
+    incompatible_dep = %{dep | roles: []}
+
+    assert {:error, failures} =
+             Conformance.check_against_installed(app, @workspace_uri, %{
+               dep_name => incompatible_dep,
+               app_name => app
+             })
+
+    assert Enum.any?(
+             failures,
+             &match?({:routing_receivers_resolve, {:socialware_receiver_not_a_role, [_]}}, &1)
+           )
+  end
+
+  test "check_merged rejects role name collisions and cross-socialware cycles" do
+    n = uniq()
+
+    {:ok, a} =
+      Definition.new(%{
+        name: "t2-conf-merged-a-#{n}",
+        roles: [%{role_name: "shared-role-#{n}", fill: :human}]
+      })
+
+    {:ok, b} =
+      Definition.new(%{
+        name: "t2-conf-merged-b-#{n}",
+        roles: [%{role_name: "shared-role-#{n}", fill: :human}]
+      })
+
+    assert {:error, collision_failures, _warnings} =
+             Conformance.check_merged([a, b], @workspace_uri)
+
+    assert Enum.any?(
+             collision_failures,
+             &match?({:merged_role_names_unique, {:role_name_collision, _, _}}, &1)
+           )
+
+    {:ok, c} =
+      Definition.new(%{
+        name: "t2-conf-merged-c-#{n}",
+        roles: [%{role_name: "c-role-#{n}", fill: :human}],
+        routing_rules: [
+          %{
+            matcher: %{"type" => "from_role", "arg" => "c-role-#{n}"},
+            receivers: ["d-role-#{n}"]
+          }
+        ]
+      })
+
+    {:ok, d} =
+      Definition.new(%{
+        name: "t2-conf-merged-d-#{n}",
+        roles: [%{role_name: "d-role-#{n}", fill: :human}],
+        routing_rules: [
+          %{
+            matcher: %{"type" => "from_role", "arg" => "d-role-#{n}"},
+            receivers: ["c-role-#{n}"]
+          }
+        ]
+      })
+
+    assert {:error, cycle_failures, _warnings} = Conformance.check_merged([c, d], @workspace_uri)
+    assert Enum.any?(cycle_failures, &match?({:routing_role_dag, {:unpredicated_cycle, _}}, &1))
   end
 end

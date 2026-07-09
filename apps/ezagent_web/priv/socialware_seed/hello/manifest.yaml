@@ -1,0 +1,60 @@
+name: hello
+version: "0.1.0"
+title: "Pure-config hello"
+description: "Hello socialware authored as a manifest."
+uses:
+  - hello
+requires:
+  - orchestrator
+bases:
+  - Ezagent.ActionSet.Session
+  - Ezagent.ActionSet.Publisher.SessionImpl
+shape:
+  - Ezagent.ActionSet.Turn
+  - Ezagent.ActionSet.Surface
+  - Ezagent.ActionSet.SupervisorApproval
+views:
+  - hello_render
+roles:
+  - role_name: builder
+    fill: agent
+    recipe: np
+    flavor: py
+  - role_name: responser
+    fill: agent
+    recipe: np
+    flavor: py
+  - role_name: viewer
+    fill: human
+routing_rules:
+  - matcher:
+      type: from_role
+      arg: viewer
+    receivers:
+      - responser
+    rule_set: default
+    position: 0
+  - matcher:
+      type: and
+      items:
+        - type: from_role
+          arg: responser
+        - type: text_matches
+          arg: '^\[need-build\]'
+    receivers:
+      - builder
+    rule_set: default
+    position: 1
+visibility_policy:
+  scope: public
+  publish_policy: supervised
+  web_anon_access: true
+prompt_templates: {}
+legends:
+  hello:
+    member_set:
+      - viewer
+      - responser
+      - builder
+    bound_rule_set: default
+    fold: false

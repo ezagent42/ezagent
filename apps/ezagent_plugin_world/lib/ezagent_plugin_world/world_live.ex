@@ -12,6 +12,7 @@ defmodule EzagentPluginWorld.WorldLive do
   alias Ezagent.World.CommandPaletteActions
   alias Ezagent.World.CommandPaletteData
   alias Ezagent.World.ConversationActions
+  alias Ezagent.World.ConversationSessionState
   alias Ezagent.World.UserActions
   alias Ezagent.World.WorkspacePluginActions
   alias EzagentPluginWorld.{Layouts, WorldLoading}
@@ -23,7 +24,7 @@ defmodule EzagentPluginWorld.WorldLive do
     caller = Map.get(socket.assigns, :current_entity_uri)
     workspace = Map.get(socket.assigns, :current_workspace_uri)
     caps = Map.get(socket.assigns, :current_caps, MapSet.new())
-    sessions = list_sessions(workspace)
+    sessions = ConversationSessionState.list_sessions(workspace, caller)
     current_session_uri = List.first(sessions)
 
     socket = assign(socket, :subscribed_topics, MapSet.new())
@@ -102,7 +103,7 @@ defmodule EzagentPluginWorld.WorldLive do
 
   defp maybe_set_current_session(socket, %{component: "conversation", session_uri: %URI{} = uri}) do
     socket
-    |> ensure_session_subscribed(uri)
+    |> ConversationSessionState.ensure_session_subscribed(uri)
     |> assign(:current_session_uri, uri)
     |> assign(:current_session_uri_str, encode_uri(uri))
     |> ConversationActions.self_join(uri)
@@ -259,13 +260,13 @@ defmodule EzagentPluginWorld.WorldLive do
     WorkspacePluginActions.handle_dispatch(socket, action, args)
   end
 
-  @conversation_actions ~w(chat.send chat.load_older chat.mark_displayed session.switch session.invite session.remove_participant session.assign_role session.create session.publish_template session.view.switch session.pty.open session.orchestrator.restart session.routing.add session.routing.toggle)
+  @conversation_actions ~w(chat.send chat.load_older chat.mark_displayed session.switch session.invite session.remove_participant session.socialware.uninstall session.create session.view.switch session.pty.open session.orchestrator.restart session.routing.add session.routing.toggle)
   def handle_event("world:dispatch", %{"action" => action, "args" => args}, socket)
       when action in @conversation_actions and is_map(args) do
     ConversationActions.handle_dispatch(socket, action, args)
   end
 
-  @kanban_actions ~w(kanban.add_node kanban.rename_node kanban.move_node kanban.remove_node kanban.set_stage kanban.claim_node kanban.unclaim_node kanban.set_status kanban.attach_artifact kanban.detach_artifact kanban.set_metric kanban.create kanban.sync_miro kanban.save_miro_creds kanban.select_board kanban.drop_subtree kanban.sync_github kanban.save_github_creds kanban.set_board_config kanban.attach_upload kanban.register_pr kanban.sync_prs kanban.push_pr kanban.attach_code_file)
+  @kanban_actions ~w(kanban.add_node kanban.rename_node kanban.move_node kanban.remove_node kanban.set_stage kanban.claim_node kanban.unclaim_node kanban.set_status kanban.attach_artifact kanban.detach_artifact kanban.set_metric kanban.create kanban.sync_miro kanban.save_miro_creds kanban.select_board kanban.drop_subtree kanban.set_board_config kanban.attach_upload kanban.register_pr kanban.attach_code_file)
   def handle_event("world:dispatch", %{"action" => action, "args" => args}, socket)
       when action in @kanban_actions and is_map(args) do
     Ezagent.World.KanbanActions.handle_dispatch(socket, action, args)
@@ -563,19 +564,25 @@ defmodule EzagentPluginWorld.WorldLive do
   end
 
   defp state_for_route(
-         %{component: "conversation", session_uri: %URI{} = session_uri},
+         %{component: "conversation", session_uri: %URI{} = session_uri} = route,
          socket,
          layout
        ) do
     session_uri
-    |> conversation_state(socket, layout)
+    |> ConversationSessionState.state_for(socket)
+    |> Map.put("path", route.path)
+    |> Map.put("title", route.title)
+    |> Map.put("layout", layout)
+    |> put_can_manage_layout("conversation", socket)
     |> put_command_palette(socket)
   end
 
   defp state_for_route(%{component: "sessions_table"}, socket, layout) do
     sessions =
-      socket.assigns.current_workspace_uri
-      |> list_sessions()
+      ConversationSessionState.list_sessions(
+        socket.assigns.current_workspace_uri,
+        socket.assigns.current_entity_uri
+      )
 
     current_session_uri = socket.assigns.current_session_uri || List.first(sessions)
 
@@ -672,9 +679,9 @@ defmodule EzagentPluginWorld.WorldLive do
       "workspace_uri" => workspace,
       "layout" => layout,
       "can_manage_layout" => can_manage_layout?("sessions_table", workspace_uri, caps),
-      "templates" => Ezagent.World.WorkspacePluginData.session_template_names(workspace_uri),
+      "templates" => session_template_names(workspace_uri),
       "socialwares" => socialware_rows(workspace_uri),
-      "sessions" => Enum.map(sessions, &session_row/1),
+      "sessions" => Enum.map(sessions, &ConversationSessionState.session_row/1),
       # F3: explicitly clear any stale create_error — the React island merges
       # world:state ({...current, ...next}) and never remounts, so a previously
       # pushed create_error would otherwise linger as a phantom banner when the
@@ -684,19 +691,63 @@ defmodule EzagentPluginWorld.WorldLive do
     }
   end
 
-  defp put_command_palette(state, socket) do
-    Map.put(state, "cmdk", CommandPaletteData.state(socket.assigns, "", false))
+  # Resolvable SessionTemplate names for the "New session" picker — the live
+  # SessionTemplate Kinds in this workspace (the names `create_session/3` can
+  # resolve, including any the operator just authored via the template form)
+  # plus the always-available `"default"` bootstrap class (auto-seeded on use).
+  defp session_template_names(%URI{scheme: "workspace"} = workspace_uri) do
+    # Registered session Template Classes (e.g. "session.hello") shown by their
+    # friendly name ("hello") — `create_session` resolves the bare name back to
+    # the `session.<name>` class (workspace `resolve_session_class/1`). Without
+    # this the dropdown only listed per-session template INSTANCES ("hello-77")
+    # and the `hello` class itself was missing.
+    # F3: offer only Classes that are DIRECTLY creatable from this generic
+    # picker (the picker supplies only the universal `session_name` arg). A
+    # Class whose `instantiate/3` requires extra args — e.g. a vertical session
+    # class needing an `operator_uri` — declares `directly_creatable?/0 => false` and is
+    # filtered out here, so it can't become the dropdown default and fail closed
+    # with `{:invalid_template, …}` on create.
+    classes =
+      Ezagent.TemplateRegistry.registered_template_names()
+      |> Enum.filter(&String.starts_with?(&1, "session."))
+      |> Enum.filter(&class_directly_creatable?/1)
+      |> Enum.map(&String.replace_prefix(&1, "session.", ""))
+
+    instances =
+      workspace_uri
+      |> Ezagent.URI.name!()
+      |> Ezagent.World.WorkspacePluginData.session_template_rows()
+      |> Enum.map(&Map.get(&1, "name"))
+
+    # "default" is ALWAYS the first (selected) option — the React picker takes
+    # `templates[0]` as its default, so the always-creatable bootstrap class
+    # must lead regardless of how the other names sort.
+    other =
+      (classes ++ instances)
+      |> Enum.reject(&(&1 in [nil, "", "default"]))
+      |> Enum.uniq()
+      |> Enum.sort()
+
+    ["default" | other]
+  rescue
+    _ -> ["default"]
   end
 
-  defp session_row(%URI{} = session_uri) do
-    uri = URI.to_string(session_uri)
-    workspace = session_uri |> Ezagent.Capability.workspace_of() |> encode_uri()
+  defp session_template_names(_), do: ["default"]
 
-    %{
-      "uri" => uri,
-      "name" => session_uri.path || session_uri.host || uri,
-      "workspace_uri" => workspace
-    }
+  # F3: a registered `session.<name>` Class is offered by the generic picker
+  # only when its Template Class declares itself directly creatable (default
+  # true; advisor overrides false). An unregistered name conservatively passes
+  # (it's a non-class instance name handled elsewhere).
+  defp class_directly_creatable?(class_name) do
+    case Ezagent.TemplateRegistry.lookup(class_name) do
+      {:ok, module} -> Ezagent.Kind.Template.directly_creatable?(module)
+      :error -> true
+    end
+  end
+
+  defp put_command_palette(state, socket) do
+    Map.put(state, "cmdk", CommandPaletteData.state(socket.assigns, "", false))
   end
 
   defp socialware_rows(%URI{} = workspace_uri) do
@@ -746,7 +797,7 @@ defmodule EzagentPluginWorld.WorldLive do
 
   defp agent_options_for_recipe(recipe, %URI{} = workspace_uri)
        when is_binary(recipe) and recipe != "" do
-    uris = Ezagent.AgentRecipeResolver.list_by_recipe(recipe, workspace_uri)
+    uris = Ezagent.Agent.RecipeResolver.list_by_recipe(recipe, workspace_uri)
     display_map = Ezagent.EntityPresenter.display_many(Enum.map(uris, &URI.to_string/1))
 
     Enum.map(uris, fn uri ->
@@ -792,16 +843,6 @@ defmodule EzagentPluginWorld.WorldLive do
 
   defp workspace_name(_), do: nil
 
-  defp list_sessions(%URI{scheme: "workspace"} = workspace_uri) do
-    # Durable listing (live + persisted) so sessions survive a cold server
-    # restart; a cold session revives on open (self_join → ensure_live).
-    EzagentDomainInstanceMessage.list_persisted_sessions(workspace_uri)
-  rescue
-    _ -> []
-  end
-
-  defp list_sessions(_), do: []
-
   defp subscribe_global_inbound(caller_uri) do
     Phoenix.PubSub.subscribe(EzagentCore.PubSub, Ezagent.Audit.stream_topic())
     Phoenix.PubSub.subscribe(EzagentCore.PubSub, Ezagent.AgentBridge.Registry.legacy_topic())
@@ -811,35 +852,6 @@ defmodule EzagentPluginWorld.WorldLive do
       Phoenix.PubSub.subscribe(EzagentCore.PubSub, Ezagent.Notifications.topic(caller_uri))
       :ok = Ezagent.Notifications.subscribe_slice_change(caller_uri)
     end
-  end
-
-  defp ensure_session_subscribed(socket, %URI{} = session_uri) do
-    topic = Ezagent.ActionSet.Session.session_events_topic(session_uri)
-    subscribed = Map.get(socket.assigns, :subscribed_topics, MapSet.new())
-
-    if connected?(socket) and not MapSet.member?(subscribed, topic) do
-      Phoenix.PubSub.subscribe(EzagentCore.PubSub, topic)
-      assign(socket, :subscribed_topics, MapSet.put(subscribed, topic))
-    else
-      socket
-    end
-  end
-
-  defp conversation_state(%URI{} = session_uri, socket, layout) do
-    sessions =
-      socket.assigns.current_workspace_uri
-      |> list_sessions()
-      |> Enum.map(&session_row/1)
-
-    session_uri
-    |> Ezagent.World.ConversationData.state_for(%{
-      caller_uri: socket.assigns.current_entity_uri,
-      caller_caps: Map.get(socket.assigns, :current_caps, MapSet.new()),
-      workspace_uri: socket.assigns.current_workspace_uri,
-      sessions: sessions
-    })
-    |> Map.put("layout", layout)
-    |> put_can_manage_layout("conversation", socket)
   end
 
   defp encode_param(%URI{} = uri), do: uri |> URI.to_string() |> URI.encode_www_form()

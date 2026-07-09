@@ -110,6 +110,23 @@ defmodule Ezagent.AgentFlavorRegistry do
     end
   end
 
+  @doc """
+  Resolve a flavor's Template Class module.
+
+  Returns `{:ok, template_class}` or a distinct error for an unknown flavor vs
+  a declaration without a Template Class. The SINGLE resolution helper shared
+  by the recipe materializer and the #1201 host-login-adopt seam (FF-1: one
+  body, not per-caller forks).
+  """
+  @spec template_class_for(flavor :: String.t()) :: {:ok, module()} | {:error, term()}
+  def template_class_for(flavor) when is_binary(flavor) do
+    case lookup(flavor) do
+      {:ok, %{template_class: tc}} when is_atom(tc) -> {:ok, tc}
+      {:ok, _decl} -> {:error, {:flavor_has_no_template_class, flavor}}
+      :error -> {:error, {:unknown_flavor, flavor}}
+    end
+  end
+
   @doc "List every registered `{flavor, decl}` pair — for debug / admin."
   @spec list_all() :: [{String.t(), decl()}]
   def list_all, do: :ets.tab2list(@table)

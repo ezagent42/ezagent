@@ -40,6 +40,7 @@ defmodule Ezagent.World.ConversationData do
     sessions = Map.fetch!(opts, :sessions)
     caller_caps = Map.get(opts, :caller_caps, MapSet.new())
     messages = load_messages(session_uri, caller_caps)
+    members = member_options(session_uri)
 
     %{
       "component" => "conversation",
@@ -47,10 +48,16 @@ defmodule Ezagent.World.ConversationData do
       "current_session_uri" => encode_uri(session_uri),
       "workspace_uri" => encode_uri(workspace_uri),
       "caller_uri" => encode_uri(caller_uri),
+      "create_error" => nil,
+      "templates" => Ezagent.World.WorkspacePluginData.session_template_names(workspace_uri),
       "messages" => messages,
       "oldest_cursor" => oldest_cursor_iso(messages),
-      "members" => member_options(session_uri),
+      "members" => members,
       "human_role_slots" => human_role_slots(session_uri),
+      "installed_socialwares" => installed_socialwares(session_uri),
+      "invite_candidates" => invite_candidates(session_uri, caller_uri, workspace_uri, members),
+      "routing_entity_candidates" =>
+        routing_entity_candidates(caller_uri, workspace_uri, members),
       "routing_rules" => list_session_routing_rules(session_uri),
       "sessions" => sessions,
       # Registry-driven view tabs (Ezagent.UI.SessionViewRegistry). Each entry is
@@ -172,13 +179,14 @@ defmodule Ezagent.World.ConversationData do
     |> Enum.sort()
     |> Enum.map(fn uri ->
       meta = Map.get(member_meta, uri, %{})
+      kind = sender_kind(uri)
 
       %{
         "uri" => uri,
-        "display_name" => Map.get(display_map, uri, uri),
+        "display_name" => member_display_name(uri, meta, display_map, kind),
         "online" => is_map(meta) and Map.get(meta, :online, false) == true,
         "role_name" => if(is_map(meta), do: Map.get(meta, :role_name), else: nil),
-        "kind" => sender_kind(uri)
+        "kind" => kind
       }
     end)
   end
@@ -218,22 +226,118 @@ defmodule Ezagent.World.ConversationData do
     _ -> []
   end
 
+  @doc "Socialware definitions currently installed on this session, shaped for the management panel."
+  @spec installed_socialwares(URI.t()) :: [map()]
+  def installed_socialwares(%URI{} = session_uri) do
+    session_uri
+    |> Ezagent.Socialware.Installation.installed_definitions()
+    |> Enum.map(fn definition ->
+      %{
+        "name" => definition.name,
+        "title" => definition.title,
+        "description" => definition.description,
+        "roles" => socialware_role_rows(definition.roles)
+      }
+    end)
+    |> Enum.sort_by(& &1["name"])
+  rescue
+    _ -> []
+  end
+
+  def installed_socialwares(_), do: []
+
+  defp socialware_role_rows(roles) when is_list(roles) do
+    roles
+    |> Enum.map(fn role ->
+      %{
+        "role_name" => Map.get(role, :role_name),
+        "fill" => role |> Map.get(:fill) |> socialware_fill_name()
+      }
+    end)
+    |> Enum.filter(&non_empty_string?(&1["role_name"]))
+  end
+
+  defp socialware_role_rows(_), do: []
+
+  defp socialware_fill_name(fill) when is_atom(fill), do: Atom.to_string(fill)
+  defp socialware_fill_name(fill) when is_binary(fill), do: fill
+  defp socialware_fill_name(_), do: nil
+
+  @doc """
+  Entity rows the current caller can invite into `session_uri`.
+
+  The option source combines the caller/workspace-authorized live picker rows
+  with provisioned users and agent snapshots in the same workspace. This layer
+  narrows those visible entities to useful session invite choices: only when the
+  caller is currently in the session, and never entities that are already
+  members.
+  """
+  @spec invite_candidates(URI.t(), URI.t() | nil, URI.t() | nil) :: [map()]
+  def invite_candidates(%URI{} = session_uri, caller_uri, workspace_uri) do
+    invite_candidates(session_uri, caller_uri, workspace_uri, member_options(session_uri))
+  end
+
+  @doc false
+  @spec invite_candidates(URI.t(), URI.t() | nil, URI.t() | nil, [map()]) :: [map()]
+  def invite_candidates(_session_uri, caller_uri, workspace_uri, members) when is_list(members) do
+    member_uris = MapSet.new(members, &Map.get(&1, "uri"))
+    caller_uri_str = encode_uri(caller_uri)
+
+    if is_binary(caller_uri_str) and MapSet.member?(member_uris, caller_uri_str) do
+      caller_uri
+      |> entity_candidate_options(workspace_uri)
+      |> Enum.flat_map(&invite_candidate_row/1)
+      |> Enum.reject(&MapSet.member?(member_uris, &1["uri"]))
+      |> sort_candidate_rows()
+    else
+      []
+    end
+  end
+
+  def invite_candidates(_session_uri, _caller_uri, _workspace_uri, _members), do: []
+
+  @doc """
+  Entity rows the current caller can use in session routing controls.
+
+  Unlike `invite_candidates/4`, this includes current members because routing
+  rules usually target entities that are already in the conversation.
+  """
+  @spec routing_entity_candidates(URI.t() | nil, URI.t() | nil, [map()]) :: [map()]
+  def routing_entity_candidates(caller_uri, workspace_uri, members) when is_list(members) do
+    (entity_candidate_options(caller_uri, workspace_uri) ++ member_candidate_options(members))
+    |> Enum.flat_map(&invite_candidate_row/1)
+    |> Enum.uniq_by(& &1["uri"])
+    |> sort_candidate_rows()
+  end
+
+  def routing_entity_candidates(_caller_uri, _workspace_uri, _members), do: []
+
   @doc """
   Parse @mentions in `text` into recipient entity URIs, against `members`
   (`member_options/1` rows). Recognizes explicit `@entity://...` URIs and bare
-  `@name` tokens resolved by URI path segment then display name (unique match
-  only). Port of the LiveView parser against survivors — world carries no
-  reference to the LV plugin. The result is what the domain's recipient
-  resolver consumes (`msg.mentions`), so this is the load-bearing piece, not
-  the autocomplete UI.
+  `@name` tokens resolved by URI path segment, role name, then display name
+  (unique match only). `open_role_slots` is used only to suppress colon-token
+  head fallback when an unfilled A-2-style role exists. Port of the LiveView
+  parser against survivors - world carries no reference to the LV plugin. The
+  result is what the domain's recipient resolver consumes (`msg.mentions`), so
+  this is the load-bearing piece, not the autocomplete UI.
   """
   @spec parse_mentions(String.t(), [map()]) :: [URI.t()]
-  def parse_mentions(text, members) when is_binary(text) and is_list(members) do
-    (parse_uri_mentions(text) ++ parse_bare_mentions(text, members))
+  def parse_mentions(text, members), do: parse_mentions(text, members, [])
+
+  @doc """
+  Like `parse_mentions/2`, with the session's open human role slots included
+  for A-2 colon-role fallback suppression. Open slots are never resolved as
+  mentions; they only prevent `@source:role` from falling back to `@source`.
+  """
+  @spec parse_mentions(String.t(), [map()], [map() | String.t()]) :: [URI.t()]
+  def parse_mentions(text, members, open_role_slots)
+      when is_binary(text) and is_list(members) and is_list(open_role_slots) do
+    (parse_uri_mentions(text) ++ parse_bare_mentions(text, members, open_role_slots))
     |> Enum.uniq_by(&URI.to_string/1)
   end
 
-  def parse_mentions(_text, _members), do: []
+  def parse_mentions(_text, _members, _open_role_slots), do: []
 
   @doc """
   Fetch a page of messages older than `cursor` (ISO-8601), oldest-first.
@@ -273,7 +377,7 @@ defmodule Ezagent.World.ConversationData do
 
   def build_message(%URI{} = sender, text, %URI{} = session_uri, attachments)
       when is_binary(text) and is_list(attachments) do
-    mentions = parse_mentions(text, member_options(session_uri))
+    mentions = parse_mentions(text, member_options(session_uri), human_role_slots(session_uri))
     Ezagent.Message.new(sender, %{text: text, attachments: attachments}, mentions: mentions)
   end
 
@@ -488,6 +592,215 @@ defmodule Ezagent.World.ConversationData do
     end
   end
 
+  defp member_display_name(uri, meta, display_map, kind) do
+    display_name = Map.get(display_map, uri, uri)
+    role_name = member_role_name(meta)
+    fallback = uri_display_fallback(uri)
+
+    if kind == "agent" and non_empty_string?(role_name) and display_name in [uri, fallback] do
+      role_name
+    else
+      display_name
+    end
+  end
+
+  defp member_role_name(meta) when is_map(meta),
+    do: Map.get(meta, :role_name) || Map.get(meta, "role_name")
+
+  defp member_role_name(_meta), do: nil
+
+  defp uri_display_fallback(uri) when is_binary(uri) do
+    case Ezagent.URI.parse(uri) do
+      {:ok, %URI{} = parsed} -> uri_name(parsed) || uri
+      _ -> uri
+    end
+  end
+
+  defp non_empty_string?(value), do: is_binary(value) and String.trim(value) != ""
+
+  defp entity_options(caller_uri, workspace_uri) do
+    uri_options = Module.concat([Ezagent.UI, UriOptions])
+
+    if Code.ensure_loaded?(uri_options) and function_exported?(uri_options, :entities, 2) do
+      apply(uri_options, :entities, [caller_uri, workspace_uri])
+    else
+      []
+    end
+  rescue
+    _ -> []
+  end
+
+  defp entity_candidate_options(caller_uri, workspace_uri) do
+    if caller_authorized_for_workspace?(caller_uri, workspace_uri) do
+      (entity_options(caller_uri, workspace_uri) ++
+         provisioned_user_options(workspace_uri) ++
+         snapshot_agent_options(workspace_uri))
+      |> Enum.uniq_by(&option_field(&1, :uri))
+    else
+      []
+    end
+  end
+
+  defp provisioned_user_options(workspace_uri) do
+    if Code.ensure_loaded?(Ezagent.Users) and
+         function_exported?(Ezagent.Users, :list_in_workspace, 1) do
+      users = apply(Ezagent.Users, :list_in_workspace, [workspace_uri])
+      display_map = Ezagent.EntityPresenter.display_many(Enum.map(users, &encode_uri(&1.uri)))
+
+      Enum.map(users, fn user ->
+        uri_str = encode_uri(user.uri)
+
+        %{
+          uri: uri_str,
+          label: Map.get(display_map, uri_str, uri_name(user.uri) || uri_str),
+          flavor: nil
+        }
+      end)
+    else
+      []
+    end
+  rescue
+    _ -> []
+  end
+
+  defp snapshot_agent_options(workspace_uri) do
+    if Code.ensure_loaded?(Ezagent.Ecto.KindSnapshot) and
+         function_exported?(Ezagent.Ecto.KindSnapshot, :list_in_workspace, 1) do
+      Ezagent.Ecto.KindSnapshot.list_in_workspace(workspace_uri)
+      |> Enum.flat_map(fn row ->
+        with uri_str when is_binary(uri_str) and uri_str != "" <- Map.get(row, :uri),
+             {:ok, %URI{scheme: "entity"} = uri} <- Ezagent.URI.parse(uri_str),
+             {:ok, "agent"} <- Ezagent.URI.type(uri) do
+          [
+            %{
+              uri: uri_str,
+              label: Ezagent.EntityPresenter.display(uri_str),
+              flavor: flavor_for_agent(uri)
+            }
+          ]
+        else
+          _ -> []
+        end
+      end)
+    else
+      []
+    end
+  rescue
+    _ -> []
+  end
+
+  defp member_candidate_options(members) do
+    Enum.map(members, fn member ->
+      %{
+        uri: Map.get(member, "uri"),
+        label: Map.get(member, "display_name"),
+        flavor: Map.get(member, "flavor")
+      }
+    end)
+  end
+
+  defp invite_candidate_row(option) when is_map(option) do
+    uri_str = option_field(option, :uri)
+
+    with uri_str when is_binary(uri_str) and uri_str != "" <- uri_str,
+         {:ok, %URI{scheme: "entity"} = uri} <- Ezagent.URI.parse(uri_str),
+         {:ok, kind} <- Ezagent.URI.type(uri),
+         true <- kind in ["user", "agent"] do
+      [
+        %{
+          "uri" => uri_str,
+          "display_name" => invite_candidate_display_name(option, uri),
+          "kind" => kind,
+          "flavor" => option_field(option, :flavor)
+        }
+      ]
+    else
+      _ -> []
+    end
+  end
+
+  defp invite_candidate_row(_option), do: []
+
+  defp invite_candidate_display_name(option, %URI{} = uri) do
+    uri_str = URI.to_string(uri)
+    label = option_field(option, :label)
+    name = uri_name(uri) || uri_str
+
+    cond do
+      not is_binary(label) -> name
+      String.trim(label) in ["", uri_str] -> name
+      true -> label
+    end
+  end
+
+  defp invite_candidate_rank(%{"kind" => "user"}), do: 0
+  defp invite_candidate_rank(%{"kind" => "agent"}), do: 1
+  defp invite_candidate_rank(_), do: 2
+
+  defp sort_candidate_rows(rows) do
+    Enum.sort_by(rows, fn row ->
+      {invite_candidate_rank(row), String.downcase(row["display_name"] || ""), row["uri"]}
+    end)
+  end
+
+  defp option_field(map, key) when is_map(map),
+    do: Map.get(map, key) || Map.get(map, to_string(key))
+
+  defp option_field(_map, _key), do: nil
+
+  defp uri_name(%URI{} = uri) do
+    case Ezagent.URI.name(uri) do
+      {:ok, name} -> name
+      _ -> nil
+    end
+  end
+
+  defp uri_name(_uri), do: nil
+
+  defp flavor_for_agent(%URI{} = uri) do
+    with {:ok, "agent"} <- Ezagent.URI.type(uri),
+         {:ok, flavor} when is_binary(flavor) and flavor != "" <-
+           Ezagent.UriQuery.resolve(:flavor, uri) do
+      flavor
+    else
+      _ -> nil
+    end
+  end
+
+  defp caller_authorized_for_workspace?(caller_uri, workspace_uri) do
+    with {:ok, %URI{} = workspace} <- normalize_uri(workspace_uri),
+         {:ok, %URI{} = caller_workspace} <- caller_workspace(caller_uri) do
+      system_workspace?(caller_workspace) or
+        Ezagent.URI.stable_key(caller_workspace) == Ezagent.URI.stable_key(workspace)
+    else
+      _ -> false
+    end
+  end
+
+  defp caller_workspace(caller_uri) do
+    with {:ok, %URI{} = caller} <- normalize_uri(caller_uri),
+         %URI{} = workspace <- Ezagent.Capability.workspace_of(caller) do
+      {:ok, workspace}
+    else
+      _ -> :error
+    end
+  rescue
+    _ -> :error
+  end
+
+  defp normalize_uri(%URI{} = uri), do: {:ok, uri}
+
+  defp normalize_uri(value) when is_binary(value) do
+    Ezagent.URI.parse(value)
+  end
+
+  defp normalize_uri(_value), do: :error
+
+  defp system_workspace?(%URI{} = workspace_uri) do
+    Ezagent.URI.stable_key(workspace_uri) ==
+      Ezagent.URI.stable_key(Ezagent.URI.workspace(:system))
+  end
+
   defp matcher_targets_session?(matcher, session_str) do
     case matcher do
       {:in_session, ^session_str} ->
@@ -517,26 +830,67 @@ defmodule Ezagent.World.ConversationData do
     |> Enum.flat_map(&safe_uri/1)
   end
 
-  defp parse_bare_mentions(_text, []), do: []
+  defp parse_bare_mentions(_text, [], _open_role_slots), do: []
 
-  defp parse_bare_mentions(text, members) do
-    ~r/(?<![\p{L}\p{N}_])@([A-Za-z0-9][A-Za-z0-9._-]*)/u
+  defp parse_bare_mentions(text, members, open_role_slots) do
+    ~r/(?<![\p{L}\p{N}_])@([A-Za-z0-9][A-Za-z0-9._-]*(?::[A-Za-z0-9][A-Za-z0-9._-]*)?)/u
     |> Regex.scan(text, capture: :all_but_first)
     |> List.flatten()
     |> Enum.uniq()
-    |> Enum.flat_map(&resolve_member_name(&1, members))
+    |> Enum.flat_map(&resolve_member_token(&1, members, open_role_slots))
   end
 
-  # Bare @name resolves by URI path segment first, then by display name —
-  # unique match only (an ambiguous name resolves to nothing, never a guess).
+  defp resolve_member_token(name, members, open_role_slots) do
+    case resolve_member_name(name, members) do
+      [] -> maybe_resolve_colon_head(name, members, open_role_slots)
+      uris -> uris
+    end
+  end
+
+  defp maybe_resolve_colon_head(name, members, open_role_slots) do
+    case String.split(name, ":", parts: 2) do
+      [head, _tail] ->
+        if colon_role_name_present?(members, open_role_slots) do
+          []
+        else
+          resolve_member_name(head, members)
+        end
+
+      _ ->
+        []
+    end
+  end
+
+  defp colon_role_name_present?(members, open_role_slots) do
+    members
+    |> Enum.map(&Map.get(&1, "role_name"))
+    |> Kernel.++(Enum.map(open_role_slots, &role_name_value/1))
+    |> Enum.any?(&(is_binary(&1) and String.contains?(&1, ":")))
+  end
+
+  defp role_name_value(%{"role_name" => role_name}), do: role_name
+  defp role_name_value(%{role_name: role_name}), do: role_name
+  defp role_name_value(role_name) when is_binary(role_name), do: role_name
+  defp role_name_value(_), do: nil
+
+  # Bare @name resolves by URI path segment, then role name, then display name -
+  # unique match only inside the deciding tier.
   defp resolve_member_name(name, members) do
-    by_segment = Enum.filter(members, &(uri_path_segment(Map.get(&1, "uri")) == name))
+    [
+      Enum.filter(members, &(uri_path_segment(Map.get(&1, "uri")) == name)),
+      Enum.filter(members, &(Map.get(&1, "role_name") == name)),
+      Enum.filter(members, &(Map.get(&1, "display_name") == name))
+    ]
+    |> Enum.reduce_while([], fn
+      [], acc ->
+        {:cont, acc}
 
-    candidates =
-      if by_segment != [],
-        do: by_segment,
-        else: Enum.filter(members, &(Map.get(&1, "display_name") == name))
+      candidates, _acc ->
+        {:halt, unique_candidate_uri(candidates)}
+    end)
+  end
 
+  defp unique_candidate_uri(candidates) do
     case candidates |> Enum.map(&Map.get(&1, "uri")) |> Enum.reject(&is_nil/1) |> Enum.uniq() do
       [uri_str] -> safe_uri(uri_str)
       _ -> []

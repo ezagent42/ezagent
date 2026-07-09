@@ -349,11 +349,21 @@ defmodule EzagentWeb.Socialware.SessionFeedChannel do
     end
   end
 
+  # EVERY user message goes to the invisible FRONT-DESK (the `hello.front-desk`
+  # chat relay agent). It — not this web layer — decides per message, by intent ×
+  # identity, whether to dispatch to the page builder (`:rebuild`) or the read-only
+  # concierge (`:answer`). The chat fan-out is mention-gated
+  # (`Behavior.Session` §:send); `Definition.routing_rules`'
+  # `{:always} -> {:role, "front-desk"}` rule is the primary delivery path — this
+  # mention is the belt to its suspenders.
   defp dispatch_post(session_uri, %URI{} = principal, text) do
-    msg =
-      Ezagent.Message.new(principal, %{text: text, attachments: []},
-        mentions: [orchestrator_uri(session_uri)]
-      )
+    mentions =
+      case EzagentPluginHello.Members.role_uri(session_uri, "front-desk") do
+        {:ok, fd_uri} -> [fd_uri]
+        :error -> []
+      end
+
+    msg = Ezagent.Message.new(principal, %{text: text, attachments: []}, mentions: mentions)
 
     Ezagent.Invocation.dispatch(%Ezagent.Invocation{
       target: Ezagent.URI.with_action(session_uri, :session, :send),
@@ -361,21 +371,6 @@ defmodule EzagentWeb.Socialware.SessionFeedChannel do
       args: %{message: msg},
       ctx: %{caller: principal, reply: :ignore}
     })
-  end
-
-  # EVERY user message goes to the invisible ORCHESTRATOR (the `hello.orchestrator`
-  # front-desk agent). It — not this web layer — decides per message, by intent ×
-  # identity, whether the message goes to the page builder or the read-only
-  # concierge (owner-vs-visitor is read from the session slice inside the
-  # orchestrator's `EzagentPluginHello.Router`). The chat fan-out is mention-gated
-  # (`Behavior.Session` §:send), so mentioning exactly the orchestrator is the whole
-  # ingress; builder/concierge never receive the user message directly.
-  defp orchestrator_uri(session_uri), do: hello_agent_uri(session_uri, "orch_")
-
-  defp hello_agent_uri(session_uri, prefix) do
-    ws = Ezagent.URI.workspace_name!(session_uri)
-    name = session_uri.path |> to_string() |> String.split("/", trim: true) |> List.last()
-    Ezagent.URI.entity(ws, :agent, "#{prefix}#{name}")
   end
 
   defp push_viewer_snapshot(socket) do

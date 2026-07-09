@@ -43,41 +43,16 @@ defmodule EzagentPluginHello.Application do
     # which boots before this plugin (a declared dep).
     _ = Ezagent.UI.SessionViewRegistry.register(EzagentPluginHello.PageView)
 
-    # Task #162 — publish the hello DEMO socialware as a PUBLIC catalog entry via
-    # the REAL governance flow (`ConfigGovernance.Socialware`), so a fresh stack
-    # ships a discoverable/installable hello demo AND every boot dogfoods the
-    # publish path (a broken publish path fails LOUD here at boot). This runs in
-    # `start/2` AFTER the `PageView` register above — NOT in `after_boot/0` and
-    # NOT in `ezagent_domain_session`'s boot seed — because the publish resolves
-    # `uses: ["hello"]` + the `hello_render` view, which only exist once THIS
-    # plugin has registered its PageView + `hello_render` cap. Idempotent (skips
-    # if already published); fail-loud in dev/prod (mirrors
-    # `seed_builtin_socialware_definitions`), skipped in `:test` (the DB write at
-    # plugin boot contends with the per-test Ecto sandbox — the same reason
-    # `RoleSeedHook` skips in test; ExUnit drives `Demo.Hello.publish/0` inside a
-    # checked-out sandbox instead).
-    :ok = maybe_publish_hello_demo()
-
+    # NOTE: the hello DEMO socialware is NOT published here. It ships as a
+    # deploy-seed package (`apps/ezagent_web/priv/socialware_seed/hello/
+    # manifest.yaml`, like `autoservice`): `Ezagent.Home.SocialwareSeed` copies
+    # it into the deployment home and the late boot scan
+    # `Ezagent.Socialware.ManifestSeed.scan_all!/1` (run from the last-booting
+    # transport app, AFTER this plugin registered its PageView + `hello_render`
+    # cap so `uses: ["hello"]` resolves) publishes it through the governed
+    # import lane. Zero call from this plugin's boot; `Ezagent.Socialware.Demo.Hello`
+    # remains only as a test driver (deploy-seed SPEC §2/§4).
     result
-  end
-
-  # Compile-time env (works in stripped OTP releases where `Mix` is unavailable).
-  @compile_env Mix.env()
-
-  defp maybe_publish_hello_demo do
-    if @compile_env == :test do
-      :ok
-    else
-      case Ezagent.Socialware.Demo.Hello.publish() do
-        {:ok, _published_or_exists} ->
-          :ok
-
-        {:error, reason} ->
-          raise "EzagentPluginHello boot aborted — the hello demo socialware could " <>
-                  "not be published via the governance flow (fail-loud dogfood, " <>
-                  "task #162): #{inspect(reason)}"
-      end
-    end
   end
 
   # Phase 2 — register the `session.hello` Template Class so a hello app is
@@ -98,6 +73,9 @@ defmodule EzagentPluginHello.Application do
       %{
         flavor: "hello",
         kind: Ezagent.Entity.Agent,
+        instance_behaviors: fn ->
+          Ezagent.Entity.Agent.base_behaviors() ++ [Ezagent.ActionSet.HelloOrchestrator]
+        end,
         template_class: EzagentPluginHello.Template.HelloAgent,
         bridge_adapter: EzagentPluginHello.BridgeAdapter,
         cap_policy: &EzagentPluginNative.CapPolicy.for_recipe/1
@@ -113,13 +91,19 @@ defmodule EzagentPluginHello.Application do
   # `agent_flavors`/own-Kind revival registration is needed. Not `passive`: the
   # builder/concierge are chat principals (@-mentionable + joinable).
   @impl Ezagent.Plugin
-  def roles, do: [hello_orchestrator_recipe(), hello_builder_recipe(), hello_concierge_recipe()]
+  def roles,
+    do: [
+      hello_front_desk_recipe(),
+      hello_builder_recipe(),
+      hello_concierge_recipe(),
+      hello_llm_recipe()
+    ]
 
-  @doc "The `hello.orchestrator` role — the invisible per-session front-desk router (`Behavior.HelloOrchestrator`)."
-  @spec hello_orchestrator_recipe() :: map()
-  def hello_orchestrator_recipe do
+  @doc "The `hello.front-desk` role — the invisible per-session chat relay that dispatches to builder/concierge via their dispatchable actions."
+  @spec hello_front_desk_recipe() :: map()
+  def hello_front_desk_recipe do
     %{
-      name: "hello.orchestrator",
+      name: "hello.front-desk",
       behaviors: [Ezagent.ActionSet.HelloOrchestrator],
       requested_caps: [
         %{behavior: Ezagent.ActionSet.HelloOrchestrator, action: :hello_sync_result}
@@ -133,7 +117,10 @@ defmodule EzagentPluginHello.Application do
     %{
       name: "hello.builder",
       behaviors: [Ezagent.ActionSet.HelloBuilder],
-      requested_caps: [%{behavior: Ezagent.ActionSet.HelloBuilder, action: :receive}]
+      requested_caps: [
+        %{behavior: Ezagent.ActionSet.HelloBuilder, action: :receive},
+        %{behavior: Ezagent.ActionSet.HelloBuilder, action: :rebuild}
+      ]
     }
   end
 
@@ -143,7 +130,29 @@ defmodule EzagentPluginHello.Application do
     %{
       name: "hello.concierge",
       behaviors: [Ezagent.ActionSet.HelloConcierge],
-      requested_caps: [%{behavior: Ezagent.ActionSet.HelloConcierge, action: :receive}]
+      requested_caps: [
+        %{behavior: Ezagent.ActionSet.HelloConcierge, action: :receive},
+        %{behavior: Ezagent.ActionSet.HelloConcierge, action: :answer}
+      ]
+    }
+  end
+
+  @doc "The `hello.llm` role — a curl LLM agent hello delegates HTTP-backend generation to (credential-optional so it keyless-spawns; key comes from the platform credential cascade)."
+  @spec hello_llm_recipe() :: map()
+  def hello_llm_recipe do
+    %{
+      name: "hello.llm",
+      # curl behaviors come from the "curl" flavor's instance_behaviors, NOT here
+      # (Definition.roles materialize drops recipe.behaviors).
+      requested_caps: [],
+      config: %{
+        provider: "deepseek",
+        api_url: "https://api.deepseek.com/chat/completions",
+        model: "deepseek-chat",
+        # opt out of the required-by-default :slice credential (Task 1) so a
+        # deployment with no DeepSeek credential source still spawns this member.
+        credential_optional: true
+      }
     }
   end
 

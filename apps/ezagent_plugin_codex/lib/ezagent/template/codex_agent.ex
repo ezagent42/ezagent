@@ -46,6 +46,13 @@ defmodule Ezagent.PluginCodex.Template.CodexAgent do
   def auth_failure_signals,
     do: [~r/Run codex login/, ~r/401 Unauthorized/, "no Codex credentials"]
 
+  # #1201 A② — the node's HOST codex login home (`$CODEX_HOME` else `~/.codex`).
+  # Consumed only through `CredentialAdapter.host_login_source_dir/1`, which
+  # additionally requires a present `auth.json` before the dir is usable.
+  @impl Ezagent.Agent.CredentialAdapter
+  def host_login_dir,
+    do: Ezagent.Credential.HomeRuntime.host_login_dir("CODEX_HOME", ".codex")
+
   # #21 PR-2b (④, TEST/E2E ONLY) — provision the full CODEX_HOME credential set
   # (auth.json + config.toml) from a durable `source` dir into the agent's `home`
   # CODEX_HOME, so the dockerized E2E runs without a human `codex login`. `source`

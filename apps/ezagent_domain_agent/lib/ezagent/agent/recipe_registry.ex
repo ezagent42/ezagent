@@ -40,18 +40,41 @@ defmodule Ezagent.Agent.RecipeRegistry do
   seed explicitly inside their Ecto sandbox — same `test_env?` discipline as the
   identity admin/smtp seeds).
 
-  ## Two-plugins-one-name collision
+  ## Two-plugins-one-name collision vs. self-upgrade (#1223 M2 reflow)
 
-  Preserved as a SEED-time check (§4.2): a second plugin seeding the same role
-  name in the system ws with a DIFFERENT body fails loud
-  (`{:role_seed_collision, name}`). The old runtime ETS raise is gone —
-  immutability is now the append-only ConfigObject + re-point.
+  Seeding distinguishes TWO shapes that both present as "pointer exists, body
+  differs":
+
+    * a genuine SAME-BOOT collision — two DIFFERENT plugins claim the same role
+      name with different bodies in ONE boot — still fails loud
+      (`{:role_seed_collision, name}`), caught by the per-boot registry
+      (`@boot_seed_key`); and
+    * a CROSS-VERSION self-upgrade — a single plugin ships a NEW body of its OWN
+      role and boots against a reflow-carried DB holding the OLD body under the
+      deterministic seed `source_turn_id` — which UPGRADES (writes the new object
+      + repoints) instead of colliding. Mirrors
+      `DefinitionRegistry.seed_builtin_definition/2`. The upgrade write is
+      idempotent under the entrypoint retry loop (a unique `source_turn_id` hit →
+      `{:ok, :already_upgraded}`, same guard as #1235). A user/CR OVERRIDE (a
+      non-seed-family `source_turn_id`) still survives untouched (`{:ok, :exists}`).
+
+  The old runtime ETS raise is gone — immutability is the append-only ConfigObject
+  + re-point.
   """
 
   alias Ezagent.Agent.Recipe
-  alias Ezagent.Socialware.{ConfigObject, ConfigPointer, ConfigStore}
+  alias Ezagent.Socialware.{ConfigObject, ConfigPointer, ConfigStore, ContentHash}
 
   @table :ezagent_role_registry
+
+  # Per-boot in-memory {role_name → body_hash} registry (VM-global via
+  # persistent_term). It keeps a genuine SAME-BOOT two-plugins-one-name collision
+  # loud (§4.2) while letting a CROSS-VERSION reboot UPGRADE its own seed: a name
+  # seeded THIS boot with a DIFFERENT body is a collision; a name whose only prior
+  # body lives in a reflow-carried DB (a PRIOR boot) has no entry here → upgrade.
+  # Lifetime == one VM boot; `reset_boot_seed_registry/0` (called per test by the
+  # shared `EzagentCore.DataCase`) makes one test behave as one fresh boot.
+  @boot_seed_key {__MODULE__, :boot_seed_hashes}
 
   # Fixed ConfigObject key per recipe subject (one recipe-recipe slice per role).
   @recipe_key "recipe"
@@ -59,6 +82,13 @@ defmodule Ezagent.Agent.RecipeRegistry do
   # Recipe-config lives on the `workspace` layer of the cascade (a role is a
   # workspace-scoped reusable recipe; user/session layers are not meaningful).
   @recipe_layer "workspace"
+
+  # The SEED-FAMILY `source_turn_id` prefix: the deterministic first-seed turn
+  # (`role-seed:…`) and a self-upgrade turn (`role-seed-upgrade:…`) both start with
+  # it. `ConfigStore.seed_object_upsert/1` uses it as the branch-3-vs-4 upgrade
+  # gate; `retire_role/1` uses it to refuse retiring a tenant override. A user/CR
+  # override carries a DIFFERENT prefix so it is never clobbered / retired.
+  @seed_family_prefix "role-seed"
 
   @doc "Return the ETS table name (used by `EzagentCore.EtsOwner`)."
   @spec table() :: atom()
@@ -236,23 +266,32 @@ defmodule Ezagent.Agent.RecipeRegistry do
   end
 
   @doc """
-  Seed `recipe` as a role ConfigObject in the SYSTEM workspace IFF no pointer yet
-  exists for its `(system_ws, "recipe:<name>", "recipe")` — the atomic
-  seed-once-if-no-pointer primitive (§4.1/§4.2).
+  Seed `recipe` as a role ConfigObject in the SYSTEM workspace — the upgrade-aware
+  built-in seed path (§4.1/§4.2, mirroring `DefinitionRegistry.seed_builtin_definition/2`).
 
-  - First boot: no pointer → writes object + points. The built-in is now config.
-  - Reboot, unchanged: pointer exists → `{:ok, :exists}` (no-op). Idempotent.
-  - Reboot after a published override: pointer exists (aimed at the override) →
-    `{:ok, :exists}`. The override SURVIVES the restart. Override-safe.
-  - Two plugins, same name, DIFFERENT body in the system ws → `{:error,
-    {:role_seed_collision, name}}` (loud, the moved boot-collision guard).
+  Resolves the currently-pointed object for the recipe slot BEFORE writing:
+
+  - No pointer yet → atomic seed-once-if-no-pointer (`{:ok, :seeded}`). The
+    built-in is now config (first boot).
+  - Pointer exists, SAME body (content-hash) → `{:ok, :exists}` (no-op).
+    Idempotent reboot.
+  - Pointer exists, DIFFERENT body from a SEED-FAMILY `source_turn_id`
+    (`role-seed…`) → UPGRADE: writes the new object + repoints
+    (`{:ok, :seeded}`; a retry that re-hits the unique upgrade turn id →
+    `{:ok, :already_upgraded}`). This is the reflow self-upgrade path (#1223 M2):
+    a plugin shipping a NEW body of its OWN role over a DB carrying the OLD one.
+  - Pointer exists, DIFFERENT body from a NON-seed `source_turn_id` (a user/CR
+    OVERRIDE) → `{:ok, :exists}`. The override SURVIVES. Override-safe.
+  - Same name, DIFFERENT body seeded EARLIER THIS BOOT (two plugins) → `{:error,
+    {:role_seed_collision, name}}` (loud; the per-boot registry discriminates a
+    same-boot collision from a cross-version upgrade).
 
   Validates the recipe through `Recipe.new/1` (fail-loud on a malformed/flavor-
   carrying recipe) BEFORE any write. The recipe `body` is stored with `behaviors`
   as module-name STRINGS (JSON-safe; `Recipe.new/1` round-trips them on rehydrate).
   """
   @spec seed_role_if_absent(recipe :: map(), opts :: keyword()) ::
-          {:ok, :seeded | :exists} | {:error, term()}
+          {:ok, :seeded | :exists | :already_upgraded} | {:error, term()}
   def seed_role_if_absent(recipe, opts \\ []) when is_map(recipe) do
     name = recipe_name(recipe)
 
@@ -261,26 +300,101 @@ defmodule Ezagent.Agent.RecipeRegistry do
       subject = recipe_subject_uri(ws, name)
       actor = Keyword.get(opts, :actor_uri, default_seed_actor())
       body = recipe_body(recipe)
+      new_hash = ContentHash.of(body)
 
-      ConfigStore.seed_object_if_no_pointer(%{
-        layer: @recipe_layer,
-        workspace_uri: ws,
-        subject_uri: subject,
-        key: @recipe_key,
-        body: body,
-        actor_uri: actor,
-        source_turn_id: "role-seed:#{ws}:#{name}",
-        collision_tag: {:role_seed_collision, name}
-      })
+      # Per-boot loudness guard (§4.2): a name already seeded THIS boot with a
+      # DIFFERENT body is a genuine two-plugins-one-name collision, NOT a
+      # cross-version upgrade (a reflow-carried OLD body has no per-boot entry).
+      case boot_seed_collision(name, new_hash) do
+        {:error, _} = collision ->
+          collision
+
+        :ok ->
+          # The three-state seed contract now lives in the ConfigStore primitive
+          # (`seed_object_upsert/1`): resolve → hash-compare → seed-family-check →
+          # upgrade → retry-tolerance. `:seed_family_prefix` makes it OVERRIDE-SAFE
+          # (§4.2) — a user/CR override (a non-`role-seed` turn) survives untouched.
+          result =
+            ConfigStore.seed_object_upsert(%{
+              layer: @recipe_layer,
+              workspace_uri: ws,
+              subject_uri: subject,
+              key: @recipe_key,
+              body: body,
+              actor_uri: actor,
+              source_turn_id: seed_source_turn_id(ws, name),
+              upgrade_source_turn_id: upgrade_source_turn_id(ws, name, new_hash),
+              collision_tag: {:role_seed_collision, name},
+              seed_family_prefix: @seed_family_prefix
+            })
+
+          record_boot_seed(name, new_hash, result)
+          # A new object was pointed (first seed OR upgrade) — drop any stale
+          # read-through cache entry so the next `lookup/2` re-resolves. Idempotent
+          # (nothing is cached on a first seed); a no-op re-seed leaves the pointer
+          # unmoved so the cache stays valid.
+          maybe_invalidate(ws, name, result)
+          result
+      end
     end
   end
+
+  defp maybe_invalidate(ws, name, {:ok, result}) when result in [:seeded, :already_upgraded],
+    do: invalidate(ws, name)
+
+  defp maybe_invalidate(_ws, _name, _result), do: :ok
+
+  @doc """
+  Reset the per-boot role-seed registry — the in-memory `{name → body_hash}` map
+  that keeps a same-boot two-plugins-one-name collision loud while letting a
+  cross-version reboot UPGRADE. Its lifetime is one VM boot; the shared
+  `EzagentCore.DataCase` calls this per test so one test behaves as one fresh boot
+  (the DB rows roll back per test, but this VM-global map would otherwise leak
+  across tests and spuriously collide fixed-name seeds). Idempotent.
+  """
+  @spec reset_boot_seed_registry() :: :ok
+  def reset_boot_seed_registry do
+    :persistent_term.erase(@boot_seed_key)
+    :ok
+  end
+
+  defp boot_seed_collision(name, new_hash) do
+    case Map.get(boot_seed_hashes(), name) do
+      nil -> :ok
+      ^new_hash -> :ok
+      _different -> {:error, {:role_seed_collision, name}}
+    end
+  end
+
+  defp record_boot_seed(_name, _hash, {:error, _}), do: :ok
+
+  defp record_boot_seed(name, hash, {:ok, _}) do
+    :persistent_term.put(@boot_seed_key, Map.put(boot_seed_hashes(), name, hash))
+    :ok
+  end
+
+  defp boot_seed_hashes, do: :persistent_term.get(@boot_seed_key, %{})
+
+  defp seed_source_turn_id(ws, name), do: "role-seed:#{ws}:#{name}"
+
+  defp upgrade_source_turn_id(ws, name, hash), do: "role-seed-upgrade:#{ws}:#{name}:#{hash}"
+
+  # A SEED-FAMILY provenance: the deterministic first-seed turn (`role-seed:…`) or
+  # a built-in self-upgrade turn (`role-seed-upgrade:…`). A user/CR override
+  # carries a DIFFERENT prefix (`override-…`, `cr-publish:…`, a fork/repoint turn),
+  # so it is NOT seed-family and its pointer is never clobbered by a re-seed.
+  defp seed_family_turn?(turn) when is_binary(turn),
+    do: String.starts_with?(turn, @seed_family_prefix)
+
+  defp seed_family_turn?(_), do: false
 
   @doc """
   Retire a seeded role — the override-safe reverse of
   `seed_role_if_absent/2`. Deletes the ConfigPointer + its ConfigObject
-  ONLY if the pointed object is still the SEED (its `source_turn_id`
-  matches the deterministic seed value); a tenant CR override carries a
-  different `source_turn_id` and SURVIVES the retire. Also invalidates
+  ONLY if the pointed object is still SEED-FAMILY (its `source_turn_id`
+  is the deterministic first-seed value OR a `role-seed-upgrade:…` self-upgrade
+  turn); a tenant CR override carries a non-seed `source_turn_id` and SURVIVES
+  the retire. Also invalidates
   the read-through ETS cache entry so a post-retire `lookup/1` misses.
 
   Used by the plugin-package UNLOAD path (`Ezagent.Agent.PackageSeedHook`).
@@ -291,7 +405,6 @@ defmodule Ezagent.Agent.RecipeRegistry do
     ws = system_workspace_uri()
     subject = recipe_subject_uri(ws, name)
     pointer_id = ConfigPointer.id(@recipe_layer, ws, subject, @recipe_key)
-    seed_turn = "role-seed:#{ws}:#{name}"
 
     case EzagentCore.Repo.get(ConfigPointer, pointer_id) do
       nil ->
@@ -300,7 +413,10 @@ defmodule Ezagent.Agent.RecipeRegistry do
       pointer ->
         obj = EzagentCore.Repo.get(ConfigObject, pointer.config_id)
 
-        if obj && obj.source_turn_id == seed_turn do
+        # Delete only if the pointed object is still SEED-FAMILY (the first-seed
+        # turn OR a built-in self-upgrade turn); a tenant CR override carries a
+        # non-seed `source_turn_id` and SURVIVES the retire.
+        if obj && seed_family_turn?(obj.source_turn_id) do
           EzagentCore.Repo.delete(pointer)
           _ = EzagentCore.Repo.delete(obj)
         end

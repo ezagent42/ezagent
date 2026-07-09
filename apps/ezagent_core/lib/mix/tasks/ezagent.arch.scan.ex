@@ -62,6 +62,18 @@ defmodule Mix.Tasks.Ezagent.Arch.Scan do
     # on-chokepoint delegate).
   ]
 
+  # socialware-seed-path gate (2026-07-07, deploy-seed SPEC §5b). The ONLY
+  # sanctioned `ConfigGovernance.Socialware.publish_or_upgrade(` call site is the
+  # framework's generic governed import lane (`ManifestYaml.import/2`) — the
+  # chokepoint the deployment-directory seed scan (`ManifestSeed.scan_all!`)
+  # flows through. Every OTHER `publish_or_upgrade(` call is a plugin/socialware
+  # self-publish at boot (the retired `Demo.publish` shape — hello/kanban/
+  # dealscout), which must migrate onto the deploy-seed lane. Plugin
+  # self-publishers are NOT on this list, so they trip the gate.
+  @socialware_publish_sanctioned_files [
+    "apps/ezagent_domain_session/lib/ezagent/socialware/manifest_yaml.ex"
+  ]
+
   @spawn_fresh_sanctioned [
     # PR-2 config-evolve — shifted +6 by adding `Ezagent.ActionSet.ConfigEvolve`
     # (+ its comment block) to `Agent.behaviors/0`; same sanctioned defs/call.
@@ -264,6 +276,71 @@ defmodule Mix.Tasks.Ezagent.Arch.Scan do
     "apps/ezagent_plugin_hello/lib/ezagent/entity/hello_builder.ex"
   ]
 
+  # Namespace-dot convention gate (2026-07-08, GLOSSARY Decision #161 follow-up).
+  # A module that lives inside an existing parent namespace must use the DOTTED
+  # child form (`Ezagent.Agent.RecipeResolver`), never parent-name concatenation
+  # (`Ezagent.AgentRecipeResolver`). `concatenated_namespace_modules` flags a
+  # SINGLE-SEGMENT `defmodule Ezagent.XyzAbc` when `Ezagent.Xyz` is a namespace
+  # that has DOTTED CHILDREN in the SAME app (so `XyzAbc` is just parent+child
+  # glued and should be `Xyz.Abc`), MINUS this sanctioned allowlist. Suppression
+  # for this gate is by MODULE NAME here (not a line-based `# arch-allow:`) — you
+  # sanction a compound by naming it, since the offence is the name itself.
+  #
+  # Every entry is a genuine single-concept compound, a namespace ROOT with its
+  # own dotted children, or a conventional role-suffix (Registry/Store/Supervisor)
+  # / genuinely-ambiguous name kept by convention — NOT a glued parent+child that
+  # should be dotted. The two real offenders (`AgentRecipeResolver`,
+  # `AgentRecipeAttributes`) were renamed to `Ezagent.Agent.Recipe*` (they join
+  # the existing dotted `Ezagent.Agent.Recipe*` cluster), so cap is 0.
+  @concatenated_namespace_allowlist [
+    # AgentFlavor* — "agent flavor" is itself the unit (a flavor OF agent); the
+    # flavor cluster is deliberately glued (Registry/Attributes/Resolver), NOT
+    # dotted under Ezagent.Agent.
+    "Ezagent.AgentFlavorRegistry",
+    "Ezagent.AgentFlavorAttributes",
+    "Ezagent.AgentFlavorResolver",
+    # AgentPassiveAttributes — the `passive` launch-attribute table; its own
+    # moduledoc declares it "exactly parallel to AgentFlavorAttributes", and there
+    # is NO dotted `Agent.Passive*` sibling cluster (unlike `Agent.Recipe*`).
+    # Closest call — sanctioned for now, flagged for review in the PR survey.
+    "Ezagent.AgentPassiveAttributes",
+    # AgentBridge — the ezagent_domain_agent_bridge app's OWN root namespace
+    # (Ezagent.AgentBridge.*), a domain concept; that app has no Ezagent.Agent
+    # namespace, so the scan never flags it. Documentary entry (task-requested).
+    "Ezagent.AgentBridge",
+    # AgentLineage — single-concept "lineage of an agent" value in ezagent_core.
+    "Ezagent.AgentLineage",
+    # AgentManifest — the agent-manifest schema; a namespace ROOT with its own
+    # child (Ezagent.AgentManifest.Tools). One concept, distinct from the
+    # ezagent_core Ezagent.Agent recipe/materialize cluster.
+    "Ezagent.AgentManifest",
+    # Registry-OF-X role-suffix (conventional single concept; several are
+    # namespace roots with their own children, e.g. CapabilityRegistry.Defaults).
+    "Ezagent.CapabilityRegistry",
+    "Ezagent.KindRegistry",
+    "Ezagent.PluginRegistry",
+    "Ezagent.PluginAssetRegistry",
+    "Ezagent.RoutingRegistry",
+    # KindSupervisor — conventional OTP "supervisor OF Kinds" role-suffix name.
+    "Ezagent.KindSupervisor",
+    # Store-OF-X role-suffix (conventional single concept).
+    "Ezagent.MessageStore",
+    "Ezagent.SnapshotStore",
+    # PluginPackage — one concept (a plugin package); namespace root with its own
+    # children (Ezagent.PluginPackage.*).
+    "Ezagent.PluginPackage",
+    # RuntimeIdentity — "the identity of the runtime"; ambiguous vs Runtime.Identity
+    # but no dotted sibling cluster. Sanctioned-pending-review (PR survey).
+    "Ezagent.RuntimeIdentity",
+    # SystemPrincipal — a domain concept (a principal that is a system actor);
+    # namespace root with its own child (Ezagent.SystemPrincipal.Catalog),
+    # distinct from the Ezagent.System.* cluster.
+    "Ezagent.SystemPrincipal",
+    # EntityPresenter — "presenter for entities"; ambiguous vs Entity.Presenter
+    # but no dotted sibling cluster. Sanctioned-pending-review (PR survey).
+    "Ezagent.EntityPresenter"
+  ]
+
   @impl Mix.Task
   def run(_args) do
     Mix.shell().info("ezagent.arch.scan — architecture fitness functions")
@@ -367,7 +444,10 @@ defmodule Mix.Tasks.Ezagent.Arch.Scan do
       cold_restart_respawn_round_trip_drift: cold_restart_respawn_round_trip_drift(),
       raw_port_spawn_executable: raw_port_spawn_executable(),
       resource_kind_as_genserver: resource_kind_as_genserver(),
-      hardcoded_deploy_domain_hosts: hardcoded_deploy_domain_hosts()
+      hardcoded_deploy_domain_hosts: hardcoded_deploy_domain_hosts(),
+      socialware_priv_manifest_files: socialware_priv_manifest_files(),
+      socialware_self_publish_unsanctioned: socialware_self_publish_unsanctioned(),
+      concatenated_namespace_modules: concatenated_namespace_modules()
     ]
   end
 
@@ -394,6 +474,52 @@ defmodule Mix.Tasks.Ezagent.Arch.Scan do
         not comment_line?(line) and
         Regex.match?(@hardcoded_deploy_domain_regex, line)
     end)
+  end
+
+  # Socialware deploy-seed gate (2026-07-07, SPEC §5). Two shapes:
+  #
+  #   (a) `socialware_priv_manifest_files` — any `apps/*/priv/socialware/*/
+  #       manifest.yaml` on disk. The plugin/domain-priv authoring lane is
+  #       DEPRECATED (design §2): the canonical socialware home is the
+  #       deployment directory (`$EZAGENT_HOME/<profile>/socialware/`), seeded
+  #       from `ezagent_web/priv/socialware_seed/<name>/` via
+  #       `Ezagent.Home.SocialwareSeed`. TARGET-ZERO — a manifest under
+  #       `priv/socialware/` must move to the deploy-seed source. (NOTE the
+  #       source dir name is `socialware_seed`, NOT `socialware`, so seed
+  #       sources never trip this glob.) This shape uses a filesystem glob, not
+  #       the `lib/**` scanner, because manifests are priv assets.
+  #
+  #   (b) `socialware_self_publish_unsanctioned` — non-framework
+  #       `ConfigGovernance.Socialware.publish_or_upgrade(` call sites (the
+  #       `Demo.publish` self-publish-at-boot shape). Only the framework import
+  #       lane (`manifest_yaml.ex`, `@socialware_publish_sanctioned_files`) is
+  #       allowed; every plugin self-publisher trips it. AST-based (parens-only
+  #       remote calls), so the `@spec`/`def publish_or_upgrade` in
+  #       `config_governance/socialware.ex` and doc mentions are NOT counted.
+  defp socialware_priv_manifest_files do
+    repo_root()
+    |> Path.join("apps/*/priv/socialware/*/manifest.yaml")
+    |> Path.wildcard()
+    |> length()
+  end
+
+  defp socialware_self_publish_unsanctioned do
+    ast_call_hits(fn _last_segment, fun -> fun == :publish_or_upgrade end)
+    |> Enum.reject(fn {file, _line, _} -> file in @socialware_publish_sanctioned_files end)
+    |> length()
+  end
+
+  @doc """
+  Testable entry for `socialware_self_publish_unsanctioned`: count
+  `publish_or_upgrade` remote-call sites in a SOURCE STRING (no sanctioned
+  reject — the fixture asserts the raw AST hit count). Proves the gate matches a
+  parenthesized `Governance.publish_or_upgrade(x, y)` call while a
+  `&Mod.publish_or_upgrade/2` capture, the `@spec`/`def` head, and doc mentions
+  are NOT counted.
+  """
+  @spec count_socialware_self_publish_in_source(String.t()) :: non_neg_integer()
+  def count_socialware_self_publish_in_source(source) when is_binary(source) do
+    count_calls_in_source(source, fn _last_segment, fun -> fun == :publish_or_upgrade end)
   end
 
   # kanban-as-role K5 (2026-06-25) — resource-only-files gate (cap 0). `resource://`
@@ -823,6 +949,117 @@ defmodule Mix.Tasks.Ezagent.Arch.Scan do
     plugin_defined_kind_offenders()
     |> Enum.reject(&MapSet.member?(allow, &1))
     |> length()
+  end
+
+  # concatenated_namespace_modules (namespace-dot convention gate). Cross-file +
+  # per-app: unlike the per-file AST counters, "is `Xyz` a namespace with children"
+  # needs every module in the app. Parse every lib file's AST, collect its
+  # `defmodule Ezagent.*` names, group by app, and — within each app — count the
+  # SINGLE-SEGMENT `Ezagent.XyzAbc` modules that glue an existing namespace prefix
+  # (`Ezagent.Xyz` has ≥1 dotted child in that app), minus the sanctioned
+  # allowlist. The classification core is the pure `concatenated_namespace_module?/3`
+  # (namespaces × module × allowlist), reused by the fixture test.
+  defp concatenated_namespace_modules do
+    allow = MapSet.new(@concatenated_namespace_allowlist)
+
+    lib_files()
+    |> Enum.flat_map(&defmodule_names_with_app/1)
+    |> Enum.group_by(fn {app, _segs} -> app end, fn {_app, segs} -> segs end)
+    |> Enum.map(fn {_app, module_seg_lists} ->
+      namespaces = namespaces_with_children(module_seg_lists)
+
+      module_seg_lists
+      |> Enum.filter(&match?([:Ezagent, _single], &1))
+      |> Enum.map(&dotted/1)
+      |> Enum.count(&concatenated_namespace_module?(namespaces, &1, allow))
+    end)
+    |> Enum.sum()
+  end
+
+  @doc """
+  Predicate core of the namespace-dot convention gate: is `module` (a full
+  dotted string like `"Ezagent.AgentRecipeResolver"`) a SINGLE-SEGMENT compound
+  that glues an existing namespace prefix in `namespaces` (a set of second-level
+  segment strings that have dotted children in the same app) and is NOT in
+  `allowlist`? Exposed so the fixture test can prove the classifier has teeth
+  (`Ezagent.AgentRecipeResolver` with `Agent` a namespace → true; the dotted
+  `Ezagent.Agent.RecipeResolver`, an allowlisted compound, and a lone
+  `Ezagent.KindSupervisor` when `Kind` is NOT a namespace → false) without
+  writing fixture files into the scanned lib tree.
+  """
+  @spec concatenated_namespace_module?(MapSet.t(String.t()), String.t(), MapSet.t(String.t())) ::
+          boolean()
+  def concatenated_namespace_module?(namespaces, module, allowlist) do
+    not MapSet.member?(allowlist, module) and
+      case String.split(module, ".") do
+        ["Ezagent", compound] -> glued_namespace_child?(compound, namespaces)
+        _ -> false
+      end
+  end
+
+  # A single-segment compound (`"AgentRecipeResolver"`) is a glued parent+child
+  # when any PROPER prefix ending at an internal uppercase boundary (`"Agent"`) is
+  # itself a namespace-with-children in the app.
+  defp glued_namespace_child?(compound, namespaces) do
+    compound
+    |> namespace_prefixes()
+    |> Enum.any?(&MapSet.member?(namespaces, &1))
+  end
+
+  defp namespace_prefixes(compound) do
+    len = String.length(compound)
+
+    if len < 2 do
+      []
+    else
+      for i <- 1..(len - 1),
+          String.at(compound, i) =~ ~r/[A-Z]/,
+          do: String.slice(compound, 0, i)
+    end
+  end
+
+  # Second-level segments with ≥1 dotted child in the app (`[:Ezagent, :Agent,
+  # :RecipeResolver]` → "Agent" is a namespace). Depth-≥3 modules contribute.
+  defp namespaces_with_children(module_seg_lists) do
+    for [:Ezagent, seg2 | rest] <- module_seg_lists,
+        rest != [],
+        into: MapSet.new(),
+        do: Atom.to_string(seg2)
+  end
+
+  # `[{app, segments}]` for every `defmodule Ezagent.*` in `file` (nested modules
+  # included via the AST walk); `app` is the umbrella app dir (`ezagent_core`).
+  defp defmodule_names_with_app(file) do
+    app = app_of(file)
+
+    case Code.string_to_quoted(read!(file)) do
+      {:ok, ast} ->
+        ast
+        |> collect_defmodule_segments()
+        |> Enum.filter(&match?([:Ezagent | _], &1))
+        |> Enum.map(fn segs -> {app, segs} end)
+
+      {:error, _} ->
+        []
+    end
+  end
+
+  defp app_of("apps/" <> rest), do: rest |> String.split("/", parts: 2) |> hd()
+  defp app_of(_), do: "?"
+
+  defp collect_defmodule_segments(ast) do
+    {_ast, acc} =
+      Macro.prewalk(ast, [], fn node, acc ->
+        case node do
+          {:defmodule, _meta, [{:__aliases__, _, segs} | _]} when is_list(segs) ->
+            {node, [segs | acc]}
+
+          _ ->
+            {node, acc}
+        end
+      end)
+
+    acc
   end
 
   @doc """

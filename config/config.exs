@@ -29,7 +29,8 @@ config :ezagent_core,
 # `create_session("default")` succeeds without the `"cc"` flavor /
 # cc-orchestrator AgentTemplate (which a cc-less build never seeds).
 config :ezagent_domain_session,
-  default_orchestrator_template_uri: "template://system/agent/cc-orchestrator"
+  default_orchestrator_template_uri: "template://system/agent/cc-orchestrator",
+  socialware_manifest_boot_scan: config_env() in [:dev, :prod]
 
 config :ezagent_domain_session,
   public_scheme: "https",
@@ -47,7 +48,10 @@ config :ezagent_web,
   # is fronted by the `*.ezagent.chat` tunnels, so the cookie is shared across the
   # `app.` / `world.` subdomains. `dev.exs` overrides this to `nil` (host-only) so
   # login works on `localhost` / `world.localhost`.
-  session_cookie_domain: ".ezagent.chat"
+  session_cookie_domain: ".ezagent.chat",
+  # Default workspace for short hello URLs (`/hello/<name>` → session://<ws>/hello/<name>).
+  # Override per-environment (e.g. prod sets the production workspace).
+  hello_workspace: "demo"
 
 # Configures the endpoint
 config :ezagent_web, EzagentWeb.Endpoint,

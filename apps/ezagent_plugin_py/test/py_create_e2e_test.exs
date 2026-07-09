@@ -79,11 +79,17 @@ defmodule Ezagent.PluginPy.CreateE2ETest do
       _ = Ezagent.Kind.terminate(agent_uri)
     end)
 
-    # THE np-gap closer: the subprocess is LIVE after create (not just the
+    # THE np-gap closer: the subprocess comes up after create (not just the
     # Kind spawned). The np direct-spawn route never called instantiate/3, so
     # np-via-UI came up with no subprocess; py's template route does.
-    assert Python.alive?(agent_uri),
-           "the py-agent's Domain.Python subprocess must be alive after create"
+    #
+    # FIRE-AND-FORGET provision (fix Ⓑ, 2026-07-06): `instantiate/3` no longer
+    # blocks the create dispatch on `Domain.Python.await_ready` — the subprocess
+    # is brought up ASYNCHRONOUSLY by `ActionSet.PyAgent.activate/2`. So the
+    # liveness assertion POLLS (it is eventually alive), not synchronously alive
+    # the instant create returns.
+    assert wait_alive(agent_uri, 30_000),
+           "the py-agent's Domain.Python subprocess must come up after create"
 
     # :receive replies end-to-end via the operator script.
     assert {:ok, %{"text" => "py-reply:hi"}} =
@@ -108,5 +114,18 @@ defmodule Ezagent.PluginPy.CreateE2ETest do
 
     assert {:ok, %{"text" => "py-reply:again"}} =
              Python.call(agent_uri, "receive", %{"text" => "again"}, 10_000)
+  end
+
+  defp wait_alive(uri, timeout_ms) do
+    deadline = System.monotonic_time(:millisecond) + timeout_ms
+    do_wait_alive(uri, deadline)
+  end
+
+  defp do_wait_alive(uri, deadline) do
+    cond do
+      Python.alive?(uri) -> true
+      System.monotonic_time(:millisecond) >= deadline -> false
+      true -> Process.sleep(200) && do_wait_alive(uri, deadline)
+    end
   end
 end

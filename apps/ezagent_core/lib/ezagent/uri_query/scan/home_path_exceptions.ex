@@ -44,8 +44,10 @@ defmodule Ezagent.UriQuery.Scan.HomePathExceptions do
     # the system:// resolver backend (Resource-unification P3, SPEC §10 OI-3) —
     # the sanctioned SINGLE Home.path chokepoint every node-global system artifact
     # routes through. Not migratable (it IS the migration target); not boot/operator.
+    # (line re-anchored 122→125: skill distribution added the `skills` catalog
+    # entry + its moduledoc bullet above it)
     {"apps/ezagent_core/lib/ezagent/system/fs_resolver.ex", "Ezagent.System.FsResolver.resolve/1",
-     118, "system:// resolver backend — R-4 sanctioned single Home.path chokepoint (P3)"},
+     125, "system:// resolver backend — R-4 sanctioned single Home.path chokepoint (P3)"},
     # early boot, pre-supervision (cookie file read before the registry exists)
     {"apps/ezagent_core/lib/ezagent/runtime.ex", "Ezagent.Runtime.cookie_path/0", 29,
      "early boot, pre-supervision (D2)"},
@@ -62,16 +64,16 @@ defmodule Ezagent.UriQuery.Scan.HomePathExceptions do
     {"apps/ezagent_core/lib/mix/tasks/ezagent.home.init.ex", "Mix.Tasks.Ezagent.Home.Init.run/1",
      36, "operator mix-task, app-not-started"},
     {"apps/ezagent_core/lib/mix/tasks/ezagent.home.init.ex",
-     "Mix.Tasks.Ezagent.Home.Init.ensure_credential_template/2", 49,
+     "Mix.Tasks.Ezagent.Home.Init.ensure_credential_template/2", 56,
      "operator mix-task helper, app-not-started"},
     {"apps/ezagent_core/lib/mix/tasks/ezagent.home.init.ex",
-     "Mix.Tasks.Ezagent.Home.Init.ensure_credentials_readme/0", 79,
+     "Mix.Tasks.Ezagent.Home.Init.ensure_credentials_readme/0", 86,
      "operator mix-task helper, app-not-started"},
     {"apps/ezagent_core/lib/mix/tasks/ezagent.home.init.ex",
-     "Mix.Tasks.Ezagent.Home.Init.print_summary/0", 145,
+     "Mix.Tasks.Ezagent.Home.Init.print_summary/0", 152,
      "operator mix-task helper, app-not-started"},
     {"apps/ezagent_core/lib/mix/tasks/ezagent.home.init.ex",
-     "Mix.Tasks.Ezagent.Home.Init.print_summary/0", 159,
+     "Mix.Tasks.Ezagent.Home.Init.print_summary/0", 167,
      "operator mix-task helper, app-not-started"},
     # operator mix-task: ezagent.home.backup
     {"apps/ezagent_core/lib/mix/tasks/ezagent.home.backup.ex",
@@ -91,8 +93,9 @@ defmodule Ezagent.UriQuery.Scan.HomePathExceptions do
     {"apps/ezagent_core/lib/ezagent/home/migration.ex", "Ezagent.Home.Migration.write_manifest/2",
      154, "operator migration tooling, app-not-started (D2)"},
     # OS-handle socket, SUN_LEN short-path, not URI-addressable (D2)
+    # (line re-anchored 673→680: #1201 A② `host_login_dir/0` inserted above it)
     {"apps/ezagent_plugin_codex/lib/ezagent/template/codex_agent.ex",
-     "Ezagent.PluginCodex.Template.CodexAgent.default_app_server_socket_path/1", 673,
+     "Ezagent.PluginCodex.Template.CodexAgent.default_app_server_socket_path/1", 680,
      "OS-handle socket, SUN_LEN short-path, not URI-addressable (D2)"},
     # operator mix-task: ezagent.plugin.install — supplies EZAGENT_HOME/plugins
     # as the zip-unpack target for a plugin-package hot-load. The runtime

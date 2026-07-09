@@ -671,12 +671,13 @@ defmodule Ezagent.Resource.FsResolverTest do
     # so two plugins never collide. The lint is a TEST (not a runtime warning in
     # register_all, which now also carries core's bare names). Core types keep
     # their bare names by design and are exempt.
-    @core_bare_types ["cc-agents", "codex-agents", "codex-remote-agents", "uploads"]
+    @core_bare_types ["uploads"]
 
-    test "core's bare types are the only un-prefixed types declared in-tree" do
+    test "non-config-dir plugin resource types are slug-prefixed in-tree" do
       # Enumerate every plugin's resource_types/0 in the umbrella and assert each
-      # is slug-prefixed with that plugin's slug. Standalone ezagent_core has no
-      # plugins on the path; this is the umbrella gate.
+      # non-config-dir type is slug-prefixed with that plugin's slug. Config-dir
+      # types are named by the cross-plugin `<namespace>-agents` contract.
+      # Standalone ezagent_core has no plugins on the path; this is the umbrella gate.
       plugin_modules =
         for {app, _, _} <- Application.loaded_applications(),
             app_str = Atom.to_string(app),
@@ -690,11 +691,12 @@ defmodule Ezagent.Resource.FsResolverTest do
         for mod <- plugin_modules,
             {type, _spec} <- mod.resource_types(),
             slug = mod.plugin_info().slug,
+            not config_dir_resource_type?(type),
             not String.starts_with?(type, slug <> "-"),
             do: {mod, type, slug}
 
       assert offenders == [],
-             "plugin-contributed resource <type>s must be slug-prefixed (D7): #{inspect(offenders)}"
+             "plugin-contributed non-config-dir resource <type>s must be slug-prefixed (D7): #{inspect(offenders)}"
     end
 
     # Resolve a plugin's `EzagentPlugin*` module from its app name. Best-effort;
@@ -705,6 +707,9 @@ defmodule Ezagent.Resource.FsResolverTest do
     rescue
       _ -> nil
     end
+
+    defp config_dir_resource_type?(type) when is_binary(type),
+      do: String.ends_with?(type, "-agents")
 
     test "a non-prefixed plugin type would be flagged by the lint predicate" do
       # Pure predicate check (no registration) — proves the lint logic catches a

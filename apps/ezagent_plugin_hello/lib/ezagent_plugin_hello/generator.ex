@@ -13,11 +13,13 @@ defmodule EzagentPluginHello.Generator do
   FRESH spec otherwise; `land_page/6` drives the spec onto the Surface and then
   designs / updates the per-page CSS theme (`build_theme/5`).
 
-  ## API config (Phase 0)
+  ## LLM backend (Task 4)
 
-  The provider config comes from env (`HELLO_LLM_API_KEY` | `DEEPSEEK_KEY`,
-  `HELLO_LLM_API_URL`, `HELLO_LLM_MODEL`), defaulting to DeepSeek. Storing the
-  key on the agent's `:api_keys` slice (the curl-agent model) is a follow-up.
+  `HELLO_LLM_BACKEND=claude_code` runs the local Claude Code CLI. Otherwise the
+  HTTP branch delegates to the session's own curl "llm" member
+  (`EzagentPluginHello.Members.role_uri/2` + `Ezagent.Entity.Agent.complete/3`) —
+  the API key lives on that agent's own `:api_keys` slice and is never seen by
+  this module.
   """
 
   require Logger
@@ -29,7 +31,6 @@ defmodule EzagentPluginHello.Generator do
   use Gettext, backend: EzagentPluginHello.Gettext
 
   alias EzagentPluginHello.{Prompts, Sanitize, Spec, TurnDriver}
-  alias EzagentPluginHello.LLM.ApiClient
 
   @doc "Spawn a supervised Task that generates + lands a page for `user_text`."
   @spec start(URI.t(), String.t()) :: {:ok, pid()} | {:error, term()}
@@ -57,9 +58,9 @@ defmodule EzagentPluginHello.Generator do
   for OWNER messages only; non-owner messages never reach here (they route to the
   concierge by identity, before any LLM call).
   """
-  @spec classify_intent(String.t()) :: :builder | :concierge
-  def classify_intent(user_text) when is_binary(user_text) do
-    case call_llm(Prompts.route_system(), user_text) do
+  @spec classify_intent(URI.t(), String.t()) :: :builder | :concierge
+  def classify_intent(%URI{} = session_uri, user_text) when is_binary(user_text) do
+    case call_llm(session_uri, Prompts.route_system(), user_text) do
       {:ok, %{content: content}} when is_binary(content) ->
         interpret_intent(content)
 
@@ -93,7 +94,7 @@ defmodule EzagentPluginHello.Generator do
     Gettext.put_locale(EzagentPluginHello.Gettext, "zh_CN")
     page = current_body_tree(session_uri)
 
-    case call_llm(Prompts.concierge_system(), concierge_user_prompt(page, user_text)) do
+    case call_llm(session_uri, Prompts.concierge_system(), concierge_user_prompt(page, user_text)) do
       {:ok, %{content: content}} when is_binary(content) and content != "" ->
         {say, nav} = parse_concierge(content)
         TurnDriver.say_nav(session_uri, concierge_uri, say, nav)
@@ -190,7 +191,7 @@ defmodule EzagentPluginHello.Generator do
         session_uri,
         builder,
         if(is_edit, do: gettext("Editing the page"), else: gettext("Generating the page")),
-        fn -> build_spec(current, user_text, is_edit) end
+        fn -> build_spec(session_uri, current, user_text, is_edit) end
       )
 
     case result do
@@ -236,8 +237,8 @@ defmodule EzagentPluginHello.Generator do
   # patch that fails to parse/apply/validate falls back to a full context-aware
   # regeneration, so an edit never dead-ends. A FIRST generation builds the whole
   # spec from scratch.
-  defp build_spec(current, user_text, true) do
-    case patch_edit(current, user_text) do
+  defp build_spec(session_uri, current, user_text, true) do
+    case patch_edit(session_uri, current, user_text) do
       {:ok, spec, ops} ->
         {:ok, spec, {:patch, ops}}
 
@@ -246,15 +247,15 @@ defmodule EzagentPluginHello.Generator do
           "hello.Generator: patch edit failed (#{inspect(reason)}); full-regen fallback"
         )
 
-        case fresh_spec(gen_prompt(current, user_text)) do
+        case fresh_spec(session_uri, gen_prompt(current, user_text)) do
           {:ok, spec} -> {:ok, spec, :fallback}
           err -> err
         end
     end
   end
 
-  defp build_spec(_current, user_text, false) do
-    case fresh_spec(user_text) do
+  defp build_spec(session_uri, _current, user_text, false) do
+    case fresh_spec(session_uri, user_text) do
       {:ok, spec} -> {:ok, spec, :fresh}
       err -> err
     end
@@ -281,8 +282,9 @@ defmodule EzagentPluginHello.Generator do
   defp describe_op(%{"op" => "remove", "id" => id}), do: "remove #{id}"
   defp describe_op(_), do: "op"
 
-  defp fresh_spec(prompt_text) do
-    with {:ok, %{content: content}} <- call_llm(Prompts.page_gen_system(), prompt_text),
+  defp fresh_spec(session_uri, prompt_text) do
+    with {:ok, %{content: content}} <-
+           call_llm(session_uri, Prompts.page_gen_system(), prompt_text),
          {:ok, raw_spec} <- Spec.extract(content),
          {:ok, spec} <- Spec.validate(raw_spec) do
       {:ok, spec}
@@ -302,11 +304,11 @@ defmodule EzagentPluginHello.Generator do
 
   # The patch path: annotate every node with an "id", ask the model for `{"ops":
   # [...]}`, apply the ops to the annotated tree, strip the ids, validate.
-  defp patch_edit(current, user_text) do
+  defp patch_edit(session_uri, current, user_text) do
     annotated = annotate_ids(current)
 
     with {:ok, %{content: content}} <-
-           call_llm(Prompts.edit_system(), edit_user_prompt(annotated, user_text)),
+           call_llm(session_uri, Prompts.edit_system(), edit_user_prompt(annotated, user_text)),
          {:ok, ops} <- extract_ops(content),
          patched = apply_ops(annotated, ops),
          stripped = strip_ids(patched),
@@ -471,31 +473,35 @@ defmodule EzagentPluginHello.Generator do
   end
 
   # Backend switch: `HELLO_LLM_BACKEND=claude_code` runs the local Claude Code CLI
-  # (much stronger designer); otherwise the DeepSeek HTTP API. Both return
-  # `{:ok, %{content: ...}}`.
-  defp call_llm(system, user_text) do
+  # (much stronger designer); otherwise the session's own curl "llm" member
+  # (a curl-flavor agent materialized by `Definition.roles` — see
+  # `EzagentPluginHello.Members`). Both return `{:ok, %{content: ...}}`.
+  defp call_llm(session_uri, system, user_text) do
     case System.get_env("HELLO_LLM_BACKEND") do
       "claude_code" ->
         EzagentPluginHello.LLM.ClaudeCode.chat(system, user_text)
 
       _ ->
-        case api_key() do
-          key when is_binary(key) and key != "" ->
-            ApiClient.chat_completion(%{
-              api_url: api_url(),
-              api_key: key,
-              model: model(),
-              messages: [
-                %{role: "system", content: system},
-                %{role: "user", content: user_text}
-              ]
-            })
+        case EzagentPluginHello.Members.role_uri(session_uri, "llm") do
+          {:ok, curl_uri} ->
+            case Ezagent.Entity.Agent.complete(
+                   Ezagent.Entity.User.admin_uri(),
+                   curl_uri,
+                   compose_prompt(system, user_text)
+                 ) do
+              {:ok, content} -> {:ok, %{content: content}}
+              {:error, _} = err -> err
+            end
 
-          _ ->
-            {:error, :no_api_key}
+          :error ->
+            {:error, :no_llm_agent}
         end
     end
   end
+
+  # curl's completion is a single prompt; fold hello's per-call system prompt into
+  # the user turn (the llm member's own system_prompt config is left generic/empty).
+  defp compose_prompt(system, user_text), do: system <> "\n\n" <> user_text
 
   # Land the page (page-only turn — NO turn-chat) then announce completion via a
   # `say` (:session :send). Turn-composed chat does NOT push to the internal
@@ -587,7 +593,7 @@ defmodule EzagentPluginHello.Generator do
   defp build_theme(session_uri, builder, spec, :generate, _user_text) do
     {theme, secs} =
       with_progress(session_uri, builder, gettext("Designing theme"), fn ->
-        generate_theme(spec, nil, nil)
+        generate_theme(session_uri, spec, nil, nil)
       end)
 
     TurnDriver.say(session_uri, builder, gettext("Theme ready in %{s}s.", s: secs))
@@ -599,7 +605,7 @@ defmodule EzagentPluginHello.Generator do
 
     {theme, secs} =
       with_progress(session_uri, builder, gettext("Restyling so new parts match"), fn ->
-        generate_theme(spec, base, nil)
+        generate_theme(session_uri, spec, base, nil)
       end)
 
     TurnDriver.say(session_uri, builder, gettext("Theme updated in %{s}s.", s: secs))
@@ -613,7 +619,7 @@ defmodule EzagentPluginHello.Generator do
 
     {theme, secs} =
       with_progress(session_uri, builder, gettext("Restyling the look"), fn ->
-        generate_theme(spec, base, user_text)
+        generate_theme(session_uri, spec, base, user_text)
       end)
 
     TurnDriver.say(session_uri, builder, gettext("Restyled in %{s}s.", s: secs))
@@ -656,8 +662,12 @@ defmodule EzagentPluginHello.Generator do
     end
   end
 
-  defp generate_theme(spec, base_theme, instruction) do
-    case call_llm(Prompts.theme_gen_system(), theme_user_prompt(spec, base_theme, instruction)) do
+  defp generate_theme(session_uri, spec, base_theme, instruction) do
+    case call_llm(
+           session_uri,
+           Prompts.theme_gen_system(),
+           theme_user_prompt(spec, base_theme, instruction)
+         ) do
       {:ok, %{content: content}} ->
         Sanitize.css(content)
 
@@ -755,10 +765,23 @@ defmodule EzagentPluginHello.Generator do
 
   defp collect_types(_other, acc), do: acc
 
-  # The session's builder agent URI, derived from the session URI:
-  # session://<ws>/hello/<name> → entity://<ws>/agent/hello_<name>
-  # (matches `App.ensure_app/2`'s builder_uri).
+  # The session's builder agent URI. The builder is a PLANNED-URI member
+  # (materialized via `Definition.roles`, `EzagentPluginHello.Members`) — the
+  # old `session://<ws>/hello/<name> -> entity://<ws>/agent/hello_<name>`
+  # convention no longer points at a live entity, so resolve by `role_name` off
+  # the session's live membership slice first. This URI is used ONLY as
+  # `Message.sender` attribution for builder narration (`TurnDriver.say`), never
+  # as a dispatch target, so a `:error` fallback to the legacy convention URI
+  # keeps generation working (and keeps the `/agent/` shape the customer SPA's
+  # sender styling expects) even if the builder isn't materialized yet.
   defp builder_uri(%URI{} = session_uri) do
+    case EzagentPluginHello.Members.role_uri(session_uri, "builder") do
+      {:ok, uri} -> uri
+      :error -> legacy_builder_uri(session_uri)
+    end
+  end
+
+  defp legacy_builder_uri(%URI{} = session_uri) do
     ws = Ezagent.URI.workspace_name!(session_uri)
     name = session_uri.path |> to_string() |> String.split("/", trim: true) |> List.last()
     Ezagent.URI.entity(ws, :agent, "hello_#{name}")
@@ -804,13 +827,6 @@ defmodule EzagentPluginHello.Generator do
     end
   end
 
-  defp api_key, do: System.get_env("HELLO_LLM_API_KEY") || System.get_env("DEEPSEEK_KEY")
-
-  defp api_url,
-    do: System.get_env("HELLO_LLM_API_URL") || "https://api.deepseek.com/chat/completions"
-
-  defp model, do: System.get_env("HELLO_LLM_MODEL") || "deepseek-chat"
-
   # === card path (chat-bubble json-render fragment) =====================
 
   @doc """
@@ -822,25 +838,25 @@ defmodule EzagentPluginHello.Generator do
   producer can call it. `current` is the current page spec (or nil) so the model
   can reuse on-page data/components. Retried once on malformed JSON.
   """
-  @spec render_card(map() | nil, String.t()) ::
+  @spec render_card(URI.t(), map() | nil, String.t()) ::
           {:ok, %{spec: map(), css: String.t() | nil}} | {:error, term()}
-  def render_card(current, user_text) when is_binary(user_text) do
-    with {:ok, spec} <- card_spec_with_retry(current, user_text) do
-      css = if style_request?(user_text), do: card_css(spec, user_text), else: nil
+  def render_card(%URI{} = session_uri, current, user_text) when is_binary(user_text) do
+    with {:ok, spec} <- card_spec_with_retry(session_uri, current, user_text) do
+      css = if style_request?(user_text), do: card_css(session_uri, spec, user_text), else: nil
       {:ok, %{spec: spec, css: css}}
     end
   end
 
-  defp card_spec_with_retry(current, user_text) do
-    case card_spec(current, user_text) do
+  defp card_spec_with_retry(session_uri, current, user_text) do
+    case card_spec(session_uri, current, user_text) do
       {:ok, _} = ok -> ok
-      {:error, _} -> card_spec(current, user_text)
+      {:error, _} -> card_spec(session_uri, current, user_text)
     end
   end
 
   # Ask the model for ONE catalog fragment (root = Card/Stack/Table…), validate it
   # against the same catalog as a page. `current` page spec (if any) is context.
-  defp card_spec(current, user_text) do
+  defp card_spec(session_uri, current, user_text) do
     prompt =
       if is_map(current) do
         """
@@ -858,7 +874,7 @@ defmodule EzagentPluginHello.Generator do
         user_text
       end
 
-    with {:ok, %{content: content}} <- call_llm(Prompts.card_gen_system(), prompt),
+    with {:ok, %{content: content}} <- call_llm(session_uri, Prompts.card_gen_system(), prompt),
          {:ok, raw} <- Spec.extract(content),
          {:ok, spec} <- Spec.validate(raw) do
       {:ok, spec}
@@ -868,7 +884,7 @@ defmodule EzagentPluginHello.Generator do
   # Per-card CSS theme — only when the user explicitly asks for a look. The model
   # writes un-prefixed selectors; the client scopes them to the card's unique id.
   # Returns nil on failure (default styling) rather than a broken theme.
-  defp card_css(spec, user_text) do
+  defp card_css(session_uri, spec, user_text) do
     prompt = """
     Style request: #{user_text}
 
@@ -877,7 +893,7 @@ defmodule EzagentPluginHello.Generator do
     #{Jason.encode!(spec)}
     """
 
-    case call_llm(Prompts.card_theme_system(), prompt) do
+    case call_llm(session_uri, Prompts.card_theme_system(), prompt) do
       {:ok, %{content: content}} ->
         case Sanitize.css(content) do
           css when is_binary(css) and css != "" -> css

@@ -65,6 +65,18 @@ defmodule Ezagent.System.FsResolverTest do
       assert {:ok, path} = FsResolver.resolve(uri)
       assert path == Path.join(Ezagent.Home.path(:plugins), "feishu-bindings.yaml")
     end
+
+    test "system://socialware resolves to the deployment socialware seed dir" do
+      uri = EzURI.system_principal("socialware")
+      assert {:ok, path} = FsResolver.resolve(uri)
+      assert path == Ezagent.Home.path("socialware")
+    end
+
+    test "system://skills resolves to the deployment skill seed dir" do
+      uri = EzURI.system_principal("skills")
+      assert {:ok, path} = FsResolver.resolve(uri)
+      assert path == Ezagent.Home.path("skills")
+    end
   end
 
   describe "UriQuery seam" do

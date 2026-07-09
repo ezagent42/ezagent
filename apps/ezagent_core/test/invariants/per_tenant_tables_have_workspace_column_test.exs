@@ -117,7 +117,11 @@ defmodule EzagentCore.Invariants.PerTenantTablesHaveWorkspaceColumnTest do
     # id. Per-tenant: the alias→session reverse lookup and the verification
     # gate are scoped to the bound session's workspace; a row for ws A must
     # never be read from ws B. Derived structurally from the session.
-    {Ezagent.Email.InboundBinding, "email_inbound_binding"}
+    {Ezagent.Email.InboundBinding, "email_inbound_binding"},
+    # Orchestration-as-socialware M1 — routing trace rows record the message
+    # journey for operator debugging. A message belongs to one workspace, so
+    # trace rows carry the same workspace partition.
+    {Ezagent.Routing.Trace, "routing_traces"}
   ]
 
   # Per-tenant tables that have NO schema module (raw `Repo.insert_all`
@@ -134,6 +138,8 @@ defmodule EzagentCore.Invariants.PerTenantTablesHaveWorkspaceColumnTest do
     "workspaces" => "Workspace IS the tenant; trivially scoped by row id.",
     "routing_rules" =>
       "Already has workspace_uri (Phase 6 PR 8 / PR #146-149) — pre-dated this migration.",
+    "routing_traces" =>
+      "Runtime routing trace table; already carries workspace_uri NOT NULL and has no schema module.",
     "dlq" =>
       "Pre-tenant boundary — failure can precede workspace determination; operator triages from system scope.",
     "app_settings" =>

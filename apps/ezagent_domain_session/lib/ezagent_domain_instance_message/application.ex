@@ -109,7 +109,17 @@ defmodule EzagentDomainInstanceMessage.Application do
       # it by orchestrator URI (cc reaches it by URI, no compile dep); the
       # DynamicSupervisor owns the per-session processes.
       {Registry, keys: :unique, name: Ezagent.Session.SessionManagerRegistry},
-      {DynamicSupervisor, name: Ezagent.Session.SessionManagerSupervisor, strategy: :one_for_one}
+      {DynamicSupervisor, name: Ezagent.Session.SessionManagerSupervisor, strategy: :one_for_one},
+      # send-echo-decouple (2026-07-08) — per-recipient message delivery runs
+      # OFF the Session Kind's hot path in an UNLINKED supervised Task, so one
+      # dead/slow member (e.g. a cold np-flavor agent whose `ensure_live` spawn
+      # blocks ~5s) never delays the sender echo, the pipeline, or other members.
+      # `Ezagent.ActionSet.Session.Delivery.deliver_async/5` enqueues into the
+      # DeliveryQueue (per-recipient FIFO, ONE in-flight job per key — codex
+      # HIGH-1 ordering fix), which runs each job as a Task under this
+      # supervisor. Supervisor first: the queue starts Tasks under it.
+      {Task.Supervisor, name: Ezagent.Session.DeliverySupervisor},
+      {Ezagent.Session.DeliveryQueue, []}
     ]
 
     case Supervisor.start_link(children, strategy: :one_for_one, name: __MODULE__) do
@@ -158,6 +168,16 @@ defmodule EzagentDomainInstanceMessage.Application do
         :ok = ensure_system_workspace()
 
         :ok = seed_builtin_socialware_definitions()
+        :ok = seed_manifest_boot_recipes()
+
+        # sw-home lane (2026-07-07) — the early domain_session-priv-only
+        # `ManifestSeed` scan was DELETED. All socialware manifests live in the
+        # single deployment seed directory (`$EZAGENT_HOME/<profile>/socialware`,
+        # seeded from `ezagent_web/priv/socialware_seed`) and are collected by
+        # ONE late scan, `Ezagent.Socialware.ManifestSeed.scan_all!/1`, triggered
+        # from `EzagentWeb.Application` after every plugin has booted — manifests
+        # may reference plugin-registered views/recipes, which do not exist
+        # yet at this point of the boot sequence.
 
         # Plugin authoring contract PR-5 codex HIGH-2 — the default
         # agent is NO LONGER seeded here. Seeding it from chat's
@@ -251,7 +271,8 @@ defmodule EzagentDomainInstanceMessage.Application do
       # `session://default/system/main` URI shape that ~10 test suites
       # assert against.
       result =
-        with :ok <- ensure_system_workspace_seeded_for_tests() do
+        with :ok <- ensure_system_workspace_seeded_for_tests(),
+             :ok <- maybe_seed_stock_orchestrator_recipe_for_tests() do
           Ezagent.Workspace.create_session(
             Ezagent.URI.workspace(:system),
             %{short_name: "main", template_name: "default"},
@@ -293,6 +314,22 @@ defmodule EzagentDomainInstanceMessage.Application do
     Code.ensure_loaded?(Mix) and Mix.env() == :test
   rescue
     _ -> false
+  end
+
+  defp maybe_seed_stock_orchestrator_recipe_for_tests do
+    module = Module.concat([Ezagent, Orchestrator, OrchestratorRecipe])
+
+    if Code.ensure_loaded?(module) and function_exported?(module, :recipe, 0) do
+      module
+      |> apply(:recipe, [])
+      |> Ezagent.Agent.RecipeRegistry.seed_role_if_absent()
+      |> case do
+        {:ok, _} -> :ok
+        {:error, reason} -> {:error, reason}
+      end
+    else
+      :ok
+    end
   end
 
   defp ensure_system_workspace_seeded_for_tests do
@@ -405,14 +442,10 @@ defmodule EzagentDomainInstanceMessage.Application do
   # system-owned template or failing with
   # `{:session_template_not_found, "default", "team-alpha"}`.
   #
-  # Minimal-viable config: empty `members` (no worker agents — just the
-  # orchestrator), empty `routing_rules` (no auto-routing),
-  # `orchestrator_template_uri` pointing at the cc-orchestrator
-  # AgentTemplate seeded in `seed_cc_orchestrator_template/0` above. A
-  # session instantiated from this template spawns only the orchestrator —
-  # the orchestrator then composes its team via its member + rule-set tools
-  # (`add_managed_member` / `define_rule_set_rule` / `define_legend`,
-  # team-routing-unification §3.8).
+  # Minimal-viable config: no legacy `members`, empty `routing_rules` (no
+  # auto-routing), and installs `chat` + `orchestrator`. The orchestrator is a
+  # stock socialware Definition materialized through the same install path as
+  # every other default contribution.
   #
   # ## Idempotency (content-addressable)
   #
@@ -477,6 +510,21 @@ defmodule EzagentDomainInstanceMessage.Application do
           raise "EzagentDomainInstanceMessage boot aborted — built-in socialware " <>
                   "definitions could not be persisted: #{inspect(reason)}"
         end
+    end
+  end
+
+  defp seed_manifest_boot_recipes do
+    if Ezagent.Socialware.ManifestSeed.enabled?() do
+      case Ezagent.Agent.RecipeRegistry.seed_role_if_absent(%{name: "autoservice-agent"}) do
+        {:ok, _} ->
+          :ok
+
+        {:error, reason} ->
+          raise "EzagentDomainInstanceMessage boot aborted — local socialware manifest " <>
+                  "recipe seeds could not be persisted: #{inspect(reason)}"
+      end
+    else
+      :ok
     end
   end
 
@@ -564,37 +612,6 @@ defmodule EzagentDomainInstanceMessage.Application do
 
   defp do_seed_default_session_template(%URI{scheme: "workspace"} = workspace_uri) do
     workspace_name = Ezagent.URI.workspace_name!(workspace_uri)
-    # Task #90 / rev6 — the orchestrator is a normal declared role member.
-    orchestrator_template_uri =
-      case Application.get_env(:ezagent_domain_session, :default_orchestrator_template_uri) do
-        %URI{} = uri -> uri
-        s when is_binary(s) and s != "" -> Ezagent.URI.new!(s)
-        _ -> nil
-      end
-
-    members =
-      case orchestrator_template_uri do
-        %URI{} = uri ->
-          [
-            # recipe-responsibility-split (2026-06-27, §1.3 conflation point #3) —
-            # `role_name` (session RESPONSIBILITY, axis B) and the orchestrator
-            # RECIPE (`source_template_uri`, axis A) are TWO INDEPENDENT fields
-            # that happen to coincide on the literal "orchestrator" by SEED
-            # CONVENTION ONLY. Nothing derives one from the other: change this
-            # `role_name` to "lead" and the recipe pointed at by
-            # `source_template_uri` is untouched — only the routing label moves.
-            # Keep them decoupled (recipe_responsibility_lockin_test.exs §T3); do
-            # not introduce code that forces `role_name` == the recipe name.
-            %{
-              role_name: "orchestrator",
-              source_template_uri: uri,
-              in_session_template: true
-            }
-          ]
-
-        _ ->
-          []
-      end
 
     content = %{
       name: "default",
@@ -607,11 +624,11 @@ defmodule EzagentDomainInstanceMessage.Application do
       # team-routing-unification §3.7 (PR-7) — SessionTemplate content carries
       # `members` (in_session_template members) / `prompt_templates` / `legends`;
       # `agent_slots` is NO LONGER a content field (PR-8 removes the slot tools).
-      # The default template is orchestrator-only. The orchestrator is declared
-      # as a role member and provisioned lazily by routing.
-      members: members,
+      # The default template delegates stock front-desk provisioning to the
+      # orchestrator socialware Definition; legacy `members` stays empty.
+      members: [],
       prompt_templates: %{},
-      installs: ["chat"],
+      installs: ["chat", "orchestrator"],
       legends: %{},
       routing_rules: [],
       default_workspace_uri: workspace_uri,
@@ -636,7 +653,34 @@ defmodule EzagentDomainInstanceMessage.Application do
 
     case Ezagent.Entity.SessionTemplate.persist_version_as_system(content, workspace_uri) do
       {:ok, _uri} ->
-        :ok
+        # fix/template-name-resolution — repoint the `default`→`current`
+        # TemplateTag at the version just persisted, so name resolution
+        # takes the deterministic tag path (`TemplateResolver.find_session_
+        # template_uri` tries `TemplateTags.resolve(ws, "default", "current")`
+        # first) and the by-scan fallback is only ever a true fallback. When
+        # new code ships a new `default` version, THIS is the exact moment a
+        # new version is persisted, so it is the exact moment the tag must
+        # repoint. `put/5` is an unconditional upsert: idempotent when the
+        # hash is unchanged, upgrade-aware (repoint) when it changed.
+        #
+        # Log-and-continue on a tag-write failure: the scan fallback is now
+        # deterministic-newest, so a missing/stale tag degrades to correct
+        # (just slower) resolution rather than a boot crash.
+        case Ezagent.TemplateTags.put(workspace_uri, "default", "current", hash, nil) do
+          :ok ->
+            :ok
+
+          {:error, tag_reason} ->
+            require Logger
+
+            Logger.warning(
+              "seed_default_session_template: tag `default`→`current` write failed: " <>
+                "#{inspect(tag_reason)} (uri=#{URI.to_string(uri)}). Name resolution " <>
+                "falls back to the deterministic-newest scan; not fatal."
+            )
+
+            :ok
+        end
 
       {:error, reason} ->
         require Logger

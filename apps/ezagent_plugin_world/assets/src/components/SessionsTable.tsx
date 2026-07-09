@@ -126,20 +126,20 @@ export function SessionsTable({state, onJoin, onCreate}: SessionsTableProps) {
       data-world-chat-default
       data-world-component="sessions_table"
     >
-      <aside className="flex min-h-0 min-w-0 flex-col border-b border-border bg-card lg:border-b-0 lg:border-r" aria-label="Sessions" data-world-session-rail>
+      <aside className="flex min-h-0 min-w-0 flex-col border-b border-border bg-card lg:border-b-0 lg:border-r" aria-label="会话" data-world-session-rail>
         <div className="flex items-center justify-between gap-2 border-b border-border px-3 py-3">
           <div className="min-w-0">
             <h2 id="sessions-title" className="truncate text-sm font-semibold text-foreground">
-              Sessions
+              会话
             </h2>
-            <p className="text-xs text-muted-foreground">Current workspace only</p>
+            <p className="text-xs text-muted-foreground">当前工作区</p>
           </div>
           <Button
             type="button"
             size="icon"
             variant={creating ? "secondary" : "default"}
             onClick={() => setCreating((open) => !open)}
-            aria-label={creating ? "Close new session form" : "Create a new session"}
+            aria-label={creating ? "关闭新建会话表单" : "新建会话"}
           >
             {creating ? <X aria-hidden="true" /> : <Plus aria-hidden="true" />}
           </Button>
@@ -147,10 +147,10 @@ export function SessionsTable({state, onJoin, onCreate}: SessionsTableProps) {
 
         <div className="border-b border-border px-3 py-3">
           <Input
-            aria-label="Filter sessions"
+            aria-label="筛选会话"
             value={filter}
             onChange={(event) => setFilter(event.target.value)}
-            placeholder="Filter sessions, template, status"
+            placeholder="筛选会话、模板、状态"
           />
         </div>
 
@@ -171,7 +171,7 @@ export function SessionsTable({state, onJoin, onCreate}: SessionsTableProps) {
             onSubmit={submit}
           >
             <label className="grid gap-1 text-xs font-medium text-muted-foreground" htmlFor="world-session-short-name">
-              Name
+              名称
               <Input
                 id="world-session-short-name"
                 value={shortName}
@@ -181,7 +181,7 @@ export function SessionsTable({state, onJoin, onCreate}: SessionsTableProps) {
               />
             </label>
             <label className="grid gap-1 text-xs font-medium text-muted-foreground" htmlFor="world-session-template">
-              Template
+              模板
               <Select
                 id="world-session-template"
                 value={templateName}
@@ -196,13 +196,13 @@ export function SessionsTable({state, onJoin, onCreate}: SessionsTableProps) {
             </label>
             {socialwares.length > 0 && (
               <label className="grid gap-1 text-xs font-medium text-muted-foreground" htmlFor="world-session-socialware">
-                Socialware
+                应用
                 <Select
                   id="world-session-socialware"
                   value={socialwareRef}
                   onChange={(event) => setSocialwareRef(event.target.value)}
                 >
-                  <option value="">None</option>
+                  <option value="">不关联</option>
                   {socialwares.map((socialware) => (
                     <option key={socialware.name} value={socialware.name}>
                       {socialware.title || socialware.name}
@@ -243,7 +243,7 @@ export function SessionsTable({state, onJoin, onCreate}: SessionsTableProps) {
             )}
             <Button type="submit" size="sm" disabled={!shortName.trim()}>
               <Plus aria-hidden="true" />
-              Create
+              创建
             </Button>
           </form>
         )}
@@ -251,7 +251,7 @@ export function SessionsTable({state, onJoin, onCreate}: SessionsTableProps) {
         <div className="min-h-0 flex-1 space-y-1 overflow-y-auto p-2">
           {filteredSessions.length === 0 ? (
             <div className="rounded-md border border-dashed border-border bg-background px-3 py-6 text-center text-sm text-muted-foreground">
-              No sessions in this workspace.
+              当前工作区暂无会话。
             </div>
           ) : (
             filteredSessions.map((session) => (
@@ -272,7 +272,7 @@ export function SessionsTable({state, onJoin, onCreate}: SessionsTableProps) {
                 />
                 <span className="min-w-0">
                   <span className="block truncate text-sm font-medium text-foreground">{displaySessionName(session)}</span>
-                  <span className="block truncate font-mono text-[11px] text-muted-foreground">{session.uri}</span>
+                  <span className="block truncate text-[11px] text-muted-foreground">{sessionDescription(session)}</span>
                 </span>
               </button>
             ))
@@ -284,18 +284,18 @@ export function SessionsTable({state, onJoin, onCreate}: SessionsTableProps) {
         <header className="flex items-center justify-between gap-3 border-b border-border bg-card px-4 py-3">
           <div className="min-w-0">
             <h3 className="truncate text-sm font-semibold text-foreground">
-              {selectedSession ? displaySessionName(selectedSession) : "Chat"}
+              {selectedSession ? displaySessionName(selectedSession) : "对话"}
             </h3>
-            <p className="truncate font-mono text-xs text-muted-foreground">
-              {selectedSession?.uri || state?.workspace_uri || "No session selected"}
+            <p className="truncate text-xs text-muted-foreground">
+              {selectedSession ? sessionDescription(selectedSession) : workspaceLabel(state?.workspace_uri) || "未选择会话"}
             </p>
           </div>
-          <div className="inline-flex rounded-[10px] border border-border bg-muted p-[3px]" aria-label="Session view">
-            {["Chat", "PTY", "Preview"].map((item) => (
+          <div className="inline-flex rounded-[10px] border border-border bg-muted p-[3px]" aria-label="会话视图">
+            {["对话", "预览"].map((item) => (
               <span
                 key={item}
                 className={
-                  item === "Chat"
+                  item === "对话"
                     ? "rounded-md bg-background px-3 py-1 text-xs font-medium text-foreground shadow-sm"
                     : "rounded-md px-3 py-1 text-xs font-medium text-muted-foreground"
                 }
@@ -313,53 +313,53 @@ export function SessionsTable({state, onJoin, onCreate}: SessionsTableProps) {
             </span>
             <div>
               <h4 className="text-base font-semibold text-foreground">
-                {selectedSession ? "Open this session to load the conversation" : "Create or select a session"}
+                {selectedSession ? "打开此会话查看对话" : "新建或选择会话"}
               </h4>
               <p className="mt-1 text-sm text-muted-foreground">
-                Chat opens in the same three-column layout with the timeline, composer, members, routing, and tools drawer.
+                对话会在当前布局中打开，包含消息、输入框、成员和路由工具。
               </p>
             </div>
             {selectedSession && (
               <Button type="button" onClick={() => onJoin?.(selectedSession.uri)}>
                 <ArrowRight aria-hidden="true" />
-                Open conversation
+                打开对话
               </Button>
             )}
           </div>
         </div>
       </main>
 
-      <aside className="flex min-h-0 min-w-0 flex-col border-t border-border bg-card lg:border-l lg:border-t-0" aria-label="Session drawer">
+      <aside className="flex min-h-0 min-w-0 flex-col border-t border-border bg-card lg:border-l lg:border-t-0" aria-label="会话详情">
         <div className="border-b border-border px-4 py-3">
-          <p className="text-xs font-medium uppercase tracking-wide text-muted-foreground">Session</p>
+          <p className="text-xs font-medium uppercase tracking-wide text-muted-foreground">会话</p>
           <h3 className="truncate text-sm font-semibold text-foreground">
-            {selectedSession ? displaySessionName(selectedSession) : "No session"}
+            {selectedSession ? displaySessionName(selectedSession) : "未选择会话"}
           </h3>
         </div>
 
         <div className="min-h-0 flex-1 space-y-4 overflow-y-auto p-4">
-          <DetailBlock label="Workspace" value={selectedSession?.workspace_uri || state?.workspace_uri || "—"} />
-          <DetailBlock label="URI" value={selectedSession?.uri || "—"} mono />
+          <DetailBlock label="工作区" value={workspaceLabel(selectedSession?.workspace_uri || state?.workspace_uri) || "—"} />
+          <DetailBlock label="类型" value={selectedSession ? "会话" : "—"} />
 
           <div className="space-y-2">
-            <p className="text-xs font-medium uppercase tracking-wide text-muted-foreground">Actions</p>
+            <p className="text-xs font-medium uppercase tracking-wide text-muted-foreground">操作</p>
             {selectedSession ? (
               <div className="grid gap-2">
                 <Button type="button" variant="secondary" onClick={() => onJoin?.(selectedSession.uri)}>
                   <ArrowRight aria-hidden="true" />
-                  Open
+                  打开
                 </Button>
                 <a
                   className="inline-flex min-h-9 items-center justify-center gap-2 rounded-full border border-border bg-card px-3 text-sm font-medium text-muted-foreground transition hover:bg-muted hover:text-foreground"
                   href={`/admin/sessions/${encodeURIComponent(selectedSession.uri)}/external_mirror`}
-                  title="Bind a Feishu chat to this session"
+                  title="绑定飞书群到此会话"
                 >
                   <Cable className="h-4 w-4" aria-hidden="true" />
-                  External mirror
+                  外部镜像
                 </a>
               </div>
             ) : (
-              <p className="text-sm text-muted-foreground">No actions available.</p>
+              <p className="text-sm text-muted-foreground">暂无可用操作。</p>
             )}
           </div>
         </div>
@@ -380,10 +380,30 @@ function filterSessions(sessions: SessionRow[], filter: string): SessionRow[] {
 }
 
 function displaySessionName(session: SessionRow): string {
-  if (session.name && session.name.trim()) return session.name
+  if (session.name && session.name.trim()) return humanizeSessionName(session.name)
 
   const parts = session.uri.split("/")
-  return parts[parts.length - 1] || session.uri
+  return humanizeSessionName(parts[parts.length - 1] || session.uri)
+}
+
+function sessionDescription(session: SessionRow): string {
+  const workspace = workspaceLabel(session.workspace_uri)
+  return workspace ? `${workspace} 工作区` : "会话"
+}
+
+function workspaceLabel(uri?: string | null): string {
+  if (!uri) return ""
+  return uri.replace(/^workspace:\/\//, "")
+}
+
+function humanizeSessionName(value: string): string {
+  const trimmed = value.trim()
+  if (!trimmed) return "会话"
+  return trimmed
+    .replace(/^conv[_-]/, "")
+    .replace(/[_]+/g, " ")
+    .replace(/\s+/g, " ")
+    .replace(/\b([a-z])/g, (match) => match.toUpperCase())
 }
 
 function createOptionsFor(socialware: SocialwareRow, choices: Record<string, RoleSlotChoice>): CreateOptions {

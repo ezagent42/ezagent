@@ -47,9 +47,51 @@ defmodule Ezagent.Orchestrator.OrchestratorRecipe do
   # agree on one string.
   @role_name "orchestrator"
 
+  @tool_atoms [
+    :add_managed_member,
+    :add_participant,
+    :update_member_template,
+    :remove_member,
+    :define_rule_set_rule,
+    :define_prompt_template,
+    :define_legend,
+    :update_template,
+    :save_template_as,
+    :migrate_session,
+    :list_templates,
+    :kb_query,
+    :kb_ingest
+  ]
+
   @doc "The registry name this role is keyed by (`RecipeRegistry.lookup(name/0)`)."
   @spec name() :: String.t()
   def name, do: @role_name
+
+  @doc "The orchestrator MCP tools declared by the cc recipe contribution."
+  @spec tool_contributions() :: [map()]
+  def tool_contributions do
+    Enum.map(tool_schemas(), fn schema ->
+      %{
+        name: schema["name"],
+        schema: schema,
+        mcp: true
+      }
+    end)
+  end
+
+  @doc "The orchestrator MCP tool schemas contributed by this recipe."
+  @spec tool_schemas() :: [map()]
+  def tool_schemas do
+    Ezagent.Orchestrator.McpServer.ToolCatalog.raw_tool_schemas()
+  end
+
+  @doc "The orchestrator MCP tool names contributed by this recipe."
+  @spec tool_names() :: [String.t()]
+  def tool_names, do: Enum.map(@tool_atoms, &Atom.to_string/1)
+
+  @doc "The orchestrator MCP tool atoms contributed by this recipe."
+  @spec tool_atoms() :: [atom()]
+  def tool_atoms, do: @tool_atoms
 
   @doc """
   The orchestrator role recipe — the map `Ezagent.Agent.Recipe.new/1` consumes (and the
@@ -74,6 +116,7 @@ defmodule Ezagent.Orchestrator.OrchestratorRecipe do
         %{behavior: Ezagent.ActionSet.Template, action: :instantiate},
         %{behavior: Ezagent.ActionSet.Template, action: :fork}
       ],
+      contributions: %{tools: tool_contributions()},
       session_template: nil
     }
   end

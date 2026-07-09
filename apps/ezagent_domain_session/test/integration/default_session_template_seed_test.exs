@@ -15,9 +15,8 @@ defmodule EzagentDomainInstanceMessage.Integration.DefaultSessionTemplateSeedTes
      and name segment is `default` is present in
      `Ezagent.Ecto.KindSnapshot.list_in_workspace("workspace://system")`.
   2. Its `:template` slice content carries the documented
-     minimal-viable shape: no `agent_slots`, empty `routing_rules`, and
-     an ordinary declared `role_name: "orchestrator"` member pointing at
-     the cc-orchestrator AgentTemplate seed URI.
+     minimal-viable shape: no `agent_slots`, empty `members`, empty
+     `routing_rules`, and installs the `chat` + `orchestrator` socialware.
 
   Boot runs in `test_helper.exs` (via `Application.ensure_all_started`)
   and writes the seeded row outside any per-test sandbox. To keep the
@@ -37,20 +36,13 @@ defmodule EzagentDomainInstanceMessage.Integration.DefaultSessionTemplateSeedTes
 
   @workspace_uri_str "workspace://system"
 
-  # PR-8 (transport #53) — `Ezagent.Orchestrator.CcOrchestratorSeed` relocated
-  # into the cc plugin (which this app does not depend on). The seed's
-  # `template_uri/0` is the string form of
-  # `Ezagent.URI.template(:system, :agent, "cc-orchestrator")`; inline it so
-  # this im test never names the cc-resident module. Behavior-identical.
-  defp cc_orchestrator_template_uri_str,
-    do: :system |> Ezagent.URI.template(:agent, "cc-orchestrator") |> URI.to_string()
-
   setup do
     # Drive the seed deterministically inside the sandbox checkout so
     # the assertion doesn't depend on whether the boot-time write
     # landed before the test owner took over the connection. Idempotent
     # (content-addressable) — no-op when the row already exists.
     :ok = EzagentDomainInstanceMessage.Application.seed_default_session_template_now()
+    :ok = seed_orchestrator_recipe()
     :ok
   end
 
@@ -146,33 +138,26 @@ defmodule EzagentDomainInstanceMessage.Integration.DefaultSessionTemplateSeedTes
 
     # team-routing-unification §3.7 (PR-7) — `agent_slots` is no longer a
     # SessionTemplate content field (PR-8 removes the slot tools). The
-    # orchestrator-only default template now carries the PR-7 content shape:
-    # empty `members` / `prompt_templates` / `legends`.
+    # M2 — the default template installs the orchestrator Definition. It no
+    # longer carries a legacy hardcoded cc-orchestrator member declaration.
     members = Map.get(content, :members) || Map.get(content, "members")
     prompt_templates = Map.get(content, :prompt_templates) || Map.get(content, "prompt_templates")
     legends = Map.get(content, :legends) || Map.get(content, "legends")
+    installs = Map.get(content, :installs) || Map.get(content, "installs")
 
     assert name == "default"
 
     refute Map.has_key?(content, :agent_slots) or Map.has_key?(content, "agent_slots"),
            "PR-7: `agent_slots` must NOT be a SessionTemplate content field; got #{inspect(content)}"
 
-    assert [
-             %{
-               role_name: "orchestrator",
-               source_template_uri: %URI{} = source_template_uri,
-               in_session_template: true
-             }
-           ] = members
-
+    assert members == []
     assert prompt_templates == %{}
     assert legends == %{}
     assert routing_rules == []
+    assert installs == ["chat", "orchestrator"]
 
     refute Map.has_key?(content, :orchestrator_template_uri)
     refute Map.has_key?(content, "orchestrator_template_uri")
-
-    assert URI.to_string(source_template_uri) == cc_orchestrator_template_uri_str()
   end
 
   # 2026-05-31 orchestrator-startup-atomicity §3 — the seed is a HARD boot
@@ -233,7 +218,7 @@ defmodule EzagentDomainInstanceMessage.Integration.DefaultSessionTemplateSeedTes
       :ok
     end
 
-    test "the default template seeds with no role members when the seam is unset" do
+    test "the default template still installs orchestrator when the legacy cc seam is unset" do
       workspace_name = "ccless-ws-#{System.unique_integer([:positive])}"
       workspace_uri = Ezagent.URI.new!("workspace://#{workspace_name}")
 
@@ -262,15 +247,16 @@ defmodule EzagentDomainInstanceMessage.Integration.DefaultSessionTemplateSeedTes
 
       members = Map.get(content, :members) || Map.get(content, "members")
 
-      assert members == [],
-             "expected the cc-less default template to carry no declared role members; " <>
-               "got #{inspect(members)}"
+      installs = Map.get(content, :installs) || Map.get(content, "installs")
+
+      assert members == []
+      assert installs == ["chat", "orchestrator"]
 
       refute Map.has_key?(content, :orchestrator_template_uri)
       refute Map.has_key?(content, "orchestrator_template_uri")
     end
 
-    test "create_session(default) succeeds as a PLAIN session without cc" do
+    test "create_session(default) resolves the orchestrator install even when the legacy seam is unset" do
       workspace_name = "ccless-create-#{System.unique_integer([:positive])}"
       workspace_uri = Ezagent.URI.new!("workspace://#{workspace_name}")
       short = "from-default-#{System.unique_integer([:positive])}"
@@ -285,10 +271,75 @@ defmodule EzagentDomainInstanceMessage.Integration.DefaultSessionTemplateSeedTes
 
       assert URI.to_string(session_uri) == "session://#{workspace_name}/default/#{short}"
 
-      # No role member is declared, but create still succeeds and returns
-      # the same session-only meta shape.
+      # The legacy direct template URI seam is gone; the stock orchestrator is
+      # selected by Definition role recipe+flavor instead.
       assert meta == %{}
     end
+  end
+
+  # ── fix/template-name-resolution — Prong 2: the seed tags the version ──
+  #
+  # `do_seed_default_session_template` must write/repoint the
+  # `default`→`current` TemplateTag at the version it just persisted, so
+  # `TemplateResolver.find_session_template_uri` resolves via the
+  # deterministic tag path and the scan is only a true fallback.
+  describe "fix/template-name-resolution — seed writes the `default`→`current` tag" do
+    alias Ezagent.TemplateTags
+
+    test "after the default seed runs, `default`→`current` resolves to the seeded version" do
+      workspace_name = "tag-seed-#{System.unique_integer([:positive])}"
+      workspace_uri = Ezagent.URI.new!("workspace://#{workspace_name}")
+
+      assert :ok =
+               EzagentDomainInstanceMessage.Application.seed_default_session_template_now(
+                 workspace_uri
+               )
+
+      seeded_hash = seeded_default_hash(workspace_name)
+      assert is_binary(seeded_hash) and seeded_hash != ""
+
+      assert {:ok, ^seeded_hash} = TemplateTags.resolve(workspace_uri, "default", "current"),
+             "expected the `default`→`current` tag to point at the seeded version #{seeded_hash}"
+    end
+
+    test "re-seeding repoints the tag from a stale hash back to the current version" do
+      workspace_name = "tag-repoint-#{System.unique_integer([:positive])}"
+      workspace_uri = Ezagent.URI.new!("workspace://#{workspace_name}")
+
+      assert :ok =
+               EzagentDomainInstanceMessage.Application.seed_default_session_template_now(
+                 workspace_uri
+               )
+
+      current_hash = seeded_default_hash(workspace_name)
+
+      # Simulate a prior version's tag lingering on a stale hash.
+      stale_hash = :crypto.hash(:sha256, "stale-#{workspace_name}") |> Base.encode16(case: :lower)
+      refute stale_hash == current_hash
+      :ok = TemplateTags.put(workspace_uri, "default", "current", stale_hash, nil)
+      assert {:ok, ^stale_hash} = TemplateTags.resolve(workspace_uri, "default", "current")
+
+      # Re-running the seed (idempotent, content-addressed) must repoint the
+      # tag back at the current version — upgrade-aware, not append-only.
+      assert :ok =
+               EzagentDomainInstanceMessage.Application.seed_default_session_template_now(
+                 workspace_uri
+               )
+
+      assert {:ok, ^current_hash} = TemplateTags.resolve(workspace_uri, "default", "current")
+    end
+  end
+
+  # Read the seeded `default` version's `@<hash>` from its snapshot URI.
+  defp seeded_default_hash(workspace_name) do
+    prefix = default_template_uri_prefix(workspace_name)
+
+    KindSnapshot.list_in_workspace("workspace://#{workspace_name}")
+    |> Enum.find_value(fn snap ->
+      if is_binary(snap.uri) and String.starts_with?(snap.uri, prefix) do
+        String.replace_prefix(snap.uri, prefix, "")
+      end
+    end)
   end
 
   defp default_template_uri_prefix(workspace_name),
@@ -297,5 +348,17 @@ defmodule EzagentDomainInstanceMessage.Integration.DefaultSessionTemplateSeedTes
   defp snapshot_exists?(prefix) do
     KindSnapshot.list_all()
     |> Enum.any?(fn snap -> is_binary(snap.uri) and String.starts_with?(snap.uri, prefix) end)
+  end
+
+  defp seed_orchestrator_recipe do
+    recipe =
+      [Ezagent, Orchestrator, OrchestratorRecipe]
+      |> Module.concat()
+      |> apply(:recipe, [])
+
+    case Ezagent.Agent.RecipeRegistry.seed_role_if_absent(recipe) do
+      {:ok, _} -> :ok
+      {:error, reason} -> {:error, reason}
+    end
   end
 end

@@ -47,4 +47,32 @@ defmodule EzagentPluginHello.Integration.HelloOrchestratorDeliveryTest do
     assert extracted.sender == sender
     assert extracted.text == "make the title blue"
   end
+
+  test "a user message mentioning the role-resolved orchestrator (web channel's " <>
+         "dispatch_post shape) reaches the role-materialized orchestrator, not a " <>
+         "convention URI" do
+    ws = "hello-deliver-role-#{System.unique_integer([:positive])}"
+    {:ok, _} = Workspace.create(ws, %{})
+
+    {:ok, session_uri, orch_uri} = App.ensure_app(ws, "main")
+
+    # `EzagentWeb.Socialware.SessionFeedChannel.dispatch_post/3` resolves the
+    # mention through exactly this call — assert it lands on the SAME
+    # orchestrator `App.ensure_app/2` joined (the role_name facet, not a
+    # `orch_<name>` convention URI, which would resolve to a phantom entity now
+    # that members are PLANNED-URI / framework-materialized).
+    assert {:ok, ^orch_uri} = EzagentPluginHello.Members.role_uri(session_uri, "front-desk")
+
+    sender = Ezagent.URI.entity(ws, :user, "operator")
+
+    msg =
+      Message.new(sender, %{text: "make the title blue", attachments: []}, mentions: [orch_uri])
+
+    ctx = %{self_uri: orch_uri, caller: session_uri}
+
+    assert {:sync, "hello", {:ok, extracted}} = Delivery.deliver_agent_receive(msg, ctx)
+    assert extracted.session_uri == session_uri
+    assert extracted.sender == sender
+    assert extracted.text == "make the title blue"
+  end
 end

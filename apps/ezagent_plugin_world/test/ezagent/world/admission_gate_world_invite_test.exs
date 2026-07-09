@@ -105,15 +105,16 @@ defmodule Ezagent.World.AdmissionGateWorldInviteTest do
     end)
   end
 
-  # The minimal WorldLive socket `invite_member/3` reads: the inviter identity and
-  # its caps. `current_caps` carries the admin genesis wildcard ONLY to clear the
-  # `:join` CapBAC gate — the admission decision reads the INVITER's DURABLE identity
-  # caps (`manages?/2`), NOT `current_caps`, so this never suppresses the gate (a
-  # STRONGER proof: even a genesis socket cap does not let B's cross-owner invite
-  # mount).
+  # The minimal WorldLive socket `invite_member/3` reads: the inviter identity,
+  # selected workspace, and caps. `current_caps` carries the admin genesis
+  # wildcard ONLY to clear the `:join` CapBAC gate — the admission decision reads
+  # the INVITER's DURABLE identity caps (`manages?/2`), NOT `current_caps`, so
+  # this never suppresses the gate (a STRONGER proof: even a genesis socket cap
+  # does not let B's cross-owner invite mount).
   defp invite_socket(inviter) do
     %Phoenix.LiveView.Socket{}
     |> assign(:current_entity_uri, inviter)
+    |> assign(:current_workspace_uri, Capability.workspace_of(inviter))
     |> assign(:current_caps, MapSet.new([Capability.admin_genesis_cap()]))
     |> assign(:last_dispatch_status, "idle")
     |> assign(:world_state, %{"layout" => %{}})

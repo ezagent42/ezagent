@@ -80,248 +80,142 @@ defmodule Ezagent.Entity.Session.Orchestrator do
         %URI{} = workspace_uri,
         %URI{} = owner_uri
       ) do
-    # 2026-05-31 orchestrator-startup-atomicity §4 step 5 — ownership is
-    # now 2-way (`:owned` / `:not_live` / `:foreign`). The
-    # `:ownership_pending` retry loop (`retry_after_race`/`do_retry`/
-    # `@retry_*`) is DELETED: with the dead Generator gone + adoption
-    # removed, the atomic create commits lineage + workspace bind inside
-    # the spawn before this classification runs, so there is no limbo
-    # window for a freshly-spawned orchestrator. A live URI that does
-    # NOT positively match us is `:foreign` (real cross-tenant collision
-    # / corruption) → fail-loud. The caller
-    # (`EzagentDomainInstanceMessage.SessionCreator.create_session/3`) rolls back on `{:error, _}`.
-    candidate_uri = build_orchestrator_uri_for_create(session_uri, workspace_uri)
-    orch_template_uri = Ezagent.URI.template(:system, :agent, "cc-orchestrator")
-    instance_name = build_orchestrator_instance_name_for_create(session_uri)
+    lock_id = {{:ezagent_domain_session, :create_session, URI.to_string(session_uri)}, self()}
 
-    case check_orchestrator(candidate_uri, owner_uri, workspace_uri) do
-      {:owned, ^candidate_uri} ->
-        {:ok, candidate_uri, :already_present}
-
-      :not_live ->
-        # codex PR #408 review CRIT — instantiate via the cc Template
-        # Class (`spawn_from_template_content/4`) so the role-bootstrap
-        # runs, instead of bypass-spawning via `Agent.spawn_fresh/4`.
-        #
-        # 2026-05-31 codex-review Q4 — the pre-spawn `check_orchestrator`
-        # above is a TOCTOU window: a concurrent registration of the same
-        # orchestrator URI between this `:not_live` classification and
-        # the template-instantiate makes `Agent.spawn_from_template_content`
-        # ADOPT the existing worker (`fresh? == false`), and the adopted
-        # path SKIPS the lineage + workspace obligations a fresh spawn
-        # establishes. We therefore RE-VERIFY ownership AFTER the spawn
-        # (`finalize_spawned_orchestrator/5`): an adopted worker has its
-        # lineage + bind established idempotently so it carries the SAME
-        # ownership records a fresh one does, and a post-spawn URI that
-        # still does not classify `:owned` is a real foreign claim →
-        # `{:error, _}` (→ caller rollback, fail-loud). No silent success
-        # on an unverified adoption.
-        spawn_result =
-          case spawn_orchestrator_via_template_content(
-                 candidate_uri,
-                 orch_template_uri,
-                 instance_name,
-                 workspace_uri,
-                 owner_uri
-               ) do
-            {:error, _} = err ->
-              err
-
-            {:ok, ^candidate_uri, outcome, fresh?, degraded_meta} ->
-              finalize_spawned_orchestrator(
-                candidate_uri,
-                owner_uri,
-                workspace_uri,
-                outcome,
-                fresh?,
-                degraded_meta
-              )
-          end
-
-        spawn_result
-
-      {:foreign, evidence} ->
-        # POSITIVE foreign evidence (lineage / workspace POSITIVELY
-        # mismatches). Real corruption / cross-tenant collision.
-        {:error, {:orchestrator_foreign, candidate_uri, evidence}}
+    try do
+      true = :global.set_lock(lock_id, [node()])
+      ensure_orchestrator_compat(session_uri, workspace_uri, owner_uri)
+    after
+      _ = :global.del_lock(lock_id, [node()])
     end
   end
 
-  # 2026-05-31 codex-review Q4 — post-spawn ownership re-verification +
-  # adopted-orchestrator lineage/bind establishment.
-  #
-  #   * `fresh? == true`  — `spawn_from_template_content/4` already ran
-  #     `establish_post_spawn_obligations/3` (lineage + workspace bind)
-  #     inside the spawn. We still RE-CHECK to close the race where a
-  #     concurrent claimant overwrote our just-recorded ownership; a
-  #     non-`:owned` result is fail-loud.
-  #   * `fresh? == false` — ADOPTED a worker someone else (or a racing
-  #     create) registered. The adopt path in `spawn_from_template_content/4`
-  #     SKIPS the obligations, so we establish them HERE, idempotently
-  #     (`AgentLineage.record/2` upserts; `WorkspaceRegistry.bind/2`
-  #     overwrites), giving the adopted orchestrator the SAME lineage +
-  #     bind a fresh one has — THEN re-check `:owned`.
-  #
-  # A `check_orchestrator/3` that is not `:owned` after this →
-  # `{:error, {:orchestrator_not_owned_after_spawn, candidate_uri, ev}}`
-  # so the caller (`EzagentDomainInstanceMessage.SessionCreator.create_session/3`) rolls back.
-  defp finalize_spawned_orchestrator(
-         %URI{} = candidate_uri,
-         %URI{} = owner_uri,
-         %URI{} = workspace_uri,
-         outcome,
-         fresh?,
-         degraded_meta
-       ) do
-    unless fresh? do
-      _ = establish_orchestrator_ownership(candidate_uri, owner_uri, workspace_uri)
-    end
-
-    case check_orchestrator(candidate_uri, owner_uri, workspace_uri) do
-      {:owned, ^candidate_uri} ->
-        wrap_orchestrator_ok(candidate_uri, outcome, degraded_meta)
-
-      other ->
-        {:error, {:orchestrator_not_owned_after_spawn, candidate_uri, other}}
-    end
-  end
-
-  # Idempotent ownership records for an ADOPTED orchestrator — the same
-  # two writes `Agent.establish_post_spawn_obligations/3` performs for a
-  # fresh worker, lifted here so the adopt path is not left without them.
-  # Both are upsert/overwrite semantics, so a re-run (or running over a
-  # worker that already had them) is a no-op.
-  defp establish_orchestrator_ownership(
-         %URI{} = orchestrator_uri,
-         %URI{} = owner_uri,
-         %URI{} = workspace_uri
-       ) do
-    if Code.ensure_loaded?(Ezagent.AgentLineage) and
-         function_exported?(Ezagent.AgentLineage, :record, 2) do
-      _ = Ezagent.AgentLineage.record(orchestrator_uri, owner_uri)
-    end
-
-    _ = Ezagent.WorkspaceRegistry.bind(orchestrator_uri, workspace_uri)
-    :ok
-  end
-
-  defp wrap_orchestrator_ok(%URI{} = candidate_uri, outcome, degraded_meta)
-       when map_size(degraded_meta) == 0,
-       do: {:ok, candidate_uri, outcome}
-
-  defp wrap_orchestrator_ok(%URI{} = candidate_uri, outcome, degraded_meta),
-    do: {:ok, candidate_uri, outcome, degraded_meta}
-
-  # 2026-05-31 orchestrator-startup-atomicity §5 — the LIVE-join readiness
-  # gate. Called AFTER the spawn + ownership finalize. On a spawn/finalize
-  # error it short-circuits (no PTY to gate). On success it awaits the
-  # live bridge join via a robust poll:
-  #
-  # codex PR #408 review CRIT — call `Agent.spawn_from_template_content/4`
-  # directly after reading the cc-orchestrator AgentTemplate's content
-  # slice. This routes the spawn through the cc Template Class's
-  # `instantiate/3` (so role-bootstrap runs) but skips the dispatch's
-  # action-body anti-cross-workspace check (`Behavior.Template.resolve_workspace_uri/3`)
-  # — the cc-orchestrator template is `template://agent/system/...` but
-  # each tenant workspace's orchestrator agent must land in THEIR OWN
-  # workspace, which is a legitimate cross-workspace spawn the action
-  # body intentionally refuses for V1.
-  #
-  # `instance_name` is the bare segment (e.g. `cc_orchestrator-<disc>`)
-  # — `spawn_from_template_content/4`'s URI builder is given a fully-
-  # formed `instance_uri` by us (the action body's flavor-prepending
-  # is bypassed; we feed the URI verbatim).
-  defp spawn_orchestrator_via_template_content(
-         %URI{} = candidate_uri,
-         %URI{} = orch_template_uri,
-         instance_name,
+  defp ensure_orchestrator_compat(
+         %URI{} = session_uri,
          %URI{} = workspace_uri,
          %URI{} = owner_uri
-       )
-       when is_binary(instance_name) do
-    with {:ok, content} <- read_orchestrator_template_content(orch_template_uri),
-         {:ok, result} <-
-           Ezagent.Entity.Agent.spawn_from_template_content(
-             content,
-             candidate_uri,
-             owner_uri,
-             workspace_uri,
-             Ezagent.Entity.Session.orchestrator_spawn_template_opts(owner_uri, orch_template_uri)
-           ) do
-      # codex PR #408 review CRIT — return `candidate_uri` (URI.new!'d
-      # form) as the canonical orchestrator URI, NOT `result.workers`'s
-      # element (which is URI.parse'd by the cc Template Class — the
-      # two are STRUCTURALLY different per `URI.parse` adding an
-      # `authority` field that `URI.new!` omits, and downstream
-      # callers/tests pinned against the URI.new! shape `spawn_fresh/4`
-      # used pre-fix).
-      #
-      # 2026-05-31 codex-review Q4 — surface the raw `fresh?` flag so the
-      # caller (`ensure_orchestrator/3` → `finalize_spawned_orchestrator/5`)
-      # can re-verify ownership and establish lineage/bind on the adopt
-      # path (`fresh? == false`). The 5-tuple is internal to this module.
-      fresh? = Map.get(result, :fresh?, false) == true
-      outcome = if fresh?, do: :created, else: :already_present
+       ) do
+    case orchestrator_member_uri(session_uri) do
+      %URI{} = orchestrator_uri ->
+        with :ok <-
+               grant_orchestrator_scoped_caps(orchestrator_uri, session_uri, owner_uri),
+             :ok <-
+               register_orchestrator_mcp_context(
+                 orchestrator_uri,
+                 session_uri,
+                 workspace_uri,
+                 owner_uri,
+                 compat_parent_template_uri(session_uri)
+               ) do
+          {:ok, orchestrator_uri, :already_present}
+        end
 
-      degraded_meta =
-        Map.take(result, [
-          :role_degraded,
-          :role_degraded_reason,
-          # #17 (c) — OAuth credential-staleness reminder, surfaced to the owner.
-          :credential_stale,
-          :credential_stale_reason
-        ])
+      nil ->
+        candidate_uri = build_orchestrator_uri_for_create(session_uri, workspace_uri)
 
-      {:ok, candidate_uri, outcome, fresh?, degraded_meta}
-    end
-  end
+        case check_orchestrator(candidate_uri, owner_uri, workspace_uri) do
+          {:owned, ^candidate_uri} ->
+            adopt_legacy_orchestrator_member(
+              session_uri,
+              workspace_uri,
+              owner_uri,
+              candidate_uri
+            )
 
-  # Read the cc-orchestrator AgentTemplate's `:template` slice content
-  # via `:sys.get_state` — same pattern `CcOrchestratorSeed.seed_status/0`
-  # uses. The AgentTemplate Kind must be alive (the boot seed runs
-  # before any `ensure_orchestrator` call); a missing Kind returns
-  # `{:error, :orchestrator_template_not_alive}` so the operator can see
-  # the boot-order issue rather than a downstream confusing error.
-  defp read_orchestrator_template_content(%URI{} = orch_template_uri) do
-    case Ezagent.KindRegistry.lookup(orch_template_uri) do
-      :error ->
-        {:error, {:orchestrator_template_not_alive, orch_template_uri}}
+          :not_live ->
+            materialize_orchestrator_definition(session_uri, workspace_uri, owner_uri)
 
-      {:ok, pid} ->
-        case safe_get_template_content(pid) do
-          %{} = content when map_size(content) > 0 ->
-            {:ok, content}
-
-          _ ->
-            {:error, {:orchestrator_template_not_populated, orch_template_uri}}
+          {:foreign, evidence} ->
+            {:error, {:orchestrator_foreign, candidate_uri, evidence}}
         end
     end
   end
 
-  # `:sys.get_state` on a Kind.Server returns `%{state: %{template: <slice>}}`.
-  # Wrapped to swallow timeouts / restarts (the AgentTemplate Kind is
-  # snapshot-persisted, so a brief restart races are normal) — returns
-  # `%{}` on any failure so the caller surfaces
-  # `:orchestrator_template_not_populated`.
-  #
-  # Lifecycle migration (SPEC 2026-05-29): `Ezagent.ActionSet.Template`
-  # now uses `use Ezagent.Lifecycle`, so the `:template` slice is the
-  # two-container `%{state: %{content: ...}, transients: %{}}` shape (the
-  # framework persists only `:state`; `:content` is fully persistent).
-  # This raw `:sys.get_state` read therefore matches the two-container
-  # form FIRST, then falls back to the legacy flat `%{content: ...}` form
-  # (a pre-migration snapshot or a non-Lifecycle Behavior). Reading the
-  # raw process state (vs `Kind.get_slice/2`'s normalized view) is
-  # deliberate here — it swallows restart-race timeouts the comment above
-  # describes without a blocking `GenServer.call`.
-  defp safe_get_template_content(pid) do
-    case :sys.get_state(pid, 500) do
-      %{state: %{template: %{state: %{content: content}}}} when is_map(content) -> content
-      %{state: %{template: %{content: content}}} when is_map(content) -> content
-      _ -> %{}
+  defp adopt_legacy_orchestrator_member(session_uri, workspace_uri, owner_uri, candidate_uri) do
+    with :ok <- install_orchestrator_definition(session_uri, workspace_uri, owner_uri),
+         :ok <-
+           EzagentDomainInstanceMessage.SessionCreator.DefinitionAgents.materialize_definition_agents(
+             session_uri,
+             workspace_uri,
+             owner_uri,
+             [
+               %{
+                 recipe: "orchestrator",
+                 role_name: "orchestrator",
+                 flavor: "cc",
+                 install_mode: :reuse,
+                 reuse_agent_uri: candidate_uri
+               }
+             ]
+           ),
+         %URI{} = orchestrator_uri <- orchestrator_member_uri(session_uri) do
+      {:ok, orchestrator_uri, :already_present}
+    else
+      nil -> {:error, {:orchestrator_adoption_failed, :member_not_joined}}
+      {:error, _} = error -> error
+      other -> {:error, {:orchestrator_adoption_failed, other}}
+    end
+  end
+
+  defp materialize_orchestrator_definition(session_uri, workspace_uri, owner_uri) do
+    with :ok <- install_orchestrator_definition(session_uri, workspace_uri, owner_uri),
+         :ok <-
+           EzagentDomainInstanceMessage.SessionCreator.materialize_template_team(
+             session_uri,
+             workspace_uri,
+             owner_uri,
+             %{installs: ["orchestrator"]}
+           ),
+         %URI{} = orchestrator_uri <- orchestrator_member_uri(session_uri) do
+      {:ok, orchestrator_uri, :created}
+    else
+      nil -> {:error, {:orchestrator_materialize_failed, :member_not_joined}}
+      {:error, _} = error -> error
+      other -> {:error, {:orchestrator_materialize_failed, other}}
+    end
+  end
+
+  defp install_orchestrator_definition(session_uri, workspace_uri, owner_uri) do
+    Ezagent.Socialware.Installation.install_template_installs(
+      session_uri,
+      workspace_uri,
+      %{installs: ["orchestrator"]},
+      owner_uri
+    )
+  end
+
+  defp orchestrator_member_uri(%URI{} = session_uri) do
+    case Ezagent.KindRegistry.lookup(session_uri) do
+      {:ok, pid} ->
+        chat_slice =
+          pid
+          |> :sys.get_state()
+          |> Map.get(:state, %{})
+          |> Map.get(Ezagent.ActionSet.Session.state_slice(), %{})
+
+        chat_persistent = Map.get(chat_slice, :state, chat_slice)
+
+        chat_persistent
+        |> Map.get(:members, %{})
+        |> Ezagent.ActionSet.Session.Members.role_name_to_uri("orchestrator")
+
+      :error ->
+        nil
     end
   catch
-    :exit, _ -> %{}
+    :exit, _ -> nil
+  end
+
+  defp compat_parent_template_uri(%URI{} = session_uri) do
+    case read_template_working_copy(session_uri) do
+      %{session_template_uri: %URI{} = uri} -> uri
+      %{"session_template_uri" => %URI{} = uri} -> uri
+      %{session_template_uri: uri} when is_binary(uri) and uri != "" -> Ezagent.URI.new!(uri)
+      %{"session_template_uri" => uri} when is_binary(uri) and uri != "" -> Ezagent.URI.new!(uri)
+      _ -> Ezagent.URI.template(:system, :session, "default")
+    end
+  rescue
+    _ -> Ezagent.URI.template(:system, :session, "default")
   end
 
   # 2-way classification on a LIVE candidate (2026-05-31
@@ -514,6 +408,66 @@ defmodule Ezagent.Entity.Session.Orchestrator do
   catch
     :exit, _ -> []
   end
+
+  @doc """
+  Member URIs extracted from a DECODED durable snapshot state map (the
+  `Ezagent.Ecto.KindSnapshot.decode_state/1` result) — the cold-Kind
+  counterpart of `session_member_uris/1`, reading the SAME two-container
+  session slice shape (`:members` under the slice's persistent `:state`)
+  WITHOUT spawning the Kind.
+
+  2026-07-08 cold-boot listing fix — sessions are NOT auto-respawned on
+  boot, so after a restart `session_member_uris/1` returns `[]` for every
+  durably-persisted session and the membership-filtered workspace listing
+  (#1217) wrongly excluded members. The listing evaluates cold membership
+  from the snapshot via this function; it stays read-only (no
+  `ensure_live` from a listing).
+
+  Kept next to `session_member_uris/1` on purpose: this module is the
+  single source of truth for the session-slice unwrap. Fail-closed — a
+  missing / malformed slice yields `[]` (never a broader member set).
+
+  ## Slice key (codex #1257 MED)
+
+  Reads via the CANONICAL `Ezagent.ActionSet.Session.state_slice()` key
+  (auto-derived `:session` since the 2026-06-12 chat→session rename) —
+  never a hardcoded key — i.e. exactly the shape
+  `Ezagent.Session.SliceMigration` serves post-cutover. Legacy
+  `:chat`-keyed rows are deliberately NOT dual-read: the rename was a
+  NO-back-compat ordered cutover (`SliceMigration` moduledoc "Deploy
+  ordering") and the live restore path likewise defaults such a slice to
+  empty and prunes it (`Snapshot.prune_orphan_slices/2`) — a listing that
+  showed members from an unmigrated row would advertise state that
+  opening the session destroys. Unmigrated rows are an operator error
+  surfaced by `mix ezagent.session.migrate_slice --gate`; here they are
+  fail-closed (`[]`).
+  """
+  @spec member_uris_from_snapshot_state(term()) :: [URI.t()]
+  def member_uris_from_snapshot_state(state) when is_map(state) do
+    chat_slice = Map.get(state, Ezagent.ActionSet.Session.state_slice())
+
+    chat_persistent =
+      case chat_slice do
+        %{} = slice ->
+          case Map.get(slice, :state, slice) do
+            %{} = persistent -> persistent
+            _ -> %{}
+          end
+
+        _ ->
+          %{}
+      end
+
+    case Map.get(chat_persistent, :members, %{}) do
+      members when is_map(members) ->
+        members |> Map.keys() |> Enum.filter(&match?(%URI{}, &1))
+
+      _ ->
+        []
+    end
+  end
+
+  def member_uris_from_snapshot_state(_), do: []
 
   @doc """
   The live `:chat` slice's session-scoped legend registry (`name => entry`).

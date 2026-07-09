@@ -1,0 +1,17 @@
+=== 03 PTY banner 佐证(零手动 creds、零 watcher,物化后 PTY 首屏即已认证)===
+aa36918d(kanban-assistant)= PtyServer[33597] / claude PID 33597
+d4bb4b6e(dev-together)   = PtyServer[33710] / claude PID 33710
+
+[debug] PtyServer[33597] stdout:     ╭─── Claude Code  v2.1.201  ──────────────────────────────────────────────────────────────
+[debug] PtyServer[33597] stdout:                        ▐ ▛███▜ ▌     Claude Code   v2.1.201    ▝▜ █████ ▛▘  Opus 4.8 (1M context) · Claude Max      ▘▘ ▝▝      ~/.ezagent/kanban-assistant        ▎ Fable 5 is back
+[debug] PtyServer[33710] stdout:     ╭─── Claude Code  v2.1.201  ──────────────────────────────────────────────────────────────
+[debug] PtyServer[33710] stdout:                        ▐ ▛███▜ ▌     Claude Code   v2.1.201    ▝▜ █████ ▛▘  Opus 4.8 (1M context) · Claude Max      ▘▘ ▝▝      ~/.ezagent/dev-together        ▎ Fable 5 is back.  
+
+"Not logged in" 在本轮日志中出现次数:
+0
+
+=== 真回复回合(server log 摘录)===
+INSERT INTO "messages" ("id","body","workspace_uri","inserted_at","sender","session_uri","mentions","visibility","routed_at") VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9) ON CONFLICT ("id") DO NOTHING ["21e495531f5c55f7", %{text: "@entity://system/agent/aa36918d-2a69-4631-a93c-3eeb76669d62 请只回复一行：17*23 的结果是多少？不要执行任何命令。", attachments: []}, "workspace://system", 
+  Parameters: %{"session_uris" => ["session://system/socialware-install-a2-verify/a2-zero-creds"], "text" => "17*23 的结果是 391。"}
+INSERT INTO "messages" ("id","body","workspace_uri","inserted_at","sender","session_uri","mentions","visibility","routed_at") VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9) ON CONFLICT ("id") DO NOTHING ["f8180a1c16606b65", %{text: "17*23 的结果是 391。", attachments: []}, "workspace://system", ~U[2026-07-06 16:48:04.491566Z], %URI{scheme: "entity", userinfo: nil, host: "system", port: nil, path: "/agen
+[debug] PtyServer[33597] stdout:      17*23 的结果是 391。

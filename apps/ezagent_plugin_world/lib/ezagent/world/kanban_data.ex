@@ -11,7 +11,7 @@ defmodule Ezagent.World.KanbanData do
   （role `kanban-manager` × flavor `native`）。board = 该 agent 的 `:kanban` snapshot
   slice。本读模型据此重接两处（spec §3.5 / plan K4）：
 
-    * **list_instances** ——`Ezagent.AgentRecipeResolver.list_by_recipe("kanban-manager",
+    * **list_instances** ——`Ezagent.Agent.RecipeResolver.list_by_recipe("kanban-manager",
       workspace_uri)`（RF-7，**快照来源**，覆盖 live + dormant，冷启动仍枚举），
       不再 `EzagentDomainUi.AutoDerive.list_instances(:kanban)`（按 Kind 类型，
       kanban-manager 的 Kind 是 `Entity.Agent` → 类型匹配为假）。返回的 URI 即
@@ -20,9 +20,10 @@ defmodule Ezagent.World.KanbanData do
       = `entity://<ws>/agent/<id>?action=kanban.<action>`，**带登录者身份/caps**
       （R3：caller=人类用户，per-node owner 授权在 Behavior 内如实判）。
 
-  连接器配置（github_repo/miro 板名）、Miro/GitHub 凭证连接状态、pr 节点的 CI 评价，
+  连接器配置（github_repo/miro 板名）、Miro 凭证连接状态、pr 节点的 CI 评价，
   全部由 `:get_tree` dispatch 一并返回（Behavior 内只读投影），world 不直引 kanban
-  plugin 任何模块。dormant 的 passive kanban-manager 经 `ensure_spawned/1`
+  plugin 任何模块。GitHub 主动连接器已退役（gh 连通是 agent 的 CLI 行为），
+  `github` 连接状态字段随之退役；`config.github_repo` 仍是纯数据（拼 git 链接用）。dormant 的 passive kanban-manager 经 `ensure_spawned/1`
   （`SpawnRegistry.spawn` 从快照 rehydrate）先起活，再 dispatch（HIGH-3 liveness）。
 
   写动作在 `Ezagent.World.KanbanActions`；本模块只读。
@@ -59,7 +60,6 @@ defmodule Ezagent.World.KanbanData do
       "stages" => stages_from_recipe(),
       "statuses" => @statuses,
       "miro" => (snapshot && snapshot["miro"]) || %{"configured" => false},
-      "github" => (snapshot && snapshot["github"]) || %{"configured" => false},
       "config" => snapshot && snapshot["config"],
       "last_dispatch_status" => nil
     }
@@ -68,7 +68,7 @@ defmodule Ezagent.World.KanbanData do
   @doc """
   列出本 workspace 的 kanban-manager agents（role `kanban-manager`）。
 
-  RF-7 `Ezagent.AgentRecipeResolver.list_by_recipe/2` ——**快照来源**，覆盖 live +
+  RF-7 `Ezagent.Agent.RecipeResolver.list_by_recipe/2` ——**快照来源**，覆盖 live +
   dormant：一个 passive 的 kanban-manager 在 BEAM 重启后即便没 live 仍枚举得到
   （否则 board 会从 UI 静默消失，HIGH-3）。`workspace_uri`（ctx 携带）把扫描限定
   在本 tenant，不跨租户泄漏。返回的 URI 即 `entity://<ws>/agent/<id>` ——既是列表项
@@ -77,7 +77,7 @@ defmodule Ezagent.World.KanbanData do
   @spec list_instances(map()) :: [map()]
   def list_instances(ctx) do
     "kanban-manager"
-    |> Ezagent.AgentRecipeResolver.list_by_recipe(workspace_scope(ctx))
+    |> Ezagent.Agent.RecipeResolver.list_by_recipe(workspace_scope(ctx))
     |> Enum.map(fn %URI{} = uri ->
       %{"uri" => encode_uri(uri), "name" => uri_name(uri), "path" => detail_path(uri)}
     end)
@@ -96,7 +96,6 @@ defmodule Ezagent.World.KanbanData do
       "instances" => list_instances(ctx),
       "config" => snapshot["config"],
       "miro" => snapshot["miro"],
-      "github" => snapshot["github"],
       "last_dispatch_status" => "ok"
     }
   end
@@ -122,7 +121,7 @@ defmodule Ezagent.World.KanbanData do
 
   @doc """
   一次 `:get_tree` dispatch 拿全量看板快照：`tree`（JSON-safe 富树，pr 节点附 ci）+
-  `config`（本图连接器配置）+ `miro`/`github`（凭证连接状态）。Behavior 内只读投影，
+  `config`（本图连接器配置）+ `miro`（凭证连接状态）。Behavior 内只读投影，
   world 不再直引 kanban plugin 的连接器模块。
   """
   @spec board_snapshot(URI.t(), map()) :: map()
@@ -153,8 +152,7 @@ defmodule Ezagent.World.KanbanData do
           # 找不到回 recipe 直读（详情页冷启动场景）。
           "stages" => stages_from_res(res) || stages_from_recipe(),
           "config" => jsonable_config(Map.get(res, :config)),
-          "miro" => jsonable_status(Map.get(res, :miro)),
-          "github" => jsonable_status(Map.get(res, :github))
+          "miro" => jsonable_status(Map.get(res, :miro))
         }
 
       _ ->
@@ -162,8 +160,7 @@ defmodule Ezagent.World.KanbanData do
           "tree" => %{"nodes" => %{}, "root_id" => nil, "drops" => []},
           "stages" => stages_from_recipe(),
           "config" => %{"github_repo" => nil, "miro_board" => nil},
-          "miro" => %{"configured" => false},
-          "github" => %{"configured" => false}
+          "miro" => %{"configured" => false}
         }
     end
   end

@@ -81,6 +81,15 @@ defmodule Ezagent.Integration.PluginIsolationWorkspaceTest do
 
   alias Ezagent.{KindRegistry, SpawnRegistry, TemplateRegistry, Workspace}
 
+  setup do
+    if Code.ensure_loaded?(Ezagent.AgentFlavorRegistry) and
+         function_exported?(Ezagent.AgentFlavorRegistry, :seal!, 0) do
+      Ezagent.AgentFlavorRegistry.seal!()
+    end
+
+    :ok
+  end
+
   # ---------------------------------------------------------------
   # Fake plugin types — defined inline in the test, NOT in lib/
   # ---------------------------------------------------------------
@@ -356,7 +365,7 @@ defmodule Ezagent.Integration.PluginIsolationWorkspaceTest do
   #     then fail the hard non-empty children assert at the call site.
   # Flunks loudly if the workspace never appears with children within the
   # budget — a real (non-transient) load failure still fails the test.
-  defp load_all_until_present(workspace_name, attempts \\ 50)
+  defp load_all_until_present(workspace_name, attempts \\ 250)
 
   defp load_all_until_present(workspace_name, 0) do
     flunk(

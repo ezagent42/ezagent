@@ -229,9 +229,9 @@ defmodule EzagentDomainInstanceMessage.UriQueryResolvers do
   # cross-Kind call could stall. A miss → `:none`.
   @spec resolve_recipe(term()) :: Ezagent.UriQuery.result()
   def resolve_recipe(%URI{} = agent_uri) do
-    case Ezagent.AgentRecipeAttributes.fetch(agent_uri) do
+    case Ezagent.Agent.RecipeAttributes.fetch(agent_uri) do
       {:ok, recipe} -> {:ok, recipe}
-      :none -> Ezagent.AgentRecipeResolver.recipe_from_durable_snapshot(agent_uri)
+      :none -> Ezagent.Agent.RecipeResolver.recipe_from_durable_snapshot(agent_uri)
     end
   end
 

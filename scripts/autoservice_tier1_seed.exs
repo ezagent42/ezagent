@@ -46,7 +46,7 @@ defmodule Ezagent.AutoService.Tier1Seed do
   # code. A correct S3 answer MUST contain this token, which no LLM could know
   # without retrieving the seeded corpus. The token is the SOUL ANCHOR the test
   # asserts on; the corpus TEXT that carries it is now DEFINITION DATA in the
-  # AutoService socialware package (priv/socialware/autoservice/kb), not code.
+  # AutoService socialware package (priv/socialware_seed/autoservice/kb), not code.
   @kb_fact_token "ZEPHYR-7731"
   @kb_probe_query "support hotline access code"
 
@@ -349,11 +349,13 @@ defmodule Ezagent.AutoService.Tier1Seed do
 
   # ── package data (definition-data boundary) ─────────────────────────────
   # The AutoService socialware app's DEFINITION DATA (support persona + KB
-  # corpus) lives as package files under `priv/socialware/autoservice/`, not
-  # hardcoded in this installer. This seed is the installer/harness that reads
-  # them (docs/together/contributing/socialware-data-deployment-boundary.md).
-  @package_app :ezagent_domain_session
-  @package_rel "priv/socialware/autoservice"
+  # corpus) lives as package files under `priv/socialware_seed/autoservice/`,
+  # not hardcoded in this installer. This seed is the installer/harness that
+  # reads them (docs/together/contributing/socialware-data-deployment-boundary.md).
+  # Deploy-seed SPEC §6: the package now ships in the ezagent_web assembly app
+  # (the deploy-seed source of truth), not domain_session priv.
+  @package_app :ezagent_web
+  @package_rel "priv/socialware_seed/autoservice"
 
   defp package_dir, do: Application.app_dir(@package_app, @package_rel)
 

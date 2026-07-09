@@ -22,6 +22,8 @@
 
 ## 创建表单字段(Identities → New Agent,实测)
 
+> 2026-07-02 当前 World UI 备注:`project_cwd` 已不是可手写字符串的输入框,而是两张选择卡片。默认卡片为“使用系统默认目录（推荐）”,自定义卡片为“使用自定义项目目录”且当前禁用。新的执行记录见 [`world-scenario-02-create-agent.md`](./world-scenario-02-create-agent.md)。
+
 | 字段 | 说明 | 本次值 |
 |---|---|---|
 | **Flavor** | 下拉(echo / cc / codex / curl…) | `echo` |

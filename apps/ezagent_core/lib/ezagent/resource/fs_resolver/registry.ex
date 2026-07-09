@@ -46,10 +46,9 @@ defmodule Ezagent.Resource.FsResolver.Registry do
 
   ## Ordering — core registers first (plugin-resource SPEC §5)
 
-  `init/1` applies core `boot_registrations/0` (`cc-agents`, `codex-agents`,
-  `uploads`) when `ezagent_core` starts, BEFORE any plugin boots (plugins depend
-  on core → start later). So core backends are claimed first and a plugin can
-  neither shadow a core `<type>` (write-once) nor alias a core backend
+  `init/1` applies core `boot_registrations/0` (`uploads`) when `ezagent_core`
+  starts, BEFORE any plugin boots (plugins depend on core → start later). So
+  core backends are claimed first and a plugin can never alias a core backend
   (backend-uniqueness). Core `boot_registrations/0` flows through the SAME
   precheck as plugin `register_all/1`, so the write-once-on-both property holds
   uniformly.
@@ -369,22 +368,6 @@ defmodule Ezagent.Resource.FsResolver.Registry do
     |> Enum.any?(fn {_type, %{backend_component: b}} -> b == backend end)
   end
 
-  # Boot-defined registration source — a pure, NOT-runtime-mutable list of
-  # `{type, spec}`. P1 adds the per-agent config-dir families (one `<ns>-agents`
-  # type per config-dir namespace in use). P2 extends with uploads. Kept as a
-  # function so future phases add entries here, never via a runtime call.
-  #
-  # Resource-unification P1 — config-dir types. Each `<ns>-agents` type's
-  # `backend_component` is the SAME `"<ns>-agents"` string, so the resolver joins
-  # `Home.path("<ns>-agents")/<ws>/<name>` — BYTE-IDENTICAL to the pre-P1
-  # `Ezagent.Sandbox.ConfigDir.path/2` layout (Locked-contract #7). The namespaces
-  # are the catalog declared by Template classes' `config_dir_namespace/0` (cc,
-  # codex, codex-remote, py); listed here statically because the resolver allowlist is immutable at
-  # boot and must not depend on plugin Application start ordering. (`py` is the
-  # py-agent flavor's per-agent config_dir family — `Home.path("py-agents")/<ws>/<name>`,
-  # where the operator-supplied script is installed at create.)
-  @config_dir_namespaces ["cc", "codex", "codex-remote", "py"]
-
   # Resource-unification P2b — uploads type. Chat attachments live at
   # `Home.path("uploads")/<ws>/<name>` (ws-partitioned). `uploads_authority/2`
   # asserts `uri.<ws> == scope.workspace`, the structural replacement for the old
@@ -395,17 +378,6 @@ defmodule Ezagent.Resource.FsResolver.Registry do
 
   @spec boot_registrations() :: [{String.t(), map()}]
   defp boot_registrations do
-    config_dir =
-      Enum.map(@config_dir_namespaces, fn namespace ->
-        type = "#{namespace}-agents"
-
-        {type,
-         %{
-           backend_component: type,
-           authority: &FsResolver.config_dir_authority/2
-         }}
-      end)
-
     uploads =
       {@uploads_type,
        %{
@@ -413,7 +385,7 @@ defmodule Ezagent.Resource.FsResolver.Registry do
          authority: &FsResolver.uploads_authority/2
        }}
 
-    config_dir ++ [uploads]
+    [uploads]
   end
 
   # All `handle_call/3` clauses grouped here (the production `:register_all` and,

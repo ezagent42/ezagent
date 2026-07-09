@@ -31,7 +31,7 @@ defmodule Ezagent.ActionSet.Session.Membership do
     # recipe-responsibility-split (2026-06-27, OQ-1) — `role_name` (the session
     # RESPONSIBILITY, axis B) is taken ONLY from the explicit join `facets` here;
     # it is NEVER derived from the member's agent RECIPE (axis A — the agent's
-    # build-spec / `Ezagent.Agent.Recipe`, mirrored to `Ezagent.AgentRecipeAttributes`).
+    # build-spec / `Ezagent.Agent.Recipe`, mirrored to `Ezagent.Agent.RecipeAttributes`).
     # DO NOT add a `role_name = Map.get(facets, :role_name) || recipe_name(...)`
     # default: that would re-create the very recipe⇄responsibility coupling the
     # split removed (a member with no declared responsibility silently inheriting
@@ -745,6 +745,30 @@ defmodule Ezagent.ActionSet.Session.Membership do
   (the orchestrator tool preflights `{:within_session, session_uri}` before
   calling this). The grant remains narrow: a concrete `Session.:join` cap for
   this session only.
+
+  ## Why the non-user (agent-reuse) branch returns `:ok` without an agent-owner check
+
+  This is deliberate, NOT the "#161-shaped reuse-join hole" it can look like when
+  read in isolation (`_inviter_uri` ignored + `else -> :ok`, flagged by the #1256
+  bootstrap audit). Provisioning is only step one of an agent reuse-join; it never
+  mounts the agent or grants a member-cap. The operator→agent credential-isolation
+  gate lives ONE seam downstream, at the common `handle_join` member-cap grant seam
+  that EVERY add path funnels through (§C.1 / R4, PR #161-c): `admission_pending?/2`
+  PENDS a credential-bearing (non-user) member whose `ctx.caller` neither IS nor
+  MANAGES it (`Authority.manages?/2` + the narrow `{:spawned_by, caller}` exemption
+  — deliberately NOT "holds any cap covering it", so a co-tenant's broad
+  `{:within_workspace}` cap cannot reopen threat X). A pended member holds no
+  member-cap ⇒ `MemberReceive.authorize/1` denies receive ⇒ the owner's credential
+  is not spent until the agent's owner `:approve_admission`s. Every operator-reachable
+  reuse route (orchestrator `Participants.add_participant`, world `invite_member`,
+  `definition_agents.reuse_existing_agent`) dispatches the join under the operator's
+  OWN bare principal, so the gate fires for foreign agents. Empirically pinned by
+  `admission_gate_test.exs` (test 28 cross-owner PENDS + the "within_workspace cap
+  does NOT exempt" teeth) and `socialware_reuse_bind_test.exs` ("operator reuse-bind
+  of a foreign agent pends through session.join"). Gating HERE instead would be a
+  parallel idiom that hard-denies (breaking the pend/approve UX those tests assert)
+  and misfires on legitimate owner-reuse (owner authority is `manages?`, not the
+  spawn-lineage `AgentLineage` notion). So: forward the join; the admission gate decides.
   """
   @spec provision_invited_join_authority(URI.t(), URI.t(), URI.t()) ::
           :ok | {:error, :no_authority}
@@ -761,6 +785,9 @@ defmodule Ezagent.ActionSet.Session.Membership do
 
       :ok
     else
+      # Non-user (agent) reuse-join: forward to the Part C admission gate at
+      # `handle_join` (§C.1/R4) — see the moduledoc "Why the non-user branch
+      # returns :ok" above. The credential-spend gate is there, not here.
       :ok
     end
   end

@@ -4,7 +4,7 @@ defmodule EzagentDomainInstanceMessage.Integration.RecipeResponsibilityLockinTes
   §2.1, tests T1–T3 + the no-default guard).
 
   The SPEC's load-bearing finding: agent **recipe** (axis A — what an agent is
-  built from: `Ezagent.Agent.Recipe` / `Ezagent.AgentRecipeAttributes` / the cc-template
+  built from: `Ezagent.Agent.Recipe` / `Ezagent.Agent.RecipeAttributes` / the cc-template
   `:role` / the `source_template_uri` recipe-origin facet) and session
   **responsibility** (axis B — membership `meta.role_name` + `{:role, name}`
   routing) are ALREADY separate fields with NO structural forcing of
@@ -17,7 +17,7 @@ defmodule EzagentDomainInstanceMessage.Integration.RecipeResponsibilityLockinTes
 
     * a **cc-template spawn** (`Tools.add_managed_member/4`, T1) carries A as the
       member's `source_template_uri` recipe-origin facet + the template flavor —
-      it does NOT write the RF-7 `AgentRecipeAttributes` marker, so we never assert
+      it does NOT write the RF-7 `RecipeAttributes` marker, so we never assert
       that marker over a template-spawned member;
     * the seed **declared-member** representation (T3) carries A as the
       `source_template_uri` recipe-origin facet (the exact facet the
@@ -33,7 +33,7 @@ defmodule EzagentDomainInstanceMessage.Integration.RecipeResponsibilityLockinTes
 
   alias Ezagent.{
     AgentFlavorAttributes,
-    AgentRecipeAttributes,
+    Agent.RecipeAttributes,
     Capability,
     Invocation,
     KindRegistry
@@ -263,7 +263,7 @@ defmodule EzagentDomainInstanceMessage.Integration.RecipeResponsibilityLockinTes
       # ── the join did NOT pollute the recipe (RF-7) marker from role_name.
       #    A cc-template spawn writes no marker at all, so it is :none — but
       #    crucially it is never the responsibility label "reviewer". ─────────
-      refute AgentRecipeAttributes.fetch(member_uri) == {:ok, "reviewer"}
+      refute RecipeAttributes.fetch(member_uri) == {:ok, "reviewer"}
     end
   end
 
@@ -286,7 +286,7 @@ defmodule EzagentDomainInstanceMessage.Integration.RecipeResponsibilityLockinTes
       assert SessionBehavior.role_name_to_uri(members_meta(session_uri), "reviewer") == user_uri
 
       # …and it owns NO recipe (axis A is agent-build-time only).
-      assert AgentRecipeAttributes.fetch(user_uri) == :none
+      assert RecipeAttributes.fetch(user_uri) == :none
       assert AgentFlavorAttributes.get(user_uri) == :none
     end
   end

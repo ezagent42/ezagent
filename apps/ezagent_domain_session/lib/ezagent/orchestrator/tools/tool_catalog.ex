@@ -1,7 +1,7 @@
 defmodule Ezagent.Orchestrator.Tools.ToolCatalog do
   @moduledoc false
 
-  @tool_names [
+  @fallback_tool_names [
     :add_managed_member,
     :add_participant,
     :update_member_template,
@@ -21,13 +21,17 @@ defmodule Ezagent.Orchestrator.Tools.ToolCatalog do
   @doc """
   The canonical set of orchestrator management tool names.
 
-  This is the single source of truth the transport layer and `SessionManager`
-  use to enumerate / validate the MCP `tools/call` surface, so the list lives
-  here rather than being re-derived per call site (which would let the cc
-  transport and the session executor drift out of sync).
+  In normal cc runtime this is read from the orchestrator recipe contribution so
+  the transport and executor validate the same contributed MCP surface. The
+  fallback keeps the domain app loadable in pluginless test/runtime contexts.
   """
   @spec tool_names() :: [atom()]
-  def tool_names, do: @tool_names
+  def tool_names do
+    case recipe_tool_atoms() do
+      {:ok, names} -> names
+      :error -> @fallback_tool_names
+    end
+  end
 
   @doc """
   Whether `name` is a recognised orchestrator tool.
@@ -39,6 +43,16 @@ defmodule Ezagent.Orchestrator.Tools.ToolCatalog do
   raising so malformed wire input is denied, not crashed.
   """
   @spec tool?(atom()) :: boolean()
-  def tool?(name) when is_atom(name), do: name in @tool_names
+  def tool?(name) when is_atom(name), do: name in tool_names()
   def tool?(_), do: false
+
+  defp recipe_tool_atoms do
+    module = Module.concat([Ezagent, Orchestrator, OrchestratorRecipe])
+
+    if Code.ensure_loaded?(module) and function_exported?(module, :tool_atoms, 0) do
+      {:ok, module.tool_atoms()}
+    else
+      :error
+    end
+  end
 end

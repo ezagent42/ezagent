@@ -15,6 +15,8 @@
 - session `session://system/default/zyli-test-1`,成员 `zyli-echo-1`(在线)+ admin
 - **ROUTING = 0 条规则**(关键变量,见下方发现)
 
+> 2026-07-02 当前 World UI 备注:在 `work/world-ui-user-surface-main-0702` 上重跑 mention roundtrip 时,`py_default` UI/DOM 显示 online,但 receive 失败 `reason=:not_alive`,未产生回显。新的执行记录见 [`world-scenario-04-agent-roundtrip.md`](./world-scenario-04-agent-roundtrip.md)。
+
 ## 角色
 
 - **调用方**:admin · **目标**:`entity://system/agent/zyli-echo-1`

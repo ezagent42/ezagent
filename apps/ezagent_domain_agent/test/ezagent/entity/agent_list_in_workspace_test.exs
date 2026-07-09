@@ -2,7 +2,7 @@ defmodule Ezagent.Entity.AgentListInWorkspaceTest do
   @moduledoc """
   Spec test 26 (R1.4) — the concrete agent enumerator used by the membership-cap
   reconcile candidate scan (§4.4) and the migration. Sourced from the persisted
-  `kind_snapshots` rows (like `AgentRecipeResolver`), so it covers LIVE **and**
+  `kind_snapshots` rows (like `Agent.RecipeResolver`), so it covers LIVE **and**
   DORMANT agents (a dormant agent has a snapshot row but no live Kind / ETS) and
   survives a BEAM restart.
 

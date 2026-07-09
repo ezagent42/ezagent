@@ -1,13 +1,14 @@
 defmodule Ezagent.PluginCc.Template.OrchestratorRecipeInstallTest do
   @moduledoc """
-  Task #54 PR-2 — the resolve / install split of the orchestrator role loader.
+  Task #54 PR-2/P3 — the resolve / hint split of the orchestrator role loader.
 
-  `Ezagent.PluginCc.Template.OrchestratorBootstrap` now installs whatever the
-  composed role recipe yields, not a hardcoded skill. These tests pin the two
-  decoupled stages directly:
+  `Ezagent.PluginCc.Template.OrchestratorBootstrap` still resolves whatever the
+  composed role recipe yields, but P3 moved skill byte materialization into
+  `Ezagent.Credential.HomeRuntime`'s atomic config_dir swap. These tests pin the
+  remaining bootstrap behavior directly:
 
-    * `install_role_sandbox/2` — pure filesystem, driven by an EXPLICIT skills
-      list (so the installer is exercised independently of the recipe);
+    * `install_role_sandbox/2` — pure filesystem hint append, driven by an
+      EXPLICIT skills list;
     * `resolve_orchestrator_recipe/0` — composes the code recipe into
       `sandbox_content` (skills + persona prompt).
   """
@@ -22,41 +23,26 @@ defmodule Ezagent.PluginCc.Template.OrchestratorRecipeInstallTest do
   @hint Bootstrap.hint_line()
 
   setup do
-    # Stage a fake skill source so the install does not depend on the real
-    # `.claude/skills/...` (a CI build might not ship it). The override is keyed
-    # to the orchestrator skill ref.
-    fixture_root = Path.join(System.tmp_dir!(), "orch-inst-#{System.unique_integer([:positive])}")
-    skill_src = Path.join(fixture_root, "ezagent-session-orchestrator")
-    File.mkdir_p!(skill_src)
-    File.write!(Path.join(skill_src, "SKILL.md"), "fixture skill\n")
-
-    Application.put_env(:ezagent_plugin_cc, :orchestrator_skill_source, skill_src)
-
     config_dir =
       Path.join(System.tmp_dir!(), "orch-inst-cfg-#{System.unique_integer([:positive])}")
 
     File.mkdir_p!(config_dir)
 
     on_exit(fn ->
-      Application.delete_env(:ezagent_plugin_cc, :orchestrator_skill_source)
-      _ = File.rm_rf(fixture_root)
       _ = File.rm_rf(config_dir)
     end)
 
     {:ok, config_dir: config_dir}
   end
 
-  describe "install_role_sandbox/2 — pure FS, explicit skills list" do
-    test "copies each named skill into config_dir/skills/<ref> + appends the hint",
+  describe "install_role_sandbox/2 — pure FS hint, explicit skills list" do
+    test "does not copy skills here and appends the orchestrator hint",
          %{config_dir: config_dir} do
       sandbox_content = %{skills: ["ezagent-session-orchestrator"], plugins: [], prompt: "p"}
 
       assert :ok = Bootstrap.install_role_sandbox(sandbox_content, config_dir)
 
-      assert File.regular?(
-               Path.join([config_dir, "skills", "ezagent-session-orchestrator", "SKILL.md"])
-             )
-
+      refute File.exists?(Path.join(config_dir, "skills"))
       assert File.read!(Path.join(config_dir, "CLAUDE.md")) =~ @hint
     end
 
@@ -71,17 +57,14 @@ defmodule Ezagent.PluginCc.Template.OrchestratorRecipeInstallTest do
       refute File.exists?(Path.join(config_dir, "CLAUDE.md"))
     end
 
-    test "an unresolvable skill ref fails closed (not hardcoded to the orchestrator skill)",
+    test "a non-orchestrator skill list copies nothing and appends no stale hint",
          %{config_dir: config_dir} do
-      # A ref with no override + no walk hit must surface an error — proving the
-      # installer is genuinely ref-driven, not silently installing the
-      # orchestrator skill regardless.
-      sandbox_content = %{
-        skills: ["definitely-not-a-real-skill-#{System.unique_integer([:positive])}"]
-      }
+      sandbox_content = %{skills: ["pm-coordinator"], plugins: [], prompt: nil}
 
-      assert {:error, {:skill_source_not_found, _}} =
-               Bootstrap.install_role_sandbox(sandbox_content, config_dir)
+      assert :ok = Bootstrap.install_role_sandbox(sandbox_content, config_dir)
+
+      refute File.exists?(Path.join(config_dir, "skills"))
+      refute File.exists?(Path.join(config_dir, "CLAUDE.md"))
     end
 
     test "fail-closed: a non-empty plugins list is rejected (PR-2 defers plugin install)",
@@ -140,9 +123,34 @@ defmodule Ezagent.PluginCc.Template.OrchestratorRecipeInstallTest do
       {:ok, _} = Application.ensure_all_started(:ezagent_domain_agent)
       name = OrchestratorRecipe.name()
       :ok = Ezagent.Agent.RecipeRegistry.flush_cache()
+      :ok = Ezagent.Agent.RecipeRegistry.retire_role(name)
+
+      on_exit(fn ->
+        _ = Ezagent.Agent.RecipeRegistry.seed_role_if_absent(OrchestratorRecipe.recipe())
+      end)
 
       assert {:error, {:role_unresolved, {:role_not_registered, ^name}}} =
                Bootstrap.resolve_orchestrator_recipe()
+    end
+  end
+
+  describe "attach_role_sandbox_content/1" do
+    test "leaves role metadata untouched when runtime skill refs are unavailable" do
+      {:ok, _} = Application.ensure_all_started(:ezagent_domain_agent)
+      :ok = Ezagent.Agent.RecipeRegistry.flush_cache()
+
+      {:ok, _} =
+        Ezagent.Agent.RecipeRegistry.seed_role_if_absent(OrchestratorRecipe.recipe())
+
+      Ezagent.SkillRegistry.reset!()
+
+      on_exit(fn ->
+        Ezagent.SkillRegistry.reset!()
+      end)
+
+      tmpl = %{"role" => OrchestratorRecipe.name()}
+
+      assert {:ok, ^tmpl} = Bootstrap.attach_role_sandbox_content(tmpl)
     end
   end
 
@@ -152,18 +160,9 @@ defmodule Ezagent.PluginCc.Template.OrchestratorRecipeInstallTest do
   # methodology, …) must get that role's skills copied into its `config_dir`.
   describe "bootstrap/2 — generalized over the agent's role (T2)" do
     setup %{config_dir: config_dir} do
-      # A NON-orchestrator role with its OWN skill ref, sourced via the generic
-      # per-ref override (mirrors the orchestrator-specific override) so the test
-      # exercises a genuinely distinct role + skill, not the orchestrator one.
       suffix = System.unique_integer([:positive])
       role_name = "pm-fixture-#{suffix}"
       skill_ref = "pm-coordinator-fixture-#{suffix}"
-
-      fixture_root = Path.join(System.tmp_dir!(), "t2-skill-#{suffix}")
-      skill_src = Path.join(fixture_root, skill_ref)
-      File.mkdir_p!(skill_src)
-      File.write!(Path.join(skill_src, "SKILL.md"), "pm coordinator fixture skill\n")
-      Application.put_env(:ezagent_plugin_cc, :role_skill_sources, %{skill_ref => skill_src})
 
       {:ok, _} = Application.ensure_all_started(:ezagent_domain_agent)
       :ok = Ezagent.Agent.RecipeRegistry.flush_cache()
@@ -179,20 +178,17 @@ defmodule Ezagent.PluginCc.Template.OrchestratorRecipeInstallTest do
         })
 
       on_exit(fn ->
-        Application.delete_env(:ezagent_plugin_cc, :role_skill_sources)
-        _ = File.rm_rf(fixture_root)
+        :ok = Ezagent.Agent.RecipeRegistry.flush_cache()
       end)
 
       {:ok, config_dir: config_dir, role_name: role_name, skill_ref: skill_ref}
     end
 
-    test "a NON-orchestrator role's skill is copied into config_dir/skills/<ref>",
+    test "a NON-orchestrator role's skill is left for HomeRuntime materialization",
          %{config_dir: config_dir, role_name: role_name, skill_ref: skill_ref} do
-      # Pre-T2 this was a no-op (bootstrap gated on `orchestrator_recipe?/1`) and the
-      # skill never landed — this is the regression-earning assertion.
       assert :ok = Bootstrap.bootstrap(%{"role" => role_name}, config_dir)
 
-      assert File.regular?(Path.join([config_dir, "skills", skill_ref, "SKILL.md"]))
+      refute File.exists?(Path.join([config_dir, "skills", skill_ref, "SKILL.md"]))
 
       # The orchestrator-specific CLAUDE.md hint is derived from the orchestrator
       # skill ref, so a different role leaves no stale orchestrator hint.

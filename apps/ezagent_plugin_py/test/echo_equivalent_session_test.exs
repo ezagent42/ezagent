@@ -85,7 +85,9 @@ defmodule Ezagent.PluginPy.EchoEquivalentSessionTest do
       _ = Ezagent.Kind.terminate(agent_uri)
     end)
 
-    assert Python.alive?(agent_uri)
+    # Async provision (fix Ⓑ): `instantiate/3` defers subprocess start to
+    # `activate/2`, so poll for liveness rather than asserting it synchronously.
+    assert wait_alive(agent_uri, 30_000)
 
     # ---- 2. Stand up a session + join admin + the py-agent --------------
     session_uri = URI.new!("session://#{ws_name}/default/echo-#{System.unique_integer([:positive])}")
@@ -174,4 +176,17 @@ defmodule Ezagent.PluginPy.EchoEquivalentSessionTest do
   defp body_text(%{text: t}) when is_binary(t), do: t
   defp body_text(%{"text" => t}) when is_binary(t), do: t
   defp body_text(_), do: ""
+
+  defp wait_alive(uri, timeout_ms) do
+    deadline = System.monotonic_time(:millisecond) + timeout_ms
+    do_wait_alive(uri, deadline)
+  end
+
+  defp do_wait_alive(uri, deadline) do
+    cond do
+      Python.alive?(uri) -> true
+      System.monotonic_time(:millisecond) >= deadline -> false
+      true -> Process.sleep(200) && do_wait_alive(uri, deadline)
+    end
+  end
 end

@@ -164,36 +164,85 @@ defmodule EzagentDomainInstanceMessage.SessionCreator.TemplateResolver do
     end
   end
 
+  # DETERMINISTIC name→URI resolution (fix/template-name-resolution).
+  #
+  # SessionTemplate versions are content-addressed: when new code ships a
+  # new `default` version, BOTH `default@<hashA>` and `default@<hashB>`
+  # coexist in storage. The old scan used `Enum.find_value` — FIRST MATCH,
+  # UNORDERED — over the live `KindRegistry` (whose select order is
+  # effectively arbitrary), so `create_session("default")` could resolve
+  # the STALE version by luck. This resolves the NEWEST version instead.
+  #
+  # Recency signal = the `kind_snapshots` row's `inserted_at` (the version's
+  # BIRTH time). A content-addressed version is write-once, and
+  # `KindSnapshot.upsert/6` preserves `inserted_at` on conflict while only
+  # bumping `updated_at` — so `inserted_at` is the STABLE per-version age,
+  # whereas `updated_at` churns on every idempotent re-persist. Rank by
+  # `inserted_at`, NOT `updated_at`. (Do not "simplify" this back to
+  # `updated_at` — that reintroduces the order-dependence this fixes.)
   defp find_session_template_uri_by_scan(template_name, workspace_name) do
     prefix =
       workspace_name
       |> Ezagent.URI.template(:session, "#{template_name}@")
       |> URI.to_string()
 
-    live =
-      KindRegistry.list_all()
-      |> Enum.find_value(false, fn {uri_str, _pid} ->
-        if String.starts_with?(uri_str, prefix), do: {:ok, Ezagent.URI.new!(uri_str)}, else: false
-      end)
+    # uri_str => inserted_at (µs unix) for every persisted version of this
+    # name. Both coexisting versions live here — this is the durable SoT.
+    birth_by_uri = snapshot_birth_times(prefix)
 
-    cond do
-      live != false -> live
-      true -> find_session_template_uri_in_snapshots(prefix)
+    # Candidate set = union of live-registry URIs and snapshotted URIs, so
+    # the (unordered) registry can never bias the pick: EVERY candidate is
+    # ranked by its snapshot birth time. A live-but-unsnapshotted version
+    # (transient; `clear_live_template_without_snapshot/1` normally reaps
+    # it) ranks below any snapshotted version and is chosen only when no
+    # snapshotted candidate exists.
+    live_uris =
+      KindRegistry.list_all()
+      |> Enum.filter(fn {uri_str, _pid} ->
+        is_binary(uri_str) and String.starts_with?(uri_str, prefix)
+      end)
+      |> Enum.map(fn {uri_str, _pid} -> uri_str end)
+
+    candidates = Enum.uniq(Map.keys(birth_by_uri) ++ live_uris)
+
+    case candidates do
+      [] ->
+        :error
+
+      _ ->
+        newest =
+          Enum.max_by(candidates, fn uri_str ->
+            case Map.get(birth_by_uri, uri_str) do
+              # {1, ...} ranks snapshotted candidates above live-only ones;
+              # `uri_str` is the deterministic tie-break for equal births.
+              nil -> {0, 0, uri_str}
+              birth_us -> {1, birth_us, uri_str}
+            end
+          end)
+
+        {:ok, Ezagent.URI.new!(newest)}
     end
   end
 
-  defp find_session_template_uri_in_snapshots(prefix) do
+  defp snapshot_birth_times(prefix) do
     Ezagent.Ecto.KindSnapshot.list_all()
-    |> Enum.find_value(:error, fn %{uri: uri_str} ->
-      if is_binary(uri_str) and String.starts_with?(uri_str, prefix) do
-        {:ok, Ezagent.URI.new!(uri_str)}
-      else
-        false
-      end
+    |> Enum.reduce(%{}, fn
+      %{uri: uri_str, inserted_at: inserted_at}, acc when is_binary(uri_str) ->
+        if String.starts_with?(uri_str, prefix) do
+          Map.put(acc, uri_str, birth_us(inserted_at))
+        else
+          acc
+        end
+
+      _, acc ->
+        acc
     end)
   rescue
-    _ -> :error
+    _ -> %{}
   end
+
+  defp birth_us(%DateTime{} = dt), do: DateTime.to_unix(dt, :microsecond)
+  defp birth_us(_), do: 0
 
   defp workspace_name_of!(%URI{scheme: "workspace"} = uri), do: Ezagent.URI.name!(uri)
 

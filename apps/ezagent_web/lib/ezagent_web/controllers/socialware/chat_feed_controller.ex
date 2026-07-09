@@ -79,6 +79,23 @@ defmodule EzagentWeb.Socialware.ChatFeedController do
 
   def show(conn, _params), do: bad_request(conn, "missing session_uri")
 
+  @doc """
+  Path-route hello pages: `GET /hello/:session_name` serves
+  `session://<hello_workspace>/hello/<name>`.
+
+  Works like `show/2` but builds the session URI from a fixed workspace
+  (application config `:ezagent_web, :hello_workspace`, default `"demo"`)
+  and the `:hello` template type. The full socialware anonymous-access
+  pipeline runs unchanged — this is just a short URL entry.
+  """
+  def show_by_name(conn, %{"session_name" => name}) when is_binary(name) and name != "" do
+    ws = Application.get_env(:ezagent_web, :hello_workspace, "demo")
+    session_uri = Ezagent.URI.session(ws, :hello, name)
+    resolve_caller(conn, session_uri)
+  end
+
+  def show_by_name(conn, _params), do: bad_request(conn, "missing session_name")
+
   defp resolve_caller(conn, session_uri) do
     case AnonIngress.resolve_caller(conn, session_uri) do
       {:ok, conn, %{caller: caller_uri}} -> render_spa(conn, session_uri, caller_uri)
@@ -133,9 +150,7 @@ defmodule EzagentWeb.Socialware.ChatFeedController do
         <meta charset="utf-8">
         <meta name="viewport" content="width=device-width, initial-scale=1">
         <title>Socialware Chat</title>
-        <link rel="preconnect" href="https://fonts.googleapis.com">
-        <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
-        <link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Inter:wght@400;450;500;600;700;800&family=Noto+Sans+SC:wght@400;500;600;700&family=Noto+Serif+SC:wght@600;700&family=Space+Mono:wght@400;700&display=swap">
+        <link rel="stylesheet" href="/assets/css/local_fonts.css">
         <link rel="stylesheet" href="/assets/css/viewer.css">
         <script defer type="module" src="/assets/js/viewer_app.js"></script>
       </head>
