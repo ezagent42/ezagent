@@ -60,6 +60,14 @@ defmodule EzagentPluginCrawler.DealscoutManifestPublishTest do
 
     :ok = RecipeRegistry.flush_cache()
 
+    # D5：manifest 带 requires: [orchestrator]，resolve/conformance 核验被
+    # 依赖定义已发布——seed builtin definitions（幂等）。
+    :ok =
+      case DefinitionRegistry.seed_builtin_definitions() do
+        :ok -> :ok
+        {:error, {:socialware_definition_seed_collision, _}} -> :ok
+      end
+
     {:ok, ws: ws}
   end
 

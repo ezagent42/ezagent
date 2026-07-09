@@ -59,6 +59,11 @@ description: "科技创业与新品动态线索雷达：discover 角色被 @ 后
 uses:
   - hello
   - crawler
+# D5（段3，照 hello #1230）：安装时递归带上平台 orchestrator（框架 builtin
+# code-seed 定义，cc flavor 前台）——解"装完会话没人应答"（gap⑪）的最小正路。
+# conformance 的 requires_published / requires_cycle_free 断言覆盖本字段。
+requires:
+  - orchestrator
 bases:
   - Ezagent.ActionSet.Session
   - Ezagent.ActionSet.Publisher.SessionImpl

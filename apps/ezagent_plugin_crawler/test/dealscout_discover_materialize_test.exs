@@ -62,6 +62,15 @@ defmodule EzagentPluginCrawler.DealscoutDiscoverMaterializeTest do
     end)
 
     :ok = RecipeRegistry.flush_cache()
+
+    # D5：manifest 带 requires: [orchestrator]，resolve 核验被依赖定义已发布
+    # ——seed builtin definitions（幂等，照 manifest_resolver_test）。
+    :ok =
+      case Ezagent.Socialware.DefinitionRegistry.seed_builtin_definitions() do
+        :ok -> :ok
+        {:error, {:socialware_definition_seed_collision, _}} -> :ok
+      end
+
     :ok
   end
 

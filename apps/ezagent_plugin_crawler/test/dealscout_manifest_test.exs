@@ -18,10 +18,16 @@ defmodule EzagentPluginCrawler.DealscoutManifestTest do
   exactly the `discover` + `page` agent role-slots with zero participant
   instance URIs (role-slot #1180), carries ONLY the content-triggered
   update-signal rule (never hello's `always → chat` — the kanban-handoff red
-  line), and is public / supervised / ANON-readable / installer-owned. No DB
-  here (resolve is ETS-only: PluginRegistry + SessionViewRegistry, both
-  populated at app start); publish/idempotency/conformance live in
-  `dealscout_manifest_publish_test.exs`.
+  line), and is public / supervised / ANON-readable / installer-owned.
+  Publish/idempotency/conformance live in `dealscout_manifest_publish_test.exs`.
+
+  ## Why DataCase（段3 起）
+
+  历史上本 gate 是 no-DB（resolve 只查 PluginRegistry + SessionViewRegistry
+  两张 ETS）。D5 给 manifest 加了 `requires: [orchestrator]`，resolver 的
+  `ensure_required_published` 经 `DefinitionRegistry.lookup`（ConfigStore，
+  DB-backed）核验被依赖定义已发布——所以 setup 里 seed builtin definitions
+  且本 gate 转 DataCase（照 domain_session `manifest_resolver_test.exs`）。
 
   ## The single-slot flavor override (spec D8), test-side
 
@@ -32,12 +38,34 @@ defmodule EzagentPluginCrawler.DealscoutManifestTest do
   consumer: this test carries its own thin `:discover_flavor` helper — a
   post-`load!` Map transform that touches ONLY the `discover` slot.
   """
-  use ExUnit.Case, async: true
+  use EzagentCore.DataCase, async: false
 
   alias Ezagent.ActionSet.Crawler
-  alias Ezagent.Socialware.{Definition, ManifestResolver, ManifestYaml, ShippedManifest}
+
+  alias Ezagent.Socialware.{
+    Definition,
+    DefinitionRegistry,
+    ManifestResolver,
+    ManifestYaml,
+    ShippedManifest
+  }
 
   @manifest_relpath "dealscout/manifest.yaml"
+
+  setup do
+    # D5：resolve 现在核验 requires（builtin orchestrator 定义须已发布，
+    # DefinitionRegistry/ConfigStore 车道）——moduledoc §Why DataCase。
+    {:ok, _} = Elixir.Application.ensure_all_started(:ezagent_domain_session)
+    :ok = seed_builtins()
+    :ok
+  end
+
+  defp seed_builtins do
+    case DefinitionRegistry.seed_builtin_definitions() do
+      :ok -> :ok
+      {:error, {:socialware_definition_seed_collision, _}} -> :ok
+    end
+  end
 
   # D8 单槽 override（moduledoc §The single-slot flavor override）：`:name`
   # 透传共享 loader；`:discover_flavor` 在 load! 之后只换 discover 槽。
@@ -93,6 +121,10 @@ defmodule EzagentPluginCrawler.DealscoutManifestTest do
 
     # uses 声明依赖两个 plugin（hello 渲染面 + crawler 爬取后台——rename 后的通用能力名）
     assert definition.uses == ["hello", "crawler"]
+    # D5（段3，照 hello #1230）：requires 递归带上平台 orchestrator（builtin
+    # code-seed 定义）——解"装完会话没人应答"（gap⑪）；conformance 的
+    # requires_published / requires_cycle_free 在 publish 测试整套跑。
+    assert definition.requires == ["orchestrator"]
     # `"hello_render"` resolved through hello's registered PageView to the
     # backing view read ActionSet — dealscout declares NO view/render of its own.
     assert definition.views == [Ezagent.ActionSet.HelloRender]
