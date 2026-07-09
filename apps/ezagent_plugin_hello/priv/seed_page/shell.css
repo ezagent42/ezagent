@@ -1,0 +1,184 @@
+.page-root{
+  --ground:#E8E8EB;--ground-2:#EFEFF1;--ground-hover:#E4E4E8;--card:#FFFFFF;
+  --ink:#17171B;--ink-2:#56565E;--ink-3:#8A8A92;--ink-4:#B6B6BC;--line:#E2E2E6;
+  --red:#D81830;--blueink:#0048A8;--yellow:#FFD400;--jade:#0FA06E;
+  --blue:#0B5CFF;--blue-deep:#0040C4;--blue-wash:#E7EEFF;--orange:#FF8A1E;
+  --jade-wash:#DCF1E8;--accent:#0B5CFF;--accent-hover:#1466FF;--on-accent:#FFFFFF;
+  --r-md:16px;--r-lg:22px;--r-pill:999px;--stage:#14131C;
+  --font-ui:'Inter',system-ui,-apple-system,sans-serif;
+  --font-cn:'Noto Serif SC','Songti SC',serif;
+  --font-cn-ui:'Noto Sans SC','PingFang SC',sans-serif;
+  --font-mono:'Space Mono',ui-monospace,Menlo,monospace;
+  --shadow-sm:0 1px 2px rgba(15,15,15,.04),0 8px 24px -12px rgba(15,15,15,.14);
+  --shadow-card:0 60px 80px rgba(15,15,15,.07),0 25px 33px rgba(15,15,15,.05),0 7.5px 10px rgba(15,15,15,.04),0 1.7px 2.2px rgba(15,15,15,.022);
+  --shadow-accent:0 10px 24px -8px rgba(11,92,255,.5);
+  --glass:rgba(255,255,255,.62);
+  --maxw:1340px;
+  --pad-x:max(28px,calc((100% - var(--maxw)) / 2));
+  /* W5: reserve room for the fixed socialware composer bar (~90px) so the last
+     row of content is never hidden behind it. */
+  width:100%;max-width:none;margin:0;padding:0 0 108px;
+  background:var(--ground);color:var(--ink);
+  font-family:var(--font-cn-ui),var(--font-ui);font-weight:450;
+  -webkit-font-smoothing:antialiased;line-height:1.55;
+}
+.page-root *{box-sizing:border-box}
+
+/* ── full-bleed bands: background spans the viewport, content centered to --maxw
+   via the gutter. Every band now lives INSIDE a tab panel (首页 wraps
+   hero+products+foundation; worldcup/team are their own panels), so the gutter is
+   applied by band CLASS (descendant) rather than direct-child — content stays
+   centered at ANY nesting depth while each band's background still bleeds full
+   width. This is the "研发进度 卡片不居中" fix. ── */
+.page-root .hero,
+.page-root .products-section,
+.page-root .foundation,
+.page-root .worldcup,
+.page-root .team,
+.page-root .footer{padding-inline:var(--pad-x)}
+
+/* nav — centered floating glass pill: brand · section tabs · GitHub · 登录 */
+.page-root .nav{
+  position:sticky;top:14px;z-index:50;width:calc(100% - 48px);max-width:var(--maxw);
+  margin:16px auto 0;display:flex;align-items:center;gap:18px;
+  padding:9px 14px 9px 20px;border-radius:var(--r-pill);
+  background:var(--glass);backdrop-filter:blur(14px) saturate(1.4);-webkit-backdrop-filter:blur(14px) saturate(1.4);
+  box-shadow:var(--shadow-sm),inset 0 0 0 1px rgba(255,255,255,.65);
+}
+.page-root .brand{gap:10px;flex:none}
+.page-root .brand img{height:24px;width:auto;display:block}
+.page-root .brand p{font-family:var(--font-ui);font-weight:800;letter-spacing:-.01em;font-size:16px;color:var(--ink);margin:0}
+
+/* section tabs, right of the brand — the pill-group the user picked: a rounded
+   ground-2 track, transparent inactive pills, cobalt active pill. Rendered as
+   real tab-trigger buttons (.nav-tab-trigger) so there is no shadcn Button
+   variant fighting the theme. */
+.page-root .navtabs{display:inline-flex;gap:4px;margin-left:2px;background:var(--ground-2);border-radius:var(--r-pill);padding:5px}
+.page-root .nav-tab-trigger{appearance:none;border:0;background:transparent;box-shadow:none;cursor:pointer;
+  font-family:var(--font-ui);font-size:13px;font-weight:600;color:var(--ink-2);
+  padding:9px 18px;border-radius:var(--r-pill);white-space:nowrap;
+  transition:all 150ms var(--ease-out,cubic-bezier(.16,1,.3,1))}
+.page-root .nav-tab-trigger:hover{background:var(--ground-hover);color:var(--ink)}
+.page-root .nav-tab-trigger[data-state=active]{background:var(--accent);color:#fff;box-shadow:var(--shadow-accent)}
+
+/* right group pushed to the far end (ruihua .spacer → margin-left:auto) */
+.page-root .navright{margin-left:auto;flex:none;display:flex;align-items:center;gap:10px}
+.page-root .navright a{font-family:var(--font-mono);font-size:12px;color:var(--ink-2);background:var(--ground-2);padding:9px 15px;border-radius:var(--r-pill);text-decoration:none;transition:all 150ms}
+.page-root .navright a:hover{background:var(--ink);color:var(--card)}
+/* auth pill (rendered as .nav-auth, no shadcn variant): logged-out = a cobalt-wash
+   login pill; logged-in = a clean hairline pill showing the username. */
+.page-root .nav-auth{appearance:none;border:0;cursor:pointer;font-family:var(--font-mono);font-weight:700;font-size:12px;
+  color:var(--blue-deep);background:var(--blue-wash);padding:9px 16px;border-radius:var(--r-pill);white-space:nowrap;transition:all 150ms}
+.page-root .nav-auth:hover{background:var(--accent);color:#fff}
+.page-root .nav-auth.is-authed{font-family:var(--font-ui);font-weight:600;color:var(--ink);background:var(--card);box-shadow:inset 0 0 0 1px var(--line);cursor:default}
+.page-root .nav-auth.is-authed:hover{background:var(--card);color:var(--ink)}
+
+/* the section tabs now live in the nav → hide the Tabs node's own trigger row */
+.page-root .jr-tabs-list{display:none}
+
+/* hero — full-bleed white band */
+.page-root .hero{
+  margin-top:18px;padding-top:74px;padding-bottom:60px;background:var(--card);
+  box-shadow:inset 0 -1px 0 var(--line);display:flex;flex-direction:column;
+}
+.page-root .hero [data-slot=badge]{align-self:flex-start;background:var(--blue-wash);color:var(--blue-deep);border:0;border-radius:var(--r-pill);font-family:var(--font-mono);font-weight:700;font-size:11px;letter-spacing:.04em;padding:5px 12px;margin-bottom:18px}
+.page-root .hero h1{font-family:var(--font-cn);font-weight:600;font-size:clamp(46px,6.6vw,76px);line-height:1.08;letter-spacing:.01em;color:var(--ink);margin:0}
+.page-root .hero h2{font-family:var(--font-ui);font-weight:800;font-size:clamp(24px,3vw,34px);letter-spacing:-.02em;color:var(--ink-2);margin:10px 0 0}
+.page-root .hero p{font-size:19px;line-height:1.6;color:var(--ink-2);max-width:62ch;margin:22px 0 0}
+.page-root .cta{margin-top:36px}
+.page-root .cta [data-slot=button]{font-family:var(--font-ui);font-weight:600;font-size:15px;height:auto;padding:14px 26px;border-radius:var(--r-pill)}
+.page-root .cta [data-slot=button]:first-child{background:var(--accent);color:var(--on-accent);box-shadow:var(--shadow-accent);border:0}
+.page-root .cta [data-slot=button]:first-child:hover{background:var(--accent-hover)}
+.page-root .cta [data-slot=button]:last-child{background:var(--ground-2);color:var(--ink);border:0}
+
+/* section heads (shared) */
+.page-root .section{padding-top:60px;padding-bottom:8px}
+.page-root .section > p:first-of-type{font-family:var(--font-mono);font-size:11px;letter-spacing:.14em;color:var(--ink-3);margin:0 0 8px}
+.page-root .section > h2{font-family:var(--font-cn);font-weight:600;font-size:clamp(28px,3.4vw,36px);line-height:1.2;color:var(--ink);margin:0}
+.page-root .section > p:nth-of-type(2),.page-root .worldcup > p{color:var(--ink-2);font-size:16px;margin:10px 0 0;max-width:70ch}
+
+/* products */
+.page-root .product-grid{margin-top:28px}
+.page-root .product{padding:34px 36px;border-radius:var(--r-lg);background:var(--card);box-shadow:var(--shadow-card);border:0;display:flex;flex-direction:column;gap:12px;position:relative}
+.page-root .glyph{position:absolute;top:28px;right:30px;width:46px;height:46px;border-radius:var(--r-md);flex:none}
+.page-root .glyph img{width:24px;height:24px;display:block}
+.page-root .product-world .glyph{background:var(--blue)}
+.page-root .product-hello .glyph{background:var(--orange)}
+.page-root .product > code{font-family:var(--font-mono);font-size:12px;letter-spacing:.06em;background:transparent;padding:0}
+.page-root .product-world > code{color:var(--blue)}
+.page-root .product-hello > code{color:var(--orange)}
+.page-root .product > h3{font-family:var(--font-cn);font-weight:600;font-size:23px;color:var(--ink);margin:0;max-width:80%}
+.page-root .product > p{color:var(--ink-2);line-height:1.6;font-size:15px;margin:0}
+.page-root .subcards{margin-top:6px}
+.page-root .subcard{background:var(--ground-2);border-radius:var(--r-md);padding:13px 16px}
+.page-root .subcard p:first-child{font-family:var(--font-mono);font-size:11px;letter-spacing:.05em;color:var(--accent);margin:0}
+.page-root .subcard h4{font-family:var(--font-cn-ui);font-weight:600;font-size:15px;color:var(--ink);margin:4px 0}
+.page-root .subcard p:last-child{font-size:13px;color:var(--ink-2);line-height:1.5;margin:0}
+.page-root .product-foot{margin-top:8px}
+.page-root .product-foot [data-slot=button]{background:var(--accent);color:#fff;border:0;border-radius:var(--r-pill);font-weight:600;font-size:14px;height:auto;padding:10px 18px;box-shadow:var(--shadow-accent)}
+.page-root .product-foot [data-slot=badge]{font-family:var(--font-mono);font-size:11px;color:var(--ink-2);background:transparent;border:1px solid var(--line);border-radius:var(--r-pill);padding:3px 10px}
+
+/* foundation — dark band */
+.page-root .foundation{margin-top:46px;padding-top:24px;padding-bottom:24px;background:var(--stage);color:#F4F2EC;align-items:center}
+.page-root .foundation [data-slot=badge]{background:var(--jade);color:#04130d;border:0;border-radius:var(--r-pill);font-family:var(--font-mono);font-weight:700}
+.page-root .foundation p:nth-of-type(1){font-family:var(--font-cn);font-weight:500;font-size:16px;color:#F4F2EC;margin:0}
+.page-root .foundation code{font-family:var(--font-mono);font-size:12px;color:#85837B;background:transparent;margin-left:auto;padding:0}
+
+/* tab bar band — the pills sit at the page gutter (tabbar-band padding-inline) */
+.page-root .tabbar-band{padding-top:46px;padding-bottom:0;background:var(--ground)}
+.page-root [data-slot=tabs-list]{background:var(--ground-2);border-radius:var(--r-pill);padding:5px;gap:4px;height:auto;display:inline-flex}
+.page-root [data-slot=tabs-trigger]{font-family:var(--font-ui);font-weight:600;font-size:13px;color:var(--ink-2);border-radius:var(--r-pill);padding:9px 18px;border:0}
+.page-root [data-slot=tabs-trigger][data-state=active]{background:var(--accent);color:#fff;box-shadow:var(--shadow-accent)}
+
+/* tab panels (REAL switch, hideList → triggers are in the nav). The Tabs node,
+   each panel, and the 首页 wrapper carry NO gutter and stay full width so band
+   backgrounds bleed edge-to-edge (the bands own the gutter above); only the
+   active panel shows. */
+.page-root .jr-tabs,
+.page-root .jr-tabs-content,
+.page-root .tabpanel{width:100%;margin:0;padding-inline:0}
+.page-root .jr-tabs-content[hidden]{display:none}
+
+/* world.cup — tinted band */
+.page-root .worldcup{background:#F1F0F4;padding-top:40px;padding-bottom:56px}
+.page-root .worldcup-head{margin-bottom:8px}
+.page-root .worldcup-head img{width:30px;height:30px;display:block}
+.page-root .worldcup-head p{font-family:var(--font-mono);font-size:11px;letter-spacing:.14em;color:var(--ink-3);margin:0}
+.page-root .worldcup > h2{font-family:var(--font-cn);font-weight:600;font-size:clamp(28px,3.4vw,36px);color:var(--ink);margin:0}
+.page-root .stat-row{margin-top:24px}
+.page-root .stat{padding:18px 20px;border-radius:var(--r-md);background:var(--card);box-shadow:var(--shadow-sm);border:0}
+.page-root .stat h3{font-family:var(--font-ui);font-weight:800;font-size:26px;letter-spacing:-.01em;color:var(--ink);margin:0}
+.page-root .stat p{font-family:var(--font-mono);font-size:11px;color:var(--ink-3);margin:4px 0 0}
+.page-root .worldcup h4{font-family:var(--font-cn);font-weight:600;font-size:18px;color:var(--ink);margin:32px 0 12px}
+.page-root .worldcup .rounded-md,.page-root .worldcup [data-slot=table-container]{border-radius:var(--r-lg)!important;border:0!important;background:var(--card);box-shadow:var(--shadow-card);overflow:hidden}
+.page-root .worldcup table{font-size:14px;width:100%}
+.page-root .worldcup thead{background:var(--ground-2)}
+.page-root .worldcup th{font-family:var(--font-mono);font-size:11px;letter-spacing:.04em;text-transform:uppercase;color:var(--ink-3);text-align:left;padding:12px 16px}
+.page-root .worldcup td{padding:12px 16px;color:var(--ink);border-top:1px solid var(--line)}
+.page-root .worldcup td:first-child{font-family:var(--font-mono);font-weight:700;color:var(--accent)}
+.page-root .worldcup caption{caption-side:bottom;font-family:var(--font-mono);font-size:11px;color:var(--ink-3);padding:10px 16px;text-align:left}
+
+/* team — ground band */
+.page-root .team{padding-bottom:60px}
+.page-root .team-wall{margin-top:28px}
+.page-root .member{padding:22px 24px;border-radius:var(--r-lg);background:var(--card);box-shadow:var(--shadow-card);border:0;display:flex;flex-direction:column;gap:10px}
+.page-root .member-top{margin-bottom:2px}
+.page-root .member [data-slot=avatar]{box-shadow:var(--shadow-sm)}
+.page-root .member [data-slot=avatar-fallback]{background:var(--accent);color:#fff;font-family:var(--font-ui);font-weight:700}
+.page-root .member-id h4{font-family:var(--font-cn);font-weight:600;font-size:17px;color:var(--ink);margin:0}
+.page-root .member-id p{font-family:var(--font-mono);font-size:11px;color:var(--ink-3);margin:2px 0 0}
+.page-root .member [data-slot=badge]{align-self:flex-start;border-radius:var(--r-pill);font-family:var(--font-mono);font-size:10px;font-weight:700;letter-spacing:.03em;padding:4px 11px}
+.page-root .member > p:last-child{font-size:13.5px;color:var(--ink-2);line-height:1.5;margin:0}
+.page-root .member-agent{background:var(--ground-2);box-shadow:var(--shadow-sm)}
+
+/* footer */
+.page-root .footer{padding-top:36px;padding-bottom:40px;color:var(--ink-3);text-align:center;display:flex;flex-direction:column;align-items:center}
+.page-root .footer [data-slot=separator]{background:var(--line);margin-bottom:18px;width:100%;max-width:200px}
+.page-root .footer p:first-of-type{font-size:13px;color:var(--ink-2)}
+.page-root .footer code{font-family:var(--font-mono);font-size:11px;color:var(--ink-3);background:transparent}
+
+@media (max-width:900px){
+  .page-root{--maxw:100%;--pad-x:22px}
+  .page-root .product-grid,.page-root .team-wall,.page-root .stat-row{grid-template-columns:1fr!important}
+  .page-root .hero{padding-top:48px;padding-bottom:34px}
+}

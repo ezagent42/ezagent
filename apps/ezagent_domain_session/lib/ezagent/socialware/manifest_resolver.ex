@@ -60,9 +60,9 @@ defmodule Ezagent.Socialware.ManifestResolver do
     end
   end
 
-  defp ensure_required_published(_attrs, []), do: :ok
+  defp ensure_required_published(_attrs, requires) when requires in [nil, []], do: :ok
 
-  defp ensure_required_published(attrs, requires) do
+  defp ensure_required_published(attrs, requires) when is_list(requires) do
     workspace_uri = workspace_uri(attrs)
 
     case Enum.find(requires, &(DefinitionRegistry.lookup(workspace_uri, &1) == :error)) do
