@@ -346,6 +346,50 @@ prod  : boot scan ON  → 走 manifest → hello 有 orchestrator   ← canary �
 
 `application.ex:631` 仍是 `installs: ["chat", "orchestrator"]`。LV 新建会话表单默认就是它。**创建 `default` session 依旧必炸。**
 
+### 8.5 orchestrator 的两条进入路径 —— 勾选框只能挡一条
+
+新建会话表单收 `short_name / template_name / socialware_ref / revision / install_config`
+（`conversation_actions.ex:97-99`）。**全仓没有 orchestrator 勾选框。** orchestrator
+经由两条性质不同的路径进入 session：
+
+| 路径 | 谁决定 | 勾选框能挡吗 |
+|---|---|---|
+| ① `default` 模版写死 `installs: ["chat","orchestrator"]`（`application.ex:631`） | 平台 | ✅ |
+| ② socialware 的 `requires` 被 `expand_installs_with_requires/3` 展开（`installation.ex:637`；hello `manifest.yaml:7`） | socialware 作者 | ❌ 这是**依赖**，不是选项 |
+
+### 8.6 「不勾选 orchestrator」是回避，不是修复
+
+**全仓只有 `cc` flavor 是 transport-gated** —— `spawn.ex:437` 是唯一的
+`require_transport_join` 调用点。hello 的四个角色是 `hello` / `native` / `native` /
+`curl`（`app.ex:140-143`），一个 cc 都没有，ReadyGate 立刻翻 `:ready`，grant `:call`
+不阻塞。
+
+|  | 不勾选 | 勾选 |
+|---|---|---|
+| 链 A（创建事务嵌 agent 事务） | 结构**依然存在**，只是没有角色槽可 spawn | 触发 |
+| 链 B（PTY 早产） | 不触发（不 spawn cc agent） | 触发 |
+| 创建耗时 | 立即返回 | 5.3s 超时 |
+
+这解释了 `#1277` 为什么"看起来修好了"。**但链 A 一点没修** —— 一个 `native` agent
+spawn 失败，照样回滚整个 session。
+
+同时代价明确：`default` 模版 `routing_rules: []`，description 自陈 *"orchestrator-only
+team"*。去掉 orchestrator 后它是**一个只有 owner 的空房间**，`@orchestrator` 零接收者。
+
+### 8.7 `install` / `uninstall` 不对称
+
+```
+session.socialware.uninstall   ✅ 已存在（conversation_actions.ex:73, :804）
+session.socialware.install     ❌ 不存在（全仓无 action(:install…) / handle_install）
+```
+
+装载被**折叠进创建**：`SocialwareInstall.prepare_create_template` 先在 caller workspace
+写一个本地 template，再让 `create_session` 去消费它（其 moduledoc 自陈 *"the normal
+session-create path then consumes that local template"*）。
+
+**这正是 Allen 要的「先建 owner-only session，再改配置」缺的那一半。** 而 A 要搬迁的
+`DefinitionAgents.materialize_one` 正好就是 `install` 事务的实现体。
+
 ---
 
 ## 9. rebase 复核
@@ -366,49 +410,46 @@ $ git diff --stat 96af00d4d..origin/main -- \
 
 ---
 
-## 10. 后续方向
+## 10. 方案（Allen 2026-07-09 裁决后）
+
+### 10.0 裁决记录
+
+| Allen 的意见 | 结论 |
+|---|---|
+| 「按需供给还是把 session 创建和 orchestrator 创建整合在一起了」 | **接受。** `RouteProvisioner` 跑在路由时、不阻塞 create，但它仍让 session 事务嵌了一小段 agent 事务。**A 的落点作废，改为 `session.socialware.install` 事务** |
+| 「应该用一个 gate 完全防止；创建只负责创建（只有 owner），之后再加载 socialware/invite」 | **接受。** 新增 A2（gate）+ A3（install 事务 + 前后端两步流） |
+| 「zyli 的 PR 1255/1292/1293 是否相关」 | 基本无关；`#1255` 的 `agent_session_role_gate_test.exs` 提供了 A2 的 gate 范式。建议 `#1293` 先合（同碰 `arch.scan.ex`） |
+| 是否先把 `default` 模版改 `["chat"]` 止血 | **不止血**，直接修 A+B |
+| install 完成前来消息怎么办 | **fail-fast 显式报错**，不留 `RouteProvisioner` 兜底 |
 
 ### 10.1 修复分层
 
 | 层 | 内容 | 修好什么 | 撤销/对应 |
 |---|---|---|---|
-| **A. 恢复契约** | 从 `materialize_template_team/4` 撤掉 `DefinitionAgents.materialize_definition_agents`；打开 `provision_declared_member/4` 的 `:agent` 分支，把 `materialize_one` 的 spawn→join→grant→MCP-register 搬进按需车道；`hello/app.ex` 里显式调 `materialize_template_team` 处同步改 | create_session 事务里不再有任何 agent 事务。**一刀消灭**创建路径上的 grant `:call`、cp_r、PTY | 撤销 `#1140` 接线 + `#1180` 封堵 + `#1223` 形态变更 |
-| **B. agent 事务自己不能重** | `instantiate` 只 spawn Kind 即返回；物化 + role bootstrap + 重校验 grant + 拉 PTY 全在 agent 自己进程/受监督 Task，**且保证 marker 落地后才 `Pty.start`** | 否则 A 只是把 5s 从 Workspace Kind 搬到 Session Kind；且 orchestrator 依然到不了 `:ready` | 修 `#1096` |
-| **B'. grant 移进 agent 自己的创建事务** | recipe caps 由 Agent 在自己的 `create/1` 里授予，而非外部 `:call` 打进来 | 跨事务 `:call` 根本不存在，`:cast` 不再需要，§7.2 的「无 caps 成员」不可能发生 | 取代 handoff 的 `:cast` |
-| **C. fail-fast 收口** | `mark_failed` flush→DLQ + telemetry；§8.2 三处静默吞咽改 fail-loud；**不引入** durable `last_error` / DEGRADED 降级态 | 崩得响，不静默 | 按 Allen 原则修正我早先方案 |
+| **A. 恢复契约** | 从 `materialize_template_team/4` 撤掉 `DefinitionAgents.materialize_definition_agents`；`hello/app.ex` 显式调用处同步改。创建事务 = spawn Session + bind + 记录 declaration + 装 prompts/legends/rules + join owner | create_session 事务里不再有任何 agent 事务。**一刀消灭**创建路径上的 grant `:call`、cp_r、PTY | 撤销 `#1140` 接线 + `#1223` 形态变更 |
+| **A2. gate** | ①静态 call-graph：`SessionCreator.create_session/3` 调用图禁止出现 `Kind.spawn(Entity.Agent,_)` / `RecipeMaterializer.create_agent_from_recipe/1` / `Identity.grant_cap/3` / `Domain.Pty.start/2`。②运行时不变式：create 返回后 `session_member_uris/1 == [owner]` —— **即 `#912` 原始断言**，恢复它 = gate + failing-first | 防止再次回归 | 照 `#1255` 的 `agent_session_role_gate_test.exs` 范式 |
+| **A3. install 事务** | 新增 `session.socialware.install`（补上 `uninstall` 缺失的另一半），把 `DefinitionAgents.materialize_one` 搬进去；失败 loud，**不回滚 session**。前后端改两步流：创建 owner-only session → 装载 socialware（UI 显示"正在装载…"） | 实现 Allen 的「创建好之后再加载」 | 新增 |
+| **A4. fail-fast 路由** | `RouteProvisioner` 的 `:agent` 分支保持关闭，且 `else -> nil` 的静默吞咽改为显式 `{:error, :role_not_installed}` | 装载完成前来的消息**显式报错**，不静默、不缓冲 | 修 `route_provisioner.ex:44-46` |
+| **B. agent 事务自己不能重** | `instantiate` 只 spawn Kind 即返回；物化 + role bootstrap + 重校验 grant + 拉 PTY 全在 agent 自己进程/受监督 Task，**且保证 marker 落地后才 `Pty.start`** | orchestrator 真的能到 `:ready` | 修 `#1096` |
+| **B'. grant 移进 agent 自身事务** | recipe caps 由 Agent 在自己的 `create/1` 里授予，而非外部 `:call` 打进来 | 跨事务 `:call` 根本不存在；`:cast` 不再需要，§7.2 的「无 caps 成员」不可能发生 | 取代 handoff 的 `:cast` |
+| **C. fail-fast 收口** | `mark_failed` flush→DLQ + telemetry；§8.2 三处静默吞咽改 fail-loud；**不引入** durable `last_error` / DEGRADED 降级态 | 崩得响，不静默 | 按 Allen 原则修正早先方案 |
 
 **A 与 B 正交，必须都做。**
-只做 A：创建秒回、发消息卡 5s、orchestrator 永远哑。
-只做 B：创建变快（~1s），但 session 事务仍会因一个 role member 起不来而回滚 —— 依然违反契约。
+只做 A：创建秒回，但 orchestrator 装载时仍会卡住且永远哑。
+只做 B：创建变快（~1s），但 session 事务仍会因一个 role member 起不来而回滚 —— 契约仍破。
 
 ### 10.2 failing-first 测试
 
-1. **A**：恢复 `session_create_orchestrator_decouple_test.exs` 的 `#912` 原始断言（"创建后唯一成员是 owner"）—— 这条测试直接就是 A 的 failing-first。
+1. **A**：恢复 `session_create_orchestrator_decouple_test.exs` 的 `#912` 原始断言（"创建后唯一成员是 owner"）。
 2. **B**：fresh instantiate 时 `Pty.start` 必须发生在 config_dir marker 落地之后。确定性、与 `Mix.env()` 无关（`require_transport_join` 在 test 被跳过，但顺序断言不依赖它）。
-3. **C**：`mark_failed` 后 buffer 必须清空并出现在 DLQ + telemetry。
+3. **A4**：路由到未装载的 role → `{:error, :role_not_installed}`，不是 `nil`、不是静默丢弃。
+4. **C**：`mark_failed` 后 buffer 必须清空并出现在 DLQ + telemetry。
 
-### 10.3 建议新增的 CI gate
+### 10.3 不做的事
 
-契约目前只存在于 moduledoc 和一个测试断言里，被 agent 反转了都没人发现。建议加不变式 gate：
-
-> **`create_session` 返回后，`Session.session_member_uris/1` 只能包含 owner。**
-
-放进 `mix ezagent.check_invariants`，下次再有人（或 agent）把 spawn 塞进创建路径，CI 会红。
-
-### 10.4 需要 Allen 拍板的两点
-
-1. **按需供给发生在 Session Kind 的 handler 内部**（`RouteProvisioner.resolve_role/4` 跑在 Session 的 action handler 里，`Process.put` 攒 effects）。即便 B 让它只剩 `Kind.spawn` + `join`（cc 因 transport-gated，`do_await_ready` 仍会烧满 `spawn_await_ready_ms` 500ms），这仍是"session 的事务里嵌了一小段 agent 的事务"。
-   **这算不算"解耦"的完成态？** 还是 `resolve_role` 找不到活成员时应只 buffer 到声明里的 planned URI，由独立的受监督 materializer 去 spawn，Session Kind 一步都不等？—— 这决定 B 的边界。
-2. **§7 的矛盾如何裁决**：确认「按 handoff 的诊断走、不按其修法走」，还是明确否掉 15:33 的原则。
-
-### 10.5 PR 归属建议
-
-- **A + C** ：需要 Allen 先答 10.4.1（边界）。
-- **B**：可独立开工，与 A 无文件冲突（`cc_agent/spawn.ex` vs `definition_agents.ex` / `template_team.ex`）。
-- **§8.4 hello workaround 收敛**：单独开 PR，不要塞进热修。
-- 注意 07-09 群里 `@陈瑞华 @张宁 你们的 PR 可以走一个 review 直接合并进去` —— 若那些 PR 触及 `definition_agents.ex` / `template_team.ex` / `session_creator.ex`，A 会撞车，需先确认。
-
----
+- **不临时把 `default` 模版改成 `installs: ["chat"]` 止血**。它能立刻解除 canary 上「新建会话失败」，但把 `default` session 掏成空房间，且掩盖链 A（见 §8.6）。
+- **不采纳 handoff 的 `grant :call → :cast`**（见 §7）。
+- **不引入 `last_error` marker / DEGRADED 降级态**（违反 let-it-crash）。
 
 ## 附录：复现方法
 
