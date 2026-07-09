@@ -39,12 +39,14 @@
 
 **段2 数据真化**（crawler plugin 层，保持 generic）
 数据源配置诚实化（D4）；Poller 抓取结果**注入 session**（发现流对用户可见——现有 dispatch 车道，抓完即丢改为丢进会话/slice）；RetentionSweeper 接线或删（无 durable 批次则删空转 GenServer）。验收：会话里能看到真实源真线索；无空转 GenServer；crawler 零业务语义。
+（落地对齐：选了更彻底的 b 路——**删掉 Poller 周期腿本身**，发现流完全 agent 驱动（crawl_now/search/@discover），RetentionSweeper 连同无消费者的 pin_batch 一并删除。）
 
 **段3 角色链路真化**（manifest 层）
 discover 槽 → np×py（D1）；`requires: [orchestrator]`（D5）；routing 单信号规则保持。验收：装完 owner 说话有应答；discover 无人工 erpc 走通"触发爬取→emit `__dealscout_update__`→routing 命中 page"。
 
 **段4 页面立起来**（view 层，D2）
-plugin 侧新增 dealscout render ActionSet（cap-only）+ SessionView（照 kanban BoardView/KanbanRender 模具），结构化渲染真实线索数据；page 角色重建走 Surface `put_version`/approve 版本树；删 ALT（D3）+ fake generator seam。验收：install 后零操作员干预页面自动立起；匿名访客 `/socialware/chat` 看到 approved 真数据页面；world 零改动。
+plugin 侧新增 dealscout render ActionSet（cap-only）+ SessionView（照 kanban BoardView/KanbanRender 模具），结构化渲染真实线索数据；page 角色重建走 Surface `put_version`/approve 版本树；删 ALT（D3）+ fake generator seam。验收：install 后零操作员干预页面自动立起；匿名访客 `/socialware/external`（页面投影的匿名入口；`/socialware/chat` 是聊天面）看到 approved 真数据页面；world 零改动。
+（落地对齐：段5 真浏览器 e2e 对本段代码修了两处——①发布读有界重试（注入 burst 期间 get_slice 5s 超时被 fail-safe 折叠成"没有线索"→ 自动腿静默跳过）；②render_tree 词表 page/section→shadcn（外部 SPA 现行 renderer 不认旧 hello page-builder 集，渲成 Unsupported node）。证据与根因：`docs/e2e/2026-07-10/dealscout-rework/06c-auto-publish-and-fixes.txt`。）
 
 **段5 e2e + 收官**（kanban 段4 同款）
 真浏览器全流程新证据集（发布→安装→会话发现流→页面重建→匿名查看，每步截图）；删被取代旧证据；活文档对齐；return + PR body 按 P6 写四分归属。
