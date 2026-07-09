@@ -9,9 +9,16 @@ defmodule Mix.Tasks.Ezagent.Skills.RegenSeed do
   The task copies each derived ref's dev-harness closure from
   `.claude/skills/<ref>/` into the release-bundled seed origin and prints the
   resulting content hash. It never edits `.claude/`.
+
+  `@requirements ["compile"]` pins the derivation to FRESH beams: without it a
+  regen after pulling recipe changes silently derives from stale `_build`
+  output and drops newly-declared refs from the bundle (the 2026-07-09 #1266
+  incident shape).
   """
 
   use Mix.Task
+
+  @requirements ["compile"]
 
   @impl Mix.Task
   def run(_argv) do

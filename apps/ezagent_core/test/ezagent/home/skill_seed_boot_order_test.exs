@@ -7,7 +7,17 @@ defmodule Ezagent.Home.SkillSeedBootOrderTest do
   setup do
     source = tmp_dir("src")
     dest = tmp_dir("dest")
-    write!(Path.join(source, "ezagent-session-orchestrator/SKILL.md"), "boot seed\n")
+
+    # The fixture source is built FROM the derivation (IC-3): a hand-listed
+    # single ref rots the moment any plugin's roles/0 declares another skill
+    # (the first test iterates every derived ref against this source).
+    fixture_refs =
+      Enum.uniq(["ezagent-session-orchestrator" | SkillRegistry.derived_recipe_skill_refs()])
+
+    for ref <- fixture_refs do
+      write!(Path.join(source, "#{ref}/SKILL.md"), "boot seed\n")
+    end
+
     SkillRegistry.reset!()
 
     on_exit(fn ->

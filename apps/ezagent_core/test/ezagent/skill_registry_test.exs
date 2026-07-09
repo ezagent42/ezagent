@@ -33,7 +33,14 @@ defmodule Ezagent.SkillRegistryTest do
   test "derived_recipe_skill_refs/0 is computed from plugin roles/0 recipes" do
     registry = registry!()
 
-    assert registry.derived_recipe_skill_refs() == [@skill_ref]
+    derived = registry.derived_recipe_skill_refs()
+
+    # Membership + shape, NOT a hand-counted exact list (IC-3 bans the
+    # hand-count: other plugins' roles/0 legitimately declare more skills and
+    # the derived set follows them). The bundle↔derivation consistency
+    # invariant is the next test.
+    assert @skill_ref in derived
+    assert derived == derived |> Enum.uniq() |> Enum.sort()
   end
 
   test "seed_bundle_refs/0 matches the derived runtime skill set" do

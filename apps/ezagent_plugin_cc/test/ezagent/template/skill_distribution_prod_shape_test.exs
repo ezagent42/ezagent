@@ -25,7 +25,10 @@ defmodule Ezagent.PluginCc.Template.SkillDistributionProdShapeTest do
       :ok = Ezagent.SkillRegistry.refresh!(runtime_dir: runtime_dir)
 
       refs = Ezagent.SkillRegistry.derived_recipe_skill_refs()
-      assert refs == [@skill_ref]
+      # Membership, not a hand-counted exact list (IC-3): the derived set
+      # follows every plugin's roles/0. The load-bearing invariant is the
+      # next line — bundle == derivation — plus the resolve loop below.
+      assert @skill_ref in refs
       assert Ezagent.SkillRegistry.seed_bundle_refs() == refs
 
       for ref <- refs do
