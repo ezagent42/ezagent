@@ -22,6 +22,8 @@ defmodule Ezagent.World.ConversationActions do
   alias Ezagent.World.ConversationRoutingForm
   alias EzagentDomainInstanceMessage.Routing.MentionRouting
 
+  @create_session_deadline_ms 30_000
+
   @doc """
   Route a `world:dispatch` conversation action to its handler (the dispatcher
   `WorldLive` delegates ALL conversation actions here, so the LiveView shell
@@ -347,9 +349,12 @@ defmodule Ezagent.World.ConversationActions do
   end
 
   defp do_create_session(socket, workspace_uri, caller, short_name, template_name) do
+    caps = Map.get(socket.assigns, :current_caps, MapSet.new())
+
     case create_session_result(
            workspace_uri,
            caller,
+           caps,
            short_name,
            template_name,
            &Ezagent.Workspace.create_session/3
@@ -470,17 +475,22 @@ defmodule Ezagent.World.ConversationActions do
   @spec create_session_result(
           URI.t(),
           URI.t(),
+          MapSet.t(),
           String.t(),
           String.t(),
           (URI.t(), map(), map() -> term())
         ) ::
           {:ok, URI.t()} | {:error, term()}
-  def create_session_result(workspace_uri, caller, short_name, template_name, create)
+  def create_session_result(workspace_uri, caller, short_name, template_name, create) do
+    create_session_result(workspace_uri, caller, MapSet.new(), short_name, template_name, create)
+  end
+
+  def create_session_result(workspace_uri, caller, caps, short_name, template_name, create)
       when is_function(create, 3) do
     case create.(
            workspace_uri,
            %{short_name: short_name, template_name: template_name},
-           %{caller: caller, caps: MapSet.new()}
+           %{caller: caller, caps: caps, deadline_ms: @create_session_deadline_ms}
          ) do
       {:ok, %{session_uri: %URI{} = session_uri}} -> {:ok, session_uri}
       {:error, reason} -> {:error, reason}

@@ -103,6 +103,20 @@ defmodule EzagentDomainInstanceMessage.Integration.SendEchoDecoupleTest do
     Process.sleep(50)
   end
 
+  defp join_no_wait(session, member) do
+    :ok =
+      Invocation.dispatch(%Invocation{
+        target: Ezagent.URI.new!("#{URI.to_string(session)}?action=session.join"),
+        mode: :cast,
+        args: %{member: member},
+        ctx: %{
+          caller: member,
+          caps: MapSet.new([Ezagent.Capability.admin_genesis_cap()]),
+          reply: :ignore
+        }
+      })
+  end
+
   # Spawn a real echo agent member, join it, then make its spawn slow and
   # terminate it → a COLD-but-durable member whose `ensure_live` revival blocks
   # @slow_spawn_ms. Restores the original entity spawn fn on exit.
@@ -218,6 +232,40 @@ defmodule EzagentDomainInstanceMessage.Integration.SendEchoDecoupleTest do
              "is blocking the send pipeline / the next send"
 
     drain_delivery_tasks()
+  end
+
+  test "immediate post-join delivery waits for the member-cap before receive authorization" do
+    session = spawn_session()
+    sender = Ezagent.URI.new!("entity://team-alpha/user/#{u("sender")}")
+    {:ok, _} = SpawnRegistry.spawn(sender)
+    join(session, sender)
+
+    member = Ezagent.URI.new!("entity://team-alpha/agent/immediate_#{u("m")}")
+    {:ok, _} = Ezagent.TestSupport.TemplateAgentSpawn.spawn_agent(member, "echo")
+    {:ok, original_receive} = Ezagent.BehaviorRegistry.lookup(Ezagent.Entity.Agent, :receive)
+
+    :ok =
+      Ezagent.BehaviorRegistry.register(
+        Ezagent.Entity.Agent,
+        :receive,
+        Ezagent.ActionSet.User.Receive
+      )
+
+    on_exit(fn ->
+      Ezagent.BehaviorRegistry.register(Ezagent.Entity.Agent, :receive, original_receive)
+    end)
+
+    join_no_wait(session, member)
+    subscribe(session)
+
+    {id, _elapsed} = send_and_time(session, sender, "post-join immediate delivery")
+    drain_delivery_tasks()
+
+    {:ok, slice} = Ezagent.Kind.get_slice(member, :session)
+    state = Map.get(slice, :state, slice)
+
+    assert %{message_id: ^id} = Map.get(state, :last_received),
+           "delivery raced ahead of the async at-join member-cap grant and was denied"
   end
 
   test "ordering — multiple rapid sends appear in the feed in send order" do

@@ -104,6 +104,22 @@ defmodule Ezagent.Socialware.AnonAdmissionTest do
       assert {:ok, %{messages: _}} = ChatFeed.snapshot(session, anon)
     end
 
+    test "multiple anonymous visitors can join the same public session" do
+      session = public_session()
+
+      assert {:ok, %{anon_uri: anon_a, source: :minted}} =
+               AnonAdmission.admit_anonymous_participant(session)
+
+      assert {:ok, %{anon_uri: anon_b, source: :minted}} =
+               AnonAdmission.admit_anonymous_participant(session)
+
+      refute anon_a == anon_b
+      assert member?(session, anon_a)
+      assert member?(session, anon_b)
+      assert {:ok, %{messages: _}} = ChatFeed.snapshot(session, anon_a)
+      assert {:ok, %{messages: _}} = ChatFeed.snapshot(session, anon_b)
+    end
+
     test "join cap remains #154-clean with no system principal granter" do
       session = public_session()
 

@@ -8,6 +8,7 @@ defmodule Ezagent.World.SocialwareInstallTest do
   use EzagentCore.DataCase, async: false
 
   alias Ezagent.Socialware.{Definition, DefinitionRegistry, Installation}
+  alias Ezagent.World.ConversationData
   alias Ezagent.World.SocialwareInstall
   alias EzagentDomainInstanceMessage.SessionCreator.TemplateResolver
 
@@ -30,6 +31,20 @@ defmodule Ezagent.World.SocialwareInstallTest do
       {:error, {:already_started, _}} -> :ok
       {:error, {:already_registered, _}} -> :ok
     end
+  end
+
+  defp workspace_create_session_cap(workspace_uri, caller) do
+    %Ezagent.Capability{
+      Ezagent.Capability.cap(
+        :workspace,
+        Ezagent.ActionSet.Workspace,
+        :create_session,
+        Ezagent.URI.instance(workspace_uri),
+        Ezagent.Capability.workspace_of(workspace_uri)
+      )
+      | granted_by: caller,
+        granted_at: DateTime.utc_now()
+    }
   end
 
   defp write!(name, bases, workspace_uri, scope) do
@@ -146,5 +161,51 @@ defmodule Ezagent.World.SocialwareInstallTest do
     install = install_of(template_name, @ws_consumer)
     assert install.ref == name
     assert install.config == %{"role_slots" => role_slots}
+  end
+
+  test "author-publish -> install template -> Workspace.create_session -> installed session is readable" do
+    workspace_name = "cidw-live-#{uniq()}"
+    workspace_uri = Ezagent.URI.workspace(workspace_name)
+    caller = URI.new!("entity://#{workspace_name}/user/operator")
+
+    {:ok, _workspace_pid} = Ezagent.Workspace.create(workspace_name, %{})
+
+    {:ok, _caller_pid} =
+      Ezagent.Kind.spawn(Ezagent.Entity.User, %{
+        uri: caller,
+        initial_caps: MapSet.new([Ezagent.Capability.admin_genesis_cap()])
+      })
+
+    name = "cidw-live-socialware-#{uniq()}"
+    write!(name, [Ezagent.ActionSet.Session], workspace_uri, :private)
+
+    assert {:ok, template_name} =
+             SocialwareInstall.prepare_create_template(
+               workspace_uri,
+               caller,
+               "default",
+               name,
+               nil
+             )
+
+    assert {:ok, %{session_uri: session_uri}} =
+             Ezagent.Workspace.create_session(
+               workspace_uri,
+               %{short_name: "installed-#{uniq()}", template_name: template_name},
+               %{
+                 caller: caller,
+                 caps: MapSet.new([workspace_create_session_cap(workspace_uri, caller)])
+               }
+             )
+
+    assert [definition] = Installation.installed_definitions(session_uri)
+    assert definition.name == name
+
+    assert [
+             %{
+               "name" => ^name,
+               "title" => _
+             }
+           ] = ConversationData.installed_socialwares(session_uri)
   end
 end

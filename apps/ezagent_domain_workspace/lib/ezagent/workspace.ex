@@ -823,15 +823,26 @@ defmodule Ezagent.Workspace do
     caller = Map.fetch!(ctx, :caller)
     caps = Map.fetch!(ctx, :caps)
 
+    dispatch_ctx =
+      %{mode: :call, caller: caller, caps: caps, reply: {:caller_inbox, self()}}
+      |> maybe_put_deadline(ctx)
+
     with :ok <- ensure_workspace_live(workspace_uri) do
       Router.dispatch(%Cmd{
         target: target,
         action: :create_session,
         args: args,
-        ctx: %{mode: :call, caller: caller, caps: caps, reply: {:caller_inbox, self()}}
+        ctx: dispatch_ctx
       })
     end
   end
+
+  defp maybe_put_deadline(dispatch_ctx, %{deadline_ms: deadline_ms})
+       when is_integer(deadline_ms) and deadline_ms > 0 do
+    Map.put(dispatch_ctx, :deadline_ms, deadline_ms)
+  end
+
+  defp maybe_put_deadline(dispatch_ctx, _ctx), do: dispatch_ctx
 
   defp ensure_workspace_live(%URI{scheme: "workspace"} = workspace_uri) do
     name = Ezagent.URI.name!(workspace_uri)

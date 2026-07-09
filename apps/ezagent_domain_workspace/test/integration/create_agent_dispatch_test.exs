@@ -112,23 +112,33 @@ defmodule Ezagent.Integration.CreateAgentDispatchTest do
       ws_name: ws_name
     } do
       {:ok, _apps} = Application.ensure_all_started(:ezagent_plugin_cc)
+      {:ok, _apps} = Application.ensure_all_started(:ezagent_plugin_codex)
 
-      agent_uri =
-        Ezagent.URI.agent(
-          ws_name,
-          "cc_default-cwd-#{System.unique_integer([:positive])}"
-        )
+      for {flavor, template_ref, namespace} <- [
+            {"cc", "cc.agent", "cc-agents"},
+            {"codex", "codex.agent", "codex-agents"}
+          ] do
+        agent_uri =
+          Ezagent.URI.agent(
+            ws_name,
+            "#{flavor}_default-cwd-#{System.unique_integer([:positive])}"
+          )
 
-      tmpl =
-        Ezagent.ActionSet.Workspace.__file_flavor_template_for_test__(
-          "cc",
-          "cc.agent",
-          agent_uri,
-          ""
-        )
+        tmpl =
+          Ezagent.ActionSet.Workspace.__file_flavor_template_for_test__(
+            flavor,
+            template_ref,
+            agent_uri,
+            ""
+          )
 
-      assert tmpl["project_cwd"] == tmpl["config_dir"]
-      assert String.contains?(tmpl["project_cwd"], "/cc-agents/#{ws_name}/cc_default-cwd-")
+        assert tmpl["project_cwd"] == tmpl["config_dir"]
+
+        assert String.contains?(
+                 tmpl["project_cwd"],
+                 "/#{namespace}/#{ws_name}/#{flavor}_default-cwd-"
+               )
+      end
     end
 
     test "cc flavor nonexistent cwd returns {:error, {:cwd_not_a_dir, _}}", %{
