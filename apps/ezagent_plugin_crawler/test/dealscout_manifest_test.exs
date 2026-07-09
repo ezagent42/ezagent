@@ -238,6 +238,20 @@ defmodule EzagentPluginCrawler.DealscoutManifestTest do
            |> map_size() == 3
   end
 
+  test "update-signal contract: manifest YAML is the authoritative carrier, code constants must match" do
+    # 契约锁反转（Decision #156，kanban relay-back marker 同款）：以前是代码
+    # `Crawler.update_signal/0` 为基准锁 manifest；现在 manifest YAML 是权威
+    # 载体——从 parse 后的 manifest 本体读出 routing 的 text_contains arg /
+    # receivers，断言 emit 侧代码常量（内容协议的发信方）与之逐字节一致。
+    # 常量漂移 = emit 的信号不再命中自家 routing 规则，这里当场红。
+    assert Crawler.update_signal() == update_marker_from_manifest()
+
+    # page receiver 名同理：直接 dispatch 腿按 `Crawler.page_role/0` 解析
+    # page 成员，必须就是 manifest routing 声明的 receiver 角色名。
+    [rule] = manifest_attrs()["routing_rules"]
+    assert [Crawler.page_role()] == rule["receivers"]
+  end
+
   # Extract the update-signal `text_contains` arg from the PARSED manifest (raw
   # attrs, pre-resolve) — the config-driven read of the contract marker.
   defp update_marker_from_manifest do

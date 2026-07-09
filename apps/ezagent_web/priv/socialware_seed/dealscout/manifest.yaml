@@ -5,10 +5,12 @@
 # `Ezagent.Socialware.ManifestSeed.scan_all!/1` resolves + publishes it through
 # the governed import lane (parse → ManifestResolver.resolve →
 # Conformance.check_candidate → publish_or_upgrade). There is ZERO self-publish
-# from the crawler plugin's boot; `EzagentPluginCrawler.Demo` remains only as a
-# test driver over this SAME file. Semantics are the judge: this file must
-# resolve to the exact Definition the retired code attrs produced (conformance
-# 13/13 green).
+# from the crawler plugin's boot AND zero plugin-side wrapper module (Decision
+# #156): tests drive this SAME file directly via
+# `Ezagent.Socialware.ShippedManifest.load!/2`
+# (`dealscout_manifest_test.exs` / `dealscout_manifest_publish_test.exs`).
+# Semantics are the judge: the published definition passes all 15
+# `Ezagent.Socialware.Conformance` assertions (15/15 green).
 #
 # Shape notes (what dealscout composes — 职责重划 2026-07-06 拍板):
 #   * dealscout = 后台数据（爬取 plugin `crawler` + discover agent 用 crawl
@@ -28,10 +30,12 @@
 #   * routing_rules — ONLY the content-triggered update-signal rule,
 #     #1212-hardened to and(text_contains "__dealscout_update__", from_role
 #     discover). NEVER hello's `always → chat` rule (kanban-handoff red line).
-#     The "__dealscout_update__" literal is the single contract point — it MUST
-#     stay byte-identical to `Ezagent.ActionSet.Crawler.update_signal/0`
-#     (locked by `demo_test.exs`); the `page` receiver name likewise mirrors
-#     `Crawler.page_role/0`.
+#     The "__dealscout_update__" literal is the single contract point and THIS
+#     FILE is its authoritative carrier — the emit-side code constant
+#     `Ezagent.ActionSet.Crawler.update_signal/0` must stay byte-identical to
+#     it, and the emit-side `Crawler.page_role/0` to the `page` receiver name
+#     (both locked config-driven by `dealscout_manifest_test.exs`, which reads
+#     the arg/receivers OUT of this parsed YAML).
 #   * visibility_policy — public + supervised like hello/kanban, and
 #     web_anon_access: true（与 kanban 的 false 不同：dealscout 的公开面是给
 #     匿名访客看的线索页，产品语义要匿名可读）。
