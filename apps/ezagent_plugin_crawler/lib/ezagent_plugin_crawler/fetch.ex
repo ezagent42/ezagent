@@ -23,7 +23,7 @@ defmodule EzagentPluginCrawler.Fetch do
 
   # 2026-07-07 真出网 e2e 发现并修正：原 @default_public_source 指
   # topstories.json（返回**整数 id 数组**，不是条目对象），真跑必
-  # FunctionClauseError 崩 Poller / crawl_now（单测 stub 的 body 都是对象数组，
+  # FunctionClauseError 崩 crawl_now（单测 stub 的 body 都是对象数组，
   # 掩盖了真源形状）。改指 HN Algolia front_page 检索（公开、无 token、返回
   # `%{"hits" => [%{...}]}` 条目对象），`parse_items/2` 同步支持该 envelope。
   @default_public_source ~c"https://hn.algolia.com/api/v1/search?tags=front_page"

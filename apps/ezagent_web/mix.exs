@@ -128,8 +128,9 @@ defmodule EzagentWeb.MixProject do
       # crawler（前名 dealscout，2026-07-07 分层 rename：plugin=通用爬取能力，
       # dealscout 只是它 ship 的 demo socialware 名）— declared so the crawler
       # plugin's OTP app boots (its roles/0 registers the dealscout demo
-      # recipes; the crawl Poller + RetentionSweeper start under the web
-      # release). Locked by all_plugin_apps_wired_to_web.
+      # recipes; the RetentionSweeper starts under the web release — crawl is
+      # agent-driven via :crawl_now, no background poller, 2026-07-10 段2).
+      # Locked by all_plugin_apps_wired_to_web.
       {:ezagent_plugin_crawler, in_umbrella: true},
       {:jason, "~> 1.2"},
       {:bandit, "~> 1.5"}

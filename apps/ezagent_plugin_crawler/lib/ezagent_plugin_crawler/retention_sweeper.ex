@@ -12,7 +12,7 @@ defmodule EzagentPluginCrawler.RetentionSweeper do
   （Ezagent 是 router 不是 req/resp app）。
 
   seams（app env，测试注入）：`:sweep_interval_ms`（默认 1h）、`:skip_sweeper`
-  （test-boot skip，照 `Poller`）。
+  （test-boot skip，照 `Ezagent.Email.Inbound`）。
   """
   use GenServer
   require Logger

@@ -38,7 +38,7 @@ defmodule EzagentPluginCrawler.FetchTest do
     [item] = Fetch.parse_items(body, :public)
     assert item.url == "https://news.ycombinator.com/item?id=123"
 
-    # topstories.json 形状（纯 id 数组）——真跑曾 FunctionClauseError 崩 Poller
+    # topstories.json 形状（纯 id 数组）——真跑曾 FunctionClauseError 崩爬取路径
     assert Fetch.parse_items("[48804297, 48804298]", :public) == []
   end
 end

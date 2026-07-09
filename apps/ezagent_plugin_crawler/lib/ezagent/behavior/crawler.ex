@@ -11,7 +11,9 @@ defmodule Ezagent.ActionSet.Crawler do
   都能，留在这里；业务 persona prompt、routing 规则等业务件留在 manifest
   YAML / Recipes 的 dealscout 命名侧。
 
-  轮询（`Poller`）和手动触发走同一注入路径：抓回条目经 P14 的 legacy 路
+  本 ActionSet 是**唯一爬取入口**（agent / 成员触发 `:crawl_now` / `:search`；
+  无后台周期抓取——曾有的全局 `Poller` 抓完即丢、结果对会话不可见，2026-07-10
+  段2 删除，发现流完全 agent 驱动）：抓回条目经 P14 的 legacy 路
   `Ezagent.Invocation.dispatch/1`（本模块构造 `%Ezagent.Invocation{}`；
   `Ezagent.Router.dispatch/1` 只收 `%Cmd{}`，2026-07-07 真 e2e 修正）投
   `session.send`。action URI 用 sanctioned `Ezagent.URI.with_action`（不裸拼
