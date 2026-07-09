@@ -66,13 +66,13 @@ defmodule EzagentDomainInstanceMessage.Architecture.SessionCreateNoAgentSpawnTes
 
   defp app_root, do: Path.expand("../..", __DIR__)
 
+  defp source_lines(rel), do: app_root() |> Path.join(rel) |> File.read!() |> code_lines()
+
   # CODE lines only: `#` comments, blank lines and `@moduledoc`/`@doc` heredoc
   # BODIES are stripped. Without this the gate trips on its own forensic prose —
   # the moduledocs necessarily NAME the primitives they forbid.
-  defp source_lines(rel) do
-    app_root()
-    |> Path.join(rel)
-    |> File.read!()
+  defp code_lines(content) do
+    content
     |> String.split("\n")
     |> Enum.with_index(1)
     |> Enum.reduce({[], false}, fn {line, lineno}, {acc, in_doc} ->
@@ -121,6 +121,47 @@ defmodule EzagentDomainInstanceMessage.Architecture.SessionCreateNoAgentSpawnTes
            Agent role slots belong in `SessionCreator.install_session_socialware/1`,
            which `Workspace.create_session` fires AFTER the owner-only session is
            durable.
+
+           Violations:
+           #{Enum.map_join(violations, "\n", &("  " <> &1))}
+           """
+  end
+
+  # The gap that let `hello` stay broken while `default` was fixed: a session
+  # Template Class's `instantiate/3` ALSO runs inside the `workspace.create_session`
+  # dispatch (`Workspace.create_session_via_class/5`), and `HelloSession` →
+  # `App.ensure_app/3` spawned four role agents + the `requires`-pulled cc
+  # orchestrator there. The first version of this gate only scanned `SessionCreator`,
+  # so it passed. Session Template Classes get the same rule.
+  @session_template_classes [
+    "../ezagent_plugin_hello/lib/ezagent_plugin_hello/template/hello_session.ex",
+    "lib/ezagent/template/generic_session.ex"
+  ]
+
+  test "session Template Classes do not materialize their team inside instantiate/3" do
+    paths =
+      @session_template_classes
+      |> Enum.map(&Path.expand(&1, app_root()))
+      |> Enum.filter(&File.exists?/1)
+
+    assert paths != [], "no session Template Class sources found — the gate would vacuously pass"
+
+    violations =
+      for path <- paths,
+          {line, lineno} <- code_lines(File.read!(path)),
+          needle <- ["materialize_template_team", "ensure_app", "DefinitionAgents"],
+          String.contains?(line, needle) do
+        "#{Path.basename(path)}:#{lineno} — `#{needle}`\n    #{String.trim(line)}"
+      end
+
+    assert violations == [],
+           """
+           A session Template Class materializes its team inside `instantiate/3`.
+
+           `instantiate/3` runs inside the `workspace.create_session` dispatch, so it
+           is bound by the same rev6 / #912 rule as `SessionCreator.create_session/3`:
+           create the session + its config, record `member_declarations`, spawn nothing.
+           `Workspace.create_session` fires the install transaction afterwards.
 
            Violations:
            #{Enum.map_join(violations, "\n", &("  " <> &1))}

@@ -128,6 +128,24 @@ defmodule EzagentDomainInstanceMessage.SessionCreator do
   defdelegate materialize_template_team(session_uri, workspace_uri, granted_by, template_content),
     to: TemplateTeam
 
+  @doc "Install a template's CONFIG (prompts / legends / routing rules). Spawns nothing."
+  defdelegate materialize_template_config(session_uri, workspace_uri, template_content),
+    to: TemplateTeam
+
+  @doc """
+  Record the durable template declaration (`session_template_uri` +
+  `member_declarations`) on a session's working copy. `install_session_socialware/1`
+  reads `member_declarations` to know which agent role slots to materialize, so a
+  Template Class that hand-rolls its session create MUST call this (not a bare
+  `system_set_working_copy`) or its declared team can never be installed.
+  """
+  defdelegate materialize_template_declaration(
+                session_uri,
+                session_template_uri,
+                template_content
+              ),
+              to: Materializer
+
   defdelegate spawned_member_instance_name_public(
                 flavor,
                 source_template_uri,
@@ -194,12 +212,44 @@ defmodule EzagentDomainInstanceMessage.SessionCreator do
   """
   @spec install_session_socialware_async(URI.t()) :: :ok
   def install_session_socialware_async(%URI{scheme: "session"} = session_uri) do
-    {:ok, _pid} =
-      Task.Supervisor.start_child(Ezagent.Session.SocialwareInstallSupervisor, fn ->
-        run_install_loudly(session_uri)
-      end)
+    # Tolerate a missing supervisor (a deployment or test that boots only some
+    # apps). Raising here would blow up inside the Workspace Kind's
+    # `create_session` handler and fail the very create we just decoupled.
+    case Task.Supervisor.start_child(Ezagent.Session.SocialwareInstallSupervisor, fn ->
+           run_install_loudly(session_uri)
+         end) do
+      {:ok, _pid} ->
+        :ok
 
-    :ok
+      other ->
+        Logger.error(
+          "could not start the socialware-install transaction for " <>
+            "#{URI.to_string(session_uri)}: #{inspect(other)} — the session is alive " <>
+            "but owner-only. Run `SessionCreator.install_session_socialware/1`."
+        )
+
+        :telemetry.execute(
+          @install_telemetry ++ [:failed],
+          %{count: 1},
+          %{session_uri: session_uri, reason: {:task_start_failed, other}}
+        )
+
+        :ok
+    end
+  catch
+    :exit, reason ->
+      Logger.error(
+        "socialware-install supervisor unavailable for #{URI.to_string(session_uri)}: " <>
+          "#{inspect(reason)} — the session is alive but owner-only."
+      )
+
+      :telemetry.execute(
+        @install_telemetry ++ [:failed],
+        %{count: 1},
+        %{session_uri: session_uri, reason: {:supervisor_unavailable, reason}}
+      )
+
+      :ok
   end
 
   defp run_install_loudly(%URI{} = session_uri) do

@@ -12,25 +12,51 @@ defmodule EzagentPluginHello.App do
   """
 
   alias Ezagent.{Capability, WorkspaceRegistry}
-  alias Ezagent.ActionSet.Session.ConfigActions
   alias Ezagent.Entity.{Session, SessionTemplate, User}
   alias Ezagent.Socialware.{DefinitionRegistry, Installation}
   alias EzagentDomainInstanceMessage.SessionCreator
   alias EzagentPluginHello.Members
 
   @doc """
-  Idempotently create the hello app: a `public_view` SessionTemplate, a live
-  socialware `Session` bound to it, and the DECLARED team — orchestrator (the
-  invisible front desk) + builder + concierge — materialized by the framework
-  standard path (`SessionCreator.materialize_template_team/4`) from the hello
-  `Definition.roles`. Each role is a role × flavor agent joined as a member with
-  its `role_name` facet; recipe caps are granted by the framework. Returns
-  `{:ok, session_uri, orchestrator_uri}`, where `orchestrator_uri` is resolved by
-  role (`Members.role_uri/2`), NOT the retired `orch_<name>` URI convention.
+  Idempotently create the hello app AND install its declared team — the composite
+  used by boot seeding, tests and operator flows. `create_app/3` (session +
+  config, owner-only) then `SessionCreator.install_session_socialware/1` (the
+  agent transaction).
+
+  Returns `{:ok, session_uri, front_desk_uri}`, resolved by role
+  (`Members.role_uri/2`), NOT the retired `orch_<name>` URI convention.
+
+  **Do NOT call this from a session-create dispatch** — `HelloSession.instantiate/3`
+  calls `create_app/3` and lets `Workspace.create_session` fire the install
+  transaction afterwards (rev6 / #912; see `create_app/3`).
   """
   @spec ensure_app(String.t(), String.t(), keyword()) ::
           {:ok, URI.t(), URI.t()} | {:error, term()}
-  def ensure_app(ws, name, _opts \\ []) when is_binary(ws) and is_binary(name) do
+  def ensure_app(ws, name, opts \\ []) when is_binary(ws) and is_binary(name) do
+    with {:ok, %URI{} = session_uri} <- create_app(ws, name, opts),
+         :ok <- SessionCreator.install_session_socialware(session_uri),
+         {:ok, front_desk_uri} <- resolve_front_desk(session_uri) do
+      {:ok, session_uri, front_desk_uri}
+    end
+  end
+
+  @doc """
+  Create the hello session and its CONFIG — nothing else. Spawns no agent.
+
+  rev6 / #912: a session create — including a Template Class's `instantiate/3` —
+  never spawns, waits for, or rolls back on a role member. The declared team
+  (`Definition.roles`) is recorded as `member_declarations` on the working copy
+  and materialized by the SEPARATE post-create socialware-install transaction,
+  which `Workspace.create_session` fires once the owner-only session is durable.
+
+  Before this split, `HelloSession.instantiate/3` → `ensure_app/3` spawned four
+  role agents (plus the `requires`-pulled cc orchestrator) INSIDE the
+  `workspace.create_session` dispatch — the same coupling that made `default`
+  sessions time out. `default` was decoupled by the facade path; `hello` reaches
+  create through the Template Class path, which is why it needed its own fix.
+  """
+  @spec create_app(String.t(), String.t(), keyword()) :: {:ok, URI.t()} | {:error, term()}
+  def create_app(ws, name, _opts \\ []) when is_binary(ws) and is_binary(name) do
     session_uri = Ezagent.URI.session(ws, :hello, name)
     workspace = Capability.workspace_of(session_uri)
     socialware_name = "hello-#{name}"
@@ -72,27 +98,16 @@ defmodule EzagentPluginHello.App do
              content,
              User.admin_uri()
            ),
-         {:ok, _} <-
-           ConfigActions.system_set_working_copy(session_uri, %{session_template_uri: tmpl}),
-         # The team is DECLARED in the hello Definition (`roles:` orchestrator /
-         # builder / concierge, each `fill: :agent`) and materialized by the
-         # framework STANDARD path — the same `materialize_template_team/4` the
-         # socialware `create_session` flow runs — which spawns each role × flavor
-         # agent, joins it as a member with its `role_name` facet, and grants the
-         # recipe caps. No imperative per-role spawn. Hello's `Kind.spawn(Session,
-         # …)` path does NOT trigger it (only `SessionCreator.create_session/3`
-         # does), so it MUST be called here explicitly, AFTER the install records +
-         # working-copy bind. Idempotent (a role already joined is skipped) so a
-         # re-instantiate of an existing app is safe.
-         :ok <-
-           SessionCreator.materialize_template_team(
-             session_uri,
-             workspace,
-             owner_uri,
-             content
-           ),
-         {:ok, front_desk_uri} <- resolve_front_desk(session_uri) do
-      {:ok, session_uri, front_desk_uri}
+         # Record the DURABLE declaration (`session_template_uri` +
+         # `member_declarations`), not just the template URI: the post-create
+         # install transaction reads `member_declarations` to know which role
+         # slots to materialize. A bare `system_set_working_copy` would leave the
+         # declared team un-installable.
+         :ok <- SessionCreator.materialize_template_declaration(session_uri, tmpl, content),
+         # CONFIG only — prompts / legends / routing rules. The `Definition.roles`
+         # agents are the install transaction's job (see `create_app/3` moduledoc).
+         :ok <- SessionCreator.materialize_template_config(session_uri, workspace, content) do
+      {:ok, session_uri}
     end
   end
 

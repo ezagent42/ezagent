@@ -687,7 +687,16 @@ defmodule Ezagent.ActionSet.Workspace do
              session_uri,
              workspace_uri,
              caller
-           ) do
+           ),
+         {:ok, facade} <- resolve_session_facade() do
+      # rev6 / #912 — SAME decoupling as the facade path. A Template Class's
+      # `instantiate/3` creates the session + its config; its declared team is an
+      # AGENT transaction fired here, after the session is durable. Before this,
+      # `session.hello` spawned four role agents (plus the `requires`-pulled cc
+      # orchestrator) inside this dispatch, so `hello` kept timing out while
+      # `default` was already fixed.
+      trigger_socialware_install(facade, session_uri)
+
       {:ok,
        %{
          session_uri: session_uri,
