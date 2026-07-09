@@ -6,7 +6,8 @@
 - **status**: in-progress（复验 A1–A4 + 撞到几个 UI bug；flaky 未复现）——用户视角，无代码 / 无 rebase
 - **汇报**: 本 return + Feishu 群；**A2/A4 + 3 个 UI bug 建议开 issue**
 - **证据**: `docs/together/2026-07-09/returns/evidence/`（截图）
-- **已开 issue**：F1→#1279 · F2→#1280 · F3→#1281 · F6→#1282 · F8→#1283 · F7→#1284 · F4→#1285 · F5→#1286（关联 #1275 空 caps / #1278 agent 表单 / #1259 create 超时）
+- **已开 issue**：F1→#1279 · F2→#1280 · F3→#1281 · F6→#1282 · F8→#1283 · F7→#1284 · F4→#1285 · F5→#1286 · F9→#1289（关联 #1275 空 caps / #1278 agent 表单 / #1259 create 超时）
+- **查重**：**F8/#1283 与 #1288（cc agent 不继承 host Claude 凭证）+ #396（agent onboarding UX）重叠** → 已交叉引用，建议并入 #1288；其余 7 个无重复。
 
 ## 复验结果（昨日修复）
 
@@ -64,6 +65,11 @@
 - **严重度**：低（表单混淆）
 - **复现**：新建 agent（flavor `cc`）→ CC CONFIGURATION 区里同时出现两个 tools 输入：① 右上角标 **`Tools`** 的框；② Permission mode 下面标 **`tools (comma-separated list)`** 的框 —— 不知道该填哪个 / 是否重复（截图 `evidence/f7-create-agent-two-tools-fields.png`）。
 - 建议：合并成一个，或标清两者区别。
+
+### F9 · canary 邮箱 magic-link 登录收不到邮件（#1289）
+- **严重度**：中（email 登录这条路走不通）
+- **复现**：https://canary.ezagent.chat/ → 选"邮箱接收登录链接" → 输入邮箱 → 提交 → **邮箱一直收不到登录邮件**，无法完成登录。
+- **线索**：canary 可能 SMTP 未配置/未真发信（有 `admin.smtp.*` 配置面）。密码登录可能仍可用，这里专指 email magic-link 路径。
 
 ## flaky 复现（B）
 - 网页对话页反复进出 + 发消息：**暂未复现**偶发不刷新 / 卡住。继续留意。
