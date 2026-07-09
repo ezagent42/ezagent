@@ -40,6 +40,8 @@
 
 **明日的系统性收尾（proposed）**：**冷启动彩排部署阶段**——全新镜像 + **空卷**的一次性可弃栈 + 最小冒烟。让「冷/空/旧」这三种环境形态在合入前就被一个闸打到。
 
+> **追记（07-09 晨·本回顾成稿后）**：这条轴在 P1-P3 收尾里又现一例——skill 分发**第二次验收修复**的根因，正是「**陈旧构建产物 = 一种环境形态**（ambient state）」。`mix ezagent.skills.regen_seed` 缺 `@requirements ["compile"]`，于是从 `_build` 里的**陈旧字节码**派生 skill 集合，只得**1 条引用**的 bundle；而全量加载派生出**3 条**（dev-together、ezagent-session-orchestrator、kanban-assistant——这三条声明是分支切出后才落到 main 的）。已从根上修复（补 `@requirements ["compile"]`），并把测试从**硬编码清单**去脆化为**一致性不变量**（`bundle == 派生`）。热的 / 陈旧的 `_build` 又是一种「环境形态」——与冷缓存、旧 seed 数据同源。文末 §追记有闭环全貌。
+
 ## §1 本日工作统计（按主题分组）
 
 ### 部署 / 发布链
@@ -188,6 +190,16 @@
    - **处置**：修复类 PR 自测清单显式加 `uri_query.scan`；判定「绿」以**每个 check 的最终结论**为准，不以数量/局部输出为准。列为流程规则更新。
 4. **环境形态隔离轴 → 已从教训升级为闸**（method 升级，已落地）。
    - 部署探针 + CI reflow 闸 + 冷测试三个 counter 本日落地；**冷启动彩排部署阶段**是提议中的系统性收尾（07-09 platform 项）。这是本周期 method 的正向增量，非债。
+5. **平台不裁决声明内容 → 原则记录**（method 记录，owner: 全员）。
+   - **原则（Allen）**：**平台不裁决声明的内容**——机制忠实实现 recipe 的**声明**（declaration），对声明**内容**的疑问交回声明的**作者**，不由机制侧代为裁决。P1-P3 收尾里，kanban recipe 的 dev-together / kanban-assistant skill 声明作为**信息**知会产品侧；机制只保证「声明什么就装什么」，内容合理性归声明作者。这条把「机制 / 内容」的边界从 GLOSSARY 的词约定落成了一条**处置原则**。
+
+## §追记（07-09 晨·本回顾成稿后收尾）
+
+本回顾成稿于 07-09 晨约 07:00。以下三事在其后收尾，补记于此——**不改上文 07-08 的口径与统计**（P1-P3 仍按「合 integration 分支」计；#1266 合入 main 属 07-09 事件）：
+
+- **skill 分发 P1-P3 完成闭环**：integration 分支验收通过（全局 gate + spec §4 全部 7 个测试文件全绿）；diff review 结论 **ACCEPT-WITH-NOTES**，两条 finding 均**在分支上修复**——① loud-on-miss 信号复用既有 `role_degraded` 通道（`SkillRegistry` READY 但 recipe 声明的引用无法解析时不再静默返回无内容模板，改为**响亮**降级）；② 补一条 prod-shape 守卫回归测试（按生产切片形状 pin 住 attach 路径）。经**第二次验收修复**（根因见环境形态节追记）后，合入 main 为 **#1266**（`364ccf6ba`）。
+- **部署晋级**：nightly 当日**双部署**（P1-P3 一次 + point-fix 退役一次——探针断言从 Dockerfile 点修移到 `skills_seed` bundle 源）；**5 项探针全绿、reflow 彩排通过**。**stable 晋级至 `364ccf6ba`**——官网现携**全部韧性弧**（#1252/#1257/#1259/#1261/#1263）+ 新版 hello #1243 + P1-P3。
+- **原则记录（Allen）**：**平台不裁决声明内容**——见上 §method-deltas 第 5 条。
 
 ---
 
