@@ -18,10 +18,10 @@ defmodule EzagentPluginKanban.Demo do
 
   ## What this module is for
 
-  A test-fixture source. `manifest_attrs/1` loads the SAME shipped YAML via
-  `Ezagent.Socialware.ManifestYaml.parse/1`, so tests exercise the exact
-  manifest production ships — the file is the one source of truth and the shape
-  gate locks it against drift.
+  A test-fixture source. `manifest_attrs/1` loads the SAME shipped YAML through
+  the shared `Ezagent.Socialware.ShippedManifest` loader, so tests exercise the
+  exact manifest production ships — the file is the one source of truth and the
+  shape gate locks it against drift.
 
   ## The e2e variant seam
 
@@ -32,7 +32,7 @@ defmodule EzagentPluginKanban.Demo do
   deploy-seed publish can never drift.
   """
 
-  alias Ezagent.Socialware.ManifestYaml
+  alias Ezagent.Socialware.ShippedManifest
 
   @name "kanban"
 
@@ -57,23 +57,20 @@ defmodule EzagentPluginKanban.Demo do
   def relay_done_marker, do: @relay_done_marker
 
   @doc """
-  Absolute path of the shipped kanban manifest YAML, discovered generically
-  through `Ezagent.Home.SocialwareSeed.source_dirs/0` (every loaded OTP app's
-  `priv/socialware_seed`) — the SAME discovery the deploy-seed lane uses. Today
-  the package ships in `ezagent_web`, but this names no app: whichever app ships
-  it is found. `nil` when no loaded app carries the package.
+  Absolute path of the shipped kanban manifest YAML — see
+  `Ezagent.Socialware.ShippedManifest.path/2` (generic discovery over every
+  loaded OTP app's `priv/socialware_seed`; today the package ships in
+  `ezagent_web`, but this names no app). `nil` when no loaded app carries the
+  package.
   """
   @spec manifest_path() :: Path.t() | nil
-  def manifest_path do
-    Ezagent.Home.SocialwareSeed.source_dirs()
-    |> Enum.map(&Path.join(&1, @manifest_relpath))
-    |> Enum.find(&File.exists?/1)
-  end
+  def manifest_path, do: ShippedManifest.path(@manifest_relpath)
 
   @doc """
   The kanban demo manifest attributes, loaded from the shipped
-  `priv/socialware_seed/kanban/manifest.yaml` via `ManifestYaml.parse/1`
-  (config-authored, string name-refs, `ManifestResolver.resolve/1`-ready).
+  `priv/socialware_seed/kanban/manifest.yaml` via
+  `Ezagent.Socialware.ShippedManifest.load!/2` (config-authored, string
+  name-refs, `ManifestResolver.resolve/1`-ready).
 
   Options (the e2e/test variant seam; both default to the shipped YAML values):
     * `:name` — override the socialware/definition name (tests pass per-run
@@ -87,33 +84,6 @@ defmodule EzagentPluginKanban.Demo do
   """
   @spec manifest_attrs(keyword()) :: map()
   def manifest_attrs(opts \\ []) do
-    path =
-      manifest_path() ||
-        raise "kanban manifest.yaml not found in any loaded app's priv/socialware_seed " <>
-                "(expected #{@manifest_relpath}); is the shipping app (ezagent_web) loaded?"
-
-    case ManifestYaml.parse(File.read!(path)) do
-      {:ok, attrs} ->
-        attrs
-        |> override_name(Keyword.get(opts, :name))
-        |> override_flavor(Keyword.get(opts, :flavor))
-
-      {:error, reason} ->
-        raise "kanban manifest.yaml failed to parse (#{path}): #{inspect(reason)}"
-    end
-  end
-
-  defp override_name(attrs, nil), do: attrs
-  defp override_name(attrs, name) when is_binary(name), do: Map.put(attrs, "name", name)
-
-  defp override_flavor(attrs, nil), do: attrs
-
-  defp override_flavor(attrs, flavor) when is_binary(flavor) do
-    Map.update!(attrs, "roles", fn roles ->
-      Enum.map(roles, fn
-        %{"fill" => "agent"} = slot -> Map.put(slot, "flavor", flavor)
-        slot -> slot
-      end)
-    end)
+    ShippedManifest.load!(@manifest_relpath, Keyword.take(opts, [:name, :flavor]))
   end
 end

@@ -261,18 +261,17 @@
   #   plugin cannot call a private domain helper under the plugin-only boundary,
   #   so the fork is forced; a future domain-side public helper would collapse
   #   it back. 43→44.
-  # - arch-cap-bump: +2 kanban socialware deploy-seed migration — Demo.Kanban is
-  #   now a thin socialware_seed YAML loader (its self-publish primitives
-  #   publish/0 / admin_ctx/2 / already_public?/1 were DELETED in the migration,
-  #   publish now goes through the deploy-seed lane). Its remaining loader /
-  #   override functions are cross-file isomorphic with Demo.Hello's same-shape
-  #   test-driver loader (both read their shipped manifest via SocialwareSeed) →
-  #   2 new duplicate-fn groups. main carries only Hello's half (44); adding
-  #   Kanban's makes 46. (The earlier #1190 "+3 publish golden-template" /
-  #   #1213 "-1 ratchet" narrative is OBSOLETE — those self-publish bodies no
-  #   longer exist.) 44→46. NOTE merge-order coupling: dealscout adds
-  #   Demo.Crawler's same-shape loader; whichever lands re-measures.
-  cross_file_duplicate_fn_groups: 46,
+  # - seed-loader dedup ratchet (0709): the kanban↔hello thin-loader
+  #   isomorphism is now extracted into the shared
+  #   `Ezagent.Socialware.ShippedManifest` loader (both Demo modules are thin
+  #   delegating shells), so the duplication is gone by construction. The
+  #   earlier "+2 kanban makes 46" attribution never actually measured: the
+  #   loader bodies aggregate to 118 normalized chars, under the scanner's
+  #   120-char floor — measured count was 42 both before and after the
+  #   extraction, so the cap ratchets to the real value. 46→42. NOTE: when
+  #   dealscout (#1264) lands, its Demo.Crawler copy switches to
+  #   ShippedManifest in S2 — re-measure then.
+  cross_file_duplicate_fn_groups: 42,
   # FF-4 (cleanup-1): distinct non-agent_bridge/non-test lib files still
   # referencing a `/cc_socket` deprecation-shim module
   # (EzagentPluginCc.{BridgeRegistry,Socket,Channel,TokenStore}). Cleanup-3
