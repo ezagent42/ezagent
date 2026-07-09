@@ -91,6 +91,15 @@ defmodule EzagentDomainInstanceMessage.SessionCreator.TemplateTeam do
 
   def materialize_template_team(_session, _ws, _granted_by, _content), do: :ok
 
+  @doc """
+  Keep only the `fill: :agent` role slots of a declaration list (the durable
+  `member_declarations` recorded at create, or a resolved socialware config's
+  `roles`). Human slots and legacy member declarations are left out.
+  """
+  @spec agent_role_slots([map()]) :: [map()]
+  def agent_role_slots(roles) when is_list(roles), do: Enum.filter(roles, &agent_role_slot?/1)
+  def agent_role_slots(_), do: []
+
   defp agent_role_slot?(%{} = role) do
     (Map.get(role, :fill) || Map.get(role, "fill")) in [:agent, "agent"]
   end

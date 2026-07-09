@@ -158,28 +158,29 @@ defmodule EzagentDomainInstanceMessage.SessionCreator do
 
   @spec install_session_socialware(URI.t(), URI.t()) :: :ok | {:error, term()}
   def install_session_socialware(%URI{scheme: "session"} = session_uri, %URI{} = workspace_uri) do
-    template_name = Ezagent.URI.type!(session_uri)
-
     effective_owner =
       case Session.owner(session_uri) do
         {:ok, %URI{} = owner} -> owner
         _ -> User.admin_uri()
       end
 
-    with {:ok, _session_template_uri, template_content} <-
-           TemplateResolver.resolve_for_repair(session_uri, template_name, workspace_uri) do
-      # Freeze-pin from this session's own install records so the agents we
-      # materialize come from the SAME frozen revision the session was created
-      # with (§4.4) — a later publish must not change an existing session.
-      pinned_content = Installation.pin_installs_from_session(session_uri, template_content)
+    # Materialize from the session's OWN durable `member_declarations` — the
+    # freeze-pinned role slots `create_session/3` recorded at step 4. Re-resolving
+    # the SessionTemplate here would (a) re-run definition lookup against whatever
+    # is registered NOW rather than the frozen revision, and (b) fail at boot
+    # before the definitions are seeded.
+    agents =
+      session_uri
+      |> Session.read_template_working_copy()
+      |> Map.get(:member_declarations, [])
+      |> TemplateTeam.agent_role_slots()
 
-      TemplateTeam.materialize_definition_agents(
-        session_uri,
-        workspace_uri,
-        effective_owner,
-        pinned_content
-      )
-    end
+    EzagentDomainInstanceMessage.SessionCreator.DefinitionAgents.materialize_definition_agents(
+      session_uri,
+      workspace_uri,
+      effective_owner,
+      agents
+    )
   end
 
   @doc """

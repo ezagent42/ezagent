@@ -770,6 +770,22 @@ defmodule Ezagent.ActionSet.Sandbox do
       :ok ->
         :ok
 
+      # NOT a failure: on a FRESH create the Template Class's own spawn path
+      # materializes the per-agent config home moments after the Kind starts, and
+      # brings the subprocess up itself — in order. `activate/2` runs before that
+      # (it is the cold-restart self-heal hook) and correctly declines to launch
+      # against an unmaterialized config home (#1096 / chain B). Nothing is
+      # degraded; the Kind is simply `:not_ready` until its own spawn path
+      # finishes. Logging this at `:error` would make every cc create look broken.
+      {:error, {:config_dir_not_materialized, _uri}} ->
+        Logger.debug(
+          "Ezagent.ActionSet.Sandbox.activate: #{inspect(template_class)} config home for " <>
+            "#{inspect(self_uri)} is not materialized yet — deferring the subprocess " <>
+            "launch to the Template Class's own spawn path (expected on fresh create)."
+        )
+
+        :ok
+
       {:error, reason} ->
         Logger.error(
           "Ezagent.ActionSet.Sandbox.activate: " <>
