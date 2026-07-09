@@ -1,5 +1,5 @@
 import React from "react"
-import {Ban, CheckCircle2, FolderLock, HardDrive, KeyRound, Plus, RotateCcw, Save, UserRound, UsersRound} from "lucide-react"
+import {Ban, CheckCircle2, FolderLock, HardDrive, KeyRound, Plus, RotateCcw, Save, TerminalSquare, UserRound, UsersRound} from "lucide-react"
 
 import {Button, EmptyState, Input, Select} from "./ui/primitives"
 
@@ -1004,6 +1004,27 @@ function AgentNewForm({state, onCreateAgent}: {state: IdentitiesState; onCreateA
             </div>
           )}
         </div>
+
+        <label
+          className="grid min-h-[64px] grid-cols-[32px_minmax(0,1fr)_auto] items-center gap-3 rounded-md border border-border bg-background p-3 text-sm"
+          data-world-agent-create-pty
+          htmlFor="world-agent-with-pty"
+        >
+          <span className="flex size-8 items-center justify-center rounded-md border border-border bg-muted/40 text-muted-foreground">
+            <TerminalSquare className="size-4" aria-hidden="true" />
+          </span>
+          <span className="grid min-w-0 gap-1">
+            <span className="font-medium text-foreground">With PTY</span>
+            <span className="text-xs text-muted-foreground">Interactive terminal sidecar</span>
+          </span>
+          <input
+            id="world-agent-with-pty"
+            type="checkbox"
+            checked={form.with_pty}
+            onChange={(event) => setForm({...form, with_pty: event.target.checked})}
+            className="size-4 rounded border-border text-primary focus:ring-ring"
+          />
+        </label>
 
         {/* M4: Flavor-specific config fields from schema (A4/A7 enabled) */}
         {flavorSchema.filter(f => f.key !== "soul_md").length > 0 && (
