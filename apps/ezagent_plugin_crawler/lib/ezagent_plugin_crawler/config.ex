@@ -40,16 +40,9 @@ defmodule EzagentPluginCrawler.Config do
   @spec set_keywords(map(), [String.t()]) :: {:set, :keywords, [String.t()]}
   def set_keywords(_current, keywords) when is_list(keywords), do: {:set, :keywords, keywords}
 
-  @doc """
-  pin 一个爬取批次 —— 返回 `{:set, key, value}` slice effect（key=`:pinned_batches`，去重）。被 pin
-  的批次即使超期也被 `RetentionSweeper.prune/2` 保留（成员限定：改自己那份配置需持
-  config cap，匿名 / 房外人无此 cap，spec §6）。
-  """
-  @spec pin_batch(map(), String.t()) :: {:set, :pinned_batches, [String.t()]}
-  def pin_batch(current, batch_id) when is_binary(batch_id) do
-    pinned = Map.get(current, :pinned_batches, [])
-    {:set, :pinned_batches, Enum.uniq([batch_id | pinned])}
-  end
+  # `pin_batch/2`（`:pinned_batches` slice effect）随 `RetentionSweeper` 一起
+  # 删除（2026-07-10 段2）：durable 爬取批次 slice 从未接线（发现流条目走
+  # `session.send` 消息历史），pin 语义无消费者=空转。
 
   # --- sources（定向源清单）→ state slice --------------------------------------
 

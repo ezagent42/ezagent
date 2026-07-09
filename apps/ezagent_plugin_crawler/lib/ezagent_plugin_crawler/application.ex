@@ -4,7 +4,7 @@ defmodule EzagentPluginCrawler.Application do
 
   ## 分层（2026-07-07 rename 拍板：plugin = 通用能力，socialware = 配置出来的名字）
 
-  本 plugin 是**通用爬取能力**（fetch / config / crawl ActionSet / sweeper），
+  本 plugin 是**通用爬取能力**（fetch / config / crawl ActionSet），
   与业务无关；**"dealscout"（科技创业/新品动态的线索雷达 demo，
   数据源 = Hacker News 公开检索 API——D4 数据源诚实化，措辞与真数据相符）是
   socialware 的名字**——一份纯配置组合（deploy-seed 包
@@ -35,9 +35,12 @@ defmodule EzagentPluginCrawler.Application do
 
   ## Declared surface
 
-  `plugin_info/0` + `children/0`（`RetentionSweeper`）+ `roles/0`
-  （dealscout 业务 recipes——demo socialware 的 agent 配方，随 demo 一起
-  ship 在本 plugin）。不声明 `behaviors/0` / view —— 其余 `Ezagent.Plugin`
+  `plugin_info/0` + `roles/0`（dealscout 业务 recipes——demo socialware 的
+  agent 配方，随 demo 一起 ship 在本 plugin）。**零后台 GenServer**
+  （`children/0` 保持 `use`-macro 默认 `[]`，2026-07-10 段2：`Poller` 抓完
+  即丢、`RetentionSweeper` 是 no-op stub——durable 批次 slice 从未接线——
+  两条空转腿都删了；爬取 = agent 驱动 `:crawl_now`，数据保留 = 会话消息
+  历史本身）。不声明 `behaviors/0` / view —— 其余 `Ezagent.Plugin`
   callback 保持 `use`-macro 默认（`[]` / `nil` / `:ok`）。dealscout demo
   socialware **不在本 plugin boot 发布**：它以 deploy-seed 包形式随发布箱走
   （`apps/ezagent_web/priv/socialware_seed/dealscout/manifest.yaml`，与
@@ -48,9 +51,6 @@ defmodule EzagentPluginCrawler.Application do
 
   use Application
   use Ezagent.Plugin
-
-  # Compile-time env (works in stripped OTP releases where `Mix` is unavailable).
-  @compile_env Mix.env()
 
   @impl Application
   def start(_type, _args) do
@@ -83,22 +83,10 @@ defmodule EzagentPluginCrawler.Application do
     }
   end
 
-  # 无后台周期抓取（2026-07-10 段2 删 `Poller`）：曾有的全局 poll timer 抓完
-  # 即丢——它是无 session 的 GenServer，仓里没有"插件后台发现目标会话"的现成
-  # 机制（Installation 是 session→installs 单向；MiroSync 先例是 per-instance、
-  # 由带 session ctx 的 handler 显式传 URI 启动），接线=发明新机制，超 scope。
-  # 发现流完全 agent 驱动：discover 角色触发 `:crawl_now`（Crawler ActionSet
-  # 注入路径，结果对会话可见）。`RetentionSweeper` skipped in `:test`（and any
-  # env where `:skip_sweeper` is set）so the test suite never starts a real
-  # timer — mirrors `Ezagent.Email.Inbound`'s test-boot skip.
-  @impl Ezagent.Plugin
-  def children do
-    if Application.get_env(:ezagent_plugin_crawler, :skip_sweeper, @compile_env == :test) do
-      []
-    else
-      [EzagentPluginCrawler.RetentionSweeper]
-    end
-  end
+  # 无 `children/0` override —— 零后台 GenServer（moduledoc §Declared
+  # surface：`Poller` / `RetentionSweeper` 两条空转腿 2026-07-10 段2 删除，
+  # 曾有的 :skip_poller / :skip_sweeper test-boot seam 随之退场），
+  # `use Ezagent.Plugin` 的 `defoverridable` 默认返回 `[]`。
 
   # Discovery-leg recipes (role-as-data, RF-4): boot seeds each into
   # `Ezagent.Agent.RecipeRegistry` by `name`. Flavor-agnostic — flavor is chosen

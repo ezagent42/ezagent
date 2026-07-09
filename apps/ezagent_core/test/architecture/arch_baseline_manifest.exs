@@ -411,7 +411,11 @@
   #   counts) contribute the crawler's Lifecycle-slice writes. This is the NET after
   #   the Demo code-seed→YAML manifest migration (#1213) deleted the old self-publish
   #   primitives' `{:set, …}` sites; measured 131 → 133 (cross-slice stays 0); net +2.
-  set_effect_sites: 133,
+  # arch-cap-bump: dealscout rework 段2 (2026-07-10) — RetentionSweeper 删除带走
+  #   Config.pin_batch/2（durable 批次 slice 从未接线，pin 无消费者）：其 @spec
+  #   `{:set, :pinned_batches, …}` 行 + 函数体 `{:set, :pinned_batches, …}` 行
+  #   两个计数点一起退场；measured 133 → 131 (cross-slice stays 0); net −2.
+  set_effect_sites: 131,
   cross_slice_set_violations: 0,
   missing_cap_check_mutating_actions: 0,
   kind_runtime_ordering_violations: 0,

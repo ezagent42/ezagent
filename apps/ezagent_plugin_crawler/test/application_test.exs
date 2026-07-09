@@ -8,7 +8,7 @@ defmodule EzagentPluginCrawler.ApplicationTest do
     assert info.version == "0.1.0"
   end
 
-  test "children/0 returns a supervisable list" do
-    assert is_list(EzagentPluginCrawler.Application.children())
+  test "children/0 is empty — 零后台 GenServer（Poller/RetentionSweeper 空转腿已删，段2）" do
+    assert EzagentPluginCrawler.Application.children() == []
   end
 end
