@@ -6,8 +6,8 @@
 - **status**: in-progress（复验 A1–A4 + 撞到几个 UI bug；flaky 未复现）——用户视角，无代码 / 无 rebase
 - **汇报**: 本 return + Feishu 群；**A2/A4 + 3 个 UI bug 建议开 issue**
 - **证据**: `docs/together/2026-07-09/returns/evidence/`（截图）
-- **已开 issue**：F1→#1279 · F2→#1280 · F3→#1281 · F6→#1282 · F8→#1283 · F7→#1284 · F4→#1285 · F5→#1286 · F9→#1289（关联 #1275 空 caps / #1278 agent 表单 / #1259 create 超时）
-- **查重**：**F8/#1283 与 #1288（cc agent 不继承 host Claude 凭证）+ #396（agent onboarding UX）重叠** → 已交叉引用，建议并入 #1288；其余 7 个无重复。
+- **已开 issue**：F1→#1279 · F2→#1280 · F3→#1281 · F6→#1282 · F7→#1284 · F4→#1285 · F5→#1286 · F9→#1289 · F10→#1290（F8→#1283 **已关，并入 #1288**）（关联 #1275 空 caps / #1278 agent 表单 / #1259 create 超时 / #396 agent onboarding）
+- **查重**：**F8/#1283 = #1288（cc agent 不继承 host Claude 凭证）的重复** → UX 角度已并入 #1288、#1283 已关；其余无重复。
 
 ## 复验结果（昨日修复）
 
@@ -70,6 +70,12 @@
 - **严重度**：中（email 登录这条路走不通）
 - **复现**：https://canary.ezagent.chat/ → 选"邮箱接收登录链接" → 输入邮箱 → 提交 → **邮箱一直收不到登录邮件**，无法完成登录。
 - **线索**：canary 可能 SMTP 未配置/未真发信（有 `admin.smtp.*` 配置面）。密码登录可能仍可用，这里专指 email magic-link 路径。
+
+### F10 · 移除 session 成员点确认后无反应，成员仍在（#1290）
+- **严重度**：中（成员管理坏了）
+- **复现**：`session://ezagent/default/test` → 邀请 黄佳佳(gagameow) → 点该成员的「移除」→ 弹窗 → 确认移除 → **无反应，成员仍在 session**（仍显示 6 成员，debug `"members": 6`）。
+- **线索**：确认后静默 no-op（无报错、未移除）；疑 `workspace.member.remove` 派发没接上/静默失败。
+- **证据**：`evidence/f10-remove-member-noop.png`（录屏在 ruihua Desktop `录屏2026-07-09 16.48.21.mov`）
 
 ## flaky 复现（B）
 - 网页对话页反复进出 + 发消息：**暂未复现**偶发不刷新 / 卡住。继续留意。
