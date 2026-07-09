@@ -103,24 +103,15 @@ defmodule Ezagent.World.PluginPageRegistry do
   end
 
   # `:param` 段捕获单个非空 segment；空 segment / 尾斜线 / 段数不符都不匹配
-  # （与原 `\A/plugins/kanban/([^/]+)\z` 正则语义逐一等价）。
+  # （与原 `\A/plugins/kanban/([^/]+)\z` 正则同形）。pattern 编译为锚定正则
+  # 而非路径切段——URI/路径切段必须收敛在 Ezagent.URI/UriQuery
+  # （uri_query.scan 的 tenant_derivation 规则），注册表只做正则匹配。
   defp match_pattern(pattern, path) do
-    pattern_segments = String.split(pattern, "/")
-    path_segments = String.split(path, "/")
+    source =
+      pattern
+      |> Regex.escape()
+      |> then(&Regex.replace(~r/:(\w+)/, &1, "(?<\\1>[^/]+)"))
 
-    if length(pattern_segments) == length(path_segments) do
-      pattern_segments
-      |> Enum.zip(path_segments)
-      |> Enum.reduce_while(%{}, fn
-        {":" <> name, segment}, params when segment != "" ->
-          {:cont, Map.put(params, name, segment)}
-
-        {segment, segment}, params ->
-          {:cont, params}
-
-        _mismatch, _params ->
-          {:halt, nil}
-      end)
-    end
+    Regex.named_captures(Regex.compile!("\\A" <> source <> "\\z"), path)
   end
 end
