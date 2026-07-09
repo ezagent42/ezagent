@@ -1,14 +1,15 @@
-defmodule EzagentPluginKanban.DemoPublishTest do
+defmodule EzagentPluginKanban.KanbanManifestPublishTest do
   @moduledoc """
-  Deploy-seed publish gate for the kanban demo socialware — the acceptance test
-  for the migration off the plugin boot self-publish onto the deploy-seed lane
-  (deploy-seed SPEC §2/§4, mirroring hello). It drives the EXACT production
-  lane: `Ezagent.Home.SocialwareSeed.seed!/1` copies the shipped
+  Deploy-seed publish gate for the kanban socialware — config-driven end to
+  end (Decision #156: socialware carries zero code; the former
+  plugin-side `Demo` wrapper shell is dissolved, the manifest YAML is the one
+  source of truth). It drives the EXACT production lane:
+  `Ezagent.Home.SocialwareSeed.seed!/1` copies the shipped
   `ezagent_web/priv/socialware_seed/kanban/` package into a temp deployment dir,
   then `Ezagent.Socialware.ManifestSeed.scan_dir!/2` resolves + publishes it
   through the governed import lane (parse → resolve → conformance →
-  `ConfigGovernance.Socialware.publish_or_upgrade`). No `Demo.publish` primitive
-  is involved anymore — production has none.
+  `ConfigGovernance.Socialware.publish_or_upgrade`). No plugin publish
+  primitive is involved anywhere — production has none.
 
     * **idempotency three-state** (P0 §5 `publish_or_upgrade/2`): first scan
       `:published` → unchanged re-scan `:exists` (NO new CR / revision) → EDITED

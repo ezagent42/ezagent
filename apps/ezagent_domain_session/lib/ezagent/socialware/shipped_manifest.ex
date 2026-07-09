@@ -3,10 +3,11 @@ defmodule Ezagent.Socialware.ShippedManifest do
   Shared thin loader for shipped socialware seed manifests — the deploy-seed
   packages under any loaded OTP app's `priv/socialware_seed/<pkg>/`.
 
-  The demo test-fixture modules (`Ezagent.Socialware.Demo.Hello`,
-  `EzagentPluginKanban.Demo`, …) delegate here instead of each carrying the
-  same discover→read→parse→override boilerplate (the pre-#1264 cross-file
-  fork this module collapses).
+  Demo test fixtures (`Ezagent.Socialware.Demo.Hello`) and socialware test
+  suites (the kanban manifest tests call `load!/2` directly — Decision #156:
+  socialware carries zero code, so there is no plugin-side wrapper) come here
+  instead of each carrying the same discover→read→parse→override boilerplate
+  (the pre-#1264 cross-file fork this module collapses).
 
   NOT to be confused with `Ezagent.Socialware.ManifestSeed` — that is the boot
   scan that RESOLVES + PUBLISHES deployed manifests through the governed

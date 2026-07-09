@@ -1,8 +1,8 @@
 defmodule EzagentPluginKanban.Integration.KanbanTeamRelayBackTest do
   @moduledoc """
   S3 relay-back integration gate — proves the kanban Definition's
-  content-triggered relay rule (the VERBATIM `routing_rules` shipped by
-  `EzagentPluginKanban.Demo.manifest_attrs/1`) (a) installs into the live
+  content-triggered relay rule (the VERBATIM `routing_rules` shipped in the
+  deploy-seed manifest YAML, loaded via `ShippedManifest.load!/2`) (a) installs into the live
   session route table at materialize and (b) routes a `__done__`-marked message to
   the pm role while a plain message does NOT. Content-triggered — no sender-lock,
   no instance URI.
@@ -21,8 +21,8 @@ defmodule EzagentPluginKanban.Integration.KanbanTeamRelayBackTest do
   `Entity.Agent`, the `definition_agents_materialize_test` pattern), because a
   `cc-headless` spawn starts a Python Claude SDK sidecar (an S6 e2e concern, not a
   routing concern). role_name / recipe / the REAL relay `routing_rules` are the
-  shipped ones — the fixture derives them from `Demo.manifest_attrs/1`, not
-  hand-written. The full cc-headless team + SDK spawn is exercised by the S6
+  shipped ones — the fixture derives them from the shipped manifest YAML
+  (`ShippedManifest.load!/2`), not hand-written. The full cc-headless team + SDK spawn is exercised by the S6
   browser e2e.
 
   Self-containment (spec §11): kanban test tree (NOT `apps/ezagent_domain_session/
@@ -40,9 +40,9 @@ defmodule EzagentPluginKanban.Integration.KanbanTeamRelayBackTest do
   alias Ezagent.Entity.{Session, User}
   alias Ezagent.Message
   alias Ezagent.Routing.{Matcher, Receiver, Resolver, RuleStore}
-  alias Ezagent.Socialware.{Definition, DefinitionRegistry, ManifestResolver}
+  alias Ezagent.Socialware.{Definition, DefinitionRegistry, ManifestResolver, ShippedManifest}
   alias EzagentDomainInstanceMessage.SessionCreator.TemplateTeam
-  alias EzagentPluginKanban.{Application, Demo}
+  alias EzagentPluginKanban.Application
 
   @workspace Ezagent.URI.workspace(:system)
   @stub_flavor "kanban-relay-itest-bare"
@@ -225,16 +225,21 @@ defmodule EzagentPluginKanban.Integration.KanbanTeamRelayBackTest do
 
   # --- fixture ----------------------------------------------------------------
 
-  # The REAL shipped kanban manifest (2 agent role-slots: pm + dev — from
-  # `Demo.manifest_attrs/1`, the boot-publish one-source-of-truth), with ONLY
+  # The REAL shipped kanban manifest (2 agent role-slots: pm + dev — loaded
+  # straight from the deploy-seed YAML, the one source of truth), with ONLY
   # the flavor swapped `cc-headless` → the bare-spawn stub (no SDK sidecar; the
-  # manifest's `:flavor` test seam) + a per-run fixture name. Role names /
+  # loader's `:flavor` test seam) + a per-run fixture name. Role names /
   # recipes / the REAL relay `routing_rules` are the shipped ones — resolved
   # through `ManifestResolver` rather than hand-written, so this exercises the
   # actual shipped manifest.
   defp itest_definition_body do
     {:ok, definition} =
-      ManifestResolver.resolve(Demo.manifest_attrs(name: @itest_definition, flavor: @stub_flavor))
+      ManifestResolver.resolve(
+        ShippedManifest.load!("kanban/manifest.yaml",
+          name: @itest_definition,
+          flavor: @stub_flavor
+        )
+      )
 
     Definition.body(definition)
   end
