@@ -51,7 +51,7 @@ config :ezagent_web,
   session_cookie_domain: ".ezagent.chat",
   # Default workspace for short hello URLs (`/hello/<name>` → session://<ws>/hello/<name>).
   # Override per-environment (e.g. prod sets the production workspace).
-  hello_workspace: "demo"
+  hello_workspace: "system"
 
 # Configures the endpoint
 config :ezagent_web, EzagentWeb.Endpoint,

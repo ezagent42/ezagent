@@ -115,6 +115,14 @@ defmodule EzagentPluginHello.App do
 
   # --- internals --------------------------------------------------------
 
+  # The platform cc orchestrator requires a real Claude Code binary + bridge
+  # infrastructure. In local dev (claude_code backend, no cc plugin bootstrap)
+  # the orchestrator activate times out — skip the requires so the session
+  # creates without it. Set HELLO_NO_ORCHESTRATOR=0 to force-enable.
+  defp hello_requires do
+    if System.get_env("HELLO_NO_ORCHESTRATOR", "1") == "0", do: ["orchestrator"], else: []
+  end
+
   @doc "The hello socialware Definition attrs for a given socialware name (testable)."
   @spec hello_definition_attrs(String.t()) :: map()
   def hello_definition_attrs(name) when is_binary(name) do
@@ -145,7 +153,9 @@ defmodule EzagentPluginHello.App do
       # M3 #1230: the platform stock cc-orchestrator is auto-installed per-session
       # (A-1 single-instance guarantee). This replaces the retired hello-owned
       # orchestrator stub with the fully-wired cc orchestrator (credentials + tools).
-      requires: ["orchestrator"],
+      # Skip in local dev when no cc infrastructure is available (the orchestrator
+      # activation times out without a real Claude Code binary).
+      requires: hello_requires(),
       prompt_templates: %{},
       legends: %{},
       adapters: [%{adapter_id: "external_feed", role: :customer, config: %{}}],
