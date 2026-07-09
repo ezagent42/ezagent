@@ -22,8 +22,14 @@
 #   * shape 带 Crawler — 2026-07-07 真浏览器 e2e 修正：`:crawl_now` 的
 #     handler 读 `ctx.session_uri` + session 的 config slice → 宿主必须是
 #     session 本体，否则 live dispatch `{:unknown_action, :crawl_now}`。
-#   * roles — discover（`dealscout-discover` × cc-headless，持 crawl cap 的
-#     发现副驾）+ page（页面重建宿主）。hello 自己的 orch_<name> 前台是命令式
+#   * roles — discover（`dealscout-discover` × py，2026-07-10 段3 D1：
+#     cc-headless 物化必崩是平台 gap、绕开不修，换 hello builder/responser
+#     已验证的 py 物化车道。py 车道真实契约 = 单方法 receive → 文本回复
+#     （Domain.Python V1 无 Python→BEAM 请求），所以 discover 的形态是
+#     "回复中自带触发"：被 @ 后 script 在自己 sandbox 真实爬 HN 公开检索源，
+#     把线索连同更新信号一起回进会话 → 下面的 routing 规则命中这条回复。
+#     script 见 `apps/ezagent_plugin_crawler/priv/python/discover.py`）
+#     + page（页面重建宿主）。hello 自己的 orch_<name> 前台是命令式
 #     ensure，不走 role 槽。【显式临时 ALT】page 槽当前指 `dealscout-page-alt`
 #     （receive 腿到 native 成员是断的，#1201 ②）；A①（hello 暴露
 #     dispatchable rebuild action）落地后一行回切 `hello.builder` 并删 ALT。
@@ -33,9 +39,10 @@
 #     The "__dealscout_update__" literal is the single contract point and THIS
 #     FILE is its authoritative carrier — the emit-side code constant
 #     `Ezagent.ActionSet.Crawler.update_signal/0` must stay byte-identical to
-#     it, and the emit-side `Crawler.page_role/0` to the `page` receiver name
-#     (both locked config-driven by `dealscout_manifest_test.exs`, which reads
-#     the arg/receivers OUT of this parsed YAML).
+#     it (the discover script's copy is substituted FROM that constant at
+#     recipe build), and the emit-side `Crawler.page_role/0` to the `page`
+#     receiver name (both locked config-driven by `dealscout_manifest_test.exs`,
+#     which reads the arg/receivers OUT of this parsed YAML).
 #   * visibility_policy — public + supervised like hello/kanban, and
 #     web_anon_access: true（与 kanban 的 false 不同：dealscout 的公开面是给
 #     匿名访客看的线索页，产品语义要匿名可读）。
@@ -46,7 +53,9 @@ title: "DealScout"
 # Hacker News（Algolia 公开检索 API，front_page + query 检索，无 token）——
 # 措辞是"科技创业/新品动态线索雷达"，不冒充商业/投融资数据（接商业源要
 # 选型+token+合规，是 follow-up 产品决策，不在本 manifest 假装已有）。
-description: "科技创业与新品动态线索雷达：AI 从 Hacker News 公开源千人千面发现线索 + 组合 hello 公开面展示。"
+# "发现"措辞与实现相符（段3 角色链路真化）：discover 是脚本车道（关键词粗筛，
+# 无 LLM），真"AI 发现"大脑是后续 curl-llm 槽的事，这里不冒充。
+description: "科技创业与新品动态线索雷达：discover 角色被 @ 后自动爬取 Hacker News 公开源发现线索 + 组合 hello 公开面展示。"
 uses:
   - hello
   - crawler
@@ -63,7 +72,7 @@ roles:
   - role_name: discover
     fill: agent
     recipe: dealscout-discover
-    flavor: cc-headless
+    flavor: py
   - role_name: page
     fill: agent
     recipe: dealscout-page-alt
@@ -90,7 +99,7 @@ legends:
     # 协作协议速查（行话翻译，给不认识 dealscout 的人/agent 进场就能懂）。
     # legend 机制只读 member_set/bound_rule_set/fold，多余 key 原样随行——
     # protocol 是纯说明数据，不参与路由。
-    protocol: "协作协议速查：discover（发现角色）每次爬完并注入新线索后，会自动触发 page 角色重建公开线索页——页面自己会刷新，不用任何人催。人类成员或新进成员想立刻再爬一轮，就在会话里触发 crawl_now（装在本会话上的爬取动作，爬完同样自动刷新页面）。消息里出现 \"__dealscout_update__\" 标记 = discover 在报告\"有新线索已入库\"的更新信号；本 legend 绑定的 dealscout-update 规则只认 discover 发出的这个标记，其他成员发同样文字不会误触发页面重建。"
+    protocol: "协作协议速查：@ 一下 discover（发现角色），它会立刻爬公开源，把发现的线索连同更新信号一起回进会话；带信号的这条回复自动触发 page 角色重建公开线索页——不用任何人催。人类成员或新进成员也可以在会话里直接触发 crawl_now（装在本会话上的爬取动作，逐条注入线索并直接刷新页面）。消息里出现 \"__dealscout_update__\" 标记 = discover 在报告\"发现了新线索\"的更新信号；本 legend 绑定的 dealscout-update 规则只认 discover 发出的这个标记，其他成员发同样文字不会误触发页面重建。"
 adapters:
   - adapter_id: external_feed
     role: customer

@@ -16,6 +16,9 @@ defmodule EzagentPluginCrawler.Recipes do
   每个 recipe 三要素照 `Ezagent.Orchestrator.OrchestratorRecipe.recipe/0`
   （`orchestrator_recipe.ex:64-79`）：`prompt`（persona）+ `requested_caps`
   （cap 只来自 recipe，Definition struct 无 caps 字段）+ `behaviors`。
+  例外是 `discover/0`——它是 **script-carrying recipe**（np 先例，RF-5b
+  role-script 通道：`Recipe.script` → sandbox_content → config_dir
+  `agent.py`），无 prompt/caps，见其注释。
 
   ## flavor 不在 recipe 上
 
@@ -40,30 +43,53 @@ defmodule EzagentPluginCrawler.Recipes do
   @send_cap %{behavior: Ezagent.ActionSet.Session, action: :send}
   @crawl_cap %{behavior: Ezagent.ActionSet.Crawler, action: :crawl_now}
   # v2 dispatch 式（ALT moduledoc）：ALT 的 action 从 `:receive` 改成
-  # `:refresh_page`。dispatch 方要持这个 cap —— 触发爬取的 discover / search
-  # recipe 也 request 它（crawl handler 用触发者的 delegated caps dispatch）。
+  # `:refresh_page`。dispatch 方要持这个 cap —— 触发爬取的 search recipe
+  # 也 request 它（crawl handler 用触发者的 delegated caps dispatch）。
+  # discover 不再 request（段3：py 车道不 dispatch，见 discover/0 注释）。
   @page_refresh_cap %{behavior: Ezagent.ActionSet.DealScoutPageRefreshAlt, action: :refresh_page}
 
   @doc "全部 recipe 声明数据（`roles/0` 的 seed 源）：发现腿 4 个 + 临时 ALT 1 个。"
   @spec all() :: [map()]
   def all, do: [discover(), search(), organize(), followup(), page_refresh_alt()]
 
-  # ① 主动发现 —— 按 profile 千人千面挑高分机会（驱动爬取的主体之一：持 crawl cap，
-  # 可主动触发 :crawl_now；爬完注入新线索后 ActionSet 自动 emit 更新信号
-  # `__dealscout_update__`，由 Definition routing_rules 转给 hello 的页面 agent 更新展示）。
+  # ① 主动发现 —— **script-carrying recipe**（2026-07-10 段3，D1 落地形态）。
+  #
+  # discover 槽从 cc-headless 换到 py flavor（cc-headless 物化必崩的平台 gap
+  # 绕开不修；py 是 hello builder/responser 已验证的物化车道）。py 车道的真实
+  # 契约是单方法 `receive → {"text": ...} | None`（Domain.Python V1 刻意不支持
+  # Python→BEAM 请求），所以 discover **不能**像 cc 大脑那样 dispatch
+  # `crawler.crawl_now`——改为"回复中自带触发"形态：script 在自己的 sandbox 里
+  # 真实爬 HN 公开检索源，把线索连同更新信号标记一起回进会话，manifest 的
+  # and(text_contains, from_role discover) 规则命中这条回复 → 触发 page。
+  # 详见 `priv/python/discover.py` 的 moduledoc。
+  #
+  # 无 requested_caps（np 先例）：py 的回复腿自带 inline `session.send`
+  # self-cap（#154，`Ezagent.ActionSet.PyAgent.maybe_reply_effect`），script
+  # 又不 dispatch 任何 action —— 空 recipe 铸 0 个 cap，fail-closed 且诚实
+  # （持有永远用不上的 crawl cap 才是假配置）。
   defp discover do
     %{
       name: "dealscout-discover",
-      behaviors: [],
-      prompt:
-        "你是 DealScout 的发现副驾。线索来自公开科技社区（Hacker News）的首页与检索" <>
-          "结果——科技创业、新品发布与技术动态。读用户 profile + 新抓回的线索条目，" <>
-          "按千人千面匹配挑出高相关线索，主动推进发现流（可触发 crawl_now 主动爬取）；" <>
-          "每条线索保留来源类型（public / directed）标注。",
-      # @page_refresh_cap：crawl 完成后的直接 dispatch 腿以触发者身份 dispatch
-      # `:refresh_page` 到 page 成员（CapBAC-honest —— 触发者没 cap 就被拒）。
-      requested_caps: [@send_cap, @crawl_cap, @page_refresh_cap]
+      script: discover_script()
     }
+  end
+
+  # 更新信号占位符：script 模板里的 `{{update_signal}}` 在 recipe 装配时替换为
+  # emit 侧代码常量 `Crawler.update_signal/0`（其与 manifest YAML 权威字面量的
+  # 一致性由 `dealscout_manifest_test.exs` 契约锁）——单一契约点，script 不
+  # 硬编码第二份字面量。
+  @update_signal_placeholder "{{update_signal}}"
+
+  @doc "discover script 的占位符（测试断言替换发生用）。"
+  @spec update_signal_placeholder() :: String.t()
+  def update_signal_placeholder, do: @update_signal_placeholder
+
+  defp discover_script do
+    :ezagent_plugin_crawler
+    |> :code.priv_dir()
+    |> Path.join("python/discover.py")
+    |> File.read!()
+    |> String.replace(@update_signal_placeholder, Ezagent.ActionSet.Crawler.update_signal())
   end
 
   # ② 主动搜索 —— 把 query 转成检索，注入发现流。

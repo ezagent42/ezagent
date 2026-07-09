@@ -2,9 +2,9 @@ defmodule EzagentPluginCrawler.RecipesTest do
   use ExUnit.Case, async: true
   alias EzagentPluginCrawler.Recipes
 
-  # 发现腿 4 个（LLM-driven，有 prompt/caps、无 code behaviors）。
-  @discovery_names [
-    "dealscout-discover",
+  # LLM-driven 发现腿 3 个（有 prompt/caps、无 code behaviors）。discover 单列
+  # ——2026-07-10 段3 D1 后它是 script-carrying recipe（py 车道，np 先例）。
+  @llm_discovery_names [
     "dealscout-followup",
     "dealscout-organize",
     "dealscout-search"
@@ -13,27 +13,48 @@ defmodule EzagentPluginCrawler.RecipesTest do
   test "declares the four discovery-leg recipes plus the temporary page-alt (A① 落地后删)" do
     names = Recipes.all() |> Enum.map(& &1.name) |> Enum.sort()
 
-    assert names == Enum.sort(@discovery_names ++ ["dealscout-page-alt"])
+    assert names ==
+             Enum.sort(@llm_discovery_names ++ ["dealscout-discover", "dealscout-page-alt"])
   end
 
-  test "discovery-leg recipes carry prompt + caps and NO code behaviors" do
-    for r <- Recipes.all(), r.name in @discovery_names do
+  test "LLM discovery-leg recipes carry prompt + caps and NO code behaviors" do
+    for r <- Recipes.all(), r.name in @llm_discovery_names do
       assert is_binary(r.prompt) and r.prompt != ""
       assert is_list(r.requested_caps) and r.requested_caps != []
       assert r.behaviors == []
     end
   end
 
-  test "the crawl-driving agents (discover / search) hold the :crawl_now + :refresh_page caps" do
+  test "discover is a script-carrying recipe (py 车道，np 先例)：script 注入信号、零 caps、无 prompt" do
+    discover = Enum.find(Recipes.all(), &(&1.name == "dealscout-discover"))
+    assert discover
+
+    # RF-5b role-script 通道：script 是 priv/python/discover.py，装配时把
+    # 占位符替换成 emit 侧代码常量（manifest 权威字面量的镜像——manifest 侧
+    # 一致性由 dealscout_manifest_test 锁）。
+    assert is_binary(discover.script) and discover.script != ""
+    assert discover.script =~ Ezagent.ActionSet.Crawler.update_signal()
+    refute discover.script =~ Recipes.update_signal_placeholder()
+
+    # py 车道真实契约 = receive → 文本回复（Domain.Python V1 无 Python→BEAM
+    # 请求），script 不 dispatch 任何 action；回复腿自带 inline session.send
+    # self-cap（#154）——所以零 requested_caps（np 先例：空 recipe 铸 0 cap，
+    # fail-closed），也无 prompt（py create 路只读 script）。
+    refute Map.has_key?(discover, :requested_caps)
+    refute Map.has_key?(discover, :prompt)
+
+    # fail-honest 契约：抓取失败/零命中的降级回复不带更新信号（不谎报入库）。
+    assert discover.script =~ "未发更新信号"
+  end
+
+  test "the search agent (crawl-driving) holds the :crawl_now + :refresh_page caps" do
     crawl_cap = %{behavior: Ezagent.ActionSet.Crawler, action: :crawl_now}
     # v2 caller-dispatch：crawl 完成后以触发者身份直接 dispatch :refresh_page
     # 到 page 成员 —— 触发爬取的 recipe 必须持这个 cap（CapBAC-honest）。
     refresh_cap = %{behavior: Ezagent.ActionSet.DealScoutPageRefreshAlt, action: :refresh_page}
     by_name = Map.new(Recipes.all(), &{&1.name, &1})
 
-    assert crawl_cap in by_name["dealscout-discover"].requested_caps
     assert crawl_cap in by_name["dealscout-search"].requested_caps
-    assert refresh_cap in by_name["dealscout-discover"].requested_caps
     assert refresh_cap in by_name["dealscout-search"].requested_caps
   end
 

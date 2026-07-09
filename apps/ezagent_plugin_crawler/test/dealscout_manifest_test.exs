@@ -130,7 +130,9 @@ defmodule EzagentPluginCrawler.DealscoutManifestTest do
 
     discover = Enum.find(agent_slots, &(&1.role_name == "discover"))
     assert discover.recipe == "dealscout-discover"
-    assert discover.flavor == "cc-headless"
+    # 2026-07-10 段3 D1：cc-headless 物化必崩（平台 gap，绕开不修）→ 换 hello
+    # builder/responser 已验证的 py 物化车道（script-carrying recipe）。
+    assert discover.flavor == "py"
 
     page = Enum.find(agent_slots, &(&1.role_name == "page"))
 
@@ -250,6 +252,16 @@ defmodule EzagentPluginCrawler.DealscoutManifestTest do
     # page 成员，必须就是 manifest routing 声明的 receiver 角色名。
     [rule] = manifest_attrs()["routing_rules"]
     assert [Crawler.page_role()] == rule["receivers"]
+
+    # emit 侧镜像 #2（段3）：discover 的 py script（"回复中自带触发"形态的
+    # 信号发信方）在 recipe 装配时从 `Crawler.update_signal/0` 注入同一字面量
+    # ——script 内容必须带 manifest 权威标记，且占位符不得残留（残留 = 装配
+    # 断链，script 启动时也会 fail-loud，这里提前当场红）。
+    discover_recipe =
+      Enum.find(EzagentPluginCrawler.Recipes.all(), &(&1.name == "dealscout-discover"))
+
+    assert discover_recipe.script =~ update_marker_from_manifest()
+    refute discover_recipe.script =~ EzagentPluginCrawler.Recipes.update_signal_placeholder()
   end
 
   # Extract the update-signal `text_contains` arg from the PARSED manifest (raw
