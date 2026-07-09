@@ -54,6 +54,7 @@ defmodule EzagentPluginCodex.AppServer do
     end
   end
 
+  @doc "Recent buffered app-server output for `agent_uri`, or `\"\"` if it is not running."
   @spec recent_output(URI.t()) :: String.t()
   def recent_output(%URI{} = agent_uri) do
     case lookup(agent_uri) do
@@ -64,6 +65,7 @@ defmodule EzagentPluginCodex.AppServer do
     _, _ -> ""
   end
 
+  @doc "Blocks until the app-server unix socket at `socket_path` exists, or `timeout_ms` elapses."
   @spec wait_until_ready(URI.t(), String.t(), non_neg_integer()) :: :ok | {:error, term()}
   def wait_until_ready(%URI{} = agent_uri, socket_path, timeout_ms)
       when is_binary(socket_path) and is_integer(timeout_ms) and timeout_ms >= 0 do

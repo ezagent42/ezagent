@@ -67,7 +67,7 @@ defmodule EzagentCore.Invariants.PluginWorkspaceLocalityContractTest do
     },
     %{
       path: "apps/ezagent_plugin_codex/lib/ezagent/plugin_codex/app_server.ex",
-      line: 60,
+      line: 61,
       key: :genserver_to_pid,
       line_substring: "GenServer.call(pid, :recent_output, 1_000)",
       reason:

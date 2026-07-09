@@ -210,7 +210,7 @@ defmodule Ezagent.PluginCodex.Template.CodexRemoteAgent do
     end
   end
 
-  # Identical app-server readiness wait as CodexAgent — delegate rather than copy.
+  @doc "Delegates to `Ezagent.PluginCodex.Template.CodexAgent.ensure_app_server_ready/3` (identical readiness wait)."
   defdelegate ensure_app_server_ready(agent_uri, socket_path, test_mode),
     to: Ezagent.PluginCodex.Template.CodexAgent
 
