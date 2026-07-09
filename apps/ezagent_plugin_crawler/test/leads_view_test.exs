@@ -20,6 +20,12 @@ defmodule EzagentPluginCrawler.LeadsViewTest do
 
   alias EzagentPluginCrawler.LeadsView
 
+  test "CrawlerRender's literal slice key matches the Crawler state slice (drift lock)" do
+    # crawler_render.ex 的 get_slice 用字面量 :crawler（sensitive_slice_read 门
+    # 对非字面量键 fail-closed）；本断言锁死它与宏派生 slice 键的一致性。
+    assert Ezagent.ActionSet.Crawler.state_slice() == :crawler
+  end
+
   test "implements Ezagent.UI.SessionView with the crawler leads identity" do
     assert Enum.member?(
              LeadsView.module_info(:attributes)

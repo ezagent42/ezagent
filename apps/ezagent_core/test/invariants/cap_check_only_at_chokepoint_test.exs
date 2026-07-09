@@ -100,7 +100,13 @@ defmodule EzagentCore.Invariants.CapCheckOnlyAtChokepointTest do
         # surface; `SessionView.authorize_view/3` checks its render cap).
         # Precise FILE allowlist (not the whole kanban behavior dir — the other
         # kanban ActionSet declares via the `action/2` macro and stays probed).
-        "apps/ezagent_plugin_kanban/lib/ezagent/behavior/kanban_render.ex"
+        "apps/ezagent_plugin_kanban/lib/ezagent/behavior/kanban_render.ex",
+        # dealscout rework — the crawler leads view's cap-only view read
+        # ActionSet (`CrawlerRender`, declaring `cap_subjects/0` for
+        # `:crawler_render`) — the SAME class as HelloRender/KanbanRender
+        # directly above. Precise FILE allowlist (the other crawler ActionSets
+        # declare via the `action/2` macro and stay probed).
+        "apps/ezagent_plugin_crawler/lib/ezagent/behavior/crawler_render.ex"
       ]
     },
     %{

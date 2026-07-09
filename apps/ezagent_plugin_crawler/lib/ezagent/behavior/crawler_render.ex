@@ -107,7 +107,9 @@ defmodule Ezagent.ActionSet.CrawlerRender do
   def items_result(%URI{} = session_uri) do
     _ = Ezagent.LocalRuntime.ensure_started(session_uri)
 
-    case Ezagent.Kind.get_slice(session_uri, Ezagent.ActionSet.Crawler.state_slice()) do
+    # 字面量 slice 键（== Ezagent.ActionSet.Crawler.state_slice()，测试锁死）：
+    # sensitive_slice_read 门对非字面量 get_slice 键 fail-closed（:__dynamic__）。
+    case Ezagent.Kind.get_slice(session_uri, :crawler) do
       {:ok, %{} = slice} ->
         {:ok, normalize_items(Map.get(slice, :items) || Map.get(slice, "items"))}
 
