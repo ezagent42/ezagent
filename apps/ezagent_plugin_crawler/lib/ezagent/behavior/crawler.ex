@@ -271,8 +271,8 @@ defmodule Ezagent.ActionSet.Crawler do
   # （与更新信号同门）。mode `:call`（kanban 板动作同款）—— 同步拿到
   # `{:ok, _}` / `{:error, _}`，失败 fail-loud。目标是 page 成员的 agent Kind
   # （另一进程），无自呼死锁；handler 只 spawn supervised Task，秒回（Task 的
-  # 读线索/驱动 Turn 按 mailbox 顺序排在本轮 `{:set, :items}` 落盘之后，时序
-  # 天然正确——CrawlerPage moduledoc）。
+  # 读线索带有界重试——session 消化注入 burst 期间 get_slice 会超时，
+  # PagePublisher.publish 等它消化完再读；2026-07-10 段5 真 e2e 实测修正）。
   defp dispatch_page_publish(_ctx, 0, _origin), do: :ok
 
   defp dispatch_page_publish(ctx, injected, origin) do

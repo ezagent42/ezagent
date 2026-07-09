@@ -172,9 +172,10 @@ defmodule EzagentPluginCrawler.DealscoutPageE2eTest do
     assert Enum.any?(texts, &(&1 =~ "Show HN: Postgres wire-compatible proxy"))
     assert Enum.any?(texts, &(&1 =~ Ezagent.ActionSet.Crawler.update_signal()))
 
-    # 4) view render 输出含真爬取字段（external json-render target）。
+    # 4) view render 输出含真爬取字段（external json-render target；shadcn
+    #    词表——外部 SPA 现行 renderer 认的根型，段5 e2e 修正）。
     view_tree = LeadsView.external_render(session_uri)
-    assert %{"type" => "page"} = view_tree
+    assert %{"type" => "Stack"} = view_tree
     assert inspect(view_tree) =~ "Show HN: Postgres wire-compatible proxy"
     assert inspect(view_tree) =~ "news.ycombinator.com/item?id=1001"
 

@@ -15,7 +15,10 @@ defmodule Ezagent.ActionSet.CrawlerPage do
   匿名读的公开页）。**必须 Task**：publish 是对 session 的顺序 `:call`，而
   本 handler 往往正被 session 内 crawl 的 `:call` 同步等着——handler 内串行
   `:call` 回 session 即死锁；Task 秒回后 session 先完成当轮（`{:set, :items}`
-  effect 落盘），Task 的读/写按 mailbox 顺序排在其后（时序天然正确）。
+  effect 落盘）。Task 的读线索**带有界重试**（`PagePublisher.publish/2`）：
+  session 消化注入 burst（几十条 send × snapshot 落盘）期间 `get_slice` 会撞
+  5s 超时，等消化完再读——2026-07-10 段5 真 e2e 实测修正，"排在 mailbox
+  后面就天然正确"是错的（读会先超时）。
 
   `session_uri` 走 args 显式传（宿主是 agent Kind，`ctx.session_uri` 只在
   session:// 目标上派生——`Kind.Runtime.Context.derive_session_uri/1`）。

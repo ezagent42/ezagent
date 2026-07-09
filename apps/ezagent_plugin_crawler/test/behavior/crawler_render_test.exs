@@ -64,26 +64,32 @@ defmodule Ezagent.ActionSet.CrawlerRenderTest do
       ]
     end
 
-    test "projects retained leads into a shared-catalog json-render page (JSON-safe)" do
+    test "projects retained leads into a shadcn-catalog json-render tree (JSON-safe)" do
       tree = CrawlerRender.render_tree(retained_items())
 
-      # string-keyed, serializable, catalog-typed（viewer 的共享 renderer
-      # 直接认 page/section/text/table，无 hello 专属 catalog 依赖）。
-      assert tree["type"] == "page"
+      # string-keyed, serializable, shadcn-typed（外部 SPA 的现行 renderer
+      # `catalog_jsonrender.mjs` 直接认 Stack/Heading/Text/Table——2026-07-10
+      # 段5 真浏览器 e2e 修正：旧 page/section 词表在匿名页渲成
+      # "Unsupported node: page"）。
+      assert tree["type"] == "Stack"
       assert Jason.encode!(tree)
 
-      [section] = tree["children"]
-      assert section["type"] == "section"
-      [text, table] = section["children"]
+      [heading, text, table] = tree["children"]
+      assert heading["type"] == "Heading"
+      assert heading["props"]["text"] == "线索"
 
-      assert text["type"] == "text"
+      assert text["type"] == "Text"
       assert text["props"]["text"] =~ "2 条"
 
-      assert table["type"] == "table"
-      assert "title" in table["props"]["columns"]
-      rows = table["props"]["rows"]
-      assert Enum.map(rows, & &1["title"]) == ["Show HN: Postgres proxy", "Acme raises tooling"]
-      assert Enum.map(rows, & &1["source_type"]) == ["public", "directed"]
+      assert table["type"] == "Table"
+      assert table["props"]["columns"] == ["title", "summary", "source", "url"]
+
+      # rows 是按 columns 对齐的 cell 数组（viewer coerceRow 对 map 行取
+      # Object.values，键序不可靠——数组行是确定性的）。
+      assert table["props"]["rows"] == [
+               ["Show HN: Postgres proxy", "s1", "hn", "https://example.com/pgp"],
+               ["Acme raises tooling", "s2", "acme", "https://example.com/acme"]
+             ]
     end
 
     test "atom-keyed entries (pre-snapshot shape) normalize into the same projection" do
@@ -92,15 +98,15 @@ defmodule Ezagent.ActionSet.CrawlerRenderTest do
           %{title: "t", url: "u", summary: "s", source: "hn", source_type: :public}
         ])
 
-      [%{"children" => [_text, table]}] = tree["children"]
-      assert [%{"title" => "t", "source_type" => "public"}] = table["props"]["rows"]
+      [_heading, _text, table] = tree["children"]
+      assert [["t", "s", "hn", "u"]] = table["props"]["rows"]
     end
 
     test "junk / empty input → empty table (never raises)" do
       for junk <- [nil, "x", %{}, [%{"no_title" => true}], [nil, 42]] do
         tree = CrawlerRender.render_tree(junk)
-        assert tree["type"] == "page"
-        [%{"children" => [_text, table]}] = tree["children"]
+        assert tree["type"] == "Stack"
+        [_heading, _text, table] = tree["children"]
         assert table["props"]["rows"] == []
       end
     end

@@ -18,8 +18,9 @@ defmodule Ezagent.ActionSet.CrawlerRender do
     * **产线索页的 json-render tree（只读投影）**：`render_tree/1` 纯函数把
       会话 `Ezagent.ActionSet.Crawler` slice 里留存的结构化线索（`:items` key，
       写入侧是 crawl/search 注入成功后的 `{:set, :items, ...}` effect）投成
-      **共享 catalog**（`catalog.mjs`：page/section/text/table）的 string-keyed
-      json-render map——同一棵树既是 view 的 external render，也是
+      **shadcn catalog**（外部 SPA `catalog_jsonrender.mjs` 的现行词表，
+      hello Spec 同源：Stack/Heading/Text/Table）的 string-keyed json-render
+      map——同一棵树既是 view 的 external render，也是
       `EzagentPluginCrawler.PagePublisher` 落 Surface 版本树的 committed 页
       （单一投影源，两条读路不会漂移）。`external_tree/1` 是 per-session 读
       入口。**零写**：无 `{:set, ...}`、无 dispatch 写 action——这是投影，
@@ -80,55 +81,88 @@ defmodule Ezagent.ActionSet.CrawlerRender do
   会话 crawler slice 里留存的结构化线索（归一后 string-keyed，最新在前）。
   dormant 会话先经核心 owner-gated chokepoint `LocalRuntime.ensure_started/1`
   起活（KanbanRender.board_slice_tree 同款，HIGH-3 liveness），再 get_slice；
-  任何失败退 `[]`（fail-safe）。
+  任何失败退 `[]`（fail-safe——渲染读路，坏 slice 绝不炸渲染）。
+
+  需要区分"确定没有线索"和"读失败"的调用方（如 `PagePublisher` 的发布读，
+  读失败要重试而不是当成空页跳过）用 `items_result/1`。
   """
   @spec items_for(URI.t() | term()) :: [map()]
   def items_for(%URI{} = session_uri) do
-    _ = Ezagent.LocalRuntime.ensure_started(session_uri)
-
-    case Ezagent.Kind.get_slice(session_uri, Ezagent.ActionSet.Crawler.state_slice()) do
-      {:ok, %{} = slice} ->
-        normalize_items(Map.get(slice, :items) || Map.get(slice, "items"))
-
-      _ ->
-        []
+    case items_result(session_uri) do
+      {:ok, items} -> items
+      {:error, _} -> []
     end
-  rescue
-    _ -> []
-  catch
-    _, _ -> []
   end
 
   def items_for(_), do: []
 
   @doc """
-  纯函数：留存线索列表 → 共享 catalog（page/section/text/table）的 string-keyed
-  json-render map（JSON round-trip 安全）。同一棵树喂两条读路：view 的
-  external render（world / SPA 通用消费）+ PagePublisher 落 Surface 的
-  committed 页（`/socialware/external` 匿名读的就是它）。输入不合法退空表
-  （不炸）。
+  `items_for/1` 的可辨别版本：`{:ok, items}` 是**确定性读**（拿到了 slice，
+  items 可能为空 = 真没有线索）；`{:error, reason}` 是**读失败**（Kind 忙 /
+  get_slice 5s 超时 / 未注册等——2026-07-10 段5 真 e2e 实测：crawl 注入 burst
+  后 session Kind 正在逐条消化 `session.send` + snapshot 落盘，get_slice 会
+  超时，此时线索其实在，只是读不到）。渲染读路请用 `items_for/1`（fail-safe）。
+  """
+  @spec items_result(URI.t() | term()) :: {:ok, [map()]} | {:error, term()}
+  def items_result(%URI{} = session_uri) do
+    _ = Ezagent.LocalRuntime.ensure_started(session_uri)
+
+    case Ezagent.Kind.get_slice(session_uri, Ezagent.ActionSet.Crawler.state_slice()) do
+      {:ok, %{} = slice} ->
+        {:ok, normalize_items(Map.get(slice, :items) || Map.get(slice, "items"))}
+
+      {:ok, _non_map} ->
+        {:ok, []}
+
+      {:error, reason} ->
+        {:error, reason}
+    end
+  rescue
+    e -> {:error, {:items_read_raised, e}}
+  catch
+    kind, reason -> {:error, {:items_read_caught, {kind, reason}}}
+  end
+
+  def items_result(other), do: {:error, {:not_a_session_uri, other}}
+
+  @doc """
+  纯函数：留存线索列表 → **shadcn catalog** 的 string-keyed json-render map
+  （JSON round-trip 安全）。同一棵树喂两条读路：view 的 external render
+  （world / SPA 通用消费）+ PagePublisher 落 Surface 的 committed 页
+  （`/socialware/external` 匿名读的就是它）。输入不合法退空表（不炸）。
+
+  词表修正（2026-07-10 段5 真浏览器 e2e 实测）：外部 SPA 的现行 renderer 是
+  `catalog_jsonrender.mjs`（shadcn 36 组件 + `LEGACY_TO_SHADCN` 只补
+  container/text/table/code 四个旧型），原先 emit 的 `page`/`section` 是
+  **已退役的 hello page-builder 词表**（`catalog_render.mjs` 认，但 viewer
+  已切走）——匿名页渲成 "Unsupported node: page"。改 emit hello Spec 同一
+  shadcn 词表（`Stack`/`Heading`/`Text`/`Table`），Table 的 rows 用**按
+  columns 对齐的 cell 数组**（viewer 的 `coerceRow` 对 map 行取
+  `Object.values`，键序不可靠）。
   """
   @spec render_tree(term()) :: map()
   def render_tree(items) do
     items = normalize_items(items)
 
+    rows =
+      Enum.map(items, fn item ->
+        Enum.map(@columns, &Map.get(item, &1, ""))
+      end)
+
     %{
-      "type" => "page",
-      "props" => %{"title" => "线索"},
+      "type" => "Stack",
+      "props" => %{"gap" => 4},
       "children" => [
+        %{"type" => "Heading", "props" => %{"text" => "线索", "level" => 2}, "children" => []},
         %{
-          "type" => "section",
-          "props" => %{},
-          "children" => [
-            %{
-              "type" => "text",
-              "props" => %{"text" => "共 #{length(items)} 条留存线索（最新在前，真实爬取产物）。"}
-            },
-            %{
-              "type" => "table",
-              "props" => %{"columns" => @columns, "rows" => items}
-            }
-          ]
+          "type" => "Text",
+          "props" => %{"text" => "共 #{length(items)} 条留存线索（最新在前，真实爬取产物）。"},
+          "children" => []
+        },
+        %{
+          "type" => "Table",
+          "props" => %{"columns" => @columns, "rows" => rows},
+          "children" => []
         }
       ]
     }

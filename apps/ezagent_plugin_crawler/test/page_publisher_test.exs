@@ -14,7 +14,19 @@ defmodule EzagentPluginCrawler.PagePublisherTest do
   alias EzagentPluginCrawler.PagePublisher
 
   setup do
-    on_exit(fn -> Application.delete_env(:ezagent_plugin_crawler, :dispatch_fun) end)
+    on_exit(fn ->
+      for key <- [
+            :dispatch_fun,
+            :items_read_fun,
+            :publish_read_attempts,
+            :publish_read_interval_ms
+          ] do
+        Application.delete_env(:ezagent_plugin_crawler, key)
+      end
+    end)
+
+    # 测试里重试间隔清零（默认 3s 是生产耐心，不是测试等待）。
+    Application.put_env(:ezagent_plugin_crawler, :publish_read_interval_ms, 0)
     :ok
   end
 
@@ -108,7 +120,7 @@ defmodule EzagentPluginCrawler.PagePublisherTest do
     assert_receive {:publish_error, %{reason: :unauthorized}}, 500
   end
 
-  test "publish/2 with zero retained leads → {:ok, :empty} + :skipped telemetry（不发空页）" do
+  test "publish/2 with zero retained leads（确定性空读）→ {:ok, :empty} + :skipped telemetry（不发空页）" do
     test_pid = self()
     handler_id = "pp-skip-#{System.unique_integer([:positive])}"
 
@@ -127,10 +139,74 @@ defmodule EzagentPluginCrawler.PagePublisherTest do
       :ok
     end)
 
-    # 无 live Kind 的 session → items_for 退 []（fail-safe）→ 跳过发布。
+    # 确定性读到空（拿到了 slice，真没有线索）→ 跳过发布，不发空页。
+    Application.put_env(:ezagent_plugin_crawler, :items_read_fun, fn _uri -> {:ok, []} end)
+
     session_uri = Ezagent.URI.session("ws-pp-none", "generic", "empty")
     assert {:ok, :empty} = PagePublisher.publish(session_uri, "s")
     assert_receive {:skipped, _}, 500
+    refute_receive :dispatched, 100
+  end
+
+  # 2026-07-10 段5 真 e2e 实测回归（feedback_e2e_failure_earns_unit_test）：
+  # crawl 注入 burst 后 session Kind 消化 send/snapshot，get_slice 5s 超时 →
+  # 旧实现把读失败折叠成 [] 静默跳过 → 自动发布腿在真实时序下必跳。
+  test "读失败（Kind 忙 get_slice 超时）→ 有界重试，消化完读到线索照常发布" do
+    test_pid = self()
+    stub_turn_pipeline(test_pid)
+    {:ok, counter} = Agent.start_link(fn -> 0 end)
+
+    # 前两次读模拟 busy 超时，第三次读到线索。
+    Application.put_env(:ezagent_plugin_crawler, :items_read_fun, fn _uri ->
+      case Agent.get_and_update(counter, fn n -> {n, n + 1} end) do
+        n when n < 2 -> {:error, {:get_slice_exit, :timeout}}
+        _ -> {:ok, items()}
+      end
+    end)
+
+    session_uri = Ezagent.URI.new!("session://system/default/pp-busy")
+    assert {:ok, "t-1"} = PagePublisher.publish(session_uri, "新线索 1 条（crawl）")
+    assert Agent.get(counter, & &1) == 3
+
+    assert_receive {:dispatched, open_cmd}, 500
+    assert URI.to_string(open_cmd.target) =~ "action=turn.open"
+  end
+
+  test "读失败重试耗尽 → {:error, {:items_read_failed, _}} + error telemetry（fail-loud，不谎报成空页）" do
+    test_pid = self()
+    handler_id = "pp-read-fail-#{System.unique_integer([:positive])}"
+
+    :ok =
+      :telemetry.attach(
+        handler_id,
+        [:crawler, :page_publish, :error],
+        fn _event, _m, meta, _c -> send(test_pid, {:publish_error, meta}) end,
+        nil
+      )
+
+    on_exit(fn -> :telemetry.detach(handler_id) end)
+
+    Application.put_env(:ezagent_plugin_crawler, :publish_read_attempts, 3)
+
+    Application.put_env(:ezagent_plugin_crawler, :items_read_fun, fn _uri ->
+      send(test_pid, :read_attempted)
+      {:error, {:get_slice_exit, :timeout}}
+    end)
+
+    Application.put_env(:ezagent_plugin_crawler, :dispatch_fun, fn _cmd ->
+      send(test_pid, :dispatched)
+      :ok
+    end)
+
+    session_uri = Ezagent.URI.new!("session://system/default/pp-dead")
+
+    assert {:error, {:items_read_failed, {:get_slice_exit, :timeout}}} =
+             PagePublisher.publish(session_uri, "s")
+
+    # 恰好 3 次（有界），失败走 error telemetry 而非 :skipped。
+    for _ <- 1..3, do: assert_receive(:read_attempted, 500)
+    refute_receive :read_attempted, 100
+    assert_receive {:publish_error, %{reason: {:items_read_failed, _}}}, 500
     refute_receive :dispatched, 100
   end
 
