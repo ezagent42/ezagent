@@ -23,6 +23,9 @@ defmodule EzagentWeb.Application do
 
     case Supervisor.start_link(children, opts) do
       {:ok, sup_pid} ->
+        # Skill distribution P2: recover/copy release-bundled skill seeds into
+        # EZAGENT_HOME and scan the single runtime origin before consumers read.
+        :ok = Ezagent.Home.SkillSeed.boot!(index?: System.get_env("MIX_ENV") != "test")
         # sw-home lane (2026-07-07) — the ONE late socialware manifest scan.
         # P13 note: ezagent_web is transport, not business logic; this call is
         # ONLY a trigger. It lives here because ezagent_web depends on every

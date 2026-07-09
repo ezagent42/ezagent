@@ -1,0 +1,202 @@
+---
+name: dev-together
+description: >-
+  Use for the ezagent dev-together daily team workflow: plan tasks, generate
+  handoffs, accept/dive into a handoff, return results, stack returned work,
+  review-test-merge, close the day, and write retrospectives. Trigger on
+  dev-together commands (init, plan, handoff, dive, return, push, close, review)
+  and natural requests about daily task splitting, handoffs, merge ordering,
+  definition of done, closeout, hooks, or team workflow. Do not trigger for
+  unrelated one-off git operations, generic single-PR review, issue closing,
+  non-dev brainstorming, or non-engineering handoffs.
+---
+
+# dev-together
+
+## Invocation details
+
+Use whenever someone is running, or participating in, the shared ezagent
+dev-together cycle: a lead programmer (human or agent) and developers (human or
+agent) moving work through plan, handoff, dive, return, stack/order, review,
+test, merge to main, and end-of-day retrospective.
+
+Trigger on `dev-together <cmd>`:
+- `init`
+- `plan`
+- `handoff`
+- `dive`
+- `return`
+- `push`
+- `close`
+- `review`
+
+Also trigger on natural phrasings like:
+- "kick off the day / split today's tasks so the branches don't collide"
+- "generate the handoffs and give me dev prompts"
+- "pick up / accept this handoff"
+- "return my finished work to the lead"
+- "stack the returned handoffs / what's the merge order"
+- "close out the day / merge what's ready after checking the DoD and gates"
+- "end-of-day dev review: efficiency, gaps, next-day plan"
+- "is this ready to hand off / what's the definition of done"
+- "discuss-first or just build this"
+- "what can we defer"
+- "install the dev-together hooks"
+
+This is the glue around the mature skills (superpowers:brainstorming,
+superpowers:writing-plans, superpowers:executing-plans /
+subagent-driven-development, codex-rescue review). Load it before any step so
+the cadence, roles, `docs/together/<date>/` artifact layout, handoff standard
+(demonstrable DoD), conflict avoidance, and per-task-branch merge model are
+applied consistently.
+
+Do not trigger for unrelated one-off git operations (a bare "git push" or
+"rebase"), generic code review of a single PR, closing a GitHub issue,
+brainstorming non-dev content, or handing off a non-engineering ticket. Those
+are near-misses, not this workflow.
+
+How the ezagent team ships work each day. The lead programmer orchestrates a
+**fleet of independent developers — human *and* agents** in parallel; this skill
+keeps them aligned, conflict-free, reviewed, and on a daily cadence.
+
+**Reuse, don't reimplement.** dev-together is *glue*. Each step DELEGATES to a
+mature skill and only adds the cadence + roles + artifact layout + the handoff
+standard + conflict/merge management:
+- shape a design → **superpowers:brainstorming**
+- break work into steps → **superpowers:writing-plans**
+- execute a handoff → **superpowers:executing-plans** / **superpowers:subagent-driven-development**
+- adversarial review → **codex-rescue** (static-only, no `mix`)
+- project rules → **ezagent-developer**, **ezagent-socialware**, `docs/guide/world-coordination.md`
+
+## Roles
+- **Lead programmer** — anyone, human or agent. Plans, generates handoffs, and is
+  the **only path to `main`** (via `close`). The lead role is a hat, not a person.
+- **Developer** — human or agent. Accepts handoffs, builds on per-task branches,
+  returns results.
+
+> **Branch model — `main` is trunk; `beta`/`release` are deploy pointers, not task
+> branches.** Task branches merge into `main` only. `beta` (smoke) and `release`
+> (stable, + `vX.Y.Z` tags) are long-lived **promotion pointers** advanced solely by
+> the deploy flow (`git branch -f beta <main-sha> && git push`), never merged into by
+> `close`/`push`. The deploy/promotion flow is maintained in a separate private
+> repo; see also the guard in [commands/close.md](commands/close.md).
+
+## Artifacts — `docs/together/YYYY-MM-DD/` (one dated folder per day)
+```
+docs/together/YYYY-MM-DD/
+├── plan.md             # lead (plan):    tasks, scope, per-task branches, conflict map
+├── plan.html           # lead (plan):    team-facing render of plan.md (product-first, no meta)
+├── handoffs/<task>.md  # lead (handoff): one reviewed handoff per task
+├── returns/<task>.md   # dev  (return):  timestamped done + DoD artifact + merge request
+├── stack.md            # lead (push):    returns in analyzed merge order
+├── review.md           # lead (review):  end-of-day retrospective + next-day suggestions
+└── review.html         # lead (review):  team-facing render of review.md (product-first, no meta)
+```
+Durable design specs/notes still live in `docs/superpowers/`; `docs/together/` is
+the **daily operational record**.
+
+## Durable team state — the inputs `plan`/`handoff`/`review` read
+
+Two durable files outlive the dated daily folders and are the source of truth so
+the daily plan is **derived, not guessed**:
+
+- **`docs/together/team.md`** — the roster. **Row identity = `github_username`**;
+  carries `role` (`human-dev` | `agent` | `lead`), `short_name` (the alias plans
+  cite), `current_track` (what each dev is on now), `latest_return`, `timezone`.
+  - `plan` reads it, filters `role: human-dev`, and derives each dev's next
+    increment from `current_track` + `latest_return`.
+  - `handoff` reads the assignee's row to tailor handoff depth.
+  - `review` is the **single writer** of `current_track`/`latest_return` (end of
+    day). `return`/`close` never write them. A mid-stream pivot may be reflected
+    by the lead.
+- **`docs/together/<ISO-week>/weekly-goals.md`** — the week's goals; every daily
+  track ladders up to one. `plan` reads it to tag each track with its goal.
+
+**Week-folder naming:** `docs/together/YYYY-Www/` where `YYYY-Www` is the **ISO
+week** of the day being planned (ISO weeks start Monday; the year is the
+ISO-week-numbering year, which can differ from the calendar year at Jan/Dec
+edges). Example: 2026-06-24 (Wed) → `2026-W26`. Compute with
+`date -j -f %Y-%m-%d <date> +%G-W%V` (macOS) or `date -d <date> +%G-W%V` (GNU).
+
+## Ledger rules — do not skip these
+
+- **No empty plan.** `plan.md` is invalid until it lists every planned task with
+  owner/dev, scope, owned surfaces/files, branch, required reading, conflict
+  notes, and handoff order. A placeholder-only plan means the day has not
+  started.
+- **Timestamp every return.** Each `returns/<task>.md` records `returned_at`,
+  `deadline`, and `deadline_status` (`on_time`, `late`, `deferred`, or
+  `out_of_scope`). Late returns stay in `returns/` but must be called out by
+  `push` and `review` instead of silently counted as planned work.
+- **Reconcile the whole ledger.** `push` must account for every file in
+  `returns/`: stacked, superseded duplicate, late, out-of-scope, or blocked.
+  Nothing may be ignored because it is inconvenient or arrived after deadline.
+- **Close PR state.** After `close`, every related GitHub PR is either merged
+  through GitHub or explicitly closed/commented as subsumed by the `main` merge
+  SHA. Never leave an open PR whose code already landed through the lead path.
+- **Team-facing render accompanies the record.** `review` writes both `review.md`
+  and its team-facing `review.html` (product-first, no Claude↔lead discussion
+  meta, self-contained inline CSS, house style) — the `.html` is the artifact the
+  team reads, `review.md` stays the machine/`plan` input. `plan` similarly carries
+  the analogous `plan.html` render. A missing `.html` means the step is incomplete.
+- **Superpowers SDD scratch.** When delegating to
+  `superpowers:subagent-driven-development`, use the current Superpowers
+  workspace convention: task briefs, reports, review diffs, and progress ledger
+  live under the git-ignored `.superpowers/sdd/`, not under `.git/`.
+
+## The daily cycle (8 commands)
+Invoke as `dev-together <command> [args]`. **Read the matching step file before
+acting** — each says who runs it, which mature skill it delegates to, its inputs,
+and its output artifact.
+
+| # | Command | Role | One-liner | Detail |
+|---|---------|------|-----------|--------|
+| 1 | `init` | dev/lead | install the deadline hook + scaffold today's folder | [commands/init.md](commands/init.md) |
+| 2 | `plan` | lead | scope the day's tasks → `plan.md` | [commands/plan.md](commands/plan.md) |
+| 3 | `handoff` | lead | generate the day's handoffs in parallel → `handoffs/` + dev prompts | [commands/handoff.md](commands/handoff.md) |
+| 4 | `dive <handoff>` | dev | accept a handoff, branch off main, build | [commands/dive.md](commands/dive.md) |
+| 5 | `return [branch]` | dev | return results → `returns/<task>.md` | [commands/return.md](commands/return.md) |
+| 6 | `push` | lead | stack the returns + analyze merge order → `stack.md` | [commands/push.md](commands/push.md) |
+| 7 | `close` | lead | review/test the stack, merge to `main` | [commands/close.md](commands/close.md) |
+| 8 | `review` | lead | end-of-day retrospective → `review.md` | [commands/review.md](commands/review.md) |
+
+`brainstorm` is NOT a dev-together command — use **superpowers:brainstorming**
+directly inside `plan`/`handoff`.
+
+## The handoff standard
+Every handoff is a self-contained spec an unfamiliar dev can run. The load-bearing
+rules — the **four-property Definition of Done**, **discuss-first
+triggers**, **defer rules**, **the per-task-branch merge model** — are in
+[references/handoff-standard.md](references/handoff-standard.md); the copy-paste
+skeleton is in [references/handoff-template.md](references/handoff-template.md).
+
+## The full loop (PDCA, completed) — don't let a task come back unfinished/divergent
+The 8 commands already form a PDCA loop (`plan`/`handoff` = Plan, `dive`/`return` =
+Do, `push`/`close` = Check, `review` = Act). Two phases make it complete so tasks
+stop returning **unfinished** or **finished-but-divergent**:
+- **Front — clarify/research (the missing "Study").** A build task is never handed
+  off while its scope/feasibility/DoD is still unknown. When a **discuss-first
+  trigger** fires (the **tiering criterion**), the lead issues a **research handoff**
+  (`clarify_first`) first — it produces the **DoD + the build slices**; only then
+  the build handoff. No trigger → fast path straight to build. The DoD is often
+  *unknowable before research* — research is what writes it.
+- **Back — method-writeback (a learning loop, not just a work loop).** The dev
+  **captures** at `return` (a per-line **DoD reconciliation** + method-friction);
+  the lead **promotes** in `review` (a mandatory **method-deltas** section → a
+  dev-together PR or tracked process-debt). The dev never edits the skill (single
+  writer); the lead does.
+- **Machine return gate.** "Done" is no longer self-asserted: a `return` requires
+  **CI (`precommit + check_invariants`) green on the PR head + rebased on `main`**
+  (branch-protected). The lead's `close` becomes a confirmation, not the first real
+  inspection.
+
+## Why these rules (adapt, don't obey blindly)
+Per-task branches + lead-merges keep parallel devs from colliding and give one
+accountable integration point (`push`+`close`). Adversarial review before build
+catches *wrong-approach*, not just defects. The **clarify/research front-phase**
+keeps the lead from handing off a build whose DoD it can't yet write. A
+**goal-derived, user-layer, closed-set DoD** + the **machine return gate** stop
+"green tests, broken product" and "self-asserted done". **Deferrals are
+lead-adjudicated**, never a dev's "READY TO MERGE". `review`'s **method-deltas**
+make the loop *learn* (lessons stop recurring). The deadline + clean-split-on-defer
+keep the cadence unblockable. If a case isn't covered, reason from these goals.

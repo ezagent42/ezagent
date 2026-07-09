@@ -44,10 +44,10 @@ defmodule Ezagent.UriQuery.Scan.HomePathExceptions do
     # the system:// resolver backend (Resource-unification P3, SPEC §10 OI-3) —
     # the sanctioned SINGLE Home.path chokepoint every node-global system artifact
     # routes through. Not migratable (it IS the migration target); not boot/operator.
-    # (line re-anchored 118→122: sw-home lane added the `socialware` catalog
+    # (line re-anchored 122→125: skill distribution added the `skills` catalog
     # entry + its moduledoc bullet above it)
     {"apps/ezagent_core/lib/ezagent/system/fs_resolver.ex", "Ezagent.System.FsResolver.resolve/1",
-     122, "system:// resolver backend — R-4 sanctioned single Home.path chokepoint (P3)"},
+     125, "system:// resolver backend — R-4 sanctioned single Home.path chokepoint (P3)"},
     # early boot, pre-supervision (cookie file read before the registry exists)
     {"apps/ezagent_core/lib/ezagent/runtime.ex", "Ezagent.Runtime.cookie_path/0", 29,
      "early boot, pre-supervision (D2)"},
@@ -64,16 +64,16 @@ defmodule Ezagent.UriQuery.Scan.HomePathExceptions do
     {"apps/ezagent_core/lib/mix/tasks/ezagent.home.init.ex", "Mix.Tasks.Ezagent.Home.Init.run/1",
      36, "operator mix-task, app-not-started"},
     {"apps/ezagent_core/lib/mix/tasks/ezagent.home.init.ex",
-     "Mix.Tasks.Ezagent.Home.Init.ensure_credential_template/2", 55,
+     "Mix.Tasks.Ezagent.Home.Init.ensure_credential_template/2", 56,
      "operator mix-task helper, app-not-started"},
     {"apps/ezagent_core/lib/mix/tasks/ezagent.home.init.ex",
-     "Mix.Tasks.Ezagent.Home.Init.ensure_credentials_readme/0", 85,
+     "Mix.Tasks.Ezagent.Home.Init.ensure_credentials_readme/0", 86,
      "operator mix-task helper, app-not-started"},
     {"apps/ezagent_core/lib/mix/tasks/ezagent.home.init.ex",
-     "Mix.Tasks.Ezagent.Home.Init.print_summary/0", 151,
+     "Mix.Tasks.Ezagent.Home.Init.print_summary/0", 152,
      "operator mix-task helper, app-not-started"},
     {"apps/ezagent_core/lib/mix/tasks/ezagent.home.init.ex",
-     "Mix.Tasks.Ezagent.Home.Init.print_summary/0", 165,
+     "Mix.Tasks.Ezagent.Home.Init.print_summary/0", 167,
      "operator mix-task helper, app-not-started"},
     # operator mix-task: ezagent.home.backup
     {"apps/ezagent_core/lib/mix/tasks/ezagent.home.backup.ex",

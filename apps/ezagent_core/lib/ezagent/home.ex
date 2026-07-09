@@ -68,7 +68,8 @@ defmodule Ezagent.Home do
 
   `:socialware` is the canonical deployment home for non-framework socialware
   (deploy-seed SPEC §4); `Ezagent.Home.SocialwareSeed` seeds shipped packages
-  into it at init time.
+  into it at init time. `:skills` is the single runtime origin for recipe-
+  referenced agent skill content after the boot skill seed lane runs.
   """
-  def skeleton_dirs, do: [:credentials, :db, :snapshots, :logs, :plugins, :socialware]
+  def skeleton_dirs, do: [:credentials, :db, :snapshots, :logs, :plugins, :socialware, :skills]
 end

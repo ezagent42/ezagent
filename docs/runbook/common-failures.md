@@ -6,6 +6,26 @@ Your Claude Code agent's `esr-developer` skill has a condensed version of this; 
 
 ---
 
+## Symptom: skill-seed logs `SKIPPED release upgrade`
+
+### Cause: operator-edited deployed skill plus changed release seed
+
+The boot skill seed compared `$EZAGENT_HOME/<profile>/skills/<ref>/` with the
+last shipped hash and the new release's `priv/skills_seed/<ref>/`. Both the
+operator copy and the release seed changed, so Ezagent preserved the operator
+edit and did not apply the release bytes.
+
+**Fix:** back up the deployed skill dir, remove
+`$EZAGENT_HOME/<profile>/skills/<ref>/`, then rerun the boot seed or
+`mix ezagent.home.init`. The next seed copies the release version and updates the
+skill index.
+
+**Pre-P3 caveat:** before P3 lands, an already-spawned agent does not pick up a
+skill upgrade in place. Regenerate that agent's `config_dir` by deleting the
+config dir and marker so the next spawn re-materializes it.
+
+---
+
 ## Symptom: message appears to send but recipient never sees it (silent drop)
 
 By far the most common class of bug in Ezagent. Causes, in order of likelihood:

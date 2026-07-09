@@ -53,6 +53,8 @@ defmodule Ezagent.System.FsResolver do
     * `socialware`  → `Home.path("socialware")` — deployment-level socialware
       manifest seeds, swept by the late boot lane
       (`Ezagent.Socialware.ManifestSeed.scan_all!/1`).
+    * `skills`      → `Home.path("skills")` — deployment-level skill seed
+      materialization, swept by `Ezagent.Home.SkillSeed`.
   """
 
   alias Ezagent.URI, as: EzURI
@@ -67,7 +69,8 @@ defmodule Ezagent.System.FsResolver do
     "logs" => :logs,
     "plugins" => :plugins,
     "inbox" => "inbox",
-    "socialware" => "socialware"
+    "socialware" => "socialware",
+    "skills" => "skills"
   }
 
   @separators ["/", "\\"]

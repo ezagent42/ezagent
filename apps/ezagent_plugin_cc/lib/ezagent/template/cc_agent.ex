@@ -497,6 +497,12 @@ defmodule Ezagent.PluginCc.Template.CcAgent do
     Ezagent.PluginCc.Template.OrchestratorBootstrap.bootstrap(tmpl, config_dir)
   end
 
+  @doc false
+  @spec attach_role_sandbox_content(map(), URI.t() | nil) :: {:ok, map()} | {:error, term()}
+  def attach_role_sandbox_content(tmpl, agent_uri \\ nil) when is_map(tmpl) do
+    Ezagent.PluginCc.Template.OrchestratorBootstrap.attach_role_sandbox_content(tmpl, agent_uri)
+  end
+
   # codex PR #408 review HIGH-3 — wrap `apply_orchestrator_recipe_bootstrap/2`
   # so a role-bootstrap failure DOES NOT tear down the agent. The agent
   # is allowed to spawn as a plain cc agent (the SKILL is UX, not
@@ -521,37 +527,6 @@ defmodule Ezagent.PluginCc.Template.CcAgent do
   @spec orchestrator_recipe?(map()) :: boolean()
   def orchestrator_recipe?(tmpl),
     do: Ezagent.PluginCc.Template.OrchestratorBootstrap.orchestrator_recipe?(tmpl)
-
-  # Resolve the on-disk source of the `ezagent-session-orchestrator`
-  # skill. Defaults to walking upward from this plugin's priv_dir looking
-  # for the first ancestor that contains
-  # `.claude/skills/ezagent-session-orchestrator/SKILL.md`. Override via
-  # `config :ezagent_plugin_cc, :orchestrator_skill_source, "/abs/path"`
-  # — used by tests to point at a temp fixture without touching the real
-  # umbrella file.
-  #
-  # codex PR #408 review HIGH-2 — pre-fix used `Path.expand("../../../..", priv)`
-  # which is 4 segments and lands at `<repo>/_build/.claude/...` (off by
-  # one — the test env masked it via the app-env override). A hardcoded
-  # `..` count is brittle and silently breaks when the priv-path depth
-  # changes (e.g. release builds nest differently). The walk searches for
-  # the actual `.claude/skills/...` marker so it is robust to depth
-  # changes, and explicitly returns the list of attempted paths on
-  # failure so operators can diagnose a missing-skill deployment.
-  @doc false
-  @spec resolve_orchestrator_skill_source() :: {:ok, String.t()} | {:error, term()}
-  def resolve_orchestrator_skill_source do
-    Ezagent.PluginCc.Template.OrchestratorBootstrap.resolve_orchestrator_skill_source()
-  end
-
-  @doc false
-  @spec search_orchestrator_skill_source_from(String.t()) ::
-          {:ok, String.t()} | {:error, {:skill_source_not_found, [String.t()]}}
-  def search_orchestrator_skill_source_from(start_dir) when is_binary(start_dir) do
-    Ezagent.PluginCc.Template.OrchestratorBootstrap.search_orchestrator_skill_source_from(
-      start_dir
-    )
-  end
 
   @doc """
   The CLAUDE.md hint line appended for orchestrator-role cc agents.
@@ -946,12 +921,14 @@ defmodule Ezagent.PluginCc.Template.CcAgent do
   def create_agent_config_dir(%URI{} = agent_uri, tmpl) when is_map(tmpl) do
     reject_stale_config_dir_data_key!(tmpl)
 
-    Ezagent.Credential.HomeRuntime.create_agent_config_dir(
-      agent_uri,
-      tmpl,
-      __MODULE__,
-      Ezagent.PluginCc.Template.CcAgent.Spawn.config_home_opts()
-    )
+    with {:ok, tmpl} <- attach_role_sandbox_content(tmpl, agent_uri) do
+      Ezagent.Credential.HomeRuntime.create_agent_config_dir(
+        agent_uri,
+        tmpl,
+        __MODULE__,
+        Ezagent.PluginCc.Template.CcAgent.Spawn.config_home_opts()
+      )
+    end
   end
 
   # --- Ezagent.UI.Form ---------------------------------------------------------
