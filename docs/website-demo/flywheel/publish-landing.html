@@ -1,0 +1,69 @@
+<!DOCTYPE html>
+<html lang="zh" data-theme="light">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>已上架 · Published — Ezagent</title>
+<meta name="description" content="你的产品已上架。">
+<link rel="stylesheet" href="ds/styles.css">
+<style>
+  body{background:var(--ground);color:var(--ink);margin:0;font-family:var(--font-cn-ui),var(--font-ui);font-weight:450;-webkit-font-smoothing:antialiased}
+  .wrap{max-width:620px;margin:0 auto;padding:26px 28px 130px;text-align:center}
+  .over{font-family:var(--font-mono);font-size:11px;letter-spacing:.14em;text-transform:uppercase;color:var(--ink-3)}
+  .check{width:64px;height:64px;border-radius:var(--r-pill);background:var(--success-wash);color:var(--success-text);display:grid;place-items:center;margin:34px auto 0}
+  h1{font-family:var(--font-cn);font-weight:600;font-size:clamp(24px,4vw,32px);line-height:1.24;margin:18px 0 0}
+  .lead{color:var(--ink-2);font-size:15px;line-height:1.68;margin:14px auto 0;max-width:40ch}
+  .lead b{color:var(--ink)}
+  /* the just-published card, slots in */
+  .card{background:var(--card);border-radius:var(--r-lg);box-shadow:var(--shadow-card);padding:18px 20px;margin:26px auto 0;max-width:340px;text-align:left;animation:slotin .6s var(--ease-out) both}
+  @keyframes slotin{from{opacity:0;transform:translateY(24px) scale(.94);filter:blur(8px)}to{opacity:1;transform:none;filter:blur(0)}}
+  .card .hd{display:flex;align-items:center;gap:11px}
+  .card .av{width:40px;height:40px;border-radius:var(--r-md);flex:none;display:grid;place-items:center;font-family:var(--font-cn);font-weight:600;font-size:19px;color:#fff;background:var(--rc,var(--accent))}
+  .card .ver{margin-left:auto;font-family:var(--font-mono);font-size:11px;color:var(--ink-4)}
+  .card .t{font-family:var(--font-cn);font-weight:600;font-size:16px;margin-top:12px;line-height:1.34}
+  .card .by{font-family:var(--font-cn-ui);font-size:12px;color:var(--ink-3);margin-top:5px}
+  .card .tags{display:flex;gap:6px;margin-top:11px}
+  .card .tag{font-family:var(--font-mono);font-size:10.5px;padding:3px 9px;border-radius:var(--r-pill)}
+  .card .tag.live{color:var(--success-text);background:var(--success-wash)}
+  .card .tag.mine{color:var(--accent-press);background:var(--accent-wash)}
+  .cta{display:flex;flex-direction:column;align-items:center;gap:12px;margin-top:30px}
+  .btn{appearance:none;border:0;cursor:pointer;font-family:var(--font-cn-ui);font-weight:600;font-size:15px;padding:14px 28px;border-radius:var(--r-pill);transition:transform 150ms var(--ease-out),background 150ms;display:inline-flex;align-items:center;gap:8px}
+  .btn.primary{background:var(--accent);color:var(--on-accent);box-shadow:var(--shadow-accent)}
+  .btn.primary:hover{transform:translateY(-2px);background:var(--accent-hover)}
+  .softlink{font-family:var(--font-cn-ui);font-size:13px;color:var(--ink-3)}
+  .softlink a{color:var(--accent-press);text-decoration:underline;text-underline-offset:2px}
+</style>
+</head>
+<body>
+<div class="wrap">
+  <span class="over">Gallery · 发布完成</span>
+  <div class="check"><svg width="30" height="30" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.6" stroke-linecap="round" stroke-linejoin="round"><path d="M20 6L9 17l-5-5"/></svg></div>
+  <h1 id="h1">已上架 · Published</h1>
+  <p class="lead" id="lead"></p>
+  <div class="card ez-fade-up" id="card"></div>
+  <div class="cta">
+    <a class="btn primary" href="gallery.html">返回探索 · Explore →</a>
+  </div>
+</div>
+
+<script src="../demo-state.js"></script>
+<script src="gallery-data.js"></script>
+<script>
+  var qp = new URLSearchParams(location.search);
+  var mode = qp.get('mode') === 'build' ? 'build' : 'fork';
+  var p = FW.get(qp.get('published')) || FW.products().slice(-1)[0];
+  document.getElementById('lead').innerHTML = mode === 'fork'
+    ? '你 fork 出来的产品上架了 —— <b>现在别人也能看到它、试用它、再 fork 它</b>。'
+    : '你造的产品上架了 —— <b>别人现在能看到它、试用它、fork 它</b>。';
+  document.getElementById('card').innerHTML =
+    '<div class="hd"><div class="av" style="--rc:' + (p.color || 'var(--accent)') + '">' + (p.glyph || 'A') + '</div><span class="ver">v' + p.version + '</span></div>'
+    + '<div class="t">' + p.title + '</div><div class="by">' + p.owner + '</div>'
+    + '<div class="tags"><span class="tag live">public_view · live</span><span class="tag mine">刚上架 · new</span></div>';
+  document.body.setAttribute('data-fw-route', mode === 'fork' ? 'seller' : 'builder');
+  document.body.setAttribute('data-fw-step', mode === 'fork' ? 'S5' : 'B5');
+  document.body.setAttribute('data-fw-next', 'gallery.html');
+  document.body.setAttribute('data-fw-next-label', '返回货架');
+</script>
+<script src="flywheel-ribbon.js"></script>
+</body>
+</html>
