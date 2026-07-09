@@ -358,7 +358,7 @@ defmodule EzagentPluginCrawler.CrawlerTest do
       refute_receive {:page_refresh_error, _}, 100
     end
 
-    test "page_role/0 是单一契约点（Demo 的角色槽声明用同一个名字）" do
+    test "page_role/0 是单一契约点（manifest 的角色槽声明用同一个名字）" do
       assert Crawler.page_role() == "page"
     end
   end

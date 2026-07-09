@@ -100,7 +100,7 @@ defmodule EzagentPluginCrawler.Recipes do
   # `hello.builder` recipe 的形状：无 prompt，behaviors 挂 ActionSet ——
   # recipe-loaded behavior 进实例行为集，dispatch 按 action 解析直达）。
   # **A①（#1201 ③，hello 暴露 dispatchable rebuild action）落地后随 ALT
-  # ActionSet 一起整体删除，Demo 的 page 槽回切 `hello.builder`。**
+  # ActionSet 一起整体删除，manifest 的 page 槽回切 `hello.builder`。**
   defp page_refresh_alt do
     %{
       name: "dealscout-page-alt",

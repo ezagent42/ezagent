@@ -1,45 +1,82 @@
-defmodule EzagentPluginCrawler.DemoTest do
+defmodule EzagentPluginCrawler.DealscoutManifestTest do
   @moduledoc """
-  Shape gate for the dealscout demo socialware manifest — the one-source-of-truth
-  is the deploy-seed package `apps/ezagent_web/priv/socialware_seed/dealscout/
-  manifest.yaml` (carried in the release box like `autoservice` / `hello` /
-  `kanban`), loaded by the `EzagentPluginCrawler.Demo` thin test driver via
-  `Ezagent.Socialware.ManifestYaml.parse/1`. Production publishes this SAME file
-  through the deploy-seed lane (`Ezagent.Home.SocialwareSeed` copy →
-  `Ezagent.Socialware.ManifestSeed` scan/publish), not this module. Proves the
-  YAML file exists +
-  parses, that the parsed manifest resolves through
-  `Ezagent.Socialware.ManifestResolver.resolve/1`
-  (the fail-closed authoring boundary), composes hello's public face
-  (Surface+Turn shape, `hello_render` view, `external_feed` adapter,
-  anon-readable), declares exactly the `discover` + `page` agent role-slots
-  with zero participant instance URIs (role-slot #1180), carries ONLY the
-  content-triggered update-signal rule (never hello's `always → chat` — the
-  kanban-handoff red line), and is public / supervised / ANON-readable /
-  installer-owned. No DB here (resolve is ETS-only: PluginRegistry +
-  SessionViewRegistry, both populated at app start); publish/idempotency/
-  conformance live in `demo_publish_test.exs`.
+  Shape gate for the dealscout socialware manifest — config-driven, zero plugin
+  code shell (Decision #156: socialware = config-only bundle; the former
+  plugin-side `Demo` wrapper module is dissolved). The one
+  source of truth is the deploy-seed package `apps/ezagent_web/priv/
+  socialware_seed/dealscout/manifest.yaml` (carried in the release box like
+  `autoservice` / `hello` / `kanban`), loaded here DIRECTLY via
+  `Ezagent.Socialware.ShippedManifest.load!/2` — the same shared loader the
+  other flagships' fixtures use. Production publishes this SAME file through
+  the deploy-seed lane (`Ezagent.Home.SocialwareSeed` copy →
+  `Ezagent.Socialware.ManifestSeed` scan/publish), never a plugin module.
+
+  Proves the YAML file exists + parses, that the parsed manifest resolves
+  through `Ezagent.Socialware.ManifestResolver.resolve/1` (the fail-closed
+  authoring boundary), composes hello's public face (Surface+Turn shape,
+  `hello_render` view, `external_feed` adapter, anon-readable), declares
+  exactly the `discover` + `page` agent role-slots with zero participant
+  instance URIs (role-slot #1180), carries ONLY the content-triggered
+  update-signal rule (never hello's `always → chat` — the kanban-handoff red
+  line), and is public / supervised / ANON-readable / installer-owned. No DB
+  here (resolve is ETS-only: PluginRegistry + SessionViewRegistry, both
+  populated at app start); publish/idempotency/conformance live in
+  `dealscout_manifest_publish_test.exs`.
+
+  ## The single-slot flavor override (spec D8), test-side
+
+  `ShippedManifest.load!/2`'s shared `:flavor` seam swaps EVERY agent slot —
+  right for kanban (both slots cc-headless), wrong for dealscout, whose `page`
+  slot is pinned `dealscout-page-alt × native`（临时 ALT，A①/#1201 ③ 落地后
+  回切 `hello.builder`）. Per D8 we do NOT grow the shared module for one
+  consumer: this test carries its own thin `:discover_flavor` helper — a
+  post-`load!` Map transform that touches ONLY the `discover` slot.
   """
   use ExUnit.Case, async: true
 
   alias Ezagent.ActionSet.Crawler
-  alias Ezagent.Socialware.{Definition, ManifestResolver, ManifestYaml}
-  alias EzagentPluginCrawler.Demo
+  alias Ezagent.Socialware.{Definition, ManifestResolver, ManifestYaml, ShippedManifest}
+
+  @manifest_relpath "dealscout/manifest.yaml"
+
+  # D8 单槽 override（moduledoc §The single-slot flavor override）：`:name`
+  # 透传共享 loader；`:discover_flavor` 在 load! 之后只换 discover 槽。
+  defp manifest_attrs(opts \\ []) do
+    {discover_flavor, opts} = Keyword.pop(opts, :discover_flavor)
+
+    @manifest_relpath
+    |> ShippedManifest.load!(opts)
+    |> put_discover_flavor(discover_flavor)
+  end
+
+  defp put_discover_flavor(attrs, nil), do: attrs
+
+  defp put_discover_flavor(attrs, flavor) when is_binary(flavor) do
+    Map.update!(attrs, "roles", fn roles ->
+      Enum.map(roles, fn
+        %{"fill" => "agent", "role_name" => "discover"} = slot ->
+          Map.put(slot, "flavor", flavor)
+
+        slot ->
+          slot
+      end)
+    end)
+  end
 
   defp resolve!(opts \\ []) do
-    assert {:ok, %Definition{} = definition} = ManifestResolver.resolve(Demo.manifest_attrs(opts))
+    assert {:ok, %Definition{} = definition} = ManifestResolver.resolve(manifest_attrs(opts))
     definition
   end
 
-  test "the manifest source is the deploy-seed YAML file: exists, parses, and IS manifest_attrs/0" do
-    path = Demo.manifest_path()
+  test "the manifest source is the deploy-seed YAML file: exists, parses, and IS the loaded attrs" do
+    path = ShippedManifest.path(@manifest_relpath)
     assert File.exists?(path)
     assert String.ends_with?(path, "priv/socialware_seed/dealscout/manifest.yaml")
 
     # `manifest_attrs/0` (no overrides) is EXACTLY the parsed YAML — the loader
     # adds nothing, so the config file is the one source of truth.
     assert {:ok, parsed} = ManifestYaml.parse(File.read!(path))
-    assert parsed == Demo.manifest_attrs()
+    assert parsed == manifest_attrs()
 
     # field equivalence with the retired code-attrs shape (string-keyed,
     # resolver-ready): stable name + the parse-normalized module list.
@@ -97,7 +134,7 @@ defmodule EzagentPluginCrawler.DemoTest do
 
     page = Enum.find(agent_slots, &(&1.role_name == "page"))
 
-    # 【显式临时 ALT】A①（#1201 ③）落地后回切 "hello.builder"（demo.ex 槽注释）。
+    # 【显式临时 ALT】A①（#1201 ③）落地后回切 "hello.builder"（manifest 槽注释）。
     assert page.recipe == "dealscout-page-alt"
     assert page.flavor == "native"
 
@@ -107,8 +144,8 @@ defmodule EzagentPluginCrawler.DemoTest do
     end)
   end
 
-  test "the :flavor option swaps ONLY the discover slot (page stays the ALT recipe × native)" do
-    definition = resolve!(flavor: "dealscout-demo-stub")
+  test "the :discover_flavor helper swaps ONLY the discover slot (page stays the ALT recipe × native)" do
+    definition = resolve!(discover_flavor: "dealscout-demo-stub")
     discover = Enum.find(definition.roles, &(&1.role_name == "discover"))
     page = Enum.find(definition.roles, &(&1.role_name == "page"))
 
@@ -141,11 +178,8 @@ defmodule EzagentPluginCrawler.DemoTest do
     assert %{"type" => "text_contains", "arg" => "__dealscout_update__"} in items
     assert %{"type" => "from_role", "arg" => "discover"} in items
 
-    # 内容标记腿的 arg 从 update_signal/0 取（单一契约点），零 URI。
-    tc = Enum.find(items, &((&1["type"] || &1[:type]) == "text_contains"))
-    arg = to_string(tc["arg"] || tc[:arg])
-    assert arg == Crawler.update_signal()
-    refute String.contains?(arg, "://")
+    # 内容标记腿的 arg 是 manifest 本体携带的字面（权威载体），零 URI。
+    refute String.contains?(update_marker_from_manifest(), "://")
 
     # from_role 硬锁的 arg 是已声明的 discover 角色名（非 URI）——其他成员
     # 发同标记不再误触发（负例断言在 matcher 语义层，core matcher_test 已锁）。
@@ -193,14 +227,26 @@ defmodule EzagentPluginCrawler.DemoTest do
     assert is_binary(protocol)
 
     # 讲清三件事：discover 爬完自动触发页面刷新；手动触发用 crawl_now；
-    # __dealscout_update__ 更新信号标记的含义（与 update_signal/0 契约点一致）。
+    # 更新信号标记的含义（与 manifest routing 的 text_contains arg 一致）。
     assert protocol =~ "discover"
     assert protocol =~ "crawl_now"
-    assert protocol =~ Crawler.update_signal()
+    assert protocol =~ update_marker_from_manifest()
 
     # 纯说明数据：legend 机制只读 member_set/bound_rule_set/fold，protocol
     # 不参与路由——机制字段仍原样在场（上一测试锁了值）。
     assert Map.take(definition.legends["dealscout"], ["member_set", "bound_rule_set", "fold"])
            |> map_size() == 3
+  end
+
+  # Extract the update-signal `text_contains` arg from the PARSED manifest (raw
+  # attrs, pre-resolve) — the config-driven read of the contract marker.
+  defp update_marker_from_manifest do
+    [rule] = manifest_attrs()["routing_rules"]
+
+    tc =
+      Enum.find(rule["matcher"]["items"], &(&1["type"] == "text_contains")) ||
+        raise "no text_contains leg in the dealscout update matcher"
+
+    to_string(tc["arg"])
   end
 end

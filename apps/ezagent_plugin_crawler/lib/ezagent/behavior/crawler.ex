@@ -5,10 +5,11 @@ defmodule Ezagent.ActionSet.Crawler do
   ## 分层（2026-07-07 rename 拍板）
 
   本模块属 **通用能力层**（`:ezagent_plugin_crawler`，爬取能力，与业务无关）；
-  "dealscout" 是**组合本能力的 socialware 的名字**（纯配置，见
-  `EzagentPluginCrawler.Demo`）。判据："换个 socialware 还能原样用吗"——
-  crawl_now/search/信号 emit/page 直呼腿都能，留在这里；投融资 prompt、
-  Definition、routing 规则等业务件留在 Demo/Recipes 的 dealscout 命名侧。
+  "dealscout" 是**组合本能力的 socialware 的名字**（纯配置，deploy-seed 包
+  `apps/ezagent_web/priv/socialware_seed/dealscout/manifest.yaml`）。判据：
+  "换个 socialware 还能原样用吗"——crawl_now/search/信号 emit/page 直呼腿
+  都能，留在这里；投融资 prompt、routing 规则等业务件留在 manifest YAML /
+  Recipes 的 dealscout 命名侧。
 
   轮询（`Poller`）和手动触发走同一注入路径：抓回条目经 P14 的 legacy 路
   `Ezagent.Invocation.dispatch/1`（本模块构造 `%Ezagent.Invocation{}`；
@@ -64,24 +65,26 @@ defmodule Ezagent.ActionSet.Crawler do
   #
   # 归属说明（2026-07-07 rename）：这是**缺省信号名**。字面量带 "dealscout" 是
   # 历史沿用（dealscout socialware 的 Definition / 演示 / 证据都引用它，改字面量
-  # 会破内容协议），不代表本模块属业务层。常量留在这里而不挪去 Demo 的理由：
-  # emit 方是本 handler，挪去 Demo 会让通用层反向依赖业务配置层（层次倒置）；
-  # Demo 经 `update_signal/0` 函数引用，单一契约点不变。别的 socialware 组合本
-  # 能力时可在 session config slice 写 `:update_signal` key 覆写（emit 侧经
-  # `ctx[:read]` 读，见 `signal_marker/1`），并在自己的 routing_rules 里声明
-  # 匹配的 matcher。
+  # 会破内容协议），不代表本模块属业务层。契约锁方向（Decision #156 反转后）：
+  # manifest YAML（`socialware_seed/dealscout/manifest.yaml` routing 的
+  # `text_contains` arg）是权威载体，本常量是 emit 侧必须匹配的镜像——
+  # `dealscout_manifest_test.exs` 从 parse 后的 manifest 读出 arg 断言 == 本
+  # 常量。别的 socialware 组合本能力时可在 session config slice 写
+  # `:update_signal` key 覆写（emit 侧经 `ctx[:read]` 读，见
+  # `signal_marker/1`），并在自己的 routing_rules 里声明匹配的 matcher。
   @update_signal "__dealscout_update__"
 
-  # page 角色槽名（单一契约点，照 update_signal/0）：Demo 的角色槽声明 + 直接
-  # dispatch 腿的 role_name 解析都从这里取。"page" 本身是通用词（任何组合本
-  # 能力的 socialware 声明一个 "page" 角色槽即可接上直呼腿）。
+  # page 角色槽名（单一契约点，照 update_signal/0）：manifest 的角色槽声明
+  # （receivers 权威载体）+ 直接 dispatch 腿的 role_name 解析都对齐这里。
+  # "page" 本身是通用词（任何组合本能力的 socialware 声明一个 "page" 角色槽
+  # 即可接上直呼腿）。
   @page_role "page"
 
   @doc "更新信号的**缺省**内容标记（Definition routing_rules 的 `text_contains` 靶子；socialware 可经 config slice `:update_signal` 覆写）。"
   @spec update_signal() :: String.t()
   def update_signal, do: @update_signal
 
-  @doc "page 角色槽名（Demo 角色槽声明 + 直接 dispatch 腿共用的单一契约点）。"
+  @doc "page 角色槽名（manifest 角色槽声明 + 直接 dispatch 腿共用的单一契约点）。"
   @spec page_role() :: String.t()
   def page_role, do: @page_role
 

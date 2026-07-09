@@ -6,8 +6,10 @@ defmodule EzagentPluginCrawler.Application do
 
   本 plugin 是**通用爬取能力**（poller / fetch / config / crawl ActionSet /
   sweeper），与业务无关；**"dealscout"（商业 / 投融资线索的搜索与撮合平台）是
-  socialware 的名字**——一份纯配置组合（`EzagentPluginCrawler.Demo` 的
-  manifest：组合 hello 公开面 + 本 plugin 的爬取后台），不是代码层的名字。
+  socialware 的名字**——一份纯配置组合（deploy-seed 包
+  `apps/ezagent_web/priv/socialware_seed/dealscout/manifest.yaml`：组合 hello
+  公开面 + 本 plugin 的爬取后台），不是代码层的名字（Decision #156：
+  socialware = config-only bundle，plugin 侧零 socialware 专属代码壳）。
   历史上 app 叫 `ezagent_plugin_dealscout` 把两层混了，故 rename。
 
   **显示是 hello 的活**：本 plugin **不声明**任何 SessionView / render
@@ -63,9 +65,10 @@ defmodule EzagentPluginCrawler.Application do
     # last-booting transport app, AFTER this plugin + hello registered their
     # plugin_info + `PageView` so `uses: ["hello", "crawler"]` + the
     # `hello_render` view resolve) publishes it through the governed import lane.
-    # Zero call from this plugin's boot; `EzagentPluginCrawler.Demo` remains only
-    # as a test driver over the SAME shipped file (deploy-seed SPEC §2/§4, the
-    # hello #162 play).
+    # Zero call from this plugin's boot AND zero plugin-side wrapper module —
+    # tests drive the SAME shipped file directly via
+    # `Ezagent.Socialware.ShippedManifest.load!/2` (deploy-seed SPEC §2/§4, the
+    # hello #162 play; Decision #156).
     result
   end
 

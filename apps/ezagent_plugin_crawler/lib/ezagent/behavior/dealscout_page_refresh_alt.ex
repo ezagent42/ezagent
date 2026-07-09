@@ -1,8 +1,8 @@
 defmodule Ezagent.ActionSet.DealScoutPageRefreshAlt do
   @moduledoc """
   【显式临时 ALT —— A①（#1201 ③，hello 暴露可 dispatch 的页面重建 action）
-  落地后本模块**整体删除**，dealscout Demo 的 `page` 槽替换回 `hello.builder`
-  （`demo.ex` page 槽注释里的一行回切）。】
+  落地后本模块**整体删除**，dealscout manifest 的 `page` 槽替换回
+  `hello.builder`（manifest.yaml page 槽注释里的一行回切）。】
 
   ## v2：caller-dispatch 式（kanban 板动作同款），不再走 receive 投递
 

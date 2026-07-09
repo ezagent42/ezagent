@@ -39,8 +39,8 @@ defmodule EzagentPluginCrawler.RecipesTest do
 
   test "the page-alt recipe is code-driven (照 hello.builder 形状：ALT ActionSet + 自己的 :refresh_page cap，无 prompt)" do
     # 【显式临时 ALT】A①（#1201 ③，hello 暴露 dispatchable rebuild action）
-    # 落地后本 recipe 随 DealScoutPageRefreshAlt 一起整体删除，Demo page 槽
-    # 回切 hello.builder。
+    # 落地后本 recipe 随 DealScoutPageRefreshAlt 一起整体删除，manifest 的
+    # page 槽回切 hello.builder。
     alt = Enum.find(Recipes.all(), &(&1.name == "dealscout-page-alt"))
     assert alt
 
