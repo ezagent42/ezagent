@@ -1,9 +1,14 @@
-# Agent Entity × Flavor:映射关系与底层实例生命周期(v2)
+# Agent Entity × Flavor:映射关系与底层实例生命周期(v2.1)
 
-日期:2026-07-09 · 基线 HEAD `364ccf6ba`(= stable,今日晋级,含 P1-P3 #1266)
-状态:**Q1/Q3/Q4 已 ratify** · 本稿吸收全部 Allen pre-grill 裁定,供合并前最终 review。
+日期:2026-07-09 · 起草基线 `364ccf6ba`(stable),**结论需按当前 HEAD 复核**
+性质:**决策记录(decision record),不是实施规格(implementation spec)。**
 
-> v1.1→v2 变更:Q1(全 flavor PTY 无状态 + rehydration 契约)· Q3(per-role cardinality `one|many` + viewer 基线)· Q4(curl 退化生命周期 + completion/tool-loop 正交轴)· D2 收紧(只读凭据+独立 runtime + Part C 兜底)· Decision A 三分类(`stateless≠diskless`)· 命名对齐(#1253/#1255/#1261)· 删 ACT-2(已证 false-positive #1269)· 删 SkillRegistry provenance 注脚(已上 main #1266)。
+> ⚠️ **实施前必读**:下述 Q1/Q3/Q4 是 Allen ratify 的**方向裁定**,**不代表实现已存在**。经 codex 对抗式 review(2026-07-09)确认,至少三处需要先补接口设计才能实施:
+> 1. **`ContextRenderer` 契约**(Q1 的 replay 当前**无代码落点**)——见 §4.4
+> 2. **`isolation` 能力位 schema**(`AgentFlavorRegistry.decl` 当前无此字段)——见 §5.3
+> 3. **D2 的 runtime key**(与 reuse 复用 `agent_uri` 存在**未解决矛盾**)——见 §5.5
+>
+> v2→v2.1 变更(codex review 后修正):curl 分类纠错(stateful behavior)· config_dir 补第④类 · `message_routings` 已移除(copy+ref model)· URI 格式纠错 · 12 连锁位重写为状态清单 · D2 矛盾显式化 · Q1 对 cc-PTY 的可实施性标为**待 Allen 裁决**。
 
 ---
 
@@ -19,7 +24,9 @@
 |---|---|---|---|
 | **Recipe** | `Ezagent.Agent.Recipe` | flavor-agnostic 沙盒内容配方(skills/plugins/prompt/script/behaviors/requested_caps/config) | core `recipe.ex:34,47-57` |
 | **flavor** | `AgentFlavorRegistry` | 声明式 data:`flavor → {kind, template_class, instance_behaviors, cap_policy}` | domain_agent `agent_flavor_registry.ex:49-54` |
-| **Entity** | `Ezagent.Entity.Agent` | `Recipe × flavor` materialize 出的运行时实例,URI `entity://agent/<flavor>_<name>` | `entity/agent.ex:47,375` |
+| **Entity** | `Ezagent.Entity.Agent` | `Recipe × flavor` materialize 出的运行时实例,URI **`entity://<workspace>/agent/<name>`** | `uri.ex:438-441`(`agent/2`);解析器强制 3 段 `:522` |
+
+> **URI 格式纠错(v2.1)**:v2 曾写 `entity://agent/<flavor>_<name>`,那是 `entity/agent.ex:47` 的 **stale moduledoc**。当前 `Ezagent.URI.agent(workspace, name)` 生成 `entity://<workspace>/agent/<name>`,per-tenant scheme 强制带 workspace host。flavor 体现在 name 段前缀(`<flavor>_<...>`),不是独立 URI 段。**顺带:`Entity.Agent` 的旧 moduledoc 应修**。
 
 **两个锚点**:**recipe provenance**(记实例、不可变,`recipe_materializer.ex:217`);**role_name**(住 (entity×session) 成员边,会话内唯一,`membership.ex:44`)。同一 uuid 实例可在不同会话当不同 role。
 
@@ -43,7 +50,22 @@ PTY 启动 `build_claude_cmd/3`(`spawn_plan.ex:81-83`)是无 `--resume`/`-p` 的
 | ② workspace/folder | recipe 引用的 **durable config_dir** | 进程死亡仍在;同 backend `claude --continue` 恢复 CLI cache | `home_runtime.ex:90` `agent_config_dir/2` |
 | ③ PTY 子进程 | disposable | **永不是真相源,只当缓存** | `spawn_plan.ex:58,81-83` |
 
-**Rehydration 契约(Decision A 必答项)**:跨 backend 切换(cc→codex)时第②层保留但 CLI transcript 格式不同 → **对话连续性只能靠 `MessageStore` PG replay**(第①层)。无状态 run 每次都从 **MessageStore 取 session context → 渲染 → 喂 flavor**。cold-start restart 走已有 `ensure_subprocess_alive` self-heal + `Sandbox.post_init`(`template_spawn.ex:689`),从"异常恢复"升为"正常路径"。
+**Rehydration 契约(Decision A 必答项)**:跨 backend 切换(cc→codex)时第②层保留但 CLI transcript 格式不同 → **对话连续性只能靠 `MessageStore` PG replay**(第①层)。
+
+### ⚠️ 2.1a Q1 的实现缺口(codex review,critical)——待 Allen 裁决
+
+**上述是目标架构,当前代码没有落点。** 现读证据:
+
+- `MessageStore` 的 replay **只用于成员重连补发**(`in_session_since/2` → 重新 dispatch,`delivery.ex:379`),**不存在**"把历史渲染后喂给 flavor"的路径。
+- cc-headless 只把**当前 `text`** 传给 SDK(`ezagent_cc_sdk_worker.py:131`);codex bridge 只把**当前 `content`** 发给 `turn/start`(`ezagent_codex_bridge.py:242`)。**没有 ContextRenderer。**
+- **cc-PTY 尤其棘手**:启动的是**裸交互 `claude`**,无 `--resume`/`-p`(`spawn_plan.ex:78`);重启路径 `ensure_subprocess_alive/2`(`cc_agent.ex:826`)只是重新拉起 PtyServer,**不喂历史**。而 PTY 是**交互式 TUI,不是 request/response** —— 无法"喂"一段历史来恢复它的 context window。
+
+**❓ 裁决点(回给 Allen)**:Q1 的"PTY = disposable"对 cc-PTY 而言,**等价于要求它迁到 headless `-p`/SDK 模式**(放弃 PTY 交互)。二选一:
+
+- **(a)** 无状态语义**只覆盖 headless/remote/HTTP 档**,`cc`(PTY)显式标 `:per_instance_stateful`(只允许"进程重启 + 同 config home 尝试恢复"),不宣称跨 backend replay 等价;
+- **(b)** 要求需要无状态的 role **一律走 `cc-headless`**,`cc`(PTY)仅留交互/调试用途。
+
+**在此裁决前,Q1 对 cc-PTY 不可实施。** 实施前必须先补 **`ContextRenderer` 设计**:读取哪些 message、窗口/截断/token budget、system/tool/result 如何编码、幂等性测试、各 flavor 输入协议适配。
 
 ### 2.2 fresh-spawn 全路径(不变,all-or-nothing)
 
@@ -58,9 +80,31 @@ resolve_cascade_content → instantiate_workers(原子 fresh?) → post_spawn_ob
 
 bridge join 才 ready(`transport_readiness.ex:56,88,168`),积压消息走 `PendingDelivery` drain。R3(重新武装)待补 `failed→not_ready` 回环。
 
-### 2.4 「换 flavor = 换实例」牽動 12 位(不变)
+### 2.4 「换 flavor = 换实例」的状态清单(v2.1 重写)
 
-实例 URI · AgentFlavorAttributes · RecipeAttributes · AgentLineage · WorkspaceRegistry · `:sandbox` slice · 凭据 grant · behavior overlay · role_name 成员边 · member-cap · 途中消息 · 子进程 sidecar(curl 无)。关键简化:第 6 位 `:sandbox` context 不再是"迁 config_dir",而是"**从 MessageStore 重放**(rehydration 契约)";第 12 位 cc-PTY 不再需"迁移子进程上下文"(可弃)。
+> **codex review(high)**:v2 的"12 位"**遗漏了关键运行态**,不足以指导实现。下表补齐并标注 owner / 持久性 / key / switch 行为。
+
+| # | 状态位 | owner | 持久性 | key | switch 行为 |
+|---|---|---|---|---|---|
+| 1 | 实例 URI | core | — | — | 新建 |
+| 2 | `AgentFlavorAttributes` | domain_agent | ETS | instance_uri | put 新 / delete 旧 |
+| 3 | `AgentRecipeAttributes` | domain_agent | ETS | instance_uri | put 新 |
+| 4 | `AgentLineage` | core | **durable(Ecto+ETS)** | agent_uri | record 新 / forget 旧 |
+| 5 | `WorkspaceRegistry` 绑定 | core | ETS | worker_uri | bind 新 / unbind 旧 |
+| 6 | `:sandbox` slice | Kind | durable snapshot | worker_uri | 新 config_dir + 重跑凭据 cascade |
+| 7 | 凭据 grant(#17 GrantRow) | credential | **durable(唯一索引)** | agent_uri | mint 新 / delete 旧 |
+| 8 | behavior overlay | Kind | 进程内 | worker | mount 新(`curl_behaviors`≠`cc`) |
+| 9 | role_name 成员边 | session | 成员边 meta | (entity×session) | 旧 leave 放名 → 新 join 占名 |
+| 10 | member-cap | identity | durable grant | member_uri | revoke 旧 / grant 新 |
+| 11 | 途中消息 | core | `PendingDelivery` | uri | 窗口内缓冲 / DLQ |
+| 12 | 子进程 sidecar | plugin | OS 进程 | worker | SIGTERM 旧 / spawn 新(curl 无) |
+| **13** | **`ReadyGate` / `TransportReadiness`** | core / domain_agent | ETS + gate | agent_uri | **必须重新武装**(`transport_readiness.ex:55`) |
+| **14** | **`AgentBridge.Registry` / channel** | agent_bridge | 进程注册 | agent_uri | 旧 unbind,新 bind(bridge join 才 ready) |
+| **15** | **codex app-server / bridge sidecar registry** | plugin_codex | 进程注册 | agent_uri | 旧 sidecar 停,新起(`plugin_codex/application.ex:69`) |
+| **16** | **codex `thread_id` 文件**(第④类) | plugin_codex | **fs** | agent_uri | **跨 backend 必然失效**(`codex_agent.ex:271,279`) |
+| **17** | **cc SDK sidecar registry + `claude_session_id`**(第④类) | plugin_cc | 进程注册 + fs | agent_uri | 同上(`sdk_sidecar.ex:31`;`cc_headless_agent.ex:92`) |
+
+**关键点**:第 13-17 位是 v2 遗漏的。其中 **16/17 属 config_dir 第④类(runtime coordination metadata)** —— 跨 backend switch 时**必然失效**(thread/session 句柄不通用),这正是 rehydration 只能靠 PG replay 的根因;同 backend reset 时**应保留**。
 
 ---
 
@@ -98,9 +142,12 @@ bridge join 才 ready(`transport_readiness.ex:56,88,168`),积压消息走 `Pendi
 |---|---|---|---|
 | ① recipe-projected | skills(幂等拷贝 `orchestrator_bootstrap.ex:43,148`)、CLAUDE.md(由 recipe 写出 `home_runtime.ex:313-315`) | 纯函数投影,determinism 锚 `recipe/compose.ex:11-13`"同 recipe×任意 flavor→字节相同" | ✅ destroy-rebuild 可复现,stateless≠diskless |
 | ② credential | `.credentials.json`(`cc_agent.ex:209`)、`auth.json` | cascade 可恢复 | ✅ restorable |
-| ③ runtime-accumulated | CLI 对话记忆、codex `rollout-*.jsonl`(`codex_agent.ex:451`)、agent 自改文件 | **唯一真不可复现** | ⚠️ **就是 state,被 Q1 RULING 降为 disposable** |
+| ③ runtime-accumulated | CLI 对话记忆、codex `rollout-*.jsonl`(`codex_agent.ex:451`)、agent 自改文件 | **不可复现** | ⚠️ 就是 state,Q1 拟降为 disposable(但见 §2.1a 缺口) |
+| **④ runtime coordination metadata**(v2.1 新增) | `claude_session_id`(`cc_headless_agent.ex:92,106`)、codex `thread_id` 文件(`codex_agent.ex:271,279`) | **control-plane 句柄** —— 指向 backend 侧 session/thread | ⚠️ **既非投影、非凭据、也不能简单 disposable** —— 丢了它,同 backend 的 thread/session 连续性即断 |
 
-**Decision A 的"state"精确指第③类**。第①/②类是 Recipe 的纯函数投影/可恢复凭据,落盘不影响"无状态"定义。读者不能误读为"skills 落盘 = 有状态冲突"。
+**Decision A 的"state"精确指第③类**;第①/②类落盘不影响"无状态"定义(读者不能误读为"skills 落盘 = 有状态冲突")。
+
+> **第④类是 codex review 补出的漏项(medium)**。它不可被简单归入任何一类:删了它,同 backend 的续接能力丢失;但它又不是对话内容本身。**需明确**:哪些可删、哪些需随实例迁移、哪些只在同 backend 内有效。这直接影响 §3 的 switch(跨 backend 时第④类必然失效)与 reset(同 backend 时应保留)。
 
 ### 4.3 异构无状态化:四个实现 + 首验对象
 
@@ -149,18 +196,46 @@ bridge join 才 ready(`transport_readiness.ex:56,88,168`),积压消息走 `Pendi
 - fan-out 到群组的下层实现走 **Legend + `$session_members`**(`legend.ex:1,7` `member_set`),不走重载 role_name。
 - Q3 让 viewer 从"隐式(anon 不占 role_name)升为**显式**(role + cardinality:many),并连带让 `from_role: viewer → responser` 对带 viewer role 的 human 生效。
 
-### 5.3 隔离能力位(修正:四档)
+### 5.3 隔离能力位(⚠️ **提案,未落代码**)
 
-| `isolation` | 谁 | reuse 共享执行器? |
-|---|---|---|
-| `:per_instance` | cc(PTY):常驻 process | **否**→退化独立实例(D2) |
-| `:per_thread`(串行) | cc-headless:`serializes` | 可,需 per-sidecar turn 队列 |
-| `:per_thread`(并发) | codex-remote/codex:app-server 多 thread | 可,每 session 一 thread(D1) |
-| `:stateless` | curl / native | 天然安全(D1) |
+> **codex review(high)**:`AgentFlavorRegistry.decl` 当前只有 `kind/template_class/instance_behaviors/cap_policy`(`agent_flavor_registry.ex:49`),**无 `isolation` 字段**;bridge 层只有 `:subprocess_ws | :in_process_sync` 两档 transport class(`adapter_registry.ex:116`)。**本节是 schema 提案**,实施前需:加注册验证 + 默认拒绝 + per-flavor invariant test。否则 D1/D2 调度无依据。
+
+**关键区分(v2.1 纠错)——"执行器无状态" ≠ "flavor 无状态"**:
+
+| `isolation`(执行器/transport 维度) | 谁 | flavor behavior 是否持有 durable state? | reuse 共享执行器? |
+|---|---|---|---|
+| `:per_instance` | cc(PTY):常驻交互 process | 是(进程内 context window) | **否**→退化独立实例(D2) |
+| `:per_thread`(串行) | cc-headless:`serializes`(`sdk_sidecar.ex:6`) | 是(SDK session,第④类句柄) | 可,需 per-sidecar turn 队列 |
+| `:per_thread`(并发) | codex-remote/codex:app-server 多 thread | 是(thread,第④类句柄) | 可,每 session 一 thread(D1) |
+| `:in_process_sync` | **curl / native** | **⚠️ curl 是 STATEFUL** —— 见下 | 需按 state 归属判定,**不能因"无子进程"就当安全** |
+
+> **curl 分类纠错(v2.1,codex critical→high)**:v2 曾把 curl 归 `:stateless`,**错**。curl 的**transport** 无子进程(`in_process_sync`),但它的 **flavor behavior 持有 durable 对话状态** —— `Ezagent.ActionSet.CurlAgent` 的 `:curl_agent` slice 含 `conversation / last_error / last_tokens`,且"**ALL the durable `{:set, :conversation/...}` effects**"(`behavior/curl_agent.ex:28-40`)。
+>
+> 正确表述:**curl = stateless transport + stateful flavor behavior**。因此 **curl 不能作为 `:stateless` D1 的证明对象**。若要让 curl 真无状态,须把 `:curl_agent.conversation` 迁走,改由 `MessageStore` 渲染请求历史(即 §4.4 的 `ContextRenderer`)。
 
 ### 5.4 reuse 三策略 + 建议(D2 默认,Q2 收紧)
 
-- **D2(默认,安全)** — 共享身份 + **只读**凭据 + **每 session 独立可写 runtime**。复用 recipe/凭据/URI,但每 session 起独立执行器。
+### ⚠️ 5.5 D2 的未解决矛盾(codex review,critical)——待 Allen 裁决
+
+**"每 session 独立可写 runtime"与 reuse 的实现方式直接冲突,v2 用措辞掩盖了它。**
+
+- reuse 复用的是**同一个 `agent_uri`**(`definition_agents.ex:179`:取 `reuse_agent_uri` 直接 `add_participant`,不 spawn、不 provision)。
+- 而 config_dir / `CODEX_HOME` 是 **`agent_uri` 的纯函数**(`Sandbox.ConfigDir.path/2` 由 agent URI 的 workspace/name 构造,`config_dir.ex:48`;`home_runtime.ex:90`)。
+- **推论**:同 `agent_uri` 跨两 session ⇒ **同一 config_dir、同一 sidecar registry key、同一 live worker**。代码里**不存在** per-session 的 runtime key。
+
+**❓ 裁决点(回给 Allen)** —— 三选一,不能再含糊:
+
+| 出路 | 含义 | 代价 |
+|---|---|---|
+| **(a)** D2 生成**新 runtime URI** | reuse 只复用 recipe/凭据来源,实例 URI 仍新建 | 退化成 fresh,省不了进程;"reuse"名不副实 |
+| **(b)** 引入 runtime key `{agent_uri, session_uri}` | 真正的 per-session 可写 runtime | 要改**所有** config_dir / `CODEX_HOME` / sidecar registry / bridge registry 的 key |
+| **(c)** 承认 reuse = **共享 runtime** | 诚实描述现状;另列 D3「共享身份但不共享记忆」为未来设计 | 放弃"独立可写 runtime"的承诺,reuse 跨 session 上下文相通 |
+
+**在此裁决前,D2 的当前表述不可实施。**
+
+---
+
+- **D2(默认,安全)** — 共享身份 + **只读**凭据 + 每 session 独立可写 runtime(**⚠️ 实现方式待定,见 §5.5**)。
   - D2 不是"共享 config"(config_dir 是 `agent_uri` 纯函数 `home_runtime.ex:90`,共享 path = 写竞争+串台,曾被 `session_discriminator`(`entity/agent.ex:373,434`)修复)。
   - reuse 授权门:经 #1269 确认为 **false-positive**——provision 只是 join 第一步,真正的 operator→agent 凭据隔离在马下游 **Part C admission gate**(`membership.ex` `admission_pending?/2`):非 owner 且非 manages 的凭据型成员被 **PEND**,无 member-cap、花不了凭据,直到 owner `:approve_admission`。
 - **D1(省资源)** — 共享执行器,仅对 `:per_thread`/`:stateless` flavor 允许。需 per-run session scope + 串行化(cc-headless)或 per-session thread(codex-remote)。
@@ -172,7 +247,9 @@ bridge join 才 ready(`transport_readiness.ex:56,88,168`),积压消息走 `Pendi
 
 ### 6.1 现状
 
-- **PG · event-sourcing 骨架**:`EventLog`(invocations)→ `SnapshotStore`(每 100 events)→ `MessageStore`(messages+message_routings · `message_store.ex:18-49`)。
+- **PG · event-sourcing 骨架**:`EventLog`(invocations)→ `SnapshotStore`(每 100 events)→ `MessageStore`(**每 session 一 row,copy+ref model**;`message_store.ex:80-81`)。
+
+> **纠错(v2.1)**:v2 写 `messages + message_routings` join 表,那是 `message_store.ex:18-25` 的 **stale moduledoc**。代码 `:80-81` 明写「vestigial `message_routings` multi-routing **was removed** —— 跨 session 转发是**复制一条新 message** 进目标 session(copy+ref model)」;`in_session_since/2`(`:123`)直接按 `m.session_uri` 查,**无 JOIN**。→ §6.2「一条消息挂多 session」那行的论据随之作废(现在是复制,不是共享行)。
 - **文件系统 · config_dir**:凭据(①)+ recipe 投影(③ skills/CLAUDE.md)+ runtime SDK session(④ codex jsonl/cc `~/.claude`)。配合 §4.2 三分类:①③ = 可复现投影,④ = disposable cache。
 
 **结论**:对话历史/上下文**已在 PG,不是 fs**。白板 `fs:log` 若指文件日志存历史,与现状不符,也不建议改主存。
@@ -205,20 +282,34 @@ bridge join 才 ready(`transport_readiness.ex:56,88,168`),积压消息走 `Pendi
 
 ## 8. 决策清单(v2)
 
+### 8.1 方向裁定(Allen ratify —— 已定)
+
 | # | 决策 | 状态 |
 |---|---|---|
-| 1 | **上下文归属 A** — MessageStore(session 键);flavor = 无状态;PTY = disposable | ✅ 已 ratify(Q1 RULING) |
-| 1a | three-layer state(MessageStore / durable folder / disposable process) | ✅ 已定 |
-| 1b | rehydration 契约(跨 backend 靠 PG replay) | ✅ 已定(Decision A 必答) |
-| 1c | config_dir 三分类(recipe-projected/credential/runtime) | ✅ 已定(§4.2) |
-| 2 | **switch v0** — S1 换实例弃旧;不丢上文(PG replay) | ✅ 已定 |
-| 3 | **reset v0** — R1 原地重启;R3(回环)降优先级(进程死=正常) | ✅ 已定 |
-| 4 | **reuse 隔离默认** — D2(只读凭据+独立 writable runtime);`:per_thread`/`:stateless` 允许 D1 | ✅ 已定(Q2 收紧) |
-| 4a | reuse 授权门 false-positive(#1269,Part C gate 兜底) | ✅ 已闭合 |
-| 5 | **per-role cardinality** — `one|many`;S3 = handoff/cutover | ✅ 已 ratify(Q3,plan §1) |
-| 6 | **curl 统一** — 退化生命周期,同一能力位接口;completion/tool-loop 正交 | ✅ 已 ratify(Q4) |
+| 1 | **上下文归属 A** — 权威在 PG `MessageStore`(session 键);flavor 应作无状态执行器 | ✅ 方向 ratify(Q1) |
+| 1a | three-layer state(MessageStore / durable folder / disposable process) | ✅ 方向已定 |
+| 1b | rehydration 靠 PG replay(跨 backend) | ✅ 方向已定 |
+| 2 | **switch v0 = S1**(换实例弃旧) | ✅ 方向已定 |
+| 3 | **reset v0 = R1**(原地重启);进程死 = normal case | ✅ 方向已定 |
+| 4a | reuse 授权门 = false-positive(#1269,Part C gate 兜底) | ✅ 已闭合 |
+| 5 | **per-role cardinality `one\|many`**;S3 = handoff/cutover | ✅ ratify(Q3) |
+| 6 | **curl 生命周期 hook 退化**;completion/tool-loop 正交 | ✅ ratify(Q4) |
 
-> 全部 ❓ 已收敛。本稿可转正式(去 WIP)。
+### 8.2 ⚠️ 实施阻塞项(codex review 2026-07-09 —— 必须先解)
+
+| # | 阻塞项 | 严重性 | 位置 |
+|---|---|---|---|
+| B1 | **Q1 对 cc-PTY 不可实施** —— 裸交互 `claude` 无 `--resume`,PTY 是 TUI 非 req/resp,无法"喂"历史。需 Allen 在 (a) 只覆盖 headless 档 / (b) 强制 role 走 cc-headless 之间裁决 | **critical** | §2.1a |
+| B2 | **`ContextRenderer` 无代码落点** —— MessageStore replay 当前只用于成员重连补发;cc-headless/codex 只传当前 text/content。需补完整接口设计(窗口/截断/token budget/编码/幂等) | **critical** | §4.4 |
+| B3 | **D2 的 runtime key 矛盾** —— reuse 复用同 `agent_uri`,而 config_dir 是其纯函数;"每 session 独立可写 runtime"无实现路径。需 Allen 在 (a)/(b)/(c) 三条出路裁决 | **critical** | §5.5 |
+| B4 | **`isolation` 能力位未建模** —— `AgentFlavorRegistry.decl` 无此字段;需 schema + 注册验证 + 默认拒绝 + invariant test | **high** | §5.3 |
+| B5 | **curl 不是 `:stateless`** —— stateless transport + **stateful flavor behavior**(`:curl_agent.conversation` durable);不能作 D1 证明对象 | **high** | §5.3 |
+
+### 8.3 已修正的事实错误(v2 → v2.1)
+
+`message_routings` 已移除(copy+ref model)· URI 格式 `entity://<ws>/agent/<name>` · config_dir 补第④类(runtime coordination metadata)· 状态清单 12 位 → 17 位。
+
+> **本稿是 decision record,不是 implementation spec。** B1–B5 解决前不进入实施;B1/B3 需 Allen 裁决,B2/B4 需补接口设计。
 
 ---
 
