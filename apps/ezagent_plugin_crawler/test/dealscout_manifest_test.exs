@@ -110,7 +110,7 @@ defmodule EzagentPluginCrawler.DealscoutManifestTest do
     # field equivalence with the retired code-attrs shape (string-keyed,
     # resolver-ready): stable name + the parse-normalized module list.
     assert parsed["name"] == "dealscout"
-    assert parsed["uses"] == ["hello", "crawler"]
+    assert parsed["uses"] == ["crawler"]
     assert Ezagent.ActionSet.Session in parsed["bases"]
     assert Crawler in parsed["shape"]
     assert parsed["views"] == ["crawler_render"]
@@ -120,8 +120,9 @@ defmodule EzagentPluginCrawler.DealscoutManifestTest do
     definition = resolve!()
     assert definition.name == "dealscout"
 
-    # uses 声明依赖两个 plugin（hello 渲染面 + crawler 爬取后台——rename 后的通用能力名）
-    assert definition.uses == ["hello", "crawler"]
+    # uses 只声明 crawler（段4 D3 诚实化：显示/页面发布是 crawler 自带件，
+    # 不再借 hello——rename 后的通用能力名）
+    assert definition.uses == ["crawler"]
     # D5（段3，照 hello #1230）：requires 递归带上平台 orchestrator（builtin
     # code-seed 定义）——解"装完会话没人应答"（gap⑪）；conformance 的
     # requires_published / requires_cycle_free 在 publish 测试整套跑。
@@ -140,9 +141,9 @@ defmodule EzagentPluginCrawler.DealscoutManifestTest do
     assert definition.name == name
   end
 
-  test "composes hello's public face: Surface+Turn shape, external_feed adapter" do
+  test "composes the platform public face: Surface+Turn shape, external_feed adapter" do
     definition = resolve!()
-    # hello 公开面配置逐项复制（hello `app.ex` `seed_hello_definition` 同款）
+    # 平台公开面组件逐项在场（hello 先例的同一套 domain ActionSet 配置）
     assert Ezagent.ActionSet.Surface in definition.shape
     assert Ezagent.ActionSet.Turn in definition.shape
     assert Ezagent.ActionSet.Session in definition.bases
@@ -194,9 +195,7 @@ defmodule EzagentPluginCrawler.DealscoutManifestTest do
   end
 
   test "role-slot recipes resolve to plugin-declared recipe names (config references real recipes)" do
-    declared =
-      Enum.map(EzagentPluginCrawler.Recipes.all(), & &1.name) ++
-        Enum.map(EzagentPluginHello.Application.roles(), & &1.name)
+    declared = Enum.map(EzagentPluginCrawler.Recipes.all(), & &1.name)
 
     definition = resolve!()
     Enum.each(definition.roles, fn slot -> assert slot.recipe in declared end)

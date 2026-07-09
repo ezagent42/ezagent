@@ -22,13 +22,13 @@ defmodule EzagentPluginCrawler.DealscoutManifestPublishTest do
 
   Environment mirrors the `mix ezagent.socialware.check` setup: domain_session
   （socialware 生命周期宿主）+ domain_socialware（注册 `external_feed`
-  adapter）+ plugin_hello（注册 HelloRender 的 `{Session, :hello_render}`
-  render cap + hello.* recipes）+ plugin_crawler（dealscout demo recipes）；
-  code-seed 两家 recipe 进 `workspace://system`（`RoleSeedHook` skips in
+  adapter）+ plugin_crawler（注册 CrawlerRender 的 `{Session, :crawler_render}`
+  render cap + dealscout/crawler recipes，段4 D2 显示自包含）；
+  code-seed recipes 进 `workspace://system`（`RoleSeedHook` skips in
   test）；DataCase DB sandbox. Only the dealscout package is scanned — the
   sibling flagships (`hello` / `autoservice` / `kanban`) seeded into the same
   temp dir are pruned first, since they reference plugin views / recipes not
-  booted in this domain+hello+crawler env (the manifest_seed boot-fallback play).
+  booted in this domain+crawler env (the manifest_seed boot-fallback play).
   """
   use EzagentCore.DataCase, async: false
 
@@ -39,7 +39,6 @@ defmodule EzagentPluginCrawler.DealscoutManifestPublishTest do
     for app <- [
           :ezagent_domain_session,
           :ezagent_domain_socialware,
-          :ezagent_plugin_hello,
           :ezagent_plugin_crawler
         ] do
       {:ok, _} = Elixir.Application.ensure_all_started(app)
@@ -51,7 +50,7 @@ defmodule EzagentPluginCrawler.DealscoutManifestPublishTest do
     # conformance's fail-closed `lookup_recipe` resolves them: dealscout 的
     # 角色槽都引 crawler 插件自家 recipe（dealscout-discover + 通用页面发布腿
     # crawler-page，段4 D2）。
-    recipes = EzagentPluginCrawler.Recipes.all() ++ EzagentPluginHello.Application.roles()
+    recipes = EzagentPluginCrawler.Recipes.all()
 
     Enum.each(recipes, fn recipe ->
       assert {:ok, _} = RecipeRegistry.seed_role_if_absent(recipe)

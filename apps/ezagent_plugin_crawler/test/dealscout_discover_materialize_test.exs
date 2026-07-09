@@ -24,9 +24,9 @@ defmodule EzagentPluginCrawler.DealscoutDiscoverMaterializeTest do
   manifest 本体**（不是手搓 map）——这正是旧 e2e 里 cc-headless 必崩的那一步。
 
   差什么（如实说）：完整 install（Installation.install → 全 slot + requires
-  递归 + orchestrator MCP context）没在这里跑——page 槽的 ALT 与 orchestrator
-  的 cc 车道不属于本段验收；会话内 @discover → receive → 回复 → routing 命中
-  page 的全链是段5 真浏览器 e2e 的活。
+  递归 + orchestrator MCP context）没在这里跑——page 槽的发布链（段4）另有
+  `dealscout_page_e2e_test.exs` 端到端证明；会话内 @discover → receive →
+  回复 → routing 命中 page 的全链是段5 真浏览器 e2e 的活。
   """
   use EzagentCore.DataCase, async: false
 
@@ -42,20 +42,20 @@ defmodule EzagentPluginCrawler.DealscoutDiscoverMaterializeTest do
 
   setup do
     # 与 dealscout_manifest_publish_test 同一环境公式 + plugin_py（注册真
-    # `py` flavor + Template.PyAgent + Domain.Python）。
+    # `py` flavor + Template.PyAgent + Domain.Python）。hello 不再需要
+    # （段4 D3：uses/views 都不引 hello）。
     for app <- [
           :ezagent_domain_session,
           :ezagent_domain_socialware,
-          :ezagent_plugin_hello,
           :ezagent_plugin_crawler,
           :ezagent_plugin_py
         ] do
       {:ok, _} = Elixir.Application.ensure_all_started(app)
     end
 
-    # `RoleSeedHook` skips in :test — seed 两家 recipe（含 script-carrying 的
-    # dealscout-discover，走 seed_role_if_absent 的 trusted-code 通道）。
-    recipes = EzagentPluginCrawler.Recipes.all() ++ EzagentPluginHello.Application.roles()
+    # `RoleSeedHook` skips in :test — seed crawler recipes（含 script-carrying
+    # 的 dealscout-discover，走 seed_role_if_absent 的 trusted-code 通道）。
+    recipes = EzagentPluginCrawler.Recipes.all()
 
     Enum.each(recipes, fn recipe ->
       assert {:ok, _} = RecipeRegistry.seed_role_if_absent(recipe)

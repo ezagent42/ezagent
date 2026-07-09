@@ -8,8 +8,8 @@ defmodule EzagentPluginCrawler.Application do
   与业务无关；**"dealscout"（科技创业/新品动态的线索雷达 demo，
   数据源 = Hacker News 公开检索 API——D4 数据源诚实化，措辞与真数据相符）是
   socialware 的名字**——一份纯配置组合（deploy-seed 包
-  `apps/ezagent_web/priv/socialware_seed/dealscout/manifest.yaml`：组合 hello
-  公开面 + 本 plugin 的爬取后台），不是代码层的名字（Decision #156：
+  `apps/ezagent_web/priv/socialware_seed/dealscout/manifest.yaml`：组合本
+  plugin 的爬取后台 + 自带线索 view + 平台公开面组件），不是代码层的名字（Decision #156：
   socialware = config-only bundle，plugin 侧零 socialware 专属代码壳）。
   历史上 app 叫 `ezagent_plugin_dealscout` 把两层混了，故 rename。
 
@@ -21,12 +21,13 @@ defmodule EzagentPluginCrawler.Application do
   [crawler_render]` 一行接入）；world 通用消费 registry（#1192/#1199），
   零 world 改动。
 
-  两个 socialware 的 agent 用**内容协议 routing** 连（跟 kanban-team relay 一样）：
+  agent 间用**内容协议 routing** 连（跟 kanban-team relay 一样）：
   爬取 agent 爬完注入新线索后 emit 一个更新信号
   （`Ezagent.ActionSet.Crawler.update_signal/0`，缺省 `"__dealscout_update__"`，
   像 kanban 的 `__done__`）→ Definition 的 routing_rules matcher 命中 → 转给
-  `{:role, <hello 页面 agent 角色>}` → hello 的 agent 更新 json-render 页。
-  零实例 URI、不数据直推、本 plugin 自己不渲染。
+  `{:role, "page"}`（本 plugin 的 crawler-page 发布腿）。零实例 URI、不数据
+  直推；生产腿是 Crawler 的 caller-dispatch 直呼（receive 投递到 native 成员
+  是平台 gap #1201 ②，绕开不修）。
 
   ## Plugin authoring contract
 

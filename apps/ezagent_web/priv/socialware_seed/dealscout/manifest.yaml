@@ -59,9 +59,11 @@ title: "DealScout"
 # 选型+token+合规，是 follow-up 产品决策，不在本 manifest 假装已有）。
 # "发现"措辞与实现相符（段3 角色链路真化）：discover 是脚本车道（关键词粗筛，
 # 无 LLM），真"AI 发现"大脑是后续 curl-llm 槽的事，这里不冒充。
-description: "科技创业与新品动态线索雷达：discover 角色被 @ 后自动爬取 Hacker News 公开源发现线索 + 组合 hello 公开面展示。"
+description: "科技创业与新品动态线索雷达：discover 角色被 @ 后自动爬取 Hacker News 公开源发现线索，crawler 自带结构化线索页（会话内 view + 匿名可读的 committed 公开页）。"
+# uses 只剩 crawler（段4 D3 诚实化）：显示/页面发布都是 crawler 自带件
+# （LeadsView/CrawlerRender/CrawlerPage），bases/shape 引的 Session/Publisher/
+# Turn/Surface 是平台 domain ActionSet，不属于（也不再借）hello。
 uses:
-  - hello
   - crawler
 # D5（段3，照 hello #1230）：安装时递归带上平台 orchestrator（框架 builtin
 # code-seed 定义，cc flavor 前台）——解"装完会话没人应答"（gap⑪）的最小正路。

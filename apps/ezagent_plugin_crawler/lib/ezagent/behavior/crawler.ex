@@ -158,7 +158,7 @@ defmodule Ezagent.ActionSet.Crawler do
 
   @doc """
   主动搜索（`:search`）——把 `%{query, source}` 参数化抓取的候选注入发现流，标记为
-  搜索结果（`source: "search:<source>"`，hello 侧分类展示时可辨来源）。
+  搜索结果（`source: "search:<source>"`，view 分类展示时可辨来源）。
   走跟 `:crawl_now` 完全相同的 P14 注入路径，失败同样 fail-loud（telemetry）；
   注入了新线索时同样 emit 更新信号（`update_signal/0`）。
 
@@ -234,7 +234,7 @@ defmodule Ezagent.ActionSet.Crawler do
     end
   end
 
-  # 内容协议更新信号：injected > 0 才发（没新线索不打扰 hello 的页面 agent）。
+  # 内容协议更新信号：injected > 0 才发（没新线索不打扰 page 发布 agent）。
   # body 只有标记 + 计数 + 来源腿——零实例 URI，routing 靠 text_contains 命中。
   defp emit_update_signal(_session_uri, 0, _origin, _ctx), do: :ok
 

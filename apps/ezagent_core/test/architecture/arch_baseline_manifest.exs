@@ -415,7 +415,12 @@
   #   Config.pin_batch/2（durable 批次 slice 从未接线，pin 无消费者）：其 @spec
   #   `{:set, :pinned_batches, …}` 行 + 函数体 `{:set, :pinned_batches, …}` 行
   #   两个计数点一起退场；measured 133 → 131 (cross-slice stays 0); net −2.
-  set_effect_sites: 131,
+  # arch-cap-bump: dealscout rework 段4 (2026-07-10) — 结构化线索留存（D2）：
+  #   `Ezagent.ActionSet.Crawler` 注入成功后的 `{:set, :items, merged}` effect
+  #   （P22 内常规 effect 路径，写自己 slice）= 1 个真实写点 + crawler.ex
+  #   moduledoc / crawler_render.ex moduledoc（读侧投影，×2）的 `{:set, :items,
+  #   ...}` 说明行 3 个计数点；measured 131 → 135 (cross-slice stays 0); net +4.
+  set_effect_sites: 135,
   cross_slice_set_violations: 0,
   missing_cap_check_mutating_actions: 0,
   kind_runtime_ordering_violations: 0,
