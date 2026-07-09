@@ -1,0 +1,27 @@
+/* ============================================================
+   Ezagent · Print / PDF export
+   三原色为轴，柔软为形 —— but only if the color survives the printer.
+
+   Browsers DROP background-color, background-image and (often) box-shadow
+   when printing or exporting to PDF, unless color adjustment is forced.
+   Without this, brand fills vanish: blue section blocks, dark surfaces,
+   card grounds, wash tints and badges all render as plain white.
+
+   Setting `print-color-adjust: exact` (a.k.a. `-webkit-print-color-adjust`)
+   tells the engine to honor the authored colors. We set it globally so any
+   consumer that links `styles.css` exports faithfully — no per-deck work.
+   ============================================================ */
+
+:root {
+  -webkit-print-color-adjust: exact;
+  print-color-adjust: exact;
+  color-adjust: exact; /* legacy alias */
+}
+
+@media print {
+  * {
+    -webkit-print-color-adjust: exact !important;
+    print-color-adjust: exact !important;
+    color-adjust: exact !important;
+  }
+}

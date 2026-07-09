@@ -1,0 +1,58 @@
+<!DOCTYPE html>
+<html lang="zh">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>飞轮 handoff · 功能标注板 callout board</title>
+<style>
+  :root{--ink:#17171B;--ink2:#56565E;--ink3:#8A8A92;--ground:#E8E8EB;--card:#fff;--red:#D81830;--blue:#0B5CFF;--line:#E2E2E6}
+  *{box-sizing:border-box}
+  body{margin:0;background:var(--ground);color:var(--ink);font-family:'Noto Sans SC',system-ui,sans-serif}
+  .wrap{max-width:1100px;margin:0 auto;padding:26px 24px 80px}
+  h1{font-size:24px;margin:0}
+  .lead{color:var(--ink2);font-size:14px;line-height:1.6;margin:10px 0 0;max-width:70ch}
+  .lead code{background:var(--card);padding:2px 6px;border-radius:6px;font-size:12px}
+  .legend{display:grid;grid-template-columns:repeat(auto-fit,minmax(210px,1fr));gap:10px;margin:20px 0 6px}
+  .lg{background:var(--card);border-radius:14px;padding:12px 14px;box-shadow:0 8px 24px -12px rgba(15,15,15,.14)}
+  .lg .id{font-family:'Space Mono',monospace;font-weight:700;font-size:12px;color:var(--red)}
+  .lg .d{font-size:12.5px;color:var(--ink2);line-height:1.5;margin-top:4px}
+  .panel{background:var(--card);border-radius:16px;box-shadow:0 20px 40px -18px rgba(15,15,15,.2);margin:22px 0 0;overflow:hidden}
+  .panel .cap{display:flex;align-items:center;gap:10px;padding:12px 16px;border-bottom:1px solid var(--line);font-size:13px;font-weight:600}
+  .panel .cap .tags{margin-left:auto;font-family:'Space Mono',monospace;font-size:11px;color:var(--red)}
+  .panel iframe{width:100%;height:560px;border:0;display:block;background:var(--ground)}
+  .note{font-family:'Space Mono',monospace;font-size:11px;color:var(--ink3);margin-top:8px}
+</style>
+</head>
+<body>
+<div class="wrap">
+  <h1>飞轮 handoff · 功能标注板</h1>
+  <p class="lead">每个 demo 页底部都有一个「<b>world / 后端需要加的功能</b>」朴素说明框，直接列出该页依赖、需研发在 <b>world / hello</b> 侧补的功能（标了对应 <b>W-G 任务号</b>，见 <code>homesite-gallery-flywheel.md</code>）。下面把几屏聚到一起 —— 从仓库根起本地服务后打开本页即可，截图贴进 handoff 或直接给研发看。</p>
+
+  <div class="legend">
+    <div class="lg"><div class="id">W-G1</div><div class="d">gallery 目录 API（browse/search/detail）—— 喂货架</div></div>
+    <div class="lg"><div class="id">W-G2</div><div class="d">发布到官网（publish CR 入口 + 自助/审核策略）</div></div>
+    <div class="lg"><div class="id">W-G3</div><div class="d">从产品页触发 fork（session.fork_config 已 ✅）</div></div>
+    <div class="lg"><div class="id">W-G4</div><div class="d">版本标识 pin + 下架</div></div>
+    <div class="lg"><div class="id">W-G5</div><div class="d">Definition 加 owner/作者字段</div></div>
+  </div>
+
+  <div class="panel">
+    <div class="cap">seller · fork 那一步（world-step, mode=fork）<span class="tags">W-G3 · W-G2</span></div>
+    <iframe src="../../../../website-demo/flywheel/world-step.html?mode=fork" title="world-step fork"></iframe>
+  </div>
+  <div class="panel">
+    <div class="cap">探索 / 货架（gallery）<span class="tags">W-G1 · W-G5</span></div>
+    <iframe src="../../../../website-demo/flywheel/gallery.html" title="gallery"></iframe>
+  </div>
+  <div class="panel">
+    <div class="cap">产品详情（product-detail）<span class="tags">W-G1 · W-G3 · W-G4 · W-G5</span></div>
+    <iframe src="../../../../website-demo/flywheel/product-detail.html?sw=expert-recruit" title="product-detail"></iframe>
+  </div>
+  <div class="panel">
+    <div class="cap">builder · 造 + 发布（world-step, mode=build）<span class="tags">W-G2</span></div>
+    <iframe src="../../../../website-demo/flywheel/world-step.html?mode=build" title="world-step build"></iframe>
+  </div>
+  <p class="note">若 iframe 空白：请从仓库根 `python3 -m http.server` 起服务，再访问本页（相对路径要求同源）。</p>
+</div>
+</body>
+</html>

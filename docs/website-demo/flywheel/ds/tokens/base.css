@@ -1,0 +1,59 @@
+/* ============================================================
+   Ezagent · base element styles
+   Minimal resets + sensible defaults wired to tokens.
+   ============================================================ */
+* { box-sizing: border-box; }
+
+body {
+  margin: 0;
+  background: var(--surface-ground);
+  color: var(--text-strong);
+  font-family: var(--font-ui);
+  font-size: var(--fs-body);
+  line-height: var(--lh-normal);
+  letter-spacing: var(--ls-ui);
+  -webkit-font-smoothing: antialiased;
+  text-rendering: optimizeLegibility;
+}
+
+/* CN content opts into serif headings / sans body via these helpers */
+.ez-cn        { font-family: var(--font-cn-ui); }
+.ez-cn-serif  { font-family: var(--font-cn); }
+.ez-mono      { font-family: var(--font-mono); letter-spacing: var(--ls-mono); }
+
+/* Display & headings (Latin) */
+.ez-display {
+  font-family: var(--font-ui);
+  font-weight: var(--fw-black);
+  font-size: var(--fs-display);
+  line-height: var(--lh-tight);
+  letter-spacing: var(--ls-display);
+}
+.ez-h1 { font-weight: var(--fw-black); font-size: var(--fs-h1); line-height: var(--lh-tight); letter-spacing: var(--ls-display); }
+.ez-h2 { font-weight: var(--fw-bold);  font-size: var(--fs-h2); line-height: var(--lh-snug);  letter-spacing: -0.02em; }
+.ez-h3 { font-weight: var(--fw-semibold); font-size: var(--fs-h3); line-height: var(--lh-snug); }
+
+/* CN serif heading */
+.ez-cn-display {
+  font-family: var(--font-cn);
+  font-weight: var(--fw-semibold);
+  font-size: var(--fs-display);
+  line-height: var(--lh-tight);
+  letter-spacing: var(--ls-cn);
+}
+
+/* Overline · uppercase mono-ish label */
+.ez-overline {
+  font-weight: var(--fw-semibold);
+  font-size: var(--fs-micro);
+  letter-spacing: var(--ls-over);
+  text-transform: uppercase;
+  color: var(--text-muted);
+}
+
+a { color: var(--accent); text-decoration: none; }
+a:hover { color: var(--accent-hover); }
+
+:focus-visible { outline: 3px solid var(--focus-ring); outline-offset: 2px; }
+
+::selection { background: var(--accent-wash); color: var(--accent-press); }

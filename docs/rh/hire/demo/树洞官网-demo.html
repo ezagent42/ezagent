@@ -1,0 +1,563 @@
+<!DOCTYPE html>
+<html lang="zh-CN" data-theme="dark">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>树洞 · the hollow — Ezagent socialware 官网 demo</title>
+
+<!-- Ezagent Design System · single entry (tokens: fonts / colors / type / spacing / effects / base) -->
+<link rel="stylesheet" href="ds/styles.css">
+
+<style>
+/* ================================================================
+   树洞 / the hollow — Ezagent socialware 官网 demo
+   Reskinned on Ezagent Design System @ a314e6d (dark theme).
+   Rules honored: no gradients (solid blocks + 点彩) · cobalt is the
+   only action color · journey identity via 暖橙 / 翠 blocks · no emoji
+   (geometric glyphs) · FadeUpBlur motion · radius-22 cards · 招牌柔影.
+   ================================================================ */
+
+/* per-journey identity accent — solid brand color blocks, NOT the action color */
+body[data-journey="hire"]  { --jaccent: var(--orange); --jaccent-wash: var(--orange-wash); }
+body[data-journey="match"] { --jaccent: var(--jade);   --jaccent-wash: var(--jade-wash); }
+
+body{
+  min-height:100vh;
+  padding-bottom:60px;               /* room for fixed playback bar */
+  background:var(--ground);          /* solid near-black · no gradient/texture */
+}
+.wrap{max-width:1160px;margin:0 auto;padding:0 28px;}
+
+/* ---------- topbar ---------- */
+.topbar{display:flex;align-items:center;gap:14px;padding:20px 0 12px;}
+.brand{display:flex;align-items:baseline;gap:9px;}
+.brand .mark{width:22px;height:22px;color:var(--jaccent);flex-shrink:0;align-self:center;}
+.brand .name{font-family:var(--font-cn);font-weight:var(--fw-semibold);font-size:21px;
+  letter-spacing:var(--ls-cn);color:var(--ink);}
+.brand .en{font-family:var(--font-mono);font-size:var(--fs-nano);letter-spacing:var(--ls-over);
+  color:var(--ink-3);text-transform:lowercase;}
+.topbar .spacer{flex:1;}
+.sw-tag{display:flex;align-items:center;gap:8px;}
+.sw-tag img{height:18px;display:block;opacity:.92;}
+.sw-tag span{font-family:var(--font-mono);font-size:var(--fs-nano);letter-spacing:var(--ls-over);
+  text-transform:uppercase;color:var(--ink-3);}
+
+/* solutions menu (pill trigger + floating dark card) */
+.sol{position:relative;}
+.sol-btn{font-family:var(--font-cn-ui);font-size:var(--fs-sm);color:var(--ink-2);background:var(--ground-2);
+  border:0;box-shadow:var(--edge);border-radius:var(--r-pill);padding:8px 15px;cursor:pointer;
+  display:inline-flex;align-items:center;gap:7px;transition:background var(--dur-fast) var(--ease-out);}
+.sol-btn:hover{background:var(--ground-hover);color:var(--ink);}
+.sol-menu{position:absolute;right:0;top:calc(100% + 9px);width:300px;z-index:30;
+  background:var(--card);border-radius:var(--r-lg);padding:8px;box-shadow:var(--shadow-card),var(--edge);
+  opacity:0;visibility:hidden;transform:translateY(-6px);transition:all var(--dur-base) var(--ease-out);}
+.sol.open .sol-menu{opacity:1;visibility:visible;transform:translateY(0);}
+.sol-menu .cap{font-family:var(--font-mono);font-size:var(--fs-nano);color:var(--ink-3);
+  padding:8px 10px 9px;line-height:1.6;letter-spacing:var(--ls-mono);}
+.sol-item{display:flex;gap:11px;align-items:flex-start;padding:11px 10px;border-radius:var(--r-md);
+  cursor:pointer;transition:background var(--dur-fast) var(--ease-out);}
+.sol-item:hover{background:var(--ground-2);}
+.sol-item .dot{width:9px;height:9px;border-radius:50%;margin-top:5px;flex-shrink:0;}
+.sol-item.j1 .dot{background:var(--orange);}
+.sol-item.j2 .dot{background:var(--jade);}
+.sol-item .t{font-family:var(--font-cn-ui);font-size:var(--fs-ui);color:var(--ink);font-weight:var(--fw-medium);}
+.sol-item .t .verb{font-family:var(--font-mono);font-size:var(--fs-nano);letter-spacing:var(--ls-mono);color:var(--ink-3);font-weight:400;}
+.sol-item .s{font-family:var(--font-cn-ui);font-size:var(--fs-xs);color:var(--ink-3);margin-top:3px;line-height:1.5;}
+
+/* ---------- facade / hero ---------- */
+.facade{text-align:center;padding:34px 0 18px;}
+.overline{font-family:var(--font-mono);font-size:var(--fs-micro);letter-spacing:var(--ls-over);
+  text-transform:uppercase;color:var(--ink-3);margin-bottom:20px;}
+.master-hook{font-family:var(--font-cn);font-weight:var(--fw-semibold);
+  font-size:clamp(30px,4.6vw,var(--fs-display));line-height:var(--lh-tight);letter-spacing:var(--ls-cn);
+  color:var(--ink);margin:0 auto;max-width:15em;}
+.master-hook .em{color:var(--jaccent);}
+.master-en{font-family:var(--font-ui);font-weight:var(--fw-medium);font-size:var(--fs-ui);
+  color:var(--ink-3);margin-top:14px;letter-spacing:var(--ls-ui);}
+
+/* the hollow — solid disc + 点彩, no glow/gradient */
+.hollow{width:154px;height:154px;margin:30px auto 6px;position:relative;}
+.hollow .dots{position:absolute;inset:0;pointer-events:none;}
+.hollow .dots span{position:absolute;border-radius:50%;opacity:.3;transition:opacity var(--dur-base) var(--ease-out);}
+.hollow.answered .dots span{animation:ez-fade-up-blur var(--dur-enter) var(--ease-out) both;}
+.hollow .ring{position:absolute;inset:26px;border-radius:50%;border:1.5px solid var(--line);
+  transition:border-color var(--dur-base) var(--ease-out);}
+.hollow.answered .ring{border-color:var(--jaccent);}
+.hollow .mouth{position:absolute;inset:38px;border-radius:50%;background:var(--ground);
+  box-shadow:inset 0 5px 22px rgba(0,0,0,.72), inset 0 0 0 1px var(--line);}
+.hollow .spk{position:absolute;top:50%;left:50%;transform:translate(-50%,-50%);
+  font-family:var(--font-mono);font-size:15px;letter-spacing:.35em;color:var(--ink-4);}
+
+/* 树洞 bar — frosted glass over the near-black */
+.bar{display:flex;align-items:center;gap:11px;max-width:660px;margin:16px auto 0;
+  background:var(--glass-bg);backdrop-filter:var(--glass-blur);-webkit-backdrop-filter:var(--glass-blur);
+  box-shadow:var(--glass-edge),var(--shadow-sm);border-radius:var(--r-lg);padding:9px 9px 9px 16px;}
+.bar .icn{width:18px;height:18px;color:var(--ink-3);flex-shrink:0;}
+.bar input{flex:1;background:transparent;border:0;outline:0;color:var(--ink);font-family:var(--font-cn);
+  font-size:var(--fs-body);letter-spacing:var(--ls-cn);}
+.bar input::placeholder{color:var(--ink-4);}
+.bar .anon{font-family:var(--font-mono);font-size:var(--fs-nano);color:var(--ink-4);
+  letter-spacing:var(--ls-mono);white-space:nowrap;}
+.bar .say{font-family:var(--font-cn-ui);font-size:var(--fs-sm);color:var(--on-accent);background:var(--accent);
+  border:0;border-radius:var(--r-md);padding:9px 18px;cursor:pointer;font-weight:var(--fw-semibold);
+  box-shadow:var(--shadow-accent);transition:transform var(--dur-fast) var(--ease-out),background var(--dur-fast) var(--ease-out);}
+.bar .say:hover{background:var(--accent-hover);transform:translateY(-2px);}
+.bar .say:active{transform:scale(.98);}
+
+/* suggested-prompt chips (auto-route) */
+.route-row{display:flex;align-items:center;justify-content:center;gap:10px;margin-top:18px;flex-wrap:wrap;}
+.route-lbl{font-family:var(--font-mono);font-size:var(--fs-nano);color:var(--ink-4);letter-spacing:var(--ls-over);text-transform:uppercase;}
+.chip{font-family:var(--font-cn);font-size:var(--fs-ui);color:var(--ink-2);background:var(--ground-2);
+  border:0;box-shadow:var(--edge);border-radius:var(--r-pill);padding:8px 16px;cursor:pointer;
+  transition:box-shadow var(--dur-fast) var(--ease-out),color var(--dur-fast) var(--ease-out);display:inline-flex;align-items:center;gap:7px;}
+.chip .arw{font-family:var(--font-mono);font-size:var(--fs-nano);color:var(--ink-3);letter-spacing:var(--ls-mono);}
+.chip.j1:hover{color:var(--orange);box-shadow:inset 0 0 0 1px var(--orange);}
+.chip.j2:hover{color:var(--jade);box-shadow:inset 0 0 0 1px var(--jade);}
+
+.hint{text-align:center;font-family:var(--font-mono);font-size:var(--fs-nano);color:var(--ink-4);
+  letter-spacing:var(--ls-mono);margin:22px 0 20px;}
+.hint kbd{background:var(--ground-2);box-shadow:var(--edge);border-radius:6px;padding:2px 6px;color:var(--ink-3);font-size:9.5px;}
+
+/* ---------- stage: surface + rail ---------- */
+.stage{display:grid;grid-template-columns:1fr 340px;gap:var(--gap-grid,22px);margin:8px 0 42px;align-items:start;}
+@media(max-width:880px){.stage{grid-template-columns:1fr;}}
+
+.surface{background:var(--card);border-radius:var(--r-lg);box-shadow:var(--shadow-card),var(--edge);
+  padding:20px 22px 10px;min-height:352px;}
+.surface .surface-hd{display:flex;align-items:center;gap:9px;padding-bottom:14px;margin-bottom:4px;
+  border-bottom:1px solid var(--line);}
+.surface .sess{font-family:var(--font-mono);font-size:var(--fs-nano);color:var(--ink-3);letter-spacing:var(--ls-mono);}
+.surface .sess b{color:var(--jaccent);font-weight:400;}
+.reddot{margin-left:auto;font-family:var(--font-mono);font-size:var(--fs-micro);color:var(--ink-3);
+  background:var(--ground-2);box-shadow:var(--edge);border-radius:var(--r-pill);padding:5px 11px;
+  display:inline-flex;align-items:center;gap:7px;transition:color var(--dur-base) var(--ease-out);letter-spacing:var(--ls-mono);}
+.reddot .d{width:7px;height:7px;border-radius:50%;background:var(--ink-4);transition:background var(--dur-base) var(--ease-out);}
+.reddot.on{color:var(--jaccent);}
+.reddot.on .d{background:var(--jaccent);animation:blip 1.5s var(--ease-in-out) infinite;}
+@keyframes blip{0%,100%{opacity:1;}50%{opacity:.4;}}
+
+.msgs{display:flex;flex-direction:column;gap:14px;padding:10px 2px 14px;}
+.msg{max-width:84%;}
+.msg .meta{font-family:var(--font-mono);font-size:var(--fs-nano);letter-spacing:var(--ls-mono);
+  color:var(--ink-3);margin-bottom:6px;display:flex;align-items:center;gap:6px;}
+.msg .meta::before{content:"";width:5px;height:5px;border-radius:50%;background:var(--ink-4);flex-shrink:0;}
+.msg .body{font-size:var(--fs-ui);line-height:var(--lh-relaxed);padding:12px 15px;border-radius:var(--r-md);}
+.msg.user{align-self:flex-start;}
+.msg.user .body{background:var(--ground-2);color:var(--ink);border-top-left-radius:6px;
+  font-family:var(--font-cn);font-size:var(--fs-body);}
+.msg.hire{align-self:flex-end;}
+.msg.hire .meta{flex-direction:row-reverse;color:var(--jaccent);}
+.msg.hire .meta::before{background:var(--jaccent);}
+.msg.hire .body{background:var(--jaccent-wash);color:var(--ink);border-top-right-radius:6px;
+  box-shadow:inset 0 0 0 1px color-mix(in srgb,var(--jaccent) 42%,transparent);font-family:var(--font-cn-ui);}
+.msg.sys{align-self:center;max-width:94%;text-align:center;}
+.msg.sys .meta{display:none;}
+.msg.sys .body{background:transparent;box-shadow:inset 0 0 0 1px var(--line);color:var(--ink-3);
+  font-size:var(--fs-sm);font-family:var(--font-cn-ui);border-radius:var(--r-md);border-style:dashed;}
+.msg.climax .body{box-shadow:inset 3px 0 0 var(--jaccent), inset 0 0 0 1px color-mix(in srgb,var(--jaccent) 42%,transparent);}
+.star{color:var(--jaccent);}
+
+/* discovered matches (journey 2) */
+.match-card{background:var(--ground-2);box-shadow:var(--edge);border-radius:var(--r-md);padding:11px 13px;margin-top:9px;}
+.match-card .mc-hd{display:flex;justify-content:space-between;align-items:center;gap:8px;
+  font-family:var(--font-cn-ui);font-size:var(--fs-sm);color:var(--ink);}
+.match-card .mc-src{font-family:var(--font-mono);font-size:9px;color:var(--ink-4);letter-spacing:var(--ls-mono);white-space:nowrap;}
+.match-card .mc-why{font-family:var(--font-cn-ui);font-size:var(--fs-xs);color:var(--jade);margin-top:6px;}
+.match-card .mc-why b{color:var(--ink-3);font-weight:400;font-family:var(--font-mono);font-size:9px;letter-spacing:var(--ls-over);text-transform:uppercase;}
+
+/* ---------- rail ---------- */
+.rail{position:sticky;top:14px;display:flex;flex-direction:column;gap:14px;}
+.rail-card{background:var(--card);border-radius:var(--r-lg);box-shadow:var(--shadow-sm),var(--edge);padding:16px 18px;}
+.slogan{font-family:var(--font-cn);font-weight:var(--fw-semibold);font-size:var(--fs-h3);line-height:var(--lh-snug);color:var(--ink);letter-spacing:var(--ls-cn);}
+.slogan .en{display:block;font-family:var(--font-ui);font-weight:var(--fw-medium);font-size:var(--fs-xs);
+  color:var(--ink-3);margin-top:9px;letter-spacing:var(--ls-ui);}
+.verb-badge{display:inline-flex;align-items:center;gap:7px;margin-top:13px;font-family:var(--font-mono);
+  font-size:var(--fs-nano);letter-spacing:var(--ls-mono);color:var(--jaccent);
+  box-shadow:inset 0 0 0 1px color-mix(in srgb,var(--jaccent) 45%,transparent);border-radius:var(--r-pill);padding:4px 11px;}
+.verb-badge .vd{width:6px;height:6px;border-radius:50%;background:var(--jaccent);}
+
+.seg-head{display:flex;align-items:baseline;gap:9px;}
+.seg-n{font-family:var(--font-mono);font-size:var(--fs-micro);color:var(--jaccent);letter-spacing:var(--ls-over);flex-shrink:0;}
+.seg-title{font-family:var(--font-cn-ui);font-size:var(--fs-ui);color:var(--ink);font-weight:var(--fw-semibold);line-height:1.4;}
+.seg-value{font-family:var(--font-cn-ui);font-size:var(--fs-sm);color:var(--ink-2);line-height:var(--lh-relaxed);margin-top:9px;}
+.seg-value b{color:var(--ink);font-weight:var(--fw-semibold);}
+.honesty{display:inline-flex;align-items:center;gap:6px;margin-top:13px;font-family:var(--font-mono);
+  font-size:var(--fs-nano);letter-spacing:var(--ls-mono);padding:4px 10px;border-radius:var(--r-pill);}
+.honesty .hd{width:6px;height:6px;border-radius:50%;flex-shrink:0;}
+.honesty.done{color:var(--success-text);background:var(--success-wash);}   .honesty.done .hd{background:var(--success);}
+.honesty.vision{color:var(--ink-3);box-shadow:inset 0 0 0 1px var(--line);border-style:dashed;} .honesty.vision .hd{background:var(--ink-4);}
+
+.rail-lbl{font-family:var(--font-mono);font-size:var(--fs-nano);color:var(--ink-3);letter-spacing:var(--ls-over);text-transform:uppercase;margin-bottom:11px;}
+.prims{display:flex;flex-wrap:wrap;gap:7px;}
+.prim{font-family:var(--font-mono);font-size:var(--fs-nano);color:var(--ink-3);box-shadow:var(--edge);
+  border-radius:var(--r-sm);padding:5px 9px;letter-spacing:var(--ls-mono);opacity:.6;transition:all var(--dur-base) var(--ease-out);}
+.prim.lit{color:var(--jaccent);background:var(--jaccent-wash);box-shadow:inset 0 0 0 1px color-mix(in srgb,var(--jaccent) 45%,transparent);opacity:1;}
+
+.ring-note{font-family:var(--font-cn-ui);font-size:var(--fs-xs);color:var(--ink-3);line-height:var(--lh-relaxed);}
+.ring-note b{color:var(--jaccent);font-weight:var(--fw-semibold);}
+
+/* ================= playback footer (themed to brand) ================= */
+.spt-footer{position:fixed;left:0;right:0;bottom:0;z-index:50;background:var(--card);color:var(--ink-2);
+  display:flex;align-items:center;padding:0 22px;gap:10px;font-family:var(--font-cn-ui);
+  border-top:1px solid var(--line);min-height:60px;box-sizing:border-box;box-shadow:0 -20px 40px -24px rgba(0,0,0,.7);}
+.spt-control-label{font-family:var(--font-mono);font-size:var(--fs-nano);letter-spacing:var(--ls-over);text-transform:uppercase;color:var(--ink-3);margin-right:2px;}
+.spt-scenario-btn{background:var(--ground-2);border:0;box-shadow:var(--edge);color:var(--ink-2);padding:7px 14px;
+  border-radius:var(--r-pill);font-size:var(--fs-xs);font-family:var(--font-cn-ui);cursor:pointer;
+  transition:all var(--dur-fast) var(--ease-out);display:inline-flex;align-items:center;gap:7px;}
+.spt-scenario-btn:hover{background:var(--ground-hover);color:var(--ink);}
+.spt-scenario-btn.active{color:var(--jaccent);background:var(--jaccent-wash);box-shadow:inset 0 0 0 1px color-mix(in srgb,var(--jaccent) 45%,transparent);font-weight:var(--fw-semibold);}
+.spt-scenario-color-dot{width:8px;height:8px;border-radius:50%;flex-shrink:0;}
+.spt-scenario-color-dot.orange{background:var(--orange);}
+.spt-scenario-color-dot.jade{background:var(--jade);}
+.spt-footer-spacer{flex:1;}
+.spt-step-counter{font-family:var(--font-mono);font-size:var(--fs-micro);color:var(--ink-3);min-width:74px;text-align:right;letter-spacing:var(--ls-mono);}
+.spt-play-btn,.spt-step-btn,.spt-prev-btn,.spt-reset-btn{background:var(--ground-2);border:0;box-shadow:var(--edge);
+  color:var(--ink-2);padding:8px 15px;border-radius:var(--r-pill);font-size:var(--fs-xs);font-family:var(--font-cn-ui);
+  cursor:pointer;display:inline-flex;align-items:center;gap:6px;transition:all var(--dur-fast) var(--ease-out);}
+.spt-play-btn{background:var(--accent);box-shadow:var(--shadow-accent);color:var(--on-accent);font-weight:var(--fw-semibold);}
+.spt-play-btn:hover{background:var(--accent-hover);transform:translateY(-2px);}
+.spt-step-btn:hover,.spt-prev-btn:hover,.spt-reset-btn:hover{background:var(--ground-hover);color:var(--ink);}
+.spt-play-btn:active,.spt-step-btn:active,.spt-prev-btn:active,.spt-reset-btn:active{transform:scale(.98);}
+.spt-play-btn:disabled,.spt-step-btn:disabled,.spt-prev-btn:disabled,.spt-reset-btn:disabled{opacity:.4;cursor:not-allowed;}
+</style>
+</head>
+<body data-journey="hire">
+<div class="wrap">
+
+  <!-- ===== topbar ===== -->
+  <header class="topbar">
+    <div class="brand">
+      <svg class="mark" viewBox="0 0 24 24" fill="none" aria-hidden="true"><circle cx="12" cy="12" r="8.5" stroke="currentColor" stroke-width="1.6"/><circle cx="12" cy="12" r="3.2" fill="currentColor" opacity=".55"/></svg>
+      <span class="name">树洞</span>
+      <span class="en">the hollow</span>
+    </div>
+    <span class="spacer"></span>
+    <span class="sw-tag">
+      <img src="ds/assets/ezagent-logo-dark.png" alt="Ezagent">
+      <span>ezagent socialware</span>
+    </span>
+    <div class="sol" id="sol">
+      <button class="sol-btn" id="sol-btn">Solutions <span style="font-size:9px;">▾</span></button>
+      <div class="sol-menu">
+        <div class="cap">一个门面（树洞），solutions 装 N 条旅程。<br>同一个树洞，说的话不同 → 兑现不同。</div>
+        <div class="sol-item j1" data-go="hire">
+          <span class="dot"></span>
+          <div><div class="t">补岗位 · 找 hire <span class="verb">· 纳入 take-in</span></div>
+            <div class="s">你缺哪个岗位，把那份能力招进来并留下</div></div>
+        </div>
+        <div class="sol-item j2" data-go="match">
+          <span class="dot"></span>
+          <div><div class="t">找钱 · 找项目 · 撮合 <span class="verb">· 连接 connect</span></div>
+            <div class="s">说出你在找什么，让对的那一方应声、牵成一条线</div></div>
+        </div>
+      </div>
+    </div>
+  </header>
+
+  <!-- ===== facade / hero ===== -->
+  <section class="facade">
+    <div class="overline">Say it · 说出来</div>
+    <h1 class="master-hook">说出你在找什么，<br>让<span class="em">对的那一方</span>应声。</h1>
+    <p class="master-en">Say what you're looking for — let the right one answer.</p>
+
+    <div class="hollow" id="hollow">
+      <div class="dots" id="dots"></div>
+      <div class="ring"></div>
+      <div class="mouth"></div>
+      <div class="spk">···</div>
+    </div>
+
+    <div class="bar">
+      <svg class="icn" viewBox="0 0 24 24" fill="none" aria-hidden="true"><circle cx="12" cy="12" r="8.5" stroke="currentColor" stroke-width="1.5"/><circle cx="12" cy="12" r="3" fill="currentColor"/></svg>
+      <input id="hollow-input" readonly value="对着树洞说点什么…你搞不定 / 你在找的那件事">
+      <span class="anon">匿名 · no login</span>
+      <button class="say" id="say-btn">说 · Say</button>
+    </div>
+
+    <div class="route-row">
+      <span class="route-lbl">Try a line · 看树洞路由到哪条旅程</span>
+      <button class="chip j1" data-go="hire">「我缺一个能做营销的人」<span class="arw">→ 纳入</span></button>
+      <button class="chip j2" data-go="match">「我在找种子轮的钱」<span class="arw">→ 连接</span></button>
+    </div>
+  </section>
+
+  <p class="hint">播放，或 <kbd>Space</kbd>/<kbd>→</kbd> 逐段 · <kbd>←</kbd> 回退 · <kbd>R</kbd> 重置 — 底部切换两条旅程</p>
+
+  <!-- ===== stage ===== -->
+  <div class="stage">
+    <section class="surface">
+      <div class="surface-hd">
+        <span class="sess">session://world/<b id="sess-slug">hollow/marketing</b> · public_view</span>
+        <span class="reddot" id="reddot"><span class="d"></span><span id="reddot-txt">还没有人接住</span></span>
+      </div>
+      <div class="msgs" id="msgs"></div>
+    </section>
+
+    <aside class="rail">
+      <div class="rail-card">
+        <div class="slogan" id="slogan"></div>
+        <span class="verb-badge"><span class="vd"></span><span id="verb-txt"></span></span>
+      </div>
+      <div class="rail-card">
+        <div class="seg-head"><span class="seg-n" id="seg-n">段 0</span><span class="seg-title" id="seg-title"></span></div>
+        <div class="seg-value" id="seg-value"></div>
+        <span class="honesty done" id="honesty"><span class="hd"></span><span id="honesty-txt">已落地 · Shipped</span></span>
+      </div>
+      <div class="rail-card">
+        <div class="rail-lbl">底层原语 · Primitives</div>
+        <div class="prims" id="prims"></div>
+      </div>
+      <div class="rail-card">
+        <div class="rail-lbl">Why a loop · 为什么是环</div>
+        <div class="ring-note" id="ring-note"></div>
+      </div>
+    </aside>
+  </div>
+</div>
+
+<!-- ===== playback footer ===== -->
+<footer class="spt-footer" id="spt-footer">
+  <span class="spt-control-label">Journey · 旅程</span>
+  <div id="spt-scenario-btns" style="display:contents;"></div>
+  <div class="spt-footer-spacer"></div>
+  <span class="spt-step-counter" id="spt-step-counter">0 / 0</span>
+  <button class="spt-reset-btn" id="spt-reset-btn" type="button">重置</button>
+  <button class="spt-prev-btn" id="spt-prev-btn" type="button" disabled>‹ 上一段</button>
+  <button class="spt-step-btn" id="spt-step-btn" type="button">下一段 ›</button>
+  <button class="spt-play-btn" id="spt-play-btn" type="button">播放 · Play</button>
+</footer>
+
+<!-- ============ scenario-playback-toolkit · step-engine (inlined; button copy de-emoji'd) ============ -->
+<script>
+(function (global) {
+  'use strict';
+  let _config=null,_activeScenario=null,_steps=[],_currentStep=0,_isPlaying=false,_isStepping=false,_stepHistory=[],_fastReplay=false;
+  const _q=id=>document.getElementById(id);
+  function _sleep(ms){return new Promise(r=>setTimeout(r,_fastReplay?Math.min(ms,5):ms));}
+  function _isMicro(t){return _config.microStepTypes.has(t);}
+  function _updateCounter(){const c=_q('spt-step-counter');if(c)c.textContent=`${Math.min(_currentStep,_steps.length)} / ${_steps.length}`;}
+  function _setBtnsDuringPlaying(d){const p=_q('spt-play-btn'),s=_q('spt-step-btn'),v=_q('spt-prev-btn');if(p)p.disabled=d;if(s)s.disabled=d;if(v)v.disabled=d||_stepHistory.length===0;if(d){if(p)p.innerHTML='播放中…';}else{if(p)p.innerHTML=_currentStep>=_steps.length?'重放 · Replay':'播放 · Play';}}
+  function _setBtnsAfterAction(){const s=_q('spt-step-btn'),v=_q('spt-prev-btn'),p=_q('spt-play-btn');if(s)s.disabled=_currentStep>=_steps.length;if(v)v.disabled=_stepHistory.length===0;if(p){p.disabled=false;p.innerHTML=_currentStep>=_steps.length?'重放 · Replay':'播放 · Play';}}
+  async function _executeStepCore(step){switch(step.t){case 'wait':await _sleep(step.ms||0);return true;case 'view_switch':{document.querySelectorAll('.spt-view').forEach(v=>{if(v.dataset.view===step.view)v.classList.add('active');else v.classList.remove('active');});return true;}case 'noop':return true;default:return false;}}
+  async function _executeStep(step){const h=await _executeStepCore(step);if(h)return;if(_config.executeStepCustom)await _config.executeStepCustom(step);else console.warn('[spt] unknown step',step.t);}
+  async function play(){if(_isPlaying||_isStepping)return;if(_currentStep>=_steps.length)return;_isPlaying=true;_setBtnsDuringPlaying(true);for(;_currentStep<_steps.length;_currentStep++){if(!_isPlaying)break;const step=_steps[_currentStep];await _executeStep(step);_updateCounter();if(!_isMicro(step.t)&&!_fastReplay)_stepHistory.push(_currentStep+1);const delay=_isMicro(step.t)?60:(_config.interStepDelayMs||380);await _sleep(delay);}_isPlaying=false;_setBtnsDuringPlaying(false);}
+  async function step(){if(_isPlaying||_isStepping)return;if(_currentStep>=_steps.length)return;_isStepping=true;_setBtnsDuringPlaying(true);let ev=false;while(_currentStep<_steps.length&&!ev){const sd=_steps[_currentStep];await _executeStep(sd);_currentStep++;_updateCounter();if(_isMicro(sd.t)){await _sleep(60);continue;}ev=true;}if(!_fastReplay)_stepHistory.push(_currentStep);_isStepping=false;_setBtnsAfterAction();}
+  async function prev(){if(_isPlaying||_isStepping)return;if(_stepHistory.length===0)return;_isStepping=true;_setBtnsDuringPlaying(true);_stepHistory.pop();const target=_stepHistory.length>0?_stepHistory[_stepHistory.length-1]:0;const saved=[..._stepHistory];reset({keepScenario:true});_stepHistory=saved;_fastReplay=true;for(let i=0;i<target;i++){await _executeStep(_steps[i]);_currentStep=i+1;}_fastReplay=false;_updateCounter();_isStepping=false;_setBtnsAfterAction();}
+  function reset(opts={}){_isPlaying=false;_isStepping=false;_currentStep=0;_stepHistory=[];if(_activeScenario&&_config)_steps=_resolveSteps(_activeScenario);_updateCounter();const p=_q('spt-play-btn'),s=_q('spt-step-btn'),v=_q('spt-prev-btn');if(p){p.disabled=false;p.innerHTML='播放 · Play';}if(s)s.disabled=false;if(v)v.disabled=true;if(_config&&_config.onReset){try{_config.onReset(_activeScenario);}catch(e){console.error(e);}}}
+  function setScenario(id){if(!_config.scenarios[id])return;_activeScenario=id;_steps=_resolveSteps(id);reset({keepScenario:true});document.querySelectorAll('.spt-scenario-btn').forEach(b=>b.classList.toggle('active',b.dataset.scenarioId===id));}
+  function _resolveSteps(id){const sc=_config.scenarios[id];if(!sc)return[];if(typeof sc.steps==='function')return sc.steps();if(Array.isArray(sc.steps))return sc.steps;return[];}
+  function currentState(){return{activeScenario:_activeScenario,currentStep:_currentStep,totalSteps:_steps.length,isPlaying:_isPlaying,isStepping:_isStepping,stepHistoryLength:_stepHistory.length};}
+  function _renderScenarioButtons(){const host=_q('spt-scenario-btns');if(!host)return;host.innerHTML='';(_config.scenarioButtons||[]).forEach(btn=>{const el=document.createElement('button');el.type='button';el.className='spt-scenario-btn';el.dataset.scenarioId=btn.id;if(btn.id===_activeScenario)el.classList.add('active');let h='';if(btn.colorDot)h+=`<span class="spt-scenario-color-dot ${btn.colorDot}"></span>`;h+=btn.label||btn.id;el.innerHTML=h;el.addEventListener('click',()=>setScenario(btn.id));host.appendChild(el);});}
+  function _bindKeyboard(){if(_config.keyboardShortcuts===false)return;document.addEventListener('keydown',e=>{const tag=e.target&&e.target.tagName;if(tag==='INPUT'||tag==='TEXTAREA'||(e.target&&e.target.isContentEditable))return;switch(e.key){case ' ':case 'ArrowRight':e.preventDefault();api.step();break;case 'ArrowLeft':e.preventDefault();api.prev();break;case 'Enter':e.preventDefault();api.play();break;case 'Escape':case 'r':case 'R':e.preventDefault();api.reset();break;}});}
+  function _bindButtonsAndKeyboard(){const p=_q('spt-play-btn'),s=_q('spt-step-btn'),v=_q('spt-prev-btn'),r=_q('spt-reset-btn');if(p)p.addEventListener('click',()=>api.play());if(s)s.addEventListener('click',()=>api.step());if(v)v.addEventListener('click',()=>api.prev());if(r)r.addEventListener('click',()=>api.reset());_bindKeyboard();}
+  function init(config){if(!config)throw new Error('init requires config');_config=Object.assign({scenarios:{},scenarioButtons:[],microStepTypes:['wait'],executeStepCustom:null,onReset:null,keyboardShortcuts:true,interStepDelayMs:380,initialScenarioId:null},config);_config.microStepTypes=new Set(_config.microStepTypes);_activeScenario=_config.initialScenarioId||(_config.scenarioButtons[0]&&_config.scenarioButtons[0].id)||Object.keys(_config.scenarios)[0]||null;if(_activeScenario)_steps=_resolveSteps(_activeScenario);_renderScenarioButtons();_bindButtonsAndKeyboard();_updateCounter();if(_config.onReset){try{_config.onReset(_activeScenario);}catch(e){console.error(e);}}}
+  const api={init,play,step,prev,reset,setScenario,currentState};
+  global.scenarioPlayback=api;
+})(typeof window!=='undefined'?window:globalThis);
+</script>
+
+<!-- ============ demo content: two journeys ============ -->
+<script>
+const $=id=>document.getElementById(id);
+
+/* ---- 点彩 · scattered solid primaries around the hollow (colors.css dark axis) ---- */
+(function seedColorPoints(){
+  const host=$('dots'); if(!host) return;
+  const lum=['#FF5A4D','#4D8DF0','#FFD84D','#34D6A0','#5AA2FF','#FFA94D']; // dark-theme brights
+  for(let i=0;i<22;i++){
+    const ang=Math.random()*Math.PI*2, rad=60+Math.random()*20;      // annulus band
+    const x=77+rad*Math.cos(ang), y=77+rad*Math.sin(ang);
+    const s=4+Math.random()*8, c=lum[(Math.random()*lum.length)|0];
+    const d=document.createElement('span');
+    d.style.cssText=`left:${x}px;top:${y}px;width:${s}px;height:${s}px;background:${c};`+
+      `animation-delay:${(Math.random()*260)|0}ms;`;
+    host.appendChild(d);
+  }
+})();
+function firePulse(){const h=$('hollow');h.classList.remove('answered');void h.offsetWidth;h.classList.add('answered');}
+
+/* ---- journey meta ---- */
+const JOURNEY={
+  hire:{
+    slogan:'你不需要又一个 agent。<br>你需要一个 <span class="star">hire</span>。',
+    en:'You don\'t need another agent. You need a hire.',
+    verb:'核心动词 · 纳入 take-in',
+    slug:'hollow/marketing',
+    input:'我缺一个能做营销的人',
+    prims:['public_view','AnonUser','add_managed_member','成员持久化','save_template_as','anon→login takeover'],
+    ring:'为什么是<b>环</b>不是漏斗：段 5 那一刻你回神 — 别人对着树洞喊时，冒出来接住他的会是<b>你自己</b>。段5出口 == 段2入口。'
+  },
+  match:{
+    slogan:'你不需要更大的 pipeline。<br>你需要<span class="star">对的那一方</span>应声。',
+    en:'You don\'t need a bigger pipeline. You need the right one to answer.',
+    verb:'核心动词 · 连接 connect',
+    slug:'hollow/dealscout',
+    input:'我在找种子轮的钱，做 AI infra 早期',
+    prims:['hello 公开面','concierge','AnonUser','发现腿·千人千面','anon→login takeover','invite_member','撮合记账','跨用户推荐'],
+    ring:'为什么是<b>应声</b>不是海投：你没投一百次，你多了一次<b>对的相遇</b>。founder↔investor 对称，段5出口 == 别人的段2入口。'
+  }
+};
+
+/* ---- segment content (6 段 × 2 旅程), faithful to J / J2 ---- */
+const SEG={
+  hire:[
+    {n:'段 0',title:'树洞门脸 == 会回话的 session',honesty:['done','已落地 · Shipped'],
+     value:'不是广告页，是一个<b>「说了不丢人、可能有回响」</b>的开口。',
+     prims:['public_view','AnonUser'],
+     msgs:[{who:'sys',body:'你落在一个树洞前。页面本身 = 绑定 world session 的 hello 产物，public_view 让你匿名进（AnonUser，零登录）。'}]},
+
+    {n:'段 1',title:'对树洞说出卡点',honesty:['done','已落地 · Shipped'],
+     value:'承认<b>「我缺」的成本被降到零</b> — 你只是在对空吐槽，没人在评判。',
+     prims:['AnonUser'],
+     msgs:[{who:'user',meta:'匿名 · AnonUser',body:'这营销我真搞不定。产品能 build，但获客、渠道、文案…一个人干不完。'}]},
+
+    {n:'段 2',title:'有人接住（涌现①）',honesty:['done','已落地 · Shipped'],
+     value:'slogan 被演出来：回你的<b>不是「又一个 agent」，是一个接住岗位的 hire</b>。',
+     prims:['add_managed_member'],reddot:{n:1,txt:'有人接住了'},pulse:true,
+     msgs:[{who:'sys',body:'编排器听到卡点 → add_managed_member 把一个营销 hire 招进「同一个」session。'},
+           {who:'hire',meta:'营销 hire · 已入组',body:'营销这块交给我。我先把你的定位和三个获客渠道摸一遍，今晚给你一版可落地的冷启动方案。'}]},
+
+    {n:'段 3',title:'回神：我不再是一个人',honesty:['done','已落地 · Shipped'],
+     value:'字面兑现：<b>你「发现」能力进了你的摊子，而不是「操作」了它</b>。成员 +1 且持久。',
+     prims:['add_managed_member','成员持久化'],
+     msgs:[{who:'sys',body:'你打开发现：那个 hire 还在、没走 — 不是一次性回复，是持久化的成员。能力留在了你可应用的范围里。'}]},
+
+    {n:'段 4',title:'回神：我们成了一个组（高潮）',honesty:['done','已落地 · Shipped'],
+     value:'<b>双重身份跃迁</b>：个人 → 有对外面的组织 A；匿名 → 被认领的你。',
+     prims:['save_template_as','anon→login takeover'],
+     msgs:[{who:'user',meta:'你 · 想给「你俩」起个名',body:'把这个 hire 留住吧。给我们起个名 — 就叫「独立增长小组」。'},
+           {who:'hire',cls:'climax',meta:'组织 A 结晶',body:'<span class="star">◆</span> save_template_as：当前 session 形态存成可版本化 / 可 fork 的 SessionTemplate（带 public_view = 对外的脸）。同刻 anon→login takeover 认领你为 owner。'}]},
+
+    {n:'段 5',title:'别人来洞里接你（结尾弦 · CTA）',honesty:['vision','愿景 · Vision'],
+     value:'<b>环闭合</b>：对树洞吐槽的人，自己成了别人树洞里接住对方的 hire。',
+     prims:['save_template_as'],reddot:{n:1,txt:'组织 A 已对外',keep:true},
+     msgs:[{who:'sys',body:'你的「独立增长小组」现在也有一个 public_view 面 — 它就是别人段 2 里能被 add_managed_member 招进去的那个 hire。组织接组织 = 嵌套（app package 容器 #1120，愿景层）。'},
+           {who:'sys',body:'此刻另一个 vibe coder 正对着树洞说：「这营销我真搞不定」— 冒出来接住他的，是你。'}]}
+  ],
+  match:[
+    {n:'段 0',title:'树洞门脸 == 会应声的公开面',honesty:['done','已落地 · Shipped'],
+     value:'不是又一个 FA 中介 / BP 投递箱，是一个<b>「说了在找什么、对的一方可能应声」</b>的开口。',
+     prims:['hello 公开面','concierge','AnonUser'],
+     msgs:[{who:'sys',body:'同一个树洞，另一条旅程。页面 = 组合 hello 拿公开面 + concierge；public_view 让你匿名进。门面手势不变，兑现不同。'}]},
+
+    {n:'段 1',title:'对树洞说出「我在找什么」',honesty:['done','已落地 · Shipped'],
+     value:'<b>说出「我在找」的成本降到零</b> — 没海投、没求人、没建 CRM。',
+     prims:['发现腿·千人千面'],
+     msgs:[{who:'user',meta:'匿名 · AnonUser',body:'我在找种子轮的钱，做 AI infra 早期。想要懂基础设施、能陪跑的那种钱。'}]},
+
+    {n:'段 2',title:'有人 / 机会应声（涌现①）',honesty:['done','已落地 · Shipped'],
+     value:'回你的<b>不是「再投一次的表单」，是 AI 循着你说的把对的人 / 机会找齐、排好</b>。',
+     prims:['发现腿·千人千面','concierge'],reddot:{n:3,txt:'有人应声'},pulse:true,
+     msgs:[{who:'sys',body:'编排器听到 → 发现腿启动（没指定源 → 先爬公开网页），每条标「为什么对上你」。'},
+           {who:'hire',meta:'AI 副驾 · 已发现 3 条',body:'循着你说的「AI infra 种子」，我捞到几个对得上的：',
+            cards:[{t:'晨曦资本 · 早期 infra 基金',src:'公开主页 · 往期投资',why:'专投 AI infra 天使/种子，陪跑型'},
+                   {t:'一位连续创业者 · 天使',src:'公开访谈',why:'自己做过 infra，找早期 AI infra 项目'}]}]},
+
+    {n:'段 3',title:'回神：对的人露面了',honesty:['done','已落地 · Shipped'],
+     value:'<b>你在找的那类人，真的循着你的信号露了面</b> — 是带真实身份的人，不是一条冷线索。',
+     prims:['anon→login takeover','hello 公开面'],
+     msgs:[{who:'sys',body:'你登录，把「我在找什么」亮成一个公开机会页。有人循着它登录进来发言、供线索；你在全量白板上看到 TA 的真实身份。'},
+           {who:'hire',meta:'晨曦资本 · 循信号登录',body:'看到你的公开机会页了。我们刚投过两个同阶段的 infra 团队，想聊聊你的技术路线。'}]},
+
+    {n:'段 4',title:'回神：牵成了一条线（高潮）',honesty:['vision','部分愿景 · Partly vision'],
+     value:'<b>不是「纳入你的组」（那是旅程 1），是牵成一条真连接</b> — 从大海捞针，到跟对的一方连上了线。',
+     prims:['invite_member','撮合记账'],
+     msgs:[{who:'user',meta:'你 · 判断对上了',body:'这方向对。invite 你进一个私有 session 细聊 — 我按信任选择性披露数据。'},
+           {who:'hire',cls:'climax',meta:'撮成一条边',body:'<span class="star">◆</span> invite_member 把 TA 牵进私有 session（选择性披露 + 撮合记账，喂撮合北极星 P-3.2）。两方仍各自独立 — 这是「连接」，不是「纳入」。身份此刻从匿名认领成你。'}]},
+
+    {n:'段 5',title:'别人循着你的洞找你（结尾弦 · CTA）',honesty:['vision','愿景 · Vision'],
+     value:'<b>环闭合</b>：对树洞说「我在找钱」的你，成了别人「找项目」时循着信号应声的一方。',
+     prims:['跨用户推荐'],reddot:{n:3,txt:'你也成了能被找的一方',keep:true},
+     msgs:[{who:'sys',body:'你的机会页现在也是「别人在找时能应声的一方」。平台跨用户把「你在找的」和「别人已发布的」自动撮到一起（发现层第③腿 F-12，discuss-first 缺口，愿景层）。'},
+           {who:'sys',body:'此刻一支基金正对着树洞说：「我这支基金找 AI infra 种子项目」— 循着信号应声的一方，是你。'}]}
+  ]
+};
+
+/* ---- render one segment (cumulative over a reset-cleared surface) ---- */
+function renderSeg(journey,i){
+  const s=SEG[journey][i];
+  $('seg-n').textContent=s.n;
+  $('seg-title').textContent=s.title;
+  $('seg-value').innerHTML=s.value;
+  const hon=$('honesty');hon.className='honesty '+s.honesty[0];$('honesty-txt').textContent=s.honesty[1];
+  document.querySelectorAll('#prims .prim').forEach(p=>p.classList.toggle('lit',s.prims.includes(p.dataset.k)));
+  if(s.reddot){$('reddot').classList.add('on');
+    $('reddot-txt').textContent=s.reddot.txt+((s.reddot.n>1&&!s.reddot.keep)?' ×'+s.reddot.n:'');}
+  if(s.pulse)firePulse();
+  const wrap=$('msgs');
+  (s.msgs||[]).forEach(m=>{
+    const el=document.createElement('div');
+    el.className='msg ez-fade-up '+(m.who)+(m.cls?' '+m.cls:'');
+    let inner='';
+    if(m.meta)inner+=`<div class="meta">${m.meta}</div>`;
+    inner+=`<div class="body">${m.body}`;
+    if(m.cards){m.cards.forEach(c=>{inner+=
+      `<div class="match-card"><div class="mc-hd"><span>${c.t}</span><span class="mc-src">${c.src}</span></div><div class="mc-why"><b>match</b> ${c.why}</div></div>`;});}
+    inner+=`</div>`;
+    el.innerHTML=inner;
+    wrap.appendChild(el);
+  });
+}
+
+/* ---- apply journey chrome (slogan, verb, input, prims, theme) ---- */
+function applyJourney(journey){
+  const j=JOURNEY[journey];
+  document.body.dataset.journey=journey;
+  $('verb-txt').textContent=j.verb;
+  $('sess-slug').textContent=j.slug;
+  $('hollow-input').value=j.input;
+  $('ring-note').innerHTML=j.ring;
+  const ph=$('prims');ph.innerHTML='';
+  j.prims.forEach(k=>{const c=document.createElement('span');c.className='prim';c.dataset.k=k;c.textContent=k;ph.appendChild(c);});
+  const sl=$('slogan');sl.innerHTML=j.slogan;
+  const e=document.createElement('span');e.className='en';e.textContent=j.en;sl.appendChild(e);
+}
+
+/* ---- reset surface + rail to "段 0, not yet" ---- */
+function resetStage(journey){
+  applyJourney(journey);
+  $('msgs').innerHTML='';
+  $('reddot').classList.remove('on');$('reddot-txt').textContent='还没有人接住';
+  $('hollow').classList.remove('answered');
+  $('seg-n').textContent='段 0';
+  $('seg-title').textContent='树洞门脸 · 等你说第一句';
+  $('seg-value').innerHTML='门面手势统一「说出你在找什么」；兑现按 solution 分流。<b>开始 · Start</b>';
+  $('honesty').className='honesty done';$('honesty-txt').textContent='已落地 · Shipped';
+  document.querySelectorAll('#prims .prim').forEach(p=>p.classList.remove('lit'));
+}
+
+/* ---- 6 段 → one seg step + one wait micro each ---- */
+function buildSteps(journey){
+  const steps=[];
+  for(let i=0;i<SEG[journey].length;i++){steps.push({t:'seg',journey,i});steps.push({t:'wait',ms:520});}
+  return steps;
+}
+async function executeStepCustom(step){ if(step.t==='seg') renderSeg(step.journey,step.i); }
+
+/* ---- init player ---- */
+scenarioPlayback.init({
+  scenarios:{ hire:{steps:()=>buildSteps('hire')}, match:{steps:()=>buildSteps('match')} },
+  scenarioButtons:[
+    {id:'hire', label:'① 找 hire · 纳入', colorDot:'orange'},
+    {id:'match',label:'② 撮合 · 连接',   colorDot:'jade'}
+  ],
+  microStepTypes:['wait'],
+  interStepDelayMs:1000,
+  executeStepCustom,
+  onReset:(id)=>resetStage(id||'hire')
+});
+
+/* ---- facade wiring: chips + solutions menu route to scenarios ---- */
+function goto(journey){
+  scenarioPlayback.setScenario(journey);
+  document.getElementById('sol').classList.remove('open');
+  firePulse();
+}
+document.querySelectorAll('[data-go]').forEach(el=>el.addEventListener('click',()=>goto(el.dataset.go)));
+$('say-btn').addEventListener('click',()=>scenarioPlayback.play());
+const sol=$('sol');
+$('sol-btn').addEventListener('click',e=>{e.stopPropagation();sol.classList.toggle('open');});
+document.addEventListener('click',e=>{if(!sol.contains(e.target))sol.classList.remove('open');});
+</script>
+</body>
+</html>

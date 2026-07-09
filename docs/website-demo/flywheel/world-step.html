@@ -1,0 +1,89 @@
+<!DOCTYPE html>
+<html lang="zh">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>world 占位页</title>
+<style>
+  /* 刻意朴素 —— 这里是 world，不是官网；占位样式表示「world 侧待建」。 */
+  body{margin:0;background:#fff;color:#17171B;font-family:ui-monospace,'Space Mono',Menlo,monospace;-webkit-font-smoothing:antialiased;display:flex;min-height:100vh;align-items:center;justify-content:center}
+  .box{max-width:580px;width:100%;padding:40px 32px}
+  .tag{font-size:12px;letter-spacing:.14em;text-transform:uppercase;color:#8A8A92}
+  h1{font-size:clamp(28px,5.4vw,38px);margin:12px 0 0;font-weight:700;letter-spacing:-.01em}
+  .todo{margin:30px 0 0;border:1px dashed #B6B6BC;border-radius:12px;padding:22px 24px}
+  .todo .th{font-size:12px;letter-spacing:.06em;text-transform:uppercase;color:#8A8A92;margin-bottom:16px}
+  .gp{margin-bottom:16px}
+  .gp:last-child{margin-bottom:0}
+  .gp .gl{font-size:12px;color:#0B5CFF;font-weight:700;margin-bottom:8px}
+  .gp ul{margin:0;padding:0;list-style:none}
+  .gp li{font-size:13.5px;line-height:1.55;color:#17171B;padding-left:20px;position:relative;margin-bottom:8px}
+  .gp li:last-child{margin-bottom:0}
+  .gp li:before{content:"+";position:absolute;left:0;top:0;color:#B6B6BC;font-weight:700}
+  .gp li .w{color:#C9C9CE;font-size:11.5px;margin-left:6px}
+  .go{margin:28px 0 0;display:flex;align-items:center;gap:16px}
+  .go button{font-family:inherit;font-size:14px;font-weight:700;color:#fff;background:#0B5CFF;border:0;border-radius:999px;padding:13px 24px;cursor:pointer}
+  .go button:hover{background:#1466FF}
+  .go a{color:#8A8A92;font-size:13px;text-decoration:none}
+  .go a:hover{color:#17171B}
+</style>
+</head>
+<body>
+<div class="box">
+  <div class="tag">world · 占位</div>
+  <h1>world 占位页</h1>
+  <div class="todo">
+    <div class="th">world 需要加的功能</div>
+    <div id="todo"></div>
+  </div>
+  <div class="go"><button id="pub">提交发布 →</button><a href="gallery.html">← 返回探索</a></div>
+</div>
+
+<script src="gallery-data.js"></script>
+<script>
+  var qp = new URLSearchParams(location.search);
+  var mode = qp.get('mode') === 'build' ? 'build' : 'fork';
+  var src = FW.get(qp.get('src') || 'expert-recruit') || FW.products()[0];
+  var newP, groups;
+
+  var PUBLISH = { g: '发布', items: [
+    ['填标题、简介', ''],
+    ['上传封面图 / 截图', ''],
+    ['提交进入审核流程 —— 合规审核，防止不合规内容上官网', 'W-G2'],
+    ['审核通过后上架官网', ''],
+  ] };
+
+  if (mode === 'fork') {
+    newP = { name: 'liconfig-recruit', version: '1.0.0', title: '招人 & 接待助手 · Hiring & reception',
+      description: '在「专家 agent 招募」基础上 fork 出来，改成给我代运营客户用的：招人分诊 + 到店接待 + 预约日历。',
+      owner: '李复制 · 代运营 agency', category: 'custom', glyph: '聘', color: 'var(--orange)',
+      tryUrl: '../recruit-v2.html', visibility: 'public_view', hires: 0, rating: '—', forkedFrom: src.name };
+    groups = [
+      { g: 'fork', items: [['从官网产品页一键触发 fork —— 复制 session 配置、建新 session、触发者成 owner', 'W-G3']] },
+      { g: '改造', items: [['在 world + hello 里把 fork 改成自己的（改话术、加功能）', '']] },
+      PUBLISH,
+    ];
+  } else {
+    newP = { name: 'onboarding-buddy', version: '1.0.0', title: '新人上手助手 · Onboarding buddy',
+      description: '一句话描述就生成：给 SaaS 新用户的引导对话面，按角色发不同的上手清单，卡住自动升级到人工。',
+      owner: '你 · a builder', category: 'custom', glyph: '导', color: 'var(--blueink)',
+      tryUrl: '../recruit-v2.html', visibility: 'public_view', hires: 0, rating: '—' };
+    groups = [
+      { g: '构建', items: [['用 hello 一句话生成一个对客的 public_view 产品面', '']] },
+      PUBLISH,
+    ];
+  }
+
+  document.getElementById('todo').innerHTML = groups.map(function (grp) {
+    var lis = grp.items.map(function (t) {
+      return '<li>' + t[0] + (t[1] ? '<span class="w">' + t[1] + '</span>' : '') + '</li>';
+    }).join('');
+    return '<div class="gp"><div class="gl">' + grp.g + '</div><ul>' + lis + '</ul></div>';
+  }).join('');
+
+  document.getElementById('pub').onclick = function () {
+    FW.publish(newP);
+    location.href = 'publish-landing.html?published=' + encodeURIComponent(newP.name) + '&mode=' + mode;
+  };
+</script>
+</body>
+</html>

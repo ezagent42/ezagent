@@ -1,0 +1,144 @@
+<!DOCTYPE html>
+<html lang="zh" data-theme="light">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>探索 · Explore — Ezagent</title>
+<meta name="description" content="看看其他人用 hello、world 做了什么。">
+<link rel="stylesheet" href="ds/styles.css">
+<style>
+  body{background:var(--ground);color:var(--ink);margin:0;font-family:var(--font-cn-ui),var(--font-ui);font-weight:450;-webkit-font-smoothing:antialiased}
+  .wrap{max-width:1180px;margin:0 auto;padding:26px 28px 120px}
+  .over{font-family:var(--font-mono);font-size:11px;letter-spacing:.14em;text-transform:uppercase;color:var(--ink-3)}
+  a{color:inherit;text-decoration:none}
+  /* header */
+  .ghead{margin-top:14px}
+  .ghead h1{font-family:var(--font-cn);font-weight:600;font-size:clamp(26px,4vw,38px);line-height:1.2;margin:10px 0 0}
+  .ghead .sub{color:var(--ink-2);font-size:15px;line-height:1.66;margin:12px 0 0;max-width:52ch}
+  .routes{display:flex;gap:10px;margin-top:18px;flex-wrap:wrap}
+  .rbtn{display:inline-flex;align-items:center;gap:9px;font-family:var(--font-cn-ui);font-weight:600;font-size:14px;padding:12px 20px;border-radius:var(--r-pill);cursor:pointer;border:0;transition:transform 150ms var(--ease-out),background 150ms}
+  .rbtn.primary{background:var(--accent);color:var(--on-accent);box-shadow:var(--shadow-accent)}
+  .rbtn.primary:hover{transform:translateY(-2px);background:var(--accent-hover)}
+  .rbtn.ghost{background:var(--card);color:var(--ink);box-shadow:var(--shadow-sm)}
+  .rbtn.ghost:hover{transform:translateY(-2px);box-shadow:var(--shadow-card)}
+  .dot{width:11px;height:11px;border-radius:3px;flex:none;display:inline-block}
+  .dot.blue{background:var(--blue)} .dot.jade{background:var(--jade)}
+  /* mini flywheel diagram */
+  .flyw{background:var(--card);border-radius:var(--r-lg);box-shadow:var(--shadow-card);padding:22px}
+  .flyw .fw-t{font-family:var(--font-mono);font-size:10.5px;letter-spacing:.1em;text-transform:uppercase;color:var(--ink-3)}
+  .flyw svg{width:100%;height:auto;margin-top:8px}
+  .flyw .cap{font-size:12px;color:var(--ink-2);line-height:1.6;margin-top:8px}
+  .flyw .cap b{color:var(--ink)}
+  /* toolbar */
+  .toolbar{display:flex;align-items:center;gap:12px;margin:34px 0 4px;flex-wrap:wrap}
+  .search{flex:1;min-width:220px;display:flex;align-items:center;gap:9px;background:var(--card);box-shadow:var(--shadow-sm);border-radius:var(--r-pill);padding:11px 18px}
+  .search input{border:0;outline:0;background:transparent;flex:1;font-family:var(--font-cn-ui);font-size:14px;color:var(--ink)}
+  .search input::placeholder{color:var(--ink-4)}
+  .chips{display:flex;gap:6px;flex-wrap:wrap}
+  .chip{appearance:none;border:0;cursor:pointer;font-family:var(--font-mono);font-size:12px;color:var(--ink-2);background:var(--card);box-shadow:var(--shadow-sm);padding:9px 15px;border-radius:var(--r-pill);transition:all 150ms var(--ease-out)}
+  .chip:hover{background:var(--ground-hover)}
+  .chip.on{background:var(--ink);color:var(--card)}
+  .count{font-family:var(--font-mono);font-size:12px;color:var(--ink-3);margin:16px 0 0}
+  .count b{color:var(--ink-2)}
+  /* card grid (瀑布流) */
+  .feed{margin:12px 0 0;columns:270px;column-gap:18px}
+  .acard{break-inside:avoid;background:var(--card);border-radius:var(--r-lg);box-shadow:var(--shadow-sm);padding:18px 18px 15px;margin:0 0 18px;transition:box-shadow .2s var(--ease-out),transform .2s;display:block}
+  .acard:hover{box-shadow:var(--shadow-card);transform:translateY(-3px)}
+  .acard .a-hd{display:flex;align-items:center;gap:10px}
+  .acard .a-av{width:38px;height:38px;border-radius:var(--r-md);flex:none;display:grid;place-items:center;font-family:var(--font-cn);font-weight:600;font-size:18px;color:#fff;background:var(--rc,var(--accent))}
+  .acard .a-ver{margin-left:auto;font-family:var(--font-mono);font-size:11px;color:var(--ink-4)}
+  .acard .a-t{font-family:var(--font-cn);font-weight:600;font-size:17px;margin-top:13px;color:var(--ink);line-height:1.32}
+  .acard .a-by{font-family:var(--font-cn-ui);font-size:12px;color:var(--ink-3);margin-top:5px}
+  .acard .a-b{font-family:var(--font-cn-ui);font-size:13px;color:var(--ink-2);line-height:1.62;margin-top:10px}
+  .acard .a-tags{display:flex;flex-wrap:wrap;gap:6px;margin-top:12px}
+  .acard .a-tag{font-family:var(--font-mono);font-size:10.5px;color:var(--ink-2);box-shadow:inset 0 0 0 1px var(--line);border-radius:var(--r-pill);padding:3px 9px}
+  .acard .a-tag.live{color:var(--success-text);background:var(--success-wash);box-shadow:none}
+  .acard .a-tag.mine{color:var(--accent-press);background:var(--accent-wash);box-shadow:none}
+  .acard .a-foot{display:flex;align-items:center;gap:10px;margin-top:14px}
+  .acard .a-stat{font-family:var(--font-mono);font-size:11px;color:var(--ink-3)}
+  .acard .a-stat b{color:var(--ink-2)}
+  .acard .a-view{margin-left:auto;font-family:var(--font-cn-ui);font-weight:600;font-size:12.5px;color:var(--on-accent);background:var(--accent);padding:8px 15px;border-radius:var(--r-pill);transition:background .15s}
+  .acard:hover .a-view{background:var(--accent-hover)}
+  .empty{text-align:center;color:var(--ink-3);font-size:14px;padding:40px}
+  /* 朴素 dev 说明框 —— 与 world 占位页同款 */
+  .backend-note{margin:40px 0 0;border:1px dashed var(--ink-4);border-radius:var(--r-md);padding:18px 20px;font-family:var(--font-mono)}
+  .backend-note .bh{font-size:11px;letter-spacing:.08em;text-transform:uppercase;color:var(--ink-3);margin-bottom:12px}
+  .backend-note ul{margin:0;padding:0;list-style:none}
+  .backend-note li{font-size:13px;line-height:1.6;color:var(--ink-2);padding-left:18px;position:relative;margin-bottom:8px}
+  .backend-note li:last-child{margin-bottom:0}
+  .backend-note li:before{content:"+";position:absolute;left:0;top:0;color:var(--ink-4);font-weight:700}
+  .backend-note li .w{color:var(--ink-4);font-size:11.5px;margin-left:6px}
+</style>
+</head>
+<body data-fw-route="">
+<div class="wrap">
+  <span class="over">explore</span>
+
+  <header class="ghead">
+    <h1>探索 · Explore</h1>
+    <p class="sub">看看其他人用 hello、world 做了什么。</p>
+    <div class="routes">
+      <a class="rbtn ghost" href="world-step.html?mode=build"><span class="dot blue"></span>发布你的产品 · Publish yours</a>
+    </div>
+  </header>
+
+  <div class="toolbar">
+    <label class="search"><svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="var(--ink-3)" stroke-width="2.2" stroke-linecap="round"><circle cx="11" cy="11" r="7"/><path d="M21 21l-4-4"/></svg>
+      <input id="q" placeholder="搜产品 · Search products…"></label>
+    <div class="chips" id="chips"></div>
+  </div>
+  <p class="count" id="count"></p>
+  <div class="feed" id="feed"></div>
+
+  <div class="backend-note">
+    <div class="bh">world / 后端需要加的功能</div>
+    <ul>
+      <li>目录 API：把已发布的 socialware 列成可浏览 / 搜索 / 筛选的货架<span class="w">W-G1</span></li>
+      <li>Definition 的 owner / 作者字段，供卡片署名<span class="w">W-G5</span></li>
+    </ul>
+  </div>
+</div>
+
+<script src="../demo-state.js"></script>
+<script src="gallery-data.js"></script>
+<script>
+  var cat = '', q = '';
+  var chipsEl = document.getElementById('chips');
+  FW.CATEGORIES.forEach(function (c) {
+    var b = document.createElement('button'); b.className = 'chip' + (c.k === cat ? ' on' : ''); b.textContent = c.label; b.dataset.k = c.k;
+    b.onclick = function () { cat = c.k; document.querySelectorAll('.chip').forEach(function (x) { x.classList.toggle('on', x.dataset.k === cat); }); render(); };
+    chipsEl.appendChild(b);
+  });
+  document.getElementById('q').addEventListener('input', function (e) { q = e.target.value.trim().toLowerCase(); render(); });
+
+  function card(p) {
+    var el = document.createElement('a'); el.className = 'acard ez-fade-up'; el.href = 'product-detail.html?sw=' + encodeURIComponent(p.name);
+    el.style.setProperty('--rc', p.color || 'var(--accent)');
+    var tags = '<span class="a-tag live">public_view · live</span>'
+      + (p.category ? '<span class="a-tag">' + ({ hire: '招募', match: '撮合', custom: '自定义' }[p.category] || p.category) + '</span>' : '')
+      + (FW.isPublished(p.name) ? '<span class="a-tag mine">刚上架 · new</span>' : '');
+    el.innerHTML =
+      '<div class="a-hd"><div class="a-av">' + (p.glyph || 'A') + '</div><span class="a-ver">v' + p.version + '</span></div>'
+      + '<div class="a-t">' + p.title + '</div>'
+      + '<div class="a-by">' + p.owner + '</div>'
+      + '<div class="a-b">' + p.description + '</div>'
+      + '<div class="a-tags">' + tags + '</div>'
+      + '<div class="a-foot"><span class="a-stat">招过 <b>' + (p.hires || 0) + '</b> · 好评 <b>' + (p.rating || '—') + '</b></span><span class="a-view">查看 · View</span></div>';
+    return el;
+  }
+  function render() {
+    var all = FW.products().filter(function (p) {
+      if (cat && p.category !== cat) return false;
+      if (q && (p.title + p.description + p.owner).toLowerCase().indexOf(q) < 0) return false;
+      return true;
+    });
+    var feed = document.getElementById('feed'); feed.innerHTML = '';
+    document.getElementById('count').innerHTML = '<b>' + all.length + '</b> 个产品 · ' + all.length + ' products';
+    if (!all.length) { feed.innerHTML = '<p class="empty">没有匹配的产品 · no matches</p>'; return; }
+    all.forEach(function (p) { feed.appendChild(card(p)); });
+  }
+  render();
+</script>
+<script src="flywheel-ribbon.js"></script>
+</body>
+</html>
