@@ -266,7 +266,7 @@ defmodule EzagentPluginWorld.WorldLive do
     ConversationActions.handle_dispatch(socket, action, args)
   end
 
-  @kanban_actions ~w(kanban.add_node kanban.rename_node kanban.move_node kanban.remove_node kanban.set_stage kanban.claim_node kanban.unclaim_node kanban.set_status kanban.attach_artifact kanban.detach_artifact kanban.set_metric kanban.create kanban.sync_miro kanban.save_miro_creds kanban.select_board kanban.drop_subtree kanban.sync_github kanban.save_github_creds kanban.set_board_config kanban.attach_upload kanban.register_pr kanban.sync_prs kanban.push_pr kanban.attach_code_file)
+  @kanban_actions ~w(kanban.add_node kanban.rename_node kanban.move_node kanban.remove_node kanban.set_stage kanban.claim_node kanban.unclaim_node kanban.set_status kanban.attach_artifact kanban.detach_artifact kanban.set_metric kanban.create kanban.sync_miro kanban.save_miro_creds kanban.select_board kanban.drop_subtree kanban.set_board_config kanban.attach_upload kanban.register_pr kanban.attach_code_file)
   def handle_event("world:dispatch", %{"action" => action, "args" => args}, socket)
       when action in @kanban_actions and is_map(args) do
     Ezagent.World.KanbanActions.handle_dispatch(socket, action, args)
@@ -797,7 +797,7 @@ defmodule EzagentPluginWorld.WorldLive do
 
   defp agent_options_for_recipe(recipe, %URI{} = workspace_uri)
        when is_binary(recipe) and recipe != "" do
-    uris = Ezagent.AgentRecipeResolver.list_by_recipe(recipe, workspace_uri)
+    uris = Ezagent.Agent.RecipeResolver.list_by_recipe(recipe, workspace_uri)
     display_map = Ezagent.EntityPresenter.display_many(Enum.map(uris, &URI.to_string/1))
 
     Enum.map(uris, fn uri ->

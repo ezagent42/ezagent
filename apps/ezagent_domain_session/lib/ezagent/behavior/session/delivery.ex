@@ -306,11 +306,60 @@ defmodule Ezagent.ActionSet.Session.Delivery do
         }
       })
 
-    if result == :ok do
-      _ = Ezagent.Session.ReadMarker.mark(session_uri, recipient_uri, msg.id, :delivered)
+    case result do
+      :ok ->
+        _ = Ezagent.Session.ReadMarker.mark(session_uri, recipient_uri, msg.id, :delivered)
+
+      {:error, :buffer_full} ->
+        # PR #1259 codex review item 2 — the recipient is `:not_ready` (e.g. a
+        # py member cold-provisioning its subprocess) and its PendingDelivery
+        # buffer is at cap: the message was DROPPED at dispatch, which now
+        # surfaces `{:error, :buffer_full}` instead of a silent `:ok`. Do NOT
+        # mark it delivered (the `:ok`-gate above); make the drop loudly
+        # attributable here too — recipient + message + session — and record a
+        # `routing_traces` row so `Trace.journey(msg.id)` shows the drop.
+        Logger.error(
+          "Ezagent.ActionSet.Session.Delivery: receive fan-out DROPPED " <>
+            "(PendingDelivery buffer full on a not-ready member; at-most-once, no retry) " <>
+            "recipient=#{URI.to_string(recipient_uri)} message_id=#{msg.id} " <>
+            "session=#{URI.to_string(session_uri)}"
+        )
+
+        record_delivery_dropped_trace(msg, recipient_uri, session_uri, :buffer_full)
+
+      _other ->
+        :ok
     end
 
     result
+  end
+
+  # Best-effort `routing_traces` row for a message DROPPED pre-delivery (the
+  # PendingDelivery overflow path). Never raises — the Logger.error above is
+  # the guaranteed signal. Mirrors `record_delivery_failed_trace/4`.
+  defp record_delivery_dropped_trace(%Message{} = msg, recipient_uri, session_uri, reason) do
+    workspace_uri =
+      case Ezagent.WorkspaceRegistry.lookup(session_uri) do
+        {:ok, uri} -> uri
+        :error -> nil
+      end
+
+    _ =
+      Ezagent.Routing.Trace.record(%{
+        message_id: msg.id,
+        workspace_uri: workspace_uri,
+        rule_id: "delivery_dropped",
+        # `Trace.record/1` stringifies receivers itself (`to_trace_string/1`)
+        # — passing the %URI{} keeps this site out of the uri_query scan's
+        # `uri_string_key` category.
+        receivers: [recipient_uri],
+        hop: msg.hops,
+        drop_reason: reason
+      })
+
+    :ok
+  catch
+    _, _ -> :ok
   end
 
   # PR-2 — derive the `<entity>.receive` behavior-prefix atom for the

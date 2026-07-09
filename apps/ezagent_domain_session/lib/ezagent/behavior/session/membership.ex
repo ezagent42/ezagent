@@ -31,7 +31,7 @@ defmodule Ezagent.ActionSet.Session.Membership do
     # recipe-responsibility-split (2026-06-27, OQ-1) — `role_name` (the session
     # RESPONSIBILITY, axis B) is taken ONLY from the explicit join `facets` here;
     # it is NEVER derived from the member's agent RECIPE (axis A — the agent's
-    # build-spec / `Ezagent.Agent.Recipe`, mirrored to `Ezagent.AgentRecipeAttributes`).
+    # build-spec / `Ezagent.Agent.Recipe`, mirrored to `Ezagent.Agent.RecipeAttributes`).
     # DO NOT add a `role_name = Map.get(facets, :role_name) || recipe_name(...)`
     # default: that would re-create the very recipe⇄responsibility coupling the
     # split removed (a member with no declared responsibility silently inheriting

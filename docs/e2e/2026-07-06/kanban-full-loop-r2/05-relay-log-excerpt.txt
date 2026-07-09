@@ -1,0 +1,16 @@
+[debug] PtyServer[92980] stdout: 
+[debug] PtyServer[92979] stdout:     ✻  ing …  10s · ↓   137 tokens)
+[debug] PtyServer[92980] stdout:      *  thinking
+[debug] HANDLED reply INCOMING ON agent_bridge:cc:entity://system/agent/d971bf44-bd03-4caf-82b6-13647007b31d (Ezagent.AgentBridge.Channel) in 384µs
+  Parameters: %{"session_uris" => ["session://system/socialware-install-kanban-loop-r2/kanban-loop-r2"], "text" => "__done__ card=n2 target_stage=metric branch=e2e/kanban-loop-r2-1783351325 sha=5a0a4fee8439601033cbd242bfa3092965433779 pr=none(PAT无createPullRequest权限,真分支已push)"}
+INSERT INTO "messages" ("id","body","workspace_uri","inserted_at","sender","session_uri","mentions","visibility","routed_at") VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9) ON CONFLICT ("id") DO NOTHING ["31bb58be85da9d2e", %{text: "__done__ card=n2 target_stage=metric branch=e2e/kanban-loop-r2-1783351325 sha=
+[debug] PtyServer[92979] stdout:      Flambé …
+INSERT INTO "kind_snapshots" AS k0 ("version","uri","workspace_uri","inserted_at","updated_at","kind_type","ever_created","state_binary") VALUES ($1,$2,$3,$4,$5,$6,$7,$8) ON CONFLICT ("uri") DO UPDATE SET "version" = $9, "workspace_uri" = $10, "updated_at" = $11, "kind_type" = $12, "state_binary" = 
+UPDATE "read_markers" SET "last_read_message_uri" = $1, "observed_at" = $2, "updated_at" = $3 WHERE "id" = $4 ["31bb58be85da9d2e", ~U[2026-07-06 15:31:57.699218Z], ~N[2026-07-06 15:31:57], 3]
+[debug] PtyServer[92980] stdout:      ·  10s ·  thinking )
+[debug] PtyServer[92979] stdout:     ●
+[debug] PtyServer[92980] stdout:          ←  esr-bridge:  __done__ card=n2 target_stage=metric branch=e2e/kanban-loop…  ❯   
+ ───────────────────────────────────────────────────────────────────────────────────────────────────�
+  ⏵⏵ bypass permissions on  (shift+tab to cycle) · esc to interrupt · ← for agents
+[debug] PtyServer[92980] stdout: 
+UPDATE "read_markers" SET "last_read_message_uri" = $1, "observed_at" = $2, "updated_at" = $3 WHERE "id" = $4 ["31bb58be85da9d2e", ~U[2026-07-06 15:31:57.797027Z], ~N[2026-07-06 15:31:57], 2]

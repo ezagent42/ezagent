@@ -1471,7 +1471,7 @@ defmodule EzagentWeb.WorldConversationTest do
     # P2 (Gate B): the agent-level attribute records BUILD PROVENANCE (the recipe
     # name), NOT the session role_name — they diverge here. The session role_name
     # lives on the membership edge (asserted below via `members`).
-    assert {:ok, ^recipe_name} = Ezagent.AgentRecipeAttributes.fetch(planned_agent)
+    assert {:ok, ^recipe_name} = Ezagent.Agent.RecipeAttributes.fetch(planned_agent)
 
     assert {:ok, sandbox_slice} = Ezagent.Kind.get_slice(planned_agent, :sandbox)
     sandbox = Ezagent.Kind.normalize_slice_view(sandbox_slice)

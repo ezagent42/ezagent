@@ -3,7 +3,7 @@ defmodule Ezagent.World.KanbanDataTest do
   kanban-as-role K4 — world kanban read-model on the AS-ROLE path.
 
   Board = a kanban-manager agent (`entity://<ws>/agent/<id>`); the read-model
-  source is `Ezagent.AgentRecipeResolver.list_by_recipe("kanban-manager", ws)` (RF-7,
+  source is `Ezagent.Agent.RecipeResolver.list_by_recipe("kanban-manager", ws)` (RF-7,
   snapshot-backed) and every read dispatches `?action=kanban.get_tree` carrying
   the caller's caps. Proves:
 

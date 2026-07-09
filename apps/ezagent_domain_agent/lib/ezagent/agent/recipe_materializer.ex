@@ -214,7 +214,7 @@ defmodule Ezagent.Agent.RecipeMaterializer do
   # role. Session role_name is set on the (entity × session) membership edge by
   # the caller's faceted `session.join` (Gate B).
   defp record_launch_attributes(%URI{} = agent_uri, recipe_name, recipe_or_content) do
-    :ok = Ezagent.AgentRecipeAttributes.put(agent_uri, recipe_name)
+    :ok = Ezagent.Agent.RecipeAttributes.put(agent_uri, recipe_name)
 
     case passive_value(recipe_or_content) do
       value when is_boolean(value) -> Ezagent.AgentPassiveAttributes.put(agent_uri, value)

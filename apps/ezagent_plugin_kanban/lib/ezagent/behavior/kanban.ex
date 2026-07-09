@@ -37,7 +37,6 @@ defmodule Ezagent.ActionSet.Kanban do
   alias Ezagent.ActionSet.Kanban.Shared
   alias EzagentPluginKanban.BoardConfig
   alias EzagentPluginKanban.Ci
-  alias EzagentPluginKanban.Github
   alias EzagentPluginKanban.Markmap
   alias EzagentPluginKanban.Miro
 
@@ -165,27 +164,12 @@ defmodule Ezagent.ActionSet.Kanban do
   )
 
   # ---------------------------------------------------------------
-  # 出站连接器动作（df-tech 下沉：原在 world kanban_actions.ex，搬进 Behavior
-  # 收口——world 退成纯 dispatcher，不再直引 EzagentPluginKanban.*）。
-  # 出站 HTTP 副作用走 :effect_returning（绑结果回 dispatch 结果）；状态变更
-  # （挂 artifact / set done）继续经唯一 commit/1。
+  # 节点 git 定位数据动作（纯数据：把 PR / commit 链接钉到节点 artifacts）。
+  # GitHub 主动连接器（sync_github / push_pr / sync_prs / save_github_creds —— 调
+  # GitHub API 建 issue / post 评论 / 轮询 PR）已删；这里留下的只把 git 引用
+  # （PR 号、commit SHA + 路径）拼成链接挂到节点，不发任何出站 HTTP。repo 取本图
+  # 配置（BoardConfig，纯数据），set_board_config 仍可记 github_repo。
   # ---------------------------------------------------------------
-
-  action(:sync_github,
-    args: %{id: :string},
-    returns: %{number: :integer, url: :string},
-    caps: [:sync_github],
-    modes: [:call],
-    description: "把节点出站成 GitHub issue + 回挂 issue 产物到节点"
-  )
-
-  action(:push_pr,
-    args: %{id: :string},
-    returns: %{url: :string},
-    caps: [:push_pr],
-    modes: [:call],
-    description: "把产品需求摘要 post 到节点已登记的 PR（纯出站，不改树）"
-  )
 
   action(:register_pr,
     args: %{id: :string, pr: :string},
@@ -203,14 +187,6 @@ defmodule Ezagent.ActionSet.Kanban do
     description: "钉 commit SHA + 路径 → 拼 github blob 链接挂到节点"
   )
 
-  action(:sync_prs,
-    args: %{},
-    returns: %{advanced: :integer},
-    caps: [:sync_prs],
-    modes: [:call],
-    description: "轮询已登记 PR 的节点；merged/closed → set_status done"
-  )
-
   action(:sync_miro,
     args: %{},
     returns: %{board_id: :string},
@@ -225,14 +201,6 @@ defmodule Ezagent.ActionSet.Kanban do
     caps: [:set_board_config],
     modes: [:call],
     description: "写本图连接器配置（github_repo + miro 板名；token 在全局）"
-  )
-
-  action(:save_github_creds,
-    args: %{access_token: :string, repo: :string},
-    returns: %{},
-    caps: [:save_github_creds],
-    modes: [:call],
-    description: "保存全局 GitHub 凭证（admin-gated）"
   )
 
   action(:save_miro_creds,
@@ -266,14 +234,10 @@ defmodule Ezagent.ActionSet.Kanban do
           :get_tree,
           :export_markmap,
           :import_markmap,
-          :sync_github,
-          :push_pr,
           :register_pr,
           :attach_code_file,
-          :sync_prs,
           :sync_miro,
           :set_board_config,
-          :save_github_creds,
           :save_miro_creds
         ],
         into: %{},
@@ -448,17 +412,18 @@ defmodule Ezagent.ActionSet.Kanban do
   defp stage_index(stages, s), do: Enum.find_index(stages, &(&1 == s)) || 0
 
   # R1.1（固定接力链）：stage 是结构事实非自由属性，沿固定棒链推进——
-  # 根固定链首棒；非根只能是"父棒"或"父棒+1"（不能跳棒、不能回退、不能乱设）；
+  # 非根只能是"父棒"或"父棒+1"（不能跳棒、不能回退、不能乱设）；
   # 对称地，每个子只能是"本棒"或"本棒+1"。这把"随意改 stage"收死成相邻棒推进。
+  # 根无父约束、只受子侧相邻棒约束（G4 拍板 2026-07-07：原"根钉死链首棒"
+  # 把根永锁 positioning，改为根随子推进——全部子到位后根才进得了下一棒）。
   defp stage_fits?(stages, nodes, id, s) do
     node = nodes[id]
     si = stage_index(stages, s)
-    first_stage = List.first(stages)
 
     parent_ok =
       case node.parent_id do
         nil ->
-          s == first_stage
+          true
 
         pid ->
           pi = stage_index(stages, nodes[pid].stage)
@@ -563,8 +528,9 @@ defmodule Ezagent.ActionSet.Kanban do
     ci_stage = Shared.config_atom(ctx, :ci_stage, List.last(stages))
 
     # drops = 图级别 drop 历史（全图属性，存在 tree 里，随 tree 一起读出）。
-    # config/miro/github/ci = 出站连接器只读投影（df-tech 下沉：world 不再直读
-    # BoardConfig/Miro/Github，全经此 dispatch 返回拿到）。
+    # config/miro/ci = 只读投影（df-tech 下沉：world 不再直读 BoardConfig/Miro，
+    # 全经此 dispatch 返回拿到）。config.github_repo 仍是纯数据（节点/板记 repo），
+    # 但 GitHub 主动连接器已删，故不再返回 `github` 连接状态字段。
     # stages = 接力链（layer-2 recipe config 数据投影）：world 读模型 + 前端经此
     # dispatch 返回拿到棒链，不再 world 侧硬编码 @stages（taxonomy §4.1 de-bake）。
     {:ok,
@@ -573,7 +539,6 @@ defmodule Ezagent.ActionSet.Kanban do
        drops: Map.get(t, :drops, []),
        config: board_config(ctx),
        miro: miro_status(),
-       github: github_status(),
        stages: stages,
        # ci_stage 棒节点的 CI 评价摘要（前端 ci 徽章）：%{node_id => verdict}，纯函数算。
        ci: ci_summaries(inner, ci_stage)
@@ -596,18 +561,6 @@ defmodule Ezagent.ActionSet.Kanban do
     case Miro.read_creds() do
       {:ok, %{token: t, board_id: b}} when is_binary(t) and t != "" ->
         %{configured: true, board_id: b}
-
-      _ ->
-        %{configured: false}
-    end
-  rescue
-    _ -> %{configured: false}
-  end
-
-  defp github_status do
-    case Github.read_creds() do
-      {:ok, %{token: t, repo: r}} when is_binary(t) and t != "" ->
-        %{configured: true, repo: r}
 
       _ ->
         %{configured: false}
@@ -645,7 +598,9 @@ defmodule Ezagent.ActionSet.Kanban do
           {:ok, %{nodes: parsed, root_id: root_id, seq: seq}} ->
             # markmap 只有拓扑——补默认 stage/owner/status/artifacts/metrics。
             # 导入默认棒来自 recipe config 数据（不再硬编码 :feature；taxonomy §4.1）。
-            import_default = Shared.config_atom(ctx, :import_default_stage, List.first(Shared.stages(ctx)))
+            import_default =
+              Shared.config_atom(ctx, :import_default_stage, List.first(Shared.stages(ctx)))
+
             nodes = Map.new(parsed, fn {id, n} -> {id, enrich_parsed(n, import_default)} end)
 
             # 导入覆盖拓扑，但保留图级别 drop 历史（drops 是 board 级，不随导入清空）。
@@ -676,28 +631,16 @@ defmodule Ezagent.ActionSet.Kanban do
   # ---------------------------------------------------------------
 
   @doc false
-  def handle_sync_github(args, ctx), do: Connectors.sync_github(args, ctx)
-
-  @doc false
-  def handle_push_pr(args, ctx), do: Connectors.push_pr(args, ctx)
-
-  @doc false
   def handle_register_pr(args, ctx), do: Connectors.register_pr(args, ctx)
 
   @doc false
   def handle_attach_code_file(args, ctx), do: Connectors.attach_code_file(args, ctx)
 
   @doc false
-  def handle_sync_prs(args, ctx), do: Connectors.sync_prs(args, ctx)
-
-  @doc false
   def handle_sync_miro(args, ctx), do: Connectors.sync_miro(args, ctx)
 
   @doc false
   def handle_set_board_config(args, ctx), do: Connectors.set_board_config(args, ctx)
-
-  @doc false
-  def handle_save_github_creds(args, ctx), do: Connectors.save_github_creds(args, ctx)
 
   @doc false
   def handle_save_miro_creds(args, ctx), do: Connectors.save_miro_creds(args, ctx)

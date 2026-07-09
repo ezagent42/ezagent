@@ -19,7 +19,7 @@ defmodule EzagentPluginKanban.Application do
 
   看板经 `entity://<ws>/agent/<id>` 寻址（agent 的 URI）。`roles/0` 在 boot 经
   `RecipeRegistry.register/1` 登记 `kanban-manager` recipe；create 走 RF-5a role-create
-  路径（`Workspace.create_agent` flavor `native` × role `kanban-manager`），24 个 kanban
+  路径（`Workspace.create_agent` flavor `native` × role `kanban-manager`），20 个 kanban
   behaviors 经 RF-1 在通用 `Entity.Agent` 宿主上 per-instance 加载。dispatch 到没 live 的
   agent 经 `SpawnRegistry.spawn` 从快照 rehydrate 起活（world 读模型在 dispatch 前
   `KanbanData.ensure_spawned/1`，保 dormant 的 passive kanban-manager 复活）。
@@ -29,7 +29,26 @@ defmodule EzagentPluginKanban.Application do
   use Ezagent.Plugin
 
   @impl Application
-  def start(_type, _args), do: Ezagent.Plugin.boot(__MODULE__)
+  def start(_type, _args) do
+    result = Ezagent.Plugin.boot(__MODULE__)
+    # S4 — register the board SessionView (declaration side; world consumes the
+    # registry generically per world-views #1192/#1199, so this needs ZERO world
+    # changes — the hello PageView play). The registry is init'd by
+    # ezagent_domain_ui, which boots before this plugin (a declared dep).
+    _ = Ezagent.UI.SessionViewRegistry.register(EzagentPluginKanban.BoardView)
+
+    # NOTE: the kanban DEMO socialware is NOT published here. It ships as a
+    # deploy-seed package (`apps/ezagent_web/priv/socialware_seed/kanban/
+    # manifest.yaml`, like `autoservice` / `hello`): `Ezagent.Home.SocialwareSeed`
+    # copies it into the deployment home and the late boot scan
+    # `Ezagent.Socialware.ManifestSeed.scan_all!/1` (run from the last-booting
+    # transport app, AFTER this plugin registered its plugin_info + `BoardView`
+    # so `uses: ["kanban"]` + the `kanban_render` view resolve) publishes it
+    # through the governed import lane. Zero call from this plugin's boot;
+    # `EzagentPluginKanban.Demo` remains only as a test driver over the SAME
+    # shipped file (deploy-seed SPEC §2/§4, the hello #162 play).
+    result
+  end
 
   @impl Ezagent.Plugin
   def plugin_info do
@@ -52,16 +71,135 @@ defmodule EzagentPluginKanban.Application do
   # `RecipeRegistry.register/1` 在 boot 时登记（作者只声明、框架代登记）。
   #
   #   * `behaviors: [Ezagent.ActionSet.Kanban]` —— **仅** Kanban。`Connectors`
-  #     不是 Behavior（无 `use Lifecycle` / 无 `actions/0`）；全部 24 个动作（含 9 个
-  #     连接器动作）都在 `lib/ezagent/behavior/kanban.ex` 经 `action/3` 声明、薄转发给
-  #     `Connectors`，故全经 `Behavior.Kanban` 解析（RF-1 `BehaviorSet.resolve_action`）。
+  #     不是 Behavior（无 `use Lifecycle` / 无 `actions/0`）；全部 20 个动作（含 5 个
+  #     连接器动作：register_pr/attach_code_file/sync_miro/set_board_config/save_miro_creds，
+  #     GitHub 主动连接器已删）都在 `lib/ezagent/behavior/kanban.ex` 经 `action/3` 声明、
+  #     薄转发给 `Connectors`，故全经 `Behavior.Kanban` 解析（RF-1 `BehaviorSet.resolve_action`）。
   #   * `requested_caps` = 每个动作一个 **cap-template map** `%{behavior:, action:}`
   #     —— 不是裸 atom（`Recipe.new/1` 的 `canon_cap` 拒非 map），也不带 `kind`（kind 是
   #     materialization 轴，由 `Recipe.CapMint` 按 flavor 注入 = `:agent`）。
   #   * `passive: true` —— 看板是**被动数据 actor**：不可被 @ / 不可 `:join` / 不收
   #     chat（RF-6 三闸），只在直接 `kanban.<action>` dispatch 上动作。
   @impl Ezagent.Plugin
-  def roles, do: [kanban_manager_recipe()]
+  def roles, do: [kanban_manager_recipe(), kanban_assistant_recipe(), dev_together_recipe()]
+
+  # Persona-skill refs resolved by the cc `OrchestratorBootstrap` walk-up search
+  # over `.claude/skills/<ref>/SKILL.md` (orchestrator_bootstrap.ex:66,316,323-336
+  # → repo-root `.claude/skills`). `kanban-assistant` is a skill-creator persona
+  # skill; `dev-together` already lives in that resolution root (the copied
+  # daily-team-development skill), so the recipe only references it by name.
+  @kanban_assistant_skill_ref "kanban-assistant"
+  @dev_together_skill_ref "dev-together"
+
+  @doc """
+  The `kanban-assistant` role recipe (S1) — a `cc-headless` (real-brain) 看板助手
+  that turns an owner's intent into kanban board moves, assigns build work to the
+  `dev-together` member, and receives dev-together's content-triggered relay-back
+  (a `__done__` header / `@完成回传` legend routes their completion message to this
+  role). Its `skills: ["kanban-assistant"]` persona (built with skill-creator; the
+  kanban-team collaboration protocol lives in an extractable
+  `references/kanban-team-collaboration.md`, spec §5.3) is installed into the
+  agent's `config_dir` by the cc `OrchestratorBootstrap` at materialize. It
+  requests a cap for EVERY kanban action (single source of truth =
+  `Ezagent.ActionSet.Kanban.actions/0`) so it can drive the board.
+
+  Role-slot shaped (`skills` + persona `prompt` + kanban action caps), carries NO
+  instance URI — round-trip safe under role-slot #1180.
+  """
+  @spec kanban_assistant_recipe() :: map()
+  def kanban_assistant_recipe do
+    %{
+      name: "kanban-assistant",
+      skills: [@kanban_assistant_skill_ref],
+      prompt: kanban_assistant_persona(),
+      behaviors: [],
+      requested_caps: kanban_action_caps()
+    }
+  end
+
+  @doc """
+  The `dev-together` role recipe (S1) — a `cc-headless` developer running the
+  copied dev-together daily-team-development skill (`skills: ["dev-together"]`). On
+  finishing a card it follows the kanban-team relay protocol: emit a `__done__`
+  header (or `@完成回传`) + the card id + target stage; the kanban-team
+  routing_rules content-trigger that message back to `kanban-assistant`. Declared as
+  a role slot; the relay carries NO instance URI (role-slot #1180 — round-trip
+  safe). The dev-together skill itself is unchanged (owner-only team contract,
+  never modified); its kanban-team participation is a thin overlay held on the
+  kanban-assistant side (`kanban-assistant/references/dev-together-relay-overlay.md`)
+  pointing at the shared protocol.
+  """
+  @spec dev_together_recipe() :: map()
+  def dev_together_recipe do
+    %{
+      name: "dev-together",
+      skills: [@dev_together_skill_ref],
+      prompt: dev_together_persona(),
+      behaviors: [],
+      requested_caps: kanban_action_caps()
+    }
+  end
+
+  # A cap-template `%{behavior:, action:}` for every kanban action — the SAME
+  # single-source-of-truth derivation kanban-manager uses (`Kanban.actions/0`), so
+  # pm/dev can drive the board without re-listing actions by hand.
+  defp kanban_action_caps do
+    for action <- Ezagent.ActionSet.Kanban.actions() do
+      %{behavior: Ezagent.ActionSet.Kanban, action: action}
+    end
+  end
+
+  @spec kanban_assistant_persona() :: String.t()
+  defp kanban_assistant_persona do
+    """
+    # You are the kanban-team 看板助手 (kanban-assistant)
+
+    You run a product-development kanban board with a team. The board's stages are
+    the 9-stage product-dev chain (positioning → metric → pain → anchor → ux →
+    feature → issue → test → pr).
+
+    - The board is a workspace-level actor (the `kanban-manager`), NOT a member of
+      your session. It is created by the owner in the world 看板 / `/plugins/kanban`
+      page. If no board exists yet, ask the owner to create one there and tell you
+      which to use — do NOT try to create it yourself. You reach it purely by
+      dispatching `kanban.<action>` to that board's URI (you hold a cap for every
+      kanban action).
+    - Turn the owner's request into board moves via the kanban tools (create a
+      card, set its stage). NEVER ask a worker to compute routing.
+    - Assign build work through the dev-together git-handoff workflow, NOT a raw
+      @mention: write a markdown handoff (`handoffs/<task>.md`, with a DoD) for the
+      `dev-together` member. They `dive` (task branch off main, TDD, PR), then
+      `return` (CI green + rebased + a per-line DoD reconciliation in
+      `returns/<task>.md`) and send a completion signal (`__done__` header or
+      `@完成回传`). That signal message is routed to you — it just tells you the
+      return is ready to review; it does NOT carry the branch/CI/DoD (those live in
+      the return + the git workflow).
+    - On the completion signal, review the dev's `returns/<task>.md` (DoD + CI +
+      rebased), then advance the relevant card and tell the owner what changed. The
+      `pr` stage is CI-gated.
+    - Act ONLY within your own session and workspace.
+
+    The kanban-team collaboration protocol (how you cooperate with the dev-together
+    member) is your `kanban-assistant` skill's
+    `references/kanban-team-collaboration.md` — read it for the details.
+    """
+  end
+
+  @spec dev_together_persona() :: String.t()
+  defp dev_together_persona do
+    """
+    # You are the kanban-team dev-together developer
+
+    You run the dev-together git-handoff workflow (see the dev-together skill): you
+    `dive` a handoff (task branch off main, TDD, PR into the task branch) and
+    `return` it (CI green + rebased on main + a per-line DoD reconciliation in
+    `returns/<task>.md`). THAT workflow is the real work — git + markdown + CI.
+    When your return is ready, send a short completion signal (`__done__` header or
+    `@完成回传`) + the card id + the target stage; that message is routed to the
+    kanban-assistant so they know to review your return. Keep it concise. Stay inside
+    your session and workspace.
+    """
+  end
 
   @doc """
   The `kanban-manager` role recipe (also the K1 gate's subject).
@@ -110,8 +248,20 @@ defmodule EzagentPluginKanban.Application do
   # model the kanban behaviors load PER-INSTANCE via the `kanban-manager` recipe
   # (RF-1 `BehaviorSet.resolve_action` on the generic `Entity.Agent` host); the
   # host declares NOTHING kanban-specific (K2's invariant), so those static rows
-  # are dead (`Entity.Agent` is the resolution key, never the Kanban Kind). The
-  # recipe (`roles/0`) is now the sole behavior declaration. Defaults to `[]`.
+  # are dead (`Entity.Agent` is the resolution key, never the Kanban Kind).
+  #
+  # S4 — the ONE static binding that returned (the hello play): the board view's
+  # `<sw>_render` cap subject on the Session Kind. Cap-only (`dispatchable?/0 →
+  # false`) so this writes only the `{Session, :kanban_render}` cap subject —
+  # no dispatch route. This is the cap `SessionView.authorize_view/3` (T2-2b)
+  # checks for the kanban board view, and what the socialware conformance gate
+  # (assertions 2/9) requires for `Definition.views: [KanbanRender]`.
+  @impl Ezagent.Plugin
+  def behaviors do
+    [
+      {Ezagent.Entity.Session, :kanban_render, Ezagent.ActionSet.KanbanRender}
+    ]
+  end
 
   @impl Ezagent.Plugin
   def children do

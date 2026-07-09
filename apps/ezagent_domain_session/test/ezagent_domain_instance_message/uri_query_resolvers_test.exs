@@ -13,8 +13,8 @@ defmodule EzagentDomainInstanceMessage.UriQueryResolversTest do
   alias Ezagent.{
     AgentFlavorAttributes,
     AgentPassiveAttributes,
-    AgentRecipeAttributes,
-    AgentRecipeResolver,
+    Agent.RecipeAttributes,
+    Agent.RecipeResolver,
     Invocation,
     Kind,
     UriQuery
@@ -44,12 +44,12 @@ defmodule EzagentDomainInstanceMessage.UriQueryResolversTest do
   test "RF-7: :role resolves :none by default and the NAME once the attribute is stored" do
     agent_uri = Ezagent.URI.agent("system", "role-attr-#{System.unique_integer([:positive])}")
 
-    on_exit(fn -> AgentRecipeAttributes.delete(agent_uri) end)
+    on_exit(fn -> RecipeAttributes.delete(agent_uri) end)
 
     # No stored attribute + no snapshot → :none (no role).
     assert :none = UriQuery.resolve(:recipe, agent_uri)
 
-    :ok = AgentRecipeAttributes.put(agent_uri, "kanban-manager")
+    :ok = RecipeAttributes.put(agent_uri, "kanban-manager")
     assert {:ok, "kanban-manager"} = UriQuery.resolve(:recipe, agent_uri)
   end
 
@@ -57,7 +57,7 @@ defmodule EzagentDomainInstanceMessage.UriQueryResolversTest do
     agent_uri = URI.new!("entity://system/agent/role-durable-source")
 
     # No ETS entry → falls through to the durable :sandbox snapshot.
-    assert :none = AgentRecipeAttributes.fetch(agent_uri)
+    assert :none = RecipeAttributes.fetch(agent_uri)
 
     assert {:ok, _} =
              Ezagent.SnapshotStore.write(
@@ -69,8 +69,8 @@ defmodule EzagentDomainInstanceMessage.UriQueryResolversTest do
     assert {:ok, "kanban-manager"} = UriQuery.resolve(:recipe, agent_uri)
 
     # A stored ETS entry is authoritative + stops the layering (fast path).
-    on_exit(fn -> AgentRecipeAttributes.delete(agent_uri) end)
-    :ok = AgentRecipeAttributes.put(agent_uri, "other-role")
+    on_exit(fn -> RecipeAttributes.delete(agent_uri) end)
+    :ok = RecipeAttributes.put(agent_uri, "other-role")
     assert {:ok, "other-role"} = UriQuery.resolve(:recipe, agent_uri)
   end
 
@@ -90,7 +90,7 @@ defmodule EzagentDomainInstanceMessage.UriQueryResolversTest do
     end
 
     listed =
-      AgentRecipeResolver.list_by_recipe(role) |> Enum.map(&URI.to_string/1) |> MapSet.new()
+      RecipeResolver.list_by_recipe(role) |> Enum.map(&URI.to_string/1) |> MapSet.new()
 
     assert MapSet.subset?(MapSet.new([URI.to_string(a1), URI.to_string(a2)]), listed),
            "list_by_recipe did not enumerate the dormant role agents from the snapshot"

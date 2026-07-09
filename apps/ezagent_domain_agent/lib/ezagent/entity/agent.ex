@@ -59,7 +59,7 @@ defmodule Ezagent.Entity.Agent do
   **and** DORMANT agents (membership-cap unification R1.4, spec test 26).
 
   Sourced from the persisted `kind_snapshots` rows (modeled EXACTLY on
-  `Ezagent.AgentRecipeResolver`'s snapshot scan — `agent_role_resolver.ex:35-64`),
+  `Ezagent.Agent.RecipeResolver`'s snapshot scan — `agent_role_resolver.ex:35-64`),
   NOT the volatile ETS/`KindRegistry` fast path, so a dormant agent member (a
   snapshot row with no live Kind) still enumerates after a BEAM restart — exactly
   why the reconcile candidate scan (§4.4) and the migration need it.

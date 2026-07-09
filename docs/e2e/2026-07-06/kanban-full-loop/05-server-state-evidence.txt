@@ -1,0 +1,27 @@
+=== 05 服务端状态取证 (erpc @ ezagent_runtime, 2026-07-06 19:2x) ===
+
+--- 板(owner 经真 LV socket world:dispatch kanban.create 建出) ---
+entity://system/agent/loop-board :kanban slice =
+  {:ok, %{tree: %{nodes: %{}, seq: 0, root_id: nil, drops: []}}}
+  (空树 = 助手从未成功跑到 add_node —— 6 连崩如实)
+
+--- relay-back 路由规则(Definition 安装, RuleStore DB) ---
+  matcher: %{"arg" => "__done__", "type" => "text_contains"}
+  receivers: ["$role:a2FuYmFuLWFzc2lzdGFudA"]  # base64("kanban-assistant")
+  rule_set: "relay-back", created_by: session://system/socialware-install-kanban-loop-e2e/kanban-loop
+
+--- 两个 cc agent materialize + 手动 creds + 认证 ---
+kanban-assistant = entity://system/agent/122b9333-53a3-47ef-a547-3b15e516fb49 (skills/kanban-assistant)
+dev-together     = entity://system/agent/f6ddf2d5-2509-4aab-b3d9-5468696c4fa6 (skills/dev-together)
+
+creds watcher log:
+watcher start 18:37:18.053387476
+copied -> /home/yaosh/.ezagent/default/cc-agents/system/122b9333-53a3-47ef-a547-3b15e516fb49/ at 18:39:58.725768612
+copied -> /home/yaosh/.ezagent/default/cc-agents/system/f6ddf2d5-2509-4aab-b3d9-5468696c4fa6/ at 18:40:02.122772336
+watcher end 18:47:18.058719962
+
+PTY banner(认证成功 => Claude Max):
+[debug] PtyServer[86312] stdout:     ╭─── Claude Code  v2.1.201  ──────────────────────────────────────────
+
+--- CLI 身份 env 注入(spawn_plan T7d, /proc/<pid>/environ 实测) ---
+EZAGENT_USER_TOKEN=esr_pat_*** EZAGENT_ENTITY_URI=entity://system/agent/122b9333-... CLAUDE_CONFIG_DIR=.../122b9333-.../

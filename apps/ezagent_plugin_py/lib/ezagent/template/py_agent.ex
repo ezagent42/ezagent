@@ -48,9 +48,6 @@ defmodule Ezagent.Template.PyAgent do
   @behaviour Ezagent.Kind.Template
   @behaviour Ezagent.UI.Form
 
-  require Logger
-
-  alias Ezagent.Domain.Python
   alias Ezagent.Domain.Python.{AgentLifecycle, Spec}
 
   @default_timeout_ms 10_000
@@ -145,54 +142,46 @@ defmodule Ezagent.Template.PyAgent do
         template_class: __MODULE__
       }
 
+      # FIRE-AND-FORGET provision (2026-07-06 go-live "fix Ⓑ"). The Python
+      # subprocess is brought up ASYNCHRONOUSLY by
+      # `Ezagent.ActionSet.PyAgent.activate/2` — the documented unified start
+      # hook that reads the durable `state.script_path` + `state.cwd` (`create/1`
+      # persists them from these same `init_args`) and self-heals the subprocess
+      # OFF the hot path. It MUST NOT be started synchronously here: a cold
+      # `uv run` provision (~9.6s for a first-run numpy/sympy recipe on a fresh
+      # container) blocks `Domain.Python.start_subprocess`'s `await_ready` ping,
+      # and this `instantiate/3` runs INSIDE the Workspace `create_session`
+      # GenServer call — so the session create (and every other create queued
+      # behind the single Workspace Kind) timed out at the 5s dispatch budget
+      # after ANY redeploy replaced the container. The Kind is materialized +
+      # registered + joinable the instant `Kind.spawn` returns; first `:cast`
+      # messages buffer via `PendingDelivery` until the subprocess flips
+      # `:ready`. A `:uv_not_found` / cold-provision failure now surfaces in
+      # `activate/2` (which keeps the Kind alive in a DEGRADED, no-subprocess
+      # state, records the durable `:last_error {:provision_failed, _}` marker,
+      # and FAIL-LOUD-AT-USE via the next `:receive` → `:not_alive`).
+      #
+      # PR #1259 codex review item 1b — the ADOPT arm (`:already_started`) must
+      # not report success over a ZOMBIE: if the adopted agent's subprocess is
+      # dead (a prior provision failed), RETRY the provision — asynchronously
+      # (a fire-and-forget `:py_ensure_alive` cast into the agent's own Kind),
+      # never blocking this create path. When the underlying failure has
+      # cleared (network back, uv installed), the retry recovers the member
+      # and clears the `:last_error` marker.
       case Ezagent.Kind.spawn(Ezagent.Entity.Agent, init_args) do
         {:ok, _pid} ->
-          case start_python(agent_uri, script_path, config_dir) do
-            :ok ->
-              {:ok, [agent_uri], %{fresh?: true, config_dir_path: config_dir}}
-
-            {:error, reason} ->
-              # DECOUPLE subprocess-liveness from MATERIALIZATION (2026-07-01).
-              # The Kind is already MATERIALIZED + alive (config/behaviors loaded,
-              # registered). A failure to bring up the Python SUBPROCESS (e.g.
-              # `:uv_not_found` on a host without uv, such as CI) must NOT roll
-              # back the materialize: session-create / socialware materialization
-              # should succeed once the agent Kind is alive + joinable. This makes
-              # the CREATE path CONSISTENT with the already-blessed restart/cold-
-              # load contract in `Ezagent.ActionSet.PyAgent.activate/2`, which
-              # ALSO keeps the Kind alive in a DEGRADED (no-subprocess) state on an
-              # `ensure_alive` failure.
-              #
-              # This is FAIL-LOUD-AT-USE, NOT silent-degrade: we log an error here
-              # AND the next `:receive` dispatch surfaces the missing subprocess
-              # loudly — `EzagentPluginPy.BridgeAdapter.run_receive/3` →
-              # `Ezagent.Domain.Python.call/4` returns `{:error, :not_alive}` when
-              # no subprocess is registered. We do NOT pretend the agent is
-              # healthy: the returned `:subprocess_degraded` meta records it.
-              Logger.error(
-                "py.agent: subprocess start failed for #{URI.to_string(agent_uri)}: " <>
-                  "#{inspect(reason)}. PyAgent Kind stays MATERIALIZED in a DEGRADED " <>
-                  "state (no Python subprocess); next :receive surfaces :not_alive."
-              )
-
-              {:ok, [agent_uri],
-               %{
-                 fresh?: true,
-                 config_dir_path: config_dir,
-                 subprocess_degraded: true,
-                 subprocess_degraded_reason: reason
-               }}
-          end
+          {:ok, [agent_uri], %{fresh?: true, config_dir_path: config_dir}}
 
         {:error, {:already_started, _pid}} ->
-          # Adopted — ensure the subprocess is alive, do NOT undo.
-          case ensure_python_alive(agent_uri, script_path, config_dir) do
-            :ok ->
-              {:ok, [agent_uri], %{fresh?: false, config_dir_path: config_dir}}
+          _ = async_reensure_if_dead(agent_uri)
+          {:ok, [agent_uri], %{fresh?: false, config_dir_path: config_dir}}
 
-            {:error, _reason} = err ->
-              err
-          end
+        {:error, {:already_registered, _}} ->
+          # Same adopt case surfaced through the KindRegistry race arm (the
+          # cc/SessionCreator spawn paths handle both shapes; py previously
+          # only matched `:already_started` and ERRORED an idempotent adopt).
+          _ = async_reensure_if_dead(agent_uri)
+          {:ok, [agent_uri], %{fresh?: false, config_dir_path: config_dir}}
 
         {:error, reason} ->
           {:error, reason}
@@ -200,7 +189,56 @@ defmodule Ezagent.Template.PyAgent do
     end
   end
 
+
   def instantiate(_tmpl_name, tmpl, _workspace_uri), do: {:error, {:invalid_template, tmpl}}
+
+  # Adopt-path zombie guard (PR #1259 item 1b). `Domain.Python.alive?/1` is a
+  # cheap Registry lookup; when the subprocess is dead, dispatch the agent's
+  # own `:py_ensure_alive` as a fire-and-forget `:cast` so the provision retry
+  # runs in the AGENT's process, off the creator's path. A cast landing while
+  # the agent is still `:not_ready` (first provision still running) buffers via
+  # PendingDelivery and drains after — a harmless idempotent re-check.
+  #
+  # Self-authority (#154): `caller: agent_uri` dispatching to its OWN
+  # `py_ensure_alive` with the inline self-scoped cap (the step-5.5
+  # `granted_via_ctx_caps?` authorizer) — same idiom as
+  # `TemplateSpawn.sandbox_update_config_self_cap/1`; never persisted through
+  # `Ezagent.Identity.Grant`.
+  defp async_reensure_if_dead(%URI{} = agent_uri) do
+    if Ezagent.Domain.Python.alive?(agent_uri) do
+      :ok
+    else
+      target = Ezagent.URI.new!("#{URI.to_string(agent_uri)}?action=py_agent.py_ensure_alive")
+
+      _ =
+        Ezagent.Invocation.dispatch(%Ezagent.Invocation{
+          target: target,
+          mode: :cast,
+          args: %{},
+          ctx: %{
+            caller: agent_uri,
+            caps: [py_ensure_alive_self_cap(agent_uri)],
+            reply: :ignore
+          }
+        })
+
+      :ok
+    end
+  end
+
+  defp py_ensure_alive_self_cap(%URI{} = agent_uri) do
+    %Ezagent.Capability{
+      Ezagent.Capability.cap(
+        :agent,
+        Ezagent.ActionSet.PyAgent,
+        :py_ensure_alive,
+        Ezagent.URI.instance(agent_uri),
+        Ezagent.Capability.workspace_of(agent_uri)
+      )
+      | granted_by: agent_uri,
+        granted_at: DateTime.utc_now()
+    }
+  end
 
   # The domain MUST have allocated the config_dir (the template carries a
   # `"config_dir"` reference → `provision_and_instantiate` injected
@@ -276,21 +314,6 @@ defmodule Ezagent.Template.PyAgent do
     case Map.fetch(data, key) do
       {:ok, v} when is_binary(v) and v != "" -> {:ok, v}
       _ -> {:error, {:missing_respawn_key, key}}
-    end
-  end
-
-  defp start_python(agent_uri, script_path, cwd) do
-    case Python.start_subprocess(build_spec(agent_uri, script_path, cwd)) do
-      {:ok, _pid} ->
-        :ok
-
-      {:error, reason} ->
-        Logger.warning(
-          "py.agent: Domain.Python.start_subprocess failed for " <>
-            "#{URI.to_string(agent_uri)}: #{inspect(reason)}"
-        )
-
-        {:error, reason}
     end
   end
 

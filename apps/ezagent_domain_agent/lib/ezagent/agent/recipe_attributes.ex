@@ -1,4 +1,4 @@
-defmodule Ezagent.AgentRecipeAttributes do
+defmodule Ezagent.Agent.RecipeAttributes do
   @moduledoc """
   Stored `recipe` (build-provenance name) attribute for an agent URI — the
   volatile ETS FAST PATH for the per-URI `:recipe` UriQuery resolver.
@@ -32,7 +32,7 @@ defmodule Ezagent.AgentRecipeAttributes do
   stable_key → lookup). It CANNOT answer "which agents came from recipe R?" —
   the ETS value is a bare recipe name and the list output must be agent URIs.
   The cold-restart-safe, cross-tenant-scopable, live+dormant list
-  (`Ezagent.AgentRecipeResolver.list_by_recipe/2`) is therefore sourced from the
+  (`Ezagent.Agent.RecipeResolver.list_by_recipe/2`) is therefore sourced from the
   persisted `kind_snapshots` rows (which carry the `uri` column directly), NOT
   from this table.
 

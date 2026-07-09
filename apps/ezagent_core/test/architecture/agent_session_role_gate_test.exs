@@ -28,8 +28,8 @@ defmodule EzagentCore.Architecture.AgentSessionRoleGateTest do
   legitimate stored attribute, mirroring flavor-as-stored-attribute. In this
   codebase "role" and "recipe name" were conflated; the P2 migration
   DISAMBIGUATES them: the provenance value stays on the agent under a `recipe`
-  name (`Ezagent.AgentRecipeAttributes`, sandbox slice `:recipe`,
-  `AgentRecipeResolver.list_by_recipe/2`, `:recipe` UriQuery), and only the
+  name (`Ezagent.Agent.RecipeAttributes`, sandbox slice `:recipe`,
+  `Agent.RecipeResolver.list_by_recipe/2`, `:recipe` UriQuery), and only the
   varying SESSION role moves to the edge. So this gate flags the `role`-NAMED
   agent-level symbols; the fix is to rename provenance to `recipe` and let the
   session role live edge-only. It does NOT flag the `role_name` membership facet
@@ -45,8 +45,8 @@ defmodule EzagentCore.Architecture.AgentSessionRoleGateTest do
 
   @scanned_files [
     "apps/ezagent_domain_agent/lib/ezagent/agent/recipe_materializer.ex",
-    "apps/ezagent_domain_agent/lib/ezagent/agent_recipe_attributes.ex",
-    "apps/ezagent_domain_agent/lib/ezagent/agent_recipe_resolver.ex",
+    "apps/ezagent_domain_agent/lib/ezagent/agent/recipe_attributes.ex",
+    "apps/ezagent_domain_agent/lib/ezagent/agent/recipe_resolver.ex",
     "apps/ezagent_core/lib/ezagent/behavior/sandbox.ex",
     "apps/ezagent_core/lib/ezagent/agent/recipe/compose.ex",
     "apps/ezagent_domain_workspace/lib/ezagent/behavior/workspace/agent_create/role_step.ex",

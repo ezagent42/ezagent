@@ -192,8 +192,20 @@ defmodule Ezagent.Invocation do
 
       {:not_ready, :cast} ->
         # Buffer for delivery once instance announces ready.
-        Ezagent.PendingDelivery.buffer(instance_uri, inv)
-        :ok
+        #
+        # PR #1259 codex review item 2 — the overflow return was silently
+        # DISCARDED here (`buffer/2` → `{:error, :buffer_full}` ignored, `:ok`
+        # returned), so during a long `:not_ready` activation window (e.g. a py
+        # member's cold `uv` provision) message #101+ to one member vanished
+        # while upstream (session delivery) recorded it as delivered. Surface
+        # it: loud log + telemetry + the Decision #67 DLQ sink (the moduledoc
+        # always said "Overflow falls to DLQ"; it was never wired) + the same
+        # `{:error, reason}` cast return shape `:no_such_actor` already uses,
+        # so callers (session delivery) can refuse to mark delivered.
+        case Ezagent.PendingDelivery.buffer(instance_uri, inv) do
+          :ok -> :ok
+          {:error, :buffer_full} -> pending_delivery_overflow(instance_uri, inv)
+        end
 
       {:not_ready, m} when m in [:call, :call_stream] ->
         # Readiness contract (post-lifecycle remediation, spec C-A):
@@ -378,6 +390,46 @@ defmodule Ezagent.Invocation do
     else
       :dead_target
     end
+  end
+
+  # PendingDelivery overflow (PR #1259 codex review item 2). A `:cast` to a
+  # `:not_ready` target whose buffer is at cap is a REAL drop — never return
+  # `:ok` for it. Loud unconditional Logger.error (not just the reply:-:ignore
+  # telemetry path), a `[:ezagent, :dispatch, :pending_delivery_overflow]`
+  # telemetry event, and the Decision #67 DLQ row (best-effort — the DLQ write
+  # is a Repo insert; a DB hiccup must not mask the error return). Returns
+  # `{:error, :buffer_full}` — the established cast pre-delivery error shape.
+  defp pending_delivery_overflow(instance_uri, %__MODULE__{} = inv) do
+    Logger.error(
+      "Ezagent.Invocation: PendingDelivery buffer FULL (#{Ezagent.PendingDelivery.max_per_uri()}) " <>
+        "for not-ready target=#{URI.to_string(inv.target)} " <>
+        "instance=#{URI.to_string(instance_uri)} — cast invocation DROPPED " <>
+        "(recorded to DLQ reason=:buffer_full)"
+    )
+
+    :telemetry.execute(
+      [:ezagent, :dispatch, :pending_delivery_overflow],
+      %{},
+      %{target: inv.target, instance_uri: instance_uri, mode: :cast}
+    )
+
+    try do
+      Ezagent.DLQ.put(:buffer_full, inv)
+    rescue
+      e ->
+        Logger.error(
+          "Ezagent.Invocation: DLQ write for dropped buffer_full cast FAILED: " <>
+            Exception.message(e)
+        )
+    catch
+      kind, payload ->
+        Logger.error(
+          "Ezagent.Invocation: DLQ write for dropped buffer_full cast FAILED: " <>
+            "#{inspect({kind, payload})}"
+        )
+    end
+
+    {:error, :buffer_full}
   end
 
   defp pre_delivery_error(%__MODULE__{} = inv, reason) do

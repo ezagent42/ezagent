@@ -253,7 +253,7 @@ defmodule EzagentDomainInstanceMessage.SessionCreator.DefinitionAgents do
   end
 
   defp agent_recipe(%URI{} = agent_uri) do
-    case Ezagent.AgentRecipeAttributes.fetch(agent_uri) do
+    case Ezagent.Agent.RecipeAttributes.fetch(agent_uri) do
       {:ok, recipe} -> {:ok, recipe}
       :none -> Ezagent.UriQuery.resolve(:recipe, agent_uri)
     end
