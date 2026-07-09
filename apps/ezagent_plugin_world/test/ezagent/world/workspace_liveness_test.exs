@@ -14,6 +14,7 @@ defmodule Ezagent.World.WorkspaceLivenessTest do
   use EzagentCore.DataCase, async: false
 
   alias Ezagent.Entity.User
+  alias Ezagent.Socialware.{Definition, DefinitionRegistry}
   alias Ezagent.Workspace
   alias Ezagent.World.WorkspacePluginData
 
@@ -83,5 +84,73 @@ defmodule Ezagent.World.WorkspaceLivenessTest do
       )
 
     assert detail["not_found"] == true
+  end
+
+  test "new template state carries installable socialware catalog with role slots",
+       %{ws_name: ws_name, workspace_uri: workspace_uri, admin_caps: admin_caps} do
+    definition_name = "world-template-catalog-#{System.unique_integer([:positive])}"
+    second_definition_name = "world-template-catalog-extra-#{System.unique_integer([:positive])}"
+
+    {:ok, definition} =
+      Definition.new(%{
+        name: definition_name,
+        title: "Template catalog fixture",
+        description: "Selectable from the world template builder.",
+        uses: ["hello"],
+        bases: [Ezagent.ActionSet.Session],
+        roles: [
+          %{role_name: "front-desk", fill: :agent, recipe: "hello.front-desk", flavor: "hello"}
+        ],
+        visibility_policy: %{publish_policy: :auto, web_anon_access: true}
+      })
+
+    {:ok, second_definition} =
+      Definition.new(%{
+        name: second_definition_name,
+        title: "Extra template catalog fixture",
+        bases: [Ezagent.ActionSet.Session],
+        roles: [
+          %{role_name: "builder", fill: :agent, recipe: "hello.builder", flavor: "hello"}
+        ],
+        visibility_policy: %{publish_policy: :auto, web_anon_access: true}
+      })
+
+    {:ok, _object} =
+      DefinitionRegistry.write_definition(definition,
+        workspace_uri: workspace_uri,
+        caller_workspace_uri: workspace_uri,
+        actor_uri: User.admin_uri(),
+        caps: admin_caps
+      )
+
+    {:ok, _object} =
+      DefinitionRegistry.write_definition(second_definition,
+        workspace_uri: workspace_uri,
+        caller_workspace_uri: workspace_uri,
+        actor_uri: User.admin_uri(),
+        caps: admin_caps
+      )
+
+    detail =
+      WorkspacePluginData.state_for(
+        %{
+          component: "workspace_template_new",
+          name: ws_name,
+          title: "New Template",
+          path: "/workspaces/#{ws_name}/templates/new"
+        },
+        %{workspace_uri: workspace_uri, caller_uri: User.admin_uri(), caller_caps: admin_caps}
+      )
+
+    row = Enum.find(detail["socialwares"], &(&1["name"] == definition_name))
+    second_row = Enum.find(detail["socialwares"], &(&1["name"] == second_definition_name))
+
+    assert row["title"] == "Template catalog fixture"
+    assert second_row["title"] == "Extra template catalog fixture"
+
+    assert [%{"role_name" => "front-desk", "fill" => "agent", "recipe" => "hello.front-desk"}] =
+             row["roles"]
+
+    assert detail["template_mode"] == "new"
   end
 end
