@@ -14,7 +14,6 @@ defmodule Ezagent.World.Navigation do
                         "/workspaces",
                         "/plugins",
                         "/plugins/feishu/bindings",
-                        "/plugins/kanban",
                         "/profile",
                         "/admin",
                         "/admin/logs",
@@ -62,7 +61,8 @@ defmodule Ezagent.World.Navigation do
   defp query_suffix(query), do: "?" <> query
 
   defp patch_path?(path) when is_binary(path) do
-    MapSet.member?(@static_patch_paths, path) or dynamic_patch_path?(path)
+    MapSet.member?(@static_patch_paths, path) or dynamic_patch_path?(path) or
+      plugin_page_patch_path?(path)
   end
 
   defp patch_path?(_), do: false
@@ -75,8 +75,13 @@ defmodule Ezagent.World.Navigation do
       ) or
       Regex.match?(~r{\A/workspaces/[^/]+/templates/new\z}, path) or
       Regex.match?(~r{\A/workspaces/[^/]+\z}, path) or
-      Regex.match?(~r{\A/plugins/kanban/[^/]+\z}, path) or
       Regex.match?(~r{\A/plugins/auto/[^/]+(?:/[^/]+)?\z}, path) or
       Regex.match?(~r{\A/admin/sessions/[^/]+/external_mirror\z}, path)
+  end
+
+  # 插件页面（`Ezagent.World.PluginPageRegistry`）的列表/详情路由都是合法
+  # patch 目标——由注册表派生，不再逐插件写静态项 + 正则（kanban 曾是硬编码）。
+  defp plugin_page_patch_path?(path) do
+    Ezagent.World.PluginPageRegistry.by_route(path) != nil
   end
 end
