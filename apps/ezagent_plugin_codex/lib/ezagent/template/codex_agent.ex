@@ -321,9 +321,12 @@ defmodule Ezagent.PluginCodex.Template.CodexAgent do
     end
   end
 
-  defp ensure_app_server_ready(_agent_uri, _socket_path, true), do: :ok
+  # Shared by CodexRemoteAgent (via defdelegate) — same app-server readiness
+  # wait, so it lives here once rather than being copied into the remote flavor.
+  @doc false
+  def ensure_app_server_ready(_agent_uri, _socket_path, true), do: :ok
 
-  defp ensure_app_server_ready(agent_uri, socket_path, false) do
+  def ensure_app_server_ready(agent_uri, socket_path, false) do
     case EzagentPluginCodex.AppServer.wait_until_ready(
            agent_uri,
            socket_path,

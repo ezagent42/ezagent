@@ -12,7 +12,6 @@ defmodule Ezagent.PluginCodex.Template.CodexRemoteAgent do
   require Logger
 
   @compile_env Mix.env()
-  @app_server_ready_wait_ms 5_000
   @thread_id_wait_ms 15_000
 
   @impl Ezagent.Kind.Template
@@ -211,18 +210,9 @@ defmodule Ezagent.PluginCodex.Template.CodexRemoteAgent do
     end
   end
 
-  defp ensure_app_server_ready(_agent_uri, _socket_path, true), do: :ok
-
-  defp ensure_app_server_ready(agent_uri, socket_path, false) do
-    case EzagentPluginCodex.AppServer.wait_until_ready(
-           agent_uri,
-           socket_path,
-           @app_server_ready_wait_ms
-         ) do
-      :ok -> :ok
-      {:error, reason} -> {:error, {:codex_app_server_not_ready, reason}}
-    end
-  end
+  # Identical app-server readiness wait as CodexAgent — delegate rather than copy.
+  defdelegate ensure_app_server_ready(agent_uri, socket_path, test_mode),
+    to: Ezagent.PluginCodex.Template.CodexAgent
 
   defp ensure_bridge_sidecar(
          agent_uri,
