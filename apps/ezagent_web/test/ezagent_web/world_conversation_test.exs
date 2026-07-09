@@ -805,10 +805,53 @@ defmodule EzagentWeb.WorldConversationTest do
     })
   end
 
-  test "PR-4: restart_orchestrator denies a caller without the restart cap", %{conn: conn} do
+  test "PR-4: restart_orchestrator denies a NON-MEMBER caller (membership gate, no admin bypass)",
+       %{conn: conn} do
+    # Admin/business decoupling (2026-07-09): the restart gate is session
+    # MEMBERSHIP — the caller below holds NO join cap, so the on-open
+    # self-join cannot mint membership and the repair is denied. (A member —
+    # incl. an admin who joined like anyone else — passes the gate instead;
+    # the former `Identity.admin?/1` check is deleted and locked out by the
+    # `business_context_admin_checks` arch gate.)
     session_uri = world_session_uri()
     encoded = session_uri |> URI.to_string() |> URI.encode_www_form()
     caller = "entity://system/user/world_no_restart_#{System.unique_integer([:positive])}"
+    caller_uri = Ezagent.URI.new!(caller)
+
+    :ok = create_read_only_user(caller_uri, [])
+
+    conn =
+      conn
+      |> Map.put(:host, "world.ezagent.chat")
+      |> Plug.Test.init_test_session(%{
+        "current_entity_uri" => caller,
+        "current_workspace_uri" => "workspace://system"
+      })
+
+    {:ok, view, _html} = live(conn, "/sessions?session=#{encoded}")
+
+    refute caller_uri in Ezagent.Entity.Session.session_member_uris(session_uri)
+
+    html =
+      view
+      |> element("#world-root")
+      |> render_hook("world:dispatch", %{
+        "action" => "session.orchestrator.restart",
+        "args" => %{"session_uri" => URI.to_string(session_uri)}
+      })
+
+    assert html =~ ~s(data-last-dispatch="error:unauthorized")
+  end
+
+  test "PR-4: restart_orchestrator authorizes a session MEMBER (self-joined via join cap)",
+       %{conn: conn} do
+    # A DEDICATED session (not the shared `main` world session): a member's
+    # repair now actually RUNS `repair_orchestrator`, and running it against
+    # the shared session leaves half-rebuilt orchestrator state that flakes
+    # unrelated create tests in this file.
+    session_uri = create_restart_target_session!()
+    encoded = session_uri |> URI.to_string() |> URI.encode_www_form()
+    caller = "entity://system/user/world_member_restart_#{System.unique_integer([:positive])}"
     caller_uri = Ezagent.URI.new!(caller)
 
     :ok = create_read_only_user(caller_uri, [session_cap(caller_uri, session_uri, :join)])
@@ -821,7 +864,11 @@ defmodule EzagentWeb.WorldConversationTest do
         "current_workspace_uri" => "workspace://system"
       })
 
+    # Opening the conversation self-joins the caller (join cap held) — the
+    # membership that now authorizes the repair.
     {:ok, view, _html} = live(conn, "/sessions?session=#{encoded}")
+
+    assert caller_uri in Ezagent.Entity.Session.session_member_uris(session_uri)
 
     html =
       view
@@ -831,7 +878,9 @@ defmodule EzagentWeb.WorldConversationTest do
         "args" => %{"session_uri" => URI.to_string(session_uri)}
       })
 
-    assert html =~ ~s(data-last-dispatch="error:unauthorized")
+    # The AUTHORIZATION gate passes for a member — the repair itself may still
+    # surface an operational error in the test env, but never `:unauthorized`.
+    refute html =~ ~s(data-last-dispatch="error:unauthorized")
   end
 
   test "PR-4: session routing add scopes a rule to the current session", %{conn: conn} do
@@ -1757,6 +1806,29 @@ defmodule EzagentWeb.WorldConversationTest do
       {:ok, %{session_uri: %URI{} = uri}} -> uri
       _ -> Ezagent.URI.new!("session://system/default/main")
     end
+  end
+
+  # A fresh, test-local session for the member-restart repair test — created
+  # through the SAME production create path as `ensure_default_world_session!`,
+  # but uniquely named so the repair's orchestrator rebuild cannot perturb the
+  # shared `main` session other tests in this file depend on.
+  defp create_restart_target_session! do
+    workspace_uri = Ezagent.URI.workspace(:system)
+
+    {:ok, %{session_uri: %URI{} = uri}} =
+      Ezagent.Workspace.create_session(
+        workspace_uri,
+        %{
+          short_name: "restart-target-#{System.unique_integer([:positive])}",
+          template_name: "default"
+        },
+        %{
+          caller: Ezagent.Entity.User.admin_uri(),
+          caps: MapSet.new([Ezagent.Capability.admin_genesis_cap()])
+        }
+      )
+
+    uri
   end
 
   defp session_cap(caller_uri, session_uri, action) do

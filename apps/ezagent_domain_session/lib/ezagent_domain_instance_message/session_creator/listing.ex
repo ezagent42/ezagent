@@ -2,7 +2,6 @@ defmodule EzagentDomainInstanceMessage.SessionCreator.Listing do
   @moduledoc false
 
   alias Ezagent.Entity.Session
-  alias Ezagent.Identity
   alias Ezagent.KindRegistry
 
   @spec list_sessions :: [URI.t()]
@@ -29,10 +28,13 @@ defmodule EzagentDomainInstanceMessage.SessionCreator.Listing do
   Workspace-scoped session listing filtered by membership.
 
   Returns only sessions in `workspace_uri` where `caller_uri` is a member.
-  Admin callers (checked via `Ezagent.Identity.admin?/1`) bypass the
-  membership filter and see all sessions in the workspace — this supports
-  operator management surfaces without leaking cross-workspace data (the
-  workspace scope is still enforced).
+  Membership is the ONLY authority — there is deliberately NO admin bypass
+  (admin/business decoupling, 2026-07-09): admin is a CONFIG/bootstrap
+  authority, and in business paths like this listing it is a normal caller
+  whose visibility comes from its own memberships. The former
+  `Identity.admin?/1` bypass branch never fired in production (operator
+  surfaces use the caller-less `list_sessions/1`) and is locked out by the
+  `business_context_admin_checks` arch gate.
 
   A non-URI or `nil` caller is fail-closed (empty list) — anonymous or
   unauthenticated callers cannot be members of any session.
@@ -54,7 +56,7 @@ defmodule EzagentDomainInstanceMessage.SessionCreator.Listing do
       base enumeration ALREADY fetched (`KindSnapshot.decode_state/1` +
       `Session.member_uris_from_snapshot_state/1`); one decode per cold
       session, no extra queries. A row that fails to decode is fail-closed
-      (member-less → excluded for non-admins).
+      (member-less → excluded).
 
   Tenant isolation (#1217 / W0) is preserved by construction: the durable
   rows come from the workspace-scoped `KindSnapshot.list_in_workspace/1`
@@ -65,21 +67,16 @@ defmodule EzagentDomainInstanceMessage.SessionCreator.Listing do
   """
   @spec list_sessions(URI.t(), URI.t() | nil) :: [URI.t()]
   def list_sessions(%URI{scheme: "workspace"} = workspace_uri, %URI{} = caller_uri) do
-    entries = persisted_session_entries(workspace_uri)
+    caller_str = URI.to_string(caller_uri)
 
-    if Identity.admin?(caller_uri) do
-      Enum.map(entries, fn {session_uri, _liveness} -> session_uri end)
-    else
-      caller_str = URI.to_string(caller_uri)
-
-      entries
-      |> Enum.filter(fn {session_uri, liveness} ->
-        session_uri
-        |> member_uris(liveness)
-        |> Enum.any?(&(URI.to_string(&1) == caller_str))
-      end)
-      |> Enum.map(fn {session_uri, _liveness} -> session_uri end)
-    end
+    workspace_uri
+    |> persisted_session_entries()
+    |> Enum.filter(fn {session_uri, liveness} ->
+      session_uri
+      |> member_uris(liveness)
+      |> Enum.any?(&(URI.to_string(&1) == caller_str))
+    end)
+    |> Enum.map(fn {session_uri, _liveness} -> session_uri end)
   end
 
   def list_sessions(%URI{}, _caller_uri), do: []

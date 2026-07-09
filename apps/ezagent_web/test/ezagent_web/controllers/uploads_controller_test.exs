@@ -86,8 +86,9 @@ defmodule EzagentWeb.UploadsControllerTest do
 
   # Persist a message in `session` whose attachments include the upload — this is
   # what makes `sender` an "uploader" (and lets later senders be participants).
-  # The token download path runs the SAME admin/uploader/participant authz the
-  # retired /files route used, so a stored file alone is NOT downloadable.
+  # The token download path runs an uploader/participant authz at serve time
+  # (the admin bypass was DELETED — admin/business decoupling 2026-07-09), so a
+  # stored file alone is NOT downloadable.
   defp attach_in_message(sender, ws, session, filename) do
     msg =
       Message.new(sender, %{
@@ -160,7 +161,7 @@ defmodule EzagentWeb.UploadsControllerTest do
          %{conn: conn} do
       # The crux of the P2 revision: an authenticated same-workspace caller who
       # can VIEW the session (and thus could be handed a rendered token link) but
-      # is neither uploader, participant, nor admin must NOT be able to download.
+      # is neither uploader nor participant must NOT be able to download.
       # A leaked/observer token is useless — serve-time authz matches pre-P2.
       filename = uploaded_filename()
       uploader = user_uri(@workspace_name, "alice-#{uniq()}")
@@ -176,15 +177,39 @@ defmodule EzagentWeb.UploadsControllerTest do
       assert conn.status == 403
     end
 
-    test "200 for ADMIN (operator bypass)", %{conn: conn} do
+    test "403 for a non-participant ADMIN (NO operator bypass — admin/business decoupling)",
+         %{conn: conn} do
+      # Attachments are business content: the genesis admin downloads exactly
+      # what any caller does — files from sessions it participates in. The
+      # pre-2026-07-09 admin bypass is deleted (`business_context_admin_checks`
+      # arch gate); this pins the observable behavior.
       filename = uploaded_filename()
       uploader = user_uri(@workspace_name, "alice-#{uniq()}")
-      {uri, content, _session} = upload_and_attach(@workspace_name, uploader, filename)
+      {uri, _content, _session} = upload_and_attach(@workspace_name, uploader, filename)
       token = DownloadToken.mint!(uri, ttl_seconds: 60)
 
       conn =
         conn
         |> sign_in(@workspace_name, Ezagent.Entity.User.admin_uri())
+        |> get(~p"/uploads/download?token=#{token}")
+
+      assert conn.status == 403
+    end
+
+    test "200 for an ADMIN who IS a session participant (membership, not identity, governs)",
+         %{conn: conn} do
+      filename = uploaded_filename()
+      uploader = user_uri(@workspace_name, "alice-#{uniq()}")
+      admin = Ezagent.Entity.User.admin_uri()
+      {uri, content, session} = upload_and_attach(@workspace_name, uploader, filename)
+      # The admin becomes a participant like anyone else — by sending into the
+      # attaching session.
+      :ok = sent_text_message(admin, session)
+      token = DownloadToken.mint!(uri, ttl_seconds: 60)
+
+      conn =
+        conn
+        |> sign_in(@workspace_name, admin)
         |> get(~p"/uploads/download?token=#{token}")
 
       assert conn.status == 200
@@ -193,18 +218,19 @@ defmodule EzagentWeb.UploadsControllerTest do
 
     test "mount workspace is the SELECTED current_workspace_uri, not the entity home (codex r2)",
          %{conn: conn} do
-      # A system entity (home = system) context-switched into team-other reads
-      # team-other's file — proving authority uses the selected workspace slot,
-      # not the entity's home workspace. (Admin bypasses the participant gate so
-      # this test isolates the workspace-derivation behavior.)
+      # A system-HOME entity context-switched into team-other reads team-other's
+      # file — proving authority uses the selected workspace slot, not the
+      # entity's home workspace. (The caller is the UPLOADER so the participant
+      # gate passes on membership — no admin bypass exists anymore — and this
+      # test isolates the workspace-derivation behavior.)
       filename = uploaded_filename()
-      uploader = user_uri(@other_workspace, "carol-#{uniq()}")
+      uploader = user_uri("system", "carol-#{uniq()}")
       {uri, content, _session} = upload_and_attach(@other_workspace, uploader, filename)
       token = DownloadToken.mint!(uri, ttl_seconds: 60)
 
       conn =
         conn
-        |> sign_in(@other_workspace, Ezagent.Entity.User.admin_uri())
+        |> sign_in(@other_workspace, uploader)
         |> get(~p"/uploads/download?token=#{token}")
 
       assert conn.status == 200
@@ -213,8 +239,8 @@ defmodule EzagentWeb.UploadsControllerTest do
 
     test "403 for a token bound to a FOREIGN workspace (authority/2)", %{conn: conn} do
       # The token is minted for team-other but the caller is mounted in
-      # team-uploads. Even an admin (who clears the participant gate) is denied —
-      # workspace isolation via authority/2 still applies.
+      # team-uploads. Even the UPLOADER (who clears the participant gate) is
+      # denied — workspace isolation via authority/2 still applies.
       filename = uploaded_filename()
       uploader = user_uri(@other_workspace, "carol-#{uniq()}")
       {uri, _content, _session} = upload_and_attach(@other_workspace, uploader, filename)
@@ -222,7 +248,7 @@ defmodule EzagentWeb.UploadsControllerTest do
 
       conn =
         conn
-        |> sign_in(@workspace_name, Ezagent.Entity.User.admin_uri())
+        |> sign_in(@workspace_name, uploader)
         |> get(~p"/uploads/download?token=#{token}")
 
       assert conn.status == 403
@@ -284,8 +310,10 @@ defmodule EzagentWeb.UploadsControllerTest do
 
   describe "ws-partitioned isolation" do
     test "same filename in two workspaces is isolated on disk and on read", %{conn: conn} do
-      # Admin caller clears the participant gate so this test isolates the
-      # ws-partition behavior (same filename, two workspaces, two bodies).
+      # The UPLOADER clears the participant gate (no admin bypass exists — the
+      # filename-keyed participant check even matches uploader_a against BOTH
+      # same-named attachments) so this test isolates the ws-partition behavior
+      # (same filename, two workspaces, two bodies).
       filename = uploaded_filename()
       uploader_a = user_uri(@workspace_name, "alice-#{uniq()}")
       uploader_b = user_uri(@other_workspace, "carol-#{uniq()}")
@@ -301,21 +329,21 @@ defmodule EzagentWeb.UploadsControllerTest do
       token_a = DownloadToken.mint!(uri_a, ttl_seconds: 60)
       token_b = DownloadToken.mint!(uri_b, ttl_seconds: 60)
 
-      admin = Ezagent.Entity.User.admin_uri()
-
-      # Admin mounted in team-uploads downloads team-uploads' copy.
+      # Uploader-a mounted in team-uploads downloads team-uploads' copy.
       conn_a =
         conn
-        |> sign_in(@workspace_name, admin)
+        |> sign_in(@workspace_name, uploader_a)
         |> get(~p"/uploads/download?token=#{token_a}")
 
       assert conn_a.status == 200
       assert conn_a.resp_body == "acme-bytes"
 
-      # The team-uploads mount cannot use team-other's token (ws isolation).
+      # The team-uploads mount cannot use team-other's token (ws isolation) —
+      # even though the same-named attachment lets the caller clear the
+      # participant gate, authority/2 still denies the foreign workspace.
       conn_cross =
         build_conn()
-        |> sign_in(@workspace_name, admin)
+        |> sign_in(@workspace_name, uploader_a)
         |> get(~p"/uploads/download?token=#{token_b}")
 
       assert conn_cross.status == 403

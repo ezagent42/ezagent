@@ -83,7 +83,7 @@ defmodule Mix.Tasks.Ezagent.Session.RemoveParticipant do
   # `mix ezagent.agent.create`'s `operator_admin_ctx`): an INLINE
   # `cap(:session, Session, :remove_participant, <session>)` granted_by the
   # caller, so the dispatch clears the chokepoint. The real authorization is the
-  # handler's identity gate (owner / self-leave / admin) keyed on `caller` — a
+  # handler's authority gate (owner / self-leave / genesis-wildcard caps) keyed on `caller` — a
   # `--as <stranger>` clears the chokepoint via this inline cap but is then
   # DENIED `:unauthorized` by the handler. Resolving the caller's persisted caps
   # here (a list-caps read) would trip cap_check_only_at_chokepoint p6.

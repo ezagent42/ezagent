@@ -286,7 +286,13 @@ defmodule EzagentCore.Invariants.CapCheckOnlyAtChokepointTest do
         "apps/ezagent_domain_identity/lib/ezagent/identity.ex",
         #   `Ezagent.Entity.User` owns `admin_uri/0` + the #154 genesis self-grant
         #   (`initial_caps_for_spawn`), which legitimately tests `uri == admin_uri()`.
-        "apps/ezagent_domain_identity/lib/ezagent/entity/user.ex"
+        "apps/ezagent_domain_identity/lib/ezagent/entity/user.ex",
+        #   The arch scanner's `business_context_admin_checks` gate (admin/business
+        #   decoupling, 2026-07-09) EMBEDS this same comparison shape as a regex
+        #   literal (`@admin_uri_comparison_regex`) in order to flag it — the
+        #   enforcement tool matches the probe's pattern by construction, exactly
+        #   like this test file itself would.
+        "apps/ezagent_core/lib/mix/tasks/ezagent.arch.scan.ex"
       ]
     }
   ]

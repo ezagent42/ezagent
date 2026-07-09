@@ -132,7 +132,21 @@ defmodule Ezagent.Identity do
 
   @doc """
   Phase 8c PR-F (Allen 2026-05-20) — does `entity_uri` belong to the
-  admin principal?
+  GENESIS bootstrap admin principal (`Ezagent.Entity.User.admin_uri/0`)?
+
+  ## ⚠️ Scope contract (admin/business decoupling, 2026-07-09)
+
+  This is a CONFIG/bootstrap predicate, NOT a business superuser check. It
+  recognizes exactly ONE principal — the genesis singleton — so workspace
+  admins and every delegated-authority holder return `false`. Legitimate call
+  sites are configuration/bootstrap surfaces only (the /admin console gate,
+  operator diagnostics, bootstrap credential adoption). BUSINESS paths
+  (session listing, chat, messages, conversation, uploads) must NEVER call it
+  — there, admin is an ordinary caller and authority comes from membership +
+  caps at the dispatch chokepoint. Enforced by the
+  `business_context_admin_checks` counter in `mix ezagent.arch.scan`
+  (sanctioned call sites live in `@business_admin_check_sanctioned_files`).
+  A follow-up rename to `genesis_admin?/1` is tracked in docs/futures/todo.md.
 
   Used by the avatar dropdown to gate visibility of the "Admin" link
   (which opens the admin drawer at `/admin`). Returns `false` for
@@ -145,15 +159,6 @@ defmodule Ezagent.Identity do
   only requires a logged-in entity, not admin caps — so /admin is open
   to anyone authenticated. The dropdown gate hides the link for
   non-admins purely for UX clarity, NOT as a security boundary.
-
-  ## TODO Phase 8d
-
-  Replace with a proper `cap:admin` check once the admin sub-pages
-  enforce admin caps at the on_mount hook (see `EzagentWeb.LiveAuth`).
-  At that point this helper becomes:
-
-      caps = list_caps_for(entity_uri)
-      Enum.any?(caps, &Ezagent.Capability.matches?(&1, {:admin, :any, :any}))
   """
   @spec admin?(URI.t() | String.t() | nil) :: boolean()
   def admin?(nil), do: false

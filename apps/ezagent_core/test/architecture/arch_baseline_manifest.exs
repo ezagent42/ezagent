@@ -418,6 +418,18 @@
   #   the existing dotted `Ezagent.Agent.Recipe*` cluster); any NEW glued module
   #   that is not sanctioned trips this.
   concatenated_namespace_modules: 0,
+  # business_context_admin_checks — 0 (hard). Admin/business decoupling gate
+  #   (2026-07-09): `Identity.admin?/1` (the genesis bootstrap singleton) and
+  #   its siblings (`AdminAuthority.admin?/2`, direct `admin_uri()` comparisons)
+  #   are CONFIG/bootstrap authority — business paths (session listing, chat,
+  #   messages, conversation, uploads) authorize via membership + caps at the
+  #   dispatch chokepoint, never via "is the caller the admin". Gate-first: went
+  #   RED at 3 (session-listing membership bypass, uploads-download admin
+  #   bypass, world restart-orchestrator admin check), then those were
+  #   deleted/migrated to membership checks. Any new business-context admin
+  #   check trips this; a legitimately-new CONFIG surface joins
+  #   `@business_admin_check_sanctioned_files` with a one-line reason.
+  business_context_admin_checks: 0,
   # Documentation-coverage gate (2026-06-13, Allen) — RATCHET-DOWN counters.
   # Backed by `Mix.Tasks.Ezagent.Doc.Scan`; enforced by
   # test/architecture/doc_coverage_test.exs. Calibrated GREEN at the CURRENT

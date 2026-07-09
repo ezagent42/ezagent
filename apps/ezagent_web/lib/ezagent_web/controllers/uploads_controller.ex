@@ -47,11 +47,14 @@ defmodule EzagentWeb.UploadsController do
   view authority, which includes observe-only callers without `chat.join`),
   minting alone would WIDEN access vs. the retired `/files` route — and a leaked
   token could be replayed by any same-workspace caller within its TTL. To keep
-  the access decision identical to the pre-P2 contract, `download/2` ALSO runs
-  the independent participant authorization at serve time: the authenticated
-  caller must be an **admin**, the **uploader** of an attaching message, or a
-  **session participant** (has sent a message into a session the attachment was
-  routed to). A leaked/observer token is therefore useless to a non-participant.
+  the access decision from widening, `download/2` ALSO runs the independent
+  participant authorization at serve time: the authenticated caller must be the
+  **uploader** of an attaching message or a **session participant** (has sent a
+  message into a session the attachment was routed to). A leaked/observer token
+  is therefore useless to a non-participant. The pre-P2 contract's third
+  disjunct — an admin bypass — was DELETED (admin/business decoupling,
+  2026-07-09; `business_context_admin_checks` arch gate): attachments are
+  business content, so admin authority here is membership, like any caller.
 
   ## Why the controller is thin
 
@@ -74,17 +77,16 @@ defmodule EzagentWeb.UploadsController do
 
   # Cap on the number of candidate Message rows we'll fully load + decode to
   # verify an attachment match (defense against a session that text-quoted the
-  # filename many times). Exceeding it falls through to deny; admin bypass
-  # remains the operator escape hatch.
+  # filename many times). Exceeding it falls through to deny.
   @candidate_cap 256
 
   @doc """
   Primary download route — `GET /uploads/download?token=<token>`.
 
-  Verifies the signed capability token, runs the participant authorization (admin
-  / uploader / session-participant — the pre-P2 contract, so the token does NOT
-  widen access), then authorizes by ws-segment against the caller's authenticated
-  mount workspace via the resolver's `authority/2`.
+  Verifies the signed capability token, runs the participant authorization
+  (uploader / session-participant — so the token does NOT widen access), then
+  authorizes by ws-segment against the caller's authenticated mount workspace
+  via the resolver's `authority/2`.
   """
   def download(conn, %{"token" => token}) when is_binary(token) do
     with {:ok, uri} <- DownloadToken.verify(token),
@@ -101,30 +103,22 @@ defmodule EzagentWeb.UploadsController do
 
   def download(conn, _params), do: forbidden(conn)
 
-  # --- Authorization (pre-P2 contract — admin / uploader / participant) ------
+  # --- Authorization (uploader / participant) ---------------------------------
+  #
+  # Membership governs — there is deliberately NO admin bypass (admin/business
+  # decoupling, 2026-07-09; `business_context_admin_checks` arch gate): message
+  # attachments are business content, so the genesis admin downloads exactly
+  # what any caller does — files attached in sessions it participates in.
 
   # RequireEntity should have bounced an anon caller; defensive nil clause stays
   # false rather than crashing.
   defp authorized?(nil, _filename), do: false
 
   defp authorized?(%URI{} = caller_uri, filename) do
-    cond do
-      admin?(caller_uri) -> true
-      caller_in_attaching_messages?(caller_uri, filename) -> true
-      true -> false
-    end
+    caller_in_attaching_messages?(caller_uri, filename)
   end
 
   defp authorized?(_caller, _filename), do: false
-
-  defp admin?(%URI{} = uri) do
-    if Code.ensure_loaded?(Ezagent.Identity) and
-         function_exported?(Ezagent.Identity, :admin?, 1) do
-      Ezagent.Identity.admin?(uri)
-    else
-      false
-    end
-  end
 
   # Combined uploader + session-participant check. Loads candidate Message rows
   # (narrowed by SQL LIKE on body), decodes each row's `body.attachments` in
