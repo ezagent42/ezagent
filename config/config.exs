@@ -30,7 +30,7 @@ config :ezagent_core,
 # cc-orchestrator AgentTemplate (which a cc-less build never seeds).
 config :ezagent_domain_session,
   default_orchestrator_template_uri: "template://system/agent/cc-orchestrator",
-  socialware_manifest_boot_scan: config_env() in [:dev, :prod]
+  socialware_manifest_boot_scan: config_env() in [:prod]
 
 config :ezagent_domain_session,
   public_scheme: "https",
