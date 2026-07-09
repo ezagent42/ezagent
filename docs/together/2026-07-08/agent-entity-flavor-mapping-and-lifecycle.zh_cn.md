@@ -1,200 +1,250 @@
-# Agent Entity × Flavor:映射关系与底层实例生命周期(v1.1)
+# Agent Entity × Flavor:映射关系与底层实例生命周期(v2)
 
-日期:2026-07-08 · 基线 HEAD `b260b09aa` · 全部断言现读,带 `file:line`
-状态:**决策 A(上下文归属)已确认** → 下沉出三条实现线(异构无状态化 / 隔离能力位 / 存储分层)
+日期:2026-07-09 · 基线 HEAD `364ccf6ba`(= stable,今日晋级,含 P1-P3 #1266)
+状态:**Q1/Q3/Q4 已 ratify** · 本稿吸收全部 Allen pre-grill 裁定,供合并前最终 review。
 
-> v0→v1 变更:决策 A 拍板"上下文放上层、flavor 作无状态执行器";新增 §4 异构无状态化、§5 隔离能力位、§6 存储分层(PG vs fs);§7 决策清单相应更新。
-> v1→v1.1 变更:现读 cc-headless/codex-remote runtime;新增 §4.5 首验对象;**修正 §5.2 隔离能力位表**——`cc-headless` 从 `:stateless` 改归 `:per_thread`(串行),`cc` 拆成 PTY(`:per_instance`)与 headless 两档。
+> v1.1→v2 变更:Q1(全 flavor PTY 无状态 + rehydration 契约)· Q3(per-role cardinality `one|many` + viewer 基线)· Q4(curl 退化生命周期 + completion/tool-loop 正交轴)· D2 收紧(只读凭据+独立 runtime + Part C 兜底)· Decision A 三分类(`stateless≠diskless`)· 命名对齐(#1253/#1255/#1261)· 删 ACT-2(已证 false-positive #1269)· 删 SkillRegistry provenance 注脚(已上 main #1266)。
 
 ---
 
 ## 0. 一句话
 
-白板 `上层角色 → Recipe → flavor → 引擎实例` 这条链,静态映射与大半生命周期已落地且边界硬。**v1 已定:上下文权威在上层(PG `MessageStore`,session 键),flavor 降为无状态执行器。** 由此收敛出三条要做的实现线:(1) cc/codex **异构**下的无状态 run 契约;(2) flavor 层的**隔离能力位**(尤其 reuse 共享执行器);(3) **存储分层**(PG 权威 / fs 缓存)。switch/reset 因决策 A 大幅简化。
+`上层角色 → Recipe → flavor → 引擎实例` 这条链,静态映射和生命周期已落地且边界硬。Allen Q1 RULING:**全 flavor(含 cc-PTY)一律作无状态执行器,PTY 进程 = disposable cache,进程死亡为正常态;对话上下文权威在 PG `MessageStore`(session 键),rehydration 靠 PG 回放。** 三条实现线(异构无状态 run 契约·隔离能力位·存储分层)方向已定,按分期交付先落 D2 + cc-headless 首验。
 
 ---
 
 ## 1. 三层映射(已落地,边界硬)
 
-| 层 | 代码实体 | 是什么 | 位置 |
+| 层 | 实体 | 是什么 | 位置 |
 |---|---|---|---|
-| **Recipe** | `Ezagent.Agent.Recipe` | flavor-agnostic 的沙盒内容配方(skills/plugins/prompt/script/behaviors/requested_caps/config)。禁携带任何 flavor 字段,`new/1` fail-closed | core `recipe.ex:34,47-57,94-116` |
-| **flavor** | `AgentFlavorRegistry` | 声明式 data:`flavor → {kind, template_class, instance_behaviors, cap_policy}` | domain_agent `agent_flavor_registry.ex:49-54,67,142` |
-| **Entity(实例)** | `Ezagent.Entity.Agent` | `Recipe × flavor` materialize 出的运行时实例,URI `entity://agent/<flavor>_<name>` | `recipe_materializer.ex:87`;URI `entity/agent.ex:47` |
+| **Recipe** | `Ezagent.Agent.Recipe` | flavor-agnostic 沙盒内容配方(skills/plugins/prompt/script/behaviors/requested_caps/config) | core `recipe.ex:34,47-57` |
+| **flavor** | `AgentFlavorRegistry` | 声明式 data:`flavor → {kind, template_class, instance_behaviors, cap_policy}` | domain_agent `agent_flavor_registry.ex:49-54` |
+| **Entity** | `Ezagent.Entity.Agent` | `Recipe × flavor` materialize 出的运行时实例,URI `entity://agent/<flavor>_<name>` | `entity/agent.ex:47,375` |
 
-**两个锚点**:`recipe provenance`(从哪个 recipe build,记实例上、不可变,`recipe_materializer.ex:217`);`role_name`(会话里叫什么角色,只住 (entity×session) 成员边,会话内唯一,`membership.ex:44`)。同一 uuid 实例可在不同会话当不同 role。
+**两个锚点**:**recipe provenance**(记实例、不可变,`recipe_materializer.ex:217`);**role_name**(住 (entity×session) 成员边,会话内唯一,`membership.ex:44`)。同一 uuid 实例可在不同会话当不同 role。
 
-**三条硬约束**:① flavor 焊死实例 URI(`entity/agent.ex:375`)→ 换 flavor 只能换实例;② role_name 会话内唯一 → 换实例被迫"先 leave 旧、再 join 新",有消息窗口;③ 新实例侧回滚现成(`undo_fresh_workers`),缺"旧↔新两侧编排"。
+**三条硬约束**:① flavor 焊死实例 URI → 换 flavor = 换实例;② role_name 会话内唯一 → 换实例被迫"先 leave 旧、再 join 新",有消息窗口;③ 新实例侧回滚现成(`undo_fresh_workers`),缺"旧↔新两侧编排"。
+
+> **命名对齐(#1253 Decision #161)**:Definition(会话模板声明)→ Recipe(内容配方)→ Manifest(部署级分发件)→ Registry(注册表)。全文统一用此四层词汇,不混用。`Ezagent.Agent.RecipeResolver`(#1261 重命名)、`Ezagent.Agent.Recipe*` 点约定(#1255 arch gate)已随 rebase 吸收。
 
 ---
 
-## 2. 生命周期:fresh-spawn 全路径 + 12 连锁位
+## 2. 生命周期(全 flavor 无状态——Allen Q1 RULING)
 
-### 2.1 全路径(`TemplateSpawn.spawn_from_template_content/5`,all-or-nothing)
+### 2.1 核心裁定:进程死亡为 NORMAL case
+
+PTY 启动 `build_claude_cmd/3`(`spawn_plan.ex:81-83`)是无 `--resume`/`-p` 的裸交互 `claude`,进程常驻、只起一次(`spawn.ex:423`)。但网络/节点 churn 可随时弄挂 PTY → **进程死亡不是异常,是运营现实。从死亡恢复应为一等公民路径。**
+
+由此确立 **state 三层归属**(RULING 15:50):
+
+| 层 | 存哪 | 性质 | 证据 |
+|---|---|---|---|
+| ① 对话上下文 | PG `MessageStore`(session 键) | **权威源,backend-agnostic,可 replay** | core `message_store.ex:43-49` |
+| ② workspace/folder | recipe 引用的 **durable config_dir** | 进程死亡仍在;同 backend `claude --continue` 恢复 CLI cache | `home_runtime.ex:90` `agent_config_dir/2` |
+| ③ PTY 子进程 | disposable | **永不是真相源,只当缓存** | `spawn_plan.ex:58,81-83` |
+
+**Rehydration 契约(Decision A 必答项)**:跨 backend 切换(cc→codex)时第②层保留但 CLI transcript 格式不同 → **对话连续性只能靠 `MessageStore` PG replay**(第①层)。无状态 run 每次都从 **MessageStore 取 session context → 渲染 → 喂 flavor**。cold-start restart 走已有 `ensure_subprocess_alive` self-heal + `Sandbox.post_init`(`template_spawn.ex:689`),从"异常恢复"升为"正常路径"。
+
+### 2.2 fresh-spawn 全路径(不变,all-or-nothing)
 
 ```
-resolve_cascade_content   ── mint #17 凭据 grant(按 agent_uri 唯一)              :260
-   ▼ instantiate_workers   ── 插件 template_class.instantiate/3 → 原子 fresh?     :374,:579
-   ▼ post_spawn_obligations── record_lineage + bind_workspace                     :802,:803
-   ▼ record_sandbox_state  ── :cast sandbox.update_config → :sandbox slice         :449,:617
-   ▼ mount_behavior_overlay── Kind.mount(recipe×flavor folded behaviors)          :450
-   ▼ AgentFlavorAttributes.put ── flavor 焊实例                                    :451
-   ── join ── role_name_conflict → grant_at_join → put_member_facets     membership.ex:48,88,39
-失败任一步 → undo_fresh_workers(terminate+unbind+lineage forget)+cleanup+grant revoke  :455,:824
+resolve_cascade_content → instantiate_workers(原子 fresh?) → post_spawn_obligations(lineage+bind)
+  → record_sandbox_state(:cast sandbox.update_config) → mount_behavior_overlay(folded)
+  → AgentFlavorAttributes.put → join(role_name_conflict→grant_at_join→facet)
 ```
+失败任一步 → `undo_fresh_workers` + cleanup + grant revoke(`template_spawn.ex:455,824`)。新实例侧回滚现成。
 
-### 2.2 readiness:进程活着 ≠ ready
+### 2.3 readiness:进程活着 ≠ ready
 
-`require_transport_join → :not_ready`(`transport_readiness.ex:56`);真 bind 事件 → drain + `:ready`(`:88`);超时 5s → `mark_failed`(`:168`)。
+bridge join 才 ready(`transport_readiness.ex:56,88,168`),积压消息走 `PendingDelivery` drain。R3(重新武装)待补 `failed→not_ready` 回环。
 
-### 2.3 换 flavor = 换实例,牵动 12 位
+### 2.4 「换 flavor = 换实例」牽動 12 位(不变)
 
-实例 URI · AgentFlavorAttributes · AgentRecipeAttributes · AgentLineage · WorkspaceRegistry 绑定 · `:sandbox` slice · 凭据 grant · behavior overlay · role_name 成员边 · member-cap · 途中消息 · 子进程 sidecar(curl 无)。(逐位 file:line 见 v0 表,未变。)
-
----
-
-## 3. switch / reset 候选语义(6 版)+ 决策 A 后的简化
-
-| 操作 | 版本 | 现成度 | 说明 |
-|---|---|---|---|
-| switch | **S1 换实例弃旧** | 高 | 复用 spawn/rollback + leave/join。**因 A:上下文在 MessageStore,弃旧不丢上下文** |
-| switch | S2 迁移内容 | 低 | **因 A 可作废**(不必迁 config_dir) |
-| switch | S3 role 指针重绑 | 冲突 | 撞 role_name 会话内唯一,需先松绑 |
-| reset | **R1 原地重启** | 高 | 身份零改动,冷启动 self-heal 已有(`template_spawn.ex:689`) |
-| reset | R2 清 sandbox 重建 | 中 | `destroy_config_dir` 有,内容重建要编排 |
-| reset | R3 重新武装 readiness | 缺口 | 无 `failed→not_ready` 回环,要新加 |
-
-**决策 A 的红利**:switch/reset 12 连锁位的第 6 位(`:sandbox` context)从"迁 config_dir"退化为"重放 MessageStore",S1/R1 成为干净 v0。
+实例 URI · AgentFlavorAttributes · RecipeAttributes · AgentLineage · WorkspaceRegistry · `:sandbox` slice · 凭据 grant · behavior overlay · role_name 成员边 · member-cap · 途中消息 · 子进程 sidecar(curl 无)。关键简化:第 6 位 `:sandbox` context 不再是"迁 config_dir",而是"**从 MessageStore 重放**(rehydration 契约)";第 12 位 cc-PTY 不再需"迁移子进程上下文"(可弃)。
 
 ---
 
-## 4. 【已确认 A】上下文放上层,flavor 作无状态执行器 —— 异构与实现
+## 3. switch / reset — 因 Q1 RULING 大幅简化
+
+### 3.1 switch(跨 flavor)
+
+| 版本 | 说明 | 现成度 |
+|---|---|---|
+| **S1 换实例弃旧(v0)** | spawn→ready→旧 leave→新 join→旧 SIGTERM。**进程=可弃,不丢上文(MessageStore replay 恢复)** | 高 |
+| S2 迁移内容 | **因 Q1 作废**(不必迁 config_dir,PG replay 足够) | — |
+| S3 role 指针重绑 | 撞 role_name 唯一;Q3 后走 **handoff/cutover**(单活跃+一 pending,原子换绑),非 fan-out | ❓ 待 Q3 落地 |
+
+### 3.2 reset(回干净态)
+
+| 版本 | 说明 | 现成度 |
+|---|---|---|
+| **R1 原地重启(v0)** | terminate sidecar → `ensure_subprocess_alive` → 从 MessageStore replay。身份零改动 | 高 |
+| R2 清 sandbox 重建 | `destroy_config_dir` 有;受 Q1 简化(replay 替代迁内容) | 中 |
+| R3 重新武装 readiness | 缺 `failed→not_ready`;**Q1 后必要性降低**(进程死=正常,直接 restart 而非 re-arm) | 低优先级 |
+
+---
+
+## 4. Decision A 实质化:config_dir 三分类 + `stateless ≠ diskless`
 
 ### 4.1 决策
 
-- **上下文权威**:ezagent `MessageStore`(PG,**键在 session**,flavor-agnostic,`core message_store.ex:43-49`)。
-- **flavor**:无状态执行器,每次 run 由上层喂完整 context;config_dir 里 SDK 的 session 文件降为**可弃缓存**。
+- **上下文权威** = PG `MessageStore`(session 键,flavor-agnostic)
+- **flavor** = 无状态执行器,每次 run 由上层喂完整 context
+- **PTY 进程** = disposable,永非真相源(Q1 RULING)
 
-### 4.2 现状是 stateful 且异构(要拿掉的正是这层)
+### 4.2 `stateless ≠ diskless` — config_dir 三分类(必须区分)
 
-| flavor | 记忆载体(现状) | 证据 |
+| 类 | 内容 | 性质 | 与无状态相容? |
+|---|---|---|---|
+| ① recipe-projected | skills(幂等拷贝 `orchestrator_bootstrap.ex:43,148`)、CLAUDE.md(由 recipe 写出 `home_runtime.ex:313-315`) | 纯函数投影,determinism 锚 `recipe/compose.ex:11-13`"同 recipe×任意 flavor→字节相同" | ✅ destroy-rebuild 可复现,stateless≠diskless |
+| ② credential | `.credentials.json`(`cc_agent.ex:209`)、`auth.json` | cascade 可恢复 | ✅ restorable |
+| ③ runtime-accumulated | CLI 对话记忆、codex `rollout-*.jsonl`(`codex_agent.ex:451`)、agent 自改文件 | **唯一真不可复现** | ⚠️ **就是 state,被 Q1 RULING 降为 disposable** |
+
+**Decision A 的"state"精确指第③类**。第①/②类是 Recipe 的纯函数投影/可恢复凭据,落盘不影响"无状态"定义。读者不能误读为"skills 落盘 = 有状态冲突"。
+
+### 4.3 异构无状态化:四个实现 + 首验对象
+
+| 实现 | 内容 | 首验 flavor |
 |---|---|---|
-| cc(PTY/TUI) | claude 进程 + `CLAUDE_CONFIG_DIR`/`~/.claude` 交互 session | cc_agent/spawn.ex:128 |
-| cc-headless | `ClaudeSDKClient` Python sidecar(无 PTY,更可控) | cc_headless_agent.ex:1-7 |
-| codex | app-server **thread**("share one context") | codex_agent.ex:276 |
-| curl / native / py | 无——每次自带完整输入 | curl_agent/application.ex:109 |
+| ① 统一 run 契约 | `run(rendered_context, input) → {reply, artifacts}`,turn 间不留 state,放 AgentBridge adapter(P12) | cc-headless / codex-remote |
+| ② context 渲染器(上层) | 从 MessageStore 按 session 取历史→翻各 flavor 输入 | 共通 |
+| ③ 绕过 flavor 自身 session | cc 走 headless/`-p`;codex 一次性 thread | cc-headless / codex-remote |
+| ④ adapter 声明能力位 | `stateless_capable?` + `isolation`(见 §5) | 共通 |
 
-异构本质:cc 是长驻交互 session,codex 是 app-server thread,都把上文锁在运行时里。
+**首验路径**(Q1 RULING 后在所有 flavor 上成立):
 
-### 4.3 需要的 4 块实现
-
-1. **统一无状态 run 契约**(AgentBridge adapter 层,P12 把协议差异关 adapter):`run(rendered_context, new_input) → {reply, artifacts}`,turn 间不留状态。现 `AgentBridge.deliver` 只投递一条、靠子进程记忆(`agent_bridge.ex:11-70`),要改成携带渲染好的 context。
-2. **context 渲染器**(上层、flavor-agnostic):从 `MessageStore` 按 session 取历史 → 翻成各 flavor 输入(curl=messages 数组;cc-headless=SDKClient 一次性输入;codex=fresh thread + replay)。
-3. **绕过 flavor 自身 session**:cc 走 `-p`/headless 而非 `--resume`;codex 一次性 thread 不复用 thread_id。
-4. **adapter 声明能力位**:`stateless_capable?` + `isolation`(见 §5.2)。
-
-### 4.4 关键子决策
-
-**cc 的 PTY 交互式 TUI 是长驻会话,强行无状态代价大**。→ 无状态语义优先落 `cc-headless`/`codex-remote`/`curl`;需要无状态的 role 一律走 `cc-headless`,而把 `cc`(PTY)当作 stateful 特例(交互/调试用)。**❓ 待确认:cc-PTY 是否排除在无状态语义外。**
-
-### 4.5 首验对象:cc-headless(串行)+ codex-remote(并发)
-
-两者都已 headless(无 PTY/TUI),turn 是"请求/响应"或"app-server thread",最接近无状态 run,应作首验:
-
-- **cc-headless**:`ClaudeSDKClient` sidecar,`query(agent_uri, text, session_id) → {:ok, map}`(`sdk_sidecar.ex:94,142-150`),接口已是无状态形状;但一个 SDK client **serializes**(`sdk_sidecar.ex:6`)→ `:per_thread` **串行**,需 per-sidecar turn 队列。落法:每次 query 把 MessageStore 的 session context 拼进 `text`(真无状态),或用 `session_id` 对齐 ezagent session。
-- **codex-remote**:app-server(shared control plane,`app_server.ex:5-7`)+ bridge sidecar,conversation 单位 `thread_id`;app-server **原生多 thread**,但现只用一个(`codex_remote_agent.ex:164,180`)→ `:per_thread` **可并发**。落法:每个 ezagent session 映一个 codex `thread_id`。
-- **`cc`(PTY)** 留作 stateful 特例(交互/调试)。
-
-> 结论:首验用 `cc-headless` 验"串行 per_thread + 队列",`codex-remote` 验"并发 per_thread + 每 session 一 thread";两条打通后无状态 run 契约即成型,curl/native 天然满足。
+| 对象 | 机制 | 隔离档位 | 先行原因 |
+|---|---|---|---|
+| cc-headless(验证"串行 per_thread") | `ClaudeSDKClient` sidecar,`query(text, session_id)`,`sdk_sidecar.ex:94`;**serializes**(`:6`)→需 turn 队列 | `:per_thread` 串行 | 接口已就位,每次 query 拼 MessageStore context |
+| codex-remote(验证"并发 per_thread") | app-server + bridge sidecar,conversation 单位 `thread_id`;app-server 原生多 thread,单 `thread_id`→要扩 per-session | `:per_thread` 并发 | 每 session 一 thread,免串行 |
+| curl / native(验证":stateless") | 本来就无状态,走 `in_process_sync`,`agent_bridge.ex:128,331` | `:stateless` | 天然满足,D1 安全 |
 
 ---
 
-## 5. 会话隔离 + flavor 隔离能力位
+## 5. 会话隔离 + cardinality(Allen Q3 ratify:per-role `one|many`)
 
-### 5.1 隔离性矩阵(现状)
+### 5.1 viewer 验证结论(ACT-1 + codex 交叉验证)
 
-| 背景 | 执行器 / config_dir | 上下文 | 隔离性 | 靠什么 |
-|---|---|---|---|---|
-| fresh · 单 session | 独立 | 独立 | ✅ 天然 | session_discriminator(`entity/agent.ex:433`) |
-| 同 session · 多人 | 共享 | 共享(有意) | 有意共享 | turn / visibility |
-| **reuse · 跨 session** | **共享同一实例** | **串**(`codex_agent.ex:276`) | ❌ **缺** | 无 |
-| curl / native | 共享 stateless | 每 run 自带 | ✅ 天然 | 本就无状态 |
-
-`reuse_existing_agent`(`definition_agents.ex:179`)复用同一 `agent_uri` → 同一子进程/config_dir/thread → 两 session 上文相串。**这是当前真空。**
-
-### 5.2 隔离能力位(做成 adapter 声明)
-
-| `isolation` | 谁 | reuse 能否共享执行器 |
+| 点 | 结论 | 关键证据 |
 |---|---|---|
-| `:per_instance` | `cc`(PTY):一实例一会话 | **否** → 退化独立实例(D2) |
-| `:per_thread`(串行) | `cc-headless`:一 sidecar 多 `session_id`,但 serializes | 可,需 per-sidecar turn 队列 |
-| `:per_thread`(可并发) | `codex-remote`/`codex`:app-server 多 thread | 可,**每 session 一 thread** 隔离 |
-| `:stateless` | `curl` / `native` | 天然安全,每 run 自带 context |
+| hello 是否声明 viewer/human? | ✅ **是** — deploy-seed `manifest.yaml:27-28` 有 `role_name: viewer, fill: human` | `manifest.yaml:18-47`;`Demo.Hello` moduledoc 权威声明"is the one source of truth"(`hello.ex:5-24`) |
+| 有 `from_role: viewer` 路由? | ✅ **是** — `manifest.yaml:29-36` 有 `from_role: viewer → responser` | `manifest.yaml:29-36` |
+| 匿名访客带 role_name 吗? | ❌ **不带** — `AnonAdmission` join 只传 `%{member: anon_uri}`,无 role_name | `anon_admission.ex:100-107` |
+| role_name_conflict 冲突? | ❌ **不冲突** — `role_name_conflict(_, _, nil) → :ok` | `members.ex:67` |
+| `from_role: viewer` 会 fire 吗? | ❌ **永不 fire**(对匿名访客)——`match?` 读 sender 的 `role_name` facet,匿名无 facet | `matcher.ex:178-179,322-326` |
+| **消息到 agent 吗?** | ✅ **到** — 走框架 `system_default` 规则 `$session_members`,广播全部成员 | `resolver.ex:17-25`;`session.ex:540,612-635` |
 
-> v1.1 修正:v1 曾把 `cc-headless` 误归 `:stateless`。现读 `sdk_sidecar.ex:6`("serializes query+receive_response")——它是**串行的 `:per_thread`**(一个 SDK client 一次一 turn),不是并发无状态。
+**一句话**:viewer 唯一性冲突 **不成立**(anon 不占 role_name);`from_role: viewer` 对匿名访客空转但交付不走空(`$session_members` 兜底);**真正的问题是** viewer role 有意义但匿名访客不在它下面,导致 `from_role: viewer` 规则永远不被匿名触发。
 
-### 5.3 reuse 三策略 + 建议
+### 5.2 per-role cardinality(Allen Q3 ratify,plan §1 5 分钟项)
 
-- **D1 无状态 + per-run session scope + 串行化**(依赖 §4):共享执行器,每 run 喂该 session context;单执行器同刻只能跑一个 session 的 turn → per-executor turn 队列。codex 多 thread 免串行,cc 单进程必串行。
-- **D2 只共享身份/config,不共享运行时**:复用 recipe/凭据/URI,每 session 仍起独立执行器 → 退化 fresh 隔离,安全但不省进程。
-- **D3 显式声明**:reuse 分"共享记忆"(有意跨 session 同上文)vs "共享身份不共享记忆"。
+**occupancy 是 per-role policy,不是全局不变式:**
 
-**建议:默认 D2(安全);`:per_thread`/`:stateless` 才允许 D1(省资源);`:per_instance` 的 cc-PTY 永远 D2。**
+| `cardinality` | 语义 | 谁 |
+|---|---|---|
+| `one`(默认) | accountable 单持有者,当前语义 | orchestrator / builder / concierge / responser |
+| `many` | 人类自由附加;`{:role}` fan-out 到所有 edge | **viewer**(hello 真实用例) |
+
+- S3 换实例跟 cardinality **正交**,仍走 **handoff/cutover**(单活跃+一 pending,原子换绑)。
+- fan-out 到群组的下层实现走 **Legend + `$session_members`**(`legend.ex:1,7` `member_set`),不走重载 role_name。
+- Q3 让 viewer 从"隐式(anon 不占 role_name)升为**显式**(role + cardinality:many),并连带让 `from_role: viewer → responser` 对带 viewer role 的 human 生效。
+
+### 5.3 隔离能力位(修正:四档)
+
+| `isolation` | 谁 | reuse 共享执行器? |
+|---|---|---|
+| `:per_instance` | cc(PTY):常驻 process | **否**→退化独立实例(D2) |
+| `:per_thread`(串行) | cc-headless:`serializes` | 可,需 per-sidecar turn 队列 |
+| `:per_thread`(并发) | codex-remote/codex:app-server 多 thread | 可,每 session 一 thread(D1) |
+| `:stateless` | curl / native | 天然安全(D1) |
+
+### 5.4 reuse 三策略 + 建议(D2 默认,Q2 收紧)
+
+- **D2(默认,安全)** — 共享身份 + **只读**凭据 + **每 session 独立可写 runtime**。复用 recipe/凭据/URI,但每 session 起独立执行器。
+  - D2 不是"共享 config"(config_dir 是 `agent_uri` 纯函数 `home_runtime.ex:90`,共享 path = 写竞争+串台,曾被 `session_discriminator`(`entity/agent.ex:373,434`)修复)。
+  - reuse 授权门:经 #1269 确认为 **false-positive**——provision 只是 join 第一步,真正的 operator→agent 凭据隔离在马下游 **Part C admission gate**(`membership.ex` `admission_pending?/2`):非 owner 且非 manages 的凭据型成员被 **PEND**,无 member-cap、花不了凭据,直到 owner `:approve_admission`。
+- **D1(省资源)** — 共享执行器,仅对 `:per_thread`/`:stateless` flavor 允许。需 per-run session scope + 串行化(cc-headless)或 per-session thread(codex-remote)。
+- **D3(显式声明)** — reuse 分"共享记忆"vs"共享身份不共享记忆"。
 
 ---
 
 ## 6. 存储分层:PG(权威)vs fs(缓存/导出)
 
-### 6.1 现状(都现读)
+### 6.1 现状
 
-- **PG · event-sourcing 骨架**:`EventLog`(invocations,追加,`event_log.ex:66,156`)→ `SnapshotStore`(kind_snapshots,每 100 events + terminate,`snapshot_store.ex:6-8`)→ `MessageStore`(messages + message_routings,历史真相源,`message_store.ex:18-49`)。
-- **文件系统 · config_dir**:凭据(auth.json / .credentials.json)+ flavor SDK session(codex thread/jsonl、cc `~/.claude`)。**即 §4 要降级的缓存。**
+- **PG · event-sourcing 骨架**:`EventLog`(invocations)→ `SnapshotStore`(每 100 events)→ `MessageStore`(messages+message_routings · `message_store.ex:18-49`)。
+- **文件系统 · config_dir**:凭据(①)+ recipe 投影(③ skills/CLAUDE.md)+ runtime SDK session(④ codex jsonl/cc `~/.claude`)。配合 §4.2 三分类:①③ = 可复现投影,④ = disposable cache。
 
-**结论**:对话历史/上下文**已经在 PG,不是 fs**。白板 `fs:log` 若指"文件日志存历史",与现状不符,也不建议改主存。
+**结论**:对话历史/上下文**已在 PG,不是 fs**。白板 `fs:log` 若指文件日志存历史,与现状不符,也不建议改主存。
 
 ### 6.2 DB vs 文件(针对历史/上下文)
 
-| 维度 | PG(现状) | 文件 fs:log |
+| 维度 | PG | 文件 |
 |---|---|---|
-| 按 session/时间/id 查询、replay | ✅ SQL JOIN + LIMIT | ✗ append 好写,随机查难 |
-| 一条消息挂多 session(reuse/多路) | ✅ `message_routings`(Decision #40) | ✗ 跨文件自建索引 |
-| 事务/幂等/一致性 | ✅ 同步 upsert + unique index | ✗ 无事务,崩溃半写 |
-| **按 session 隔离(§5)** | ✅ `session_uri` 列,天然分区 | ✗ 共享文件要自己切 |
-| append 吞吐 / PTY 原始流 | 中 | ✅ 顺序写快 |
-| 大附件 / 产物 | ✗ 不塞 blob | ✅ 天生适合 |
-| 离线 cat/grep / 归档 | 中 | ✅ 直接看(codex jsonl) |
-| 统一备份/迁移 | ✅ 一处 DB | 中(散在各 config_dir) |
+| 按 session/时间/id 查询 replay | ✅ SQL JOIN+LIMIT | ✗ 随机查难 |
+| 一条消息挂多 session | ✅ `message_routings`(#40) | ✗ 跨文件自建索引 |
+| 事务/幂等/一致性 | ✅ upsert+unique | ✗ 无事务 |
+| **按 session 隔离(§5)** | ✅ `session_uri` 列,天然分区 | ✗ 共享文件自己切 |
+| append 吞吐/PTY 原始流 | 中 | ✅ 顺序写快 |
+| 大附件/产物 | ✗ 不塞 blob | ✅ 天生适合 |
+| 离线 cat/grep/归档 | 中 | ✅ 直接看(jsonl) |
 
-### 6.3 fs:log 的合理定位
+### 6.3 fs:log 的定位
 
-不是主存,而是从 EventLog/MessageStore **投影出的可选 append-only 审计/导出流**(cat/grep/归档、喂无状态 run),真相源仍是 PG。文件存储专接**附件/大产物**(config_dir 或对象存储)与 **PTY 原始流录制**(若需)。
+`fs:log` 不是主存,而是从 EventLog/MessageStore **投影出的可选追加审计/导出流**(cat/grep/归档、喂无状态 run),真相源仍是 PG。文件专接**附件/大产物**(config_dir 或对象存储)+**PTY 录制**(若需)。
 
 ---
 
-## 7. 决策清单(v1)
+## 7. curl 统一(退化生命周期,Q4)
+
+- **声明** `:stateless` + `:in_process_sync`(`agent_bridge.ex:128,331`)——**没有**子进程/config_dir/PTY 生命周期(`bridge_adapter.ex:22`「NO subprocess and NO WebSocket」)。
+- **退化**:ready=恒真;fail=`last_error` 数据(`behavior/curl_agent.ex:35-37`);reset = `reset_conversation`(:91);switch = `configure`(:99)。**同一套能力位接口,每个 hook 退化**,不分叉。
+- **completion vs tool-loop 与 flavor 正交**:curl 纯 completion(`bridge_adapter.ex:105`,零 tool);tool-loop 只在 cc MCP orchestrator(`mcp_server.ex:329`)。**真做 tool-loop 应在 flavor 之上起共享轴驱动任意 flavor**(含 curl)。保护不变式:flavor = 可互换 completion backend(`recipe/compose.ex:11-13`)。
+
+---
+
+## 8. 决策清单(v2)
 
 | # | 决策 | 状态 |
 |---|---|---|
-| 1 | **上下文归属 A** — flavor = 无状态执行器,上下文权威在 MessageStore(session 键) | ✅ **已确认** |
-| 1a | cc-PTY 是否排除在无状态语义外(需无状态 role 走 cc-headless) | ❓ 待定 |
-| 2 | **switch v0** — S1 换实例弃旧;窗口内消息缓冲 vs 拒 | ❓ 建议 S1 |
-| 3 | **reset v0** — R1 原地重启;是否补 R3(failed→not_ready 回环) | ❓ 建议 R1 |
-| 4 | **reuse 隔离默认** — D2(安全)/ 按 isolation 能力位允许 D1 | ❓ 建议 D2 默认 |
-| 5 | **role 多 member** — role_name 会话内唯一是否松绑(解锁 S3) | ❓ 待定 |
-| 6 | **curl 分叉** — 无子进程的 ready/fail/reset/switch 是否统一抽象 | ❓ 待定 |
+| 1 | **上下文归属 A** — MessageStore(session 键);flavor = 无状态;PTY = disposable | ✅ 已 ratify(Q1 RULING) |
+| 1a | three-layer state(MessageStore / durable folder / disposable process) | ✅ 已定 |
+| 1b | rehydration 契约(跨 backend 靠 PG replay) | ✅ 已定(Decision A 必答) |
+| 1c | config_dir 三分类(recipe-projected/credential/runtime) | ✅ 已定(§4.2) |
+| 2 | **switch v0** — S1 换实例弃旧;不丢上文(PG replay) | ✅ 已定 |
+| 3 | **reset v0** — R1 原地重启;R3(回环)降优先级(进程死=正常) | ✅ 已定 |
+| 4 | **reuse 隔离默认** — D2(只读凭据+独立 writable runtime);`:per_thread`/`:stateless` 允许 D1 | ✅ 已定(Q2 收紧) |
+| 4a | reuse 授权门 false-positive(#1269,Part C gate 兜底) | ✅ 已闭合 |
+| 5 | **per-role cardinality** — `one|many`;S3 = handoff/cutover | ✅ 已 ratify(Q3,plan §1) |
+| 6 | **curl 统一** — 退化生命周期,同一能力位接口;completion/tool-loop 正交 | ✅ 已 ratify(Q4) |
+
+> 全部 ❓ 已收敛。本稿可转正式(去 WIP)。
 
 ---
 
-## 8. 三条实现线的依赖
+## 9. 三条实现线依赖(更新)
 
 ```
-决策 A(已定)
-   ├─► 线1 异构无状态 run 契约(§4)──┐
-   │      cc-headless/codex/curl 先行  │
-   │                                   ▼
-   ├─► 线2 隔离能力位(§5)── reuse D1 依赖线1;D2 可独立先落
+Q1 RULING(全 flavor 无状态 + rehydration)
+   ├─► 线1 无状态 run 契约(§4.3) —— cc-headless + codex-remote 首验
+   │      dependent: 线2 D1(共享执行器)
    │
-   └─► 线3 存储分层(§6)── PG 已是权威,fs 降缓存 + 可选导出流
+   ├─► 线2 隔离能力位(§5.3-5.4) —— D2 可独立先落;D1 依赖线1
+   │
+   └─► 线3 存储分层(§6) —— PG 已是权威;config_dir 三分类固化
 ```
 
-**交付边界**:先落线3(确认/固化 PG 权威 + config_dir 降缓存)与线2 的 D2(安全隔离),线1 从 `cc-headless` 起步验证无状态 run 契约,再回头让 reuse 走 D1。S2/S3/role 松绑/curl 统一显式 defer,走 Allen grill 进 GLOSSARY Decision Log。
+**分期交付**:线3(固化 PG + config_dir 三分类)先行;线2 D2(安全隔离)独立可落;线1 首验从 cc-headless 起步→codex-remote→回头让 reuse 走 D1。S2(内容迁移)/S3(多 member)/curl 统一(退化)已收口;app.ex dead-code drift(§6.4)登记清理。
+
+---
+
+## 附录:本稿引用的外部变更
+
+| PR | 内容 | 对本稿影响 |
+|---|---|---|
+| #1269 | reuse-join 授权门 false-positive(Part C gate) | ACT-2 作废 |
+| #1266 | SkillRegistry P1-P3 合入 main | DOC-prov(provenance 注脚)删除 |
+| #1253 | Decision #161 四层词汇(Definition/Recipe/Manifest/Registry) | 命名对齐 |
+| #1261 | `RecipeResolver` 重命名 | `Ezagent.Agent.RecipeResolver` 引用更新 |
+| #1255 | `Recipe*` 点约定 + arch gate | `Ezagent.Agent.Recipe*` 类名前缀 |
+| #1233 | hello 迁部署级 seed 车道(`manifest.yaml`) | viewer 结论:moved from `app.ex` 死代码→`manifest.yaml` 权威源 |
