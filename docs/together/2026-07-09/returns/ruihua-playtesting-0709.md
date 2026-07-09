@@ -66,6 +66,12 @@
 - **复现**：新建 agent（flavor `cc`）→ CC CONFIGURATION 区里同时出现两个 tools 输入：① 右上角标 **`Tools`** 的框；② Permission mode 下面标 **`tools (comma-separated list)`** 的框 —— 不知道该填哪个 / 是否重复（截图 `evidence/f7-create-agent-two-tools-fields.png`）。
 - 建议：合并成一个，或标清两者区别。
 
+### F8 · 新建 cc agent "logged out"，UI 无自助完成凭证的路径（已并入 #1288）
+- **严重度**：中高
+- **现象**：新建 **cc（Claude Code）** agent 后显示 "Credential: Logged out —— 无 `.credentials.json`，agent 从未登录（`claude /login`)"。UI 上**没有自助完成登录的入口**：`claude /login` 是交互式 OAuth、托管环境无 UI 入口；Agent API Keys 路又坏（F6 `:failed`），且 cc 用 Claude OAuth 不是 provider key。→ designer 从 UI 完不成 fresh cc agent 配置。
+- **处理**：与同事 **#1288**（cc agent 不继承 host Claude 凭证）重复 —— UX 角度已并入 #1288、原 #1283 已关；沾 **#396**（onboarding UX）。
+- **证据**：录屏 ruihua Desktop `录屏2026-07-09 14.44.51.mov`
+
 ### F9 · canary 邮箱 magic-link 登录收不到邮件（#1289）
 - **严重度**：中（email 登录这条路走不通）
 - **复现**：https://canary.ezagent.chat/ → 选"邮箱接收登录链接" → 输入邮箱 → 提交 → **邮箱一直收不到登录邮件**，无法完成登录。
