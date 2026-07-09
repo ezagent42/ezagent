@@ -5,8 +5,9 @@
 # `Ezagent.Socialware.ManifestSeed.scan_all!/1` resolves + publishes it through
 # the governed import lane (parse → ManifestResolver.resolve →
 # Conformance.check_candidate → publish_or_upgrade). There is ZERO self-publish
-# from the kanban plugin's boot; `EzagentPluginKanban.Demo` remains only as a
-# test driver over this SAME file. Semantics are the judge: this file must
+# from the kanban plugin's boot — and ZERO plugin-side socialware module at all
+# (Decision #156: socialware carries zero code; tests drive this SAME file via
+# Ezagent.Socialware.ShippedManifest). Semantics are the judge: this file must
 # resolve to the exact Definition the retired code attrs produced (conformance
 # 15/15 green).
 #
@@ -20,7 +21,8 @@
 #     `always → chat` rule (handoff red line). The "__done__" literal is the
 #     spec §4.2 contract point — byte-identical to the marker in
 #     `.claude/skills/kanban-assistant/references/*` (locked by
-#     `relay-signal-check.sh` + `EzagentPluginKanban.Demo.relay_done_marker/0`).
+#     `relay-signal-check.sh` + `kanban_manifest_test.exs`, both reading THIS
+#     file as the authoritative carrier).
 #   * visibility_policy — public + supervised like hello, but
 #     web_anon_access: false (a kanban board is not an anonymous public page).
 name: kanban
