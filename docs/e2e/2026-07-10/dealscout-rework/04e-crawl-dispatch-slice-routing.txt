@@ -1,0 +1,76 @@
+# 04e 发现流证据 — @discover 真爬 + crawl_now 真 dispatch + slice 留存 + routing 审计（2026-07-10）
+
+## ① @discover（真键盘 autocomplete，见 04a/04b/04c 截图）
+
+- composer 真键盘 `@dis` → `ul[role=listbox]` 出现 "discover ROLE" → 点击插入
+  结构化 mention → 追加文本 → Enter，`data-last-dispatch=ok`。
+- ~15s 后 discover（py flavor，sandbox 真跑 discover.py）回复**真实爬取**的
+  HN 线索（截图 04c；条目是当日真实 HN 前排：EU Parliament Chat Control /
+  GPT-5.6 / Show HN: 18 Words 等），回复自带更新信号：
+
+```
+__dealscout_update__ 新线索 5 条（discover 爬取 HN 公开检索源）
+- [public] EU Parliament greenlights Chat Control 1.0 — https://www.patrick-breyer.de/...（687 points）
+- [public] Show HN: 18 Words — https://18words.com/（656 points）
+- [public] GPT-5.6 — https://openai.com/index/gpt-5-6/（643 points）
+...
+```
+
+## ② routing 审计（DB routing_traces，真规则命中）
+
+```
+SELECT id, rule_id, receivers, hop FROM routing_traces ORDER BY inserted_at LIMIT 3;
+ 1 | 1 | {entity://system/agent/f20bd8ae-...}（discover）| 8   ← admin @discover 的 mention 路由
+ 2 | 1 | {entity://system/user/admin}                    | 8   ← discover 回复回投 admin
+ 3 | 2 | {entity://system/agent/4318541d-...}（page）    | 8   ← 回复含 __dealscout_update__ × from_role discover 命中 rule 2 → page
+```
+
+rule 2 与 manifest YAML 逐字一致：
+
+```
+SELECT id, rule_set, matcher_data, receivers FROM routing_rules WHERE rule_set='dealscout-update';
+ 2 | dealscout-update | {"type":"and","items":[{"arg":"__dealscout_update__","type":"text_contains"},{"arg":"discover","type":"from_role"}]} | {$role:cGFnZQ}   （base64 "page"）
+```
+
+## ③ 已知平台缺口（如实，不修——#1201 ②）
+
+routing 命中后对 native page 成员的 receive 投递死于 bridge 缺失（server log）：
+
+```
+[warning] AgentBridge deliver dropped for entity://system/agent/4318541d-...: :no_sandbox_respawn_state.
+Message from entity://system/agent/f20bd8ae-...: __dealscout_update__ 新线索 5 条（discover 爬取 HN 公开检索源）
+```
+
+生产腿是 Crawler 的 caller-dispatch 直呼（见 06c），chat 信号腿保留为声明式
+痕迹 + #1201 ② 修复后的回切靶子（manifest 注释同述）。
+
+## ④ crawl_now 真 dispatch（admin 身份，CapBAC 不绕过）
+
+`dealscout_dispatch.exs`（本目录随附，照 kanban r2 先例：
+`Ezagent.Entity.authenticate(token)` → caps → `Invocation.dispatch` :call；
+token 用 `mix ezagent.user.token ... --mint` 自助铸造，**不入库**）：
+
+```
+$ elixir --name probe@127.0.0.1 --cookie <runtime cookie> dealscout_dispatch.exs \
+    "session://system/socialware-install-dealscout/dealscout-rework-e2e" "crawler.crawl_now" '{}'
+{:ok, %{injected: 20}}
+```
+
+- 20 条真实线索逐条 `session.send` 入会话（截图 04d：会话消息 + 更新信号 +
+  发布 turn 的 chat 摘要"新线索 20 条（crawl）"）；
+- `crawler.search`（`{"query":"AI agent"}`）同路走通：`{:ok, %{injected: 20}}`，
+  条目带 `{search:public}` 来源标注（04d 截图内可见 search 结果行）。
+
+## ⑤ 结构化留存（:crawler slice 的 :items，view/公开页的数据面）
+
+erpc 只读探针（server 节点内 `CrawlerRender.items_for/1`）：
+
+```
+items count: 20
+[%{"retained_at" => "2026-07-09T19:44:49Z", "source" => "public", "source_type" => "public",
+   "summary" => "687 points by rapnie", "title" => "EU Parliament greenlights Chat Control 1.0",
+   "url" => "https://www.patrick-breyer.de/..."}, ...]
+```
+
+（多轮 crawl/search 后按 url+title 去重累积：最终 41→43 条，公开页计数同步，
+见 06a/06b。）
