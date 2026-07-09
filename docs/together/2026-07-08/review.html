@@ -65,6 +65,7 @@
 <p><b>本日已落地的反制</b>：① 部署能力探针（容器内断言部署形态）；② CI reflow 彩排闸（带上一版本 seed 数据的 DB boot 新镜像，专抓「第三态」bug）；③ 注入延迟的冷启动测试。</p>
 <p style="margin-bottom:0"><b>明日的系统性收尾（proposed）</b>：<b>冷启动彩排部署阶段</b>——全新镜像 + <b>空卷</b>的一次性可弃栈 + 最小冒烟，让「冷 / 空 / 旧」三种环境形态在合入前就被一个闸打到。</p>
 </div>
+<blockquote><b>追记（07-09 晨·成稿后）</b>：这条轴在 P1-P3 收尾里又现一例——skill 分发<b>第二次验收修复</b>的根因正是「<b>陈旧构建产物 = 一种环境形态</b>（ambient state）」。<code>mix ezagent.skills.regen_seed</code> 缺 <code>@requirements ["compile"]</code>，从 <code>_build</code> 里的<b>陈旧字节码</b>派生 skill 集合，只得 <b>1 条引用</b>的 bundle；全量加载则派生出 <b>3 条</b>（dev-together、ezagent-session-orchestrator、kanban-assistant——分支切出后才落 main 的声明）。已从根上修复（补 <code>@requirements ["compile"]</code>），测试从<b>硬编码清单</b>去脆化为<b>一致性不变量</b>（<code>bundle == 派生</code>）。热的 / 陈旧的 <code>_build</code> 又是一种「环境形态」——与冷缓存、旧 seed 数据同源。闭环全貌见文末 §追记。</blockquote>
 
 <h2>§1 本日工作统计（按主题分组）</h2>
 
@@ -203,7 +204,18 @@
 <li><b>头号目标滑动记账时点</b>（流程改进）：mid-day pivot 时 lead 即在 plan 追一行「转向说明」，不等 close。</li>
 <li><b>两次过早合并 → 验证结论化</b>（流程规则）：判定「绿」以每个 check 的最终结论为准，不以数量/局部输出为准；修复类 PR 自测清单显式加 <code>uri_query.scan</code>。</li>
 <li class="good" style="list-style-position:inside"><b>环境形态隔离轴 → 已从教训升级为闸</b>（method 正向增量）：部署探针 + CI reflow 闸 + 冷测试三个 counter 本日落地；冷启动彩排部署阶段 = 07-09 系统性收尾提案。</li>
+<li class="good" style="list-style-position:inside"><b>平台不裁决声明内容 → 原则记录</b>（Allen）：机制忠实实现 recipe 的<b>声明</b>，对声明<b>内容</b>的疑问交回声明的<b>作者</b>，不由机制侧代裁。P1-P3 收尾里 kanban recipe 的 dev-together / kanban-assistant skill 声明作为<b>信息</b>知会产品侧；把「机制 / 内容」边界从词约定落成处置原则。</li>
 </ol>
+
+<h2>§追记（07-09 晨·本回顾成稿后收尾）</h2>
+<div class="good">
+<p style="margin-top:0">本回顾成稿于 07-09 晨约 07:00。以下三事在其后收尾，补记于此——<b>不改上文 07-08 的口径与统计</b>（P1-P3 仍按「合 integration 分支」计；#1266 合入 main 属 07-09 事件）：</p>
+<ul>
+<li><b>skill 分发 P1-P3 完成闭环</b>：integration 分支验收通过（全局 gate + spec §4 全部 7 个测试文件全绿）；diff review 结论 <b>ACCEPT-WITH-NOTES</b>，两条 finding 均<b>在分支上修复</b>——① loud-on-miss 信号复用既有 <code>role_degraded</code> 通道（<code>SkillRegistry</code> READY 但 recipe 声明的引用无法解析时不再静默返回无内容模板，改为<b>响亮</b>降级）；② 补 prod-shape 守卫回归测试。经<b>第二次验收修复</b>（根因见环境形态节追记）后，合入 main 为 <b>#1266</b>（<code>364ccf6ba</code>）。</li>
+<li><b>部署晋级</b>：nightly 当日<b>双部署</b>（P1-P3 一次 + point-fix 退役一次——探针断言从 Dockerfile 点修移到 <code>skills_seed</code> bundle 源）；<b>5 项探针全绿、reflow 彩排通过</b>。<b>stable 晋级至 <code>364ccf6ba</code></b>——官网现携<b>全部韧性弧</b>（#1252/#1257/#1259/#1261/#1263）+ 新版 hello #1243 + P1-P3。</li>
+<li><b>原则记录（Allen）</b>：<b>平台不裁决声明内容</b>——见上 §method-deltas 第 5 条。</li>
+</ul>
+</div>
 
 <p style="margin-top:24px;color:#9ca3af;font-size:12px">本回顾面向全体开发者，仅含团队相关内容。Markdown 版见 <code>review.md</code>。</p>
 </body>
