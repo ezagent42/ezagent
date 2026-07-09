@@ -4,7 +4,7 @@ defmodule Ezagent.World.WorkspacePluginActions do
   """
 
   import Phoenix.Component, only: [assign: 3]
-  import Phoenix.LiveView, only: [push_event: 3]
+  import Phoenix.LiveView, only: [push_event: 3, push_patch: 2]
 
   alias Ezagent.World.{CredentialCascade, WorkspacePluginData}
 
@@ -231,6 +231,7 @@ defmodule Ezagent.World.WorkspacePluginActions do
         },
         "ok"
       )
+      |> patch_to_workspace_detail(workspace_name)
     else
       false ->
         put_world_state(
@@ -468,6 +469,11 @@ defmodule Ezagent.World.WorkspacePluginActions do
      |> assign(:world_state_json, Jason.encode!(state))
      |> assign(:last_dispatch_status, status)
      |> push_event("world:state", updates)}
+  end
+
+  defp patch_to_workspace_detail({:noreply, socket}, workspace_name)
+       when is_binary(workspace_name) do
+    {:noreply, push_patch(socket, to: "/workspaces/#{URI.encode_www_form(workspace_name)}")}
   end
 
   defp valid_entity_uri?(caller, workspace, user_uri) do

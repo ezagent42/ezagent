@@ -322,4 +322,27 @@ defmodule Ezagent.World.SaveSessionTemplatePublicScopeGateTest do
     assert socket.assigns.world_state["last_socialware_refs"] == []
     assert install_refs(saved_content!(socket)) == ["chat", "orchestrator"]
   end
+
+  test "successful save returns from template builder to the workspace detail route" do
+    ws = "world-template-return-#{uniq()}"
+    workspace_uri = Ezagent.URI.workspace(ws)
+    operator = Ezagent.URI.user(ws, "operator")
+    caps = MapSet.new([Capability.admin_genesis_cap()])
+
+    {:ok, _} = Ezagent.Workspace.create(ws, %{})
+    :ok = spawn_user(operator)
+    :ok = grant_add_template(operator, workspace_uri)
+
+    {:noreply, socket} =
+      save_template_params(workspace_uri, operator, caps, %{
+        "name" => "world-template-return-tmpl-#{uniq()}",
+        "description" => "return to workspace detail after save"
+      })
+
+    assert socket.assigns.last_dispatch_status == "ok",
+           "template save failed with #{inspect(socket.assigns.world_state)}"
+
+    assert socket.redirected ==
+             {:live, :patch, %{kind: :push, to: "/workspaces/#{URI.encode_www_form(ws)}"}}
+  end
 end
