@@ -395,7 +395,8 @@ defmodule Ezagent.Socialware.Definition do
       {:ok,
        %{
          publish_policy: publish_policy,
-         web_anon_access: get(policy, :web_anon_access, false) == true,
+         web_anon_access: get(policy, :web_anon_access, false) == true or
+           get(policy, "web_anon_access", false) == true,
          scope: scope
        }}
     else

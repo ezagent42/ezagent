@@ -295,10 +295,20 @@ defmodule EzagentPluginHello.Application do
   end
 
   defp seed_page(session_uri) do
-    EzagentPluginHello.TurnDriver.drive(
-      session_uri,
-      EzagentPluginHello.Spec.seed(),
-      "Seed page — the hello builder is live."
-    )
+    body_path = Path.join(:code.priv_dir(:ezagent_plugin_hello), "seed_page/body.json")
+    css_path = Path.join(:code.priv_dir(:ezagent_plugin_hello), "seed_page/shell.css")
+    actor = Ezagent.Entity.User.admin_uri()
+
+    case {File.read(body_path), File.read(css_path)} do
+      {{:ok, body_json}, {:ok, css}} ->
+        body = Jason.decode!(body_json)
+        _ = EzagentPluginHello.TurnDriver.drive(session_uri, body, "v2 website page", actor)
+        _ = EzagentPluginHello.TurnDriver.set_shell(session_uri, actor, "", css)
+        Logger.info("hello seed_page: applied v2 website page (#{byte_size(body_json)}b body + #{byte_size(css)}b css)")
+
+      _ ->
+        # Fallback: the built-in seed spec (no prerecorded page in priv)
+        _ = EzagentPluginHello.TurnDriver.drive(session_uri, EzagentPluginHello.Spec.seed(), "Seed page — the hello builder is live.")
+    end
   end
 end
