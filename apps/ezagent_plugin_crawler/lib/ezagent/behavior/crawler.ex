@@ -8,8 +8,8 @@ defmodule Ezagent.ActionSet.Crawler do
   "dealscout" 是**组合本能力的 socialware 的名字**（纯配置，deploy-seed 包
   `apps/ezagent_web/priv/socialware_seed/dealscout/manifest.yaml`）。判据：
   "换个 socialware 还能原样用吗"——crawl_now/search/信号 emit/page 直呼腿
-  都能，留在这里；投融资 prompt、routing 规则等业务件留在 manifest YAML /
-  Recipes 的 dealscout 命名侧。
+  都能，留在这里；业务 persona prompt、routing 规则等业务件留在 manifest
+  YAML / Recipes 的 dealscout 命名侧。
 
   轮询（`Poller`）和手动触发走同一注入路径：抓回条目经 P14 的 legacy 路
   `Ezagent.Invocation.dispatch/1`（本模块构造 `%Ezagent.Invocation{}`；
@@ -105,7 +105,7 @@ defmodule Ezagent.ActionSet.Crawler do
     returns: %{injected: :integer},
     caps: [:crawl_now],
     modes: [:call],
-    description: "Trigger a dealscout crawl and inject results into this session."
+    description: "Trigger a crawl and inject results into this session."
   )
 
   action(:search,
@@ -113,7 +113,7 @@ defmodule Ezagent.ActionSet.Crawler do
     returns: %{injected: :integer},
     caps: [:search],
     modes: [:call],
-    description: "Run a dealscout active search (query) and inject results into this session."
+    description: "Run an active search (query) and inject results into this session."
   )
 
   @impl Ezagent.ActionSet

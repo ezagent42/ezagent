@@ -10,8 +10,9 @@ defmodule EzagentPluginCrawler.ConfigTest do
     end
 
     test "set_keywords returns a {:set, :keywords, value} slice effect" do
-      assert {:set, :keywords, ["具身智能", "投融资"]} =
-               Config.set_keywords(%{}, ["具身智能", "投融资"])
+      # 关键词是纯机制数据（任意字符串），测试数据用中性词——业务措辞只住 L2 配置。
+      assert {:set, :keywords, ["elixir", "otp"]} =
+               Config.set_keywords(%{}, ["elixir", "otp"])
     end
   end
 

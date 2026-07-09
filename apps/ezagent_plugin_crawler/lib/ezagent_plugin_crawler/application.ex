@@ -5,7 +5,8 @@ defmodule EzagentPluginCrawler.Application do
   ## 分层（2026-07-07 rename 拍板：plugin = 通用能力，socialware = 配置出来的名字）
 
   本 plugin 是**通用爬取能力**（poller / fetch / config / crawl ActionSet /
-  sweeper），与业务无关；**"dealscout"（商业 / 投融资线索的搜索与撮合平台）是
+  sweeper），与业务无关；**"dealscout"（科技创业/新品动态的线索雷达 demo，
+  数据源 = Hacker News 公开检索 API——D4 数据源诚实化，措辞与真数据相符）是
   socialware 的名字**——一份纯配置组合（deploy-seed 包
   `apps/ezagent_web/priv/socialware_seed/dealscout/manifest.yaml`：组合 hello
   公开面 + 本 plugin 的爬取后台），不是代码层的名字（Decision #156：

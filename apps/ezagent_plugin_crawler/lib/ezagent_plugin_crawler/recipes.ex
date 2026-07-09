@@ -4,8 +4,11 @@ defmodule EzagentPluginCrawler.Recipes do
 
   ## 分层（2026-07-07 rename 拍板）
 
-  这些 recipe 是 **dealscout 业务配置**（投融资线索的 persona prompt），不是
-  通用能力——判据"换个 socialware 还能原样用吗"：prompt 全是投融资措辞，不能。
+  这些 recipe 是 **dealscout 业务配置**（科技创业/新品动态线索的 persona
+  prompt），不是通用能力——判据"换个 socialware 还能原样用吗"：prompt 全是
+  dealscout 业务措辞，不能。persona 措辞与真实数据源一致（D4 数据源诚实化，
+  2026-07-10 段2）：当前唯一真源是 Hacker News 公开检索 API，prompt 不冒充
+  商业/投融资数据。
   所以 recipe **名字保留 dealscout-*** 前缀，随 demo socialware 一起 ship 在
   本（通用 crawler）plugin 里；真正的通用件是 recipe 挂的能力面——
   `Ezagent.ActionSet.Crawler` 的 crawl/search cap。
@@ -53,9 +56,10 @@ defmodule EzagentPluginCrawler.Recipes do
       name: "dealscout-discover",
       behaviors: [],
       prompt:
-        "你是 DealScout 的发现副驾。读用户 profile + 新抓回的线索条目，按千人千面匹配" <>
-          "挑出高分机会，主动推进发现流（可触发 crawl_now 主动爬取）；每条机会保留来源" <>
-          "类型（public / directed）标注。",
+        "你是 DealScout 的发现副驾。线索来自公开科技社区（Hacker News）的首页与检索" <>
+          "结果——科技创业、新品发布与技术动态。读用户 profile + 新抓回的线索条目，" <>
+          "按千人千面匹配挑出高相关线索，主动推进发现流（可触发 crawl_now 主动爬取）；" <>
+          "每条线索保留来源类型（public / directed）标注。",
       # @page_refresh_cap：crawl 完成后的直接 dispatch 腿以触发者身份 dispatch
       # `:refresh_page` 到 page 成员（CapBAC-honest —— 触发者没 cap 就被拒）。
       requested_caps: [@send_cap, @crawl_cap, @page_refresh_cap]
@@ -67,7 +71,9 @@ defmodule EzagentPluginCrawler.Recipes do
     %{
       name: "dealscout-search",
       behaviors: [],
-      prompt: "你把用户的 query 转成对全网 / 指定源的检索，汇总候选，注入发现流并标记为搜索结果。",
+      prompt:
+        "你把用户的 query 转成对公开科技社区（Hacker News 检索 API）/ 已配置定向源的" <>
+          "检索，汇总候选，注入发现流并标记为搜索结果。",
       # 同 discover：search 完成后同样触发直接 dispatch 腿。
       requested_caps: [@send_cap, @crawl_cap, @page_refresh_cap]
     }
@@ -83,12 +89,12 @@ defmodule EzagentPluginCrawler.Recipes do
     }
   end
 
-  # ④ 深挖追问 —— 对单条机会多轮追问，产出可下载材料。
+  # ④ 深挖追问 —— 对单条线索多轮追问，产出可下载材料。
   defp followup do
     %{
       name: "dealscout-followup",
       behaviors: [],
-      prompt: "你对单条机会做多轮深挖追问，逐步产出可下载的尽调材料。",
+      prompt: "你对单条线索做多轮深挖追问，逐步产出可下载的调研材料。",
       requested_caps: [@send_cap]
     }
   end

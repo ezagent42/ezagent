@@ -42,7 +42,11 @@
 name: dealscout
 version: "0.1.0"
 title: "DealScout"
-description: "商业/投融资线索侦察：AI 千人千面发现 deal + 组合 hello 公开面撮合。"
+# 描述与真实数据源一致（D4 数据源诚实化，2026-07-10 段2）：当前唯一真源是
+# Hacker News（Algolia 公开检索 API，front_page + query 检索，无 token）——
+# 措辞是"科技创业/新品动态线索雷达"，不冒充商业/投融资数据（接商业源要
+# 选型+token+合规，是 follow-up 产品决策，不在本 manifest 假装已有）。
+description: "科技创业与新品动态线索雷达：AI 从 Hacker News 公开源千人千面发现线索 + 组合 hello 公开面展示。"
 uses:
   - hello
   - crawler

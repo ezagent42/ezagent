@@ -43,7 +43,7 @@ defmodule EzagentPluginCrawler.MixProject do
       {:ezagent_domain_agent, in_umbrella: true},
       {:ezagent_domain_workspace, in_umbrella: true},
       {:ezagent_domain_identity, in_umbrella: true},
-      # 组合 hello 拿公开面 + concierge（撮合腿）——dealscout manifest
+      # 组合 hello 拿公开面 + concierge（展示腿）——dealscout manifest
       # `uses: ["hello", "crawler"]`。爬取能力本身不用它，但 demo socialware
       # 组合（manifest 测试解析 hello recipes + ALT 调 hello 公开生成入口）
       # 需要它先编译进 build path。
