@@ -48,6 +48,16 @@ defmodule Ezagent.ActionSet.Crawler do
   （`[:crawler, :page_refresh, :error]` telemetry + warning），不静默。
   chat 信号腿保留（会话内可见的声明式痕迹 + A① 落地后回切 receive 式的靶子）。
 
+  ## 结构化线索留存（`:items` slice key，view 的数据面）
+
+  注入成功的线索除了进会话消息史，还经常规 `{:set, :items, ...}` effect 留存
+  进本 ActionSet 自己的 state slice（P22 内的通用 effect 路径——"把动作产物
+  留在自己 slice 里"是任何组合本能力的 socialware 都原样可用的机制，无业务
+  语义）：string-keyed、JSON round-trip 安全、最新在前、按 url+title 去重、
+  上限 `@max_retained_items`。读侧是 `Ezagent.ActionSet.CrawlerRender`
+  （view 投影）+ `EzagentPluginCrawler.PagePublisher`（committed 公开页）——
+  两者渲染的都是这份真实爬取产物。
+
   ## source/token 自动分流（Stage B 接线，live 路径）
 
   `:crawl_now` 走 `Fetch.crawl_auto/1`（source 有无自动分流的决策点，spec
@@ -90,6 +100,14 @@ defmodule Ezagent.ActionSet.Crawler do
   @spec page_role() :: String.t()
   def page_role, do: @page_role
 
+  # 结构化线索留存上限（moduledoc §结构化线索留存）：slice 里最新 N 条；
+  # 发现流完整历史仍在会话消息史里，这里只是 view/公开页的结构化读面。
+  @max_retained_items 100
+
+  @doc "结构化线索留存上限（slice `:items` key 的最大长度）。"
+  @spec max_retained_items() :: pos_integer()
+  def max_retained_items, do: @max_retained_items
+
   # 直接 dispatch 腿要按 role_name 解析 page 成员 —— members 住 session Kind 的
   # `:session` slice（`Ezagent.ActionSet.Session` 的 members map）。本 handler
   # 跑在 session Kind 进程内，`Kind.get_slice`（GenServer.call）会自呼死锁，
@@ -129,15 +147,12 @@ defmodule Ezagent.ActionSet.Crawler do
   """
   def handle_crawl_now(_args, ctx) do
     {:ok, items} = fetch_fun().(config_sources(ctx))
-
-    injected =
-      Enum.reduce(items, 0, fn item, acc ->
-        if inject(ctx.session_uri, item, ctx), do: acc + 1, else: acc
-      end)
+    injected_items = Enum.filter(items, &inject(ctx.session_uri, &1, ctx))
+    injected = length(injected_items)
 
     emit_update_signal(ctx.session_uri, injected, "crawl", ctx)
     dispatch_page_refresh(ctx, injected, "crawl")
-    {:ok, %{injected: injected}, []}
+    {:ok, %{injected: injected}, retain_effects(ctx, injected_items)}
   end
 
   @doc """
@@ -153,15 +168,69 @@ defmodule Ezagent.ActionSet.Crawler do
     {:ok, items} = search_fun().(query)
     source = Map.get(args, :source, "public")
 
-    injected =
-      Enum.reduce(items, 0, fn item, acc ->
-        tagged = Map.put(item, :source, "search:#{source}")
-        if inject(ctx.session_uri, tagged, ctx), do: acc + 1, else: acc
-      end)
+    injected_items =
+      items
+      |> Enum.map(&Map.put(&1, :source, "search:#{source}"))
+      |> Enum.filter(&inject(ctx.session_uri, &1, ctx))
+
+    injected = length(injected_items)
 
     emit_update_signal(ctx.session_uri, injected, "search", ctx)
     dispatch_page_refresh(ctx, injected, "search")
-    {:ok, %{injected: injected}, []}
+    {:ok, %{injected: injected}, retain_effects(ctx, injected_items)}
+  end
+
+  # 结构化线索留存（moduledoc §结构化线索留存）：注入成功的条目归一成
+  # string-keyed JSON-safe entry，最新在前合并进现有 `:items`，按 url+title
+  # 去重、截断到 `@max_retained_items`。零注入 → 零 effect（不动 slice）。
+  defp retain_effects(_ctx, []), do: []
+
+  defp retain_effects(ctx, injected_items) do
+    existing = Ezagent.ActionSet.CrawlerRender.normalize_items(read_items(ctx))
+    fresh = Enum.map(injected_items, &retained_entry/1)
+
+    merged =
+      (fresh ++ existing)
+      |> Enum.uniq_by(fn entry -> {entry["url"], entry["title"]} end)
+      |> Enum.take(@max_retained_items)
+
+    [{:set, :items, merged}]
+  end
+
+  defp read_items(ctx) do
+    case ctx[:read] do
+      read when is_function(read, 2) -> read.(:items, [])
+      _ -> []
+    end
+  end
+
+  # JSON round-trip 安全的留存条目（string key、纯字符串值——slice 会随
+  # snapshot 序列化，DateTime/atom 不落盘原样）。
+  defp retained_entry(item) do
+    %{
+      "title" => str_field(item, :title),
+      "url" => str_field(item, :url),
+      "summary" => str_field(item, :summary),
+      "source" => str_field(item, :source),
+      "source_type" => str_field(item, :source_type),
+      "retained_at" => retained_at(item)
+    }
+  end
+
+  defp str_field(item, key) do
+    case Map.get(item, key) do
+      nil -> ""
+      value when is_binary(value) -> value
+      value when is_atom(value) -> Atom.to_string(value)
+      value -> to_string(value)
+    end
+  end
+
+  defp retained_at(item) do
+    case Map.get(item, :ts) do
+      %DateTime{} = ts -> DateTime.to_iso8601(ts)
+      _ -> DateTime.to_iso8601(DateTime.utc_now())
+    end
   end
 
   # 内容协议更新信号：injected > 0 才发（没新线索不打扰 hello 的页面 agent）。

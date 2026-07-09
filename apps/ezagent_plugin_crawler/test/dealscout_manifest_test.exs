@@ -13,8 +13,9 @@ defmodule EzagentPluginCrawler.DealscoutManifestTest do
 
   Proves the YAML file exists + parses, that the parsed manifest resolves
   through `Ezagent.Socialware.ManifestResolver.resolve/1` (the fail-closed
-  authoring boundary), composes hello's public face (Surface+Turn shape,
-  `hello_render` view, `external_feed` adapter, anon-readable), declares
+  authoring boundary), composes the platform public face (Surface+Turn shape,
+  crawler 自带的 `crawler_render` view——段4 D2 显示自包含, `external_feed`
+  adapter, anon-readable), declares
   exactly the `discover` + `page` agent role-slots with zero participant
   instance URIs (role-slot #1180), carries ONLY the content-triggered
   update-signal rule (never hello's `always → chat` — the kanban-handoff red
@@ -112,7 +113,7 @@ defmodule EzagentPluginCrawler.DealscoutManifestTest do
     assert parsed["uses"] == ["hello", "crawler"]
     assert Ezagent.ActionSet.Session in parsed["bases"]
     assert Crawler in parsed["shape"]
-    assert parsed["views"] == ["hello_render"]
+    assert parsed["views"] == ["crawler_render"]
   end
 
   test "manifest resolves through ManifestResolver (string name-refs → Definition)" do
@@ -125,9 +126,10 @@ defmodule EzagentPluginCrawler.DealscoutManifestTest do
     # code-seed 定义）——解"装完会话没人应答"（gap⑪）；conformance 的
     # requires_published / requires_cycle_free 在 publish 测试整套跑。
     assert definition.requires == ["orchestrator"]
-    # `"hello_render"` resolved through hello's registered PageView to the
-    # backing view read ActionSet — dealscout declares NO view/render of its own.
-    assert definition.views == [Ezagent.ActionSet.HelloRender]
+    # `"crawler_render"` resolved through crawler's registered LeadsView to the
+    # backing view read ActionSet（段4 D2：显示自包含，不再借 hello 的
+    # hello_render）。
+    assert definition.views == [Ezagent.ActionSet.CrawlerRender]
     # #1180: the `members` field is retired; participants live in `roles`.
     refute Map.has_key?(Map.from_struct(definition), :members)
   end

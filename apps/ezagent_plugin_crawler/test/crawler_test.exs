@@ -363,6 +363,98 @@ defmodule EzagentPluginCrawler.CrawlerTest do
     end
   end
 
+  describe "结构化线索留存（段4 D2：注入成功的线索经 {:set, :items, ...} 落 slice）" do
+    defp fixture_item(n) do
+      %{
+        title: "线索#{n}",
+        url: "https://example.com/#{n}",
+        summary: "s#{n}",
+        source: "hn",
+        ts: ~U[2026-07-10 00:00:00Z],
+        source_type: :public
+      }
+    end
+
+    test "crawl_now retains injected leads as string-keyed JSON-safe entries (newest first)" do
+      Application.put_env(:ezagent_plugin_crawler, :fetch_fun, fn _sources ->
+        {:ok, [fixture_item(1), fixture_item(2)]}
+      end)
+
+      Application.put_env(:ezagent_plugin_crawler, :dispatch_fun, fn _cmd -> :ok end)
+
+      ctx = %{session_uri: Ezagent.URI.new!("session://system/default/t"), caller: nil}
+      assert {:ok, %{injected: 2}, effects} = Crawler.handle_crawl_now(%{}, ctx)
+
+      assert [{:set, :items, retained}] = effects
+      assert Enum.map(retained, & &1["title"]) == ["线索1", "线索2"]
+
+      # JSON round-trip 安全（slice 随 snapshot 序列化）：string key、纯字符串值。
+      assert Jason.encode!(retained)
+
+      assert [%{"source_type" => "public", "retained_at" => "2026-07-10T00:00:00Z"} | _] =
+               retained
+    end
+
+    test "retention merges with existing slice items, dedupes by url+title, caps the length" do
+      Application.put_env(:ezagent_plugin_crawler, :fetch_fun, fn _sources ->
+        {:ok, [fixture_item(1), fixture_item(2)]}
+      end)
+
+      Application.put_env(:ezagent_plugin_crawler, :dispatch_fun, fn _cmd -> :ok end)
+
+      existing =
+        [
+          # 与本轮线索1 同 url+title —— 必须去重（新条目在前）。
+          %{"title" => "线索1", "url" => "https://example.com/1", "summary" => "old"}
+        ] ++
+          for n <- 3..(Crawler.max_retained_items() + 5) do
+            %{"title" => "旧#{n}", "url" => "https://old.example/#{n}", "summary" => ""}
+          end
+
+      ctx = %{
+        session_uri: Ezagent.URI.new!("session://system/default/t"),
+        caller: nil,
+        read: fn
+          :items, _default -> existing
+          _key, default -> default
+        end
+      }
+
+      assert {:ok, %{injected: 2}, [{:set, :items, retained}]} =
+               Crawler.handle_crawl_now(%{}, ctx)
+
+      # 新条目在前，同 url+title 的旧条目被去重掉，总长封顶。
+      assert ["线索1", "线索2" | _] = Enum.map(retained, & &1["title"])
+      assert Enum.count(retained, &(&1["title"] == "线索1")) == 1
+      assert length(retained) == Crawler.max_retained_items()
+    end
+
+    test "empty crawl / zero injected → zero effects (slice untouched)" do
+      Application.put_env(:ezagent_plugin_crawler, :fetch_fun, fn _sources -> {:ok, []} end)
+      Application.put_env(:ezagent_plugin_crawler, :dispatch_fun, fn _cmd -> :ok end)
+
+      ctx = %{session_uri: Ezagent.URI.new!("session://system/default/t"), caller: nil}
+      assert {:ok, %{injected: 0}, []} = Crawler.handle_crawl_now(%{}, ctx)
+    end
+
+    test "search retains its injected leads too (source tagged search:<source>)" do
+      Application.put_env(:ezagent_plugin_crawler, :search_fun, fn _query ->
+        {:ok, [fixture_item(9)]}
+      end)
+
+      on_exit(fn -> Application.delete_env(:ezagent_plugin_crawler, :search_fun) end)
+      Application.put_env(:ezagent_plugin_crawler, :dispatch_fun, fn _cmd -> :ok end)
+
+      ctx = %{session_uri: Ezagent.URI.new!("session://system/default/t"), caller: nil}
+
+      assert {:ok, %{injected: 1}, [{:set, :items, [entry]}]} =
+               Crawler.handle_search(%{query: "postgres", source: "hn"}, ctx)
+
+      assert entry["title"] == "线索9"
+      assert entry["source"] == "search:hn"
+    end
+  end
+
   test "a failed dispatch is counted out (fail-loud, not silent) — injected stays 0" do
     items = [
       %{

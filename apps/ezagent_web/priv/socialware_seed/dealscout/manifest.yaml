@@ -12,13 +12,15 @@
 # Semantics are the judge: the published definition passes all 15
 # `Ezagent.Socialware.Conformance` assertions (15/15 green).
 #
-# Shape notes (what dealscout composes — 职责重划 2026-07-06 拍板):
-#   * dealscout = 后台数据（爬取 plugin `crawler` + discover agent 用 crawl
-#     能力爬线索），hello = 显示 + concierge。本文件是把两者组合成一个
-#     socialware 的那份纯数据：bases/shape 复制 hello 的公开面配置
-#     （Session + Publisher.SessionImpl / Turn + Surface），`views:
-#     [hello_render]` 经 hello registered `PageView` 解析到
-#     `Ezagent.ActionSet.HelloRender` — dealscout 自己不声明任何 view/render。
+# Shape notes (what dealscout composes — 职责重划 2026-07-06 拍板；显示
+# 自包含 2026-07-10 段4 D2):
+#   * dealscout = 爬取 plugin `crawler` 的能力组合（discover agent 用 crawl
+#     能力爬线索 + crawler 自带的结构化线索 view 展示）。本文件是纯配置：
+#     bases/shape 是平台公开面组件（Session + Publisher.SessionImpl / Turn +
+#     Surface，hello 先例的同一套 domain ActionSet），`views:
+#     [crawler_render]` 经 crawler registered `LeadsView` 解析到
+#     `Ezagent.ActionSet.CrawlerRender` — 显示不再借 hello（D2 消掉
+#     LLM key / fake generator / 手工 mount 三个假点）。
 #   * shape 带 Crawler — 2026-07-07 真浏览器 e2e 修正：`:crawl_now` 的
 #     handler 读 `ctx.session_uri` + session 的 config slice → 宿主必须是
 #     session 本体，否则 live dispatch `{:unknown_action, :crawl_now}`。
@@ -72,7 +74,7 @@ shape:
   - Ezagent.ActionSet.Surface
   - Ezagent.ActionSet.Crawler
 views:
-  - hello_render
+  - crawler_render
 roles:
   - role_name: discover
     fill: agent

@@ -30,7 +30,8 @@ defmodule Mix.Tasks.Ezagent.Socialware.Check do
   @reference_apps [
     :ezagent_domain_socialware,
     :ezagent_plugin_hello,
-    :ezagent_plugin_kanban
+    :ezagent_plugin_kanban,
+    :ezagent_plugin_crawler
   ]
 
   @impl Mix.Task
