@@ -122,16 +122,52 @@ defmodule EzagentDomainInstanceMessage.Integration.SessionCreateOrchestratorDeco
       |> Enum.map(fn {:ok, result} -> result end)
 
     for {short, elapsed_ms, {:ok, %{session_uri: session_uri}}} <- results do
-      # The 5s dispatch budget was the SYMPTOM ceiling (canary saw ~5.3s). With
-      # the agent transaction out of create, three concurrent creates through the
-      # single Workspace Kind must land far under it. 1.5s is a real regression
-      # guard; 5s would have passed even while the outage was live.
-      assert elapsed_ms < 1_500,
+      # The 5s dispatch budget was the SYMPTOM ceiling (canary saw ~5.3s), so a
+      # `< 5_000` assertion was green THROUGHOUT the outage and guarded nothing.
+      # With the agent transaction out of create, three concurrent creates through
+      # the single Workspace Kind must land far under it.
+      #
+      # 2s, not 1.5s: each create ALSO fires its own async socialware-install
+      # transaction, and those three background agent spawns contend for the same
+      # Ecto pool while creates #2/#3 are still being measured. 2s keeps a 2.6×
+      # margin over the pre-fix ~5.3s while tolerating that load on a slow CI box.
+      assert elapsed_ms < 2_000,
              "create_session #{short} exceeded the owner-only create budget: #{elapsed_ms}ms"
 
       assert URI.to_string(session_uri) == "session://system/default/#{short}"
       assert_finalized_session_snapshot!(session_uri, owner_uri)
     end
+  end
+
+  # Covers the wiring `Workspace.create_session` → `trigger_socialware_install/1`
+  # → `SessionCreator.install_session_socialware_async/1`. Without this, the whole
+  # async lane could be dead (an unresolvable facade, a missing Task.Supervisor,
+  # a silently-skipped `function_exported?` branch) and every other test in this
+  # file would still pass — creates return owner-only by design, and the direct
+  # `install_session_socialware/1` entry point is exercised separately.
+  test "Workspace.create_session fires the post-create socialware-install transaction" do
+    workspace_uri = Ezagent.URI.workspace(:system)
+    owner_uri = User.admin_uri()
+    short = "async-install-#{System.unique_integer([:positive])}"
+
+    assert {:ok, %{session_uri: session_uri}} =
+             Workspace.create_session(
+               workspace_uri,
+               %{short_name: short, template_name: "default"},
+               %{caller: owner_uri, caps: MapSet.new([Ezagent.Capability.admin_genesis_cap()])}
+             )
+
+    # The create itself is owner-only…
+    assert Session.session_member_uris(session_uri) |> Enum.map(&URI.to_string/1) ==
+             [URI.to_string(owner_uri)]
+
+    # …and the declared orchestrator shows up shortly after, materialized by the
+    # separate transaction the create fired.
+    assert wait_until(
+             fn -> match?(%URI{}, member_role_uri(session_uri, "orchestrator")) end,
+             200
+           ),
+           "the async socialware-install transaction never materialized the orchestrator"
   end
 
   test "route-time role delivery provisions declared orchestrator member lazily" do
