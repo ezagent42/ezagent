@@ -49,9 +49,8 @@ defmodule EzagentPluginCrawler.DealscoutManifestPublishTest do
 
     # `RoleSeedHook` skips in :test — seed both recipe families explicitly so
     # conformance's fail-closed `lookup_recipe` resolves them: dealscout 的
-    # 角色槽当前都引自家 recipe（dealscout-discover + 临时 ALT
-    # dealscout-page-alt）；hello 家照旧一起 seed（A① 落地后 page 槽回切
-    # hello.builder 时这里不用再动）。
+    # 角色槽都引 crawler 插件自家 recipe（dealscout-discover + 通用页面发布腿
+    # crawler-page，段4 D2）。
     recipes = EzagentPluginCrawler.Recipes.all() ++ EzagentPluginHello.Application.roles()
 
     Enum.each(recipes, fn recipe ->

@@ -33,24 +33,23 @@ defmodule EzagentPluginCrawler.Recipes do
   这些 recipe 经 `EzagentPluginCrawler.Application.roles/0` 声明进插件契约，
   boot 时按 `name` 注册进 `Ezagent.Agent.RecipeRegistry`。
 
-  另有一个**显式临时 ALT** recipe（`page_refresh_alt/0`，非发现腿）：A①
-  （#1201 ③，hello builder `from_user?` 门放行带标记信号）落地后随
-  `Ezagent.ActionSet.DealScoutPageRefreshAlt` 一起整体删除。
+  另有一个**通用件** recipe（`crawler_page/0`，非发现腿、名字不带业务词）：
+  page 槽的页面发布腿——把会话留存线索驱动 Turn/Surface 落 committed 公开页
+  （段4 D2，取代曾经借 hello Generator 的临时 ALT）。
   """
 
   # caps 只在这里（recipe 的 requested_caps 是 caps 的唯一来源）。cap-template
   # 形状 `%{behavior: <ActionSet>, action: <atom>}`，照 orchestrator_recipe。
   @send_cap %{behavior: Ezagent.ActionSet.Session, action: :send}
   @crawl_cap %{behavior: Ezagent.ActionSet.Crawler, action: :crawl_now}
-  # v2 dispatch 式（ALT moduledoc）：ALT 的 action 从 `:receive` 改成
-  # `:refresh_page`。dispatch 方要持这个 cap —— 触发爬取的 search recipe
-  # 也 request 它（crawl handler 用触发者的 delegated caps dispatch）。
-  # discover 不再 request（段3：py 车道不 dispatch，见 discover/0 注释）。
-  @page_refresh_cap %{behavior: Ezagent.ActionSet.DealScoutPageRefreshAlt, action: :refresh_page}
+  # 页面发布腿（段4 D2）：dispatch 方要持这个 cap —— 触发爬取的 search
+  # recipe 也 request 它（crawl handler 用触发者的 delegated caps dispatch）。
+  # discover 不 request（段3：py 车道不 dispatch，见 discover/0 注释）。
+  @page_publish_cap %{behavior: Ezagent.ActionSet.CrawlerPage, action: :publish_page}
 
-  @doc "全部 recipe 声明数据（`roles/0` 的 seed 源）：发现腿 4 个 + 临时 ALT 1 个。"
+  @doc "全部 recipe 声明数据（`roles/0` 的 seed 源）：发现腿 4 个 + 通用页面发布腿 1 个。"
   @spec all() :: [map()]
-  def all, do: [discover(), search(), organize(), followup(), page_refresh_alt()]
+  def all, do: [discover(), search(), organize(), followup(), crawler_page()]
 
   # ① 主动发现 —— **script-carrying recipe**（2026-07-10 段3，D1 落地形态）。
   #
@@ -100,8 +99,8 @@ defmodule EzagentPluginCrawler.Recipes do
       prompt:
         "你把用户的 query 转成对公开科技社区（Hacker News 检索 API）/ 已配置定向源的" <>
           "检索，汇总候选，注入发现流并标记为搜索结果。",
-      # 同 discover：search 完成后同样触发直接 dispatch 腿。
-      requested_caps: [@send_cap, @crawl_cap, @page_refresh_cap]
+      # 同 discover：search 完成后同样触发页面发布的直接 dispatch 腿。
+      requested_caps: [@send_cap, @crawl_cap, @page_publish_cap]
     }
   end
 
@@ -125,19 +124,19 @@ defmodule EzagentPluginCrawler.Recipes do
     }
   end
 
-  # ⑤ 【显式临时 ALT，非发现腿】page 槽的 dispatchable 重建入口（v2
-  # caller-dispatch 式，ALT moduledoc）：crawl 完成后直接 dispatch
-  # `:refresh_page` 过来 → 调 hello 公开生成入口重建页面
-  # （`Ezagent.ActionSet.DealScoutPageRefreshAlt`）。code-driven（照
-  # `hello.builder` recipe 的形状：无 prompt，behaviors 挂 ActionSet ——
-  # recipe-loaded behavior 进实例行为集，dispatch 按 action 解析直达）。
-  # **A①（#1201 ③，hello 暴露 dispatchable rebuild action）落地后随 ALT
-  # ActionSet 一起整体删除，manifest 的 page 槽回切 `hello.builder`。**
-  defp page_refresh_alt do
+  # ⑤ 【通用件，非发现腿】page 槽的 dispatchable 页面发布入口（段4 D2，
+  # 取代曾经借 hello Generator 的临时 ALT）：crawl 完成后直接 dispatch
+  # `:publish_page` 过来 → supervised Task 里把会话留存线索驱动
+  # Turn/Surface 落 committed 版本树（`Ezagent.ActionSet.CrawlerPage` +
+  # `EzagentPluginCrawler.PagePublisher`）。code-driven（照 `hello.builder`
+  # recipe 的形状：无 prompt，behaviors 挂 ActionSet —— recipe-loaded
+  # behavior 进实例行为集，dispatch 按 action 解析直达）。名字不带业务词：
+  # 任何组合 crawler 能力的 socialware 声明一个 page 槽引本 recipe 即接上。
+  defp crawler_page do
     %{
-      name: "dealscout-page-alt",
-      behaviors: [Ezagent.ActionSet.DealScoutPageRefreshAlt],
-      requested_caps: [@page_refresh_cap]
+      name: "crawler-page",
+      behaviors: [Ezagent.ActionSet.CrawlerPage],
+      requested_caps: [@page_publish_cap]
     }
   end
 end

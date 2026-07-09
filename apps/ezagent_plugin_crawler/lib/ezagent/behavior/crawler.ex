@@ -30,11 +30,10 @@ defmodule Ezagent.ActionSet.Crawler do
   `@update_signal` 注释）到同一会话。它是 agent 间的**内容协议**：dealscout
   Definition（纯配置）的 routing_rules 用 `text_contains("__dealscout_update__")`
   matcher（`apps/ezagent_core/lib/ezagent/routing/matcher.ex:74`）命中它 →
-  receiver `{:role, <hello 页面 agent 角色>}` → hello 的 agent 收信号后更新
-  json-render 页。**零实例 URI、不数据直推、本插件自己不渲染**——显示是
-  hello 的活。信号 dispatch 失败同样 fail-loud（`[:crawler, :update_signal, :error]`）。
+  receiver `{:role, "page"}`（页面发布角色）。**零实例 URI、不数据直推**。
+  信号 dispatch 失败同样 fail-loud（`[:crawler, :update_signal, :error]`）。
 
-  ## 页面重建的直接 dispatch 腿（v2，绕 #1201 ②）
+  ## 页面发布的直接 dispatch 腿（v2 caller-dispatch，绕 #1201 ②）
 
   真 e2e 实测：上面的 chat 信号腿到 native page 成员是断的 —— canonical
   `agent.receive` 只会把投递塞 bridge，native flavor 无 bridge 必丢。所以在
@@ -42,11 +41,13 @@ defmodule Ezagent.ActionSet.Crawler do
   （#1190 r2 pm→board 已证）：按 `role_name` facet 从 `:session` sibling
   slice（`reads_siblings [:session]`，本 handler 跑在 session Kind 上，不能
   `Kind.get_slice` 自呼死锁）解析出 `page_role/0`（`"page"`）成员的实例
-  URI，直接 dispatch `:refresh_page`（`Ezagent.ActionSet
-  .DealScoutPageRefreshAlt`）—— dispatch 按 action 在实例行为集解析直接跑
-  handler，不经 bridge。找不到 page 成员 / dispatch 失败 → fail-loud
-  （`[:crawler, :page_refresh, :error]` telemetry + warning），不静默。
-  chat 信号腿保留（会话内可见的声明式痕迹 + A① 落地后回切 receive 式的靶子）。
+  URI，直接 dispatch `:publish_page`（`Ezagent.ActionSet.CrawlerPage`，
+  段4 D2：supervised Task 里把留存线索驱动 Turn/Surface 落 committed
+  公开页）—— dispatch 按 action 在实例行为集解析直接跑 handler，不经
+  bridge。找不到 page 成员 / dispatch 失败 → fail-loud
+  （`[:crawler, :page_publish, :error]` telemetry + warning），不静默。
+  chat 信号腿保留（会话内可见的声明式痕迹 + #1201 ② 修复后回切 receive
+  式的靶子）。
 
   ## 结构化线索留存（`:items` slice key，view 的数据面）
 
@@ -151,7 +152,7 @@ defmodule Ezagent.ActionSet.Crawler do
     injected = length(injected_items)
 
     emit_update_signal(ctx.session_uri, injected, "crawl", ctx)
-    dispatch_page_refresh(ctx, injected, "crawl")
+    dispatch_page_publish(ctx, injected, "crawl")
     {:ok, %{injected: injected}, retain_effects(ctx, injected_items)}
   end
 
@@ -176,7 +177,7 @@ defmodule Ezagent.ActionSet.Crawler do
     injected = length(injected_items)
 
     emit_update_signal(ctx.session_uri, injected, "search", ctx)
-    dispatch_page_refresh(ctx, injected, "search")
+    dispatch_page_publish(ctx, injected, "search")
     {:ok, %{injected: injected}, retain_effects(ctx, injected_items)}
   end
 
@@ -266,19 +267,21 @@ defmodule Ezagent.ActionSet.Crawler do
     end
   end
 
-  # 页面重建的直接 dispatch 腿（moduledoc §直接 dispatch 腿）：injected > 0 才发
+  # 页面发布的直接 dispatch 腿（moduledoc §直接 dispatch 腿）：injected > 0 才发
   # （与更新信号同门）。mode `:call`（kanban 板动作同款）—— 同步拿到
   # `{:ok, _}` / `{:error, _}`，失败 fail-loud。目标是 page 成员的 agent Kind
-  # （另一进程），无自呼死锁；handler 只 spawn supervised Task，秒回。
-  defp dispatch_page_refresh(_ctx, 0, _origin), do: :ok
+  # （另一进程），无自呼死锁；handler 只 spawn supervised Task，秒回（Task 的
+  # 读线索/驱动 Turn 按 mailbox 顺序排在本轮 `{:set, :items}` 落盘之后，时序
+  # 天然正确——CrawlerPage moduledoc）。
+  defp dispatch_page_publish(_ctx, 0, _origin), do: :ok
 
-  defp dispatch_page_refresh(ctx, injected, origin) do
+  defp dispatch_page_publish(ctx, injected, origin) do
     case page_member_uri(ctx) do
       {:ok, %URI{} = page_uri} ->
-        # 行为段 `:crawler` 只是 `?action=<behavior>.<action>` 的命名段——runtime
-        # 解析只按 action 原子在实例行为集找 handler（BehaviorSet.resolve_action），
-        # 去业务词后不影响解析（rename 前是 :dealscout）。
-        target = Ezagent.URI.with_action(page_uri, :crawler, :refresh_page)
+        # 行为段 `:crawler_page` 只是 `?action=<behavior>.<action>` 的命名段——
+        # runtime 解析只按 action 原子在实例行为集找 handler
+        # （BehaviorSet.resolve_action）。
+        target = Ezagent.URI.with_action(page_uri, :crawler_page, :publish_page)
 
         cmd = %Ezagent.Invocation{
           target: target,
@@ -286,7 +289,7 @@ defmodule Ezagent.ActionSet.Crawler do
           args: %{
             summary: "新线索 #{injected} 条（#{origin}）",
             # 宿主是 agent Kind，`ctx.session_uri` 在那边派生不出来 —— 走 args
-            # 显式传（DealScoutPageRefreshAlt moduledoc）。
+            # 显式传（CrawlerPage moduledoc）。
             session_uri: URI.to_string(ctx.session_uri)
           },
           ctx: delegated_ctx(ctx)
@@ -295,11 +298,11 @@ defmodule Ezagent.ActionSet.Crawler do
         case dispatch_fun().(cmd) do
           :ok -> :ok
           {:ok, _} -> :ok
-          other -> page_refresh_error(other, injected, origin)
+          other -> page_publish_error(other, injected, origin)
         end
 
       {:error, reason} ->
-        page_refresh_error(reason, injected, origin)
+        page_publish_error(reason, injected, origin)
     end
   end
 
@@ -323,16 +326,16 @@ defmodule Ezagent.ActionSet.Crawler do
   end
 
   # 谁会知道原则：page 成员缺失 / dispatch 失败都有人知道（telemetry + warning），
-  # 不静默吞 —— 页面不刷新时运维能从日志定位到这条腿。
-  defp page_refresh_error(reason, injected, origin) do
-    :telemetry.execute([:crawler, :page_refresh, :error], %{count: 1}, %{
+  # 不静默吞 —— 页面不更新时运维能从日志定位到这条腿。
+  defp page_publish_error(reason, injected, origin) do
+    :telemetry.execute([:crawler, :page_publish, :error], %{count: 1}, %{
       injected: injected,
       origin: origin,
       reason: reason
     })
 
     Logger.warning(
-      "Crawler page refresh dispatch failed (no one else would know): #{inspect(reason)}"
+      "Crawler page publish dispatch failed (no one else would know): #{inspect(reason)}"
     )
 
     :ok

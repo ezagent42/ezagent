@@ -238,8 +238,8 @@ defmodule EzagentPluginCrawler.CrawlerTest do
     end
   end
 
-  describe "页面重建的直接 dispatch 腿（v2 caller-dispatch，绕 #1201 ②）" do
-    test "injected>0 且 siblings 里有 page 成员 → 直接 dispatch :refresh_page（:call，带 summary + session_uri，透传触发者身份）" do
+  describe "页面发布的直接 dispatch 腿（v2 caller-dispatch，绕 #1201 ②）" do
+    test "injected>0 且 siblings 里有 page 成员 → 直接 dispatch :publish_page（:call，带 summary + session_uri，透传触发者身份）" do
       test_pid = self()
 
       items = [
@@ -270,29 +270,29 @@ defmodule EzagentPluginCrawler.CrawlerTest do
       # 线索注入 → 更新信号（chat 腿保留）→ 直接 dispatch 腿，三条按序。
       assert_receive {:dispatched, %Ezagent.Invocation{} = _inject_cmd}, 500
       assert_receive {:dispatched, %Ezagent.Invocation{} = _signal_cmd}, 500
-      assert_receive {:dispatched, %Ezagent.Invocation{mode: :call} = refresh_cmd}, 500
+      assert_receive {:dispatched, %Ezagent.Invocation{mode: :call} = publish_cmd}, 500
 
-      target = URI.to_string(refresh_cmd.target)
+      target = URI.to_string(publish_cmd.target)
       assert target =~ "entity://system/agent/page-1"
-      assert target =~ "action=crawler.refresh_page"
+      assert target =~ "action=crawler_page.publish_page"
 
-      assert refresh_cmd.args.summary =~ "新线索 1 条（crawl）"
-      assert refresh_cmd.args.session_uri == "session://system/default/t"
+      assert publish_cmd.args.summary =~ "新线索 1 条（crawl）"
+      assert publish_cmd.args.session_uri == "session://system/default/t"
       # CapBAC-honest：以触发者身份 dispatch（触发者没 cap 就被拒）。
-      assert refresh_cmd.ctx.caller == caller
-      assert refresh_cmd.ctx.caps == caps
+      assert publish_cmd.ctx.caller == caller
+      assert publish_cmd.ctx.caps == caps
     end
 
-    test "没有 page 成员 → fail-loud telemetry，不发 refresh dispatch（不静默）" do
+    test "没有 page 成员 → fail-loud telemetry，不发 publish dispatch（不静默）" do
       test_pid = self()
-      handler_id = "crawler-page-refresh-error-#{System.unique_integer([:positive])}"
+      handler_id = "crawler-page-publish-error-#{System.unique_integer([:positive])}"
 
       :ok =
         :telemetry.attach(
           handler_id,
-          [:crawler, :page_refresh, :error],
+          [:crawler, :page_publish, :error],
           fn _event, _measurements, meta, _config ->
-            send(test_pid, {:page_refresh_error, meta})
+            send(test_pid, {:page_publish_error, meta})
           end,
           nil
         )
@@ -326,24 +326,24 @@ defmodule EzagentPluginCrawler.CrawlerTest do
 
       assert {:ok, %{injected: 1}, _} = Crawler.handle_crawl_now(%{}, ctx)
 
-      assert_receive {:page_refresh_error, %{reason: :no_page_member, injected: 1}}, 500
+      assert_receive {:page_publish_error, %{reason: :no_page_member, injected: 1}}, 500
 
-      # 只有线索注入 + 更新信号两条，没有 refresh dispatch。
+      # 只有线索注入 + 更新信号两条，没有 publish dispatch。
       assert_receive {:dispatched, _}, 500
       assert_receive {:dispatched, _}, 500
       refute_receive {:dispatched, _}, 100
     end
 
-    test "injected == 0 → 不发 refresh、不报错（与更新信号同门）" do
+    test "injected == 0 → 不发 publish、不报错（与更新信号同门）" do
       test_pid = self()
-      handler_id = "crawler-page-refresh-error-#{System.unique_integer([:positive])}"
+      handler_id = "crawler-page-publish-error-#{System.unique_integer([:positive])}"
 
       :ok =
         :telemetry.attach(
           handler_id,
-          [:crawler, :page_refresh, :error],
+          [:crawler, :page_publish, :error],
           fn _event, _measurements, meta, _config ->
-            send(test_pid, {:page_refresh_error, meta})
+            send(test_pid, {:page_publish_error, meta})
           end,
           nil
         )
@@ -355,7 +355,7 @@ defmodule EzagentPluginCrawler.CrawlerTest do
 
       ctx = %{session_uri: Ezagent.URI.new!("session://system/default/t"), caller: nil}
       assert {:ok, %{injected: 0}, _} = Crawler.handle_crawl_now(%{}, ctx)
-      refute_receive {:page_refresh_error, _}, 100
+      refute_receive {:page_publish_error, _}, 100
     end
 
     test "page_role/0 是单一契约点（manifest 的角色槽声明用同一个名字）" do

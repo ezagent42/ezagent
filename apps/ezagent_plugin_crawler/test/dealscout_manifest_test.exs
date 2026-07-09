@@ -34,8 +34,8 @@ defmodule EzagentPluginCrawler.DealscoutManifestTest do
 
   `ShippedManifest.load!/2`'s shared `:flavor` seam swaps EVERY agent slot —
   right for kanban (both slots cc-headless), wrong for dealscout, whose `page`
-  slot is pinned `dealscout-page-alt × native`（临时 ALT，A①/#1201 ③ 落地后
-  回切 `hello.builder`）. Per D8 we do NOT grow the shared module for one
+  slot is pinned `crawler-page × native`（crawler 通用页面发布腿，段4 D2）.
+  Per D8 we do NOT grow the shared module for one
   consumer: this test carries its own thin `:discover_flavor` helper — a
   post-`load!` Map transform that touches ONLY the `discover` slot.
   """
@@ -170,8 +170,9 @@ defmodule EzagentPluginCrawler.DealscoutManifestTest do
 
     page = Enum.find(agent_slots, &(&1.role_name == "page"))
 
-    # 【显式临时 ALT】A①（#1201 ③）落地后回切 "hello.builder"（manifest 槽注释）。
-    assert page.recipe == "dealscout-page-alt"
+    # 段4 D2：page 槽 = crawler 通用页面发布腿（把留存线索驱动 Turn/Surface
+    # 落 committed 公开页），取代曾借 hello Generator 的临时 ALT。
+    assert page.recipe == "crawler-page"
     assert page.flavor == "native"
 
     Enum.each(agent_slots, fn slot ->
@@ -180,17 +181,16 @@ defmodule EzagentPluginCrawler.DealscoutManifestTest do
     end)
   end
 
-  test "the :discover_flavor helper swaps ONLY the discover slot (page stays the ALT recipe × native)" do
+  test "the :discover_flavor helper swaps ONLY the discover slot (page stays crawler-page × native)" do
     definition = resolve!(discover_flavor: "dealscout-demo-stub")
     discover = Enum.find(definition.roles, &(&1.role_name == "discover"))
     page = Enum.find(definition.roles, &(&1.role_name == "page"))
 
     assert discover.flavor == "dealscout-demo-stub"
     assert discover.recipe == "dealscout-discover"
-    # page 槽是页面刷新腿（临时 ALT recipe × native），不随 stub 换。
-    # A①（#1201 ③）落地后回切 "hello.builder"。
+    # page 槽是页面发布腿（crawler 通用 recipe × native），不随 stub 换。
     assert page.flavor == "native"
-    assert page.recipe == "dealscout-page-alt"
+    assert page.recipe == "crawler-page"
   end
 
   test "role-slot recipes resolve to plugin-declared recipe names (config references real recipes)" do

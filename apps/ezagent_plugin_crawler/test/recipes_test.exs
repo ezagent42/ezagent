@@ -10,11 +10,11 @@ defmodule EzagentPluginCrawler.RecipesTest do
     "dealscout-search"
   ]
 
-  test "declares the four discovery-leg recipes plus the temporary page-alt (A① 落地后删)" do
+  test "declares the four discovery-leg recipes plus the generic crawler-page publish leg" do
     names = Recipes.all() |> Enum.map(& &1.name) |> Enum.sort()
 
     assert names ==
-             Enum.sort(@llm_discovery_names ++ ["dealscout-discover", "dealscout-page-alt"])
+             Enum.sort(@llm_discovery_names ++ ["dealscout-discover", "crawler-page"])
   end
 
   test "LLM discovery-leg recipes carry prompt + caps and NO code behaviors" do
@@ -47,31 +47,30 @@ defmodule EzagentPluginCrawler.RecipesTest do
     assert discover.script =~ "未发更新信号"
   end
 
-  test "the search agent (crawl-driving) holds the :crawl_now + :refresh_page caps" do
+  test "the search agent (crawl-driving) holds the :crawl_now + :publish_page caps" do
     crawl_cap = %{behavior: Ezagent.ActionSet.Crawler, action: :crawl_now}
-    # v2 caller-dispatch：crawl 完成后以触发者身份直接 dispatch :refresh_page
+    # v2 caller-dispatch：crawl 完成后以触发者身份直接 dispatch :publish_page
     # 到 page 成员 —— 触发爬取的 recipe 必须持这个 cap（CapBAC-honest）。
-    refresh_cap = %{behavior: Ezagent.ActionSet.DealScoutPageRefreshAlt, action: :refresh_page}
+    publish_cap = %{behavior: Ezagent.ActionSet.CrawlerPage, action: :publish_page}
     by_name = Map.new(Recipes.all(), &{&1.name, &1})
 
     assert crawl_cap in by_name["dealscout-search"].requested_caps
-    assert refresh_cap in by_name["dealscout-search"].requested_caps
+    assert publish_cap in by_name["dealscout-search"].requested_caps
   end
 
-  test "the page-alt recipe is code-driven (照 hello.builder 形状：ALT ActionSet + 自己的 :refresh_page cap，无 prompt)" do
-    # 【显式临时 ALT】A①（#1201 ③，hello 暴露 dispatchable rebuild action）
-    # 落地后本 recipe 随 DealScoutPageRefreshAlt 一起整体删除，manifest 的
-    # page 槽回切 hello.builder。
-    alt = Enum.find(Recipes.all(), &(&1.name == "dealscout-page-alt"))
-    assert alt
+  test "the crawler-page recipe is code-driven (照 hello.builder 形状：CrawlerPage ActionSet + 自己的 :publish_page cap，无 prompt)" do
+    # 段4 D2：通用页面发布腿（取代曾借 hello Generator 的临时 ALT）——名字
+    # 不带业务词，任何组合 crawler 能力的 socialware 的 page 槽都可引用。
+    page = Enum.find(Recipes.all(), &(&1.name == "crawler-page"))
+    assert page
 
-    assert alt.behaviors == [Ezagent.ActionSet.DealScoutPageRefreshAlt]
+    assert page.behaviors == [Ezagent.ActionSet.CrawlerPage]
 
-    assert alt.requested_caps == [
-             %{behavior: Ezagent.ActionSet.DealScoutPageRefreshAlt, action: :refresh_page}
+    assert page.requested_caps == [
+             %{behavior: Ezagent.ActionSet.CrawlerPage, action: :publish_page}
            ]
 
-    refute Map.has_key?(alt, :prompt)
+    refute Map.has_key?(page, :prompt)
   end
 
   test "every recipe is a flavor-agnostic, boot-seedable Ezagent.Agent.Recipe" do

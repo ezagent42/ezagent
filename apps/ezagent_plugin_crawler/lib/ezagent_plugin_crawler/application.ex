@@ -42,10 +42,11 @@ defmodule EzagentPluginCrawler.Application do
   `plugin_info/0` + `roles/0`（dealscout 业务 recipes——demo socialware 的
   agent 配方，随 demo 一起 ship 在本 plugin）+ `behaviors/0`（LeadsView 的
   `{Session, :crawler_render}` render cap subject，照 kanban S4 先例）。
-  **零后台 GenServer**（`children/0` 保持 `use`-macro 默认 `[]`，2026-07-10
-  段2：`Poller` 抓完即丢、`RetentionSweeper` 是 no-op stub——durable 批次
-  slice 从未接线——两条空转腿都删了；爬取 = agent 驱动 `:crawl_now`，数据
-  保留 = 会话消息历史 + 结构化 `:items` slice）。其余 `Ezagent.Plugin`
+  **零周期后台**（2026-07-10 段2：`Poller` 抓完即丢、`RetentionSweeper` 是
+  no-op stub——durable 批次 slice 从未接线——两条空转腿都删了；爬取 =
+  agent 驱动 `:crawl_now`，数据保留 = 会话消息历史 + 结构化 `:items`
+  slice）；`children/0` 只有页面发布腿的 `Task.Supervisor`（段4 D2，非
+  轮询件）。其余 `Ezagent.Plugin`
   callback 保持 `use`-macro 默认（`[]` / `nil` / `:ok`）。dealscout demo
   socialware **不在本 plugin boot 发布**：它以 deploy-seed 包形式随发布箱走
   （`apps/ezagent_web/priv/socialware_seed/dealscout/manifest.yaml`，与
@@ -92,10 +93,17 @@ defmodule EzagentPluginCrawler.Application do
     }
   end
 
-  # 无 `children/0` override —— 零后台 GenServer（moduledoc §Declared
-  # surface：`Poller` / `RetentionSweeper` 两条空转腿 2026-07-10 段2 删除，
-  # 曾有的 :skip_poller / :skip_sweeper test-boot seam 随之退场），
-  # `use Ezagent.Plugin` 的 `defoverridable` 默认返回 `[]`。
+  # 唯一 child 是页面发布腿的 Task.Supervisor（段4 D2：`CrawlerPage`
+  # handler 秒回，publish 的顺序 `:call` 串在 supervised Task 里跑）——
+  # 不是周期后台（`Poller` / `RetentionSweeper` 两条空转腿 2026-07-10 段2
+  # 删除，零轮询 GenServer 的纪律不变；Task.Supervisor 只监督显式触发的
+  # fire-and-forget 发布任务）。
+  @impl Ezagent.Plugin
+  def children do
+    [
+      {Task.Supervisor, name: EzagentPluginCrawler.TaskSupervisor}
+    ]
+  end
 
   # Discovery-leg recipes (role-as-data, RF-4): boot seeds each into
   # `Ezagent.Agent.RecipeRegistry` by `name`. Flavor-agnostic — flavor is chosen
