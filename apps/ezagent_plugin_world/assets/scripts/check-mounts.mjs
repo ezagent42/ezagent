@@ -68,13 +68,29 @@ for (const file of componentFiles) {
 }
 
 // Check 3 — family parity: the renderer handles exactly the manifest's families.
+// Plugin-page families render through the PLUGIN_PAGE_RENDERERS registry map
+// (looked up in the switch default) instead of literal cases — the handled set
+// is the union of switch cases and the map's keys (PluginPageRegistry rework).
 const switchBody = (() => {
   const start = mainSrc.indexOf("switch (rendererFamily(component.type))")
   const end = mainSrc.indexOf("\nfunction ", start)
   return start === -1 ? "" : mainSrc.slice(start, end === -1 ? undefined : end)
 })()
-const rendererCases = new Set([...switchBody.matchAll(/case "([a-z_]+)":/g)].map((m) => m[1]))
+const pluginPageBody = (() => {
+  const start = mainSrc.indexOf("const PLUGIN_PAGE_RENDERERS")
+  const end = mainSrc.indexOf("\nfunction ", start)
+  return start === -1 ? "" : mainSrc.slice(start, end === -1 ? undefined : end)
+})()
+const switchCases = new Set([...switchBody.matchAll(/case "([a-z_]+)":/g)].map((m) => m[1]))
+const pluginPageKeys = new Set([...pluginPageBody.matchAll(/^  ([a-z_]+): \(/gm)].map((m) => m[1]))
 const manifestFamilies = new Set(Object.keys(manifest.renderer_families))
+
+for (const key of pluginPageKeys) {
+  // A literal case would silently shadow the registry entry (mirrors the
+  // SlotRegistry compile-time clash guard).
+  if (switchCases.has(key)) errors.push(`main.tsx: plugin page key "${key}" shadowed by a literal switch case`)
+}
+const rendererCases = new Set([...switchCases, ...pluginPageKeys])
 
 for (const fam of manifestFamilies) {
   if (!rendererCases.has(fam)) errors.push(`main.tsx: no renderer case for manifest family "${fam}"`)
@@ -83,9 +99,15 @@ for (const fam of rendererCases) {
   if (!manifestFamilies.has(fam)) errors.push(`main.tsx: renderer case "${fam}" is not a manifest renderer family`)
 }
 
-// Check 4 — no unknown fallback: the switch default must throw (not render a surface).
-if (!/default:\s*\n\s*throw/.test(switchBody)) {
+// Check 4 — no unknown fallback: the switch default must throw (not render a
+// surface). The default branch may first consult PLUGIN_PAGE_RENDERERS, but an
+// unregistered family must still end in a throw.
+const defaultBranch = switchBody.slice(switchBody.indexOf("default:"))
+if (!defaultBranch.includes("throw")) {
   errors.push("main.tsx: renderLayoutComponent default branch must throw on an unknown family (no silent fallback)")
+}
+if (defaultBranch.includes("Surface")) {
+  errors.push("main.tsx: renderLayoutComponent default branch must not render a surface — unknown family = throw")
 }
 if (!/if \(!spec\) \{[\s\S]*?throw/.test(mainSrc)) {
   errors.push("main.tsx: rendererFamily must throw on an unregistered slot type (no silent fallback)")
