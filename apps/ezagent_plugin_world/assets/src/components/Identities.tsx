@@ -1,5 +1,5 @@
 import React from "react"
-import {Ban, CheckCircle2, FolderLock, HardDrive, KeyRound, Plus, RotateCcw, Save, TerminalSquare, UserRound, UsersRound} from "lucide-react"
+import {Ban, CheckCircle2, FolderLock, HardDrive, KeyRound, Loader2, Plus, RotateCcw, Save, TerminalSquare, UserRound, UsersRound} from "lucide-react"
 
 import {Button, EmptyState, Input, Select} from "./ui/primitives"
 
@@ -833,6 +833,7 @@ function AgentDetail({state, onDeleteAgent}: {state: IdentitiesState; onDeleteAg
 
 function AgentNewForm({state, onCreateAgent}: {state: IdentitiesState; onCreateAgent?: (payload: Record<string, unknown>) => void}) {
   const flavors = allAgentFlavors(state)
+  const [creating, setCreating] = React.useState(false)
   const [form, setForm] = React.useState({
     flavor: state.default_flavor || flavors[0] || "cc",
     name: "",
@@ -868,9 +869,23 @@ function AgentNewForm({state, onCreateAgent}: {state: IdentitiesState; onCreateA
   // Light client validation; the authoritative parse runs server-side on submit.
   const capTokens = form.caps.split(",").map((c) => c.trim()).filter(Boolean)
   const capsInvalid = capTokens.some((t) => !/^[a-z][a-z0-9_]*\.[a-z][a-z0-9_]*$/.test(t))
+  const submitDisabled =
+    creating ||
+    !form.name ||
+    capsInvalid ||
+    customCwdUnavailable ||
+    customCwdMissing ||
+    missingRequiredConfigKeys.length > 0
+
+  React.useEffect(() => {
+    setCreating(false)
+  }, [state.create_error])
 
   const handleSubmit = (event: React.FormEvent) => {
     event.preventDefault()
+    if (submitDisabled) return
+    setCreating(true)
+
     // M4: submit flavor-specific config fields via A7 ingest pathway
     const cf = form.configFields || {}
     const filteredFields: Record<string, unknown> = {}
@@ -899,6 +914,7 @@ function AgentNewForm({state, onCreateAgent}: {state: IdentitiesState; onCreateA
       <form
         id="world-agent-new-form"
         data-world-agent-create-form
+        aria-busy={creating}
         className="grid gap-3 sm:grid-cols-2"
         onSubmit={handleSubmit}
       >
@@ -1085,16 +1101,15 @@ function AgentNewForm({state, onCreateAgent}: {state: IdentitiesState; onCreateA
           <code className={codeClass}>{preview}</code>
           <Button
             type="submit"
-            disabled={
-              !form.name ||
-              capsInvalid ||
-              customCwdUnavailable ||
-              customCwdMissing ||
-              missingRequiredConfigKeys.length > 0
-            }
+            data-world-agent-create-submit
+            disabled={submitDisabled}
           >
-            <Plus aria-hidden="true" />
-            Create
+            {creating ? (
+              <Loader2 className="animate-spin" aria-hidden="true" />
+            ) : (
+              <Plus aria-hidden="true" />
+            )}
+            {creating ? "Creating..." : "Create"}
           </Button>
         </div>
       </form>

@@ -12,6 +12,7 @@ defmodule Ezagent.PluginCodex.Template.CodexRemoteAgent do
   require Logger
 
   @compile_env Mix.env()
+  @app_server_ready_wait_ms 5_000
   @thread_id_wait_ms 15_000
 
   @impl Ezagent.Kind.Template
@@ -186,7 +187,7 @@ defmodule Ezagent.PluginCodex.Template.CodexRemoteAgent do
 
   defp ensure_app_server(agent_uri, cwd, socket_path, codex_path, test_mode, tmpl) do
     if EzagentPluginCodex.AppServer.alive?(agent_uri) do
-      :ok
+      ensure_app_server_ready(agent_uri, socket_path, test_mode)
     else
       params =
         Ezagent.PluginCodex.Template.CodexAgent.build_app_server_params(
@@ -198,10 +199,28 @@ defmodule Ezagent.PluginCodex.Template.CodexRemoteAgent do
         )
 
       case EzagentPluginCodex.AppServer.start(agent_uri, params) do
-        {:ok, _pid} -> :ok
-        {:error, {:already_started, _pid}} -> :ok
-        {:error, reason} -> {:error, {:codex_app_server_start_failed, reason}}
+        {:ok, _pid} ->
+          ensure_app_server_ready(agent_uri, socket_path, test_mode)
+
+        {:error, {:already_started, _pid}} ->
+          ensure_app_server_ready(agent_uri, socket_path, test_mode)
+
+        {:error, reason} ->
+          {:error, {:codex_app_server_start_failed, reason}}
       end
+    end
+  end
+
+  defp ensure_app_server_ready(_agent_uri, _socket_path, true), do: :ok
+
+  defp ensure_app_server_ready(agent_uri, socket_path, false) do
+    case EzagentPluginCodex.AppServer.wait_until_ready(
+           agent_uri,
+           socket_path,
+           @app_server_ready_wait_ms
+         ) do
+      :ok -> :ok
+      {:error, reason} -> {:error, {:codex_app_server_not_ready, reason}}
     end
   end
 
