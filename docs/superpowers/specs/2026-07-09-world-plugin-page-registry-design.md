@@ -16,9 +16,11 @@ world 编译期不引 kanban 模块（dispatch-by-URI，编译图干净），**�
 | 1 | `routes.ex:108-128` | `/plugins/kanban` + `/plugins/kanban/<id>` 具名分支 → `component: "kanban"` |
 | 2 | `navigation.ex:17` + `:77` | 静态侧栏项 + patch 白名单正则 `~r{/plugins/kanban/[^/]+}` |
 | 3 | `slot_registry.ex:71-72` | `kanban: {Ezagent.World.KanbanData, [{"kanban","看板"}]}` 专属 renderer family |
-| 4 | `world_live.ex:625-635` + `:269-272` | `state_for_route(%{component: "kanban"})` 子句 + `@kanban_actions` 24 个动作串白名单 → `KanbanActions.handle_dispatch` |
+| 4 | `world_live.ex:625-635` + `:269-272` | `state_for_route(%{component: "kanban"})` 子句 + `@kanban_actions` 20 个动作串白名单（GitHub 4 动作已退役）→ `KanbanActions.handle_dispatch` |
 | 5 | `main.tsx:11` + `:968` | `import {Kanban}` + `case "kanban":` 写死 switch |
 | 6 | `slots.manifest.json:68` | 写死 `data_source: "Ezagent.World.KanbanData"` |
+
+> 表中行号为审查时快照，以 `PluginPageRegistry` 现状为准。
 
 后果：每加一个插件页面要改 6 个 world 文件；kanban 专属模块（KanbanData 315 行 / KanbanActions 406 行 / Kanban.tsx 608 行 / KanbanCanvas 198 行）与 world 基建纠缠，未来插件无路可走。
 
@@ -59,7 +61,7 @@ def by_route(path), do: ...                                 # 路径匹配 → {
 1. **routes.ex**：具名分支 → `PluginPageRegistry.by_route/1` 通配（放在现有具名路由之后，不影响 kb/feishu 等未迁移分支）
 2. **navigation.ex**：静态项/正则 → 由 `pages()` 派生
 3. **slot_registry.ex**：kanban 条目 → 由 `pages()` 派生注入
-4. **world_live.ex**：`state_for_route(%{component: "kanban"})` → 通用 `state_for_route(%{component: key})` 查注册表拿 data_builder；`@kanban_actions` 串 → `action_prefixes` 前缀判定 + `actions_module.handle_dispatch`（**动作细白名单不放松**：前缀命中后仍逐动作校验，名单从 KanbanActions 声明导出，语义与现 24 串逐一等价）
+4. **world_live.ex**：`state_for_route(%{component: "kanban"})` → 通用 `state_for_route(%{component: key})` 查注册表拿 data_builder；`@kanban_actions` 串 → `action_prefixes` 前缀判定 + `actions_module.handle_dispatch`（**动作细白名单不放松**：前缀命中后仍逐动作校验，名单从 KanbanActions 声明导出，语义与现 20 串逐一等价）
 5. **main.tsx**：`case "kanban"` → 组件注册表 map `{kanban: Kanban}` 查 key（import 仍显式，Vite 静态打包不变）
 6. **slots.manifest.json**：data_source 由注册表生成或校验一致（取实现时更稳的一边）
 
