@@ -1,6 +1,8 @@
 defmodule Ezagent.ActionSet.Session.RouteProvisioner do
   @moduledoc false
 
+  require Logger
+
   alias Ezagent.KindRegistry
   alias Ezagent.ActionSet.Session.{Members, Membership}
   alias EzagentDomainInstanceMessage.SessionCreator.TemplateTeam
@@ -42,8 +44,57 @@ defmodule Ezagent.ActionSet.Session.RouteProvisioner do
       Process.put(provision_key, prior ++ effects)
       member_uri
     else
-      _ -> nil
+      # An `fill: :agent` role slot is NOT provisioned here — spawning an agent
+      # inside the Session Kind's own action handler is the coupling rev6 / #912
+      # forbids. It is materialized by the post-create socialware-install
+      # transaction (`SessionCreator.install_session_socialware/1`). A message
+      # arriving before that transaction lands must FAIL LOUDLY, not resolve to
+      # `nil` and silently fall through to zero receivers (Invariant #9).
+      {:error, {:agent_role_slot_materialized_at_session_create, _role, _session}} ->
+        role_not_installed(session_uri, role_name)
+
+      # A human slot awaiting runtime assignment is a NORMAL state, not a fault.
+      {:error, {:human_role_slot_requires_runtime_assignment, _role, _session}} ->
+        nil
+
+      # No declaration for this role at all — the caller (`RoleResolver`) falls
+      # back to workspace-level responsibility assignment, which is a legitimate
+      # resolution path, so this stays quiet.
+      nil ->
+        nil
+
+      other ->
+        Logger.error(
+          "Session route provisioning FAILED for role=#{inspect(role_name)} " <>
+            "session=#{URI.to_string(session_uri)}: #{inspect(other)} — the message " <>
+            "has no receiver for this role."
+        )
+
+        :telemetry.execute(
+          [:ezagent, :session, :route_provision, :failed],
+          %{count: 1},
+          %{session_uri: session_uri, role_name: role_name, reason: other}
+        )
+
+        nil
     end
+  end
+
+  defp role_not_installed(session_uri, role_name) do
+    Logger.error(
+      "Session route: role=#{inspect(role_name)} is DECLARED but not installed on " <>
+        "#{URI.to_string(session_uri)} — its socialware-install transaction has not " <>
+        "completed (or failed). The message has no receiver. Retry once the install " <>
+        "lands, or re-run `SessionCreator.install_session_socialware/1`."
+    )
+
+    :telemetry.execute(
+      [:ezagent, :session, :route_provision, :role_not_installed],
+      %{count: 1},
+      %{session_uri: session_uri, role_name: role_name}
+    )
+
+    nil
   end
 
   # #161 C.1 (admission-gate over-fire fix) — realizing a member DECLARED in the
