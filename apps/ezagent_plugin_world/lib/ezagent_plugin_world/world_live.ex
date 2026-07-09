@@ -273,8 +273,8 @@ defmodule EzagentPluginWorld.WorldLive do
   end
 
   def handle_event("pty_input", %{"bytes" => bytes}, socket) when is_binary(bytes) do
-    case socket.assigns.world_state do
-      %{"component" => "pty_terminal", "agent_uri" => agent_uri_str} ->
+    case pty_agent_uri_str(socket.assigns.world_state) do
+      agent_uri_str when is_binary(agent_uri_str) ->
         with {:ok, agent_uri} <- parse_agent_uri(agent_uri_str),
              :ok <- dispatch_pty_input(socket, agent_uri, bytes) do
           {:noreply, socket}
@@ -296,6 +296,18 @@ defmodule EzagentPluginWorld.WorldLive do
   def handle_event("world:dispatch", _params, socket) do
     {:noreply, assign(socket, :last_dispatch_status, "error:unsupported_action")}
   end
+
+  defp pty_agent_uri_str(%{"component" => "pty_terminal", "agent_uri" => agent_uri_str}),
+    do: agent_uri_str
+
+  defp pty_agent_uri_str(%{
+         "component" => "conversation",
+         "active_view" => "pty",
+         "active_pty_agent_uri" => agent_uri_str
+       }),
+       do: agent_uri_str
+
+  defp pty_agent_uri_str(_), do: nil
 
   @impl true
   def render(assigns) do

@@ -186,9 +186,19 @@ defmodule Ezagent.World.ConversationData do
         "display_name" => member_display_name(uri, meta, display_map, kind),
         "online" => is_map(meta) and Map.get(meta, :online, false) == true,
         "role_name" => if(is_map(meta), do: Map.get(meta, :role_name), else: nil),
-        "kind" => kind
+        "kind" => kind,
+        "pty_alive" => kind == "agent" and pty_alive?(uri)
       }
     end)
+  end
+
+  defp pty_alive?(uri) when is_binary(uri) do
+    case Ezagent.URI.parse(uri) do
+      {:ok, %URI{} = parsed} -> Ezagent.Domain.Pty.alive?(parsed)
+      _ -> false
+    end
+  rescue
+    _ -> false
   end
 
   @doc "Human role slots installed on a session, including the current assigned member URI when present."

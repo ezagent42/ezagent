@@ -3,6 +3,7 @@ import {Bug, Cable, CheckCircle2, ChevronUp, Copy, ExternalLink, LayoutGrid, Lin
 
 import {Button, Input, Modal, Select} from "./ui/primitives"
 import {JsonRenderBubble} from "./JsonRenderBubble"
+import {PtyTerminalSurface} from "./PtyTerminal"
 
 // Server-rendered attachment: an uploads URI carries a signed download `href`
 // (`message_row/2`); any other value renders as a plain label (`href: null`).
@@ -64,6 +65,7 @@ type MemberRow = {
   display_name?: string | null
   role_name?: string | null
   online?: boolean
+  pty_alive?: boolean
   kind?: string | null
 }
 
@@ -208,8 +210,7 @@ export function Conversation({
   const installedSocialwares = state.installed_socialwares || []
   const fallbackViews: ViewTab[] = [{id: "conversation", label: "对话", icon: "message-square", mode: "chat"}]
   const sourceViews = state.views && state.views.length > 0 ? state.views : fallbackViews
-  const visibleViews = sourceViews.filter((v) => v.id !== "pty" && v.mode !== "pty")
-  const views = visibleViews.length > 0 ? visibleViews : fallbackViews
+  const views = sourceViews.length > 0 ? sourceViews : fallbackViews
   const activeId = views.find((v) => v.id === state.active_view)?.id ?? views[0]?.id ?? "conversation"
   const activeMode = views.find((v) => v.id === activeId)?.mode ?? "chat"
   const viewLabel = (view: ViewTab) => (view.id === "conversation" ? "对话" : view.label)
@@ -261,6 +262,8 @@ export function Conversation({
   const currentSession = sessions.find((session) => session.uri === sessionUri) || null
   const sessionTitle = currentSession ? sessionLabel(currentSession) : sessionUri ? humanizeSessionName(uriSegment(sessionUri)) : "会话"
   const sessionMeta = [countLabel(members.length, "成员"), countLabel(messages.length, "轮次")].join(" · ")
+  const ptyMembers = members.filter((member) => member.kind === "agent" && member.pty_alive === true)
+  const activePtyAgentUri = state.agent_uri || state.active_pty_agent_uri || null
 
   React.useEffect(() => {
     setMembers(state.members || [])
@@ -677,7 +680,16 @@ export function Conversation({
                     key={v.id}
                     type="button"
                     className={segmentClass(activeId === v.id)}
-                    onClick={() => sessionUri && onSwitchView(sessionUri, v.id)}
+                    onClick={() => {
+                      if (!sessionUri) return
+                      if (v.id === "pty" || v.mode === "pty") {
+                        const agent = activePtyAgentUri || ptyMembers[0]?.uri
+                        if (agent) onOpenPty(sessionUri, agent)
+                        else onSwitchView(sessionUri, v.id)
+                      } else {
+                        onSwitchView(sessionUri, v.id)
+                      }
+                    }}
                     aria-label={"显示" + label}
                   >
                     <Icon aria-hidden={true} className="h-[15px] w-[15px]" />
@@ -746,6 +758,17 @@ export function Conversation({
         </div>
 
         <div className="flex min-h-0 flex-1 overflow-hidden">
+          {activeMode === "pty" ? (
+            <div className="min-w-0 flex-1 overflow-y-auto bg-[#fafafa] p-4" data-world-subcomponent="pty">
+              <PtyTerminalSurface
+                state={{...state, agent_uri: activePtyAgentUri}}
+                onInput={onPtyInput}
+                onResize={onPtyResize}
+                onServerEvent={onServerEvent}
+              />
+            </div>
+          ) : (
+            <>
             <div className="flex min-w-0 flex-1 flex-col overflow-hidden">
             <div
               className="flex flex-1 flex-col gap-3.5 overflow-y-auto bg-[linear-gradient(#ffffff,#ffffff),repeating-linear-gradient(0deg,transparent,transparent_31px,rgba(23,32,42,0.04)_32px)] px-4 py-4"
@@ -925,6 +948,8 @@ export function Conversation({
                 <HelloPagePreview sessionUri={sessionUri} />
               </div>
             )}
+            </>
+          )}
           </div>
 
         {debugOpen && (
@@ -1035,6 +1060,23 @@ export function Conversation({
                     {label}
                   </span>
                   <span className="rounded-full border border-border px-1.5 py-0.5 text-[9.5px] font-semibold uppercase tracking-wide text-muted-foreground">{kindBadgeLabel(member.kind)}</span>
+
+                  {member.pty_alive === true && (
+                    <Button
+                      type="button"
+                      size="sm"
+                      variant="ghost"
+                      onClick={() => {
+                        if (!sessionUri) return
+                        onOpenPty(sessionUri, member.uri)
+                      }}
+                      data-world-member-pty
+                      aria-label={`打开 ${label} 的 PTY`}
+                      title="打开 PTY"
+                    >
+                      <TerminalSquare aria-hidden="true" />
+                    </Button>
+                  )}
 
                   {member.uri !== callerUri && (
                     <Button
