@@ -48,7 +48,11 @@ defmodule Ezagent.World.ConversationActionsTest do
                           template_name: "default"
                         }
 
-                 assert got_ctx == %{caller: caller, caps: caps}
+                 assert got_ctx == %{
+                          caller: caller,
+                          caps: caps,
+                          deadline_ms: ConversationActions.create_session_deadline_ms()
+                        }
 
                  {:ok, %{session_uri: session_uri}}
                end,
@@ -93,6 +97,18 @@ defmodule Ezagent.World.ConversationActionsTest do
     test "an unknown reason still produces a non-empty message (never a silent drop)" do
       msg = ConversationActions.session_create_error_message(:some_unmapped_reason)
       assert is_binary(msg) and msg != ""
+    end
+
+    test "unsupported Claude dev-channel errors get a concise operator message" do
+      msg =
+        ConversationActions.session_create_error_message(
+          {:agent_grant_recipe_caps_failed,
+           {:grant_failed, {:unsupported_claude_dev_channels, "/usr/bin/claude"}}}
+        )
+
+      assert msg =~ "Claude Code"
+      assert msg =~ "不支持"
+      refute msg =~ "agent_grant_recipe_caps_failed"
     end
   end
 

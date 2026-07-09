@@ -24,6 +24,8 @@ defmodule Ezagent.PluginCc.Template.SpawnPlan do
   @cli_user_token_env "EZAGENT_USER_TOKEN"
   @cli_entity_uri_env "EZAGENT_ENTITY_URI"
   @cli_identity_token_label "cc-cli-identity"
+  @dev_channels_flag "--dangerously-load-development-channels"
+  @dev_channels_server "server:esr-bridge"
 
   @doc false
   @spec build_pty_params(URI.t(), String.t(), map(), atom()) :: {:ok, map()} | {:error, term()}
@@ -54,10 +56,12 @@ defmodule Ezagent.PluginCc.Template.SpawnPlan do
 
   @doc false
   @spec build_claude_cmd(URI.t(), String.t(), map()) ::
-          {:ok, {[String.t()], map()}} | {:error, :claude_not_found}
+          {:ok, {[String.t()], map()}}
+          | {:error, :claude_not_found | {:unsupported_claude_dev_channels, String.t()}}
   def build_claude_cmd(%URI{} = agent_uri, agent_cwd, tmpl)
       when is_binary(agent_cwd) and is_map(tmpl) do
-    with {:ok, claude_path} <- resolve_claude_executable(agent_uri) do
+    with {:ok, claude_path} <- resolve_claude_executable(agent_uri),
+         :ok <- ensure_dev_channels_supported(claude_path) do
       config_home = CcAgent.resolve_config_home(agent_uri, tmpl)
 
       {:ok, _global_mcp_path, agent_token} =
@@ -79,8 +83,8 @@ defmodule Ezagent.PluginCc.Template.SpawnPlan do
         [
           claude_path,
           "--dangerously-skip-permissions",
-          "--dangerously-load-development-channels",
-          "server:esr-bridge"
+          @dev_channels_flag,
+          @dev_channels_server
         ] ++ settings_mcp_args
 
       base_env = %{
@@ -116,6 +120,34 @@ defmodule Ezagent.PluginCc.Template.SpawnPlan do
       claude_path ->
         {:ok, claude_path}
     end
+  end
+
+  @doc false
+  @spec ensure_dev_channels_supported(String.t()) ::
+          :ok | {:error, {:unsupported_claude_dev_channels, String.t()}}
+  def ensure_dev_channels_supported(claude_path) when is_binary(claude_path) do
+    if claude_dev_channels_supported?(claude_path) do
+      :ok
+    else
+      Logger.error(
+        "cc.agent: `claude` at #{claude_path} does not support #{@dev_channels_flag}; " <>
+          "the cc bridge requires #{@dev_channels_flag} #{@dev_channels_server}. " <>
+          "Install a Claude Code build that supports development channels or use a non-cc flavor."
+      )
+
+      {:error, {:unsupported_claude_dev_channels, claude_path}}
+    end
+  end
+
+  @doc false
+  @spec claude_dev_channels_supported?(String.t()) :: boolean()
+  def claude_dev_channels_supported?(claude_path) when is_binary(claude_path) do
+    case System.cmd(claude_path, ["--help"], stderr_to_stdout: true) do
+      {output, _status} when is_binary(output) -> String.contains?(output, @dev_channels_flag)
+      _ -> false
+    end
+  rescue
+    ErlangError -> false
   end
 
   @doc false

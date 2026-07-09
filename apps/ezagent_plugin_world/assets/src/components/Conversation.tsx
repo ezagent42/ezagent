@@ -1,5 +1,5 @@
 import React from "react"
-import {Bug, Cable, CheckCircle2, ChevronUp, Copy, ExternalLink, LayoutGrid, Link2, Maximize2, MessageSquare, MoreHorizontal, Paperclip, PanelTop, Plus, RotateCcw, Route, Send, Sparkles, TerminalSquare, Upload, UserMinus, UserPlus, Users, X} from "lucide-react"
+import {Bug, Cable, CheckCircle2, ChevronUp, Copy, ExternalLink, LayoutGrid, Link2, Loader2, Maximize2, MessageSquare, MoreHorizontal, Paperclip, PanelTop, Plus, RotateCcw, Route, Send, Sparkles, TerminalSquare, Upload, UserMinus, UserPlus, Users, X} from "lucide-react"
 
 import {Button, Input, Modal, Select} from "./ui/primitives"
 import {JsonRenderBubble} from "./JsonRenderBubble"
@@ -131,6 +131,7 @@ export type ConversationState = {
   session_uri?: string | null
   caller_uri?: string | null
   create_error?: string | null
+  last_dispatch_status?: string | null
   is_hello?: boolean | null
   messages?: MessageRow[]
   oldest_cursor?: string | null
@@ -140,6 +141,7 @@ export type ConversationState = {
   routing_rules?: RoutingRule[]
   sessions?: SessionRow[]
   templates?: string[]
+  session_create_pending?: boolean
   members?: MemberRow[]
   invite_candidates?: InviteCandidateRow[]
   routing_entity_candidates?: InviteCandidateRow[]
@@ -218,6 +220,7 @@ export function Conversation({
   // template — whose URI carries the template name, not `/hello/` — still gets the
   // Page pane. Falls back to the URI check.
   const isHelloSession = state.is_hello === true || sessionUri.includes("/hello/")
+  const createPending = state.session_create_pending === true
 
   const [members, setMembers] = React.useState<MemberRow[]>(state.members || [])
   const [humanRoleSlots, setHumanRoleSlots] = React.useState<HumanRoleSlotRow[]>(state.human_role_slots || [])
@@ -284,6 +287,14 @@ export function Conversation({
   React.useEffect(() => {
     if (!templates.includes(newSessionTemplate)) setNewSessionTemplate(templates[0])
   }, [newSessionTemplate, templates])
+
+  React.useEffect(() => {
+    if (!createPending && state.last_dispatch_status === "ok") {
+      setNewSessionName("")
+      setNewSessionTemplate(templates[0])
+      setCreating(false)
+    }
+  }, [createPending, state.last_dispatch_status, templates])
 
   // @mention autocomplete: the open token is the @word immediately before the
   // caret. Matches consider URI segment, role_name, display_name, and
@@ -473,11 +484,8 @@ export function Conversation({
     event.preventDefault()
     const trimmed = newSessionName.trim()
     const template = newSessionTemplate.trim() || "default"
-    if (!trimmed) return
+    if (!trimmed || createPending) return
     onCreate?.(trimmed, template)
-    setNewSessionName("")
-    setNewSessionTemplate(templates[0])
-    setCreating(false)
   }
 
   const doPublish = () => {
@@ -560,6 +568,7 @@ export function Conversation({
           <form
             className="m-2.5 grid gap-2.5 rounded-lg border border-border bg-muted/30 p-3"
             id="world-session-create-form"
+            aria-busy={createPending}
             onSubmit={submitCreate}
           >
             <label className="grid gap-1 text-[11px] font-medium text-muted-foreground" htmlFor="world-conversation-session-name">
@@ -586,9 +595,9 @@ export function Conversation({
                 ))}
               </Select>
             </label>
-            <Button type="submit" size="sm" disabled={!newSessionName.trim()}>
-              <Plus aria-hidden="true" />
-              创建
+            <Button type="submit" size="sm" disabled={createPending || !newSessionName.trim()}>
+              {createPending ? <Loader2 className="animate-spin" aria-hidden="true" /> : <Plus aria-hidden="true" />}
+              {createPending ? "创建中" : "创建"}
             </Button>
           </form>
         )}

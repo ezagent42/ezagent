@@ -22,6 +22,12 @@ defmodule Ezagent.World.ConversationActions do
   alias Ezagent.World.ConversationRoutingForm
   alias EzagentDomainInstanceMessage.Routing.MentionRouting
 
+  @create_session_deadline_ms 60_000
+
+  @doc false
+  @spec create_session_deadline_ms() :: pos_integer()
+  def create_session_deadline_ms, do: @create_session_deadline_ms
+
   @doc """
   Route a `world:dispatch` conversation action to its handler (the dispatcher
   `WorldLive` delegates ALL conversation actions here, so the LiveView shell
@@ -443,7 +449,24 @@ defmodule Ezagent.World.ConversationActions do
 
   def session_create_error_message(:unauthorized), do: "没有创建会话的权限"
   def session_create_error_message(:cross_workspace_denied), do: "跨工作区操作被拒绝"
-  def session_create_error_message(reason), do: "创建会话失败：#{reason(reason)}"
+
+  def session_create_error_message(reason) do
+    if unsupported_claude_dev_channels?(reason) do
+      "创建会话失败：当前 Claude Code 不支持 cc orchestrator 所需的开发通道参数，请升级 Claude Code 或改用 codex flavor。"
+    else
+      "创建会话失败：#{reason(reason)}"
+    end
+  end
+
+  defp unsupported_claude_dev_channels?({:unsupported_claude_dev_channels, _}), do: true
+
+  defp unsupported_claude_dev_channels?(tuple) when is_tuple(tuple) do
+    tuple
+    |> Tuple.to_list()
+    |> Enum.any?(&unsupported_claude_dev_channels?/1)
+  end
+
+  defp unsupported_claude_dev_channels?(_), do: false
 
   # Trim + collapse any run of (Unicode) whitespace to a single "-", so a name
   # like "hello world" becomes the URI-safe "hello-world" instead of crashing the
@@ -499,7 +522,7 @@ defmodule Ezagent.World.ConversationActions do
     case create.(
            workspace_uri,
            %{short_name: short_name, template_name: template_name},
-           %{caller: caller, caps: caps}
+           %{caller: caller, caps: caps, deadline_ms: @create_session_deadline_ms}
          ) do
       {:ok, %{session_uri: %URI{} = session_uri}} -> {:ok, session_uri}
       {:error, reason} -> {:error, reason}
