@@ -6,7 +6,7 @@
 - **status**: in-progress（复验 A1–A4 + 撞到几个 UI bug；flaky 未复现）——用户视角，无代码 / 无 rebase
 - **汇报**: 本 return + Feishu 群；**A2/A4 + 3 个 UI bug 建议开 issue**
 - **证据**: `docs/together/2026-07-09/returns/evidence/`（截图）
-- **已开 issue**：F1→#1279 · F2→#1280 · F3→#1281 · F6→#1282 · F7→#1284 · F4→#1285 · F5→#1286 · F9→#1289 · F10→#1290（F8→#1283 **已关，并入 #1288**）（关联 #1275 空 caps / #1278 agent 表单 / #1259 create 超时 / #396 agent onboarding）
+- **已开 issue**：F1→#1279 · F2→#1280 · F3→#1281 · F6→#1282 · F7→#1284 · F4→#1285 · F5→#1286 · F9→#1289 · F10→#1290 · F11→#1291（F8→#1283 **已关，并入 #1288**）（关联 #1275 空 caps / #1278 agent 表单 / #1259 create 超时 / #396 agent onboarding）
 - **查重**：**F8/#1283 = #1288（cc agent 不继承 host Claude 凭证）的重复** → UX 角度已并入 #1288、#1283 已关；其余无重复。
 
 ## 复验结果（昨日修复）
@@ -76,6 +76,11 @@
 - **复现**：`session://ezagent/default/test` → 邀请 黄佳佳(gagameow) → 点该成员的「移除」→ 弹窗 → 确认移除 → **无反应，成员仍在 session**（仍显示 6 成员，debug `"members": 6`）。
 - **线索**：确认后静默 no-op（无报错、未移除）；疑 `workspace.member.remove` 派发没接上/静默失败。
 - **证据**：`evidence/f10-remove-member-noop.png`（录屏在 ruihua Desktop `录屏2026-07-09 16.48.21.mov`）
+
+### F11 · session 视图多个控件点了没反应（#1291）
+- **严重度**：中（一批功能点不动）
+- **复现**：session 内点以下控件均**无反应**：**Bindings** tab · **路由** tab · **重启 agent runner** · 右上角**复制样 图标按钮**（挨着 `···`）。
+- **线索**：Bindings/路由 疑 `session.view.switch`；重启疑 `session.orchestrator.restart` —— 可能同一根（派发没接）或各自独立，先合并给 triage。控件位置见 `evidence/f10-remove-member-noop.png`。
 
 ## flaky 复现（B）
 - 网页对话页反复进出 + 发消息：**暂未复现**偶发不刷新 / 卡住。继续留意。
