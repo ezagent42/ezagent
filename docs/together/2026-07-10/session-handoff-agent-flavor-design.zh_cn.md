@@ -25,7 +25,7 @@
 | **PR** | [#1256](https://github.com/ezagent42/ezagent/pull/1256) · **draft** · title `docs(design): ...(v2.2 · decision record)` |
 | **head** | `65489626` · 5 commits · **1 文件 +442/-0 · 零代码** |
 | **分支** | `docs/agent-flavor-mapping-lifecycle`(已 rebase 到最新 `origin/main`) |
-| **设计稿** | `docs/together/2026-07-08/agent-entity-flavor-mapping-and-lifecycle.zh_cn.md`(**v2.2**,已 commit) |
+| **设计稿** | `docs/together/2026-07-08/agent-entity-flavor-mapping-and-lifecycle.zh_cn.md`(**v2.4**,已 commit) |
 | **可视化图** | https://claude.ai/code/artifact/8c288393-8edc-4f9d-815c-c6ad0fdc038f (v2.2,同链接可 redeploy) |
 | **评审分析/行动计划** | `docs/together/2026-07-09/allen-pr1256-review-analysis-and-plan.zh_cn.md`(**untracked**,工作分解非设计) |
 
@@ -82,24 +82,26 @@ L3 core(已有)  MessageStore.in_session_since/2 · ReadyGate
 | # | 状态 | 内容 |
 |---|---|---|
 | **B1** | ✅ **实测关闭**(critical→low) | cc-PTY 的 state 在磁盘;`--resume` 与 `server:esr-bridge` 无冲突。实现 = 两行 argv |
-| **B2** | 🔴 **唯一真架构阻塞** | 跨 backend replay 的渲染契约。**仅 `:replay` 分支需要**。三约束:per-flavor 渲染(cc-PTY 最难,只能拼进首条 prompt)· handle 隐含 **cwd 依赖** · **幂等与 token 预算尚未设计** |
+| **B2** | 🟡 **降级为 future capability**(v2.4) | 跨 backend replay。同 backend native resume 是高频需求;跨 backend switch 未经验证。Phase 2 独立 SPEC 排期,**不阻塞 Phase 1** |
 | **B3** | ✅ **已裁决(c)** | 承认 reuse = 共享 runtime(D2 收紧);另列 D3「共享身份不共享记忆」为未来设计。Part C admission gate 兜底非 owner。**不再阻塞 Step 1** |
-| **B4** | 🟠 随 Step 1 落地 | `isolation` 未建模,但**建模轴已找到**(control plane) |
+| **B4** | 🟠 **Phase 1 不关闭 B4**(v2.4) | `isolation` 未建模;建模轴已找到(`control_lifetime`/`surface`/`resume_backend`)。B4 关闭条件 = `AgentFlavorRegistry` 完整 isolation schema |
 | **B5** | ✅ 已修 | curl = stateless transport + **stateful** flavor behavior |
 
-### 分两步走(已写进稿子 §4.5)
+### 分三步走(Phase 1/2/3,v2.4)
 
-- **Step 1(小,可立即做)**:只封装 native 路径 —— `engine_session_handle` + `new_session_handle/0` + `resume_args/1`。cc 补两行 argv(`--session-id` / `--resume`),codex 把 `thread_id` 挪进 handle。`:replay` 先返 `{:error, :not_implemented}`。**收益:B1/B4 关闭,稿子可进实施。**
-- **Step 2(大,独立 SPEC)**:补 `:replay` = B2 本体。
+- **Phase 1(小,可立即做)**:`NativeResume` —— `engine_session_handle` + `new_session_handle/0` + `resume_args/1`。cc 补两行 argv(`--session-id` / `--resume`),codex 把 `thread_id` 挪进 handle。**收益:B1 关闭、第④类收编、resume 失败有 fallback。不关闭 B4。**
+- **Phase 2(独立 SPEC)**:`ReplayRestore` = 跨 backend replay = B2 本体。降级为 future capability,不阻塞 Phase 1。
+- **Phase 3(未来)**:`UnifiedContextRestore` —— 等 Phase 1+2 成型后统一 API。
 
 ---
 
 ## 4. 立即待办(优先级序)
 
-1. ✅ ~~在 PR #1256 上回 Allen~~ —— **已回**([comment](https://github.com/ezagent42/ezagent/pull/1256#issuecomment-4931545706)),B3 直接选了 (c)
-2. **Step 1 实现** —— 两行 argv + handle 收编。**B3 不再阻塞,可立即开工。**
-3. **B2 独立 SPEC**(排期,不在本 PR)。
-4. 登记项:`hello/app.ex:131-136` dead-code drift · `Entity.Agent` 与 `MessageStore` 的 **stale moduledoc 应修**。
+1. ✅ ~~在 PR #1256 上回 Allen~~ —— 已回;B3 选了 (c)
+2. ✅ ~~双 review~~ —— 本 session + Codex 独立 review 完成,共识整合进 v2.4
+3. **Phase 1 实现** —— `NativeResume`:两行 argv + `EngineSessionHandle` envelope(key=`agent_uri`) + resume 失败 fallback。**可立即开工。**
+4. **B2 独立 SPEC**(排期,不在本 PR)—— 降级为 future capability,不阻塞 Phase 1。
+5. 登记项:`hello/app.ex:131-136` dead-code drift · `Entity.Agent` 与 `MessageStore` 的 **stale moduledoc 应修**。
 
 ---
 
