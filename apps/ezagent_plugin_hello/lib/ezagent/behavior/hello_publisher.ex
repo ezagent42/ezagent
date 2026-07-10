@@ -101,6 +101,7 @@ defmodule Ezagent.ActionSet.HelloPublisher do
   defp extract_template_name(%{instruction: instruction})
        when is_binary(instruction) and instruction != "" do
     patterns = [
+      ~r/发布为\s*[：:]*\s*(\S+)/u,
       ~r/名字为\s*[：:]*\s*(\S+)/u,
       ~r/name\s+(\S+)/i,
       ~r/叫\s*[：:]*\s*(\S+)/u,
