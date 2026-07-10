@@ -46,7 +46,8 @@ defmodule Ezagent.ActionSet.HelloPublisher do
           end
           |> case do
             {:ok, %URI{} = tmpl_uri} ->
-              "New template version: #{URI.to_string(tmpl_uri)}"
+              name = template_display_name(tmpl_uri)
+              "Template \"#{name}\" published."
 
             {:error, reason} ->
               "Template save failed: #{inspect(reason)}"
@@ -79,6 +80,14 @@ defmodule Ezagent.ActionSet.HelloPublisher do
   def data_owner(_), do: :no_owner
 
   # --- internals --------------------------------------------------------
+
+  # Extract a human-readable name from the template URI, e.g.
+  # template://system/session/hello-main@hash → "hello-main".
+  defp template_display_name(%URI{path: "/session/" <> rest}) do
+    rest |> String.split("@") |> List.first() || rest
+  end
+
+  defp template_display_name(%URI{} = uri), do: URI.to_string(uri)
 
   # Read the session's parent template URI from its working copy.
   defp read_parent_template_uri(%URI{} = session_uri) do
