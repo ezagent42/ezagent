@@ -1055,6 +1055,8 @@ defmodule Ezagent.ExternalMirror.AuthModelInvariantTest do
     def interface, do: %{}
     @impl true
     def data_owner(_), do: :any
+    @impl true
+    def required_caps, do: []
   end
 
   defmodule DenyAdapter do
@@ -1116,6 +1118,8 @@ defmodule Ezagent.ExternalMirror.AuthModelInvariantTest do
     def interface, do: %{}
     @impl true
     def data_owner(_), do: :any
+    @impl true
+    def required_caps, do: []
   end
 
   defmodule SlowAdapter do
