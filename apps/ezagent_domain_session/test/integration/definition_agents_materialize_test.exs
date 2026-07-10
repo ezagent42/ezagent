@@ -362,7 +362,7 @@ defmodule EzagentDomainInstanceMessage.Integration.DefinitionAgentsMaterializeTe
     role_name = "reuse-mismatch-#{n}"
     reusable = live_agent(n, other_recipe)
 
-    assert {:error, {:reuse_agent_recipe_mismatch, ^role_name, ^reusable}} =
+    assert {:error, {:reuse_agent_recipe_mismatch, ^role_name, ^reusable}, _partial} =
              DefinitionAgents.materialize_definition_agents(
                session_uri,
                @workspace_uri,
@@ -437,7 +437,7 @@ defmodule EzagentDomainInstanceMessage.Integration.DefinitionAgentsMaterializeTe
     session_uri = live_session(n)
     missing = "no-such-recipe-#{n}"
 
-    assert {:error, {:unknown_agent_recipe, ^missing}} =
+    assert {:error, {:unknown_agent_recipe, ^missing}, _partial} =
              DefinitionAgents.materialize_definition_agents(
                session_uri,
                @workspace_uri,

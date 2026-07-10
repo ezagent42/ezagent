@@ -112,13 +112,21 @@ defmodule EzagentDomainInstanceMessage.SessionCreator.DefinitionAgents do
               {:cont, {:ok, seen, installed, [%{role_name: role_name, reason: reason} | skipped]}}
 
             {:error, reason} ->
-              {:halt, {:error, reason}}
+              partial = %{
+                satisfied: Enum.reverse(installed),
+                skipped: Enum.reverse(skipped)
+              }
+
+              {:halt, {:error, reason, partial}}
           end
       end
     end)
     |> case do
-      {:ok, _seen, installed, skipped} ->
-        {:ok, %{satisfied: Enum.reverse(installed), skipped: Enum.reverse(skipped)}}
+      {:ok, _seen, satisfied, skipped} ->
+        {:ok, %{satisfied: Enum.reverse(satisfied), skipped: Enum.reverse(skipped)}}
+
+      {:error, reason, partial} ->
+        {:error, reason, partial}
 
       {:error, _} = err ->
         err
@@ -234,19 +242,21 @@ defmodule EzagentDomainInstanceMessage.SessionCreator.DefinitionAgents do
              role_name,
              flavor
            ),
-         # Safety net for the class the pre-flight cannot see: a source that
-         # resolves but whose copy silently produced nothing (#1311). Verified
-         # BEFORE the join, so a skipped agent never becomes a session member.
-         :ok <- verify_credentials(planned_uri, flavor),
+         # Safety net for the class the pre-flight cannot see (#1311).
+         # This agent was just spawned by us — if it has no credentials,
+         # terminate it (it was never joined). REUSE path uses the separate
+         # `verify_credentials_on_reuse/2` which leaves the agent alive.
+         :ok <- verify_credentials_on_fresh(planned_uri, flavor),
          :ok <- join_or_cleanup(session_uri, planned_uri, role_name),
          :ok <- grant_recipe_caps(planned_uri, recipe) do
       {:ok, planned_uri}
     end
   end
 
-  # `{:skip, _}` from `check_materialized/2` tears the just-spawned worker down
-  # first — it was never joined, so termination is the whole cleanup.
-  defp verify_credentials(%URI{} = agent_uri, flavor) do
+  # For the FRESH path only: the agent was just spawned by us, so a credential
+  # skip tears it down. The REUSE path must NEVER terminate the pre-existing agent
+  # (it belongs to someone else — CRITICAL, codex r2).
+  defp verify_credentials_on_fresh(%URI{} = agent_uri, flavor) do
     case CredentialPrecondition.check_materialized(agent_uri, flavor) do
       :ok ->
         :ok
@@ -257,13 +267,21 @@ defmodule EzagentDomainInstanceMessage.SessionCreator.DefinitionAgents do
     end
   end
 
+  # For the REUSE path: skip the reuse but leave the existing agent alive.
+  defp verify_credentials_on_reuse(%URI{} = agent_uri, flavor) do
+    case CredentialPrecondition.check_materialized(agent_uri, flavor) do
+      :ok -> :ok
+      {:skip, _reason} = skip -> skip
+    end
+  end
+
   defp reuse_existing_agent(session_uri, workspace_uri, operator, agent, recipe_name, role_name) do
     with %URI{} = agent_uri <- reuse_agent_uri_of(agent),
          :ok <- ensure_reuse_recipe_match(agent_uri, recipe_name, role_name),
-         # Chain C — a reused agent may be a legacy zombie: created before the
-         # credential-precondition gate existed, with no credentials, silently
-         # stuck at :not_ready. Verify its config home before joining it.
-         :ok <- verify_credentials(agent_uri, flavor_of(agent)),
+         # Chain C — a reused agent may be a legacy zombie. Verify its config
+         # home before joining it; on skip, LEAVE the agent alive (it is not ours
+         # to destroy — CRITICAL, codex r2).
+         :ok <- verify_credentials_on_reuse(agent_uri, flavor_of(agent)),
          {:ok, ^agent_uri} <-
            Participants.add_participant(agent_uri, role_name,
              caller: operator,

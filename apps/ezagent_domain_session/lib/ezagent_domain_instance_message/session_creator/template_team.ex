@@ -99,8 +99,8 @@ defmodule EzagentDomainInstanceMessage.SessionCreator.TemplateTeam do
 
   def materialize_template_team(_session, _ws, _granted_by, _content), do: :ok
 
-  defp record_unfilled_slots(_session_uri, []), do: :ok
-
+  # Write on EVERY materialize — even an empty list clears a stale record left by
+  # a previous install whose orchestrator had no credentials.
   defp record_unfilled_slots(session_uri, skipped) when is_list(skipped) do
     EzagentDomainInstanceMessage.SessionCreator.record_unfilled_role_slots(session_uri, skipped)
   end

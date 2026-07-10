@@ -84,7 +84,7 @@ defmodule Ezagent.Agent.CredentialPrecondition do
 
       if Enum.any?(relpaths, fn rel ->
            path = Path.join(dir, rel)
-           File.exists?(path) and File.stat!(path).size > 0
+           File.exists?(path) and not File.dir?(path) and File.stat!(path).size > 0
          end) do
         :ok
       else
