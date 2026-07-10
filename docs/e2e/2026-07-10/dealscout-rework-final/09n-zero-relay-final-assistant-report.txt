@@ -1,0 +1,31 @@
+# 09n — 最终轮 assistant 如实汇报原文（职责接受→REPO_ROOT 定位→官方 CLI 以自身份跑→token 验真→identity.list_caps 自呼 5s 超时）
+# 会话 dealscout-zero-relay-final，sender=assistant(c3352577)，2026-07-10 13:15:55Z
+
+I'll process this update signal per my standing ingest role. First, let me locate the ezagent repo root from the pointer file.Repo root located. Now running the official ingest command with this session URI and query term (identity env is injected by the platform; CapBAC will adjudicate).入库失败了 —— 如实汇报，不重试绕过、不编造任何 injected 数字。
+
+**结果：入库未成功（CLI 报错，非权限拒绝，属 RPC 超时类基础设施错误）**
+
+- 会话：`session://system/socialware-install-dealscout/dealscout-zero-relay-final`
+- 查询词：`coding agent`
+- 执行命令（在 `REPO_ROOT=/home/yaosh/projects/ezagent-biz/.claude/worktrees/sw-dealscout-rework`）：
+  `mise exec elixir@1.18.4-otp-27 erlang@27.3.4.13 -- mix ezagent session search --session "…dealscout-zero-relay-final" --query "coding agent"`
+
+身份 token 校验通过（`entity://system/agent/c3352577-…` token 已 verify 并更新 last_used_at），但随后 dispatch 阶段超时，退出码 1。错误原文关键段：
+
+```
+error: rpc failed: {:EXIT, {:timeout, {GenServer, :call,
+  [#PID<23684.6229.0>,
+   {:ezagent_dispatch, %Ezagent.Invocation{
+      target: entity://system/agent/c3352577-…?action=identity.list_caps,
+      mode: :call, ...}},
+   5000]}}}
+```
+
+即：在做 `identity.list_caps`（CapBAC 权限枚举）这一步，对目标 agent 进程的 GenServer 调用 5000ms 超时——不是 `unauthorized` 权限裁决拒绝，而是被调用方进程无响应/超时。
+
+**因此：**
+- injected: 0（本次未入库，公开线索页未重建）。
+- 我没有重试绕过，也没有编造入库条数。
+- 这看起来是目标 agent 进程无响应导致的可恢复性超时（非权限问题）。若需重跑本次入库，请确认目标 dispatch 进程恢复后，再触发一次同样的 search 命令即可；需要我在确认恢复后重跑请告知。
+
+原始信号中 discover 报告的 5 条线索（查询词 `coding agent`）仍待入库，尚未注入会话。

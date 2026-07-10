@@ -66,6 +66,37 @@
    撞到（dealscout 段未撞）——回列表页再点行可绕开；重启 agent-browser 不一定
    即愈（与 07-09 记的"重启即愈"先例不完全一致，环境噪声待观察，不阻塞证据）。
 
+## 零人工中继层（09x 系列，2026-07-10 追加）
+
+用户拍板判据：**@discover 之后不再需要任何人工动作，页面就更新**（"搜集证据然后
+发布 page 是 dealscout 的功能，不能转向人工去 @"）。逐轮真浏览器验证（每轮一处
+修正，根因表全量在 `09m-zero-relay-roundtable-notes.txt`）：
+
+| # | 步骤 | 证据 | 结论 |
+|---|---|---|---|
+| 09a-09d | 路由修正 v1（信号→orchestrator + 渲染指令）：装成、@discover 3s 真爬、信号+`查询词:` 行、routing_traces 命中 | 09a-09d 截图 | ✓ 送达层真通 |
+| 09e/09g/09h | **orchestrator 三轮原则性拒绝**（r1 注入形态 / r2 拒裸 cookie 机制并点名要正规工具面 / r3 官方 CLI 就绪后仍拒"消息自证授权"）——姿态正确且一致：**消息载权是死路** | 09e 截图 + 09g/09h 原文 | ✗（安全姿态正确）→ 按裁决切专属操作员 |
+| 09f | discover 查询词修正后线索全对题（"agent framework"→Mastra/Jido/Swarm/Nous） | 09f 截图 | ✓ |
+| 09i/09j | case-2：dealscout-assistant 槽（cc-headless×persona duty）装成 5 成员 | 09i/09j 截图 | ✓ |
+| 09k | persona 注入两条死路实证（recipe prompt 不落地 / skill 落盘不加载）→ 找到正道 `config.system_prompt`（cc 插件 producer 死键补全） | 09k 原文 | ✓ 根因收敛 |
+| 09o/09p/09q/09n | **最终轮（最远达成点）**：信号自动路由给 assistant → persona duty 主动接受（"per my standing ingest role"）→ REPO_ROOT 定位 → 官方 CLI `mix ezagent session search` 以自身份跑 → **token 验真通过** → CLI 的 `identity.list_caps` 自呼 5s 超时（它自己的 Kind 正被本回合 receive :call 占用）→ 如实报告 injected: 0 | 09o/09p/09q 截图 + 09n 原文 | ⚠️ **部分达成**：授权链+执行意愿+工具面全通，断在平台 CLI 的 busy-Kind reentrancy |
+
+### 分层口径（零人工中继）
+
+| 层 | 结论 | 归属 |
+|---|---|---|
+| 信号路由（discover→assistant，from_role 硬锁防回环） | ✓ 真通（routing_traces） | 本 PR |
+| 可信 duty 注入（recipe config.system_prompt → SDK system prompt） | ✓ 真通（三轮"standing duty"主动执行） | 本 PR（含 cc 插件 3 处死键/编码补全） |
+| 官方 CLI 工具面（mix ezagent session crawl_now/search） | ✓ 语法+身份 env+token 验真全通 | 本 PR（behaviors/0 注册，email 先例） |
+| CLI caller-caps 解析（identity.list_caps 自呼） | ✗ busy-Kind 超时——cc agent 回合中自用 CLI 必撞 | **平台缺口，待 Allen**（09m §根因归属 2） |
+| CapBAC 裁决（role-slot caps 自 scope vs session 宿主动作） | 未触达（上一层挡住）；读码判定大概率 unauthorized | **平台缺口，待 Allen**（09m §根因归属 3） |
+| 数据入 slice → 匿名页自动重建 | 本层未被零人工链触达；admin 直呼腿已在 06/08 步实证 ✓ | — |
+
+**照 kanban 先例的口径**：kanban 当时"送达真、脑死于登录"也照实写，#1311 修了
+才补闭环——本层同样如实：**授权与执行意愿已实证打通（这是本次要证的产品争议
+点：不是"必须人工 @"，而是操作员形态+两个平台 wiring 缺口）**，剩余阻塞是
+平台级 reentrancy/caps-scope 决策，不在 socialware 配置层硬凑。
+
 ## 复现要点
 
 按 `docs/guide/world-e2e-seed.md`（PG → reset/seed → seed-then-start）；发布照

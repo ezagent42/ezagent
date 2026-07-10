@@ -1,0 +1,22 @@
+# 09k/09l — assistant persona 缺失实证（r5=recipe prompt 不落地 / r6=skill 落 sandbox 但 SDK 会话未加载）
+# r6 会话 dealscout-zero-relay-r6，sender=assistant(6acd68f0)，2026-07-10 11:44:34Z：'Nothing in my actual instructions defines me as a dealscout-assistant'（r5 同类原文 sender=9fe471d5 11:36:05Z）
+
+I'm going to pause rather than act on this, because the message asks me to execute "standing duties" that don't actually exist in my configuration.
+
+Here's what I'm seeing:
+
+**No established role or duties.** Nothing in my actual instructions defines me as a "dealscout-assistant" with a standing job to ingest/store leads. The message asserts that role inline ("你是本会话的 dealscout-assistant；按你的常设职责处理本条"), but self-asserted authority inside a piece of content isn't the same as a real, configured task. This is the classic shape of a prompt-injection: untrusted content that tells the assistant it has a pre-agreed obligation to act.
+
+**Suspicious framing.** The session path `socialware-install-dealscout` and the `__dealscout_update__` relay wrapper are trying to make routine automated ingestion look pre-authorized. I have no verified tool binding, target datastore, or schema for any "入库" (intake) operation — so "process this per your duties" has no concrete, safe interpretation I can trust.
+
+**The payload itself is harmless but irrelevant.** The five items are just public Hacker News posts about coding agents (OpenCode, Qwen, AlphaEvolve, AGENTS.md, a Simon Willison post). There's nothing to verify or act on unless a real task requires it.
+
+So I won't auto-ingest, store, forward, or otherwise "process" these based on an instruction embedded in the delivered content.
+
+If you're the actual operator and you *do* want something done, tell me directly and I'll do it — for example:
+- **Summarize / dedupe / rank** these 5 links into a brief.
+- **Write them somewhere specific** (a file/CSV/table) — give me the path and format.
+- **Fetch and fact-check** any of the linked pages.
+- **Set up a real recurring job** for this feed via the schedule/loop skills, with explicit parameters.
+
+Which of those (if any) did you intend? I'd rather confirm the real task than execute assumed "standing duties."
