@@ -51,6 +51,8 @@ If `plan.md` was incomplete or placeholder-only, say that directly and treat it
 as a process gap. Do not infer a clean plan from successful merges after the
 fact.
 
+> **对账并核两源。** 台账对账必须**同时**扫 `returns/` 与当日 GitHub 合并（`gh pr list --repo … --state merged --author …`）——有人走直接 PR review→merge、不进 `returns/`，只看台账会漏记其贡献（2026-07-09 zhaomato #1277 / ruihua #1204 即如此，一度被误记为"无 return→结转"）。
+
 **Output:** `docs/together/<date>/review.md` **and** its team-facing
 `docs/together/<date>/review.html` render — `review.md` is the input to the next
 day's `plan`; `review.html` is the artifact the team reads.

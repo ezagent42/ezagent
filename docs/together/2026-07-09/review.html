@@ -1,0 +1,99 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>dev-together 回顾 — 2026-07-09</title>
+<style>
+  body{font:14px/1.6 -apple-system,"Segoe UI",Roboto,"PingFang SC","Microsoft YaHei",sans-serif;color:#1a1a1a;max-width:1100px;margin:24px auto;padding:0 20px;background:#fff}
+  h1{font-size:24px;border-bottom:3px solid #2563eb;padding-bottom:8px}
+  h2{font-size:19px;margin-top:32px;color:#1e40af;border-left:4px solid #2563eb;padding-left:10px}
+  h3{font-size:15px;margin-top:20px;color:#374151}
+  table{border-collapse:collapse;width:100%;margin:12px 0;font-size:13px}
+  .scroll{overflow-x:auto}
+  th,td{border:1px solid #d1d5db;padding:6px 9px;text-align:left;vertical-align:top}
+  th{background:#eff6ff;font-weight:600}
+  tr:nth-child(even){background:#f9fafb}
+  .num{text-align:right;font-variant-numeric:tabular-nums}
+  .kpi{display:inline-block;margin:6px 14px 6px 0;padding:10px 16px;background:#f1f5f9;border-radius:8px}
+  .kpi b{font-size:22px;color:#2563eb;display:block}
+  .big{background:#fffbeb;border:1px solid #fde68a;border-radius:8px;padding:12px 16px;margin:14px 0}
+  .inc{background:#fef2f2;border:1px solid #fecaca;border-radius:8px;padding:10px 16px;margin:12px 0}
+  .inc h3{margin-top:4px;color:#b91c1c}
+  .good{background:#f0fdf4;border:1px solid #bbf7d0;border-radius:8px;padding:10px 16px;margin:12px 0}
+  blockquote{margin:10px 0;padding:8px 14px;background:#f8fafc;border-left:3px solid #94a3b8;color:#475569}
+  code{background:#f1f5f9;padding:1px 5px;border-radius:4px;font-size:12px}
+  .tag{display:inline-block;padding:1px 7px;border-radius:10px;font-size:11px;font-weight:600}
+  .t-dep{background:#fef3c7;color:#92400e}.t-res{background:#fee2e2;color:#991b1b}.t-cap{background:#e0e7ff;color:#3730a3}.t-doc{background:#f3e8ff;color:#6b21a8}
+</style>
+</head>
+<body>
+<h1>dev-together 回顾 · 2026-07-09</h1>
+<p>数据窗口：<code>merged:2026-07-09</code>（GMT+9 工作日）。本回顾面向全体开发者：呈现产品大局、统计团队效能、诚实复盘方法与教训。<b>本日头号目标</b>是跑通自举开发流程（Track C 修通）——<b>达成度：部分</b>：断面根因已被 gaga 完整诊断并产出修复（#1294），但<b>未落 main、未 canary 实测</b>，转结 07-10 头号。</p>
+
+<h2>指标速览</h2>
+<div>
+<span class="kpi"><b>6</b>PR 合入 main（GMT+9 07-09）</span>
+<span class="kpi"><b>1</b>根因诊断（create_session 两链解耦，#1294 在途）</span>
+<span class="kpi"><b>4</b>道行锚静态 gate 连环（#1276）</span>
+<span class="kpi"><b>6</b>贡献者</span>
+</div>
+<ul>
+<li><b>进 main 的 6 个 PR</b>：#1266（skill 分发 P1-P3，stable 已晋级至 <code>364ccf6ba</code>）· #1295（seed-loader 去重）· #1276（<code>2df027f58</code>，world 模板 UX + cc dev-channel 探针 + PTY 会话面）· #1277（官网 hello v2 重建工具/指南）· #1204（官网飞轮 handoff）· #1263（07-08 深夜 main-green 收尾，迟到跨日归本工作日<sup>*</sup>）。</li>
+<li><b>头号未落</b>：create_session 根因修复 <b>#1294</b> 已产出、评审中，但<b>未落 main、未 canary 实测</b> → 转 07-10 头号。</li>
+<li><b>方法教训两条</b>：#1276 一个大 PR 连环触发 4 道行锚静态 gate（本地只跑单 gate）；create_session 一类改动<b>机器闸（CI 绿）≠ 产品验证</b>——只有 canary 能证。</li>
+</ul>
+<blockquote><sup>*</sup> <b>#1263 归账说明</b>：#1263 是 07-08 深夜的 main-green 收尾修复，按时钟横跨到 GMT+9 07-09 清晨。07-08 回顾按其 GMT+9 工作日已叙及此弧；此处计入 07-09 KPI 是因 merge 落点落在 07-09——非重复计产，仅口径边界，交叉阅读 07-08 回顾者请留意。</blockquote>
+
+<h2>大局</h2>
+<p>本工作日主线是<b>一次困扰一周的根因诊断被打穿</b>：新建 session「5 秒超时」与「@orchestrator 不回话」这条链，被 gaga <b>reproduce-first</b>、逐链取证，最终诊断为<b>两条被 #1223 焊接的独立链</b>——链 A（创建事务里 eager-spawn orchestrator）与链 B（cc PTY 在 config_dir 物化前早产）。识破 #1223 把守护断言放在一个名叫 <code>..._decouple_test.exs</code> 的文件里<b>反转</b>（<code>== [owner]</code> → orchestrator 必须已是成员），所以 CI 从未变红。修复 <b>#1294</b> 把 agent 事务整个移出创建路径、恢复 #912 契约（"Session creation never waits for a transport bridge"）——但<b>仍在评审、未落 main、未 canary 实测</b>，转为 07-10 头号。</p>
+<ul>
+<li><b>gaga 的架构自证</b>：#1294 把 agent 事务移出创建路径后，历史上那条 handoff 里的 grant <code>:call</code>→<code>:cast</code> 补丁<b>不再需要</b>——"架构对了补丁就消失" 是本周期最好的架构论据，直接印证 lead 的边界收敛方向（session 面不再伸手进 agent 生命周期）。</li>
+<li><b>团队判断正面</b>：#1276 复盘 return 明确写着 caller-caps + longer-deadline 那条 handoff <b>被主动从分支移除</b>（ownership 归 gaga #1247）。团队<b>没有</b>用"加长 deadline + loading 态"去盖症状，而是把结构性修复路由给根因持有者——判断本身是对的。</li>
+<li><b>已进 main / 已晋级</b>：#1266 skill 分发 P1-P3（stable 晋级 <code>364ccf6ba</code>，含 #1243/#1252/#1257/#1259/#1261/#1263）· #1295 seed-loader 去重（hello/kanban Demo 收敛，duplicate-fn cap 46→42）· #1276 world 模板 UX + cc dev-channel 探针 + PTY 会话面（<code>2df027f58</code>）。</li>
+</ul>
+
+<h2>§2 开发效能（profile 更新据此）</h2>
+<ul>
+<li><b>gagameow（黄佳佳）</b> — 本周最强信号。create_session 卡死困扰一周（#1202→#1259→#1223 一路只按到一个 sync point），gaga <b>reproduce-first</b>、逐链取证，识破 #1223 断言反转，诊断出"5秒超时"与"@orchestrator 不回话"是<b>两条被焊接的独立链</b>。→ 强化标签 <b>根因诊断 / 架构级排查</b>。</li>
+<li><b>#1276（world 模板 UX，大 PR）</b> — 体量大、端到端。<b>返工点</b>：作为一个大 PR 合入时连环触发 4 道<b>行锚静态 gate</b>（arch dedup / doc-coverage / uri_query 实为 home_path 行锚 / locality allowlist），被红 arch gate 逐层掩盖。根因非代码错误，而是<b>本地 DoD 只跑了单个 gate</b>（见 §3）。→ 派发注记：大 PR + 动行锚文件时，本地跑全套 gate 是硬要求。</li>
+<li><b>jjkysy 席位（seed-loader #1295）</b> — 顺带<b>考据出 arch baseline 记账漂移</b>：duplicate-fn cap 46 从 #1248 起一路虚高，实测一直是 42（count≤cap 的绿掩盖了虚高）。→ 强化标签 <b>原则 / 记账把关</b>。教训：bump/ratchet baseline 必须以<b>带数字的实测输出</b>为准，不能只看测试绿。</li>
+</ul>
+
+<h2>§3 方法教训（method-deltas → 写回 dev-together skill）</h2>
+
+<div class="inc">
+<h3>教训 1 — 静态 gate 拓扑：return 前跑完整 <code>ci.local</code>，不跑子集（#1276 四道 gate 连环）</h3>
+<p>#1276 四道 gate 连环暴露的根因：这些 gate 分散在<b>不同 CI job</b>——<code>gate (deterministic)</code> 只跑 <code>arch.scan</code> + <code>doc.scan</code>；<code>full-suite</code>（<code>mix ci.local</code>）才跑 <code>uri_query.scan</code>（含 <code>home_path_in_runtime_code</code> 行锚）+ 全部 ExUnit 不变量；<code>check_invariants</code> <b>不含</b> <code>uri_query.scan</code>。且 <code>HomePathExceptions</code> / locality allowlist / arch anchors 是<b>按行锚定</b>的——上方插/删行就漂移，把合法永久豁免变成"违规"。</p>
+<p><b>写入 return DoD</b>：改动含行锚豁免文件或新增/提升公共 def 时，本地必跑 <code>arch.scan + doc.scan + uri_query.scan + check_invariants</code>（或整套 <code>ci.local</code>）；行锚漂移<b>重锚</b>、不新增 allowlist。只跑任务点名的那一道，绿了只会揭开下一道。</p>
+</div>
+
+<div class="big">
+<h3 style="margin-top:0">教训 2 — 机器闸（CI 绿）≠ 产品验证：这类 PR 必须加 canary 实测（#1294）</h3>
+<p>凡动 <b>orchestrator / session-create / PTY 就绪</b>的改动：test 环境跳过 <code>require_transport_join</code>、短路 <code>:exec.run</code>——"transport bridge 真 join、agent 真翻 <code>:ready</code> 并回话" <b>只有 canary 能证</b>。历史上 coordinator 曾在 #1259 后过早宣布"create_session 修好"，实测仍超时。</p>
+<p><b>写入 handoff 标准</b>：这类 PR 的 DoD 必须加一个显式的 <b>canary 实测</b>步骤（合并后在部署渠道上实测），实测通过再宣布"修好"。#1294 create_session 根因修复即受此约束。</p>
+</div>
+
+<p><b>（基建 follow-up）</b> mac runner 从 GitHub releases 下 <code>tailwindcss</code> 二进制反复吃 504（#1276 收尾撞到），asset build 挂但测试全绿 = infra flake。→ runner 预缓存二进制。</p>
+
+<h2>§4 台账对账（4 份 return + 直接 PR + 结转）</h2>
+<div class="scroll"><table>
+<tr><th>return / track</th><th>归属</th><th>状态</th><th>去向</th></tr>
+<tr><td>pr-1276-complete-return</td><td>codex（汇总）</td><td><b>merged</b> <code>2df027f58</code></td><td>补 4 gate 后合入；world 模板 UX + cc 探针 + PTY 面</td></tr>
+<tr><td>world-session-create-failfast</td><td>claude</td><td><b>superseded / merged</b></td><td>cc dev-channel fail-fast 合入；其 <code>deadline_ms</code> 加长 stopgap <b>未进 main</b>（已核实：<code>workspace.ex</code> 仅通用 pass-through helper，无 60000 硬值）——正确地让位给 #1294 结构修</td></tr>
+<tr><td>world-pty-conversation-surface</td><td>claude</td><td><b>merged</b>（标 out_of_scope）</td><td>随 #1276 合入；PTY 会话面</td></tr>
+<tr><td>seed-loader-dedup</td><td>jjkysy 席位</td><td><b>merged #1295</b></td><td>ShippedManifest 共享 loader</td></tr>
+<tr><td>Track C（create_session 根因）</td><td>gagameow</td><td><b>carry → 07-10 头号</b></td><td>#1294 已产出，评审中 + <b>未 canary 实测</b></td></tr>
+<tr><td>官网 hello 重建</td><td>zhaomaota97</td><td><b>merged #1277</b>（直接 PR，非 returns/ 台账）</td><td>v2 seed page + rebuild guide + domain fixes。<b>注</b>：重建工具/指南已交付；<b>live E2E</b> 能力上依赖 #1294 落 canary——07-10 复走确认</td></tr>
+<tr><td>官网飞轮 handoff</td><td>ruihuachen-designer</td><td><b>merged #1204</b>（直接 PR）</td><td>价值链梳理 + 可点击 demo + handoffs + scenarios</td></tr>
+<tr><td>canary 走查</td><td>zyli-developer</td><td><b>无 return 归档 → 结转</b></td><td>07-10 结转（zyli 主体在 #1276；走查 return 未归档）</td></tr>
+<tr><td>#1255 三命名裁定</td><td>jjkysy</td><td><b>无 return 归档 → 结转</b></td><td>07-10 结转（seed-loader #1295 已交付）</td></tr>
+</table></div>
+<blockquote><b>台账 vs 实际合并的缺口</b>：zhaomato #1277 / ruihua #1204 走的是<b>直接 PR review→merge</b>，没进 dev-together 的 <code>returns/</code> 台账——所以只看 <code>returns/</code> 会漏记他们的贡献（已据 GitHub 更正，一度被误记为"无 return→结转"）。教训：review 的对账必须<b>同时</b>扫 <code>returns/</code> 与当日 GitHub 合并，两条来源并核。zyli 走查 / jjkysy #1255 仍无归档也无对应 PR → 真结转，07-10 确认。</blockquote>
+
+<h2>§5 次日建议</h2>
+<p>见 <code>docs/together/2026-07-10/plan.md</code>。头号 = <b>#1294 落地 + canary 实测</b>（困扰一周的 create_session 链）；lead 新增结构线 = <b>AgentRuntime 控制面 in-repo 边界</b>（把 #1294 的 A2 gate 泛化为可量化的边界度量）；jjkysy 把本篇两条 method-delta 写进 skill。</p>
+
+<p style="margin-top:24px;color:#9ca3af;font-size:12px">本回顾面向全体开发者，仅含团队相关内容。Markdown 版见 <code>review.md</code>。</p>
+</body>
+</html>
