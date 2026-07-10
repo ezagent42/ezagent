@@ -102,7 +102,7 @@ defmodule EzagentWeb.Socialware.AnonIngressTest do
     session = public_session(false)
     conn = Plug.Test.init_test_session(conn, %{})
 
-    assert {:error, :not_public_view} = AnonIngress.resolve_caller(conn, session)
+    assert {:error, :login_required} = AnonIngress.resolve_caller(conn, session)
     refute Map.has_key?(conn.resp_cookies, AnonCookie.cookie_name())
   end
 
