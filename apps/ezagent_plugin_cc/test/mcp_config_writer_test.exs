@@ -184,9 +184,10 @@ defmodule EzagentPluginCc.McpConfigWriterTest do
       assert File.exists?(Path.join(agent_cwd, ".mcp.json"))
     end
 
-    test "write_with_token!/1 with :config_dir writes the AUTHORITATIVE per-agent .mcp.json there (PR-3 DD-6)", %{
-      out_dir: out_dir
-    } do
+    test "write_with_token!/1 with :config_dir writes the AUTHORITATIVE per-agent .mcp.json there (PR-3 DD-6)",
+         %{
+           out_dir: out_dir
+         } do
       # PR-3: the per-agent .mcp.json the domain-allocated config_dir owns is the
       # one claude's `--mcp-config` points at. The cwd copy remains as compat.
       config_dir =
@@ -197,7 +198,11 @@ defmodule EzagentPluginCc.McpConfigWriterTest do
 
       File.mkdir_p!(config_dir)
       File.mkdir_p!(agent_cwd)
-      on_exit(fn -> File.rm_rf(config_dir); File.rm_rf(agent_cwd) end)
+
+      on_exit(fn ->
+        File.rm_rf(config_dir)
+        File.rm_rf(agent_cwd)
+      end)
 
       {:ok, _path, _token} =
         McpConfigWriter.write_with_token!(
@@ -212,7 +217,9 @@ defmodule EzagentPluginCc.McpConfigWriterTest do
       # the cwd compat copy is still written
       assert File.exists?(Path.join(agent_cwd, ".mcp.json"))
 
-      env = cfg_mcp |> File.read!() |> Jason.decode!() |> get_in(["mcpServers", "esr-bridge", "env"])
+      env =
+        cfg_mcp |> File.read!() |> Jason.decode!() |> get_in(["mcpServers", "esr-bridge", "env"])
+
       assert Map.keys(env) == ["EZAGENT_BRIDGE_WS_URL"]
     end
 
@@ -225,6 +232,129 @@ defmodule EzagentPluginCc.McpConfigWriterTest do
         )
 
       assert File.exists?(path)
+    end
+  end
+
+  # transport #53 / Phase 7 PR-5 — the orchestrator MCP transport bridge must be
+  # wired into the SAME .mcp.json claude's primary --mcp-config reads, so a live
+  # orchestrator's claude launches orchestrator_bridge.py and joins
+  # `orch:bridge:<uri>` (the readiness signal). Gated on the :orchestrator opt
+  # (the caller sets it from role == "orchestrator", flavor-agnostic) — a normal
+  # cc agent must NOT get the second server.
+  describe "orchestrator second server (:orchestrator opt)" do
+    test "an orchestrator .mcp.json contains BOTH esr-bridge AND esr-orchestrator", %{
+      out_dir: out_dir
+    } do
+      config_dir =
+        Path.join(System.tmp_dir!(), "esr-orch-mcp-#{System.unique_integer([:positive])}")
+
+      File.mkdir_p!(config_dir)
+      on_exit(fn -> File.rm_rf(config_dir) end)
+
+      tools_path = "/some/sandbox/orchestrator_tools.json"
+
+      {:ok, _path, _token} =
+        McpConfigWriter.write_with_token!(
+          agent_uri: "entity://team-alpha/agent/cc_orchestrator-s1",
+          dir: out_dir,
+          config_dir: config_dir,
+          orchestrator: true,
+          orchestrator_ws_url: "ws://127.0.0.1:10042/orchestrator_socket/websocket",
+          orchestrator_tools_path: tools_path
+        )
+
+      servers =
+        config_dir
+        |> Path.join(".mcp.json")
+        |> File.read!()
+        |> Jason.decode!()
+        |> Map.fetch!("mcpServers")
+
+      # The chat-transport bridge is still present.
+      assert servers["esr-bridge"]["command"] == "uv"
+
+      # AND the orchestrator MCP transport bridge.
+      orch = servers["esr-orchestrator"]
+      assert orch["command"] == "uv"
+      assert ["run", "--script", script] = orch["args"]
+
+      # Script resolves at RUNTIME under priv (reuse the #1325 pattern) and is
+      # actually packaged/present — the invariant that keeps the sidecar out of
+      # the "absent from release" bug class.
+      priv_dir = Application.app_dir(:ezagent_plugin_cc, "priv")
+      assert String.starts_with?(script, priv_dir)
+      assert Path.basename(script) == "orchestrator_bridge.py"
+      assert File.exists?(script)
+      assert script == McpConfigWriter.orchestrator_bridge_script_path()
+
+      # Its env points at the /orchestrator_socket mount + the exported schema.
+      assert orch["env"]["EZAGENT_BRIDGE_WS_URL"] ==
+               "ws://127.0.0.1:10042/orchestrator_socket/websocket"
+
+      assert orch["env"]["EZAGENT_ORCHESTRATOR_TOOLS_PATH"] == tools_path
+
+      # Per-agent identity (URI + token) is NOT baked into this shared file — it
+      # flows via claude's process env, exactly like esr-bridge.
+      refute Map.has_key?(orch["env"], "EZAGENT_AGENT_URI")
+      refute Map.has_key?(orch["env"], "EZAGENT_AGENT_TOKEN")
+    end
+
+    test "a NON-orchestrator cc agent's .mcp.json does NOT contain esr-orchestrator", %{
+      out_dir: out_dir
+    } do
+      config_dir =
+        Path.join(System.tmp_dir!(), "esr-plain-mcp-#{System.unique_integer([:positive])}")
+
+      File.mkdir_p!(config_dir)
+      on_exit(fn -> File.rm_rf(config_dir) end)
+
+      {:ok, _path, _token} =
+        McpConfigWriter.write_with_token!(
+          agent_uri: "entity://team-alpha/agent/cc_plain",
+          dir: out_dir,
+          config_dir: config_dir
+        )
+
+      servers =
+        config_dir
+        |> Path.join(".mcp.json")
+        |> File.read!()
+        |> Jason.decode!()
+        |> Map.fetch!("mcpServers")
+
+      assert Map.has_key?(servers, "esr-bridge")
+      refute Map.has_key?(servers, "esr-orchestrator")
+    end
+
+    test "an orchestrator entry omits the tools-path env key when no path is given", %{
+      out_dir: out_dir
+    } do
+      config_dir =
+        Path.join(System.tmp_dir!(), "esr-orch-notools-#{System.unique_integer([:positive])}")
+
+      File.mkdir_p!(config_dir)
+      on_exit(fn -> File.rm_rf(config_dir) end)
+
+      {:ok, _path, _token} =
+        McpConfigWriter.write_with_token!(
+          agent_uri: "entity://team-alpha/agent/cc_orchestrator-s2",
+          dir: out_dir,
+          config_dir: config_dir,
+          orchestrator: true,
+          orchestrator_ws_url: "ws://127.0.0.1:10042/orchestrator_socket/websocket"
+        )
+
+      env =
+        config_dir
+        |> Path.join(".mcp.json")
+        |> File.read!()
+        |> Jason.decode!()
+        |> get_in(["mcpServers", "esr-orchestrator", "env"])
+
+      # Absent tools path → key omitted (bridge falls back to its next-to-script
+      # default) rather than written as a null.
+      refute Map.has_key?(env, "EZAGENT_ORCHESTRATOR_TOOLS_PATH")
+      assert Map.has_key?(env, "EZAGENT_BRIDGE_WS_URL")
     end
   end
 end
