@@ -26,7 +26,7 @@ defmodule Ezagent.ActionSet.HelloPublisher do
   @doc """
   Dispatchable publish entry. Derives a template name from the session name +
   timestamp by default; if the instruction carries an explicit name
-  (e.g. \"发布为zzz\"), uses that name + timestamp instead. Always unique.
+  (e.g. user says \"name it zzz\"), uses that name + timestamp. Always unique.
   Posts the result from the publisher agent itself.
   """
   def handle_publish(%{session_uri: session_str} = args, _ctx)
@@ -98,8 +98,8 @@ defmodule Ezagent.ActionSet.HelloPublisher do
 
   @name_prompt """
   Extract only the template name from this chat message.
-  - If the user explicitly named it (e.g. \"发布为xxx\", \"叫xxx\", \"name xxx\",
-    \"发布，名字是xxx\", \"存为yyy\", etc.), return ONLY the name.
+  - If the user explicitly named it (e.g. \"name xxx\", \"named xxx\",
+    \"call it xxx\", \"save as yyy\", etc.), return ONLY the name.
   - If NO name was specified, return \"auto\".
   - Return ONLY the name or \"auto\". No punctuation, no extra text.
   """
