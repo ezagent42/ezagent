@@ -55,6 +55,8 @@ defmodule Ezagent.World.ConversationData do
       "members" => members,
       "human_role_slots" => human_role_slots(session_uri),
       "installed_socialwares" => installed_socialwares(session_uri),
+      "unfilled_agent_role_slots" =>
+        EzagentDomainInstanceMessage.SessionCreator.unfilled_agent_role_slots(session_uri),
       "invite_candidates" => invite_candidates(session_uri, caller_uri, workspace_uri, members),
       "routing_entity_candidates" =>
         routing_entity_candidates(caller_uri, workspace_uri, members),

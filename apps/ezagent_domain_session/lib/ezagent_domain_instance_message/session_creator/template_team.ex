@@ -47,7 +47,8 @@ defmodule EzagentDomainInstanceMessage.SessionCreator.TemplateTeam do
   socialware-install step, `repair_orchestrator/1`, and the plugin app-instantiate
   paths. Idempotent — a role already joined is skipped.
   """
-  @spec materialize_definition_agents(URI.t(), URI.t(), URI.t(), map()) :: :ok | {:error, term()}
+  @spec materialize_definition_agents(URI.t(), URI.t(), URI.t(), map()) ::
+          {:ok, DefinitionAgents.summary()} | {:error, term()}
   def materialize_definition_agents(
         %URI{} = session_uri,
         %URI{} = workspace_uri,
@@ -68,7 +69,8 @@ defmodule EzagentDomainInstanceMessage.SessionCreator.TemplateTeam do
     end
   end
 
-  def materialize_definition_agents(_session, _ws, _granted_by, _content), do: :ok
+  def materialize_definition_agents(_session, _ws, _granted_by, _content),
+    do: {:ok, %{satisfied: [], skipped: []}}
 
   @doc """
   Config + agents in one call. Used by the REPAIR path and by plugin
@@ -84,12 +86,24 @@ defmodule EzagentDomainInstanceMessage.SessionCreator.TemplateTeam do
         template_content
       )
       when is_map(template_content) do
-    with :ok <- materialize_template_config(session_uri, workspace_uri, template_content) do
-      materialize_definition_agents(session_uri, workspace_uri, granted_by, template_content)
+    # The repair + plugin app-instantiate lanes. Skip records are written to the
+    # session working copy (same as `install_session_socialware/1`) so the UI can
+    # surface unfilled role slots regardless of which lane created the session.
+    with :ok <- materialize_template_config(session_uri, workspace_uri, template_content),
+         {:ok, summary} <-
+           materialize_definition_agents(session_uri, workspace_uri, granted_by, template_content),
+         :ok <- record_unfilled_slots(session_uri, summary.skipped) do
+      :ok
     end
   end
 
   def materialize_template_team(_session, _ws, _granted_by, _content), do: :ok
+
+  # Write on EVERY materialize — even an empty list clears a stale record left by
+  # a previous install whose orchestrator had no credentials.
+  defp record_unfilled_slots(session_uri, skipped) when is_list(skipped) do
+    EzagentDomainInstanceMessage.SessionCreator.record_unfilled_role_slots(session_uri, skipped)
+  end
 
   @doc """
   Keep only the `fill: :agent` role slots of a declaration list (the durable

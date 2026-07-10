@@ -149,6 +149,7 @@ export type ConversationState = {
   routing_entity_candidates?: InviteCandidateRow[]
   human_role_slots?: HumanRoleSlotRow[]
   installed_socialwares?: InstalledSocialwareRow[]
+  unfilled_agent_role_slots?: { role_name: string; reason: string }[]
   views?: ViewTab[]
 }
 
@@ -208,6 +209,7 @@ export function Conversation({
   const templates = state.templates && state.templates.length > 0 ? state.templates : ["default"]
   const routingRules = state.routing_rules || []
   const installedSocialwares = state.installed_socialwares || []
+  const unfilledRoleSlots = state.unfilled_agent_role_slots || []
   const fallbackViews: ViewTab[] = [{id: "conversation", label: "对话", icon: "message-square", mode: "chat"}]
   const sourceViews = state.views && state.views.length > 0 ? state.views : fallbackViews
   const views = sourceViews.length > 0 ? sourceViews : fallbackViews
@@ -1151,6 +1153,20 @@ export function Conversation({
               })}
             </div>
           </section>
+        )}
+
+        {unfilledRoleSlots.length > 0 && (
+          <div className="border-t border-border px-3 py-2.5" data-world-unfilled-role-slots>
+            {unfilledRoleSlots.map((slot) => (
+              <p key={slot.role_name} className="text-[12px] leading-relaxed text-muted-foreground">
+                <strong className="font-medium text-amber-400">{slot.role_name}</strong>
+                {" · 未装载"}
+                {slot.reason === "missing_credentials" &&
+                  "：缺少 Claude 凭证，请在设置中绑定 Claude 登录后再试"}
+                {slot.reason !== "missing_credentials" && `（${slot.reason}）`}
+              </p>
+            ))}
+          </div>
         )}
 
         <details className="border-t border-border px-2 py-3" data-world-routing-drawer>

@@ -161,7 +161,7 @@ defmodule EzagentDomainInstanceMessage.Integration.DefinitionAgentsMaterializeTe
     recipe_name = seed_recipe(n)
     role_name = "greeter-#{n}"
 
-    assert :ok =
+    assert {:ok, _summary} =
              DefinitionAgents.materialize_definition_agents(
                session_uri,
                @workspace_uri,
@@ -192,7 +192,7 @@ defmodule EzagentDomainInstanceMessage.Integration.DefinitionAgentsMaterializeTe
     role_name = "greeter-non-cc-#{n}"
     flavor = register_stub_flavor(n)
 
-    assert :ok =
+    assert {:ok, _summary} =
              DefinitionAgents.materialize_definition_agents(
                session_uri,
                @workspace_uri,
@@ -235,7 +235,7 @@ defmodule EzagentDomainInstanceMessage.Integration.DefinitionAgentsMaterializeTe
     role_name = "behavior-member-#{n}"
     flavor = register_stub_flavor(n)
 
-    assert :ok =
+    assert {:ok, _summary} =
              DefinitionAgents.materialize_definition_agents(
                session_uri,
                @workspace_uri,
@@ -271,7 +271,7 @@ defmodule EzagentDomainInstanceMessage.Integration.DefinitionAgentsMaterializeTe
 
     :ok = ensure_orchestrator_recipe()
 
-    assert :ok =
+    assert {:ok, _summary} =
              DefinitionAgents.materialize_definition_agents(
                session_uri,
                @workspace_uri,
@@ -294,7 +294,7 @@ defmodule EzagentDomainInstanceMessage.Integration.DefinitionAgentsMaterializeTe
            end)
   end
 
-  test "ensure_orchestrator adopts a legacy planned orchestrator into Definition membership" do
+  test "ensure_orchestrator skips a bare Agent Kind without credentials (chain C)" do
     n = uniq()
     session_uri = live_session(n)
 
@@ -314,31 +314,28 @@ defmodule EzagentDomainInstanceMessage.Integration.DefinitionAgentsMaterializeTe
     :ok = Ezagent.Agent.RecipeAttributes.put(orchestrator_uri, "orchestrator")
     on_exit(fn -> terminate(orchestrator_uri) end)
 
-    assert {:ok, ^orchestrator_uri, :already_present} =
+    # Chain C: the bare Agent Kind spawned above has no credential source and no
+    # materialized config home, so the reuse path skips it. `ensure_orchestrator`
+    # correctly reports the adoption failure.
+    assert {:error, {:orchestrator_adoption_failed, :member_not_joined}} =
              Ezagent.Entity.Session.Orchestrator.ensure_orchestrator(
                session_uri,
                @workspace_uri,
                @owner_uri
              )
-
-    assert SessionBehavior.role_name_to_uri(members_of(session_uri), "orchestrator") ==
-             orchestrator_uri
-
-    caps = Ezagent.Identity.list_caps_for(orchestrator_uri)
-
-    assert Enum.any?(caps, fn cap ->
-             cap.kind == :session and cap.instance == {:within_session, session_uri}
-           end)
   end
 
-  test "reuse install choice joins the selected recipe-matching agent through the edge role" do
+  test "reuse install choice skips a credential-less agent (chain C) instead of joining a zombie" do
     n = uniq()
     session_uri = live_session(n)
     recipe_name = seed_recipe(n)
     role_name = "reuse-advisor-#{n}"
     reusable = live_agent(n, recipe_name)
 
-    assert :ok =
+    # Chain C: a bare-bones Agent Kind spawned for testing has no credential
+    # source and no materialized config home. Before the fix it was reused
+    # silently; now it's skipped.
+    assert {:ok, %{satisfied: [], skipped: [%{role_name: ^role_name, reason: {:config_home_without_credentials, "cc"}}]}} =
              DefinitionAgents.materialize_definition_agents(
                session_uri,
                @workspace_uri,
@@ -354,8 +351,7 @@ defmodule EzagentDomainInstanceMessage.Integration.DefinitionAgentsMaterializeTe
              )
 
     members = members_of(session_uri)
-    assert SessionBehavior.role_name_to_uri(members, role_name) == reusable
-    assert map_size(members) == 1
+    assert SessionBehavior.role_name_to_uri(members, role_name) == nil
   end
 
   test "reuse install choice rejects an agent from a different recipe" do
@@ -366,7 +362,7 @@ defmodule EzagentDomainInstanceMessage.Integration.DefinitionAgentsMaterializeTe
     role_name = "reuse-mismatch-#{n}"
     reusable = live_agent(n, other_recipe)
 
-    assert {:error, {:reuse_agent_recipe_mismatch, ^role_name, ^reusable}} =
+    assert {:error, {:reuse_agent_recipe_mismatch, ^role_name, ^reusable}, _partial} =
              DefinitionAgents.materialize_definition_agents(
                session_uri,
                @workspace_uri,
@@ -391,7 +387,7 @@ defmodule EzagentDomainInstanceMessage.Integration.DefinitionAgentsMaterializeTe
     role_name = "greeter-#{n}"
     agents = [%{recipe: recipe_name, role_name: role_name}]
 
-    assert :ok =
+    assert {:ok, _summary} =
              DefinitionAgents.materialize_definition_agents(
                session_uri,
                @workspace_uri,
@@ -404,7 +400,7 @@ defmodule EzagentDomainInstanceMessage.Integration.DefinitionAgentsMaterializeTe
     on_exit(fn -> terminate(planned) end)
 
     # second call is a no-op skip (member already at our deterministic URI)
-    assert :ok =
+    assert {:ok, _summary} =
              DefinitionAgents.materialize_definition_agents(
                session_uri,
                @workspace_uri,
@@ -441,7 +437,7 @@ defmodule EzagentDomainInstanceMessage.Integration.DefinitionAgentsMaterializeTe
     session_uri = live_session(n)
     missing = "no-such-recipe-#{n}"
 
-    assert {:error, {:unknown_agent_recipe, ^missing}} =
+    assert {:error, {:unknown_agent_recipe, ^missing}, _partial} =
              DefinitionAgents.materialize_definition_agents(
                session_uri,
                @workspace_uri,

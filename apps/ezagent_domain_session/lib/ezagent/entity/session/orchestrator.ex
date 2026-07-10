@@ -133,7 +133,7 @@ defmodule Ezagent.Entity.Session.Orchestrator do
 
   defp adopt_legacy_orchestrator_member(session_uri, workspace_uri, owner_uri, candidate_uri) do
     with :ok <- install_orchestrator_definition(session_uri, workspace_uri, owner_uri),
-         :ok <-
+         {:ok, _summary} <-
            EzagentDomainInstanceMessage.SessionCreator.DefinitionAgents.materialize_definition_agents(
              session_uri,
              workspace_uri,

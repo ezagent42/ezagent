@@ -910,7 +910,15 @@ defmodule Ezagent.World.ConversationActions do
         ConversationData.routing_entity_candidates(caller, workspace, members),
       "invite_candidates" =>
         ConversationData.invite_candidates(session_uri, caller, workspace, members),
-      "views" => ConversationData.session_views(session_uri, caller)
+      "views" => ConversationData.session_views(session_uri, caller),
+      # Chain C — declared agent role slots that could not be materialized (today
+      # only "missing credentials"). Mirrors the existing `human_role_slots`
+      # shape: `[%{role_name: "...", reason: :missing_credentials}]`. The UI
+      # renders a hint in the socialware section so the user knows WHY a role
+      # agent is absent (Invariant #9: a server log alone is a silent drop at a
+      # user-facing surface).
+      "unfilled_agent_role_slots" =>
+        EzagentDomainInstanceMessage.SessionCreator.unfilled_agent_role_slots(session_uri)
     }
 
     if connected?(socket), do: push_event(socket, "world:state", payload), else: socket
