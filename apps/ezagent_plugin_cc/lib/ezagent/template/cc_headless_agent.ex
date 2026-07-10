@@ -70,7 +70,21 @@ defmodule Ezagent.PluginCc.Template.CcHeadlessAgent do
   @impl Ezagent.Kind.Template
   def validate(tmpl) when is_map(tmpl) do
     with :ok <- check_class(tmpl),
-         :ok <- check_agent_uri(tmpl),
+         :ok <- validate_after_class(tmpl) do
+      :ok
+    end
+  end
+
+  def validate(_), do: {:error, :not_a_map}
+
+  # Every cc_headless.agent validation check AFTER the class-string check, shared
+  # with the deepseek provider shim (`CcHeadlessDeepseekAgent`) so its
+  # `validate/1` reuses the exact rules while accepting its own
+  # `"cc_headless_deepseek.agent"` class.
+  @doc false
+  @spec validate_after_class(map()) :: :ok | {:error, term()}
+  def validate_after_class(tmpl) when is_map(tmpl) do
+    with :ok <- check_agent_uri(tmpl),
          :ok <- check_cwd(tmpl),
          :ok <- check_optional_config_dir(tmpl),
          :ok <- reject_stale_config_dir_data_key!(tmpl) do
@@ -78,13 +92,27 @@ defmodule Ezagent.PluginCc.Template.CcHeadlessAgent do
     end
   end
 
-  def validate(_), do: {:error, :not_a_map}
-
   @impl Ezagent.Kind.Template
   def instantiate(_tmpl_name, %{"agent_uri" => uri_str} = tmpl, workspace_uri) do
+    instantiate_for_flavor(__MODULE__, uri_str, tmpl, workspace_uri)
+  end
+
+  def instantiate(_tmpl_name, tmpl, _workspace_uri), do: {:error, {:invalid_template, tmpl}}
+
+  # Flavor-parameterized instantiate body, shared with the deepseek provider
+  # shim (`CcHeadlessDeepseekAgent`) so the STORED launch flavor is the caller's
+  # flavor (`cc-headless` vs `cc-headless-deepseek`) while the SDK-sidecar spawn
+  # path stays this single module. The provider dimension rides in `tmpl` as a
+  # `"provider"` data field (read by `sdk_sidecar_params/2` → the sidecar's
+  # `EZAGENT_CC_SDK_ENV` passthrough → the Python worker's SDK `env=`).
+  @doc false
+  @spec instantiate_for_flavor(module(), String.t(), map(), URI.t()) ::
+          {:ok, [URI.t()], map()} | {:error, term()}
+  def instantiate_for_flavor(flavor_class, uri_str, tmpl, workspace_uri)
+      when is_atom(flavor_class) and is_binary(uri_str) and is_map(tmpl) do
     agent_uri = Ezagent.URI.new!(uri_str)
 
-    with :ok <- Ezagent.AgentFlavorAttributes.put_from_template_class(agent_uri, __MODULE__) do
+    with :ok <- Ezagent.AgentFlavorAttributes.put_from_template_class(agent_uri, flavor_class) do
       cond do
         agent_kind_alive?(agent_uri) ->
           {:ok, [agent_uri], %{fresh?: false}}
@@ -94,8 +122,6 @@ defmodule Ezagent.PluginCc.Template.CcHeadlessAgent do
       end
     end
   end
-
-  def instantiate(_tmpl_name, tmpl, _workspace_uri), do: {:error, {:invalid_template, tmpl}}
 
   # ---- Spawn path ---------------------------------------------------------
 
@@ -222,7 +248,10 @@ defmodule Ezagent.PluginCc.Template.CcHeadlessAgent do
     end
   end
 
-  defp sdk_sidecar_params(agent_uri, tmpl) do
+  # Public (`@doc false`) so the deepseek-backend test can assert the provider
+  # env (`cmd_env`) threaded into the sidecar without starting a real sidecar.
+  @doc false
+  def sdk_sidecar_params(agent_uri, tmpl) do
     config_dir =
       Ezagent.Credential.HomeRuntime.resolve_config_home(agent_uri, tmpl, __MODULE__) ||
         Map.get(tmpl, "agent_config_dir") ||
@@ -240,10 +269,26 @@ defmodule Ezagent.PluginCc.Template.CcHeadlessAgent do
       allowed_tools: Map.get(tmpl, "allowed_tools"),
       disallowed_tools: Map.get(tmpl, "disallowed_tools"),
       mcp_servers: Map.get(tmpl, "mcp_servers"),
+      # Provider/backend env (anthropic|deepseek), ORTHOGONAL to the headless
+      # transport. anthropic → %{} (unchanged). deepseek → the 8-var DeepSeek
+      # block; the sidecar exports it as `EZAGENT_CC_SDK_ENV` and the Python
+      # worker applies it as the Claude Code SDK subprocess `env=`, so headless
+      # deepseek talks to the DeepSeek endpoint exactly like the pty path. The
+      # deepseek instantiate already fail-fasts on a missing DEEPSEEK_API_KEY.
+      cmd_env: provider_cmd_env(tmpl),
       uv_path: Map.get(tmpl, "uv_path"),
       python_path: Map.get(tmpl, "python_path"),
       sdk_worker_path: Map.get(tmpl, "sdk_worker_path")
     }
+  end
+
+  defp provider_cmd_env(tmpl) do
+    case Ezagent.PluginCc.Provider.provider_env(tmpl) do
+      {:ok, env} -> env
+      # Unreachable for deepseek (instantiate gates the key first); a bare {} is
+      # a safe no-op for the sidecar's `maybe_json_env` (skips empty maps).
+      {:error, _} -> %{}
+    end
   end
 
   defp rollback_runtime(agent_uri) do

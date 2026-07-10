@@ -77,7 +77,13 @@
   #   `Ezagent.Credential.HomeRuntime.host_login_dir/2` derivation (env override
   #   else `~/.claude`), consumed only via
   #   `CredentialAdapter.host_login_source_dir/1`. 51→52.
-  def_count_cc_agent: 52,
+  # arch-cap-bump: +2 cc DeepSeek backend — cc_agent.ex adds two SHARED public
+  #   defs the deepseek provider shim (`CcDeepseekAgent`) reuses so a distinct
+  #   flavor stores its own launch flavor while the spawn + validation logic stays
+  #   single-sourced (NOT forked into the shim): `instantiate_for_flavor/4`
+  #   (flavor-parameterized instantiate body) + `validate_after_class/1` (the
+  #   class-agnostic validation checks). 52→54.
+  def_count_cc_agent: 54,
   def_count_orchestrator_tools: 35,
   # arch-cap-bump: PR #783 split steps 5-8 into `ensure_orchestrator_and_finalize/6`
   #   so the step-4.5 orchestrator pre-store can fail-fast ahead of the readiness
@@ -317,7 +323,14 @@
   #   declines to launch the PTY against an un-materialized config home (chain B /
   #   #1096). codex_agent unchanged; the +21 is the guard + forensic doc comments,
   #   not extractable duplication. Measured 1745→1766.
-  cc_codex_template_class_combined_loc: 1766,
+  # arch-cap-bump: +20 cc DeepSeek backend — cc_agent.ex adds the two SHARED public
+  #   defs the deepseek provider shim reuses (`instantiate_for_flavor/4` +
+  #   `validate_after_class/1`, see def_count_cc_agent bump) so the deepseek env +
+  #   flavor wiring is single-sourced, not forked. codex_agent unchanged. The
+  #   provider logic itself lives in the sibling `Ezagent.PluginCc.Provider` +
+  #   thin `CcDeepseekAgent`/`CcHeadlessDeepseekAgent` shims (separate files, not
+  #   counted here). Measured 1766→1786.
+  cc_codex_template_class_combined_loc: 1786,
   # P3 (resource-unification, SPEC §10 OI-3): the population-3 outside-core
   # callers (agent_bridge token registry, identity smtp_config, feishu app-cred +
   # inbox + plugin config, python log) migrated behind the `UriQuery` seam

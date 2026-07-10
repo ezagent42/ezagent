@@ -57,11 +57,22 @@ defmodule Ezagent.PluginCc.Template.SpawnPlan do
   @doc false
   @spec build_claude_cmd(URI.t(), String.t(), map()) ::
           {:ok, {[String.t()], map()}}
-          | {:error, :claude_not_found | {:unsupported_claude_dev_channels, String.t()}}
+          | {:error,
+             :claude_not_found
+             | :deepseek_api_key_missing
+             | {:unsupported_claude_dev_channels, String.t()}}
   def build_claude_cmd(%URI{} = agent_uri, agent_cwd, tmpl)
       when is_binary(agent_cwd) and is_map(tmpl) do
     with {:ok, claude_path} <- resolve_claude_executable(agent_uri),
-         :ok <- ensure_dev_channels_supported(claude_path) do
+         :ok <- ensure_dev_channels_supported(claude_path),
+         # Provider/backend dimension (anthropic|deepseek), ORTHOGONAL to
+         # transport. anthropic → %{} (the normal cc env is UNCHANGED — no
+         # DeepSeek vars leak in). deepseek → the 8-var block from
+         # DEEPSEEK_API_KEY, or a fail-fast :deepseek_api_key_missing (the
+         # deepseek instantiate already gates this before spawn; kept here as
+         # defense so the raw builder never emits a half-configured deepseek
+         # launch).
+         {:ok, provider_env} <- Ezagent.PluginCc.Provider.provider_env(tmpl) do
       config_home = CcAgent.resolve_config_home(agent_uri, tmpl)
 
       {:ok, _global_mcp_path, agent_token} =
@@ -97,6 +108,14 @@ defmodule Ezagent.PluginCc.Template.SpawnPlan do
         |> put_claude_config_dir(config_home, tmpl)
         |> maybe_put_orchestrator_recipe_env(tmpl)
         |> maybe_put_cli_identity_env(agent_uri, tmpl)
+        # Provider env LAST so the DeepSeek block (ANTHROPIC_BASE_URL/
+        # ANTHROPIC_AUTH_TOKEN/…) authoritatively points claude at the DeepSeek
+        # endpoint. Empty for anthropic — the default cc path is unchanged.
+        |> Map.merge(provider_env)
+        # Bridge-topic override so a deepseek sidecar joins
+        # `agent_bridge:cc-deepseek:<uri>` (matching its resolved flavor) instead
+        # of the sidecar's `agent_bridge:cc:` default. Empty for anthropic.
+        |> Map.merge(Ezagent.PluginCc.Provider.bridge_topic_env(tmpl, agent_uri))
 
       {:ok, {argv, cmd_env}}
     end
