@@ -75,38 +75,47 @@ defmodule Ezagent.ActionSet.HelloPublisher do
   # --- internals --------------------------------------------------------
 
   @name_prompt """
-  You are a template-name assistant. Given a user's chat instruction, produce a
-  short, descriptive, URL-safe template name (lowercase letters, digits, hyphens).
-  Reply with ONLY the name, nothing else.
-
-  Rules:
-  - If the user EXPLICITLY named the template (e.g. \"名字为xxx\", \"叫xxx\",
-    \"发布为xxx\", \"name xxx\", \"named xxx\"), use that name, sanitised.
-  - If NO name was specified, generate a brief descriptive name reflecting what
-    this session/page is about (e.g. \"company-site\", \"product-page\",
-    \"team-portal\"). Do NOT use command words like \"publish\", \"发布\",
-    \"share\", \"template\", or agent names like \"builder\", \"publisher\" as
-    the name.
-  - Keep it under 30 characters. One or two words at most.
+  Extract the template name from this chat message. Rules:
+  - If the message contains \"发布为XXX\", \"名字为XXX\", \"name XXX\",
+    \"叫XXX\", \"named XXX\", or \"命名为XXX\" — return ONLY the XXX value.
+  - If the message is \"@publisher 发布\" with NO name — return \"auto\".
+  - Ignore @mentions and agent names. They are NOT template names.
+  - Return ONLY the name. One word, lowercase, 2-30 chars, URL-safe
+    (letters/digits/hyphens). No spaces, no punctuation.
   """
 
   defp resolve_template_name(session_uri, instruction) do
     # Ask the LLM for a name
-    prompt = "#{@name_prompt}\n\nUser said: #{instruction}"
-    candidate = llm_name(prompt)
+    prompt = "#{@name_prompt}\n\nMessage: #{instruction}"
+    candidate = llm_name(prompt) |> sanitize_name()
 
-    # If it collides, append a random suffix and retry once
-    workspace_uri = Ezagent.Capability.workspace_of(session_uri)
-    candidate = sanitize_name(candidate)
+    # LLM returns "auto" when no explicit name — generate one
+    candidate = if candidate == "auto", do: auto_name(), else: candidate
 
-    case Ezagent.Socialware.DefinitionRegistry.lookup(workspace_uri, candidate) do
-      {:ok, _definition, _object} ->
-        suffix = suffix()
-        {:ok, "#{candidate}-#{suffix}"}
-
-      :error ->
-        {:ok, candidate}
+    # Check for collision with existing template names
+    case template_name_exists?(candidate) do
+      true -> {:ok, "#{candidate}-#{suffix()}"}
+      false -> {:ok, candidate}
     end
+  end
+
+  defp auto_name do
+    ts = DateTime.utc_now() |> Calendar.strftime("%m%d-%H%M")
+    "site-#{ts}"
+  end
+
+  defp template_name_exists?(name) do
+    uri = "template://system/session/#{name}@"
+
+    {:ok, rows} =
+      EzagentCore.Repo.query(
+        "SELECT 1 FROM kind_snapshots WHERE uri LIKE $1 LIMIT 1",
+        [uri <> "%"]
+      )
+
+    rows.num_rows > 0
+  rescue
+    _ -> false
   end
 
   defp llm_name(prompt) do
