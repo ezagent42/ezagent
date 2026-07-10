@@ -13,7 +13,7 @@
 # `Ezagent.Socialware.Conformance` assertions (15/15 green).
 #
 # Shape notes (what dealscout composes — 职责重划 2026-07-06 拍板；显示
-# 自包含 2026-07-10 段4 D2):
+# 自包含 2026-07-10 段4 D2；零人工中继 2026-07-10 终段):
 #   * dealscout = 爬取 plugin `crawler` 的能力组合（discover agent 用 crawl
 #     能力爬线索 + crawler 自带的结构化线索 view 展示）。本文件是纯配置：
 #     bases/shape 是平台公开面组件（Session + Publisher.SessionImpl / Turn +
@@ -34,19 +34,50 @@
 #     + page（页面发布宿主，crawler 通用 `crawler-page` recipe × native——
 #     段4 D2 取代曾借 hello Generator 的临时 ALT：crawl/search 注入新线索后
 #     被直呼 dispatch `:publish_page`，supervised Task 里把会话留存线索驱动
-#     Turn/Surface 落 committed 公开页。routing 的 receive 投递到 native
-#     成员仍是平台 gap #1201 ②，绕开不修，规则保留为声明式痕迹；生产腿是
-#     Crawler 的 caller-dispatch 直呼）。
+#     Turn/Surface 落 committed 公开页。page 是 dispatch-only 工具腿，
+#     **从不做 chat receiver**——native 无 bridge，receive 投递必丢（平台
+#     gap #1201 ②）。它必须留在 role 槽：直呼腿按 session members 的
+#     role_name facet 解析它的实例 URI（`crawler.ex` page_member_uri），
+#     所以 recipe 不能标 `passive: true`——RF-6 passive-join 三闸会在
+#     materialize 的 faceted session.join 当场拒（`session.ex:788-790`
+#     `{:passive_actor_cannot_join, _}`）。kanban 的 passive board 是
+#     workspace 级 URI-dispatch actor、不进 role 槽（kanban manifest 头注），
+#     形态不同；page 若要转那个形态是独立重构，等 Allen 拍板）。
 #   * routing_rules — ONLY the content-triggered update-signal rule,
 #     #1212-hardened to and(text_contains "__dealscout_update__", from_role
 #     discover). NEVER hello's `always → chat` rule (kanban-handoff red line).
+#     receiver = **orchestrator**（2026-07-10 零人工中继修正，照 kanban 先例
+#     "信号路由给操作员、操作员 dispatch 工具动作"：曾经的 receiver `page`
+#     是 native 工具，投递必丢 #1201 ②——工具从不收消息。orchestrator 经
+#     requires 递归随装随在，conformance `routing_receivers_resolve` 连同
+#     requires 声明的角色一起解析（`conformance.ex` declared_role_names/3）；
+#     它是会话里唯一同时持 within-session delegation（`orchestrator/caps.ex`
+#     Cap #1：kind :session · behavior :any · instance {:within_session}）与
+#     CLI 身份 env（T7d `spawn_plan.ex`：EZAGENT_USER_TOKEN /
+#     EZAGENT_ENTITY_URI）的零人工执行者——收到信号即可 dispatch 本会话的
+#     `crawler.search` / `crawler.crawl_now`，线索入 `:items` slice + 直呼腿
+#     自动重建匿名公开页。规则挂 `prompt_template_ref`，把投递渲染成带
+#     {session} 的自动化执行指令（见 prompt_templates）。防回环：crawl /
+#     search 完成后 emit 的信号 sender = 触发者（orchestrator），from_role
+#     discover 硬锁不再命中——一次 @discover 只跑一轮。
 #     The "__dealscout_update__" literal is the single contract point and THIS
 #     FILE is its authoritative carrier — the emit-side code constant
 #     `Ezagent.ActionSet.Crawler.update_signal/0` must stay byte-identical to
 #     it (the discover script's copy is substituted FROM that constant at
 #     recipe build), and the emit-side `Crawler.page_role/0` to the `page`
-#     receiver name (both locked config-driven by `dealscout_manifest_test.exs`,
-#     which reads the arg/receivers OUT of this parsed YAML).
+#     ROLE-SLOT name (the caller-dispatch publish leg resolves the page member
+#     by that role_name; both locked config-driven by
+#     `dealscout_manifest_test.exs`, which reads the arg / role slots OUT of
+#     this parsed YAML).
+#   * prompt_templates — dealscout-crawl-directive：更新信号投递给
+#     orchestrator 时的渲染模板（PR-4 delivery transform，`{body}` 必须在场
+#     是 PromptTemplate v1 校验）。它是给 orchestrator 的**业务操作说明**
+#     （manifest 是 socialware 对平台 orchestrator 唯一的业务配置通道——
+#     orchestrator 的 persona/skill 是平台件，不为单个 socialware 改）。
+#     执行机制照 kanban-assistant skill 的 dispatch stand-in 先例
+#     （identity → target URI → Router.dispatch 不变式，kanban_dispatch.exs）；
+#     节点名/cookie 路径是 deployment 运行时细节，生产化收敛为 skill/工具面
+#     是 follow-up。
 #   * visibility_policy — public + supervised like hello/kanban, and
 #     web_anon_access: true（与 kanban 的 false 不同：dealscout 的公开面是给
 #     匿名访客看的线索页，产品语义要匿名可读）。
@@ -59,14 +90,15 @@ title: "DealScout"
 # 选型+token+合规，是 follow-up 产品决策，不在本 manifest 假装已有）。
 # "发现"措辞与实现相符（段3 角色链路真化）：discover 是脚本车道（关键词粗筛，
 # 无 LLM），真"AI 发现"大脑是后续 curl-llm 槽的事，这里不冒充。
-description: "科技创业与新品动态线索雷达：discover 角色被 @ 后自动爬取 Hacker News 公开源发现线索，crawler 自带结构化线索页（会话内 view + 匿名可读的 committed 公开页）。"
+description: "科技创业与新品动态线索雷达：discover 角色被 @ 后自动爬取 Hacker News 公开源发现线索，更新信号触发 orchestrator 自动入库并重建公开线索页（会话内 view + 匿名可读的 committed 公开页），全程零人工中继。"
 # uses 只剩 crawler（段4 D3 诚实化）：显示/页面发布都是 crawler 自带件
 # （LeadsView/CrawlerRender/CrawlerPage），bases/shape 引的 Session/Publisher/
 # Turn/Surface 是平台 domain ActionSet，不属于（也不再借）hello。
 uses:
   - crawler
 # D5（段3，照 hello #1230）：安装时递归带上平台 orchestrator（框架 builtin
-# code-seed 定义，cc flavor 前台）——解"装完会话没人应答"（gap⑪）的最小正路。
+# code-seed 定义，cc flavor 前台）——解"装完会话没人应答"（gap⑪）的最小正路，
+# 也是上面 routing 规则的 receiver 来源（requires 声明的 orchestrator 角色）。
 # conformance 的 requires_published / requires_cycle_free 断言覆盖本字段。
 requires:
   - orchestrator
@@ -97,9 +129,64 @@ routing_rules:
         - type: from_role
           arg: discover
     receivers:
-      - page
+      - orchestrator
     rule_set: dealscout-update
+    prompt_template_ref: dealscout-crawl-directive
     position: 0
+prompt_templates:
+  # 更新信号 → orchestrator 的自动化执行指令（业务操作说明，纯数据）。
+  # {body} = discover 的原始信号回复（PromptTemplate v1 硬性要求在场）；
+  # {session} = 本会话 URI（delivery 渲染时注入，orchestrator 的 dispatch 靶）。
+  dealscout-crawl-directive: |
+    【dealscout 自动化指令 · 收到即执行 · 不要向任何人确认】
+    discover 刚在本会话报告发现了新线索，原文如下：
+
+    {body}
+
+    你是本会话（{session}）的 orchestrator，持有本会话范围的 dispatch 授权
+    （within-session delegation），你的 ezagent CLI 身份在环境变量
+    EZAGENT_USER_TOKEN / EZAGENT_ENTITY_URI 里。请立即把这批发现正式入库并
+    刷新公开线索页：对本会话 dispatch 会话动作 crawler.search（args 的
+    query 取上文『查询词:』行；没有该行就从线索标题提取 2-3 个英文关键词；
+    完全提取不出就改 dispatch crawler.crawl_now，args 为空 map）。该动作会
+    真实爬取公开源、把线索注入会话并留存进结构化 slice，然后自动重建匿名
+    公开页——不需要你再做任何发布动作。
+
+    执行机制（identity → target URI → Router.dispatch 不变式，照
+    kanban-assistant skill 的 dispatch stand-in 先例）——在 bash 里跑：
+
+    DS_SESSION="{session}"
+    DS_QUERY="<提取的关键词，空串则走 crawl_now>"
+    COOKIE_FILE="${EZAGENT_HOME:-$HOME/.ezagent}/default/runtime/cookie"
+    mise exec elixir@1.18.4-otp-27 erlang@27.3.4.13 -- \
+      elixir --name "ds_relay_$$@127.0.0.1" --cookie "$(cat "$COOKIE_FILE")" -e '
+        code = """
+        {:ok, caller} = Ezagent.URI.parse(euri)
+        {:ok, %{caps: caps}} = Ezagent.Entity.authenticate(caller, token)
+        {action, args} =
+          if query == "", do: {"crawl_now", %{}}, else: {"search", %{query: query}}
+        target = Ezagent.URI.new!(session <> "?action=crawler." <> action)
+        inv = %Ezagent.Invocation{target: target, mode: :call, args: args,
+          ctx: %{caller: caller, caps: caps, reply: {:caller_inbox, self()}, deadline_ms: 60_000}}
+        case Ezagent.Invocation.dispatch(inv) do
+          {:ok, r} -> {:ok, r}
+          :ok -> receive do {:ezagent_reply, r} -> {:ok, r} after 60_000 -> {:ok, :timeout_no_reply} end
+          err -> err
+        end
+        """
+        binding = [
+          euri: System.fetch_env!("EZAGENT_ENTITY_URI"),
+          token: System.fetch_env!("EZAGENT_USER_TOKEN"),
+          session: System.fetch_env!("DS_SESSION"),
+          query: System.get_env("DS_QUERY", "")
+        ]
+        node = String.to_atom(System.get_env("EZAGENT_NODE", "ezagent_runtime@127.0.0.1"))
+        IO.inspect(:erpc.call(node, Code, :eval_string, [code, binding], 90_000))
+      '
+
+    （DS_SESSION/DS_QUERY 用 export 或内联 env 传给 elixir 进程均可。）
+    成功（{:ok, %{injected: N}}）后在会话里用一句话确认"已入库 N 条、公开页
+    已自动重建"即可；失败就如实报告错误原文，不要编造结果。
 legends:
   dealscout:
     member_set:
@@ -110,7 +197,7 @@ legends:
     # 协作协议速查（行话翻译，给不认识 dealscout 的人/agent 进场就能懂）。
     # legend 机制只读 member_set/bound_rule_set/fold，多余 key 原样随行——
     # protocol 是纯说明数据，不参与路由。
-    protocol: "协作协议速查：@ 一下 discover（发现角色），它会立刻爬公开源，把发现的线索连同更新信号一起回进会话；带信号的这条回复自动触发 page 角色重建公开线索页——不用任何人催。人类成员或新进成员也可以在会话里直接触发 crawl_now（装在本会话上的爬取动作，逐条注入线索并直接刷新页面）。消息里出现 \"__dealscout_update__\" 标记 = discover 在报告\"发现了新线索\"的更新信号；本 legend 绑定的 dealscout-update 规则只认 discover 发出的这个标记，其他成员发同样文字不会误触发页面重建。"
+    protocol: "协作协议速查：@ 一下 discover（发现角色），它会立刻爬公开源，把发现的线索连同更新信号一起回进会话；带信号的这条回复自动路由给 orchestrator（编排脑），由它立刻 dispatch 本会话的 crawler.search/crawl_now 把线索正式入库——数据落结构化 slice，公开线索页随之自动重建，全程不需要任何人再做任何操作。人类成员也可以在会话里直接触发 crawl_now（装在本会话上的爬取动作，逐条注入线索并直接刷新页面）。消息里出现 \"__dealscout_update__\" 标记 = discover 在报告\"发现了新线索\"的更新信号；本 legend 绑定的 dealscout-update 规则只认 discover 发出的这个标记（from_role 硬锁），其他成员（包括 orchestrator 入库完成后自己发的信号）不会再次触发——一次发现只跑一轮入库。page 角色是页面发布工具腿（dispatch-only），不接收聊天消息，不要 @ 它。"
 adapters:
   - adapter_id: external_feed
     role: customer

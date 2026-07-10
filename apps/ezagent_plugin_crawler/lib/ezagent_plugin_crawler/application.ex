@@ -22,12 +22,14 @@ defmodule EzagentPluginCrawler.Application do
   零 world 改动。
 
   agent 间用**内容协议 routing** 连（跟 kanban-team relay 一样）：
-  爬取 agent 爬完注入新线索后 emit 一个更新信号
-  （`Ezagent.ActionSet.Crawler.update_signal/0`，缺省 `"__dealscout_update__"`，
-  像 kanban 的 `__done__`）→ Definition 的 routing_rules matcher 命中 → 转给
-  `{:role, "page"}`（本 plugin 的 crawler-page 发布腿）。零实例 URI、不数据
-  直推；生产腿是 Crawler 的 caller-dispatch 直呼（receive 投递到 native 成员
-  是平台 gap #1201 ②，绕开不修）。
+  发现 agent 的带信号回复（`Ezagent.ActionSet.Crawler.update_signal/0`，缺省
+  `"__dealscout_update__"`，像 kanban 的 `__done__`）→ Definition 的
+  routing_rules matcher 命中 → 转给 `{:role, "orchestrator"}`（编排脑，
+  2026-07-10 零人工中继修正——照 kanban"信号给操作员、操作员 dispatch 工具
+  动作"先例），由它 dispatch 会话的 `:search`/`:crawl_now` 正式入库。零实例
+  URI、不数据直推；页面发布的生产腿是 Crawler 的 caller-dispatch 直呼到
+  `page` 成员（native 工具从不收 chat：receive 投递到 native 成员是平台 gap
+  #1201 ②，绕开不修）。
 
   ## Plugin authoring contract
 

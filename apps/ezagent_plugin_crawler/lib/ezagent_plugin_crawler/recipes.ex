@@ -125,6 +125,12 @@ defmodule EzagentPluginCrawler.Recipes do
   end
 
   # ⑤ 【通用件，非发现腿】page 槽的 dispatchable 页面发布入口（段4 D2，
+  # dispatch-only 工具腿但 **不标 `passive: true`**：page 必须能 faceted
+  # session.join 成会话成员——直呼腿按 members 的 role_name facet 解析它
+  # （`crawler.ex` page_member_uri）；RF-6 passive-join 三闸会在 materialize
+  # 拒掉 passive 成员（`session.ex:788-790` {:passive_actor_cannot_join,_}）。
+  # kanban-manager 的 passive: true 成立是因为 board 是 workspace 级
+  # URI-dispatch actor、不进 role 槽（kanban manifest 头注）——形态不同。
   # 取代曾经借 hello Generator 的临时 ALT）：crawl 完成后直接 dispatch
   # `:publish_page` 过来 → supervised Task 里把会话留存线索驱动
   # Turn/Surface 落 committed 版本树（`Ezagent.ActionSet.CrawlerPage` +

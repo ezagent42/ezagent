@@ -26,7 +26,12 @@ action"形态在 py 车道不存在。真实支持的形态是"**回复中自带
   2. 把发现的线索连同**更新信号标记**一起作为回复发回会话（回复以 discover
      成员身份 `session.send`，见 `Ezagent.ActionSet.PyAgent.maybe_reply_effect`）；
   3. manifest 的 routing 规则 and(text_contains <信号>, from_role discover)
-     命中这条回复 → 触发 page 角色。
+     命中这条回复 → 路由给 **orchestrator**（编排脑，2026-07-10 零人工中继
+     修正：native page 收不到消息 #1201 ②），由它 dispatch 本会话的
+     `crawler.search`/`crawler.crawl_now` 把线索正式入库并自动重建公开页。
+     回复里带一行 `查询词: …`（本轮实际用的检索关键词），给 orchestrator
+     的 search dispatch 直接复用——同一批关键词、同一公开源，入库的就是
+     本轮发现的同类线索。
 
   爬取失败 / 零命中时回复**不带**信号标记（没有新线索就不谎报"已入库"，
   fail-honest）。
@@ -141,7 +146,12 @@ def receive(params):
         return {"text": "本轮未发现新线索：公开源返回为空，未发更新信号。"}
 
     header = f"{UPDATE_SIGNAL} 新线索 {len(leads)} 条（discover 爬取 HN 公开检索源）"
-    return {"text": "\n".join([header, *leads])}
+    # 查询词行：orchestrator 收到路由投递后据此 dispatch crawler.search 入库
+    # （manifest prompt_templates 的 dealscout-crawl-directive 教它提取本行）。
+    # 无关键词（front_page 回退）时不发这一行，directive 会改走 crawl_now。
+    keywords = _keywords(text)
+    query_line = [f"查询词: {' '.join(keywords)}"] if keywords else []
+    return {"text": "\n".join([header, *query_line, *leads])}
 
 
 if __name__ == "__main__":

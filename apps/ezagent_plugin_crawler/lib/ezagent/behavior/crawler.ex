@@ -30,7 +30,12 @@ defmodule Ezagent.ActionSet.Crawler do
   `@update_signal` 注释）到同一会话。它是 agent 间的**内容协议**：dealscout
   Definition（纯配置）的 routing_rules 用 `text_contains("__dealscout_update__")`
   matcher（`apps/ezagent_core/lib/ezagent/routing/matcher.ex:74`）命中它 →
-  receiver `{:role, "page"}`（页面发布角色）。**零实例 URI、不数据直推**。
+  receiver `{:role, "orchestrator"}`（2026-07-10 零人工中继修正：编排脑收信号
+  后 dispatch 本会话的 `:search`/`:crawl_now` 正式入库——曾经的 receiver
+  `page` 是 native 工具，投递必丢 #1201 ②；工具从不收消息，照 kanban 先例）。
+  **零实例 URI、不数据直推**。防回环：本函数发的信号 sender = 触发者
+  （`send_args` 的 `sender_uri(ctx)`），orchestrator 入库触发的这条不带
+  from_role discover，规则不再命中——一次发现只跑一轮。
   信号 dispatch 失败同样 fail-loud（`[:crawler, :update_signal, :error]`）。
 
   ## 页面发布的直接 dispatch 腿（v2 caller-dispatch，绕 #1201 ②）
@@ -46,8 +51,8 @@ defmodule Ezagent.ActionSet.Crawler do
   公开页）—— dispatch 按 action 在实例行为集解析直接跑 handler，不经
   bridge。找不到 page 成员 / dispatch 失败 → fail-loud
   （`[:crawler, :page_publish, :error]` telemetry + warning），不静默。
-  chat 信号腿保留（会话内可见的声明式痕迹 + #1201 ② 修复后回切 receive
-  式的靶子）。
+  chat 信号腿保留（会话内可见的声明式痕迹 + orchestrator 编排腿的路由靶子，
+  见 §更新信号）。
 
   ## 结构化线索留存（`:items` slice key，view 的数据面）
 
@@ -87,8 +92,9 @@ defmodule Ezagent.ActionSet.Crawler do
   # `signal_marker/1`），并在自己的 routing_rules 里声明匹配的 matcher。
   @update_signal "__dealscout_update__"
 
-  # page 角色槽名（单一契约点，照 update_signal/0）：manifest 的角色槽声明
-  # （receivers 权威载体）+ 直接 dispatch 腿的 role_name 解析都对齐这里。
+  # page 角色槽名（单一契约点，照 update_signal/0）：manifest 的 `page`
+  # 角色槽声明（roles 权威载体）+ 直接 dispatch 腿的 role_name 解析都对齐这里
+  # （2026-07-10 起 routing receiver 是 orchestrator，page 只收直呼 dispatch）。
   # "page" 本身是通用词（任何组合本能力的 socialware 声明一个 "page" 角色槽
   # 即可接上直呼腿）。
   @page_role "page"

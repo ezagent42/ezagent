@@ -19,7 +19,10 @@ defmodule EzagentPluginCrawler.DealscoutManifestTest do
   exactly the `discover` + `page` agent role-slots with zero participant
   instance URIs (role-slot #1180), carries ONLY the content-triggered
   update-signal rule (never hello's `always → chat` — the kanban-handoff red
-  line), and is public / supervised / ANON-readable / installer-owned.
+  line; receiver = `orchestrator`, the requires-declared 编排脑 —— 2026-07-10
+  零人工中继修正：native page 从不收消息 #1201 ②, 信号照 kanban 先例路由给
+  操作员, 规则挂 `dealscout-crawl-directive` prompt template 渲染成自动化
+  执行指令), and is public / supervised / ANON-readable / installer-owned.
   Publish/idempotency/conformance live in `dealscout_manifest_publish_test.exs`.
 
   ## Why DataCase（段3 起）
@@ -221,9 +224,15 @@ defmodule EzagentPluginCrawler.DealscoutManifestTest do
     fr = Enum.find(items, &((&1["type"] || &1[:type]) == "from_role"))
     assert to_string(fr["arg"] || fr[:arg]) == "discover"
 
-    # 已声明角色名（conformance `routing_receivers_resolve` 只认这个），非 URI。
-    assert (Map.get(rule, "receivers") || Map.get(rule, :receivers)) == ["page"]
+    # receiver = orchestrator（requires 声明的编排脑角色；conformance 的
+    # `routing_receivers_resolve` 经 declared_role_names/3 连同 requires 的
+    # 角色一起解析——2026-07-10 零人工中继修正，native page 不再当 receiver）。
+    assert (Map.get(rule, "receivers") || Map.get(rule, :receivers)) == ["orchestrator"]
     assert (Map.get(rule, "rule_set") || Map.get(rule, :rule_set)) == "dealscout-update"
+
+    # 规则挂 prompt_template_ref：投递渲染成带 {session} 的自动化执行指令。
+    assert (Map.get(rule, "prompt_template_ref") || Map.get(rule, :prompt_template_ref)) ==
+             "dealscout-crawl-directive"
 
     # NO `always` matcher anywhere (the hello chat route must not be copied).
     refute Enum.any?(definition.routing_rules, fn r ->
@@ -281,10 +290,17 @@ defmodule EzagentPluginCrawler.DealscoutManifestTest do
     # 常量漂移 = emit 的信号不再命中自家 routing 规则，这里当场红。
     assert Crawler.update_signal() == update_marker_from_manifest()
 
-    # page receiver 名同理：直接 dispatch 腿按 `Crawler.page_role/0` 解析
-    # page 成员，必须就是 manifest routing 声明的 receiver 角色名。
-    [rule] = manifest_attrs()["routing_rules"]
-    assert [Crawler.page_role()] == rule["receivers"]
+    # page 角色槽名同理：直接 dispatch 腿按 `Crawler.page_role/0` 从 session
+    # members 解析 page 成员，必须就是 manifest `roles` 声明的 page 槽名
+    # （2026-07-10 起 routing receiver 是 orchestrator——native page 从不收
+    # 消息 #1201 ②；page 槽仍是发布腿的解析契约点，权威载体从 receivers
+    # 挪到 roles）。
+    page_slot =
+      Enum.find(manifest_attrs()["roles"], fn slot ->
+        slot["fill"] == "agent" and slot["recipe"] == "crawler-page"
+      end)
+
+    assert page_slot["role_name"] == Crawler.page_role()
 
     # emit 侧镜像 #2（段3）：discover 的 py script（"回复中自带触发"形态的
     # 信号发信方）在 recipe 装配时从 `Crawler.update_signal/0` 注入同一字面量
@@ -295,6 +311,34 @@ defmodule EzagentPluginCrawler.DealscoutManifestTest do
 
     assert discover_recipe.script =~ update_marker_from_manifest()
     refute discover_recipe.script =~ EzagentPluginCrawler.Recipes.update_signal_placeholder()
+  end
+
+  test "crawl directive prompt template: referenced, {body}/{session} placeholders, teaches the dispatch" do
+    # 2026-07-10 零人工中继：更新信号投递给 orchestrator 时经
+    # `dealscout-crawl-directive` 渲染成自动化执行指令（PR-4 delivery
+    # transform，`delivery.ex` render_for_delivery）。这里锁三件事：
+    # ① 规则引用的模板在 manifest 的 prompt_templates 里真实存在且过
+    #    PromptTemplate v1 校验（{body} 必须在场——投递绝不丢原文）；
+    # ② 带 {session}（orchestrator 的 dispatch 靶 URI 由 delivery 注入）；
+    # ③ 指令教的是本 socialware 的入库动作（crawler.search / crawl_now），
+    #    与 orchestrator 的 CLI 身份 env（T7d）——业务操作说明的最小面。
+    attrs = manifest_attrs()
+    [rule] = attrs["routing_rules"]
+    ref = rule["prompt_template_ref"]
+    template = attrs["prompt_templates"][ref]
+
+    assert is_binary(template)
+    assert :ok == Ezagent.Routing.PromptTemplate.validate(template)
+    assert template =~ "{session}"
+    assert template =~ "crawler.search"
+    assert template =~ "crawl_now"
+    assert template =~ "EZAGENT_USER_TOKEN"
+    assert template =~ "EZAGENT_ENTITY_URI"
+
+    # resolve 后 Definition 原样携带（install 时进 session prompt-template
+    # store，template_team.exs install_template_prompt_templates）。
+    definition = resolve!()
+    assert definition.prompt_templates[ref] == template
   end
 
   # Extract the update-signal `text_contains` arg from the PARSED manifest (raw
