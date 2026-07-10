@@ -294,7 +294,7 @@ defmodule EzagentDomainInstanceMessage.Integration.DefinitionAgentsMaterializeTe
            end)
   end
 
-  test "ensure_orchestrator adopts a legacy planned orchestrator into Definition membership" do
+  test "ensure_orchestrator skips a bare Agent Kind without credentials (chain C)" do
     n = uniq()
     session_uri = live_session(n)
 
@@ -314,31 +314,28 @@ defmodule EzagentDomainInstanceMessage.Integration.DefinitionAgentsMaterializeTe
     :ok = Ezagent.Agent.RecipeAttributes.put(orchestrator_uri, "orchestrator")
     on_exit(fn -> terminate(orchestrator_uri) end)
 
-    assert {:ok, ^orchestrator_uri, :already_present} =
+    # Chain C: the bare Agent Kind spawned above has no credential source and no
+    # materialized config home, so the reuse path skips it. `ensure_orchestrator`
+    # correctly reports the adoption failure.
+    assert {:error, {:orchestrator_adoption_failed, :member_not_joined}} =
              Ezagent.Entity.Session.Orchestrator.ensure_orchestrator(
                session_uri,
                @workspace_uri,
                @owner_uri
              )
-
-    assert SessionBehavior.role_name_to_uri(members_of(session_uri), "orchestrator") ==
-             orchestrator_uri
-
-    caps = Ezagent.Identity.list_caps_for(orchestrator_uri)
-
-    assert Enum.any?(caps, fn cap ->
-             cap.kind == :session and cap.instance == {:within_session, session_uri}
-           end)
   end
 
-  test "reuse install choice joins the selected recipe-matching agent through the edge role" do
+  test "reuse install choice skips a credential-less agent (chain C) instead of joining a zombie" do
     n = uniq()
     session_uri = live_session(n)
     recipe_name = seed_recipe(n)
     role_name = "reuse-advisor-#{n}"
     reusable = live_agent(n, recipe_name)
 
-    assert {:ok, _summary} =
+    # Chain C: a bare-bones Agent Kind spawned for testing has no credential
+    # source and no materialized config home. Before the fix it was reused
+    # silently; now it's skipped.
+    assert {:ok, %{satisfied: [], skipped: [%{role_name: ^role_name, reason: {:config_home_without_credentials, "cc"}}]}} =
              DefinitionAgents.materialize_definition_agents(
                session_uri,
                @workspace_uri,
@@ -354,8 +351,7 @@ defmodule EzagentDomainInstanceMessage.Integration.DefinitionAgentsMaterializeTe
              )
 
     members = members_of(session_uri)
-    assert SessionBehavior.role_name_to_uri(members, role_name) == reusable
-    assert map_size(members) == 1
+    assert SessionBehavior.role_name_to_uri(members, role_name) == nil
   end
 
   test "reuse install choice rejects an agent from a different recipe" do

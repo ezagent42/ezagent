@@ -73,7 +73,7 @@ defmodule EzagentPluginHello.Template.HelloSessionTest do
 
       # `Workspace.create_session` fires this transaction once the owner-only
       # session is durable; drive it synchronously here.
-      assert {:ok, %{installed: _, skipped: []}} =
+      assert {:ok, %{satisfied: _, skipped: []}} =
                EzagentDomainInstanceMessage.SessionCreator.install_session_socialware(session_uri)
 
       assert {:ok, orch_uri} = Members.role_uri(session_uri, "front-desk")

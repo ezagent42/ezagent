@@ -70,7 +70,7 @@ defmodule EzagentDomainInstanceMessage.SessionCreator.TemplateTeam do
   end
 
   def materialize_definition_agents(_session, _ws, _granted_by, _content),
-    do: {:ok, %{installed: [], skipped: []}}
+    do: {:ok, %{satisfied: [], skipped: []}}
 
   @doc """
   Config + agents in one call. Used by the REPAIR path and by plugin
@@ -86,18 +86,24 @@ defmodule EzagentDomainInstanceMessage.SessionCreator.TemplateTeam do
         template_content
       )
       when is_map(template_content) do
-    # `:ok`-only for its existing callers (repair, plugin app-instantiate). Role
-    # slots SKIPPED for missing credentials are already logged + telemetry'd by
-    # `DefinitionAgents`; only `install_session_socialware/1` records them
-    # durably (it is the lane a user's session-create actually goes through).
+    # The repair + plugin app-instantiate lanes. Skip records are written to the
+    # session working copy (same as `install_session_socialware/1`) so the UI can
+    # surface unfilled role slots regardless of which lane created the session.
     with :ok <- materialize_template_config(session_uri, workspace_uri, template_content),
-         {:ok, _summary} <-
-           materialize_definition_agents(session_uri, workspace_uri, granted_by, template_content) do
+         {:ok, summary} <-
+           materialize_definition_agents(session_uri, workspace_uri, granted_by, template_content),
+         :ok <- record_unfilled_slots(session_uri, summary.skipped) do
       :ok
     end
   end
 
   def materialize_template_team(_session, _ws, _granted_by, _content), do: :ok
+
+  defp record_unfilled_slots(_session_uri, []), do: :ok
+
+  defp record_unfilled_slots(session_uri, skipped) when is_list(skipped) do
+    EzagentDomainInstanceMessage.SessionCreator.record_unfilled_role_slots(session_uri, skipped)
+  end
 
   @doc """
   Keep only the `fill: :agent` role slots of a declaration list (the durable

@@ -59,7 +59,7 @@ defmodule EzagentDomainInstanceMessage.SessionCreator.DefinitionAgents do
   (the #154-clean grant/spawn root). Idempotent on the repair/restart path.
 
   Returns `{:ok, summary}` where `summary` is
-  `%{installed: [role_name], skipped: [%{role_name:, reason:}]}`.
+  `%{satisfied: [role_name], skipped: [%{role_name:, reason:}]}`.
 
   ## Skip vs fail (chain C, Allen 2026-07-10)
 
@@ -75,7 +75,7 @@ defmodule EzagentDomainInstanceMessage.SessionCreator.DefinitionAgents do
   and must not be swallowed as "skipped".
   """
   @type summary :: %{
-          installed: [String.t()],
+          satisfied: [String.t()],
           skipped: [%{role_name: String.t(), reason: term()}]
         }
 
@@ -118,7 +118,7 @@ defmodule EzagentDomainInstanceMessage.SessionCreator.DefinitionAgents do
     end)
     |> case do
       {:ok, _seen, installed, skipped} ->
-        {:ok, %{installed: Enum.reverse(installed), skipped: Enum.reverse(skipped)}}
+        {:ok, %{satisfied: Enum.reverse(installed), skipped: Enum.reverse(skipped)}}
 
       {:error, _} = err ->
         err
@@ -126,7 +126,7 @@ defmodule EzagentDomainInstanceMessage.SessionCreator.DefinitionAgents do
   end
 
   def materialize_definition_agents(_session, _ws, _granted_by, _agents),
-    do: {:ok, %{installed: [], skipped: []}}
+    do: {:ok, %{satisfied: [], skipped: []}}
 
   # LOUD, but not fatal. The durable, user-facing record is written by
   # `SessionCreator.install_session_socialware/1` from the returned summary — a
@@ -158,31 +158,40 @@ defmodule EzagentDomainInstanceMessage.SessionCreator.DefinitionAgents do
         maybe_after_materialize(session_uri, workspace_uri, granted_by, agent, existing_uri)
 
       nil ->
-        with {:ok, agent_uri} <-
-               (case install_mode_of(agent) do
-                  :reuse ->
-                    reuse_existing_agent(
-                      session_uri,
-                      workspace_uri,
-                      granted_by,
-                      agent,
-                      recipe_name,
-                      role_name
-                    )
+        result =
+          case install_mode_of(agent) do
+            :reuse ->
+              reuse_existing_agent(
+                session_uri,
+                workspace_uri,
+                granted_by,
+                agent,
+                recipe_name,
+                role_name
+              )
 
-                  :fresh ->
-                    materialize_fresh_agent(
-                      session_uri,
-                      workspace_uri,
-                      granted_by,
-                      agent,
-                      recipe_name,
-                      role_name
-                    )
-                end),
-             :ok <-
-               maybe_after_materialize(session_uri, workspace_uri, granted_by, agent, agent_uri) do
-          :ok
+            :fresh ->
+              materialize_fresh_agent(
+                session_uri,
+                workspace_uri,
+                granted_by,
+                agent,
+                recipe_name,
+                role_name
+              )
+          end
+
+        case result do
+          {:ok, agent_uri} ->
+            # The orchestrator-recipe hook: grants scoped delegation caps +
+            # registers MCP context. Non-orchestrator roles are a no-op.
+            maybe_after_materialize(session_uri, workspace_uri, granted_by, agent, agent_uri)
+
+          {:skip, _reason} = skip ->
+            skip
+
+          {:error, _reason} = error ->
+            error
         end
     end
   end
@@ -251,6 +260,10 @@ defmodule EzagentDomainInstanceMessage.SessionCreator.DefinitionAgents do
   defp reuse_existing_agent(session_uri, workspace_uri, operator, agent, recipe_name, role_name) do
     with %URI{} = agent_uri <- reuse_agent_uri_of(agent),
          :ok <- ensure_reuse_recipe_match(agent_uri, recipe_name, role_name),
+         # Chain C — a reused agent may be a legacy zombie: created before the
+         # credential-precondition gate existed, with no credentials, silently
+         # stuck at :not_ready. Verify its config home before joining it.
+         :ok <- verify_credentials(agent_uri, flavor_of(agent)),
          {:ok, ^agent_uri} <-
            Participants.add_participant(agent_uri, role_name,
              caller: operator,
@@ -262,6 +275,7 @@ defmodule EzagentDomainInstanceMessage.SessionCreator.DefinitionAgents do
       {:ok, agent_uri}
     else
       nil -> {:error, {:invalid_reuse_agent_uri, role_name}}
+      {:skip, _reason} = skip -> skip
       {:error, _} = error -> error
       other -> {:error, {:reuse_agent_join_failed, role_name, other}}
     end

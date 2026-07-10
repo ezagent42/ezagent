@@ -146,7 +146,7 @@ defmodule Ezagent.PluginCc.Integration.SocialwareCcCredentialInheritTest do
     recipe_name = seed_recipe(n, project_cwd)
     role_name = "cred-inherit-role-#{n}"
 
-    assert {:ok, %{installed: [^role_name], skipped: []}} =
+    assert {:ok, %{satisfied: [^role_name], skipped: []}} =
              DefinitionAgents.materialize_definition_agents(
                session_uri,
                @workspace_uri,
@@ -241,7 +241,7 @@ defmodule Ezagent.PluginCc.Integration.SocialwareCcCredentialInheritTest do
       recipe_name = seed_recipe("host-#{n}", project_cwd)
       role_name = "host-inherit-role-#{n}"
 
-      assert {:ok, %{installed: [^role_name], skipped: []}} =
+      assert {:ok, %{satisfied: [^role_name], skipped: []}} =
                DefinitionAgents.materialize_definition_agents(
                  session_uri,
                  @workspace_uri,
@@ -301,7 +301,7 @@ defmodule Ezagent.PluginCc.Integration.SocialwareCcCredentialInheritTest do
       # Before chain C the agent was created (successfully) but with NO credentials.
       assert {:ok,
               %{
-                installed: [],
+                satisfied: [],
                 skipped: [%{role_name: ^role_name, reason: {:no_credential_source, "cc"}}]
               }} =
                DefinitionAgents.materialize_definition_agents(

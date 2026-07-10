@@ -119,7 +119,7 @@ defmodule Ezagent.PluginCc.Integration.CcConfigHomeCredentialsTest do
       assert {:ok, summary} = SessionCreator.install_session_socialware(session_uri)
 
       # The batch completes — an un-fillable role never blocks the rest.
-      assert summary.installed == []
+      assert summary.satisfied == []
 
       assert [%{role_name: "orchestrator", reason: {:no_credential_source, "cc"}}] =
                summary.skipped
@@ -157,7 +157,7 @@ defmodule Ezagent.PluginCc.Integration.CcConfigHomeCredentialsTest do
       assert {:ok, summary} =
                DefinitionAgents.materialize_definition_agents(session_uri, ws, installer, agents)
 
-      assert summary.installed == []
+      assert summary.satisfied == []
 
       assert Enum.map(summary.skipped, & &1.role_name) == ["orchestrator", "second-desk"],
              "the second slot must be reached — a skip is not a halt"
@@ -174,7 +174,7 @@ defmodule Ezagent.PluginCc.Integration.CcConfigHomeCredentialsTest do
           template_name: template_name
         )
 
-      assert {:ok, %{skipped: [], installed: ["orchestrator"]}} =
+      assert {:ok, %{skipped: [], satisfied: ["orchestrator"]}} =
                SessionCreator.install_session_socialware(session_uri)
 
       assert %URI{} = agent_uri = orchestrator_member(session_uri)

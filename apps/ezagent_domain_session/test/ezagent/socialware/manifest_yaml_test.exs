@@ -230,7 +230,7 @@ defmodule Ezagent.Socialware.ManifestYamlTest do
     # `Workspace.create_session` fires asynchronously in production).
     refute role_member_uri(session_uri, "autoservice")
 
-    assert {:ok, %{installed: ["autoservice"], skipped: []}} =
+    assert {:ok, %{satisfied: ["autoservice"], skipped: []}} =
              EzagentDomainInstanceMessage.SessionCreator.install_session_socialware(session_uri)
 
     assert %URI{} = role_member_uri(session_uri, "autoservice")

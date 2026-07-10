@@ -82,7 +82,10 @@ defmodule Ezagent.Agent.CredentialPrecondition do
          [_ | _] = relpaths <- credential_relpaths(module) do
       dir = HomeRuntime.agent_config_dir(agent_uri, module)
 
-      if Enum.any?(relpaths, &File.exists?(Path.join(dir, &1))) do
+      if Enum.any?(relpaths, fn rel ->
+           path = Path.join(dir, rel)
+           File.exists?(path) and File.stat!(path).size > 0
+         end) do
         :ok
       else
         {:skip, {:config_home_without_credentials, flavor}}

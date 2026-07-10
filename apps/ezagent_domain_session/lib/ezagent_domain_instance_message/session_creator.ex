@@ -245,7 +245,8 @@ defmodule EzagentDomainInstanceMessage.SessionCreator do
   end
 
   # Written on EVERY install, so a retry that now succeeds CLEARS a stale record.
-  defp record_unfilled_role_slots(%URI{} = session_uri, skipped) when is_list(skipped) do
+  @doc false
+  def record_unfilled_role_slots(%URI{} = session_uri, skipped) when is_list(skipped) do
     rows =
       Enum.map(skipped, fn %{role_name: role_name, reason: reason} ->
         %{role_name: role_name, reason: reason_tag(reason)}
@@ -325,7 +326,7 @@ defmodule EzagentDomainInstanceMessage.SessionCreator do
       {:ok, %{skipped: []} = summary} ->
         :telemetry.execute(@install_telemetry ++ [:ok], %{count: 1}, %{
           session_uri: session_uri,
-          installed: summary.installed
+          installed: summary.satisfied
         })
 
         :ok
@@ -343,7 +344,7 @@ defmodule EzagentDomainInstanceMessage.SessionCreator do
 
         :telemetry.execute(@install_telemetry ++ [:partial], %{count: 1}, %{
           session_uri: session_uri,
-          installed: summary.installed,
+          installed: summary.satisfied,
           skipped: skipped
         })
 
