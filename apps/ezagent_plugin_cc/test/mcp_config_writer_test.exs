@@ -121,9 +121,23 @@ defmodule EzagentPluginCc.McpConfigWriterTest do
     end
   end
 
-  test "bridge_script_path/0 points at v2 Python script that exists" do
+  # Regression guard for the dev/prod divergence that left cc agents
+  # unable to bind: bridge_script_path/0 must resolve to the SHIPPED
+  # priv location (packaged into the release), not a compile-time
+  # __DIR__-relative source path that only exists in a dev checkout.
+  # The path must be (a) under :code.priv_dir(:ezagent_plugin_cc) and
+  # (b) actually present on disk — the exact invariant that was missing.
+  test "bridge_script_path/0 resolves under priv and the script is packaged" do
     path = McpConfigWriter.bridge_script_path()
-    assert File.exists?(path), "expected v2 bridge script at #{path}"
+    priv_dir = Application.app_dir(:ezagent_plugin_cc, "priv")
+
+    assert String.starts_with?(path, priv_dir),
+           "expected bridge script under priv (#{priv_dir}), got #{path} — " <>
+             "a __DIR__-relative source path is absent from releases"
+
+    assert File.exists?(path),
+           "expected v2 bridge script to be packaged and present at #{path}"
+
     assert Path.basename(path) == "ezagent_mcp_bridge.py"
   end
 

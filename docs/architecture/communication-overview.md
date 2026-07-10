@@ -53,7 +53,7 @@ So `session.send |> entity_type.receive` **partially exists**: one `chat.send` f
 
 There are **two** claude-code transports, both **subprocesses of `claude`**, both reaching the BEAM over a WS Phoenix Channel:
 
-**(a) Agent CHAT bridge** (inbound delivery + outbound reply): Python sidecar `apps/ezagent_plugin_cc/python/ezagent_mcp_bridge.py` (MCP server exposing the `reply` tool) ↔ `Ezagent.AgentBridge.Channel`/`Socket`, topic `agent_bridge:<flavor>:<agent_uri>`. Inbound: `EzagentPluginCc.BridgeAdapter.deliver/2` → Channel `push "to_claude"` → sidecar feeds live `claude`. Outbound: sidecar `reply` tool → `BridgeAdapter.handle_client_event("reply", …)` → `chat.send` back into the session.
+**(a) Agent CHAT bridge** (inbound delivery + outbound reply): Python sidecar `apps/ezagent_plugin_cc/priv/python/ezagent_mcp_bridge.py` (MCP server exposing the `reply` tool) ↔ `Ezagent.AgentBridge.Channel`/`Socket`, topic `agent_bridge:<flavor>:<agent_uri>`. Inbound: `EzagentPluginCc.BridgeAdapter.deliver/2` → Channel `push "to_claude"` → sidecar feeds live `claude`. Outbound: sidecar `reply` tool → `BridgeAdapter.handle_client_event("reply", …)` → `chat.send` back into the session.
 
 **(b) Orchestrator MCP transport** (the 7 privileged orchestration tools): Python sidecar `apps/ezagent_domain_instance_message/priv/orchestrator_bridge.py` (a **second** MCP server) ↔ `Ezagent.Orchestrator.McpChannel`/`McpSocket`, topic `orch:bridge:<orchestrator_uri>`. `tools/list` served locally from a shipped schema; `tools/call` forwarded as a Channel push → `McpServer.handle_tool_call/3` under the orchestrator's delegated caps.
 
