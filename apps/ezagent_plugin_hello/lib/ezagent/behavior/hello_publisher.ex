@@ -20,6 +20,7 @@ defmodule Ezagent.ActionSet.HelloPublisher do
   )
 
   @impl Ezagent.Lifecycle
+  @doc false
   def create(_args), do: {:ok, %{}}
 
   @doc """
@@ -65,11 +66,16 @@ defmodule Ezagent.ActionSet.HelloPublisher do
     {:ok, %{}, []}
   end
 
+  @doc false
   def handle_publish(_args, _ctx), do: {:ok, %{}, []}
 
+  @doc false
   def handle_receive(_args, _ctx), do: {:ok, %{}, []}
 
+  @doc false
   def data_owner(:any), do: :any
+
+  @doc false
   def data_owner(_), do: :no_owner
 
   # --- internals --------------------------------------------------------
