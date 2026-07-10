@@ -305,7 +305,7 @@ type RoleSlotChoice = {
 }
 
 const FOUNDATION_SOCIALWARE_REFS = new Set(["chat", "orchestrator", "socialware"])
-const DEFAULT_TEMPLATE_INSTALLS = ["chat", "orchestrator"]
+const DEFAULT_TEMPLATE_INSTALLS = ["chat"]
 
 function TemplateBuilder({
   state,

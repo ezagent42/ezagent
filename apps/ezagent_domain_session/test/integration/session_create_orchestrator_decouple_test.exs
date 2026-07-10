@@ -34,7 +34,7 @@ defmodule EzagentDomainInstanceMessage.Integration.SessionCreateOrchestratorDeco
     :ok
   end
 
-  test "default SessionTemplate installs orchestrator socialware, not a legacy member" do
+  test "default SessionTemplate installs chat only, not orchestrator or a legacy member" do
     {:ok, template_uri, content} =
       TemplateResolver.resolve_session_template!("default", Ezagent.URI.workspace(:system))
 
@@ -46,7 +46,7 @@ defmodule EzagentDomainInstanceMessage.Integration.SessionCreateOrchestratorDeco
     installs = Map.get(content, :installs) || Map.get(content, "installs")
 
     assert members == []
-    assert installs == ["chat", "orchestrator"]
+    assert installs == ["chat"]
   end
 
   # Restored to the #912 assertion. #1223 inverted it ("materializes the default
@@ -54,7 +54,7 @@ defmodule EzagentDomainInstanceMessage.Integration.SessionCreateOrchestratorDeco
   # so the rev6 contract regressed without ever turning the suite red. The
   # declaration IS recorded at create (rev6 step 4); the live member is NOT
   # (rev6 step 5 — "join only the owner").
-  test "create_session records the orchestrator declaration WITHOUT spawning it" do
+  test "create_session from the default template records no orchestrator declaration" do
     short = "decouple-create-#{System.unique_integer([:positive])}"
 
     assert {:ok, session_uri, meta} =
@@ -81,14 +81,7 @@ defmodule EzagentDomainInstanceMessage.Integration.SessionCreateOrchestratorDeco
     wc = Session.read_template_working_copy(session_uri)
     assert Map.get(wc, :session_template_uri)
 
-    assert [
-             %{
-               fill: :agent,
-               recipe: "orchestrator",
-               flavor: "cc",
-               role_name: "orchestrator"
-             }
-           ] = Map.get(wc, :member_declarations)
+    assert Map.get(wc, :member_declarations) == []
 
     refute Map.has_key?(wc, :orchestrator_uri)
     refute Map.has_key?(wc, :orchestrator_template_uri)
@@ -139,13 +132,7 @@ defmodule EzagentDomainInstanceMessage.Integration.SessionCreateOrchestratorDeco
     end
   end
 
-  # Covers the wiring `Workspace.create_session` → `trigger_socialware_install/1`
-  # → `SessionCreator.install_session_socialware_async/1`. Without this, the whole
-  # async lane could be dead (an unresolvable facade, a missing Task.Supervisor,
-  # a silently-skipped `function_exported?` branch) and every other test in this
-  # file would still pass — creates return owner-only by design, and the direct
-  # `install_session_socialware/1` entry point is exercised separately.
-  test "Workspace.create_session fires the post-create socialware-install transaction" do
+  test "Workspace.create_session default path does not materialize an orchestrator" do
     workspace_uri = Ezagent.URI.workspace(:system)
     owner_uri = User.admin_uri()
     short = "async-install-#{System.unique_integer([:positive])}"
@@ -161,13 +148,12 @@ defmodule EzagentDomainInstanceMessage.Integration.SessionCreateOrchestratorDeco
     assert Session.session_member_uris(session_uri) |> Enum.map(&URI.to_string/1) ==
              [URI.to_string(owner_uri)]
 
-    # …and the declared orchestrator shows up shortly after, materialized by the
-    # separate transaction the create fired.
-    assert wait_until(
+    # Main hotfix 2026-07-10: default sessions stay plain while orchestrator
+    # readiness is repaired separately.
+    refute wait_until(
              fn -> match?(%URI{}, member_role_uri(session_uri, "orchestrator")) end,
              200
-           ),
-           "the async socialware-install transaction never materialized the orchestrator"
+           )
   end
 
   test "route-time role delivery provisions declared orchestrator member lazily" do
@@ -283,24 +269,12 @@ defmodule EzagentDomainInstanceMessage.Integration.SessionCreateOrchestratorDeco
       |> Map.keys()
       |> Enum.map(&URI.to_string/1)
 
-    # `Workspace.create_session` fires the post-create socialware-install
-    # transaction, so a role member MAY have joined by the time we read the
-    # snapshot. The owner-only invariant for the CREATE transaction itself is
-    # asserted in "create_session records the orchestrator declaration WITHOUT
-    # spawning it" (which drives `SessionCreator.create_session/3` directly).
-    assert owner_str in member_uris
+    assert member_uris == [owner_str]
 
     working_copy = Map.fetch!(session_slice, :template_working_copy)
     assert %URI{} = Map.get(working_copy, :session_template_uri)
 
-    assert [
-             %{
-               fill: :agent,
-               recipe: "orchestrator",
-               flavor: "cc",
-               role_name: "orchestrator"
-             }
-           ] = Map.get(working_copy, :member_declarations)
+    assert Map.get(working_copy, :member_declarations) == []
   end
 
   defp seed_orchestrator_recipe do

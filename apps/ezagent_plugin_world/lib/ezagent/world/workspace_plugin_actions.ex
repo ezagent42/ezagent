@@ -8,7 +8,7 @@ defmodule Ezagent.World.WorkspacePluginActions do
 
   alias Ezagent.World.{CredentialCascade, WorkspacePluginData}
 
-  @default_world_template_installs ["chat", "orchestrator"]
+  @default_world_template_installs ["chat"]
   @foundation_socialware_refs ["chat", "orchestrator", "socialware"]
 
   @doc "Route a workspace/plugin/profile world action to its handler."

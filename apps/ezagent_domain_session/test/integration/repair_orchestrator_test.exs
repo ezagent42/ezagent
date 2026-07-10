@@ -1,9 +1,10 @@
 defmodule EzagentDomainInstanceMessage.Integration.RepairOrchestratorTest do
   @moduledoc """
   Rev6 repair contract: `repair_orchestrator/1,2` re-materializes the
-  session template declaration and routing metadata. It does not spawn or
-  wait for an orchestrator; route-time delivery provisions declared role
-  members lazily.
+  session template declaration and routing metadata from the session's
+  recorded template. During the 2026-07-10 default-template hotfix, the stock
+  `default` template is plain chat, so repair must not invent an orchestrator
+  declaration for that path.
   """
 
   use EzagentCore.DataCase, async: false
@@ -18,7 +19,7 @@ defmodule EzagentDomainInstanceMessage.Integration.RepairOrchestratorTest do
   end
 
   describe "repair_orchestrator/1 — re-materializes template declarations" do
-    test "after clearing declarations, repair restores them and returns empty meta" do
+    test "after clearing default-template metadata, repair restores the template URI without inventing orchestrator" do
       short = "repair-otu-#{System.unique_integer([:positive])}"
 
       {:ok, session_uri, create_meta} =
@@ -29,7 +30,7 @@ defmodule EzagentDomainInstanceMessage.Integration.RepairOrchestratorTest do
       assert create_meta == %{}
 
       wc = Session.read_template_working_copy(session_uri)
-      assert [%{role_name: "orchestrator"}] = Map.get(wc, :member_declarations)
+      assert [] == Map.get(wc, :member_declarations)
       assert match?(%URI{}, Map.get(wc, :session_template_uri))
 
       cleared =
@@ -51,7 +52,7 @@ defmodule EzagentDomainInstanceMessage.Integration.RepairOrchestratorTest do
       assert match?(%URI{}, Map.get(repaired_wc, :session_template_uri)),
              "repair_orchestrator MUST re-write session_template_uri"
 
-      assert [%{role_name: "orchestrator"}] = Map.get(repaired_wc, :member_declarations)
+      assert [] == Map.get(repaired_wc, :member_declarations)
       refute Map.has_key?(repaired_wc, :orchestrator_template_uri)
     end
 
