@@ -129,6 +129,51 @@ defmodule Ezagent.PluginCc.Template.CcUnifiedCreateCascadeTest do
   defp restore_system_env(key, nil), do: System.delete_env(key)
   defp restore_system_env(key, value), do: System.put_env(key, value)
 
+  # Register a workspace-shared cc credential source carrying a real
+  # `.credentials.json`, so a bare admin create resolves the #17 cascade and
+  # materializes a LAUNCHABLE per-agent home. Since chain B / #1096, a
+  # credentialled cc flavor FAILS FAST at launch when its config home has no
+  # credential (`{:credential_not_materialized, _}`), so these structural
+  # create/persist/replay tests must stand in a "logged-in" state to exercise the
+  # create path to completion. Returns the registered source URI.
+  defp seed_ws_cc_credential_source(ws_name, workspace_uri) do
+    src_dir =
+      Path.join(System.tmp_dir!(), "cc-ws-cred-src-#{System.unique_integer([:positive])}")
+
+    File.mkdir_p!(src_dir)
+
+    File.write!(
+      Path.join(src_dir, ".credentials.json"),
+      ~s({"claudeAiOauth":{"accessToken":"T"}})
+    )
+
+    on_exit(fn -> File.rm_rf(src_dir) end)
+
+    source_uri =
+      URI.new!(
+        "entity://#{ws_name}/agent/cc_ws-cred-source-#{System.unique_integer([:positive])}"
+      )
+
+    {:ok, _} =
+      Ezagent.SnapshotStore.write(
+        URI.to_string(source_uri),
+        %{sandbox: %{state: %{config_dir_path: src_dir, flavor: "cc"}}},
+        kind_type: :agent
+      )
+
+    {:ok, _} =
+      %{
+        workspace_uri: URI.to_string(workspace_uri),
+        flavor: "cc",
+        source_uri: URI.to_string(source_uri),
+        set_by: URI.to_string(User.admin_uri())
+      }
+      |> WorkspaceSharedSource.changeset()
+      |> Repo.insert()
+
+    source_uri
+  end
+
   describe "create-time flavor config ingest — cc file flavor" do
     setup :install_flavor_config_spawn_facade
 
@@ -203,6 +248,7 @@ defmodule Ezagent.PluginCc.Template.CcUnifiedCreateCascadeTest do
   describe "bare cc create (no --from) — isolation precondition" do
     test "persisted template carries a non-empty config_dir reference (NOT operator ~/.claude)",
          %{ws_name: ws_name, workspace_uri: workspace_uri, admin_ctx: admin_ctx, cwd: cwd} do
+      _ = seed_ws_cc_credential_source(ws_name, workspace_uri)
       name = "isolated-#{System.unique_integer([:positive])}"
 
       {:ok, %{agent_uri: agent_uri}} =
@@ -228,6 +274,7 @@ defmodule Ezagent.PluginCc.Template.CcUnifiedCreateCascadeTest do
 
     test "resolved config home for the persisted template is non-nil (isolated dir)",
          %{ws_name: ws_name, workspace_uri: workspace_uri, admin_ctx: admin_ctx, cwd: cwd} do
+      _ = seed_ws_cc_credential_source(ws_name, workspace_uri)
       name = "home-#{System.unique_integer([:positive])}"
 
       {:ok, %{agent_uri: agent_uri}} =
@@ -269,10 +316,25 @@ defmodule Ezagent.PluginCc.Template.CcUnifiedCreateCascadeTest do
 
       admin_uri = User.admin_uri()
 
+      # The shared source carries a real `.credentials.json` so the materialized
+      # per-agent home is LAUNCHABLE (chain B / #1096) — the create runs to
+      # completion and the minted grant can be inspected.
+      source_config_dir =
+        Path.join(System.tmp_dir!(), "cc-shared-src-#{System.unique_integer([:positive])}")
+
+      File.mkdir_p!(source_config_dir)
+
+      File.write!(
+        Path.join(source_config_dir, ".credentials.json"),
+        ~s({"claudeAiOauth":{"accessToken":"T"}})
+      )
+
+      on_exit(fn -> File.rm_rf(source_config_dir) end)
+
       {:ok, _} =
         Ezagent.SnapshotStore.write(
           source_uri,
-          %{sandbox: %{state: %{config_dir_path: System.tmp_dir!()}}},
+          %{sandbox: %{state: %{config_dir_path: source_config_dir}}},
           kind_type: :agent
         )
 
@@ -317,6 +379,7 @@ defmodule Ezagent.PluginCc.Template.CcUnifiedCreateCascadeTest do
       # WITHOUT re-running the cascade under the workspace-loader principal
       # (codex r2 HIGH-1) and WITHOUT clobbering the fresh?/adoption gate
       # (codex r2 HIGH-2).
+      _ = seed_ws_cc_credential_source(ws_name, workspace_uri)
       name = "replay-#{System.unique_integer([:positive])}"
 
       {:ok, %{agent_uri: agent_uri, template_name: tmpl_name}} =

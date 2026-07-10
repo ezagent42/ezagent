@@ -434,33 +434,79 @@ defmodule Ezagent.PluginCc.Template.CcAgent.Spawn do
   # credential-grant gate (#701 hardening of the SpawnPlan public-launcher
   # bypass).
   defp ensure_pty_server(agent_uri, cwd, tmpl) do
-    require_transport_join(agent_uri)
-
-    # §5.B follow-up (b) — DURABLE first-run-dialog suppression. claude shows its
-    # theme / "Select login method" dialogs on first run against an un-onboarded
-    # config home EVEN with a valid materialized `.credentials.json`; a headless
-    # PTY can't answer them and the bridge never binds. Mark onboarding complete in
-    # the resolved per-agent config home BEFORE launch so the first-run flow never
-    # starts. Runs on BOTH the fresh-spawn AND respawn paths (this is the single
-    # chokepoint both reach) so the marker survives the agent's own restarts. The
-    # PtyServer `:theme_dialog` / `:login_method_dialog` auto-prompts remain the
-    # fallback; best-effort (never tears the agent down — see try_ensure/2).
     config_home = resolve_config_home(agent_uri, tmpl)
 
-    _ =
-      Ezagent.PluginCc.Template.OnboardingBootstrap.try_ensure(config_home, agent_uri,
-        project_cwd: cwd
+    # chain B / #1096 credential gap — FAIL-FAST before the transport wait + PTY
+    # launch. cc is a credentialled `:file` flavor: claude reads
+    # `CLAUDE_CONFIG_DIR` (which OVERRIDES its `~/.claude` HOME lookup), so a
+    # marker-complete home with NO `.credentials.json` is NOT launchable — claude
+    # boots "Not logged in" (exit-256), its esr-bridge never joins, and the
+    # orchestrator ReadyGate hangs `:not_ready` for the whole transport-join
+    # budget. Refuse the launch LOUD (the caller terminates the Kind + fails the
+    # spawn) instead of a silent doomed launch. The credential arrives via the
+    # #17 grant cascade (`copy_secret_relpaths` from the gate-allowed source);
+    # when the source is not logged in the home is non-launchable and this gate
+    # is the honest signal. NO ad-hoc host-login copy here — that would bypass the
+    # #161 HostLoginAdopt gate (co-tenant credential isolation).
+    with :ok <- assert_config_home_launchable(agent_uri, config_home) do
+      require_transport_join(agent_uri)
+
+      # §5.B follow-up (b) — DURABLE first-run-dialog suppression. claude shows its
+      # theme / "Select login method" dialogs on first run against an un-onboarded
+      # config home EVEN with a valid materialized `.credentials.json`; a headless
+      # PTY can't answer them and the bridge never binds. Mark onboarding complete in
+      # the resolved per-agent config home BEFORE launch so the first-run flow never
+      # starts. Runs on BOTH the fresh-spawn AND respawn paths (this is the single
+      # chokepoint both reach) so the marker survives the agent's own restarts. The
+      # PtyServer `:theme_dialog` / `:login_method_dialog` auto-prompts remain the
+      # fallback; best-effort (never tears the agent down — see try_ensure/2).
+      _ =
+        Ezagent.PluginCc.Template.OnboardingBootstrap.try_ensure(config_home, agent_uri,
+          project_cwd: cwd
+        )
+
+      with {:ok, params} <-
+             Ezagent.PluginCc.Template.SpawnPlan.build_pty_params(
+               agent_uri,
+               cwd,
+               tmpl,
+               @compile_env
+             ),
+           {:ok, _pid} <- start_pty(agent_uri, params) do
+        :ok
+      end
+    end
+  end
+
+  # `nil` config home = the agent has no per-agent home (claude falls back to
+  # `~/.claude`); nothing to gate. Otherwise the credentialled cc home MUST be
+  # launchable — marker present AND `.credentials.json` present — before launch.
+  # Keyed on `Ezagent.PluginCc.Template.CcAgent` (the CredentialAdapter identity
+  # the cascade keys on — NOT `__MODULE__`, which is this Spawn module).
+  defp assert_config_home_launchable(_agent_uri, nil), do: :ok
+
+  defp assert_config_home_launchable(%URI{} = agent_uri, config_home)
+       when is_binary(config_home) do
+    if Ezagent.Credential.HomeRuntime.config_dir_launchable?(
+         config_home,
+         Ezagent.PluginCc.Template.CcAgent
+       ) do
+      :ok
+    else
+      Logger.error(
+        "cc.agent: refusing to launch #{URI.to_string(agent_uri)} — config home " <>
+          "#{config_home} is marker-complete but has NO credential (not launchable). " <>
+          "The agent's #17 credential source is not logged in; fix the source " <>
+          "(host login / user credential) and respawn. Failing fast instead of a " <>
+          "doomed 'Not logged in' launch (chain B / #1096)."
       )
 
-    with {:ok, params} <-
-           Ezagent.PluginCc.Template.SpawnPlan.build_pty_params(
-             agent_uri,
-             cwd,
-             tmpl,
-             @compile_env
-           ),
-         {:ok, _pid} <- start_pty(agent_uri, params) do
-      :ok
+      :telemetry.execute([:ezagent, :cc, :credential_not_materialized], %{count: 1}, %{
+        agent_uri: agent_uri,
+        config_home: config_home
+      })
+
+      {:error, {:credential_not_materialized, agent_uri}}
     end
   end
 

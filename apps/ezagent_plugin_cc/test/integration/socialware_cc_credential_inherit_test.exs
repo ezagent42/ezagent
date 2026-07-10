@@ -296,7 +296,14 @@ defmodule Ezagent.PluginCc.Integration.SocialwareCcCredentialInheritTest do
       recipe_name = seed_recipe("other-#{n}", project_cwd)
       role_name = "no-host-inherit-role-#{n}"
 
-      assert :ok =
+      # The co-tenant install did NOT inherit the host login (#161 / DoD 6), so the
+      # cc agent has no credential source and cannot authenticate. Per the chain-B
+      # credential gate, that agent now FAILS FAST at launch
+      # (`{:credential_not_materialized, _}`) instead of silently spawning a
+      # credential-less "Not logged in" agent — the security property (no host-login
+      # inheritance) holds AND the failure is loud, not an opaque exit-256.
+      assert {:error,
+              {:agent_spawn_failed, ^role_name, {:credential_not_materialized, _agent_uri}}} =
                DefinitionAgents.materialize_definition_agents(
                  session_uri,
                  @workspace_uri,
@@ -304,17 +311,9 @@ defmodule Ezagent.PluginCc.Integration.SocialwareCcCredentialInheritTest do
                  [%{recipe: recipe_name, role_name: role_name, flavor: "cc"}]
                )
 
-      members = members_of(session_uri)
-      agent_uri = SessionBehavior.role_name_to_uri(members, role_name)
-      assert %URI{} = agent_uri
-      on_exit(fn -> terminate(agent_uri) end)
-      on_exit(fn -> File.rm_rf(CcAgent.agent_config_dir(agent_uri)) end)
-
       # The HOST login must NOT flow to an agent a co-tenant caused to exist
-      # (#161 / DoD 6): no credential file, no auto-created pointer, no grant.
-      refute File.exists?(Path.join(CcAgent.agent_config_dir(agent_uri), ".credentials.json"))
+      # (#161 / DoD 6): no auto-created user-default pointer for the co-tenant.
       assert UserDefaultSource.resolve(URI.to_string(other_uri), ws_name, "cc") == nil
-      assert GrantRow.get_for_agent(URI.to_string(agent_uri)) == nil
     end
   end
 

@@ -532,9 +532,43 @@ defmodule Ezagent.Agent.Materializer do
     with {:ok, source_uri, version} <- GrantRow.fetch_for_materialize(agent_uri),
          {:ok, source_dir} <- source_dir_for.(source_uri),
          :ok <- copy_secret_relpaths(source_dir, staging, secret_relpaths),
+         :ok <- warn_if_no_secret_landed(agent_uri, source_uri, staging, secret_relpaths),
          :ok <- GrantRow.revalidate_version!(agent_uri, version),
          {:ok, result} <- commit.(version) do
       {:ok, result}
+    end
+  end
+
+  # Loud-but-non-fatal (chain B / #1096 credential gap). The #17 grant gate
+  # ALLOWED this credential source, but `copy_secret_relpaths/3` is best-effort:
+  # when the source identity is not logged in it carries none of the flavor's
+  # secrets and silently leaves the staging without them. That is not a fault
+  # HERE (a not-yet-logged-in source is legitimate; the materialize completes),
+  # but the launch gate `Ezagent.Credential.HomeRuntime.config_dir_launchable?/2`
+  # will refuse the resulting credential-less home. Surface WHY the credential is
+  # missing at the source (telemetry + info) so it is not a silent no-op that
+  # only shows up later as an opaque "Not logged in" (exit-256). NEVER copies a
+  # host login here — that stays gated by `HostLoginAdopt` (#161 co-tenant
+  # isolation).
+  defp warn_if_no_secret_landed(_agent_uri, _source_uri, _staging, []), do: :ok
+
+  defp warn_if_no_secret_landed(agent_uri, source_uri, staging, secret_relpaths) do
+    if Enum.any?(secret_relpaths, &File.exists?(Path.join(staging, &1))) do
+      :ok
+    else
+      :telemetry.execute(
+        [:ezagent, :credential, :source_missing_secret],
+        %{count: 1},
+        %{agent_uri: agent_uri, source_uri: source_uri}
+      )
+
+      Logger.info(
+        "credential source #{inspect(source_uri)} for agent #{agent_uri} carried none of " <>
+          "#{inspect(secret_relpaths)} — the materialized home will be non-launchable until " <>
+          "the source logs in (chain B / #1096)"
+      )
+
+      :ok
     end
   end
 

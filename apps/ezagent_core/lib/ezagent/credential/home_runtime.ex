@@ -131,21 +131,45 @@ defmodule Ezagent.Credential.HomeRuntime do
   @doc """
   True iff a subprocess may be launched against the per-agent config home `dir`.
 
-  Launchable means EITHER:
+  Launchable means:
 
-    * `stage_and_swap/7` committed the home and wrote `#{@config_complete_marker}`
-      (a freshly materialized home), OR
-    * the home already carries one of `template_module.credential_relpaths/0`
-      (a home materialized before the marker existed, or provisioned by an
-      operator's interactive login) — the same signal `materialize_single_reference/5`
-      uses to decide a target is a real user home worth overlaying.
+    * for a **credentialled `:file` flavor** (cc/codex, i.e. any flavor whose
+      Template Class implements the `Ezagent.Agent.CredentialAdapter`
+      declarative group) — at least one of its `credential_relpaths/0` present
+      on disk. The credential — NOT the completion marker — is the launchable
+      signal: it covers both a freshly materialized home (marker + credential)
+      AND a home provisioned by an operator's interactive login (credential,
+      possibly no marker). A marker WITHOUT the credential is a LIE and is NOT
+      launchable (see below);
+    * for a **credential-less flavor** (deepseek `:slice`, curl, np) — the
+      completion marker `#{@config_complete_marker}` (`stage_and_swap/7` /
+      `materialize_cascade/6` write it LAST), since these keep no credential
+      file.
 
-  A directory that merely EXISTS is neither: `OnboardingBootstrap` `mkdir_p`s the
-  config home before the copy, so an un-marked, credential-less dir can hold a
-  `.claude.json` and nothing else. Launching against THAT produces an agent that
-  can never authenticate, and the subsequent `atomic_replace` renames the
-  directory out from under the running process (chain B / #1096). Callers MUST
-  gate the subprocess launch on this.
+  ## Why the marker alone is not enough (chain B / #1096, credential gap)
+
+  A cc/codex agent points its CLI at the per-agent home via `CLAUDE_CONFIG_DIR`
+  / `CODEX_HOME`, which **OVERRIDES** the CLI's `~/.claude` / `~/.codex` HOME
+  lookup. So a marker-complete home with NO `.credentials.json` is NOT
+  launchable — claude boots and reports "Not logged in" (exit-256), its
+  esr-bridge never joins, and the orchestrator's `ReadyGate` stays
+  `:not_ready`. `materialize_cascade/6` writes the marker but the credential
+  arrives only via the grant-scoped `Ezagent.Agent.Materializer.copy_secret_relpaths/3`,
+  which is best-effort (silently no-ops when the grant source is not logged in).
+  A marker without the credential is therefore a LIE: this gate refuses to bless
+  it, so callers fail-fast (loud) BEFORE the launch instead of an opaque
+  exit-256. Forensics:
+  `docs/together/2026-07-09/cc-orchestrator-create-blocking-rootcause.zh_cn.md`.
+
+  A directory that merely EXISTS is neither marked nor credentialled:
+  `OnboardingBootstrap` `mkdir_p`s the config home before the copy, so an
+  un-marked dir can hold a `.claude.json` and nothing else. Callers MUST gate
+  the subprocess launch on this.
+
+  **Credential-less flavors** (`:slice` flavors like the deepseek `curl.agent`,
+  plus `np`/`echo`) implement none of the credential callbacks and keep NO
+  credential file — the marker alone is their launchable signal, so they are
+  never failed for lacking a `.credentials.json`.
   """
   @spec config_dir_launchable?(String.t() | nil, module()) :: boolean()
   def config_dir_launchable?(nil, _template_module), do: false
@@ -153,8 +177,11 @@ defmodule Ezagent.Credential.HomeRuntime do
   def config_dir_launchable?(dir, template_module)
       when is_binary(dir) and is_atom(template_module) do
     File.dir?(dir) and
-      (File.exists?(Path.join(dir, @config_complete_marker)) or
-         has_user_credentials?(dir, template_module))
+      if Ezagent.Agent.CredentialAdapter.credentialled?(template_module) do
+        has_user_credentials?(dir, template_module)
+      else
+        File.exists?(Path.join(dir, @config_complete_marker))
+      end
   end
 
   @doc "The sentinel file `stage_and_swap/7` writes last, marking a config home complete."
