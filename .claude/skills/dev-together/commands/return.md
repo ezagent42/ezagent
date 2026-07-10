@@ -8,9 +8,10 @@ Return finished work to the lead before the deadline.
    **rebased onto current `main`**. Put the **CI run URL + status** and the
    **rebase-base SHA** in the return — "gates green" as a claim is not accepted.
    (CI + branch protection now enforce this structurally.) return 前跑完整静态-gate
-   集（`arch.scan + doc.scan + uri_query.scan + check_invariants`，见
+   集（`arch.scan + doc.scan + uri_query.scan + check_invariants`，或整套
+   `mix ci.local`——**不跑子集**，见
    [handoff-standard](../references/handoff-standard.md)）；动 orchestrator/session-create/PTY
-   的改动加 canary 实测步骤。
+   就绪路径的改动加 **canary 实测**步骤——合并后实测过再宣布"修好"。
 2. **DoD reconciliation — go through the handoff's DoD line by line.** For each
    DoD line, state: met (with the proof link) / deferred (→ §3) / not-met. The DoD
    is a **closed set** — you may defer a line, never delete one. This is also where
