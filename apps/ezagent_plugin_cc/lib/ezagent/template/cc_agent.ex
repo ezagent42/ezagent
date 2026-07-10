@@ -322,7 +322,20 @@ defmodule Ezagent.PluginCc.Template.CcAgent do
   def validate(tmpl) when is_map(tmpl) do
     with :ok <- check_no_stale_config_dir_key(tmpl),
          :ok <- check_class(tmpl),
-         :ok <- check_agent_uri(tmpl),
+         :ok <- validate_after_class(tmpl) do
+      :ok
+    end
+  end
+
+  def validate(_), do: {:error, :not_a_map}
+
+  # Every cc.agent validation check AFTER the class-string check, shared with the
+  # deepseek provider shim so its `validate/1` reuses the exact rules while
+  # accepting its own class. The `"provider"` key is unknown here (ignored).
+  @doc false
+  @spec validate_after_class(map()) :: :ok | {:error, term()}
+  def validate_after_class(tmpl) when is_map(tmpl) do
+    with :ok <- check_agent_uri(tmpl),
          :ok <- check_cwd(tmpl),
          :ok <- check_optional_sandbox_keys(tmpl),
          :ok <- Ezagent.PluginCc.Template.CcAgent.ConfigSchema.validate_values(tmpl),
@@ -330,8 +343,6 @@ defmodule Ezagent.PluginCc.Template.CcAgent do
       :ok
     end
   end
-
-  def validate(_), do: {:error, :not_a_map}
 
   # config_dir promotion (Allen 2026-06-03) — FAIL LOUD on a stale
   # `"claude_config_dir"` data key (codex P2 closure). The per-agent
@@ -418,17 +429,28 @@ defmodule Ezagent.PluginCc.Template.CcAgent do
 
   @impl Ezagent.Kind.Template
   def instantiate(_tmpl_name, %{"agent_uri" => uri_str} = tmpl, workspace_uri) do
+    instantiate_for_flavor(__MODULE__, uri_str, tmpl, workspace_uri)
+  end
+
+  def instantiate(_tmpl_name, tmpl, _workspace_uri), do: {:error, {:invalid_template, tmpl}}
+
+  # Flavor-parameterized instantiate body, shared with the deepseek provider shim
+  # (`CcDeepseekAgent`) so the STORED launch flavor is the caller's (`cc` vs
+  # `cc-deepseek`) while spawn/PTY/credential-cascade stays the single
+  # `CcAgent.Spawn` chokepoint; the provider dimension rides in `tmpl`, not a fork.
+  @doc false
+  @spec instantiate_for_flavor(module(), String.t(), map(), URI.t()) ::
+          {:ok, [URI.t()], map()} | {:error, term()}
+  def instantiate_for_flavor(flavor_class, uri_str, tmpl, workspace_uri)
+      when is_atom(flavor_class) and is_binary(uri_str) and is_map(tmpl) do
     agent_uri = Ezagent.URI.new!(uri_str)
 
-    with :ok <- Ezagent.AgentFlavorAttributes.put_from_template_class(agent_uri, __MODULE__) do
-      # PR-D2 idempotency short-circuit: if BOTH the Agent Kind and the
-      # PtyServer are already alive we have nothing to do. Each plugin
-      # re-running Workspace.Loader.load_all/0 hits this on subsequent
-      # passes; the first pass spawns, the rest no-op.
-      #
-      # codex round-6 HIGH-1 — the 3-element `{:ok, uris, %{fresh?: _}}`
-      # return carries whether THIS call STARTED the Agent Kind worker.
-      # The short-circuit means the worker pre-existed → `fresh?: false`.
+    with :ok <- Ezagent.AgentFlavorAttributes.put_from_template_class(agent_uri, flavor_class) do
+      # PR-D2 idempotency short-circuit: if BOTH the Agent Kind and the PtyServer
+      # are already alive we have nothing to do (each plugin re-running
+      # Workspace.Loader.load_all/0 hits this; first pass spawns, rest no-op).
+      # codex round-6 HIGH-1 — the short-circuit means the worker pre-existed, so
+      # the `{:ok, uris, %{fresh?: _}}` return is `fresh?: false`.
       cond do
         agent_kind_alive?(agent_uri) and pty_server_alive?(agent_uri) ->
           {:ok, [agent_uri], %{fresh?: false}}
@@ -442,8 +464,6 @@ defmodule Ezagent.PluginCc.Template.CcAgent do
       end
     end
   end
-
-  def instantiate(_tmpl_name, tmpl, _workspace_uri), do: {:error, {:invalid_template, tmpl}}
 
   # PR-3T (#25 burn-down) — the spawn / PTY / grant-cascade machinery was
   # extracted VERBATIM into `Ezagent.PluginCc.Template.CcAgent.Spawn`
