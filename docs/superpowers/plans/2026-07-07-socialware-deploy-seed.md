@@ -26,10 +26,10 @@
 - Test: arch gate 自己的 test（若有）+ `apps/ezagent_core/test/architecture/*`
 
 **Interfaces:**
-- Produces: 一条新 arch 规则 `socialware_seed_path`（名字实施时定），检测 (a) `apps/*/priv/socialware/*/manifest.yaml` 存在；(b) 非框架 app 在 Application boot 调 `ConfigGovernance.Socialware.publish_or_upgrade` / `Demo.publish`。allowlist：core 框架内置。
+- Produces: 一条新 arch 规则 `socialware_seed_path`（名字实施时定），检测 (a) `apps/*/priv/socialware/*/manifest.yaml` 存在；(b) 非框架 app 在 Application boot 调 `ConfigGovernance.Socialware.publish_or_upgrade`（已退役的 Demo 自发布形态）。allowlist：core 框架内置。
 
 - [ ] Step 1: 读 `mix ezagent.arch.scan` 现有规则结构（AST/grep gate 怎么注册的），找扩展点。
-- [ ] Step 2: 加规则 (a)：grep `apps/*/priv/socialware/*/manifest.yaml`，非空即违规。加规则 (b)：扫非-core Application 模块 boot 路径里的 `publish_or_upgrade`/`Demo.publish` 调用。
+- [ ] Step 2: 加规则 (a)：grep `apps/*/priv/socialware/*/manifest.yaml`，非空即违规。加规则 (b)：扫非-core Application 模块 boot 路径里的 `publish_or_upgrade` 调用（已退役的 Demo 自发布形态）。
 - [ ] Step 3: 跑 `mise exec ... -- mix ezagent.arch.scan`，**预期红**：列出 `ezagent_domain_session/priv/socialware/autoservice/manifest.yaml`（本分支唯一 priv/socialware）。记录报错。
 - [ ] Step 4: commit（gate 红是预期的 gate-first 状态；若 arch.scan 是 CI gate 需允许本 commit 红或用标记，实施时按现有 gate 惯例处理）。
 

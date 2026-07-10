@@ -31,13 +31,24 @@ defmodule Ezagent.World.SlotRegistry do
 
   @manifest_version 1
 
+  # 插件页面（`Ezagent.World.PluginPageRegistry`）贡献的 renderer families ——
+  # 编译期由注册表派生注入 `@families`，不再逐插件手写条目（kanban 曾是
+  # 硬编码 `kanban: {KanbanData, [{"kanban", "看板"}]}`）。family atom = 页面 key。
+  @plugin_page_families Map.new(
+                          Ezagent.World.PluginPageRegistry.pages(),
+                          fn page ->
+                            {String.to_atom(page.key),
+                             {page.data_builder, page.renderer_families}}
+                          end
+                        )
+
   # renderer_family => {data_source, [{type, title}]}
   #
   # data_source is the Elixir origin of the slot's state shape (the renderer-
   # agnostic data contract): a `*Data` module, or `:world_live` when the state
   # is assembled inline in the LiveView. Keep this list in sync with
   # `main.tsx`'s renderer map and `WorldLive.route_for/2`.
-  @families %{
+  @static_families %{
     sessions: {:world_live, [{"sessions_table", "Sessions"}]},
     # Overview 操作员落地页（FP5 S2-a）：KPI 概览 + 快捷入口,数据复用 AdminData。
     overview: {Ezagent.World.AdminData, [{"overview", "Overview"}]},
@@ -69,8 +80,6 @@ defmodule Ezagent.World.SlotRegistry do
          {"auto_derive", "Auto Derive"},
          {"profile", "Profile"}
        ]},
-    # kanban 操作面（kanban-as-role K4）—— 自有 renderer family + KanbanData。
-    kanban: {Ezagent.World.KanbanData, [{"kanban", "看板"}]},
     identities:
       {Ezagent.World.IdentityData,
        [
@@ -87,6 +96,15 @@ defmodule Ezagent.World.SlotRegistry do
          {"agent_config", "Agent Config"}
        ]}
   }
+
+  # 编译期防呆：插件页面 key 不允许与静态 family 撞名（撞了 = 静默覆盖，违反
+  # fail-closed 纪律），直接编译失败。
+  case Map.keys(Map.take(@static_families, Map.keys(@plugin_page_families))) do
+    [] -> :ok
+    clash -> raise "plugin page keys clash with static renderer families: #{inspect(clash)}"
+  end
+
+  @families Map.merge(@static_families, @plugin_page_families)
 
   # Seed allowlist for the JS mount gate: universal shell chrome that mounts
   # outside the layout renderer by design. Identified by stable DOM ids /

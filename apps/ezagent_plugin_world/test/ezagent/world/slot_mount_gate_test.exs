@@ -66,12 +66,23 @@ defmodule Ezagent.World.SlotMountGateTest do
   test "Check 3 — family parity: renderer handles exactly the manifest's families" do
     switch_body = renderer_switch_body()
 
-    renderer_cases =
+    switch_cases =
       ~r/case "([a-z_]+)":/
       |> Regex.scan(switch_body, capture: :all_but_first)
       |> List.flatten()
       |> MapSet.new()
 
+    # 插件页面 family 经 PLUGIN_PAGE_RENDERERS 注册表 map（default 分支查 key）
+    # 渲染，不再是字面 switch case（PluginPageRegistry 重构，2026-07-09）——
+    # map 的 key 与 switch case 并集才是 renderer 处理的 family 全集。
+    plugin_page_keys = plugin_page_renderer_keys()
+
+    # 撞名 = switch 分支静默遮蔽注册表条目（对应 SlotRegistry 的编译期防呆）
+    assert MapSet.disjoint?(switch_cases, plugin_page_keys),
+           "plugin page keys shadowed by literal switch cases: " <>
+             "#{inspect(MapSet.intersection(switch_cases, plugin_page_keys) |> MapSet.to_list())}"
+
+    renderer_cases = MapSet.union(switch_cases, plugin_page_keys)
     manifest_families = SlotRegistry.manifest()["renderer_families"] |> Map.keys() |> MapSet.new()
 
     assert renderer_cases == manifest_families,
@@ -93,6 +104,31 @@ defmodule Ezagent.World.SlotMountGateTest do
 
     refute String.contains?(default_branch, "Surface"),
            "renderLayoutComponent default branch must not render a surface — unknown family = throw"
+  end
+
+  # `const PLUGIN_PAGE_RENDERERS = { kanban: (component, context) => ... }` 的
+  # key 集合——服务端 PluginPageRegistry 的前端对应面（显式 import，Vite 静态打包）。
+  defp plugin_page_renderer_keys do
+    main = File.read!(@main)
+
+    case :binary.match(main, "const PLUGIN_PAGE_RENDERERS") do
+      {s, _} ->
+        rest = binary_part(main, s, byte_size(main) - s)
+
+        block =
+          case :binary.match(rest, "\nfunction ") do
+            {e, _} -> binary_part(rest, 0, e)
+            :nomatch -> rest
+          end
+
+        ~r/^  ([a-z_]+): \(/m
+        |> Regex.scan(block, capture: :all_but_first)
+        |> List.flatten()
+        |> MapSet.new()
+
+      :nomatch ->
+        MapSet.new()
+    end
   end
 
   defp renderer_switch_body do
