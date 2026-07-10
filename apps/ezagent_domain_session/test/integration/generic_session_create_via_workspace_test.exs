@@ -54,4 +54,41 @@ defmodule EzagentDomainInstanceMessage.Integration.GenericSessionCreateViaWorksp
     # The class path actually spawned the Session Kind.
     assert {:ok, _pid} = Ezagent.KindRegistry.lookup(session_uri)
   end
+
+  test "class-template create joins the non-admin creator so filtered listings include it",
+       %{ws_name: ws_name, workspace_uri: workspace_uri} do
+    short = "echo-generic-member-#{System.unique_integer([:positive])}"
+
+    creator_uri =
+      URI.new!("entity://#{ws_name}/user/generic-creator-#{System.unique_integer([:positive])}")
+
+    create_session_cap = %Ezagent.Capability{
+      kind: :workspace,
+      behavior: Ezagent.ActionSet.Workspace,
+      action: :create_session,
+      instance: workspace_uri,
+      workspace_uri: workspace_uri,
+      granted_by: User.admin_uri(),
+      granted_at: DateTime.utc_now()
+    }
+
+    {:ok, _pid} =
+      Ezagent.Kind.spawn(User, %{uri: creator_uri, initial_caps: MapSet.new([create_session_cap])})
+
+    creator_ctx = %{caller: creator_uri, caps: MapSet.new([create_session_cap])}
+
+    assert {:ok, %{session_uri: session_uri}} =
+             Workspace.create_session(
+               workspace_uri,
+               %{short_name: short, template_name: "generic"},
+               creator_ctx
+             )
+
+    assert Enum.any?(
+             apply(EzagentDomainInstanceMessage, :list_sessions, [workspace_uri, creator_uri]),
+             fn uri ->
+               URI.to_string(uri) == URI.to_string(session_uri)
+             end
+           )
+  end
 end
