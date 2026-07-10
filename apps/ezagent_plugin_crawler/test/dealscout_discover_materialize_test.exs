@@ -127,7 +127,7 @@ defmodule EzagentPluginCrawler.DealscoutDiscoverMaterializeTest do
       on_exit(fn -> terminate(session_uri) end)
 
       # 旧 e2e 在这步（cc-headless 物化）必崩；py 车道要走通。
-      assert :ok =
+      assert {:ok, %{skipped: []}} =
                DefinitionAgents.materialize_definition_agents(
                  session_uri,
                  @workspace_uri,

@@ -129,7 +129,7 @@ defmodule EzagentPluginCrawler.DealscoutPageE2eTest do
     assert page_slot.recipe == "crawler-page"
     assert page_slot.flavor == "native"
 
-    assert :ok =
+    assert {:ok, %{skipped: []}} =
              DefinitionAgents.materialize_definition_agents(
                session_uri,
                @workspace_uri,
