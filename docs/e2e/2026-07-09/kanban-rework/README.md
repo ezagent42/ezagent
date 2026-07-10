@@ -49,6 +49,16 @@
 - **步骤 04（列表页）冒烟**：rebase 未破坏注册表 index route，渲染正常。
 - **`world_conversation_test.exs` pre-existing 失败（原 :1374 assert_patch）**：#1294 改了该文件 35 行（PR-6 测试改为 `wait_for_role_member` 轮询异步物化），**仍未修好**——41 tests, 1 failure，同一个 PR-6 测试（:1374），失败形态变为轮询超时：`declared role "py-helper-*" was never materialized as a member ... by the post-create socialware-install transaction`。只记录结论，本分支不修。
 
+## 2026-07-10 cc 真脑实测（05x-cc-brain-probe-*）
+
+回答最后一层「cc 真脑回话痛不痛」（前三层：安装/板动作/relay 路由已证）。全新库真向导装 kanban → 真键盘 autocomplete 分别 @kanban-assistant / @dev-together：
+
+- **装配 ✓**：无红条、3 成员即时在线（#1294 修复继续成立）。
+- **送达 ✓**：两次 mention 均 dispatch ok，两个 agent 的 SDK sidecar 被触发并回包（71s 首包 / 11s 热包）。
+- **真脑 ✗**：**两个角色均回 `Not logged in · Please run /login`——401 仍痛**。
+
+**但根因不是宿主凭证过期**：宿主 `~/.claude/.credentials.json` 实测有效（expiresAt 1783674628214 = 当天 17:10，余量 ~6.3h）。拍死的根因是 **#1209 宿主登录收养链对 cc-headless flavor 静默 no-op**——`CcHeadlessAgent`（cc_headless_agent.ex:24-33）漏 delegate `host_login_dir/0`，`CredentialAdapter.host_login_source_dir/1`（credential_adapter.ex:124-137）的 `function_exported?` gate 判 `:none`；erpc 正反证：同一函数对 `CcAgent` 返回 `{:ok, "~/.claude"}`。于是 fresh 库三张 credential 表全空，物化 config_dir 里**没有** `.credentials.json`（非过期，是无副本）。#1209 集成测试只覆盖 flavor `"cc"`，kanban 两 role 恰全是 cc-headless，整体落进覆盖缺口。修复面极小（补一个 delegate），候选 issue，不在本分支修。详见 `05x-cc-brain-probe-notes.txt`，截图 `05x-cc-brain-probe-*.png`（向导/建成/成员/autocomplete/发送/两个 401 回复）。
+
 ## 复现要点
 
 按 `docs/guide/world-e2e-seed.md`（PG → reset/seed → seed-then-start）；发布段照 `00`/`02` 两个 txt；浏览器交互坑（React 受控 input 用 native setter、mention 必须真键盘 autocomplete、`world.localhost`）见 `docs/e2e/guide.md` §8.2。
