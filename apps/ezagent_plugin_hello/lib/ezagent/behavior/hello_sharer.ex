@@ -4,7 +4,8 @@ defmodule Ezagent.ActionSet.HelloSharer do
   action so the front-desk relay can route a share request here.
 
   Native-flavor (no bridge adapter) — reachable via dispatch, not chat delivery
-  (T2 I-1). On `:share`, posts a chat message with the public session URL.
+  (T2 I-1). On `:share`, posts a chat message with the public session URL using
+  ITS OWN URI as sender, so the front-desk loop guard excludes it.
   """
 
   use Ezagent.Lifecycle
@@ -21,19 +22,33 @@ defmodule Ezagent.ActionSet.HelloSharer do
   def create(_args), do: {:ok, %{}}
 
   @doc """
-  Dispatchable share entry. Posts the session's public URL as a chat message.
+  Dispatchable share entry. Posts the session's public URL as a chat message
+  from the sharer agent itself (so the front-desk loop guard blocks re-routing).
   """
   def handle_share(%{session_uri: session_str}, _ctx)
       when is_binary(session_str) and session_str != "" do
     case parse_session_uri(session_str) do
       {:ok, session_uri} ->
         share_url = "/socialware/chat?session_uri=#{URI.to_string(session_uri)}"
-        _ = post_share_message(session_uri, share_url)
-        {:ok, %{}, []}
+
+        case EzagentPluginHello.Members.role_uri(session_uri, "sharer") do
+          {:ok, sharer_uri} ->
+            _ =
+              EzagentPluginHello.TurnDriver.say(
+                session_uri,
+                sharer_uri,
+                "Public URL: #{share_url}"
+              )
+
+          :error ->
+            :ok
+        end
 
       :error ->
-        {:ok, %{}, []}
+        :ok
     end
+
+    {:ok, %{}, []}
   end
 
   def handle_share(_args, _ctx), do: {:ok, %{}, []}
@@ -53,16 +68,5 @@ defmodule Ezagent.ActionSet.HelloSharer do
     end
   rescue
     ArgumentError -> :error
-  end
-
-  defp post_share_message(%URI{} = session_uri, share_url) do
-    _ =
-      EzagentPluginHello.TurnDriver.say(
-        session_uri,
-        Ezagent.Entity.User.admin_uri(),
-        "Public URL: #{share_url}"
-      )
-
-    :ok
   end
 end

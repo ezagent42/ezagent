@@ -5,8 +5,8 @@ defmodule Ezagent.ActionSet.HelloPublisher do
 
   Native-flavor (no bridge adapter) — reachable via dispatch, not chat delivery
   (T2 I-1). On `:publish`, snapshots the session's current state as a new
-  immutable template version, equivalent to clicking "Publish as Template" in
-  the world UI.
+  immutable template version and posts the result as a chat message from ITS OWN
+  URI (so the front-desk loop guard excludes it).
   """
 
   use Ezagent.Lifecycle
@@ -24,28 +24,28 @@ defmodule Ezagent.ActionSet.HelloPublisher do
 
   @doc """
   Dispatchable publish entry. Calls `update_template` to snapshot the session's
-  working-copy state as a new version of its parent SessionTemplate.
+  working-copy state as a new version of its parent SessionTemplate, then posts
+  the result from the publisher agent itself.
   """
   def handle_publish(%{session_uri: session_str}, _ctx)
       when is_binary(session_str) and session_str != "" do
     case parse_session_uri(session_str) do
       {:ok, session_uri} ->
-        case Ezagent.Orchestrator.Tools.Templates.update_template(session_uri: session_uri) do
-          {:ok, %{template_uri: tmpl_uri}} ->
-            _ =
-              EzagentPluginHello.TurnDriver.say(
-                session_uri,
-                Ezagent.Entity.User.admin_uri(),
-                "New template version: #{URI.to_string(tmpl_uri)}"
-              )
+        result =
+          case Ezagent.Orchestrator.Tools.Templates.update_template(session_uri: session_uri) do
+            {:ok, %{template_uri: tmpl_uri}} ->
+              "New template version: #{URI.to_string(tmpl_uri)}"
 
-          {:error, reason} ->
-            _ =
-              EzagentPluginHello.TurnDriver.say(
-                session_uri,
-                Ezagent.Entity.User.admin_uri(),
-                "Template save failed: #{inspect(reason)}"
-              )
+            {:error, reason} ->
+              "Template save failed: #{inspect(reason)}"
+          end
+
+        case EzagentPluginHello.Members.role_uri(session_uri, "publisher") do
+          {:ok, publisher_uri} ->
+            _ = EzagentPluginHello.TurnDriver.say(session_uri, publisher_uri, result)
+
+          :error ->
+            :ok
         end
 
       :error ->
