@@ -1393,6 +1393,13 @@ defmodule EzagentWeb.WorldConversationTest do
     :ok = Ezagent.Workspace.add_member(installer_ws_name, installer_user)
     :ok = seed_py_recipe(recipe_name)
 
+    # The `default` template installs a cc `orchestrator`. Since chain B / #1096,
+    # a credentialled cc agent FAILS FAST at launch without a credential — so
+    # provide a workspace-shared cc credential source (a logged-in state) for the
+    # installer workspace, else the orchestrator declines the launch, the
+    # socialware-install transaction halts, and the py role never materializes.
+    seed_ws_cc_credential_source(installer_ws_name, installer_ws)
+
     raw_manifest =
       hello_manifest_attrs(%{
         name: manifest_name,
@@ -1604,6 +1611,43 @@ defmodule EzagentWeb.WorldConversationTest do
     else
       {:error, reason} -> flunk("failed to start manifest reference app: #{inspect(reason)}")
     end
+  end
+
+  # Register a workspace-shared cc credential source carrying a real
+  # `.credentials.json` so a cc agent materialized in `workspace_uri` (e.g. the
+  # `default` template's orchestrator) has a LAUNCHABLE config home (chain B /
+  # #1096 fail-fast otherwise).
+  defp seed_ws_cc_credential_source(ws_name, workspace_uri) do
+    src_dir =
+      Path.join(System.tmp_dir!(), "cc-ws-cred-src-#{System.unique_integer([:positive])}")
+
+    File.mkdir_p!(src_dir)
+    File.write!(Path.join(src_dir, ".credentials.json"), ~s({"claudeAiOauth":{"accessToken":"T"}}))
+    on_exit(fn -> File.rm_rf(src_dir) end)
+
+    source_uri =
+      Ezagent.URI.new!(
+        "entity://#{ws_name}/agent/cc_ws-cred-source-#{System.unique_integer([:positive])}"
+      )
+
+    {:ok, _} =
+      Ezagent.SnapshotStore.write(
+        URI.to_string(source_uri),
+        %{sandbox: %{state: %{config_dir_path: src_dir, flavor: "cc"}}},
+        kind_type: :agent
+      )
+
+    {:ok, _} =
+      %{
+        workspace_uri: URI.to_string(workspace_uri),
+        flavor: "cc",
+        source_uri: URI.to_string(source_uri),
+        set_by: URI.to_string(Ezagent.Entity.User.admin_uri())
+      }
+      |> Ezagent.Credential.WorkspaceSharedSource.changeset()
+      |> EzagentCore.Repo.insert()
+
+    source_uri
   end
 
   defp seed_py_recipe(recipe_name) do
