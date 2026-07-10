@@ -1443,8 +1443,13 @@ defmodule EzagentWeb.WorldConversationTest do
 
     assert Ezagent.Socialware.Installation.installed?(session_uri, manifest_name)
 
-    members = Ezagent.Orchestrator.Tools.read_members(session_uri)
-    planned_agent = SessionBehavior.role_name_to_uri(members, role_name)
+    # rev6 / #912 — session create is now owner-only; the manifest's declared
+    # agent role slots are materialized by the SEPARATE post-create
+    # socialware-install transaction that `Workspace.create_session` fires. So the
+    # py role member appears SHORTLY AFTER the dispatch returns, not synchronously
+    # — poll for it rather than reading once (the read used to race the join by
+    # ~tens of ms).
+    {planned_agent, members} = wait_for_role_member(session_uri, role_name)
     assert %URI{} = planned_agent
 
     on_exit(fn ->
@@ -1648,6 +1653,32 @@ defmodule EzagentWeb.WorldConversationTest do
 
     _ = Ezagent.ActionSet.Session.Membership.mount_participation_caps(session_uri, anon_uri)
     anon_uri
+  end
+
+  # Poll until the post-create socialware-install transaction has joined the
+  # declared `role_name` agent as a session member (rev6 / #912 async materialize).
+  # 150 × 20ms = 3s — generous headroom: the manifest-install path (py recipe +
+  # definitions + cascade caps) is heavier than a plain default create.
+  defp wait_for_role_member(session_uri, role_name, attempts \\ 150)
+
+  defp wait_for_role_member(session_uri, role_name, 0) do
+    flunk(
+      "declared role #{inspect(role_name)} was never materialized as a member of " <>
+        "#{URI.to_string(session_uri)} by the post-create socialware-install transaction"
+    )
+  end
+
+  defp wait_for_role_member(session_uri, role_name, attempts) do
+    members = Ezagent.Orchestrator.Tools.read_members(session_uri)
+
+    case SessionBehavior.role_name_to_uri(members, role_name) do
+      %URI{} = uri ->
+        {uri, members}
+
+      _ ->
+        Process.sleep(20)
+        wait_for_role_member(session_uri, role_name, attempts - 1)
+    end
   end
 
   defp wait_for_page(session, caller, attempts \\ 150)
