@@ -42,6 +42,7 @@ defmodule EzagentDomainInstanceMessage.SessionCreator.DefinitionAgents do
 
   require Logger
 
+  alias Ezagent.Agent.CredentialPrecondition
   alias Ezagent.Agent.RecipeRegistry
   alias Ezagent.ActionSet.Session.Members
   alias Ezagent.Entity.Session.Orchestrator, as: SessionOrchestrator
@@ -57,11 +58,29 @@ defmodule EzagentDomainInstanceMessage.SessionCreator.DefinitionAgents do
   Materialize agent role slots into `session_uri`. `granted_by` is the session owner
   (the #154-clean grant/spawn root). Idempotent on the repair/restart path.
 
-  Returns `:ok` or `{:error, reason}` (fail-loud — a create-path failure rolls
-  the session back).
+  Returns `{:ok, summary}` where `summary` is
+  `%{installed: [role_name], skipped: [%{role_name:, reason:}]}`.
+
+  ## Skip vs fail (chain C, Allen 2026-07-10)
+
+  A role slot whose flavor **cannot be given credentials for this installer** is
+  SKIPPED, not fatal: it is logged, emitted as telemetry, recorded on the
+  session, and the rest of the batch continues. Creating it anyway produces an
+  agent that boots "Not logged in", never joins its transport bridge, and hangs
+  at `:not_ready` forever — a silent zombie member (see
+  `Ezagent.Agent.CredentialPrecondition`).
+
+  Every OTHER failure still halts the batch (`{:error, reason}`): a duplicate
+  role name, an unknown recipe, a failed join. Those are bugs, not environment,
+  and must not be swallowed as "skipped".
   """
+  @type summary :: %{
+          installed: [String.t()],
+          skipped: [%{role_name: String.t(), reason: term()}]
+        }
+
   @spec materialize_definition_agents(URI.t(), URI.t(), URI.t(), [map()]) ::
-          :ok | {:error, term()}
+          {:ok, summary()} | {:error, term()}
   def materialize_definition_agents(
         %URI{} = session_uri,
         %URI{} = workspace_uri,
@@ -70,7 +89,8 @@ defmodule EzagentDomainInstanceMessage.SessionCreator.DefinitionAgents do
       )
       when is_list(agents) do
     agents
-    |> Enum.reduce_while({:ok, MapSet.new()}, fn agent, {:ok, batch_seen} ->
+    |> Enum.reduce_while({:ok, MapSet.new(), [], []}, fn agent,
+                                                         {:ok, batch_seen, installed, skipped} ->
       role_name = role_name_of(agent)
 
       cond do
@@ -81,19 +101,50 @@ defmodule EzagentDomainInstanceMessage.SessionCreator.DefinitionAgents do
           {:halt, {:error, {:duplicate_agent_role_name, role_name}}}
 
         true ->
+          seen = MapSet.put(batch_seen, role_name)
+
           case materialize_one(session_uri, workspace_uri, granted_by, agent) do
-            :ok -> {:cont, {:ok, MapSet.put(batch_seen, role_name)}}
-            {:error, reason} -> {:halt, {:error, reason}}
+            :ok ->
+              {:cont, {:ok, seen, [role_name | installed], skipped}}
+
+            {:skip, reason} ->
+              report_skip(session_uri, role_name, reason)
+              {:cont, {:ok, seen, installed, [%{role_name: role_name, reason: reason} | skipped]}}
+
+            {:error, reason} ->
+              {:halt, {:error, reason}}
           end
       end
     end)
     |> case do
-      {:ok, _seen} -> :ok
-      {:error, _} = err -> err
+      {:ok, _seen, installed, skipped} ->
+        {:ok, %{installed: Enum.reverse(installed), skipped: Enum.reverse(skipped)}}
+
+      {:error, _} = err ->
+        err
     end
   end
 
-  def materialize_definition_agents(_session, _ws, _granted_by, _agents), do: :ok
+  def materialize_definition_agents(_session, _ws, _granted_by, _agents),
+    do: {:ok, %{installed: [], skipped: []}}
+
+  # LOUD, but not fatal. The durable, user-facing record is written by
+  # `SessionCreator.install_session_socialware/1` from the returned summary — a
+  # server log alone would be a silent drop at a user-facing surface (#9).
+  defp report_skip(session_uri, role_name, reason) do
+    Logger.error(
+      "socialware role slot #{inspect(role_name)} SKIPPED on " <>
+        "#{URI.to_string(session_uri)}: #{inspect(reason)} — the agent would boot " <>
+        "without credentials, never join its transport bridge, and hang at :not_ready. " <>
+        "The session is alive without this role."
+    )
+
+    :telemetry.execute(
+      @telemetry_prefix ++ [:skipped],
+      %{count: 1},
+      %{session_uri: session_uri, role_name: role_name, reason: reason}
+    )
+  end
 
   defp materialize_one(session_uri, workspace_uri, granted_by, %{} = agent) do
     recipe_name = lookup_ref(recipe_of(agent))
@@ -160,9 +211,12 @@ defmodule EzagentDomainInstanceMessage.SessionCreator.DefinitionAgents do
              workspace_uri,
              flavor
            ),
+         # Chain C — the adopt above NO-OPS for a non-admin installer (#161 /
+         # DoD 6). Without a credential source this agent can only boot "Not
+         # logged in": skip the slot rather than join a silent zombie.
+         :ok <- CredentialPrecondition.check_source(granted_by, workspace_uri, flavor),
          :ok <-
-           spawn_and_join(
-             session_uri,
+           spawn_agent(
              workspace_uri,
              granted_by,
              planned_uri,
@@ -171,8 +225,26 @@ defmodule EzagentDomainInstanceMessage.SessionCreator.DefinitionAgents do
              role_name,
              flavor
            ),
+         # Safety net for the class the pre-flight cannot see: a source that
+         # resolves but whose copy silently produced nothing (#1311). Verified
+         # BEFORE the join, so a skipped agent never becomes a session member.
+         :ok <- verify_credentials(planned_uri, flavor),
+         :ok <- join_or_cleanup(session_uri, planned_uri, role_name),
          :ok <- grant_recipe_caps(planned_uri, recipe) do
       {:ok, planned_uri}
+    end
+  end
+
+  # `{:skip, _}` from `check_materialized/2` tears the just-spawned worker down
+  # first — it was never joined, so termination is the whole cleanup.
+  defp verify_credentials(%URI{} = agent_uri, flavor) do
+    case CredentialPrecondition.check_materialized(agent_uri, flavor) do
+      :ok ->
+        :ok
+
+      {:skip, _reason} = skip ->
+        _ = terminate_worker(agent_uri)
+        skip
     end
   end
 
@@ -297,8 +369,9 @@ defmodule EzagentDomainInstanceMessage.SessionCreator.DefinitionAgents do
 
   # --- spawn + join ---------------------------------------------------------
 
-  defp spawn_and_join(
-         session_uri,
+  # Spawn ONLY. The join moved out so `verify_credentials/2` can run between the
+  # two — a credential-less agent must never become a session member.
+  defp spawn_agent(
          workspace_uri,
          granted_by,
          planned_uri,
@@ -322,11 +395,8 @@ defmodule EzagentDomainInstanceMessage.SessionCreator.DefinitionAgents do
            source_template_uri: source_template_uri,
            description: @agent_description
          }) do
-      {:ok, _outcome} ->
-        join_or_cleanup(session_uri, planned_uri, role_name)
-
-      {:error, reason} ->
-        {:error, {:agent_spawn_failed, role_name, reason}}
+      {:ok, _outcome} -> :ok
+      {:error, reason} -> {:error, {:agent_spawn_failed, role_name, reason}}
     end
   end
 

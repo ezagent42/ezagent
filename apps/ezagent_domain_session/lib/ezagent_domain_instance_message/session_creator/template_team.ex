@@ -47,7 +47,8 @@ defmodule EzagentDomainInstanceMessage.SessionCreator.TemplateTeam do
   socialware-install step, `repair_orchestrator/1`, and the plugin app-instantiate
   paths. Idempotent — a role already joined is skipped.
   """
-  @spec materialize_definition_agents(URI.t(), URI.t(), URI.t(), map()) :: :ok | {:error, term()}
+  @spec materialize_definition_agents(URI.t(), URI.t(), URI.t(), map()) ::
+          {:ok, DefinitionAgents.summary()} | {:error, term()}
   def materialize_definition_agents(
         %URI{} = session_uri,
         %URI{} = workspace_uri,
@@ -68,7 +69,8 @@ defmodule EzagentDomainInstanceMessage.SessionCreator.TemplateTeam do
     end
   end
 
-  def materialize_definition_agents(_session, _ws, _granted_by, _content), do: :ok
+  def materialize_definition_agents(_session, _ws, _granted_by, _content),
+    do: {:ok, %{installed: [], skipped: []}}
 
   @doc """
   Config + agents in one call. Used by the REPAIR path and by plugin
@@ -84,8 +86,14 @@ defmodule EzagentDomainInstanceMessage.SessionCreator.TemplateTeam do
         template_content
       )
       when is_map(template_content) do
-    with :ok <- materialize_template_config(session_uri, workspace_uri, template_content) do
-      materialize_definition_agents(session_uri, workspace_uri, granted_by, template_content)
+    # `:ok`-only for its existing callers (repair, plugin app-instantiate). Role
+    # slots SKIPPED for missing credentials are already logged + telemetry'd by
+    # `DefinitionAgents`; only `install_session_socialware/1` records them
+    # durably (it is the lane a user's session-create actually goes through).
+    with :ok <- materialize_template_config(session_uri, workspace_uri, template_content),
+         {:ok, _summary} <-
+           materialize_definition_agents(session_uri, workspace_uri, granted_by, template_content) do
+      :ok
     end
   end
 

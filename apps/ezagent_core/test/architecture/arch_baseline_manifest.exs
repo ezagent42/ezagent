@@ -89,7 +89,13 @@
   #   so the step-4.5 orchestrator pre-store can fail-fast ahead of the readiness
   #   gate (a readability seam-split — smaller functions). 29→30.
   # ratchet-down: #154 extracted the orchestrator owner-notifier cluster → Ezagent.Orchestrator.OwnerNotifier (1071→936 LOC, 35→29 defs) 30→29
-  def_count_session_creator: 29,
+  # arch-cap-bump: +4 chain C — `record_unfilled_role_slots/2` +
+  #   `unfilled_agent_role_slots/1` (durable read model the UI renders) +
+  #   `reason_tag/1` (stable atom for the UI to switch on) + the updated
+  #   `run_install_loudly/1` with the partial-success arm. These give the
+  #   post-create socialware-install transaction a structured summary and a
+  #   user-facing durable record, separate from the install imperative. 29→33.
+  def_count_session_creator: 33,
   # arch-cap-bump: #154 genesis collapse — the admin-entity trust root added
   #   `admin_genesis_cap/0` + `admin_genesis_granter/0` (Stage 1) and predicate-A's
   #   `granted_by_entity?/2` clauses + `admin_invariant?/2` clauses + `same_uri?/2`

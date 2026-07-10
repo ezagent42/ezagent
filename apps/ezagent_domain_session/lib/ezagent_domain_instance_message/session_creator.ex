@@ -69,6 +69,7 @@ defmodule EzagentDomainInstanceMessage.SessionCreator do
   alias Ezagent.Entity.{Session, User}
 
   alias EzagentDomainInstanceMessage.SessionCreator.{
+    DefinitionAgents,
     Listing,
     Materializer,
     Rollback,
@@ -174,7 +175,8 @@ defmodule EzagentDomainInstanceMessage.SessionCreator do
     end
   end
 
-  @spec install_session_socialware(URI.t(), URI.t()) :: :ok | {:error, term()}
+  @spec install_session_socialware(URI.t(), URI.t()) ::
+          {:ok, DefinitionAgents.summary()} | {:error, term()}
   def install_session_socialware(%URI{scheme: "session"} = session_uri, %URI{} = workspace_uri) do
     # `read_template_working_copy/1` returns the EMPTY default when the Session
     # Kind is not in the registry, and an empty declaration list is
@@ -213,13 +215,59 @@ defmodule EzagentDomainInstanceMessage.SessionCreator do
       |> Map.get(:member_declarations, [])
       |> TemplateTeam.agent_role_slots()
 
-    EzagentDomainInstanceMessage.SessionCreator.DefinitionAgents.materialize_definition_agents(
-      session_uri,
-      workspace_uri,
-      effective_owner,
-      agents
-    )
+    with {:ok, summary} <-
+           DefinitionAgents.materialize_definition_agents(
+             session_uri,
+             workspace_uri,
+             effective_owner,
+             agents
+           ),
+         :ok <- record_unfilled_role_slots(session_uri, summary.skipped) do
+      {:ok, summary}
+    end
   end
+
+  @doc """
+  The durable, queryable record of role slots this session DECLARES but could not
+  fill — today only "the flavor needs credentials this installer cannot be given"
+  (`Ezagent.Agent.CredentialPrecondition`).
+
+  A server-side `Logger.error` alone is a silent drop at a user-facing surface
+  (Invariant #9): the user asked for an orchestrator and got a session without
+  one. This is the read model the world UI renders (`unfilled_agent_role_slots`
+  mirrors the existing `human_role_slots` shape).
+  """
+  @spec unfilled_agent_role_slots(URI.t()) :: [map()]
+  def unfilled_agent_role_slots(%URI{scheme: "session"} = session_uri) do
+    session_uri
+    |> Session.read_template_working_copy()
+    |> Map.get(:unfilled_agent_role_slots, [])
+  end
+
+  # Written on EVERY install, so a retry that now succeeds CLEARS a stale record.
+  defp record_unfilled_role_slots(%URI{} = session_uri, skipped) when is_list(skipped) do
+    rows =
+      Enum.map(skipped, fn %{role_name: role_name, reason: reason} ->
+        %{role_name: role_name, reason: reason_tag(reason)}
+      end)
+
+    working_copy =
+      session_uri
+      |> Session.read_template_working_copy()
+      |> Map.put(:unfilled_agent_role_slots, rows)
+
+    case Ezagent.ActionSet.Session.system_set_working_copy(session_uri, working_copy) do
+      {:ok, _} -> :ok
+      {:error, reason} -> {:error, {:record_unfilled_role_slots_failed, reason}}
+      other -> {:error, {:record_unfilled_role_slots_failed, other}}
+    end
+  end
+
+  # A stable atom for the UI to switch on; the full reason stays in the log +
+  # telemetry, where operators (not end users) look.
+  defp reason_tag({:no_credential_source, _flavor}), do: :missing_credentials
+  defp reason_tag({:config_home_without_credentials, _flavor}), do: :missing_credentials
+  defp reason_tag(_other), do: :unavailable
 
   @doc """
   Fire-and-forget `install_session_socialware/1` under a supervised Task.
@@ -274,8 +322,31 @@ defmodule EzagentDomainInstanceMessage.SessionCreator do
 
   defp run_install_loudly(%URI{} = session_uri) do
     case install_session_socialware(session_uri) do
-      :ok ->
-        :telemetry.execute(@install_telemetry ++ [:ok], %{count: 1}, %{session_uri: session_uri})
+      {:ok, %{skipped: []} = summary} ->
+        :telemetry.execute(@install_telemetry ++ [:ok], %{count: 1}, %{
+          session_uri: session_uri,
+          installed: summary.installed
+        })
+
+        :ok
+
+      {:ok, %{skipped: skipped} = summary} ->
+        # The batch completed; some declared roles have no agent. Each was already
+        # logged individually by `DefinitionAgents`; this is the transaction-level
+        # summary, and `unfilled_agent_role_slots/1` is the durable record the UI
+        # renders.
+        Logger.error(
+          "session socialware install completed with SKIPPED roles for " <>
+            "#{URI.to_string(session_uri)}: #{inspect(skipped)} — the session is alive " <>
+            "and usable, but those roles have no agent."
+        )
+
+        :telemetry.execute(@install_telemetry ++ [:partial], %{count: 1}, %{
+          session_uri: session_uri,
+          installed: summary.installed,
+          skipped: skipped
+        })
+
         :ok
 
       {:error, reason} ->

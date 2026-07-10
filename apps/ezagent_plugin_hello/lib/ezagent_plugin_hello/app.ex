@@ -34,7 +34,11 @@ defmodule EzagentPluginHello.App do
           {:ok, URI.t(), URI.t()} | {:error, term()}
   def ensure_app(ws, name, opts \\ []) when is_binary(ws) and is_binary(name) do
     with {:ok, %URI{} = session_uri} <- create_app(ws, name, opts),
-         :ok <- SessionCreator.install_session_socialware(session_uri),
+         # `{:ok, summary}` — a role slot skipped for missing credentials (e.g. the
+         # `requires`-pulled cc orchestrator, for a non-admin installer) does NOT
+         # fail the app; hello's own roles are credential-less. `resolve_front_desk/1`
+         # below is the fail-loud check that the roles hello ACTUALLY needs landed.
+         {:ok, _summary} <- SessionCreator.install_session_socialware(session_uri),
          {:ok, front_desk_uri} <- resolve_front_desk(session_uri) do
       {:ok, session_uri, front_desk_uri}
     end

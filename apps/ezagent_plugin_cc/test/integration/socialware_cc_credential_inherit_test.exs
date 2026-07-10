@@ -146,7 +146,7 @@ defmodule Ezagent.PluginCc.Integration.SocialwareCcCredentialInheritTest do
     recipe_name = seed_recipe(n, project_cwd)
     role_name = "cred-inherit-role-#{n}"
 
-    assert :ok =
+    assert {:ok, %{installed: [^role_name], skipped: []}} =
              DefinitionAgents.materialize_definition_agents(
                session_uri,
                @workspace_uri,
@@ -241,7 +241,7 @@ defmodule Ezagent.PluginCc.Integration.SocialwareCcCredentialInheritTest do
       recipe_name = seed_recipe("host-#{n}", project_cwd)
       role_name = "host-inherit-role-#{n}"
 
-      assert :ok =
+      assert {:ok, %{installed: [^role_name], skipped: []}} =
                DefinitionAgents.materialize_definition_agents(
                  session_uri,
                  @workspace_uri,
@@ -296,7 +296,14 @@ defmodule Ezagent.PluginCc.Integration.SocialwareCcCredentialInheritTest do
       recipe_name = seed_recipe("other-#{n}", project_cwd)
       role_name = "no-host-inherit-role-#{n}"
 
-      assert :ok =
+      # Chain C: non-operator installers get no credential source, so the cc role
+      # is SKIPPED rather than materialized as a credential-less zombie (#161/DoD 6).
+      # Before chain C the agent was created (successfully) but with NO credentials.
+      assert {:ok,
+              %{
+                installed: [],
+                skipped: [%{role_name: ^role_name, reason: {:no_credential_source, "cc"}}]
+              }} =
                DefinitionAgents.materialize_definition_agents(
                  session_uri,
                  @workspace_uri,
@@ -305,16 +312,11 @@ defmodule Ezagent.PluginCc.Integration.SocialwareCcCredentialInheritTest do
                )
 
       members = members_of(session_uri)
-      agent_uri = SessionBehavior.role_name_to_uri(members, role_name)
-      assert %URI{} = agent_uri
-      on_exit(fn -> terminate(agent_uri) end)
-      on_exit(fn -> File.rm_rf(CcAgent.agent_config_dir(agent_uri)) end)
+      assert SessionBehavior.role_name_to_uri(members, role_name) == nil
 
       # The HOST login must NOT flow to an agent a co-tenant caused to exist
       # (#161 / DoD 6): no credential file, no auto-created pointer, no grant.
-      refute File.exists?(Path.join(CcAgent.agent_config_dir(agent_uri), ".credentials.json"))
       assert UserDefaultSource.resolve(URI.to_string(other_uri), ws_name, "cc") == nil
-      assert GrantRow.get_for_agent(URI.to_string(agent_uri)) == nil
     end
   end
 

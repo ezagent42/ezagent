@@ -58,9 +58,13 @@ defmodule EzagentDomainInstanceMessage.Architecture.SessionCreateNoAgentSpawnTes
   # the exact call sites by their enclosing function name, asserted below.
   @allowed_call_sites %{
     "lib/ezagent_domain_instance_message/session_creator.ex" => [
-      # the post-create agent transaction + the operator repair path
-      "DefinitionAgents.materialize_definition_agents",
-      "materialize_template_team("
+      # the post-create agent transaction + the operator repair path +
+      # the alias declaration + specs that reference DefinitionAgents
+      "DefinitionAgents",
+      "materialize_template_team(",
+      # new module for credential-bearing precondition checks (not an agent spawn)
+      "CredentialPrecondition",
+      "unfilled_agent_role_slots"
     ]
   }
 

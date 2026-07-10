@@ -161,7 +161,7 @@ defmodule EzagentDomainInstanceMessage.Integration.DefinitionAgentsMaterializeTe
     recipe_name = seed_recipe(n)
     role_name = "greeter-#{n}"
 
-    assert :ok =
+    assert {:ok, _summary} =
              DefinitionAgents.materialize_definition_agents(
                session_uri,
                @workspace_uri,
@@ -192,7 +192,7 @@ defmodule EzagentDomainInstanceMessage.Integration.DefinitionAgentsMaterializeTe
     role_name = "greeter-non-cc-#{n}"
     flavor = register_stub_flavor(n)
 
-    assert :ok =
+    assert {:ok, _summary} =
              DefinitionAgents.materialize_definition_agents(
                session_uri,
                @workspace_uri,
@@ -235,7 +235,7 @@ defmodule EzagentDomainInstanceMessage.Integration.DefinitionAgentsMaterializeTe
     role_name = "behavior-member-#{n}"
     flavor = register_stub_flavor(n)
 
-    assert :ok =
+    assert {:ok, _summary} =
              DefinitionAgents.materialize_definition_agents(
                session_uri,
                @workspace_uri,
@@ -271,7 +271,7 @@ defmodule EzagentDomainInstanceMessage.Integration.DefinitionAgentsMaterializeTe
 
     :ok = ensure_orchestrator_recipe()
 
-    assert :ok =
+    assert {:ok, _summary} =
              DefinitionAgents.materialize_definition_agents(
                session_uri,
                @workspace_uri,
@@ -338,7 +338,7 @@ defmodule EzagentDomainInstanceMessage.Integration.DefinitionAgentsMaterializeTe
     role_name = "reuse-advisor-#{n}"
     reusable = live_agent(n, recipe_name)
 
-    assert :ok =
+    assert {:ok, _summary} =
              DefinitionAgents.materialize_definition_agents(
                session_uri,
                @workspace_uri,
@@ -391,7 +391,7 @@ defmodule EzagentDomainInstanceMessage.Integration.DefinitionAgentsMaterializeTe
     role_name = "greeter-#{n}"
     agents = [%{recipe: recipe_name, role_name: role_name}]
 
-    assert :ok =
+    assert {:ok, _summary} =
              DefinitionAgents.materialize_definition_agents(
                session_uri,
                @workspace_uri,
@@ -404,7 +404,7 @@ defmodule EzagentDomainInstanceMessage.Integration.DefinitionAgentsMaterializeTe
     on_exit(fn -> terminate(planned) end)
 
     # second call is a no-op skip (member already at our deterministic URI)
-    assert :ok =
+    assert {:ok, _summary} =
              DefinitionAgents.materialize_definition_agents(
                session_uri,
                @workspace_uri,
