@@ -14,6 +14,10 @@ defmodule Ezagent.DLQ do
   - `:idempotency_duplicate_marker` — saw a key whose result was lost
   - `:buffer_full` — `:cast` to a `:not_ready` target whose `PendingDelivery`
     buffer is at cap (Decision #67 "overflow falls to DLQ", wired in PR #1259)
+  - `:never_ready` — `:cast` invocations still buffered in `PendingDelivery` when
+    the target's readiness gate is marked `:failed` (transport never joined). The
+    buffer would otherwise be silently dropped by `mark_failed` (doc §8.1 /
+    Invariant #9); `Ezagent.Kind.ReadyTransition.mark_failed/1` dead-letters them.
 
   ## Phase 1 scope
 
@@ -28,7 +32,8 @@ defmodule Ezagent.DLQ do
     :unroutable,
     :no_actor,
     :idempotency_duplicate_marker,
-    :buffer_full
+    :buffer_full,
+    :never_ready
   ]
 
   @doc """

@@ -172,6 +172,102 @@ defmodule EzagentDomainInstanceMessage.Architecture.SessionCreateNoAgentSpawnTes
            """
   end
 
+  # ── R4: extend the gate to the INSTALL lane ────────────────────────────────
+  #
+  # The create gate above proves create spawns no agent. The install lane
+  # (`install_session_socialware/1`, run in a fire-and-forget supervised Task) is
+  # where agents ARE spawned — but it must obey the OTHER half of the #912
+  # contract: **a role member that fails to start never rolls the session back**.
+  # An install failure is LOUD (Logger.error + `…:socialware_install:failed`
+  # telemetry) and leaves the session alive + owner-only — never a rollback, never
+  # a hang. This static gate locks the "never rollback" half.
+  #
+  # NOTE (grant-mechanism seam): the "never BLOCKS on agent readiness / no
+  # `:activate_timeout` from the install lane" half is currently still true only
+  # up to the 20s activate budget, because `grant_recipe_caps` /
+  # `grant_orchestrator_scoped_caps` still dispatch a blocking `:call` to the
+  # not-yet-ready agent. Converting those to a non-blocking buffered grant is the
+  # R1 decision pending Allen's A/B ruling; the runtime "no `:activate_timeout`"
+  # assertion lands WITH that conversion (see the PR design note).
+  test "the install lane never rolls back the session (R4 — loud, not rollback)" do
+    body =
+      app_root()
+      |> Path.join("lib/ezagent_domain_instance_message/session_creator.ex")
+      |> File.read!()
+
+    [_, from_install] =
+      String.split(
+        body,
+        ~s|def install_session_socialware(%URI{scheme: "session"} = session_uri) do|,
+        parts: 2
+      )
+
+    # Everything from the install entry up to the next unrelated public helper is
+    # the install lane (both `install_session_socialware/1,2`,
+    # `do_install_session_socialware/3`, `install_session_socialware_async/1`, and
+    # `run_install_loudly/1`). `rollback_session` first appears far below, on the
+    # CREATE path (`verify_or_recreate` / the finalize failure branch).
+    [install_lane | _] = String.split(from_install, "def demand_spawn_member(", parts: 2)
+
+    refute install_lane =~ "rollback_session",
+           """
+           The post-create install lane calls `rollback_session`.
+
+           #912 contract: a declared role member that fails to start must NOT roll
+           the session back. `install_session_socialware/1` runs AFTER the
+           owner-only session is durable; its failure is LOUD (Logger.error +
+           `[:ezagent, :session, :socialware_install, :failed]` telemetry) and
+           leaves the session alive + usable — never a rollback.
+           """
+  end
+
+  # ── R2 + R3: orchestrator post-materialize ordering ────────────────────────
+  #
+  # `maybe_after_materialize/5` runs three steps for the orchestrator slot. Their
+  # order is load-bearing:
+  #   1. STORE the durable `:orchestrator_uri` binding (with the ACTUAL spawned
+  #      URI) — so a cold restart can rebuild the tool surface (R2);
+  #   2. REGISTER the MCP context — the tool-surface registration must precede the
+  #      grant, not follow it (R3, the pre-fix order was grant-then-register);
+  #   3. GRANT the scope-bounded caps LAST.
+  # The store + register both target already-ready Kinds (the Session / the MCP
+  # registry), so they never block on the not-yet-ready agent.
+  test "orchestrator post-materialize order is store → register → grant (R2/R3)" do
+    body =
+      app_root()
+      |> Path.join("lib/ezagent_domain_instance_message/session_creator/definition_agents.ex")
+      |> File.read!()
+
+    # Scope to the `maybe_after_materialize/5` body (up to the private
+    # `store_orchestrator_uri/2` DEFINITION that follows it).
+    [_, after_head] =
+      String.split(body, "defp maybe_after_materialize(", parts: 2)
+
+    [fn_body | _] = String.split(after_head, "defp store_orchestrator_uri(", parts: 2)
+
+    store_at = index_of(fn_body, "store_orchestrator_uri(session_uri")
+    register_at = index_of(fn_body, "register_orchestrator_mcp_context(")
+    grant_at = index_of(fn_body, "grant_orchestrator_scoped_caps(")
+
+    assert store_at != nil, "store_orchestrator_uri call not found in maybe_after_materialize/5"
+    assert register_at != nil, "register_orchestrator_mcp_context call not found"
+    assert grant_at != nil, "grant_orchestrator_scoped_caps call not found"
+
+    assert store_at < register_at and register_at < grant_at,
+           """
+           maybe_after_materialize/5 must run: STORE :orchestrator_uri (R2) →
+           REGISTER mcp context (R3) → GRANT scoped caps. Got byte offsets
+           store=#{store_at}, register=#{register_at}, grant=#{grant_at}.
+           """
+  end
+
+  defp index_of(haystack, needle) do
+    case :binary.match(haystack, needle) do
+      {start, _len} -> start
+      :nomatch -> nil
+    end
+  end
+
   test "create_session/3 does not reference the agent materializer" do
     body =
       app_root()

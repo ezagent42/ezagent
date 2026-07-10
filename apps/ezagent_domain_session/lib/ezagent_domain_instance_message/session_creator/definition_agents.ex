@@ -49,6 +49,7 @@ defmodule EzagentDomainInstanceMessage.SessionCreator.DefinitionAgents do
   alias Ezagent.Invocation
   alias Ezagent.Orchestrator.Tools.Participants
   alias EzagentDomainInstanceMessage.SessionCreator
+  alias EzagentDomainInstanceMessage.SessionCreator.Materializer
   alias Mix.Tasks.Ezagent.Agent.GrantRecipeCaps
 
   @telemetry_prefix [:ezagent, :socialware, :definition_agents]
@@ -303,12 +304,18 @@ defmodule EzagentDomainInstanceMessage.SessionCreator.DefinitionAgents do
     if orchestrator_recipe_slot?(agent) do
       parent_template_uri = parent_template_uri_for(session_uri)
 
-      with :ok <-
-             SessionOrchestrator.grant_orchestrator_scoped_caps(
-               agent_uri,
-               session_uri,
-               granted_by
-             ),
+      # Ordering (R2 + R3, docs/notes/2026-07-10-session-agent-coupling…):
+      #   1. store the durable `:orchestrator_uri` binding EAGERLY with the
+      #      ACTUAL spawned agent URI (a random-UUID URI since the orchestrator
+      #      stopped living at a deterministic name), BEFORE any grant, so the
+      #      orchestrator's MCP tool surface is recoverable after a BEAM restart
+      #      (`McpServer.rebuild_from_durable` reads exactly this binding). The
+      #      write targets the SESSION Kind (already ready), so it never blocks
+      #      on the not-yet-ready agent.
+      #   2. register the MCP context BEFORE granting (R3 — the readiness/
+      #      tool-surface registration must precede the grant, not follow it).
+      #   3. grant the orchestrator's scope-bounded caps LAST.
+      with :ok <- store_orchestrator_uri(session_uri, agent_uri),
            :ok <-
              SessionOrchestrator.register_orchestrator_mcp_context(
                agent_uri,
@@ -316,11 +323,29 @@ defmodule EzagentDomainInstanceMessage.SessionCreator.DefinitionAgents do
                workspace_uri,
                granted_by,
                parent_template_uri
+             ),
+           :ok <-
+             SessionOrchestrator.grant_orchestrator_scoped_caps(
+               agent_uri,
+               session_uri,
+               granted_by
              ) do
         :ok
       end
     else
       :ok
+    end
+  end
+
+  # R2 — revive the (previously orphaned) durable-binding writer. Writes the
+  # ACTUAL spawned orchestrator URI (`agent_uri`) into the session working copy
+  # so `Ezagent.UriQuery.resolve(:orchestrator, session_uri)` and the cold
+  # `rebuild_from_durable` path both recover the orchestrator tool surface after
+  # a restart. Idempotent on the repair/re-materialize path (same URI re-stored).
+  defp store_orchestrator_uri(%URI{} = session_uri, %URI{} = agent_uri) do
+    case Materializer.store_session_orchestrator_uri(session_uri, agent_uri) do
+      :ok -> :ok
+      {:error, reason} -> {:error, {:store_orchestrator_uri_failed, reason}}
     end
   end
 
