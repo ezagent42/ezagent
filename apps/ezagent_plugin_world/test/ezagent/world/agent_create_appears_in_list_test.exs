@@ -111,8 +111,15 @@ defmodule Ezagent.World.AgentCreateAppearsInListTest do
 
   describe "project_cwd default path is real (not blocked by stale UI-only validation)" do
     test "cc flavor with empty cwd creates through the workspace facade",
-         %{workspace_uri: workspace_uri, admin_ctx: admin_ctx} do
+         %{ws_name: ws_name, workspace_uri: workspace_uri, admin_ctx: admin_ctx} do
       {:ok, _apps} = Application.ensure_all_started(:ezagent_plugin_cc)
+
+      # A workspace-shared cc credential source with a real `.credentials.json`,
+      # so the created agent's config home is LAUNCHABLE. Since chain B / #1096, a
+      # credentialled cc flavor FAILS FAST at launch without a credential; this
+      # test probes the empty-cwd default path, not credential-absence, so it
+      # stands in a "logged-in" state.
+      seed_ws_cc_credential_source(ws_name, workspace_uri)
 
       assert {:ok, %{agent_uri: %URI{} = agent_uri}} =
                Workspace.create_agent(
@@ -128,5 +135,46 @@ defmodule Ezagent.World.AgentCreateAppearsInListTest do
 
       assert agent_uri.path =~ "/agent/no-cwd-probe-"
     end
+  end
+
+  # Register a workspace-shared cc credential source carrying a real
+  # `.credentials.json` so a bare admin cc create materializes a LAUNCHABLE
+  # per-agent home (chain B / #1096 fail-fast otherwise).
+  defp seed_ws_cc_credential_source(ws_name, workspace_uri) do
+    src_dir =
+      Path.join(System.tmp_dir!(), "cc-ws-cred-src-#{System.unique_integer([:positive])}")
+
+    File.mkdir_p!(src_dir)
+
+    File.write!(
+      Path.join(src_dir, ".credentials.json"),
+      ~s({"claudeAiOauth":{"accessToken":"T"}})
+    )
+
+    on_exit(fn -> File.rm_rf(src_dir) end)
+
+    source_uri =
+      URI.new!(
+        "entity://#{ws_name}/agent/cc_ws-cred-source-#{System.unique_integer([:positive])}"
+      )
+
+    {:ok, _} =
+      Ezagent.SnapshotStore.write(
+        URI.to_string(source_uri),
+        %{sandbox: %{state: %{config_dir_path: src_dir, flavor: "cc"}}},
+        kind_type: :agent
+      )
+
+    {:ok, _} =
+      %{
+        workspace_uri: URI.to_string(workspace_uri),
+        flavor: "cc",
+        source_uri: URI.to_string(source_uri),
+        set_by: URI.to_string(User.admin_uri())
+      }
+      |> Ezagent.Credential.WorkspaceSharedSource.changeset()
+      |> EzagentCore.Repo.insert()
+
+    source_uri
   end
 end
