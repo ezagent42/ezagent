@@ -122,6 +122,7 @@ defmodule Mix.Tasks.Ezagent.User.Create do
          :ok <- check_allcaps_flag(caps_str, allow_allcaps),
          {:ok, caps} <- Ezagent.Capability.Parser.parse(caps_str, Ezagent.Entity.User.admin_uri()),
          {:ok, decoded} <- Ezagent.Users.create(user_uri, password, caps),
+         :ok <- add_workspace_membership(user_uri),
          :ok <- maybe_set_email(user_uri, email, display_name_opt) do
       Mix.shell().info("✓ created #{user_uri_str}")
       Mix.shell().info("  caps: #{length(caps)}")
@@ -139,6 +140,59 @@ defmodule Mix.Tasks.Ezagent.User.Create do
     else
       {:error, reason} -> Mix.raise("create failed: #{inspect(reason)}")
     end
+  end
+
+  # 2026-07-10 golive gap — `Ezagent.Users.create/3` assigns the new
+  # user's `users.workspace_uri` (derived from the entity URI) but does
+  # NOT add the user to that workspace's `member_uris`. The "my
+  # workspaces" view filters by MEMBERSHIP (a non-admin caller's
+  # wildcard `workspace_uri: :any` caps contribute NOTHING per SPEC
+  # §3.3.b), so an operator-created user was assigned a workspace they
+  # could not see. This hit all 6 golive users (live-remediated via
+  # `Ezagent.Workspace.add_member`). The registration/invite paths
+  # already call `add_member`; this closes the operator `user.create`
+  # gap so an assigned workspace ALWAYS implies membership.
+  #
+  # `Ezagent.Workspace` lives in `ezagent_domain_workspace`, which this
+  # app does NOT compile-depend on (identity → workspace would be a
+  # circular dep). So dispatch lazily via `apply/3` behind a
+  # `Code.ensure_loaded?` guard — the same pattern
+  # `Ezagent.Registration` uses. The workspace app IS started here
+  # (`run/1` calls `ensure_all_started(:ezagent_domain_session)`, which
+  # pulls in `:ezagent_domain_workspace`), so a not-loaded state means a
+  # broken environment and is raised loudly, NOT silently skipped —
+  # mirroring `Registration.join_under_issuer/3` (do not swallow a
+  # membership failure: a user assigned to a workspace they can't join
+  # is the exact bug we're fixing).
+  #
+  # Idempotency: `add_member/2` dedups via `Enum.uniq` on the member
+  # list, so re-running `user.create` (or re-adding an existing member)
+  # does not corrupt `member_uris` — proven by the regression test.
+  defp add_workspace_membership(%URI{} = user_uri) do
+    workspace_name = Ezagent.URI.workspace_name!(user_uri)
+
+    cond do
+      not workspace_loaded?() ->
+        {:error, {:workspace_app_unavailable, workspace_name}}
+
+      true ->
+        case apply(Ezagent.Workspace, :add_member, [workspace_name, user_uri]) do
+          :ok ->
+            Mix.shell().info("  workspace member: added to #{workspace_name}")
+            :ok
+
+          {:error, reason} ->
+            {:error, {:add_workspace_member_failed, workspace_name, reason}}
+
+          other ->
+            {:error, {:add_workspace_member_failed, workspace_name, other}}
+        end
+    end
+  end
+
+  defp workspace_loaded? do
+    Code.ensure_loaded?(Ezagent.Workspace) and
+      function_exported?(Ezagent.Workspace, :add_member, 2)
   end
 
   # 2026-05-26 — Allen surfaced the gap: `set_email` exists as a

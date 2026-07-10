@@ -731,177 +731,24 @@ defmodule Ezagent.Workspace do
   defp user_uri?(%URI{scheme: "entity"} = uri), do: Ezagent.URI.type?(uri, :user)
   defp user_uri?(_), do: false
 
-  # --- create_agent (SPEC 2026-05-25-agent-create-cli-gui-parity) -----
+  # --- provisioning (create_agent / create_session / create_user) -----
+  #
+  # Extracted verbatim into `Ezagent.Workspace.Provisioning` (2026-07-10)
+  # to keep this facade under the `oversized_modules_gt_1000` arch ratchet.
+  # The public API is unchanged — callers still use
+  # `Ezagent.Workspace.create_{agent,session,user}/3` via these delegates
+  # (same pattern as `Workspace.Listing` / `Workspace.MagicLinkRule`). The
+  # golive-gap post-dispatch `add_member` for `create_user/3` lives in the
+  # submodule (still at the facade layer, NOT the action body — re-entrancy).
 
-  @doc """
-  Unified agent-create entry — CLI and LV both call this. Dispatches
-  `Behavior.Workspace.:create_agent` against the target workspace's
-  Kind, which runs the validate + register-template + Loader.invoke_template
-  chain inside the Workspace GenServer.
+  @doc "See `Ezagent.Workspace.Provisioning.create_agent/3`."
+  defdelegate create_agent(workspace_uri, args, ctx), to: Ezagent.Workspace.Provisioning
 
-  ## Args
+  @doc "See `Ezagent.Workspace.Provisioning.create_session/3`."
+  defdelegate create_session(workspace_uri, args, ctx), to: Ezagent.Workspace.Provisioning
 
-  - `workspace_uri` — `%URI{scheme: "workspace", host: "<name>"}` of
-    the workspace the new agent belongs to.
-  - `args` — map with keys:
-      - `:flavor` — `"cc" | "echo" | "curl" | <future>`
-      - `:name` — entity-name suffix (composed as `<flavor>_<name>`)
-      - `:cwd` — working directory (required for cc + echo-with-PTY,
-        ignored otherwise)
-      - `:with_pty` — boolean (echo opt-in for `/bin/bash -i` sidecar)
-  - `ctx` — caller context: `%{caller: caller_uri, caps: caller_caps}`.
-    The CapBAC check is enforced at dispatch; caller MUST hold a
-    `Behavior.Workspace` cap on this workspace (or admin).
-
-  ## Return
-
-  `{:ok, %{agent_uri: %URI{}, template_name: String.t() | nil}}` on
-  success — `template_name` is `nil` for direct-spawn flavors (curl
-  and future no-template flavors).
-
-  `{:error, reason}` for shape / validation / cap-denial / spawn
-  failures (see `coerce_create_args/1` + `validate_*` in the action body).
-  """
-  @spec create_agent(URI.t(), map(), map()) ::
-          {:ok, %{agent_uri: URI.t(), template_name: String.t() | nil}}
-          | {:error, term()}
-  def create_agent(%URI{scheme: "workspace"} = workspace_uri, args, ctx)
-      when is_map(args) and is_map(ctx) do
-    target =
-      Ezagent.URI.with_action(workspace_uri, :workspace, :create_agent)
-
-    caller = Map.fetch!(ctx, :caller)
-    caps = Map.fetch!(ctx, :caps)
-
-    dispatch_ctx =
-      %{mode: :call, caller: caller, caps: caps, reply: {:caller_inbox, self()}}
-      |> maybe_put_deadline_ms(ctx)
-
-    Router.dispatch(%Cmd{
-      target: target,
-      action: :create_agent,
-      args: args,
-      ctx: dispatch_ctx
-    })
-  end
-
-  defp maybe_put_deadline_ms(dispatch_ctx, %{deadline_ms: deadline_ms})
-       when is_integer(deadline_ms) and deadline_ms > 0 do
-    Map.put(dispatch_ctx, :deadline_ms, deadline_ms)
-  end
-
-  defp maybe_put_deadline_ms(dispatch_ctx, _ctx), do: dispatch_ctx
-
-  @doc """
-  Dispatch the `:create_session` action on Workspace Kind — the
-  unified CLI/LV session-creation entry from SPEC
-  `docs/superpowers/specs/2026-05-26-session-create-orchestrator-unified.md`
-  Gap C.
-
-  Wraps `EzagentDomainInstanceMessage.SessionCreator.create_session/3` via the
-  `Behavior.Workspace.:create_session` action so the CLI
-  (`mix ezagent workspace create_session ...`) and the LV "New session"
-  form both reach the same code path.
-
-  Goes through `Ezagent.Invocation.dispatch/1` so step 5.5 CapBAC,
-  audit telemetry, and the action body's workspace check all fire.
-
-  `args` is `%{short_name: String.t(), template_name: String.t()}`.
-  `ctx` carries `:caller` + `:caps`.
-
-  Returns `{:ok, %{session_uri: URI.t()}}` on success; `{:error, reason}`
-  on validation / cap denial / facade failure.
-  """
-  @spec create_session(URI.t(), map(), map()) ::
-          {:ok, %{session_uri: URI.t()}}
-          | {:error, term()}
-  def create_session(%URI{scheme: "workspace"} = workspace_uri, args, ctx)
-      when is_map(args) and is_map(ctx) do
-    target =
-      Ezagent.URI.with_action(workspace_uri, :workspace, :create_session)
-
-    caller = Map.fetch!(ctx, :caller)
-    caps = Map.fetch!(ctx, :caps)
-
-    with :ok <- ensure_workspace_live(workspace_uri) do
-      Router.dispatch(%Cmd{
-        target: target,
-        action: :create_session,
-        args: args,
-        ctx: %{mode: :call, caller: caller, caps: caps, reply: {:caller_inbox, self()}}
-      })
-    end
-  end
-
-  defp ensure_workspace_live(%URI{scheme: "workspace"} = workspace_uri) do
-    name = Ezagent.URI.name!(workspace_uri)
-
-    case KindRegistry.lookup(workspace_uri) do
-      {:ok, _pid} ->
-        :ok
-
-      :error ->
-        case Store.get_by_name(name) do
-          nil ->
-            {:error, :workspace_not_found}
-
-          %{members: members, session_templates: templates, routing_rules: rules} ->
-            case spawn_workspace(name, %{
-                   members: members,
-                   session_templates: templates,
-                   routing_rules: rules
-                 }) do
-              {:ok, _pid} -> :ok
-              {:error, {:already_started, _pid}} -> :ok
-              {:error, reason} -> {:error, {:workspace_spawn_failed, reason}}
-            end
-        end
-    end
-  end
-
-  @doc """
-  Dispatch the `:create_user` action on Workspace Kind — the HIGH-2
-  completion entry that replaces the legacy `mix ezagent.user.create`
-  task's direct call into `Ezagent.Users.create/3`.
-
-  Goes through `Ezagent.Invocation.dispatch/1` so step 5.5 CapBAC,
-  audit telemetry, and the action body's structural cross-workspace
-  check on the new user URI all fire.
-
-  `args` is `%{user_uri: String.t(), password: String.t() | nil,
-  caps: String.t() | nil}`. `ctx` carries `:caller` + `:caps`.
-
-  Returns `{:ok, %{user_uri: String.t(), caps_granted: integer(),
-  password_set: boolean(), spawned: String.t()}}` on success;
-  `{:error, reason}` on validation / cap denial / cross-workspace
-  refusal / DB insert failure.
-  """
-  @spec create_user(URI.t(), map(), map()) ::
-          {:ok,
-           %{
-             user_uri: String.t(),
-             caps_granted: non_neg_integer(),
-             password_set: boolean(),
-             spawned: String.t()
-           }}
-          | {:error, term()}
-  def create_user(%URI{scheme: "workspace"} = workspace_uri, args, ctx)
-      when is_map(args) and is_map(ctx) do
-    # Codex PR #356 r1 CRIT fix: `:create_user` lives on the new
-    # `Ezagent.ActionSet.WorkspaceUserAdmin` (slice `:workspace_user_admin`),
-    # NOT on `Behavior.Workspace` — so the cap subject is distinct.
-    target = Ezagent.URI.with_action(workspace_uri, :workspace_user_admin, :create_user)
-
-    caller = Map.fetch!(ctx, :caller)
-    caps = Map.fetch!(ctx, :caps)
-
-    Router.dispatch(%Cmd{
-      target: target,
-      action: :create_user,
-      args: args,
-      ctx: %{mode: :call, caller: caller, caps: caps, reply: {:caller_inbox, self()}}
-    })
-  end
+  @doc "See `Ezagent.Workspace.Provisioning.create_user/3`."
+  defdelegate create_user(workspace_uri, args, ctx), to: Ezagent.Workspace.Provisioning
 
   @doc """
   Loop `identity.grant_cap` dispatches against `agent_uri`, one per cap.
