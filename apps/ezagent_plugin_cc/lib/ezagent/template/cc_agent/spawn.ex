@@ -448,7 +448,7 @@ defmodule Ezagent.PluginCc.Template.CcAgent.Spawn do
     # when the source is not logged in the home is non-launchable and this gate
     # is the honest signal. NO ad-hoc host-login copy here — that would bypass the
     # #161 HostLoginAdopt gate (co-tenant credential isolation).
-    with :ok <- assert_config_home_launchable(agent_uri, config_home) do
+    with :ok <- assert_config_home_launchable(agent_uri, config_home, tmpl) do
       require_transport_join(agent_uri)
 
       # §5.B follow-up (b) — DURABLE first-run-dialog suppression. claude shows its
@@ -479,34 +479,43 @@ defmodule Ezagent.PluginCc.Template.CcAgent.Spawn do
   end
 
   # `nil` config home = the agent has no per-agent home (claude falls back to
-  # `~/.claude`); nothing to gate. Otherwise the credentialled cc home MUST be
-  # launchable — marker present AND `.credentials.json` present — before launch.
-  # Keyed on `Ezagent.PluginCc.Template.CcAgent` (the CredentialAdapter identity
-  # the cascade keys on — NOT `__MODULE__`, which is this Spawn module).
-  defp assert_config_home_launchable(_agent_uri, nil), do: :ok
+  # `~/.claude`); nothing to gate. A DeepSeek-provider cc agent (#1324)
+  # authenticates via `DEEPSEEK_API_KEY` (env), NOT a `.credentials.json` OAuth
+  # login — its api-key presence is the fail-fast gate in `Provider.provider_env/1`
+  # at `build_pty_params`, so it must NOT be required to carry a credential file.
+  # Otherwise the credentialled cc home MUST carry its credential
+  # (`config_dir_launchable?`) before launch. Keyed on
+  # `Ezagent.PluginCc.Template.CcAgent` (the CredentialAdapter identity the cascade
+  # keys on — NOT `__MODULE__`, which is this Spawn module).
+  defp assert_config_home_launchable(_agent_uri, nil, _tmpl), do: :ok
 
-  defp assert_config_home_launchable(%URI{} = agent_uri, config_home)
+  defp assert_config_home_launchable(%URI{} = agent_uri, config_home, tmpl)
        when is_binary(config_home) do
-    if Ezagent.Credential.HomeRuntime.config_dir_launchable?(
-         config_home,
-         Ezagent.PluginCc.Template.CcAgent
-       ) do
-      :ok
-    else
-      Logger.error(
-        "cc.agent: refusing to launch #{URI.to_string(agent_uri)} — config home " <>
-          "#{config_home} is marker-complete but has NO credential (not launchable). " <>
-          "The agent's #17 credential source is not logged in; fix the source " <>
-          "(host login / user credential) and respawn. Failing fast instead of a " <>
-          "doomed 'Not logged in' launch (chain B / #1096)."
-      )
+    cond do
+      Ezagent.PluginCc.Provider.deepseek?(tmpl) ->
+        :ok
 
-      :telemetry.execute([:ezagent, :cc, :credential_not_materialized], %{count: 1}, %{
-        agent_uri: agent_uri,
-        config_home: config_home
-      })
+      Ezagent.Credential.HomeRuntime.config_dir_launchable?(
+        config_home,
+        Ezagent.PluginCc.Template.CcAgent
+      ) ->
+        :ok
 
-      {:error, {:credential_not_materialized, agent_uri}}
+      true ->
+        Logger.error(
+          "cc.agent: refusing to launch #{URI.to_string(agent_uri)} — config home " <>
+            "#{config_home} is marker-complete but has NO credential (not launchable). " <>
+            "The agent's #17 credential source is not logged in; fix the source " <>
+            "(host login / user credential) and respawn. Failing fast instead of a " <>
+            "doomed 'Not logged in' launch (chain B / #1096)."
+        )
+
+        :telemetry.execute([:ezagent, :cc, :credential_not_materialized], %{count: 1}, %{
+          agent_uri: agent_uri,
+          config_home: config_home
+        })
+
+        {:error, {:credential_not_materialized, agent_uri}}
     end
   end
 

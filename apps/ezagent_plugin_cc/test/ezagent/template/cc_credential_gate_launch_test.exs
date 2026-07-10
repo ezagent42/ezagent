@@ -65,6 +65,32 @@ defmodule Ezagent.PluginCc.Template.CcCredentialGateLaunchTest do
            "no PtyServer must be alive — the launch was declined before Pty.start"
   end
 
+  test "a DeepSeek-provider cc agent is NOT declined for lacking a credential (#1324)", ctx do
+    # DeepSeek cc agents authenticate via DEEPSEEK_API_KEY (env), not a
+    # `.credentials.json` OAuth login, so the credential gate must NOT fire —
+    # even against a credential-less home.
+    System.put_env("DEEPSEEK_API_KEY", "sk-test-deepseek")
+    on_exit(fn -> System.delete_env("DEEPSEEK_API_KEY") end)
+
+    ref_dir = Path.join(System.tmp_dir!(), "cc-ref-ds-#{uniq()}")
+    File.mkdir_p!(ref_dir)
+    File.write!(Path.join(ref_dir, "settings.json"), "SETTINGS")
+    on_exit(fn -> File.rm_rf(ref_dir) end)
+
+    tmpl =
+      ctx.agent_uri
+      |> base_tmpl(ctx.target, ref_dir, ctx.cwd)
+      |> Map.put("provider", "deepseek")
+
+    result = CcAgent.instantiate("cc.agent", tmpl, URI.new!("workspace://team-a"))
+
+    refute match?({:error, {:credential_not_materialized, _}}, result),
+           "a DeepSeek-provider cc agent must NOT be gated on a `.credentials.json`; got: " <>
+             inspect(result)
+
+    _ = Ezagent.Domain.Pty.stop(ctx.agent_uri)
+  end
+
   test "fresh cc create WITH a credential launches (control — only the credential differs)",
        ctx do
     # Same setup, but the reference home carries `.credentials.json` → launchable.
