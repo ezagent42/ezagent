@@ -20,8 +20,8 @@
 | 00 | 环境：ecto.reset + world_e2e_seed + `mix phx.server`(PID 精确管理) + `_health` 200 | `00-env-and-health.txt` | ✅ |
 | 01 | world 登录（admin@ezagent.chat / \$ADMIN_PW，见 docs/guide/world-e2e-seed.md） | `01a-login-page.png` `01b-logged-in-sessions.png` | ✅ |
 | 02 | **发布**：deploy-seed 拷贝（`socialware deploy-seed: kanban → $EZAGENT_HOME/default/socialware/kanban`）+ server 节点内 `ManifestSeed.scan_dir!` → `kanban (deploy) → published`；DB `socialware_config_pointers` 落 `socialware:kanban` | `02-publish-deploy-lane.txt` | ✅ |
-| 03 | **安装**：新建会话「应用」下拉出现 *Kanban 看板团队*（manifest 描述原文可见）→ 向导展示两个 role 槽（kanban-assistant / dev-together × cc-headless，Fresh）→ 创建 `session://system/socialware-install-kanban/kanban-rework-e2e`：3 成员（两 agent + Admin）、已装 Socialware=1 | `03a-install-wizard-kanban-selected.png` `03b-session-created-list.png` `03c-session-open-members.png` `03d-members-panel.png` `03e-routing-relay-rule.png` | ✅（UI 有已知 5s create_session 超时红条，后台实际创建成功，见 Blockers 1） |
-| 04 | **列表页（注册表 index route）**：`/plugins/kanban` 渲染「看板 · 配置」（Miro 凭证配置面）——即 `PluginPageRegistry` 的 `{"/plugins/kanban", :index}` + `KanbanData.state_for` + React 注册表 map 全链 | `04a-plugins-kanban-list.png` | ✅ |
+| 03 | **安装**：新建会话「应用」下拉出现 *Kanban 看板团队*（manifest 描述原文可见）→ 向导展示两个 role 槽（kanban-assistant / dev-together × cc-headless，Fresh）→ 创建 `session://system/socialware-install-kanban/kanban-rework-e2e`：3 成员（两 agent + Admin）、已装 Socialware=1 | `03a-install-wizard-kanban-selected.png` `03b-session-created-list.png` `03c-session-open-members.png` `03d-members-panel.png` `03e-routing-relay-rule.png` | ✅（UI 有已知 5s create_session 超时红条，后台实际创建成功，见 Blockers 1；**2026-07-10 #1294 合入后重验：已修复** —— 同一向导重装 kanban 无红条，create_session ~1.14s 同步建成，成员/规则即时齐全，见 `03x-revalidated-after-1294-*.png` + `03x-revalidated-after-1294-notes.txt`） |
+| 04 | **列表页（注册表 index route）**：`/plugins/kanban` 渲染「看板 · 配置」（Miro 凭证配置面）——即 `PluginPageRegistry` 的 `{"/plugins/kanban", :index}` + `KanbanData.state_for` + React 注册表 map 全链 | `04a-plugins-kanban-list.png` | ✅（2026-07-10 rebase 到 main b11c81de3(#1294) 后冒烟：列表页渲染正常，`04x-revalidated-after-1294-plugins-list.png`） |
 | 05 | **建板**：kanban-as-role —— `Workspace.create_agent`（flavor native × role kanban-manager，RF-5a）建 `entity://system/agent/e2e-board`，`RecipeResolver.list_by_recipe("kanban-manager")` 枚举到它 | `05a-new-agent-board-form.png` `05b-board-agent-created.png` | ✅（经 dispatch；UI New Agent 的 role 字段有既有缺口，见 Blockers 2） |
 | 06 | **详情页 + 板上动作（注册表 detail route + action 白名单）**：`/plugins/kanban/entity%3A%2F%2F.../e2e-board` 渲染画布；UI 依次 `kanban.add_node`（建根+加子）→ `kanban.claim_node` → `kanban.set_stage`（定位→北极星），全部 `data-last-dispatch=ok`；`kanban.get_tree` dispatch 回读 `:kanban` slice 持久化数据 | `06a-kanban-detail-empty.png` `06b-root-node-added.png` `06c-child-node-added.png` `06d-child-claimed.png` `06e-stage-advanced.png` `06f-get-tree-persistence.txt` | ✅ |
 | 07 | **relay-back 路由**：manifest 的 `and(text_contains "__done__", from_role dev-together) → kanban-assistant` 规则装入路由表（DB routing_rules id=2，与 YAML 逐字一致）；dev-together 身份发 `__done__` 消息 → `routing_traces` 命中 rule 2 送达 kanban-assistant（其 sidecar 随即回消息 = 送达闭环）；两条负路径（dev-together 无标记 / **admin 发含 `__done__` 字面量的消息**）均不触发 | `07a-mention-dev-together-typed.png` `07b-message-sent.png` `07c-dev-together-replied.png` `07d-relay-transcript.png` `07e-relay-routing-audit.txt` | ✅（路由层实证；真脑 401，见下） |
@@ -35,10 +35,19 @@
 ## Blockers / 既有缺口（均非本分支回归，不在本 PR 修）
 
 1. **create_session 5s dispatch 超时（已知，docs/guide/world-e2e-seed.md §3）**：cc-headless 材料化慢（Python SDK sidecar 首次要下依赖），UI 报 `{:create_session_exit, {:timeout, ...}}` 红条，但后台创建成功（成员/规则/快照齐全）。刷新即见会话。
+   **2026-07-10 追记（#1294 合入后重验）：已修复。** main b11c81de3 含 #1294（create_session 事务解耦 orchestrator eager-spawn + cc PTY 等 config_dir 物化后再起），本分支 rebase 后全新库重走同一向导（kanban，2×cc-headless Fresh）：无红条、create_session invocation `duration_us=1137096`（≈1.14s，DB `invocations` 表实证），UI 秒切入新会话，成员/relay 规则/已装 socialware 即时齐全。证据 `03x-revalidated-after-1294-{wizard,created-no-redbar,members}.png` + `03x-revalidated-after-1294-notes.txt`。
 2. **world「New agent」表单的 native role 字段静默丢失**：表单把 role 放进 `config_fields`（string key `"role"`），`agent_actions.ex:75` `Map.merge(config_fields)` 后 `agent_create.ex:84` 只读 atom `:role` → role 掉地，建出的 agent 无 recipe 标记（`{:unknown_action, :add_node}`）。本分支未触碰这两个文件（`git log origin/main..HEAD` 为空），为 main 既有缺口。本次改用与 K3 验收测试同路径的 `Workspace.create_agent`（atom `:role`）dispatch 建板。候选 issue。
 3. **会话内「看板」子视图切换不生效**：`session.view.switch` dispatch ok、`world:state` 推送 `active_view`，但 Conversation 岛主区不切（`Conversation.tsx` 只有 chat 渲染分支，无 mode 渲染腿）。`Conversation.tsx`/`conversation_actions.ex` 本分支未触碰，非注册表化回归。板操作面走 `/plugins/kanban`（本 e2e 覆盖），子视图渲染缺腿候选 issue。
 4. **整目录 `scan_all!` 在 autoservice 处 fail-loud**：本库 `recipe:autoservice-agent` 不存在（`{:unknown_agent_recipe, "autoservice-agent"}`），按字母序先于 kanban 中断扫描。与 kanban 无关；kanban 用只含它的目录（symlink 指向部署目录真实包）单独扫，`(deploy) → published` 证据不受影响。
 5. **dev 关 boot scan**（`config/config.exs:33` prod-only，设计如此）：发布用 erpc 在运行中的 server 节点显式驱动同一晚扫描车道（全插件 boot 后扫部署目录，语义与 prod boot 扫描一致）。
+
+## 2026-07-10 重验追记（rebase 含 #1294 后）
+
+只重验 #1294 影响面（不是全量重做；cc OAuth 401 是凭证问题 #1288，与 #1294 无关，不在范围）：
+
+- **步骤 03（安装）：#1294 修复生效**。原"5s 超时红条 + 后台补建"→ 现 ~1.14s 同步建成、无红条（见上表 03 追记与 notes txt）。
+- **步骤 04（列表页）冒烟**：rebase 未破坏注册表 index route，渲染正常。
+- **`world_conversation_test.exs` pre-existing 失败（原 :1374 assert_patch）**：#1294 改了该文件 35 行（PR-6 测试改为 `wait_for_role_member` 轮询异步物化），**仍未修好**——41 tests, 1 failure，同一个 PR-6 测试（:1374），失败形态变为轮询超时：`declared role "py-helper-*" was never materialized as a member ... by the post-create socialware-install transaction`。只记录结论，本分支不修。
 
 ## 复现要点
 
