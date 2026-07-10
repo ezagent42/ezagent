@@ -302,7 +302,9 @@ defmodule Mix.Tasks.Ezagent.Arch.Scan do
     # AgentPassiveAttributes — the `passive` launch-attribute table; its own
     # moduledoc declares it "exactly parallel to AgentFlavorAttributes", and there
     # is NO dotted `Agent.Passive*` sibling cluster (unlike `Agent.Recipe*`).
-    # Closest call — sanctioned for now, flagged for review in the PR survey.
+    # Reviewed & sanctioned 2026-07-09 (jjkysy): deliberate mirror of the
+    # sanctioned AgentFlavor* glued cluster — renaming it alone would break the
+    # flavor/passive symmetry; renaming both reopens an already-sanctioned call.
     "Ezagent.AgentPassiveAttributes",
     # AgentBridge — the ezagent_domain_agent_bridge app's OWN root namespace
     # (Ezagent.AgentBridge.*), a domain concept; that app has no Ezagent.Agent
@@ -330,14 +332,21 @@ defmodule Mix.Tasks.Ezagent.Arch.Scan do
     # children (Ezagent.PluginPackage.*).
     "Ezagent.PluginPackage",
     # RuntimeIdentity — "the identity of the runtime"; ambiguous vs Runtime.Identity
-    # but no dotted sibling cluster. Sanctioned-pending-review (PR survey).
+    # but no dotted sibling cluster. Reviewed & sanctioned 2026-07-09 (jjkysy):
+    # the Ezagent.Runtime.* siblings are the OS-subprocess pipeline
+    # (line_buffer/os_process/orphan_reaper/pid_file) — an unrelated concept;
+    # `Runtime.Identity` would wrongly imply membership in that cluster.
     "Ezagent.RuntimeIdentity",
     # SystemPrincipal — a domain concept (a principal that is a system actor);
     # namespace root with its own child (Ezagent.SystemPrincipal.Catalog),
     # distinct from the Ezagent.System.* cluster.
     "Ezagent.SystemPrincipal",
     # EntityPresenter — "presenter for entities"; ambiguous vs Entity.Presenter
-    # but no dotted sibling cluster. Sanctioned-pending-review (PR survey).
+    # but no dotted sibling cluster. Reviewed & sanctioned 2026-07-09 (jjkysy):
+    # X-of-Y role-suffix convention (same family as KindRegistry/MessageStore/
+    # KindSupervisor above); widely referenced across render layers — rename
+    # yields the least value of the three surveyed. Closest call: revisit only
+    # if an Entity.Presenter.* child cluster ever emerges.
     "Ezagent.EntityPresenter"
   ]
 

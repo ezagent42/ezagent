@@ -495,6 +495,18 @@ defmodule Ezagent.PluginCc.Template.CcAgent.Spawn do
         {:ok, pid}
 
       {:error, {:already_started, pid}} ->
+        # Idempotent adopt (start-path race). Stays idempotent, but is no longer
+        # SILENT: this clause is what masked chain B's premature PTY (#1096).
+        Logger.warning(
+          "cc.agent: PtyServer already running for #{URI.to_string(agent_uri)} " <>
+            "(pid=#{inspect(pid)}) — adopting. On a fresh create this means " <>
+            "something launched the PTY early."
+        )
+
+        :telemetry.execute([:ezagent, :cc, :pty, :already_started], %{count: 1}, %{
+          agent_uri: agent_uri
+        })
+
         {:ok, pid}
 
       {:error, reason} ->

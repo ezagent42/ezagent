@@ -128,6 +128,39 @@ defmodule Ezagent.Credential.HomeRuntime do
     end
   end
 
+  @doc """
+  True iff a subprocess may be launched against the per-agent config home `dir`.
+
+  Launchable means EITHER:
+
+    * `stage_and_swap/7` committed the home and wrote `#{@config_complete_marker}`
+      (a freshly materialized home), OR
+    * the home already carries one of `template_module.credential_relpaths/0`
+      (a home materialized before the marker existed, or provisioned by an
+      operator's interactive login) — the same signal `materialize_single_reference/5`
+      uses to decide a target is a real user home worth overlaying.
+
+  A directory that merely EXISTS is neither: `OnboardingBootstrap` `mkdir_p`s the
+  config home before the copy, so an un-marked, credential-less dir can hold a
+  `.claude.json` and nothing else. Launching against THAT produces an agent that
+  can never authenticate, and the subsequent `atomic_replace` renames the
+  directory out from under the running process (chain B / #1096). Callers MUST
+  gate the subprocess launch on this.
+  """
+  @spec config_dir_launchable?(String.t() | nil, module()) :: boolean()
+  def config_dir_launchable?(nil, _template_module), do: false
+
+  def config_dir_launchable?(dir, template_module)
+      when is_binary(dir) and is_atom(template_module) do
+    File.dir?(dir) and
+      (File.exists?(Path.join(dir, @config_complete_marker)) or
+         has_user_credentials?(dir, template_module))
+  end
+
+  @doc "The sentinel file `stage_and_swap/7` writes last, marking a config home complete."
+  @spec config_complete_marker() :: String.t()
+  def config_complete_marker, do: @config_complete_marker
+
   @doc false
   @spec revalidate_grant_before_launch(grant_ctx()) :: :ok | {:error, term()}
   def revalidate_grant_before_launch(nil), do: :ok

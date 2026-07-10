@@ -225,6 +225,14 @@ defmodule Ezagent.Socialware.ManifestYamlTest do
                template_name: template_name
              )
 
+    # rev6 / #912 — create is owner-only; agent role slots are materialized by
+    # the SEPARATE post-create socialware-install transaction (which
+    # `Workspace.create_session` fires asynchronously in production).
+    refute role_member_uri(session_uri, "autoservice")
+
+    assert :ok =
+             EzagentDomainInstanceMessage.SessionCreator.install_session_socialware(session_uri)
+
     assert %URI{} = role_member_uri(session_uri, "autoservice")
     assert :ok = dispatch_send(session_uri, "I need tier-1 help")
   end

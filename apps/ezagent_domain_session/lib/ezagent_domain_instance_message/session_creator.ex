@@ -37,6 +37,31 @@ defmodule EzagentDomainInstanceMessage.SessionCreator do
   Declared role members are provisioned on first route. Session creation
   never waits for a transport bridge and never rolls the session back because
   a role member failed to start.
+
+  ## 2026-07-09 — contract restored (Allen)
+
+  Between #1140 (07-03) and #1223 (07-07) this contract silently regressed:
+  `materialize_template_team/4` grew an agent-spawn step (`DefinitionAgents`)
+  and the `default` template's orchestrator moved from a lazily-provisioned
+  legacy member declaration onto that eager create-time path. The guard test
+  `session_create_orchestrator_decouple_test.exs` was REWRITTEN to assert the
+  new behavior, so the suite never went red. Forensics:
+  `docs/together/2026-07-09/cc-orchestrator-create-blocking-rootcause.zh_cn.md`.
+
+  Restored shape — **the create transaction spawns no agent**:
+
+    * `create_session/3` installs template CONFIG only
+      (`TemplateTeam.materialize_template_config/3` — prompts / legends /
+      routing rules) and joins the owner. `session_member_uris/1 == [owner]`.
+    * Agent role slots are materialized by `install_session_socialware/1`, a
+      SEPARATE transaction. `Workspace.create_session` fires it
+      (`install_session_socialware_async/1`) the instant the owner-only session
+      is durable, so the caller — and the UI — never block on an agent.
+    * An install failure is LOUD (log + telemetry) and leaves the session alive
+      (let-it-crash / fail-fast: no DEGRADED marker, no rollback).
+
+  Enforced by `EzagentCore.Architecture.SessionCreateNoAgentSpawnTest` (static
+  call-graph gate) + the restored runtime assertion in the decouple test.
   """
 
   alias Ezagent.KindRegistry
@@ -103,6 +128,24 @@ defmodule EzagentDomainInstanceMessage.SessionCreator do
   defdelegate materialize_template_team(session_uri, workspace_uri, granted_by, template_content),
     to: TemplateTeam
 
+  @doc "Install a template's CONFIG (prompts / legends / routing rules). Spawns nothing."
+  defdelegate materialize_template_config(session_uri, workspace_uri, template_content),
+    to: TemplateTeam
+
+  @doc """
+  Record the durable template declaration (`session_template_uri` +
+  `member_declarations`) on a session's working copy. `install_session_socialware/1`
+  reads `member_declarations` to know which agent role slots to materialize, so a
+  Template Class that hand-rolls its session create MUST call this (not a bare
+  `system_set_working_copy`) or its declared team can never be installed.
+  """
+  defdelegate materialize_template_declaration(
+                session_uri,
+                session_template_uri,
+                template_content
+              ),
+              to: Materializer
+
   defdelegate spawned_member_instance_name_public(
                 flavor,
                 source_template_uri,
@@ -112,6 +155,139 @@ defmodule EzagentDomainInstanceMessage.SessionCreator do
               to: TemplateTeam
 
   defdelegate session_discriminator(session_uri), to: TemplateTeam
+
+  @install_telemetry [:ezagent, :session, :socialware_install]
+
+  @doc """
+  Materialize the session's installed socialware agent role slots — the AGENT
+  transaction that `create_session/3` deliberately does NOT run (rev6 / #912).
+
+  Runs AFTER the session exists. A failure is LOUD (log + telemetry) and leaves
+  the session intact: `create_session` never rolls back because a role member
+  failed to start. Idempotent — a role already joined is skipped.
+  """
+  @spec install_session_socialware(URI.t()) :: :ok | {:error, term()}
+  def install_session_socialware(%URI{scheme: "session"} = session_uri) do
+    case Ezagent.Capability.workspace_of(session_uri) do
+      %URI{} = workspace_uri -> install_session_socialware(session_uri, workspace_uri)
+      :any -> {:error, :install_requires_workspace}
+    end
+  end
+
+  @spec install_session_socialware(URI.t(), URI.t()) :: :ok | {:error, term()}
+  def install_session_socialware(%URI{scheme: "session"} = session_uri, %URI{} = workspace_uri) do
+    effective_owner =
+      case Session.owner(session_uri) do
+        {:ok, %URI{} = owner} -> owner
+        _ -> User.admin_uri()
+      end
+
+    # Materialize from the session's OWN durable `member_declarations` — the
+    # freeze-pinned role slots `create_session/3` recorded at step 4. Re-resolving
+    # the SessionTemplate here would (a) re-run definition lookup against whatever
+    # is registered NOW rather than the frozen revision, and (b) fail at boot
+    # before the definitions are seeded.
+    agents =
+      session_uri
+      |> Session.read_template_working_copy()
+      |> Map.get(:member_declarations, [])
+      |> TemplateTeam.agent_role_slots()
+
+    EzagentDomainInstanceMessage.SessionCreator.DefinitionAgents.materialize_definition_agents(
+      session_uri,
+      workspace_uri,
+      effective_owner,
+      agents
+    )
+  end
+
+  @doc """
+  Fire-and-forget `install_session_socialware/1` under a supervised Task.
+
+  The caller (`Workspace.create_session`) returns the instant the owner-only
+  session is durable; role members appear as this transaction completes. A
+  failure NEVER propagates back into the create reply — it surfaces as a loud
+  `Logger.error` + `#{inspect(@install_telemetry)} :failed` telemetry event
+  (Invariant #9: no silent drops).
+  """
+  @spec install_session_socialware_async(URI.t()) :: :ok
+  def install_session_socialware_async(%URI{scheme: "session"} = session_uri) do
+    # Tolerate a missing supervisor (a deployment or test that boots only some
+    # apps). Raising here would blow up inside the Workspace Kind's
+    # `create_session` handler and fail the very create we just decoupled.
+    case Task.Supervisor.start_child(Ezagent.Session.SocialwareInstallSupervisor, fn ->
+           run_install_loudly(session_uri)
+         end) do
+      {:ok, _pid} ->
+        :ok
+
+      other ->
+        Logger.error(
+          "could not start the socialware-install transaction for " <>
+            "#{URI.to_string(session_uri)}: #{inspect(other)} — the session is alive " <>
+            "but owner-only. Run `SessionCreator.install_session_socialware/1`."
+        )
+
+        :telemetry.execute(
+          @install_telemetry ++ [:failed],
+          %{count: 1},
+          %{session_uri: session_uri, reason: {:task_start_failed, other}}
+        )
+
+        :ok
+    end
+  catch
+    :exit, reason ->
+      Logger.error(
+        "socialware-install supervisor unavailable for #{URI.to_string(session_uri)}: " <>
+          "#{inspect(reason)} — the session is alive but owner-only."
+      )
+
+      :telemetry.execute(
+        @install_telemetry ++ [:failed],
+        %{count: 1},
+        %{session_uri: session_uri, reason: {:supervisor_unavailable, reason}}
+      )
+
+      :ok
+  end
+
+  defp run_install_loudly(%URI{} = session_uri) do
+    case install_session_socialware(session_uri) do
+      :ok ->
+        :telemetry.execute(@install_telemetry ++ [:ok], %{count: 1}, %{session_uri: session_uri})
+        :ok
+
+      {:error, reason} ->
+        Logger.error(
+          "session socialware install FAILED for #{URI.to_string(session_uri)}: " <>
+            "#{inspect(reason)} — the session is alive but its declared role members " <>
+            "are NOT materialized. Retry via `SessionCreator.repair_orchestrator/1`."
+        )
+
+        :telemetry.execute(
+          @install_telemetry ++ [:failed],
+          %{count: 1},
+          %{session_uri: session_uri, reason: reason}
+        )
+
+        {:error, reason}
+    end
+  catch
+    kind, reason ->
+      Logger.error(
+        "session socialware install CRASHED for #{URI.to_string(session_uri)}: " <>
+          "#{inspect(kind)} #{inspect(reason)}"
+      )
+
+      :telemetry.execute(
+        @install_telemetry ++ [:failed],
+        %{count: 1},
+        %{session_uri: session_uri, reason: {kind, reason}}
+      )
+
+      {:error, {kind, reason}}
+  end
 
   @doc false
   def demand_spawn_member(%URI{} = member_uri), do: Ezagent.SpawnRegistry.spawn(member_uri)
@@ -592,11 +768,14 @@ defmodule EzagentDomainInstanceMessage.SessionCreator do
                template_content,
                effective_owner
              ),
+           # rev6 step 4 — CONFIG ONLY (prompts / legends / routing rules).
+           # Agent role slots are an AGENT transaction and are materialized
+           # AFTER create returns, by `install_session_socialware/1`. See the
+           # moduledoc + `session_create_orchestrator_decouple_test.exs`.
            :ok <-
-             materialize_template_team(
+             TemplateTeam.materialize_template_config(
                session_uri,
                workspace_uri,
-               effective_owner,
                template_content
              ),
            # Seed the Surface from a "published" template's captured page

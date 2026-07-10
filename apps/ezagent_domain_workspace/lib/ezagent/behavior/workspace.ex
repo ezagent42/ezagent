@@ -688,6 +688,18 @@ defmodule Ezagent.ActionSet.Workspace do
              workspace_uri,
              caller
            ) do
+      # rev6 / #912 — SAME decoupling as the facade path. A Template Class's
+      # `instantiate/3` creates the session + its config; its declared team is an
+      # AGENT transaction fired here, after the session is durable. Before this,
+      # `session.hello` spawned four role agents (plus the `requires`-pulled cc
+      # orchestrator) inside this dispatch, so `hello` kept timing out while
+      # `default` was already fixed.
+      #
+      # NEVER gate the create's success on this: `instantiate/3` has ALREADY
+      # durably created the session, and "the install lane is unavailable" is
+      # exactly the failure rev6 says must not fail a create.
+      trigger_socialware_install(session_uri)
+
       {:ok,
        %{
          session_uri: session_uri,
@@ -712,12 +724,48 @@ defmodule Ezagent.ActionSet.Workspace do
                    workspace_uri,
                    caller
                  ) do
+            # rev6 / #912 — the session is now durable and owner-only. Its
+            # declared agent role slots are an AGENT transaction: fire it off
+            # under its own supervisor and return immediately. A member that
+            # fails to start surfaces loudly there; it never fails this create
+            # nor rolls the session back.
+            trigger_socialware_install(session_uri)
             {:ok, %{session_uri: session_uri}, []}
           end
 
         {:error, reason} ->
           {:error, reason}
       end
+    end
+  end
+
+  # Fire the post-create AGENT transaction. ALWAYS returns `:ok` — the session is
+  # already durable, and a create must never fail because the install lane is
+  # unavailable (rev6 / #912). But it must never fail SILENTLY either (Invariant
+  # #9): an unresolvable facade or a test double without the entry point means
+  # the session's declared team will never materialize, and somebody has to know.
+  defp trigger_socialware_install(%URI{} = session_uri) do
+    with {:ok, facade} <- resolve_session_facade(),
+         true <- function_exported?(facade, :install_session_socialware_async, 1) do
+      facade.install_session_socialware_async(session_uri)
+      :ok
+    else
+      other ->
+        require Logger
+
+        Logger.error(
+          "post-create socialware install NOT fired for #{URI.to_string(session_uri)}: " <>
+            "#{inspect(other)} — the session is alive but owner-only; its declared role " <>
+            "members will never materialize."
+        )
+
+        :telemetry.execute(
+          [:ezagent, :session, :socialware_install, :not_fired],
+          %{count: 1},
+          %{session_uri: session_uri, reason: other}
+        )
+
+        :ok
     end
   end
 
