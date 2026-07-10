@@ -75,13 +75,19 @@ defmodule Ezagent.ActionSet.HelloPublisher do
   # --- internals --------------------------------------------------------
 
   @name_prompt """
-  You are a template-name assistant. Given a user's instruction, extract or
-  generate a short, URL-safe template name (lowercase letters, digits, hyphens).
+  You are a template-name assistant. Given a user's chat instruction, produce a
+  short, descriptive, URL-safe template name (lowercase letters, digits, hyphens).
   Reply with ONLY the name, nothing else.
 
-  - If the user specified a name explicitly, use it (sanitised).
-  - If no name specified, generate a short unique one from the instruction context.
-  - Keep it under 30 characters.
+  Rules:
+  - If the user EXPLICITLY named the template (e.g. \"名字为xxx\", \"叫xxx\",
+    \"发布为xxx\", \"name xxx\", \"named xxx\"), use that name, sanitised.
+  - If NO name was specified, generate a brief descriptive name reflecting what
+    this session/page is about (e.g. \"company-site\", \"product-page\",
+    \"team-portal\"). Do NOT use command words like \"publish\", \"发布\",
+    \"share\", \"template\", or agent names like \"builder\", \"publisher\" as
+    the name.
+  - Keep it under 30 characters. One or two words at most.
   """
 
   defp resolve_template_name(session_uri, instruction) do
@@ -111,7 +117,7 @@ defmodule Ezagent.ActionSet.HelloPublisher do
       _ ->
         # Fallback: generate a timestamp-based name
         ts = DateTime.utc_now() |> Calendar.strftime("%m%d-%H%M")
-        "template-#{ts}"
+        "site-#{ts}"
     end
   end
 
