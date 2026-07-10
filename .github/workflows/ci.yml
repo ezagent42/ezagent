@@ -213,13 +213,13 @@ jobs:
             ghcr.io/gitleaks/gitleaks:latest \
             detect --source /repo --no-git --config /repo/.gitleaks.toml --redact
 
-  # main-merge → nightly 自动部署(2026-07-08 plan, allenwoods)。
+  # main-merge → canary 自动部署(2026-07-08 plan, allenwoods)。
   # 需要 secret DEPLOY_DISPATCH_TOKEN:fine-grained PAT,Hyprial/ezagent-deploy
   # 的 contents:read + actions:write(或 classic repo scope)。secret 缺失时
   # 静默跳过(dispatch job 是 best-effort,不 gate 任何合并)。
-  # 部署仓库侧只进 nightly;beta/stable 仍人工晋级。
-  dispatch-nightly:
-    name: dispatch nightly deploy
+  # 部署仓库侧只进 canary;beta/stable 仍人工晋级。
+  dispatch-canary:
+    name: dispatch canary deploy
     if: github.event_name == 'push' && github.ref == 'refs/heads/main'
     runs-on: ubuntu-latest
     permissions: { contents: read }
