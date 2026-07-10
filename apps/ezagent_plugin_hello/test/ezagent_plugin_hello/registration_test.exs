@@ -33,11 +33,13 @@ defmodule EzagentPluginHello.RegistrationTest do
     refute :grant_cap in Ezagent.ActionSet.Identity.actions()
   end
 
-  test "all four hello role recipes are published in roles/0" do
+  test "all six hello role recipes are published in roles/0" do
     assert HelloApp.hello_front_desk_recipe() in HelloApp.roles()
     assert HelloApp.hello_builder_recipe() in HelloApp.roles()
     assert HelloApp.hello_concierge_recipe() in HelloApp.roles()
     assert HelloApp.hello_llm_recipe() in HelloApp.roles()
+    assert HelloApp.hello_sharer_recipe() in HelloApp.roles()
+    assert HelloApp.hello_publisher_recipe() in HelloApp.roles()
   end
 
   test "hello.llm curl recipe carries provider/model + credential_optional in config" do
@@ -129,7 +131,7 @@ defmodule EzagentPluginHello.RegistrationTest do
     {:ok, defn} = Ezagent.Socialware.Definition.new(attrs)
 
     role_names = Enum.map(defn.roles, & &1.role_name) |> Enum.sort()
-    assert role_names == ["builder", "concierge", "front-desk", "llm"]
+    assert role_names == ["builder", "concierge", "front-desk", "llm", "publisher", "sharer"]
     assert Enum.all?(defn.roles, &(&1.fill == :agent))
     assert Enum.find(defn.roles, &(&1.role_name == "front-desk")).flavor == "hello"
 
