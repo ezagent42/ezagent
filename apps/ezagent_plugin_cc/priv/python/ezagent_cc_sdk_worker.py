@@ -26,7 +26,13 @@ import traceback
 from dataclasses import asdict, is_dataclass
 from typing import Any
 
-from claude_agent_sdk import ClaudeAgentOptions, ClaudeSDKClient
+try:
+    from claude_agent_sdk import ClaudeAgentOptions, ClaudeSDKClient
+except ImportError:  # pragma: no cover - lets the pure helpers below be
+    # imported for unit tests on hosts without the SDK installed. The SDK is
+    # required at runtime (Worker.start), where its absence surfaces loudly.
+    ClaudeAgentOptions = None  # type: ignore[assignment,misc]
+    ClaudeSDKClient = None  # type: ignore[assignment,misc]
 
 try:
     from claude_agent_sdk.types import AssistantMessage, ResultMessage, TextBlock
@@ -48,6 +54,69 @@ def env_json(name: str, default: Any) -> Any:
 
 def compact_error(exc: BaseException) -> str:
     return f"{exc.__class__.__name__}: {exc}"
+
+
+def _server_names_from_mcp_file(path: str) -> list[str]:
+    """Server names declared in a Claude-Code `.mcp.json` (`{"mcpServers": {...}}`)."""
+    try:
+        with open(path, "r", encoding="utf-8") as fh:
+            data = json.load(fh)
+    except (OSError, json.JSONDecodeError):
+        return []
+    servers = data.get("mcpServers") if isinstance(data, dict) else None
+    if isinstance(servers, dict):
+        return [str(name) for name in servers]
+    return []
+
+
+def resolve_mcp_config(
+    config_dir: str,
+    explicit_mcp: Any,
+    existing_allowed: Any,
+) -> tuple[Any, list[str]]:
+    """Resolve the MCP servers + auto-allowed tools for a headless SDK session.
+
+    Route B (per Claude Agent SDK >=0.2.94, where
+    ``ClaudeAgentOptions.mcp_servers`` accepts ``dict | str | Path``):
+
+    - If the elixir side passed an explicit ``mcp_servers`` value
+      (``EZAGENT_CC_SDK_MCP_SERVERS``), honor it verbatim.
+    - Otherwise load the materialized per-agent ``<config_dir>/.mcp.json`` —
+      the SAME file the PTY/`cc` flavor points `claude` at via
+      ``--mcp-config``. Passed as a path string so the SDK/CLI reads it
+      directly. ``strict_mcp_config`` stays ``True``: only these servers are
+      used, nothing leaks in from ambient project/user config.
+
+    Because a headless sidecar cannot answer an interactive permission
+    prompt, every loaded MCP server is added to ``allowed_tools`` at the
+    server granularity (``mcp__<server>``) so its tools auto-execute under
+    ``permission_mode="default"`` (SDK: an empty ``allowed_tools`` does not
+    deny tools, it makes them *prompt* — fatal for headless). Built-in tools
+    (Bash/Write/…) keep their normal permission behavior.
+
+    Returns ``(mcp_servers, allowed_tools)``; ``mcp_servers`` is ``None`` when
+    nothing is configured.
+    """
+    allowed: list[str] = [str(t) for t in (existing_allowed or [])]
+    mcp_servers: Any = None
+    names: list[str] = []
+
+    if explicit_mcp:
+        mcp_servers = explicit_mcp
+        if isinstance(explicit_mcp, dict):
+            names = [str(name) for name in explicit_mcp]
+    elif config_dir:
+        candidate = os.path.join(config_dir, ".mcp.json")
+        if os.path.isfile(candidate):
+            mcp_servers = candidate
+            names = _server_names_from_mcp_file(candidate)
+
+    for name in names:
+        tool = f"mcp__{name}"
+        if tool not in allowed:
+            allowed.append(tool)
+
+    return mcp_servers, allowed
 
 
 def plain(value: Any) -> Any:
@@ -96,6 +165,16 @@ class Worker:
             sdk_env["CLAUDE_CONFIG_DIR"] = config_dir
             os.environ["CLAUDE_CONFIG_DIR"] = config_dir
 
+        # Route B: load the materialized per-agent `.mcp.json` from the agent's
+        # config dir (same MCP surface the PTY/`cc` flavor uses) and auto-allow
+        # its servers so a headless agent's tools are actually callable.
+        # `strict_mcp_config` stays True — only these servers are used.
+        mcp_servers, allowed_tools = resolve_mcp_config(
+            config_dir,
+            env_json("EZAGENT_CC_SDK_MCP_SERVERS", None),
+            env_json("EZAGENT_CC_SDK_ALLOWED_TOOLS", []),
+        )
+
         options = ClaudeAgentOptions(
             cwd=cwd,
             setting_sources=[],
@@ -108,17 +187,15 @@ class Worker:
             system_prompt=os.environ.get("EZAGENT_CC_SDK_SYSTEM_PROMPT") or None,
         )
 
-        allowed_tools = env_json("EZAGENT_CC_SDK_ALLOWED_TOOLS", [])
+        if mcp_servers:
+            options.mcp_servers = mcp_servers
+
         if allowed_tools:
             options.allowed_tools = list(allowed_tools)
 
         disallowed_tools = env_json("EZAGENT_CC_SDK_DISALLOWED_TOOLS", [])
         if disallowed_tools:
             options.disallowed_tools = list(disallowed_tools)
-
-        mcp_servers = env_json("EZAGENT_CC_SDK_MCP_SERVERS", None)
-        if mcp_servers:
-            options.mcp_servers = mcp_servers
 
         self.client = ClaudeSDKClient(options)
         await self.client.connect()

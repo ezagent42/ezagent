@@ -63,6 +63,55 @@ defmodule Ezagent.PluginCc.Template.CcHeadlessAgentTest do
     end
   end
 
+  describe "sdk_sidecar_params/2 threading" do
+    test "threads cwd / config_dir / MCP surface / process env from the template" do
+      agent_uri = Ezagent.URI.new!("entity://test-ws/agent/cc_headless_params")
+
+      tmpl = %{
+        "class" => "cc_headless.agent",
+        "agent_uri" => URI.to_string(agent_uri),
+        "cwd" => "/tmp/agent-cwd",
+        # resolve_config_home returns agent_config_dir verbatim when a valid
+        # dir string is present (no filesystem access) — this is the config
+        # dir the worker points `mcp_servers` at.
+        "agent_config_dir" => "/tmp/agent-cfg",
+        "allowed_tools" => ["Bash"],
+        "mcp_servers" => %{"custom" => %{"type" => "stdio", "command" => "x"}},
+        # Bridge identity env the MCP servers claude launches read from
+        # os.environ (EZAGENT_AGENT_URI / EZAGENT_AGENT_TOKEN / WS_URL).
+        "cmd_env" => %{"EZAGENT_AGENT_URI" => "agent://x", "EZAGENT_AGENT_TOKEN" => "tok"}
+      }
+
+      params = CcHeadlessAgent.sdk_sidecar_params(agent_uri, tmpl)
+
+      assert params.cwd == "/tmp/agent-cwd"
+      assert params.config_dir == "/tmp/agent-cfg"
+      assert params.allowed_tools == ["Bash"]
+      assert params.mcp_servers == %{"custom" => %{"type" => "stdio", "command" => "x"}}
+
+      assert params.cmd_env == %{
+               "EZAGENT_AGENT_URI" => "agent://x",
+               "EZAGENT_AGENT_TOKEN" => "tok"
+             }
+    end
+
+    test "cmd_env defaults to nil when the template carries no process env" do
+      agent_uri = Ezagent.URI.new!("entity://test-ws/agent/cc_headless_noenv")
+
+      tmpl = %{
+        "class" => "cc_headless.agent",
+        "agent_uri" => URI.to_string(agent_uri),
+        "cwd" => "/tmp/agent-cwd",
+        "agent_config_dir" => "/tmp/agent-cfg"
+      }
+
+      params = CcHeadlessAgent.sdk_sidecar_params(agent_uri, tmpl)
+
+      assert params.cmd_env == nil
+      assert params.config_dir == "/tmp/agent-cfg"
+    end
+  end
+
   describe "CredentialAdapter delegation" do
     alias Ezagent.PluginCc.Template.CcAgent
 

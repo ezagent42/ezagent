@@ -222,7 +222,10 @@ defmodule Ezagent.PluginCc.Template.CcHeadlessAgent do
     end
   end
 
-  defp sdk_sidecar_params(agent_uri, tmpl) do
+  @doc false
+  # Public for unit tests: asserts the sidecar-launch glue threads the agent's
+  # cwd / config_dir / MCP surface / process env from the template.
+  def sdk_sidecar_params(agent_uri, tmpl) do
     config_dir =
       Ezagent.Credential.HomeRuntime.resolve_config_home(agent_uri, tmpl, __MODULE__) ||
         Map.get(tmpl, "agent_config_dir") ||
@@ -240,6 +243,12 @@ defmodule Ezagent.PluginCc.Template.CcHeadlessAgent do
       allowed_tools: Map.get(tmpl, "allowed_tools"),
       disallowed_tools: Map.get(tmpl, "disallowed_tools"),
       mcp_servers: Map.get(tmpl, "mcp_servers"),
+      # Process env the SDK worker passes through to the `claude` subprocess
+      # (`EZAGENT_CC_SDK_ENV`). The MCP bridge servers claude launches read
+      # EZAGENT_AGENT_URI / EZAGENT_AGENT_TOKEN / EZAGENT_BRIDGE_WS_URL from
+      # os.environ to authenticate their WS join, exactly as the PTY `cc`
+      # flavor exports them via `cmd_env` in `SpawnPlan.build_claude_cmd/3`.
+      cmd_env: Map.get(tmpl, "cmd_env"),
       uv_path: Map.get(tmpl, "uv_path"),
       python_path: Map.get(tmpl, "python_path"),
       sdk_worker_path: Map.get(tmpl, "sdk_worker_path")
