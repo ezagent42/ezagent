@@ -1,4 +1,4 @@
-# Agent Entity × Flavor:映射关系与底层实例生命周期(v2.2)
+# Agent Entity × Flavor:映射关系与底层实例生命周期(v2.3)
 
 日期:2026-07-10 · 起草基线 `364ccf6ba`(stable),**结论需按当前 HEAD 复核**
 性质:**决策记录(decision record),不是实施规格(implementation spec)。**
@@ -14,11 +14,12 @@
 > ⚠️ **实施前必读**:Q1/Q3/Q4 是 Allen ratify 的**方向裁定**。经 codex 对抗式 review + 实测,当前状态:
 > - **B1(cc-PTY 恢复)** —— ✅ **已实测关闭**,降为 low(两行 argv),见 §2.1a
 > - **B2(跨 backend replay)** —— 🔴 **唯一真架构阻塞**,范围已收窄,见 §4.4
-> - **B3(D2 runtime key)** —— 🔴 待 Allen 裁决,见 §5.5
+> - **B3(D2 runtime key)** —— ✅ **已裁决(c)**,承认 reuse = 共享 runtime,见 §5.5
 > - **B4(isolation schema)** —— 🟠 建模轴已找到(control plane),见 §5.3
 > - **B5(curl 分类)** —— ✅ 已修
 >
-> v2.1→v2.2 变更:**实测 cc `--session-id`/`--resume` 与 `server:esr-bridge` 无冲突** · 确立 cache/source-of-truth framing · 新增 §2.1b **control plane 分层**(PTY 是正交 surface,不是 mode)· §4.2 厘清 **③是内容/④是指针,均为缓存** · §4.3 新增 **`ContextRestore` 三层封装契约** · 状态清单 **17 → 16 位**(合并 `engine_session_handle`)· B1 关闭 · B2 收窄。
+> v2.2→v2.3 变更:**B3 关闭,选定 (c):承认 reuse = 共享 runtime** · D2 定义收紧(共享身份+只读凭据+共享 runtime)· 新增 D3「共享身份不共享记忆」为未来设计 · D2 不再阻塞 Step 1。
+> v2.1→v2.2 变更:实测 `--session-id`/`--resume` 与 `server:esr-bridge` 无冲突 · 确立 cache/source-of-truth framing · 新增 §2.1b control plane 分层(PTY 是正交 surface,不是 mode)· §4.2 厘清 ③是内容/④是指针,均为缓存 · §4.3 新增 `ContextRestore` 三层封装契约 · 状态清单 17 → 16 位(合并 `engine_session_handle`)· B1 关闭 · B2 收窄。
 
 ---
 
@@ -310,31 +311,33 @@ L3  core(已有,不动)
 
 ### 5.4 reuse 三策略 + 建议(D2 默认,Q2 收紧)
 
-### ⚠️ 5.5 D2 的未解决矛盾(codex review,critical)——待 Allen 裁决
+### ✅ 5.5 B3 已裁决(2026-07-10):承认 reuse = 共享 runtime
 
-**"每 session 独立可写 runtime"与 reuse 的实现方式直接冲突,v2 用措辞掩盖了它。**
+**选 (c)**。三条出路中选了最诚实的:承认 reuse 就是共享同一个 live worker,不强行承诺「独立可写 runtime」。
 
-- reuse 复用的是**同一个 `agent_uri`**(`definition_agents.ex:179`:取 `reuse_agent_uri` 直接 `add_participant`,不 spawn、不 provision)。
-- 而 config_dir / `CODEX_HOME` 是 **`agent_uri` 的纯函数**(`Sandbox.ConfigDir.path/2` 由 agent URI 的 workspace/name 构造,`config_dir.ex:48`;`home_runtime.ex:90`)。
-- **推论**:同 `agent_uri` 跨两 session ⇒ **同一 config_dir、同一 sidecar registry key、同一 live worker**。代码里**不存在** per-session 的 runtime key。
+**裁决理由**:
+- config_dir / `CODEX_HOME` 是 `agent_uri` 的纯函数(`config_dir.ex:48`;`home_runtime.ex:90`),同 `agent_uri` 跨两 session ⇒ 天然同一 config_dir、同一 live worker。代码现状如此,没必要用措辞掩盖。
+- Part C admission gate(#1269)已兜底:**非 owner 的 reuse join 被 PEND**(无 member-cap、花不了凭据),owner 自己 reuse 时上下文相通是可接受的 trade-off。
+- Allen Q2 反问「贡献身份的同时共享记忆好像也挺好的吧」——**共享记忆本身不是问题,问题是谁能访问**。admission gate 解决了后者。
+- 「独立可写 runtime」列为 **D3 未来设计**,不阻塞当前 Step 1。
 
-**❓ 裁决点(回给 Allen)** —— 三选一,不能再含糊:
+**D2 定义收紧为**:
 
-| 出路 | 含义 | 代价 |
-|---|---|---|
-| **(a)** D2 生成**新 runtime URI** | reuse 只复用 recipe/凭据来源,实例 URI 仍新建 | 退化成 fresh,省不了进程;"reuse"名不副实 |
-| **(b)** 引入 runtime key `{agent_uri, session_uri}` | 真正的 per-session 可写 runtime | 要改**所有** config_dir / `CODEX_HOME` / sidecar registry / bridge registry 的 key |
-| **(c)** 承认 reuse = **共享 runtime** | 诚实描述现状;另列 D3「共享身份但不共享记忆」为未来设计 | 放弃"独立可写 runtime"的承诺,reuse 跨 session 上下文相通 |
+> 共享身份 + 只读凭据 + **共享 runtime**(同 agent_uri、同 config_dir、同 live worker)。跨 session 上下文相通;非 owner 经 admission gate PEND 保护。
 
-**在此裁决前,D2 的当前表述不可实施。**
+**D3(未来设计)**:
+
+> 「共享身份但不共享记忆」—— 同一 agent identity 跨 session 复用,但每 session 独立 context window。需要 per-session runtime key(`{agent_uri, session_uri}`)或等效隔离机制。
+
+**对 Step 1 的影响**:无。Step 1(封装 native 路径)不涉及 reuse 路径,`engine_session_handle` 只管 native resume。B3 不再阻塞 Step 1。`
 
 ---
 
-- **D2(默认,安全)** — 共享身份 + **只读**凭据 + 每 session 独立可写 runtime(**⚠️ 实现方式待定,见 §5.5**)。
-  - D2 不是"共享 config"(config_dir 是 `agent_uri` 纯函数 `home_runtime.ex:90`,共享 path = 写竞争+串台,曾被 `session_discriminator`(`entity/agent.ex:373,434`)修复)。
-  - reuse 授权门:经 #1269 确认为 **false-positive**——provision 只是 join 第一步,真正的 operator→agent 凭据隔离在马下游 **Part C admission gate**(`membership.ex` `admission_pending?/2`):非 owner 且非 manages 的凭据型成员被 **PEND**,无 member-cap、花不了凭据,直到 owner `:approve_admission`。
+- **D2(默认,安全)** — 共享身份 + **只读**凭据 + **共享 runtime**(同 agent_uri、同 config_dir、同 live worker,§5.5 裁决)。
+  - 跨 session 上下文相通。非 owner 经 **Part C admission gate** 保护(`admission_pending?/2`):非 owner 且非 manages 的凭据型成员被 **PEND**,无 member-cap、花不了凭据,直到 owner `:approve_admission`。
+  - D2 不是"共享 config"(config_dir 是 `agent_uri` 纯函数 `home_runtime.ex:90`,共享 path = 写竞争+串台,曾被 `session_discriminator`(`entity/agent.ex:373,434`)修复)——当前实现就是共享 runtime,诚实承认。
 - **D1(省资源)** — 共享执行器,仅对 `:per_thread`/`:stateless` flavor 允许。需 per-run session scope + 串行化(cc-headless)或 per-session thread(codex-remote)。
-- **D3(显式声明)** — reuse 分"共享记忆"vs"共享身份不共享记忆"。
+- **D3(未来设计,见 §5.5)** — 「共享身份但不共享记忆」:同一 agent identity 跨 session 复用,但每 session 独立 context window。需 per-session runtime key(`{agent_uri, session_uri}`)或等效隔离机制。不阻塞当前 Step 1。
 
 ---
 
@@ -396,11 +399,17 @@ L3  core(已有,不动)
 |---|---|---|---|
 | ~~B1~~ | ~~Q1 对 cc-PTY 不可实施~~ | ~~critical~~ → **low** | ✅ **实测关闭**(§2.1a):`--resume` 与 `server:esr-bridge` 无冲突;state 在磁盘 jsonl。实现 = 两行 argv |
 | **B2** | **跨 backend replay 的渲染契约** —— 仅 `:replay` 分支需要(同 backend 走 native resume)。三个约束:per-flavor 渲染(cc-PTY 只能拼进首条 prompt,有损)· handle 隐含 cwd 依赖 · **幂等与 token 预算尚未设计** | **critical** | 🔴 **唯一真架构阻塞**(§4.4) |
-| **B3** | **D2 的 runtime key 矛盾** —— reuse 复用同 `agent_uri`,而 config_dir 是其纯函数。Allen 已反问「共享身份的同时共享记忆不也挺好?」→ 倾向出路 (c),但需明确区分**纵向记忆共享**(想要)与**横向 context 交织**(隐私风险) | **critical** | 🔴 待 Allen 裁决(§5.5) |
+| **B3** | **D2 的 runtime key 矛盾** —— reuse 复用同 `agent_uri`,而 config_dir 是其纯函数 ⇒ 天然共享 runtime。三条出路 (a/b/c) 中选 (c):诚实承认 reuse = 共享 runtime,另列 D3「共享身份不共享记忆」为未来设计。Part C admission gate 兜底非 owner 访问 | ~~critical~~ → **resolved** | ✅ **已裁决(c)**(§5.5) |
 | **B4** | `isolation` 能力位未建模 —— `AgentFlavorRegistry.decl` 无此字段 | **high** | 🟠 建模轴已找到:**control plane**(§2.1b);`engine_session_handle` 的有无天然区分 stateful/stateless |
 | ~~B5~~ | ~~curl 不是 `:stateless`~~ | ~~high~~ | ✅ 已修(§5.3) |
 
 ### 8.3 已修正的事实错误
+
+**v2.2 → v2.3**(B3 裁决):
+- **B3 关闭,选 (c)**:承认 reuse = 共享 runtime(config_dir 是 agent_uri 纯函数,同 agent_uri ⇒ 天然同 runtime)。D2 定义从「独立可写 runtime」收紧为「共享 runtime」。
+- **新增 D3**「共享身份但不共享记忆」为未来设计,不阻塞 Step 1。
+- Part C admission gate(#1269)兜底非 owner 的凭据访问。
+- **B3 不再阻塞 Step 1**:Step 1(封装 native 路径)不涉及 reuse 路径,`engine_session_handle` 只管 native resume。
 
 **v2 → v2.1**:`message_routings` 已移除(copy+ref model)· URI 格式 `entity://<ws>/agent/<name>` · config_dir 补第④类 · 状态清单 12 位 → 17 位。
 
@@ -410,7 +419,7 @@ L3  core(已有,不动)
 - **"第③类是唯一真不可复现的 state"是错的** —— ③ 是**内容**(同 engine 可 `--resume`),④ 是**指向它的指针**;两者都是缓存,**权威只有 `MessageStore`**。状态清单 17 位 → **16 位**(16/17 合并为 `engine_session_handle`)。
 
 > **本稿是 decision record,不是 implementation spec。**
-> **Step 1(封装 native 路径)落地后即可进入实施**;B2 作为独立 SPEC 排期;B3 待 Allen 裁决。
+> **Step 1(封装 native 路径)落地后即可进入实施**;B2 作为独立 SPEC 排期;B3 已裁决(c)。
 
 ---
 

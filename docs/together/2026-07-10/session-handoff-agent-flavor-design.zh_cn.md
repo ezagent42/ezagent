@@ -83,7 +83,7 @@ L3 core(已有)  MessageStore.in_session_since/2 · ReadyGate
 |---|---|---|
 | **B1** | ✅ **实测关闭**(critical→low) | cc-PTY 的 state 在磁盘;`--resume` 与 `server:esr-bridge` 无冲突。实现 = 两行 argv |
 | **B2** | 🔴 **唯一真架构阻塞** | 跨 backend replay 的渲染契约。**仅 `:replay` 分支需要**。三约束:per-flavor 渲染(cc-PTY 最难,只能拼进首条 prompt)· handle 隐含 **cwd 依赖** · **幂等与 token 预算尚未设计** |
-| **B3** | 🔴 **待 Allen 裁决** | D2 runtime key 矛盾。见 §5 |
+| **B3** | ✅ **已裁决(c)** | 承认 reuse = 共享 runtime(D2 收紧);另列 D3「共享身份不共享记忆」为未来设计。Part C admission gate 兜底非 owner。**不再阻塞 Step 1** |
 | **B4** | 🟠 随 Step 1 落地 | `isolation` 未建模,但**建模轴已找到**(control plane) |
 | **B5** | ✅ 已修 | curl = stateless transport + **stateful** flavor behavior |
 
@@ -96,8 +96,8 @@ L3 core(已有)  MessageStore.in_session_since/2 · ReadyGate
 
 ## 4. 立即待办(优先级序)
 
-1. **🔴 在 PR #1256 上回 Allen**(内容已备好,见 §5)—— 他两条回复都还没正式答复。
-2. **Step 1 实现**(若 Allen 认可)—— 两行 argv + handle 收编。
+1. ✅ ~~在 PR #1256 上回 Allen~~ —— **已回**([comment](https://github.com/ezagent42/ezagent/pull/1256#issuecomment-4931545706)),B3 直接选了 (c)
+2. **Step 1 实现** —— 两行 argv + handle 收编。**B3 不再阻塞,可立即开工。**
 3. **B2 独立 SPEC**(排期,不在本 PR)。
 4. 登记项:`hello/app.ex:131-136` dead-code drift · `Entity.Agent` 与 `MessageStore` 的 **stale moduledoc 应修**。
 
