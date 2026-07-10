@@ -1,0 +1,38 @@
+# 03d 安装步骤 DB 交叉印证（dealscout rework 终版 e2e，2026-07-10）
+
+## create_session：#1294 后现实——同步建成，无红条（gap 复测 ✓）
+
+真向导（应用=DealScout，两 role 槽 discover(dealscout-discover×py)/
+page(crawler-page×native)，名称 dealscout-final-0710）点「创建」→ UI 直接切入
+新会话（03b 截图，无任何红条，data-last-dispatch=ok）。
+
+invocations 表（authz granted，无 exception）：
+
+  target      workspace://system?action=workspace.create_session
+  at          2026-07-10 05:35:08.090409Z
+  duration_us 4420953    （≈4.42s < 5s 预算——py 物化仍慢但不再超时；
+                          上一套证据里的"5s 超时红条 + 后台建成"已被 #1294 消除）
+
+## 成员：4 全绿在线（03b/03c 截图）
+
+orchestrator / page / discover（li[data-kind=agent][data-online=true] ×3）+ Admin(user)。
+已装 Socialware = 2：**DealScout（discover, page）+ Orchestrator（orchestrator）
+—— D5 requires 递归安装实证**（manifest `requires: [orchestrator]`）。
+
+## dealscout-update 规则装入（materialize 时从 manifest 装入，routing_rules id=2）
+
+```
+SELECT id, rule_set, matcher_data, receivers, enabled FROM routing_rules ORDER BY id;
+ 1 |                  | {"type":"always"} | {$session_users,$mentions} | t
+ 2 | dealscout-update | {"type":"and","items":[{"arg":"__dealscout_update__","type":"text_contains"},
+                                               {"arg":"discover","type":"from_role"}]}
+   | {$role:cGFnZQ}（base64url "page"，零实例 URI） | t
+```
+
+与 manifest.yaml routing_rules 逐字一致。
+
+## UI 注记
+
+右栏「高级规则 0」是预期显示：该列表只呈现 matcher 直接锚定本会话的规则，
+dealscout-update 属 rule_set 规则不在其列（kanban final 同一注记）——装入证据
+以上方 DB 行为准。

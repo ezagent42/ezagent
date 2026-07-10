@@ -1,0 +1,26 @@
+# 08c 页面自动重建 + 匿名公开页证据（dealscout rework 终版，2026-07-10）
+
+## 自动发布腿（段5 bug① 修复后的常态行为，本次直接复核）
+
+- 05:45:12Z `crawler.crawl_now` → `{:ok, %{injected: 20}}`
+- **05:45:29Z socialware_settlements 落 turn-1 committed**（注入完成后 ~17s，
+  零操作员干预；PagePublisher 读重试腿消化注入 burst 的 get_slice 忙时序）：
+
+```
+turn_id  session://…/dealscout-final-0710#turn-1  status committed
+         committed_at 2026-07-10 05:45:29  subwrites {outbox_emitted,pointer_advanced,visibility_flipped}
+```
+
+- 05:52:5xZ `crawler.search` 再注入 20 条 → **05:53:39Z turn-2 committed**
+  （第二轮自动重建，同样零干预）。
+
+## 匿名公开页（08a/08b 截图）
+
+- 入口：`GET /socialware/external?session_uri=<url-encoded session uri>`（公开
+  scope，无登录）。
+- 匿名 = 全新 browser context，**`document.cookie.length == 0` 实测**；controller
+  铸 read-only anon-User + 入会 + ChatFeedAuth token。
+- 08a：第一轮 committed 页——heading「线索」+ 「共 20 条留存线索」+ 四列表
+  （title/summary/source/url，shadcn Table 词表），条目为当日真实 HN 前排。
+- 08b：search 触发第二轮自动重建后新匿名 context 访问 → **「共 40 条留存线索」**，
+  新增条目带 `search:public` 来源标注——公开页随发现流自动更新。

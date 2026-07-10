@@ -1,0 +1,25 @@
+# 00 环境与健康检查（dealscout rework 终版收口 e2e，2026-07-10）
+
+- 分支：feat/sw-dealscout-rework（工作树 .claude/worktrees/sw-dealscout-rework）
+  - 基底 = 最新 main e3677b7ff（merge-base 实测），**含 #1294 create_session 修复 +
+    #1311 cc-headless 宿主凭证继承修复**——这两条正是本套证据与上一套
+    （docs/e2e/2026-07-10/dealscout-rework/，已删）的两处关键差异来源。
+- 工具链：mise exec elixir@1.18.4-otp-27 erlang@27.3.4.13 -- mix ...
+- 开测前重验（步骤 0，rebase 后）：
+  - `mix test apps/ezagent_plugin_crawler/test/ --seed 0` → **93 tests, 0 failures**
+  - `mix ezagent.arch.scan` → 全 PASS，exit 0
+  - `mix ezagent.uri_query.scan` → ✓ no violations，exit 0
+- DB：docker PG ezagent-pg-compat-audit-postgres（127.0.0.1:55432，库 ezagent_pg_compat_dev）
+  - `mix ecto.reset`（drop+create+migrate+seed）清旧实验污染
+  - `mix run scripts/world_e2e_seed.exs` → admin@ezagent.chat / $ADMIN_PW
+    （见 docs/guide/world-e2e-seed.md，密码不入库）
+- server：`elixir --name ezagent_runtime@127.0.0.1 -S mix phx.server`（后台 setsid，
+  **beam PID 98943**，端口 10042，收尾 `kill 98943` 精确杀、port 释放实测）
+  - 健康：curl http://localhost:10042/_health → HTTP 200（40s 内首个 200）
+  - VITE v8.1.0 ready（watcher 正常，无孤儿 vite）
+  - 分布式 cookie：boot 时 `Ezagent.Runtime.ensure_cookie!` 用
+    `$EZAGENT_HOME/default/runtime/cookie` 覆盖命令行 `--cookie` —— erpc 辅助脚本
+    一律读该文件（内容不入库）。
+- 浏览器：agent-browser（headless Chromium），一律 http://world.localhost:10042
+  （HSTS 坑不用 world.ezagent.chat）。mention 全部真键盘 autocomplete +
+  listbox 真实 click（onMouseDown 语义，页内 JS click 无效）。
