@@ -122,6 +122,7 @@ defmodule Mix.Tasks.Ezagent.CheckInvariants do
             "| grep -v 'apps/ezagent_core/lib/ezagent/publisher_lifecycle.ex' " <>
             "| grep -v 'apps/ezagent_core/lib/ezagent/notifications.ex' " <>
             "| grep -v 'apps/ezagent_domain_pty/lib/ezagent_domain_pty/server.ex' " <>
+            "| grep -v 'apps/ezagent_domain_pty/lib/ezagent_domain_pty/parked_dialog_watch.ex' " <>
             "| grep -v 'apps/ezagent_domain_python/lib/ezagent/domain/python/server.ex' " <>
             "| grep -v 'apps/ezagent_domain_agent_bridge/lib/ezagent/agent_bridge/registry.ex' " <>
             "| grep -v 'apps/ezagent_domain_session/lib/ezagent/socialware/settlement.ex' " <>
