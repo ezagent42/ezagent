@@ -99,6 +99,7 @@ defmodule EzagentWeb.Socialware.ChatFeedController do
   defp resolve_caller(conn, session_uri) do
     case AnonIngress.resolve_caller(conn, session_uri) do
       {:ok, conn, %{caller: caller_uri}} -> render_spa(conn, session_uri, caller_uri)
+      {:error, :login_required} -> render_login_required(conn, session_uri)
       {:error, _reason} -> bounce(conn)
     end
   end
@@ -111,6 +112,42 @@ defmodule EzagentWeb.Socialware.ChatFeedController do
     conn
     |> put_resp_content_type("text/html")
     |> send_resp(200, page(session_uri, token))
+  end
+
+  # Render a friendly login-prompt page when the session requires login.
+  # Unlike `bounce/1` (302 redirect), this shows a self-contained page with
+  # a login link — the visitor sees what they're trying to access.
+  defp render_login_required(conn, session_uri) do
+    login_url = "/login?return_to=#{URI.encode_www_form(uri_to_string(session_uri))}"
+
+    body = """
+    <!doctype html>
+    <html lang="en">
+      <head>
+        <meta charset="utf-8">
+        <meta name="viewport" content="width=device-width, initial-scale=1">
+        <title>Login Required</title>
+        <style>
+          body { font-family: system-ui, sans-serif; display: flex; justify-content: center; align-items: center; min-height: 100vh; margin: 0; background: #f5f5f5; }
+          .card { background: white; border-radius: 12px; padding: 48px; max-width: 400px; text-align: center; box-shadow: 0 2px 12px rgba(0,0,0,0.08); }
+          h1 { font-size: 24px; margin: 0 0 12px; }
+          p { color: #666; margin: 0 0 24px; line-height: 1.5; }
+          a { display: inline-block; background: #111; color: white; padding: 12px 32px; border-radius: 8px; text-decoration: none; font-weight: 500; }
+        </style>
+      </head>
+      <body>
+        <div class="card">
+          <h1>Login Required</h1>
+          <p>This page requires authentication. Please log in to view its content.</p>
+          <a href="#{login_url}">Log in</a>
+        </div>
+      </body>
+    </html>
+    """
+
+    conn
+    |> put_resp_content_type("text/html")
+    |> send_resp(200, body)
   end
 
   # --- parsing + responses -----------------------------------------------

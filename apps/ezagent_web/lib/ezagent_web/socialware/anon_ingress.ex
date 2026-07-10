@@ -68,7 +68,7 @@ defmodule EzagentWeb.Socialware.AnonIngress do
         :error -> mint_fresh(conn, session_uri, opts)
       end
     else
-      {:error, :not_public_view}
+      {:error, :login_required}
     end
   end
 
