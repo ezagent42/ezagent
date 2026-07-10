@@ -12,7 +12,7 @@ defmodule Ezagent.ActionSet.HelloPublisher do
   use Ezagent.Lifecycle
 
   action(:publish,
-    args: %{session_uri: :string},
+    args: %{session_uri: :string, instruction: :string},
     returns: %{},
     caps: [:publish],
     modes: [:cast],
@@ -23,26 +23,40 @@ defmodule Ezagent.ActionSet.HelloPublisher do
   def create(_args), do: {:ok, %{}}
 
   @doc """
-  Dispatchable publish entry. Calls `update_template` to snapshot the session's
-  working-copy state as a new version of its parent SessionTemplate, then posts
-  the result from the publisher agent itself.
+  Dispatchable publish entry. If the user specified a template name
+  (\"名字为XXX\" / \"name XXX\"), calls `save_template_as` to create a new
+  template family; otherwise calls `update_template` to publish as a new
+  version of the parent template. Posts the result from the publisher agent.
   """
-  def handle_publish(%{session_uri: session_str}, _ctx)
+  def handle_publish(%{session_uri: session_str} = args, _ctx)
       when is_binary(session_str) and session_str != "" do
     case parse_session_uri(session_str) do
       {:ok, session_uri} ->
         workspace_uri = Ezagent.Capability.workspace_of(session_uri)
         caller_uri = Ezagent.Entity.User.admin_uri()
+        caps = MapSet.new([Ezagent.Capability.admin_genesis_cap()])
 
+        # If the user specified a custom template name, create a NEW family.
         result =
-          with {:ok, parent_uri} <- read_parent_template_uri(session_uri) do
-            Ezagent.Orchestrator.Tools.Templates.update_template(
-              session_uri: session_uri,
-              workspace_uri: workspace_uri,
-              caller: caller_uri,
-              caps: MapSet.new([Ezagent.Capability.admin_genesis_cap()]),
-              parent_template_uri: parent_uri
-            )
+          case extract_template_name(args) do
+            {:ok, new_name} ->
+              Ezagent.Orchestrator.Tools.Templates.save_template_as(new_name,
+                session_uri: session_uri,
+                workspace_uri: workspace_uri,
+                caller: caller_uri,
+                caps: caps
+              )
+
+            :use_parent ->
+              with {:ok, parent_uri} <- read_parent_template_uri(session_uri) do
+                Ezagent.Orchestrator.Tools.Templates.update_template(
+                  session_uri: session_uri,
+                  workspace_uri: workspace_uri,
+                  caller: caller_uri,
+                  caps: caps,
+                  parent_template_uri: parent_uri
+                )
+              end
           end
           |> case do
             {:ok, %URI{} = tmpl_uri} ->
@@ -80,6 +94,29 @@ defmodule Ezagent.ActionSet.HelloPublisher do
   def data_owner(_), do: :no_owner
 
   # --- internals --------------------------------------------------------
+
+  # Parse the user's instruction for a custom template name.
+  # Supports: "名字为XXX", "name XXX", "叫XXX", "named XXX", "命名为XXX".
+  # Returns {:ok, name} or :use_parent (fall through to update_template).
+  defp extract_template_name(%{instruction: instruction})
+       when is_binary(instruction) and instruction != "" do
+    patterns = [
+      ~r/名字为\s*[：:]*\s*(\S+)/u,
+      ~r/name\s+(\S+)/i,
+      ~r/叫\s*[：:]*\s*(\S+)/u,
+      ~r/named\s+(\S+)/i,
+      ~r/命名为\s*[：:]*\s*(\S+)/u
+    ]
+
+    Enum.find_value(patterns, :use_parent, fn re ->
+      case Regex.run(re, instruction) do
+        [_, name] -> {:ok, String.trim(name)}
+        nil -> nil
+      end
+    end)
+  end
+
+  defp extract_template_name(_args), do: :use_parent
 
   # Extract a human-readable name from the template URI, e.g.
   # template://system/session/hello-main@hash → "hello-main".
