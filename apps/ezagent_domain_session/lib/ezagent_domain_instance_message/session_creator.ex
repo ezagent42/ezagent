@@ -176,6 +176,27 @@ defmodule EzagentDomainInstanceMessage.SessionCreator do
 
   @spec install_session_socialware(URI.t(), URI.t()) :: :ok | {:error, term()}
   def install_session_socialware(%URI{scheme: "session"} = session_uri, %URI{} = workspace_uri) do
+    # `read_template_working_copy/1` returns the EMPTY default when the Session
+    # Kind is not in the registry, and an empty declaration list is
+    # indistinguishable from "this template declares no agent role slots" (the
+    # `generic` case). Reading a dead Kind would therefore install nothing and
+    # report SUCCESS. Demand-spawn first (idempotent — reuses this module's
+    # existing SpawnRegistry chokepoint, no new spawn writer), then require the
+    # durable declaration `create_session/3` step 4 wrote.
+    _ = demand_spawn_member(session_uri)
+
+    working_copy = Session.read_template_working_copy(session_uri)
+
+    case Map.get(working_copy, :session_template_uri) do
+      %URI{} ->
+        do_install_session_socialware(session_uri, workspace_uri, working_copy)
+
+      _ ->
+        {:error, {:no_template_declaration, session_uri}}
+    end
+  end
+
+  defp do_install_session_socialware(session_uri, workspace_uri, working_copy) do
     effective_owner =
       case Session.owner(session_uri) do
         {:ok, %URI{} = owner} -> owner
@@ -188,8 +209,7 @@ defmodule EzagentDomainInstanceMessage.SessionCreator do
     # is registered NOW rather than the frozen revision, and (b) fail at boot
     # before the definitions are seeded.
     agents =
-      session_uri
-      |> Session.read_template_working_copy()
+      working_copy
       |> Map.get(:member_declarations, [])
       |> TemplateTeam.agent_role_slots()
 

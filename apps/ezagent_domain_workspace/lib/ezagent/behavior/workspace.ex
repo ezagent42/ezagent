@@ -700,13 +700,12 @@ defmodule Ezagent.ActionSet.Workspace do
       # exactly the failure rev6 says must not fail a create.
       trigger_socialware_install(session_uri)
 
-      {:ok,
-       %{
-         session_uri: session_uri,
-         orchestrator_uri: nil,
-         orchestrator_status: :ready,
-         orchestrator_error: nil
-       }, []}
+      # Meta shape matches `create_session_via_facade/4`. The retired
+      # `orchestrator_status: :ready` was already a misrepresentation once the
+      # team materialized asynchronously, and the facade path never carried the
+      # `orchestrator_*` keys at all (`create_session_dispatch_test` asserts their
+      # ABSENCE) — the two create paths must not disagree on their return shape.
+      {:ok, %{session_uri: session_uri}, []}
     end
   end
 

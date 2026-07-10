@@ -355,11 +355,15 @@ defmodule Ezagent.World.ConversationActions do
            &Ezagent.Workspace.create_session/3
          ) do
       {:ok, %URI{} = session_uri} ->
-        # A session created from a PUBLISHED hello template gets its DECLARED team
-        # (orchestrator + builder + concierge) for free: the generic create path
-        # (`Workspace.create_session/3` → `SessionCreator.create_session/3`) runs
-        # `materialize_template_team/4`, which materializes the socialware
-        # `Definition.roles` — no hello-specific orchestrator ensure is needed.
+        # rev6 / #912 — the session returned here is OWNER-ONLY. Its declared team
+        # (`Definition.roles`) is materialized by the post-create
+        # socialware-install transaction that `Workspace.create_session` fires,
+        # NOT inside the create. We deep-link immediately, so a message sent to a
+        # declared `fill: :agent` role during that window has no receiver: routing
+        # surfaces `[:ezagent, :session, :route_provision, :role_not_installed]`
+        # (loud) rather than delivering. TODO(#1294): show an "installing…" state
+        # and surface `:role_not_installed` in the UI — a server-side-only log is
+        # a silent drop at a user-facing surface (Invariant #9).
         {:noreply,
          socket
          |> assign(:last_dispatch_status, "ok")
