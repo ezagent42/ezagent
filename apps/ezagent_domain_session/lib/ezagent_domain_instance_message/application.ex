@@ -448,9 +448,8 @@ defmodule EzagentDomainInstanceMessage.Application do
   # `{:session_template_not_found, "default", "team-alpha"}`.
   #
   # Minimal-viable config: no legacy `members`, empty `routing_rules` (no
-  # auto-routing), and installs `chat` + `orchestrator`. The orchestrator is a
-  # stock socialware Definition materialized through the same install path as
-  # every other default contribution.
+  # auto-routing), and installs only `chat`. Orchestrator can still be installed
+  # by explicit templates/socialware manifests; the stock default stays plain.
   #
   # ## Idempotency (content-addressable)
   #
@@ -460,10 +459,9 @@ defmodule EzagentDomainInstanceMessage.Application do
   # SAME URI and `SpawnRegistry.spawn/1` returns `{:ok, _existing_pid}`
   # — no duplicate row in `kind_snapshots`. Hash inputs include
   # `members`, `routing_rules`, `prompt_templates`, `legends`,
-  # `orchestrator_template_uri`, and
-  # `default_workspace_uri`; `created_at`/`created_by` are explicitly
-  # excluded (see `SessionTemplate.compute_version_hash/1`) so wall-
-  # clock skew across reboots doesn't churn the hash.
+  # `default_workspace_uri`; `created_at`/`created_by` are explicitly excluded
+  # (see `SessionTemplate.compute_version_hash/1`) so wall-clock skew across
+  # reboots doesn't churn the hash.
   #
   # ## Best-effort (won't abort boot)
   #
@@ -473,10 +471,10 @@ defmodule EzagentDomainInstanceMessage.Application do
   # seed.
   # 2026-05-31 orchestrator-startup-atomicity §3 — the `"default"`
   # SessionTemplate is a HARD boot invariant in prod/dev: the
-  # orchestrator-bearing default template MUST exist so `create_session`
-  # can resolve `"default"` (the wizard + Feishu + `mix create_session`
-  # all default to it). If it can't persist, crash the boot LOUDLY rather
-  # than run a system where every default create fails with
+  # plain default template MUST exist so `create_session` can resolve
+  # `"default"` (the wizard + Feishu + `mix create_session` all default to it).
+  # If it can't persist, crash the boot LOUDLY rather than run a system where
+  # every default create fails with
   # `{:session_template_not_found, "default", _}` (fail-loud, no degrade —
   # `feedback_let_it_crash_no_workarounds`).
   #
@@ -496,7 +494,7 @@ defmodule EzagentDomainInstanceMessage.Application do
 
         {:error, reason} ->
           raise "EzagentDomainInstanceMessage boot aborted — the `default` SessionTemplate " <>
-                  "(orchestrator-bearing) could not be persisted (fail-closed, §3): " <>
+                  "could not be persisted (fail-closed, §3): " <>
                   "#{inspect(reason)}. Every `create_session(... template_name: \"default\")` " <>
                   "would fail to resolve the template; refusing to boot."
       end
@@ -621,19 +619,20 @@ defmodule EzagentDomainInstanceMessage.Application do
     content = %{
       name: "default",
       description:
-        "Default session template — orchestrator-only team. Compose " <>
-          "the team via the orchestrator's member + rule-set tools. " <>
+        "Default session template — plain chat session. Compose " <>
+          "agent teams via explicit socialware installs. " <>
           "Seeded under `#{URI.to_string(Ezagent.URI.workspace(workspace_name))}` so " <>
           "`mix ezagent workspace create_session --template-name default` " <>
           "and the LV New-session form resolve without operator setup.",
       # team-routing-unification §3.7 (PR-7) — SessionTemplate content carries
       # `members` (in_session_template members) / `prompt_templates` / `legends`;
       # `agent_slots` is NO LONGER a content field (PR-8 removes the slot tools).
-      # The default template delegates stock front-desk provisioning to the
-      # orchestrator socialware Definition; legacy `members` stays empty.
+      # Main hotfix 2026-07-10 — keep default session creation independent of
+      # orchestrator install/readiness. Explicit templates may still install
+      # orchestrator socialware; the stock default stays plain.
       members: [],
       prompt_templates: %{},
-      installs: ["chat", "orchestrator"],
+      installs: ["chat"],
       legends: %{},
       routing_rules: [],
       default_workspace_uri: workspace_uri,
@@ -692,8 +691,8 @@ defmodule EzagentDomainInstanceMessage.Application do
 
         Logger.error(
           "seed_default_session_template: persist failed: #{inspect(reason)} — " <>
-            "the orchestrator-bearing `default` SessionTemplate is the boot " <>
-            "invariant create_session resolves `template_name: \"default\"` against. " <>
+            "the plain `default` SessionTemplate is the boot invariant " <>
+            "create_session resolves `template_name: \"default\"` against. " <>
             "§3 hard-fails boot in prod/dev on this error."
         )
 
