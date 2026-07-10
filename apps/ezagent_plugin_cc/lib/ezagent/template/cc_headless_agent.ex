@@ -32,6 +32,17 @@ defmodule Ezagent.PluginCc.Template.CcHeadlessAgent do
   @impl Ezagent.Agent.CredentialAdapter
   def auth_failure_signals, do: Ezagent.PluginCc.Template.CcAgent.auth_failure_signals()
 
+  # #1309 — the node's HOST claude login home, SAME source as `cc` (cc-headless
+  # inherits the host login identically to cc-pty; the whole point is parity).
+  # `host_login_dir/0` is an OPTIONAL CredentialAdapter callback, so its omission
+  # produced NO compiler warning — yet `CredentialAdapter.host_login_source_dir/1`
+  # gates on `function_exported?(mod, :host_login_dir, 0)`, so without this delegate
+  # the gate resolved to `:none`, #1209's installer host-login adoption chain
+  # (`DefinitionAgents` → `HostLoginAdopt.ensure_installer_source`) silently no-oped,
+  # and the materialized cc-headless config home never got `.credentials.json` → 401.
+  @impl Ezagent.Agent.CredentialAdapter
+  def host_login_dir, do: Ezagent.PluginCc.Template.CcAgent.host_login_dir()
+
   @impl Ezagent.Agent.CredentialAdapter
   def refresh_test_credentials(source, home, opts \\ []) do
     Ezagent.PluginCc.Template.CcAgent.refresh_test_credentials(source, home, opts)
