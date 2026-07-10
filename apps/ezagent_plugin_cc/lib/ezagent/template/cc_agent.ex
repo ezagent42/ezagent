@@ -872,6 +872,17 @@ defmodule Ezagent.PluginCc.Template.CcAgent do
       pty_server_alive?(agent_uri) ->
         :ok
 
+      # Chain B (#1096) — this is the cold-restart SELF-HEAL hook, but since #1096
+      # threaded the sandbox state into the Agent Kind's init args it also fires on
+      # a FRESH create, where `spawn_for_local_pty/3` has not copied the config home
+      # yet. Launching `claude` there gives it no credentials, and the following
+      # `stage_and_swap` renames the dir out from under it → bridge never joins →
+      # ReadyGate stuck `:not_ready`. Decline; the fresh launch happens in-order
+      # inside `spawn_for_local_pty/3`. Forensics:
+      # `docs/together/2026-07-09/cc-orchestrator-create-blocking-rootcause.zh_cn.md`.
+      not config_dir_materialized?(agent_uri, respawn_data) ->
+        {:error, {:config_dir_not_materialized, agent_uri}}
+
       true ->
         with {:ok, respawn_data} <-
                Ezagent.Credential.CascadeRuntime.rehydrate_respawn_data(agent_uri, respawn_data) do
@@ -886,6 +897,17 @@ defmodule Ezagent.PluginCc.Template.CcAgent do
   end
 
   def ensure_subprocess_alive(_, _), do: {:error, :invalid_args}
+
+  # `nil` config home = the agent has none (claude falls back to `~/.claude`):
+  # nothing to materialize, so nothing to wait for. Otherwise the home must be
+  # launchable — see `HomeRuntime.config_dir_launchable?/2`; a bare `File.dir?/1`
+  # is not enough (the onboarding write `mkdir_p`s the dir before the copy).
+  defp config_dir_materialized?(%URI{} = agent_uri, respawn_data) do
+    case Ezagent.PluginCc.Template.CcAgent.Spawn.resolve_config_home(agent_uri, respawn_data) do
+      nil -> true
+      dir -> Ezagent.Credential.HomeRuntime.config_dir_launchable?(dir, __MODULE__)
+    end
+  end
 
   # Create a fresh per-agent config dir by copying the template's
   # reference dir into the agent-private location.

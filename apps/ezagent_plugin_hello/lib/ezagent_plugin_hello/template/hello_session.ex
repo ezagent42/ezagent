@@ -40,8 +40,13 @@ defmodule EzagentPluginHello.Template.HelloSession do
       session_uri = Ezagent.URI.session(workspace_name, :hello, session_name)
       fresh? = not LocalRuntime.kind_alive?(session_uri)
 
-      case App.ensure_app(workspace_name, session_name) do
-        {:ok, ^session_uri, _orch_uri} ->
+      # rev6 / #912 — `instantiate/3` runs INSIDE the `workspace.create_session`
+      # dispatch, so it may create the session and its config but MUST NOT spawn
+      # the declared team. `Workspace.create_session` fires the socialware-install
+      # transaction once this returns. (`App.ensure_app/3` is the create+install
+      # composite, for boot seeding and tests.)
+      case App.create_app(workspace_name, session_name) do
+        {:ok, ^session_uri} ->
           {:ok, [session_uri], %{fresh?: fresh?, vertical: :hello}}
 
         {:error, _reason} = error ->

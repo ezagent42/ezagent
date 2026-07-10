@@ -770,6 +770,34 @@ defmodule Ezagent.ActionSet.Sandbox do
       :ok ->
         :ok
 
+      # On a FRESH create this is EXPECTED: the Template Class's own spawn path
+      # materializes the per-agent config home moments after the Kind starts and
+      # launches the subprocess in order, while `activate/2` (the cold-restart
+      # self-heal hook) correctly declines to launch against an unmaterialized
+      # home (#1096 / chain B). Logging that at `:error` would make every cc
+      # create look broken.
+      #
+      # On a COLD RESTART the same reason means the config home was deleted or
+      # never committed — a REAL fault that leaves the agent permanently without a
+      # subprocess. We cannot tell the two apart from here, so: log at `:info`
+      # (not `:debug`, which is off in prod) and ALWAYS emit the telemetry event.
+      # A `:not_ready` agent that keeps re-emitting this is the fault signal.
+      {:error, {:config_dir_not_materialized, _uri} = reason} ->
+        Logger.info(
+          "Ezagent.ActionSet.Sandbox.activate: #{inspect(template_class)} config home for " <>
+            "#{inspect(self_uri)} is not materialized — deferring the subprocess launch to " <>
+            "the Template Class's spawn path. Expected on a fresh create; on a RESTART it " <>
+            "means the config home is gone and the agent will stay subprocess-less."
+        )
+
+        :telemetry.execute(
+          [:ezagent, :sandbox, :config_dir_not_materialized],
+          %{count: 1},
+          %{uri: self_uri, template_class: template_class, reason: reason}
+        )
+
+        :ok
+
       {:error, reason} ->
         Logger.error(
           "Ezagent.ActionSet.Sandbox.activate: " <>

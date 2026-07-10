@@ -42,7 +42,7 @@ defmodule EzagentPluginHello.Template.HelloSessionTest do
   end
 
   describe "instantiate/3" do
-    test "stands up a creatable hello app: session + materialized Definition.roles team" do
+    test "stands up a creatable hello app: session + declared (not spawned) team" do
       ws = "hello-tmpl-#{System.unique_integer([:positive])}"
       {:ok, _} = Workspace.create(ws, %{})
       workspace_uri = Ezagent.URI.workspace(ws)
@@ -53,12 +53,29 @@ defmodule EzagentPluginHello.Template.HelloSessionTest do
 
       assert session_uri == Ezagent.URI.session(ws, :hello, "main")
 
-      # The DECLARED team (orchestrator + builder + concierge) is materialized from
-      # `Definition.roles` — each joins as a member with its `role_name` facet at a
-      # PLANNED (UUID) URI (the `orch_`/`hello_`/`concierge_` convention is retired,
-      # so members are resolved by role, not name). Materialization is synchronous
-      # (no deadlock materializing inside the workspace process — the standard
-      # socialware create path does the same), so the team is present on return.
+      # rev6 / #912 — `instantiate/3` runs inside the `workspace.create_session`
+      # dispatch, so it creates the session + its config and RECORDS the declared
+      # team as `member_declarations`. It spawns nothing. Before this split it
+      # materialized four role agents (plus the `requires`-pulled cc orchestrator)
+      # right here, which is why `hello` kept timing out at the 5s dispatch budget
+      # after `default` had already been decoupled.
+      assert :error = Members.role_uri(session_uri, "front-desk")
+
+      declarations =
+        session_uri
+        |> Ezagent.Entity.Session.read_template_working_copy()
+        |> Map.get(:member_declarations, [])
+        |> Enum.map(&(Map.get(&1, :role_name) || Map.get(&1, "role_name")))
+
+      assert "front-desk" in declarations
+      assert "builder" in declarations
+      assert "concierge" in declarations
+
+      # `Workspace.create_session` fires this transaction once the owner-only
+      # session is durable; drive it synchronously here.
+      assert :ok =
+               EzagentDomainInstanceMessage.SessionCreator.install_session_socialware(session_uri)
+
       assert {:ok, orch_uri} = Members.role_uri(session_uri, "front-desk")
       assert {:ok, _builder_uri} = Members.role_uri(session_uri, "builder")
       assert {:ok, _concierge_uri} = Members.role_uri(session_uri, "concierge")
