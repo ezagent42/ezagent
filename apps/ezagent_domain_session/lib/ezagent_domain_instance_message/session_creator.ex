@@ -409,6 +409,10 @@ defmodule EzagentDomainInstanceMessage.SessionCreator do
   def demand_spawn_member(%URI{} = member_uri), do: Ezagent.SpawnRegistry.spawn(member_uri)
 
   @doc false
+  def join_session_members(%URI{} = session_uri, members) when is_list(members),
+    do: Materializer.join_session_members(session_uri, members)
+
+  @doc false
   def list_caps_for_materialization(%URI{} = actor_uri),
     do: Ezagent.Identity.list_caps_for(actor_uri)
 
