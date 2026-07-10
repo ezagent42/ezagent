@@ -347,13 +347,13 @@ defmodule EzagentWeb.SessionController do
         :ok
 
       true ->
-        do_send_magic_link(email, ip)
+        do_send_magic_link(conn, email, ip)
     end
   end
 
-  defp do_send_magic_link(email, ip) do
+  defp do_send_magic_link(conn, email, ip) do
     {:ok, raw} = Ezagent.Entity.MagicLinkToken.mint(email)
-    link = EzagentWeb.Endpoint.url() <> "/auth/magic/" <> raw
+    link = EzagentWeb.UrlHelper.request_base_url(conn) <> "/auth/magic/" <> raw
 
     case EzagentWeb.Mailer.deliver_magic_link(email, link) do
       {:ok, _} ->
