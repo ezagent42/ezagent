@@ -115,6 +115,9 @@ defmodule Mix.Tasks.Ezagent.Auth.MagicLink do
 
   defp do_send(email) do
     {:ok, raw} = Ezagent.Entity.MagicLinkToken.mint(email)
+    # CLI has no request context (no `conn`), so unlike the controllers it cannot
+    # derive the base URL from the request host — keep the statically configured
+    # `Endpoint.url/0`. (Controllers use `EzagentWeb.UrlHelper.request_base_url/1`.)
     link = EzagentWeb.Endpoint.url() <> "/auth/magic/" <> raw
 
     case EzagentWeb.Mailer.deliver_magic_link(email, link) do
