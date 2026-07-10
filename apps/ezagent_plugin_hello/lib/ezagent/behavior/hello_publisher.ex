@@ -36,7 +36,7 @@ defmodule Ezagent.ActionSet.HelloPublisher do
               EzagentPluginHello.TurnDriver.say(
                 session_uri,
                 Ezagent.Entity.User.admin_uri(),
-                "Template published: #{URI.to_string(tmpl_uri)}"
+                "New template version: #{URI.to_string(tmpl_uri)}"
               )
 
           {:error, reason} ->
@@ -44,7 +44,7 @@ defmodule Ezagent.ActionSet.HelloPublisher do
               EzagentPluginHello.TurnDriver.say(
                 session_uri,
                 Ezagent.Entity.User.admin_uri(),
-                "Publish failed: #{inspect(reason)}"
+                "Template save failed: #{inspect(reason)}"
               )
         end
 

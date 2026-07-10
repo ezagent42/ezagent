@@ -60,7 +60,7 @@ defmodule Ezagent.ActionSet.HelloSharer do
       EzagentPluginHello.TurnDriver.say(
         session_uri,
         Ezagent.Entity.User.admin_uri(),
-        "Share link: #{share_url}"
+        "Public URL: #{share_url}"
       )
 
     :ok

@@ -24,7 +24,7 @@ defmodule EzagentPluginHello.Router do
   # The front-desk's own worker roles (builder + concierge) — their output must
   # never re-route back (loop guard). The platform orchestrator (`requires:
   # ["orchestrator"]`) is NOT a hello worker.
-  @worker_roles ["builder", "concierge"]
+  @worker_roles ["builder", "concierge", "sharer", "publisher"]
 
   @doc """
   Route `user_text` (sent by `sender`) in `session_uri` to the builder's
