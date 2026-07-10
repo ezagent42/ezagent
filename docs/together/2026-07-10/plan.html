@@ -1,0 +1,88 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>dev-together 计划 — 2026-07-10</title>
+<style>
+  body{font:14px/1.6 -apple-system,"Segoe UI",Roboto,"PingFang SC","Microsoft YaHei",sans-serif;color:#1a1a1a;max-width:1100px;margin:24px auto;padding:0 20px;background:#fff}
+  h1{font-size:24px;border-bottom:3px solid #059669;padding-bottom:8px}
+  h2{font-size:19px;margin-top:30px;color:#047857;border-left:4px solid #059669;padding-left:10px}
+  h3{font-size:15px;margin-top:18px;color:#374151}
+  table{border-collapse:collapse;width:100%;margin:12px 0;font-size:13px}
+  .scroll{overflow-x:auto}
+  th,td{border:1px solid #d1d5db;padding:7px 9px;text-align:left;vertical-align:top}
+  th{background:#ecfdf5;font-weight:600}
+  tr:nth-child(even){background:#f9fafb}
+  .meta{background:#f0fdf4;border:1px solid #bbf7d0;border-radius:8px;padding:10px 16px;margin:12px 0;font-size:13px}
+  .gate{background:#fffbeb;border:1px solid #fde68a;border-radius:8px;padding:12px 16px;margin:14px 0}
+  .chain{font-family:ui-monospace,SFMono-Regular,Menlo,monospace;font-size:13px;line-height:1.9;white-space:pre;overflow-x:auto;background:#f8fafc;border:1px solid #e2e8f0;border-radius:8px;padding:12px 16px;margin:10px 0}
+  .gap{background:#fef2f2;border-left:3px solid #ef4444;padding:8px 14px;margin:8px 0}
+  code{background:#f1f5f9;padding:1px 5px;border-radius:4px;font-size:12px}
+  .pr1{color:#047857;font-weight:600}.defer{color:#b45309;font-weight:600}
+  ol.steps{margin:6px 0 6px 22px}ol.steps li{margin:3px 0}
+</style>
+</head>
+<body>
+<h1>dev-together 计划 · 2026-07-10</h1>
+<div class="meta">
+<b>本周目标（W28）：</b>在 stable 上验证 socialware 全生命周期 + 打通官网全流程；本周新增结构线 —— <b>收敛 agent 控制面边界</b>（session 面不再伸手进 agent 生命周期）。<br>
+<b>本日头号目标：</b>落地并在 <b>canary 实测</b> create_session 根因修复（<b>#1294</b>）—— 让"新建 session 5 秒超时"和"@orchestrator 不回话"这条困扰一周的链，在真实部署上验证为真绿；并由 lead 把急症修复上升为<b>结构性边界</b>（AgentRuntime 控制面 in-repo 硬边界）。
+</div>
+
+<h2>§0 昨日（07-09）收尾状态</h2>
+<ul>
+<li><b>已进 main / 已晋级</b>：P1-P3 skill 分发（#1266，<code>364ccf6ba</code>，stable 已晋级）· #1295 seed-loader 去重 · #1276 world 模板 UX + cc dev-channel 探针 + PTY 会话面（squash <code>2df027f58</code>，合入前补齐 4 道行锚 gate）。</li>
+<li><b>昨日头号未落</b>：Track C（create_session 根因）。gaga 昨夜产出 <b>#1294</b>，诊断为<b>两条被 #1223 焊接的独立链</b>（链 A 创建事务 eager-spawn orchestrator + 链 B cc PTY 在 config_dir 物化前早产）。<b>#1294 仍在评审 + 未 canary 实测</b> → 转为本日头号。</li>
+<li><b>07-09 走直接 PR 合入（未进 <code>returns/</code> 台账，据 GitHub 更正）</b>：zhaomato <b>#1277</b>（hello v2 seed page + rebuild guide + domain fixes）· ruihua <b>#1204</b>（官网飞轮 handoff + scenarios）。</li>
+<li><b>仍无归档、需确认/结转</b>：zyli canary 走查 · jjkysy #1255 三命名裁定（无 return 亦无对应 PR → 本日确认状态，不默认已完成）。</li>
+</ul>
+
+<h2>§1 头号 — create_session 根因落地 + canary 实测（#1294）</h2>
+<div class="gate">
+昨日审计断的那一面。#1294 把 agent 事务整个移出创建路径，恢复 #912 契约（<b>"Session creation never waits for a transport bridge"</b>）。<b>验证的红线</b>：test 环境跳过 <code>require_transport_join</code>、短路 <code>:exec.run</code>，所以"bridge 真 join、orchestrator 翻 <code>:ready</code> 并回话" <b>只有 canary 能证</b>。DoD 因此分两段：
+<ol class="steps">
+<li><b>CI 绿 + 合并</b>（coordinator 派的 subagent 在做）；</li>
+<li><b>canary 上实测 orchestrator 真回话</b>（gaga + coordinator）——②达成前<b>不发"修好"通报</b>。</li>
+</ol>
+</div>
+
+<h2>§2 按开发者规划</h2>
+<p style="font-size:12px;color:#6b7280">每行 = 一个自含闭环 track。coordinator 为 off-plan support，不占 track 行。</p>
+<div class="scroll"><table>
+<tr><th>开发者</th><th>feishu</th><th>本日 track</th><th>闭环 / 依赖说明</th></tr>
+<tr><td><b>allenwoods</b></td><td>林懿伦</td><td><span class="pr1">结构线：AgentRuntime 控制面 in-repo 边界（SPEC + 可量化 gate）</span> —— 把 #1294 的急症修复上升为命名边界：<code>AgentRuntime</code> = 对 recipe×flavor <b>物化成果</b> 的封装（谁托管/运行 agent = 控制面：物化 + 生命周期），与 <code>Session</code>（谁在跟它对话 = role/session 面）分开。产出：① 边界 SPEC（控制面/会话面接缝、in-repo vs out-of-repo 的分界与代价）；② <code>agent_runtime_boundary</code> arch gate —— 把 #1294 的 A2 gate（禁创建事务里 spawn/grant/materialize）<b>泛化</b>为对"session 面伸手进 agent 生命周期"的数值化度量（模块图可达性计数），让边界模糊可测、可 ratchet</td><td>独立结构线；建立在 #1294 落地之上（A2 gate 已是第一颗种子）。coordinator 备 codex 对抗评审</td></tr>
+<tr><td><b>gagameow</b></td><td>黄佳佳</td><td><span class="pr1">头号：#1294 落地 + canary 实测</span> —— ① 配合 coordinator 的 subagent 把 #1294 rebase/绿/合入；② <b>canary 实测</b>：新建 session 不超时 + @orchestrator 真回话（agent-browser 截图 + PTY join 日志）；③ 三个 deferral 定夺/开单：mark_failed 不 drain PendingDelivery（静默丢消息洞）· #1277 hello <code>HELLO_NO_ORCHESTRATOR</code> 与 manifest <code>requires</code> 打架（<b>dev 绿/canary 红</b>的真实分叉）· LV 缺"正在装载 orchestrator…"中间态</td><td>头号；②依赖 #1294 合入 canary 自动部署</td></tr>
+<tr><td><b>zhaomaota97</b></td><td>张宁</td><td><b>官网 hello session live E2E 确认</b>（重建工具/指南已随 <b>#1277</b> 合入 07-09）：在部署渠道上归档旧 golive session（#1243 前旧 Definition 的 stale 实例）→ 从新 Definition <code>ensure_app</code>/instantiate → <b>E2E 验证 greeter + curl-llm 真回复</b></td><td>直接 PR 已合（#1277）；<b>live E2E 能力上依赖 #1294 落 canary</b>（orchestrator 真回话是 hello front-desk relay 的前提）；可先在 nightly 起步</td></tr>
+<tr><td><b>zyli-developer</b></td><td>李震宇</td><td><b>canary 用户视角走查</b>（07-09 结转，未归档 return → 先确认状态）：以真实用户走查 canary（含刚合入的 #1276 world 模板 UX + PTY 面）；<b>#1294 落 canary 后重点复走</b> create_session + @orchestrator 回话；发现即记录/开 issue；C2 = #1245 卸载 UI 浏览器路径绿态截图</td><td>在带全部修复的 canary 上走查</td></tr>
+<tr><td><b>jjkysy</b></td><td>姚升悦</td><td>① <b>#1255 三命名裁定</b>（07-09 结转）：AgentPassiveAttributes / RuntimeIdentity / EntityPresenter，裁定写回 allowlist/issue；② <b>dev-together 方法增量 PR</b>（skill owner）：把本周两条 method-delta 写进 handoff 标准 / return DoD —— (a) <b>静态 gate 拓扑</b>：return 前必跑完整 <code>ci.local</code>（arch+doc+<b>uri_query</b>+check_invariants），改动含行锚豁免文件尤甚（#1276 四道 gate 连环教训）；(b) <b>机器闸 ≠ 产品验证</b>：动 orchestrator/session-create/PTY 就绪的 PR，合并后<b>必须 canary 实测再宣布</b>（#1294 + 历史教训）</td><td>独立；②是学习回路的写回，jjkysy 是 skill 单一写者</td></tr>
+<tr><td><b>ruihuachen-designer</b></td><td>陈瑞华</td><td><b>刷新后 canary/stable 探索式测试</b>：发消息延迟、session 创建、会话列表、官网 hello；发现走 Feishu</td><td>依赖 canary 刷新</td></tr>
+</table></div>
+<p style="font-size:13px;color:#374151"><b>Off-plan（support · coordinator）</b>：① 驱动 #1294 subagent → 对抗评审（含 A2 gate 破坏性验证）+ rebase + 完整 gate 集 + 合入 → 与 gaga 一起 <b>canary 实测 orchestrator 回话</b>；② 两条基建 follow-up：(a) mac runner 预缓存 tailwindcss 二进制（消 GitHub-releases 504 反复 flake，#1276 收尾撞到）· (b) 把静态 gate 拓扑写进 <code>docs/together/contributing/</code>；③ 备 Allen 的 AgentRuntime SPEC codex 对抗评审。</p>
+
+<h2>§3 依赖与顺序 / 并行</h2>
+<ul>
+<li><b>头号串行段</b>：#1294 subagent 绿 → 合入 main → canary 自动部署 → gaga+coordinator canary 实测。zhaomato / zyli 的 canary 复走在 #1294 落 canary 后最有价值，但都可先在 nightly / 现有 canary 起步，不必空等。</li>
+<li><b>全程并行</b>：Allen AgentRuntime SPEC（独立结构线）· jjkysy ①② · ruihua 探索 · coordinator 基建 follow-up。</li>
+<li><b>依赖注记</b>：官网 hello（zhaomato）与 create_session 回话（#1294）是<b>能力依赖</b>而非分支依赖——orchestrator 真回话是 hello front-desk relay 的前提。</li>
+</ul>
+
+<h2>§4 out-of-scope / backlog（登记）</h2>
+<ul>
+<li>socialware 全生命周期验证（C1，07-08→07-09 结转）：#1294 落地 + 官网 hello 通后有余力再系统跑一遍；本日不设硬目标。</li>
+<li><code>admin?/1</code> 业务态清理：#1299 gate（SOUND-WITH-NOTES）待 Allen 合入定夺 + 两条 follow-up（uploads roster-member 下载、gate alias/import 加固）——登记，非本日硬目标。</li>
+<li>CapBAC vs RBAC（#1296）/ agent-layer 边界（#1297）设计 PR：待 Allen 读后定是否形成重构线；AgentRuntime 边界 track 是其中"agent-layer"一支的落地。</li>
+<li>git-filter-repo 历史重写：仍需 dev 窗口冻结（延续登记）。</li>
+</ul>
+
+<h2>§5 协作约束</h2>
+<ul>
+<li>CI 闸：进 main 的 PR 需 <code>precommit + check_invariants</code> 绿 + rebase；<b>return 前跑完整 <code>ci.local</code></b>（含 <code>uri_query.scan</code>——它只在 full-suite，不在 check_invariants；#1276 教训）；改动含<b>行锚豁免</b>文件必<b>重锚</b>不新增 allowlist；判"绿"以每个 check 最终结论为准，不以数量为准。</li>
+<li><b>动 orchestrator/session-create/PTY 就绪的改动</b>：合并后 <b>canary 实测再宣布</b>（#1294 红线）。</li>
+<li>评审基准 = <code>origin/main</code>；验证面向真实生产流程；UI 验证 agent-browser 截图第一、日志第二。</li>
+<li>full-suite 若仅因 tailwindcss GitHub-releases 504 挂 asset build（<code>Couldn't fetch …tailwindcss-macos-arm64</code>）= 已知 infra flake，重跑失败 job，非代码问题。</li>
+</ul>
+
+<p style="margin-top:24px;color:#9ca3af;font-size:12px">本计划面向全体开发者。Markdown 版见 <code>plan.md</code>。</p>
+</body>
+</html>

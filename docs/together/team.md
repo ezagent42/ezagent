@@ -1,6 +1,6 @@
 # Dev Together Team
 
-_Last checked: 2026-07-08_
+_Last checked: 2026-07-10_
 
 The durable roster for `dev-together`. **Row identity = `github_username`** (the
 canonical key; it joins to PR authorship). `dev-together plan` reads this file,
@@ -14,13 +14,13 @@ it exists so the long GitHub key joins to the short name plans cite.
 
 | github_username | short_name | role | feishu_name | current_track | latest_return | timezone | github_lookup |
 |---|---|---|---|---|---|---|---|
-| `zyli-developer` | zyli | human-dev | 李震宇 | 0709 #1245 卸载 UI 浏览器路径绿态收尾（#1259 已解阻冷 provision） | `2026-07-08/returns/socialware-uninstall-ui-agent-browser.md` | GMT+8 | verified org member |
-| `gagameow` | gaga | human-dev | 黄佳佳 | 0709 自举 Track C 修通（socialware author/install + @mention :unauthorized）+ #1256 agent×flavor 设计续 | n/a（#1247 审计草稿 + #1256，无 return 文件——07-08 流程债） | GMT+8 | verified |
-| `zhaomaota97` | zhaomato | human-dev | 张宁 | 0709 官网 hello session 重建（#1243 后：归档旧 → 新 Definition 重建 → greeter + curl-llm E2E） | n/a（#1243 已合，无 return 文件——07-08 流程债） | GMT+8 | verified org member |
+| `zyli-developer` | zyli | human-dev | 李震宇 | canary 用户走查 + #1245 卸载 UI 截图 | `#1276 (2026-07-09)` | GMT+8 | verified org member |
+| `gagameow` | gaga | human-dev | 黄佳佳 | #1294 create_session 根因（rev6 契约恢复 + cc PTY 早产修复）— 落地 + canary 实测 | `#1294 (2026-07-09, forensics: 2026-07-09/cc-orchestrator-create-blocking-rootcause.zh_cn.md)` | GMT+8 | verified |
+| `zhaomaota97` | zhaomato | human-dev | 张宁 | 官网 hello live E2E 确认（重建工具 #1277 已合） | `#1277 (2026-07-09)` | GMT+8 | verified org member |
 | `FatNine` | fatnine | human-dev | 戴明 | 0701 Agent Console one complete prototype path | `2026-06-30/returns/fatnine-agent-console-completeness-ia.md` | GMT+8 | verified |
-| `allenwoods` | allen | lead | 林懿伦 | dev-together lead (plan/handoff/close/review) + own tracks；**07-09 缺席，事项委派 jjkysy 代理** | n/a | GMT+9 | verified |
-| `jjkysy` | jjkysy | human-dev | 姚升悦 | 0709 Allen 代理日：P1-P3 合入定夺 + stable 晋级 + #1255 命名裁定 + seed-loader 去重（deploy-seed 车道 07-08 全量 DONE） | `2026-07-08/returns/kanban-deploy-seed-migration.md` | GMT+8 | verified |
-| `ruihuachen-designer` | ruihua | designer | 陈瑞华 | 0709 刷新后 nightly/stable 探索式测试 + WorldConversationTest flaky 复现 | n/a | GMT+8 | verified |
+| `allenwoods` | allen | lead | 林懿伦 | AgentRuntime 控制面 in-repo 边界 SPEC + gate（结构线） | n/a | GMT+9 | verified |
+| `jjkysy` | jjkysy | human-dev | 姚升悦 | #1255 三命名裁定 + dev-together method-delta 写回 | `#1295 seed-loader-dedup (2026-07-09)` | GMT+8 | verified |
+| `ruihuachen-designer` | ruihua | designer | 陈瑞华 | 0709 刷新后 nightly/stable 探索式测试 + WorldConversationTest flaky 复现 | `#1204 (2026-07-09)` | GMT+8 | verified |
 | `claude` | claude | agent | — | off-plan support (orchestration / fixes on request) | n/a | — | n/a |
 | `codex` | codex | agent | — | off-plan support (bounded verifiable sub-tasks) | n/a | — | n/a |
 
@@ -59,9 +59,9 @@ go-live reseed provisions.
 | github | background | 强项 / 适合任务（动态，据 review） |
 |---|---|---|
 | `allenwoods` (林懿伦) | 全栈工程师 · 背景 AI 博士 · 当期职责 lead programmer | 架构/地基、对抗评审驱动的大改造、跨域整合、运行时、部署。架构熟悉度最高。6-25：独力 A+B+C + RF-1..9 + kanban-as-role + py-agent + deploy |
-| `jjkysy` (姚升悦) | 全栈工程师 · 背景 AI 博士 · 当期职责 lead programmer | 架构/原则把关（主动发现 kanban 原则问题）、kanban 插件原作（#964 13.5k LOC）、dev-together skill owner。适合地基/流程/评审 |
-| `gagameow` (黄佳佳) | 运维工程师 | 部署/运维、agent console（6-25）、agent 配置验证。运维 + 产品 sense |
-| `zyli-developer` (李震宇) | 全栈工程师 | 全栈、E2E 体系、Feishu 适配/产品缺口。端到端验证强 |
+| `jjkysy` (姚升悦) | 全栈工程师 · 背景 AI 博士 · 当期职责 lead programmer | 架构/原则把关（主动发现 kanban 原则问题）、kanban 插件原作（#964 13.5k LOC）、dev-together skill owner。适合地基/流程/评审。7-09：#1295 揪出 duplicate-fn baseline 虚高（46 实为 42），强化"记账/原则把关" |
+| `gagameow` (黄佳佳) | 运维工程师 | 部署/运维、agent console（6-25）、agent 配置验证。运维 + 产品 sense。7-09：#1294 根因诊断——create_session 两链（#1223 焊接）解耦，reproduce-first 识破 decouple_test 断言反转。强化"根因诊断/架构级排查" |
+| `zyli-developer` (李震宇) | 全栈工程师 | 全栈、E2E 体系、Feishu 适配/产品缺口。端到端验证强。7-09：#1276 大 PR 连环触发 4 道行锚 gate（本地只跑单 gate）→ 派发注记：大 PR/动行锚文件本地跑全套 gate |
 | `zhaomaota97` (张宁) | 全栈工程师 | 全栈、前端 json-render / hello 渲染底座。前端/渲染强 |
 | `FatNine` (戴明) | 后端工程师 | 后端 / core |
 | `ruihuachen-designer` (陈瑞华) | 产品经理 | 产品/设计版式、可外发文档版式输入（设计输入，不改代码） |
