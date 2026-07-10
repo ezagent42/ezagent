@@ -6,7 +6,7 @@
 
 ```bash
 cd /home/ning/ezagent
-PORT=10042 HELLO_DEMO_SEED=1 HELLO_DEMO_WS=system HELLO_DEMO_NAME=main mix phx.server
+PORT=10042 HELLO_LLM_BACKEND=claude_code HELLO_DEMO_SEED=1 HELLO_DEMO_WS=system HELLO_DEMO_NAME=main mix phx.server
 ```
 
 启动后 session `session://system/hello/main` 自动创建，v2 页面(body + shell CSS)自动写入。
