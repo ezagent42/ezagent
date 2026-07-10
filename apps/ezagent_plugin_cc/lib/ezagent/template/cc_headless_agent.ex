@@ -262,8 +262,6 @@ defmodule Ezagent.PluginCc.Template.CcHeadlessAgent do
       config_dir: config_dir,
       session_id: Map.get(tmpl, "claude_session_id") || new_session_id(),
       permission_mode: Map.get(tmpl, "permission_mode", "default"),
-      cmd_env:
-        Ezagent.PluginCc.Template.SpawnPlan.maybe_put_cli_identity_env(%{}, agent_uri, tmpl),
       model: Map.get(tmpl, "model"),
       effort: Map.get(tmpl, "effort") || Map.get(tmpl, "claude_effort"),
       cli_path: Map.get(tmpl, "claude_cli_path"),
@@ -277,7 +275,14 @@ defmodule Ezagent.PluginCc.Template.CcHeadlessAgent do
       # worker applies it as the Claude Code SDK subprocess `env=`, so headless
       # deepseek talks to the DeepSeek endpoint exactly like the pty path. The
       # deepseek instantiate already fail-fasts on a missing DEEPSEEK_API_KEY.
-      cmd_env: provider_cmd_env(tmpl),
+      # 叠加 T7d CLI 身份 env（SDK 车道与 SpawnPlan pty 车道 parity）——provider
+      # env 打底、身份 env 覆盖，单一 cmd_env 键（1.19 对 map 重复键 warning）。
+      cmd_env:
+        Ezagent.PluginCc.Template.SpawnPlan.maybe_put_cli_identity_env(
+          provider_cmd_env(tmpl),
+          agent_uri,
+          tmpl
+        ),
       uv_path: Map.get(tmpl, "uv_path"),
       python_path: Map.get(tmpl, "python_path"),
       sdk_worker_path: Map.get(tmpl, "sdk_worker_path")
