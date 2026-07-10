@@ -1622,7 +1622,12 @@ defmodule EzagentWeb.WorldConversationTest do
       Path.join(System.tmp_dir!(), "cc-ws-cred-src-#{System.unique_integer([:positive])}")
 
     File.mkdir_p!(src_dir)
-    File.write!(Path.join(src_dir, ".credentials.json"), ~s({"claudeAiOauth":{"accessToken":"T"}}))
+
+    File.write!(
+      Path.join(src_dir, ".credentials.json"),
+      ~s({"claudeAiOauth":{"accessToken":"T"}})
+    )
+
     on_exit(fn -> File.rm_rf(src_dir) end)
 
     source_uri =
