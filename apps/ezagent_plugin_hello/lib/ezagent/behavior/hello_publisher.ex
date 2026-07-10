@@ -31,8 +31,20 @@ defmodule Ezagent.ActionSet.HelloPublisher do
       when is_binary(session_str) and session_str != "" do
     case parse_session_uri(session_str) do
       {:ok, session_uri} ->
+        workspace_uri = Ezagent.Capability.workspace_of(session_uri)
+        caller_uri = Ezagent.Entity.User.admin_uri()
+
         result =
-          case Ezagent.Orchestrator.Tools.Templates.update_template(session_uri: session_uri) do
+          with {:ok, parent_uri} <- read_parent_template_uri(session_uri) do
+            Ezagent.Orchestrator.Tools.Templates.update_template(
+              session_uri: session_uri,
+              workspace_uri: workspace_uri,
+              caller: caller_uri,
+              caps: MapSet.new([Ezagent.Capability.admin_genesis_cap()]),
+              parent_template_uri: parent_uri
+            )
+          end
+          |> case do
             {:ok, %{template_uri: tmpl_uri}} ->
               "New template version: #{URI.to_string(tmpl_uri)}"
 
@@ -64,6 +76,16 @@ defmodule Ezagent.ActionSet.HelloPublisher do
   def data_owner(_), do: :no_owner
 
   # --- internals --------------------------------------------------------
+
+  # Read the session's parent template URI from its working copy.
+  defp read_parent_template_uri(%URI{} = session_uri) do
+    wc = Ezagent.Entity.Session.read_template_working_copy(session_uri)
+
+    case Map.get(wc || %{}, :session_template_uri) || Map.get(wc || %{}, "session_template_uri") do
+      %URI{} = uri -> {:ok, uri}
+      nil -> {:error, :no_template_bound}
+    end
+  end
 
   defp parse_session_uri(session_str) do
     case Ezagent.URI.new!(session_str) do
