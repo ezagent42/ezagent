@@ -45,11 +45,14 @@ defmodule Ezagent.ActionSet.HelloPublisher do
             )
           end
           |> case do
-            {:ok, %{template_uri: tmpl_uri}} ->
+            {:ok, %URI{} = tmpl_uri} ->
               "New template version: #{URI.to_string(tmpl_uri)}"
 
             {:error, reason} ->
               "Template save failed: #{inspect(reason)}"
+
+            other ->
+              "Template save unexpected result: #{inspect(other)}"
           end
 
         case EzagentPluginHello.Members.role_uri(session_uri, "publisher") do
