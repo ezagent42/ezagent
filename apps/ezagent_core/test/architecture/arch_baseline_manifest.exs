@@ -353,8 +353,9 @@
   #   `system_prompt`（消费链三级早已在，仅缺 producer 行；recipe
   #   `config.system_prompt` 由此成为 cc-headless persona 车道）+
   #   cc_headless_agent `sdk_sidecar_params` 补 `cmd_env`（T7d CLI 身份 env 的
-  #   SDK 车道 parity）。净 +3 行 wiring。Measured 1786→1789。
-  cc_codex_template_class_combined_loc: 1789,
+  #   SDK 车道 parity）。Measured 1786→1787（rebase 后实测；+1 净值——#1324 的
+  #   DeepSeek 重构已吸收原两处中的部分行）。
+  cc_codex_template_class_combined_loc: 1787,
   # P3 (resource-unification, SPEC §10 OI-3): the population-3 outside-core
   # callers (agent_bridge token registry, identity smtp_config, feishu app-cred +
   # inbox + plugin config, python log) migrated behind the `UriQuery` seam
