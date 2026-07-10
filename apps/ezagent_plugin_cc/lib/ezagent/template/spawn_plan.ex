@@ -77,9 +77,11 @@ defmodule Ezagent.PluginCc.Template.SpawnPlan do
 
       {:ok, _global_mcp_path, agent_token} =
         EzagentPluginCc.McpConfigWriter.write_with_token!(
-          agent_uri: URI.to_string(agent_uri),
-          agent_cwd: agent_cwd,
-          config_dir: config_home
+          [
+            agent_uri: URI.to_string(agent_uri),
+            agent_cwd: agent_cwd,
+            config_dir: config_home
+          ] ++ orchestrator_mcp_opts(tmpl)
         )
 
       per_agent_mcp_path =
@@ -277,6 +279,27 @@ defmodule Ezagent.PluginCc.Template.SpawnPlan do
         )
 
         env
+    end
+  end
+
+  # Orchestrator-only `.mcp.json` opts (transport #53 / Phase 7 PR-5). For an
+  # orchestrator agent — gated on `role == "orchestrator"` via
+  # `CcAgent.orchestrator_recipe?/1`, FLAVOR-AGNOSTIC so a cc-deepseek
+  # orchestrator gets it too and a normal cc agent never does — thread the
+  # orchestrator-socket WS URL + the seed-exported tool-schema path so
+  # `McpConfigWriter` writes the second `esr-orchestrator` server (the bridge
+  # that joins `orch:bridge:<uri>`, the orchestrator readiness signal). The
+  # bridge SCRIPT is resolved at runtime from `priv/` inside the writer; only
+  # these two orchestrator-specific values are passed from here.
+  defp orchestrator_mcp_opts(tmpl) when is_map(tmpl) do
+    if CcAgent.orchestrator_recipe?(tmpl) do
+      [
+        orchestrator: true,
+        orchestrator_ws_url: Ezagent.Orchestrator.CcOrchestratorSeed.orchestrator_socket_ws_url(),
+        orchestrator_tools_path: Ezagent.Orchestrator.CcOrchestratorSeed.tools_schema_path()
+      ]
+    else
+      []
     end
   end
 

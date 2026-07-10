@@ -10,16 +10,29 @@ defmodule Ezagent.Orchestrator.CcOrchestratorSeed do
   an orchestrator process but it had no flavor, no sandbox, no MCP
   config, no system prompt. PR-5 makes the seed populate a real slice:
 
-  - `flavor: "cc"` — the orchestrator is a `claude` PTY agent.
+  - `flavor: "cc-deepseek"` — the orchestrator is a `claude` PTY agent on the
+    DeepSeek backend (flavor merged in #1324): it authenticates via
+    `DEEPSEEK_API_KEY`, so it needs no host `~/.claude` OAuth login (no #161
+    co-tenant issue) and boots authenticated (no exit-256 / bridge-join timeout
+    from a missing login). The deepseek flavor is a PROVIDER shim over cc that
+    reuses the cc config namespace, so `.mcp.json` generation is unchanged.
   - `config_dir` — an isolated `CLAUDE_CONFIG_DIR` sandbox so the
     orchestrator's `claude` does not share the operator's `~/.claude`
     (PR-2: AgentTemplate content field, renamed from `claude_config_dir`).
   - `settings_path` — a `settings.json` enabling the orchestration
     pattern (the mandatory plugin safety `--settings` still wins; this
     operator file layers non-conflicting keys — §1.5 (c)).
-  - `mcp_config_path` — points at the ORCHESTRATOR MCP server config
-    (the 7-tool surface, `Ezagent.Orchestrator.McpServer`) — additive
-    to the trusted esr-bridge config (§1.5 (c)).
+  - The ORCHESTRATOR MCP server (the 7-tool surface,
+    `Ezagent.Orchestrator.McpServer`) is NO LONGER seeded as a separate
+    `mcp_config_path` / `orchestrator.mcp.json` threaded as an additive
+    `--mcp-config`. That additive path was appended LAST and shadowed/raced the
+    per-agent `.mcp.json` claude's primary `--mcp-config` reads, so it did not
+    reliably fire the `orch:bridge` join on a deployed node. The server is now
+    written into that PRIMARY per-agent `.mcp.json` by
+    `EzagentPluginCc.McpConfigWriter.write_with_token!` (gated on the
+    orchestrator role) — the single owner. This seed still EXPORTS the tool
+    schema (`orchestrator_tools.json`) that entry's
+    `EZAGENT_ORCHESTRATOR_TOOLS_PATH` points at (see `tools_schema_path/0`).
   - a system prompt teaching the orchestrator role (written into the
     sandbox `CLAUDE.md`).
 
@@ -33,12 +46,13 @@ defmodule Ezagent.Orchestrator.CcOrchestratorSeed do
 
   ## Why files on disk
 
-  `config_dir` / `settings_path` / `mcp_config_path` are file
-  paths the cc Template Class threads to `claude` as `CLAUDE_CONFIG_DIR`
-  env + `--settings` / `--mcp-config` flags. They must exist on disk for
-  a live `claude` to use them. The seed writes dev-profile defaults
-  under `~/.ezagent/cc-orchestrator/`; production multi-tenant
-  deployments override per-template.
+  `config_dir` / `settings_path` are file paths the cc Template Class threads to
+  `claude` as `CLAUDE_CONFIG_DIR` env + the `--settings` flag. They must exist on
+  disk for a live `claude` to use them. The seed writes dev-profile defaults
+  under `~/.ezagent/cc-orchestrator/`; production multi-tenant deployments
+  override per-template. (`mcp_config_path` is no longer part of the seeded
+  content — the orchestrator MCP server moved to the per-agent `.mcp.json`; see
+  the flavor/MCP bullets above.)
 
   ## The orchestrator MCP transport bridge (PR-5 completion)
 
@@ -414,11 +428,28 @@ defmodule Ezagent.Orchestrator.CcOrchestratorSeed do
       description:
         "The session orchestrator — an LLM-driven manager that composes " <>
           "and routes a team of worker agents via the 7 orchestration tools.",
-      flavor: "cc",
+      # cc-deepseek (flavor merged in #1324): the orchestrator authenticates via
+      # DEEPSEEK_API_KEY, so it has no `.credentials.json`, no dependency on the
+      # host `~/.claude` OAuth login (#161), and boots authenticated — no
+      # exit-256 / bridge-join timeout from a missing host login. It reuses cc's
+      # config_dir namespace + the shared `CcAgent.Spawn` chokepoint, so
+      # `.mcp.json` generation (esr-bridge + the orchestrator server) is
+      # identical to the cc path; the chat bridge topic becomes
+      # `agent_bridge:cc-deepseek:<uri>` (Provider.bridge_topic_env), while the
+      # `orch:bridge:<uri>` topic is flavor-agnostic.
+      flavor: "cc-deepseek",
       project_cwd: sandbox.project_cwd,
       config_dir: sandbox.config_dir,
       settings_path: sandbox.settings_path,
-      mcp_config_path: sandbox.mcp_config_path,
+      # `mcp_config_path` is intentionally NOT set. It used to map to
+      # `operator_mcp_config_path` → an ADDITIVE `--mcp-config` pointing at the
+      # separate `orchestrator.mcp.json`, appended LAST in
+      # `SpawnPlan.assemble_settings_mcp_args` — which SHADOWED / raced the
+      # per-agent `.mcp.json` claude's primary `--mcp-config` reads and did not
+      # reliably fire the `orch:bridge` join on a deployed node. The orchestrator
+      # MCP server is now written into that PRIMARY `.mcp.json` by
+      # `McpConfigWriter.write_with_token!` (gated on the orchestrator role), so
+      # this seed no longer emits a second, shadowing config path.
       api_key_helper: nil,
       # SPEC `2026-05-26-session-create-orchestrator-unified` Gap B —
       # carrying `role: "orchestrator"` on the AgentTemplate content
@@ -545,6 +576,27 @@ defmodule Ezagent.Orchestrator.CcOrchestratorSeed do
     |> resolve_base_ws_url()
     |> swap_ws_path("/orchestrator_socket/websocket")
   end
+
+  @doc """
+  The resolved `/orchestrator_socket` WebSocket URL an orchestrator's
+  `orchestrator_bridge.py` connects to (honors the same `EZAGENT_BRIDGE_WS_URL`
+  env / `:ezagent_plugin_cc, :ws_url` deployment knobs as the cc bridge, but on
+  the orchestrator mount). Threaded by `SpawnPlan` into the `esr-orchestrator`
+  `.mcp.json` entry's `EZAGENT_BRIDGE_WS_URL`.
+  """
+  @spec orchestrator_socket_ws_url() :: String.t()
+  def orchestrator_socket_ws_url, do: resolve_orchestrator_ws_url()
+
+  @doc """
+  Absolute path of the exported 7-tool schema JSON
+  (`orchestrator_tools.json`) written beside the bridge in the orchestrator
+  sandbox by `install_orchestrator_bridge/1` (single-sourced from
+  `McpServer.tool_schemas/0`). Threaded by `SpawnPlan` into the
+  `esr-orchestrator` `.mcp.json` entry's `EZAGENT_ORCHESTRATOR_TOOLS_PATH` so the
+  bridge answers `tools/list` from the file without the BEAM running.
+  """
+  @spec tools_schema_path() :: String.t()
+  def tools_schema_path, do: Path.join(sandbox_base(), @tools_schema_file)
 
   defp resolve_base_ws_url(default) do
     System.get_env("EZAGENT_BRIDGE_WS_URL") ||

@@ -97,6 +97,23 @@ defmodule EzagentPluginCc.McpConfigWriter do
   returned token is stable per agent — one credential, exported into
   `cmd_env` by the caller (NOT written into the shared esr-bridge config),
   no spoofing surface.
+
+  ## Orchestrator second server (orchestrator agents only)
+
+  When `:orchestrator` is `true`, a SECOND `mcpServers` entry
+  (`"esr-orchestrator"`, running `orchestrator_bridge.py`) is written so a live
+  orchestrator's `claude` launches the bridge that joins `orch:bridge:<uri>` —
+  the join that flips orchestrator transport-readiness. The caller gates this on
+  the agent's `role == "orchestrator"` (flavor-agnostic: cc AND cc-deepseek).
+  Orchestrator opts:
+
+  - `:orchestrator` — `true` to write the second server (default `false`).
+  - `:orchestrator_ws_url` — the `/orchestrator_socket` WS URL for the entry's
+    `EZAGENT_BRIDGE_WS_URL` (distinct from the esr-bridge `/agent_bridge` mount).
+  - `:orchestrator_tools_path` — path to the exported 7-tool schema JSON, for
+    `EZAGENT_ORCHESTRATOR_TOOLS_PATH` (omitted when nil → bridge uses its
+    next-to-script default).
+  - `:orchestrator_script_path` — override the bridge script path (tests).
   """
   @spec write_with_token!(keyword()) :: {:ok, String.t(), String.t()}
   def write_with_token!(opts) do
@@ -139,15 +156,56 @@ defmodule EzagentPluginCc.McpConfigWriter do
     # `websockets` dep on first run. Without `--script`, `uv run python3 <path>`
     # invokes Python directly and skips PEP 723 → `ModuleNotFoundError:
     # No module named 'websockets'` at startup (Allen 2026-05-19 03:12).
-    config = %{
-      "mcpServers" => %{
-        "esr-bridge" => %{
-          "command" => "uv",
-          "args" => ["run", "--script", script_path],
-          "env" => env
-        }
+    mcp_servers = %{
+      "esr-bridge" => %{
+        "command" => "uv",
+        "args" => ["run", "--script", script_path],
+        "env" => env
       }
     }
+
+    # ORCHESTRATOR-ONLY second server (transport #53 / Phase 7 PR-5). A live
+    # orchestrator's readiness is gated on the `orch:bridge:<uri>` join
+    # (`Ezagent.Agent.LiveJoinRegistry.mark_joined`, fired ONLY from
+    # `Ezagent.Orchestrator.McpChannel.join/3`), which fires ONLY if claude
+    # actually launches `orchestrator_bridge.py`. That bridge must therefore be
+    # in the .mcp.json claude's PRIMARY `--mcp-config` points at (the per-agent
+    # `config_dir/.mcp.json` this writer produces) — the previous seed path wrote
+    # it into a SEPARATE `orchestrator.mcp.json` threaded as an ADDITIVE
+    # `--mcp-config` appended LAST, which shadowed/raced the primary file and
+    # did not reliably fire on a deployed node (live E2E). Only orchestrator
+    # agents (gated by the caller on `role == "orchestrator"`, flavor-agnostic —
+    # cc AND cc-deepseek) get this entry; normal cc agents never do.
+    #
+    # The script resolves at RUNTIME from installed `priv/` (reuse the
+    # esr-bridge #1325 pattern), NOT a copied sandbox file. AGENT_URI + the
+    # connect TOKEN are inherited from claude's process env (`cmd_env`, set for
+    # every cc agent) — the SAME token minted above — so they are NOT baked into
+    # this shared file. Only the orchestrator-socket WS URL + the exported
+    # tool-schema path (both orchestrator-specific, caller-supplied) live here.
+    mcp_servers =
+      if Keyword.get(opts, :orchestrator, false) do
+        orch_env =
+          %{"EZAGENT_BRIDGE_WS_URL" => Keyword.get(opts, :orchestrator_ws_url)}
+          |> maybe_put(
+            "EZAGENT_ORCHESTRATOR_TOOLS_PATH",
+            Keyword.get(opts, :orchestrator_tools_path)
+          )
+
+        Map.put(mcp_servers, "esr-orchestrator", %{
+          "command" => "uv",
+          "args" => [
+            "run",
+            "--script",
+            Keyword.get(opts, :orchestrator_script_path, orchestrator_bridge_script_path())
+          ],
+          "env" => orch_env
+        })
+      else
+        mcp_servers
+      end
+
+    config = %{"mcpServers" => mcp_servers}
 
     encoded = Jason.encode!(config, pretty: true)
 
@@ -233,6 +291,19 @@ defmodule EzagentPluginCc.McpConfigWriter do
   end
 
   @doc """
+  Absolute path of the orchestrator MCP transport-bridge script
+  (`orchestrator_bridge.py`), resolved at RUNTIME from the app's installed
+  `priv/` directory — the SAME reliability property `bridge_script_path/0` gives
+  the esr-bridge (#1325): the packaged `priv/` location exists in both a dev
+  checkout and a `mix release`, and it never depends on a per-agent sandbox copy
+  landing on disk. Only the orchestrator `.mcp.json` entry references it.
+  """
+  @spec orchestrator_bridge_script_path() :: String.t()
+  def orchestrator_bridge_script_path do
+    Application.app_dir(:ezagent_plugin_cc, "priv/orchestrator_bridge.py")
+  end
+
+  @doc """
   Resolved WebSocket URL for the bridge.
 
   Lookup order:
@@ -257,6 +328,13 @@ defmodule EzagentPluginCc.McpConfigWriter do
   defp default_dir do
     Ezagent.System.FsResolver.path!(Ezagent.URI.system_principal("plugins"))
   end
+
+  # Include a key only when its value is a non-empty binary. The orchestrator
+  # bridge falls back to its own default tool-schema path when the env var is
+  # absent, so an unresolved path must be omitted rather than written as `nil`.
+  defp maybe_put(map, _key, value) when value in [nil, ""], do: map
+  defp maybe_put(map, key, value) when is_binary(value), do: Map.put(map, key, value)
+  defp maybe_put(map, _key, _value), do: map
 
   defp mint_token!(agent_uri_str) when is_binary(agent_uri_str) do
     agent_uri = Ezagent.URI.new!(agent_uri_str)
