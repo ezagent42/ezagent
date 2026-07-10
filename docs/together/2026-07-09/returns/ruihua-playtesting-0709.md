@@ -6,7 +6,7 @@
 - **status**: in-progress（复验 A1–A4 + 撞到几个 UI bug；flaky 未复现）——用户视角，无代码 / 无 rebase
 - **汇报**: 本 return + Feishu 群；**A2/A4 + 3 个 UI bug 建议开 issue**
 - **证据**: `docs/together/2026-07-09/returns/evidence/`（截图）
-- **已开 issue**：F1→#1279 · F2→#1280 · F3→#1281 · F6→#1282 · F7→#1284 · F4→#1285 · F5→#1286 · F9→#1289 · F10→#1290 · F11→#1291（F8→#1283 **已关，并入 #1288**）（关联 #1275 空 caps / #1278 agent 表单 / #1259 create 超时 / #396 agent onboarding）
+- **已开 issue**：F1→#1279 · F2→#1280 · F3→#1281 · F6→#1282 · F7→#1284 · F4→#1285 · F5→#1286 · F9→#1289 · F10→#1290 · F11→#1291（F8→#1283 **已关，并入 #1288**；F12 **补入 #1274**，zyli 已开）（关联 #1275 空 caps / #1278 agent 表单 / #1259 create 超时 / #396 agent onboarding）
 - **查重**：**F8/#1283 = #1288（cc agent 不继承 host Claude 凭证）的重复** → UX 角度已并入 #1288、#1283 已关；其余无重复。
 
 ## 复验结果（昨日修复）
@@ -87,6 +87,12 @@
 - **严重度**：中（一批功能点不动）
 - **复现**：session 内点以下控件均**无反应**：**Bindings** tab · **路由** tab · **重启 agent runner** · 右上角**复制样 图标按钮**（挨着 `···`）。
 - **线索**：Bindings/路由 疑 `session.view.switch`；重启疑 `session.orchestrator.restart` —— 可能同一根（派发没接）或各自独立，先合并给 triage。控件位置见 `evidence/f10-remove-member-noop.png`。
+
+### F12 · workspace 切换器显示 "No workspaces"（补入 #1274）
+- **严重度**：中（0710 续测）
+- **复现**：点左上角 workspace 切换器下拉 → 列表显示 **"No workspaces"**，但你**就在 ezagent 工作区**（头部 `ezagent / ezagent`、会话标"ezagent 工作区"、右栏 工作区=ezagent）→ 当前 workspace 根本没出现在列表里。
+- **处理**：**= #1274（zyli：Workspace switcher shows incorrect workspace list）的具体实例** → 已把 repro + 证据补进 #1274，不另开。
+- **证据**：`evidence/f12-workspace-switcher-no-workspaces.png`
 
 ## flaky 复现（B）
 - 网页对话页反复进出 + 发消息：**暂未复现**偶发不刷新 / 卡住。继续留意。
