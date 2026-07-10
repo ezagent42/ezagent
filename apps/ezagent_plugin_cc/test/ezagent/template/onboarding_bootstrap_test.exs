@@ -142,4 +142,60 @@ defmodule Ezagent.PluginCc.Template.OnboardingBootstrapTest do
     json = read_claude_json(dir)
     assert json["projects"] == %{"/some/cwd" => %{"allowedTools" => []}}
   end
+
+  # Channel-inject entitlement — materialize the `tengu_harbor` GrowthBook feature
+  # so the `claude/channel` inject capability registers on a non-Anthropic backend
+  # (deepseek/GLM), letting server-pushed `@mentions` reach the agent. Cache-only,
+  # no Anthropic OAuth. See the module's §"Two concerns".
+  test "materializes cachedGrowthBookFeatures with tengu_harbor + a timestamp", %{dir: dir} do
+    assert OnboardingBootstrap.ensure(dir) == :ok
+
+    json = read_claude_json(dir)
+    assert json["cachedGrowthBookFeatures"]["tengu_harbor"] == true
+    # A fresh ms timestamp so claude treats the cache as usable.
+    assert is_integer(json["cachedGrowthBookFeaturesAt"])
+    assert json["cachedGrowthBookFeaturesAt"] > 0
+  end
+
+  test "merges tengu_harbor INTO an existing feature blob without clobbering siblings", %{dir: dir} do
+    # Simulates creds copied from an Anthropic-backed home carrying the full blob.
+    existing = %{
+      "cachedGrowthBookFeatures" => %{"tengu_other_flag" => "on", "tengu_harbor" => false},
+      "cachedGrowthBookFeaturesAt" => 111
+    }
+
+    File.write!(Path.join(dir, ".claude.json"), Jason.encode!(existing))
+
+    assert OnboardingBootstrap.ensure(dir) == :ok
+
+    json = read_claude_json(dir)
+    # tengu_harbor is force-set true even if it was previously false/absent.
+    assert json["cachedGrowthBookFeatures"]["tengu_harbor"] == true
+    # sibling features preserved.
+    assert json["cachedGrowthBookFeatures"]["tengu_other_flag"] == "on"
+    # an existing timestamp is preserved (set-if-absent → proven-safe even stale).
+    assert json["cachedGrowthBookFeaturesAt"] == 111
+  end
+
+  test "channel-feature injection is idempotent (stable timestamp across runs)", %{dir: dir} do
+    assert OnboardingBootstrap.ensure(dir) == :ok
+    first = read_claude_json(dir)
+    assert OnboardingBootstrap.ensure(dir) == :ok
+    second = read_claude_json(dir)
+
+    assert first["cachedGrowthBookFeatures"] == second["cachedGrowthBookFeatures"]
+    assert first["cachedGrowthBookFeaturesAt"] == second["cachedGrowthBookFeaturesAt"]
+  end
+
+  test "a non-object cachedGrowthBookFeatures is replaced, not crashed", %{dir: dir} do
+    # Hand-edited / corrupt file with a non-object features key must not raise.
+    File.write!(
+      Path.join(dir, ".claude.json"),
+      Jason.encode!(%{"cachedGrowthBookFeatures" => "oops"})
+    )
+
+    assert OnboardingBootstrap.ensure(dir) == :ok
+    json = read_claude_json(dir)
+    assert json["cachedGrowthBookFeatures"]["tengu_harbor"] == true
+  end
 end

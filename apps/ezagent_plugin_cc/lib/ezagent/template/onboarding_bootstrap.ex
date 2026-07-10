@@ -20,12 +20,37 @@ defmodule Ezagent.PluginCc.Template.OnboardingBootstrap do
   `.claude.json` (never clobbering an operator/agent-chosen `theme` or any other
   key) and writes the file 0600. It runs on BOTH the fresh-spawn and the respawn
   paths so the marker survives the agent's own restarts.
+
+  ## Two concerns materialized into `.claude.json`
+
+  This module now materializes TWO independent `.claude.json` concerns:
+
+  1. **First-run dialog suppression** (`merge_onboarding/2`, the original §5.B
+     purpose) — `hasCompletedOnboarding` + `theme` + the per-project trust gates.
+  2. **Channel-inject entitlement** (`merge_channel_features/1`) — the
+     `claude/channel` inject capability that lets a server-pushed `@mention`
+     reach the agent is gated by claude's `tengu_harbor` GrowthBook feature (a
+     first-party account entitlement, normally fetched from GrowthBook and cached
+     under `cachedGrowthBookFeatures`). A cc agent on a non-Anthropic backend
+     (deepseek/GLM) never fetches it, so mentions are silently dropped. We
+     materialize the cache directly (`tengu_harbor: true` + a
+     `cachedGrowthBookFeaturesAt` timestamp) so channel registration succeeds
+     WITHOUT any Anthropic OAuth. Live-proven on canary: sidecar logs "Channel
+     notifications registered" and the `@mention` reply fires. Cache-only,
+     durable across respawns (a 30-day-stale timestamp still worked).
+
+  Scope: this runs for EVERY cc agent, because every cc agent launches with
+  `--dangerously-load-development-channels server:esr-bridge` (see
+  `SpawnPlan.build_claude_cmd/3`) and this bootstrap is the single chokepoint the
+  cc spawn/respawn path reaches — so "all cc agents" == "agents that launch with
+  the dev-channels flag". No per-flavor branch is needed (机制 ≠ 业务).
   """
 
   require Logger
 
   @claude_json_relpath ".claude.json"
   @default_theme "dark"
+  @channel_features_relpath "channel_growthbook_features.json"
 
   @doc """
   Ensure `<config_dir>/.claude.json` marks claude onboarding complete.
@@ -43,6 +68,7 @@ defmodule Ezagent.PluginCc.Template.OnboardingBootstrap do
 
     with {:ok, existing} <- read_existing(path),
          merged = merge_onboarding(existing, Keyword.get(opts, :project_cwd)),
+         merged = merge_channel_features(merged),
          :ok <- write_private(path, Jason.encode!(merged, pretty: true)) do
       :ok
     end
@@ -140,6 +166,43 @@ defmodule Ezagent.PluginCc.Template.OnboardingBootstrap do
   end
 
   defp maybe_put_project_trust(map, _), do: map
+
+  # Channel-inject entitlement (see moduledoc §"Two concerns"). Merge
+  # `tengu_harbor: true` INTO any existing `cachedGrowthBookFeatures` map so the
+  # `claude/channel` inject capability registers on a non-Anthropic backend.
+  #
+  #   * `tengu_harbor` is force-set true (idempotent) — this is the ONE feature
+  #     the channel-registration gate needs; merged non-destructively so a
+  #     pre-existing full GrowthBook blob (e.g. copied creds) is preserved.
+  #   * `cachedGrowthBookFeaturesAt` is set-IF-ABSENT (a fresh ms timestamp on
+  #     first materialization, preserved thereafter). Set-if-absent keeps the
+  #     write idempotent AND is proven-safe: a 30-day-stale timestamp still
+  #     registered channels on canary (claude uses the cache; the best-effort
+  #     GrowthBook refresh that a non-Anthropic backend can't complete does not
+  #     invalidate it).
+  defp merge_channel_features(map) when is_map(map) do
+    features =
+      map
+      |> Map.get("cachedGrowthBookFeatures")
+      |> as_map()
+      |> Map.merge(channel_features())
+
+    map
+    |> Map.put("cachedGrowthBookFeatures", features)
+    |> Map.put_new("cachedGrowthBookFeaturesAt", System.os_time(:millisecond))
+  end
+
+  # COMMITTED asset (never the host `~/.claude.json` — the container has none).
+  # Read at runtime (same pattern as SpawnPlan.mandatory_settings_path/0) so the
+  # minimal `{"tengu_harbor": true}` payload stays human-editable + reversible:
+  # if it ever proves insufficient on a live agent, drop the full GrowthBook
+  # feature blob into the JSON — no code change.
+  defp channel_features do
+    :code.priv_dir(:ezagent_plugin_cc)
+    |> Path.join(@channel_features_relpath)
+    |> File.read!()
+    |> Jason.decode!()
+  end
 
   defp as_map(m) when is_map(m), do: m
   defp as_map(_), do: %{}
