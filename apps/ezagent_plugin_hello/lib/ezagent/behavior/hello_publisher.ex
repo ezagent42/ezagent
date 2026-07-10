@@ -76,10 +76,10 @@ defmodule Ezagent.ActionSet.HelloPublisher do
 
   # Derive a unique template name: <base>-<MMDD>-<HHMM>.
   # Base = user-specified name if present, otherwise the session name.
-  # E.g. "hello-main-0709-2010" or "zzzmn-0709-2115".
+  # E.g. "hello-main-0709-201015" or "zzzmn-0709-211530".
   defp resolve_template_name(session_uri, instruction) do
     base = extract_base_name(session_uri, instruction)
-    ts = DateTime.utc_now() |> Calendar.strftime("%m%d-%H%M")
+    ts = DateTime.utc_now() |> Calendar.strftime("%m%d-%H%M%S")
     {:ok, "#{base}-#{ts}"}
   end
 
