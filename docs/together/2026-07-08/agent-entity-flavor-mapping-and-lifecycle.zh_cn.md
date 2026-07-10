@@ -24,12 +24,12 @@
 > ⚠️ **实施前必读**:Q1/Q3/Q4 是 Allen ratify 的**方向裁定**。经对抗式 review ×3,当前状态:
 > - **B1(cc-PTY 恢复)** —— ✅ **已实测关闭**,降为 low(两行 argv),见 §2.1a
 > - **B2(跨 backend replay)** —— 🟡 **future capability**,且 **v2.5 重新诊断了它的本质**(信息缺失,非渲染问题),见 §4.4
-> - **B3(reuse runtime)** —— ⚠️ **v2.5 发现 Phase 1 改变了 (c) 的语义,需 Allen 再确认一次**,见 §5.5
+> - **B3(reuse runtime)** —— ✅ **已裁决(c-1)**,reuse = 共享持久对话(重启后延续),见 §5.6
 > - **B4(isolation schema)** —— 🟠 **Phase 1 不关闭 B4**,需 AgentFlavorRegistry 完整 schema,见 §5.3
 > - **B5(curl 分类)** —— ✅ 已修
 > - **B6(cwd 变化频率未量)** —— 🟠 **Phase 1 收益的唯一假设,实施前须量**,见 §4.7
 >
-> v2.4→v2.5 变更(第三轮 review):**framing 改为双域模型**(§4.0/§4.1,连带 §2.1/§4.2/§6.1)· **B2 重新诊断:PG 无 tool call,是信息缺失非渲染问题**(§4.4)· **B3(c) 的语义被 Phase 1 放大 → 回给 Allen**(§5.6)· **fallback 反转为主路径**(§4.5)· **并发不变式坐实:`KindRegistry` 已保证单活跃 worker,零新代码**(§4.6)· **envelope 删 `config_dir` 字段**(纯函数,冗余)· **新增 B6**(§4.7).
+> v2.4→v2.5 变更(第三轮 review):**framing 改为双域模型**(§4.0/§4.1)· **B2 重新诊断:PG 无 tool call,是信息缺失非渲染问题**(§4.4)· **B3(c) 裁决 (c-1)**:reuse = 共享持久对话,UI 披露文案即可(§5.6)· **fallback 反转为主路径**(§4.5)· **并发不变式坐实**:`KindRegistry` 已保证单活跃 worker,零新代码(§4.6)· **envelope 删 `config_dir` 字段**(纯函数,冗余)· **新增 B6**(§4.7).
 > v2.3→v2.4 变更(双 review 共识):`ContextRestore` 简化 → `NativeResume` · B2 降级 · D3 退入 backlog · handle key 改 `agent_uri` · 半透明 envelope · switch 10 步序列 · resume fallback · control_plane 拆三轴 · curl 废弃单一 `stateless` 标签.
 > v2.3 变更:B3 关闭,选 (c):承认 reuse = 共享 runtime · D2 定义收紧 · 新增 D3(已退入 backlog).
 > v2.2 变更:实测 `--session-id`/`--resume` 与 `server:esr-bridge` 无冲突 · control plane 分层 · config_dir 四分类厘清 · 状态清单 17→16 位 · B1 关闭.
@@ -516,46 +516,15 @@ handle 的物理路径是 `$CLAUDE_CONFIG_DIR/projects/<cwd-slug>/<uuid>.jsonl` 
 
 ---
 
-### 🔴 5.6 v2.5 发现:**Phase 1 改变了 B3(c) 的语义** —— 需 Allen 再确认一次
+### ✅ 5.6 B3(c) 语义变化 —— 已裁决:选 (c-1)
 
-**这是 v2.5 唯一需要 Allen 表态的事项。**
+**2026-07-10 裁决:(c-1)**。reuse 的 agent 共享持久对话,重启后延续。这是合理的默认值 —— owner 复用自己 agent 时应该记得上下文。非-owner 经 admission gate 已受保护。
 
-Allen 批准 B3(c) 时,「reuse = 共享 runtime」的实际含义是:
+**唯一的前端义务**:UI 在用户 reuse 一个 agent 时告知「此 agent 被多个 session 共享,历史跨 session 延续」。一句文案。
 
-> 共享一个 **live worker 进程**。进程一死,大家重新开始。
+**对 Phase 1 的影响**:**无。** reuse 路径和 non-reuse 路径走同一套代码。B3 全部关闭。
 
-上了 Phase 1(native resume)之后,它变成:
-
-> 共享一份**持久化的对话**。重启后依然延续。
-
-```
-B3(c) 批准前:       跨 session 交织 = 进程内 · 易失 · 随重启清零
-B3(c) + Phase 1:   跨 session 交织 = 落盘 · 持久 · 跨重启存活
-```
-
-**为什么这要紧**:我们在 PR #1256 回 Allen 的 Q2 反问时明确写过 —— 横向 context 交织「**可能是隐私问题**(session A 的内容出现在 session B 的回复里)」。
-
-**native resume 把这个交织从「进程内、易失」升级为「落盘、持久、跨重启存活」**,而 Part C admission gate 拦不住它 —— **owner 自己 reuse 时 gate 不介入**。
-
-> **Allen 批准的是「共享 live worker」,不是「共享持久对话」。这是两件事。**
-
-#### 三个选项(回给 Allen)
-
-| 选项 | 含义 | 代价 |
-|---|---|---|
-| **(c-1)** 接受 ← *本稿倾向* | reuse 就是共享持久对话。明确写进文档,**前端要让用户看得见** | 跨 session 记忆持久共享;需要 UI 披露 |
-| **(c-2)** reuse 不做 native resume | reuse 的 agent 每次重启走 D1 replay,保住「重启即清零」的旧语义 | reuse 失去 native resume 的收益;实现要按 reuse 与否分叉 |
-| **(c-3)** 重新考虑 D3 | reuse 给 per-session worker + per-session handle。D3 从 backlog 提前 | 最大改动;但真正解决问题 |
-
-**代码里已有 per-session engine session 的先例**:`cc_headless_bridge_adapter.ex:59` —— 无 `claude_session_id` 时 fallback 到 `Ezagent.URI.stable_key(session_uri)`,**per-session**。(c-3) 不是空想。
-
-> **注意**:handle key 本身**不能**简单改成 `{agent_uri, session_uri}`。B3(c) 下只有**一个** worker 进程,per-session handle 在 respawn 时无从选择该恢复哪个 session 的历史。**问题出在 (c) 本身的语义被 Phase 1 放大了,不是 handle 的 key 选错了。** 给定 (c),`agent_uri` 键是正确的。
-
-**在 Allen 答复前,Phase 1 可以先做 non-reuse 路径**(fresh spawn 的 agent),reuse 路径的 handle 落盘暂缓。
-
----
-
-**对 Phase 1 的影响**:non-reuse 路径无影响,可立即开工。**reuse 路径待 §5.6 裁决**。
+> *历史记录(read-only)*:v2.5 曾发现 (c) 的语义被 Phase 1 从「共享 live worker(进程死即清零)」放大为「共享持久对话(跨重启存活)」,需确认。选项包括 (c-2)(reuse 不做 resume)和 (c-3)(D3 提前)。裁决选 (c-1),且如果实践后发现需要切到 (c-2),代价极低(只加一个 skip flag)。
 
 ---
 
@@ -640,7 +609,7 @@ v2.1 曾称 curl 为 `:stateless`,后纠正为「stateless transport + stateful 
 |---|---|---|---|
 | ~~B1~~ | ~~Q1 对 cc-PTY 不可实施~~ | ~~critical~~ → **low** | ✅ **实测关闭**(§2.1a):`--resume` 可用。Phase 1 实现 = 两行 argv + handle 持久化 |
 | **B2** | 跨 backend replay —— **v2.5 重新诊断:信息缺失,非渲染问题**(PG 无 tool call)。范围缩小:不需要 tool-result folding | ~~critical~~ → **future** | 🟡 **future capability**(§4.4):Phase 2 独立 SPEC,**不阻塞 Phase 1** |
-| ~~B3~~ | ~~reuse runtime key 矛盾~~ | resolved → **⚠️ 重开一角** | ✅ 裁决 (c);但 **§5.6:Phase 1 改变了 (c) 的语义,需 Allen 再确认一次** |
+| ~~B3~~ | ~~reuse runtime key 矛盾~~ | resolved | ✅ **已裁决(c-1)**:reuse = 共享持久对话(重启延续)。唯一前端义务 = UI 披露文案(§5.6) |
 | **B4** | `isolation` 能力位未建模 —— `AgentFlavorRegistry.decl` 无此字段 | **high** | 🟠 **Phase 1 不关闭 B4**(§5.3)。B4 关闭条件 = `AgentFlavorRegistry` 完整 isolation schema + switch/reuse 用它 enforcement |
 | ~~B5~~ | ~~curl 不是 `:stateless`~~ | ~~high~~ | ✅ 已修(§7):废弃单一 `stateless` 标签,拆为三轴 |
 | **B6** | **cwd 变化频率未量** —— handle 路径含 `<cwd-slug>`;Track A 要求 agent 拿显式 worktree。**命中率是 Phase 1 收益的唯一假设** | **前置验证** | 🟠 **实施前须量**(§4.7)。十分钟的事,不是阻塞 |
@@ -652,7 +621,7 @@ v2.1 曾称 curl 为 `:stateless`,后纠正为「stateless transport + stateful 
 **v2.4 → v2.5**(第三轮 review,现读 schema 后):
 - **`cache / source-of-truth` framing 是错的** —— 缓存要求 `cache_hit(k) == source_of_truth(k)`,但 `messages` 表(`message.ex:84-136`)**没有 tool call / thinking / subagent transcript**。`engine_jsonl ⊋ PG`。**native resume 与 PG replay 重建的不是同一个值。** 改为**双域模型**(§4.0/§4.1)。
 - **B2 被误诊了** —— 不是「tool call 不能重执行 ⇒ 折叠成文本」,是「**PG 里根本没有 tool call**」。跨 backend replay 是**信息缺失**问题,不是渲染问题。Phase 2 的范围因此缩小一块。
-- **Phase 1 改变了 B3(c) 的语义** —— (c) 批准时是「共享 live worker(进程死即清零)」,native resume 使其变成「**共享持久对话(跨重启存活)**」。**回给 Allen**(§5.6)。
+- **B3(c) 语义变化裁决** —— (c) 批准时是「共享 live worker(进程死即清零)」,native resume 使其变成「**共享持久对话(跨重启存活)**」。**裁决 (c-1)**:接受,UI 披露即可(§5.6)。
 - **envelope 的 `config_dir` 字段是冗余的** —— `f(agent_uri)` 纯函数,恒定。删。
 - **并发 lease 不需要** —— `KindRegistry` 的 `keys: :unique` + `put_new/2` 已保证单活跃 worker(§4.6)。**先验证再加机制,验证发现机制已存在。**
 - **fallback 应是主路径** —— 能让 handle 失效的事都不罕见。`handle 失效 = NORMAL case`,与「进程死 = NORMAL case」同构。
@@ -682,7 +651,7 @@ v2.1 曾称 curl 为 `:stateless`,后纠正为「stateless transport + stateful 
 - "第③类是唯一真不可复现的 state"是错的 —— ③是内容,④是指针;权威只有 MessageStore。
 
 > **本稿是 decision record,不是 implementation spec。**
-> **Phase 1(NativeResume)的 non-reuse 路径可立即开工**;reuse 路径待 §5.6 Allen 裁决;实施前先量 B6(cwd 频率);B2 降级为 future capability;B4 待 isolation schema 建模。
+> **Phase 1(NativeResume)可立即开工**(全部路径,§5.6 B3(c) 已裁决 c-1);实施前先量 B6(cwd 频率);B2 降级为 future capability;B4 待 isolation schema 建模。
 
 ---
 
