@@ -1,0 +1,58 @@
+# 07e relay-back 路由审计证据（2026-07-10 收口 e2e）
+
+结论口径（与 README 一致）：路由层「真测通过，但注明测法」——__done__ 消息由测试以
+dev-together 成员身份注入（与 UI chat.send 同一真实通道），不是 agent 自主产生；
+agent 自主发 __done__ 的大脑层闭环被 #1309 挡住（见 README）。
+
+## 1) 装入会话的 relay-back 规则（DB routing_rules id=2，materialize 时从 manifest 装入）
+
+matcher_data | {"type": "and", "items": [{"arg": "__done__", "type": "text_contains"},
+                                         {"arg": "dev-together", "type": "from_role"}]}
+receivers    | {$role:a2FuYmFuLWFzc2lzdGFudA}   -- base64url("kanban-assistant")，零实例 URI（非 sender-lock）
+rule_set     | relay-back / position 0 / enabled t
+created_by   | session://system/socialware-install-kanban/kanban-final-0710
+
+与 manifest.yaml routing_rules 逐字一致。
+
+## 2) 成员/角色映射（ConversationData.member_options，erpc 实测）
+
+kanban-assistant → entity://system/agent/24b6e087-195c-4222-b3da-222df6e3bb68 (online)
+dev-together     → entity://system/agent/5bc5ecfd-f7cb-4873-b91e-c312053189fe (online)
+
+## 3) 测试注入（复刻 world conversation_actions.send_message 同构路径，erpc 进 server 节点）
+
+sender（message.from / ctx.caller）= dev-together 槽位成员 entity://system/agent/5bc5ecfd-…
+mode=:cast, reply=:ignore（与 UI chat.send 一致）；caps 为管理注入（admin genesis）——
+消息是测试造的，非 agent 自主发出（大脑层见 README #1309 段）。
+
+- 对照消息（无标记）："对照消息：登录表单模块开发中（无标记）"          → {:ok, "dc6f5164acbb0a1a"}
+- __done__ 消息："登录表单模块完成，PR https://example.test/pr/1 已开 __done__" → {:ok, "7b576303e9fe17d0"}
+
+## 4) routing_traces 审计行（DB，全表）
+
+id=1  msg=6e6013935b6e3554  rule_id=1  receivers={agent/5bc5ecfd-…(dev-together)}
+      -- ★ 负路径最硬一条：admin 真键盘 @dev-together 发的消息字面量里就有 "__done__"
+      --   （07a/07b 截图），只命中 mention 规则送 dev-together；
+      --   rule 2 未触发 = from_role dev-together 硬锁生效（#1212）
+id=2  msg=491b523d412636ec  rule_id=1  receivers={user/admin}
+      -- dev-together sidecar 被 mention 触发后的回包（23s，内容是 401——送达真、脑死于登录）
+id=3  msg=dc6f5164acbb0a1a  rule_id=1  receivers={user/admin}
+      -- ★ 负路径 2：dev-together 身份发无标记消息，只命中默认规则，rule 2 未触发
+id=4  msg=7b576303e9fe17d0  rule_id=1  receivers={user/admin}
+id=5  msg=7b576303e9fe17d0  rule_id=2  receivers={agent/24b6e087-…(kanban-assistant)}
+      -- ★ relay-back 命中：dev-together 身份 × __done__ → kanban-assistant 槽位成员
+id=6  msg=6b4bf89e329b43f0  rule_id=1  receivers={user/admin}
+      -- kanban-assistant 收到 relay 消息后 sidecar 的回包（19s）= 送达闭环
+
+## 5) messages 表交叉印证（sender/时刻）
+
+6e6013935b6e3554  admin              03:57:10  "@dev-together 请直接回复一条包含 __done__ 的消息（负路径核验）"
+491b523d412636ec  agent/5bc5ecfd-…   03:57:33  "Not logged in · Please run /login"
+dc6f5164acbb0a1a  agent/5bc5ecfd-…   03:58:43  "对照消息：登录表单模块开发中（无标记）"
+7b576303e9fe17d0  agent/5bc5ecfd-…   03:58:46  "登录表单模块完成，PR … 已开 __done__"
+6b4bf89e329b43f0  agent/24b6e087-…   03:59:05  "Not logged in · Please run /login"
+
+## 6) UI transcript（截图 07d）
+
+五条消息按上表顺序全部呈现在会话 transcript；kanban-assistant 只在 __done__ 消息后出现回复，
+对照消息后无任何反应。

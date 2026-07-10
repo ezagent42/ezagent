@@ -320,7 +320,7 @@ defmodule Ezagent.World.SaveSessionTemplatePublicScopeGateTest do
            "template save failed with #{inspect(socket.assigns.world_state)}"
 
     assert socket.assigns.world_state["last_socialware_refs"] == []
-    assert install_refs(saved_content!(socket)) == ["chat", "orchestrator"]
+    assert install_refs(saved_content!(socket)) == ["chat"]
   end
 
   test "successful save returns from template builder to the workspace detail route" do

@@ -45,8 +45,9 @@ defmodule EzagentPluginKanban.Application do
     # transport app, AFTER this plugin registered its plugin_info + `BoardView`
     # so `uses: ["kanban"]` + the `kanban_render` view resolve) publishes it
     # through the governed import lane. Zero call from this plugin's boot;
-    # `EzagentPluginKanban.Demo` remains only as a test driver over the SAME
-    # shipped file (deploy-seed SPEC §2/§4, the hello #162 play).
+    # tests drive the SAME shipped file directly via
+    # `Ezagent.Socialware.ShippedManifest` — no plugin-side socialware module
+    # at all (Decision #156; deploy-seed SPEC §2/§4, the hello #162 play).
     result
   end
 

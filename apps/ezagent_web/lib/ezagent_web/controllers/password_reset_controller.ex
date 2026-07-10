@@ -37,7 +37,7 @@ defmodule EzagentWeb.PasswordResetController do
         render_sent(conn, email)
 
       true ->
-        _ = maybe_send_reset(email, ip)
+        _ = maybe_send_reset(conn, email, ip)
         # Identical response whether or not the account exists (anti-enumeration).
         render_sent(conn, email)
     end
@@ -80,11 +80,11 @@ defmodule EzagentWeb.PasswordResetController do
 
   # --- internals ----------------------------------------------------------
 
-  defp maybe_send_reset(email, ip) do
+  defp maybe_send_reset(conn, email, ip) do
     case Registration.principal_for_email(email) do
       {:ok, _uri} ->
         {:ok, raw} = MagicLinkToken.mint(email, purpose: "reset")
-        link = EzagentWeb.Endpoint.url() <> "/auth/reset/" <> raw
+        link = EzagentWeb.UrlHelper.request_base_url(conn) <> "/auth/reset/" <> raw
 
         case EzagentWeb.Mailer.deliver_password_reset(email, link) do
           {:ok, _} ->

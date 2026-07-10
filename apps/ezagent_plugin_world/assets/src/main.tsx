@@ -909,6 +909,26 @@ type RenderContext = {
   onServerEvent?: (event: string, callback: (payload: unknown) => void) => void
 }
 
+// 插件页面组件注册表——服务端 `Ezagent.World.PluginPageRegistry` 的前端对应面：
+// renderer family key（= 页面 key）→ React 渲染器。import 保持显式（Vite 静态
+// 打包），加页面 = import 组件 + 加一行 map 条目。key 查不到时走 switch default
+// 的 fail-closed throw（与原 `case "kanban"` 缺省行为一致，无兜底渲染）。
+const PLUGIN_PAGE_RENDERERS: Record<
+  string,
+  (component: NonNullable<WorldLayout["components"]>[number], context: RenderContext) => React.ReactElement
+> = {
+  // kanban 操作面（kanban-as-role K4）：复用 onWorkspacePluginAction 透传
+  // world:dispatch（kanban.* 动作经 WorldLive 的注册表准入子句路由到 KanbanActions）。
+  kanban: (component, context) => (
+    <ManageFrame key={component.id} active="plugins" title="Kanban">
+      <Kanban
+        state={{...context.state, component: component.type}}
+        onAction={context.onWorkspacePluginAction}
+      />
+    </ManageFrame>
+  ),
+}
+
 function renderLayoutComponent(component: NonNullable<WorldLayout["components"]>[number], context: RenderContext) {
   // Registry-backed dispatch: the slot's type resolves to a renderer family via
   // the checked-in manifest, and the family selects the React renderer. An
@@ -980,18 +1000,6 @@ function renderLayoutComponent(component: NonNullable<WorldLayout["components"]>
         />
       )
 
-    case "kanban":
-      // kanban 操作面（kanban-as-role K4）：复用 onWorkspacePluginAction 透传 world:dispatch
-      // （kanban.* 动作经 WorldLive 的 @kanban_actions 子句路由到 KanbanActions）。
-      return (
-        <ManageFrame key={component.id} active="plugins" title="Kanban">
-          <Kanban
-            state={{...context.state, component: component.type}}
-            onAction={context.onWorkspacePluginAction}
-          />
-        </ManageFrame>
-      )
-
     case "identities":
       return (
         <IdentitiesSurface
@@ -1010,11 +1018,17 @@ function renderLayoutComponent(component: NonNullable<WorldLayout["components"]>
         />
       )
 
-    default:
+    default: {
+      // 插件页面：family key 命中 PLUGIN_PAGE_RENDERERS 时渲染注册组件；
+      // 未注册 family 保持原 fail-closed throw（无兜底渲染）。
+      const renderPluginPage = PLUGIN_PAGE_RENDERERS[rendererFamily(component.type)]
+      if (renderPluginPage) return renderPluginPage(component, context)
+
       throw new Error(
         `world: no renderer for family ${JSON.stringify(SLOTS[component.type]?.renderer_family)} ` +
           `(slot ${JSON.stringify(component.type)})`,
       )
+    }
   }
 }
 

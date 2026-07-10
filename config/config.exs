@@ -15,19 +15,11 @@ config :ezagent_core,
 
 # Task #58 — default SessionTemplate ⇄ cc-orchestrator decoupling.
 #
-# The `default` SessionTemplate's `orchestrator_template_uri` is a
-# DEPLOYMENT SEAM (read by
-# `EzagentDomainInstanceMessage.Application.do_seed_default_session_template/1`),
-# not a value the session domain hardcodes. This is the cc-INCLUSIVE
-# build (the standard umbrella release ships the cc plugin), so the
-# default template is orchestrator-bearing exactly as before —
-# `create_session(template_name: "default")` brings up the
-# cc-orchestrator (wizard / Feishu / `mix create_session`).
-#
-# A cc-LESS deployment (`im-without-cc`) OMITS or blanks this key (→
-# `nil`), making the default a PLAIN session template so
-# `create_session("default")` succeeds without the `"cc"` flavor /
-# cc-orchestrator AgentTemplate (which a cc-less build never seeds).
+# Legacy deployment seam retained for callers that still read it directly.
+# The stock `default` SessionTemplate no longer consumes this value: main
+# hotfix 2026-07-10 keeps default session creation plain (`installs: ["chat"]`)
+# so it cannot block on orchestrator install/readiness. Explicit templates may
+# still install orchestrator socialware.
 config :ezagent_domain_session,
   default_orchestrator_template_uri: "template://system/agent/cc-orchestrator",
   socialware_manifest_boot_scan: config_env() in [:prod]

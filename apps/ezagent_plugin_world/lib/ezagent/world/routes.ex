@@ -116,28 +116,6 @@ defmodule Ezagent.World.Routes do
           path: path
         }
 
-      # kanban 操作面（kanban-as-role K4）：列表页 + 单个 kanban 详情页。
-      # entity_uri = 一个 kanban-manager agent 的 `entity://<ws>/agent/<id>`。
-      match = Regex.run(~r{\A/plugins/kanban/([^/]+)\z}, path) ->
-        [_full, encoded] = match
-
-        %{
-          group: :workspace_plugins,
-          component: "kanban",
-          title: "看板",
-          path: path,
-          entity_uri: parse_any_uri(encoded)
-        }
-
-      path == "/plugins/kanban" ->
-        %{
-          group: :workspace_plugins,
-          component: "kanban",
-          title: "看板",
-          path: path,
-          entity_uri: nil
-        }
-
       match = Regex.run(~r{\A/plugins/auto/([^/]+)/([^/]+)\z}, path) ->
         [_full, kind, encoded] = match
 
@@ -273,10 +251,35 @@ defmodule Ezagent.World.Routes do
           entity_uri: parse_entity_uri(encoded)
         }
 
+      # 插件页面（`Ezagent.World.PluginPageRegistry`）：具名路由都不匹配时按
+      # 注册表通配解析（列表页 entity_uri=nil；详情页 `:id` 段 = 该页面 agent 的
+      # `entity://<ws>/agent/<id>`）。kanban 等页面从写死分支改为注册表条目。
+      route = plugin_page_route(path) ->
+        route
+
       true ->
         %{component: "sessions_table", title: "Chat", path: path}
     end
   end
+
+  defp plugin_page_route(path) do
+    case Ezagent.World.PluginPageRegistry.by_route(path) do
+      {page, params} ->
+        %{
+          group: :workspace_plugins,
+          component: page.key,
+          title: page.nav.label,
+          path: path,
+          entity_uri: plugin_page_entity_uri(params)
+        }
+
+      nil ->
+        nil
+    end
+  end
+
+  defp plugin_page_entity_uri(%{"id" => encoded}), do: parse_any_uri(encoded)
+  defp plugin_page_entity_uri(_), do: nil
 
   defp browser_path(uri) when is_binary(uri) do
     path =

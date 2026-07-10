@@ -266,10 +266,19 @@ defmodule EzagentPluginWorld.WorldLive do
     ConversationActions.handle_dispatch(socket, action, args)
   end
 
-  @kanban_actions ~w(kanban.add_node kanban.rename_node kanban.move_node kanban.remove_node kanban.set_stage kanban.claim_node kanban.unclaim_node kanban.set_status kanban.attach_artifact kanban.detach_artifact kanban.set_metric kanban.create kanban.sync_miro kanban.save_miro_creds kanban.select_board kanban.drop_subtree kanban.set_board_config kanban.attach_upload kanban.register_pr kanban.attach_code_file)
+  # 插件页面动作（`Ezagent.World.PluginPageRegistry`）：fail-closed 准入——
+  # action 命中某页面的前缀 **且** 在其细白名单内才路由到该页面的
+  # actions_module（kanban 曾是写死的 `@kanban_actions` 串子句）；未注册动作
+  # 与原 catch-all 一致返回 `error:unsupported_action`。
   def handle_event("world:dispatch", %{"action" => action, "args" => args}, socket)
-      when action in @kanban_actions and is_map(args) do
-    Ezagent.World.KanbanActions.handle_dispatch(socket, action, args)
+      when is_binary(action) and is_map(args) do
+    case Ezagent.World.PluginPageRegistry.by_action(action) do
+      %{actions_module: actions_module} ->
+        actions_module.handle_dispatch(socket, action, args)
+
+      nil ->
+        {:noreply, assign(socket, :last_dispatch_status, "error:unsupported_action")}
+    end
   end
 
   def handle_event("pty_input", %{"bytes" => bytes}, socket) when is_binary(bytes) do
@@ -634,18 +643,21 @@ defmodule EzagentPluginWorld.WorldLive do
     |> put_command_palette(socket)
   end
 
-  # kanban 操作面（kanban-as-role K4）：自有 KanbanData 读模型（list-by-role +
-  # entity://agent dispatch）。必须排在通用 `:workspace_plugins` 子句之前。
-  defp state_for_route(%{component: "kanban"} = route, socket, layout) do
-    route
-    |> Ezagent.World.KanbanData.state_for(%{
-      workspace_uri: socket.assigns.current_workspace_uri,
-      caller_uri: socket.assigns.current_entity_uri,
-      caller_caps: Map.get(socket.assigns, :current_caps, MapSet.new())
-    })
-    |> Map.put("layout", layout)
-    |> Map.put("can_manage_layout", false)
-    |> put_command_palette(socket)
+  # 插件页面（`Ezagent.World.PluginPageRegistry`）：每个注册页面编译期生成一个
+  # 子句，用条目的 data_builder 读模型（kanban 曾是写死的 `component: "kanban"`
+  # 特例）。必须排在通用 `:workspace_plugins` 子句之前——页面 route 同属该 group。
+  for %{key: key, data_builder: data_builder} <- Ezagent.World.PluginPageRegistry.pages() do
+    defp state_for_route(%{component: unquote(key)} = route, socket, layout) do
+      route
+      |> unquote(data_builder).state_for(%{
+        workspace_uri: socket.assigns.current_workspace_uri,
+        caller_uri: socket.assigns.current_entity_uri,
+        caller_caps: Map.get(socket.assigns, :current_caps, MapSet.new())
+      })
+      |> Map.put("layout", layout)
+      |> Map.put("can_manage_layout", false)
+      |> put_command_palette(socket)
+    end
   end
 
   defp state_for_route(%{group: :workspace_plugins} = route, socket, layout) do

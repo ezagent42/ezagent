@@ -1,0 +1,14 @@
+# 00 环境与健康检查（kanban rework 收口 e2e，2026-07-10）
+
+- 分支：feat/sw-kanban-rework（工作树 .claude/worktrees/sw-kanban-rework），
+  基底 = main cb53a6b49（含 #1294 create_session 事务解耦修复、#1306）
+- 工具链：mise exec elixir@1.18.4-otp-27 erlang@27.3.4.13 -- mix ...
+- DB：docker PG ezagent-pg-compat-audit-postgres（127.0.0.1:55432，库 ezagent_pg_compat_dev）
+  - 开测前 `mix ecto.reset`（drop+create+migrate+core seeds，全新库）
+  - `mix run scripts/world_e2e_seed.exs` → admin@ezagent.chat / $ADMIN_PW（见 docs/guide/world-e2e-seed.md；
+    bob join 的 `:no_such_actor` 为 fresh DB 已知限制，guide §3 有记，不影响本流程）
+- server：`mix phx.server` 后台（beam PID 72503，node ezagent_runtime@127.0.0.1，端口 10042）
+  - 健康：curl http://localhost:10042/_health → HTTP 200（起后 ≤15s 绿）
+  - 收尾精确 kill 该 PID
+- 浏览器：agent-browser（headless Chromium），一律 http://world.localhost:10042
+  （HSTS 坑不用 world.ezagent.chat，见 docs/e2e/guide.md §8.2）

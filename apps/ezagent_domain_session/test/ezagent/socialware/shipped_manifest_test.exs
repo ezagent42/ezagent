@@ -1,8 +1,8 @@
 defmodule Ezagent.Socialware.ShippedManifestTest do
   @moduledoc """
   Unit gate for `Ezagent.Socialware.ShippedManifest` — the shared thin loader
-  the demo test-fixture modules (`Ezagent.Socialware.Demo.Hello`,
-  `EzagentPluginKanban.Demo`) delegate to instead of each carrying the same
+  demo fixtures (`Ezagent.Socialware.Demo.Hello`) and socialware test suites
+  (the kanban manifest tests) drive instead of each carrying the same
   discover→read→parse→override boilerplate.
 
   The real shipped packages live in `ezagent_web`'s priv (not a dep here), so

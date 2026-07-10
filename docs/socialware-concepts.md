@@ -92,7 +92,7 @@ conversation flows, so it is a shape, not a base.
 
 For kanban, the shape is the board/task protocol,
 `Ezagent.ActionSet.Kanban`: nodes, stages, claims, statuses, artifacts, metrics,
-GitHub/Miro sync, and board configuration.
+Miro sync, and board configuration.
 
 Surface is different: a rendered external surface can be reused by unrelated
 flows, so `Ezagent.ActionSet.Surface` is a base.

@@ -85,6 +85,18 @@ defmodule Ezagent.PluginCc.Template.CcHeadlessAgentTest do
       assert Enum.map(CcHeadlessAgent.auth_failure_signals(), &inspect/1) ==
                Enum.map(CcAgent.auth_failure_signals(), &inspect/1)
     end
+
+    # #1309 — cc-headless must expose the OPTIONAL `host_login_dir/0` callback
+    # identically to cc, or the installer host-login adoption chain no-ops and the
+    # agent boots into an empty config home ("Not logged in" / 401). Its omission
+    # produced no compiler warning (optional callback), so this locks parity.
+    test "host_login_dir is exported and delegates to CcAgent (host-login parity)" do
+      assert function_exported?(CcHeadlessAgent, :host_login_dir, 0),
+             "cc-headless must implement host_login_dir/0 (optional CredentialAdapter callback) " <>
+               "or CredentialAdapter.host_login_source_dir/1 resolves :none and #1209 adoption no-ops"
+
+      assert CcHeadlessAgent.host_login_dir() == CcAgent.host_login_dir()
+    end
   end
 
   describe "template_data_extra/1" do

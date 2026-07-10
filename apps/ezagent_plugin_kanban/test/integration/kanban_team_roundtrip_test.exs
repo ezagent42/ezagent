@@ -10,7 +10,7 @@ defmodule EzagentPluginKanban.Integration.KanbanTeamRoundtripTest do
   How the projection mirrors a real snapshot: the routing_rules are read from the
   LIVE `RuleStore` post-materialize and decoded back to the shape a snapshot would
   emit (matcher map + role_name receivers), then substituted into the REAL
-  shipped kanban body (`Demo.manifest_attrs/1` resolved — whose role slots
+  shipped kanban body (the deploy-seed manifest YAML resolved — whose role slots
   already carry only role_name/recipe/flavor — never the spawned UUID, exactly
   what `DefinitionEditor.live_role_slots` produces). If the relay were a sender-lock,
   the live matcher would embed the dev's spawned UUID and both the URI-guard
@@ -31,9 +31,9 @@ defmodule EzagentPluginKanban.Integration.KanbanTeamRoundtripTest do
   alias Ezagent.AgentFlavorRegistry
   alias Ezagent.Entity.{Session, User}
   alias Ezagent.Routing.{Receiver, Resolver, RuleStore}
-  alias Ezagent.Socialware.{Definition, DefinitionRegistry, ManifestResolver}
+  alias Ezagent.Socialware.{Definition, DefinitionRegistry, ManifestResolver, ShippedManifest}
   alias EzagentDomainInstanceMessage.SessionCreator.TemplateTeam
-  alias EzagentPluginKanban.{Application, Demo}
+  alias EzagentPluginKanban.Application
 
   @workspace Ezagent.URI.workspace(:system)
   @stub_flavor "kanban-roundtrip-itest-bare"
@@ -137,10 +137,10 @@ defmodule EzagentPluginKanban.Integration.KanbanTeamRoundtripTest do
     assert live_rules != [], "expected the materialized relay-back rule in the live store"
 
     # Substitute the LIVE-projected rules into the REAL shipped kanban body
-    # (the boot-publish manifest, resolved) — the round-trip: does the shipped
+    # (the deploy-seed manifest, resolved) — the round-trip: does the shipped
     # Definition, carrying the rules as they live after materialize, still
     # validate with zero instance URI?
-    {:ok, shipped} = ManifestResolver.resolve(Demo.manifest_attrs())
+    {:ok, shipped} = ManifestResolver.resolve(ShippedManifest.load!("kanban/manifest.yaml"))
     snapshot_body = Map.put(Definition.body(shipped), :routing_rules, live_rules)
 
     # (a) re-validating the snapshotted body does NOT trip #1180's instance-URI
@@ -157,14 +157,19 @@ defmodule EzagentPluginKanban.Integration.KanbanTeamRoundtripTest do
 
   # --- fixture ----------------------------------------------------------------
 
-  # The REAL shipped kanban manifest (2 agent role-slots: pm + dev — from
-  # `Demo.manifest_attrs/1`, the boot-publish one-source-of-truth), with ONLY
-  # the flavor swapped `cc-headless` → bare-spawn stub (the manifest's `:flavor`
+  # The REAL shipped kanban manifest (2 agent role-slots: pm + dev — loaded
+  # straight from the deploy-seed YAML, the one source of truth), with ONLY
+  # the flavor swapped `cc-headless` → bare-spawn stub (the loader's `:flavor`
   # test seam) + a per-run fixture name. Resolved through `ManifestResolver`,
   # not hand-written — exercises the actual shipped manifest.
   defp itest_definition_body do
     {:ok, definition} =
-      ManifestResolver.resolve(Demo.manifest_attrs(name: @itest_definition, flavor: @stub_flavor))
+      ManifestResolver.resolve(
+        ShippedManifest.load!("kanban/manifest.yaml",
+          name: @itest_definition,
+          flavor: @stub_flavor
+        )
+      )
 
     Definition.body(definition)
   end

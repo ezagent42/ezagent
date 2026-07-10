@@ -22,7 +22,7 @@
 - **`system://socialware` 解析** `FsResolver`（`apps/ezagent_core/lib/ezagent/system/fs_resolver.ex:53/70`）→ `Home.path("socialware")` = `$EZAGENT_HOME/<profile>/socialware/`。
 - **框架内置代码 seed** `DefinitionRegistry`（`definition_registry.ex`，chat/socialware builtin + #1223 orchestrator 经默认 session-template install）。→ **保留**。
 - **autoservice**：`apps/ezagent_domain_session/priv/socialware/autoservice/`（manifest.yaml + package.yaml + kb/ + persona/）。→ **迁走**。
-- **kanban 自发布**：`apps/ezagent_plugin_kanban/lib/ezagent_plugin_kanban/application.ex`(boot call) + `demo.ex`（`Demo.publish` 全链 + `manifest.yaml` 在 plugin priv）。→ **迁走 + 删自发布**（自发布已在 `feat/sw-kanban` WIP 删）。
+- **kanban 自发布**：`apps/ezagent_plugin_kanban/lib/ezagent_plugin_kanban/application.ex`(boot call) + `demo.ex`（Demo 自发布全链 + `manifest.yaml` 在 plugin priv）。→ **已完成**：manifest 迁至 `ezagent_web/priv/socialware_seed/kanban/`，`EzagentPluginKanban.Demo` 整模块溶解（Decision #156，`feat/sw-kanban-rework`）。
 - **dealscout 自发布**：`apps/ezagent_plugin_crawler/.../application.ex` + `demo.ex`（同 kanban 形态）。→ **迁走 + 删自发布**。
 - **home.init**（`apps/ezagent_core/lib/mix/tasks/ezagent.home.init.ex`）：mkdir `skeleton_dirs`（`home.ex:67`=`[:credentials,:db,:snapshots,:logs,:plugins]`）+ 幂等写文件（`unless File.exists? → File.write!`）。→ **扩展**：加 `:socialware` + seed copy。
 
@@ -40,14 +40,14 @@
 
 新增 arch 规则（`mix ezagent.arch.scan` 扩展，与现有 AST/grep gate 同风格），禁止：
 - **(a) 废弃位置**：任何 `apps/*/priv/socialware/*/manifest.yaml` 存在 = 红（只准 `socialware_seed` 源或 runtime 部署目录）。
-- **(b) 非框架直接 seed**：plugin/非-core Application 在 boot 调 `ConfigGovernance.Socialware.publish_or_upgrade` / `Demo.publish`；非框架名 走 `DefinitionRegistry` builtin seed。框架内置（`chat`/`socialware`/`orchestrator`）走 allowlist。
+- **(b) 非框架直接 seed**：plugin/非-core Application 在 boot 调 `ConfigGovernance.Socialware.publish_or_upgrade`（即已退役的 Demo 自发布形态）；非框架名 走 `DefinitionRegistry` builtin seed。框架内置（`chat`/`socialware`/`orchestrator`）走 allowlist。
 
 **gate-first**：先落 gate（预期红），一次性抓出 autoservice(priv)、kanban(priv+自发布)、dealscout(priv+自发布)，然后照报错逐个修到绿。
 
 ## 6. 迁移（照 gate 报错逐个修）
 
 - **autoservice**：`domain_session/priv/socialware/autoservice/` 整目录 → `ezagent_web/priv/socialware_seed/autoservice/`；改 `manifest_seed_test.exs:102`（原断言"从 domain priv 默认枚举发布" → 改断言"从部署目录 seed 后发布"或直接测 `seed!/0` + deploy_sources）。
-- **kanban**：`kanban/priv/socialware/kanban/` → `ezagent_web/priv/socialware_seed/kanban/`；删自发布（`feat/sw-kanban` 已做）；`Demo.manifest_path` 指向新源（测试仍读同一份）；测试接线。
+- **kanban**：kanban plugin priv 旧目录 → `ezagent_web/priv/socialware_seed/kanban/`。**已完成**（`feat/sw-kanban-rework`）：自发布删除、`EzagentPluginKanban.Demo` 整模块溶解（Decision #156），manifest YAML 是唯一真相，测试直读 seed 目录。
 - **dealscout**：`crawler/priv/socialware/dealscout/` → `ezagent_web/priv/socialware_seed/dealscout/`；删自发布；同 kanban。
 
 ## 7. 分支 / 执行顺序
@@ -65,5 +65,5 @@
 
 ## 9. Follow-up
 
-- **dead-path cleaner**（另开 issue）：迁移后 app_sources 扫描、各 plugin 退役的 `Demo.publish`/自发布代码成死路径，需一个定期 cleaner 检测+清除。本 spec §3 是路径清单基准。
+- **dead-path cleaner**（另开 issue）：迁移后 app_sources 扫描、各 plugin 退役的 Demo 自发布代码成死路径，需一个定期 cleaner 检测+清除（kanban 的 Demo 已在 `feat/sw-kanban-rework` 整体溶解，无死路径残留）。本 spec §3 是路径清单基准。
 - registry / 远程 config-repo 家（#1218 提案 follow-up）：部署目录之上的"从 ezagent 直接安装"UI/registry，未来接。

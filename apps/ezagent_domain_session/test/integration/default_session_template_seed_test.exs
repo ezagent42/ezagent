@@ -16,7 +16,7 @@ defmodule EzagentDomainInstanceMessage.Integration.DefaultSessionTemplateSeedTes
      `Ezagent.Ecto.KindSnapshot.list_in_workspace("workspace://system")`.
   2. Its `:template` slice content carries the documented
      minimal-viable shape: no `agent_slots`, empty `members`, empty
-     `routing_rules`, and installs the `chat` + `orchestrator` socialware.
+     `routing_rules`, and installs only the `chat` socialware.
 
   Boot runs in `test_helper.exs` (via `Application.ensure_all_started`)
   and writes the seeded row outside any per-test sandbox. To keep the
@@ -138,8 +138,8 @@ defmodule EzagentDomainInstanceMessage.Integration.DefaultSessionTemplateSeedTes
 
     # team-routing-unification §3.7 (PR-7) — `agent_slots` is no longer a
     # SessionTemplate content field (PR-8 removes the slot tools). The
-    # M2 — the default template installs the orchestrator Definition. It no
-    # longer carries a legacy hardcoded cc-orchestrator member declaration.
+    # Main hotfix 2026-07-10 — the default template stays plain so session
+    # creation cannot block on orchestrator install/readiness.
     members = Map.get(content, :members) || Map.get(content, "members")
     prompt_templates = Map.get(content, :prompt_templates) || Map.get(content, "prompt_templates")
     legends = Map.get(content, :legends) || Map.get(content, "legends")
@@ -154,7 +154,7 @@ defmodule EzagentDomainInstanceMessage.Integration.DefaultSessionTemplateSeedTes
     assert prompt_templates == %{}
     assert legends == %{}
     assert routing_rules == []
-    assert installs == ["chat", "orchestrator"]
+    assert installs == ["chat"]
 
     refute Map.has_key?(content, :orchestrator_template_uri)
     refute Map.has_key?(content, "orchestrator_template_uri")
@@ -179,17 +179,10 @@ defmodule EzagentDomainInstanceMessage.Integration.DefaultSessionTemplateSeedTes
 
   # ── Task #58 — default SessionTemplate ⇄ cc decoupling ──────────────
   #
-  # The orchestrator AgentTemplate URI the default template is seeded with
-  # is now a deployment seam read from
-  # `:ezagent_domain_session, :default_orchestrator_template_uri`. The
-  # tests above prove the cc-INCLUSIVE side (key set in config/config.exs →
-  # the default is orchestrator-bearing, pointing at cc-orchestrator). The
-  # tests below force the cc-LESS (`im-without-cc`) side: blank the key so
-  # the default seeds PLAIN, and assert `create_session("default")`
-  # succeeds as a plain session — the edge that previously broke with
-  # `{:orchestrator_ensure_failed, {:unknown_flavor, "cc"}}` when the cc
-  # plugin (and so the `"cc"` flavor + cc-orchestrator AgentTemplate) is
-  # absent.
+  # The legacy orchestrator AgentTemplate URI seam is intentionally inert for
+  # the default template. Main hotfix 2026-07-10 keeps the default PLAIN so
+  # `create_session("default")` succeeds even while orchestrator readiness is
+  # being repaired separately.
   #
   # We force the condition explicitly (set config → nil) rather than rely
   # on ambient state: the monorepo test build always loads cc, so a test
@@ -218,7 +211,7 @@ defmodule EzagentDomainInstanceMessage.Integration.DefaultSessionTemplateSeedTes
       :ok
     end
 
-    test "the default template still installs orchestrator when the legacy cc seam is unset" do
+    test "the default template stays plain when the legacy cc seam is unset" do
       workspace_name = "ccless-ws-#{System.unique_integer([:positive])}"
       workspace_uri = Ezagent.URI.new!("workspace://#{workspace_name}")
 
@@ -250,7 +243,7 @@ defmodule EzagentDomainInstanceMessage.Integration.DefaultSessionTemplateSeedTes
       installs = Map.get(content, :installs) || Map.get(content, "installs")
 
       assert members == []
-      assert installs == ["chat", "orchestrator"]
+      assert installs == ["chat"]
 
       refute Map.has_key?(content, :orchestrator_template_uri)
       refute Map.has_key?(content, "orchestrator_template_uri")

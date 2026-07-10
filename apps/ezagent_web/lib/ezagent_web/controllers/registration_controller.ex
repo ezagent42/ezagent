@@ -89,7 +89,7 @@ defmodule EzagentWeb.RegistrationController do
 
         case Registration.register_with_password(email, password, display_name, opts) do
           {:ok, uri} ->
-            send_confirmation(email, uri)
+            send_confirmation(conn, email, uri)
             # Identical response whether or not the email was new
             # (anti-enumeration, Codex #6): always "check your email".
             render_check_email(conn, email)
@@ -108,9 +108,9 @@ defmodule EzagentWeb.RegistrationController do
     end
   end
 
-  defp send_confirmation(email, _uri) do
+  defp send_confirmation(conn, email, _uri) do
     {:ok, raw} = MagicLinkToken.mint(email, purpose: "confirm")
-    link = EzagentWeb.Endpoint.url() <> "/auth/confirm/" <> raw
+    link = EzagentWeb.UrlHelper.request_base_url(conn) <> "/auth/confirm/" <> raw
 
     case EzagentWeb.Mailer.deliver_confirmation(email, link) do
       {:ok, _} ->

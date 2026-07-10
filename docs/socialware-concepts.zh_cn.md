@@ -84,7 +84,7 @@ shape 是流程特有的 behavior 和 recipe，它把 base 组合成某种具体
 
 对 kanban 来说，shape 是 board/task protocol，也就是
 `Ezagent.ActionSet.Kanban`：nodes、stages、claims、statuses、artifacts、
-metrics、GitHub/Miro sync 和 board configuration。
+metrics、Miro sync 和 board configuration。
 
 Surface 不同：渲染外部 surface 可以被无关流程复用，所以
 `Ezagent.ActionSet.Surface` 是 base。
