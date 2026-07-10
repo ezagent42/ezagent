@@ -1,7 +1,7 @@
 # dev-together 复盘 · 2026-07-09
 
 **reviewed_at**: 2026-07-10 晨（GMT+9）· lead: allenwoods（coordinator: Claude 执行）
-**本日头号目标**：跑通自举开发流程（Track C 修通）。**达成度：部分** —— 断面根因已被 gaga 完整诊断并产出修复（#1294），但**未落 main、未 canary 实测**，转结 07-10 头号。
+**本日头号目标**：跑通自举开发流程（Track C 修通）。**达成度：根因修复已落 main（#1294 → `2d47475b2`，CI 全绿），唯余 canary 实测** —— gaga 完整诊断 create_session 两链根因并产出修复，本晨 rebase+绿+合入；orchestrator 真回话的 canary 实测转结 07-10 头号。
 
 ## §1 本日进入 main / 晋级
 
@@ -10,14 +10,17 @@
 | #1266 (`364ccf6ba`) | skill 分发 P1-P3（SkillRegistry + seed 车道 + 物化 fold） | 二次验收修复后合入；**stable 已晋级至此**（含 #1243/#1252/#1257/#1259/#1261/#1263） |
 | #1295 | seed-loader 去重（ShippedManifest 共享 loader） | hello/kanban Demo 收敛；duplicate-fn cap 46→42（考据：46 是虚高记账） |
 | #1276 (`2df027f58`) | world 模板 UX + cc dev-channel 探针 + PTY 会话面 | 今晨 coordinator 补 4 道行锚 gate 后 squash 合入（见 §3 method-delta 1） |
-| #1277 | hello manifest `requires` 恢复 + dev 关 manifest boot scan | 与 #1294 的 hello 交互有关（见 §4 deferral） |
+| #1277 | hello v2 seed page + rebuild guide + domain fixes（web_anon_access / manifest nil requires） | zhaomato；官网 hello 重建工具/指南 |
+| #1294 (`2d47475b2`) | create_session 根因（rev6 契约恢复 + cc PTY 早产修复 + A2 静态 gate） | gaga；本晨 rebase+绿+合入，**canary 实测 orchestrator 回话 = 唯余项** |
+| #1293 | #1255 三命名裁定（arch.scan allowlist 转正 + 理由 + return 文档） | jjkysy；纯注释无逻辑，07-10 02:08 合入 |
+| #1292 | 项目讨论 skill `project-discussion-esr-ng` 全量 re-bootstrap | jjkysy；skill markdown |
 
 ## §2 开发效能（profile 更新据此）
 
 - **gagameow（黄佳佳）** — 本周最强信号。create_session 卡死困扰一周（#1202→#1259→#1223 一路只按到一个 sync point），gaga **reproduce-first**、逐链取证，识破 #1223 把守护断言在一个名叫 `..._decouple_test.exs` 的文件里**反转**（`== [owner]` → orchestrator 必须已是成员），所以 CI 从未变红。诊断出"5秒超时"与"@orchestrator 不回话"是**两条被焊接的独立链**。→ 强化标签 **根因诊断 / 架构级排查**。其自证的"架构对了补丁就消失"（agent 事务移出创建路径后，handoff 那条 grant `:call`→`:cast` 补丁**不再需要**）是本周最好的架构论据——直接印证 Allen 的边界收敛方向。
 - **create_session 的正确路由（团队判断）** — 值得单独记：#1276 的复盘 return 明确写着 caller-caps + longer-deadline 那条 handoff **被主动从分支移除**，因为 ownership 归 gaga #1247。团队**没有**用"加长 deadline + loading 态"去盖症状，而是把结构性修复路由给根因持有者——这个判断本身是对的，也是 Allen 边界框架的正面验证。
-- **#1276（zyli 主体 15 commits + claude 3 + codex 汇总）** — world 模板 UX 体量大、端到端。**返工点**：作为一个大 PR 合入时连环触发 4 道**行锚静态 gate**（arch dedup / doc-coverage / uri_query 实为 home_path 行锚 / locality allowlist），被红 arch gate 逐层掩盖。根因非代码错误，而是**本地 DoD 只跑了单个 gate**（见 §3）。→ 派发注记：大 PR + 动行锚文件时，本地跑全套 gate 是硬要求。最终 gate 修复 + 合并由 coordinator（本 session）完成，非 zyli。
-- **jjkysy 席位（seed-loader #1295）** — 顺带**考据出 arch baseline 记账漂移**：duplicate-fn cap 46 从 #1248 起一路虚高，实测一直是 42（count≤cap 的绿掩盖了虚高）。→ 强化标签 **原则/记账把关**。教训写回：bump/ratchet baseline 必须以**带数字的实测输出**为准，不能只看测试绿。
+- **#1276（zyli）** — world 模板 UX 体量大、端到端。**返工点**：作为一个大 PR 合入时连环触发 4 道**行锚静态 gate**（arch dedup / doc-coverage / uri_query 实为 home_path 行锚 / locality allowlist），被红 arch gate 逐层掩盖。根因非代码错误，而是**本地 DoD 只跑了单个 gate**（见 §3）。→ 派发注记：大 PR + 动行锚文件时，本地跑全套 gate 是硬要求。（收尾的 gate 修复 + 合并由 coordinator 支持完成。）
+- **jjkysy（#1295 + #1293 + #1292，三件全落）** — 本日产出最扎实的一位：① **#1295 seed-loader 去重**顺带**考据出 arch baseline 记账漂移**（duplicate-fn cap 46 从 #1248 起一路虚高，实测一直是 42，count≤cap 的绿掩盖了虚高）；② **#1293 #1255 三命名裁定**——AgentPassiveAttributes / RuntimeIdentity / EntityPresenter 逐条给出转正理由（passive↔flavor 对称、Runtime.* 是 OS-子进程流水线无关簇、X-of-Y 角色后缀惯例），**附 return 文档**，把"sanctioned-pending-review"清成"已评审转正"；③ **#1292 项目讨论 skill 全量 re-bootstrap**。→ 强化标签 **原则/记账把关 + 命名/边界裁定**。教训写回：bump/ratchet baseline 必须以**带数字的实测输出**为准，不能只看测试绿。
 
 ## §3 method-deltas（学习回路 → jjkysy dev-together PR）
 
@@ -27,19 +30,20 @@
 
 ## §4 台账对账（4 份 return + 无归档 track）
 
-| return / track | 归属 | 状态 | 去向 |
+> 归属 = **开 PR 的开发者**（非 return/commit 的执行 agent）。
+
+| PR / track | 归属（PR 创建者） | 状态 | 去向 |
 |---|---|---|---|
-| pr-1276-complete-return | codex（汇总） | **merged** `2df027f58` | 补 4 gate 后合入；world 模板 UX + cc 探针 + PTY 面 |
-| world-session-create-failfast | claude | **superseded / merged** | cc dev-channel fail-fast 合入；其 `deadline_ms` 加长 stopgap **未进 main**（已核实：workspace.ex 仅通用 pass-through helper，无 60000 硬值）——正确地让位给 #1294 结构修 |
-| world-pty-conversation-surface | claude | **merged**（标 out_of_scope） | 随 #1276 合入；PTY 会话面 |
-| seed-loader-dedup | agent（jjkysy 席位） | **merged** #1295 | ShippedManifest 共享 loader |
-| Track C（create_session 根因） | gagameow | **carry → 07-10 头号** | #1294 已产出，评审中 + **未 canary 实测** |
+| #1276 world 模板 UX（含 create-failfast + PTY 面 stacked） | **zyli** | **merged** `2df027f58` | 补 4 gate 后合入；world 模板 UX + cc 探针 + PTY 面。其中 `deadline_ms` 加长 stopgap **未进 main**（已核实：workspace.ex 仅通用 pass-through helper，无 60000 硬值）——正确地让位给 #1294 结构修 |
+| #1295 seed-loader 去重 | **jjkysy** | **merged** | ShippedManifest 共享 loader；duplicate-fn cap 46→42 |
+| #1294 create_session 根因（Track C） | **gaga** | **本晨落地 `2d47475b2`（CI 全绿）→ carry canary 实测到 07-10** | rebase + 4 gate 修 + A2 破坏性验证 + 一处 full-suite 真回归修复后合入；**唯余 canary 实测 orchestrator 真回话**（已核实 canary 部署带此 commit） |
 | 官网 hello 重建 | zhaomaota97 | **merged #1277**（走直接 PR，非 returns/ 台账） | v2 seed page + rebuild guide + domain fixes（web_anon_access / manifest nil requires）。**注**：重建工具/指南已交付；**部署渠道上的 live E2E（greeter+curl-llm 真回复）能力上依赖 #1294 落 canary**——07-10 复走确认 |
 | 官网飞轮 handoff | ruihuachen-designer | **merged #1204**（走直接 PR） | 价值链梳理 + 可点击 demo + handoffs + scenarios（07-09/handoffs/ 即其产出） |
 | canary 走查 | zyli-developer | **无 return 归档 → 确认/结转** | 07-10 结转（zyli 主体在 #1276；走查 return 未归档） |
-| #1255 三命名裁定 | jjkysy | **无 return 归档 → 确认/结转** | 07-10 结转（seed-loader #1295 已交付） |
+| #1293 #1255 三命名裁定 | **jjkysy** | **merged**（07-10 02:08 coordinator admin-merge） | arch.scan.ex 三条 allowlist 从"sanctioned-pending-review"清成"已评审转正"+ 逐条理由 + **return 文档 `1255-naming-adjudication.md`**；纯注释无逻辑改动 |
+| #1292 项目讨论 skill re-bootstrap | **jjkysy** | **merged**（07-10 02:08） | `project-discussion-esr-ng` skill 全量重建到 main（2 文件 skill markdown） |
 
-> **台账 vs 实际合并的缺口**：zhaomato #1277 / ruihua #1204 走的是**直接 PR review→merge**，没进 dev-together 的 returns/ 台账——所以只看 returns/ 会漏记他们的贡献（已据 GitHub 更正）。教训：review 的对账必须**同时**扫 returns/ 与当日 GitHub 合并，两条来源并核。zyli 走查 / jjkysy #1255 仍无归档也无对应 PR → 真结转，07-10 确认。
+> **台账 vs 实际合并的缺口**：zhaomato #1277 / ruihua #1204 走**直接 PR review→merge**，没进 returns/ 台账；jjkysy #1293 有 return 文档但在**未合并的 PR 分支上**（当时未落 main，故初版 review 漏记）——都已据 GitHub 更正。教训：review 对账必须**同时**扫 returns/ **与当日/隔夜 GitHub 合并 + open PR 的 returns/**，三源并核。仅剩 **zyli canary 走查**无归档无对应 PR → 真结转，07-10 确认。
 
 ## §5 次日建议
 
