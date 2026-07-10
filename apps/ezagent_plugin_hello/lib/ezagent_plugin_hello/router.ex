@@ -36,28 +36,39 @@ defmodule EzagentPluginHello.Router do
   def route(%URI{} = session_uri, user_text, %URI{} = sender) when is_binary(user_text) do
     if should_route?(session_uri, sender) do
       Task.Supervisor.start_child(EzagentPluginHello.TaskSupervisor, fn ->
-        case decide(owner?(session_uri, sender), session_uri, user_text) do
-          :builder ->
-            dispatch_to_member(session_uri, "builder", :rebuild, user_text)
-
-          :concierge ->
-            dispatch_to_member(session_uri, "concierge", :answer, user_text)
-        end
+        action = classify(user_text, owner?(session_uri, sender), session_uri)
+        dispatch_to_member(session_uri, action, user_text)
       end)
     else
       :ignored
     end
   end
 
-  # Dispatch a named action to a session member by role_name. Builder + concierge
-  # are ALWAYS-materialized members (`Definition.roles`); fail-loud if unresolved.
-  defp dispatch_to_member(session_uri, role_name, _action, user_text) do
+  # Classify the user's intent. Share/publish intents (detected by keyword) take
+  # precedence; otherwise fall through to the owner-aware builder/concierge decision.
+  defp classify(user_text, owner?, session_uri) do
+    lower = String.downcase(user_text)
+
+    cond do
+      String.contains?(lower, "share") or String.contains?(lower, "分享") -> :sharer
+      String.contains?(lower, "publish") or String.contains?(lower, "发布") -> :publisher
+      owner? -> Generator.classify_intent(session_uri, user_text)
+      true -> :concierge
+    end
+  end
+
+  # Dispatch a named action to a session member by role_name.
+  defp dispatch_to_member(session_uri, role, user_text) when is_atom(role) do
+    role_name = Atom.to_string(role)
+
     {:ok, member_uri} = Members.role_uri(session_uri, role_name)
 
     action_atom =
-      case role_name do
-        "builder" -> :rebuild
-        "concierge" -> :answer
+      case role do
+        :builder -> :rebuild
+        :concierge -> :answer
+        :sharer -> :share
+        :publisher -> :publish
       end
 
     target =
@@ -97,26 +108,11 @@ defmodule EzagentPluginHello.Router do
     end
   end
 
-  @doc """
-  The routing policy — identity FIRST (the page-edit security boundary), then
-  intent. A non-owner is ALWAYS routed to the read-only concierge, no matter what
-  they type and with NO LLM call; only the owner's message is intent-classified
-  (build vs ask). Pure w.r.t. identity so the boundary is unit-testable; the
-  owner branch delegates to the LLM classifier.
-  """
-  @spec decide(boolean(), URI.t(), String.t()) :: :builder | :concierge
-  def decide(false = _owner?, _session_uri, _user_text), do: :concierge
-
-  def decide(true = _owner?, %URI{} = session_uri, user_text),
-    do: Generator.classify_intent(session_uri, user_text)
-
   # Read the session's owner from its `:session` slice (same source
   # `EzagentWeb.Socialware.SessionFeedChannel` uses). When an owner IS set, enforce
   # it (a non-owner is the read-only concierge — the page-edit boundary). When the
   # session is OWNERLESS (nil owner — e.g. a pre-owner_uri hello session), fail-OPEN
-  # and treat the sender as the owner: there is no owner to protect, anon/non-members
-  # cannot speak here anyway, and stranding the operator (everything → concierge, no
-  # page ever builds) is the worse failure.
+  # and treat the sender as the owner.
   defp owner?(session_uri, %URI{} = sender) do
     case Ezagent.Kind.get_slice(session_uri, :session) do
       {:ok, slice} when is_map(slice) ->
