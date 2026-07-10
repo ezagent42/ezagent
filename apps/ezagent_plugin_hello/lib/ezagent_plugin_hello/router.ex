@@ -44,17 +44,13 @@ defmodule EzagentPluginHello.Router do
     end
   end
 
-  # Classify the user's intent. Share/publish intents (detected by keyword) take
-  # precedence; otherwise fall through to the owner-aware builder/concierge decision.
-  defp classify(user_text, owner?, session_uri) do
-    lower = String.downcase(user_text)
+  # Classify the user's intent. Non-owner → ALWAYS concierge (identity-first
+  # security boundary). Owner → LLM intent classification (BUILD/ASK/SHARE/
+  # PUBLISH). Fail-open to :concierge for non-owner, :builder for owner.
+  defp classify(user_text, false = _owner?, _session_uri), do: :concierge
 
-    cond do
-      String.contains?(lower, "share") or String.contains?(lower, "分享") -> :sharer
-      String.contains?(lower, "publish") or String.contains?(lower, "发布") -> :publisher
-      owner? -> Generator.classify_intent(session_uri, user_text)
-      true -> :concierge
-    end
+  defp classify(user_text, true = _owner?, session_uri) do
+    Generator.classify_intent(session_uri, user_text)
   end
 
   # Dispatch a named action to a session member by role_name.
