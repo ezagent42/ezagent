@@ -1,14 +1,24 @@
-# Agent Entity × Flavor:映射关系与底层实例生命周期(v2.1)
+# Agent Entity × Flavor:映射关系与底层实例生命周期(v2.2)
 
-日期:2026-07-09 · 起草基线 `364ccf6ba`(stable),**结论需按当前 HEAD 复核**
+日期:2026-07-10 · 起草基线 `364ccf6ba`(stable),**结论需按当前 HEAD 复核**
 性质:**决策记录(decision record),不是实施规格(implementation spec)。**
 
-> ⚠️ **实施前必读**:下述 Q1/Q3/Q4 是 Allen ratify 的**方向裁定**,**不代表实现已存在**。经 codex 对抗式 review(2026-07-09)确认,至少三处需要先补接口设计才能实施:
-> 1. **`ContextRenderer` 契约**(Q1 的 replay 当前**无代码落点**)——见 §4.4
-> 2. **`isolation` 能力位 schema**(`AgentFlavorRegistry.decl` 当前无此字段)——见 §5.3
-> 3. **D2 的 runtime key**(与 reuse 复用 `agent_uri` 存在**未解决矛盾**)——见 §5.5
+> ## 核心 framing(v2.2,实测确立)
 >
-> v2→v2.1 变更(codex review 后修正):curl 分类纠错(stateful behavior)· config_dir 补第④类 · `message_routings` 已移除(copy+ref model)· URI 格式纠错 · 12 连锁位重写为状态清单 · D2 矛盾显式化 · Q1 对 cc-PTY 的可实施性标为**待 Allen 裁决**。
+> **引擎的 session = 可弃缓存。PG `MessageStore` = 权威。**
+> - **同 backend**:命中缓存 → 走引擎自己的 CLI-native resume(快、零 token)
+> - **跨 backend / 缓存失效**:回源 → 从 PG 重建
+>
+> Allen 的「flavor = 无状态执行器」由此获得精确含义:**不是"每次都从 PG 喂",而是"引擎的记忆永远只是缓存,丢了能重建"。**
+
+> ⚠️ **实施前必读**:Q1/Q3/Q4 是 Allen ratify 的**方向裁定**。经 codex 对抗式 review + 实测,当前状态:
+> - **B1(cc-PTY 恢复)** —— ✅ **已实测关闭**,降为 low(两行 argv),见 §2.1a
+> - **B2(跨 backend replay)** —— 🔴 **唯一真架构阻塞**,范围已收窄,见 §4.4
+> - **B3(D2 runtime key)** —— 🔴 待 Allen 裁决,见 §5.5
+> - **B4(isolation schema)** —— 🟠 建模轴已找到(control plane),见 §5.3
+> - **B5(curl 分类)** —— ✅ 已修
+>
+> v2.1→v2.2 变更:**实测 cc `--session-id`/`--resume` 与 `server:esr-bridge` 无冲突** · 确立 cache/source-of-truth framing · 新增 §2.1b **control plane 分层**(PTY 是正交 surface,不是 mode)· §4.4 重写为 **`ContextRestore` 三层封装契约** · B1 关闭 · B2 收窄。
 
 ---
 
@@ -52,20 +62,57 @@ PTY 启动 `build_claude_cmd/3`(`spawn_plan.ex:81-83`)是无 `--resume`/`-p` 的
 
 **Rehydration 契约(Decision A 必答项)**:跨 backend 切换(cc→codex)时第②层保留但 CLI transcript 格式不同 → **对话连续性只能靠 `MessageStore` PG replay**(第①层)。
 
-### ⚠️ 2.1a Q1 的实现缺口(codex review,critical)——待 Allen 裁决
+### ✅ 2.1a B1 已实测关闭 —— cc-PTY 的 state 在磁盘,不在进程
 
-**上述是目标架构,当前代码没有落点。** 现读证据:
+> **v2.1 曾断言**「PTY 是交互式 TUI,物理上无法喂历史 ⇒ Q1 对 cc-PTY 不可实施」。**这是错的。** Allen 纠正后实测推翻。
 
-- `MessageStore` 的 replay **只用于成员重连补发**(`in_session_since/2` → 重新 dispatch,`delivery.ex:379`),**不存在**"把历史渲染后喂给 flavor"的路径。
-- cc-headless 只把**当前 `text`** 传给 SDK(`ezagent_cc_sdk_worker.py:131`);codex bridge 只把**当前 `content`** 发给 `turn/start`(`ezagent_codex_bridge.py:242`)。**没有 ContextRenderer。**
-- **cc-PTY 尤其棘手**:启动的是**裸交互 `claude`**,无 `--resume`/`-p`(`spawn_plan.ex:78`);重启路径 `ensure_subprocess_alive/2`(`cc_agent.ex:826`)只是重新拉起 PtyServer,**不喂历史**。而 PTY 是**交互式 TUI,不是 request/response** —— 无法"喂"一段历史来恢复它的 context window。
+**实测(2026-07-10,隔离 `CLAUDE_CONFIG_DIR`,`--print` 非交互模式):**
 
-**❓ 裁决点(回给 Allen)**:Q1 的"PTY = disposable"对 cc-PTY 而言,**等价于要求它迁到 headless `-p`/SDK 模式**(放弃 PTY 交互)。二选一:
+| 步骤 | argv | 结果 |
+|---|---|---|
+| spawn | `--session-id <u1> --dangerously-skip-permissions` | ✅ |
+| resume(**新进程**) | `--resume <u1>` | ✅ **答出上个进程的暗号** |
+| spawn(**ezagent 完整 argv**) | `--session-id <u2> --dangerously-skip-permissions --dangerously-load-development-channels server:esr-bridge` | ✅ |
+| resume(**新进程 + 完整 argv**) | `--resume <u2>` + 同上 | ✅ **答出暗号** |
 
-- **(a)** 无状态语义**只覆盖 headless/remote/HTTP 档**,`cc`(PTY)显式标 `:per_instance_stateful`(只允许"进程重启 + 同 config home 尝试恢复"),不宣称跨 backend replay 等价;
-- **(b)** 要求需要无状态的 role **一律走 `cc-headless`**,`cc`(PTY)仅留交互/调试用途。
+**三条结论:**
 
-**在此裁决前,Q1 对 cc-PTY 不可实施。** 实施前必须先补 **`ContextRenderer` 设计**:读取哪些 message、窗口/截断/token budget、system/tool/result 如何编码、幂等性测试、各 flavor 输入协议适配。
+1. **`--resume` 与 `server:esr-bridge` 开发通道无冲突**(该 flag 带值,argv 里零位置参数,追加 flag 安全)。
+2. **state 的物理位置是磁盘**:`$CLAUDE_CONFIG_DIR/projects/<cwd-slug>/<session-uuid>.jsonl`。**进程死掉,对话还在。** 这正是 Allen RULING 第②层原文所述(CLI-native resume restores same-backend conversation cache from disk)。
+3. **cc 与 cc-headless 的 state 机制是同一个**(同一份 jsonl)。区别只在 control plane 形态,**不在 state 归属**。
+
+**⇒ B1 从 `critical/不可实施` 降为 `low/两行 argv`**,实现照抄 cc-headless:
+
+1. `spawn_plan.build_claude_cmd/3` argv 加 `--session-id <uuid>`;
+2. uuid 持久化进 `:sandbox` slice 的 `respawn_template_data`(即 `cc_headless_agent.ex:92,106` 的 `claude_session_id`);
+3. `ensure_subprocess_alive/2` 的 respawn argv 加 `--resume <同一 uuid>`。
+
+**仍未验证**:PTY 交互模式未直接实测(用的是 `--print`,session 存储机制相同);MCP rebind 后 `AgentBridge.Registry` 能否重绑(状态位 13/14),需起真 ezagent;`--resume` 遇 config_dir 被 wipe(R2)必然失败,需 fallback 到 fresh。
+
+### 2.1b Control plane 分层 —— PTY 是正交 surface,不是 mode
+
+**决定 flavor 行为的不是"有没有 PTY",而是"control plane 长在哪"。**
+
+`app_server.ex:5-9` 原文:app-server 是 **shared control plane**,同时被 operator 的 Codex TUI 和 ezagent bridge sidecar 使用,**「刻意与 `Domain.Pty` 分离:app-server 是 control daemon,`Domain.Pty` 拥有交互式 TUI 进程和终端界面」**。而 `codex_agent.ex:276`:PTY TUI **resume 同一个 thread**,与 AgentBridge 共享 context。
+
+cc 则是二合一:control plane 内嵌在 claude 进程里(`server:esr-bridge` MCP),`transport_class = :subprocess_ws`。**量化对比:`Domain.Pty` 引用数 —— cc 51 处,codex 仅 7 处。PTY 对 cc 是执行通道,对 codex 只是终端。**
+
+```
+control_plane: :daemon | :in_process | :none(oneshot)
+surface:       :pty | :none                 # 正交,可有可无
+```
+
+| flavor | control_plane | surface | state 实际在哪(实测) |
+|---|---|---|---|
+| `codex` | `:daemon` | `:pty` | daemon 的 thread + rollout 文件 |
+| `codex-remote` | `:daemon` | `:none` | 同上 |
+| `cc` | `:in_process` | `:pty` | **磁盘 session jsonl**(`--resume` 可恢复) |
+| `cc-headless` | `:none` | `:none` | **磁盘 session jsonl**(同机制) |
+| `curl` | `:none` | `:none` | ezagent 的 `:curl_agent` slice |
+
+**「PTY = disposable」对所有 flavor 成立,但代价按 control plane 分层**:`{daemon,pty}` 零代价 · `{in_process,pty}` 靠 `--resume` 从磁盘恢复 · `{none,*}` 靠 replay。**跨 backend 一律只能 PG replay。**
+
+> **这也修正了 §5.3 的建模轴**:`isolation` 的正确一级轴是 **control plane**,不是"有无 PTY"。
 
 ### 2.2 fresh-spawn 全路径(不变,all-or-nothing)
 
@@ -149,22 +196,53 @@ bridge join 才 ready(`transport_readiness.ex:56,88,168`),积压消息走 `Pendi
 
 > **第④类是 codex review 补出的漏项(medium)**。它不可被简单归入任何一类:删了它,同 backend 的续接能力丢失;但它又不是对话内容本身。**需明确**:哪些可删、哪些需随实例迁移、哪些只在同 backend 内有效。这直接影响 §3 的 switch(跨 backend 时第④类必然失效)与 reset(同 backend 时应保留)。
 
-### 4.3 异构无状态化:四个实现 + 首验对象
+### 4.3 `ContextRestore` — 三层封装契约(v2.2 重写)
 
-| 实现 | 内容 | 首验 flavor |
-|---|---|---|
-| ① 统一 run 契约 | `run(rendered_context, input) → {reply, artifacts}`,turn 间不留 state,放 AgentBridge adapter(P12) | cc-headless / codex-remote |
-| ② context 渲染器(上层) | 从 MessageStore 按 session 取历史→翻各 flavor 输入 | 共通 |
-| ③ 绕过 flavor 自身 session | cc 走 headless/`-p`;codex 一次性 thread | cc-headless / codex-remote |
-| ④ adapter 声明能力位 | `stateless_capable?` + `isolation`(见 §5) | 共通 |
+**封装的本质:把「命中缓存(native resume)还是回源(PG replay)」这个决策藏在契约后面。调用方不该关心。**
 
-**首验路径**(Q1 RULING 后在所有 flavor 上成立):
+```
+L1  framework, flavor-agnostic
+    Ezagent.Agent.ContextRestore
+      decide/3     : (old_flavor, new_flavor, handle_state) -> :native | :replay | :fresh
+      rehydrate/3  : 执行决策
 
-| 对象 | 机制 | 隔离档位 | 先行原因 |
-|---|---|---|---|
-| cc-headless(验证"串行 per_thread") | `ClaudeSDKClient` sidecar,`query(text, session_id)`,`sdk_sidecar.ex:94`;**serializes**(`:6`)→需 turn 队列 | `:per_thread` 串行 | 接口已就位,每次 query 拼 MessageStore context |
-| codex-remote(验证"并发 per_thread") | app-server + bridge sidecar,conversation 单位 `thread_id`;app-server 原生多 thread,单 `thread_id`→要扩 per-session | `:per_thread` 并发 | 每 session 一 thread,免串行 |
-| curl / native(验证":stateless") | 本来就无状态,走 `in_process_sync`,`agent_bridge.ex:128,331` | `:stateless` | 天然满足,D1 安全 |
+L2  flavor adapter callbacks
+      new_session_handle/0   # cc → uuid;codex → thread_id;curl/native → nil
+      resume_args/1          # cc → ["--resume", h];curl → []
+      render_context/2       # 仅 :replay 分支
+      inject_context/2       # 仅 :replay 分支
+
+L3  core(已有,不动)
+      MessageStore.in_session_since/2   -- 历史来源
+      ReadyGate                          -- 注入时机(bridge join 后、首条真实消息前)
+```
+
+**关键一步:把 config_dir 第④类抽象成 opaque `engine_session_handle`。**
+
+它现在是散落的 fs 状态(`claude_session_id`、codex `thread_id` 文件),各 template_class 自管。封装后:存进 `:sandbox` slice 的一个 opaque 字段,**framework 管生命周期**;adapter 只回答两问——「给我一个新 handle」「用这个 handle 怎么 resume」。**switch flavor 时 framework 自动知道 handle 失效**(engine 变 ⇒ 走 `:replay`)。
+
+| 原问题 | 消解方式 |
+|---|---|
+| **B1** cc-PTY 恢复 | 只需 `new_session_handle` + `resume_args` ≈ 两行 |
+| **B2** ContextRenderer | 范围从"所有 flavor"收窄到 **仅 `:replay` 分支** |
+| **第④类 metadata** | 散落 fs 文件 → framework 管理的 opaque handle |
+| **状态清单 16/17 位** | 两位合并成一位 `engine_session_handle` |
+| **B4** isolation 建模 | handle 的有无,天然区分 stateful/stateless engine |
+
+### ⚠️ 4.4 B2 — 唯一真架构阻塞(范围已收窄)
+
+**只有 `:replay` 分支(跨 backend switch)需要它。** 同 backend 一律走 native resume。三个真实约束,不可被封装糖衣掩盖:
+
+1. **`render_context` 必须 per-flavor,cc-PTY 最难。** curl 天然是 messages 数组;cc-headless/codex 可塞进 SDK 输入;**`cc`(PTY)没法向交互式 TUI「注入」历史** —— 跨 backend 时只能把历史**拼进第一条 prompt**,有损且吃 token。
+2. **handle 隐含 cwd 依赖。** 实测路径 `$CLAUDE_CONFIG_DIR/projects/<cwd-slug>/<uuid>.jsonl` —— **cwd 编码进路径**。handle 实际是 `{uuid, cwd}`;agent 的 `project_cwd` 一变(如换 worktree),`--resume` 即失效。契约须写明:handle 有效性依赖 `(config_dir, cwd)` 均不变。
+3. **replay 的幂等与预算(B2 的本体,尚未设计)**:历史里的 tool call **不能重新执行** ⇒ 渲染时须把 tool result 折叠成文本;需窗口策略(最近 N 条 / token budget / 摘要),否则长会话爆掉。
+
+### 4.5 分两步走(建议)
+
+- **Step 1(小,可立即做)—— 只封装 native 路径。** 落 `engine_session_handle` + `new_session_handle/0` + `resume_args/1`。cc 补两行 argv,codex 把 `thread_id` 挪进 handle。`:replay` 分支先返回 `{:error, :not_implemented}`(反正现在也不支持跨 backend switch)。**收益:B1 关闭、第④类收编、16/17 位合并、B4 有了建模轴。**
+- **Step 2(大,需独立 SPEC)—— 补 `:replay`。** `render_context`/`inject_context` + 窗口策略 + 幂等语义。这才是 B2 的本体。
+
+**Step 1 落地后,本稿即可进入实施;B2 作为独立提案排期。**
 
 ---
 
@@ -196,9 +274,11 @@ bridge join 才 ready(`transport_readiness.ex:56,88,168`),积压消息走 `Pendi
 - fan-out 到群组的下层实现走 **Legend + `$session_members`**(`legend.ex:1,7` `member_set`),不走重载 role_name。
 - Q3 让 viewer 从"隐式(anon 不占 role_name)升为**显式**(role + cardinality:many),并连带让 `from_role: viewer → responser` 对带 viewer role 的 human 生效。
 
-### 5.3 隔离能力位(⚠️ **提案,未落代码**)
+### 5.3 隔离能力位(⚠️ **提案,未落代码;建模轴见 §2.1b**)
 
-> **codex review(high)**:`AgentFlavorRegistry.decl` 当前只有 `kind/template_class/instance_behaviors/cap_policy`(`agent_flavor_registry.ex:49`),**无 `isolation` 字段**;bridge 层只有 `:subprocess_ws | :in_process_sync` 两档 transport class(`adapter_registry.ex:116`)。**本节是 schema 提案**,实施前需:加注册验证 + 默认拒绝 + per-flavor invariant test。否则 D1/D2 调度无依据。
+> **codex review(high)**:`AgentFlavorRegistry.decl` 当前只有 `kind/template_class/instance_behaviors/cap_policy`(`agent_flavor_registry.ex:49`),**无 `isolation` 字段**;bridge 层只有 `:subprocess_ws | :in_process_sync` 两档 transport class(`adapter_registry.ex:116`)。**本节是 schema 提案**。
+>
+> **v2.2 修正建模轴**:一级轴应是 **control plane**(`:daemon | :in_process | :none`,§2.1b),不是"有无 PTY"——PTY 是正交 surface。`isolation` 可从 control plane 派生;`engine_session_handle` 的有无天然区分 stateful/stateless engine。
 
 **关键区分(v2.1 纠错)——"执行器无状态" ≠ "flavor 无状态"**:
 
@@ -295,21 +375,23 @@ bridge join 才 ready(`transport_readiness.ex:56,88,168`),积压消息走 `Pendi
 | 5 | **per-role cardinality `one\|many`**;S3 = handoff/cutover | ✅ ratify(Q3) |
 | 6 | **curl 生命周期 hook 退化**;completion/tool-loop 正交 | ✅ ratify(Q4) |
 
-### 8.2 ⚠️ 实施阻塞项(codex review 2026-07-09 —— 必须先解)
+### 8.2 实施阻塞项(v2.2 实测后更新)
 
-| # | 阻塞项 | 严重性 | 位置 |
+| # | 阻塞项 | 严重性 | 状态 |
 |---|---|---|---|
-| B1 | **Q1 对 cc-PTY 不可实施** —— 裸交互 `claude` 无 `--resume`,PTY 是 TUI 非 req/resp,无法"喂"历史。需 Allen 在 (a) 只覆盖 headless 档 / (b) 强制 role 走 cc-headless 之间裁决 | **critical** | §2.1a |
-| B2 | **`ContextRenderer` 无代码落点** —— MessageStore replay 当前只用于成员重连补发;cc-headless/codex 只传当前 text/content。需补完整接口设计(窗口/截断/token budget/编码/幂等) | **critical** | §4.4 |
-| B3 | **D2 的 runtime key 矛盾** —— reuse 复用同 `agent_uri`,而 config_dir 是其纯函数;"每 session 独立可写 runtime"无实现路径。需 Allen 在 (a)/(b)/(c) 三条出路裁决 | **critical** | §5.5 |
-| B4 | **`isolation` 能力位未建模** —— `AgentFlavorRegistry.decl` 无此字段;需 schema + 注册验证 + 默认拒绝 + invariant test | **high** | §5.3 |
-| B5 | **curl 不是 `:stateless`** —— stateless transport + **stateful flavor behavior**(`:curl_agent.conversation` durable);不能作 D1 证明对象 | **high** | §5.3 |
+| ~~B1~~ | ~~Q1 对 cc-PTY 不可实施~~ | ~~critical~~ → **low** | ✅ **实测关闭**(§2.1a):`--resume` 与 `server:esr-bridge` 无冲突;state 在磁盘 jsonl。实现 = 两行 argv |
+| **B2** | **跨 backend replay 的渲染契约** —— 仅 `:replay` 分支需要(同 backend 走 native resume)。三个约束:per-flavor 渲染(cc-PTY 只能拼进首条 prompt,有损)· handle 隐含 cwd 依赖 · **幂等与 token 预算尚未设计** | **critical** | 🔴 **唯一真架构阻塞**(§4.4) |
+| **B3** | **D2 的 runtime key 矛盾** —— reuse 复用同 `agent_uri`,而 config_dir 是其纯函数。Allen 已反问「共享身份的同时共享记忆不也挺好?」→ 倾向出路 (c),但需明确区分**纵向记忆共享**(想要)与**横向 context 交织**(隐私风险) | **critical** | 🔴 待 Allen 裁决(§5.5) |
+| **B4** | `isolation` 能力位未建模 —— `AgentFlavorRegistry.decl` 无此字段 | **high** | 🟠 建模轴已找到:**control plane**(§2.1b);`engine_session_handle` 的有无天然区分 stateful/stateless |
+| ~~B5~~ | ~~curl 不是 `:stateless`~~ | ~~high~~ | ✅ 已修(§5.3) |
 
-### 8.3 已修正的事实错误(v2 → v2.1)
+### 8.3 已修正的事实错误
 
-`message_routings` 已移除(copy+ref model)· URI 格式 `entity://<ws>/agent/<name>` · config_dir 补第④类(runtime coordination metadata)· 状态清单 12 位 → 17 位。
+**v2 → v2.1**:`message_routings` 已移除(copy+ref model)· URI 格式 `entity://<ws>/agent/<name>` · config_dir 补第④类 · 状态清单 12 位 → 17 位。
+**v2.1 → v2.2**:**"PTY 物理上无法喂历史"是错的**(实测推翻)· "PTY 是一个 mode"是错的(PTY 是**正交 surface**,一级轴是 control plane)· cc 与 cc-headless 的 state 机制本是同一个。
 
-> **本稿是 decision record,不是 implementation spec。** B1–B5 解决前不进入实施;B1/B3 需 Allen 裁决,B2/B4 需补接口设计。
+> **本稿是 decision record,不是 implementation spec。**
+> **Step 1(封装 native 路径)落地后即可进入实施**;B2 作为独立 SPEC 排期;B3 待 Allen 裁决。
 
 ---
 
