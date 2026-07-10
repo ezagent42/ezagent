@@ -4,10 +4,9 @@ defmodule Ezagent.ActionSet.HelloPublisher do
   dispatchable action so the front-desk relay can route a publish request here.
 
   Native-flavor (no bridge adapter) — reachable via dispatch, not chat delivery
-  (T2 I-1). On `:publish`, uses an LLM round-trip to extract or generate a
-  template name from the user's instruction (auto-unique if not specified,
-  auto-suffix on collision), then calls `save_template_as` to create the
-  template and posts the result as the publisher agent itself (loop-guard-safe).
+  (T2 I-1). On `:publish`, derives a unique template name from the session name
+  + timestamp (or user-specified name + timestamp), calls `save_template_as`,
+  and posts the result as the publisher agent itself (loop-guard-safe).
   """
 
   use Ezagent.Lifecycle
@@ -24,9 +23,10 @@ defmodule Ezagent.ActionSet.HelloPublisher do
   def create(_args), do: {:ok, %{}}
 
   @doc """
-  Dispatchable publish entry. Lets the LLM decide the template name from the
-  instruction: extracts a specified name, auto-generates a unique one otherwise,
-  and appends a suffix on collision. Posts the result from the publisher agent.
+  Dispatchable publish entry. Derives a template name from the session name +
+  timestamp by default; if the instruction carries an explicit name
+  (e.g. \"发布为zzz\"), uses that name + timestamp instead. Always unique.
+  Posts the result from the publisher agent itself.
   """
   def handle_publish(%{session_uri: session_str} = args, _ctx)
       when is_binary(session_str) and session_str != "" do
@@ -74,79 +74,56 @@ defmodule Ezagent.ActionSet.HelloPublisher do
 
   # --- internals --------------------------------------------------------
 
-  @name_prompt """
-  Extract the template name from this chat message. Rules:
-  - If the message contains \"发布为XXX\", \"名字为XXX\", \"name XXX\",
-    \"叫XXX\", \"named XXX\", or \"命名为XXX\" — return ONLY the XXX value.
-  - If the message is \"@publisher 发布\" with NO name — return \"auto\".
-  - Ignore @mentions and agent names. They are NOT template names.
-  - Return ONLY the name. One word, lowercase, 2-30 chars, URL-safe
-    (letters/digits/hyphens). No spaces, no punctuation.
-  """
-
+  # Derive a unique template name: <base>-<MMDD>-<HHMM>.
+  # Base = user-specified name if present, otherwise the session name.
+  # E.g. "hello-main-0709-2010" or "zzzmn-0709-2115".
   defp resolve_template_name(session_uri, instruction) do
-    # Ask the LLM for a name
-    prompt = "#{@name_prompt}\n\nMessage: #{instruction}"
-    candidate = llm_name(prompt) |> sanitize_name()
-
-    # LLM returns "auto" when no explicit name — generate one
-    candidate = if candidate == "auto", do: auto_name(), else: candidate
-
-    # Check for collision with existing template names
-    case template_name_exists?(candidate) do
-      true -> {:ok, "#{candidate}-#{suffix()}"}
-      false -> {:ok, candidate}
-    end
-  end
-
-  defp auto_name do
+    base = extract_base_name(session_uri, instruction)
     ts = DateTime.utc_now() |> Calendar.strftime("%m%d-%H%M")
-    "site-#{ts}"
+    {:ok, "#{base}-#{ts}"}
   end
 
-  defp template_name_exists?(name) do
-    uri = "template://system/session/#{name}@"
-
-    {:ok, rows} =
-      EzagentCore.Repo.query(
-        "SELECT 1 FROM kind_snapshots WHERE uri LIKE $1 LIMIT 1",
-        [uri <> "%"]
-      )
-
-    rows.num_rows > 0
-  rescue
-    _ -> false
-  end
-
-  defp llm_name(prompt) do
-    case EzagentPluginHello.LLM.ClaudeCode.chat(prompt, "extract name") do
-      {:ok, %{content: content}} when is_binary(content) ->
-        String.trim(content)
-
-      _ ->
-        # Fallback: generate a timestamp-based name
-        ts = DateTime.utc_now() |> Calendar.strftime("%m%d-%H%M")
-        "site-#{ts}"
+  defp extract_base_name(session_uri, instruction) do
+    case extract_explicit_name(instruction) do
+      {:ok, name} -> name
+      :none -> session_base_name(session_uri)
     end
   end
 
-  defp sanitize_name(raw) do
-    raw
-    |> String.trim()
-    |> String.downcase()
-    |> String.replace(~r/[^a-z0-9\-_]/, "-")
-    |> String.replace(~r/-+/, "-")
-    |> String.trim("-")
-    |> case do
-      "" -> "template"
-      s -> String.slice(s, 0, 30)
-    end
+  defp extract_explicit_name(instruction) when is_binary(instruction) and instruction != "" do
+    patterns = [
+      ~r/发布为\s*[：:]*\s*(\S+)/u,
+      ~r/名字为\s*[：:]*\s*(\S+)/u,
+      ~r/name\s+(\S+)/i,
+      ~r/named\s+(\S+)/i
+    ]
+
+    Enum.find_value(patterns, :none, fn re ->
+      case Regex.run(re, instruction) do
+        [_, name] ->
+          sanitized =
+            name
+            |> String.trim()
+            |> String.replace(~r/[^a-zA-Z0-9\-_]/, "-")
+            |> String.slice(0, 30)
+
+          {:ok, sanitized}
+
+        nil ->
+          nil
+      end
+    end)
   end
 
-  defp suffix, do: :erlang.unique_integer([:positive]) |> Integer.to_string(16)
+  defp extract_explicit_name(_), do: :none
 
-  # Extract a human-readable name from the template URI, e.g.
-  # template://system/session/hello-main@hash → "hello-main".
+  defp session_base_name(%URI{path: "/hello/" <> name}) do
+    name |> String.replace(~r/[^a-zA-Z0-9\-_]/, "-")
+  end
+
+  defp session_base_name(_), do: "site"
+
+  # Extract a human-readable name from the template URI.
   defp template_display_name(%URI{path: "/session/" <> rest}) do
     rest |> String.split("@") |> List.first() || rest
   end
