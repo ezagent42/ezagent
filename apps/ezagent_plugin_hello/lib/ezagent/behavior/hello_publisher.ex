@@ -90,29 +90,32 @@ defmodule Ezagent.ActionSet.HelloPublisher do
     end
   end
 
+  @name_prompt """
+  Extract only the template name from this chat message.
+  - If the user explicitly named it (e.g. \"发布为xxx\", \"叫xxx\", \"name xxx\",
+    \"发布，名字是xxx\", \"存为yyy\", etc.), return ONLY the name.
+  - If NO name was specified, return \"auto\".
+  - Return ONLY the name or \"auto\". No punctuation, no extra text.
+  """
+
   defp extract_explicit_name(instruction) when is_binary(instruction) and instruction != "" do
-    patterns = [
-      ~r/发布为\s*[：:]*\s*(\S+)/u,
-      ~r/名字为\s*[：:]*\s*(\S+)/u,
-      ~r/name\s+(\S+)/i,
-      ~r/named\s+(\S+)/i
-    ]
+    case EzagentPluginHello.LLM.ClaudeCode.chat(@name_prompt, instruction) do
+      {:ok, %{content: content}} when is_binary(content) ->
+        name =
+          content
+          |> String.trim()
+          |> String.replace(~r/[^a-zA-Z0-9\-_]/, "-")
+          |> String.slice(0, 30)
 
-    Enum.find_value(patterns, :none, fn re ->
-      case Regex.run(re, instruction) do
-        [_, name] ->
-          sanitized =
-            name
-            |> String.trim()
-            |> String.replace(~r/[^a-zA-Z0-9\-_]/, "-")
-            |> String.slice(0, 30)
+        if name in ["", "auto"] do
+          :none
+        else
+          {:ok, name}
+        end
 
-          {:ok, sanitized}
-
-        nil ->
-          nil
-      end
-    end)
+      _ ->
+        :none
+    end
   end
 
   defp extract_explicit_name(_), do: :none
