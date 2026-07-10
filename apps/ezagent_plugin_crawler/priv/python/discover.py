@@ -91,12 +91,21 @@ def _http_get_json(url: str) -> dict:
 
 
 def _keywords(text: str) -> list[str]:
-    """触发消息 → 粗筛关键词（≥3 字符的词；剔除 @mention 与信号标记）。"""
+    """触发消息 → 粗筛关键词（≥3 字符的 ASCII 词；剔除 @mention 与信号标记）。
+
+    两处修正（2026-07-10 零人工中继 e2e 实测）：
+      * @mention 先整体剔除——原实现 findall 后按 startswith("@") 过滤，
+        但 \w 分词早把 @ 剥掉了，角色名 "discover" 会漏进查询词（假阳性）；
+      * 只保留 ASCII 词——HN Algolia 是英文源，中文词混进 query 会把检索
+        稀释成 front_page 泛结果，线索与请求对不上（orchestrator 拒信号的
+        "数据自相矛盾" 观感即来于此）。
+    """
     if not isinstance(text, str):
         return []
     cleaned = text.replace(UPDATE_SIGNAL, " ")
+    cleaned = re.sub(r"@\S+", " ", cleaned)
     words = re.findall(r"[\w-]{3,}", cleaned, flags=re.UNICODE)
-    return [w.lower() for w in words if not w.startswith("@")][:8]
+    return [w.lower() for w in words if w.isascii()][:8]
 
 
 def _fetch_hits(keywords: list[str]) -> list[dict]:

@@ -65,6 +65,34 @@ defmodule EzagentPluginCrawler.Application do
   def start(_type, _args) do
     result = Ezagent.Plugin.boot(__MODULE__)
 
+    # dealscout-assistant（cc-headless 入库操作员）的工作目录。cc-headless
+    # 物化的缺省 cwd = `~/.ezagent/<recipe名>`（`DefaultAgentSeed.
+    # default_project_cwd/1`，recipe 无 config[:project_cwd] 时的回落），但
+    # 平台不替 role agent 建目录——sidecar spawn `Cannot chdir` 必崩（2026-07-10
+    # 零人工中继 e2e 实测）。照 `CcOrchestratorSeed.ensure_sandbox_files`
+    # mkdir 自己 sandbox base 的先例，声明该 recipe 的插件负责保证目录在。
+    _ =
+      File.mkdir_p(
+        Path.join([System.user_home() || System.tmp_dir!(), ".ezagent", "dealscout-assistant"])
+      )
+
+    # 仓库根指针（部署运行时数据，非 shipped 常量）：SDK sidecar 车道不给
+    # agent cwd 写 .mcp.json（那是 PTY 车道 McpConfigWriter 的三处写之一），
+    # 09m 实测 assistant 在空 cwd 里定位不到仓库根、CLI 跑不起来。boot 时把
+    # 本运行时的仓库根写成 cwd 里的 REPO_ROOT 指针文件，skill/persona 第 1 步
+    # `cat ./REPO_ROOT` 读它——与 McpConfigWriter 往 agent cwd 写共享配置的
+    # 先例同类（机器相关的值在运行时落盘，不进代码/manifest）。
+    _ =
+      File.write(
+        Path.join([
+          System.user_home() || System.tmp_dir!(),
+          ".ezagent",
+          "dealscout-assistant",
+          "REPO_ROOT"
+        ]),
+        File.cwd!()
+      )
+
     # 段4 D2（照 kanban S4）——register the leads SessionView (declaration side;
     # world consumes the registry generically per world-views #1192/#1199, so
     # this needs ZERO world changes). The registry is init'd by
@@ -124,7 +152,19 @@ defmodule EzagentPluginCrawler.Application do
   @impl Ezagent.Plugin
   def behaviors do
     [
-      {Ezagent.Entity.Session, :crawler_render, Ezagent.ActionSet.CrawlerRender}
+      {Ezagent.Entity.Session, :crawler_render, Ezagent.ActionSet.CrawlerRender},
+      # 2026-07-10 零人工中继 round-3：把爬取动作注册成 Session Kind 的全局
+      # dispatchable 行为（email plugin 先例——`{SessionKind, action,
+      # EmailAllow}`，插件契约的 sanctioned 车道）。这给 orchestrator 一个
+      # **正规 CLI 工具面**：`mix ezagent session crawl_now/search`（identity
+      # → runtime 内 Exec → Router.dispatch，cookie 由官方 CLI 内部处理）。
+      # 真 e2e 实测（docs/e2e/2026-07-10/dealscout-rework-final 09e/09g）：
+      # cc 真脑两轮拒绝"消息教它拿集群 cookie 起节点"的 stand-in 机制
+      # （拒得对——cookie = 集群根凭证），点名要正规工具面；本注册就是
+      # 那个工具面。CapBAC 不变：caller 无 crawl/search cap 照拒
+      # （orchestrator 的 within-session delegation 只覆盖自己会话）。
+      {Ezagent.Entity.Session, :crawl_now, Ezagent.ActionSet.Crawler},
+      {Ezagent.Entity.Session, :search, Ezagent.ActionSet.Crawler}
     ]
   end
 end

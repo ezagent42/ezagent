@@ -161,10 +161,18 @@ defmodule EzagentPluginCrawler.DealscoutManifestTest do
            end)
   end
 
-  test "declares exactly the discover + page agent role-slots, zero instance URIs (#1180)" do
+  test "declares exactly the discover + dealscout-assistant + page agent role-slots, zero instance URIs (#1180)" do
     definition = resolve!()
     agent_slots = Enum.filter(definition.roles, &(&1.fill == :agent))
-    assert Enum.sort(Enum.map(agent_slots, & &1.role_name)) == ["discover", "page"]
+
+    assert Enum.sort(Enum.map(agent_slots, & &1.role_name)) ==
+             ["dealscout-assistant", "discover", "page"]
+
+    # 入库操作员（零人工中继 case-2，kanban-assistant 模具）：cc-headless
+    # 真脑，常设职责在 recipe persona（可信渠道，非消息载权）。
+    assistant = Enum.find(agent_slots, &(&1.role_name == "dealscout-assistant"))
+    assert assistant.recipe == "dealscout-assistant"
+    assert assistant.flavor == "cc-headless"
 
     discover = Enum.find(agent_slots, &(&1.role_name == "discover"))
     assert discover.recipe == "dealscout-discover"
@@ -224,10 +232,11 @@ defmodule EzagentPluginCrawler.DealscoutManifestTest do
     fr = Enum.find(items, &((&1["type"] || &1[:type]) == "from_role"))
     assert to_string(fr["arg"] || fr[:arg]) == "discover"
 
-    # receiver = orchestrator（requires 声明的编排脑角色；conformance 的
-    # `routing_receivers_resolve` 经 declared_role_names/3 连同 requires 的
-    # 角色一起解析——2026-07-10 零人工中继修正，native page 不再当 receiver）。
-    assert (Map.get(rule, "receivers") || Map.get(rule, :receivers)) == ["orchestrator"]
+    # receiver = dealscout-assistant（专属入库操作员，2026-07-10 零人工中继
+    # case-2：native page 不做 receiver（#1201 ②，与 #1319 L2
+    # receivers_can_receive 相容）；orchestrator 中间形态三轮 e2e 被 cc 真脑
+    # 按"消息自证授权"拒（09e/09g/09h）——duty 走 persona 渠道的专属操作员）。
+    assert (Map.get(rule, "receivers") || Map.get(rule, :receivers)) == ["dealscout-assistant"]
     assert (Map.get(rule, "rule_set") || Map.get(rule, :rule_set)) == "dealscout-update"
 
     # 规则挂 prompt_template_ref：投递渲染成带 {session} 的自动化执行指令。
@@ -260,7 +269,7 @@ defmodule EzagentPluginCrawler.DealscoutManifestTest do
     definition = resolve!()
     legend = definition.legends["dealscout"]
     assert legend
-    assert Enum.sort(legend["member_set"]) == ["discover", "page"]
+    assert Enum.sort(legend["member_set"]) == ["dealscout-assistant", "discover", "page"]
     assert legend["bound_rule_set"] == "dealscout-update"
     assert legend["fold"] == false
   end
@@ -313,15 +322,15 @@ defmodule EzagentPluginCrawler.DealscoutManifestTest do
     refute discover_recipe.script =~ EzagentPluginCrawler.Recipes.update_signal_placeholder()
   end
 
-  test "crawl directive prompt template: referenced, {body}/{session} placeholders, teaches the dispatch" do
-    # 2026-07-10 零人工中继：更新信号投递给 orchestrator 时经
-    # `dealscout-crawl-directive` 渲染成自动化执行指令（PR-4 delivery
-    # transform，`delivery.ex` render_for_delivery）。这里锁三件事：
-    # ① 规则引用的模板在 manifest 的 prompt_templates 里真实存在且过
-    #    PromptTemplate v1 校验（{body} 必须在场——投递绝不丢原文）；
-    # ② 带 {session}（orchestrator 的 dispatch 靶 URI 由 delivery 注入）；
-    # ③ 指令教的是本 socialware 的入库动作（crawler.search / crawl_now），
-    #    与 orchestrator 的 CLI 身份 env（T7d）——业务操作说明的最小面。
+  test "trigger template + assistant persona: duty in persona (trusted), template only renders the event" do
+    # 2026-07-10 零人工中继三轮 e2e 收敛（09e/09g/09h）：cc 真脑一致拒绝
+    # "路由消息自证授权/消息教它执行特权动作"（拒得对）。所以分工是：
+    # ① 触发模板（prompt_template）只报事实：{body} 原文 + {session} 靶
+    #    （PromptTemplate v1 校验 {body} 必须在场），不自证协议、不内嵌
+    #    执行机制、不出现让 agent 自己摸集群 cookie 的字样；
+    # ② 职责与官方 CLI 执行步骤在 dealscout-assistant 的 recipe persona 里
+    #    （materialize 写进它 sandbox 的 CLAUDE.md——安装者配置的可信渠道，
+    #    kanban-assistant skill 同款分工）。
     attrs = manifest_attrs()
     [rule] = attrs["routing_rules"]
     ref = rule["prompt_template_ref"]
@@ -330,15 +339,40 @@ defmodule EzagentPluginCrawler.DealscoutManifestTest do
     assert is_binary(template)
     assert :ok == Ezagent.Routing.PromptTemplate.validate(template)
     assert template =~ "{session}"
-    assert template =~ "crawler.search"
-    assert template =~ "crawl_now"
-    assert template =~ "EZAGENT_USER_TOKEN"
-    assert template =~ "EZAGENT_ENTITY_URI"
+    assert template =~ "dealscout-assistant"
+    refute template =~ "runtime/cookie"
+    refute template =~ "erpc"
 
-    # resolve 后 Definition 原样携带（install 时进 session prompt-template
-    # store，template_team.exs install_template_prompt_templates）。
-    definition = resolve!()
-    assert definition.prompt_templates[ref] == template
+    persona =
+      EzagentPluginCrawler.Recipes.all()
+      |> Enum.find(&(&1.name == "dealscout-assistant"))
+      |> Map.fetch!(:prompt)
+
+    # persona 教官方 CLI 工具面（`mix ezagent session crawl_now/search`，
+    # 凭证由 CLI 内部处理）+ 身份 env + 如实汇报纪律。
+    assert persona =~ "mix ezagent session search"
+    assert persona =~ "mix ezagent session crawl_now"
+    assert persona =~ "EZAGENT_USER_TOKEN"
+    assert persona =~ "EZAGENT_ENTITY_URI"
+    refute persona =~ "runtime/cookie"
+
+    # caps：操作员 recipe 申请 crawler 动作 cap（kanban-assistant 模具；
+    # role-slot 授予的 scope 边界见返回件——e2e 如实拍 CapBAC 裁决）。
+    caps =
+      EzagentPluginCrawler.Recipes.all()
+      |> Enum.find(&(&1.name == "dealscout-assistant"))
+      |> Map.fetch!(:requested_caps)
+
+    assert %{behavior: Crawler, action: :crawl_now} in caps
+    assert %{behavior: Crawler, action: :search} in caps
+    assert %{behavior: Ezagent.ActionSet.CrawlerPage, action: :publish_page} in caps
+
+    # 官方 CLI 工具面的另一半：crawler 插件把这两个动作注册成 Session Kind
+    # 全局 dispatchable 行为（email plugin 先例），CLI 子命令树才长出
+    # `session crawl_now/search`。
+    declared = EzagentPluginCrawler.Application.behaviors()
+    assert {Ezagent.Entity.Session, :crawl_now, Crawler} in declared
+    assert {Ezagent.Entity.Session, :search, Crawler} in declared
   end
 
   # Extract the update-signal `text_contains` arg from the PARSED manifest (raw

@@ -10,11 +10,16 @@ defmodule EzagentPluginCrawler.RecipesTest do
     "dealscout-search"
   ]
 
-  test "declares the four discovery-leg recipes plus the generic crawler-page publish leg" do
+  test "declares the discovery legs + 入库操作员 + generic crawler-page publish leg" do
     names = Recipes.all() |> Enum.map(& &1.name) |> Enum.sort()
 
+    # dealscout-assistant（2026-07-10 零人工中继 case-2）：cc-headless 入库
+    # 操作员，职责在 persona（kanban-assistant 模具），信号路由的 receiver。
     assert names ==
-             Enum.sort(@llm_discovery_names ++ ["dealscout-discover", "crawler-page"])
+             Enum.sort(
+               @llm_discovery_names ++
+                 ["dealscout-discover", "dealscout-assistant", "crawler-page"]
+             )
   end
 
   test "LLM discovery-leg recipes carry prompt + caps and NO code behaviors" do
