@@ -262,6 +262,8 @@ defmodule Ezagent.PluginCc.Template.CcHeadlessAgent do
       config_dir: config_dir,
       session_id: Map.get(tmpl, "claude_session_id") || new_session_id(),
       permission_mode: Map.get(tmpl, "permission_mode", "default"),
+      cmd_env:
+        Ezagent.PluginCc.Template.SpawnPlan.maybe_put_cli_identity_env(%{}, agent_uri, tmpl),
       model: Map.get(tmpl, "model"),
       effort: Map.get(tmpl, "effort") || Map.get(tmpl, "claude_effort"),
       cli_path: Map.get(tmpl, "claude_cli_path"),

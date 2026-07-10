@@ -348,7 +348,13 @@
   #   provider logic itself lives in the sibling `Ezagent.PluginCc.Provider` +
   #   thin `CcDeepseekAgent`/`CcHeadlessDeepseekAgent` shims (separate files, not
   #   counted here). Measured 1766→1786.
-  cc_codex_template_class_combined_loc: 1786,
+  # arch-cap-bump: +3 dealscout 零人工中继（2026-07-10，rebase 过 #1324 后实测）——
+  #   cc-headless SDK 车道死键补全：cc_agent `template_data_extra` 发射
+  #   `system_prompt`（消费链三级早已在，仅缺 producer 行；recipe
+  #   `config.system_prompt` 由此成为 cc-headless persona 车道）+
+  #   cc_headless_agent `sdk_sidecar_params` 补 `cmd_env`（T7d CLI 身份 env 的
+  #   SDK 车道 parity）。净 +3 行 wiring。Measured 1786→1789。
+  cc_codex_template_class_combined_loc: 1789,
   # P3 (resource-unification, SPEC §10 OI-3): the population-3 outside-core
   # callers (agent_bridge token registry, identity smtp_config, feishu app-cred +
   # inbox + plugin config, python log) migrated behind the `UriQuery` seam

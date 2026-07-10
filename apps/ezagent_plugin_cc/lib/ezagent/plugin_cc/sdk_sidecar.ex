@@ -365,13 +365,18 @@ defmodule EzagentPluginCc.SdkSidecar do
 
   defp maybe_env(env, _key, value) when value in [nil, ""], do: env
 
+  # UTF-8 安全的 env 编码（2026-07-10 dealscout e2e 实测）：erlexec 的 env
+  # 只收字节列表；`String.to_charlist/1` 对非 ASCII（如中文 system_prompt）
+  # 产出 >255 的码点列表 → spawn 当场拒 `env - invalid env argument`。
+  # `:binary.bin_to_list/1` 给 UTF-8 原始字节（ASCII 输入产出不变），worker
+  # 侧 os.environ 按 UTF-8 解码原样复原。
   defp maybe_env(env, key, value) when is_binary(value),
-    do: [{key, String.to_charlist(value)} | env]
+    do: [{key, :binary.bin_to_list(value)} | env]
 
   defp maybe_json_env(env, _key, value) when value in [nil, "", [], %{}], do: env
 
   defp maybe_json_env(env, key, value),
-    do: [{key, value |> Jason.encode!() |> String.to_charlist()} | env]
+    do: [{key, value |> Jason.encode!() |> :binary.bin_to_list()} | env]
 
   # #1201 ①: codepoint-boundary-aware — a raw binary_part tail can start
   # mid-codepoint on CJK-heavy sidecar output and hand invalid UTF-8 to

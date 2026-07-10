@@ -289,6 +289,7 @@ defmodule Ezagent.PluginCc.Template.CcAgent do
         Ezagent.Kind.Template.content_field(content, :mcp_config_path),
       "api_key_helper" => Ezagent.Kind.Template.content_field(content, :api_key_helper),
       "role" => Ezagent.Kind.Template.content_field(content, :role),
+      "system_prompt" => Ezagent.Kind.Template.content_field(content, :system_prompt),
       "model" => Ezagent.Kind.Template.content_field(content, :model),
       "effort" => Ezagent.Kind.Template.content_field(content, :effort),
       "permission_mode" => Ezagent.Kind.Template.content_field(content, :permission_mode),
