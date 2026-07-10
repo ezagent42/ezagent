@@ -215,10 +215,21 @@ defmodule EzagentPluginCc.McpConfigWriter do
     {:ok, path, token}
   end
 
-  @doc "Absolute path of the v2 Python bridge script."
+  @doc """
+  Absolute path of the v2 Python bridge script.
+
+  Resolved at RUNTIME from the app's installed `priv/` directory via
+  `Application.app_dir/2`, NOT a compile-time `__DIR__`-relative source
+  path. The former resolves to the real packaged location in both a dev
+  checkout AND a release; the latter points at `apps/.../python/...`,
+  which is absent from a `mix release` (only `priv/` is packaged). That
+  divergence meant the esr-bridge MCP sidecar was never present on a
+  deployed node, so no cc agent ever bound. The script therefore lives
+  under `priv/python/` alongside `ezagent_cc_sdk_worker.py`.
+  """
   @spec bridge_script_path() :: String.t()
   def bridge_script_path do
-    Path.expand("../../../python/ezagent_mcp_bridge.py", __DIR__)
+    Application.app_dir(:ezagent_plugin_cc, "priv/python/ezagent_mcp_bridge.py")
   end
 
   @doc """

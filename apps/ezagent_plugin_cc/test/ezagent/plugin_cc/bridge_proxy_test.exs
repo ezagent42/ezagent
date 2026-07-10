@@ -2,7 +2,7 @@ defmodule EzagentPluginCc.BridgeProxyTest do
   use ExUnit.Case, async: true
 
   @scripts [
-    "python/ezagent_mcp_bridge.py",
+    "priv/python/ezagent_mcp_bridge.py",
     "priv/orchestrator_bridge.py"
   ]
 
