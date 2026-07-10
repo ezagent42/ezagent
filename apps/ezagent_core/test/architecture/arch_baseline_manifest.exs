@@ -310,7 +310,14 @@
   #   to the SHARED `Ezagent.Credential.HomeRuntime.host_login_dir/2` body — the
   #   derivation logic itself is NOT duplicated per flavor; the +24 is the two
   #   @impl defs + their doc comments. Measured 1721→1745.
-  cc_codex_template_class_combined_loc: 1745,
+  # arch-cap-bump: +21 #1294 B (cc PTY premature start) — cc_agent Template Class
+  #   adds the `config_dir_materialized?/2` guard clause in `ensure_subprocess_alive`
+  #   + its private helper (delegating to the SHARED
+  #   `HomeRuntime.config_dir_launchable?/2`) so the cold-restart self-heal hook
+  #   declines to launch the PTY against an un-materialized config home (chain B /
+  #   #1096). codex_agent unchanged; the +21 is the guard + forensic doc comments,
+  #   not extractable duplication. Measured 1745→1766.
+  cc_codex_template_class_combined_loc: 1766,
   # P3 (resource-unification, SPEC §10 OI-3): the population-3 outside-core
   # callers (agent_bridge token registry, identity smtp_config, feishu app-cred +
   # inbox + plugin config, python log) migrated behind the `UriQuery` seam
