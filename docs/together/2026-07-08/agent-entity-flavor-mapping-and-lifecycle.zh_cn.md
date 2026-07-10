@@ -18,7 +18,7 @@
 > - **B4(isolation schema)** —— 🟠 建模轴已找到(control plane),见 §5.3
 > - **B5(curl 分类)** —— ✅ 已修
 >
-> v2.1→v2.2 变更:**实测 cc `--session-id`/`--resume` 与 `server:esr-bridge` 无冲突** · 确立 cache/source-of-truth framing · 新增 §2.1b **control plane 分层**(PTY 是正交 surface,不是 mode)· §4.4 重写为 **`ContextRestore` 三层封装契约** · B1 关闭 · B2 收窄。
+> v2.1→v2.2 变更:**实测 cc `--session-id`/`--resume` 与 `server:esr-bridge` 无冲突** · 确立 cache/source-of-truth framing · 新增 §2.1b **control plane 分层**(PTY 是正交 surface,不是 mode)· §4.2 厘清 **③是内容/④是指针,均为缓存** · §4.3 新增 **`ContextRestore` 三层封装契约** · 状态清单 **17 → 16 位**(合并 `engine_session_handle`)· B1 关闭 · B2 收窄。
 
 ---
 
@@ -127,9 +127,10 @@ resolve_cascade_content → instantiate_workers(原子 fresh?) → post_spawn_ob
 
 bridge join 才 ready(`transport_readiness.ex:56,88,168`),积压消息走 `PendingDelivery` drain。R3(重新武装)待补 `failed→not_ready` 回环。
 
-### 2.4 「换 flavor = 换实例」的状态清单(v2.1 重写)
+### 2.4 「换 flavor = 换实例」的状态清单(**16 位**;v2:12 → v2.1:17 → v2.2:16)
 
 > **codex review(high)**:v2 的"12 位"**遗漏了关键运行态**,不足以指导实现。下表补齐并标注 owner / 持久性 / key / switch 行为。
+> **v2.2**:原 16/17 两位合并成一位 `engine_session_handle`(framework 收编)。
 
 | # | 状态位 | owner | 持久性 | key | switch 行为 |
 |---|---|---|---|---|---|
@@ -148,10 +149,13 @@ bridge join 才 ready(`transport_readiness.ex:56,88,168`),积压消息走 `Pendi
 | **13** | **`ReadyGate` / `TransportReadiness`** | core / domain_agent | ETS + gate | agent_uri | **必须重新武装**(`transport_readiness.ex:55`) |
 | **14** | **`AgentBridge.Registry` / channel** | agent_bridge | 进程注册 | agent_uri | 旧 unbind,新 bind(bridge join 才 ready) |
 | **15** | **codex app-server / bridge sidecar registry** | plugin_codex | 进程注册 | agent_uri | 旧 sidecar 停,新起(`plugin_codex/application.ex:69`) |
-| **16** | **codex `thread_id` 文件**(第④类) | plugin_codex | **fs** | agent_uri | **跨 backend 必然失效**(`codex_agent.ex:271,279`) |
-| **17** | **cc SDK sidecar registry + `claude_session_id`**(第④类) | plugin_cc | 进程注册 + fs | agent_uri | 同上(`sdk_sidecar.ex:31`;`cc_headless_agent.ex:92`) |
+| **16** | **`engine_session_handle`**(v2.2 合并)<br>cc `--session-id <uuid>` · codex `thread_id` | **framework**(原:各 plugin 自管) | `:sandbox` slice | agent_uri | **同 engine → 保留**(native resume)<br>**跨 engine → 作废,走 replay** |
 
-**关键点**:第 13-17 位是 v2 遗漏的。其中 **16/17 属 config_dir 第④类(runtime coordination metadata)** —— 跨 backend switch 时**必然失效**(thread/session 句柄不通用),这正是 rehydration 只能靠 PG replay 的根因;同 backend reset 时**应保留**。
+**关键点**:
+
+- 第 13-16 位是 v2 遗漏的运行态。
+- **v2.1 的第 16/17 位(codex `thread_id` 文件 `codex_agent.ex:271,279`、cc `claude_session_id` `cc_headless_agent.ex:92`)在 v2.2 合并成一位 `engine_session_handle`** —— 从各 plugin 自管的散落 fs 状态,收编为 framework 管理的 **opaque handle**(§4.3)。
+- **它是 native resume 与 PG replay 的分岔点**:engine 不变则 handle 有效(命中缓存,零 token);engine 一变则 handle 作废(回源 PG)。**这正是 rehydration 只能靠 PG replay 的根因。**
 
 ---
 
@@ -175,7 +179,7 @@ bridge join 才 ready(`transport_readiness.ex:56,88,168`),积压消息走 `Pendi
 
 ---
 
-## 4. Decision A 实质化:config_dir 三分类 + `stateless ≠ diskless`
+## 4. Decision A 实质化:config_dir 四分类 + `ContextRestore` 契约
 
 ### 4.1 决策
 
@@ -183,18 +187,29 @@ bridge join 才 ready(`transport_readiness.ex:56,88,168`),积压消息走 `Pendi
 - **flavor** = 无状态执行器,每次 run 由上层喂完整 context
 - **PTY 进程** = disposable,永非真相源(Q1 RULING)
 
-### 4.2 `stateless ≠ diskless` — config_dir 三分类(必须区分)
+### 4.2 `stateless ≠ diskless` — config_dir 四分类(v2.2 厘清:③是内容,④是指针)
 
-| 类 | 内容 | 性质 | 与无状态相容? |
+| 类 | 内容 | 性质 | 恢复方式 |
 |---|---|---|---|
-| ① recipe-projected | skills(幂等拷贝 `orchestrator_bootstrap.ex:43,148`)、CLAUDE.md(由 recipe 写出 `home_runtime.ex:313-315`) | 纯函数投影,determinism 锚 `recipe/compose.ex:11-13`"同 recipe×任意 flavor→字节相同" | ✅ destroy-rebuild 可复现,stateless≠diskless |
+| ① recipe-projected | skills(幂等拷贝 `orchestrator_bootstrap.ex:43,148`)、CLAUDE.md(由 recipe 写出 `home_runtime.ex:313-315`) | 纯函数投影,determinism 锚 `recipe/compose.ex:11-13`"同 recipe×任意 flavor→字节相同" | ✅ destroy-rebuild 可复现 |
 | ② credential | `.credentials.json`(`cc_agent.ex:209`)、`auth.json` | cascade 可恢复 | ✅ restorable |
-| ③ runtime-accumulated | CLI 对话记忆、codex `rollout-*.jsonl`(`codex_agent.ex:451`)、agent 自改文件 | **不可复现** | ⚠️ 就是 state,Q1 拟降为 disposable(但见 §2.1a 缺口) |
-| **④ runtime coordination metadata**(v2.1 新增) | `claude_session_id`(`cc_headless_agent.ex:92,106`)、codex `thread_id` 文件(`codex_agent.ex:271,279`) | **control-plane 句柄** —— 指向 backend 侧 session/thread | ⚠️ **既非投影、非凭据、也不能简单 disposable** —— 丢了它,同 backend 的 thread/session 连续性即断 |
+| **③ 对话内容本身** | `<uuid>.jsonl`(**实测**:`$CLAUDE_CONFIG_DIR/projects/<cwd-slug>/<uuid>.jsonl`)、codex `rollout-*.jsonl`(`codex_agent.ex:451`) | **缓存,不是权威** | **同 engine**:`--resume <handle>` 恢复(零 token)<br>**跨 engine**:作废 → 回源 PG replay |
+| **④ handle(指向③的指针)** | `claude_session_id`(`cc_headless_agent.ex:92,106`)、codex `thread_id`(`codex_agent.ex:271,279`) | **control-plane 句柄** | v2.2 收编为 framework 管的 opaque `engine_session_handle`(§4.3) |
 
-**Decision A 的"state"精确指第③类**;第①/②类落盘不影响"无状态"定义(读者不能误读为"skills 落盘 = 有状态冲突")。
+> ### v2.2 关键厘清:**③ 是内容,④ 是指向它的指针**
+>
+> v2.1 曾把 ③ 称作「唯一真不可复现的 state」。**实测推翻**:`<uuid>.jsonl` 在同 engine 下用 `--resume` 就能完整恢复(新进程答出了上个进程的暗号,§2.1a)。
+>
+> 正确表述:
+> - **handle 有效**(同 engine)⇒ 命中缓存,零 token;
+> - **handle 作废**(跨 engine)⇒ 回源 PG replay。
+> - **①②③④ 没有一类是"权威"。权威只有 `MessageStore`。**
+>
+> 这就是 `ContextRestore.decide/3`(§4.3)的全部依据——**handle 是 native resume 与 PG replay 的分岔点**。
 
-> **第④类是 codex review 补出的漏项(medium)**。它不可被简单归入任何一类:删了它,同 backend 的续接能力丢失;但它又不是对话内容本身。**需明确**:哪些可删、哪些需随实例迁移、哪些只在同 backend 内有效。这直接影响 §3 的 switch(跨 backend 时第④类必然失效)与 reset(同 backend 时应保留)。
+**Decision A 的"state"** 因此不再指某一类目录内容,而是指:**引擎侧的对话记忆(③)整体是可弃缓存;PG 是唯一 source of truth。** 第①/②类落盘不影响"无状态"定义(读者不能误读为"skills 落盘 = 有状态冲突")。
+
+**这直接决定 §3 的两个操作**:switch(跨 engine)⇒ ④ 必然失效 ⇒ 必须 replay;reset(同 engine)⇒ ④ 有效 ⇒ 走 native resume。
 
 ### 4.3 `ContextRestore` — 三层封装契约(v2.2 重写)
 
@@ -330,7 +345,7 @@ L3  core(已有,不动)
 - **PG · event-sourcing 骨架**:`EventLog`(invocations)→ `SnapshotStore`(每 100 events)→ `MessageStore`(**每 session 一 row,copy+ref model**;`message_store.ex:80-81`)。
 
 > **纠错(v2.1)**:v2 写 `messages + message_routings` join 表,那是 `message_store.ex:18-25` 的 **stale moduledoc**。代码 `:80-81` 明写「vestigial `message_routings` multi-routing **was removed** —— 跨 session 转发是**复制一条新 message** 进目标 session(copy+ref model)」;`in_session_since/2`(`:123`)直接按 `m.session_uri` 查,**无 JOIN**。→ §6.2「一条消息挂多 session」那行的论据随之作废(现在是复制,不是共享行)。
-- **文件系统 · config_dir**:凭据(①)+ recipe 投影(③ skills/CLAUDE.md)+ runtime SDK session(④ codex jsonl/cc `~/.claude`)。配合 §4.2 三分类:①③ = 可复现投影,④ = disposable cache。
+- **文件系统 · config_dir(四分类,全是缓存)**:① recipe 投影(可复现)· ② 凭据(cascade 可恢复)· ③ 对话内容 `<uuid>.jsonl`(同 engine 可 `--resume`)· ④ handle(指向③的指针)。**没有一类是"权威"** —— 权威只有 `MessageStore`(§4.2)。
 
 **结论**:对话历史/上下文**已在 PG,不是 fs**。白板 `fs:log` 若指文件日志存历史,与现状不符,也不建议改主存。
 
@@ -388,7 +403,11 @@ L3  core(已有,不动)
 ### 8.3 已修正的事实错误
 
 **v2 → v2.1**:`message_routings` 已移除(copy+ref model)· URI 格式 `entity://<ws>/agent/<name>` · config_dir 补第④类 · 状态清单 12 位 → 17 位。
-**v2.1 → v2.2**:**"PTY 物理上无法喂历史"是错的**(实测推翻)· "PTY 是一个 mode"是错的(PTY 是**正交 surface**,一级轴是 control plane)· cc 与 cc-headless 的 state 机制本是同一个。
+
+**v2.1 → v2.2**(实测推翻三条):
+- **"PTY 物理上无法喂历史"是错的** —— `--resume` 实测可完整恢复。
+- **"PTY 是一个 mode"是错的** —— PTY 是**正交 surface**;一级轴是 control plane。cc 与 cc-headless 的 state 机制本是同一个。
+- **"第③类是唯一真不可复现的 state"是错的** —— ③ 是**内容**(同 engine 可 `--resume`),④ 是**指向它的指针**;两者都是缓存,**权威只有 `MessageStore`**。状态清单 17 位 → **16 位**(16/17 合并为 `engine_session_handle`)。
 
 > **本稿是 decision record,不是 implementation spec。**
 > **Step 1(封装 native 路径)落地后即可进入实施**;B2 作为独立 SPEC 排期;B3 待 Allen 裁决。
@@ -404,10 +423,10 @@ Q1 RULING(全 flavor 无状态 + rehydration)
    │
    ├─► 线2 隔离能力位(§5.3-5.4) —— D2 可独立先落;D1 依赖线1
    │
-   └─► 线3 存储分层(§6) —— PG 已是权威;config_dir 三分类固化
+   └─► 线3 存储分层(§6) —— PG 是唯一权威;config_dir 四分类(全是缓存)固化
 ```
 
-**分期交付**:线3(固化 PG + config_dir 三分类)先行;线2 D2(安全隔离)独立可落;线1 首验从 cc-headless 起步→codex-remote→回头让 reuse 走 D1。S2(内容迁移)/S3(多 member)/curl 统一(退化)已收口;app.ex dead-code drift(§6.4)登记清理。
+**分期交付**:**Step 1(封装 native 路径:`engine_session_handle` + `resume_args`)先行** —— 关闭 B1/B4,稿子即可进实施;线3(固化 PG 唯一权威 + config_dir 四分类)随之;线2 D2(安全隔离)独立可落;线1 的 `:replay` 分支(= B2 本体)作独立 SPEC 排期。S2(内容迁移)/S3(多 member)/curl 统一(退化)已收口;app.ex dead-code drift(§6.4)登记清理。
 
 ---
 
