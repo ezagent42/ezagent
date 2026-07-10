@@ -165,7 +165,11 @@ defmodule Ezagent.Agent.TransportReadiness do
       now = System.monotonic_time(:millisecond)
 
       if now >= deadline do
-        :ok = Ezagent.ReadyGate.mark_failed(agent_uri)
+        # Route through ReadyTransition (not ReadyGate directly) so any :cast
+        # invocations still buffered for this never-joined agent are drained to
+        # the DLQ instead of silently dropped (doc §8.1 / Invariant #9). This is
+        # the real never-ready cc path (transport-join budget exhausted).
+        :ok = Ezagent.Kind.ReadyTransition.mark_failed(agent_uri)
         {:error, :timeout}
       else
         Process.sleep(@poll_ms)

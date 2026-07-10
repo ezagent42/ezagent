@@ -294,6 +294,41 @@ defmodule EzagentDomainInstanceMessage.Integration.DefinitionAgentsMaterializeTe
            end)
   end
 
+  test "orchestrator materialization writes the durable :orchestrator_uri binding eagerly (R2)" do
+    n = uniq()
+    session_uri = live_session(n)
+    role_name = "orchestrator"
+    flavor = register_stub_flavor(n)
+
+    :ok = ensure_orchestrator_recipe()
+
+    # #1326: `materialize_definition_agents/4` now returns `{:ok, summary}`. The
+    # stub flavor is credential-less, so the orchestrator slot is SATISFIED (not
+    # skipped) — R2's eager binding write must therefore have run.
+    assert {:ok, _summary} =
+             DefinitionAgents.materialize_definition_agents(
+               session_uri,
+               @workspace_uri,
+               @owner_uri,
+               [%{recipe: "orchestrator", role_name: role_name, flavor: flavor}]
+             )
+
+    orchestrator_uri = SessionBehavior.role_name_to_uri(members_of(session_uri), role_name)
+    on_exit(fn -> terminate(orchestrator_uri) end)
+
+    # R2 — the durable working copy carries the ACTUAL spawned orchestrator URI
+    # (a random-UUID URI), written eagerly right after spawn+join, so the
+    # orchestrator's MCP tool surface is recoverable after a BEAM restart. Before
+    # this fix the binding was never written and `rebuild_from_durable` read nil.
+    working_copy = Session.read_template_working_copy(session_uri)
+    assert Map.get(working_copy, :orchestrator_uri) == orchestrator_uri
+
+    # …resolvable via the SAME `Ezagent.UriQuery` read `McpServer.rebuild_from_durable`
+    # performs after a restart to recover the 7-tool orchestrator surface.
+    assert {:ok, ^orchestrator_uri} =
+             Ezagent.Entity.Session.Orchestrator.orchestrator_uri(session_uri)
+  end
+
   test "ensure_orchestrator skips a bare Agent Kind without credentials (chain C)" do
     n = uniq()
     session_uri = live_session(n)
