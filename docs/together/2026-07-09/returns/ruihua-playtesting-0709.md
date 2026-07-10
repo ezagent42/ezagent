@@ -129,10 +129,8 @@
 - **复现**：session → 外部镜像(`/admin/sessions/:id/external_mirror`)→ 填绑定表单(adapter=feishu + target)→ 点 Bind → **无反应**、没绑上、也没报错(silent no-op)。
 - **线索**：属 World UI silent no-op 一族(cf #1290/#1291)；且是 `/admin/` 面 + 空 caps → 可能是静默 `:unauthorized`（#1275/#1282）。UI 不该啥都不显示。
 
-### F20 · Overview 可继续 Sessions 只显示 3 个，实际 5 个（补入 #1280，待澄清）
-- **严重度**：低-中（0710 续测；**可能是设计**）
-- **现象**：Overview「可继续的 Sessions」只列 3 个，实际共 5 个。
-- **caveat**：该块有「查看全部」链接，可能是 top-N 预览（设计）。真 bug 判据 = 关键状态 "Sessions" 计数显示 3 而非 5，或「查看全部」也只有 3。已补进 #1280，待澄清。
+### F20 · Overview 可继续 Sessions 只显示 3 个 —— ✅ **非 bug**（已澄清）
+- **结论**：**不是 bug**。加到 6 个 session 后核对：关键状态 **Sessions 计数正确 = 6**；「可继续的 Sessions」是 **top-3 预览 + 「查看全部」**，设计如此。已在 #1280 澄清、撤下这条（#1280 里 F2/F18 的真不一致仍成立）。证据 `evidence/f20-overview-count-correct-not-a-bug.png`。
 
 ## flaky 复现（B）
 - 网页对话页反复进出 + 发消息：**暂未复现**偶发不刷新 / 卡住。继续留意。
