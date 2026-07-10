@@ -1,9 +1,11 @@
 name: Protect dev-together skill
 
-# Only the repo owner may modify the shared dev-together workflow skill
-# (.claude/skills/dev-together/**). It is team-wide glue: an unreviewed edit by
-# any member changes how everyone ships. This check fails when a PR (or a direct
-# push to main) touches that path and the author is not the owner.
+# Only authorized skill owners may modify the shared dev-together workflow
+# skill (.claude/skills/dev-together/**). It is team-wide glue: an unreviewed
+# edit by any member changes how everyone ships. This check fails when a PR (or
+# a direct push to main) touches that path and the author is not in OWNERS
+# (space-separated allowlist; 2026-07-10 jjkysy added as skill co-owner per
+# dev-together method-writeback role — the daily plan's "skill 单一写者" seat).
 #
 # NOTE: CI runs AFTER a push, so for *direct pushes* this only surfaces a red
 # check — it cannot block the push itself. Real enforcement needs branch
@@ -34,7 +36,7 @@ jobs:
       - name: Guard .claude/skills/dev-together
         env:
           GH_TOKEN: ${{ github.token }}
-          OWNER: allenwoods
+          OWNERS: allenwoods jjkysy
           GUARDED_PATH: .claude/skills/dev-together/
           EVENT_NAME: ${{ github.event_name }}
           PR_URL: ${{ github.event.pull_request.html_url }}
@@ -63,13 +65,21 @@ jobs:
             exit 0
           fi
 
-          owner_lc="$(printf '%s' "$OWNER" | tr '[:upper:]' '[:lower:]')"
           actor_lc="$(printf '%s' "$actor" | tr '[:upper:]' '[:lower:]')"
           echo "Detected changes under $GUARDED_PATH by '$actor' (event: $EVENT_NAME)."
           printf '%s\n' "$changed" | grep "^$GUARDED_PATH" | sed 's/^/  • /'
 
-          if [ "$actor_lc" != "$owner_lc" ]; then
-            echo "::error::Only @$OWNER may modify $GUARDED_PATH — author '$actor' is not authorized. Revert these files, or have @$OWNER make the change."
+          authorized=0
+          for owner in $OWNERS; do
+            owner_lc="$(printf '%s' "$owner" | tr '[:upper:]' '[:lower:]')"
+            if [ "$actor_lc" = "$owner_lc" ]; then
+              authorized=1
+              break
+            fi
+          done
+
+          if [ "$authorized" != "1" ]; then
+            echo "::error::Only one of [$OWNERS] may modify $GUARDED_PATH — author '$actor' is not authorized. Revert these files, or have a skill owner make the change."
             exit 1
           fi
-          echo "✓ Authorized: '$actor' is the repo owner."
+          echo "✓ Authorized: '$actor' is a dev-together skill owner."
