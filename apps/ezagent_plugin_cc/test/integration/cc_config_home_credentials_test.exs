@@ -99,10 +99,50 @@ defmodule Ezagent.PluginCc.Integration.CcConfigHomeCredentialsTest do
                  "py"
                )
     end
+
+    test "an environment-credential flavor is skipped before spawn when its key is missing" do
+      previous = System.get_env("DEEPSEEK_API_KEY")
+      System.delete_env("DEEPSEEK_API_KEY")
+
+      on_exit(fn ->
+        if previous,
+          do: System.put_env("DEEPSEEK_API_KEY", previous),
+          else: System.delete_env("DEEPSEEK_API_KEY")
+      end)
+
+      installer = Ezagent.URI.user(:system, "deepseek#{uniq()}")
+
+      assert {:skip, {:credential_unavailable, "cc-deepseek"}} =
+               CredentialPrecondition.check_source(
+                 installer,
+                 Ezagent.URI.workspace(:system),
+                 "cc-deepseek"
+               )
+    end
+
+    test "an environment-credential flavor proceeds when its key is present" do
+      previous = System.get_env("DEEPSEEK_API_KEY")
+      System.put_env("DEEPSEEK_API_KEY", "test-only-key")
+
+      on_exit(fn ->
+        if previous,
+          do: System.put_env("DEEPSEEK_API_KEY", previous),
+          else: System.delete_env("DEEPSEEK_API_KEY")
+      end)
+
+      installer = Ezagent.URI.user(:system, "deepseek#{uniq()}")
+
+      assert :ok =
+               CredentialPrecondition.check_source(
+                 installer,
+                 Ezagent.URI.workspace(:system),
+                 "cc-deepseek"
+               )
+    end
   end
 
-  describe "post-create socialware install, non-admin installer (chain C)" do
-    test "skips the orchestrator loudly instead of joining a credential-less zombie" do
+  describe "automatic role materialization (chain C)" do
+    test "skips the environment-credential orchestrator loudly when its key is missing" do
       template_name = "orch-cred-#{uniq()}"
       ws = Ezagent.URI.workspace(:system)
       {:ok, _} = persist_orchestrator_template(template_name)
@@ -121,7 +161,12 @@ defmodule Ezagent.PluginCc.Integration.CcConfigHomeCredentialsTest do
       # The batch completes — an un-fillable role never blocks the rest.
       assert summary.satisfied == []
 
-      assert [%{role_name: "orchestrator", reason: {:no_credential_source, "cc"}}] =
+      assert [
+               %{
+                 role_name: "orchestrator",
+                 reason: {:credential_unavailable, "cc-deepseek"}
+               }
+             ] =
                summary.skipped
 
       # …and NO credential-less agent joined the session.
@@ -130,7 +175,7 @@ defmodule Ezagent.PluginCc.Integration.CcConfigHomeCredentialsTest do
 
       # …and the skip is DURABLE, so the UI can tell the user (Invariant #9 —
       # a server log alone is a silent drop at a user-facing surface).
-      assert [%{role_name: "orchestrator", reason: :missing_credentials}] =
+      assert [%{role_name: "orchestrator", reason: :unavailable}] =
                SessionCreator.unfilled_agent_role_slots(session_uri)
     end
 
@@ -163,21 +208,28 @@ defmodule Ezagent.PluginCc.Integration.CcConfigHomeCredentialsTest do
              "the second slot must be reached — a skip is not a halt"
     end
 
-    test "an admin (host-operator) installer still gets a credentialled orchestrator" do
-      template_name = "orch-cred-admin-#{uniq()}"
+    test "an admin (host-operator) installer still gets a credentialled plain cc agent" do
       ws = Ezagent.URI.workspace(:system)
-      {:ok, _} = persist_orchestrator_template(template_name)
 
       {:ok, session_uri, _} =
         SessionCreator.create_session("cred-admin-#{uniq()}", User.admin_uri(),
           workspace_uri: ws,
-          template_name: template_name
+          template_name: "default"
         )
 
-      assert {:ok, %{skipped: [], satisfied: ["orchestrator"]}} =
-               SessionCreator.install_session_socialware(session_uri)
+      roles = [
+        %{role_name: "cc-operator", fill: :agent, recipe: "orchestrator", flavor: "cc"}
+      ]
 
-      assert %URI{} = agent_uri = orchestrator_member(session_uri)
+      assert {:ok, %{skipped: [], satisfied: ["cc-operator"]}} =
+               DefinitionAgents.materialize_definition_agents(
+                 session_uri,
+                 ws,
+                 User.admin_uri(),
+                 roles
+               )
+
+      assert %URI{} = agent_uri = role_member(session_uri, "cc-operator")
       dir = CcAgent.agent_config_dir(agent_uri)
       on_exit(fn -> File.rm_rf(dir) end)
 
@@ -213,6 +265,10 @@ defmodule Ezagent.PluginCc.Integration.CcConfigHomeCredentialsTest do
   end
 
   defp orchestrator_member(session_uri) do
+    role_member(session_uri, "orchestrator")
+  end
+
+  defp role_member(session_uri, role_name) do
     case Ezagent.KindRegistry.lookup(session_uri) do
       {:ok, pid} ->
         pid
@@ -222,7 +278,7 @@ defmodule Ezagent.PluginCc.Integration.CcConfigHomeCredentialsTest do
         |> then(&Map.get(&1, :state, &1))
         |> Map.get(:members, %{})
         |> Enum.find_value(fn {uri, meta} ->
-          if Map.get(meta, :role_name) == "orchestrator", do: uri
+          if Map.get(meta, :role_name) == role_name, do: uri
         end)
 
       :error ->
