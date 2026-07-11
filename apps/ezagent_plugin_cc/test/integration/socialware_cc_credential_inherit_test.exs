@@ -105,10 +105,17 @@ defmodule Ezagent.PluginCc.Integration.SocialwareCcCredentialInheritTest do
     # --- the INSTALLER: live User Kind holding sandbox.read on the source ---
     installer_uri = URI.new!("entity://system/user/installer-#{n}")
 
+    {:ok, source_read_artifact} =
+      Ezagent.Cap.issue(
+        {:genesis, User.admin_uri()},
+        installer_uri,
+        GrantCap.read_cap_for(source_uri)
+      )
+
     {:ok, _pid} =
       Ezagent.Kind.spawn(User, %{
         uri: installer_uri,
-        initial_caps: MapSet.new([GrantCap.read_cap_for(source_uri)])
+        initial_caps: MapSet.new([source_read_artifact])
       })
 
     on_exit(fn -> terminate(installer_uri) end)

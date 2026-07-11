@@ -52,6 +52,14 @@ defmodule Ezagent.ActionSet.IdentityTest do
       assert {:ok, %{caps: caps}} = Identity.create(%{initial_caps: [cap]})
       assert MapSet.size(caps) == 1
     end
+
+    test "I5 drops an unverified initial cap before it enters the slice" do
+      valid = Ezagent.Capability.admin_genesis_cap()
+      invalid = %{valid | granted_by: Ezagent.URI.new!("system://forged")}
+
+      assert {:ok, %{caps: caps}} = Identity.create(%{initial_caps: [valid, invalid]})
+      assert MapSet.equal?(caps, MapSet.new([valid]))
+    end
   end
 
   describe "handle_list_caps/2" do

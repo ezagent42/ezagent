@@ -1,11 +1,13 @@
 defmodule Ezagent.Invariants.CapIssueChokepointTest do
   @moduledoc """
-  I7 leg 2: ratchet every provenance-bearing capability construction and every
+  I7: ratchet every provenance-bearing capability construction and every
   explicit `:caps` slice write while Phase 3 moves them behind `Cap.issue/3`.
 
-  S1 intentionally records the current broad candidate set. Later stages may
-  only shrink these counts as proposed-cap constructors become issue callers;
-  widening either map is a review-blocking chokepoint bypass.
+  S1 introduced the leg-2 shrink-only allowlist. S4 adds leg 1: the one
+  capability-adding writer is verification-gated, while revoke remains a
+  monotonic removal. Later stages may only shrink these counts as proposed-cap
+  constructors become issue callers; widening either map is a review-blocking
+  chokepoint bypass.
   """
   use ExUnit.Case, async: true
 
@@ -39,10 +41,10 @@ defmodule Ezagent.Invariants.CapIssueChokepointTest do
   @mint_candidate_sites 34
 
   @caps_writers %{
-    "apps/ezagent_domain_identity/lib/ezagent/behavior/identity.ex" => 3
+    "apps/ezagent_domain_identity/lib/ezagent/behavior/identity.ex" => 2
   }
   @caps_writer_files 1
-  @caps_writer_sites 3
+  @caps_writer_sites 2
 
   test "provenance-bearing capability construction allowlist can only shrink" do
     actual = provenance_constructors()
@@ -62,6 +64,21 @@ defmodule Ezagent.Invariants.CapIssueChokepointTest do
 
     assert map_size(@caps_writers) == @caps_writer_files
     assert Enum.sum(Map.values(@caps_writers)) == @caps_writer_sites
+  end
+
+  test "I7 leg 1 classifies the adding writer as verified and revoke as removal-only" do
+    identity =
+      repo_root()
+      |> Path.join("apps/ezagent_domain_identity/lib/ezagent/behavior/identity.ex")
+      |> File.read!()
+
+    store = between(identity, "defp store_verified_cap", "def handle_revoke_cap")
+    revoke = between(identity, "def handle_revoke_cap", "defp uri_to_str")
+
+    assert store =~ "Ezagent.Cap.verify(cap_struct)"
+    assert store =~ "{:set, :caps, new_caps}"
+    assert revoke =~ "Ezagent.Capability.revoke(current_caps, cap_struct)"
+    refute revoke =~ "MapSet.put"
   end
 
   defp provenance_constructors do
@@ -117,6 +134,12 @@ defmodule Ezagent.Invariants.CapIssueChokepointTest do
       {:ok, ast} -> ast
       {:error, reason} -> raise "cannot scan #{file}: #{inspect(reason)}"
     end
+  end
+
+  defp between(source, first, last) do
+    [_, tail] = String.split(source, first, parts: 2)
+    [section | _] = String.split(tail, last, parts: 2)
+    section
   end
 
   defp repo_root do

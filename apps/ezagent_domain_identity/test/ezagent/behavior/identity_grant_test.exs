@@ -11,7 +11,7 @@ defmodule Ezagent.ActionSet.IdentityGrantTest do
   """
   use EzagentCore.DataCase, async: false
 
-  alias Ezagent.ActionSet.{Identity, IdentityAdmin}
+  alias Ezagent.ActionSet.IdentityAdmin
   alias Ezagent.Capability
 
   @workspace_uri URI.new!("workspace://team-alpha")
@@ -159,6 +159,14 @@ defmodule Ezagent.ActionSet.IdentityGrantTest do
 
       assert {:ok, _result, effects} = IdentityAdmin.handle_grant_cap(%{cap: cap}, ctx)
       assert {:set, :caps, _} = Enum.find(effects, &match?({:set, :caps, _}, &1))
+    end
+
+    test "dispatch handler verifies provenance without re-authorizing the grantor" do
+      forged = %{echo_cap() | granted_by: Ezagent.URI.new!("system://forged")}
+      ctx = ctx_with(MapSet.new(), MapSet.new())
+
+      assert {:error, :invalid_cap_artifact} =
+               IdentityAdmin.handle_grant_cap(%{cap: forged}, ctx)
     end
 
     test "instance-scoped wildcard cap does NOT count as bootstrap admin" do
