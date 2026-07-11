@@ -1475,6 +1475,8 @@ n×n 场景:Session 内的 agents 默认互通,逐条 grant 太碎,用 `{:within
 
 `:self` 在 grant 时立即解析成具体 URI(**grant-time resolution**)——cap 内容凝固不变。
 
+> ⚠️ **本表的 `User.default_caps()` 行已 superseded**(见 §7.7 + `capbac.md` §6):per-session refactor 后 `default_caps(workspace_uri)` 返回 **`[]`**,fresh user 不再持任何 standing session cap;session 参与(`:send`/`:join`)在 join 时由 session owner per-session grant。此处保留仅为历史 context。
+
 ### 7.4 Push → Token 迁移路径
 
 v0 Push;未来 Token(macaroon / biscuit / signed JWT)。**迁移成本极低**:
@@ -1547,6 +1549,18 @@ end
 #### Workspace-scoped principal (PR-CC-2-v2, 2026-05-25)
 
 `Behavior.workspace_scoped?/0` 在 dispatch **step 5.6** 强制执行 workspace 隔离 — 默认 `true` (per-tenant Kind)。返回 `false` 的 Behavior 跨 workspace 可调用 (e.g. system-scoped 配置读取)。`workspace_sot_test.exs` invariant 验证 workspace URI 段是权威 (而非 WorkspaceRegistry — registry 是 cache,URI 段才是 SoT)。
+
+### 7.7 Grant 模型:ISSUE → STORE → VERIFY(cbac-done-right Phase-3,landed main `fa72d36ba` 2026-07-12)
+
+§7.1 描述的是"caller 在 `ctx.caps` 携带 cap,step 5.5 检查"的 **dispatch-side** 模型 —— 那部分不变。**变的是 grant 本身**:一个 grant 不再是"一次 issuer→grantee 的 dispatch 直接写 grantee 的 `:caps` slice",而是三个可分离步骤,权威从 **issuer → artifact**,存储只走 **grantee 自己**。`granted_by` = issuer。
+
+- **ISSUE — `Ezagent.Cap.issue/3`**:grantor 载入自己的 authority、跑完整 grant 授权(`CapabilityRegistry.authorize_grant/3`)、成功后 stamp `granted_by`=issuer 产出一个 artifact。**不向 grantee 转移 authority**。四个授权 tag(`{:held_by}`/`{:admin}`/`{:rule}`/`{:genesis}`)不变,`Ezagent.Identity.Grant` 仍是唯一 grant/revoke constructor(内部经 `Cap.issue`)。
+- **STORE / absorb**:grantee 自存 —— `create/1` self-store(keyed entity lifecycle 读自己 pre-issued artifacts via `Cap.verified_set/1`)或 `:vm_internal` `absorb_cap` cast(`handle_absorb_cap/2` 只收 `:vm_internal` caller)。same-BEAM/same-node,无 cross-node absorb transport。
+- **VERIFY — `Ezagent.Cap.verify/1`**:total + fail-closed,只在 ≤5 个 reviewed load/store 边界跑;Phase-3 查 provenance format(entity-scheme `granted_by`),是 Phase-4 签名验证的 stand-in(seam 换 body 不动 caller)。
+- **`RecipeCapBinding`**:agent 存在前 pre-issued recipe caps 的 durable home(`issue_and_upsert/4`);persistence 从不向 grantee dispatch cap 写。
+- **I12 paradigm-lock**(`cap_self_store_paradigm_lock_test.exs`)禁 issuer→grantee dispatch;~16 legacy grant driver shrink-only ratchet;recipe/orchestrator/workspace 三 cold-agent cutover zero-tolerance。dispatch 侧 `cap_issued` runtime bypass 只由 chokepoint 在 `Cap.issue` 成功后 stamp(N1 `cap_issued_bypass_trust_keys_test.exs` pin)。
+
+**scope**:single-BEAM / trusted-node;crypto = Phase-4。与 §7.4 的 "Push → Token" 迁移路径同向 —— Phase-4 换 `issue/3`/`verify/1` body 为签名 + 验签,并解锁 cross-node。**current source of truth**:`.claude/skills/ezagent-developer/references/capbac.md` §4.5(design spec/plan 未 merge);GLOSSARY Decision #162 + §2 "ISSUE / STORE / VERIFY" 条。
 
 ---
 

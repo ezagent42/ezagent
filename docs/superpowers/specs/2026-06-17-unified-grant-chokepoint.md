@@ -1,5 +1,18 @@
 # Unified Grant Chokepoint — design (rev 2)
 
+> **⚠️ RECONCILED to Phase-3 (cbac-done-right, landed main `fa72d36ba` 2026-07-12).** This spec's
+> chokepoint (`Ezagent.Identity.Grant`) still exists and is still the sole grant/revoke
+> constructor. What changed: a grant is **no longer** a single issuer→grantee dispatch that
+> writes the grantee's `:caps` slice (the model described below). It is now **ISSUE → STORE →
+> VERIFY** — the grantor ISSUEs a provenance-stamped artifact at `Ezagent.Cap.issue/3` (routed
+> by this same chokepoint), the grantee STOREs it itself (`create/1` self-store or `:vm_internal`
+> `absorb_cap`), and load boundaries VERIFY via `Ezagent.Cap.verify/1`. The **I12
+> paradigm-lock** now forbids issuer→grantee grant dispatch. Where this doc describes the grant
+> as "one dispatch that mutates the grantee slice", read it as the pre-Phase-3 model. **Current
+> source of truth:** `.claude/skills/ezagent-developer/references/capbac.md` §4.5 + GLOSSARY
+> Decision #162. The rest of this spec (three-role separation, `ctx.caps` as authorizer,
+> `granted_by` = accountable entity, the tag set) is unchanged and correct.
+
 **Status:** spec rev 3 — APPROVED to implement (rev 1 RECONSIDER → rev 2 addressed 3
 BLOCKERs → 2nd subagent review SHIP-WITH-CHANGES → rev 3 applies the 3 must-fixes +
 should-fixes). Ready for PR-1.

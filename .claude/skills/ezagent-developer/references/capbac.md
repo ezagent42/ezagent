@@ -11,6 +11,18 @@ verify against the cited modules before relying on a detail (the code wins).
 > exactly one chokepoint (`Ezagent.Identity.Grant`). Confusing any two of these is how
 > every bug in this area happens.
 
+> **Phase-3 update (cbac-done-right, landed on main 2026-07-12, merge `fa72d36ba`):** a grant
+> is no longer a single issuer→grantee dispatch that writes the grantee's slice. It is now
+> **ISSUE → STORE → VERIFY**: the grantor ISSUEs a provenance-stamped *artifact* at
+> `Ezagent.Cap.issue/3` (transferring NO authority), the grantee STOREs it itself (via its own
+> `create/1` self-store or the `:vm_internal` `absorb_cap` cast), and every load/store boundary
+> VERIFIEs provenance via `Ezagent.Cap.verify/1`. `granted_by` = the issuer. The **I12
+> paradigm-lock** forbids issuer→grantee dispatch. See **§4.5** for the full model; the
+> ISSUE-chokepoint is `Ezagent.Cap.issue/3`, wrapped by the same `Ezagent.Identity.Grant`.
+> **This file is the current source of truth for the Phase-3 model** — the design spec/plan
+> were not merged; the invariant gates (§8) and `docs/e2e/2026-07-11/phase3-cbac-done-right/`
+> are the other authoritative references.
+
 ---
 
 ## 1. The three roles you must keep separate
@@ -154,6 +166,101 @@ return `{:error}` as an effect). `Ezagent.Identity.grant_cap/3` is a back-compat
 
 ---
 
+## 4.5 Phase-3 (cbac-done-right): grant = ISSUE → STORE → VERIFY, with I12 paradigm-lock
+
+Landed on main 2026-07-12 (merge `fa72d36ba`). The chokepoint is unchanged in *location*
+(`Ezagent.Identity.Grant` is still the sole grant/revoke constructor, §4); the *paradigm*
+changed. A grant used to be one issuer→grantee dispatch that mutated the grantee's `:caps`
+slice. It is now three separable steps — and the **I12 paradigm-lock** forbids the old
+issuer-drives-grantee shape.
+
+### ISSUE — `Ezagent.Cap.issue/3`
+`apps/ezagent_core/lib/ezagent/cap.ex`. The grantor's step. `issue(authorization, target, cap)`
+loads the **issuer's** held authority through the dependency-inverted `:authority_loader`
+(config `:ezagent_core, Ezagent.Cap`), runs the full grant-authorization algorithm
+(`CapabilityRegistry.authorize_grant/3` — the same action-axis + shape + delegation checks as
+§3/§5), and on success stamps issuer provenance: `%{cap | granted_by: <issuer>, granted_at:
+now}`, validating `granted_by` is `%URI{scheme: "entity"}` (else `{:error,
+{:granter_not_entity, _}}`). **ISSUE transfers NO authority to the grantee** — it produces only
+a provenance-stamped *artifact*. The four authorization tags
+(`{:held_by}`/`{:admin}`/`{:rule}`/`{:genesis}`, §4) are unchanged and each maps 1:1 to the
+issuer that `granted_by` records. `Ezagent.Identity.Grant.prepare/4` calls `Cap.issue` for
+grant and `Cap.prepare_provenance` for revoke (both share the one provenance primitive —
+`cap_provenance_chokepoint` gate).
+
+### STORE — the grantee absorbs the artifact into its own `:caps` slice
+Two lanes, both **grantee-driven**, never issuer-driven:
+- **`create/1` self-store** — a keyed entity at Identity `create/1`/`activate/2` reads its OWN
+  pre-issued artifacts (from `RecipeCapBinding`, below) and folds them in via
+  `Ezagent.Cap.verified_set/1` (`behavior/identity.ex`).
+- **`:vm_internal` absorb** — for a live grantee, `Ezagent.Identity.absorb_cap/2`
+  (`identity.ex`) dispatches ONE `:absorb_cap` `%Cmd{}` with `caller: :vm_internal, caps:
+  MapSet.new(), mode: :cast, reply: :ignore`. `handle_absorb_cap/2` accepts ONLY a
+  `:vm_internal` caller (any other caller → `{:error, :unauthorized}`), verifies the artifact,
+  and writes the slice via `store_verified_cap`. `absorb_cap` is a same-BEAM, same-node store
+  that never issues authority; there is no cross-node absorb transport (`cap_absorb_reachability`
+  gate — that requires Phase-4 crypto first). The absorb `%Cmd{}` is constructed in exactly one
+  place (the `Ezagent.Identity` facade).
+
+### VERIFY — `Ezagent.Cap.verify/1` at load/store boundaries
+`verify/1` is total and fail-closed: true only for `%Capability{granted_by: %URI{scheme:
+"entity"}}`. It runs at the reviewed boundaries only (`cap_verify_load_boundaries` gate, ≤5
+homes): the grantee's `create/1`/`activate/2` slice load, the identity
+`read_held_caps`/`list_caps_for` loader that feeds dispatch ctx, the snapshot load fallback,
+and `store_verified_cap` on both the grant and absorb write paths. In Phase-3, `verify/1` is a
+**provenance-format** check (entity-scheme `granted_by`) standing in for Phase-4 signature
+verification — the seam is designed so Phase-4 swaps the one `verify/1` body without touching
+callers.
+
+### How a stored grant is authorized at dispatch — the `cap_issued` runtime bypass
+Because the grant *dispatch* itself is machinery (the grantee holds nothing yet),
+`Kind.Runtime` step-5.5's first `cond` arm authorizes an `IdentityAdmin` `:grant_cap` dispatch
+when `ctx.cap_issued == true` — with no separate matching cap. The token is safe because it is
+stamped ONLY by the chokepoint, and ONLY on the `Cap.issue/3` success branch
+(`grant.ex` `maybe_mark_issued(ctx, :grant_cap)`; revoke never stamps it). So an unauthorized
+grantor ⇒ `Cap.issue` returns `{:error, _}` ⇒ no `cap_issued`, no dispatch; and an
+externally-built ctx (web/CLI/MCP/workspace) can never carry `cap_issued` (nor forge the
+`:vm_internal` absorb caller). These two trust-key properties are pinned by
+`cap_issued_bypass_trust_keys_test.exs` (the N1 regression, §8).
+
+### `RecipeCapBinding` — durable home for pre-issued recipe caps
+`Ezagent.Identity.RecipeCapBinding` (`recipe_cap_binding.ex`). When a recipe is materialized
+*before* its agent exists, the materializer calls `issue_and_upsert/4`: it ISSUEs every
+proposed cap under the recorded issuer (`Cap.issue({:admin, issuer}, agent_uri, proposal)`),
+validates the issued set (issuer/kind/target/workspace match), and only then commits the whole
+set to a durable, version-and-tombstone-tracked binding keyed by agent instance. **Persistence
+never dispatches a cap write to the grantee** — the keyed agent later reads the artifacts from
+its own lifecycle hooks (the `create/1` self-store lane). Repeating a recipe is idempotent
+(content-hash); changed content advances a monotone version.
+
+### I12 — the paradigm lock (what's pinned)
+`cap_self_store_paradigm_lock` invariant. The structural rule: **authority moves issuer →
+artifact; storage moves only through the grantee's own lifecycle (`create/1`) or the
+`:vm_internal` `absorb_cap` cast — never an issuer→grantee grant dispatch that drives the
+grantee.** The gate:
+- **forbids new issuer-driven grant sites.** The ~16 legacy
+  `grant_cap`/`grant_cap_via_router` sites (12 files) are pinned as **shrink-only** migration
+  debt (the exact `@legacy_grant_drivers` ledger — the count can only go DOWN, never up).
+- the three Phase-3 cold-agent cutovers (recipe / orchestrator / workspace) are
+  **zero-tolerance**: each must `issue_*` then `absorb_*`, with no `Identity.Grant`, no
+  `mode: :call`, no `await_ready`.
+- the companion `cap_issue_chokepoint` gate ratchets every provenance-bearing
+  `%Capability{granted_by: …}` constructor and every explicit `{:set, :caps, …}` slice writer
+  DOWN toward `Cap.issue`/`store_verified_cap`.
+
+Adding a new grant driver, a new caps-slice writer, or a second `cap_issued`/absorb producer
+fails CI.
+
+### Accepted scope (Phase-3)
+Single-BEAM / trusted-node: the whole issue→store path (including `absorb_cap`) is same-node;
+there is no cross-node transport. Crypto is **Phase-4**: `verify/1` checks provenance *format*
+(entity-scheme `granted_by`), not a signature; a malicious in-VM actor is out of scope (the
+`:vm_internal` trust model already trusts all in-VM code). Phase-4 replaces the `issue/3` and
+`verify/1` bodies with signing + signature verification behind the same seam, and only then is
+cross-node absorb transport unlocked.
+
+---
+
 ## 5. `rule_cap_bounded?` and the rule branch
 
 `apps/ezagent_domain_identity/lib/ezagent/behavior/identity.ex`. A `{:rule, …}` grant carries
@@ -247,6 +354,13 @@ an **authorizer**, never a `granted_by`.
 | `check_action_wildcard_grant_authorized/2` (runtime) | a wildcard-action grant needs admin authority or a scope-bounded instance. |
 | `no_admin_caps_fallback_test.exs` | no ad-hoc principal mint; the Catalog is closed. |
 | `mix ezagent.check_invariants` (#1 cap-check-only-at-chokepoint, …) | cap checks live at the dispatch chokepoint, not scattered. |
+| **Phase-3 (cbac-done-right):** | |
+| `cap_self_store_paradigm_lock_test.exs` (I12) | authority moves issuer→artifact; storage only via grantee `create/1` self-store or `:vm_internal` absorb; ~16 legacy grant drivers are shrink-only; the 3 cold-agent cutovers are zero-tolerance. |
+| `cap_issue_chokepoint_test.exs` (I7) | every provenance-bearing `%Capability{granted_by:}` constructor + every `{:set, :caps, …}` writer is ratcheted (shrink-only) toward `Cap.issue` / `store_verified_cap`. |
+| `cap_absorb_reachability_test.exs` (I2/I8) | `absorb_cap` is VM-internal, same-node, verifies, never self-issues; no cross-node absorb transport. |
+| `cap_provenance_chokepoint_test.exs` (I11) | `Ezagent.Cap` is the sole home that stamps `granted_by`; grant issues, revoke shares the provenance primitive. |
+| `cap_verify_load_boundaries_test.exs` (I5) | `Cap.verify`/`verified_set` live only at ≤5 reviewed load/store homes, never beside a `matches?/2` check. |
+| `cap_issued_bypass_trust_keys_test.exs` (N1) | the `cap_issued` runtime bypass: unauthorized grantor ⇒ `Cap.issue` error ⇒ no token / no dispatch; `cap_issued` is written only at the grant chokepoint. |
 
 **Run the FULL suite before any admin-merge** — a green security subset is not a green PR
 (see `feedback_run_check_invariants_gate`).
