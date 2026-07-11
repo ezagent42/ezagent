@@ -284,18 +284,11 @@ defmodule EzagentCli.Dispatch do
   end
 
   defp lookup_identity_caps(uri) do
-    # Lifecycle migration (PR #485 — Identity → use Ezagent.Lifecycle):
-    # the `:identity` slice is now the two-container shape
-    # `%{state: %{caps}, transients}`. Read through the canonical
-    # `Ezagent.Kind.get_slice/2` chokepoint, which normalizes to the
-    # flat `:state` view (T3); a raw `:sys.get_state` match on
-    # `%{state: %{identity: %{caps: _}}}` would silently miss the
-    # nested `:state` and return empty caps for `--as <uri>`.
-    case Ezagent.Kind.get_slice(uri, :identity) do
-      {:ok, %{caps: caps}} when is_struct(caps, MapSet) -> caps
-      {:ok, %{caps: caps}} when is_list(caps) -> MapSet.new(caps)
-      _ -> MapSet.new()
-    end
+    # S4 I5 boundary #3: route the development-only `--as` slice load through
+    # the same persistent, verified authority loader used by `Cap.issue/3`.
+    # This keeps inline self-authority caps untouched while every cap copied
+    # from an identity slice into dispatch ctx crosses `Cap.verify/1`.
+    Ezagent.Identity.read_held_caps(uri)
   end
 
   # Restored to local dispatch — the pivot (Allen 2026-05-17) moves the

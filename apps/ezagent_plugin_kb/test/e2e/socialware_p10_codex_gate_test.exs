@@ -375,8 +375,19 @@ defmodule EzagentPluginKb.E2E.SocialwareP10CodexGateTest do
     :ok = Ezagent.AgentFlavorAttributes.put(orchestrator_uri, "codex")
     on_exit(fn -> Ezagent.AgentFlavorAttributes.delete(orchestrator_uri) end)
 
+    issued_caps =
+      Enum.map(caps, fn proposal ->
+        {:ok, artifact} =
+          Ezagent.Cap.issue({:genesis, User.admin_uri()}, orchestrator_uri, proposal)
+
+        artifact
+      end)
+
     {:ok, _pid} =
-      Ezagent.Kind.spawn(Ezagent.Entity.Agent, %{uri: orchestrator_uri, initial_caps: caps})
+      Ezagent.Kind.spawn(Ezagent.Entity.Agent, %{
+        uri: orchestrator_uri,
+        initial_caps: MapSet.new(issued_caps)
+      })
 
     :ok = Ezagent.WorkspaceRegistry.bind(orchestrator_uri, workspace_uri)
 

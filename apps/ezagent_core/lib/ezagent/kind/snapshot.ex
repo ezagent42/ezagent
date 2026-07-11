@@ -105,7 +105,6 @@ defmodule Ezagent.Kind.Snapshot do
         init_fresh_first_spawn(kind_module, args)
 
       {:ok, loaded_state} ->
-        emit_restored(uri_str, loaded_state)
         # SPEC 2026-05-27-uri-canonicalization §9.2.1 (OQ-4 option b)
         # — canonicalize every `%URI{}` embedded in the decoded state
         # BEFORE the merge. Pre-migration snapshots may contain
@@ -153,10 +152,15 @@ defmodule Ezagent.Kind.Snapshot do
         _ = Ezagent.Kind.BehaviorSet.validate_closure!(effective)
         fresh = init_fresh_for_set(effective, args)
 
-        fresh
-        |> Map.merge(coerce_loaded_to_fresh_shape(fresh, canonicalized))
-        |> prune_orphan_slices(kind_module)
-        |> reconcile_after_load_behaviors(uri, kind_module)
+        rehydrated =
+          fresh
+          |> Map.merge(coerce_loaded_to_fresh_shape(fresh, canonicalized))
+          |> prune_orphan_slices(kind_module)
+          |> reconcile_after_load_behaviors(uri, kind_module)
+          |> verify_snapshot_caps()
+
+        emit_restored(uri_str, rehydrated)
+        rehydrated
 
       {:error, reason} ->
         # PR-4 (blocker #2). A row EXISTS but is unloadable (version mismatch /
@@ -638,6 +642,34 @@ defmodule Ezagent.Kind.Snapshot do
   # Any other combination (both two-container, both flat, fresh has no peer,
   # non-map loaded value) → unchanged.
   defp coerce_one_slice(_fresh_slice, loaded_slice), do: loaded_slice
+
+  # Phase 3 S4 / I5 boundary #4: a capability re-entering the live Kind from
+  # `kind_snapshots.state_binary` is verified before the decoded identity
+  # slice becomes live, after fresh+loaded merge and reconciliation. Both the
+  # pre-Lifecycle flat shape and the current two-container shape are accepted;
+  # malformed or unverified entries fail closed by being omitted from the
+  # loaded set.
+  defp verify_snapshot_caps(%{identity: %{state: %{caps: caps} = inner} = slice} = state) do
+    put_verified_snapshot_caps(state, {:lifecycle, slice, inner}, caps)
+  end
+
+  defp verify_snapshot_caps(%{identity: %{caps: caps} = slice} = state) do
+    put_verified_snapshot_caps(state, {:flat, slice}, caps)
+  end
+
+  defp verify_snapshot_caps(state), do: state
+
+  defp put_verified_snapshot_caps(state, location, caps) do
+    verified = Ezagent.Cap.verified_set(caps)
+
+    verified_slice =
+      case location do
+        {:lifecycle, slice, inner} -> %{slice | state: %{inner | caps: verified}}
+        {:flat, slice} -> %{slice | caps: verified}
+      end
+
+    %{state | identity: verified_slice}
+  end
 
   # P1 FIRST-spawn slice materialization. Reachable ONLY from
   # `load_with_fallback/3`'s `:not_found` branch and from `load_or_init/3`'s

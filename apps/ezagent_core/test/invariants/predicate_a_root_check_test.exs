@@ -14,8 +14,10 @@ defmodule Ezagent.Invariants.PredicateARootCheckTest do
   permissions not granted by an entity" requires.
 
   Both authorizer sets are covered:
-  - inline `ctx.caps` (the forged-cap vector)
-  - slice-held caps (the stale-pre-collapse-snapshot vector)
+  - inline `ctx.caps` (the forged-cap vector) remains guarded at consumption;
+  - slice-held caps (the stale-pre-collapse-snapshot vector) are now rejected
+    earlier by Phase 3 S4's `Cap.verify` load boundary, with predicate A kept as
+    defense in depth.
 
   Per `feedback_completion_requires_invariant_test`.
   """
@@ -97,16 +99,20 @@ defmodule Ezagent.Invariants.PredicateARootCheckTest do
   end
 
   describe "slice-held authorizer set (stale-snapshot vector)" do
-    test "an entity holding a system://-granted wildcard in its slice is NOT authorized" do
+    test "a system://-granted wildcard never enters the live slice and cannot authorize" do
       uri_str = "entity://team-alpha/user/preda_held_sys_#{System.unique_integer([:positive])}"
       {:ok, _} = Users.create(uri_str, nil, [wildcard_cap(system_granter())])
       uri = Ezagent.URI.new!(uri_str)
       {:ok, _pid} = Ezagent.SpawnRegistry.spawn(uri)
       session_uri = session()
 
-      # No inline caps — authorization must come from the slice (held path).
+      refute Enum.any?(Ezagent.Identity.read_held_caps(uri), fn cap ->
+               cap.granted_by == system_granter()
+             end)
+
+      # No inline caps — any authorization would have to come from the slice.
       assert {:error, :unauthorized} = dispatch_send(uri, MapSet.new(), session_uri),
-             "a slice-held system://-granted wildcard MUST NOT authorize via the held path"
+             "an unverified system://-granted wildcard MUST NOT reach or authorize via the held path"
     end
 
     test "an entity holding an ENTITY-granted wildcard in its slice IS authorized (control)" do
