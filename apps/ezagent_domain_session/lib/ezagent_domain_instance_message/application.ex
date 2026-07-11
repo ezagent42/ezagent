@@ -65,11 +65,10 @@ defmodule EzagentDomainInstanceMessage.Application do
 
     # PR-8 (transport #53) — the orchestrator-MCP transport subsystem
     # (`McpRegistry`/`LiveJoinRegistry`/`McpChannel`/`McpServer`/`Tools`/…) +
-    # its `OrchestratorReadinessPort` impl registration RELOCATED into the cc
-    # plugin (`EzagentPluginCc.Application.after_boot/0`). This app now only
-    # owns the port + its neutral fallback (spec §3.6); the cc-resident
-    # `ReadinessAdapter` is registered at cc boot. The session never names a
-    # transport module, keeping `im → session → agent` acyclic.
+    # context registration RELOCATED into the cc plugin. This app owns the
+    # context-only port + its neutral fallback; generic readiness remains in
+    # the agent domain. The session never names a transport module, keeping
+    # `im → session → agent` acyclic.
 
     # Phase 8c PR-J (Allen 2026-05-20) — `session://default/system/main` is no longer
     # a static supervisor child. The first-login wizard at `/` creates

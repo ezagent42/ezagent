@@ -666,6 +666,20 @@ defmodule EzagentDomainInstanceMessage.Integration.DefinitionAgentsMaterializeTe
     # performs after a restart to recover the 7-tool orchestrator surface.
     assert {:ok, ^orchestrator_uri} =
              Ezagent.Entity.Session.Orchestrator.orchestrator_uri(session_uri)
+
+    assert {:ok, manager_pid} = Ezagent.Session.SessionManager.whereis(orchestrator_uri)
+
+    binding = GenServer.call(manager_pid, :binding)
+    assert binding.orchestrator_uri == orchestrator_uri
+    assert binding.session_uri == session_uri
+    assert binding.workspace_uri == @workspace_uri
+    assert binding.owner_uri == @owner_uri
+
+    expected_parent_template_uri =
+      Map.get(working_copy, :session_template_uri) ||
+        Ezagent.URI.template(:system, :session, "default")
+
+    assert binding.parent_template_uri == expected_parent_template_uri
   end
 
   test "ensure_orchestrator skips a bare Agent Kind without credentials (chain C)" do
