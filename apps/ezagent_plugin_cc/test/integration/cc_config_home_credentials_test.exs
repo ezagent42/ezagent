@@ -142,7 +142,7 @@ defmodule Ezagent.PluginCc.Integration.CcConfigHomeCredentialsTest do
   end
 
   describe "automatic role materialization (chain C)" do
-    test "skips the environment-credential orchestrator loudly when its key is missing" do
+    test "skips the plain cc orchestrator loudly when its host login is unavailable" do
       template_name = "orch-cred-#{uniq()}"
       ws = Ezagent.URI.workspace(:system)
       {:ok, _} = persist_orchestrator_template(template_name)
@@ -164,7 +164,7 @@ defmodule Ezagent.PluginCc.Integration.CcConfigHomeCredentialsTest do
       assert [
                %{
                  role_name: "orchestrator",
-                 reason: {:credential_unavailable, "cc-deepseek"}
+                 reason: {:no_credential_source, "cc"}
                }
              ] =
                summary.skipped
@@ -175,7 +175,7 @@ defmodule Ezagent.PluginCc.Integration.CcConfigHomeCredentialsTest do
 
       # …and the skip is DURABLE, so the UI can tell the user (Invariant #9 —
       # a server log alone is a silent drop at a user-facing surface).
-      assert [%{role_name: "orchestrator", reason: :unavailable}] =
+      assert [%{role_name: "orchestrator", reason: :missing_credentials}] =
                SessionCreator.unfilled_agent_role_slots(session_uri)
     end
 
