@@ -369,6 +369,97 @@ defmodule EzagentDomainInstanceMessage.Integration.DefinitionAgentsMaterializeTe
     assert Enum.member?(caps, bound_cap)
   end
 
+  test "I3 full orchestrator lane buffers four scoped artifacts, stays nonblocking, and revokes the exact inverse" do
+    n = uniq()
+    session_uri = live_session(n)
+    role_name = "orchestrator"
+    flavor = register_never_ready_flavor(n)
+    :ok = ensure_orchestrator_recipe()
+
+    working_copy =
+      session_uri
+      |> Session.read_template_working_copy()
+      |> Map.put(:session_template_uri, Ezagent.URI.template(:system, :session, "default"))
+      |> Map.put(:member_declarations, [
+        %{fill: :agent, recipe: "orchestrator", role_name: role_name, flavor: flavor}
+      ])
+
+    assert {:ok, _} = SessionBehavior.system_set_working_copy(session_uri, working_copy)
+
+    task =
+      Task.async(fn ->
+        receive do
+          :run_install ->
+            SessionCreator.install_session_socialware(session_uri, @workspace_uri)
+        end
+      end)
+
+    Ecto.Adapters.SQL.Sandbox.allow(Repo, self(), task.pid)
+    send(task.pid, :run_install)
+
+    assert {:ok, {:ok, %{satisfied: [^role_name], skipped: []}}} =
+             Task.yield(task, 5_000) || Task.shutdown(task, :brutal_kill)
+
+    members = members_of(session_uri)
+    orchestrator_uri = SessionBehavior.role_name_to_uri(members, role_name)
+    on_exit(fn -> terminate(orchestrator_uri) end)
+
+    assert {:ok, orchestrator_pid} = KindRegistry.lookup(orchestrator_uri)
+    assert {:ok, session_pid} = KindRegistry.lookup(session_uri)
+    assert Process.alive?(session_pid)
+    assert Session.owner(session_uri) == {:ok, @owner_uri}
+    assert {:ok, %{ok: true}} = owner_cap_gated_probe(session_uri)
+    assert Ezagent.ReadyGate.status(orchestrator_uri) == :not_ready
+
+    # The admin owner holds delegable authority for both Template kinds, so the
+    # full materialization lane emits #1/#2 scope caps plus #3/#4 preflight caps.
+    # Legacy member-join grants may share this URI buffer; count the four
+    # absorb artifacts themselves rather than assuming exclusive ownership of
+    # the transport queue.
+    assert eventually(fn -> length(buffered_absorb_artifacts(orchestrator_uri)) == 4 end)
+
+    refute Enum.any?(
+             Ezagent.Identity.read_entity_caps(orchestrator_uri),
+             &scoped_orchestrator_cap?/1
+           )
+
+    assert :ready =
+             Ezagent.Kind.ReadyTransition.drain_pending_then_mark_ready(
+               URI.to_string(orchestrator_uri),
+               orchestrator_pid
+             )
+
+    assert eventually(fn ->
+             orchestrator_uri
+             |> Ezagent.Identity.read_entity_caps()
+             |> Enum.filter(&scoped_orchestrator_cap?/1)
+             |> scoped_orchestrator_cap_keys() ==
+               MapSet.new([
+                 {:session, :any, :any, {:within_session, session_uri}, @owner_uri},
+                 {:agent, :any, :any, {:spawned_by, orchestrator_uri}, @owner_uri},
+                 {:session_template, Ezagent.ActionSet.Template, :any,
+                  {:within_workspace, @workspace_uri}, @owner_uri},
+                 {:agent_template, Ezagent.ActionSet.Template, :any,
+                  {:within_workspace, @workspace_uri}, @owner_uri}
+               ])
+           end)
+
+    assert :ok =
+             Ezagent.Entity.Session.Orchestrator.Caps.revoke_orchestrator_scoped_caps(
+               orchestrator_uri,
+               session_uri,
+               @owner_uri,
+               @workspace_uri
+             )
+
+    assert eventually(fn ->
+             orchestrator_uri
+             |> Ezagent.Identity.read_entity_caps()
+             |> Enum.any?(&scoped_orchestrator_cap?/1)
+             |> Kernel.not()
+           end)
+  end
+
   test "definitive fresh spawn failure tombstones its pre-spawn binding" do
     n = uniq()
     session_uri = live_session(n)
@@ -492,14 +583,18 @@ defmodule EzagentDomainInstanceMessage.Integration.DefinitionAgentsMaterializeTe
     orchestrator_uri = SessionBehavior.role_name_to_uri(members, role_name)
     on_exit(fn -> terminate(orchestrator_uri) end)
 
-    caps = Ezagent.Identity.list_caps_for(orchestrator_uri)
+    # Scoped-cap storage is now an intentional self-store cast. Materialization
+    # returns once the hand-off is accepted, so observe eventual slice commit
+    # instead of reintroducing a readiness/blocking barrier in the producer.
+    assert eventually(fn ->
+             caps = Ezagent.Identity.read_entity_caps(orchestrator_uri)
 
-    assert Enum.any?(caps, fn cap ->
-             cap.kind == :session and cap.instance == {:within_session, session_uri}
-           end)
-
-    assert Enum.any?(caps, fn cap ->
-             cap.kind == :agent and cap.instance == {:spawned_by, orchestrator_uri}
+             Enum.any?(caps, fn cap ->
+               cap.kind == :session and cap.instance == {:within_session, session_uri}
+             end) and
+               Enum.any?(caps, fn cap ->
+                 cap.kind == :agent and cap.instance == {:spawned_by, orchestrator_uri}
+               end)
            end)
   end
 
@@ -694,5 +789,69 @@ defmodule EzagentDomainInstanceMessage.Integration.DefinitionAgentsMaterializeTe
                @owner_uri,
                [%{recipe: missing, role_name: "ghost-#{n}"}]
              )
+  end
+
+  defp scoped_orchestrator_cap?(%Ezagent.Capability{} = cap) do
+    scope_cap? =
+      cap.kind in [:session, :agent] and cap.behavior == :any and
+        Ezagent.Capability.action_of(cap) == :any and
+        match?({scope, %URI{}} when scope in [:within_session, :spawned_by], cap.instance)
+
+    template_cap? =
+      cap.kind in [:session_template, :agent_template] and
+        cap.behavior == Ezagent.ActionSet.Template and
+        Ezagent.Capability.action_of(cap) == :any and
+        match?({:within_workspace, %URI{}}, cap.instance)
+
+    scope_cap? or template_cap?
+  end
+
+  defp scoped_orchestrator_cap_keys(caps) do
+    caps
+    |> Enum.map(fn cap ->
+      {
+        cap.kind,
+        cap.behavior,
+        Ezagent.Capability.action_of(cap),
+        cap.instance,
+        cap.granted_by
+      }
+    end)
+    |> MapSet.new()
+  end
+
+  defp buffered_absorb_artifacts(uri) do
+    entries =
+      Ezagent.PendingDelivery.with_lock(uri, fn ->
+        case :ets.lookup(Ezagent.PendingDelivery.table(), URI.to_string(uri)) do
+          [{_key, entries}] -> entries
+          [] -> []
+        end
+      end)
+
+    entries
+    |> Ezagent.PendingDelivery.unwrap_entries()
+    |> Enum.flat_map(fn
+      %Invocation{
+        target: %URI{query: "action=identity.absorb_cap"},
+        args: %{artifact: artifact}
+      } ->
+        [artifact]
+
+      _other ->
+        []
+    end)
+  end
+
+  defp eventually(fun, attempts \\ 100)
+  defp eventually(_fun, 0), do: false
+
+  defp eventually(fun, attempts) do
+    if fun.() do
+      true
+    else
+      Process.sleep(10)
+      eventually(fun, attempts - 1)
+    end
   end
 end

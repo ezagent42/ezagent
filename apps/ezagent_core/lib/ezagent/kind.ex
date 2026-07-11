@@ -457,6 +457,11 @@ defmodule Ezagent.Kind do
   is swallowed and `:ok` is returned (the caller is on a failure exit
   and a teardown step must not mask the original error).
 
+  Before process lookup, the URI is definitively marked failed and any
+  `PendingDelivery` casts are dead-lettered. This prevents an authority-bearing
+  absorb artifact queued for a failed incarnation from landing on a later entity
+  recreated at the same URI.
+
   This terminates ONLY the Kind process. Lineage (`AgentLineage`) and
   workspace binding (`WorkspaceRegistry`) are Ezagent-domain registries —
   a plugin Template Class must NOT touch them (3-tier rule); the
@@ -465,6 +470,8 @@ defmodule Ezagent.Kind do
   """
   @spec terminate(URI.t()) :: :ok
   def terminate(%URI{} = uri) do
+    :ok = Ezagent.Kind.ReadyTransition.mark_failed(uri)
+
     with {:ok, pid} <- Ezagent.KindRegistry.lookup(uri),
          {:ok, kind_module} <- safe_kind_module(pid) do
       case terminate_strategy(kind_module) do

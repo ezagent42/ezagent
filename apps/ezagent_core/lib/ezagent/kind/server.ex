@@ -137,10 +137,8 @@ defmodule Ezagent.Kind.Server do
           create_freshness: :unknown
         }
 
-        case Ezagent.KindRegistry.put_new(uri_str, self()) do
+        case Ezagent.Kind.ReadyTransition.register_not_ready(uri_str, self()) do
           :ok ->
-            :ok = Ezagent.ReadyGate.put(uri_str, :not_ready)
-
             # #533 5a (§3.10.3) — capture freshness from the Lifecycle's own
             # create-vs-activate decision BEFORE persist_initial_snapshot sets
             # the `ever_created` marker. We go through `Lifecycle.fresh_create?/1`
@@ -165,11 +163,9 @@ defmodule Ezagent.Kind.Server do
                 {:ok, state, {:continue, :announce_ready}}
 
               {:error, reason} ->
-                # Issue #342 (Allen 2026-05-25 — let-it-crash). Initial
-                # persistence is a durability promise: a Kind whose row never
-                # landed must NOT report ":ok" to its spawner. The earlier
-                # `KindRegistry.put_new/1` registration is auto-cleaned by
-                # `Registry` on process exit, so `{:stop, ...}` is enough.
+                # Persistence is a durability promise. Registration is already
+                # visible, so fail and detach any pending delivery before exit.
+                :ok = Ezagent.Kind.ReadyTransition.mark_failed(uri_str)
                 {:stop, {:persistence_failed, reason}}
             end
 
@@ -739,37 +735,23 @@ defmodule Ezagent.Kind.Server do
     commit_result
   end
 
-  # Unified forwarder: any GenServer message a Kind's Behaviors might want
-  # to react to (currently only `:DOWN` from Process.monitor; Phase 3+ may
-  # add timer ticks etc) routes through `handle_kind_message/3` on each
-  # Behavior that exports it. Behaviors that ignore the message return
-  # their slice unchanged.
-  #
-  # The optional hook signature `handle_kind_message(message, slice, ctx)`:
-  #  - `message`: the raw GenServer message (e.g. `{:DOWN, ref, ..., reason}`)
-  #  - `slice`: this Behavior's slice
-  #  - `ctx`: %{kind_module:, self_uri:} so Behaviors can route based on Kind
-  #
-  # Returns `{:ok, new_slice}` or `:ignore` (slice unchanged). This lets
-  # multi-Behavior Kinds share one mailbox without each Behavior shadowing
-  # everything (P2-D2 K-path principle: one Behavior, multiple Kinds —
-  # not a Kind-wide message bus).
-  # P2.5c (codex impl HIGH) — run the post-commit deferred dispatches on a
-  # SEPARATE mailbox turn (enqueued via `DeferredDispatch.enqueue/1` AFTER the
-  # parent slice committed), NOT inline in the dispatch `handle_call`/`handle_cast`
-  # callback. See `Ezagent.Kind.DeferredDispatch` for the full ordering /
-  # no-deadlock / failure-handling contract.
+  # Behavior mailbox forwarding receives the raw message, its slice, and
+  # `%{kind_module:, self_uri:}`; `:ignore` preserves that slice. Deferred
+  # commands run on a later mailbox turn, after the parent commit, to avoid
+  # dispatch deadlock. `DeferredDispatch` owns the detailed ordering contract.
   @impl true
   def handle_info({:ezagent_external_ready_gate, uri_str, :ok}, state)
       when is_binary(uri_str) do
-    Ezagent.Kind.ReadyTransition.drain_pending_then_mark_ready(uri_str, self())
-    run_on_ready_hooks(state.kind, state.uri, state.state)
+    if Ezagent.Kind.ReadyTransition.drain_pending_then_mark_ready(uri_str, self()) == :ready do
+      run_on_ready_hooks(state.kind, state.uri, state.state)
+    end
+
     {:noreply, state}
   end
 
-  def handle_info({:ezagent_external_ready_gate, uri_str, {:error, :timeout}}, state)
-      when is_binary(uri_str) do
-    :ok = Ezagent.Kind.ReadyTransition.mark_failed(uri_str)
+  # The waiter already committed timeout/supersession generation-safely.
+  def handle_info({:ezagent_external_ready_gate, uri_str, {:error, reason}}, state)
+      when is_binary(uri_str) and reason in [:timeout, :superseded] do
     {:noreply, state}
   end
 

@@ -751,10 +751,12 @@ defmodule Ezagent.Workspace do
   defdelegate create_user(workspace_uri, args, ctx), to: Ezagent.Workspace.Provisioning
 
   @doc """
-  Loop `identity.grant_cap` dispatches against `agent_uri`, one per cap.
-  Uses the CALLER's context (caps + URI) so the cap grants stay
-  CapBAC-bound (LV's existing `grant_all/3` pattern, lifted into a
-  shared helper so CLI can call it too).
+  Issue every requested capability from the CALLER's durable held authority,
+  then hand the complete issued set to `agent_uri` for self-storage.
+
+  `ctx.caps` is intentionally ignored: `Ezagent.Cap.issue/3` reloads the
+  caller's real held caps through the configured authority loader. ISSUE for
+  the whole batch completes before the first non-blocking ABSORB handoff.
 
   Returns `:ok` if all grants succeed, `{:error, {:grant_failed, cap,
   reason}}` on the first failure (does not continue past a failure —
@@ -764,18 +766,63 @@ defmodule Ezagent.Workspace do
           :ok | {:error, term()}
   def grant_initial_caps(_agent_uri, [], _ctx), do: :ok
 
-  def grant_initial_caps(%URI{} = agent_uri, [cap | rest], ctx) when is_map(ctx) do
-    # Grant chokepoint (SPEC 2026-06-17 §3.5 site #2). The CALLER is the
-    # authorizer — its real held caps drive CapBAC — so `{:held_by,
-    # caller}` reproduces the prior `caller`/`caps` ctx exactly (the
-    # chokepoint re-reads the caller's held caps) while making the
-    # entity `granted_by` explicit.
+  def grant_initial_caps(%URI{} = agent_uri, caps, ctx) when is_list(caps) and is_map(ctx) do
+    case issue_and_absorb_initial_caps(agent_uri, caps, ctx) do
+      {:ok, _issued} -> :ok
+      {:error, _reason} = error -> error
+    end
+  end
+
+  @doc false
+  @spec issue_and_absorb_initial_caps(URI.t(), [Ezagent.Capability.t()], map()) ::
+          {:ok, [Ezagent.Capability.t()]} | {:error, term()}
+  def issue_and_absorb_initial_caps(%URI{} = agent_uri, caps, ctx)
+      when is_list(caps) and is_map(ctx) do
     caller = Map.fetch!(ctx, :caller)
 
-    case Ezagent.Identity.Grant.grant_cap(agent_uri, cap, {:held_by, caller}) do
-      :ok -> grant_initial_caps(agent_uri, rest, ctx)
-      {:error, reason} -> {:error, {:grant_failed, cap, reason}}
+    with {:ok, issued_pairs} <- issue_initial_caps(agent_uri, caps, caller),
+         stored_pairs = canonicalize_issued_pairs(issued_pairs),
+         :ok <- absorb_initial_caps(agent_uri, stored_pairs) do
+      {:ok, Enum.map(stored_pairs, &elem(&1, 1))}
     end
+  end
+
+  defp issue_initial_caps(agent_uri, caps, caller) do
+    target = Ezagent.URI.instance(agent_uri)
+
+    caps
+    |> Enum.reduce_while({:ok, []}, fn cap, {:ok, issued} ->
+      case Ezagent.Cap.issue({:held_by, caller}, target, cap) do
+        {:ok, artifact} -> {:cont, {:ok, [{cap, artifact} | issued]}}
+        {:error, reason} -> {:halt, {:error, {:grant_failed, cap, reason}}}
+      end
+    end)
+    |> case do
+      {:ok, issued} -> {:ok, Enum.reverse(issued)}
+      {:error, _reason} = error -> error
+    end
+  end
+
+  defp absorb_initial_caps(agent_uri, issued) do
+    Enum.reduce_while(issued, :ok, fn {proposal, artifact}, :ok ->
+      case Ezagent.Identity.absorb_cap(agent_uri, artifact) do
+        :ok -> {:cont, :ok}
+        {:error, reason} -> {:halt, {:error, {:grant_failed, proposal, reason}}}
+      end
+    end)
+  end
+
+  # The Identity slice replaces artifacts by logical identity key. Mirror that
+  # rule before hand-off so a short-lived CLI can await the exact final structs
+  # instead of waiting forever for an earlier metadata variant that cannot
+  # coexist with the last one.
+  defp canonicalize_issued_pairs(issued_pairs) do
+    issued_pairs
+    |> Enum.reverse()
+    |> Enum.uniq_by(fn {_proposal, artifact} ->
+      Ezagent.Capability.identity_key(artifact)
+    end)
+    |> Enum.reverse()
   end
 
   @doc """

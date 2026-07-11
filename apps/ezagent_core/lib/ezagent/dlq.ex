@@ -18,6 +18,10 @@ defmodule Ezagent.DLQ do
     the target's readiness gate is marked `:failed` (transport never joined). The
     buffer would otherwise be silently dropped by `mark_failed` (doc §8.1 /
     Invariant #9); `Ezagent.Kind.ReadyTransition.mark_failed/1` dead-letters them.
+  - `:stale_incarnation` — a `:cast` producer observed one Kind incarnation but
+    reached its mailbox/buffer commit after that process had been replaced. The
+    invocation is rejected instead of transferring authority into the replacement
+    incarnation.
 
   ## Phase 1 scope
 
@@ -33,7 +37,8 @@ defmodule Ezagent.DLQ do
     :no_actor,
     :idempotency_duplicate_marker,
     :buffer_full,
-    :never_ready
+    :never_ready,
+    :stale_incarnation
   ]
 
   @doc """
