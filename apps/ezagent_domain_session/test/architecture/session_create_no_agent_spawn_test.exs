@@ -287,6 +287,43 @@ defmodule EzagentDomainInstanceMessage.Architecture.SessionCreateNoAgentSpawnTes
            """
   end
 
+  test "existing-orchestrator repair registers context and executor before granting authority" do
+    source =
+      app_root()
+      |> Path.join("lib/ezagent/entity/session/orchestrator.ex")
+      |> File.read!()
+
+    [_, compat_tail] = String.split(source, "defp ensure_orchestrator_compat(", parts: 2)
+
+    [compat_body | _] =
+      String.split(compat_tail, "defp adopt_legacy_orchestrator_member(", parts: 2)
+
+    register_at = index_of(compat_body, "register_orchestrator_mcp_context(")
+    grant_at = index_of(compat_body, "grant_orchestrator_scoped_caps(")
+
+    assert register_at != nil, "repair path must register the orchestrator context"
+    assert grant_at != nil, "repair path must grant the orchestrator scoped caps"
+
+    assert register_at < grant_at,
+           "existing-member repair must establish context + executor before " <>
+             "exposing scoped authority"
+
+    [_, register_tail] =
+      String.split(source, "def register_orchestrator_mcp_context(", parts: 2)
+
+    [register_body | _] =
+      String.split(register_tail, "@doc \"Ensure the SessionTemplate Kind", parts: 2)
+
+    context_at = index_of(register_body, "OrchestratorContextPort.register_context(")
+    executor_at = index_of(register_body, "SessionManager.ensure_started(")
+
+    assert context_at != nil, "context registration call not found"
+    assert executor_at != nil, "SessionManager executor start call not found"
+
+    assert context_at < executor_at,
+           "context must be registered before the session-owned executor is exposed"
+  end
+
   defp index_of(haystack, needle) do
     case :binary.match(haystack, needle) do
       {start, _len} -> start

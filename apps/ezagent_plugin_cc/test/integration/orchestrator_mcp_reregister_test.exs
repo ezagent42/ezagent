@@ -132,7 +132,11 @@ defmodule EzagentDomainInstanceMessage.Integration.OrchestratorMcpReregisterTest
 
       :ok = KindSnapshot.delete(URI.to_string(session_uri))
       :ok = McpRegistry.unregister(orchestrator_uri)
-      :ok = SnapshotFixtures.save_kind_snapshot(session_uri, Session, %{session: chat_slice})
+
+      :ok =
+        SnapshotFixtures.save_kind_snapshot(session_uri, Session, %{
+          session: %{state: chat_slice}
+        })
 
       assert McpRegistry.lookup(orchestrator_uri) == :error
       assert {:ok, :registered} = McpServer.from_orchestrator_uri(orchestrator_uri)

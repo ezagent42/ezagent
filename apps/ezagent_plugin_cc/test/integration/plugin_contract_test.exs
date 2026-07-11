@@ -64,4 +64,35 @@ defmodule EzagentPluginCc.Integration.PluginContractTest do
   test "cc plugin declares :flavor config_surface" do
     assert %{kind: :flavor, flavor: "cc"} = EzagentPluginCc.Application.config_surface()
   end
+
+  test "cc boot wires the context-only orchestrator transport seam" do
+    orchestrator_uri =
+      Ezagent.URI.new!("entity://system/agent/context-port-#{System.unique_integer([:positive])}")
+
+    session_uri = Ezagent.URI.new!("session://system/default/context-port")
+    workspace_uri = Ezagent.URI.new!("workspace://system")
+    owner_uri = Ezagent.URI.new!("entity://system/user/admin")
+    parent_template_uri = Ezagent.URI.new!("template://system/session/default@context-port")
+
+    assert Ezagent.Session.OrchestratorContextPort.impl() ==
+             EzagentPluginCc.Orchestrator.ContextAdapter
+
+    assert :ok =
+             Ezagent.Session.OrchestratorContextPort.register_context(orchestrator_uri,
+               session_uri: session_uri,
+               workspace_uri: workspace_uri,
+               owner_uri: owner_uri,
+               parent_template_uri: parent_template_uri
+             )
+
+    on_exit(fn ->
+      Ezagent.Session.OrchestratorContextPort.unregister(orchestrator_uri)
+    end)
+
+    assert {:ok, context} = Ezagent.Orchestrator.McpRegistry.lookup(orchestrator_uri)
+    assert context.session_uri == session_uri
+    assert context.workspace_uri == workspace_uri
+    assert context.owner_uri == owner_uri
+    assert context.parent_template_uri == parent_template_uri
+  end
 end

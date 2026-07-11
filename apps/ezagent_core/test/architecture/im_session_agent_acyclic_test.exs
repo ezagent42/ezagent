@@ -116,7 +116,7 @@ defmodule Ezagent.Architecture.ImSessionAgentAcyclicTest do
 
       assert offenders == [],
              "session must not name the MCP transport (relocated to cc in PR-8; " <>
-               "driven via OrchestratorReadinessPort). Offenders:\n" <> format(offenders)
+               "driven via OrchestratorContextPort). Offenders:\n" <> format(offenders)
     end
 
     test "the agent domain has NO compile reference to a plugin-defined module" do
