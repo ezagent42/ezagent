@@ -3,7 +3,11 @@ defmodule Ezagent.IdentityTest do
 
   describe "list_caps_for/1" do
     test "returns empty MapSet for not-yet-spawned user" do
-      uri = Ezagent.URI.new!("entity://team-alpha/user/never-spawned-#{System.unique_integer([:positive])}")
+      uri =
+        Ezagent.URI.new!(
+          "entity://team-alpha/user/never-spawned-#{System.unique_integer([:positive])}"
+        )
+
       caps = Ezagent.Identity.list_caps_for(uri)
       assert %MapSet{} = caps
       assert MapSet.size(caps) == 0
@@ -27,6 +31,22 @@ defmodule Ezagent.IdentityTest do
       assert Enum.any?(caps, fn cap ->
                cap.kind == :any and cap.behavior == :any and cap.instance == :any
              end)
+    end
+  end
+
+  describe "verified durable cap loading" do
+    test "I5 read_held_caps filters an invalid caps_json artifact" do
+      uri =
+        Ezagent.URI.new!(
+          "entity://team-alpha/user/verify-loader-#{System.unique_integer([:positive])}"
+        )
+
+      valid = Ezagent.Capability.admin_genesis_cap()
+      invalid = %{valid | granted_by: Ezagent.URI.new!("system://forged")}
+
+      assert {:ok, _user} = Ezagent.Users.create(uri, nil, [valid, invalid])
+
+      assert Ezagent.Identity.read_held_caps(uri) == MapSet.new([valid])
     end
   end
 

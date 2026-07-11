@@ -205,6 +205,26 @@ defmodule Ezagent.Kind.SnapshotTest do
     assert MapSet.equal?(loaded_caps, caps)
   end
 
+  test "I5 snapshot rehydration drops unverified caps before the identity slice loads" do
+    uri =
+      Ezagent.URI.new!(
+        "entity://team-alpha/user/snap-verify-#{System.unique_integer([:positive])}"
+      )
+
+    valid = Ezagent.Capability.admin_genesis_cap()
+    invalid = %{valid | granted_by: Ezagent.URI.new!("system://forged")}
+
+    :ok =
+      Snapshot.save_now(uri, Ezagent.Entity.User, %{
+        identity: %{caps: MapSet.new([valid, invalid])}
+      })
+
+    %{identity: %{state: %{caps: loaded_caps}}} =
+      Snapshot.load_or_init(uri, Ezagent.Entity.User, %{uri: uri})
+
+    assert MapSet.equal?(loaded_caps, MapSet.new([valid]))
+  end
+
   test "load_or_init merges fresh init with loaded state (Q5: new Behavior path)" do
     # Persist a state that's MISSING a slice the Kind would normally init
     uri =
