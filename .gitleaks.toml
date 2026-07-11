@@ -12,6 +12,12 @@ useDefault = true
 
 [allowlist]
 description = "Known-benign classes; every entry has a rationale below"
+# Clearly-fake DUMMY test key committed by design in the CI workflow +
+# config/test.exs (satisfies the cc-deepseek pre-flight check; test-mode stubs
+# the real spawn so it never reaches the network). Not a real credential.
+regexes = [
+  '''sk-test-dummy-deepseek-not-a-real-key''',
+]
 paths = [
   # Historical dev-together manuscripts (handled by separate history rewrite).
   '''docs/together/.*''',

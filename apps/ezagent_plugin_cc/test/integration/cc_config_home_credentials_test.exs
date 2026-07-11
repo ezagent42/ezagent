@@ -199,7 +199,22 @@ defmodule Ezagent.PluginCc.Integration.CcConfigHomeCredentialsTest do
         description: "orchestrator-bearing template (chain C regression)",
         members: [],
         prompt_templates: %{},
-        installs: ["chat", "orchestrator"],
+        # Pin the orchestrator role slot to flavor "cc" (host-login credential).
+        # These chain-C tests exist to pin the #161 co-tenant HOST-LOGIN
+        # isolation rule (admin's `~/.claude` login reaches their own agents; a
+        # non-admin installer's un-fillable slot is skipped loudly). That rule is
+        # a `cc`-flavor (OAuth / `.credentials.json`) property. #1332 switched the
+        # stock "orchestrator" socialware definition's DEFAULT flavor to
+        # `cc-deepseek` (a shared-platform DEEPSEEK_API_KEY credential — a
+        # DIFFERENT isolation model with no host login and no per-installer
+        # skip), which would otherwise silently retarget these tests off the
+        # behaviour they guard. The role-slot flavor choice re-pins to `cc` so
+        # the #161 coverage is preserved. (cc-deepseek's own shared-key
+        # isolation properties are a separate coverage gap — see PR body / #1324.)
+        installs: [
+          "chat",
+          %{ref: "orchestrator", config: %{role_slots: [%{role_name: "orchestrator", flavor: "cc"}]}}
+        ],
         legends: %{},
         routing_rules: [],
         default_workspace_uri: Ezagent.URI.workspace(:system),

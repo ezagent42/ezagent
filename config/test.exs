@@ -67,6 +67,22 @@ config :ezagent_web, EzagentWeb.Endpoint,
 config :ezagent_core, Ezagent.Uploads.DownloadToken,
   secret_key_base: "3v32NqyJT1oDLVf9Qcg2pz9caQu68+W737xqtaGSUPsaw6dDqwqXIC8VCQCSGLpy"
 
+# cc-deepseek credential (#1324): the orchestrator flavor's ONLY credential is
+# the DEEPSEEK_API_KEY env var (no OAuth, no `.credentials.json`). Its
+# credential pre-check (`Provider.ensure_api_key/1` at `instantiate/3`) runs in
+# EVERY env — it is NOT test-stubbed — so keyless CI cannot materialize the
+# orchestrator and the socialware-install lane skips it. A clearly-fake DUMMY
+# key satisfies that pre-flight check WITHOUT ever reaching the network: in
+# `:test` the real `claude` subprocess is short-circuited
+# (`SpawnPlan.build_pty_params_for_env(_, _, _, :test)` returns `test_mode:
+# true`, so `build_claude_cmd/3` — which would embed the key — is never called,
+# and `PtyServer.handle_continue(:spawn_pty, %{test_mode: true})` never runs
+# `:exec.run`). Preserve a real ambient key if the operator set one.
+System.put_env(
+  "DEEPSEEK_API_KEY",
+  System.get_env("DEEPSEEK_API_KEY") || "sk-test-dummy-deepseek-not-a-real-key"
+)
+
 # Print only warnings and errors during test
 config :logger, level: :warning
 
