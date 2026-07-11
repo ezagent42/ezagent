@@ -125,6 +125,17 @@ defmodule EzagentDomainExternalMirror.Application do
          ) do
       {:ok, sup_pid} ->
         :ok = register_worker_behavior()
+
+        # Test-only (task #108-class async-escape fix, 2026-07-11): register
+        # this app's fire-and-forget Task.Supervisors (subscribe /
+        # target-ownership checks — DB reads for the cold-restart + mirror
+        # suites) so the shared `EzagentCore.DataCase` teardown drains their
+        # in-flight children before stopping the sandbox owner. Same
+        # plain-atom registry as `:ezagent_test_boot_reset_hooks`.
+        if test_env?() do
+          register_async_drain_supervisors()
+        end
+
         # r2 HIGH-3 fix (2026-05-25): the old one-shot
         # `register_per_adapter_cap_subjects/0` walked
         # `AdapterRegistry.list/0` at app boot — but adapter plugins
@@ -153,6 +164,30 @@ defmodule EzagentDomainExternalMirror.Application do
         :publish,
         Ezagent.ActionSet.ExternalMirrorWorker
       )
+
+    :ok
+  end
+
+  defp test_env? do
+    Code.ensure_loaded?(Mix) and Mix.env() == :test
+  rescue
+    _ -> false
+  end
+
+  # Register the fire-and-forget Task.Supervisors this app hosts so the
+  # shared DataCase teardown drains their in-flight children before
+  # stopping the sandbox owner. Guarded on the core helper being present.
+  defp register_async_drain_supervisors do
+    if Code.ensure_loaded?(EzagentCore.DataCase) and
+         function_exported?(EzagentCore.DataCase, :register_async_drain_supervisor, 1) do
+      EzagentCore.DataCase.register_async_drain_supervisor(
+        Ezagent.ExternalMirror.SubscribeTaskSup
+      )
+
+      EzagentCore.DataCase.register_async_drain_supervisor(
+        Ezagent.ExternalMirror.TargetCheckTaskSup
+      )
+    end
 
     :ok
   end

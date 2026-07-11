@@ -218,6 +218,20 @@ defmodule EzagentDomainInstanceMessage.Application do
         # AgentTemplate URI (seeded by the cc plugin's after_boot).
         :ok = seed_default_session_template()
 
+        # Test-only (task #108-class async-escape fix, 2026-07-11): register
+        # this app's fire-and-forget delivery Task.Supervisors so the shared
+        # `EzagentCore.DataCase` teardown DRAINS their in-flight children
+        # (`Delivery.deliver_async → ReadMarker.insert_marker`, snapshot
+        # writes) BEFORE it stops the sandbox owner. Without this those
+        # unlinked Tasks outlive the owner's connection and either lose it
+        # mid-query or find the pool reverted to `:manual`, dropping the
+        # write and flaking any test that asserts the delivered effect. Core
+        # names no downstream module — we pass the supervisor NAMES in, the
+        # same plain-atom registry convention as `:ezagent_test_boot_reset_hooks`.
+        if test_env?() do
+          register_async_drain_supervisors()
+        end
+
         # Phase 8c PR-J — test-only main session seed.
         #
         # 2026-05-31 orchestrator-startup-atomicity §4 — MOVED to
@@ -319,6 +333,35 @@ defmodule EzagentDomainInstanceMessage.Application do
     Code.ensure_loaded?(Mix) and Mix.env() == :test
   rescue
     _ -> false
+  end
+
+  # Register the delivery Task.Supervisors this app hosts (see the call
+  # site in `start/2`) so the shared DataCase teardown drains their
+  # in-flight children before stopping the sandbox owner. Guarded on the
+  # helper being present so a partial/older core never raises at boot.
+  defp register_async_drain_supervisors do
+    if Code.ensure_loaded?(EzagentCore.DataCase) and
+         function_exported?(EzagentCore.DataCase, :register_async_drain_supervisor, 1) do
+      EzagentCore.DataCase.register_async_drain_supervisor(Ezagent.Session.DeliverySupervisor)
+
+      EzagentCore.DataCase.register_async_drain_supervisor(
+        Ezagent.Session.SocialwareInstallSupervisor
+      )
+
+      # The delivery fan-out sits behind the `DeliveryQueue` feeder: a job is a
+      # live child of `DeliverySupervisor` only AFTER the queue processes the
+      # Kind's `enqueue` cast. Register `idle?/0` as the synchronous quiescence
+      # probe so teardown promotes any queued job to a child before checking
+      # the supervisor — otherwise a broadcast burst enqueued at test end
+      # escapes past `stop_owner`.
+      if function_exported?(EzagentCore.DataCase, :register_async_drain_idle_check, 1) do
+        EzagentCore.DataCase.register_async_drain_idle_check(
+          &Ezagent.Session.DeliveryQueue.idle?/0
+        )
+      end
+    end
+
+    :ok
   end
 
   defp maybe_seed_stock_orchestrator_recipe_for_tests do
