@@ -57,7 +57,7 @@ defmodule Ezagent.Identity do
                  reply: {:caller_inbox, self()}
                }
              }) do
-          {:ok, %{caps: caps}} when is_list(caps) -> MapSet.new(caps)
+          {:ok, %{caps: caps}} when is_list(caps) -> verified_cap_set(caps)
           _ -> MapSet.new()
         end
     end
@@ -274,7 +274,12 @@ defmodule Ezagent.Identity do
   spoofable (the DB row was written under the §5.2 grant gate).
   """
   @spec read_held_caps(URI.t() | String.t()) :: MapSet.t(Ezagent.Capability.t())
-  def read_held_caps(actor_uri), do: read_granter_caps(parse_uri(actor_uri))
+  def read_held_caps(actor_uri) do
+    actor_uri
+    |> parse_uri()
+    |> read_granter_caps()
+    |> verified_cap_set()
+  end
 
   @doc """
   Authorize a held-cap set against a runtime `needed`-cap map, with the EXACT
@@ -336,10 +341,13 @@ defmodule Ezagent.Identity do
   """
   @spec read_entity_caps(URI.t() | String.t()) :: [Ezagent.Capability.t()]
   def read_entity_caps(entity_uri) do
-    case Ezagent.Kind.get_slice(entity_uri, :identity) do
-      {:ok, slice} when is_map(slice) -> caps_from_slice(slice)
-      _ -> caps_from_snapshot(entity_uri)
-    end
+    caps =
+      case Ezagent.Kind.get_slice(entity_uri, :identity) do
+        {:ok, slice} when is_map(slice) -> caps_from_slice(slice)
+        _ -> caps_from_snapshot(entity_uri)
+      end
+
+    verified_cap_list(caps)
   end
 
   defp caps_from_snapshot(entity_uri) do
@@ -364,6 +372,10 @@ defmodule Ezagent.Identity do
   end
 
   defp caps_from_slice(_), do: []
+
+  defp verified_cap_list(caps), do: caps |> verified_cap_set() |> MapSet.to_list()
+
+  defp verified_cap_set(caps), do: Ezagent.Cap.verified_set(caps)
 
   # PR-OWN-2 (caps-data-ownership SPEC #306 §5.2 + r4):
   # Read the granter's current Identity slice caps via

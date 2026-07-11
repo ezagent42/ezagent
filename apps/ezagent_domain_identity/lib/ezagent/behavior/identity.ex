@@ -161,6 +161,8 @@ defmodule Ezagent.ActionSet.Identity do
           caps
       end
 
+    caps = Ezagent.Cap.verified_set(caps)
+
     {:ok, %{caps: caps}}
   end
 
@@ -269,7 +271,7 @@ defmodule Ezagent.ActionSet.Identity do
           {:ok, %{}}
 
         caps_list when is_list(caps_list) ->
-          merged = MapSet.union(existing_caps, MapSet.new(caps_list))
+          merged = MapSet.union(existing_caps, Ezagent.Cap.verified_set(caps_list))
 
           if MapSet.size(merged) == MapSet.size(existing_caps) do
             {:ok, %{}}
@@ -481,54 +483,28 @@ defmodule Ezagent.ActionSet.IdentityAdmin do
   def handle_grant_cap(%{cap: cap}, ctx) do
     cap_struct = Ezagent.Capability.normalize!(cap, granter_from_ctx(ctx))
 
-    current_caps = ctx[:read].(:caps, MapSet.new())
-
-    # Dedup by identity-tuple BEFORE adding (codex review HIGH-1
-    # follow-on for the grant path).
-    deduped =
-      current_caps
-      |> Enum.reject(fn held ->
-        Ezagent.Capability.identity_key(held) ==
-          Ezagent.Capability.identity_key(cap_struct)
-      end)
-      |> MapSet.new()
-
-    new_caps = MapSet.put(deduped, cap_struct)
-
-    notify_cap_change(
-      ctx,
-      :cap_granted,
-      "A new capability was granted to you.",
-      cap_struct
-    )
-
-    # SPEC 2026-06-16 §4 (Decision #88) — manager provenance. A
-    # manager-delegated grant (NOT self, NOT admin, but authorized because
-    # the caller holds a Manage cap over the target + the cap is delegable)
-    # is recorded with `via_manage: true` in the audit/telemetry emit so it
-    # is distinguishable from a self/admin grant. The provenance lives on
-    # the EVENT payload, not the `%Capability{}` struct (the struct is
-    # `@enforce_keys` + `to_map`/`from_map`/`identity_key`/Jason-coupled, and
-    # `granted_by` already carries the manager URI via `normalize!/2`).
-    {:ok, %{caps: MapSet.to_list(new_caps)},
-     [
-       {:set, :caps, new_caps},
-       {:emit, :cap_granted,
-        %{
-          target_uri: Map.get(ctx, :self_uri) |> uri_to_str(),
-          cap: cap_struct,
-          via_manage: manager_delegated_grant?(cap_struct, ctx),
-          at: DateTime.utc_now()
-        }}
-     ]}
+    store_verified_cap(cap_struct, ctx, %{
+      via_manage: manager_delegated_grant?(cap_struct, ctx)
+    })
   end
 
   @doc "Store a verified pre-issued artifact; only the VM-internal hand-off may call it."
   def handle_absorb_cap(%{artifact: artifact}, %{caller: :vm_internal} = ctx) do
-    with {:ok, cap_struct} <- normalize_artifact(artifact),
-         true <- Ezagent.Cap.verify(cap_struct) do
+    with {:ok, cap_struct} <- normalize_artifact(artifact) do
+      store_verified_cap(cap_struct, ctx, %{via_manage: false, via_absorb: true})
+    else
+      _ -> {:error, :invalid_cap_artifact}
+    end
+  end
+
+  def handle_absorb_cap(_args, _ctx), do: {:error, :unauthorized}
+
+  defp store_verified_cap(cap_struct, ctx, event_attrs) do
+    if Ezagent.Cap.verify(cap_struct) do
       current_caps = ctx[:read].(:caps, MapSet.new())
 
+      # Dedup by identity-tuple BEFORE adding (codex review HIGH-1
+      # follow-on for both grant and absorb store paths).
       deduped =
         current_caps
         |> Enum.reject(fn held ->
@@ -540,24 +516,23 @@ defmodule Ezagent.ActionSet.IdentityAdmin do
 
       notify_cap_change(ctx, :cap_granted, "A new capability was granted to you.", cap_struct)
 
+      payload =
+        %{
+          target_uri: Map.get(ctx, :self_uri) |> uri_to_str(),
+          cap: cap_struct,
+          at: DateTime.utc_now()
+        }
+        |> Map.merge(event_attrs)
+
       {:ok, %{caps: MapSet.to_list(new_caps)},
        [
          {:set, :caps, new_caps},
-         {:emit, :cap_granted,
-          %{
-            target_uri: Map.get(ctx, :self_uri) |> uri_to_str(),
-            cap: cap_struct,
-            via_manage: false,
-            via_absorb: true,
-            at: DateTime.utc_now()
-          }}
+         {:emit, :cap_granted, payload}
        ]}
     else
-      _ -> {:error, :invalid_cap_artifact}
+      {:error, :invalid_cap_artifact}
     end
   end
-
-  def handle_absorb_cap(_args, _ctx), do: {:error, :unauthorized}
 
   @doc "Revoke a capability from this principal — normalizes the `cap` then removes the identity-key match via `Ezagent.Capability.revoke/2`, notifies the principal, and emits `:cap_revoked`."
   # NOTE (SPEC 2026-06-17 §3.3): a revoke dispatched under a `{:rule,…}` tag is
