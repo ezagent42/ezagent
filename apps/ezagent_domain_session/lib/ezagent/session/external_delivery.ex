@@ -12,6 +12,13 @@ defmodule Ezagent.Session.ExternalDelivery do
   `ExternalFeed`. `Ezagent.Socialware.ExternalFeed.topic/1` now delegates here.
   """
 
+  @doc """
+  The canonical external-feed PubSub topic for `session_uri`.
+
+  Returns `"socialware:external:" <> URI.to_string(session_uri)`. This exact
+  string is a WIRE CONVENTION shared with the external SPA's web channel — treat
+  it as a contract and change the channel + socket in lockstep if it ever moves.
+  """
   @spec topic(URI.t()) :: String.t()
   def topic(%URI{} = session_uri), do: "socialware:external:" <> URI.to_string(session_uri)
 end
