@@ -51,7 +51,11 @@ defmodule Ezagent.Agent.CredentialPrecondition do
 
   @doc """
   `:ok` when a credential source resolves for `(installer, workspace, flavor)`,
-  else `{:skip, {:no_credential_source, flavor}}`.
+  or when an environment-backed credential reports `:authenticated`.
+
+  Returns `{:skip, {:no_credential_source, flavor}}` when a file-backed flavor
+  has no source, or `{:skip, {:credential_unavailable, flavor}}` when an
+  environment-backed flavor reports a non-authenticated status.
 
   Call this AFTER `HostLoginAdopt.ensure_installer_source/3` — for the host
   operator that call registers the pointer this reads, so the admin path
@@ -60,10 +64,9 @@ defmodule Ezagent.Agent.CredentialPrecondition do
   @spec check_source(URI.t(), URI.t(), String.t()) :: :ok | {:skip, term()}
   def check_source(%URI{} = installer, %URI{} = workspace_uri, flavor)
       when is_binary(flavor) do
-    cond do
-      not credential_bearing?(flavor) -> :ok
-      source_available?(installer, workspace_uri, flavor) -> :ok
-      true -> {:skip, {:no_credential_source, flavor}}
+    case template_class(flavor) do
+      {:ok, module} -> check_source(module, installer, workspace_uri, flavor)
+      _ -> :ok
     end
   end
 
@@ -103,7 +106,29 @@ defmodule Ezagent.Agent.CredentialPrecondition do
       not is_nil(WorkspaceSharedSource.resolve(workspace_uri, flavor))
   end
 
+  defp check_source(module, installer, workspace_uri, flavor) do
+    cond do
+      credential_relpaths(module) != [] ->
+        if source_available?(installer, workspace_uri, flavor),
+          do: :ok,
+          else: {:skip, {:no_credential_source, flavor}}
+
+      environment_credential?(module) ->
+        case module.credential_status(nil, []) do
+          %{status: :authenticated} -> :ok
+          _ -> {:skip, {:credential_unavailable, flavor}}
+        end
+
+      true ->
+        :ok
+    end
+  end
+
   defp template_class(flavor), do: Ezagent.AgentFlavorRegistry.template_class_for(flavor)
+
+  defp environment_credential?(module) do
+    Code.ensure_loaded?(module) and function_exported?(module, :credential_status, 2)
+  end
 
   # `credential_relpaths/0` is an `@optional_callbacks` CredentialAdapter member,
   # so an omission compiles clean — see `credential_adapter_completeness_test`.
