@@ -189,5 +189,41 @@ defmodule Ezagent.ActionSet.IdentityLifecycleColdLoadTest do
 
       Ezagent.Kind.terminate(user_uri)
     end
+
+    test "I5 caps_json reconcile drops an unverified cap before union" do
+      handle = "cold-reconcile-invalid-#{System.unique_integer([:positive])}"
+      user_uri = URI.new!("entity://cold-load/user/#{handle}")
+
+      invalid_cap =
+        Ezagent.Capability.cap(
+          :session,
+          Ezagent.ActionSet.Session,
+          :send,
+          :any,
+          Ezagent.Capability.workspace_of(user_uri)
+        )
+        |> Map.put(:granted_by, URI.new!("system://forged"))
+        |> Map.put(:granted_at, DateTime.utc_now())
+
+      {:ok, _decoded} = Ezagent.Users.create(user_uri, nil, [invalid_cap])
+
+      :ok =
+        Ezagent.BehaviorRegistry.register(
+          IdentityHostKind,
+          :list_caps,
+          Ezagent.ActionSet.Identity
+        )
+
+      {:ok, _pid} = Ezagent.Kind.spawn(IdentityHostKind, %{uri: user_uri, initial_caps: []})
+      wait_until(fn -> Ezagent.ReadyGate.status(user_uri) == :ready end)
+
+      {:ok, %{state: state0}} = Ezagent.Kind.get_raw_slice(user_uri, :identity)
+
+      refute Enum.any?(state0.caps, fn cap ->
+               cap.behavior == Ezagent.ActionSet.Session and cap.action == :send
+             end)
+
+      Ezagent.Kind.terminate(user_uri)
+    end
   end
 end

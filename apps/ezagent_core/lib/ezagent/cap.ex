@@ -44,6 +44,23 @@ defmodule Ezagent.Cap do
   def verify(%Capability{granted_by: %URI{scheme: "entity"}}), do: true
   def verify(_artifact), do: false
 
+  @doc """
+  Return the verified subset of a capability collection as a `MapSet`.
+
+  Load boundaries share this small adapter so Phase 4 still upgrades the one
+  `verify/1` seam rather than duplicating collection handling across domains.
+  Malformed containers and invalid artifacts fail closed as an empty/filtered
+  set.
+  """
+  @spec verified_set(term()) :: MapSet.t(Capability.t())
+  def verified_set(caps) when is_list(caps) or is_struct(caps, MapSet) do
+    Enum.reduce(caps, MapSet.new(), fn cap, verified ->
+      if verify(cap), do: MapSet.put(verified, cap), else: verified
+    end)
+  end
+
+  def verified_set(_caps), do: MapSet.new()
+
   @doc false
   @spec prepare_provenance(authorization(), Capability.t()) ::
           {:ok, artifact()} | {:error, term()}
