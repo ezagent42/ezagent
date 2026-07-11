@@ -6,20 +6,56 @@ defmodule Ezagent.Socialware.DefinitionRegistry do
   `socialware:<name>` with ConfigObject key `"socialware"`, mirroring recipe
   storage's `recipe:<name>` subject. Workspace is a SEPARATE ConfigStore field,
   so it is not embedded in the subject (T1 project B).
+
+  ## Seed model — DEFAULT NO-CLOBBER on divergence (Allen 2026-07-10)
+
+  The built-in definitions (`builtin_definitions/0`) are the CODE/source
+  definitions. The stored ConfigStore object is the RUNTIME definition. The boot
+  seed (`seed_builtin_definitions/0`) reconciles them under a **default
+  no-clobber** policy:
+
+    * ABSENT (no stored object) → seed the code version (create-if-absent).
+    * stored `content_hash` == code `content_hash` → silent no-op.
+    * stored DIVERGES from code (`content_hash` differs) → **do NOT overwrite.**
+      The runtime definition may carry an intentional operator change; silently
+      applying the code version would clobber it. Instead SURFACE THE CONFLICT
+      loud (a `Logger.warning` + a `[:ezagent, :socialware, :definition,
+      :divergence]` telemetry event) and leave the stored object AS-IS.
+
+  Applying the code version to a diverged stored definition is an EXPLICIT,
+  content-safe operator action (`reseed_builtin_definition/1` +
+  `mix ezagent.socialware.reseed_builtins --force`) — "change the data, not the
+  code" is a decision the operator confirms, never one a reboot makes for them.
+
+  This intentionally REPLACES the earlier §5.2 always-upgrade-on-hash-difference
+  boot behavior for definitions: a seed-code change to an app definition no
+  longer auto-migrates existing stored definitions on the next deploy; it
+  surfaces the divergence and waits for an explicit `--force`. (The
+  `ConfigStore.seed_object_upsert/1` always-upgrade primitive is retained — it is
+  the force-apply path, invoked only on explicit operator request.)
   """
 
+  require Logger
+
   alias Ezagent.Entity.Session
-  alias Ezagent.Socialware.{ConfigObject, ConfigStore, Definition}
+  alias Ezagent.Socialware.{ConfigObject, ConfigStore, ContentHash, Definition}
 
   @definition_key "socialware"
   @definition_layer "workspace"
 
+  # Telemetry emitted when the boot seed finds a stored definition that diverges
+  # from the code definition and (per the default no-clobber policy) declines to
+  # overwrite it. Operators wire this to an alert / dashboard; the payload
+  # carries the name, workspace, and both content hashes.
+  @divergence_telemetry [:ezagent, :socialware, :definition, :divergence]
+
   # The built-in definition SEED-FAMILY `source_turn_id` prefix. The deterministic
-  # first-seed turn is `<prefix>:<ws>:<name>`; a content-hash-carrying self-upgrade
+  # first-seed turn is `<prefix>:<ws>:<name>`; a content-hash-carrying force-apply
   # turn is `<prefix>-upgrade:<ws>:<name>:<hash>`. Both feed the ConfigStore
-  # `seed_object_upsert/1` primitive (definitions pass NO `:seed_family_prefix`, so
-  # they ALWAYS-UPGRADE on a hash difference — §5.2 — but the turn ids stay stable
-  # so a reboot re-seed is deterministically idempotent).
+  # `seed_object_upsert/1` primitive on the EXPLICIT force path
+  # (`reseed_builtin_definition/1`); the boot lane never upgrades (it is
+  # no-clobber). The turn ids stay stable so a re-forced apply is deterministically
+  # idempotent.
   @definition_seed_prefix "socialware-definition-seed"
 
   # P0 §6/§11.2 (D-4) — the def-level RETRACT marker. A SEPARATE ConfigStore key
@@ -204,15 +240,183 @@ defmodule Ezagent.Socialware.DefinitionRegistry do
     end
   end
 
-  @doc "Seed the built-in chat and socialware definitions if absent or stale."
+  @doc """
+  Boot seed for the built-in definitions — DEFAULT NO-CLOBBER (Allen 2026-07-10).
+
+  For each built-in: seed it if ABSENT, no-op if the stored object already
+  matches the code (`content_hash`), and — if the stored object DIVERGES from the
+  code — SURFACE the conflict (`Logger.warning` + a `:divergence` telemetry
+  event) and leave the stored object untouched. It NEVER overwrites a diverged
+  stored definition; that is the explicit `reseed_builtin_definition/1` force
+  path.
+
+  Returns `:ok` (a divergence is a surfaced-but-non-fatal condition, not a boot
+  error) or `{:error, reason}` on a genuine write failure of an ABSENT seed.
+  """
   @spec seed_builtin_definitions() :: :ok | {:error, term()}
   def seed_builtin_definitions do
     Enum.reduce_while(builtin_definitions(), :ok, fn definition, :ok ->
-      case seed_builtin_definition(definition, workspace_uri: system_workspace_uri()) do
+      case seed_builtin_definition_no_clobber(definition, system_workspace_uri()) do
         {:ok, _} -> {:cont, :ok}
         {:error, reason} -> {:halt, {:error, reason}}
       end
     end)
+  end
+
+  @doc """
+  Read-only divergence report for the built-in definitions (no side effects).
+
+  Returns one entry per built-in whose STORED system-workspace object diverges
+  from the CODE definition:
+  `%{name, workspace_uri, stored_hash, code_hash}`. Built-ins that are absent or
+  current are omitted. Used by `mix ezagent.socialware.reseed_builtins` (no
+  `--force`) to show the operator exactly what a `--force` would change.
+  """
+  @spec builtin_definition_divergences() :: [map()]
+  def builtin_definition_divergences do
+    workspace_uri = system_workspace_uri()
+
+    Enum.flat_map(builtin_definitions(), fn definition ->
+      case builtin_definition_state(definition, workspace_uri) do
+        {:diverged, stored_hash, code_hash} ->
+          [
+            %{
+              name: definition.name,
+              workspace_uri: workspace_uri,
+              stored_hash: stored_hash,
+              code_hash: code_hash
+            }
+          ]
+
+        _ ->
+          []
+      end
+    end)
+  end
+
+  @doc """
+  OPERATOR FORCE-RESEED — apply the CODE version of ONE built-in socialware
+  definition BY NAME to the stored system-workspace definition NOW, overriding a
+  divergence.
+
+  This is the EXPLICIT "change the data, not the code" path (Allen 2026-07-10):
+  the boot seed (`seed_builtin_definitions/0`) deliberately does NOT overwrite a
+  diverged stored definition, so applying the code version is only ever an
+  operator-confirmed action — this function, or the
+  `mix ezagent.socialware.reseed_builtins <name> --force` task that wraps it.
+
+  It is content-safe: it runs `ConfigStore.seed_object_upsert/1` (nil prefix =
+  always-apply on a hash difference), which APPENDS a new immutable object and
+  REPOINTS the pointer — never a raw in-place `UPDATE`. An already-current
+  definition is a no-op (`:exists`); an absent one is seeded.
+
+  ## Non-clobber scope
+
+  Only the SYSTEM-workspace built-in pointer is touched. A tenant workspace that
+  published its OWN revision of this definition holds a SEPARATE pointer row
+  (`write_definition/2` writes under the caller's workspace), which this call
+  never resolves, so tenant overrides are never affected.
+
+  Returns the `seed_object_upsert/1` result
+  (`{:ok, :seeded | :exists | :already_upgraded}`), or
+  `{:error, {:unknown_builtin_definition, name}}` if no built-in of that name
+  exists.
+  """
+  @spec reseed_builtin_definition(String.t()) ::
+          {:ok, :seeded | :exists | :already_upgraded} | {:error, term()}
+  def reseed_builtin_definition(name) when is_binary(name) and name != "" do
+    case Enum.find(builtin_definitions(), &(&1.name == name)) do
+      %Definition{} = definition ->
+        force_apply_builtin_definition(definition, system_workspace_uri())
+
+      nil ->
+        {:error, {:unknown_builtin_definition, name}}
+    end
+  end
+
+  # Boot / non-force lane: seed-if-absent, no-op if current, surface + skip on
+  # divergence. Never overwrites a diverged stored definition.
+  defp seed_builtin_definition_no_clobber(%Definition{} = definition, workspace_uri) do
+    workspace_uri = uri_string(workspace_uri)
+
+    case builtin_definition_state(definition, workspace_uri) do
+      :absent ->
+        seed_builtin_definition_if_absent(definition, workspace_uri)
+
+      :current ->
+        {:ok, :exists}
+
+      {:diverged, stored_hash, code_hash} ->
+        surface_definition_divergence(definition.name, workspace_uri, stored_hash, code_hash)
+        {:ok, :diverged}
+    end
+  end
+
+  # Classify a built-in against its stored system-workspace object (pure read):
+  # `:absent` (no pointer), `:current` (hashes match), or
+  # `{:diverged, stored_hash, code_hash}`. A legacy object with a NULL
+  # `content_hash` column is hashed from its stored body so it is not reported as
+  # a spurious divergence.
+  defp builtin_definition_state(%Definition{} = definition, workspace_uri) do
+    subject = definition_subject_uri(workspace_uri, definition.name)
+    code_hash = definition |> Definition.body() |> ContentHash.of()
+
+    case ConfigStore.resolve(@definition_layer, workspace_uri, subject, @definition_key) do
+      :none ->
+        :absent
+
+      {:ok, %ConfigObject{} = object} ->
+        stored_hash = object.content_hash || ContentHash.of(object.body)
+
+        if stored_hash == code_hash do
+          :current
+        else
+          {:diverged, stored_hash, code_hash}
+        end
+    end
+  end
+
+  # Create-if-absent seed of a built-in (race-safe via ConfigStore). This is only
+  # reached when no pointer exists, so it never overwrites anything.
+  defp seed_builtin_definition_if_absent(%Definition{} = definition, workspace_uri) do
+    subject = definition_subject_uri(workspace_uri, definition.name)
+
+    ConfigStore.seed_object_if_no_pointer(%{
+      layer: @definition_layer,
+      workspace_uri: workspace_uri,
+      subject_uri: subject,
+      key: @definition_key,
+      body: Definition.body(definition),
+      actor_uri: default_seed_actor(),
+      source_turn_id: "#{@definition_seed_prefix}:#{workspace_uri}:#{definition.name}",
+      collision_tag: {:socialware_definition_seed_collision, definition.name}
+    })
+  end
+
+  # Loud, operator-visible surfacing of a code-vs-stored divergence the boot seed
+  # declined to overwrite (Allen 2026-07-10). Log + telemetry; no side effect on
+  # the stored definition.
+  defp surface_definition_divergence(name, workspace_uri, stored_hash, code_hash) do
+    Logger.warning(
+      "socialware definition #{inspect(name)} in #{workspace_uri} DIVERGES from code " <>
+        "(stored #{inspect(stored_hash)} vs code #{inspect(code_hash)}) — NOT overwriting " <>
+        "(default no-clobber policy). To apply the code version run " <>
+        "`mix ezagent.socialware.reseed_builtins #{name} --force`, or change the code to " <>
+        "match the stored definition."
+    )
+
+    :telemetry.execute(
+      @divergence_telemetry,
+      %{count: 1},
+      %{
+        name: name,
+        workspace_uri: workspace_uri,
+        stored_hash: stored_hash,
+        code_hash: code_hash
+      }
+    )
+
+    :ok
   end
 
   @doc "Seed one socialware definition into ConfigStore without clobbering overrides."
@@ -294,13 +498,30 @@ defmodule Ezagent.Socialware.DefinitionRegistry do
         name: "orchestrator",
         title: "Orchestrator",
         description: "Stock cc orchestrator team front desk.",
+        # `uses: ["cc"]` names the PLUGIN dependency (conformance checks
+        # `uses_plugins_installed`); it stays "cc" because `cc-deepseek` is a
+        # PROVIDER FLAVOR hosted by the `ezagent_plugin_cc` plugin, not a
+        # separate plugin.
         uses: ["cc"],
         roles: [
           %{
             role_name: "orchestrator",
             fill: :agent,
             recipe: "orchestrator",
-            flavor: "cc"
+            # cc-deepseek (flavors merged #1324; orchestrator switched in #1332):
+            # the orchestrator authenticates via DEEPSEEK_API_KEY, needs no host
+            # `~/.claude` OAuth login (no #161 co-tenant issue), and boots
+            # authenticated. #1332 switched the cc-orchestrator AgentTemplate seed
+            # (`CcOrchestratorSeed`) to `cc-deepseek` but NOT this app-definition
+            # role flavor, so `App=Orchestrator` still installed a `cc` orchestrator
+            # from the stored socialware definition. This brings the two seed
+            # representations into agreement. NOTE (default no-clobber policy): a
+            # stored orchestrator definition that already diverges from this code
+            # (e.g. the pre-#1332 `cc` one) is NOT auto-migrated on boot — the boot
+            # seed surfaces the divergence and leaves it as-is; applying this code
+            # version is an explicit `reseed_builtin_definition/1` /
+            # `mix ezagent.socialware.reseed_builtins orchestrator --force`.
+            flavor: "cc-deepseek"
           }
         ],
         views: [],
@@ -514,16 +735,16 @@ defmodule Ezagent.Socialware.DefinitionRegistry do
 
   defp caller_uri(_), do: nil
 
-  # Built-in direct-write fast path applying the SHARED idempotency RULE (P0 §5,
-  # D-2), now via the ConfigStore three-state seed primitive
-  # (`seed_object_upsert/1`). NO `:seed_family_prefix` is passed → the §5.2
-  # ALWAYS-UPGRADE contract is preserved (the `builtin_seed_object?` provenance
-  # guard stays DELETED: an edited built-in manifest re-promotes purely on a
-  # content-hash difference; provenance does not gate the upgrade). The primitive
-  # owns resolve → hash-compare → upgrade → unique-`source_turn_id` retry
-  # tolerance (`{:ok, :already_upgraded}`, the #1235 crash-restart guard).
-  defp seed_builtin_definition(%Definition{} = definition, opts) do
-    workspace_uri = opts |> Keyword.fetch!(:workspace_uri) |> uri_string()
+  # EXPLICIT force-apply primitive (`reseed_builtin_definition/1`): apply the code
+  # definition to the stored one via the ConfigStore three-state seed primitive
+  # (`seed_object_upsert/1`). NO `:seed_family_prefix` is passed → always-apply on
+  # a content-hash difference (APPEND a new immutable object + REPOINT, never a
+  # raw UPDATE). The primitive owns resolve → hash-compare → apply →
+  # unique-`source_turn_id` retry tolerance (`{:ok, :already_upgraded}`, the #1235
+  # crash-restart guard). This is invoked ONLY on an explicit operator request —
+  # the boot lane (`seed_builtin_definition_no_clobber/2`) never calls it.
+  defp force_apply_builtin_definition(%Definition{} = definition, workspace_uri) do
+    workspace_uri = uri_string(workspace_uri)
     subject = definition_subject_uri(workspace_uri, definition.name)
     body = Definition.body(definition)
     new_hash = Definition.content_hash(body)

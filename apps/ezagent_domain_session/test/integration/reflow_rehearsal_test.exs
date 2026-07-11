@@ -7,8 +7,18 @@ defmodule Ezagent.Socialware.ReflowRehearsalTest do
   seed, which EVERY reflow-carrying deploy produces — crashed. This test simulates
   what a reflowed DB holds (definitions + recipes written with SIMULATED OLD bodies
   under their SEED-FAMILY `source_turn_id`s, directly via `ConfigStore`) and then
-  runs the REAL boot seed paths against it — asserting zero raises AND that the
-  upgrade was applied (a new object + a `…-upgrade:` pointer).
+  runs the REAL boot seed paths against it — asserting zero raises.
+
+  ## Definition lane — DEFAULT NO-CLOBBER (Allen 2026-07-10)
+
+  The DEFINITION boot seed no longer auto-upgrades a reflow-carried older
+  definition (that would clobber an intentional runtime change). It now leaves the
+  divergent stored definition AS-IS and surfaces the conflict; the current
+  built-in is applied only on an EXPLICIT `reseed_builtin_definition/1` force.
+  This test asserts both: boot does not raise and does not clobber, then a force
+  upgrades. (The RECIPE lane below is unchanged — `seed_role_if_absent/1` still
+  upgrades a reflow-carried older recipe; the no-clobber ruling was scoped to app
+  definitions.)
 
   This is deterministic (no docker, no external services) and belongs in the
   ubuntu gate. The FULL-FIDELITY rehearsal — provision a PREVIOUS release's DB,
@@ -32,7 +42,7 @@ defmodule Ezagent.Socialware.ReflowRehearsalTest do
 
   # ---- Definition boot seed against a reflow-carried OLDER definition --------
 
-  test "seed_builtin_definitions UPGRADES a reflow-carried OLD built-in without raising" do
+  test "seed_builtin_definitions does NOT clobber a reflow-carried OLD built-in (no raise); force upgrades" do
     ws = DefinitionRegistry.system_workspace_uri()
     subject = DefinitionRegistry.definition_subject_uri(ws, "socialware")
 
@@ -57,30 +67,36 @@ defmodule Ezagent.Socialware.ReflowRehearsalTest do
       ConfigStore.write_and_point(%{
         layer: "workspace",
         workspace_uri: ws,
-        subject_uri: DefinitionRegistry.definition_subject_uri(ws, "socialware"),
+        subject_uri: subject,
         key: DefinitionRegistry.definition_key(),
         body: old_body,
         actor_uri: "entity://system/user/admin",
         source_turn_id: "socialware-definition-seed:#{ws}:socialware"
       })
 
-    # The REAL boot seed path — must NOT raise and must succeed for every built-in.
+    # The REAL boot seed path — must NOT raise, and (default no-clobber) must NOT
+    # overwrite the reflow-carried divergent definition.
     assert :ok = DefinitionRegistry.seed_builtin_definitions()
 
-    # The reflow-carried `socialware` def was UPGRADED to the current built-in.
+    assert {:ok, %ConfigObject{id: ^old_id}} =
+             ConfigStore.resolve("workspace", ws, subject, DefinitionRegistry.definition_key())
+
+    assert Enum.any?(
+             DefinitionRegistry.builtin_definition_divergences(),
+             &(&1.name == "socialware")
+           )
+
+    # An EXPLICIT force applies the current built-in (content-safe upgrade).
+    assert {:ok, :seeded} = DefinitionRegistry.reseed_builtin_definition("socialware")
+
     assert {:ok, %ConfigObject{id: upgraded_id, content_hash: ^new_hash, source_turn_id: turn}} =
-             ConfigStore.resolve(
-               "workspace",
-               ws,
-               DefinitionRegistry.definition_subject_uri(ws, "socialware"),
-               DefinitionRegistry.definition_key()
-             )
+             ConfigStore.resolve("workspace", ws, subject, DefinitionRegistry.definition_key())
 
     assert upgraded_id != old_id
     assert String.starts_with?(turn, "socialware-definition-seed-upgrade:")
 
-    # Idempotent — a second boot pass over the now-current DB is a no-op (no raise).
-    assert :ok = DefinitionRegistry.seed_builtin_definitions()
+    # Idempotent — a second force over the now-current DB is a no-op (no raise).
+    assert {:ok, :exists} = DefinitionRegistry.reseed_builtin_definition("socialware")
   end
 
   # ---- Role/recipe boot seed against a reflow-carried OLDER recipe -----------
