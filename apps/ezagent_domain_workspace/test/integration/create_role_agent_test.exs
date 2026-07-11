@@ -24,6 +24,7 @@ defmodule Ezagent.Integration.CreateRoleAgentTest do
   alias Ezagent.Workspace
   alias Ezagent.Entity.User
   alias Ezagent.Workspace.RoleTestBehavior
+  alias Ezagent.Workspace.TransportGatedRoleBehavior
   alias Ezagent.{AgentFlavorRegistry, AgentPassiveAttributes, Agent.RecipeRegistry, UriQuery}
 
   @flavor "rf5a-native"
@@ -159,6 +160,126 @@ defmodule Ezagent.Integration.CreateRoleAgentTest do
   end
 
   @tag :integration
+  test "I3 full create lane returns with a never-joined child, buffers its role artifact, and keeps the workspace usable",
+       %{ws_name: ws_name, workspace_uri: workspace_uri, admin_ctx: admin_ctx} do
+    skip_if_no_entity_spawn(fn ->
+      unique = System.unique_integer([:positive])
+      flavor = "s7-transport-gated-#{unique}"
+      recipe = "s7-transport-gated-role-#{unique}"
+      name = "never-joined-#{unique}"
+
+      # test.exs widens the generic Kind.spawn ready-observation budget to the
+      # same 5 s as Invocation's outer call deadline. This fixture is
+      # intentionally never ready, so pin the production-like bounded budget
+      # locally; the assertion is that the 30 s transport gate does not become
+      # a second blocking grant wait. Restore the application env after the
+      # non-async test so no neighboring test inherits the override.
+      previous_spawn_budget = Application.get_env(:ezagent_core, :spawn_await_ready_ms)
+      Application.put_env(:ezagent_core, :spawn_await_ready_ms, 200)
+
+      on_exit(fn ->
+        if is_nil(previous_spawn_budget) do
+          Application.delete_env(:ezagent_core, :spawn_await_ready_ms)
+        else
+          Application.put_env(:ezagent_core, :spawn_await_ready_ms, previous_spawn_budget)
+        end
+      end)
+
+      :ok =
+        AgentFlavorRegistry.register(%{
+          flavor: flavor,
+          kind: Ezagent.Entity.Agent,
+          template_class: nil,
+          cap_policy: &cap_policy/1
+        })
+
+      {:ok, _} =
+        RecipeRegistry.seed_role_if_absent(%{
+          name: recipe,
+          passive: true,
+          behaviors: [TransportGatedRoleBehavior],
+          requested_caps: [%{behavior: TransportGatedRoleBehavior, action: :ping}]
+        })
+
+      RecipeRegistry.flush_cache()
+
+      create_task =
+        Task.async(fn ->
+          receive do
+            :run_create ->
+              Workspace.create_agent(
+                workspace_uri,
+                %{flavor: flavor, name: name, role: recipe, cwd: "", with_pty: false},
+                admin_ctx
+              )
+          end
+        end)
+
+      Ecto.Adapters.SQL.Sandbox.allow(EzagentCore.Repo, self(), create_task.pid)
+      send(create_task.pid, :run_create)
+
+      assert {:ok, {:ok, %{agent_uri: agent_uri, template_name: nil}}} =
+               Task.yield(create_task, 5_000) || Task.shutdown(create_task, :brutal_kill)
+
+      assert agent_uri == Ezagent.URI.agent(ws_name, name)
+      assert {:ok, agent_pid} = Ezagent.KindRegistry.lookup(agent_uri)
+      assert Process.alive?(agent_pid)
+      assert Ezagent.ReadyGate.status(agent_uri) == :not_ready
+
+      assert [artifact] = buffered_absorb_artifacts(agent_uri)
+      assert artifact.behavior == TransportGatedRoleBehavior
+      assert Ezagent.Capability.action_of(artifact) == :ping
+
+      refute Enum.any?(Ezagent.Identity.read_entity_caps(agent_uri), fn cap ->
+               cap.behavior == TransportGatedRoleBehavior and
+                 Ezagent.Capability.action_of(cap) == :ping
+             end)
+
+      # The parent Workspace Kind remains live and continues serving a real
+      # cap-gated action while the child transport never joins.
+      list_cmd =
+        Ezagent.Cmd.new(
+          Ezagent.URI.with_action(workspace_uri, :workspace, :list_members),
+          :list_members,
+          %{},
+          %{
+            mode: :call,
+            caller: User.admin_uri(),
+            caps: admin_ctx.caps,
+            reply: {:caller_inbox, self()}
+          }
+        )
+
+      # Agent provisioning does not implicitly create a workspace-membership
+      # edge. A successful list dispatch is the liveness assertion here; the
+      # empty result is the setup's unchanged, semantically correct slice.
+      assert {:ok, %{members: []}} = Ezagent.Router.dispatch(list_cmd)
+
+      # Definitive never-ready failure is loud and detaches the authority; it
+      # cannot linger for a future incarnation at the same URI.
+      assert :ok = Ezagent.Kind.ReadyTransition.mark_failed(agent_uri)
+      assert Ezagent.PendingDelivery.buffer_size(agent_uri) == 0
+
+      assert [["never_ready", payload_json]] =
+               EzagentCore.Repo.query!(
+                 "SELECT reason, payload FROM dlq " <>
+                   "WHERE reason = 'never_ready' " <>
+                   "AND payload LIKE '%action=identity.absorb_cap%' " <>
+                   "ORDER BY id DESC LIMIT 1"
+               ).rows
+
+      payload = Jason.decode!(payload_json)
+      assert payload["target"] =~ "action=identity.absorb_cap"
+
+      assert get_in(payload, ["args", "artifact", "granted_by"]) ==
+               URI.to_string(User.admin_uri())
+
+      :ok = Ezagent.Agent.TransportReadiness.clear(agent_uri)
+      _ = Ezagent.Kind.terminate(agent_uri)
+    end)
+  end
+
+  @tag :integration
   test "COLD RESTART — passive survives a snapshot reload (NOT fail-open to principal)",
        %{workspace_uri: workspace_uri, admin_ctx: admin_ctx} do
     skip_if_no_entity_spawn(fn ->
@@ -209,6 +330,29 @@ defmodule Ezagent.Integration.CreateRoleAgentTest do
         Process.sleep(10)
         wait_until_deregistered(uri, attempts - 1)
     end
+  end
+
+  defp buffered_absorb_artifacts(uri) do
+    entries =
+      Ezagent.PendingDelivery.with_lock(uri, fn ->
+        case :ets.lookup(Ezagent.PendingDelivery.table(), URI.to_string(uri)) do
+          [{_key, entries}] -> entries
+          [] -> []
+        end
+      end)
+
+    entries
+    |> Ezagent.PendingDelivery.unwrap_entries()
+    |> Enum.flat_map(fn
+      %Ezagent.Invocation{
+        target: %URI{query: "action=identity.absorb_cap"},
+        args: %{artifact: artifact}
+      } ->
+        [artifact]
+
+      _other ->
+        []
+    end)
   end
 
   defp skip_if_no_entity_spawn(body) do

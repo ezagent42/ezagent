@@ -6,8 +6,9 @@ defmodule Ezagent.Entity.Session.Orchestrator.Caps do
   # ─────────────────────────────────────────────────────────────────────
 
   @doc """
-  Grant the orchestrator its scope-bounded delegation caps + (if the
-  owner holds them) the delegable Template caps.
+  Issue the orchestrator's scope-bounded delegation artifacts and hand them
+  to the orchestrator for self-storage. If the owner holds the required
+  Template authority, the same flow includes the delegable Template caps.
 
   RFC #402 (Allen 2026-05-26): caps #1–#4 go TO the orchestrator. The
   workspace is derived from the session's `WorkspaceRegistry` binding
@@ -19,7 +20,7 @@ defmodule Ezagent.Entity.Session.Orchestrator.Caps do
   using the named `cap_equal_ignoring_metadata?/2`). This function
   grants ONLY the orchestrator-side caps.
 
-  Idempotent: a re-grant of a logically-equal cap is skipped via
+  Idempotent: a repeated handoff of a logically-equal cap is skipped via
   `cap_equal_ignoring_metadata?/2`.
   """
   @spec grant_orchestrator_scoped_caps(URI.t(), URI.t(), URI.t()) :: :ok | {:error, term()}
@@ -53,7 +54,10 @@ defmodule Ezagent.Entity.Session.Orchestrator.Caps do
          %URI{} = session_workspace
        ) do
     desired = build_desired_caps(orchestrator_uri, session_uri, owner_uri, session_workspace)
-    current = Ezagent.Entity.Session.list_caps_for_materialization(orchestrator_uri)
+    # This reconciliation runs immediately after materialization, while the
+    # transport may still be settling. Read the Identity slice directly so
+    # deciding what to issue never dispatches through the readiness gate.
+    current = Ezagent.Identity.read_entity_caps(orchestrator_uri)
 
     {genesis_caps, rule_caps} =
       desired
@@ -67,15 +71,40 @@ defmodule Ezagent.Entity.Session.Orchestrator.Caps do
         Enum.any?(current, &cap_equal_ignoring_metadata?(&1, want))
       end)
 
-    results =
-      Enum.map(to_grant, fn want ->
-        Ezagent.Identity.Grant.grant_cap(orchestrator_uri, want, grant_tag_for(want, owner_uri))
-      end)
-
-    case Enum.reject(results, &(&1 == :ok)) do
-      [] -> :ok
-      [err | _] -> {:error, {:scoped_cap_grant_failed, err}}
+    with {:ok, issued} <- issue_scoped_caps(orchestrator_uri, owner_uri, to_grant),
+         :ok <- absorb_scoped_caps(orchestrator_uri, issued) do
+      :ok
+    else
+      {:error, reason} -> {:error, {:scoped_cap_grant_failed, reason}}
     end
+  end
+
+  # Authorize the complete desired set before the first artifact is handed to
+  # the grantee. This preserves all-or-nothing ISSUE ordering even though
+  # self-storage itself is deliberately fire-and-forget.
+  defp issue_scoped_caps(orchestrator_uri, owner_uri, caps) do
+    target = Ezagent.URI.instance(orchestrator_uri)
+
+    caps
+    |> Enum.reduce_while({:ok, []}, fn cap, {:ok, issued} ->
+      case Ezagent.Cap.issue(grant_tag_for(cap, owner_uri), target, cap) do
+        {:ok, artifact} -> {:cont, {:ok, [artifact | issued]}}
+        {:error, reason} -> {:halt, {:error, {:issue_failed, cap, reason}}}
+      end
+    end)
+    |> case do
+      {:ok, issued} -> {:ok, Enum.reverse(issued)}
+      {:error, _reason} = error -> error
+    end
+  end
+
+  defp absorb_scoped_caps(orchestrator_uri, issued) do
+    Enum.reduce_while(issued, :ok, fn artifact, :ok ->
+      case Ezagent.Identity.absorb_cap(orchestrator_uri, artifact) do
+        :ok -> {:cont, :ok}
+        {:error, reason} -> {:halt, {:error, {:absorb_failed, artifact, reason}}}
+      end
+    end)
   end
 
   @doc """
@@ -215,7 +244,9 @@ defmodule Ezagent.Entity.Session.Orchestrator.Caps do
   # ─────────────────────────────────────────────────────────────────────
 
   defp delegable_template_caps(%URI{} = owner_uri, %URI{} = session_workspace) do
-    owner_caps = Ezagent.Entity.Session.list_caps_for_materialization(owner_uri)
+    # Owner authority must come from the non-spoofable held-cap loader used by
+    # `Cap.issue/3`, not from a readiness-gated call to the owner process.
+    owner_caps = Ezagent.Identity.read_held_caps(owner_uri)
 
     workspace_name = Ezagent.URI.workspace_name!(session_workspace)
 
