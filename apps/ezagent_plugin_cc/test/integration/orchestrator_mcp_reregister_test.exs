@@ -96,6 +96,54 @@ defmodule EzagentDomainInstanceMessage.Integration.OrchestratorMcpReregisterTest
   end
 
   describe "lazy rebuild from durable snapshot — THE GATE (pure phx restart)" do
+    test "rebuilds an ordinary role/member orchestrator without legacy OTU" do
+      session_uri = unique_session_uri()
+      workspace_uri = Capability.workspace_of(session_uri)
+      owner_uri = Ezagent.URI.new!("entity://default/user/owner-role-member")
+      session_template_uri = Ezagent.URI.new!("template://default/session/role-member@abc123")
+
+      orchestrator_uri =
+        Ezagent.URI.entity(
+          "team-alpha",
+          :agent,
+          "ordinary-orchestrator-#{System.unique_integer([:positive])}"
+        )
+
+      working_copy = %{
+        orchestrator_uri: orchestrator_uri,
+        session_template_uri: session_template_uri,
+        routing_rules: []
+      }
+
+      refute Map.has_key?(working_copy, :orchestrator_template_uri)
+
+      chat_slice = %{
+        members: %{
+          orchestrator_uri => %{
+            online: true,
+            role_name: "orchestrator"
+          }
+        },
+        monitors: %{},
+        last_seen: %{},
+        owner_uri: owner_uri,
+        template_working_copy: working_copy
+      }
+
+      :ok = KindSnapshot.delete(URI.to_string(session_uri))
+      :ok = McpRegistry.unregister(orchestrator_uri)
+      :ok = SnapshotFixtures.save_kind_snapshot(session_uri, Session, %{session: chat_slice})
+
+      assert McpRegistry.lookup(orchestrator_uri) == :error
+      assert {:ok, :registered} = McpServer.from_orchestrator_uri(orchestrator_uri)
+
+      assert {:ok, ctx} = McpRegistry.lookup(orchestrator_uri)
+      assert ctx.session_uri == session_uri
+      assert ctx.workspace_uri == workspace_uri
+      assert ctx.owner_uri == owner_uri
+      assert ctx.parent_template_uri == session_template_uri
+    end
+
     test "from_orchestrator_uri rebuilds the full context on an ETS miss" do
       session_uri = unique_session_uri()
       owner_uri = Ezagent.URI.new!("entity://default/user/owner-mcp")
