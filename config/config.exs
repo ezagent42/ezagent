@@ -143,6 +143,10 @@ config :ezagent_plugin_email, Ezagent.Email.Mailer, adapter: Swoosh.Adapters.SMT
 config :ezagent_plugin_email, :verification_base_url, "https://app.ezagent.chat"
 config :swoosh, :api_client, false
 
+# Phase 3 capability issue inversion: core owns authorization, while the
+# identity domain supplies its existing live + durable held-cap loader.
+config :ezagent_core, Ezagent.Cap, authority_loader: Ezagent.Identity
+
 # Import environment specific config. This must remain at the bottom
 # of this file so it overrides the configuration defined above.
 import_config "#{config_env()}.exs"

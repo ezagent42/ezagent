@@ -342,6 +342,11 @@ defmodule Ezagent.Kind.Runtime do
       }
 
       cond do
+        Map.get(ctx, :cap_issued, false) and
+          behavior_module == Ezagent.ActionSet.IdentityAdmin and action == :grant_cap ->
+          :telemetry.execute([:ezagent, :authz, :granted], %{}, Map.put(meta, :via_issue, true))
+          {:ok, nil}
+
         # SPEC 2026-06-17 §3.3 PR-2 — rule-authorization branch. A `{:rule,…}`
         # grant carries `ctx.caps = []`; defer to the handler's
         # `check_grant_authorized` rule branch (enforces `rule_cap_bounded?/1`:

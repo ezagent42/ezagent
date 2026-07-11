@@ -162,9 +162,9 @@ defmodule Ezagent.Identity.GrantTest do
       assert {:error, _} =
                Grant.grant_cap_via_router(grantee, wildcard, {:held_by, unauth}, :sync)
 
-      # :async → :cast → the dispatch returns :ok immediately; the failure is
-      # swallowed. This is the regression the site #3 `:sync` fix prevents.
-      assert :ok =
+      # Issue-time authorization runs before either envelope is dispatched, so
+      # async can no longer swallow an authorization failure.
+      assert {:error, _} =
                Grant.grant_cap_via_router(grantee, wildcard, {:held_by, unauth}, :async)
     end
   end
