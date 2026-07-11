@@ -38,7 +38,17 @@ defmodule EzagentPluginHello.HelloPublisherDispatchTest do
     end)
 
     target = Ezagent.URI.with_action(publisher_uri, :agent, :publish)
-    args = %{session_uri: "session://team-alpha/hello/test", instruction: "publish this"}
+
+    # Instruction is intentionally EMPTY. A non-empty instruction makes
+    # `handle_publish` call `extract_explicit_name/1`, which shells out to a real
+    # `claude -p` subprocess (EzagentPluginHello.LLM.ClaudeCode) to extract a
+    # user-specified template name. Under `:call` mode that blocks the dispatch
+    # past the 5s GenServer.call deadline and the test times out. An empty
+    # instruction exercises the real production fallback
+    # (`extract_explicit_name(_) -> :none` → session-name path) with no external
+    # dependency, so the test stays hermetic. Do NOT restore a non-empty
+    # instruction here — it reintroduces the subprocess hang.
+    args = %{session_uri: "session://team-alpha/hello/test", instruction: ""}
 
     # F1: a caller WITHOUT the :publish cap is rejected.
     result_denied =
@@ -51,8 +61,8 @@ defmodule EzagentPluginHello.HelloPublisherDispatchTest do
 
     assert {:error, :unauthorized} = result_denied
 
-    # A caller WITH the :publish cap is authorized (but will fail on missing
-    # session — that's expected; the cap-gate is what we are testing).
+    # A caller WITH the :publish cap is authorized. The handler then runs and
+    # fail-fasts on the missing session (expected) — the cap-gate is what we test.
     publish_cap =
       %Capability{
         Capability.cap(:agent, HelloPublisher, :publish, publisher_uri, ws_uri)
@@ -72,9 +82,11 @@ defmodule EzagentPluginHello.HelloPublisherDispatchTest do
         }
       })
 
-    # :call mode gets a result (not just :ok for :cast). With admin + the
-    # cap, the dispatch is authorized; the handler runs and returns {:ok,%{},[]}.
-    assert {:ok, %{}, []} = result_allowed
+    # :call mode returns the dispatch result (not just :ok as for :cast). With
+    # admin + the cap the dispatch is authorized; the handler returns its
+    # `{:ok, reply, effects}` contract and dispatch surfaces the reply as
+    # `{:ok, reply}` — here `{:ok, %{}}`.
+    assert {:ok, %{}} = result_allowed
   end
 end
 
