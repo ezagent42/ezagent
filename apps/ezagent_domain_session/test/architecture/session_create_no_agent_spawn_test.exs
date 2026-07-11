@@ -182,13 +182,10 @@ defmodule EzagentDomainInstanceMessage.Architecture.SessionCreateNoAgentSpawnTes
   # telemetry) and leaves the session alive + owner-only — never a rollback, never
   # a hang. This static gate locks the "never rollback" half.
   #
-  # NOTE (grant-mechanism seam): the "never BLOCKS on agent readiness / no
-  # `:activate_timeout` from the install lane" half is currently still true only
-  # up to the 20s activate budget, because `grant_recipe_caps` /
-  # `grant_orchestrator_scoped_caps` still dispatch a blocking `:call` to the
-  # not-yet-ready agent. Converting those to a non-blocking buffered grant is the
-  # R1 decision pending Allen's A/B ruling; the runtime "no `:activate_timeout`"
-  # assertion lands WITH that conversion (see the PR design note).
+  # NOTE (Phase 3 split): S6 removes the recipe-cap readiness coupling and the
+  # gate below locks that lane to binding/create or issue/absorb. The
+  # orchestrator-scoped grant remains a separate S7 cutover; this S6 gate must
+  # not erase that stage boundary by scanning unrelated orchestrator hooks.
   test "the install lane never rolls back the session (R4 — loud, not rollback)" do
     body =
       app_root()
@@ -219,6 +216,35 @@ defmodule EzagentDomainInstanceMessage.Architecture.SessionCreateNoAgentSpawnTes
            `[:ezagent, :session, :socialware_install, :failed]` telemetry) and
            leaves the session alive + usable — never a rollback.
            """
+  end
+
+  test "install-lane recipe caps never block on an issuer-driven grant to the fresh agent" do
+    definition_agents =
+      app_root()
+      |> Path.join("lib/ezagent_domain_instance_message/session_creator/definition_agents.ex")
+      |> File.read!()
+
+    [_, materialize] = String.split(definition_agents, "defp materialize_fresh_agent(", parts: 2)
+    [materialize | _] = String.split(materialize, "defp spawn_bound_agent(", parts: 2)
+
+    refute materialize =~ "grant_recipe_caps",
+           "fresh role materialization must end after binding + spawn/join; recipe caps self-store in create/1"
+
+    refute definition_agents =~ "GrantRecipeCaps.grant_recipe_caps",
+           "the install lane must not drive a cap-write into the freshly materialized grantee"
+
+    grant_recipe_caps =
+      Path.expand(
+        "../ezagent_domain_agent/lib/mix/tasks/ezagent.agent.grant_recipe_caps.ex",
+        app_root()
+      )
+      |> File.read!()
+
+    refute grant_recipe_caps =~ "Ezagent.Identity.grant_cap("
+    refute grant_recipe_caps =~ "Ezagent.Identity.Grant.grant_cap("
+    assert grant_recipe_caps =~ "Ezagent.Cap.issue("
+    assert grant_recipe_caps =~ "Ezagent.Identity.absorb_cap("
+    assert grant_recipe_caps =~ "Map.has_key?(instance_overrides, behavior)"
   end
 
   # ── R2 + R3: orchestrator post-materialize ordering ────────────────────────

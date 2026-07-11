@@ -23,9 +23,10 @@ defmodule Ezagent.Agent.DefaultAgentSeed do
   entry, which the `cap_check_only_at_chokepoint` p7 probe forbids. It moved to
   the sanctioned operator/materialize mix task
   `Mix.Tasks.Ezagent.Agent.GrantRecipeCaps` (a deliberate grant entry). At boot
-  the default agent isn't live anyway, so the caps land at materialize-time (T7b)
-  via that sanctioned `GrantRecipeCaps` mix task, invoked from the live
-  materialize path.
+  the default agent isn't live anyway. Socialware materialization now issues the
+  caps into its durable recipe binding before spawn, and the agent self-stores
+  them in `create/1`; the mix task remains an explicit operator hand-off, not a
+  materializer callback.
 
   ## Flavor `cc` (2026-06-28 decision)
 
@@ -77,9 +78,9 @@ defmodule Ezagent.Agent.DefaultAgentSeed do
   `after_boot` MUST NOT crash a boot).
 
   The recipe-cap GRANT is no longer done here — it moved to the sanctioned
-  operator/materialize mix task `Mix.Tasks.Ezagent.Agent.GrantRecipeCaps`
-  (p7: grant is a deliberate entry, not a boot-time auto-grant). At boot the
-  default agent isn't live, so the caps land at materialize-time (T7b).
+  operator mix task `Mix.Tasks.Ezagent.Agent.GrantRecipeCaps` (p7: issue/store is
+  a deliberate entry, not a boot-time auto-grant). The normal materialize lane
+  uses the durable recipe binding + `create/1` self-store instead.
   """
   @spec seed(spec()) :: :ok
   def seed(%{role_name: role, telemetry_prefix: prefix} = spec) do
