@@ -7,8 +7,8 @@ defmodule EzagentDomainInstanceMessage.Integration.DefinitionAgentsMaterializeTe
   The cc flavor is unregistered in the `domain_session` test env, so
   `spawn_from_template_content` spawns a bare `Entity.Agent` (no real claude
   sidecar) — enough to prove: (1) the agent joins as a member carrying its
-  `role_name` facet, (2) `GrantRecipeCaps` lands the recipe's `requested_caps` on
-  the per-session agent URI, (3) idempotent re-materialize, (4) role_name
+  `role_name` facet, (2) the durable binding self-stores the recipe's
+  `requested_caps` on the per-session agent URI, (3) idempotent re-materialize, (4) role_name
   uniqueness (batch + vs existing member) and (5) fail-closed on unknown recipe.
   """
 
@@ -18,9 +18,10 @@ defmodule EzagentDomainInstanceMessage.Integration.DefinitionAgentsMaterializeTe
   alias Ezagent.ActionSet.Session, as: SessionBehavior
   alias Ezagent.Entity.Session
   alias Ezagent.Identity.RecipeCapBinding
-  alias Ezagent.KindRegistry
+  alias Ezagent.{Invocation, KindRegistry}
   alias EzagentCore.Repo
   alias EzagentDomainInstanceMessage.MaterializedRoleTestBehavior
+  alias EzagentDomainInstanceMessage.SessionCreator
   alias EzagentDomainInstanceMessage.SessionCreator.DefinitionAgents
 
   defmodule StubTemplate do
@@ -50,6 +51,49 @@ defmodule EzagentDomainInstanceMessage.Integration.DefinitionAgentsMaterializeTe
         {:error, {:already_started, _pid}} -> {:ok, [uri], %{fresh?: false}}
         {:error, {:already_registered, _}} -> {:ok, [uri], %{fresh?: false}}
         {:error, reason} -> {:error, reason}
+      end
+    end
+  end
+
+  defmodule NeverReadyTemplate do
+    @moduledoc false
+    @behaviour Ezagent.Kind.Template
+
+    @impl Ezagent.Kind.Template
+    def template_name, do: "definition_agents.never_ready"
+
+    @impl Ezagent.Kind.Template
+    def validate(%{
+          "class" => "definition_agents.never_ready",
+          "agent_uri" => agent_uri,
+          "cwd" => cwd
+        })
+        when is_binary(agent_uri) and is_binary(cwd),
+        do: :ok
+
+    def validate(_), do: {:error, :invalid_definition_agents_never_ready_template}
+
+    @impl Ezagent.Kind.Template
+    def instantiate(_name, data, _workspace_uri) do
+      uri = Ezagent.URI.new!(data["agent_uri"])
+
+      case Ezagent.Kind.spawn(Ezagent.Entity.Agent, %{
+             uri: uri,
+             behaviors: Ezagent.Entity.Agent.base_behaviors(),
+             role: data["role"]
+           }) do
+        {:ok, _pid} ->
+          :ok = Ezagent.ReadyGate.put(uri, :not_ready)
+          {:ok, [uri], %{fresh?: true, config_dir_path: nil}}
+
+        {:error, {:already_started, _pid}} ->
+          {:ok, [uri], %{fresh?: false}}
+
+        {:error, {:already_registered, _}} ->
+          {:ok, [uri], %{fresh?: false}}
+
+        {:error, reason} ->
+          {:error, reason}
       end
     end
   end
@@ -100,6 +144,19 @@ defmodule EzagentDomainInstanceMessage.Integration.DefinitionAgentsMaterializeTe
     flavor
   end
 
+  defp register_never_ready_flavor(n) do
+    flavor = "definition_agents_never_ready_#{n}"
+
+    :ok =
+      Ezagent.AgentFlavorRegistry.register(%{
+        flavor: flavor,
+        kind: Ezagent.Entity.Agent,
+        template_class: NeverReadyTemplate
+      })
+
+    flavor
+  end
+
   defp terminate(uri) do
     case KindRegistry.lookup(uri) do
       {:ok, pid} -> if Process.alive?(pid), do: Ezagent.Kind.terminate(uri)
@@ -111,7 +168,11 @@ defmodule EzagentDomainInstanceMessage.Integration.DefinitionAgentsMaterializeTe
     session_uri = Ezagent.URI.session("system", "generic", "t2-agents-#{n}")
 
     {:ok, _pid} =
-      Ezagent.Kind.spawn(Session, %{uri: session_uri, behaviors: Session.behaviors()})
+      Ezagent.Kind.spawn(Session, %{
+        uri: session_uri,
+        behaviors: Session.behaviors(),
+        owner_uri: @owner_uri
+      })
 
     :ok = Ezagent.WorkspaceRegistry.bind(session_uri, @workspace_uri)
     on_exit(fn -> terminate(session_uri) end)
@@ -185,6 +246,19 @@ defmodule EzagentDomainInstanceMessage.Integration.DefinitionAgentsMaterializeTe
     Map.get(slice, :members, %{})
   end
 
+  defp owner_cap_gated_probe(%URI{} = session_uri) do
+    Invocation.dispatch(%Invocation{
+      target: Ezagent.URI.with_action(session_uri, :session, :attach),
+      mode: :call,
+      args: %{filename: "owner-usable-probe.txt"},
+      ctx: %{
+        caller: @owner_uri,
+        caps: MapSet.new([Ezagent.Capability.admin_genesis_cap()]),
+        reply: {:caller_inbox, self()}
+      }
+    })
+  end
+
   test "materializes a declared agent as a member with its role_name + recipe caps" do
     n = uniq()
     session_uri = live_session(n)
@@ -214,16 +288,85 @@ defmodule EzagentDomainInstanceMessage.Integration.DefinitionAgentsMaterializeTe
              cap.behavior == Ezagent.ActionSet.Identity and cap.action == :list_caps
            end)
 
-    # S5 coexistence: create/1 self-stored the durable issued artifact, then the
-    # legacy post-join dispatch replaced the same identity key without a dup.
+    # S6 sole-source I1: create/1 self-stored the exact durable artifact. Full
+    # struct equality (including granted_at) proves no post-spawn re-issue
+    # silently replaced it with a logically-equal cap.
     assert {:ok, %{caps: bound_caps, version: 1, issuer_uri: @owner_uri}} =
              RecipeCapBinding.fetch(planned)
 
-    assert Enum.any?(bound_caps, &(&1.granted_by == @owner_uri))
+    bound_cap =
+      Enum.find(bound_caps, fn cap ->
+        cap.behavior == Ezagent.ActionSet.Identity and cap.action == :list_caps
+      end)
+
+    live_cap =
+      Enum.find(caps, fn cap ->
+        cap.behavior == Ezagent.ActionSet.Identity and cap.action == :list_caps
+      end)
+
+    assert %Ezagent.Capability{granted_by: @owner_uri} = bound_cap
+    assert live_cap == bound_cap
 
     assert Enum.count(caps, fn cap ->
              cap.behavior == Ezagent.ActionSet.Identity and cap.action == :list_caps
            end) == 1
+  end
+
+  test "I3 install lane returns while a role agent never readies and keeps the session usable" do
+    n = uniq()
+    session_uri = live_session(n)
+    recipe_name = seed_recipe_with_behavior(n)
+    role_name = "never-ready-#{n}"
+    flavor = register_never_ready_flavor(n)
+
+    working_copy =
+      session_uri
+      |> Session.read_template_working_copy()
+      |> Map.put(:session_template_uri, Ezagent.URI.template(:system, :session, "default"))
+      |> Map.put(:member_declarations, [
+        %{fill: :agent, recipe: recipe_name, role_name: role_name, flavor: flavor}
+      ])
+
+    assert {:ok, _} = SessionBehavior.system_set_working_copy(session_uri, working_copy)
+
+    task =
+      Task.async(fn ->
+        receive do
+          :run_install ->
+            SessionCreator.install_session_socialware(session_uri, @workspace_uri)
+        end
+      end)
+
+    Ecto.Adapters.SQL.Sandbox.allow(Repo, self(), task.pid)
+    send(task.pid, :run_install)
+
+    assert {:ok, result} = Task.yield(task, 5_000) || Task.shutdown(task, :brutal_kill)
+
+    assert {:ok, %{satisfied: [^role_name], skipped: []}} = result
+
+    members = members_of(session_uri)
+    planned = SessionBehavior.role_name_to_uri(members, role_name)
+    on_exit(fn -> terminate(planned) end)
+
+    assert {:ok, session_pid} = KindRegistry.lookup(session_uri)
+    assert Process.alive?(session_pid)
+    assert Session.owner(session_uri) == {:ok, @owner_uri}
+    assert Ezagent.ReadyGate.status(planned) == :not_ready
+
+    assert {:ok, %{ok: true}} = owner_cap_gated_probe(session_uri)
+
+    assert {:ok, identity_slice} = Ezagent.Kind.get_slice(planned, :identity)
+    caps = identity_slice |> Ezagent.Kind.normalize_slice_view() |> Map.fetch!(:caps)
+
+    assert {:ok, %{caps: bound_caps, issuer_uri: @owner_uri}} = RecipeCapBinding.fetch(planned)
+
+    bound_cap =
+      Enum.find(bound_caps, fn cap ->
+        cap.behavior == MaterializedRoleTestBehavior and cap.action == :ping
+      end)
+
+    assert %Ezagent.Capability{granted_by: @owner_uri} = bound_cap
+    assert Enum.member?(caps, bound_cap)
   end
 
   test "definitive fresh spawn failure tombstones its pre-spawn binding" do

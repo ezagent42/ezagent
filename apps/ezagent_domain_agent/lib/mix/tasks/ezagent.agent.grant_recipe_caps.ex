@@ -1,9 +1,9 @@
 defmodule Mix.Tasks.Ezagent.Agent.GrantRecipeCaps do
-  @shortdoc "Grant a role recipe's least-priv caps to a (materialized) default agent"
+  @shortdoc "Issue and self-store a role recipe's least-priv caps"
   @moduledoc """
-  Phase 3 ③ T7a/T7b — the SANCTIONED operator/materialize entry point that grants
-  a role recipe's `requested_caps` to a default-agent entity URI under admin
-  authority (least-priv).
+  Phase 3 ③ T7a/T7b — the SANCTIONED operator entry point that issues a role
+  recipe's `requested_caps` under admin authority, then hands the artifacts to
+  a materialized agent for its own non-blocking `absorb_cap` storage.
 
   ## Why this is a mix task (p7)
 
@@ -11,10 +11,14 @@ defmodule Mix.Tasks.Ezagent.Agent.GrantRecipeCaps do
   from each plugin's `after_boot/0`. That made `Identity.grant_cap/3` fire from a
   **boot-time, non-deliberate** entry — exactly what the
   `cap_check_only_at_chokepoint` p7 probe forbids ("grant only from Identity
-  Behavior / admin LV / **mix tasks**"). The grant is now a deliberate
-  operator/materialize action: `DefaultAgentSeed.seed/1` only writes the template
-  at boot, and this mix task lands the caps once a target agent exists (T7b live
-  materialize, or an operator running it directly).
+  Behavior / admin LV / **mix tasks**"). The operation is now deliberate:
+  `DefaultAgentSeed.seed/1` only writes the template at boot, and this mix task
+  performs ISSUE → self-STORE once a target agent exists.
+
+  Socialware definition materialization does not call this task: its self-scoped
+  recipe caps are issued into the durable recipe binding before spawn and
+  self-stored by `create/1`. This task remains the explicit operator/delegated
+  hand-off surface, including `instance_overrides`.
 
   It does NOT prejudge the default-agent identity model (system-singleton vs
   per-session — see `surface-notes-for-user.md` §零): the grant target URI is
@@ -26,21 +30,24 @@ defmodule Mix.Tasks.Ezagent.Agent.GrantRecipeCaps do
 
       mix ezagent.agent.grant_recipe_caps <role> [--agent-uri <entity-uri>]
 
-      # grant the pm-coordinator recipe to the system-singleton default agent
+      # issue + self-store the pm-coordinator recipe on the default agent
       mix ezagent.agent.grant_recipe_caps pm-coordinator
 
-      # grant to a specific materialized instance URI (T7b)
+      # issue + self-store on a specific materialized instance URI (T7b)
       mix ezagent.agent.grant_recipe_caps dev-together \\
           --agent-uri entity://workspace-a/agent/dev-together-1
 
-  ## Guarantees (unchanged from the relocated engine)
+  ## Guarantees
 
   - **fail-closed, no partial** — every requested cap's behavior (an atom OR a
     recipe STRING name) resolves to a LOADED module FIRST; if ANY is unloaded the
-    task fails LOUD (`{:error, {:behavior_not_loaded, _}}` + telemetry), granting
+    task fails LOUD (`{:error, {:behavior_not_loaded, _}}` + telemetry), storing
     nothing — never a silently-dead cap.
-  - **least-priv** — every cap is granted under the genesis admin entity
-    (`granted_by: admin`), scoped to the agent's own instance + workspace.
+  - **issue-all before store** — complete authorization succeeds for every
+    proposal before the first absorb hand-off, preventing partial authorization.
+  - **least-priv** — every artifact records the admin issuer in `granted_by` and
+    is scoped to the agent's own instance + workspace unless explicitly
+    overridden.
   """
   use Mix.Task
 
@@ -49,6 +56,7 @@ defmodule Mix.Tasks.Ezagent.Agent.GrantRecipeCaps do
   alias Ezagent.Agent.{DefaultAgentSeed, RecipeRegistry}
 
   @operator_telemetry_prefix [:ezagent, :agent, :grant_recipe_caps]
+  @operator_store_timeout_ms 5_000
 
   # Role-owning plugins booted best-effort so their `roles/0` recipes register
   # into `RecipeRegistry` for the lookup below. Atom-only — a no-op if a plugin
@@ -83,8 +91,15 @@ defmodule Mix.Tasks.Ezagent.Agent.GrantRecipeCaps do
   defp do_grant(role, opts) do
     with {:ok, recipe} <- lookup_recipe(role),
          {:ok, agent_uri} <- target_uri(role, Keyword.get(opts, :agent_uri)),
-         :ok <- grant_recipe_caps(agent_uri, recipe, @operator_telemetry_prefix) do
-      Mix.shell().info("✓ granted #{role} recipe caps to #{to_string(agent_uri)}")
+         {:ok, issued_caps} <-
+           issue_and_absorb_recipe_caps(
+             agent_uri,
+             recipe,
+             @operator_telemetry_prefix,
+             %{}
+           ),
+         :ok <- await_absorbed(agent_uri, issued_caps, @operator_store_timeout_ms) do
+      Mix.shell().info("✓ issued and stored #{role} recipe caps on #{to_string(agent_uri)}")
     else
       :error -> Mix.raise("no role recipe registered for #{inspect(role)}")
       {:error, reason} -> Mix.raise("grant failed: #{inspect(reason)}")
@@ -102,18 +117,25 @@ defmodule Mix.Tasks.Ezagent.Agent.GrantRecipeCaps do
   end
 
   @doc """
-  Grant `recipe`'s `requested_caps` to `agent_uri` under admin authority
-  (least-priv), emitting telemetry under `telemetry_prefix`. Resolves each cap's
+  Issue `recipe`'s `requested_caps` under admin authority and hand the resulting
+  artifacts to `agent_uri` for self-storage, emitting telemetry under
+  `telemetry_prefix`. Resolves each cap's
   behavior (atom OR a recipe STRING name, e.g. github) to a LOADED module FIRST —
   an unloaded behavior fails LOUD (`telemetry_prefix ++ [:behavior_not_loaded]` +
   `{:error, {:behavior_not_loaded, _}}`), never a silently-dead grant — then
-  grants fail-closed (`{:error, {:grant_failed, cap, reason}}` on the first
-  failure). No partial: if ANY behavior is unresolvable, NOTHING is granted.
+  authorization fail-closed (`{:error, {:grant_failed, cap, reason}}` on the
+  first failure). Resolution and ISSUE are both all-or-nothing: every proposal
+  is authorized before the first non-blocking absorb hand-off.
 
-  This is the SANCTIONED grant entry (p7 mix-task category); the socialware
-  definition-agent materialize (`SessionCreator`'s `definition_agents`) + the
-  kanban board-scoping seed (`EzagentPluginKanban.PmCoordinatorSeed`) delegate
-  to it.
+  This programmatic helper returns once every cast is accepted or buffered. The
+  standalone `run/1` entry additionally waits until the exact issued artifacts
+  are observable in the target slice, so its short-lived BEAM never reports
+  success while the only copy still lives in an in-memory delivery buffer.
+
+  This is the SANCTIONED explicit operator/delegated hand-off entry (p7 mix-task
+  category). Socialware definition agents use the durable binding + `create/1`
+  self-store lane instead; callers that own a cross-instance target may supply
+  `instance_overrides` here.
 
   ## Cap-instance scoping (Phase 3 ③ T7g Part A)
 
@@ -138,9 +160,24 @@ defmodule Mix.Tasks.Ezagent.Agent.GrantRecipeCaps do
           :ok | {:error, term()}
   def grant_recipe_caps(%URI{} = agent_uri, recipe, telemetry_prefix, instance_overrides \\ %{})
       when is_map(recipe) and is_list(telemetry_prefix) and is_map(instance_overrides) do
+    case issue_and_absorb_recipe_caps(
+           agent_uri,
+           recipe,
+           telemetry_prefix,
+           instance_overrides
+         ) do
+      {:ok, _issued_caps} -> :ok
+      {:error, _reason} = error -> error
+    end
+  end
+
+  defp issue_and_absorb_recipe_caps(agent_uri, recipe, telemetry_prefix, instance_overrides) do
     with {:ok, proposed_caps} <-
-           propose_recipe_caps(agent_uri, recipe, telemetry_prefix, instance_overrides) do
-      grant_all(agent_uri, proposed_caps)
+           propose_recipe_caps(agent_uri, recipe, telemetry_prefix, instance_overrides),
+         {:ok, issued_caps} <- issue_all(agent_uri, proposed_caps),
+         stored_caps = canonicalize_issued_caps(issued_caps),
+         :ok <- absorb_all(agent_uri, stored_caps) do
+      {:ok, stored_caps}
     end
   end
 
@@ -169,7 +206,8 @@ defmodule Mix.Tasks.Ezagent.Agent.GrantRecipeCaps do
       when is_map(recipe) and is_list(telemetry_prefix) and is_map(instance_overrides) do
     requested = Map.get(recipe, :requested_caps) || Map.get(recipe, "requested_caps") || []
 
-    with {:ok, resolved} <- resolve_caps(requested, telemetry_prefix) do
+    with :ok <- validate_instance_overrides(instance_overrides),
+         {:ok, resolved} <- resolve_caps(requested, telemetry_prefix) do
       {:ok, Enum.map(resolved, &proposal_cap(agent_uri, &1, instance_overrides))}
     end
   end
@@ -259,25 +297,102 @@ defmodule Mix.Tasks.Ezagent.Agent.GrantRecipeCaps do
   end
 
   defp proposal_cap(%URI{} = agent_uri, {behavior, action}, instance_overrides) do
-    scope_uri = Map.get(instance_overrides, behavior, agent_uri)
+    # Presence is the Phase-3 self-scoped-vs-delegated signal. Do not infer it
+    # by comparing the resolved URI with the agent: an explicit override may
+    # deliberately point at the same canonical instance.
+    scope_uri =
+      if Map.has_key?(instance_overrides, behavior) do
+        Map.fetch!(instance_overrides, behavior)
+      else
+        agent_uri
+      end
+
     instance = Ezagent.URI.instance(scope_uri)
     workspace = Ezagent.Capability.workspace_of(scope_uri)
 
     Ezagent.Capability.cap(:agent, behavior, action, instance, workspace)
   end
 
-  defp grant_all(%URI{} = agent_uri, proposed_caps) do
-    granter = Ezagent.Entity.User.admin_uri()
+  defp validate_instance_overrides(instance_overrides) do
+    Enum.reduce_while(instance_overrides, :ok, fn
+      {_behavior, %URI{}}, :ok ->
+        {:cont, :ok}
 
-    Enum.reduce_while(proposed_caps, :ok, fn proposed_cap, :ok ->
-      # Preserve the legacy dispatch path's observable cap shape. The grant
-      # chokepoint authorizes and re-stamps this provenance before storage.
-      cap = %{proposed_cap | granted_by: granter, granted_at: DateTime.utc_now()}
+      {behavior, target}, :ok ->
+        {:halt, {:error, {:invalid_instance_override, behavior, target}}}
+    end)
+  end
 
-      case Ezagent.Identity.grant_cap(agent_uri, cap, granter) do
-        :ok -> {:cont, :ok}
-        {:error, reason} -> {:halt, {:error, {:grant_failed, cap, reason}}}
+  # Two distinct passes are load-bearing: complete every authorization before
+  # any grantee receives an artifact. Interleaving issue + absorb would recreate
+  # the legacy partial-grant failure mode when a later proposal is denied.
+  defp issue_all(%URI{} = agent_uri, proposed_caps) do
+    issuer = Ezagent.Entity.User.admin_uri()
+    target = Ezagent.URI.instance(agent_uri)
+
+    proposed_caps
+    |> Enum.reduce_while({:ok, []}, fn proposed_cap, {:ok, issued} ->
+      case Ezagent.Cap.issue({:admin, issuer}, target, proposed_cap) do
+        {:ok, artifact} -> {:cont, {:ok, [artifact | issued]}}
+        {:error, reason} -> {:halt, {:error, {:grant_failed, proposed_cap, reason}}}
       end
     end)
+    |> case do
+      {:ok, issued} -> {:ok, Enum.reverse(issued)}
+      {:error, _reason} = error -> error
+    end
+  end
+
+  defp absorb_all(%URI{} = agent_uri, issued_caps) do
+    Enum.reduce_while(issued_caps, :ok, fn artifact, :ok ->
+      case Ezagent.Identity.absorb_cap(agent_uri, artifact) do
+        :ok -> {:cont, :ok}
+        {:error, reason} -> {:halt, {:error, {:grant_failed, artifact, reason}}}
+      end
+    end)
+  end
+
+  # Recipe input may repeat a logical cap. ISSUE still authorizes every
+  # proposal, then STORE follows the identity-key semantics of the Identity
+  # slice: the last issued artifact for an identity wins. Canonicalizing before
+  # absorb avoids redundant audit events and lets the CLI await the exact final
+  # structs instead of waiting forever for metadata variants that cannot coexist.
+  defp canonicalize_issued_caps(issued_caps) do
+    issued_caps
+    |> Enum.reverse()
+    |> Enum.uniq_by(&Ezagent.Capability.identity_key/1)
+    |> Enum.reverse()
+  end
+
+  # The programmatic helper above is deliberately non-blocking for long-lived
+  # runtimes. A standalone Mix task is different: exiting its BEAM while a cast
+  # is still buffered would lose the hand-off. The CLI therefore waits for the
+  # exact issued structs to become observable in the target slice, and fails
+  # loudly instead of printing a false success if the target never readies.
+  defp await_absorbed(%URI{} = agent_uri, issued_caps, timeout_ms) do
+    deadline = System.monotonic_time(:millisecond) + timeout_ms
+    do_await_absorbed(Ezagent.URI.instance(agent_uri), issued_caps, deadline)
+  end
+
+  defp do_await_absorbed(agent_uri, issued_caps, deadline) do
+    # Keep sensitive Identity-state ownership inside the Identity facade. Its
+    # read path checks the live slice without activating a cold entity and can
+    # fall back to the durable snapshot; exact artifact equality below prevents
+    # an older logical cap from being mistaken for this hand-off's commit.
+    stored_caps = Ezagent.Identity.read_entity_caps(agent_uri)
+
+    missing = Enum.reject(issued_caps, &Enum.member?(stored_caps, &1))
+
+    cond do
+      missing == [] ->
+        :ok
+
+      System.monotonic_time(:millisecond) >= deadline ->
+        {:error, {:absorb_not_committed, missing}}
+
+      true ->
+        Process.sleep(10)
+        do_await_absorbed(agent_uri, issued_caps, deadline)
+    end
   end
 end
