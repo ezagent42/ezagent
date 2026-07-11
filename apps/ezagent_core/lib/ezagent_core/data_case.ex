@@ -106,7 +106,98 @@ defmodule EzagentCore.DataCase do
     pid = start_owner_stable!(not tags[:async])
     allow_live_kinds(pid)
     on_exit(fn -> Ecto.Adapters.SQL.Sandbox.stop_owner(pid) end)
-    on_exit(&drain_live_kinds/0)
+    on_exit(&drain_to_quiescence/0)
+  end
+
+  @doc """
+  Register a `Task.Supervisor` whose fire-and-forget children the test
+  teardown must DRAIN before it stops the sandbox owner (P6 async-escape
+  fix — 2026-07-11).
+
+  ## The bug this closes
+
+  The Kind-mailbox flush (`flush_live_kinds/0`, below) drains every live
+  `Kind.Server`'s mailbox, but the platform ALSO fans DB-touching work OFF a
+  Kind's process into
+  UNLINKED supervised Tasks under GLOBAL `Task.Supervisor`s — the dominant
+  one being `Ezagent.Session.DeliverySupervisor`, which runs
+  `Delivery.deliver_async/5 → ReadMarker.insert_marker/…` and Kind-snapshot
+  writes. Those Tasks are NOT in `KindRegistry`, so the Kind-drain never
+  waits for them. When the test body returns and `stop_owner` reclaims the
+  shared connection, an in-flight delivery Task either is mid-query
+  (`… is still using a connection from owner …`) or starts its query after
+  the owner exited and the pool reverted to `:manual`
+  (`cannot find ownership process for #PID<…>`). In the SECOND case the
+  Task's write is silently DROPPED — and any test that asserts the
+  delivered effect (a read marker, an audit event, a snapshot) goes RED,
+  non-deterministically, ONLY under the full-umbrella concurrency that
+  widens the straddle window (task #108-class flake).
+
+  `Sandbox.allow`-ing the Task is NOT the fix: in shared mode every process
+  already sees the owner's connection, so the failure is purely a LIFETIME
+  race — the Task outlives `stop_owner`. The fix is to make teardown WAIT
+  for these Tasks to finish (against the still-valid connection) before it
+  stops the owner. Because that write work interleaves with Kind mailboxes
+  (a delivery Task casts back into a Kind, which may enqueue another
+  delivery), the drain loops kinds ⇄ supervisors to JOINT quiescence.
+
+  ## Why register-at-boot rather than name the supervisors here
+
+  `ezagent_core` must name no downstream module (the `no_role_concept_in_core`
+  layering gate). So — exactly like the `:ezagent_test_boot_reset_hooks`
+  registry drained by `reset_boot_seed_registry/0` — the owning app registers
+  its supervisor NAME (a plain atom) into a `persistent_term` list at boot
+  (test env only), and core drains the list without referencing the domain
+  or plugin layer. A suite that boots none registers none and pays nothing.
+  """
+  @async_drain_key :ezagent_test_async_drain_supervisors
+  @async_idle_key :ezagent_test_async_drain_idle_checks
+
+  @spec register_async_drain_supervisor(atom()) :: :ok
+  def register_async_drain_supervisor(name) when is_atom(name) do
+    existing = :persistent_term.get(@async_drain_key, [])
+    :persistent_term.put(@async_drain_key, Enum.uniq([name | existing]))
+    :ok
+  end
+
+  @doc """
+  Register a `(-> boolean)` quiescence probe that the teardown drain must
+  see return `true` before it treats the async work as drained.
+
+  ## Why a probe is needed on top of the supervisor drain
+
+  A supervisor's children only tell half the story when the fan-out sits
+  behind a FEEDER GenServer. `Ezagent.Session.DeliveryQueue` is the case in
+  point: a Kind casts an `enqueue` to it, and only when the queue processes
+  that cast does the job become a live child of `Ezagent.Session.DeliverySupervisor`.
+  Flushing the Kind's mailbox lands the `enqueue` in the QUEUE's mailbox — but
+  in the instant before the queue promotes it, the supervisor still has zero
+  children, so a bare "children empty?" check reads FALSE-quiescent, the drain
+  returns, and the just-promoted delivery Tasks escape past `stop_owner`
+  (observed as a single-test broadcast burst still emitting
+  `cannot find ownership process`).
+
+  The probe closes that gap because it is a synchronous `GenServer.call`
+  (`DeliveryQueue.idle?/0`): the call cannot be answered until the queue has
+  processed every `enqueue` ahead of it — so by the time the probe returns,
+  any pending job has ALREADY been promoted to a supervisor child that the
+  child-drain then waits out. Owning apps register their feeder's `idle?`
+  here (test env only), the same plain-atom persistent_term convention as
+  `:ezagent_test_boot_reset_hooks`.
+  """
+  @spec register_async_drain_idle_check((-> boolean())) :: :ok
+  def register_async_drain_idle_check(fun) when is_function(fun, 0) do
+    existing = :persistent_term.get(@async_idle_key, [])
+    :persistent_term.put(@async_idle_key, [fun | existing])
+    :ok
+  end
+
+  defp registered_async_supervisors do
+    :persistent_term.get(@async_drain_key, [])
+  end
+
+  defp registered_async_idle_checks do
+    :persistent_term.get(@async_idle_key, [])
   end
 
   # #52 Mode-B tightening (design §3.2). Walk every Kind ALREADY LIVE in
@@ -119,7 +210,7 @@ defmodule EzagentCore.DataCase do
   # live pids here closes that gap for Kinds alive at setup.
   #
   # This is best-effort and complements (does not replace) the P6
-  # `drain_live_kinds/0` teardown + the cold-restart fix (gating the boot
+  # `drain_to_quiescence/0` teardown + the cold-restart fix (gating the boot
   # singleton out of `:test`). Kinds spawned LATER in the test under a
   # global supervisor still inherit via `$callers` when spawned from the
   # (allowed) test process; the residual detached class is best-effort
@@ -223,15 +314,70 @@ defmodule EzagentCore.DataCase do
   end
 
   # Bounded number of drain passes. One pass flushes each Kind's mailbox
-  # AS OF the moment of the call; but a late PubSub broadcast (presence
-  # diff, slice-change fan-out) from a still-running process can land a
-  # fresh `handle_info` AFTER that pass — which then writes a snapshot
-  # under the about-to-be-stopped owner. Re-passing while any Kind still
-  # has queued messages drains those stragglers too. Bounded so a
-  # genuinely busy-looping Kind can't hang teardown; the rare message
-  # that arrives after the final pass is best-effort (it logs but does
-  # not fail any assertion — see moduledoc).
-  @drain_passes 4
+  # AND waits for every registered async Task.Supervisor's in-flight
+  # children (deliveries, snapshot writes) to finish. The two escape
+  # hatches feed each other — a delivery Task casts back into a Kind, a
+  # Kind's `handle_info` enqueues another delivery — so we re-pass while
+  # EITHER still has outstanding work. A late PubSub broadcast (presence
+  # diff, slice-change fan-out) from a still-running process can also land
+  # a fresh `handle_info` after a pass. Bounded so a genuinely busy-looping
+  # Kind or a wedged delivery can't hang teardown; the rare straggler that
+  # arrives after the final pass is best-effort (it logs but does not fail
+  # any assertion — see moduledoc + `register_async_drain_supervisor/1`).
+  @drain_passes 6
+
+  # Per-pass budget for waiting out one supervisor's in-flight Task
+  # children. A single delivery Task is a handful of ms; this ceiling only
+  # bites a pathologically slow/wedged Task, which we then leave to the
+  # next pass / best-effort.
+  @sup_drain_budget_ms 2_000
+
+  # Interleave the Kind-mailbox flush with the async-supervisor drain,
+  # looping until BOTH are quiescent (or the pass budget is spent). This is
+  # the seam that keeps fire-and-forget DB work from outliving the sandbox
+  # owner's connection — see `register_async_drain_supervisor/1`.
+  defp drain_to_quiescence, do: drain_to_quiescence(@drain_passes)
+
+  defp drain_to_quiescence(0), do: :ok
+
+  defp drain_to_quiescence(passes_left) do
+    # 1. Flush Kind mailboxes first: a queued delivery cast is processed
+    #    now, landing its `enqueue` in the feeder queue's mailbox.
+    flush_live_kinds()
+
+    # 2. Flush the feeder GenServers (a synchronous `idle?` call) so any
+    #    just-enqueued job is PROMOTED to a supervisor child before we look —
+    #    closing the false-quiescent gap (see `register_async_drain_idle_check/1`).
+    run_idle_checks()
+
+    # 3. Wait for the async Task.Supervisors' in-flight children to finish
+    #    their DB work against the still-valid connection.
+    await_async_supervisors_drained()
+
+    if quiescent?() do
+      :ok
+    else
+      drain_to_quiescence(passes_left - 1)
+    end
+  end
+
+  # Invoke each registered quiescence probe. The RETURN value is folded into
+  # `quiescent?/0`; the SIDE EFFECT (a synchronous `GenServer.call` into the
+  # feeder) is what flushes the feeder's mailbox so queued jobs become live
+  # supervisor children. Best-effort: a feeder that is down/absent is idle.
+  defp run_idle_checks do
+    Enum.each(registered_async_idle_checks(), fn check ->
+      _ = safe_idle_check(check)
+    end)
+  end
+
+  defp safe_idle_check(check) do
+    check.()
+  rescue
+    _ -> true
+  catch
+    :exit, _ -> true
+  end
 
   # Flush in-flight DB work out of every live Kind so no query outlives
   # the sandbox owner's connection. A synchronous `GenServer.call`
@@ -240,30 +386,92 @@ defmodule EzagentCore.DataCase do
   # completes against the still-valid connection. Best-effort: a Kind
   # that exits or times out mid-drain is already not holding the
   # connection.
-  defp drain_live_kinds, do: drain_live_kinds(@drain_passes)
-
-  defp drain_live_kinds(0), do: :ok
-
-  defp drain_live_kinds(passes_left) do
-    kinds = registered_kinds()
-
-    Enum.each(kinds, fn {_uri, pid} ->
+  defp flush_live_kinds do
+    Enum.each(registered_kinds(), fn {_uri, pid} ->
       try do
         GenServer.call(pid, :ezagent_kind_module, 5_000)
       catch
         :exit, _ -> :ok
       end
     end)
+  end
 
-    # If any Kind still has queued messages, another late `handle_info`
-    # is pending — make one more pass. Otherwise we're quiescent.
-    if Enum.any?(kinds, fn {_uri, pid} ->
-         match?({:message_queue_len, n} when n > 0, Process.info(pid, :message_queue_len))
-       end) do
-      drain_live_kinds(passes_left - 1)
-    else
-      :ok
+  # For each registered async Task.Supervisor, block until it has no live
+  # children — monitoring the current children and waiting for their
+  # `:DOWN`. A queued job (e.g. the per-recipient FIFO in
+  # `Ezagent.Session.DeliveryQueue`) promotes to a fresh child once the
+  # running one finishes, so we re-poll until the supervisor is empty (or
+  # the budget is spent). Draining here means the Task's
+  # `ReadMarker.insert`/snapshot write COMMITS before `stop_owner` reclaims
+  # the connection — closing the "cannot find ownership process" /
+  # "still using a connection from owner" flake.
+  defp await_async_supervisors_drained do
+    Enum.each(registered_async_supervisors(), fn sup ->
+      await_supervisor_empty(sup, @sup_drain_budget_ms)
+    end)
+  end
+
+  @doc """
+  Block until `sup` (a `Task.Supervisor` name) has no live children, or the
+  default per-supervisor budget is spent. This is the primitive the teardown
+  uses to keep fire-and-forget delivery/snapshot Tasks from outliving the
+  sandbox owner; exposed for the regression guard that asserts the wait
+  actually blocks (drop the wait → the guard's task is still running when
+  this returns → the guard fails).
+  """
+  @spec drain_async_supervisor(atom()) :: :ok
+  def drain_async_supervisor(sup) when is_atom(sup) do
+    await_supervisor_empty(sup, @sup_drain_budget_ms)
+  end
+
+  defp await_supervisor_empty(_sup, budget_ms) when budget_ms <= 0, do: :ok
+
+  defp await_supervisor_empty(sup, budget_ms) do
+    case supervisor_children(sup) do
+      [] ->
+        :ok
+
+      pids ->
+        t0 = System.monotonic_time(:millisecond)
+        Enum.each(pids, fn pid -> await_pid_down(pid, budget_ms) end)
+        # Let a same-key queued job promote to a new child, then re-poll.
+        Process.sleep(5)
+        spent = max(System.monotonic_time(:millisecond) - t0, 1)
+        await_supervisor_empty(sup, budget_ms - spent)
     end
+  end
+
+  defp await_pid_down(pid, timeout_ms) do
+    ref = Process.monitor(pid)
+
+    receive do
+      {:DOWN, ^ref, :process, ^pid, _reason} -> :ok
+    after
+      timeout_ms -> Process.demonitor(ref, [:flush])
+    end
+  end
+
+  defp supervisor_children(sup) do
+    Task.Supervisor.children(sup)
+  rescue
+    # Supervisor not started in this suite — nothing to drain.
+    _ -> []
+  catch
+    :exit, _ -> []
+  end
+
+  # Quiescent = no live Kind has a queued message AND every registered
+  # async supervisor has no live children.
+  defp quiescent? do
+    no_queued_kind_messages?() and
+      Enum.all?(registered_async_supervisors(), fn sup -> supervisor_children(sup) == [] end) and
+      Enum.all?(registered_async_idle_checks(), fn check -> safe_idle_check(check) == true end)
+  end
+
+  defp no_queued_kind_messages? do
+    not Enum.any?(registered_kinds(), fn {_uri, pid} ->
+      match?({:message_queue_len, n} when n > 0, Process.info(pid, :message_queue_len))
+    end)
   end
 
   defp registered_kinds do
