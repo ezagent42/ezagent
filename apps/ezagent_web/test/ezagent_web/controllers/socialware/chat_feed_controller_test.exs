@@ -156,9 +156,9 @@ defmodule EzagentWeb.Socialware.ChatFeedControllerTest do
         |> Plug.Test.init_test_session(%{})
         |> get("/socialware/chat", %{"session_uri" => URI.to_string(session)})
 
-      assert redirected_to(conn) =~ "/login"
-      # No anon-User minted, no cookie set — a private session never becomes
-      # anon-accessible.
+      # web_anon_access: false → renders a "Login Required" page (200, not 302).
+      assert conn.status == 200
+      assert response(conn, 200) =~ "Login Required"
       assert is_nil(anon_cookie_value(conn))
     end
   end
@@ -392,7 +392,8 @@ defmodule EzagentWeb.Socialware.ChatFeedControllerTest do
         |> Plug.Test.init_test_session(%{})
         |> get("/hello/#{name}")
 
-      assert redirected_to(conn) =~ "/login"
+      assert conn.status == 200
+      assert response(conn, 200) =~ "Login Required"
     end
 
     test "missing / empty session_name → 404 (does not match the route)" do

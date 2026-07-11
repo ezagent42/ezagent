@@ -6,7 +6,7 @@
 
 ```bash
 cd /home/ning/ezagent
-PORT=10042 HELLO_DEMO_SEED=1 HELLO_DEMO_WS=system HELLO_DEMO_NAME=main mix phx.server
+PORT=10042 HELLO_LLM_BACKEND=claude_code HELLO_DEMO_SEED=1 HELLO_DEMO_WS=system HELLO_DEMO_NAME=main mix phx.server
 ```
 
 启动后 session `session://system/hello/main` 自动创建，v2 页面(body + shell CSS)自动写入。
@@ -54,8 +54,12 @@ v2 页面(body + shell CSS)来自 `apps/ezagent_plugin_hello/priv/seed_page/`:
 | `builder` | native | 页面生成——收到 `:rebuild` dispatch→调 LLM→TurnDriver→Surface |
 | `concierge` | native | 只读问答——收到 `:answer` dispatch→回答问题，永不触 Surface |
 | `llm` | curl | LLM 后端——持有 key(credential cascade)，给 builder/concierge 做 HTTP 补全。**credential-optional**——没配 DeepSeek 也能 keyless spawn。本地 dev 用 `claude_code`，休眠 |
+| `sharer` | native | 分享链接——收到 `:share` dispatch→生成公开 URL→回消息。触发词 "share"/"分享" |
+| `publisher` | native | 发布模板——收到 `:publish` dispatch→`update_template` 生成新模板版本→回消息。触发词 "publish"/"发布" |
 
 session owner 是 `entity://system/user/admin`。匿名访客被自动 mint 只读 AnonUser(48h GC)。
+
+sharer/publisher 跟 builder/concierge 一样，靠 front-desk 意图识别触发，不靠 @-mention（native 味没有 bridge adapter）。
 
 ## 本地 dev 注意事项
 

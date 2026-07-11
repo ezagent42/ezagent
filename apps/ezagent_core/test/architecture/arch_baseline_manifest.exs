@@ -498,12 +498,18 @@
   #   cap-only Lifecycle module for the :complete cap subject. Adds standard
   #   boilerplate (create/1, data_owner/1, data_owner/2 — all @doc false now)
   #   plus Lifecycle macro-generated structural fns. 395→398.
-  # - arch-cap-bump: +1 CapBAC transient-identity-read fix — the new
+  # - arch-cap-bump: +1 CapBAC transient-identity-read fix (main) — the new
   #   `Ezagent.Kind.IdentityReadError` `defexception` module generates a public
   #   `exception/1` (macro-emitted, no @doc target; its `message/1` IS `@impl`).
   #   Same shape as the existing `Capability.Unauthorized` / `BehaviorSet` error
   #   exceptions already in the baseline. 398→399.
-  undocumented_public_defs: 399,
+  # - arch-cap-bump: +3 #1312 (feat/hello-0709) — new hello publisher
+  #   visible-access-control surface (`EzagentPluginHello.HelloPublisherDispatchTest`
+  #   + HelloPublisher/sharer/publisher role code) adds 3 undoc'd public API forms.
+  #   399→402. Reconciled additively on rebase onto main (base 398 + main's +1
+  #   + branch's +3 = 402; verified against `mix ezagent.arch.scan` on the
+  #   merged tree).
+  undocumented_public_defs: 402,
   # dynamic_public_def_heads — `def unquote(name)(...)` heads whose function name
   #   is only known at macro-expansion, so they cannot become a documented
   #   {name, arity} entry. ENFORCED at 0 (the tree has none): adding any new

@@ -50,15 +50,13 @@ defmodule EzagentPluginHello.Generator do
   end
 
   @doc """
-  Classify a PAGE-OWNER message as page `:builder` (change/create the page) vs
-  read-only `:concierge` (question / navigation), via one cheap LLM round-trip
-  (`Prompts.route_system/0`). Fail-closed to `:builder` — the owner is here to
-  build, and a mis-route to the builder is recoverable (it just regenerates),
-  whereas losing a build request is not. Used by the `hello.orchestrator` router
-  for OWNER messages only; non-owner messages never reach here (they route to the
-  concierge by identity, before any LLM call).
+  Classify a PAGE-OWNER message as page `:builder`, read-only `:concierge`,
+  `:sharer` (share link), or `:publisher` (publish template), via one cheap
+  LLM round-trip (`Prompts.route_system/0`). Fail-closed to `:builder` — the
+  owner is here to build, and a mis-route to the builder is recoverable (it
+  just regenerates), whereas losing a build request is not.
   """
-  @spec classify_intent(URI.t(), String.t()) :: :builder | :concierge
+  @spec classify_intent(URI.t(), String.t()) :: :builder | :concierge | :sharer | :publisher
   def classify_intent(%URI{} = session_uri, user_text) when is_binary(user_text) do
     case call_llm(session_uri, Prompts.route_system(), user_text) do
       {:ok, %{content: content}} when is_binary(content) ->
@@ -71,15 +69,20 @@ defmodule EzagentPluginHello.Generator do
   end
 
   @doc """
-  Interpret the router model's one-word answer. `ASK` (anywhere in the reply) →
-  `:concierge`; anything else → `:builder` (fail-open to build, the owner default).
+  Interpret the router model's one-word answer. SHARE→:sharer, PUBLISH→:publisher,
+  ASK→:concierge, anything else→:builder (fail-open to build, the owner default).
   Pure — split out so the routing policy is unit-testable without the LLM.
   """
-  @spec interpret_intent(String.t()) :: :builder | :concierge
+  @spec interpret_intent(String.t()) :: :builder | :concierge | :sharer | :publisher
   def interpret_intent(content) when is_binary(content) do
-    if content |> String.upcase() |> String.contains?("ASK"),
-      do: :concierge,
-      else: :builder
+    up = String.upcase(content)
+
+    cond do
+      String.contains?(up, "SHARE") -> :sharer
+      String.contains?(up, "PUBLISH") -> :publisher
+      String.contains?(up, "ASK") -> :concierge
+      true -> :builder
+    end
   end
 
   @doc """

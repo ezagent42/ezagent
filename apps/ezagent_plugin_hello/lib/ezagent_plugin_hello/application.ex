@@ -96,7 +96,9 @@ defmodule EzagentPluginHello.Application do
       hello_front_desk_recipe(),
       hello_builder_recipe(),
       hello_concierge_recipe(),
-      hello_llm_recipe()
+      hello_llm_recipe(),
+      hello_sharer_recipe(),
+      hello_publisher_recipe()
     ]
 
   @doc "The `hello.front-desk` role — the invisible per-session chat relay that dispatches to builder/concierge via their dispatchable actions."
@@ -153,6 +155,26 @@ defmodule EzagentPluginHello.Application do
         # deployment with no DeepSeek credential source still spawns this member.
         credential_optional: true
       }
+    }
+  end
+
+  @doc "The `hello.sharer` role — wraps 'create share link' as a dispatchable action (`Behavior.HelloSharer`)."
+  @spec hello_sharer_recipe() :: map()
+  def hello_sharer_recipe do
+    %{
+      name: "hello.sharer",
+      behaviors: [Ezagent.ActionSet.HelloSharer],
+      requested_caps: [%{behavior: Ezagent.ActionSet.HelloSharer, action: :share}]
+    }
+  end
+
+  @doc "The `hello.publisher` role — wraps 'publish as template' as a dispatchable action (`Behavior.HelloPublisher`)."
+  @spec hello_publisher_recipe() :: map()
+  def hello_publisher_recipe do
+    %{
+      name: "hello.publisher",
+      behaviors: [Ezagent.ActionSet.HelloPublisher],
+      requested_caps: [%{behavior: Ezagent.ActionSet.HelloPublisher, action: :publish}]
     }
   end
 
@@ -304,11 +326,19 @@ defmodule EzagentPluginHello.Application do
         body = Jason.decode!(body_json)
         _ = EzagentPluginHello.TurnDriver.drive(session_uri, body, "v2 website page", actor)
         _ = EzagentPluginHello.TurnDriver.set_shell(session_uri, actor, "", css)
-        Logger.info("hello seed_page: applied v2 website page (#{byte_size(body_json)}b body + #{byte_size(css)}b css)")
+
+        Logger.info(
+          "hello seed_page: applied v2 website page (#{byte_size(body_json)}b body + #{byte_size(css)}b css)"
+        )
 
       _ ->
         # Fallback: the built-in seed spec (no prerecorded page in priv)
-        _ = EzagentPluginHello.TurnDriver.drive(session_uri, EzagentPluginHello.Spec.seed(), "Seed page — the hello builder is live.")
+        _ =
+          EzagentPluginHello.TurnDriver.drive(
+            session_uri,
+            EzagentPluginHello.Spec.seed(),
+            "Seed page — the hello builder is live."
+          )
     end
   end
 end

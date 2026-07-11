@@ -478,9 +478,13 @@ defmodule EzagentPluginHello.Prompts do
       "regenerate the home page", "delete the team block").
     - ASK — the owner is asking a QUESTION about the page/site or wants to navigate
       (e.g. "what's on this page", "who's on the team", "go to the progress tab").
+    - SHARE — the owner wants to generate a public link for this page (e.g.
+      "share this", "send me the link", "get a public URL").
+    - PUBLISH — the owner wants to save/publish the current page state as a new
+      template version (e.g. "publish", "save as template", "create a version").
 
-    Reply with EXACTLY ONE WORD — either BUILD or ASK — and nothing else. When in
-    doubt, prefer BUILD (the owner is here to build).
+    Reply with EXACTLY ONE WORD — BUILD, ASK, SHARE, or PUBLISH — and nothing else.
+    When in doubt, prefer BUILD (the owner is here to build).
     """
   end
 end
