@@ -15,14 +15,24 @@ name: CI
 #                      + ecto + `precommit` full ~1856-test suite +
 #                      check_invariants + socialware.check). Runs ONLY after
 #                      `gate` passes, so a broken branch never burns the
-#                      expensive dev-machine run. Darwin is the green-reliable
-#                      OS for the concurrent suite (ubuntu is the flake-prone
-#                      loaded runner — see #108).
+#                      expensive dev-machine run. NOT on pull_request (job-level
+#                      `if`): the ~500-580s run happens only on push-to-main
+#                      (pre-deploy, BLOCKING via dispatch-canary) and the
+#                      nightly `schedule` cron — every PR still gets the cheap
+#                      ubuntu `gate` (a 100% subset). Darwin is the green-
+#                      reliable OS for the concurrent suite (ubuntu is the
+#                      flake-prone loaded runner — see #108).
 
 on:
   pull_request:
   push:
     branches: [main]
+  schedule:
+    # Nightly full-suite run (08:00 UTC ≈ 17:00 GMT+9). full-suite is gated off
+    # pull_request (see its job-level `if`), so this cron is the only path that
+    # keeps the expensive self-hosted macOS suite exercised on green days when
+    # nothing merges to main.
+    - cron: "0 8 * * *"
 
 concurrency:
   group: ci-${{ github.workflow }}-${{ github.ref }}
@@ -128,6 +138,13 @@ jobs:
   full-suite:
     name: full-suite (self-hosted macOS)
     needs: [gate]
+    # NOT on pull_request: the full suite is 500-580s on the lead's own dev
+    # machine (self-hosted macOS) and `gate` is already a 100% subset of it —
+    # so every PR gets the cheap ubuntu `gate` while the expensive run happens
+    # only on push-to-main (pre-deploy, BLOCKING via dispatch-canary's needs)
+    # and on the nightly `schedule` cron. This keeps the dev machine free while
+    # codex pushes many PRs, without ever deploying an untested main.
+    if: github.event_name != 'pull_request'
     # Same self-hosted macOS runner label as deploy.yml. Runs the full
     # concurrent suite on the green-reliable OS, gated behind `gate`.
     runs-on: [self-hosted, macOS, ARM64]
@@ -225,8 +242,12 @@ jobs:
   # 的 contents:read + actions:write(或 classic repo scope)。secret 缺失时
   # 静默跳过(dispatch job 是 best-effort,不 gate 任何合并)。
   # 部署仓库侧只进 nightly;beta/stable 仍人工晋级。
-  dispatch-nightly:
-    name: dispatch nightly deploy
+  dispatch-canary:
+    name: dispatch canary deploy
+    # BLOCKING on full-suite: only fire the deploy dispatch after the full
+    # suite passes on main (previously this job had no `needs:` and fired on
+    # any push-to-main regardless of test outcome — a real gap).
+    needs: [full-suite]
     if: github.event_name == 'push' && github.ref == 'refs/heads/main'
     runs-on: ubuntu-latest
     permissions: { contents: read }
