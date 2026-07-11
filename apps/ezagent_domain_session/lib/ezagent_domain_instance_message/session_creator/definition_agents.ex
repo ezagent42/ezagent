@@ -81,7 +81,7 @@ defmodule EzagentDomainInstanceMessage.SessionCreator.DefinitionAgents do
         }
 
   @spec materialize_definition_agents(URI.t(), URI.t(), URI.t(), [map()]) ::
-          {:ok, summary()} | {:error, term()}
+          {:ok, summary()} | {:error, term()} | {:error, term(), summary()}
   def materialize_definition_agents(
         %URI{} = session_uri,
         %URI{} = workspace_uri,
@@ -452,10 +452,40 @@ defmodule EzagentDomainInstanceMessage.SessionCreator.DefinitionAgents do
            source_template_uri: source_template_uri,
            description: @agent_description
          }) do
-      {:ok, _outcome} -> :ok
-      {:error, reason} -> {:error, {:agent_spawn_failed, role_name, reason}}
+      {:ok, _outcome} ->
+        :ok
+
+      {:error, reason} ->
+        # SKIP vs FAIL (chain C contract, §"Skip vs fail"): a spawn that
+        # fails BECAUSE the flavor has no credential in this environment is the
+        # SAME "credential-less role → SKIP, not fatal" class the pre-flight
+        # `CredentialPrecondition.check_source/3` catches — it just surfaces one
+        # layer later, at spawn, for flavors whose credential is an ENV VAR
+        # (`DEEPSEEK_API_KEY`) rather than a config-home FILE, so `check_source`
+        # (file-based `credential_bearing?/1`) waves them through. Without this,
+        # a keyless env (every CI without `DEEPSEEK_API_KEY`) turns the
+        # orchestrator slot into a HARD `{:agent_spawn_failed, …}` that halts the
+        # whole batch (and, via the unhandled 3-tuple, CRASHED the install
+        # transaction) — so a co-declared credential-less role (e.g. the py
+        # helper) was never materialized. Classify it as a skip so the batch
+        # continues and the durable `unfilled_agent_role_slots` record is written,
+        # exactly as a file-credential-missing role already is.
+        if credential_missing_spawn_reason?(reason) do
+          {:skip, {:no_credential_source, flavor}}
+        else
+          {:error, {:agent_spawn_failed, role_name, reason}}
+        end
     end
   end
+
+  # NARROW by design: only a KNOWN missing-credential spawn reason reclassifies
+  # to a skip. Every other spawn failure stays a hard error (a bug, not the
+  # environment — §"Skip vs fail"). Today the only env-var-credential flavor that
+  # fails this way is deepseek (`DEEPSEEK_API_KEY`); file-credential flavors are
+  # already pre-skipped by `CredentialPrecondition.check_source/3`.
+  defp credential_missing_spawn_reason?({:deepseek_api_key_missing, _}), do: true
+  defp credential_missing_spawn_reason?(:deepseek_api_key_missing), do: true
+  defp credential_missing_spawn_reason?(_), do: false
 
   # Faceted `session.join` carrying the `%{role_name: name}` facet. On failure,
   # terminate the worker we just spawned (the add_managed_member cleanup

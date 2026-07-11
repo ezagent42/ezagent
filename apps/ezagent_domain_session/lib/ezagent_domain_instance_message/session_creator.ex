@@ -364,6 +364,35 @@ defmodule EzagentDomainInstanceMessage.SessionCreator do
         )
 
         {:error, reason}
+
+      # A hard error from `materialize_definition_agents/4` carries a THIRD
+      # element — the partial `%{satisfied:, skipped:}` of roles processed before
+      # the halt (a TESTED contract: see `definition_agents_materialize_test.exs`
+      # "rejects a duplicate…"/"fails closed on an unknown recipe"). Before, this
+      # 3-tuple hit NO clause here and raised `CaseClauseError`, which the `catch`
+      # below turned into "install CRASHED" — masking the real reason AND dropping
+      # the roles that DID materialize from the durable record. Handle it as a
+      # loud PARTIAL failure: persist the skipped-so-far so the UI's
+      # `unfilled_agent_role_slots` is not silently lost (Invariant #9), then
+      # surface the same clean `{:error, reason}` the 2-tuple path returns.
+      {:error, reason, partial} when is_map(partial) ->
+        Logger.error(
+          "session socialware install FAILED (partial) for #{URI.to_string(session_uri)}: " <>
+            "#{inspect(reason)} — satisfied=#{inspect(Map.get(partial, :satisfied, []))}, " <>
+            "skipped=#{inspect(Map.get(partial, :skipped, []))}. The session is alive but its " <>
+            "declared role members are only PARTIALLY materialized. Retry via " <>
+            "`SessionCreator.repair_orchestrator/1`."
+        )
+
+        _ = record_unfilled_role_slots(session_uri, Map.get(partial, :skipped, []))
+
+        :telemetry.execute(
+          @install_telemetry ++ [:failed],
+          %{count: 1},
+          %{session_uri: session_uri, reason: reason}
+        )
+
+        {:error, reason}
     end
   catch
     kind, reason ->
