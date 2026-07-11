@@ -27,7 +27,7 @@ defmodule Ezagent.ActionSet.IdentityManagerDelegatedGrantTest do
   use EzagentCore.DataCase, async: false
 
   alias Ezagent.ActionSet.IdentityAdmin
-  alias Ezagent.Capability
+  alias Ezagent.{Capability, CapabilityRegistry}
 
   @workspace_uri URI.new!("workspace://team-alpha")
 
@@ -91,11 +91,17 @@ defmodule Ezagent.ActionSet.IdentityManagerDelegatedGrantTest do
     }
   end
 
+  defp authorize(caller_caps, cap) do
+    CapabilityRegistry.authorize_grant(caller_caps, cap, %{caller: manager_uri()})
+  end
+
   test "manager CAN grant a cap whose scope its held caps cover (via_manage provenance)" do
     cap = cap_to_grant(OwnedStubBehavior, :read)
 
     # Manager holds: Manage over target + a delegable concrete cap covering it.
     caller_caps = [manage_cap_over_target(), held_delegable_cap(OwnedStubBehavior, :read)]
+
+    assert :ok = authorize(caller_caps, cap)
 
     {:ok, %{caps: granted}, effects} =
       IdentityAdmin.handle_grant_cap(%{cap: cap}, ctx_for(caller_caps))
@@ -122,7 +128,7 @@ defmodule Ezagent.ActionSet.IdentityManagerDelegatedGrantTest do
     caller_caps = [manage_cap_over_target(), held_delegable_cap(OwnedStubBehavior, :read)]
 
     assert {:error, :grant_not_delegable} =
-             IdentityAdmin.handle_grant_cap(%{cap: cap}, ctx_for(caller_caps))
+             authorize(caller_caps, cap)
   end
 
   test "delegation is scope-bounded — a held cap scoped to a DIFFERENT instance does not authorize" do
@@ -146,7 +152,7 @@ defmodule Ezagent.ActionSet.IdentityManagerDelegatedGrantTest do
     caller_caps = [manage_cap_over_target(), held_elsewhere]
 
     assert {:error, :grant_not_delegable} =
-             IdentityAdmin.handle_grant_cap(%{cap: cap}, ctx_for(caller_caps))
+             authorize(caller_caps, cap)
   end
 
   test "asymmetric match (delegation bound) — concrete held cap rejects a :any-action grant over a concrete target" do
@@ -157,7 +163,7 @@ defmodule Ezagent.ActionSet.IdentityManagerDelegatedGrantTest do
     caller_caps = [manage_cap_over_target(), held_delegable_cap(OwnedStubBehavior, :read)]
 
     assert {:error, :wildcard_action_grant_requires_admin_authority} =
-             IdentityAdmin.handle_grant_cap(%{cap: cap}, ctx_for(caller_caps))
+             authorize(caller_caps, cap)
   end
 
   test "non-manager non-owner non-admin caller is still rejected :grant_not_owner" do
@@ -168,7 +174,7 @@ defmodule Ezagent.ActionSet.IdentityManagerDelegatedGrantTest do
     caller_caps = [held_delegable_cap(OwnedStubBehavior, :read)]
 
     assert {:error, :grant_not_owner} =
-             IdentityAdmin.handle_grant_cap(%{cap: cap}, ctx_for(caller_caps))
+             authorize(caller_caps, cap)
   end
 
   test "manager holding Manage but NO delegable cap at all → :grant_not_delegable" do
@@ -178,7 +184,7 @@ defmodule Ezagent.ActionSet.IdentityManagerDelegatedGrantTest do
     caller_caps = [manage_cap_over_target()]
 
     assert {:error, :grant_not_delegable} =
-             IdentityAdmin.handle_grant_cap(%{cap: cap}, ctx_for(caller_caps))
+             authorize(caller_caps, cap)
   end
 
   test "self and admin keep delegation-unbounded behavior (manager bound does not apply)" do
@@ -192,6 +198,9 @@ defmodule Ezagent.ActionSet.IdentityManagerDelegatedGrantTest do
       self_uri: target_instance(),
       read: fn :caps, _d -> MapSet.new() end
     }
+
+    assert :ok =
+             CapabilityRegistry.authorize_grant(admin_ctx.caps, cap, %{caller: admin_ctx.caller})
 
     assert {:ok, _result, effects} = IdentityAdmin.handle_grant_cap(%{cap: cap}, admin_ctx)
 

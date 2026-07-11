@@ -10,13 +10,35 @@ defmodule Ezagent.Architecture.CapArchDependencyTest do
 
   test "Ezagent.Cap has no domain module or umbrella-app dependency" do
     root = repo_root()
-    cap_source = File.read!(Path.join(root, "apps/ezagent_core/lib/ezagent/cap.ex"))
     core_mix = File.read!(Path.join(root, "apps/ezagent_core/mix.exs"))
 
-    refute cap_source =~ "Ezagent.Identity"
-    refute cap_source =~ "EzagentDomain"
-    refute cap_source =~ "ezagent_domain_"
+    references =
+      [
+        "apps/ezagent_core/lib/ezagent/cap.ex",
+        "apps/ezagent_core/lib/ezagent/cap/authority_loader.ex",
+        "apps/ezagent_core/lib/ezagent/capability_registry.ex"
+      ]
+      |> Enum.flat_map(&module_references(Path.join(root, &1)))
+
+    assert Enum.filter(references, &domain_module?/1) == []
     refute core_mix =~ ~r/\{:ezagent_domain_[a-z_]+,\s*in_umbrella:/
+  end
+
+  defp module_references(file) do
+    {:ok, ast} = Code.string_to_quoted(File.read!(file))
+
+    {_ast, references} =
+      Macro.prewalk(ast, [], fn
+        {:__aliases__, _, parts} = node, acc -> {node, [Module.concat(parts) | acc]}
+        node, acc -> {node, acc}
+      end)
+
+    references
+  end
+
+  defp domain_module?(module) do
+    name = Atom.to_string(module)
+    String.starts_with?(name, "Elixir.EzagentDomain") or name == "Elixir.Ezagent.Identity"
   end
 
   defp repo_root do
