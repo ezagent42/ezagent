@@ -77,3 +77,4 @@ defmodule EzagentPluginHello.HelloPublisherDispatchTest do
     assert {:ok, %{}, []} = result_allowed
   end
 end
+
