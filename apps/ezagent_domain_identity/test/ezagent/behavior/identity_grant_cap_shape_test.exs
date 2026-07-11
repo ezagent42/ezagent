@@ -43,35 +43,33 @@ defmodule Ezagent.ActionSet.IdentityGrantCapShapeTest do
   # auxiliary effects. Dispatch-parity through Kind.Runtime is covered
   # by `identity_migration_parity_test.exs`.
   defp invoke_shim(:grant_cap, slice, args, ctx) do
-    handler_ctx = Map.put(ctx, :read, fn key, default ->
-      case key do
-        :caps -> Map.get(slice, :caps, default)
-        _ -> default
+    handler_ctx =
+      Map.put(ctx, :read, fn key, default ->
+        case key do
+          :caps -> Map.get(slice, :caps, default)
+          _ -> default
+        end
+      end)
+
+    {:ok, result, effects} = IdentityAdmin.handle_grant_cap(args, handler_ctx)
+
+    new_caps =
+      case Enum.find(effects, &match?({:set, :caps, _}, &1)) do
+        {:set, :caps, set} -> set
+        nil -> Map.get(slice, :caps, MapSet.new())
       end
-    end)
 
-    case IdentityAdmin.handle_grant_cap(args, handler_ctx) do
-      {:ok, result, effects} ->
-        new_caps =
-          case Enum.find(effects, &match?({:set, :caps, _}, &1)) do
-            {:set, :caps, set} -> set
-            nil -> Map.get(slice, :caps, MapSet.new())
-          end
-
-        {:ok, %{slice | caps: new_caps}, result}
-
-      {:error, _} = err ->
-        err
-    end
+    {:ok, %{slice | caps: new_caps}, result}
   end
 
   defp invoke_shim(:revoke_cap, slice, args, ctx) do
-    handler_ctx = Map.put(ctx, :read, fn key, default ->
-      case key do
-        :caps -> Map.get(slice, :caps, default)
-        _ -> default
-      end
-    end)
+    handler_ctx =
+      Map.put(ctx, :read, fn key, default ->
+        case key do
+          :caps -> Map.get(slice, :caps, default)
+          _ -> default
+        end
+      end)
 
     case IdentityAdmin.handle_revoke_cap(args, handler_ctx) do
       {:ok, result, effects} ->
@@ -161,6 +159,7 @@ defmodule Ezagent.ActionSet.IdentityGrantCapShapeTest do
 
       [stored] = caps
       assert MapSet.size(new_slice.caps) == 1
+
       assert is_struct(stored, Capability),
              "expected a %Ezagent.Capability{} struct in the slice, got #{inspect(stored)}"
 
@@ -473,6 +472,7 @@ defmodule Ezagent.ActionSet.IdentityGrantCapShapeTest do
       }
 
       cap = Capability.normalize!(input, @granter)
+
       assert Capability.action_of(cap) == :bind,
              "atom-keyed grant input MUST propagate `:action` into the canonical struct"
     end
@@ -494,6 +494,7 @@ defmodule Ezagent.ActionSet.IdentityGrantCapShapeTest do
       }
 
       cap = Capability.normalize!(input, @granter)
+
       assert Capability.action_of(cap) == :bind,
              "string-keyed (CLI) grant input MUST propagate `\"action\"` into the canonical struct — pre-fix, the CLI's narrow `:bind` grant became a silent behavior-wildcard"
     end
@@ -513,6 +514,7 @@ defmodule Ezagent.ActionSet.IdentityGrantCapShapeTest do
 
     test "string-keyed map without \"action\" defaults to :any (back-compat with pre-SPEC CLI)" do
       cap = Capability.normalize!(shape_string_keyed_map(), @granter)
+
       assert Capability.action_of(cap) == :any,
              "pre-SPEC CLI payloads lacked `\"action\"`; the default is `:any` so old CLI grants behave like the pre-SPEC behavior-wildcard. New CLI grants narrow by passing an explicit `\"action\"` field."
     end
@@ -642,6 +644,7 @@ defmodule Ezagent.ActionSet.IdentityGrantCapShapeTest do
       assert MapSet.size(new_caps) == 1
 
       [survivor] = MapSet.to_list(new_caps)
+
       assert Capability.action_of(survivor) == :unbind,
              "revoking the `:bind` cap MUST leave the `:unbind` cap untouched — pre-fix, identity_key/1 ignored action axis so both caps had the same key and both got removed. SPEC 2026-05-27 HIGH-1."
     end
@@ -697,6 +700,7 @@ defmodule Ezagent.ActionSet.IdentityGrantCapShapeTest do
       }
 
       legacy_or_forged = Map.delete(full_legacy, :action)
+
       assert not Map.has_key?(legacy_or_forged, :action),
              "pre-condition: :action key absent (legacy OR forged shape)"
 

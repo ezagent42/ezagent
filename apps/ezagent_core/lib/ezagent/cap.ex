@@ -8,11 +8,12 @@ defmodule Ezagent.Cap do
   can replace these bodies with signing and signature verification without
   changing callers.
 
-  Grant authorization is deliberately still performed by the existing runtime
-  and Identity handler in S1. It moves into `issue/3` in S2.
+  `issue/3` loads the issuer's held authority through the dependency-inverted
+  durable loader and runs the complete grantor-authorization algorithm before
+  returning an artifact. Downstream handlers only store issued artifacts.
   """
 
-  alias Ezagent.Capability
+  alias Ezagent.{Capability, CapabilityRegistry}
 
   @type artifact :: Capability.t()
   @type authorization ::
@@ -22,15 +23,16 @@ defmodule Ezagent.Cap do
           | {:genesis, URI.t()}
 
   @doc """
-  Stamp issuer provenance and produce a capability artifact.
-
-  This is the mock issue seam. S2 adds the complete grantor-authorization
-  predicates before an artifact can be returned.
+  Authorize the issuer, stamp issuer provenance, and produce an artifact.
   """
   @spec issue(authorization(), URI.t(), Capability.t()) ::
           {:ok, artifact()} | {:error, term()}
   def issue(authorization, %URI{}, %Capability{} = cap) do
-    prepare_provenance(authorization, cap)
+    {caps, context} = authorization_context(authorization)
+
+    with :ok <- CapabilityRegistry.authorize_grant(caps, cap, context) do
+      prepare_provenance(authorization, cap)
+    end
   end
 
   @doc """
@@ -60,4 +62,31 @@ defmodule Ezagent.Cap do
   defp issuer({:admin, %URI{} = admin}), do: admin
   defp issuer({:rule, name, %URI{} = configurer}) when is_atom(name), do: configurer
   defp issuer({:genesis, %URI{} = granted_by}), do: granted_by
+
+  @doc false
+  @spec authorization_context(authorization()) :: {MapSet.t(Capability.t()), map()}
+  def authorization_context({:held_by, %URI{} = actor}) do
+    {load_held_caps(actor), %{caller: actor}}
+  end
+
+  def authorization_context({:admin, %URI{} = admin}) do
+    {load_held_caps(admin), %{caller: admin}}
+  end
+
+  def authorization_context({:rule, name, %URI{} = configurer}) when is_atom(name) do
+    {MapSet.new(), %{caller: configurer, authorization_rule: name}}
+  end
+
+  def authorization_context({:genesis, %URI{} = granted_by}) do
+    {MapSet.new([Capability.admin_genesis_cap()]), %{caller: granted_by}}
+  end
+
+  defp load_held_caps(actor) do
+    loader =
+      :ezagent_core
+      |> Application.fetch_env!(__MODULE__)
+      |> Keyword.fetch!(:authority_loader)
+
+    loader.read_held_caps(actor)
+  end
 end
