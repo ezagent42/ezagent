@@ -269,6 +269,16 @@ defmodule Ezagent.Orchestrator.McpServer do
 
     case Map.get(wc, :orchestrator_template_uri) do
       %URI{} -> {:ok, wc}
+      _ -> ordinary_orchestrator_working_copy(chat_slice, wc)
+    end
+  end
+
+  defp ordinary_orchestrator_working_copy(chat_slice, wc) do
+    with %URI{} = orchestrator_uri <- Map.get(wc, :orchestrator_uri),
+         members when is_map(members) <- Map.get(chat_slice, :members, %{}),
+         %{role_name: "orchestrator"} <- Map.get(members, orchestrator_uri) do
+      {:ok, wc}
+    else
       _ -> :error
     end
   end
