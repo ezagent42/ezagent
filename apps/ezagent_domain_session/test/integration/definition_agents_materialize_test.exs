@@ -52,6 +52,28 @@ defmodule EzagentDomainInstanceMessage.Integration.DefinitionAgentsMaterializeTe
     end
   end
 
+  # A flavor whose credential is an ENV VAR (like deepseek's `DEEPSEEK_API_KEY`),
+  # so the file-based pre-flight `CredentialPrecondition.check_source/3` waves it
+  # through and the missing-credential surfaces only at spawn as
+  # `{:deepseek_api_key_missing, uri}`. Mirrors the real cc-deepseek orchestrator
+  # in a keyless env (every CI without the key).
+  defmodule DeepseekMissingStubTemplate do
+    @moduledoc false
+    @behaviour Ezagent.Kind.Template
+
+    @impl Ezagent.Kind.Template
+    def template_name, do: "definition_agents.deepseek_missing_stub"
+
+    @impl Ezagent.Kind.Template
+    def validate(%{"agent_uri" => agent_uri}) when is_binary(agent_uri), do: :ok
+    def validate(_), do: {:error, :invalid_deepseek_missing_stub_template}
+
+    @impl Ezagent.Kind.Template
+    def instantiate(_name, data, _workspace_uri) do
+      {:error, {:deepseek_api_key_missing, Ezagent.URI.new!(data["agent_uri"])}}
+    end
+  end
+
   @workspace_uri URI.new!("workspace://system")
   @owner_uri URI.new!("entity://system/user/admin")
 
@@ -65,6 +87,19 @@ defmodule EzagentDomainInstanceMessage.Integration.DefinitionAgentsMaterializeTe
         flavor: flavor,
         kind: Ezagent.Entity.Agent,
         template_class: StubTemplate
+      })
+
+    flavor
+  end
+
+  defp register_deepseek_missing_flavor(n) do
+    flavor = "definition_agents_deepseek_missing_#{n}"
+
+    :ok =
+      Ezagent.AgentFlavorRegistry.register(%{
+        flavor: flavor,
+        kind: Ezagent.Entity.Agent,
+        template_class: DeepseekMissingStubTemplate
       })
 
     flavor
@@ -479,5 +514,50 @@ defmodule EzagentDomainInstanceMessage.Integration.DefinitionAgentsMaterializeTe
                @owner_uri,
                [%{recipe: missing, role_name: "ghost-#{n}"}]
              )
+  end
+
+  # Regression (WorldConversationTest PR-6 / O-1 flake): a role whose spawn fails
+  # with a MISSING-CREDENTIAL reason (`:deepseek_api_key_missing`, the keyless-CI
+  # condition for the cc-deepseek orchestrator) must be classified as a SKIP, not
+  # a hard error — so the batch CONTINUES and a co-declared credential-less role
+  # (the py helper) still materializes. Pre-fix, the credential-missing role
+  # returned `{:agent_spawn_failed, …}` → the `reduce_while` HALTED with an
+  # unhandled 3-tuple → the following role was never materialized AND the install
+  # transaction CRASHED with `CaseClauseError`. Ordered credential-missing FIRST
+  # so the "batch continues" guarantee is what's under test.
+  test "a missing-credential (env-var) spawn failure skips the role and the batch continues" do
+    n = uniq()
+    session_uri = live_session(n)
+    recipe_name = seed_recipe(n)
+    missing_flavor = register_deepseek_missing_flavor(n)
+    ok_flavor = register_stub_flavor(n)
+
+    cred_missing_role = "env-cred-#{n}"
+    ok_role = "ok-role-#{n}"
+
+    assert {:ok, summary} =
+             DefinitionAgents.materialize_definition_agents(
+               session_uri,
+               @workspace_uri,
+               @owner_uri,
+               [
+                 %{recipe: recipe_name, role_name: cred_missing_role, flavor: missing_flavor},
+                 %{recipe: recipe_name, role_name: ok_role, flavor: ok_flavor}
+               ]
+             )
+
+    # The credential-missing role is SKIPPED (not a hard error) with the
+    # `:no_credential_source` reason the durable `unfilled_agent_role_slots`
+    # record renders.
+    assert [%{role_name: ^cred_missing_role, reason: {:no_credential_source, ^missing_flavor}}] =
+             summary.skipped
+
+    # The batch CONTINUED: the role declared AFTER the skipped one materialized
+    # and joined as a live member (the exact "py never materialized" bug).
+    assert summary.satisfied == [ok_role]
+
+    members = members_of(session_uri)
+    assert %URI{} = SessionBehavior.role_name_to_uri(members, ok_role)
+    assert SessionBehavior.role_name_to_uri(members, cred_missing_role) == nil
   end
 end
