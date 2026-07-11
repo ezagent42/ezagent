@@ -148,3 +148,4 @@ defmodule Ezagent.ActionSet.HelloPublisher do
     ArgumentError -> :error
   end
 end
+
