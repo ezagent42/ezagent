@@ -8,7 +8,7 @@ description: Use this skill whenever a task involves Elixir, OTP, Phoenix, LiveV
 Produce Elixir, OTP, and Phoenix code the way an experienced Elixir engineer would: idiomatic, process-aware, version-accurate, and test-covered. The skill is anchored on OTP core (deepest reference) and supplemented with equally rigorous guides for Phoenix web, Ecto, real-time, and testing.
 
 **Default version targets (adjust based on project's `mix.exs`):**
-- Elixir 1.19+ / Erlang OTP 27+
+- Elixir 1.19+ / Erlang OTP 28+
 - Phoenix 1.8+ / LiveView 1.1+
 - Ecto 3.12+
 

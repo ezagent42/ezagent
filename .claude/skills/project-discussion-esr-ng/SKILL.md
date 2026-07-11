@@ -105,7 +105,7 @@ YAML interchange 是 `Ezagent.Socialware.ManifestYaml`（manifest_yaml.ex，cont
 
 - **25-app umbrella**，三层 + transport 顶层。app 索引见下表，逐 app 细节见 `references/module-details.md`。
 - **DB**：PostgreSQL @ docker `55432`。注意 core 源里 "SQLite" 注释是 stale（真 dep 是 `:postgrex`）；`workspaces`/KB 等确有 SQLite 局部用途（KB 用 exqlite per-KB 文件）。
-- **工具链**：mise 固定 OTP27 / Elixir 1.18（隔离）。
+- **工具链**：CI 固定 OTP 28 / Elixir 1.19；本地应使用同一大版本的隔离工具链。
 - **端口**：dev web `10042`。**admin**：`admin@ezagent.chat` / `worlddev`。
 - **两条核心差异（vs typical Phoenix app）**：(1) 是 router 不是 req/resp app——每条 message 没人接收要有人知道（telemetry+DLQ+显式 reject；#1259 后 PendingDelivery 溢出也进 DLQ `:buffer_full`）；(2) 跨 Kind 唯一路径是 dispatch（P14，`Ezagent.Router.dispatch/1` / legacy `Invocation.dispatch/1`），禁 `PubSub.broadcast` 到 inbound topic。
 
@@ -172,7 +172,7 @@ git -C <repo> log --oneline -5
 
 ## 测试
 
-**全部 best-effort，需现跑**（本轮 2026-07-09 全量 bootstrap **未跑任何测试**——只逐文件现读；工具链 mise OTP27/1.18 隔离；MEMORY 记 ~11 个稳定失败是工具链 triage、与代码无关）。
+**全部 best-effort，需现跑**（本轮 2026-07-09 全量 bootstrap **未跑任何测试**——只逐文件现读；工具链按 CI 的 OTP 28 / Elixir 1.19 隔离；MEMORY 记 ~11 个稳定失败是工具链 triage、与代码无关）。
 
 **跑法（umbrella 根，绝不 per-app `cd`）**：
 ```bash
