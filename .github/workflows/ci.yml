@@ -197,6 +197,129 @@ jobs:
           lsof -ti tcp:"$POSTGRES_PORT" | xargs -r kill -9 2>/dev/null || true
           rm -rf "$PGDATA_CI"
 
+  # DEPLOY-FIDELITY gate. The full-suite runs `mix test` on the self-hosted dev
+  # Mac, which carries ambient dev conditions the clean deploy container never has
+  # (mihomo proxy, a populated ~/.claude with tengu_harbor/creds, installed
+  # uv/node/claude, a dev Postgres, a full PATH). So CI can be green while the
+  # container is missing a file / env / OTP dep → runtime failure only in deploy —
+  # the class that caused the #1325 week-long orchestrator outage (esr-bridge
+  # sidecar resolved from a build-tree path that `mix release` never packaged).
+  #
+  # This builds the prod OTP release EXACTLY as docker/Dockerfile.prod's builder
+  # stage does (the deploy Dockerfile itself lives in the separate deploy repo per
+  # #1214 — we mirror its steps, we do NOT vendor it back), then boots that real
+  # artifact in a CLEAN, minimal env (env -i + a fresh blank HOME/EZAGENT_HOME) and
+  # health-probes it. On ubuntu (a clean OS + the linux/debian deploy target), with
+  # the ambient dev state stripped, it catches:
+  #   * a runtime asset resolved from a build-tree path absent in the release
+  #     (the #1325 esr-bridge sidecar packaging half — the resolution half is also
+  #     caught statically by DirRelativeRuntimeAssetTest in the `gate` job),
+  #   * a required runtime env var / OTP dep / native lib absent in a clean env,
+  #   * a :permanent app that silently fails to start on a clean boot,
+  #   * a boot/seed step that quietly depended on dev-Mac ambient state.
+  # It does NOT run tests — it only builds + boots — so it stays cheap, and it is
+  # gated behind `gate` so a broken branch never reaches it.
+  release-boot-smoke:
+    name: release-boot smoke (clean-env prod release)
+    needs: [gate]
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    env:
+      MIX_ENV: prod
+      POSTGRES_USER: ezagent_pg_compat
+      POSTGRES_PASSWORD: ezagent_pg_compat
+      POSTGRES_HOST: 127.0.0.1
+      POSTGRES_PORT: "5432"
+    services:
+      postgres:
+        image: postgres:16
+        env:
+          POSTGRES_USER: ezagent_pg_compat
+          POSTGRES_PASSWORD: ezagent_pg_compat
+          POSTGRES_DB: postgres
+        ports:
+          - 5432:5432
+        options: >-
+          --health-cmd "pg_isready -U ezagent_pg_compat"
+          --health-interval 10s
+          --health-timeout 5s
+          --health-retries 10
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Set up Elixir/OTP
+        uses: erlef/setup-beam@v1
+        with:
+          otp-version: "28"
+          elixir-version: "1.19"
+
+      # Node for the web asset build (Dockerfile.prod's builder installs node 22).
+      - name: Set up Node
+        uses: actions/setup-node@v4
+        with:
+          node-version: "22"
+
+      - name: Cache prod deps + _build
+        uses: actions/cache@v4
+        with:
+          path: |
+            deps
+            _build
+          key: ${{ runner.os }}-mix-prod-${{ hashFiles('**/mix.lock') }}
+          restore-keys: |
+            ${{ runner.os }}-mix-prod-
+
+      # --- build the release, mirroring docker/Dockerfile.prod's builder stage ---
+      - name: Fetch prod deps
+        run: mix deps.get --only prod
+
+      - name: Build web assets (setup + deploy)
+        run: |
+          cd apps/ezagent_web
+          mix assets.setup
+          mix assets.deploy
+
+      # Match Dockerfile.prod exactly (it uses npm here, not pnpm) so the release's
+      # feishu sidecar priv/ is packaged the same way deploy builds it.
+      - name: Feishu WS sidecar deps
+        run: cd apps/ezagent_plugin_feishu/priv/ws_sidecar && npm install --omit=dev
+
+      - name: Compile (prod)
+        run: mix compile
+
+      - name: Assemble release
+        run: mix release ezagent
+
+      # Packaging check — the #1325 half a static gate structurally cannot see:
+      # `mix release` packages only priv/, so a sidecar left in a source dir (or
+      # whose app was dropped from releases/0) is simply absent from the artifact.
+      # Assert the load-bearing agent sidecars actually shipped. Add a line when a
+      # new sidecar the runtime shells out to is introduced.
+      - name: Assert agent sidecars packaged in the release
+        run: |
+          set -euo pipefail
+          REL=_build/prod/rel/ezagent
+          missing=0
+          for f in \
+            "lib/ezagent_plugin_cc-*/priv/python/ezagent_mcp_bridge.py" \
+            "lib/ezagent_plugin_cc-*/priv/python/ezagent_cc_sdk_worker.py" \
+            "lib/ezagent_plugin_cc-*/priv/orchestrator_bridge.py" \
+            "lib/ezagent_plugin_codex-*/priv/python/ezagent_codex_bridge.py" \
+            "lib/ezagent_plugin_feishu-*/priv/ws_sidecar/main.js" \
+            "lib/ezagent_domain_python-*/priv/python" ; do
+            if compgen -G "$REL/$f" > /dev/null; then
+              echo "  ok: $f"
+            else
+              echo "  MISSING FROM RELEASE: $f" >&2; missing=1
+            fi
+          done
+          [ "$missing" = 0 ] || { echo "release is missing runtime sidecar assets (the #1325 class)"; exit 1; }
+
+      # Boot the real artifact in a scrubbed, minimal env + health-probe. All the
+      # clean-env logic lives in the script so it is runnable/debuggable locally.
+      - name: Boot release in a clean env + health check
+        run: bash .github/scripts/release-boot-smoke.sh
+
   gitleaks:
     name: gitleaks secret scan
     runs-on: ubuntu-latest
