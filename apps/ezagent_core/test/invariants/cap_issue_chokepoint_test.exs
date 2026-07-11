@@ -39,10 +39,10 @@ defmodule Ezagent.Invariants.CapIssueChokepointTest do
   @mint_candidate_sites 34
 
   @caps_writers %{
-    "apps/ezagent_domain_identity/lib/ezagent/behavior/identity.ex" => 2
+    "apps/ezagent_domain_identity/lib/ezagent/behavior/identity.ex" => 3
   }
   @caps_writer_files 1
-  @caps_writer_sites 2
+  @caps_writer_sites 3
 
   test "provenance-bearing capability construction allowlist can only shrink" do
     actual = provenance_constructors()

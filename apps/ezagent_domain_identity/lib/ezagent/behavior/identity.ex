@@ -421,6 +421,17 @@ defmodule Ezagent.ActionSet.IdentityAdmin do
     modes: [:call]
   )
 
+  action(:absorb_cap,
+    args: %{artifact: :map},
+    returns: %{caps: {:list, :map}},
+    caps: [{:absorb_cap, kind: :user, workspace_scoped?: false}],
+    description: "store a pre-issued capability in this principal's own caps slice",
+    modes: [:cast]
+  )
+
+  @doc "VM-internal self-store is provenance-gated in the handler, not by a held cap."
+  def cap_exempt_actions, do: [:absorb_cap]
+
   # =================================================================
   # Explicit `required_caps/0` — preserved `kind: :user` axis.
   # =================================================================
@@ -512,6 +523,42 @@ defmodule Ezagent.ActionSet.IdentityAdmin do
      ]}
   end
 
+  @doc "Store a verified pre-issued artifact; only the VM-internal hand-off may call it."
+  def handle_absorb_cap(%{artifact: artifact}, %{caller: :vm_internal} = ctx) do
+    with {:ok, cap_struct} <- normalize_artifact(artifact),
+         true <- Ezagent.Cap.verify(cap_struct) do
+      current_caps = ctx[:read].(:caps, MapSet.new())
+
+      deduped =
+        current_caps
+        |> Enum.reject(fn held ->
+          Ezagent.Capability.identity_key(held) == Ezagent.Capability.identity_key(cap_struct)
+        end)
+        |> MapSet.new()
+
+      new_caps = MapSet.put(deduped, cap_struct)
+
+      notify_cap_change(ctx, :cap_granted, "A new capability was granted to you.", cap_struct)
+
+      {:ok, %{caps: MapSet.to_list(new_caps)},
+       [
+         {:set, :caps, new_caps},
+         {:emit, :cap_granted,
+          %{
+            target_uri: Map.get(ctx, :self_uri) |> uri_to_str(),
+            cap: cap_struct,
+            via_manage: false,
+            via_absorb: true,
+            at: DateTime.utc_now()
+          }}
+       ]}
+    else
+      _ -> {:error, :invalid_cap_artifact}
+    end
+  end
+
+  def handle_absorb_cap(_args, _ctx), do: {:error, :unauthorized}
+
   @doc "Revoke a capability from this principal — normalizes the `cap` then removes the identity-key match via `Ezagent.Capability.revoke/2`, notifies the principal, and emits `:cap_revoked`."
   # NOTE (SPEC 2026-06-17 §3.3): a revoke dispatched under a `{:rule,…}` tag is
   # authorized SOLELY by the `Kind.Runtime` step-5.5 rule bypass; this handler runs
@@ -549,6 +596,18 @@ defmodule Ezagent.ActionSet.IdentityAdmin do
 
   defp uri_to_str(%URI{} = uri), do: URI.to_string(uri)
   defp uri_to_str(other), do: inspect(other)
+
+  defp normalize_artifact(%Ezagent.Capability{} = artifact), do: {:ok, artifact}
+
+  defp normalize_artifact(%{} = artifact) do
+    try do
+      {:ok, Ezagent.Capability.from_map(artifact)}
+    rescue
+      _ -> {:error, :invalid}
+    end
+  end
+
+  defp normalize_artifact(_artifact), do: {:error, :invalid}
 
   # SPEC 2026-06-17 §3.2 (MEDIUM-N3) — the `system://bootstrap` grant-path
   # fallback is REMOVED. Every grant/revoke now routes through
