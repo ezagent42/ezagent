@@ -17,7 +17,9 @@ defmodule EzagentDomainInstanceMessage.Integration.DefinitionAgentsMaterializeTe
   alias Ezagent.Agent.RecipeRegistry
   alias Ezagent.ActionSet.Session, as: SessionBehavior
   alias Ezagent.Entity.Session
+  alias Ezagent.Identity.RecipeCapBinding
   alias Ezagent.KindRegistry
+  alias EzagentCore.Repo
   alias EzagentDomainInstanceMessage.MaterializedRoleTestBehavior
   alias EzagentDomainInstanceMessage.SessionCreator.DefinitionAgents
 
@@ -52,6 +54,21 @@ defmodule EzagentDomainInstanceMessage.Integration.DefinitionAgentsMaterializeTe
     end
   end
 
+  defmodule FailingTemplate do
+    @moduledoc false
+    @behaviour Ezagent.Kind.Template
+
+    @impl Ezagent.Kind.Template
+    def template_name, do: "definition_agents.failing"
+
+    @impl Ezagent.Kind.Template
+    def validate(%{"class" => "definition_agents.failing"}), do: :ok
+    def validate(_), do: {:error, :invalid_definition_agents_failing_template}
+
+    @impl Ezagent.Kind.Template
+    def instantiate(_name, _data, _workspace_uri), do: {:error, :synthetic_spawn_failure}
+  end
+
   @workspace_uri URI.new!("workspace://system")
   @owner_uri URI.new!("entity://system/user/admin")
 
@@ -65,6 +82,19 @@ defmodule EzagentDomainInstanceMessage.Integration.DefinitionAgentsMaterializeTe
         flavor: flavor,
         kind: Ezagent.Entity.Agent,
         template_class: StubTemplate
+      })
+
+    flavor
+  end
+
+  defp register_failing_flavor(n) do
+    flavor = "definition_agents_failing_#{n}"
+
+    :ok =
+      Ezagent.AgentFlavorRegistry.register(%{
+        flavor: flavor,
+        kind: Ezagent.Entity.Agent,
+        template_class: FailingTemplate
       })
 
     flavor
@@ -183,6 +213,42 @@ defmodule EzagentDomainInstanceMessage.Integration.DefinitionAgentsMaterializeTe
     assert Enum.any?(caps, fn cap ->
              cap.behavior == Ezagent.ActionSet.Identity and cap.action == :list_caps
            end)
+
+    # S5 coexistence: create/1 self-stored the durable issued artifact, then the
+    # legacy post-join dispatch replaced the same identity key without a dup.
+    assert {:ok, %{caps: bound_caps, version: 1, issuer_uri: @owner_uri}} =
+             RecipeCapBinding.fetch(planned)
+
+    assert Enum.any?(bound_caps, &(&1.granted_by == @owner_uri))
+
+    assert Enum.count(caps, fn cap ->
+             cap.behavior == Ezagent.ActionSet.Identity and cap.action == :list_caps
+           end) == 1
+  end
+
+  test "definitive fresh spawn failure tombstones its pre-spawn binding" do
+    n = uniq()
+    session_uri = live_session(n)
+    recipe_name = seed_recipe(n)
+    role_name = "spawn-fails-#{n}"
+    flavor = register_failing_flavor(n)
+
+    assert {:error, {:agent_spawn_failed, ^role_name, _reason}, _partial} =
+             DefinitionAgents.materialize_definition_agents(
+               session_uri,
+               @workspace_uri,
+               @owner_uri,
+               [%{recipe: recipe_name, role_name: role_name, flavor: flavor}]
+             )
+
+    binding =
+      RecipeCapBinding
+      |> Repo.all()
+      |> Enum.find(&(&1.recipe_name == recipe_name))
+
+    assert %RecipeCapBinding{tombstoned_at: %DateTime{}} = binding
+    assert RecipeCapBinding.fetch(Ezagent.URI.new!(binding.agent_uri)) == :not_found
+    assert SessionBehavior.role_name_to_uri(members_of(session_uri), role_name) == nil
   end
 
   test "materializes a declared non-cc flavor agent with config, readiness, role, grants, and join" do
@@ -370,7 +436,13 @@ defmodule EzagentDomainInstanceMessage.Integration.DefinitionAgentsMaterializeTe
     # Chain C: a bare-bones Agent Kind spawned for testing has no credential
     # source and no materialized config home. Before the fix it was reused
     # silently; now it's skipped.
-    assert {:ok, %{satisfied: [], skipped: [%{role_name: ^role_name, reason: {:config_home_without_credentials, "cc"}}]}} =
+    assert {:ok,
+            %{
+              satisfied: [],
+              skipped: [
+                %{role_name: ^role_name, reason: {:config_home_without_credentials, "cc"}}
+              ]
+            }} =
              DefinitionAgents.materialize_definition_agents(
                session_uri,
                @workspace_uri,

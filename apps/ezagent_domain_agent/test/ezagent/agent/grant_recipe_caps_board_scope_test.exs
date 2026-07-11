@@ -122,4 +122,24 @@ defmodule Mix.Tasks.Ezagent.Agent.GrantRecipeCapsBoardScopeTest do
                cap_for(caps, Ezagent.ActionSet.Identity)
     end
   end
+
+  describe "fail-loud resolution" do
+    test "an unresolvable later template dispatches none of the earlier caps" do
+      agent_uri = spawn_bare_agent()
+      caps_before = caps_for(agent_uri)
+      missing_behavior = "Ezagent.ActionSet.DoesNotExistForRecipeGrant"
+
+      recipe = %{
+        requested_caps: [
+          %{behavior: Ezagent.ActionSet.ApiKeys, action: :put_api_key},
+          %{behavior: missing_behavior, action: :list_caps}
+        ]
+      }
+
+      assert {:error, {:behavior_not_loaded, ^missing_behavior}} =
+               GrantRecipeCaps.grant_recipe_caps(agent_uri, recipe, @telemetry_prefix)
+
+      assert caps_for(agent_uri) == caps_before
+    end
+  end
 end
