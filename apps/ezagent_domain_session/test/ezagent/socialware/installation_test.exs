@@ -40,9 +40,21 @@ defmodule Ezagent.Socialware.InstallationTest do
   end
 
   test "seeds orchestrator as a built-in socialware Definition using the cc plugin" do
+    # Force the orchestrator definition to the CODE version so this assertion is
+    # deterministic regardless of what the ambient DB already holds. Under the
+    # default no-clobber boot policy (Allen 2026-07-10), a reused DB carrying an
+    # older stored orchestrator (e.g. the pre-#1332 `cc` one) is intentionally NOT
+    # auto-migrated by `seed_builtin_definitions/0` — applying the code version is
+    # an explicit force. This test asserts the code definition's shape, so it
+    # forces it first (content-safe append + repoint, rolled back with the sandbox).
+    {:ok, _} = DefinitionRegistry.reseed_builtin_definition("orchestrator")
+
     assert {:ok, definition, _object} =
              DefinitionRegistry.lookup(Ezagent.URI.workspace(:system), "orchestrator")
 
+    # `uses` names the PLUGIN (cc); the orchestrator runs on the `cc-deepseek`
+    # provider FLAVOR of that plugin (#1332/#1324) — the built-in role flavor was
+    # brought into agreement with the cc-orchestrator AgentTemplate seed.
     assert definition.uses == ["cc"]
     assert definition.views == []
     assert definition.routing_rules == []
@@ -53,7 +65,7 @@ defmodule Ezagent.Socialware.InstallationTest do
                role_name: "orchestrator",
                fill: :agent,
                recipe: "orchestrator",
-               flavor: "cc"
+               flavor: "cc-deepseek"
              }
            ] = definition.roles
   end
