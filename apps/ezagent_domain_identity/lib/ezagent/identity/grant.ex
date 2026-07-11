@@ -26,9 +26,10 @@ defmodule Ezagent.Identity.Grant do
 
   ## The closed authorization-tag set
 
-  `prepare/4` derives ALL THREE roles from a single closed tagged
-  value. Each tag fixes BOTH which caps load into `ctx.caps` (the
-  authorizer) AND the derived `granted_by` (always a real entity):
+  `prepare/4` derives the dispatch context from a single closed tagged value,
+  while `Ezagent.Cap` is the shared provenance primitive for grant and revoke.
+  Each tag fixes BOTH which caps load into `ctx.caps` (the authorizer) AND the
+  derived `granted_by` (always a real entity):
 
   | tag | `ctx.caps` (authorizer) | `ctx.caller` | derived `granted_by` |
   |-----|-------------------------|--------------|----------------------|
@@ -42,7 +43,7 @@ defmodule Ezagent.Identity.Grant do
   > (satisfying dispatch step 5.5 for wildcard / no-data-owner grants the
   > entity caller's own caps lack), while `ctx.caller` stays the accountable
   > entity so the handler's `caller == owner` self-check still authorizes a
-  > concrete-data_owner grant. See `derive/1`.
+  > concrete-data_owner grant. See `derive_context/1`.
 
   `{:held_by, actor}` subsumes self (actor == target owner), admin
   (actor holds admin caps), and #811 manager-delegation (actor holds a
@@ -57,7 +58,7 @@ defmodule Ezagent.Identity.Grant do
   `system://` principal in the authorization path.
 
   `granted_by` is **derived from the tag** — never a parameter the
-  caller can set to itself. The chokepoint EXPLICITLY OVERWRITES the
+  caller can set to itself. `Ezagent.Cap` EXPLICITLY OVERWRITES the
   cap's `granted_by` (a struct update — NOT via `normalize!/2`, which
   returns a `%Capability{}` unchanged and would leave a pre-existing
   non-entity `granted_by` in place) and then VALIDATES it is
@@ -76,7 +77,7 @@ defmodule Ezagent.Identity.Grant do
   (fail-fast, let-it-crash).
   """
 
-  alias Ezagent.{Capability, Cmd, Invocation, Router}
+  alias Ezagent.{Cap, Capability, Cmd, Invocation, Router}
 
   @type authorization ::
           {:held_by, URI.t()}
@@ -214,48 +215,50 @@ defmodule Ezagent.Identity.Grant do
     {:dispatch_returning, cmd!(target, cap, authorization, :revoke_cap, :sync), bind_as: bind_as}
   end
 
-  # ── CORE: prepare/4 — the ONLY place granted_by is derived ────────────
+  # ── CORE: prepare/4 — dispatch adapter over the Cap provenance seam ───
 
-  # Derives ctx.caps + ctx.caller + granted_by + authorization_rule from
-  # the tag, OVERWRITES the cap's granted_by (struct update — NOT
-  # normalize!/2), and VALIDATES the derived granted_by is an entity URI.
+  # Derives ctx.caps + ctx.caller + authorization_rule from the tag. Grant
+  # routes through Cap.issue/3; revoke routes through the SAME lower-level
+  # Cap.prepare_provenance/2 primitive without invoking grant authorization.
   # Returns the canonical {target_with_action, cap', ctx'} or {:error, _}.
   @spec prepare(URI.t(), Capability.t(), authorization(), grant_action()) ::
           {:ok, {URI.t(), Capability.t(), map()}} | {:error, term()}
   defp prepare(%URI{} = target, %Capability{} = cap, authorization, action)
        when action in [:grant_cap, :revoke_cap] do
-    {caps, caller, granted_by, rule} = derive(authorization)
+    {caps, caller, rule} = derive_context(authorization)
 
-    # OVERWRITE the cap's granter (explicit struct update). normalize!/2
-    # is NOT used here: for a %Capability{} it is a passthrough that
-    # ignores the granter, so a pre-existing system-principal granted_by
-    # would survive — exactly the #154 bug.
-    cap2 = %{cap | granted_by: granted_by, granted_at: DateTime.utc_now()}
+    artifact_result =
+      case action do
+        :grant_cap -> Cap.issue(authorization, target, cap)
+        :revoke_cap -> Cap.prepare_provenance(authorization, cap)
+      end
 
-    if match?(%URI{scheme: "entity"}, granted_by) do
-      ctx = build_ctx(caps, caller, rule)
-      target_uri = Ezagent.URI.with_action(target, :identity, action)
-      {:ok, {target_uri, cap2, ctx}}
-    else
-      {:error, {:granter_not_entity, granted_by}}
+    case artifact_result do
+      {:ok, cap2} ->
+        ctx = build_ctx(caps, caller, rule)
+        target_uri = Ezagent.URI.with_action(target, :identity, action)
+        {:ok, {target_uri, cap2, ctx}}
+
+      {:error, _} = error ->
+        error
     end
   end
 
-  # ── tag → {caps, caller, granted_by, rule} ────────────────────────────
+  # ── tag → {caps, caller, rule} ────────────────────────────────────────
 
-  defp derive({:held_by, %URI{} = actor}) do
-    {Ezagent.Identity.read_held_caps(actor), actor, actor, nil}
+  defp derive_context({:held_by, %URI{} = actor}) do
+    {Ezagent.Identity.read_held_caps(actor), actor, nil}
   end
 
-  defp derive({:admin, %URI{} = admin}) do
-    {Ezagent.Identity.read_held_caps(admin), admin, admin, nil}
+  defp derive_context({:admin, %URI{} = admin}) do
+    {Ezagent.Identity.read_held_caps(admin), admin, nil}
   end
 
-  defp derive({:rule, name, %URI{} = configurer}) when is_atom(name) do
-    {MapSet.new(), configurer, configurer, name}
+  defp derive_context({:rule, name, %URI{} = configurer}) when is_atom(name) do
+    {MapSet.new(), configurer, name}
   end
 
-  defp derive({:genesis, %URI{} = granted_by}) do
+  defp derive_context({:genesis, %URI{} = granted_by}) do
     # #154 genesis collapse (2026-06-20) — the genesis authorizer. ctx.caps =
     # the canonical admin-granted genesis wildcard
     # (`Ezagent.Capability.admin_genesis_cap/0`, granted_by the admin entity —
@@ -269,7 +272,7 @@ defmodule Ezagent.Identity.Grant do
     # `{:system, principal, granted_by}` tag (the authorizer caps came from
     # the bootstrap principal's Catalog row; now they come from the admin
     # entity's immutable genesis cap, with no `system://` reference anywhere).
-    {MapSet.new([Ezagent.Capability.admin_genesis_cap()]), granted_by, granted_by, nil}
+    {MapSet.new([Ezagent.Capability.admin_genesis_cap()]), granted_by, nil}
   end
 
   # ── shared envelope helpers ───────────────────────────────────────────

@@ -77,7 +77,11 @@ defmodule Ezagent.Identity.GrantTest do
       configurer = Ezagent.URI.new!("entity://team-alpha/user/operator")
 
       {:dispatch, cmd} =
-        Grant.grant_cap_effect(target_user(), concrete_cap(), {:rule, :feishu_binding, configurer})
+        Grant.grant_cap_effect(
+          target_user(),
+          concrete_cap(),
+          {:rule, :feishu_binding, configurer}
+        )
 
       assert cmd.ctx.authorization_rule == :feishu_binding
       assert cmd.ctx.caps == MapSet.new()
@@ -217,5 +221,49 @@ defmodule Ezagent.Identity.GrantTest do
                c.behavior == Ezagent.ActionSet.Template and c.granted_by == @admin_uri
              end)
     end
+  end
+
+  describe "C3 revoke authorization remains unchanged" do
+    test "ordinary held-cap revoke still removes the matching capability" do
+      grantee = target_user()
+      {:ok, _} = Ezagent.SpawnRegistry.spawn(@admin_uri)
+      {:ok, _} = Ezagent.SpawnRegistry.spawn(grantee)
+      Ezagent.ReadyGate.await(@admin_uri, 2_000)
+      Ezagent.ReadyGate.await(grantee, 2_000)
+
+      assert :ok = Grant.grant_cap(grantee, concrete_cap(), {:held_by, @admin_uri})
+      assert cap_present?(grantee)
+
+      assert :ok = Grant.revoke_cap(grantee, concrete_cap(), {:held_by, @admin_uri})
+      refute cap_present?(grantee)
+    end
+
+    test "rule-based revoke still bypasses grant authz and only de-escalates" do
+      grantee = target_user()
+      configurer = Ezagent.URI.new!("entity://team-alpha/user/rule-configurer")
+      {:ok, _} = Ezagent.SpawnRegistry.spawn(@admin_uri)
+      {:ok, _} = Ezagent.SpawnRegistry.spawn(grantee)
+      Ezagent.ReadyGate.await(@admin_uri, 2_000)
+      Ezagent.ReadyGate.await(grantee, 2_000)
+
+      assert :ok = Grant.grant_cap(grantee, concrete_cap(), {:held_by, @admin_uri})
+      assert cap_present?(grantee)
+
+      assert :ok =
+               Grant.revoke_cap(grantee, concrete_cap(), {
+                 :rule,
+                 :session_membership_cleanup,
+                 configurer
+               })
+
+      refute cap_present?(grantee)
+    end
+  end
+
+  defp cap_present?(grantee) do
+    Enum.any?(Ezagent.Identity.list_caps_for(grantee), fn cap ->
+      cap.behavior == Ezagent.ActionSet.Template and
+        cap.instance == {:within_workspace, ws()}
+    end)
   end
 end
