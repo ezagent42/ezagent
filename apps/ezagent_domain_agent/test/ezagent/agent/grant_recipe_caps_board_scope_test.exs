@@ -12,15 +12,32 @@ defmodule Mix.Tasks.Ezagent.Agent.GrantRecipeCapsBoardScopeTest do
   behaviors' caps to the override target, while every other cap stays
   self-scoped.
 
-  Pure grant-side assertions on the landed cap shape (least-priv: a CONCRETE
+  Pure issue/self-store assertions on the landed cap shape (least-priv: a CONCRETE
   board instance, NOT a wildcard) — the dispatch-time positive/越权 proof is the
   kanban e2e (`DispatchVerbKanbanTest`). `async: false` (spawns a live agent +
-  grants on its identity slice).
+  absorbs on its identity slice).
   """
 
   use EzagentCore.DataCase, async: false
 
   alias Mix.Tasks.Ezagent.Agent.GrantRecipeCaps
+
+  defmodule PermissiveProposalBehavior do
+    @moduledoc false
+  end
+
+  defmodule AdminRequiredProposalBehavior do
+    @moduledoc false
+    def data_owner(_instance), do: :no_owner
+  end
+
+  defmodule AuthorityLoaderStub do
+    @moduledoc false
+    @behaviour Ezagent.Cap.AuthorityLoader
+
+    @impl true
+    def read_held_caps(_actor), do: Process.get({__MODULE__, :caps}, MapSet.new())
+  end
 
   @telemetry_prefix [:ezagent, :test, :t7g, :grant]
 
@@ -40,6 +57,18 @@ defmodule Mix.Tasks.Ezagent.Agent.GrantRecipeCapsBoardScopeTest do
         uri: uri,
         behaviors: Ezagent.Entity.Agent.base_behaviors()
       })
+
+    on_exit(fn ->
+      _ = Ezagent.PendingDelivery.flush(uri)
+
+      case Ezagent.KindRegistry.lookup(uri) do
+        {:ok, pid} when is_pid(pid) ->
+          if Process.alive?(pid), do: Ezagent.Kind.terminate(uri)
+
+        _ ->
+          :ok
+      end
+    end)
 
     wait_ready(uri)
     uri
@@ -121,6 +150,60 @@ defmodule Mix.Tasks.Ezagent.Agent.GrantRecipeCapsBoardScopeTest do
       assert %Ezagent.Capability{instance: ^self_instance} =
                cap_for(caps, Ezagent.ActionSet.Identity)
     end
+
+    test "same-instance override stays non-blocking and a duplicate identity buffers once" do
+      agent_uri = spawn_bare_agent()
+      {:ok, agent_pid} = Ezagent.KindRegistry.lookup(agent_uri)
+      :ok = Ezagent.ReadyGate.put(agent_uri, :not_ready)
+      buffer_size_before = Ezagent.PendingDelivery.buffer_size(agent_uri)
+
+      recipe = %{
+        requested_caps: [
+          %{behavior: Ezagent.ActionSet.ApiKeys, action: :put_api_key},
+          %{behavior: Ezagent.ActionSet.ApiKeys, action: :put_api_key}
+        ]
+      }
+
+      task =
+        Task.async(fn ->
+          receive do
+            :run ->
+              GrantRecipeCaps.grant_recipe_caps(
+                agent_uri,
+                recipe,
+                @telemetry_prefix,
+                %{Ezagent.ActionSet.ApiKeys => agent_uri}
+              )
+          end
+        end)
+
+      Ecto.Adapters.SQL.Sandbox.allow(EzagentCore.Repo, self(), task.pid)
+      send(task.pid, :run)
+
+      assert {:ok, :ok} = Task.yield(task, 5_000) || Task.shutdown(task, :brutal_kill)
+      assert Ezagent.ReadyGate.status(agent_uri) == :not_ready
+      assert Ezagent.PendingDelivery.buffer_size(agent_uri) == buffer_size_before + 1
+
+      assert :ready =
+               Ezagent.Kind.ReadyTransition.drain_pending_then_mark_ready(
+                 URI.to_string(agent_uri),
+                 agent_pid
+               )
+
+      assert eventually(fn ->
+               with {:ok, slice} <- Ezagent.Kind.get_slice(agent_uri, :identity) do
+                 caps = slice |> Ezagent.Kind.normalize_slice_view() |> Map.fetch!(:caps)
+
+                 Enum.any?(caps, fn cap ->
+                   cap.behavior == Ezagent.ActionSet.ApiKeys and
+                     cap.action == :put_api_key and
+                     cap.instance == Ezagent.URI.instance(agent_uri)
+                 end)
+               else
+                 _ -> false
+               end
+             end)
+    end
   end
 
   describe "fail-loud resolution" do
@@ -140,6 +223,69 @@ defmodule Mix.Tasks.Ezagent.Agent.GrantRecipeCapsBoardScopeTest do
                GrantRecipeCaps.grant_recipe_caps(agent_uri, recipe, @telemetry_prefix)
 
       assert caps_for(agent_uri) == caps_before
+    end
+
+    test "complete ISSUE authorization finishes before any absorb hand-off" do
+      agent_uri = spawn_bare_agent()
+      caps_before = caps_for(agent_uri)
+      previous = Application.fetch_env!(:ezagent_core, Ezagent.Cap)
+
+      on_exit(fn ->
+        Application.put_env(:ezagent_core, Ezagent.Cap, previous)
+        Process.delete({AuthorityLoaderStub, :caps})
+      end)
+
+      Application.put_env(
+        :ezagent_core,
+        Ezagent.Cap,
+        Keyword.put(previous, :authority_loader, AuthorityLoaderStub)
+      )
+
+      Process.put({AuthorityLoaderStub, :caps}, MapSet.new())
+      buffer_size_before = Ezagent.PendingDelivery.buffer_size(agent_uri)
+
+      permissive_proposal =
+        Ezagent.Capability.cap(
+          :agent,
+          PermissiveProposalBehavior,
+          :first,
+          Ezagent.URI.instance(agent_uri),
+          Ezagent.Capability.workspace_of(agent_uri)
+        )
+
+      assert {:ok, %Ezagent.Capability{behavior: PermissiveProposalBehavior}} =
+               Ezagent.Cap.issue(
+                 {:admin, Ezagent.Entity.User.admin_uri()},
+                 agent_uri,
+                 permissive_proposal
+               )
+
+      recipe = %{
+        requested_caps: [
+          %{behavior: PermissiveProposalBehavior, action: :first},
+          %{behavior: AdminRequiredProposalBehavior, action: :second}
+        ]
+      }
+
+      assert {:error,
+              {:grant_failed, %Ezagent.Capability{behavior: AdminRequiredProposalBehavior},
+               :grant_owner_unresolvable}} =
+               GrantRecipeCaps.grant_recipe_caps(agent_uri, recipe, @telemetry_prefix)
+
+      assert caps_for(agent_uri) == caps_before
+      assert Ezagent.PendingDelivery.buffer_size(agent_uri) == buffer_size_before
+    end
+  end
+
+  defp eventually(fun, attempts \\ 100)
+  defp eventually(_fun, 0), do: false
+
+  defp eventually(fun, attempts) do
+    if fun.() do
+      true
+    else
+      Process.sleep(10)
+      eventually(fun, attempts - 1)
     end
   end
 end

@@ -246,6 +246,39 @@ defmodule Ezagent.Identity do
     grant_cap(entity_uri, Map.put(cap_params, :workspace_uri, default_ws), granter_uri)
   end
 
+  @doc """
+  Hand an already-issued capability artifact to `entity_uri` for self-storage.
+
+  This is the sole producer-side `absorb_cap` envelope. It canonicalizes the
+  grantee, dispatches a VM-internal fire-and-forget cast, and never waits for
+  readiness. A not-ready local Kind therefore buffers the artifact through
+  `PendingDelivery`; authorization already completed at `Ezagent.Cap.issue/3`.
+  """
+  @spec absorb_cap(URI.t() | String.t(), Ezagent.Capability.t()) ::
+          :ok | {:error, term()}
+  def absorb_cap(entity_uri, %Ezagent.Capability{} = artifact) do
+    target = entity_uri |> parse_uri() |> Ezagent.URI.instance()
+
+    cmd = %Cmd{
+      target: Ezagent.URI.with_action(target, :identity, :absorb_cap),
+      action: :absorb_cap,
+      args: %{artifact: artifact},
+      ctx: %{
+        caller: :vm_internal,
+        caps: MapSet.new(),
+        mode: :cast,
+        reply: :ignore
+      }
+    }
+
+    case Router.dispatch(cmd) do
+      :ok -> :ok
+      {:ok, _result} -> :ok
+      {:error, _reason} = error -> error
+      other -> {:error, {:unexpected_absorb_result, other}}
+    end
+  end
+
   defp build_cap_from_params(%{} = p, granter_uri) do
     %Ezagent.Capability{
       kind: Map.get(p, :kind, :any),
