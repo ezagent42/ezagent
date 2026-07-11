@@ -151,6 +151,186 @@ defmodule Ezagent.InvocationTest do
       :ok = Ezagent.ReadyGate.mark_ready(uri)
     end
 
+    test ":not_ready in-flight cast cannot cross into a replacement Kind", %{instance_uri: uri} do
+      {:ok, old_pid} = Ezagent.KindRegistry.lookup(uri)
+      :ok = Ezagent.ReadyGate.put(uri, :not_ready)
+      parent = self()
+
+      lock_holder =
+        Task.async(fn ->
+          Ezagent.PendingDelivery.with_lock(uri, fn ->
+            send(parent, {:pending_lock_held, self()})
+
+            receive do
+              :release_pending_lock -> :ok
+            end
+          end)
+        end)
+
+      assert_receive {:pending_lock_held, lock_pid}, 1_000
+      assert lock_pid == lock_holder.pid
+
+      inv = %Invocation{
+        target: Ezagent.URI.new!("#{URI.to_string(uri)}?action=test.noop"),
+        mode: :cast,
+        args: %{msg: "old-incarnation-authority"},
+        ctx: ctx_for(self())
+      }
+
+      dispatch =
+        Task.async(fn ->
+          receive do
+            :run -> Invocation.dispatch(inv)
+          end
+        end)
+
+      :ok = Ecto.Adapters.SQL.Sandbox.allow(EzagentCore.Repo, self(), dispatch.pid)
+
+      assert :erlang.trace_pattern(
+               {Ezagent.Invocation, :dispatch_cast_at_linearization_point, 3},
+               true,
+               [:local]
+             ) >= 0
+
+      assert 1 = :erlang.trace(dispatch.pid, true, [:call])
+
+      on_exit(fn ->
+        if Process.alive?(dispatch.pid) do
+          :erlang.trace(dispatch.pid, false, [:call])
+        end
+
+        :erlang.trace_pattern(
+          {Ezagent.Invocation, :dispatch_cast_at_linearization_point, 3},
+          false,
+          [:local]
+        )
+      end)
+
+      send(dispatch.pid, :run)
+
+      # Observe the cast linearization call after Invocation captured old_pid
+      # and before it can acquire the held URI lock. This is deterministic even
+      # when the runner has not scheduled the Task promptly.
+      assert_receive {:trace, dispatch_pid, :call,
+                      {Ezagent.Invocation, :dispatch_cast_at_linearization_point,
+                       [_target_uri, _invocation, ^old_pid]}},
+                     1_000
+
+      assert dispatch_pid == dispatch.pid
+      :erlang.trace(dispatch.pid, false, [:call])
+
+      :erlang.trace_pattern(
+        {Ezagent.Invocation, :dispatch_cast_at_linearization_point, 3},
+        false,
+        [:local]
+      )
+
+      :ok = GenServer.stop(old_pid, :normal)
+      assert wait_until_unregistered(uri)
+
+      # Replacement publication now uses the same pending lock. Start it while
+      # the lock is held to prove it cannot overtake the old dispatch; await it
+      # only after releasing the linearization point.
+      test_pid = self()
+
+      replacement_parent =
+        spawn(fn ->
+          send(test_pid, {:replacement_starting, self()})
+          result = Ezagent.Kind.Server.start_link({TestKind, %{uri: uri}})
+          send(test_pid, {:replacement_started, self(), result})
+
+          receive do
+            :release_replacement_parent -> :ok
+          end
+        end)
+
+      on_exit(fn ->
+        if Process.alive?(replacement_parent), do: Process.exit(replacement_parent, :kill)
+      end)
+
+      assert_receive {:replacement_starting, ^replacement_parent}, 1_000
+      refute_receive {:replacement_started, ^replacement_parent, _result}, 100
+
+      send(lock_holder.pid, :release_pending_lock)
+      assert :ok = Task.await(lock_holder, 1_000)
+
+      assert {:error, :stale_incarnation} = Task.await(dispatch, 1_000)
+
+      assert_receive {:replacement_started, ^replacement_parent, {:ok, new_pid}}, 1_000
+      assert Ezagent.PendingDelivery.buffer_size(uri) == 0
+
+      assert [["stale_incarnation"]] =
+               EzagentCore.Repo.query!("SELECT reason FROM dlq ORDER BY id DESC LIMIT 1").rows
+
+      :ok = Ezagent.ReadyGate.mark_ready(uri)
+      :ok = GenServer.stop(new_pid, :normal)
+      send(replacement_parent, :release_replacement_parent)
+    end
+
+    test "replacement registration and cast delivery share one URI linearization point", %{
+      instance_uri: uri
+    } do
+      {:ok, old_pid} = Ezagent.KindRegistry.lookup(uri)
+      :ok = GenServer.stop(old_pid, :normal)
+      assert wait_until_unregistered(uri)
+
+      # Model the exact Kind.Server publication sequence while holding the
+      # PendingDelivery lock: Registry first, then ReadyGate :not_ready. The
+      # stale gate deliberately remains :ready between those two writes.
+      parent = self()
+
+      replacement_pid =
+        spawn(fn ->
+          Ezagent.PendingDelivery.with_lock(uri, fn ->
+            :ok = Ezagent.KindRegistry.put_new(uri)
+            send(parent, {:replacement_pid_published, self()})
+
+            receive do
+              :publish_not_ready -> :ok = Ezagent.ReadyGate.put(uri, :not_ready)
+            end
+          end)
+
+          send(parent, {:replacement_publication_complete, self()})
+          forwarding_loop(parent)
+        end)
+
+      on_exit(fn ->
+        if Process.alive?(replacement_pid), do: Process.exit(replacement_pid, :kill)
+      end)
+
+      assert_receive {:replacement_pid_published, ^replacement_pid}, 1_000
+      assert Ezagent.ReadyGate.status(uri) == :ready
+
+      inv = %Invocation{
+        target: Ezagent.URI.new!("#{URI.to_string(uri)}?action=test.noop"),
+        mode: :cast,
+        args: %{msg: "must-enter-pending-before-persistence"},
+        ctx: ctx_for(self())
+      }
+
+      dispatch = Task.async(fn -> Invocation.dispatch(inv) end)
+      :ok = Ecto.Adapters.SQL.Sandbox.allow(EzagentCore.Repo, self(), dispatch.pid)
+
+      # A cast may not use the stale :ready row while replacement publication
+      # owns the URI lock. It must wait until :not_ready is visible, then buffer.
+      assert Task.yield(dispatch, 100) == nil
+
+      send(replacement_pid, :publish_not_ready)
+      assert_receive {:replacement_publication_complete, ^replacement_pid}, 1_000
+      assert :ok = Task.await(dispatch, 1_000)
+      assert Ezagent.PendingDelivery.buffer_size(uri) == 1
+      refute_receive {:replacement_received, _message}, 100
+
+      # Initial persistence failure/definitive teardown drains the buffered
+      # artifact loudly; it was never queued directly in the replacement.
+      assert :ok = Ezagent.Kind.ReadyTransition.mark_failed(uri)
+      assert Ezagent.PendingDelivery.buffer_size(uri) == 0
+      refute_receive {:replacement_received, _message}, 100
+
+      assert [["never_ready"]] =
+               EzagentCore.Repo.query!("SELECT reason FROM dlq ORDER BY id DESC LIMIT 1").rows
+    end
+
     test ":not_ready + :cast at PendingDelivery cap → LOUD {:error, :buffer_full} + DLQ row (never a silent :ok)",
          %{instance_uri: uri} do
       # PR #1259 codex review item 2 — pre-fix, `dispatch/1` DISCARDED the
@@ -216,6 +396,28 @@ defmodule Ezagent.InvocationTest do
       }
 
       assert {:error, :unsupported_mode} = Invocation.dispatch(inv)
+    end
+  end
+
+  defp wait_until_unregistered(uri, attempts \\ 100)
+  defp wait_until_unregistered(_uri, 0), do: false
+
+  defp wait_until_unregistered(uri, attempts) do
+    case Ezagent.KindRegistry.lookup(uri) do
+      :error ->
+        true
+
+      {:ok, _pid} ->
+        Process.sleep(10)
+        wait_until_unregistered(uri, attempts - 1)
+    end
+  end
+
+  defp forwarding_loop(parent) do
+    receive do
+      message ->
+        send(parent, {:replacement_received, message})
+        forwarding_loop(parent)
     end
   end
 

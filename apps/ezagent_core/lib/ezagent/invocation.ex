@@ -104,6 +104,9 @@ defmodule Ezagent.Invocation do
           | :ok
           | {:error, :no_such_actor}
           | {:error, :not_ready}
+          | {:error, :failed}
+          | {:error, :stale_incarnation}
+          | {:error, :buffer_full}
           | {:error, :activate_timeout}
           | {:error, :unsupported_mode}
           | {:error, {:invalid_args, list()}}
@@ -182,30 +185,42 @@ defmodule Ezagent.Invocation do
   # not a replacement; BootReconciler covers the "subscribe to peer
   # before any dispatch reaches us" case, lazy-spawn covers the
   # "dispatch lands while the Kind's process was reaped" case.
+  defp dispatch_with_lazy_spawn(instance_uri, :cast, inv) do
+    expected_incarnation = current_incarnation(instance_uri)
+
+    case dispatch_cast_at_linearization_point(instance_uri, inv, expected_incarnation) do
+      :ok ->
+        :ok
+
+      {:error, :buffer_full} ->
+        pending_delivery_overflow(instance_uri, inv)
+
+      {:error, :failed} ->
+        {:error, :failed}
+
+      {:error, :incarnation_changed} ->
+        pending_delivery_incarnation_changed(instance_uri, inv)
+
+      {:error, :dead_target} ->
+        pre_delivery_error(inv, :no_such_actor)
+
+      {:retry, :ready} ->
+        dispatch_with_lazy_spawn(instance_uri, :cast, inv)
+
+      {:retry, :unknown} ->
+        attempt_lazy_spawn_and_redispatch(instance_uri, :cast, inv)
+    end
+  end
+
   defp dispatch_with_lazy_spawn(instance_uri, mode, inv) do
+    expected_incarnation = current_incarnation(instance_uri)
+
     case {Ezagent.ReadyGate.status(instance_uri), mode} do
       {:ready, _} ->
-        deliver_to_ready(instance_uri, mode, inv)
+        deliver_to_ready(instance_uri, mode, inv, expected_incarnation)
 
       {:failed, _} ->
         {:error, :failed}
-
-      {:not_ready, :cast} ->
-        # Buffer for delivery once instance announces ready.
-        #
-        # PR #1259 codex review item 2 — the overflow return was silently
-        # DISCARDED here (`buffer/2` → `{:error, :buffer_full}` ignored, `:ok`
-        # returned), so during a long `:not_ready` activation window (e.g. a py
-        # member's cold `uv` provision) message #101+ to one member vanished
-        # while upstream (session delivery) recorded it as delivered. Surface
-        # it: loud log + telemetry + the Decision #67 DLQ sink (the moduledoc
-        # always said "Overflow falls to DLQ"; it was never wired) + the same
-        # `{:error, reason}` cast return shape `:no_such_actor` already uses,
-        # so callers (session delivery) can refuse to mark delivered.
-        case Ezagent.PendingDelivery.buffer(instance_uri, inv) do
-          :ok -> :ok
-          {:error, :buffer_full} -> pending_delivery_overflow(instance_uri, inv)
-        end
 
       {:not_ready, m} when m in [:call, :call_stream] ->
         # Readiness contract (post-lifecycle remediation, spec C-A):
@@ -229,6 +244,53 @@ defmodule Ezagent.Invocation do
       {:unknown, _} ->
         attempt_lazy_spawn_and_redispatch(instance_uri, mode, inv)
     end
+  end
+
+  # Cast readiness, incarnation validation, and the final mailbox/buffer write
+  # share PendingDelivery's URI lock with Kind registration and ready/failed
+  # transitions. Without this one linearization point, a replacement PID could
+  # become visible while the URI still carried its predecessor's :ready row;
+  # a cast would then bypass the buffer and be lost if initial persistence failed.
+  defp dispatch_cast_at_linearization_point(instance_uri, inv, expected_incarnation) do
+    Ezagent.PendingDelivery.with_lock(instance_uri, fn ->
+      current_incarnation = current_incarnation(instance_uri)
+
+      if current_incarnation != expected_incarnation do
+        {:error, :incarnation_changed}
+      else
+        case {Ezagent.ReadyGate.status(instance_uri), expected_incarnation} do
+          {:ready, pid} when is_pid(pid) ->
+            if Process.alive?(pid) do
+              GenServer.cast(pid, {:ezagent_dispatch, inv})
+              :ok
+            else
+              {:error, :dead_target}
+            end
+
+          {:ready, :unregistered} ->
+            # The readiness row outlived an already-gone target. Preserve the
+            # established missing-actor contract; there is no replacement
+            # incarnation here to classify as stale authority transfer.
+            {:error, :dead_target}
+
+          {:not_ready, _incarnation} ->
+            Ezagent.PendingDelivery.buffer_if_not_ready_locked(
+              instance_uri,
+              inv,
+              expected_incarnation
+            )
+
+          {:failed, _incarnation} ->
+            {:error, :failed}
+
+          {:unknown, :unregistered} ->
+            {:retry, :unknown}
+
+          {:unknown, _registered_pid} ->
+            {:error, :incarnation_changed}
+        end
+      end
+    end)
   end
 
   # The cold-spawn-from-snapshot attempt. Returns the dispatch outcome
@@ -292,31 +354,8 @@ defmodule Ezagent.Invocation do
     end
   end
 
-  defp deliver_to_ready(instance_uri, :cast, inv) do
-    # Kind-death race (see the :call clause below for the full picture).
-    # A `GenServer.cast` to a dead pid does NOT raise — it SILENTLY DROPS
-    # (invariant #9: no silent drops). So a dead pid must be guarded: it
-    # is treated EXACTLY as the pre-existing `lookup == :error` (target
-    # gone) case → `pre_delivery_error(:no_such_actor)`, which surfaces
-    # the error instead of dropping it. No new semantics — the dead-pid
-    # subcase simply joins the already-correct missing-target subcase.
-    # (We do NOT respawn here: a dispatch landing in the death window
-    # against a gone target must report "gone", not resurrect it.)
-    case Ezagent.KindRegistry.lookup(instance_uri) do
-      {:ok, pid} ->
-        if Process.alive?(pid) do
-          GenServer.cast(pid, {:ezagent_dispatch, inv})
-          :ok
-        else
-          pre_delivery_error(inv, :no_such_actor)
-        end
-
-      :error ->
-        pre_delivery_error(inv, :no_such_actor)
-    end
-  end
-
-  defp deliver_to_ready(instance_uri, mode, inv) when mode in [:call, :call_stream] do
+  defp deliver_to_ready(instance_uri, mode, inv, expected_incarnation)
+       when mode in [:call, :call_stream] do
     # Kind-death race (fix/readygate-death-race): a Kind can die in the
     # window AFTER `ReadyGate.status == :ready` but BEFORE `KindRegistry`
     # (a stdlib unique Registry) asynchronously reaps the dead pid on its
@@ -343,13 +382,20 @@ defmodule Ezagent.Invocation do
     # separate `{:unknown, _}` branch in `dispatch_with_lazy_spawn/3` (+
     # `ExternalMirror.BootReconciler`), which this change does NOT touch.
     case Ezagent.KindRegistry.lookup(instance_uri) do
-      {:ok, pid} ->
+      {:ok, ^expected_incarnation} when is_pid(expected_incarnation) ->
+        pid = expected_incarnation
         timeout = inv.ctx[:deadline_ms] || 5_000
 
         case call_live_target(pid, {:ezagent_dispatch, inv}, timeout) do
           {:ok, result} -> result
           :dead_target -> {:error, :no_such_actor}
         end
+
+      {:ok, _replacement_pid} ->
+        {:error, :stale_incarnation}
+
+      :error when is_pid(expected_incarnation) ->
+        {:error, :no_such_actor}
 
       :error ->
         {:error, :no_such_actor}
@@ -430,6 +476,45 @@ defmodule Ezagent.Invocation do
     end
 
     {:error, :buffer_full}
+  end
+
+  defp pending_delivery_incarnation_changed(instance_uri, %__MODULE__{} = inv) do
+    Logger.error(
+      "Ezagent.Invocation: cast target incarnation CHANGED before delivery commit " <>
+        "target=#{URI.to_string(inv.target)} instance=#{URI.to_string(instance_uri)} — " <>
+        "cast invocation DROPPED (recorded to DLQ reason=:stale_incarnation)"
+    )
+
+    :telemetry.execute(
+      [:ezagent, :dispatch, :pending_delivery_stale_incarnation],
+      %{},
+      %{target: inv.target, instance_uri: instance_uri, mode: :cast}
+    )
+
+    try do
+      Ezagent.DLQ.put(:stale_incarnation, inv)
+    rescue
+      e ->
+        Logger.error(
+          "Ezagent.Invocation: DLQ write for stale-incarnation cast FAILED: " <>
+            Exception.message(e)
+        )
+    catch
+      kind, payload ->
+        Logger.error(
+          "Ezagent.Invocation: DLQ write for stale-incarnation cast FAILED: " <>
+            "#{inspect({kind, payload})}"
+        )
+    end
+
+    {:error, :stale_incarnation}
+  end
+
+  defp current_incarnation(instance_uri) do
+    case Ezagent.KindRegistry.lookup(instance_uri) do
+      {:ok, pid} when is_pid(pid) -> pid
+      _ -> :unregistered
+    end
   end
 
   defp pre_delivery_error(%__MODULE__{} = inv, reason) do

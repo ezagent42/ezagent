@@ -98,7 +98,12 @@ defmodule Mix.Tasks.Ezagent.Agent.GrantRecipeCaps do
              @operator_telemetry_prefix,
              %{}
            ),
-         :ok <- await_absorbed(agent_uri, issued_caps, @operator_store_timeout_ms) do
+         :ok <-
+           Ezagent.Identity.CapAbsorbAwait.await_exact(
+             agent_uri,
+             issued_caps,
+             @operator_store_timeout_ms
+           ) do
       Mix.shell().info("✓ issued and stored #{role} recipe caps on #{to_string(agent_uri)}")
     else
       :error -> Mix.raise("no role recipe registered for #{inspect(role)}")
@@ -364,35 +369,4 @@ defmodule Mix.Tasks.Ezagent.Agent.GrantRecipeCaps do
     |> Enum.reverse()
   end
 
-  # The programmatic helper above is deliberately non-blocking for long-lived
-  # runtimes. A standalone Mix task is different: exiting its BEAM while a cast
-  # is still buffered would lose the hand-off. The CLI therefore waits for the
-  # exact issued structs to become observable in the target slice, and fails
-  # loudly instead of printing a false success if the target never readies.
-  defp await_absorbed(%URI{} = agent_uri, issued_caps, timeout_ms) do
-    deadline = System.monotonic_time(:millisecond) + timeout_ms
-    do_await_absorbed(Ezagent.URI.instance(agent_uri), issued_caps, deadline)
-  end
-
-  defp do_await_absorbed(agent_uri, issued_caps, deadline) do
-    # Keep sensitive Identity-state ownership inside the Identity facade. Its
-    # read path checks the live slice without activating a cold entity and can
-    # fall back to the durable snapshot; exact artifact equality below prevents
-    # an older logical cap from being mistaken for this hand-off's commit.
-    stored_caps = Ezagent.Identity.read_entity_caps(agent_uri)
-
-    missing = Enum.reject(issued_caps, &Enum.member?(stored_caps, &1))
-
-    cond do
-      missing == [] ->
-        :ok
-
-      System.monotonic_time(:millisecond) >= deadline ->
-        {:error, {:absorb_not_committed, missing}}
-
-      true ->
-        Process.sleep(10)
-        do_await_absorbed(agent_uri, issued_caps, deadline)
-    end
-  end
 end

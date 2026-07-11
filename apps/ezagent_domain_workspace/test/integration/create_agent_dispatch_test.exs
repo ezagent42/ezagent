@@ -158,11 +158,11 @@ defmodule Ezagent.Integration.CreateAgentDispatchTest do
   end
 
   # System-principal elimination (#154, 2026-06-19) — behavioral proof for the
-  # ONE grant sub-path of `mix ezagent.agent.create --caps`: the operator's ctx
-  # now carries `caller: User.admin_uri()`, and `grant_initial_caps/3` routes
-  # through the `Ezagent.Identity.Grant` chokepoint as `{:held_by, caller}`,
-  # which RE-READS the caller's REAL held caps (`Ezagent.Identity.read_held_caps/1`)
-  # to authorize. This proves the admin entity (a) resolves and (b) holds the
+  # ONE ISSUE sub-path of `mix ezagent.agent.create --caps`: the operator's ctx
+  # now carries `caller: User.admin_uri()`, and `grant_initial_caps/3` calls
+  # `Ezagent.Cap.issue/3` as `{:held_by, caller}`. The chokepoint RE-READS the
+  # caller's REAL held caps (`Ezagent.Identity.read_held_caps/1`) to authorize.
+  # This proves the admin entity (a) resolves and (b) holds the
   # bootstrap wildcard (`User.initial_caps_for_spawn/1`) — i.e. the grant
   # AUTHORIZES. (The prior mix-task code passed `caller: system://mix-task`,
   # whose `read_held_caps` returns EMPTY → any `--caps` grant would have failed;
@@ -199,17 +199,164 @@ defmodule Ezagent.Integration.CreateAgentDispatchTest do
 
       assert :ok = Workspace.grant_initial_caps(agent_uri, [granted_cap], operator_ctx)
 
-      # The grant landed on the agent's identity slice, with granted_by = admin.
-      assert agent_uri
-             |> Ezagent.Identity.list_caps_for()
-             |> Enum.any?(fn
-               %Ezagent.Capability{behavior: Ezagent.ActionSet.Session, granted_by: gb} = c ->
-                 Ezagent.Capability.action_of(c) == :send and gb == User.admin_uri()
+      # ABSORB is intentionally a cast; eventually the artifact lands on the
+      # agent's identity slice with issuer provenance = admin.
+      assert eventually(fn ->
+               agent_uri
+               |> Ezagent.Identity.read_entity_caps()
+               |> Enum.any?(fn
+                 %Ezagent.Capability{behavior: Ezagent.ActionSet.Session, granted_by: gb} = c ->
+                   Ezagent.Capability.action_of(c) == :send and gb == User.admin_uri()
 
-               _ ->
-                 false
+                 _ ->
+                   false
+               end)
              end),
              "expected the operator → admin-entity grant to land on the agent's caps"
+    end
+  end
+
+  describe "S7 grant_initial_caps issue + self-store hand-off" do
+    test "a not-ready agent buffers the artifacts and never blocks workspace provisioning", %{
+      ws_name: ws_name,
+      workspace_uri: workspace_uri,
+      admin_ctx: admin_ctx
+    } do
+      name = "s7-buffered-#{System.unique_integer([:positive])}"
+
+      assert {:ok, %{agent_uri: agent_uri}} =
+               Workspace.create_agent(
+                 workspace_uri,
+                 %{flavor: "curl", name: name, cwd: "", with_pty: false},
+                 admin_ctx
+               )
+
+      {:ok, agent_pid} = Ezagent.KindRegistry.lookup(agent_uri)
+      on_exit(fn -> terminate_agent(agent_uri) end)
+
+      proposal =
+        Ezagent.Capability.cap(
+          :session,
+          Ezagent.ActionSet.Session,
+          :send,
+          Ezagent.URI.session(ws_name, :default, :s7_target),
+          workspace_uri
+        )
+
+      :ok = Ezagent.ReadyGate.put(agent_uri, :not_ready)
+      buffer_size_before = Ezagent.PendingDelivery.buffer_size(agent_uri)
+
+      task =
+        Task.async(fn ->
+          receive do
+            :run -> Workspace.grant_initial_caps(agent_uri, [proposal], admin_ctx)
+          end
+        end)
+
+      Ecto.Adapters.SQL.Sandbox.allow(EzagentCore.Repo, self(), task.pid)
+      send(task.pid, :run)
+
+      assert {:ok, :ok} = Task.yield(task, 5_000) || Task.shutdown(task, :brutal_kill)
+      assert Ezagent.ReadyGate.status(agent_uri) == :not_ready
+      assert Ezagent.PendingDelivery.buffer_size(agent_uri) == buffer_size_before + 1
+
+      refute Enum.any?(Ezagent.Identity.read_entity_caps(agent_uri), fn cap ->
+               cap.behavior == Ezagent.ActionSet.Session and cap.action == :send
+             end)
+
+      assert :ready =
+               Ezagent.Kind.ReadyTransition.drain_pending_then_mark_ready(
+                 URI.to_string(agent_uri),
+                 agent_pid
+               )
+
+      assert eventually(fn ->
+               Enum.any?(Ezagent.Identity.read_entity_caps(agent_uri), fn cap ->
+                 cap.behavior == Ezagent.ActionSet.Session and
+                   cap.action == :send and
+                   cap.instance == Ezagent.URI.instance(proposal.instance) and
+                   cap.granted_by == User.admin_uri()
+               end)
+             end)
+    end
+
+    test "all ISSUE authorization finishes before the first absorb hand-off", %{
+      workspace_uri: workspace_uri,
+      admin_ctx: admin_ctx
+    } do
+      name = "s7-c2-#{System.unique_integer([:positive])}"
+
+      assert {:ok, %{agent_uri: agent_uri}} =
+               Workspace.create_agent(
+                 workspace_uri,
+                 %{flavor: "curl", name: name, cwd: "", with_pty: false},
+                 admin_ctx
+               )
+
+      on_exit(fn -> terminate_agent(agent_uri) end)
+
+      cap_config = Application.fetch_env!(:ezagent_core, Ezagent.Cap)
+      loader = EzagentCore.Test.CapAuthorityLoaderStub
+      loader_config = Application.fetch_env(:ezagent_core, loader)
+
+      on_exit(fn ->
+        Application.put_env(:ezagent_core, Ezagent.Cap, cap_config)
+
+        case loader_config do
+          {:ok, value} -> Application.put_env(:ezagent_core, loader, value)
+          :error -> Application.delete_env(:ezagent_core, loader)
+        end
+      end)
+
+      Application.put_env(
+        :ezagent_core,
+        Ezagent.Cap,
+        Keyword.put(cap_config, :authority_loader, loader)
+      )
+
+      Application.put_env(:ezagent_core, loader, MapSet.new())
+
+      caller = User.admin_uri()
+
+      owner_permitted =
+        Ezagent.Capability.cap(
+          :user,
+          Ezagent.ActionSet.Identity,
+          :list_caps,
+          caller,
+          Ezagent.Capability.workspace_of(caller)
+        )
+
+      later_denied =
+        Ezagent.Capability.cap(
+          :agent,
+          Ezagent.ActionSet.Identity,
+          :list_caps,
+          agent_uri,
+          workspace_uri
+        )
+
+      assert {:ok, %Ezagent.Capability{instance: ^caller}} =
+               Ezagent.Cap.issue({:held_by, caller}, agent_uri, owner_permitted)
+
+      caps_before = Ezagent.Identity.read_entity_caps(agent_uri)
+      buffer_size_before = Ezagent.PendingDelivery.buffer_size(agent_uri)
+
+      assert {:error, {:grant_failed, ^later_denied, :grant_not_owner}} =
+               Workspace.grant_initial_caps(
+                 agent_uri,
+                 [owner_permitted, later_denied],
+                 %{
+                   caller: caller,
+                   # C1 teeth: caller-supplied caps are deliberately powerful,
+                   # but ISSUE must ignore them and use the configured durable
+                   # authority loader, which is empty in this test.
+                   caps: MapSet.new([Ezagent.Capability.admin_genesis_cap()])
+                 }
+               )
+
+      assert Ezagent.Identity.read_entity_caps(agent_uri) == caps_before
+      assert Ezagent.PendingDelivery.buffer_size(agent_uri) == buffer_size_before
     end
   end
 
@@ -584,5 +731,29 @@ defmodule Ezagent.Integration.CreateAgentDispatchTest do
       _ ->
         false
     end)
+  end
+
+  defp terminate_agent(agent_uri) do
+    _ = Ezagent.PendingDelivery.flush(agent_uri)
+
+    case Ezagent.KindRegistry.lookup(agent_uri) do
+      {:ok, pid} when is_pid(pid) ->
+        if Process.alive?(pid), do: Ezagent.Kind.terminate(agent_uri)
+
+      _ ->
+        :ok
+    end
+  end
+
+  defp eventually(fun, attempts \\ 100)
+  defp eventually(_fun, 0), do: false
+
+  defp eventually(fun, attempts) do
+    if fun.() do
+      true
+    else
+      Process.sleep(10)
+      eventually(fun, attempts - 1)
+    end
   end
 end
