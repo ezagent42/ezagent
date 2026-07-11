@@ -2,7 +2,7 @@
 
 This is the MVP anchor for the skill. Go deep here. Examples are full-module, not snippets, because OTP code is structural — you need to see the whole supervision tree and module to judge it.
 
-**Target: Elixir 1.19+ / Erlang OTP 27+.** Elixir 1.19 added type inference across anonymous functions, protocol dispatch, and function captures (like `&String.to_integer/1`) — so stale `@spec`s or mismatched argument types will increasingly surface as compiler warnings. Lean into it: write accurate specs, trust the compiler to catch mistakes.
+**Target: Elixir 1.19+ / Erlang OTP 28+.** Elixir 1.19 added type inference across anonymous functions, protocol dispatch, and function captures (like `&String.to_integer/1`) — so stale `@spec`s or mismatched argument types will increasingly surface as compiler warnings. Lean into it: write accurate specs, trust the compiler to catch mistakes.
 
 ## Choosing an abstraction
 
