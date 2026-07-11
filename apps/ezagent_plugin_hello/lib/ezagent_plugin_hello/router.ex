@@ -49,9 +49,7 @@ defmodule EzagentPluginHello.Router do
     end
   end
 
-  # Classify the user's intent. Non-owner → ALWAYS concierge (identity-first
-  # security boundary). Owner → LLM intent classification (BUILD/ASK/SHARE/
-  # PUBLISH). Fail-open to :concierge for non-owner, :builder for owner.
+  @doc false
   def classify(_user_text, false = _owner?, _session_uri), do: :concierge
 
   def classify(user_text, true = _owner?, session_uri) do
