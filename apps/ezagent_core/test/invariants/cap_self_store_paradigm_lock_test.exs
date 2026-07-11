@@ -1,11 +1,11 @@
 defmodule Ezagent.Invariants.CapSelfStoreParadigmLockTest do
   @moduledoc """
-  S6 I12 paradigm lock.
+  S6/S7 I12 paradigm lock.
 
   Capability authority moves issuer -> artifact, while storage moves only
   through the grantee's own lifecycle (`create/1`) or the VM-internal
   `absorb_cap` cast.  Existing, not-yet-migrated grant drivers are pinned as
-  shrink-only debt; the recipe cutover is zero-tolerance from S6 onward.
+  shrink-only debt; all three Phase-3 cold-agent cutovers are zero-tolerance.
   """
   use ExUnit.Case, async: true
 
@@ -13,6 +13,8 @@ defmodule Ezagent.Invariants.CapSelfStoreParadigmLockTest do
   @identity_behavior "apps/ezagent_domain_identity/lib/ezagent/behavior/identity.ex"
   @grant_chokepoint "apps/ezagent_domain_identity/lib/ezagent/identity/grant.ex"
   @recipe_grant_task "apps/ezagent_domain_agent/lib/mix/tasks/ezagent.agent.grant_recipe_caps.ex"
+  @orchestrator_caps "apps/ezagent_domain_session/lib/ezagent/entity/session/orchestrator/caps.ex"
+  @workspace_facade "apps/ezagent_domain_workspace/lib/ezagent/workspace.ex"
 
   @legacy_grant_drivers %{
     "apps/ezagent_domain_session/lib/ezagent/behavior/session/member_cap.ex" => %{
@@ -23,9 +25,6 @@ defmodule Ezagent.Invariants.CapSelfStoreParadigmLockTest do
     },
     "apps/ezagent_domain_session/lib/ezagent/behavior/template.ex" => %{
       {:grant_cap_via_router, 4} => 1
-    },
-    "apps/ezagent_domain_session/lib/ezagent/entity/session/orchestrator/caps.ex" => %{
-      {:grant_cap, 3} => 1
     },
     "apps/ezagent_domain_session/lib/ezagent/entity/session_template.ex" => %{
       {:grant_cap, 3} => 1
@@ -41,10 +40,7 @@ defmodule Ezagent.Invariants.CapSelfStoreParadigmLockTest do
     "apps/ezagent_domain_workspace/lib/ezagent/behavior/workspace.ex" => %{
       {:grant_cap_effect, 3} => 1
     },
-    "apps/ezagent_domain_workspace/lib/ezagent/workspace.ex" => %{
-      {:grant_cap, 3} => 1,
-      {:grant_cap_via_router, 4} => 1
-    },
+    @workspace_facade => %{{:grant_cap_via_router, 4} => 1},
     "apps/ezagent_domain_workspace/lib/ezagent/workspace/responsibility_assignments.ex" => %{
       {:grant_cap, 3} => 1
     },
@@ -53,8 +49,8 @@ defmodule Ezagent.Invariants.CapSelfStoreParadigmLockTest do
       {:grant_cap_via_router, 4} => 1
     }
   }
-  @legacy_driver_files 13
-  @legacy_driver_sites 18
+  @legacy_driver_files 12
+  @legacy_driver_sites 16
 
   @legacy_local_grant_drivers %{
     "apps/ezagent_domain_session/lib/ezagent/behavior/template.ex" => %{{:grant_cap, 2} => 2}
@@ -66,13 +62,17 @@ defmodule Ezagent.Invariants.CapSelfStoreParadigmLockTest do
   ]
 
   @absorb_producers %{
-    @recipe_grant_task => %{{:absorb_cap, 2} => 1}
+    @recipe_grant_task => %{{:absorb_cap, 2} => 1},
+    @orchestrator_caps => %{{:absorb_cap, 2} => 1},
+    @workspace_facade => %{{:absorb_cap, 2} => 1}
   }
 
   @absorb_action_literals %{
     @recipe_grant_task => 1,
+    @orchestrator_caps => 1,
     @identity_behavior => 3,
-    @identity_facade => 2
+    @identity_facade => 2,
+    @workspace_facade => 1
   }
 
   test "remaining issuer-driven grant sites are shrink-only migration debt" do
@@ -142,6 +142,28 @@ defmodule Ezagent.Invariants.CapSelfStoreParadigmLockTest do
     refute definition_agents =~ "GrantRecipeCaps.grant_recipe_caps"
   end
 
+  test "S7 orchestrator and workspace cold-agent lanes issue-all before self-store" do
+    orchestrator =
+      @orchestrator_caps
+      |> source!()
+      |> definition_source(:do_grant_orchestrator_scoped_caps, 4)
+
+    assert ordered?(orchestrator, "issue_scoped_caps", "absorb_scoped_caps")
+    refute orchestrator =~ "Identity.Grant"
+    refute orchestrator =~ "mode: :call"
+    refute orchestrator =~ "await_ready"
+
+    workspace =
+      @workspace_facade
+      |> source!()
+      |> definition_source(:issue_and_absorb_initial_caps, 3)
+
+    assert ordered?(workspace, "<- issue_initial_caps(", "<- absorb_initial_caps(")
+    refute workspace =~ "Identity.Grant"
+    refute workspace =~ "mode: :call"
+    refute workspace =~ "await_ready"
+  end
+
   test "absorb dispatch is constructed exactly once by the identity self-store facade" do
     assert absorb_cmd_constructors() == %{@identity_facade => 1}
     assert absorb_target_constructors() == %{@identity_facade => 1}
@@ -171,7 +193,24 @@ defmodule Ezagent.Invariants.CapSelfStoreParadigmLockTest do
     assert ordered?(producer, "issue_all", "absorb_all")
 
     operator = definition_source(source!(@recipe_grant_task), :do_grant, 2)
-    assert ordered?(operator, "issue_and_absorb_recipe_caps", "await_absorbed")
+
+    assert ordered?(
+             operator,
+             "issue_and_absorb_recipe_caps",
+             "CapAbsorbAwait.await_exact"
+           )
+
+    orchestrator =
+      definition_source(source!(@orchestrator_caps), :do_grant_orchestrator_scoped_caps, 4)
+
+    assert ordered?(orchestrator, "issue_scoped_caps", "absorb_scoped_caps")
+
+    workspace =
+      @workspace_facade
+      |> source!()
+      |> definition_source(:issue_and_absorb_initial_caps, 3)
+
+    assert ordered?(workspace, "<- issue_initial_caps(", "<- absorb_initial_caps(")
 
     {:ok, dynamic_apply_ast} =
       Code.string_to_quoted("""
@@ -196,6 +235,34 @@ defmodule Ezagent.Invariants.CapSelfStoreParadigmLockTest do
 
     assert length(Regex.scan(~r/\bstore_verified_cap\(/, source)) == 3,
            "store_verified_cap must have exactly two callers plus its definition"
+  end
+
+  test "product code cannot bypass guarded pending-delivery ingress or loud drains" do
+    assert unguarded_pending_delivery_calls() == %{},
+           "PendingDelivery.buffer/2 and flush/1 are legacy/test-only; product ingress must be incarnation-guarded and drains must pass ReadyTransition DLQ handling"
+  end
+
+  test "the pending-delivery scanner catches aliased local and dynamic escape calls" do
+    {:ok, ast} =
+      Code.string_to_quoted("""
+      defmodule Escape do
+        alias Ezagent.PendingDelivery, as: PD
+        import PD, only: [buffer: 2, flush: 1]
+
+        def bypass(uri, invocation), do: buffer(uri, invocation)
+        def silent_drop(uri), do: flush(uri)
+        def dynamic_drop(uri), do: apply(PD, :flush, [uri])
+        def capture_drop, do: Function.capture(PD, :flush, 1)
+      end
+      """)
+
+    assert pending_delivery_escape_fingerprints(ast) == %{
+             {:buffer, 2} => 1,
+             {:flush, 1} => 1,
+             {:flush, {:apply, 1}} => 1,
+             {:flush, {:capture, 1}} => 1,
+             {:pending_delivery_import, 0} => 1
+           }
   end
 
   defp grant_driver_calls do
@@ -335,6 +402,89 @@ defmodule Ezagent.Invariants.CapSelfStoreParadigmLockTest do
     end)
   end
 
+  defp unguarded_pending_delivery_calls do
+    source_files()
+    |> Enum.filter(fn {_relative, absolute} ->
+      File.read!(absolute) =~ "PendingDelivery"
+    end)
+    |> Enum.reduce(%{}, fn {relative, absolute}, acc ->
+      fingerprints = absolute |> quoted!() |> pending_delivery_escape_fingerprints()
+      if map_size(fingerprints) == 0, do: acc, else: Map.put(acc, relative, fingerprints)
+    end)
+  end
+
+  defp pending_delivery_escape_fingerprints(ast) do
+    remote =
+      call_fingerprints(ast, fn
+        {{:., _, [_module, function]}, _, args}
+        when function in [:buffer, :flush] and is_list(args) ->
+          {function, length(args)}
+
+        {{:., _, [_module, :capture]}, _, [_target, function, arity]}
+        when function in [:buffer, :flush] ->
+          {function, captured_arity(arity)}
+
+        {{:., _, [_kernel, :apply]}, _, [_module, function, args]}
+        when function in [:buffer, :flush] ->
+          {function, applied_arity(args)}
+
+        {:apply, _, [_module, function, args]} when function in [:buffer, :flush] ->
+          {function, applied_arity(args)}
+
+        _node ->
+          nil
+      end)
+
+    import_count = pending_delivery_import_count(ast)
+
+    if import_count == 0 do
+      remote
+    else
+      local =
+        ast
+        |> definition_body_fingerprints("buffer")
+        |> merge_frequencies(definition_body_fingerprints(ast, "flush"))
+
+      remote
+      |> merge_frequencies(local)
+      |> Map.put({:pending_delivery_import, 0}, import_count)
+    end
+  end
+
+  defp pending_delivery_import_count(ast) do
+    {_ast, {_aliases, imports}} =
+      Macro.prewalk(ast, {%{}, 0}, fn
+        {:alias, _, [target_ast | opts]} = node, {aliases, imports} ->
+          target = target_ast |> Macro.to_string() |> expand_alias(aliases)
+          alias_name = alias_name(target, opts)
+          {node, {Map.put(aliases, alias_name, target), imports}}
+
+        {:import, _, [module_ast | _opts]} = node, {aliases, imports} ->
+          module = module_ast |> Macro.to_string() |> expand_alias(aliases)
+          count = if module == "Ezagent.PendingDelivery", do: imports + 1, else: imports
+          {node, {aliases, count}}
+
+        node, state ->
+          {node, state}
+      end)
+
+    imports
+  end
+
+  defp alias_name(target, opts) do
+    case opts do
+      [[as: as_ast]] -> Macro.to_string(as_ast)
+      _ -> target |> String.split(".") |> List.last()
+    end
+  end
+
+  defp expand_alias(module, aliases) do
+    case String.split(module, ".", parts: 2) do
+      [prefix, suffix] -> Map.get(aliases, prefix, prefix) <> "." <> suffix
+      [prefix] -> Map.get(aliases, prefix, prefix)
+    end
+  end
+
   defp count_by_file(predicate) do
     source_files()
     |> Enum.reduce(%{}, fn {relative, absolute}, acc ->
@@ -422,6 +572,12 @@ defmodule Ezagent.Invariants.CapSelfStoreParadigmLockTest do
     frequencies
   end
 
+  defp merge_frequencies(left, right) do
+    Map.merge(left, right, fn _fingerprint, left_count, right_count ->
+      left_count + right_count
+    end)
+  end
+
   defp fingerprint_site_count(by_file) do
     by_file
     |> Map.values()
@@ -450,9 +606,12 @@ defmodule Ezagent.Invariants.CapSelfStoreParadigmLockTest do
 
     {_ast, found} =
       Macro.prewalk(ast, nil, fn
-        {kind, _meta, [{^name, _, args}, _body]} = node, nil
-        when kind in [:def, :defp] and is_list(args) and length(args) == arity ->
-          {node, Macro.to_string(node)}
+        {kind, _meta, [head, _body]} = node, nil when kind in [:def, :defp] ->
+          if definition_head?(head, name, arity) do
+            {node, Macro.to_string(node)}
+          else
+            {node, nil}
+          end
 
         node, found ->
           {node, found}
@@ -460,6 +619,14 @@ defmodule Ezagent.Invariants.CapSelfStoreParadigmLockTest do
 
     found || flunk("#{name}/#{arity} not found")
   end
+
+  defp definition_head?({:when, _, [head | _guards]}, name, arity),
+    do: definition_head?(head, name, arity)
+
+  defp definition_head?({name, _, args}, name, arity) when is_list(args),
+    do: length(args) == arity
+
+  defp definition_head?(_head, _name, _arity), do: false
 
   defp source_files do
     root = repo_root()
