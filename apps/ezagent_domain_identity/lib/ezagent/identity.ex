@@ -13,6 +13,8 @@ defmodule Ezagent.Identity do
   users CAN read their own caps via dispatch without bypassing auth.
   """
 
+  @behaviour Ezagent.Cap.AuthorityLoader
+
   alias Ezagent.{Cmd, KindRegistry, Router}
 
   @doc """

@@ -105,7 +105,8 @@ defmodule Ezagent.ActionSet.Identity do
     args: %{},
     returns: %{},
     caps: [{:cascade_notify_managers, kind: :any}],
-    description: "Post-commit cascade: content-free notify of this entity's managers/owners on an allowlisted slice change",
+    description:
+      "Post-commit cascade: content-free notify of this entity's managers/owners on an allowlisted slice change",
     modes: [:cast]
   )
 
@@ -179,7 +180,13 @@ defmodule Ezagent.ActionSet.Identity do
 
       caps
       |> MapSet.put(
-        self_scoped_cap(:agent, Ezagent.ActionSet.Sandbox, :update_config, instance, workspace_uri)
+        self_scoped_cap(
+          :agent,
+          Ezagent.ActionSet.Sandbox,
+          :update_config,
+          instance,
+          workspace_uri
+        )
       )
       |> MapSet.put(
         self_scoped_cap(
@@ -453,59 +460,56 @@ defmodule Ezagent.ActionSet.IdentityAdmin do
   # shapes (struct / atom-keyed map / string-keyed map). `normalize!`
   # coerces all three to the canonical struct.
   @doc """
-  Grant a capability to this principal — the cap-grant chokepoint.
+  Store a capability artifact already authorized by `Ezagent.Cap.issue/3`.
 
   Normalizes the incoming `cap` (struct / atom-keyed / string-keyed → canonical
-  struct), runs the grant authorization checks (`check_action_wildcard_grant_authorized/2`
-  + `check_grant_authorized/2`), dedups any cap with the same identity-key, adds
-  the new cap to the `:caps` slice, notifies the principal, and emits `:cap_granted`.
+  struct), dedups by identity-key, writes the `:caps` slice, notifies the
+  principal, and emits `:cap_granted`. It deliberately performs no grantor
+  authorization; the single authorization home is `Ezagent.Cap.issue/3`.
   """
   def handle_grant_cap(%{cap: cap}, ctx) do
     cap_struct = Ezagent.Capability.normalize!(cap, granter_from_ctx(ctx))
 
-    with :ok <- check_action_wildcard_grant_authorized(cap_struct, ctx),
-         :ok <- check_grant_authorized(cap_struct, ctx) do
-      current_caps = ctx[:read].(:caps, MapSet.new())
+    current_caps = ctx[:read].(:caps, MapSet.new())
 
-      # Dedup by identity-tuple BEFORE adding (codex review HIGH-1
-      # follow-on for the grant path).
-      deduped =
-        current_caps
-        |> Enum.reject(fn held ->
-          Ezagent.Capability.identity_key(held) ==
-            Ezagent.Capability.identity_key(cap_struct)
-        end)
-        |> MapSet.new()
+    # Dedup by identity-tuple BEFORE adding (codex review HIGH-1
+    # follow-on for the grant path).
+    deduped =
+      current_caps
+      |> Enum.reject(fn held ->
+        Ezagent.Capability.identity_key(held) ==
+          Ezagent.Capability.identity_key(cap_struct)
+      end)
+      |> MapSet.new()
 
-      new_caps = MapSet.put(deduped, cap_struct)
+    new_caps = MapSet.put(deduped, cap_struct)
 
-      notify_cap_change(
-        ctx,
-        :cap_granted,
-        "A new capability was granted to you.",
-        cap_struct
-      )
+    notify_cap_change(
+      ctx,
+      :cap_granted,
+      "A new capability was granted to you.",
+      cap_struct
+    )
 
-      # SPEC 2026-06-16 §4 (Decision #88) — manager provenance. A
-      # manager-delegated grant (NOT self, NOT admin, but authorized because
-      # the caller holds a Manage cap over the target + the cap is delegable)
-      # is recorded with `via_manage: true` in the audit/telemetry emit so it
-      # is distinguishable from a self/admin grant. The provenance lives on
-      # the EVENT payload, not the `%Capability{}` struct (the struct is
-      # `@enforce_keys` + `to_map`/`from_map`/`identity_key`/Jason-coupled, and
-      # `granted_by` already carries the manager URI via `normalize!/2`).
-      {:ok, %{caps: MapSet.to_list(new_caps)},
-       [
-         {:set, :caps, new_caps},
-         {:emit, :cap_granted,
-          %{
-            target_uri: Map.get(ctx, :self_uri) |> uri_to_str(),
-            cap: cap_struct,
-            via_manage: manager_delegated_grant?(cap_struct, ctx),
-            at: DateTime.utc_now()
-          }}
-       ]}
-    end
+    # SPEC 2026-06-16 §4 (Decision #88) — manager provenance. A
+    # manager-delegated grant (NOT self, NOT admin, but authorized because
+    # the caller holds a Manage cap over the target + the cap is delegable)
+    # is recorded with `via_manage: true` in the audit/telemetry emit so it
+    # is distinguishable from a self/admin grant. The provenance lives on
+    # the EVENT payload, not the `%Capability{}` struct (the struct is
+    # `@enforce_keys` + `to_map`/`from_map`/`identity_key`/Jason-coupled, and
+    # `granted_by` already carries the manager URI via `normalize!/2`).
+    {:ok, %{caps: MapSet.to_list(new_caps)},
+     [
+       {:set, :caps, new_caps},
+       {:emit, :cap_granted,
+        %{
+          target_uri: Map.get(ctx, :self_uri) |> uri_to_str(),
+          cap: cap_struct,
+          via_manage: manager_delegated_grant?(cap_struct, ctx),
+          at: DateTime.utc_now()
+        }}
+     ]}
   end
 
   @doc "Revoke a capability from this principal — normalizes the `cap` then removes the identity-key match via `Ezagent.Capability.revoke/2`, notifies the principal, and emits `:cap_revoked`."
@@ -574,29 +578,6 @@ defmodule Ezagent.ActionSet.IdentityAdmin do
     :ok
   end
 
-  # SPEC 2026-05-27 capability-action-axis §3.6.1(b) — runtime grant-
-  # boundary check.
-  defp check_action_wildcard_grant_authorized(%Ezagent.Capability{} = cap, ctx) do
-    cond do
-      Ezagent.Capability.action_of(cap) != :any ->
-        :ok
-
-      scope_bounded_instance?(cap.instance) ->
-        :ok
-
-      holds_admin_caps?(ctx) ->
-        :ok
-
-      true ->
-        {:error, :wildcard_action_grant_requires_admin_authority}
-    end
-  end
-
-  defp scope_bounded_instance?({:within_session, %URI{}}), do: true
-  defp scope_bounded_instance?({:within_workspace, %URI{}}), do: true
-  defp scope_bounded_instance?({:spawned_by, %URI{}}), do: true
-  defp scope_bounded_instance?(_), do: false
-
   @doc """
   Structural bound a `{:rule, …}` grant must satisfy (SPEC 2026-06-17 §3.3).
 
@@ -605,140 +586,19 @@ defmodule Ezagent.ActionSet.IdentityAdmin do
   (`{:within_session/within_workspace/spawned_by, %URI{}}`) — a concrete
   `%URI{}` instance is allowed only with a concrete action.
 
-  This is written to MATCH `check_action_wildcard_grant_authorized/2`
-  exactly (an `action: :any` cap needs a scope-bounded instance there
-  too), so the two gates are consistent by construction and the
-  wildcard gate (which runs first) never rejects a shape this branch
-  would have accepted. PUBLIC for direct unit testing (matching the
-  precedent of `holds_admin_caps?/1` etc.) — the rule branch itself is
-  not yet reachable end-to-end via dispatch (see `check_grant_authorized/2`).
+  The implementation lives in core beside `Cap.issue/3`; this public delegate
+  is retained for compatibility with existing callers and tests.
   """
   @spec rule_cap_bounded?(Ezagent.Capability.t()) :: boolean()
-  def rule_cap_bounded?(%Ezagent.Capability{kind: :any}), do: false
-  def rule_cap_bounded?(%Ezagent.Capability{behavior: :any}), do: false
-
-  def rule_cap_bounded?(%Ezagent.Capability{instance: instance} = cap) do
-    scope_bounded_instance?(instance) or
-      (match?(%URI{}, instance) and Ezagent.Capability.action_of(cap) != :any)
-  end
-
-  # PR-OWN-2 §5.2 enforcement helpers — called from `handle_grant_cap/2`.
-
-  # Rule branch (SPEC 2026-06-17 §3.3, Decision #154). Fires ONLY when
-  # `ctx[:authorization_rule]` is set — and ONLY `Ezagent.Identity.Grant`
-  # (the chokepoint) sets it, exclusively for the `{:rule, name,
-  # configurer}` tag, after the caller verified the rule's precondition
-  # (e.g. `PublicView.web_anon_access?/1`). The grant is then authorized on
-  # the rule's assertion rather than on `ctx.caps` (which is `[]` for a
-  # rule grant). The STRUCTURAL bound: a rule may NOT mint a wildcard
-  # cap. `rule_cap_bounded?/1` is written to MATCH
-  # `check_action_wildcard_grant_authorized/2`'s logic EXACTLY (an
-  # `action: :any` cap is allowed only with a scope-bounded instance),
-  # so the two gates are consistent by construction and the wildcard
-  # gate never rejects a shape the rule branch would have accepted.
-  #
-  # ⚠️ NOT REACHABLE END-TO-END IN PR-1 (dormant infrastructure). A
-  # `{:rule, …}` grant carries `ctx.caps = []`, so dispatch step 5.5
-  # (`Ezagent.Kind.Runtime` cap check, ~runtime.ex:407) denies it with
-  # `:unauthorized` BEFORE this handler runs. PR-1 ships ZERO sites using
-  # `{:rule, …}` (all 14 use `{:held_by}`/`{:system}`, which carry caps),
-  # so this branch + `rule_cap_bounded?/1` are verified as a pure
-  # predicate, not through dispatch. PR-2/PR-3 (which introduce the first
-  # `{:rule, …}` callers) MUST make the path reachable — either teach
-  # dispatch step 5.5 to honor `ctx[:authorization_rule]`, or route rule
-  # grants via `Ezagent.Kind.trusted_slice_update/3` (which already
-  # bypasses dispatch CapBAC). That is an authorization-path change,
-  # deliberately OUT of PR-1's mechanical/behavior-preserving scope.
-  defp check_grant_authorized(%Ezagent.Capability{} = cap, ctx)
-       when is_map_key(ctx, :authorization_rule) do
-    if rule_cap_bounded?(cap) do
-      :ok
-    else
-      {:error, :rule_grant_must_be_concrete_scoped}
-    end
-  end
-
-  defp check_grant_authorized(
-         %Ezagent.Capability{
-           kind: :any,
-           behavior: :any,
-           instance: :any,
-           workspace_uri: :any
-         },
-         ctx
-       ),
-       do: require_bootstrap_admin(ctx, :grant_wildcard_requires_admin)
-
-  defp check_grant_authorized(%Ezagent.Capability{kind: :any} = cap, ctx),
-    do: require_workspace_admin(ctx, cap.workspace_uri, cap)
-
-  defp check_grant_authorized(%Ezagent.Capability{behavior: :any} = cap, ctx),
-    do: require_workspace_admin(ctx, cap.workspace_uri, cap)
-
-  defp check_grant_authorized(
-         %Ezagent.Capability{behavior: behavior, instance: instance, workspace_uri: cap_ws} = cap,
-         ctx
-       )
-       when is_atom(behavior) do
-    if Code.ensure_loaded?(behavior) and
-         function_exported?(behavior, :data_owner, 1) do
-      # SPEC `2026-05-29-dispatch-returning-effect.md` §2b — call
-      # the public re-export on `Ezagent.ActionSet` rather than reaching
-      # into `Ezagent.CapabilityRegistry` directly. §11 Gate 6 grep
-      # gate forbids plugin Behavior modules from talking to the
-      # registry as an implementation detail; the Behavior helper is
-      # the sanctioned author-facing surface. The underlying logic is
-      # unchanged (the re-export is a thin delegate).
-      case Ezagent.ActionSet.data_owner_of(behavior, instance) do
-        %URI{} = owner ->
-          caller = Map.get(ctx, :caller)
-
-          # Grant-authorizer set (SPEC 2026-06-16 §1, Decision #88):
-          # `{self, admin, manager-of-target}`.
-          #   * self  — caller IS the data-owner of the target slice.
-          #   * admin — bootstrap wildcard holder.
-          #   * manager — caller holds a `Behavior.Manage`/`:any`-action cap
-          #     scoped to THIS target instance (it manages the instance).
-          #
-          # The manager branch is delegation-bounded (codex P1): `grant_cap`
-          # does NOT inherit `Recipe.CapMint`'s delegation policy (that policy
-          # is not on this runtime path), so a manager added to the authorizer
-          # without a held-cap check could grant arbitrary concrete-action
-          # caps it does not hold (escalation). For the manager case ONLY we
-          # therefore require the cap-to-grant to `Capability.matches?` a cap
-          # the CALLER ITSELF holds — a manager grants only caps it holds
-          # whose scope covers the target. `Capability.Match` is asymmetric
-          # (a concrete held cap never authorizes a wildcard request), so a
-          # manager cannot fabricate authority it lacks; fail-closed
-          # `:grant_not_delegable` if no held cap matches. Self/admin keep
-          # their existing behavior (no delegation bound).
-          cond do
-            caller == owner -> :ok
-            holds_admin_caps?(ctx) -> :ok
-            manages_target?(ctx, instance) -> check_delegable_by_caller(cap, ctx)
-            true -> {:error, :grant_not_owner}
-          end
-
-        :any ->
-          require_workspace_admin(ctx, cap_ws, cap)
-
-        _ ->
-          require_bootstrap_admin(ctx, :grant_owner_unresolvable)
-      end
-    else
-      :ok
-    end
-  end
-
-  defp check_grant_authorized(_cap, _ctx), do: :ok
+  defdelegate rule_cap_bounded?(cap), to: Ezagent.CapabilityRegistry
 
   # SPEC 2026-06-16 §4 (Decision #88) — manager-provenance predicate for the
   # `:cap_granted` audit emit. True iff the grant was authorized via the NEW
   # manager branch: the cap resolves to a concrete `%URI{}` data-owner, the
   # caller is NOT that owner, NOT bootstrap-admin, but DOES hold a Manage cap
   # over the target AND the cap is delegable. Mirrors the
-  # `check_grant_authorized/2` manager branch exactly so provenance can never
-  # diverge from the authorization decision (self/admin/non-manager → false).
+  # core issue-time manager branch exactly so provenance cannot diverge from
+  # the authorization decision (self/admin/non-manager → false).
   defp manager_delegated_grant?(%Ezagent.Capability{behavior: behavior, instance: instance}, ctx)
        when is_atom(behavior) do
     if Code.ensure_loaded?(behavior) and function_exported?(behavior, :data_owner, 1) do
@@ -770,31 +630,6 @@ defmodule Ezagent.ActionSet.IdentityAdmin do
     |> Ezagent.Identity.Authority.holds_manage_over_target?(instance)
   end
 
-  # codex P1 (MANDATORY) — explicit held-cap delegation bound for the
-  # MANAGER case only. The cap-to-grant must `Capability.matches?` a cap the
-  # CALLER ITSELF holds: `Capability.matches?(held, needed)` treats the
-  # held cap as the authorizer and the cap-to-grant as the request, so the
-  # asymmetric wildcard rule applies — a concrete held cap never authorizes a
-  # wildcard-axis request, and the held cap's instance-scope tuples bound
-  # WHICH targets it reaches. Fail-closed `:grant_not_delegable` if none
-  # matches. (Self/admin never reach here — they keep their existing,
-  # delegation-unbounded behavior.)
-  defp check_delegable_by_caller(%Ezagent.Capability{} = cap, ctx) do
-    needed = %{
-      kind: cap.kind,
-      behavior: cap.behavior,
-      action: Ezagent.Capability.action_of(cap),
-      instance: cap.instance,
-      workspace_uri: cap.workspace_uri
-    }
-
-    if ctx |> caller_caps() |> Enum.any?(&Ezagent.Capability.matches?(&1, needed)) do
-      :ok
-    else
-      {:error, :grant_not_delegable}
-    end
-  end
-
   # The caller's held caps, from the dispatch ctx (`ctx.caps`, the same
   # source `holds_admin_caps?/1` reads). Tolerates a MapSet, a list, or a
   # `%{caps: _}` wrapper; anything else → empty (fail-closed).
@@ -807,25 +642,6 @@ defmodule Ezagent.ActionSet.IdentityAdmin do
       _ -> []
     end
   end
-
-  defp require_workspace_admin(ctx, :any, _cap) do
-    if holds_admin_caps?(ctx) or holds_cross_workspace_admin_cap?(ctx) do
-      :ok
-    else
-      {:error, :grant_workspace_any_requires_admin}
-    end
-  end
-
-  defp require_workspace_admin(ctx, %URI{} = cap_ws, _cap) do
-    if holds_admin_caps?(ctx) or
-         Ezagent.Identity.Authority.workspace_admin?(caller_caps(ctx), cap_ws) do
-      :ok
-    else
-      {:error, :grant_workspace_admin_required}
-    end
-  end
-
-  defp require_workspace_admin(_ctx, _, _), do: {:error, :grant_workspace_uri_invalid}
 
   @doc """
   Does the cap list hold a structural cross-workspace admin cap?
@@ -865,14 +681,6 @@ defmodule Ezagent.ActionSet.IdentityAdmin do
       _ ->
         false
     end)
-  end
-
-  defp require_bootstrap_admin(ctx, error_tag) do
-    if holds_admin_caps?(ctx) do
-      :ok
-    else
-      {:error, error_tag}
-    end
   end
 
   @doc """
