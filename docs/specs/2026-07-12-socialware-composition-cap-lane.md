@@ -2,55 +2,58 @@
 
 > **Status:** SPEC (architecture-level, pre-implementation). Design for Allen to approve, then
 > codex to implement. This doc resolves mechanism at the DESIGN level; incidental file:line is
-> demoted to impl-constraint notes (§9) — the code wins.
-> **Baseline:** `origin/main` @ `fa72d36ba`. Every file:line below re-verified on that tree.
+> demoted to impl-constraint notes (§8) — the code wins.
+> **Baseline:** `origin/main` @ `fa72d36ba` (cbac Phase-3 **merged** — the 13 stage commits
+> `dec0bc134`…`46f26a3b3` are in history below the S8 tip). Every file:line below re-verified on
+> that tree.
 > **Read before implementing:** `.claude/skills/ezagent-developer/references/capbac.md` (the three
-> roles caller/authorizer/granter, the `Ezagent.Identity.Grant` chokepoint, the tag set,
-> `rule_cap_bounded?`, Decision #154).
+> roles caller/authorizer/granter, the grant tag set, `rule_cap_bounded?`, Decision #154), plus the
+> merged seam modules named in §0.
 > **Origin:** jjkysy PR #1355 (`docs/authz-composition-cap-gap`) — handoff
-> `docs/together/2026-07-11/handoffs/socialware-composition-cap-gap.md`. §7 below answers that
+> `docs/together/2026-07-11/handoffs/socialware-composition-cap-gap.md`. §5 below answers that
 > handoff's §五 拍板项 verbatim.
 
 ---
 
-## 0. Baseline correction (read first — the brief's cbac primitives are unmerged)
+## 0. Foundation — the merged cbac ISSUE / STORE / VERIFY seam this lane builds on
 
-The task brief frames this lane as "building on cbac Phase-3" and names `Ezagent.Cap.issue/3`
-(`cap.ex:30`), `RecipeCapBinding.issue_and_upsert` / `create/1` self-store, and `CapAbsorbAwait`
-as **already provided**. **Re-verified on `fa72d36ba`: none of these exist as merged code.**
+cbac Phase-3 is **merged on `fa72d36ba`**. The composition-cap lane mints through the same seam
+every other cap now flows through:
 
-- The Phase-3 HEAD commit `fa72d36ba` ("test(e2e): prove Phase 3 cap self-store flows") adds
-  **only** screenshots + a README under `docs/together/2026-07-11/phase3-cbac-done-right/` — zero
-  `lib/` changes.
-- `grep -rn 'def issue' apps/ezagent_core/lib/ezagent/capability.ex` → no match; there is no
-  `ezagent/cap.ex` (only `capability.ex`). `grep -rln 'RecipeCapBinding\|CapAbsorbAwait' apps` → no
-  match. No `Cap.issue`/`Cap.verify` non-test caller.
-- `Cap.issue`/`RecipeCapBinding`/`CapAbsorbAwait` appear only in the **unmerged** spec
-  `docs/specs/2026-07-10-cap-self-store-unification-phase3.md`. That is the ISSUE/STORE/VERIFY
-  design; it has not landed.
+- **ISSUE — `Ezagent.Cap.issue/3`** (`apps/ezagent_core/lib/ezagent/cap.ex:30`). Takes an
+  **authorization tag** — the closed set `{:held_by, actor}` / `{:admin, admin}` / `{:rule, name,
+  configurer}` / `{:genesis, owner}` (`cap.ex:19-23,78-99`) — a **holder** URI, and a proposed
+  `%Capability{}`. It authorizes the issuer via `CapabilityRegistry.authorize_grant/3`
+  (`capability_registry.ex:371`), stamps `granted_by` = the tag's accountable **entity** (validated
+  `%URI{scheme:"entity"}`, else `{:granter_not_entity, _}`, `cap.ex:67-76`), and returns the
+  artifact. **Owner-as-granter (#154) is expressed directly as `{:rule, name, owner}`.** The grant
+  chokepoint `Ezagent.Identity.Grant.grant_cap` now routes through `Cap.issue` (`grant.ex:232`); the
+  orchestrator lane calls `Cap.issue` directly (`caps.ex:90`).
+- **STORE (self-absorb) — `Ezagent.Identity.absorb_cap/2`** (`identity.ex:259`). The **holder**
+  self-stores an already-issued, `Cap.verify`-checked artifact into its own `:caps` slice.
+  Authorization is already complete at ISSUE; absorb only persists. This is the store path for a
+  **live** holder (the orchestrator uses it, `caps.ex:103`).
+- **STORE (durable pre-issue) — `Ezagent.Identity.RecipeCapBinding.issue_and_upsert/4`**
+  (`recipe_cap_binding.ex:56`). A materializer issues a not-yet-live agent's **own** recipe caps
+  before the agent exists and commits them to a durable, versioned binding the agent reads from its
+  Identity `create/1` lifecycle. **This path is SELF-SCOPED by construction:** `validate_artifact/4`
+  (`:187-195`) hard-rejects any artifact whose `kind ≠ :agent` (`:kind_mismatch`), whose `instance`
+  is not the grantee **itself** (`:target_mismatch`), or whose `granted_by` is not the issuer; and
+  it issues under a hardcoded `{:admin, issuer}` tag (`:144`). **A cross-instance cap cannot pass
+  it** — decisive for §3.2.
+- **VERIFY — `Ezagent.Cap.verify/1`** (`cap.ex:44`) + `verified_set/1` (`:56`). Load boundaries
+  filter to entity-provenance artifacts; `CapAbsorbAwait` (`identity/cap_absorb_await.ex`) gates a
+  cold target on its pending self-store.
 
-**Consequence for this spec:** the composition-cap lane is designed on the machinery that IS
-merged and verified present:
+> **Correction (supersedes an earlier draft of this spec):** a prior revision claimed Phase-3 was
+> unmerged and anchored the design on the pre-cbac `Identity.Grant`/`grant_cap` shim. That was a
+> stale-tree read (the author's working branch predated cbac). **Retracted.** cbac IS merged; this
+> revision anchors the mint on `Cap.issue` + `absorb_cap`, and the brief's symbol names
+> (`bind_recipe_caps`, `propose_recipe_caps`, `proposal_cap`, `instance_overrides`) are all correct
+> on `fa72d36ba`.
 
-1. `Ezagent.Identity.Grant` — the single grant/revoke chokepoint (`grant.ex`), with the closed
-   tag set `{:held_by,·}` / `{:admin,·}` / `{:rule, name, owner}` / `{:genesis, owner}`. This is
-   the real ISSUE seam. Owner-as-granter (#154) is already expressible via `{:rule, name, owner}`.
-2. The **`instance_overrides` seam** on `GrantRecipeCaps.grant_recipe_caps/4`
-   (`ezagent.agent.grant_recipe_caps.ex:137-233`) — the code's own `★core gap★` (:118-135) with
-   zero production caller.
-3. The **orchestrator precedent** — `Ezagent.Entity.Session.Orchestrator.Caps.build_desired_caps/4`
-   (`caps.ex:148`) + `grant_tag_for/2` (:120): a working lane that mints scope-bounded caps under
-   `granted_by: owner_uri` via `{:rule, :template_materialize, owner}` / `{:genesis, owner}`, and
-   already emits `kind: :session` via `{:within_session, session_uri}`.
-
-STORE and VERIFY, on merged main, are simply: the grant chokepoint dispatches into the target
-entity's `:caps` slice (durable via the `caps_json` projection), and dispatch step 5.5 reads it
-back. This spec needs no new store/verify primitive. If Phase-3's `Cap.issue`/self-store later
-merges, the lane's mint call re-points at it with no change to the declaration or wiring design.
-
-> **Action for the coordinator:** the brief was written against the Phase-3 spec's vocabulary, not
-> merged code. This spec substitutes the verified-present equivalents. Flag if Phase-3 was expected
-> to be merged first — the lane does not depend on it, but the framing differs.
+The lane needs **no new** issue/store/verify primitive — only a declaration, materialize wiring
+that calls the existing seam, and a Kind-axis decision.
 
 ---
 
@@ -68,15 +71,16 @@ operation falls back:
 | **autoservice** | orchestrator → kb | hand-written `scripts/autoservice_tier1_seed.exs` explicitly grants `kb.query` (:21). | ❌ fallback — the exact "hand-write bindings" smell the boundary doc names |
 | **hello** | front-desk (responser) → builder | `Ezagent.Capability.admin_genesis_cap()` — a 5-axis wildcard (`capability.ex:244`, `kind/behavior/action/instance/workspace = :any`). | ❌ fallback (privileged relay) |
 | **dealscout** | assistant → data host | copies kanban's shape; dead-ends (kind + instance double-mismatch, §6). | ❌ wall |
-| **orchestrator** | → session members | `grant_orchestrator_scoped_caps` mints owner-granted `{:within_session}` caps — but a hook **hardcoded to the orchestrator role** (`definition_agents.ex:352-354` `orchestrator_recipe_slot?`). | ⚠ half-right; unreachable by ordinary socialware |
+| **orchestrator** | → session members | `grant_orchestrator_scoped_caps` mints owner-granted cross-instance caps via `Cap.issue` + `absorb_cap` — but reachable only through a hook **hardcoded to the orchestrator role** (`definition_agents.ex` `orchestrator_recipe_slot?`). | ⚠ the right mechanism, wrong reach |
 
-`docs/together/contributing/socialware-data-deployment-boundary.md:48-49` states the principle:
+`docs/together/contributing/socialware-data-deployment-boundary.md:48-49`:
 > "any need to … hand-write working-copy bindings **is treated as evidence that a supported
 > install/runtime path is missing**."
 
-The four fallbacks are that evidence. The engine seam (`instance_overrides`) and the granter rule
-(#154) already exist; what is missing is (a) a **declaration** of the relationship, (b) the
-**materialize wiring** that drives the seam, and (c) a decision on the **Kind axis**.
+The four fallbacks are that evidence. The ISSUE/STORE seam (`Cap.issue` + `absorb_cap`), the
+target-scoping seam (`instance_overrides`), and the granter rule (#154) all exist; what is missing
+is (a) a **declaration** of the relationship, (b) the **materialize wiring** that mints the cap,
+and (c) a decision on the **Kind axis**.
 
 ---
 
@@ -84,28 +88,28 @@ The four fallbacks are that evidence. The engine seam (`instance_overrides`) and
 
 The lane must **not** lighten the dispatch guardrail. Two layers are deliberately separate:
 
-- **can-FIND (routing / addressing).** `routing_rules` + `legends` (`Definition` fields
-  `definition.ex:23,25,51,53`) + the URI schemes decide **who a message reaches**. This is a
-  discovery/delivery concern. Being routable to B, or being able to construct B's URI, is NOT
-  authority over B.
-- **can-OPERATE (authorization).** Dispatch step 5.5 (`kind/runtime.ex`, the sole
-  Behavior×Entity chokepoint, grep-gated by `cap_check_only_at_chokepoint_test.exs`) derives the
-  **needed** cap by substituting the target's **concrete instance URI**
-  (`resolve_required_cap` → `Ezagent.URI.instance(target)`) and matches it against the caller's
-  held caps by **exact instance equality** (`capability/match.ex`). A cap that points at *self*
-  structurally cannot open *another agent's* lock.
+- **can-FIND (routing / addressing).** `routing_rules` + `legends` (`definition.ex:23,25`) + the URI
+  schemes decide **who a message reaches**. Being routable to B, or able to construct B's URI, is
+  NOT authority over B.
+- **can-OPERATE (authorization).** Dispatch step 5.5 (`kind/runtime.ex`, the sole Behavior×Entity
+  chokepoint, grep-gated by `cap_check_only_at_chokepoint_test.exs`) derives the **needed** cap by
+  substituting the target's **concrete instance URI** (`resolve_required_cap` →
+  `Ezagent.URI.instance(target)`) and matches it against the caller's held caps by **exact instance
+  equality** (`capability/match.ex`). A cap that points at *self* structurally cannot open
+  *another agent's* lock.
 
 This split is a real confused-deputy / workspace-isolation defense: "can address B ≠ can operate
-B." **The lane adds a narrow can-OPERATE cap; it changes nothing about can-FIND, and it never
-relaxes the exact-instance match.** Composition is orthogonal to authorization by design — a
-composed-in socialware must NOT be able to operate a member it was not declared to operate.
+B." **The lane adds a narrow can-OPERATE cap; it changes nothing about can-FIND, and never relaxes
+the exact-instance match.** A composed-in socialware must NOT be able to operate a member it was
+not declared to operate.
 
 ---
 
 ## 3. Design: the composition-cap lane
 
-Three parts — a declaration field, materialize wiring, and the granter — riding on the
-verified-present machinery of §0.
+Three parts — a declaration field, materialize wiring, and the granter — riding on the merged seam
+of §0. The **orchestrator lane is the exact precedent**: a *live holder* absorbing a *cross-instance*
+cap issued under *owner* authority.
 
 ### 3.1 Declaration (a NEW directed field — not routing/legend reuse)
 
@@ -124,133 +128,141 @@ roles:
     operates:
       - role: board            # a target ROLE NAME in this same Definition
         behavior: Ezagent.ActionSet.Kanban
-        action: mutate         # a CONCRETE action (not :any) — see §5
+        action: mutate         # a CONCRETE action (not :any) — see §3.3
 ```
 
 Semantics: *"the member filling `kanban-assistant` may dispatch `behavior.action` to the member
 filling role `board`."* Each entry names a **target role in the same Definition** — never a URI
-(the `Definition` never carries instance URIs; `reject_participant_instance_uris`
-`definition.ex:85`). Directed and per-source: it reads as "this role operates …", co-located with
-the role that receives the cap.
+(the `Definition` never carries instance URIs; `reject_participant_instance_uris`,
+`definition.ex:85`). Directed and per-source, co-located with the role that receives the cap.
 
 Validation extends `role_slot/1` (`definition.ex:280`) with an optional `operates` list, each entry
-requiring a non-empty `role` (string), a `behavior` (module, via the existing `behavior_list`
-validator style), and a concrete `action` atom. The current validator **silently drops unknown
-keys** (it reconstructs a fixed-key map at :291), so an authored `operates` today is discarded —
-the field must be parsed explicitly.
+requiring a non-empty `role` (string), a `behavior` (module), and a concrete `action` atom. The
+current validator **silently drops unknown keys** (it reconstructs a fixed-key map, `:291`), so an
+authored `operates` today is discarded — the field must be parsed explicitly.
 
 Alternative (documented, not recommended): a top-level `compositions: [%{from:, to:, behavior:,
-action:}]`. Equivalent expressive power; `operates`-on-role_slot is preferred for locality. Either
-is a NEW field — the design's fixed point is *directed, concrete-action, references a role name*.
+action:}]`. Equivalent power; `operates`-on-role_slot preferred for locality. Either way it is a
+NEW field — the fixed point is *directed, concrete-action, references a role name*.
 
-**Consequence — composition targets must be materialized roles.** `operates.role` is resolved to a
+**Consequence — composition targets must be materialized roles.** `operates.role` resolves to a
 live member URI at materialize time via `Members.role_name_to_uri/2`
-(`behavior/session/members.ex:84`, already used by `definition_agents.ex:601`). Therefore the
-**target must be a role slot** in the Definition. This is the "data-as-a-role" model (§5/§6): the
-kanban board and the autoservice kb become **agent role slots** so `role_name_to_uri` resolves
-them — which is exactly what makes the cap mintable.
+(`behavior/session/members.ex:84`, already used by `definition_agents.ex`). So the **target must be
+a role slot**. This is the "data-as-a-role" model (§3.3/§6): the kanban board and the autoservice
+kb become **agent role slots** so `role_name_to_uri` resolves them — which is exactly what makes
+the cap mintable.
 
-### 3.2 Materialize wiring (drive the seam under owner authority)
+### 3.2 Materialize wiring — mint via `Cap.issue` + `absorb_cap` (the orchestrator path), NOT RecipeCapBinding
 
-Today's socialware materialize (`SessionCreator.DefinitionAgents.materialize_definition_agents/4`,
-`definition_agents.ex:85`) already threads `granted_by` (the **session owner**) end-to-end and
-resolves role_name→URI. The gap: the per-agent recipe-cap grant (`grant_recipe_caps/2`, :550 →
-`GrantRecipeCaps.grant_recipe_caps/3`, :551) passes **no** `instance_overrides` (every recipe cap
-self-scoped, :217) and issues under **admin** authority (`grant_all` uses
-`Ezagent.Entity.User.admin_uri()` :210 via `Ezagent.Identity.grant_cap/3`, the back-compat shim →
-`{:held_by, admin}` per capbac.md §4 — *not* `{:admin, admin}`; brief wording corrected here).
+The socialware recipe-cap path (`definition_agents.ex` `bind_recipe_caps`, `:617` →
+`GrantRecipeCaps.propose_recipe_caps`, `:621` → `RecipeCapBinding.issue_and_upsert`, `:623`) is
+**self-scoped by construction**: it issues under `{:admin, admin}` (`:618`) and RecipeCapBinding
+rejects any cross-instance or non-`:agent` artifact (§0). **A composition cap — held by the source
+member, pointing at the *target* member — cannot flow through it** (`:target_mismatch`).
 
-**Wiring:** after each role's members are joined, add a composition step that, for every role
-carrying `operates`:
+The correct path is the one the orchestrator already runs
+(`Orchestrator.Caps.grant_orchestrator_scoped_caps`): a live holder absorbing a cross-instance,
+owner-issued cap. Add a **composition step** to socialware materialize (sibling to the
+orchestrator-only hook) that, for every role carrying `operates`:
 
-1. resolves each `operates.role` → target member URI (`Members.role_name_to_uri/2`);
-2. builds the **target-scoped** map `%{behavior_module => target_uri}` — the exact shape the
-   `instance_overrides` seam consumes (`ezagent.agent.grant_recipe_caps.ex:124-135`,:217);
-3. mints one **concrete** cap per `operates` entry — `kind` per §5, `behavior` = the entry's
-   module, `action` = the entry's concrete action, `instance` = `URI.instance(target_uri)`,
-   `workspace_uri` = `Capability.workspace_of(target_uri)` — and grants it to the **source** member
-   under owner authority (§3.3).
+1. **Resolve** each `operates.role` → target member URI (`Members.role_name_to_uri/2`), after that
+   target's member has joined. Fail LOUD if unresolved (fail-closed, no partial).
+2. **Build** the concrete composition cap:
+   `Ezagent.Capability.cap(kind, behavior_module, action, Ezagent.URI.instance(target_uri),
+   Ezagent.Capability.workspace_of(target_uri))` — `kind` per §3.3, `behavior`/`action` from the
+   entry (concrete), `instance` = the **target's** concrete URI. (This is the same cross-instance
+   scoping the `instance_overrides` seam computes — `proposal_cap`, `grant_recipe_caps.ex:304-319`;
+   the lane reuses that *scoping idea* but mints on the owner path, not the admin recipe path.)
+3. **ISSUE** under owner authority:
+   `Ezagent.Cap.issue({:rule, :socialware_composition, owner}, source_member_uri, cap)` — `owner`
+   is the session owner `granted_by`, already threaded through
+   `materialize_definition_agents/4` (`:91,:94`). The **holder** arg is the **source member**.
+4. **STORE (self-absorb):** `Ezagent.Identity.absorb_cap(source_member_uri, artifact)` — the source
+   member self-stores the issued artifact (mirrors `caps.ex:101-108`; `absorb_cap` does not require
+   `instance == holder`, which is why the orchestrator can hold `{:within_session}` caps and the
+   source member can hold a target-scoped cap).
 
-The cap is minted at the source member's URI, scoped to the target's instance — the same
-target-scoping the `instance_overrides` seam expresses. Whether codex implements this by
-parameterizing `grant_recipe_caps/4`'s granter/kind and feeding it the resolved overrides, or as a
-sibling owner-authority mint modelled on the orchestrator lane, is an impl choice (§9) — the design
-fixes only: **target-scoped, owner-granted, concrete, minted at the source member.**
+Complete all ISSUE authorizations before the first absorb (all-or-nothing ordering — same discipline
+as `grant_recipe_caps.ex:331-334` and `caps.ex:82-84`).
 
-### 3.3 Granter = the owner, via `{:rule, :socialware_composition, owner}`
+The design's fixed points: **cross-instance, owner-granted, concrete, issued via `Cap.issue`,
+self-absorbed by the source member.** Whether codex reuses `grant_recipe_caps/4`'s
+`instance_overrides` parameter (which would additionally need an owner tag + a Kind knob) or writes
+a dedicated composition mint modelled on `Orchestrator.Caps` is an impl choice (§8) — the design
+recommends the dedicated `Cap.issue`/`absorb_cap` path because it is owner-granted and Kind-flexible
+natively, and it leaves the self-scoped recipe path untouched.
 
-Per Decision #154 (`GLOSSARY` #154; capbac.md §1/§4): an auto-grant is driven by a RULE, and the
-granter is **whoever configured the rule** — here the **owner** who installed the socialware /
-owns the session (already in hand as `granted_by`). Not admin, not a `system://` principal.
+### 3.3 Granter = the owner, via the `{:rule, :socialware_composition, owner}` issue tag
 
-Use the tag `{:rule, :socialware_composition, owner}` (a new named rule, mirroring the
-orchestrator's `{:rule, :template_materialize, owner}`, `caps.ex:133`). A composition cap is
-**rule-eligible** because `rule_cap_bounded?` (`behavior/identity.ex`, capbac.md §5) admits a
-concrete-`%URI{}` instance with a **concrete action** (`kind ≠ :any`, `behavior ≠ :any`,
-`action ≠ :any`) — which is exactly the §3.1 shape. This is why §3.1 requires a concrete action.
+Per Decision #154 (capbac.md §1/§4): an auto-grant is driven by a RULE, and the granter is the
+entity that **configured the rule** — here the **owner** who installed the socialware / owns the
+session (in hand as `granted_by`). Not admin, not a `system://` principal.
 
-`granted_by` is validated `%URI{scheme: "entity"}` at the chokepoint; the owner entity passes.
+Pass `{:rule, :socialware_composition, owner}` as the `Cap.issue` authorization tag (a new named
+rule, mirroring the orchestrator's `{:rule, :template_materialize, owner}`, `caps.ex:162`).
+`CapabilityRegistry.authorize_grant/3` admits it because a composition cap is **rule-eligible**:
+`rule_cap_bounded?` (capbac.md §5) requires `kind ≠ :any`, `behavior ≠ :any`, and (concrete action
+**or** scope-bounded instance) — the §3.1 shape (concrete action) satisfies it. This is why §3.1
+mandates a concrete action. `Cap.issue` stamps `granted_by = owner` and validates it is an entity
+URI.
 
 ---
 
-## 4. Invariants (what CI / the design must hold)
+## 4. Invariants
 
 1. **Least-privilege, never wildcard.** Every composition cap is concrete on all five axes
-   (`kind` concrete, `behavior` concrete, `action` concrete, `instance` = target's concrete URI,
-   `workspace_uri` concrete). It does **not** relax `no_wildcard_system_principals_test` or
+   (`kind`, `behavior`, `action` concrete; `instance` = target's concrete URI; `workspace_uri`
+   concrete). It does not relax `no_wildcard_system_principals_test` /
    `no_unowned_system_principal_grant_test`, and a dispatch to an **unrelated** instance is denied
-   (the exact-instance match fails). The `admin_genesis_cap` wildcard fallback is retired for these
+   (exact-instance match fails). The `admin_genesis_cap` wildcard fallback is retired for these
    paths, not generalized.
-2. **`granted_by` = a real owner entity** (`%URI{scheme: "entity"}`), via `{:rule,
-   :socialware_composition, owner}`. Never admin-as-granter, never a `system://` principal
-   (#154). Enforced by the chokepoint's entity validation.
-3. **can-FIND unchanged.** No change to `routing_rules`, `legends`, URI schemes, or the routing
-   layer. The lane only adds a can-OPERATE cap.
+2. **`granted_by` = a real owner entity** (`%URI{scheme:"entity"}`), via `{:rule,
+   :socialware_composition, owner}`. Never admin-as-granter, never a `system://` principal (#154);
+   enforced by `Cap.issue`'s entity validation.
+3. **can-FIND unchanged.** No change to `routing_rules`, `legends`, URI schemes, or routing.
 4. **Dispatch guardrail intact.** Step 5.5, `resolve_required_cap`, and the exact-instance
-   `match.ex` are untouched. The lane satisfies the guardrail with a correctly-scoped cap; it does
-   not bypass or soften it.
+   `match.ex` untouched. The lane satisfies the guardrail with a correctly-scoped cap; it does not
+   bypass or soften it.
 5. **Declared-only.** A member may operate another **only** where the Definition declares it. No
-   `operates` entry ⇒ no cross-member cap (self-scoped recipe caps only, as today).
-6. **Fail-closed, no partial** — inherit `grant_recipe_caps`'s existing contract: an unresolvable
-   target role (no live member for `operates.role`) or unloaded behavior fails LOUD, granting
-   nothing (never a silently-dead cap).
-7. **Chokepoint-only.** Every mint goes through `Ezagent.Identity.Grant` (grep-gated by
-   `grant_dispatch_chokepoint_test.exs`). No hand-built grant dispatch.
-8. **Idempotent** on the repair/re-materialize path (mirror `cap_equal_ignoring_metadata?`,
-   `caps.ex:200`).
+   `operates` ⇒ no cross-member cap (self-scoped recipe caps only, as today).
+6. **Fail-closed, no partial.** An unresolvable target role or unloaded behavior fails LOUD,
+   issuing/absorbing nothing (never a silently-dead cap); all ISSUE before any absorb.
+7. **Issued + verifiable.** Every composition cap goes through `Cap.issue` (entity provenance) and
+   passes `Cap.verify` — a first-class cbac artifact, not a hand-built grant.
+8. **Idempotent** on repair/re-materialize (mirror `cap_equal_ignoring_metadata?`, `caps.ex`), and
+   revocable via the orchestrator's `revoke` inverse pattern (`caps.ex:129`).
 
 ---
 
 ## 5. Answers to jjkysy PR #1355 §五 (拍板项)
 
 > Verbatim decisions from `socialware-composition-cap-gap.md` §五. Recommendations follow; the two
-> genuine forks are re-surfaced in §6 for Allen.
+> genuine forks are re-surfaced in §6.
 
-**决策 1 — Do we accept the gap is worth a proper lane (vs tolerating admin/script fallback)?**
-**Recommend: YES.** Four shipped socialware fall back today; the boundary doc names hand-written
-bindings as a missing-path signal; kanban assistant→board and autoservice→kb have **no** correct
-path without it (data hosts can't self-execute — §6). The engine seam already exists and is
-labelled `★core gap★` with zero callers. Filling it converges toward Decision #154 (retire the
-`system://`/admin fallbacks), not away.
+**决策 1 — Is the gap worth a proper lane (vs tolerating admin/script fallback)?**
+**Recommend: YES.** Four shipped socialware fall back; the boundary doc names hand-written bindings
+as a missing-path signal; kanban assistant→board and autoservice→kb have **no** correct path
+without it (data hosts can't self-execute — §6). The mint seam (`Cap.issue`+`absorb_cap`) and the
+target-scoping seam already exist; the orchestrator already proves the exact pattern. Filling it
+converges toward #154 (retire the `system://`/admin fallbacks).
 
-**决策 2 — (a) how to declare, (b) how to pick the granter, (c) extend Kind axis to session?**
-- **(a) Declaration:** a **NEW directed field**, `operates` on the agent role_slot (§3.1). **Do
-  not reuse legend/routing** (that collapses can-find vs can-operate). Concrete action, references
-  a role name.
-- **(b) Granter:** the **owner** (session owner / installer) via `{:rule, :socialware_composition,
-  owner}` (§3.3) — #154-clean, mirrors the orchestrator precedent. (Fork vs today's `{:held_by,
-  admin}` — §6.2.)
-- **(c) Kind axis:** **prefer data-as-agent so the common path stays `kind: :agent`; support
-  `kind: :session` only as a second, deferred sub-lane where the action host is naturally a
-  session.** Do NOT force session-host actions through the agent-only `grant_all` seam. (This is a
-  genuine fork — §6.1.)
+**决策 2 — (a) declaration, (b) granter, (c) extend Kind axis to session?**
+- **(a) Declaration:** a **NEW directed field**, `operates` on the agent role_slot (§3.1). **Not**
+  legend/routing reuse. Concrete action, references a role name.
+- **(b) Granter:** the **owner** via the `{:rule, :socialware_composition, owner}` `Cap.issue` tag
+  (§3.3) — #154-clean, mirrors the orchestrator. (Fork vs the recipe path's `{:admin, admin}` —
+  §6.2.)
+- **(c) Kind axis:** **prefer data-as-agent so the common path is `kind: :agent`; support
+  `kind: :session` only where the action host is naturally a session** — reachable *for free* on the
+  direct `Cap.issue` path (the orchestrator already issues `kind: :session` `{:within_session}`
+  caps). Do NOT force session-host actions through the agent-only `proposal_cap`/RecipeCapBinding
+  seam. (Genuine fork — §6.1.)
 
 **决策 3 — Also lift kanban assistant→board from fallback to the proper lane?**
-**Recommend: YES.** Model the board as a **data-as-agent** role slot; declare
-`kanban-assistant operates board`; delete the admin/owner master-key path. jjkysy's judgment
-(§三.3, §五.3) — this is the board's **only** correct path (the board is a passive data host that
-cannot receive chat and self-execute) — holds against the code. This is the reference
-implementation of the lane.
+**Recommend: YES.** Model the board as a **data-as-agent** role slot; declare `kanban-assistant
+operates board`; delete the admin/owner master-key path. jjkysy's judgment (§三.3, §五.3) — the
+board is a passive data host that can't self-execute, so this is its **only** correct path — holds
+against the code. This is the reference implementation.
 
 ---
 
@@ -258,121 +270,150 @@ implementation of the lane.
 
 ### 6.1 Kind axis — the genuine fork (resolved-with-recommendation)
 
-`grant_all` hardcodes `kind: :agent` (`ezagent.agent.grant_recipe_caps.ex:223`). Three options:
+The self-scoped recipe seams force `kind: :agent` (`proposal_cap`, `grant_recipe_caps.ex:318`;
+`RecipeCapBinding.validate_artifact` `:kind_mismatch`). But the **direct `Cap.issue` path imposes no
+such limit** — `authorize_grant`/`rule_cap_bounded?` admit `kind: :session`, and `absorb_cap` stores
+it (the orchestrator does exactly this). Options:
 
-- **(a)** Extend the recipe-cap seam to emit non-`:agent` kinds (parameterize `grant_all`).
-- **(b)** Mint the composition cap directly on the orchestrator's scope-bounded path (which already
-  emits `kind: :session` via `{:within_session}`, `caps.ex:161-169`), bypassing `grant_all`.
-- **(c)** "Data-as-a-standalone-agent" — make board/kb **agent** role slots so every composition
-  target is `kind: :agent` and the existing seam fits unchanged.
+- **(a)** Parameterize the recipe seam (`proposal_cap`) to emit non-`:agent` kinds.
+- **(b)** Mint the composition cap on the **direct `Cap.issue` + `absorb_cap`** path (§3.2), which
+  emits any Kind (incl. `kind: :session` via a `{:within_session}` scope tuple) with no seam change.
+- **(c)** "Data-as-a-standalone-agent" — make board/kb **agent** role slots so every target is
+  `kind: :agent`.
 
-**Recommendation: (c) as the default + (b) as a bounded second sub-lane.** Make data hosts agent
-roles (kanban board, autoservice kb) → the common lane needs **no** kind change and reuses the seam
-as-is. Reserve `kind: :session` (via the orchestrator's scope-tuple path) for the rare case where
-the action genuinely lives on the session host (dealscout `crawl_now`); **do not** force
-session-host actions through the agent-only seam (that's the double-mismatch that dead-ends
-dealscout — §1). dealscout defers via **lane ①** (role self-execution + routing) short-term and is
-not a blocker.
+**Recommendation: (c) as the default target model + (b) as the mint path.** Data hosts become agent
+roles (kanban board, autoservice kb) → the common cap is `kind: :agent`; and because we mint via
+direct `Cap.issue` (b), the rare session-host action (dealscout `crawl_now`) is supported by a
+`kind: :session` scope-tuple cap **without** touching the agent-only recipe seams. Do **not** force
+session-host actions through `proposal_cap`/RecipeCapBinding — that agent-only self-scope is the
+double-mismatch that dead-ends dealscout (§1). dealscout defers via **lane ①** (role
+self-execution + routing) short-term; not a blocker.
 
-### 6.2 Granter — `{:held_by, admin}` (today) vs `{:rule, :socialware_composition, owner}` (proposed)
+### 6.2 Granter — `{:admin, admin}` (today's recipe path) vs `{:rule, :socialware_composition, owner}`
 
-Today the recipe-cap grant runs under admin (`grant_all` :210, `{:held_by, admin}`). The lane
-proposes owner-as-granter via `{:rule, …, owner}` (§3.3), which is #154-clean and matches the
-orchestrator precedent. **Recommendation: owner via `{:rule, :socialware_composition, owner}`.**
-Confirm with Allen (it changes the accountable granter on these caps and adds a named rule to the
-`{:rule, …}` set). Note: this granter change is scoped to **composition** caps; self-scoped recipe
-caps may stay as-is or move to owner separately (out of scope here).
+Recipe caps issue under `{:admin, admin}` (`bind_recipe_caps` `:618`; `RecipeCapBinding` `:144`).
+The lane proposes owner-as-granter via `{:rule, …, owner}` (§3.3) — #154-clean, matching the
+orchestrator's owner tags (`caps.ex:149-162`). **Recommendation: owner via `{:rule,
+:socialware_composition, owner}`.** Confirm with Allen (it adds a named rule to the `{:rule, …}` set
+and sets the accountable granter on these caps to the owner). Scope: **composition** caps only;
+self-scoped recipe caps stay `{:admin, admin}` (separate concern).
 
 ### 6.3 Declaration placement — `operates` on role_slot vs top-level `compositions`
 
-Recommended `operates` on role_slot (§3.1) for locality. Top-level `compositions` is the
-alternative if Allen prefers a single relationship table. Cosmetic vs the design's fixed point.
+Recommended `operates` on role_slot (§3.1) for locality; top-level `compositions` is the alternative
+if Allen prefers a single relationship table. Cosmetic vs the design's fixed point.
 
 ---
 
-## 7. Impl-constraints (for codex — not design decisions)
+## 7. Answering the coordinator's integration question directly
+
+*"Does `RecipeCapBinding.issue_and_upsert` go through `instance_overrides`, or should the composition
+cap be minted via a direct `Cap.issue(...)`?"*
+
+**Direct `Cap.issue` + `absorb_cap`.** `RecipeCapBinding` is the **self-scoped** durable home for a
+not-yet-live agent's *own* recipe caps: `validate_artifact/4` (`recipe_cap_binding.ex:187-195`)
+structurally rejects any cap whose `instance ≠ the grantee itself` or whose `kind ≠ :agent`, and it
+issues under `{:admin, issuer}`. A composition cap is cross-instance (held by the source member,
+`instance` = the target member) — it **cannot** pass RecipeCapBinding. The `instance_overrides` seam
+(`grant_recipe_caps.ex:304-319`) *computes* a cross-instance-scoped cap shape, but its host
+(`proposal_cap`) still stamps `kind: :agent` and its callers route to either RecipeCapBinding
+(self-scoped) or an `{:admin, admin}` absorb — neither is owner-granted. The composition lane
+therefore mints on the **same path the orchestrator uses for its cross-instance delegation caps**:
+`Cap.issue({:rule, :socialware_composition, owner}, source_member, cap)` → `absorb_cap(source_member,
+artifact)`. This IS the merged cbac paradigm (issue at the `Cap.issue` chokepoint, holder
+self-stores), applied to a target-scoped cap.
+
+---
+
+## 8. Impl-constraints (for codex — not design decisions)
 
 - **Declaration parse:** extend `role_slot/1` (`definition.ex:280`) — the validator reconstructs a
-  fixed-key map (:291) and silently drops unknown keys, so `operates` must be parsed and validated
+  fixed-key map (`:291`) and drops unknown keys, so `operates` must be parsed + validated
   explicitly (non-empty `role` string; `behavior` a loadable module; `action` a concrete atom,
-  reject `:any`). Reject any `operates` entry that names a `role` not present in `roles`.
-- **Target resolution:** reuse `Members.role_name_to_uri/2` (`behavior/session/members.ex:84`), the
-  same resolver `definition_agents.ex:601` uses. Fail LOUD if a declared target role has no live
-  member (fail-closed, no partial — mirror `grant_recipe_caps` :207/:230).
-- **Ordering:** mint composition caps **after** the target role's member has joined (the target URI
-  must exist). Slot into `materialize_one`/`materialize_fresh_agent` after `join_or_cleanup`, or as
-  a post-batch pass once all roles are materialized (a composition may point at a role that
-  materializes later in the batch — a post-batch pass is safer).
-- **Granter threading:** `granted_by` (session owner) is already a parameter of
-  `materialize_definition_agents/4` (:88) — thread it to the composition mint. Tag `{:rule,
-  :socialware_composition, owner}` via `Ezagent.Identity.Grant` (never `Identity.grant_cap/3`, the
-  admin shim).
-- **Kind:** default `:agent` (data-as-agent targets). Any `kind: :session` sub-lane follows
-  `Orchestrator.Caps.build_desired_caps` (`caps.ex:148-185`) — scope-tuple `{:within_session,·}`
-  with `{:genesis, owner}`/`{:rule, …, owner}` per `grant_tag_for/2` (:120).
-- **`rule_cap_bounded?` reachability:** a concrete-`%URI{}` + concrete-action cap must pass
-  `check_action_wildcard_grant_authorized/2` **before** the rule branch is reached (capbac.md §5) —
-  it does, because it is not an `action:any` grant.
-- **Idempotency:** reuse `cap_equal_ignoring_metadata?` (`caps.ex:200`) to skip re-grants on
-  repair.
-- **Gates to run:** `grant_dispatch_chokepoint_test`, `no_wildcard_system_principals_test`,
-  `no_unowned_system_principal_grant_test`, `mix ezagent.check_invariants`,
-  `mix ezagent.socialware.check`, plus touched-app tests + full suite before merge.
+  reject `:any`). Reject any `operates.role` not present in `roles`.
+- **Target resolution:** reuse `Members.role_name_to_uri/2` (`behavior/session/members.ex:84`). Fail
+  LOUD if a declared target has no live member.
+- **Mint:** `Ezagent.Cap.issue({:rule, :socialware_composition, owner}, source_member_uri, cap)`
+  then `Ezagent.Identity.absorb_cap(source_member_uri, artifact)` (`cap.ex:30` / `identity.ex:259`).
+  Do **not** route composition caps through `RecipeCapBinding.issue_and_upsert` (self-scoped) or the
+  pre-cbac `Identity.grant_cap` shim. Build the cap with `Ezagent.Capability.cap/5`.
+- **Ordering:** resolve+mint **after** the target role's member has joined; a post-batch pass (once
+  all roles are materialized) is safer than inline, since a composition may point at a role that
+  materializes later. Complete all ISSUE before the first absorb (all-or-nothing).
+- **Granter threading:** thread `granted_by` (owner) from `materialize_definition_agents/4`
+  (`:91,:94`) into the composition mint. Model the step on `Orchestrator.Caps`
+  (`caps.ex:85-108,149-162`).
+- **Kind:** default `:agent` (data-as-agent targets). Any `kind: :session` sub-lane uses a
+  `{:within_session, session_uri}` scope tuple (as `build_desired_caps`, `caps.ex:177+`).
+- **`rule_cap_bounded?` reachability:** a concrete-`%URI{}` + concrete-action cap passes the
+  wildcard gate before the rule branch (capbac.md §5) — it does, being non-`action:any`.
+- **Idempotency + revoke:** reuse `cap_equal_ignoring_metadata?` to skip re-grants on repair; add a
+  revoke inverse (`caps.ex:129` pattern) for rollback.
+- **Gates to run:** the cbac invariant gates (`recipe_cap_binding_invariant_test`,
+  `cap_absorb_reachability_test`), `grant_dispatch_chokepoint_test`,
+  `no_wildcard_system_principals_test`, `no_unowned_system_principal_grant_test`,
+  `mix ezagent.check_invariants`, `mix ezagent.socialware.check`, touched-app tests + full suite
+  before merge.
 
 ---
 
-## 8. Staged PR plan
+## 9. Staged PR plan
 
 1. **PR-1 — declaration field.** Add + validate `operates` on the agent role_slot
    (`definition.ex`). Manifest schema doc + `mix ezagent.socialware.check` awareness. Round-trip
    test (authored `operates` survives `Definition.new/1`). No behavior yet. *(pure schema)*
-2. **PR-2 — materialize wiring.** Resolve `operates` targets → URIs, mint target-scoped composition
-   caps under `{:rule, :socialware_composition, owner}` in socialware materialize (`kind: :agent`).
-   Fail-closed + idempotent. Unit + a socialware-materialize integration test proving a source
-   member holds a board-scoped cap and can dispatch to the board while an unrelated instance is
-   denied (the §2 invariant, as a failing-without-the-lane test).
+2. **PR-2 — materialize wiring.** Resolve `operates` targets → URIs; mint target-scoped composition
+   caps via `Cap.issue({:rule, :socialware_composition, owner}, source, cap)` + `absorb_cap`
+   (`kind: :agent`). Fail-closed, all-or-nothing, idempotent. Integration test proving a source
+   member holds a target-scoped cap and can dispatch to it while an unrelated instance is denied
+   (the §2 invariant, as a failing-without-the-lane test).
 3. **PR-3 — lift kanban + delete autoservice hand-grant.** Model kanban `board` as a data-as-agent
    role slot; declare `kanban-assistant operates board`; remove the admin/owner master-key path.
    Convert autoservice kb to a role slot; declare `orchestrator operates kb`; **delete
    `scripts/autoservice_tier1_seed.exs`**'s `kb.query` hand-grant. E2e: assistant→board and
    orchestrator→kb both authorized by the minted narrow cap, no fallback.
-4. **Deferred — `kind: :session` sub-lane + dealscout.** Only if/when a session-host action host is
-   needed. dealscout uses **lane ①** (role self-execution + routing) short-term; not a blocker.
-   hello front-desk→builder can migrate onto the lane in a follow-up (retire its
-   `admin_genesis_cap` relay) once PR-2 lands.
+4. **Deferred — `kind: :session` sub-lane + dealscout + hello.** Only if/when a session-host action
+   host is needed (via a `{:within_session}` composition cap on the direct `Cap.issue` path).
+   dealscout uses **lane ①** short-term. hello front-desk→builder migrates onto the lane in a
+   follow-up (retire its `admin_genesis_cap` relay) once PR-2 lands.
 
 ---
 
-## 9. Primary evidence (re-verified on `fa72d36ba`)
+## 10. Primary evidence (re-verified on `fa72d36ba`)
 
-- Declaration schema: `apps/ezagent_domain_session/lib/ezagent/socialware/definition.ex` — struct
-  fields `:12-29` (`roles`, `routing_rules`, `legends`); `role_slot/1` validator `:280-308`
-  (fixed-key reconstruct at :291, no `operates`).
-- The `★core gap★` + `instance_overrides` seam:
-  `apps/ezagent_domain_agent/lib/mix/tasks/ezagent.agent.grant_recipe_caps.ex` — docstring
-  `:118-135`, `grant_recipe_caps/4` `:137-146`, `grant_all/3` `:209-233` (self-scope default :217,
-  admin granter :210, hardcoded `kind: :agent` :223). `PmCoordinatorSeed` **referenced** at :116
-  and `default_agent_seed.ex:8` but **never defined** (`grep 'defmodule.*PmCoordinatorSeed'` → 0).
-- Socialware materialize:
+- **Merged cbac seam:** `apps/ezagent_core/lib/ezagent/cap.ex` — `issue/3` `:30`, tag set `:19-99`,
+  `verify/1` `:44`, provenance `:67-76`. `apps/ezagent_core/lib/ezagent/capability_registry.ex` —
+  `authorize_grant/3` `:371`, `rule_cap_bounded?` rule branch. `identity.ex:259` `absorb_cap/2`.
+  `grant.ex:232` (`grant_cap` → `Cap.issue`). cbac stage commits `dec0bc134`,`d4c28f7a9`,
+  `af8ad54e5`,`915c0bc49`,`9f883f139`,`28493a56f`,`46f26a3b3` in `origin/main` history.
+- **RecipeCapBinding (self-scoped store):**
+  `apps/ezagent_domain_identity/lib/ezagent/identity/recipe_cap_binding.ex` — `issue_and_upsert/4`
+  `:56`, `Cap.issue({:admin, issuer})` `:144`, `validate_artifact/4` self-scope enforcement
+  (`kind==:agent`, `instance==agent_uri`, issuer match) `:187-195`. `CapAbsorbAwait`
+  `apps/ezagent_domain_identity/lib/ezagent/identity/cap_absorb_await.ex`.
+- **Orchestrator precedent (cross-instance, owner-granted, Cap.issue+absorb):**
+  `apps/ezagent_domain_session/lib/ezagent/entity/session/orchestrator/caps.ex` — `issue_scoped_caps`
+  (`Cap.issue(grant_tag_for(cap, owner), target, cap)`) `:85-99`, `absorb_scoped_caps`
+  (`absorb_cap`) `:101-108`, `grant_tag_for` (`{:genesis, owner}` / `{:rule, :template_materialize,
+  owner}`) `:149-162`, `build_desired_caps` `kind: :session` `{:within_session}` cap `:177+`.
+- **Socialware materialize + self-scoped recipe path:**
   `apps/ezagent_domain_session/lib/ezagent_domain_instance_message/session_creator/definition_agents.ex`
-  — `materialize_definition_agents/4` `:85` (threads `granted_by` owner :88), recipe-cap grant with
-  no overrides `:252,:550-555`, orchestrator-only hook `orchestrator_recipe_slot?` `:352-354`,
-  `role_name_to_uri` use `:601`.
-- Orchestrator precedent:
-  `apps/ezagent_domain_session/lib/ezagent/entity/session/orchestrator/caps.ex` —
-  `build_desired_caps/4` `:148`, `{:within_session}` cap `:161-169`, `grant_tag_for/2` `:120`
-  (`{:genesis, owner}` / `{:rule, :template_materialize, owner}`), `cap_equal_ignoring_metadata?`
-  `:200`.
-- Grant chokepoint + tags: `apps/ezagent_domain_identity/lib/ezagent/identity/grant.ex`;
-  `rule_cap_bounded?` in `apps/ezagent_domain_identity/lib/ezagent/behavior/identity.ex`
-  (capbac.md §5).
-- Target resolver: `Members.role_name_to_uri/2`
+  — `materialize_definition_agents/4` `:91` (owner `granted_by` `:94`), `bind_recipe_caps` `:617`
+  (issuer=admin `:618`), `propose_recipe_caps` call `:621`, `RecipeCapBinding.issue_and_upsert`
+  `:623`, orchestrator-only hook `orchestrator_recipe_slot?`.
+- **`instance_overrides` scoping seam:**
+  `apps/ezagent_domain_agent/lib/mix/tasks/ezagent.agent.grant_recipe_caps.ex` — `grant_recipe_caps/4`
+  `:166`, `propose_recipe_caps` `:205`, `proposal_cap/3` (hardcoded `kind: :agent`) `:304-319`,
+  `issue_all` (`Cap.issue({:admin, issuer})`) `:334`, `absorb_all` (`absorb_cap`) `:351`.
+  `PmCoordinatorSeed` **referenced** (`:116`, `default_agent_seed.ex:8`) but **never defined**.
+- **Declaration schema:** `apps/ezagent_domain_session/lib/ezagent/socialware/definition.ex` — struct
+  fields `:12-29` (`roles`,`routing_rules`,`legends`); `role_slot/1` `:280-308` (fixed-key
+  reconstruct `:291`, no `operates`); `reject_participant_instance_uris` `:85`.
+- **Target resolver:** `Members.role_name_to_uri/2`
   `apps/ezagent_domain_session/lib/ezagent/behavior/session/members.ex:84`.
-- Wildcard fallback: `admin_genesis_cap/0`
-  `apps/ezagent_core/lib/ezagent/capability.ex:244` (all-5-axes `:any`).
-- Fallback apps' declarations: `apps/ezagent_web/priv/socialware_seed/{hello,kanban,autoservice}/manifest.yaml`
-  (kanban board is NOT a role slot — two agent roles only; hello has builder/responser/viewer;
+- **Wildcard fallback:** `admin_genesis_cap/0` `apps/ezagent_core/lib/ezagent/capability.ex:244`
+  (all-5-axes `:any`).
+- **Fallback apps:** `apps/ezagent_web/priv/socialware_seed/{hello,kanban,autoservice}/manifest.yaml`
+  (kanban board is NOT a role slot — two agent roles only; hello builder/responser/viewer;
   autoservice one role). autoservice hand-grant: `scripts/autoservice_tier1_seed.exs:21`.
-- Phase-3 not-merged: `git show --stat fa72d36ba` = 9 files, all png/README, 0 `lib/`. No
-  `Cap.issue`/`RecipeCapBinding`/`CapAbsorbAwait` in `apps/`.
-- Boundary principle: `docs/together/contributing/socialware-data-deployment-boundary.md:48-49`.
+- **Boundary principle:** `docs/together/contributing/socialware-data-deployment-boundary.md:48-49`.
