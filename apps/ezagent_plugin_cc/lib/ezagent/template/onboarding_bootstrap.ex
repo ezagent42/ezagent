@@ -21,9 +21,9 @@ defmodule Ezagent.PluginCc.Template.OnboardingBootstrap do
   key) and writes the file 0600. It runs on BOTH the fresh-spawn and the respawn
   paths so the marker survives the agent's own restarts.
 
-  ## Two concerns materialized into `.claude.json`
+  ## Three concerns materialized into `.claude.json`
 
-  This module now materializes TWO independent `.claude.json` concerns:
+  This module materializes THREE independent `.claude.json` concerns:
 
   1. **First-run dialog suppression** (`merge_onboarding/2`, the original §5.B
      purpose) — `hasCompletedOnboarding` + `theme` + the per-project trust gates.
@@ -38,6 +38,25 @@ defmodule Ezagent.PluginCc.Template.OnboardingBootstrap do
      WITHOUT any Anthropic OAuth. Live-proven on canary: sidecar logs "Channel
      notifications registered" and the `@mention` reply fires. Cache-only,
      durable across respawns (a 30-day-stale timestamp still worked).
+  3. **Custom-API-key confirm pre-approval** (`merge_api_key_approvals/1`) —
+     claude's first-run flow shows a `Detected a custom API key in your
+     environment / Do you want to use this API key?` CONFIRM dialog whenever it
+     picks up an `ANTHROPIC_API_KEY` env var that is not yet on its
+     `customApiKeyResponses.approved` allowlist. A headless PTY cannot answer it,
+     so the spawn would hang. Our deepseek/proxy agents authenticate via
+     `ANTHROPIC_AUTH_TOKEN` (NOT `ANTHROPIC_API_KEY`), which claude checks on a
+     SEPARATE branch that never enters this confirm — so this is a
+     BELT-AND-SUSPENDERS guard for the failure mode where a deploy erroneously
+     sets `ANTHROPIC_API_KEY` instead of `ANTHROPIC_AUTH_TOKEN`. claude stores the
+     approval as the key's LAST 20 CHARS (verified in the 2.1.206 binary:
+     `D4(e) = e.slice(-20)`, read by `customApiKeyResponses.approved?.includes(D4(t))`),
+     so we pre-seed that exact identifier. The spawned claude INHERITS the BEAM's
+     ambient OS env (`PtyServer.build_env/1` adds `cmd_env` on top of normal
+     OS-process inheritance and never strips it), so the `ANTHROPIC_API_KEY` we
+     read here via `System.get_env/1` is the exact key claude will use. No-op when
+     `ANTHROPIC_API_KEY` is unset/empty (the normal case) — this only ever writes
+     when the erroneous env is actually present. Deterministic (no scan / no
+     TUI-text fragility); the PtyServer scanner is not the mechanism here.
 
   Scope: this runs for EVERY cc agent, because every cc agent launches with
   `--dangerously-load-development-channels server:esr-bridge` (see
@@ -69,6 +88,7 @@ defmodule Ezagent.PluginCc.Template.OnboardingBootstrap do
     with {:ok, existing} <- read_existing(path),
          merged = merge_onboarding(existing, Keyword.get(opts, :project_cwd)),
          merged = merge_channel_features(merged),
+         merged = merge_api_key_approvals(merged),
          :ok <- write_private(path, Jason.encode!(merged, pretty: true)) do
       :ok
     end
@@ -203,6 +223,54 @@ defmodule Ezagent.PluginCc.Template.OnboardingBootstrap do
     |> File.read!()
     |> Jason.decode!()
   end
+
+  # Concern 3 (see moduledoc §"Three concerns"). Pre-approve an env-provided
+  # `ANTHROPIC_API_KEY` so claude's first-run custom-API-key CONFIRM dialog never
+  # appears (a headless PTY can't answer it → hang). No-op when the env var is
+  # absent/empty — the normal case for our deepseek/proxy agents, which use
+  # `ANTHROPIC_AUTH_TOKEN`. This is the belt-and-suspenders guard for a deploy
+  # that erroneously sets `ANTHROPIC_API_KEY`.
+  #
+  # Merges NON-DESTRUCTIVELY into any existing `customApiKeyResponses`: the key's
+  # approval id is appended to `approved` only if absent (idempotent across
+  # respawns), a pre-existing `rejected` list is preserved, and an
+  # operator-approved key from a copied `.claude.json` is never dropped.
+  defp merge_api_key_approvals(map) when is_map(map) do
+    case api_key_from_env() do
+      nil ->
+        map
+
+      key ->
+        id = api_key_approval_id(key)
+        responses = as_map(Map.get(map, "customApiKeyResponses"))
+        approved = as_list(Map.get(responses, "approved"))
+        approved = if id in approved, do: approved, else: approved ++ [id]
+
+        responses =
+          responses
+          |> Map.put("approved", approved)
+          |> Map.put("rejected", as_list(Map.get(responses, "rejected")))
+
+        Map.put(map, "customApiKeyResponses", responses)
+    end
+  end
+
+  defp api_key_from_env do
+    case System.get_env("ANTHROPIC_API_KEY") do
+      k when is_binary(k) and k != "" -> k
+      _ -> nil
+    end
+  end
+
+  # claude 2.1.206 stores the approval identifier as the key's LAST 20 CHARACTERS
+  # (`D4(e) = e.slice(-20)`; read back by `approved?.includes(D4(t))`). We MUST
+  # produce byte-for-byte the same identifier or the pre-seed won't satisfy the
+  # gate. `String.slice/3` with a `-20` offset matches JS `slice(-20)` exactly:
+  # last 20 chars for a longer key, the whole string for a key ≤ 20 chars.
+  defp api_key_approval_id(key) when is_binary(key), do: String.slice(key, -20, 20)
+
+  defp as_list(l) when is_list(l), do: l
+  defp as_list(_), do: []
 
   defp as_map(m) when is_map(m), do: m
   defp as_map(_), do: %{}
