@@ -85,6 +85,8 @@ defmodule Mix.Tasks.Ezagent.Agent.Create do
   """
   use Mix.Task
 
+  @operator_store_timeout_ms 5_000
+
   @impl Mix.Task
   def run(args) do
     {:ok, _} = Application.ensure_all_started(:ezagent_core)
@@ -156,11 +158,11 @@ defmodule Mix.Tasks.Ezagent.Agent.Create do
     #     `ctx.caps` at step 5.5. It carries an INLINE
     #     `cap(:workspace, Workspace, :create_agent)` scoped to the target
     #     workspace; `granted_by` = `admin_uri` (provenance only on an inline
-    #     authorizer, never routed through `Ezagent.Identity.Grant`).
+    #     authorizer, never used as ISSUE authority).
     #
-    #   * `Workspace.grant_initial_caps/3` — a GRANT path that routes through
-    #     the `Ezagent.Identity.Grant` chokepoint as `{:held_by, ctx.caller}`.
-    #     The chokepoint RE-READS the caller's REAL held caps
+    #   * `Workspace.issue_and_absorb_initial_caps/3` — an ISSUE path using
+    #     `{:held_by, ctx.caller}`. `Ezagent.Cap.issue/3` RE-READS the caller's
+    #     REAL held caps
     #     (`Ezagent.Identity.read_held_caps/1`) to authorize, so `caller` MUST
     #     be `admin_uri` — the admin User Kind is seeded with the bootstrap
     #     wildcard (`User.initial_caps_for_spawn/1`), which authorizes granting
@@ -188,7 +190,14 @@ defmodule Mix.Tasks.Ezagent.Agent.Create do
            }),
          {:ok, %{agent_uri: created_uri, template_name: tmpl_name}} <-
            Ezagent.Workspace.create_agent(workspace_uri, create_args, admin_ctx),
-         :ok <- Ezagent.Workspace.grant_initial_caps(created_uri, caps, admin_ctx) do
+         {:ok, issued_caps} <-
+           Ezagent.Workspace.issue_and_absorb_initial_caps(created_uri, caps, admin_ctx),
+         :ok <-
+           Ezagent.Identity.CapAbsorbAwait.await_exact(
+             created_uri,
+             issued_caps,
+             @operator_store_timeout_ms
+           ) do
       Mix.shell().info("✓ created #{URI.to_string(created_uri)}")
       if tmpl_name, do: Mix.shell().info("  template: #{tmpl_name}")
       if from_uri, do: Mix.shell().info("  cloned from: #{URI.to_string(from_uri)}")
@@ -201,11 +210,11 @@ defmodule Mix.Tasks.Ezagent.Agent.Create do
   # System-principal elimination (#154, 2026-06-19) — the operator → admin
   # entity ctx for the `create_agent` NON-grant dispatch (replaces the
   # eliminated `system://mix-task` ambient wildcard). `caller` = `admin_uri`
-  # (a real entity, also the `{:held_by}` actor the chokepoint re-reads on the
-  # downstream `grant_initial_caps` sub-path); `caps` carries the INLINE
+  # (a real entity, also the `{:held_by}` actor `Cap.issue/3` re-reads on the
+  # downstream initial-cap ISSUE sub-path); `caps` carries the INLINE
   # `cap(:workspace, Workspace, :create_agent)` scoped to the target workspace
   # (the step-5.5 authorizer), `granted_by` = `admin_uri` (provenance only on
-  # an inline authorizer never routed through `Ezagent.Identity.Grant`).
+  # an inline authorizer never used as ISSUE authority).
   defp operator_admin_ctx(%URI{} = admin_uri, %URI{scheme: "workspace"} = workspace_uri) do
     %{
       caller: admin_uri,
