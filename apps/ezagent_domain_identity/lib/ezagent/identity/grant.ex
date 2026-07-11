@@ -42,7 +42,7 @@ defmodule Ezagent.Identity.Grant do
   > is the ENTITY `granted_by`. `ctx.caps` carries the genesis authority
   > (satisfying dispatch step 5.5 for wildcard / no-data-owner grants the
   > entity caller's own caps lack), while `ctx.caller` stays the accountable
-  > entity so the handler's `caller == owner` self-check still authorizes a
+  > entity so the issue-time `caller == owner` self-check still authorizes a
   > concrete-data_owner grant. See `derive_context/1`.
 
   `{:held_by, actor}` subsumes self (actor == target owner), admin
@@ -235,7 +235,11 @@ defmodule Ezagent.Identity.Grant do
 
     case artifact_result do
       {:ok, cap2} ->
-        ctx = build_ctx(caps, caller, rule)
+        ctx =
+          caps
+          |> build_ctx(caller, rule)
+          |> maybe_mark_issued(action)
+
         target_uri = Ezagent.URI.with_action(target, :identity, action)
         {:ok, {target_uri, cap2, ctx}}
 
@@ -246,33 +250,9 @@ defmodule Ezagent.Identity.Grant do
 
   # ── tag → {caps, caller, rule} ────────────────────────────────────────
 
-  defp derive_context({:held_by, %URI{} = actor}) do
-    {Ezagent.Identity.read_held_caps(actor), actor, nil}
-  end
-
-  defp derive_context({:admin, %URI{} = admin}) do
-    {Ezagent.Identity.read_held_caps(admin), admin, nil}
-  end
-
-  defp derive_context({:rule, name, %URI{} = configurer}) when is_atom(name) do
-    {MapSet.new(), configurer, name}
-  end
-
-  defp derive_context({:genesis, %URI{} = granted_by}) do
-    # #154 genesis collapse (2026-06-20) — the genesis authorizer. ctx.caps =
-    # the canonical admin-granted genesis wildcard
-    # (`Ezagent.Capability.admin_genesis_cap/0`, granted_by the admin entity —
-    # a real entity, NOT the eliminated `system://bootstrap` principal). It
-    # satisfies dispatch step 5.5 for the wildcard/no-data-owner grants the
-    # owner's own caps cannot. ctx.caller = the ENTITY `granted_by` — the
-    # handler's `check_grant_authorized` self-check reads `ctx.caller` and
-    # rejects `:grant_not_owner` for a concrete-data_owner cap unless
-    # caller == owner. The granted cap's `granted_by` is stamped to this same
-    # real entity (creator/owner). Replaces the retired
-    # `{:system, principal, granted_by}` tag (the authorizer caps came from
-    # the bootstrap principal's Catalog row; now they come from the admin
-    # entity's immutable genesis cap, with no `system://` reference anywhere).
-    {MapSet.new([Ezagent.Capability.admin_genesis_cap()]), granted_by, nil}
+  defp derive_context(authorization) do
+    {caps, context} = Cap.authorization_context(authorization)
+    {caps, Map.fetch!(context, :caller), Map.get(context, :authorization_rule)}
   end
 
   # ── shared envelope helpers ───────────────────────────────────────────
@@ -328,6 +308,9 @@ defmodule Ezagent.Identity.Grant do
   defp build_ctx(caps, caller, rule) when is_atom(rule) do
     %{caller: caller, caps: caps, authorization_rule: rule}
   end
+
+  defp maybe_mark_issued(ctx, :grant_cap), do: Map.put(ctx, :cap_issued, true)
+  defp maybe_mark_issued(ctx, :revoke_cap), do: ctx
 
   defp reply_for(:sync), do: {:caller_inbox, self()}
   defp reply_for(:async), do: :ignore
