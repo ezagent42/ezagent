@@ -381,12 +381,31 @@ defmodule Ezagent.Kind.Runtime do
               {:ok, cap}
 
             :error ->
-              if granted_via_holds_cap?(ctx, needed) do
-                :telemetry.execute([:ezagent, :authz, :granted], %{}, meta)
-                {:ok, nil}
-              else
-                :telemetry.execute([:ezagent, :authz, :denied], %{}, meta)
-                {:error, :unauthorized}
+              # `granted_via_holds_cap?` reads the CALLER's identity slice; a
+              # TRANSIENT read failure raises `Ezagent.Kind.IdentityReadError`
+              # (fail-loud, never a silent deny — see `default_holds_cap?/2`).
+              # We run inside the TARGET Kind.Server's `handle_dispatch`, so we
+              # CATCH it here and surface a DISTINCT, caller-retryable error
+              # (never `:unauthorized` — no security decision on a transient)
+              # rather than crashing the target session/workspace (which would
+              # feed a rehydrate loop under sustained starvation).
+              try do
+                if granted_via_holds_cap?(ctx, needed) do
+                  :telemetry.execute([:ezagent, :authz, :granted], %{}, meta)
+                  {:ok, nil}
+                else
+                  :telemetry.execute([:ezagent, :authz, :denied], %{}, meta)
+                  {:error, :unauthorized}
+                end
+              rescue
+                e in Ezagent.Kind.IdentityReadError ->
+                  :telemetry.execute(
+                    [:ezagent, :authz, :identity_read_unavailable],
+                    %{},
+                    Map.put(meta, :reason, e.reason)
+                  )
+
+                  {:error, :identity_read_unavailable}
               end
           end
       end

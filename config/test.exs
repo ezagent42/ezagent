@@ -36,7 +36,19 @@ config :ezagent_core, EzagentCore.Repo,
   # boot-writer (gating `system://routing/default`'s boot-spawn out of
   # `:test`, which deletes the unsynchronized boot-time `kind_snapshots`
   # writer) and (b) the raised `busy_timeout` below — NOT a smaller pool.
-  pool_size: 20,
+  #
+  # 20→40 (CapBAC transient-identity-read fix, belt-and-suspenders): the
+  #   fire-and-forget delivery/materialization Tasks (#1339 drains them in
+  #   teardown but they pressure the pool DURING the run) can starve the pool
+  #   enough that a live identity Kind's `get_slice` call queues behind its own
+  #   blocked DB work — the TRANSIENT read the correctness fix now handles
+  #   fail-loud (`Ezagent.Kind.default_holds_cap?/2`). A subagent measured a
+  #   failing WorldConversationTest seed going 3→0 at 20→60; 40 is a conservative
+  #   headroom bump that stays well under connection limits (RAISING the pool is
+  #   safe — only LOWERING regressed the heavier suites above). This is SECONDARY:
+  #   the correctness fix is the actual fix (a transient never becomes a silent
+  #   `:unauthorized`); this just reduces how often the retry path is hit.
+  pool_size: 40,
   pool: Ecto.Adapters.SQL.Sandbox,
   # Extend queue timeout — under load tests can legitimately wait briefly for a
   # connection.

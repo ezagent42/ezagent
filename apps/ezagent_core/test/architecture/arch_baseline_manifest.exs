@@ -65,7 +65,16 @@
   #   is a tracked burn-down follow-up in docs/futures/todo.md (`same_entity?` is
   #   cluster-local; only session.ex's 3 admission handlers + the registration list
   #   would repoint).
-  oversized_modules_gt_1000: 3,
+  # - arch-cap-bump: 3→4 CapBAC transient-identity-read fix — `kind/runtime.ex`
+  #   was 991 on main; the step-5.5 chokepoint gained a bounded `try/rescue` that
+  #   converts a TRANSIENT caller identity-read failure (raised
+  #   `Ezagent.Kind.IdentityReadError`) into the distinct, caller-retryable
+  #   `{:error, :identity_read_unavailable}` instead of crashing the TARGET Kind
+  #   or silently denying → 1011. Like the #161 admission cluster, this is inline
+  #   chokepoint control flow (mutually bound to the authz telemetry + return
+  #   shape), NOT a cleanly-extractable leaf. Burn-down (split authz_check out of
+  #   runtime.ex) is a tracked follow-up in docs/futures/todo.md.
+  oversized_modules_gt_1000: 4,
   # arch-cap-bump: +1 #160 — cc_agent Template Class adds the `credential_status/2`
   #   enum adapter (the CredentialAdapter optional callback that maps the cc probe's
   #   File.exists?/expiresAt result into the normalized status enum for the
@@ -489,7 +498,12 @@
   #   cap-only Lifecycle module for the :complete cap subject. Adds standard
   #   boilerplate (create/1, data_owner/1, data_owner/2 — all @doc false now)
   #   plus Lifecycle macro-generated structural fns. 395→398.
-  undocumented_public_defs: 398,
+  # - arch-cap-bump: +1 CapBAC transient-identity-read fix — the new
+  #   `Ezagent.Kind.IdentityReadError` `defexception` module generates a public
+  #   `exception/1` (macro-emitted, no @doc target; its `message/1` IS `@impl`).
+  #   Same shape as the existing `Capability.Unauthorized` / `BehaviorSet` error
+  #   exceptions already in the baseline. 398→399.
+  undocumented_public_defs: 399,
   # dynamic_public_def_heads — `def unquote(name)(...)` heads whose function name
   #   is only known at macro-expansion, so they cannot become a documented
   #   {name, arity} entry. ENFORCED at 0 (the tree has none): adding any new
