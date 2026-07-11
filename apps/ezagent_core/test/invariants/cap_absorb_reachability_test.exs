@@ -32,6 +32,31 @@ defmodule Ezagent.Invariants.CapAbsorbReachabilityTest do
     assert violations == []
   end
 
+  test "S6 delegated recipe producer issues first and reaches absorb only through the facade" do
+    root = repo_root()
+
+    producer =
+      root
+      |> Path.join("apps/ezagent_domain_agent/lib/mix/tasks/ezagent.agent.grant_recipe_caps.ex")
+      |> File.read!()
+
+    facade =
+      root
+      |> Path.join("apps/ezagent_domain_identity/lib/ezagent/identity.ex")
+      |> File.read!()
+
+    assert producer =~ "Ezagent.Cap.issue("
+    assert producer =~ "Ezagent.Identity.absorb_cap("
+    refute producer =~ "handle_absorb_cap("
+    refute producer =~ ":rpc."
+    refute producer =~ "Node.connect"
+
+    assert facade =~ "def absorb_cap("
+    assert facade =~ "caller: :vm_internal"
+    assert facade =~ "mode: :cast"
+    assert facade =~ "reply: :ignore"
+  end
+
   defp identity_source do
     File.read!(
       Path.join(

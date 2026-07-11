@@ -27,10 +27,10 @@ defmodule EzagentDomainInstanceMessage.SessionCreator.DefinitionAgents do
     5. **join + cleanup** — faceted `session.join` carrying `%{role_name: name}`;
        on a definitive spawn/join failure terminate the worker and conditionally
        tombstone the exact binding version.
-    6. **legacy grant during S5 only** — `GrantRecipeCaps.grant_recipe_caps`
-       runs after a successful join for coexistence coverage. `create/1` already
-       self-stored the binding; identity-key replacement prevents duplicates.
-       S6 deletes this issuer-driven dispatch.
+    6. **no post-spawn recipe grant** — `create/1` self-stores the exact issued
+       artifacts from the binding. The recipe-cap path never drives a cap write
+       into the new agent and therefore never waits for its transport readiness.
+       The separate orchestrator-scoped post-hook remains an S7 cutover.
 
   Authority is SYSTEM-MEDIATED materialization (mirrors
   `Materializer.join_session_members`):
@@ -257,12 +257,7 @@ defmodule EzagentDomainInstanceMessage.SessionCreator.DefinitionAgents do
              role_name,
              flavor,
              binding
-           ),
-         # S5 coexistence window: keep the legacy post-join dispatch until S6.
-         # Identity-key replacement makes it a no-duplicate no-op in authority
-         # terms. A legacy grant failure does NOT tombstone a successfully
-         # spawned/joined binding; S6 removes this dispatch entirely.
-         :ok <- grant_recipe_caps(planned_uri, recipe) do
+           ) do
       {:ok, planned_uri}
     end
   end
@@ -578,7 +573,7 @@ defmodule EzagentDomainInstanceMessage.SessionCreator.DefinitionAgents do
     :ok
   end
 
-  # --- durable recipe-cap binding + coexistence grant -----------------------
+  # --- durable recipe-cap binding -------------------------------------------
 
   defp refresh_existing_binding(workspace_uri, agent_uri, recipe_name, role_name) do
     with {:ok, recipe} <- lookup_recipe(workspace_uri, recipe_name),
@@ -614,15 +609,6 @@ defmodule EzagentDomainInstanceMessage.SessionCreator.DefinitionAgents do
         )
 
         :ok
-    end
-  end
-
-  # Legacy dispatch remains only for the S5 coexistence window. S6 removes it.
-
-  defp grant_recipe_caps(%URI{} = agent_uri, recipe) do
-    case GrantRecipeCaps.grant_recipe_caps(agent_uri, recipe, @telemetry_prefix) do
-      :ok -> :ok
-      {:error, reason} -> {:error, {:agent_grant_recipe_caps_failed, reason}}
     end
   end
 
