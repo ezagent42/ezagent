@@ -37,6 +37,11 @@ defmodule EzagentPluginHello.Router do
     if should_route?(session_uri, sender) do
       Task.Supervisor.start_child(EzagentPluginHello.TaskSupervisor, fn ->
         action = classify(user_text, owner?(session_uri, sender), session_uri)
+        # F2 fail-closed: publish/share require a real owner. An ownerless
+        # session (nil owner_uri, e.g. a pre-owner_uri old session) has
+        # owner?→true (fail-open for builder/concierge) but must NOT grant
+        # admin-level publish/share. Downgrade to concierge.
+        action = guard_admin_actions(action, session_uri)
         dispatch_to_member(session_uri, action, user_text)
       end)
     else
@@ -52,6 +57,21 @@ defmodule EzagentPluginHello.Router do
   def classify(user_text, true = _owner?, session_uri) do
     Generator.classify_intent(session_uri, user_text)
   end
+
+  # F2 fail-closed: publish/share are admin-level actions. A session whose
+  # owner_uri is nil (e.g. a pre-owner_uri old session — owner? returns true
+  # as a fail-open for builder/concierge) must NOT grant these. Downgrade to
+  # :concierge so a nil-owner session's visitors can't publish or share.
+  defp guard_admin_actions(action, session_uri)
+       when action in [:publisher, :sharer] do
+    case Ezagent.Kind.get_slice(session_uri, :session) do
+      {:ok, %{owner_uri: owner}} when not is_nil(owner) -> action
+      {:ok, %{"owner_uri" => owner}} when not is_nil(owner) -> action
+      _ -> :concierge
+    end
+  end
+
+  defp guard_admin_actions(action, _session_uri), do: action
 
   # Dispatch a named action to a session member by role_name.
   defp dispatch_to_member(session_uri, role, user_text) when is_atom(role) do
