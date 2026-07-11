@@ -28,13 +28,59 @@ defmodule EzagentDomainPty.Application do
 
   use Application
 
+  # cc-PTY hardening 2026-07-10 (audit #3): the PtyServer DynamicSupervisor
+  # previously ran with NO intensity override → OTP's default 3-restarts-in-5s.
+  # Exceeding intensity terminates ALL children + the supervisor, so one
+  # crash-looping `claude` wiped every PtyServer on the node. We now set an
+  # explicit, GENEROUS intensity (20 restarts in 60 s) and pair it with a
+  # per-child sliding-window respawn backoff (`Ezagent.Domain.Pty.RespawnBackoff`,
+  # applied in the Server) that rate-limits a single looping child well below
+  # this ceiling. Result: one bad agent can never trip the supervisor (isolated),
+  # while a genuinely systemic mass-crash (many children restarting at once) still
+  # escalates — which is what intensity is FOR. Both knobs are app-env-injectable
+  # so tests can scale them.
+  @default_max_restarts 20
+  @default_max_seconds 60
+
   @impl true
   def start(_type, _args) do
+    # Owned here so the table exists before the first PtyServer spawns; the
+    # module also lazy-inits defensively.
+    :ok = Ezagent.Domain.Pty.RespawnBackoff.init()
+
     children = [
       {Registry, keys: :unique, name: EzagentDomainPty.Registry},
-      {DynamicSupervisor, name: EzagentDomainPty.Supervisor, strategy: :one_for_one}
+      {DynamicSupervisor,
+       name: EzagentDomainPty.Supervisor,
+       strategy: :one_for_one,
+       max_restarts: max_restarts(),
+       max_seconds: max_seconds()}
     ]
 
     Supervisor.start_link(children, strategy: :one_for_one, name: __MODULE__)
+  end
+
+  @doc """
+  PtyServer `DynamicSupervisor` restart intensity — max child restarts allowed
+  within `max_seconds/0` before OTP terminates the subtree. Default
+  #{@default_max_restarts}; override with
+  `config :ezagent_domain_pty, :supervisor_max_restarts`.
+  """
+  @spec max_restarts() :: pos_integer()
+  def max_restarts, do: cfg(:supervisor_max_restarts, @default_max_restarts)
+
+  @doc """
+  PtyServer `DynamicSupervisor` restart-intensity window in seconds. Default
+  #{@default_max_seconds}; override with
+  `config :ezagent_domain_pty, :supervisor_max_seconds`.
+  """
+  @spec max_seconds() :: pos_integer()
+  def max_seconds, do: cfg(:supervisor_max_seconds, @default_max_seconds)
+
+  defp cfg(key, default) do
+    case Application.get_env(:ezagent_domain_pty, key, default) do
+      v when is_integer(v) and v > 0 -> v
+      _ -> default
+    end
   end
 end

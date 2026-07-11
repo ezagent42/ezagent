@@ -73,7 +73,7 @@ defmodule Ezagent.PluginCc.Template.CcAgent.Spawn do
     # codex round-8 HIGH-1 — the fresh-check gates the PTY sidecar.
     # When the Agent Kind was `:already_started` (a worker this call
     # did NOT create), return `fresh?: false` IMMEDIATELY without
-    # calling `ensure_pty_server/3`. Starting a PTY / `claude` sidecar
+    # calling `ensure_pty_server/4`. Starting a PTY / `claude` sidecar
     # for a pre-existing (possibly foreign or orphaned) worker would
     # make a rejected adoption non-zero-side-effect. The Template Class
     # only brings up a sidecar for a worker IT freshly started; whether
@@ -133,7 +133,7 @@ defmodule Ezagent.PluginCc.Template.CcAgent.Spawn do
           # 3. Thread `agent_config_dir` into `tmpl` so `build_claude_cmd/3`
           #    reads the PER-AGENT dir (not the template's reference
           #    dir).
-          # 4. If `ensure_pty_server/3` fails → terminate the Kind AND
+          # 4. If `ensure_pty_server/4` fails → terminate the Kind AND
           #    remove the just-created config_dir (full rollback).
           # 5. On full success: return `config_dir_path: dir` AND
           #    `respawn_template_data: tmpl_with_dir` in meta so caller
@@ -177,7 +177,9 @@ defmodule Ezagent.PluginCc.Template.CcAgent.Spawn do
                # :grant_changed ABORT + clear the just-materialized config_dir so it is
                # not left usable for the revoked grant. No-grant agents skip this (nil ctx).
                :ok <- revalidate_grant_before_launch(grant_ctx),
-               :ok <- ensure_pty_server(agent_uri, cwd, tmpl_with_dir) do
+               # Fresh spawn → resume? = false (a brand-new agent has no prior
+               # conversation; `--continue` would only find nothing).
+               :ok <- ensure_pty_server(agent_uri, cwd, tmpl_with_dir, false) do
             # #17 (c) — spawn-time OAuth freshness reminder. Best-effort, never
             # blocks: surfaces `credential_stale` in meta (like `role_degraded`)
             # + warns + telemetry when the materialized token is already expired,
@@ -286,7 +288,7 @@ defmodule Ezagent.PluginCc.Template.CcAgent.Spawn do
   Grant-guarded PTY respawn entrypoint for the cold-restart / orphan-restart
   path. The ONLY public way to reach the raw PTY launcher on respawn: it runs
   the credential-grant revocation boundary (#17 cascade §5.1) BEFORE launch,
-  so `ensure_pty_server/3` stays PRIVATE and the cc create-chokepoint cannot be
+  so `ensure_pty_server/4` stays PRIVATE and the cc create-chokepoint cannot be
   bypassed by an in-process caller (codex PR-3T review HIGH).
   """
   def respawn_subprocess(%URI{} = agent_uri, respawn_data) when is_map(respawn_data) do
@@ -317,7 +319,11 @@ defmodule Ezagent.PluginCc.Template.CcAgent.Spawn do
             # (the agent's own auth-failure observers surface a truly-dead cred).
             _ = maybe_reprovision_source_from_respawn_data(agent_uri, respawn_data)
 
-            case ensure_pty_server(agent_uri, cwd, respawn_data) do
+            # cc-PTY hardening 2026-07-10 (audit #2): a respawn (crash / OOM /
+            # cold restart) must RESUME the prior conversation, not start fresh.
+            # resume? = true → the argv gets `--continue` (targets THIS agent's
+            # conversation via its own cwd + CLAUDE_CONFIG_DIR).
+            case ensure_pty_server(agent_uri, cwd, respawn_data, true) do
               :ok ->
                 # #17 (c) — respawn is the cold-restart case where a day-old OAuth
                 # token most often relaunches MUTE (respawn does NOT re-materialize
@@ -433,7 +439,7 @@ defmodule Ezagent.PluginCc.Template.CcAgent.Spawn do
   # the public SpawnPlan builder, so a cc PTY can never start without the
   # credential-grant gate (#701 hardening of the SpawnPlan public-launcher
   # bypass).
-  defp ensure_pty_server(agent_uri, cwd, tmpl) do
+  defp ensure_pty_server(agent_uri, cwd, tmpl, resume?) do
     require_transport_join(agent_uri)
 
     # §5.B follow-up (b) — DURABLE first-run-dialog suppression. claude shows its
@@ -459,10 +465,33 @@ defmodule Ezagent.PluginCc.Template.CcAgent.Spawn do
              tmpl,
              @compile_env
            ),
+         params = maybe_resume_conversation(params, resume?, agent_uri),
          {:ok, _pid} <- start_pty(agent_uri, params) do
       :ok
     end
   end
+
+  # cc-PTY hardening 2026-07-10 (audit #2). On the respawn path, inject
+  # `--continue` into the built argv so the restarted `claude` resumes THIS
+  # agent's conversation. Fresh spawns (resume? == false) and `:test`-env params
+  # (no `:cmd_override`) are returned unchanged.
+  defp maybe_resume_conversation(params, true, agent_uri) do
+    case Ezagent.PluginCc.Template.SpawnPlan.inject_resume_flag(params) do
+      ^params ->
+        params
+
+      updated ->
+        Logger.info(
+          "cc.agent: respawn resumes the prior conversation via " <>
+            "#{Ezagent.PluginCc.Template.SpawnPlan.resume_flag()} for " <>
+            URI.to_string(agent_uri)
+        )
+
+        updated
+    end
+  end
+
+  defp maybe_resume_conversation(params, _resume?, _agent_uri), do: params
 
   defp require_transport_join(%URI{} = agent_uri) do
     unless @compile_env == :test do

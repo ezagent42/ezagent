@@ -7,7 +7,7 @@ defmodule Ezagent.PluginCc.Template.CcPtyLaunchChokepointTest do
   through the credential-grant gate. The chokepoint is the call chain in
   `cc_agent/spawn.ex`:
 
-      Domain.Pty.start  ⟵ start_pty/2 ⟵ ensure_pty_server/3 ⟵ {spawn_for_local_pty/3, respawn_subprocess/2}
+      Domain.Pty.start  ⟵ start_pty/2 ⟵ ensure_pty_server/4 ⟵ {spawn_for_local_pty/3, respawn_subprocess/2}
 
   where `spawn_for_local_pty/3` (fresh spawn) and `respawn_subprocess/2`
   (cold restart) are the ONLY public entrypoints and each runs the grant
@@ -37,8 +37,8 @@ defmodule Ezagent.PluginCc.Template.CcPtyLaunchChokepointTest do
   # Sanctioned chain by {name, arity}: the EXACT allowed callers at each hop.
   @launcher_id {:start_pty, 2}
   @allowed_callers %{
-    {:start_pty, 2} => MapSet.new([{:ensure_pty_server, 3}]),
-    {:ensure_pty_server, 3} => MapSet.new([{:spawn_for_local_pty, 3}, {:respawn_subprocess, 2}])
+    {:start_pty, 2} => MapSet.new([{:ensure_pty_server, 4}]),
+    {:ensure_pty_server, 4} => MapSet.new([{:spawn_for_local_pty, 3}, {:respawn_subprocess, 2}])
   }
 
   # Per-file %{{name, arity} => %{private, locals (MapSet of referenced
@@ -94,7 +94,7 @@ defmodule Ezagent.PluginCc.Template.CcPtyLaunchChokepointTest do
                "#701-class bypass."
     end
 
-    for helper_id <- [{:start_pty, 2}, {:ensure_pty_server, 3}] do
+    for helper_id <- [{:start_pty, 2}, {:ensure_pty_server, 4}] do
       assert fns[helper_id] && fns[helper_id].private,
              "#{fmt(helper_id)} must be `defp` (private) in #{@allowed_relpath}."
     end

@@ -26,6 +26,16 @@ defmodule Ezagent.PluginCc.Template.SpawnPlan do
   @cli_identity_token_label "cc-cli-identity"
   @dev_channels_flag "--dangerously-load-development-channels"
   @dev_channels_server "server:esr-bridge"
+  # cc-PTY hardening 2026-07-10 (audit #2). On RESPAWN (crash/OOM/cold-restart)
+  # the restarted `claude` must resume the SAME conversation, not start fresh —
+  # otherwise every restart of a long session silently loses the whole context.
+  # `--continue` resumes the most-recent conversation in the current directory;
+  # because each cc agent has its OWN `cwd` AND its OWN `CLAUDE_CONFIG_DIR`, that
+  # conversation is unambiguously THIS agent's. Verified empirically: on a first
+  # spawn with no prior conversation `--continue` degrades gracefully to a fresh
+  # session (it does not error), so it is safe on the respawn path even if the
+  # very first spawn had crashed before persisting a transcript.
+  @resume_flag "--continue"
 
   @doc false
   @spec build_pty_params(URI.t(), String.t(), map(), atom()) :: {:ok, map()} | {:error, term()}
@@ -122,6 +132,33 @@ defmodule Ezagent.PluginCc.Template.SpawnPlan do
       {:ok, {argv, cmd_env}}
     end
   end
+
+  @doc """
+  The `claude` resume flag (`--continue`). Public for the respawn-path caller
+  and tests; see the `@resume_flag` rationale.
+  """
+  @spec resume_flag() :: String.t()
+  def resume_flag, do: @resume_flag
+
+  @doc false
+  # cc-PTY hardening 2026-07-10 (audit #2). Insert `--continue` into an
+  # already-built PTY params map so a respawned `claude` resumes its
+  # conversation. Kept OUT of `build_claude_cmd/3` (whose 3-arity is pinned by a
+  # large invariant-test surface) — the resume decision is a respawn-vs-fresh
+  # concern owned by the gated launcher chain, not the argv builder. Idempotent
+  # and shape-safe: a `:test` params map (no `:cmd_override`) or an
+  # already-`--continue` argv is returned unchanged.
+  @spec inject_resume_flag(map()) :: map()
+  def inject_resume_flag(%{cmd_override: [claude_path | rest]} = params)
+      when is_binary(claude_path) do
+    if @resume_flag in rest or @resume_flag == claude_path do
+      params
+    else
+      %{params | cmd_override: [claude_path, @resume_flag | rest]}
+    end
+  end
+
+  def inject_resume_flag(params) when is_map(params), do: params
 
   @doc false
   @spec resolve_claude_executable(URI.t()) :: {:ok, String.t()} | {:error, :claude_not_found}

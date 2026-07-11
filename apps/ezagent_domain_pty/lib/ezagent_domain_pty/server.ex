@@ -47,10 +47,22 @@ defmodule Ezagent.Domain.Pty.Server do
   bridge so the Agent Kind registers even when claude doesn't lazily
   initialize the MCP server.
 
-  ## Crash policy
+  ## Crash policy (cc-PTY hardening 2026-07-10)
 
-  Trap_exit + erlexec `:monitor` — child process death triggers stop;
-  DynamicSupervisor restarts with backoff (3-in-60s default).
+  Trap_exit + erlexec `:monitor` — child death triggers `{:stop, {:child_exited,
+  _}}`, and `EzagentDomainPty.Supervisor` restarts this GenServer, whose
+  `handle_continue(:spawn_pty)` spawns a fresh child. Restarts are BOUNDED so one
+  crash-looping child cannot wipe the node: the supervisor runs an explicit
+  intensity (`max_restarts: 20 / max_seconds: 60`, was OTP's 3-in-5s — see
+  `EzagentDomainPty.Application`), and each real respawn first applies
+  `Ezagent.Domain.Pty.RespawnBackoff` — a per-agent sliding-window backoff that
+  rate-limits a looping child below that ceiling (ISOLATING it) and self-resets
+  when the child stabilizes. On respawn the cc plugin passes `--continue` so the
+  restarted `claude` resumes the SAME conversation instead of starting fresh.
+
+  If the PTY goes idle on a selection dialog (`❯`) matching no armed auto-prompt,
+  `Ezagent.Domain.Pty.ParkedDialogWatch` EMITS the stripped screen so the stuck
+  state is OBSERVABLE before the transport-join times out opaquely (audit #1).
 
   ## Test mode
 
@@ -63,6 +75,7 @@ defmodule Ezagent.Domain.Pty.Server do
   require Logger
 
   alias Ezagent.AnsiStrip
+  alias Ezagent.Domain.Pty.ParkedDialogWatch
   alias Ezagent.Utf8Tail
 
   defstruct [
@@ -126,7 +139,12 @@ defmodule Ezagent.Domain.Pty.Server do
     # Tracks whether `:dead` has been broadcast already so the
     # terminate/2 path doesn't double-emit after a {:DOWN, ...} or
     # :exec.run failure has already published the terminal phase.
-    dead_broadcast?: false
+    dead_broadcast?: false,
+    # cc-PTY hardening 2026-07-10 (audit #1) — parked-on-unknown-dialog watchdog.
+    # `parked_check_ref`: the one-shot idle timer (re)armed on every output chunk.
+    # `parked_dialog_signature`: the screen we last emitted for (dedupe).
+    parked_check_ref: nil,
+    parked_dialog_signature: nil
   ]
 
   def start_link(%{agent_uri: %URI{} = agent_uri} = args) do
@@ -258,6 +276,15 @@ defmodule Ezagent.Domain.Pty.Server do
   """
   def phase_topic(%URI{} = agent_uri),
     do: "pty:phase:" <> URI.to_string(agent_uri)
+
+  @doc """
+  PubSub topic for an agent's "parked on an UNKNOWN dialog" signal (cc-PTY
+  hardening 2026-07-10, audit #1). Subscribers receive
+  `{:pty_parked_unknown_dialog, agent_uri, screen}`. See
+  `Ezagent.Domain.Pty.ParkedDialogWatch`.
+  """
+  def parked_dialog_topic(%URI{} = agent_uri),
+    do: Ezagent.Domain.Pty.ParkedDialogWatch.topic(agent_uri)
 
   @doc """
   Public accessor for the current phase of a live PtyServer.
@@ -439,6 +466,11 @@ defmodule Ezagent.Domain.Pty.Server do
   end
 
   def handle_continue(:spawn_pty, state) do
+    # cc-PTY hardening 2026-07-10 (audit #3): rate-limit a crash-looping child's
+    # respawns so one bad `claude` cannot trip the supervisor intensity and wipe
+    # every sibling PtyServer (per-agent sliding-window backoff, self-resetting).
+    apply_respawn_backoff(state)
+
     case spawn_claude_directly(state) do
       {:ok, exec_pid, os_pid} ->
         Logger.info(
@@ -473,6 +505,12 @@ defmodule Ezagent.Domain.Pty.Server do
         broadcast_phase(new_state, :dead, %{reason: reason, os_pid: nil})
         {:stop, {:spawn_failed, reason}, new_state}
     end
+  end
+
+  # Rate-limit this child's respawn BEFORE launching (see the module's docs): the
+  # sleep blocks only this PtyServer, so a looping child spins slowly.
+  defp apply_respawn_backoff(%__MODULE__{agent_uri: %URI{} = agent_uri}) do
+    Ezagent.Domain.Pty.RespawnBackoff.throttle(agent_uri)
   end
 
   # Backstop for the erlexec `{packet,2}` `:einval` crash: estimate the
@@ -667,6 +705,10 @@ defmodule Ezagent.Domain.Pty.Server do
 
     state = scan_auto_prompts(state)
 
+    # cc-PTY hardening 2026-07-10 (audit #1) — (re)arm the idle watchdog (fires
+    # only after output SILENCE, so an active claude keeps cancelling it).
+    state = arm_parked_check(state)
+
     {:noreply, state}
   end
 
@@ -683,6 +725,12 @@ defmodule Ezagent.Domain.Pty.Server do
     end
 
     {:noreply, state}
+  end
+
+  # cc-PTY hardening 2026-07-10 (audit #1) — output has been silent for
+  # `parked_dialog_idle_ms`; check whether we are parked on an unknown dialog.
+  def handle_info(:check_parked_dialog, state) do
+    {:noreply, maybe_emit_parked_dialog(state)}
   end
 
   def handle_info(_msg, state), do: {:noreply, state}
@@ -726,6 +774,39 @@ defmodule Ezagent.Domain.Pty.Server do
     # Per-agent topic (LV badge etc.) + the shared topic (PR-C2 domain notifier).
     Phoenix.PubSub.broadcast(EzagentCore.PubSub, auth_failed_topic(state.agent_uri), msg)
     Phoenix.PubSub.broadcast(EzagentCore.PubSub, auth_failed_all_topic(), msg)
+  end
+
+  # --- parked-on-unknown-dialog watchdog (cc-PTY hardening 2026-07-10) --
+  # Detection + emit live in `Ezagent.Domain.Pty.ParkedDialogWatch`; the Server
+  # owns only the idle timer + state plumbing.
+
+  @default_parked_dialog_idle_ms 8_000
+
+  # (Re)arm the one-shot idle watchdog. Cancels any pending timer first so the
+  # deadline always measures from the LAST output chunk.
+  defp arm_parked_check(%__MODULE__{parked_check_ref: ref} = state) do
+    if is_reference(ref), do: Process.cancel_timer(ref)
+    new_ref = Process.send_after(self(), :check_parked_dialog, parked_dialog_idle_ms())
+    %{state | parked_check_ref: new_ref}
+  end
+
+  defp maybe_emit_parked_dialog(%__MODULE__{phase: :running} = state) do
+    stripped = state.pty_buffer |> AnsiStrip.strip() |> normalize_ws()
+    armed? = Enum.any?(state.auto_prompts, &(not &1.fired? and matches?(&1.match, stripped)))
+
+    case ParkedDialogWatch.check(state.agent_uri, stripped, armed?, state.parked_dialog_signature) do
+      {:emitted, signature} -> %{state | parked_dialog_signature: signature}
+      :noop -> state
+    end
+  end
+
+  defp maybe_emit_parked_dialog(state), do: state
+
+  defp parked_dialog_idle_ms do
+    case Application.get_env(:ezagent_domain_pty, :parked_dialog_idle_ms, @default_parked_dialog_idle_ms) do
+      v when is_integer(v) and v > 0 -> v
+      _ -> @default_parked_dialog_idle_ms
+    end
   end
 
   # --- generic auto-prompt scanner (Phase 6 PR 19) ---------------------
