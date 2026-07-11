@@ -126,18 +126,31 @@ defmodule Ezagent.ActionSet.HelloPublisher do
 
   defp extract_explicit_name(_), do: :none
 
-  defp session_base_name(%URI{path: "/hello/" <> name}) do
-    name |> String.replace(~r/[^a-zA-Z0-9\-_]/, "-")
+  # Session URIs are `session://<ws>/hello/<name>` (template/type axis is
+  # "hello"). Read the name segment through the Ezagent.URI accessors rather
+  # than pattern-matching %URI{path:} (unify-uri-query: URI is opaque).
+  defp session_base_name(%URI{} = uri) do
+    with {:ok, "hello"} <- Ezagent.URI.type(uri),
+         {:ok, name} <- Ezagent.URI.name(uri) do
+      name |> String.replace(~r/[^a-zA-Z0-9\-_]/, "-")
+    else
+      _ -> "site"
+    end
   end
 
   defp session_base_name(_), do: "site"
 
-  # Extract a human-readable name from the template URI.
-  defp template_display_name(%URI{path: "/session/" <> rest}) do
-    rest |> String.split("@") |> List.first() || rest
+  # Extract a human-readable name from the template URI. Session templates are
+  # `template://<ws>/session/<name>` (type axis "session"); read the name
+  # segment via Ezagent.URI accessors and strip the `@version` suffix.
+  defp template_display_name(%URI{} = uri) do
+    with {:ok, "session"} <- Ezagent.URI.type(uri),
+         {:ok, name} <- Ezagent.URI.name(uri) do
+      name |> String.split("@") |> List.first() || name
+    else
+      _ -> URI.to_string(uri)
+    end
   end
-
-  defp template_display_name(%URI{} = uri), do: URI.to_string(uri)
 
   defp parse_session_uri(session_str) do
     case Ezagent.URI.new!(session_str) do
