@@ -150,6 +150,17 @@ defmodule Ezagent.ActionSet.IdentityGrantTest do
   end
 
   describe "§5.2 admin predicate (codex PR-OWN-2 round-2 HIGH-1 regression)" do
+    test "dispatch handler is store-only and does not re-authorize an issued artifact" do
+      cap = echo_cap()
+      ctx = ctx_with(MapSet.new(), MapSet.new())
+
+      assert {:error, :wildcard_action_grant_requires_admin_authority} =
+               Ezagent.CapabilityRegistry.authorize_grant(ctx.caps, cap, %{caller: ctx.caller})
+
+      assert {:ok, _result, effects} = IdentityAdmin.handle_grant_cap(%{cap: cap}, ctx)
+      assert {:set, :caps, _} = Enum.find(effects, &match?({:set, :caps, _}, &1))
+    end
+
     test "instance-scoped wildcard cap does NOT count as bootstrap admin" do
       target_uri = Ezagent.URI.new!("entity://acme/user/victim-x")
 
@@ -169,12 +180,19 @@ defmodule Ezagent.ActionSet.IdentityGrantTest do
       # action-wildcard runtime check fires BEFORE the per-shape
       # workspace-admin check.
       assert {:error, :wildcard_action_grant_requires_admin_authority} =
-               IdentityAdmin.handle_grant_cap(%{cap: cap_to_grant}, ctx)
+               Ezagent.CapabilityRegistry.authorize_grant(ctx.caps, cap_to_grant, %{
+                 caller: ctx.caller
+               })
     end
 
     test "only the all-four-wildcards bootstrap-admin shape qualifies" do
       cap_to_grant = echo_cap()
       ctx = ctx_with(MapSet.new([Ezagent.Capability.admin_genesis_cap()]), MapSet.new())
+
+      assert :ok =
+               Ezagent.CapabilityRegistry.authorize_grant(ctx.caps, cap_to_grant, %{
+                 caller: ctx.caller
+               })
 
       assert {:ok, _result, _effects} =
                IdentityAdmin.handle_grant_cap(%{cap: cap_to_grant}, ctx)

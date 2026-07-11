@@ -360,6 +360,197 @@ defmodule Ezagent.CapabilityRegistry do
   end
 
   @doc """
+  Authorize issuance of `cap` against authority loaded for the issuer.
+
+  `context` contains the accountable `:caller` and optional
+  `:authorization_rule`. All inputs are structural; domain code contributes
+  only Behavior `data_owner/1` callback data through `data_owner_of/2`.
+  """
+  @spec authorize_grant(MapSet.t(Capability.t()) | [Capability.t()], Capability.t(), map()) ::
+          :ok | {:error, term()}
+  def authorize_grant(caps, %Capability{} = cap, context) when is_map(context) do
+    held = normalize_authority_caps(caps)
+
+    if Map.has_key?(context, :authorization_rule) do
+      if rule_cap_bounded?(cap),
+        do: :ok,
+        else: {:error, :rule_grant_must_be_concrete_scoped}
+    else
+      with :ok <- authorize_action_axis(held, cap),
+           :ok <- authorize_cap_shape(held, cap, Map.get(context, :caller)) do
+        :ok
+      end
+    end
+  end
+
+  @doc "True when a rule-issued capability is structurally bounded."
+  @spec rule_cap_bounded?(Capability.t()) :: boolean()
+  def rule_cap_bounded?(%Capability{} = cap) when cap.kind == :any, do: false
+  def rule_cap_bounded?(%Capability{} = cap) when cap.behavior == :any, do: false
+
+  def rule_cap_bounded?(%Capability{instance: instance} = cap) do
+    scope_bounded_instance?(instance) or
+      (match?(%URI{}, instance) and Capability.action_of(cap) != :any)
+  end
+
+  defp authorize_action_axis(held, %Capability{} = cap) do
+    cond do
+      Capability.action_of(cap) != :any -> :ok
+      scope_bounded_instance?(cap.instance) -> :ok
+      admin_caps?(held) -> :ok
+      true -> {:error, :wildcard_action_grant_requires_admin_authority}
+    end
+  end
+
+  defp authorize_cap_shape(held, %Capability{} = cap, _caller)
+       when cap.kind == :any and cap.behavior == :any and cap.instance == :any and
+              cap.workspace_uri == :any do
+    require_admin(held, :grant_wildcard_requires_admin)
+  end
+
+  defp authorize_cap_shape(held, %Capability{} = cap, _caller) when cap.kind == :any,
+    do: require_workspace_admin(held, cap.workspace_uri)
+
+  defp authorize_cap_shape(held, %Capability{} = cap, _caller) when cap.behavior == :any,
+    do: require_workspace_admin(held, cap.workspace_uri)
+
+  defp authorize_cap_shape(
+         held,
+         %Capability{behavior: behavior, instance: instance, workspace_uri: ws} = cap,
+         caller
+       )
+       when is_atom(behavior) do
+    if Code.ensure_loaded?(behavior) and function_exported?(behavior, :data_owner, 1) do
+      case data_owner_of(behavior, instance) do
+        %URI{} = owner ->
+          cond do
+            caller == owner -> :ok
+            admin_caps?(held) -> :ok
+            manages_target?(held, instance) -> require_delegable(held, cap)
+            true -> {:error, :grant_not_owner}
+          end
+
+        :any ->
+          require_workspace_admin(held, ws)
+
+        _ ->
+          require_admin(held, :grant_owner_unresolvable)
+      end
+    else
+      :ok
+    end
+  end
+
+  defp authorize_cap_shape(_held, _cap, _caller), do: :ok
+
+  defp require_delegable(held, %Capability{} = cap) do
+    needed = %{
+      kind: cap.kind,
+      behavior: cap.behavior,
+      action: Capability.action_of(cap),
+      instance: cap.instance,
+      workspace_uri: cap.workspace_uri
+    }
+
+    if Enum.any?(held, &Capability.matches?(&1, needed)),
+      do: :ok,
+      else: {:error, :grant_not_delegable}
+  end
+
+  defp require_admin(held, error), do: if(admin_caps?(held), do: :ok, else: {:error, error})
+
+  defp require_workspace_admin(held, :any) do
+    if admin_caps?(held) or cross_workspace_admin?(held),
+      do: :ok,
+      else: {:error, :grant_workspace_any_requires_admin}
+  end
+
+  defp require_workspace_admin(held, %URI{} = ws) do
+    if admin_caps?(held) or workspace_admin?(held, ws),
+      do: :ok,
+      else: {:error, :grant_workspace_admin_required}
+  end
+
+  defp require_workspace_admin(_held, _ws), do: {:error, :grant_workspace_uri_invalid}
+
+  defp admin_caps?(held) do
+    Enum.any?(held, fn
+      %Capability{} = cap ->
+        cap.kind == :any and cap.behavior == :any and cap.action == :any and
+          cap.instance == :any and cap.workspace_uri == :any
+
+      _ ->
+        false
+    end)
+  end
+
+  defp cross_workspace_admin?(held) do
+    workspace = Module.concat([Ezagent, ActionSet, Workspace])
+
+    Enum.any?(held, fn
+      %Capability{
+        kind: :workspace,
+        behavior: ^workspace,
+        action: :any,
+        instance: :any,
+        workspace_uri: :any
+      } ->
+        true
+
+      _ ->
+        false
+    end)
+  end
+
+  defp workspace_admin?(held, ws) do
+    workspace = Module.concat([Ezagent, ActionSet, Workspace])
+
+    Enum.any?(held, fn
+      %Capability{behavior: ^workspace, action: :any, workspace_uri: ^ws} -> true
+      %Capability{behavior: ^workspace, action: :any, workspace_uri: :any} -> true
+      _ -> false
+    end)
+  end
+
+  defp manages_target?(held, instance) do
+    target =
+      case instance do
+        {_scope, %URI{} = uri} -> uri
+        other -> other
+      end
+
+    Enum.any?(held, fn
+      %Capability{behavior: Ezagent.ActionSet.Manage} = cap ->
+        Capability.action_of(cap) == :any and held_instance_covers?(cap, target)
+
+      _ ->
+        false
+    end)
+  end
+
+  defp held_instance_covers?(%Capability{} = held, %URI{} = target) do
+    Capability.matches?(held, %{
+      kind: held.kind,
+      behavior: held.behavior,
+      action: Capability.action_of(held),
+      instance: target,
+      workspace_uri: held.workspace_uri
+    })
+  end
+
+  defp held_instance_covers?(_held, _target), do: false
+
+  defp scope_bounded_instance?({scope, %URI{}})
+       when scope in [:within_session, :within_workspace, :spawned_by],
+       do: true
+
+  defp scope_bounded_instance?(_), do: false
+
+  defp normalize_authority_caps(%MapSet{} = caps), do: MapSet.to_list(caps)
+  defp normalize_authority_caps(caps) when is_list(caps), do: caps
+  defp normalize_authority_caps(_), do: []
+
+  @doc """
   Walk every Behavior registered against `kind`, ask each one
   `data_owner(target_uri)`, and return the list of
   `{grantee_uri, %Capability{}}` tuples to grant.
