@@ -150,20 +150,50 @@ defmodule Ezagent.ActionSet.Identity do
 
     # PR-OWN-3 codex round-1 MED fix: provision the owner-derived
     # safe Identity cap at slice init.
-    caps =
+    {caps, recipe_binding} =
       case Map.get(args, :uri) do
         %URI{} = uri ->
-          caps
-          |> add_owner_identity_cap(uri)
-          |> add_agent_self_caps(uri)
+          caps =
+            caps
+            |> add_owner_identity_cap(uri)
+            |> add_agent_self_caps(uri)
+
+          hydrate_recipe_binding(caps, uri)
 
         _ ->
-          caps
+          {caps, :none}
       end
 
     caps = Ezagent.Cap.verified_set(caps)
 
-    {:ok, %{caps: caps}}
+    state =
+      case recipe_binding do
+        {:active, version, keys} ->
+          %{caps: caps, recipe_binding_version: version, recipe_binding_keys: keys}
+
+        :none ->
+          %{caps: caps}
+      end
+
+    {:ok, state}
+  end
+
+  defp hydrate_recipe_binding(caps, %URI{} = uri) do
+    if Ezagent.URI.type?(uri, :agent) do
+      case Ezagent.Identity.RecipeCapBinding.fetch(uri) do
+        {:ok, %{caps: binding_caps, version: version}} ->
+          keys = cap_identity_keys(binding_caps)
+          {merge_caps_by_identity(caps, binding_caps), {:active, version, keys}}
+
+        :not_found ->
+          {caps, :none}
+
+        {:error, reason} ->
+          raise "recipe cap binding read failed for #{inspect(uri)}: #{inspect(reason)}"
+      end
+    else
+      {caps, :none}
+    end
   end
 
   # Agent-owned config-evolve (spec 2026-06-11 rev 4) — every agent's base
@@ -264,27 +294,108 @@ defmodule Ezagent.ActionSet.Identity do
   # returned when there is no reconcile (non-user URI, empty caps_json,
   # or the union is a no-op).
   @impl Ezagent.Lifecycle
-  def activate(%{caps: existing_caps} = state, %{self_uri: %URI{scheme: "entity"} = uri}) do
-    if Ezagent.URI.type?(uri, :user) do
-      case caps_from_caps_json(uri) do
-        [] ->
-          {:ok, %{}}
+  def activate(%{caps: _existing_caps} = state, %{self_uri: %URI{scheme: "entity"} = uri}) do
+    user_caps = if Ezagent.URI.type?(uri, :user), do: caps_from_caps_json(uri), else: []
 
-        caps_list when is_list(caps_list) ->
-          merged = MapSet.union(existing_caps, Ezagent.Cap.verified_set(caps_list))
+    with {:ok, base_state, binding_caps, binding_update} <-
+           reconcile_recipe_binding(state, uri) do
+      merged = merge_caps_by_identity(base_state.caps, user_caps ++ binding_caps)
+      verified_caps = Ezagent.Cap.verified_set(merged)
 
-          if MapSet.size(merged) == MapSet.size(existing_caps) do
-            {:ok, %{}}
-          else
-            {:ok, %{}, %{state | caps: merged}}
-          end
+      reconciled =
+        base_state
+        |> Map.put(:caps, verified_caps)
+        |> apply_recipe_binding_update(binding_update)
+
+      if reconciled == state do
+        {:ok, %{}}
+      else
+        {:ok, %{}, reconciled}
       end
-    else
-      {:ok, %{}}
     end
   end
 
   def activate(_state, _ctx), do: {:ok, %{}}
+
+  defp reconcile_recipe_binding(state, %URI{} = uri) do
+    if Ezagent.URI.type?(uri, :agent) do
+      old_keys = Map.get(state, :recipe_binding_keys, MapSet.new())
+      old_version = Map.get(state, :recipe_binding_version)
+
+      case Ezagent.Identity.RecipeCapBinding.fetch(uri) do
+        {:ok, %{version: ^old_version}} ->
+          # Same binding version means no recipe-cap replay. A cap deliberately
+          # revoked from the live slice therefore stays revoked across restart.
+          {:ok, state, [], :unchanged}
+
+        {:ok, %{caps: caps, version: version}} ->
+          base_state = restore_structural_caps(state, uri, old_keys)
+          {:ok, base_state, caps, {:active, version, cap_identity_keys(caps)}}
+
+        :not_found ->
+          if MapSet.size(old_keys) == 0 do
+            {:ok, state, [], :unchanged}
+          else
+            base_state = restore_structural_caps(state, uri, old_keys)
+            {:ok, base_state, [], :cleared}
+          end
+
+        {:error, reason} ->
+          {:error, {:recipe_cap_binding_read_failed, reason}}
+      end
+    else
+      {:ok, state, [], :unchanged}
+    end
+  end
+
+  defp apply_recipe_binding_update(state, :unchanged), do: state
+
+  defp apply_recipe_binding_update(state, {:active, version, keys}) do
+    state
+    |> Map.put(:recipe_binding_version, version)
+    |> Map.put(:recipe_binding_keys, keys)
+  end
+
+  defp apply_recipe_binding_update(state, :cleared) do
+    state
+    |> Map.delete(:recipe_binding_version)
+    |> Map.delete(:recipe_binding_keys)
+  end
+
+  defp drop_caps_by_keys(caps, keys) do
+    caps
+    |> Enum.reject(&(Ezagent.Capability.identity_key(&1) in keys))
+    |> MapSet.new()
+  end
+
+  defp restore_structural_caps(state, uri, old_binding_keys) do
+    structural_caps =
+      MapSet.new()
+      |> add_owner_identity_cap(uri)
+      |> add_agent_self_caps(uri)
+
+    caps =
+      state.caps
+      |> drop_caps_by_keys(old_binding_keys)
+      |> merge_caps_by_identity(structural_caps)
+
+    Map.put(state, :caps, caps)
+  end
+
+  defp cap_identity_keys(caps) do
+    caps
+    |> Enum.map(&Ezagent.Capability.identity_key/1)
+    |> MapSet.new()
+  end
+
+  defp merge_caps_by_identity(current, incoming) do
+    incoming = MapSet.new(incoming)
+    incoming_keys = cap_identity_keys(incoming)
+
+    current
+    |> drop_caps_by_keys(incoming_keys)
+    |> MapSet.union(incoming)
+  end
 
   defp caps_from_caps_json(%URI{} = uri) do
     if Code.ensure_loaded?(Ezagent.Users) and
