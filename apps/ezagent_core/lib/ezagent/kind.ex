@@ -151,10 +151,15 @@ defmodule Ezagent.Kind do
   When a Kind does not export `holds_cap?/2`, dispatch uses
   `Ezagent.Kind.default_holds_cap?/2` which:
 
-  1. Resolves the entity's caps via `Ezagent.Identity.list_caps_for/1`.
+  1. Reads the entity's `:identity` slice via `Kind.get_slice/2` (NOT
+     `Invocation.dispatch/1` — breaks the self-list-caps recursion), through
+     the classifying + bounded-retry read `SliceAccess.read_identity_caps/1`.
   2. Converts the `needed` `%Capability{}` into the 4-field map
      `Capability.matches?/2` consumes.
-  3. Returns `true` iff any held cap matches.
+  3. Returns `true` iff any held cap matches (per #154 predicate A). A GENUINE
+     absence denies (`false`); a TRANSIENT read failure of a KNOWN entity fails
+     LOUD (raises `Ezagent.Kind.IdentityReadError`) — never a silent deny. See
+     `default_holds_cap?/2`.
 
   ## Override semantics
 
@@ -192,12 +197,50 @@ defmodule Ezagent.Kind do
   Default `holds_cap?/2` impl — used by `Ezagent.Kind.holds_cap?/3`
   when the target Kind module does not export the optional callback.
 
-  Reads the entity's caps via `Ezagent.Identity.list_caps_for/1` (which
-  returns a `MapSet.t(Capability.t())`) and tests each against `needed`
-  via `Capability.matches?/2`. Returns `false` on any error in the
-  lookup path (per `feedback_let_it_crash_no_workarounds` — the dispatch
-  step deny-by-default is the safer posture; a malformed slice is a bug
-  for separate forensic investigation, not a permission grant).
+  Reads the entity's `:identity` slice directly via `Kind.get_slice/3`
+  (a `GenServer.call` to the live Kind.Server, NOT a re-entry into
+  `Invocation.dispatch/1` — this breaks the self-list-caps recursion) and
+  tests each held cap against `needed` via `Capability.granted_by_entity?/1`
+  (#154 predicate A) + `Capability.matches?/2`.
+
+  ## Fail-LOUD on a transient read — NOT fail-closed (correctness gate)
+
+  The `:identity` read has four possible outcomes, and they are NOT all a
+  denial:
+
+  | outcome | meaning | decision |
+  |---|---|---|
+  | `{:ok, %{caps: caps}}` | slice read, caps present | check caps; genuinely-absent → **deny** (`false`) |
+  | `{:ok, other}` | live Kind, no cap-bearing identity slice | **deny** (`false`) — a non-cap-bearer holds no caps |
+  | `{:error, {:get_slice_exit, _}}` | Kind is ALIVE but the call timed out / exited (DB-pool starvation, mid-restart) | **TRANSIENT** — bounded-retry, then `raise Ezagent.Kind.IdentityReadError` |
+  | `{:error, :not_found}` | no live Kind | disambiguate by DURABLE existence (below) |
+
+  A `:not_found` is the subtle case. A **durable Kind snapshot** existing for
+  the URI (what a Kind restart / rehydration preserves) means the entity is
+  KNOWN but transiently unreachable → TRANSIENT (retry/raise). No durable
+  snapshot → the entity genuinely does not exist / has never persisted an
+  identity → **deny** (`false`). This distinction is load-bearing: it MUST NOT
+  treat a non-existent entity as transient (that would turn every probe of an
+  unknown URI into a crash) and MUST NOT treat a KNOWN-but-cold entity as
+  absent (the historical `_ -> false` bug — a spurious `:unauthorized` on a
+  DB blip / Kind restart).
+
+  Historically this whole non-`{:ok, caps}` space collapsed to a single
+  `_ -> false` deny-by-default. Under a starved Ecto sandbox pool (or a
+  production Kind restart / DB failover) a TRANSIENT read failure became a
+  false DENY → the well-known WorldConversationTest CI flake AND a latent
+  production correctness bug. The fix distinguishes a transient failure to read
+  a KNOWN entity from a legitimate "no such cap / no such entity", and refuses
+  to convert the former into a security decision — it retries, then fails LOUD.
+
+  > **`cbac-done-right` contract:** the future cap-layer refactor MUST preserve
+  > these fail-loud-not-deny semantics. A transient identity-read failure must
+  > never be converted into a capability denial.
+
+  Retry bound + per-attempt timeout are `Application.get_env(:ezagent_core, …)`
+  tunables (`:identity_read_timeout_ms` 1_000, `:identity_read_max_attempts` 4,
+  `:identity_read_backoff_ms` 25) so the bounded retry fits inside the enclosing
+  dispatch deadline and a genuinely-stuck Kind eventually fails LOUD, not hangs.
 
   SPEC §3 default impl.
   """
@@ -222,19 +265,16 @@ defmodule Ezagent.Kind do
       workspace_uri: needed.workspace_uri
     }
 
-    # Read the entity's `:identity` slice directly via `Kind.get_slice/2`
-    # (a `GenServer.call` to the Kind.Server, NOT a re-entry into
-    # `Invocation.dispatch/1`). This breaks the self-reference
-    # recursion that an `Identity.list_caps_for/1`-based lookup would
-    # otherwise introduce when step 5.5 runs against the User Kind's
-    # own `:list_caps` action.
-    #
-    # Per the Behavior.Identity contract, the slice shape is
-    # `%{caps: MapSet.t(Capability.t())}`. A missing / nil slice
-    # (Kind not yet alive, or non-cap-bearing Kind) → no held caps →
-    # deny-by-default per `feedback_let_it_crash_no_workarounds`.
-    case get_slice(entity_uri, :identity) do
-      {:ok, %{caps: caps}} when is_struct(caps, MapSet) ->
+    # Read + CLASSIFY the entity's `:identity` slice (bounded-retry on a
+    # transient read) — the mechanical read/classify/retry lives in
+    # `Ezagent.Kind.SliceAccess.read_identity_caps/1` (the slice-read layer);
+    # the SECURITY decision (predicate-A match / clean-deny / fail-loud raise)
+    # stays HERE. It returns one of:
+    #   {:caps, MapSet}   — slice read, check held caps
+    #   :absent           — genuinely no caps / no such entity → deny
+    #   {:transient, why} — a KNOWN entity was unreadable → fail LOUD
+    case Ezagent.Kind.SliceAccess.read_identity_caps(entity_uri) do
+      {:caps, caps} ->
         # #154 genesis collapse (2026-06-20) — predicate A: a slice-held cap
         # authorizes ONLY if its authority traces to a real ENTITY
         # (`granted_by_entity?/1`, never a `system://` principal). The grant
@@ -242,6 +282,11 @@ defmodule Ezagent.Kind do
         # is defense-in-depth against a stale pre-collapse snapshot carrying a
         # `system://`-granted cap. Mirrors the inline-`ctx.caps` check in
         # `Ezagent.Kind.Runtime.authorizes?/2`.
+        #
+        # The inner `rescue`/`catch` is INTENTIONALLY narrow: a MALFORMED cap in
+        # a successfully-read slice is a legitimate non-match (deny), a distinct
+        # failure class from the transient READ failure handled above — a bad cap
+        # struct must NOT become a transient-raise.
         Enum.any?(caps, fn held ->
           try do
             Ezagent.Capability.granted_by_entity?(held) and
@@ -253,8 +298,18 @@ defmodule Ezagent.Kind do
           end
         end)
 
-      _ ->
+      :absent ->
+        # Genuinely-absent: a live Kind that bears no cap-carrying identity
+        # slice, OR `:not_found` with NO durable snapshot (entity never existed
+        # / never persisted an identity). Deny-by-default is CORRECT here — and
+        # is the security-critical control against opening a bypass where a
+        # non-existent entity would be treated as retryable.
         false
+
+      {:transient, reason} ->
+        # A KNOWN entity's identity was transiently unreadable. NEVER silently
+        # deny — raise so the enclosing dispatch fails LOUD / the caller retries.
+        raise Ezagent.Kind.IdentityReadError, entity_uri: entity_uri, reason: reason
     end
   end
 

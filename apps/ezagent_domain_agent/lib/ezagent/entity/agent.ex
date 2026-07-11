@@ -515,10 +515,19 @@ defmodule Ezagent.Entity.Agent do
         ws
       )
 
-    if Ezagent.Kind.holds_cap?(__MODULE__, caller, needed) do
-      :ok
-    else
-      {:error, :unauthorized}
+    # `holds_cap?/3` reads the caller's identity slice; a TRANSIENT read failure
+    # raises `Ezagent.Kind.IdentityReadError` (fail-loud, never a silent deny —
+    # see `Ezagent.Kind.default_holds_cap?/2`). Surface it as a DISTINCT,
+    # caller-retryable error rather than letting it crash this dispatch or
+    # collapsing it into `:unauthorized` (which would be a spurious denial).
+    try do
+      if Ezagent.Kind.holds_cap?(__MODULE__, caller, needed) do
+        :ok
+      else
+        {:error, :unauthorized}
+      end
+    rescue
+      _ in Ezagent.Kind.IdentityReadError -> {:error, :identity_read_unavailable}
     end
   end
 
