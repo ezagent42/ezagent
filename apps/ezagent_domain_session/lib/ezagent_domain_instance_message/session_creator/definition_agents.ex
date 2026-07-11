@@ -19,13 +19,18 @@ defmodule EzagentDomainInstanceMessage.SessionCreator.DefinitionAgents do
        re-materialize/repair has already bound the role, so skip.
     2. **resolve recipe by workspace** — `RecipeRegistry.lookup(workspace, name)`,
        fail-closed on `:error` (never a cap-less spawn; #1116).
-    3. **spawn** — recipe × declared flavor (default `cc`) →
+    3. **issue + bind** — resolve the recipe caps, run complete `Cap.issue`
+       authorization under the canonical admin issuer, and atomically upsert the
+       issued artifacts in the identity tier before any spawn.
+    4. **spawn** — recipe × declared flavor (default `cc`) →
        `Agent.spawn_from_template_content` at a fresh uuid agent URI.
-    4. **join + cleanup** — faceted `session.join` carrying `%{role_name: name}`;
-       on join `{:error, _}` terminate the worker we just spawned.
-    5. **grant caps LAST** — `GrantRecipeCaps.grant_recipe_caps` grants the
-       recipe's `requested_caps` (fail-closed, no partial). Runs after a
-       successful join so join-failure cleanup only has to terminate.
+    5. **join + cleanup** — faceted `session.join` carrying `%{role_name: name}`;
+       on a definitive spawn/join failure terminate the worker and conditionally
+       tombstone the exact binding version.
+    6. **legacy grant during S5 only** — `GrantRecipeCaps.grant_recipe_caps`
+       runs after a successful join for coexistence coverage. `create/1` already
+       self-stored the binding; identity-key replacement prevents duplicates.
+       S6 deletes this issuer-driven dispatch.
 
   Authority is SYSTEM-MEDIATED materialization (mirrors
   `Materializer.join_session_members`):
@@ -46,6 +51,7 @@ defmodule EzagentDomainInstanceMessage.SessionCreator.DefinitionAgents do
   alias Ezagent.Agent.RecipeRegistry
   alias Ezagent.ActionSet.Session.Members
   alias Ezagent.Entity.Session.Orchestrator, as: SessionOrchestrator
+  alias Ezagent.Identity.RecipeCapBinding
   alias Ezagent.Invocation
   alias Ezagent.Orchestrator.Tools.Participants
   alias EzagentDomainInstanceMessage.SessionCreator
@@ -162,9 +168,13 @@ defmodule EzagentDomainInstanceMessage.SessionCreator.DefinitionAgents do
     case existing_member_for_role(session_uri, role_name) do
       %URI{} = existing_uri ->
         # Idempotent re-materialize (repair/restart) — the role is already
-        # joined. Do not re-spawn; do re-run post materialization hooks because
-        # they are idempotent and may be absent on legacy sessions.
-        maybe_after_materialize(session_uri, workspace_uri, granted_by, agent, existing_uri)
+        # joined. Refresh its durable recipe binding without re-spawning, then
+        # re-run post materialization hooks because both are idempotent and may
+        # be absent on legacy sessions.
+        with :ok <-
+               refresh_existing_binding(workspace_uri, existing_uri, recipe_name, role_name) do
+          maybe_after_materialize(session_uri, workspace_uri, granted_by, agent, existing_uri)
+        end
 
       nil ->
         result =
@@ -233,24 +243,72 @@ defmodule EzagentDomainInstanceMessage.SessionCreator.DefinitionAgents do
          # DoD 6). Without a credential source this agent can only boot "Not
          # logged in": skip the slot rather than join a silent zombie.
          :ok <- CredentialPrecondition.check_source(granted_by, workspace_uri, flavor),
+         # S5 I9/C2: complete Cap.issue authorization and commit the durable
+         # identity-tier binding before Kind.spawn. No DB transaction spans the
+         # spawn. create/1 can therefore self-store the issued artifacts.
+         {:ok, binding} <- bind_recipe_caps(planned_uri, recipe_name, recipe),
          :ok <-
-           spawn_agent(
-             workspace_uri,
+           spawn_bound_agent(
+             session_uri,
              granted_by,
              planned_uri,
              recipe,
              recipe_name,
              role_name,
-             flavor
+             flavor,
+             binding
            ),
-         # Safety net for the class the pre-flight cannot see (#1311).
-         # This agent was just spawned by us — if it has no credentials,
-         # terminate it (it was never joined). REUSE path uses the separate
-         # `verify_credentials_on_reuse/2` which leaves the agent alive.
-         :ok <- verify_credentials_on_fresh(planned_uri, flavor),
-         :ok <- join_or_cleanup(session_uri, planned_uri, role_name),
+         # S5 coexistence window: keep the legacy post-join dispatch until S6.
+         # Identity-key replacement makes it a no-duplicate no-op in authority
+         # terms. A legacy grant failure does NOT tombstone a successfully
+         # spawned/joined binding; S6 removes this dispatch entirely.
          :ok <- grant_recipe_caps(planned_uri, recipe) do
       {:ok, planned_uri}
+    end
+  end
+
+  defp spawn_bound_agent(
+         session_uri,
+         granted_by,
+         planned_uri,
+         recipe,
+         recipe_name,
+         role_name,
+         flavor,
+         binding
+       ) do
+    workspace_uri = Ezagent.Capability.workspace_of(planned_uri)
+
+    result =
+      with :ok <-
+             spawn_agent(
+               workspace_uri,
+               granted_by,
+               planned_uri,
+               recipe,
+               recipe_name,
+               role_name,
+               flavor
+             ),
+           # Safety net for the class the pre-flight cannot see (#1311).
+           # This agent was just spawned by us — if it has no credentials,
+           # terminate it (it was never joined). REUSE path leaves its agent.
+           :ok <- verify_credentials_on_fresh(planned_uri, flavor),
+           :ok <- join_or_cleanup(session_uri, planned_uri, role_name) do
+        :ok
+      end
+
+    case result do
+      :ok ->
+        :ok
+
+      {:skip, _reason} = skip ->
+        compensate_recipe_binding(planned_uri, binding)
+        skip
+
+      {:error, _reason} = error ->
+        compensate_recipe_binding(planned_uri, binding)
+        error
     end
   end
 
@@ -283,6 +341,10 @@ defmodule EzagentDomainInstanceMessage.SessionCreator.DefinitionAgents do
          # home before joining it; on skip, LEAVE the agent alive (it is not ours
          # to destroy — CRITICAL, codex r2).
          :ok <- verify_credentials_on_reuse(agent_uri, flavor_of(agent)),
+         {:ok, recipe} <- lookup_recipe(workspace_uri, recipe_name),
+         # A reused agent already exists, so I9's pre-spawn ordering does not
+         # apply. Bind only after a successful join: an unrelated join failure
+         # must never tombstone or overwrite that agent's pre-existing binding.
          {:ok, ^agent_uri} <-
            Participants.add_participant(agent_uri, role_name,
              caller: operator,
@@ -290,7 +352,8 @@ defmodule EzagentDomainInstanceMessage.SessionCreator.DefinitionAgents do
              workspace_uri: workspace_uri,
              session_uri: session_uri,
              in_session_template: true
-           ) do
+           ),
+         {:ok, _binding} <- bind_recipe_caps(agent_uri, recipe_name, recipe) do
       {:ok, agent_uri}
     else
       nil -> {:error, {:invalid_reuse_agent_uri, role_name}}
@@ -545,7 +608,46 @@ defmodule EzagentDomainInstanceMessage.SessionCreator.DefinitionAgents do
     :ok
   end
 
-  # --- grant ----------------------------------------------------------------
+  # --- durable recipe-cap binding + coexistence grant -----------------------
+
+  defp refresh_existing_binding(workspace_uri, agent_uri, recipe_name, role_name) do
+    with {:ok, recipe} <- lookup_recipe(workspace_uri, recipe_name),
+         {:ok, _binding} <- bind_recipe_caps(agent_uri, recipe_name, recipe) do
+      :ok
+    else
+      {:error, reason} -> {:error, {:agent_recipe_binding_refresh_failed, role_name, reason}}
+    end
+  end
+
+  defp bind_recipe_caps(%URI{} = agent_uri, recipe_name, recipe) do
+    issuer = Ezagent.Entity.User.admin_uri()
+
+    with {:ok, proposals} <-
+           GrantRecipeCaps.propose_recipe_caps(agent_uri, recipe, @telemetry_prefix),
+         {:ok, binding} <-
+           RecipeCapBinding.issue_and_upsert(agent_uri, recipe_name, issuer, proposals) do
+      {:ok, binding}
+    else
+      {:error, reason} -> {:error, {:agent_bind_recipe_caps_failed, reason}}
+    end
+  end
+
+  defp compensate_recipe_binding(%URI{} = agent_uri, %{version: version}) do
+    case RecipeCapBinding.tombstone_if_version(agent_uri, version) do
+      :ok ->
+        :ok
+
+      {:error, reason} ->
+        Logger.error(
+          "recipe-cap binding compensation FAILED for #{inspect(agent_uri)} " <>
+            "version=#{version}: #{inspect(reason)} — tombstone GC must retry"
+        )
+
+        :ok
+    end
+  end
+
+  # Legacy dispatch remains only for the S5 coexistence window. S6 removes it.
 
   defp grant_recipe_caps(%URI{} = agent_uri, recipe) do
     case GrantRecipeCaps.grant_recipe_caps(agent_uri, recipe, @telemetry_prefix) do

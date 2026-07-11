@@ -138,10 +138,39 @@ defmodule Mix.Tasks.Ezagent.Agent.GrantRecipeCaps do
           :ok | {:error, term()}
   def grant_recipe_caps(%URI{} = agent_uri, recipe, telemetry_prefix, instance_overrides \\ %{})
       when is_map(recipe) and is_list(telemetry_prefix) and is_map(instance_overrides) do
+    with {:ok, proposed_caps} <-
+           propose_recipe_caps(agent_uri, recipe, telemetry_prefix, instance_overrides) do
+      grant_all(agent_uri, proposed_caps)
+    end
+  end
+
+  @doc """
+  Resolve every requested recipe-cap template and return concrete proposal
+  artifacts without issuing or persisting them.
+
+  Proposal caps are scoped to the canonical agent instance + workspace by
+  default. A behavior present in `instance_overrides` is instead scoped to that
+  target's canonical instance + workspace. The returned caps intentionally keep
+  `Capability.cap/5`'s declarative sentinel provenance; the caller must issue
+  them through `Ezagent.Cap.issue/3` before persisting or handing them off.
+
+  Resolution is all-or-nothing: an unresolvable behavior or action returns a
+  loud error and no proposal list. Behavior failures retain the legacy
+  `:behavior_not_loaded` telemetry event.
+  """
+  @spec propose_recipe_caps(URI.t(), map(), [atom()], %{optional(module()) => URI.t()}) ::
+          {:ok, [Ezagent.Capability.t()]} | {:error, term()}
+  def propose_recipe_caps(
+        %URI{} = agent_uri,
+        recipe,
+        telemetry_prefix,
+        instance_overrides \\ %{}
+      )
+      when is_map(recipe) and is_list(telemetry_prefix) and is_map(instance_overrides) do
     requested = Map.get(recipe, :requested_caps) || Map.get(recipe, "requested_caps") || []
 
     with {:ok, resolved} <- resolve_caps(requested, telemetry_prefix) do
-      grant_all(agent_uri, resolved, instance_overrides)
+      {:ok, Enum.map(resolved, &proposal_cap(agent_uri, &1, instance_overrides))}
     end
   end
 
@@ -150,10 +179,12 @@ defmodule Mix.Tasks.Ezagent.Agent.GrantRecipeCaps do
   # map (`behavior` an atom OR a string name).
   defp resolve_caps(requested, prefix) when is_list(requested) do
     Enum.reduce_while(requested, {:ok, []}, fn cap_tmpl, {:ok, acc} ->
-      case resolve_behavior(Map.get(cap_tmpl, :behavior) || Map.get(cap_tmpl, "behavior"), prefix) do
-        {:ok, module} ->
-          action = Map.get(cap_tmpl, :action) || Map.get(cap_tmpl, "action")
-          {:cont, {:ok, [{module, action} | acc]}}
+      behavior = Map.get(cap_tmpl, :behavior) || Map.get(cap_tmpl, "behavior")
+      action = Map.get(cap_tmpl, :action) || Map.get(cap_tmpl, "action")
+
+      case resolve_cap_template(behavior, action, prefix) do
+        {:ok, resolved} ->
+          {:cont, {:ok, [resolved | acc]}}
 
         {:error, _} = err ->
           {:halt, err}
@@ -162,6 +193,13 @@ defmodule Mix.Tasks.Ezagent.Agent.GrantRecipeCaps do
     |> case do
       {:ok, resolved} -> {:ok, Enum.reverse(resolved)}
       {:error, _} = err -> err
+    end
+  end
+
+  defp resolve_cap_template(behavior, action, prefix) do
+    with {:ok, module} <- resolve_behavior(behavior, prefix),
+         {:ok, action} <- resolve_action(action) do
+      {:ok, {module, action}}
     end
   end
 
@@ -183,6 +221,20 @@ defmodule Mix.Tasks.Ezagent.Agent.GrantRecipeCaps do
   end
 
   defp resolve_behavior(other, _prefix), do: {:error, {:invalid_cap_behavior, other}}
+
+  defp resolve_action(action) when is_atom(action) and action not in [nil, true, false],
+    do: {:ok, action}
+
+  defp resolve_action(name) when is_binary(name) do
+    case String.to_existing_atom(name) do
+      action when action not in [nil, true, false] -> {:ok, action}
+      _action -> {:error, {:invalid_cap_action, name}}
+    end
+  rescue
+    ArgumentError -> {:error, {:invalid_cap_action, name}}
+  end
+
+  defp resolve_action(other), do: {:error, {:invalid_cap_action, other}}
 
   defp ensure_behavior_loaded(module, prefix) when is_atom(module) do
     if Code.ensure_loaded?(module) do
@@ -206,24 +258,21 @@ defmodule Mix.Tasks.Ezagent.Agent.GrantRecipeCaps do
     {:error, {:behavior_not_loaded, behavior}}
   end
 
-  defp grant_all(%URI{} = agent_uri, resolved, instance_overrides) do
+  defp proposal_cap(%URI{} = agent_uri, {behavior, action}, instance_overrides) do
+    scope_uri = Map.get(instance_overrides, behavior, agent_uri)
+    instance = Ezagent.URI.instance(scope_uri)
+    workspace = Ezagent.Capability.workspace_of(scope_uri)
+
+    Ezagent.Capability.cap(:agent, behavior, action, instance, workspace)
+  end
+
+  defp grant_all(%URI{} = agent_uri, proposed_caps) do
     granter = Ezagent.Entity.User.admin_uri()
 
-    Enum.reduce_while(resolved, :ok, fn {behavior, action}, :ok ->
-      # Self-scope by default; a behavior listed in `instance_overrides` is scoped
-      # to its cross-instance target instead (T7g Part A). Both axes derive from the
-      # SAME helpers dispatch step 5.5 uses (`URI.instance/1` + `workspace_of/1`), so
-      # a board-scoped cap matches a board-targeted invocation and ONLY that board.
-      scope_uri = Map.get(instance_overrides, behavior, agent_uri)
-      instance = Ezagent.URI.instance(scope_uri)
-      workspace = Ezagent.Capability.workspace_of(scope_uri)
-
-      cap =
-        %Ezagent.Capability{
-          Ezagent.Capability.cap(:agent, behavior, action, instance, workspace)
-          | granted_by: granter,
-            granted_at: DateTime.utc_now()
-        }
+    Enum.reduce_while(proposed_caps, :ok, fn proposed_cap, :ok ->
+      # Preserve the legacy dispatch path's observable cap shape. The grant
+      # chokepoint authorizes and re-stamps this provenance before storage.
+      cap = %{proposed_cap | granted_by: granter, granted_at: DateTime.utc_now()}
 
       case Ezagent.Identity.grant_cap(agent_uri, cap, granter) do
         :ok -> {:cont, :ok}

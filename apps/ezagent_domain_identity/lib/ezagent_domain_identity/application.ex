@@ -72,7 +72,8 @@ defmodule EzagentDomainIdentity.Application do
     :ok = Ezagent.Socialware.ConfigProjection.register()
 
     children = [
-      {DynamicSupervisor, name: __MODULE__.UserSupervisor, strategy: :one_for_one}
+      {DynamicSupervisor, name: __MODULE__.UserSupervisor, strategy: :one_for_one},
+      Ezagent.Identity.RecipeCapBinding.Sweeper
     ]
 
     # PR #141 (SPEC v2): identity domain owns the User Kind, so it
