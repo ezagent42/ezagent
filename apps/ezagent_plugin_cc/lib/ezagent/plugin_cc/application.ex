@@ -186,13 +186,19 @@ defmodule EzagentPluginCc.Application do
   def after_boot do
     # PR-8 (transport #53) — the orchestrator-MCP transport subsystem moved
     # from `ezagent_domain_session` INTO this plugin. Their lazy-`init/0`
-    # ETS tables + the readiness-port impl registration move here with them.
+    # ETS tables + the context-port implementation registration move here with
+    # them.
     #
     # `McpRegistry` — the `orchestrator_uri → bound McpServer context` table.
     # Agent live-join readiness is now the generic domain-agent contract
     # (`Ezagent.Agent.LiveJoinRegistry`) keyed by `agent_uri`.
     :ok = Ezagent.Orchestrator.McpRegistry.init()
     :ok = Ezagent.Agent.LiveJoinRegistry.init()
+
+    :ok =
+      Ezagent.Session.OrchestratorContextPort.put_impl(
+        EzagentPluginCc.Orchestrator.ContextAdapter
+      )
 
     _ = maybe_reap_orphans()
     _ = maybe_reap_cc_sdk_orphans()

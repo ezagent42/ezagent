@@ -22,11 +22,10 @@ defmodule EzagentDomainInstanceMessage.SessionCreator.Rollback do
     )
 
     if match?(%URI{}, orchestrator_uri) do
-      # PR-8 (transport #53) — route MCP unregister + live-join clear through
-      # the session-owned port (no-op when cc is not loaded) instead of naming
-      # the now-cc-resident `McpRegistry` / `LiveJoinRegistry`.
-      safe(:orchestrator_readiness_unregister, fn ->
-        Ezagent.Session.OrchestratorReadinessPort.unregister(orchestrator_uri)
+      # MCP context ownership stays behind the session-owned port (a no-op when
+      # cc is absent). Generic live-join state belongs to the agent domain.
+      safe(:orchestrator_context_unregister, fn ->
+        Ezagent.Session.OrchestratorContextPort.unregister(orchestrator_uri)
       end)
 
       # Transport #53 Decision C (codex C-rC-P2) — stop the per-orchestrator
@@ -51,8 +50,8 @@ defmodule EzagentDomainInstanceMessage.SessionCreator.Rollback do
       safe(:unbind_orchestrator, fn -> Ezagent.WorkspaceRegistry.unbind(orchestrator_uri) end)
       forget_lineage(orchestrator_uri)
 
-      safe(:orchestrator_readiness_clear, fn ->
-        Ezagent.Session.OrchestratorReadinessPort.clear(orchestrator_uri)
+      safe(:orchestrator_live_join_clear, fn ->
+        Ezagent.Agent.LiveJoinRegistry.clear(orchestrator_uri)
       end)
     end
 

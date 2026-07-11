@@ -72,8 +72,8 @@ defmodule EzagentPluginCc.MixProject do
       # warning only by alphabetical umbrella build order (ezagent_domain_session
       # sorts before ezagent_plugin_cc, so the session beam happened to exist
       # when cc compiled) — a latent layering hazard, not a real decoupling.
-      # cc also implements `Ezagent.Session.OrchestratorReadinessPort` (the
-      # session → transport seam) and hosts cc agents (the shared
+      # cc also implements `Ezagent.Session.OrchestratorContextPort` (the
+      # context-only session → transport seam) and hosts cc agents (the shared
       # `Ezagent.Entity.Agent` Kind, DEFINED in this domain). Declaring the
       # honest dep mirrors ezagent_plugin_py, which deps on session outright
       # for the same Agent-Kind/dispatcher reason. The acyclic invariant is
