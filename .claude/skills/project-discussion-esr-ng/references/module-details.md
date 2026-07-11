@@ -3,7 +3,7 @@
 > **基线：`upstream/main` @ `63877f425`（2026-07-09 全量 re-bootstrap）。**
 > 本文件在 49f0167f7（2026-07-06）全量索引基础上，把 49f0167f7..63877f425 约 60 个 commit 的变化并入（改动大的节全量重写，未动的节保留）。每条断言尽量带 `file:line`（现读取证，未二次编造）。
 > 本轮（49f0167f7..HEAD）生产 lib 字节未动的 app：external_mirror / python / socialware(domain) / curl / email / feishu / kb / native / protocol_api / cli —— 这些节沿用上轮全量索引。
-> 测试状态一律 best-effort，本轮 bootstrap **未现跑**（需 mise OTP27/1.18 隔离工具链 + Postgres）。
+> 测试状态一律 best-effort，本轮 bootstrap **未现跑**（需与 CI 一致的 OTP 28 / Elixir 1.19 隔离工具链 + Postgres）。
 >
 > 三层（P9 "读什么数据决定归属"）：**core（L1 机制）→ domain（L2 领域）→ plugin（L3 扩展）**；`ezagent_cli` / `ezagent_web` 是 transport 顶层（P13）。
 > 已裁决冲突：`Ezagent.Session.Membership.authorize` 现役是 **3 参**（`authorize(slice, caller, session_uri)`，membership_predicate.ex:55），`/2` 仍存但只 delegate 到 `/3` 传 nil（:42）；socialware 三处读全传 session_uri（external_feed.ex:402 / chat_feed.ex:137 / gc.ex:212）。moduledoc 里 "authorize/2" 是 stale。
