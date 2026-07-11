@@ -44,7 +44,7 @@ defmodule EzagentPluginHello.HelloPublisherDispatchTest do
     result_denied =
       Invocation.dispatch(%Invocation{
         target: target,
-        mode: :cast,
+        mode: :call,
         args: args,
         ctx: %{caller: denied_uri, caps: MapSet.new(), reply: {:caller_inbox, self()}}
       })
