@@ -102,6 +102,9 @@ defmodule EzagentCore.Invariants.PerTenantTablesHaveWorkspaceColumnTest do
     # session it views; the workspace is DERIVED from that session (never supplied),
     # so a binding can never span tenants.
     {Ezagent.Socialware.AnonBinding, "socialware_anon_bindings"},
+    # Phase 3 S5 — pre-issued recipe artifacts are keyed to one concrete agent;
+    # the binding must stay inside that agent's workspace boundary.
+    {Ezagent.Identity.RecipeCapBinding, "recipe_cap_bindings"},
     # Socialware P9 — named workspace responsibility assignments are scoped to
     # one workspace; the same holder URI cannot receive a responsibility across
     # tenants without a separate row in that tenant.
