@@ -98,15 +98,15 @@ defmodule Ezagent.Entity.Session.Orchestrator do
     case orchestrator_member_uri(session_uri) do
       %URI{} = orchestrator_uri ->
         with :ok <-
-               grant_orchestrator_scoped_caps(orchestrator_uri, session_uri, owner_uri),
-             :ok <-
                register_orchestrator_mcp_context(
                  orchestrator_uri,
                  session_uri,
                  workspace_uri,
                  owner_uri,
                  compat_parent_template_uri(session_uri)
-               ) do
+               ),
+             :ok <-
+               grant_orchestrator_scoped_caps(orchestrator_uri, session_uri, owner_uri) do
           {:ok, orchestrator_uri, :already_present}
         end
 
@@ -520,12 +520,12 @@ defmodule Ezagent.Entity.Session.Orchestrator do
   # ─────────────────────────────────────────────────────────────────────
 
   @doc """
-  Register the orchestrator's MCP context (cache-fill).
+  Register the orchestrator's MCP context and start its session-owned executor.
 
   2026-05-31 orchestrator-startup-atomicity §4 step 7 — made public so
   the atomic `EzagentDomainInstanceMessage.SessionCreator.create_session/3` chokepoint can call it
-  directly. The lazy `rebuild_from_durable` (now able to read OTU via
-  the A+C2 unwrap fix) also reconstructs it on JOIN.
+  directly. The lazy `rebuild_from_durable` reconstructs the same context from
+  the durable role/member binding on JOIN after a restart.
   """
   @spec register_orchestrator_mcp_context(URI.t(), URI.t(), URI.t(), URI.t(), URI.t()) ::
           :ok | {:error, term()}
@@ -536,12 +536,23 @@ defmodule Ezagent.Entity.Session.Orchestrator do
         %URI{} = owner_uri,
         %URI{} = parent_template_uri
       ) do
-    Ezagent.Session.OrchestratorReadinessPort.register_context(orchestrator_uri,
-      session_uri: session_uri,
-      workspace_uri: workspace_uri,
-      owner_uri: owner_uri,
-      parent_template_uri: parent_template_uri
-    )
+    with :ok <-
+           Ezagent.Session.OrchestratorContextPort.register_context(orchestrator_uri,
+             session_uri: session_uri,
+             workspace_uri: workspace_uri,
+             owner_uri: owner_uri,
+             parent_template_uri: parent_template_uri
+           ),
+         {:ok, _pid} <-
+           Ezagent.Session.SessionManager.ensure_started(
+             orchestrator_uri: orchestrator_uri,
+             session_uri: session_uri,
+             workspace_uri: workspace_uri,
+             owner_uri: owner_uri,
+             parent_template_uri: parent_template_uri
+           ) do
+      :ok
+    end
   end
 
   @doc "Ensure the SessionTemplate Kind at `template_uri` is materialized/alive before it is read or instantiated. Delegates to `Ezagent.Entity.Session`."
