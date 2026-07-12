@@ -28,6 +28,80 @@ defmodule Ezagent.Session.Config.ExecuteTest do
              {:error, {:invalid_addressed_target, :request_supplied_context}}
   end
 
+  test "execute/4 rejects adapter-supplied authority context and unknown args" do
+    principal = User.admin_uri()
+    workspace_uri = Ezagent.URI.workspace("system")
+
+    assert SessionConfig.execute(
+             "list_templates",
+             %{"caller" => URI.to_string(principal)},
+             principal,
+             workspace_uri
+           ) == {:error, {:invalid_args, [{:authority_context_forbidden, "caller"}]}}
+
+    assert SessionConfig.execute(
+             "list_templates",
+             %{"not_in_schema" => true},
+             principal,
+             workspace_uri
+           ) == {:error, {:invalid_args, [{:unknown_arg, "not_in_schema"}]}}
+  end
+
+  test "execute/4 validates declared JSON types before readiness or admission" do
+    principal = User.admin_uri()
+    workspace_uri = Ezagent.URI.workspace("system")
+
+    assert SessionConfig.execute(
+             "list_templates",
+             %{"name_filter" => 123},
+             principal,
+             workspace_uri
+           ) == {:error, {:invalid_args, [{:invalid_type, "name_filter", "string"}]}}
+  end
+
+  test "required-argument validation runs before readiness and admission" do
+    principal = User.admin_uri()
+    missing_session = session_uri("missing-before-gates")
+
+    assert SessionConfig.execute(
+             "add_managed_member",
+             %{"role_name" => "reviewer"},
+             principal,
+             missing_session
+           ) == {:error, {:missing_arg, "source_agent_template_uri"}}
+  end
+
+  test "execute/4 owns transport-neutral scalar coercion" do
+    :ok =
+      ExtensionRegistry.assemble!([
+        %{
+          name: "coercion_probe",
+          description: "coercion probe",
+          input_schema: %{
+            "type" => "object",
+            "properties" => %{
+              "enabled" => %{"type" => "boolean"},
+              "position" => %{"type" => "integer"}
+            },
+            "required" => ["enabled", "position"]
+          },
+          target_scope: :workspace,
+          admission_gate: :workspace_caps,
+          route: {:mfa, __MODULE__, :capture_args}
+        }
+      ])
+
+    principal = User.admin_uri()
+
+    assert {:ok, %{"enabled" => false, "position" => 7}} =
+             SessionConfig.execute(
+               "coercion_probe",
+               %{"enabled" => "false", "position" => "7"},
+               principal,
+               Ezagent.URI.workspace("system")
+             )
+  end
+
   test "operation names are normalized without converting request strings to atoms" do
     assert SessionConfig.operation("list_templates").name == "list_templates"
     assert SessionConfig.operation(:list_templates).name == "list_templates"
@@ -238,4 +312,5 @@ defmodule Ezagent.Session.Config.ExecuteTest do
   defp eventually(_fun, 0), do: false
 
   def capture_context(_args, opts), do: {:ok, opts}
+  def capture_args(args, _opts), do: {:ok, args}
 end

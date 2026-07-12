@@ -66,5 +66,21 @@ defmodule Ezagent.Session.Config.CatalogTest do
     end
   end
 
+  test "assembled extension names stay wire strings and never require pre-existing atoms" do
+    name = "runtime_extension_#{System.unique_integer([:positive])}"
+
+    assert :ok =
+             ExtensionRegistry.assemble!([
+               %{
+                 name: name,
+                 description: "runtime",
+                 input_schema: object_schema(),
+                 route: :runtime
+               }
+             ])
+
+    assert Ezagent.Session.SessionManager.tool_names() == @core_names ++ [name]
+  end
+
   defp object_schema, do: %{"type" => "object", "properties" => %{}, "required" => []}
 end

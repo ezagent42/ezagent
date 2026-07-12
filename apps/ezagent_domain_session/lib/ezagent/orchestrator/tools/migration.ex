@@ -378,20 +378,11 @@ defmodule Ezagent.Orchestrator.Tools.Migration do
   end
 
   defp preflight_session_template_cap(caps, %URI{} = workspace_uri) do
-    representative =
-      workspace_uri
-      |> Ezagent.URI.workspace_name!()
-      |> Ezagent.URI.template(:session, "_catalog@_")
-
-    needed = %{
-      kind: :session_template,
-      behavior: Ezagent.ActionSet.Template,
-      action: :any,
-      instance: representative,
-      workspace_uri: workspace_uri
-    }
-
-    if Ezagent.Capability.Authorization.authorizes?(Tools.to_cap_set(caps), needed) do
+    if Ezagent.Session.Config.Admission.template_cap?(
+         Tools.to_cap_set(caps),
+         :session_template,
+         workspace_uri
+       ) do
       :ok
     else
       {:error, :unauthorized}

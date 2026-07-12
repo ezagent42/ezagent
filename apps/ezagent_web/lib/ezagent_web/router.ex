@@ -283,6 +283,13 @@ defmodule EzagentWeb.Router do
     post "/:kind/:action", ApiV1Controller, :invoke
   end
 
+  scope "/api/session-config", EzagentWeb do
+    pipe_through :api
+
+    get "/", SessionConfigController, :index
+    post "/:operation", SessionConfigController, :invoke
+  end
+
   # Enable LiveDashboard in development
   if Application.compile_env(:ezagent_web, :dev_routes) do
     import Phoenix.LiveDashboard.Router

@@ -270,10 +270,10 @@ defmodule Ezagent.Session.SessionManager do
   end
 
   @doc "The assembled Session-Config operation names."
-  @spec tool_names() :: [atom()]
+  @spec tool_names() :: [String.t()]
   def tool_names do
     Ezagent.Session.Config.Catalog.operations()
-    |> Enum.map(&String.to_existing_atom(&1.name))
+    |> Enum.map(& &1.name)
   end
 
   # --- GenServer --------------------------------------------------------

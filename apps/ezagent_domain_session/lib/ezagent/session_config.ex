@@ -1,7 +1,7 @@
 defmodule Ezagent.Session.Config do
   @moduledoc "Single executable boundary for Session-Config operations."
 
-  alias Ezagent.Session.Config.{Admission, Catalog, Executor, Operation, Readiness}
+  alias Ezagent.Session.Config.{Admission, Catalog, Executor, Operation, Readiness, Validation}
 
   @spec operation(String.t() | atom()) :: Operation.t() | nil
   @doc "Return the canonical descriptor for a Session-Config operation."
@@ -18,6 +18,7 @@ defmodule Ezagent.Session.Config do
   def execute(operation_name, args, %URI{} = principal, addressed_target) when is_map(args) do
     with %Operation{} = operation <- operation(operation_name),
          {:ok, target} <- normalize_target(operation, principal, addressed_target),
+         {:ok, args} <- Validation.coerce(operation, args),
          :ok <- validate_target(operation, target),
          :ok <- Readiness.check(operation, target),
          {:ok, opts} <- derive_context(operation, principal, target),

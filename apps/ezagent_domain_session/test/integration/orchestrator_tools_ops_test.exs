@@ -469,20 +469,20 @@ defmodule EzagentDomainInstanceMessage.Integration.OrchestratorToolsOpsTest do
     test "SessionManager.tool_names/0 is the member + participant + rule-set + template set" do
       assert MapSet.new(SessionManager.tool_names()) ==
                MapSet.new([
-                 :add_managed_member,
-                 :add_participant,
-                 :update_member_template,
-                 :remove_member,
-                 :define_rule_set_rule,
-                 :define_prompt_template,
-                 :define_legend,
-                 :update_template,
-                 :save_template_as,
-                 :migrate_session,
-                 :list_templates,
+                 "add_managed_member",
+                 "add_participant",
+                 "update_member_template",
+                 "remove_member",
+                 "define_rule_set_rule",
+                 "define_prompt_template",
+                 "define_legend",
+                 "update_template",
+                 "save_template_as",
+                 "migrate_session",
+                 "list_templates",
                  # kb-retrieval SPEC §5.3 option 1 — kb-agent retrieve / ingest.
-                 :kb_query,
-                 :kb_ingest
+                 "kb_query",
+                 "kb_ingest"
                ])
     end
   end

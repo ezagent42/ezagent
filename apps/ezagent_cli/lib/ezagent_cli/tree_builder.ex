@@ -12,7 +12,7 @@ defmodule EzagentCli.TreeBuilder do
   to compile order.
   """
 
-  alias EzagentCli.{Coercion, FacadeRegistry}
+  alias EzagentCli.{Coercion, FacadeRegistry, SessionConfigFacade}
 
   @doc """
   Build the Optimus root spec. `behavior_triples` is
@@ -21,6 +21,11 @@ defmodule EzagentCli.TreeBuilder do
   """
   @spec build(list()) :: Optimus.t()
   def build(behavior_triples \\ Ezagent.BehaviorRegistry.list_all()) do
+    # The OTP release keeps :ezagent_cli load-only. Rebuild this domain-owned
+    # projection on every CLI tree construction so commands are reachable even
+    # when EzagentCli.Application.start/2 was intentionally never invoked.
+    :ok = SessionConfigFacade.register_all()
+
     # Filter stale entries — when test suites register fake Kind
     # modules per-test, those modules may no longer be loadable when
     # build() runs later. Skip rather than crash.

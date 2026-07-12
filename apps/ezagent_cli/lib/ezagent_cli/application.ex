@@ -40,6 +40,8 @@ defmodule EzagentCli.Application do
       }
     )
 
+    EzagentCli.SessionConfigFacade.register_all()
+
     :ok
   end
 

@@ -67,9 +67,14 @@ defmodule Ezagent.Orchestrator.Tools.Participants do
          caps,
          _workspace_uri,
          session_uri,
-         _opts
+         opts
        ) do
-    admit_participant(session_uri, member_uri, %{role_name: role_name}, caller, caps, false)
+    facets = %{
+      role_name: role_name,
+      in_session_template: Keyword.get(opts, :in_session_template, true)
+    }
+
+    admit_participant(session_uri, member_uri, facets, caller, caps, false)
   end
 
   defp add_participant_ref(
