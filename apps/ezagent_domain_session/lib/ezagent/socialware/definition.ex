@@ -32,8 +32,15 @@ defmodule Ezagent.Socialware.Definition do
   A socialware-declared participant role slot. Agent slots name a recipe and
   default flavor; human slots are open runtime assignment slots.
   """
+  @type operate_edge :: %{role: String.t(), behavior: module(), action: atom()}
   @type role_slot ::
-          %{role_name: String.t(), fill: :agent, recipe: String.t(), flavor: String.t()}
+          %{
+            required(:role_name) => String.t(),
+            required(:fill) => :agent,
+            required(:recipe) => String.t(),
+            required(:flavor) => String.t(),
+            optional(:operates) => [operate_edge()]
+          }
           | %{role_name: String.t(), fill: :human}
 
   @type t :: %__MODULE__{
@@ -80,6 +87,7 @@ defmodule Ezagent.Socialware.Definition do
          {:ok, shape} <- behavior_list(attrs, :shape),
          {:ok, views} <- behavior_list(attrs, :views),
          {:ok, roles} <- roles_list(attrs),
+         :ok <- validate_operates_roles(roles),
          {:ok, visibility_policy} <- visibility_policy(attrs),
          {:ok, owner_policy} <- owner_policy(attrs),
          :ok <- reject_participant_instance_uris(raw_roles, routing_rules),
@@ -286,18 +294,24 @@ defmodule Ezagent.Socialware.Definition do
       :agent ->
         flavor = get(item, :flavor)
 
-        if non_empty_string?(recipe) and non_empty_string?(role_name) and
-             non_empty_string?(flavor) do
-          {:ok, %{role_name: role_name, fill: :agent, recipe: recipe, flavor: flavor}}
+        with true <-
+               non_empty_string?(recipe) and non_empty_string?(role_name) and
+                 non_empty_string?(flavor),
+             {:ok, operates} <- operates_list(item, role_name) do
+          slot = %{role_name: role_name, fill: :agent, recipe: recipe, flavor: flavor}
+          {:ok, maybe_put_operates(slot, operates)}
         else
-          {:error, {:invalid_socialware_role_slot, item}}
+          false -> {:error, {:invalid_socialware_role_slot, item}}
+          {:error, _} = error -> error
         end
 
       :human ->
-        if non_empty_string?(role_name) do
+        with true <- non_empty_string?(role_name),
+             [] <- get(item, :operates, []) do
           {:ok, %{role_name: role_name, fill: :human}}
         else
-          {:error, {:invalid_socialware_role_slot, item}}
+          false -> {:error, {:invalid_socialware_role_slot, item}}
+          _ -> {:error, {:invalid_socialware_operates_source, role_name}}
         end
 
       _ ->
@@ -306,6 +320,87 @@ defmodule Ezagent.Socialware.Definition do
   end
 
   defp role_slot(other), do: {:error, {:invalid_socialware_role_slot, other}}
+
+  defp operates_list(item, source_role) do
+    case get(item, :operates, []) do
+      list when is_list(list) ->
+        list
+        |> Enum.reduce_while({:ok, []}, fn edge, {:ok, acc} ->
+          case operate_edge(edge) do
+            {:ok, normalized} -> {:cont, {:ok, [normalized | acc]}}
+            {:error, _} = error -> {:halt, error}
+          end
+        end)
+        |> case do
+          {:ok, edges} -> {:ok, Enum.reverse(edges)}
+          error -> error
+        end
+
+      other ->
+        {:error, {:invalid_socialware_operates, source_role, other}}
+    end
+  end
+
+  defp operate_edge(edge) when is_map(edge) do
+    role = get(edge, :role)
+    behavior = get(edge, :behavior)
+    action = get(edge, :action)
+
+    with true <- non_empty_string?(role),
+         {:ok, behavior} <- behavior_module(behavior),
+         {:ok, action} <- operate_action(behavior, action) do
+      {:ok, %{role: role, behavior: behavior, action: action}}
+    else
+      false -> {:error, {:invalid_socialware_operates_edge, edge}}
+      {:error, _} = error -> error
+    end
+  end
+
+  defp operate_edge(other), do: {:error, {:invalid_socialware_operates_edge, other}}
+
+  defp operate_action(behavior, action) when is_atom(action) do
+    if action != :any and action in Ezagent.ActionSet.action_names(behavior) do
+      {:ok, action}
+    else
+      {:error, {:invalid_socialware_operates_action, behavior, action}}
+    end
+  end
+
+  defp operate_action(behavior, action) when is_binary(action) do
+    case Enum.find(Ezagent.ActionSet.action_names(behavior), &(Atom.to_string(&1) == action)) do
+      nil -> {:error, {:invalid_socialware_operates_action, behavior, action}}
+      declared -> {:ok, declared}
+    end
+  end
+
+  defp operate_action(behavior, action),
+    do: {:error, {:invalid_socialware_operates_action, behavior, action}}
+
+  defp maybe_put_operates(slot, []), do: slot
+  defp maybe_put_operates(slot, operates), do: Map.put(slot, :operates, operates)
+
+  defp validate_operates_roles(roles) do
+    roles_by_name = Map.new(roles, &{&1.role_name, &1})
+
+    Enum.reduce_while(roles, :ok, fn source, :ok ->
+      source
+      |> Map.get(:operates, [])
+      |> Enum.reduce_while(:ok, fn %{role: target_role}, :ok ->
+        case Map.get(roles_by_name, target_role) do
+          %{fill: :agent} ->
+            {:cont, :ok}
+
+          _ ->
+            {:halt,
+             {:error, {:invalid_socialware_operates_target, source.role_name, target_role}}}
+        end
+      end)
+      |> case do
+        :ok -> {:cont, :ok}
+        {:error, _} = error -> {:halt, error}
+      end
+    end)
+  end
 
   defp fill_type(:agent), do: :agent
   defp fill_type("agent"), do: :agent
@@ -395,8 +490,9 @@ defmodule Ezagent.Socialware.Definition do
       {:ok,
        %{
          publish_policy: publish_policy,
-         web_anon_access: get(policy, :web_anon_access, false) == true or
-           Map.get(policy, "web_anon_access", false) == true,
+         web_anon_access:
+           get(policy, :web_anon_access, false) == true or
+             Map.get(policy, "web_anon_access", false) == true,
          scope: scope
        }}
     else

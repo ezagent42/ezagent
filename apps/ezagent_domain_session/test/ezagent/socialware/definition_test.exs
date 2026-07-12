@@ -111,6 +111,109 @@ defmodule Ezagent.Socialware.DefinitionTest do
     end
   end
 
+  describe "operates field (composition-cap declaration)" do
+    test "normalizes a concrete agent-to-agent edge and round-trips it through body/1" do
+      attrs = %{
+        "name" => "kanban-team",
+        "roles" => [
+          %{
+            "role_name" => "assistant",
+            "fill" => "agent",
+            "recipe" => "assistant",
+            "flavor" => "cc",
+            "operates" => [
+              %{
+                "role" => "board",
+                "behavior" => "Ezagent.ActionSet.Sandbox",
+                "action" => "read"
+              }
+            ]
+          },
+          %{"role_name" => "board", "fill" => "agent", "recipe" => "board", "flavor" => "native"}
+        ]
+      }
+
+      assert {:ok, definition} = Definition.new(attrs)
+
+      assert [assistant, _board] = definition.roles
+
+      assert assistant.operates == [
+               %{
+                 role: "board",
+                 behavior: Ezagent.ActionSet.Sandbox,
+                 action: :read
+               }
+             ]
+
+      body = Definition.body(definition)
+      assert {:ok, round_tripped} = Definition.new(body)
+      assert round_tripped.roles == definition.roles
+    end
+
+    test "rejects an edge whose target role is absent" do
+      assert {:error, {:invalid_socialware_operates_target, "assistant", "missing"}} =
+               Definition.new(%{
+                 name: "missing-target",
+                 roles: [
+                   agent_slot("assistant",
+                     operates: [operate_edge("missing")]
+                   )
+                 ]
+               })
+    end
+
+    test "requires both source and target roles to be agent slots" do
+      assert {:error, {:invalid_socialware_operates_source, "reviewer"}} =
+               Definition.new(%{
+                 name: "human-source",
+                 roles: [
+                   %{role_name: "reviewer", fill: :human, operates: [operate_edge("bot")]},
+                   agent_slot("bot")
+                 ]
+               })
+
+      assert {:error, {:invalid_socialware_operates_target, "bot", "reviewer"}} =
+               Definition.new(%{
+                 name: "human-target",
+                 roles: [
+                   agent_slot("bot", operates: [operate_edge("reviewer")]),
+                   %{role_name: "reviewer", fill: :human}
+                 ]
+               })
+    end
+
+    test "rejects wildcard or undeclared actions" do
+      assert {:error, {:invalid_socialware_operates_action, Ezagent.ActionSet.Sandbox, :any}} =
+               Definition.new(%{
+                 name: "wildcard-action",
+                 roles: [
+                   agent_slot("source", operates: [operate_edge("target", action: :any)]),
+                   agent_slot("target")
+                 ]
+               })
+
+      assert {:error, {:invalid_socialware_operates_action, Ezagent.ActionSet.Sandbox, "missing"}} =
+               Definition.new(%{
+                 name: "missing-action",
+                 roles: [
+                   agent_slot("source", operates: [operate_edge("target", action: "missing")]),
+                   agent_slot("target")
+                 ]
+               })
+    end
+
+    test "rejects a behavior that is not a loadable ActionSet" do
+      assert {:error, {:invalid_socialware_behavior, Enum}} =
+               Definition.new(%{
+                 name: "invalid-behavior",
+                 roles: [
+                   agent_slot("source", operates: [operate_edge("target", behavior: Enum)]),
+                   agent_slot("target")
+                 ]
+               })
+    end
+  end
+
   describe "manifest metadata and uses" do
     test "accepts catalog fields and explicit plugin uses" do
       assert {:ok, %Definition{} = definition} =
@@ -277,5 +380,19 @@ defmodule Ezagent.Socialware.DefinitionTest do
                  ]
                })
     end
+  end
+
+  defp agent_slot(role_name, overrides \\ []) do
+    Map.merge(
+      %{role_name: role_name, fill: :agent, recipe: role_name, flavor: "native"},
+      Map.new(overrides)
+    )
+  end
+
+  defp operate_edge(role, overrides \\ []) do
+    Map.merge(
+      %{role: role, behavior: Ezagent.ActionSet.Sandbox, action: :read},
+      Map.new(overrides)
+    )
   end
 end
