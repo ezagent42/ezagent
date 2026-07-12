@@ -168,6 +168,10 @@ return `{:error}` as an effect). `Ezagent.Identity.grant_cap/3` is a back-compat
 
 ## 4.5 Phase-3 (cbac-done-right): grant = ISSUE → STORE → VERIFY, with I12 paradigm-lock
 
+> **Before you write ANY cap-granting code, read [`cbac-grant-prompt.md`](cbac-grant-prompt.md)** —
+> a paste-before-you-code checklist (decision tree + the shapes that fail the I12/I7 gates). This
+> section is the full model; that file is the fast path.
+
 Landed on main 2026-07-12 (merge `fa72d36ba`). The chokepoint is unchanged in *location*
 (`Ezagent.Identity.Grant` is still the sole grant/revoke constructor, §4); the *paradigm*
 changed. A grant used to be one issuer→grantee dispatch that mutated the grantee's `:caps`
