@@ -11,7 +11,7 @@ defmodule Ezagent.Orchestrator.Tools.Participants do
          {:ok, caps} <- Tools.require_opt(opts, :caps),
          {:ok, workspace_uri} <- Tools.require_opt(opts, :workspace_uri),
          {:ok, session_uri} <- Tools.require_opt(opts, :session_uri),
-         :ok <- Tools.preflight_within_session_cap(caps, session_uri) do
+         :ok <- Tools.preflight_within_session_cap(caps, session_uri, :join) do
       add_participant_ref(ref, role_name, caller, caps, workspace_uri, session_uri, opts)
     end
   end
@@ -72,7 +72,9 @@ defmodule Ezagent.Orchestrator.Tools.Participants do
            ) do
       case Tools.join_member(session_uri, member_uri, facets, caller, caps) do
         :ok ->
-          :ok = Ezagent.ActionSet.Session.Membership.mount_participation_caps(session_uri, member_uri)
+          :ok =
+            Ezagent.ActionSet.Session.Membership.mount_participation_caps(session_uri, member_uri)
+
           {:ok, member_uri}
 
         {:error, reason} ->
@@ -95,7 +97,11 @@ defmodule Ezagent.Orchestrator.Tools.Participants do
              workspace_uri,
              session_uri
            ) do
-      facets = %{role_name: role_name, in_session_template: Keyword.get(opts, :in_session_template, true)}
+      facets = %{
+        role_name: role_name,
+        in_session_template: Keyword.get(opts, :in_session_template, true)
+      }
+
       admit_participant(session_uri, member_uri, facets, caller, caps, fresh?)
     else
       {:error, _} = err -> err

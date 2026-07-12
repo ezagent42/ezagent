@@ -4,7 +4,7 @@ defmodule Ezagent.Session.Config.Catalog do
   alias Ezagent.Session.Config.{CoreSchemas, ExtensionRegistry, Operation}
 
   @workspace_operations ~w(list_templates)
-  @template_write_operations ~w(update_template save_template_as migrate_session)
+  @template_write_operations ~w(update_template save_template_as)
 
   @spec core_operations() :: [Operation.t()]
   @doc "Return the closed core Session-Config operation set."

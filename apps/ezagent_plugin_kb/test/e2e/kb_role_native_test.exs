@@ -300,7 +300,7 @@ defmodule EzagentPluginKb.E2E.KbRoleNativeTest do
         Ezagent.AgentFlavorAttributes.delete(read_only)
       end)
 
-      assert {:error, :unauthorized} =
+      assert {:error, {:gate_failed, :operation_caps, :unauthorized}} =
                Ezagent.Session.Config.execute(
                  "kb_ingest",
                  %{"kb_agent" => name, "source_uri" => source_uri},

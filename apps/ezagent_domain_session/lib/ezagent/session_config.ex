@@ -1,7 +1,7 @@
 defmodule Ezagent.Session.Config do
   @moduledoc "Single executable boundary for Session-Config operations."
 
-  alias Ezagent.Session.Config.{Catalog, Executor, Operation}
+  alias Ezagent.Session.Config.{Admission, Catalog, Executor, Operation, Readiness}
 
   @spec operation(String.t() | atom()) :: Operation.t() | nil
   @doc "Return the canonical descriptor for a Session-Config operation."
@@ -13,13 +13,15 @@ defmodule Ezagent.Session.Config do
 
   def operation(_), do: nil
 
-  @spec execute(String.t() | atom(), map(), URI.t(), URI.t()) :: term()
+  @spec execute(String.t() | atom(), map(), URI.t(), URI.t() | nil) :: term()
   @doc "Validate and execute one operation for an authenticated principal and addressed target."
-  def execute(operation_name, args, %URI{} = principal, %URI{} = addressed_target)
-      when is_map(args) do
+  def execute(operation_name, args, %URI{} = principal, addressed_target) when is_map(args) do
     with %Operation{} = operation <- operation(operation_name),
-         :ok <- validate_target(operation, addressed_target),
-         {:ok, opts} <- derive_context(operation, principal, addressed_target) do
+         {:ok, target} <- normalize_target(operation, principal, addressed_target),
+         :ok <- validate_target(operation, target),
+         :ok <- Readiness.check(operation, target),
+         {:ok, opts} <- derive_context(operation, principal, target),
+         :ok <- Admission.check(operation, args, opts) do
       Executor.execute(operation.execute, args, opts)
     else
       nil -> {:error, {:unknown_operation, wire_name(operation_name)}}
@@ -27,14 +29,18 @@ defmodule Ezagent.Session.Config do
     end
   end
 
-  def execute(operation_name, args, %URI{}, invalid_target) when is_map(args) do
-    case operation(operation_name) do
-      nil -> {:error, {:unknown_operation, wire_name(operation_name)}}
-      %Operation{} -> {:error, {:invalid_addressed_target, invalid_target}}
-    end
+  def execute(_operation, _args, _principal, _target), do: {:error, :invalid_execution_context}
+
+  defp normalize_target(%Operation{target_scope: :workspace}, principal, nil) do
+    {:ok, Ezagent.Capability.workspace_of(principal)}
+  rescue
+    _ -> {:error, {:invalid_addressed_target, nil}}
   end
 
-  def execute(_operation, _args, _principal, _target), do: {:error, :invalid_execution_context}
+  defp normalize_target(%Operation{}, _principal, %URI{} = target), do: {:ok, target}
+
+  defp normalize_target(%Operation{}, _principal, target),
+    do: {:error, {:invalid_addressed_target, target}}
 
   defp validate_target(%Operation{target_scope: :session}, %URI{scheme: "session"}), do: :ok
 
@@ -48,20 +54,23 @@ defmodule Ezagent.Session.Config do
     workspace_uri = Ezagent.Capability.workspace_of(session_uri)
     working_copy = Ezagent.Entity.Session.read_template_working_copy(session_uri)
 
-    owner =
-      case Ezagent.Entity.Session.owner(session_uri) do
-        {:ok, %URI{} = uri} -> uri
-        _ -> principal
-      end
+    case Ezagent.Entity.Session.owner(session_uri) do
+      {:ok, %URI{} = owner} ->
+        {:ok,
+         context_opts(
+           principal,
+           session_uri,
+           workspace_uri,
+           owner,
+           Map.get(working_copy, :session_template_uri)
+         )}
 
-    {:ok,
-     context_opts(
-       principal,
-       session_uri,
-       workspace_uri,
-       owner,
-       Map.get(working_copy, :session_template_uri)
-     )}
+      {:ok, nil} ->
+        {:error, {:context_derivation_failed, :owner}}
+
+      {:error, reason} ->
+        {:error, {:context_derivation_failed, :owner, reason}}
+    end
   end
 
   defp derive_context(%Operation{target_scope: :workspace}, principal, workspace_uri) do

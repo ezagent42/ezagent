@@ -541,50 +541,8 @@ defmodule Ezagent.Kind.Runtime do
   # matched to attribute a Receipt. Allow/deny decision unchanged.)
   defp granted_via_ctx_caps?(ctx, needed_map) do
     caps = Map.get(ctx, :caps, MapSet.new())
-
-    cond do
-      caps == nil ->
-        :error
-
-      is_struct(caps, MapSet) ->
-        find_authorizing_cap(caps, needed_map)
-
-      is_list(caps) ->
-        find_authorizing_cap(caps, needed_map)
-
-      true ->
-        :error
-    end
+    Ezagent.Capability.Authorization.authorizing_cap(caps, needed_map)
   end
-
-  defp find_authorizing_cap(caps, needed_map) do
-    Enum.find_value(caps, :error, fn cap ->
-      case authorizes?(cap, needed_map) do
-        {:ok, _} = ok -> ok
-        :error -> false
-      end
-    end)
-  end
-
-  # #154 predicate A: an authorizing cap counts only if it traces to a real
-  # entity (`Capability.granted_by_entity?/1`) AND `matches?/2` the needed cap.
-  # Returns `{:ok, cap}` on a match (to attribute a Receipt), else `:error` —
-  # `granted_by_entity?/1` still fences every match (unchanged from the boolean).
-  defp authorizes?(%Ezagent.Capability{} = cap, needed_map) do
-    matched? =
-      Ezagent.Capability.granted_by_entity?(cap) and
-        try do
-          Ezagent.Capability.matches?(cap, needed_map)
-        rescue
-          _ -> false
-        catch
-          _, _ -> false
-        end
-
-    if matched?, do: {:ok, cap}, else: :error
-  end
-
-  defp authorizes?(_, _), do: :error
 
   defp needed_map_to_struct(
          %{

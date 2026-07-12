@@ -219,7 +219,7 @@ defmodule EzagentPluginKb.E2E.AutoserviceTier1SeedTest do
         workspace_uri: seed.workspace_uri
       ]
 
-      assert {:error, :unauthorized} =
+      assert {:error, {:gate_failed, :operation_caps, :unauthorized}} =
                Ezagent.Session.Config.execute(
                  "kb_query",
                  %{"kb_agent" => seed.kb_agent_name, "query" => probe, "k" => 5},

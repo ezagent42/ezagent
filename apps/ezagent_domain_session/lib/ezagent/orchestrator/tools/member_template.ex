@@ -105,21 +105,21 @@ defmodule Ezagent.Orchestrator.Tools.MemberTemplate do
          {:ok, caps} <- Tools.require_opt(opts, :caps),
          {:ok, workspace_uri} <- Tools.require_opt(opts, :workspace_uri),
          {:ok, session_uri} <- Tools.require_opt(opts, :session_uri),
-         # Fail closed BEFORE resolving/terminating anything — an
-         # unauthorized caller never mutates the team (mirrors
-         # add_managed_member's M2 preflight).
-         :ok <- Tools.preflight_within_session_cap(caps, session_uri),
-         # codex round-10 P1 — `preflight_within_session_cap/2` only matches
-         # kind + `{:within_session, S}` (it ignores behavior/action, like
-         # `add_managed_member`). A regenerate is DESTRUCTIVE: it `chat.leave`s
+         # A regenerate is DESTRUCTIVE: it `session.leave`s
          # the old member then `chat.join`s the replacement. A caller holding a
-         # NARROWED within-session cap (e.g. only `Chat :leave`) would pass the
-         # coarse preflight, successfully leave the old member, then FAIL the
-         # `chat.join` at dispatch — stranding the role. So preflight that the
-         # caller holds BOTH `chat.join` AND `chat.leave` authority (full
-         # behavior/action match via `Capability.matches?/2`) BEFORE any
-         # destruction. Fails closed.
-         :ok <- preflight_chat_join_leave_caps(caps, session_uri, workspace_uri),
+         # narrowed within-session cap must hold BOTH exact join and leave
+         # authority before any destruction.
+         #
+         # The shared preflight below evaluates the same complete needed-cap
+         # map as Kind.Runtime: kind, behavior, action, instance, workspace,
+         # and grant provenance. Keeping that predicate centralized prevents
+         # an instance-only check from admitting a wrong-behavior cap before
+         # teardown. Both checks happen while the old member and its routing
+         # bindings are intact. A failure therefore has no compensation path
+         # to run and cannot strand the role between leave and replacement.
+         # This is deliberately stricter than a roster-membership admission;
+         # membership admits the operation, while these caps authorize gates.
+         :ok <- preflight_chat_join_leave_caps(caps, session_uri),
          {:ok, %URI{} = old_member_uri} <- resolve_existing_member(session_uri, role_name) do
       do_update_member_template(
         session_uri,
@@ -360,26 +360,10 @@ defmodule Ezagent.Orchestrator.Tools.MemberTemplate do
   # so a NARROWED `{:within_session, S}` cap (e.g. leave-only) is rejected —
   # the SAME authority the live `chat.join` / `chat.leave` dispatches enforce.
   # Fails closed; nothing destructive runs without both.
-  defp preflight_chat_join_leave_caps(caps, %URI{} = session_uri, %URI{} = workspace_uri) do
-    cap_set = Tools.to_cap_set(caps)
-
-    with :ok <- preflight_chat_action_cap(cap_set, :join, session_uri, workspace_uri) do
-      preflight_chat_action_cap(cap_set, :leave, session_uri, workspace_uri)
+  defp preflight_chat_join_leave_caps(caps, %URI{} = session_uri) do
+    with :ok <- Tools.preflight_within_session_cap(caps, session_uri, :join) do
+      Tools.preflight_within_session_cap(caps, session_uri, :leave)
     end
-  end
-
-  defp preflight_chat_action_cap(cap_set, action, %URI{} = session_uri, %URI{} = workspace_uri) do
-    needed = %{
-      kind: :session,
-      behavior: Ezagent.ActionSet.Session,
-      action: action,
-      instance: session_uri,
-      workspace_uri: workspace_uri
-    }
-
-    if Enum.any?(cap_set, &Ezagent.Capability.matches?(&1, needed)),
-      do: :ok,
-      else: {:error, :unauthorized}
   end
 
   defp preflight_terminate_authority(%URI{} = old_member_uri, caps) do
@@ -394,7 +378,7 @@ defmodule Ezagent.Orchestrator.Tools.MemberTemplate do
     authorized? =
       caps
       |> Tools.to_cap_set()
-      |> Enum.any?(&Ezagent.Capability.matches?(&1, needed))
+      |> Ezagent.Capability.Authorization.authorizes?(needed)
 
     if authorized?, do: :ok, else: {:error, :unauthorized}
   end

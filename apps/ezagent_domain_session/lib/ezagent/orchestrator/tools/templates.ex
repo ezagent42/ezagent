@@ -89,8 +89,11 @@ defmodule Ezagent.Orchestrator.Tools.Templates do
   def list_templates(name_filter \\ nil, opts \\ []) do
     with {:ok, caps} <- require_opt(opts, :caps),
          {:ok, workspace_uri} <- require_opt(opts, :workspace_uri) do
-      agent_allowed? = has_template_cap?(caps, :agent_template, workspace_uri)
-      session_allowed? = has_template_cap?(caps, :session_template, workspace_uri)
+      agent_allowed? =
+        Ezagent.Session.Config.Admission.template_cap?(caps, :agent_template, workspace_uri)
+
+      session_allowed? =
+        Ezagent.Session.Config.Admission.template_cap?(caps, :session_template, workspace_uri)
 
       if not agent_allowed? and not session_allowed? do
         {:error, :unauthorized}
@@ -244,34 +247,12 @@ defmodule Ezagent.Orchestrator.Tools.Templates do
     end
   end
 
-  defp to_cap_set(%MapSet{} = caps), do: caps
-  defp to_cap_set(caps) when is_list(caps), do: MapSet.new(caps)
-  defp to_cap_set(_), do: MapSet.new()
-
-  defp has_template_cap?(caps, kind, %URI{} = workspace_uri) do
-    workspace_name = Ezagent.URI.workspace_name!(workspace_uri)
-
-    representative =
-      case kind do
-        :agent_template -> Ezagent.URI.template(workspace_name, :agent, :_catalog)
-        :session_template -> Ezagent.URI.template(workspace_name, :session, "_catalog@_")
-      end
-
-    needed = %{
-      kind: kind,
-      behavior: Ezagent.ActionSet.Template,
-      action: :any,
-      instance: representative,
-      workspace_uri: workspace_uri
-    }
-
-    caps
-    |> to_cap_set()
-    |> Enum.any?(&Ezagent.Capability.matches?(&1, needed))
-  end
-
   defp check_template_write_cap(caps, %URI{} = workspace_uri) do
-    if has_template_cap?(caps, :session_template, workspace_uri) do
+    if Ezagent.Session.Config.Admission.template_cap?(
+         caps,
+         :session_template,
+         workspace_uri
+       ) do
       :ok
     else
       {:error, :unauthorized}

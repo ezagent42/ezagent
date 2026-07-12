@@ -192,7 +192,8 @@ defmodule EzagentDomainInstanceMessage.E2E.Scenario33_FullStarTest do
     {:ok, _pid} =
       Ezagent.Kind.spawn(Session, %{
         uri: session_uri,
-        behaviors: Ezagent.Entity.Session.behaviors()
+        behaviors: Ezagent.Entity.Session.behaviors(),
+        owner_uri: User.admin_uri()
       })
 
     :ok = Ezagent.WorkspaceRegistry.bind(session_uri, @workspace_uri)
@@ -215,6 +216,15 @@ defmodule EzagentDomainInstanceMessage.E2E.Scenario33_FullStarTest do
     caps = orchestrator_caps(session_uri, orchestrator_uri, @workspace_uri)
     {:ok, _pid} = Ezagent.Kind.spawn(Agent, %{uri: orchestrator_uri, initial_caps: caps})
     :ok = Ezagent.WorkspaceRegistry.bind(orchestrator_uri, @workspace_uri)
+
+    :ok =
+      Ezagent.Orchestrator.Tools.join_member(
+        session_uri,
+        orchestrator_uri,
+        %{role_name: "orchestrator", in_session_template: true},
+        User.admin_uri(),
+        MapSet.new([Capability.admin_genesis_cap()])
+      )
 
     epoch = Ecto.UUID.generate()
 

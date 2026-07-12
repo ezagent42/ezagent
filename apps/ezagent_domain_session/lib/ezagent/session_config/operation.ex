@@ -12,7 +12,8 @@ defmodule Ezagent.Session.Config.Operation do
   defstruct @enforce_keys
 
   @type target_scope :: :session | :workspace
-  @type admission_gate :: :session_membership | :workspace_caps | :template_write
+  @type admission_gate ::
+          :session_membership | :workspace_caps | :template_write | :operation_caps
   @type t :: %__MODULE__{
           name: String.t(),
           description: String.t(),

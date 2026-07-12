@@ -15,7 +15,7 @@ defmodule Ezagent.Orchestrator.Tools.Migration do
          {:ok, workspace_uri} <- Tools.require_opt(opts, :workspace_uri),
          {:ok, caller_uri} <- Tools.require_opt(opts, :caller),
          {:ok, caps} <- Tools.require_opt(opts, :caps),
-         :ok <- Tools.preflight_within_session_cap(caps, session_uri),
+         :ok <- Tools.preflight_within_session_cap(caps, session_uri, :any),
          :ok <- preflight_session_template_cap(caps, workspace_uri),
          {:ok, target_content} <- read_target_template(target_session_template_uri),
          {:ok, target_config} <-
@@ -391,7 +391,7 @@ defmodule Ezagent.Orchestrator.Tools.Migration do
       workspace_uri: workspace_uri
     }
 
-    if caps |> Tools.to_cap_set() |> Enum.any?(&Ezagent.Capability.matches?(&1, needed)) do
+    if Ezagent.Capability.Authorization.authorizes?(Tools.to_cap_set(caps), needed) do
       :ok
     else
       {:error, :unauthorized}

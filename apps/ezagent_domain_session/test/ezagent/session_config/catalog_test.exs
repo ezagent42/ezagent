@@ -26,6 +26,20 @@ defmodule Ezagent.Session.Config.CatalogTest do
 
     assert Enum.map(Catalog.schemas(), & &1["name"]) == @core_names
     assert Enum.all?(Catalog.schemas(), &is_map(&1["inputSchema"]))
+
+    declarations =
+      Map.new(Catalog.core_operations(), &{&1.name, {&1.target_scope, &1.admission_gate}})
+
+    assert declarations["list_templates"] == {:workspace, :workspace_caps}
+    assert declarations["save_template_as"] == {:session, :template_write}
+    assert declarations["update_template"] == {:session, :template_write}
+    assert declarations["migrate_session"] == {:session, :session_membership}
+
+    assert Enum.all?(
+             ~w(add_managed_member add_participant update_member_template remove_member
+                define_rule_set_rule define_prompt_template define_legend migrate_session),
+             &(declarations[&1] == {:session, :session_membership})
+           )
   end
 
   test "extension assembly is deterministic and rejects duplicate or late names" do

@@ -189,7 +189,8 @@ defmodule EzagentDomainInstanceMessage.Integration.OrchestratorToolsOpsTest do
     {:ok, _pid} =
       Ezagent.Kind.spawn(Session, %{
         uri: session_uri,
-        behaviors: Ezagent.Entity.Session.behaviors()
+        behaviors: Ezagent.Entity.Session.behaviors(),
+        owner_uri: User.admin_uri()
       })
 
     :ok = Ezagent.WorkspaceRegistry.bind(session_uri, @workspace_uri)
@@ -284,6 +285,15 @@ defmodule EzagentDomainInstanceMessage.Integration.OrchestratorToolsOpsTest do
   end
 
   defp set_active_binding(session_uri, orchestrator_uri, extra \\ %{}) do
+    :ok =
+      Ezagent.Orchestrator.Tools.join_member(
+        session_uri,
+        orchestrator_uri,
+        %{role_name: "orchestrator", in_session_template: true},
+        User.admin_uri(),
+        MapSet.new([Capability.admin_genesis_cap()])
+      )
+
     epoch = Ecto.UUID.generate()
 
     working_copy =
@@ -554,7 +564,8 @@ defmodule EzagentDomainInstanceMessage.Integration.OrchestratorToolsOpsTest do
     test "list_templates with caps #3/#4 OMITTED → {:error, :unauthorized}" do
       ctx = provision([])
 
-      assert {:error, :unauthorized} = run_tool(ctx, "list_templates", %{}),
+      assert {:error, {:gate_failed, :workspace_caps, :unauthorized}} =
+               run_tool(ctx, "list_templates", %{}),
              "list_templates with NO template caps must FAIL — if it succeeded the " <>
                "op path fell back to ambient admin_caps (forbidden)."
     end
@@ -590,7 +601,7 @@ defmodule EzagentDomainInstanceMessage.Integration.OrchestratorToolsOpsTest do
 
       ctx = %{orchestrator_uri: orchestrator_uri, token: token, session_uri: session_uri}
 
-      assert {:error, :unauthorized} =
+      assert {:error, {:gate_failed, :template_write, :unauthorized}} =
                run_tool(ctx, "update_template", %{})
     end
   end

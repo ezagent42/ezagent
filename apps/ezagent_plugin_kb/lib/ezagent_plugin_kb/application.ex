@@ -105,12 +105,13 @@ defmodule EzagentPluginKb.Application do
           "required" => ["kb_agent", "query"]
         },
         target_scope: :workspace,
-        admission_gate: :workspace_caps,
+        admission_gate: :operation_caps,
         route:
           {:agent_action,
            %{
              agent_arg: "kb_agent",
              behavior: :kb,
+             cap_behavior: Ezagent.ActionSet.Kb,
              action: :query,
              args: [query: "query", k: {"k", 5}]
            }}
@@ -139,12 +140,13 @@ defmodule EzagentPluginKb.Application do
           "required" => ["kb_agent", "source_uri"]
         },
         target_scope: :workspace,
-        admission_gate: :workspace_caps,
+        admission_gate: :operation_caps,
         route:
           {:agent_action,
            %{
              agent_arg: "kb_agent",
              behavior: :kb,
+             cap_behavior: Ezagent.ActionSet.Kb,
              action: :ingest,
              args: [source_uri: "source_uri"]
            }}

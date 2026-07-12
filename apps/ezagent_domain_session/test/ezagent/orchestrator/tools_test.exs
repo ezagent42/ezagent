@@ -43,6 +43,29 @@ defmodule Ezagent.Orchestrator.ToolsTest do
              "got: #{inspect(actual)}"
   end
 
+  test "session preflight uses the runtime full behavior/action predicate" do
+    session_uri = URI.new!("session://system/generic/full-preflight")
+    workspace_uri = URI.new!("workspace://system")
+
+    join_cap = %Ezagent.Capability{
+      kind: :session,
+      behavior: Ezagent.ActionSet.Session,
+      action: :join,
+      instance: {:within_session, session_uri},
+      workspace_uri: workspace_uri,
+      granted_by: URI.new!("entity://system/user/admin"),
+      granted_at: DateTime.utc_now()
+    }
+
+    assert :ok = Tools.preflight_within_session_cap([join_cap], session_uri, :join)
+
+    assert {:error, :unauthorized} =
+             Tools.preflight_within_session_cap([join_cap], session_uri, :leave)
+
+    assert {:error, :unauthorized} =
+             Tools.preflight_within_session_cap([join_cap], session_uri, :any)
+  end
+
   test "the slot tools are RETIRED (§3.8 clean cutover)" do
     for retired <- [:add_agent_slot, :remove_agent_slot, :update_agent_template, :write_matcher] do
       refute Tools.tool?(retired),
@@ -214,7 +237,7 @@ defmodule Ezagent.Orchestrator.ToolsTest do
       caller: URI.new!("entity://system/agent/cc_orch-pr6"),
       caps: MapSet.new(),
       workspace_uri: URI.new!("workspace://system"),
-      session_uri: URI.new!("session://generic/system/no-such-pr6")
+      session_uri: URI.new!("session://system/generic/no-such-pr6")
     ]
 
     test "fails closed (:unauthorized) without the {:within_session, S} cap" do
@@ -227,7 +250,7 @@ defmodule Ezagent.Orchestrator.ToolsTest do
     end
 
     test "with the session cap but no live member, resolves to :unknown_member_role" do
-      session_uri = URI.new!("session://generic/system/no-such-pr6")
+      session_uri = URI.new!("session://system/generic/no-such-pr6")
 
       caps =
         MapSet.new([
