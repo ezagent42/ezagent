@@ -70,8 +70,8 @@ defmodule Ezagent.Session.SessionManager do
 
   require Logger
 
-  alias Ezagent.Orchestrator.Tools
   alias Ezagent.Session.OrchestratorBinding
+  alias Ezagent.Session.Config, as: SessionConfig
 
   @registry Ezagent.Session.SessionManagerRegistry
   @supervisor Ezagent.Session.SessionManagerSupervisor
@@ -269,6 +269,13 @@ defmodule Ezagent.Session.SessionManager do
     end
   end
 
+  @doc "The assembled Session-Config operation names."
+  @spec tool_names() :: [atom()]
+  def tool_names do
+    Ezagent.Session.Config.Catalog.operations()
+    |> Enum.map(&String.to_existing_atom(&1.name))
+  end
+
   # --- GenServer --------------------------------------------------------
 
   @impl GenServer
@@ -282,15 +289,24 @@ defmodule Ezagent.Session.SessionManager do
 
   def handle_call(:binding, _from, %__MODULE__{} = binding), do: {:reply, binding, binding}
 
-  # Step 0 → 1 → 2 → 3 → 4. Each gate fails CLOSED. The bridge-token check is
-  # FIRST + unconditional (the unforgeable entry); only then the structural
-  # check, cap reconstruction, and the cross-process tool dispatch.
+  # Transport authN and structural binding stay here; executable ownership
+  # begins at the SessionConfig domain boundary.
   defp run(%__MODULE__{} = binding, tool, arguments, bridge_token) do
     with :ok <- verify_bridge_token(binding, bridge_token),
-         {:ok, wc} <- structural_check(binding),
-         {:ok, tool_atom} <- normalize_tool(tool) do
-      caps = load_orchestrator_caps(binding.orchestrator_uri)
-      run_tool_op(tool_atom, arguments, opts(binding, wc, caps))
+         {:ok, _working_copy} <- structural_check(binding) do
+      SessionConfig.execute(
+        tool,
+        arguments,
+        binding.orchestrator_uri,
+        addressed_target(binding, tool)
+      )
+    end
+  end
+
+  defp addressed_target(binding, tool) do
+    case SessionConfig.operation(tool) do
+      %{target_scope: :workspace} -> binding.workspace_uri
+      _ -> binding.session_uri
     end
   end
 
@@ -339,240 +355,6 @@ defmodule Ezagent.Session.SessionManager do
       {:ok, %{state: %{template_working_copy: wc}}} when is_map(wc) -> wc
       {:ok, %{template_working_copy: wc}} when is_map(wc) -> wc
       _ -> nil
-    end
-  end
-
-  # === Step 2 — reconstruct the orchestrator's delegated caps ============
-  #
-  # Privileged read of the orchestrator agent's OWN `:identity` slice — run
-  # SESSION-side so NO caps cross the cc boundary. It grants nothing; the caps
-  # are exactly what the Generator delegated. An orchestrator with no delegated
-  # caps yields an empty set, and every underlying tool DENIES at the dispatch
-  # chokepoint (no admin_caps fallback).
-  defp load_orchestrator_caps(%URI{} = orchestrator_uri) do
-    orchestrator_uri
-    |> Ezagent.Identity.read_entity_caps()
-    |> MapSet.new()
-  rescue
-    _ -> MapSet.new()
-  end
-
-  # The caller opts the `Ezagent.Orchestrator.Tools.<tool>` ops consume. The
-  # caps are the RECONSTRUCTED orchestrator caps (NOT empty) — the Session
-  # chokepoint gates each op with them. `parent_template_uri` (the MUTABLE field
-  # `update_template` targets) is read from the LIVE working copy `wc` so a
-  # repair that re-materializes the same orchestrator with a NEW parent is
-  # reflected immediately (codex C-r2-P2) — never the stale cached binding; it
-  # falls back to the binding only when the live slice omits it. The other fields
-  # (orchestrator/session/workspace URIs + owner) are stable for a session.
-  defp opts(%__MODULE__{} = binding, wc, caps) do
-    parent_template_uri =
-      case Map.get(wc, :session_template_uri) do
-        %URI{} = uri -> uri
-        _ -> binding.parent_template_uri
-      end
-
-    [
-      caller: binding.orchestrator_uri,
-      caps: caps,
-      session_uri: binding.session_uri,
-      workspace_uri: binding.workspace_uri,
-      owner: binding.owner_uri || binding.orchestrator_uri,
-      parent_template_uri: parent_template_uri
-    ]
-  end
-
-  # === Step 3 — run the tool (cross-process dispatch to the Session) =====
-  #
-  # The arg-extraction + op dispatch (relocated verbatim from the old
-  # `Ezagent.Orchestrator.ToolRunner`). `arguments` is the LLM's JSON-decoded
-  # map (string keys); the caller/cap/session context comes ENTIRELY from
-  # `opts`. Returns the tool's raw `{:ok, value}` / `{:error, reason}`.
-  defp run_tool_op(:add_managed_member, args, opts) do
-    with {:ok, tmpl_uri} <- arg_uri(args, "source_agent_template_uri"),
-         {:ok, role_name} <- arg_string(args, "role_name") do
-      in_session_template = arg_optional_boolean(args, "in_session_template", true)
-      Tools.add_managed_member(tmpl_uri, role_name, in_session_template, opts)
-    end
-  end
-
-  defp run_tool_op(:add_participant, args, opts) do
-    with {:ok, ref} <- arg_string(args, "ref"),
-         {:ok, role_name} <- arg_string(args, "role_name") do
-      participant_opts =
-        [
-          in_session_template: arg_optional_boolean(args, "in_session_template", true),
-          slots: arg_optional_map(args, "slots", %{})
-        ] ++ opts
-
-      Tools.add_participant(ref, role_name, participant_opts)
-    end
-  end
-
-  defp run_tool_op(:update_member_template, args, opts) do
-    with {:ok, role_name} <- arg_string(args, "role_name"),
-         {:ok, new_tmpl_uri} <- arg_uri(args, "new_source_template_uri") do
-      Tools.update_member_template(role_name, new_tmpl_uri, opts)
-    end
-  end
-
-  defp run_tool_op(:remove_member, args, opts) do
-    with {:ok, role_name} <- arg_string(args, "role_name") do
-      Tools.remove_member(role_name, opts)
-    end
-  end
-
-  defp run_tool_op(:define_rule_set_rule, args, opts) do
-    with {:ok, matcher} <- arg_matcher(args, "matcher_ast"),
-         {:ok, receiver_role} <- arg_string(args, "receiver_role_name"),
-         {:ok, rule_set} <- arg_string(args, "rule_set") do
-      rule_opts =
-        [
-          rule_set: rule_set,
-          position: arg_optional_integer(args, "position", 0),
-          prompt_template_ref: arg_optional_string(args, "prompt_template_ref")
-        ] ++ opts
-
-      Tools.define_rule_set_rule(matcher, receiver_role, rule_opts)
-    end
-  end
-
-  defp run_tool_op(:define_prompt_template, args, opts) do
-    with {:ok, name} <- arg_string(args, "name"),
-         {:ok, template} <- arg_string(args, "template") do
-      Tools.define_prompt_template(name, template, opts)
-    end
-  end
-
-  defp run_tool_op(:define_legend, args, opts) do
-    with {:ok, legend_name} <- arg_string(args, "legend_name"),
-         {:ok, member_role_names} <- arg_string_list(args, "member_role_names"),
-         {:ok, bound_rule_set} <- arg_string(args, "bound_rule_set") do
-      fold = arg_optional_boolean(args, "fold", true)
-      Tools.define_legend(legend_name, member_role_names, bound_rule_set, fold, opts)
-    end
-  end
-
-  defp run_tool_op(:update_template, _args, opts), do: Tools.update_template(opts)
-
-  defp run_tool_op(:save_template_as, args, opts) do
-    with {:ok, new_name} <- arg_string(args, "new_name") do
-      Tools.save_template_as(new_name, opts)
-    end
-  end
-
-  defp run_tool_op(:migrate_session, args, opts) do
-    with {:ok, target_uri} <- arg_uri(args, "target_session_template_uri") do
-      Tools.migrate_session(target_uri, opts)
-    end
-  end
-
-  defp run_tool_op(:list_templates, args, opts) do
-    Tools.list_templates(arg_optional_string(args, "name_filter"), opts)
-  end
-
-  # kb-retrieval SPEC §5.3 option 1 — retrieve / ingest against a kb-agent
-  # named within the orchestrator's workspace (the orchestrator's reconstructed
-  # caps in `opts` authorize the kb.query / kb.ingest dispatch, fail-closed).
-  defp run_tool_op(:kb_query, args, opts) do
-    with {:ok, kb_agent} <- arg_string(args, "kb_agent"),
-         {:ok, query} <- arg_string(args, "query") do
-      Tools.kb_query(kb_agent, query, arg_optional_integer(args, "k", 5), opts)
-    end
-  end
-
-  defp run_tool_op(:kb_ingest, args, opts) do
-    with {:ok, kb_agent} <- arg_string(args, "kb_agent"),
-         {:ok, source_uri} <- arg_string(args, "source_uri") do
-      Tools.kb_ingest(kb_agent, source_uri, opts)
-    end
-  end
-
-  # --- tool-name normalization ------------------------------------------
-
-  @doc "The orchestrator tool names (atoms) — delegates to `Tools`."
-  @spec tool_names() :: [atom()]
-  defdelegate tool_names(), to: Tools
-
-  defp normalize_tool(tool) when is_atom(tool) do
-    if Tools.tool?(tool), do: {:ok, tool}, else: {:error, {:unknown_tool, tool}}
-  end
-
-  defp normalize_tool(tool) when is_binary(tool) do
-    case Enum.find(Tools.tool_names(), &(Atom.to_string(&1) == tool)) do
-      nil -> {:error, {:unknown_tool, tool}}
-      atom -> {:ok, atom}
-    end
-  end
-
-  defp normalize_tool(other), do: {:error, {:unknown_tool, other}}
-
-  # --- arg extraction (relocated verbatim from ToolRunner) --------------
-
-  defp arg_string(args, key) do
-    case Map.get(args, key) do
-      s when is_binary(s) and s != "" -> {:ok, s}
-      _ -> {:error, {:missing_arg, key}}
-    end
-  end
-
-  defp arg_optional_string(args, key) do
-    case Map.get(args, key) do
-      s when is_binary(s) and s != "" -> s
-      _ -> nil
-    end
-  end
-
-  defp arg_optional_boolean(args, key, default) do
-    case Map.get(args, key) do
-      b when is_boolean(b) -> b
-      _ -> default
-    end
-  end
-
-  defp arg_optional_integer(args, key, default) do
-    case Map.get(args, key) do
-      i when is_integer(i) -> i
-      _ -> default
-    end
-  end
-
-  defp arg_optional_map(args, key, default) do
-    case Map.get(args, key) do
-      %{} = map -> map
-      _ -> default
-    end
-  end
-
-  defp arg_uri(args, key) do
-    case Map.get(args, key) do
-      s when is_binary(s) and s != "" ->
-        try do
-          {:ok, Ezagent.URI.new!(s)}
-        rescue
-          ArgumentError -> {:error, {:invalid_arg, key}}
-        end
-
-      %URI{} = uri ->
-        {:ok, uri}
-
-      _ ->
-        {:error, {:missing_arg, key}}
-    end
-  end
-
-  defp arg_string_list(args, key) do
-    case Map.get(args, key) do
-      list when is_list(list) -> {:ok, Enum.map(list, &to_string/1)}
-      _ -> {:error, {:missing_arg, key}}
-    end
-  end
-
-  defp arg_matcher(args, key) do
-    case Map.get(args, key) do
-      %{} = m -> {:ok, m}
-      t when is_tuple(t) -> {:ok, t}
-      _ -> {:error, {:missing_arg, key}}
     end
   end
 

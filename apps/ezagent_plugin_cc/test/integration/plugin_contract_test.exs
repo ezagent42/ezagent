@@ -82,7 +82,8 @@ defmodule EzagentPluginCc.Integration.PluginContractTest do
                session_uri: session_uri,
                workspace_uri: workspace_uri,
                owner_uri: owner_uri,
-               parent_template_uri: parent_template_uri
+               parent_template_uri: parent_template_uri,
+               binding_epoch: "plugin-contract-epoch"
              )
 
     on_exit(fn ->

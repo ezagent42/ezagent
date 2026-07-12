@@ -572,7 +572,8 @@ defmodule EzagentDomainInstanceMessage.Integration.OrchestratorToolsOpsTest do
       {:ok, _pid} = Ezagent.Kind.spawn(Agent, %{uri: orchestrator_uri, initial_caps: caps})
       :ok = Ezagent.WorkspaceRegistry.bind(orchestrator_uri, @workspace_uri)
 
-      :ok = set_active_binding(session_uri, orchestrator_uri)
+      parent_uri = Ezagent.URI.new!("template://team-alpha/session/x@abc")
+      :ok = set_active_binding(session_uri, orchestrator_uri, %{session_template_uri: parent_uri})
 
       {:ok, token} = TokenStore.mint(orchestrator_uri)
 
@@ -582,7 +583,7 @@ defmodule EzagentDomainInstanceMessage.Integration.OrchestratorToolsOpsTest do
           session_uri: session_uri,
           workspace_uri: @workspace_uri,
           owner_uri: orchestrator_uri,
-          parent_template_uri: Ezagent.URI.new!("template://team-alpha/session/x@abc")
+          parent_template_uri: parent_uri
         )
 
       on_exit(fn -> SessionManager.stop(orchestrator_uri) end)
@@ -1026,7 +1027,7 @@ defmodule EzagentDomainInstanceMessage.Integration.OrchestratorToolsOpsTest do
       {:ok, _pid} = Ezagent.Kind.spawn(Agent, %{uri: orchestrator_uri, initial_caps: caps})
       :ok = Ezagent.WorkspaceRegistry.bind(orchestrator_uri, @workspace_uri)
 
-      :ok = set_active_binding(session_uri, orchestrator_uri)
+      :ok = set_active_binding(session_uri, orchestrator_uri, %{session_template_uri: parent_uri})
 
       {:ok, token} = TokenStore.mint(orchestrator_uri)
 
@@ -1205,7 +1206,10 @@ defmodule EzagentDomainInstanceMessage.Integration.OrchestratorToolsOpsTest do
       {:ok, _pid} = Ezagent.Kind.spawn(Agent, %{uri: orchestrator_uri, initial_caps: caps})
       :ok = Ezagent.WorkspaceRegistry.bind(orchestrator_uri, @workspace_uri)
 
-      :ok = set_active_binding(session_uri, orchestrator_uri)
+      parent_uri =
+        Ezagent.URI.new!("template://team-alpha/session/never-existed-#{uniq()}@deadbeef")
+
+      :ok = set_active_binding(session_uri, orchestrator_uri, %{session_template_uri: parent_uri})
 
       {:ok, token} = TokenStore.mint(orchestrator_uri)
 
@@ -1215,8 +1219,7 @@ defmodule EzagentDomainInstanceMessage.Integration.OrchestratorToolsOpsTest do
           session_uri: session_uri,
           workspace_uri: @workspace_uri,
           owner_uri: orchestrator_uri,
-          parent_template_uri:
-            Ezagent.URI.new!("template://team-alpha/session/never-existed-#{uniq()}@deadbeef")
+          parent_template_uri: parent_uri
         )
 
       on_exit(fn -> SessionManager.stop(orchestrator_uri) end)
@@ -1231,7 +1234,7 @@ defmodule EzagentDomainInstanceMessage.Integration.OrchestratorToolsOpsTest do
     test "an unknown tool name is rejected" do
       ctx = provision([:agent_template])
 
-      assert {:error, {:unknown_tool, "not_a_real_tool"}} =
+      assert {:error, {:unknown_operation, "not_a_real_tool"}} =
                run_tool(ctx, "not_a_real_tool", %{})
     end
 

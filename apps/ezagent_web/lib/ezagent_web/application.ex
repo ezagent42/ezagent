@@ -26,6 +26,13 @@ defmodule EzagentWeb.Application do
         # Skill distribution P2: recover/copy release-bundled skill seeds into
         # EZAGENT_HOME and scan the single runtime origin before consumers read.
         :ok = Ezagent.Home.SkillSeed.boot!(index?: System.get_env("MIX_ENV") != "test")
+        # Session-Config extensions are assembled only after every plugin app
+        # has booted; registration is deterministic and frozen from here on.
+        :ok =
+          Ezagent.Session.Config.ExtensionRegistry.assemble!(
+            Ezagent.Session.Config.ExtensionRegistry.discover_loaded_extensions()
+          )
+
         # sw-home lane (2026-07-07) — the ONE late socialware manifest scan.
         # P13 note: ezagent_web is transport, not business logic; this call is
         # ONLY a trigger. It lives here because ezagent_web depends on every

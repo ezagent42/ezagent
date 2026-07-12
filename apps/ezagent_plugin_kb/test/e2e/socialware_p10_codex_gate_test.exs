@@ -131,6 +131,13 @@ defmodule EzagentPluginKb.E2E.SocialwareP10CodexGateTest do
         kb_seed.orchestrator_caps
       )
 
+    held_caps = Ezagent.Identity.read_entity_caps(orchestrator.uri)
+
+    assert Enum.any?(held_caps, fn cap ->
+             cap.behavior == Ezagent.ActionSet.Kb and cap.action == :query
+           end),
+           "the Session-Config principal must durably hold kb.query before tool dispatch"
+
     tool_result =
       run_codex_tool(orchestrator, "kb_query", %{
         "kb_agent" => kb_seed.kb_agent_name,
@@ -372,6 +379,7 @@ defmodule EzagentPluginKb.E2E.SocialwareP10CodexGateTest do
 
   defp start_codex_orchestrator(workspace_uri, session_uri, template_uri, caps) do
     orchestrator_uri = Ezagent.URI.agent(workspace_uri.host, "codex-orchestrator-p10-#{uniq()}")
+    binding_epoch = Ezagent.Session.OrchestratorBinding.new_epoch()
     :ok = Ezagent.AgentFlavorAttributes.put(orchestrator_uri, "codex")
     on_exit(fn -> Ezagent.AgentFlavorAttributes.delete(orchestrator_uri) end)
 
@@ -394,7 +402,9 @@ defmodule EzagentPluginKb.E2E.SocialwareP10CodexGateTest do
     assert {:ok, _} =
              Ezagent.ActionSet.Session.ConfigActions.system_set_working_copy(session_uri, %{
                session_template_uri: template_uri,
-               orchestrator_uri: orchestrator_uri,
+               orchestrator_uri:
+                 Ezagent.Session.OrchestratorBinding.active(orchestrator_uri, binding_epoch),
+               orchestrator_materialization_epoch: binding_epoch,
                orchestrator_template_uri:
                  Ezagent.Orchestrator.CodexOrchestratorSeed.template_uri()
              })

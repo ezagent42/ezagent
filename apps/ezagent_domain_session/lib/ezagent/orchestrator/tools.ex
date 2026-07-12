@@ -95,20 +95,19 @@ defmodule Ezagent.Orchestrator.Tools do
   alias Ezagent.ActionSet.Session
   alias Ezagent.Invocation
   alias Ezagent.Orchestrator.Tools.DefinitionSync
-  alias Ezagent.Orchestrator.Tools.Kb
   alias Ezagent.Orchestrator.Tools.MemberTemplate
   alias Ezagent.Orchestrator.Tools.Migration
   alias Ezagent.Orchestrator.Tools.Participants
   alias Ezagent.Orchestrator.Tools.Templates
-  alias Ezagent.Orchestrator.Tools.ToolCatalog
+  alias Ezagent.Session.Config.Catalog
 
   @doc "The orchestration tool names."
   @spec tool_names() :: [atom()]
-  defdelegate tool_names(), to: ToolCatalog
+  defdelegate tool_names(), to: Catalog, as: :core_names
 
   @doc "True iff `name` is one of the declared orchestration tools."
   @spec tool?(atom()) :: boolean()
-  defdelegate tool?(name), to: ToolCatalog
+  def tool?(name), do: is_atom(name) and name in tool_names()
 
   # === add_managed_member ================================================
 
@@ -811,15 +810,6 @@ defmodule Ezagent.Orchestrator.Tools do
           {:ok, %{agent_templates: [URI.t()], session_templates: [URI.t()]}}
           | {:error, term()}
   defdelegate list_templates(name_filter \\ nil, opts \\ []), to: Templates
-
-  @doc "Retrieve top-k chunks from a kb-agent (kb-retrieval SPEC §5.3 option 1)."
-  @spec kb_query(String.t(), String.t(), pos_integer(), keyword()) ::
-          {:ok, term()} | {:error, term()}
-  defdelegate kb_query(kb_agent, query, k, opts \\ []), to: Kb
-
-  @doc "Ingest one source document into a kb-agent (kb-retrieval SPEC §5.3 option 1)."
-  @spec kb_ingest(String.t(), String.t(), keyword()) :: {:ok, term()} | {:error, term()}
-  defdelegate kb_ingest(kb_agent, source_uri, opts \\ []), to: Kb
 
   # === generic invoke ====================================================
 

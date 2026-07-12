@@ -57,14 +57,12 @@ defmodule Ezagent.Orchestrator.OrchestratorRecipeTest do
                "update_template",
                "save_template_as",
                "migrate_session",
-               "list_templates",
-               "kb_query",
-               "kb_ingest"
+               "list_templates"
              ]
 
       assert get_in(role.contributions, [:tools]) == OrchestratorRecipe.tool_contributions()
       assert Enum.map(Tools.tool_names(), &Atom.to_string/1) == contribution_names
-      assert McpServer.tool_names() == contribution_names
+      assert McpServer.tool_names() == contribution_names ++ ["kb_ingest", "kb_query"]
     end
 
     test "names no flavor (would re-entangle role with flavor)" do
