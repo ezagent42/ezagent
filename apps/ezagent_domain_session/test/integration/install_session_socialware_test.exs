@@ -21,6 +21,7 @@ defmodule EzagentDomainInstanceMessage.Integration.InstallSessionSocialwareTest 
 
   alias Ezagent.Entity.{Session, User}
   alias Ezagent.KindRegistry
+  alias Ezagent.ActionSet.Session, as: SessionBehavior
   alias EzagentDomainInstanceMessage.SessionCreator
 
   setup do
@@ -48,6 +49,35 @@ defmodule EzagentDomainInstanceMessage.Integration.InstallSessionSocialwareTest 
       # arity-2 call passes an explicit %URI{} workspace, so `:no_template_declaration`
       # is the only reachable error.)
       assert {:error, {:no_template_declaration, ^session_uri}} =
+               SessionCreator.install_session_socialware(session_uri, workspace_uri)
+    end
+  end
+
+  describe "install_session_socialware/2 with no accountable session owner" do
+    test "fails loud instead of substituting the admin owner" do
+      short = "install-no-owner-#{System.unique_integer([:positive])}"
+      session_uri = Ezagent.URI.session("system", "default", short)
+      workspace_uri = Ezagent.URI.workspace(:system)
+
+      on_exit(fn -> terminate_if_alive(session_uri) end)
+
+      {:ok, _pid} =
+        Ezagent.Kind.spawn(Session, %{
+          uri: session_uri,
+          behaviors: Session.behaviors()
+        })
+
+      :ok = Ezagent.WorkspaceRegistry.bind(session_uri, workspace_uri)
+
+      working_copy = %{
+        session_template_uri: Ezagent.URI.template(:system, :session, "default"),
+        member_declarations: []
+      }
+
+      assert {:ok, _} = SessionBehavior.system_set_working_copy(session_uri, working_copy)
+      assert {:ok, nil} = Session.owner(session_uri)
+
+      assert {:error, {:no_session_owner, ^session_uri}} =
                SessionCreator.install_session_socialware(session_uri, workspace_uri)
     end
   end

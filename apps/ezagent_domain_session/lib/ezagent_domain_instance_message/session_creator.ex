@@ -199,36 +199,40 @@ defmodule EzagentDomainInstanceMessage.SessionCreator do
   end
 
   defp do_install_session_socialware(session_uri, workspace_uri, working_copy) do
-    effective_owner =
-      case Session.owner(session_uri) do
-        {:ok, %URI{} = owner} -> owner
-        _ -> User.admin_uri()
-      end
+    case Session.owner(session_uri) do
+      {:ok, %URI{} = owner} ->
+        # Materialize from the session's OWN durable `member_declarations` — the
+        # freeze-pinned role slots `create_session/3` recorded at step 4. Re-resolving
+        # the SessionTemplate here would (a) re-run definition lookup against whatever
+        # is registered NOW rather than the frozen revision, and (b) fail at boot
+        # before the definitions are seeded.
+        agents =
+          working_copy
+          |> Map.get(:member_declarations, [])
+          |> TemplateTeam.agent_role_slots()
 
-    # Use the session's freeze-pinned declarations; never re-resolve live config.
-    agents =
-      working_copy
-      |> Map.get(:member_declarations, [])
-      |> TemplateTeam.agent_role_slots()
+        case DefinitionAgents.materialize_definition_agents(
+               session_uri,
+               workspace_uri,
+               owner,
+               agents
+             ) do
+          {:ok, summary} ->
+            with :ok <- record_unfilled_role_slots(session_uri, summary.skipped) do
+              {:ok, summary}
+            end
 
-    case DefinitionAgents.materialize_definition_agents(
-           session_uri,
-           workspace_uri,
-           effective_owner,
-           agents
-         ) do
-      {:ok, summary} ->
-        with :ok <- record_unfilled_role_slots(session_uri, summary.skipped) do
-          {:ok, summary}
+          {:error, reason, _partial} = error ->
+            _ = Materializer.tombstone_orchestrator_binding(session_uri, reason)
+            error
+
+          {:error, reason} = error ->
+            _ = Materializer.tombstone_orchestrator_binding(session_uri, reason)
+            error
         end
 
-      {:error, reason, _partial} = error ->
-        _ = Materializer.tombstone_orchestrator_binding(session_uri, reason)
-        error
-
-      {:error, reason} = error ->
-        _ = Materializer.tombstone_orchestrator_binding(session_uri, reason)
-        error
+      _ ->
+        {:error, {:no_session_owner, session_uri}}
     end
   end
 
