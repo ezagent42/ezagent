@@ -103,7 +103,7 @@ defmodule Ezagent.ActionSet.UserTokensTest do
       assert hd(rows).id == token_id
       refute hd(rows).token_hash == plain
 
-      assert {:ok, %{caps: _}} = Token.verify(user_uri, plain)
+      assert {:ok, ^user_uri} = Ezagent.Authentication.authenticate(plain)
     end
 
     test "label is propagated into the row", %{ctx: ctx} do
@@ -112,12 +112,15 @@ defmodule Ezagent.ActionSet.UserTokensTest do
     end
 
     test "ctx[:read] returning N produces mint_count: N+1", %{ctx: ctx} do
-      ctx_after_one = %{ctx | read: fn key, default ->
-                                case key do
-                                  :mint_count -> 1
-                                  _ -> default
-                                end
-                              end}
+      ctx_after_one = %{
+        ctx
+        | read: fn key, default ->
+            case key do
+              :mint_count -> 1
+              _ -> default
+            end
+          end
+      }
 
       assert {:ok, _result, effects} = UT.handle_mint_token(%{}, ctx_after_one)
       assert {:set, :mint_count, 2} in effects
@@ -209,7 +212,7 @@ defmodule Ezagent.ActionSet.UserTokensTest do
       assert Enum.any?(effects, &match?({:emit, :token_revoked, _}, &1))
 
       # Subsequent verify fails — the row is gone.
-      assert {:error, :no_such_entity} = Token.verify(user_uri, plain)
+      assert {:error, :invalid_credentials} = Ezagent.Authentication.authenticate(plain)
     end
 
     test "unknown id returns :not_found (codex r1 HIGH cross-entity hardening)",

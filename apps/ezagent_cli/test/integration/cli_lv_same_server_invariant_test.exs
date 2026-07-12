@@ -121,8 +121,7 @@ defmodule EzagentCli.Integration.CliRuntimeSameServerInvariantTest do
           "--cap",
           cap_json
         ],
-        token: plain_token,
-        entity_uri: URI.to_string(caller_uri)
+        token: plain_token
       )
 
     assert result.exit_code == 0,

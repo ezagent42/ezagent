@@ -12,18 +12,17 @@ defmodule EzagentCli.Integration.CliLvCapParityTest do
   CLI (or vice versa) — breaking the "CLI ↔ LV same-server invariant"
   (Decision #130). The structural reason this works today is that
   BOTH paths derive caps from `Ezagent.Identity.list_caps_for/1` (LV
-  reads it on mount; CLI reads it via `Ezagent.Entity.authenticate/2`
-  on the bearer-token verify path).
+  reads it on mount; CLI resolves a principal via
+  `Ezagent.Authentication.authenticate/1` and then reads the same caps).
 
   ## PR #142 update
 
   CLI token storage moved from `users.cli_token` (per-user-only field)
-  to `entity_tokens` (entity-agnostic table). Verify is via
-  `Ezagent.Entity.Token.verify/2` rather than `Users.lookup_by_cli_token/1`.
+  to `entity_tokens` (entity-agnostic table). A versioned PAT resolves via
+  `Ezagent.Authentication.authenticate/1` rather than caller-supplied URI.
 
-  `Entity.authenticate/2` dispatches by URI host — `user` → password
-  (bcrypt against `users.password_hash`), `agent` → token (against
-  `entity_tokens`). The parity invariant we're guarding is unchanged:
+  Password login and PAT authentication are separate mechanisms. The parity
+  invariant we're guarding is unchanged:
   whichever path lands a user/agent in the running runtime, caps come
   from `Ezagent.Identity.list_caps_for/1` so the same principal sees
   the same cap set across CLI + LV.
@@ -32,7 +31,7 @@ defmodule EzagentCli.Integration.CliLvCapParityTest do
 
   1. A minted token verifies back to the same agent URI it was
      minted for (token path).
-  2. A user URI's caps via `Entity.authenticate` (password) and via
+  2. A user URI's caps via `Entity.authenticate_password/2` and via
      `list_caps_for` (LV mount) converge on the same MapSet
      (V3.4 parity).
   3. Invalid tokens cleanly return `{:error, :invalid_credentials}`
@@ -43,7 +42,7 @@ defmodule EzagentCli.Integration.CliLvCapParityTest do
 
   use EzagentCore.DataCase, async: false
 
-  alias Ezagent.{Capability, Entity, Users}
+  alias Ezagent.{Authentication, Capability, Entity, Users}
   alias Ezagent.Entity.Token
 
   setup do
@@ -62,7 +61,7 @@ defmodule EzagentCli.Integration.CliLvCapParityTest do
   test "minted token verifies back to its agent URI", %{agent_uri: agent_uri} do
     {plain, _row} = Token.mint(agent_uri, label: "parity-test")
 
-    assert {:ok, %{caps: _}} = Entity.authenticate(agent_uri, plain)
+    assert {:ok, ^agent_uri} = Authentication.authenticate(plain)
   end
 
   test "CLI-resolved caps == LV-resolved caps for the same user (V3.4 parity)",
@@ -80,7 +79,7 @@ defmodule EzagentCli.Integration.CliLvCapParityTest do
     :ok = create_user_with_caps(user_uri, [workspace_cap])
 
     # CLI path: bcrypt → Entity.authenticate → caps
-    {:ok, %{caps: cli_caps}} = Entity.authenticate(user_uri, "test-password")
+    {:ok, %{caps: cli_caps}} = Entity.authenticate_password(user_uri, "test-password")
 
     # LV path: session cookie → URI → list_caps_for (same function
     # Entity.authenticate calls under the hood)
@@ -102,14 +101,15 @@ defmodule EzagentCli.Integration.CliLvCapParityTest do
     {_real, _row} = Token.mint(agent_uri)
 
     fake_token = "not-a-real-token-#{System.unique_integer([:positive])}"
-    assert {:error, :invalid_credentials} = Entity.authenticate(agent_uri, fake_token)
+    assert {:error, :unsupported_credential} = Authentication.authenticate(fake_token)
   end
 
   test "non-admin agent token does NOT resolve to admin wildcard cap",
        %{agent_uri: agent_uri} do
     {plain, _row} = Token.mint(agent_uri)
 
-    {:ok, %{caps: caps}} = Entity.authenticate(agent_uri, plain)
+    assert {:ok, ^agent_uri} = Authentication.authenticate(plain)
+    caps = Ezagent.Identity.read_entity_caps(agent_uri)
 
     refute Enum.any?(caps, fn c ->
              c.kind == :any and c.behavior == :any and c.instance == :any

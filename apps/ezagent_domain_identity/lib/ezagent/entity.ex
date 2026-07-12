@@ -1,6 +1,6 @@
 defmodule Ezagent.Entity do
   @moduledoc """
-  Entity facade — entity-agnostic auth + identity helpers (PR #142,
+  Entity facade — password-login and identity helpers (PR #142,
   `entity-agnostic-architecture-reflection.md` §4 S-1).
 
   Today every dispatch surface (login form, CLI bearer-token, future
@@ -10,65 +10,32 @@ defmodule Ezagent.Entity do
   `agent://` URIs had no equivalent auth step (they were spawned by
   capability).
 
-  After PR #141 the `entity://` scheme unifies User + Agent; after
-  PR #142 this module is the unified auth path. Dispatches by URI
-  shape:
-
-  - user entity URI + password → bcrypt path (delegates to
-    `Ezagent.Users.verify_password/2`)
-  - agent entity URI + token → entity_tokens path
-    (delegates to `Ezagent.Entity.Token.verify/2`)
-  - other entity URIs / non-entity schemes → `{:error, {:unsupported_entity_uri, uri}}`
-
-  Returns `{:ok, %{caps: MapSet.t(Ezagent.Capability.t())}}` on
-  success.
+  Bearer credentials resolve through `Ezagent.Authentication.authenticate/1`.
+  This module deliberately keeps password login separate: a user URI and human
+  password authenticate an interactive login that may mint a PAT, but passwords
+  are never accepted by the per-operation credential resolver.
   """
 
-  alias Ezagent.Entity.Token
   alias Ezagent.Users
 
   @type result :: {:ok, %{caps: MapSet.t(Ezagent.Capability.t())}} | {:error, term()}
 
-  @doc """
-  Authenticate `uri` with `secret`. Dispatch is by URI type axis:
-
-  - `type == "user"` → bcrypt against `users.password_hash`
-  - `type == "agent"` → bearer-token verify against `entity_tokens`
-
-  Returns:
-  - `{:ok, %{caps: MapSet.t()}}` on success
-  - `{:error, :no_such_user}` — user URI unknown
-  - `{:error, :no_such_entity}` — agent URI has no tokens
-  - `{:error, :invalid_credentials}` — wrong password / wrong token
-  - `{:error, {:unsupported_entity_uri, uri}}` — non-entity URI
-  """
-  @spec authenticate(URI.t(), String.t()) :: result()
-  def authenticate(uri, secret), do: authenticate(uri, secret, [])
-
-  @doc """
-  Authenticate `uri` with `secret`, with options. Same dispatch as `/2`, plus:
-
-  - `:allow_user_tokens` (default `true`) — when `false`, a user URI accepts
-    ONLY its bcrypt password, never a bearer token. task #87: the human login
-    FORM passes `false` so a typed API token cannot be used as a password. The
-    CLI/API bearer path keeps `/2` (tokens allowed).
-  """
-  @spec authenticate(URI.t(), String.t(), keyword()) :: result()
-  def authenticate(uri, secret, opts)
-
-  def authenticate(%URI{scheme: "entity"} = uri, secret, opts) when is_binary(secret) do
-    cond do
-      entity_type?(uri, :user) -> authenticate_user(uri, secret, opts)
-      entity_type?(uri, :agent) -> Token.verify(uri, secret)
-      true -> {:error, {:unsupported_entity_uri, uri}}
+  @doc "Authenticate an interactive human login with a user URI and password only."
+  @spec authenticate_password(URI.t(), String.t()) :: result()
+  def authenticate_password(%URI{scheme: "entity"} = uri, password)
+      when is_binary(password) do
+    if entity_type?(uri, :user) do
+      authenticate_user_password(uri, password)
+    else
+      {:error, {:unsupported_entity_uri, uri}}
     end
   end
 
-  def authenticate(%URI{} = uri, _secret, _opts), do: {:error, {:unsupported_entity_uri, uri}}
+  def authenticate_password(%URI{} = uri, _password),
+    do: {:error, {:unsupported_entity_uri, uri}}
 
-  defp authenticate_user(%URI{} = uri, secret, opts) when is_binary(secret) do
+  defp authenticate_user_password(%URI{} = uri, password) do
     uri_str = URI.to_string(uri)
-    allow_tokens = Keyword.get(opts, :allow_user_tokens, true)
 
     case Users.get_by_uri(uri_str) do
       nil ->
@@ -81,28 +48,11 @@ defmodule Ezagent.Entity do
         {:error, :disabled}
 
       _user ->
-        cond do
-          # Codex CLI/GUI audit 2026-05-24 HIGH-1: user URIs accept BOTH
-          # passwords (for the /login form) AND bearer tokens (for CLI
-          # access). Token.mint/2 already accepts user URIs; this
-          # completes the auth side. Try token first (cheaper; only checks
-          # entity_tokens table); fall through to password.
-          #
-          # task #87 (Codex plan-review #3): the human login FORM passes
-          # `allow_user_tokens: false` so a typed API token can't be used as a
-          # password. The CLI/API bearer path leaves it true.
-          allow_tokens and match?({:ok, _}, Token.verify(uri, secret)) ->
-            ensure_spawned(uri)
-            caps = Ezagent.Identity.list_caps_for(uri)
-            {:ok, %{caps: caps}}
-
-          Users.verify_password(uri_str, secret) ->
-            ensure_spawned(uri)
-            caps = Ezagent.Identity.list_caps_for(uri)
-            {:ok, %{caps: caps}}
-
-          true ->
-            {:error, :invalid_credentials}
+        if Users.verify_password(uri_str, password) do
+          ensure_spawned(uri)
+          {:ok, %{caps: Ezagent.Identity.list_caps_for(uri)}}
+        else
+          {:error, :invalid_credentials}
         end
     end
   end

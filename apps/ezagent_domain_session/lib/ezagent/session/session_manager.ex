@@ -320,9 +320,15 @@ defmodule Ezagent.Session.SessionManager do
   # is the orchestrator's CONNECTION credential (held by the cc socket that
   # authenticated the WS), never caps.
   defp verify_bridge_token(%__MODULE__{orchestrator_uri: orchestrator_uri}, presented) do
-    if Ezagent.AgentBridge.TokenStore.verify_token(orchestrator_uri, presented),
-      do: :ok,
-      else: {:error, :unauthorized}
+    credential = %Ezagent.Authentication.BridgeCredential{
+      token: presented,
+      principal: orchestrator_uri
+    }
+
+    case Ezagent.Authentication.authenticate(credential) do
+      {:ok, ^orchestrator_uri} -> :ok
+      _ -> {:error, :unauthorized}
+    end
   end
 
   # === Step 1 — structural caller-is-our-orchestrator check ==============

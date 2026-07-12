@@ -1,5 +1,22 @@
 import Config
 
+pat_digest_version = String.to_integer(System.get_env("EZAGENT_PAT_DIGEST_VERSION", "1"))
+
+pat_peppers =
+  1..pat_digest_version
+  |> Enum.reduce(%{}, fn version, acc ->
+    case System.get_env("EZAGENT_PAT_PEPPER_V#{version}") do
+      pepper when is_binary(pepper) and byte_size(pepper) >= 32 -> Map.put(acc, version, pepper)
+      _ -> acc
+    end
+  end)
+
+if map_size(pat_peppers) > 0 or config_env() == :prod do
+  config :ezagent_domain_identity, Ezagent.Entity.Token,
+    current_version: pat_digest_version,
+    peppers: pat_peppers
+end
+
 # config/runtime.exs is executed for all environments, including
 # during releases. It is executed after compilation and before the
 # system starts, so it is typically used to load production configuration

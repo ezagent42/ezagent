@@ -16,7 +16,7 @@ defmodule EzagentWeb.MagicLinkController do
 
   alias Ezagent.Entity.MagicLinkToken
   alias Ezagent.Registration
-  alias EzagentWeb.SessionPrincipal
+  alias EzagentWeb.PatDelivery
 
   def consume(conn, %{"token" => token}) do
     # task #87 — magic-link is now a LOGIN method for EXISTING accounts only
@@ -46,9 +46,18 @@ defmodule EzagentWeb.MagicLinkController do
           # validating principal funnel (also rotates the session).
           :ok = Ezagent.Entity.spawn_principal(uri)
 
-          conn
-          |> SessionPrincipal.put(URI.to_string(uri))
-          |> redirect(to: "/sessions")
+          case PatDelivery.issue(conn, uri, "/sessions") do
+            {:ok, issued_conn} ->
+              redirect(issued_conn, to: "/login/token")
+
+            {:error, _reason} ->
+              conn
+              |> put_flash(
+                :error,
+                gettext("Sign-in token service is unavailable. Please try again.")
+              )
+              |> redirect(to: "/login")
+          end
         else
           conn
           |> put_flash(:error, gettext("Please confirm your email before signing in."))

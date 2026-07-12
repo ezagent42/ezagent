@@ -15,14 +15,13 @@ defmodule Ezagent.PluginCc.Template.SpawnPlan do
 
   # Phase 3 ③ T7d — the CLI-identity env a role-agent needs to act through the
   # ezagent CLI (`mix ezagent <verb>`) AS ITSELF. `EzagentCli.Exec` authenticates
-  # every dispatching call against `entity_tokens` via these two vars (see
-  # `EzagentCli.Exec.resolve_caller/2` → `Ezagent.Entity.authenticate/2`); without
+  # every dispatching call against `entity_tokens` via this credential (see
+  # `Ezagent.Authentication.authenticate/1`); without
   # them a `mix ezagent kanban.* / github.*` call fails CLOSED ("CLI calls require
   # authentication"). The bridge's `EZAGENT_AGENT_TOKEN` is a SEPARATE bridge-connect
   # token (`cc-channels.yaml`, verified by `AgentBridge.TokenStore`), NOT an entity
   # token, so it cannot stand in here.
   @cli_user_token_env "EZAGENT_USER_TOKEN"
-  @cli_entity_uri_env "EZAGENT_ENTITY_URI"
   @cli_identity_token_label "cc-cli-identity"
   @dev_channels_flag "--dangerously-load-development-channels"
   @dev_channels_server "server:esr-bridge"
@@ -272,8 +271,8 @@ defmodule Ezagent.PluginCc.Template.SpawnPlan do
   end
 
   @doc false
-  # Phase 3 ③ T7d — inject the CLI-identity env (`EZAGENT_USER_TOKEN` +
-  # `EZAGENT_ENTITY_URI`) for a ROLE-agent so its `claude` brain can drive the
+  # Phase 3 ③ T7d — inject the token-only CLI identity credential for a
+  # ROLE-agent so its `claude` brain can drive the
   # ezagent CLI under its OWN identity + least-priv caps (every dispatch is
   # CapBAC-gated; the token is scoped to THIS agent's caps — no self-mint, no
   # admin fallback, exactly the threat model `TokenScopeCapbacTest` pins). A
@@ -301,12 +300,7 @@ defmodule Ezagent.PluginCc.Template.SpawnPlan do
   defp put_cli_identity_env(env, %URI{} = agent_uri) do
     case Ezagent.Entity.Token.mint(agent_uri, label: @cli_identity_token_label) do
       {token, _row} when is_binary(token) ->
-        env
-        |> Map.put(@cli_user_token_env, token)
-        # canonical stable_key (== the key `Token.mint` persisted for this agent),
-        # so `EzagentCli.Exec.resolve_caller/2`'s `Ezagent.URI.new!/1` round-trips
-        # to the same `entity_tokens` row.
-        |> Map.put(@cli_entity_uri_env, Ezagent.URI.stable_key(agent_uri))
+        Map.put(env, @cli_user_token_env, token)
 
       {:error, reason} ->
         Logger.warning(

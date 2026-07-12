@@ -15,8 +15,11 @@ defmodule EzagentWeb.MagicLinkControllerTest do
     {:ok, raw} = MagicLinkToken.mint("known@good.com")
 
     conn = get(conn, "/auth/magic/#{raw}")
-    assert redirected_to(conn) == "/sessions"
+    assert redirected_to(conn) == "/login/token"
     assert get_session(conn, :current_entity_uri) == "entity://team-alpha/user/known"
+
+    delivery = get(recycle(conn), "/login/token")
+    assert html_response(delivery, 200) =~ "esr_pat_v1_"
   end
 
   # task #87 — magic-link no longer creates accounts. A link for an email with

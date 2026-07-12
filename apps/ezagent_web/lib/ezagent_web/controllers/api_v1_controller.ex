@@ -8,8 +8,7 @@ defmodule EzagentWeb.ApiV1Controller do
     1. Looking up the Behavior for `{kind_module, action}` in
        `Ezagent.BehaviorRegistry`.
     2. Parsing the JSON request body as the action's args map.
-    3. Resolving the caller via PR 7's bearer token header
-       (`Authorization: Bearer esr_pat_...`) or falling back to admin.
+    3. Resolving the caller from the bearer credential alone.
     4. Building an `Ezagent.Invocation` and dispatching.
     5. Encoding the result as JSON.
 
@@ -21,7 +20,7 @@ defmodule EzagentWeb.ApiV1Controller do
   ## Examples
 
       POST /api/v1/agent/say
-      Authorization: Bearer esr_pat_xxx
+      Authorization: Bearer esr_pat_v1_<raw>
       Content-Type: application/json
 
       {"target": "entity://agent/team-alpha/py_default", "args": {"message": "hi"}}
@@ -46,6 +45,7 @@ defmodule EzagentWeb.ApiV1Controller do
   def invoke(conn, params) do
     with {:ok, kind_module, behavior_module} <- resolve_behavior(params),
          {:ok, action} <- resolve_action(params, behavior_module),
+         :ok <- reject_identity_inputs(conn, params),
          {:ok, target_uri} <- resolve_target(params, kind_module),
          {:ok, caller_uri, caller_caps} <- resolve_caller(conn) do
       args = Map.get(params, "args", %{}) |> atomize_keys()
@@ -131,32 +131,12 @@ defmodule EzagentWeb.ApiV1Controller do
   defp resolve_caller(conn) do
     case Plug.Conn.get_req_header(conn, "authorization") do
       ["Bearer " <> token] ->
-        # PR #142: bearer-token verify is entity-agnostic now. The
-        # caller MUST also provide `X-Ezagent-Entity-URI: entity://...`
-        # so we know which URI's tokens to verify against. (Token
-        # plaintext alone is not enough — `entity_tokens` is indexed
-        # by URI, and reverse lookup-by-hash would be a per-request
-        # bcrypt scan of the whole table.)
-        case Plug.Conn.get_req_header(conn, "x-ezagent-entity-uri") do
-          [uri_str | _] ->
-            uri = Ezagent.URI.new!(uri_str)
+        case Ezagent.Authentication.authenticate(token) do
+          {:ok, uri} ->
+            {:ok, uri, uri |> Ezagent.Identity.read_entity_caps() |> MapSet.new()}
 
-            case Ezagent.Entity.authenticate(uri, token) do
-              {:ok, %{caps: caps}} ->
-                {:ok, uri, caps}
-
-              {:error, :invalid_credentials} ->
-                {:error, 401, "invalid_token", "bearer token unknown or revoked"}
-
-              {:error, :no_such_entity} ->
-                {:error, 401, "invalid_token", "no tokens minted for #{uri_str}"}
-
-              {:error, reason} ->
-                {:error, 401, "invalid_token", inspect(reason)}
-            end
-
-          [] ->
-            {:error, 401, "missing_entity_uri", "X-Ezagent-Entity-URI header required"}
+          {:error, reason} ->
+            {:error, 401, "invalid_token", inspect(reason)}
         end
 
       _ ->
@@ -167,6 +147,18 @@ defmodule EzagentWeb.ApiV1Controller do
         # `mix ezagent.user.token <uri> --mint`.
         {:error, 401, "missing_token",
          "bearer token required; mint via `mix ezagent.user.token <uri> --mint`"}
+    end
+  end
+
+  defp reject_identity_inputs(conn, params) do
+    forbidden_body_keys = ["caller", "principal", "entity_uri", "owner", "workspace", "parent"]
+
+    if Plug.Conn.get_req_header(conn, "x-ezagent-entity-uri") != [] or
+         Enum.any?(forbidden_body_keys, &Map.has_key?(params, &1)) do
+      {:error, 400, "identity_input_forbidden",
+       "principal and authority context derive from token"}
+    else
+      :ok
     end
   end
 

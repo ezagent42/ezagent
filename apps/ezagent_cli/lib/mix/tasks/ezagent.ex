@@ -26,8 +26,6 @@ defmodule Mix.Tasks.Ezagent do
       EZAGENT_HOME           Where the runtime cookie file lives
                          (default ~/.ezagent)
       EZAGENT_USER_TOKEN     Bearer token (verified via `entity_tokens`)
-      EZAGENT_ENTITY_URI     Entity URI the token belongs to (e.g.
-                             `entity://user/system/admin` or `entity://agent/team-alpha/cc_demo`)
 
   ## Single-machine assumption
 
@@ -43,11 +41,9 @@ defmodule Mix.Tasks.Ezagent do
   @impl Mix.Task
   def run(argv) do
     # PR #142: bearer tokens are now entity-agnostic (entity_tokens
-    # table). The CLI presents BOTH the token and the entity URI it
-    # was minted for (verify is keyed by URI). Token-less calls fall
-    # back to admin caps (single-user BC).
+    # table). The token itself selects the digest version and resolves
+    # directly to its principal; no identity URI is accepted.
     {token, argv} = extract_token(argv)
-    {entity_uri, argv} = extract_entity_uri(argv)
 
     case Ezagent.Runtime.connect_as_cli() do
       {:ok, runtime_node} ->
@@ -55,7 +51,7 @@ defmodule Mix.Tasks.Ezagent do
                runtime_node,
                EzagentCli.Exec,
                :exec,
-               [argv, [token: token, entity_uri: entity_uri]],
+               [argv, [token: token]],
                30_000
              ) do
           %{output: output, exit_code: code} ->
@@ -87,12 +83,6 @@ defmodule Mix.Tasks.Ezagent do
   defp extract_token(argv) do
     {tok, rest} = pluck_flag(argv, "--token", [])
     {tok || System.get_env("EZAGENT_USER_TOKEN"), rest}
-  end
-
-  # Pluck --uri=VAL / --uri VAL out of argv; falls back to EZAGENT_ENTITY_URI.
-  defp extract_entity_uri(argv) do
-    {uri, rest} = pluck_flag(argv, "--uri", [])
-    {uri || System.get_env("EZAGENT_ENTITY_URI"), rest}
   end
 
   defp pluck_flag([], _name, acc), do: {nil, Enum.reverse(acc)}

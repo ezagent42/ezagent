@@ -58,7 +58,6 @@ defmodule EzagentWeb.ApiV1ControllerTest do
     conn =
       conn
       |> put_req_header("authorization", "Bearer esr_pat_garbage_token_value")
-      |> put_req_header("x-ezagent-entity-uri", "entity://system/user/admin")
       |> post("/api/v1/user/list_caps", %{"target" => "entity://system/user/admin"})
 
     assert conn.status == 401
@@ -66,15 +65,45 @@ defmodule EzagentWeb.ApiV1ControllerTest do
     assert body["error"]["code"] == "invalid_token"
   end
 
-  test "POST with bearer token but no entity URI header returns 401 missing_entity_uri",
+  test "POST resolves a valid bearer token without an entity URI header", %{conn: conn} do
+    principal = Ezagent.Entity.User.admin_uri()
+    {token, _row} = Ezagent.Entity.Token.mint(principal, label: "api-token-only")
+
+    conn =
+      conn
+      |> put_req_header("authorization", "Bearer #{token}")
+      |> post("/api/v1/user/list_caps", %{"target" => URI.to_string(principal)})
+
+    assert conn.status == 200
+    assert Jason.decode!(conn.resp_body)["ok"] == true
+  end
+
+  test "POST rejects authority-context fields in the request body", %{conn: conn} do
+    principal = Ezagent.Entity.User.admin_uri()
+    {token, _row} = Ezagent.Entity.Token.mint(principal, label: "api-no-context")
+
+    conn =
+      conn
+      |> put_req_header("authorization", "Bearer #{token}")
+      |> post("/api/v1/user/list_caps", %{
+        "target" => URI.to_string(principal),
+        "principal" => URI.to_string(principal)
+      })
+
+    assert conn.status == 400
+    assert Jason.decode!(conn.resp_body)["error"]["code"] == "identity_input_forbidden"
+  end
+
+  test "POST rejects a caller-supplied identity selector header",
        %{conn: conn} do
     conn =
       conn
       |> put_req_header("authorization", "Bearer esr_pat_garbage_token_value")
+      |> put_req_header("x-ezagent-entity-uri", "entity://system/user/admin")
       |> post("/api/v1/user/list_caps", %{"target" => "entity://system/user/admin"})
 
-    assert conn.status == 401
+    assert conn.status == 400
     body = Jason.decode!(conn.resp_body)
-    assert body["error"]["code"] == "missing_entity_uri"
+    assert body["error"]["code"] == "identity_input_forbidden"
   end
 end
