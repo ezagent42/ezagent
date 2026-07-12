@@ -67,8 +67,8 @@ defmodule Ezagent.Socialware.DefinitionEditor do
     with {:ok, resolved} <-
            Installation.resolved_template_installs(template_content, workspace_uri) do
       config =
-        Enum.reduce(resolved, empty_config(), fn {definition, _object, install}, acc ->
-          merge_definition(acc, definition, install)
+        Enum.reduce(resolved, empty_config(), fn {definition, object, install}, acc ->
+          merge_definition(acc, definition, object, install)
         end)
         |> merge_legacy_template_fields(template_content)
 
@@ -319,9 +319,15 @@ defmodule Ezagent.Socialware.DefinitionEditor do
     }
   end
 
-  defp merge_definition(acc, %Definition{} = definition, install) do
+  defp merge_definition(acc, %Definition{} = definition, object, install) do
     %{
-      roles: acc.roles ++ apply_role_slot_config(definition.roles, install_config(install)),
+      roles:
+        acc.roles ++
+          apply_role_slot_config(
+            definition.roles,
+            install_config(install),
+            composition_provenance(object, install)
+          ),
       routing_rules: acc.routing_rules ++ definition.routing_rules,
       prompt_templates: Map.merge(acc.prompt_templates, definition.prompt_templates),
       legends: Map.merge(acc.legends, definition.legends),
@@ -333,13 +339,41 @@ defmodule Ezagent.Socialware.DefinitionEditor do
   defp install_config(%{config: config}) when is_map(config), do: config
   defp install_config(_install), do: %{}
 
-  defp apply_role_slot_config(roles, config) when is_list(roles) and is_map(config) do
+  defp apply_role_slot_config(roles, config, provenance)
+       when is_list(roles) and is_map(config) do
     choices =
       config
       |> map_get(:role_slots, [])
       |> role_slot_choices_by_name()
 
-    Enum.map(roles, &apply_role_slot_choice(&1, Map.get(choices, map_get(&1, :role_name))))
+    Enum.map(roles, fn role ->
+      role
+      |> apply_role_slot_choice(Map.get(choices, map_get(role, :role_name)))
+      |> maybe_put_composition_provenance(provenance)
+    end)
+  end
+
+  defp composition_provenance(%ConfigObject{} = object, install) do
+    %{
+      install_id: map_get(install, :ref),
+      definition_config_id: object.id,
+      definition_content_hash: object.content_hash
+    }
+  end
+
+  defp composition_provenance(_object, install) do
+    %{
+      install_id: map_get(install, :ref),
+      definition_config_id: map_get(install, :config_id),
+      definition_content_hash: map_get(install, :content_hash)
+    }
+  end
+
+  defp maybe_put_composition_provenance(role, provenance) do
+    case map_get(role, :operates) do
+      [_ | _] -> Map.put(role, :composition_provenance, provenance)
+      _ -> role
+    end
   end
 
   defp role_slot_choices_by_name(choices) when is_list(choices) do

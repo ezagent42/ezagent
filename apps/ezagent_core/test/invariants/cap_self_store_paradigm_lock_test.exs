@@ -14,6 +14,7 @@ defmodule Ezagent.Invariants.CapSelfStoreParadigmLockTest do
   @grant_chokepoint "apps/ezagent_domain_identity/lib/ezagent/identity/grant.ex"
   @recipe_grant_task "apps/ezagent_domain_agent/lib/mix/tasks/ezagent.agent.grant_recipe_caps.ex"
   @orchestrator_caps "apps/ezagent_domain_session/lib/ezagent/entity/session/orchestrator/caps.ex"
+  @composition_caps "apps/ezagent_domain_session/lib/ezagent/socialware/composition_caps.ex"
   @workspace_facade "apps/ezagent_domain_workspace/lib/ezagent/workspace.ex"
 
   @legacy_grant_drivers %{
@@ -64,12 +65,14 @@ defmodule Ezagent.Invariants.CapSelfStoreParadigmLockTest do
   @absorb_producers %{
     @recipe_grant_task => %{{:absorb_cap, 2} => 1},
     @orchestrator_caps => %{{:absorb_cap, 2} => 1},
+    @composition_caps => %{{:absorb_cap, 2} => 1},
     @workspace_facade => %{{:absorb_cap, 2} => 1}
   }
 
   @absorb_action_literals %{
     @recipe_grant_task => 1,
     @orchestrator_caps => 1,
+    @composition_caps => 1,
     @identity_behavior => 3,
     @identity_facade => 2,
     @workspace_facade => 1

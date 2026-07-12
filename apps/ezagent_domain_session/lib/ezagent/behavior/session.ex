@@ -856,7 +856,14 @@ defmodule Ezagent.ActionSet.Session do
 
   # --- :leave / :remove_participant (F7 PR-A) — bodies in Membership -------
   def handle_leave(%{member: %URI{} = member_uri}, ctx) do
-    {:ok, %{}, Membership.leave_effects(member_uri, ctx)}
+    with :ok <-
+           Ezagent.Socialware.CompositionCaps.deactivate_member(
+             ctx[:self_uri],
+             member_uri,
+             :role_departure
+           ) do
+      {:ok, %{}, Membership.leave_effects(member_uri, ctx)}
+    end
   end
 
   def handle_remove_participant(%{participant: %URI{} = participant_uri}, ctx) do

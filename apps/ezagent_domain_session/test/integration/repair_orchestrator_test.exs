@@ -71,6 +71,23 @@ defmodule EzagentDomainInstanceMessage.Integration.RepairOrchestratorTest do
 
       assert meta == %{}
     end
+
+    test "repair_orchestrator/2 accepts the authenticated actor alongside the workspace" do
+      short = "repair-actor-#{System.unique_integer([:positive])}"
+
+      {:ok, session_uri, _meta} =
+        EzagentDomainInstanceMessage.SessionCreator.create_session(short, User.admin_uri(),
+          template_name: "default"
+        )
+
+      workspace_uri = Ezagent.URI.entity_workspace_uri(User.admin_uri())
+
+      assert {:ok, ^session_uri, %{}} =
+               EzagentDomainInstanceMessage.repair_orchestrator(
+                 session_uri,
+                 {workspace_uri, User.admin_uri()}
+               )
+    end
   end
 
   describe "repair_orchestrator guards" do
@@ -80,6 +97,26 @@ defmodule EzagentDomainInstanceMessage.Integration.RepairOrchestratorTest do
                EzagentDomainInstanceMessage.repair_orchestrator(
                  Ezagent.URI.new!("session://system/default/whatever"),
                  nil
+               )
+    end
+
+    test "an owner-unresolvable session fails loud instead of repairing as admin" do
+      suffix = System.unique_integer([:positive])
+      session_uri = Ezagent.URI.session("system", "default", "repair-no-owner-#{suffix}")
+      workspace_uri = Ezagent.URI.workspace(:system)
+
+      {:ok, _pid} =
+        Ezagent.Kind.spawn(Session, %{
+          uri: session_uri,
+          behaviors: Session.behaviors()
+        })
+
+      :ok = Ezagent.WorkspaceRegistry.bind(session_uri, workspace_uri)
+
+      assert {:error, {:no_session_owner, ^session_uri}} =
+               EzagentDomainInstanceMessage.repair_orchestrator(
+                 session_uri,
+                 {workspace_uri, User.admin_uri()}
                )
     end
   end

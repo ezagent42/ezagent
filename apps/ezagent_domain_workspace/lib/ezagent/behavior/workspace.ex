@@ -698,7 +698,7 @@ defmodule Ezagent.ActionSet.Workspace do
       # NEVER gate the create's success on this: `instantiate/3` has ALREADY
       # durably created the session, and "the install lane is unavailable" is
       # exactly the failure rev6 says must not fail a create.
-      trigger_socialware_install(session_uri)
+      trigger_socialware_install(session_uri, caller)
 
       # Meta shape matches `create_session_via_facade/4`. The retired
       # `orchestrator_status: :ready` was already a misrepresentation once the
@@ -728,7 +728,7 @@ defmodule Ezagent.ActionSet.Workspace do
             # under its own supervisor and return immediately. A member that
             # fails to start surfaces loudly there; it never fails this create
             # nor rolls the session back.
-            trigger_socialware_install(session_uri)
+            trigger_socialware_install(session_uri, caller)
             {:ok, %{session_uri: session_uri}, []}
           end
 
@@ -743,10 +743,10 @@ defmodule Ezagent.ActionSet.Workspace do
   # unavailable (rev6 / #912). But it must never fail SILENTLY either (Invariant
   # #9): an unresolvable facade or a test double without the entry point means
   # the session's declared team will never materialize, and somebody has to know.
-  defp trigger_socialware_install(%URI{} = session_uri) do
+  defp trigger_socialware_install(%URI{} = session_uri, %URI{} = actor_uri) do
     with {:ok, facade} <- resolve_session_facade(),
          true <- function_exported?(facade, :install_session_socialware_async, 1) do
-      facade.install_session_socialware_async(session_uri)
+      facade.install_session_socialware_async({session_uri, actor_uri})
       :ok
     else
       other ->

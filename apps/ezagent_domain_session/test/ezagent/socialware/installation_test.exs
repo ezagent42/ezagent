@@ -86,12 +86,24 @@ defmodule Ezagent.Socialware.InstallationTest do
         name: definition_name,
         bases: [Ezagent.ActionSet.Session],
         roles: [
-          %{role_name: "orchestrator", fill: :agent, recipe: "orchestrator", flavor: "claude"},
+          %{
+            role_name: "orchestrator",
+            fill: :agent,
+            recipe: "orchestrator",
+            flavor: "claude",
+            operates: [
+              %{
+                role: "reviewer",
+                behavior: Ezagent.ActionSet.ApiKeys,
+                action: :list_api_keys
+              }
+            ]
+          },
           %{role_name: "reviewer", fill: :agent, recipe: "reviewer", flavor: "claude"}
         ]
       })
 
-    assert {:ok, _object} =
+    assert {:ok, object} =
              DefinitionRegistry.write_definition(definition,
                workspace_uri: Ezagent.URI.workspace(:system),
                caller_workspace_uri: Ezagent.URI.workspace(:system),
@@ -120,7 +132,19 @@ defmodule Ezagent.Socialware.InstallationTest do
              DefinitionEditor.config_for_template(content, Ezagent.URI.workspace(:system))
 
     assert Enum.any?(config.roles, fn
-             %{role_name: "orchestrator", fill: :agent, flavor: "codex", install_mode: :fresh} ->
+             %{
+               role_name: "orchestrator",
+               fill: :agent,
+               flavor: "codex",
+               install_mode: :fresh,
+               composition_provenance: %{
+                 install_id: ^definition_name,
+                 definition_config_id: definition_config_id,
+                 definition_content_hash: definition_content_hash
+               }
+             }
+             when definition_config_id == object.id and
+                    definition_content_hash == object.content_hash ->
                true
 
              _ ->

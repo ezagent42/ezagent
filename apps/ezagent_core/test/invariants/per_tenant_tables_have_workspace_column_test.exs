@@ -105,6 +105,9 @@ defmodule EzagentCore.Invariants.PerTenantTablesHaveWorkspaceColumnTest do
     # Phase 3 S5 — pre-issued recipe artifacts are keyed to one concrete agent;
     # the binding must stay inside that agent's workspace boundary.
     {Ezagent.Identity.RecipeCapBinding, "recipe_cap_bindings"},
+    # Socialware composition-cap lane — every derivation row is scoped to the
+    # concrete source/target workspace and is union-reconciled only within it.
+    {Ezagent.Socialware.CompositionBinding, "socialware_composition_bindings"},
     # Socialware P9 — named workspace responsibility assignments are scoped to
     # one workspace; the same holder URI cannot receive a responsibility across
     # tenants without a separate row in that tenant.

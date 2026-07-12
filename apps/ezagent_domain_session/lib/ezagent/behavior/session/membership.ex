@@ -1040,7 +1040,13 @@ defmodule Ezagent.ActionSet.Session.Membership do
         # security regression (§14.5 asserts revoke⇒deny, never worker-destroyed).
         # Fully separating the destructive teardown to AFTER the revoke needs a
         # chokepoint-compatible authority preflight (deferred; see final report).
-        with :ok <- MemberCap.revoke_member_cap_checked(participant_uri, ctx) do
+        with :ok <-
+               Ezagent.Socialware.CompositionCaps.deactivate_member(
+                 session_uri,
+                 participant_uri,
+                 :role_departure
+               ),
+             :ok <- MemberCap.revoke_member_cap_checked(participant_uri, ctx) do
           if leave_ref, do: Process.demonitor(leave_ref, [:flush])
 
           {:ok,
@@ -1064,7 +1070,13 @@ defmodule Ezagent.ActionSet.Session.Membership do
             # rejecting check (teardown authority + prune) has passed. On failure
             # the removal ABORTS and the member is left fully intact (cap +
             # roster). No destructive step ran on this branch, so abort is clean.
-            with :ok <- MemberCap.revoke_member_cap_checked(participant_uri, ctx) do
+            with :ok <-
+                   Ezagent.Socialware.CompositionCaps.deactivate_member(
+                     session_uri,
+                     participant_uri,
+                     :role_departure
+                   ),
+                 :ok <- MemberCap.revoke_member_cap_checked(participant_uri, ctx) do
               if leave_ref, do: Process.demonitor(leave_ref, [:flush])
 
               {:ok,

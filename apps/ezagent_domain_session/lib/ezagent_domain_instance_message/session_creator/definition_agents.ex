@@ -88,49 +88,90 @@ defmodule EzagentDomainInstanceMessage.SessionCreator.DefinitionAgents do
 
   @spec materialize_definition_agents(URI.t(), URI.t(), URI.t(), [map()]) ::
           {:ok, summary()} | {:error, term()} | {:error, term(), summary()}
+  def materialize_definition_agents(session_uri, workspace_uri, granted_by, agents),
+    do: materialize_definition_agents(session_uri, workspace_uri, granted_by, agents, [])
+
+  @spec materialize_definition_agents(URI.t(), URI.t(), URI.t(), [map()], keyword()) ::
+          {:ok, summary()} | {:error, term()} | {:error, term(), summary()}
   def materialize_definition_agents(
         %URI{} = session_uri,
         %URI{} = workspace_uri,
         %URI{} = granted_by,
-        agents
+        agents,
+        opts
       )
-      when is_list(agents) do
-    agents
-    |> Enum.reduce_while({:ok, MapSet.new(), [], []}, fn agent,
-                                                         {:ok, batch_seen, installed, skipped} ->
-      role_name = role_name_of(agent)
+      when is_list(agents) and is_list(opts) do
+    with :ok <-
+           Ezagent.Socialware.CompositionCaps.assert_install_authorized(
+             session_uri,
+             agents,
+             opts
+           ) do
+      do_materialize_definition_agents(
+        session_uri,
+        workspace_uri,
+        granted_by,
+        agents,
+        opts
+      )
+    end
+  end
 
-      cond do
-        not valid_agent?(agent) ->
-          {:halt, {:error, {:invalid_socialware_agent, agent}}}
+  def materialize_definition_agents(_session, _ws, _granted_by, _agents, _opts),
+    do: {:ok, %{satisfied: [], skipped: []}}
 
-        MapSet.member?(batch_seen, role_name) ->
-          {:halt, {:error, {:duplicate_agent_role_name, role_name}}}
+  defp do_materialize_definition_agents(session_uri, workspace_uri, granted_by, agents, opts) do
+    result =
+      Enum.reduce_while(agents, {:ok, MapSet.new(), [], []}, fn agent,
+                                                                {:ok, batch_seen, installed,
+                                                                 skipped} ->
+        role_name = role_name_of(agent)
 
-        true ->
-          seen = MapSet.put(batch_seen, role_name)
+        cond do
+          not valid_agent?(agent) ->
+            {:halt, {:error, {:invalid_socialware_agent, agent}}}
 
-          case materialize_one(session_uri, workspace_uri, granted_by, agent) do
-            :ok ->
-              {:cont, {:ok, seen, [role_name | installed], skipped}}
+          MapSet.member?(batch_seen, role_name) ->
+            {:halt, {:error, {:duplicate_agent_role_name, role_name}}}
 
-            {:skip, reason} ->
-              report_skip(session_uri, role_name, reason)
-              {:cont, {:ok, seen, installed, [%{role_name: role_name, reason: reason} | skipped]}}
+          true ->
+            seen = MapSet.put(batch_seen, role_name)
 
-            {:error, reason} ->
-              partial = %{
-                satisfied: Enum.reverse(installed),
-                skipped: Enum.reverse(skipped)
-              }
+            case materialize_one(session_uri, workspace_uri, granted_by, agent) do
+              :ok ->
+                {:cont, {:ok, seen, [role_name | installed], skipped}}
 
-              {:halt, {:error, reason, partial}}
-          end
-      end
-    end)
-    |> case do
+              {:skip, reason} ->
+                report_skip(session_uri, role_name, reason)
+
+                {:cont,
+                 {:ok, seen, installed, [%{role_name: role_name, reason: reason} | skipped]}}
+
+              {:error, reason} ->
+                partial = %{
+                  satisfied: Enum.reverse(installed),
+                  skipped: Enum.reverse(skipped)
+                }
+
+                {:halt, {:error, reason, partial}}
+            end
+        end
+      end)
+
+    case result do
       {:ok, _seen, satisfied, skipped} ->
-        {:ok, %{satisfied: Enum.reverse(satisfied), skipped: Enum.reverse(skipped)}}
+        summary = %{satisfied: Enum.reverse(satisfied), skipped: Enum.reverse(skipped)}
+
+        case Ezagent.Socialware.CompositionCaps.reconcile_session(
+               session_uri,
+               workspace_uri,
+               granted_by,
+               agents,
+               opts
+             ) do
+          {:ok, _composition_summary} -> {:ok, summary}
+          {:error, reason} -> {:error, reason, summary}
+        end
 
       {:error, reason, partial} ->
         {:error, reason, partial}
@@ -139,9 +180,6 @@ defmodule EzagentDomainInstanceMessage.SessionCreator.DefinitionAgents do
         err
     end
   end
-
-  def materialize_definition_agents(_session, _ws, _granted_by, _agents),
-    do: {:ok, %{satisfied: [], skipped: []}}
 
   # LOUD, but not fatal. The durable, user-facing record is written by
   # `SessionCreator.install_session_socialware/1` from the returned summary — a

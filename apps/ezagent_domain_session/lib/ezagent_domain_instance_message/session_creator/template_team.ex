@@ -47,15 +47,17 @@ defmodule EzagentDomainInstanceMessage.SessionCreator.TemplateTeam do
   socialware-install step, `repair_orchestrator/1`, and the plugin app-instantiate
   paths. Idempotent — a role already joined is skipped.
   """
-  @spec materialize_definition_agents(URI.t(), URI.t(), URI.t(), map()) ::
+  @spec materialize_definition_agents(URI.t(), URI.t(), URI.t() | {URI.t(), URI.t()}, map()) ::
           {:ok, DefinitionAgents.summary()} | {:error, term()}
   def materialize_definition_agents(
         %URI{} = session_uri,
         %URI{} = workspace_uri,
-        %URI{} = granted_by,
+        granted_by_or_authorization,
         template_content
       )
       when is_map(template_content) do
+    {granted_by, opts} = materialize_authorization(granted_by_or_authorization)
+
     with {:ok, socialware_config} <-
            DefinitionEditor.config_for_template(template_content, workspace_uri) do
       DefinitionAgents.materialize_definition_agents(
@@ -64,7 +66,8 @@ defmodule EzagentDomainInstanceMessage.SessionCreator.TemplateTeam do
         granted_by,
         socialware_config
         |> Map.get(:roles, [])
-        |> Enum.filter(&agent_role_slot?/1)
+        |> Enum.filter(&agent_role_slot?/1),
+        opts
       )
     end
   end
@@ -78,11 +81,12 @@ defmodule EzagentDomainInstanceMessage.SessionCreator.TemplateTeam do
   action. **Never call this from `SessionCreator.create_session/3`** — the arch
   gate `session_create_no_agent_spawn_test` enforces that.
   """
-  @spec materialize_template_team(URI.t(), URI.t(), URI.t(), map()) :: :ok | {:error, term()}
+  @spec materialize_template_team(URI.t(), URI.t(), URI.t() | {URI.t(), URI.t()}, map()) ::
+          :ok | {:error, term()}
   def materialize_template_team(
         %URI{} = session_uri,
         %URI{} = workspace_uri,
-        %URI{} = granted_by,
+        granted_by_or_authorization,
         template_content
       )
       when is_map(template_content) do
@@ -91,13 +95,30 @@ defmodule EzagentDomainInstanceMessage.SessionCreator.TemplateTeam do
     # surface unfilled role slots regardless of which lane created the session.
     with :ok <- materialize_template_config(session_uri, workspace_uri, template_content),
          {:ok, summary} <-
-           materialize_definition_agents(session_uri, workspace_uri, granted_by, template_content),
+           materialize_definition_agents(
+             session_uri,
+             workspace_uri,
+             granted_by_or_authorization,
+             template_content
+           ),
          :ok <- record_unfilled_slots(session_uri, summary.skipped) do
       :ok
     end
   end
 
   def materialize_template_team(_session, _ws, _granted_by, _content), do: :ok
+
+  defp materialize_authorization({%URI{} = granted_by, %URI{} = actor}) do
+    {granted_by, [install_authorized?: same_uri?(granted_by, actor)]}
+  end
+
+  defp materialize_authorization({%URI{} = granted_by, nil}), do: {granted_by, []}
+  defp materialize_authorization(%URI{} = granted_by), do: {granted_by, []}
+
+  defp same_uri?(left, right),
+    do:
+      Ezagent.URI.stable_key(Ezagent.URI.instance(left)) ==
+        Ezagent.URI.stable_key(Ezagent.URI.instance(right))
 
   # Write on EVERY materialize — even an empty list clears a stale record left by
   # a previous install whose orchestrator had no credentials.

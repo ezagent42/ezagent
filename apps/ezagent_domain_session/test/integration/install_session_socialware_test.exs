@@ -82,6 +82,51 @@ defmodule EzagentDomainInstanceMessage.Integration.InstallSessionSocialwareTest 
     end
   end
 
+  describe "composition install authorization" do
+    test "an actor other than the session owner is rejected before role materialization" do
+      suffix = System.unique_integer([:positive])
+      owner = Ezagent.URI.new!("entity://system/user/composition-owner-#{suffix}")
+      stranger = Ezagent.URI.new!("entity://system/user/composition-stranger-#{suffix}")
+      session_uri = Ezagent.URI.session("system", "default", "composition-auth-#{suffix}")
+      workspace_uri = Ezagent.URI.workspace(:system)
+
+      on_exit(fn -> terminate_if_alive(session_uri) end)
+
+      {:ok, _pid} =
+        Ezagent.Kind.spawn(Session, %{
+          uri: session_uri,
+          behaviors: Session.behaviors(),
+          owner_uri: owner
+        })
+
+      :ok = Ezagent.WorkspaceRegistry.bind(session_uri, workspace_uri)
+
+      working_copy = %{
+        session_template_uri: Ezagent.URI.template(:system, :session, "default"),
+        member_declarations: [
+          %{
+            role_name: "source",
+            fill: :agent,
+            recipe: "must-not-resolve",
+            operates: [
+              %{
+                role: "target",
+                behavior: Ezagent.ActionSet.ApiKeys,
+                action: :list_api_keys
+              }
+            ]
+          },
+          %{role_name: "target", fill: :agent, recipe: "must-not-resolve"}
+        ]
+      }
+
+      assert {:ok, _} = SessionBehavior.system_set_working_copy(session_uri, working_copy)
+
+      assert {:error, {:composition_install_not_owner_authorized, ^session_uri}} =
+               SessionCreator.install_session_socialware(session_uri, {workspace_uri, stranger})
+    end
+  end
+
   defp terminate_if_alive(uri) do
     case KindRegistry.lookup(uri) do
       {:ok, pid} when is_pid(pid) ->
