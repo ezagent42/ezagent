@@ -151,12 +151,15 @@ export type ConversationState = {
   installed_socialwares?: InstalledSocialwareRow[]
   unfilled_agent_role_slots?: { role_name: string; reason: string }[]
   degraded_operates_edges?: {
+    request_id: string
     source_role: string
     target_role: string
     behavior: string
     action: string
     target_uri: string
     reason: string
+    target_approval?: string
+    source_approval?: string
   }[]
   views?: ViewTab[]
 }
@@ -1181,9 +1184,9 @@ export function Conversation({
         {degradedOperatesEdges.length > 0 && (
           <div className="border-t border-border px-3 py-2.5" data-world-degraded-operates-edges>
             {degradedOperatesEdges.map((edge) => (
-              <p key={`${edge.source_role}:${edge.target_role}:${edge.behavior}:${edge.action}`} className="text-[12px] leading-relaxed text-muted-foreground">
+              <p key={edge.request_id || `${edge.source_role}:${edge.target_role}:${edge.behavior}:${edge.action}`} className="text-[12px] leading-relaxed text-muted-foreground">
                 <strong className="font-medium text-amber-400">{edge.source_role}</strong>
-                {` · 仅参与，暂不能操作 ${edge.target_role}.${edge.action}（${edge.reason}）`}
+                {` · 仅参与，暂不能操作 ${edge.target_role}.${edge.action}（${edge.reason}；目标授权 ${edge.target_approval || "pending"}；来源授权 ${edge.source_approval || "pending"}）`}
               </p>
             ))}
           </div>

@@ -1,7 +1,7 @@
 defmodule Ezagent.Socialware.CompositionCapsTest do
   use EzagentCore.DataCase, async: false
 
-  alias Ezagent.Socialware.{CompositionBinding, CompositionCaps, Installation}
+  alias Ezagent.Socialware.{CompositionBinding, CompositionCaps, CompositionConsent, Installation}
 
   alias EzagentDomainInstanceMessage.{
     CompositionOwnedTestBehavior,
@@ -334,6 +334,243 @@ defmodule Ezagent.Socialware.CompositionCapsTest do
     refute eventually(fn -> holds_operate_cap?(source, target, :composition_owned_probe) end, 5)
   end
 
+  test "foreign target and source require independent authenticated approvals" do
+    configurer = user_uri("consent-configurer")
+    source_owner = user_uri("consent-source-owner")
+    target_owner = user_uri("consent-target-owner")
+    stranger = user_uri("consent-stranger")
+    source = live_agent("consent-source", source_owner, Ezagent.Entity.Agent.base_behaviors())
+    target = live_agent("consent-target", target_owner, [CompositionOwnedTestBehavior])
+    session = live_session("two-approval-consent", configurer)
+    role_members = %{"source" => source, "target" => target}
+    declarations = roles(CompositionOwnedTestBehavior, :composition_owned_probe)
+
+    assert {:ok, %{active: 0, degraded: 1}} =
+             CompositionCaps.reconcile_session(
+               session,
+               workspace_uri(),
+               configurer,
+               declarations,
+               install_authorized?: true,
+               role_members: role_members
+             )
+
+    binding = hd(CompositionBinding.degraded_for_session(session))
+    binding_id = binding.id
+
+    assert %CompositionConsent{
+             binding_id: ^binding_id,
+             target_approval: :pending,
+             source_approval: :pending
+           } = CompositionConsent.get_by_binding(binding.id)
+
+    assert [target_request] = CompositionConsent.pending_for_owner(target_owner)
+    assert target_request.binding_id == binding.id
+    assert [source_request] = CompositionConsent.pending_for_owner(source_owner)
+    assert source_request.binding_id == binding.id
+
+    other_session = live_session("consent-wrong-session", configurer)
+
+    assert {:error, :consent_request_session_mismatch} =
+             dispatch_consent(
+               target_owner,
+               other_session,
+               binding.id,
+               :target,
+               :approve,
+               "target-approval-wrong-session"
+             )
+
+    assert {:error, :consent_actor_not_target_owner} =
+             dispatch_consent(
+               stranger,
+               session,
+               binding.id,
+               :target,
+               :approve,
+               "target-approval-wrong-actor"
+             )
+
+    assert {:ok, %{target_approval: :denied}} =
+             dispatch_consent(
+               target_owner,
+               session,
+               binding.id,
+               :target,
+               :deny,
+               "target-denial-1"
+             )
+
+    assert {:ok, %{target_approval: :approved}} =
+             dispatch_consent(
+               target_owner,
+               session,
+               binding.id,
+               :target,
+               :approve,
+               "target-approval-1"
+             )
+
+    assert {:ok, %{active: 0, degraded: 1}} =
+             CompositionCaps.reconcile_session(
+               session,
+               workspace_uri(),
+               configurer,
+               declarations,
+               install_authorized?: true,
+               role_members: role_members
+             )
+
+    refute eventually(fn -> holds_operate_cap?(source, target, :composition_owned_probe) end, 5)
+
+    assert {:ok, %{source_approval: :approved}} =
+             dispatch_consent(
+               source_owner,
+               session,
+               binding.id,
+               :source,
+               :approve,
+               "source-approval-1"
+             )
+
+    # Replay is idempotent and returns the command's original result.
+    assert {:ok, %{source_approval: :approved}} =
+             dispatch_consent(
+               source_owner,
+               session,
+               binding.id,
+               :source,
+               :approve,
+               "source-approval-1"
+             )
+
+    assert {:error, :consent_idempotency_conflict} =
+             dispatch_consent(
+               source_owner,
+               session,
+               binding.id,
+               :source,
+               :revoke,
+               "source-approval-1"
+             )
+
+    assert {:ok, %{active: 1, degraded: 0}} =
+             CompositionCaps.reconcile_session(
+               session,
+               workspace_uri(),
+               configurer,
+               declarations,
+               install_authorized?: true,
+               role_members: role_members
+             )
+
+    assert eventually(fn -> holds_operate_cap?(source, target, :composition_owned_probe) end)
+
+    consent_cap =
+      Enum.find(Ezagent.Identity.list_caps_for(source), fn cap ->
+        cap.behavior == CompositionOwnedTestBehavior and
+          cap.action == :composition_owned_probe and
+          cap.instance == Ezagent.URI.instance(target)
+      end)
+
+    assert consent_cap.granted_by == target_owner
+
+    assert {:ok, %{source_approval: :revoked}} =
+             dispatch_consent(
+               source_owner,
+               session,
+               binding.id,
+               :source,
+               :revoke,
+               "source-revoke-1"
+             )
+
+    refute eventually(fn -> holds_operate_cap?(source, target, :composition_owned_probe) end, 5)
+  end
+
+  test "approval is bound to the exact Definition revision and cannot mint a successor edge" do
+    configurer = user_uri("stale-consent-configurer")
+    target_owner = user_uri("stale-consent-target-owner")
+    source = live_agent("stale-consent-source", configurer, Ezagent.Entity.Agent.base_behaviors())
+    target = live_agent("stale-consent-target", target_owner, [CompositionOwnedTestBehavior])
+    session = live_session("stale-consent", configurer)
+    role_members = %{"source" => source, "target" => target}
+    v1 = roles(CompositionOwnedTestBehavior, :composition_owned_probe)
+
+    assert {:ok, %{active: 0, degraded: 1}} =
+             CompositionCaps.reconcile_session(
+               session,
+               workspace_uri(),
+               configurer,
+               v1,
+               install_authorized?: true,
+               role_members: role_members
+             )
+
+    old_binding = hd(CompositionBinding.degraded_for_session(session))
+
+    assert %CompositionConsent{target_approval: :pending, source_approval: :approved} =
+             CompositionConsent.get_by_binding(old_binding.id)
+
+    assert {:ok, %{target_approval: :approved}} =
+             dispatch_consent(
+               target_owner,
+               session,
+               old_binding.id,
+               :target,
+               :approve,
+               "stale-target-approval-v1"
+             )
+
+    assert {:ok, %{active: 1, degraded: 0}} =
+             CompositionCaps.reconcile_session(
+               session,
+               workspace_uri(),
+               configurer,
+               v1,
+               install_authorized?: true,
+               role_members: role_members
+             )
+
+    assert eventually(fn -> holds_operate_cap?(source, target, :composition_owned_probe) end)
+
+    v2 =
+      Enum.map(v1, fn
+        %{role_name: "source"} = role ->
+          put_in(role, [:composition_provenance], %{
+            install_id: "composition-test",
+            definition_config_id: "definition-v2",
+            definition_content_hash: "definition-hash-v2"
+          })
+
+        role ->
+          role
+      end)
+
+    assert {:ok, %{active: 0, degraded: 1}} =
+             CompositionCaps.reconcile_session(
+               session,
+               workspace_uri(),
+               configurer,
+               v2,
+               install_authorized?: true,
+               role_members: role_members
+             )
+
+    refute eventually(fn -> holds_operate_cap?(source, target, :composition_owned_probe) end, 5)
+
+    assert %CompositionConsent{
+             target_approval: :superseded,
+             source_approval: :superseded
+           } = CompositionConsent.get_by_binding(old_binding.id)
+
+    new_binding = hd(CompositionBinding.degraded_for_session(session))
+    refute new_binding.id == old_binding.id
+
+    assert %CompositionConsent{target_approval: :pending, source_approval: :approved} =
+             CompositionConsent.get_by_binding(new_binding.id)
+  end
+
   defp roles(behavior, action) do
     provenance = %{
       install_id: "composition-test",
@@ -369,6 +606,35 @@ defmodule Ezagent.Socialware.CompositionCapsTest do
     :ok = Ezagent.AgentLineage.record(uri, owner)
     on_exit(fn -> Ezagent.Kind.terminate(uri) end)
     uri
+  end
+
+  defp live_session(name, owner) do
+    uri = session_uri(name)
+
+    {:ok, _pid} =
+      Ezagent.Kind.spawn(Ezagent.Entity.Session, %{
+        uri: uri,
+        behaviors: Ezagent.Entity.Session.behaviors(),
+        owner_uri: owner
+      })
+
+    :ok = Ezagent.WorkspaceRegistry.bind(uri, workspace_uri())
+    on_exit(fn -> Ezagent.Kind.terminate(uri) end)
+    uri
+  end
+
+  defp dispatch_consent(caller, session, binding_id, side, command, idempotency_key) do
+    Ezagent.Invocation.dispatch(%Ezagent.Invocation{
+      target: Ezagent.URI.with_action(session, :session, :composition_consent),
+      mode: :call,
+      args: %{
+        binding_id: binding_id,
+        side: side,
+        command: command,
+        idempotency_key: idempotency_key
+      },
+      ctx: %{caller: caller, caps: MapSet.new(), reply: {:caller_inbox, self()}}
+    })
   end
 
   defp dispatch_probe(caller, target, action) do

@@ -85,6 +85,43 @@ defmodule Ezagent.Socialware.CompositionBinding do
     end
   end
 
+  @doc "Load one exact binding aggregate row."
+  @spec get(String.t()) :: t() | nil
+  def get(id) when is_binary(id), do: Repo.get(__MODULE__, id)
+
+  @doc "Deterministic identity for an exact session/install/Definition edge subject."
+  @spec id_for(map()) :: String.t()
+  def id_for(attrs) when is_map(attrs) do
+    {canonical_uri(Map.fetch!(attrs, :session_uri)), Map.fetch!(attrs, :install_id),
+     Map.fetch!(attrs, :definition_config_id), Map.fetch!(attrs, :source_role),
+     Map.fetch!(attrs, :target_role), canonical_uri(Map.fetch!(attrs, :source_uri)),
+     canonical_uri(Map.fetch!(attrs, :target_uri)), Map.fetch!(attrs, :behavior),
+     Map.fetch!(attrs, :action)}
+    |> :erlang.term_to_binary([:deterministic])
+    |> then(&:crypto.hash(:sha256, &1))
+    |> Base.url_encode64(padding: false)
+  end
+
+  @doc false
+  @spec mark_degraded(String.t(), atom()) :: {:ok, t()} | {:error, term()}
+  def mark_degraded(id, reason) when is_binary(id) and is_atom(reason) do
+    now = DateTime.utc_now()
+
+    case Repo.get(__MODULE__, id) do
+      %__MODULE__{} = binding ->
+        binding
+        |> changeset(%{
+          status: :degraded,
+          inactive_reason: Atom.to_string(reason),
+          inactivated_at: now
+        })
+        |> Repo.update()
+
+      nil ->
+        {:error, :composition_binding_not_found}
+    end
+  end
+
   @doc "Return active binding rows for a canonical holder URI."
   @spec active_for_holder(URI.t()) :: [t()]
   def active_for_holder(%URI{} = holder_uri) do
@@ -237,7 +274,18 @@ defmodule Ezagent.Socialware.CompositionBinding do
       identity = cap_identity(cap)
 
       normalized = %{
-        id: binding_id(attrs, session_uri, source_uri, target_uri, behavior, action),
+        id:
+          id_for(%{
+            session_uri: session_uri,
+            install_id: Map.get(attrs, :install_id),
+            definition_config_id: Map.get(attrs, :definition_config_id),
+            source_role: Map.get(attrs, :source_role),
+            target_role: Map.get(attrs, :target_role),
+            source_uri: source_uri,
+            target_uri: target_uri,
+            behavior: behavior,
+            action: action
+          }),
         workspace_uri: canonical_uri(workspace_uri),
         session_uri: canonical_uri(session_uri),
         install_id: Map.get(attrs, :install_id),
@@ -338,16 +386,6 @@ defmodule Ezagent.Socialware.CompositionBinding do
       %URI{} = uri -> {:ok, uri}
       _ -> {:error, {:invalid_uri, key}}
     end
-  end
-
-  defp binding_id(attrs, session_uri, source_uri, target_uri, behavior, action) do
-    {canonical_uri(session_uri), Map.get(attrs, :install_id),
-     Map.get(attrs, :definition_config_id), Map.get(attrs, :source_role),
-     Map.get(attrs, :target_role), canonical_uri(source_uri), canonical_uri(target_uri), behavior,
-     action}
-    |> :erlang.term_to_binary([:deterministic])
-    |> then(&:crypto.hash(:sha256, &1))
-    |> Base.url_encode64(padding: false)
   end
 
   defp deactivate_where(where, reason) do

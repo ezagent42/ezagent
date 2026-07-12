@@ -10,7 +10,7 @@ defmodule Ezagent.Socialware.CompositionCaps do
   """
 
   alias Ezagent.ActionSet.Session.Members
-  alias Ezagent.Socialware.CompositionBinding
+  alias Ezagent.Socialware.{CompositionBinding, CompositionConsent}
 
   @type summary :: %{active: non_neg_integer(), degraded: non_neg_integer()}
 
@@ -88,15 +88,39 @@ defmodule Ezagent.Socialware.CompositionCaps do
     session_uri
     |> CompositionBinding.degraded_for_session()
     |> Enum.map(fn row ->
+      consent = CompositionConsent.get_by_binding(row.id)
+
       %{
+        request_id: row.id,
         source_role: row.source_role,
         target_role: row.target_role,
         behavior: row.behavior,
         action: row.action,
         target_uri: row.target_uri,
-        reason: row.inactive_reason
+        reason: row.inactive_reason,
+        target_approval: consent && consent.target_approval,
+        source_approval: consent && consent.source_approval
       }
     end)
+  end
+
+  @doc false
+  @spec reconcile_consent_revocation(String.t()) :: :ok | {:error, term()}
+  def reconcile_consent_revocation(binding_id) when is_binary(binding_id) do
+    case CompositionBinding.get(binding_id) do
+      %CompositionBinding{status: :active} = binding ->
+        with {:ok, _binding} <-
+               CompositionBinding.mark_degraded(binding_id, :consent_not_approved),
+             :ok <- revoke_unsupported([binding]) do
+          :ok
+        end
+
+      %CompositionBinding{} ->
+        :ok
+
+      nil ->
+        {:error, :composition_binding_not_found}
+    end
   end
 
   # SINGLE non-bypassable mint chokepoint. No other function in this lane calls
@@ -110,7 +134,9 @@ defmodule Ezagent.Socialware.CompositionCaps do
          {:ok, issued} <- issue_all(prepared, configurer),
          classified <- classify_source_authority(issued, configurer),
          attrs <- Enum.map(classified, &binding_attrs(&1, session_uri, workspace_uri, configurer)),
-         {:ok, _bindings} <- CompositionBinding.replace_session(session_uri, attrs),
+         {:ok, bindings} <- CompositionBinding.replace_session(session_uri, attrs),
+         :ok <- CompositionConsent.supersede_inactive(session_uri),
+         :ok <- sync_consents(bindings, classified, configurer),
          :ok <- absorb_active(classified),
          :ok <- revoke_unsupported(previous) do
       {:ok,
@@ -126,7 +152,7 @@ defmodule Ezagent.Socialware.CompositionCaps do
       with {:ok, source_uri} <- resolve_role(role_members, edge.source_role, session_uri),
            {:ok, target_uri} <- resolve_role(role_members, edge.target_role, session_uri),
            :ok <- validate_provenance(edge.provenance),
-           {:ok, _owner} <- assert_target_owner(edge.behavior, target_uri),
+           {:ok, target_owner} <- assert_target_owner(edge.behavior, target_uri),
            :ok <- assert_target_conformance(target_uri, edge.behavior, edge.action) do
         cap =
           Ezagent.Capability.cap(
@@ -137,13 +163,31 @@ defmodule Ezagent.Socialware.CompositionCaps do
             workspace_uri
           )
 
+        source_owner = source_owner(source_uri)
+
+        subject =
+          edge.provenance
+          |> Map.merge(%{
+            session_uri: session_uri,
+            source_role: edge.source_role,
+            target_role: edge.target_role,
+            source_uri: Ezagent.URI.instance(source_uri),
+            target_uri: Ezagent.URI.instance(target_uri),
+            behavior: edge.behavior,
+            action: edge.action
+          })
+
         item =
           edge
           |> Map.merge(%{
+            binding_id: CompositionBinding.id_for(subject),
             source_uri: Ezagent.URI.instance(source_uri),
             target_uri: Ezagent.URI.instance(target_uri),
+            source_owner: source_owner,
+            target_owner: target_owner,
             cap: cap,
-            configurer: configurer
+            configurer: configurer,
+            consent: CompositionConsent.get_by_binding(CompositionBinding.id_for(subject))
           })
 
         {:cont, {:ok, [item | prepared]}}
@@ -159,17 +203,27 @@ defmodule Ezagent.Socialware.CompositionCaps do
 
   defp issue_all(prepared, configurer) do
     Enum.reduce_while(prepared, {:ok, []}, fn item, {:ok, issued} ->
-      case Ezagent.Cap.issue({:held_by, configurer}, item.source_uri, item.cap) do
-        {:ok, artifact} ->
-          {:cont, {:ok, [item |> Map.put(:cap, artifact) |> Map.put(:status, :issued) | issued]}}
+      case issue_item(item, configurer) do
+        {:ok, artifact, target_required?} ->
+          {:cont,
+           {:ok,
+            [
+              item
+              |> Map.put(:cap, artifact)
+              |> Map.put(:issuer, artifact.granted_by)
+              |> Map.put(:status, :issued)
+              |> Map.put(:target_required?, target_required?)
+              | issued
+            ]}}
 
-        {:error, :grant_not_owner} ->
+        {:error, :target_consent_required} ->
           {:cont,
            {:ok,
             [
               item
               |> Map.put(:status, :degraded)
               |> Map.put(:degrade_reason, :grant_not_owner)
+              |> Map.put(:target_required?, true)
               | issued
             ]}}
 
@@ -183,42 +237,72 @@ defmodule Ezagent.Socialware.CompositionCaps do
     end
   end
 
-  defp classify_source_authority(items, configurer) do
-    Enum.map(items, fn
-      %{status: :degraded} = item ->
-        item
+  defp issue_item(item, configurer) do
+    case Ezagent.Cap.issue({:held_by, configurer}, item.source_uri, item.cap) do
+      {:ok, artifact} ->
+        {:ok, artifact, false}
 
-      %{status: :issued, source_uri: source_uri} = item ->
-        case Ezagent.CapabilityRegistry.data_owner_of(
-               Ezagent.ActionSet.ApiKeys,
-               Ezagent.URI.instance(source_uri)
-             ) do
-          %URI{} = owner ->
-            if same_uri?(owner, configurer) or
-                 Ezagent.Identity.Authority.manages?(configurer, source_uri) do
-              %{item | status: :active}
-            else
-              item
-              |> Map.put(:status, :degraded)
-              |> Map.put(:degrade_reason, :foreign_source)
-            end
-
-          _ ->
-            item
-            |> Map.put(:status, :degraded)
-            |> Map.put(:degrade_reason, :foreign_source)
+      {:error, :grant_not_owner} ->
+        if CompositionConsent.approved?(item.consent, :target, item.target_owner) do
+          case Ezagent.Cap.issue(
+                 {:held_by, item.target_owner},
+                 item.source_uri,
+                 item.cap
+               ) do
+            {:ok, artifact} -> {:ok, artifact, true}
+            {:error, reason} -> {:error, {:target_owner_issue_failed, reason}}
+          end
+        else
+          {:error, :target_consent_required}
         end
+
+      {:error, reason} ->
+        {:error, reason}
+    end
+  end
+
+  defp classify_source_authority(items, configurer) do
+    Enum.map(items, fn item ->
+      source_authorized? =
+        match?(%URI{}, item.source_owner) and
+          (same_uri?(item.source_owner, configurer) or
+             Ezagent.Identity.Authority.manages?(configurer, item.source_uri))
+
+      source_consented? =
+        CompositionConsent.approved?(item.consent, :source, item.source_owner)
+
+      item = Map.put(item, :source_required?, not source_authorized?)
+
+      cond do
+        item.status == :issued and (source_authorized? or source_consented?) ->
+          item
+          |> Map.put(:status, :active)
+          |> Map.put_new(:target_required?, false)
+
+        item.status == :issued ->
+          item
+          |> Map.put(:status, :degraded)
+          |> Map.put(:degrade_reason, :foreign_source)
+          |> Map.put_new(:target_required?, false)
+
+        true ->
+          item
+          |> Map.put_new(:target_required?, true)
+      end
     end)
   end
 
   defp absorb_active(items) do
     Enum.reduce_while(items, :ok, fn
-      %{status: :active, source_uri: source_uri, cap: artifact}, :ok ->
+      %{status: :active, source_uri: source_uri, cap: artifact} = item, :ok ->
         identity = CompositionBinding.cap_identity(artifact)
 
         cond do
           not CompositionBinding.supported?(source_uri, identity) ->
             {:halt, {:error, :composition_binding_not_current}}
+
+          not consent_current?(item) ->
+            {:halt, {:error, :composition_consent_not_current}}
 
           true ->
             case Ezagent.Identity.absorb_cap(source_uri, artifact) do
@@ -273,11 +357,37 @@ defmodule Ezagent.Socialware.CompositionCaps do
       workspace_uri: workspace_uri,
       behavior: item.behavior,
       action: item.action,
-      issuer_uri: configurer,
+      issuer_uri: Map.get(item, :issuer, configurer),
       cap: item.cap,
       status: item.status,
       degrade_reason: Map.get(item, :degrade_reason)
     })
+  end
+
+  defp sync_consents(bindings, classified, configurer) do
+    items_by_id = Map.new(classified, &{&1.binding_id, &1})
+
+    Enum.reduce_while(bindings, :ok, fn binding, :ok ->
+      item = Map.fetch!(items_by_id, binding.id)
+
+      case CompositionConsent.sync(binding, %{
+             configurer: configurer,
+             target_owner: item.target_owner,
+             source_owner: item.source_owner,
+             target_required?: item.target_required?,
+             source_required?: item.source_required?
+           }) do
+        {:ok, _consent} -> {:cont, :ok}
+        {:error, reason} -> {:halt, {:error, {:composition_consent_sync_failed, reason}}}
+      end
+    end)
+  end
+
+  defp consent_current?(item) do
+    consent = CompositionConsent.get_by_binding(item.binding_id)
+
+    CompositionConsent.approved?(consent, :target, item.target_owner) and
+      CompositionConsent.approved?(consent, :source, item.source_owner)
   end
 
   defp assert_target_owner(behavior, target_uri) do
@@ -288,6 +398,16 @@ defmodule Ezagent.Socialware.CompositionCaps do
       end
     else
       {:error, {:operate_target_ownerless, target_uri, behavior}}
+    end
+  end
+
+  defp source_owner(source_uri) do
+    case Ezagent.CapabilityRegistry.data_owner_of(
+           Ezagent.ActionSet.ApiKeys,
+           Ezagent.URI.instance(source_uri)
+         ) do
+      %URI{} = owner -> owner
+      _ -> nil
     end
   end
 

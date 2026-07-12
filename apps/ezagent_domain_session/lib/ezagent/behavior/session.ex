@@ -303,6 +303,20 @@ defmodule Ezagent.ActionSet.Session do
         "drops its own pending entry (authz: requested_by == caller)"
   )
 
+  action(:composition_consent,
+    args: %{
+      binding_id: :string,
+      side: :atom,
+      command: :atom,
+      idempotency_key: :string
+    },
+    returns: %{request_id: :string, target_approval: :atom, source_approval: :atom},
+    caps: [:composition_consent],
+    modes: [:call],
+    description:
+      "Approve, deny, or revoke one exact composition binding as its live target/source owner"
+  )
+
   @doc """
   Membership-cap Part C cap-exempt actions (spec §C.4/§C.5): the admission
   approve/deny/withdraw actions are authorized IN-HANDLER (the approver/denier by
@@ -311,7 +325,8 @@ defmodule Ezagent.ActionSet.Session do
   session. Mirrors the `:receive` / `:cascade_notify_managers` cap-exempt
   precedent. Keeps `keys(required_caps) ∪ cap_exempt_actions == actions`.
   """
-  def cap_exempt_actions, do: [:approve_admission, :deny_admission, :withdraw_admission]
+  def cap_exempt_actions,
+    do: [:approve_admission, :deny_admission, :withdraw_admission, :composition_consent]
 
   # `create/1` — FIRST-EVER existence (SPEC 2026-05-29 §2). Builds the
   # PERSISTENT `state`. The macro-injected `init_slice/1` wraps this in
@@ -964,6 +979,39 @@ defmodule Ezagent.ActionSet.Session do
   def handle_withdraw_admission(%{member: %URI{} = member_uri}, ctx) do
     Membership.withdraw_admission(member_uri, ctx)
   end
+
+  @doc false
+  def handle_composition_consent(
+        %{
+          binding_id: binding_id,
+          side: side,
+          command: command,
+          idempotency_key: idempotency_key
+        },
+        %{caller: %URI{} = caller, self_uri: %URI{} = session_uri}
+      ) do
+    case Ezagent.Socialware.CompositionConsent.command(
+           binding_id,
+           session_uri,
+           side,
+           command,
+           caller,
+           idempotency_key
+         ) do
+      {:ok, consent} ->
+        {:ok,
+         %{
+           request_id: consent.id,
+           target_approval: consent.target_approval,
+           source_approval: consent.source_approval
+         }, []}
+
+      {:error, _} = error ->
+        error
+    end
+  end
+
+  def handle_composition_consent(_args, _ctx), do: {:error, :invalid_consent_command}
 
   # --- :set_working_copy -------------------------------------------------
 

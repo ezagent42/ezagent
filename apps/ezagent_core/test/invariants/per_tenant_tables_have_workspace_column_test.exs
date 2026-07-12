@@ -108,6 +108,8 @@ defmodule EzagentCore.Invariants.PerTenantTablesHaveWorkspaceColumnTest do
     # Socialware composition-cap lane — every derivation row is scoped to the
     # concrete source/target workspace and is union-reconciled only within it.
     {Ezagent.Socialware.CompositionBinding, "socialware_composition_bindings"},
+    {Ezagent.Socialware.CompositionConsent, "socialware_composition_consents"},
+    {Ezagent.Socialware.CompositionConsentCommand, "socialware_composition_consent_commands"},
     # Socialware P9 — named workspace responsibility assignments are scoped to
     # one workspace; the same holder URI cannot receive a responsibility across
     # tenants without a separate row in that tenant.
