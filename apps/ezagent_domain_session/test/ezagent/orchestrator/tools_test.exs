@@ -124,6 +124,15 @@ defmodule Ezagent.Orchestrator.ToolsTest do
                Tools.add_participant("entity://system/user/operator", "operator", [])
     end
 
+    test "manifest import is a separate local/operator-only entry" do
+      assert {:error, :local_operator_required} =
+               Ezagent.Orchestrator.Tools.Participants.import_participant_manifest(
+                 "/etc/passwd",
+                 "operator",
+                 []
+               )
+    end
+
     test "remove_member surfaces :missing_opt for required ctx" do
       assert {:error, {:missing_opt, :caller}} = Tools.remove_member("role-x", [])
     end

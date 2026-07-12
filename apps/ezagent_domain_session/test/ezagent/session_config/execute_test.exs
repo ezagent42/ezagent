@@ -123,6 +123,29 @@ defmodule Ezagent.Session.Config.ExecuteTest do
     assert opts[:caller] == principal
   end
 
+  test "add_participant rejects filesystem paths and non-entity URIs at the boundary" do
+    principal = User.admin_uri()
+    session_uri = session_uri("participant-ref")
+    spawn_session(session_uri, principal)
+
+    assert SessionConfig.execute(
+             "add_participant",
+             %{"ref" => "/etc/passwd", "role_name" => "intruder"},
+             principal,
+             session_uri
+           ) == {:error, {:invalid_arg, "ref", :existing_entity_uri_required}}
+
+    assert SessionConfig.execute(
+             "add_participant",
+             %{
+               "ref" => "template://team-alpha/agent/worker",
+               "role_name" => "spawn-by-confusion"
+             },
+             principal,
+             session_uri
+           ) == {:error, {:invalid_arg, "ref", :existing_entity_uri_required}}
+  end
+
   defp assemble_probe(name, scope, gate) do
     :ok =
       ExtensionRegistry.assemble!([

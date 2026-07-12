@@ -18,7 +18,7 @@ defmodule Ezagent.Session.Config.Executor do
   end
 
   def execute({:core, "add_participant"}, args, opts) do
-    with {:ok, ref} <- arg_string(args, "ref"),
+    with {:ok, ref} <- arg_existing_entity_uri(args, "ref"),
          {:ok, role_name} <- arg_string(args, "role_name") do
       participant_opts =
         [
@@ -187,6 +187,15 @@ defmodule Ezagent.Session.Config.Executor do
 
       _ ->
         {:error, {:missing_arg, key}}
+    end
+  end
+
+  defp arg_existing_entity_uri(args, key) do
+    with {:ok, %URI{scheme: "entity"} = uri} <- arg_uri(args, key),
+         true <- Ezagent.URI.type?(uri, :agent) or Ezagent.URI.type?(uri, :user) do
+      {:ok, uri}
+    else
+      _ -> {:error, {:invalid_arg, key, :existing_entity_uri_required}}
     end
   end
 
