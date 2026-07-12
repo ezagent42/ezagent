@@ -38,7 +38,7 @@ defmodule EzagentCore.Invariants.PluginWorkspaceLocalityContractTest do
     },
     %{
       path: "apps/ezagent_plugin_cc/lib/ezagent/orchestrator/mcp_server.ex",
-      line: 367,
+      line: 428,
       key: :genserver_to_pid,
       line_substring:
         "GenServer.call(pid, {:run_tool, tool, arguments, ctx.bridge_token}, :infinity)",

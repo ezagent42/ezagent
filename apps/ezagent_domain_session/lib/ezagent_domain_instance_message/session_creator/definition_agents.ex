@@ -223,10 +223,10 @@ defmodule EzagentDomainInstanceMessage.SessionCreator.DefinitionAgents do
          recipe_name,
          role_name
        ) do
-    planned_uri = planned_agent_uri(workspace_uri)
     flavor = flavor_of(agent)
 
-    with {:ok, recipe} <- lookup_recipe(workspace_uri, recipe_name),
+    with {:ok, planned_uri} <- planned_uri_for_role(session_uri, workspace_uri, agent),
+         {:ok, recipe} <- lookup_recipe(workspace_uri, recipe_name),
          # #1201 A② — installer host-login inheritance. BEFORE the spawn (whose
          # #17 cascade resolves the installer's user-default source), ensure the
          # INSTALLER's host login is adopted as that source. No-ops for
@@ -362,25 +362,21 @@ defmodule EzagentDomainInstanceMessage.SessionCreator.DefinitionAgents do
     if orchestrator_recipe_slot?(agent) do
       parent_template_uri = parent_template_uri_for(session_uri)
 
-      # Ordering (R2 + R3, docs/notes/2026-07-10-session-agent-coupling…):
-      #   1. store the durable `:orchestrator_uri` binding EAGERLY with the
-      #      ACTUAL spawned agent URI (a random-UUID URI since the orchestrator
-      #      stopped living at a deterministic name), BEFORE any grant, so the
-      #      orchestrator's MCP tool surface is recoverable after a BEAM restart
-      #      (`McpServer.rebuild_from_durable` reads exactly this binding). The
-      #      write targets the SESSION Kind (already ready), so it never blocks
-      #      on the not-yet-ready agent.
+      # Ordering (R2 + R3 + P1):
+      #   1. verify the durable binding pre-stored before spawn still names the
+      #      ACTUAL spawned agent URI, and obtain its materialization epoch;
       #   2. register the MCP context BEFORE granting (R3 — the readiness/
       #      tool-surface registration must precede the grant, not follow it).
       #   3. grant the orchestrator's scope-bounded caps LAST.
-      with :ok <- store_orchestrator_uri(session_uri, agent_uri),
+      with {:ok, binding} <- Materializer.ensure_orchestrator_binding(session_uri, agent_uri),
            :ok <-
              SessionOrchestrator.register_orchestrator_mcp_context(
                agent_uri,
                session_uri,
                workspace_uri,
                granted_by,
-               parent_template_uri
+               parent_template_uri,
+               binding.epoch
              ),
            :ok <-
              SessionOrchestrator.grant_orchestrator_scoped_caps(
@@ -392,18 +388,6 @@ defmodule EzagentDomainInstanceMessage.SessionCreator.DefinitionAgents do
       end
     else
       :ok
-    end
-  end
-
-  # R2 — revive the (previously orphaned) durable-binding writer. Writes the
-  # ACTUAL spawned orchestrator URI (`agent_uri`) into the session working copy
-  # so `Ezagent.UriQuery.resolve(:orchestrator, session_uri)` and the cold
-  # `rebuild_from_durable` path both recover the orchestrator tool surface after
-  # a restart. Idempotent on the repair/re-materialize path (same URI re-stored).
-  defp store_orchestrator_uri(%URI{} = session_uri, %URI{} = agent_uri) do
-    case Materializer.store_session_orchestrator_uri(session_uri, agent_uri) do
-      :ok -> :ok
-      {:error, reason} -> {:error, {:store_orchestrator_uri_failed, reason}}
     end
   end
 
@@ -683,6 +667,28 @@ defmodule EzagentDomainInstanceMessage.SessionCreator.DefinitionAgents do
     workspace_uri
     |> Ezagent.URI.workspace_name!()
     |> Ezagent.URI.agent(Ecto.UUID.generate())
+  end
+
+  defp planned_uri_for_role(session_uri, workspace_uri, agent) do
+    if orchestrator_recipe_slot?(agent) do
+      case Materializer.stored_orchestrator_binding(session_uri) do
+        {:ok, %{uri: %URI{} = uri}} ->
+          case Materializer.ensure_orchestrator_binding(session_uri, uri) do
+            {:ok, _binding} -> {:ok, uri}
+            {:error, reason} -> {:error, {:store_orchestrator_uri_failed, reason}}
+          end
+
+        _ ->
+          uri = planned_agent_uri(workspace_uri)
+
+          case Materializer.ensure_orchestrator_binding(session_uri, uri) do
+            {:ok, _binding} -> {:ok, uri}
+            {:error, reason} -> {:error, {:store_orchestrator_uri_failed, reason}}
+          end
+      end
+    else
+      {:ok, planned_agent_uri(workspace_uri)}
+    end
   end
 
   defp existing_member_for_role(%URI{} = session_uri, role_name) do

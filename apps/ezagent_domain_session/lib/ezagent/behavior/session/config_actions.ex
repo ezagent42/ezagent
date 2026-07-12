@@ -108,8 +108,7 @@ defmodule Ezagent.ActionSet.Session.ConfigActions do
   `EzagentDomainInstanceMessage.SessionCreator.create_session/3` (the atomic single writer — the
   dead `Session.spawn_from_template/2` Generator was deleted in the
   2026-05-31 orchestrator-startup-atomicity pass) does the FIRST
-  `template_working_copy` write in step 4
-  (`materialize_orchestrator_working_copy/3`), before any orchestrator
+  `template_working_copy` declaration and versioned binding writes before any orchestrator
   cap exists. It cannot hold the orchestrator's `{:within_session, _}`
   cap (the session is brand-new), so it uses this path: a
   `chat.set_working_copy` dispatch carrying `ctx[:system_internal] =

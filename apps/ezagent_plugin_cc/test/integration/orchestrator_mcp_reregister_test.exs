@@ -56,7 +56,6 @@ defmodule EzagentDomainInstanceMessage.Integration.OrchestratorMcpReregisterTest
   defp orchestrator_chat_slice(opts) do
     wc = %{
       routing_rules: [],
-      orchestrator_template_uri: Ezagent.URI.new!("template://system/agent/cc-orchestrator"),
       default_workspace_uri: Ezagent.URI.new!("workspace://default"),
       description: "task #110 fixture"
     }
@@ -83,7 +82,7 @@ defmodule EzagentDomainInstanceMessage.Integration.OrchestratorMcpReregisterTest
   defp pure_restart_state(session_uri, chat_slice) do
     workspace_uri = Capability.workspace_of(session_uri)
     orchestrator_uri = Session.planned_orchestrator_uri(session_uri, workspace_uri)
-    chat_slice = put_in(chat_slice, [:template_working_copy, :orchestrator_uri], orchestrator_uri)
+    chat_slice = put_active_binding(chat_slice, orchestrator_uri)
 
     :ok = KindSnapshot.delete(URI.to_string(session_uri))
     :ok = McpRegistry.unregister(orchestrator_uri)
@@ -96,6 +95,83 @@ defmodule EzagentDomainInstanceMessage.Integration.OrchestratorMcpReregisterTest
   end
 
   describe "lazy rebuild from durable snapshot — THE GATE (pure phx restart)" do
+    test "a stale warm cache epoch is rejected and rebuilt from the current binding" do
+      session_uri = unique_session_uri()
+      owner_uri = Ezagent.URI.new!("entity://default/user/owner-stale-cache")
+      session_template_uri = Ezagent.URI.new!("template://default/session/stale-cache@abc123")
+
+      chat_slice =
+        orchestrator_chat_slice(
+          owner_uri: owner_uri,
+          session_template_uri: session_template_uri
+        )
+
+      {workspace_uri, orchestrator_uri} = pure_restart_state(session_uri, chat_slice)
+
+      :ok =
+        McpRegistry.register(orchestrator_uri,
+          session_uri: session_uri,
+          workspace_uri: workspace_uri,
+          owner_uri: owner_uri,
+          parent_template_uri: session_template_uri,
+          binding_epoch: "stale-warm-cache-epoch"
+        )
+
+      assert {:ok, :registered} = McpServer.from_orchestrator_uri(orchestrator_uri)
+      assert {:ok, ctx} = McpRegistry.lookup(orchestrator_uri)
+      refute ctx.binding_epoch == "stale-warm-cache-epoch"
+
+      snapshot = KindSnapshot.get(URI.to_string(session_uri))
+      {:ok, %{session: persisted_chat}} = KindSnapshot.decode_state(snapshot)
+      persisted_chat = Ezagent.Kind.normalize_slice_view(persisted_chat)
+      working_copy = Map.fetch!(persisted_chat, :template_working_copy)
+
+      assert ctx.binding_epoch ==
+               Map.fetch!(working_copy, :orchestrator_materialization_epoch)
+    end
+
+    test "a tombstoned binding is discoverable and fails loud" do
+      session_uri = unique_session_uri()
+      owner_uri = Ezagent.URI.new!("entity://default/user/owner-tombstone")
+
+      orchestrator_uri =
+        Ezagent.URI.entity(
+          "team-alpha",
+          :agent,
+          "tombstoned-orchestrator-#{System.unique_integer([:positive])}"
+        )
+
+      working_copy = %{
+        orchestrator_uri: %{
+          uri: orchestrator_uri,
+          epoch: "failed-epoch",
+          status: :tombstone,
+          reason: :synthetic_spawn_failure
+        },
+        orchestrator_materialization_epoch: "failed-epoch",
+        session_template_uri: Ezagent.URI.new!("template://default/session/tombstone@abc123")
+      }
+
+      chat_slice = %{
+        members: %{},
+        monitors: %{},
+        last_seen: %{},
+        owner_uri: owner_uri,
+        template_working_copy: working_copy
+      }
+
+      :ok = KindSnapshot.delete(URI.to_string(session_uri))
+      :ok = McpRegistry.unregister(orchestrator_uri)
+
+      :ok =
+        SnapshotFixtures.save_kind_snapshot(session_uri, Session, %{session: %{state: chat_slice}})
+
+      assert McpServer.from_orchestrator_uri(orchestrator_uri) ==
+               {:error, {:orchestrator_binding_tombstoned, :synthetic_spawn_failure}}
+
+      assert McpRegistry.lookup(orchestrator_uri) == :error
+    end
+
     test "rebuilds an ordinary role/member orchestrator without legacy OTU" do
       session_uri = unique_session_uri()
       workspace_uri = Capability.workspace_of(session_uri)
@@ -110,7 +186,8 @@ defmodule EzagentDomainInstanceMessage.Integration.OrchestratorMcpReregisterTest
         )
 
       working_copy = %{
-        orchestrator_uri: orchestrator_uri,
+        orchestrator_uri: active_binding(orchestrator_uri, "ordinary-epoch"),
+        orchestrator_materialization_epoch: "ordinary-epoch",
         session_template_uri: session_template_uri,
         routing_rules: []
       }
@@ -208,8 +285,7 @@ defmodule EzagentDomainInstanceMessage.Integration.OrchestratorMcpReregisterTest
       workspace_uri = Capability.workspace_of(session_uri)
       orchestrator_uri = Session.planned_orchestrator_uri(session_uri, workspace_uri)
 
-      chat_slice =
-        put_in(chat_slice, [:template_working_copy, :orchestrator_uri], orchestrator_uri)
+      chat_slice = put_active_binding(chat_slice, orchestrator_uri)
 
       :ok = KindSnapshot.delete(URI.to_string(session_uri))
       :ok = McpRegistry.unregister(orchestrator_uri)
@@ -302,7 +378,7 @@ defmodule EzagentDomainInstanceMessage.Integration.OrchestratorMcpReregisterTest
   end
 
   describe "no-orchestrator session — legitimate fail-closed" do
-    test "a plain session (no orchestrator_template_uri) returns :orchestrator_not_registered" do
+    test "a plain session (no orchestrator binding) returns :orchestrator_not_registered" do
       session_uri = unique_session_uri()
       workspace_uri = Capability.workspace_of(session_uri)
       orchestrator_uri = Session.planned_orchestrator_uri(session_uri, workspace_uri)
@@ -310,8 +386,7 @@ defmodule EzagentDomainInstanceMessage.Integration.OrchestratorMcpReregisterTest
       :ok = KindSnapshot.delete(URI.to_string(session_uri))
       :ok = McpRegistry.unregister(orchestrator_uri)
 
-      # A fresh / system session: template_working_copy keeps the default
-      # shape where :orchestrator_template_uri is nil.
+      # A fresh / system session has no orchestrator binding.
       plain_slice = %{
         members: %{},
         monitors: %{},
@@ -344,5 +419,20 @@ defmodule EzagentDomainInstanceMessage.Integration.OrchestratorMcpReregisterTest
 
       assert McpRegistry.lookup(orchestrator_uri) == :error
     end
+  end
+
+  defp put_active_binding(chat_slice, orchestrator_uri) do
+    epoch = "fixture-#{System.unique_integer([:positive])}"
+
+    chat_slice
+    |> put_in(
+      [:template_working_copy, :orchestrator_uri],
+      active_binding(orchestrator_uri, epoch)
+    )
+    |> put_in([:template_working_copy, :orchestrator_materialization_epoch], epoch)
+  end
+
+  defp active_binding(uri, epoch) do
+    %{uri: uri, epoch: epoch, status: :active, reason: nil}
   end
 end

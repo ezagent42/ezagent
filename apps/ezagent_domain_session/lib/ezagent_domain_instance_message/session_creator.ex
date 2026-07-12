@@ -205,25 +205,30 @@ defmodule EzagentDomainInstanceMessage.SessionCreator do
         _ -> User.admin_uri()
       end
 
-    # Materialize from the session's OWN durable `member_declarations` — the
-    # freeze-pinned role slots `create_session/3` recorded at step 4. Re-resolving
-    # the SessionTemplate here would (a) re-run definition lookup against whatever
-    # is registered NOW rather than the frozen revision, and (b) fail at boot
-    # before the definitions are seeded.
+    # Use the session's freeze-pinned declarations; never re-resolve live config.
     agents =
       working_copy
       |> Map.get(:member_declarations, [])
       |> TemplateTeam.agent_role_slots()
 
-    with {:ok, summary} <-
-           DefinitionAgents.materialize_definition_agents(
-             session_uri,
-             workspace_uri,
-             effective_owner,
-             agents
-           ),
-         :ok <- record_unfilled_role_slots(session_uri, summary.skipped) do
-      {:ok, summary}
+    case DefinitionAgents.materialize_definition_agents(
+           session_uri,
+           workspace_uri,
+           effective_owner,
+           agents
+         ) do
+      {:ok, summary} ->
+        with :ok <- record_unfilled_role_slots(session_uri, summary.skipped) do
+          {:ok, summary}
+        end
+
+      {:error, reason, _partial} = error ->
+        _ = Materializer.tombstone_orchestrator_binding(session_uri, reason)
+        error
+
+      {:error, reason} = error ->
+        _ = Materializer.tombstone_orchestrator_binding(session_uri, reason)
+        error
     end
   end
 
@@ -478,26 +483,9 @@ defmodule EzagentDomainInstanceMessage.SessionCreator do
   @doc """
   Repair an EXISTING session's orchestrator (SPEC 2026-05-31 §6).
 
-  Fixes sessions whose `orchestrator_template_uri` (OTU) is nil — the
-  `main` / `orch-feishu-7429` class created before the atomic flow set
-  OTU, and any session whose orchestrator died. Unlike a plain restart
-  (which only re-dispatched `template.instantiate` + respawned the PTY,
-  NEVER setting OTU), this:
-
-    1. resolves the session's SessionTemplate from its 3-segment URI
-       (`session://<template>/<ws>/<name>` — the `<template>` segment is
-       the host) and reads its content (fail-loud if absent);
-    2. RE-MATERIALIZES the working copy — writes `orchestrator_template_uri`
-       + `session_template_uri` (`materialize_orchestrator_working_copy/3`,
-       the same write the create flow does);
-    3. runs the §5 atomic orchestrator-ensure gate + cap grants + MCP
-       registration + member join (`ensure_orchestrated_session/4`).
-
-  Returns `{:ok, session_uri, meta}` (same `create_session_meta` shape) or
-  `{:error, reason}`. A plain (no-orchestrator) template is a no-op success.
-
-  Cap-gated by the caller: the LV's `restart_orchestrator` path checks
-  `Ezagent.ActionSet.OrchestratorAdmin :restart` BEFORE dispatching here.
+  Re-materializes the freeze-pinned declaration under a new binding epoch.
+  Skip restores the active binding; definitive failure writes a discoverable
+  same-URI tombstone. Authorization remains the caller surface's responsibility.
   """
   @spec repair_orchestrator(URI.t()) ::
           {:ok, URI.t(), create_session_meta()} | {:error, term()}
@@ -575,14 +563,25 @@ defmodule EzagentDomainInstanceMessage.SessionCreator do
                  session_template_uri,
                  pinned_content
                ),
-             :ok <-
-               materialize_template_team(
+             {:ok, _binding} <-
+               Materializer.prepare_orchestrator_binding(session_uri, workspace_uri) do
+          case materialize_template_team(
                  session_uri,
                  workspace_uri,
                  effective_owner,
                  pinned_content
                ) do
-          {:ok, session_uri, %{}}
+            :ok ->
+              {:ok, session_uri, %{}}
+
+            {:error, reason, _partial} = error ->
+              _ = Materializer.tombstone_orchestrator_binding(session_uri, reason)
+              error
+
+            {:error, reason} = error ->
+              _ = Materializer.tombstone_orchestrator_binding(session_uri, reason)
+              error
+          end
         end
     end
   end
@@ -854,6 +853,9 @@ defmodule EzagentDomainInstanceMessage.SessionCreator do
                session_template_uri,
                template_content
              ),
+           # P1 I7: commit the exact URI before async install can expose it.
+           {:ok, _binding} <-
+             Materializer.prepare_orchestrator_binding(session_uri, workspace_uri),
            :ok <- Materializer.join_session_members(session_uri, [effective_owner]),
            # F7 PR-A — grant the owner the session-membership authority to remove
            # a participant (the entry gate on `session.remove_participant`). On

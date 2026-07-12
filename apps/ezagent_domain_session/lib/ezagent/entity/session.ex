@@ -363,7 +363,8 @@ defmodule Ezagent.Entity.Session do
                 session_uri,
                 workspace_uri,
                 owner_uri,
-                parent_template_uri
+                parent_template_uri,
+                binding_epoch
               ),
               to: Ezagent.Entity.Session.Orchestrator
 

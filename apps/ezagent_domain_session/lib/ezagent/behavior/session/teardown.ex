@@ -122,7 +122,12 @@ defmodule Ezagent.ActionSet.Session.Teardown do
     members = Map.get(state, :members, %{})
     owner_uri = Map.get(state, :owner_uri)
     wc = Ezagent.ActionSet.Session.ConfigActions.template_working_copy(state)
-    orchestrator_uri = Map.get(wc, :orchestrator_uri)
+
+    orchestrator_uri =
+      case Ezagent.Session.OrchestratorBinding.decode(Map.get(wc, :orchestrator_uri)) do
+        {:ok, binding} -> binding.uri
+        _ -> nil
+      end
 
     # 1. tear down every member (skip the owner — never reap the owner).
     Enum.each(members, fn {member_uri, meta} ->

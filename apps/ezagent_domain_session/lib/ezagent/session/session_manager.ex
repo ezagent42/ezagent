@@ -1,7 +1,7 @@
 defmodule Ezagent.Session.SessionManager do
   @moduledoc """
   Per-orchestrator MCP **executor** — a plain supervised `GenServer` in the
-  session domain that runs the orchestrator's 7 management tools (Decision C,
+  session domain that runs the orchestrator's management operations (Decision C,
   `docs/superpowers/specs/2026-06-13-orchestrator-sessionmanager-kind-design.md`).
 
   ## Why a plain GenServer (NOT a Kind)
@@ -71,6 +71,7 @@ defmodule Ezagent.Session.SessionManager do
   require Logger
 
   alias Ezagent.Orchestrator.Tools
+  alias Ezagent.Session.OrchestratorBinding
 
   @registry Ezagent.Session.SessionManagerRegistry
   @supervisor Ezagent.Session.SessionManagerSupervisor
@@ -173,10 +174,10 @@ defmodule Ezagent.Session.SessionManager do
   def ensure_for_session(%URI{} = session_uri) do
     case live_working_copy(session_uri) do
       wc when is_map(wc) ->
-        case Map.get(wc, :orchestrator_uri) do
-          %URI{} = orchestrator_uri ->
+        case OrchestratorBinding.current(wc) do
+          {:ok, binding} ->
             ensure_started(
-              orchestrator_uri: orchestrator_uri,
+              orchestrator_uri: binding.uri,
               session_uri: session_uri,
               workspace_uri: workspace_of(session_uri),
               owner_uri: live_owner_uri(session_uri),
@@ -319,8 +320,8 @@ defmodule Ezagent.Session.SessionManager do
   # cached binding (codex C-r2-P2).
   defp structural_check(%__MODULE__{} = binding) do
     with wc when is_map(wc) <- live_working_copy(binding.session_uri),
-         %URI{} = stored <- Map.get(wc, :orchestrator_uri),
-         true <- URI.to_string(stored) == URI.to_string(binding.orchestrator_uri) do
+         {:ok, stored} <- OrchestratorBinding.current(wc),
+         true <- URI.to_string(stored.uri) == URI.to_string(binding.orchestrator_uri) do
       {:ok, wc}
     else
       _ -> {:error, :unauthorized}

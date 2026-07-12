@@ -42,8 +42,9 @@ defmodule Ezagent.Orchestrator.McpRegistry do
 
   Each row: `{orchestrator_uri_string, context_map}` where
   `context_map` carries `:session_uri`, `:workspace_uri`,
-  `:owner_uri`, `:parent_template_uri` — every value a `%URI{}` (or
-  `nil` for the optional `:parent_template_uri`).
+  `:owner_uri`, `:parent_template_uri`, and the durable
+  `:binding_epoch`. The epoch makes every cache fill traceable to the
+  materialization generation that authorized it.
 
   ## Lifecycle
 
@@ -57,7 +58,7 @@ defmodule Ezagent.Orchestrator.McpRegistry do
   ## This is a CACHE, not the source of truth (Task #110)
 
   The registry is rebuilt EMPTY on a phx restart. That used to be a
-  correctness bug — the orchestrator's 7 management MCP tools went dead
+  correctness bug — the orchestrator's management MCP operations went dead
   until a fresh session re-spawn. As of Task #110 it is a non-issue:
   `Ezagent.Orchestrator.McpServer.from_orchestrator_uri/1` treats this
   table as a READ-THROUGH CACHE. On a miss it LAZILY REBUILDS the
@@ -72,7 +73,8 @@ defmodule Ezagent.Orchestrator.McpRegistry do
           session_uri: URI.t(),
           workspace_uri: URI.t(),
           owner_uri: URI.t() | nil,
-          parent_template_uri: URI.t() | nil
+          parent_template_uri: URI.t() | nil,
+          binding_epoch: String.t()
         }
 
   @doc """
@@ -114,12 +116,14 @@ defmodule Ezagent.Orchestrator.McpRegistry do
     init()
 
     with {:ok, session_uri} <- fetch_uri(opts, :session_uri),
-         {:ok, workspace_uri} <- fetch_uri(opts, :workspace_uri) do
+         {:ok, workspace_uri} <- fetch_uri(opts, :workspace_uri),
+         {:ok, binding_epoch} <- fetch_string(opts, :binding_epoch) do
       context = %{
         session_uri: session_uri,
         workspace_uri: workspace_uri,
         owner_uri: opt_uri(opts, :owner_uri),
-        parent_template_uri: opt_uri(opts, :parent_template_uri)
+        parent_template_uri: opt_uri(opts, :parent_template_uri),
+        binding_epoch: binding_epoch
       }
 
       true = :ets.insert(@table, {URI.to_string(orchestrator_uri), context})
@@ -167,6 +171,13 @@ defmodule Ezagent.Orchestrator.McpRegistry do
       %URI{} = uri -> uri
       s when is_binary(s) and s != "" -> Ezagent.URI.new!(s)
       _ -> nil
+    end
+  end
+
+  defp fetch_string(opts, key) do
+    case Keyword.get(opts, key) do
+      value when is_binary(value) and value != "" -> {:ok, value}
+      _ -> {:error, {:missing_opt, key}}
     end
   end
 end

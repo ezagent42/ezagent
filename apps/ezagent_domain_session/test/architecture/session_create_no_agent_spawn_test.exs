@@ -251,39 +251,37 @@ defmodule EzagentDomainInstanceMessage.Architecture.SessionCreateNoAgentSpawnTes
   #
   # `maybe_after_materialize/5` runs three steps for the orchestrator slot. Their
   # order is load-bearing:
-  #   1. STORE the durable `:orchestrator_uri` binding (with the ACTUAL spawned
-  #      URI) — so a cold restart can rebuild the tool surface (R2);
+  #   1. VERIFY the durable pre-stored `:orchestrator_uri` binding matches the
+  #      ACTUAL spawned URI and obtain its epoch (R2/P1);
   #   2. REGISTER the MCP context — the tool-surface registration must precede the
   #      grant, not follow it (R3, the pre-fix order was grant-then-register);
   #   3. GRANT the scope-bounded caps LAST.
   # The store + register both target already-ready Kinds (the Session / the MCP
   # registry), so they never block on the not-yet-ready agent.
-  test "orchestrator post-materialize order is store → register → grant (R2/R3)" do
+  test "orchestrator post-materialize order is verify binding → register → grant (R2/R3/P1)" do
     body =
       app_root()
       |> Path.join("lib/ezagent_domain_instance_message/session_creator/definition_agents.ex")
       |> File.read!()
 
-    # Scope to the `maybe_after_materialize/5` body (up to the private
-    # `store_orchestrator_uri/2` DEFINITION that follows it).
     [_, after_head] =
       String.split(body, "defp maybe_after_materialize(", parts: 2)
 
-    [fn_body | _] = String.split(after_head, "defp store_orchestrator_uri(", parts: 2)
+    [fn_body | _] = String.split(after_head, "defp orchestrator_recipe_slot?(", parts: 2)
 
-    store_at = index_of(fn_body, "store_orchestrator_uri(session_uri")
+    verify_at = index_of(fn_body, "ensure_orchestrator_binding(session_uri, agent_uri)")
     register_at = index_of(fn_body, "register_orchestrator_mcp_context(")
     grant_at = index_of(fn_body, "grant_orchestrator_scoped_caps(")
 
-    assert store_at != nil, "store_orchestrator_uri call not found in maybe_after_materialize/5"
+    assert verify_at != nil, "binding verification call not found in maybe_after_materialize/5"
     assert register_at != nil, "register_orchestrator_mcp_context call not found"
     assert grant_at != nil, "grant_orchestrator_scoped_caps call not found"
 
-    assert store_at < register_at and register_at < grant_at,
+    assert verify_at < register_at and register_at < grant_at,
            """
-           maybe_after_materialize/5 must run: STORE :orchestrator_uri (R2) →
+           maybe_after_materialize/5 must run: VERIFY pre-stored binding (R2/P1) →
            REGISTER mcp context (R3) → GRANT scoped caps. Got byte offsets
-           store=#{store_at}, register=#{register_at}, grant=#{grant_at}.
+           verify=#{verify_at}, register=#{register_at}, grant=#{grant_at}.
            """
   end
 

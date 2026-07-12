@@ -290,7 +290,12 @@ defmodule EzagentDomainInstanceMessage.UriQueryResolversTest do
     working_copy =
       SessionBehavior.default_template_working_copy()
       |> Map.put(:session_template_uri, session_template_uri)
-      |> Map.put(:orchestrator_uri, orchestrator_uri)
+      |> Map.put(:orchestrator_uri, %{
+        uri: orchestrator_uri,
+        epoch: "uri-query-current",
+        status: :active
+      })
+      |> Map.put(:orchestrator_materialization_epoch, "uri-query-current")
 
     assert {:ok, _} = SessionBehavior.system_set_working_copy(session_uri, working_copy)
 

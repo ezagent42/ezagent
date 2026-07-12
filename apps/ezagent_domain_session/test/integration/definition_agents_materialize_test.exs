@@ -655,12 +655,15 @@ defmodule EzagentDomainInstanceMessage.Integration.DefinitionAgentsMaterializeTe
     orchestrator_uri = SessionBehavior.role_name_to_uri(members_of(session_uri), role_name)
     on_exit(fn -> terminate(orchestrator_uri) end)
 
-    # R2 — the durable working copy carries the ACTUAL spawned orchestrator URI
-    # (a random-UUID URI), written eagerly right after spawn+join, so the
-    # orchestrator's MCP tool surface is recoverable after a BEAM restart. Before
-    # this fix the binding was never written and `rebuild_from_durable` read nil.
+    # R2/P1 — the durable working copy carries the ACTUAL spawned orchestrator URI
+    # and its current materialization epoch, so the orchestrator's MCP tool
+    # surface is recoverable after a BEAM restart without serving stale state.
     working_copy = Session.read_template_working_copy(session_uri)
-    assert Map.get(working_copy, :orchestrator_uri) == orchestrator_uri
+
+    assert {:ok, %{uri: ^orchestrator_uri, epoch: epoch, status: :active}} =
+             Ezagent.Session.OrchestratorBinding.current(working_copy)
+
+    assert is_binary(epoch)
 
     # …resolvable via the SAME `Ezagent.UriQuery` read `McpServer.rebuild_from_durable`
     # performs after a restart to recover the 7-tool orchestrator surface.

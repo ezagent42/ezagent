@@ -3,28 +3,8 @@ defmodule EzagentDomainInstanceMessage.SessionCreator.Materializer do
 
   alias Ezagent.Invocation
   alias Ezagent.Entity.Session
+  alias Ezagent.Session.OrchestratorBinding
   alias Ezagent.Socialware.DefinitionEditor
-
-  # Write `orchestrator_template_uri` + `session_template_uri` to the
-  # session's durable working copy before the orchestrator can join.
-  def materialize_orchestrator_working_copy(
-        %URI{} = session_uri,
-        %URI{} = session_template_uri,
-        orchestrator_template_uri
-      ) do
-    prior = Session.read_template_working_copy(session_uri)
-
-    working_copy =
-      prior
-      |> Map.put(:orchestrator_template_uri, orchestrator_template_uri)
-      |> Map.put(:session_template_uri, session_template_uri)
-
-    case Ezagent.ActionSet.Session.system_set_working_copy(session_uri, working_copy) do
-      {:ok, _} -> :ok
-      {:error, _} = err -> err
-      other -> {:error, {:unexpected_set_working_copy_result, other}}
-    end
-  end
 
   def materialize_template_declaration(
         %URI{} = session_uri,
@@ -36,7 +16,10 @@ defmodule EzagentDomainInstanceMessage.SessionCreator.Materializer do
 
     working_copy =
       prior
-      |> Map.drop([:orchestrator_template_uri, :orchestrator_uri])
+      # `orchestrator_template_uri` is valid SessionTemplate DEFINITION data,
+      # but it was never a live working-copy binding. Remove old snapshot
+      # residue while preserving the authoritative `:orchestrator_uri` value.
+      |> Map.delete(:orchestrator_template_uri)
       |> Map.put(:session_template_uri, session_template_uri)
       |> Map.put(
         :member_declarations,
@@ -50,50 +33,121 @@ defmodule EzagentDomainInstanceMessage.SessionCreator.Materializer do
     end
   end
 
-  def store_session_orchestrator_uri(%URI{} = session_uri, %URI{} = orchestrator_uri) do
-    working_copy =
-      session_uri
-      |> Session.read_template_working_copy()
-      |> Map.put(:orchestrator_uri, orchestrator_uri)
+  @doc """
+  Allocate and durably bind the ACTUAL random orchestrator URI before the
+  asynchronous role installer can spawn it and expose its bridge seed.
 
-    case Ezagent.ActionSet.Session.system_set_working_copy(session_uri, working_copy) do
-      {:ok, _} -> :ok
-      {:error, _} = err -> err
-      other -> {:error, {:unexpected_set_working_copy_result, other}}
+  No orchestrator declaration means no binding. On repair the prior URI is
+  retained while a new materialization epoch is committed, so every outcome
+  remains discoverable by the URI the bridge already knows.
+  """
+  @spec prepare_orchestrator_binding(URI.t(), URI.t()) ::
+          {:ok, OrchestratorBinding.t() | nil} | {:error, term()}
+  def prepare_orchestrator_binding(%URI{} = session_uri, %URI{} = workspace_uri) do
+    working_copy = Session.read_template_working_copy(session_uri)
+
+    if orchestrator_declaration?(Map.get(working_copy, :member_declarations, [])) do
+      uri = prior_or_new_orchestrator_uri(working_copy, workspace_uri)
+      binding = OrchestratorBinding.active(uri, OrchestratorBinding.new_epoch())
+
+      case store_session_orchestrator_binding(session_uri, binding) do
+        :ok -> {:ok, binding}
+        {:error, _} = error -> error
+      end
+    else
+      {:ok, nil}
     end
   end
 
-  @doc """
-  Pre-persist the deterministic *planned* orchestrator URI into the session's
-  durable working copy BEFORE the step-5 orchestrator-readiness gate runs.
+  @doc false
+  @spec ensure_orchestrator_binding(URI.t(), URI.t()) ::
+          {:ok, OrchestratorBinding.t()} | {:error, term()}
+  def ensure_orchestrator_binding(%URI{} = session_uri, %URI{} = orchestrator_uri) do
+    working_copy = Session.read_template_working_copy(session_uri)
 
-  The live orchestrator's MCP bridge join self-registers by lazily rebuilding
-  its context from this durable binding (`Ezagent.Orchestrator.McpServer`
-  read-through cache). The binding was previously only written at step 6
-  (`store_session_orchestrator_uri/2`), which runs AFTER `ensure_orchestrator`
-  — but `ensure_orchestrator`'s readiness gate POLLS for that very join. So in
-  production (live claude) every join was rejected `:orchestrator_not_registered`
-  for the whole 90s gate → timeout → full create rollback, blocking the
-  orchestrator + admin UI on a fresh stack. Deterministic tests masked it
-  (test-mode signals readiness without a live MCP join). See
-  `docs/notes/2026-06-15-live-orchestrator-mcp-registration-bug.md`.
+    case OrchestratorBinding.current(working_copy) do
+      {:ok, %{uri: %URI{} = ^orchestrator_uri} = binding} ->
+        {:ok, binding}
 
-  Applied ONLY on the fresh-create path (`new_session?: true`), where a fresh
-  session has no `:orchestrator_uri` yet and EVERY downstream failure rolls the
-  whole session back (`rollback_session/3` deletes the snapshot — atomicity Q1),
-  so a failed gate cannot leave a stale pre-stored binding behind. The
-  repair/restart path is NOT pre-stored here — its existing binding (== planned,
-  preserved by `materialize_orchestrator_working_copy/3`) already resolves the
-  live join; the narrower nil-orchestrator repair case needs a separate
-  readiness-vs-binding separation and is tracked in docs/futures/todo.md (the
-  `:orchestrator_uri` field doubles as the `session_complete?/4` readiness proof,
-  so pre-storing it on the keep-the-live-session repair path could read as
-  premature readiness — codex review).
-  """
-  @spec prestore_planned_orchestrator_uri(URI.t(), URI.t()) :: :ok | {:error, term()}
-  def prestore_planned_orchestrator_uri(%URI{} = session_uri, %URI{} = workspace_uri) do
-    planned = Session.planned_orchestrator_uri(session_uri, workspace_uri)
-    store_session_orchestrator_uri(session_uri, planned)
+      _ ->
+        binding = OrchestratorBinding.active(orchestrator_uri, OrchestratorBinding.new_epoch())
+
+        case store_session_orchestrator_binding(session_uri, binding) do
+          :ok -> {:ok, binding}
+          {:error, _} = error -> error
+        end
+    end
+  end
+
+  @doc false
+  @spec current_orchestrator_binding(URI.t()) ::
+          {:ok, OrchestratorBinding.t()} | {:error, term()}
+  def current_orchestrator_binding(%URI{} = session_uri) do
+    session_uri
+    |> Session.read_template_working_copy()
+    |> OrchestratorBinding.current()
+  end
+
+  @doc false
+  @spec stored_orchestrator_binding(URI.t()) ::
+          {:ok, OrchestratorBinding.t()} | {:error, term()}
+  def stored_orchestrator_binding(%URI{} = session_uri) do
+    session_uri
+    |> Session.read_template_working_copy()
+    |> Map.get(:orchestrator_uri)
+    |> OrchestratorBinding.decode()
+  end
+
+  @doc false
+  @spec tombstone_orchestrator_binding(URI.t(), term()) :: :ok | {:error, term()}
+  def tombstone_orchestrator_binding(%URI{} = session_uri, reason) do
+    working_copy = Session.read_template_working_copy(session_uri)
+
+    with {:ok, binding} <- OrchestratorBinding.decode(Map.get(working_copy, :orchestrator_uri)) do
+      epoch =
+        Map.get(working_copy, :orchestrator_materialization_epoch) || binding.epoch ||
+          OrchestratorBinding.new_epoch()
+
+      store_session_orchestrator_binding(
+        session_uri,
+        OrchestratorBinding.tombstone(binding.uri, epoch, reason)
+      )
+    end
+  end
+
+  @doc false
+  @spec store_session_orchestrator_binding(URI.t(), OrchestratorBinding.t()) ::
+          :ok | {:error, term()}
+  def store_session_orchestrator_binding(
+        %URI{} = session_uri,
+        %OrchestratorBinding{} = binding
+      ) do
+    prior = Session.read_template_working_copy(session_uri)
+
+    prior_uri =
+      case OrchestratorBinding.decode(Map.get(prior, :orchestrator_uri)) do
+        {:ok, %{uri: %URI{} = uri}} -> uri
+        _ -> nil
+      end
+
+    working_copy =
+      prior
+      |> Map.delete(:orchestrator_template_uri)
+      |> Map.put(:orchestrator_uri, binding)
+      |> Map.put(:orchestrator_materialization_epoch, binding.epoch)
+
+    case Ezagent.ActionSet.Session.system_set_working_copy(session_uri, working_copy) do
+      {:ok, _} ->
+        evict_orchestrator_runtime(prior_uri)
+        evict_orchestrator_runtime(binding.uri)
+        :ok
+
+      {:error, _} = err ->
+        err
+
+      other ->
+        {:error, {:unexpected_set_working_copy_result, other}}
+    end
   end
 
   @doc """
@@ -390,4 +444,39 @@ defmodule EzagentDomainInstanceMessage.SessionCreator.Materializer do
       {:error, _} -> []
     end
   end
+
+  defp orchestrator_declaration?(declarations) when is_list(declarations) do
+    Enum.any?(declarations, fn
+      %{} = declaration ->
+        field(declaration, :role_name) == "orchestrator" and
+          field(declaration, :recipe) in ["orchestrator", "recipe:orchestrator"] and
+          field(declaration, :fill) in [:agent, "agent"]
+
+      _ ->
+        false
+    end)
+  end
+
+  defp orchestrator_declaration?(_), do: false
+
+  defp prior_or_new_orchestrator_uri(working_copy, workspace_uri) do
+    case OrchestratorBinding.decode(Map.get(working_copy, :orchestrator_uri)) do
+      {:ok, %{uri: %URI{} = uri}} ->
+        uri
+
+      _ ->
+        workspace_uri
+        |> Ezagent.URI.workspace_name!()
+        |> Ezagent.URI.agent(Ecto.UUID.generate())
+    end
+  end
+
+  defp evict_orchestrator_runtime(%URI{} = uri) do
+    :ok = Ezagent.Session.OrchestratorContextPort.unregister(uri)
+    Ezagent.Session.SessionManager.stop(uri)
+  end
+
+  defp evict_orchestrator_runtime(_), do: :ok
+
+  defp field(map, key), do: Map.get(map, key) || Map.get(map, Atom.to_string(key))
 end

@@ -216,10 +216,16 @@ defmodule EzagentDomainInstanceMessage.E2E.Scenario33_FullStarTest do
     {:ok, _pid} = Ezagent.Kind.spawn(Agent, %{uri: orchestrator_uri, initial_caps: caps})
     :ok = Ezagent.WorkspaceRegistry.bind(orchestrator_uri, @workspace_uri)
 
+    epoch = Ecto.UUID.generate()
+
     {:ok, _} =
       Ezagent.ActionSet.Session.ConfigActions.system_set_working_copy(session_uri, %{
-        orchestrator_uri: orchestrator_uri,
-        orchestrator_template_uri: Ezagent.URI.new!("template://system/agent/cc-orchestrator")
+        orchestrator_uri: %{
+          uri: orchestrator_uri,
+          epoch: epoch,
+          status: :active
+        },
+        orchestrator_materialization_epoch: epoch
       })
 
     {:ok, token} = TokenStore.mint(orchestrator_uri)
