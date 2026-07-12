@@ -246,7 +246,7 @@ defmodule Ezagent.ActionSet.Kanban do
 
   # data_owner 是 per-INSTANCE（实例级 cap 收口）。per-NODE 授权在 handler 内做。
   @doc false
-  def data_owner(_), do: :no_owner
+  def data_owner(instance), do: Ezagent.ActionSet.ApiKeys.data_owner(instance)
 
   @impl Ezagent.Lifecycle
   def create(_args), do: {:ok, %{tree: empty_tree()}}
