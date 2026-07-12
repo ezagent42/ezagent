@@ -164,5 +164,23 @@ defmodule Ezagent.Entity.TokenTest do
       assert {:error, :invalid_credentials} = Authentication.authenticate(first)
       assert {:ok, ^uri} = Authentication.authenticate(second)
     end
+
+    test "rotate_label preserves the active token when the new pepper is unavailable" do
+      uri = Ezagent.URI.user("team-alpha", "rotate-fail-#{System.unique_integer([:positive])}")
+      {active, active_row} = Token.rotate_label(uri, "interactive-login")
+      old = Application.get_env(:ezagent_domain_identity, Token)
+      Application.put_env(:ezagent_domain_identity, Token, current_version: 9, peppers: %{})
+
+      on_exit(fn -> Application.put_env(:ezagent_domain_identity, Token, old) end)
+
+      assert {:error, {:pat_pepper_unavailable, 9}} =
+               Token.rotate_label(uri, "interactive-login")
+
+      assert [%Token{id: id, label: "interactive-login"}] = Token.list(uri)
+      assert id == active_row.id
+
+      Application.put_env(:ezagent_domain_identity, Token, old)
+      assert {:ok, ^uri} = Authentication.authenticate(active)
+    end
   end
 end

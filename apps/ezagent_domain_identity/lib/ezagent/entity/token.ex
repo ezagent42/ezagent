@@ -125,7 +125,10 @@ defmodule Ezagent.Entity.Token do
            from(t in __MODULE__, where: t.entity_uri == ^URI.to_string(uri) and t.label == ^label)
            |> Repo.delete_all()
 
-           mint(uri, Keyword.put(opts, :label, label))
+           case mint(uri, Keyword.put(opts, :label, label)) do
+             {:error, reason} -> Repo.rollback(reason)
+             result -> result
+           end
          end) do
       {:ok, result} -> result
       {:error, reason} -> {:error, reason}
