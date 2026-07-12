@@ -12,10 +12,9 @@
 # 15/15 green).
 #
 # Shape notes (the three data diffs vs hello, per the kanban handoff):
-#   * roles — exactly TWO agent role-slots (kanban-assistant + dev-together,
-#     both cc-headless). NOT a `kanban-manager` slot: that recipe is
-#     `passive: true` and the RF-6 passive-join gate rejects it at materialize;
-#     the board stays a workspace-level URI-dispatch actor (the S2 fix).
+#   * roles — two active cc-headless collaborators plus one passive native board
+#     data role. Passive data roles are materialized without session.join and
+#     are addressable only through the composition edge.
 #   * routing_rules — ONLY the #1190 relay-back rule, #1212-hardened to
 #     and(text_contains "__done__", from_role dev-together). NEVER hello's
 #     `always → chat` rule (handoff red line). The "__done__" literal is the
@@ -40,10 +39,35 @@ roles:
     fill: agent
     recipe: kanban-assistant
     flavor: cc-headless
+    operates:
+      - {role: board, behavior: Ezagent.ActionSet.Kanban, action: add_node}
+      - {role: board, behavior: Ezagent.ActionSet.Kanban, action: rename_node}
+      - {role: board, behavior: Ezagent.ActionSet.Kanban, action: move_node}
+      - {role: board, behavior: Ezagent.ActionSet.Kanban, action: remove_node}
+      - {role: board, behavior: Ezagent.ActionSet.Kanban, action: set_stage}
+      - {role: board, behavior: Ezagent.ActionSet.Kanban, action: claim_node}
+      - {role: board, behavior: Ezagent.ActionSet.Kanban, action: unclaim_node}
+      - {role: board, behavior: Ezagent.ActionSet.Kanban, action: set_status}
+      - {role: board, behavior: Ezagent.ActionSet.Kanban, action: attach_artifact}
+      - {role: board, behavior: Ezagent.ActionSet.Kanban, action: detach_artifact}
+      - {role: board, behavior: Ezagent.ActionSet.Kanban, action: set_metric}
+      - {role: board, behavior: Ezagent.ActionSet.Kanban, action: drop_subtree}
+      - {role: board, behavior: Ezagent.ActionSet.Kanban, action: get_tree}
+      - {role: board, behavior: Ezagent.ActionSet.Kanban, action: export_markmap}
+      - {role: board, behavior: Ezagent.ActionSet.Kanban, action: import_markmap}
+      - {role: board, behavior: Ezagent.ActionSet.Kanban, action: register_pr}
+      - {role: board, behavior: Ezagent.ActionSet.Kanban, action: attach_code_file}
+      - {role: board, behavior: Ezagent.ActionSet.Kanban, action: sync_miro}
+      - {role: board, behavior: Ezagent.ActionSet.Kanban, action: set_board_config}
+      - {role: board, behavior: Ezagent.ActionSet.Kanban, action: save_miro_creds}
   - role_name: dev-together
     fill: agent
     recipe: dev-together
     flavor: cc-headless
+  - role_name: board
+    fill: agent
+    recipe: kanban-manager
+    flavor: native
 routing_rules:
   - matcher:
       type: and

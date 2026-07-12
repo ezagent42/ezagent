@@ -101,8 +101,9 @@ defmodule EzagentPluginKanban.Application do
   kanban-team collaboration protocol lives in an extractable
   `references/kanban-team-collaboration.md`, spec §5.3) is installed into the
   agent's `config_dir` by the cc `OrchestratorBootstrap` at materialize. It
-  requests a cap for EVERY kanban action (single source of truth =
-  `Ezagent.ActionSet.Kanban.actions/0`) so it can drive the board.
+  receives its board authority from the socialware role-slot's `operates`
+  edges, minted for the exact board instance. The recipe requests no ambient
+  kanban caps.
 
   Role-slot shaped (`skills` + persona `prompt` + kanban action caps), carries NO
   instance URI — round-trip safe under role-slot #1180.
@@ -114,7 +115,7 @@ defmodule EzagentPluginKanban.Application do
       skills: [@kanban_assistant_skill_ref],
       prompt: kanban_assistant_persona(),
       behaviors: [],
-      requested_caps: kanban_action_caps()
+      requested_caps: []
     }
   end
 
@@ -137,17 +138,8 @@ defmodule EzagentPluginKanban.Application do
       skills: [@dev_together_skill_ref],
       prompt: dev_together_persona(),
       behaviors: [],
-      requested_caps: kanban_action_caps()
+      requested_caps: []
     }
-  end
-
-  # A cap-template `%{behavior:, action:}` for every kanban action — the SAME
-  # single-source-of-truth derivation kanban-manager uses (`Kanban.actions/0`), so
-  # pm/dev can drive the board without re-listing actions by hand.
-  defp kanban_action_caps do
-    for action <- Ezagent.ActionSet.Kanban.actions() do
-      %{behavior: Ezagent.ActionSet.Kanban, action: action}
-    end
   end
 
   @spec kanban_assistant_persona() :: String.t()
@@ -159,12 +151,9 @@ defmodule EzagentPluginKanban.Application do
     the 9-stage product-dev chain (positioning → metric → pain → anchor → ux →
     feature → issue → test → pr).
 
-    - The board is a workspace-level actor (the `kanban-manager`), NOT a member of
-      your session. It is created by the owner in the world 看板 / `/plugins/kanban`
-      page. If no board exists yet, ask the owner to create one there and tell you
-      which to use — do NOT try to create it yourself. You reach it purely by
-      dispatching `kanban.<action>` to that board's URI (you hold a cap for every
-      kanban action).
+    - The board is your session's passive `board` data role (`kanban-manager` ×
+      native). It is installed with the socialware composition, and you receive
+      only instance-scoped `kanban.<action>` caps declared by that role edge.
     - Turn the owner's request into board moves via the kanban tools (create a
       card, set its stage). NEVER ask a worker to compute routing.
     - Assign build work through the dev-together git-handoff workflow, NOT a raw

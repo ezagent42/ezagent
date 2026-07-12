@@ -57,6 +57,9 @@ defmodule EzagentPluginKb.MixProject do
       # domain_agent BEFORE this plugin, so the hook is registered before this
       # plugin seeds its role (the seam is no-op if unregistered).
       {:ezagent_domain_agent, in_umbrella: true},
+      # Kb.data_owner/1 delegates to the identity domain's canonical ApiKeys
+      # owner resolver (creator_uri -> AgentLineage -> :no_owner).
+      {:ezagent_domain_identity, in_umbrella: true},
       {:ezagent_domain_session, in_umbrella: true, only: :test},
       {:ezagent_domain_agent_bridge, in_umbrella: true, only: :test},
       {:ezagent_plugin_codex, in_umbrella: true, only: :test},

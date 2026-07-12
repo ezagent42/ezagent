@@ -35,7 +35,10 @@ routing:
     receiver: autoservice-agent
 roles:
   autoservice:
-    requested_caps:
-      - { behavior: Ezagent.Behavior.Kb, action: query }
+    operates:
+      - { role: kb, behavior: Ezagent.ActionSet.Kb, action: query }
+  kb:
+    recipe: kb
+    flavor: native
 surface:
   customer: /socialware/chat

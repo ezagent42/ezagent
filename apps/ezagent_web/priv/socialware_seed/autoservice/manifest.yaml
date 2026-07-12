@@ -12,6 +12,14 @@ roles:
     fill: agent
     recipe: autoservice-agent
     flavor: native
+    operates:
+      - role: kb
+        behavior: Ezagent.ActionSet.Kb
+        action: query
+  - role_name: kb
+    fill: agent
+    recipe: kb
+    flavor: native
 routing_rules:
   - matcher:
       type: always

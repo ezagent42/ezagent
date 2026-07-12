@@ -12,8 +12,8 @@ defmodule EzagentPluginKanban.KanbanManifestTest do
 
   Proves the YAML file exists + parses, that the parsed manifest resolves
   through `Ezagent.Socialware.ManifestResolver.resolve/1` (the fail-closed
-  authoring boundary), declares exactly the TWO agent role-slots
-  (`kanban-assistant` + `dev-together`, both cc-headless active) with zero
+  authoring boundary), declares two active agent roles plus a passive board
+  data role with zero
   participant instance URIs (role-slot #1180), carries ONLY the #1190
   relay-back routing rule (never hello's `always → chat` — the handoff red
   line), and is public / supervised / non-anon / installer-owned. No DB here
@@ -32,16 +32,8 @@ defmodule EzagentPluginKanban.KanbanManifestTest do
   `relay-signal-check.sh` also locks). Three-way lock: manifest ⟷ spec literal
   ⟷ skill references.
 
-  ## Why NOT a kanban-manager role-slot (the S2 modeling fix, kept vs the handoff)
-
-  Allen's handoff example writes `kanban-manager × native` into `roles`, but the
-  `kanban-manager` recipe is `passive: true` (`application.ex`
-  `kanban_manager_recipe/0`) and the RF-6 passive-join gate rejects a passive
-  actor at `session.join` (`{:passive_actor_cannot_join, _}`; locked by
-  `test/e2e/role_native_create_test.exs`). Declaring it as an agent role-slot
-  would crash materialize — the board modeling bug S2 already fixed. So `roles`
-  stays pm + dev, the board stays a workspace-level URI-dispatch actor, and this
-  divergence is reported back to Allen in the return doc. This test locks it.
+  The `kanban-manager` recipe remains `passive: true`; materialization binds it
+  as composition data without calling `session.join`, preserving RF-6.
   """
   use ExUnit.Case, async: true
 
@@ -103,38 +95,60 @@ defmodule EzagentPluginKanban.KanbanManifestTest do
     assert definition.name == name
   end
 
-  test "declares exactly kanban-assistant + dev-together agent role-slots, zero instance URIs" do
+  test "declares collaborators plus a passive board role and narrow operate edges" do
     definition = resolve!()
     agent_slots = Enum.filter(definition.roles, &(&1.fill == :agent))
 
     assert Enum.sort(Enum.map(agent_slots, & &1.role_name)) == [
+             "board",
              "dev-together",
              "kanban-assistant"
            ]
 
     Enum.each(agent_slots, fn slot ->
       assert slot.fill == :agent
-      assert slot.flavor == "cc-headless"
       assert is_binary(slot.recipe) and slot.recipe != ""
       refute String.contains?(slot.recipe, "://")
       refute String.contains?(slot.role_name, "://")
     end)
+
+    board = Enum.find(agent_slots, &(&1.role_name == "board"))
+    assistant = Enum.find(agent_slots, &(&1.role_name == "kanban-assistant"))
+    assert board.recipe == "kanban-manager"
+    assert board.flavor == "native"
+    assert length(assistant.operates) == 20
+
+    assert Enum.all?(
+             assistant.operates,
+             &(&1.role == "board" and &1.behavior == Ezagent.ActionSet.Kanban)
+           )
+
+    assert MapSet.new(assistant.operates, & &1.action) ==
+             MapSet.new(Ezagent.ActionSet.Kanban.actions())
   end
 
-  test "the :flavor option swaps BOTH slots' flavor (integration stub seam), nothing else" do
+  test "the :flavor option swaps all three slots' flavor (integration stub seam), nothing else" do
     definition = resolve!(flavor: "kanban-demo-stub")
-    assert Enum.map(definition.roles, & &1.flavor) == ["kanban-demo-stub", "kanban-demo-stub"]
+
+    assert Enum.map(definition.roles, & &1.flavor) == [
+             "kanban-demo-stub",
+             "kanban-demo-stub",
+             "kanban-demo-stub"
+           ]
 
     assert Enum.sort(Enum.map(definition.roles, & &1.recipe)) == [
              "dev-together",
-             "kanban-assistant"
+             "kanban-assistant",
+             "kanban-manager"
            ]
   end
 
-  test "kanban-manager is NOT a role-slot (passive board actor, RF-6) — the handoff divergence, locked" do
+  test "kanban-manager is the passive board role-slot" do
     definition = resolve!()
-    refute "kanban-manager" in Enum.map(definition.roles, & &1.role_name)
-    # but it IS still a kanban plugin recipe (the workspace board actor).
+
+    assert %{recipe: "kanban-manager", role_name: "board"} =
+             Enum.find(definition.roles, &(&1.role_name == "board"))
+
     assert "kanban-manager" in Enum.map(EzagentPluginKanban.Application.roles(), & &1.name)
   end
 

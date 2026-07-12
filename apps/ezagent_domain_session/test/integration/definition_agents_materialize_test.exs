@@ -18,6 +18,7 @@ defmodule EzagentDomainInstanceMessage.Integration.DefinitionAgentsMaterializeTe
   alias Ezagent.ActionSet.Session, as: SessionBehavior
   alias Ezagent.Entity.Session
   alias Ezagent.Identity.RecipeCapBinding
+  alias Ezagent.Socialware.CompositionBinding
   alias Ezagent.{Invocation, KindRegistry}
   alias EzagentCore.Repo
   alias EzagentDomainInstanceMessage.MaterializedRoleTestBehavior
@@ -247,6 +248,20 @@ defmodule EzagentDomainInstanceMessage.Integration.DefinitionAgentsMaterializeTe
     name
   end
 
+  defp seed_passive_recipe(n) do
+    name = "t2-passive-data-#{n}"
+    RecipeRegistry.invalidate(RecipeRegistry.system_workspace_uri(), name)
+
+    {:ok, _} =
+      RecipeRegistry.seed_role_if_absent(%{
+        name: name,
+        passive: true,
+        requested_caps: []
+      })
+
+    name
+  end
+
   defp ensure_orchestrator_recipe do
     case RecipeRegistry.lookup(RecipeRegistry.system_workspace_uri(), "orchestrator") do
       {:ok, _recipe} ->
@@ -345,6 +360,86 @@ defmodule EzagentDomainInstanceMessage.Integration.DefinitionAgentsMaterializeTe
     assert Enum.count(caps, fn cap ->
              cap.behavior == Ezagent.ActionSet.Identity and cap.action == :list_caps
            end) == 1
+  end
+
+  test "passive data role stays out of membership and receives an owner-resolvable composition binding" do
+    n = uniq()
+    session_uri = live_session(n)
+    source_recipe = seed_recipe(n)
+    data_recipe = seed_passive_recipe(n)
+    flavor = register_stub_flavor(n)
+
+    provenance = %{
+      install_id: "passive-install-#{n}",
+      definition_config_id: "passive-config-#{n}",
+      definition_content_hash: "passive-hash-#{n}"
+    }
+
+    roles = [
+      %{
+        recipe: source_recipe,
+        role_name: "operator-#{n}",
+        flavor: flavor,
+        composition_provenance: provenance,
+        operates: [
+          %{
+            role: "data-#{n}",
+            behavior: Ezagent.ActionSet.ApiKeys,
+            action: :list_api_keys
+          }
+        ]
+      },
+      %{
+        recipe: data_recipe,
+        role_name: "data-#{n}",
+        flavor: flavor,
+        composition_provenance: provenance,
+        operates: []
+      }
+    ]
+
+    assert {:ok, %{satisfied: satisfied, skipped: []}} =
+             DefinitionAgents.materialize_definition_agents(
+               session_uri,
+               @workspace_uri,
+               @owner_uri,
+               roles,
+               install_authorized?: true
+             )
+
+    assert Enum.sort(satisfied) == Enum.sort(["operator-#{n}", "data-#{n}"])
+
+    members = members_of(session_uri)
+    source = SessionBehavior.role_name_to_uri(members, "operator-#{n}")
+    assert %URI{} = source
+    assert SessionBehavior.role_name_to_uri(members, "data-#{n}") == nil
+
+    assert [%CompositionBinding{target_uri: target_uri, status: :active}] =
+             CompositionBinding.for_session(session_uri)
+
+    target = Ezagent.URI.new!(target_uri)
+    on_exit(fn -> Enum.each([source, target], &terminate/1) end)
+
+    assert {:ok, @owner_uri} = Ezagent.AgentLineage.lookup(target)
+
+    assert Enum.any?(Ezagent.Identity.list_caps_for(source), fn cap ->
+             cap.behavior == Ezagent.ActionSet.ApiKeys and cap.action == :list_api_keys and
+               cap.instance == target
+           end)
+
+    assert {:ok, %{satisfied: satisfied_again, skipped: []}} =
+             DefinitionAgents.materialize_definition_agents(
+               session_uri,
+               @workspace_uri,
+               @owner_uri,
+               roles,
+               install_authorized?: true
+             )
+
+    assert Enum.sort(satisfied_again) == Enum.sort(satisfied)
+
+    assert [%CompositionBinding{target_uri: ^target_uri}] =
+             CompositionBinding.for_session(session_uri)
   end
 
   test "I3 install lane returns while a role agent never readies and keeps the session usable" do

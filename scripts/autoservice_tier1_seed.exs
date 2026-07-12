@@ -193,7 +193,14 @@ defmodule Ezagent.AutoService.Tier1Seed do
                  role,
                  admin_ctx
                ),
-             :ok <- grant_orchestrator_kb_query(autosvc_uri, workspace_uri, admin_ctx),
+             :ok <-
+               reconcile_kb_composition(
+                 session_uri,
+                 workspace_uri,
+                 admin_ctx.caller,
+                 autosvc_uri,
+                 EzUri.agent(EzUri.workspace_name!(workspace_uri), kb_agent)
+               ),
              :ok <- join_member(session_uri, autosvc_uri, :agent) do
           :created
         else
@@ -247,11 +254,8 @@ defmodule Ezagent.AutoService.Tier1Seed do
   AutoService role recipe (idempotent). Only needed when the seed runs OUTSIDE a
   fully-booted node (the test); the live node registered all of these at boot.
 
-  The minimal AutoService role recipe REQUESTS the `kb.query` cap so the created
-  AutoService agent genuinely holds it via CapMint (advisor: the cap must be
-  seeded, not hand-built). On the live node the orchestrator's kb authority
-  comes from the session/orchestrator caps machinery (kb-retrieval SPEC §5.3
-  option 1) instead.
+  The minimal AutoService role requests no KB authority. The shipped
+  socialware's `autoservice operates kb` edge is the only grant source.
   """
   def register_recipes(autosvc_flavor, kb_flavor, autosvc_role) do
     reg = Ezagent.AgentFlavorRegistry
@@ -274,7 +278,7 @@ defmodule Ezagent.AutoService.Tier1Seed do
           name: autosvc_role,
           passive: false,
           behaviors: [],
-          requested_caps: [%{behavior: Ezagent.ActionSet.Kb, action: :query}]
+          requested_caps: []
         })
     end
 
@@ -629,25 +633,37 @@ defmodule Ezagent.AutoService.Tier1Seed do
     |> String.replace("{{kb_agent}}", kb_agent)
   end
 
-  # Grant the AutoService orchestrator the `kb.query` cap INTO ITS OWN identity
-  # slice — the exact source the live orchestrator reads
-  # (`SessionManager.load_orchestrator_caps/1` = `Identity.read_entity_caps/1`,
-  # which reconstructs the orchestrator's delegated caps session-side). Without
-  # this grant, a seeded cc-orchestrator's delegated caps are the orchestration
-  # tools only; `kb.query` would DENY at the dispatch chokepoint (fail-closed) —
-  # the live-S3 cap gap. Granted by admin; query-only (the orchestrator never
-  # ingests at runtime). Idempotent (grant_cap upserts the cap).
-  @doc false
-  def grant_orchestrator_kb_query(autosvc_uri, workspace_uri, admin_ctx) do
-    cap = Capability.cap(:agent, Ezagent.ActionSet.Kb, :query, :any, workspace_uri)
+  # Transitional seed harness: route the old runnable scenario through the same
+  # composition mint chokepoint as the shipped manifest. No direct grant remains.
+  defp reconcile_kb_composition(session_uri, workspace_uri, owner, autosvc_uri, kb_uri) do
+    provenance = %{
+      install_id: "autoservice-tier1:#{URI.to_string(session_uri)}",
+      definition_config_id: "autoservice-tier1:0.1.0",
+      definition_content_hash:
+        :crypto.hash(:sha256, File.read!(Path.join(package_dir(), "manifest.yaml")))
+        |> Base.encode16(case: :lower)
+    }
 
-    case Ezagent.Identity.grant_cap(autosvc_uri, cap, admin_ctx.caller) do
-      :ok ->
-        Logger.info("autosvc-seed: granted kb.query to #{URI.to_string(autosvc_uri)}")
-        :ok
+    roles = [
+      %{
+        role_name: "autoservice",
+        composition_provenance: provenance,
+        operates: [%{role: "kb", behavior: Ezagent.ActionSet.Kb, action: :query}]
+      },
+      %{role_name: "kb", composition_provenance: provenance, operates: []}
+    ]
 
-      {:error, reason} ->
-        {:error, {:grant_kb_query_failed, reason}}
+    case Ezagent.Socialware.CompositionCaps.reconcile_session(
+           session_uri,
+           workspace_uri,
+           owner,
+           roles,
+           install_authorized?: true,
+           role_members: %{"autoservice" => autosvc_uri, "kb" => kb_uri}
+         ) do
+      {:ok, %{active: 1}} -> :ok
+      {:ok, summary} -> {:error, {:kb_composition_degraded, summary}}
+      {:error, reason} -> {:error, {:kb_composition_failed, reason}}
     end
   end
 

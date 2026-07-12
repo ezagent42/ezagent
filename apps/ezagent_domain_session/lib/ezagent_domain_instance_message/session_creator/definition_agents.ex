@@ -1,13 +1,12 @@
 defmodule EzagentDomainInstanceMessage.SessionCreator.DefinitionAgents do
   @moduledoc """
-  Materialize a socialware `Definition`'s agent role slots into a live session
-  as spawned members.
+  Materialize a socialware `Definition`'s agent role slots into live actors.
 
   Agent role slots declare "this socialware needs an agent with this role";
-  materialization turns each into a live,
-  session/workspace-scoped agent that is JOINED as a session member with its
-  `role_name` facet (so `{:role, name}` routing rules resolve to it) and holds
-  its recipe's `requested_caps`.
+  materialization turns each into a live, session/workspace-scoped agent. Active
+  roles are JOINED as session members with their `role_name` facet (so
+  `{:role, name}` routing rules resolve to them). Passive data roles remain
+  outside membership and are made available to composition-cap reconciliation.
 
   Per agent, the pipeline REUSES the existing safe managed-member envelope shape
   (`Ezagent.Orchestrator.Tools.add_managed_member`: preflight → spawn → faceted
@@ -122,9 +121,9 @@ defmodule EzagentDomainInstanceMessage.SessionCreator.DefinitionAgents do
 
   defp do_materialize_definition_agents(session_uri, workspace_uri, granted_by, agents, opts) do
     result =
-      Enum.reduce_while(agents, {:ok, MapSet.new(), [], []}, fn agent,
-                                                                {:ok, batch_seen, installed,
-                                                                 skipped} ->
+      Enum.reduce_while(agents, {:ok, MapSet.new(), [], [], %{}}, fn agent,
+                                                                     {:ok, batch_seen, installed,
+                                                                      skipped, role_members} ->
         role_name = role_name_of(agent)
 
         cond do
@@ -138,14 +137,17 @@ defmodule EzagentDomainInstanceMessage.SessionCreator.DefinitionAgents do
             seen = MapSet.put(batch_seen, role_name)
 
             case materialize_one(session_uri, workspace_uri, granted_by, agent) do
-              :ok ->
-                {:cont, {:ok, seen, [role_name | installed], skipped}}
+              {:ok, %URI{} = agent_uri} ->
+                {:cont,
+                 {:ok, seen, [role_name | installed], skipped,
+                  Map.put(role_members, role_name, agent_uri)}}
 
               {:skip, reason} ->
                 report_skip(session_uri, role_name, reason)
 
                 {:cont,
-                 {:ok, seen, installed, [%{role_name: role_name, reason: reason} | skipped]}}
+                 {:ok, seen, installed, [%{role_name: role_name, reason: reason} | skipped],
+                  role_members}}
 
               {:error, reason} ->
                 partial = %{
@@ -159,7 +161,7 @@ defmodule EzagentDomainInstanceMessage.SessionCreator.DefinitionAgents do
       end)
 
     case result do
-      {:ok, _seen, satisfied, skipped} ->
+      {:ok, _seen, satisfied, skipped, role_members} ->
         summary = %{satisfied: Enum.reverse(satisfied), skipped: Enum.reverse(skipped)}
 
         case Ezagent.Socialware.CompositionCaps.reconcile_session(
@@ -167,7 +169,7 @@ defmodule EzagentDomainInstanceMessage.SessionCreator.DefinitionAgents do
                workspace_uri,
                granted_by,
                agents,
-               opts
+               Keyword.put(opts, :role_members, role_members)
              ) do
           {:ok, _composition_summary} -> {:ok, summary}
           {:error, reason} -> {:error, reason, summary}
@@ -209,9 +211,16 @@ defmodule EzagentDomainInstanceMessage.SessionCreator.DefinitionAgents do
         # joined. Refresh its durable recipe binding without re-spawning, then
         # re-run post materialization hooks because both are idempotent and may
         # be absent on legacy sessions.
-        with :ok <-
-               refresh_existing_binding(workspace_uri, existing_uri, recipe_name, role_name) do
-          maybe_after_materialize(session_uri, workspace_uri, granted_by, agent, existing_uri)
+        with :ok <- refresh_existing_binding(workspace_uri, existing_uri, recipe_name, role_name),
+             :ok <-
+               maybe_after_materialize(
+                 session_uri,
+                 workspace_uri,
+                 granted_by,
+                 agent,
+                 existing_uri
+               ) do
+          {:ok, existing_uri}
         end
 
       nil ->
@@ -242,7 +251,16 @@ defmodule EzagentDomainInstanceMessage.SessionCreator.DefinitionAgents do
           {:ok, agent_uri} ->
             # The orchestrator-recipe hook: grants scoped delegation caps +
             # registers MCP context. Non-orchestrator roles are a no-op.
-            maybe_after_materialize(session_uri, workspace_uri, granted_by, agent, agent_uri)
+            case maybe_after_materialize(
+                   session_uri,
+                   workspace_uri,
+                   granted_by,
+                   agent,
+                   agent_uri
+                 ) do
+              :ok -> {:ok, agent_uri}
+              {:error, _reason} = error -> error
+            end
 
           {:skip, _reason} = skip ->
             skip
@@ -263,8 +281,9 @@ defmodule EzagentDomainInstanceMessage.SessionCreator.DefinitionAgents do
        ) do
     flavor = flavor_of(agent)
 
-    with {:ok, planned_uri} <- planned_uri_for_role(session_uri, workspace_uri, agent),
-         {:ok, recipe} <- lookup_recipe(workspace_uri, recipe_name),
+    with {:ok, recipe} <- lookup_recipe(workspace_uri, recipe_name),
+         {:ok, planned_uri} <-
+           planned_uri_for_role(session_uri, workspace_uri, agent, role_name, recipe),
          # #1201 A② — installer host-login inheritance. BEFORE the spawn (whose
          # #17 cascade resolves the installer's user-default source), ensure the
          # INSTALLER's host login is adopted as that source. No-ops for
@@ -327,7 +346,7 @@ defmodule EzagentDomainInstanceMessage.SessionCreator.DefinitionAgents do
            # This agent was just spawned by us — if it has no credentials,
            # terminate it (it was never joined). REUSE path leaves its agent.
            :ok <- verify_credentials_on_fresh(planned_uri, flavor),
-           :ok <- join_or_cleanup(session_uri, planned_uri, role_name) do
+           :ok <- join_or_cleanup(session_uri, planned_uri, role_name, recipe) do
         :ok
       end
 
@@ -570,7 +589,16 @@ defmodule EzagentDomainInstanceMessage.SessionCreator.DefinitionAgents do
   # Faceted `session.join` carrying the `%{role_name: name}` facet. On failure,
   # terminate the worker we just spawned (the add_managed_member cleanup
   # envelope) so a denied/failed join never leaves an orphan.
-  defp join_or_cleanup(session_uri, %URI{} = member_uri, role_name) do
+  defp join_or_cleanup(session_uri, %URI{} = member_uri, role_name, recipe)
+       when is_map(recipe) do
+    if passive_recipe?(recipe) do
+      :ok
+    else
+      do_join_or_cleanup(session_uri, member_uri, role_name)
+    end
+  end
+
+  defp do_join_or_cleanup(session_uri, %URI{} = member_uri, role_name) do
     case join_member(session_uri, member_uri, role_name) do
       :ok ->
         :ok
@@ -707,7 +735,7 @@ defmodule EzagentDomainInstanceMessage.SessionCreator.DefinitionAgents do
     |> Ezagent.URI.agent(Ecto.UUID.generate())
   end
 
-  defp planned_uri_for_role(session_uri, workspace_uri, agent) do
+  defp planned_uri_for_role(session_uri, workspace_uri, agent, role_name, recipe) do
     if orchestrator_recipe_slot?(agent) do
       case Materializer.stored_orchestrator_binding(session_uri) do
         {:ok, %{uri: %URI{} = uri}} ->
@@ -725,9 +753,27 @@ defmodule EzagentDomainInstanceMessage.SessionCreator.DefinitionAgents do
           end
       end
     else
-      {:ok, planned_agent_uri(workspace_uri)}
+      {:ok, planned_agent_uri(workspace_uri, session_uri, role_name, passive_recipe?(recipe))}
     end
   end
+
+  defp planned_agent_uri(workspace_uri, _session_uri, _role_name, false),
+    do: planned_agent_uri(workspace_uri)
+
+  defp planned_agent_uri(workspace_uri, session_uri, role_name, true) do
+    digest =
+      [URI.to_string(session_uri), "\0", role_name]
+      |> IO.iodata_to_binary()
+      |> then(&:crypto.hash(:sha256, &1))
+      |> Base.encode16(case: :lower)
+      |> binary_part(0, 24)
+
+    Ezagent.URI.agent(Ezagent.URI.workspace_name!(workspace_uri), "sw-data-#{digest}")
+  end
+
+  defp passive_recipe?(recipe),
+    do: Map.get(recipe, :passive, Map.get(recipe, "passive", false)) == true
+
 
   defp existing_member_for_role(%URI{} = session_uri, role_name) do
     Members.role_name_to_uri(read_members(session_uri), role_name)
