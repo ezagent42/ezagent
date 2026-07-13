@@ -28,7 +28,7 @@ const SURFACES = [
 
 // Sanctioned `:subcomponent` mounts: a parent surface owning a nested slot,
 // marked in the DOM with `data-world-subcomponent`. file => [allowed surfaces].
-const SUBCOMPONENT_ALLOWLIST = {}
+const SUBCOMPONENT_ALLOWLIST = {"Conversation.tsx": ["PtyTerminalSurface"]}
 
 const errors = []
 const read = (p) => readFileSync(p, "utf8")
