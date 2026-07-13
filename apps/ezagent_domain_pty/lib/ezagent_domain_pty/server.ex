@@ -95,10 +95,8 @@ defmodule Ezagent.Domain.Pty.Server do
     # Phase 6 PR 19 — data-driven auto-confirm rules, `%{name, match, send, fired?}`.
     # `fired?` makes each one-shot. See `Ezagent.Domain.Pty.AutoPrompts`.
     auto_prompts: [],
-    # #17 PR-C — emit-only auth-failure OBSERVERS: %{name, match, fired?}. They
-    # surface an expired/missing login and NEVER write stdin. See
-    # `Ezagent.Domain.Pty.AuthObservers` (including why the respawn breaker must
-    # not key off them).
+    # #17 PR-C — emit-only auth-failure observers (%{name, match, fired?},
+    # one-shot, NEVER write stdin). See `Ezagent.Domain.Pty.AuthObservers`.
     auth_observers: [],
     # The three canonical phases of the OS subprocess — `:starting | :running |
     # :dead`, per Allen's directive (no middle states). A respawn HALT is NOT a
@@ -118,6 +116,9 @@ defmodule Ezagent.Domain.Pty.Server do
     # counts). `halted?` = tripped: alive, no child, none spawned until an operator.
     healthy?: false,
     halted?: false,
+    # 2026-07-13 — auth observer fired this incarnation? → halt gets :needs_login
+    # reason instead of the opaque exit code. See `tag_reason/2`.
+    auth_failed?: false,
     # Which command this incarnation launched — the breaker books failures and
     # healthy runs against it (a healthy FALLBACK must not forgive the PRIMARY).
     spawn_mode: :primary
@@ -504,11 +505,8 @@ defmodule Ezagent.Domain.Pty.Server do
     end
   end
 
-  # The breaker tripped: do NOT spawn, and do NOT stop either — stopping would let the
-  # supervisor restart us straight back into this clause. Staying alive with no child is
-  # what makes the halt OBSERVABLE (`status/1` answers; the pty_buffer keeps the failing
-  # screen). Phase is `:dead` because the SUBPROCESS is dead; a halt is a supervision
-  # fact, not a fourth phase (`Ezagent.ActionSet.Sandbox` validates the three).
+  # Breaker tripped: do NOT spawn, do NOT stop. Stay alive with no child (status/ptBuffer
+  # stay observable). Phase :dead; halt is a supervision fact, not a fourth phase.
   defp enter_halt(state, info) do
     halted = %{
       state
@@ -679,8 +677,8 @@ defmodule Ezagent.Domain.Pty.Server do
   def handle_call({:write_input, _bytes}, _from, state),
     do: {:reply, {:error, :pty_not_alive}, state}
 
-  # Operator recovery from a halt (`Ezagent.Domain.Pty.restart/1` clears the breaker
-  # first). Kills any live child, then re-enters the spawn path with a clean slate.
+  # Operator recovery (`Ezagent.Domain.Pty.restart/1` clears the breaker, kills any
+  # live child, re-enters the spawn path with a clean slate).
   @impl true
   def handle_cast(:respawn, state) do
     if state.exec_pid, do: safe_stop_child(state.exec_pid)
@@ -722,7 +720,8 @@ defmodule Ezagent.Domain.Pty.Server do
     # (and may decline to spawn). A child that already ran healthily is a genuine
     # crash — it respawns as before, with no failure counted against it.
     if not state.healthy?,
-      do: RespawnPolicy.record_failure(state.agent_uri, reason, state.spawn_mode)
+      do:
+        RespawnPolicy.record_failure(state.agent_uri, tag_reason(reason, state), state.spawn_mode)
 
     # PTY-phase-state-machine follow-up (b): the OS subprocess just
     # died — publish the terminal :dead phase BEFORE returning {:stop,
@@ -775,7 +774,10 @@ defmodule Ezagent.Domain.Pty.Server do
     # #17 PR-C — emit-only auth-failure detection BEFORE auto_prompts (auto_prompts may
     # reset the buffer on a match; observers must see the same bytes). Observers never
     # send to stdin.
-    state = scan_auth_observers(state, AnsiStrip.strip(new_buffer))
+    {state, auth_just_fired} =
+      scan_auth_observers(state, AnsiStrip.strip(new_buffer))
+
+    state = %{state | auth_failed?: state.auth_failed? or auth_just_fired}
 
     state = scan_auto_prompts(state)
 
@@ -809,14 +811,18 @@ defmodule Ezagent.Domain.Pty.Server do
 
   def handle_info(_msg, state), do: {:noreply, state}
 
-  # --- #17 PR-C: emit-only auth-failure observers ----------------------
-  # Detection + emit live in `Ezagent.Domain.Pty.AuthObservers` (extracted for the
-  # oversized-module arch gate); the Server owns only the state plumbing. These are
-  # a NOTIFICATION surface — the respawn breaker deliberately does NOT key off them
-  # (they fired 0 times across the 933-crash canary loop; see that module's docs).
+  # --- #17 PR-C: emit-only auth-failure observers (Ezagent.Domain.Pty.AuthObservers) ---
+  # Returns `{state, just_fired?}` → halt names :needs_login instead of an opaque code.
   defp scan_auth_observers(%__MODULE__{auth_observers: observers} = state, stripped) do
-    %{state | auth_observers: AuthObservers.scan(observers, stripped, state.agent_uri)}
+    new = AuthObservers.scan(observers, stripped, state.agent_uri)
+    just_fired? = Enum.count(new, & &1.fired?) > Enum.count(observers, & &1.fired?)
+    {%{state | auth_observers: new}, just_fired?}
   end
+
+  # Auth observer fired → the crash is almost certainly a credential failure.
+  # Name it so the halt is diagnostic (":needs_login" vs "{:exit_status, 256}").
+  defp tag_reason(_reason, %__MODULE__{auth_failed?: true}), do: :needs_login
+  defp tag_reason(reason, _state), do: reason
 
   defp halt_reason(%__MODULE__{halted?: true, agent_uri: agent_uri}) do
     case RespawnPolicy.halt_info(agent_uri) do
@@ -985,9 +991,8 @@ defmodule Ezagent.Domain.Pty.Server do
   defp broadcast_phase(%__MODULE__{agent_uri: %URI{} = agent_uri} = state, phase, extra_meta),
     do: PhaseBroadcast.emit(agent_uri, phase, state.os_pid, extra_meta)
 
-  # Idempotency guard for the terminate/2 path. `dead_broadcast?` is set to true the FIRST
-  # time `:dead` is emitted (from :exec.run failure, {:DOWN, ...} or a respawn halt), so
-  # the graceful terminate/2 path does not double-emit the terminal transition.
+  # Idempotency guard: `dead_broadcast?` = true when :dead was already emitted, so
+  # terminate/2 does not double-emit the terminal transition.
   defp maybe_broadcast_dead_on_terminate(%__MODULE__{dead_broadcast?: true}, _reason), do: :ok
 
   defp maybe_broadcast_dead_on_terminate(%__MODULE__{} = state, reason),
