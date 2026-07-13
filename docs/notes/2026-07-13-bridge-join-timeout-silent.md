@@ -111,4 +111,4 @@ person who can fix it**, which is also Allen's answer to "who may recover a dead
 **Related:**
 - `docs/notes/2026-07-13-cc-pty-respawn-crashloop-rootcause.md` — #1294's root cause (it was
   `--continue`, not authentication)
-- `docs/notes/2026-07-13-pty-restart-operator-lever-open-decision.md` — the operator recovery lever
+- `docs/notes/2026-07-13-agent-creator-pty-authority-gap.md` — the creator cannot reach their own agent's PTY (the prerequisite for any recovery lever)

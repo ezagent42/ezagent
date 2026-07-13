@@ -100,4 +100,4 @@ owner。bridge join 超时应该走同一条路 —— **创建者是那个能�
 
 **相关:**
 - `docs/notes/2026-07-13-cc-pty-respawn-crashloop-rootcause.zh_cn.md` — #1294 的根因(是 `--continue`,不是认证)
-- `docs/notes/2026-07-13-pty-restart-operator-lever-open-decision.zh_cn.md` — operator 恢复杠杆(cap 归属)
+- `docs/notes/2026-07-13-agent-creator-pty-authority-gap.zh_cn.md` — 创建者进不了自己 agent 的 PTY(operator 恢复杠杆的前提)
