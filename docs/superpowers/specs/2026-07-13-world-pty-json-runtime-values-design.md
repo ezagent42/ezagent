@@ -31,8 +31,8 @@ The intended outcomes are:
 - PID values become readable strings such as `#PID<...>`;
 - the same boundary also safely handles future Port, Reference, function, or
   other runtime-only diagnostic values;
-- existing JSON-safe strings, numbers, booleans, and `nil` retain their native
-  JSON types;
+- existing strings and numbers retain their native JSON types, while the
+  current atom normalization (including booleans and `nil`) remains unchanged;
 - existing recursive handling of URI, date/time, struct, map, list, and atom
   values remains unchanged;
 - no lifecycle, PTY, dispatch, CapBAC, or agent readiness behavior changes.
