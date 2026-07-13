@@ -183,10 +183,9 @@ defmodule Ezagent.Domain.Pty.RespawnPolicy do
     if count == max_failures() do
       Logger.error(
         "PtyServer: PREFERRED COMMAND WRITTEN OFF for #{URI.to_string(agent_uri)} after " <>
-          "#{count} failed starts. The agent keeps running its `cmd_fallback` command from now " <>
-          "on — a DURABLE degradation, not a blip, whose cost is defined by the plugin that " <>
-          "supplied the fallback. Fix the cause and restart the agent " <>
-          "(Ezagent.Domain.Pty.restart/1) to let the preferred command be tried again."
+          "#{count} failed starts — the preferred command will NOT be retried at startup. " <>
+          "This is a DURABLE degradation, not a blip. Fix the cause and restart the agent " <>
+          "(Ezagent.Domain.Pty.restart/1) to let it be tried again."
       )
 
       :telemetry.execute([:ezagent, :pty, :primary_written_off], %{failures: count}, %{
