@@ -167,9 +167,35 @@ defmodule Ezagent.Domain.Pty.RespawnPolicy do
       {:halted, info}
     else
       store(key, state)
+      maybe_announce_write_off(agent_uri, mode, primary_failures)
       :ok
     end
   end
+
+  # The transition where the PREFERRED command is written off is a real, DURABLE
+  # degradation — the agent keeps working, but on the fallback, and (for cc) that
+  # means it will no longer resume its conversation across restarts. It is exactly
+  # the regression `--continue` existed to prevent, so it must never happen QUIETLY.
+  # `status/1` also reports `degraded?: true` from here on.
+  defp maybe_announce_write_off(%URI{} = agent_uri, :primary, count) do
+    if count == max_failures() do
+      Logger.error(
+        "PtyServer: PREFERRED COMMAND WRITTEN OFF for #{URI.to_string(agent_uri)} after " <>
+          "#{count} failed starts. The agent will keep running its FALLBACK command from now " <>
+          "on — for cc that means a FRESH conversation on every restart, no resume. This is a " <>
+          "durable degradation, not a blip: fix the cause and restart the agent " <>
+          "(Ezagent.Domain.Pty.restart/1) to let the preferred command be tried again."
+      )
+
+      :telemetry.execute([:ezagent, :pty, :primary_written_off], %{failures: count}, %{
+        agent_uri: agent_uri
+      })
+    end
+
+    :ok
+  end
+
+  defp maybe_announce_write_off(_agent_uri, :fallback, _count), do: :ok
 
   @doc """
   The child for `agent_uri` survived `healthy_after_ms/0` running `mode`'s command

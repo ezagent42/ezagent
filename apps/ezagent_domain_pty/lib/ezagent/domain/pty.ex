@@ -111,7 +111,21 @@ defmodule Ezagent.Domain.Pty do
   # lookup and the terminate. Re-look-up and stop the replacement too, rather than
   # reporting success over a still-running child. Bounded — the window is tiny, and a
   # terminated DynamicSupervisor child is not restarted, so this converges at once.
-  defp terminate_until_gone(_agent_uri, 0), do: :ok
+  defp terminate_until_gone(%URI{} = agent_uri, 0) do
+    # Giving up must not be SILENT: the caller is about to have the crash history
+    # cleared out from under a server that is still running.
+    if alive?(agent_uri) do
+      require Logger
+
+      Logger.error(
+        "PtyServer: stop/1 could NOT terminate #{URI.to_string(agent_uri)} — a replacement " <>
+          "server kept appearing. Its respawn history is being cleared anyway; if it is " <>
+          "crash-looping it now has a clean slate. Investigate."
+      )
+    end
+
+    :ok
+  end
 
   defp terminate_until_gone(%URI{} = agent_uri, attempts_left) do
     case lookup(agent_uri) do
@@ -119,10 +133,10 @@ defmodule Ezagent.Domain.Pty do
         :ok
 
       {:ok, pid} ->
-        case DynamicSupervisor.terminate_child(EzagentDomainPty.Supervisor, pid) do
-          :ok -> terminate_until_gone(agent_uri, attempts_left - 1)
-          {:error, :not_found} -> terminate_until_gone(agent_uri, attempts_left - 1)
-        end
+        _ = DynamicSupervisor.terminate_child(EzagentDomainPty.Supervisor, pid)
+        # Re-check rather than trust the return: `:ok` and `{:error, :not_found}` are
+        # both consistent with a REPLACEMENT server now being registered for this agent.
+        terminate_until_gone(agent_uri, attempts_left - 1)
     end
   end
 
