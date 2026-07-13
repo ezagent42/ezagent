@@ -1,0 +1,114 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>dev-together 计划 — 2026-07-13</title>
+<style>
+  body{font:14px/1.6 -apple-system,"Segoe UI",Roboto,"PingFang SC","Microsoft YaHei",sans-serif;color:#1a1a1a;max-width:1100px;margin:24px auto;padding:0 20px;background:#fff}
+  h1{font-size:24px;border-bottom:3px solid #059669;padding-bottom:8px}
+  h2{font-size:19px;margin-top:30px;color:#047857;border-left:4px solid #059669;padding-left:10px}
+  h3{font-size:15px;margin-top:18px;color:#374151}
+  table{border-collapse:collapse;width:100%;margin:12px 0;font-size:13px}
+  .scroll{overflow-x:auto}
+  th,td{border:1px solid #d1d5db;padding:7px 9px;text-align:left;vertical-align:top}
+  th{background:#ecfdf5;font-weight:600}
+  tr:nth-child(even){background:#f9fafb}
+  .meta{background:#f0fdf4;border:1px solid #bbf7d0;border-radius:8px;padding:10px 16px;margin:12px 0;font-size:13px}
+  .demo{background:#eff6ff;border:1px solid #bfdbfe;border-radius:8px;padding:12px 16px;margin:14px 0}
+  .gate{background:#fffbeb;border:1px solid #fde68a;border-radius:8px;padding:12px 16px;margin:14px 0}
+  .chain{font-family:ui-monospace,SFMono-Regular,Menlo,monospace;font-size:13px;line-height:1.9;white-space:pre;overflow-x:auto;background:#f8fafc;border:1px solid #e2e8f0;border-radius:8px;padding:12px 16px;margin:10px 0}
+  .redline{background:#fef2f2;border-left:3px solid #ef4444;padding:8px 14px;margin:8px 0}
+  code{background:#f1f5f9;padding:1px 5px;border-radius:4px;font-size:12px}
+  .lead{color:#047857;font-weight:600}.note{color:#6b7280}
+  ol.steps{margin:6px 0 6px 22px}ol.steps li{margin:4px 0}
+  .tag{display:inline-block;background:#ecfdf5;border:1px solid #a7f3d0;border-radius:10px;padding:0 8px;font-size:11px;color:#047857;margin-left:4px}
+</style>
+</head>
+<body>
+<h1>dev-together 计划 · 2026-07-13</h1>
+<div class="meta">
+<b>week goal（W29）:</b> 实现 ezagent 自举 —— 收敛为<b>一个统一验收 demo</b>，本周至少完整跑通一次（不要求稳定）。<br>
+<b>本日头号:</b> 在 canary 上跑通自举 demo 的第一段 —— <b>平台 agent（cc/codex）可被正常调用/真回话</b>，这是全链入口。<br>
+<b>timezone:</b> GMT+8 · <b>lead:</b> 林懿伦（allenwoods） · <b>coordinator:</b> allenwoods + CC
+</div>
+
+<h2>§0 本周大局 — 统一 demo（W29 验收）</h2>
+<div class="demo">
+<b>一条端到端链，把「在 ezagent 里开发 ezagent」和「hello/kanban 作为真实产品被用」拧成一次验收：</b>
+<div class="chain">登录官网（magic-link）
+   └─→ 进 hello（入口 / concierge）
+          └─→ hello 连到 kanban socialware（开发任务板）
+                 └─→ 在 kanban 上把一个真实 ezagent 开发任务
+                       派给一个「平台托管的开发 agent」（cc / codex）
+                          └─→ agent 产出真实 PR
+                                 └─→ 过 CI + review + 合并 + 部署
+                                        └─→ kanban 上看到任务流转 → 三面绿</div>
+= <b>dev-loop</b>（在 ezagent 里开发 ezagent）+ <b>产品 dogfood</b>（hello / kanban 作为真实 socialware 被 install / use / uninstall）+ <b>两者结合</b>（用 kanban 派开发任务）。<br>
+<b>验证顺序:</b> 从 agent 可被正常调用起（gaga）→ 逐环节由 jjkysy 用 kanban 看板监控 + 测试验收。<br>
+<span class="note">现状：这条 demo 目前一次都还没跑通；本周先跑通一次，再谈去脆。W28 头号 canary 目标能力已由 #1332/#1333 就位。</span>
+</div>
+
+<h2>§1 本日头号 — 自举第一段（agent 可调用 / 真回话）</h2>
+<p>agent 若不能被 kanban 派活、不能回话，下游整条 demo（hello 连 kanban、派任务、产 PR、看板流转）都无从开始。<b>本日先在 canary 实证这一段。</b></p>
+
+<h2>§2 按开发者规划</h2>
+<p class="note">每行 = 一个自含闭环 track（human-dev only）。agent 不出现在 plan 中；coordinator = allen + CC 负责分支合并 / canary 部署 / demo 集成粘合，不占 track 行。</p>
+<div class="scroll"><table>
+<tr><th>开发者</th><th>本日 track</th><th>闭环 / 依赖</th><th>demo 环节</th></tr>
+<tr>
+  <td><b>gagameow</b><br>黄佳佳</td>
+  <td><b>agent 方向配置 + 验证自举第一步</b>：配置平台托管的开发 agent（能被 kanban 派活、能产 PR），<b>canary 上 #1294 @orchestrator 真回话验证</b>（#1310 是防御性 hotfix，不替代 canary 实测）。<span class="tag">全链入口</span></td>
+  <td>前置于整条 demo；agent-browser 截图 + PTY join 日志取证</td>
+  <td>自举 dev-loop 入口</td>
+</tr>
+<tr>
+  <td><b>jjkysy</b><br>姚升悦</td>
+  <td><b>整体进度监控 + 测试，以 kanban socialware 为抓手</b>：把 demo 各环节任务放进 kanban（dogfood 看板），跟踪进度 + 跨环节测试验收把关。</td>
+  <td>依赖各环节产出；kanban 作为团队看板</td>
+  <td>自举 × socialware</td>
+</tr>
+<tr>
+  <td><b>zhaomaota97</b><br>张宁</td>
+  <td><b>官网 + hello</b>：官网首程（登录 → 进站）+ hello 入口 + <b>hello 连接 kanban</b>；#1134 concierge/public-read 顺带。</td>
+  <td>hello 连 kanban 是 demo 的产品面；依赖 agent 可回话</td>
+  <td>socialware / 官网</td>
+</tr>
+<tr>
+  <td><b>zyli-developer</b><br>李震宇</td>
+  <td><b>UI 优化 + bug 修复</b>：修 demo journey 的 UI bug + 优化（#1320 class listings、#1327 卸载 UI，+ 走查发现的）。</td>
+  <td>修各环节 UI 缺陷</td>
+  <td>socialware / 官网</td>
+</tr>
+</table></div>
+<p class="note"><b>设计输入（非 track 行）:</b> <b>ruihuachen-designer</b>（陈瑞华，designer）—— <b>UX 设计（官网体验为主）</b>。designer 不占 track 行、不改代码；设计输入走 Feishu，作为 demo journey 的官网体验参照。</p>
+
+<h2>§3 冲突图（并行 / 串行）</h2>
+<div class="scroll"><table>
+<tr><th>任务</th><th>拥有面 / 文件</th><th>冲突</th><th>并行 / 串行</th></tr>
+<tr><td>zhaomato hello / 官网</td><td><code>world</code>（hello 入口、官网首程、hello→kanban 连接）</td><td>与 zyli 同触 <code>world</code></td><td>按 world-coordination 串行</td></tr>
+<tr><td>zyli demo UI polish</td><td><code>world</code>（各环节 UI、#1320/#1327 卸载 UI）</td><td>与 zhaomato 同触 <code>world</code></td><td>按 world-coordination 串行</td></tr>
+<tr><td>jjkysy kanban 看板</td><td>kanban socialware 插件面</td><td>与 world 面不重叠</td><td>可并行</td></tr>
+<tr><td>gaga agent / orchestrator config</td><td>agent / orchestrator 配置面（canary）</td><td>与产品面不重叠</td><td>可并行（且为前置）</td></tr>
+</table></div>
+<div class="gate">
+<b>world 序列化（zhaomato + zyli）:</b> 两条 track 都触 <code>world</code> → 适用 <code>docs/guide/world-coordination.md</code>——<b>声明 surface 归属、串行化 <code>styles.css</code>、遵守 layout gate</b>。hello 入口 / 官网首程归 zhaomato；各环节 UI 缺陷 / 卸载 UI 归 zyli。<br>
+<b>jjkysy = kanban 插件、gaga = agent/orchestrator 配置</b>——与 world 面及彼此互不重叠，可全程并行。
+</div>
+
+<h2>§4 handoff 顺序</h2>
+<ol class="steps">
+<li><b>gaga 先跑通「agent 可被调用 / 真回话」（canary 实测）</b> —— 全链入口，未通前下游 demo 无法链测。</li>
+<li>gaga 宣布 agent 可回话后 → zhaomato 的 hello→kanban 连接与 jjkysy 的 kanban 派活面变为<b>可链测</b>。</li>
+<li>zhaomato 官网首程 + hello 连 kanban（产品面）→ jjkysy 在 kanban 上派一个真实开发任务给平台 agent。</li>
+<li>agent 产 PR → coordinator 走 CI / review / 合并 / 部署 → jjkysy 在 kanban 看到任务流转 → 三面绿。</li>
+<li>zyli 全程修各环节 UI 缺陷（并行）；ruihua 提供官网体验 UX 设计输入（Feishu）。</li>
+</ol>
+<p class="note">coordinator（allen + CC）：#1361 已合 main；socialware composition-cap 车道合并中；负责 canary 部署（含 PAT pepper）+ demo 集成粘合。</p>
+
+<h2>§5 红线</h2>
+<div class="redline"><b>canary 前不宣布修好。</b> 任何「agent 真回话 / demo 跑通」的通报，须有 <b>canary 实测证据</b>（agent-browser 截图 + PTY join 日志 / 真实 PR 链接 + kanban 流转截图）后才发——机器闸 CI 绿 ≠ 产品验证。</div>
+
+<p style="margin-top:24px;color:#9ca3af;font-size:12px">本计划面向全体开发者。week goal 见 <code>docs/together/2026-W29/weekly-goals.md</code>。</p>
+</body>
+</html>

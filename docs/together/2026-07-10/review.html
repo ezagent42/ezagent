@@ -1,0 +1,176 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>dev-together 回顾 — 2026-07-10 工作窗（含周末）</title>
+<style>
+  body{font:14px/1.6 -apple-system,"Segoe UI",Roboto,"PingFang SC","Microsoft YaHei",sans-serif;color:#1a1a1a;max-width:1100px;margin:24px auto;padding:0 20px;background:#fff}
+  h1{font-size:24px;border-bottom:3px solid #2563eb;padding-bottom:8px}
+  h2{font-size:19px;margin-top:32px;color:#1e40af;border-left:4px solid #2563eb;padding-left:10px}
+  h3{font-size:15px;margin-top:20px;color:#374151}
+  table{border-collapse:collapse;width:100%;margin:12px 0;font-size:13px}
+  .scroll{overflow-x:auto}
+  th,td{border:1px solid #d1d5db;padding:6px 9px;text-align:left;vertical-align:top}
+  th{background:#eff6ff;font-weight:600}
+  tr:nth-child(even){background:#f9fafb}
+  .num{text-align:right;font-variant-numeric:tabular-nums}
+  .kpi{display:inline-block;margin:6px 14px 6px 0;padding:10px 16px;background:#f1f5f9;border-radius:8px}
+  .kpi b{font-size:22px;color:#2563eb;display:block}
+  .big{background:#fffbeb;border:1px solid #fde68a;border-radius:8px;padding:12px 16px;margin:14px 0}
+  .inc{background:#fef2f2;border:1px solid #fecaca;border-radius:8px;padding:10px 16px;margin:12px 0}
+  .inc h3{margin-top:4px;color:#b91c1c}
+  .good{background:#f0fdf4;border:1px solid #bbf7d0;border-radius:8px;padding:10px 16px;margin:12px 0}
+  blockquote{margin:10px 0;padding:8px 14px;background:#f8fafc;border-left:3px solid #94a3b8;color:#475569}
+  code{background:#f1f5f9;padding:1px 5px;border-radius:4px;font-size:12px}
+  .tag{display:inline-block;padding:1px 7px;border-radius:10px;font-size:11px;font-weight:600}
+  .t-cap{background:#e0e7ff;color:#3730a3}.t-dep{background:#fef3c7;color:#92400e}.t-orch{background:#dbeafe;color:#1e40af}.t-cc{background:#fae8ff;color:#86198f}.t-prod{background:#dcfce7;color:#166534}.t-doc{background:#f3e8ff;color:#6b21a8}.t-spec{background:#fee2e2;color:#991b1b}
+</style>
+</head>
+<body>
+<h1>dev-together 回顾 · 2026-07-10 工作窗（含 07-11 / 07-12 周末）</h1>
+<p>数据窗口：<code>merged ≥ 2026-07-10</code> → 07-12（GMT+9）。07-10 是唯一有 <code>plan.md</code> 的计划日，周末无 plan、被一次 <b>lead 主导的 cbac Phase-3 冲刺</b>接管。本回顾面向全体开发者：呈现产品大局、统计团队效能、诚实复盘头号目标滑动与方法教训。</p>
+
+<h2>指标速览</h2>
+<div>
+<span class="kpi"><b>42</b>PR 合并（32 落 main · 10 汇 cbac 任务分支）</span>
+<span class="kpi"><b>1</b>范式落地（cbac Phase-3 自存储）</span>
+<span class="kpi"><b>2</b>周末 off-plan spec 车道（impl 中）</span>
+<span class="kpi"><b>4</b>贡献者（+2 agent 车道）</span>
+</div>
+<ul>
+<li><b>cbac Phase-3 自存储范式落地</b>：授权从"发行方→接收方 dispatch"翻转为 <b>grantee 自吸收（self-store absorption）+ I12 paradigm-lock</b>，冷目标能力交接打通，S1–S8 + e2e + N1 bypass 回归，走完整 stacked-PR-into-task-branch 模型。</li>
+<li><b>@orchestrator 真回话链在周末被真正推进——但根因与 #1294 正交</b>：#1294 修 create_session 结构解耦；"@mention 收得到"是被 <b>#1333 tengu_harbor 自动物化</b> + <b>#1332 orchestrator MCP wiring / cc-deepseek flavor</b> 解开的。</li>
+<li><b>两条 off-plan agent spec 车道进 impl 并诚实 return</b>：socialware 组合关系授权 + orchestrator Session-Config API，均 codex 多轮对抗评审、均未达机器返回闸、均未自宣 READY——把裁定交回 lead。</li>
+</ul>
+
+<h2>大局</h2>
+<p>07-10 <code>plan.md</code> 的头号目标是 <b>在 canary 实测 #1294 create_session 根因修复，让"@orchestrator 真回话"这条困扰一周的链在真实部署上验证为真绿</b>，并把两条结构线（AgentRuntime 控制面边界 SPEC + cc-headless 改造）移交 gaga。<b>但计划被周末接管</b>：07-11/07-12 无 plan，窗口主量是 allen 独力推的 cbac Phase-3 自存储范式 + 一批 deploy/seed/orchestrator/cc-deepseek/PTY 加固。</p>
+<p><b>头号 canary 目标未按 plan 达成</b>（见风险节 A），但 plan 的红线"②达成前不发'修好'通报"<b>被遵守</b>——没有出现虚假的"修好"通报，这是成熟信号。W28 三大目标里，<b>①socialware 生命周期 + 官网 flow</b> 以 #1312 hello 可见性控制 + composition-cap 车道推进；<b>②自举三面全绿</b> 以 boot-empty-credential gate（#1330）+ keyless CI（#1344）+ CI re-tier（#1350）加固；<b>③收敛 agent 控制面边界</b> 以急症加固（#1329 install-lane 解耦）推进，但结构线 SPEC 本窗口未落地。</p>
+
+<h2>§1 本窗口工作统计（合入 main，按主题分组）</h2>
+<blockquote><b>口径</b>：42 PR 合并，<b>10 个合入 <code>feat/cbac-done-right</code> 任务分支</b>（cbac S1–S8 stacked 子 PR），<b>32 个落 main</b>。cbac Phase-3 是<b>一个任务</b>，经 10 子 PR 汇任务分支后由 <code>#1356</code> <b>一次落 main</b>——按 handoff-standard merge model，不按 10 独立特性计。</blockquote>
+
+<h3><span class="tag t-cap">cbac Phase-3 自存储范式</span>（allen · 周末主量 · 一个任务）</h3>
+<div class="scroll"><table>
+<tr><th>PR</th><th>落点</th><th>作用</th></tr>
+<tr><td>#1336–#1354</td><td>任务分支</td><td><b>S1</b> issue+provenance seam · <b>S2</b> authorize-at-issue · <b>S3</b> verified self-store absorption · <b>S4</b> verify cap load boundaries · <b>S5</b> persist issued recipe bindings · <b>S6</b> self-store recipe artifacts · <b>S7</b> cold-target handoffs（+ follow-up role-model MCP context）· <b>S8</b> validate e2e（含 #1335 OTP index/baseline CI）</td></tr>
+<tr><td><b>#1356</b></td><td><b>main</b></td><td><b>cbac-done-right Phase-3 cap self-store（ISSUE/STORE/VERIFY + I12 paradigm-lock）</b></td></tr>
+<tr><td>#1358 / #1359</td><td>main</td><td>docs：sync 模型 + N1 bypass 回归 + team handoff · cbac-grant-prompt paste-before-you-code checklist</td></tr>
+<tr><td>#1339 / #1340 / #1346 / #1344</td><td>main</td><td>flake/CI 卫生：drain fire-and-forget（#108-class）· missing-cred spawn skips · transient identity-read <b>fail-loud</b> · keyless full-suite 绿</td></tr>
+</table></div>
+
+<h3><span class="tag t-orch">头号链 — create_session / orchestrator 真回话</span>（gaga + allen）</h3>
+<div class="scroll"><table>
+<tr><th>PR</th><th>开发者</th><th>作用</th></tr>
+<tr><td>#1294</td><td>gaga</td><td>docs forensics：超时 + orchestrator 哑掉根因/契约破坏点（代码修复 07-09 已落）</td></tr>
+<tr><td>#1310</td><td>gaga</td><td><b>防御性 hotfix</b>：默认 session 只装 chat 不装 orchestrator（因启动仍 flake；<b>明确不替代 #1294 canary 实测</b>）</td></tr>
+<tr><td>#1317 / #1318</td><td>gaga</td><td>stop silent socialware install success（`:ready` 不撒谎）· stabilize presence read-receipts e2e</td></tr>
+<tr><td>#1326</td><td>gaga</td><td><b>链 C</b>：凭证缺失时跳过角色槽、不建无声僵尸（PR-1+PR-2）</td></tr>
+<tr><td>#1329</td><td>allen</td><td>decouple agent authz from session-create/install lane（R2–R5）</td></tr>
+<tr><td>#1332</td><td>allen</td><td>wire orchestrator MCP-channel → <code>.mcp.json</code> + 切 orchestrator 到 cc-deepseek flavor</td></tr>
+<tr><td>#1333</td><td>allen</td><td><b>auto-materialize <code>tengu_harbor</code></b> 使 cc agent 能 RECEIVE @mentions（← 真正解开"收不到"那一面，根因与 #1294 正交）</td></tr>
+<tr><td>#1331</td><td>allen</td><td>harden cc PTY（bounded supervisor / respawn --resume / 未知对话框 loud-fail）</td></tr>
+</table></div>
+
+<h3><span class="tag t-dep">deploy / seed / boot 加固</span> &nbsp; <span class="tag t-cc">cc backend / bridge</span> &nbsp; <span class="tag t-cap">auth / membership</span>（allen）</h3>
+<div class="scroll"><table>
+<tr><th>PR</th><th>作用</th></tr>
+<tr><td>#1334</td><td>no-clobber reseed for stale app definitions（boot 暴露分叉，operator --force 迁移）</td></tr>
+<tr><td>#1330</td><td>gate：boot+seed 须在<b>空凭证库</b>下成功且不启带凭证 agent</td></tr>
+<tr><td>#1343</td><td>static arch gate：禁裸 <code>__DIR__</code> 运行时资产解析（#1325 另一半）</td></tr>
+<tr><td>#1350</td><td>CI re-tier：full-suite 移出 every-PR + block deploy dispatch + rename dispatch job（supersedes #1349）</td></tr>
+<tr><td>#1324</td><td>DeepSeek backend for cc flavor（pty + headless，API-key 认证，无 OAuth）</td></tr>
+<tr><td>#1325 / #1311</td><td>ship esr-bridge sidecar in release + 运行时解析路径 · cc-headless 继承宿主 Claude login（补 `host_login_dir/0`，#1309）</td></tr>
+<tr><td>#1306 / #1307</td><td>magic-link 用请求 host（allowlisted）· user-creation 补 workspace membership（修 go-live <code>member_uris</code> 空 → 6 用户看不到 workspace）</td></tr>
+</table></div>
+
+<h3><span class="tag t-prod">产品面</span>（zhaomato / jjkysy）&nbsp; <span class="tag t-doc">流程/文档</span></h3>
+<div class="scroll"><table>
+<tr><th>PR</th><th>开发者</th><th>作用</th></tr>
+<tr><td>#1312</td><td>zhaomato</td><td>hello：visible control + sharer/publisher agents + v2 seed page + rebuild guide（本窗口唯一合入）</td></tr>
+<tr><td>#1298</td><td>jjkysy</td><td><b>kanban 改版</b>：插件页面注册表化 + socialware 纯化 + e2e 四段（连贯全链路证据 26 件，分层确定句结论）</td></tr>
+<tr><td>#1293 / #1292 / #1304</td><td>jjkysy</td><td>#1255 三命名裁定 · 项目讨论 skill re-bootstrap · dev-together W28 方法增量 + owner-guard 名单制</td></tr>
+<tr><td>#1302 / #1305</td><td>allen</td><td>0709 close/review + 0710 plan + skill method-deltas · attribution by PR-creator + track handoff（不计产品量）</td></tr>
+</table></div>
+
+<h3><span class="tag t-spec">周末 off-plan agent spec 车道</span>（<b>未合入 main</b>，impl 分支）</h3>
+<div class="scroll"><table>
+<tr><th>车道</th><th>impl 分支 @SHA</th><th>return 状态</th></tr>
+<tr><td><b>socialware composition-cap v5</b><br>组合关系→成员级窄 operate cap，走既有 owner gate，不新造授权原语；foreign target → fail-closed → participate-only</td><td><code>feat/socialware-composition-cap</code> @ <code>d7ebcd39b</code>（6 commits，0 behind / 6 ahead）</td><td><b>out_of_scope</b>：机器闸未达（无 PR/无 CI URL；<code>ci.local</code> exit 2 = 既有并发 seed flake，隔离重跑 14/0 绿）；<b>未自宣 READY</b></td></tr>
+<tr><td><b>orchestrator Session-Config API v4</b><br>单域边界 <code>execute/…</code> + 薄投影 MCP/HTTP/CLI/World + 版本化 HMAC PAT</td><td><code>feat/orchestrator-session-config</code> @ <code>9820a3044</code>（8 commits，8 ahead / 0 behind）</td><td><b>deferred</b>：机器闸开（无 PR-head CI、须 post-merge canary、须 rebase 核 main freshness）；<b>未自宣 READY</b></td></tr>
+</table></div>
+
+<h2>§2 台账对账 + 效能</h2>
+<div class="scroll"><table>
+<tr><th>问题</th><th>答案</th></tr>
+<tr><td>plan.md 里有几条 track？</td><td>6 条人类 track（allen lead · gaga 头号+2 结构线 · zhaomato · zyli · jjkysy · ruihua）</td></tr>
+<tr><td>到了几份 return，几份迟到？</td><td>on-plan <b>1</b>（kanban-rework-final，on_time）+ 周末 off-plan <b>2</b>（composition-cap out_of_scope · session-config deferred）；<b>迟到 0</b></td></tr>
+<tr><td>几份进了 stack.md？</td><td><b>无 stack.md</b> —— 此问无答案 = 流程缺口（见方法增量 D1）</td></tr>
+<tr><td>几个合入 main？</td><td>42 PR 合并；<b>32 落 main</b>，10 入 cbac 任务分支。落 main：allen 22 · gaga 5 · jjkysy 4 · zhaomato 1</td></tr>
+<tr><td>superseded / out-of-scope / deferred？</td><td>superseded：#1349→#1350 · #1338→#1339 · #1347 收编入各 S PR。out_of_scope：composition-cap return。deferred：session-config return + AgentRuntime 边界 SPEC（结构线未落地）</td></tr>
+<tr><td>相关 GitHub PR 状态？</td><td>合 main 32；有意 open：#1360/#1357/#1355（socialware core-gap→Allen 拍板）· #1301（dealscout 五段）· #1327/#1320（zyli 收口）· #1296/#1297/#1299（CapBAC/agent-layer/admin-gate 待拍板）· #1134/#1256/#1287/#1148 等</td></tr>
+</table></div>
+
+<h3>按开发者（口径：能力交付，非 PR 数排名）</h3>
+<div class="scroll"><table>
+<tr><th>开发者</th><th>feishu</th><th>本窗口交付</th><th>summary</th></tr>
+<tr><td>allenwoods</td><td>林懿伦（lead）</td><td>cbac Phase-3 自存储范式（10 子 PR + e2e）+ deploy/seed/orchestrator/cc-deepseek/PTY 加固 + auth/membership 修复</td><td>独力扛周末冲刺；一次完整跑通 stacked-PR merge model</td></tr>
+<tr><td>gagameow</td><td>黄佳佳</td><td>链C #1326 · stop-silent-install #1317 · presence e2e #1318 · 默认 session plain hotfix #1310</td><td>头号链加固扎实；结构线 SPEC 未落地（结转）</td></tr>
+<tr><td>jjkysy</td><td>姚升悦</td><td>kanban 改版 #1298 收口 + #1293/#1292/#1304</td><td>产品收口 + 深层缺口发现（socialware core-gap → #1357）</td></tr>
+<tr><td>zhaomaota97</td><td>张宁</td><td>hello 可见性控制 + v2 seed + rebuild guide #1312</td><td>前端/官网能力面；live E2E transcript 待补</td></tr>
+<tr><td>zyli-developer</td><td>李震宇</td><td>canary 走查（无 return/合入；#1320/#1327 仍 open）</td><td>需确认状态 + 补 return</td></tr>
+</table></div>
+
+<h3>效能观察</h3>
+<ul>
+<li><b>头号目标滑动，明记不掩盖</b>：42 PR 合并 ≠ 计划头号达成。canary 实测未归档 transcript；能力被另一条根因（tengu_harbor）推进——"急症根因"与"能力可用"是两个根因，须各自 canary 证。</li>
+<li><b>红线被遵守</b>：orchestrator 链"达成前不发修好通报"守住——防御性 hotfix #1310 诚实标注"不替代 canary 实测"。</li>
+<li><b>merge model 一次完整跑通</b>：cbac 10 子 PR 全汇任务分支、lead 一次落 main——handoff-standard 的分支模型在大改造上验证有效。</li>
+</ul>
+
+<h2>§3 风险 / 事故 / 结转（诚实复盘）</h2>
+
+<div class="inc">
+<h3>风险 A — 头号 canary 目标未达成，且"orchestrator 真回话"是被另一条根因解开的</h3>
+<p><b>经过</b>：plan 头号 = canary 实测 #1294 让 @orchestrator 真回话。窗口内<b>无 canary transcript 归档</b>（e2e 目录只有 phase3-cbac 证据）。gaga 反而插入防御性 hotfix #1310（默认 session 只装 chat），因 orchestrator 启动仍 flake。周末真正解开"收得到 @mention"的是 <b>#1333 tengu_harbor</b> + <b>#1332 orchestrator MCP/cc-deepseek flavor</b>——<b>根因与 #1294（create_session 解耦）正交</b>。</p>
+<p><b>教训</b>：一次真正的 #1294 canary 实测本会暴露 orchestrator 仍哑（堵点在 tengu_harbor，非 create_session）。头号 canary <b>结转</b>——能力现已由 #1332/#1333 就位，gaga 补一次真回话 canary transcript 即可收口。</p>
+</div>
+
+<div class="inc">
+<h3>风险 B — 移交的两条结构线（AgentRuntime 边界 SPEC + cc-headless 改造）未在窗口落地</h3>
+<p><b>经过</b>：07-10 移交 gaga 的 W28③ 结构线，窗口内未产出合入版 SPEC（#1256/#1297 仍 open）；cc-headless 由 allen 侧以 #1311/#1324/#1332 分片推进。<b>结转</b>：AgentRuntime 边界 SPEC + <code>agent_runtime_boundary</code> gate 为 gaga 次日 current_track。</p>
+</div>
+
+<div class="good">
+<h3>正向 C — 两份周末 return 未达机器闸，但证据出处标注到位</h3>
+<p>composition-cap（<code>ci.local</code> exit 2 = 既有并发 seed flake，隔离重跑绿）与 session-config（无 PR-head CI、须 post-merge canary）<b>均未达机器闸、均未自宣 READY</b>，把裁定交回 lead。两份 return 把证据出处标注到位（"prior-run evidence, NOT re-executed"、"recorded as LOCAL, NOT remote PR CI"）——正是对"凭空自证"风险的正确响应，是本窗口最重要的方法产出。</p>
+</div>
+
+<blockquote><b>结转登记</b>：kanban 大脑层（#1311 已修 host-login，待补真脑闭环 e2e）· socialware 全生命周期验证（持续结转，composition-cap 推进了组合授权一支）· <code>admin?/1</code> 业务态清理（#1299 待 Allen 合入）· CapBAC vs RBAC（#1296）/ agent-layer 边界（#1297）待拍板。</blockquote>
+<blockquote><b>roster 变动</b>：FatNine（戴明，后端）2026-07-13 退出 ezagent 开发，已从 roster 与 track 移除。</blockquote>
+
+<h2>§方法增量（促进，不只收集）</h2>
+<p>三源：两份周末 return 的 Method-friction + kanban-rework-final + 窗口协作实况。每条给出规则映射 + 处置（<b>skill 改动</b> vs <b>process-debt</b>）。</p>
+<ol>
+<li><b>D1 无 stack.md → 台账靠 PR 反推</b>（process-debt，owner lead）：常态走直接-PR、returns 稀，stack.md 事实停用。→ 建议把 accounting 的"stack 计数"降为可选、把<b>双源对账（returns/ ∪ GitHub 合并）</b>升为必跑。</li>
+<li><b>D2 spec 源须绑完整 commit SHA，不绑"v5"/名字</b>（<b>skill 改动</b>）：composition-cap spec 中途 v4→v5、HEAD 从中间 commit 更正。→ 写进 handoff-standard「Required-reading」——spec 引用 = 分支@完整SHA，返回核 tree 携带该文件。</li>
+<li><b>D3 "no core global flip" = LOCKED decision，须显式钉死</b>（<b>skill 改动</b>）：0a(b) core 全局翻转被提出后又 descope；无 LOCKED 极易在 core 过度伸手。→ touches CapBAC/core 的 handoff 必列 "Locked decisions / must-not-do" 节。</li>
+<li><b>D4 phased-handoff target-branch 一次性审查 ≠ 默认机器闸</b>（<b>skill 改动</b>）：无 PR 的 target-branch 返回，DoD PR-CI/rebase/canary 变为 lead-owned。→ return.md 认可此返回态：三项机器闸标 <code>deferred(lead-owned)</code>，不视违规、不得自宣 READY。</li>
+<li><b>D5 证据须带出处；"没重跑" ≠ 绿；agent 自述 gate-绿永不替代 PR-CI</b>（<b>skill 改动</b>）：→ 扩"return 前看 PR CI 全绿"为"证据出处三条"——① 每条证据标 re-run/prior-run/read-only；② "gates green" 散文永不替代 PR-CI；③ 无 PR 时本地绿只作 local 证据、显式标 NOT remote CI。<b>本窗口核心方法产出。</b></li>
+<li><b>D6 codex-rescue relay-break</b>（process-debt）：codex 长任务会孤儿化 → 交有界可验证子步（两条车道正是切成 6/8 commits 才走通），relay 断即以 target-branch 现状对账。→ 写进 contributing/ codex 协作节。</li>
+</ol>
+<blockquote><b>卫生类</b>：<code>mix ci.local</code> 会改写 <code>pnpm-lock.yaml</code>——return 前必还原 · default-SessionTemplate 并发 seed flake（隔离重跑绿）单列独立 CI-稳定债，不归因 composition-cap。</blockquote>
+
+<h2>§次日计划建议</h2>
+<ol>
+<li><b>补头号 canary transcript</b>（gaga）：#1332/#1333 已就位，跑一次 canary"新建 session 不超时 + @orchestrator 真回话"（截图 + PTY join 日志），正式收口 07-10 头号目标。</li>
+<li><b>裁定两条周末车道</b>（lead）：审 target 分支（composition-cap <code>d7ebcd39b</code> / session-config <code>9820a3044</code>），定审查/CI 拓扑；并发 seed flake 单列 CI-稳定债。</li>
+<li><b>AgentRuntime 边界 SPEC 重启</b>（gaga）：W28③ 结构线以 SPEC + <code>agent_runtime_boundary</code> arch gate 收口（把 #1329 install-lane gate 泛化为数值度量）。</li>
+<li><b>把 D2–D5 四条 skill 改动落一个 dev-together PR</b>（lead 单写者）。</li>
+<li><b>推进 open 产品线</b>：dealscout #1301 推到可合 + socialware core-gap 决策（#1355/#1357/#1360）+ zyli #1320/#1327 收口 + zhaomato hello live E2E transcript。</li>
+</ol>
+
+<p style="margin-top:24px;color:#9ca3af;font-size:12px">本回顾面向全体开发者，仅含团队相关内容。Markdown 版见 <code>review.md</code>。台账双源已核（returns/ ∪ GitHub 合并）。</p>
+</body>
+</html>
