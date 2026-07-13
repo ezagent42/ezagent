@@ -69,6 +69,66 @@ defmodule Ezagent.Socialware.BoardProvision do
     end
   end
 
+  @default_assistant_role "kanban-assistant"
+
+  @doc """
+  拉板 —— 把一块**已存在**的板拉进 `target_session_uri`,给该 session 的 assistant 发指向
+  这块板的操作钥匙(数据跨 session 共享、板不进群、URI 寻址)。
+
+  **拉板 = 只有板主人能做**。授权检查在 call-site(这里):`caller_ctx.caller` 必须是这块板
+  的 `data_owner`(经 `CapabilityRegistry.data_owner_of/2`),否则 `{:error, :not_board_owner}`。
+  这一步必须在本层做 —— `CompositionCaps.mint_cap/4` 内部是用板主人权铸的、不自检触发者,所以
+  "只有主人能拉别人拉不了"的守卫落在这里(发现按 cap 收敛只保证看不到,不保证拉不了)。
+
+  步骤:① 授权(caller == 板主人)→ ② 拿 target session 的 `assistant_role` 成员 URI(照
+  建板同款读成员边;target 无该成员 → `{:error, :no_assistant_in_target}`)→ ③ `mint_cap`
+  发**全部操作动作**(`Ezagent.ActionSet.action_names(behavior)`)的实例精确钥匙。
+
+    * `board_uri` —— 已存在的板(数据宿主)。
+    * `target_session_uri` —— 拉进的目标 session;assistant 从它的成员边解析。
+    * `behavior` —— 操作 cap 的 ActionSet 模块(如 `Ezagent.ActionSet.Kanban`)。
+    * `caller_ctx` —— `%{caller, ...}`:发起拉板者,须 == 板主人;可选 `:assistant_role`
+      覆盖收钥匙成员的 role_name(默认 `"kanban-assistant"`)。
+
+  返回 `{:ok, %{assistant_uri, minted}}` 或 `{:error, :not_board_owner | :no_assistant_in_target | term()}`。
+  """
+  @spec pull_board(URI.t(), URI.t(), module(), map()) ::
+          {:ok, %{assistant_uri: URI.t(), minted: [Ezagent.Capability.t()]}} | {:error, term()}
+  def pull_board(%URI{} = board_uri, %URI{} = target_session_uri, behavior, caller_ctx)
+      when is_atom(behavior) and is_map(caller_ctx) do
+    assistant_role = Map.get(caller_ctx, :assistant_role, @default_assistant_role)
+
+    with :ok <- assert_board_owner(board_uri, behavior, caller_ctx),
+         {:ok, assistant_uri} <- resolve_target_assistant(target_session_uri, assistant_role),
+         actions = Ezagent.ActionSet.action_names(behavior),
+         {:ok, minted} <- CompositionCaps.mint_cap(assistant_uri, board_uri, behavior, actions) do
+      {:ok, %{assistant_uri: assistant_uri, minted: minted}}
+    end
+  end
+
+  # 拉板守卫:caller 必须是这块板的 data_owner(mint 内部不自检触发者,故这里把关)。
+  defp assert_board_owner(board_uri, behavior, %{caller: %URI{} = caller}) do
+    case Ezagent.CapabilityRegistry.data_owner_of(behavior, Ezagent.URI.instance(board_uri)) do
+      %URI{} = owner ->
+        if URI.to_string(owner) == URI.to_string(caller),
+          do: :ok,
+          else: {:error, :not_board_owner}
+
+      _ ->
+        {:error, :not_board_owner}
+    end
+  end
+
+  defp assert_board_owner(_board_uri, _behavior, _ctx), do: {:error, :not_board_owner}
+
+  # target session 无该 role 成员 → 优雅报 :no_assistant_in_target(别硬凑)。
+  defp resolve_target_assistant(session_uri, assistant_role) do
+    case resolve_assistant(session_uri, assistant_role) do
+      {:ok, %URI{} = uri} -> {:ok, uri}
+      {:error, _} -> {:error, :no_assistant_in_target}
+    end
+  end
+
   # 本 session 的成员边(与 CompositionCaps.read_role_members 同源:`:session` 状态切片的
   # `:members` map),`role_name == assistant_role` 的成员即收钥匙人。
   defp resolve_assistant(session_uri, assistant_role) do
