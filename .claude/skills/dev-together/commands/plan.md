@@ -5,6 +5,23 @@ Plan and scope the day's tasks so parallel work won't collide.
 **Delegate to:** **superpowers:brainstorming** (shape any fuzzy task) →
 **superpowers:writing-plans** (break the day's work down).
 
+**Canonical skeleton:** author `plan.md` from
+[../references/plan-template.md](../references/plan-template.md) (the §0–§7
+section order is fixed so the format stops drifting and `plan.html` mirrors it
+1:1). The two load-bearing sections that must never be dropped:
+
+- **§0 本周大局 — STANDING (required in EVERY plan).** The plan MUST open with it,
+  carrying three parts: the **week acceptance** (the concrete demo/goal — standing,
+  same each day until it lands) + **今日进度** (where we are against that acceptance:
+  what landed, what's next, what blocks) + **修正/变化** (deltas vs the last
+  plan/state; "无" is valid but must be stated). This is the progress-carrying
+  section — never omit it.
+- **§5 开工 prompt — one paste-ready block per human dev.** Each block gives the
+  branch, scope, required reading (skills + spec/notes), a DoD pointer, the gates
+  (`arch.scan + doc.scan + uri_query.scan + check_invariants` / `mix ci.local`),
+  and the per-task-branch + "return 前 PR CI 绿 + rebase 到 main" rule. Cross-
+  reference the full `handoff` command for tasks that carry real unknowns.
+
 **Do:**
 1. Ensure today's folder exists (`scripts/new_day.sh`).
 2. **Load the roster — don't guess who the devs are.** Read
@@ -41,9 +58,15 @@ Plan and scope the day's tasks so parallel work won't collide.
 ## Plan completeness gate
 
 Before generating handoffs or accepting returns, verify `plan.md` is not just
-the scaffold. It must include:
+the scaffold. Author from
+[../references/plan-template.md](../references/plan-template.md); it must include:
 
 - `planned_at`, lead, day deadline, timezone.
+- **§0 本周大局 (STANDING)** — the week acceptance + **今日进度** + **修正/变化**.
+  A plan that does not open with §0 (all three parts) is invalid.
+- **§5 开工 prompt** — one paste-ready kickoff block per human dev (branch, scope,
+  required reading, DoD pointer, gates, the per-task-branch / CI-green rule). A
+  plan missing the per-dev 开工 prompt is invalid.
 - One row per planned task: task id, owner/dev, branch, scope, owned
   surfaces/files, required reading, DoD artifact, deadline.
 - A conflict map: shared files/surfaces, serialization owner, and which tasks can

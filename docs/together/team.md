@@ -26,6 +26,11 @@ it exists so the long GitHub key joins to the short name plans cite.
 > **role legend:** `human-dev` gets a daily track in `plan`. `lead` runs the
 > cadence. `agent` is off-plan support — never gets a track row in the plan.
 > `designer` / others are listed for the username↔Feishu map but get no track.
+>
+> **dev-together 无唯一 owner。** 所有 skill 改动全员讨论；特殊情况由 lead
+> （`allenwoods`）admin-merge（「Protect dev-together skill」CI gate = lead-gated，
+> 不属于任何个人）。`dev-together review` 作为 `current_track`/`latest_return` 的
+> **single writer** 指的是一处机械去重的写入职责，不是对 skill 的所有权。
 
 ## Platform accounts — go-live (2026-07-06)
 
@@ -58,7 +63,7 @@ go-live reseed provisions.
 | github | background | 强项 / 适合任务（动态，据 review） |
 |---|---|---|
 | `allenwoods` (林懿伦) | 全栈工程师 · 背景 AI 博士 · 当期职责 lead programmer | 架构/地基、对抗评审驱动的大改造、跨域整合、运行时、部署。架构熟悉度最高。6-25：独力 A+B+C + RF-1..9 + kanban-as-role + py-agent + deploy。7-10 周末：独力推 cbac Phase-3 自存储范式（ISSUE/STORE/VERIFY + I12 paradigm-lock，10 stacked 子 PR + e2e）+ deploy/seed/orchestrator/cc-deepseek/PTY 加固——一次完整跑通 stacked-PR-into-task-branch merge model；强化"大改造/范式级授权重构" |
-| `jjkysy` (姚升悦) | 全栈工程师 · 背景 AI 博士 · 当期职责 lead programmer | 架构/原则把关（主动发现 kanban 原则问题）、kanban 插件原作（#964 13.5k LOC）、dev-together skill owner。适合地基/流程/评审。7-09：#1295 揪出 duplicate-fn baseline 虚高（46 实为 42），强化"记账/原则把关"。7-10：kanban 改版 #1298 收口（重做连贯全链路证据 26 件，分层确定句结论）+ #1255 三命名裁定 #1293 + 项目讨论 skill re-bootstrap #1292；发现 socialware core-gap（#1355 组合关系→窄 cap / #1360 跨 session 数据共享）驱动 lead spec #1357——强化"产品收口 + 深层缺口发现" |
+| `jjkysy` (姚升悦) | 全栈工程师 · 背景 AI 博士 · 当期职责 lead programmer | 架构/原则把关（主动发现 kanban 原则问题）、kanban 插件原作（#964 13.5k LOC）、dev-together 流程/评审贡献大。适合地基/流程/评审。7-09：#1295 揪出 duplicate-fn baseline 虚高（46 实为 42），强化"记账/原则把关"。7-10：kanban 改版 #1298 收口（重做连贯全链路证据 26 件，分层确定句结论）+ #1255 三命名裁定 #1293 + 项目讨论 skill re-bootstrap #1292；发现 socialware core-gap（#1355 组合关系→窄 cap / #1360 跨 session 数据共享）驱动 lead spec #1357——强化"产品收口 + 深层缺口发现" |
 | `gagameow` (黄佳佳) | 运维工程师 | 部署/运维、agent console（6-25）、agent 配置验证。运维 + 产品 sense。7-09：#1294 根因诊断——create_session 两链（#1223 焊接）解耦，reproduce-first 识破 decouple_test 断言反转。强化"根因诊断/架构级排查"。7-10：链C credential-skip（#1326）+ stop-silent-install-success（#1317）+ presence e2e 去脆（#1318）+ 默认 session plain 防御性 hotfix（#1310，诚实标注"不替代 canary 实测"）；注意点：AgentRuntime 边界 SPEC（移交结构线）本窗口未落地，须补 |
 | `zyli-developer` (李震宇) | 全栈工程师 | 全栈、E2E 体系、Feishu 适配/产品缺口。端到端验证强。7-09：#1276 大 PR 连环触发 4 道行锚 gate（本地只跑单 gate）→ 派发注记：大 PR/动行锚文件本地跑全套 gate |
 | `zhaomaota97` (张宁) | 全栈工程师 | 全栈、前端 json-render / hello 渲染底座。前端/渲染强。7-11：#1312 hello 可见性控制 + sharer/publisher agents + v2 seed + rebuild guide；注意点：hello live E2E "greeter+curl-llm 真回复" transcript 待补（能力依赖 orchestrator 真回话） |
