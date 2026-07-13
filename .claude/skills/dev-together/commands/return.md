@@ -33,6 +33,18 @@ Return finished work to the lead before the deadline.
    rebase/order notes).
 6. Emit the message the dev sends the lead.
 
+## Non-code (designer) deliverables
+
+A design demo / prototype / mockup / UX doc has nothing for CI to compile, so
+the machine-return-gate (step 1: green CI + rebase) **does not apply**. Follow
+[`references/designer-deliverable.md`](../references/designer-deliverable.md)
+instead: unpack (never commit the raw zip) → place in the deliverable's home
+(app-repo demo dir, or the `ezagent-design` repo for reusable brand assets) →
+add a return with **embedded screenshots** (rendered from the static HTML) as
+the substitute gate. Attribute to the designer (`Co-Authored-By` + return
+`authored-by`) when the coordinator opens the PR on their behalf. Worked
+example: `#1372`.
+
 ## Required metadata block
 
 Every return starts with a block equivalent to:
