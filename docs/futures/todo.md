@@ -12,6 +12,46 @@
 > one-line status. Conservative rule applied: RESOLVED only with concrete
 > code/PR/test evidence; otherwise left open.
 
+## 2026-07-13 — frontend CI coverage (Allen → **zyli**, planned 2026-07-14)
+
+**DEV TASK (owner: zyli, scheduled 2026-07-14).** Investigation 2026-07-13
+found the frontend has **effectively no CI coverage** and does not meet
+frontend best practice. Facts verified against `origin/main`:
+
+- **Zero JS/TS test files** (no `*.test.tsx` / `*.spec.ts` anywhere).
+- **No type check** — `tsconfig.json` exists in all 3 asset dirs
+  (`ezagent_web/assets`, `ezagent_plugin_world/assets`,
+  `ezagent_plugin_hello/assets`) but `tsc --noEmit` is invoked NOWHERE;
+  esbuild/vite strip types without checking → type errors ship silently.
+- **No ESLint / Prettier / Vitest / Testing-Library / Playwright** (no
+  configs, no devDeps). `package.json` has only `dev` + `build` (+ world's
+  manual `check:mounts`).
+- **The only frontend gates in CI**: (a) the asset bundle builds via mix
+  `esbuild`/`tailwind` (proves "it bundles", not type/behavior); (b) a few
+  **Elixir tests that static-grep the `.tsx` source** (`slot_mount_gate_test`,
+  `pty_terminal_runtime_contract_test`) — crude string assertions, not real
+  frontend tests. `pnpm check:mounts` is **not wired to any hook/CI/script
+  chain** — it runs only when a dev manually invokes it.
+- **Real cost, demonstrated:** the #1369 xterm bug (World bundle referenced
+  non-existent `window.Terminal` globals → runtime crash) **shipped to canary**
+  and was only caught by a manual agent-browser check.
+
+**Proposed phased plan (priority-ordered; do #1 first — highest value/least
+effort):**
+1. **`tsc --noEmit` typecheck in CI** — per asset dir + a CI step. Catches the
+   most bugs (incl. the xterm class) for the least setup.
+2. **ESLint** (+ `react-hooks` rules) + wire the existing `check:mounts` into a
+   CI `pnpm lint`/check step.
+3. **Vitest + Testing-Library** unit/component tests — start with the critical
+   surfaces (`PtyTerminal`, `Conversation`).
+4. A thin **Playwright E2E smoke** on the demo path (or formalize the
+   agent-browser walkthrough).
+
+Note: CI runs no pnpm/node in the ubuntu `gate` today (see `ci.yml`); a
+frontend-CI job likely belongs in `full-suite` or a new dedicated job. Relates
+to the two-layer typed-slot gate ([[reference_ezagent_static_gate_topology]],
+#1370 lockstep guard).
+
 ## 2026-07-09 plan input — 官网 session 重建 (Allen 2026-07-08)
 
 - **官网 hello session 重建** — the live golive hello sessions are stale
