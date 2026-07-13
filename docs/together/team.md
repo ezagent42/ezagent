@@ -1,6 +1,6 @@
 # Dev Together Team
 
-_Last checked: 2026-07-10_
+_Last checked: 2026-07-12_
 
 The durable roster for `dev-together`. **Row identity = `github_username`** (the
 canonical key; it joins to PR authorship). `dev-together plan` reads this file,
@@ -14,13 +14,12 @@ it exists so the long GitHub key joins to the short name plans cite.
 
 | github_username | short_name | role | feishu_name | current_track | latest_return | timezone | github_lookup |
 |---|---|---|---|---|---|---|---|
-| `zyli-developer` | zyli | human-dev | 李震宇 | canary 用户走查 + #1245 卸载 UI 截图 | `#1276 (2026-07-09)` | GMT+8 | verified org member |
-| `gagameow` | gaga | human-dev | 黄佳佳 | #1294 create_session 根因（rev6 契约恢复 + cc PTY 早产修复）— 落地 + canary 实测 | `#1294 (2026-07-09, forensics: 2026-07-09/cc-orchestrator-create-blocking-rootcause.zh_cn.md)` | GMT+8 | verified |
-| `zhaomaota97` | zhaomato | human-dev | 张宁 | 官网 hello live E2E 确认（重建工具 #1277 已合） | `#1277 (2026-07-09)` | GMT+8 | verified org member |
-| `FatNine` | fatnine | human-dev | 戴明 | 0701 Agent Console one complete prototype path | `2026-06-30/returns/fatnine-agent-console-completeness-ia.md` | GMT+8 | verified |
-| `allenwoods` | allen | lead | 林懿伦 | AgentRuntime 控制面 in-repo 边界 SPEC + gate（结构线） | n/a | GMT+9 | verified |
-| `jjkysy` | jjkysy | human-dev | 姚升悦 | #1255 三命名裁定 + dev-together method-delta 写回 | `#1295 seed-loader-dedup (2026-07-09)` | GMT+8 | verified |
-| `ruihuachen-designer` | ruihua | designer | 陈瑞华 | 0709 刷新后 nightly/stable 探索式测试 + WorldConversationTest flaky 复现 | `#1204 (2026-07-09)` | GMT+8 | verified |
+| `zyli-developer` | zyli | human-dev | 李震宇 | demo UI 优化 + bug 修复 | `#1276 (2026-07-09)`（本窗口无合入/return；#1320/#1327 仍 open） | GMT+8 | verified org member |
+| `gagameow` | gaga | human-dev | 黄佳佳 | agent 配置 + canary 自举第一步验证(agent 可回话) | `#1326 链C credential-skip (2026-07-10, 直接PR)` | GMT+8 | verified |
+| `zhaomaota97` | zhaomato | human-dev | 张宁 | 官网首程 + hello 连 kanban | `#1312 (2026-07-11, 直接PR)` | GMT+8 | verified org member |
+| `allenwoods` | allen | lead | 林懿伦 | 裁定两条周末车道（composition-cap `d7ebcd39b` / session-config `9820a3044` target-branch review + CI 拓扑）+ D2–D5 skill 增量落一个 dev-together PR + cbac Phase-4（crypto 签名/scoring，登记） | n/a | GMT+9 | verified |
+| `jjkysy` | jjkysy | human-dev | 姚升悦 | kanban socialware 进度看板 + demo 测试验收 | `kanban-rework-final (2026-07-10)` | GMT+8 | verified |
+| `ruihuachen-designer` | ruihua | designer | 陈瑞华 | 官网体验 UX 设计 | `#1204 (2026-07-09)` | GMT+8 | verified |
 | `claude` | claude | agent | — | off-plan support (orchestration / fixes on request) | n/a | — | n/a |
 | `codex` | codex | agent | — | off-plan support (bounded verifiable sub-tasks) | n/a | — | n/a |
 
@@ -58,13 +57,14 @@ go-live reseed provisions.
 
 | github | background | 强项 / 适合任务（动态，据 review） |
 |---|---|---|
-| `allenwoods` (林懿伦) | 全栈工程师 · 背景 AI 博士 · 当期职责 lead programmer | 架构/地基、对抗评审驱动的大改造、跨域整合、运行时、部署。架构熟悉度最高。6-25：独力 A+B+C + RF-1..9 + kanban-as-role + py-agent + deploy |
-| `jjkysy` (姚升悦) | 全栈工程师 · 背景 AI 博士 · 当期职责 lead programmer | 架构/原则把关（主动发现 kanban 原则问题）、kanban 插件原作（#964 13.5k LOC）、dev-together skill owner。适合地基/流程/评审。7-09：#1295 揪出 duplicate-fn baseline 虚高（46 实为 42），强化"记账/原则把关" |
-| `gagameow` (黄佳佳) | 运维工程师 | 部署/运维、agent console（6-25）、agent 配置验证。运维 + 产品 sense。7-09：#1294 根因诊断——create_session 两链（#1223 焊接）解耦，reproduce-first 识破 decouple_test 断言反转。强化"根因诊断/架构级排查" |
+| `allenwoods` (林懿伦) | 全栈工程师 · 背景 AI 博士 · 当期职责 lead programmer | 架构/地基、对抗评审驱动的大改造、跨域整合、运行时、部署。架构熟悉度最高。6-25：独力 A+B+C + RF-1..9 + kanban-as-role + py-agent + deploy。7-10 周末：独力推 cbac Phase-3 自存储范式（ISSUE/STORE/VERIFY + I12 paradigm-lock，10 stacked 子 PR + e2e）+ deploy/seed/orchestrator/cc-deepseek/PTY 加固——一次完整跑通 stacked-PR-into-task-branch merge model；强化"大改造/范式级授权重构" |
+| `jjkysy` (姚升悦) | 全栈工程师 · 背景 AI 博士 · 当期职责 lead programmer | 架构/原则把关（主动发现 kanban 原则问题）、kanban 插件原作（#964 13.5k LOC）、dev-together skill owner。适合地基/流程/评审。7-09：#1295 揪出 duplicate-fn baseline 虚高（46 实为 42），强化"记账/原则把关"。7-10：kanban 改版 #1298 收口（重做连贯全链路证据 26 件，分层确定句结论）+ #1255 三命名裁定 #1293 + 项目讨论 skill re-bootstrap #1292；发现 socialware core-gap（#1355 组合关系→窄 cap / #1360 跨 session 数据共享）驱动 lead spec #1357——强化"产品收口 + 深层缺口发现" |
+| `gagameow` (黄佳佳) | 运维工程师 | 部署/运维、agent console（6-25）、agent 配置验证。运维 + 产品 sense。7-09：#1294 根因诊断——create_session 两链（#1223 焊接）解耦，reproduce-first 识破 decouple_test 断言反转。强化"根因诊断/架构级排查"。7-10：链C credential-skip（#1326）+ stop-silent-install-success（#1317）+ presence e2e 去脆（#1318）+ 默认 session plain 防御性 hotfix（#1310，诚实标注"不替代 canary 实测"）；注意点：AgentRuntime 边界 SPEC（移交结构线）本窗口未落地，须补 |
 | `zyli-developer` (李震宇) | 全栈工程师 | 全栈、E2E 体系、Feishu 适配/产品缺口。端到端验证强。7-09：#1276 大 PR 连环触发 4 道行锚 gate（本地只跑单 gate）→ 派发注记：大 PR/动行锚文件本地跑全套 gate |
-| `zhaomaota97` (张宁) | 全栈工程师 | 全栈、前端 json-render / hello 渲染底座。前端/渲染强 |
-| `FatNine` (戴明) | 后端工程师 | 后端 / core |
+| `zhaomaota97` (张宁) | 全栈工程师 | 全栈、前端 json-render / hello 渲染底座。前端/渲染强。7-11：#1312 hello 可见性控制 + sharer/publisher agents + v2 seed + rebuild guide；注意点：hello live E2E "greeter+curl-llm 真回复" transcript 待补（能力依赖 orchestrator 真回话） |
 | `ruihuachen-designer` (陈瑞华) | 产品经理 | 产品/设计版式、可外发文档版式输入（设计输入，不改代码） |
+
+> **退出记录**：`FatNine`（戴明，后端）2026-07-13 退出 ezagent 开发，已从 roster 与今日 track 移除。
 
 ## 任务分配原则（lead 派发遵守）
 
