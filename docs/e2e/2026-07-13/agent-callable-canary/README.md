@@ -1,6 +1,6 @@
 # Canary agent-callability verification
 
-Status: **BLOCKED at interactive authentication**
+Status: **IN PROGRESS — interactive authentication unblocked**
 
 This evidence set tracks the 2026-07-13 `gagameow` task defined in
 `docs/together/2026-07-13/gagameow-agent-callable-canary-task-analysis.md`.
@@ -11,47 +11,49 @@ This evidence set tracks the 2026-07-13 `gagameow` task defined in
 - Read-only deployment-host inspection verifies canary is running application
   SHA `a915343de2c9e2ba36f2395670562495b7fd57fd`; #1294, #1326, #1332, and #1333
   are all present.
-- A fresh magic link for the verified `huang.jiajia@ezagent.chat` account reached
-  the consume endpoint, but login stopped after token consumption with:
+- Before the deployment correction, fresh magic links for the verified
+  `huang.jiajia@ezagent.chat` account stopped after token consumption with:
 
   ```text
   Sign-in token service is unavailable. Please try again.
   ```
 
-- The failure occurs after `MagicLinkToken.consume/2`, while
-  `PatDelivery.issue/3` rotates the interactive-login PAT. The controller does
-  not expose the underlying `Entity.Token.rotate_label/3` error.
-- A controlled retry consumed a newly minted link in approximately 40 seconds
-  and reproduced the same PAT-delivery error. Normal link expiry is therefore
-  ruled out for this blocker.
-- Read-only presence inspection confirms the selected PAT pepper is missing or
-  shorter than the required 32 bytes. This is the root cause of the PAT delivery
-  failure; no secret value was read or recorded.
-- Product verification has therefore **not** created a session, sent an
-  `@orchestrator` message, or claimed that the agent chain works.
+- The failure occurred while `PatDelivery.issue/3` rotated the interactive-login
+  PAT. Controlled reproduction and presence-only configuration inspection
+  established that the selected PAT pepper was absent from the application
+  container.
+- With explicit user approval, the existing pepper was moved from the Compose
+  substitution file into the service `env_file`, preserving the exact value.
+  Only the canary application service was recreated. The original files are
+  backed up outside Git and an exact rollback command is recorded in the
+  local-only deployment note.
+- Post-change checks confirmed a healthy container, successful HTTP health,
+  and a selected PAT pepper of valid length inside the canary application.
+- A newly minted magic link then redirected to `/login/token`, and the same
+  authenticated session fetched `/sessions` with HTTP 200. The former
+  authentication blocker is therefore resolved.
+- Product verification has still **not** created a session, sent an
+  `@orchestrator` message, or claimed that the agent chain works. Those online
+  writes require their own explicit authorization.
 
-## Required unblock
+## Next authorization gate
 
-The deployment owner must, only after explicit user approval:
-
-1. set a valid `EZAGENT_PAT_PEPPER_V<n>` matching the configured digest version;
-2. refresh/redeploy the canary application so it receives the corrected secret;
-3. request a newly minted magic link, because links used in prior attempts are
-   single-use.
+Before continuing the product proof, obtain explicit permission to create one
+new orchestrator session, allow its agent materialization, and send the two
+nonce probes plus one minimal development-task instruction.
 
 ## Online-access authorization
 
-The deployment host and formal canary container have now been located. Remote
-access remains strictly read-only. Any action that changes online state —
-including configuration, container lifecycle, deployment, database data,
-accounts, session creation, message sending, agent invocation, or cleanup —
-requires explicit user approval before execution.
+Remote access is read-only by default. The user explicitly authorized the
+single PAT-pepper configuration correction and canary application recreation;
+that authorization does not implicitly cover session creation, message sending,
+agent invocation, cleanup, or unrelated deployment changes.
 
 ## Evidence files
 
 - `01-deploy-baseline.txt` — health, connectivity, Git/deploy visibility.
 - `02-auth-blocker.txt` — sanitized reproduction and code-path diagnosis.
+- `03-auth-recovery.txt` — sanitized correction and fresh-login verification.
 
 The remaining planned screenshots, transcript, PTY/bridge evidence, and minimal
-task-dispatch result cannot be produced until authentication and release
-baseline checks are unblocked.
+task-dispatch result await the product-write authorization described above.

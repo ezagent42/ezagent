@@ -1,0 +1,50 @@
+CANARY AGENT-CALLABILITY — AUTHENTICATION RECOVERY
+Date: 2026-07-13
+Change ID: 20260713T055622Z
+
+Authorization:
+  The user explicitly approved the minimum canary configuration correction,
+  required full change recording, and required an exact restoration path if
+  the correction proved ineffective.
+
+Root-cause correction:
+  The existing EZAGENT_PAT_PEPPER_V1 assignment was moved from the channel's
+  Compose substitution file to the canary service env_file. The value was not
+  regenerated or printed. A value hash comparison confirmed byte-for-byte
+  preservation.
+
+Scope:
+  - Modified only the two canary environment files involved in this setting.
+  - Recreated only the ezagent service in Compose project ezagent-canary.
+  - Did not run migrations, seeds, reflow, or direct database writes.
+  - Did not modify beta, stable, nightly, or the excluded legacy dev service.
+
+Rollback:
+  Both original files were copied with metadata preservation to a timestamped,
+  mode-0700 operator backup directory outside Git. Exact paths, before/after
+  file hashes, and the rollback/recreate command are stored in the ignored
+  canary-deployment-location.md operator note. No secret appears there.
+
+Fresh verification:
+  - Compose configuration parsed successfully before service recreation.
+  - Docker health after recreation: healthy.
+  - HTTP GET /_health: 200 with {"status":"ok"}.
+  - Selected pepper inside the application container: SET_LENGTH_OK.
+  - A new POST /login/magic completed with HTTP 200; application logs recorded
+    a successful magic-link email send.
+  - The new single-use GET /auth/magic/<redacted> returned HTTP 302 to
+    /login/token, not the former token-service error.
+  - GET /login/token returned the one-time PAT delivery page.
+  - GET /sessions with the resulting authenticated cookie returned HTTP 200
+    and rendered the Sessions/Orchestrator surface.
+
+Sensitive-data handling:
+  The magic-link token, one-time PAT, cookies, pepper, provider keys, and
+  authorization headers were not recorded. Temporary response bodies were
+  deleted; the authenticated cookie remains mode 0600 under /tmp only for the
+  ongoing sanctioned product verification.
+
+Conclusion:
+  The PAT-pepper injection defect and interactive-authentication blocker are
+  resolved on canary. This does not prove agent materialization, bridge joins,
+  or orchestrator replies; those remain separate acceptance gates.
