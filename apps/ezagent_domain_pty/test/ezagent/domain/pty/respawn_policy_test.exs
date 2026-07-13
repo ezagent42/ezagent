@@ -238,16 +238,63 @@ defmodule Ezagent.Domain.Pty.RespawnPolicyTest do
       assert RespawnPolicy.probes(uri) == @probes
     end
 
+    test "the probe budget is LIFETIME — a pathological fallback cannot refill it forever",
+         %{uri: uri} do
+      # THE bound, and the subtlest one in this module. A per-cycle cap looks
+      # equivalent — a probe is spent on every failed retry, so the STOCK never grows
+      # — but it leaves the CYCLE unbounded:
+      #
+      #   healthy fallback → bank a probe → probe retries the doomed primary →
+      #   probe spent → fall back → healthy fallback → …
+      #
+      # Each round burns one wasted primary spawn and there is no last round. This is
+      # exactly the non-convergence the two-counter model exists to prevent, just at a
+      # 30 s cadence instead of 37 ms. Measured before the fix: 1000 pathological
+      # cycles cost 1000 wasted spawns.
+      for _ <- 1..@max, do: fail(uri, :primary)
+
+      wasted =
+        Enum.reduce(1..200, 0, fn _, acc ->
+          # The PATHOLOGICAL fallback: healthy on the clock, useless in fact — so it
+          # never fixes whatever broke the primary, and the probe always fails.
+          RespawnPolicy.record_healthy(uri, :fallback)
+
+          case RespawnPolicy.decide(uri, true) do
+            :primary ->
+              fail(uri, :primary)
+              acc + 1
+
+            :fallback ->
+              acc
+          end
+        end)
+
+      assert wasted == @probes,
+             "200 pathological cycles wasted #{wasted} primary spawns; the lifetime budget " <>
+               "must cap it at #{@probes}. Anything that scales with the cycle count is the " <>
+               "unbounded loop this whole PR exists to kill."
+
+      # And the agent is still WORKING on the fallback — bounded, not halted.
+      assert RespawnPolicy.decide(uri, true) == :fallback
+      assert RespawnPolicy.halt_info(uri) == nil
+    end
+
     test "a failing probe still leaves the agent WORKING on the fallback (no halt)",
          %{uri: uri} do
       for _ <- 1..@max, do: fail(uri, :primary)
 
-      # Several probe cycles, all failing. The agent must keep running the fallback —
-      # a broken PRIMARY is a degradation, not a reason to take the agent down.
+      # Burn the lifetime budget: one healthy fallback banks the probe, the probe
+      # retries the doomed primary, the probe fails and is spent.
+      RespawnPolicy.record_healthy(uri, :fallback)
+      assert RespawnPolicy.decide(uri, true) == :primary
+      fail(uri, :primary)
+
+      # From here the agent settles on the fallback and STAYS there, however many
+      # more healthy fallback runs it accumulates. A broken PRIMARY is a degradation,
+      # not a reason to take the agent down — and not a reason to keep paying a
+      # wasted spawn per restart either.
       for _ <- 1..5 do
         RespawnPolicy.record_healthy(uri, :fallback)
-        assert RespawnPolicy.decide(uri, true) == :primary
-        fail(uri, :primary)
         assert RespawnPolicy.decide(uri, true) == :fallback
       end
 
