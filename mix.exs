@@ -245,7 +245,7 @@ defmodule EzagentCore.Umbrella.MixProject do
   # already prevents the racy teardown by never running it. CI tears down PG +
   # the container afterward, so leaked child PIDs are reaped by the runner.)
   defp finalize_ci_local(_args) do
-    IO.puts([IO.ANSI.green(), "✓ ci.local: all gates passed — deterministic exit 0", IO.ANSI.reset()])
+    IO.puts("✓ ci.local: all gates passed — deterministic exit 0")
     System.halt(0)
   end
 end
