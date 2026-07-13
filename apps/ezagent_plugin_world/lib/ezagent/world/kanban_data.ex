@@ -78,12 +78,71 @@ defmodule Ezagent.World.KanbanData do
   def list_instances(ctx) do
     "kanban-manager"
     |> Ezagent.Agent.RecipeResolver.list_by_recipe(workspace_scope(ctx))
+    |> Enum.filter(&visible?(&1, ctx))
     |> Enum.map(fn %URI{} = uri ->
       %{"uri" => encode_uri(uri), "name" => uri_name(uri), "path" => detail_path(uri)}
     end)
   rescue
     _ -> []
   end
+
+  # --- 发现按 CBAC 权属收敛（Task 2） ------------------------------------
+  # fail-open（谁都看到全 workspace 的板）→ 权属过滤：
+  #   * workspace admin（`Ezagent.Identity.AdminAuthority.admin?/2`）看全部；
+  #   * 普通用户只看到 own（板的 `data_owner` 是自己）或持有指向该板 cap 的板。
+  # ctx 的 caller 身份字段 = `:caller_uri` / `:caller_caps`（world `KanbanActions.read_ctx`
+  # 注入；`caller_caps` 已是 caller 全量 cap 集，源自 mount 期 `Identity.list_caps_for`）。
+  defp visible?(%URI{} = board_uri, ctx) do
+    caller = Map.get(ctx, :caller_uri)
+    caps = Map.get(ctx, :caller_caps) || MapSet.new()
+
+    Ezagent.Identity.AdminAuthority.admin?(caller, caps) or
+      owns_or_holds_cap?(caller, caps, board_uri)
+  end
+
+  defp visible?(_, _), do: false
+
+  defp owns_or_holds_cap?(caller, caps, board_uri),
+    do: owns_board?(caller, board_uri) or holds_board_cap?(caps, board_uri)
+
+  # own：板（kanban-manager agent）的 `data_owner`（经 creator / lineage）== caller。
+  # 与核心 dispatch chokepoint（`CapabilityRegistry.authorize_cap_shape` 的
+  # `caller == owner`）同款结构比对。模块可能尚未加载（world 无 kanban plugin dep）→
+  # 先 ensure_loaded；解析不出 owner（`:no_owner`/`:any`）保守判不可见。
+  defp owns_board?(%URI{} = caller, %URI{} = board_uri) do
+    _ = Code.ensure_loaded(Ezagent.ActionSet.Kanban)
+
+    case Ezagent.CapabilityRegistry.data_owner_of(
+           Ezagent.ActionSet.Kanban,
+           Ezagent.URI.instance(board_uri)
+         ) do
+      %URI{} = owner -> owner == caller
+      _ -> false
+    end
+  rescue
+    _ -> false
+  catch
+    _, _ -> false
+  end
+
+  defp owns_board?(_, _), do: false
+
+  # holds：caller 持有一张 instance 精确指向该板的 cap（Task 3/4/5 发钥匙的形状，
+  # 以及建板时的 creator-manage cap）。instance 经 `URI.instance/1` 归一化后结构比对。
+  defp holds_board_cap?(caps, %URI{} = board_uri) do
+    target = Ezagent.URI.instance(board_uri)
+
+    Enum.any?(caps, fn
+      %Ezagent.Capability{instance: %URI{} = inst} -> Ezagent.URI.instance(inst) == target
+      _ -> false
+    end)
+  rescue
+    _ -> false
+  catch
+    _, _ -> false
+  end
+
+  defp holds_board_cap?(_, _), do: false
 
   @doc "选中某个 kanban 的 state：`kanban_uri` + `tree` + 全量 `instances`（侧边栏切换用）。"
   @spec board_state(URI.t(), map()) :: map()

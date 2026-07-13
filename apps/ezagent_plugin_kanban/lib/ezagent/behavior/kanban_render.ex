@@ -91,6 +91,23 @@ defmodule Ezagent.ActionSet.KanbanRender do
   本 session workspace 的 kanban-manager board URIs（字典序，确定性首选）。
   `Agent.RecipeResolver.list_by_recipe/2` 是快照来源 —— dormant board 仍枚举得到
   （HIGH-3 同款理由：否则 BEAM 重启后 board view 静默变空）。fail-safe `[]`。
+
+  ## Task 2 —— read-side CBAC 收敛：为何这里不按 caller 权属过滤（需确认边界）
+
+  world 的"发现"列表（`Ezagent.World.KanbanData.list_instances/1`）已按 caller
+  own/持 cap 收敛（admin 见全 ws）。本入口是 **另一条读面**：SessionView 的
+  `external_render/1` json-render 投影，其契约签名只有 `session_uri`
+  （`Ezagent.UI.SessionView` `@callback external_render(session_uri :: URI.t())`）
+  —— **read-side 无 caller 上下文**，无法在此处按 caller 权属过滤 board。
+
+  这条读面的可见性 **已在上游 cap-gate**：`SessionViewRegistry.external_renderers/2`
+  以 caller-aware 的 `SessionView.authorize_view/3` 检查 `{Session, :kanban_render}`
+  cap —— 拿不到 render cap 的 caller 根本看不到 board view。故 `boards_for` 只负责
+  "本 ws 有哪些 board、按字典序选首个显示"，**不是**可见性闸。
+
+  因此这里 **保守保留**（不盲删可见性、不臆造 caller）：若要把 per-board 权属收敛也
+  落到这条读面，需先给 `external_render` 契约穿 caller（跨 UI domain 的契约变更，
+  超出 Task 2 边界，标注为 **需确认** 的后续工作）。
   """
   @spec boards_for(URI.t() | term()) :: [URI.t()]
   def boards_for(%URI{} = session_uri) do
