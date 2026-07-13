@@ -102,9 +102,16 @@ defmodule EzagentPluginKanban.Integration.KanbanTeamRelayBackTest do
     # Seed the pm/dev recipes into ConfigStore so the materializer's fail-closed
     # `lookup_recipe` resolves them (flavor comes from the ROLE SLOT, not the
     # recipe — recipes are flavor-agnostic).
+    #
+    # 提纯(Task 1):`kanban-manager` 由 plugin `roles/0` 声明;两个"脑"配方
+    # (`kanban-assistant` / `dev-together`)搬进 sw seed 同目录 `recipes.yaml`,
+    # 生产是 `ManifestSeed.scan_dir!` 在发布 manifest 前注册。这里手动 seed 两侧
+    # 复现该前置。
     Enum.each(Application.roles(), fn recipe ->
       assert {:ok, _} = Ezagent.Agent.RecipeRegistry.seed_role_if_absent(recipe)
     end)
+
+    seed_shipped_brain_recipes!()
 
     :ok = Ezagent.Agent.RecipeRegistry.flush_cache()
 
@@ -288,6 +295,31 @@ defmodule EzagentPluginKanban.Integration.KanbanTeamRelayBackTest do
   end
 
   # --- helpers ----------------------------------------------------------------
+
+  # Seed the two "brain" data-role recipes shipped in the kanban socialware seed
+  # package's sibling `recipes.yaml` (Task 1 提纯 — kanban-assistant / dev-together
+  # moved out of plugin `roles/0`). Reads the SAME shipped file production's
+  # `ManifestSeed.scan_dir!` reads, via the `ShippedManifest` seam.
+  defp seed_shipped_brain_recipes! do
+    recipes_path =
+      Ezagent.Socialware.ShippedManifest.path("kanban/manifest.yaml")
+      |> Path.dirname()
+      |> Path.join("recipes.yaml")
+
+    {:ok, %{"recipes" => list}} =
+      Ezagent.Socialware.ManifestYaml.parse(File.read!(recipes_path))
+
+    Enum.each(list, fn r ->
+      assert {:ok, _} =
+               Ezagent.Agent.RecipeRegistry.seed_role_if_absent(%{
+                 name: r["name"],
+                 skills: r["skills"] || [],
+                 prompt: r["prompt"] || "",
+                 behaviors: [],
+                 requested_caps: []
+               })
+    end)
+  end
 
   defp msg(sender, text), do: Message.new(sender, %{text: text, attachments: []}, mentions: [])
 
