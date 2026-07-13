@@ -39,6 +39,14 @@ The deployment owner must provide, without revealing secret values:
 4. after correcting deployment configuration if needed, a newly minted magic
    link, because the link used in this attempt was single-use.
 
+## Online-access authorization
+
+The deployment host and formal canary container have now been located. Remote
+access remains strictly read-only. Any action that changes online state —
+including configuration, container lifecycle, deployment, database data,
+accounts, session creation, message sending, agent invocation, or cleanup —
+requires explicit user approval before execution.
+
 ## Evidence files
 
 - `01-deploy-baseline.txt` — health, connectivity, Git/deploy visibility.
