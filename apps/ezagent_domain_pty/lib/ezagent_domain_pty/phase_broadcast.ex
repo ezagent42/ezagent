@@ -9,9 +9,11 @@ defmodule Ezagent.Domain.Pty.PhaseBroadcast do
   `Ezagent.ActionSet.Sandbox` validates that set.
 
   A respawn HALT is deliberately **not** a fourth phase. The subprocess genuinely is
-  `:dead`; "and no respawn is coming" is a *supervision* fact, carried separately by
-  `Ezagent.Domain.Pty.RespawnPolicy` (its own `halted_topic/1` + `status/1` fields). Phase
-  answers "what is the child doing"; the halt answers "will anything bring it back".
+  `:dead`; "and no respawn is coming" rides on the SAME `:dead` broadcast, distinguished
+  by its `meta.reason` — `{:respawn_halted, cause}` for a halt versus the raw exit reason
+  for an ordinary death that a respawn will follow. A subscriber therefore learns both
+  facts from one message. (`Ezagent.Domain.Pty.Server.status/1` also exposes `halted?` +
+  `halt_reason`, and `Ezagent.Domain.Pty.halt_info/1` reads the durable ETS record.)
 
   Best-effort by contract: phase tracking is OPERATOR VISIBILITY plumbing and its failure
   MUST NOT block the primary PTY path (spawn / write / shutdown). A broadcast failure logs
