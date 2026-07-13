@@ -86,10 +86,8 @@ defmodule Ezagent.Domain.Pty.Server do
     # `VAR=val cmd` prefix (which is unavailable in argv form and was
     # shell-injectable in string form — codex HIGH-2).
     :cmd_env,
-    # 2026-07-13 — optional DEGRADED command (same argv shape) used when
-    # `cmd_override` cannot start. cc supplies its argv WITHOUT `--continue`:
-    # losing conversation context on a restart is a regression, never starting at
-    # all is fatal. See `Ezagent.Domain.Pty.RespawnPolicy`.
+    # Optional DEGRADED command used when `cmd_override` cannot start. cc supplies
+    # its argv WITHOUT `--continue`. See `Ezagent.Domain.Pty.RespawnPolicy`.
     :cmd_fallback,
     pty_buffer: "",
     # Phase 6 PR 19 — data-driven auto-confirm rules, `%{name, match, send, fired?}`.
@@ -111,9 +109,8 @@ defmodule Ezagent.Domain.Pty.Server do
     # `parked_dialog_signature`: the screen we last emitted for (dedupe).
     parked_check_ref: nil,
     parked_dialog_signature: nil,
-    # 2026-07-13 respawn breaker. `healthy?` flips once this child has survived
-    # `healthy_after_ms` (dying before that = a failed START — what the breaker
-    # counts). `halted?` = tripped: alive, no child, none spawned until an operator.
+    # Breaker: `healthy?` = survived `healthy_after_ms`; `halted?` = tripped (alive,
+    # no child, none spawned until an operator).
     healthy?: false,
     halted?: false,
     # 2026-07-13 — auth observer fired this incarnation? → halt gets :needs_login
@@ -459,8 +456,8 @@ defmodule Ezagent.Domain.Pty.Server do
           "PtyServer spawned claude os_pid=#{os_pid} for agent=#{URI.to_string(state.agent_uri)}"
         )
 
-        # Healthy = survived past startup. Timer carries exec_pid so a stale one
-        # cannot vouch for a replacement child (codex review).
+        # Healthy = survived startup. Timer carries exec_pid so a stale one cannot
+        # vouch for a replacement child.
         Process.send_after(self(), {:mark_healthy, exec_pid}, RespawnPolicy.healthy_after_ms())
 
         # PTY-pid-files 2026-05-26 follow-up (a): persist os_pid so the
@@ -496,7 +493,9 @@ defmodule Ezagent.Domain.Pty.Server do
         Logger.error("PtyServer: spawn failed: #{inspect(reason)}")
         # A launch that never got off the ground is a failed start too — count it,
         # or an unspawnable command (bad binary, oversized argv) loops forever.
-        _ = RespawnPolicy.record_failure(state.agent_uri, {:spawn_failed, reason}, mode)
+        fb? = state.cmd_fallback != nil
+        _ = RespawnPolicy.record_failure(state.agent_uri, {:spawn_failed, reason}, mode, fb?)
+
         new_state = %{state | phase: :dead, dead_broadcast?: true}
         broadcast_phase(new_state, :dead, %{reason: reason, os_pid: nil})
         {:stop, {:spawn_failed, reason}, new_state}
@@ -699,9 +698,8 @@ defmodule Ezagent.Domain.Pty.Server do
     {:noreply, fresh, {:continue, :spawn_pty}}
   end
 
-  # `{:DOWN, os_pid, :process, exec_pid, reason}` from erlexec, correlated on exec_pid
-  # (Erlang pid, never recycled). A stale DOWN (operator `:respawn` swapped the child)
-  # must NOT be booked against its successor (codex review, HIGH).
+  # erlexec DOWN, correlated on exec_pid (an Erlang pid — never recycled). A stale one
+  # (operator `:respawn` swapped the child) must NOT hit its successor (codex, HIGH).
   @impl true
   def handle_info(
         {:DOWN, _os_pid, :process, exec_pid, reason},
@@ -712,13 +710,16 @@ defmodule Ezagent.Domain.Pty.Server do
       "PtyServer: child process exited for #{URI.to_string(state.agent_uri)}: #{inspect(reason)}"
     )
 
-    # 2026-07-13 — a child that dies BEFORE `:mark_healthy` never got past startup.
-    # Feed that to the breaker; the supervisor restart that follows will consult it
-    # (and may decline to spawn). A child that already ran healthily is a genuine
-    # crash — it respawns as before, with no failure counted against it.
+    # A child dying BEFORE `:mark_healthy` never got past startup → feed the breaker.
+    # One that already ran healthily is an ordinary crash: respawn, count nothing.
     if not state.healthy?,
       do:
-        RespawnPolicy.record_failure(state.agent_uri, tag_reason(reason, state), state.spawn_mode)
+        RespawnPolicy.record_failure(
+          state.agent_uri,
+          tag_reason(reason, state),
+          state.spawn_mode,
+          state.cmd_fallback != nil
+        )
 
     # PTY-phase-state-machine follow-up (b): the OS subprocess just
     # died — publish the terminal :dead phase BEFORE returning {:stop,

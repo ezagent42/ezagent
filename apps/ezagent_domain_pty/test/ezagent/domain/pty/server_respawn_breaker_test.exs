@@ -32,6 +32,7 @@ defmodule Ezagent.Domain.Pty.Server.RespawnBreakerTest do
   alias Ezagent.Domain.Pty.Server, as: PtyServer
 
   @max_failures 3
+  @max_probes 1
   @healthy_after_ms 400
 
   setup do
@@ -39,6 +40,7 @@ defmodule Ezagent.Domain.Pty.Server.RespawnBreakerTest do
       Map.new(
         [
           :respawn_max_failures,
+          :respawn_max_probes,
           :respawn_healthy_after_ms,
           :respawn_backoff_base_ms,
           :respawn_backoff_cap_ms
@@ -47,6 +49,9 @@ defmodule Ezagent.Domain.Pty.Server.RespawnBreakerTest do
       )
 
     Application.put_env(:ezagent_domain_pty, :respawn_max_failures, @max_failures)
+    # Pin the probe budget too: a leftover value from another suite would otherwise
+    # decide whether a written-off primary gets retried here.
+    Application.put_env(:ezagent_domain_pty, :respawn_max_probes, @max_probes)
     Application.put_env(:ezagent_domain_pty, :respawn_healthy_after_ms, @healthy_after_ms)
     # Keep the backoff from dominating the wall-clock; it is tested elsewhere.
     Application.put_env(:ezagent_domain_pty, :respawn_backoff_base_ms, 20)
@@ -149,6 +154,47 @@ defmodule Ezagent.Domain.Pty.Server.RespawnBreakerTest do
       assert {:ok, live} = Pty.lookup(uri)
       assert Process.alive?(live)
       assert Pty.status(uri).running == true
+    end
+  end
+
+  describe "halt diagnosis: :needs_login" do
+    test "an auth observer that fired names the halt :needs_login, not an opaque exit code" do
+      %{uri: uri, log: log} = agent()
+
+      # A child that prints a credential failure and then dies — the shape of a cc
+      # agent whose login expired. Without the tag the operator's only clue is
+      # `halt_reason: {:exit_status, 256}`, which says nothing about what to fix.
+      cmd = ["/bin/sh", "-c", "echo spawn >> #{log}; echo 'API Error: 403'; exit 1"]
+
+      {:ok, _} =
+        start_pty(uri,
+          cmd_override: cmd,
+          auth_observers: [%{name: :test_403, match: "API Error: 403"}]
+        )
+
+      wait_until(fn -> RespawnPolicy.halt_info(uri) != nil end)
+
+      assert %{reason: :needs_login} = RespawnPolicy.halt_info(uri),
+             "the auth observer fired for this child, so the halt must be diagnosable as " <>
+               ":needs_login rather than an opaque exit status"
+
+      assert Pty.status(uri).halt_reason == :needs_login
+    end
+
+    test "a child that dies WITHOUT an auth signal keeps its raw exit reason" do
+      %{uri: uri, log: log} = agent()
+
+      # No observer match → no tag. Mis-labelling an ordinary crash as :needs_login
+      # would send the operator hunting for a credential problem that is not there.
+      {:ok, _} =
+        start_pty(uri,
+          cmd_override: fails_immediately(log, "spawn"),
+          auth_observers: [%{name: :test_403, match: "API Error: 403"}]
+        )
+
+      wait_until(fn -> RespawnPolicy.halt_info(uri) != nil end)
+
+      assert {:exit_status, _} = RespawnPolicy.halt_info(uri).reason
     end
   end
 

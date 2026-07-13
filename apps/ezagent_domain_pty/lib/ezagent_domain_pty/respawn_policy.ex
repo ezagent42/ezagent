@@ -81,7 +81,22 @@ defmodule Ezagent.Domain.Pty.RespawnPolicy do
   @table :ezagent_pty_respawn_policy
 
   @default_max_failures 3
-  @default_healthy_after_ms 15_000
+  @default_max_probes 1
+
+  # 2026-07-13 — aligned with `EzagentPluginCc.…Spawn.@default_transport_join_timeout_ms`
+  # (30 s). A shorter window declares a child healthy BEFORE its transport bridge has
+  # had time to JOIN, so a zombie that boots but never becomes reachable is waved
+  # through as a healthy start.
+  #
+  # KNOWN LIMITATION (for Allen): elapsed time is a PROXY, not the real signal. The
+  # authoritative "this child actually started" fact is the bridge JOIN
+  # (`Ezagent.Agent.TransportReadiness.on_transport_joined/1`). A child that boots and
+  # sits at a login prompt survives any timeout and is counted healthy, so the breaker
+  # cannot catch that failure mode. Wiring the real signal in means either the PTY
+  # domain app depending on `ezagent_domain_agent_bridge` (its mix.exs forbids it:
+  # "Tier-2 rule: Domain apps depend on ezagent_core ONLY") or a new core-level health
+  # topic. Both are architecture decisions — deliberately NOT made in this PR.
+  @default_healthy_after_ms 30_000
 
   @type mode :: :primary | :fallback
   @type halt_info :: %{reason: term(), failures: pos_integer(), at: integer()}
@@ -114,9 +129,18 @@ defmodule Ezagent.Domain.Pty.RespawnPolicy do
       %{halt: %{} = info} ->
         {:halt, info}
 
-      # The preferred command has failed to start too many times over this agent's
-      # life: stop paying a wasted spawn per restart to retry it. Settles on the
-      # fallback, which is what makes the ladder CONVERGE (see the moduledoc).
+      # PROBE: the primary is written off, but a fallback has since run healthily —
+      # the child really worked, so whatever broke the primary may well be fixed
+      # (for cc: a conversation now exists, so `--continue` would resolve). Spend
+      # ONE spawn finding out. A healthy primary here erases the write-off entirely;
+      # a failed probe burns the probe and we settle back onto the fallback. Probes
+      # are capped and only granted by a HEALTHY fallback run, so this cannot become
+      # the unbounded primary/fallback cycle the two-counter model exists to prevent.
+      %{primary_failures: p, probes: probes} when fallback_available? and p >= max and probes > 0 ->
+        :primary
+
+      # Written off with no probe left: stop paying a wasted spawn per restart to
+      # retry a command we know cannot start. This is what makes the ladder CONVERGE.
       %{primary_failures: p} when fallback_available? and p >= max ->
         :fallback
 
@@ -139,18 +163,35 @@ defmodule Ezagent.Domain.Pty.RespawnPolicy do
   primary-failure count) and trips the breaker at `max_failures/0`, returning
   `{:halted, info}` on the transition so the caller can surface it.
   """
-  @spec record_failure(URI.t(), term(), mode()) :: :ok | {:halted, halt_info()}
-  # `mode` is MANDATORY on purpose — no default. A defaulted `:primary` would let an
-  # accidental 2-arity call book a FALLBACK failure against the primary, silently
-  # corrupting the write-off decision this module's convergence depends on.
-  def record_failure(%URI{} = agent_uri, reason, mode) when mode in [:primary, :fallback] do
+  @spec record_failure(URI.t(), term(), mode(), boolean()) :: :ok | {:halted, halt_info()}
+  # `mode` and `fallback_available?` are MANDATORY on purpose — no defaults. A
+  # defaulted `:primary` would let an accidental short call book a FALLBACK failure
+  # against the primary, silently corrupting the write-off decision this module's
+  # convergence depends on.
+  def record_failure(%URI{} = agent_uri, reason, mode, fallback_available?)
+      when mode in [:primary, :fallback] and is_boolean(fallback_available?) do
     key = URI.to_string(agent_uri)
     state = load(key)
+    max = max_failures()
     failures = state.failures + 1
     primary_failures = state.primary_failures + if(mode == :primary, do: 1, else: 0)
-    state = %{state | failures: failures, primary_failures: primary_failures}
 
-    if failures >= max_failures() do
+    # A failed PROBE is spent — otherwise the same probe would retry the doomed
+    # primary on every restart, which is the unbounded cycle in another costume.
+    probes = if mode == :primary and state.probes > 0, do: state.probes - 1, else: state.probes
+
+    state = %{state | failures: failures, primary_failures: primary_failures, probes: probes}
+
+    # The primary failure that FIRST reaches the threshold is the WRITE-OFF transition,
+    # not a halt: `decide/2` answers it by retiring the primary and switching to the
+    # fallback. Halting here would mean a perfectly valid `max_failures: 1` never tries
+    # the fallback AT ALL — the self-healing path skipped at precisely the threshold it
+    # was built for (codex review, P4). The breaker still trips once the FALLBACK is
+    # also failing, or when there is no fallback to fall back to.
+    write_off_crossing? =
+      fallback_available? and mode == :primary and primary_failures >= max and probes == 0
+
+    if failures >= max and not write_off_crossing? do
       info = %{reason: reason, failures: failures, at: System.os_time(:millisecond)}
       store(key, %{state | halt: info})
 
@@ -203,13 +244,20 @@ defmodule Ezagent.Domain.Pty.RespawnPolicy do
   — it got past startup.
 
   A healthy **primary** erases the history entirely: the preferred command works,
-  so nothing is left to remember.
+  so nothing is left to remember. This is how a written-off primary gets FULLY
+  rehabilitated — reached via the probe (below).
 
   A healthy **fallback** zeroes the consecutive-failure count (it is not
   crash-looping) but KEEPS `primary_failures`. That memory is load-bearing: erasing
   it lets a fallback that survives the health timer without actually working reset
   the ladder on every cycle, so the primary is retried forever and the breaker never
   converges (codex review — see the moduledoc).
+
+  It DOES, however, grant one PROBE (capped at `max_probes/0`). A fallback that ran
+  healthily means the child really worked — for cc that means a conversation was
+  persisted, so the `--continue` that was written off would very likely succeed now.
+  Without the probe the write-off is PERMANENT and the agent silently loses resume
+  forever; the probe is what stops the breaker from being a one-way door.
   """
   @spec record_healthy(URI.t(), mode()) :: :ok
   # `mode` is MANDATORY (see `record_failure/3`): a defaulted `:primary` here would
@@ -220,8 +268,16 @@ defmodule Ezagent.Domain.Pty.RespawnPolicy do
     state = load(key)
 
     case mode do
-      :primary -> :ets.delete(@table, key)
-      :fallback -> store(key, %{state | failures: 0, halt: nil})
+      :primary ->
+        :ets.delete(@table, key)
+
+      :fallback ->
+        store(key, %{
+          state
+          | failures: 0,
+            halt: nil,
+            probes: min(state.probes + 1, max_probes())
+        })
     end
 
     :ok
@@ -270,12 +326,28 @@ defmodule Ezagent.Domain.Pty.RespawnPolicy do
   @spec max_failures() :: pos_integer()
   def max_failures, do: cfg(:respawn_max_failures, @default_max_failures)
 
+  @doc """
+  How many PROBES a written-off primary may accumulate — one retry each, granted by a
+  healthy fallback run. Default #{@default_max_probes}; override with
+  `config :ezagent_domain_pty, :respawn_max_probes`.
+
+  The cap is what keeps the probe from re-creating the unbounded primary/fallback
+  cycle: probes are granted ONLY by a healthy fallback (which costs a full
+  `healthy_after_ms`), spent one per retry, and never exceed this ceiling.
+  """
+  @spec max_probes() :: pos_integer()
+  def max_probes, do: cfg(:respawn_max_probes, @default_max_probes)
+
+  @doc "Probes currently banked for `agent_uri` (test/observability helper)."
+  @spec probes(URI.t()) :: non_neg_integer()
+  def probes(%URI{} = agent_uri), do: load(URI.to_string(agent_uri)).probes
+
   defp load(key) do
     init()
 
     case :ets.lookup(@table, key) do
       [{^key, %{} = state}] -> state
-      _ -> %{failures: 0, primary_failures: 0, halt: nil}
+      _ -> %{failures: 0, primary_failures: 0, probes: 0, halt: nil}
     end
   end
 
