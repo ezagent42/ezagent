@@ -108,12 +108,16 @@ defmodule Ezagent.Domain.Pty do
   end
 
   # A crash racing the stop can have the supervisor replace the server between our
-  # lookup and the terminate. Re-look-up and stop the replacement too, rather than
-  # reporting success over a still-running child. Bounded — the window is tiny, and a
-  # terminated DynamicSupervisor child is not restarted, so this converges at once.
+  # terminate and the re-check. Re-look-up and stop the replacement too. Bounded — the
+  # window is tiny, and a terminated DynamicSupervisor child is not restarted.
+  #
+  # P1 (codex review): the previous code used `lookup/1` which calls
+  # `:sys.get_state(pid, 500)`. When the PtyServer is sleeping inside
+  # `apply_respawn_backoff/1` (up to 30 s), that 500 ms timeout fires and `lookup/1`
+  # returns `:error` even though the child is ALIVE — handing a still-looping agent a
+  # clean crash history. Registry.lookup/2 finds the PID WITHOUT probing the process,
+  # so a sleeping server is correctly found and terminated.
   defp terminate_until_gone(%URI{} = agent_uri, 0) do
-    # Giving up must not be SILENT: the caller is about to have the crash history
-    # cleared out from under a server that is still running.
     if alive?(agent_uri) do
       require Logger
 
@@ -128,15 +132,18 @@ defmodule Ezagent.Domain.Pty do
   end
 
   defp terminate_until_gone(%URI{} = agent_uri, attempts_left) do
-    case lookup(agent_uri) do
-      :error ->
-        :ok
+    key = URI.to_string(agent_uri)
+    sup = EzagentDomainPty.Supervisor
 
-      {:ok, pid} ->
-        _ = DynamicSupervisor.terminate_child(EzagentDomainPty.Supervisor, pid)
-        # Re-check rather than trust the return: `:ok` and `{:error, :not_found}` are
-        # both consistent with a REPLACEMENT server now being registered for this agent.
+    # Registry :via name gives us the PID without probing via :sys.get_state
+    case Registry.lookup(EzagentDomainPty.Registry, key) do
+      [{pid, _}] ->
+        _ = DynamicSupervisor.terminate_child(sup, pid)
         terminate_until_gone(agent_uri, attempts_left - 1)
+
+      [] ->
+        # Not registered → definitely gone (or was never started).
+        :ok
     end
   end
 

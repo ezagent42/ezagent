@@ -119,8 +119,7 @@ defmodule Ezagent.Domain.Pty.Server do
     # 2026-07-13 — auth observer fired this incarnation? → halt gets :needs_login
     # reason instead of the opaque exit code. See `tag_reason/2`.
     auth_failed?: false,
-    # Which command this incarnation launched — the breaker books failures and
-    # healthy runs against it (a healthy FALLBACK must not forgive the PRIMARY).
+    # Which cmd this incarnation launched — breaker books per-mode.
     spawn_mode: :primary
   ]
 
@@ -460,9 +459,8 @@ defmodule Ezagent.Domain.Pty.Server do
           "PtyServer spawned claude os_pid=#{os_pid} for agent=#{URI.to_string(state.agent_uri)}"
         )
 
-        # A healthy START = survived past startup; dying before that is what the
-        # breaker counts. The timer carries the exec_pid it was armed FOR, so a stale
-        # one (operator `:respawn` swapped the child) cannot vouch for its successor.
+        # Healthy = survived past startup. Timer carries exec_pid so a stale one
+        # cannot vouch for a replacement child (codex review).
         Process.send_after(self(), {:mark_healthy, exec_pid}, RespawnPolicy.healthy_after_ms())
 
         # PTY-pid-files 2026-05-26 follow-up (a): persist os_pid so the
@@ -689,22 +687,22 @@ defmodule Ezagent.Domain.Pty.Server do
         os_pid: nil,
         halted?: false,
         healthy?: false,
+        auth_failed?: false,
         spawn_mode: :primary,
         phase: :starting,
         dead_broadcast?: false,
-        pty_buffer: ""
+        pty_buffer: "",
+        # Re-arm auth observers for the replacement child (codex review, P2).
+        auth_observers: Enum.map(state.auth_observers, &%{&1 | fired?: false})
     }
 
     broadcast_phase(fresh, :starting, %{os_pid: nil})
     {:noreply, fresh, {:continue, :spawn_pty}}
   end
 
-  # erlexec's monitor DOWN is `{:DOWN, os_pid, :process, exec_pid, reason}`. It MUST be
-  # correlated with the child we are actually running (codex review, HIGH): an operator
-  # `:respawn` stops child A and spawns B in the same `handle_continue`, so A's DOWN is
-  # already queued when B exists. An uncorrelated clause books A's exit against B —
-  # inventing a failure for a healthy child AND killing it via terminate/2. `exec_pid` is
-  # an Erlang pid, so unlike an OS pid it is never recycled.
+  # `{:DOWN, os_pid, :process, exec_pid, reason}` from erlexec, correlated on exec_pid
+  # (Erlang pid, never recycled). A stale DOWN (operator `:respawn` swapped the child)
+  # must NOT be booked against its successor (codex review, HIGH).
   @impl true
   def handle_info(
         {:DOWN, _os_pid, :process, exec_pid, reason},
@@ -734,8 +732,7 @@ defmodule Ezagent.Domain.Pty.Server do
     {:stop, {:child_exited, reason}, new_state}
   end
 
-  # A DOWN from a child we already replaced (operator `:respawn`) — it must not be
-  # booked against its successor, nor kill it.
+  # Stale DOWN from a replaced child — ignore.
   def handle_info({:DOWN, _os_pid, :process, _stale, _reason}, state), do: {:noreply, state}
 
   # The child this timer was armed for got past startup. A healthy PRIMARY clears the
@@ -802,6 +799,10 @@ defmodule Ezagent.Domain.Pty.Server do
 
     {:noreply, state}
   end
+
+  # Stale stdout/stderr from a replaced child: must not reach its successor.
+  def handle_info({stream, _os_pid, _data}, state) when stream in [:stdout, :stderr],
+    do: {:noreply, state}
 
   # cc-PTY hardening 2026-07-10 (audit #1) — output has been silent for
   # `parked_dialog_idle_ms`; check whether we are parked on an unknown dialog.
@@ -918,8 +919,7 @@ defmodule Ezagent.Domain.Pty.Server do
   end
 
   @doc false
-  # Kept as the Server's public matcher API (tests + AutoPrompts/AuthObservers call it);
-  # the implementation lives in `ScreenMatch` (extracted for the oversized-module gate).
+  # ScreenMatch holds the implementation (extracted for the oversized-module gate).
   defdelegate matches?(needle, stripped), to: Ezagent.Domain.Pty.ScreenMatch
 
   defp fire_prompt(prompt, state) do
