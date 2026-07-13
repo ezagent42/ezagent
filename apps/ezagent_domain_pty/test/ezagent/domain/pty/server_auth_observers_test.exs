@@ -9,7 +9,11 @@ defmodule Ezagent.Domain.Pty.Server.AuthObserversTest do
   alias Ezagent.AnsiStrip
   alias Ezagent.Domain.Pty.Server, as: PtyServer
 
-  defp agent_uri, do: Ezagent.URI.new!("entity://team-alpha/agent/cc_authobs-#{System.unique_integer([:positive])}")
+  defp agent_uri,
+    do:
+      Ezagent.URI.new!(
+        "entity://team-alpha/agent/cc_authobs-#{System.unique_integer([:positive])}"
+      )
 
   test "matches? catches a real claude 403 / login-needed buffer" do
     buf = AnsiStrip.strip("\e[1CAPI Error: 403\r\r\nPlease run /login to continue")

@@ -34,22 +34,33 @@ defmodule Ezagent.Domain.Pty.SupervisorIsolationTest do
   @backoff_cap 300
   @backoff_window 2_000
 
+  # 2026-07-13: this test pins the BACKOFF's isolation property — that a child which
+  # keeps looping is rate-limited below the supervisor's intensity. The respawn
+  # BREAKER (`RespawnPolicy`) would halt that looper after a few failed starts, and
+  # there would be no sustained loop left to rate-limit, so it is held off here. The
+  # breaker has its own test (`server_respawn_breaker_test.exs`); this one must keep
+  # guarding what it was written to guard.
+  @breaker_off 10_000
+
   setup do
     prev = %{
       base: Application.get_env(:ezagent_domain_pty, :respawn_backoff_base_ms),
       cap: Application.get_env(:ezagent_domain_pty, :respawn_backoff_cap_ms),
-      window: Application.get_env(:ezagent_domain_pty, :respawn_backoff_window_ms)
+      window: Application.get_env(:ezagent_domain_pty, :respawn_backoff_window_ms),
+      max_failures: Application.get_env(:ezagent_domain_pty, :respawn_max_failures)
     }
 
     Application.put_env(:ezagent_domain_pty, :respawn_backoff_base_ms, @backoff_base)
     Application.put_env(:ezagent_domain_pty, :respawn_backoff_cap_ms, @backoff_cap)
     Application.put_env(:ezagent_domain_pty, :respawn_backoff_window_ms, @backoff_window)
+    Application.put_env(:ezagent_domain_pty, :respawn_max_failures, @breaker_off)
 
     on_exit(fn ->
       for {v, app_key} <- [
             {prev.base, :respawn_backoff_base_ms},
             {prev.cap, :respawn_backoff_cap_ms},
-            {prev.window, :respawn_backoff_window_ms}
+            {prev.window, :respawn_backoff_window_ms},
+            {prev.max_failures, :respawn_max_failures}
           ] do
         case v do
           nil -> Application.delete_env(:ezagent_domain_pty, app_key)

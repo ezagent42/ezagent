@@ -118,3 +118,19 @@ config :ezagent_web, :session_cookie_domain, nil
 # Manifest deploy-seed scan is a dev/prod boot lane. Tests exercise it directly
 # with temp priv dirs so boot remains deterministic.
 config :ezagent_domain_session, :socialware_manifest_boot_scan, false
+
+# PTY supervisor intensity — TEST ONLY (2026-07-13).
+#
+# The respawn-breaker suites drive REAL crash-looping children through the REAL
+# app supervisor (that frozen-child-spec replay is the whole point — a private
+# supervisor would not exercise it). Each halt costs `max_failures` restarts, and
+# a handful of such tests in one 60 s window blows past the production ceiling of
+# 20, at which point OTP tears the subtree down and every LATER test finds a
+# supervisor that no longer restarts anything — a failure that looks like a
+# breaker bug and is not.
+#
+# Production keeps its bounded 20/60 s (a real crash-loop MUST still escalate);
+# tests get headroom so the suite measures the breaker, not OTP's ceiling.
+config :ezagent_domain_pty,
+  supervisor_max_restarts: 1_000,
+  supervisor_max_seconds: 1

@@ -84,16 +84,100 @@ defmodule Ezagent.Domain.Pty do
   @doc """
   Stop the PtyServer for `agent_uri`. Idempotent — returns `:ok`
   whether the server was alive or not.
+
+  Also clears the respawn breaker's history (2026-07-13). A `stop/1` is a
+  DELIBERATE teardown, and `terminate_child` already ends the supervisor's
+  automatic restart loop — which is the only thing the breaker exists to stop.
+  Leaving a halt behind would instead poison the NEXT deliberate `start/2`: it
+  would be vetoed by a stale halt, `restart/1` cannot help (no server to restart),
+  and the agent would have no way back at all.
+
+  The clear happens only AFTER the server is confirmed gone (codex review). Doing it
+  first left a window where a child crashing mid-`stop/1` got its PtyServer replaced
+  by the supervisor: `terminate_child` then targeted the obsolete pid, returned
+  `{:error, :not_found}` — which was discarded — and `stop/1` reported `:ok` while a
+  REPLACEMENT server kept running with a freshly wiped crash history. That is both a
+  silent failure and a clean slate handed to the very looper we meant to stop.
   """
   @spec stop(URI.t()) :: :ok
   def stop(%URI{} = agent_uri) do
-    case lookup(agent_uri) do
-      {:ok, pid} ->
-        _ = DynamicSupervisor.terminate_child(EzagentDomainPty.Supervisor, pid)
-        :ok
+    terminate_until_gone(agent_uri, 5)
+    Ezagent.Domain.Pty.RespawnPolicy.clear(agent_uri)
+    Ezagent.Domain.Pty.RespawnBackoff.clear(URI.to_string(agent_uri))
+    :ok
+  end
 
-      :error ->
+  # A crash racing the stop can have the supervisor replace the server between our
+  # terminate and the re-check. Re-look-up and stop the replacement too. Bounded — the
+  # window is tiny, and a terminated DynamicSupervisor child is not restarted.
+  #
+  # P1 (codex review): the previous code used `lookup/1` which calls
+  # `:sys.get_state(pid, 500)`. When the PtyServer is sleeping inside
+  # `apply_respawn_backoff/1` (up to 30 s), that 500 ms timeout fires and `lookup/1`
+  # returns `:error` even though the child is ALIVE — handing a still-looping agent a
+  # clean crash history. Registry.lookup/2 finds the PID WITHOUT probing the process,
+  # so a sleeping server is correctly found and terminated.
+  defp terminate_until_gone(%URI{} = agent_uri, 0) do
+    if alive?(agent_uri) do
+      require Logger
+
+      Logger.error(
+        "PtyServer: stop/1 could NOT terminate #{URI.to_string(agent_uri)} — a replacement " <>
+          "server kept appearing. Its respawn history is being cleared anyway; if it is " <>
+          "crash-looping it now has a clean slate. Investigate."
+      )
+    end
+
+    :ok
+  end
+
+  defp terminate_until_gone(%URI{} = agent_uri, attempts_left) do
+    key = URI.to_string(agent_uri)
+    sup = EzagentDomainPty.Supervisor
+
+    # Registry :via name gives us the PID without probing via :sys.get_state
+    case Registry.lookup(EzagentDomainPty.Registry, key) do
+      [{pid, _}] ->
+        _ = DynamicSupervisor.terminate_child(sup, pid)
+        terminate_until_gone(agent_uri, attempts_left - 1)
+
+      [] ->
+        # Not registered → definitely gone (or was never started).
         :ok
     end
   end
+
+  @doc """
+  Operator recovery for a HALTED agent (2026-07-13) — and the only way back.
+
+  When `Ezagent.Domain.Pty.RespawnPolicy` trips its breaker, the PtyServer stays
+  alive but runs no child and will not spawn one: a child that failed to start N
+  times in a row needs a human to look at the cause, not another retry. This is
+  that human's lever. It clears the breaker AND the backoff history, then drives a
+  fresh spawn — so it also works as a plain "bounce this agent".
+
+  Returns `{:error, :not_running}` when no PtyServer exists for `agent_uri` (there
+  is nothing to restart — start it through the owning plugin's spawn path instead).
+  """
+  @spec restart(URI.t()) :: :ok | {:error, :not_running}
+  def restart(%URI{} = agent_uri) do
+    Ezagent.Domain.Pty.RespawnPolicy.clear(agent_uri)
+    Ezagent.Domain.Pty.RespawnBackoff.clear(URI.to_string(agent_uri))
+
+    # Registry.lookup finds the PID without probing via :sys.get_state, so a server
+    # sleeping in apply_respawn_backoff (up to 30 s) is correctly found (codex P1).
+    case Registry.lookup(EzagentDomainPty.Registry, URI.to_string(agent_uri)) do
+      [{pid, _}] -> GenServer.cast(pid, :respawn)
+      [] -> {:error, :not_running}
+    end
+  end
+
+  @doc """
+  The respawn-halt record for `agent_uri`, or `nil` when it is not halted.
+
+  A halt is DURABLE (ETS) and outlives the PtyServer process, so this answers even
+  when no server is running — unlike `status/1`, which needs a live one.
+  """
+  @spec halt_info(URI.t()) :: map() | nil
+  def halt_info(%URI{} = agent_uri), do: Ezagent.Domain.Pty.RespawnPolicy.halt_info(agent_uri)
 end

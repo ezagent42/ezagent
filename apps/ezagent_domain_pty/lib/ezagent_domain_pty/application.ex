@@ -44,9 +44,10 @@ defmodule EzagentDomainPty.Application do
 
   @impl true
   def start(_type, _args) do
-    # Owned here so the table exists before the first PtyServer spawns; the
-    # module also lazy-inits defensively.
+    # Owned here so the tables exist before the first PtyServer spawns; both
+    # modules also lazy-init defensively.
     :ok = Ezagent.Domain.Pty.RespawnBackoff.init()
+    :ok = Ezagent.Domain.Pty.RespawnPolicy.init()
 
     children = [
       {Registry, keys: :unique, name: EzagentDomainPty.Registry},

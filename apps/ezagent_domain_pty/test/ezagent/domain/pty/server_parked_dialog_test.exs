@@ -29,7 +29,11 @@ defmodule Ezagent.Domain.Pty.Server.ParkedDialogTest do
     :ok
   end
 
-  defp fresh_uri, do: Ezagent.URI.new!("entity://team-alpha/agent/cc_parked-#{System.unique_integer([:positive])}")
+  defp fresh_uri,
+    do:
+      Ezagent.URI.new!(
+        "entity://team-alpha/agent/cc_parked-#{System.unique_integer([:positive])}"
+      )
 
   defp start_server(opts \\ %{}) do
     uri = fresh_uri()
@@ -58,7 +62,9 @@ defmodule Ezagent.Domain.Pty.Server.ParkedDialogTest do
     assert screen =~ "Frobnicate the widget"
     assert screen =~ "❯"
 
-    assert_receive {:telemetry, [:ezagent, :pty, :parked_unknown_dialog], %{count: 1}, meta}, 1_000
+    assert_receive {:telemetry, [:ezagent, :pty, :parked_unknown_dialog], %{count: 1}, meta},
+                   1_000
+
     assert meta.agent_uri == uri
     assert meta.screen =~ "Frobnicate the widget"
   end
