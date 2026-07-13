@@ -1204,7 +1204,7 @@ defmodule Ezagent.World.ConversationActions do
         Atom.to_string(value)
 
       true ->
-        value
+        inspect(value)
     end
   end
 

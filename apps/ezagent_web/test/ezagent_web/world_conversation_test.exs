@@ -788,7 +788,31 @@ defmodule EzagentWeb.WorldConversationTest do
   test "PR-4: switching to a member PTY records the active agent", %{conn: conn} do
     session_uri = world_session_uri()
     encoded = session_uri |> URI.to_string() |> URI.encode_www_form()
-    agent = "entity://system/agent/world-pr4-pty"
+
+    agent_uri =
+      Ezagent.URI.new!(
+        "entity://system/agent/world-pr4-pty-#{System.unique_integer([:positive])}"
+      )
+
+    agent = URI.to_string(agent_uri)
+
+    {:ok, _agent_pid} =
+      Ezagent.Kind.spawn(Ezagent.Entity.Agent, %{uri: agent_uri, initial_caps: MapSet.new()})
+
+    {:ok, _pty_pid} =
+      Ezagent.Domain.Pty.start(agent_uri, %{
+        cwd: "/tmp",
+        cmd_override: ["/bin/sleep", "60"],
+        test_mode: false,
+        auto_prompts: []
+      })
+
+    on_exit(fn ->
+      :ok = Ezagent.Domain.Pty.stop(agent_uri)
+      :ok = Ezagent.Kind.terminate(agent_uri)
+    end)
+
+    assert is_pid(wait_for_pty_exec_pid(agent_uri))
 
     {:ok, view, _html} = live(admin_conn(conn), "/sessions?session=#{encoded}")
 
@@ -801,8 +825,15 @@ defmodule EzagentWeb.WorldConversationTest do
 
     assert_push_event(view, "world:state", %{
       "active_view" => "pty",
-      "active_pty_agent_uri" => ^agent
+      "active_pty_agent_uri" => ^agent,
+      "agent_status" => %{
+        "detail" => %{"exec_pid" => exec_pid}
+      }
     })
+
+    assert is_binary(exec_pid)
+    assert String.starts_with?(exec_pid, "#PID<")
+    assert Process.alive?(view.pid)
   end
 
   test "PR-4: restart_orchestrator denies a caller without the restart cap", %{conn: conn} do
@@ -1653,6 +1684,23 @@ defmodule EzagentWeb.WorldConversationTest do
 
     _ = Ezagent.ActionSet.Session.Membership.mount_participation_caps(session_uri, anon_uri)
     anon_uri
+  end
+
+  defp wait_for_pty_exec_pid(agent_uri, attempts \\ 100)
+
+  defp wait_for_pty_exec_pid(agent_uri, 0) do
+    flunk("PTY never exposed exec_pid for #{URI.to_string(agent_uri)}")
+  end
+
+  defp wait_for_pty_exec_pid(agent_uri, attempts) do
+    case Ezagent.Domain.Pty.status(agent_uri) do
+      %{exec_pid: exec_pid} when is_pid(exec_pid) ->
+        exec_pid
+
+      _ ->
+        Process.sleep(20)
+        wait_for_pty_exec_pid(agent_uri, attempts - 1)
+    end
   end
 
   # Poll until the post-create socialware-install transaction has joined the
