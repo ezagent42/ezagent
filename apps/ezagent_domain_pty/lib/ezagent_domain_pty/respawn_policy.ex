@@ -83,19 +83,30 @@ defmodule Ezagent.Domain.Pty.RespawnPolicy do
   @default_max_failures 3
   @default_max_probes 1
 
-  # 2026-07-13 — aligned with `EzagentPluginCc.…Spawn.@default_transport_join_timeout_ms`
-  # (30 s). A shorter window declares a child healthy BEFORE its transport bridge has
-  # had time to JOIN, so a zombie that boots but never becomes reachable is waved
-  # through as a healthy start.
+  # How long a child must stay up before its START counts as successful.
   #
-  # KNOWN LIMITATION (for Allen): elapsed time is a PROXY, not the real signal. The
-  # authoritative "this child actually started" fact is the bridge JOIN
-  # (`Ezagent.Agent.TransportReadiness.on_transport_joined/1`). A child that boots and
-  # sits at a login prompt survives any timeout and is counted healthy, so the breaker
-  # cannot catch that failure mode. Wiring the real signal in means either the PTY
-  # domain app depending on `ezagent_domain_agent_bridge` (its mix.exs forbids it:
-  # "Tier-2 rule: Domain apps depend on ezagent_core ONLY") or a new core-level health
-  # topic. Both are architecture decisions — deliberately NOT made in this PR.
+  # This answers exactly ONE question — **did the process come up?** — and nothing
+  # more. It is deliberately NOT a measure of whether the agent became USABLE.
+  #
+  # An earlier revision pinned this to cc's 30 s transport-join timeout, reasoning
+  # that a shorter window would call a child healthy before its bridge had a chance
+  # to JOIN. That was a LAYERING ERROR (Allen, 2026-07-13): a process launcher's job
+  # ends when the process is correctly running. Whether the agent then connects is
+  # the bridge's business — the bridge has its own join timeout and is the layer that
+  # must surface that failure. Importing bridge semantics here made one number try to
+  # answer two questions belonging to two layers, and answer neither well.
+  #
+  # So the value is chosen for PROCESS STABILITY alone. The canary crash-loop this
+  # module exists to kill died ~700 ms after spawn (37 ms after the auto-prompt
+  # keystroke), and a real `claude` reaches a working TUI within a few seconds. 30 s
+  # is a conservative "this process is genuinely up and staying up" margin — the same
+  # number as before, now for the right reason, and free to move without regard to
+  # any bridge timeout.
+  #
+  # The corollary: a child that boots and then sits uselessly (parked at a login
+  # prompt, bridge never joining) is a HEALTHY START by this module's definition, and
+  # correctly so. That failure is real, but it belongs to the bridge — see
+  # `docs/notes/2026-07-13-bridge-join-timeout-silent.md`.
   @default_healthy_after_ms 30_000
 
   @type mode :: :primary | :fallback
