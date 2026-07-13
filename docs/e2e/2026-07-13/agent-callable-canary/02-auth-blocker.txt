@@ -1,0 +1,46 @@
+CANARY AGENT-CALLABILITY — AUTHENTICATION BLOCKER
+Date: 2026-07-13
+Approximate UTC reproduction window: 04:24
+
+Sanitized reproduction:
+  1. Request a new magic-link for the existing verified account
+     huang.jiajia@ezagent.chat through POST /login/magic.
+  2. Open the returned GET /auth/magic/<redacted-single-use-token> URL.
+  3. The request redirects to /login instead of /login/token or /sessions.
+
+User-visible result:
+  Sign-in token service is unavailable. Please try again.
+
+Observed authorization state:
+  GET /sessions with the resulting cookie redirects to /login.
+
+Code-path localization on main d4cd8419:
+  - MagicLinkController.consume/2 successfully passed MagicLinkToken.consume/2;
+    otherwise the UI would show invalid/expired/consumed-link copy.
+  - Registration lookup and email verification also passed; otherwise the UI
+    would show account-not-found or email-confirmation copy.
+  - The observed message is emitted only when PatDelivery.issue/3 returns
+    {:error, reason}.
+  - PatDelivery.issue/3 delegates to Entity.Token.rotate_label/3.
+  - Entity.Token.rotate_label/3 requires a PAT pepper for the configured current
+    digest version. Missing/malformed pepper returns
+    {:error, {:pat_pepper_unavailable, version}}.
+
+Current hypothesis (NOT YET CONFIRMED):
+  The running canary has no valid pepper for its selected PAT digest version, or
+  the deployment version/configuration does not match the plan's statement that
+  PAT pepper was set.
+
+Evidence still required before confirming root cause:
+  - canary application SHA;
+  - presence-only PAT digest/pepper configuration check;
+  - sanitized container log containing the underlying PatDelivery/Token error.
+
+Safety:
+  The raw magic link, session cookie, PAT values, pepper values, provider keys,
+  and authorization headers are intentionally absent from this file.
+
+Disposition:
+  BLOCKED. Do not retry with another magic link until the PAT issue path is
+  verified, because MagicLinkToken.consume/2 burns the single-use link before
+  PatDelivery.issue/3 attempts PAT rotation.
