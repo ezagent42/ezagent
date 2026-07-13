@@ -81,115 +81,14 @@ defmodule EzagentPluginKanban.Application do
   #     materialization 轴，由 `Recipe.CapMint` 按 flavor 注入 = `:agent`）。
   #   * `passive: true` —— 看板是**被动数据 actor**：不可被 @ / 不可 `:join` / 不收
   #     chat（RF-6 三闸），只在直接 `kanban.<action>` dispatch 上动作。
+  #
+  # 提纯(Task 1):`kanban-assistant` / `dev-together` 两个"脑"配方已从这里搬到
+  # sw seed 数据 `apps/ezagent_web/priv/socialware_seed/kanban/recipes.yaml`。
+  # 部署时 late boot 扫描(`ManifestSeed.scan_dir!`)在发布 kanban manifest 之前先
+  # 读同目录 recipes.yaml 注册这两个 data-role,manifest 的 role slot 仍以 name-ref
+  # 解析。plugin 这里只留 board 工具(`kanban-manager` behaviors),不再声明脑。
   @impl Ezagent.Plugin
-  def roles, do: [kanban_manager_recipe(), kanban_assistant_recipe(), dev_together_recipe()]
-
-  # Persona-skill refs resolved by the cc `OrchestratorBootstrap` walk-up search
-  # over `.claude/skills/<ref>/SKILL.md` (orchestrator_bootstrap.ex:66,316,323-336
-  # → repo-root `.claude/skills`). `kanban-assistant` is a skill-creator persona
-  # skill; `dev-together` already lives in that resolution root (the copied
-  # daily-team-development skill), so the recipe only references it by name.
-  @kanban_assistant_skill_ref "kanban-assistant"
-  @dev_together_skill_ref "dev-together"
-
-  @doc """
-  The `kanban-assistant` role recipe (S1) — a `cc-headless` (real-brain) 看板助手
-  that turns an owner's intent into kanban board moves, assigns build work to the
-  `dev-together` member, and receives dev-together's content-triggered relay-back
-  (a `__done__` header / `@完成回传` legend routes their completion message to this
-  role). Its `skills: ["kanban-assistant"]` persona (built with skill-creator; the
-  kanban-team collaboration protocol lives in an extractable
-  `references/kanban-team-collaboration.md`, spec §5.3) is installed into the
-  agent's `config_dir` by the cc `OrchestratorBootstrap` at materialize. It
-  receives its board authority from the socialware role-slot's `operates`
-  edges, minted for the exact board instance. The recipe requests no ambient
-  kanban caps.
-
-  Role-slot shaped (`skills` + persona `prompt` + kanban action caps), carries NO
-  instance URI — round-trip safe under role-slot #1180.
-  """
-  @spec kanban_assistant_recipe() :: map()
-  def kanban_assistant_recipe do
-    %{
-      name: "kanban-assistant",
-      skills: [@kanban_assistant_skill_ref],
-      prompt: kanban_assistant_persona(),
-      behaviors: [],
-      requested_caps: []
-    }
-  end
-
-  @doc """
-  The `dev-together` role recipe (S1) — a `cc-headless` developer running the
-  copied dev-together daily-team-development skill (`skills: ["dev-together"]`). On
-  finishing a card it follows the kanban-team relay protocol: emit a `__done__`
-  header (or `@完成回传`) + the card id + target stage; the kanban-team
-  routing_rules content-trigger that message back to `kanban-assistant`. Declared as
-  a role slot; the relay carries NO instance URI (role-slot #1180 — round-trip
-  safe). The dev-together skill itself is unchanged (owner-only team contract,
-  never modified); its kanban-team participation is a thin overlay held on the
-  kanban-assistant side (`kanban-assistant/references/dev-together-relay-overlay.md`)
-  pointing at the shared protocol.
-  """
-  @spec dev_together_recipe() :: map()
-  def dev_together_recipe do
-    %{
-      name: "dev-together",
-      skills: [@dev_together_skill_ref],
-      prompt: dev_together_persona(),
-      behaviors: [],
-      requested_caps: []
-    }
-  end
-
-  @spec kanban_assistant_persona() :: String.t()
-  defp kanban_assistant_persona do
-    """
-    # You are the kanban-team 看板助手 (kanban-assistant)
-
-    You run a product-development kanban board with a team. The board's stages are
-    the 9-stage product-dev chain (positioning → metric → pain → anchor → ux →
-    feature → issue → test → pr).
-
-    - The board is your session's passive `board` data role (`kanban-manager` ×
-      native). It is installed with the socialware composition, and you receive
-      only instance-scoped `kanban.<action>` caps declared by that role edge.
-    - Turn the owner's request into board moves via the kanban tools (create a
-      card, set its stage). NEVER ask a worker to compute routing.
-    - Assign build work through the dev-together git-handoff workflow, NOT a raw
-      @mention: write a markdown handoff (`handoffs/<task>.md`, with a DoD) for the
-      `dev-together` member. They `dive` (task branch off main, TDD, PR), then
-      `return` (CI green + rebased + a per-line DoD reconciliation in
-      `returns/<task>.md`) and send a completion signal (`__done__` header or
-      `@完成回传`). That signal message is routed to you — it just tells you the
-      return is ready to review; it does NOT carry the branch/CI/DoD (those live in
-      the return + the git workflow).
-    - On the completion signal, review the dev's `returns/<task>.md` (DoD + CI +
-      rebased), then advance the relevant card and tell the owner what changed. The
-      `pr` stage is CI-gated.
-    - Act ONLY within your own session and workspace.
-
-    The kanban-team collaboration protocol (how you cooperate with the dev-together
-    member) is your `kanban-assistant` skill's
-    `references/kanban-team-collaboration.md` — read it for the details.
-    """
-  end
-
-  @spec dev_together_persona() :: String.t()
-  defp dev_together_persona do
-    """
-    # You are the kanban-team dev-together developer
-
-    You run the dev-together git-handoff workflow (see the dev-together skill): you
-    `dive` a handoff (task branch off main, TDD, PR into the task branch) and
-    `return` it (CI green + rebased on main + a per-line DoD reconciliation in
-    `returns/<task>.md`). THAT workflow is the real work — git + markdown + CI.
-    When your return is ready, send a short completion signal (`__done__` header or
-    `@完成回传`) + the card id + the target stage; that message is routed to the
-    kanban-assistant so they know to review your return. Keep it concise. Stay inside
-    your session and workspace.
-    """
-  end
+  def roles, do: [kanban_manager_recipe()]
 
   @doc """
   The `kanban-manager` role recipe (also the K1 gate's subject).

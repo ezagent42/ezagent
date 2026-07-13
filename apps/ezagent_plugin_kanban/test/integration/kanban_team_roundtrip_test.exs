@@ -90,9 +90,13 @@ defmodule EzagentPluginKanban.Integration.KanbanTeamRoundtripTest do
         template_class: StubTemplate
       })
 
+    # 提纯(Task 1):plugin roles/0 只留 kanban-manager;两个"脑"配方搬进 sw seed
+    # 同目录 recipes.yaml(生产由 ManifestSeed.scan_dir! 在发布 manifest 前注册)。
     Enum.each(Application.roles(), fn recipe ->
       assert {:ok, _} = Ezagent.Agent.RecipeRegistry.seed_role_if_absent(recipe)
     end)
+
+    seed_shipped_brain_recipes!()
 
     :ok = Ezagent.Agent.RecipeRegistry.flush_cache()
 
@@ -161,6 +165,31 @@ defmodule EzagentPluginKanban.Integration.KanbanTeamRoundtripTest do
   # The REAL shipped kanban manifest (2 active agent role-slots plus the passive
   # board role — loaded straight from the deploy-seed YAML, the one source of
   # truth), with ONLY the active-agent flavor swapped `cc-headless` → bare-spawn stub (the loader's `:flavor`
+  # Seed the two "brain" data-role recipes shipped in the kanban socialware seed
+  # package's sibling `recipes.yaml` (Task 1 提纯 — kanban-assistant / dev-together
+  # moved out of plugin `roles/0`). Reads the SAME shipped file production's
+  # `ManifestSeed.scan_dir!` reads, via the `ShippedManifest` seam.
+  defp seed_shipped_brain_recipes! do
+    recipes_path =
+      Ezagent.Socialware.ShippedManifest.path("kanban/manifest.yaml")
+      |> Path.dirname()
+      |> Path.join("recipes.yaml")
+
+    {:ok, %{"recipes" => list}} =
+      Ezagent.Socialware.ManifestYaml.parse(File.read!(recipes_path))
+
+    Enum.each(list, fn r ->
+      assert {:ok, _} =
+               Ezagent.Agent.RecipeRegistry.seed_role_if_absent(%{
+                 name: r["name"],
+                 skills: r["skills"] || [],
+                 prompt: r["prompt"] || "",
+                 behaviors: [],
+                 requested_caps: []
+               })
+    end)
+  end
+
   # test seam) + a per-run fixture name. Resolved through `ManifestResolver`,
   # not hand-written — exercises the actual shipped manifest.
   defp itest_definition_body do

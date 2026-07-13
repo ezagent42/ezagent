@@ -152,9 +152,28 @@ defmodule EzagentPluginKanban.KanbanManifestTest do
     assert "kanban-manager" in Enum.map(EzagentPluginKanban.Application.roles(), & &1.name)
   end
 
-  test "recipe names in role-slots are a subset of the kanban plugin roles/0 recipes" do
+  test "every role-slot recipe is declared — kanban-manager by plugin roles/0, the two brains by the sibling recipes.yaml (Task 1 提纯)" do
     definition = resolve!()
-    declared = Enum.map(EzagentPluginKanban.Application.roles(), & &1.name)
+
+    plugin_declared = Enum.map(EzagentPluginKanban.Application.roles(), & &1.name)
+    # 提纯:plugin roles/0 只留 board 工具。
+    assert plugin_declared == ["kanban-manager"]
+
+    # 两个"脑"配方搬进 sw seed 同目录 recipes.yaml(部署时 ManifestSeed 在发布
+    # manifest 前注册),不再由 plugin 声明。
+    seed_declared =
+      ShippedManifest.path(@manifest_relpath)
+      |> Path.dirname()
+      |> Path.join("recipes.yaml")
+      |> File.read!()
+      |> then(&elem(ManifestYaml.parse(&1), 1))
+      |> Map.fetch!("recipes")
+      |> Enum.map(& &1["name"])
+
+    assert Enum.sort(seed_declared) == ["dev-together", "kanban-assistant"]
+
+    # 每个 role-slot 的 recipe 都被某一侧声明(合起来无悬挂引用)。
+    declared = plugin_declared ++ seed_declared
     Enum.each(definition.roles, fn slot -> assert slot.recipe in declared end)
   end
 
