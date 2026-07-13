@@ -30,10 +30,34 @@ defmodule Ezagent.PluginCc.Template.SpawnPlan do
   # otherwise every restart of a long session silently loses the whole context.
   # `--continue` resumes the most-recent conversation in the current directory;
   # because each cc agent has its OWN `cwd` AND its OWN `CLAUDE_CONFIG_DIR`, that
-  # conversation is unambiguously THIS agent's. Verified empirically: on a first
-  # spawn with no prior conversation `--continue` degrades gracefully to a fresh
-  # session (it does not error), so it is safe on the respawn path even if the
-  # very first spawn had crashed before persisting a transcript.
+  # conversation is unambiguously THIS agent's.
+  #
+  # 2026-07-13 — THE CLAIM THAT USED TO STAND HERE WAS FALSE, and it cost a
+  # 933-respawn production loop. It read: "Verified empirically: on a first spawn
+  # with no prior conversation `--continue` degrades gracefully to a fresh session
+  # (it does not error), so it is safe on the respawn path even if the very first
+  # spawn had crashed before persisting a transcript."
+  #
+  # It does NOT degrade gracefully. On claude 2.1.162, `--continue` with nothing
+  # resumable prints "No conversation found to continue" and EXITS 1 — and a
+  # transcript merely existing on disk is not enough to be resumable (reproduced
+  # under production-identical conditions; see the root-cause note). So the exact
+  # case the comment blessed — "even if the very first spawn had crashed before
+  # persisting a transcript" — is a PERMANENT DEADLOCK: the crash means nothing is
+  # resumable, `--continue` then guarantees the next start fails too, which means
+  # nothing becomes resumable, forever. `test-zyli-cc-1` respawned 933 times in two
+  # hours this way.
+  #
+  # The flag therefore must never be able to PREVENT a start. `inject_resume_flag/1`
+  # now also records the pre-injection argv as `:cmd_fallback`, and the PTY spawn
+  # path (`Ezagent.Domain.Pty.RespawnPolicy`) falls back to it when the preferred
+  # command cannot start. Losing conversation context on a restart is a regression;
+  # never starting at all is fatal — we trade the former to eliminate the latter.
+  #
+  # Resumability cannot be pre-checked from disk (see the note's §3), which is why
+  # this is a fallback and not a predicate.
+  #
+  # docs/notes/2026-07-13-cc-pty-respawn-crashloop-rootcause.md
   @resume_flag "--continue"
 
   @doc false
@@ -147,13 +171,21 @@ defmodule Ezagent.PluginCc.Template.SpawnPlan do
   # concern owned by the gated launcher chain, not the argv builder. Idempotent
   # and shape-safe: a `:test` params map (no `:cmd_override`) or an
   # already-`--continue` argv is returned unchanged.
+  #
+  # 2026-07-13 — ALSO records the pre-injection argv as `:cmd_fallback`. That is
+  # what makes `--continue` unable to prevent a start: when the resumed command
+  # cannot come up, the PTY spawn path retries with this exact argv minus the flag
+  # (a fresh conversation) instead of respawning the doomed one forever. See the
+  # `@resume_flag` rationale.
   @spec inject_resume_flag(map()) :: map()
-  def inject_resume_flag(%{cmd_override: [claude_path | rest]} = params)
+  def inject_resume_flag(%{cmd_override: [claude_path | rest] = fresh_argv} = params)
       when is_binary(claude_path) do
     if @resume_flag in rest or @resume_flag == claude_path do
       params
     else
-      %{params | cmd_override: [claude_path, @resume_flag | rest]}
+      params
+      |> Map.put(:cmd_override, [claude_path, @resume_flag | rest])
+      |> Map.put(:cmd_fallback, fresh_argv)
     end
   end
 
