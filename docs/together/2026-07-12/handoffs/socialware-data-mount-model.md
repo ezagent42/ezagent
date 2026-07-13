@@ -6,6 +6,23 @@
 
 ---
 
+## 更新（2026-07-13）——#1362 已 landed，本 handoff 收窄为 Layer B
+
+`#1362`（socialware composition-cap 车道）已合入 main（`a915343de`）。它用 **per-session passive role slot + `operates` 声明 + owner mint operate cap + consent 双批** 落地了 mount 三场景里的**第一个（团队操作自己的数据 agent）**，并**撤销了 S2**（kanban board 从"workspace 级共享单板"改成"每 session 各物化一份"）。坐实：`kanban-assistant` 挂 20 条 `operates → board`，board 是 `recipe: kanban-manager` 的 passive role slot、跳过 session.join（RF-6 守住）。
+
+**所以本 handoff 收窄为剩下两半（Layer B）**：**跨 session 共享同一块数据 + 对外公开挂载**。现成 socialware 拉取机制拼不出跨 session 共享：`requires:` 是"按名再生蓝图"（本 session 长出全新一份）、`:reuse` 是"走 join 撞 RF-6 且 manifest 不可声明"——都够不到"引用同一个已存在的跨 session passive 实例"。
+
+**用户确认的精确机制（Layer B = 拉已存在的 manager `a`）**：
+- kanban manager **`a`** = 一个代表某份数据权益的 agent（**数据 owner**）。
+- 把 `a` **拉进 session 1** → session 1 的 assistant 调用 `a` 的能力 = **`a`（数据 owner）授权给这个 assistant**。
+- 把**同一个** `a` **拉进 session 2** → session 2 的另一个 assistant 也能调用 `a` = **`a` 的数据进了 session 2**（同一份数据、被多个 session 共享）。
+
+**关键：授权那半 #1362 已现成、可整段复用**——它的 owner mint（`Cap.issue({:held_by, owner})`）+ consent（目标数据 owner 双批）正是"`a` 授权给 assistant"。**唯一要补的窄 infra = 声明 + 解析"把一个已存在的、跨 session 的 `a` 引用/挂载进来"**（挂载表 + 跨 session 实例解析层），不是重造授权。**铁律成立**：`a` 是 passive 数据 agent，"拉 `a` 进 session" = 挂载（可操作、不聊天），`a` 永不进聊天路径 → RF-6 安全（与 #1362 让 passive board 跳 join 同姿势）。
+
+**"admin 管全局" = system admin user**（已全能，零 infra，用户确认）。**"成员改看板" = 当聊天成员给 assistant 发消息让它改**（plugin 层现成，用户确认）。所以 Layer B 的净 infra 就一件：**跨 session 引用/挂载已存在 `a` 的声明+解析层**；下面第四节的 mount 模型据此收窄理解。
+
+---
+
 ## 一、为什么提（怎么撞出来的）
 
 做 kanban 时发现：一个 session 里的 AI 助手（cc-assistant）想操作看板 board，**根本没有指向 board 的权限，也没有任何机制给它**。往上追，这是 kanban / dealscout / autoservice / hello 共同的兜底缺口——今天全靠 admin 万能钥匙代跑或手写脚本。
