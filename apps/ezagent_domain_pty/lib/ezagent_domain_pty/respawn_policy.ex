@@ -253,14 +253,25 @@ defmodule Ezagent.Domain.Pty.RespawnPolicy do
   the ladder on every cycle, so the primary is retried forever and the breaker never
   converges (codex review — see the moduledoc).
 
-  It DOES, however, grant one PROBE (capped at `max_probes/0`). A fallback that ran
-  healthily means the child really worked — for cc that means a conversation was
-  persisted, so the `--continue` that was written off would very likely succeed now.
-  Without the probe the write-off is PERMANENT and the agent silently loses resume
+  It DOES, however, grant one PROBE — but only while the agent's LIFETIME probe
+  budget (`max_probes/0`) is not yet exhausted. A fallback that ran healthily means
+  the child really worked — for cc that means a conversation was persisted, so the
+  `--continue` that was written off would very likely succeed now.
+
+  The budget is LIFETIME, not a refillable stock, and that distinction is the whole
+  bound. Refilling on every healthy fallback looks harmless — the probe is spent on
+  each failed retry, so the stock never grows — but it makes the CYCLE unbounded:
+  healthy fallback → bank a probe → probe retries the doomed primary → probe spent →
+  fall back → healthy fallback → … Each round burns one wasted primary spawn and
+  there is no last round. Measured: 1000 pathological cycles cost 1000 wasted spawns.
+  That is the very non-convergence the two-counter model exists to prevent, just at a
+  30 s cadence instead of 37 ms.
+
+  Without ANY probe the write-off is PERMANENT and the agent silently loses resume
   forever; the probe is what stops the breaker from being a one-way door.
   """
   @spec record_healthy(URI.t(), mode()) :: :ok
-  # `mode` is MANDATORY (see `record_failure/3`): a defaulted `:primary` here would
+  # `mode` is MANDATORY (see `record_failure/4`): a defaulted `:primary` here would
   # make a healthy FALLBACK erase the primary's failure history — the exact
   # non-convergence codex found.
   def record_healthy(%URI{} = agent_uri, mode) when mode in [:primary, :fallback] do
@@ -272,11 +283,18 @@ defmodule Ezagent.Domain.Pty.RespawnPolicy do
         :ets.delete(@table, key)
 
       :fallback ->
+        # Draw from the LIFETIME budget, never a refill. `probes_granted` only ever
+        # grows (until a healthy primary or an operator wipes the row), so the number
+        # of wasted primary retries this agent can ever cost is bounded by
+        # `max_probes/0` — no matter how many healthy fallback runs it accumulates.
+        grant = if state.probes_granted < max_probes(), do: 1, else: 0
+
         store(key, %{
           state
           | failures: 0,
             halt: nil,
-            probes: min(state.probes + 1, max_probes())
+            probes: state.probes + grant,
+            probes_granted: state.probes_granted + grant
         })
     end
 
@@ -327,13 +345,16 @@ defmodule Ezagent.Domain.Pty.RespawnPolicy do
   def max_failures, do: cfg(:respawn_max_failures, @default_max_failures)
 
   @doc """
-  How many PROBES a written-off primary may accumulate — one retry each, granted by a
-  healthy fallback run. Default #{@default_max_probes}; override with
+  The agent's LIFETIME probe budget — the total number of times a written-off primary
+  may ever be retried. Default #{@default_max_probes}; override with
   `config :ezagent_domain_pty, :respawn_max_probes`.
 
-  The cap is what keeps the probe from re-creating the unbounded primary/fallback
-  cycle: probes are granted ONLY by a healthy fallback (which costs a full
-  `healthy_after_ms`), spent one per retry, and never exceed this ceiling.
+  Lifetime, not a refillable stock: this is the whole bound. A per-cycle cap looks
+  equivalent (a probe is spent on every failed retry, so the stock never grows) but
+  leaves the CYCLE unbounded — a pathological fallback that stays healthy without
+  working would buy a fresh probe every round, forever, at one wasted primary spawn
+  each. Only a healthy PRIMARY run or an operator `clear/1` refills it, and both mean
+  the situation genuinely changed.
   """
   @spec max_probes() :: pos_integer()
   def max_probes, do: cfg(:respawn_max_probes, @default_max_probes)
@@ -347,7 +368,7 @@ defmodule Ezagent.Domain.Pty.RespawnPolicy do
 
     case :ets.lookup(@table, key) do
       [{^key, %{} = state}] -> state
-      _ -> %{failures: 0, primary_failures: 0, probes: 0, halt: nil}
+      _ -> %{failures: 0, primary_failures: 0, probes: 0, probes_granted: 0, halt: nil}
     end
   end
 
