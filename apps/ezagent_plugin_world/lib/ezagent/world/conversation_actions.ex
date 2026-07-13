@@ -1200,6 +1200,9 @@ defmodule Ezagent.World.ConversationActions do
       is_list(value) ->
         Enum.map(value, &jsonable/1)
 
+      is_binary(value) or is_number(value) ->
+        value
+
       is_atom(value) ->
         Atom.to_string(value)
 

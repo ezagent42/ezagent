@@ -799,6 +799,11 @@ defmodule EzagentWeb.WorldConversationTest do
     {:ok, _agent_pid} =
       Ezagent.Kind.spawn(Ezagent.Entity.Agent, %{uri: agent_uri, initial_caps: MapSet.new()})
 
+    on_exit(fn ->
+      _ = Ezagent.Domain.Pty.stop(agent_uri)
+      _ = Ezagent.Kind.terminate(agent_uri)
+    end)
+
     {:ok, _pty_pid} =
       Ezagent.Domain.Pty.start(agent_uri, %{
         cwd: "/tmp",
@@ -806,11 +811,6 @@ defmodule EzagentWeb.WorldConversationTest do
         test_mode: false,
         auto_prompts: []
       })
-
-    on_exit(fn ->
-      :ok = Ezagent.Domain.Pty.stop(agent_uri)
-      :ok = Ezagent.Kind.terminate(agent_uri)
-    end)
 
     assert is_pid(wait_for_pty_exec_pid(agent_uri))
 
@@ -827,12 +827,17 @@ defmodule EzagentWeb.WorldConversationTest do
       "active_view" => "pty",
       "active_pty_agent_uri" => ^agent,
       "agent_status" => %{
-        "detail" => %{"exec_pid" => exec_pid}
+        "detail" => %{
+          "cwd" => "/tmp",
+          "exec_pid" => exec_pid,
+          "os_pid" => os_pid
+        }
       }
     })
 
     assert is_binary(exec_pid)
     assert String.starts_with?(exec_pid, "#PID<")
+    assert is_integer(os_pid)
     assert Process.alive?(view.pid)
   end
 
