@@ -113,6 +113,111 @@ defmodule Ezagent.ActionSet.PtyTest do
              })
   end
 
+  # ---------------------------------------------------------------
+  # `pty.restart` is gated by the MANAGE authority (see required_caps/0).
+  # These three pin the exact authorization shape — they are the reason
+  # the creator needs no new capability and no backfill.
+  # ---------------------------------------------------------------
+
+  defp creator_uri, do: Ezagent.URI.new!("entity://team-alpha/user/agent-creator")
+
+  defp write_cap(agent_uri) do
+    %Ezagent.Capability{
+      kind: :agent,
+      behavior: Ezagent.ActionSet.Pty,
+      action: :write,
+      instance: agent_uri,
+      workspace_uri: Ezagent.URI.new!("workspace://team-alpha"),
+      granted_by: creator_uri(),
+      granted_at: DateTime.utc_now()
+    }
+  end
+
+  defp restart_target(agent_uri),
+    do: URI.parse(URI.to_string(agent_uri) <> "?action=pty.restart")
+
+  # EXACTLY the cap `Ezagent.ActionSet.Workspace.AgentCreate` mints for the
+  # creator today, via `CreatorGrant.manage_cap/4`. Nothing added.
+  defp creator_ctx(agent_uri) do
+    # `workspace://team-alpha` is the PRODUCTION shape: agent creation passes
+    # `socket.assigns.current_workspace_uri`, which `agent_actions.ex:70`
+    # pattern-matches as `%URI{scheme: "workspace"}`. Written as a literal on
+    # purpose — deriving it with `Capability.workspace_of/1` would just mirror
+    # the runtime's own derivation and prove nothing.
+    cap =
+      Ezagent.CreatorGrant.manage_cap(
+        :agent,
+        agent_uri,
+        Ezagent.URI.new!("workspace://team-alpha"),
+        creator_uri()
+      )
+
+    %{caller: creator_uri(), caps: MapSet.new([cap]), reply: {:caller_inbox, self()}}
+  end
+
+  test "creator's EXISTING manage cap authorizes pty.restart — no new grant", %{
+    agent_uri: agent_uri
+  } do
+    # The whole point: the creator holds ONE cap (Manage/:any/this-agent) and
+    # it must carry `pty.restart`. Anything but :unauthorized proves authz
+    # passed and the handler ran.
+    refute match?(
+             {:error, :unauthorized},
+             Invocation.dispatch(%Invocation{
+               target: restart_target(agent_uri),
+               mode: :call,
+               args: %{},
+               ctx: creator_ctx(agent_uri)
+             })
+           )
+  end
+
+  test "a manage cap for ANOTHER agent does NOT authorize pty.restart", %{agent_uri: agent_uri} do
+    other = Ezagent.URI.new!("entity://team-alpha/agent/cc_someone-elses-agent")
+
+    assert {:error, :unauthorized} =
+             Invocation.dispatch(%Invocation{
+               target: restart_target(agent_uri),
+               mode: :call,
+               args: %{},
+               ctx: creator_ctx(other)
+             })
+  end
+
+  test "a pty:write cap does NOT authorize pty.restart", %{agent_uri: agent_uri} do
+    assert {:error, :unauthorized} =
+             Invocation.dispatch(%Invocation{
+               target: restart_target(agent_uri),
+               mode: :call,
+               args: %{},
+               ctx: %{
+                 caller: creator_uri(),
+                 caps: MapSet.new([write_cap(agent_uri)]),
+                 reply: {:caller_inbox, self()}
+               }
+             })
+  end
+
+  test "a CONCRETE-action pty:write cap authorizes pty.write (the /login hatch)", %{
+    agent_uri: agent_uri
+  } do
+    # The other half of the gap: typing into the terminal. A concrete-action
+    # cap (NOT `action: :any`) suffices — which also sidesteps
+    # `CapabilityRegistry`'s `:wildcard_action_grant_requires_admin_authority`
+    # guard on exact-instance `:any`-action grants.
+    assert {:ok, %{bytes_written: 1}} =
+             Invocation.dispatch(%Invocation{
+               target: dispatch_target(agent_uri),
+               mode: :call,
+               args: %{bytes: "x"},
+               ctx: %{
+                 caller: creator_uri(),
+                 caps: MapSet.new([write_cap(agent_uri)]),
+                 reply: {:caller_inbox, self()}
+               }
+             })
+  end
+
   test "Behavior.Pty registered on Entity.Agent for :write" do
     assert {:ok, Ezagent.ActionSet.Pty} =
              Ezagent.BehaviorRegistry.lookup(Ezagent.Entity.Agent, :write)
@@ -121,7 +226,9 @@ defmodule Ezagent.ActionSet.PtyTest do
   test "dispatch against an agent with no PtyServer → :no_pty_server" do
     # Spawn the PTY-capable test Kind (so dispatch resolves) but no PtyServer.
     bare_uri =
-      Ezagent.URI.new!("entity://team-alpha/agent/cc_no-pty-#{System.unique_integer([:positive])}")
+      Ezagent.URI.new!(
+        "entity://team-alpha/agent/cc_no-pty-#{System.unique_integer([:positive])}"
+      )
 
     {:ok, _kind_pid} = EzagentDomainPty.Test.PtyAgentFixture.spawn(bare_uri)
 

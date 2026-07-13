@@ -80,8 +80,8 @@ defmodule Ezagent.ActionSet.PtyMigrationParityTest do
       assert Ezagent.ActionSet.new_style?(Pty)
     end
 
-    test "__action_names__/0 lists [:write]" do
-      assert Pty.__action_names__() == [:write]
+    test "__action_names__/0 lists [:write, :restart]" do
+      assert Pty.__action_names__() == [:write, :restart]
     end
 
     test "handle_write/2 is exported (macro invariant)" do
@@ -177,10 +177,11 @@ defmodule Ezagent.ActionSet.PtyMigrationParityTest do
 
   describe "legacy callbacks remain available (framework wiring)" do
     test "actions/0, interface/0, cap_subjects/0 all defined" do
-      assert Pty.actions() == [:write]
+      assert Pty.actions() == [:write, :restart]
       assert Map.has_key?(Pty.interface(), :write)
-      assert [{:write, desc}] = Pty.cap_subjects()
+      assert [{:write, desc}, {:restart, restart_desc}] = Pty.cap_subjects()
       assert is_binary(desc) and desc != ""
+      assert is_binary(restart_desc) and restart_desc != ""
     end
 
     test "required_caps/0 uses the :agent axis" do

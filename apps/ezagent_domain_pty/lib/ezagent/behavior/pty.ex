@@ -106,12 +106,21 @@ defmodule Ezagent.ActionSet.Pty do
 
   use Ezagent.Lifecycle
 
-  action :write,
+  action(:write,
     args: %{bytes: :string},
     returns: %{bytes_written: :integer},
     caps: [:write],
     modes: [:call, :cast],
     description: "Write raw bytes to the agent's PTY input stream"
+  )
+
+  action(:restart,
+    args: %{},
+    returns: %{restarted: :boolean},
+    caps: [:restart],
+    modes: [:call],
+    description: "Clear a respawn-breaker halt and respawn the agent's PTY subprocess"
+  )
 
   # SPEC `docs/superpowers/specs/2026-05-25-caps-cleanup-v1-r4-impl.md` §2.
   # Pty is registered on the Agent Kind — kind axis is `:agent`. The
@@ -120,7 +129,22 @@ defmodule Ezagent.ActionSet.Pty do
   # existing grants.
   def required_caps do
     %{
-      write: Ezagent.Capability.cap(:agent, __MODULE__, :write)
+      write: Ezagent.Capability.cap(:agent, __MODULE__, :write),
+
+      # `:restart` is gated by the agent's MANAGE cap, not a PTY cap —
+      # the same idiom `Ezagent.ActionSet.ConfigGovernance` uses for its CR
+      # actions (lead decision OQ-4: "the agent's MANAGE cap, no separate
+      # cap"). `Kind.Runtime` overwrites the needed-cap's ACTION with the
+      # dispatched action but honours the declared BEHAVIOR, so a held
+      # `cap(:agent, Manage, :any, <this agent>)` matches `:restart`.
+      #
+      # Recovering a dead agent is a management act on the instance, not
+      # terminal typing. The creator already holds exactly that cap from
+      # `CreatorGrant.manage_cap/4` (#533 §3.3 — "any management action on
+      # THIS instance"), so Allen's 2026-07-13 decision ("the agent's
+      # creator has authority to recover it") needs no new grant and no
+      # backfill. Pinned by the three authz tests in `pty_test.exs`.
+      restart: Ezagent.Capability.cap(:agent, Ezagent.ActionSet.Manage, :any)
     }
   end
 
@@ -183,6 +207,26 @@ defmodule Ezagent.ActionSet.Pty do
 
   def handle_write(_args, _ctx),
     do: {:error, {:invalid_args, :bytes_required}}
+
+  @doc """
+  Clear a respawn-breaker halt and respawn the agent's PTY subprocess.
+
+  Gated by the MANAGE authority (see `required_caps/0`) — recovering a dead
+  agent is a management act on the instance, not terminal typing. The creator's
+  existing `cap(:agent, Manage, :any, <this agent>)` therefore carries it.
+  """
+  def handle_restart(_args, ctx) do
+    case Map.get(ctx, :self_uri) do
+      %URI{} = agent_uri ->
+        case Ezagent.Domain.Pty.restart(agent_uri) do
+          :ok -> {:ok, %{restarted: true}, []}
+          {:error, reason} -> {:error, reason}
+        end
+
+      _ ->
+        {:error, :no_self_uri}
+    end
+  end
 
   # PR-OWN-4 (caps-data-ownership SPEC #306 §6): per-entity Behavior
   # — the entity (user / agent) owns its own state for this Behavior.
