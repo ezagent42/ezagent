@@ -2,6 +2,18 @@ CANARY AGENT-CALLABILITY — AUTHENTICATION BLOCKER
 Date: 2026-07-13
 Approximate UTC reproduction window: 04:24
 
+Confirmed retry:
+  A newly requested link was minted at 04:55:36Z and consumed at 04:56:16Z,
+  approximately 40 seconds later. It produced the same "Sign-in token service
+  is unavailable" result. This rules out the normal 15-minute expiry path and
+  establishes that the PAT-delivery failure is reproducible.
+
+Control observation:
+  An earlier retry consumed approximately 21 minutes after minting correctly
+  returned the distinct "That sign-in link has expired" message. Canary HTTP
+  Date and the executor UTC clock matched, so there is no observed system-clock
+  skew.
+
 Sanitized reproduction:
   1. Request a new magic-link for the existing verified account
      huang.jiajia@ezagent.chat through POST /login/magic.
@@ -41,6 +53,7 @@ Safety:
   and authorization headers are intentionally absent from this file.
 
 Disposition:
-  BLOCKED. Do not retry with another magic link until the PAT issue path is
-  verified, because MagicLinkToken.consume/2 burns the single-use link before
-  PatDelivery.issue/3 attempts PAT rotation.
+  BLOCKED after one prompt retry and one controlled timely retry. Do not request
+  another magic link until the PAT issue path is verified, because
+  MagicLinkToken.consume/2 burns the single-use link before PatDelivery.issue/3
+  attempts PAT rotation.

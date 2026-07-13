@@ -20,6 +20,9 @@ This evidence set tracks the 2026-07-13 `gagameow` task defined in
 - The failure occurs after `MagicLinkToken.consume/2`, while
   `PatDelivery.issue/3` rotates the interactive-login PAT. The controller does
   not expose the underlying `Entity.Token.rotate_label/3` error.
+- A controlled retry consumed a newly minted link in approximately 40 seconds
+  and reproduced the same PAT-delivery error. Normal link expiry is therefore
+  ruled out for this blocker.
 - Product verification has therefore **not** created a session, sent an
   `@orchestrator` message, or claimed that the agent chain works.
 
