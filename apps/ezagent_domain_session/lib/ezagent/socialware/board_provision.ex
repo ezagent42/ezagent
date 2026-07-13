@@ -70,6 +70,8 @@ defmodule Ezagent.Socialware.BoardProvision do
   end
 
   @default_assistant_role "kanban-assistant"
+  # 只读动作:转发发的钥匙只含这些(能看不能改)。kanban 读动作 = get_tree / export_markmap。
+  @default_read_actions [:get_tree, :export_markmap]
 
   @doc """
   拉板 —— 把一块**已存在**的板拉进 `target_session_uri`,给该 session 的 assistant 发指向
@@ -106,6 +108,109 @@ defmodule Ezagent.Socialware.BoardProvision do
     end
   end
 
+  @doc """
+  转发只读 —— 群里**任何成员**能做:把一块板从 `from_session_uri` 转发给 `to_session_uri`,
+  给 to_session 的 assistant 发指向这块板的**只读**钥匙(默认 `[:get_tree, :export_markmap]`),
+  只能看不能改(数据跨 session 共享、板不进群、URI 寻址)。
+
+  **对比拉板(`pull_board`)**:同一条 `mint_cap`,只是 (1) 授权检查不同、(2) actions 不同。
+  拉板只有板主人能、发全部操作动作;转发**任何在 from_session 且 from_session 对板有 access
+  的成员**能、发只读动作。granter 仍 = 板主人(读的还是他的数据,mint_cap 内部用板主人权铸),
+  转发成员只是"传递了他的 access"。
+
+  **授权检查(call-site,fail-closed)**:`caller_ctx.caller` 必须
+    ① **在 from_session 里**(是 from_session 的成员),且
+    ② **from_session 对这块板有 access** —— 即 from_session 的 `assistant_role` 成员持有一把
+       指向这块板(instance 精确)的 `behavior` cap(这块板被 pull/create 进了 from_session)。
+  任一不满足 → `{:error, :no_forward_access}`。**不要求 caller 是板主人**(那是拉板)。
+
+    * `board_uri` —— 已存在的板(数据宿主)。
+    * `from_session_uri` —— caller 所在、且对板有 access 的来源 session。
+    * `to_session_uri` —— 收只读钥匙的目标 session;assistant 从它的成员边解析。
+    * `behavior` —— 操作/读 cap 的 ActionSet 模块(如 `Ezagent.ActionSet.Kanban`)。
+    * `caller_ctx` —— `%{caller, ...}`:发起转发者;可选 `:assistant_role` 覆盖两侧收/查钥匙成员
+      的 role_name(默认 `"kanban-assistant"`)、`:read_actions` 覆盖只读动作集。
+
+  返回 `{:ok, %{assistant_uri, minted}}` 或
+  `{:error, :no_forward_access | :no_assistant_in_target | term()}`。
+  """
+  @spec forward_board(URI.t(), URI.t(), URI.t(), module(), map()) ::
+          {:ok, %{assistant_uri: URI.t(), minted: [Ezagent.Capability.t()]}} | {:error, term()}
+  def forward_board(
+        %URI{} = board_uri,
+        %URI{} = from_session_uri,
+        %URI{} = to_session_uri,
+        behavior,
+        caller_ctx
+      )
+      when is_atom(behavior) and is_map(caller_ctx) do
+    assistant_role = Map.get(caller_ctx, :assistant_role, @default_assistant_role)
+    read_actions = Map.get(caller_ctx, :read_actions, @default_read_actions)
+
+    with :ok <-
+           assert_forward_access(board_uri, from_session_uri, behavior, assistant_role, caller_ctx),
+         {:ok, assistant_uri} <- resolve_target_assistant(to_session_uri, assistant_role),
+         {:ok, minted} <-
+           CompositionCaps.mint_cap(assistant_uri, board_uri, behavior, read_actions) do
+      {:ok, %{assistant_uri: assistant_uri, minted: minted}}
+    end
+  end
+
+  # 转发守卫:caller 必须 ① 在 from_session 里 ② from_session 的 assistant 持指向该板的 cap
+  # (= from_session 对板有 access)。mint 内部用板主人权铸、不自检触发者,故这两道把关落这里。
+  defp assert_forward_access(
+         board_uri,
+         from_session_uri,
+         behavior,
+         assistant_role,
+         %{caller: %URI{} = caller}
+       ) do
+    members =
+      case Ezagent.Kind.get_slice(from_session_uri, :session) do
+        {:ok, slice} when is_map(slice) -> Map.get(slice, :members, %{})
+        _ -> %{}
+      end
+
+    cond do
+      not caller_member?(members, caller) ->
+        {:error, :no_forward_access}
+
+      true ->
+        case Members.role_name_to_uri(members, assistant_role) do
+          %URI{} = from_assistant ->
+            if session_holds_board_cap?(from_assistant, behavior, board_uri),
+              do: :ok,
+              else: {:error, :no_forward_access}
+
+          _ ->
+            {:error, :no_forward_access}
+        end
+    end
+  end
+
+  defp assert_forward_access(_board_uri, _from, _behavior, _role, _ctx),
+    do: {:error, :no_forward_access}
+
+  # caller 是否 from_session 的成员(成员边 key = 成员 URI,normalize 后比 instance)。
+  defp caller_member?(members, %URI{} = caller) do
+    key = Ezagent.URI.stable_key(Ezagent.URI.instance(caller))
+
+    Enum.any?(members, fn
+      {%URI{} = uri, _meta} -> Ezagent.URI.stable_key(Ezagent.URI.instance(uri)) == key
+      _ -> false
+    end)
+  end
+
+  # from_session 的 assistant 是否持一把指向这块板(instance 精确)的 behavior cap。
+  defp session_holds_board_cap?(assistant_uri, behavior, board_uri) do
+    board_instance = Ezagent.URI.instance(board_uri)
+
+    Enum.any?(Ezagent.Identity.list_caps_for(assistant_uri), fn cap ->
+      cap.kind == :agent and cap.behavior == behavior and
+        cap.instance == board_instance
+    end)
+  end
+
   # 拉板守卫:caller 必须是这块板的 data_owner(mint 内部不自检触发者,故这里把关)。
   defp assert_board_owner(board_uri, behavior, %{caller: %URI{} = caller}) do
     case Ezagent.CapabilityRegistry.data_owner_of(behavior, Ezagent.URI.instance(board_uri)) do
@@ -131,6 +236,8 @@ defmodule Ezagent.Socialware.BoardProvision do
 
   # 本 session 的成员边(与 CompositionCaps.read_role_members 同源:`:session` 状态切片的
   # `:members` map),`role_name == assistant_role` 的成员即收钥匙人。
+  # 本 session 的成员边(与 CompositionCaps.read_role_members 同源:`:session` 状态切片的
+  # `:members` map,key = 成员 URI,meta 带 `:role_name`),`role_name == assistant_role` 即目标。
   defp resolve_assistant(session_uri, assistant_role) do
     members =
       case Ezagent.Kind.get_slice(session_uri, :session) do
