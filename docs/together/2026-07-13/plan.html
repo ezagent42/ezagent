@@ -23,6 +23,11 @@
   .lead{color:#047857;font-weight:600}.note{color:#6b7280}
   ol.steps{margin:6px 0 6px 22px}ol.steps li{margin:4px 0}
   .tag{display:inline-block;background:#ecfdf5;border:1px solid #a7f3d0;border-radius:10px;padding:0 8px;font-size:11px;color:#047857;margin-left:4px}
+  .kick{background:#f8fafc;border:1px solid #e2e8f0;border-radius:8px;padding:10px 16px;margin:12px 0}
+  .kick h3{margin-top:2px;color:#047857}
+  .kick ul{margin:6px 0 2px 20px;padding:0}.kick li{margin:3px 0}
+  .prog{background:#f0fdf4;border:1px solid #bbf7d0;border-radius:8px;padding:10px 16px;margin:10px 0}
+  .delta{background:#fef9f3;border:1px solid #fed7aa;border-radius:8px;padding:10px 16px;margin:10px 0}
 </style>
 </head>
 <body>
@@ -30,12 +35,12 @@
 <div class="meta">
 <b>week goal（W29）:</b> 实现 ezagent 自举 —— 收敛为<b>一个统一验收 demo</b>，本周至少完整跑通一次（不要求稳定）。<br>
 <b>本日头号:</b> 在 canary 上跑通自举 demo 的第一段 —— <b>平台 agent（cc/codex）可被正常调用/真回话</b>，这是全链入口。<br>
-<b>timezone:</b> GMT+8 · <b>lead:</b> 林懿伦（allenwoods） · <b>coordinator:</b> allenwoods + CC
+<b>timezone:</b> GMT+8 · <b>lead:</b> 林懿伦（allenwoods） · <b>coordinator:</b> allenwoods + CC（agent 不占 track 行）
 </div>
 
-<h2>§0 本周大局 — 统一 demo（W29 验收）</h2>
+<h2>§0 本周大局 — 统一 demo（W29 验收 · STANDING）</h2>
 <div class="demo">
-<b>一条端到端链，把「在 ezagent 里开发 ezagent」和「hello/kanban 作为真实产品被用」拧成一次验收：</b>
+<b>本周验收（逐日不变，直到跑通）—— 一条端到端链，把「在 ezagent 里开发 ezagent」和「hello/kanban 作为真实产品被用」拧成一次验收：</b>
 <div class="chain">登录官网（magic-link）
    └─→ 进 hello（入口 / concierge）
           └─→ hello 连到 kanban socialware（开发任务板）
@@ -44,40 +49,59 @@
                           └─→ agent 产出真实 PR
                                  └─→ 过 CI + review + 合并 + 部署
                                         └─→ kanban 上看到任务流转 → 三面绿</div>
-= <b>dev-loop</b>（在 ezagent 里开发 ezagent）+ <b>产品 dogfood</b>（hello / kanban 作为真实 socialware 被 install / use / uninstall）+ <b>两者结合</b>（用 kanban 派开发任务）。<br>
-<b>验证顺序:</b> 从 agent 可被正常调用起（gaga）→ 逐环节由 jjkysy 用 kanban 看板监控 + 测试验收。<br>
-<span class="note">现状：这条 demo 目前一次都还没跑通；本周先跑通一次，再谈去脆。W28 头号 canary 目标能力已由 #1332/#1333 就位。</span>
+= <b>dev-loop</b>（在 ezagent 里开发 ezagent）+ <b>产品 dogfood</b>（hello / kanban 作为真实 socialware 被 install / use / uninstall）+ <b>两者结合</b>（用 kanban 派开发任务）。本周至少完整跑通一次，再谈去脆。
+</div>
+<div class="prog">
+<b>今日进度（progress toward the acceptance）</b>
+<ul>
+<li><b>自举地基已 landed:</b> <code>#1361</code>（orchestrator session-config MCP）+ <code>#1362</code>（socialware composition-cap 车道）<b>均已合入 main</b>（HEAD <code>a915343de</code>）——agent 控制面 / 组合能力地基就位。</li>
+<li><b>canary:</b> PAT pepper 已设 canary。</li>
+<li><b>下一步 = 本日头号:</b> 在 canary 实证自举第一段（agent 可被调用 / 真回话，见 §1）；通了下游才可链测。</li>
+<li><b>待 / 风险:</b> seed-flake 可能挡 canary 部署——部署前需排查，否则 canary 实测被阻。</li>
+</ul>
+</div>
+<div class="delta">
+<b>修正 / 变化（deltas vs 上一 plan / state）</b>
+<ul>
+<li><b>FatNine（戴明，后端）2026-07-13 退出</b>开发，已从 roster 与今日 track 移除。</li>
+<li><b>coordinator = allenwoods + CC</b>（分支合并 / canary 部署 / demo 集成粘合）；agent 不占 track 行。</li>
+<li><b>#1362 已从「合并中」转为「已合 main」</b>——地基不再是在途项。</li>
+</ul>
 </div>
 
 <h2>§1 本日头号 — 自举第一段（agent 可调用 / 真回话）</h2>
-<p>agent 若不能被 kanban 派活、不能回话，下游整条 demo（hello 连 kanban、派任务、产 PR、看板流转）都无从开始。<b>本日先在 canary 实证这一段。</b></p>
+<p>agent 若不能被 kanban 派活、不能回话，下游整条 demo（hello 连 kanban、派任务、产 PR、看板流转）都无从开始。<b>本日先在 canary 实证这一段。</b>W28 头号 canary 目标"@orchestrator 真回话"未按 plan 归档（见 <code>2026-07-10/review.md</code> §3 事故 A），能力已由 #1332/#1333 就位。<span class="note">红线见 §7：canary 前不宣布修好。</span></p>
 
 <h2>§2 按开发者规划</h2>
 <p class="note">每行 = 一个自含闭环 track（human-dev only）。agent 不出现在 plan 中；coordinator = allen + CC 负责分支合并 / canary 部署 / demo 集成粘合，不占 track 行。</p>
 <div class="scroll"><table>
-<tr><th>开发者</th><th>本日 track</th><th>闭环 / 依赖</th><th>demo 环节</th></tr>
+<tr><th>开发者</th><th>本日 track</th><th>闭环 / 依赖</th><th>分支</th><th>demo 环节</th></tr>
 <tr>
   <td><b>gagameow</b><br>黄佳佳</td>
   <td><b>agent 方向配置 + 验证自举第一步</b>：配置平台托管的开发 agent（能被 kanban 派活、能产 PR），<b>canary 上 #1294 @orchestrator 真回话验证</b>（#1310 是防御性 hotfix，不替代 canary 实测）。<span class="tag">全链入口</span></td>
   <td>前置于整条 demo；agent-browser 截图 + PTY join 日志取证</td>
+  <td><code>fix/agent-callable-canary</code></td>
   <td>自举 dev-loop 入口</td>
 </tr>
 <tr>
   <td><b>jjkysy</b><br>姚升悦</td>
   <td><b>整体进度监控 + 测试，以 kanban socialware 为抓手</b>：把 demo 各环节任务放进 kanban（dogfood 看板），跟踪进度 + 跨环节测试验收把关。</td>
   <td>依赖各环节产出；kanban 作为团队看板</td>
+  <td><code>feat/kanban-progress-board</code></td>
   <td>自举 × socialware</td>
 </tr>
 <tr>
   <td><b>zhaomaota97</b><br>张宁</td>
   <td><b>官网 + hello</b>：官网首程（登录 → 进站）+ hello 入口 + <b>hello 连接 kanban</b>；#1134 concierge/public-read 顺带。</td>
   <td>hello 连 kanban 是 demo 的产品面；依赖 agent 可回话</td>
+  <td><code>feat/hello-kanban-entry</code></td>
   <td>socialware / 官网</td>
 </tr>
 <tr>
   <td><b>zyli-developer</b><br>李震宇</td>
   <td><b>UI 优化 + bug 修复</b>：修 demo journey 的 UI bug + 优化（#1320 class listings、#1327 卸载 UI，+ 走查发现的）。</td>
   <td>修各环节 UI 缺陷</td>
+  <td><code>fix/demo-ui-polish</code></td>
   <td>socialware / 官网</td>
 </tr>
 </table></div>
@@ -96,7 +120,7 @@
 <b>jjkysy = kanban 插件、gaga = agent/orchestrator 配置</b>——与 world 面及彼此互不重叠，可全程并行。
 </div>
 
-<h2>§4 handoff 顺序</h2>
+<h2>§4 依赖与 handoff 顺序</h2>
 <ol class="steps">
 <li><b>gaga 先跑通「agent 可被调用 / 真回话」（canary 实测）</b> —— 全链入口，未通前下游 demo 无法链测。</li>
 <li>gaga 宣布 agent 可回话后 → zhaomato 的 hello→kanban 连接与 jjkysy 的 kanban 派活面变为<b>可链测</b>。</li>
@@ -104,10 +128,73 @@
 <li>agent 产 PR → coordinator 走 CI / review / 合并 / 部署 → jjkysy 在 kanban 看到任务流转 → 三面绿。</li>
 <li>zyli 全程修各环节 UI 缺陷（并行）；ruihua 提供官网体验 UX 设计输入（Feishu）。</li>
 </ol>
-<p class="note">coordinator（allen + CC）：#1361 已合 main；socialware composition-cap 车道合并中；负责 canary 部署（含 PAT pepper）+ demo 集成粘合。</p>
+<p class="note"><b>coordinator（allen + CC）:</b> #1361 + #1362 已合 main（lead 是进 main 唯一路径）；canary 部署（含 PAT pepper）+ demo 集成粘合。</p>
 
-<h2>§5 红线</h2>
-<div class="redline"><b>canary 前不宣布修好。</b> 任何「agent 真回话 / demo 跑通」的通报，须有 <b>canary 实测证据</b>（agent-browser 截图 + PTY join 日志 / 真实 PR 链接 + kanban 流转截图）后才发——机器闸 CI 绿 ≠ 产品验证。</div>
+<h2>§5 开工 prompt（每个 dev 一段 paste-ready）</h2>
+<p class="note">每段可直接粘贴给该 dev / 其 agent 起步。深任务走完整 <code>handoff</code> 命令出 spec；本节是快路 kickoff。通用规约见 §7。</p>
+
+<div class="kick">
+<h3>gaga — agent 方向配置 + 验证自举第一步（canary）</h3>
+<ul>
+<li><b>分支:</b> <code>fix/agent-callable-canary</code>（先 <code>git fetch origin main</code> 再从 <code>origin/main</code> 切）</li>
+<li><b>范围:</b> 配置平台托管的开发 agent（能被 kanban 派活、能产 PR）；<b>在 canary 上实证 #1294 @orchestrator 真回话</b>（GitHub 确认周末未做）。范围外：把 #1310 防御性 hotfix 当"已修好"——它不替代 canary 实测。</li>
+<li><b>必读:</b> <code>ezagent-developer</code> 技能 · #1294 / #1310 上下文 · <code>2026-07-10/review.md</code> §3 事故 A · dev-together 技能。</li>
+<li><b>取证 = DoD:</b> canary 上 agent 真回话 transcript + <b>agent-browser 截图</b> + <b>PTY join 日志</b>（机器闸 CI 绿 ≠ 产品验证；此段只有 canary 能证）。</li>
+<li><b>闸:</b> <code>arch.scan + doc.scan + uri_query.scan + check_invariants</code>（或 <code>mix ci.local</code>）+ 回归测试 + PR-head CI 绿 + rebase main。</li>
+</ul>
+<div class="redline"><b>红线:</b> canary 前不宣布修好（须有实测证据再通报）。</div>
+</div>
+
+<div class="kick">
+<h3>jjkysy — kanban socialware 作为团队进度看板</h3>
+<ul>
+<li><b>分支:</b> <code>feat/kanban-progress-board</code>（从 <code>origin/main</code> 切）</li>
+<li><b>范围:</b> 把本周 demo 各环节任务放进 kanban socialware（<b>dogfood</b> 看板），跟踪进度 + 跨环节测试验收把关；用到组合能力时对齐 #1362 composition-cap 车道（已 main）。</li>
+<li><b>必读:</b> <code>ezagent-socialware</code> + <code>ezagent-developer</code> 技能 · #1362 composition-cap lane（已 main）· <code>kanban-rework-final (2026-07-10)</code> 续接点 · dev-together 技能。</li>
+<li><b>DoD:</b> demo 各环节在 kanban 上有任务卡 + 可见流转；至少一条跨环节验收用例通过（真实数据，非 stub）。</li>
+<li><b>闸:</b> 全套静态 gate + 回归测试 + PR-head CI 绿 + rebase main。</li>
+</ul>
+</div>
+
+<div class="kick">
+<h3>zhaomato — 官网首程 + hello 入口 + hello 连 kanban</h3>
+<ul>
+<li><b>分支:</b> <code>feat/hello-kanban-entry</code>（从 <code>origin/main</code> 切）</li>
+<li><b>范围:</b> 官网首程（登录 → 进站）+ hello 入口 + <b>hello 连接 kanban</b>；#1134 concierge/public-read 顺带。这是 demo 的<b>产品面</b>。<b>依赖:</b> agent 可回话（gaga 段通了才可链测 hello→kanban 派活）。</li>
+<li><b>必读:</b> <code>ezagent-socialware</code> 技能 · hello 源（渲染底座 / 入口）· <b><code>docs/guide/world-coordination.md</code></b>（触 <code>world</code>，与 zyli 串行 <code>styles.css</code>）· dev-together 技能 · <code>#1312 (2026-07-11)</code> 续接点。</li>
+<li><b>DoD:</b> 官网首程 + hello 入口 + hello→kanban 连接的<b>真实产品面证明</b>（LiveViewTest 过路由 / agent-browser 驱动）+ 截图 companion；非仅后端 seam。</li>
+<li><b>闸:</b> 全套静态 gate + 回归测试 + PR-head CI 绿 + rebase main。<b>world 规约:</b> 声明 surface 归属、串行 <code>styles.css</code>、遵守 layout gate。</li>
+</ul>
+</div>
+
+<div class="kick">
+<h3>zyli — demo journey UI 优化 + bug 修复</h3>
+<ul>
+<li><b>分支:</b> <code>fix/demo-ui-polish</code>（从 <code>origin/main</code> 切）</li>
+<li><b>范围:</b> 修 demo journey 的 UI bug + 优化：#1320 class listings、#1327 卸载 UI，+ 走查发现的。触 <code>world</code>，与 zhaomato 串行共享文件。</li>
+<li><b>必读:</b> <b><code>docs/guide/world-coordination.md</code></b>（触 <code>world</code> 必读）· <code>ezagent-developer</code> 技能 · #1320 / #1327（仍 open）· <code>#1276 (2026-07-09)</code> 续接点（大 PR / 动行锚文件<b>本地跑全套 gate</b>）· dev-together 技能。</li>
+<li><b>DoD:</b> 每个修复项的<b>用户面证明</b>（过真实 surface 的自动化测试）+ 截图；#1320/#1327 各自闭环或明确结转。</li>
+<li><b>闸:</b> 全套静态 gate（大 PR / 行锚文件<b>本地必跑全套</b>，见 #1276 教训）+ 回归测试 + PR-head CI 绿 + rebase main。<b>world 规约:</b> 各环节 UI / 卸载 UI 归 zyli，串行 <code>styles.css</code>。</li>
+</ul>
+</div>
+
+<p class="note"><b>ruihua（设计输入，非 track 行）:</b> designer 不占 track 行、不改代码；官网体验 UX 设计输入走 <b>Feishu</b>，作为 demo journey 的官网体验参照。</p>
+
+<h2>§6 out-of-scope / backlog（登记 + 归因）</h2>
+<ul>
+<li><b>cbac Phase-4</b>（crypto 签名 / scoring）—— lead 侧登记项，非本日 demo 关键路径（近期目标外的地基项，登记待排）。</li>
+<li><b>demo 去脆 / 稳定化</b> —— 本周先跑通一次即达标；稳定化明确结转下周（MVP 线之外，按 weekly-goals 结转）。</li>
+<li>走查冒出超出 #1320/#1327 的大量 world UI 缺陷 —— 按派发原则判「偏离方向」或「底层疏漏」登记，不隐性扩范围。</li>
+</ul>
+
+<h2>§7 协作约束</h2>
+<div class="gate">
+<b>CI 闸:</b> return 前本地跑<b>全套</b>静态 gate（<code>arch.scan + doc.scan + uri_query.scan + check_invariants</code> 或整套 <code>mix ci.local</code>）——不跑子集（大 PR / 动行锚文件尤其，见 #1276）；<b>机器闸 CI 绿 ≠ 产品验证</b>。<br>
+<b>PR 标题诚实:</b> 未 canary 实证的修复不标「修好」。<br>
+<b>评审基准:</b> <code>origin/main</code>（rebase 到 current main 后再 return）；每任务一分支，PR 只并入本任务分支，lead 走 <code>close</code> 合 main。<br>
+<b>skill 改动:</b> dev-together <b>无唯一 owner</b> —— 全员讨论，特殊情况由 lead（allenwoods）admin-merge（「Protect dev-together skill」CI gate = lead-gated）。
+</div>
+<div class="redline"><b>canary 红线：canary 前不宣布修好。</b> 任何「agent 真回话 / demo 跑通」的通报，须有 <b>canary 实测证据</b>（agent-browser 截图 + PTY join 日志 / 真实 PR 链接 + kanban 流转截图）后才发——对齐 <code>2026-07-10/review.md</code> §3 事故 A 红线，未虚报是成熟信号。</div>
 
 <p style="margin-top:24px;color:#9ca3af;font-size:12px">本计划面向全体开发者。week goal 见 <code>docs/together/2026-W29/weekly-goals.md</code>。</p>
 </body>

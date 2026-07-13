@@ -2,6 +2,11 @@
 
 End-of-day retrospective that closes the loop and feeds tomorrow's `plan`.
 
+**Canonical skeleton:** author `review.md` (and its `review.html`) from
+[../references/review-template.md](../references/review-template.md) so the format
+matches the plan's §0–§5 shape and stops drifting. The mandatory sections below
+are unchanged.
+
 **Do:** write `docs/together/<date>/review.md` covering:
 1. **What landed** — tasks merged to `main` (from `stack.md`), with shas.
 2. **Efficiency stats** — planned vs. returned vs. stacked vs. merged; cycle
