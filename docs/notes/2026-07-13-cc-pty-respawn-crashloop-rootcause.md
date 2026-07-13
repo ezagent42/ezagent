@@ -65,14 +65,29 @@ node were never written to.
 | **C** | prod cmd, trusted cwd, no keystroke | parks on the dev-channels dialog, alive at 18 s |
 | **D** | prod cmd **minus `--continue`** + `"1\r"` | **boots the full TUI, alive at 22 s — no crash** |
 | **E** | **exact prod cmd** + `"1\r"` | **exit 1**, screen reads `No conversation found to continue` |
-| **F** | exact prod cmd + `"1\r"`, with the agent's **real transcript made resumable** | **exit 1**, same message |
+| **G** | **exact prod cmd, real cwd** (so the transcript is fully in scope) | **exit 1**, same message |
 
-Run D vs run E isolates the cause to a single flag. Run F closes the remaining
-hole: the agent *does* carry a 7 799-byte transcript
-(`projects/-data-…-test-zyli-cc-1/5271f2db-….jsonl`), but even when that transcript
-is placed where `--continue` can find it, claude still reports **no conversation to
-continue**. The transcript is a fragment left by a crashed session, not a resumable
-conversation — and `sessions/` is empty.
+Run D vs run E isolates the cause to a **single flag**.
+
+Run G closes the remaining hole, and it matters for the shape of the fix. The agent
+*does* carry a transcript — `projects/-data-…-test-zyli-cc-1/5271f2db-….jsonl`,
+7 799 bytes, 7 records including a `user` and an `assistant` turn, with
+`"cwd": "/data/default/cc-agents/ezagent/test-zyli-cc-1"` recorded inside. Run G was
+executed with that **real cwd** (so both the project key and the transcript's own
+recorded cwd match) and a copied `CLAUDE_CONFIG_DIR`, i.e. under conditions identical
+to production. `claude --continue` **still** reports `No conversation found to
+continue` and exits 1.
+
+> An earlier run (F) placed the transcript under a *different* project key and was
+> therefore inconclusive — the records carry the original cwd, so claude rejected it
+> for the wrong reason. Run G supersedes it. Recorded here so the mistake is not
+> repeated.
+
+**Consequence for the fix: a transcript file existing on disk does NOT mean
+`--continue` will succeed.** Any fix of the form "check whether a conversation file
+exists, then pass `--continue`" would still pass the flag here, and would still crash.
+There is also no healthy counter-example to calibrate a disk predicate against — see §7.
+The guard therefore has to be a **fallback on failure**, not a pre-flight prediction.
 
 ## 4. Root cause
 
@@ -132,21 +147,45 @@ observer firing) and a canary that keeps spinning at ~470 respawns/hour.
 
 ## 6. Fix plan
 
-1. **Tighten `--continue` (cc plugin).** Only pass it when a resumable conversation
-   actually exists, or fall back to a `--continue`-free retry when it fails. Correct
-   the falsified comment at `spawn_plan.ex:31-37`; it is the origin of this bug.
+An important mechanical detail shapes both fixes: **`DynamicSupervisor` freezes the
+child spec.** `Ezagent.Domain.Pty.start/2` hands `DynamicSupervisor.start_child/2` a
+`{Server, params}` spec, and every subsequent supervisor restart re-runs
+`Server.start_link/1` with *those same params*. So the `--continue` argv was chosen
+**once** by the cc plugin and is then replayed verbatim by the supervisor — 933 times
+and counting. The cc plugin is never consulted again. The loop therefore cannot be
+broken from the cc side alone; the spawn path itself has to be able to change its mind.
+
+1. **Make the resume flag self-healing (`--continue` must never be able to prevent
+   startup).** Because resumability cannot be predicted from disk (§3), the cc plugin
+   supplies both the preferred argv (with `--continue`) and a **degraded fallback**
+   argv (without it); when the preferred command fails to reach a healthy lifetime,
+   the PTY spawn path retries with the fallback. Losing conversation context on a
+   restart is a regression; never starting at all is fatal — the fallback trades the
+   former to eliminate the latter. Correct the falsified comment at
+   `spawn_plan.ex:31-37`; it is the origin of this bug.
 2. **Make the respawn decision vetoable (Domain.Pty).** The handoff's structural
    instinct is right — only the trigger was wrong. Use a **cause-agnostic crash-loop
-   halt**: after K consecutive spawns that never reach a healthy lifetime, stop
-   respawning and move the agent to a terminal `:needs_login`/`:halted` state.
-   `RespawnBackoff` already counts exactly this (`attempt_count/1`) — promoting it
-   from "slow it down" to "trip a breaker" is a small change. This trigger catches
-   *this* bug (which is not auth at all), plus the auth case, the OOM case, and the
-   wrong-dialog-option case. The auth observer and `CredentialPrecondition` can feed
-   the breaker as *faster* additional triggers, but must not be the only ones.
+   breaker**: after K consecutive spawns that never reach a healthy lifetime (and with
+   no fallback left to try), stop respawning and put the agent in a durable terminal
+   halt state with a reason. `RespawnBackoff` already counts exactly this
+   (`attempt_count/1`) — promoting it from "slow it down" to "trip a breaker" is a
+   small change. This trigger catches *this* bug (which is not auth at all), plus the
+   auth case, the OOM case, and the wrong-dialog-option case. The auth observer and
+   `CredentialPrecondition` can feed the breaker as *faster* additional triggers, but
+   must not be the only ones.
+3. **Give a halted agent a way back.** See §7 — there is currently no operator control
+   that can restart an agent, so a halt with no recovery path would only trade one
+   dead end for another.
 
 ## 7. Gaps found on the way
 
+* **Not one cc agent on canary has credentials.** All six config homes under
+  `/data/default/cc-agents/ezagent/` report no `.credentials.json`, and the container
+  exports no `ANTHROPIC_*`. This is independent of the crash loop, but it means the
+  week's "the agent actually replies" goal is blocked on credential provisioning
+  regardless of this fix. It also means there is **no healthy cc agent to calibrate a
+  "is this conversation resumable?" disk predicate against** — reinforcing §6.1's
+  fallback-not-prediction conclusion.
 * **There is no operator "stop"/"restart agent" control anywhere.** The world UI
   exposes `agents.create`, `agents.delete` and `agents.config.*` only
   (`apps/ezagent_plugin_world/lib/ezagent/world/agent_actions.ex`); `mix ezagent`

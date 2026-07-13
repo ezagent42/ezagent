@@ -61,12 +61,24 @@ config home、数据库、BEAM 节点全程零写入。
 | **C** | 线上命令,可信 cwd,不敲键 | 停在 dev-channels 对话框,18s 仍活 |
 | **D** | 线上命令**去掉 `--continue`** + `"1\r"` | **完整启动 TUI,22s 仍活 —— 不崩** |
 | **E** | **一字不差的线上命令** + `"1\r"` | **exit 1**,屏幕:`No conversation found to continue` |
-| **F** | 同 E,但把 agent 的**真实 transcript** 放到可恢复的位置 | **exit 1**,同样的报错 |
+| **G** | **一字不差的线上命令 + 真实 cwd**(transcript 完全在作用域内) | **exit 1**,同样的报错 |
 
-D 和 E 把病因锁死在**单个 flag** 上。F 补上了最后的漏洞:这个 agent 确实有一份 7799 字节的
-transcript(`projects/-data-…-test-zyli-cc-1/5271f2db-….jsonl`),但**即使**把它放到
-`--continue` 找得到的位置,claude 依旧报「没有可续的对话」。那份 .jsonl 是崩溃会话留下的
-**残片**,不是一个可恢复的对话 —— 而 `sessions/` 是空的。
+D 和 E 把病因锁死在**单个 flag** 上。
+
+G 补上了最后的漏洞,而且它直接决定了修复方案的形状。这个 agent **确实**有一份 transcript
+(`projects/-data-…-test-zyli-cc-1/5271f2db-….jsonl`,7799 字节,7 条记录,含一条 `user`
+和一条 `assistant` 轮次,内部记录着 `"cwd": "/data/default/cc-agents/ezagent/test-zyli-cc-1"`)。
+RUN G 就是用这个**真实 cwd** 跑的(所以 project key 和 transcript 内部记录的 cwd **都**对得上),
+配合副本 `CLAUDE_CONFIG_DIR` —— 条件与生产完全一致。`claude --continue` **依然**报
+`No conversation found to continue` 并 exit 1。
+
+> 更早的 RUN F 把 transcript 放到了**另一个** project key 下,因此**不成立** —— 记录内部带着
+> 原始 cwd,claude 是因为路径不匹配才拒绝的,理由不对。RUN G 取代它。此处保留记录,以免后人重蹈。
+
+**这对修复方案的含义:磁盘上存在 transcript 文件,不代表 `--continue` 能成功。** 任何
+「先查对话文件是否存在,再决定传不传 `--continue`」形式的修复,在这里都会照样传、照样崩。
+而且**没有健康样本可以用来校准这个磁盘判据**(见 §7)。因此这道闸必须是**失败后回退**,
+不能是**事前预测**。
 
 ## 4. 根因
 
@@ -122,18 +134,34 @@ claude 的 TUI 照样正常启动(轮次 D),只有在**试图说话**时才失�
 
 ## 6. 修复方案
 
-1. **收紧 `--continue`(cc plugin)。** 只在确实存在可恢复对话时才传;或者在它失败后
-   自动降级为不带 `--continue` 重试一次。同时改掉 `spawn_plan.ex:31-37` 那句被证伪的
-   注释 —— 它是这个 bug 的源头。
+有一个机械细节同时决定了两个修复的形状:**`DynamicSupervisor` 会把 child spec 冻结。**
+`Ezagent.Domain.Pty.start/2` 交给 `DynamicSupervisor.start_child/2` 的是
+`{Server, params}`,此后**每一次** supervisor 重启都用**同一份 params** 重跑
+`Server.start_link/1`。也就是说,带 `--continue` 的 argv 是 cc plugin **只决定了一次**,
+然后被 supervisor **原样重放** 933 次 —— **cc plugin 再也没有被问过第二次**。因此这个循环
+**无法只从 cc 侧打断**,spawn 路径自己必须有"改主意"的能力。
+
+1. **让 resume flag 自愈(`--continue` 绝不能有能力阻止启动)。** 因为可恢复性**无法从磁盘
+   预测**(§3),所以由 cc plugin 同时给出**首选 argv**(带 `--continue`)和一份**降级备用
+   argv**(不带);当首选命令活不到健康寿命时,PTY spawn 路径**用备用命令重试**。重启时丢掉
+   对话上下文是一个回归,但**根本起不来是致命的** —— 这个回退用前者换掉后者。同时改掉
+   `spawn_plan.ex:31-37` 那句被证伪的注释,它是这个 bug 的源头。
 2. **让重生决策可被否决(Domain.Pty)。** 交接单的**结构直觉是对的**,错的只是触发器。
-   改用**与根因无关**的 **crash-loop 熔断**:连续 K 次 spawn 都活不到健康寿命 → 停止重生,
-   把 agent 置于终态 `:needs_login` / `:halted`。`RespawnBackoff` **已经在数这个了**
-   (`attempt_count/1`),把它从"减速"升级成"到点熔断"是个很小的改动。这个触发器能抓住
-   **本 bug**(它根本不是 auth)、也能抓住 auth 的、OOM 的、对话框选错的。auth observer 和
-   `CredentialPrecondition` 可以作为**更快的**附加触发器叠上去,但不能是唯一的。
+   改用**与根因无关**的 **crash-loop 熔断**:连续 K 次 spawn 都活不到健康寿命(且已无备用
+   命令可试)→ 停止重生,把 agent 置于**持久化的终态 halt**并附带原因。`RespawnBackoff`
+   **已经在数这个了**(`attempt_count/1`),把它从"减速"升级成"到点熔断"是个很小的改动。
+   这个触发器能抓住**本 bug**(它根本不是 auth)、也能抓住 auth 的、OOM 的、对话框选错的。
+   auth observer 和 `CredentialPrecondition` 可以作为**更快的**附加触发器叠上去,但不能是唯一的。
+3. **给被 halt 的 agent 一条回来的路。** 见 §7 —— 目前**没有任何** operator 控件能重启一个
+   agent,所以只 halt 不给恢复路径,等于把一个死胡同换成另一个死胡同。
 
 ## 7. 途中发现的其它缺口
 
+* **canary 上 6 个 cc agent,没有一个有凭证。** `/data/default/cc-agents/ezagent/` 下全部
+  6 个 config home 都没有 `.credentials.json`,容器里也没有任何 `ANTHROPIC_*`。这跟崩溃循环
+  无关,但它意味着**本周「agent 真回话」的目标无论如何都卡在凭证发放上**,修完本 bug 也一样。
+  同时它也意味着**没有任何健康 cc agent 可以用来校准"这个对话可恢复吗"的磁盘判据** ——
+  进一步印证 §6.1「必须回退、不能预测」的结论。
 * **系统里根本不存在 operator 的「停止 / 重启 agent」控件。** world UI 只暴露
   `agents.create` / `agents.delete` / `agents.config.*`
   (`apps/ezagent_plugin_world/lib/ezagent/world/agent_actions.ex`);`mix ezagent` 只有
