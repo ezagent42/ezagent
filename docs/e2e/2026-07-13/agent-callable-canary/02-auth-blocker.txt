@@ -1,0 +1,68 @@
+CANARY AGENT-CALLABILITY — AUTHENTICATION BLOCKER
+Date: 2026-07-13
+Approximate UTC reproduction window: 04:24
+
+Confirmed retry:
+  A newly requested link was minted at 04:55:36Z and consumed at 04:56:16Z,
+  approximately 40 seconds later. It produced the same "Sign-in token service
+  is unavailable" result. This rules out the normal 15-minute expiry path and
+  establishes that the PAT-delivery failure is reproducible.
+
+Control observation:
+  An earlier retry consumed approximately 21 minutes after minting correctly
+  returned the distinct "That sign-in link has expired" message. Canary HTTP
+  Date and the executor UTC clock matched, so there is no observed system-clock
+  skew.
+
+Sanitized reproduction:
+  1. Request a new magic-link for the existing verified account
+     <redacted-existing-account> through POST /login/magic.
+  2. Open the returned GET /auth/magic/<redacted-single-use-token> URL.
+  3. The request redirects to /login instead of /login/token or /sessions.
+
+User-visible result:
+  Sign-in token service is unavailable. Please try again.
+
+Observed authorization state:
+  GET /sessions with the resulting cookie redirects to /login.
+
+Code-path localization on main d4cd8419:
+  - MagicLinkController.consume/2 successfully passed MagicLinkToken.consume/2;
+    otherwise the UI would show invalid/expired/consumed-link copy.
+  - Registration lookup and email verification also passed; otherwise the UI
+    would show account-not-found or email-confirmation copy.
+  - The observed message is emitted only when PatDelivery.issue/3 returns
+    {:error, reason}.
+  - PatDelivery.issue/3 delegates to Entity.Token.rotate_label/3.
+  - Entity.Token.rotate_label/3 requires a PAT pepper for the configured current
+    digest version. Missing/malformed pepper returns
+    {:error, {:pat_pepper_unavailable, version}}.
+
+Confirmed root cause:
+  Read-only inspection inside the formal canary container reported:
+
+    PAT_DIGEST_VERSION=SET_NUMERIC
+    SELECTED_PAT_PEPPER=MISSING_OR_TOO_SHORT
+
+  No secret value was read or printed. Entity.Token.rotate_label/3 cannot mint
+  the one-time interactive-login PAT without a pepper of at least 32 bytes for
+  the selected digest version, so PatDelivery.issue/3 returns an error after the
+  magic link has already been consumed.
+
+Deployment correlation:
+  - Application SHA a915343de2c9e2ba36f2395670562495b7fd57fd.
+  - #1294, #1326, #1332, and #1333 are all ancestors of that SHA.
+  - Container logs confirm each magic-link email was sent but do not log the
+    swallowed PatDelivery reason; the presence-only configuration check and the
+    unique controller branch establish the failure path.
+
+Safety:
+  The raw magic link, session cookie, PAT values, pepper values, provider keys,
+  and authorization headers are intentionally absent from this file.
+
+Disposition:
+  BLOCKED after one prompt retry and one controlled timely retry. Do not request
+  another magic link until the PAT pepper configuration is corrected and the
+  canary deployment is refreshed with explicit user approval, because
+  MagicLinkToken.consume/2 burns the single-use link before PatDelivery.issue/3
+  attempts PAT rotation.
