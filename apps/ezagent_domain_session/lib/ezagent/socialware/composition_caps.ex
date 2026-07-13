@@ -123,6 +123,60 @@ defmodule Ezagent.Socialware.CompositionCaps do
     end
   end
 
+  @doc """
+  运行时"发一把钥匙"通用入口:给 `grantee_uri` 铸一批指向 `target_uri`(数据宿主)的
+  实例精确 cap,granter 永远 = target 的 data_owner(板主人授权,#154)。
+
+  发什么钥匙完全由 `actions` 决定 —— 同一条 issue+absorb 路,动作是参数:
+  传 `[:get_tree]`(读动作)铸只读钥匙、传 `[:add_node, ...]`(增删改)铸操作钥匙。
+  调用方(拉板传全动作 / 转发传读动作)自己选。
+
+  复用 composition 现成的 `issue_item/2`(ISSUE)+ `absorb_one/2`(STORE)路,
+  不碰 `CompositionBinding.replace_session`(不做整-session 重算),也不新增第二个
+  absorb 调用点。target 无属主 → fail-closed,绝不回落 admin。
+  """
+  @spec mint_cap(URI.t(), URI.t(), module(), [atom()]) ::
+          {:ok, [Ezagent.Capability.t()]} | {:error, term()}
+  def mint_cap(%URI{} = grantee_uri, %URI{} = target_uri, behavior, actions)
+      when is_atom(behavior) and is_list(actions) do
+    grantee_instance = Ezagent.URI.instance(grantee_uri)
+    target_instance = Ezagent.URI.instance(target_uri)
+    workspace_uri = Ezagent.Capability.workspace_of(target_uri)
+
+    with {:ok, owner} <- assert_target_owner(behavior, target_uri) do
+      actions
+      |> Enum.reduce_while({:ok, []}, fn action, {:ok, artifacts} ->
+        cap =
+          Ezagent.Capability.cap(:agent, behavior, action, target_instance, workspace_uri)
+
+        # Minimal item: for a same-owner grant `issue_item/2` takes the direct
+        # `{:ok, artifact}` branch (Cap.issue caller == data_owner), so consent /
+        # target_owner are never read — we still pass them for total-ness.
+        item = %{
+          source_uri: grantee_instance,
+          cap: cap,
+          consent: nil,
+          target_owner: owner
+        }
+
+        case issue_item(item, owner) do
+          {:ok, artifact, _target_required?} ->
+            case absorb_one(grantee_instance, artifact) do
+              :ok -> {:cont, {:ok, [artifact | artifacts]}}
+              {:error, reason} -> {:halt, {:error, {:composition_cap_absorb_failed, reason}}}
+            end
+
+          {:error, reason} ->
+            {:halt, {:error, {:composition_cap_issue_failed, action, reason}}}
+        end
+      end)
+      |> case do
+        {:ok, artifacts} -> {:ok, Enum.reverse(artifacts)}
+        error -> error
+      end
+    end
+  end
+
   # SINGLE non-bypassable mint chokepoint. No other function in this lane calls
   # Cap.issue/3 or Identity.absorb_cap/2.
   defp mint_composition_cap(session_uri, workspace_uri, configurer, edges, opts) do
@@ -133,7 +187,8 @@ defmodule Ezagent.Socialware.CompositionCaps do
            prepare_edges(edges, role_members, session_uri, workspace_uri, configurer),
          {:ok, issued} <- issue_all(prepared, configurer),
          classified <- classify_source_authority(issued, configurer),
-         attrs <- Enum.map(classified, &binding_attrs(&1, session_uri, workspace_uri, configurer)),
+         attrs <-
+           Enum.map(classified, &binding_attrs(&1, session_uri, workspace_uri, configurer)),
          {:ok, bindings} <- CompositionBinding.replace_session(session_uri, attrs),
          :ok <- CompositionConsent.supersede_inactive(session_uri),
          :ok <- sync_consents(bindings, classified, configurer),
@@ -305,7 +360,7 @@ defmodule Ezagent.Socialware.CompositionCaps do
             {:halt, {:error, :composition_consent_not_current}}
 
           true ->
-            case Ezagent.Identity.absorb_cap(source_uri, artifact) do
+            case absorb_one(source_uri, artifact) do
               :ok -> {:cont, :ok}
               {:error, reason} -> {:halt, {:error, {:composition_cap_absorb_failed, reason}}}
             end
@@ -314,6 +369,14 @@ defmodule Ezagent.Socialware.CompositionCaps do
       _item, :ok ->
         {:cont, :ok}
     end)
+  end
+
+  # SINGLE non-bypassable STORE hand-off. This is the lane's ONLY call to
+  # `Ezagent.Identity.absorb_cap/2`; every self-store path (the session-reconcile
+  # `absorb_active/1` and the runtime `mint_cap/4` entry) routes through here so
+  # the I12 paradigm lock keeps counting exactly one absorb producer in this file.
+  defp absorb_one(source_uri, artifact) do
+    Ezagent.Identity.absorb_cap(source_uri, artifact)
   end
 
   defp revoke_unsupported(rows) do
