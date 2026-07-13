@@ -1,0 +1,37 @@
+CANARY POST-DEPLOY TRANSCRIPT — PR #1367
+Date: 2026-07-13
+Running image: ezagent:760a86c7a
+Session: session://ezagent/socialware-install-orchestrator/acc-postdeploy-20260713T105317Z-27310
+Agent: entity://ezagent/agent/9ddf0b1c-6179-4681-95d4-11f1adb37502
+Role/recipe: orchestrator
+Flavor: cc-deepseek
+
+Session create:
+  Form operation duration: 875 ms
+  Total navigation duration: 3,625 ms
+  Create errors: none
+  Browser console errors: none
+  Readback: two members; orchestrator online; PTY alive; no unfilled roles;
+            no degraded operates edges
+
+User message:
+  Durable message id: 4de518cf180072d2
+  Sender: entity://ezagent/user/huang_jiajia
+  Sent at: 2026-07-13T10:54:06.197Z
+  Pending screenshot at: 2026-07-13T10:54:06.537Z
+  Text: @orchestrator Post-deploy read-only validation. Reply exactly
+        ACC_POSTDEPLOY_20260713T105402Z_10936_ACK and nothing else.
+
+Agent reply:
+  Durable message id: 901c976432f4d90d
+  Sender: entity://ezagent/agent/9ddf0b1c-6179-4681-95d4-11f1adb37502
+  Observed at: 2026-07-13T10:54:13.452Z
+  Text: ACC_POSTDEPLOY_20260713T105402Z_10936_ACK
+
+Result:
+  Exact reply found: PASS
+  Reply correlated to the new session and agent: PASS
+  Browser console errors: none
+  This was one post-deploy regression nonce. The two independent nonce replies
+  and the minimal development-task acceptance required by the original task are
+  preserved in 04-transcript.txt from the same formal product path.

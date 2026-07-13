@@ -1,0 +1,63 @@
+CANARY POST-DEPLOY PTY / BRIDGE / TERMINAL EVIDENCE — PR #1367
+Date: 2026-07-13
+Running image: ezagent:760a86c7a
+Session: session://ezagent/socialware-install-orchestrator/acc-postdeploy-20260713T105317Z-27310
+Agent: entity://ezagent/agent/9ddf0b1c-6179-4681-95d4-11f1adb37502
+
+[config-home ordering]
+2026-07-13T10:53:22.329Z Sandbox.activate: config home is not materialized —
+  deferring the subprocess launch to the Template Class spawn path.
+2026-07-13T10:53:22.339105512Z MARKER
+  /data/default/cc-agents/ezagent/9ddf0b1c-6179-4681-95d4-11f1adb37502/.ezagent-config-complete
+2026-07-13T10:53:22.502941888Z PtyServer spawned claude os_pid=9094.
+Result: marker committed 163 ms before the first PTY spawn — PASS.
+
+[PTY lifecycle]
+2026-07-13T10:53:23.748Z first child exited with status 256 during prompt
+  handling; its PtyServer terminated and entered the one-second supervised
+  respawn backoff.
+2026-07-13T10:53:24.758Z PtyServer spawned claude os_pid=9140.
+2026-07-13T10:53:25.426Z dev_channels_dialog auto-prompt fired.
+Final browser state: Kind alive; PTY running; pty_alive=true; pty_phase=running.
+
+[bridge joins]
+2026-07-13T10:53:26.885Z JOINED
+  orch:bridge:entity://ezagent/agent/9ddf0b1c-6179-4681-95d4-11f1adb37502
+2026-07-13T10:53:26.987Z JOINED
+  agent_bridge:cc-deepseek:entity://ezagent/agent/9ddf0b1c-6179-4681-95d4-11f1adb37502
+Authentication parameters were filtered by the server and are not reproduced.
+
+[PR #1367 serialization regression]
+Terminal open state:
+  active_view: pty
+  pty panel visible: true
+  agent_status.detail.exec_pid: string (#PID representation)
+  agent_status.detail.cwd: string
+  agent_status.detail.os_pid: number (9140)
+  LiveView/product page remained alive after Terminal open: PASS
+  Browser body error lines for the old Jason/PID crash: none
+
+[separate World client failure]
+Visible text: xterm runtime is not loaded.
+Reproduced after a separate 10-second Terminal open.
+Browser console errors: none
+Browser page errors: none
+Failed network requests: none
+HTTP 4xx/5xx responses: none
+Source correlation:
+  apps/ezagent_plugin_world/assets/src/components/PtyTerminal.tsx requires
+  window.Terminal and window.FitAddon.FitAddon.
+  apps/ezagent_plugin_world/assets/package.json declares neither xterm runtime.
+Result: server-side scalar serialization PASS; interactive xterm rendering FAIL.
+
+[local regression command]
+SHELL=/bin/bash mix test \
+  apps/ezagent_web/test/ezagent_web/world_conversation_test.exs:780
+Result: 1 test, 0 failures (40 excluded).
+
+Whole-file diagnostic run:
+SHELL=/bin/bash mix test \
+  apps/ezagent_web/test/ezagent_web/world_conversation_test.exs
+Result: 41 tests, 1 unrelated failure in the pure-config hello manifest role
+materialization test. This run is recorded as FAIL and is not represented as a
+green full-file gate. The PR's deterministic CI gate passed before merge.

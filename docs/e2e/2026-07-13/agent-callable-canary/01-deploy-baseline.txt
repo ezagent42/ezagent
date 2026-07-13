@@ -37,3 +37,18 @@ Required commits to prove present in the deployed SHA:
 
 No conclusion about agent readiness or orchestrator replies is supported by
 this liveness result alone.
+
+POST-DEPLOY REVALIDATION — PR #1367
+Observed at: 2026-07-13 10:18:06Z–10:58:00Z
+PR: https://github.com/ezagent42/ezagent/pull/1367
+PR state: MERGED
+Merge commit: 760a86c7a6468e7cb64c1af7a1284ecabf1d5e80
+Running image tags: ezagent:760a86c7a, ezagent:canary
+Running image id: sha256:b7992d5e9e064c51ce4db58c7d85b1a0d47e8f4ad783fd3c7697ed211a977695
+Application container started: 2026-07-13T10:18:07.147058068Z
+Observed container state: healthy
+Observed HTTP liveness: HTTP 200, {"status":"ok"}
+
+The post-deploy product checks below used this running image. No deployment,
+restart, configuration change, cleanup, or direct database write was performed
+as part of the revalidation.

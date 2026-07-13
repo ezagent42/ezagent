@@ -22,10 +22,21 @@ Proof:
     deliveries and response tool calls.
 
 Known limitation:
-  The Terminal tab crashes its LiveView while JSON-encoding exec_pid. This does
-  not break chat dispatch or bridge operation, but downstream operators cannot
-  use the product Terminal pane to inspect the agent until the local fix is
-  reviewed, deployed, and reverified.
+  PR #1367 is deployed and the Terminal tab no longer crashes its LiveView while
+  serializing exec_pid. However, the World Terminal surface now exposes a
+  separate client defect: `xterm runtime is not loaded.` The panel renders and
+  reports Kind alive / PTY running, but the interactive terminal canvas is empty.
+  Chat dispatch and both bridges remain operational; downstream operators still
+  cannot use the product Terminal pane for PTY inspection.
+
+Post-deploy proof:
+  Session: session://ezagent/socialware-install-orchestrator/acc-postdeploy-20260713T105317Z-27310
+  Agent: entity://ezagent/agent/9ddf0b1c-6179-4681-95d4-11f1adb37502
+  Image: ezagent:760a86c7a
+  Exact nonce ACK: PASS
+  PID/cwd/os_pid JSON scalar types: PASS
+  Terminal LiveView survival: PASS
+  Interactive xterm output: FAIL (separate World client runtime issue)
 
 Not authorized/performed:
   - no extra agent or dev-together member was created;
