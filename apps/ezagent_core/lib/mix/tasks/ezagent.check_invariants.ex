@@ -103,11 +103,10 @@ defmodule Mix.Tasks.Ezagent.CheckInvariants do
     # - domain PTY/Python/AgentBridge/Socialware modules: runtime status,
     #   stream, auth, connection, and customer-feed fan-out. These are
     #   observer notifications, not inbound command dispatch.
-    #   (2026-07-13: `auth_observers.ex` / `phase_broadcast.ex` /
-    #   `respawn_policy.ex` carry PTY fan-out that was already allowlisted
-    #   inside `server.ex` — extracted verbatim to keep that module under the
-    #   oversized-module gate — plus the new respawn-halt signal. Same
-    #   category: operator-visibility fan-out, never an inbound message.)
+    #   (2026-07-13: `auth_observers.ex` / `phase_broadcast.ex` carry PTY
+    #   fan-out extracted verbatim from `server.ex` to keep that module under
+    #   the oversized-module gate. Same category: operator-visibility fan-out,
+    #   never an inbound message.)
     # Plus the standard exclusions (tests, this checker).
     {output, _exit_code} =
       System.cmd(
@@ -130,7 +129,6 @@ defmodule Mix.Tasks.Ezagent.CheckInvariants do
             "| grep -v 'apps/ezagent_domain_pty/lib/ezagent_domain_pty/parked_dialog_watch.ex' " <>
             "| grep -v 'apps/ezagent_domain_pty/lib/ezagent_domain_pty/auth_observers.ex' " <>
             "| grep -v 'apps/ezagent_domain_pty/lib/ezagent_domain_pty/phase_broadcast.ex' " <>
-            "| grep -v 'apps/ezagent_domain_pty/lib/ezagent_domain_pty/respawn_policy.ex' " <>
             "| grep -v 'apps/ezagent_domain_python/lib/ezagent/domain/python/server.ex' " <>
             "| grep -v 'apps/ezagent_domain_agent_bridge/lib/ezagent/agent_bridge/registry.ex' " <>
             "| grep -v 'apps/ezagent_domain_session/lib/ezagent/socialware/settlement.ex' " <>

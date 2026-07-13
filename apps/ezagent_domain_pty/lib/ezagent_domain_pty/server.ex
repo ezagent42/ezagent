@@ -516,7 +516,6 @@ defmodule Ezagent.Domain.Pty.Server do
     }
 
     broadcast_phase(halted, :dead, %{reason: {:respawn_halted, info.reason}, os_pid: nil})
-    RespawnPolicy.announce_halt(state.agent_uri, info)
     halted
   end
 

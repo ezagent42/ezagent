@@ -239,44 +239,6 @@ defmodule Ezagent.Domain.Pty.RespawnPolicy do
   @spec halt_info(URI.t()) :: halt_info() | nil
   def halt_info(%URI{} = agent_uri), do: load(URI.to_string(agent_uri)).halt
 
-  @doc """
-  PubSub topic for an agent's respawn-halt signal. Subscribers receive
-  `{:pty_respawn_halted, agent_uri, info}`.
-
-  This is DISTINCT from the `:dead` phase. `:dead` says the OS subprocess is not
-  running and is routinely followed by a respawn; a halt says **no respawn is
-  coming** until an operator intervenes. The phase vocabulary stays exactly three
-  values (`:starting | :running | :dead`, per the Server's contract and
-  `Ezagent.ActionSet.Sandbox`'s `validate_phase/1`) — a halt is a supervision
-  fact, not a fourth state of the subprocess.
-  """
-  @spec halted_topic(URI.t()) :: String.t()
-  def halted_topic(%URI{} = agent_uri), do: "pty:halted:" <> URI.to_string(agent_uri)
-
-  @doc """
-  Broadcast that `agent_uri` is halted, so the operator surfaces learn about it.
-  Best-effort: a PubSub failure degrades (the halt itself is already durable in
-  ETS and readable via `halt_info/1`); it must never wedge the PtyServer.
-  """
-  @spec announce_halt(URI.t(), halt_info()) :: :ok
-  def announce_halt(%URI{} = agent_uri, %{} = info) do
-    Phoenix.PubSub.broadcast(
-      EzagentCore.PubSub,
-      halted_topic(agent_uri),
-      {:pty_respawn_halted, agent_uri, info}
-    )
-
-    :ok
-  catch
-    kind, reason ->
-      Logger.warning(
-        "PtyServer: halt broadcast failed (#{inspect(kind)}, #{inspect(reason)}) for " <>
-          "#{URI.to_string(agent_uri)}; the halt itself stands (RespawnPolicy.halt_info/1)"
-      )
-
-      :ok
-  end
-
   @doc "Consecutive failed starts currently recorded for `agent_uri`."
   @spec failures(URI.t()) :: non_neg_integer()
   def failures(%URI{} = agent_uri), do: load(URI.to_string(agent_uri)).failures

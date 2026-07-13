@@ -29,6 +29,7 @@ defmodule Ezagent.Domain.Pty.Server.RespawnBreakerTest do
   alias Ezagent.Domain.Pty
   alias Ezagent.Domain.Pty.RespawnBackoff
   alias Ezagent.Domain.Pty.RespawnPolicy
+  alias Ezagent.Domain.Pty.Server, as: PtyServer
 
   @max_failures 3
   @healthy_after_ms 400
@@ -66,12 +67,15 @@ defmodule Ezagent.Domain.Pty.Server.RespawnBreakerTest do
   describe "a child that can never start" do
     test "is spawned a BOUNDED number of times, then halted — it does not loop forever" do
       %{uri: uri, log: log} = agent()
-      Phoenix.PubSub.subscribe(EzagentCore.PubSub, RespawnPolicy.halted_topic(uri))
+      # Halt is signalled through the unified phase channel (:dead with reason
+      # {:respawn_halted, _}) — no separate halt topic. The first N :dead messages
+      # carry the raw exit reason; the halt is the final one.
+      Phoenix.PubSub.subscribe(EzagentCore.PubSub, PtyServer.phase_topic(uri))
 
       {:ok, _} = start_pty(uri, cmd_override: fails_immediately(log, "spawn"))
 
-      # The breaker announces itself the moment it trips.
-      assert_receive {:pty_respawn_halted, ^uri, info}, 5_000
+      assert_receive_until_halted(uri)
+      info = RespawnPolicy.halt_info(uri)
       assert info.failures == @max_failures
 
       # BEFORE the fix this is the assertion that fails: the child was respawned
@@ -264,6 +268,17 @@ defmodule Ezagent.Domain.Pty.Server.RespawnBreakerTest do
       fun.() -> :ok
       System.monotonic_time(:millisecond) >= deadline -> flunk("condition never became true")
       true -> Process.sleep(50) && do_wait(fun, deadline)
+    end
+  end
+
+  # Keep consuming {:pty_phase, uri, :dead, _} until we find one whose reason is
+  # {:respawn_halted, _} — the halt signal, unified under the phase channel.
+  defp assert_receive_until_halted(uri) do
+    assert_receive {:pty_phase, ^uri, :dead, meta}, 5_000
+
+    case meta.reason do
+      {:respawn_halted, _} -> :ok
+      _ -> assert_receive_until_halted(uri)
     end
   end
 end

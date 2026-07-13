@@ -164,9 +164,11 @@ defmodule Ezagent.Domain.Pty do
     Ezagent.Domain.Pty.RespawnPolicy.clear(agent_uri)
     Ezagent.Domain.Pty.RespawnBackoff.clear(URI.to_string(agent_uri))
 
-    case lookup(agent_uri) do
-      {:ok, pid} -> GenServer.cast(pid, :respawn)
-      :error -> {:error, :not_running}
+    # Registry.lookup finds the PID without probing via :sys.get_state, so a server
+    # sleeping in apply_respawn_backoff (up to 30 s) is correctly found (codex P1).
+    case Registry.lookup(EzagentDomainPty.Registry, URI.to_string(agent_uri)) do
+      [{pid, _}] -> GenServer.cast(pid, :respawn)
+      [] -> {:error, :not_running}
     end
   end
 
