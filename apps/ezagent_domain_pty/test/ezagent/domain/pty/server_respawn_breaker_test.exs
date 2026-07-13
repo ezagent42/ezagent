@@ -114,6 +114,40 @@ defmodule Ezagent.Domain.Pty.Server.RespawnBreakerTest do
     end
   end
 
+  describe "operator restart of a HEALTHY agent (codex review, HIGH)" do
+    test "does not manufacture a failure, and does not kill the child it just started" do
+      %{uri: uri, log: log} = agent()
+
+      # A perfectly healthy, long-running child.
+      cmd = ["/bin/sh", "-c", "echo spawn >> #{log}; sleep 30"]
+      {:ok, _} = start_pty(uri, cmd_override: cmd)
+      wait_until(fn -> spawn_count(log) == 1 end)
+
+      # The defect: `:respawn` stops child A and spawns B inside the same
+      # handle_continue, so A's erlexec `:DOWN` is ALREADY queued when B exists. An
+      # uncorrelated DOWN clause booked A's exit against B — inventing a failure for a
+      # healthy child and then killing it via terminate/2. Operator recovery would
+      # corrupt the very accounting this whole PR exists to make trustworthy.
+      assert :ok == Pty.restart(uri)
+
+      wait_until(fn -> spawn_count(log) == 2 end)
+      # Give A's stale DOWN every chance to land and do damage.
+      Process.sleep(400)
+
+      assert spawn_count(log) == 2,
+             "the restart spawned #{spawn_count(log)} children; a stale DOWN killed the " <>
+               "replacement and the supervisor started yet another"
+
+      assert RespawnPolicy.failures(uri) == 0,
+             "a stale DOWN from the replaced child was booked as a failure of its successor"
+
+      assert RespawnPolicy.halt_info(uri) == nil
+      assert {:ok, live} = Pty.lookup(uri)
+      assert Process.alive?(live)
+      assert Pty.status(uri).running == true
+    end
+  end
+
   describe "a halt must never become a dead end" do
     test "a deliberate stop/1 clears the halt, so the next start/2 is not vetoed by it" do
       %{uri: uri, log: log} = agent()

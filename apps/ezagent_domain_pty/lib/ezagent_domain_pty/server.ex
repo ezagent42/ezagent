@@ -14,12 +14,10 @@ defmodule Ezagent.Domain.Pty.Server do
 
   ## Background — same as the pre-move docstring
 
-  Phase 4-completion PR 8: Ezagent's first plugin-managed child process.
-  Uses `:exec.run/2` (erlexec) for PTY allocation (claude TUI needs
-  a real tty). Post-Phase-5 (Allen 2026-05-17): inlined the previous
-  `bash cc-bridge-attach.sh` wrapper into `spawn_claude_directly/1`,
-  and routes `agent_uri` through mcp.json (not env-var passthrough)
-  so the Python bridge always announces with the correct agent_uri.
+  Phase 4-completion PR 8: Ezagent's first plugin-managed child process. Uses
+  `:exec.run/2` (erlexec) for PTY allocation (the claude TUI needs a real tty), and
+  routes `agent_uri` through mcp.json (not env-var passthrough) so the Python bridge
+  always announces with the correct agent_uri.
 
   ## Generic auto-prompt scanner (Phase 6 PR 19)
 
@@ -76,16 +74,11 @@ defmodule Ezagent.Domain.Pty.Server do
     :exec_pid,
     :os_pid,
     :test_mode,
-    # Optional cmd override. Two accepted shapes:
-    #   * a STRING — run via `/bin/sh -c` (legacy; tests pass a mock
-    #     script path here, e.g. `"bash /tmp/mock.sh"`).
-    #   * a LIST of strings — argv form `[Cmd | Args]`, executed
-    #     directly via `execve` with NO shell. Each element is exactly
-    #     one argv element — no element can split into multiple args or
-    #     introduce shell metacharacter behavior. The cc plugin builds
-    #     its `claude ...` invocation as a list so operator-controlled
-    #     sandbox paths cannot inject flags or shell commands (codex
-    #     HIGH-2).
+    # Optional cmd override. A STRING runs via `/bin/sh -c` (legacy; tests pass a
+    # mock script path). A LIST is argv form, executed via `execve` with NO shell —
+    # each element is exactly one argv entry, so an operator-controlled sandbox path
+    # can neither split into extra args nor be interpreted by a shell (codex HIGH-2).
+    # The cc plugin builds its `claude ...` invocation as a list for that reason.
     :cmd_override,
     # Optional extra environment variables for the spawned child,
     # `%{"NAME" => "value"}`. Merged into the inherited OS env. The cc
@@ -99,13 +92,8 @@ defmodule Ezagent.Domain.Pty.Server do
     # all is fatal. See `Ezagent.Domain.Pty.RespawnPolicy`.
     :cmd_fallback,
     pty_buffer: "",
-    # Phase 6 PR 19 (Allen 2026-05-18): generalize auto-confirm into a
-    # data-driven list of prompt patterns. Each entry:
-    #   %{name: atom, match: String.t() | [String.t()] | Regex.t(),
-    #     send: iodata, fired?: boolean}
-    # match: string = substring; list of strings = ALL must match
-    # (AND); Regex = pattern match. send: bytes to write to PTY stdin.
-    # fired? = true after one match → never re-fires (idempotent).
+    # Phase 6 PR 19 — data-driven auto-confirm rules, `%{name, match, send, fired?}`.
+    # `fired?` makes each one-shot. See `Ezagent.Domain.Pty.AutoPrompts`.
     auto_prompts: [],
     # #17 PR-C — emit-only auth-failure OBSERVERS: %{name, match, fired?}. They
     # surface an expired/missing login and NEVER write stdin. See
@@ -129,7 +117,10 @@ defmodule Ezagent.Domain.Pty.Server do
     # `healthy_after_ms` (dying before that = a failed START — what the breaker
     # counts). `halted?` = tripped: alive, no child, none spawned until an operator.
     healthy?: false,
-    halted?: false
+    halted?: false,
+    # Which command this incarnation launched — the breaker books failures and
+    # healthy runs against it (a healthy FALLBACK must not forgive the PRIMARY).
+    spawn_mode: :primary
   ]
 
   def start_link(%{agent_uri: %URI{} = agent_uri} = args) do
@@ -177,7 +168,7 @@ defmodule Ezagent.Domain.Pty.Server do
       # (`:dead` alone does NOT say that); `degraded?` = running the fallback argv.
       halted?: state.halted? == true,
       halt_reason: halt_reason(state),
-      degraded?: state.cmd_fallback != nil and RespawnPolicy.failures(state.agent_uri) > 0,
+      degraded?: RespawnPolicy.degraded?(state.agent_uri),
       # Phase 6 PR 19: expose the auto-prompt state so operator LV
       # can see which prompts fired vs which are still waiting.
       auto_prompts:
@@ -190,11 +181,8 @@ defmodule Ezagent.Domain.Pty.Server do
   end
 
   @doc """
-  Walks the DynamicSupervisor's children looking for a PtyServer whose
-  state's `agent_uri` matches. Returns `{:ok, pid}` or `:error`.
-
-  Cheap enough for v1 (~few children typically); switch to a Registry
-  if PtyServer count gets into the dozens.
+  Walk the DynamicSupervisor's children for the PtyServer whose `agent_uri` matches.
+  Returns `{:ok, pid}` or `:error`. Cheap enough for the current child count.
   """
   def find_by_agent_uri(%URI{} = agent_uri) do
     target = URI.to_string(agent_uri)
@@ -235,33 +223,20 @@ defmodule Ezagent.Domain.Pty.Server do
     do: "pty:output:" <> URI.to_string(agent_uri)
 
   @doc """
-  #17 PR-C — PubSub topic for an agent's auth-failure signals. Subscribers receive
-  `{:pty_auth_failed, agent_uri, observer_name}` when the PTY output matches a credential
-  `auth_observer` (expired/missing login). The domain credential notifier (PR-C2) consumes
-  this to notify the agent's owner with a clickable terminal URL.
+  #17 PR-C — per-agent auth-failure topic; subscribers receive
+  `{:pty_auth_failed, agent_uri, observer_name}`. See `Ezagent.Domain.Pty.AuthObservers`.
   """
   def auth_failed_topic(%URI{} = agent_uri), do: AuthObservers.topic(agent_uri)
 
   @doc """
-  #17 PR-C2 — the SHARED auth-failure topic (all agents). The domain credential notifier
-  subscribes here ONCE (rather than per-agent) and receives `{:pty_auth_failed, agent_uri,
-  observer_name}` for every agent, resolving the owner per event.
+  #17 PR-C2 — the SHARED auth-failure topic; the domain credential notifier subscribes
+  here ONCE for every agent. See `Ezagent.Domain.Pty.AuthObservers`.
   """
   def auth_failed_all_topic, do: AuthObservers.all_topic()
 
   @doc """
-  PubSub topic for an agent's PTY phase transitions (PTY-phase-state-machine
-  2026-05-26 follow-up b).
-
-  Subscribers (Sandbox slice updater + TerminalLive badge) receive
-  messages of shape `{:pty_phase, agent_uri, phase, meta}` where:
-
-    * `phase` is one of `:starting | :running | :dead`
-    * `meta` carries `%{os_pid: integer() | nil, reason: term() | nil,
-      at: System.os_time(:millisecond)}`
-
-  Best-effort: a broadcast failure (PubSub down) is logged but never
-  raises into the calling GenServer's primary path.
+  PubSub topic for an agent's PTY phase transitions. Subscribers receive
+  `{:pty_phase, agent_uri, phase, meta}`. See `Ezagent.Domain.Pty.PhaseBroadcast`.
   """
   def phase_topic(%URI{} = agent_uri), do: PhaseBroadcast.topic(agent_uri)
 
@@ -308,11 +283,9 @@ defmodule Ezagent.Domain.Pty.Server do
   xterm at mount and the operator sees the current screen state
   immediately.
 
-  Bounded to the last `max_bytes` (default 64KB) so a long-running
-  session doesn't send megabytes through PubSub on every reconnect.
-  Most TUIs (claude included) re-emit their full visible screen
-  within the last few KB of output via ANSI cursor + redraw
-  sequences, so 64KB is generous.
+  Bounded to the last `max_bytes` (default 64KB) so a long-running session doesn't
+  send megabytes through PubSub on every reconnect — most TUIs re-emit their full
+  visible screen within the last few KB via ANSI redraw sequences.
 
   Returns `{:ok, binary}` or `:error` if PtyServer not alive.
   """
@@ -338,14 +311,9 @@ defmodule Ezagent.Domain.Pty.Server do
   end
 
   @doc """
-  PR #128 — trigger a TUI redraw by sending a brief winsize change
-  followed by the original size. Most TUIs (claude included) listen
-  for SIGWINCH and re-emit their full screen.
-
-  This is the **belt-and-suspenders** companion to `snapshot_buffer/2`:
-  buffer replay handles the cumulative output; winsz nudge handles
-  the case where the TUI's last redraw is older than the bounded
-  buffer window.
+  PR #128 — trigger a TUI redraw via a brief winsize change (most TUIs listen for
+  SIGWINCH and re-emit their screen). Belt-and-suspenders companion to
+  `snapshot_buffer/2`, for when the TUI's last redraw predates the bounded buffer.
   """
   @spec trigger_redraw(URI.t()) :: :ok | :error
   def trigger_redraw(%URI{} = agent_uri) do
@@ -491,9 +459,9 @@ defmodule Ezagent.Domain.Pty.Server do
         )
 
         # A healthy START = survived past startup; dying before that is what the
-        # breaker counts. The timer carries the os_pid it was armed FOR, so a stale
+        # breaker counts. The timer carries the exec_pid it was armed FOR, so a stale
         # one (operator `:respawn` swapped the child) cannot vouch for its successor.
-        Process.send_after(self(), {:mark_healthy, os_pid}, RespawnPolicy.healthy_after_ms())
+        Process.send_after(self(), {:mark_healthy, exec_pid}, RespawnPolicy.healthy_after_ms())
 
         # PTY-pid-files 2026-05-26 follow-up (a): persist os_pid so the
         # orphan reaper at next-BEAM boot can discover prior-incarnation
@@ -512,7 +480,14 @@ defmodule Ezagent.Domain.Pty.Server do
         # cols second.
         Process.send_after(self(), :send_default_winsize, 500)
 
-        new_state = %{state | exec_pid: exec_pid, os_pid: os_pid, phase: :running}
+        new_state = %{
+          state
+          | exec_pid: exec_pid,
+            os_pid: os_pid,
+            phase: :running,
+            spawn_mode: mode
+        }
+
         broadcast_phase(new_state, :running, %{os_pid: os_pid})
 
         {:noreply, new_state}
@@ -521,7 +496,7 @@ defmodule Ezagent.Domain.Pty.Server do
         Logger.error("PtyServer: spawn failed: #{inspect(reason)}")
         # A launch that never got off the ground is a failed start too — count it,
         # or an unspawnable command (bad binary, oversized argv) loops forever.
-        _ = RespawnPolicy.record_failure(state.agent_uri, {:spawn_failed, reason})
+        _ = RespawnPolicy.record_failure(state.agent_uri, {:spawn_failed, reason}, mode)
         new_state = %{state | phase: :dead, dead_broadcast?: true}
         broadcast_phase(new_state, :dead, %{reason: reason, os_pid: nil})
         {:stop, {:spawn_failed, reason}, new_state}
@@ -715,6 +690,7 @@ defmodule Ezagent.Domain.Pty.Server do
         os_pid: nil,
         halted?: false,
         healthy?: false,
+        spawn_mode: :primary,
         phase: :starting,
         dead_broadcast?: false,
         pty_buffer: ""
@@ -724,8 +700,18 @@ defmodule Ezagent.Domain.Pty.Server do
     {:noreply, fresh, {:continue, :spawn_pty}}
   end
 
+  # erlexec's monitor DOWN is `{:DOWN, os_pid, :process, exec_pid, reason}`. It MUST be
+  # correlated with the child we are actually running (codex review, HIGH): an operator
+  # `:respawn` stops child A and spawns B in the same `handle_continue`, so A's DOWN is
+  # already queued when B exists. An uncorrelated clause books A's exit against B —
+  # inventing a failure for a healthy child AND killing it via terminate/2. `exec_pid` is
+  # an Erlang pid, so unlike an OS pid it is never recycled.
   @impl true
-  def handle_info({:DOWN, _ref, :process, _pid, reason}, state) do
+  def handle_info(
+        {:DOWN, _os_pid, :process, exec_pid, reason},
+        %__MODULE__{exec_pid: exec_pid} = state
+      )
+      when not is_nil(exec_pid) do
     Logger.warning(
       "PtyServer: child process exited for #{URI.to_string(state.agent_uri)}: #{inspect(reason)}"
     )
@@ -734,7 +720,8 @@ defmodule Ezagent.Domain.Pty.Server do
     # Feed that to the breaker; the supervisor restart that follows will consult it
     # (and may decline to spawn). A child that already ran healthily is a genuine
     # crash — it respawns as before, with no failure counted against it.
-    if not state.healthy?, do: RespawnPolicy.record_failure(state.agent_uri, reason)
+    if not state.healthy?,
+      do: RespawnPolicy.record_failure(state.agent_uri, reason, state.spawn_mode)
 
     # PTY-phase-state-machine follow-up (b): the OS subprocess just
     # died — publish the terminal :dead phase BEFORE returning {:stop,
@@ -747,16 +734,23 @@ defmodule Ezagent.Domain.Pty.Server do
     {:stop, {:child_exited, reason}, new_state}
   end
 
-  # The child this timer was armed for survived long enough to be past startup —
-  # clear the crash history so a later, unrelated crash starts counting from zero.
-  def handle_info({:mark_healthy, os_pid}, %__MODULE__{os_pid: os_pid, halted?: false} = state)
-      when not is_nil(os_pid) do
-    RespawnPolicy.record_healthy(state.agent_uri)
+  # A DOWN from a child we already replaced (operator `:respawn`) — it must not be
+  # booked against its successor, nor kill it.
+  def handle_info({:DOWN, _os_pid, :process, _stale, _reason}, state), do: {:noreply, state}
+
+  # The child this timer was armed for got past startup. A healthy PRIMARY clears the
+  # history; a healthy FALLBACK keeps `primary_failures` (RespawnPolicy moduledoc).
+  def handle_info(
+        {:mark_healthy, exec_pid},
+        %__MODULE__{exec_pid: exec_pid, halted?: false} = state
+      )
+      when not is_nil(exec_pid) do
+    RespawnPolicy.record_healthy(state.agent_uri, state.spawn_mode)
     {:noreply, %{state | healthy?: true}}
   end
 
   # Stale timer (child replaced, or server halted) — must not vouch for what runs now.
-  def handle_info({:mark_healthy, _stale_os_pid}, state), do: {:noreply, state}
+  def handle_info({:mark_healthy, _stale}, state), do: {:noreply, state}
 
   # stdout / stderr chunks from erlexec
   def handle_info({stream, _os_pid, data}, state) when stream in [:stdout, :stderr] do

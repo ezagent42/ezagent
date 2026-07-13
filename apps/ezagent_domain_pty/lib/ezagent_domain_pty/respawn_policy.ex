@@ -42,13 +42,30 @@ defmodule Ezagent.Domain.Pty.RespawnPolicy do
 
   Each spawn asks `decide/2`, each outcome is reported back:
 
-      failures = 0            → :primary    (the preferred command)
-      failures ≥ 1, fallback  → :fallback   (degraded — e.g. cc drops `--continue`)
-      failures ≥ max_failures → {:halt, info}
+      primary_failures ≥ max_failures, fallback → :fallback   (primary written off)
+      failures = 0                              → :primary    (the preferred command)
+      failures ≥ 1, fallback                    → :fallback   (degraded)
+      failures ≥ max_failures                   → {:halt, info}
 
-  `record_healthy/1` (the child survived `healthy_after_ms`) **erases the whole
-  history** — a child that got past startup is not crash-looping, and needs no
-  external reset. `clear/1` is the operator's "restart this agent" lever.
+  ## Two counters, and why one of them must NOT be reset (codex review)
+
+  `failures` counts CONSECUTIVE failed starts in any mode and trips the halt.
+  A healthy run zeroes it — a child that got past startup is not crash-looping.
+
+  `primary_failures` counts failures of the PREFERRED command over the agent's
+  lifetime, and a healthy **fallback** run deliberately does NOT reset it. Without
+  that memory the ladder does not converge, and the first draft of this module did
+  not: primary fails → fallback runs → the fallback's healthy timer erases the
+  whole history → the fallback later exits → the next incarnation tries primary
+  again → fails again → … Each fallback erased the single primary failure, so
+  `max_failures` was never reached and the pair could cycle **forever**. Slower
+  than the 37 ms loop this module exists to kill, but the same unbounded shape.
+
+  Remembering that the primary is broken bounds it: after `max_failures` primary
+  failures the primary is written off and the agent settles onto the fallback (it
+  keeps WORKING — it just stops paying a wasted spawn per restart to retry a
+  command we now know cannot start). Only a healthy PRIMARY run, or an operator
+  (`clear/1`), forgives it.
 
   A halt is TERMINAL and durable: it survives the GenServer restart, so the
   PtyServer that comes back up sees it and declines to spawn. Recovery is manual
@@ -91,30 +108,49 @@ defmodule Ezagent.Domain.Pty.RespawnPolicy do
   """
   @spec decide(URI.t(), boolean()) :: mode() | {:halt, halt_info()}
   def decide(%URI{} = agent_uri, fallback_available?) when is_boolean(fallback_available?) do
+    max = max_failures()
+
     case load(URI.to_string(agent_uri)) do
-      %{halt: %{} = info} -> {:halt, info}
-      %{failures: 0} -> :primary
-      %{failures: _n} when fallback_available? -> :fallback
-      _ -> :primary
+      %{halt: %{} = info} ->
+        {:halt, info}
+
+      # The preferred command has failed to start too many times over this agent's
+      # life: stop paying a wasted spawn per restart to retry it. Settles on the
+      # fallback, which is what makes the ladder CONVERGE (see the moduledoc).
+      %{primary_failures: p} when fallback_available? and p >= max ->
+        :fallback
+
+      %{failures: 0} ->
+        :primary
+
+      %{failures: _n} when fallback_available? ->
+        :fallback
+
+      _ ->
+        :primary
     end
   end
 
   @doc """
-  The child for `agent_uri` died before reaching a healthy lifetime.
+  The child for `agent_uri` died before reaching a healthy lifetime, while running
+  `mode`'s command.
 
-  Increments the consecutive-failure count and trips the breaker at
-  `max_failures/0`, returning `{:halted, info}` on the transition so the caller
-  can surface it.
+  Increments the consecutive-failure count (and, for `:primary`, the lifetime
+  primary-failure count) and trips the breaker at `max_failures/0`, returning
+  `{:halted, info}` on the transition so the caller can surface it.
   """
-  @spec record_failure(URI.t(), term()) :: :ok | {:halted, halt_info()}
-  def record_failure(%URI{} = agent_uri, reason) do
+  @spec record_failure(URI.t(), term(), mode()) :: :ok | {:halted, halt_info()}
+  def record_failure(%URI{} = agent_uri, reason, mode \\ :primary)
+      when mode in [:primary, :fallback] do
     key = URI.to_string(agent_uri)
     state = load(key)
     failures = state.failures + 1
+    primary_failures = state.primary_failures + if(mode == :primary, do: 1, else: 0)
+    state = %{state | failures: failures, primary_failures: primary_failures}
 
     if failures >= max_failures() do
       info = %{reason: reason, failures: failures, at: System.os_time(:millisecond)}
-      store(key, %{state | failures: failures, halt: info})
+      store(key, %{state | halt: info})
 
       Logger.error(
         "PtyServer: RESPAWN HALTED for #{key} after #{failures} consecutive failed starts " <>
@@ -130,23 +166,44 @@ defmodule Ezagent.Domain.Pty.RespawnPolicy do
 
       {:halted, info}
     else
-      store(key, %{state | failures: failures})
+      store(key, state)
       :ok
     end
   end
 
   @doc """
-  The child for `agent_uri` survived `healthy_after_ms/0` — it got past startup.
+  The child for `agent_uri` survived `healthy_after_ms/0` running `mode`'s command
+  — it got past startup.
 
-  Erases the crash history entirely: a healthy child is not crash-looping, and a
-  later failure should start counting from zero rather than inherit a stale tally.
+  A healthy **primary** erases the history entirely: the preferred command works,
+  so nothing is left to remember.
+
+  A healthy **fallback** zeroes the consecutive-failure count (it is not
+  crash-looping) but KEEPS `primary_failures`. That memory is load-bearing: erasing
+  it lets a fallback that survives the health timer without actually working reset
+  the ladder on every cycle, so the primary is retried forever and the breaker never
+  converges (codex review — see the moduledoc).
   """
-  @spec record_healthy(URI.t()) :: :ok
-  def record_healthy(%URI{} = agent_uri) do
-    init()
-    :ets.delete(@table, URI.to_string(agent_uri))
+  @spec record_healthy(URI.t(), mode()) :: :ok
+  def record_healthy(%URI{} = agent_uri, mode \\ :primary) when mode in [:primary, :fallback] do
+    key = URI.to_string(agent_uri)
+    state = load(key)
+
+    case mode do
+      :primary -> :ets.delete(@table, key)
+      :fallback -> store(key, %{state | failures: 0, halt: nil})
+    end
+
     :ok
   end
+
+  @doc """
+  True when the preferred command has failed for `agent_uri`, i.e. the agent is (or
+  is about to be) running the degraded fallback. Survives a healthy fallback run —
+  that is exactly the point.
+  """
+  @spec degraded?(URI.t()) :: boolean()
+  def degraded?(%URI{} = agent_uri), do: load(URI.to_string(agent_uri)).primary_failures > 0
 
   @doc "The halt record for `agent_uri`, or `nil` when it is not halted."
   @spec halt_info(URI.t()) :: halt_info() | nil
@@ -226,7 +283,7 @@ defmodule Ezagent.Domain.Pty.RespawnPolicy do
 
     case :ets.lookup(@table, key) do
       [{^key, %{} = state}] -> state
-      _ -> %{failures: 0, halt: nil}
+      _ -> %{failures: 0, primary_failures: 0, halt: nil}
     end
   end
 

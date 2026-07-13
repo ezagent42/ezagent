@@ -91,19 +91,38 @@ defmodule Ezagent.Domain.Pty do
   Leaving a halt behind would instead poison the NEXT deliberate `start/2`: it
   would be vetoed by a stale halt, `restart/1` cannot help (no server to restart),
   and the agent would have no way back at all.
+
+  The clear happens only AFTER the server is confirmed gone (codex review). Doing it
+  first left a window where a child crashing mid-`stop/1` got its PtyServer replaced
+  by the supervisor: `terminate_child` then targeted the obsolete pid, returned
+  `{:error, :not_found}` — which was discarded — and `stop/1` reported `:ok` while a
+  REPLACEMENT server kept running with a freshly wiped crash history. That is both a
+  silent failure and a clean slate handed to the very looper we meant to stop.
   """
   @spec stop(URI.t()) :: :ok
   def stop(%URI{} = agent_uri) do
+    terminate_until_gone(agent_uri, 5)
     Ezagent.Domain.Pty.RespawnPolicy.clear(agent_uri)
     Ezagent.Domain.Pty.RespawnBackoff.clear(URI.to_string(agent_uri))
+    :ok
+  end
 
+  # A crash racing the stop can have the supervisor replace the server between our
+  # lookup and the terminate. Re-look-up and stop the replacement too, rather than
+  # reporting success over a still-running child. Bounded — the window is tiny, and a
+  # terminated DynamicSupervisor child is not restarted, so this converges at once.
+  defp terminate_until_gone(_agent_uri, 0), do: :ok
+
+  defp terminate_until_gone(%URI{} = agent_uri, attempts_left) do
     case lookup(agent_uri) do
-      {:ok, pid} ->
-        _ = DynamicSupervisor.terminate_child(EzagentDomainPty.Supervisor, pid)
-        :ok
-
       :error ->
         :ok
+
+      {:ok, pid} ->
+        case DynamicSupervisor.terminate_child(EzagentDomainPty.Supervisor, pid) do
+          :ok -> terminate_until_gone(agent_uri, attempts_left - 1)
+          {:error, :not_found} -> terminate_until_gone(agent_uri, attempts_left - 1)
+        end
     end
   end
 
