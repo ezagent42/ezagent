@@ -17,7 +17,7 @@ defmodule EzagentPluginKanban.Integration.KanbanTeamRoundtripTest do
   assertion and `Definition.new/1` would fail here.
 
   Fixture note: the same as `kanban_team_relay_back_test` — the REAL shipped
-  kanban-team body (2 active agent role-slots plus the passive board role), with
+  kanban-team body (T4b: 2 active agent role-slots ONLY, no board role), with
   ONLY the active-agent flavor swapped to a bare-spawn stub
   (the cc-headless SDK spawn is an S6 e2e concern). Role names / recipes / the
   routing rule under test are the shipped ones, and the body it snapshots INTO is
@@ -162,7 +162,7 @@ defmodule EzagentPluginKanban.Integration.KanbanTeamRoundtripTest do
 
   # --- fixture ----------------------------------------------------------------
 
-  # The REAL shipped kanban manifest (2 active agent role-slots plus the passive
+  # The REAL shipped kanban manifest (T4b: 2 active agent role-slots ONLY, no
   # board role — loaded straight from the deploy-seed YAML, the one source of
   # truth), with ONLY the active-agent flavor swapped `cc-headless` → bare-spawn stub (the loader's `:flavor`
   # Seed the two "brain" data-role recipes shipped in the kanban socialware seed
