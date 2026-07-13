@@ -14,6 +14,7 @@ defmodule Ezagent.World.SlotMountGateTest do
   @src Path.expand("../../../assets/src", __DIR__)
   @main Path.join(@src, "main.tsx")
   @components Path.join(@src, "components")
+  @check_mounts Path.expand("../../../assets/scripts/check-mounts.mjs", __DIR__)
 
   # Layout-slot Surface components: the renderer's leaves, mountable ONLY by the
   # renderer in main.tsx.
@@ -25,6 +26,26 @@ defmodule Ezagent.World.SlotMountGateTest do
 
   defp component_files do
     @components |> File.ls!() |> Enum.filter(&String.ends_with?(&1, ".tsx"))
+  end
+
+  # Lockstep guard. The developer-facing JS mirror (`check-mounts.mjs`) is NOT run
+  # in CI (the gate runs no pnpm/node — see ci.yml), so its allowlist can silently
+  # drift from this authoritative one — as it did (JS `{}` vs this `%{"Conversation
+  # .tsx" => ["PtyTerminalSurface"]}`), and nothing caught it. Pin the two together
+  # here so a change to one without the other fails CI.
+  test "layer lockstep — check-mounts.mjs SUBCOMPONENT_ALLOWLIST matches this gate" do
+    js = File.read!(@check_mounts)
+
+    obj =
+      case Regex.run(~r/SUBCOMPONENT_ALLOWLIST\s*=\s*(\{.*?\})/s, js) do
+        [_, literal] -> literal
+        _ -> flunk("could not find SUBCOMPONENT_ALLOWLIST literal in check-mounts.mjs")
+      end
+
+    assert Jason.decode!(obj) == @subcomponent_allowlist,
+           "check-mounts.mjs SUBCOMPONENT_ALLOWLIST drifted from this gate's " <>
+             "@subcomponent_allowlist — the two typed-slot layers must be kept in " <>
+             "lockstep (change both together)."
   end
 
   test "Check 1 — single mount point: createRoot only in main.tsx" do
