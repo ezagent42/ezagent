@@ -91,7 +91,7 @@ defmodule EzagentPluginHello.Template.HelloSessionTest do
       {:ok, %{caps: caps}} = Ezagent.Kind.get_slice(orch_uri, :identity)
 
       assert {:error, :unauthorized} =
-               Ezagent.Orchestrator.Tools.preflight_within_session_cap(caps, session_uri)
+               Ezagent.Orchestrator.Tools.preflight_within_session_cap(caps, session_uri, :any)
 
       # Idempotent: re-instantiating the same app reports not-fresh.
       assert {:ok, [^session_uri], %{fresh?: false}} =

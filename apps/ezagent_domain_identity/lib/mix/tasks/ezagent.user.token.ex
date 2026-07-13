@@ -52,8 +52,8 @@ defmodule Mix.Tasks.Ezagent.User.Token do
 
   Pass the token to CLI calls:
 
-      EZAGENT_USER_TOKEN=esr_pat_xxx mix ezagent session create test
-      mix ezagent session create test --token=esr_pat_xxx
+      EZAGENT_USER_TOKEN=esr_pat_v1_<raw> mix ezagent session create test
+      mix ezagent session create test --token=esr_pat_v1_<raw>
   """
   use Mix.Task
 

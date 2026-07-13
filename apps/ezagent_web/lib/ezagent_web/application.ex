@@ -9,6 +9,15 @@ defmodule EzagentWeb.Application do
   def start(_type, _args) do
     :ok = EzagentWeb.RateLimiter.init_table()
 
+    # Every dependency app (including plugins) has already started before OTP
+    # enters this callback. Freeze the deterministic Session-Config extension
+    # set before Endpoint can accept a request, so no caller can observe a
+    # transient core-only catalog during boot.
+    :ok =
+      Ezagent.Session.Config.ExtensionRegistry.assemble!(
+        Ezagent.Session.Config.ExtensionRegistry.discover_loaded_extensions()
+      )
+
     children = [
       EzagentWeb.Telemetry,
       # Start a worker by calling: EzagentWeb.Worker.start_link(arg)
@@ -26,6 +35,7 @@ defmodule EzagentWeb.Application do
         # Skill distribution P2: recover/copy release-bundled skill seeds into
         # EZAGENT_HOME and scan the single runtime origin before consumers read.
         :ok = Ezagent.Home.SkillSeed.boot!(index?: System.get_env("MIX_ENV") != "test")
+
         # sw-home lane (2026-07-07) — the ONE late socialware manifest scan.
         # P13 note: ezagent_web is transport, not business logic; this call is
         # ONLY a trigger. It lives here because ezagent_web depends on every

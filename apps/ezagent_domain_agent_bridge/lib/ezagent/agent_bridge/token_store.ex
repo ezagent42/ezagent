@@ -10,6 +10,18 @@ defmodule Ezagent.AgentBridge.TokenStore do
 
   @file_name "cc-channels.yaml"
 
+  alias Ezagent.Authentication.BridgeCredential
+
+  @doc "Authenticate a bridge token only for its transport-bound principal."
+  @spec authenticate(BridgeCredential.t()) :: {:ok, URI.t()} | {:error, :invalid_credentials}
+  def authenticate(%BridgeCredential{token: token, principal: %URI{} = principal}) do
+    if verify_token(principal, token),
+      do: {:ok, principal},
+      else: {:error, :invalid_credentials}
+  end
+
+  def authenticate(_), do: {:error, :invalid_credentials}
+
   @doc """
   Mint a token for `agent_uri` and persist it.
 

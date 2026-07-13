@@ -148,6 +148,42 @@ defmodule Ezagent.CapabilityTest do
     end
   end
 
+  describe "authorizing_cap/2" do
+    test "is the shared provenance-aware full predicate used by runtime and preflights" do
+      target = Ezagent.URI.new!("session://team-alpha/generic/shared-predicate")
+
+      needed =
+        needed(
+          kind: :session,
+          behavior: Ezagent.ActionSet.Session,
+          action: :join,
+          instance: target,
+          workspace_uri: @ws_default
+        )
+
+      valid =
+        cap(
+          kind: :session,
+          behavior: Ezagent.ActionSet.Session,
+          action: :join,
+          instance: target,
+          workspace_uri: @ws_default,
+          granted_by: @user_uri,
+          granted_at: @now
+        )
+
+      wrong_action = %{valid | action: :leave}
+      legacy_system_grant = %{valid | granted_by: @system_uri}
+
+      assert {:ok, ^valid} =
+               Capability.Authorization.authorizing_cap([wrong_action, valid], needed)
+
+      assert Capability.Authorization.authorizes?(MapSet.new([valid]), needed)
+      refute Capability.Authorization.authorizes?([wrong_action], needed)
+      refute Capability.Authorization.authorizes?([legacy_system_grant], needed)
+    end
+  end
+
   describe "revoke/2" do
     test "removes a non-admin cap" do
       c =

@@ -121,8 +121,8 @@ for every kanban action, so you can drive the board directly. Pass your identity
 either as flags or via the environment:
 
 ```bash
-mix ezagent <kind> <action> … --token "$EZAGENT_USER_TOKEN" --uri "<your-entity-uri>"
-# or set EZAGENT_USER_TOKEN + EZAGENT_ENTITY_URI in the env and drop the flags
+mix ezagent <kind> <action> … --token "$EZAGENT_USER_TOKEN"
+# or set EZAGENT_USER_TOKEN in the environment and drop the flag
 ```
 
 ### Targeting the board

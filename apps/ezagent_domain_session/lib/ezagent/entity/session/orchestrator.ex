@@ -97,13 +97,19 @@ defmodule Ezagent.Entity.Session.Orchestrator do
        ) do
     case orchestrator_member_uri(session_uri) do
       %URI{} = orchestrator_uri ->
-        with :ok <-
+        with {:ok, binding} <-
+               EzagentDomainInstanceMessage.SessionCreator.Materializer.ensure_orchestrator_binding(
+                 session_uri,
+                 orchestrator_uri
+               ),
+             :ok <-
                register_orchestrator_mcp_context(
                  orchestrator_uri,
                  session_uri,
                  workspace_uri,
                  owner_uri,
-                 compat_parent_template_uri(session_uri)
+                 compat_parent_template_uri(session_uri),
+                 binding.epoch
                ),
              :ok <-
                grant_orchestrator_scoped_caps(orchestrator_uri, session_uri, owner_uri) do
@@ -527,21 +533,30 @@ defmodule Ezagent.Entity.Session.Orchestrator do
   directly. The lazy `rebuild_from_durable` reconstructs the same context from
   the durable role/member binding on JOIN after a restart.
   """
-  @spec register_orchestrator_mcp_context(URI.t(), URI.t(), URI.t(), URI.t(), URI.t()) ::
+  @spec register_orchestrator_mcp_context(
+          URI.t(),
+          URI.t(),
+          URI.t(),
+          URI.t(),
+          URI.t(),
+          String.t()
+        ) ::
           :ok | {:error, term()}
   def register_orchestrator_mcp_context(
         %URI{} = orchestrator_uri,
         %URI{} = session_uri,
         %URI{} = workspace_uri,
         %URI{} = owner_uri,
-        %URI{} = parent_template_uri
+        %URI{} = parent_template_uri,
+        binding_epoch
       ) do
     with :ok <-
            Ezagent.Session.OrchestratorContextPort.register_context(orchestrator_uri,
              session_uri: session_uri,
              workspace_uri: workspace_uri,
              owner_uri: owner_uri,
-             parent_template_uri: parent_template_uri
+             parent_template_uri: parent_template_uri,
+             binding_epoch: binding_epoch
            ),
          {:ok, _pid} <-
            Ezagent.Session.SessionManager.ensure_started(
@@ -564,8 +579,8 @@ defmodule Ezagent.Entity.Session.Orchestrator do
   principal). Returns `{:ok, content}` | `{:error, reason}`.
 
   2026-05-31 orchestrator-startup-atomicity §4 — kept + made public so
-  the atomic `EzagentDomainInstanceMessage.SessionCreator.create_session/3` can read the template's
-  `orchestrator_template_uri` to materialize the session working copy.
+  the session creator can read SessionTemplate definition data. A definition's
+  `orchestrator_template_uri` remains valid here; it is not a runtime binding.
   """
   @spec read_template_content(URI.t()) :: {:ok, map()} | {:error, term()}
   def read_template_content(%URI{} = session_template_uri) do

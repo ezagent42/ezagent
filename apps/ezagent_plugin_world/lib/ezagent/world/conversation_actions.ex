@@ -383,7 +383,6 @@ defmodule Ezagent.World.ConversationActions do
           {:noreply, Phoenix.LiveView.Socket.t()}
   defp publish_template(socket, %URI{} = session_uri, name) do
     caller = socket.assigns.current_entity_uri
-    caps = Map.get(socket.assigns, :current_caps, MapSet.new())
     workspace_uri = Ezagent.Capability.workspace_of(session_uri)
     trimmed = String.trim(name)
 
@@ -393,11 +392,11 @@ defmodule Ezagent.World.ConversationActions do
        |> assign(:last_dispatch_status, "error:template_name_required")
        |> push_event("world:state", %{"publish_error" => "请填写发布物名称"})}
     else
-      case Ezagent.Orchestrator.Tools.Templates.save_template_as(trimmed,
-             session_uri: session_uri,
-             workspace_uri: workspace_uri,
-             caller: caller,
-             caps: caps
+      case Ezagent.Session.Config.execute(
+             "save_template_as",
+             %{"new_name" => trimmed},
+             caller,
+             session_uri
            ) do
         {:ok, %URI{}} ->
           {:noreply,

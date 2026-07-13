@@ -320,6 +320,7 @@ defmodule EzagentDomainInstanceMessage.Integration.OrchestratorMcpBridgeTest do
       # not need the orchestrator URI to be known at spawn time.
       caps = MapSet.new([template_cap(:agent_template, @workspace_uri)])
       orchestrator_uri = spawn_orchestrator_with_caps(caps)
+      binding_epoch = Ecto.UUID.generate()
 
       # The Generator's registration step — bind the server-derived
       # context the bridge's Channel will look up.
@@ -327,7 +328,8 @@ defmodule EzagentDomainInstanceMessage.Integration.OrchestratorMcpBridgeTest do
         McpRegistry.register(orchestrator_uri,
           session_uri: session_uri,
           workspace_uri: @workspace_uri,
-          owner_uri: User.admin_uri()
+          owner_uri: User.admin_uri(),
+          binding_epoch: binding_epoch
         )
 
       # Decision C: the SessionManager (session domain) authorizes the
@@ -338,8 +340,12 @@ defmodule EzagentDomainInstanceMessage.Integration.OrchestratorMcpBridgeTest do
       # session-side token gate + cap reconstruction.
       {:ok, _} =
         Ezagent.ActionSet.Session.ConfigActions.system_set_working_copy(session_uri, %{
-          orchestrator_uri: orchestrator_uri,
-          orchestrator_template_uri: Ezagent.URI.new!("template://system/agent/cc-orchestrator")
+          orchestrator_uri: %{
+            uri: orchestrator_uri,
+            epoch: binding_epoch,
+            status: :active
+          },
+          orchestrator_materialization_epoch: binding_epoch
         })
 
       {:ok, token} = TokenStore.mint(orchestrator_uri)
@@ -423,7 +429,8 @@ defmodule EzagentDomainInstanceMessage.Integration.OrchestratorMcpBridgeTest do
       :ok =
         McpRegistry.register(orch_b,
           session_uri: session_uri,
-          workspace_uri: @workspace_uri
+          workspace_uri: @workspace_uri,
+          binding_epoch: Ecto.UUID.generate()
         )
 
       result =
@@ -484,12 +491,14 @@ defmodule EzagentDomainInstanceMessage.Integration.OrchestratorMcpBridgeTest do
       session_uri = spawn_session()
       caps = MapSet.new([template_cap(:agent_template, @workspace_uri)])
       orchestrator_uri = spawn_orchestrator_with_caps(caps)
+      binding_epoch = Ecto.UUID.generate()
 
       :ok =
         McpRegistry.register(orchestrator_uri,
           session_uri: session_uri,
           workspace_uri: @workspace_uri,
-          owner_uri: User.admin_uri()
+          owner_uri: User.admin_uri(),
+          binding_epoch: binding_epoch
         )
 
       # Decision C: wire the durable orchestrator_uri + start the SessionManager
@@ -497,8 +506,12 @@ defmodule EzagentDomainInstanceMessage.Integration.OrchestratorMcpBridgeTest do
       # gate pass for the forwarded tools/call.
       {:ok, _} =
         Ezagent.ActionSet.Session.ConfigActions.system_set_working_copy(session_uri, %{
-          orchestrator_uri: orchestrator_uri,
-          orchestrator_template_uri: Ezagent.URI.new!("template://system/agent/cc-orchestrator")
+          orchestrator_uri: %{
+            uri: orchestrator_uri,
+            epoch: binding_epoch,
+            status: :active
+          },
+          orchestrator_materialization_epoch: binding_epoch
         })
 
       # The token `McpSocket.connect/3` will verify — minted by the same
@@ -637,7 +650,8 @@ defmodule EzagentDomainInstanceMessage.Integration.OrchestratorMcpBridgeTest do
           session_uri: session_uri,
           workspace_uri: @workspace_uri,
           owner_uri: User.admin_uri(),
-          parent_template_uri: parent
+          parent_template_uri: parent,
+          binding_epoch: "epoch-registry-round-trip"
         )
 
       assert {:ok, ctx} = McpRegistry.lookup(orch)
@@ -645,6 +659,7 @@ defmodule EzagentDomainInstanceMessage.Integration.OrchestratorMcpBridgeTest do
       assert ctx.workspace_uri == @workspace_uri
       assert ctx.owner_uri == User.admin_uri()
       assert ctx.parent_template_uri == parent
+      assert ctx.binding_epoch == "epoch-registry-round-trip"
 
       :ok = McpRegistry.unregister(orch)
       assert McpRegistry.lookup(orch) == :error

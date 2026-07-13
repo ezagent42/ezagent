@@ -13,6 +13,10 @@ import Config
 config :ezagent_core,
   ecto_repos: [EzagentCore.Repo]
 
+config :ezagent_core, Ezagent.Authentication,
+  pat_resolver: Ezagent.Entity.Token,
+  bridge_resolver: Ezagent.AgentBridge.TokenStore
+
 # Task #58 — default SessionTemplate ⇄ cc-orchestrator decoupling.
 #
 # Legacy deployment seam retained for callers that still read it directly.

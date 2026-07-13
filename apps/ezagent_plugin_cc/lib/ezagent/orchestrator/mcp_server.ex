@@ -1,7 +1,7 @@
 defmodule Ezagent.Orchestrator.McpServer do
   @moduledoc """
   Orchestrator MCP **transport** — the cc-plugin request-plumbing a live
-  `claude` orchestrator reaches its 7 management tools through.
+  `claude` orchestrator reaches its management operation catalog through.
 
   ## Pure transport, ZERO authority (transport #53 Decision C)
 
@@ -55,6 +55,7 @@ defmodule Ezagent.Orchestrator.McpServer do
   require Logger
 
   alias Ezagent.Orchestrator.McpServer.ToolCatalog
+  alias Ezagent.Session.OrchestratorBinding
 
   # The session-domain Registry the per-orchestrator `SessionManager`
   # GenServers register under (keyed by orchestrator URI string). Named here as
@@ -133,9 +134,27 @@ defmodule Ezagent.Orchestrator.McpServer do
   # followed it moved to SessionManager.
   defp ensure_registered(%URI{} = orchestrator_uri) do
     case Ezagent.Orchestrator.McpRegistry.lookup(orchestrator_uri) do
-      {:ok, _ctx} -> :ok
+      {:ok, ctx} -> ensure_cached_context_current(orchestrator_uri, ctx)
       :error -> rebuild_from_durable(orchestrator_uri)
     end
+  end
+
+  defp ensure_cached_context_current(%URI{} = orchestrator_uri, %{session_uri: session_uri} = ctx) do
+    with {:ok, chat_slice} <- load_chat_slice(session_uri),
+         {:ok, working_copy} <- orchestrator_working_copy(chat_slice),
+         {:ok, binding} <- current_matching_binding(working_copy, orchestrator_uri),
+         true <- Map.get(ctx, :binding_epoch) == binding.epoch do
+      :ok
+    else
+      _ ->
+        :ok = Ezagent.Orchestrator.McpRegistry.unregister(orchestrator_uri)
+        rebuild_from_durable(orchestrator_uri)
+    end
+  end
+
+  defp ensure_cached_context_current(%URI{} = orchestrator_uri, _invalid_context) do
+    :ok = Ezagent.Orchestrator.McpRegistry.unregister(orchestrator_uri)
+    rebuild_from_durable(orchestrator_uri)
   end
 
   # ETS MISS path: resolve the orchestrator's session URI from the durable
@@ -146,7 +165,14 @@ defmodule Ezagent.Orchestrator.McpServer do
   defp rebuild_from_durable(%URI{} = orchestrator_uri) do
     with {:ok, session_uri, workspace_uri} <- resolve_session(orchestrator_uri),
          {:ok, chat_slice} <- load_chat_slice(session_uri),
-         {:ok, wc} <- orchestrator_working_copy(chat_slice) do
+         {:ok, wc} <- orchestrator_working_copy(chat_slice),
+         {:ok, binding, wc} <-
+           current_or_repaired_binding(
+             session_uri,
+             workspace_uri,
+             orchestrator_uri,
+             wc
+           ) do
       owner_uri = Map.get(chat_slice, :owner_uri)
       parent_template_uri = Map.get(wc, :session_template_uri)
 
@@ -155,7 +181,8 @@ defmodule Ezagent.Orchestrator.McpServer do
           session_uri: session_uri,
           workspace_uri: workspace_uri,
           owner_uri: owner_uri,
-          parent_template_uri: parent_template_uri
+          parent_template_uri: parent_template_uri,
+          binding_epoch: binding.epoch
         )
 
       # Transport #53 Decision C (cold-restart self-heal, codex C-rC-P1 / C-r3-P2
@@ -192,6 +219,7 @@ defmodule Ezagent.Orchestrator.McpServer do
 
       :ok
     else
+      {:error, {:orchestrator_binding_tombstoned, _reason}} = error -> error
       _ -> {:error, :orchestrator_not_registered}
     end
   end
@@ -220,8 +248,8 @@ defmodule Ezagent.Orchestrator.McpServer do
     |> Stream.map(& &1.uri)
     |> Enum.find_value(fn uri_str ->
       with {:ok, session_uri} <- safe_parse(uri_str),
-           %URI{} = stored <- stored_orchestrator_uri(session_uri),
-           true <- URI.to_string(stored) == target do
+           {:ok, binding} <- stored_orchestrator_binding(session_uri),
+           true <- URI.to_string(binding.uri) == target do
         session_uri
       else
         _ -> nil
@@ -235,13 +263,13 @@ defmodule Ezagent.Orchestrator.McpServer do
     _ -> :error
   end
 
-  defp stored_orchestrator_uri(%URI{} = session_uri) do
+  defp stored_orchestrator_binding(%URI{} = session_uri) do
     with {:ok, chat_slice} <- load_chat_slice(session_uri),
          {:ok, working_copy} <- orchestrator_working_copy(chat_slice),
-         %URI{} = orchestrator_uri <- Map.get(working_copy, :orchestrator_uri) do
-      orchestrator_uri
+         {:ok, binding} <- OrchestratorBinding.decode(Map.get(working_copy, :orchestrator_uri)) do
+      {:ok, binding}
     else
-      _ -> nil
+      _ -> :error
     end
   end
 
@@ -267,18 +295,51 @@ defmodule Ezagent.Orchestrator.McpServer do
   defp orchestrator_working_copy(chat_slice) do
     wc = Map.get(chat_slice, :template_working_copy, %{})
 
-    case Map.get(wc, :orchestrator_template_uri) do
-      %URI{} -> {:ok, wc}
-      _ -> ordinary_orchestrator_working_copy(chat_slice, wc)
+    case OrchestratorBinding.decode(Map.get(wc, :orchestrator_uri)) do
+      {:ok, _binding} -> {:ok, wc}
+      _ -> :error
     end
   end
 
-  defp ordinary_orchestrator_working_copy(chat_slice, wc) do
-    with %URI{} = orchestrator_uri <- Map.get(wc, :orchestrator_uri),
-         members when is_map(members) <- Map.get(chat_slice, :members, %{}),
-         %{role_name: "orchestrator"} <- Map.get(members, orchestrator_uri) do
-      {:ok, wc}
+  defp current_or_repaired_binding(session_uri, workspace_uri, orchestrator_uri, wc) do
+    case current_matching_binding(wc, orchestrator_uri) do
+      {:ok, binding} ->
+        {:ok, binding, wc}
+
+      {:error, {:orchestrator_binding_tombstoned, _reason}} = error ->
+        error
+
+      {:error, {:orchestrator_binding_epoch_mismatch, _binding_epoch, _current_epoch}} ->
+        repair_and_reload_binding(session_uri, workspace_uri, orchestrator_uri)
+
+      _ ->
+        :error
+    end
+  end
+
+  defp repair_and_reload_binding(session_uri, workspace_uri, orchestrator_uri) do
+    _ =
+      EzagentDomainInstanceMessage.repair_orchestrator(
+        session_uri,
+        workspace_uri
+      )
+
+    with {:ok, chat_slice} <- load_chat_slice(session_uri),
+         {:ok, wc} <- orchestrator_working_copy(chat_slice),
+         {:ok, binding} <- current_matching_binding(wc, orchestrator_uri) do
+      {:ok, binding, wc}
     else
+      {:error, {:orchestrator_binding_tombstoned, _reason}} = error -> error
+      _ -> :error
+    end
+  end
+
+  defp current_matching_binding(wc, orchestrator_uri) do
+    with {:ok, binding} <- OrchestratorBinding.current(wc),
+         true <- URI.to_string(binding.uri) == URI.to_string(orchestrator_uri) do
+      {:ok, binding}
+    else
+      {:error, _} = error -> error
       _ -> :error
     end
   end
@@ -314,7 +375,7 @@ defmodule Ezagent.Orchestrator.McpServer do
   @spec tool_schemas() :: [map()]
   defdelegate tool_schemas(), to: ToolCatalog
 
-  @doc "The 9 tool names this MCP server exposes."
+  @doc "The management operation names this MCP server exposes."
   @spec tool_names() :: [String.t()]
   defdelegate tool_names(), to: ToolCatalog
 

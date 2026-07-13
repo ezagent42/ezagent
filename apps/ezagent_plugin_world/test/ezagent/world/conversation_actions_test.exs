@@ -2,6 +2,15 @@ defmodule Ezagent.World.ConversationActionsTest do
   use ExUnit.Case, async: true
 
   alias Ezagent.World.ConversationActions
+
+  test "Session-Config UI actions project through the domain execute boundary" do
+    source =
+      File.read!(Path.expand("../../../lib/ezagent/world/conversation_actions.ex", __DIR__))
+
+    assert source =~ "Ezagent.Session.Config.execute("
+    refute source =~ "Ezagent.Orchestrator.Tools.Templates.save_template_as"
+  end
+
   alias Ezagent.World.ConversationRoutingForm
 
   test "create_session_result converts create_session exits into errors" do

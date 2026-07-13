@@ -190,7 +190,12 @@ defmodule EzagentPluginKb.E2E.AutoserviceTier1SeedTest do
       on_exit(fn -> :telemetry.detach(handler_id) end)
 
       assert {:ok, %{hits: hits}} =
-               Ezagent.Orchestrator.Tools.kb_query(seed.kb_agent_name, probe, 5, opts)
+               Ezagent.Session.Config.execute(
+                 "kb_query",
+                 %{"kb_agent" => seed.kb_agent_name, "query" => probe, "k" => 5},
+                 opts[:caller],
+                 opts[:workspace_uri]
+               )
 
       assert Enum.any?(hits, fn h -> h.text =~ fact end),
              "the KB answer must contain the fact only present in the ingested corpus " <>
@@ -214,8 +219,13 @@ defmodule EzagentPluginKb.E2E.AutoserviceTier1SeedTest do
         workspace_uri: seed.workspace_uri
       ]
 
-      assert {:error, :unauthorized} =
-               Ezagent.Orchestrator.Tools.kb_query(seed.kb_agent_name, probe, 5, no_cap_opts),
+      assert {:error, {:gate_failed, :operation_caps, :unauthorized}} =
+               Ezagent.Session.Config.execute(
+                 "kb_query",
+                 %{"kb_agent" => seed.kb_agent_name, "query" => probe, "k" => 5},
+                 no_cap_opts[:caller],
+                 no_cap_opts[:workspace_uri]
+               ),
              "kb.query from a capless principal must be refused (the cap is load-bearing)"
     end)
   end

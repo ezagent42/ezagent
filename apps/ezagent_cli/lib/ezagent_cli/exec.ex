@@ -31,9 +31,7 @@ defmodule EzagentCli.Exec do
   @doc """
   PR #142: 2-arg form accepts CLI-level options. Currently:
 
-    * `:token` — bearer token (verified via `Ezagent.Entity.authenticate/2`).
-    * `:entity_uri` — the URI the token belongs to (required when
-      `:token` is set; `entity_tokens` is keyed by URI).
+    * `:token` — bearer token resolved directly to its principal.
 
   Codex CLI/GUI audit 2026-05-24 HIGH-1 (`feedback_let_it_crash_no_workarounds`):
   the previous code fell back to admin caps when no token was
@@ -53,6 +51,15 @@ defmodule EzagentCli.Exec do
     end
   end
 
+  @doc false
+  @spec authenticated_principal() :: {:ok, URI.t()} | {:error, :no_authenticated_principal}
+  def authenticated_principal do
+    case Process.get(:ezagent_cli_caller_override) do
+      {%URI{} = principal, %MapSet{}} -> {:ok, principal}
+      _ -> {:error, :no_authenticated_principal}
+    end
+  end
+
   # Argv that don't need authentication — help / version / no-args
   # commands surface usage info without dispatching anything.
   defp help_only_argv?([]), do: true
@@ -62,7 +69,7 @@ defmodule EzagentCli.Exec do
   defp help_only_argv?(_), do: false
 
   defp exec_with_auth(argv, opts) do
-    case resolve_caller(opts[:token], opts[:entity_uri]) do
+    case resolve_caller(opts[:token]) do
       {:ok, caller_uri, caller_caps} ->
         # Store on the per-call process dict so Dispatch.derive_caller
         # (in the same RPC-handling pid) picks it up without threading
@@ -78,22 +85,14 @@ defmodule EzagentCli.Exec do
       {:error, :no_token} ->
         %{
           output:
-            "error: CLI calls require authentication. Pass --token + --uri\n" <>
-              "       (or set EZAGENT_USER_TOKEN + EZAGENT_ENTITY_URI). Mint a\n" <>
-              "       token with `mix ezagent.user.token mint <entity-uri>`.\n",
+            "error: CLI calls require authentication. Pass --token\n" <>
+              "       (or set EZAGENT_USER_TOKEN). Mint a\n" <>
+              "       token with `mix ezagent.user.token <entity-uri> --mint`.\n",
           exit_code: 4
         }
 
       {:error, :invalid_token} ->
         %{output: "error: invalid or revoked CLI token\n", exit_code: 4}
-
-      {:error, :missing_entity_uri} ->
-        %{
-          output:
-            "error: --token requires --uri (or EZAGENT_ENTITY_URI) since PR #142;\n" <>
-              "       tokens live in entity_tokens, keyed by entity URI\n",
-          exit_code: 4
-        }
     end
   end
 
@@ -140,18 +139,12 @@ defmodule EzagentCli.Exec do
   # REFUSE. Previously this returned {:ok, nil, nil} which Dispatch
   # then turned into admin caps (the silent fallback path). Now we
   # surface `:no_token` so Exec returns a clear exit-4 error.
-  defp resolve_caller(nil, _), do: {:error, :no_token}
-  defp resolve_caller("", _), do: {:error, :no_token}
+  defp resolve_caller(nil), do: {:error, :no_token}
+  defp resolve_caller(""), do: {:error, :no_token}
 
-  defp resolve_caller(token, nil) when is_binary(token), do: {:error, :missing_entity_uri}
-  defp resolve_caller(token, "") when is_binary(token), do: {:error, :missing_entity_uri}
-
-  defp resolve_caller(token, entity_uri_str)
-       when is_binary(token) and is_binary(entity_uri_str) do
-    uri = Ezagent.URI.new!(entity_uri_str)
-
-    case Ezagent.Entity.authenticate(uri, token) do
-      {:ok, %{caps: caps}} -> {:ok, uri, caps}
+  defp resolve_caller(token) when is_binary(token) do
+    case Ezagent.Authentication.authenticate(token) do
+      {:ok, uri} -> {:ok, uri, uri |> Ezagent.Identity.read_entity_caps() |> MapSet.new()}
       {:error, _} -> {:error, :invalid_token}
     end
   end

@@ -92,4 +92,22 @@ defmodule Ezagent.AgentBridge.TokenStoreTest do
              "TokenStore must NOT expose the secret token via a getter — verify in-module."
     end
   end
+
+  test "unified resolver authenticates only the connection-bound bridge principal" do
+    principal = URI.new!("entity://team-alpha/agent/test_unified_bridge")
+    other = URI.new!("entity://team-alpha/agent/test_unified_bridge_other")
+    assert {:ok, token} = TokenStore.mint(principal)
+
+    assert {:ok, ^principal} =
+             Ezagent.Authentication.authenticate(%Ezagent.Authentication.BridgeCredential{
+               token: token,
+               principal: principal
+             })
+
+    assert {:error, :invalid_credentials} =
+             Ezagent.Authentication.authenticate(%Ezagent.Authentication.BridgeCredential{
+               token: token,
+               principal: other
+             })
+  end
 end

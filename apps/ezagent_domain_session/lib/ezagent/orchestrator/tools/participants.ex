@@ -11,8 +11,52 @@ defmodule Ezagent.Orchestrator.Tools.Participants do
          {:ok, caps} <- Tools.require_opt(opts, :caps),
          {:ok, workspace_uri} <- Tools.require_opt(opts, :workspace_uri),
          {:ok, session_uri} <- Tools.require_opt(opts, :session_uri),
-         :ok <- Tools.preflight_within_session_cap(caps, session_uri) do
+         :ok <- Tools.preflight_within_session_cap(caps, session_uri, :join) do
       add_participant_ref(ref, role_name, caller, caps, workspace_uri, session_uri, opts)
+    end
+  end
+
+  @doc """
+  Import a participant manifest from a host-local, confined directory.
+
+  This is deliberately separate from the remotely projectable
+  `add_participant/3` operation. Callers must opt into the local boundary,
+  hold explicit management authority over the addressed session, and supply
+  the trusted manifest root. No HTTP/MCP/remote CLI projection calls this API.
+  """
+  @spec import_participant_manifest(String.t(), String.t(), keyword()) ::
+          {:ok, URI.t()} | {:error, term()}
+  def import_participant_manifest(path, role_name, opts \\ [])
+      when is_binary(path) and is_binary(role_name) do
+    with true <- Keyword.get(opts, :local_operator, false),
+         {:ok, caller} <- Tools.require_opt(opts, :caller),
+         {:ok, caps} <- Tools.require_opt(opts, :caps),
+         {:ok, workspace_uri} <- Tools.require_opt(opts, :workspace_uri),
+         {:ok, session_uri} <- Tools.require_opt(opts, :session_uri),
+         {:ok, root} <- Tools.require_opt(opts, :manifest_root),
+         :ok <- preflight_operator_cap(caps, session_uri, workspace_uri),
+         :ok <- Tools.preflight_within_session_cap(caps, session_uri, :join),
+         {:ok, body} <- Ezagent.Session.Config.ManifestImport.read(path, root),
+         {:ok, manifest} <- Ezagent.AgentManifest.load(body),
+         {:ok, member_uri, fresh?} <-
+           spawn_manifest_participant(
+             manifest,
+             Keyword.get(opts, :slots, %{}),
+             role_name,
+             caller,
+             caps,
+             workspace_uri,
+             session_uri
+           ) do
+      facets = %{
+        role_name: role_name,
+        in_session_template: Keyword.get(opts, :in_session_template, true)
+      }
+
+      admit_participant(session_uri, member_uri, facets, caller, caps, fresh?)
+    else
+      false -> {:error, :local_operator_required}
+      {:error, _} = error -> error
     end
   end
 
@@ -23,22 +67,14 @@ defmodule Ezagent.Orchestrator.Tools.Participants do
          caps,
          _workspace_uri,
          session_uri,
-         _opts
-       ) do
-    admit_participant(session_uri, member_uri, %{role_name: role_name}, caller, caps, false)
-  end
-
-  defp add_participant_ref(
-         %URI{scheme: "template"} = source_template_uri,
-         role_name,
-         _caller,
-         _caps,
-         _workspace_uri,
-         _session_uri,
          opts
        ) do
-    in_session_template = Keyword.get(opts, :in_session_template, true)
-    Tools.add_managed_member(source_template_uri, role_name, in_session_template, opts)
+    facets = %{
+      role_name: role_name,
+      in_session_template: Keyword.get(opts, :in_session_template, true)
+    }
+
+    admit_participant(session_uri, member_uri, facets, caller, caps, false)
   end
 
   defp add_participant_ref(
@@ -52,11 +88,11 @@ defmodule Ezagent.Orchestrator.Tools.Participants do
        )
        when is_binary(ref) do
     case parse_ref_uri(ref) do
-      {:ok, %URI{} = uri} ->
+      {:ok, %URI{scheme: "entity"} = uri} ->
         add_participant_ref(uri, role_name, caller, caps, workspace_uri, session_uri, opts)
 
-      :error ->
-        add_manifest_participant(ref, role_name, caller, caps, workspace_uri, session_uri, opts)
+      _ ->
+        {:error, {:invalid_participant_ref, :existing_entity_uri_required}}
     end
   end
 
@@ -72,34 +108,15 @@ defmodule Ezagent.Orchestrator.Tools.Participants do
            ) do
       case Tools.join_member(session_uri, member_uri, facets, caller, caps) do
         :ok ->
-          :ok = Ezagent.ActionSet.Session.Membership.mount_participation_caps(session_uri, member_uri)
+          :ok =
+            Ezagent.ActionSet.Session.Membership.mount_participation_caps(session_uri, member_uri)
+
           {:ok, member_uri}
 
         {:error, reason} ->
           if fresh_spawn?, do: _ = Tools.terminate_worker(member_uri, caller, caps)
           {:error, reason}
       end
-    end
-  end
-
-  defp add_manifest_participant(ref, role_name, caller, caps, workspace_uri, session_uri, opts) do
-    with {:ok, body} <- File.read(ref),
-         {:ok, manifest} <- Ezagent.AgentManifest.load(body),
-         {:ok, member_uri, fresh?} <-
-           spawn_manifest_participant(
-             manifest,
-             Keyword.get(opts, :slots, %{}),
-             role_name,
-             caller,
-             caps,
-             workspace_uri,
-             session_uri
-           ) do
-      facets = %{role_name: role_name, in_session_template: Keyword.get(opts, :in_session_template, true)}
-      admit_participant(session_uri, member_uri, facets, caller, caps, fresh?)
-    else
-      {:error, _} = err -> err
-      {:error, reason, _path} -> {:error, {:participant_manifest_read_failed, reason}}
     end
   end
 
@@ -157,5 +174,19 @@ defmodule Ezagent.Orchestrator.Tools.Participants do
     {:ok, Ezagent.URI.new!(ref)}
   rescue
     ArgumentError -> :error
+  end
+
+  defp preflight_operator_cap(caps, session_uri, workspace_uri) do
+    needed = %{
+      kind: Ezagent.Entity.Session.type_name(),
+      behavior: Ezagent.ActionSet.Manage,
+      action: :reconfigure,
+      instance: session_uri,
+      workspace_uri: workspace_uri
+    }
+
+    if Ezagent.Capability.Authorization.authorizes?(caps, needed),
+      do: :ok,
+      else: {:error, :operator_cap_required}
   end
 end

@@ -22,6 +22,7 @@ defmodule EzagentWeb.SessionController do
 
   alias Ezagent.Entity
   alias EzagentWeb.AuthBoundaryLayout
+  alias EzagentWeb.PatDelivery
   alias EzagentWeb.SessionPrincipal
 
   # PR-E (SPEC v2 §G7): head + chrome moved to AuthBoundaryLayout so
@@ -105,9 +106,20 @@ defmodule EzagentWeb.SessionController do
     case resolve_and_auth(email, password) do
       {:ok, uri_str} ->
         if login_verified?(uri_str) do
-          conn
-          |> SessionPrincipal.put(uri_str, workspace: nil)
-          |> redirect(to: return_to)
+          case PatDelivery.issue(conn, Ezagent.URI.new!(uri_str), return_to) do
+            {:ok, issued_conn} ->
+              redirect(issued_conn, to: "/login/token")
+
+            {:error, reason} ->
+              Logger.error("password login PAT mint failed for #{uri_str}: #{inspect(reason)}")
+
+              conn
+              |> put_status(:service_unavailable)
+              |> render_login_page(
+                cred_error: gettext("Sign-in token service is unavailable. Please try again."),
+                return_to: return_to
+              )
+          end
         else
           # Shown ONLY after a correct password, so it does not reveal which
           # emails are registered (anti-enumeration, Codex #7).
@@ -127,6 +139,8 @@ defmodule EzagentWeb.SessionController do
 
   def create(conn, _params),
     do: render_login_page(conn, cred_error: gettext("Email and password are required."))
+
+  def token(conn, _params), do: PatDelivery.render_once(conn)
 
   # POST /login/magic — passwordless magic-link send (KEPT, SMTP-gated).
   # Anti-enumeration: identical response regardless of allowlist / rate-limit.
@@ -274,7 +288,7 @@ defmodule EzagentWeb.SessionController do
   defp resolve_and_auth(email, password) do
     case Ezagent.Entity.Profile.by_email(email) do
       %{entity_uri: uri_str} when is_binary(uri_str) ->
-        case Entity.authenticate(Ezagent.URI.new!(uri_str), password, allow_user_tokens: false) do
+        case Entity.authenticate_password(Ezagent.URI.new!(uri_str), password) do
           {:ok, _} -> {:ok, uri_str}
           {:error, _} -> :error
         end

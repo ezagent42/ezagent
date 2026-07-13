@@ -189,7 +189,8 @@ defmodule EzagentDomainInstanceMessage.Integration.OrchestratorToolsOpsTest do
     {:ok, _pid} =
       Ezagent.Kind.spawn(Session, %{
         uri: session_uri,
-        behaviors: Ezagent.Entity.Session.behaviors()
+        behaviors: Ezagent.Entity.Session.behaviors(),
+        owner_uri: User.admin_uri()
       })
 
     :ok = Ezagent.WorkspaceRegistry.bind(session_uri, @workspace_uri)
@@ -209,11 +210,7 @@ defmodule EzagentDomainInstanceMessage.Integration.OrchestratorToolsOpsTest do
     {:ok, _pid} = Ezagent.Kind.spawn(Agent, %{uri: orchestrator_uri, initial_caps: caps})
     :ok = Ezagent.WorkspaceRegistry.bind(orchestrator_uri, @workspace_uri)
 
-    {:ok, _} =
-      Ezagent.ActionSet.Session.ConfigActions.system_set_working_copy(session_uri, %{
-        orchestrator_uri: orchestrator_uri,
-        orchestrator_template_uri: Ezagent.URI.new!("template://system/agent/cc-orchestrator")
-      })
+    :ok = set_active_binding(session_uri, orchestrator_uri)
 
     {:ok, token} = TokenStore.mint(orchestrator_uri)
 
@@ -264,11 +261,7 @@ defmodule EzagentDomainInstanceMessage.Integration.OrchestratorToolsOpsTest do
     {:ok, _pid} = Ezagent.Kind.spawn(Agent, %{uri: orchestrator_uri, initial_caps: caps})
     :ok = Ezagent.WorkspaceRegistry.bind(orchestrator_uri, @workspace_uri)
 
-    {:ok, _} =
-      Ezagent.ActionSet.Session.ConfigActions.system_set_working_copy(session_uri, %{
-        orchestrator_uri: orchestrator_uri,
-        orchestrator_template_uri: Ezagent.URI.new!("template://system/agent/cc-orchestrator")
-      })
+    :ok = set_active_binding(session_uri, orchestrator_uri)
 
     {:ok, token} = TokenStore.mint(orchestrator_uri)
 
@@ -289,6 +282,40 @@ defmodule EzagentDomainInstanceMessage.Integration.OrchestratorToolsOpsTest do
   # the RAW result, with the structural + cap gates exercised.
   defp run_tool(%{orchestrator_uri: orch, token: token}, tool, args) when is_binary(tool) do
     SessionManager.run_tool(orch, tool, args, token)
+  end
+
+  defp set_active_binding(session_uri, orchestrator_uri, extra \\ %{}) do
+    :ok =
+      Ezagent.Orchestrator.Tools.join_member(
+        session_uri,
+        orchestrator_uri,
+        %{role_name: "orchestrator", in_session_template: true},
+        User.admin_uri(),
+        MapSet.new([Capability.admin_genesis_cap()])
+      )
+
+    epoch = Ecto.UUID.generate()
+
+    working_copy =
+      Map.merge(
+        %{
+          orchestrator_uri: %{
+            uri: orchestrator_uri,
+            epoch: epoch,
+            status: :active
+          },
+          orchestrator_materialization_epoch: epoch
+        },
+        extra
+      )
+
+    case Ezagent.ActionSet.Session.ConfigActions.system_set_working_copy(
+           session_uri,
+           working_copy
+         ) do
+      {:ok, _} -> :ok
+      other -> other
+    end
   end
 
   defp chat_slice(session_uri) do
@@ -382,12 +409,7 @@ defmodule EzagentDomainInstanceMessage.Integration.OrchestratorToolsOpsTest do
       {:ok, parent_uri} = SessionTemplate.persist_version(parent_content, "team-alpha")
 
       # Working copy points at the parent (orchestrator_uri + session_template_uri).
-      {:ok, _} =
-        Ezagent.ActionSet.Session.ConfigActions.system_set_working_copy(session_uri, %{
-          orchestrator_uri: orchestrator_uri,
-          orchestrator_template_uri: Ezagent.URI.new!("template://system/agent/cc-orchestrator"),
-          session_template_uri: parent_uri
-        })
+      :ok = set_active_binding(session_uri, orchestrator_uri, %{session_template_uri: parent_uri})
 
       {:ok, token} = TokenStore.mint(orchestrator_uri)
 
@@ -447,21 +469,21 @@ defmodule EzagentDomainInstanceMessage.Integration.OrchestratorToolsOpsTest do
     test "SessionManager.tool_names/0 is the member + participant + rule-set + template set" do
       assert MapSet.new(SessionManager.tool_names()) ==
                MapSet.new([
-                 :add_managed_member,
-                 :add_participant,
-                 :update_member_template,
-                 :remove_member,
-                 :define_rule_set_rule,
-                 :define_prompt_template,
-                :define_legend,
-                :update_template,
-                :save_template_as,
-                :migrate_session,
-                :list_templates,
-                # kb-retrieval SPEC §5.3 option 1 — kb-agent retrieve / ingest.
-                :kb_query,
-                :kb_ingest
-              ])
+                 "add_managed_member",
+                 "add_participant",
+                 "update_member_template",
+                 "remove_member",
+                 "define_rule_set_rule",
+                 "define_prompt_template",
+                 "define_legend",
+                 "update_template",
+                 "save_template_as",
+                 "migrate_session",
+                 "list_templates",
+                 # kb-retrieval SPEC §5.3 option 1 — kb-agent retrieve / ingest.
+                 "kb_query",
+                 "kb_ingest"
+               ])
     end
   end
 
@@ -542,7 +564,8 @@ defmodule EzagentDomainInstanceMessage.Integration.OrchestratorToolsOpsTest do
     test "list_templates with caps #3/#4 OMITTED → {:error, :unauthorized}" do
       ctx = provision([])
 
-      assert {:error, :unauthorized} = run_tool(ctx, "list_templates", %{}),
+      assert {:error, {:gate_failed, :workspace_caps, :unauthorized}} =
+               run_tool(ctx, "list_templates", %{}),
              "list_templates with NO template caps must FAIL — if it succeeded the " <>
                "op path fell back to ambient admin_caps (forbidden)."
     end
@@ -560,11 +583,8 @@ defmodule EzagentDomainInstanceMessage.Integration.OrchestratorToolsOpsTest do
       {:ok, _pid} = Ezagent.Kind.spawn(Agent, %{uri: orchestrator_uri, initial_caps: caps})
       :ok = Ezagent.WorkspaceRegistry.bind(orchestrator_uri, @workspace_uri)
 
-      {:ok, _} =
-        Ezagent.ActionSet.Session.ConfigActions.system_set_working_copy(session_uri, %{
-          orchestrator_uri: orchestrator_uri,
-          orchestrator_template_uri: Ezagent.URI.new!("template://system/agent/cc-orchestrator")
-        })
+      parent_uri = Ezagent.URI.new!("template://team-alpha/session/x@abc")
+      :ok = set_active_binding(session_uri, orchestrator_uri, %{session_template_uri: parent_uri})
 
       {:ok, token} = TokenStore.mint(orchestrator_uri)
 
@@ -574,14 +594,14 @@ defmodule EzagentDomainInstanceMessage.Integration.OrchestratorToolsOpsTest do
           session_uri: session_uri,
           workspace_uri: @workspace_uri,
           owner_uri: orchestrator_uri,
-          parent_template_uri: Ezagent.URI.new!("template://team-alpha/session/x@abc")
+          parent_template_uri: parent_uri
         )
 
       on_exit(fn -> SessionManager.stop(orchestrator_uri) end)
 
       ctx = %{orchestrator_uri: orchestrator_uri, token: token, session_uri: session_uri}
 
-      assert {:error, :unauthorized} =
+      assert {:error, {:gate_failed, :template_write, :unauthorized}} =
                run_tool(ctx, "update_template", %{})
     end
   end
@@ -875,11 +895,7 @@ defmodule EzagentDomainInstanceMessage.Integration.OrchestratorToolsOpsTest do
       {:ok, _pid} = Ezagent.Kind.spawn(Agent, %{uri: orch_b, initial_caps: caps_b})
       :ok = Ezagent.WorkspaceRegistry.bind(orch_b, @workspace_uri)
 
-      {:ok, _} =
-        Ezagent.ActionSet.Session.ConfigActions.system_set_working_copy(session_b, %{
-          orchestrator_uri: orch_b,
-          orchestrator_template_uri: Ezagent.URI.new!("template://system/agent/cc-orchestrator")
-        })
+      :ok = set_active_binding(session_b, orch_b)
 
       {:ok, token_b} = TokenStore.mint(orch_b)
 
@@ -1022,11 +1038,7 @@ defmodule EzagentDomainInstanceMessage.Integration.OrchestratorToolsOpsTest do
       {:ok, _pid} = Ezagent.Kind.spawn(Agent, %{uri: orchestrator_uri, initial_caps: caps})
       :ok = Ezagent.WorkspaceRegistry.bind(orchestrator_uri, @workspace_uri)
 
-      {:ok, _} =
-        Ezagent.ActionSet.Session.ConfigActions.system_set_working_copy(session_uri, %{
-          orchestrator_uri: orchestrator_uri,
-          orchestrator_template_uri: Ezagent.URI.new!("template://system/agent/cc-orchestrator")
-        })
+      :ok = set_active_binding(session_uri, orchestrator_uri, %{session_template_uri: parent_uri})
 
       {:ok, token} = TokenStore.mint(orchestrator_uri)
 
@@ -1065,7 +1077,15 @@ defmodule EzagentDomainInstanceMessage.Integration.OrchestratorToolsOpsTest do
       }
 
       {:ok, parent_uri} = SessionTemplate.persist_version(parent_content, @workspace_uri)
-      :ok = TemplateTags.put(@workspace_uri, parent_content.name, "current", template_hash(parent_uri), User.admin_uri())
+
+      :ok =
+        TemplateTags.put(
+          @workspace_uri,
+          parent_content.name,
+          "current",
+          template_hash(parent_uri),
+          User.admin_uri()
+        )
 
       session_uri = spawn_session()
       orchestrator_uri = Ezagent.URI.new!("entity://team-alpha/agent/cc_orch-#{uniq()}")
@@ -1081,12 +1101,7 @@ defmodule EzagentDomainInstanceMessage.Integration.OrchestratorToolsOpsTest do
       {:ok, _pid} = Ezagent.Kind.spawn(Agent, %{uri: orchestrator_uri, initial_caps: caps})
       :ok = Ezagent.WorkspaceRegistry.bind(orchestrator_uri, @workspace_uri)
 
-      {:ok, _} =
-        Ezagent.ActionSet.Session.ConfigActions.system_set_working_copy(session_uri, %{
-          orchestrator_uri: orchestrator_uri,
-          orchestrator_template_uri: Ezagent.URI.new!("template://system/agent/cc-orchestrator"),
-          session_template_uri: parent_uri
-        })
+      :ok = set_active_binding(session_uri, orchestrator_uri, %{session_template_uri: parent_uri})
 
       {:ok, token} = TokenStore.mint(orchestrator_uri)
 
@@ -1104,7 +1119,9 @@ defmodule EzagentDomainInstanceMessage.Integration.OrchestratorToolsOpsTest do
       orch = %{orchestrator_uri: orchestrator_uri, token: token, session_uri: session_uri}
 
       assert {:ok, %URI{} = new_uri} = run_tool(orch, "update_template", %{})
-      assert {:ok, template_hash(new_uri)} == TemplateTags.resolve(@workspace_uri, parent_content.name, "current")
+
+      assert {:ok, template_hash(new_uri)} ==
+               TemplateTags.resolve(@workspace_uri, parent_content.name, "current")
     end
 
     test "migrate_session persists a ledger on injected failure and resumes to advance the pin" do
@@ -1146,7 +1163,11 @@ defmodule EzagentDomainInstanceMessage.Integration.OrchestratorToolsOpsTest do
 
       {:ok, target_uri} = SessionTemplate.persist_version(target_content, @workspace_uri)
 
-      Application.put_env(:ezagent_domain_session, :migrate_session_fault, {:after_role_done, "worker"})
+      Application.put_env(
+        :ezagent_domain_session,
+        :migrate_session_fault,
+        {:after_role_done, "worker"}
+      )
 
       on_exit(fn ->
         Application.delete_env(:ezagent_domain_session, :migrate_session_fault)
@@ -1175,6 +1196,7 @@ defmodule EzagentDomainInstanceMessage.Integration.OrchestratorToolsOpsTest do
 
       members = chat_slice(ctx.session_uri).members
       refute Map.has_key?(members, old_member_uri)
+
       assert Enum.any?(members, fn {_uri, meta} ->
                meta.role_name == "worker" and meta.source_template_uri == source_v2
              end)
@@ -1195,11 +1217,10 @@ defmodule EzagentDomainInstanceMessage.Integration.OrchestratorToolsOpsTest do
       {:ok, _pid} = Ezagent.Kind.spawn(Agent, %{uri: orchestrator_uri, initial_caps: caps})
       :ok = Ezagent.WorkspaceRegistry.bind(orchestrator_uri, @workspace_uri)
 
-      {:ok, _} =
-        Ezagent.ActionSet.Session.ConfigActions.system_set_working_copy(session_uri, %{
-          orchestrator_uri: orchestrator_uri,
-          orchestrator_template_uri: Ezagent.URI.new!("template://system/agent/cc-orchestrator")
-        })
+      parent_uri =
+        Ezagent.URI.new!("template://team-alpha/session/never-existed-#{uniq()}@deadbeef")
+
+      :ok = set_active_binding(session_uri, orchestrator_uri, %{session_template_uri: parent_uri})
 
       {:ok, token} = TokenStore.mint(orchestrator_uri)
 
@@ -1209,8 +1230,7 @@ defmodule EzagentDomainInstanceMessage.Integration.OrchestratorToolsOpsTest do
           session_uri: session_uri,
           workspace_uri: @workspace_uri,
           owner_uri: orchestrator_uri,
-          parent_template_uri:
-            Ezagent.URI.new!("template://team-alpha/session/never-existed-#{uniq()}@deadbeef")
+          parent_template_uri: parent_uri
         )
 
       on_exit(fn -> SessionManager.stop(orchestrator_uri) end)
@@ -1225,7 +1245,7 @@ defmodule EzagentDomainInstanceMessage.Integration.OrchestratorToolsOpsTest do
     test "an unknown tool name is rejected" do
       ctx = provision([:agent_template])
 
-      assert {:error, {:unknown_tool, "not_a_real_tool"}} =
+      assert {:error, {:unknown_operation, "not_a_real_tool"}} =
                run_tool(ctx, "not_a_real_tool", %{})
     end
 

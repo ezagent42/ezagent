@@ -132,6 +132,7 @@ defmodule EzagentWeb.Router do
     # POST /login/magic (kept, SMTP-gated). /login/credentials (handle/URI) is
     # orphaned from the page and retired in PR-6.
     get "/login", SessionController, :new
+    get "/login/token", SessionController, :token
     post "/login", SessionController, :create
     post "/login/magic", SessionController, :magic_create
     delete "/logout", SessionController, :delete
@@ -280,6 +281,13 @@ defmodule EzagentWeb.Router do
 
     get "/", ApiV1Controller, :index
     post "/:kind/:action", ApiV1Controller, :invoke
+  end
+
+  scope "/api/session-config", EzagentWeb do
+    pipe_through :api
+
+    get "/", SessionConfigController, :index
+    post "/:operation", SessionConfigController, :invoke
   end
 
   # Enable LiveDashboard in development

@@ -79,6 +79,81 @@ defmodule EzagentPluginKb.Application do
   @impl Ezagent.Plugin
   def roles, do: [kb_recipe()]
 
+  @doc "Session-Config operations contributed by the KB plugin."
+  def session_config_operations do
+    [
+      %{
+        name: "kb_query",
+        description:
+          "Retrieve the top-k most relevant chunks from a knowledge-base agent " <>
+            "(a `kb`-role agent in your workspace). Returns ranked chunks with " <>
+            "provenance (source_uri, chunk_id, score). Use this to ground an " <>
+            "answer in indexed documents (keyword/FTS retrieval).",
+        input_schema: %{
+          "type" => "object",
+          "properties" => %{
+            "kb_agent" => %{
+              "type" => "string",
+              "description" => "Name of the kb-agent in your workspace to query."
+            },
+            "query" => %{"type" => "string", "description" => "The search query (free text)."},
+            "k" => %{
+              "type" => "integer",
+              "description" => "Max number of chunks to return (default 5)."
+            }
+          },
+          "required" => ["kb_agent", "query"]
+        },
+        target_scope: :workspace,
+        admission_gate: :operation_caps,
+        route:
+          {:agent_action,
+           %{
+             agent_arg: "kb_agent",
+             behavior: :kb,
+             cap_behavior: Ezagent.ActionSet.Kb,
+             action: :query,
+             args: [query: "query", k: {"k", 5}]
+           }}
+      },
+      %{
+        name: "kb_ingest",
+        description:
+          "Ingest one source document into a knowledge-base agent (a `kb`-role " <>
+            "agent in your workspace). The source is referenced by a resource " <>
+            "URI in the `resource` scheme; re-ingesting the same source replaces " <>
+            "its chunks. Requires the kb.ingest capability (distinct from kb.query).",
+        input_schema: %{
+          "type" => "object",
+          "properties" => %{
+            "kb_agent" => %{
+              "type" => "string",
+              "description" => "Name of the kb-agent in your workspace to ingest into."
+            },
+            "source_uri" => %{
+              "type" => "string",
+              "description" =>
+                "A resource-scheme URI of the form " <>
+                  "resource:[//]<ws>/kb-source/<name> pointing at the document to ingest."
+            }
+          },
+          "required" => ["kb_agent", "source_uri"]
+        },
+        target_scope: :workspace,
+        admission_gate: :operation_caps,
+        route:
+          {:agent_action,
+           %{
+             agent_arg: "kb_agent",
+             behavior: :kb,
+             cap_behavior: Ezagent.ActionSet.Kb,
+             action: :ingest,
+             args: [source_uri: "source_uri"]
+           }}
+      }
+    ]
+  end
+
   @doc """
   Plugin-owned `resource://` types (SPEC §4.2 / §4.4), registered at boot by
   `Ezagent.Plugin.boot/1` via `FsResolver.Registry.register_all/1`.

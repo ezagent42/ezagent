@@ -95,20 +95,19 @@ defmodule Ezagent.Orchestrator.Tools do
   alias Ezagent.ActionSet.Session
   alias Ezagent.Invocation
   alias Ezagent.Orchestrator.Tools.DefinitionSync
-  alias Ezagent.Orchestrator.Tools.Kb
   alias Ezagent.Orchestrator.Tools.MemberTemplate
   alias Ezagent.Orchestrator.Tools.Migration
   alias Ezagent.Orchestrator.Tools.Participants
   alias Ezagent.Orchestrator.Tools.Templates
-  alias Ezagent.Orchestrator.Tools.ToolCatalog
+  alias Ezagent.Session.Config.Catalog
 
   @doc "The orchestration tool names."
   @spec tool_names() :: [atom()]
-  defdelegate tool_names(), to: ToolCatalog
+  defdelegate tool_names(), to: Catalog, as: :core_names
 
   @doc "True iff `name` is one of the declared orchestration tools."
   @spec tool?(atom()) :: boolean()
-  defdelegate tool?(name), to: ToolCatalog
+  def tool?(name), do: is_atom(name) and name in tool_names()
 
   # === add_managed_member ================================================
 
@@ -151,7 +150,7 @@ defmodule Ezagent.Orchestrator.Tools do
          # (`terminate_worker`, gated by the SAME possibly-insufficient caps)
          # could leave an ORPHAN. Failing closed here means an unauthorized
          # caller never spawns.
-         :ok <- preflight_within_session_cap(caps, session_uri),
+         :ok <- preflight_within_session_cap(caps, session_uri, :join),
          {:ok, %URI{} = member_uri} <-
            spawn_member(
              source_agent_template_uri,
@@ -812,15 +811,6 @@ defmodule Ezagent.Orchestrator.Tools do
           | {:error, term()}
   defdelegate list_templates(name_filter \\ nil, opts \\ []), to: Templates
 
-  @doc "Retrieve top-k chunks from a kb-agent (kb-retrieval SPEC §5.3 option 1)."
-  @spec kb_query(String.t(), String.t(), pos_integer(), keyword()) ::
-          {:ok, term()} | {:error, term()}
-  defdelegate kb_query(kb_agent, query, k, opts \\ []), to: Kb
-
-  @doc "Ingest one source document into a kb-agent (kb-retrieval SPEC §5.3 option 1)."
-  @spec kb_ingest(String.t(), String.t(), keyword()) :: {:ok, term()} | {:error, term()}
-  defdelegate kb_ingest(kb_agent, source_uri, opts \\ []), to: Kb
-
   # === generic invoke ====================================================
 
   @doc """
@@ -852,27 +842,24 @@ defmodule Ezagent.Orchestrator.Tools do
   def to_cap_set(caps) when is_list(caps), do: MapSet.new(caps)
   def to_cap_set(_), do: MapSet.new()
 
-  # M2 — true iff `caps` carries the orchestrator's cap #1
-  # (`{:within_session, session_uri}` on the `:session` kind). Mirrors the
-  # session-side `Session.orchestrator_cap_present?/1` check so the preflight
-  # decision matches the authority the deferred `chat.join` would enforce.
-  # `:ok` / `{:error, :unauthorized}` — fail closed.
+  # M2 — true iff `caps` carries the orchestrator's full cap #1 requirement:
+  # Session behavior + any action over this concrete session/workspace. This
+  # uses the same provenance-aware full capability predicate as runtime; a
+  # narrowed cap of the wrong behavior/action cannot pass before side effects.
   #
   # PUBLIC (PR-3S): also called by `Tools.MemberTemplate.update_member_template/3`.
   @doc false
-  def preflight_within_session_cap(caps, %URI{} = session_uri) do
-    session_str = URI.to_string(session_uri)
+  def preflight_within_session_cap(caps, %URI{} = session_uri, action)
+      when is_atom(action) do
+    needed = %{
+      kind: :session,
+      behavior: Ezagent.ActionSet.Session,
+      action: action,
+      instance: session_uri,
+      workspace_uri: Ezagent.Capability.workspace_of(session_uri)
+    }
 
-    authorized? =
-      caps
-      |> to_cap_set()
-      |> Enum.any?(fn
-        %Ezagent.Capability{kind: :session, instance: {:within_session, %URI{} = s}} ->
-          URI.to_string(s) == session_str
-
-        _ ->
-          false
-      end)
+    authorized? = Ezagent.Capability.Authorization.authorizes?(to_cap_set(caps), needed)
 
     if authorized?, do: :ok, else: {:error, :unauthorized}
   end

@@ -240,42 +240,90 @@ defmodule EzagentPluginKb.E2E.KbRoleNativeTest do
       _src = write_source(ws_name, source_name, "mcp retrieval over indexed documents works")
       source_uri = "resource://#{ws_name}/kb-source/#{source_name}"
 
-      # An "orchestrator" holding kb caps (the bridge-token path reconstructs
-      # the orchestrator's caps; here we pass them directly to the Tools fn).
+      # An authenticated principal holding kb caps; SessionConfig reconstructs
+      # these from the principal's identity slice.
       orch = URI.new!("entity://#{ws_name}/agent/orchestrator")
 
       caps =
         MapSet.new([
-          Ezagent.Capability.cap(:agent, Ezagent.ActionSet.Kb, :query),
-          Ezagent.Capability.cap(:agent, Ezagent.ActionSet.Kb, :ingest)
+          kb_cap(:query, workspace_uri),
+          kb_cap(:ingest, workspace_uri)
         ])
 
-      opts = [caller: orch, caps: caps, workspace_uri: workspace_uri]
+      :ok = Ezagent.AgentFlavorAttributes.put(orch, "cc")
+      {:ok, _pid} = Ezagent.Kind.spawn(Ezagent.Entity.Agent, %{uri: orch, initial_caps: caps})
+      :ok = Ezagent.WorkspaceRegistry.bind(orch, workspace_uri)
+
+      on_exit(fn ->
+        Ezagent.Kind.terminate(orch)
+        Ezagent.AgentFlavorAttributes.delete(orch)
+      end)
+
+      assert Enum.any?(Ezagent.Identity.read_entity_caps(orch), fn cap ->
+               cap.behavior == Ezagent.ActionSet.Kb and cap.action == :ingest
+             end)
 
       # kb_ingest MCP tool → dispatches kb.ingest into the named kb-agent.
       assert {:ok, %{chunks: _}} =
-               Ezagent.Orchestrator.Tools.kb_ingest(name, source_uri, opts)
+               Ezagent.Session.Config.execute(
+                 "kb_ingest",
+                 %{"kb_agent" => name, "source_uri" => source_uri},
+                 orch,
+                 workspace_uri
+               )
 
       # kb_query MCP tool → dispatches kb.query, returns hits with provenance.
       assert {:ok, %{hits: [hit | _]}} =
-               Ezagent.Orchestrator.Tools.kb_query(name, "indexed documents", 5, opts)
+               Ezagent.Session.Config.execute(
+                 "kb_query",
+                 %{"kb_agent" => name, "query" => "indexed documents", "k" => 5},
+                 orch,
+                 workspace_uri
+               )
 
       assert hit.text =~ "indexed"
 
       # An orchestrator WITHOUT the kb.ingest cap is denied (fail-closed).
-      read_only = [
-        caller: orch,
-        caps: MapSet.new([Ezagent.Capability.cap(:agent, Ezagent.ActionSet.Kb, :query)]),
-        workspace_uri: workspace_uri
-      ]
+      read_only = URI.new!("entity://#{ws_name}/agent/read-only-orchestrator")
+      :ok = Ezagent.AgentFlavorAttributes.put(read_only, "cc")
 
-      assert {:error, :unauthorized} =
-               Ezagent.Orchestrator.Tools.kb_ingest(name, source_uri, read_only),
+      {:ok, _pid} =
+        Ezagent.Kind.spawn(Ezagent.Entity.Agent, %{
+          uri: read_only,
+          initial_caps: MapSet.new([kb_cap(:query, workspace_uri)])
+        })
+
+      :ok = Ezagent.WorkspaceRegistry.bind(read_only, workspace_uri)
+
+      on_exit(fn ->
+        Ezagent.Kind.terminate(read_only)
+        Ezagent.AgentFlavorAttributes.delete(read_only)
+      end)
+
+      assert {:error, {:gate_failed, :operation_caps, :unauthorized}} =
+               Ezagent.Session.Config.execute(
+                 "kb_ingest",
+                 %{"kb_agent" => name, "source_uri" => source_uri},
+                 read_only,
+                 workspace_uri
+               ),
              "an orchestrator without kb.ingest must be denied (option-1 caps gate)"
     end)
   end
 
   # ── helpers ────────────────────────────────────────────────────────────────
+
+  defp kb_cap(action, workspace_uri) do
+    %Ezagent.Capability{
+      kind: :agent,
+      behavior: Ezagent.ActionSet.Kb,
+      action: action,
+      instance: {:within_workspace, workspace_uri},
+      workspace_uri: workspace_uri,
+      granted_by: User.admin_uri(),
+      granted_at: DateTime.utc_now()
+    }
+  end
 
   defp create_kb_agent(workspace_uri, ws_name, name, admin_ctx) do
     assert {:ok, %{agent_uri: agent_uri}} =

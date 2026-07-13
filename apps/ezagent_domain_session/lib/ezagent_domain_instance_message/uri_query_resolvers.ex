@@ -262,8 +262,9 @@ defmodule EzagentDomainInstanceMessage.UriQueryResolvers do
   @doc false
   @spec resolve_orchestrator(term()) :: Ezagent.UriQuery.result()
   def resolve_orchestrator(%URI{scheme: "session"} = session_uri) do
-    with {:ok, working_copy} <- template_working_copy(session_uri) do
-      uri_result(Map.get(working_copy, :orchestrator_uri))
+    with {:ok, working_copy} <- template_working_copy(session_uri),
+         {:ok, binding} <- Ezagent.Session.OrchestratorBinding.current(working_copy) do
+      {:ok, binding.uri}
     end
   end
 

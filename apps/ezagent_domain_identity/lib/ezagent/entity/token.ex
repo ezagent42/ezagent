@@ -1,6 +1,6 @@
 defmodule Ezagent.Entity.Token do
   @moduledoc """
-  Entity-agnostic bearer-token store (PR #142, SPEC v2 §5.12).
+  Entity-agnostic, self-identifying HMAC bearer-token store.
 
   Replaces the User-only `users.cli_token` field with the
   `entity_tokens` table. Any Entity URI can mint tokens —
@@ -11,26 +11,23 @@ defmodule Ezagent.Entity.Token do
 
       {plain, row} = Token.mint(uri, label: "cli-laptop")
       # store `plain` once at the call site (operator sees it)
-      # `row.token_hash` is bcrypt(plain), persisted in the table
+      # `row.token_digest` is HMAC-SHA256(pepper_vN, raw), persisted
 
-      {:ok, %{caps: caps}} = Token.verify(uri, plain)
-      # `last_used_at` is bumped on every successful verify
+      {:ok, principal} = Ezagent.Authentication.authenticate(plain)
+      # principal is derived from the token; caps remain an authZ concern
 
       :ok = Token.revoke(row.id)
-      # subsequent Token.verify(uri, plain) → {:error, :invalid_credentials}
+      # subsequent authenticate(plain) → {:error, :invalid_credentials}
 
-  ## Why bcrypt the token
-
-  Bearer tokens leak the same way passwords do (operator pastes one
-  into a chat, an env file gets checked in). Hashing reduces blast
-  radius — a stolen DB doesn't immediately yield usable tokens.
-  Verification cost is acceptable: agents/CLI present a token once
-  per session, not per request.
+  The token format is `esr_pat_v<N>_<raw>`. The in-token version selects a
+  durable server pepper before the database read; the keyed digest is then one
+  unique-index lookup. No caller-supplied entity URI and no bcrypt fallback are
+  accepted.
 
   ## See also
 
-  - `Ezagent.Entity.authenticate/2` — the unified facade that
-    dispatches to this module for `entity://agent/*` URIs.
+  - `Ezagent.Authentication.authenticate/1` — the token-only facade that
+    resolves the owning principal before authorization.
   - `entity-agnostic-architecture-reflection.md` §4 S-2 — the
     design rationale (User-only token field doesn't generalize).
   """
@@ -43,6 +40,8 @@ defmodule Ezagent.Entity.Token do
   schema "entity_tokens" do
     field(:entity_uri, :string)
     field(:token_hash, :string)
+    field(:token_digest, :binary)
+    field(:digest_version, :integer)
     field(:label, :string)
     field(:expires_at, :utc_datetime_usec)
     field(:last_used_at, :utc_datetime_usec)
@@ -73,51 +72,68 @@ defmodule Ezagent.Entity.Token do
   def mint(uri, opts \\ [])
 
   def mint(%URI{scheme: "entity"} = uri, opts) do
-    plain = generate_token()
-    hash = Bcrypt.hash_pwd_salt(plain)
-    workspace_uri = Ezagent.Persistence.workspace_uri_for!(uri)
+    version = current_version()
 
-    %__MODULE__{}
-    |> Ecto.Changeset.change(%{
-      entity_uri: URI.to_string(uri),
-      token_hash: hash,
-      label: Keyword.get(opts, :label),
-      expires_at: Keyword.get(opts, :expires_at),
-      # Phase 9 PR-6 (SPEC v3 §7) — workspace_uri tracks the entity's
-      # tenant so SELECTs can scope by workspace at audit time.
-      workspace_uri: workspace_uri
-    })
-    |> Repo.insert!()
-    |> then(&{plain, &1})
+    with {:ok, pepper} <- pepper(version) do
+      raw = generate_raw_secret()
+      plain = "esr_pat_v#{version}_#{raw}"
+      workspace_uri = Ezagent.Persistence.workspace_uri_for!(uri)
+
+      %__MODULE__{}
+      |> Ecto.Changeset.change(%{
+        entity_uri: URI.to_string(uri),
+        token_hash: nil,
+        token_digest: digest(pepper, raw),
+        digest_version: version,
+        label: Keyword.get(opts, :label),
+        expires_at: Keyword.get(opts, :expires_at),
+        workspace_uri: workspace_uri
+      })
+      |> Repo.insert!()
+      |> then(&{plain, &1})
+    end
   end
 
   def mint(uri, _opts), do: {:error, {:unsupported_entity_uri, uri}}
 
-  @doc """
-  Verify `plain_token` against the tokens minted for `entity_uri`.
-
-  Returns:
-  - `{:ok, %{caps: MapSet.t()}}` on success, with `last_used_at` bumped
-  - `{:error, :no_such_entity}` if no tokens exist for that URI
-  - `{:error, :invalid_credentials}` for wrong / expired tokens
-  """
-  @spec verify(URI.t() | String.t(), String.t()) ::
-          {:ok, %{caps: MapSet.t(Ezagent.Capability.t())}} | {:error, atom()}
-  def verify(uri, plain_token) when is_binary(plain_token) do
-    uri_str = uri_to_str(uri)
-
-    case rows_for(uri_str) do
-      [] ->
-        # Run a dummy verify to avoid timing leak.
-        Bcrypt.no_user_verify()
-        {:error, :no_such_entity}
-
-      rows ->
-        check_rows(rows, plain_token, uri)
+  @doc "Resolve one versioned PAT to its canonical principal with one indexed lookup."
+  @spec authenticate(String.t()) :: {:ok, URI.t()} | {:error, term()}
+  def authenticate(token) when is_binary(token) do
+    with {:ok, version, raw} <- parse(token),
+         {:ok, pepper} <- pepper(version),
+         %__MODULE__{} = row <- row_for_digest(digest(pepper, raw)),
+         true <- row.digest_version == version,
+         false <- expired?(row, DateTime.utc_now()),
+         {:ok, principal} <- enabled_principal(row.entity_uri),
+         :ok <- Ezagent.Entity.spawn_principal(principal) do
+      bump_last_used(row, DateTime.utc_now())
+      {:ok, principal}
+    else
+      {:error, {:pat_pepper_unavailable, _}} = error -> error
+      _ -> {:error, :invalid_credentials}
     end
   end
 
-  def verify(_, _), do: {:error, :invalid_credentials}
+  def authenticate(_), do: {:error, :invalid_credentials}
+
+  @doc "Replace all tokens with `label` for an entity and return one fresh PAT."
+  @spec rotate_label(URI.t(), String.t(), keyword()) ::
+          {String.t(), t()} | {:error, term()}
+  def rotate_label(%URI{scheme: "entity"} = uri, label, opts \\ [])
+      when is_binary(label) and label != "" do
+    case Repo.transaction(fn ->
+           from(t in __MODULE__, where: t.entity_uri == ^URI.to_string(uri) and t.label == ^label)
+           |> Repo.delete_all()
+
+           case mint(uri, Keyword.put(opts, :label, label)) do
+             {:error, reason} -> Repo.rollback(reason)
+             result -> result
+           end
+         end) do
+      {:ok, result} -> result
+      {:error, reason} -> {:error, reason}
+    end
+  end
 
   @doc """
   List all (non-revoked) tokens for `entity_uri`, sorted by
@@ -156,29 +172,9 @@ defmodule Ezagent.Entity.Token do
 
   # --- internals -----------------------------------------------------
 
-  defp rows_for(uri_str) do
-    from(t in __MODULE__,
-      where: t.entity_uri == ^uri_str,
-      order_by: [desc: t.inserted_at]
-    )
-    |> Repo.all()
-  end
-
-  defp check_rows(rows, plain_token, uri) do
-    now = DateTime.utc_now()
-
-    Enum.find(rows, fn row ->
-      not expired?(row, now) and Bcrypt.verify_pass(plain_token, row.token_hash)
-    end)
-    |> case do
-      nil ->
-        {:error, :invalid_credentials}
-
-      row ->
-        bump_last_used(row, now)
-        caps = Ezagent.Identity.list_caps_for(uri)
-        {:ok, %{caps: caps}}
-    end
+  defp row_for_digest(token_digest) do
+    from(t in __MODULE__, where: t.token_digest == ^token_digest, limit: 1)
+    |> Repo.one()
   end
 
   defp expired?(%__MODULE__{expires_at: nil}, _now), do: false
@@ -193,8 +189,50 @@ defmodule Ezagent.Entity.Token do
     |> Repo.update!()
   end
 
-  defp generate_token do
-    "esr_pat_" <> (:crypto.strong_rand_bytes(32) |> Base.url_encode64(padding: false))
+  defp enabled_principal(entity_uri) do
+    principal = Ezagent.URI.new!(entity_uri)
+
+    if Ezagent.URI.type?(principal, :user) do
+      case Ezagent.Users.get_by_uri(entity_uri) do
+        %{disabled_at: %DateTime{}} -> {:error, :disabled}
+        _ -> {:ok, principal}
+      end
+    else
+      {:ok, principal}
+    end
+  rescue
+    ArgumentError -> {:error, :invalid_credentials}
+  end
+
+  defp parse(token) do
+    case Regex.run(~r/\Aesr_pat_v([1-9][0-9]*)_([A-Za-z0-9_-]{43})\z/, token) do
+      [_, version, raw] -> {:ok, String.to_integer(version), raw}
+      _ -> {:error, :invalid_credentials}
+    end
+  end
+
+  defp current_version do
+    :ezagent_domain_identity
+    |> Application.get_env(__MODULE__, [])
+    |> Keyword.get(:current_version, 1)
+  end
+
+  defp pepper(version) do
+    peppers =
+      :ezagent_domain_identity
+      |> Application.get_env(__MODULE__, [])
+      |> Keyword.get(:peppers, %{})
+
+    case Map.get(peppers, version) do
+      value when is_binary(value) and byte_size(value) >= 32 -> {:ok, value}
+      _ -> {:error, {:pat_pepper_unavailable, version}}
+    end
+  end
+
+  defp digest(pepper, raw), do: :crypto.mac(:hmac, :sha256, pepper, raw)
+
+  defp generate_raw_secret do
+    :crypto.strong_rand_bytes(32) |> Base.url_encode64(padding: false)
   end
 
   defp uri_to_str(%URI{} = u), do: URI.to_string(u)

@@ -16,7 +16,7 @@ defmodule Ezagent.IdentityTest do
     test "returns admin's all-cap MapSet for live admin Kind" do
       # PR-M (2026-05-20): admin User Kind is no longer a static
       # supervisor child — it spawns lazily on first reference. The
-      # production login path (`Ezagent.Entity.authenticate/2`) calls
+      # production password-login path (`Ezagent.Entity.authenticate_password/2`) calls
       # `ensure_spawned/1` which hydrates caps from the `users` DB row
       # (populated by `EzagentDomainIdentity.Application.ensure_admin_user/0`
       # at boot). For this direct-read test, spawn explicitly via

@@ -7,17 +7,16 @@ defmodule Ezagent.PluginCc.Template.SpawnPlanCliIdentityTest do
   could NOT actually drive `mix ezagent kanban.* / github.*`, because the cc
   sidecar's process env carried only the BRIDGE token (`EZAGENT_AGENT_TOKEN`,
   verified by `AgentBridge.TokenStore`) — NOT the `entity_tokens` credential
-  (`EZAGENT_USER_TOKEN` + `EZAGENT_ENTITY_URI`) that `EzagentCli.Exec` requires.
+  (`EZAGENT_USER_TOKEN`) that `EzagentCli.Exec` requires.
   Without it every CLI call fails CLOSED ("CLI calls require authentication").
 
   This pins the fix at the `SpawnPlan.maybe_put_cli_identity_env/3` seam:
 
-    * a role-agent gets BOTH env vars, and the minted token ACTUALLY
-      authenticates as that agent through the SAME `Ezagent.Entity.authenticate/2`
+    * a role-agent gets a token, and it ACTUALLY resolves as that agent through
+      the SAME `Ezagent.Authentication.authenticate/1`
       path the CLI uses — scoped to the agent's own identity (no admin fallback);
     * a role-less legacy cc agent gets neither (no behavior change);
-    * the exported `EZAGENT_ENTITY_URI` round-trips through `Ezagent.URI.new!/1`
-      (the exact parse `EzagentCli.Exec.resolve_caller/2` runs).
+    * no identity selector env is exported.
   """
   use EzagentCore.DataCase, async: false
 
@@ -37,39 +36,25 @@ defmodule Ezagent.PluginCc.Template.SpawnPlanCliIdentityTest do
   end
 
   describe "maybe_put_cli_identity_env/3 — role-agent gets a working CLI bearer token" do
-    test "injects EZAGENT_USER_TOKEN + EZAGENT_ENTITY_URI that authenticate as the agent" do
+    test "injects a token-only credential that resolves as the agent" do
       uri = agent_uri()
 
       env = SpawnPlan.maybe_put_cli_identity_env(%{}, uri, tmpl("pm-coordinator"))
 
       token = env["EZAGENT_USER_TOKEN"]
-      entity_uri = env["EZAGENT_ENTITY_URI"]
-
       assert is_binary(token) and token != ""
-      assert entity_uri == Ezagent.URI.stable_key(uri)
+      refute Map.has_key?(env, "EZAGENT_ENTITY_URI")
 
       # The token authenticates as THIS agent through the exact path the CLI uses
       # (parse the env URI string → authenticate) — proving it is a usable
       # entity-token credential, not just any string.
-      parsed = Ezagent.URI.new!(entity_uri)
-      assert {:ok, %{caps: _}} = Ezagent.Entity.authenticate(parsed, token)
-    end
-
-    test "the token is scoped to the agent — a DIFFERENT agent's URI rejects it" do
-      uri = agent_uri()
-      other = agent_uri()
-
-      env = SpawnPlan.maybe_put_cli_identity_env(%{}, uri, tmpl("dev-together"))
-      token = env["EZAGENT_USER_TOKEN"]
-
-      # No cross-agent acceptance: the bearer token is bound to its own entity URI.
-      assert {:error, _} = Ezagent.Entity.authenticate(other, token)
+      assert {:ok, ^uri} = Ezagent.Authentication.authenticate(token)
     end
 
     test "is generic over any role name (orchestrator too — not a per-role branch)" do
       env = SpawnPlan.maybe_put_cli_identity_env(%{}, agent_uri(), tmpl("orchestrator"))
       assert is_binary(env["EZAGENT_USER_TOKEN"])
-      assert is_binary(env["EZAGENT_ENTITY_URI"])
+      refute Map.has_key?(env, "EZAGENT_ENTITY_URI")
     end
   end
 

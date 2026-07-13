@@ -32,11 +32,7 @@ defmodule Ezagent.Orchestrator.ToolsTest do
     :save_template_as,
     # spec-3 Phase 3: session-level, ledger-tracked re-point to a new template @hash
     :migrate_session,
-    :list_templates,
-    # kb-retrieval SPEC §5.3 option 1 — retrieve from / ingest into a kb-agent
-    # (orchestrator-catalog MCP path, bridge-token authority).
-    :kb_query,
-    :kb_ingest
+    :list_templates
   ]
 
   test "the orchestrator tools are exactly the §3.8 member/rule-set + template set" do
@@ -45,6 +41,29 @@ defmodule Ezagent.Orchestrator.ToolsTest do
     assert MapSet.new(actual) == MapSet.new(@expected),
            "Orchestrator tools diverged from the §3.8 surface. Expected: #{inspect(@expected)}, " <>
              "got: #{inspect(actual)}"
+  end
+
+  test "session preflight uses the runtime full behavior/action predicate" do
+    session_uri = URI.new!("session://system/generic/full-preflight")
+    workspace_uri = URI.new!("workspace://system")
+
+    join_cap = %Ezagent.Capability{
+      kind: :session,
+      behavior: Ezagent.ActionSet.Session,
+      action: :join,
+      instance: {:within_session, session_uri},
+      workspace_uri: workspace_uri,
+      granted_by: URI.new!("entity://system/user/admin"),
+      granted_at: DateTime.utc_now()
+    }
+
+    assert :ok = Tools.preflight_within_session_cap([join_cap], session_uri, :join)
+
+    assert {:error, :unauthorized} =
+             Tools.preflight_within_session_cap([join_cap], session_uri, :leave)
+
+    assert {:error, :unauthorized} =
+             Tools.preflight_within_session_cap([join_cap], session_uri, :any)
   end
 
   test "the slot tools are RETIRED (§3.8 clean cutover)" do
@@ -103,6 +122,15 @@ defmodule Ezagent.Orchestrator.ToolsTest do
     test "add_participant surfaces :missing_opt for required ctx" do
       assert {:error, {:missing_opt, :caller}} =
                Tools.add_participant("entity://system/user/operator", "operator", [])
+    end
+
+    test "manifest import is a separate local/operator-only entry" do
+      assert {:error, :local_operator_required} =
+               Ezagent.Orchestrator.Tools.Participants.import_participant_manifest(
+                 "/etc/passwd",
+                 "operator",
+                 []
+               )
     end
 
     test "remove_member surfaces :missing_opt for required ctx" do
@@ -218,7 +246,7 @@ defmodule Ezagent.Orchestrator.ToolsTest do
       caller: URI.new!("entity://system/agent/cc_orch-pr6"),
       caps: MapSet.new(),
       workspace_uri: URI.new!("workspace://system"),
-      session_uri: URI.new!("session://generic/system/no-such-pr6")
+      session_uri: URI.new!("session://system/generic/no-such-pr6")
     ]
 
     test "fails closed (:unauthorized) without the {:within_session, S} cap" do
@@ -231,7 +259,7 @@ defmodule Ezagent.Orchestrator.ToolsTest do
     end
 
     test "with the session cap but no live member, resolves to :unknown_member_role" do
-      session_uri = URI.new!("session://generic/system/no-such-pr6")
+      session_uri = URI.new!("session://system/generic/no-such-pr6")
 
       caps =
         MapSet.new([

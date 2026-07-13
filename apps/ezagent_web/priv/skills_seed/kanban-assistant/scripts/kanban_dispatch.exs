@@ -5,19 +5,16 @@
 # 按协议模块注记(kanban-team-collaboration.md §d 末尾):"the mechanism
 # (identity → target URI → Router.dispatch) is the invariant"。本脚本复刻
 # EzagentCli.Dispatch.run_action 同一路径(dispatch.ex:83-99 invocation 构造 +
-# :307 do_dispatch),身份/caps 来自 Ezagent.Entity.authenticate(调用者自己的
-# EZAGENT_USER_TOKEN/EZAGENT_ENTITY_URI)——CapBAC 不绕过。
+# :307 do_dispatch),身份从 EZAGENT_USER_TOKEN 自解析，caps 单独读取——CapBAC 不绕过。
 [action, args_json] = System.argv()
 token = System.get_env("EZAGENT_USER_TOKEN") || raise "EZAGENT_USER_TOKEN unset"
-euri = System.get_env("EZAGENT_ENTITY_URI") || raise "EZAGENT_ENTITY_URI unset"
 board = System.get_env("BOARD_URI") || "entity://system/agent/loop-board-r2"
 node = :"ezagent_runtime@127.0.0.1"
 
 code = ~S"""
-{:ok, caller} = Ezagent.URI.parse(euri)
-
-case Ezagent.Entity.authenticate(caller, token) do
-  {:ok, %{caps: caps}} ->
+case Ezagent.Authentication.authenticate(token) do
+  {:ok, caller} ->
+    caps = caller |> Ezagent.Identity.read_entity_caps() |> MapSet.new()
     args =
       Jason.decode!(args_json)
       |> Map.new(fn {k, v} -> {String.to_atom(k), v} end)
@@ -51,7 +48,7 @@ case Ezagent.Entity.authenticate(caller, token) do
 end
 """
 
-binding = [euri: euri, token: token, board: board, action: action, args_json: args_json]
+binding = [token: token, board: board, action: action, args_json: args_json]
 
 case :erpc.call(node, Code, :eval_string, [code, binding], 30_000) do
   {result, _} -> IO.inspect(result, limit: 20, width: 120, printable_limit: 2000)
