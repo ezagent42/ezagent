@@ -1,5 +1,8 @@
 import React from "react"
 import {TerminalSquare} from "lucide-react"
+import {Terminal} from "xterm"
+import {FitAddon} from "xterm-addon-fit"
+import "xterm/css/xterm.css"
 
 type PtyState = {
   agent_detail_path?: string | null
@@ -17,47 +20,20 @@ type Props = {
   onServerEvent?: (event: string, callback: (payload: unknown) => void) => void
 }
 
-declare global {
-  interface Window {
-    Terminal?: new (options: Record<string, unknown>) => XtermTerminal
-    FitAddon?: {FitAddon: new () => XtermFitAddon}
-  }
-}
-
-type XtermTerminal = {
-  cols: number
-  rows: number
-  dispose: () => void
-  loadAddon: (addon: XtermFitAddon) => void
-  onData: (callback: (data: string) => void) => void
-  open: (element: HTMLElement) => void
-  write: (bytes: string) => void
-}
-
-type XtermFitAddon = {
-  fit: () => void
-}
-
 export function PtyTerminalSurface({state, onInput, onResize, onServerEvent}: Props) {
   const containerRef = React.useRef<HTMLDivElement | null>(null)
-  const termRef = React.useRef<XtermTerminal | null>(null)
-  const [clientError, setClientError] = React.useState<string | null>(null)
+  const termRef = React.useRef<Terminal | null>(null)
 
   React.useEffect(() => {
     if (!state.agent_uri || !state.pty_alive || !containerRef.current) return undefined
 
-    if (!window.Terminal || !window.FitAddon?.FitAddon) {
-      setClientError("xterm runtime is not loaded.")
-      return undefined
-    }
-
-    const term = new window.Terminal({
+    const term = new Terminal({
       fontFamily: '"SF Mono", Menlo, Consolas, "DejaVu Sans Mono", monospace',
       fontSize: 13,
       theme: {background: "#111827", foreground: "#d1d5db"},
       cursorBlink: true,
     })
-    const fitAddon = new window.FitAddon.FitAddon()
+    const fitAddon = new FitAddon()
 
     term.loadAddon(fitAddon)
     term.open(containerRef.current)
@@ -117,8 +93,6 @@ export function PtyTerminalSurface({state, onInput, onResize, onServerEvent}: Pr
         <span data-phase={phase}>Kind {phase}</span>
         <span data-pty-phase={ptyPhase}>PTY {ptyPhase}</span>
       </div>
-
-      {clientError && <p className="text-sm text-destructive">{clientError}</p>}
 
       {state.agent_uri && state.pty_alive ? (
         <div ref={containerRef} className="h-[420px] w-full overflow-hidden rounded-md border border-border bg-[#111827] p-2" />
