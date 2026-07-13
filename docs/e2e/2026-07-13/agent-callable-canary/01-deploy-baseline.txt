@@ -19,20 +19,21 @@ Important network note:
   canary health failure.
 
 Release baseline:
-  UNVERIFIED
+  VERIFIED
 
-Reason:
-  /_health does not expose a release/commit value. Application CI dispatches an
-  exact github.sha to the private Hyprial/ezagent-deploy repository after the
-  main full-suite, but the current gagameow GitHub token receives 404 for that
-  repository and cannot read its Actions runs. The local host has no canary
-  deployment checkout or container-log access.
+Read-only deployment-host inspection:
+  SSH: h2oslabs@100.64.0.27
+  Container: ezagent-canary-ezagent-1
+  Compose project: ezagent-canary
+  Image: ezagent:canary / ezagent:a915343de
+  Application SHA: a915343de2c9e2ba36f2395670562495b7fd57fd
+  Health: healthy
 
 Required commits to prove present in the deployed SHA:
-  #1294 2d47475b2ef565d1fe9caccb2fc3ce5473eb9e7a
-  #1326 4ac9e0a75da955bcaca9dc3d3fff834578ae0b6b
-  #1332 4b48c12ce3690ca5d4e2b98fd1a5a4616d84c09b
-  #1333 ed7f448b46271e1689b2679f85734fdbcc7b83e7
+  #1294 2d47475b2ef565d1fe9caccb2fc3ce5473eb9e7a PRESENT
+  #1326 4ac9e0a75da955bcaca9dc3d3fff834578ae0b6b PRESENT
+  #1332 4b48c12ce3690ca5d4e2b98fd1a5a4616d84c09b PRESENT
+  #1333 ed7f448b46271e1689b2679f85734fdbcc7b83e7 PRESENT
 
 No conclusion about agent readiness or orchestrator replies is supported by
 this liveness result alone.

@@ -8,8 +8,9 @@ This evidence set tracks the 2026-07-13 `gagameow` task defined in
 ## Current result
 
 - Canary HTTP liveness is green through the tailnet endpoint.
-- The public health endpoint does not expose a release revision, so the deployed
-  application SHA is not yet verified.
+- Read-only deployment-host inspection verifies canary is running application
+  SHA `a915343de2c9e2ba36f2395670562495b7fd57fd`; #1294, #1326, #1332, and #1333
+  are all present.
 - A fresh magic link for the verified `huang.jiajia@ezagent.chat` account reached
   the consume endpoint, but login stopped after token consumption with:
 
@@ -23,21 +24,20 @@ This evidence set tracks the 2026-07-13 `gagameow` task defined in
 - A controlled retry consumed a newly minted link in approximately 40 seconds
   and reproduced the same PAT-delivery error. Normal link expiry is therefore
   ruled out for this blocker.
+- Read-only presence inspection confirms the selected PAT pepper is missing or
+  shorter than the required 32 bytes. This is the root cause of the PAT delivery
+  failure; no secret value was read or recorded.
 - Product verification has therefore **not** created a session, sent an
   `@orchestrator` message, or claimed that the agent chain works.
 
 ## Required unblock
 
-The deployment owner must provide, without revealing secret values:
+The deployment owner must, only after explicit user approval:
 
-1. the current canary application SHA;
-2. `SET/MISSING` for `EZAGENT_PAT_DIGEST_VERSION` and the selected
-   `EZAGENT_PAT_PEPPER_V<n>` (pepper length must be at least 32 bytes);
-3. the container log entry for the failed magic-link request around
-   `2026-07-13T04:24Z`, including the internal PAT rotation reason but excluding
-   tokens, cookies, authorization headers, and secret values;
-4. after correcting deployment configuration if needed, a newly minted magic
-   link, because the link used in this attempt was single-use.
+1. set a valid `EZAGENT_PAT_PEPPER_V<n>` matching the configured digest version;
+2. refresh/redeploy the canary application so it receives the corrected secret;
+3. request a newly minted magic link, because links used in prior attempts are
+   single-use.
 
 ## Online-access authorization
 

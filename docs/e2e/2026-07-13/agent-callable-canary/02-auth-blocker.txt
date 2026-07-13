@@ -38,15 +38,23 @@ Code-path localization on main d4cd8419:
     digest version. Missing/malformed pepper returns
     {:error, {:pat_pepper_unavailable, version}}.
 
-Current hypothesis (NOT YET CONFIRMED):
-  The running canary has no valid pepper for its selected PAT digest version, or
-  the deployment version/configuration does not match the plan's statement that
-  PAT pepper was set.
+Confirmed root cause:
+  Read-only inspection inside the formal canary container reported:
 
-Evidence still required before confirming root cause:
-  - canary application SHA;
-  - presence-only PAT digest/pepper configuration check;
-  - sanitized container log containing the underlying PatDelivery/Token error.
+    PAT_DIGEST_VERSION=SET_NUMERIC
+    SELECTED_PAT_PEPPER=MISSING_OR_TOO_SHORT
+
+  No secret value was read or printed. Entity.Token.rotate_label/3 cannot mint
+  the one-time interactive-login PAT without a pepper of at least 32 bytes for
+  the selected digest version, so PatDelivery.issue/3 returns an error after the
+  magic link has already been consumed.
+
+Deployment correlation:
+  - Application SHA a915343de2c9e2ba36f2395670562495b7fd57fd.
+  - #1294, #1326, #1332, and #1333 are all ancestors of that SHA.
+  - Container logs confirm each magic-link email was sent but do not log the
+    swallowed PatDelivery reason; the presence-only configuration check and the
+    unique controller branch establish the failure path.
 
 Safety:
   The raw magic link, session cookie, PAT values, pepper values, provider keys,
@@ -54,6 +62,7 @@ Safety:
 
 Disposition:
   BLOCKED after one prompt retry and one controlled timely retry. Do not request
-  another magic link until the PAT issue path is verified, because
+  another magic link until the PAT pepper configuration is corrected and the
+  canary deployment is refreshed with explicit user approval, because
   MagicLinkToken.consume/2 burns the single-use link before PatDelivery.issue/3
   attempts PAT rotation.
