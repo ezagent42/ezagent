@@ -16,7 +16,7 @@ Control observation:
 
 Sanitized reproduction:
   1. Request a new magic-link for the existing verified account
-     huang.jiajia@ezagent.chat through POST /login/magic.
+     <redacted-existing-account> through POST /login/magic.
   2. Open the returned GET /auth/magic/<redacted-single-use-token> URL.
   3. The request redirects to /login instead of /login/token or /sessions.
 

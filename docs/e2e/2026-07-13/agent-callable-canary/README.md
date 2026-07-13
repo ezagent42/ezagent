@@ -55,8 +55,18 @@ This evidence set covers the 2026-07-13 `gagameow` task defined in
   deliveries, and three agent tool calls/replies.
 - Two independent nonce replies: **PASS**.
 - Minimal kanban-style task acceptance: **PASS**.
+- Three-state message screenshots: **PARTIAL**. The evidence includes the
+  pre-send session state and the final instruction-plus-reply state, but not a
+  separate screenshot captured after send and before the reply. The durable
+  transcript preserves that intermediate timing, but it does not replace the
+  strict screenshot requirement.
 - Terminal process existence and callable readiness: **PASS**; the agent is
   alive and completed all three calls.
+- Config-home materialization before the first PTY spawn: **EVIDENCE GAP**. The
+  captured logs show launch was deferred while materialization was incomplete
+  and show the later materialized cwd, but do not include an explicit
+  materialization-complete event before the first spawn. This ordering must be
+  rechecked with the deployed repair.
 - Terminal tab rendering: **FAIL (separate UI serialization defect)**. Opening
   the Terminal tab deterministically terminates that LiveView because
   `agent_status.detail.exec_pid` is a PID and `push_world_state/2` passes it to
