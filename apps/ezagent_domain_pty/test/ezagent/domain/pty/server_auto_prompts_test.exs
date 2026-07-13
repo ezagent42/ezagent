@@ -61,20 +61,20 @@ defmodule Ezagent.Domain.Pty.Server.AutoPromptsTest do
   # proceeds with the materialized OAuth token (no Console/API-key prompt). The
   # menu is a static radio list (no animated banner), so words are not fragmented.
   @login_method_buffer "\e[1CSelect\e[1Clogin\e[1Cmethod:\r\r\n" <>
-                         "\e[1CUse\e[1Cyour\e[1Csubscription\e[1Cor\e[1CAPI\e[1Caccount\r\r\n" <>
-                         "\e[1C\u276F\e[1C1.\e[1CClaude\e[1Caccount\e[1Cwith\e[1Csubscription\r\r\n" <>
-                         "\e[3C2.\e[1CAnthropic\e[1CConsole\e[1Caccount\r\r\n" <>
-                         "\e[1CEnter\e[1Cto\e[1Cconfirm\e[1C\u00B7\e[1CEsc\e[1Cto\e[1Cexit"
+                          "\e[1CUse\e[1Cyour\e[1Csubscription\e[1Cor\e[1CAPI\e[1Caccount\r\r\n" <>
+                          "\e[1C\u276F\e[1C1.\e[1CClaude\e[1Caccount\e[1Cwith\e[1Csubscription\r\r\n" <>
+                          "\e[3C2.\e[1CAnthropic\e[1CConsole\e[1Caccount\r\r\n" <>
+                          "\e[1CEnter\e[1Cto\e[1Cconfirm\e[1C\u00B7\e[1CEsc\e[1Cto\e[1Cexit"
 
   # SAME menu, but the selection marker `❯` is on option 2 (Console/API-key)
   # instead of option 1 — account/version drift could render this. Bare Enter
   # here would pick the WRONG auth path, so the prompt MUST NOT fire (codex PR
   # #718): the matcher requires `❯ 1.` on the subscription row.
   @login_method_buffer_opt2_highlighted "\e[1CSelect\e[1Clogin\e[1Cmethod:\r\r\n" <>
-                                          "\e[1CUse\e[1Cyour\e[1Csubscription\e[1Cor\e[1CAPI\e[1Caccount\r\r\n" <>
-                                          "\e[3C1.\e[1CClaude\e[1Caccount\e[1Cwith\e[1Csubscription\r\r\n" <>
-                                          "\e[1C\u276F\e[1C2.\e[1CAnthropic\e[1CConsole\e[1Caccount\r\r\n" <>
-                                          "\e[1CEnter\e[1Cto\e[1Cconfirm\e[1C\u00B7\e[1CEsc\e[1Cto\e[1Cexit"
+                          "\e[1CUse\e[1Cyour\e[1Csubscription\e[1Cor\e[1CAPI\e[1Caccount\r\r\n" <>
+                          "\e[3C1.\e[1CClaude\e[1Caccount\e[1Cwith\e[1Csubscription\r\r\n" <>
+                          "\e[1C\u276F\e[1C2.\e[1CAnthropic\e[1CConsole\e[1Caccount\r\r\n" <>
+                          "\e[1CEnter\e[1Cto\e[1Cconfirm\e[1C\u00B7\e[1CEsc\e[1Cto\e[1Cexit"
 
   defp spec(name),
     do: Enum.find(PtyServer.default_auto_prompts(), &(&1.name == name))
@@ -175,11 +175,8 @@ defmodule Ezagent.Domain.Pty.Server.AutoPromptsTest do
   # match would miss. The option-1 label stays atomic, so the rule must still fire.
   test ":dev_channels_dialog fires when the warning prose fragments word-internally" do
     p = spec(:dev_channels_dialog)
-
-    live =
-      "Lo ding developme t channel  --dangerously-load-development-channels ... " <>
-        "Channels: server:esr-bridge  ❯   1.  I am using this for local development   2.  Exit"
-
+    live = "Lo ding developme t channel  --dangerously-load-development-channels ... " <>
+             "Channels: server:esr-bridge  ❯   1.  I am using this for local development   2.  Exit"
     assert PtyServer.matches?(p.match, live)
   end
 

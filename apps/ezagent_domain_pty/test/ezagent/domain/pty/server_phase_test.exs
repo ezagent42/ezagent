@@ -24,7 +24,9 @@ defmodule Ezagent.Domain.Pty.Server.PhaseTest do
   alias Ezagent.Domain.Pty.Server, as: PtyServer
 
   defp fresh_uri do
-    URI.new!("entity://team-alpha/agent/test_phase-#{System.unique_integer([:positive])}")
+    URI.new!(
+      "entity://team-alpha/agent/test_phase-#{System.unique_integer([:positive])}"
+    )
   end
 
   defp subscribe_phase(uri) do
@@ -76,11 +78,7 @@ defmodule Ezagent.Domain.Pty.Server.PhaseTest do
     end
 
     test "phase/1 returns :dead when no server exists for the URI" do
-      ghost =
-        URI.new!(
-          "entity://team-alpha/agent/test_phase-nonexistent-#{System.unique_integer([:positive])}"
-        )
-
+      ghost = URI.new!("entity://team-alpha/agent/test_phase-nonexistent-#{System.unique_integer([:positive])}")
       assert :dead = PtyServer.phase(ghost)
     end
   end

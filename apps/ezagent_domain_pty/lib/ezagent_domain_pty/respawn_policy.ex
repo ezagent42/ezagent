@@ -140,8 +140,10 @@ defmodule Ezagent.Domain.Pty.RespawnPolicy do
   `{:halted, info}` on the transition so the caller can surface it.
   """
   @spec record_failure(URI.t(), term(), mode()) :: :ok | {:halted, halt_info()}
-  def record_failure(%URI{} = agent_uri, reason, mode \\ :primary)
-      when mode in [:primary, :fallback] do
+  # `mode` is MANDATORY on purpose — no default. A defaulted `:primary` would let an
+  # accidental 2-arity call book a FALLBACK failure against the primary, silently
+  # corrupting the write-off decision this module's convergence depends on.
+  def record_failure(%URI{} = agent_uri, reason, mode) when mode in [:primary, :fallback] do
     key = URI.to_string(agent_uri)
     state = load(key)
     failures = state.failures + 1
@@ -181,9 +183,9 @@ defmodule Ezagent.Domain.Pty.RespawnPolicy do
     if count == max_failures() do
       Logger.error(
         "PtyServer: PREFERRED COMMAND WRITTEN OFF for #{URI.to_string(agent_uri)} after " <>
-          "#{count} failed starts. The agent will keep running its FALLBACK command from now " <>
-          "on — for cc that means a FRESH conversation on every restart, no resume. This is a " <>
-          "durable degradation, not a blip: fix the cause and restart the agent " <>
+          "#{count} failed starts. The agent keeps running its `cmd_fallback` command from now " <>
+          "on — a DURABLE degradation, not a blip, whose cost is defined by the plugin that " <>
+          "supplied the fallback. Fix the cause and restart the agent " <>
           "(Ezagent.Domain.Pty.restart/1) to let the preferred command be tried again."
       )
 
@@ -211,7 +213,10 @@ defmodule Ezagent.Domain.Pty.RespawnPolicy do
   converges (codex review — see the moduledoc).
   """
   @spec record_healthy(URI.t(), mode()) :: :ok
-  def record_healthy(%URI{} = agent_uri, mode \\ :primary) when mode in [:primary, :fallback] do
+  # `mode` is MANDATORY (see `record_failure/3`): a defaulted `:primary` here would
+  # make a healthy FALLBACK erase the primary's failure history — the exact
+  # non-convergence codex found.
+  def record_healthy(%URI{} = agent_uri, mode) when mode in [:primary, :fallback] do
     key = URI.to_string(agent_uri)
     state = load(key)
 

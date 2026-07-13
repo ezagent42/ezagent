@@ -23,9 +23,7 @@ defmodule Ezagent.Domain.Pty.Server.SnapshotBufferTest do
     # short-circuits the real :exec spawn. We can still get_state on
     # the GenServer to verify the snapshot path.
     agent_uri =
-      URI.new!(
-        "entity://team-alpha/agent/test_snapshot-test-#{System.unique_integer([:positive])}"
-      )
+      URI.new!("entity://team-alpha/agent/test_snapshot-test-#{System.unique_integer([:positive])}")
 
     {:ok, pid} = Ezagent.Domain.Pty.start(agent_uri, %{cwd: "/tmp", test_mode: true})
 
@@ -61,9 +59,7 @@ defmodule Ezagent.Domain.Pty.Server.SnapshotBufferTest do
 
     test "returns :error for unknown agent_uri" do
       ghost =
-        URI.new!(
-          "entity://team-alpha/agent/test_does-not-exist-#{System.unique_integer([:positive])}"
-        )
+        URI.new!("entity://team-alpha/agent/test_does-not-exist-#{System.unique_integer([:positive])}")
 
       assert :error = PtyServer.snapshot_buffer(ghost)
     end
@@ -76,9 +72,7 @@ defmodule Ezagent.Domain.Pty.Server.SnapshotBufferTest do
 
     test "returns :error for unknown agent_uri" do
       ghost =
-        URI.new!(
-          "entity://team-alpha/agent/test_does-not-exist-#{System.unique_integer([:positive])}"
-        )
+        URI.new!("entity://team-alpha/agent/test_does-not-exist-#{System.unique_integer([:positive])}")
 
       assert :error = PtyServer.trigger_redraw(ghost)
     end

@@ -447,8 +447,9 @@ defmodule Ezagent.Domain.Pty.Server do
     if mode == :fallback do
       Logger.warning(
         "PtyServer: DEGRADED respawn for #{URI.to_string(state.agent_uri)} — the preferred " <>
-          "command failed to start, retrying with the fallback argv (cc: without `--continue`, " <>
-          "i.e. a fresh conversation instead of no agent at all)."
+          "command failed to start; retrying with the `cmd_fallback` argv. The agent comes up " <>
+          "with reduced capability rather than not at all; what is given up is defined by the " <>
+          "plugin that supplied the fallback."
       )
     end
 

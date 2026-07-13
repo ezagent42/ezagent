@@ -30,7 +30,9 @@ defmodule Ezagent.Domain.Pty.Server.BufferUtf8TrimTest do
 
   defp start_server do
     agent_uri =
-      URI.new!("entity://team-alpha/agent/test_utf8trim-#{System.unique_integer([:positive])}")
+      URI.new!(
+        "entity://team-alpha/agent/test_utf8trim-#{System.unique_integer([:positive])}"
+      )
 
     {:ok, pid} =
       Ezagent.Domain.Pty.start(agent_uri, %{
