@@ -23,42 +23,30 @@ defmodule Ezagent.Domain.Pty.Server do
 
   ## Generic auto-prompt scanner (Phase 6 PR 19)
 
-  Allen 2026-05-18 (after dev-channels confirm worked but MCP init
-  still didn't fire): "监控 pty stream 侦测到关键字后再 send key".
-  Generalized the one-shot dev-channels confirm into a data-driven
-  list of `{name, match, send, fired?}` rules. Each PTY stdout/stderr
-  chunk accumulates into a stripped buffer; the scanner walks every
-  still-unfired rule and fires those whose pattern matches.
+  Allen 2026-05-18: "监控 pty stream 侦测到关键字后再 send key". Each stdout/stderr
+  chunk accumulates into a stripped buffer; the scanner walks every still-unfired
+  rule and writes the `send` bytes of any that match. Adding a new auto-input is one
+  entry in `Ezagent.Domain.Pty.AutoPrompts` — no scanner change; callers can inject
+  extra rules via the `:auto_prompts` arg. Match shapes are substring /
+  list-of-substrings (AND) / regex — see `Ezagent.Domain.Pty.ScreenMatch`.
 
-  Adding a new auto-input becomes one entry in
-  `default_auto_prompts/0` — no scanner code change. Tests + callers
-  can also inject extra prompts via `:auto_prompts` arg at spawn.
-
-  Match shapes:
-  - `String.t()` — substring contains
-  - `[String.t()]` — ALL substrings must be present (AND)
-  - `Regex.t()` — regex match
-
-  Built-in prompts:
-  - `:dev_channels_dialog` — `--dangerously-load-development-channels`
-    security confirm. Sends `"1\r"`.
-
-  Phase 6 PR 19 also added eager bridge-announce in the Python MCP
-  bridge so the Agent Kind registers even when claude doesn't lazily
-  initialize the MCP server.
-
-  ## Crash policy (cc-PTY hardening 2026-07-10)
+  ## Crash policy (2026-07-10 hardening; respawn BREAKER added 2026-07-13)
 
   Trap_exit + erlexec `:monitor` — child death triggers `{:stop, {:child_exited,
-  _}}`, and `EzagentDomainPty.Supervisor` restarts this GenServer, whose
-  `handle_continue(:spawn_pty)` spawns a fresh child. Restarts are BOUNDED so one
-  crash-looping child cannot wipe the node: the supervisor runs an explicit
-  intensity (`max_restarts: 20 / max_seconds: 60`, was OTP's 3-in-5s — see
-  `EzagentDomainPty.Application`), and each real respawn first applies
-  `Ezagent.Domain.Pty.RespawnBackoff` — a per-agent sliding-window backoff that
-  rate-limits a looping child below that ceiling (ISOLATING it) and self-resets
-  when the child stabilizes. On respawn the cc plugin passes `--continue` so the
-  restarted `claude` resumes the SAME conversation instead of starting fresh.
+  _}}`, `EzagentDomainPty.Supervisor` restarts this GenServer, and
+  `handle_continue(:spawn_pty)` spawns a fresh child. THREE layers bound that loop:
+
+    * an explicit supervisor intensity (`20 / 60 s`, not OTP's 3-in-5s — see
+      `EzagentDomainPty.Application`), so one bad child cannot wipe the node;
+    * `Ezagent.Domain.Pty.RespawnBackoff`, which rate-limits a looper below that
+      ceiling — it ISOLATES the loop, it does not end it;
+    * `Ezagent.Domain.Pty.RespawnPolicy`, which ENDS it: a child that never reaches
+      a healthy lifetime is retried with `cmd_fallback`, then HALTED.
+
+  Without the breaker a permanently-failing child respawned forever — 933 times in
+  two hours on canary, because the cc respawn argv carried `--continue` and nothing
+  was resumable, so `claude` exited 1 within 37 ms every time. See
+  `docs/notes/2026-07-13-cc-pty-respawn-crashloop-rootcause.md`.
 
   If the PTY goes idle on a selection dialog (`❯`) matching no armed auto-prompt,
   `Ezagent.Domain.Pty.ParkedDialogWatch` EMITS the stripped screen so the stuck
@@ -75,7 +63,11 @@ defmodule Ezagent.Domain.Pty.Server do
   require Logger
 
   alias Ezagent.AnsiStrip
+  alias Ezagent.Domain.Pty.AuthObservers
   alias Ezagent.Domain.Pty.ParkedDialogWatch
+  alias Ezagent.Domain.Pty.PhaseBroadcast
+  alias Ezagent.Domain.Pty.RespawnPolicy
+  alias Ezagent.Domain.Pty.ScreenMatch
   alias Ezagent.Utf8Tail
 
   defstruct [
@@ -101,6 +93,11 @@ defmodule Ezagent.Domain.Pty.Server do
     # `VAR=val cmd` prefix (which is unavailable in argv form and was
     # shell-injectable in string form — codex HIGH-2).
     :cmd_env,
+    # 2026-07-13 — optional DEGRADED command (same argv shape) used when
+    # `cmd_override` cannot start. cc supplies its argv WITHOUT `--continue`:
+    # losing conversation context on a restart is a regression, never starting at
+    # all is fatal. See `Ezagent.Domain.Pty.RespawnPolicy`.
+    :cmd_fallback,
     pty_buffer: "",
     # Phase 6 PR 19 (Allen 2026-05-18): generalize auto-confirm into a
     # data-driven list of prompt patterns. Each entry:
@@ -110,31 +107,14 @@ defmodule Ezagent.Domain.Pty.Server do
     # (AND); Regex = pattern match. send: bytes to write to PTY stdin.
     # fired? = true after one match → never re-fires (idempotent).
     auto_prompts: [],
-    # #17 PR-C — auth-failure OBSERVERS. Same match shapes as auto_prompts but
-    # EMIT-ONLY: on match they fire telemetry + broadcast `auth_failed_topic`
-    # (NEVER send bytes to stdin — that is auto_prompts' job). Used to surface an
-    # expired/missing login (cc 403 / "Please run /login", codex 401) instead of a
-    # silent mute. Each entry: %{name, match, fired?}. fired? → one-shot per match
-    # name (avoids re-notifying on every subsequent chunk).
+    # #17 PR-C — emit-only auth-failure OBSERVERS: %{name, match, fired?}. They
+    # surface an expired/missing login and NEVER write stdin. See
+    # `Ezagent.Domain.Pty.AuthObservers` (including why the respawn breaker must
+    # not key off them).
     auth_observers: [],
-    # PTY-phase-state-machine 2026-05-26 follow-up (b). Three canonical
-    # phases on the OS subprocess (per Allen's directive — exactly
-    # three, no `:initializing` / `:ready` / `:respawning` middle states):
-    #
-    #   :starting — after init/1 accepted args but before :exec.run
-    #               returned an os_pid (or after respawn invoked but
-    #               PTY not yet up)
-    #   :running  — :exec.run returned {:ok, _, os_pid} and the
-    #               link/monitor is intact
-    #   :dead     — :exec.run failed, OR {:DOWN, ...} arrived from
-    #               erlexec, OR terminate/2 ran
-    #
-    # Broadcasts on every transition via Phoenix.PubSub on topic
-    # `"pty:phase:" <> URI.to_string(agent_uri)`. Best-effort: a
-    # broadcast failure (PubSub down) logs + degrades; it does NOT
-    # block the primary spawn / write / shutdown path. Phase tracking
-    # exists for OPERATOR VISIBILITY (Sandbox slice + LV badge) — its
-    # failure must never wedge the PTY itself.
+    # The three canonical phases of the OS subprocess — `:starting | :running |
+    # :dead`, per Allen's directive (no middle states). A respawn HALT is NOT a
+    # fourth phase; see `Ezagent.Domain.Pty.PhaseBroadcast`.
     phase: :starting,
     # Tracks whether `:dead` has been broadcast already so the
     # terminate/2 path doesn't double-emit after a {:DOWN, ...} or
@@ -144,7 +124,13 @@ defmodule Ezagent.Domain.Pty.Server do
     # `parked_check_ref`: the one-shot idle timer (re)armed on every output chunk.
     # `parked_dialog_signature`: the screen we last emitted for (dedupe).
     parked_check_ref: nil,
-    parked_dialog_signature: nil
+    parked_dialog_signature: nil,
+    # 2026-07-13 respawn breaker. `healthy?` flips once this incarnation's child
+    # has survived `healthy_after_ms` (dying before that = a failed START, which
+    # is what the breaker counts). `halted?` = the breaker tripped: alive, but
+    # running no child and spawning none until an operator restarts it.
+    healthy?: false,
+    halted?: false
   ]
 
   def start_link(%{agent_uri: %URI{} = agent_uri} = args) do
@@ -188,6 +174,11 @@ defmodule Ezagent.Domain.Pty.Server do
       # three-phase state so operator LV and integration tests can
       # observe the SAME field they would receive via PubSub.
       phase: state.phase || :starting,
+      # 2026-07-13 breaker. `halted?` = no respawn is coming without an operator
+      # (`:dead` alone does NOT say that); `degraded?` = running the fallback argv.
+      halted?: state.halted? == true,
+      halt_reason: halt_reason(state),
+      degraded?: state.cmd_fallback != nil and RespawnPolicy.failures(state.agent_uri) > 0,
       # Phase 6 PR 19: expose the auto-prompt state so operator LV
       # can see which prompts fired vs which are still waiting.
       auto_prompts:
@@ -250,15 +241,14 @@ defmodule Ezagent.Domain.Pty.Server do
   `auth_observer` (expired/missing login). The domain credential notifier (PR-C2) consumes
   this to notify the agent's owner with a clickable terminal URL.
   """
-  def auth_failed_topic(%URI{} = agent_uri),
-    do: "pty:auth_failed:" <> URI.to_string(agent_uri)
+  def auth_failed_topic(%URI{} = agent_uri), do: AuthObservers.topic(agent_uri)
 
   @doc """
   #17 PR-C2 — the SHARED auth-failure topic (all agents). The domain credential notifier
   subscribes here ONCE (rather than per-agent) and receives `{:pty_auth_failed, agent_uri,
   observer_name}` for every agent, resolving the owner per event.
   """
-  def auth_failed_all_topic, do: "pty:auth_failed"
+  def auth_failed_all_topic, do: AuthObservers.all_topic()
 
   @doc """
   PubSub topic for an agent's PTY phase transitions (PTY-phase-state-machine
@@ -274,8 +264,7 @@ defmodule Ezagent.Domain.Pty.Server do
   Best-effort: a broadcast failure (PubSub down) is logged but never
   raises into the calling GenServer's primary path.
   """
-  def phase_topic(%URI{} = agent_uri),
-    do: "pty:phase:" <> URI.to_string(agent_uri)
+  def phase_topic(%URI{} = agent_uri), do: PhaseBroadcast.topic(agent_uri)
 
   @doc """
   PubSub topic for an agent's "parked on an UNKNOWN dialog" signal (cc-PTY
@@ -422,6 +411,7 @@ defmodule Ezagent.Domain.Pty.Server do
       cwd: cwd,
       test_mode: test_mode,
       cmd_override: cmd_override,
+      cmd_fallback: Map.get(args, :cmd_fallback),
       cmd_env: cmd_env,
       auto_prompts: default_auto_prompts() ++ Map.get(args, :auto_prompts, []),
       auth_observers:
@@ -466,16 +456,44 @@ defmodule Ezagent.Domain.Pty.Server do
   end
 
   def handle_continue(:spawn_pty, state) do
+    # 2026-07-13 — the respawn decision is VETOABLE. Before the breaker existed
+    # this clause always spawned, so a child that could never succeed respawned
+    # forever (933 times in 2 h on canary). RespawnPolicy answers one of three
+    # ways: run the preferred command, run the degraded fallback, or don't spawn
+    # at all. The decision lives in ETS, so it survives the very GenServer restart
+    # that carries us back here (DynamicSupervisor replays the FROZEN child spec —
+    # the plugin that chose the argv is never consulted again).
+    case RespawnPolicy.decide(state.agent_uri, state.cmd_fallback != nil) do
+      {:halt, info} -> {:noreply, enter_halt(state, info)}
+      mode -> spawn_child(state, mode)
+    end
+  end
+
+  defp spawn_child(state, mode) do
     # cc-PTY hardening 2026-07-10 (audit #3): rate-limit a crash-looping child's
     # respawns so one bad `claude` cannot trip the supervisor intensity and wipe
     # every sibling PtyServer (per-agent sliding-window backoff, self-resetting).
     apply_respawn_backoff(state)
 
-    case spawn_claude_directly(state) do
+    cmd = if mode == :fallback, do: state.cmd_fallback, else: state.cmd_override
+
+    if mode == :fallback do
+      Logger.warning(
+        "PtyServer: DEGRADED respawn for #{URI.to_string(state.agent_uri)} — the preferred " <>
+          "command failed to start, retrying with the fallback argv (cc: without `--continue`, " <>
+          "i.e. a fresh conversation instead of no agent at all)."
+      )
+    end
+
+    case spawn_claude_directly(state, cmd) do
       {:ok, exec_pid, os_pid} ->
         Logger.info(
           "PtyServer spawned claude os_pid=#{os_pid} for agent=#{URI.to_string(state.agent_uri)}"
         )
+
+        # The child only counts as a healthy START once it has survived long
+        # enough to be past startup. Dying before this is what the breaker counts.
+        Process.send_after(self(), :mark_healthy, RespawnPolicy.healthy_after_ms())
 
         # PTY-pid-files 2026-05-26 follow-up (a): persist os_pid so the
         # orphan reaper at next-BEAM boot can discover prior-incarnation
@@ -501,10 +519,34 @@ defmodule Ezagent.Domain.Pty.Server do
 
       {:error, reason} ->
         Logger.error("PtyServer: spawn failed: #{inspect(reason)}")
+        # A launch that never got off the ground is a failed start too — count it,
+        # or an unspawnable command (bad binary, oversized argv) loops forever.
+        _ = RespawnPolicy.record_failure(state.agent_uri, {:spawn_failed, reason})
         new_state = %{state | phase: :dead, dead_broadcast?: true}
         broadcast_phase(new_state, :dead, %{reason: reason, os_pid: nil})
         {:stop, {:spawn_failed, reason}, new_state}
     end
+  end
+
+  # The breaker tripped: do NOT spawn, and do NOT stop either. Stopping would let
+  # the supervisor restart us straight back into this clause; staying alive with no
+  # child is what makes the halt OBSERVABLE (`status/1` answers, the pty_buffer
+  # survives with the failing screen still in it, the operator LV can read both).
+  # The phase is `:dead` because the SUBPROCESS is dead — a halt is a supervision
+  # fact, not a fourth phase (`Ezagent.ActionSet.Sandbox` validates the three).
+  defp enter_halt(state, info) do
+    halted = %{
+      state
+      | phase: :dead,
+        dead_broadcast?: true,
+        halted?: true,
+        exec_pid: nil,
+        os_pid: nil
+    }
+
+    broadcast_phase(halted, :dead, %{reason: {:respawn_halted, info.reason}, os_pid: nil})
+    RespawnPolicy.announce_halt(state.agent_uri, info)
+    halted
   end
 
   # Rate-limit this child's respawn BEFORE launching (see the module's docs): the
@@ -536,8 +578,8 @@ defmodule Ezagent.Domain.Pty.Server do
   # WebSocket). The MCP config writer + claude invocation is built by
   # the cc plugin and passed in as `cmd_override`; this Server module
   # no longer references any cc-plugin module.
-  defp spawn_claude_directly(state) do
-    exec_cmd = build_exec_cmd(state.cmd_override, state.agent_uri)
+  defp spawn_claude_directly(state, cmd) do
+    exec_cmd = build_exec_cmd(cmd, state.agent_uri)
     env = build_env(state)
 
     with :ok <- check_command_size(exec_cmd, env) do
@@ -662,11 +704,39 @@ defmodule Ezagent.Domain.Pty.Server do
   def handle_call({:write_input, _bytes}, _from, state),
     do: {:reply, {:error, :pty_not_alive}, state}
 
+  # Operator recovery from a halt (`Ezagent.Domain.Pty.restart/1`, which clears the
+  # breaker first). Kills any live child, then re-enters the spawn path with a clean
+  # slate — so a halted agent has a way back, and a healthy one can be bounced.
+  @impl true
+  def handle_cast(:respawn, state) do
+    if state.exec_pid, do: safe_stop_child(state.exec_pid)
+
+    fresh = %{
+      state
+      | exec_pid: nil,
+        os_pid: nil,
+        halted?: false,
+        healthy?: false,
+        phase: :starting,
+        dead_broadcast?: false,
+        pty_buffer: ""
+    }
+
+    broadcast_phase(fresh, :starting, %{os_pid: nil})
+    {:noreply, fresh, {:continue, :spawn_pty}}
+  end
+
   @impl true
   def handle_info({:DOWN, _ref, :process, _pid, reason}, state) do
     Logger.warning(
       "PtyServer: child process exited for #{URI.to_string(state.agent_uri)}: #{inspect(reason)}"
     )
+
+    # 2026-07-13 — a child that dies BEFORE `:mark_healthy` never got past startup.
+    # Feed that to the breaker; the supervisor restart that follows will consult it
+    # (and may decline to spawn). A child that already ran healthily is a genuine
+    # crash — it respawns as before, with no failure counted against it.
+    if not state.healthy?, do: RespawnPolicy.record_failure(state.agent_uri, reason)
 
     # PTY-phase-state-machine follow-up (b): the OS subprocess just
     # died — publish the terminal :dead phase BEFORE returning {:stop,
@@ -678,6 +748,15 @@ defmodule Ezagent.Domain.Pty.Server do
 
     {:stop, {:child_exited, reason}, new_state}
   end
+
+  # This incarnation's child survived long enough to be past startup — clear the
+  # crash history so a later, unrelated crash starts counting from zero.
+  def handle_info(:mark_healthy, %__MODULE__{halted?: false} = state) do
+    RespawnPolicy.record_healthy(state.agent_uri)
+    {:noreply, %{state | healthy?: true}}
+  end
+
+  def handle_info(:mark_healthy, state), do: {:noreply, state}
 
   # stdout / stderr chunks from erlexec
   def handle_info({stream, _os_pid, data}, state) when stream in [:stdout, :stderr] do
@@ -736,44 +815,28 @@ defmodule Ezagent.Domain.Pty.Server do
   def handle_info(_msg, state), do: {:noreply, state}
 
   # --- #17 PR-C: emit-only auth-failure observers ----------------------
-
-  # Walk each (still-unfired) auth observer against the ANSI-stripped buffer; on a match
-  # EMIT telemetry + broadcast `auth_failed_topic` and mark it fired (one-shot). NEVER
-  # sends to stdin (that distinguishes it from auto_prompts — codex review). The buffer is
-  # left intact for scan_auto_prompts to handle.
-  defp scan_auth_observers(%__MODULE__{auth_observers: []} = state, _stripped), do: state
-
+  # Detection + emit live in `Ezagent.Domain.Pty.AuthObservers` (extracted for the
+  # oversized-module arch gate); the Server owns only the state plumbing. These are
+  # a NOTIFICATION surface — the respawn breaker deliberately does NOT key off them
+  # (they fired 0 times across the 933-crash canary loop; see that module's docs).
   defp scan_auth_observers(%__MODULE__{auth_observers: observers} = state, stripped) do
-    new_observers =
-      Enum.map(observers, fn o ->
-        if o.fired? or not matches?(o.match, stripped) do
-          o
-        else
-          fire_auth_observer(o, state)
-          %{o | fired?: true}
-        end
-      end)
-
-    %{state | auth_observers: new_observers}
+    %{state | auth_observers: AuthObservers.scan(observers, stripped, state.agent_uri)}
   end
 
-  defp fire_auth_observer(observer, state) do
-    Logger.warning(
-      "PtyServer: AUTH FAILURE signal #{observer.name} matched for " <>
-        "#{URI.to_string(state.agent_uri)} — the agent's login is expired/missing; the " <>
-        "owner must re-`/login` in its terminal. (no silent mute — #17)"
-    )
+  defp halt_reason(%__MODULE__{halted?: true, agent_uri: agent_uri}) do
+    case RespawnPolicy.halt_info(agent_uri) do
+      %{reason: reason} -> reason
+      _ -> :unknown
+    end
+  end
 
-    :telemetry.execute(
-      [:ezagent, :agent, :auth_failed],
-      %{count: 1},
-      %{agent_uri: state.agent_uri, observer: observer.name}
-    )
+  defp halt_reason(_state), do: nil
 
-    msg = {:pty_auth_failed, state.agent_uri, observer.name}
-    # Per-agent topic (LV badge etc.) + the shared topic (PR-C2 domain notifier).
-    Phoenix.PubSub.broadcast(EzagentCore.PubSub, auth_failed_topic(state.agent_uri), msg)
-    Phoenix.PubSub.broadcast(EzagentCore.PubSub, auth_failed_all_topic(), msg)
+  defp safe_stop_child(pid) do
+    :exec.stop(pid)
+    :ok
+  catch
+    _, _ -> :ok
   end
 
   # --- parked-on-unknown-dialog watchdog (cc-PTY hardening 2026-07-10) --
@@ -791,7 +854,7 @@ defmodule Ezagent.Domain.Pty.Server do
   end
 
   defp maybe_emit_parked_dialog(%__MODULE__{phase: :running} = state) do
-    stripped = state.pty_buffer |> AnsiStrip.strip() |> normalize_ws()
+    stripped = state.pty_buffer |> AnsiStrip.strip() |> ScreenMatch.normalize_ws()
     armed? = Enum.any?(state.auto_prompts, &(not &1.fired? and matches?(&1.match, stripped)))
 
     case ParkedDialogWatch.check(state.agent_uri, stripped, armed?, state.parked_dialog_signature) do
@@ -803,7 +866,11 @@ defmodule Ezagent.Domain.Pty.Server do
   defp maybe_emit_parked_dialog(state), do: state
 
   defp parked_dialog_idle_ms do
-    case Application.get_env(:ezagent_domain_pty, :parked_dialog_idle_ms, @default_parked_dialog_idle_ms) do
+    case Application.get_env(
+           :ezagent_domain_pty,
+           :parked_dialog_idle_ms,
+           @default_parked_dialog_idle_ms
+         ) do
       v when is_integer(v) and v > 0 -> v
       _ -> @default_parked_dialog_idle_ms
     end
@@ -850,37 +917,9 @@ defmodule Ezagent.Domain.Pty.Server do
   end
 
   @doc false
-  # Match needle(s) against the ANSI-stripped PTY buffer. Whitespace is
-  # NORMALISED (runs of whitespace -> a single space) on BOTH sides before the
-  # substring test: `Ezagent.AnsiStrip.strip/1` emits a SPACE for every CSI
-  # escape it removes, so a TUI line such as `❯\e[39m \e[38;5;246m1.` strips to
-  # "❯   1." (multiple spaces). Without normalisation an exact-spacing match
-  # string ("❯ 1. Use this MCP server") NEVER matches the live dialog — the cause
-  # of the #505 live finding where the `:mcp_trust_dialog` scanner silently never
-  # fired, so claude's esr-bridge MCP was never approved and the transport bridge
-  # never JOINed. Normalisation does NOT bridge whitespace the TUI redraw injected
-  # INSIDE a word (e.g. "serv r"), so match strings must still avoid redraw-split
-  # words (see `Ezagent.PtyServer.AutoPrompts` notes).
-  def matches?(needle, stripped) when is_binary(needle),
-    do: String.contains?(normalize_ws(stripped), normalize_ws(needle))
-
-  def matches?(needles, stripped) when is_list(needles),
-    do: Enum.all?(needles, &matches?(&1, stripped))
-
-  def matches?(%Regex{} = re, stripped), do: Regex.match?(re, scrub_invalid(stripped))
-
-  defp normalize_ws(s) when is_binary(s),
-    do: String.replace(scrub_invalid(s), ~r/\s+/u, " ")
-
-  # #1201 ① defense-in-depth at the point the buffer enters regex scanning:
-  # `~r/…/u` RAISES ArgumentError on invalid UTF-8. Boundary-aware trimming
-  # (Utf8Tail) keeps a valid stream valid, but a PTY can emit genuinely
-  # invalid bytes, and a chunk boundary can transiently split a codepoint
-  # (the raw buffer self-heals when the next chunk appends the rest — so we
-  # scrub only this scan-side copy, never the buffer itself).
-  defp scrub_invalid(s) when is_binary(s) do
-    if String.valid?(s), do: s, else: String.replace_invalid(s)
-  end
+  # Kept as the Server's public matcher API (tests + AutoPrompts/AuthObservers call it);
+  # the implementation lives in `ScreenMatch` (extracted for the oversized-module gate).
+  defdelegate matches?(needle, stripped), to: Ezagent.Domain.Pty.ScreenMatch
 
   defp fire_prompt(prompt, state) do
     Logger.info(
@@ -927,11 +966,7 @@ defmodule Ezagent.Domain.Pty.Server do
   end
 
   def terminate(reason, %__MODULE__{exec_pid: pid, agent_uri: agent_uri} = state) do
-    try do
-      :exec.stop(pid)
-    catch
-      _, _ -> :ok
-    end
+    safe_stop_child(pid)
 
     # PTY-pid-files 2026-05-26 follow-up (a): clean the pid file on
     # graceful shutdown. A brutal BEAM kill skips this terminate/2
@@ -950,51 +985,16 @@ defmodule Ezagent.Domain.Pty.Server do
   end
 
   # --- phase broadcast helpers (PTY-phase-state-machine follow-up b) -------
+  # Emit lives in `Ezagent.Domain.Pty.PhaseBroadcast` (extracted for the oversized-module
+  # arch gate); the Server owns only the state plumbing + the dedupe flag.
+  defp broadcast_phase(%__MODULE__{agent_uri: %URI{} = agent_uri} = state, phase, extra_meta),
+    do: PhaseBroadcast.emit(agent_uri, phase, state.os_pid, extra_meta)
 
-  # Best-effort broadcast of a phase transition. The contract per
-  # Allen's directive: phase tracking is OPERATOR VISIBILITY plumbing
-  # and its failure MUST NOT block the primary PTY path (spawn /
-  # write / shutdown). Wrap the Phoenix.PubSub.broadcast/3 call in
-  # try/catch — if PubSub is down or the process tree is being torn
-  # down, log + continue. Subscribers losing one transition is
-  # acceptable; the periodic LV poll picks the next phase up.
-  defp broadcast_phase(%__MODULE__{agent_uri: %URI{} = agent_uri} = state, phase, extra_meta)
-       when phase in [:starting, :running, :dead] do
-    meta =
-      Map.merge(
-        %{
-          os_pid: state.os_pid,
-          reason: nil,
-          at: System.os_time(:millisecond)
-        },
-        extra_meta || %{}
-      )
-
-    try do
-      Phoenix.PubSub.broadcast(
-        EzagentCore.PubSub,
-        phase_topic(agent_uri),
-        {:pty_phase, agent_uri, phase, meta}
-      )
-    catch
-      kind, reason ->
-        Logger.warning(
-          "PtyServer: phase broadcast failed (#{inspect(kind)}, #{inspect(reason)}) " <>
-            "for #{URI.to_string(agent_uri)} phase=#{inspect(phase)}; continuing"
-        )
-
-        :ok
-    end
-  end
-
-  # Idempotency guard for the terminate/2 path. `dead_broadcast?` is
-  # set to true the FIRST time `:dead` is emitted (from :exec.run
-  # failure OR {:DOWN, ...}). The graceful terminate/2 path consults
-  # the flag and only broadcasts when no upstream signal has already
-  # published the terminal transition.
+  # Idempotency guard for the terminate/2 path. `dead_broadcast?` is set to true the FIRST
+  # time `:dead` is emitted (from :exec.run failure, {:DOWN, ...} or a respawn halt), so
+  # the graceful terminate/2 path does not double-emit the terminal transition.
   defp maybe_broadcast_dead_on_terminate(%__MODULE__{dead_broadcast?: true}, _reason), do: :ok
 
-  defp maybe_broadcast_dead_on_terminate(%__MODULE__{} = state, reason) do
-    broadcast_phase(state, :dead, %{reason: reason, os_pid: state.os_pid})
-  end
+  defp maybe_broadcast_dead_on_terminate(%__MODULE__{} = state, reason),
+    do: broadcast_phase(state, :dead, %{reason: reason, os_pid: state.os_pid})
 end

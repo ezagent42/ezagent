@@ -96,4 +96,36 @@ defmodule Ezagent.Domain.Pty do
         :ok
     end
   end
+
+  @doc """
+  Operator recovery for a HALTED agent (2026-07-13) — and the only way back.
+
+  When `Ezagent.Domain.Pty.RespawnPolicy` trips its breaker, the PtyServer stays
+  alive but runs no child and will not spawn one: a child that failed to start N
+  times in a row needs a human to look at the cause, not another retry. This is
+  that human's lever. It clears the breaker AND the backoff history, then drives a
+  fresh spawn — so it also works as a plain "bounce this agent".
+
+  Returns `{:error, :not_running}` when no PtyServer exists for `agent_uri` (there
+  is nothing to restart — start it through the owning plugin's spawn path instead).
+  """
+  @spec restart(URI.t()) :: :ok | {:error, :not_running}
+  def restart(%URI{} = agent_uri) do
+    Ezagent.Domain.Pty.RespawnPolicy.clear(agent_uri)
+    Ezagent.Domain.Pty.RespawnBackoff.clear(URI.to_string(agent_uri))
+
+    case lookup(agent_uri) do
+      {:ok, pid} -> GenServer.cast(pid, :respawn)
+      :error -> {:error, :not_running}
+    end
+  end
+
+  @doc """
+  The respawn-halt record for `agent_uri`, or `nil` when it is not halted.
+
+  A halt is DURABLE (ETS) and outlives the PtyServer process, so this answers even
+  when no server is running — unlike `status/1`, which needs a live one.
+  """
+  @spec halt_info(URI.t()) :: map() | nil
+  def halt_info(%URI{} = agent_uri), do: Ezagent.Domain.Pty.RespawnPolicy.halt_info(agent_uri)
 end
