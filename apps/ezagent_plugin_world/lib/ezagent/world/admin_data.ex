@@ -42,10 +42,12 @@ defmodule Ezagent.World.AdminData do
   # 可继续 session 列表。不带 orchestrator 明细 —— 那是 Admin Dashboard 的职责,Overview
   # 只做轻量总览 + 导航。session_template_names 复用 WorkspacePluginData(单一 source,
   # 与 WorldLive 的 "New session" 选择器同源)。
-  defp component_state(%{component: "overview"}, base, workspace_uri, _caller_uri) do
+  defp component_state(%{component: "overview"}, base, workspace_uri, caller_uri) do
+    session_rows = overview_session_rows(workspace_uri, caller_uri)
+
     base
-    |> Map.put("kpis", kpis())
-    |> Map.put("available_sessions", available_session_rows(workspace_uri))
+    |> Map.put("kpis", overview_kpis(session_rows))
+    |> Map.put("available_sessions", Enum.take(session_rows, 3))
     |> Map.put(
       "session_template_names",
       Ezagent.World.WorkspacePluginData.session_template_names(workspace_uri)
@@ -136,6 +138,10 @@ defmodule Ezagent.World.AdminData do
 
   defp default_test_recipient(_), do: ""
 
+  defp overview_kpis(session_rows) when is_list(session_rows) do
+    Map.put(kpis(), "sessions", length(session_rows))
+  end
+
   # KPI 概览,dashboard 与 overview 共用（FP5 S2-a）。
   defp kpis do
     kinds = Ezagent.KindRegistry.list_all()
@@ -149,35 +155,15 @@ defmodule Ezagent.World.AdminData do
     }
   end
 
-  # Overview 落地页"可继续 session"列表:URI 序(非时间序,`list_sessions` 不承诺时间
-  # 顺序),最多 3 条。guard 在 workspace URI 形状上,别的形状(nil / entity URI)直接返回
-  # [];底层异常也兜底到 []。URI 值走 `encode_uri/1`(而非裸 `URI.to_string`)保持
-  # URI-query scan 干净。
-  defp available_session_rows(%URI{scheme: "workspace"} = workspace_uri) do
-    workspace_uri
-    |> EzagentDomainInstanceMessage.list_sessions()
-    |> Enum.take(3)
-    |> Enum.map(fn session_uri ->
-      %{
-        "uri" => encode_uri(session_uri),
-        "name" => session_name(session_uri)
-      }
-    end)
+  # Overview 落地页"可继续 session"列表:复用会话页的 filtered row builder,
+  # 保证 KPI 总数和下方可继续列表使用同一套 workspace/caller 可见性口径。
+  defp overview_session_rows(%URI{scheme: "workspace"} = workspace_uri, %URI{} = caller_uri) do
+    Ezagent.World.ConversationSessionState.rows_for_workspace(workspace_uri, caller_uri)
   rescue
     _ -> []
   end
 
-  defp available_session_rows(_), do: []
-
-  # 产品化 session 名(`Ezagent.URI.name!`);取不到时兜底到 URI 串。
-  defp session_name(session_uri) do
-    case Ezagent.URI.name!(session_uri) do
-      name when is_binary(name) and name != "" -> name
-      _ -> encode_uri(session_uri)
-    end
-  rescue
-    _ -> encode_uri(session_uri)
-  end
+  defp overview_session_rows(_, _), do: []
 
   defp count_scheme(kinds, scheme) do
     Enum.count(kinds, fn {uri_str, _pid} ->

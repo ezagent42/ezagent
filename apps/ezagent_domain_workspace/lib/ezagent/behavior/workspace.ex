@@ -680,8 +680,9 @@ defmodule Ezagent.ActionSet.Workspace do
     end
   end
 
-  defp finish_class_session(%URI{} = session_uri, %URI{} = workspace_uri, caller) do
-    with :ok <-
+  defp finish_class_session(%URI{} = session_uri, %URI{} = workspace_uri, %URI{} = caller) do
+    with :ok <- join_class_session_creator(session_uri, caller),
+         :ok <-
            Ezagent.Workspace.grant_creator_manage_cap(
              :session,
              session_uri,
@@ -706,6 +707,20 @@ defmodule Ezagent.ActionSet.Workspace do
       # `orchestrator_*` keys at all (`create_session_dispatch_test` asserts their
       # ABSENCE) — the two create paths must not disagree on their return shape.
       {:ok, %{session_uri: session_uri}, []}
+    end
+  end
+
+  defp join_class_session_creator(%URI{} = session_uri, %URI{} = caller) do
+    case resolve_session_facade() do
+      {:ok, facade} ->
+        if function_exported?(facade, :join_session_members, 2) do
+          facade.join_session_members(session_uri, [caller])
+        else
+          {:error, {:session_facade_join_unavailable, facade}}
+        end
+
+      {:error, _reason} = error ->
+        error
     end
   end
 
