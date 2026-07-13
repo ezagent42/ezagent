@@ -89,7 +89,8 @@ defmodule Ezagent.ActionSet.ChatTest do
                  :set_prompt_templates,
                  :approve_admission,
                  :deny_admission,
-                 :withdraw_admission
+                 :withdraw_admission,
+                 :composition_consent
                ]
     end
 
@@ -186,6 +187,7 @@ defmodule Ezagent.ActionSet.ChatTest do
                  :approve_admission,
                  :assign_role,
                  :attach,
+                 :composition_consent,
                  :deny_admission,
                  :join,
                  :leave,

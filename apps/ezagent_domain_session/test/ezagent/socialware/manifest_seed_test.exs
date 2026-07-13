@@ -7,6 +7,10 @@ defmodule Ezagent.Socialware.ManifestSeedTest do
   @workspace Ezagent.URI.workspace(:system)
 
   setup do
+    {:ok, _} = Application.ensure_all_started(:ezagent_plugin_native)
+    {:ok, _} = Application.ensure_all_started(:ezagent_plugin_kb)
+    {:ok, _} = RecipeRegistry.seed_role_if_absent(EzagentPluginKb.Application.kb_recipe())
+
     Ezagent.PluginRegistry.register(Ezagent.Socialware.ManifestYamlTest.FixturePlugin)
     Ezagent.UI.SessionViewRegistry.init()
     :ok = Ezagent.UI.SessionViewRegistry.register(Ezagent.Socialware.ManifestYamlTest.PageView)

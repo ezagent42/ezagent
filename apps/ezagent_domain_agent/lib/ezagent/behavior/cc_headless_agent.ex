@@ -162,6 +162,5 @@ defmodule Ezagent.ActionSet.CcHeadlessAgent do
   defp format_error(reason), do: inspect(reason)
 
   @doc false
-  def data_owner(:any), do: :any
-  def data_owner(_), do: :no_owner
+  def data_owner(instance), do: Ezagent.ActionSet.ApiKeys.data_owner(instance)
 end

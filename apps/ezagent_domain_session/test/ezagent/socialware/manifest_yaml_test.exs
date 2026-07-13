@@ -200,7 +200,9 @@ defmodule Ezagent.Socialware.ManifestYamlTest do
   end
 
   test "autoservice manifest imports, publishes, installs, materializes agents, and routes" do
-    :ok = seed_autoservice_recipe()
+    {:ok, _} = Application.ensure_all_started(:ezagent_plugin_native)
+    {:ok, _} = Application.ensure_all_started(:ezagent_plugin_kb)
+    :ok = seed_autoservice_recipes()
     yaml = File.read!(autoservice_manifest_path())
 
     assert {:ok, attrs} = ManifestYaml.parse(yaml)
@@ -230,8 +232,11 @@ defmodule Ezagent.Socialware.ManifestYamlTest do
     # `Workspace.create_session` fires asynchronously in production).
     refute role_member_uri(session_uri, "autoservice")
 
-    assert {:ok, %{satisfied: ["autoservice"], skipped: []}} =
-             EzagentDomainInstanceMessage.SessionCreator.install_session_socialware(session_uri)
+    assert {:ok, %{satisfied: ["autoservice", "kb"], skipped: []}} =
+             EzagentDomainInstanceMessage.SessionCreator.install_session_socialware(
+               session_uri,
+               {@workspace, @admin}
+             )
 
     assert %URI{} = role_member_uri(session_uri, "autoservice")
     assert :ok = dispatch_send(session_uri, "I need tier-1 help")
@@ -304,11 +309,17 @@ defmodule Ezagent.Socialware.ManifestYamlTest do
     name
   end
 
-  defp seed_autoservice_recipe do
-    case RecipeRegistry.seed_role_if_absent(%{name: "autoservice-agent"}) do
-      {:ok, _} -> :ok
-      {:error, reason} -> flunk("autoservice recipe seed failed: #{inspect(reason)}")
-    end
+  defp seed_autoservice_recipes do
+    recipes = [%{name: "autoservice-agent"}, EzagentPluginKb.Application.kb_recipe()]
+
+    Enum.each(recipes, fn recipe ->
+      case RecipeRegistry.seed_role_if_absent(recipe) do
+        {:ok, _} -> :ok
+        {:error, reason} -> flunk("autoservice recipe seed failed: #{inspect(reason)}")
+      end
+    end)
+
+    :ok
   end
 
   defp autoservice_manifest_path do

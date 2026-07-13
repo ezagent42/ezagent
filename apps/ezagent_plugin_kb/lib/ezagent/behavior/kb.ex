@@ -69,10 +69,11 @@ defmodule Ezagent.ActionSet.Kb do
     }
   end
 
-  # per-INSTANCE cap collection point. KB has no single owning principal — the
-  # corpus is workspace-scoped data, gated by the role's minted caps.
+  # Per-instance owner authority follows the canonical agent resolver:
+  # creator_uri -> AgentLineage -> :no_owner. Composition minting therefore
+  # stays owner-gated for a concrete KB data-agent.
   @doc false
-  def data_owner(_), do: :no_owner
+  def data_owner(instance), do: Ezagent.ActionSet.ApiKeys.data_owner(instance)
 
   # ── lifecycle ─────────────────────────────────────────────────────────────
 

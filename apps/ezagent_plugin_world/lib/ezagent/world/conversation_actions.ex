@@ -579,7 +579,10 @@ defmodule Ezagent.World.ConversationActions do
     if caller_can_restart_orchestrator?(socket, session_uri) do
       workspace_uri = Ezagent.Capability.workspace_of(session_uri)
 
-      case EzagentDomainInstanceMessage.repair_orchestrator(session_uri, workspace_uri) do
+      case EzagentDomainInstanceMessage.repair_orchestrator(
+             session_uri,
+             {workspace_uri, socket.assigns.current_entity_uri}
+           ) do
         {:ok, ^session_uri, _meta} ->
           {:noreply, assign(socket, :last_dispatch_status, "ok")}
 
@@ -917,7 +920,8 @@ defmodule Ezagent.World.ConversationActions do
       # agent is absent (Invariant #9: a server log alone is a silent drop at a
       # user-facing surface).
       "unfilled_agent_role_slots" =>
-        EzagentDomainInstanceMessage.SessionCreator.unfilled_agent_role_slots(session_uri)
+        EzagentDomainInstanceMessage.SessionCreator.unfilled_agent_role_slots(session_uri),
+      "degraded_operates_edges" => Ezagent.Socialware.CompositionCaps.degraded_edges(session_uri)
     }
 
     if connected?(socket), do: push_event(socket, "world:state", payload), else: socket

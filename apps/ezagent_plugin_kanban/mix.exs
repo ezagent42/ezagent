@@ -56,6 +56,9 @@ defmodule EzagentPluginKanban.MixProject do
       # is registered before this plugin's `Ezagent.Plugin.boot/1` seeds its role
       # (the seam is no-op if unregistered — the dep removes that race).
       {:ezagent_domain_agent, in_umbrella: true},
+      # Kanban.data_owner/1 delegates to the identity domain's canonical
+      # ApiKeys owner resolver (creator_uri -> AgentLineage -> :no_owner).
+      {:ezagent_domain_identity, in_umbrella: true},
       # kanban socialware: domain_session is a PROD dep, not test-only —
       # `BoardView` hard-refs `Ezagent.Socialware.Installation` in lib/ (the
       # board reads the session's installed definitions). Tests additionally

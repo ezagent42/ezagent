@@ -17,8 +17,8 @@ defmodule EzagentPluginKanban.Integration.KanbanTeamRoundtripTest do
   assertion and `Definition.new/1` would fail here.
 
   Fixture note: the same as `kanban_team_relay_back_test` — the REAL shipped
-  kanban-team body (2 agent role-slots: pm + dev; NO passive kanban-manager slot
-  since the S2 modeling fix), with ONLY the flavor swapped to a bare-spawn stub
+  kanban-team body (2 active agent role-slots plus the passive board role), with
+  ONLY the active-agent flavor swapped to a bare-spawn stub
   (the cc-headless SDK spawn is an S6 e2e concern). Role names / recipes / the
   routing rule under test are the shipped ones, and the body it snapshots INTO is
   the REAL shipped kanban-team body.
@@ -121,13 +121,14 @@ defmodule EzagentPluginKanban.Integration.KanbanTeamRoundtripTest do
              TemplateTeam.materialize_template_team(
                session_uri,
                @workspace,
-               granted_by,
+               {granted_by, granted_by},
                %{installs: [@itest_definition]}
              )
 
     pm_uri = member_uri_for_role(session_uri, "kanban-assistant")
     dev_uri = member_uri_for_role(session_uri, "dev-together")
-    on_exit(fn -> Enum.each([pm_uri, dev_uri], &terminate/1) end)
+    board_uri = composition_target(session_uri)
+    on_exit(fn -> Enum.each([pm_uri, dev_uri, board_uri], &terminate/1) end)
     assert %URI{} = pm_uri
     assert %URI{} = dev_uri
 
@@ -157,9 +158,9 @@ defmodule EzagentPluginKanban.Integration.KanbanTeamRoundtripTest do
 
   # --- fixture ----------------------------------------------------------------
 
-  # The REAL shipped kanban manifest (2 agent role-slots: pm + dev — loaded
-  # straight from the deploy-seed YAML, the one source of truth), with ONLY
-  # the flavor swapped `cc-headless` → bare-spawn stub (the loader's `:flavor`
+  # The REAL shipped kanban manifest (2 active agent role-slots plus the passive
+  # board role — loaded straight from the deploy-seed YAML, the one source of
+  # truth), with ONLY the active-agent flavor swapped `cc-headless` → bare-spawn stub (the loader's `:flavor`
   # test seam) + a per-run fixture name. Resolved through `ManifestResolver`,
   # not hand-written — exercises the actual shipped manifest.
   defp itest_definition_body do
@@ -202,6 +203,13 @@ defmodule EzagentPluginKanban.Integration.KanbanTeamRoundtripTest do
   defp member_uri_for_role(session_uri, role_name) do
     case Ezagent.UriQuery.resolve(:member_by_role, {session_uri, role_name}) do
       {:ok, %URI{} = uri} -> uri
+      _ -> nil
+    end
+  end
+
+  defp composition_target(session_uri) do
+    case Ezagent.Socialware.CompositionBinding.for_session(session_uri) do
+      [%{target_uri: uri} | _] -> Ezagent.URI.new!(uri)
       _ -> nil
     end
   end

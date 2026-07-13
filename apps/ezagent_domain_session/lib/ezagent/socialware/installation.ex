@@ -188,16 +188,18 @@ defmodule Ezagent.Socialware.Installation do
   def retract_session_installs(%URI{scheme: "session"} = session_uri, actor_uri) do
     workspace = Ezagent.URI.workspace_of(session_uri)
 
-    session_uri
-    |> ConfigStore.list_keys_for_subject()
-    |> Enum.filter(&String.starts_with?(&1, @install_key_prefix))
-    |> Enum.reduce_while(:ok, fn key, :ok ->
-      case retract_session_install(session_uri, workspace, key, actor_uri) do
-        {:ok, _object} -> {:cont, :ok}
-        :ok -> {:cont, :ok}
-        {:error, reason} -> {:halt, {:error, reason}}
-      end
-    end)
+    with :ok <- Ezagent.Socialware.CompositionCaps.deactivate_session(session_uri, :uninstall) do
+      session_uri
+      |> ConfigStore.list_keys_for_subject()
+      |> Enum.filter(&String.starts_with?(&1, @install_key_prefix))
+      |> Enum.reduce_while(:ok, fn key, :ok ->
+        case retract_session_install(session_uri, workspace, key, actor_uri) do
+          {:ok, _object} -> {:cont, :ok}
+          :ok -> {:cont, :ok}
+          {:error, reason} -> {:halt, {:error, reason}}
+        end
+      end)
+    end
   end
 
   def retract_session_installs(_session_uri, _actor_uri), do: :ok

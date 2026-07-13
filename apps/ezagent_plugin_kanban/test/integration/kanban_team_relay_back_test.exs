@@ -7,14 +7,12 @@ defmodule EzagentPluginKanban.Integration.KanbanTeamRelayBackTest do
   the pm role while a plain message does NOT. Content-triggered — no sender-lock,
   no instance URI.
 
-  ## Materializes the REAL shipped 2-role team (flavor-swapped to a bare stub)
+  ## Materializes the REAL shipped team (active flavors swapped to a bare stub)
 
-  Since the S2 modeling fix the SHIPPED kanban-team declares exactly TWO agent
-  role-slots — `kanban-assistant` + `dev-together` — and NO `kanban-manager` slot
-  (the board is a workspace-level passive URI-dispatch actor, not a session
-  member; declaring it would trip the RF-6 passive-join gate
-  `{:passive_actor_cannot_join, _}`, `session.ex:723`). So both role-slots now
-  really materialize + `session.join` into a live session — no passive gate hit.
+  The shipped kanban-team declares two active agent roles — `kanban-assistant`
+  and `dev-together` — plus a passive `kanban-manager` board role. Both active
+  roles materialize and join the session; the board materializes as an
+  owner-resolvable data actor but remains outside membership, preserving RF-6.
 
   The ONLY deviation from the shipped body: this fixture swaps each slot's flavor
   `cc-headless` → a bare-spawn stub flavor (a `StubTemplate` that spawns a plain
@@ -110,8 +108,8 @@ defmodule EzagentPluginKanban.Integration.KanbanTeamRelayBackTest do
 
     :ok = Ezagent.Agent.RecipeRegistry.flush_cache()
 
-    # Seed the minimal 2-role fixture Definition (pm + dev, stub flavor) carrying
-    # the REAL relay `routing_rules` from the shipped kanban-team body.
+    # Seed the shipped-role fixture Definition (pm + dev with stub flavor plus
+    # passive board) carrying the REAL relay `routing_rules`.
     assert {:ok, _} =
              DefinitionRegistry.seed_definition_if_absent(
                itest_definition_body(),
@@ -137,7 +135,7 @@ defmodule EzagentPluginKanban.Integration.KanbanTeamRelayBackTest do
              TemplateTeam.materialize_template_team(
                session_uri,
                @workspace,
-               granted_by,
+               {granted_by, granted_by},
                %{installs: [@itest_definition]}
              )
 
@@ -146,25 +144,69 @@ defmodule EzagentPluginKanban.Integration.KanbanTeamRelayBackTest do
     # deterministic planned URI).
     pm_uri = member_uri_for_role(session_uri, "kanban-assistant")
     dev_uri = member_uri_for_role(session_uri, "dev-together")
-    on_exit(fn -> Enum.each([pm_uri, dev_uri], &terminate/1) end)
+    board_uri = composition_target(session_uri)
+    on_exit(fn -> Enum.each([pm_uri, dev_uri, board_uri], &terminate/1) end)
 
     # Both role-slots really JOINED (member_by_role only resolves a URI for a
     # joined member) — no RF-6 passive-join gate hit, because neither slot is the
     # passive kanban-manager (the S2 modeling fix). This is the "2 roles join" gate.
     assert %URI{} = pm_uri
     assert %URI{} = dev_uri
+    assert %URI{} = board_uri
+    assert member_uri_for_role(session_uri, "board") == nil
+
+    bindings = Ezagent.Socialware.CompositionBinding.for_session(session_uri)
+    assert length(bindings) == 20
+
+    assert Enum.all?(
+             bindings,
+             &(&1.status == :active and &1.target_uri == URI.to_string(board_uri))
+           )
+
+    assert eventually(fn ->
+             pm_uri
+             |> Ezagent.Identity.list_caps_for()
+             |> Enum.count(&(&1.behavior == Ezagent.ActionSet.Kanban)) == 20
+           end)
+
+    pm_caps = Ezagent.Identity.list_caps_for(pm_uri)
+
+    refute Enum.any?(
+             Ezagent.Identity.list_caps_for(dev_uri),
+             &(&1.behavior == Ezagent.ActionSet.Kanban)
+           )
+
+    assert Enum.all?(Enum.filter(pm_caps, &(&1.behavior == Ezagent.ActionSet.Kanban)), fn cap ->
+             cap.instance == board_uri and cap.granted_by == granted_by
+           end)
+
+    assert {:ok, %{tree: %{nodes: %{}}}} =
+             Ezagent.Router.dispatch(
+               Ezagent.Cmd.new(
+                 Ezagent.URI.with_action(board_uri, :kanban, :get_tree),
+                 :get_tree,
+                 %{},
+                 %{
+                   mode: :call,
+                   caller: pm_uri,
+                   caps: pm_caps,
+                   reply: {:caller_inbox, self()}
+                 }
+               )
+             )
 
     # (a) the installed live rule is content-triggered + zero URI (NOT sender-locked).
     table = Resolver.default_routing_table()
     rule = RuleStore.find_by_identity(table, session_uri, "relay-back", 0)
     assert %RuleStore{} = rule
+
     assert rule.matcher_data == %{
-               "type" => "and",
-               "items" => [
-                 %{"type" => "text_contains", "arg" => "__done__"},
-                 %{"type" => "from_role", "arg" => "dev-together"}
-               ]
-             }
+             "type" => "and",
+             "items" => [
+               %{"type" => "text_contains", "arg" => "__done__"},
+               %{"type" => "from_role", "arg" => "dev-together"}
+             ]
+           }
 
     assert Enum.map(rule.receivers, &Receiver.decode_from_store/1) == [
              {:role, "kanban-assistant"}
@@ -179,6 +221,7 @@ defmodule EzagentPluginKanban.Integration.KanbanTeamRelayBackTest do
 
     # the matcher fires on the `__done__` marker, not on a plain message.
     {:ok, matcher} = Matcher.from_json(rule.matcher_data)
+
     # #1212 from_role 腿需要 ctx.members（运行期由 Resolver 注入成员边；测试手工给）
     ctx = %{members: %{dev_uri => %{role_name: "dev-together"}}}
     assert Matcher.match?(matcher, msg(dev_uri, "card 3 → test __done__"), ctx)
@@ -225,9 +268,9 @@ defmodule EzagentPluginKanban.Integration.KanbanTeamRelayBackTest do
 
   # --- fixture ----------------------------------------------------------------
 
-  # The REAL shipped kanban manifest (2 agent role-slots: pm + dev — loaded
-  # straight from the deploy-seed YAML, the one source of truth), with ONLY
-  # the flavor swapped `cc-headless` → the bare-spawn stub (no SDK sidecar; the
+  # The REAL shipped kanban manifest (2 active agent role-slots plus the passive
+  # board role — loaded straight from the deploy-seed YAML, the one source of
+  # truth), with ONLY the active-agent flavor swapped `cc-headless` → the bare-spawn stub (no SDK sidecar; the
   # loader's `:flavor` test seam) + a per-run fixture name. Role names /
   # recipes / the REAL relay `routing_rules` are the shipped ones — resolved
   # through `ManifestResolver` rather than hand-written, so this exercises the
@@ -255,6 +298,13 @@ defmodule EzagentPluginKanban.Integration.KanbanTeamRelayBackTest do
     end
   end
 
+  defp composition_target(session_uri) do
+    case Ezagent.Socialware.CompositionBinding.for_session(session_uri) do
+      [%{target_uri: uri} | _] -> Ezagent.URI.new!(uri)
+      _ -> nil
+    end
+  end
+
   # Mirror the domain's `{:role, name}` resolver seam (Resolver expands a role
   # receiver via this closure): role_name → the member's per-session URI.
   defp role_resolver_for(session_uri) do
@@ -267,6 +317,22 @@ defmodule EzagentPluginKanban.Integration.KanbanTeamRelayBackTest do
     case Ezagent.KindRegistry.lookup(uri) do
       {:ok, pid} -> if Process.alive?(pid), do: Ezagent.Kind.terminate(uri)
       :error -> :ok
+    end
+  end
+
+  defp eventually(fun, attempts \\ 50)
+
+  defp eventually(fun, attempts) when is_function(fun, 0) do
+    cond do
+      fun.() ->
+        true
+
+      attempts == 0 ->
+        false
+
+      true ->
+        Process.sleep(10)
+        eventually(fun, attempts - 1)
     end
   end
 end

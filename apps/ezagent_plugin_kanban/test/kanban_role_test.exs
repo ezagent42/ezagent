@@ -106,7 +106,8 @@ defmodule EzagentPluginKanban.KanbanRoleTest do
   # kanban-team roles (S1) — the plugin's roles/0 grows from the single
   # kanban-manager recipe to a three-role team: kanban-assistant (cc-headless
   # coordinator) + dev-together (cc-headless developer) + kanban-manager. Both new
-  # recipes are role-slot shaped (skills + persona prompt + kanban action caps),
+  # recipes are role-slot shaped (skills + persona prompt; board authority is
+  # composition-minted),
   # carry NO instance URI, and round-trip through Recipe.new/1.
   describe "kanban-team roles (S1)" do
     test "roles/0 declares kanban-manager, kanban-assistant, and dev-together" do
@@ -116,17 +117,13 @@ defmodule EzagentPluginKanban.KanbanRoleTest do
       assert "dev-together" in names
     end
 
-    test "kanban_assistant_recipe requests a cap for every kanban action" do
+    test "kanban_assistant_recipe has no ambient board master key" do
       recipe = KanbanApp.kanban_assistant_recipe()
       assert recipe.name == "kanban-assistant"
       assert recipe.skills == ["kanban-assistant"]
       assert is_binary(recipe.prompt) and recipe.prompt != ""
 
-      requested_actions =
-        recipe.requested_caps |> Enum.map(fn %{action: a} -> a end) |> Enum.sort()
-
-      assert requested_actions == Enum.sort(Kanban.actions())
-      assert Enum.all?(recipe.requested_caps, &(&1.behavior == Kanban))
+      assert recipe.requested_caps == []
     end
 
     test "dev_together_recipe wires the dev-together skill" do
@@ -134,7 +131,7 @@ defmodule EzagentPluginKanban.KanbanRoleTest do
       assert recipe.name == "dev-together"
       assert recipe.skills == ["dev-together"]
       assert is_binary(recipe.prompt) and recipe.prompt != ""
-      assert Enum.all?(recipe.requested_caps, &(&1.behavior == Kanban))
+      assert recipe.requested_caps == []
     end
 
     test "both new recipes round-trip through Recipe.new/1 (no instance URI, valid role-slot)" do
@@ -143,7 +140,7 @@ defmodule EzagentPluginKanban.KanbanRoleTest do
         assert role.skills == recipe.skills
         assert is_binary(role.prompt)
         refute String.contains?(role.prompt, "://")
-        assert length(role.requested_caps) == length(Kanban.actions())
+        assert role.requested_caps == []
       end
     end
   end

@@ -509,7 +509,16 @@
   #   399→402. Reconciled additively on rebase onto main (base 398 + main's +1
   #   + branch's +3 = 402; verified against `mix ezagent.arch.scan` on the
   #   merged tree).
-  undocumented_public_defs: 402,
+  # - arch-cap-bump: +2 socialware composition-cap lane v5 — two new internal
+  #   public API forms: `Ezagent.Socialware.SessionInstaller.install/4` (the new
+  #   `@moduledoc false` owner-gated install chokepoint) and
+  #   `EzagentDomainInstanceMessage.SessionCreator.DefinitionAgents.materialize_definition_agents/5`
+  #   (the composition-authorized arity; the `/4` arity is already a baseline
+  #   undoc entry). Both are internal materialization seams, consistent with the
+  #   sibling undocumented `session_creator`/`materializer` internals already in
+  #   the baseline. 402→404 (headroom that fit on the pre-rebase base was consumed
+  #   by #1361 landing first; reconciled additively on rebase onto main).
+  undocumented_public_defs: 404,
   # dynamic_public_def_heads — `def unquote(name)(...)` heads whose function name
   #   is only known at macro-expansion, so they cannot become a documented
   #   {name, arity} entry. ENFORCED at 0 (the tree has none): adding any new

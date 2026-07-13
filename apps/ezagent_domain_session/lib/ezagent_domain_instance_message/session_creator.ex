@@ -175,9 +175,18 @@ defmodule EzagentDomainInstanceMessage.SessionCreator do
     end
   end
 
-  @spec install_session_socialware(URI.t(), URI.t()) ::
+  @spec install_session_socialware(URI.t(), URI.t() | {URI.t(), URI.t()}) ::
           {:ok, DefinitionAgents.summary()} | {:error, term()}
-  def install_session_socialware(%URI{scheme: "session"} = session_uri, %URI{} = workspace_uri) do
+  def install_session_socialware(
+        %URI{scheme: "session"} = session_uri,
+        workspace_or_authorization
+      ) do
+    {workspace_uri, actor_uri} =
+      case workspace_or_authorization do
+        %URI{} = workspace -> {workspace, nil}
+        {%URI{} = workspace, actor} -> {workspace, actor}
+      end
+
     # `read_template_working_copy/1` returns the EMPTY default when the Session
     # Kind is not in the registry, and an empty declaration list is
     # indistinguishable from "this template declares no agent role slots" (the
@@ -191,44 +200,15 @@ defmodule EzagentDomainInstanceMessage.SessionCreator do
 
     case Map.get(working_copy, :session_template_uri) do
       %URI{} ->
-        do_install_session_socialware(session_uri, workspace_uri, working_copy)
+        Ezagent.Socialware.SessionInstaller.install(
+          session_uri,
+          workspace_uri,
+          working_copy,
+          actor_uri
+        )
 
       _ ->
         {:error, {:no_template_declaration, session_uri}}
-    end
-  end
-
-  defp do_install_session_socialware(session_uri, workspace_uri, working_copy) do
-    effective_owner =
-      case Session.owner(session_uri) do
-        {:ok, %URI{} = owner} -> owner
-        _ -> User.admin_uri()
-      end
-
-    # Use the session's freeze-pinned declarations; never re-resolve live config.
-    agents =
-      working_copy
-      |> Map.get(:member_declarations, [])
-      |> TemplateTeam.agent_role_slots()
-
-    case DefinitionAgents.materialize_definition_agents(
-           session_uri,
-           workspace_uri,
-           effective_owner,
-           agents
-         ) do
-      {:ok, summary} ->
-        with :ok <- record_unfilled_role_slots(session_uri, summary.skipped) do
-          {:ok, summary}
-        end
-
-      {:error, reason, _partial} = error ->
-        _ = Materializer.tombstone_orchestrator_binding(session_uri, reason)
-        error
-
-      {:error, reason} = error ->
-        _ = Materializer.tombstone_orchestrator_binding(session_uri, reason)
-        error
     end
   end
 
@@ -284,50 +264,60 @@ defmodule EzagentDomainInstanceMessage.SessionCreator do
   `Logger.error` + `#{inspect(@install_telemetry)} :failed` telemetry event
   (Invariant #9: no silent drops).
   """
-  @spec install_session_socialware_async(URI.t()) :: :ok
-  def install_session_socialware_async(%URI{scheme: "session"} = session_uri) do
+  @spec install_session_socialware_async(URI.t() | {URI.t(), URI.t()}) :: :ok
+  def install_session_socialware_async(session_or_authorization) do
+    {session_uri, actor_uri} =
+      case session_or_authorization do
+        %URI{scheme: "session"} = session -> {session, nil}
+        {%URI{scheme: "session"} = session, %URI{} = actor} -> {session, actor}
+      end
+
     # Tolerate a missing supervisor (a deployment or test that boots only some
     # apps). Raising here would blow up inside the Workspace Kind's
     # `create_session` handler and fail the very create we just decoupled.
-    case Task.Supervisor.start_child(Ezagent.Session.SocialwareInstallSupervisor, fn ->
-           run_install_loudly(session_uri)
-         end) do
-      {:ok, _pid} ->
-        :ok
+    try do
+      case Task.Supervisor.start_child(Ezagent.Session.SocialwareInstallSupervisor, fn ->
+             run_install_loudly({session_uri, actor_uri})
+           end) do
+        {:ok, _pid} ->
+          :ok
 
-      other ->
+        other ->
+          Logger.error(
+            "could not start the socialware-install transaction for " <>
+              "#{URI.to_string(session_uri)}: #{inspect(other)} — the session is alive " <>
+              "but owner-only. Run `SessionCreator.install_session_socialware/1`."
+          )
+
+          :telemetry.execute(
+            @install_telemetry ++ [:failed],
+            %{count: 1},
+            %{session_uri: session_uri, reason: {:task_start_failed, other}}
+          )
+
+          :ok
+      end
+    catch
+      :exit, reason ->
         Logger.error(
-          "could not start the socialware-install transaction for " <>
-            "#{URI.to_string(session_uri)}: #{inspect(other)} — the session is alive " <>
-            "but owner-only. Run `SessionCreator.install_session_socialware/1`."
+          "socialware-install supervisor unavailable for #{URI.to_string(session_uri)}: " <>
+            "#{inspect(reason)} — the session is alive but owner-only."
         )
 
         :telemetry.execute(
           @install_telemetry ++ [:failed],
           %{count: 1},
-          %{session_uri: session_uri, reason: {:task_start_failed, other}}
+          %{session_uri: session_uri, reason: {:supervisor_unavailable, reason}}
         )
 
         :ok
     end
-  catch
-    :exit, reason ->
-      Logger.error(
-        "socialware-install supervisor unavailable for #{URI.to_string(session_uri)}: " <>
-          "#{inspect(reason)} — the session is alive but owner-only."
-      )
-
-      :telemetry.execute(
-        @install_telemetry ++ [:failed],
-        %{count: 1},
-        %{session_uri: session_uri, reason: {:supervisor_unavailable, reason}}
-      )
-
-      :ok
   end
 
-  defp run_install_loudly(%URI{} = session_uri) do
-    case install_session_socialware(session_uri) do
+  defp run_install_loudly({%URI{} = session_uri, actor_uri}) do
+    workspace_uri = Ezagent.Capability.workspace_of(session_uri)
+
+    case install_session_socialware(session_uri, {workspace_uri, actor_uri}) do
       {:ok, %{skipped: []} = summary} ->
         :telemetry.execute(@install_telemetry ++ [:ok], %{count: 1}, %{
           session_uri: session_uri,
@@ -499,90 +489,97 @@ defmodule EzagentDomainInstanceMessage.SessionCreator do
     repair_orchestrator(session_uri, workspace_uri)
   end
 
-  @spec repair_orchestrator(URI.t(), URI.t() | nil) ::
+  @spec repair_orchestrator(URI.t(), URI.t() | {URI.t(), URI.t()} | nil) ::
           {:ok, URI.t(), create_session_meta()} | {:error, term()}
   def repair_orchestrator(
         %URI{scheme: "session"} = session_uri,
-        %URI{} = workspace_uri
+        workspace_or_authorization
       ) do
-    _template_name = Ezagent.URI.type!(session_uri)
+    case workspace_or_authorization do
+      nil ->
+        {:error, :repair_requires_workspace}
 
-    with :ok <-
-           Ezagent.WorkspaceOwnerGate.assert_local_owner(
-             workspace_uri,
-             {:session_repair, session_uri}
-           ) do
-      # The SAME per-URI lock ResourceId the create flow uses (`:create_session`,
-      # NOT a distinct `:repair_orchestrator` id) so a repair and a concurrent
-      # create/repair of the same session actually serialize on one lock. (codex Q4.)
-      lock_id =
-        {{:ezagent_domain_session, :create_session, URI.to_string(session_uri)}, self()}
+      workspace_or_actor ->
+        {workspace_uri, actor_uri} =
+          case workspace_or_actor do
+            %URI{} = workspace -> {workspace, nil}
+            {%URI{} = workspace, %URI{} = actor} -> {workspace, actor}
+          end
 
-      try do
-        true = :global.set_lock(lock_id, [node()])
-        do_repair_orchestrator(session_uri, workspace_uri)
-      after
-        _ = :global.del_lock(lock_id, [node()])
-      end
+        _template_name = Ezagent.URI.type!(session_uri)
+
+        with :ok <-
+               Ezagent.WorkspaceOwnerGate.assert_local_owner(
+                 workspace_uri,
+                 {:session_repair, session_uri}
+               ) do
+          # The SAME per-URI lock ResourceId the create flow uses (`:create_session`,
+          # NOT a distinct `:repair_orchestrator` id) so a repair and a concurrent
+          # create/repair of the same session actually serialize on one lock. (codex Q4.)
+          lock_id =
+            {{:ezagent_domain_session, :create_session, URI.to_string(session_uri)}, self()}
+
+          try do
+            true = :global.set_lock(lock_id, [node()])
+            do_repair_orchestrator(session_uri, workspace_uri, actor_uri)
+          after
+            _ = :global.del_lock(lock_id, [node()])
+          end
+        end
     end
   end
 
-  def repair_orchestrator(%URI{scheme: "session"}, nil),
-    do: {:error, :repair_requires_workspace}
-
-  defp do_repair_orchestrator(%URI{} = session_uri, %URI{} = workspace_uri) do
+  defp do_repair_orchestrator(%URI{} = session_uri, %URI{} = workspace_uri, actor_uri) do
     template_name = Ezagent.URI.type!(session_uri)
 
     # The session OWNER carries the orchestrator ownership obligations; read
     # it from the live/durable session so the re-materialize + ensure use
     # the SAME owner the session was created with (NOT the repairing
     # operator — same constraint as the LV restart's `spawned_by` lineage).
-    effective_owner =
-      case Session.owner(session_uri) do
-        {:ok, %URI{} = owner} -> owner
-        _ -> User.admin_uri()
-      end
+    with {:ok, %URI{} = effective_owner} <- Session.owner(session_uri) do
+      case TemplateResolver.resolve_for_repair(session_uri, template_name, workspace_uri) do
+        {:error, _} = err ->
+          err
 
-    case TemplateResolver.resolve_for_repair(session_uri, template_name, workspace_uri) do
-      {:error, _} = err ->
-        err
+        {:ok, session_template_uri, template_content} ->
+          # Freeze-pin (§4.4) MUST cover the repair/rematerialization path: the
+          # recorded SessionTemplate content is UNPINNED (only the per-session
+          # install RECORDS carry the frozen `config_id`), so re-materializing from
+          # it raw would resolve each install LIVE and let a later publish/retract
+          # change this EXISTING session's behaviors. Re-pin from the session's own
+          # install records so repair rebuilds from the SAME frozen revision the
+          # session was created with.
+          pinned_content = Installation.pin_installs_from_session(session_uri, template_content)
 
-      {:ok, session_template_uri, template_content} ->
-        # Freeze-pin (§4.4) MUST cover the repair/rematerialization path: the
-        # recorded SessionTemplate content is UNPINNED (only the per-session
-        # install RECORDS carry the frozen `config_id`), so re-materializing from
-        # it raw would resolve each install LIVE and let a later publish/retract
-        # change this EXISTING session's behaviors. Re-pin from the session's own
-        # install records so repair rebuilds from the SAME frozen revision the
-        # session was created with.
-        pinned_content = Installation.pin_installs_from_session(session_uri, template_content)
+          with :ok <-
+                 Materializer.materialize_template_declaration(
+                   session_uri,
+                   session_template_uri,
+                   pinned_content
+                 ),
+               {:ok, _binding} <-
+                 Materializer.prepare_orchestrator_binding(session_uri, workspace_uri) do
+            case materialize_template_team(
+                   session_uri,
+                   workspace_uri,
+                   {effective_owner, actor_uri},
+                   pinned_content
+                 ) do
+              :ok ->
+                {:ok, session_uri, %{}}
 
-        with :ok <-
-               Materializer.materialize_template_declaration(
-                 session_uri,
-                 session_template_uri,
-                 pinned_content
-               ),
-             {:ok, _binding} <-
-               Materializer.prepare_orchestrator_binding(session_uri, workspace_uri) do
-          case materialize_template_team(
-                 session_uri,
-                 workspace_uri,
-                 effective_owner,
-                 pinned_content
-               ) do
-            :ok ->
-              {:ok, session_uri, %{}}
+              {:error, reason, _partial} = error ->
+                _ = Materializer.tombstone_orchestrator_binding(session_uri, reason)
+                error
 
-            {:error, reason, _partial} = error ->
-              _ = Materializer.tombstone_orchestrator_binding(session_uri, reason)
-              error
-
-            {:error, reason} = error ->
-              _ = Materializer.tombstone_orchestrator_binding(session_uri, reason)
-              error
+              {:error, reason} = error ->
+                _ = Materializer.tombstone_orchestrator_binding(session_uri, reason)
+                error
+            end
           end
-        end
+      end
+    else
+      _ -> {:error, {:no_session_owner, session_uri}}
     end
   end
 

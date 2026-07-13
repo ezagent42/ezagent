@@ -118,6 +118,7 @@ defmodule Ezagent.ActionSet.ChatMigrationParityTest do
                  :approve_admission,
                  :assign_role,
                  :attach,
+                 :composition_consent,
                  :deny_admission,
                  :join,
                  :leave,

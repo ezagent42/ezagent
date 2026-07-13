@@ -150,6 +150,17 @@ export type ConversationState = {
   human_role_slots?: HumanRoleSlotRow[]
   installed_socialwares?: InstalledSocialwareRow[]
   unfilled_agent_role_slots?: { role_name: string; reason: string }[]
+  degraded_operates_edges?: {
+    request_id: string
+    source_role: string
+    target_role: string
+    behavior: string
+    action: string
+    target_uri: string
+    reason: string
+    target_approval?: string
+    source_approval?: string
+  }[]
   views?: ViewTab[]
 }
 
@@ -210,6 +221,7 @@ export function Conversation({
   const routingRules = state.routing_rules || []
   const installedSocialwares = state.installed_socialwares || []
   const unfilledRoleSlots = state.unfilled_agent_role_slots || []
+  const degradedOperatesEdges = state.degraded_operates_edges || []
   const fallbackViews: ViewTab[] = [{id: "conversation", label: "对话", icon: "message-square", mode: "chat"}]
   const sourceViews = state.views && state.views.length > 0 ? state.views : fallbackViews
   const views = sourceViews.length > 0 ? sourceViews : fallbackViews
@@ -1164,6 +1176,17 @@ export function Conversation({
                 {slot.reason === "missing_credentials" &&
                   "：缺少 Claude 凭证，请在设置中绑定 Claude 登录后再试"}
                 {slot.reason !== "missing_credentials" && `（${slot.reason}）`}
+              </p>
+            ))}
+          </div>
+        )}
+
+        {degradedOperatesEdges.length > 0 && (
+          <div className="border-t border-border px-3 py-2.5" data-world-degraded-operates-edges>
+            {degradedOperatesEdges.map((edge) => (
+              <p key={edge.request_id || `${edge.source_role}:${edge.target_role}:${edge.behavior}:${edge.action}`} className="text-[12px] leading-relaxed text-muted-foreground">
+                <strong className="font-medium text-amber-400">{edge.source_role}</strong>
+                {` · 仅参与，暂不能操作 ${edge.target_role}.${edge.action}（${edge.reason}；目标授权 ${edge.target_approval || "pending"}；来源授权 ${edge.source_approval || "pending"}）`}
               </p>
             ))}
           </div>
