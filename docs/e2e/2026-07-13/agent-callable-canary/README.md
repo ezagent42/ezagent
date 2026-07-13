@@ -1,6 +1,6 @@
 # Canary agent-callability verification
 
-Status: **CORE CALL PATH PASS; PTY UI LIMITATION FOUND**
+Status: **CORE CALL PATH PASS; PTY FIX VERIFIED LOCALLY, DEPLOYMENT PENDING**
 
 This evidence set covers the 2026-07-13 `gagameow` task defined in
 `docs/together/2026-07-13/gagameow-agent-callable-canary-task-analysis.md`.
@@ -62,7 +62,10 @@ This evidence set covers the 2026-07-13 `gagameow` task defined in
   `agent_status.detail.exec_pid` is a PID and `push_world_state/2` passes it to
   `Jason.encode!/1`. This does not interrupt the agent or either bridge, but the
   Terminal view cannot currently render. Evidence and reproduction are in
-  `05-pty-and-bridge-join.log`.
+  `05-pty-and-bridge-join.log`. The PID normalization repair now has a public
+  LiveView regression test and passes locally. Canary remains unchanged, so the
+  deployed Terminal result stays FAIL until an explicitly authorized deployment
+  and recheck.
 
 ## Conclusion
 

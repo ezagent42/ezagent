@@ -75,3 +75,12 @@ Impact:
 Safety:
   Connection URLs containing tokens, authorization data, cookies, PATs,
   provider keys, magic links, and full environment output were excluded.
+
+LOCAL REPAIR DISPOSITION
+  A public session.pty.open LiveView regression now starts a real erlexec-backed
+  PTY, observes its exec_pid, and verifies that World state projects the PID as
+  a readable string without terminating the LiveView.
+  Focused test: PASS (1 test, 0 failures)
+  Full World conversation test file: PASS (41 tests, 0 failures)
+  Independent task review: APPROVED (no Critical, Important, or Minor findings)
+  Canary deployment/revalidation: PENDING EXPLICIT AUTHORIZATION
