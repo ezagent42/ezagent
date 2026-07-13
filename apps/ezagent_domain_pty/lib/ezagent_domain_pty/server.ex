@@ -125,10 +125,9 @@ defmodule Ezagent.Domain.Pty.Server do
     # `parked_dialog_signature`: the screen we last emitted for (dedupe).
     parked_check_ref: nil,
     parked_dialog_signature: nil,
-    # 2026-07-13 respawn breaker. `healthy?` flips once this incarnation's child
-    # has survived `healthy_after_ms` (dying before that = a failed START, which
-    # is what the breaker counts). `halted?` = the breaker tripped: alive, but
-    # running no child and spawning none until an operator restarts it.
+    # 2026-07-13 respawn breaker. `healthy?` flips once this child has survived
+    # `healthy_after_ms` (dying before that = a failed START — what the breaker
+    # counts). `halted?` = tripped: alive, no child, none spawned until an operator.
     healthy?: false,
     halted?: false
   ]
@@ -491,9 +490,10 @@ defmodule Ezagent.Domain.Pty.Server do
           "PtyServer spawned claude os_pid=#{os_pid} for agent=#{URI.to_string(state.agent_uri)}"
         )
 
-        # The child only counts as a healthy START once it has survived long
-        # enough to be past startup. Dying before this is what the breaker counts.
-        Process.send_after(self(), :mark_healthy, RespawnPolicy.healthy_after_ms())
+        # A healthy START = survived past startup; dying before that is what the
+        # breaker counts. The timer carries the os_pid it was armed FOR, so a stale
+        # one (operator `:respawn` swapped the child) cannot vouch for its successor.
+        Process.send_after(self(), {:mark_healthy, os_pid}, RespawnPolicy.healthy_after_ms())
 
         # PTY-pid-files 2026-05-26 follow-up (a): persist os_pid so the
         # orphan reaper at next-BEAM boot can discover prior-incarnation
@@ -528,11 +528,10 @@ defmodule Ezagent.Domain.Pty.Server do
     end
   end
 
-  # The breaker tripped: do NOT spawn, and do NOT stop either. Stopping would let
-  # the supervisor restart us straight back into this clause; staying alive with no
-  # child is what makes the halt OBSERVABLE (`status/1` answers, the pty_buffer
-  # survives with the failing screen still in it, the operator LV can read both).
-  # The phase is `:dead` because the SUBPROCESS is dead — a halt is a supervision
+  # The breaker tripped: do NOT spawn, and do NOT stop either — stopping would let the
+  # supervisor restart us straight back into this clause. Staying alive with no child is
+  # what makes the halt OBSERVABLE (`status/1` answers; the pty_buffer keeps the failing
+  # screen). Phase is `:dead` because the SUBPROCESS is dead; a halt is a supervision
   # fact, not a fourth phase (`Ezagent.ActionSet.Sandbox` validates the three).
   defp enter_halt(state, info) do
     halted = %{
@@ -704,9 +703,8 @@ defmodule Ezagent.Domain.Pty.Server do
   def handle_call({:write_input, _bytes}, _from, state),
     do: {:reply, {:error, :pty_not_alive}, state}
 
-  # Operator recovery from a halt (`Ezagent.Domain.Pty.restart/1`, which clears the
-  # breaker first). Kills any live child, then re-enters the spawn path with a clean
-  # slate — so a halted agent has a way back, and a healthy one can be bounced.
+  # Operator recovery from a halt (`Ezagent.Domain.Pty.restart/1` clears the breaker
+  # first). Kills any live child, then re-enters the spawn path with a clean slate.
   @impl true
   def handle_cast(:respawn, state) do
     if state.exec_pid, do: safe_stop_child(state.exec_pid)
@@ -749,14 +747,16 @@ defmodule Ezagent.Domain.Pty.Server do
     {:stop, {:child_exited, reason}, new_state}
   end
 
-  # This incarnation's child survived long enough to be past startup — clear the
-  # crash history so a later, unrelated crash starts counting from zero.
-  def handle_info(:mark_healthy, %__MODULE__{halted?: false} = state) do
+  # The child this timer was armed for survived long enough to be past startup —
+  # clear the crash history so a later, unrelated crash starts counting from zero.
+  def handle_info({:mark_healthy, os_pid}, %__MODULE__{os_pid: os_pid, halted?: false} = state)
+      when not is_nil(os_pid) do
     RespawnPolicy.record_healthy(state.agent_uri)
     {:noreply, %{state | healthy?: true}}
   end
 
-  def handle_info(:mark_healthy, state), do: {:noreply, state}
+  # Stale timer (child replaced, or server halted) — must not vouch for what runs now.
+  def handle_info({:mark_healthy, _stale_os_pid}, state), do: {:noreply, state}
 
   # stdout / stderr chunks from erlexec
   def handle_info({stream, _os_pid, data}, state) when stream in [:stdout, :stderr] do

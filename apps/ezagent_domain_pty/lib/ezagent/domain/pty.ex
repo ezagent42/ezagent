@@ -84,9 +84,19 @@ defmodule Ezagent.Domain.Pty do
   @doc """
   Stop the PtyServer for `agent_uri`. Idempotent — returns `:ok`
   whether the server was alive or not.
+
+  Also clears the respawn breaker's history (2026-07-13). A `stop/1` is a
+  DELIBERATE teardown, and `terminate_child` already ends the supervisor's
+  automatic restart loop — which is the only thing the breaker exists to stop.
+  Leaving a halt behind would instead poison the NEXT deliberate `start/2`: it
+  would be vetoed by a stale halt, `restart/1` cannot help (no server to restart),
+  and the agent would have no way back at all.
   """
   @spec stop(URI.t()) :: :ok
   def stop(%URI{} = agent_uri) do
+    Ezagent.Domain.Pty.RespawnPolicy.clear(agent_uri)
+    Ezagent.Domain.Pty.RespawnBackoff.clear(URI.to_string(agent_uri))
+
     case lookup(agent_uri) do
       {:ok, pid} ->
         _ = DynamicSupervisor.terminate_child(EzagentDomainPty.Supervisor, pid)

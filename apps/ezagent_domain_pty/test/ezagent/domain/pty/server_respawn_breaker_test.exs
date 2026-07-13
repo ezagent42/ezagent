@@ -114,6 +114,27 @@ defmodule Ezagent.Domain.Pty.Server.RespawnBreakerTest do
     end
   end
 
+  describe "a halt must never become a dead end" do
+    test "a deliberate stop/1 clears the halt, so the next start/2 is not vetoed by it" do
+      %{uri: uri, log: log} = agent()
+      {:ok, _} = start_pty(uri, cmd_override: fails_immediately(log, "spawn"))
+      wait_until(fn -> RespawnPolicy.halt_info(uri) != nil end)
+
+      # A halt is durable in ETS and outlives the process. If `stop/1` left it there,
+      # a stopped+halted agent would be UNRECOVERABLE: `restart/1` has no server to
+      # restart, and any fresh `start/2` would be vetoed by the stale halt forever.
+      # `stop/1` is a DELIBERATE teardown and terminate_child already ends the
+      # supervisor loop the breaker exists to stop, so it clears the history.
+      :ok = Pty.stop(uri)
+      assert Pty.halt_info(uri) == nil
+
+      # ...and a fresh start really does spawn again (not silently vetoed).
+      before = spawn_count(log)
+      {:ok, _} = start_pty(uri, cmd_override: fails_immediately(log, "spawn"))
+      wait_until(fn -> spawn_count(log) > before end)
+    end
+  end
+
   describe "a child that starts healthily" do
     test "still respawns on a later crash — the breaker does not fire (no false positive)" do
       %{uri: uri, log: log} = agent()
