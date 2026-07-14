@@ -24,11 +24,26 @@ defmodule EzagentDomainUi.Pty.TerminalSeam do
   function library, consistent with the rest of `ezagent_domain_ui`
   (a Tier-2 library of stateless helpers).
 
+  ## Reading a PTY is capability-gated (Allen, 2026-07-14)
+
+  A terminal's OUTPUT carries `claude /login` codes, secrets echoed by
+  commands, and the agent's whole conversation — it is at least as
+  sensitive as its input. `subscribe/2` and `push_initial_buffer/3`
+  therefore TAKE the caller's caps and refuse unless
+  `Ezagent.Domain.Pty.Access.may_read?/2` passes (the agent's Manage
+  cap — which its creator already holds; admin's genesis also matches).
+
+  They are gated BY CONSTRUCTION rather than by convention: a host LV
+  cannot subscribe without passing caps, so a future host cannot
+  reintroduce the ungated-read hole by forgetting a check. Every other
+  PTY read exit calls the same predicate.
+
   ## Typical host-LV wiring
 
       # in mount/3, after `connected?`:
-      TerminalSeam.subscribe(agent_uri)
-      socket = TerminalSeam.push_initial_buffer(socket, agent_uri)
+      caps = socket.assigns.current_caps
+      TerminalSeam.subscribe(agent_uri, caps)
+      socket = TerminalSeam.push_initial_buffer(socket, agent_uri, caps)
 
       # PubSub fan-out:
       def handle_info({:pty_output, _uri, chunk}, socket),
@@ -50,18 +65,26 @@ defmodule EzagentDomainUi.Pty.TerminalSeam do
   alias Ezagent.Domain.Pty.Server
 
   @doc """
-  Subscribe the calling process to `agent_uri`'s PTY output stream.
+  Subscribe the calling process to `agent_uri`'s PTY output stream, IF `caps`
+  authorize reading that terminal.
 
-  Call from the host LV's `mount/3` once `connected?(socket)` is true.
-  After this, `{:pty_output, agent_uri, chunk}` messages arrive in the
-  LV's `handle_info/2` — feed them to `push_chunk/2`.
+  Call from the host LV's `mount/3` once `connected?(socket)` is true. After
+  this, `{:pty_output, agent_uri, chunk}` messages arrive in the LV's
+  `handle_info/2` — feed them to `push_chunk/2`.
+
+  Returns `{:error, :unauthorized}` and subscribes to NOTHING when the caller
+  may not read this agent's terminal. Fails closed.
   """
-  @spec subscribe(URI.t()) :: :ok
-  def subscribe(%URI{} = agent_uri) do
-    Phoenix.PubSub.subscribe(
-      EzagentCore.PubSub,
-      Server.output_topic(agent_uri)
-    )
+  @spec subscribe(URI.t(), Enumerable.t()) :: :ok | {:error, :unauthorized}
+  def subscribe(%URI{} = agent_uri, caps) do
+    if Ezagent.Domain.Pty.Access.may_read?(agent_uri, caps) do
+      Phoenix.PubSub.subscribe(
+        EzagentCore.PubSub,
+        Server.output_topic(agent_uri)
+      )
+    else
+      {:error, :unauthorized}
+    end
   end
 
   @doc """
@@ -71,10 +94,21 @@ defmodule EzagentDomainUi.Pty.TerminalSeam do
   and pushes it as a `pty_chunk` event so a fresh page load shows the
   existing screen state immediately. No-op (returns the socket
   unchanged) when no server is alive or the buffer is empty.
+
+  Returns the socket UNCHANGED (no buffer pushed) when `caps` do not authorize
+  reading this agent's terminal. Fails closed.
   """
-  @spec push_initial_buffer(Phoenix.LiveView.Socket.t(), URI.t()) ::
+  @spec push_initial_buffer(Phoenix.LiveView.Socket.t(), URI.t(), Enumerable.t()) ::
           Phoenix.LiveView.Socket.t()
-  def push_initial_buffer(socket, %URI{} = agent_uri) do
+  def push_initial_buffer(socket, %URI{} = agent_uri, caps) do
+    if Ezagent.Domain.Pty.Access.may_read?(agent_uri, caps) do
+      do_push_initial_buffer(socket, agent_uri)
+    else
+      socket
+    end
+  end
+
+  defp do_push_initial_buffer(socket, %URI{} = agent_uri) do
     case Server.snapshot_buffer(agent_uri) do
       {:ok, buf} when byte_size(buf) > 0 ->
         Phoenix.LiveView.push_event(socket, "pty_chunk", %{bytes: buf})
@@ -131,7 +165,10 @@ defmodule EzagentDomainUi.Pty.TerminalSeam do
   """
   @spec input_error_message(term()) :: String.t()
   def input_error_message(:unauthorized),
-    do: "Unauthorized — need agent.pty.write cap on this agent."
+    do:
+      "Unauthorized — this agent's terminal belongs to its creator. " <>
+        "Needs the agent's manage cap (agent.manage on this instance); " <>
+        "an agent.pty cap no longer grants terminal access."
 
   def input_error_message(:cross_workspace_denied),
     do:

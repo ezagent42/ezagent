@@ -143,13 +143,31 @@ defmodule EzagentPluginWorld.WorldLive do
 
   def handle_info(:refresh, socket), do: {:noreply, socket}
 
-  def handle_info({:pty_output, _agent_uri, chunk}, socket) when is_binary(chunk) do
-    {:noreply, push_event(socket, "pty_chunk", %{bytes: chunk})}
+  # Bind the chunk to the agent whose terminal is ACTUALLY on screen.
+  #
+  # PTY subscriptions accumulate: opening agent A's terminal and then agent B's
+  # leaves this LV subscribed to both, and nothing ever unsubscribes. Forwarding
+  # every chunk the process happens to receive therefore bled A's output into B's
+  # terminal — and kept streaming a terminal the viewer had navigated away from,
+  # including after their authority over it changed. Both subscriptions are
+  # capability-gated at subscribe time (`Ezagent.Domain.Pty.Access`), so this is
+  # not the ungated-read hole; it is the second half of closing it — output only
+  # reaches the browser for the terminal being looked at.
+  def handle_info({:pty_output, %URI{} = agent_uri, chunk}, socket) when is_binary(chunk) do
+    if active_pty_agent?(socket, agent_uri) do
+      {:noreply, push_event(socket, "pty_chunk", %{bytes: chunk})}
+    else
+      {:noreply, socket}
+    end
   end
 
-  def handle_info({:pty_phase, _agent_uri, phase, _meta}, socket)
+  def handle_info({:pty_phase, %URI{} = agent_uri, phase, _meta}, socket)
       when phase in [:starting, :running, :dead] do
-    {:noreply, update_pty_state(socket, %{"pty_phase" => Atom.to_string(phase)})}
+    if active_pty_agent?(socket, agent_uri) do
+      {:noreply, update_pty_state(socket, %{"pty_phase" => Atom.to_string(phase)})}
+    else
+      {:noreply, socket}
+    end
   end
 
   def handle_info({:chat_message, %URI{} = source_uri, %Ezagent.Message{} = msg}, socket) do
@@ -191,6 +209,12 @@ defmodule EzagentPluginWorld.WorldLive do
     do: {:noreply, push_inbound_event(socket, "slice_changed", event)}
 
   def handle_info(_msg, socket), do: {:noreply, socket}
+
+  # Both views store the agent URI with a plain `URI.to_string/1` (only
+  # `agent_detail_path` is www-form-encoded), so a direct compare is right.
+  defp active_pty_agent?(socket, %URI{} = agent_uri) do
+    pty_agent_uri_str(socket.assigns[:world_state] || %{}) == URI.to_string(agent_uri)
+  end
 
   @impl true
   def handle_event("world:navigate", %{"to" => to}, socket) when is_binary(to) do
@@ -860,11 +884,11 @@ defmodule EzagentPluginWorld.WorldLive do
   # `IdentityData.component_state/5`'s `pty_terminal` branch). `agent_uri`
   # comes from the URL, so this subscription carries the same capability
   # check — gating only the state path would leave the live output stream
-  # wide open. See `Ezagent.World.PtyAccess`.
+  # wide open. See `Ezagent.Domain.Pty.Access`.
   defp maybe_subscribe_pty(socket, %{component: "pty_terminal", entity_uri: %URI{} = agent_uri}) do
     caps = Map.get(socket.assigns, :current_caps, MapSet.new())
 
-    if connected?(socket) and Ezagent.World.PtyAccess.may_read?(agent_uri, caps) do
+    if connected?(socket) and Ezagent.Domain.Pty.Access.may_read?(agent_uri, caps) do
       Phoenix.PubSub.subscribe(
         EzagentCore.PubSub,
         Ezagent.Domain.Pty.Server.output_topic(agent_uri)

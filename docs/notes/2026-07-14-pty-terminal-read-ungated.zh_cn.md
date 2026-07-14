@@ -6,6 +6,20 @@
 
 **发现路径:** 调查「创建者进不了自己 agent 的 PTY」时,codex 的 claim-verification 反过来指出我把方向说反了;逐行复核代码后确认。
 
+> ### ⚠️ 第一版修复只堵了 4 个出口里的 2 个
+>
+> 我最初以为只有两个读出口(终端路由的 state + 它的 PubSub 订阅),修完就收工了。
+> **codex 的第二轮 review 和我自己的复扫同时指出:还有两个。** 其中一个是**活的、
+> 客户端可直接触发的** —— 会话里的 `session.pty.open`,拿客户端传来的任意 agent URI
+> 直接订阅它的输出流。**第一版修复对它完全无效,洞照样开着。**
+>
+> 这正是本文自己写下的那句话:**"两处是独立的数据出口,只堵一个等于没堵"** ——
+> 我写了这句话,然后自己掉进去了。
+>
+> 教训落到代码里:**策略从 `plugin_world` 搬到了 `Ezagent.Domain.Pty.Access`** ——
+> 住在被保护的东西旁边,四个出口都调它;`TerminalSeam` 改成**按构造自带门禁**
+> (不传 caps 就订阅不了),这样未来新增的 host LV **没法靠"忘了检查"重新捅出这个洞**。
+
 ---
 
 ## 一句话
@@ -15,15 +29,26 @@
 
 终端里会滚过什么:`claude /login` 的授权码、agent 的对话内容、源码、命令输出、被 echo 出来的密钥。
 
-## 链条(逐行,零授权)
+## 四个读出口(全部零授权)
+
+| # | 出口 | 入口 | 泄露什么 |
+|---|---|---|---|
+| 1 | `IdentityData.component_state/5` 的 `pty_terminal` 分支 | `/identities/agents/:uri/terminal`(URL 可控) | **回滚缓冲** |
+| 2 | `WorldLive.maybe_subscribe_pty/2` | 同上 | **实时输出流** |
+| 3 | **`ConversationActions.switch_to_pty/3`** | **客户端事件 `session.pty.open`,`"agent"` 字段任意** | **实时输出流** |
+| 4 | `EzagentDomainUi.Pty.TerminalSeam` | 可复用 seam(当时零调用方) | 缓冲 + 输出流 |
+
+**出口 3 最要命:** 它连 URL 都不用改 —— 客户端直接发一个事件,`agent` 字段填**任意 agent URI**(跨 workspace 也行),服务端就把它订阅上了。`_session_uri` 参数**被显式忽略**,连"这个 agent 属不属于这个会话"都不查。
+
+链条(以出口 1/2 为例):
 
 | # | 位置 | 做了什么 |
 |---|---|---|
-| 1 | `ezagent_web/router.ex:36-53` | `live "/identities/agents/:uri/terminal"`,只过 `RequireEntity` —— **任何已登录实体** |
-| 2 | `world/routes.ex:234-242` | 正则从 **URL** 里抠出 `:uri` → `entity_uri: parse_entity_uri(encoded)`,**不校验** |
-| 3 | `world/identity_data.ex:207-213` | `component_state(%{component: "pty_terminal", entity_uri: agent_uri}, base, _workspace, _caller, _caps)` —— **`_workspace` / `_caller` / `_caps` 三个全部下划线丢弃** |
-| 4 | `world/identity_data.ex:478-480` | `pty_initial_buffer(agent_uri)` → `Domain.Pty.Server.snapshot_buffer(agent_uri)` —— **直接读回滚缓冲** |
-| 5 | `world_live.ex:859-866` | `PubSub.subscribe(Domain.Pty.Server.output_topic(agent_uri))` —— **直接订阅实时输出流** |
+| 1 | `ezagent_web/router.ex:36-53` | 只过 `RequireEntity` —— **任何已登录实体** |
+| 2 | `world/routes.ex:234-242` | 正则从 **URL** 里抠出 agent URI,**不校验** |
+| 3 | `world/identity_data.ex:207` | `component_state(…, _workspace, _caller, _caps)` —— **三个授权入参全部下划线丢弃** |
+| 4 | `world/identity_data.ex:478` | 直接读**回滚缓冲** |
+| 5 | `world_live.ex:859` | 直接订阅**实时输出流** |
 
 第 3 步是关键:那三个下划线参数不是"暂时没用",而是**授权信息被显式丢弃**。
 
@@ -54,23 +79,28 @@ Capability.Authorization.authorizes?(caps, %{
 })
 ```
 
-**两个出口都接了**(这是最容易漏的一点 —— 它们是**独立**的数据出口,只堵一个等于没堵):
+**四个出口全部接上**(策略住在 `Ezagent.Domain.Pty.Access` —— 被保护的东西旁边,而不是某个调用方里):
 
-1. `IdentityData.component_state/5` 的 `pty_terminal` 分支 —— 未授权时 buffer / 存活 / phase 全部不返回,访客除了自己敲进 URL 的那个 URI 之外**一无所获**
+1. `IdentityData.component_state/5` —— 未授权时 buffer / 存活 / phase 全部不返回,访客除了自己敲进 URL 的那个 URI 之外**一无所获**
 2. `WorldLive.maybe_subscribe_pty/2` —— 未授权**不订阅**输出 topic
+3. **`ConversationActions.switch_to_pty/3`** —— 未授权直接 `error:unauthorized`,**一个 topic 都不订**
+4. **`TerminalSeam.subscribe/2` + `push_initial_buffer/3`** —— 改成**按构造自带门禁**:不传 caps 就编译不过,传了不够就 `{:error, :unauthorized}`。未来的 host LV **没法靠"忘了检查"重新捅出这个洞**
+
+**外加一条 chunk 绑定:** PTY 订阅会累积且从不退订(开过 A 再开 B,两个都订着)。`handle_info` 原本忽略 chunk 的 agent URI、无脑推给浏览器 —— A 的输出会漏进 B 的终端,**且在授权状态变化后仍在流**。现在 chunk 绑定到**屏幕上真正在看的那个 agent**。
 
 **为什么是 Manage cap 而不是 Pty cap:** 创建者手里**只有** Manage cap(全仓库没有任何地方铸过 Pty cap),而 `ActionSet.Pty` 的 `:write` / `:restart` 现在也统一挂在 Manage 上。**一个权威覆盖整个终端:看、写、重启。零新 cap、零回填。**
 
 workspace 轴自动收口:cap 的 `instance` 是精确 URI,别人 agent 的 Manage cap 匹配不上 —— 跨 workspace 围观自然被拒。
 
-### 回归测试
+### 回归测试(每一条都验过:摘掉对应门禁 → 立刻变红)
 
-`apps/ezagent_plugin_world/test/ezagent/world/pty_access_test.exs`:
-- 无 cap 的访客 → **拿不到 buffer、拿不到存活状态**(把门禁摘掉这条**立刻变红**,已验证)
-- 创建者的 Manage cap → 能看
-- **别人 agent** 的 Manage cap → 看不了
-- Pty cap → 看不了(契约已移走)
-- admin genesis → 能看
+`apps/ezagent_domain_pty/test/ezagent/domain/pty/access_test.exs`(谓词):
+- 创建者的 Manage cap → 能看 · **别人 agent** 的 Manage cap → 看不了 · Pty cap → 看不了 · admin genesis → 能看 · 无 cap → 看不了 · 垃圾输入 → 拒绝而非崩溃
+
+`apps/ezagent_plugin_world/test/ezagent/world/pty_read_exits_test.exs`(出口):
+- **出口 1** 无 cap → 拿不到 buffer、拿不到存活状态
+- **出口 3** 无 cap → `error:unauthorized`,而且**广播一条 PTY 输出过去,收不到**(证明真的没订阅)
+- **chunk 绑定** → 别的 agent 的 chunk **不会**进这个终端
 
 ## ⚠️ 仍未修:`WorkspaceUserAdmin.create_user` 是个 confused deputy
 

@@ -223,7 +223,7 @@ defmodule Ezagent.World.IdentityData do
          caps
        ) do
     agent_uri_str = encode_uri(agent_uri)
-    authorized? = Ezagent.World.PtyAccess.may_read?(agent_uri, caps)
+    authorized? = Ezagent.Domain.Pty.Access.may_read?(agent_uri, caps)
 
     base
     |> Map.put("agent_uri", agent_uri_str)

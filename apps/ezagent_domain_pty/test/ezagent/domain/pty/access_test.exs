@@ -1,4 +1,4 @@
-defmodule Ezagent.World.PtyAccessTest do
+defmodule Ezagent.Domain.Pty.AccessTest do
   @moduledoc """
   The terminal-read gate.
 
@@ -12,7 +12,7 @@ defmodule Ezagent.World.PtyAccessTest do
   """
   use ExUnit.Case, async: true
 
-  alias Ezagent.World.PtyAccess
+  alias Ezagent.Domain.Pty.Access, as: PtyAccess
 
   @agent Ezagent.URI.new!("entity://team-alpha/agent/cc_mine")
   @other Ezagent.URI.new!("entity://team-alpha/agent/cc_someone-elses")
@@ -61,59 +61,5 @@ defmodule Ezagent.World.PtyAccessTest do
   test "garbage in the caps position is refused, not crashed" do
     refute PtyAccess.may_read?(@agent, nil)
     refute PtyAccess.may_read?(@agent, :not_caps)
-  end
-end
-
-defmodule Ezagent.World.PtyTerminalStateGateTest do
-  @moduledoc """
-  The REGRESSION test for the hole itself.
-
-  `PtyAccessTest` above proves the predicate is correct; this proves the read
-  EXIT actually consults it. Without the gate in `IdentityData.component_state/5`
-  this test goes red — an unauthenticated-for-this-agent viewer gets the live
-  scrollback buffer.
-  """
-  use EzagentCore.DataCase, async: false
-
-  alias Ezagent.World.IdentityData
-
-  @agent Ezagent.URI.new!("entity://team-alpha/agent/cc_gate-probe")
-  @creator Ezagent.URI.new!("entity://team-alpha/user/creator")
-
-  defp route,
-    do: %{
-      component: "pty_terminal",
-      title: "Terminal",
-      path: "/identities/agents/x/terminal",
-      entity_uri: @agent
-    }
-
-  defp state_with(caps) do
-    IdentityData.state_for(route(), %{
-      workspace_uri: Ezagent.URI.new!("workspace://team-alpha"),
-      caller_uri: @creator,
-      caller_caps: caps
-    })
-  end
-
-  test "a viewer with NO cap for this agent gets NO buffer and NO liveness" do
-    state = state_with(MapSet.new())
-
-    refute state["pty_authorized"]
-    assert state["pty_initial_buffer"] == ""
-    assert state["pty_alive"] == false
-    assert state["pty_phase"] == "unknown"
-  end
-
-  test "the creator's existing manage cap opens it" do
-    cap =
-      Ezagent.CreatorGrant.manage_cap(
-        :agent,
-        @agent,
-        Ezagent.URI.new!("workspace://team-alpha"),
-        @creator
-      )
-
-    assert state_with(MapSet.new([cap]))["pty_authorized"]
   end
 end
