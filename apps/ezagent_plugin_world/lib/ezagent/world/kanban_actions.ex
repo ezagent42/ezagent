@@ -419,7 +419,11 @@ defmodule Ezagent.World.KanbanActions do
 
   # read-side ctx（caller_uri/caller_caps/workspace_uri）给 KanbanData.read_tree/
   # board_state/list_instances。workspace_uri 让 list-by-role 限定在本 tenant（RF-7）。
-  defp read_ctx(socket) do
+  @doc """
+  KanbanData 读侧 ctx（caller 身份 + cap 快照 + workspace 域）——从 world socket assigns
+  取。`ConversationActions.switch_view`（切 kanban tab 载板）也复用此函数，故公开。
+  """
+  def read_ctx(socket) do
     %{
       caller_uri: socket.assigns.current_entity_uri,
       caller_caps: Map.get(socket.assigns, :current_caps, MapSet.new()),

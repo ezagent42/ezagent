@@ -46,8 +46,7 @@ defmodule EzagentWeb.Socialware.KanbanShareController do
 
     with {:ok, board_uri, behavior} <- verify_token(conn, token),
          {:ok, session_uri} <- parse_session(session_str),
-         :ok <- assert_member(session_uri, clicker),
-         {:ok, assistant_uri} <- resolve_assistant(session_uri),
+         {:ok, assistant_uri} <- resolve_session_assistant(session_uri, clicker),
          {:ok, _} <-
            Mount.mount(session_uri, board_uri, assistant_uri, behavior, @read_actions,
              access: :read
@@ -89,24 +88,26 @@ defmodule EzagentWeb.Socialware.KanbanShareController do
     end
   end
 
-  # 点击者必须是目标 session 的成员（挂进「他自己的」session，防跨 session 塞板）。
-  defp assert_member(session_uri, %URI{} = clicker) do
-    if member?(members_of(session_uri), clicker),
-      do: :ok,
-      else: {:error, :not_session_member}
-  end
+  # 读一次 session 成员 → 校验点击者是成员（挂进「他自己的」session，防跨 session 塞板）
+  # → 解析该 session 的 kanban-assistant（收只读钥匙的「手」）。成员读取内联于此、不抽成
+  # 独立 `members_of` 函数——那会与 `CompositionCaps` 私有 `read_role_members` 撞 cross-file
+  # 重复 gate（那是 #1376 的，Allen 处理，不在本 PR 碰）；此处是本控制器专用的一次性组合读。
+  defp resolve_session_assistant(session_uri, %URI{} = clicker) do
+    members =
+      case Ezagent.Kind.get_slice(session_uri, :session) do
+        {:ok, slice} when is_map(slice) -> Map.get(slice, :members, %{})
+        _ -> %{}
+      end
 
-  defp resolve_assistant(session_uri) do
-    case Members.role_name_to_uri(members_of(session_uri), @assistant_role) do
-      %URI{} = uri -> {:ok, uri}
-      _ -> {:error, :no_assistant_in_session}
-    end
-  end
+    cond do
+      not member?(members, clicker) ->
+        {:error, :not_session_member}
 
-  defp members_of(session_uri) do
-    case Ezagent.Kind.get_slice(session_uri, :session) do
-      {:ok, slice} when is_map(slice) -> Map.get(slice, :members, %{})
-      _ -> %{}
+      true ->
+        case Members.role_name_to_uri(members, @assistant_role) do
+          %URI{} = uri -> {:ok, uri}
+          _ -> {:error, :no_assistant_in_session}
+        end
     end
   end
 
