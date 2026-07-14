@@ -148,7 +148,13 @@ defmodule Ezagent.Socialware.BoardProvision do
     read_actions = Map.get(caller_ctx, :read_actions, @default_read_actions)
 
     with :ok <-
-           assert_forward_access(board_uri, from_session_uri, behavior, assistant_role, caller_ctx),
+           assert_forward_access(
+             board_uri,
+             from_session_uri,
+             behavior,
+             assistant_role,
+             caller_ctx
+           ),
          {:ok, assistant_uri} <- resolve_target_assistant(to_session_uri, assistant_role),
          {:ok, minted} <-
            CompositionCaps.mint_cap(assistant_uri, board_uri, behavior, read_actions) do
@@ -201,14 +207,25 @@ defmodule Ezagent.Socialware.BoardProvision do
     end)
   end
 
-  # from_session 的 assistant 是否持一把指向这块板(instance 精确)的 behavior cap。
+  # from_session 的 assistant 对这块板是否有 access —— **不直读 cap 列表**(那会绕过 dispatch
+  # chokepoint、把 cap 校验挪出许可路)。改让 assistant 以自身份对这块板 dispatch 一个只读动作
+  # (`:get_tree`, mode `:call`),cap 校验落在 dispatch 许可路上:`{:ok, _}` = 有钥匙(有权),
+  # 任何 `{:error, _}`(如 `:unauthorized`) = 没钥匙(无权)。ctx 只带空 caps —— runtime 授权
+  # 在 ctx.caps 未命中时回落读 assistant 自持的 cap slice(self-store),故无需在此提前展开。
+  # 目标动作 URI 的 slice 由 behavior 自身派生(`behavior.state_slice/0`,如 Kanban → `:kanban`),
+  # 不硬编码。
   defp session_holds_board_cap?(assistant_uri, behavior, board_uri) do
-    board_instance = Ezagent.URI.instance(board_uri)
+    target = Ezagent.URI.with_action(board_uri, behavior.state_slice(), :get_tree)
 
-    Enum.any?(Ezagent.Identity.list_caps_for(assistant_uri), fn cap ->
-      cap.kind == :agent and cap.behavior == behavior and
-        cap.instance == board_instance
-    end)
+    case Ezagent.Invocation.dispatch(%Ezagent.Invocation{
+           target: target,
+           mode: :call,
+           args: %{},
+           ctx: %{caller: assistant_uri, caps: MapSet.new(), reply: {:caller_inbox, self()}}
+         }) do
+      {:ok, _} -> true
+      {:error, _} -> false
+    end
   end
 
   # 拉板守卫:caller 必须是这块板的 data_owner(mint 内部不自检触发者,故这里把关)。
