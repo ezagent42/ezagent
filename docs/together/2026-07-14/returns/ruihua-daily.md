@@ -11,9 +11,15 @@
 - flywheel 解耦 design-system 本地副本，改为 CDN 引用
 
 ### ✅ Plan 分配任务（已完成）
-- `1378-flywheel-to-liveview/design-brief.md` — IA 映射表 + 视觉方向 + hello↔kanban 连接点 + 不做事项清单（单一事实源）
-- `doc/page-flow.md` 已更新设计参考节
-- 受众 zhaomato，不改代码，设计输入最终走 Feishu
+- `flywheel/design-brief.md` — IA 映射表 + 视觉方向 + hello↔kanban 连接点 + 不做事项清单（单一事实源）
+- 飞书已交付 zhaomato
+
+### ✅ 额外产出：recruit → publish Builder 发布流原型
+- `recruit-publish-flow/publish-entry.html` — 2 步 wizard（选 agent → 写说明 + 领域标签），左侧编辑 + 右侧实时 Gallery 卡片预览
+- `recruit-publish-flow/design-brief.md` — 研发面向设计说明
+- `mainsite.html` Gallery 区加入 Builder 发布入口
+- `recruit/index.html` 改链接指向 publish-entry
+- `doc/page-flow.md` 更新流转
 
 ### 📸 交付截图
 
