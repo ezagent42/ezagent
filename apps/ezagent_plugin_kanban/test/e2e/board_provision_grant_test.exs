@@ -22,6 +22,7 @@ defmodule EzagentPluginKanban.E2E.BoardProvisionGrantTest do
   alias Ezagent.Entity.User
   alias Ezagent.{AgentFlavorRegistry, Agent.RecipeRegistry, Invocation}
   alias Ezagent.Socialware.BoardProvision
+  alias Ezagent.Socialware.MountRow
   alias EzagentPluginKanban.Application, as: KanbanApp
 
   @flavor "t4a-native"
@@ -147,6 +148,12 @@ defmodule EzagentPluginKanban.E2E.BoardProvisionGrantTest do
       # 铸了全 20 个 kanban 动作,granted_by 全 = owner(板主人)
       assert length(minted) == length(Ezagent.ActionSet.action_names(Ezagent.ActionSet.Kanban))
       assert Enum.all?(minted, &(URI.to_string(&1.granted_by) == URI.to_string(owner_uri)))
+
+      # 挂载落表:本 session 有指向新板的 operate 挂载行(建板 = operate)
+      board_mount = MountRow.get(session_uri, board_uri, assistant_uri, Ezagent.ActionSet.Kanban)
+      assert board_mount != nil
+      assert board_mount.access == "operate"
+      assert Enum.any?(MountRow.list_for_session(session_uri), &(&1.id == board_mount.id))
 
       # (b) assistant 持指向该新板的实例精确 add_node cap
       assert eventually(fn -> holds_board_cap?(assistant_uri, board_uri, :add_node) end)
