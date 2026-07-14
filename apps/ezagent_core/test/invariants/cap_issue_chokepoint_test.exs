@@ -46,6 +46,41 @@ defmodule Ezagent.Invariants.CapIssueChokepointTest do
   @caps_writer_files 1
   @caps_writer_sites 2
 
+  # ------------------------------------------------------------------
+  # Leg 3 (2026-07-14) — `users.caps_json` is a BACK DOOR into the cap slice.
+  #
+  # Legs 1-2 above ratchet who CONSTRUCTS a provenance-bearing cap and who
+  # writes the Kind's `:caps` slice. Neither watches `Ezagent.Users.create/3,4`,
+  # which writes a cap list straight into the `users.caps_json` COLUMN — and
+  # `Behavior.Identity.post_init/2` reconciles the Kind's cap slice FROM that
+  # column. So anything that can put a cap in `caps_json` has put a cap in the
+  # user's authority, without ever passing `Cap.issue/3`.
+  #
+  # Something did. `WorkspaceUserAdmin.handle_create_user/2` parsed ARBITRARY
+  # caller-supplied cap text, stamped it `granted_by: admin` regardless of who
+  # was actually calling, and stored it. A holder of
+  # `workspace_user_admin.create_user` — a WORKSPACE admin, not necessarily a
+  # global one — could mint themselves a full wildcard: a second global admin.
+  # (Codex PR #356 r1 had narrowed WHO can reach that action. It did not disarm
+  # the action.)
+  #
+  # Every call site is therefore enumerated here, and each declares how it
+  # satisfies the chokepoint. Adding one is a security decision, made here,
+  # deliberately — not discovered later.
+  #
+  #   :issued            — hands `Users.create` only artifacts from `Cap.issue/3`
+  #   :no_caps           — every call passes a literal `[]`
+  #   :genesis_bootstrap — the ROOT OF TRUST: mints the admin's own wildcard at
+  #                        first boot, when no prior authority exists to issue
+  #                        from. Exactly one of these may exist.
+  @caps_json_writers %{
+    "apps/ezagent_domain_identity/lib/ezagent/behavior/workspace_user_admin.ex" => :issued,
+    "apps/ezagent_domain_identity/lib/mix/tasks/ezagent.user.create.ex" => :issued,
+    "apps/ezagent_domain_identity/lib/ezagent/registration.ex" => :no_caps,
+    "apps/ezagent_domain_identity/lib/ezagent_domain_identity/application.ex" =>
+      :genesis_bootstrap
+  }
+
   test "provenance-bearing capability construction allowlist can only shrink" do
     actual = provenance_constructors()
 
@@ -79,6 +114,74 @@ defmodule Ezagent.Invariants.CapIssueChokepointTest do
     assert store =~ "{:set, :caps, new_caps}"
     assert revoke =~ "Ezagent.Capability.revoke(current_caps, cap_struct)"
     refute revoke =~ "MapSet.put"
+  end
+
+  test "every `users.caps_json` writer is enumerated — a new one is a security decision" do
+    found = users_create_sites()
+    expected = @caps_json_writers |> Map.keys() |> MapSet.new()
+
+    assert found == expected, """
+    The set of `Ezagent.Users.create/3,4` call sites changed.
+
+    `users.caps_json` feeds the user Kind's cap slice, so anything written there
+    is authority granted. Every cap that lands in it must have passed
+    `Ezagent.Cap.issue/3` (Decision #162). Add your site to `@caps_json_writers`
+    with the reason it is safe — :issued, :no_caps, or :genesis_bootstrap.
+
+      added:   #{inspect(MapSet.to_list(MapSet.difference(found, expected)))}
+      removed: #{inspect(MapSet.to_list(MapSet.difference(expected, found)))}
+    """
+  end
+
+  test "`:issued` caps_json writers actually call Cap.issue" do
+    for {file, :issued} <- @caps_json_writers do
+      src = repo_root() |> Path.join(file) |> File.read!()
+
+      assert src =~ "Ezagent.Cap.issue(",
+             "#{file} is declared `:issued` but never calls `Ezagent.Cap.issue/3`"
+    end
+  end
+
+  test "`:no_caps` caps_json writers pass a literal empty cap list" do
+    for {file, :no_caps} <- @caps_json_writers do
+      args = repo_root() |> Path.join(file) |> users_create_cap_args()
+
+      assert args != [], "#{file} is declared `:no_caps` but calls no Users.create"
+
+      for arg <- args do
+        assert arg == [],
+               "#{file} is declared `:no_caps` but passes `#{Macro.to_string(arg)}` as caps"
+      end
+    end
+  end
+
+  test "authority begins in exactly ONE place" do
+    roots = for {file, :genesis_bootstrap} <- @caps_json_writers, do: file
+
+    assert length(roots) == 1,
+           "there must be exactly one root of trust, found: #{inspect(roots)}"
+  end
+
+  defp users_create_sites do
+    source_files()
+    |> Enum.filter(fn {_rel, abs} -> users_create_cap_args(abs) != [] end)
+    |> Enum.map(fn {rel, _abs} -> rel end)
+    |> MapSet.new()
+  end
+
+  # The 3rd positional arg of every `Users.create(...)` / `Ezagent.Users.create(...)`.
+  defp users_create_cap_args(file) do
+    {_ast, acc} =
+      Macro.prewalk(quoted!(file), [], fn
+        {{:., _, [{:__aliases__, _, mod}, :create]}, _, args} = node, acc
+        when length(args) >= 3 ->
+          if List.last(mod) == :Users, do: {node, [Enum.at(args, 2) | acc]}, else: {node, acc}
+
+        node, acc ->
+          {node, acc}
+      end)
+
+    Enum.reverse(acc)
   end
 
   defp provenance_constructors do

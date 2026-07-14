@@ -149,8 +149,7 @@ defmodule Ezagent.ActionSet.WorkspaceUserAdmin do
          {:ok, user_uri} <- parse_user_uri(user_uri_str),
          {:ok, target_ws} <- require_workspace_uri(raw_target_uri),
          :ok <- ensure_user_in_target_workspace(user_uri, target_ws),
-         {:ok, caps} <-
-           Ezagent.Capability.Parser.parse(caps_str || "", Ezagent.Entity.User.admin_uri()),
+         {:ok, caps} <- issue_requested_caps(caps_str, user_uri, ctx),
          {:ok, decoded} <- Ezagent.Users.create(user_uri, password, caps) do
       spawn_result = maybe_spawn_user_kind(user_uri)
       cur = ctx[:read].(:create_count, 0)
@@ -184,6 +183,81 @@ defmodule Ezagent.ActionSet.WorkspaceUserAdmin do
   # =================================================================
   # Helpers
   # =================================================================
+
+  # -----------------------------------------------------------------
+  # The ISSUE chokepoint (Decision #162: ISSUE → STORE → VERIFY)
+  # -----------------------------------------------------------------
+  #
+  # Before this, `create_user` did:
+  #
+  #     Parser.parse(caps_str, Ezagent.Entity.User.admin_uri())
+  #     Ezagent.Users.create(user_uri, password, caps)
+  #
+  # — it parsed ARBITRARY caller-supplied cap text, stamped it
+  # `granted_by: admin` regardless of who was actually calling, and wrote it
+  # straight into `users.caps_json`. `Ezagent.Cap.issue/3` was never called, so
+  # `CapabilityRegistry.authorize_grant/3` never ran: neither the
+  # wildcard-action guard nor the owner/delegation guard could fire. A holder of
+  # `workspace_user_admin.create_user` could therefore conjure a user holding
+  # ANY capability — including `agent.manage` over somebody else's agent, which
+  # since 2026-07-14 (Decision #163, "the terminal belongs to the creator")
+  # carries that agent's PTY: arbitrary command execution in its sandbox.
+  #
+  # Codex PR #356 r1 already narrowed WHO can reach this action (it split
+  # `:create_user` onto its own Behavior so a `Behavior.Workspace` cap no longer
+  # implies it). That fixed the door. This fixes the room: what you may hand out
+  # is now bounded by what you actually hold.
+  #
+  # `{:held_by, caller}` loads the CALLER's real held caps and runs
+  # `authorize_grant` against them, then stamps `granted_by: caller` — an
+  # accountable granter, not a laundered admin.
+  #
+  # Fail-closed and all-or-nothing: the first cap the caller may not grant
+  # aborts the whole create. A partially-capped user is worse than no user.
+  #
+  # Creating a user with NO caps needs no granter and stays open to system /
+  # registration callers — only HANDING OUT authority requires an accountable
+  # entity granter (`Cap.issue/3` refuses a non-`entity://` granter outright).
+  defp issue_requested_caps(caps_str, %URI{} = user_uri, ctx) do
+    case String.trim(caps_str || "") do
+      "" ->
+        {:ok, []}
+
+      trimmed ->
+        with {:ok, %URI{} = caller} <- require_entity_caller(Map.get(ctx, :caller)),
+             {:ok, requested} <- Ezagent.Capability.Parser.parse(trimmed, caller) do
+          issue_each(requested, user_uri, caller)
+        end
+    end
+  end
+
+  defp issue_each(requested, %URI{} = user_uri, %URI{} = caller) when is_list(requested) do
+    requested
+    |> Enum.reduce_while({:ok, []}, fn cap, {:ok, acc} ->
+      case Ezagent.Cap.issue({:held_by, caller}, user_uri, cap) do
+        {:ok, artifact} -> {:cont, {:ok, [artifact | acc]}}
+        {:error, reason} -> {:halt, {:error, {:cap_grant_refused, describe_cap(cap), reason}}}
+      end
+    end)
+    |> case do
+      {:ok, issued} -> {:ok, Enum.reverse(issued)}
+      {:error, _} = error -> error
+    end
+  end
+
+  defp require_entity_caller(%URI{scheme: "entity"} = caller), do: {:ok, caller}
+
+  defp require_entity_caller(other),
+    do: {:error, {:granting_caps_requires_entity_caller, other}}
+
+  defp describe_cap(%Ezagent.Capability{} = cap) do
+    %{
+      kind: cap.kind,
+      behavior: cap.behavior,
+      action: Ezagent.Capability.action_of(cap),
+      instance: cap.instance
+    }
+  end
 
   defp coerce_create_user_args(args) do
     user_uri = Map.get(args, :user_uri)
