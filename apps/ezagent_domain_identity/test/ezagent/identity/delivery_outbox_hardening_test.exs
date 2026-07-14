@@ -70,6 +70,65 @@ defmodule Ezagent.Identity.DeliveryOutboxHardeningTest do
     terminate(target, pid)
   end
 
+  test "same cap and idempotency key with different authorization context is rejected" do
+    {target, pid} = spawn_target("idem-authorization-conflict")
+    :ok = Ezagent.ReadyGate.put(target, :not_ready)
+    key = "cap-delivery-authorization-conflict-#{System.unique_integer([:positive])}"
+    cap = capability(target)
+
+    first =
+      absorb_invocation(target, cap,
+        idempotency_key: key,
+        authorization_rule: :original_rule
+      )
+
+    conflicting =
+      absorb_invocation(target, cap,
+        idempotency_key: key,
+        authorization_rule: :different_rule
+      )
+
+    assert :ok = Invocation.dispatch(first)
+    assert {:error, :idempotency_conflict} = Invocation.dispatch(conflicting)
+    assert delivery_count(target) == 1
+
+    terminate(target, pid)
+  end
+
+  test "same semantic caps in different insertion order have one canonical envelope" do
+    {target, pid} = spawn_target("idem-caps-order")
+    :ok = Ezagent.ReadyGate.put(target, :not_ready)
+    key = "cap-delivery-caps-order-#{System.unique_integer([:positive])}"
+    cap = capability(target)
+
+    authorization_caps =
+      for offset <- 1..40 do
+        %{cap | granted_at: DateTime.add(cap.granted_at, offset, :microsecond)}
+      end
+
+    ascending = MapSet.new(authorization_caps)
+    descending = authorization_caps |> Enum.reverse() |> MapSet.new()
+
+    assert :ok =
+             Invocation.dispatch(
+               absorb_invocation(target, cap, idempotency_key: key, caps: ascending)
+             )
+
+    delivery = one_delivery!(target)
+    envelope = :erlang.binary_to_term(delivery.payload, [:safe])
+
+    assert envelope.caps ==
+             Enum.sort_by(authorization_caps, &:erlang.term_to_binary(&1, [:deterministic]))
+
+    assert :ok =
+             Invocation.dispatch(
+               absorb_invocation(target, cap, idempotency_key: key, caps: descending)
+             )
+
+    assert delivery_count(target) == 1
+    terminate(target, pid)
+  end
+
   test "the persisted envelope is versioned, allowlisted, and contains no reply pid" do
     {target, pid} = spawn_target("canonical-envelope")
     :ok = Ezagent.ReadyGate.put(target, :not_ready)
@@ -313,16 +372,18 @@ defmodule Ezagent.Identity.DeliveryOutboxHardeningTest do
   defp absorb_invocation(target, cap, opts \\ []) do
     ctx = %{
       caller: :vm_internal,
-      caps: MapSet.new(),
+      caps: Keyword.get(opts, :caps, MapSet.new()),
       reply: :ignore,
       cap_delivery_producer: :identity_absorb
     }
 
     ctx =
-      case Keyword.fetch(opts, :idempotency_key) do
-        {:ok, key} -> Map.put(ctx, :idempotency_key, key)
-        :error -> ctx
-      end
+      Enum.reduce([:idempotency_key, :authorization_rule], ctx, fn key, acc ->
+        case Keyword.fetch(opts, key) do
+          {:ok, value} -> Map.put(acc, key, value)
+          :error -> acc
+        end
+      end)
 
     %Invocation{
       target: Ezagent.URI.with_action(target, :identity, :absorb_cap),

@@ -22,6 +22,10 @@ defmodule Ezagent.Cap.DeliveryOutbox.Envelope do
   def version, do: @version
 
   @doc false
+  @spec canonical_binary(map()) :: binary()
+  def canonical_binary(envelope), do: :erlang.term_to_binary(envelope, [:deterministic])
+
+  @doc false
   @spec eligible?(Invocation.t()) :: boolean()
   def eligible?(%Invocation{} = invocation) do
     match?({:ok, _}, producer_parts(invocation))
@@ -149,7 +153,11 @@ defmodule Ezagent.Cap.DeliveryOutbox.Envelope do
   defp producer_parts(_), do: :error
 
   defp allowlisted_context(%{caller: caller, caps: %MapSet{} = caps} = ctx) do
-    caps = MapSet.to_list(caps)
+    caps =
+      caps
+      |> MapSet.to_list()
+      |> Enum.sort_by(&:erlang.term_to_binary(&1, [:deterministic]))
+
     rule = Map.get(ctx, :authorization_rule)
 
     if valid_caller?(caller) and Enum.all?(caps, &match?(%Capability{}, &1)) and

@@ -280,7 +280,7 @@ defmodule Ezagent.Cap.DeliveryOutbox do
       workspace_uri: Persistence.workspace_uri_for!(envelope.target_uri),
       target_uri: envelope.target_uri,
       op: envelope.op,
-      payload: :erlang.term_to_binary(envelope),
+      payload: Envelope.canonical_binary(envelope),
       payload_version: Envelope.version(),
       payload_identity: Envelope.payload_identity(envelope.cap),
       idempotency_key: Map.get(invocation.ctx, :idempotency_key),
@@ -344,7 +344,7 @@ defmodule Ezagent.Cap.DeliveryOutbox do
   end
 
   defp verify_reused_payload(%Delivery{} = delivery, envelope) do
-    if delivery.payload_identity == Envelope.payload_identity(envelope.cap),
+    if delivery.payload == Envelope.canonical_binary(envelope),
       do: :ok,
       else: {:error, :idempotency_conflict}
   end

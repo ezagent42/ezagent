@@ -181,3 +181,36 @@ The hardening migration was applied to the isolated `entity_caps_a` test
 partition. `mix format --check-formatted` for every changed Elixir file and
 `git diff --check` both passed. Per controller instruction, this follow-up did
 not run the full `ci.local` gate.
+
+## Second-review canonical identity fix
+
+Idempotent reuse now compares the complete persisted version-1 envelope bytes,
+not only the capability hash. `Envelope.canonical_binary/1` uses deterministic
+external-term encoding, and capability context sets are sorted by each
+capability's deterministic external-term bytes before the envelope is encoded.
+Consequently, caller, authorization capabilities, authorization rule, producer,
+operation, target, capability, and version all participate in reuse identity,
+while semantically equal `MapSet` values remain insertion-order independent.
+This required no schema or migration change.
+
+TDD RED reproduced both review cases:
+
+```text
+# Same cap/key but different authorization_rule was incorrectly reused
+# 40-cap MapSet was persisted in a non-canonical order
+2 tests, 2 failures
+```
+
+Final verification after the fix:
+
+```text
+# Complete delivery-outbox hardening test file
+13 tests, 0 failures
+
+# Core architecture plus cap/self-store/tenant/trust invariants
+184 tests, 0 failures
+```
+
+The three changed Elixir files pass `mix format --check-formatted`, and
+`git diff --check` passes. Per controller instruction, this review follow-up did
+not run the full `ci.local` gate.
