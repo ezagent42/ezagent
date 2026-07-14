@@ -100,6 +100,16 @@ defmodule Ezagent.CapTest do
       assert artifact.key_id == Signing.key_id(1, "a:*")
       assert artifact.grantee_uri == admin_uri
       assert_signed_by(artifact, admin_uri)
+
+      trust_domain = Signing.trust_domain(artifact.workspace_uri)
+      {public_key, private_key} = Signing.derive_keypair(admin_uri, trust_domain, 1)
+      direct_signature = Signing.sign(artifact, private_key)
+
+      assert Signing.verify(artifact, direct_signature, public_key)
+
+      assert_raise ArgumentError, ~r/cap signing URI is not canonicalizable: nil/, fn ->
+        Signing.sign(genesis, private_key)
+      end
     end
 
     test "rejects a missing or wildcard grantee before authorization" do
