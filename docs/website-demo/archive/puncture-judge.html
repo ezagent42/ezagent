@@ -1,0 +1,223 @@
+<!DOCTYPE html>
+<html lang="zh" data-theme="light">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>你有这行的判断吗 · 法务 · Ezagent</title>
+<meta name="description" content="别急着自己搓 agent —— 3 道真实场景，看看你和专业法务差多少。差的不是聪明，是这行的判断。">
+<!-- puncture 方案①原型（判断题·点选）· 单角色法务跑通机制，之后推广全角色 + 并回 recruit-v2。 -->
+<style>
+@import url('https://fonts.googleapis.com/css2?family=Inter:wght@400;450;500;600;700;800&family=Noto+Sans+SC:wght@400;500;700&family=Noto+Serif+SC:wght@400;500;600;700&family=Space+Mono:wght@400;700&display=swap');
+:root{
+  --ground:#E8E8EB;--ground-2:#EFEFF1;--ground-hover:#E4E4E8;--card:#FFFFFF;
+  --ink:#17171B;--ink-2:#56565E;--ink-3:#8A8A92;--ink-4:#B6B6BC;--line:#E2E2E6;
+  --red:#D81830;--blueink:#0048A8;--yellow:#FFD400;--jade:#0FA06E;
+  --blue:#0B5CFF;--blue-deep:#0040C4;--blue-wash:#E7EEFF;--orange:#FF8A1E;
+  --jade-wash:#DCF1E8;--red-wash:#FAE0E3;--yellow-wash:#FFF4CC;--orange-wash:#FFEBD6;
+  --accent:var(--blue);--accent-hover:#1466FF;--accent-press:var(--blue-deep);--accent-wash:var(--blue-wash);--on-accent:#fff;--focus-ring:rgba(11,92,255,.45);
+  --font-ui:'Inter',system-ui,-apple-system,sans-serif;--font-cn:'Noto Serif SC','Songti SC',serif;
+  --font-cn-ui:'Noto Sans SC','PingFang SC',sans-serif;--font-mono:'Space Mono',ui-monospace,Menlo,monospace;
+  --r-sm:10px;--r-md:16px;--r-lg:22px;--r-pill:999px;
+  --shadow-sm:0 1px 2px rgba(15,15,15,.04),0 8px 24px -12px rgba(15,15,15,.14);
+  --shadow-card:0 60px 80px rgba(15,15,15,.07),0 25px 33px rgba(15,15,15,.05),0 7.5px 10px rgba(15,15,15,.04),0 1.7px 2.2px rgba(15,15,15,.022);
+  --shadow-accent:0 10px 24px -8px rgba(11,92,255,.5);
+  --ease-out:cubic-bezier(.16,1,.3,1);--dur-enter:500ms;--stage:#14131C;
+  --rc:var(--blueink);
+}
+:root[data-theme="dark"]{
+  --ground:#16151C;--ground-2:#211F2A;--ground-hover:#2A2834;--card:#1E1C26;
+  --ink:#F4F2EC;--ink-2:#B6B4AC;--ink-3:#85837B;--ink-4:#56544D;--line:#332F3B;
+  --blue:#5AA2FF;--accent-press:#A9CBFF;--blue-wash:#1E2A40;--on-accent:#0E1A2E;--accent-hover:#74B2FF;--focus-ring:rgba(90,162,255,.5);
+  --jade:#34D6A0;--jade-wash:#173A2E;--red:#FF5A4D;--red-wash:#3E211E;--blueink:#4D8DF0;
+  --shadow-card:inset 0 0 0 1px rgba(244,242,236,.07),0 26px 60px -20px rgba(0,0,0,.72);
+  --shadow-sm:inset 0 0 0 1px rgba(244,242,236,.06),0 10px 26px -12px rgba(0,0,0,.6);
+}
+*{box-sizing:border-box}
+html{overflow-x:hidden}
+body{margin:0;background:var(--ground);color:var(--ink);font-family:var(--font-cn-ui),var(--font-ui);font-weight:450;-webkit-font-smoothing:antialiased}
+h1,h2,h3,p{margin:0}a{color:inherit;text-decoration:none}
+.over{font-family:var(--font-mono);font-size:11px;letter-spacing:.14em;text-transform:uppercase;color:var(--ink-3)}
+.wrap{max-width:600px;margin:0 auto;padding:34px 24px 70px}
+.screen{animation:fu var(--dur-enter) var(--ease-out) both}
+@keyframes fu{from{opacity:0;transform:translateY(16px);filter:blur(7px)}to{opacity:1;transform:none;filter:blur(0)}}
+@media (prefers-reduced-motion:reduce){.screen,*{animation:none!important}}
+[hidden]{display:none!important}
+em{font-style:normal;color:var(--accent)}
+.btn{appearance:none;border:0;cursor:pointer;font-family:var(--font-ui);font-weight:600;font-size:15px;padding:14px 28px;border-radius:var(--r-pill);transition:transform 150ms var(--ease-out),background 150ms;display:inline-flex;align-items:center;gap:8px}
+.btn.primary{background:var(--accent);color:var(--on-accent);box-shadow:var(--shadow-accent)}
+.btn.primary:hover{transform:translateY(-2px);background:var(--accent-hover)}
+.btn.ghost{background:var(--ground-2);color:var(--ink)}
+.btn.ghost:hover{background:var(--ground-hover)}
+.note{font-family:var(--font-mono);font-size:11px;color:var(--ink-3);text-align:center;margin-top:34px}
+
+/* intro */
+.intro{text-align:center;padding-top:16px}
+.rolechip{display:inline-flex;align-items:center;gap:9px;font-family:var(--font-cn-ui);font-size:13px;color:var(--ink-2);background:var(--card);box-shadow:var(--shadow-sm);padding:7px 14px 7px 8px;border-radius:var(--r-pill)}
+.rolechip .g{width:26px;height:26px;border-radius:8px;display:grid;place-items:center;font-family:var(--font-cn);font-weight:600;font-size:14px;color:#fff;background:var(--rc)}
+.intro h1{font-family:var(--font-cn);font-weight:600;font-size:clamp(27px,5.4vw,40px);line-height:1.2;margin:20px 0 0}
+.intro .sub{color:var(--ink-2);font-size:15.5px;line-height:1.66;margin:16px auto 0;max-width:36ch}
+.intro .sub b{color:var(--ink);font-weight:600}
+.intro .cta{margin-top:30px}
+.intro .meta{font-family:var(--font-mono);font-size:12px;color:var(--ink-3);margin-top:18px}
+
+/* quiz */
+.prog{display:flex;align-items:center;gap:12px;margin-bottom:20px}
+.pbar{flex:1;height:7px;border-radius:var(--r-pill);background:var(--ground-2);overflow:hidden}
+.pbar i{display:block;height:100%;background:var(--rc);border-radius:var(--r-pill);transition:width .35s var(--ease-out)}
+.pnum{font-family:var(--font-mono);font-size:12px;color:var(--ink-3)}
+.qkick{font-family:var(--font-mono);font-size:11px;letter-spacing:.1em;text-transform:uppercase;color:var(--rc)}
+.qscene{font-family:var(--font-cn);font-weight:600;font-size:21px;line-height:1.4;margin:9px 0 20px}
+.opts{display:flex;flex-direction:column;gap:11px}
+.opt{appearance:none;border:0;cursor:pointer;text-align:left;background:var(--card);box-shadow:var(--shadow-sm);border-radius:var(--r-md);padding:15px 16px;display:flex;align-items:flex-start;gap:13px;transition:transform 150ms var(--ease-out),box-shadow 150ms;font-family:inherit}
+.opt:hover{transform:translateY(-2px);box-shadow:var(--shadow-card)}
+.opt .dot{flex:none;width:26px;height:26px;border-radius:8px;background:var(--ground-2);color:var(--ink-2);font-family:var(--font-mono);font-weight:700;font-size:13px;display:grid;place-items:center;transition:.15s}
+.opt .ot{font-size:15px;color:var(--ink);line-height:1.45;font-weight:500}
+.opts.locked .opt{cursor:default;pointer-events:none;transform:none}
+.opt.correct{box-shadow:inset 0 0 0 2px var(--jade);background:var(--jade-wash)}
+.opt.correct .dot{background:var(--jade);color:#fff}
+.opt.wrong{box-shadow:inset 0 0 0 2px var(--red);background:var(--red-wash);opacity:.9}
+.opt.wrong .dot{background:var(--red);color:#fff}
+.opt.dim{opacity:.5}
+.reveal{margin-top:16px;background:var(--stage);color:#F4F2EC;border-radius:var(--r-lg);padding:18px 20px;animation:fu .4s var(--ease-out) both}
+.reveal .rk{font-family:var(--font-mono);font-size:11px;letter-spacing:.06em;color:#85837B;text-transform:uppercase}
+.reveal .rk b{color:var(--jade)}
+.reveal .rt{font-size:14px;line-height:1.66;color:#D8D8DE;margin-top:9px}
+.reveal .rt b{color:#fff;font-weight:600}
+.nextrow{display:flex;justify-content:flex-end;margin-top:18px}
+
+/* result */
+.result{text-align:center}
+.score-card{background:var(--stage);color:#F4F2EC;border-radius:var(--r-lg);padding:26px 24px;box-shadow:var(--shadow-card)}
+.score-big{font-family:var(--font-ui);font-weight:800;font-size:50px;line-height:1;letter-spacing:-.02em}
+.score-big small{font-size:22px;color:#B6B4AC;font-weight:700}
+.score-vs{font-family:var(--font-cn-ui);font-size:13.5px;color:#B6B4AC;margin-top:10px}
+.score-vs b{color:#F4F2EC}
+.verdict{font-family:var(--font-cn);font-weight:600;font-size:clamp(19px,3.4vw,24px);line-height:1.5;max-width:26ch;margin:26px auto 0}
+.verdict em{font-style:normal;color:var(--accent)}
+.result .lead{color:var(--ink-2);font-size:14.5px;line-height:1.7;max-width:40ch;margin:16px auto 0}
+.result .lead b{color:var(--ink);font-weight:600}
+.result .row{display:flex;gap:12px;justify-content:center;flex-wrap:wrap;margin-top:26px}
+.retake{appearance:none;border:0;cursor:pointer;background:transparent;color:var(--ink-3);font-family:var(--font-mono);font-size:12px;margin:18px auto 0;display:block}
+.retake:hover{color:var(--ink)}
+</style>
+</head>
+<body>
+<div class="wrap">
+
+  <!-- INTRO -->
+  <section class="screen intro" id="s-intro">
+    <span class="rolechip"><span class="g">法</span>你抽到了 · 法务</span>
+    <h1>先别急着自己搓 agent —— <br>你真有<em>这行的判断</em>吗？</h1>
+    <p class="sub">3 道真实场景，选一个你会怎么办。看完你就知道，<b>和专业法务差的不是聪明</b>，是判断。</p>
+    <div class="cta"><button class="btn primary" id="startBtn">开始 · 3 题 →</button></div>
+    <p class="meta">凭直觉选，不用查资料</p>
+  </section>
+
+  <!-- QUIZ -->
+  <section class="screen" id="s-quiz" hidden>
+    <div class="prog"><div class="pbar"><i id="pbar"></i></div><span class="pnum" id="pnum">1 / 3</span></div>
+    <span class="qkick">法务判断 · 场景</span>
+    <h2 class="qscene" id="qscene"></h2>
+    <div class="opts" id="opts"></div>
+    <div id="revealBox"></div>
+    <div class="nextrow" id="nextRow" hidden><button class="btn primary" id="nextBtn">下一题 →</button></div>
+  </section>
+
+  <!-- RESULT -->
+  <section class="screen result" id="s-result" hidden>
+    <div class="score-card">
+      <div class="score-big"><span id="scoreN">0</span><small>/3</small></div>
+      <div class="score-vs">专业法务 <b>3/3</b> · 你 <b id="scoreN2">0</b>/3</div>
+    </div>
+    <p class="verdict" id="verdict"></p>
+    <p class="lead" id="lead"></p>
+    <div class="row">
+      <a class="btn primary" href="../recruit.html">去招一个专业法务 →</a>
+      <a class="btn ghost" href="../index.html#intro">看看 world / hello</a>
+    </div>
+    <button class="retake" id="retakeBtn">重测一次</button>
+  </section>
+
+  <p class="note">原型 · 方案①判断题（单角色法务）· 替代 recruit-v2 的手搓 prompt 环节</p>
+</div>
+
+<script>
+const $=s=>document.querySelector(s);
+const SCREENS=['s-intro','s-quiz','s-result'];
+function show(id){ SCREENS.forEach(s=>$('#'+s).hidden=(s!==id)); window.scrollTo(0,0); }
+
+const QUESTIONS=[
+  {scene:'一份 SaaS 合同，客户法务把第 7.2 条「赔付上限」删了。你怎么办？',
+   options:[
+     {t:'同意，反正极端赔付很少触发',ok:false},
+     {t:'加一句「重大过失除外」就签',ok:false},
+     {t:'坚持把赔付封在 3× 月费内，写进主协议 MSA',ok:true}],
+   why:'无上限赔付，一次极端事故就能拖垮一家早期公司；「重大过失除外」太模糊、举证难，客户法务照砍。<b>量化封顶 + 写进主协议</b>（不是塞附件），才既挡住风险又签得下去。'},
+  {scene:'客户丢来一份他们模板的 DPA（数据处理协议），让你签。你怎么办？',
+   options:[
+     {t:'直接签，DPA 都是标准文件',ok:false},
+     {t:'要求对方改用我方模板',ok:false},
+     {t:'只盯三处：数据出境、子处理商名单、删除期限，其余照让',ok:true}],
+   why:'DPA 九成是模板套话，逐条抠既费时又签不下来；对方基本不会换你的模板。<b>专业的只在真有风险的少数几处较劲</b>，其余让步换效率。'},
+  {scene:'自动续费条款，怎么写才不会被客户法务砍掉？',
+   options:[
+     {t:'写「到期自动续费」，简单直接',ok:false},
+     {t:'加「提前 30 天邮件通知 + 书面退出窗口」',ok:true},
+     {t:'干脆别写自动续费，省得扯皮',ok:false}],
+   why:'纯自动续费是被客户法务砍得最多的条款；<b>给一个明确的退出窗口</b>，对方就放行，你也保住续费收入。不写自动续费，等于白丢一块最稳的现金流。'},
+];
+
+const state={cur:0,score:0};
+$('#startBtn').onclick=()=>{ state.cur=0;state.score=0; renderQ(); show('s-quiz'); };
+
+function renderQ(){
+  const q=QUESTIONS[state.cur];
+  $('#pnum').textContent=(state.cur+1)+' / 3';
+  $('#pbar').style.width=(state.cur/3*100)+'%';
+  $('#qscene').textContent=q.scene;
+  $('#revealBox').innerHTML=''; $('#nextRow').hidden=true;
+  const w=$('#opts'); w.className='opts'; w.innerHTML='';
+  q.options.forEach((opt,i)=>{
+    const b=document.createElement('button'); b.className='opt';
+    b.innerHTML='<span class="dot">'+'ABC'[i]+'</span><span class="ot">'+opt.t+'</span>';
+    b.onclick=()=>choose(i);
+    w.appendChild(b);
+  });
+}
+function choose(i){
+  const q=QUESTIONS[state.cur];
+  const w=$('#opts'); w.classList.add('locked');
+  const btns=[...w.children];
+  const correctIdx=q.options.findIndex(o=>o.ok);
+  const right=q.options[i].ok;
+  if(right) state.score++;
+  btns.forEach((b,j)=>{
+    if(j===correctIdx) b.classList.add('correct');
+    else if(j===i) b.classList.add('wrong');
+    else b.classList.add('dim');
+  });
+  $('#revealBox').innerHTML=
+    '<div class="reveal"><div class="rk">专业解读 · '+(right?'<b>你答对了</b>':'专业选 '+'ABC'[correctIdx])+'</div><div class="rt">'+q.why+'</div></div>';
+  $('#nextRow').hidden=false;
+  $('#pbar').style.width=((state.cur+1)/3*100)+'%';
+}
+$('#nextBtn').onclick=()=>{
+  if(state.cur<QUESTIONS.length-1){ state.cur++; renderQ(); }
+  else finish();
+};
+
+function finish(){
+  $('#scoreN').textContent=state.score; $('#scoreN2').textContent=state.score;
+  if(state.score>=3){
+    $('#verdict').innerHTML='你 3/3 —— 八成你<em>本来就是</em>这行的。';
+    $('#lead').innerHTML='那换到你<b>不熟的行业</b>呢？判断立刻掉下来 —— 你不可能每个行业都是专家。真正能替你干成的，是一个<b>专业的组织 / session</b>：TA 经手过的合同、判例库、真人把关，你自己搓一个 agent 搓不出这些。';
+  }else{
+    $('#verdict').innerHTML='差的不是聪明，<br>是<em>这行的判断</em>。';
+    $('#lead').innerHTML='专业法务 3/3，你 '+state.score+'/3。而判断背后，是 TA 经手过的一堆合同、一个<b>判例库</b>、和<b>真人把关</b> —— 你自己搓一个 agent，搓不出这个。真正能替你干成的，是一个<b>专业的组织 / session</b>。';
+  }
+  show('s-result');
+}
+$('#retakeBtn').onclick=()=>{ state.cur=0;state.score=0; show('s-intro'); };
+</script>
+</body>
+</html>

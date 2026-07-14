@@ -1,4 +1,4 @@
-/* 复制自 docs/website-demo/index.html 的通用构件与样式（go-live 时直 link 真 DS） */
+/* 复制自 docs/website-demo/mainsite.html 的通用构件与样式（go-live 时直 link 真 DS） */
 @import url('https://fonts.googleapis.com/css2?family=Inter:wght@400;450;500;600;700;800&family=Noto+Sans+SC:wght@400;500;700&family=Noto+Serif+SC:wght@400;500;600;700&family=Space+Mono:wght@400;700&display=swap');
 :root{
   --ground:#E8E8EB;--ground-2:#EFEFF1;--ground-hover:#E4E4E8;--card:#FFFFFF;
@@ -211,7 +211,7 @@ footer .mono{font-size:11px}
   .nav{padding:8px 10px 8px 14px;gap:8px}.tab .en{display:none}.brand span.wm{display:none}
 }
 
-/* ══ contributors 办公室（team-office 移植；nav/badge/主题/fu 复用本页）════════ */
+/* ══ contributors 办公室（team-office 移植；nav/bad../fu 复用本页）════════ */
 main[data-page-panel="contributors"] .wrap{min-height:calc(100vh - 108px);display:flex;flex-direction:column}
 main[data-page-panel="contributors"] .sec-head.first{flex:none;margin:22px 0 22px}
 main[data-page-panel="contributors"] footer{flex:none;margin:6px 0 8px}

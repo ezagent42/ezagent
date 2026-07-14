@@ -5,7 +5,7 @@
 <meta name="viewport" content="width=device-width, initial-scale=1">
 <title>你搓的 agent，和专家差多少 · Ezagent</title>
 <meta name="description" content="你什么都自己搓——换个行业，还搓得出专业的 agent 吗？抽一张职业卡，为 TA 写一个 agent，看看你和行业专家差多远。">
-<!-- recruit v2 · 手搓挑战（抽卡小游戏）· 同 recruit.html 的 DS / 打分内核。s-draw(抽卡) → s-play(写 prompt + 打分)。无控制台。 -->
+<!-- recruit v2 · 手搓挑战（抽卡小游戏）· 同 recruit/ 的 DS / 打分内核。s-draw(抽卡) → s-play(写 prompt + 打分)。无控制台。 -->
 <style>
 @import url('https://fonts.googleapis.com/css2?family=Inter:wght@400;450;500;600;700;800&family=Noto+Sans+SC:wght@400;500;700&family=Noto+Serif+SC:wght@400;500;600;700&family=Space+Mono:wght@400;700&display=swap');
 :root{
@@ -237,7 +237,7 @@ em{font-style:normal;color:var(--accent)}
       <div class="play-cta">
         <button class="btn primary" id="marketBtn">招一个专业的，别自己搓 →</button>
         <button class="ghostlink" id="replayBtn">← 再抽一张职业卡</button>
-        <p class="softlink">好奇专业的 agent 从哪来？<a href="index.html#intro">看看 world / hello</a></p>
+        <p class="softlink">好奇专业的 agent 从哪来？<a href="mainsite.html#intro">看看 world / hello</a></p>
       </div>
     </div>
   </section>
@@ -255,7 +255,7 @@ em{font-style:normal;color:var(--accent)}
         <h2 class="mk-title">「<span id="mkRole">法务</span>」的专业 agent</h2>
         <p class="mk-sub">下面每一个，都由真正做过 <b id="mkRole2">法务</b> 的人发布。招一个进你的 workspace，比自己从头搓强得多。</p>
         <div class="mk-feed" id="mkFeed"></div>
-        <p class="mk-foot">你自己也是某个行业的专家？<a href="index.html#intro">看看怎么把你的 agent 也发布上来 →</a></p>
+        <p class="mk-foot">你自己也是某个行业的专家？<a href="mainsite.html#intro">看看怎么把你的 agent 也发布上来 →</a></p>
       </main>
     </div>
   </section>
@@ -269,8 +269,9 @@ em{font-style:normal;color:var(--accent)}
   <a class="wsbar-cta" id="wsbarGo" href="#">进 world 看看 TA 在做什么 →</a>
 </div>
 
-<script src="demo-state.js"></script>
-<script src="site-nav.js"></script>
+<script src="../assets/js/demo-state.js"></script>
+<script>window.EZD_SITE_ROOT = "../";</script>
+<script src="../assets/js/site-nav.js"></script>
 <script>
 const $=s=>document.querySelector(s);
 const SCREENS=['s-draw','s-play','s-market'];

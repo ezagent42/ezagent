@@ -6,7 +6,7 @@
 <title>案例 · Ezagent builds Ezagent · Cases · Ezagent</title>
 <meta name="description" content="Ezagent 案例 — 团队用 ezagent 做自己的研发，更快了。Real metrics from our own development.">
 <!-- 官网 demo · Cases 案例研究页（dogfooding 案例 #1）。结构参考飞书客户案例页（左侧纵向目录 + 简洁分段）。
-     复用 docs/website-demo/index.html 通用构件与样式(styles.css)；本页特有构件用页内 <style>。 -->
+     复用 docs/website-demo/mainsite.html 通用构件与样式(styles.css)；本页特有构件用页内 <style>。 -->
 <link rel="stylesheet" href="styles.css">
 <style>
 /* ── Cases 页特有构件 ── */
@@ -61,24 +61,24 @@ h2.flashing{animation:flash2 1.1s ease-in-out;border-radius:8px}
 
 <!-- nav：复用首页 nav 构件 -->
 <nav class="nav">
-  <a class="brand" href="index.html"><img class="logo light" src="../../ezagent-logo.png" alt="Ezagent" width="26" height="26"><img class="logo dark" src="../../ezagent-logo-dark.png" alt="Ezagent" width="26" height="26"><span class="wm">EZAGENT</span></a>
+  <a class="brand" href="mainsite.html"><img class="logo light" src="../assets/images/ezagent-logo.png" alt="Ezagent" width="26" height="26"><img class="logo dark" src="../assets/images/ezagent-logo-dark.png" alt="Ezagent" width="26" height="26"><span class="wm">EZAGENT</span></a>
   <div class="tabs">
-    <a class="tab" href="index.html">介绍<span class="en">Intro</span></a>
-    <a class="tab" href="index.html#worldcup">world.cup<span class="en">Progress</span></a>
-    <a class="tab" href="index.html#contributors">团队<span class="en">Team</span></a>
+    <a class="tab" href="mainsite.html">介绍<span class="en">Intro</span></a>
+    <a class="tab" href="mainsite.html#worldcup">world.cup<span class="en">Progress</span></a>
+    <a class="tab" href="mainsite.html#contributors">团队<span class="en">Team</span></a>
     <a class="tab active" href="cases-v2.html">案例<span class="en">Cases</span></a>
   </div>
   <span class="spacer"></span>
   <a class="ghbtn" href="https://github.com/ezagent42" target="_blank" rel="noopener">↗ GitHub</a>
-  <a class="loginbtn" href="../../login.html" rel="noopener">登录 · Login</a>
+  <a class="loginbtn" href="../login.html" rel="noopener">登录 · Login</a>
   <button class="iconbtn" id="theme" title="切换主题 · Theme" aria-label="切换主题">
-    <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><path d="M21 12.8A9 9 0 1 1 11.2 3a7 7 0 0 0 9.8 9.8z"/></svg>
+    <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><path d="M21 12.8A9 9 0 1 1 11.2 3a7 7 0 0 0 9.8 9.8../svg>
   </button>
 </nav>
 
 <div class="wrap">
 
-  <p class="crumb" style="margin:20px 0 0"><a href="index.html">首页</a> / <a href="cases-v2.html">案例</a> / Ezagent builds Ezagent</p>
+  <p class="crumb" style="margin:20px 0 0"><a href="mainsite.html">首页</a> / <a href="cases-v2.html">案例</a> / Ezagent builds Ezagent</p>
 
   <!-- HERO -->
   <div class="hero card">
@@ -157,8 +157,8 @@ h2.flashing{animation:flash2 1.1s ease-in-out;border-radius:8px}
       </div>
       <div class="ba card">
         <h3>开始统一编排前 / 后</h3>
-        <div class="barrow"><span class="nm">之前</span><div class="track"><div class="fill before" data-w="56">94 PR/周</div></div></div>
-        <div class="barrow"><span class="nm">之后</span><div class="track"><div class="fill after" data-w="100">170 PR/周</div></div></div>
+        <div class="barrow"><span class="nm">之前</span><div class="track"><div class="fill before" data-w="56">94 ../div></div></div>
+        <div class="barrow"><span class="nm">之后</span><div class="track"><div class="fill after" data-w="100">170 ../div></div></div>
         <p class="delta">每周合并的 PR 多了 <b>≈ 1.8 倍</b>（之前 2026-06-01→21 三周，之后 06-22→30）。</p>
         <p class="foot-note">数据来自本仓库 <span class="mono">git</span> + <span class="mono">gh pr</span>，按周折算。这段时间也有招人、流程改进等其他因素，没有剔除，所以只当方向参考。这份提速归功于「用 ezagent 的方式做研发」，不是某个大模型本身。</p>
       </div>
@@ -183,7 +183,7 @@ h2.flashing{animation:flash2 1.1s ease-in-out;border-radius:8px}
       <!-- CTA + more -->
       <div class="ctaband">
         <span class="t">想看 Ezagent 怎么跑起来？</span>
-        <a class="btn primary" href="index.html#products">了解产品 →</a>
+        <a class="btn primary" href="mainsite.html#products">了解产品 →</a>
       </div>
       <div class="more">
         <span class="badge info"><span class="dot"></span>More coming</span>
