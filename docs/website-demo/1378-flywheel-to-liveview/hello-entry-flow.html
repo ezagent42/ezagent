@@ -1,0 +1,165 @@
+<!DOCTYPE html>
+<html lang="zh" data-theme="light">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Hello 入口流参考 · Greeter → Kanban · Ezagent 设计参考</title>
+<link rel="stylesheet" href="https://cdn.jsdelivr.net/gh/ezagent42/design-system@main/styles.css">
+<style>
+  body { max-width:1100px; margin:40px auto; padding:0 24px 80px; background:var(--ground); color:var(--ink); font-family:var(--font-ui) }
+  h1 { font-family:var(--font-cn); font-size:28px; margin-bottom:4px }
+  .sub { color:var(--ink-3); font-size:14px; margin-bottom:32px }
+  h2 { font-family:var(--font-cn); font-size:20px; margin:36px 0 16px; padding-bottom:8px; border-bottom:2px solid var(--accent) }
+  h3 { font-family:var(--font-cn); font-size:16px; margin:0 0 8px }
+
+  /* Flow stage cards */
+  .stages { display:flex; gap:0; margin:24px 0; overflow-x:auto }
+  .stage { flex:1; min-width:180px; background:var(--card); border-radius:var(--r-lg); padding:20px; box-shadow:var(--shadow-sm); position:relative }
+  .stage:not(:last-child)::after { content:"→"; position:absolute; right:-16px; top:50%; transform:translateY(-50%); font-size:20px; color:var(--ink-4); z-index:1 }
+  .stage .num { display:inline-block; width:28px; height:28px; line-height:28px; text-align:center; border-radius:50%; background:var(--accent); color:#fff; font-size:13px; font-weight:700; margin-bottom:8px }
+  .stage .title { font-weight:700; font-size:15px; margin-bottom:4px }
+  .stage .desc { font-size:12px; color:var(--ink-3); line-height:1.5 }
+  .stage .fly { margin-top:8px; padding:6px 8px; background:var(--accent-wash); border-radius:var(--r-sm); font-size:11px; color:var(--accent) }
+  .stage .fly::before { content:"↳ flywheel: " }
+
+  .highlight { background:var(--ground-2); border-radius:var(--r-md); padding:16px 20px; margin:16px 0; border-left:3px solid var(--accent) }
+  .highlight h3 { margin-top:0 }
+
+  .note { background:var(--ground-2); border-radius:var(--r-md); padding:12px 16px; margin-top:12px; font-size:13px; color:var(--ink-3) }
+  .note b { color:var(--ink-2) }
+
+  .gap { border:2px dashed var(--orange); background:var(--warning-wash, #fff7ed); padding:14px 18px; border-radius:var(--r-md); margin:10px 0; font-size:13px }
+  .gap::before { content:"⚠ 松耦合 — 非最终挂载："; font-weight:700; color:var(--orange) }
+
+  .done { border:2px solid var(--jade); background:var(--success-wash); padding:14px 18px; border-radius:var(--r-md); margin:10px 0; font-size:13px }
+  .done::before { content:"✓ 已实现："; font-weight:700; color:var(--success-text) }
+</style>
+</head>
+<body>
+
+<h1>Hello 入口流参考：Greeter → Live 回复 → Kanban 连接</h1>
+<p class="sub">设计参考 · PR #1378 · 受众 zhaomato · hello live E2E + hello↔kanban 融合</p>
+
+<!-- ===== User Journey ===== -->
+<h2>1. 用户旅程（6 步）</h2>
+<div class="stages">
+  <div class="stage">
+    <div class="num">1</div>
+    <div class="title">Hello 入口 · Greeter</div>
+    <div class="desc">用户进入 hello session（/hello/:name 或 /socialware/chat）<br>看到欢迎页：产品名、功能说明、CTA</div>
+    <div class="fly">product-detail.html（产品详情 + Try 按钮）</div>
+  </div>
+  <div class="stage">
+    <div class="num">2</div>
+    <div class="title">真 Prompt · Live 渲染</div>
+    <div class="desc">用户输入需求 → LLM 生成 @json-render spec → 页面实时渲染<br>36 组件 catalog 约束输出</div>
+    <div class="fly">Try 试用（进 world 试玩产品）</div>
+  </div>
+  <div class="stage">
+    <div class="num">3</div>
+    <div class="title">Concierge · 确认</div>
+    <div class="desc">Concierge 对话确认需求、细化任务<br>只读问答不改页</div>
+    <div class="fly">Fork 前确认（"真的要 Fork 吗？"）</div>
+  </div>
+  <div class="stage">
+    <div class="num">4</div>
+    <div class="title">🔌 派活到 Kanban</div>
+    <div class="desc">hello→kanban 连接点<br>创建开发任务卡、进入看板</div>
+    <div class="fly">Fork（一键复制到 workspace）</div>
+  </div>
+  <div class="stage">
+    <div class="num">5</div>
+    <div class="title">Agent 接任务</div>
+    <div class="desc">平台托管 agent 接卡、分析需求<br>产出 PR → CI → review → merge</div>
+    <div class="fly">world-step 改造（构建/Fork 流程）</div>
+  </div>
+  <div class="stage">
+    <div class="num">6</div>
+    <div class="title">看板流转 · 闭环 ✓</div>
+    <div class="desc">任务完成 → 状态流转 → 三面绿<br>用户可见：任务从 "待派" 走到 "已完成"</div>
+    <div class="fly">publish-landing（发布确认 + 上架）</div>
+  </div>
+</div>
+
+<!-- ===== Key Design Moments ===== -->
+<h2>2. 三个关键设计时刻</h2>
+
+<div class="highlight">
+  <h3>时刻 A：Hello 入口页（第 1 步）</h3>
+  <p>用户进入 hello 的第一眼。应参照 flywheel <code>product-detail.html</code> 的结构：</p>
+  <ul>
+    <li><b>产品标识</b>：名称 + glyph + 描述（用 @json-render 的 Heading + Text + Badge）</li>
+    <li><b>功能说明</b>：这个 hello 能做什么（用 Grid + Card 列出能力）</li>
+    <li><b>主 CTA</b>：醒目的 "开始使用 / 派个任务" 按钮（参照 product-detail 的 primary button）</li>
+    <li><b>公开可见</b>：匿名 public_view 可访问（参照 flywheel 的 "public_view · live" 标签）</li>
+  </ul>
+</div>
+
+<div class="highlight" style="border-left-color:var(--orange)">
+  <h3>时刻 B：Hello↔Kanban 连接点（第 4 步）<span class="gap" style="display:inline-block;margin-left:12px;border:0;padding:3px 10px;font-size:11px">松耦合</span></h3>
+  <p>这是自举链的关键衔接点。Flywheel 里是 Fork 按钮，这里应是 "派活到 kanban" 动作：</p>
+  <ul>
+    <li><b>触发方式</b>：Concierge 确认需求后，显示 "创建开发任务" CTA</li>
+    <li><b>视觉提示</b>：按钮 + 简短的过渡说明（"将在 kanban 看板创建任务，agent 接单后自动开工"）</li>
+    <li><b>松耦合标注</b>：诚实标注 "当前为松耦合连接，最终将走 #1360 Layer B 跨-session 挂载"</li>
+    <li><b>状态反馈</b>：任务创建后 → 显示 kanban 任务卡链接 + agent 状态</li>
+  </ul>
+</div>
+
+<div class="highlight" style="border-left-color:var(--jade)">
+  <h3>时刻 C：闭环反馈（第 6 步）</h3>
+  <p>任务完成后，用户应能感知到进展——参照 flywheel publish-landing 的闭环模式：</p>
+  <ul>
+    <li>kanban 看板上任务卡状态切换（待派 → 进行中 → PR 已开 → 已合并 → 已部署）</li>
+    <li>状态变更时视觉反馈（badge 颜色变化、卡片位置移动）</li>
+    <li>最终 "三面绿 ✓" 作为 publish-landing 的等价物</li>
+  </ul>
+</div>
+
+<!-- ===== Existing vs New ===== -->
+<h2>3. 已实现 vs 待建</h2>
+
+<div class="done">Hello @json-render catalog（36 组件：Stack/Grid/Card/Heading/Text/Button/Image…）— 已落地，hello 入口页可直接组合使用</div>
+<div class="done">Hello external feed（/socialware/external）+ chat feed（/socialware/chat）— 已落地</div>
+<div class="done">Fork 后端（session.fork_config）— 已落地，待前端触发</div>
+<div class="done">CR 发布管线 — 已落地，待前端入口 + 表单</div>
+
+<div class="gap">Hello 入口页（greeter 欢迎面）— 待建。参照 product-detail 结构，用 @json-render 组件搭建</div>
+<div class="gap">Hello→Kanban 连接点 — 待建。hello 侧 CTA + kanban 侧任务创建</div>
+<div class="gap">Kanban 看板任务状态流转 UI — 待建</div>
+<div class="gap">Kanban→Agent 派活链路 — 待链测（后端已就绪，待端到端验证）</div>
+
+<!-- ===== Flow Comparison ===== -->
+<h2>4. 双流对照</h2>
+<div style="display:grid;grid-template-columns:1fr 1fr;gap:24px;margin-top:16px">
+  <div style="background:var(--card);border-radius:var(--r-lg);padding:20px 24px;box-shadow:var(--shadow-sm)">
+    <h3>Flywheel 飞轮（Homesite 视角）</h3>
+    <div style="font-size:13px;line-height:2.2">
+      🏠 官网 → Gallery 货架<br>
+      → 产品详情（看 + Try + Fork）<br>
+      → Try 试用（进 world 交互）<br>
+      → Fork 复制（到自己 workspace）<br>
+      → 改造 + 发布<br>
+      → ✨ 新产品上架（闭环）
+    </div>
+  </div>
+  <div style="background:var(--card);border-radius:var(--r-lg);padding:20px 24px;box-shadow:var(--shadow-sm)">
+    <h3>Hello 自举链（World 视角）</h3>
+    <div style="font-size:13px;line-height:2.2">
+      🔑 登录 → Hello 入口（greeter）<br>
+      → 真 prompt → live 渲染<br>
+      → Concierge 确认需求<br>
+      → 🔌 派活到 kanban（连接点）<br>
+      → Agent 接任务 → 产 PR<br>
+      → ✨ merge → 三面绿（闭环）
+    </div>
+  </div>
+</div>
+
+<div class="note" style="margin-top:16px">
+  <b>两条链的共同模式：</b>浏览/发现 → 深入了解 → 触发行动（Try/Fork vs 派活/接任务）→ 工作执行 → 结果可见（上架 vs 三面绿）<br>
+  <b>关键差异：</b>Flywheel 是多租户 marketplace（Builder × Seller）；自举链是单次开发任务流（用户 × Agent）。
+</div>
+
+</body>
+</html>

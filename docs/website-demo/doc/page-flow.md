@@ -105,3 +105,15 @@ L2/L3 页面通过 `site-nav.js`（设置 `EZD_SITE_ROOT = "../"`）或显式 "�
 - `index-old.html` — 旧版 mainsite（无 Gallery 入口）
 - `ezagent-flywheel-demo.zip` — 旧版 flywheel 压缩包
 - `2026-06-30-website-*.md` — 历史路线图 / 审计文档
+
+---
+
+## 设计参考（离线，不从 mainsite 链接）
+
+这些页面是纯设计参考文档，不在 mainsite 导航流中，为真实 world/hello LiveView 面开发提供 IA/视觉方向。
+
+| 参考页 | 文件 | 用途 | 关联 PR |
+|--------|------|------|---------|
+| **IA 映射** | `1378-flywheel-to-liveview/ia-mapping.html` | flywheel 5 页 → world/hello 真实面的 IA 对照 | #1378 |
+| **Hello 入口流** | `1378-flywheel-to-liveview/hello-entry-flow.html` | greeter → live 回复 → kanban 连接的用户旅程参考 | #1378 |
+| **设计说明** | `1378-flywheel-to-liveview/design-brief.md` | IA 映射表 + 视觉方向 + 不做事项 | #1378 |

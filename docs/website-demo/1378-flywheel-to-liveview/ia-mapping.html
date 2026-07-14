@@ -1,0 +1,135 @@
+<!DOCTYPE html>
+<html lang="zh" data-theme="light">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>IA 映射 · Flywheel → World/Hello · Ezagent 设计参考</title>
+<link rel="stylesheet" href="https://cdn.jsdelivr.net/gh/ezagent42/design-system@main/styles.css">
+<style>
+  body { max-width:1280px; margin:40px auto; padding:0 24px 80px; background:var(--ground); color:var(--ink); font-family:var(--font-ui) }
+  h1 { font-family:var(--font-cn); font-size:28px; margin-bottom:4px }
+  .sub { color:var(--ink-3); font-size:14px; margin-bottom:32px }
+  h2 { font-family:var(--font-cn); font-size:20px; margin:36px 0 16px; padding-bottom:8px; border-bottom:2px solid var(--accent) }
+  .row { display:grid; grid-template-columns:1fr 1fr; gap:24px; margin-bottom:24px }
+  .col { background:var(--card); border-radius:var(--r-lg); padding:20px 24px; box-shadow:var(--shadow-sm) }
+  .col h3 { font-family:var(--font-cn); font-size:16px; margin:0 0 4px }
+  .col .path { font-family:var(--font-mono); font-size:11px; color:var(--ink-4); margin-bottom:12px }
+  .col .tag { display:inline-block; padding:2px 8px; border-radius:var(--r-pill); font-size:11px; margin-right:6px }
+  .tag-fly { background:var(--accent-wash); color:var(--accent) }
+  .tag-real { background:var(--success-wash); color:var(--success-text) }
+  .tag-gap { background:var(--warning-wash, #fff7ed); color:var(--orange, #ea580c) }
+  .arrow { text-align:center; font-size:24px; color:var(--ink-4); padding:8px 0 }
+  .note { background:var(--ground-2); border-radius:var(--r-md); padding:12px 16px; margin-top:12px; font-size:13px; color:var(--ink-3) }
+  .note b { color:var(--ink-2) }
+  .flow { display:flex; align-items:center; gap:12px; flex-wrap:wrap; margin:16px 0; font-size:14px }
+  .flow .step { background:var(--card); border:1px solid var(--ground-2); padding:10px 16px; border-radius:var(--r-pill) }
+  .flow .arr { color:var(--ink-4); font-size:18px }
+  .empty { border:2px dashed var(--ink-5); background:var(--ground); padding:16px 20px; border-radius:var(--r-md); color:var(--ink-4); font-size:13px; text-align:center }
+</style>
+</head>
+<body>
+
+<h1>IA 映射：Flywheel 原型 → World/Hello 真实面</h1>
+<p class="sub">设计参考 · PR #1378 · 不改代码 · 不统一视觉风格</p>
+
+<!-- ===== Gallery ===== -->
+<h2>1. Gallery 货架</h2>
+<div class="row">
+  <div class="col">
+    <h3><span class="tag tag-fly">Flywheel</span> gallery.html</h3>
+    <div class="path">docs/website-demo/flywheel/gallery.html</div>
+    <p>产品货架：CSS columns 瀑布流卡片 + 搜索 + 分类筛选 chip + 产品数量计数。每个卡片含 glyph 头像、标题、作者、描述、标签（public_view · live）、统计（招过 N · 好评 M）+ "查看" CTA。</p>
+    <div class="note"><b>视觉特征：</b>白色卡片 + 阴影，hover 上浮 3px；glyph/color 产品身份；"刚上架 · new" 时间徽章</div>
+  </div>
+  <div class="col">
+    <h3><span class="tag tag-real">World</span> /plugins 页</h3>
+    <div class="path">WorldLive → React: workspace_plugins</div>
+    <p>已安装 workspace 插件列表（非 marketplace gallery）。卡片样式存在但语义不同——显示的是 "已安装" 而非 "可浏览/Fork"。</p>
+    <div class="note"><b>缺口 W-G1：</b>需要 Gallery 浏览/搜索/详情 API，从 DefinitionRegistry 拉取已发布产品。前端可用现有 shadcn Card + Grid 组件实现。</div>
+    <div class="empty">待建：Gallery 浏览页</div>
+  </div>
+</div>
+
+<!-- ===== Product Detail ===== -->
+<h2>2. 产品详情</h2>
+<div class="row">
+  <div class="col">
+    <h3><span class="tag tag-fly">Flywheel</span> product-detail.html</h3>
+    <div class="path">docs/website-demo/flywheel/product-detail.html</div>
+    <p>面包屑 → 英雄卡片（大 glyph + 标题 + 描述）→ Manifest 条纹网格（name/version/owner/visibility/category）→ 双按钮：Fork（复制成我的）+ Try（试玩）。</p>
+    <div class="note"><b>视觉特征：</b>窄容器 820px 聚焦；Manifest 键值对网格；primary + ghost 双 CTA 并排</div>
+  </div>
+  <div class="col">
+    <h3><span class="tag tag-real">Hello</span> external feed 页</h3>
+    <div class="path">/socialware/external?session_uri=...</div>
+    <p>Hello 外部 SPA——渲染 AI 生成的 @json-render 页面，无 metadata 浏览层。是 "试用" 面而非 "详情" 面。</p>
+    <div class="note"><b>设计方向：</b>Hello 入口页（greeter）应参照 product-detail 结构——产品名 + 描述 + 功能说明 + CTA（"开始使用 / 派个任务"）。可用 @json-render 的 Card + Heading + Button 组件组合。</div>
+    <div class="empty">待建：Hello 入口/详情页（greeter 面）</div>
+  </div>
+</div>
+
+<!-- ===== World Step / Build+Fork ===== -->
+<h2>3. 构建 / Fork 中转</h2>
+<div class="row">
+  <div class="col">
+    <h3><span class="tag tag-fly">Flywheel</span> world-step.html</h3>
+    <div class="path">docs/website-demo/flywheel/world-step.html</div>
+    <p>占位页：虚线框列出待建功能。build 模式显示发布前置步骤；fork 模式显示 "从官网一键触发 fork → 改造 → 发布"。</p>
+    <div class="note"><b>设计特征：</b>故意朴素——纯白背景、系统字体、textarea 模拟表单。`data-fw-route` + `data-fw-step` 追踪飞轮状态。</div>
+  </div>
+  <div class="col">
+    <h3><span class="tag tag-real">World</span> LiveView + Publish CR</h3>
+    <div class="path">WorldLive → Fork 后端已落地（session.fork_config）</div>
+    <p>Fork 后端已实现（Conversation.tsx:713 → config_fork.ex），CR 发布管线已落地。缺：前端入口 + 发布表单。</p>
+    <div class="note"><b>设计方向：</b>① Fork 触发——在 hello 入口/Gallery 产品页放 Fork 按钮，一键调 session.fork_config；② 发布表单——world-step 的发布流程用 shadcn Form 组件实现（title/description/cover 上传/提交 CR）。</div>
+    <div class="empty">待建 W-G2：发布入口 + 表单；W-G3：Gallery→Fork 触发</div>
+  </div>
+</div>
+
+<!-- ===== Publish Landing ===== -->
+<h2>4. 发布确认 + 闭环</h2>
+<div class="row">
+  <div class="col">
+    <h3><span class="tag tag-fly">Flywheel</span> publish-landing.html</h3>
+    <div class="path">docs/website-demo/flywheel/publish-landing.html</div>
+    <p>绿色 ✓ + "已上架 / Published" + 产品卡片滑入动画 + "返回探索" CTA。卡片通过 `slotin` 关键帧动画入场。</p>
+    <div class="note"><b>视觉特征：</b>成功色语义；缩略产品卡片；动画闭环反馈——发布后立刻在货架可见</div>
+  </div>
+  <div class="col">
+    <h3><span class="tag tag-real">自举链</span> 闭环确认</h3>
+    <div class="path">kanban 看板 → 三面绿 ✓</div>
+    <p>自举链的 "闭环" 是看板任务状态流转（待派 → 进行中 → PR 已开 → 已合并 → 已部署）。每个状态变更都是 fliwheel 的 "publish" 等价物。</p>
+    <div class="note"><b>设计方向：</b>kanban 任务卡的状态流转应参照 publish-landing 的闭环反馈模式——状态变更时视觉上可感知（badge 切换、卡片位置移动、动画过渡）。</div>
+  </div>
+</div>
+
+<!-- ===== Full Loop ===== -->
+<h2>5. 完整闭环对照</h2>
+<div class="col" style="grid-column:1/-1">
+  <h3><span class="tag tag-fly">Flywheel</span> 5 步飞轮</h3>
+  <div class="flow">
+    <span class="step">gallery<br>浏览货架</span><span class="arr">→</span>
+    <span class="step">product-detail<br>查看详情</span><span class="arr">→</span>
+    <span class="step">Try 试用</span><span class="arr">→</span>
+    <span class="step">Fork 改造</span><span class="arr">→</span>
+    <span class="step">publish<br>发布上架 ✨</span>
+  </div>
+
+  <h3 style="margin-top:28px"><span class="tag tag-real">Hello</span> 自举链（zhaomato 当前任务）</h3>
+  <div class="flow">
+    <span class="step">hello 入口<br>greeter</span><span class="arr">→</span>
+    <span class="step">真 prompt<br>live 渲染</span><span class="arr">→</span>
+    <span class="step">concierge<br>确认需求</span><span class="arr">→</span>
+    <span class="step">kanban<br>派活 ✨</span><span class="arr">→</span>
+    <span class="step">agent 产 PR<br>→ CI → merge</span>
+  </div>
+
+  <div class="note" style="margin-top:16px">
+    <b>关键映射：</b>Flywheel 的 "Fork" = hello→kanban 派活连接点（松耦合，非最终挂载）。<br>
+    Flywheel 的 "Publish" = agent PR 合并 + 看板流转。<br>
+    Flywheel 的 "Gallery 货架" = kanban 看板（任务可见、可接、可追踪）。
+  </div>
+</div>
+
+</body>
+</html>

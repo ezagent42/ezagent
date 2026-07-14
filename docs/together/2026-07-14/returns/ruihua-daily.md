@@ -10,18 +10,23 @@
 - `ezagent-together` SKILL.md 写入设计交付规范（6 条规则 + 设计 return 模板 + 验收 gate）
 - flywheel 解耦 design-system 本地副本，改为 CDN 引用
 
-### ⬜ Plan 分配任务（待开始）
-- 飞轮原型 #1372 IA/视觉接入真实 world/hello LiveView 面（设计输入，走 Feishu）
-- 作为 hello/官网面设计参照，对接 zhaomato 的 hello live E2E
+### ✅ Plan 分配任务（已完成）
+- `1378-flywheel-to-liveview/design-brief.md` — IA 映射表 + 视觉方向 + hello↔kanban 连接点 + 不做事项清单
+- `1378-flywheel-to-liveview/ia-mapping.html` — flywheel 5 页 → world/hello 真实面 IA 对照原型
+- `1378-flywheel-to-liveview/hello-entry-flow.html` — greeter → live 回复 → kanban 连接的用户旅程参考
+- `doc/page-flow.md` 已更新设计参考节
+- 受众 zhaomato，不改代码，设计输入最终走 Feishu
 
 ## 设计决策
 - L1 页面放根目录（从 mainsite 直接触达），L2/L3 收入子目录 — 遵循设计交付规范规则 #2
 - 孤立原型（puncture/、team-office.html）归档而非删除 — git 历史可追溯
 - site-nav.js 用 `EZD_SITE_ROOT` 变量适配不同页面深度，替代 `<base>` 标签（避免全局副作用）
+- Flywheel IA 映射关键是 "结构对照" 而非 "风格统一" — homesite 暗色玻璃不进 world 的 shadcn 体系
+- Hello↔Kanban 连接点设计标注 "松耦合，非最终挂载"（诚实策略，参照 flywheel world-step 占位页做法）
 
 ## 下一步计划（必填）
-- 开始 Plan 分配任务：将 #1372 飞轮的 IA/视觉方向写成设计输入文档（走 Feishu），对接 zhaomato 的 hello live E2E 产品面
-- 产出的设计文档和 HTML 原型按新 workflow 放入 `docs/website-demo/` 对应文件夹，更新 `doc/page-flow.md`
+- 设计输入文档走 Feishu 交付给 zhaomato
+- 若 Plan 有后续设计任务，按新 workflow 继续：新建文件夹 → 设计说明 → HTML 产物 → 更新 page-flow.md → return
 
 ## 待办 / 阻塞
 - 无
