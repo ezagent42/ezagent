@@ -1,8 +1,9 @@
 import React from "react"
-import {Bug, Cable, CheckCircle2, ChevronUp, Copy, ExternalLink, LayoutGrid, Link2, Loader2, Maximize2, MessageSquare, MoreHorizontal, Paperclip, PanelTop, Plus, RotateCcw, Route, Send, Sparkles, TerminalSquare, Upload, UserMinus, UserPlus, Users, X} from "lucide-react"
+import {Bug, Cable, CheckCircle2, ChevronUp, Copy, ExternalLink, LayoutGrid, Link2, Loader2, Maximize2, MessageSquare, MoreHorizontal, Paperclip, PanelTop, Plus, RotateCcw, Route, Send, Sparkles, SquareKanban, TerminalSquare, Upload, UserMinus, UserPlus, Users, X} from "lucide-react"
 
 import {Button, Input, Modal, Select} from "./ui/primitives"
 import {JsonRenderBubble} from "./JsonRenderBubble"
+import {Kanban, type KanbanState} from "./Kanban"
 import {PtyTerminalSurface} from "./PtyTerminal"
 
 // Server-rendered attachment: an uploads URI carries a signed download `href`
@@ -46,6 +47,7 @@ const ICONS: Record<string, React.ComponentType<{className?: string; "aria-hidde
   link: Link2,
   "panel-top": PanelTop,
   sparkles: Sparkles,
+  "square-kanban": SquareKanban,
 }
 
 const iconFor = (name: string) => ICONS[name] ?? LayoutGrid
@@ -183,6 +185,10 @@ type Props = {
   onPtyInput: (bytes: string) => void
   onPtyResize: (size: {cols: number; rows: number}) => void
   onServerEvent?: (event: string, callback: (payload: unknown) => void) => void
+  // Kanban board actions (kanban.*) dispatched from the in-session board tab.
+  // Wired to the same `world:dispatch` path the plugin page uses
+  // (`onWorkspacePluginAction`); session-agnostic, so no session_uri is threaded.
+  onKanbanAction: (action: string, args: Record<string, unknown>) => void
   // Publish this (hello) session as a reusable SessionTemplate carrying the
   // current page + agent (not the chat history). Operator-only; the button lives
   // in the page-preview overlay, so it never shows on the public share page.
@@ -212,6 +218,7 @@ export function Conversation({
   onPtyInput,
   onPtyResize,
   onServerEvent,
+  onKanbanAction,
   onPublishTemplate,
 }: Props) {
   const sessionUri = state.session_uri || ""
@@ -798,7 +805,15 @@ export function Conversation({
         </div>
 
         <div className="flex min-h-0 flex-1 overflow-hidden">
-          {activeMode === "pty" ? (
+          {activeMode === "kanban" ? (
+            // 权限门控的 session tab 里渲染富 Kanban 操作面（复用插件页同一组件）。
+            // board 数据来自 world:state 合并的看板字段（后端 session.view.switch 切到
+            // kanban_board 时经 KanbanData.session_boards 载入 + 自动选中首块板）；
+            // onAction 走现成 world:dispatch（onKanbanAction = onWorkspacePluginAction）。
+            <div className="min-w-0 flex-1 overflow-y-auto bg-[#fafafa]" data-world-subcomponent="kanban">
+              <Kanban state={state as unknown as KanbanState} onAction={onKanbanAction} />
+            </div>
+          ) : activeMode === "pty" ? (
             <div className="min-w-0 flex-1 overflow-y-auto bg-[#fafafa] p-4" data-world-subcomponent="pty">
               <PtyTerminalSurface
                 state={{...state, agent_uri: activePtyAgentUri}}

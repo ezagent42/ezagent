@@ -525,10 +525,50 @@ defmodule Ezagent.World.ConversationActions do
     caller = socket.assigns.current_entity_uri
 
     if view in ConversationData.session_view_ids(session_uri, caller) do
-      {:noreply, push_world_state(socket, %{"active_view" => view})}
+      {:noreply, push_world_state(socket, view_switch_updates(socket, session_uri, view))}
     else
       {:noreply, assign(socket, :last_dispatch_status, "error:bad_view")}
     end
+  end
+
+  # Switching to the native kanban board tab loads the session's boards
+  # (`KanbanData.session_boards/2` — caller-cap filtered, session-workspace
+  # scoped) so the rich `<Kanban>` mounts WITH data instead of the plugin-page
+  # Miro-config placeholder. With ≥1 board, auto-select the first: merge its full
+  # snapshot (kanban_uri + tree + config + miro), then re-assert the session-scoped
+  # `instances` list. Zero boards → just the empty `instances` + `active_view`
+  # (frontend renders its own empty/config state). fail-safe: any error falls back
+  # to a plain active_view switch so the tab never wedges.
+  defp view_switch_updates(socket, %URI{} = session_uri, "kanban_board") do
+    ctx = kanban_read_ctx(socket)
+    boards = Ezagent.World.KanbanData.session_boards(session_uri, ctx)
+    base = %{"active_view" => "kanban_board", "instances" => boards}
+
+    with [%{"uri" => uri} | _] when is_binary(uri) <- boards,
+         {:ok, %URI{} = board_uri} <- Ezagent.URI.parse(uri) do
+      base
+      |> Map.merge(Ezagent.World.KanbanData.board_state(board_uri, ctx))
+      |> Map.merge(%{"active_view" => "kanban_board", "instances" => boards})
+    else
+      _ -> base
+    end
+  rescue
+    _ -> %{"active_view" => "kanban_board"}
+  catch
+    _, _ -> %{"active_view" => "kanban_board"}
+  end
+
+  defp view_switch_updates(_socket, _session_uri, view), do: %{"active_view" => view}
+
+  # read-side ctx for KanbanData (session_boards / board_state) — mirrors
+  # `Ezagent.World.KanbanData.dispatch_ctx` inputs: caller identity + cap snapshot
+  # + workspace scope (RF-7 tenant bound). Same shape as `KanbanActions.read_ctx`.
+  defp kanban_read_ctx(socket) do
+    %{
+      caller_uri: socket.assigns.current_entity_uri,
+      caller_caps: Map.get(socket.assigns, :current_caps, MapSet.new()),
+      workspace_uri: socket.assigns.current_workspace_uri
+    }
   end
 
   @doc """
