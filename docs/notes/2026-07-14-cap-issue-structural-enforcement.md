@@ -22,7 +22,7 @@
 | 2 | 管道 · 别名 · `apply` · capture | codex |
 | 3 | `import` · `@attr` · **`Module.concat`** | 自查 |
 
-前两类都补上了(现在 7 种写法全抓,见 `cap_issue_chokepoint_boundary_test.exs`)。
+前两类都补上了。扫描器现在认 **8 种写法**(1 个基线 `Users.create(...)` + **7 种规避**:管道 / 别名(`as:` 和 `{Users, ...}` 两式)/ `import` / `@attr` / `apply` / capture),每一种都由 `cap_issue_chokepoint_boundary_test.exs` 里的 fixture 钉死。
 
 **但第三类补不上:**
 

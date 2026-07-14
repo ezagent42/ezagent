@@ -15,7 +15,8 @@ defmodule Ezagent.Invariants.CapIssueChokepointBoundaryTest do
   not. A comment cannot hold a boundary. So the boundary lives here, and it is
   measured on every run:
 
-    * the seven spellings below MUST be caught
+    * the EIGHT spellings in `@seen` MUST be caught — one plain baseline plus
+      the seven evasions that actually got past earlier cuts of the scanner
     * `Module.concat/1` — the module resolved at RUNTIME — MUST NOT be, because
       no source scan can see it. That is pinned deliberately. If someone teaches
       the scanner to see it, this test fails and forces them to come back and

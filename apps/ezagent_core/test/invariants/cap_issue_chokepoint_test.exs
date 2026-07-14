@@ -279,60 +279,6 @@ defmodule Ezagent.Invariants.CapIssueChokepointTest do
 
   defp count_caps_json_kw(_node), do: 0
 
-  # EVERY `Users.*` entry point that writes the `caps_json` column, and the
-  # argument carrying the caps:
-  #
-  #   Users.create/3,4          — caps are the 3rd positional arg
-  #   Users.create_read_only/2  — caps are the 2nd (and the /1 clause defaults [])
-  #
-  # ## WHAT THIS SCANNER CAN AND CANNOT SEE — read before trusting it
-  #
-  # It has been evaded three times. Each time the fix was "teach it one more
-  # spelling", and each time it was still wrong. So the boundary is stated up
-  # front, and it is a REAL boundary, not a to-do:
-  #
-  # SEEN (each verified by a fixture that goes red):
-  #     Ezagent.Users.create(uri, pw, caps)        plain remote call
-  #     uri |> Ezagent.Users.create(pw, caps)      pipe (the arg sits OUTSIDE
-  #                                                the call node — an arity
-  #                                                guard silently under-counts)
-  #     alias Ezagent.Users, as: U; U.create(...)  alias, incl. `as:` and
-  #                                                `alias Ezagent.{Users, ...}`
-  #     import Ezagent.Users; create(...)          import → bare local call
-  #     @users Ezagent.Users; @users.create(...)   module attribute
-  #     apply(Ezagent.Users, :create, [...])       apply with a literal module
-  #     &Ezagent.Users.create/3                    capture (caps arg invisible →
-  #                                                recorded `:opaque`, which
-  #                                                CANNOT be classified
-  #                                                `:no_caps`; a human must decide)
-  #
-  # NOT SEEN — and nothing else sees it either:
-  #     m = Module.concat([:Ezagent, :Users])      the module atom is resolved
-  #     m.create(uri, pw, forged_caps)             at RUNTIME
-  #
-  # Leg 3a does NOT back this up. An evasive CALLER does not write `caps_json:`
-  # — `users.ex` does, on its behalf. Leg 3a catches a new WRITER FUNCTION, not
-  # an unenumerated caller. (An earlier version of this comment claimed it was a
-  # "structural backstop" for exactly this case. That was false.)
-  #
-  # ## So what does this gate actually prove?
-  #
-  # Only this: **every STATICALLY RESOLVABLE call to a `caps_json` writer is
-  # enumerated, and every assignment to the column is enumerated.** It does NOT
-  # prove "every cap in `users.caps_json` passed `Cap.issue/3`". A source scan
-  # cannot prove that — the property is about what happens at RUNTIME, and the
-  # gap is not closable by a better scanner.
-  #
-  # Closing it for real means making the property structural: have `Cap.issue/3`
-  # record what it issued and have `Ezagent.Users` REFUSE a cap that was never
-  # issued. Then the spelling of the call stops mattering. That changes core and
-  # a public API contract, so it is a decision, not a test fix — see
-  # `docs/notes/2026-07-14-cap-issue-structural-enforcement.md`.
-  #
-  # Residual limitation, named honestly: a macro that GENERATES the call, or a
-  # module atom built at runtime, is still invisible to a source scan. That is
-  # deliberate obfuscation rather than an accident, and leg 3a below (the column
-  # itself) is the structural backstop for it.
   defp provenance_constructors do
     source_files()
     |> Enum.reduce(%{}, fn {relative, absolute}, acc ->

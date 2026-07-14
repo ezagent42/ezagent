@@ -9,8 +9,57 @@ defmodule EzagentCore.CapsJsonScanner do
   which spellings the detector can and cannot see. A boundary test that carried
   its own copy of this logic would be testing its copy, not the gate.
 
-  What it sees and what it is blind to is stated — and MEASURED — in
-  `cap_issue_chokepoint_boundary_test.exs`. Read that before trusting this.
+  ## What it sees, and what it is blind to
+
+  This has been evaded three times. Each fix was "teach it one more spelling",
+  and each time it was still wrong. So the boundary is stated here — and every
+  line of it is MEASURED by a fixture in `cap_issue_chokepoint_boundary_test.exs`,
+  which runs THIS detector, not a copy of it.
+
+  SEEN — 8 fixtures (a plain baseline + the 7 evasions that actually got past
+  earlier cuts):
+
+      Ezagent.Users.create(uri, pw, caps)        plain remote call
+      uri |> Ezagent.Users.create(pw, caps)      pipe — the first arg sits
+                                                 OUTSIDE the call node, so an
+                                                 arity guard silently misses it
+      alias Ezagent.Users, as: U; U.create(...)  alias, both `as:` and
+                                                 `alias Ezagent.{Users, ...}`
+      import Ezagent.Users; create(...)          import → bare local call
+      @users Ezagent.Users; @users.create(...)   module attribute
+      apply(Ezagent.Users, :create, [...])       apply with a literal module
+      &Ezagent.Users.create/3                    capture — the caps arg is not
+                                                 visible, so it is recorded
+                                                 `:opaque`, which CANNOT be
+                                                 classified `:no_caps`; a human
+                                                 must decide
+
+  NOT SEEN — and nothing else sees it either:
+
+      m = Module.concat([:Ezagent, :Users])      the module atom is resolved
+      m.create(uri, pw, forged_caps)             at RUNTIME
+
+  **Leg 3a (the column ratchet) does NOT back that up.** An evasive CALLER never
+  writes `caps_json:` itself — `users.ex` does, on its behalf. Leg 3a catches a
+  new WRITER FUNCTION inside `Ezagent.Users`, not an unenumerated caller. (An
+  earlier version of this comment claimed leg 3a was a "structural backstop" for
+  exactly this case. It is not. That claim was false and is retracted.)
+
+  ## So what does this scanner actually prove?
+
+  Only this, and not a word more:
+
+  > **Every STATICALLY RESOLVABLE call to a `caps_json` writer is enumerated.**
+
+  It does NOT prove "every cap in `users.caps_json` passed `Cap.issue/3`". That
+  property is about what happens at RUNTIME, and no source scan can prove it —
+  the gap is not closable by a better scanner.
+
+  Closing it for real means making the property structural: have `Cap.issue/3`
+  record what it issued, and have `Ezagent.Users` REFUSE a cap that was never
+  issued. Then the spelling of the call stops mattering entirely. That changes
+  core and a public API contract, so it is a decision, not a test fix — see
+  `docs/notes/2026-07-14-cap-issue-structural-enforcement.md`.
   """
 
   @doc false
