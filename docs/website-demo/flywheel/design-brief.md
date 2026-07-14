@@ -2,7 +2,7 @@
 
 > **目标**：将 #1372 飞轮原型的 IA 结构和视觉方向映射到真实 world/hello 面，作为 zhaomato hello live E2E + hello↔kanban 融合的设计参照。
 > **受众**：zhaomato（hello 产品面开发）
-> **不做**：不改代码、不统一视觉风格（flywheel 和 world 各自保持风格）
+> **约束**：本文件夹是设计参照，不替代研发的技术方案
 > **PR**：#1378
 
 ---
@@ -29,6 +29,8 @@ flywheel 原型里的 gallery 是一个 **socialware marketplace**（浏览 → 
 这个空缺意味着：flywheel 的 IA 映射到真实面时，**多数对应行是 "不存在" 而非 "改这个页面"**。这不是坏事——它恰恰说明了设计参考的价值：告诉 zhaomato 在构建 hello live E2E 时，哪些 flywheel 页面结构应该被带上。
 
 ### 关键映射
+
+> 以下映射的是**结构模式**（浏览→查看→触发→执行→闭环），不是页面功能的字面对应。Flywheel 是产品 marketplace，自举链是工程开发环——结构相似，用途不同。
 
 ```
 Flywheel 飞轮                    Hello 自举链
@@ -103,8 +105,7 @@ hello 入口页（greeter 欢迎 + 说明功能）
 
 ## 4. 不做的事
 
-- ❌ 不把 homesite 暗色玻璃风格写进 world 的 Tailwind/shacdn 体系
-- ❌ 不修改任何 `.ex` / `.tsx` / `.heex` 代码
+- ❌ 不把 homesite 暗色玻璃风格写进 world 的 Tailwind/shadcn 体系
 - ❌ 不设计 Gallery API 的后端实现（那是 W-G1~G6，后端工程任务）
 - ❌ 不替代 hello @json-render catalog（36 组件已定义，本次不增不减）
 - ❌ 不新建 LiveView 页面或路由
