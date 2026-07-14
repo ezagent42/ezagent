@@ -12,7 +12,7 @@
 | 页面 | 作用 | 状态 |
 |------|------|------|
 | **index.html** | 撮合入口：描述需求 → AI 匹配 → 查看结果 → 牵线 · 保存搜索 | 🆕 新建 |
-| `profile/index.html` | 个人名片：身份 + 行业标签 + 资源/需求 | 🆕 新建 |
+| `profile/index.html` | 个人名片：身份 + 行业标签 + 资源/需求 | 🔴 **不在 dealscout 内**——名片是平台级功能（`achievement-center.html` 的角色档案），dealscout 只读取 |
 | `connection/request-sent.html` | 牵线请求已发送 + 等待对方确认 | 🆕 新建 |
 | `connection/inbox.html` | 牵线收件箱：查看请求 + 接受/拒绝 | 🆕 新建 |
 | `notification/saved.html` | 保存的搜索 + 新匹配通知 | 🆕 新建 |
@@ -23,8 +23,7 @@
 ```
 mainsite.html / flywheel/gallery.html
   → dealscout/index.html
-    ├── profile/index.html                [名片：先建名片，匹配更准]
-    │     └── → dealscout/index.html      (保存后返回)
+    ├── achievement-center.html           [名片：平台级角色档案，dealscout 读取]
     │
     ├── ① 描述需求 → ② AI 匹配 → ③ 查看结果
     │     ├── 选中牵线 → connection/request-sent.html  [等待对方确认]
