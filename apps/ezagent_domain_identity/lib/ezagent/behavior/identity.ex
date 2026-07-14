@@ -621,14 +621,14 @@ defmodule Ezagent.ActionSet.IdentityAdmin do
   def handle_persist_caps(%{caps: caps}, %{caller: :vm_internal} = ctx) when is_list(caps) do
     receiver = Map.get(ctx, :self_uri)
 
-    case Ezagent.EntityCaps.prepare_for_storage(caps, receiver, true) do
-      {:ok, persistable} ->
-        new_caps = MapSet.new(persistable)
+    with :ok <- Ezagent.EntityCaps.validate_issued_caps(caps, receiver),
+         {:ok, persistable} <- Ezagent.EntityCaps.prepare_for_storage(caps, receiver, true) do
+      new_caps = MapSet.new(persistable)
 
-        with :ok <- persist_user_caps(receiver, new_caps) do
-          {:ok, %{caps: MapSet.to_list(new_caps)}, [set_caps_effect(new_caps)]}
-        end
-
+      with :ok <- persist_entity_caps(receiver, new_caps) do
+        {:ok, %{caps: MapSet.to_list(new_caps)}, [set_caps_effect(new_caps)]}
+      end
+    else
       {:error, _reason} ->
         {:error, :invalid_cap_artifact}
     end
@@ -641,10 +641,11 @@ defmodule Ezagent.ActionSet.IdentityAdmin do
     receiver = Map.get(ctx, :self_uri)
     updated = replace_cap(ctx[:read].(:caps, MapSet.new()), cap)
 
-    with {:ok, persistable} <- Ezagent.EntityCaps.prepare_for_storage(updated, receiver, true) do
+    with :ok <- Ezagent.EntityCaps.validate_issued_caps([cap], receiver),
+         {:ok, persistable} <- Ezagent.EntityCaps.prepare_for_storage(updated, receiver, true) do
       new_caps = MapSet.new(persistable)
 
-      with :ok <- persist_user_caps(receiver, new_caps) do
+      with :ok <- persist_entity_caps(receiver, new_caps) do
         {:ok, %{caps: MapSet.to_list(new_caps)}, [set_caps_effect(new_caps)]}
       end
     end
@@ -661,7 +662,7 @@ defmodule Ezagent.ActionSet.IdentityAdmin do
            Ezagent.EntityCaps.prepare_for_storage(updated, Map.get(ctx, :self_uri), true) do
       new_caps = MapSet.new(persistable)
 
-      with :ok <- persist_user_caps(Map.get(ctx, :self_uri), new_caps) do
+      with :ok <- persist_entity_caps(Map.get(ctx, :self_uri), new_caps) do
         {:ok, %{caps: MapSet.to_list(new_caps)}, [set_caps_effect(new_caps)]}
       end
     else
@@ -761,6 +762,16 @@ defmodule Ezagent.ActionSet.IdentityAdmin do
   end
 
   defp persist_user_caps(_uri, _caps), do: :ok
+
+  defp persist_entity_caps(%URI{} = uri, caps) do
+    if Ezagent.URI.type?(uri, :user) do
+      Ezagent.EntityCaps.UserStore.persist(uri, MapSet.to_list(caps))
+    else
+      :ok
+    end
+  end
+
+  defp persist_entity_caps(_uri, _caps), do: :ok
 
   defp replace_cap(caps, cap) do
     caps

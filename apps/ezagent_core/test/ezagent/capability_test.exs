@@ -648,27 +648,66 @@ defmodule Ezagent.CapabilityTest do
   end
 
   describe "Phase-4 signing fields serialization" do
-    test "scope-tuple instances round-trip through the caps_json wire shape" do
-      session_uri = URI.new!("session://team-alpha/default/scoped")
+    test "all scope-tuple instance variants round-trip through the caps_json wire shape" do
+      scopes = [
+        {:within_session, URI.new!("session://team-alpha/default/scoped")},
+        {:within_workspace, URI.new!("workspace://team-alpha")},
+        {:spawned_by, URI.new!("entity://team-alpha/agent/orchestrator")}
+      ]
 
-      original = %Capability{
+      for instance <- scopes do
+        original = %Capability{
+          kind: :agent,
+          behavior: Ezagent.ActionSet.Session,
+          action: :send,
+          instance: instance,
+          workspace_uri: @ws_default,
+          granted_by: @user_uri,
+          granted_at: @now
+        }
+
+        restored =
+          original
+          |> Capability.to_map()
+          |> Jason.encode!()
+          |> Jason.decode!()
+          |> Capability.from_map()
+
+        assert restored == original
+      end
+    end
+
+    test "scope tuples are rejected on workspace and grant-provenance axes" do
+      scope = {:within_workspace, @ws_default}
+
+      base = %Capability{
         kind: :agent,
         behavior: Ezagent.ActionSet.Session,
         action: :send,
-        instance: {:within_session, session_uri},
+        instance: :any,
         workspace_uri: @ws_default,
         granted_by: @user_uri,
         granted_at: @now
       }
 
-      restored =
-        original
-        |> Capability.to_map()
-        |> Jason.encode!()
-        |> Jason.decode!()
-        |> Capability.from_map()
+      assert_raise ArgumentError, ~r/workspace_uri/, fn ->
+        Capability.to_map(%{base | workspace_uri: scope})
+      end
 
-      assert restored == original
+      assert_raise ArgumentError, ~r/granted_by/, fn ->
+        Capability.to_map(%{base | granted_by: scope})
+      end
+
+      encoded_scope = %{"scope" => "within_workspace", "uri" => URI.to_string(@ws_default)}
+      stored = Capability.to_map(base)
+
+      assert_raise ArgumentError, ~r/workspace_uri/, fn ->
+        Capability.from_map(Map.put(stored, "workspace_uri", encoded_scope))
+      end
+
+      assert_raise ArgumentError, ~r/granted_by/, fn ->
+        Capability.from_map(Map.put(stored, "granted_by", encoded_scope))
+      end
     end
 
     test "nil signing and grantee fields round-trip through the caps_json wire shape" do

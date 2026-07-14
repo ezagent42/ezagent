@@ -24,9 +24,7 @@ defmodule Ezagent.EntityCaps do
   * `persist/2`, `grant/2`, and `revoke/2` return `:ok` or `{:error, reason}`.
   """
 
-  import Ecto.Query
-
-  alias Ezagent.{Capability, Cmd, Kind, KindRegistry, Router, SnapshotStore}
+  alias Ezagent.{Capability, Cmd, Kind, ReadyGate, Router, SnapshotStore, SpawnRegistry}
   alias Ezagent.EntityCaps.UserStore
 
   @type caps :: [Capability.t()] | MapSet.t(Capability.t())
@@ -62,14 +60,10 @@ defmodule Ezagent.EntityCaps do
   @spec persist(URI.t() | String.t(), caps()) :: :ok | {:error, term()}
   def persist(uri, caps) do
     uri = parse_uri(uri)
-    live = live?(uri)
 
-    with {:ok, persistable_caps} <- prepare_for_storage(caps, uri, live) do
-      if live do
-        persist_live(uri, persistable_caps)
-      else
-        persist_cold(uri, persistable_caps)
-      end
+    with :ok <- validate_issued_caps(caps, uri),
+         :ok <- ensure_mutation_target(uri) do
+      dispatch_mutation(uri, :persist_caps, %{caps: Enum.to_list(caps)})
     end
   end
 
@@ -78,12 +72,10 @@ defmodule Ezagent.EntityCaps do
   def grant(uri, %Capability{} = cap) do
     uri = parse_uri(uri)
 
-    with {:ok, [_verified]} <- validate_caps([cap], uri) do
-      if live?(uri) do
-        dispatch_live_mutation(uri, :store_cap, %{cap: cap})
-      else
-        update_cold(uri, fn current -> {:ok, replace_by_identity(current, cap)} end)
-      end
+    with :ok <- validate_issued_caps([cap], uri),
+         {:ok, [_verified]} <- validate_caps([cap], uri),
+         :ok <- ensure_mutation_target(uri) do
+      dispatch_mutation(uri, :store_cap, %{cap: cap})
     end
   end
 
@@ -92,10 +84,8 @@ defmodule Ezagent.EntityCaps do
   def revoke(uri, %Capability{} = cap) do
     uri = parse_uri(uri)
 
-    if live?(uri) do
-      dispatch_live_mutation(uri, :remove_cap, %{cap: cap})
-    else
-      update_cold(uri, fn current -> Capability.revoke(MapSet.new(current), cap) end)
+    with :ok <- ensure_mutation_target(uri) do
+      dispatch_mutation(uri, :remove_cap, %{cap: cap})
     end
   end
 
@@ -115,11 +105,21 @@ defmodule Ezagent.EntityCaps do
     end
   end
 
-  defp persist_live(uri, caps) do
-    dispatch_live_mutation(uri, :persist_caps, %{caps: caps})
+  @doc false
+  @spec validate_issued_caps(caps(), URI.t() | String.t()) :: :ok | {:error, term()}
+  def validate_issued_caps(caps, uri) when is_list(caps) or is_struct(caps, MapSet) do
+    uri = parse_uri(uri)
+
+    if Enum.all?(caps, &issued_for?(&1, uri)) do
+      :ok
+    else
+      {:error, :invalid_cap_artifact}
+    end
   end
 
-  defp dispatch_live_mutation(uri, action, args) do
+  def validate_issued_caps(_caps, _uri), do: {:error, :invalid_cap_artifact}
+
+  defp dispatch_mutation(uri, action, args) do
     target = Ezagent.URI.with_action(Ezagent.URI.instance(uri), :identity, action)
 
     Router.dispatch(%Cmd{
@@ -136,97 +136,31 @@ defmodule Ezagent.EntityCaps do
     |> normalize_dispatch_result()
   end
 
-  defp persist_cold(uri, caps) do
-    if user_uri?(uri) do
-      UserStore.persist(uri, caps)
+  defp ensure_mutation_target(uri) do
+    with :ok <- ensure_live(uri),
+         :ok <- ReadyGate.await(uri, Ezagent.Invocation.activate_budget_ms()) do
+      :ok
     else
-      persist_snapshot(uri, caps)
+      {:error, :timeout} -> {:error, :activate_timeout}
+      {:error, :not_created} -> {:error, :not_found}
+      {:error, _reason} = error -> error
     end
   end
 
-  defp persist_snapshot(uri, caps) do
-    case EzagentCore.Repo.transaction(fn -> persist_snapshot_transaction(uri, caps) end) do
-      {:ok, result} -> result
-      {:error, reason} -> {:error, reason}
-    end
-  end
-
-  defp persist_snapshot_transaction(uri, caps) do
-    uri_string = URI.to_string(uri)
-
-    case locked_snapshot(uri_string) do
-      nil ->
-        {:error, :not_found}
-
-      row ->
-        with {:ok, state} <- Ezagent.Ecto.KindSnapshot.decode_state(row),
-             {:ok, _result} <-
-               SnapshotStore.write(uri, put_identity_caps(state, caps),
-                 kind_type: row.kind_type,
-                 version: (row.version || 0) + 1
-               ) do
-          :ok
-        else
-          :error -> {:error, :invalid_snapshot}
-          {:error, reason} -> {:error, reason}
-        end
-    end
-  end
-
-  defp update_cold(uri, mutation) do
+  defp ensure_live(uri) do
     if user_uri?(uri) do
-      UserStore.update(uri, fn current -> prepare_mutation(uri, current, mutation) end)
-    else
-      update_snapshot(uri, mutation)
-    end
-  end
-
-  defp update_snapshot(uri, mutation) do
-    case EzagentCore.Repo.transaction(fn -> update_snapshot_locked(uri, mutation) end) do
-      {:ok, result} -> result
-      {:error, reason} -> {:error, reason}
-    end
-  end
-
-  defp update_snapshot_locked(uri, mutation) do
-    case locked_snapshot(URI.to_string(uri)) do
-      nil ->
+      if UserStore.exists?(uri) do
+        Ezagent.Entity.spawn_principal(uri)
+      else
         {:error, :not_found}
-
-      row ->
-        with {:ok, state} <- Ezagent.Ecto.KindSnapshot.decode_state(row),
-             current <-
-               state
-               |> Map.get(:identity, %{})
-               |> Kind.normalize_slice_view()
-               |> caps_from_slice(),
-             {:ok, caps} <- prepare_mutation(uri, current, mutation),
-             {:ok, _result} <-
-               SnapshotStore.write(uri, put_identity_caps(state, caps),
-                 kind_type: row.kind_type,
-                 version: (row.version || 0) + 1
-               ) do
-          :ok
-        else
-          :error -> {:error, :invalid_snapshot}
-          {:error, reason} -> {:error, reason}
-        end
+      end
+    else
+      case SpawnRegistry.ensure_live(uri) do
+        {:ok, _status} -> :ok
+        {:error, {:already_registered, _winner}} -> :ok
+        {:error, _reason} = error -> error
+      end
     end
-  end
-
-  defp prepare_mutation(uri, current, mutation) do
-    with {:ok, mutated} <- mutation.(current),
-         {:ok, persistable} <- prepare_for_storage(mutated, uri, false) do
-      {:ok, persistable}
-    end
-  end
-
-  defp locked_snapshot(uri_string) do
-    from(snapshot in Ezagent.Ecto.KindSnapshot,
-      where: snapshot.uri == ^uri_string,
-      lock: "FOR UPDATE"
-    )
-    |> EzagentCore.Repo.one()
   end
 
   defp snapshot_caps(uri) do
@@ -240,24 +174,6 @@ defmodule Ezagent.EntityCaps do
       _ ->
         []
     end
-  end
-
-  defp put_identity_caps(state, caps) do
-    identity = Map.get(state, :identity, %{state: %{}})
-
-    updated =
-      case identity do
-        %{state: persistent} when is_map(persistent) ->
-          Map.put(identity, :state, Map.put(persistent, :caps, MapSet.new(caps)))
-
-        flat when is_map(flat) ->
-          Map.put(flat, :caps, MapSet.new(caps))
-
-        _ ->
-          %{state: %{caps: MapSet.new(caps)}}
-      end
-
-    Map.put(state, :identity, updated)
   end
 
   defp validate_caps(caps, uri) when is_list(caps) or is_struct(caps, MapSet) do
@@ -284,6 +200,16 @@ defmodule Ezagent.EntityCaps do
     end
   end
 
+  defp issued_for?(
+         %Capability{signature: signature, key_id: key_id, grantee_uri: %URI{} = grantee},
+         uri
+       )
+       when is_binary(signature) and byte_size(signature) > 0 and is_binary(key_id) and
+              byte_size(key_id) > 0,
+       do: Ezagent.URI.stable_key(grantee) == Ezagent.URI.stable_key(uri)
+
+  defp issued_for?(_cap, _uri), do: false
+
   defp dedupe_by_identity(caps) do
     Enum.reduce(caps, %{}, fn cap, acc ->
       Map.put(acc, Capability.identity_key(cap), cap)
@@ -308,8 +234,6 @@ defmodule Ezagent.EntityCaps do
   end
 
   defp verified(caps, uri), do: caps |> verified_set(uri) |> MapSet.to_list()
-
-  defp live?(uri), do: match?({:ok, _pid}, KindRegistry.lookup(uri))
 
   defp user_uri?(%URI{scheme: "entity"} = uri), do: Ezagent.URI.type?(uri, :user)
   defp user_uri?(_uri), do: false

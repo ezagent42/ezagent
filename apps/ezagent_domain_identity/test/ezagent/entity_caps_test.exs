@@ -21,6 +21,9 @@ defmodule Ezagent.EntityCapsTest do
   end
 
   setup do
+    :ok = Ezagent.ReadyGate.register_external_gate(Ezagent.EntityCapsReadyBarrier)
+    :ok = Ezagent.EntityCapsReadyBarrier.clear()
+
     for action <- [:list_caps, :has_cap?, :persist_caps, :store_cap, :remove_cap] do
       :ok =
         Ezagent.CapabilityRegistry.register(
@@ -33,6 +36,7 @@ defmodule Ezagent.EntityCapsTest do
         )
     end
 
+    on_exit(&Ezagent.EntityCapsReadyBarrier.clear/0)
     :ok
   end
 
@@ -126,6 +130,93 @@ defmodule Ezagent.EntityCapsTest do
   end
 
   describe "persist/2, grant/2, and revoke/2" do
+    test "fresh-user concurrent mutations wait for startup and survive restart" do
+      user = user_uri("startup-race")
+      first = issued_cap(user, :send)
+      second = issued_cap(user, :join)
+
+      assert {:ok, _user} = Ezagent.Users.create_read_only(user, [])
+      assert :error = Ezagent.KindRegistry.lookup(user)
+      assert :ok = Ezagent.EntityCapsReadyBarrier.arm(user)
+
+      first_task = Task.async(fn -> EntityCaps.grant(user, first) end)
+      assert_receive {:entity_caps_barrier_waiting, barrier}, 2_000
+      second_task = Task.async(fn -> EntityCaps.grant(user, second) end)
+
+      send(barrier, :release_entity_caps_barrier)
+      assert :ok = Task.await(first_task, 5_000)
+      assert :ok = Task.await(second_task, 5_000)
+
+      assert {:ok, pid1} = Ezagent.KindRegistry.lookup(user)
+      assert cap_present?(EntityCaps.load(user), first)
+      assert cap_present?(EntityCaps.load(user), second)
+
+      Process.exit(pid1, :kill)
+
+      wait_until(fn ->
+        case Ezagent.KindRegistry.lookup(user) do
+          {:ok, pid2} when pid2 != pid1 -> Ezagent.ReadyGate.status(user) == :ready
+          _ -> false
+        end
+      end)
+
+      assert cap_present?(EntityCaps.load(user), first)
+      assert cap_present?(EntityCaps.load(user), second)
+      :ok = Ezagent.Kind.terminate(user)
+    end
+
+    test "a live user without a users row cannot acquire snapshot-only authority" do
+      user = user_uri("rowless-live")
+      cap = issued_cap(user, :send)
+
+      assert {:ok, _pid} =
+               Ezagent.Kind.spawn(IdentityHostKind, %{uri: user, initial_caps: []})
+
+      wait_until_ready(user)
+
+      assert {:error, :not_found} = EntityCaps.grant(user, cap)
+      refute cap_present?(EntityCaps.load(user), cap)
+      assert EntityCaps.load_persisted(user) == []
+      :ok = Ezagent.Kind.terminate(user)
+    end
+
+    test "grant rejects an unsigned legacy cap even when signature enforcement is disabled" do
+      user = user_uri("unsigned")
+
+      unsigned = %Capability{
+        kind: :session,
+        behavior: Ezagent.ActionSet.Session,
+        action: :send,
+        instance: URI.new!("session://entity-caps/default/main"),
+        workspace_uri: @workspace,
+        granted_by: @issuer,
+        granted_at: DateTime.utc_now(),
+        grantee_uri: user
+      }
+
+      assert {:ok, _user} = Ezagent.Users.create_read_only(user, [])
+      previous = Application.get_env(:ezagent_core, Cap)
+      cap_config = previous || []
+      signing = cap_config |> Keyword.get(:signing, []) |> Keyword.put(:require_signature, false)
+      Application.put_env(:ezagent_core, Cap, Keyword.put(cap_config, :signing, signing))
+
+      on_exit(fn ->
+        if is_nil(previous) do
+          Application.delete_env(:ezagent_core, Cap)
+        else
+          Application.put_env(:ezagent_core, Cap, previous)
+        end
+      end)
+
+      forged = %{issued_cap(user, :join) | signature: :binary.copy(<<0>>, 64)}
+
+      assert {:error, :invalid_cap_artifact} = EntityCaps.grant(user, unsigned)
+      assert {:error, :invalid_cap_artifact} = EntityCaps.persist(user, [unsigned])
+      assert {:error, :invalid_cap_artifact} = EntityCaps.grant(user, forged)
+      assert {:error, :invalid_cap_artifact} = EntityCaps.persist(user, [forged])
+      assert EntityCaps.load_persisted(user) == []
+    end
+
     test "cold user persist replaces caps_json; grant and revoke round-trip durably" do
       user = user_uri("cold-write")
       first = issued_cap(user, :send)
@@ -133,13 +224,16 @@ defmodule Ezagent.EntityCapsTest do
 
       assert {:ok, _user} = Ezagent.Users.create(user, nil, [first])
       assert :ok = EntityCaps.persist(user, [second])
-      assert identity_keys(EntityCaps.load(user)) == identity_keys([second])
+      assert cap_present?(EntityCaps.load(user), second)
+      refute cap_present?(EntityCaps.load(user), first)
 
       assert :ok = EntityCaps.grant(user, first)
-      assert identity_keys(EntityCaps.load(user)) == identity_keys([first, second])
+      assert cap_present?(EntityCaps.load(user), first)
+      assert cap_present?(EntityCaps.load(user), second)
 
       assert :ok = EntityCaps.revoke(user, first)
-      assert identity_keys(EntityCaps.load(user)) == identity_keys([second])
+      assert cap_present?(EntityCaps.load(user), second)
+      refute cap_present?(EntityCaps.load(user), first)
     end
 
     test "cold agent persist, grant, and revoke preserve the snapshot wrapper" do
@@ -147,12 +241,15 @@ defmodule Ezagent.EntityCapsTest do
       first = issued_cap(agent, :send)
       second = issued_cap(agent, :join)
 
-      assert {:ok, _snapshot} =
-               SnapshotStore.write(
-                 agent,
-                 %{identity: %{state: %{caps: MapSet.new([first])}}, other: %{value: 7}},
-                 kind_type: :agent
-               )
+      assert {:ok, _pid} =
+               Ezagent.Kind.spawn(Ezagent.Entity.Agent, %{uri: agent, initial_caps: [first]})
+
+      wait_until_ready(agent)
+      assert {:ok, %{state: before_state}} = SnapshotStore.latest(agent)
+      preserved_slices = Map.drop(before_state, [:identity])
+      assert map_size(preserved_slices) > 0
+      :ok = Ezagent.Kind.terminate(agent)
+      wait_until(fn -> Ezagent.KindRegistry.lookup(agent) == :error end)
 
       assert :ok = EntityCaps.persist(agent, [second])
       loaded = EntityCaps.load(agent)
@@ -160,7 +257,7 @@ defmodule Ezagent.EntityCapsTest do
       refute cap_present?(loaded, first)
 
       assert {:ok, %{state: state}} = SnapshotStore.latest(agent)
-      assert state.other == %{value: 7}
+      assert Map.take(state, Map.keys(preserved_slices)) == preserved_slices
       assert %{state: %{caps: persisted}} = state.identity
       assert cap_present?(persisted, second)
       refute cap_present?(persisted, first)
@@ -294,7 +391,7 @@ defmodule Ezagent.EntityCapsTest do
       assert cap_present?(loaded, grant_b)
     end
 
-    test "concurrent cold snapshot grants and revokes serialize and advance version" do
+    test "concurrent cold snapshot grants and revokes serialize through one rehydrated Kind" do
       agent = agent_uri("cold-agent-concurrent")
 
       [remove_a, remove_b, grant_a, grant_b] =
@@ -304,7 +401,8 @@ defmodule Ezagent.EntityCapsTest do
                SnapshotStore.write(
                  agent,
                  %{identity: %{state: %{caps: MapSet.new([remove_a, remove_b])}}},
-                 kind_type: :agent
+                 kind_type: :agent,
+                 version: 0
                )
 
       assert [:ok, :ok, :ok, :ok] ==
@@ -317,7 +415,7 @@ defmodule Ezagent.EntityCapsTest do
       assert cap_present?(loaded, grant_b)
 
       assert {:ok, %{version: version}} = SnapshotStore.latest(agent)
-      assert version == initial_version + 4
+      assert version == initial_version
     end
   end
 

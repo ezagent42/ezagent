@@ -23,24 +23,22 @@ defmodule Ezagent.Invariants.EntityCapsAccessGateTest do
                              {"apps/ezagent_domain_identity/lib/ezagent/identity/grant_migration.ex",
                               :gate, 0},
                              {"apps/ezagent_domain_identity/lib/ezagent/identity/grant_migration.ex",
-                              :migrate_users, 1}
+                              :migrate_users, 1},
+                             {"apps/ezagent_plugin_world/lib/ezagent/world/user_data.ex",
+                              :list_users, 1},
+                             {"apps/ezagent_plugin_world/lib/ezagent/world/user_data.ex",
+                              :detail_state, 4}
                            ])
 
   @snapshot_identity_caps_allowlist MapSet.new([
                                       {"apps/ezagent_domain_identity/lib/ezagent/entity_caps.ex",
                                        :snapshot_caps, 1},
-                                      {"apps/ezagent_domain_identity/lib/ezagent/entity_caps.ex",
-                                       :put_identity_caps, 2},
-                                      {"apps/ezagent_domain_identity/lib/ezagent/entity_caps.ex",
-                                       :update_snapshot_locked, 2},
                                       {"apps/ezagent_domain_identity/lib/ezagent/identity/grant_migration.ex",
                                        :rewrite_identity_caps, 1},
                                       {"apps/ezagent_domain_identity/lib/ezagent/identity/cap_signing_backfill.ex",
                                        :identity_caps, 1},
                                       {"apps/ezagent_core/lib/ezagent/kind/snapshot.ex",
-                                       :verify_snapshot_caps, 2},
-                                      {"apps/ezagent_core/lib/ezagent/kind/snapshot.ex",
-                                       :put_verified_snapshot_caps, 4}
+                                       :verify_snapshot_caps, 2}
                                     ])
 
   @persisted_only_allowlist MapSet.new([
@@ -77,16 +75,25 @@ defmodule Ezagent.Invariants.EntityCapsAccessGateTest do
       alias Ezagent.Users, as: U
 
       def user(row), do: row.caps_json
+      def mapped_json(row), do: Map.get(row, :caps_json)
+      def fetched_json(row), do: Map.fetch!(row, :caps_json)
+      def nested_json(row), do: get_in(row, [:caps_json])
+      def applied_json(row), do: apply(Map, :get, [row, :caps_json])
       def indirect_user(uri) do
         %{caps: caps} = U.get_by_uri(uri)
         caps
       end
+      def mapped_user(uri), do: U.get_by_uri(uri) |> Map.get(:caps)
+      def fetched_user(uri), do: U.get_by_uri(uri) |> Map.fetch!(:caps)
+      def nested_user(uri), do: get_in(U.get_by_uri(uri), [:caps])
       def compatibility(uri), do: I.read_entity_caps(uri)
       def imported_compatibility(uri) do
         import Ezagent.Identity, only: [read_entity_caps: 1]
         read_entity_caps(uri)
       end
       def captured_compatibility, do: &I.read_entity_caps/1
+      def function_capture, do: Function.capture(I, :read_entity_caps, 1)
+      def applied_compatibility(uri), do: apply(I, :read_entity_caps, [uri])
       def persisted(uri), do: Ezagent.EntityCaps.load_persisted(uri)
 
       def snapshot(snapshot) do
@@ -95,6 +102,15 @@ defmodule Ezagent.Invariants.EntityCapsAccessGateTest do
       end
 
       def dotted_snapshot(state), do: state.identity.caps
+      def sourced_snapshot(uri) do
+        {:ok, %{state: state}} = Ezagent.SnapshotStore.latest(uri)
+        get_in(state, [:identity, :caps])
+      end
+
+      def unrelated_axes(map) do
+        Map.get(map, :identity)
+        Map.get(map, :caps)
+      end
     end
     """
 
@@ -103,20 +119,30 @@ defmodule Ezagent.Invariants.EntityCapsAccessGateTest do
     assert violation_functions(definitions, :raw_user_caps) ==
              MapSet.new([
                {"bad_caps_consumer.ex", :user, 1},
-               {"bad_caps_consumer.ex", :indirect_user, 1}
+               {"bad_caps_consumer.ex", :mapped_json, 1},
+               {"bad_caps_consumer.ex", :fetched_json, 1},
+               {"bad_caps_consumer.ex", :nested_json, 1},
+               {"bad_caps_consumer.ex", :applied_json, 1},
+               {"bad_caps_consumer.ex", :indirect_user, 1},
+               {"bad_caps_consumer.ex", :mapped_user, 1},
+               {"bad_caps_consumer.ex", :fetched_user, 1},
+               {"bad_caps_consumer.ex", :nested_user, 1}
              ])
 
     assert violation_functions(definitions, :identity_compat_consumer) ==
              MapSet.new([
                {"bad_caps_consumer.ex", :compatibility, 1},
                {"bad_caps_consumer.ex", :imported_compatibility, 1},
-               {"bad_caps_consumer.ex", :captured_compatibility, 0}
+               {"bad_caps_consumer.ex", :captured_compatibility, 0},
+               {"bad_caps_consumer.ex", :function_capture, 0},
+               {"bad_caps_consumer.ex", :applied_compatibility, 1}
              ])
 
     assert violation_functions(definitions, :snapshot_identity_caps) ==
              MapSet.new([
                {"bad_caps_consumer.ex", :snapshot, 1},
-               {"bad_caps_consumer.ex", :dotted_snapshot, 1}
+               {"bad_caps_consumer.ex", :dotted_snapshot, 1},
+               {"bad_caps_consumer.ex", :sourced_snapshot, 1}
              ])
 
     assert violation_functions(definitions, :persisted_only_consumer) ==
@@ -139,7 +165,7 @@ defmodule Ezagent.Invariants.EntityCapsAccessGateTest do
     ast_any?(definition.ast, &raw_caps_json?/1) or
       (ast_any?(definition.body, &users_caps_source?/1) and
          (ast_any?(definition.body, &user_caps_pattern?/1) or
-            ast_any?(definition.body, &dot_caps_access?/1)))
+            ast_any?(definition.body, &caps_access?/1)))
   end
 
   defp violation?(:identity_compat_consumer, definition),
@@ -158,6 +184,21 @@ defmodule Ezagent.Invariants.EntityCapsAccessGateTest do
 
   defp raw_caps_json?({{:., _, [_owner, :caps_json]}, _, []}), do: true
   defp raw_caps_json?({:caps_json, _value}), do: true
+
+  defp raw_caps_json?({{:., _, [module, function]}, _, args})
+       when function in [:get, :fetch, :fetch!] and is_list(args),
+       do:
+         Macro.to_string(module) == "Map" and Enum.any?(args, &(&1 in [:caps_json, "caps_json"]))
+
+  defp raw_caps_json?({:get_in, _, [_source, path]}) when is_list(path),
+    do: Enum.any?(path, &(&1 in [:caps_json, "caps_json"]))
+
+  defp raw_caps_json?({{:., _, [_kernel, :apply]}, _, [module, function, args]}),
+    do: map_apply_with_key?(module, function, args, :caps_json)
+
+  defp raw_caps_json?({:apply, _, [module, function, args]}),
+    do: map_apply_with_key?(module, function, args, :caps_json)
+
   defp raw_caps_json?(_node), do: false
 
   defp user_caps_pattern?({:%{}, _, fields}) when is_list(fields) do
@@ -169,88 +210,156 @@ defmodule Ezagent.Invariants.EntityCapsAccessGateTest do
 
   defp user_caps_pattern?(_node), do: false
 
-  defp dot_caps_access?({{:., _, [_owner, :caps]}, _, []}), do: true
-  defp dot_caps_access?(_node), do: false
+  defp caps_access?({{:., _, [_owner, :caps]}, _, []}), do: true
+
+  defp caps_access?({{:., _, [module, function]}, _, args})
+       when function in [:get, :fetch, :fetch!] and is_list(args),
+       do: Macro.to_string(module) == "Map" and Enum.any?(args, &(&1 == :caps))
+
+  defp caps_access?({:get_in, _, [_source, path]}) when is_list(path),
+    do: Enum.any?(path, &(&1 in [:caps, "caps"]))
+
+  defp caps_access?({{:., _, [_kernel, :apply]}, _, [module, function, args]}),
+    do: map_apply_with_key?(module, function, args, :caps)
+
+  defp caps_access?({:apply, _, [module, function, args]}),
+    do: map_apply_with_key?(module, function, args, :caps)
+
+  defp caps_access?(node), do: user_caps_pattern?(node)
+
+  defp map_apply_with_key?(module, function, args, key) do
+    Macro.to_string(module) == "Map" and function in [:get, :fetch, :fetch!] and is_list(args) and
+      Enum.any?(args, &(&1 in [key, Atom.to_string(key)]))
+  end
 
   defp identity_compat_call?(node), do: named_call?(node, :read_entity_caps)
 
   defp users_caps_source?(node),
     do: Enum.any?([:get_by_uri, :list_all, :list_in_workspace], &named_call?(node, &1))
 
+  defp named_call?({{:., _, [_module, :capture]}, _, [_target, name, _arity]}, name), do: true
+  defp named_call?({{:., _, [_module, :apply]}, _, [_target, name, _args]}, name), do: true
+  defp named_call?({:apply, _, [_target, name, _args]}, name), do: true
   defp named_call?({{:., _, [_module, name]}, _, args}, name) when is_list(args), do: true
   defp named_call?({name, _, args}, name) when is_list(args), do: true
   defp named_call?(_node, _name), do: false
 
-  defp snapshot_identity_shape?(ast) do
-    identity_shape? =
-      ast_any?(ast, fn
-        {:identity, _value} -> true
-        node -> map_key_mutation?(node, :identity)
-      end)
+  defp snapshot_identity_shape?(ast), do: nested_identity_caps?(ast)
 
-    caps_shape? =
-      ast_any?(ast, fn
-        {:caps, _value} -> true
-        _node -> false
-      end)
-
-    identity_shape? and caps_shape?
+  defp nested_identity_caps?(ast) do
+    ast_any?(ast, fn
+      {:identity, value} -> ast_any?(value, &caps_key_access?/1)
+      node -> map_key_mutation_with_caps?(node)
+    end)
   end
 
-  defp map_key_mutation?({{:., _, [module, function]}, _, args}, key)
-       when function in [:put, :update] and is_list(args),
-       do: Macro.to_string(module) == "Map" and key in args
+  defp map_key_mutation_with_caps?({{:., _, [module, function]}, _, args})
+       when function in [:put, :update] and is_list(args) do
+    Macro.to_string(module) == "Map" and :identity in args and
+      Enum.any?(args, &ast_any?(&1, fn node -> caps_key_access?(node) end))
+  end
 
-  defp map_key_mutation?(_node, _key), do: false
+  defp map_key_mutation_with_caps?(_node), do: false
 
   defp dotted_identity_caps?(ast) do
     ast_any?(ast, fn
-      {{:., _, [{{:., _, [_state, :identity]}, _, []}, :caps]}, _, []} -> true
+      {{:., _, [owner, :caps]}, _, []} -> ast_any?(owner, &identity_dot?/1)
       _ -> false
     end)
   end
+
+  defp identity_dot?({{:., _, [_owner, :identity]}, _, []}), do: true
+  defp identity_dot?(_node), do: false
 
   defp snapshot_source?(node),
     do: Enum.any?([:latest, :decode_state], &named_call?(node, &1))
 
   defp identity_key_access?({{:., _, [module, function]}, _, args})
-       when function in [:get, :put, :update] and is_list(args),
+       when function in [:get, :fetch, :fetch!, :put, :update] and is_list(args),
        do: Macro.to_string(module) == "Map" and :identity in args
 
   defp identity_key_access?({:identity, _value}), do: true
   defp identity_key_access?({{:., _, [_owner, :identity]}, _, []}), do: true
+
+  defp identity_key_access?({:get_in, _, [_source, path]}) when is_list(path),
+    do: :identity in path or "identity" in path
+
   defp identity_key_access?(_node), do: false
 
   defp caps_key_access?({{:., _, [module, function]}, _, args})
-       when function in [:get, :put, :update] and is_list(args),
+       when function in [:get, :fetch, :fetch!, :put, :update] and is_list(args),
        do: Macro.to_string(module) == "Map" and :caps in args
 
   defp caps_key_access?({:caps, _value}), do: true
   defp caps_key_access?({{:., _, [_owner, :caps]}, _, []}), do: true
+
+  defp caps_key_access?({:get_in, _, [_source, path]}) when is_list(path),
+    do: :caps in path or "caps" in path
+
   defp caps_key_access?({:caps_from_slice, _, _args}), do: true
   defp caps_key_access?(_node), do: false
 
   defp ast_any?(ast, predicate) do
     {_ast, found?} =
       Macro.prewalk(ast, false, fn node, found? ->
-        {node, found? or predicate.(node)}
+        embedded_found? =
+          if embedded_code_candidate?(node) do
+            case Code.string_to_quoted(node) do
+              {:ok, embedded} when embedded != node -> ast_any?(embedded, predicate)
+              _ -> false
+            end
+          else
+            false
+          end
+
+        {node, found? or predicate.(node) or embedded_found?}
       end)
 
     found?
   end
 
+  defp embedded_code_candidate?(node) when is_binary(node) do
+    Enum.any?(
+      ["Ezagent.", "read_entity_caps", "load_persisted", "caps_json", "SnapshotStore"],
+      &String.contains?(node, &1)
+    )
+  end
+
+  defp embedded_code_candidate?(_node), do: false
+
   defp source_definitions do
     root = repo_root()
 
-    root
-    |> Path.join("apps/**/*.ex")
-    |> Path.wildcard()
-    |> Enum.reject(&String.contains?(&1, "/test/"))
+    ["apps/**/*.ex", "apps/**/*.exs"]
+    |> Enum.flat_map(&(root |> Path.join(&1) |> Path.wildcard()))
+    |> Enum.reject(
+      &(String.contains?(&1, "/test/") or String.contains?(&1, "/priv/repo/migrations/"))
+    )
     |> Enum.flat_map(fn absolute ->
       relative = String.replace_prefix(absolute, root <> "/", "")
-      absolute |> File.read!() |> definitions_from_source(relative)
+      source = File.read!(absolute)
+      definitions = definitions_from_source(source, relative)
+
+      if String.ends_with?(relative, ".exs") do
+        {:ok, ast} = Code.string_to_quoted(source)
+        top_level = strip_module_definitions(ast)
+
+        [
+          %{file: relative, name: :__script__, arity: 0, ast: top_level, body: top_level}
+          | definitions
+        ]
+      else
+        definitions
+      end
     end)
   end
+
+  defp strip_module_definitions({:__block__, meta, expressions}) do
+    {:__block__, meta, Enum.reject(expressions, &match?({:defmodule, _, _}, &1))}
+  end
+
+  defp strip_module_definitions({:defmodule, _, _}), do: {:__block__, [], []}
+  defp strip_module_definitions(ast), do: ast
 
   defp definitions_from_source(source, file) do
     {:ok, ast} = Code.string_to_quoted(source)

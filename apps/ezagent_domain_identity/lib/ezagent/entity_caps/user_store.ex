@@ -5,6 +5,9 @@ defmodule Ezagent.EntityCaps.UserStore do
 
   alias EzagentCore.Repo
 
+  @spec exists?(URI.t()) :: boolean()
+  def exists?(%URI{} = uri), do: not is_nil(Ezagent.Users.get_by_uri(uri))
+
   @spec load(URI.t()) :: [Ezagent.Capability.t()]
   def load(%URI{} = uri) do
     case Ezagent.Users.get_by_uri(uri) do
