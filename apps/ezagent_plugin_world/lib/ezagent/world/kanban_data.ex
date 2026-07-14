@@ -91,7 +91,8 @@ defmodule Ezagent.World.KanbanData do
   #   * workspace admin（`Ezagent.Identity.AdminAuthority.admin?/2`）看全部；
   #   * 普通用户只看到 own（板的 `data_owner` 是自己）或持有指向该板 cap 的板。
   # ctx 的 caller 身份字段 = `:caller_uri` / `:caller_caps`（world `KanbanActions.read_ctx`
-  # 注入；`caller_caps` 已是 caller 全量 cap 集，源自 mount 期 `Identity.list_caps_for`）。
+  # 注入；`caller_caps` 是 mount 期注入的 caller 身份 cap 快照，即触发这次读的 caller 当时
+  # 持有的全量 cap 集）。
   defp visible?(%URI{} = board_uri, ctx) do
     caller = Map.get(ctx, :caller_uri)
     caps = Map.get(ctx, :caller_caps) || MapSet.new()
