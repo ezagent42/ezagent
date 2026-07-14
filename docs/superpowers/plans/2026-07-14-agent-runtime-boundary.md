@@ -18,8 +18,8 @@
 - Allowlist entries are exact, justified, stale-checked and target empty.
 - No compatibility shim may leave two permanent Agent facade homes.
 - Live credential provisioning is a separate operational track and never enters this branch.
-- PR #1375/#1379 semantics are absorbed, but their unreviewed heads are never merged or cherry-picked into this branch.
-- Final source anchors and live credential acceptance wait for #1375; capability-issuing facade work waits for #1379.
+- PR #1375/#1379 are merged into `main`; this branch is rebased onto that reviewed baseline.
+- Final source anchors and the capability chokepoint may now be implemented. Live credential acceptance still waits for confirmation that #1375 is deployed.
 - Run `mix precommit` after all repository changes.
 
 ---
@@ -98,9 +98,8 @@ git add docs/superpowers/specs/2026-07-14-agent-runtime-boundary-design.md \
 git commit -m "docs(agent): classify session runtime boundary crossings"
 ```
 
-**Upstream checkpoint:** Before calling this inventory frozen, fetch `main` and check
-PR #1375. While it is pending, mark its changed `session_creator/materializer.ex`
-entries as `anchor_pending_1375`; do not encode their current line numbers in the gate.
+**Upstream checkpoint (satisfied 2026-07-14):** PR #1375 merged as `ca65f5266`;
+the branch was rebased and the materializer anchors were frozen against that baseline.
 
 ### Task 2: Add an AST scanner with teeth fixtures
 
@@ -552,10 +551,10 @@ one target agent must never be performed concurrently by multiple workers.
 
 | Work item | #1375 | #1379 | May start now? |
 |---|---|---|---|
-| Design/SPEC update | semantic input | semantic input | Yes |
-| Lifecycle inventory | final anchor dependency | none | Yes, anchors provisional |
-| AST scanner fixtures | none | none | Yes |
-| Exact repository allowlist | rebase/final anchors | none | No finalization |
-| Creator Terminal `/login` evidence | merged + deployed | none | No |
-| Facade capability issuance/store | policy context | merged chokepoint | No |
-| Facade lifecycle API without new grants | policy context | review constraint | Design only |
+| Design/SPEC update | absorbed from merged PR | absorbed from merged PR | Complete |
+| Lifecycle inventory | merged/final anchors | none | Complete |
+| AST scanner fixtures | none | none | Complete |
+| Exact repository allowlist | merged/final anchors | none | Complete |
+| Creator Terminal `/login` evidence | deployment confirmation pending | none | Blocked on deployment |
+| Facade capability issuance/store | policy context | merged chokepoint | Ready after gate review |
+| Facade lifecycle API without new grants | policy context | review constraint | Ready after gate review |

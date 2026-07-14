@@ -209,7 +209,7 @@ gate，再进入正式 return。
 
 ## 9. 执行状态
 
-### 已完成（不依赖 #1375/#1379）
+### 已完成
 
 - [x] ARB-0 生命周期 inventory：34 行闭合表；primary search 76 = 28 个
   executable expressions + 48 个 prose/history hits；混合 target wrapper 按调用
@@ -219,19 +219,27 @@ gate，再进入正式 return。
 - [x] 合法反例：Session destroy、SessionTemplate ensure-live、member dispatch、
   Kind lookup 不会被 blanket-ban。
 - [x] credential 脱敏验收模板已准备。
+- [x] PR #1375（`ca65f5266`）与 #1379（`6ee6e8af1`）均已合入；工作分支已
+  rebase 到最新 `origin/main`，没有直接吸纳未审查 head。
+- [x] Task 3 exact repository gate：动态扫描全部 Session production source，
+  使用 24 项 exact allowlist，逐项 stale/duplicate/schema 检查，并覆盖已知绕过。
 
 实现提交：
 
-- `01bb6cc56` — 初版 inventory 与批准文档；
-- `abf1227a9` — 补 aliased executor call 与混合 wrapper 调用边；
-- `26098dc6d` — 统一 inventory 记账；
-- `f49470d6a` — Task 2 AST scanner + 词法 alias fixtures。
+- `f161a75b3` — 初版 inventory 与批准文档；
+- `2b3be5120` — 补 aliased executor call 与混合 wrapper 调用边；
+- `9382d19bd` — 统一 inventory 记账；
+- `2996c4f68` — Task 2 AST scanner + 词法 alias fixtures；
+- `f9bcd30d4` — Task 3 exact allowlist、repository gate 与绕过回归测试。
 
-### 当前等待
+### 下一步与阻塞
 
-- Task 3 exact repository allowlist/final anchors：等待 #1375 合入后 rebase；
-- creator Terminal `/login` live acceptance：等待 #1375 合入并部署；
-- capability-issuing Facade slice：等待 #1379 合入；
-- 完整 `mix precommit` 复验：Task 2 focused 9/9 绿；此前 full precommit 被共享
+- Task 4：对 ownership、allowlist bypass、false positive 做独立架构攻防复核；
+- Task 5：汇总最终 gates 与 return evidence；
+- creator Terminal `/login` live acceptance：仅等待 #1375 部署确认，不以 merge
+  状态替代部署证据；
+- capability-issuing Facade slice：#1379 chokepoint 已就绪，在 Task 4 gate review
+  后进入实现；
+- 完整 `mix precommit` 复验：Task 3 focused 20/20 绿；此前 full precommit 被共享
   test DB 的残留 `probe-*` workspace 行触发 3 个既有 visibility invariant 失败，
   不在本任务中用清库或绕过手段掩盖。
