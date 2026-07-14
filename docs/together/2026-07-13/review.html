@@ -1,0 +1,163 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>dev-together 回顾 — 2026-07-13（W29 自举第一张多米诺）</title>
+<style>
+  body{font:14px/1.6 -apple-system,"Segoe UI",Roboto,"PingFang SC","Microsoft YaHei",sans-serif;color:#1a1a1a;max-width:1100px;margin:24px auto;padding:0 20px;background:#fff}
+  h1{font-size:24px;border-bottom:3px solid #2563eb;padding-bottom:8px}
+  h2{font-size:19px;margin-top:32px;color:#1e40af;border-left:4px solid #2563eb;padding-left:10px}
+  h3{font-size:15px;margin-top:20px;color:#374151}
+  table{border-collapse:collapse;width:100%;margin:12px 0;font-size:13px}
+  .scroll{overflow-x:auto}
+  th,td{border:1px solid #d1d5db;padding:6px 9px;text-align:left;vertical-align:top}
+  th{background:#eff6ff;font-weight:600}
+  tr:nth-child(even){background:#f9fafb}
+  .num{text-align:right;font-variant-numeric:tabular-nums}
+  .kpi{display:inline-block;margin:6px 14px 6px 0;padding:10px 16px;background:#f1f5f9;border-radius:8px}
+  .kpi b{font-size:22px;color:#2563eb;display:block}
+  .big{background:#fffbeb;border:1px solid #fde68a;border-radius:8px;padding:12px 16px;margin:14px 0}
+  .inc{background:#fef2f2;border:1px solid #fecaca;border-radius:8px;padding:10px 16px;margin:12px 0}
+  .inc h3{margin-top:4px;color:#b91c1c}
+  .good{background:#f0fdf4;border:1px solid #bbf7d0;border-radius:8px;padding:10px 16px;margin:12px 0}
+  blockquote{margin:10px 0;padding:8px 14px;background:#f8fafc;border-left:3px solid #94a3b8;color:#475569}
+  code{background:#f1f5f9;padding:1px 5px;border-radius:4px;font-size:12px}
+  .tag{display:inline-block;padding:1px 7px;border-radius:10px;font-size:11px;font-weight:600}
+  .t-orch{background:#dbeafe;color:#1e40af}.t-cc{background:#fae8ff;color:#86198f}.t-prod{background:#dcfce7;color:#166534}.t-doc{background:#f3e8ff;color:#6b21a8}.t-ci{background:#fef3c7;color:#92400e}.t-base{background:#e0e7ff;color:#3730a3}.t-des{background:#ffe4e6;color:#9f1239}
+</style>
+</head>
+<body>
+<h1>dev-together 回顾 · 2026-07-13</h1>
+<p>数据窗口：<code>merged 2026-07-13</code>（GMT+8）。本回顾面向全体开发者：呈现产品大局、统计团队效能、诚实复盘头号目标与结转。W29 统一验收 = 一条端到端自举链，本周至少跑通一次。</p>
+
+<h2>指标速览</h2>
+<div>
+<span class="kpi"><b>13</b>PR 合入 main（3 自举地基 · 10 当日 track/加固）</span>
+<span class="kpi"><b>1</b>头号目标达成（agent 可调用 · canary 实证）</span>
+<span class="kpi"><b>4</b>returns/（其余 9 走直接 PR）</span>
+<span class="kpi"><b>0</b>虚报「修好」（红线遵守）</span>
+</div>
+
+<div class="good">
+<b>头号目标达成：自举第一张多米诺在 canary 上被证明为真。</b>
+plan §1 的头号目标——「平台 agent 可被正常调用 / <code>@orchestrator</code> 真回话」——达成。gaga 的 <b>#1367</b> canary 验收
+（commit <code>200f91b5</code>）记录了一个平台托管的 <code>cc-deepseek</code> agent 经<b>正式入口</b>被唤醒、两次 nonce <code>@orchestrator</code> <b>真实回复</b>、
+一个最小开发任务被 <b>ACCEPTED</b> 并给出计划。困扰一周多的入口打通——下游 hello→kanban 派活、agent 产 PR、看板流转从此<b>可链测</b>。
+</div>
+
+<h2>大局</h2>
+<p>W29 的统一验收是一条端到端自举链：登录官网 → hello → kanban socialware 派开发任务给<b>平台托管 agent</b>
+→ agent 产 PR → CI/review/合并/部署 → 看板流转 → 三面绿。今天<b>推动并证明了这条链的第一张多米诺</b>。
+地基侧，三条自举地基（<b>#1361</b> orchestrator Session-Config MCP · <b>#1362</b> socialware composition-cap 车道 · <b>#1363</b> 07-10 复盘/07-13 plan）清晨落 main，
+agent 控制面 / 组合能力就位。同一天清理了一批 CI/前端隐患（<b>#1368</b> <code>ci.local</code> 确定性退出 · <b>#1370</b> slot-gate 行锚 lockstep + CI guard · <b>#1367/#1369</b> World Terminal 崩溃/xterm 运行时修复），
+并把「前端 CI 覆盖 = 0」这一真实隐患（#1369 xterm bug 曾带崩上 canary）登记成明日开发任务（<b>#1371</b>）。</p>
+<p><b>诚实边界:</b> 第一张多米诺证明「可跑通一次」，但整条链尚未端到端跑通；hello→kanban 与看板流转待明日在已解锁的入口上链测。</p>
+<div class="big">
+<b>新浮现的 demo 关键路径缺口——hello↔kanban 融合的底层挂载 infra 尚未建。</b> #1362 只落了「<b>同 session 内操作自己数据的 agent</b>」这半；
+而 demo 要求的「hello 连 kanban」本质是<b>跨 session 共享 + 公开挂载</b>（把 kanban socialware 挂进官网/hello 的派活入口），这正是 jjkysy <b>#1360 分析的 Layer B</b>——<b>目前只有 spec、未实现</b>。
+故「hello 连 kanban」不是接根线即通，须新建一层跨-session 挂载 infra。<b>本周策略:</b> 先用<b>松耦合</b>方式把全链跑通一次（满足 W29「至少跑通一次、不要求稳定」），<b>紧接</b>造这层挂载 infra——先跑通、后补挂载，两步都在本周视野内。
+</div>
+
+<h2>§1 本日落地（合入 main，按开发者分组 · 13 PR）</h2>
+
+<h3><span class="tag t-base">自举地基</span>（allen · 清晨落 main · codex 对抗评审车道）</h3>
+<div class="scroll"><table>
+<tr><th>PR</th><th>SHA</th><th>作用</th></tr>
+<tr><td>#1361</td><td><code>d32c4a4d8</code></td><td>orchestrator Session-Config domain API + surfaces；P1 cold-restart binding</td></tr>
+<tr><td>#1362</td><td><code>a915343de</code></td><td>socialware composition-cap lane v5 — owner-gated operate caps（不引入新原语）</td></tr>
+<tr><td>#1363</td><td><code>8efe8876b</code></td><td>docs：2026-07-10 复盘 + 2026-07-13 plan（W29 自举 demo）+ roster/skill 更新</td></tr>
+</table></div>
+
+<h3><span class="tag t-orch">gaga（黄佳佳）</span> — PTY 急症 + canary 自举第一步</h3>
+<div class="scroll"><table>
+<tr><th>PR</th><th>SHA</th><th>作用</th></tr>
+<tr><td><b>#1367</b></td><td><code>760a86c7a</code></td><td>fix(world) 安全序列化 PTY runtime status（Terminal LiveView 因不可 JSON 序列化的 <code>exec_pid</code> 崩溃）— <b>已部署 canary</b>；验收 commit <code>200f91b5</code> = 自举第一张多米诺实证</td></tr>
+<tr><td>#1366</td><td><code>f518ccd48</code></td><td>fix(cc,pty) 重生死循环——<b>真根因是 <code>--continue</code>，不是认证失败</b>；respawn-policy 断路器 + 模块重构 + 600+ 行测试 + 双语根因文档</td></tr>
+<tr><td>#1369</td><td><code>ebe2e3396</code></td><td>fix(world) 打包 xterm 运行时（World Terminal「xterm runtime not loaded」修复）</td></tr>
+</table></div>
+<div class="good"><b>诚实工程亮点:</b> coordinator 早前把重生死循环误诊为「认证失败」；gaga 用<b>单变量 D-vs-E 受控实验</b>证伪
+（<b>933 次崩溃 / 0 次 auth-observer 命中</b>），锁定真根因 <code>--continue</code>，并加断路器 + 测试 + 双语根因文档。root-cause 前先复现真实失败——reproduce-first 的范例。</div>
+
+<h3><span class="tag t-prod">zyli（李震宇）</span> — demo UI 收口</h3>
+<div class="scroll"><table>
+<tr><th>PR</th><th>SHA</th><th>作用</th></tr>
+<tr><td>#1365</td><td><code>bc539b190</code></td><td>Close #1320（creator 自动加入 class/template session → 过滤列表可见）+ #1327（socialware 卸载证据）；overview 可见性统一 caller-scoped</td></tr>
+</table></div>
+
+<h3><span class="tag t-des">ruihua（陈瑞华，designer）</span> — 官网体验</h3>
+<div class="scroll"><table>
+<tr><th>PR</th><th>SHA</th><th>作用</th></tr>
+<tr><td>#1372</td><td><code>863960a8b</code></td><td>官网飞轮 demo：可点击静态 HTML 原型（新 <code>index-gallery.html</code>「组织的 IDE」落地页 + 双边飞轮 Builder/Seller 走查 + README）；零构建可跑，coordinator 按 designer-deliverable 约定代开 PR</td></tr>
+</table></div>
+
+<h3><span class="tag t-ci">coordinator（allen + CC）</span> — CI/前端加固 + 流程</h3>
+<div class="scroll"><table>
+<tr><th>PR</th><th>SHA</th><th>作用</th></tr>
+<tr><td>#1368</td><td><code>6023e2a59</code></td><td>fix(ci) <code>mix ci.local</code> 确定性退出（全 gate 过后 <code>halt 0</code>）——teardown-flake 修复，机制经隔离复现证明</td></tr>
+<tr><td>#1370</td><td><code>7f8f11317</code></td><td>fix(world) check-mounts allowlist 对齐 + CI 内 slot-gate lockstep 守卫（JS/Elixir 行锚同步）</td></tr>
+<tr><td>#1371</td><td><code>f31789939</code></td><td>docs(todo) 登记前端 CI 覆盖开发任务（zyli，2026-07-14）</td></tr>
+<tr><td>#1364</td><td><code>d4cd8419a</code></td><td>dev-together 规范 plan/review 模板 + §0-standing + 开工-prompt</td></tr>
+<tr><td>#1373</td><td><code>1764653e2</code></td><td>docs(dev-together) 编成 designer / 非代码交付物 → PR 约定</td></tr>
+</table></div>
+
+<h2>§2 台账对账</h2>
+<blockquote><b>两源核对（returns/ + GitHub 合并）:</b> 今天两源严重背离——<b>4 return vs 13 merged</b>，差额 9 条全走直接 PR
+（gaga #1366/#1367/#1369 · coordinator #1368/#1370/#1371 · 地基 #1361/#1362/#1363）。只看台账会漏记 gaga 急症主量与 coordinator 加固。</blockquote>
+<div class="scroll"><table>
+<tr><th>指标</th><th class="num">数</th><th>备注</th></tr>
+<tr><td>plan.md 计划</td><td class="num">4 + 1</td><td>4 human-dev track（gaga/jjkysy/zhaomato/zyli）+ ruihua 设计输入</td></tr>
+<tr><td>returns/ 到达</td><td class="num">4</td><td>close-1320-1327 · orchestrator-session-config · socialware-composition-cap · ruihua-flywheel-demo；late 0</td></tr>
+<tr><td>合入 main</td><td class="num">13</td><td>#1361–#1373（3 地基 + 10 当日 track/加固）</td></tr>
+<tr><td>superseded</td><td class="num">2</td><td>旧 #1320 / #1327 被 #1365 吸收（待 lead 接受后关）</td></tr>
+<tr><td>blocked</td><td class="num">1</td><td>zhaomato 官网 hello E2E（依赖 orchestrator 真回话，mid-day 才由 #1367 证明）</td></tr>
+<tr><td>deferred</td><td class="num">2</td><td>gaga AgentRuntime 边界 SPEC（急症挤占）· jjkysy kanban 进度看板 + #1301（#1360 分析已提 2 commit 于 <code>docs/socialware-data-mount-model</code>，未走 PR，结转形式化）</td></tr>
+<tr><td>left-open</td><td class="num">1</td><td>#1301 dealscout（jjkysy，末次触碰 07-12，未推进）</td></tr>
+</table></div>
+
+<h2>§3 缺口 / 结转</h2>
+<div class="inc">
+<h3>gaga · AgentRuntime 边界 SPEC / <code>agent_runtime_boundary</code> gate — 未落地（W28③ 结构线）</h3>
+<p>被 PTY 重生死循环急症<b>正当挤占</b>——入口不通则下游无从链测，急症优先，取舍正确。结转 07-14 拉回头号。</p>
+</div>
+<div class="inc">
+<h3>zhaomato · 官网首程 + hello→kanban E2E — 未交付，但 blocked-not-idle</h3>
+<p>该 track 依赖 orchestrator 真回话，而第一张多米诺 mid-day 才由 #1367 证明；解锁前无法链测。<b>今日属被阻，非空转。</b>阻塞现已清，结转 07-14（现可链测）。</p>
+</div>
+<div class="inc">
+<h3>jjkysy · #1360 core-gap 分析有推进（2 commit），但未走 PR/return</h3>
+<p>07-13 他在 <code>docs/socialware-data-mount-model</code> 提了 <b>2 个 commit</b>——「socialware 数据跨 session 共享 = mount agent 进房间」分析 + 收窄为 <b>Layer B</b>（续 #1355/#1357 深层缺口线）。即其 track 的<b>缺口发现线有进展</b>，但<b>没开 PR、没写 return</b>，PR 层看不见——缺口是<b>流程（未形式化）</b>，<b>不是产出为零</b>。kanban 进度看板本身与 #1301 dealscout（末次触碰 07-12）仍待落。明日形式化 + 交付。</p>
+</div>
+<div class="big">
+<b>hello↔kanban 融合的底层挂载 infra 未建（demo 关键路径）:</b> #1362 只落「同 session 内操作自己数据的 agent」半；demo 要求的「hello 连 kanban」= <b>跨 session 共享 + 公开挂载</b> = jjkysy <b>#1360 Layer B</b>，<b>spec-only、未实现</b>。故须新建一层跨-session 挂载 infra。<b>结转策略:</b> 本周先<b>松耦合</b>跑通一次（zhaomato 从 hello 侧起造连接、jjkysy 做 kanban 侧检查），<b>紧接</b>补挂载 infra（#1360 Layer B 形式化 → 实现，jjkysy 主形式化）。
+</div>
+<div class="big">
+<b>前端 CI 覆盖 = 0（系统性缺口）:</b> 无 JS/TS 测试、<code>tsc --noEmit</code> 全项目零调用、无 ESLint/Vitest；#1369 xterm bug 正因此带崩上 canary 才被人工 agent-browser 发现。已登记为 zyli 07-14 开发任务（#1371）。<br>
+<b>gaga 诚实旗标（独立后续）:</b> <code>test-zyli-cc-1</code> 缺凭证（与 crash-loop 无关，属 per-agent config）+ 可能更多 agent 待下发凭证——结转 gaga 07-14。
+</div>
+
+<h2>§4 方法增量（method-deltas）</h2>
+<div class="scroll"><table>
+<tr><th>#</th><th>发现</th><th>会抓到它的规则</th><th>去向</th></tr>
+<tr><td>1</td><td>coordinator 误诊「认证失败」；gaga 单变量 D-vs-E 证伪（933 崩溃/0 auth 命中），真根因 <code>--continue</code>。</td><td><b>现有</b> · reproduce-first（root-cause 前先 e2e 复现）——gaga 恰照做</td><td>process-debt（强化 + 记 gaga profile 强项）</td></tr>
+<tr><td>2</td><td>前端零 CI 覆盖，#1369 xterm bug 带崩上 canary，仅人工发现。</td><td><b>新</b> · 需一道前端 CI gate（<code>tsc --noEmit</code> 起步）</td><td>→ 已转开发任务 #1371（zyli 07-14 分期）</td></tr>
+<tr><td>3</td><td>急症正当挤占计划结构线（AgentRuntime SPEC），须显式登记否则隐形丢失。</td><td><b>现有</b> · plan §6 out-of-scope 登记 + review §3 结转</td><td>process-debt（§3 已显式结转）</td></tr>
+<tr><td>4</td><td>4 return vs 13 merged 背离，9 条直接 PR 不进 returns。</td><td><b>现有</b> · 对账并核两源（returns/ + GitHub 双扫）——本复盘已双扫</td><td>无改动（正例）</td></tr>
+<tr><td>5</td><td>designer 交付非代码原型，coordinator 代开 PR（#1372）纳入 review 轨。</td><td><b>现有（今日新落）</b> · #1373 designer 非代码交付 → PR 约定</td><td>skill-change 已落（#1373）</td></tr>
+</table></div>
+
+<h2>§5 次日规划建议</h2>
+<p>第一张多米诺已证明——07-14 重心从「证明入口」转向「沿链往下推 + 补回被急症挤占的结构线」：</p>
+<ol>
+<li><b>zhaomato 解除阻塞、优先链测:</b> 官网首程 + hello greeter + curl-llm 真回复 E2E transcript（唯一阻塞已清）。</li>
+<li><b>gaga 补结构线 + 凭证下发:</b> AgentRuntime 边界 SPEC / <code>agent_runtime_boundary</code> gate 拉回头号 + demo agent 凭证下发。</li>
+<li><b>jjkysy 形式化 + 检查补位:</b> 把 #1360 core-gap 分析（今日 2 commit，未走 PR/return）<b>形式化为 PR/return</b>；以检查补位为主——hello↔kanban 融合的 kanban 侧检查 + kanban 看板 demo 各环节任务卡 + 至少一条可核实跨环节验收；#1301 次要。避免再次「有 commit 却无 PR/return」。</li>
+<li><b>zyli 转前端 CI:</b> #1371 前端 CI 覆盖，先 <code>tsc --noEmit</code> 进 CI（最高性价比，直接防 xterm 类 bug）。</li>
+<li><b>ruihua 承接飞轮原型落地:</b> #1372 原型 IA/视觉接入真实 world/hello LiveView 面（设计输入，走 Feishu）。</li>
+<li><b>序列化提示:</b> zhaomato（hello/官网）与 zyli（前端 assets）若同触 <code>world</code>，按 <code>world-coordination.md</code> 串行 <code>styles.css</code>。</li>
+</ol>
+
+<hr style="margin-top:36px;border:none;border-top:1px solid #e5e7eb">
+<p style="color:#94a3b8;font-size:12px">dev-together · W29（2026-07-13 – 07-19）· 统一自举 demo 验收 · lead: allenwoods</p>
+</body>
+</html>
