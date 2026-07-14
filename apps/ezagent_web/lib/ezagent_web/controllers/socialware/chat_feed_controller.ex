@@ -72,7 +72,7 @@ defmodule EzagentWeb.Socialware.ChatFeedController do
   """
   def show(conn, %{"session_uri" => session_str}) do
     case parse_session(session_str) do
-      {:ok, session_uri} -> resolve_caller(conn, session_uri)
+      {:ok, session_uri} -> resolve_caller(conn, session_uri, :chat)
       :error -> bad_request(conn, "missing or invalid session_uri")
     end
   end
@@ -91,14 +91,14 @@ defmodule EzagentWeb.Socialware.ChatFeedController do
   def show_by_name(conn, %{"session_name" => name}) when is_binary(name) and name != "" do
     ws = Application.get_env(:ezagent_web, :hello_workspace, "demo")
     session_uri = Ezagent.URI.session(ws, :hello, name)
-    resolve_caller(conn, session_uri)
+    resolve_caller(conn, session_uri, :external)
   end
 
   def show_by_name(conn, _params), do: bad_request(conn, "missing session_name")
 
-  defp resolve_caller(conn, session_uri) do
+  defp resolve_caller(conn, session_uri, feed) do
     case AnonIngress.resolve_caller(conn, session_uri) do
-      {:ok, conn, %{caller: caller_uri}} -> render_spa(conn, session_uri, caller_uri)
+      {:ok, conn, %{caller: caller_uri}} -> render_spa(conn, session_uri, caller_uri, feed)
       {:error, :login_required} -> render_login_required(conn, session_uri)
       {:error, _reason} -> bounce(conn)
     end
@@ -106,12 +106,12 @@ defmodule EzagentWeb.Socialware.ChatFeedController do
 
   # --- the SPA shell -----------------------------------------------------
 
-  defp render_spa(conn, session_uri, caller_uri) do
+  defp render_spa(conn, session_uri, caller_uri, feed) do
     token = Ezagent.Socialware.ChatFeedAuth.issue_token(caller_uri, session_uri)
 
     conn
     |> put_resp_content_type("text/html")
-    |> send_resp(200, page(session_uri, token))
+    |> send_resp(200, page(session_uri, token, feed))
   end
 
   # Render a friendly login-prompt page when the session requires login.
@@ -176,10 +176,12 @@ defmodule EzagentWeb.Socialware.ChatFeedController do
   end
 
   # The SPA shell — the shared viewer_app.js pointed at the chat socket + topic.
-  defp page(session_uri, token) do
+  defp page(session_uri, token, feed) do
     session = session_uri |> uri_to_string() |> escape()
     token = escape(token)
     csrf = Plug.CSRFProtection.get_csrf_token() |> escape()
+
+    {title, socket_path, topic_prefix, root_class} = feed_config(feed)
 
     delegation_attr =
       if Ezagent.URI.type?(session_uri, :hello),
@@ -192,16 +194,25 @@ defmodule EzagentWeb.Socialware.ChatFeedController do
       <head>
         <meta charset="utf-8">
         <meta name="viewport" content="width=device-width, initial-scale=1">
-        <title>Socialware Chat</title>
+        <title>#{title}</title>
         <link rel="stylesheet" href="/assets/css/local_fonts.css">
         <link rel="stylesheet" href="/assets/css/viewer.css">
         <script defer type="module" src="/assets/js/viewer_app.js"></script>
       </head>
       <body class="min-h-screen bg-background text-foreground antialiased">
-        <main id="socialware-viewer-root" class="block min-h-screen w-full px-4 py-8 sm:py-12" data-session-uri="#{session}" data-token="#{token}" data-socket-path="/socialware_chat_socket" data-topic-prefix="socialware:chat_feed" data-csrf-token="#{csrf}"#{delegation_attr}></main>
+        <main id="socialware-viewer-root" class="#{root_class}" data-session-uri="#{session}" data-token="#{token}" data-socket-path="#{socket_path}" data-topic-prefix="#{topic_prefix}" data-csrf-token="#{csrf}"#{delegation_attr}></main>
       </body>
     </html>
     """
+  end
+
+  defp feed_config(:external) do
+    {"Hello", "/socialware_external_socket", "socialware:external", "block min-h-screen w-full"}
+  end
+
+  defp feed_config(:chat) do
+    {"Socialware Chat", "/socialware_chat_socket", "socialware:chat_feed",
+     "block min-h-screen w-full px-4 py-8 sm:py-12"}
   end
 
   defp escape(value) do

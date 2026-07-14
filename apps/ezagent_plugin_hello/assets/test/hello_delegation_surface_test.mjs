@@ -9,6 +9,10 @@ const controller = readFileSync(
   new URL("../../../ezagent_web/lib/ezagent_web/controllers/socialware/external_feed_controller.ex", import.meta.url),
   "utf8",
 )
+const catalogRenderer = readFileSync(
+  new URL("../../../ezagent_domain_socialware/assets/js/catalog_jsonrender.mjs", import.meta.url),
+  "utf8",
+)
 
 assert.match(viewer, /id: "hello-prompt-form"/)
 assert.match(viewer, /id: "hello-delegate-login"/)
@@ -23,6 +27,9 @@ assert.match(viewer, /jr-composer-focus/)
 assert.match(viewer, /focus\(\)/)
 assert.doesNotMatch(viewer, /kanban\.add_node/)
 assert.match(controller, /data-hello-delegation-endpoint/)
+assert.match(catalogRenderer, /hello-product-entry/)
+assert.match(catalogRenderer, /hello-task-cta/)
+assert.match(catalogRenderer, /hello-coupling-boundary/)
 
 const seed = JSON.parse(readFileSync(new URL("../../priv/seed_page/body.json", import.meta.url), "utf8"))
 const serializedSeed = JSON.stringify(seed)
