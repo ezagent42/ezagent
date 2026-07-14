@@ -16,9 +16,9 @@ it exists so the long GitHub key joins to the short name plans cite.
 |---|---|---|---|---|---|---|---|
 | `zyli-developer` | zyli | human-dev | 李震宇 | 前端 CI 覆盖任务（分期，先 `tsc --noEmit` 进 CI；#1371 登记） | `#1365 (2026-07-13)`（Close #1320+#1327；creator 自动入 session + 卸载证据） | GMT+8 | verified org member |
 | `gagameow` | gaga | human-dev | 黄佳佳 | AgentRuntime 边界 SPEC / `agent_runtime_boundary` gate（W28③ 结构线，补回）+ demo agent 凭证下发 | `#1367 canary 验收 (2026-07-13, commit 200f91b5)` — 自举第一张多米诺 + PTY 急症 #1366/#1369 | GMT+8 | verified |
-| `zhaomaota97` | zhaomato | human-dev | 张宁 | 官网 hello live E2E transcript（greeter + curl-llm 真回复；现已解锁） | `#1312 (2026-07-11, 直接PR)`（07-13 blocked，无新 return） | GMT+8 | verified org member |
+| `zhaomaota97` | zhaomato | human-dev | 张宁 | hello live E2E（6-point transcript）+ 从 hello 侧起造 hello↔kanban 融合（hello 侧连接） | `#1312 (2026-07-11, 直接PR)`（07-13 blocked，无新 return） | GMT+8 | verified org member |
 | `allenwoods` | allen | lead | 林懿伦 | 裁定两条周末车道（composition-cap `d7ebcd39b` / session-config `9820a3044` target-branch review + CI 拓扑）+ D2–D5 skill 增量落一个 dev-together PR + cbac Phase-4（crypto 签名/scoring，登记） | n/a | GMT+9 | verified |
-| `jjkysy` | jjkysy | human-dev | 姚升悦 | kanban socialware 整体进度监控 + 测试（可核实交付）+ 推 #1301 dealscout 到 mergeable | `kanban-rework-final (2026-07-10)`（07-13：#1360 分析 2 commit 于 `docs/socialware-data-mount-model`，未走 PR/return） | GMT+8 | verified |
+| `jjkysy` | jjkysy | human-dev | 姚升悦 | 检查补位（hello↔kanban 融合的 kanban 侧检查）+ 整体进度监控/测试（可核实跨环节验收）+ 把 #1360 分析形式化为 PR/return；#1301 次要 | `kanban-rework-final (2026-07-10)`（07-13：#1360 分析 2 commit 于 `docs/socialware-data-mount-model`，未走 PR/return） | GMT+8 | verified |
 | `ruihuachen-designer` | ruihua | designer | 陈瑞华 | 官网体验：飞轮原型 IA/视觉接入真实 world/hello LiveView 面（设计输入，不占 track 行） | `#1372 (2026-07-13)`（官网飞轮 demo 可点击原型） | GMT+8 | verified |
 | `claude` | claude | agent | — | off-plan support (orchestration / fixes on request) | n/a | — | n/a |
 | `codex` | codex | agent | — | off-plan support (bounded verifiable sub-tasks) | n/a | — | n/a |

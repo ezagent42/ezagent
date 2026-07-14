@@ -20,6 +20,11 @@ demo 所需的 agent 控制面 / 组合能力就位。同一天还清理了一�
 并把「前端 CI 覆盖=0」这一真实隐患（#1369 xterm bug 曾带崩上 canary）登记成明日 zyli 的开发任务（#1371）。
 **诚实边界:** 第一张多米诺已证明「可跑通一次」，但整条链尚未端到端跑通；hello→kanban 与看板流转仍待明日在已解锁的入口上链测。
 
+**新浮现的 demo 关键路径缺口——hello↔kanban 融合的底层挂载 infra 尚未建。** #1362 只落了「**同 session 内操作自己数据的 agent**」这半——
+但 demo 要求的 hello 连 kanban，本质是**跨 session 共享 + 公开挂载**（把 kanban socialware 挂进官网/hello 的派活入口），
+这正是 jjkysy #1360 分析的 **Layer B**，目前**只有 spec、未有实现**。这意味着「hello 连 kanban」不是接根线就通，而是要新建一层跨-session 挂载 infra。
+**本周策略:** 先用**松耦合**方式把全链跑通一次（满足 W29「至少跑通一次、不要求稳定」），**紧接**着造这层挂载 infra——两步都在本周视野内，先跑通、后补挂载。
+
 ## §1 落地了什么（what landed — SHAs）
 
 今天合入 `main` 的 PR 共 **13 个**（`#1361`–`#1373`）：**3 条自举地基**（清晨）+ **10 条当日 track/加固**。
@@ -89,6 +94,10 @@ demo 所需的 agent 控制面 / 组合能力就位。同一天还清理了一�
   ② 可能还有更多 agent 需凭证下发。两者登记为 demo agent 凭证下发后续，结转 gaga 07-14。
 - **前端 CI 覆盖 = 0（系统性缺口）:** 无 JS/TS 测试、`tsc --noEmit` 全项目零调用、无 ESLint/Vitest；#1369 xterm bug
   正因此带崩上 canary 才被人工 agent-browser 发现。已登记为 zyli 07-14 开发任务（#1371 / `docs/futures/todo.md` 2026-07-13 节）。
+- **hello↔kanban 融合的底层挂载 infra 未建（demo 关键路径）:** #1362 只落「同 session 内操作自己数据的 agent」半；
+  demo 要求的「hello 连 kanban」= **跨 session 共享 + 公开挂载**（把 kanban 挂进官网/hello 派活入口）= jjkysy **#1360 Layer B**，
+  **spec-only、未实现**。故 hello↔kanban 不是接线即通，须新建一层跨-session 挂载 infra。**结转策略:** 本周先**松耦合**跑通一次
+  （zhaomato 从 hello 侧起造 hello 侧连接、jjkysy 做 kanban 侧检查），**紧接**补挂载 infra（#1360 Layer B 形式化 → 实现，jjkysy 主形式化）。
 
 ## §4 method-deltas（MANDATORY — promote, don't just collect）
 > 每条发现都映射到「会抓到它的规则」；无映射规则 = 需要新增规则的信号。
@@ -121,6 +130,6 @@ demo 所需的 agent 控制面 / 组合能力就位。同一天还清理了一�
 
 - **zyli**（李震宇）: `current_track` → 前端 CI 覆盖任务（分期，先 `tsc --noEmit` 进 CI；#1371 登记）· `latest_return` → `#1365 (2026-07-13)`（Close #1320+#1327）
 - **gaga**（黄佳佳）: `current_track` → AgentRuntime 边界 SPEC / `agent_runtime_boundary` gate（W28③ 结构线，补回）+ demo agent 凭证下发 · `latest_return` → `#1367 canary 验收 (2026-07-13, commit 200f91b5)` — 自举第一张多米诺 + PTY 急症（#1366/#1369）
-- **zhaomato**（张宁）: `current_track` → 官网 hello live E2E transcript（greeter + curl-llm 真回复；**现已解锁**）· `latest_return` → `#1312 (2026-07-11)`（本日 blocked，无新 return）
-- **jjkysy**（姚升悦）: `current_track` → kanban socialware 整体进度监控 + 测试（可核实交付）+ 推 #1301 dealscout 到 mergeable · `latest_return` → `kanban-rework-final (2026-07-10)`（07-13：#1360 分析 2 commit 于 `docs/socialware-data-mount-model`，未走 PR/return）
+- **zhaomato**（张宁）: `current_track` → hello **live E2E**（6-point transcript）+ **从 hello 侧起造 hello↔kanban 融合**（hello 侧连接）· `latest_return` → `#1312 (2026-07-11)`（本日 blocked，无新 return）
+- **jjkysy**（姚升悦）: `current_track` → **检查补位为主**（hello↔kanban 融合的 kanban 侧检查）+ 整体进度监控/测试（可核实跨环节验收）+ **把 #1360 分析形式化为 PR/return**；#1301 次要 · `latest_return` → `kanban-rework-final (2026-07-10)`（07-13：#1360 分析 2 commit 于 `docs/socialware-data-mount-model`，未走 PR/return）
 - **ruihua**（陈瑞华）: `current_track` → 官网体验：把飞轮原型 IA/视觉接入真实 world/hello LiveView 面（设计输入，不占 track 行）· `latest_return` → `#1372 (2026-07-13)`（官网飞轮 demo）

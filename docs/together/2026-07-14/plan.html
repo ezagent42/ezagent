@@ -1,0 +1,209 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>dev-together 计划 — 2026-07-14</title>
+<style>
+  body{font:14px/1.6 -apple-system,"Segoe UI",Roboto,"PingFang SC","Microsoft YaHei",sans-serif;color:#1a1a1a;max-width:1100px;margin:24px auto;padding:0 20px;background:#fff}
+  h1{font-size:24px;border-bottom:3px solid #059669;padding-bottom:8px}
+  h2{font-size:19px;margin-top:30px;color:#047857;border-left:4px solid #059669;padding-left:10px}
+  h3{font-size:15px;margin-top:18px;color:#374151}
+  table{border-collapse:collapse;width:100%;margin:12px 0;font-size:13px}
+  .scroll{overflow-x:auto}
+  th,td{border:1px solid #d1d5db;padding:7px 9px;text-align:left;vertical-align:top}
+  th{background:#ecfdf5;font-weight:600}
+  tr:nth-child(even){background:#f9fafb}
+  .meta{background:#f0fdf4;border:1px solid #bbf7d0;border-radius:8px;padding:10px 16px;margin:12px 0;font-size:13px}
+  .demo{background:#eff6ff;border:1px solid #bfdbfe;border-radius:8px;padding:12px 16px;margin:14px 0}
+  .gate{background:#fffbeb;border:1px solid #fde68a;border-radius:8px;padding:12px 16px;margin:14px 0}
+  .chain{font-family:ui-monospace,SFMono-Regular,Menlo,monospace;font-size:13px;line-height:1.9;white-space:pre;overflow-x:auto;background:#f8fafc;border:1px solid #e2e8f0;border-radius:8px;padding:12px 16px;margin:10px 0}
+  .redline{background:#fef2f2;border-left:3px solid #ef4444;padding:8px 14px;margin:8px 0}
+  code{background:#f1f5f9;padding:1px 5px;border-radius:4px;font-size:12px}
+  .lead{color:#047857;font-weight:600}.note{color:#6b7280}
+  ol.steps{margin:6px 0 6px 22px}ol.steps li{margin:4px 0}
+  .tag{display:inline-block;background:#ecfdf5;border:1px solid #a7f3d0;border-radius:10px;padding:0 8px;font-size:11px;color:#047857;margin-left:4px}
+  .kick{background:#f8fafc;border:1px solid #e2e8f0;border-radius:8px;padding:10px 16px;margin:12px 0}
+  .kick h3{margin-top:2px;color:#047857}
+  .kick ul{margin:6px 0 2px 20px;padding:0}.kick li{margin:3px 0}
+  .prog{background:#f0fdf4;border:1px solid #bbf7d0;border-radius:8px;padding:10px 16px;margin:10px 0}
+  .delta{background:#fef9f3;border:1px solid #fed7aa;border-radius:8px;padding:10px 16px;margin:10px 0}
+  .found{background:#fdf4ff;border:1px solid #e9d5ff;border-radius:8px;padding:10px 16px;margin:10px 0}
+</style>
+</head>
+<body>
+<h1>dev-together 计划 · 2026-07-14</h1>
+<div class="meta">
+<b>week goal（W29）:</b> 实现 ezagent 自举 —— 一个统一验收 demo，本周至少完整跑通一次（不要求稳定）。<br>
+<b>本日头号:</b> 沿自举链往下推第二段 —— hello <b>live E2E 真回复</b> + 从 hello 侧起造 hello↔kanban 融合（本周先<b>松耦合</b>跑通一次）；并行补回 <b>AgentRuntime 结构线地基</b>。<br>
+<b>timezone:</b> GMT+8 · <b>lead:</b> 林懿伦（allenwoods） · <b>coordinator:</b> allenwoods + CC（agent 不占 track 行） · <b>lead_confirmed:</b> true（2026-07-14）
+</div>
+
+<h2>§0 本周大局 — 统一 demo（W29 验收 · STANDING）</h2>
+<div class="demo">
+<b>本周验收（逐日不变，直到跑通）—— 一条端到端链，把「在 ezagent 里开发 ezagent」和「hello/kanban 作为真实产品被用」拧成一次验收：</b>
+<div class="chain">登录官网（magic-link）
+   └─→ 进 hello（入口 / concierge）
+          └─→ hello 连到 kanban socialware（开发任务板）
+                 └─→ 在 kanban 上把一个真实 ezagent 开发任务
+                       派给一个「平台托管的开发 agent」（cc / codex）
+                          └─→ agent 产出真实 PR
+                                 └─→ 过 CI + review + 合并 + 部署
+                                        └─→ kanban 上看到任务流转 → 三面绿</div>
+= <b>dev-loop</b> + <b>产品 dogfood</b>（hello / kanban 作为真实 socialware 被 install / use / uninstall）+ <b>两者结合</b>（用 kanban 派开发任务）。本周至少完整跑通一次，再谈去脆。
+</div>
+<div class="prog">
+<b>今日进度（progress toward the acceptance）</b>
+<ul>
+<li><b>第一张多米诺已 canary 实证:</b> 07-13 gaga <code>#1367</code>（验收 commit <code>200f91b5</code>）证明平台托管的 <code>cc-deepseek</code> agent 经<b>正式入口</b>被唤醒、两次 <code>@orchestrator</code> 真回复、一个最小开发任务被 ACCEPTED。<b>全链入口打通</b>——下游 hello→kanban 派活、agent 产 PR、看板流转从此<b>可链测</b>。</li>
+<li><b>自举地基已 landed:</b> <code>#1361</code>（orchestrator Session-Config MCP）+ <code>#1362</code>（socialware composition-cap 车道）已合 main。</li>
+<li><b>下一步 = 沿链往下推第二段:</b> hello <b>live E2E</b> 真回复 + 从 hello 侧起造 hello↔kanban 融合（本周先<b>松耦合</b>跑通一次）；并行补回 <b>AgentRuntime 结构线</b>（demo 地基，不能再滑）。</li>
+</ul>
+</div>
+<div class="found">
+<b>新浮现的 demo 关键路径缺口 —— hello↔kanban 融合的底层挂载 infra 尚未建。</b> <code>#1362</code> 只落「<b>同 session 内操作自己数据的 agent</b>」半；demo 要求的「hello 连 kanban」= <b>跨 session 共享 + 公开挂载</b>（把 kanban socialware 挂进官网/hello 派活入口）= jjkysy <b>#1360 Layer B</b>，目前 <b>spec-only、未实现</b>。<b>本周策略:</b> 先用<b>松耦合</b>把全链跑通一次（满足「至少跑通一次、不要求稳定」），<b>紧接</b>造这层挂载 infra —— 先跑通、后补挂载，两步都在本周视野内。
+</div>
+<div class="delta">
+<b>修正 / 变化（deltas vs 上一 plan / state）</b>
+<ul>
+<li><b>入口已从「待证」转为「已证」</b>——头号从「证明入口（gaga canary）」切换到「沿链推进 + 补结构线地基」。</li>
+<li><b>hello↔kanban 融合底层挂载 infra 未建 = 本周关键路径</b>（见上「新浮现缺口」+ <code>2026-07-13/review.md</code> §0/§3）。</li>
+<li><b>jjkysy 07-13 有 2 个 #1360 分析 commit</b>（<code>docs/socialware-data-mount-model</code>）但未走 PR/return —— 今日先<b>形式化</b>为 PR/return。</li>
+</ul>
+</div>
+
+<h2>§1 本日头号 — 沿链推进第二段 + 补结构线地基</h2>
+<p><b>沿自举链往下推第二段 —— hello live E2E 真回复 + 从 hello 侧起造 hello↔kanban 融合（本周先松耦合跑通一次）。</b>第一张多米诺（agent 可被调用/真回话）已在 canary 证明，今日把它接续成更长的链：hello 真生成/渲染要成立，且 hello 能把开发任务递到 kanban 派活面。并行的 demo <b>地基</b>头号：<b>gaga 补回 AgentRuntime 边界 SPEC / <code>agent_runtime_boundary</code> gate</b>（W28③ 结构线）—— 07-13 被 PTY 急症正当挤占，今日不能再滑。</p>
+<div class="redline"><b>红线:</b> hello↔kanban 融合的底层挂载 infra（跨 session 共享 + 公开挂载 = #1360 Layer B）<b>本周先不强求真挂载</b> —— 先<b>松耦合</b>跑通一次，<b>紧接</b>再补挂载 infra；不得为「看起来通了」而绕过 #1360 Layer B 的真实缺口（须诚实标注「松耦合，非最终挂载」）。</div>
+
+<h2>§2 按开发者规划</h2>
+<p class="note">每行 = 一个 track（human-dev only）。agent 不出现在 plan 中；coordinator = allen + CC 负责分支合并 / canary 部署 / demo 集成粘合，不占 track 行。</p>
+<div class="scroll"><table>
+<tr><th>开发者</th><th>本日 track</th><th>闭环 / 依赖</th><th>分支</th><th>demo 环节</th></tr>
+<tr>
+  <td><b>zhaomaota97</b><br>张宁</td>
+  <td>① hello <b>live E2E</b>（6-point：greeter 入口 → 真 prompt → curl-llm(deepseek) 真生成 json-render spec → <code>Spec.validate</code> → live 渲染 → 第二 prompt 变形/PATCH → concierge 只读问答不改页 → 匿名 <code>public_view</code> 可见 → catalog 36-组件约束 live 成立；交付 agent-browser 截图 + transcript）② <b>从 hello 侧起造 hello↔kanban 融合</b>（把 kanban 接进官网/hello 派活入口，hello 侧连接）<span class="tag">产品面 + 融合(hello 侧)</span></td>
+  <td>依赖 agent 可回话（已 07-13 证）；hello↔kanban 本周先<b>松耦合</b></td>
+  <td><code>feat/hello-live-e2e-kanban-fusion</code></td>
+  <td>demo 产品面 + 融合(hello 侧)</td>
+</tr>
+<tr>
+  <td><b>gagameow</b><br>黄佳佳</td>
+  <td>① <b>AgentRuntime 边界 SPEC / <code>agent_runtime_boundary</code> gate</b>（W28③ 结构线，session 面不再伸手进 agent 生命周期；补回，<b>头号</b>）② <b>demo agent 凭证下发</b>（<code>test-zyli-cc-1</code> 等缺凭证）<span class="tag">地基</span></td>
+  <td>demo 地基；SPEC 走 codex 对抗评审</td>
+  <td><code>spec/agent-runtime-boundary</code></td>
+  <td>demo 地基（agent 控制面收敛）</td>
+</tr>
+<tr>
+  <td><b>jjkysy</b><br>姚升悦</td>
+  <td><b>以检查补位为主，不做主建</b> —— ① hello↔kanban 融合的 <b>kanban 侧检查</b> ② 整体进度监控 + 测试（kanban 看板 demo 各环节任务卡 + <b>至少一条可核实的跨环节验收用例</b>，真数据）③ 把昨日 <b>#1360 分析形式化为 PR/return</b>；#1301 dealscout 次要</td>
+  <td>依赖 zhaomato hello 侧连接（互检）；#1360 形式化 = 补挂载 infra 前置</td>
+  <td><code>docs/socialware-data-mount-model</code>（#1360）+ kanban 检查</td>
+  <td>demo 融合(kanban 侧检查)/监控</td>
+</tr>
+<tr>
+  <td><b>zyli-developer</b><br>李震宇</td>
+  <td><b>前端 CI 覆盖</b>，<b>先 <code>tsc --noEmit</code> 进 CI</b>（每 assets 目录 + 一个 CI step；后续 ESLint → Vitest → Playwright smoke 分期）</td>
+  <td>补 #1369 xterm 类隐患的系统性闸</td>
+  <td><code>ci/frontend-tsc-noemit</code></td>
+  <td>demo 地基 / 质量闸</td>
+</tr>
+</table></div>
+<p class="note"><b>设计输入（非 track 行）:</b> <b>ruihuachen-designer</b>（陈瑞华，designer）—— <b>官网体验</b>：把飞轮原型 #1372 的 IA/视觉方向接入真实 world/hello LiveView 面的设计输入走 <b>Feishu</b>，不占 track 行、不改代码。</p>
+
+<h2>§3 冲突图（并行 / 串行）</h2>
+<div class="scroll"><table>
+<tr><th>任务</th><th>拥有面 / 文件</th><th>冲突</th><th>并行 / 串行</th></tr>
+<tr><td>zhaomato hello live E2E + hello↔kanban(hello 侧)</td><td><code>world</code>（hello 入口/渲染、官网首程、hello→kanban 连接入口）</td><td>与 zyli 前端 CI 若同触 <code>world/assets</code> 构建 / <code>styles.css</code></td><td>world-coordination 串行共享文件</td></tr>
+<tr><td>zyli 前端 CI（tsc）</td><td><code>ci.yml</code> + 三个 <code>assets/tsconfig.json</code>（web/world/hello）+ CI step</td><td>与 zhaomato 仅在 <code>world/assets</code> 构建面可能相邻；tsc 是配置面，改动小</td><td>大体并行；触 <code>world/assets</code> 时打招呼</td></tr>
+<tr><td>jjkysy kanban 侧检查 + #1360 形式化</td><td>kanban socialware 插件面 + <code>docs/socialware-data-mount-model</code></td><td>与 world 面不重叠；与 zhaomato hello↔kanban 是<b>互检</b>关系（非同写）</td><td>可并行（互检对齐契约）</td></tr>
+<tr><td>gaga AgentRuntime SPEC + 凭证下发</td><td><code>docs/</code>（SPEC）+ agent 生命周期/配置面（canary）</td><td>与产品面、kanban 面不重叠</td><td>可并行</td></tr>
+</table></div>
+<div class="gate">
+<b>world 序列化（zhaomato + zyli）:</b> 两条 track 都可能触 <code>world</code>（zhaomato hello 渲染/入口、zyli <code>world/assets</code> tsc）→ 适用 <code>docs/guide/world-coordination.md</code>——<b>声明 surface 归属、串行化 <code>styles.css</code>、遵守 layout gate</b>。hello 入口/渲染归 zhaomato；前端 CI 配置（tsconfig/ci.yml）归 zyli，不改 <code>world</code> 运行时 UI。<br>
+<b>hello↔kanban = zhaomato(hello 侧建) × jjkysy(kanban 侧检查):</b> 非同写同一文件，而是<b>两侧对齐挂载/派活接口契约</b>（互 mock 先对齐，再各自并行）。<br>
+<b>jjkysy #1360 形式化、gaga AgentRuntime SPEC、zyli 前端 CI</b> 三者互不重叠，可全程并行。
+</div>
+
+<h2>§4 依赖与 handoff 顺序</h2>
+<ol class="steps">
+<li><b>gaga 补回 AgentRuntime 边界 SPEC（头号地基）</b> —— 走 <b>codex 对抗评审</b>后交 lead；与下游并行，不阻塞产品面。</li>
+<li><b>zhaomato hello live E2E（6-point）</b> —— 入口已证，今日直接跑真回复链；先交 E2E transcript，再起 hello↔kanban 融合(hello 侧)。</li>
+<li><b>hello↔kanban 融合互检:</b> zhaomato 出 hello 侧连接契约 → jjkysy 从 kanban 侧检查 + 对齐；两侧先 <b>mock 对方接口</b>对齐契约，再并行。本周先<b>松耦合</b>，#1360 Layer B 挂载 infra 形式化后再补真挂载。</li>
+<li><b>jjkysy #1360 形式化为 PR/return</b> —— 把 07-13 的 2 commit 落成 PR/return（补挂载 infra 的前置 spec），并给可核实的 kanban 看板交付。</li>
+<li><b>zyli 前端 CI（tsc 先行）</b> —— 全程并行；#1371 分期任务第一步。</li>
+<li><b>ruihua</b> 官网体验 UX 设计输入（Feishu），作为 hello/官网面参照。</li>
+</ol>
+<p class="note"><b>coordinator（allen + CC）:</b> 分支合并（lead 是进 main 唯一路径）· canary 部署 · demo 集成粘合（hello live E2E + hello↔kanban 松耦合 + 看板流转拼成端到端链）· 裁定 #1360 Layer B 挂载 infra 排期（松耦合先跑通、紧接补挂载）。</p>
+
+<h2>§5 开工 prompt（每个 dev 一段 paste-ready）</h2>
+<p class="note">每段可直接粘贴给该 dev / 其 agent 起步。深任务走完整 <code>handoff</code> 命令出 spec；本节是快路 kickoff。通用规约见 §7。</p>
+
+<div class="kick">
+<h3>zhaomato — hello live E2E（6-point）+ 从 hello 侧起造 hello↔kanban 融合</h3>
+<ul>
+<li><b>分支:</b> <code>feat/hello-live-e2e-kanban-fusion</code>（先 <code>git fetch origin main</code> 再从 <code>origin/main</code> 切）</li>
+<li><b>范围:</b> ① hello <b>live E2E</b> 6-point：greeter 入口 → 真 prompt → <b>curl-llm(deepseek) 真生成</b> json-render spec → <code>Spec.validate</code> → live 渲染 → 第二 prompt <b>变形/PATCH</b> → concierge <b>只读问答不改页</b> → 匿名 <code>public_view</code> 可见 → catalog <b>36-组件约束 live 成立</b>；② <b>从 hello 侧起造 hello↔kanban 融合</b>（把 kanban 接进官网/hello 派活入口，hello 侧连接）。<b>范围外:</b> 强求 #1360 Layer B 真挂载——本周先<b>松耦合</b>，诚实标注「松耦合，非最终挂载」。</li>
+<li><b>必读:</b> <code>ezagent-socialware</code> + <code>ezagent-developer</code> 技能 · hello 渲染底座/入口源 · <b><code>docs/guide/world-coordination.md</code></b>（触 <code>world</code>，与 zyli 串行 <code>styles.css</code>）· <code>2026-07-13/review.md</code> §0/§3（挂载 infra 缺口）· <code>#1312 (2026-07-11)</code> 续接点 · dev-together 技能。</li>
+<li><b>DoD:</b> hello live E2E 的 <b>agent-browser 截图 + transcript</b>（6-point 全成立，真 deepseek 生成，非 stub）+ hello↔kanban 松耦合连接的<b>真实产品面证明</b>（LiveViewTest / agent-browser 驱动）+ 与 jjkysy 对齐的挂载/派活接口契约。</li>
+<li><b>闸:</b> 全套静态 gate + 回归测试 + PR-head CI 绿 + rebase main。<b>world 规约:</b> 声明 surface 归属、串行 <code>styles.css</code>、遵守 layout gate。</li>
+</ul>
+</div>
+
+<div class="kick">
+<h3>gaga — AgentRuntime 边界 SPEC / <code>agent_runtime_boundary</code> gate（补回）+ demo agent 凭证下发</h3>
+<ul>
+<li><b>分支:</b> <code>spec/agent-runtime-boundary</code>（从 <code>origin/main</code> 切）</li>
+<li><b>范围:</b> ① <b>AgentRuntime 边界 SPEC</b>——「session 面不再伸手进 agent 生命周期」写成结构线 SPEC + 一道 <code>agent_runtime_boundary</code> 静态 gate（W28③）；② <b>demo agent 凭证下发</b>——<code>test-zyli-cc-1</code> 等缺凭证平台 agent，按 per-agent config 下发。<b>范围外:</b> 大改运行时实现——本轮先 SPEC + gate 契约，实现分期。</li>
+<li><b>必读:</b> <code>ezagent-developer</code> 技能 · <code>2026-W29/weekly-goals.md</code> §使能结构③ · agent 生命周期/控制面源 · <code>#1367 (2026-07-13)</code> 续接点 · <code>references/handoff-standard.md</code> · dev-together 技能。</li>
+<li><b>DoD:</b> AgentRuntime 边界 SPEC（四属性齐全，走 <b>codex 对抗评审</b>后交 lead）+ <code>agent_runtime_boundary</code> gate 的<b>失败样例</b>（gate 能抓到 session 越界）+ demo agent 凭证下发的<b>可核实结果</b>（缺凭证 → 可被调用，脱敏证据）。</li>
+<li><b>闸:</b> 全套静态 gate + 回归测试 + PR-head CI 绿 + rebase main。<b>SPEC 约:</b> 先 codex 对抗评审（架构方向/分层/边界），SOUND 后再交 lead。</li>
+</ul>
+</div>
+
+<div class="kick">
+<h3>jjkysy — 检查补位（kanban 侧检查）+ 监控/测试 + #1360 形式化</h3>
+<ul>
+<li><b>分支:</b> <code>docs/socialware-data-mount-model</code>（#1360 形式化，续 07-13 的 2 commit）+ kanban 检查（同分支或 <code>feat/kanban-fusion-check</code>，从 <code>origin/main</code> 切）</li>
+<li><b>范围:</b> <b>以检查补位为主，不做主建</b> —— ① hello↔kanban 融合的 <b>kanban 侧检查</b>（与 zhaomato hello 侧互检挂载/派活接口契约）；② 整体进度监控 + 测试（kanban 看板 demo 各环节任务卡 + <b>至少一条可核实的跨环节验收用例</b>，真数据非 stub）；③ 把昨日 <b>#1360 分析形式化为 PR/return</b>（跨 session 共享 + 公开挂载 = Layer B）。<b>范围外:</b> #1301 dealscout 次要（有余力再推 mergeable）。</li>
+<li><b>必读:</b> <code>ezagent-socialware</code> + <code>ezagent-developer</code> 技能 · #1360 / #1355 / #1357 core-gap 线 · #1362 composition-cap lane（已 main）· <code>docs/socialware-data-mount-model</code>（07-13 2 commit）· <code>kanban-rework-final (2026-07-10)</code> 续接点 · dev-together 技能。</li>
+<li><b>DoD:</b> #1360 形式化的 <b>PR/return</b>（Layer B spec 落成，不再「有 commit 无 PR」）+ kanban 侧检查的<b>可核实结论</b>（跨环节验收用例过，真数据）+ 与 zhaomato 对齐的接口契约。</li>
+<li><b>闸:</b> 全套静态 gate + 回归测试 + PR-head CI 绿 + rebase main。</li>
+</ul>
+</div>
+
+<div class="kick">
+<h3>zyli — 前端 CI 覆盖（先 <code>tsc --noEmit</code> 进 CI）</h3>
+<ul>
+<li><b>分支:</b> <code>ci/frontend-tsc-noemit</code>（从 <code>origin/main</code> 切）</li>
+<li><b>范围:</b> #1371 登记的前端 CI 覆盖任务<b>第一步</b>：把 <b><code>tsc --noEmit</code> 类型检查接进 CI</b>——三个 assets 目录（<code>ezagent_web/assets</code>、<code>ezagent_plugin_world/assets</code>、<code>ezagent_plugin_hello/assets</code>）各跑 + 一个 CI step。<b>范围外:</b> 一次做全（ESLint/Vitest/Playwright 后续分期，本轮只 tsc）；不改 <code>world</code> 运行时 UI（只加 CI 配置）。</li>
+<li><b>必读:</b> <code>docs/futures/todo.md</code> 2026-07-13 节（前端 CI 覆盖 + 分期计划）· <code>ci.yml</code>（前端 CI 落 full-suite 或新 job）· 三个 <code>assets/tsconfig.json</code> · <code>[[reference_ezagent_static_gate_topology]]</code>（#1370 lockstep guard）· <code>#1365 (2026-07-13)</code> 续接点 · dev-together 技能。</li>
+<li><b>DoD:</b> <code>tsc --noEmit</code> 在 CI 中对三个 assets 目录<b>真实运行并会 fail</b>（构造一个类型错误证明 gate 有效，再修复）+ CI 绿。</li>
+<li><b>闸:</b> 全套静态 gate + PR-head CI 绿 + rebase main。</li>
+</ul>
+</div>
+
+<p class="note"><b>ruihua（设计输入，非 track 行）:</b> designer 不占 track 行、不改代码；<b>官网体验</b>——把飞轮原型 #1372 的 IA/视觉方向接入真实 world/hello LiveView 面的设计输入走 <b>Feishu</b>，作为 hello/官网面参照。</p>
+
+<h2>§6 out-of-scope / backlog（登记 + 归因）</h2>
+<ul>
+<li><b>#1360 Layer B 挂载 infra 的真实实现</b>（跨 session 共享 + 公开挂载）—— 本周先松耦合跑通，真挂载<b>紧接</b>排期；今日只做 jjkysy 的<b>形式化 spec</b>（demo 关键路径地基，本周内紧接补，先形式化）。</li>
+<li><b>cbac Phase-4</b>（crypto 签名 / scoring）—— lead 侧登记项，非本日 demo 关键路径（近期目标外的地基项，登记待排）。</li>
+<li><b>前端 CI 分期后续</b>（ESLint / Vitest / Playwright smoke）—— 本轮只 tsc；后续分期结转（按 #1371 计划推进）。</li>
+<li><b>demo 去脆 / 稳定化</b> —— 本周先跑通一次即达标；稳定化明确结转下周（MVP 线之外，按 weekly-goals 结转）。</li>
+<li>走查冒出超范围的 world UI 缺陷 —— 按派发原则判「偏离方向」或「底层疏漏」登记，不隐性扩范围。</li>
+</ul>
+
+<h2>§7 协作约束</h2>
+<div class="gate">
+<b>CI 闸:</b> return 前本地跑<b>全套</b>静态 gate（<code>arch.scan + doc.scan + uri_query.scan + check_invariants</code> 或整套 <code>mix ci.local</code>）——不跑子集（大 PR / 动行锚文件尤其，见 #1276）；<b>机器闸 CI 绿 ≠ 产品验证</b>。<br>
+<b>PR 标题诚实:</b> 未 canary 实证的修复不标「修好」；<b>hello↔kanban 融合本周是「松耦合先跑通」，须诚实标注「松耦合，非最终挂载（#1360 Layer B 待补）」</b>——不得把松耦合冒充真挂载。<br>
+<b>评审基准:</b> <code>origin/main</code>（rebase 到 current main 后再 return）；每任务一分支，PR 只并入本任务分支，lead 走 <code>close</code> 合 main。<br>
+<b>SPEC 约:</b> gaga AgentRuntime SPEC 先走 <b>codex 对抗评审</b>（架构方向/分层/边界），SOUND 后再交 lead。<br>
+<b>skill 改动:</b> dev-together <b>无唯一 owner</b> —— 全员讨论，特殊情况由 lead（allenwoods）admin-merge（「Protect dev-together skill」CI gate = lead-gated）。
+</div>
+<div class="redline"><b>canary 红线：canary 前不宣布修好。</b> 任何「demo 跑通 / 链测通过」的通报，须有 <b>canary 实测证据</b>（agent-browser 截图 + transcript / 真实 PR 链接 + kanban 流转截图）后才发——对齐 <code>2026-07-10/review.md</code> §3 事故 A 红线，未虚报是成熟信号。</div>
+
+<p style="margin-top:24px;color:#9ca3af;font-size:12px">本计划面向全体开发者。week goal 见 <code>docs/together/2026-W29/weekly-goals.md</code>。</p>
+</body>
+</html>

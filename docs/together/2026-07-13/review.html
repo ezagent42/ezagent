@@ -53,6 +53,11 @@ plan §1 的头号目标——「平台 agent 可被正常调用 / <code>@orches
 agent 控制面 / 组合能力就位。同一天清理了一批 CI/前端隐患（<b>#1368</b> <code>ci.local</code> 确定性退出 · <b>#1370</b> slot-gate 行锚 lockstep + CI guard · <b>#1367/#1369</b> World Terminal 崩溃/xterm 运行时修复），
 并把「前端 CI 覆盖 = 0」这一真实隐患（#1369 xterm bug 曾带崩上 canary）登记成明日开发任务（<b>#1371</b>）。</p>
 <p><b>诚实边界:</b> 第一张多米诺证明「可跑通一次」，但整条链尚未端到端跑通；hello→kanban 与看板流转待明日在已解锁的入口上链测。</p>
+<div class="big">
+<b>新浮现的 demo 关键路径缺口——hello↔kanban 融合的底层挂载 infra 尚未建。</b> #1362 只落了「<b>同 session 内操作自己数据的 agent</b>」这半；
+而 demo 要求的「hello 连 kanban」本质是<b>跨 session 共享 + 公开挂载</b>（把 kanban socialware 挂进官网/hello 的派活入口），这正是 jjkysy <b>#1360 分析的 Layer B</b>——<b>目前只有 spec、未实现</b>。
+故「hello 连 kanban」不是接根线即通，须新建一层跨-session 挂载 infra。<b>本周策略:</b> 先用<b>松耦合</b>方式把全链跑通一次（满足 W29「至少跑通一次、不要求稳定」），<b>紧接</b>造这层挂载 infra——先跑通、后补挂载，两步都在本周视野内。
+</div>
 
 <h2>§1 本日落地（合入 main，按开发者分组 · 13 PR）</h2>
 
@@ -106,7 +111,7 @@ agent 控制面 / 组合能力就位。同一天清理了一批 CI/前端隐患�
 <tr><td>合入 main</td><td class="num">13</td><td>#1361–#1373（3 地基 + 10 当日 track/加固）</td></tr>
 <tr><td>superseded</td><td class="num">2</td><td>旧 #1320 / #1327 被 #1365 吸收（待 lead 接受后关）</td></tr>
 <tr><td>blocked</td><td class="num">1</td><td>zhaomato 官网 hello E2E（依赖 orchestrator 真回话，mid-day 才由 #1367 证明）</td></tr>
-<tr><td>deferred</td><td class="num">2</td><td>gaga AgentRuntime 边界 SPEC（急症挤占）· jjkysy kanban 进度看板（无可见 artifact）</td></tr>
+<tr><td>deferred</td><td class="num">2</td><td>gaga AgentRuntime 边界 SPEC（急症挤占）· jjkysy kanban 进度看板 + #1301（#1360 分析已提 2 commit 于 <code>docs/socialware-data-mount-model</code>，未走 PR，结转形式化）</td></tr>
 <tr><td>left-open</td><td class="num">1</td><td>#1301 dealscout（jjkysy，末次触碰 07-12，未推进）</td></tr>
 </table></div>
 
@@ -120,8 +125,11 @@ agent 控制面 / 组合能力就位。同一天清理了一批 CI/前端隐患�
 <p>该 track 依赖 orchestrator 真回话，而第一张多米诺 mid-day 才由 #1367 证明；解锁前无法链测。<b>今日属被阻，非空转。</b>阻塞现已清，结转 07-14（现可链测）。</p>
 </div>
 <div class="inc">
-<h3>jjkysy · kanban 进度看板 — 无 PR、无 return（缺口跟进）</h3>
-<p>今日无可见 artifact，#1301 dealscout 末次触碰 07-12 未推进。<b>caveat:</b> 可能存在非 PR 的看板监控/协调工作，但本复盘无法核实。明日须给可核实交付物 + 推 #1301 到 mergeable。</p>
+<h3>jjkysy · #1360 core-gap 分析有推进（2 commit），但未走 PR/return</h3>
+<p>07-13 他在 <code>docs/socialware-data-mount-model</code> 提了 <b>2 个 commit</b>——「socialware 数据跨 session 共享 = mount agent 进房间」分析 + 收窄为 <b>Layer B</b>（续 #1355/#1357 深层缺口线）。即其 track 的<b>缺口发现线有进展</b>，但<b>没开 PR、没写 return</b>，PR 层看不见——缺口是<b>流程（未形式化）</b>，<b>不是产出为零</b>。kanban 进度看板本身与 #1301 dealscout（末次触碰 07-12）仍待落。明日形式化 + 交付。</p>
+</div>
+<div class="big">
+<b>hello↔kanban 融合的底层挂载 infra 未建（demo 关键路径）:</b> #1362 只落「同 session 内操作自己数据的 agent」半；demo 要求的「hello 连 kanban」= <b>跨 session 共享 + 公开挂载</b> = jjkysy <b>#1360 Layer B</b>，<b>spec-only、未实现</b>。故须新建一层跨-session 挂载 infra。<b>结转策略:</b> 本周先<b>松耦合</b>跑通一次（zhaomato 从 hello 侧起造连接、jjkysy 做 kanban 侧检查），<b>紧接</b>补挂载 infra（#1360 Layer B 形式化 → 实现，jjkysy 主形式化）。
 </div>
 <div class="big">
 <b>前端 CI 覆盖 = 0（系统性缺口）:</b> 无 JS/TS 测试、<code>tsc --noEmit</code> 全项目零调用、无 ESLint/Vitest；#1369 xterm bug 正因此带崩上 canary 才被人工 agent-browser 发现。已登记为 zyli 07-14 开发任务（#1371）。<br>
@@ -143,7 +151,7 @@ agent 控制面 / 组合能力就位。同一天清理了一批 CI/前端隐患�
 <ol>
 <li><b>zhaomato 解除阻塞、优先链测:</b> 官网首程 + hello greeter + curl-llm 真回复 E2E transcript（唯一阻塞已清）。</li>
 <li><b>gaga 补结构线 + 凭证下发:</b> AgentRuntime 边界 SPEC / <code>agent_runtime_boundary</code> gate 拉回头号 + demo agent 凭证下发。</li>
-<li><b>jjkysy 明确交付物:</b> kanban 看板有 demo 各环节任务卡 + 至少一条跨环节验收，并推 #1301 到 mergeable（避免再次无 PR 无 return）。</li>
+<li><b>jjkysy 形式化 + 检查补位:</b> 把 #1360 core-gap 分析（今日 2 commit，未走 PR/return）<b>形式化为 PR/return</b>；以检查补位为主——hello↔kanban 融合的 kanban 侧检查 + kanban 看板 demo 各环节任务卡 + 至少一条可核实跨环节验收；#1301 次要。避免再次「有 commit 却无 PR/return」。</li>
 <li><b>zyli 转前端 CI:</b> #1371 前端 CI 覆盖，先 <code>tsc --noEmit</code> 进 CI（最高性价比，直接防 xterm 类 bug）。</li>
 <li><b>ruihua 承接飞轮原型落地:</b> #1372 原型 IA/视觉接入真实 world/hello LiveView 面（设计输入，走 Feishu）。</li>
 <li><b>序列化提示:</b> zhaomato（hello/官网）与 zyli（前端 assets）若同触 <code>world</code>，按 <code>world-coordination.md</code> 串行 <code>styles.css</code>。</li>
