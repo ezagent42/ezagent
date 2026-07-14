@@ -70,8 +70,11 @@ function render(){
   document.getElementById('inbox').innerHTML=h;
 }
 function respond(i,ok){
+  var r=INBOX[i];
+  var msg=ok?'确认接受 '+r.name+' 的牵线请求？接受后双方进入 workspace。':'确认拒绝 '+r.name+' 的牵线请求？';
+  if(!confirm(msg))return;
   if(ok){accepted[i]=true;var el=document.getElementById('req'+i);el.style.borderColor='var(--jade)';el.style.background='var(--jade-wash)';
-    el.innerHTML='<div style="text-align:center;width:100%;padding:8px"><b style="color:var(--success)">✓ 已接受 · Accepted</b> — 双方进入 workspace</div>';}
+    el.innerHTML='<div style="text-align:center;width:100%;padding:12px"><b style="color:var(--success)">✓ 已接受 · Accepted</b> — 双方进入 workspace<br><br><a class="btn accept" href="../../world/workspace.html" style="color:#fff;font-size:13px">进入 world 工作台 · Open workspace →</a></div>';}
   else{declined[i]=true;var el=document.getElementById('req'+i);el.style.opacity='0.4';
     el.innerHTML='<div style="text-align:center;width:100%;padding:8px;color:var(--ink-4)">已拒绝 · Declined</div>';}
 }
