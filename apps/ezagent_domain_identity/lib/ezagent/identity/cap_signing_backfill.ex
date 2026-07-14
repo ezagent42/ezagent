@@ -118,12 +118,15 @@ defmodule Ezagent.Identity.CapSigningBackfill do
   # different issuer/timestamp means they claim different EventLog sources.
   # Keep those sources distinct: the lifecycle replay will quarantine stale
   # ones instead of letting an identity-only dedupe select one arbitrarily.
-  defp source_key(%Capability{granted_by: %URI{} = issuer, granted_at: %DateTime{} = granted_at}) do
-    {Ezagent.URI.stable_key(issuer), DateTime.to_iso8601(granted_at)}
-  end
+  defp source_key(%Capability{} = cap) do
+    case {cap.granted_by, cap.granted_at} do
+      {%URI{} = issuer, %DateTime{} = granted_at} ->
+        {Ezagent.URI.stable_key(issuer), DateTime.to_iso8601(granted_at)}
 
-  defp source_key(%Capability{granted_by: granted_by, granted_at: granted_at}),
-    do: {inspect(granted_by), inspect(granted_at)}
+      {granted_by, granted_at} ->
+        {inspect(granted_by), inspect(granted_at)}
+    end
+  end
 
   defp classify(%{holder: holder, cap: cap}, _event_streamer, _issue)
        when cap.granted_by == :plugin_declared do
