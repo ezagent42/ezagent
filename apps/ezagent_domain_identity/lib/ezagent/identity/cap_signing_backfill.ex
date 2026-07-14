@@ -106,9 +106,24 @@ defmodule Ezagent.Identity.CapSigningBackfill do
 
   defp deduplicate(candidates) do
     Enum.uniq_by(candidates, fn %{holder: holder, cap: cap} ->
-      {Ezagent.URI.stable_key(holder), Capability.identity_key(cap)}
+      {
+        Ezagent.URI.stable_key(holder),
+        Capability.identity_key(cap),
+        source_key(cap)
+      }
     end)
   end
+
+  # A users-row and a snapshot can carry the same logical capability, but a
+  # different issuer/timestamp means they claim different EventLog sources.
+  # Keep those sources distinct: the lifecycle replay will quarantine stale
+  # ones instead of letting an identity-only dedupe select one arbitrarily.
+  defp source_key(%Capability{granted_by: %URI{} = issuer, granted_at: %DateTime{} = granted_at}) do
+    {Ezagent.URI.stable_key(issuer), DateTime.to_iso8601(granted_at)}
+  end
+
+  defp source_key(%Capability{granted_by: granted_by, granted_at: granted_at}),
+    do: {inspect(granted_by), inspect(granted_at)}
 
   defp classify(%{holder: holder, cap: cap}, _event_streamer, _issue)
        when cap.granted_by == :plugin_declared do
@@ -158,7 +173,9 @@ defmodule Ezagent.Identity.CapSigningBackfill do
 
   defp authoritative_event(events, holder, %Capability{} = candidate) when is_list(events) do
     events
-    |> Enum.reduce_while({:ok, %{active: nil, revoked?: false}}, fn event, {:ok, state} ->
+    |> Enum.reduce_while({:ok, %{active: nil, revoked?: false, superseded?: false}}, fn event,
+                                                                                        {:ok,
+                                                                                         state} ->
       case lifecycle_event(event, holder) do
         :ignore ->
           {:cont, {:ok, state}}
@@ -167,14 +184,25 @@ defmodule Ezagent.Identity.CapSigningBackfill do
           {:halt, {:error, reason}}
 
         {:ok, :grant, event_cap, event_id} ->
-          if exact_grant_source?(candidate, event_cap, holder) do
-            replay = %{
-              event_id: event_id,
-              issuer: event_cap.granted_by,
-              proposal: %{event_cap | signature: nil, key_id: nil, grantee_uri: nil}
-            }
+          if same_identity?(candidate, event_cap) do
+            if exact_grant_source?(candidate, event_cap, holder) do
+              replay = %{
+                event_id: event_id,
+                issuer: event_cap.granted_by,
+                proposal: %{event_cap | signature: nil, key_id: nil, grantee_uri: nil}
+              }
 
-            {:cont, {:ok, %{active: replay, revoked?: false}}}
+              {:cont, {:ok, %{active: replay, revoked?: false, superseded?: false}}}
+            else
+              # A later grant of the same capability identity replaces the
+              # prior slice value. Its source must be exact before it can be
+              # reauthorized; otherwise the candidate is stale, not eligible.
+              if not is_nil(state.active) do
+                {:cont, {:ok, %{active: nil, revoked?: false, superseded?: true}}}
+              else
+                {:cont, {:ok, state}}
+              end
+            end
           else
             {:cont, {:ok, state}}
           end
@@ -196,6 +224,10 @@ defmodule Ezagent.Identity.CapSigningBackfill do
   defp finalize_lifecycle({:error, _reason} = error), do: error
   defp finalize_lifecycle({:ok, %{active: replay}}) when not is_nil(replay), do: {:ok, replay}
   defp finalize_lifecycle({:ok, %{revoked?: true}}), do: {:error, :authoritative_grant_revoked}
+
+  defp finalize_lifecycle({:ok, %{superseded?: true}}),
+    do: {:error, :authoritative_grant_superseded}
+
   defp finalize_lifecycle({:ok, _state}), do: {:error, :missing_authoritative_grant_event}
 
   defp lifecycle_event(%{event_name: event_name}, _holder)
@@ -297,8 +329,11 @@ defmodule Ezagent.Identity.CapSigningBackfill do
   defp exact_grant_source?(_candidate, _event_cap, _holder), do: false
 
   defp relevant_revocation?(candidate, event_cap) do
-    Capability.identity_key(event_cap) == Capability.identity_key(candidate)
+    same_identity?(candidate, event_cap)
   end
+
+  defp same_identity?(left, right),
+    do: Capability.identity_key(left) == Capability.identity_key(right)
 
   defp event_grantee_matches_holder?(%Capability{grantee_uri: nil}, _holder), do: true
 

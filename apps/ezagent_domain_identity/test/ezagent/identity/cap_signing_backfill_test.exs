@@ -194,6 +194,48 @@ defmodule Ezagent.Identity.CapSigningBackfillTest do
       assert [%{status: :quarantined, reason: :authoritative_grant_revoked}] = report.entries
     end
 
+    test "quarantines a stale candidate superseded by a later same-identity grant" do
+      cap_a = legacy_cap(granted_at: @granted_at_a)
+      cap_b = legacy_cap(granted_at: @granted_at_b)
+
+      assert {:ok, report} =
+               CapSigningBackfill.dry_run(
+                 candidates: [candidate(:users, cap_a)],
+                 event_streamer: fn @holder -> [grant_event(cap_a, 1), grant_event(cap_b, 2)] end,
+                 issue: fn _, _, _ -> flunk("superseded source must not issue") end
+               )
+
+      assert [%{status: :quarantined, reason: :authoritative_grant_superseded}] = report.entries
+    end
+
+    test "keeps divergent durable-home sources distinct so only the current grant can reauthorize" do
+      cap_a = legacy_cap(granted_at: @granted_at_a)
+      cap_b = legacy_cap(granted_at: @granted_at_b)
+
+      issue = fn {:held_by, @issuer}, @holder, proposal ->
+        send(self(), {:reissued, proposal.granted_at})
+        {:ok, proposal}
+      end
+
+      assert {:ok, report} =
+               CapSigningBackfill.dry_run(
+                 candidates: [candidate(:users, cap_a), candidate(:snapshot, cap_b)],
+                 event_streamer: fn @holder -> [grant_event(cap_a, 1), grant_event(cap_b, 2)] end,
+                 issue: issue
+               )
+
+      assert_receive {:reissued, @granted_at_b}
+      refute_receive {:reissued, @granted_at_a}
+
+      assert %{scanned: 2, would_sign: 1, quarantined: 1} = report
+
+      assert Enum.any?(report.entries, fn entry ->
+               entry.status == :quarantined and entry.reason == :authoritative_grant_superseded
+             end)
+
+      assert Enum.any?(report.entries, &(&1.status == :would_sign and &1.event_id == 2))
+    end
+
     test "does not bind a same-axis grant with different provenance" do
       event_cap = legacy_cap(granted_by: @other_issuer)
 
