@@ -556,8 +556,20 @@ body.jr-highlight [data-slot]{outline:1.5px solid rgba(217,70,239,.75);outline-o
 // chat.send), so a disabled input is the honest affordance, not a security gate.
 function PreviewBar({viewer, sessionUri, messages, chatOpen, setChatOpen, onJoin, onPost, onLogin, selected, onClearSelection, selectMode, onToggleSelect, jrHighlight, onToggleHighlight, delegationEndpoint, csrfToken}) {
   const [draft, setDraft] = useState("")
+  const instructionRef = useRef(null)
   const loggedIn = !!(viewer && viewer.logged_in)
   const member = loggedIn && !!viewer.member
+
+  useEffect(() => {
+    const focusComposer = () => {
+      if (instructionRef.current) {
+        instructionRef.current.focus()
+        instructionRef.current.scrollIntoView({behavior: "smooth", block: "center"})
+      }
+    }
+    window.addEventListener("jr-composer-focus", focusComposer)
+    return () => window.removeEventListener("jr-composer-focus", focusComposer)
+  }, [])
   // Unread hint on the open-session button: the chat panel no longer expands
   // inline, so a new reply (from @hello / the concierge) lights a red dot to tell
   // the member to open the session. Baseline = the message count at mount (so the
@@ -655,6 +667,7 @@ function PreviewBar({viewer, sessionUri, messages, chatOpen, setChatOpen, onJoin
           : null,
       ),
       React.createElement("input", {
+        ref: instructionRef,
         className: "previewbar-input",
         name: "instruction",
         value: draft,

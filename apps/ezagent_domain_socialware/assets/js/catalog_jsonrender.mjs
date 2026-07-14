@@ -119,6 +119,7 @@ function TabsSwitch({props, children}) {
 //   - `@login`    → AUTH button: go to /login?return_to=… when logged out, and
 //                   swap its own label to the username when logged in (reads the
 //                   viewer identity `viewer_app.js` publishes on `jr-viewer`)
+//   - `@composer` → focus the viewer's single persistent prompt composer
 //   - anything else → open in a new tab (external links / GitHub; W3)
 // A Button also carrying `navTab: "<value>"` is a NAV TAB: besides dispatching
 // the switch, it LISTENS to `jr-tab-switch` and toggles its own `.active` class
@@ -165,6 +166,10 @@ function ButtonNav({props, emit}) {
         const back = window.location.pathname + window.location.search
         window.location.href = "/login?return_to=" + encodeURIComponent(back)
       }
+      return
+    }
+    if (url === "@composer") {
+      window.dispatchEvent(new CustomEvent("jr-composer-focus"))
       return
     }
     if (url && String(url).charAt(0) === "#") {
