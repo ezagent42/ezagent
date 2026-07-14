@@ -28,7 +28,7 @@ defmodule Ezagent.Invariants.CapAbsorbReachabilityTest do
     [absorb_section | _] = String.split(absorb_section, "def handle_revoke_cap", parts: 2)
 
     assert absorb_section =~ "%{caller: :vm_internal}"
-    assert absorb_section =~ "Ezagent.Cap.verify(cap_struct)"
+    assert absorb_section =~ "Ezagent.Cap.verify_for(cap_struct"
     assert absorb_section =~ "def handle_absorb_cap(_args, _ctx), do: {:error, :unauthorized}"
     refute absorb_section =~ "Cap.issue"
   end

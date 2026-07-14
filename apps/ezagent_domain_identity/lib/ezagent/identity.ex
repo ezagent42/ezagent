@@ -57,7 +57,7 @@ defmodule Ezagent.Identity do
                  reply: {:caller_inbox, self()}
                }
              }) do
-          {:ok, %{caps: caps}} when is_list(caps) -> verified_cap_set(caps)
+          {:ok, %{caps: caps}} when is_list(caps) -> verified_cap_set(caps, user_uri)
           _ -> MapSet.new()
         end
     end
@@ -308,10 +308,11 @@ defmodule Ezagent.Identity do
   """
   @spec read_held_caps(URI.t() | String.t()) :: MapSet.t(Ezagent.Capability.t())
   def read_held_caps(actor_uri) do
+    actor_uri = parse_uri(actor_uri)
+
     actor_uri
-    |> parse_uri()
     |> read_granter_caps()
-    |> verified_cap_set()
+    |> verified_cap_set(actor_uri)
   end
 
   @doc """
@@ -374,13 +375,15 @@ defmodule Ezagent.Identity do
   """
   @spec read_entity_caps(URI.t() | String.t()) :: [Ezagent.Capability.t()]
   def read_entity_caps(entity_uri) do
+    entity_uri = parse_uri(entity_uri)
+
     caps =
       case Ezagent.Kind.get_slice(entity_uri, :identity) do
         {:ok, slice} when is_map(slice) -> caps_from_slice(slice)
         _ -> caps_from_snapshot(entity_uri)
       end
 
-    verified_cap_list(caps)
+    verified_cap_list(caps, entity_uri)
   end
 
   defp caps_from_snapshot(entity_uri) do
@@ -406,9 +409,10 @@ defmodule Ezagent.Identity do
 
   defp caps_from_slice(_), do: []
 
-  defp verified_cap_list(caps), do: caps |> verified_cap_set() |> MapSet.to_list()
+  defp verified_cap_list(caps, receiver_uri),
+    do: caps |> verified_cap_set(receiver_uri) |> MapSet.to_list()
 
-  defp verified_cap_set(caps), do: Ezagent.Cap.verified_set(caps)
+  defp verified_cap_set(caps, receiver_uri), do: Ezagent.Cap.verified_set(caps, receiver_uri)
 
   # PR-OWN-2 (caps-data-ownership SPEC #306 §5.2 + r4):
   # Read the granter's current Identity slice caps via
