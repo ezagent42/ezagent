@@ -302,11 +302,12 @@ main[data-page-panel="contributors"] footer{flex:none;margin:6px 0 8px}
 <body>
 
 <nav class="nav">
-  <div class="brand" data-page="intro"><img class="logo light" src="ezagent-logo.png" alt="Ezagent" width="26" height="26"><img class="logo dark" src="ezagent-logo-dark.png" alt="Ezagent" width="26" height="26"><span class="wm">EZAGENT</span></div>
+  <div class="brand" data-page="intro"><img class="logo light" src="assets/images/ezagent-logo.png" alt="Ezagent" width="26" height="26"><img class="logo dark" src="assets/images/ezagent-logo-dark.png" alt="Ezagent" width="26" height="26"><span class="wm">EZAGENT</span></div>
   <div class="tabs" id="tabs">
     <button class="tab" data-page="intro">介绍<span class="en">Intro</span></button>
     <button class="tab" data-page="worldcup"><svg class="navball" viewBox="0 0 24 24" aria-hidden="true"><circle cx="12" cy="12" r="10" fill="#fff" stroke="#17171B" stroke-width="1.6"/><path d="M12 7.2l3 2.2-1.15 3.5h-3.7L9 9.4z" fill="#17171B"/><path d="M12 7.2V4.2M15 9.4l2.7-1M13.85 12.9l1.7 2.4M10.15 12.9l-1.7 2.4M9 9.4l-2.7-1" stroke="#17171B" stroke-width="1.3" fill="none" stroke-linecap="round"/></svg>world.cup<span class="en">Progress</span></button>
     <button class="tab" data-page="contributors">团队<span class="en">Team</span></button>
+    <a class="tab" href="flywheel/gallery.html">探索<span class="en">Gallery</span></a>
   </div>
   <span class="spacer"></span>
   <a class="ghbtn" href="https://github.com/ezagent42" target="_blank" rel="noopener">↗ GitHub</a>
@@ -370,6 +371,13 @@ main[data-page-panel="contributors"] footer{flex:none;margin:6px 0 8px}
       </div>
     </div>
   </div>
+  <!-- ════════ Gallery 飞轮入口 ════════ -->
+  <div class="sec-head">
+    <span class="over">Gallery · 飞轮交换点</span>
+    <h2>探索 Gallery — 看别人造了什么，Fork 成你自己的</h2>
+    <p class="sub">Gallery 是 builder 供给 × seller 需求的唯一交汇点。每个产品都是活的 public_view —— 当场试用、一键 Fork、改完上架、回流货架。</p>
+    <a class="hookline" href="flywheel/gallery.html" style="margin-top:14px"><span class="hd"></span>进入<b>探索 · Explore</b> → 浏览货架、试用产品、Fork 成你自己的</a>
+  </div>
   <div class="foundation">
     <span class="badge success"><span class="dot"></span>ezagent</span>
     <span class="t">一个底座，两个产品 · One substrate, two products</span>
@@ -406,8 +414,8 @@ main[data-page-panel="contributors"] footer{flex:none;margin:6px 0 8px}
 </div>
 </main>
 
-<script src="mock-ezagent-api.js"></script>
-<script src="worldcup.js"></script>
+<script src="assets/js/mock-ezagent-api.js"></script>
+<script src="assets/js/worldcup.js"></script>
 <script>
 const $=(s,r=document)=>r.querySelector(s);
 const el=(t,c,h)=>{const e=document.createElement(t);if(c)e.className=c;if(h!=null)e.innerHTML=h;return e};
@@ -676,7 +684,7 @@ function seatNode(m,i){
     </div>
   </a>
 </div>
-<script src="demo-state.js"></script>
+<script src="assets/js/demo-state.js"></script>
 <script>
 /* nav「登录」→ 有驾照后变「我的主页」指向成就中心 */
 (function(){ try{ var me = window.EZD && EZD.hasIdentity(); var b = document.getElementById('loginbtn');

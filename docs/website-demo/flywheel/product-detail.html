@@ -5,7 +5,7 @@
 <meta name="viewport" content="width=device-width, initial-scale=1">
 <title>产品详情 · Product — Ezagent</title>
 <meta name="description" content="一个 gallery 产品的详情：试用它，或 fork 成你自己的。">
-<link rel="stylesheet" href="ds/styles.css">
+<link rel="stylesheet" href="https://cdn.jsdelivr.net/gh/ezagent42/design-system@main/styles.css">
 <style>
   body{background:var(--ground);color:var(--ink);margin:0;font-family:var(--font-cn-ui),var(--font-ui);font-weight:450;-webkit-font-smoothing:antialiased}
   .wrap{max-width:820px;margin:0 auto;padding:26px 28px 130px}
@@ -59,7 +59,7 @@
   </div>
 </div>
 
-<script src="../demo-state.js"></script>
+<script src="../assets/js/demo-state.js"></script>
 <script src="gallery-data.js"></script>
 <script>
   var name = new URLSearchParams(location.search).get('sw') || 'expert-recruit';
@@ -79,7 +79,7 @@
     + '</div>'
     + '<div class="actions">'
     + '<a class="btn primary" data-w="W-G3" href="world-step.html?mode=fork&src=' + encodeURIComponent(p.name) + '">Fork 复制成我的 · Fork this</a>'
-    + '<a class="btn ghost" href="' + (p.tryUrl || '../recruit-v2.html') + '" target="_blank" rel="noopener">试用 · Try →</a>'
+    + '<a class="btn ghost" href="' + (p.tryUrl || '../recruit/') + '" target="_blank" rel="noopener">试用 · Try →</a>'
     + '</div>';
   // ribbon 下一步指向 Fork
   document.body.setAttribute('data-fw-next', 'world-step.html?mode=fork&src=' + encodeURIComponent(p.name));

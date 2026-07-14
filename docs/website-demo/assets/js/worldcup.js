@@ -14,7 +14,7 @@
   const fmt = (n) => Math.round(n).toLocaleString();
   const HEART = '<svg viewBox="0 0 24 24" fill="currentColor" style="width:12px;height:12px"><path d="M12 21s-6.7-4.3-9.2-8.6C1.2 9.6 2.6 6 6 6c2 0 3.2 1.2 4 2.4C10.8 7.2 12 6 14 6c3.4 0 4.8 3.6 3.2 6.4C18.7 16.7 12 21 12 21z"/></svg>';
 
-  // ── DS 样式（token 来自 index.html :root）────────────────────────────────
+  // ── DS 样式（token 来自 mainsite.html :root）────────────────────────────────
   const CSS = `
   #wc-root{margin-top:18px}
   .wc-viewbar{display:flex;align-items:center;gap:12px;flex-wrap:wrap;margin-bottom:8px}

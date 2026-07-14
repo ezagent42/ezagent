@@ -1,0 +1,266 @@
+<!DOCTYPE html>
+<html lang="zh" data-theme="light">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>一份合同，一个 agent vs 一个组织 · 法务 · Ezagent</title>
+<meta name="description" content="同一份 SaaS 合同：你搓的一个 agent 给你 3 行泛泛的话；一个专业法务组织给你 21 处带数据的风险 + 真人把关。这不是一个 prompt，是一个 team。">
+<!-- puncture 方案③′原型（直接展团队的量·不考用户）· 单角色法务。之后推广全角色 + 并回 recruit-v2。 -->
+<style>
+@import url('https://fonts.googleapis.com/css2?family=Inter:wght@400;450;500;600;700;800&family=Noto+Sans+SC:wght@400;500;700&family=Noto+Serif+SC:wght@400;500;600;700&family=Space+Mono:wght@400;700&display=swap');
+:root{
+  --ground:#E8E8EB;--ground-2:#EFEFF1;--ground-hover:#E4E4E8;--card:#FFFFFF;
+  --ink:#17171B;--ink-2:#56565E;--ink-3:#8A8A92;--ink-4:#B6B6BC;--line:#E2E2E6;
+  --red:#D81830;--blueink:#0048A8;--yellow:#FFD400;--jade:#0FA06E;
+  --blue:#0B5CFF;--blue-deep:#0040C4;--blue-wash:#E7EEFF;--orange:#FF8A1E;
+  --jade-wash:#DCF1E8;--red-wash:#FAE0E3;--yellow-wash:#FFF4CC;--orange-wash:#FFEBD6;
+  --accent:var(--blue);--accent-hover:#1466FF;--accent-press:var(--blue-deep);--accent-wash:var(--blue-wash);--on-accent:#fff;--focus-ring:rgba(11,92,255,.45);
+  --font-ui:'Inter',system-ui,-apple-system,sans-serif;--font-cn:'Noto Serif SC','Songti SC',serif;
+  --font-cn-ui:'Noto Sans SC','PingFang SC',sans-serif;--font-mono:'Space Mono',ui-monospace,Menlo,monospace;
+  --r-sm:10px;--r-md:16px;--r-lg:22px;--r-pill:999px;
+  --shadow-sm:0 1px 2px rgba(15,15,15,.04),0 8px 24px -12px rgba(15,15,15,.14);
+  --shadow-card:0 60px 80px rgba(15,15,15,.07),0 25px 33px rgba(15,15,15,.05),0 7.5px 10px rgba(15,15,15,.04),0 1.7px 2.2px rgba(15,15,15,.022);
+  --shadow-accent:0 10px 24px -8px rgba(11,92,255,.5);
+  --ease-out:cubic-bezier(.16,1,.3,1);--dur-enter:500ms;--stage:#14131C;--rc:var(--blueink);
+}
+:root[data-theme="dark"]{
+  --ground:#16151C;--ground-2:#211F2A;--ground-hover:#2A2834;--card:#1E1C26;
+  --ink:#F4F2EC;--ink-2:#B6B4AC;--ink-3:#85837B;--ink-4:#56544D;--line:#332F3B;
+  --blue:#5AA2FF;--accent-press:#A9CBFF;--blue-wash:#1E2A40;--on-accent:#0E1A2E;--accent-hover:#74B2FF;--focus-ring:rgba(90,162,255,.5);
+  --jade:#34D6A0;--jade-wash:#173A2E;--red:#FF5A4D;--red-wash:#3E211E;--orange:#FFA94D;--orange-wash:#3A2A16;--blueink:#4D8DF0;
+  --shadow-card:inset 0 0 0 1px rgba(244,242,236,.07),0 26px 60px -20px rgba(0,0,0,.72);
+  --shadow-sm:inset 0 0 0 1px rgba(244,242,236,.06),0 10px 26px -12px rgba(0,0,0,.6);
+}
+*{box-sizing:border-box}
+html{overflow-x:hidden}
+body{margin:0;background:var(--ground);color:var(--ink);font-family:var(--font-cn-ui),var(--font-ui);font-weight:450;-webkit-font-smoothing:antialiased}
+h1,h2,h3,h4,p{margin:0}a{color:inherit;text-decoration:none}
+.wrap{max-width:680px;margin:0 auto;padding:32px 24px 72px}
+.fu{animation:fu var(--dur-enter) var(--ease-out) both}
+@keyframes fu{from{opacity:0;transform:translateY(16px);filter:blur(7px)}to{opacity:1;transform:none;filter:blur(0)}}
+@media (prefers-reduced-motion:reduce){*{animation:none!important}}
+[hidden]{display:none!important}
+em{font-style:normal;color:var(--accent)}
+.btn{appearance:none;border:0;cursor:pointer;font-family:var(--font-ui);font-weight:600;font-size:15px;padding:14px 26px;border-radius:var(--r-pill);transition:transform 150ms var(--ease-out),background 150ms;display:inline-flex;align-items:center;gap:8px}
+.btn.primary{background:var(--accent);color:var(--on-accent);box-shadow:var(--shadow-accent)}
+.btn.primary:hover{transform:translateY(-2px);background:var(--accent-hover)}
+.btn.ghost{background:var(--ground-2);color:var(--ink)}
+.btn.ghost:hover{background:var(--ground-hover)}
+.note{font-family:var(--font-mono);font-size:11px;color:var(--ink-3);text-align:center;margin-top:34px}
+
+/* intro */
+.intro{text-align:center}
+.rolechip{display:inline-flex;align-items:center;gap:9px;font-family:var(--font-cn-ui);font-size:13px;color:var(--ink-2);background:var(--card);box-shadow:var(--shadow-sm);padding:7px 14px 7px 8px;border-radius:var(--r-pill)}
+.rolechip .g{width:26px;height:26px;border-radius:8px;display:grid;place-items:center;font-family:var(--font-cn);font-weight:600;font-size:14px;color:#fff;background:var(--rc)}
+.intro h1{font-family:var(--font-cn);font-weight:600;font-size:clamp(25px,4.8vw,36px);line-height:1.3;margin:18px auto 0;max-width:20ch}
+.intro h1 .q{color:var(--ink)}
+.diy{margin:26px auto 0;max-width:480px;text-align:left;background:var(--card);border-radius:var(--r-lg);box-shadow:var(--shadow-sm);padding:16px 18px}
+.diy .hd{display:flex;align-items:center;gap:9px;font-family:var(--font-mono);font-size:11px;color:var(--ink-3)}
+.diy .hd .av{width:24px;height:24px;border-radius:7px;background:var(--ink-4);color:#fff;display:grid;place-items:center;font-family:var(--font-cn);font-weight:600;font-size:12px}
+.diy .body{font-family:var(--font-cn-ui);font-size:13.5px;line-height:1.7;color:var(--ink-2);margin-top:11px}
+.diy .tag{display:inline-block;margin-top:11px;font-family:var(--font-mono);font-size:10.5px;color:var(--orange);background:var(--orange-wash);border-radius:var(--r-pill);padding:3px 10px}
+.turn{color:var(--ink-2);font-size:15px;margin:24px auto 0;max-width:30ch;line-height:1.6}
+.turn b{color:var(--ink);font-weight:600}
+.intro .cta{margin-top:20px}
+
+/* reveal · 专业组织的量 */
+.reveal{margin-top:34px}
+.rv-head{text-align:center;margin-bottom:20px}
+.rv-head .k{font-family:var(--font-mono);font-size:11px;letter-spacing:.1em;text-transform:uppercase;color:var(--rc)}
+.rv-head h2{font-family:var(--font-cn);font-weight:600;font-size:clamp(20px,3.6vw,26px);line-height:1.3;margin-top:10px}
+/* team bar */
+.team{background:var(--stage);border-radius:var(--r-lg);padding:18px 20px;box-shadow:var(--shadow-card)}
+.team-lbl{font-family:var(--font-mono);font-size:10.5px;letter-spacing:.08em;color:#85837B;text-transform:uppercase;margin-bottom:8px}
+.team-flow{width:100%}
+.team-flow svg{width:100%;height:auto;display:block;overflow:visible}
+.fnode{opacity:0;transition:opacity .45s var(--ease-out)}
+.fnode.on{opacity:1}
+.fnode .card{fill:rgba(255,255,255,.05);stroke:rgba(255,255,255,.13);stroke-width:1}
+.fnode.human .card{fill:rgba(201,162,39,.12);stroke:#C9A227;stroke-width:1.4}
+.fnode.out .card{fill:rgba(90,162,255,.14);stroke:rgba(90,162,255,.5)}
+.fnode .nm{fill:#F4F2EC;font-family:var(--font-cn-ui);font-weight:600}
+.fnode.out .nm{fill:#fff}
+.fnode .sub{fill:#85837B;font-family:var(--font-mono)}
+.fnode .avtxt{fill:#fff;font-family:var(--font-cn);font-weight:600}
+.fedge{fill:none;stroke:rgba(255,255,255,.24);stroke-width:1.6;stroke-dasharray:1;stroke-dashoffset:1;transition:stroke-dashoffset .55s var(--ease-out)}
+.fedge.on{stroke-dashoffset:0}
+/* stats */
+.stats{display:grid;grid-template-columns:repeat(4,1fr);gap:12px;margin-top:16px}
+@media(max-width:560px){.stats{grid-template-columns:repeat(2,1fr)}}
+.stat{background:var(--card);border-radius:var(--r-md);box-shadow:var(--shadow-sm);padding:14px 14px;text-align:center}
+.stat .n{font-family:var(--font-ui);font-weight:800;font-size:26px;letter-spacing:-.02em;color:var(--ink)}
+.stat .n em{font-style:normal;color:var(--rc)}
+.stat .l{font-family:var(--font-cn-ui);font-size:11.5px;color:var(--ink-3);margin-top:4px;line-height:1.3}
+/* findings */
+.finds{margin-top:20px}
+.seen{background:var(--ground-2);border-radius:var(--r-md);padding:13px 16px}
+.seen .h{font-family:var(--font-mono);font-size:10.5px;letter-spacing:.06em;text-transform:uppercase;color:var(--ink-3)}
+.seen ul{margin:8px 0 0;padding-left:18px}
+.seen li{font-family:var(--font-cn-ui);font-size:12.5px;color:var(--ink-2);line-height:1.7}
+.unseen-lbl{font-family:var(--font-cn);font-weight:600;font-size:16px;color:var(--ink);margin:20px 0 12px;display:flex;align-items:baseline;gap:8px}
+.unseen-lbl b{color:var(--red)}
+.bucket{background:var(--card);border-radius:var(--r-lg);box-shadow:var(--shadow-sm);padding:16px 18px;margin-bottom:12px}
+.bucket .bh{display:flex;align-items:center;gap:9px;font-family:var(--font-cn-ui);font-weight:600;font-size:14px;color:var(--ink)}
+.bucket .bh .bc{font-family:var(--font-mono);font-size:10px;color:#fff;border-radius:var(--r-pill);padding:2px 8px;margin-left:auto}
+.bucket .bh .sub{font-family:var(--font-mono);font-size:10px;color:var(--ink-3);font-weight:400}
+.bucket .fi{font-family:var(--font-cn-ui);font-size:13px;color:var(--ink);line-height:1.6;margin-top:11px;padding-left:16px;position:relative}
+.bucket .fi::before{content:"";position:absolute;left:0;top:8px;width:6px;height:6px;border-radius:50%;background:var(--rc)}
+.bucket .fi .d{color:var(--red);font-size:12px}
+.bucket .more{font-family:var(--font-mono);font-size:11px;color:var(--ink-3);margin-top:11px;padding-left:16px}
+/* punch */
+.punch{text-align:center;margin-top:30px}
+.punch .big{font-family:var(--font-cn);font-weight:600;font-size:clamp(20px,3.6vw,26px);line-height:1.5;max-width:24ch;margin:0 auto;color:var(--ink)}
+.punch .big em{font-style:normal;color:var(--accent)}
+.punch .lead{color:var(--ink-2);font-size:14px;line-height:1.7;max-width:40ch;margin:15px auto 0}
+.punch .lead b{color:var(--ink);font-weight:600}
+.punch .row{display:flex;gap:12px;justify-content:center;flex-wrap:wrap;margin-top:24px}
+</style>
+</head>
+<body>
+<div class="wrap">
+
+  <!-- INTRO：你会怎么办 -->
+  <section class="intro fu" id="intro">
+    <span class="rolechip"><span class="g">法</span>法务 · legal</span>
+    <h1><span class="q">「帮我看下这份 SaaS 合同」</span><br>你大概会怎么办？</h1>
+    <div class="diy">
+      <div class="hd"><span class="av">法</span>你搓的一个法务 agent · 贴给它问「有没有坑」</div>
+      <div class="body">这份合同整体没大问题。建议注意保密条款、明确双方权利义务、约定违约责任，重要条款建议再找律师复核。</div>
+      <span class="tag">▸ 3 行泛泛而谈</span>
+    </div>
+    <p class="turn">那，<b>一个专业法务组织</b>拿到同一份合同，做的是这些 ↓</p>
+    <div class="cta"><button class="btn primary" id="goBtn">让专业组织过一遍 →</button></div>
+  </section>
+
+  <!-- REVEAL：一个组织的量 -->
+  <section class="reveal" id="reveal" hidden>
+    <div class="rv-head">
+      <span class="k">专业法务组织 · 一个 session 里的 team</span>
+      <h2>同一份合同，一个团队一起过</h2>
+    </div>
+
+    <div class="team">
+      <div class="team-lbl">成员 · 上下游接力，真人把关</div>
+      <div class="team-flow" id="teamFlow"></div>
+    </div>
+
+    <div class="stats" id="stats"></div>
+
+    <div class="finds" id="finds" hidden>
+      <div class="seen">
+        <div class="h">你（那个 agent）看见的 · 3 处</div>
+        <ul><li>赔付上限被删 → 建议封在 3× 月费</li><li>自动续费无退出窗口 → 加 30 天</li><li>DPA 没单独成附件 → 补上</li></ul>
+      </div>
+
+      <div class="unseen-lbl">你<b>没看见</b>的 —— 还有 18 处，分三类：</div>
+
+      <div class="bucket" style="--bc:var(--blueink)">
+        <div class="bh"><span>跨辖区风险</span><span class="sub">需要懂欧盟 / 美国的</span><span class="bc" style="background:var(--blueink)">6 处</span></div>
+        <div class="fi">GDPR 数据出境缺 SCC 标准条款 —— <span class="d">欧盟客户会一票否决</span></div>
+        <div class="fi">加州 CCPA「删除权」未覆盖 —— <span class="d">未来罚款风险</span></div>
+        <div class="more">+ 还有 4 处（数据本地化、跨境仲裁地、出口管制…）</div>
+      </div>
+
+      <div class="bucket" style="--bc:var(--jade)">
+        <div class="bh"><span>行业基准偏差</span><span class="sub">经手过 500 份才知道的</span><span class="bc" style="background:var(--jade)">7 处</span></div>
+        <div class="fi">你的责任上限写了 <b>12× 月费</b>，市场标准是 1–3× —— <span class="d">你亏大了</span></div>
+        <div class="fi">付款账期 60 天，同阶段 SaaS 通常是 30 天</div>
+        <div class="more">+ 还有 5 处（SLA 赔偿口径、涨价条款、最惠客户条款…）</div>
+      </div>
+
+      <div class="bucket" style="--bc:var(--orange)">
+        <div class="bh"><span>边界情况</span><span class="sub">要真人判断的</span><span class="bc" style="background:var(--orange)">5 处</span></div>
+        <div class="fi">知产条款默认允许<b>对方用你的数据训练模型</b></div>
+        <div class="fi">终止后数据返还期仅 7 天 —— <span class="d">太短、易违约</span></div>
+        <div class="more">+ 还有 3 处（真人 partner 正逐条批注）</div>
+      </div>
+
+      <div class="punch">
+        <p class="big">同一份合同。一个 agent 给你 3 行话，<br>一个<em>组织</em>给你 21 处带数据的风险。</p>
+        <p class="lead">而且它不是答一次就走 —— <b>下一份合同、续约、纠纷，这个组织都还在</b>。这不是一个 prompt 能干的活，是一个 <b>team</b> 的量。你要的不是搓一个 agent，是<b>招进这个组织</b>。</p>
+        <div class="row">
+          <a class="btn primary" href="../recruit.html">去招一个这样的法务组织 →</a>
+          <a class="btn ghost" href="../index.html#intro">看看 world / hello</a>
+        </div>
+      </div>
+    </div>
+  </section>
+
+  <p class="note">原型 · 方案③′直接展团队的量（单角色法务）· 替代 recruit-v2 的手搓 prompt 环节</p>
+</div>
+
+<script>
+const $=s=>document.querySelector(s);
+const NODES=[
+  {id:'n1',cx:85, cy:115,w:150,av:'合',c:'var(--blueink)',nm:'合同审查 agent',sub:'逐条过合同'},
+  {id:'n2',cx:305,cy:60, w:150,av:'规',c:'var(--jade)',   nm:'合规 agent',    sub:'跨辖区 check'},
+  {id:'n3',cx:305,cy:170,w:150,av:'判',c:'var(--orange)', nm:'判例检索 agent', sub:'比对 512 份'},
+  {id:'n4',cx:505,cy:115,w:150,av:'真',c:'#C9A227',        nm:'资深法务 · 真人', sub:'把关边界 · 定稿',human:true},
+  {id:'out',cx:650,cy:115,w:120,nm:'21 处风险报告',sub:'交付',out:true},
+];
+const EDGES=[
+  {id:'e1',from:'n1',to:'n2'},{id:'e2',from:'n1',to:'n3'},
+  {id:'e3',from:'n2',to:'n4'},{id:'e4',from:'n3',to:'n4'},
+  {id:'e5',from:'n4',to:'out'},
+];
+const STATS=[
+  {to:21,lbl:'检出风险',em:true},
+  {to:3, lbl:'覆盖辖区（中/欧/美）'},
+  {to:512,lbl:'比对同类合同'},
+  {to:5, lbl:'真人把关的边界情况'},
+];
+
+// 预建工作流 SVG（初始隐藏，reveal 时按上下游顺序点亮）
+(function buildFlow(){
+  const H=54, halfH=27, NM={};
+  NODES.forEach(n=>NM[n.id]={...n,x:n.cx-n.w/2,y:n.cy-halfH});
+  const path=e=>{ const s=NM[e.from],t=NM[e.to],x1=s.x+s.w,y1=s.cy,x2=t.x,y2=t.cy,dx=Math.max(28,(x2-x1)*.5);
+    return 'M'+x1+','+y1+' C'+(x1+dx)+','+y1+' '+(x2-dx)+','+y2+' '+x2+','+y2; };
+  let g='<svg viewBox="0 0 720 230" role="img" aria-label="专业法务组织工作流">';
+  g+='<defs><marker id="arw" markerWidth="7" markerHeight="7" refX="5.4" refY="3" orient="auto"><path d="M0,0 L6,3 L0,6 z" fill="rgba(255,255,255,.45)"/></marker></defs>';
+  EDGES.forEach(e=>{ g+='<path id="'+e.id+'" class="fedge" pathLength="1" d="'+path(e)+'" marker-end="url(#arw)"/>'; });
+  NODES.forEach(n=>{ const nd=NM[n.id],avX=nd.x+11,avY=nd.cy-14,tx=n.out?nd.x+16:avX+37;
+    g+='<g id="'+n.id+'" class="fnode'+(n.human?' human':'')+(n.out?' out':'')+'">';
+    g+='<rect class="card" x="'+nd.x+'" y="'+nd.y+'" width="'+n.w+'" height="'+H+'" rx="13"/>';
+    if(!n.out) g+='<rect x="'+avX+'" y="'+avY+'" width="28" height="28" rx="8" fill="'+n.c+'"/><text class="avtxt" x="'+(avX+14)+'" y="'+(nd.cy+5)+'" text-anchor="middle" font-size="14">'+n.av+'</text>';
+    g+='<text class="nm" x="'+tx+'" y="'+(nd.cy-2)+'" font-size="13">'+n.nm+'</text>';
+    g+='<text class="sub" x="'+tx+'" y="'+(nd.cy+14)+'" font-size="10">'+n.sub+'</text></g>';
+  });
+  g+='</svg>';
+  $('#teamFlow').innerHTML=g;
+})();
+const sr=$('#stats');
+STATS.forEach((s,i)=>{
+  const el=document.createElement('div'); el.className='stat';
+  el.innerHTML='<div class="n" id="stat'+i+'">'+(s.em?'<em>0</em>':'0')+'</div><div class="l">'+s.lbl+'</div>';
+  sr.appendChild(el);
+});
+
+const wait=ms=>new Promise(r=>setTimeout(r,ms));
+function countUp(i,to,em){
+  const el=$('#stat'+i); const dur=750; const t0=performance.now();
+  function step(now){ const p=Math.min(1,(now-t0)/dur); const v=Math.round(p*to);
+    el.innerHTML=em?'<em>'+v+'</em>':''+v; if(p<1) requestAnimationFrame(step); }
+  requestAnimationFrame(step);
+}
+async function reveal(){
+  $('#intro').style.transition='opacity .3s'; $('#intro').style.opacity='.45';
+  $('#reveal').hidden=false; $('#reveal').classList.add('fu');
+  $('#reveal').scrollIntoView({behavior:'smooth',block:'start'});
+  await wait(400);
+  const on=id=>document.getElementById(id).classList.add('on');
+  on('n1'); await wait(430);
+  on('e1'); on('e2'); await wait(300);
+  on('n2'); on('n3'); await wait(520);
+  on('e3'); on('e4'); await wait(300);
+  on('n4'); await wait(480);
+  on('e5'); await wait(240);
+  on('out'); await wait(360);
+  STATS.forEach((s,i)=>countUp(i,s.to,s.em));
+  await wait(900);
+  const f=$('#finds'); f.hidden=false; f.classList.add('fu');
+}
+$('#goBtn').onclick=()=>{ $('#goBtn').disabled=true; reveal(); };
+</script>
+</body>
+</html>
