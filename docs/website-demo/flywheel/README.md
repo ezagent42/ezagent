@@ -81,6 +81,7 @@ docs/website-demo/
 ├── world/                     ← 工作台
 │   └── workspace.html
 ├── flywheel/                  ← 飞轮（Gallery 货架 + 产品详情 + Fork + 发布）
+│   ├── README.md              ← 本文件（飞轮使用指南）
 │   ├── design-brief.md        ← 面向研发的 IA/视觉映射说明
 │   ├── gallery.html
 │   ├── product-detail.html
@@ -92,8 +93,7 @@ docs/website-demo/
 ├── assets/                    ← 共享资源（JS/CSS/图片）
 ├── doc/                       ← 文档
 │   └── page-flow.md           ← 页面流转关系 living doc
-├── archive/                   ← 历史归档
-└── README.md                  ← 本文件
+└── archive/                   ← 历史归档
 ```
 
 ## 6. 设计系统

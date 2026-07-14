@@ -499,7 +499,7 @@ function renderFeed(){
     el.querySelector('.a-hire').onclick=(e)=>{
       e.target.textContent='已招进 ✓'; e.target.classList.add('done');
       $('#wsbarName').textContent=a.t;
-      $('#wsbarGo').setAttribute('href','world-workspace.html?role='+mkRole+'&t='+encodeURIComponent(a.t)+'&by='+encodeURIComponent(a.by));
+      $('#wsbarGo').setAttribute('href','../world/workspace.html?role='+mkRole+'&t='+encodeURIComponent(a.t)+'&by='+encodeURIComponent(a.by));
       $('#wsBar').classList.add('show');
     };
     feed.appendChild(el);
