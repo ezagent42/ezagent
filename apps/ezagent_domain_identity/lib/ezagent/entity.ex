@@ -91,10 +91,8 @@ defmodule Ezagent.Entity do
   end
 
   defp spawn_with_hydrated_caps(%URI{} = uri) do
-    uri_str = URI.to_string(uri)
-
-    case Users.get_by_uri(uri_str) do
-      %{caps: caps_list} when is_list(caps_list) and caps_list != [] ->
+    case Ezagent.EntityCaps.load_persisted(uri) do
+      caps_list when is_list(caps_list) and caps_list != [] ->
         # Reach past the generic spawn fn so we can pass initial_caps.
         # The spawn fn registered in EzagentDomainIdentity.Application
         # uses `MapSet.new()`, which is correct for "no row to hydrate

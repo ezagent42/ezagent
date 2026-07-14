@@ -648,6 +648,29 @@ defmodule Ezagent.CapabilityTest do
   end
 
   describe "Phase-4 signing fields serialization" do
+    test "scope-tuple instances round-trip through the caps_json wire shape" do
+      session_uri = URI.new!("session://team-alpha/default/scoped")
+
+      original = %Capability{
+        kind: :agent,
+        behavior: Ezagent.ActionSet.Session,
+        action: :send,
+        instance: {:within_session, session_uri},
+        workspace_uri: @ws_default,
+        granted_by: @user_uri,
+        granted_at: @now
+      }
+
+      restored =
+        original
+        |> Capability.to_map()
+        |> Jason.encode!()
+        |> Jason.decode!()
+        |> Capability.from_map()
+
+      assert restored == original
+    end
+
     test "nil signing and grantee fields round-trip through the caps_json wire shape" do
       original = %Capability{
         kind: :user,

@@ -57,7 +57,7 @@ defmodule Ezagent.Entity.Session.Orchestrator.Caps do
     # This reconciliation runs immediately after materialization, while the
     # transport may still be settling. Read the Identity slice directly so
     # deciding what to issue never dispatches through the readiness gate.
-    current = Ezagent.Identity.read_entity_caps(orchestrator_uri)
+    current = Ezagent.EntityCaps.load(orchestrator_uri)
 
     {genesis_caps, rule_caps} =
       desired

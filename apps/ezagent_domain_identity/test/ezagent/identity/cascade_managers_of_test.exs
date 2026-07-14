@@ -33,6 +33,7 @@ defmodule Ezagent.Identity.CascadeManagersOfTest do
 
   test "managers_of(agent) returns the creator (holds Manage cap), not an unrelated user (15)" do
     x = agent_uri("team-alpha")
+
     creator = user_with_caps("team-alpha", [manage_cap_over(x, URI.new!("entity://team-alpha/user/root"))])
     _unrelated = user_with_caps("team-alpha", [])
 
@@ -44,7 +45,8 @@ defmodule Ezagent.Identity.CascadeManagersOfTest do
     ws = Capability.workspace_of(x)
     mgr = user_with_caps("team-alpha", [])
 
-    # A scope-tuple instance can't round-trip through caps_json, so grant it LIVE.
+    # Grant live here because this test exercises live cascade lookup; scope tuples
+    # also round-trip through caps_json via Capability.Normalize.
     within_ws_manage = %Capability{
       kind: :agent,
       behavior: Ezagent.ActionSet.Manage,

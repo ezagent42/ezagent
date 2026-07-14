@@ -176,7 +176,7 @@ defmodule Ezagent.ActionSet.Session.Membership do
 
   defp holds_spawned_by_authority?(%URI{} = caller, %URI{} = member_uri) do
     caller
-    |> Ezagent.Identity.read_entity_caps()
+    |> Ezagent.EntityCaps.load()
     |> Enum.any?(&spawned_by_caller_cap_covers?(&1, caller, member_uri))
   end
 

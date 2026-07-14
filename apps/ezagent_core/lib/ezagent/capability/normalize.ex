@@ -244,11 +244,25 @@ defmodule Ezagent.Capability.Normalize do
   defp uri_or_any_to_string(:any), do: "any"
   defp uri_or_any_to_string(%URI{} = u), do: URI.to_string(u)
 
+  defp uri_or_any_to_string({scope, %URI{} = uri})
+       when scope in [:within_session, :within_workspace, :spawned_by] do
+    %{"scope" => Atom.to_string(scope), "uri" => URI.to_string(uri)}
+  end
+
   defp uri_or_nil_to_string(nil), do: nil
   defp uri_or_nil_to_string(%URI{} = uri), do: URI.to_string(uri)
 
   defp string_to_uri_or_any("any"), do: :any
   defp string_to_uri_or_any(s) when is_binary(s), do: Ezagent.URI.new!(s)
+
+  defp string_to_uri_or_any(%{"scope" => "within_session", "uri" => uri}),
+    do: {:within_session, Ezagent.URI.new!(uri)}
+
+  defp string_to_uri_or_any(%{"scope" => "within_workspace", "uri" => uri}),
+    do: {:within_workspace, Ezagent.URI.new!(uri)}
+
+  defp string_to_uri_or_any(%{"scope" => "spawned_by", "uri" => uri}),
+    do: {:spawned_by, Ezagent.URI.new!(uri)}
 
   defp string_to_uri_or_nil(nil), do: nil
   defp string_to_uri_or_nil(s) when is_binary(s), do: Ezagent.URI.new!(s)

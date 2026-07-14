@@ -14,6 +14,7 @@ defmodule Ezagent.Invariants.CapVerifyLoadBoundariesTest do
 
   @identity_behavior "apps/ezagent_domain_identity/lib/ezagent/behavior/identity.ex"
   @identity_facade "apps/ezagent_domain_identity/lib/ezagent/identity.ex"
+  @entity_caps "apps/ezagent_domain_identity/lib/ezagent/entity_caps.ex"
   @recipe_cap_binding "apps/ezagent_domain_identity/lib/ezagent/identity/recipe_cap_binding.ex"
   @snapshot "apps/ezagent_core/lib/ezagent/kind/snapshot.ex"
   @cap "apps/ezagent_core/lib/ezagent/cap.ex"
@@ -21,7 +22,7 @@ defmodule Ezagent.Invariants.CapVerifyLoadBoundariesTest do
 
   @verify_homes %{
     @identity_behavior => 3,
-    @identity_facade => 1,
+    @entity_caps => 1,
     @recipe_cap_binding => 1,
     @snapshot => 1
   }
@@ -49,14 +50,22 @@ defmodule Ezagent.Invariants.CapVerifyLoadBoundariesTest do
 
     store = definition_source(@identity_behavior, :store_verified_cap, 3)
     assert store =~ "Ezagent.Cap.verify_for"
-    assert store =~ "{:set, :caps, new_caps}"
+    assert store =~ "set_caps_effect(new_caps)"
+
+    assert definition_source(@identity_behavior, :set_caps_effect, 1) =~
+             "{:set, :caps, caps}"
 
     assert definition_source(@identity_facade, :list_caps_for, 1) =~ "verified_cap_set"
     assert definition_source(@identity_facade, :read_held_caps, 1) =~ "verified_cap_set"
-    assert definition_source(@identity_facade, :read_entity_caps, 1) =~ "verified_cap_list"
+
+    assert source(@identity_facade) =~
+             "defdelegate read_entity_caps(entity_uri), to: Ezagent.EntityCaps, as: :load"
 
     facade_verifier = definition_source(@identity_facade, :verified_cap_set, 2)
-    assert facade_verifier =~ "Ezagent.Cap.verified_set"
+    assert facade_verifier =~ "Ezagent.EntityCaps.verified_set"
+
+    entity_caps_verifier = definition_source(@entity_caps, :verified_set, 2)
+    assert entity_caps_verifier =~ "Ezagent.Cap.verified_set"
 
     assert definition_source(@recipe_cap_binding, :validate_artifact, 4) =~
              "Ezagent.Cap.verify_for"

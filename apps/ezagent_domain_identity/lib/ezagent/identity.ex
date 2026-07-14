@@ -358,61 +358,12 @@ defmodule Ezagent.Identity do
   defp normalize_caps(caps) when is_list(caps), do: MapSet.new(caps)
   defp normalize_caps(_), do: MapSet.new()
 
-  @doc """
-  Read `entity_uri`'s granted caps from its durable `:identity` slice as a LIST
-  of `%Capability{}` — WITHOUT activating the entity.
-
-  Reads the LIVE slice via `Ezagent.Kind.get_slice/2` (a registry lookup —
-  returns `:not_found` for a cold entity, NEVER spawns), then falls back to the
-  persisted `Ezagent.SnapshotStore.latest/1` snapshot (cold-path), normalizing
-  the two-container slice via `Ezagent.Kind.normalize_slice_view/1`. Returns
-  `[]` when neither is present.
-
-  Distinct from `read_held_caps/1` (the GRANTER-authorization path, which falls
-  back to the `users` table to decide who may MINT a grant): this is a READ
-  surface for ANY entity (incl. agents), so its fallback is the snapshot, not
-  `users`. Keeping them separate avoids changing grant authority.
-  """
+  @doc "Compatibility delegate; new callers use `Ezagent.EntityCaps.load/1`."
   @spec read_entity_caps(URI.t() | String.t()) :: [Ezagent.Capability.t()]
-  def read_entity_caps(entity_uri) do
-    entity_uri = parse_uri(entity_uri)
+  defdelegate read_entity_caps(entity_uri), to: Ezagent.EntityCaps, as: :load
 
-    caps =
-      case Ezagent.Kind.get_slice(entity_uri, :identity) do
-        {:ok, slice} when is_map(slice) -> caps_from_slice(slice)
-        _ -> caps_from_snapshot(entity_uri)
-      end
-
-    verified_cap_list(caps, entity_uri)
-  end
-
-  defp caps_from_snapshot(entity_uri) do
-    case Ezagent.SnapshotStore.latest(entity_uri) do
-      {:ok, %{state: state}} when is_map(state) ->
-        state
-        |> Map.get(:identity, %{})
-        |> Ezagent.Kind.normalize_slice_view()
-        |> caps_from_slice()
-
-      _ ->
-        []
-    end
-  end
-
-  defp caps_from_slice(slice) when is_map(slice) do
-    case Map.get(slice, :caps) do
-      %MapSet{} = set -> MapSet.to_list(set)
-      list when is_list(list) -> list
-      _ -> []
-    end
-  end
-
-  defp caps_from_slice(_), do: []
-
-  defp verified_cap_list(caps, receiver_uri),
-    do: caps |> verified_cap_set(receiver_uri) |> MapSet.to_list()
-
-  defp verified_cap_set(caps, receiver_uri), do: Ezagent.Cap.verified_set(caps, receiver_uri)
+  defp verified_cap_set(caps, receiver_uri),
+    do: Ezagent.EntityCaps.verified_set(caps, receiver_uri)
 
   # PR-OWN-2 (caps-data-ownership SPEC #306 §5.2 + r4):
   # Read the granter's current Identity slice caps via
@@ -453,9 +404,6 @@ defmodule Ezagent.Identity do
   # facade is User-scoped today; future Agent-grant flows would
   # add an `Agents.get_by_uri/1` branch.
   defp read_persisted_caps(granter_uri) do
-    case Ezagent.Users.get_by_uri(granter_uri) do
-      %{caps: caps} when is_list(caps) -> MapSet.new(caps)
-      _ -> MapSet.new()
-    end
+    granter_uri |> Ezagent.EntityCaps.UserStore.load() |> MapSet.new()
   end
 end

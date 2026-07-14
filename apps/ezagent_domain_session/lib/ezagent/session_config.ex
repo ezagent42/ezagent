@@ -90,7 +90,7 @@ defmodule Ezagent.Session.Config do
   end
 
   defp principal_caps(principal) do
-    principal |> Ezagent.Identity.read_entity_caps() |> MapSet.new()
+    principal |> Ezagent.EntityCaps.load() |> MapSet.new()
   rescue
     _ -> MapSet.new()
   end

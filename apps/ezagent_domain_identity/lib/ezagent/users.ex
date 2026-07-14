@@ -155,9 +155,9 @@ defmodule Ezagent.Users do
   (Decision #154 — no unowned permissions): the anon is then a self-sufficient
   caller that joins ONLY its own session under its OWN authority, with no
   `system://` principal in the dispatch ctx. NOTE the caps MUST be
-  `to_map/1`-serializable — concrete-`%URI{}` (or `:any`) instance axes only; a
-  scope tuple (`{:within_session, _}`) is NOT JSON-serializable on this path
-  (only the slice snapshot carries tuples).
+  `to_map/1`-serializable. Concrete `%URI{}` / `:any` instance axes and the
+  closed scope-tuple forms (`:within_session`, `:within_workspace`, and
+  `:spawned_by`) round-trip through the same `caps_json` wire shape.
 
   The row carries no `password_hash`, so `verify_password/2` refuses login for it
   (a read-only viewer is never a login principal).

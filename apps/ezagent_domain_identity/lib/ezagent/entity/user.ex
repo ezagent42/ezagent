@@ -71,8 +71,8 @@ defmodule Ezagent.Entity.User do
 
   ## Boot-order tolerance
 
-  Wrapped in `try/rescue` so an early-boot call (before `Ezagent.Users`
-  is callable) degrades to `MapSet.new()` rather than crashing the
+  The `EntityCaps.UserStore` adapter is wrapped so an early-boot call (before
+  `Ezagent.Users` is callable) degrades to `MapSet.new()` rather than crashing the
   spawn — the post_init reconcile path in
   `Ezagent.ActionSet.Identity` repairs the slice on the next spawn
   once the DB is available (and `mix ezagent.user.create` runs
@@ -88,25 +88,7 @@ defmodule Ezagent.Entity.User do
       # this minter + `admin_invariant?/1`'s recognizer never drift.
       MapSet.new([Ezagent.Capability.admin_genesis_cap()])
     else
-      hydrate_from_caps_json(uri)
-    end
-  end
-
-  defp hydrate_from_caps_json(%URI{} = uri) do
-    if Code.ensure_loaded?(Ezagent.Users) and
-         function_exported?(Ezagent.Users, :get_by_uri, 1) do
-      try do
-        case Ezagent.Users.get_by_uri(uri) do
-          %{caps: caps_list} when is_list(caps_list) -> MapSet.new(caps_list)
-          _ -> MapSet.new()
-        end
-      rescue
-        _ -> MapSet.new()
-      catch
-        _, _ -> MapSet.new()
-      end
-    else
-      MapSet.new()
+      uri |> Ezagent.EntityCaps.load_persisted() |> MapSet.new()
     end
   end
 

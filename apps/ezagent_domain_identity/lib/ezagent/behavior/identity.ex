@@ -295,7 +295,8 @@ defmodule Ezagent.ActionSet.Identity do
   # or the union is a no-op).
   @impl Ezagent.Lifecycle
   def activate(%{caps: _existing_caps} = state, %{self_uri: %URI{scheme: "entity"} = uri}) do
-    user_caps = if Ezagent.URI.type?(uri, :user), do: caps_from_caps_json(uri), else: []
+    user_caps =
+      if Ezagent.URI.type?(uri, :user), do: Ezagent.EntityCaps.UserStore.load(uri), else: []
 
     with {:ok, base_state, binding_caps, binding_update} <-
            reconcile_recipe_binding(state, uri) do
@@ -395,24 +396,6 @@ defmodule Ezagent.ActionSet.Identity do
     current
     |> drop_caps_by_keys(incoming_keys)
     |> MapSet.union(incoming)
-  end
-
-  defp caps_from_caps_json(%URI{} = uri) do
-    if Code.ensure_loaded?(Ezagent.Users) and
-         function_exported?(Ezagent.Users, :get_by_uri, 1) do
-      try do
-        case Ezagent.Users.get_by_uri(uri) do
-          %{caps: caps} when is_list(caps) -> caps
-          _ -> []
-        end
-      rescue
-        _ -> []
-      catch
-        _, _ -> []
-      end
-    else
-      []
-    end
   end
 
   # =================================================================
@@ -542,8 +525,32 @@ defmodule Ezagent.ActionSet.IdentityAdmin do
     modes: [:cast]
   )
 
+  action(:persist_caps,
+    args: %{caps: {:list, :map}},
+    returns: %{caps: {:list, :map}},
+    caps: [{:persist_caps, kind: :user, workspace_scoped?: false}],
+    description: "replace the complete verified capability set in the entity's physical store",
+    modes: [:call]
+  )
+
+  action(:store_cap,
+    args: %{cap: :map},
+    returns: %{caps: {:list, :map}},
+    caps: [{:store_cap, kind: :user, workspace_scoped?: false}],
+    description: "atomically store one verified cap artifact",
+    modes: [:call]
+  )
+
+  action(:remove_cap,
+    args: %{cap: :map},
+    returns: %{caps: {:list, :map}},
+    caps: [{:remove_cap, kind: :user, workspace_scoped?: false}],
+    description: "atomically remove one cap identity",
+    modes: [:call]
+  )
+
   @doc "VM-internal self-store is provenance-gated in the handler, not by a held cap."
-  def cap_exempt_actions, do: [:absorb_cap]
+  def cap_exempt_actions, do: [:absorb_cap, :persist_caps, :store_cap, :remove_cap]
 
   # =================================================================
   # Explicit `required_caps/0` — preserved `kind: :user` axis.
@@ -610,6 +617,61 @@ defmodule Ezagent.ActionSet.IdentityAdmin do
 
   def handle_absorb_cap(_args, _ctx), do: {:error, :unauthorized}
 
+  @doc "VM-internal storage action used by `Ezagent.EntityCaps.persist/2` for a live entity."
+  def handle_persist_caps(%{caps: caps}, %{caller: :vm_internal} = ctx) when is_list(caps) do
+    receiver = Map.get(ctx, :self_uri)
+
+    case Ezagent.EntityCaps.prepare_for_storage(caps, receiver, true) do
+      {:ok, persistable} ->
+        new_caps = MapSet.new(persistable)
+
+        with :ok <- persist_user_caps(receiver, new_caps) do
+          {:ok, %{caps: MapSet.to_list(new_caps)}, [set_caps_effect(new_caps)]}
+        end
+
+      {:error, _reason} ->
+        {:error, :invalid_cap_artifact}
+    end
+  end
+
+  def handle_persist_caps(_args, _ctx), do: {:error, :unauthorized}
+
+  @doc "VM-internal atomic single-artifact storage used by `Ezagent.EntityCaps.grant/2`."
+  def handle_store_cap(%{cap: %Ezagent.Capability{} = cap}, %{caller: :vm_internal} = ctx) do
+    receiver = Map.get(ctx, :self_uri)
+    updated = replace_cap(ctx[:read].(:caps, MapSet.new()), cap)
+
+    with {:ok, persistable} <- Ezagent.EntityCaps.prepare_for_storage(updated, receiver, true) do
+      new_caps = MapSet.new(persistable)
+
+      with :ok <- persist_user_caps(receiver, new_caps) do
+        {:ok, %{caps: MapSet.to_list(new_caps)}, [set_caps_effect(new_caps)]}
+      end
+    end
+  end
+
+  def handle_store_cap(_args, _ctx), do: {:error, :unauthorized}
+
+  @doc "VM-internal atomic single-artifact removal used by `Ezagent.EntityCaps.revoke/2`."
+  def handle_remove_cap(%{cap: %Ezagent.Capability{} = cap}, %{caller: :vm_internal} = ctx) do
+    current_caps = ctx[:read].(:caps, MapSet.new())
+
+    with {:ok, updated} <- Ezagent.Capability.revoke(current_caps, cap),
+         {:ok, persistable} <-
+           Ezagent.EntityCaps.prepare_for_storage(updated, Map.get(ctx, :self_uri), true) do
+      new_caps = MapSet.new(persistable)
+
+      with :ok <- persist_user_caps(Map.get(ctx, :self_uri), new_caps) do
+        {:ok, %{caps: MapSet.to_list(new_caps)}, [set_caps_effect(new_caps)]}
+      end
+    else
+      {:error, reason} ->
+        {:error, reason}
+    end
+  end
+
+  def handle_remove_cap(_args, _ctx), do: {:error, :unauthorized}
+
   defp store_verified_cap(cap_struct, ctx, event_attrs) do
     if Ezagent.Cap.verify_for(cap_struct, Map.get(ctx, :self_uri)) do
       current_caps = ctx[:read].(:caps, MapSet.new())
@@ -625,21 +687,23 @@ defmodule Ezagent.ActionSet.IdentityAdmin do
 
       new_caps = MapSet.put(deduped, cap_struct)
 
-      notify_cap_change(ctx, :cap_granted, "A new capability was granted to you.", cap_struct)
+      with :ok <- persist_user_caps(Map.get(ctx, :self_uri), new_caps) do
+        notify_cap_change(ctx, :cap_granted, "A new capability was granted to you.", cap_struct)
 
-      payload =
-        %{
-          target_uri: Map.get(ctx, :self_uri) |> uri_to_str(),
-          cap: cap_struct,
-          at: DateTime.utc_now()
-        }
-        |> Map.merge(event_attrs)
+        payload =
+          %{
+            target_uri: Map.get(ctx, :self_uri) |> uri_to_str(),
+            cap: cap_struct,
+            at: DateTime.utc_now()
+          }
+          |> Map.merge(event_attrs)
 
-      {:ok, %{caps: MapSet.to_list(new_caps)},
-       [
-         {:set, :caps, new_caps},
-         {:emit, :cap_granted, payload}
-       ]}
+        {:ok, %{caps: MapSet.to_list(new_caps)},
+         [
+           set_caps_effect(new_caps),
+           {:emit, :cap_granted, payload}
+         ]}
+      end
     else
       {:error, :invalid_cap_artifact}
     end
@@ -657,23 +721,25 @@ defmodule Ezagent.ActionSet.IdentityAdmin do
 
     case Ezagent.Capability.revoke(current_caps, cap_struct) do
       {:ok, new_caps} ->
-        notify_cap_change(
-          ctx,
-          :cap_revoked,
-          "A capability was revoked from you.",
-          cap_struct
-        )
+        with :ok <- persist_user_caps(Map.get(ctx, :self_uri), new_caps) do
+          notify_cap_change(
+            ctx,
+            :cap_revoked,
+            "A capability was revoked from you.",
+            cap_struct
+          )
 
-        {:ok, %{caps: MapSet.to_list(new_caps)},
-         [
-           {:set, :caps, new_caps},
-           {:emit, :cap_revoked,
-            %{
-              target_uri: Map.get(ctx, :self_uri) |> uri_to_str(),
-              cap: cap_struct,
-              at: DateTime.utc_now()
-            }}
-         ]}
+          {:ok, %{caps: MapSet.to_list(new_caps)},
+           [
+             set_caps_effect(new_caps),
+             {:emit, :cap_revoked,
+              %{
+                target_uri: Map.get(ctx, :self_uri) |> uri_to_str(),
+                cap: cap_struct,
+                at: DateTime.utc_now()
+              }}
+           ]}
+        end
 
       {:error, :cannot_revoke_admin} = err ->
         err
@@ -682,6 +748,31 @@ defmodule Ezagent.ActionSet.IdentityAdmin do
 
   defp uri_to_str(%URI{} = uri), do: URI.to_string(uri)
   defp uri_to_str(other), do: inspect(other)
+
+  defp persist_user_caps(%URI{} = uri, caps) do
+    if Ezagent.URI.type?(uri, :user) do
+      case Ezagent.EntityCaps.UserStore.persist(uri, MapSet.to_list(caps)) do
+        {:error, :not_found} -> :ok
+        result -> result
+      end
+    else
+      :ok
+    end
+  end
+
+  defp persist_user_caps(_uri, _caps), do: :ok
+
+  defp replace_cap(caps, cap) do
+    caps
+    |> Enum.reject(&(Ezagent.Capability.identity_key(&1) == Ezagent.Capability.identity_key(cap)))
+    |> MapSet.new()
+    |> MapSet.put(cap)
+  end
+
+  # I7: every runtime caps replacement is visible at this one literal writer.
+  # Each caller has already either verified the complete set/artifact or proven
+  # that the mutation is removal-only.
+  defp set_caps_effect(caps), do: {:set, :caps, caps}
 
   defp normalize_artifact(%Ezagent.Capability{} = artifact), do: {:ok, artifact}
 

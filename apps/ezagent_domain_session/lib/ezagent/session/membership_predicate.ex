@@ -45,7 +45,7 @@ defmodule Ezagent.Session.Membership do
   Authorize `caller` to read `chat` — the HELD-CAP form (membership-cap
   unification A2.3 / spec R1.1). Identical to `authorize/2` PLUS: a non-owner
   caller must additionally HOLD the member-cap over `session_uri` (read LIVE via
-  `Ezagent.Identity.read_entity_caps/1`, provenance-filtered), so an ex-member
+  `Ezagent.EntityCaps.load/1`, provenance-filtered), so an ex-member
   whose cap was revoked is denied IMMEDIATELY even if a stale roster entry lingers
   (no "in-projection ⇒ authorized" window). `session_uri == nil` skips the held-cap
   check (roster-only, backward-compatible with any caller lacking session context).
@@ -78,7 +78,7 @@ defmodule Ezagent.Session.Membership do
 
   defp holds_member_cap?(%URI{} = caller, %URI{} = session_uri) do
     caller
-    |> Ezagent.Identity.read_entity_caps()
+    |> Ezagent.EntityCaps.load()
     |> Ezagent.Session.MemberReceive.holds_member_cap_over?(session_uri)
   end
 

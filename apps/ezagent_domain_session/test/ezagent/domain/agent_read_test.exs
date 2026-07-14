@@ -95,11 +95,10 @@ defmodule Ezagent.Domain.AgentReadTest do
     :ok
   end
 
-  # Persist a caller's identity-slice caps into its snapshot (caller Kind stays
-  # COLD), so route-2 (`read_entity_caps` slice→snapshot) can authorize it.
+  # Persist a User caller's caps into users.caps_json (the User SSOT; caller
+  # Kind stays COLD), so route 2 can authorize it without activating the Kind.
   defp seed_caller_slice_caps(caller, caps) do
-    {:ok, _} =
-      SnapshotStore.write(caller, %{identity: %{caps: MapSet.new(caps)}}, kind_type: :user)
+    {:ok, _} = Ezagent.Users.create_read_only(caller, caps)
 
     :ok
   end
@@ -165,6 +164,7 @@ defmodule Ezagent.Domain.AgentReadTest do
 
     other = Ezagent.URI.entity(:team_alpha, :agent, "other-#{System.unique_integer([:positive])}")
     other_granter = user("og")
+
     wrong_caps = MapSet.new([manage_cap(other, workspace, other_granter), sandbox_cap(other, other_granter)])
     ctx = %{caller: other_granter, caps: wrong_caps}
 
@@ -208,9 +208,9 @@ defmodule Ezagent.Domain.AgentReadTest do
     :ok = seed_agent_snapshot(agent, workspace, manager)
 
     user_caller = user("logged-in")
-    # Persist the cap into the COLD caller's slice; pass NO inline caps. This is
+    # Persist the cap into the COLD caller's caps_json; pass NO inline caps. This is
     # the bug bare `holds_cap?` (slice-only, denies cold) would have produced —
-    # read_entity_caps' snapshot fallback authorizes the cold caller.
+    # EntityCaps' durable User fallback authorizes the cold caller.
     :ok = seed_caller_slice_caps(user_caller, [sandbox_cap(agent, manager)])
     ctx = %{caller: user_caller, caps: MapSet.new()}
 
@@ -264,6 +264,7 @@ defmodule Ezagent.Domain.AgentReadTest do
        %{agent: agent, workspace: workspace} do
     manager = user("mgr")
     :ok = seed_agent_snapshot(agent, workspace, manager)
+
     ctx = %{caller: manager, caps: MapSet.new([sandbox_cap(agent, manager), list_caps_cap(agent, manager)])}
 
     assert {:ok, caps} = DomainAgent.read_caps(agent, ctx)
