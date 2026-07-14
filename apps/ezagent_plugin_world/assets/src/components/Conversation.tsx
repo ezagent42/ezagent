@@ -255,6 +255,7 @@ export function Conversation({
   const [inviteValue, setInviteValue] = React.useState("")
   const [debugOpen, setDebugOpen] = React.useState(false)
   const [membersOpen, setMembersOpen] = React.useState(false)
+  const [routingOpen, setRoutingOpen] = React.useState(false)
   const [toolsOpen, setToolsOpen] = React.useState(false)
   const [publishOpen, setPublishOpen] = React.useState(false)
   const [publishName, setPublishName] = React.useState("")
@@ -295,6 +296,7 @@ export function Conversation({
     setInviteOpen(false)
     setInviteValue("")
     setMembersOpen(false)
+    setRoutingOpen(false)
     setPublishOpen(false)
     setPublishName("")
     setPublished(false)
@@ -689,13 +691,36 @@ export function Conversation({
               {orderViews(views).map((v) => {
                 const Icon = iconFor(v.icon)
                 const label = viewLabel(v)
+                const selected = v.id === "routing" ? membersOpen && routingOpen : activeId === v.id
+
+                if (v.id === "external_mirror") {
+                  return (
+                    <a
+                      key={v.id}
+                      href={`/admin/sessions/${encodeURIComponent(sessionUri)}/external_mirror`}
+                      className={segmentClass(false)}
+                      aria-label={"显示" + label}
+                      data-world-bindings-tab
+                    >
+                      <Icon aria-hidden={true} className="h-[15px] w-[15px]" />
+                      {label}
+                    </a>
+                  )
+                }
+
                 return (
                   <button
                     key={v.id}
                     type="button"
-                    className={segmentClass(activeId === v.id)}
+                    className={segmentClass(selected)}
                     onClick={() => {
                       if (!sessionUri) return
+                      if (v.id === "routing") {
+                        setInviteOpen(false)
+                        setMembersOpen(true)
+                        setRoutingOpen(true)
+                        return
+                      }
                       if (v.id === "pty" || v.mode === "pty") {
                         const agent = activePtyAgentUri || ptyMembers[0]?.uri
                         if (agent) onOpenPty(sessionUri, agent)
@@ -705,6 +730,7 @@ export function Conversation({
                       }
                     }}
                     aria-label={"显示" + label}
+                    data-world-routing-tab={v.id === "routing" ? true : undefined}
                   >
                     <Icon aria-hidden={true} className="h-[15px] w-[15px]" />
                     {label}
@@ -1192,7 +1218,12 @@ export function Conversation({
           </div>
         )}
 
-        <details className="border-t border-border px-2 py-3" data-world-routing-drawer>
+        <details
+          className="border-t border-border px-2 py-3"
+          open={routingOpen}
+          onToggle={(event) => setRoutingOpen(event.currentTarget.open)}
+          data-world-routing-drawer
+        >
           <summary className="flex cursor-pointer list-none items-center justify-between gap-2 rounded-md px-2 py-1.5 text-sm font-medium text-muted-foreground hover:bg-muted hover:text-foreground">
             <span className="inline-flex items-center gap-2">
               <Route aria-hidden="true" className="h-[15px] w-[15px]" />
