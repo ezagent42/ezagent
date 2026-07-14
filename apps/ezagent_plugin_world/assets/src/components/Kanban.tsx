@@ -36,6 +36,8 @@ export type KanbanState = {
   // 每图独立配置（github 仓库=纯数据拼 git 链接 + miro 板名；GitHub 主动连接器已退役）
   config?: {github_repo?: string | null; miro_board?: string | null}
   last_dispatch_status?: string | null
+  // 分享看板生成的只读接收链接（kanban.share_board 成功后经 world:state 回推）。
+  share_link?: string | null
 }
 
 type Act = (action: string, args: Record<string, unknown>) => void
@@ -55,7 +57,8 @@ export function Kanban({
 }: {
   state: KanbanState
   onAction?: Act
-  onShare?: () => void
+  // 分享看板：拿到本图 uri → 交给宿主 dispatch kanban.share_board（回推 share_link）。
+  onShare?: (kanbanUri: string) => void
   onShareArtifact?: (name: string, url: string) => void
   onUploadFile?: UploadFn
   // "operate"（默认，会话 tab 用）：有 kanban_uri 就渲富操作面 KanbanDetail。
@@ -67,16 +70,46 @@ export function Kanban({
   return state.kanban_uri ? (
     <KanbanDetail state={state} onAction={onAction} onShare={onShare} onShareArtifact={onShareArtifact} onUploadFile={onUploadFile} />
   ) : (
-    <KanbanList state={state} onAction={onAction} />
+    // 空会话 tab（零块板）：给「建第一块板」入口（showCreate），不再只有 Miro 配置。
+    <KanbanList state={state} onAction={onAction} showCreate />
   )
 }
 
 // 插件配置页 = 只配 Miro 凭证（不在这编辑导图——编辑在会话内 Kanban 子视图）。
-function KanbanList({state, onAction}: {state: KanbanState; onAction: Act}) {
+// showCreate=true（空会话 tab）时，顶部多出「建第一块板」入口——否则用户在零板空态
+// 里无从 UI 建板（建板输入原本只在 KanbanDetail 侧边栏，得先有板才能进）。
+function KanbanList({state, onAction, showCreate = false}: {state: KanbanState; onAction: Act; showCreate?: boolean}) {
   const [token, setToken] = useState("")
+  const [newName, setNewName] = useState("")
   const configured = state.miro?.configured
+  const createBoard = () => {
+    const name = newName.trim()
+    if (!name) return
+    onAction("kanban.create", {name})
+    setNewName("")
+  }
   return (
     <div className="flex max-w-2xl flex-col gap-4 p-6">
+      {showCreate && (
+        <div className="flex flex-col gap-3 rounded-md border border-border bg-card p-4" data-world-kanban-empty-create>
+          <div>
+            <h2 className="text-lg font-semibold text-foreground">看板 · 新建</h2>
+            <p className="text-sm text-muted-foreground">这个会话还没有看板。建一块开始——建完自动进操作面。<strong>建议英文/数字/连字符命名</strong>（中文可能被拒）。</p>
+          </div>
+          <div className="flex gap-2">
+            <input
+              className={`${inputCls} w-full`}
+              placeholder="新看板名（如 my-product-board）"
+              value={newName}
+              onChange={(e) => setNewName(e.target.value)}
+              onKeyDown={(e) => e.key === "Enter" && createBoard()}
+            />
+            <Button type="button" size="sm" onClick={createBoard}>
+              <Plus className="h-4 w-4" /> 建看板
+            </Button>
+          </div>
+        </div>
+      )}
       <div>
         <h2 className="text-lg font-semibold text-foreground">看板 · 配置</h2>
         <p className="text-sm text-muted-foreground">配置出站连接器凭证（Miro）。<strong>建树/认领/编辑在会话(session)里的 Kanban 子视图</strong>，本页只配置。</p>
@@ -107,7 +140,7 @@ function KanbanList({state, onAction}: {state: KanbanState; onAction: Act}) {
   )
 }
 
-function KanbanDetail({state, onAction, onShare, onShareArtifact, onUploadFile}: {state: KanbanState; onAction: Act; onShare?: () => void; onShareArtifact?: (name: string, url: string) => void; onUploadFile?: UploadFn}) {
+function KanbanDetail({state, onAction, onShare, onShareArtifact, onUploadFile}: {state: KanbanState; onAction: Act; onShare?: (kanbanUri: string) => void; onShareArtifact?: (name: string, url: string) => void; onUploadFile?: UploadFn}) {
   const uri = state.kanban_uri as string
   const tree = state.tree || {nodes: {}, root_id: null}
   const stages = state.stages || STAGES
@@ -155,7 +188,7 @@ function KanbanDetail({state, onAction, onShare, onShareArtifact, onUploadFile}:
         </div>
         <div className="flex flex-shrink-0 items-center gap-1.5">
           {onShare && (
-            <Button type="button" size="sm" variant="secondary" title="分享到对话" onClick={onShare}>
+            <Button type="button" size="sm" variant="secondary" title="生成只读分享链接" onClick={() => onShare(uri)}>
               <Send className="h-4 w-4" /> 分享
             </Button>
           )}
