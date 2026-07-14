@@ -540,7 +540,7 @@ defmodule Ezagent.World.ConversationActions do
   # (frontend renders its own empty/config state). fail-safe: any error falls back
   # to a plain active_view switch so the tab never wedges.
   defp view_switch_updates(socket, %URI{} = session_uri, "kanban_board") do
-    ctx = kanban_read_ctx(socket)
+    ctx = Ezagent.World.KanbanActions.read_ctx(socket)
     boards = Ezagent.World.KanbanData.session_boards(session_uri, ctx)
     base = %{"active_view" => "kanban_board", "instances" => boards}
 
@@ -559,17 +559,6 @@ defmodule Ezagent.World.ConversationActions do
   end
 
   defp view_switch_updates(_socket, _session_uri, view), do: %{"active_view" => view}
-
-  # read-side ctx for KanbanData (session_boards / board_state) — mirrors
-  # `Ezagent.World.KanbanData.dispatch_ctx` inputs: caller identity + cap snapshot
-  # + workspace scope (RF-7 tenant bound). Same shape as `KanbanActions.read_ctx`.
-  defp kanban_read_ctx(socket) do
-    %{
-      caller_uri: socket.assigns.current_entity_uri,
-      caller_caps: Map.get(socket.assigns, :current_caps, MapSet.new()),
-      workspace_uri: socket.assigns.current_workspace_uri
-    }
-  end
 
   @doc """
   Switch the conversation panel to the PTY view for a member agent.
