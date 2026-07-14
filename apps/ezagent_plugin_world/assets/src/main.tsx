@@ -970,6 +970,7 @@ function renderLayoutComponent(component: NonNullable<WorldLayout["components"]>
           onPtyInput={context.onPtyInput}
           onPtyResize={context.onPtyResize}
           onServerEvent={context.onServerEvent}
+          onKanbanAction={context.onWorkspacePluginAction}
           onPublishTemplate={context.onPublishTemplate}
         />
       )
