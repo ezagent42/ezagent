@@ -15,8 +15,8 @@ defmodule Ezagent.Invariants.CapIssueChokepointBoundaryTest do
   not. A comment cannot hold a boundary. So the boundary lives here, and it is
   measured on every run:
 
-    * the EIGHT spellings in `@seen` MUST be caught — one plain baseline plus
-      the seven evasions that actually got past earlier cuts of the scanner
+    * the ten spellings in `@seen` MUST be caught — one plain baseline plus the
+      nine evasions that got past earlier cuts of the scanner
     * `Module.concat/1` — the module resolved at RUNTIME — MUST NOT be, because
       no source scan can see it. That is pinned deliberately. If someone teaches
       the scanner to see it, this test fails and forces them to come back and
@@ -26,8 +26,9 @@ defmodule Ezagent.Invariants.CapIssueChokepointBoundaryTest do
 
   The property we want is about RUNTIME: "every cap that reaches
   `users.caps_json` passed `Ezagent.Cap.issue/3`". A source scan proves
-  something weaker — "every STATICALLY RESOLVABLE call is enumerated" — and the
-  gap between them is not closable by a better scanner.
+  something weaker — "every call whose MODULE is named literally at the call site
+  is enumerated" — and the gap between them is not closable by a better scanner
+  (a module reached through a variable already walks past it).
 
   Closing it for real means making the property structural: `Cap.issue/3`
   records what it issued, `Ezagent.Users` refuses a cap that was never issued.
@@ -66,10 +67,23 @@ defmodule Ezagent.Invariants.CapIssueChokepointBoundaryTest do
      def m(u, p, c), do: @users.create(u, p, c)
      """},
     {"apply/3", "def m(u, p, c), do: apply(Ezagent.Users, :create, [u, p, c])"},
+    {"Kernel.apply/3", "def m(u, p, c), do: Kernel.apply(Ezagent.Users, :create, [u, p, c])"},
+    {"defdelegate", "defdelegate create(u, p, c), to: Ezagent.Users"},
     {"capture", "def m, do: &Ezagent.Users.create_read_only/2"}
   ]
 
+  # The boundary: a MODULE reached through a VARIABLE. The scanner does no
+  # dataflow, so it cannot follow either of these — and neither can any source
+  # scan. Pinned so that if someone teaches the scanner to follow one, this test
+  # fails and forces the CLAIM to be updated.
   @blind [
+    {"module bound to a variable",
+     """
+     def m(u, p, c) do
+       mod = Ezagent.Users
+       mod.create(u, p, c)
+     end
+     """},
     {"module atom built at RUNTIME",
      """
      def m(u, p, c) do
@@ -105,7 +119,7 @@ defmodule Ezagent.Invariants.CapIssueChokepointBoundaryTest do
 
                  * the boundary comment in #{@scanner}
                  * the moduledoc of this file
-                 * anything that repeats "statically resolvable"
+                 * anything that repeats the "literal module at the call site" line
 
                Then move this fixture into `@seen`.
                """

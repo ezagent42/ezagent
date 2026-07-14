@@ -27,17 +27,24 @@ defmodule EzagentCore.CapsJsonScanner do
                                                  `alias Ezagent.{Users, ...}`
       import Ezagent.Users; create(...)          import → bare local call
       @users Ezagent.Users; @users.create(...)   module attribute
-      apply(Ezagent.Users, :create, [...])       apply with a literal module
-      &Ezagent.Users.create/3                    capture — the caps arg is not
-                                                 visible, so it is recorded
-                                                 `:opaque`, which CANNOT be
-                                                 classified `:no_caps`; a human
-                                                 must decide
+      apply(Ezagent.Users, :create, [...])       bare apply, literal module
+      Kernel.apply(Ezagent.Users, :create, ...)  fully-spelled apply
+      defdelegate create(...), to: Ezagent.Users re-export → `:opaque`
+      &Ezagent.Users.create/3                    capture → `:opaque` (caps arg
+                                                 not visible; cannot be
+                                                 `:no_caps`; a human must decide)
 
-  NOT SEEN — and nothing else sees it either:
+  NOT SEEN — the boundary is whether the MODULE NAME is written literally AT THE
+  CALL SITE. When it is reached through a VARIABLE, the scanner cannot follow it,
+  and neither can any other source scan:
 
-      m = Module.concat([:Ezagent, :Users])      the module atom is resolved
-      m.create(uri, pw, forged_caps)             at RUNTIME
+      m = Ezagent.Users;         m.create(...)   module bound to a variable
+      m = Module.concat([...]);  m.create(...)   module built at RUNTIME
+
+  (An earlier version of this note said the boundary was "statically resolvable".
+  That was wrong: `mod = Ezagent.Users` IS statically resolvable by a human eye,
+  yet the scanner does not do dataflow, so it does not follow it. The honest line
+  is the literal-module-at-the-call-site one above.)
 
   **Leg 3a (the column ratchet) does NOT back that up.** An evasive CALLER never
   writes `caps_json:` itself — `users.ex` does, on its behalf. Leg 3a catches a
@@ -49,7 +56,8 @@ defmodule EzagentCore.CapsJsonScanner do
 
   Only this, and not a word more:
 
-  > **Every STATICALLY RESOLVABLE call to a `caps_json` writer is enumerated.**
+  > **Every call to a `caps_json` writer whose MODULE is named literally at the
+  > call site is enumerated; every literal `caps_json:` assignment is enumerated.**
 
   It does NOT prove "every cap in `users.caps_json` passed `Cap.issue/3`". That
   property is about what happens at RUNTIME, and no source scan can prove it —
@@ -129,6 +137,30 @@ defmodule EzagentCore.CapsJsonScanner do
 
   defp users?(mod, env), do: List.last(Map.get(env.aliases, mod, mod)) == :Users
 
+  # `Kernel.apply(Users, :create, [...])` — the fully-spelled form. The plain
+  # remote-call clause below would see `mod = [:Kernel]` and wave it through.
+  defp collect_site(
+         {{:., _, [{:__aliases__, _, [:Kernel]}, :apply]}, _,
+          [{:__aliases__, _, mod}, fun, args]},
+         env
+       )
+       when is_atom(fun) do
+    apply_site(mod, fun, args, env)
+  end
+
+  # `defdelegate create(u, p, c), to: Ezagent.Users` — a RE-EXPORT. The caps that
+  # flow through belong to whoever calls the delegate, so they are invisible here:
+  # recorded `:opaque`, which cannot be classified `:no_caps`. A human must decide.
+  defp collect_site({:defdelegate, _, [{fun, _, _}, opts]}, env) when is_list(opts) do
+    with {:__aliases__, _, mod} <- Keyword.get(opts, :to),
+         true <- users?(mod, env),
+         true <- writer?(Keyword.get(opts, :as, fun)) do
+      [:opaque]
+    else
+      _ -> []
+    end
+  end
+
   # A plain (or piped, or aliased) remote call.
   defp collect_site({{:., _, [{:__aliases__, _, mod}, fun]}, _, args}, env)
        when is_list(args) do
@@ -144,16 +176,10 @@ defmodule EzagentCore.CapsJsonScanner do
     end
   end
 
-  # `apply(Users, :create, [uri, pw, caps])`
+  # `apply(Users, :create, [uri, pw, caps])` — the bare form.
   defp collect_site({:apply, _, [{:__aliases__, _, mod}, fun, args]}, env)
        when is_atom(fun) do
-    cond do
-      not users?(mod, env) -> []
-      is_list(args) -> caps_arg(fun, args)
-      # a runtime-built arg list hides the caps
-      writer?(fun) -> [:opaque]
-      true -> []
-    end
+    apply_site(mod, fun, args, env)
   end
 
   # `&Users.create/3` — the caps argument is not visible at the capture site.
@@ -172,6 +198,16 @@ defmodule EzagentCore.CapsJsonScanner do
   end
 
   defp collect_site(_node, _env), do: []
+
+  defp apply_site(mod, fun, args, env) do
+    cond do
+      not users?(mod, env) -> []
+      is_list(args) -> caps_arg(fun, args)
+      # a runtime-built arg list hides the caps
+      writer?(fun) -> [:opaque]
+      true -> []
+    end
+  end
 
   defp writer?(fun), do: fun in [:create, :create_read_only]
 
