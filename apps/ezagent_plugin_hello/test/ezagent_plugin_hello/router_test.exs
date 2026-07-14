@@ -22,6 +22,12 @@ defmodule EzagentPluginHello.RouterTest do
   end
 
   describe "interpret_intent/1 — owner intent parsing (pure)" do
+    test "KANBAN anywhere → dispatcher" do
+      assert Generator.interpret_intent("KANBAN") == :dispatcher
+      assert Generator.interpret_intent("kanban") == :dispatcher
+      assert Generator.interpret_intent("The answer is KANBAN.") == :dispatcher
+    end
+
     test "ASK anywhere → concierge" do
       assert Generator.interpret_intent("ASK") == :concierge
       assert Generator.interpret_intent("ask") == :concierge
@@ -68,6 +74,11 @@ defmodule EzagentPluginHello.RouterTest do
     test "ignores its own concierge member", %{session: session} do
       assert {:ok, concierge} = Members.role_uri(session, "concierge")
       refute Router.should_route?(session, concierge)
+    end
+
+    test "ignores its own dispatcher member", %{session: session} do
+      assert {:ok, dispatcher} = Members.role_uri(session, "dispatcher")
+      refute Router.should_route?(session, dispatcher)
     end
 
     test "routes a user message", %{session: session} do

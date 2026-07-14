@@ -194,6 +194,9 @@ defmodule EzagentWeb.Router do
     # anon-access pipeline (PublicView gate, anon minting, SPA shell) runs
     # unchanged — this is just a short URL entry.
     get "/hello/:session_name", Socialware.ChatFeedController, :show_by_name
+    post "/hello/delegate", HelloDelegationController, :create
+    get "/hello/delegate/resume", HelloDelegationController, :resume
+    post "/hello/delegate/resume", HelloDelegationController, :resume
   end
 
   # Plugin-package (Q1-C): hot-loaded plugins serve their frontend island

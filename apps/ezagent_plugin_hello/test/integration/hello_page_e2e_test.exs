@@ -21,7 +21,7 @@ defmodule EzagentPluginHello.Integration.HelloPageE2ETest do
   alias Ezagent.Workspace
   alias Ezagent.ActionSet.KindBase
   alias Ezagent.Socialware.{AnonBinding, AnonUser, ExternalFeed}
-  alias EzagentPluginHello.{App, Spec, TurnDriver}
+  alias EzagentPluginHello.{App, KanbanDelegation, Spec, TurnDriver}
 
   setup do
     # `ensure_app` creates the orchestrator via the RF-5a role-create path, which
@@ -33,10 +33,16 @@ defmodule EzagentPluginHello.Integration.HelloPageE2ETest do
     # boot-registered by the curl_agent plugin's `agent_flavors/0`, so it must be
     # started here (it is not a transitive dep of anything else this test starts).
     {:ok, _} = Application.ensure_all_started(:ezagent_plugin_curl_agent)
+    {:ok, _} = Application.ensure_all_started(:ezagent_plugin_kanban)
 
     Enum.each(EzagentPluginHello.Application.roles(), fn recipe ->
       {:ok, _} = Ezagent.Agent.RecipeRegistry.seed_role_if_absent(recipe)
     end)
+
+    {:ok, _} =
+      Ezagent.Agent.RecipeRegistry.seed_role_if_absent(
+        EzagentPluginKanban.Application.kanban_manager_recipe()
+      )
 
     ws = "hello-e2e-#{System.unique_integer([:positive])}"
     {:ok, _ws_pid} = Workspace.create(ws, %{})
@@ -137,6 +143,56 @@ defmodule EzagentPluginHello.Integration.HelloPageE2ETest do
     assert Ezagent.ActionSet.Publisher.SessionImpl in behaviors
   end
 
+  test "a second validated prompt result changes the live anonymous page", ctx do
+    first = Spec.seed()
+
+    second =
+      put_in(first, ["children", Access.at(0), "props", "text"], "A warmer second prompt")
+
+    assert {:ok, ^first} = Spec.validate(first)
+    assert {:ok, ^second} = Spec.validate(second)
+    assert {:ok, _} = TurnDriver.drive(ctx.session, first, "First version")
+    assert %{page: ^first} = wait_for_page_value(ctx.session, ctx.caller, first)
+    assert {:ok, _} = TurnDriver.drive(ctx.session, second, "Second version")
+
+    snapshot = wait_for_page_value(ctx.session, ctx.caller, second)
+    assert snapshot.page == second
+    refute snapshot.page == first
+  end
+
+  test "hello delegation creates a real Kanban node without mutating the Surface", ctx do
+    spec = Spec.seed()
+    assert {:ok, _} = TurnDriver.drive(ctx.session, spec, "Page ready")
+    assert %{page: ^spec} = wait_for_page_value(ctx.session, ctx.caller, spec)
+    assert {:ok, surface_before} = Ezagent.Kind.get_slice(ctx.session, :surface)
+
+    assert {:ok, result} =
+             KanbanDelegation.delegate(
+               ctx.session,
+               "Ship the hello landing page",
+               Ezagent.Entity.User.admin_uri()
+             )
+
+    assert {:ok, surface_after} = Ezagent.Kind.get_slice(ctx.session, :surface)
+    assert surface_after == surface_before
+
+    assert {:ok, %{tree: tree}} =
+             Ezagent.Invocation.dispatch(%Ezagent.Invocation{
+               target: Ezagent.URI.with_action(result.kanban_uri, :kanban, :get_tree),
+               mode: :call,
+               args: %{},
+               ctx: %{
+                 caller: Ezagent.Entity.User.admin_uri(),
+                 caps: MapSet.new([Ezagent.Capability.admin_genesis_cap()]),
+                 reply: {:caller_inbox, self()}
+               }
+             })
+
+    assert tree.nodes[result.node_id].title == "Ship the hello landing page"
+    assert [artifact] = tree.nodes[result.node_id].artifacts
+    assert artifact.kind == "hello_source"
+  end
+
   test "INV-CC ②: a session with the curl llm member is created even with NO credential source" do
     # A fresh workspace in this test env has no DeepSeek credential source
     # provisioned — this is exactly the deployment shape `credential_optional`
@@ -164,6 +220,22 @@ defmodule EzagentPluginHello.Integration.HelloPageE2ETest do
       _ ->
         Process.sleep(20)
         wait_for_page(session, caller, attempts - 1)
+    end
+  end
+
+  defp wait_for_page_value(session, caller, expected, attempts \\ 150)
+
+  defp wait_for_page_value(_session, _caller, _expected, 0),
+    do: flunk("external snapshot never exposed the expected approved page")
+
+  defp wait_for_page_value(session, caller, expected, attempts) do
+    case ExternalFeed.snapshot(session, caller) do
+      {:ok, %{page: ^expected} = snapshot} ->
+        snapshot
+
+      _ ->
+        Process.sleep(20)
+        wait_for_page_value(session, caller, expected, attempts - 1)
     end
   end
 

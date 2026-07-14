@@ -169,6 +169,8 @@ function boot(root) {
   // codex finding 3). Both default to the external-surface values.
   const socketPath = root.dataset.socketPath || "/socialware_external_socket"
   const topicPrefix = root.dataset.topicPrefix || "socialware:external"
+  const delegationEndpoint = root.dataset.helloDelegationEndpoint || null
+  const csrfToken = root.dataset.csrfToken || ""
   const reactRoot = createRoot(root)
 
   reactRoot.render(
@@ -177,6 +179,8 @@ function boot(root) {
       token,
       socketPath,
       topicPrefix,
+      delegationEndpoint,
+      csrfToken,
     })
   )
 }
@@ -221,7 +225,7 @@ function execNav(nav) {
   }
 }
 
-function ViewerApp({sessionUri, token, socketPath, topicPrefix}) {
+function ViewerApp({sessionUri, token, socketPath, topicPrefix, delegationEndpoint, csrfToken}) {
   const [snapshot, setSnapshot] = useState(null)
   const [unauthorized, setUnauthorized] = useState(false)
   // Debug: highlight which parts of the page are json-render (vs the HTML frame).
@@ -517,6 +521,8 @@ function ViewerApp({sessionUri, token, socketPath, topicPrefix}) {
       },
       jrHighlight,
       onToggleHighlight: () => setJrHighlight((v) => !v),
+      delegationEndpoint,
+      csrfToken,
     })
   )
 }
@@ -548,7 +554,7 @@ body.jr-highlight [data-slot]{outline:1.5px solid rgba(217,70,239,.75);outline-o
 //
 // Anon viewers are read-only BY CONSTRUCTION (the anon-User's caps deny
 // chat.send), so a disabled input is the honest affordance, not a security gate.
-function PreviewBar({viewer, sessionUri, messages, chatOpen, setChatOpen, onJoin, onPost, onLogin, selected, onClearSelection, selectMode, onToggleSelect, jrHighlight, onToggleHighlight}) {
+function PreviewBar({viewer, sessionUri, messages, chatOpen, setChatOpen, onJoin, onPost, onLogin, selected, onClearSelection, selectMode, onToggleSelect, jrHighlight, onToggleHighlight, delegationEndpoint, csrfToken}) {
   const [draft, setDraft] = useState("")
   const loggedIn = !!(viewer && viewer.logged_in)
   const member = loggedIn && !!viewer.member
@@ -579,7 +585,9 @@ function PreviewBar({viewer, sessionUri, messages, chatOpen, setChatOpen, onJoin
 
   let action
   if (!loggedIn) {
-    action = React.createElement("button", {type: "button", className: "previewbar-action", onClick: onLogin}, "登录")
+    action = delegationEndpoint
+      ? React.createElement("button", {id: "hello-delegate-login", type: "submit", className: "previewbar-action", disabled: !draft.trim()}, "登录并交给 Kanban")
+      : React.createElement("button", {type: "button", className: "previewbar-action", onClick: onLogin}, "登录")
   } else if (!member) {
     action = React.createElement("button", {type: "button", className: "previewbar-action", onClick: onJoin}, "加入")
   } else {
@@ -591,7 +599,7 @@ function PreviewBar({viewer, sessionUri, messages, chatOpen, setChatOpen, onJoin
   }
 
   const placeholder = !loggedIn
-    ? "登录后参与"
+    ? delegationEndpoint ? "描述任务，登录后交给 Kanban" : "登录后参与"
     : !member
       ? "加入后可发言"
       : selected
@@ -613,14 +621,17 @@ function PreviewBar({viewer, sessionUri, messages, chatOpen, setChatOpen, onJoin
         )
       : null
 
-  return React.createElement(
-    "div",
-    {className: "previewbar-wrap", "data-viewer": member ? "member" : loggedIn ? "guest" : "anon"},
-    chatOpen ? React.createElement(ChatPanel, {messages, onClose: () => setChatOpen(false)}) : null,
-    chip,
-    React.createElement(
-      "div",
-      {className: "previewbar"},
+  const prompt = React.createElement(
+    "form",
+    {
+      id: "hello-prompt-form",
+      className: "previewbar",
+      action: !loggedIn && delegationEndpoint ? delegationEndpoint : undefined,
+      method: !loggedIn && delegationEndpoint ? "post" : undefined,
+      onSubmit: member ? (event) => { event.preventDefault(); submit() } : undefined,
+    },
+      delegationEndpoint ? React.createElement("input", {type: "hidden", name: "session_uri", value: sessionUri}) : null,
+      delegationEndpoint ? React.createElement("input", {type: "hidden", name: "_csrf_token", value: csrfToken}) : null,
       // Open the full session (world console conversation view) in a new tab —
       // NOT an inline panel. Enabled only for a joined member (login + join); an
       // anon/guest sees it disabled (their speak/join rules are unchanged).
@@ -645,12 +656,13 @@ function PreviewBar({viewer, sessionUri, messages, chatOpen, setChatOpen, onJoin
       ),
       React.createElement("input", {
         className: "previewbar-input",
+        name: "instruction",
         value: draft,
-        disabled: !member,
+        disabled: !member && !(delegationEndpoint && !loggedIn),
         placeholder,
         onChange: (e) => setDraft(e.target.value),
         onKeyDown: (e) => {
-          if (e.key === "Enter" && !e.nativeEvent.isComposing) {
+          if (member && e.key === "Enter" && !e.nativeEvent.isComposing) {
             e.preventDefault()
             submit()
           }
@@ -680,7 +692,15 @@ function PreviewBar({viewer, sessionUri, messages, chatOpen, setChatOpen, onJoin
         },
         "◐"
       )
-    )
+  )
+
+  return React.createElement(
+    "div",
+    {className: "previewbar-wrap", "data-viewer": member ? "member" : loggedIn ? "guest" : "anon"},
+    chatOpen ? React.createElement(ChatPanel, {messages, onClose: () => setChatOpen(false)}) : null,
+    chip,
+    prompt,
+    React.createElement("div", {id: "hello-kanban-result", role: "status", "aria-live": "polite"}),
   )
 }
 

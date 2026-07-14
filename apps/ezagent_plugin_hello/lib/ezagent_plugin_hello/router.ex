@@ -24,7 +24,7 @@ defmodule EzagentPluginHello.Router do
   # The front-desk's own worker roles (builder + concierge) — their output must
   # never re-route back (loop guard). The platform orchestrator (`requires:
   # ["orchestrator"]`) is NOT a hello worker.
-  @worker_roles ["builder", "concierge", "sharer", "publisher"]
+  @worker_roles ["builder", "concierge", "sharer", "publisher", "dispatcher"]
 
   @doc """
   Route `user_text` (sent by `sender`) in `session_uri` to the builder's
@@ -42,7 +42,7 @@ defmodule EzagentPluginHello.Router do
         # owner?→true (fail-open for builder/concierge) but must NOT grant
         # admin-level publish/share. Downgrade to concierge.
         action = guard_admin_actions(action, session_uri)
-        dispatch_to_member(session_uri, action, user_text)
+        dispatch_to_member(session_uri, action, user_text, sender)
       end)
     else
       :ignored
@@ -72,7 +72,7 @@ defmodule EzagentPluginHello.Router do
   defp guard_admin_actions(action, _session_uri), do: action
 
   # Dispatch a named action to a session member by role_name.
-  defp dispatch_to_member(session_uri, role, user_text) when is_atom(role) do
+  defp dispatch_to_member(session_uri, role, user_text, sender) when is_atom(role) do
     role_name = Atom.to_string(role)
 
     {:ok, member_uri} = Members.role_uri(session_uri, role_name)
@@ -83,6 +83,7 @@ defmodule EzagentPluginHello.Router do
         :concierge -> :answer
         :sharer -> :share
         :publisher -> :publish
+        :dispatcher -> :delegate_to_kanban
       end
 
     target =
@@ -93,7 +94,12 @@ defmodule EzagentPluginHello.Router do
     Ezagent.Invocation.dispatch(%Ezagent.Invocation{
       target: target,
       mode: :cast,
-      args: %{session_uri: session_uri_str, instruction: user_text, text: user_text},
+      args: %{
+        session_uri: session_uri_str,
+        instruction: user_text,
+        text: user_text,
+        sender_uri: URI.to_string(sender)
+      },
       ctx: %{
         caller: Ezagent.Entity.User.admin_uri(),
         caps: MapSet.new([Ezagent.Capability.admin_genesis_cap()]),
@@ -148,4 +154,3 @@ defmodule EzagentPluginHello.Router do
 
   defp same_uri?(_, _), do: false
 end
-
