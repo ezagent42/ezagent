@@ -113,6 +113,24 @@ defmodule EzagentPluginHello.Integration.HelloPageE2ETest do
     assert Enum.any?(snapshot.messages, &(text_of(&1) == "Generated your page."))
   end
 
+  test "the shipped seed is a recording-ready Hello product entry" do
+    body_path = Path.join(:code.priv_dir(:ezagent_plugin_hello), "seed_page/body.json")
+    body = body_path |> File.read!() |> Jason.decode!()
+    text = seed_text(body)
+    classes = seed_classes(body)
+
+    assert {:ok, ^body} = Spec.validate(body)
+    assert "hello · 生成层 · generation" in text
+    assert "一句话生成可用界面" in text
+    assert "第二次描述继续修改" in text
+    assert "确认后派给 Kanban" in text
+    assert Enum.any?(text, &String.starts_with?(&1, "派个任务"))
+    assert "松耦合，非最终挂载" in text
+    assert "hello-product-entry" in classes
+    assert "hello-task-cta" in classes
+    assert "hello-coupling-boundary" in classes
+  end
+
   test "ensure_app joins the orchestrator front desk without minting a within-session cap", ctx do
     orchestrator = ctx.orchestrator
 
@@ -242,4 +260,18 @@ defmodule EzagentPluginHello.Integration.HelloPageE2ETest do
   defp text_of(message) do
     Map.get(message.body, "text") || Map.get(message.body, :text)
   end
+
+  defp seed_text(%{"children" => children, "props" => props}) do
+    own = [props["text"], props["label"]] |> Enum.reject(&is_nil/1)
+    own ++ Enum.flat_map(children, &seed_text/1)
+  end
+
+  defp seed_text(_), do: []
+
+  defp seed_classes(%{"children" => children, "props" => props}) do
+    own = if is_binary(props["className"]), do: String.split(props["className"]), else: []
+    own ++ Enum.flat_map(children, &seed_classes/1)
+  end
+
+  defp seed_classes(_), do: []
 end
