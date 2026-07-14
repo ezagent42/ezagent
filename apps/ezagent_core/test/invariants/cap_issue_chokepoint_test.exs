@@ -46,6 +46,59 @@ defmodule Ezagent.Invariants.CapIssueChokepointTest do
   @caps_writer_files 1
   @caps_writer_sites 2
 
+  # ------------------------------------------------------------------
+  # Leg 3 (2026-07-14) — `users.caps_json` is a BACK DOOR into the cap slice.
+  #
+  # Legs 1-2 above ratchet who CONSTRUCTS a provenance-bearing cap and who
+  # writes the Kind's `:caps` slice. Neither watches `Ezagent.Users.create/3,4`,
+  # which writes a cap list straight into the `users.caps_json` COLUMN — and
+  # `Behavior.Identity.post_init/2` reconciles the Kind's cap slice FROM that
+  # column. So anything that can put a cap in `caps_json` has put a cap in the
+  # user's authority, without ever passing `Cap.issue/3`.
+  #
+  # Something did. `WorkspaceUserAdmin.handle_create_user/2` parsed ARBITRARY
+  # caller-supplied cap text, stamped it `granted_by: admin` regardless of who
+  # was actually calling, and stored it. A holder of
+  # `workspace_user_admin.create_user` — a WORKSPACE admin, not necessarily a
+  # global one — could mint themselves a full wildcard: a second global admin.
+  # (Codex PR #356 r1 had narrowed WHO can reach that action. It did not disarm
+  # the action.)
+  #
+  # Every call site is therefore enumerated here, and each declares how it
+  # satisfies the chokepoint. Adding one is a security decision, made here,
+  # deliberately — not discovered later.
+  #
+  #   :issued            — hands `Users.create` only artifacts from `Cap.issue/3`
+  #   :no_caps           — every call passes a literal `[]`
+  #   :genesis_bootstrap — the ROOT OF TRUST: mints the admin's own wildcard at
+  #                        first boot, when no prior authority exists to issue
+  #                        from. Exactly one of these may exist.
+  @caps_json_writers %{
+    "apps/ezagent_domain_identity/lib/ezagent/behavior/workspace_user_admin.ex" => :issued,
+    "apps/ezagent_domain_identity/lib/mix/tasks/ezagent.user.create.ex" => :issued,
+    "apps/ezagent_domain_identity/lib/ezagent/registration.ex" => :no_caps,
+    "apps/ezagent_domain_identity/lib/ezagent_domain_identity/application.ex" =>
+      :genesis_bootstrap,
+
+    # The anonymous-viewer mint. `Users.create_read_only/2` is a caps_json writer
+    # too — the first version of this gate scanned only `Users.create/3,4` and
+    # MISSED it, which is exactly the false comfort a gate must not give. Its
+    # caps are code-constructed and narrow (a session join + public view reads),
+    # never caller-supplied, so the exposure was latent rather than live; it now
+    # issues under `{:rule, :anon_public_view_mint, _}`, whose rule branch
+    # enforces `rule_cap_bounded?/1` — an anon cannot be BORN with a wildcard.
+    "apps/ezagent_domain_socialware/lib/ezagent/socialware/anon_user.ex" => :issued,
+
+    # Seed scripts. `scripts/*.exs` is NOT `apps/**/*.ex` — the first cut of this
+    # gate scanned only the latter, so these were invisible to it while forging
+    # provenance-bearing caps and storing them via `create_read_only/2`. Running
+    # a seed means shell access, which is admin-equivalent, so they now issue
+    # under `{:genesis, admin}`: the same power, taken through the front door.
+    "scripts/world_e2e_seed.exs" => :issued,
+    "scripts/autoservice_tier1_seed.exs" => :issued,
+    "scripts/cc_headless_sdk_sidecar_e2e_seed.exs" => :no_caps
+  }
+
   test "provenance-bearing capability construction allowlist can only shrink" do
     actual = provenance_constructors()
 
@@ -80,6 +133,103 @@ defmodule Ezagent.Invariants.CapIssueChokepointTest do
     assert revoke =~ "Ezagent.Capability.revoke(current_caps, cap_struct)"
     refute revoke =~ "MapSet.put"
   end
+
+  test "every `users.caps_json` writer is enumerated — a new one is a security decision" do
+    found = users_create_sites()
+    expected = @caps_json_writers |> Map.keys() |> MapSet.new()
+
+    assert found == expected, """
+    The set of `Ezagent.Users.create/3,4` call sites changed.
+
+    `users.caps_json` feeds the user Kind's cap slice, so anything written there
+    is authority granted. Every cap that lands in it must have passed
+    `Ezagent.Cap.issue/3` (Decision #162). Add your site to `@caps_json_writers`
+    with the reason it is safe — :issued, :no_caps, or :genesis_bootstrap.
+
+      added:   #{inspect(MapSet.to_list(MapSet.difference(found, expected)))}
+      removed: #{inspect(MapSet.to_list(MapSet.difference(expected, found)))}
+    """
+  end
+
+  test "`:issued` caps_json writers actually call Cap.issue" do
+    for {file, :issued} <- @caps_json_writers do
+      src = repo_root() |> Path.join(file) |> File.read!()
+
+      assert src =~ "Ezagent.Cap.issue(",
+             "#{file} is declared `:issued` but never calls `Ezagent.Cap.issue/3`"
+    end
+  end
+
+  test "`:no_caps` caps_json writers pass a literal empty cap list" do
+    for {file, :no_caps} <- @caps_json_writers do
+      args = repo_root() |> Path.join(file) |> users_create_cap_args()
+
+      assert args != [], "#{file} is declared `:no_caps` but calls no Users.create"
+
+      for arg <- args do
+        assert arg == [],
+               "#{file} is declared `:no_caps` but passes `#{Macro.to_string(arg)}` as caps"
+      end
+    end
+  end
+
+  test "authority begins in exactly ONE place" do
+    roots = for {file, :genesis_bootstrap} <- @caps_json_writers, do: file
+
+    assert length(roots) == 1,
+           "there must be exactly one root of trust, found: #{inspect(roots)}"
+  end
+
+  # Leg 3 scans a WIDER surface than legs 1-2: `caps_json` is written from
+  # `scripts/*.exs` too, and scanning only `apps/**/*.ex` is precisely how the
+  # first cut of this gate missed the seeds. Legs 1-2 keep their own (narrower)
+  # file set so their ratchets stay comparable.
+  defp caps_json_source_files do
+    root = repo_root()
+
+    (Path.wildcard(Path.join(root, "apps/**/*.ex")) ++
+       Path.wildcard(Path.join(root, "scripts/**/*.exs")))
+    |> Enum.reject(&String.contains?(&1, "/test/"))
+    |> Enum.map(&{String.replace_prefix(&1, root <> "/", ""), &1})
+  end
+
+  defp users_create_sites do
+    caps_json_source_files()
+    |> Enum.filter(fn {_rel, abs} -> users_create_cap_args(abs) != [] end)
+    |> Enum.map(fn {rel, _abs} -> rel end)
+    |> MapSet.new()
+  end
+
+  # EVERY `Users.*` entry point that writes the `caps_json` column, and the
+  # argument carrying the caps:
+  #
+  #   Users.create/3,4          — caps are the 3rd positional arg
+  #   Users.create_read_only/2  — caps are the 2nd (and the /1 clause defaults [])
+  #
+  # Missing the second one is how the first cut of this gate gave false comfort.
+  # If a new `caps_json` writer is added to `Ezagent.Users`, it MUST be taught
+  # here or the enumeration silently stops covering it.
+  defp users_create_cap_args(file) do
+    {_ast, acc} =
+      Macro.prewalk(quoted!(file), [], fn
+        {{:., _, [{:__aliases__, _, mod}, fun]}, _, args} = node, acc ->
+          {node, collect_caps_arg(List.last(mod), fun, args) ++ acc}
+
+        node, acc ->
+          {node, acc}
+      end)
+
+    Enum.reverse(acc)
+  end
+
+  defp collect_caps_arg(:Users, :create, args) when length(args) >= 3,
+    do: [Enum.at(args, 2)]
+
+  defp collect_caps_arg(:Users, :create_read_only, args) when length(args) >= 2,
+    do: [Enum.at(args, 1)]
+
+  # `create_read_only/1` defaults to `[]` — no caps, nothing to police.
+  defp collect_caps_arg(_mod, _fun, _args), do: []
 
   defp provenance_constructors do
     source_files()

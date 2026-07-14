@@ -35,13 +35,29 @@ cap = fn member_uri, action ->
   }
 end
 
+# Decision #162 — `create_read_only/2` writes straight into `users.caps_json`,
+# and the user Kind reconciles its cap slice FROM that column, so anything put
+# there IS authority granted. Seeds used to hand-forge the caps and store them
+# without ever calling `Cap.issue/3`, i.e. without `authorize_grant/3` running.
+# Running a seed means shell access, which is admin-equivalent — so take that
+# authority through the FRONT door (`{:genesis, admin}`) instead of forging
+# provenance around the chokepoint. Same power, one gate.
+issue = fn uri, caps ->
+  admin = Ezagent.Entity.User.admin_uri()
+
+  Enum.map(caps, fn c ->
+    {:ok, artifact} = Ezagent.Cap.issue({:genesis, admin}, uri, c)
+    artifact
+  end)
+end
+
 ensure_member = fn uri_str, label ->
   uri = EzUri.new!(uri_str)
   join_cap = cap.(uri, :join)
   send_cap = cap.(uri, :send)
 
   # 1. registered user row carrying its own narrow join+send grants.
-  case Ezagent.Users.create_read_only(uri, [join_cap, send_cap]) do
+  case Ezagent.Users.create_read_only(uri, issue.(uri, [join_cap, send_cap])) do
     {:ok, _} ->
       Logger.info("seed: created user #{uri_str}")
 

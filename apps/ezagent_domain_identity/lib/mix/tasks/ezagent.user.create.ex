@@ -120,7 +120,9 @@ defmodule Mix.Tasks.Ezagent.User.Create do
 
     with {:ok, user_uri} <- parse_uri(user_uri_str),
          :ok <- check_allcaps_flag(caps_str, allow_allcaps),
-         {:ok, caps} <- Ezagent.Capability.Parser.parse(caps_str, Ezagent.Entity.User.admin_uri()),
+         {:ok, requested} <-
+           Ezagent.Capability.Parser.parse(caps_str, Ezagent.Entity.User.admin_uri()),
+         {:ok, caps} <- issue_operator_caps(requested, user_uri),
          {:ok, decoded} <- Ezagent.Users.create(user_uri, password, caps),
          :ok <- add_workspace_membership(user_uri),
          :ok <- maybe_set_email(user_uri, email, display_name_opt) do
@@ -218,6 +220,36 @@ defmodule Mix.Tasks.Ezagent.User.Create do
     case Ezagent.Entity.Profile.upsert(profile_attrs) do
       {:ok, _row} -> :ok
       {:error, reason} -> {:error, {:profile_upsert_failed, reason}}
+    end
+  end
+
+  # Decision #162 (ISSUE → STORE → VERIFY): every capability that lands in
+  # `users.caps_json` goes through `Ezagent.Cap.issue/3`. This task used to
+  # parse the operator's cap string, stamp it `granted_by: admin` by hand, and
+  # write it straight to the row — forging admin provenance BEHIND the
+  # chokepoint's back, so `authorize_grant/3` never ran.
+  #
+  # The authority here really IS admin's: running a mix task means shell access
+  # on the box, which is admin-equivalent. So say so explicitly —
+  # `{:genesis, admin}` loads that authority through the front door, runs the
+  # grant checks, and stamps accountable provenance. The `--allow-allcaps` guard
+  # above still governs the `*` shorthand.
+  #
+  # Nothing about the operator's power changes; what changes is that it is now
+  # exercised through the one chokepoint instead of around it.
+  defp issue_operator_caps(requested, %URI{} = user_uri) when is_list(requested) do
+    admin = Ezagent.Entity.User.admin_uri()
+
+    requested
+    |> Enum.reduce_while({:ok, []}, fn cap, {:ok, acc} ->
+      case Ezagent.Cap.issue({:genesis, admin}, user_uri, cap) do
+        {:ok, artifact} -> {:cont, {:ok, [artifact | acc]}}
+        {:error, reason} -> {:halt, {:error, {:cap_grant_refused, reason}}}
+      end
+    end)
+    |> case do
+      {:ok, issued} -> {:ok, Enum.reverse(issued)}
+      {:error, _} = error -> error
     end
   end
 
