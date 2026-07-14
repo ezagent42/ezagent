@@ -81,7 +81,19 @@ assert.equal(conversation.includes("Open terminal"), false)
 assert.equal(sessionsTable.includes('"PTY"'), false)
 assert.equal(conversation.includes("data-world-external-mirror-link"), true)
 assert.equal(conversation.includes("/external_mirror"), true)
+assert.equal(conversation.includes("data-world-bindings-tab"), true)
+assert.equal(
+  conversation.includes('href={`/admin/sessions/${encodeURIComponent(sessionUri)}/external_mirror`}'),
+  true,
+)
+assert.equal(conversation.includes("data-world-routing-tab"), true)
+assert.match(
+  conversation,
+  /if \(v\.id === "routing"\) \{[\s\S]*setMembersOpen\(true\)[\s\S]*setRoutingOpen\(true\)[\s\S]*return/,
+)
 assert.equal(conversation.includes("data-world-routing-drawer"), true)
+assert.equal(conversation.includes("open={routingOpen}"), true)
+assert.equal(conversation.includes("onToggle={(event) => setRoutingOpen(event.currentTarget.open)}"), true)
 assert.equal(conversation.includes("data-world-routing-matcher-select"), true)
 assert.equal(conversation.includes("data-world-routing-receiver-select"), true)
 assert.equal(conversation.includes('placeholder="Add a receiver"'), false)

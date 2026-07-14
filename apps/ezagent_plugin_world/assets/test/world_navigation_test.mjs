@@ -56,6 +56,15 @@ assert.equal(
   "/sessions?session=session%3A%2F%2Fsystem%2Fdefault%2Fmain"
 )
 
+assert.equal(
+  worldNavigationTarget(
+    click(anchor({href: "/admin/sessions/session%3A%2F%2Fsystem%2Fdefault%2Fmain/external_mirror"})),
+    root,
+    current
+  ),
+  "/admin/sessions/session%3A%2F%2Fsystem%2Fdefault%2Fmain/external_mirror"
+)
+
 assert.equal(worldNavigationTarget(click(anchor({href: "https://example.com/admin"})), root, current), null)
 assert.equal(worldNavigationTarget(click(anchor({href: "/uploads/download?token=x"})), root, current), null)
 assert.equal(worldNavigationTarget(click(anchor({href: "/admin", target: "_blank"})), root, current), null)
