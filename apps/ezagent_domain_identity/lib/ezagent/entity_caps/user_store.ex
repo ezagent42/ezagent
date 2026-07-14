@@ -5,9 +5,11 @@ defmodule Ezagent.EntityCaps.UserStore do
 
   alias EzagentCore.Repo
 
+  @doc false
   @spec exists?(URI.t()) :: boolean()
   def exists?(%URI{} = uri), do: not is_nil(Ezagent.Users.get_by_uri(uri))
 
+  @doc false
   @spec load(URI.t()) :: [Ezagent.Capability.t()]
   def load(%URI{} = uri) do
     case Ezagent.Users.get_by_uri(uri) do
@@ -20,11 +22,13 @@ defmodule Ezagent.EntityCaps.UserStore do
     _, _ -> []
   end
 
+  @doc false
   @spec persist(URI.t(), [Ezagent.Capability.t()]) :: :ok | {:error, term()}
   def persist(%URI{} = uri, caps) when is_list(caps) do
     __MODULE__.update(uri, fn _current -> {:ok, caps} end)
   end
 
+  @doc false
   @spec update(URI.t(), ([Ezagent.Capability.t()] ->
                            {:ok, [Ezagent.Capability.t()]} | {:error, term()})) ::
           :ok | {:error, term()}

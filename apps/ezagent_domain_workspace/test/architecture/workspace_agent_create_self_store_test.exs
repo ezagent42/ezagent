@@ -63,7 +63,7 @@ defmodule EzagentDomainWorkspace.Architecture.WorkspaceAgentCreateSelfStoreTest 
     await_source =
       source!("apps/ezagent_domain_identity/lib/ezagent/identity/cap_absorb_await.ex")
 
-    assert await_source =~ "Ezagent.Identity.read_entity_caps(entity_uri)"
+    assert await_source =~ "Ezagent.EntityCaps.load(entity_uri)"
     assert await_source =~ "{:absorb_not_committed, missing}"
   end
 

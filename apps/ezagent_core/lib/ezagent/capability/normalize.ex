@@ -246,7 +246,7 @@ defmodule Ezagent.Capability.Normalize do
 
   defp instance_to_wire({scope, %URI{} = uri})
        when scope in [:within_session, :within_workspace, :spawned_by] do
-    %{"scope" => Atom.to_string(scope), "uri" => URI.to_string(uri)}
+    %{"scope" => Atom.to_string(scope), "uri" => Ezagent.URI.stable_key(uri)}
   end
 
   defp instance_to_wire(other), do: invalid_axis!(:instance, other)
