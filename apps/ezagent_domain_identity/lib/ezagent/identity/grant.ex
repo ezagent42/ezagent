@@ -311,7 +311,9 @@ defmodule Ezagent.Identity.Grant do
   end
 
   defp maybe_mark_issued(ctx, :grant_cap), do: Map.put(ctx, :cap_issued, true)
-  defp maybe_mark_issued(ctx, :revoke_cap), do: ctx
+
+  defp maybe_mark_issued(ctx, :revoke_cap),
+    do: Map.put(ctx, :cap_delivery_producer, :identity_revoke)
 
   defp reply_for(:sync), do: {:caller_inbox, self()}
   defp reply_for(:async), do: :ignore

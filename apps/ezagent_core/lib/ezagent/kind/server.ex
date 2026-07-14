@@ -625,10 +625,13 @@ defmodule Ezagent.Kind.Server do
             # — they would broadcast a "succeeded" state that won't
             # survive restart. Keep the in-memory slice un-advanced
             # and propagate the persistence error.
-            {:reply, {:error, {:persistence_failed, reason}}, state}
+            delivery_reason = {:persistence_failed, reason}
+            record_cap_delivery_failure(inv, delivery_reason)
+            {:reply, {:error, delivery_reason}, state}
         end
 
-      {:error, _} = err ->
+      {:error, reason} = err ->
+        record_cap_delivery_failure(inv, reason)
         {:reply, err, state}
     end
   end
@@ -654,12 +657,15 @@ defmodule Ezagent.Kind.Server do
             # branch: propagate the error to the caller, leave the
             # in-memory slice un-advanced.
             log_unobservable_cast_error(inv, {:persistence_failed, reason})
-            Ezagent.Invocation.reply(inv.ctx, {:error, {:persistence_failed, reason}})
+            delivery_reason = {:persistence_failed, reason}
+            record_cap_delivery_failure(inv, delivery_reason)
+            Ezagent.Invocation.reply(inv.ctx, {:error, delivery_reason})
             {:noreply, state}
         end
 
       {:error, reason} ->
         log_unobservable_cast_error(inv, reason)
+        record_cap_delivery_failure(inv, reason)
         Ezagent.Invocation.reply(inv.ctx, {:error, reason})
         {:noreply, state}
     end
@@ -709,6 +715,23 @@ defmodule Ezagent.Kind.Server do
   end
 
   defp mark_cap_delivery_applied(%Ezagent.Invocation{}), do: :ok
+
+  defp record_cap_delivery_failure(%Ezagent.Invocation{} = inv, reason) do
+    case Ezagent.Cap.DeliveryOutbox.record_handler_failure(inv, reason) do
+      :ok ->
+        :ok
+
+      {:error, failure_reason} ->
+        require Logger
+
+        Logger.error(
+          "Kind.Server: cap delivery failure state update failed " <>
+            "reason=#{inspect(failure_reason)}; claim lease remains the retry backstop"
+        )
+
+        :ok
+    end
+  end
 
   # Commit-then-notify ordering (codex PR-N1 round-2 MEDIUM +
   # round-3 HIGH-1 fix + issue #342 propagation, Allen 2026-05-25):

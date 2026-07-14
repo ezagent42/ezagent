@@ -129,3 +129,55 @@ gate; the controller owns the post-rebase `mix ci.local` verification.
 - The migration was applied to the isolated `entity_caps_a` test partition for
   local verification. Deployment still requires the normal repository
   migration gate.
+
+## Reviewer hardening fix
+
+The follow-up fix closes all six reviewer blockers:
+
+- durable idempotency is now established by a nullable producer key and a
+  partial unique `(workspace_uri, target_uri, op, idempotency_key)` index before
+  generic ETS idempotency can consume the request;
+- retries and ready-drains reconstruct a canonical version-1 invocation as
+  `mode: :cast, reply: :ignore`, while the first newly inserted synchronous
+  revoke still returns the original call result;
+- claims are atomic conditional updates with a token and lease, and every
+  applied/failure writeback is token-bound so a stale claimant cannot overwrite
+  a renewed lease;
+- the persisted envelope is an exact, allowlisted, safe-term-decoded version-1
+  payload. Poison and permanent authorization failures are isolated as `dead`,
+  while transient handler/commit failures release the claim as `pending` with
+  retry metadata;
+- only explicitly marked Identity absorb/revoke producers enter the durable
+  path, and `Ezagent.Kind.Server` records both handler and commit failures;
+- cold boot rehydrates the ETS target hint from PostgreSQL and successfully
+  drains persisted work after the hint table is cleared.
+
+### Follow-up TDD evidence
+
+The initial hardening test run produced 9 expected failures, covering duplicate
+producer retries, generic-key ordering, missing producer gating, poison-row
+isolation, missing claim state, permanent failure classification, concurrent
+claims, self-call ready-drain, and conflicting idempotency payloads. A separate
+RED assertion showed the former persisted struct keys instead of the required
+canonical envelope.
+
+Final focused verification:
+
+```text
+# Hardening suite plus existing Identity absorb/revoke coverage
+32 tests, 0 failures
+
+# Reviewer-critical concurrency, stale-token, poison, cold-boot, and real-ready cases
+4 tests, 0 failures
+
+# Core architecture and capability invariants
+181 tests, 0 failures
+
+# Core/agent/workspace/session normal-flow regression selection
+69 tests, 0 failures
+```
+
+The hardening migration was applied to the isolated `entity_caps_a` test
+partition. `mix format --check-formatted` for every changed Elixir file and
+`git diff --check` both passed. Per controller instruction, this follow-up did
+not run the full `ci.local` gate.

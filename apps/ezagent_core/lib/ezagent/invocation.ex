@@ -125,12 +125,18 @@ defmodule Ezagent.Invocation do
            Ezagent.WorkspaceOwnerGate.assert_local_owner_for_uri(
              instance_uri,
              {:dispatch, target}
-           ),
-         :ok <- maybe_idempotency_check(ctx) do
-      if Ezagent.Cap.DeliveryOutbox.eligible?(inv) do
-        Ezagent.Cap.DeliveryOutbox.enqueue_and_attempt(inv)
-      else
-        dispatch_with_lazy_spawn(instance_uri, mode, inv)
+           ) do
+      cond do
+        Ezagent.Cap.DeliveryOutbox.replay?(inv) ->
+          dispatch_with_lazy_spawn(instance_uri, mode, inv)
+
+        Ezagent.Cap.DeliveryOutbox.eligible?(inv) ->
+          Ezagent.Cap.DeliveryOutbox.enqueue_and_attempt(inv)
+
+        true ->
+          with :ok <- maybe_idempotency_check(ctx) do
+            dispatch_with_lazy_spawn(instance_uri, mode, inv)
+          end
       end
     end
   end

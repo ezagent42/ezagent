@@ -343,7 +343,7 @@ defmodule Ezagent.Integration.CreateRoleAgentTest do
     )
     |> EzagentCore.Repo.all()
     |> Enum.map(fn payload ->
-      %Ezagent.Invocation{args: %{artifact: artifact}} =
+      %{version: 1, op: :absorb_cap, cap: artifact} =
         :erlang.binary_to_term(payload, [:safe])
 
       artifact

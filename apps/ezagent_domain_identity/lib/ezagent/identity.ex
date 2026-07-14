@@ -269,7 +269,8 @@ defmodule Ezagent.Identity do
         caller: :vm_internal,
         caps: MapSet.new(),
         mode: :cast,
-        reply: :ignore
+        reply: :ignore,
+        cap_delivery_producer: :identity_absorb
       }
     }
 

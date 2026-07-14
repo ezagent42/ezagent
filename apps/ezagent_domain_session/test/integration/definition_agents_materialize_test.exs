@@ -1024,7 +1024,9 @@ defmodule EzagentDomainInstanceMessage.Integration.DefinitionAgentsMaterializeTe
     )
     |> Repo.all()
     |> Enum.map(fn payload ->
-      %Invocation{args: %{artifact: artifact}} = :erlang.binary_to_term(payload, [:safe])
+      %{version: 1, op: :absorb_cap, cap: artifact} =
+        :erlang.binary_to_term(payload, [:safe])
+
       artifact
     end)
   end

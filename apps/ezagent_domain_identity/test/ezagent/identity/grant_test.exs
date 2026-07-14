@@ -310,6 +310,48 @@ defmodule Ezagent.Identity.GrantTest do
              end)
     end
 
+    test "a target's real ready lifecycle replays a pending synchronous revoke as a cast" do
+      grantee = target_user()
+
+      cap = %Capability{
+        kind: :user,
+        behavior: Ezagent.ActionSet.Identity,
+        action: :list_caps,
+        instance: grantee,
+        workspace_uri: ws(),
+        granted_by: @admin_uri,
+        granted_at: ~U[2026-01-01 00:00:00Z]
+      }
+
+      {:ok, _} = Ezagent.SpawnRegistry.spawn(@admin_uri)
+      Ezagent.ReadyGate.await(@admin_uri, 2_000)
+      {:ok, _user} = Ezagent.Users.create(grantee, nil, [cap])
+
+      assert {:error, :no_such_actor} =
+               Grant.revoke_cap(grantee, cap, {:held_by, @admin_uri})
+
+      delivery =
+        Repo.one!(
+          from(delivery in Delivery,
+            where: delivery.target_uri == ^URI.to_string(grantee),
+            where: delivery.op == :revoke_cap,
+            order_by: [desc: delivery.id],
+            limit: 1
+          )
+        )
+
+      assert delivery.status == :pending
+
+      {:ok, pid} = Ezagent.SpawnRegistry.spawn(grantee)
+
+      assert eventually(fn ->
+               Process.alive?(pid) and
+                 Ezagent.ReadyGate.status(grantee) == :ready and
+                 Repo.get!(Delivery, delivery.id).status == :applied and
+                 not capability_present_in_slice?(grantee, cap)
+             end)
+    end
+
     test "rule-based revoke still bypasses grant authz and only de-escalates" do
       grantee = target_user()
       configurer = Ezagent.URI.new!("entity://team-alpha/user/rule-configurer")
@@ -348,6 +390,17 @@ defmodule Ezagent.Identity.GrantTest do
     |> Enum.any?(fn cap ->
       cap.behavior == Ezagent.ActionSet.Template and
         cap.instance == {:within_workspace, ws()}
+    end)
+  end
+
+  defp capability_present_in_slice?(grantee, expected) do
+    {:ok, slice} = Ezagent.Kind.get_slice(grantee, :identity)
+
+    slice
+    |> Ezagent.Kind.normalize_slice_view()
+    |> Map.fetch!(:caps)
+    |> Enum.any?(fn cap ->
+      Ezagent.Capability.identity_key(cap) == Ezagent.Capability.identity_key(expected)
     end)
   end
 
