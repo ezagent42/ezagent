@@ -316,8 +316,9 @@ canary 数据审计显示旧 EventLog backfill 仅能处理 196 个 Caps 中的 
 - ARB-0 inventory、ARB-1 scanner fixtures、Task 3 exact gate 和 Task 4 独立攻防
   复核（`SOUND`）。
 - PR #1375/#1379 合入后的 rebase 与语义复核。
-- 已 rebase 到包含 #1399/#1400/#1401 的最新 `origin/main`（`be23fcf97`），当前
-  分支 ahead 15、behind 0；LiveAuth 回归已按 receiver-bound Ed25519 签名重审。
+- 已 rebase 到包含 #1399/#1400/#1401 的最新 `origin/main`（`be23fcf97`），PR
+  #1402 创建时分支 ahead 17、behind 0；LiveAuth 回归已按 receiver-bound Ed25519
+  签名重审。
 - canary 上复现 LiveAuth/Terminal capability 差异并定位到双读取源。
 - CAP-SOT-0 热态代码与 User/Agent 回归测试已实现；focused capability gates、
   `arch.scan`、`check_invariants`、`git diff --check` 已通过。
@@ -329,9 +330,9 @@ canary 数据审计显示旧 EventLog backfill 仅能处理 196 个 Caps 中的 
 
 #### 未完成
 
-- CAP-SOT-0 热态修复已提交在当前分支，尚待形成 PR；`EntityCaps` facade 合入后
-  还需迁移 LiveAuth 并补 cold User、grant/revoke/restart 完整矩阵。
-- Task 5 最终 evidence 汇总与 dev-together return 尚未完成。
+- CAP-SOT-0 热态修复已随 PR #1402 提交；`EntityCaps` facade 合入后还需迁移
+  LiveAuth 并补 cold User、grant/revoke/restart 完整矩阵。
+- Task 5 return 已形成，尚待 PR #1402 protected CI URL/状态回填。
 - creator Terminal 的正常产品调用、credential authenticated 状态和 restart
   persistence 验收尚未完成。
 - CAP-SOT-1/2 等待 entity-caps scoped A/D；AUTH-FAIL-1、CAP-READ-1、

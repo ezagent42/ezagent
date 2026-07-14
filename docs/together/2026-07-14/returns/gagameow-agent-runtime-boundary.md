@@ -2,7 +2,7 @@
 
 > **Task:** gagameow-agent-runtime-boundary
 > **Branch:** `spec/agent-runtime-boundary`
-> **PR:** pending
+> **PR:** https://github.com/ezagent42/ezagent/pull/1402
 > **Dev:** gagameow / Codex
 > **returned_at:** 2026-07-14 22:37 +0800
 > **deadline:** 2026-07-14 23:59 +0800
@@ -31,7 +31,7 @@ recorded in the homework document and intentionally remain outside this return's
 | 2 | Add an exact structural gate for current Session-owned lifecycle debt | met | focused AgentRuntime architecture suite: 23/23 |
 | 3 | Prove qualified, alias, import, and grouped-alias bypasses fail | met | adversarial scanner fixtures; independent verdict `SOUND` |
 | 4 | Preserve sanctioned negative fixtures and stale-allowlist enforcement | met | focused gate suite and full precommit |
-| 5 | Rebase onto current `origin/main` and run full machine gates | met locally | base `be23fcf97`; full precommit exit 0; PR CI URL to be added after creation |
+| 5 | Rebase onto current `origin/main` and run full machine gates | met locally | base `be23fcf97`; full precommit exit 0; PR #1402 CI pending |
 | 6 | Complete creator Terminal product-call and restart-persistence canary acceptance | deferred | operational follow-up; no longer blocks the structural ARB-0/ARB-1 PR |
 
 **Method friction:** shared local test DB retained four `probe-*` workspaces from old test
@@ -53,13 +53,13 @@ test isolation should prevent durable probe names from escaping a test transacti
 | touched-file format check | PASS |
 | `git diff --check` | PASS |
 | `SHELL=/bin/bash mix precommit` | PASS — exit 0 |
-| PR CI | PENDING — PR not created yet |
+| PR CI | PENDING — https://github.com/ezagent42/ezagent/pull/1402/checks |
 
 ## Rebase and scope
 
 - Rebase base: `origin/main@be23fcf97a17da9f667b7ec3acccb1d3aedf4e2d`, containing
   PR #1375, #1379, #1399, #1400, and #1401.
-- Branch state before push: ahead 16, behind 0.
+- Branch state at PR creation: ahead 17, behind 0.
 - The shared-DB cleanup affected only local `127.0.0.1:55432/ezagent_pg_compat_test`;
   no canary database row was modified.
 - LiveAuth's remaining durable SSOT, HomeLive fail-closed, member-cap reader, cap-count UI,
@@ -75,5 +75,5 @@ test isolation should prevent durable probe names from escaping a test transacti
 
 ## Merge request
 
-Push `spec/agent-runtime-boundary`, create a PR targeting `main`, wait for protected CI, then
-replace the pending PR/CI fields above with the actual URL and final status before lead merge.
+PR #1402 targets `main`. Wait for protected CI, then replace the pending CI field above with
+the final run URL and status before lead merge.
