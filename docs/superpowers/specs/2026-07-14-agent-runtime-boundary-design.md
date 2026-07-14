@@ -46,8 +46,10 @@ Session-domain lifecycle paths.
     stored capability was issued there; PR #1381 makes that scanner boundary
     explicit, including the `Module.concat/1` blind spot. Any future facade
     capability issuance must still use `Ezagent.Cap.issue/3` and may not parse and
-    store provenance-bearing capabilities directly. A runtime structural guarantee
-    needs a separate accepted architecture decision.
+    store provenance-bearing capabilities directly. PR #1382 accepted that runtime
+    guarantee as Phase-4 Ed25519 signing: `issue/3` signs the artifact and every
+    reviewed STORE/LOAD boundary verifies it. The Agent facade must wait for that
+    mechanism rather than inventing an ETS fingerprint side channel.
 
 ## 3. Vocabulary and ownership
 

@@ -234,14 +234,17 @@ gate，再进入正式 return。
 
 ### 下一步与阻塞
 
-- Task 4：对 ownership、allowlist bypass、false positive 做独立架构攻防复核；
+- [x] Task 4：ownership、allowlist bypass、false positive 独立攻防复核完成，
+  verdict `SOUND`；grouped alias、import、option-bearing grouped alias 绕过均已关闭；
 - Task 5：汇总最终 gates 与 return evidence；
 - creator Terminal `/login` live acceptance：仅等待 #1375 部署确认，不以 merge
   状态替代部署证据；
 - capability-issuing Facade slice：#1379 chokepoint 已就绪，在 Task 4 gate review
   后仍不得直接进入 authority-persisting 实现。PR #1381 证明该 chokepoint 只枚举
-  静态可解析调用，不能证明运行时所有 cap 都来自 `Ezagent.Cap.issue/3`；需等待
-  structural-enforcement 架构决策；
-- 完整 `mix precommit` 复验：Task 3 focused 20/20 绿；此前 full precommit 被共享
-  test DB 的残留 `probe-*` workspace 行触发 3 个既有 visibility invariant 失败，
-  不在本任务中用清库或绕过手段掩盖。
+  静态可解析调用，不能证明运行时所有 cap 都来自 `Ezagent.Cap.issue/3`。#1382
+  已将 structural enforcement 锁定为 Ed25519 signed artifact；本 slice 等待其
+  P1–P6 实现及迁移状态，不吸纳 #1381 的 ETS fingerprint 草案；
+- Task 5 post-rebase 验证：focused 23/23、`arch.scan`、`doc.scan`、
+  `check_invariants` 通过。完整 precommit 被 `origin/main` 同样存在的
+  `world_live.ex:216` URI-query violation 阻塞；组合 architecture+invariants 仍被
+  共享 test DB 残留 `probe-*` workspace 触发 3 个 visibility invariant 失败。
