@@ -92,8 +92,19 @@ defmodule Ezagent.Invariants.CapIssuedBypassTrustKeysTest do
              "defp maybe_mark_issued(ctx, :grant_cap), do: Map.put(ctx, :cap_issued, true)",
            "grant is the only action that stamps cap_issued"
 
-    assert grant_src =~ "defp maybe_mark_issued(ctx, :revoke_cap), do: ctx",
-           "revoke must never stamp cap_issued"
+    assert grant_src =~
+             "do: Map.put(ctx, :cap_delivery_producer, :identity_revoke)",
+           "revoke must stamp only its durable-delivery producer marker"
+
+    revoke_marker_source =
+      grant_src
+      |> String.split("defp maybe_mark_issued(ctx, :revoke_cap)", parts: 2)
+      |> List.last()
+      |> String.split("defp reply_for", parts: 2)
+      |> List.first()
+
+    refute revoke_marker_source =~ "cap_issued",
+           "revoke must never stamp the grant-only cap_issued trust key"
   end
 
   test "property (b): cap_issued originates only at the grant chokepoint" do

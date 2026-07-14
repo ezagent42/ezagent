@@ -150,9 +150,10 @@ defmodule Ezagent.Identity.Grant do
   (e.g. the at-join member-cap compensation in `handle_join`): a session-instance
   cap's grant/revoke resolves the instance's data-owner, which re-enters the
   session Kind — a `:sync` call from within that same blocked Kind self-deadlocks.
-  The cast is enqueued (FIFO) after any preceding grant cast to the same target,
-  so a grant-then-compensating-revoke pair settles deterministically to "absent".
-  Returns `:ok` or `{:error, reason}`.
+  The cast is persisted in the capability delivery outbox before dispatch and
+  retried until the grantee handler applies it. The call remains asynchronous;
+  there is no wait for the outbox row to become applied. Returns `:ok` or
+  `{:error, reason}`.
   """
   @spec revoke_cap_via_router(URI.t(), Capability.t(), authorization(), :async | :sync) ::
           :ok | {:error, term()}
@@ -310,7 +311,9 @@ defmodule Ezagent.Identity.Grant do
   end
 
   defp maybe_mark_issued(ctx, :grant_cap), do: Map.put(ctx, :cap_issued, true)
-  defp maybe_mark_issued(ctx, :revoke_cap), do: ctx
+
+  defp maybe_mark_issued(ctx, :revoke_cap),
+    do: Map.put(ctx, :cap_delivery_producer, :identity_revoke)
 
   defp reply_for(:sync), do: {:caller_inbox, self()}
   defp reply_for(:async), do: :ignore

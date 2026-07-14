@@ -21,6 +21,9 @@ defmodule Ezagent.Integration.CreateAgentDispatchTest do
 
   use EzagentCore.DataCase, async: false
 
+  import Ecto.Query
+
+  alias Ezagent.Cap.Delivery
   alias Ezagent.Workspace
   alias Ezagent.Entity.User
 
@@ -217,7 +220,7 @@ defmodule Ezagent.Integration.CreateAgentDispatchTest do
   end
 
   describe "S7 grant_initial_caps issue + self-store hand-off" do
-    test "a not-ready agent buffers the artifacts and never blocks workspace provisioning", %{
+    test "a not-ready agent persists the artifacts and never blocks workspace provisioning", %{
       ws_name: ws_name,
       workspace_uri: workspace_uri,
       admin_ctx: admin_ctx
@@ -258,7 +261,18 @@ defmodule Ezagent.Integration.CreateAgentDispatchTest do
 
       assert {:ok, :ok} = Task.yield(task, 5_000) || Task.shutdown(task, :brutal_kill)
       assert Ezagent.ReadyGate.status(agent_uri) == :not_ready
-      assert Ezagent.PendingDelivery.buffer_size(agent_uri) == buffer_size_before + 1
+      assert Ezagent.PendingDelivery.buffer_size(agent_uri) == buffer_size_before
+
+      delivery =
+        EzagentCore.Repo.one!(
+          from(delivery in Delivery,
+            where: delivery.target_uri == ^URI.to_string(agent_uri),
+            where: delivery.op == :absorb_cap,
+            where: delivery.status == :pending,
+            order_by: [desc: delivery.id],
+            limit: 1
+          )
+        )
 
       refute Enum.any?(Ezagent.Identity.read_entity_caps(agent_uri), fn cap ->
                cap.behavior == Ezagent.ActionSet.Session and cap.action == :send
@@ -276,7 +290,8 @@ defmodule Ezagent.Integration.CreateAgentDispatchTest do
                    cap.action == :send and
                    cap.instance == Ezagent.URI.instance(proposal.instance) and
                    cap.granted_by == User.admin_uri()
-               end)
+               end) and
+                 EzagentCore.Repo.get!(Delivery, delivery.id).status == :applied
              end)
     end
 

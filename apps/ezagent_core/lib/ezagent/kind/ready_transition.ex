@@ -47,10 +47,17 @@ defmodule Ezagent.Kind.ReadyTransition do
 
     dead_letter_stale_entries(uri_str, stale_entries)
 
-    case result do
-      {:deferred, module} -> start_external_wait(module, uri_str, parent)
-      result -> result
+    final_result =
+      case result do
+        {:deferred, module} -> start_external_wait(module, uri_str, parent)
+        result -> result
+      end
+
+    if final_result == :ready and Ezagent.Cap.DeliveryOutbox.pending_target?(uri_str) do
+      drain_cap_delivery_outbox(uri_str)
     end
+
+    final_result
   end
 
   defp start_external_wait(module, uri_str, parent) do
@@ -206,4 +213,24 @@ defmodule Ezagent.Kind.ReadyTransition do
 
   defp to_uri_string(%URI{} = uri), do: URI.to_string(uri)
   defp to_uri_string(uri) when is_binary(uri), do: uri
+
+  defp drain_cap_delivery_outbox(uri_str) do
+    Ezagent.Cap.DeliveryOutbox.drain_target(uri_str)
+  rescue
+    error ->
+      Logger.error(
+        "Ezagent.Kind.ReadyTransition: cap delivery outbox drain failed for #{uri_str}: " <>
+          Exception.message(error) <> "; periodic retry remains authoritative"
+      )
+
+      :ok
+  catch
+    kind, reason ->
+      Logger.error(
+        "Ezagent.Kind.ReadyTransition: cap delivery outbox drain #{kind} for #{uri_str}: " <>
+          inspect(reason) <> "; periodic retry remains authoritative"
+      )
+
+      :ok
+  end
 end

@@ -32,6 +32,10 @@ defmodule EzagentCore.EtsOwner do
   @tables [
     {Ezagent.ReadyGate, :set},
     {Ezagent.PendingDelivery, :set},
+    # Durable capability delivery keeps only target-presence hints in ETS so
+    # ordinary Kind ready transitions avoid a cross-workspace DB query. The
+    # outbox rows remain authoritative and the Sweeper rehydrates this cache.
+    {Ezagent.Cap.DeliveryOutbox, :set},
     {Ezagent.Idempotency, :set},
     {Ezagent.BehaviorRegistry, :set},
     {Ezagent.RoutingRegistry, :set},

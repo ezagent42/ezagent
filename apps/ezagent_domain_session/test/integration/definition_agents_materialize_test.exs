@@ -14,10 +14,13 @@ defmodule EzagentDomainInstanceMessage.Integration.DefinitionAgentsMaterializeTe
 
   use EzagentCore.DataCase, async: false
 
+  import Ecto.Query
+
   alias Ezagent.Agent.RecipeRegistry
   alias Ezagent.ActionSet.Session, as: SessionBehavior
   alias Ezagent.Entity.Session
   alias Ezagent.Identity.RecipeCapBinding
+  alias Ezagent.Cap.Delivery
   alias Ezagent.Socialware.CompositionBinding
   alias Ezagent.{Invocation, KindRegistry}
   alias EzagentCore.Repo
@@ -499,7 +502,7 @@ defmodule EzagentDomainInstanceMessage.Integration.DefinitionAgentsMaterializeTe
     assert Enum.member?(caps, bound_cap)
   end
 
-  test "I3 full orchestrator lane buffers four scoped artifacts, stays nonblocking, and revokes the exact inverse" do
+  test "I3 full orchestrator lane persists four scoped artifacts, stays nonblocking, and revokes the exact inverse" do
     n = uniq()
     session_uri = live_session(n)
     role_name = "orchestrator"
@@ -543,10 +546,9 @@ defmodule EzagentDomainInstanceMessage.Integration.DefinitionAgentsMaterializeTe
 
     # The admin owner holds delegable authority for both Template kinds, so the
     # full materialization lane emits #1/#2 scope caps plus #3/#4 preflight caps.
-    # Legacy member-join grants may share this URI buffer; count the four
-    # absorb artifacts themselves rather than assuming exclusive ownership of
-    # the transport queue.
-    assert eventually(fn -> length(buffered_absorb_artifacts(orchestrator_uri)) == 4 end)
+    # Count the four durable absorb artifacts themselves rather than assuming
+    # exclusive ownership of any transport queue.
+    assert eventually(fn -> length(pending_absorb_artifacts(orchestrator_uri)) == 4 end)
 
     refute Enum.any?(
              Ezagent.Identity.read_entity_caps(orchestrator_uri),
@@ -1012,26 +1014,20 @@ defmodule EzagentDomainInstanceMessage.Integration.DefinitionAgentsMaterializeTe
     |> MapSet.new()
   end
 
-  defp buffered_absorb_artifacts(uri) do
-    entries =
-      Ezagent.PendingDelivery.with_lock(uri, fn ->
-        case :ets.lookup(Ezagent.PendingDelivery.table(), URI.to_string(uri)) do
-          [{_key, entries}] -> entries
-          [] -> []
-        end
-      end)
+  defp pending_absorb_artifacts(uri) do
+    from(delivery in Delivery,
+      where: delivery.target_uri == ^URI.to_string(uri),
+      where: delivery.op == :absorb_cap,
+      where: delivery.status == :pending,
+      order_by: [asc: delivery.id],
+      select: delivery.payload
+    )
+    |> Repo.all()
+    |> Enum.map(fn payload ->
+      %{version: 1, op: :absorb_cap, cap: artifact} =
+        :erlang.binary_to_term(payload, [:safe])
 
-    entries
-    |> Ezagent.PendingDelivery.unwrap_entries()
-    |> Enum.flat_map(fn
-      %Invocation{
-        target: %URI{query: "action=identity.absorb_cap"},
-        args: %{artifact: artifact}
-      } ->
-        [artifact]
-
-      _other ->
-        []
+      artifact
     end)
   end
 

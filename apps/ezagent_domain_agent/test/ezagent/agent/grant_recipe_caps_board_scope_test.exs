@@ -20,6 +20,10 @@ defmodule Mix.Tasks.Ezagent.Agent.GrantRecipeCapsBoardScopeTest do
 
   use EzagentCore.DataCase, async: false
 
+  import Ecto.Query
+
+  alias Ezagent.Cap.Delivery
+  alias EzagentCore.Repo
   alias Mix.Tasks.Ezagent.Agent.GrantRecipeCaps
 
   defmodule PermissiveProposalBehavior do
@@ -151,7 +155,7 @@ defmodule Mix.Tasks.Ezagent.Agent.GrantRecipeCapsBoardScopeTest do
                cap_for(caps, Ezagent.ActionSet.Identity)
     end
 
-    test "same-instance override stays non-blocking and a duplicate identity buffers once" do
+    test "same-instance override stays non-blocking and a duplicate identity persists once" do
       agent_uri = spawn_bare_agent()
       {:ok, agent_pid} = Ezagent.KindRegistry.lookup(agent_uri)
       :ok = Ezagent.ReadyGate.put(agent_uri, :not_ready)
@@ -177,12 +181,22 @@ defmodule Mix.Tasks.Ezagent.Agent.GrantRecipeCapsBoardScopeTest do
           end
         end)
 
-      Ecto.Adapters.SQL.Sandbox.allow(EzagentCore.Repo, self(), task.pid)
+      Ecto.Adapters.SQL.Sandbox.allow(Repo, self(), task.pid)
       send(task.pid, :run)
 
       assert {:ok, :ok} = Task.yield(task, 5_000) || Task.shutdown(task, :brutal_kill)
       assert Ezagent.ReadyGate.status(agent_uri) == :not_ready
-      assert Ezagent.PendingDelivery.buffer_size(agent_uri) == buffer_size_before + 1
+      assert Ezagent.PendingDelivery.buffer_size(agent_uri) == buffer_size_before
+
+      assert 1 ==
+               Repo.aggregate(
+                 from(delivery in Delivery,
+                   where: delivery.target_uri == ^URI.to_string(agent_uri),
+                   where: delivery.op == :absorb_cap,
+                   where: delivery.status == :pending
+                 ),
+                 :count
+               )
 
       assert :ready =
                Ezagent.Kind.ReadyTransition.drain_pending_then_mark_ready(
@@ -198,7 +212,15 @@ defmodule Mix.Tasks.Ezagent.Agent.GrantRecipeCapsBoardScopeTest do
                    cap.behavior == Ezagent.ActionSet.ApiKeys and
                      cap.action == :put_api_key and
                      cap.instance == Ezagent.URI.instance(agent_uri)
-                 end)
+                 end) and
+                   Repo.aggregate(
+                     from(delivery in Delivery,
+                       where: delivery.target_uri == ^URI.to_string(agent_uri),
+                       where: delivery.op == :absorb_cap,
+                       where: delivery.status == :applied
+                     ),
+                     :count
+                   ) == 1
                else
                  _ -> false
                end
