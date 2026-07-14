@@ -57,8 +57,6 @@ mainsite.html ──────────────────────
   │     └── → world-demo.html             (成就卡片)
   │     └── → mainsite.html#worldcup      (成就卡片)
   │
-  ├── recruit/index.html                  [L1] 专家招募 · Expert Recruit
-  ├── dealscout/index.html                [L1] 投融资撮合 · DealScout
   ├── recruit-publish-flow/publish-entry.html  [L1] Builder 发布入口
   │
   └── flywheel/gallery.html               [L1] Gallery 货架入口
