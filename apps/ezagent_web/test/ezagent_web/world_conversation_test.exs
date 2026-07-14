@@ -1441,7 +1441,18 @@ defmodule EzagentWeb.WorldConversationTest do
     installer_ws = Ezagent.URI.workspace(installer_ws_name)
     installer_user = Ezagent.URI.entity(installer_ws_name, :user, "admin")
     admin = Ezagent.Entity.User.admin_uri()
-    :ok = create_read_only_user(installer_user, [])
+
+    installer_admin_cap = %Ezagent.Capability{
+      kind: :workspace,
+      behavior: Ezagent.ActionSet.Workspace,
+      action: :any,
+      instance: :any,
+      workspace_uri: installer_ws,
+      granted_by: admin,
+      granted_at: DateTime.utc_now()
+    }
+
+    :ok = create_read_only_user(installer_user, [installer_admin_cap])
     :ok = Ezagent.Workspace.add_member(installer_ws_name, installer_user)
     :ok = seed_py_recipe(recipe_name)
 
