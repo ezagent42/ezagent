@@ -354,9 +354,11 @@ defmodule EzagentWeb.Socialware.ChatFeedControllerTest do
 
       assert conn.status == 200
       body = response(conn, 200)
-      # Renders the same SPA shell as /socialware/chat
-      assert body =~ ~s(data-socket-path="/socialware_chat_socket")
-      assert body =~ ~s(data-topic-prefix="socialware:chat_feed")
+      # The product short-link renders the committed Surface, not the chat-only
+      # message projection. The shared viewer still owns the same composer and
+      # login-gated delegation form.
+      assert body =~ ~s(data-socket-path="/socialware_external_socket")
+      assert body =~ ~s(data-topic-prefix="socialware:external")
       assert body =~ URI.to_string(session_uri)
       assert body =~ ~s(data-hello-delegation-endpoint="/hello/delegate")
       assert body =~ ~s(data-csrf-token=")
