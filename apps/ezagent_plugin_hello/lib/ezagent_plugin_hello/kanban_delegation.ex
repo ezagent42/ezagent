@@ -17,6 +17,7 @@ defmodule EzagentPluginHello.KanbanDelegation do
   @canonical_name "hello-kanban"
   @max_instruction 500
 
+  @doc "Start a supervised hello-to-Kanban delegation and report its result in chat."
   @spec start(URI.t(), String.t(), URI.t()) :: {:ok, pid()} | {:error, term()}
   def start(%URI{} = session_uri, instruction, %URI{} = sender_uri)
       when is_binary(instruction) do
@@ -25,6 +26,7 @@ defmodule EzagentPluginHello.KanbanDelegation do
     end)
   end
 
+  @doc "Delegate one instruction under the authenticated sender's persisted capabilities."
   @spec delegate(URI.t(), String.t(), URI.t()) ::
           {:ok, %{kanban_uri: URI.t(), node_id: String.t(), path: String.t()}}
           | {:error, term()}
@@ -60,6 +62,7 @@ defmodule EzagentPluginHello.KanbanDelegation do
     ArgumentError -> {:error, :invalid_session_workspace}
   end
 
+  @doc "Resolve the workspace's sole or explicitly canonical `kanban-manager` board."
   @spec resolve_default(URI.t(), map()) :: {:ok, URI.t()} | {:error, term()}
   def resolve_default(%URI{scheme: "workspace"} = workspace_uri, ctx) do
     case RecipeResolver.list_by_recipe("kanban-manager", workspace_uri) do
@@ -106,7 +109,7 @@ defmodule EzagentPluginHello.KanbanDelegation do
   defp source_artifact(session_uri, instruction) do
     content =
       Jason.encode!(%{
-        "session_uri" => URI.to_string(session_uri),
+        "session_uri" => uri_to_string(session_uri),
         "page_summary" => page_summary(session_uri),
         "instruction" => instruction
       })
@@ -114,15 +117,17 @@ defmodule EzagentPluginHello.KanbanDelegation do
     %{
       "tool" => "hello",
       "kind" => "hello_source",
-      "ref" => URI.to_string(session_uri),
+      "ref" => uri_to_string(session_uri),
       "url" => page_url(session_uri),
       "content" => content
     }
   end
 
-  defp page_url(%URI{path: path}) do
-    name = path |> String.split("/", trim: true) |> List.last()
-    "/hello/" <> URI.encode_www_form(name || "")
+  defp page_url(%URI{} = session_uri) do
+    case Ezagent.URI.name(session_uri) do
+      {:ok, name} -> "/hello/" <> URI.encode_www_form(name)
+      :error -> "/hello/"
+    end
   end
 
   defp page_summary(session_uri) do
@@ -190,6 +195,12 @@ defmodule EzagentPluginHello.KanbanDelegation do
   defp format_reason(:unauthorized), do: "请先登录后再试"
   defp format_reason(_reason), do: "服务暂时不可用，请稍后再试"
 
-  defp entity_name(%URI{path: path}),
-    do: path |> String.split("/", trim: true) |> List.last()
+  defp entity_name(%URI{} = entity_uri) do
+    case Ezagent.URI.name(entity_uri) do
+      {:ok, name} -> name
+      :error -> nil
+    end
+  end
+
+  defp uri_to_string(%URI{} = uri), do: URI.to_string(uri)
 end

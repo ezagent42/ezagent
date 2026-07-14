@@ -20,6 +20,7 @@ defmodule Ezagent.ActionSet.HelloDispatcher do
   @impl Ezagent.Lifecycle
   def create(_args), do: {:ok, %{}}
 
+  @doc false
   def handle_delegate_to_kanban(
         %{session_uri: session, instruction: instruction, sender_uri: sender},
         _ctx
@@ -36,6 +37,7 @@ defmodule Ezagent.ActionSet.HelloDispatcher do
 
   def handle_delegate_to_kanban(_args, _ctx), do: {:ok, %{}, []}
 
+  @doc false
   def data_owner(:any), do: :any
   def data_owner(_), do: :no_owner
 

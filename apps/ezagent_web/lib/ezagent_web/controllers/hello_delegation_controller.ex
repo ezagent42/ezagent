@@ -11,6 +11,7 @@ defmodule EzagentWeb.HelloDelegationController do
   @digest_key :hello_delegation_digest
   @consumed_key :hello_delegation_consumed_digest
 
+  @doc false
   def create(conn, %{"session_uri" => session_str, "instruction" => instruction})
       when is_binary(session_str) and is_binary(instruction) do
     with {:ok, %URI{scheme: "session"} = session_uri} <- Ezagent.URI.parse(session_str),
@@ -30,6 +31,7 @@ defmodule EzagentWeb.HelloDelegationController do
   def create(conn, _params),
     do: conn |> put_flash(:error, "Instruction is required.") |> redirect(to: "/sessions")
 
+  @doc false
   def resume(conn, _params) do
     token = get_session(conn, @token_key)
     expected_digest = get_session(conn, @digest_key)
@@ -101,8 +103,10 @@ defmodule EzagentWeb.HelloDelegationController do
 
   defp hello_session?(session_uri), do: match?({:ok, "hello"}, Ezagent.URI.type(session_uri))
 
-  defp page_path(%URI{path: path}) do
-    name = path |> String.split("/", trim: true) |> List.last()
-    "/hello/" <> URI.encode_www_form(name || "")
+  defp page_path(%URI{} = session_uri) do
+    case Ezagent.URI.name(session_uri) do
+      {:ok, name} -> "/hello/" <> URI.encode_www_form(name)
+      :error -> "/sessions"
+    end
   end
 end
