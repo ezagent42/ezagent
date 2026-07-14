@@ -90,6 +90,7 @@ defmodule Ezagent.Kind.Snapshot do
 
   defp load_with_fallback(uri, kind_module, args) do
     uri_str = uri_to_str(uri)
+    receiver_uri = Ezagent.URI.new!(uri_str)
 
     # P1 (SPEC §3.1, codex CRITICAL finding 1): fetch the persisted row FIRST.
     # We do NOT compute `init_fresh` up-front any more — running init_set /
@@ -157,7 +158,7 @@ defmodule Ezagent.Kind.Snapshot do
           |> Map.merge(coerce_loaded_to_fresh_shape(fresh, canonicalized))
           |> prune_orphan_slices(kind_module)
           |> reconcile_after_load_behaviors(uri, kind_module)
-          |> verify_snapshot_caps()
+          |> verify_snapshot_caps(receiver_uri)
 
         emit_restored(uri_str, rehydrated)
         rehydrated
@@ -649,18 +650,21 @@ defmodule Ezagent.Kind.Snapshot do
   # pre-Lifecycle flat shape and the current two-container shape are accepted;
   # malformed or unverified entries fail closed by being omitted from the
   # loaded set.
-  defp verify_snapshot_caps(%{identity: %{state: %{caps: caps} = inner} = slice} = state) do
-    put_verified_snapshot_caps(state, {:lifecycle, slice, inner}, caps)
+  defp verify_snapshot_caps(
+         %{identity: %{state: %{caps: caps} = inner} = slice} = state,
+         receiver_uri
+       ) do
+    put_verified_snapshot_caps(state, {:lifecycle, slice, inner}, caps, receiver_uri)
   end
 
-  defp verify_snapshot_caps(%{identity: %{caps: caps} = slice} = state) do
-    put_verified_snapshot_caps(state, {:flat, slice}, caps)
+  defp verify_snapshot_caps(%{identity: %{caps: caps} = slice} = state, receiver_uri) do
+    put_verified_snapshot_caps(state, {:flat, slice}, caps, receiver_uri)
   end
 
-  defp verify_snapshot_caps(state), do: state
+  defp verify_snapshot_caps(state, _receiver_uri), do: state
 
-  defp put_verified_snapshot_caps(state, location, caps) do
-    verified = Ezagent.Cap.verified_set(caps)
+  defp put_verified_snapshot_caps(state, location, caps, receiver_uri) do
+    verified = Ezagent.Cap.verified_set(caps, receiver_uri)
 
     verified_slice =
       case location do

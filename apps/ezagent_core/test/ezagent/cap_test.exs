@@ -175,10 +175,82 @@ defmodule Ezagent.CapTest do
   end
 
   describe "verify/1" do
-    test "is total and trusts only entity provenance" do
+    test "dual-reads legacy entity artifacts and emits the fallback telemetry event" do
+      handler_id = "cap-legacy-fallback-#{System.unique_integer([:positive])}"
+
+      :ok =
+        :telemetry.attach(
+          handler_id,
+          [:ezagent, :cap, :legacy_fallback],
+          fn event, measurements, metadata, test_pid ->
+            send(test_pid, {:telemetry, event, measurements, metadata})
+          end,
+          self()
+        )
+
+      on_exit(fn -> :telemetry.detach(handler_id) end)
+
       assert Cap.verify(%{unstamped_cap() | granted_by: @issuer})
+
+      assert_receive {:telemetry, [:ezagent, :cap, :legacy_fallback], %{count: 1},
+                      %{granted_by: @issuer}}
+
       refute Cap.verify(unstamped_cap())
       refute Cap.verify(:not_an_artifact)
+    end
+
+    test "verifies signed artifacts but denies tampering and untrusted key selectors" do
+      assert {:ok, artifact} = Cap.issue({:genesis, @issuer}, @target, signable_cap())
+
+      assert Cap.verify(artifact)
+      refute Cap.verify(%{artifact | action: :receive})
+      refute Cap.verify(%{artifact | signature: nil})
+      refute Cap.verify(%{artifact | signature: <<>>})
+      refute Cap.verify(%{artifact | signature: :not_a_signature})
+      refute Cap.verify(%{artifact | key_id: "bad-key-id"})
+
+      domain_mismatch_key_id = Signing.key_id(1, Signing.trust_domain(:any))
+      refute Cap.verify(%{artifact | key_id: domain_mismatch_key_id})
+    end
+
+    test "binds signed artifacts to their receiver while keeping legacy artifacts dual-readable" do
+      assert {:ok, artifact} = Cap.issue({:genesis, @issuer}, @target, signable_cap())
+
+      assert Cap.verify_for(artifact, @target)
+      refute Cap.verify_for(artifact, @other_target)
+      assert Cap.verified_set([artifact], @target) == MapSet.new([artifact])
+      assert Cap.verified_set([artifact], @other_target) == MapSet.new()
+
+      legacy = %{unstamped_cap() | granted_by: @issuer}
+      assert Cap.verify_for(legacy, @other_target)
+    end
+
+    test "keeps only legacy artifacts when a collection has no receiver URI" do
+      assert {:ok, signed} = Cap.issue({:genesis, @issuer}, @target, signable_cap())
+      legacy = %{unstamped_cap() | granted_by: @issuer}
+
+      assert Cap.verified_set([signed, legacy], nil) == MapSet.new([legacy])
+    end
+
+    test "raises for trusted signed artifacts when key material is unavailable" do
+      assert {:ok, artifact} = Cap.issue({:genesis, @issuer}, @target, signable_cap())
+      replace_seed_provider(fn _version -> {:error, :missing_seed} end)
+
+      assert_raise RuntimeError, ~r/signing seed unavailable/, fn ->
+        Cap.verify(artifact)
+      end
+
+      assert_raise RuntimeError, ~r/signing seed unavailable/, fn ->
+        Cap.verified_set([artifact], @target)
+      end
+
+      assert_raise RuntimeError, ~r/signing seed unavailable/, fn ->
+        Cap.verify_for(artifact, @other_target)
+      end
+
+      assert_raise RuntimeError, ~r/signing seed unavailable/, fn ->
+        Cap.verified_set([artifact], @other_target)
+      end
     end
   end
 

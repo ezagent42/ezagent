@@ -1,6 +1,7 @@
 defmodule Ezagent.Identity.RecipeCapBindingTest do
   use EzagentCore.DataCase, async: false
 
+  alias Ezagent.{Cap, Capability}
   alias Ezagent.Identity.RecipeCapBinding
   alias Ezagent.Identity.RecipeCapBinding.Sweeper
 
@@ -168,6 +169,36 @@ defmodule Ezagent.Identity.RecipeCapBindingTest do
 
       assert Repo.get(RecipeCapBinding, URI.to_string(agent_uri)) == nil
     end
+
+    test "fetch denies a signed artifact whose grantee is not the bound agent" do
+      agent_uri = agent_uri()
+      other_grantee = agent_uri()
+
+      assert {:ok, %{version: 1}} =
+               RecipeCapBinding.issue_and_upsert(
+                 agent_uri,
+                 "wrong-grantee",
+                 @admin_uri,
+                 [proposal(agent_uri)]
+               )
+
+      assert {:ok, wrong_grantee_artifact} =
+               Cap.issue({:admin, @admin_uri}, other_grantee, proposal(agent_uri))
+
+      binding = Repo.get!(RecipeCapBinding, URI.to_string(agent_uri))
+      caps = [wrong_grantee_artifact]
+
+      attrs = %{
+        artifacts: %{"caps" => Enum.map(caps, &Capability.to_map/1)},
+        content_hash: binding_content_hash(binding, caps)
+      }
+
+      binding
+      |> Ecto.Changeset.change(attrs)
+      |> Repo.update!()
+
+      assert RecipeCapBinding.fetch(agent_uri) == :not_found
+    end
   end
 
   describe "failure compensation" do
@@ -228,5 +259,26 @@ defmodule Ezagent.Identity.RecipeCapBindingTest do
 
       assert {:ok, %{version: 2}} = RecipeCapBinding.fetch(agent_uri)
     end
+  end
+
+  defp binding_content_hash(binding, caps) do
+    logical_content = {
+      binding.agent_uri,
+      binding.workspace_uri,
+      binding.recipe_name,
+      binding.issuer_uri,
+      Enum.map(caps, &artifact_identity/1)
+    }
+
+    :sha256
+    |> :crypto.hash(:erlang.term_to_binary(logical_content, [:deterministic]))
+    |> Base.encode16(case: :lower)
+  end
+
+  defp artifact_identity(cap) do
+    cap
+    |> Capability.to_map()
+    |> Map.drop(["granted_at"])
+    |> :erlang.term_to_binary([:deterministic])
   end
 end

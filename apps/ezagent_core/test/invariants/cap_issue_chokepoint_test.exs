@@ -130,7 +130,7 @@ defmodule Ezagent.Invariants.CapIssueChokepointTest do
     store = between(identity, "defp store_verified_cap", "def handle_revoke_cap")
     revoke = between(identity, "def handle_revoke_cap", "defp uri_to_str")
 
-    assert store =~ "Ezagent.Cap.verify(cap_struct)"
+    assert store =~ "Ezagent.Cap.verify_for(cap_struct"
     assert store =~ "{:set, :caps, new_caps}"
     assert revoke =~ "Ezagent.Capability.revoke(current_caps, cap_struct)"
     refute revoke =~ "MapSet.put"

@@ -190,6 +190,7 @@ defmodule Ezagent.Identity.RecipeCapBinding do
       cap.kind != :agent -> {:error, :kind_mismatch}
       not same_uri?(cap.instance, agent_uri) -> {:error, :target_mismatch}
       not same_uri?(cap.workspace_uri, workspace_uri) -> {:error, :workspace_mismatch}
+      not Ezagent.Cap.verify_for(cap, agent_uri) -> {:error, :invalid_cap_artifact}
       true -> :ok
     end
   end
