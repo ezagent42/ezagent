@@ -127,24 +127,38 @@ defmodule Ezagent.ActionSet.Pty do
   # macro-derived default would be `:any`; we override to preserve
   # the `:agent` axis the CapabilityRegistry needs to match the
   # existing grants.
+  # Allen, 2026-07-14 — **the terminal belongs to the creator**, and the
+  # creator's authority over an agent IS the Manage cap they already receive at
+  # creation (`CreatorGrant.manage_cap/4`; #533 §3.3 — "any management action on
+  # THIS instance"). So every PTY action is gated on that one authority rather
+  # than on a separate Pty cap that nothing in the repo ever mints.
+  #
+  # This is the established idiom, not a new one: `ConfigGovernance` gates all
+  # seven of its CR actions the same way, and `ConfigEvolve` likewise (lead
+  # decision OQ-4 — "the agent's MANAGE cap, no separate publish/reviewer cap").
+  # `Kind.Runtime` overwrites the needed-cap's ACTION with the dispatched action
+  # but honours the declared BEHAVIOR (`runtime.ex:468`), so a single held
+  # `cap(:agent, Manage, :any, <this agent>)` satisfies `:write` and `:restart`
+  # alike — and `Ezagent.World.PtyAccess` gates terminal READS on the same cap.
+  #
+  # What this buys: Allen's 2026-07-10 decision ("a user may deliberately create
+  # a credential-less cc agent and run `claude /login` inside its PTY") becomes
+  # executable with ZERO new grants and ZERO backfill — every agent that already
+  # exists works immediately, because its creator already holds the cap. Before
+  # this, the creator could neither type into nor even watch the terminal of the
+  # agent they had just created; only an admin could.
+  #
+  # Consequence, deliberately accepted: a hand-provisioned `Pty` cap (nothing in
+  # the repo mints one) no longer authorizes `pty.write`. It fails CLOSED
+  # (`:unauthorized`), and re-granting is a Manage cap on the instance.
+  #
+  # Pinned by the authz tests in `pty_test.exs`.
   def required_caps do
-    %{
-      write: Ezagent.Capability.cap(:agent, __MODULE__, :write),
+    manage = Ezagent.Capability.cap(:agent, Ezagent.ActionSet.Manage, :any)
 
-      # `:restart` is gated by the agent's MANAGE cap, not a PTY cap —
-      # the same idiom `Ezagent.ActionSet.ConfigGovernance` uses for its CR
-      # actions (lead decision OQ-4: "the agent's MANAGE cap, no separate
-      # cap"). `Kind.Runtime` overwrites the needed-cap's ACTION with the
-      # dispatched action but honours the declared BEHAVIOR, so a held
-      # `cap(:agent, Manage, :any, <this agent>)` matches `:restart`.
-      #
-      # Recovering a dead agent is a management act on the instance, not
-      # terminal typing. The creator already holds exactly that cap from
-      # `CreatorGrant.manage_cap/4` (#533 §3.3 — "any management action on
-      # THIS instance"), so Allen's 2026-07-13 decision ("the agent's
-      # creator has authority to recover it") needs no new grant and no
-      # backfill. Pinned by the three authz tests in `pty_test.exs`.
-      restart: Ezagent.Capability.cap(:agent, Ezagent.ActionSet.Manage, :any)
+    %{
+      write: manage,
+      restart: manage
     }
   end
 

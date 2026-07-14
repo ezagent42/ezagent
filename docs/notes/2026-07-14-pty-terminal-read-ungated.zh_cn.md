@@ -1,6 +1,6 @@
 # 任何登录用户都能围观任意 agent 的终端(跨 workspace)
 
-**状态:** 待 Allen 定夺。**安全问题,不在当前 PR 修** —— 独立 bug、独立取证、独立 PR。
+**状态:** ✅ **已修(本 PR)。** Allen 2026-07-14 拍板:「谁看?肯定是创建者,创建者有权限。」
 
 **性质:** 机密性泄露。**写**终端被 CapBAC 拦得死死的,**看**终端完全没有门禁。
 
@@ -40,17 +40,41 @@
 
 **该锁的没锁,该开的没开。**
 
-## 建议修法
+## 修法(已实施)
 
-`component_state/5` 对 `pty_terminal` 分支必须停止丢弃 `_caller` / `_caps` / `_workspace`:
+新增 `Ezagent.World.PtyAccess.may_read?/2` —— 校验**该 agent 的 Manage cap**:
 
-1. **cap 检查** —— 读终端应当要求一个 cap。最自然的形状是复用写侧的 instance 轴:持有该 agent 的 Pty cap(或 Manage cap)才能看。
-2. **workspace 校验** —— `entity_uri` 来自 URL,必须断言它属于 `socket.assigns.current_workspace_uri`,否则跨 workspace 直接拒。
-3. **订阅点同样要拦** —— `maybe_subscribe_pty/2` 独立订阅 PubSub topic,**即使 state 那条路补上了检查,这里不补一样漏**(两条路都能拿到输出)。
+```elixir
+Capability.Authorization.authorizes?(caps, %{
+  kind: :agent,
+  behavior: Ezagent.ActionSet.Manage,   # 精确
+  action: :read,
+  instance: agent_uri,                  # 精确 —— 只能看自己创建的那一个
+  workspace_uri: Capability.workspace_of(agent_uri)
+})
+```
 
-第 3 条最容易漏:两处是**独立**的数据出口。
+**两个出口都接了**(这是最容易漏的一点 —— 它们是**独立**的数据出口,只堵一个等于没堵):
 
-## 顺带:`WorkspaceUserAdmin.create_user` 是个 confused deputy
+1. `IdentityData.component_state/5` 的 `pty_terminal` 分支 —— 未授权时 buffer / 存活 / phase 全部不返回,访客除了自己敲进 URL 的那个 URI 之外**一无所获**
+2. `WorldLive.maybe_subscribe_pty/2` —— 未授权**不订阅**输出 topic
+
+**为什么是 Manage cap 而不是 Pty cap:** 创建者手里**只有** Manage cap(全仓库没有任何地方铸过 Pty cap),而 `ActionSet.Pty` 的 `:write` / `:restart` 现在也统一挂在 Manage 上。**一个权威覆盖整个终端:看、写、重启。零新 cap、零回填。**
+
+workspace 轴自动收口:cap 的 `instance` 是精确 URI,别人 agent 的 Manage cap 匹配不上 —— 跨 workspace 围观自然被拒。
+
+### 回归测试
+
+`apps/ezagent_plugin_world/test/ezagent/world/pty_access_test.exs`:
+- 无 cap 的访客 → **拿不到 buffer、拿不到存活状态**(把门禁摘掉这条**立刻变红**,已验证)
+- 创建者的 Manage cap → 能看
+- **别人 agent** 的 Manage cap → 看不了
+- Pty cap → 看不了(契约已移走)
+- admin genesis → 能看
+
+## ⚠️ 仍未修:`WorkspaceUserAdmin.create_user` 是个 confused deputy
+
+**这条不在本 PR 修 —— 独立问题,独立 PR。**
 
 同一轮 review 里 codex 指出、我复核确认:
 

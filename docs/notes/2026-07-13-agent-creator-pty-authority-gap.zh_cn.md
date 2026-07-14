@@ -1,12 +1,14 @@
-# 创建者能不能碰自己 agent 的 PTY —— 一半已修,一半是既有缺口
+# 终端属于创建者 —— 三条 PTY 权限全部收敛到创建者已有的那一个 cap
 
-**状态:** `pty.restart` **已实现**(本 PR,零新授权)。`pty.write`(`/login` 出口)仍是缺口,方案已收敛,等 Allen。
+**状态:** 全部实现(本 PR)。**看 / 写 / 重启** 三个终端权限,统一由创建者在 agent 创建时就已拿到的 Manage cap 携带 —— **零新 cap、零回填**,canary 上 6 个存量 agent 立刻可用。
+
+**Allen 2026-07-14:「谁看?肯定是创建者,创建者有权限。」**
 
 **⚠️ 本文 v1 有三条结论是错的,已在下方【撤回】小节逐条列明。** 错的部分由 codex 的 claim-verification 抓出,并用实测复核。留着不删 —— 错误的推导过程本身有信息量。
 
 ---
 
-## 一、Allen 2026-07-13 的决策:创建者有权恢复死掉的 agent
+## 一、重启:Allen 2026-07-13「创建者有权恢复死掉的 agent」
 
 **已实现,而且是免费的。**
 
@@ -41,13 +43,13 @@ manage = Ezagent.Capability.cap(:agent, Ezagent.ActionSet.Manage, :any)
 |---|---|---|
 | 创建者的 Manage cap(**生产真实形状**,`workspace://<ws>`) | ✅ 授权 | 这就是全部理由 |
 | **别人 agent** 的 Manage cap | ❌ `:unauthorized` | instance 精确有界 |
-| `pty:write` cap | ❌ `:unauthorized` | 不产生扩权 |
+| `Pty` cap | ❌ `:unauthorized` | 契约已移到 Manage,fail-closed |
 
 > 注:测试里 workspace 必须用 `workspace://team-alpha`(生产形状)。我第一版硬写了一个 `entity://.../workspace/...`,系统里根本不存在这种 URI,导致测试假红。**红过一次,查明是 fixture 编错了 workspace,不是机制不通。**
 
 ---
 
-## 二、`pty.write` —— 这一半仍是缺口
+## 二、`pty.write`(`/login` 出口)—— 也已修,同样免费
 
 ### Allen 2026-07-10 定的规矩
 
@@ -57,42 +59,46 @@ manage = Ezagent.Capability.cap(:agent, Ezagent.ActionSet.Manage, :any)
 
 自动物化链之所以敢**硬拦**无凭证 agent,正因为「用户显式创建」这条链**有个出口** —— 用户自己进终端补登录。
 
-### 出口不存在
+### 出口原本不存在
 
-- agent 创建时,创建者**只**拿到 Manage cap(`grant_agent_creator_manage_cap`)
-- `grant_initial_caps(...)` 的**每一条**调用路径(RoleStep / world agent_actions / `agent.create --caps`)第一个参数都是 **`agent_uri`** —— 铸给 **agent 自己**,不是创建者
-- 全仓库没有任何 recipe 请求过 Pty cap
-- 创建者手里的 Manage 只有 2 个 action(`:delete` / `:reconfigure`),**没有任何自助铸 cap 的动作** → 无法自我提权
-
-`Capability.Match` 逐字段比,`Manage ≠ Pty` → **创建者 `pty.write` 拿不到。**
+- agent 创建时,创建者**只**拿到 Manage cap
+- `grant_initial_caps(...)` 的**每一条**路径都铸给 **agent 自己**,不是创建者
+- **全仓库没有任何地方铸过 `ActionSet.Pty` cap** —— 零个铸造点、零个 recipe 请求
+- 创建者的 Manage 只有 `:delete` / `:reconfigure`,**没有自助铸 cap 的动作** → 无法自我提权
 
 **canary 上 6 个 cc agent 无一有凭证。按 Allen 的模型,它们的创建者本该自己进终端补登录 —— 而他们进不去。**
 
-### 方案(修正版:用**具体 action**,不用 `:any`)
+### 修法(Allen 2026-07-14:**终端属于创建者**)
 
-创建时,紧挨着 `grant_agent_creator_manage_cap` 再铸一个:
+**不铸新 cap。让创建者已有的权威直接携带终端。**
 
 ```elixir
-Ezagent.Capability.cap(:agent, Ezagent.ActionSet.Pty, :write, agent_uri, workspace_uri)
-#                                                       ^^^^^^ 具体 action,不是 :any
+# ActionSet.Pty.required_caps/0
+manage = Ezagent.Capability.cap(:agent, Ezagent.ActionSet.Manage, :any)
+%{write: manage, restart: manage}
 ```
 
-**为什么改用具体 action(推翻了此前"选 `:any`"的结论):**
+`Ezagent.World.PtyAccess`(终端的**读**门禁)校验同一个 cap。于是:
 
-1. **`:any` 的唯一理由已经消失。** 原本要 `:any` 是为了让 `restart` 白拿 —— 但 `restart` 现在走 Manage,根本不经过 Pty cap。剩下要授的只有 `write` 一个动作,没有理由再开通配。
-2. **`:any` 会撞发放门禁。** `CapabilityRegistry` 对「精确 instance + `action: :any`」的 grant 会拒:
-   `:wildcard_action_grant_requires_admin_authority`(codex 发现)。具体 action 直接绕开这道门(`action_of(cap) != :any -> :ok`)。
-3. 更小的授权面,同样满足 Allen 的决策。
+> **对一个 agent 的权威 = 它的 Manage cap。这个权威携带终端:看、写、重启。**
 
-已实测:一个 `cap(:agent, Pty, :write, <agent>, workspace://<ws>)` 能授权 `pty.write`(`pty_test.exs`)。
+**零新 cap、零回填、零 migration —— canary 上 6 个存量 agent 立刻可用**(它们的创建者早就持有这个 cap)。
 
-### 回填
+### 为什么不是「铸一个 Pty cap 给创建者」(我的前一版方案)
 
-`CreatorGrant.manage_cap/4` 的 `granted_by` 就是创建者,`Identity.list_caps_for/1` 可遍历 → 走所有 `kind: :agent` 的 Manage cap,持有人即创建者,补铸对应的 `Pty/:write` cap。
+**因为铸 cap 的那个地方,没资格提 `Pty` 这个模块。** 分层查实:
 
-建议做成 **`mix ezagent` 一次性 task**(不是 migration):这是授权数据补写,且需要在 canary 上手动、可观察地跑一次并留证。
+| app | 能引 `ActionSet.Pty` 吗 |
+|---|---|
+| `ezagent_core`(`CreatorGrant`) | ❌ core→domain 依赖环 |
+| `ezagent_domain_workspace`(创建 agent 的地方) | ❌ deps 里**没有** domain_pty |
+| `ezagent_plugin_world`(读门禁在这) | ✅ deps 里有 |
 
----
+要绕过这堵墙就得发明新机制(比如「Kind 的创建者拥有哪些 behavior」注册表),那是**新架构**,得走 Allen。而 Manage 方案**一行都不用绕** —— `ActionSet.Pty` 在 domain_pty,引 core 的 `Manage` 天经地义。
+
+### 刻意接受的后果
+
+**手工发放的 `Pty` cap 不再授权 `pty.write`。** 全仓库没有任何地方铸过它,所以现实中大概率无人持有;万一有,**是 fail-closed**(拿到 `:unauthorized`,不是静默放行),重新授权就是补一个该实例的 Manage cap。
 
 ## 三、【撤回】v1 里三条错误结论
 
@@ -126,12 +132,12 @@ Ezagent.Capability.cap(:agent, Ezagent.ActionSet.Pty, :write, agent_uri, workspa
 
 **这句话把方向说反了。** 精确的事实是:
 
-| | 门禁 |
-|---|---|
-| **往终端写**(`pty.write`) | ✅ 走 dispatch → CapBAC。**创建者拿不到 cap → 进不去**(即上面第二节) |
-| **看终端**(实时输出 + 回滚缓冲) | ❌ **完全没有 cap 门禁 —— 任何登录用户,任意 agent,跨 workspace** |
+| | 修复前的门禁 | 现在 |
+|---|---|---|
+| **往终端写**(`pty.write`) | ✅ CapBAC —— 但**创建者拿不到 cap,进不去** | ✅ 创建者的 Manage cap |
+| **看终端**(实时输出 + 回滚缓冲) | ❌ **零门禁 —— 任何登录用户,任意 agent,跨 workspace** | ✅ 同一个 Manage cap |
 
-**该锁的没锁,该开的没开。** 详见 `docs/notes/2026-07-14-pty-terminal-read-ungated.zh_cn.md`(独立安全 note)。
+**该锁的没锁,该开的没开 —— 两边都已在本 PR 修。** 详见 `docs/notes/2026-07-14-pty-terminal-read-ungated.zh_cn.md`(独立安全 note)。
 
 (另:admin **确实**可以在**建用户时**通过 `WorkspaceUserAdmin.create_user` 的 cap 字符串手工发一个 Pty cap。但那条路表达不了「我将来要创建的那个 agent」—— instance 必须是建用户时就已知的具体 URI,或者 `:any`(= 系统里每一个 agent)。所以它不是创建者的出口,是 admin 的后门,且它本身也有问题 —— 见同一份安全 note。)
 

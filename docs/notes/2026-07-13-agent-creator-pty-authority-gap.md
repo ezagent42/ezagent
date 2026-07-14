@@ -1,6 +1,8 @@
-# Can a creator reach their agent's PTY — half fixed, half still open
+# The terminal belongs to the creator — all three PTY authorities collapse onto the cap they already hold
 
-**Status:** `pty.restart` is **implemented** (this PR, zero new grants). `pty.write` — the `/login` escape hatch — is still a gap; the fix has converged and awaits Allen.
+**Status:** all implemented (this PR). **Read / write / restart** on an agent's terminal are all carried by the Manage cap its creator already receives at creation — **zero new caps, zero backfill**. The six agents already on canary work immediately.
+
+**Allen, 2026-07-14: "Who may watch? The creator, obviously — the creator has the authority."**
 
 **⚠️ Three conclusions in v1 of this note were WRONG.** They are listed and retracted below rather than deleted — the wrong reasoning is itself informative. They were caught by a codex claim-verification pass and re-checked empirically.
 
@@ -40,13 +42,13 @@ It is also semantically correct: **bringing a dead agent back up is a management
 |---|---|---|
 | the creator's Manage cap (**production shape**, `workspace://<ws>`) | ✅ authorized | this is the whole point |
 | a Manage cap for **someone else's agent** | ❌ `:unauthorized` | instance stays exact |
-| a `pty:write` cap | ❌ `:unauthorized` | no privilege creep |
+| a `Pty` cap | ❌ `:unauthorized` | the contract moved to Manage; fails closed |
 
 > Note: the test must use `workspace://team-alpha` (the production shape). My first version hard-coded an `entity://.../workspace/...` URI — a shape that does not exist in this system — and the test went red for that reason alone. **The red was a bad fixture, not a broken mechanism.**
 
 ---
 
-## 2. `pty.write` — this half is still a gap
+## 2. `pty.write` (the `/login` hatch) — also fixed, also free
 
 ### What Allen decided on 2026-07-10
 
@@ -54,43 +56,48 @@ From `Ezagent.Agent.CredentialPrecondition`'s moduledoc:
 
 > a user may deliberately create a credential-less cc agent and **run `claude /login` inside its PTY**
 
-The automatic-materialization lane is allowed to hard-refuse a credential-less agent precisely *because* the explicit-creation lane has an escape hatch: the user goes into the terminal and logs in.
+The automatic lane may hard-refuse a credential-less agent precisely *because* the explicit-creation lane has an escape hatch: the user goes into the terminal and logs in.
 
-### The hatch does not exist
+### The hatch did not exist
 
-- at creation the creator receives **only** a Manage cap (`grant_agent_creator_manage_cap`)
-- **every** call site of `grant_initial_caps(...)` (RoleStep / world `agent_actions` / `agent.create --caps`) passes **`agent_uri`** as the holder — the caps go to **the agent itself**, not the creator
-- no recipe anywhere requests a Pty cap
-- the creator's Manage cap has exactly two actions (`:delete` / `:reconfigure`) and **no cap-minting action** → no self-escalation
+- at creation the creator receives **only** a Manage cap
+- **every** `grant_initial_caps(...)` call site grants to **the agent itself**, not the creator
+- **nothing in the whole repo ever mints an `ActionSet.Pty` cap** — zero mint sites, zero recipes requesting one
+- the creator's Manage cap has two actions (`:delete` / `:reconfigure`) and **no cap-minting action** → no self-escalation
 
-`Capability.Match` compares field by field, and `Manage ≠ Pty` → **the creator cannot `pty.write`.**
+**None of the six cc agents on canary has credentials. Under Allen's model their creators are supposed to go in and fix that. They could not get in.**
 
-**None of the six cc agents on canary has credentials. Under Allen's model their creators are supposed to go into the terminal and fix that. They cannot get in.**
+### The fix (Allen, 2026-07-14 — **the terminal belongs to the creator**)
 
-### The fix (revised: a CONCRETE action, not `:any`)
-
-At creation, next to `grant_agent_creator_manage_cap`, mint one more:
+**Mint nothing. Let the authority the creator already holds carry the terminal.**
 
 ```elixir
-Ezagent.Capability.cap(:agent, Ezagent.ActionSet.Pty, :write, agent_uri, workspace_uri)
-#                                                      ^^^^^^ concrete action, not :any
+# ActionSet.Pty.required_caps/0
+manage = Ezagent.Capability.cap(:agent, Ezagent.ActionSet.Manage, :any)
+%{write: manage, restart: manage}
 ```
 
-**Why concrete now (this reverses the earlier "use `:any`" conclusion):**
+`Ezagent.World.PtyAccess` (the terminal **read** gate) checks the same cap. So:
 
-1. **The only reason for `:any` has evaporated.** `:any` was needed so `restart` would ride along free — but `restart` now goes through Manage and never touches a Pty cap. The only verb left to grant is `write`. There is no longer any reason to open a wildcard.
-2. **`:any` would hit an issuance guard.** `CapabilityRegistry` refuses a grant with an exact instance and `action: :any`: `:wildcard_action_grant_requires_admin_authority` (found by codex). A concrete action bypasses that guard cleanly (`action_of(cap) != :any -> :ok`).
-3. Smaller authority surface, same satisfaction of Allen's decision.
+> **Authority over an agent = its Manage cap. That authority carries the terminal: watch, type, restart.**
 
-Measured: a `cap(:agent, Pty, :write, <agent>, workspace://<ws>)` authorizes `pty.write` (`pty_test.exs`).
+**Zero new caps, zero backfill, zero migration** — every agent that already exists works immediately, because its creator already holds the cap.
 
-### Backfill
+### Why not "mint a Pty cap for the creator" (my previous plan)
 
-`CreatorGrant.manage_cap/4` records `granted_by: creator_uri`, and `Identity.list_caps_for/1` enumerates by holder → walk every `kind: :agent` Manage cap, its holder is the creator, mint the matching `Pty/:write` cap.
+**Because the place that mints the cap is not allowed to name the `Pty` module.** Verified:
 
-Suggested as a one-shot **`mix ezagent` task, not a migration**: this is an authorization-data backfill, and it wants to be run manually and observably on canary once, with evidence kept.
+| app | may reference `ActionSet.Pty`? |
+|---|---|
+| `ezagent_core` (`CreatorGrant`) | ❌ core → domain is a dependency cycle |
+| `ezagent_domain_workspace` (where agents are created) | ❌ domain_pty is **not** among its deps |
+| `ezagent_plugin_world` (where the read gate lives) | ✅ it is |
 
----
+Getting round that wall would mean inventing a new mechanism (e.g. a "which behaviors does a Kind's creator own" registry) — **new architecture**, which needs Allen. The Manage route needs no workaround at all: `ActionSet.Pty` lives in domain_pty and referencing core's `Manage` is the normal direction.
+
+### The consequence, deliberately accepted
+
+**A hand-provisioned `Pty` cap no longer authorizes `pty.write`.** Nothing in the repo mints one, so in practice nobody holds one; if someone does, it **fails closed** (`:unauthorized`, never silent access), and re-granting is a Manage cap on that instance.
 
 ## 3. RETRACTED — three wrong conclusions from v1
 
@@ -124,12 +131,12 @@ It is not undocumented; it is documented **somewhere nobody would look** (one Ac
 
 **That sentence has it backwards.** Precisely:
 
-| | gate |
-|---|---|
-| **writing** to a terminal (`pty.write`) | ✅ dispatch → CapBAC. **The creator holds no cap → cannot get in** (section 2 above) |
-| **watching** a terminal (live output + scrollback) | ❌ **no capability gate at all — any authenticated user, any agent, across workspaces** |
+| | gate before | now |
+|---|---|---|
+| **writing** to a terminal (`pty.write`) | ✅ CapBAC — but **the creator held no cap and could not get in** | ✅ the creator's Manage cap |
+| **watching** a terminal (live output + scrollback) | ❌ **no gate at all — any authenticated user, any agent, across workspaces** | ✅ the same Manage cap |
 
-**The thing that should be locked is open, and the thing that should be open is locked.** See `docs/notes/2026-07-14-pty-terminal-read-ungated.md` (separate security note).
+**The thing that should be locked was open, and the thing that should be open was locked. Both are fixed in this PR.** See `docs/notes/2026-07-14-pty-terminal-read-ungated.md` (separate security note).
 
 (Also: an admin **can** hand-provision a Pty cap via `WorkspaceUserAdmin.create_user`'s cap string at **user**-creation time. But that path cannot express "the agent I am going to create later" — the instance must be a concrete URI known when the user is created, or `:any`, meaning every agent in the system. So it is an admin back door, not the creator's hatch — and it has its own problem; see the same security note.)
 

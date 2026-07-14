@@ -184,7 +184,7 @@ defmodule Ezagent.ActionSet.PtyTest do
              })
   end
 
-  test "a pty:write cap does NOT authorize pty.restart", %{agent_uri: agent_uri} do
+  test "a Pty cap does NOT authorize pty.restart either", %{agent_uri: agent_uri} do
     assert {:error, :unauthorized} =
              Invocation.dispatch(%Invocation{
                target: restart_target(agent_uri),
@@ -198,23 +198,51 @@ defmodule Ezagent.ActionSet.PtyTest do
              })
   end
 
-  test "a CONCRETE-action pty:write cap authorizes pty.write (the /login hatch)", %{
+  test "creator's EXISTING manage cap authorizes pty.write — this is the /login hatch", %{
     agent_uri: agent_uri
   } do
-    # The other half of the gap: typing into the terminal. A concrete-action
-    # cap (NOT `action: :any`) suffices — which also sidesteps
-    # `CapabilityRegistry`'s `:wildcard_action_grant_requires_admin_authority`
-    # guard on exact-instance `:any`-action grants.
+    # Allen 2026-07-10 says the way to fix a credential-less agent is to type
+    # `claude /login` into its PTY. That requires pty.write. The creator holds
+    # ONE cap — the Manage cap from creation — and it must carry this.
     assert {:ok, %{bytes_written: 1}} =
              Invocation.dispatch(%Invocation{
                target: dispatch_target(agent_uri),
                mode: :call,
                args: %{bytes: "x"},
-               ctx: %{
-                 caller: creator_uri(),
-                 caps: MapSet.new([write_cap(agent_uri)]),
-                 reply: {:caller_inbox, self()}
-               }
+               ctx: creator_ctx(agent_uri)
+             })
+  end
+
+  test "a Pty cap authorizes NOTHING now — the contract moved to Manage", %{
+    agent_uri: agent_uri
+  } do
+    # Deliberate consequence of gating the terminal on the agent's Manage
+    # authority. Nothing in the repo mints a Pty cap; a hand-provisioned one
+    # fails CLOSED rather than silently half-working.
+    pty_ctx = %{
+      caller: creator_uri(),
+      caps: MapSet.new([write_cap(agent_uri)]),
+      reply: {:caller_inbox, self()}
+    }
+
+    assert {:error, :unauthorized} =
+             Invocation.dispatch(%Invocation{
+               target: dispatch_target(agent_uri),
+               mode: :call,
+               args: %{bytes: "x"},
+               ctx: pty_ctx
+             })
+  end
+
+  test "a manage cap for ANOTHER agent does NOT authorize pty.write", %{agent_uri: agent_uri} do
+    other = Ezagent.URI.new!("entity://team-alpha/agent/cc_someone-elses-agent")
+
+    assert {:error, :unauthorized} =
+             Invocation.dispatch(%Invocation{
+               target: dispatch_target(agent_uri),
+               mode: :call,
+               args: %{bytes: "x"},
+               ctx: creator_ctx(other)
              })
   end
 

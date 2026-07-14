@@ -184,11 +184,23 @@ defmodule Ezagent.ActionSet.PtyMigrationParityTest do
       assert is_binary(restart_desc) and restart_desc != ""
     end
 
-    test "required_caps/0 uses the :agent axis" do
+    # CONTRACT CHANGE (Allen, 2026-07-14 — "the terminal belongs to the
+    # creator"). This test previously pinned `behavior: Pty, action: :write`.
+    # Both PTY actions are now gated on the agent's MANAGE cap — the authority
+    # the creator already holds from creation — because nothing in the repo ever
+    # minted a Pty cap, so the creator could neither type into nor watch the
+    # terminal of the agent they had just created. The `:agent` kind axis, which
+    # is what this test is really about, is unchanged.
+    test "required_caps/0 uses the :agent axis (now on the MANAGE authority)" do
       caps = Pty.required_caps()
 
-      assert %Ezagent.Capability{kind: :agent, behavior: Pty, action: :write} =
-               caps[:write]
+      for action <- [:write, :restart] do
+        assert %Ezagent.Capability{
+                 kind: :agent,
+                 behavior: Ezagent.ActionSet.Manage,
+                 action: :any
+               } = caps[action]
+      end
     end
 
     test "state_slice/0 unchanged; init_slice/1 builds the two-container shape" do

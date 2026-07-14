@@ -204,22 +204,48 @@ defmodule Ezagent.World.IdentityData do
     |> Map.merge(list_extensions(agent_uri, caller, caps))
   end
 
+  # A terminal's OUTPUT is as sensitive as its input: `claude /login` codes,
+  # secrets echoed by commands, the agent's whole conversation. `entity_uri`
+  # here comes straight out of the URL (`Routes.route_for/2` regex), so
+  # WITHOUT this check any authenticated entity could watch any agent's
+  # terminal in any workspace. Reading is gated on the same instance-scoped
+  # Pty authority as writing — the agent's creator holds it (Allen,
+  # 2026-07-14: "the terminal belongs to the creator"), admin's genesis
+  # wildcard matches, nobody else does.
+  #
+  # The subscription in `WorldLive.maybe_subscribe_pty/2` is a SECOND,
+  # independent exit for the same bytes and carries the same check.
   defp component_state(
          %{component: "pty_terminal", entity_uri: agent_uri},
          base,
          _workspace,
          _caller,
-         _caps
+         caps
        ) do
     agent_uri_str = encode_uri(agent_uri)
+    authorized? = Ezagent.World.PtyAccess.may_read?(agent_uri, caps)
 
     base
     |> Map.put("agent_uri", agent_uri_str)
     |> Map.put("agent_detail_path", detail_path("agent", agent_uri_str))
-    |> Map.put("agent_status", agent_status(agent_uri))
-    |> Map.put("pty_alive", pty_alive?(agent_uri))
-    |> Map.put("pty_phase", pty_phase(agent_uri))
-    |> Map.put("pty_initial_buffer", pty_initial_buffer(agent_uri))
+    |> Map.put("pty_authorized", authorized?)
+    |> then(fn state ->
+      if authorized? do
+        state
+        |> Map.put("agent_status", agent_status(agent_uri))
+        |> Map.put("pty_alive", pty_alive?(agent_uri))
+        |> Map.put("pty_phase", pty_phase(agent_uri))
+        |> Map.put("pty_initial_buffer", pty_initial_buffer(agent_uri))
+      else
+        # No buffer, no liveness, no phase — an unauthorized viewer learns
+        # nothing about the agent beyond the URI they already typed.
+        state
+        |> Map.put("agent_status", "unknown")
+        |> Map.put("pty_alive", false)
+        |> Map.put("pty_phase", "unknown")
+        |> Map.put("pty_initial_buffer", "")
+      end
+    end)
   end
 
   defp component_state(

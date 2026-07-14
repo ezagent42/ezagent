@@ -856,8 +856,15 @@ defmodule EzagentPluginWorld.WorldLive do
   defp same_uri?(%URI{} = left, %URI{} = right), do: URI.to_string(left) == URI.to_string(right)
   defp same_uri?(_, _), do: false
 
+  # The SECOND read exit for the same bytes (the first is
+  # `IdentityData.component_state/5`'s `pty_terminal` branch). `agent_uri`
+  # comes from the URL, so this subscription carries the same capability
+  # check — gating only the state path would leave the live output stream
+  # wide open. See `Ezagent.World.PtyAccess`.
   defp maybe_subscribe_pty(socket, %{component: "pty_terminal", entity_uri: %URI{} = agent_uri}) do
-    if connected?(socket) do
+    caps = Map.get(socket.assigns, :current_caps, MapSet.new())
+
+    if connected?(socket) and Ezagent.World.PtyAccess.may_read?(agent_uri, caps) do
       Phoenix.PubSub.subscribe(
         EzagentCore.PubSub,
         Ezagent.Domain.Pty.Server.output_topic(agent_uri)

@@ -1,6 +1,6 @@
 # Any authenticated user can watch any agent's terminal (across workspaces)
 
-**Status:** for Allen. **A security issue, not fixed in the current PR** — separate bug, separate evidence, separate PR.
+**Status:** ✅ **fixed (this PR).** Allen, 2026-07-14: "Who may watch? The creator, obviously — the creator has the authority."
 
 **Nature:** confidentiality. **Writing** to a terminal is tightly CapBAC-gated. **Reading** one is not gated at all.
 
@@ -40,17 +40,42 @@ Step 3 is the crux: those three underscored parameters are not "unused for now" 
 
 **The thing that should be locked is open, and the thing that should be open is locked.**
 
-## Suggested fix
+## The fix (implemented)
 
-The `pty_terminal` branch of `component_state/5` must stop discarding `_caller` / `_caps` / `_workspace`:
+New `Ezagent.World.PtyAccess.may_read?/2` — it checks **that agent's Manage cap**:
 
-1. **Capability check** — reading a terminal should require a cap. The natural shape reuses the write side's instance axis: you may watch an agent's terminal if you hold that agent's Pty cap (or its Manage cap).
-2. **Workspace check** — `entity_uri` comes from the URL, so assert it belongs to `socket.assigns.current_workspace_uri` and refuse cross-workspace outright.
-3. **Gate the subscription too** — `maybe_subscribe_pty/2` subscribes to the PubSub topic independently. **Fixing only the state path leaves this one open**; both are data exits.
+```elixir
+Capability.Authorization.authorizes?(caps, %{
+  kind: :agent,
+  behavior: Ezagent.ActionSet.Manage,   # exact
+  action: :read,
+  instance: agent_uri,                  # exact — only the agent you created
+  workspace_uri: Capability.workspace_of(agent_uri)
+})
+```
 
-Item 3 is the easy one to miss: they are two **independent** paths to the same output.
+**Both exits are wired to it** — the easy thing to miss, because they are two **independent** paths to the same bytes and gating one leaves the other serving them:
 
-## Also: `WorkspaceUserAdmin.create_user` is a confused deputy
+1. `IdentityData.component_state/5`'s `pty_terminal` branch — an unauthorized viewer gets no buffer, no liveness, no phase; nothing beyond the URI they typed themselves.
+2. `WorldLive.maybe_subscribe_pty/2` — an unauthorized viewer does not subscribe to the output topic at all.
+
+**Why the Manage cap and not a Pty cap:** the creator holds *only* a Manage cap (nothing in the repo ever mints a Pty cap), and `ActionSet.Pty`'s `:write` / `:restart` now hang off the same authority. **One authority covers the whole terminal — watch, type, restart. Zero new caps, zero backfill.**
+
+The workspace axis closes itself: the cap's `instance` is an exact URI, so a Manage cap on someone else's agent cannot match — cross-workspace watching is refused as a consequence, not as a special case.
+
+### Regression tests
+
+`apps/ezagent_plugin_world/test/ezagent/world/pty_access_test.exs`:
+
+- a viewer with no cap for this agent → **no buffer, no liveness** (remove the gate and this goes red — verified)
+- the creator's Manage cap → may watch
+- a Manage cap on **another** agent → may not
+- a Pty cap → may not (the contract moved)
+- admin's genesis cap → may watch
+
+## ⚠️ Still open: `WorkspaceUserAdmin.create_user` is a confused deputy
+
+**Not fixed in this PR — separate problem, separate PR.**
 
 Raised by codex in the same review, confirmed here:
 
