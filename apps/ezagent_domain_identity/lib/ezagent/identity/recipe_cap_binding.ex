@@ -217,7 +217,11 @@ defmodule Ezagent.Identity.RecipeCapBinding do
   defp artifact_identity(%Capability{} = cap) do
     cap
     |> Capability.to_map()
-    |> Map.drop(["granted_at"])
+    # An issuance artifact's signature covers its fresh `granted_at` stamp.
+    # Both fields therefore vary on a retry even when the recipe proposal is
+    # logically identical. Binding idempotence is about that proposal, not
+    # the cryptographic envelope selected for a particular issuance attempt.
+    |> Map.drop(["granted_at", "signature"])
     |> :erlang.term_to_binary([:deterministic])
   end
 

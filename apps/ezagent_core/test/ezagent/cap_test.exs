@@ -199,6 +199,29 @@ defmodule Ezagent.CapTest do
       refute Cap.verify(:not_an_artifact)
     end
 
+    test "denies an unsigned legacy artifact when signature enforcement is enabled" do
+      require_signature!()
+
+      refute Cap.verify(%{unstamped_cap() | granted_by: @issuer})
+    end
+
+    test "continues to verify a valid signed artifact and deny a bad signed artifact in enforce mode" do
+      assert {:ok, artifact} = Cap.issue({:genesis, @issuer}, @target, signable_cap())
+      require_signature!()
+
+      assert Cap.verify(artifact)
+      refute Cap.verify(%{artifact | action: :receive})
+    end
+
+    test "enforce mode retains only signed issued authorizer artifacts in a receiver-bound set" do
+      assert {:ok, signed} = Cap.issue({:genesis, @issuer}, @target, signable_cap())
+      legacy = %{unstamped_cap() | granted_by: @issuer}
+      sentinel = Capability.cap(:session, Ezagent.ActionSet.Session, :send)
+      require_signature!()
+
+      assert Cap.verified_set([signed, legacy, sentinel], @target) == MapSet.new([signed])
+    end
+
     test "verifies signed artifacts but denies tampering and untrusted key selectors" do
       assert {:ok, artifact} = Cap.issue({:genesis, @issuer}, @target, signable_cap())
 
@@ -280,6 +303,17 @@ defmodule Ezagent.CapTest do
       :ezagent_core,
       Cap,
       Keyword.put(config, :signing, Keyword.put(signing, :seed_provider, seed_provider))
+    )
+  end
+
+  defp require_signature! do
+    config = Application.fetch_env!(:ezagent_core, Cap)
+    signing = Keyword.fetch!(config, :signing)
+
+    Application.put_env(
+      :ezagent_core,
+      Cap,
+      Keyword.put(config, :signing, Keyword.put(signing, :require_signature, true))
     )
   end
 end
