@@ -8,18 +8,17 @@ architecture gate
 **Verdict:** **NOT SOUND**
 
 The ownership design is coherent, and the exact debt allowlist has the intended
-stale-entry and replacement resistance. The ARB-1 scanner nevertheless has two
-high-severity alias/import bypasses. Both can express calls that the design marks
-forbidden while producing no offender. The boundary therefore cannot receive a
-`SOUND` verdict until those call forms are either detected or structurally forbidden
-by another gate.
+stale-entry and replacement resistance. Commit `f44638811` closes the original
+plain grouped-alias and imported-local-call reproductions. A legal grouped alias
+with options still bypasses the ARB-1 scanner, however, so the boundary cannot
+receive a `SOUND` verdict yet.
 
 ## Findings
 
 | Severity | Finding | Evidence | Resolution |
 |---|---|---|---|
-| High | A grouped alias bypasses the classifier. `alias Ezagent.Entity.{Agent, User}` followed by `Agent.spawn_from_manifest/1` returns `[]`. The walker only accepts an `alias` whose first argument is a plain `__aliases__` node, so the grouped-alias AST is not registered. | Reproduction: `Scanner.scan_source/2` returned `[]` for the grouped-alias fixture. Scanner alias pattern: `apps/ezagent_core/test/support/agent_runtime_boundary_scanner.ex:100`; the design requires aliased forbidden calls to be detected: `docs/superpowers/specs/2026-07-14-agent-runtime-boundary-design.md:181-186,350-352`. | **Unresolved.** Extend lexical alias handling to grouped aliases and add a positive regression fixture. Until then the gate is bypassable. |
-| High | An imported forbidden function bypasses the classifier. `import Ezagent.Entity.Agent, only: [spawn_from_manifest: 1]` followed by local `spawn_from_manifest/1` returns `[]`. The classifier recognizes only remote-call AST (`Module.function(...)`) and has no lexical import table. | Reproduction: `Scanner.scan_source/2` returned `[]` for the import fixture. Remote-only call pattern: `apps/ezagent_core/test/support/agent_runtime_boundary_scanner.ex:158-181`; direct Agent spawn is forbidden regardless of call spelling: `docs/superpowers/specs/2026-07-14-agent-runtime-boundary-design.md:148-156`. | **Unresolved.** Either resolve lexical imports and local calls, or add a separate fail-closed rule forbidding imports of the closed lifecycle modules in Session production code. Add positive and lexical-scope regression fixtures. |
+| High | Grouped aliases with options still bypass the classifier. The plain `alias Ezagent.Entity.{Agent, User}` form is fixed, but `alias Ezagent.Entity.{Agent, User}, warn: false` followed by `Agent.spawn_from_manifest/1` returns `[]`. The new walker clause matches only a one-element alias argument list, while the legal option form has a second keyword-list argument. | Reproduction against `f44638811`: `Scanner.scan_source/2` returned `[]` for the option-bearing grouped-alias fixture. The new grouped-alias pattern is at `apps/ezagent_core/test/support/agent_runtime_boundary_scanner.ex:101-119`; the design requires aliased forbidden calls to be detected at `docs/superpowers/specs/2026-07-14-agent-runtime-boundary-design.md:181-186,350-352`. | **Unresolved.** Accept and ignore the optional alias keyword list while registering grouped members, and add this exact option-bearing regression fixture. Until then the original High is only partially closed. |
+| High | An imported forbidden function bypassed the classifier. `import Ezagent.Entity.Agent, only: [spawn_from_manifest: 1]` followed by local `spawn_from_manifest/1` previously returned `[]`. | Reproduction against `f44638811` now returns one `agent_materialization` offender. An aliased import (`alias ... as: A; import A`) also returns one offender, while imports remain lexical: calls before the import and outside a nested/sibling scope remain unclassified. The permanent positive fixture is at `apps/ezagent_core/test/architecture/agent_runtime_boundary_test.exs:344-355`. | **Resolved by `f44638811`.** The scanner records imported modules lexically and classifies matching local calls. |
 | Info | A Session wrapper does not conceal a forbidden remote seam when the wrapper body retains an explicit Agent target. | A fixture whose `run/1` calls a local helper and whose helper calls `Ezagent.SpawnRegistry.ensure_live(agent_uri)` produced one `agent_ensure_live` offender anchored to `defp:helper/1`. This follows the wrapper prohibition at design lines 148-156. | Resolved by the existing recursive AST walk for the tested v1 wrapper form. General interprocedural dataflow is explicitly out of scope. |
 | Info | Dynamic file discovery and exact allowlist identity resist two common count-gate attacks. A new file containing a qualified Agent spawn is detected; deleting one old offender and adding the same call in a new path yields both a stale allowance and an unallowlisted offender. | Repository discovery uses `Path.wildcard` over `apps/ezagent_domain_session/lib/**/*.ex` at `apps/ezagent_core/test/architecture/agent_runtime_boundary_test.exs:4-12,188-195`. The replacement fixture returned one `unmatched_allowance` and one `unallowlisted_offender`; exact matching includes path, class and source anchor at scanner lines 265-271. | Resolved for recognized call forms. The alias/import bypasses remain independent of allowlist exactness. |
 | Info | Comments and moduledocs containing forbidden names do not produce false positives. | A fixture containing the forbidden call spelling only in a comment and `@moduledoc` returned `[]`; parsing plus call-node classification ignores strings and comments. | Resolved. |
@@ -49,11 +48,10 @@ that the not-yet-implemented facade already satisfies them.
 
 ## Required closure before `SOUND`
 
-1. Make grouped aliases non-bypassable and add a positive test.
-2. Make imported closed-family calls non-bypassable, or fail closed on imports of
-   those modules, with lexical-scope tests.
-3. Re-run the focused architecture test and this attack set.
-4. Preserve the current legal-call negative fixtures and exact allowlist checks.
+1. Make option-bearing grouped aliases non-bypassable and add the exact positive
+   regression test.
+2. Re-run the focused architecture test and this attack set.
+3. Preserve the current legal-call negative fixtures and exact allowlist checks.
 
-No scanner or gate source was modified by this review, so the two findings remain
-open for the implementation owner.
+No scanner or gate source was modified by this review. The import finding is closed;
+the grouped-alias finding remains High and blocks `SOUND`.
