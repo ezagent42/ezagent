@@ -21,7 +21,8 @@ defmodule Ezagent.Capability.Normalize do
       "granted_by" => uri_or_any_to_string(cap.granted_by),
       "granted_at" => DateTime.to_iso8601(cap.granted_at),
       "signature" => encode_signature(cap.signature),
-      "key_id" => cap.key_id
+      "key_id" => cap.key_id,
+      "grantee_uri" => uri_or_nil_to_string(cap.grantee_uri)
     }
   end
 
@@ -50,7 +51,8 @@ defmodule Ezagent.Capability.Normalize do
       granted_by: string_to_uri_or_any(Map.get(m, "granted_by")),
       granted_at: parse_datetime(Map.get(m, "granted_at")),
       signature: decode_signature(Map.get(m, "signature")),
-      key_id: Map.get(m, "key_id")
+      key_id: Map.get(m, "key_id"),
+      grantee_uri: string_to_uri_or_nil(Map.get(m, "grantee_uri"))
     }
   end
 
@@ -242,8 +244,14 @@ defmodule Ezagent.Capability.Normalize do
   defp uri_or_any_to_string(:any), do: "any"
   defp uri_or_any_to_string(%URI{} = u), do: URI.to_string(u)
 
+  defp uri_or_nil_to_string(nil), do: nil
+  defp uri_or_nil_to_string(%URI{} = uri), do: URI.to_string(uri)
+
   defp string_to_uri_or_any("any"), do: :any
   defp string_to_uri_or_any(s) when is_binary(s), do: Ezagent.URI.new!(s)
+
+  defp string_to_uri_or_nil(nil), do: nil
+  defp string_to_uri_or_nil(s) when is_binary(s), do: Ezagent.URI.new!(s)
 
   defp encode_signature(nil), do: nil
 
