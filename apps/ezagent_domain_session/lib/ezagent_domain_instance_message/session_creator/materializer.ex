@@ -374,7 +374,7 @@ defmodule EzagentDomainInstanceMessage.SessionCreator.Materializer do
   > **This function currently has ZERO callers** (repo-wide, including tests).
   > Since 2026-07-14 an agent's `cap(:agent, Manage, :any, <agent>)` also carries
   > its **PTY** — `pty.write` and `pty.restart` are gated on the Manage authority
-  > (`Ezagent.ActionSet.Pty.required_caps/0`), and `Ezagent.World.PtyAccess` gates
+  > (`Ezagent.ActionSet.Pty.required_caps/0`), and `Ezagent.Domain.Pty.Access` gates
   > terminal *reads* on it too. Allen, 2026-07-14: "the terminal belongs to the
   > creator."
   >

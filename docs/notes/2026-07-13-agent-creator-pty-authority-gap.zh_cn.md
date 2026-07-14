@@ -78,7 +78,7 @@ manage = Ezagent.Capability.cap(:agent, Ezagent.ActionSet.Manage, :any)
 %{write: manage, restart: manage}
 ```
 
-`Ezagent.World.PtyAccess`(终端的**读**门禁)校验同一个 cap。于是:
+`Ezagent.Domain.Pty.Access`(终端的**读**门禁)校验同一个 cap。于是:
 
 > **对一个 agent 的权威 = 它的 Manage cap。这个权威携带终端:看、写、重启。**
 

@@ -52,11 +52,11 @@
 
 第 3 步是关键:那三个下划线参数不是"暂时没用",而是**授权信息被显式丢弃**。
 
-## 对照:写路径是有门禁的
+## 对照:写路径一直是有门禁的
 
-`world_live.ex:284` 的 `handle_event("pty_input", …)` → `Invocation.dispatch/1` → CapBAC step 5.5 → 需要 `cap(:agent, Pty, :write, <该 agent>)`。
+`world_live.ex:284` 的 `handle_event("pty_input", …)` → `Invocation.dispatch/1` → CapBAC step 5.5。本 PR 之前它要的是 `cap(:agent, Pty, :write, <该 agent>)` —— 而**全仓库没有任何地方铸过这个 cap**,所以连创建者都没有。
 
-**所以现状是:**
+**本 PR 之前的状态:**
 
 | | 门禁 | 后果 |
 |---|---|---|
@@ -67,7 +67,7 @@
 
 ## 修法(已实施)
 
-新增 `Ezagent.World.PtyAccess.may_read?/2` —— 校验**该 agent 的 Manage cap**:
+新增 `Ezagent.Domain.Pty.Access.may_read?/2` —— 校验**该 agent 的 Manage cap**:
 
 ```elixir
 Capability.Authorization.authorizes?(caps, %{

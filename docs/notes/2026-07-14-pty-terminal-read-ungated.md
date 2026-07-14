@@ -6,6 +6,25 @@
 
 **How it surfaced:** while investigating "a creator cannot reach their own agent's PTY", a codex claim-verification pass pointed out I had the direction backwards. Confirmed line by line.
 
+> ### ⚠️ The first version of this fix gated 2 of the 4 exits
+>
+> I assumed there were two read exits (the terminal route's state, and its PubSub
+> subscription), fixed those, and called it done. **A second codex pass and my own
+> re-sweep independently found two more.** One of them is **live and directly
+> client-triggerable** — the in-conversation `session.pty.open`, which takes an
+> arbitrary client-supplied agent URI and subscribes to its output stream. **The
+> first fix did nothing for it; the hole stayed open.**
+>
+> This is the sentence this very note already contained — *"they are two
+> independent exits; gating one is the same as gating none"* — and I walked into
+> it anyway.
+>
+> The lesson is now in the code: the policy moved out of `plugin_world` into
+> **`Ezagent.Domain.Pty.Access`**, next to the thing it protects, and all four
+> exits call it. `TerminalSeam` is gated **by construction** (you cannot subscribe
+> without passing caps), so a future host LV cannot reopen the hole by forgetting
+> a check.
+
 ---
 
 ## In one sentence
@@ -15,23 +34,42 @@
 
 What scrolls through a terminal: `claude /login` authorization codes, the agent's conversation, source code, command output, secrets echoed by commands.
 
-## The chain (line by line, zero authorization)
+## Four read exits, all ungated
+
+| # | Exit | Entry | Leaks |
+|---|---|---|---|
+| 1 | `IdentityData.component_state/5`'s `pty_terminal` branch | `/identities/agents/:uri/terminal` (URL-controlled) | **the scrollback** |
+| 2 | `WorldLive.maybe_subscribe_pty/2` | same | **the live output stream** |
+| 3 | **`ConversationActions.switch_to_pty/3`** | **the `session.pty.open` client event, arbitrary `"agent"` field** | **the live output stream** |
+| 4 | `EzagentDomainUi.Pty.TerminalSeam` | reusable seam (no callers, but a footgun) | buffer + output stream |
+
+**Exit 3 is the worst — it does not even need a crafted URL:**
+
+```
+client sends:  session.pty.open  { "agent": "entity://other-workspace/agent/theirs" }
+server:        subscribes to that agent's PTY output stream
+               no capability check, no workspace check
+               `_session_uri` is explicitly ignored — it never even asks whether
+               that agent belongs to that session
+```
+
+The chain for exits 1/2:
 
 | # | Where | What it does |
 |---|---|---|
-| 1 | `ezagent_web/router.ex:36-53` | `live "/identities/agents/:uri/terminal"`, behind `RequireEntity` only — **any authenticated entity** |
-| 2 | `world/routes.ex:234-242` | regex-extracts `:uri` **from the URL** → `entity_uri: parse_entity_uri(encoded)`, **unchecked** |
-| 3 | `world/identity_data.ex:207-213` | `component_state(%{component: "pty_terminal", entity_uri: agent_uri}, base, _workspace, _caller, _caps)` — **`_workspace` / `_caller` / `_caps` are all discarded** |
-| 4 | `world/identity_data.ex:478-480` | `pty_initial_buffer(agent_uri)` → `Domain.Pty.Server.snapshot_buffer(agent_uri)` — **reads the scrollback** |
-| 5 | `world_live.ex:859-866` | `PubSub.subscribe(Domain.Pty.Server.output_topic(agent_uri))` — **subscribes to the live output stream** |
+| 1 | `ezagent_web/router.ex:36-53` | behind `RequireEntity` only — **any authenticated entity** |
+| 2 | `world/routes.ex:234-242` | regex-extracts the agent URI **from the URL**, **unchecked** |
+| 3 | `world/identity_data.ex:207` | `component_state(…, _workspace, _caller, _caps)` — **all three authorization inputs discarded** |
+| 4 | `world/identity_data.ex:478` | reads the **scrollback** |
+| 5 | `world_live.ex:859` | subscribes to the **live output stream** |
 
-Step 3 is the crux: those three underscored parameters are not "unused for now" — they are **authorization inputs being explicitly thrown away**.
+Step 3 is the crux: those underscored parameters are not "unused for now" — they are **authorization inputs being explicitly thrown away**.
 
-## By contrast, the write path IS gated
+## By contrast, the write path WAS gated all along
 
-`world_live.ex:284`'s `handle_event("pty_input", …)` → `Invocation.dispatch/1` → CapBAC step 5.5 → requires `cap(:agent, Pty, :write, <that agent>)`.
+`world_live.ex:284`'s `handle_event("pty_input", …)` → `Invocation.dispatch/1` → CapBAC step 5.5. Before this PR that required `cap(:agent, Pty, :write, <that agent>)` — a cap **nothing in the repo ever minted**, so not even the creator held it.
 
-**So the state of the world is:**
+**The state of the world before this PR:**
 
 | | gate | consequence |
 |---|---|---|
@@ -42,7 +80,7 @@ Step 3 is the crux: those three underscored parameters are not "unused for now" 
 
 ## The fix (implemented)
 
-New `Ezagent.World.PtyAccess.may_read?/2` — it checks **that agent's Manage cap**:
+New `Ezagent.Domain.Pty.Access.may_read?/2` — it checks **that agent's Manage cap**:
 
 ```elixir
 Capability.Authorization.authorizes?(caps, %{
@@ -54,24 +92,33 @@ Capability.Authorization.authorizes?(caps, %{
 })
 ```
 
-**Both exits are wired to it** — the easy thing to miss, because they are two **independent** paths to the same bytes and gating one leaves the other serving them:
+**All four exits are wired to it.** The policy lives in the PTY domain — next to the thing it protects — rather than in one caller, which is exactly what the first version got wrong:
 
-1. `IdentityData.component_state/5`'s `pty_terminal` branch — an unauthorized viewer gets no buffer, no liveness, no phase; nothing beyond the URI they typed themselves.
-2. `WorldLive.maybe_subscribe_pty/2` — an unauthorized viewer does not subscribe to the output topic at all.
+1. `IdentityData.component_state/5` — an unauthorized viewer gets no buffer, no liveness, no phase; nothing beyond the URI they typed themselves.
+2. `WorldLive.maybe_subscribe_pty/2` — an unauthorized viewer does not subscribe at all.
+3. **`ConversationActions.switch_to_pty/3`** — unauthorized returns `error:unauthorized` and subscribes to **nothing**.
+4. **`TerminalSeam.subscribe/2` + `push_initial_buffer/3`** — gated **by construction**: you cannot subscribe without passing caps, and insufficient caps return `{:error, :unauthorized}`. A future host LV cannot reopen this hole by forgetting a check.
+
+**Plus a chunk binding.** PTY subscriptions accumulate and are never torn down (open A, then B, and the LV holds both), while `handle_info` ignored the chunk's agent URI and forwarded everything to the browser — so A's output bled into B's terminal, **and kept streaming after the viewer's authority over it changed**. Chunks are now bound to the agent actually on screen.
 
 **Why the Manage cap and not a Pty cap:** the creator holds *only* a Manage cap (nothing in the repo ever mints a Pty cap), and `ActionSet.Pty`'s `:write` / `:restart` now hang off the same authority. **One authority covers the whole terminal — watch, type, restart. Zero new caps, zero backfill.**
 
 The workspace axis closes itself: the cap's `instance` is an exact URI, so a Manage cap on someone else's agent cannot match — cross-workspace watching is refused as a consequence, not as a special case.
 
-### Regression tests
+### Regression tests (each verified red with its gate removed)
 
-`apps/ezagent_plugin_world/test/ezagent/world/pty_access_test.exs`:
+`apps/ezagent_domain_pty/test/ezagent/domain/pty/access_test.exs` — the predicate:
+the creator's Manage cap may watch · a Manage cap on **another** agent may not · a
+Pty cap may not (the contract moved) · admin's genesis may · no cap may not ·
+garbage input is refused rather than crashing.
 
-- a viewer with no cap for this agent → **no buffer, no liveness** (remove the gate and this goes red — verified)
-- the creator's Manage cap → may watch
-- a Manage cap on **another** agent → may not
-- a Pty cap → may not (the contract moved)
-- admin's genesis cap → may watch
+`apps/ezagent_plugin_world/test/ezagent/world/pty_read_exits_test.exs` — the exits:
+
+- **exit 1** with no cap → no buffer, no liveness
+- **exit 3** with no cap → `error:unauthorized`, **and a PTY chunk broadcast to that
+  agent's topic is never received** (proving it really did not subscribe, rather
+  than merely returning an error)
+- **chunk binding** → another agent's chunk does not reach this terminal
 
 ## ⚠️ Still open: `WorkspaceUserAdmin.create_user` is a confused deputy
 

@@ -77,7 +77,7 @@ manage = Ezagent.Capability.cap(:agent, Ezagent.ActionSet.Manage, :any)
 %{write: manage, restart: manage}
 ```
 
-`Ezagent.World.PtyAccess` (the terminal **read** gate) checks the same cap. So:
+`Ezagent.Domain.Pty.Access` (the terminal **read** gate) checks the same cap. So:
 
 > **Authority over an agent = its Manage cap. That authority carries the terminal: watch, type, restart.**
 
