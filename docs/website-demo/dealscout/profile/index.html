@@ -1,0 +1,127 @@
+<!DOCTYPE html>
+<html lang="zh" data-theme="light">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>建立你的名片 · Profile · DealScout · Ezagent</title>
+<link rel="stylesheet" href="https://cdn.jsdelivr.net/gh/ezagent42/design-system@main/styles.css">
+<style>
+  body{max-width:820px;margin:40px auto;padding:0 24px 80px;background:var(--ground);color:var(--ink);font-family:var(--font-ui);font-weight:450;-webkit-font-smoothing:antialiased}
+  .back{display:inline-block;margin-bottom:20px;font-size:13px;color:var(--ink-3);text-decoration:none;transition:color .15s var(--ease-out)}
+  .back:hover{color:var(--accent)}
+  h1{font-family:var(--font-cn);font-size:28px;font-weight:600;margin:0 0 6px;letter-spacing:-.01em}
+  .sub{color:var(--ink-3);font-size:14px;margin-bottom:28px}
+  h2{font-family:var(--font-cn);font-size:17px;font-weight:600;margin:0 0 6px}
+  .sec-desc{font-size:13px;color:var(--ink-3);margin:0 0 14px}
+
+  .layout{display:grid;grid-template-columns:1fr 300px;gap:32px;align-items:start}
+  @media(max-width:700px){.layout{grid-template-columns:1fr}}
+
+  .field{margin:12px 0}
+  .field label{display:block;font-size:12px;font-weight:600;margin-bottom:3px;color:var(--ink-2)}
+  .field input,.field textarea{width:100%;padding:9px 14px;border:1px solid var(--line);border-radius:var(--r-md);font-size:13px;font-family:inherit;background:var(--card);color:var(--ink);resize:vertical;box-sizing:border-box;transition:border-color .15s var(--ease-out),box-shadow .15s var(--ease-out)}
+  .field input:focus,.field textarea:focus{outline:none;border-color:var(--accent);box-shadow:0 0 0 3px var(--accent-wash)}
+
+  .tags{display:flex;flex-wrap:wrap;gap:6px;margin:8px 0}
+  .tags .tag{padding:5px 12px;border-radius:var(--r-pill);font-size:11px;cursor:pointer;background:var(--ground-2);color:var(--ink-2);transition:all .12s var(--ease-out);border:1px solid transparent}
+  .tags .tag:hover{background:var(--ground-hover)}
+  .tags .tag.sel{background:var(--accent);color:var(--on-accent)}
+  .tag-input{padding:5px 12px;border:1px dashed var(--line);border-radius:var(--r-pill);font-size:11px;color:var(--ink-4);cursor:text;min-width:80px;outline:none;background:transparent}
+  .tag-input:focus{border-color:var(--accent)}
+
+  .preview-card{padding:24px 20px;background:var(--card);border-radius:var(--r-lg);box-shadow:var(--shadow-card);position:sticky;top:24px}
+  .preview-card h3{font-family:var(--font-cn);font-size:13px;color:var(--ink-3);margin:0 0 14px;font-weight:400}
+  .pc{display:flex;gap:14px;align-items:flex-start}
+  .pc .av{width:48px;height:48px;border-radius:var(--r-md);display:grid;place-items:center;font-size:22px;font-weight:700;color:#fff;flex-shrink:0}
+  .pc .info{flex:1;min-width:0}
+  .pc .name{font-weight:700;font-size:15px;color:var(--ink)}
+  .pc .org{font-size:12px;color:var(--ink-3);margin:3px 0}
+  .pc .tags{font-size:10px}
+  .pc .need{font-size:11px;color:var(--ink-3);margin-top:10px;padding-top:10px;border-top:1px solid var(--line);line-height:1.5}
+  .pc .need b{color:var(--ink-2);font-weight:600}
+
+  .btn{font-family:var(--font-ui);font-size:14px;font-weight:600;padding:10px 24px;border-radius:var(--r-pill);border:0;cursor:pointer;text-decoration:none;display:inline-flex;align-items:center;gap:6px;transition:all .15s var(--ease-out);min-height:44px}
+  .btn:focus-visible{outline:2px solid var(--accent);outline-offset:2px}
+  .btn.primary{background:var(--accent);color:var(--on-accent)}
+  .btn.primary:hover{transform:translateY(-1px);box-shadow:0 4px 16px rgba(11,92,255,.4)}
+  .btn.primary:active{transform:scale(.98)}
+  .nav-btns{display:flex;justify-content:space-between;margin-top:24px}
+  @media(prefers-reduced-motion:reduce){*,*::before,*::after{animation-duration:.01ms!important;transition-duration:.01ms!important}}
+</style>
+</head>
+<body>
+
+<a class="back" href="../">← 返回 DealScout · Back</a>
+<h1>建立你的名片 · Profile</h1>
+<p class="sub">让匹配算法知道你是谁——名片越完整，匹配越准。</p>
+
+<div class="layout">
+<div>
+  <h2>身份 · Identity</h2>
+  <p class="sec-desc">你是谁、代表哪个机构。</p>
+  <div class="field"><label>姓名 · Name</label><input type="text" id="pName" placeholder="你的姓名" oninput="up()"></div>
+  <div class="field"><label>机构 · Organization</label><input type="text" id="pOrg" placeholder="公司/基金/机构名称" oninput="up()"></div>
+  <div class="field"><label>角色 · Role</label><input type="text" id="pRole" placeholder="创始人 / 投资人 / …" oninput="up()"></div>
+
+  <h2 style="margin-top:28px">行业标签 · Industry tags</h2>
+  <p class="sec-desc">选或输入你的行业关键词。</p>
+  <div class="tags" id="suggestedTags">
+    <span class="tag" onclick="toggleTag(this)">FinTech</span>
+    <span class="tag" onclick="toggleTag(this)">AI / Agent</span>
+    <span class="tag" onclick="toggleTag(this)">SaaS</span>
+    <span class="tag" onclick="toggleTag(this)">跨境</span>
+    <span class="tag" onclick="toggleTag(this)">Web3</span>
+    <span class="tag" onclick="toggleTag(this)">医疗健康</span>
+    <span class="tag" onclick="toggleTag(this)">消费</span>
+    <span class="tag" onclick="toggleTag(this)">企业服务</span>
+    <span class="tag" onclick="toggleTag(this)">硬科技</span>
+  </div>
+  <span class="tag-input" contenteditable="true" onkeydown="addTag(event)" onblur="addTagBlur(event)" placeholder="输入自定义标签…"></span>
+
+  <h2 style="margin-top:28px">资源与需求 · Have &amp; Need</h2>
+  <p class="sec-desc">你有什么资源？你在找什么？两者都会用于双向匹配。</p>
+  <div class="field"><label>我有什么 · What I have</label><textarea id="pHave" rows="2" placeholder="资金、人脉、行业经验、技术、牌照…" oninput="up()"></textarea></div>
+  <div class="field"><label>我在找什么 · What I need</label><textarea id="pNeed" rows="2" placeholder="钱、项目、联合创始人、退出机会…" oninput="up()"></textarea></div>
+
+  <div class="nav-btns">
+    <span></span>
+    <button class="btn primary" onclick="save()">保存名片 · Save profile →</button>
+  </div>
+</div>
+
+<!-- Preview -->
+<div class="preview-card">
+  <h3>名片预览 · Card preview</h3>
+  <div class="pc">
+    <div class="av" id="pcAv" style="background:var(--accent)">你</div>
+    <div class="info">
+      <div class="name" id="pcName">你的姓名</div>
+      <div class="org" id="pcOrg">机构 · 角色</div>
+      <div class="tags" id="pcTags"></div>
+    </div>
+  </div>
+  <div class="need" id="pcNeed"><b>我在找：</b>—</div>
+  <div class="need" style="border-top:none;margin-top:4px" id="pcHave"><b>我有：</b>—</div>
+</div>
+</div>
+
+<script>
+var tags=[];
+function toggleTag(el){el.classList.toggle('sel');up();}
+function getTags(){var t=[];document.querySelectorAll('#suggestedTags .tag.sel').forEach(function(x){t.push(x.textContent);});return t.concat(tags);}
+function addTag(e){if(e.key==='Enter'){e.preventDefault();var v=(e.target.textContent||'').trim();if(v&&tags.indexOf(v)===-1){tags.push(v);e.target.textContent='';up();}}}
+function addTagBlur(e){var v=(e.target.textContent||'').trim();if(v&&tags.indexOf(v)===-1){tags.push(v);e.target.textContent='';up();}}
+function up(){
+  var n=document.getElementById('pName').value||'你的姓名';
+  document.getElementById('pcName').textContent=n;
+  document.getElementById('pcAv').textContent=n.charAt(0)||'你';
+  document.getElementById('pcOrg').textContent=(document.getElementById('pOrg').value||'机构')+' · '+(document.getElementById('pRole').value||'角色');
+  var all=getTags();
+  document.getElementById('pcTags').innerHTML=all.map(function(t){return'<span class="tag sel">'+t+'</span>';}).join('');
+  document.getElementById('pcHave').innerHTML='<b>我有：</b>'+(document.getElementById('pHave').value||'—');
+  document.getElementById('pcNeed').innerHTML='<b>我在找：</b>'+(document.getElementById('pNeed').value||'—');
+}
+function save(){alert('名片已保存 · Profile saved（demo）');location.href='../';}
+</script>
+</body>
+</html>
