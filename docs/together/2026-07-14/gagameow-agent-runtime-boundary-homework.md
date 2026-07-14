@@ -237,8 +237,10 @@ gate，再进入正式 return。
 - [x] Task 4：ownership、allowlist bypass、false positive 独立攻防复核完成，
   verdict `SOUND`；grouped alias、import、option-bearing grouped alias 绕过均已关闭；
 - Task 5：汇总最终 gates 与 return evidence；
-- creator Terminal `/login` live acceptance：仅等待 #1375 部署确认，不以 merge
-  状态替代部署证据；
+- creator Terminal live acceptance：只读 canary 检查已证明 #1375 部署在
+  `ezagent:22d966b04`，公网 health 200。`test-zyli-cc-1` 已启动 Claude 并加入
+  agent bridge，说明 credential-bearing runtime 存在，但停在未识别交互对话框；
+  尚未完成正常产品调用和 restart persistence，且本轮未获线上写操作授权；
 - capability-issuing Facade slice：#1379 chokepoint 已就绪，在 Task 4 gate review
   后仍不得直接进入 authority-persisting 实现。PR #1381 证明该 chokepoint 只枚举
   静态可解析调用，不能证明运行时所有 cap 都来自 `Ezagent.Cap.issue/3`。#1382
@@ -248,3 +250,5 @@ gate，再进入正式 return。
   `check_invariants` 通过。完整 precommit 被 `origin/main` 同样存在的
   `world_live.ex:216` URI-query violation 阻塞；组合 architecture+invariants 仍被
   共享 test DB 残留 `probe-*` workspace 触发 3 个 visibility invariant 失败。
+  补齐本地 web node_modules 后，纯 main 仍复现 World PTY state timeout；
+  `pnpm-lock.yaml` 也落后于 `package.json` 的四个依赖。
