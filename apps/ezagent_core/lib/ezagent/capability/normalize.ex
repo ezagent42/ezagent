@@ -19,7 +19,9 @@ defmodule Ezagent.Capability.Normalize do
       "instance" => uri_or_any_to_string(cap.instance),
       "workspace_uri" => uri_or_any_to_string(cap.workspace_uri),
       "granted_by" => uri_or_any_to_string(cap.granted_by),
-      "granted_at" => DateTime.to_iso8601(cap.granted_at)
+      "granted_at" => DateTime.to_iso8601(cap.granted_at),
+      "signature" => encode_signature(cap.signature),
+      "key_id" => cap.key_id
     }
   end
 
@@ -46,7 +48,9 @@ defmodule Ezagent.Capability.Normalize do
       instance: string_to_uri_or_any(Map.get(m, "instance")),
       workspace_uri: string_to_uri_or_any(Map.get(m, "workspace_uri", "any")),
       granted_by: string_to_uri_or_any(Map.get(m, "granted_by")),
-      granted_at: parse_datetime(Map.get(m, "granted_at"))
+      granted_at: parse_datetime(Map.get(m, "granted_at")),
+      signature: decode_signature(Map.get(m, "signature")),
+      key_id: Map.get(m, "key_id")
     }
   end
 
@@ -240,6 +244,24 @@ defmodule Ezagent.Capability.Normalize do
 
   defp string_to_uri_or_any("any"), do: :any
   defp string_to_uri_or_any(s) when is_binary(s), do: Ezagent.URI.new!(s)
+
+  defp encode_signature(nil), do: nil
+
+  defp encode_signature(signature) when is_binary(signature),
+    do: Base.url_encode64(signature, padding: false)
+
+  defp decode_signature(nil), do: nil
+
+  defp decode_signature(signature) when is_binary(signature) do
+    case Base.url_decode64(signature, padding: false) do
+      {:ok, raw_signature} ->
+        raw_signature
+
+      :error ->
+        raise ArgumentError,
+              "Ezagent.Capability.from_map/1: invalid base64url signature"
+    end
+  end
 
   defp parse_datetime(nil), do: DateTime.utc_now()
 
