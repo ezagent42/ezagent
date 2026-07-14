@@ -11,6 +11,8 @@ defmodule Ezagent.Invariants.CapIssueChokepointTest do
   """
   use ExUnit.Case, async: true
 
+  alias EzagentCore.CapsJsonScanner, as: Scanner
+
   @mint_candidates %{
     "apps/ezagent_core/lib/ezagent/cap.ex" => 1,
     "apps/ezagent_core/lib/ezagent/capability/normalize.ex" => 3,
@@ -134,6 +136,44 @@ defmodule Ezagent.Invariants.CapIssueChokepointTest do
     refute revoke =~ "MapSet.put"
   end
 
+  # ------------------------------------------------------------------
+  # Leg 3a — the COLUMN itself.
+  #
+  # The caller enumeration below is an allowlist of selected APIs. It is NOT an
+  # invariant over the authority column, and it never was: `create_read_only/2`
+  # sat outside it for as long as the first cut of this gate existed, because the
+  # scanner knew call-site spellings and nothing about `caps_json`.
+  #
+  # So pin the column. `users.caps_json` is where a user's authority actually
+  # lives — the user Kind reconciles its cap slice FROM it. Every assignment to
+  # it, repo-wide, is enumerated here. Add a new writer function to
+  # `Ezagent.Users` and this goes red BEFORE the caller allowlist has any chance
+  # to be wrong about it.
+  @caps_json_assignments %{
+    # `create/3` and `create_read_only/2` — the two entry points the caller
+    # allowlist below governs.
+    "apps/ezagent_domain_identity/lib/ezagent/users.ex" => 2,
+
+    # Rewrites the retired Chat behavior name inside EXISTING artifacts. It
+    # preserves authority rather than broadening it, and grants nothing new.
+    "apps/ezagent_domain_identity/lib/ezagent/identity/grant_migration.ex" => 1
+  }
+
+  test "the authority column has exactly the known writers" do
+    actual = caps_json_assignment_sites()
+
+    assert actual == @caps_json_assignments, """
+    The set of `caps_json` ASSIGNMENTS changed.
+
+    This column IS a user's authority — the user Kind reconciles its cap slice
+    from it. A new writer is a new way for authority to enter the system, and
+    the caller allowlist cannot see it (that is exactly how `create_read_only/2`
+    went unwatched). Justify it here.
+
+      actual: #{inspect(actual, pretty: true)}
+    """
+  end
+
   test "every `users.caps_json` writer is enumerated — a new one is a security decision" do
     found = users_create_sites()
     expected = @caps_json_writers |> Map.keys() |> MapSet.new()
@@ -162,7 +202,7 @@ defmodule Ezagent.Invariants.CapIssueChokepointTest do
 
   test "`:no_caps` caps_json writers pass a literal empty cap list" do
     for {file, :no_caps} <- @caps_json_writers do
-      args = repo_root() |> Path.join(file) |> users_create_cap_args()
+      args = repo_root() |> Path.join(file) |> Scanner.users_create_cap_args()
 
       assert args != [], "#{file} is declared `:no_caps` but calls no Users.create"
 
@@ -195,41 +235,49 @@ defmodule Ezagent.Invariants.CapIssueChokepointTest do
 
   defp users_create_sites do
     caps_json_source_files()
-    |> Enum.filter(fn {_rel, abs} -> users_create_cap_args(abs) != [] end)
+    |> Enum.filter(fn {_rel, abs} -> Scanner.users_create_cap_args(abs) != [] end)
     |> Enum.map(fn {rel, _abs} -> rel end)
     |> MapSet.new()
   end
 
-  # EVERY `Users.*` entry point that writes the `caps_json` column, and the
-  # argument carrying the caps:
-  #
-  #   Users.create/3,4          — caps are the 3rd positional arg
-  #   Users.create_read_only/2  — caps are the 2nd (and the /1 clause defaults [])
-  #
-  # Missing the second one is how the first cut of this gate gave false comfort.
-  # If a new `caps_json` writer is added to `Ezagent.Users`, it MUST be taught
-  # here or the enumeration silently stops covering it.
-  defp users_create_cap_args(file) do
-    {_ast, acc} =
-      Macro.prewalk(quoted!(file), [], fn
-        {{:., _, [{:__aliases__, _, mod}, fun]}, _, args} = node, acc ->
-          {node, collect_caps_arg(List.last(mod), fun, args) ++ acc}
+  # Every `caps_json: ...` assignment (a changeset / struct key), repo-wide.
+  # Docstrings and comments naturally fall out — this walks the AST, not text.
+  defp caps_json_assignment_sites do
+    caps_json_source_files()
+    |> Enum.reduce(%{}, fn {relative, absolute}, acc ->
+      {_ast, count} =
+        Macro.prewalk(quoted!(absolute), 0, fn
+          {:%{}, _, fields} = node, n when is_list(fields) ->
+            {node, n + count_caps_json_key(fields)}
 
-        node, acc ->
-          {node, acc}
-      end)
+          {:{}, _, _} = node, n ->
+            {node, n}
 
-    Enum.reverse(acc)
+          node, n ->
+            {node, n + count_caps_json_kw(node)}
+        end)
+
+      if count == 0, do: acc, else: Map.put(acc, relative, count)
+    end)
   end
 
-  defp collect_caps_arg(:Users, :create, args) when length(args) >= 3,
-    do: [Enum.at(args, 2)]
+  defp count_caps_json_key(fields) do
+    Enum.count(fields, fn
+      {:caps_json, _} -> true
+      _ -> false
+    end)
+  end
 
-  defp collect_caps_arg(:Users, :create_read_only, args) when length(args) >= 2,
-    do: [Enum.at(args, 1)]
+  # A bare keyword list (e.g. `change(uri: x, caps_json: y)`) is a plain list of
+  # 2-tuples in the AST, not a `%{}` node.
+  defp count_caps_json_kw(node) when is_list(node) do
+    Enum.count(node, fn
+      {:caps_json, _} -> true
+      _ -> false
+    end)
+  end
 
-  # `create_read_only/1` defaults to `[]` — no caps, nothing to police.
-  defp collect_caps_arg(_mod, _fun, _args), do: []
+  defp count_caps_json_kw(_node), do: 0
 
   defp provenance_constructors do
     source_files()
