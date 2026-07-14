@@ -9,13 +9,24 @@
 
 ## 1. IA 映射表：flywheel → 真实面
 
+> **术语约定**：Gallery 货架展示的是 **socialware 产品**（用户用 world+hello 构建的产物，可发布形态是 `Socialware.Definition`，config-only、不含代码），不是 plugin（plugin 是代码扩展，提供 mechanism）。见 GLOSSARY.md #156–#158。
+
 | Flywheel 页面 | 作用 | 对应真实面 | 当前状态 |
 |--------------|------|-----------|---------|
-| **gallery.html** | 产品货架（搜索/筛选/瀑布流卡片） | WorldLive `/plugins` + 待建 Gallery API（W-G1） | `/plugins` 只显示已安装插件，不是 marketplace gallery |
-| **product-detail.html** | 产品详情（manifest + Try + Fork CTA） | Hello external feed `/socialware/external` + 待建产品详情页 | 无产品详情页；hello external feed 是 AI 生成页面的查看器，不带 metadata |
-| **world-step.html** | 构建/Fork 中转（发布表单占位） | WorldLive 内待建发布入口（W-G2） + Fork 触发（W-G3） | Fork 后端已落地（`session.fork_config`），CR 管线已落地——缺前端入口和表单 |
-| **publish-landing.html** | 发布确认 + 卡片进入货架（闭环反馈） | 待建（H-G4） | 无 |
-| **gallery → product → world → publish → gallery 闭环** | 5 步飞轮 | hello 自举链：greeter → live 回复 → concierge → kanban 派活 → agent 产 PR → CI/merge/deploy → 看板流转 | hello live E2E 待建（zhaomato 当前任务） |
+| **gallery.html** | socialware 产品货架（搜索/筛选/瀑布流卡片） | 🔴 **不存在。** WorldLive 的 `/plugins` 页显示的是已安装的**代码插件**，和 gallery 展示的 socialware 产品是两回事 | 真正的 gallery 浏览/搜索/详情 API 待建（W-G1）；前端 UI 待建 |
+| **product-detail.html** | 产品详情（manifest + Try + Fork CTA） | 🔴 **不存在。** Hello external feed 是 AI 生成页面的查看器，不带 socialware metadata | 无产品详情页；Hello external feed 渲染 @json-render 内容，不含 manifest 展示 |
+| **world-step.html** | 构建/Fork 中转（发布表单占位） | 🟡 Fork 后端已落地（`session.fork_config`），CR 管线已落地——**缺前端入口和表单** | W-G2（发布入口+表单）、W-G3（Gallery→Fork 触发）待建 |
+| **publish-landing.html** | 发布确认 + 卡片进入货架（闭环反馈） | 🔴 **不存在。** | H-G4 待建 |
+| **gallery → product → world → publish → gallery 闭环** | 5 步飞轮（多租户 marketplace：Builder × Seller） | hello 自举链（单次开发任务流：用户 × Agent） | hello live E2E 待建（zhaomato 当前任务） |
+
+### 🔴 关键空缺：真正的 Gallery 还没有
+
+flywheel 原型里的 gallery 是一个 **socialware marketplace**（浏览 → 试用 → Fork → 上架），而真实 WorldLive 里没有任何一个页面对应它：
+
+- WorldLive `/plugins` = 已安装的代码插件列表（不是 marketplace）
+- 真正的 gallery 需要 W-G1（目录 API）+ 前端 UI（浏览/搜索/筛选/详情），**目前全部待建**
+
+这个空缺意味着：flywheel 的 IA 映射到真实面时，**多数对应行是 "不存在" 而非 "改这个页面"**。这不是坏事——它恰恰说明了设计参考的价值：告诉 zhaomato 在构建 hello live E2E 时，哪些 flywheel 页面结构应该被带上。
 
 ### 关键映射
 

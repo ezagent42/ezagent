@@ -12,10 +12,22 @@
 
 ### ✅ Plan 分配任务（已完成）
 - `1378-flywheel-to-liveview/design-brief.md` — IA 映射表 + 视觉方向 + hello↔kanban 连接点 + 不做事项清单
-- `1378-flywheel-to-liveview/ia-mapping.html` — flywheel 5 页 → world/hello 真实面 IA 对照原型
 - `1378-flywheel-to-liveview/hello-entry-flow.html` — greeter → live 回复 → kanban 连接的用户旅程参考
 - `doc/page-flow.md` 已更新设计参考节
 - 受众 zhaomato，不改代码，设计输入最终走 Feishu
+
+### 🔴 重点发现：真正的 Gallery 还不存在
+
+IA 映射过程中发现关键事实：flywheel 原型的 gallery 是 socialware marketplace（浏览 → 试用 → Fork → 上架），而真实 WorldLive 里**没有任何页面对应它**。WorldLive `/plugins` 显示的是代码插件，不是 socialware 产品。
+
+| Flywheel 页面 | 真实面对应 | 状态 |
+|--------------|-----------|------|
+| gallery 货架 | — | 🔴 不存在 |
+| product-detail | — | 🔴 不存在 |
+| world-step (发布) | Fork 后端/C管线已落地 | 🟡 缺前端入口+表单 |
+| publish-landing | — | 🔴 不存在 |
+
+这意味着 flywheel IA → 真实面的映射，多数行是 **"不存在"而非"改现有页面"**。设计参考的价值在于告诉 zhaomato：构建 hello live E2E 时，哪些 flywheel 的结构应该被带入。
 
 ## 设计决策
 - L1 页面放根目录（从 mainsite 直接触达），L2/L3 收入子目录 — 遵循设计交付规范规则 #2
@@ -23,6 +35,7 @@
 - site-nav.js 用 `EZD_SITE_ROOT` 变量适配不同页面深度，替代 `<base>` 标签（避免全局副作用）
 - Flywheel IA 映射关键是 "结构对照" 而非 "风格统一" — homesite 暗色玻璃不进 world 的 shadcn 体系
 - Hello↔Kanban 连接点设计标注 "松耦合，非最终挂载"（诚实策略，参照 flywheel world-step 占位页做法）
+- **Plugin ≠ Socialware**：Gallery 货架展示的是 socialware 产品（config-only Definition），不是 plugin（代码扩展）。WorldLive `/plugins` 页不是 gallery 的对应物——这个区分写入 design-brief.md 术语约定
 
 ## 下一步计划（必填）
 - 设计输入文档走 Feishu 交付给 zhaomato
