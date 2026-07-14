@@ -5,41 +5,77 @@
 # 按协议模块注记(kanban-team-collaboration.md §d 末尾):"the mechanism
 # (identity → target URI → Router.dispatch) is the invariant"。本脚本复刻
 # EzagentCli.Dispatch.run_action 同一路径(dispatch.ex:83-99 invocation 构造 +
-# :307 do_dispatch),身份从 EZAGENT_USER_TOKEN 自解析，caps 单独读取——CapBAC 不绕过。
+# :307 do_dispatch),身份从 EZAGENT_USER_TOKEN 自解析,caps 单独读取——CapBAC 不绕过。
+#
+# board 解析:优先 BOARD_URI env;未设时**从调用者(助手)自持的 kanban board cap
+# 动态解析**——即「我这 session 挂的板」。助手挂板时收到 instance-scoped
+# `kanban.<action>` cap(kind=:agent、behavior=Ezagent.ActionSet.Kanban、
+# instance=板 URI),取那些 cap 的 instance 即板 URI,无需外部塞 BOARD_URI。
+# 多个不同板 → 报错让 env 显式指定(避免误操作到别的板)。
 [action, args_json] = System.argv()
 token = System.get_env("EZAGENT_USER_TOKEN") || raise "EZAGENT_USER_TOKEN unset"
-board = System.get_env("BOARD_URI") || "entity://system/agent/loop-board-r2"
+board_env = System.get_env("BOARD_URI")
 node = :"ezagent_runtime@127.0.0.1"
 
 code = ~S"""
 case Ezagent.Authentication.authenticate(token) do
   {:ok, caller} ->
     caps = caller |> Ezagent.Identity.read_entity_caps() |> MapSet.new()
-    args =
-      Jason.decode!(args_json)
-      |> Map.new(fn {k, v} -> {String.to_atom(k), v} end)
 
-    target = Ezagent.URI.new!(board <> "?action=kanban." <> action)
+    # board 解析:BOARD_URI env 优先;未设 → 从 caller 自持的 kanban board cap 解。
+    board_result =
+      case board_env do
+        b when is_binary(b) and b != "" ->
+          {:ok, b}
 
-    inv = %Ezagent.Invocation{
-      target: target,
-      mode: :call,
-      args: args,
-      ctx: %{caller: caller, caps: caps, reply: {:caller_inbox, self()}, deadline_ms: 15_000}
-    }
+        _ ->
+          instances =
+            caps
+            |> Enum.filter(fn c ->
+              c.kind == :agent and c.behavior == Ezagent.ActionSet.Kanban and
+                match?(%URI{}, c.instance)
+            end)
+            |> Enum.map(fn c -> URI.to_string(Ezagent.URI.instance(c.instance)) end)
+            |> Enum.uniq()
 
-    case Ezagent.Invocation.dispatch(inv) do
-      {:ok, r} ->
-        {:ok, r}
+          case instances do
+            [only] -> {:ok, only}
+            [] -> {:error, :no_kanban_board_cap}
+            many -> {:error, {:multiple_boards, many}}
+          end
+      end
 
-      :ok ->
-        receive do
-          {:ezagent_reply, r} -> {:ok, r}
-        after
-          15_000 -> {:ok, :timeout_no_reply}
+    case board_result do
+      {:ok, board} ->
+        args =
+          Jason.decode!(args_json)
+          |> Map.new(fn {k, v} -> {String.to_atom(k), v} end)
+
+        target = Ezagent.URI.new!(board <> "?action=kanban." <> action)
+
+        inv = %Ezagent.Invocation{
+          target: target,
+          mode: :call,
+          args: args,
+          ctx: %{caller: caller, caps: caps, reply: {:caller_inbox, self()}, deadline_ms: 15_000}
+        }
+
+        case Ezagent.Invocation.dispatch(inv) do
+          {:ok, r} ->
+            {:ok, r}
+
+          :ok ->
+            receive do
+              {:ezagent_reply, r} -> {:ok, r}
+            after
+              15_000 -> {:ok, :timeout_no_reply}
+            end
+
+          err ->
+            err
         end
 
-      err ->
+      {:error, _} = err ->
         err
     end
 
@@ -48,7 +84,7 @@ case Ezagent.Authentication.authenticate(token) do
 end
 """
 
-binding = [token: token, board: board, action: action, args_json: args_json]
+binding = [token: token, board_env: board_env, action: action, args_json: args_json]
 
 case :erpc.call(node, Code, :eval_string, [code, binding], 30_000) do
   {result, _} -> IO.inspect(result, limit: 20, width: 120, printable_limit: 2000)
