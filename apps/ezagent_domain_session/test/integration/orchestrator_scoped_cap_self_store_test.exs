@@ -6,9 +6,12 @@ defmodule EzagentDomainInstanceMessage.Integration.OrchestratorScopedCapSelfStor
   """
   use EzagentCore.DataCase, async: false
 
+  import Ecto.Query
+
+  alias Ezagent.Cap.Delivery
   alias Ezagent.Entity.Session.Orchestrator.Caps
 
-  test "a never-ready orchestrator buffers only owner-authorized scoped artifacts" do
+  test "a never-ready orchestrator persists only owner-authorized scoped artifacts" do
     unique = System.unique_integer([:positive])
     workspace_name = "s7-orch-#{unique}"
     workspace_uri = Ezagent.URI.workspace(workspace_name)
@@ -55,7 +58,17 @@ defmodule EzagentDomainInstanceMessage.Integration.OrchestratorScopedCapSelfStor
 
     # This owner holds no delegable Template cap, so the standing preflight
     # admits only the two unconditional, scope-bounded delegation artifacts.
-    assert Ezagent.PendingDelivery.buffer_size(orchestrator_uri) == buffer_size_before + 2
+    assert Ezagent.PendingDelivery.buffer_size(orchestrator_uri) == buffer_size_before
+
+    assert 2 ==
+             EzagentCore.Repo.aggregate(
+               from(delivery in Delivery,
+                 where: delivery.target_uri == ^URI.to_string(orchestrator_uri),
+                 where: delivery.op == :absorb_cap,
+                 where: delivery.status == :pending
+               ),
+               :count
+             )
 
     refute Enum.any?(Ezagent.Identity.read_entity_caps(orchestrator_uri), fn cap ->
              cap.instance in [
@@ -84,7 +97,15 @@ defmodule EzagentDomainInstanceMessage.Integration.OrchestratorScopedCapSelfStor
                Enum.all?(caps, fn cap ->
                  cap.behavior != Ezagent.ActionSet.Template or
                    cap.instance != {:within_workspace, workspace_uri}
-               end)
+               end) and
+               EzagentCore.Repo.aggregate(
+                 from(delivery in Delivery,
+                   where: delivery.target_uri == ^URI.to_string(orchestrator_uri),
+                   where: delivery.op == :absorb_cap,
+                   where: delivery.status == :applied
+                 ),
+                 :count
+               ) == 2
            end)
   end
 

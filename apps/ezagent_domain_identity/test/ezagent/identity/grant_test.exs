@@ -8,8 +8,12 @@ defmodule Ezagent.Identity.GrantTest do
   """
   use EzagentCore.DataCase, async: false
 
+  import Ecto.Query
+
+  alias Ezagent.Cap.Delivery
   alias Ezagent.Capability
   alias Ezagent.Identity.Grant
+  alias EzagentCore.Repo
 
   # A non-entity (system-scheme) URI used to prove the chokepoint OVERWRITES a
   # pre-existing non-entity `granted_by` and REFUSES a non-entity derived
@@ -236,6 +240,74 @@ defmodule Ezagent.Identity.GrantTest do
 
       assert :ok = Grant.revoke_cap(grantee, concrete_cap(), {:held_by, @admin_uri})
       refute cap_present?(grantee)
+
+      delivery =
+        Repo.one!(
+          from(delivery in Delivery,
+            where: delivery.target_uri == ^URI.to_string(grantee),
+            where: delivery.op == :revoke_cap,
+            order_by: [desc: delivery.id],
+            limit: 1
+          )
+        )
+
+      assert delivery.status == :applied
+      assert delivery.attempts == 1
+    end
+
+    test "async revoke stays pending outside a full ETS buffer and drains on ready" do
+      grantee = target_user()
+      {:ok, _} = Ezagent.SpawnRegistry.spawn(@admin_uri)
+      {:ok, pid} = Ezagent.SpawnRegistry.spawn(grantee)
+      Ezagent.ReadyGate.await(@admin_uri, 2_000)
+      Ezagent.ReadyGate.await(grantee, 2_000)
+
+      assert :ok = Grant.grant_cap(grantee, concrete_cap(), {:held_by, @admin_uri})
+      assert cap_present?(grantee)
+
+      :ok = Ezagent.ReadyGate.put(grantee, :not_ready)
+
+      for index <- 1..Ezagent.PendingDelivery.max_per_uri() do
+        :ok = Ezagent.PendingDelivery.buffer(grantee, {:unrelated, index})
+      end
+
+      assert :ok =
+               Grant.revoke_cap_via_router(
+                 grantee,
+                 concrete_cap(),
+                 {:held_by, @admin_uri},
+                 :async
+               )
+
+      assert Ezagent.PendingDelivery.buffer_size(grantee) ==
+               Ezagent.PendingDelivery.max_per_uri()
+
+      delivery =
+        Repo.one!(
+          from(delivery in Delivery,
+            where: delivery.target_uri == ^URI.to_string(grantee),
+            where: delivery.op == :revoke_cap,
+            order_by: [desc: delivery.id],
+            limit: 1
+          )
+        )
+
+      assert delivery.status == :pending
+      assert cap_present_in_slice?(grantee)
+
+      assert length(Ezagent.PendingDelivery.flush(grantee)) ==
+               Ezagent.PendingDelivery.max_per_uri()
+
+      assert :ready =
+               Ezagent.Kind.ReadyTransition.drain_pending_then_mark_ready(
+                 URI.to_string(grantee),
+                 pid
+               )
+
+      assert eventually(fn ->
+               Repo.get!(Delivery, delivery.id).status == :applied and
+                 not cap_present_in_slice?(grantee)
+             end)
     end
 
     test "rule-based revoke still bypasses grant authz and only de-escalates" do
@@ -265,5 +337,29 @@ defmodule Ezagent.Identity.GrantTest do
       cap.behavior == Ezagent.ActionSet.Template and
         cap.instance == {:within_workspace, ws()}
     end)
+  end
+
+  defp cap_present_in_slice?(grantee) do
+    {:ok, slice} = Ezagent.Kind.get_slice(grantee, :identity)
+
+    slice
+    |> Ezagent.Kind.normalize_slice_view()
+    |> Map.fetch!(:caps)
+    |> Enum.any?(fn cap ->
+      cap.behavior == Ezagent.ActionSet.Template and
+        cap.instance == {:within_workspace, ws()}
+    end)
+  end
+
+  defp eventually(fun, attempts \\ 100)
+  defp eventually(_fun, 0), do: false
+
+  defp eventually(fun, attempts) do
+    if fun.() do
+      true
+    else
+      Process.sleep(10)
+      eventually(fun, attempts - 1)
+    end
   end
 end

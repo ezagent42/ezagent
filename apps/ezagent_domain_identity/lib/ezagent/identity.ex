@@ -250,9 +250,11 @@ defmodule Ezagent.Identity do
   Hand an already-issued capability artifact to `entity_uri` for self-storage.
 
   This is the sole producer-side `absorb_cap` envelope. It canonicalizes the
-  grantee, dispatches a VM-internal fire-and-forget cast, and never waits for
-  readiness. A not-ready local Kind therefore buffers the artifact through
-  `PendingDelivery`; authorization already completed at `Ezagent.Cap.issue/3`.
+  grantee and dispatches a VM-internal fire-and-forget cast without waiting for
+  readiness. `Ezagent.Invocation` persists this operation in the capability
+  delivery outbox before attempting the cast; a not-ready grantee therefore
+  leaves a durable pending row instead of entering bounded `PendingDelivery`.
+  Authorization already completed at `Ezagent.Cap.issue/3`.
   """
   @spec absorb_cap(URI.t() | String.t(), Ezagent.Capability.t()) ::
           :ok | {:error, term()}

@@ -21,6 +21,9 @@ defmodule Ezagent.Integration.CreateRoleAgentTest do
 
   use EzagentCore.DataCase, async: false
 
+  import Ecto.Query
+
+  alias Ezagent.Cap.Delivery
   alias Ezagent.Workspace
   alias Ezagent.Entity.User
   alias Ezagent.Workspace.RoleTestBehavior
@@ -160,7 +163,7 @@ defmodule Ezagent.Integration.CreateRoleAgentTest do
   end
 
   @tag :integration
-  test "I3 full create lane returns with a never-joined child, buffers its role artifact, and keeps the workspace usable",
+  test "I3 full create lane returns with a never-joined child, persists its role artifact, and keeps the workspace usable",
        %{ws_name: ws_name, workspace_uri: workspace_uri, admin_ctx: admin_ctx} do
     skip_if_no_entity_spawn(fn ->
       unique = System.unique_integer([:positive])
@@ -226,7 +229,7 @@ defmodule Ezagent.Integration.CreateRoleAgentTest do
       assert Process.alive?(agent_pid)
       assert Ezagent.ReadyGate.status(agent_uri) == :not_ready
 
-      assert [artifact] = buffered_absorb_artifacts(agent_uri)
+      assert [artifact] = pending_absorb_artifacts(agent_uri)
       assert artifact.behavior == TransportGatedRoleBehavior
       assert Ezagent.Capability.action_of(artifact) == :ping
 
@@ -255,24 +258,22 @@ defmodule Ezagent.Integration.CreateRoleAgentTest do
       # empty result is the setup's unchanged, semantically correct slice.
       assert {:ok, %{members: []}} = Ezagent.Router.dispatch(list_cmd)
 
-      # Definitive never-ready failure is loud and detaches the authority; it
-      # cannot linger for a future incarnation at the same URI.
+      # A definitive never-ready failure drains only the legacy ETS transport.
+      # Capability authority remains durably pending for retry; it is never
+      # converted into a diagnostic-only DLQ drop.
       assert :ok = Ezagent.Kind.ReadyTransition.mark_failed(agent_uri)
       assert Ezagent.PendingDelivery.buffer_size(agent_uri) == 0
+      assert [^artifact] = pending_absorb_artifacts(agent_uri)
 
-      assert [["never_ready", payload_json]] =
-               EzagentCore.Repo.query!(
-                 "SELECT reason, payload FROM dlq " <>
-                   "WHERE reason = 'never_ready' " <>
-                   "AND payload LIKE '%action=identity.absorb_cap%' " <>
-                   "ORDER BY id DESC LIMIT 1"
-               ).rows
-
-      payload = Jason.decode!(payload_json)
-      assert payload["target"] =~ "action=identity.absorb_cap"
-
-      assert get_in(payload, ["args", "artifact", "granted_by"]) ==
-               URI.to_string(User.admin_uri())
+      assert 1 ==
+               EzagentCore.Repo.aggregate(
+                 from(delivery in Delivery,
+                   where: delivery.target_uri == ^URI.to_string(agent_uri),
+                   where: delivery.op == :absorb_cap,
+                   where: delivery.status == :pending
+                 ),
+                 :count
+               )
 
       :ok = Ezagent.Agent.TransportReadiness.clear(agent_uri)
       _ = Ezagent.Kind.terminate(agent_uri)
@@ -332,26 +333,20 @@ defmodule Ezagent.Integration.CreateRoleAgentTest do
     end
   end
 
-  defp buffered_absorb_artifacts(uri) do
-    entries =
-      Ezagent.PendingDelivery.with_lock(uri, fn ->
-        case :ets.lookup(Ezagent.PendingDelivery.table(), URI.to_string(uri)) do
-          [{_key, entries}] -> entries
-          [] -> []
-        end
-      end)
+  defp pending_absorb_artifacts(uri) do
+    from(delivery in Delivery,
+      where: delivery.target_uri == ^URI.to_string(uri),
+      where: delivery.op == :absorb_cap,
+      where: delivery.status == :pending,
+      order_by: [asc: delivery.id],
+      select: delivery.payload
+    )
+    |> EzagentCore.Repo.all()
+    |> Enum.map(fn payload ->
+      %Ezagent.Invocation{args: %{artifact: artifact}} =
+        :erlang.binary_to_term(payload, [:safe])
 
-    entries
-    |> Ezagent.PendingDelivery.unwrap_entries()
-    |> Enum.flat_map(fn
-      %Ezagent.Invocation{
-        target: %URI{query: "action=identity.absorb_cap"},
-        args: %{artifact: artifact}
-      } ->
-        [artifact]
-
-      _other ->
-        []
+      artifact
     end)
   end
 

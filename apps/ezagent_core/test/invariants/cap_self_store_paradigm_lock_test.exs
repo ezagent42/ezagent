@@ -16,6 +16,8 @@ defmodule Ezagent.Invariants.CapSelfStoreParadigmLockTest do
   @orchestrator_caps "apps/ezagent_domain_session/lib/ezagent/entity/session/orchestrator/caps.ex"
   @composition_caps "apps/ezagent_domain_session/lib/ezagent/socialware/composition_caps.ex"
   @workspace_facade "apps/ezagent_domain_workspace/lib/ezagent/workspace.ex"
+  @cap_delivery_schema "apps/ezagent_core/lib/ezagent/cap/delivery.ex"
+  @cap_delivery_outbox "apps/ezagent_core/lib/ezagent/cap/delivery_outbox.ex"
 
   @legacy_grant_drivers %{
     "apps/ezagent_domain_session/lib/ezagent/behavior/session/member_cap.ex" => %{
@@ -70,6 +72,8 @@ defmodule Ezagent.Invariants.CapSelfStoreParadigmLockTest do
   }
 
   @absorb_action_literals %{
+    @cap_delivery_schema => 2,
+    @cap_delivery_outbox => 1,
     @recipe_grant_task => 1,
     @orchestrator_caps => 1,
     @composition_caps => 1,

@@ -157,6 +157,15 @@ config :ezagent_core, Ezagent.Cap,
     require_signature: false
   ]
 
+# Durable capability delivery retries. `require_sync_ack` is a policy seam for
+# a future external/adversarial deployment; the current implementation never
+# waits for an outbox row to become applied.
+config :ezagent_core, Ezagent.Cap.DeliveryOutbox,
+  require_sync_ack: [],
+  sweep_interval_ms: 1_000,
+  retry_base_ms: 1_000,
+  retry_max_ms: 60_000
+
 # Import environment specific config. This must remain at the bottom
 # of this file so it overrides the configuration defined above.
 import_config "#{config_env()}.exs"
