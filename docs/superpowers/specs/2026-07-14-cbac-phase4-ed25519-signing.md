@@ -304,18 +304,18 @@ signature. Signing needs a *deterministic* byte construction.
 fixed field order, wrapped in a versioned envelope:**
 
 ```
-signing_payload(cap) = {                 # JSON object. Every SCALAR LEAF is a string; the only
+signing_payload(cap, grantee_uri) = {    # JSON object. Every SCALAR LEAF is a string; the only
                                          # exceptions are the int `v` and the `instance` scope
                                          # array (a list of 2-element [tag,val] string arrays).
   v:            1,                        # signing-format version (bump = new envelope) — the ONLY number
   key_id:       "v<N>|<b64url(trust_domain)>",  # bounded grammar §6.2; SIGNED (in the payload)
-  key_id:       "v<N>|<b64url(trust_domain)>",  # bounded grammar, §6.2 below
   kind:         canon_atom(cap.kind),          # "any" | atom-name string
   behavior:     canon_module(cap.behavior),    # "any" | full module-name string
   action:       canon_atom(Capability.action_of(cap)),  # "any" | atom-name string (capability.ex:182)
   instance:     canon_instance(cap.instance),  # "any" | canonical-URI string | ordered scope array
   workspace_uri: canon_workspace(cap.workspace_uri),  # "any" | canonical-URI string  (see note)
-  granted_by:   canon_uri(cap.granted_by),     # canonical-URI string (entity://…)
+  granted_by:   canon_uri(cap.granted_by),     # canonical-URI string (entity://…) — the ISSUER
+  grantee:      canon_uri(grantee_uri),        # canonical-URI string — the HOLDER (§6.3, binds the target)
   granted_at:   canon_ts(cap.granted_at)       # fixed-precision ISO8601 UTC string, §6.1
 }
 ```
@@ -397,6 +397,35 @@ or domain-mismatched `key_id` is a **deny (`false`)**, never a raise.
   *and* a signed payload field, no contradiction.
   `to_map/1` / `from_map/1` / the `Jason.Encoder` (capability.ex:436/450/569) gain
   the two fields for round-trip persistence in `caps_json`.
+
+### 6.3 Grantee binding (amendment 2026-07-14 — entity-caps review found a retargeting hole)
+
+**The vulnerability.** `Cap.issue(authorization, grantee_uri, cap)` already receives the
+grantee as its **second argument** (e.g. `Cap.issue({:held_by, configurer}, item.source_uri,
+item.cap)` — `source_uri` is the grantee, composition_caps.ex:241), but the artifact has **no
+grantee field** (`%Capability{}` enforce_keys = kind/behavior/instance/workspace_uri/granted_by/
+granted_at — capability.ex:36-60) and the pre-amendment `signing_payload` did **not** cover the
+grantee. So a validly-signed cap could be **re-wrapped naming a different grantee** and still
+pass `verify/1` → **authority retargeting** (attach alice's signed cap to bob). This breaks the
+whole "a forged/retargeted authority can never enter a slice" guarantee.
+
+**The fix (this amendment):**
+
+1. Add a **`grantee_uri: URI.t() | nil`** field to `%Capability{}` (stamped by `issue/3` from
+   its 2nd arg), round-tripped in `to_map`/`from_map`/`Jason.Encoder` like `signature`/`key_id`.
+2. `signing_payload(cap, grantee_uri)` **includes `grantee: canon_uri(grantee_uri)`** (§6 block,
+   above). The signature now binds the holder.
+3. `verify/1` recomputes the payload using **the artifact's own `grantee_uri`**; a re-wrapped
+   cap whose `grantee_uri` differs from what was signed → signature mismatch → `false` (a deny).
+   Consumers that project/store a cap into an entity's slice MUST additionally require the
+   artifact's `grantee_uri` to **equal the receiving entity** (exact equality) — a signed-for-alice
+   cap cannot be stored in bob's slice even if bob is handed the bytes.
+4. `grantee_uri` is a real `entity://` URI for authorizer caps; declared/needed sentinels
+   (`:plugin_declared`) are unaffected (they are never signed, §3).
+
+This closes the retargeting hole **independently of the entity-caps work**, and is the shared
+contract the entity-caps decision envelope binds against (each grant decision's signature covers
+its grantee). Golden vectors (§6.1) MUST include a grantee-mismatch negative case.
 
 ---
 
