@@ -27,6 +27,8 @@ defmodule EzagentPluginHello.KanbanDelegationTest do
 
     assert %URI{} = result.kanban_uri
     assert result.node_id == "n1"
+    assert result.title == "Ship the homepage"
+    assert result.status == :unassigned
     assert result.path =~ "/plugins/kanban/"
 
     assert {:ok, %{tree: tree}} = dispatch(result.kanban_uri, :get_tree, %{}, ctx.admin)
