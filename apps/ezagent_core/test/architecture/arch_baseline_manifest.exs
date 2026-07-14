@@ -116,6 +116,10 @@
   #   recognizer never drift. 22→28.
   # arch-cap-bump: #154 genesis collapse — admin trust-root minter/recognizer/predicate-A fns (see block above) 22→28
   def_count_capability: 28,
+  # Phase-4 CBAC signing fail-loud invariant. The bounded verification ingress
+  # chain must never rescue missing signing material or crypto failures into a
+  # normal `false` signature denial.
+  cap_verify_rescue_to_false: 0,
   # arch-cap-bump: +3 protocol_api P0 (#82/#896) — the inbound HTTP API spawns the
   #   target agent / conversation session through the SANCTIONED SpawnRegistry
   #   chokepoint: conversation_registry.ex `resolve` (2 sites: ensure session live

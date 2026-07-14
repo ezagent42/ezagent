@@ -29,6 +29,41 @@ defmodule Mix.Tasks.Ezagent.Arch.Scan do
     def_count_capability: "apps/ezagent_core/lib/ezagent/capability.ex"
   }
 
+  # Phase-4 CBAC signing: these are the complete verify/verified-set ingress
+  # chain. A bad signature is an ordinary deny (`false`), but missing key
+  # material or a crypto failure is an operational failure and must raise. Keep
+  # this scanner deliberately bounded to that chain so unrelated error handling
+  # cannot mask or inflate the security invariant.
+  @cap_verify_fail_loud_targets %{
+    "apps/ezagent_core/lib/ezagent/cap.ex" => [
+      verify: 1,
+      verify_for: 2,
+      verified_set: 1,
+      verified_set: 2
+    ],
+    "apps/ezagent_domain_identity/lib/ezagent/identity.ex" => [
+      verified_cap_list: 2,
+      verified_cap_set: 2
+    ],
+    "apps/ezagent_domain_identity/lib/ezagent/behavior/identity.ex" => [
+      create: 1,
+      activate: 2,
+      store_verified_cap: 3
+    ],
+    "apps/ezagent_domain_identity/lib/ezagent/identity/recipe_cap_binding.ex" => [
+      validate_artifact: 4
+    ],
+    "apps/ezagent_core/lib/ezagent/kind/snapshot.ex" => [
+      verify_snapshot_caps: 2,
+      put_verified_snapshot_caps: 4
+    ]
+  }
+
+  @cap_verify_fail_loud_function_keys @cap_verify_fail_loud_targets
+                                      |> Map.values()
+                                      |> List.flatten()
+                                      |> MapSet.new()
+
   @template_class_files [
     "apps/ezagent_plugin_cc/lib/ezagent/template/cc_agent.ex",
     "apps/ezagent_plugin_codex/lib/ezagent/template/codex_agent.ex"
@@ -418,6 +453,7 @@ defmodule Mix.Tasks.Ezagent.Arch.Scan do
       def_count_orchestrator_tools: def_count(:def_count_orchestrator_tools),
       def_count_session_creator: def_count(:def_count_session_creator),
       def_count_capability: def_count(:def_count_capability),
+      cap_verify_rescue_to_false: cap_verify_rescue_to_false(),
       spawn_registry_call_sites: length(spawn_hits),
       spawn_registry_modules: spawn_hits |> unique_files() |> length(),
       spawn_registry_off_chokepoint_modules:
@@ -458,6 +494,87 @@ defmodule Mix.Tasks.Ezagent.Arch.Scan do
       socialware_self_publish_unsanctioned: socialware_self_publish_unsanctioned(),
       concatenated_namespace_modules: concatenated_namespace_modules()
     ]
+  end
+
+  # Phase-4 signing fail-loud gate. This searches only the exact verification
+  # path above for a `try ... rescue ... -> false` escape hatch. `false` remains
+  # correct for a normal signature denial, so the predicate is intentionally
+  # scoped to a rescue clause rather than every false-returning branch.
+  defp cap_verify_rescue_to_false do
+    Enum.reduce(@cap_verify_fail_loud_targets, 0, fn {file, function_keys}, total ->
+      case Code.string_to_quoted(read!(file)) do
+        {:ok, ast} -> total + count_cap_verify_rescue_to_false(ast, MapSet.new(function_keys))
+        {:error, _} -> total
+      end
+    end)
+  end
+
+  @doc false
+  @spec count_cap_verify_rescue_to_false_in_source(String.t()) :: non_neg_integer()
+  def count_cap_verify_rescue_to_false_in_source(source) when is_binary(source) do
+    case Code.string_to_quoted(source) do
+      {:ok, ast} ->
+        count_cap_verify_rescue_to_false(ast, @cap_verify_fail_loud_function_keys)
+
+      {:error, _} ->
+        0
+    end
+  end
+
+  defp count_cap_verify_rescue_to_false(ast, function_keys) do
+    {_ast, count} =
+      Macro.prewalk(ast, 0, fn
+        {definition, _meta, [head, [{:do, body} | _]]} = node, count
+        when definition in [:def, :defp] ->
+          if MapSet.member?(function_keys, fn_key(head)) and rescue_returns_false?(body) do
+            {node, count + 1}
+          else
+            {node, count}
+          end
+
+        node, count ->
+          {node, count}
+      end)
+
+    count
+  end
+
+  defp rescue_returns_false?(body) do
+    {_body, found?} =
+      Macro.prewalk(body, false, fn
+        {:try, _meta, [clauses]} = node, found? when is_list(clauses) ->
+          rescue_returns_false? =
+            clauses
+            |> Keyword.get(:rescue, [])
+            |> List.wrap()
+            |> Enum.any?(&rescue_clause_contains_false?/1)
+
+          {node, found? or rescue_returns_false?}
+
+        node, found? ->
+          {node, found?}
+      end)
+
+    found?
+  end
+
+  # Any `false` inside a rescue clause is a possible infra-failure deny. This
+  # intentionally catches conditional and case branches as well as a direct
+  # `rescue _ -> false`; normal verification denial is outside `rescue` and is
+  # therefore unaffected.
+  defp rescue_clause_contains_false?({:->, _meta, [_patterns, body]}),
+    do: contains_false?(body)
+
+  defp rescue_clause_contains_false?(_clause), do: false
+
+  defp contains_false?(body) do
+    {_body, found?} =
+      Macro.prewalk(body, false, fn
+        false, _found? -> {false, true}
+        node, found? -> {node, found?}
+      end)
+
+    found?
   end
 
   # World host-scope config (2026-06-29) — deployment host literals belong in
