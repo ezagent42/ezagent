@@ -24,28 +24,28 @@
       title: '专家 agent 招募 · Expert agent recruiting',
       description: '抽一张职业卡，为 TA 写个 agent，看看你和行业专家差多少 —— 然后招一个真专家发布的 agent 进你的组。',
       owner: 'Ezagent 团队 · Ezagent', category: 'hire', glyph: '招', color: 'var(--blue)',
-      tryUrl: '../recruit/', visibility: 'public_view', hires: 1284, rating: '4.9', seed: true,
+      tryUrl: '../recruit/index.html', visibility: 'public_view', hires: 1284, rating: '4.9', seed: true,
     },
     {
       name: 'dealscout-matching', version: '1.1.0',
       title: '投融资撮合树洞 · DealScout matching',
       description: '说出你在找什么钱 / 项目 / 联合创始人，AI 循着信号把对的那一方捞到面前，你挑对上的牵成一条线。',
       owner: 'DealScout 团队 · DealScout', category: 'match', glyph: '撮', color: 'var(--jade)',
-      tryUrl: '../recruit/', visibility: 'public_view', hires: 412, rating: '4.8', seed: true,
+      tryUrl: '../recruit/index.html', visibility: 'public_view', hires: 412, rating: '4.8', seed: true,
     },
     {
       name: 'cs-desk', version: '1.4.2',
       title: '客服自助台 · Customer support desk',
       description: '把重复工单接进 AI 自助面，按「能否自助」二分、按愤怒值排队，一线只留一个升级按钮。',
       owner: '马屿 · SaaS 客服负责人', category: 'custom', glyph: '客', color: 'var(--orange)',
-      tryUrl: '../recruit/', visibility: 'public_view', hires: 268, rating: '4.7', seed: true,
+      tryUrl: '../recruit/index.html', visibility: 'public_view', hires: 268, rating: '4.7', seed: true,
     },
     {
       name: 'contract-redline', version: '1.0.3',
       title: '合同红线审查官 · Contract redline',
       description: '按中 / 欧双辖区逐条标注最常被砍的条款，输出可直接改的红线批注，不空谈原则。',
       owner: '苏珩 · 企业法务 9 年', category: 'custom', glyph: '法', color: 'var(--blueink)',
-      tryUrl: '../recruit/', visibility: 'public_view', hires: 214, rating: '4.9', seed: true,
+      tryUrl: '../recruit/index.html', visibility: 'public_view', hires: 214, rating: '4.9', seed: true,
     },
   ];
 
