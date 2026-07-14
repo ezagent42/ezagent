@@ -483,8 +483,7 @@ defmodule EzagentPluginHello.Prompts do
     - PUBLISH — the owner wants to save/publish the current page state as a new
       template version (e.g. "publish", "save as template", "create a version").
     - KANBAN — the owner wants to hand work from this hello conversation to the
-      workspace Kanban (e.g. "give this to Kanban", "send this task to the board",
-      "把这个交给 Kanban").
+    workspace Kanban (e.g. "give this to Kanban", "send this task to the board").
 
     Reply with EXACTLY ONE WORD — BUILD, ASK, SHARE, PUBLISH, or KANBAN — and nothing else.
     When in doubt, prefer BUILD (the owner is here to build).

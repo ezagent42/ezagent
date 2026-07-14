@@ -9,6 +9,7 @@ defmodule EzagentPluginHello.KanbanDelegation do
   """
 
   require Logger
+  use Gettext, backend: EzagentPluginHello.Gettext
 
   alias Ezagent.{Capability, Identity, Invocation, Workspace}
   alias Ezagent.Agent.RecipeResolver
@@ -37,9 +38,6 @@ defmodule EzagentPluginHello.KanbanDelegation do
     ctx = caller_ctx(sender_uri)
 
     with true <- instruction != "" || {:error, :instruction_required},
-         true <-
-           same_workspace_or_admin?(sender_uri, workspace_uri, ctx) ||
-             {:error, :cross_workspace_denied},
          {:ok, kanban_uri} <- resolve_default(workspace_uri, ctx),
          {:ok, parent_id} <- root_id(kanban_uri, ctx),
          {:ok, %{id: node_id}} <-
@@ -152,13 +150,6 @@ defmodule EzagentPluginHello.KanbanDelegation do
     }
   end
 
-  defp same_workspace_or_admin?(sender_uri, workspace_uri, ctx) do
-    admin? = MapSet.member?(ctx.caps, Capability.admin_genesis_cap())
-    admin? || Capability.workspace_of(sender_uri) == workspace_uri
-  rescue
-    ArgumentError -> false
-  end
-
   defp dispatch(kanban_uri, action, args, ctx) do
     Invocation.dispatch(%Invocation{
       target: Ezagent.URI.with_action(kanban_uri, :kanban, action),
@@ -180,20 +171,27 @@ defmodule EzagentPluginHello.KanbanDelegation do
         TurnDriver.say_nav(
           session_uri,
           actor,
-          "已交给 Kanban：#{instruction}",
+          gettext("Delegated to Kanban: %{instruction}", instruction: instruction),
           %{"type" => "open_url", "value" => result.path}
         )
 
       {:error, reason} ->
         Logger.warning("hello Kanban delegation failed: #{inspect(reason)}")
-        TurnDriver.say(session_uri, actor, "未能交给 Kanban：#{format_reason(reason)}")
+
+        TurnDriver.say(
+          session_uri,
+          actor,
+          gettext("Could not delegate to Kanban: %{reason}", reason: format_reason(reason))
+        )
     end
   end
 
-  defp format_reason(:ambiguous_default_kanban), do: "工作区存在多个看板，且未设置默认看板"
-  defp format_reason(:forbidden), do: "当前账号没有创建看板任务的权限"
-  defp format_reason(:unauthorized), do: "请先登录后再试"
-  defp format_reason(_reason), do: "服务暂时不可用，请稍后再试"
+  defp format_reason(:ambiguous_default_kanban),
+    do: gettext("The workspace has multiple boards and no canonical default")
+
+  defp format_reason(:forbidden), do: gettext("This account cannot create Kanban tasks")
+  defp format_reason(:unauthorized), do: gettext("Sign in and try again")
+  defp format_reason(_reason), do: gettext("The service is temporarily unavailable")
 
   defp entity_name(%URI{} = entity_uri) do
     case Ezagent.URI.name(entity_uri) do

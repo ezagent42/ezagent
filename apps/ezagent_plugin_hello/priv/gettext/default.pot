@@ -11,6 +11,24 @@
 msgid ""
 msgstr ""
 
+msgid "Delegated to Kanban: %{instruction}"
+msgstr ""
+
+msgid "Could not delegate to Kanban: %{reason}"
+msgstr ""
+
+msgid "The workspace has multiple boards and no canonical default"
+msgstr ""
+
+msgid "This account cannot create Kanban tasks"
+msgstr ""
+
+msgid "Sign in and try again"
+msgstr ""
+
+msgid "The service is temporarily unavailable"
+msgstr ""
+
 #: lib/ezagent_plugin_hello/generator.ex:67
 #, elixir-autogen, elixir-format
 msgid "Got it ✅ understanding your request…"

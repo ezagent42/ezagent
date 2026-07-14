@@ -11,6 +11,24 @@ msgstr ""
 "Language: zh_CN\n"
 "Plural-Forms: nplurals=1; plural=0;\n"
 
+msgid "Delegated to Kanban: %{instruction}"
+msgstr "已交给 Kanban：%{instruction}"
+
+msgid "Could not delegate to Kanban: %{reason}"
+msgstr "未能交给 Kanban：%{reason}"
+
+msgid "The workspace has multiple boards and no canonical default"
+msgstr "工作区存在多个看板，且未设置默认看板"
+
+msgid "This account cannot create Kanban tasks"
+msgstr "当前账号没有创建看板任务的权限"
+
+msgid "Sign in and try again"
+msgstr "请先登录后再试"
+
+msgid "The service is temporarily unavailable"
+msgstr "服务暂时不可用，请稍后再试"
+
 #: lib/ezagent_plugin_hello/generator.ex:67
 #, elixir-autogen, elixir-format
 msgid "Got it ✅ understanding your request…"
