@@ -73,7 +73,7 @@
 </ul>
 <div class="coord"><b>⚠ 协调点：</b> gaga 列的「<b>EntityCaps 持久化统一</b>」与 codex entity-caps <b>D（EntityCaps facade）重叠</b>、「<b>no-tail enforcement</b>」= <b>lead 轨道</b>——须由 <b>lead 分派</b>，避免 gaga 与 codex 同改 caps 持久化面碰撞。</div>
 <ul>
-<li><b>bridge-join 静默超时——不在 demo 关键路径（被绕过、非遗忘）：</b> 当初两条焊接链（A 新建 5s 超时 · B @orchestrator 变哑）<b>急症那半已修 + canary 实证</b>（<code>#1294</code> 合 main <code>2d47475b2</code>、07-10 canary 不超时；<code>#1367</code> 07-13 canary 两次 @orchestrator 真回话）。剩下的 <b>cc-PTY bridge-join 慢激活</b>被 <b>cc-headless</b>（<code>:in_process_sync</code>，无 bridge-join 风险）绕过——demo 跑 cc-headless 即可。故 bridge-join = <b>cc-PTY 专项残留 latent 项、延后登记</b>（仅当要用真 PTY agent 上生产时才修），<b>不是 demo 阻塞项</b>。</li>
+<li><b>bridge-join——归因已被 codex 更正（<code>#1405</code> 设计已合），仍非 demo 阻塞、但有真实安全维度：</b> demo 侧被 <b>cc-headless</b>（<code>:in_process_sync</code>，无 bridge-join 风险）绕过、急症半已 canary 证（<code>#1294</code>/<code>#1367</code>），故对 demo <b>不阻塞</b>。但 codex <code>#1405</code> <b>实测证伪了「缺凭证」归因</b>（无凭证 claude 照样发完整 MCP initialize 握手，旧 note 三处全错）——真根因未知、设计刻意不依赖病因。两个真问题浮现：(a) <code>ReadyGate.:failed</code>（投递闸）挡住 <code>pty.write</code>/<code>pty.restart</code>（管理 action）→ agent 一坏，<code>#1375</code> 给创建者的 3 权限有 2 个是死的；(b) <b>cap-revoke 生产今天就被 DLQ</b>——一次 transport 超时丢一条 pending <code>:revoke_cap</code> → cap 留着 = entity-caps <code>#1394</code> gap A 同一个静默丢弃病。<code>#1405</code> 纯设计、Option B 已锁，<b>实现卡在 2 个 lead 决策</b>（见 §4）。</li>
 <li><b>CapBAC 从「主线急症」转为「lead 轨道收口」：</b> 不再牵动全员；codex 两返验收 + 无尾巴升级 &amp; enforce 时机 = lead 轨道（§4）。</li>
 </ul>
 </div>
@@ -173,6 +173,13 @@
 <ul>
 <li><b>验收 codex 两份返工：</b> entity-caps scoped A/B/D 实现（<code>feat/entity-caps-scoped</code>）+ cap-signing 无尾巴调查 findings（<code>feat/cap-signing-notail-upgrade</code>）→ 定无尾巴 re-provision 升级实现 &amp; <b>enforce 时机</b>（enforce 不翻直到 audit=0 未签名 authorizer cap）。</li>
 <li><b>demo 端到端集成粘合 + 验收：</b> 把 hello live E2E + hello↔kanban 松耦合 + 派活→PR→合→看板流转拼成端到端链，canary 实测验收（gaga 测 → lead 验）。</li>
+<li><b>★ 拍 <code>#1405</code> 的 2 个决策（阻塞 bridge-join/agent-fault 实现）：</b>
+  <ul>
+  <li><b>决策 A（<code>#1394</code> 统一底座）：</b> bridge-join 故障投递 + entity-caps cap 投递合成一套 durable-delivery。<b>推荐：一张通用 durable-op outbox</b>——把 entity-caps A 的 outbox 泛化成通用底座，fault-envelope + cap-op 作两类 producer/consumer，共用 retry/backoff（north-star 不许两套 retry）。</li>
+  <li><b>决策 B（cap-revoke DLQ 三选一，生产今天就有的洞）：</b> ①排除 cap op 出 dead-letter（弱，ETS buffer 重启即丢）/ ②等 <code>#1394</code> A durable delivery 先落、<code>#1405</code> 排其后（codex 说最便宜）/ ③本 PR 先落 + 记录已知丢弃。<b>推荐：选 ②</b> + 把 <b><code>#1394</code> A 提为 codex 下一优先</b>，落地前明记窗口风险。</li>
+  </ul>
+</li>
+<li><b><code>#1403</code> canary 部署时机：</b> 已在 main、<b>未发 canary</b>（auth 路径改动、深夜压住）——lead 定何时发（发时走真数据 E2E 验证登录不被误伤，per §7 新 gate）。</li>
 <li><b>分支合并</b>（lead 是进 main 唯一路径）· <b>canary 部署</b> · <code>#1378</code> rebase 后合 · <code>#1386</code> grantee-binding 收口。</li>
 </ul>
 </div>

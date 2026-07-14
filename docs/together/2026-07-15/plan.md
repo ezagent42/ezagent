@@ -26,7 +26,7 @@
 **修正/变化（deltas vs 上一 plan/state）:**
 - **demo 分工明确（lead 07-14 定）:** 端到端最后一段 = **gaga 测试 demo 路径 → allen 验收 → ruihua 从产品角度完善**；**jjkysy 明天可能没时间**（不派主建，检查补位若有时间再做）。
 - **gaga 已从安全线转回结构线:** AgentRuntime 边界 gate **#1402 已合**（07-14，只减不增门禁 + 绕过对抗测试）；同 PR 一并热修一个 canary 发现的 **LiveAuth 权限可见性 bug**（改读 Ed25519 校验的 live Identity caps 而非旧 caps_json，dual-read 安全）。**#1402 明确未含** ARB-2~5 存量迁移 + 一批 LiveAuth/caps 审计项（HomeLive fail-closed、EntityCaps 持久化统一、cold/restart 权限矩阵、member-cap reader、UI cap count、email boundary、no-tail enforcement）——按优先级另排。**⚠ 协调点:** gaga 列的「EntityCaps 持久化统一」与 codex entity-caps **D（EntityCaps facade）重叠**、「no-tail enforcement」= lead 轨道——须由 lead 分派，避免 gaga 与 codex 同改 caps 持久化面碰撞。
-- **bridge-join 静默超时——不在 demo 关键路径（被绕过、非遗忘）:** 当初的两条焊接链（A 新建 5s 超时 · B @orchestrator 变哑）**急症那半已修 + canary 实证**（#1294 合 main `2d47475b2`、07-10 canary 不超时；#1367 07-13 canary 两次 @orchestrator 真回话）。剩下的 **cc-PTY bridge-join 慢激活**被 **cc-headless**（`:in_process_sync`，无 bridge-join 风险）绕过——demo 跑 cc-headless 即可。故 bridge-join = **cc-PTY 专项的残留 latent 项，延后登记**（仅当要用真 PTY agent 上生产时才修），**不是 demo 阻塞项**。
+- **bridge-join——归因已被 codex 更正（#1405 设计已合），仍非 demo 阻塞、但有真实安全维度:** demo 侧被 **cc-headless**（`:in_process_sync`，无 bridge-join 风险）绕过、急症半已 canary 证（#1294/#1367），故对 demo **不阻塞**。但 codex #1405 **实测证伪了"缺凭证"归因**（无凭证 claude 照样发完整 MCP initialize 握手，旧 note 三处全错）——真根因未知、设计刻意不依赖病因。两个真问题浮现：(a) `ReadyGate.:failed`（投递闸）挡住 `pty.write`/`pty.restart`（管理 action）→ agent 一坏，#1375 给创建者的 3 权限有 2 个是死的；(b) **cap-revoke 生产今天就被 DLQ**——一次 transport 超时丢一条 pending `:revoke_cap` → cap 留着 = entity-caps #1394 gap A 同一个静默丢弃病。#1405 纯设计、Option B 已锁，**实现卡在 2 个 lead 决策**（见 §4）。
 - **CapBAC 从「主线急症」转为「lead 轨道收口」:** 不再牵动全员；codex 两返验收 + 无尾巴升级 & enforce 时机 = lead 轨道（§4）。
 
 ## §1 头号目标
@@ -79,6 +79,10 @@
 **Coordinator（allenwoods + CC，含 codex = lead 轨道）职责:**
 - **验收 codex 两份返工:** entity-caps scoped A/B/D 实现（`feat/entity-caps-scoped`）+ cap-signing 无尾巴调查 findings（`feat/cap-signing-notail-upgrade`）→ 定无尾巴 re-provision 升级实现 & **enforce 时机**（enforce 不翻直到 audit=0 未签名 authorizer cap）。
 - **demo 端到端集成粘合 + 验收:** 把 hello live E2E + hello↔kanban 松耦合 + 派活→PR→合→看板流转拼成端到端链，canary 实测验收（gaga 测 → lead 验）。
+- **★ 拍 #1405 的 2 个决策（阻塞 bridge-join/agent-fault 实现）:**
+  - **决策 A（#1394 统一底座）:** bridge-join 故障投递 + entity-caps cap 投递合成一套 durable-delivery。**推荐：一张通用 durable-op outbox**——把 entity-caps A 的 outbox 泛化成通用底座，fault-envelope + cap-op 作两类 producer/consumer，共用 retry/backoff（north-star 不许两套 retry）。
+  - **决策 B（cap-revoke DLQ 三选一，生产今天就有的洞）:** ①排除 cap op 出 dead-letter（弱，ETS buffer 重启即丢）/ ②等 #1394 A durable delivery 先落、#1405 排其后（codex 说最便宜）/ ③本 PR 先落 + 记录已知丢弃。**推荐：选 ②** + 把 **#1394 A 提为 codex 下一优先**，落地前明记窗口风险。
+- **#1403 canary 部署时机:** 已在 main、**未发 canary**（auth 路径改动、深夜压住）——lead 定何时发（发时走真数据 E2E 验证登录不被误伤，per §7 新 gate）。
 - **分支合并**（lead 是进 main 唯一路径）· **canary 部署** · #1378 rebase 后合 · #1386 grantee-binding 收口。
 
 ## §5 开工 prompt（每个 dev 一段 paste-ready）
