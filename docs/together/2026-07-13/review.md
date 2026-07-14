@@ -69,7 +69,7 @@ demo 所需的 agent 控制面 / 组合能力就位。同一天还清理了一�
 | returns/ 到达数 | 4 | `close-1320-1327`（zyli #1365）· `orchestrator-session-config`（allen #1361）· `socialware-composition-cap`（allen #1362）· `ruihua-flywheel-demo`（ruihua #1372）；其中 late：0 |
 | 进入 stack.md 数 | 0 | 本日无 `stack.md`（走直接 PR→merge 模型；lead 直接合入 main） |
 | 合入 main 数 | 13 | `#1361`–`#1373`（3 地基 + 10 当日 track/加固） |
-| superseded / out-of-scope / blocked / deferred | superseded 2 · blocked 1 · deferred 2 | superseded：旧 #1320 / #1327 被 #1365 取代（待 lead 接受后关）；blocked：zhaomato 官网 hello E2E（依赖 orchestrator 真回话，mid-day 才由 #1367 证明）；deferred：gaga 的 AgentRuntime 边界 SPEC（急症挤占，结转 07-14）· jjkysy kanban 进度看板（无可见 artifact，结转） |
+| superseded / out-of-scope / blocked / deferred | superseded 2 · blocked 1 · deferred 2 | superseded：旧 #1320 / #1327 被 #1365 取代（待 lead 接受后关）；blocked：zhaomato 官网 hello E2E（依赖 orchestrator 真回话，mid-day 才由 #1367 证明）；deferred：gaga 的 AgentRuntime 边界 SPEC（急症挤占，结转 07-14）· jjkysy 的 kanban 进度看板 + #1301（#1360 分析已提 2 commit 于 `docs/socialware-data-mount-model`，未走 PR，结转形式化） |
 | GitHub PR：merged / subsumed / left-open | merged 13 · subsumed 2（#1320/#1327 由 #1365 吸收）· left-open 1（#1301 dealscout，jjkysy，末次触碰 07-12，未推进） | 逐一点名如上 |
 
 > plan.md 本日**完整**（`lead_confirmed: true`，含 §0 standing + §5 开工 prompt），非 placeholder——不作过程缺口。
@@ -80,8 +80,11 @@ demo 所需的 agent 控制面 / 组合能力就位。同一天还清理了一�
   正当挤占（#1366/#1367/#1369）——**这是正确取舍**：入口不通则下游无从链测，急症优先。结转 07-14（见 §5）。
 - **zhaomato · 官网首程 + hello→kanban E2E transcript — 未交付，但 blocked-not-idle。** 该 track 依赖 orchestrator 真回话，
   而第一张多米诺 mid-day 才由 gaga #1367 证明；解锁前无法链测 hello→kanban 派活。今日属被阻，非空转。结转 07-14（现已解锁）。
-- **jjkysy · kanban socialware 进度看板 — 无 PR、无 return，`#1301` dealscout 末次触碰 07-12。** 今日无可见 artifact；
-  **caveat:** 可能存在非 PR 的看板监控 / 协调工作，但本复盘无法核实。作为缺口跟进，明日明确交付物（见 §5）。
+- **jjkysy · #1360 core-gap 分析有推进（2 commit），但未走 PR/return。** 07-13 他在
+  `docs/socialware-data-mount-model` 提了 2 个 commit——「socialware 数据跨 session 共享 = mount agent 进房间」
+  分析记录 + 收窄为 Layer B（续 #1355/#1357 的深层缺口线）。即其 track 的**缺口发现线有进展**，但
+  **没开 PR、没写 return**，故 PR 层看不见——缺口是**流程（未形式化）**，不是产出为零。kanban 进度看板本身
+  （demo 各环节任务卡 + 跨环节验收）与 `#1301` dealscout（末次触碰 07-12）仍待落——明日形式化 + 交付（见 §5）。
 - **gaga 诚实旗标（独立后续，非急症本身）:** ① `test-zyli-cc-1` 无凭证（与 crash-loop 无关，属 per-agent config）；
   ② 可能还有更多 agent 需凭证下发。两者登记为 demo agent 凭证下发后续，结转 gaga 07-14。
 - **前端 CI 覆盖 = 0（系统性缺口）:** 无 JS/TS 测试、`tsc --noEmit` 全项目零调用、无 ESLint/Vitest；#1369 xterm bug
@@ -106,8 +109,9 @@ demo 所需的 agent 控制面 / 组合能力就位。同一天还清理了一�
    「官网首程 + hello greeter + curl-llm 真回复」E2E transcript（此前唯一的阻塞已清）。
 2. **gaga 补结构线 + 凭证下发。** 把今日让位的 AgentRuntime 边界 SPEC / `agent_runtime_boundary` gate 拉回为头号；
    并处理他诚实旗标的 demo agent 凭证下发（`test-zyli-cc-1` 等）。急症已收口，结构线不能再滑。
-3. **jjkysy 明确交付物。** kanban 进度看板今日无可见 artifact——07-14 给出**可核实**的交付（看板上有 demo 各环节任务卡 + 至少一条跨环节验收），
-   并把 #1301 dealscout 推到 mergeable。避免再次「无 PR 无 return」。
+3. **jjkysy 形式化 + 落交付。** #1360 core-gap 分析今日有 2 commit（`docs/socialware-data-mount-model`）但未走 PR/return——
+   07-14 把它形式化为 PR/return，并给出**可核实**的 kanban 进度看板交付（demo 各环节任务卡 + 至少一条跨环节验收），
+   把 #1301 dealscout 推到 mergeable。核心是别再「有 commit 却无 PR/return」。
 4. **zyli 转前端 CI。** #1320/#1327 已收口；07-14 起 #1371 前端 CI 覆盖任务，**先 `tsc --noEmit` 进 CI**（最高性价比，直接防 xterm 类 bug）。
 5. **ruihua 承接飞轮原型落地。** 把 #1372 原型的 IA/视觉方向接入真实 world/hello LiveView 面（设计输入，走 Feishu，不占 track 行）。
 6. **序列化提示:** zhaomato（hello/官网）与 zyli（前端 CI，触 `world` assets）若同触 `world` 面，按 `world-coordination.md` 串行 `styles.css`。
@@ -118,5 +122,5 @@ demo 所需的 agent 控制面 / 组合能力就位。同一天还清理了一�
 - **zyli**（李震宇）: `current_track` → 前端 CI 覆盖任务（分期，先 `tsc --noEmit` 进 CI；#1371 登记）· `latest_return` → `#1365 (2026-07-13)`（Close #1320+#1327）
 - **gaga**（黄佳佳）: `current_track` → AgentRuntime 边界 SPEC / `agent_runtime_boundary` gate（W28③ 结构线，补回）+ demo agent 凭证下发 · `latest_return` → `#1367 canary 验收 (2026-07-13, commit 200f91b5)` — 自举第一张多米诺 + PTY 急症（#1366/#1369）
 - **zhaomato**（张宁）: `current_track` → 官网 hello live E2E transcript（greeter + curl-llm 真回复；**现已解锁**）· `latest_return` → `#1312 (2026-07-11)`（本日 blocked，无新 return）
-- **jjkysy**（姚升悦）: `current_track` → kanban socialware 整体进度监控 + 测试（可核实交付）+ 推 #1301 dealscout 到 mergeable · `latest_return` → `kanban-rework-final (2026-07-10)`（本日无 PR/return）
+- **jjkysy**（姚升悦）: `current_track` → kanban socialware 整体进度监控 + 测试（可核实交付）+ 推 #1301 dealscout 到 mergeable · `latest_return` → `kanban-rework-final (2026-07-10)`（07-13：#1360 分析 2 commit 于 `docs/socialware-data-mount-model`，未走 PR/return）
 - **ruihua**（陈瑞华）: `current_track` → 官网体验：把飞轮原型 IA/视觉接入真实 world/hello LiveView 面（设计输入，不占 track 行）· `latest_return` → `#1372 (2026-07-13)`（官网飞轮 demo）
