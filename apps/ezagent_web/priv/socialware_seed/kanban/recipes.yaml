@@ -26,7 +26,16 @@ recipes:
       - The board is your session's passive `board` data role (`kanban-manager` ×
         native). It is installed with the socialware composition, and you receive
         only instance-scoped `kanban.<action>` caps declared by that role edge.
-      - Turn the owner's request into board moves via the kanban tools (create a
+      - To operate the board, use your `kanban-assistant` skill. Run the board CLI:
+        `scripts/kanban-cli.sh <action> '<json-args>'` — for example
+        `scripts/kanban-cli.sh add_node '{"parent_id":"","title":"登录表单"}'` or
+        `scripts/kanban-cli.sh set_stage '{"id":"n1","stage":"feature"}'`. The CLI
+        authenticates as YOU and dispatches the action; the board you represent is
+        **resolved automatically** from your own instance-scoped `kanban.<action>`
+        caps (you do NOT pass a board URI). See the skill's
+        `references/kanban-team-collaboration.md` for the mechanism. This is a
+        first-class tool — do NOT look for an MCP server or MCP kanban tools; there
+        are none. Turn the owner's request into board moves this way (create a
         card, set its stage). NEVER ask a worker to compute routing.
       - Assign build work through the dev-together git-handoff workflow, NOT a raw
         @mention: write a markdown handoff (`handoffs/<task>.md`, with a DoD) for the

@@ -3,13 +3,18 @@ defmodule EzagentWeb.Socialware.KanbanShareController do
   接收「分享的看板」链接（T6.4）—— world 看板操作面 `kanban.share_board`
   （`Ezagent.World.KanbanActions.share_link/2`）生成的只读分享链接的落点。
 
-  流程：登录用户（`RequireEntity` 保证 `current_entity_uri`）带 `token`（分享时
-  `Phoenix.Token.sign` 签的 board + 只读意图）+ 自己的 `session_uri` 点进来：
+  流程：登录用户（`RequireEntity` 保证 `current_entity_uri`）**只带 `token`**（分享时
+  `Phoenix.Token.sign` 签的 board + 只读意图）点进来：
 
     1. `Phoenix.Token.verify`（同 salt/max_age）→ 拿回 board_uri + behavior；verify 失败
        （过期/篡改）→ 403（fail-closed）。
-    2. 解析点击者的 session，校验点击者是该 session 的成员（挂进「他自己的」session，
-       防跨 session 塞板）。
+    2. **服务端解析接收者自己的目标 session**：发链接方不知道收方哪个 session，故
+       `session_uri` 不该塞在 URL 里。这里从 `conn.assigns.current_entity_uri` 反推
+       接收者的 workspace（`Ezagent.URI.workspace_of/1`），用世界首页/sessions 列表同一
+       条 `EzagentDomainInstanceMessage.list_sessions/2`（返回「该用户是成员」的 session）
+       挑出**第一个带 `kanban-assistant` 成员的 session** 作为落点（同 `WorldLive` 用
+       `List.first/1` 取「当前/默认」session 的口径；列表按 URI 串排序、无 recency 信号，
+       故取确定性首个）。接收者没有可挂的 session → 友好错误（非 500）。
     3. 解析该 session 的 `kanban-assistant` 成员（收只读钥匙的「手」）。
     4. `Ezagent.Socialware.Mount.mount/6` 直接挂 `access: :read` 的只读钥匙
        （`[:get_tree, :export_markmap]`）。
@@ -20,8 +25,10 @@ defmodule EzagentWeb.Socialware.KanbanShareController do
   才签得出 token），token 即凭证，接收侧只管挂。granter 仍 = 板主人（`Mount` 内部用板
   主人权铸），与 forward/pull 的 mint chokepoint 完全一致。
 
-  成功 → 板进点击者 tab（挂载表有 `access="read"` 行），302 重定向到 world 看板详情页
-  + flash 提示。
+  成功 → 板进点击者 session 的挂载表（`access="read"` 行），302 重定向到**接收者 session
+  的 world 会话页**（`/sessions?session=<www-form-encoded session_uri>`，`WorldLive` 的
+  conversation 面）—— 板真正出现的地方（看板 tab 在该页 tab 栏，客户端 `session.view.switch`
+  切换，URL 无 view 深链），而不是 T6.3 缩成 Miro 配置面的 `/plugins/kanban/<board>`。
   """
   use EzagentWeb, :controller
 
@@ -37,23 +44,22 @@ defmodule EzagentWeb.Socialware.KanbanShareController do
   @assistant_role "kanban-assistant"
 
   @doc """
-  接收分享：verify 只读 token → 校验点击者是自己 session 的成员 → 解析其 kanban-assistant
-  → `Mount.mount` 只读挂进该 session → 重定向到看板详情页 + flash。任何环节失败 → 403。
+  接收分享：verify 只读 token → 服务端解析接收者的目标 session（带 kanban-assistant）
+  → 解析其 kanban-assistant → `Mount.mount` 只读挂进该 session → 重定向到该 session 的
+  world 会话页 + flash。token/篡改失败 → 403（fail-closed）；无可挂 session → 友好 404。
   """
-  def claim(conn, %{"token" => token, "session_uri" => session_str})
-      when is_binary(token) and is_binary(session_str) do
+  def claim(conn, %{"token" => token}) when is_binary(token) do
     clicker = conn.assigns.current_entity_uri
 
     with {:ok, board_uri, behavior} <- verify_token(conn, token),
-         {:ok, session_uri} <- parse_session(session_str),
-         {:ok, assistant_uri} <- resolve_session_assistant(session_uri, clicker),
+         {:ok, session_uri, assistant_uri} <- resolve_target_session(clicker),
          {:ok, _} <-
            Mount.mount(session_uri, board_uri, assistant_uri, behavior, @read_actions,
              access: :read
            ) do
       conn
-      |> put_flash(:info, "看板已加入你的工作区（只读）。")
-      |> redirect(to: "/plugins/kanban/" <> URI.encode_www_form(URI.to_string(board_uri)))
+      |> put_flash(:info, "看板已加入你的工作区（只读）。在会话页的「看板」标签查看。")
+      |> redirect(to: "/sessions?session=" <> URI.encode_www_form(URI.to_string(session_uri)))
     else
       {:error, reason} -> reject(conn, reason)
     end
@@ -81,51 +87,80 @@ defmodule EzagentWeb.Socialware.KanbanShareController do
 
   # --- session / member / assistant --------------------------------------
 
-  defp parse_session(value) do
-    case Ezagent.URI.parse(value) do
-      {:ok, %URI{scheme: "session"} = uri} -> {:ok, uri}
-      _ -> {:error, :bad_session}
+  # 服务端解析接收者的落点 session：发链接方不知道收方哪个 session，故 session 不由 URL 传，
+  # 而是从接收者身份反推。步骤：
+  #   1. `workspace_of(clicker)` 拿接收者 workspace（entity URI 首段即 workspace）。
+  #   2. `list_sessions(ws, clicker)`（同 `WorldLive` 首页取「当前/默认」session 的口径）
+  #      → 接收者作为成员的 session 列表（按 URI 串排序，无 recency 信号）。
+  #   3. 逐个挑出**带 kanban-assistant 成员**的 session（收只读钥匙需要这只「手」）；取首个。
+  # 任何一步空 → 友好错误（`reject/2` 映射为 404，非 500）。
+  defp resolve_target_session(%URI{} = clicker) do
+    with %URI{scheme: "workspace"} = workspace_uri <- Ezagent.URI.workspace_of(clicker),
+         [_ | _] = sessions <-
+           EzagentDomainInstanceMessage.list_sessions(workspace_uri, clicker),
+         {:ok, session_uri, assistant_uri} <- first_session_with_assistant(sessions) do
+      {:ok, session_uri, assistant_uri}
+    else
+      %URI{} -> {:error, :no_workspace}
+      :any -> {:error, :no_workspace}
+      [] -> {:error, :no_session}
+      {:error, _} = err -> err
+      _ -> {:error, :no_session}
     end
   end
 
-  # 读一次 session 成员 → 校验点击者是成员（挂进「他自己的」session，防跨 session 塞板）
-  # → 解析该 session 的 kanban-assistant（收只读钥匙的「手」）。成员读取内联于此、不抽成
-  # 独立 `members_of` 函数——那会与 `CompositionCaps` 私有 `read_role_members` 撞 cross-file
-  # 重复 gate（那是 #1376 的，Allen 处理，不在本 PR 碰）；此处是本控制器专用的一次性组合读。
-  defp resolve_session_assistant(session_uri, %URI{} = clicker) do
+  # 逐个 session 读成员，返回首个持 kanban-assistant 成员的 {session, assistant}。
+  defp first_session_with_assistant(sessions) do
+    sessions
+    |> Enum.find_value(fn %URI{} = session_uri ->
+      case session_assistant(session_uri) do
+        {:ok, assistant_uri} -> {:ok, session_uri, assistant_uri}
+        _ -> nil
+      end
+    end)
+    |> case do
+      {:ok, _session, _assistant} = ok -> ok
+      _ -> {:error, :no_session_with_assistant}
+    end
+  end
+
+  # 读一次 session 成员 → 解析该 session 的 kanban-assistant（收只读钥匙的「手」）。成员读取
+  # 内联于此、不抽成独立 `members_of` 函数——那会与 `CompositionCaps` 私有 `read_role_members`
+  # 撞 cross-file 重复 gate（那是 #1376 的，Allen 处理，不在本 PR 碰）；此处是本控制器专用的
+  # 一次性组合读。
+  defp session_assistant(%URI{} = session_uri) do
     members =
       case Ezagent.Kind.get_slice(session_uri, :session) do
         {:ok, slice} when is_map(slice) -> Map.get(slice, :members, %{})
         _ -> %{}
       end
 
-    cond do
-      not member?(members, clicker) ->
-        {:error, :not_session_member}
-
-      true ->
-        case Members.role_name_to_uri(members, @assistant_role) do
-          %URI{} = uri -> {:ok, uri}
-          _ -> {:error, :no_assistant_in_session}
-        end
+    case Members.role_name_to_uri(members, @assistant_role) do
+      %URI{} = uri -> {:ok, uri}
+      _ -> {:error, :no_assistant_in_session}
     end
   end
 
-  # 成员边 key = 成员 URI（normalize 后比 instance），同 `BoardProvision.caller_member?`。
-  defp member?(members, %URI{} = who) do
-    key = Ezagent.URI.stable_key(Ezagent.URI.instance(who))
-
-    Enum.any?(members, fn
-      {%URI{} = uri, _meta} -> Ezagent.URI.stable_key(Ezagent.URI.instance(uri)) == key
-      _ -> false
-    end)
-  end
-
   # --- responses ---------------------------------------------------------
+
+  # token/篡改类 → 403（fail-closed）；接收者侧「无可挂 session」类 → 友好 404（非 500，
+  # 非 403：不是权限被拒，是接收者还没有能承接看板的 session）。
+  @no_session_reasons [:no_workspace, :no_session, :no_session_with_assistant]
+
+  defp reject(conn, reason) when reason in @no_session_reasons do
+    conn
+    |> put_resp_content_type("text/plain")
+    |> send_resp(404, no_session_message(reason))
+  end
 
   defp reject(conn, reason) do
     conn
     |> put_resp_content_type("text/plain")
     |> send_resp(403, "share link rejected: #{reason}")
   end
+
+  defp no_session_message(_reason),
+    do:
+      "无法接收看板：你当前还没有可承接看板的会话（需要一个带 kanban-assistant 的会话）。" <>
+        "请先在世界里创建/进入这样一个会话，再点分享链接。"
 end

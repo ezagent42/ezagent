@@ -6,10 +6,11 @@ defmodule EzagentWeb.Socialware.KanbanShareControllerTest do
     * **分享侧** `Ezagent.World.KanbanActions.share_link/2`：板主人（对板有 access）→
       得到一个可 `Phoenix.Token.verify` 的只读 token 链接；无 access 的路人 → `{:error,
       :no_access}`。
-    * **接收侧** `GET /socialware/kanban/receive?token=&session_uri=`
-      （`EzagentWeb.Socialware.KanbanShareController`）：有效 token → 板只读挂进点击者
-      session（`MountRow` 有 `access="read"` 行）+ 点击者 kanban-assistant 自身份 dispatch
-      `kanban.get_tree` 成、`kanban.add_node` 被拒（只读）；无效/篡改 token → 403、不挂载。
+    * **接收侧** `GET /socialware/kanban/receive?token=`（**只带 token**，session 服务端解析）
+      （`EzagentWeb.Socialware.KanbanShareController`）：有效 token → 控制器从登录者身份解析
+      其带 kanban-assistant 的 session → 板只读挂进该 session（`MountRow` 有 `access="read"`
+      行）+ 点击者 kanban-assistant 自身份 dispatch `kanban.get_tree` 成、`kanban.add_node`
+      被拒（只读）；成功 302 落到该 session 的 world 会话页；无效/篡改 token → 403、不挂载。
 
   端到端：接收侧用的 token 就是分享侧用板主人 socket 真签出来的（同 salt/endpoint）。
   """
@@ -130,10 +131,11 @@ defmodule EzagentWeb.Socialware.KanbanShareControllerTest do
       out =
         conn
         |> sign_in(ws_name, clicker)
-        |> get(~p"/socialware/kanban/receive?#{[token: token, session_uri: s(clicker_session)]}")
+        |> get(~p"/socialware/kanban/receive?#{[token: token]}")
 
-      # 成功 → 302 重定向到看板详情页
-      assert redirected_to(out) =~ "/plugins/kanban/"
+      # 成功 → 302 重定向到接收者 session 的 world 会话页（服务端解析出的正是 clicker_session）
+      assert redirected_to(out) =~ "/sessions?session="
+      assert redirected_to(out) =~ URI.encode_www_form(s(clicker_session))
 
       # 挂载表有指向该板的 read 行
       row = MountRow.get(clicker_session, board_uri, clicker_assistant, Ezagent.ActionSet.Kanban)
@@ -155,9 +157,7 @@ defmodule EzagentWeb.Socialware.KanbanShareControllerTest do
       bad =
         conn
         |> sign_in(ws_name, clicker)
-        |> get(
-          ~p"/socialware/kanban/receive?#{[token: "garbage", session_uri: s(clicker_session)]}"
-        )
+        |> get(~p"/socialware/kanban/receive?#{[token: "garbage"]}")
 
       assert bad.status == 403
     end)
@@ -165,12 +165,8 @@ defmodule EzagentWeb.Socialware.KanbanShareControllerTest do
 
   @tag :integration
   test "receive: 匿名(未登录)被 RequireEntity 挡在 /login",
-       %{ws_name: ws_name, conn: conn} do
-    out =
-      get(
-        conn,
-        ~p"/socialware/kanban/receive?#{[token: "x", session_uri: "session://#{ws_name}/default/none"]}"
-      )
+       %{conn: conn} do
+    out = get(conn, ~p"/socialware/kanban/receive?#{[token: "x"]}")
 
     assert redirected_to(out) == "/login"
   end
