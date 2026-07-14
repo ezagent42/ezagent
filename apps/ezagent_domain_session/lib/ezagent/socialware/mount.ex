@@ -20,6 +20,8 @@ defmodule Ezagent.Socialware.Mount do
 
   alias Ezagent.Socialware.{CompositionCaps, MountRow}
 
+  require Logger
+
   @type mount_result :: %{caps: [Ezagent.Capability.t()], mount: MountRow.t()}
   @type provision_result :: %{
           target: URI.t(),
@@ -129,6 +131,75 @@ defmodule Ezagent.Socialware.Mount do
       {:ok, %{target: target_uri, caps: caps, mount: mount}}
     end
   end
+
+  @doc """
+  重发 `session_uri` 名下所有挂载的钥匙 —— session 重启后的存活底座。
+
+  一个 mount 的钥匙落在 grantee 的 self-store cap slice;session 重启时该 slice 重建、
+  钥匙不会自动重发,但挂载表(`MountRow`,durable SoT)仍在。本函数读回
+  `MountRow.list_for_session/1` 的每条挂载行,对每条重跑 `mount/6`(= mint_cap 复用现成
+  issue+absorb chokepoint + upsert),使钥匙重现。
+
+  **幂等**:mint 走 composition 现成 issue+absorb chokepoint(重跑覆盖),`upsert` 在自然键
+  冲突时原地覆盖 —— 连跑两次挂载表仍 N 行、钥匙仍在。
+
+  **best-effort per row**:单条重发失败(如宿主已被删/无属主)只记 `:warning`、计入 `failed`,
+  不牵连其余行(与 `Session.Reconcile.reconcile_after_load/2` 的 fail-safe 姿态一致)。整体
+  永不 raise —— 挂在 `activate/2` 上时不能崩 Kind 重启。返回
+  `{:ok, %{reconciled: n, failed: m}}`。
+  """
+  @spec reconcile_session_mounts(URI.t()) ::
+          {:ok, %{reconciled: non_neg_integer(), failed: non_neg_integer()}}
+  def reconcile_session_mounts(%URI{} = session_uri) do
+    session_uri
+    |> MountRow.list_for_session()
+    |> Enum.reduce(%{reconciled: 0, failed: 0}, fn %MountRow{} = row, acc ->
+      case remint_row(session_uri, row) do
+        {:ok, _} ->
+          %{acc | reconciled: acc.reconciled + 1}
+
+        {:error, reason} ->
+          Logger.warning(
+            "Mount.reconcile_session_mounts/1: re-mint FAILED for target=" <>
+              "#{row.target_uri} grantee=#{row.grantee_uri} behavior=#{row.behavior}: " <>
+              "#{inspect(reason)} — skipping (other mounts unaffected)."
+          )
+
+          %{acc | failed: acc.failed + 1}
+      end
+    end)
+    |> then(&{:ok, &1})
+  rescue
+    error ->
+      Logger.warning(
+        "Mount.reconcile_session_mounts/1: mount scan failed for " <>
+          "#{URI.to_string(session_uri)}: #{inspect(error.__struct__)} — treated as no-op."
+      )
+
+      {:ok, %{reconciled: 0, failed: 0}}
+  end
+
+  # 从挂载行还原参数并重跑 mount/6。行里存的是字符串(URI/behavior/actions_json/access),
+  # 逐一反序列化回 mount/6 需要的类型。
+  defp remint_row(session_uri, %MountRow{} = row) do
+    target = Ezagent.URI.new!(row.target_uri)
+    grantee = Ezagent.URI.new!(row.grantee_uri)
+    behavior = decode_behavior(row.behavior)
+    actions = recorded_actions(row)
+    access = decode_access(row.access)
+
+    mount(session_uri, target, grantee, behavior, actions, access: access)
+  end
+
+  # behavior 存的是 `inspect(module)` —— 无 `Elixir.` 前缀(如
+  # `"Ezagent.ActionSet.Kanban"`)。`Module.concat/1` 是其自然逆运算,自动补回前缀。
+  # (`String.to_existing_atom/1` 不加前缀会 raise,故不用;实测确认 `Module.concat`
+  # 转得回 module atom。)
+  defp decode_behavior(behavior) when is_binary(behavior), do: Module.concat([behavior])
+
+  # access 存的是字符串("read" / "operate")—— 两者对应 atom 均已存在。
+  defp decode_access(access) when is_binary(access), do: String.to_existing_atom(access)
+  defp decode_access(_), do: :operate
 
   # ── internals ───────────────────────────────────────────────────────────
 
