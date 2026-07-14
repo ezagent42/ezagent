@@ -169,4 +169,59 @@ defmodule Ezagent.World.KanbanDataScopeTest do
       refute URI.to_string(a) in seen, "carol 无 board-a 的权，不应看到"
     end)
   end
+
+  # Task 1 — `session_boards/2`：session-scoped board 读入口。从 session 解析出它的
+  # workspace（`Ezagent.URI.workspace_of/1`，board 是 workspace 级 actor），
+  # `list_by_recipe("kanban-manager", ws)` 枚举，再复用同一 `visible?` CBAC 收敛。
+  # 与 `list_instances/1` 同形，只是 workspace 从 session URI 解析而非 ctx。
+  test "session_boards/2：非 admin 只看到自己 own 的板（own-branch）",
+       %{ws_name: ws_name, workspace_uri: ws, genesis: genesis, alice: alice, bob: bob} do
+    skip_if_no_entity_spawn(fn ->
+      a = spawn_board_as(ws, alice, genesis, "board-a")
+      b = spawn_board_as(ws, bob, genesis, "board-b")
+
+      session = Ezagent.URI.session(ws_name, "default", "s1")
+      ctx_a = %{caller_uri: alice, caller_caps: MapSet.new()}
+      seen = uris(KanbanData.session_boards(session, ctx_a))
+
+      assert URI.to_string(a) in seen, "alice 应看到自己 own 的 board-a"
+      refute URI.to_string(b) in seen, "alice 不应看到 bob 的 board-b"
+    end)
+  end
+
+  test "session_boards/2：admin 看到该 session workspace 的全部板（admin-branch）",
+       %{
+         ws_name: ws_name,
+         workspace_uri: ws,
+         genesis: genesis,
+         admin: admin,
+         alice: alice,
+         bob: bob
+       } do
+    skip_if_no_entity_spawn(fn ->
+      a = spawn_board_as(ws, alice, genesis, "board-a")
+      b = spawn_board_as(ws, bob, genesis, "board-b")
+
+      session = Ezagent.URI.session(ws_name, "default", "s1")
+      ctx_admin = %{caller_uri: admin, caller_caps: genesis}
+      seen = uris(KanbanData.session_boards(session, ctx_admin))
+
+      assert URI.to_string(a) in seen and URI.to_string(b) in seen,
+             "admin 应看到该 workspace 全部板"
+    end)
+  end
+
+  test "session_boards/2：无权 caller 看不到（no-perm-branch）",
+       %{ws_name: ws_name, workspace_uri: ws, genesis: genesis, alice: alice} do
+    skip_if_no_entity_spawn(fn ->
+      a = spawn_board_as(ws, alice, genesis, "board-a")
+
+      carol = URI.new!("entity://#{ws_name}/user/carol")
+      session = Ezagent.URI.session(ws_name, "default", "s1")
+      ctx_c = %{caller_uri: carol, caller_caps: MapSet.new()}
+
+      seen = uris(KanbanData.session_boards(session, ctx_c))
+      refute URI.to_string(a) in seen, "carol 无权，不应看到 alice 的 board-a"
+    end)
+  end
 end
