@@ -1,0 +1,198 @@
+<!DOCTYPE html>
+<html lang="zh" data-theme="light">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>投融资撮合树洞 · DealScout · Ezagent</title>
+<meta name="description" content="说出你找什么——钱、项目、联合创始人。AI 循着信号把对的那一方捞到你面前。">
+<link rel="stylesheet" href="https://cdn.jsdelivr.net/gh/ezagent42/design-system@main/styles.css">
+<style>
+  body{max-width:820px;margin:40px auto;padding:0 24px 80px;background:var(--ground);color:var(--ink);font-family:var(--font-ui);font-weight:450;-webkit-font-smoothing:antialiased}
+  .back{display:inline-block;margin-bottom:20px;font-size:13px;color:var(--ink-3);text-decoration:none;transition:color .15s var(--ease-out)}
+  .back:hover{color:var(--accent)}
+
+  h1{font-family:var(--font-cn);font-size:28px;font-weight:600;margin:0 0 6px;letter-spacing:-.01em}
+  .sub{color:var(--ink-3);font-size:14px;margin-bottom:28px}
+
+  /* Steps */
+  .page{display:none;animation:fu var(--dur-enter) var(--ease-out) both}
+  .page.active{display:block}
+  @keyframes fu{from{opacity:0;transform:translateY(20px);filter:blur(8px)}to{opacity:1;transform:none;filter:blur(0)}}
+  h2{font-family:var(--font-cn);font-size:17px;font-weight:600;margin:0 0 6px}
+  .sec-desc{font-size:13px;color:var(--ink-3);margin:0 0 14px}
+
+  /* Step 1: input */
+  .type-chips{display:flex;gap:8px;flex-wrap:wrap;margin-bottom:16px}
+  .type-chip{padding:10px 20px;border-radius:var(--r-pill);font-size:13px;cursor:pointer;background:var(--card);color:var(--ink-2);border:2px solid var(--line);transition:all .15s var(--ease-out);box-shadow:var(--shadow-sm)}
+  .type-chip:hover{border-color:var(--accent);color:var(--ink)}
+  .type-chip.sel{border-color:var(--accent);background:var(--accent-wash);color:var(--accent);font-weight:600}
+  .field{margin:14px 0}
+  .field textarea{width:100%;padding:14px 16px;border:1px solid var(--line);border-radius:var(--r-lg);font-size:14px;font-family:inherit;background:var(--card);color:var(--ink);resize:vertical;box-sizing:border-box;min-height:100px;transition:border-color .15s var(--ease-out),box-shadow .15s var(--ease-out)}
+  .field textarea:focus{outline:none;border-color:var(--accent);box-shadow:0 0 0 3px var(--accent-wash)}
+
+  /* Step 2: matches */
+  .match-card{display:flex;gap:16px;padding:18px 20px;background:var(--card);border:2px solid transparent;border-radius:var(--r-lg);margin-bottom:10px;cursor:pointer;transition:all .15s var(--ease-out);box-shadow:var(--shadow-sm)}
+  .match-card:hover{border-color:var(--line);transform:translateY(-1px)}
+  .match-card.sel{border-color:var(--accent);background:var(--accent-wash)}
+  .match-card .av{width:48px;height:48px;border-radius:var(--r-md);display:grid;place-items:center;font-size:20px;font-weight:700;color:#fff;flex-shrink:0}
+  .match-card .info{flex:1;min-width:0}
+  .match-card .name{font-weight:700;font-size:15px;color:var(--ink)}
+  .match-card .brief{font-size:12px;color:var(--ink-3);margin:4px 0 8px;line-height:1.5}
+  .match-card .tags{display:flex;gap:4px;flex-wrap:wrap}
+  .match-card .tags span{font-size:10px;padding:2px 8px;border-radius:var(--r-pill);background:var(--ground-2);color:var(--ink-3)}
+  .match-card .score{display:flex;flex-direction:column;align-items:center;gap:2px;flex-shrink:0}
+  .match-card .score .pct{font-family:var(--font-mono);font-size:20px;font-weight:700;color:var(--jade)}
+  .match-card .score .lbl{font-size:10px;color:var(--ink-4);text-align:center}
+
+  /* Step 3: confirm */
+  .confirm-card{padding:28px 24px;background:var(--card);border-radius:var(--r-lg);box-shadow:var(--shadow-card);text-align:center}
+  .confirm-card .big-av{width:64px;height:64px;border-radius:var(--r-md);display:grid;place-items:center;font-size:28px;font-weight:700;color:#fff;margin:0 auto 16px}
+  .confirm-card h2{margin-bottom:8px}
+  .confirm-card .detail{font-size:13px;color:var(--ink-3);margin-bottom:24px;line-height:1.6}
+  .connected{display:none;padding:20px;border:2px solid var(--jade);border-radius:var(--r-md);background:var(--jade-wash);text-align:center;animation:fu .3s var(--ease-out) both}
+  .connected.show{display:block}
+  .connected .tt{font-weight:700;font-size:14px;color:var(--success)}
+  .connected p{font-size:12px;color:var(--ink-3);margin:4px 0 0}
+
+  /* Buttons */
+  .btn{font-family:var(--font-ui);font-size:14px;font-weight:600;padding:10px 24px;border-radius:var(--r-pill);border:0;cursor:pointer;text-decoration:none;display:inline-flex;align-items:center;gap:6px;transition:all .15s var(--ease-out);min-height:44px}
+  .btn:focus-visible{outline:2px solid var(--accent);outline-offset:2px}
+  .btn.primary{background:var(--accent);color:var(--on-accent)}
+  .btn.primary:hover{transform:translateY(-1px);box-shadow:0 4px 16px rgba(11,92,255,.4)}
+  .btn.primary:active{transform:scale(.98)}
+  .btn.primary:disabled{opacity:.45;cursor:not-allowed;transform:none;box-shadow:none}
+  .btn.ghost{background:var(--ground-2);color:var(--ink-2)}
+  .btn.ghost:hover{background:var(--ground-hover);color:var(--ink)}
+  .btn.jade{background:var(--jade);color:#fff}
+  .btn.jade:hover{transform:translateY(-1px);box-shadow:0 4px 16px rgba(15,160,110,.35)}
+  .nav-btns{display:flex;justify-content:space-between;margin-top:24px}
+
+  .empty-hint{padding:14px 18px;border:2px dashed var(--line);border-radius:var(--r-lg);text-align:center;color:var(--ink-4);font-size:12px;margin-top:24px}
+  @media(prefers-reduced-motion:reduce){*,*::before,*::after{animation-duration:.01ms!important;transition-duration:.01ms!important}}
+</style>
+</head>
+<body>
+
+<a class="back" href="../flywheel/gallery.html">← 返回 Gallery · Back</a>
+
+<h1>投融资撮合树洞 · DealScout</h1>
+<p class="sub">说出你找什么——钱、项目、联合创始人。AI 循着信号把对的那一方捞到你面前。</p>
+
+<!-- ════════ Step 1: Describe need ════════ -->
+<div class="page active" data-page="1">
+  <h2>你在找什么？</h2>
+  <p class="sec-desc">选类型 + 描述需求。越具体，匹配越准。</p>
+  <div class="type-chips">
+    <span class="type-chip" data-type="funding" onclick="pickType(this)">找钱 · Funding</span>
+    <span class="type-chip" data-type="project" onclick="pickType(this)">找项目 · Projects</span>
+    <span class="type-chip" data-type="cofounder" onclick="pickType(this)">找联合创始人 · Co-founder</span>
+    <span class="type-chip" data-type="exit" onclick="pickType(this)">找退出 · Exit</span>
+  </div>
+  <div class="field">
+    <textarea id="needDesc" placeholder="描述你正在找什么……&#10;&#10;例：我在做一个跨境支付 SaaS，天使轮刚关，现在需要对接 A 轮有意向的机构，偏好对 FinTech 有经验的基金。"></textarea>
+  </div>
+  <div class="nav-btns">
+    <span></span>
+    <button class="btn primary" id="matchBtn" disabled onclick="runMatch()">开始匹配 · Start matching →</button>
+  </div>
+</div>
+
+<!-- ════════ Step 2: Match results ════════ -->
+<div class="page" data-page="2">
+  <h2>匹配结果</h2>
+  <p class="sec-desc" id="matchHead">为你找到 4 个高匹配信号。</p>
+  <div id="matchList"></div>
+  <div class="nav-btns">
+    <button class="btn ghost" onclick="goStep(1)">← 重新描述</button>
+    <button class="btn primary" id="connectBtn" disabled onclick="goStep(3)">选这个，牵线 · Connect →</button>
+  </div>
+</div>
+
+<!-- ════════ Step 3: Confirm + Connect ════════ -->
+<div class="page" data-page="3">
+  <div class="confirm-card" id="confirmCard"></div>
+  <div class="connected" id="connectedBox">
+    <div class="tt">✓ 牵线成功 · Connected</div>
+    <p>双方已进入 workspace。DealScout agent 会协助后续对接。</p>
+  </div>
+  <div class="nav-btns" id="confirmBtns">
+    <button class="btn ghost" onclick="goStep(2)">← 换一个</button>
+    <button class="btn jade" id="finalConnect" onclick="doConnect()">牵线 · Connect →</button>
+  </div>
+</div>
+
+<div class="empty-hint">后端待建：匹配信号池 API · 撮合算法 · DealScout workspace session</div>
+
+<script>
+var DEALS = [
+  {name:'金沙江创投 · GSR Ventures',type:'funding',brief:'早期科技投资，偏好 FinTech / SaaS / AI。目前正在看跨境支付和合规科技方向。',tags:['FinTech','A轮','跨境','人民币+美元'],glyph:'金',color:'var(--jade)',score:94},
+  {name:'红杉中国 · Sequoia China',type:'funding',brief:'全阶段科技基金。消费科技和企业服务团队都在看支付基础设施项目。',tags:['企业服务','B轮+','双币','支付'],glyph:'杉',color:'var(--blueink)',score:87},
+  {name:'高瓴资本 · Hillhouse',type:'funding',brief:'长期结构性价值投资。对全球化 SaaS 有深度布局，偏好有网络效应的平台型项目。',tags:['全球化','SaaS','成长期','平台型'],glyph:'瓴',color:'var(--accent)',score:82},
+  {name:'分布式实验室 · D-Labs',type:'project',brief:'Web3 基础设施早期孵化器。正在找支付/身份赛道团队合作，提供技术+资金+社区。',tags:['Web3','支付','孵化','技术社区'],glyph:'分',color:'var(--orange)',score:91},
+  {name:'跨境支付合规平台 · CrossPay',type:'project',brief:'已获牌照的跨境支付中间件。找有商户资源的团队联合推向东南亚市场。',tags:['跨境','牌照','东南亚','商户端'],glyph:'跨',color:'var(--jade)',score:88},
+  {name:'企业级 AI 助手 · EntBot',type:'project',brief:'为企业提供可私有化部署的 AI agent 平台。找懂合规场景的合伙人做行业垂直。',tags:['AI Agent','私有部署','合规','B2B'],glyph:'智',color:'var(--blue)',score:83},
+  {name:'苏珩 · 企业法务 9 年',type:'cofounder',brief:'做过 200+ 合同审查系统，懂 NLP + 法律知识图谱。想找技术合伙人做 AI 法务 SaaS。',tags:['法务','NLP','SaaS','技术合伙人'],glyph:'法',color:'var(--blueink)',score:96},
+  {name:'马屿 · SaaS 客服负责人',type:'cofounder',brief:'在头部 SaaS 带过 40 人客服团队。想做 AI 客服分流产品，找技术合伙人 + 种子轮。',tags:['客服','AI','种子轮','技术合伙人'],glyph:'客',color:'var(--orange)',score:90},
+  {name:'跨境 M&A 顾问 · BridgeCap',type:'exit',brief:'专注 500 万–5000 万美元的跨境并购。目前有 3 个买方在找亚太支付标的。',tags:['M&A','跨境','支付','买方代表'],glyph:'桥',color:'var(--jade)',score:89},
+  {name:'二级市场退出通道 · SecExit',type:'exit',brief:'为成长期 SaaS 公司提供二级市场流动性方案。已服务 12 家独角兽员工股权退出。',tags:['二级市场','SaaS','ESOP','流动性'],glyph:'退',color:'var(--blue)',score:78},
+];
+
+var selType='',selMatch=null;
+
+function pickType(el){
+  document.querySelectorAll('.type-chip').forEach(function(c){c.classList.remove('sel');});
+  el.classList.add('sel');selType=el.dataset.type;
+  document.getElementById('matchBtn').disabled=false;
+}
+document.getElementById('needDesc').addEventListener('input',function(){
+  document.getElementById('matchBtn').disabled=!selType;
+});
+
+function runMatch(){
+  var desc=(document.getElementById('needDesc').value||'').toLowerCase();
+  var all=DEALS.filter(function(d){return d.type===selType;});
+  if(!desc)desc=' '; // show all of that type
+  var results=DEALS.filter(function(d){
+    if(d.type!==selType)return false;
+    if(desc&&desc.length>1){
+      var q=desc;return d.brief.toLowerCase().indexOf(q)>-1||d.tags.some(function(t){return t.toLowerCase().indexOf(q)>-1});
+    }
+    return true;
+  });
+  if(results.length<3)results=all.slice(0,4);
+  document.getElementById('matchHead').textContent='为你找到 '+results.length+' 个匹配信号。';
+  document.getElementById('matchList').innerHTML=results.map(function(d){
+    return'<div class="match-card" data-name="'+d.name+'" onclick="pickMatch(this)">'
+      +'<div class="av" style="background:'+d.color+'">'+d.glyph+'</div>'
+      +'<div class="info"><div class="name">'+d.name+'</div><div class="brief">'+d.brief+'</div>'
+      +'<div class="tags">'+d.tags.map(function(t){return'<span>'+t+'</span>';}).join('')+'</div></div>'
+      +'<div class="score"><span class="pct">'+d.score+'%</span><span class="lbl">匹配度</span></div></div>';
+  }).join('');
+  goStep(2);
+}
+
+function pickMatch(el){
+  document.querySelectorAll('.match-card').forEach(function(m){m.classList.remove('sel');});
+  el.classList.add('sel');selMatch=DEALS.filter(function(d){return d.name===el.dataset.name;})[0];
+  document.getElementById('connectBtn').disabled=false;
+}
+
+function goStep(n){
+  document.querySelectorAll('.page').forEach(function(p){p.classList.remove('active');});
+  var pg=document.querySelector('.page[data-page="'+n+'"]');pg.classList.add('active');
+  if(n===3){
+    document.getElementById('confirmCard').innerHTML='<div class="big-av" style="background:'+selMatch.color+'">'+selMatch.glyph+'</div>'
+      +'<h2>'+selMatch.name+'</h2>'
+      +'<div class="detail">'+selMatch.brief+'<br><br>匹配度 <b style="color:var(--jade);font-family:var(--font-mono)">'+selMatch.score+'%</b> · 确认牵线后双方进入 DealScout workspace。</div>';
+  }
+  if(n===2){selMatch=null;document.getElementById('connectBtn').disabled=true;}
+}
+
+function doConnect(){
+  document.getElementById('confirmCard').style.display='none';
+  document.getElementById('confirmBtns').style.display='none';
+  document.getElementById('connectedBox').classList.add('show');
+}
+</script>
+</body>
+</html>
