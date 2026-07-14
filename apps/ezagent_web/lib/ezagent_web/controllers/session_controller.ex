@@ -82,10 +82,39 @@ defmodule EzagentWeb.SessionController do
   # workspace instead of `default`, and the page surfaces "Signing into
   # <name>" so the user understands the context they're about to enter.
   def new(conn, params) do
+    conn = clear_invalid_identity(conn)
+
     render_login_page(conn,
       workspace: Map.get(params, "workspace"),
       return_to: Map.get(params, "return_to")
     )
+  end
+
+  defp clear_invalid_identity(conn) do
+    case get_session(conn, :current_entity_uri) do
+      nil -> conn
+      identity when is_binary(identity) -> clear_unless_valid_identity(conn, identity)
+      _invalid -> SessionPrincipal.clear(conn)
+    end
+  end
+
+  defp clear_unless_valid_identity(conn, identity) do
+    with {:ok, %URI{scheme: "entity"} = uri} <- Ezagent.URI.parse(identity),
+         {:ok, type} when type in ["user", "agent"] <- Ezagent.URI.type(uri),
+         true <- identity_exists?(uri, type) do
+      conn
+    else
+      _ -> SessionPrincipal.clear(conn)
+    end
+  end
+
+  defp identity_exists?(uri, "user") do
+    Ezagent.Users.get_by_uri(uri) != nil or match?({:ok, _pid}, Ezagent.KindRegistry.lookup(uri))
+  end
+
+  defp identity_exists?(uri, "agent") do
+    match?({:ok, _pid}, Ezagent.KindRegistry.lookup(uri)) or
+      match?({:ok, _snapshot}, Ezagent.SnapshotStore.latest(uri))
   end
 
   # POST /login — email + password (task #87 primary login). Resolves the

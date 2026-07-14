@@ -57,20 +57,29 @@ defmodule EzagentWeb.HomeLive do
   def mount(_params, session, socket) do
     case session do
       %{"current_entity_uri" => entity_uri_str} when is_binary(entity_uri_str) ->
-        mount_authenticated(entity_uri_str, session, socket)
+        with {:ok, entity_uri} <- parse_entity_uri(entity_uri_str),
+             true <- entity_principal_exists?(entity_uri) do
+          mount_authenticated(entity_uri, session, socket)
+        else
+          _ -> redirect_to_cleared_login(socket)
+        end
 
       _ ->
-        {:ok, push_navigate(socket, to: "/login")}
+        redirect_to_cleared_login(socket)
     end
   end
 
-  defp mount_authenticated(entity_uri_str, session, socket) do
+  defp redirect_to_cleared_login(socket) do
+    {:ok, push_navigate(socket, to: "/login")}
+  end
+
+  defp mount_authenticated(entity_uri, session, socket) do
     # W0 — workspace-scoped landing判据 (see moduledoc). `list_sessions/1`
     # filters the global registry down to the caller's workspace; a
     # non-workspace scope (`:any` / malformed) fails closed to `[]` so the
     # operator sees the wizard, never a cross-tenant redirect or a crash.
     sessions =
-      case landing_workspace_uri(session, entity_uri_str) do
+      case landing_workspace_uri(session, entity_uri) do
         %URI{scheme: "workspace"} = workspace_uri ->
           EzagentDomainInstanceMessage.list_sessions(workspace_uri)
 
@@ -83,7 +92,8 @@ defmodule EzagentWeb.HomeLive do
         # No sessions yet — render the wizard.
         socket =
           socket
-          |> assign(:current_entity_uri_str, entity_uri_str)
+          |> assign(:current_entity_uri, entity_uri)
+          |> assign(:current_entity_uri_str, URI.to_string(entity_uri))
           |> assign(:flash_error, nil)
           |> assign(
             :form,
@@ -106,7 +116,7 @@ defmodule EzagentWeb.HomeLive do
     if short_name == "" do
       {:noreply, assign(socket, :flash_error, gettext("Session name is required."))}
     else
-      creator_uri = parse_entity_uri(socket.assigns.current_entity_uri_str)
+      creator_uri = socket.assigns.current_entity_uri
 
       # SPEC #366 (Allen 2026-05-26) — create_session now requires an
       # explicit `:template_name`. The first-login
@@ -234,28 +244,42 @@ defmodule EzagentWeb.HomeLive do
     end
   end
 
-  # Defensive parser — LiveAuth already validated this string at session
-  # mount, but HomeLive lives outside the `:require_entity` live_session,
-  # so re-parse here. Fall back to admin if the cookie is malformed
-  # (LiveAuth would have caught it earlier on protected routes; here
-  # we let the wizard proceed under admin caps so the operator isn't
-  # locked out of their own setup).
+  # HomeLive lives outside the `:require_entity` live_session, so its public
+  # mount must validate the cookie itself. Invalid identity input is never
+  # replaced with a more privileged principal.
   defp parse_entity_uri(uri_str) when is_binary(uri_str) do
-    # SPEC 2026-05-27-uri-canonicalization §3.3 — canonical chokepoint
-    # with try/rescue keeping the admin-fallback semantics for stale
-    # cookies (LiveAuth catches these on protected routes; wizard runs
-    # outside that live_session and tolerates them).
     try do
       case Ezagent.URI.new!(uri_str) do
-        %URI{scheme: "entity"} = uri -> uri
-        _ -> Ezagent.Entity.User.admin_uri()
+        %URI{scheme: "entity"} = uri ->
+          case Ezagent.URI.type(uri) do
+            {:ok, type} when type in ["user", "agent"] -> {:ok, uri}
+            _ -> {:error, :invalid_identity}
+          end
+
+        _ ->
+          {:error, :invalid_identity}
       end
     rescue
-      ArgumentError -> Ezagent.Entity.User.admin_uri()
+      ArgumentError -> {:error, :invalid_identity}
     end
   end
 
-  defp parse_entity_uri(_), do: Ezagent.Entity.User.admin_uri()
+  defp parse_entity_uri(_), do: {:error, :invalid_identity}
+
+  defp entity_principal_exists?(%URI{} = entity_uri) do
+    case Ezagent.URI.type(entity_uri) do
+      {:ok, "user"} ->
+        Ezagent.Users.get_by_uri(entity_uri) != nil or
+          match?({:ok, _pid}, Ezagent.KindRegistry.lookup(entity_uri))
+
+      {:ok, "agent"} ->
+        match?({:ok, _pid}, Ezagent.KindRegistry.lookup(entity_uri)) or
+          match?({:ok, _snapshot}, Ezagent.SnapshotStore.latest(entity_uri))
+
+      _ ->
+        false
+    end
+  end
 
   # W0 landing scope. Prefer the session's SELECTED workspace
   # (`current_workspace_uri`, the slot `/sessions` renders from — set by
@@ -264,7 +288,7 @@ defmodule EzagentWeb.HomeLive do
   # context-switched system member it may differ). Fall back to the caller
   # entity's home workspace. Callers guard on `%URI{scheme: "workspace"}`,
   # so a nil/`:any` return fails closed.
-  defp landing_workspace_uri(session, entity_uri_str) do
+  defp landing_workspace_uri(session, entity_uri) do
     selected =
       case session do
         %{"current_workspace_uri" => ws_str} when is_binary(ws_str) ->
@@ -274,7 +298,7 @@ defmodule EzagentWeb.HomeLive do
           nil
       end
 
-    selected || Ezagent.Capability.workspace_of(parse_entity_uri(entity_uri_str))
+    selected || Ezagent.Capability.workspace_of(entity_uri)
   end
 
   # Canonical parse (SPEC 2026-05-27-uri-canonicalization §3.3) tolerant of
