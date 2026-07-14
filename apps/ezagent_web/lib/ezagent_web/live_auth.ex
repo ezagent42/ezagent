@@ -335,27 +335,29 @@ defmodule EzagentWeb.LiveAuth do
     Enum.sort_by(persisted, & &1.name)
   end
 
-  # Load the caller's caps from the Users slice. Returns `[]` on any
-  # failure (unparseable URI, Users unavailable, DB unavailable). The
-  # cap-scope branch of `list_workspaces_for/2` degrades gracefully —
-  # the caller sees only their membership workspaces in that case.
+  # Load the caller's verified, current caps through the Entity-cap read facade.
+  # Runtime grant/revoke stores into the live Identity slice; `users.caps_json`
+  # is provisioning input and may lag behind that state. Reading Users here
+  # made authenticated LiveViews deny newly granted authority and could expose
+  # stale authority after a revoke. `read_entity_caps/1` owns the live-slice →
+  # durable-snapshot fallback and applies receiver-aware `Cap.verified_set/2`
+  # at that boundary.
   defp load_caps(%URI{} = caller_uri) do
     try do
-      if Code.ensure_loaded?(Ezagent.Users) and
-           function_exported?(Ezagent.Users, :get_by_uri, 1) do
-        case apply(Ezagent.Users, :get_by_uri, [caller_uri]) do
-          %{caps: caps} when is_list(caps) -> caps
-          _ -> []
-        end
+      if Code.ensure_loaded?(Ezagent.Identity) and
+           function_exported?(Ezagent.Identity, :read_entity_caps, 1) do
+        caller_uri
+        |> Ezagent.Identity.read_entity_caps()
+        |> MapSet.new()
       else
-        []
+        MapSet.new()
       end
     rescue
-      _ -> []
+      _ -> MapSet.new()
     end
   end
 
-  defp load_caps(_), do: []
+  defp load_caps(_), do: MapSet.new()
 
   # PR #149 (S-8): accept entity://user/* and entity://agent/* uniformly.
   #

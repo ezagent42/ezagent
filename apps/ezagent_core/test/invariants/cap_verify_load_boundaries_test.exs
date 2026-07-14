@@ -15,6 +15,7 @@ defmodule Ezagent.Invariants.CapVerifyLoadBoundariesTest do
   @identity_behavior "apps/ezagent_domain_identity/lib/ezagent/behavior/identity.ex"
   @identity_facade "apps/ezagent_domain_identity/lib/ezagent/identity.ex"
   @recipe_cap_binding "apps/ezagent_domain_identity/lib/ezagent/identity/recipe_cap_binding.ex"
+  @outbound_grant "apps/ezagent_domain_identity/lib/ezagent/outbound_grant.ex"
   @snapshot "apps/ezagent_core/lib/ezagent/kind/snapshot.ex"
   @cap "apps/ezagent_core/lib/ezagent/cap.ex"
   @cli_dispatch "apps/ezagent_cli/lib/ezagent_cli/dispatch.ex"
@@ -23,18 +24,19 @@ defmodule Ezagent.Invariants.CapVerifyLoadBoundariesTest do
     @identity_behavior => 3,
     @identity_facade => 1,
     @recipe_cap_binding => 1,
+    @outbound_grant => 1,
     @snapshot => 1
   }
-  @verify_home_count 6
+  @verify_home_count 7
 
-  test "I5 Cap verification boundary calls are exact, ratcheted, and at most six" do
+  test "I5 Cap verification boundary calls are exact, ratcheted, and at most seven" do
     actual = cap_verify_calls()
 
     assert actual == @verify_homes,
            "Cap verification moved outside the reviewed load boundaries:\n#{inspect(actual, pretty: true)}"
 
     assert Enum.sum(Map.values(@verify_homes)) == @verify_home_count
-    assert @verify_home_count <= 6
+    assert @verify_home_count <= 7
   end
 
   test "I5 named boundaries route through the reviewed verification helpers" do
@@ -59,6 +61,9 @@ defmodule Ezagent.Invariants.CapVerifyLoadBoundariesTest do
     assert facade_verifier =~ "Ezagent.Cap.verified_set"
 
     assert definition_source(@recipe_cap_binding, :validate_artifact, 4) =~
+             "Ezagent.Cap.verify_for"
+
+    assert definition_source(@outbound_grant, :normalize_attrs, 1) =~
              "Ezagent.Cap.verify_for"
 
     assert definition_source(@snapshot, :load_with_fallback, 3) =~
