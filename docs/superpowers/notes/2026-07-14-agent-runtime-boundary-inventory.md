@@ -63,13 +63,15 @@ older `/4` or `/5` APIs.
 
 ## Closure search reconciliation
 
-The primary search returned 76 textual hits. Twenty-nine are executable calls in
-the closed lifecycle family; 47 are aliases, moduledocs, comments, or deleted API
-history. Twenty-eight calls have direct rows above. The remaining expression is the
-polymorphic `demand_spawn_member/1` wrapper definition at `session_creator.ex:409`.
-It cannot honestly receive one class from syntax alone: its four known invocation
-edges are inventoried separately above (one Session target, three Agent/member
-targets). The four edge rows replace a false whole-wrapper classification.
+The primary search returned 76 textual hits: 28 executable expressions in the
+closed lifecycle family and 48 aliases, moduledocs, comments, or deleted API
+history. Twenty-seven expressions have direct rows above. The remaining expression
+is the polymorphic `demand_spawn_member/1` wrapper definition at
+`session_creator.ex:409`. It cannot honestly receive one class from syntax alone:
+its four known invocation edges are inventoried separately above (one Session
+target, three Agent/member targets). Replacing that one body expression with four
+edge rows produces 31 primary-derived rows. The closure search contributes three
+additional rows, for 34 table rows total.
 
 The required closure search for `KindRegistry`, `LocalRuntime`,
 `Invocation.dispatch`, and wrapper definitions returned 87 textual hits. It added
@@ -93,7 +95,7 @@ non-lifecycle families:
   `ensure_orchestrator/…` are lifecycle wrappers whose underlying forbidden calls
   already have rows above. `demand_spawn_member/1` is different: it is
   mixed-target, and its four invocation edges are the classification unit.
-- `e2e/scenarios/agent_contract_g4.ex` is under `lib`, so its two runtime calls are
+- `e2e/scenarios/agent_contract_g4.ex` is under `lib`, so its three runtime calls are
   intentionally inventoried rather than silently treated as test-only.
 
 Thus no unexplained call in the closed lifecycle API family remains.
