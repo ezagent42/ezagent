@@ -317,13 +317,14 @@ defmodule EzagentDomainInstanceMessage.Integration.DefinitionAgentsMaterializeTe
     session_uri = live_session(n)
     recipe_name = seed_recipe(n)
     role_name = "greeter-#{n}"
+    flavor = register_stub_flavor(n)
 
     assert {:ok, _summary} =
              DefinitionAgents.materialize_definition_agents(
                session_uri,
                @workspace_uri,
                @owner_uri,
-               [%{recipe: recipe_name, role_name: role_name}]
+               [%{recipe: recipe_name, role_name: role_name, flavor: flavor}]
              )
 
     members = members_of(session_uri)
@@ -879,7 +880,8 @@ defmodule EzagentDomainInstanceMessage.Integration.DefinitionAgentsMaterializeTe
     session_uri = live_session(n)
     recipe_name = seed_recipe(n)
     role_name = "greeter-#{n}"
-    agents = [%{recipe: recipe_name, role_name: role_name}]
+    flavor = register_stub_flavor(n)
+    agents = [%{recipe: recipe_name, role_name: role_name, flavor: flavor}]
 
     assert {:ok, _summary} =
              DefinitionAgents.materialize_definition_agents(
