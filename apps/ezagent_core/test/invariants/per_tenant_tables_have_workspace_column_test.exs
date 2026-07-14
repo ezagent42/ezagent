@@ -115,6 +115,10 @@ defmodule EzagentCore.Invariants.PerTenantTablesHaveWorkspaceColumnTest do
     {Ezagent.Socialware.CompositionBinding, "socialware_composition_bindings"},
     {Ezagent.Socialware.CompositionConsent, "socialware_composition_consents"},
     {Ezagent.Socialware.CompositionConsentCommand, "socialware_composition_consent_commands"},
+    # Socialware runtime-mount SoT — one row per `(session, target, grantee,
+    # behavior)` records a mount of a data-host agent into a session; scoped to
+    # the target's workspace (a mount in ws A must not be reconciled from ws B).
+    {Ezagent.Socialware.MountRow, "socialware_mounts"},
     # Socialware P9 — named workspace responsibility assignments are scoped to
     # one workspace; the same holder URI cannot receive a responsibility across
     # tenants without a separate row in that tenant.
