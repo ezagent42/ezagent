@@ -1,0 +1,139 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>dev-together 回顾 — 2026-07-14</title>
+<style>
+  body{font:14px/1.6 -apple-system,"Segoe UI",Roboto,"PingFang SC","Microsoft YaHei",sans-serif;color:#1a1a1a;max-width:1100px;margin:24px auto;padding:0 20px;background:#fff}
+  h1{font-size:24px;border-bottom:3px solid #2563eb;padding-bottom:8px}
+  h2{font-size:19px;margin-top:32px;color:#1e40af;border-left:4px solid #2563eb;padding-left:10px}
+  h3{font-size:15px;margin-top:20px;color:#374151}
+  .tablewrap{width:100%;overflow-x:auto;margin:12px 0}
+  table{border-collapse:collapse;width:100%;font-size:13px;min-width:560px}
+  th,td{border:1px solid #d1d5db;padding:7px 9px;text-align:left;vertical-align:top}
+  th{background:#eff6ff;font-weight:600}
+  tr:nth-child(even){background:#f9fafb}
+  .kpi{display:inline-block;margin:6px 14px 6px 0;padding:10px 16px;background:#f1f5f9;border-radius:8px}
+  .kpi b{font-size:22px;color:#2563eb;display:block}
+  .big{background:#fffbeb;border:1px solid #fde68a;border-radius:8px;padding:12px 16px;margin:14px 0}
+  .risk{background:#fef2f2;border:1px solid #fecaca;border-radius:8px;padding:12px 16px;margin:14px 0}
+  .ok{background:#dcfce7;color:#166534}.warn{background:#fef3c7;color:#92400e}.hold{background:#fee2e2;color:#991b1b}
+  .pill{display:inline-block;padding:1px 7px;border-radius:10px;font-size:11px;font-weight:600}
+  blockquote{margin:10px 0;padding:8px 14px;background:#f8fafc;border-left:3px solid #94a3b8;color:#475569}
+  code{background:#f1f5f9;padding:1px 5px;border-radius:4px;font-size:12px}
+</style>
+</head>
+<body>
+<h1>dev-together 回顾 · 2026-07-14</h1>
+<p>回顾时间：2026-07-14（lead close）。来源：GitHub PR 合并状态、chat returns（今日无 <code>returns/</code> 目录，从 <code>gh pr list --state merged</code> 与 PR 描述回填）。本页按既有形式整理：先看产品大局，再看合并结果、未合并风险和流程沉淀。</p>
+
+<div>
+  <span class="kpi"><b>11</b>工作/文档 PR 已合入</span>
+  <span class="kpi"><b>5</b>PR 保持 held/open</span>
+  <span class="kpi"><b>6/196</b>真数据回填签名命中</span>
+  <span class="kpi"><b>22/0</b>ed25519 crypto 单测</span>
+</div>
+
+<div class="big">
+<b>产品大局：</b>今天从计划轨道硬转向一条计划外但高价值的 <b>CapBAC 安全线</b>，四件事一次落地：
+<b>①</b> 关掉一个真实越权洞——workspace-admin 可以铸造 global-admin 能力（#1379），当天定位并封堵；
+<b>②</b> Phase-4 ed25519 能力签名从 spec → codex 构建 → lead 验收 → 合入 main，走 <b>dual-read</b>（<code>require_signature:false</code>，签而不校，零 schema 变更），一个被伪造的 cap 在 gate 上密码学失效成为结构性修复；
+<b>③</b> demo 的 <b>Hello↔Kanban 松耦合融合</b>落地（#1383，公共/匿名入口 + 一次性登录续接 + Hello Dispatcher + 派活链）；
+<b>④</b> enforce <b>尚未就绪，被真数据 E2E 提前抓住</b>——把 canary 库还原进隔离栈跑回填 dry-run，196 个真实 cap 只签出 6 个，enforce 保持关闭。这是当天最重要的风险捕获。
+</div>
+
+<h2>§1 今日工作统计（按领域 / PR）</h2>
+<div class="tablewrap">
+<table>
+<tr><th>领域</th><th>PR</th><th>负责人</th><th>产品结果</th></tr>
+<tr>
+  <td><b>安全（create_user 越权 + PTY 权属）</b></td>
+  <td>#1379 · #1375 · #1381（含 #1366 backfill）</td>
+  <td>gaga</td>
+  <td>#1379 create_user 不再是“cap-from-string”预言机；#1375 终端归创建者所有，封堵跨 workspace 终端偷窥洞；#1381 cap 签发 gate 诚实加固 + 边界测试。</td>
+</tr>
+<tr>
+  <td><b>AgentRuntime 边界 + LiveAuth 权限可见性热修</b></td>
+  <td>#1402</td>
+  <td>gaga</td>
+  <td>只减不增的 <code>agent_runtime_boundary</code> 架构门禁（Session 域调用 Agent 生命周期）+ 绕过场景对抗测试；<b>LiveAuth 改读 Ed25519 校验的 live Identity caps</b>（<code>Identity.read_entity_caps → Cap.verified_set</code>）而非旧 <code>caps_json</code>——修复运行时已授予的 creator cap 在 Web/Terminal 授权中不可见的真 canary bug（dual-read 安全：未签名 cap 仍授权）。</td>
+</tr>
+<tr>
+  <td><b>cbac Phase-4 ed25519 签名</b></td>
+  <td>spec #1382；<code>feat/cbac-phase4-ed25519</code> 栈 #1385/#1387/#1390/#1391/#1392/#1393/#1395/#1397/#1398；feat→main 合入 <b>#1399</b></td>
+  <td>allen（lead spec/验收；codex 构建）</td>
+  <td>grantee-binding 落地；dual-read <code>require_signature:false</code>，签名存于 <code>caps_json</code>，零 schema 变更；crypto 单测 22/0。</td>
+</tr>
+<tr>
+  <td><b>Demo 路径（W29）</b></td>
+  <td>#1383</td>
+  <td>zhaomato</td>
+  <td>Hello↔Kanban 松耦合融合：公共/匿名入口 + 一次性登录续接 + Hello Dispatcher + 派活链。</td>
+</tr>
+<tr>
+  <td><b>UI 修复</b></td>
+  <td>#1389</td>
+  <td>zyli</td>
+  <td>Session Bindings / Routing 页签点击处理修复。</td>
+</tr>
+<tr>
+  <td><b>架构文档 / handoff</b></td>
+  <td>#1394 · #1400 · #1401 · #1380</td>
+  <td>allen（lead 轨道）</td>
+  <td>#1394 entity-caps 收敛计划 + handoff；#1400 cap-signing no-tail 发现 + handoff；#1401 handoff 修订；#1380 lead 轨道。</td>
+</tr>
+</table>
+</div>
+<p style="color:#6b7280;font-size:12px">说明：cbac 栈 #1385–#1398 以 <code>allenwoods</code> 署名的提交实为 codex dev-agent 的构建产出（lead 轨道）；#1382/#1394/#1400/#1401 为 lead 轨道文档。</p>
+
+<h2>§2 合并结果与未合并状态</h2>
+
+<h3>计划 vs 实际</h3>
+<p><b>计划轨道（0714 plan §5）：</b>zyli 前端 CI · gaga AgentRuntime SPEC+creds · zhaomato hello E2E+融合 · jjkysy 检查补位+#1360 形式化 · ruihua 飞轮接入 · allen #1376 裁定+cbac Phase-4。</p>
+<p><b>实际：</b>当天被计划外的 CapBAC 安全+签名线主导（gaga #1379 越权发现 → lead Phase-4 spec → codex 构建 → 合并），牵动 lead + codex + gaga。计划轨道里：zhaomato <b>命中</b>（融合 #1383 + demo 路径）；zyli 交付了 UI 修复（#1389）而非前端 CI 轨道；<b>gaga 两线都交付</b>——安全三件（#1375/#1379/#1381）+ 计划内的 AgentRuntime 边界门禁（#1402，含 canary 发现的 LiveAuth 权限可见性热修）；jjkysy #1376 被 <b>held</b>（被取代）；ruihua #1378/#1388 <b>pending/WIP</b>。</p>
+
+<h3>Held / 未合并</h3>
+<div class="tablewrap">
+<table>
+<tr><th>PR</th><th>状态</th><th>说明</th></tr>
+<tr><td>#1376（jjkysy mount）</td><td><span class="pill hold">held</span></td><td>被 entity-caps 取代，保持 draft。</td></tr>
+<tr><td>#1374（kanban）</td><td><span class="pill hold">held</span></td><td>stacked 在 #1376 之上，随之保留。</td></tr>
+<tr><td>#1378（ruihua）</td><td><span class="pill warn">CONFLICTING</span></td><td>需 rebase 后由 lead 合入。</td></tr>
+<tr><td>#1388（ruihua DealScout）</td><td><span class="pill warn">WIP</span></td><td>继续开发。</td></tr>
+<tr><td>#1386（grantee-binding docs）</td><td><span class="pill warn">open</span></td><td>文档 PR，待收。</td></tr>
+</table>
+</div>
+<p style="color:#6b7280;font-size:12px">今日无 <code>returns/</code> 目录——devs 经 chat/PR 描述返工，从 <code>gh pr list --state merged</code> 回填。</p>
+
+<h2>§3 质量与风险判断</h2>
+<ul>
+<li><b>真实安全洞已封堵：</b>workspace admin 可铸造 global-admin cap（#1379）。根因更深——源码扫描无法证明一个运行时属性——因此结构性修复落在 Phase-4 签名：一个被伪造的 cap 在 gate 上密码学失效。</li>
+<li><b>Phase-4 走 dual-read（<code>require_signature:false</code>），部署安全：</b>签名发生、但不强校，现有 cap 仍可授权；crypto 已证 22/0；<b>零 schema 变更</b>（签名存于 <code>caps_json</code> JSON）。</li>
+</ul>
+<div class="risk">
+<b>⚠ Enforce 尚未就绪——被真数据 E2E 抓住。</b> 把 canary 库还原进隔离栈、跑回填 dry-run，显示只对 <b>6/196</b> 真实 cap 签名（189 个进 quarantine：grant event 缺失/畸形、shape 不支持）。单测在干净 fixture 上全绿（22/0）却漏掉了这一点。Enforce 保持关闭；一个“no-tail”重新 provision-签名的路径已交给 codex 调查。<b>这是当天最重要的风险捕获。</b>
+</div>
+<ul>
+<li><b>entity-caps 设计已在途修正（无坏码落地）：</b>该设计经历数轮收敛，从“大一统”重新收敛为一个 scoped patch；纠正发生在合并之前，没有基于错误前提的代码进入 main。</li>
+</ul>
+
+<h2>§4 流程沉淀</h2>
+<blockquote><b>新规则（process-debt，owner: lead）：任何对安全/授权不变量或数据迁移的改动，在考虑 enforce/flip 之前必须先过一次真 canary 数据的 E2E。</b> 干净 fixture 上的绿单测是必要、非充分——6/196 的回填缺口只在真数据上才出现。（本可提前抓住“回填会签下全部”的过度乐观假设。）</blockquote>
+<blockquote><b>强化规则（doc-why-must-be-code-verified / reproduce-before-benchmark）：先读代码再 spec 行为，不要把读代码外包给 reviewer。</b> entity-caps 的 spec 反复来自于未读代码就断言其行为；规则本已存在，这次的失手就是信号，止住循环的做法是停下来读代码、再重新收敛范围。</blockquote>
+<blockquote><b>强化规则（subagent-worktree-wrong-repo）：从 scratchpad worktree push/PR 前，先核对 <code>git remote -v</code>。</b> cbac spec 在一个 cc-openclaw worktree 里撰写，差点 PR 到错误的仓库（靠“所有 sibling spec 都在 esr-ng”兜住）。</blockquote>
+<blockquote><b>确认有效的做法：经验性差分测试（re-issue → 审计未签名 = 找出绕过路径）胜过纯代码审计</b>，已折入 cap-signing 调查 handoff。</blockquote>
+
+<h2>§5 对 2026-07-15 的建议</h2>
+<ol>
+<li><b>把 W29 demo 端到端串一遍</b>——Hello↔Kanban 融合（#1383）已落地，缺的一段是 派活→平台 agent 出 PR→合→看板流转。分工：gaga 测试 demo 路径 → allen 验收 → ruihua 从产品角度完善。（jjkysy 明天可能没时间。）</li>
+<li><b>gaga：AgentRuntime 边界已合（#1402）；</b>下一步 = ARB-2~5 存量迁移 + 一批 LiveAuth/caps 审计项——<b>⚠ 其中「EntityCaps 持久化统一」须与 codex entity-caps D 协调，别同改 caps 持久化面。</b></li>
+<li><b>bridge-join 不是 demo 阻塞（被绕过、非遗忘）：</b>急症那半（新建超时 + @orchestrator 变哑）已修（#1294，canary 实证 #1367）；剩下的 cc-PTY bridge-join 慢激活由 cc-headless（<code>:in_process_sync</code>，无 bridge-join 风险）绕过。作为 cc-PTY 专项 latent 项延后（仅当真 PTY agent 上生产时才修）。demo 跑 cc-headless。</li>
+<li><b>等 codex 两份返工</b>（entity-caps A/B/D；cap-signing no-tail 发现文档）→ lead 验收 + 决定 re-provision-签名 构建与 enforce 时点。Enforce 保持关闭，直到审计证明 0 个未签名的 authorizer cap。</li>
+<li><b>ruihua rebase #1378</b>（CONFLICTING）→ lead 合入；继续 #1388。</li>
+<li><b>流程：把 §4 规则 1（auth 不变量/迁移 enforce 前必须过真数据 E2E）确立为常设 gate。</b></li>
+</ol>
+
+<p style="margin-top:30px;color:#9ca3af;font-size:12px">对应 Markdown：<code>docs/together/2026-07-14/review.md</code>。本 HTML 参考既有 review 页面结构撰写。</p>
+</body>
+</html>
