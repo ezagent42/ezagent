@@ -155,9 +155,9 @@ defmodule Ezagent.Users do
   (Decision #154 — no unowned permissions): the anon is then a self-sufficient
   caller that joins ONLY its own session under its OWN authority, with no
   `system://` principal in the dispatch ctx. NOTE the caps MUST be
-  `to_map/1`-serializable — concrete-`%URI{}` (or `:any`) instance axes only; a
-  scope tuple (`{:within_session, _}`) is NOT JSON-serializable on this path
-  (only the slice snapshot carries tuples).
+  `to_map/1`-serializable. Concrete `%URI{}` / `:any` instance axes and the
+  closed scope-tuple forms (`:within_session`, `:within_workspace`, and
+  `:spawned_by`) round-trip through the same `caps_json` wire shape.
 
   The row carries no `password_hash`, so `verify_password/2` refuses login for it
   (a read-only viewer is never a login principal).
@@ -205,25 +205,35 @@ defmodule Ezagent.Users do
   provisioning row. `destroy/2` is idempotent — a never-spawned User (no
   snapshot) is a harmless no-op.
   """
-  @spec delete(URI.t() | String.t()) :: :ok
+  @spec delete(URI.t() | String.t()) :: :ok | {:error, :cannot_self_destroy}
   def delete(uri) do
-    # Terminate + clear the Kind snapshot/marker first (best-effort: a User
-    # that was never spawned has no Kind state — destroy is a no-op).
-    _ =
-      try do
-        Ezagent.Lifecycle.destroy(uri)
-      rescue
-        _ -> :ok
+    Ezagent.Lifecycle.with_entity_transition(uri, fn ->
+      # Terminate + clear the Kind snapshot/marker first (best-effort: a User
+      # that was never spawned has no Kind state — destroy is a no-op). The
+      # outer transition lock remains held through the provisioning-row delete;
+      # destroy/2 nests reentrantly under the same requester lock.
+      destroy_result =
+        try do
+          Ezagent.Lifecycle.destroy(uri)
+        rescue
+          _ -> :ok
+        end
+
+      case destroy_result do
+        {:error, :cannot_self_destroy} = error ->
+          error
+
+        _ ->
+          case Repo.get_by(__MODULE__, uri: uri_to_str(uri)) do
+            nil ->
+              :ok
+
+            row ->
+              _ = Repo.delete(row)
+              :ok
+          end
       end
-
-    case Repo.get_by(__MODULE__, uri: uri_to_str(uri)) do
-      nil ->
-        :ok
-
-      row ->
-        _ = Repo.delete(row)
-        :ok
-    end
+    end)
   end
 
   @doc "Set or rotate a user's password. Returns `{:ok, decoded}` or `{:error, :not_found}`."

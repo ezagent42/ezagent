@@ -11,7 +11,7 @@ defmodule EzagentPluginHello.KanbanDelegation do
   require Logger
   use Gettext, backend: EzagentPluginHello.Gettext
 
-  alias Ezagent.{Capability, Identity, Invocation, Workspace}
+  alias Ezagent.{Capability, Invocation, Workspace}
   alias Ezagent.Agent.RecipeResolver
   alias EzagentPluginHello.{Members, TurnDriver}
 
@@ -145,7 +145,7 @@ defmodule EzagentPluginHello.KanbanDelegation do
   defp caller_ctx(sender_uri) do
     %{
       caller: sender_uri,
-      caps: sender_uri |> Identity.read_entity_caps() |> MapSet.new(),
+      caps: sender_uri |> Ezagent.EntityCaps.load() |> MapSet.new(),
       reply: {:caller_inbox, self()}
     }
   end

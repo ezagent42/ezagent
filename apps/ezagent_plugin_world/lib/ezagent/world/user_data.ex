@@ -27,6 +27,7 @@ defmodule Ezagent.World.UserData do
       uri_str = URI.to_string(user.uri)
       online? = Ezagent.Presence.present?(user.uri)
       profile = Ezagent.Entity.Profile.get(user.uri)
+      cap_count = length(user.caps)
 
       %{
         "uri" => uri_str,
@@ -39,7 +40,7 @@ defmodule Ezagent.World.UserData do
         "disabled_at" => encode_datetime(user.disabled_at),
         "disabled_by" => user.disabled_by,
         "disabled_reason" => user.disabled_reason,
-        "cap_count" => length(user.caps),
+        "cap_count" => cap_count,
         "online" => online?,
         "transports" => transports_summary(Ezagent.Presence.list(user.uri)),
         "system_member" => MapSet.member?(system_members, Ezagent.URI.stable_key(user.uri)),
@@ -58,6 +59,7 @@ defmodule Ezagent.World.UserData do
     user = Ezagent.Users.get_by_uri(user_uri)
     profile = Ezagent.Entity.Profile.get(user_uri)
     user_uri_str = URI.to_string(user_uri)
+    cap_count = length(user.caps)
 
     base
     |> Map.put("user_uri", user_uri_str)
@@ -73,7 +75,7 @@ defmodule Ezagent.World.UserData do
     |> Map.put("disabled_at", encode_datetime(user.disabled_at))
     |> Map.put("disabled_by", user.disabled_by)
     |> Map.put("disabled_reason", user.disabled_reason)
-    |> Map.put("cap_count", length(user.caps))
+    |> Map.put("cap_count", cap_count)
     |> Map.put("caps_path", caps_path(user_uri_str))
     |> Map.put("granted_caps", CapData.list_entity_caps(user_uri, caller, caps))
     |> Map.put("action_error", nil)

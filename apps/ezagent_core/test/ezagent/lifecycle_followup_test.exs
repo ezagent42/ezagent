@@ -471,6 +471,91 @@ defmodule Ezagent.LifecycleFollowupTest do
     end
   end
 
+  describe "entity transition lock" do
+    test "string, struct, and action variants share one lock while different URIs do not block" do
+      instance = uri("lifecycle_fixture")
+      action = Ezagent.URI.with_action(instance, :lifecycle_fixture, :touch)
+      string = URI.to_string(instance)
+      other = uri("lifecycle_fixture")
+      parent = self()
+      ref = make_ref()
+
+      first =
+        Task.async(fn ->
+          Ezagent.Lifecycle.with_entity_transition(action, fn ->
+            send(parent, {ref, :first_locked, self()})
+
+            assert :nested ==
+                     Ezagent.Lifecycle.with_entity_transition(instance, fn -> :nested end)
+
+            assert :nested_string ==
+                     Ezagent.Lifecycle.with_entity_transition(string, fn -> :nested_string end)
+
+            receive do
+              {^ref, :release} -> :first_done
+            end
+          end)
+        end)
+
+      assert_receive {^ref, :first_locked, first_pid}, 1_000
+
+      assert transition_lock_available?(instance) == false
+
+      unrelated =
+        Task.async(fn ->
+          Ezagent.Lifecycle.with_entity_transition(other, fn ->
+            send(parent, {ref, :other_locked})
+            :other_done
+          end)
+        end)
+
+      assert_receive {^ref, :other_locked}, 1_000
+      assert :other_done = Task.await(unrelated, 1_000)
+      send(first_pid, {ref, :release})
+
+      assert :first_done = Task.await(first, 1_000)
+      assert transition_lock_available?(instance) == true
+    end
+
+    test "callback raise and exit release both the process marker and global lock" do
+      instance = uri("lifecycle_fixture")
+
+      assert_raise RuntimeError, "transition callback failed", fn ->
+        Ezagent.Lifecycle.with_entity_transition(instance, fn ->
+          raise "transition callback failed"
+        end)
+      end
+
+      assert :after_raise ==
+               Ezagent.Lifecycle.with_entity_transition(instance, fn -> :after_raise end)
+
+      assert catch_exit(
+               Ezagent.Lifecycle.with_entity_transition(instance, fn ->
+                 exit(:transition_callback_exit)
+               end)
+             ) == :transition_callback_exit
+
+      assert :after_exit ==
+               Ezagent.Lifecycle.with_entity_transition(instance, fn -> :after_exit end)
+    end
+  end
+
+  defp transition_lock_available?(uri) do
+    stable_key = uri |> Ezagent.URI.instance() |> Ezagent.URI.stable_key()
+
+    Task.async(fn ->
+      lock_id = {{:ezagent_entity_transition, stable_key}, self()}
+
+      if :global.set_lock(lock_id, [node()], 0) do
+        :global.del_lock(lock_id, [node()])
+        true
+      else
+        false
+      end
+    end)
+    |> Task.await(1_000)
+  end
+
   # A throwaway module whose deactivate returns {:ok, state} — used to
   # prove __run_deactivate__ DISCARDS it (F5).
   defmodule DeactivateReturnsState do

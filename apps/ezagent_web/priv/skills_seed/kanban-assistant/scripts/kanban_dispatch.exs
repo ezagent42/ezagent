@@ -14,7 +14,7 @@ node = :"ezagent_runtime@127.0.0.1"
 code = ~S"""
 case Ezagent.Authentication.authenticate(token) do
   {:ok, caller} ->
-    caps = caller |> Ezagent.Identity.read_entity_caps() |> MapSet.new()
+    caps = caller |> Ezagent.EntityCaps.load() |> MapSet.new()
     args =
       Jason.decode!(args_json)
       |> Map.new(fn {k, v} -> {String.to_atom(k), v} end)

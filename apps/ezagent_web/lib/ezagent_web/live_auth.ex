@@ -344,10 +344,10 @@ defmodule EzagentWeb.LiveAuth do
   # at that boundary.
   defp load_caps(%URI{} = caller_uri) do
     try do
-      if Code.ensure_loaded?(Ezagent.Identity) and
-           function_exported?(Ezagent.Identity, :read_entity_caps, 1) do
+      if Code.ensure_loaded?(Ezagent.EntityCaps) and
+           function_exported?(Ezagent.EntityCaps, :load, 1) do
         caller_uri
-        |> Ezagent.Identity.read_entity_caps()
+        |> Ezagent.EntityCaps.load()
         |> MapSet.new()
       else
         MapSet.new()
