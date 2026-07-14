@@ -20,6 +20,10 @@
 - Live credential provisioning is a separate operational track and never enters this branch.
 - PR #1375/#1379 are merged into `main`; this branch is rebased onto that reviewed baseline.
 - Final source anchors and the capability chokepoint may now be implemented. Live credential acceptance still waits for confirmation that #1375 is deployed.
+- PR #1381 is not a code prerequisite for the AgentRuntime gate. It corrects the
+  assurance level of #1379: static enumeration is not a runtime issuance proof.
+  Authority-persisting facade work waits for the structural-enforcement decision,
+  not merely for #1381 to merge.
 - Run `mix precommit` after all repository changes.
 
 ---
@@ -556,5 +560,5 @@ one target agent must never be performed concurrently by multiple workers.
 | AST scanner fixtures | none | none | Complete |
 | Exact repository allowlist | merged/final anchors | none | Complete |
 | Creator Terminal `/login` evidence | deployment confirmation pending | none | Blocked on deployment |
-| Facade capability issuance/store | policy context | merged chokepoint | Ready after gate review |
+| Facade capability issuance/store | policy context | static chokepoint only; #1381/structural decision pending | Paused for architecture decision |
 | Facade lifecycle API without new grants | policy context | review constraint | Ready after gate review |

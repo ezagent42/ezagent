@@ -239,7 +239,9 @@ gate，再进入正式 return。
 - creator Terminal `/login` live acceptance：仅等待 #1375 部署确认，不以 merge
   状态替代部署证据；
 - capability-issuing Facade slice：#1379 chokepoint 已就绪，在 Task 4 gate review
-  后进入实现；
+  后仍不得直接进入 authority-persisting 实现。PR #1381 证明该 chokepoint 只枚举
+  静态可解析调用，不能证明运行时所有 cap 都来自 `Ezagent.Cap.issue/3`；需等待
+  structural-enforcement 架构决策；
 - 完整 `mix precommit` 复验：Task 3 focused 20/20 绿；此前 full precommit 被共享
   test DB 的残留 `probe-*` workspace 行触发 3 个既有 visibility invariant 失败，
   不在本任务中用清库或绕过手段掩盖。

@@ -41,9 +41,13 @@ Session-domain lifecycle paths.
 9. PR #1375 makes the target Agent's Manage cap the authority for PTY read, write
    and restart. PTY access policy remains owned by `Ezagent.Domain.Pty.Access`; the
    Agent control facade must not duplicate it.
-10. PR #1379 enforces ISSUE→STORE→VERIFY for `users.caps_json`. Any future facade
-    capability issuance must use `Ezagent.Cap.issue/3`; it may not parse and store
-    provenance-bearing capabilities directly.
+10. PR #1379 requires statically resolvable `users.caps_json` issuance paths to use
+    `Ezagent.Cap.issue/3`, but it does not prove the runtime property that every
+    stored capability was issued there; PR #1381 makes that scanner boundary
+    explicit, including the `Module.concat/1` blind spot. Any future facade
+    capability issuance must still use `Ezagent.Cap.issue/3` and may not parse and
+    store provenance-bearing capabilities directly. A runtime structural guarantee
+    needs a separate accepted architecture decision.
 
 ## 3. Vocabulary and ownership
 
