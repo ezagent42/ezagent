@@ -51,13 +51,19 @@ export function Kanban({
   onShare,
   onShareArtifact,
   onUploadFile,
+  mode = "operate",
 }: {
   state: KanbanState
   onAction?: Act
   onShare?: () => void
   onShareArtifact?: (name: string, url: string) => void
   onUploadFile?: UploadFn
+  // "operate"（默认，会话 tab 用）：有 kanban_uri 就渲富操作面 KanbanDetail。
+  // "config"（插件页 /plugins/kanban 用）：只渲配置面 KanbanList（Miro/GitHub 凭证），
+  // 不出操作 UI——建树/认领/编辑都在会话 tab 里做。白名单不动（tab 走同一 dispatch）。
+  mode?: "operate" | "config"
 }) {
+  if (mode === "config") return <KanbanList state={state} onAction={onAction} />
   return state.kanban_uri ? (
     <KanbanDetail state={state} onAction={onAction} onShare={onShare} onShareArtifact={onShareArtifact} onUploadFile={onUploadFile} />
   ) : (
