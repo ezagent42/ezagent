@@ -2,18 +2,19 @@ defmodule Ezagent.Cap do
   @moduledoc """
   Capability artifact seam.
 
-  Phase 3 keeps the artifact as an `Ezagent.Capability` struct. `issue/3`
-  stamps accountable entity provenance without transferring the issuer's
-  authority, and `verify/1` checks that provenance at trust boundaries. Phase 4
-  can replace these bodies with signing and signature verification without
-  changing callers.
+  The artifact remains an `Ezagent.Capability` struct. `issue/3` stamps
+  accountable entity provenance and its receiving grantee, then signs the
+  artifact without transferring the issuer's authority. `verify/1` still
+  checks provenance at trust boundaries until the Phase 4 verification slice
+  replaces that seam with signature verification.
 
   `issue/3` loads the issuer's held authority through the dependency-inverted
   durable loader and runs the complete grantor-authorization algorithm before
-  returning an artifact. Downstream handlers only store issued artifacts.
+  returning a signed artifact. Downstream handlers only store issued artifacts.
   """
 
   alias Ezagent.{Capability, CapabilityRegistry}
+  alias Ezagent.Cap.Signing
 
   @type artifact :: Capability.t()
   @type authorization ::
@@ -27,11 +28,12 @@ defmodule Ezagent.Cap do
   """
   @spec issue(authorization(), URI.t(), Capability.t()) ::
           {:ok, artifact()} | {:error, term()}
-  def issue(authorization, %URI{}, %Capability{} = cap) do
+  def issue(authorization, %URI{} = grantee_uri, %Capability{} = cap) do
     {caps, context} = authorization_context(authorization)
 
-    with :ok <- CapabilityRegistry.authorize_grant(caps, cap, context) do
-      prepare_provenance(authorization, cap)
+    with :ok <- CapabilityRegistry.authorize_grant(caps, cap, context),
+         {:ok, artifact} <- prepare_provenance(authorization, grantee_uri, cap) do
+      {:ok, sign_artifact(artifact)}
     end
   end
 
@@ -75,10 +77,28 @@ defmodule Ezagent.Cap do
     end
   end
 
+  @doc false
+  @spec prepare_provenance(authorization(), URI.t(), Capability.t()) ::
+          {:ok, artifact()} | {:error, term()}
+  def prepare_provenance(authorization, %URI{} = grantee_uri, %Capability{} = cap) do
+    with {:ok, artifact} <- prepare_provenance(authorization, cap) do
+      {:ok, %{artifact | grantee_uri: grantee_uri}}
+    end
+  end
+
   defp issuer({:held_by, %URI{} = actor}), do: actor
   defp issuer({:admin, %URI{} = admin}), do: admin
   defp issuer({:rule, name, %URI{} = configurer}) when is_atom(name), do: configurer
   defp issuer({:genesis, %URI{} = granted_by}), do: granted_by
+
+  defp sign_artifact(%Capability{} = cap) do
+    version = Signing.active_key_version()
+    trust_domain = Signing.trust_domain(cap.workspace_uri)
+    cap = %{cap | key_id: Signing.key_id(version, trust_domain)}
+    {_public_key, private_key} = Signing.derive_keypair(cap.granted_by, trust_domain, version)
+
+    %{cap | signature: Signing.sign(cap, private_key)}
+  end
 
   @doc false
   @spec authorization_context(authorization()) :: {MapSet.t(Capability.t()), map()}
