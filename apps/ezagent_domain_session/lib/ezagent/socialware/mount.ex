@@ -133,11 +133,21 @@ defmodule Ezagent.Socialware.Mount do
   # ── internals ───────────────────────────────────────────────────────────
 
   # granter 权 = 挂载行落的 granted_by(= target 的 data_owner)。mint 出的每个 artifact
-  # 都带 `granted_by`(板主人),直接取;万一 actions 为空(无 artifact)则回落 data_owner_of。
-  defp granted_by([%Ezagent.Capability{granted_by: %URI{} = owner} | _], _behavior, _target_uri),
-    do: owner
+  # 都带 `granted_by`(板主人),直接取其字段;万一 actions 为空(无 artifact)或该字段缺失,
+  # 回落 `data_owner_of`。
+  # 注:头部匹配空 `%Capability{}` 再字段访问,刻意不在结构体模式里写 `granted_by:` ——
+  # CapIssueChokepoint gate(#1379/I7)按 `%…Capability{granted_by: …}` AST 计 provenance
+  # 构造,解构模式会被误计,故用字段访问避开(本函数是读 mint 结果,非构造 cap)。
+  defp granted_by([%Ezagent.Capability{} = cap | _], behavior, target_uri) do
+    case cap.granted_by do
+      %URI{} = owner -> owner
+      _ -> data_owner_fallback(behavior, target_uri)
+    end
+  end
 
-  defp granted_by(_caps, behavior, target_uri) do
+  defp granted_by(_caps, behavior, target_uri), do: data_owner_fallback(behavior, target_uri)
+
+  defp data_owner_fallback(behavior, target_uri) do
     case Ezagent.CapabilityRegistry.data_owner_of(behavior, Ezagent.URI.instance(target_uri)) do
       %URI{} = owner -> owner
       _ -> nil
