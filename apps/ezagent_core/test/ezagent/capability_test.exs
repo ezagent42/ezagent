@@ -647,6 +647,100 @@ defmodule Ezagent.CapabilityTest do
     end
   end
 
+  describe "Phase-4 signing fields serialization" do
+    test "nil signing fields round-trip through the caps_json wire shape" do
+      original = %Capability{
+        kind: :user,
+        behavior: Ezagent.ActionSet.Session,
+        action: :send,
+        instance: :any,
+        workspace_uri: @ws_default,
+        granted_by: @user_uri,
+        granted_at: @now
+      }
+
+      stored = Capability.to_map(original)
+
+      assert stored["signature"] == nil
+      assert stored["key_id"] == nil
+
+      restored = stored |> Jason.encode!() |> Jason.decode!() |> Capability.from_map()
+
+      assert restored == original
+      assert restored.signature == nil
+      assert restored.key_id == nil
+    end
+
+    test "raw signature and key id round-trip through base64url caps_json fields" do
+      signature = :binary.copy(<<0, 255, 128, 1>>, 16)
+      key_id = "v1|dzp3b3Jrc3BhY2U6Ly90ZWFtLWFscGhh"
+
+      original =
+        struct(Capability, %{
+          kind: :user,
+          behavior: Ezagent.ActionSet.Session,
+          action: :send,
+          instance: :any,
+          workspace_uri: @ws_default,
+          granted_by: @user_uri,
+          granted_at: @now,
+          signature: signature,
+          key_id: key_id
+        })
+
+      stored = Capability.to_map(original)
+
+      assert stored["signature"] == Base.url_encode64(signature, padding: false)
+      assert stored["key_id"] == key_id
+
+      restored = stored |> Jason.encode!() |> Jason.decode!() |> Capability.from_map()
+
+      assert restored == original
+      assert restored.signature == signature
+      assert restored.key_id == key_id
+    end
+
+    test "explicit Jason encoder uses the same signing-field wire representation" do
+      signature = :binary.copy(<<255, 0>>, 32)
+      key_id = "v2|YToq"
+
+      cap =
+        struct(Capability, %{
+          kind: :any,
+          behavior: :any,
+          action: :any,
+          instance: :any,
+          workspace_uri: :any,
+          granted_by: @user_uri,
+          granted_at: @now,
+          signature: signature,
+          key_id: key_id
+        })
+
+      decoded = cap |> Jason.encode!() |> Jason.decode!()
+
+      assert decoded["signature"] == Base.url_encode64(signature, padding: false)
+      assert decoded["key_id"] == key_id
+    end
+
+    test "from_map rejects a malformed encoded signature" do
+      stored =
+        Capability.to_map(%Capability{
+          kind: :user,
+          behavior: :any,
+          action: :any,
+          instance: :any,
+          workspace_uri: @ws_default,
+          granted_by: @user_uri,
+          granted_at: @now
+        })
+
+      assert_raise ArgumentError, ~r/invalid base64url signature/, fn ->
+        Capability.from_map(Map.put(stored, "signature", "not+base64url"))
+      end
+    end
+  end
+
   # Remediation SPEC 2026-05-30 C-C regression: a %Capability{} MUST be
   # JSON-encodable so the `{:emit, :cap_granted, %{cap: cap}}` effect persists
   # to EventLog. Before the encoder, this raised `Jason.EncodeError` /
