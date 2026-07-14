@@ -25,6 +25,23 @@ defmodule EzagentWeb.HomeLiveTest do
     assert {:error, {:live_redirect, %{to: "/login"}}} = live(conn, ~p"/")
   end
 
+  describe "GET / with invalid identity input" do
+    test "fails closed for a malformed URI", %{conn: conn} do
+      assert_invalid_identity_redirect(conn, "not-a-uri", "malformed-cookie")
+    end
+
+    test "fails closed for a non-entity URI", %{conn: conn} do
+      assert_invalid_identity_redirect(conn, "workspace://system", "non-entity-cookie")
+    end
+
+    test "fails closed for an entity URI whose principal no longer exists", %{conn: conn} do
+      missing_uri = "entity://auth-fail/user/missing-principal"
+      assert Ezagent.Users.get_by_uri(missing_uri) == nil
+
+      assert_invalid_identity_redirect(conn, missing_uri, "missing-principal")
+    end
+  end
+
   test "GET / with session AND existing sessions redirects to /sessions", %{conn: conn} do
     # The chat Application's `:test`-env seed populates `session://system/default/main`
     # at boot, so `list_sessions/0` returns non-empty by default in the
@@ -53,6 +70,9 @@ defmodule EzagentWeb.HomeLiveTest do
   # → the `{:ok, _lv, html}` match raises.
   test "GET / scopes the landing judgment to the caller's workspace (no cross-tenant leak)",
        %{conn: conn} do
+    caller_uri = URI.new!("entity://w0iso/user/alice")
+    assert {:ok, _user} = Ezagent.Users.create_read_only(caller_uri)
+
     # Precondition: some OTHER tenant (system) has a live session.
     assert Enum.any?(EzagentDomainInstanceMessage.list_sessions(), fn uri ->
              match?(%URI{scheme: "session", host: "system"}, uri)
@@ -65,7 +85,7 @@ defmodule EzagentWeb.HomeLiveTest do
     conn =
       conn
       |> Plug.Test.init_test_session(%{
-        "current_entity_uri" => "entity://w0iso/user/alice"
+        "current_entity_uri" => URI.to_string(caller_uri)
       })
 
     # No redirect → wizard rendered inline (a redirect would return
@@ -194,6 +214,40 @@ defmodule EzagentWeb.HomeLiveTest do
 
       _ ->
         :ok
+    end
+  end
+
+  defp assert_invalid_identity_redirect(conn, identity, session_name) do
+    workspace_uri = URI.new!("workspace://auth-fail")
+    sessions_before = EzagentDomainInstanceMessage.list_sessions(workspace_uri)
+
+    conn =
+      Plug.Test.init_test_session(conn, %{
+        "current_entity_uri" => identity,
+        "current_workspace_uri" => URI.to_string(workspace_uri)
+      })
+
+    trace_session_creation_calls(fn ->
+      assert {:error, {:live_redirect, %{to: "/login"}}} = live(conn, ~p"/")
+    end)
+
+    assert EzagentDomainInstanceMessage.list_sessions(workspace_uri) == sessions_before
+
+    assert :error =
+             Ezagent.KindRegistry.lookup(URI.new!("session://auth-fail/default/#{session_name}"))
+  end
+
+  defp trace_session_creation_calls(fun) do
+    mfa = {Ezagent.Workspace, :create_session, 3}
+    :erlang.trace_pattern(mfa, true, [:local])
+    :erlang.trace(:all, true, [:call, {:tracer, self()}])
+
+    try do
+      fun.()
+      refute_receive {:trace, _pid, :call, {Ezagent.Workspace, :create_session, _args}}, 50
+    after
+      :erlang.trace(:all, false, [:call])
+      :erlang.trace_pattern(mfa, false, [:local])
     end
   end
 

@@ -26,6 +26,36 @@ defmodule EzagentWeb.SessionControllerTest do
       body = html_response(conn, 200)
       refute body =~ ~s(action="/login/magic")
     end
+
+    test "invalid identity state is cleared from both authentication slots" do
+      conn =
+        build_conn()
+        |> Plug.Test.init_test_session(%{
+          "current_entity_uri" => "not-a-uri",
+          "current_workspace_uri" => "workspace://system"
+        })
+        |> get("/login")
+
+      assert html_response(conn, 200) =~ "Sign in"
+      refute Plug.Conn.get_session(conn, :current_entity_uri)
+      refute Plug.Conn.get_session(conn, :current_workspace_uri)
+    end
+
+    test "visiting login cannot force logout a valid principal" do
+      admin = Ezagent.Entity.User.admin_uri()
+
+      conn =
+        build_conn()
+        |> Plug.Test.init_test_session(%{
+          "current_entity_uri" => URI.to_string(admin),
+          "current_workspace_uri" => "workspace://system"
+        })
+        |> get("/login")
+
+      assert html_response(conn, 200) =~ "Sign in"
+      assert Plug.Conn.get_session(conn, :current_entity_uri) == URI.to_string(admin)
+      assert Plug.Conn.get_session(conn, :current_workspace_uri) == "workspace://system"
+    end
   end
 
   describe "POST /login (email+password) — task #87" do
