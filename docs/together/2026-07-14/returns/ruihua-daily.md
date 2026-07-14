@@ -11,8 +11,7 @@
 - flywheel 解耦 design-system 本地副本，改为 CDN 引用
 
 ### ✅ Plan 分配任务（已完成）
-- `1378-flywheel-to-liveview/design-brief.md` — IA 映射表 + 视觉方向 + hello↔kanban 连接点 + 不做事项清单
-- `1378-flywheel-to-liveview/hello-entry-flow.html` — greeter → live 回复 → kanban 连接的用户旅程参考
+- `1378-flywheel-to-liveview/design-brief.md` — IA 映射表 + 视觉方向 + hello↔kanban 连接点 + 不做事项清单（单一事实源）
 - `doc/page-flow.md` 已更新设计参考节
 - 受众 zhaomato，不改代码，设计输入最终走 Feishu
 

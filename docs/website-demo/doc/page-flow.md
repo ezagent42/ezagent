@@ -114,5 +114,4 @@ L2/L3 页面通过 `site-nav.js`（设置 `EZD_SITE_ROOT = "../"`）或显式 "�
 
 | 参考页 | 文件 | 用途 | 关联 PR |
 |--------|------|------|---------|
-| **设计说明** | `1378-flywheel-to-liveview/design-brief.md` | IA 映射表 + 视觉方向 + hello↔kanban 连接点 | #1378 |
-| **Hello 入口流** | `1378-flywheel-to-liveview/hello-entry-flow.html` | greeter → live 回复 → kanban 连接的用户旅程参考 | #1378 |
+| **设计说明** | `1378-flywheel-to-liveview/design-brief.md` | IA 映射表 + 视觉方向 + hello↔kanban 连接点 + 不做事项 | #1378 |
