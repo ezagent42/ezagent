@@ -15,6 +15,10 @@
 - `doc/page-flow.md` 已更新设计参考节
 - 受众 zhaomato，不改代码，设计输入最终走 Feishu
 
+### 📸 交付截图
+
+![mainsite 截图](../../website-demo/assets/images/mainsite-screenshot.png)
+
 ### 🔴 重点发现：真正的 Gallery 还不存在
 
 IA 映射过程中发现关键事实：flywheel 原型的 gallery 是 socialware marketplace（浏览 → 试用 → Fork → 上架），而真实 WorldLive 里**没有任何页面对应它**。WorldLive `/plugins` 显示的是代码插件，不是 socialware 产品。
