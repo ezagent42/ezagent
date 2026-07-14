@@ -99,4 +99,3 @@ Every code PR runs its focused red/green regression, touched-app tests,
 `mix ezagent.arch.scan`, `mix ezagent.doc.scan`, `mix ezagent.uri_query.scan`,
 `mix ezagent.check_invariants`, and `SHELL=/bin/bash mix precommit`. A reviewer
 must report no Critical or Important issue before push/PR handoff.
-
