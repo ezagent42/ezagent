@@ -113,6 +113,10 @@ defmodule Ezagent.Invariants.EntityCapsAccessGateTest do
         {:ok, %{state: state}} = Ezagent.SnapshotStore.latest(uri)
         state[:identity][:caps]
       end
+      def embedded_snapshot(state) do
+        Code.eval_string("state[:identity][:caps]", state: state)
+      end
+      def unrelated_snapshot_words, do: "identity + caps"
 
       def unrelated_axes(map) do
         Map.get(map, :identity)
@@ -172,7 +176,8 @@ defmodule Ezagent.Invariants.EntityCapsAccessGateTest do
                {"bad_caps_consumer.ex", :snapshot, 1},
                {"bad_caps_consumer.ex", :dotted_snapshot, 1},
                {"bad_caps_consumer.ex", :sourced_snapshot, 1},
-               {"bad_caps_consumer.ex", :bracket_snapshot, 1}
+               {"bad_caps_consumer.ex", :bracket_snapshot, 1},
+               {"bad_caps_consumer.ex", :embedded_snapshot, 1}
              ])
 
     assert violation_functions(definitions, :persisted_only_consumer) ==
@@ -331,7 +336,8 @@ defmodule Ezagent.Invariants.EntityCapsAccessGateTest do
     resolved in target_modules
   end
 
-  defp snapshot_identity_shape?(ast), do: nested_identity_caps?(ast)
+  defp snapshot_identity_shape?(ast),
+    do: nested_identity_caps?(ast) or bracket_identity_caps?(ast)
 
   defp nested_identity_caps?(ast) do
     ast_any?(ast, fn
@@ -347,6 +353,25 @@ defmodule Ezagent.Invariants.EntityCapsAccessGateTest do
   end
 
   defp map_key_mutation_with_caps?(_node), do: false
+
+  defp bracket_identity_caps?(ast) do
+    ast_any?(ast, fn
+      {{:., _, [module, :get]}, _, [owner, key]}
+      when key in [:caps, "caps"] ->
+        Macro.to_string(module) == "Access" and
+          ast_any?(owner, fn
+            {{:., _, [inner_module, :get]}, _, [_source, inner_key]}
+            when inner_key in [:identity, "identity"] ->
+              Macro.to_string(inner_module) == "Access"
+
+            _ ->
+              false
+          end)
+
+      _ ->
+        false
+    end)
+  end
 
   defp dotted_identity_caps?(ast) do
     ast_any?(ast, fn
@@ -412,10 +437,14 @@ defmodule Ezagent.Invariants.EntityCapsAccessGateTest do
   end
 
   defp embedded_code_candidate?(node) when is_binary(node) do
-    Enum.any?(
-      ["Ezagent.", "read_entity_caps", "load_persisted", "caps_json", "SnapshotStore"],
-      &String.contains?(node, &1)
-    )
+    known_boundary? =
+      Enum.any?(
+        ["Ezagent.", "read_entity_caps", "load_persisted", "caps_json", "SnapshotStore"],
+        &String.contains?(node, &1)
+      )
+
+    raw_snapshot_shape? = String.contains?(node, "identity") and String.contains?(node, "caps")
+    known_boundary? or raw_snapshot_shape?
   end
 
   defp embedded_code_candidate?(_node), do: false

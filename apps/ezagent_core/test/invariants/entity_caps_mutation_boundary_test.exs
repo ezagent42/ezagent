@@ -117,6 +117,18 @@ defmodule Ezagent.Invariants.EntityCapsMutationBoundaryTest do
     assert count_ast(ast, &vm_internal_cmd_constructor?/1) == 3
   end
 
+  test "VM-internal producer scanner resolves an explicitly renamed Cmd alias" do
+    {:ok, ast} =
+      Code.string_to_quoted("""
+      alias Ezagent.Cmd, as: C
+      struct(C, target: target, action: dynamic_action, args: args, ctx: %{caller: :vm_internal})
+      C.new(target, dynamic_action, args, %{caller: :vm_internal})
+      """)
+
+    aliases = aliases(ast)
+    assert count_ast(ast, &vm_internal_cmd_constructor?(&1, aliases)) == 2
+  end
+
   defp action_literals do
     production_asts()
     |> Enum.reduce(%{}, fn {file, ast}, acc ->
@@ -156,7 +168,7 @@ defmodule Ezagent.Invariants.EntityCapsMutationBoundaryTest do
   defp vm_internal_cmd_builders do
     production_definitions()
     |> Enum.filter(fn definition ->
-      count_ast(definition.body, &vm_internal_cmd_constructor?/1) > 0
+      count_ast(definition.body, &vm_internal_cmd_constructor?(&1, definition.aliases)) > 0
     end)
     |> Enum.map(&{&1.file, &1.name, &1.arity})
     |> MapSet.new()
@@ -171,24 +183,35 @@ defmodule Ezagent.Invariants.EntityCapsMutationBoundaryTest do
     |> MapSet.new()
   end
 
-  defp vm_internal_cmd_constructor?({:%, _, [module, {:%{}, _, fields}]})
+  defp vm_internal_cmd_constructor?(node), do: vm_internal_cmd_constructor?(node, %{})
+
+  defp vm_internal_cmd_constructor?({:%, _, [module, {:%{}, _, fields}]}, aliases)
        when is_list(fields),
-       do: cmd_module?(module) and ast_contains?(fields, {:caller, :vm_internal})
+       do: cmd_module?(module, aliases) and ast_contains?(fields, {:caller, :vm_internal})
 
-  defp vm_internal_cmd_constructor?({:struct, _, [module, fields]}),
-    do: cmd_module?(module) and ast_contains?(fields, {:caller, :vm_internal})
+  defp vm_internal_cmd_constructor?({:struct, _, [module, fields]}, aliases),
+    do: cmd_module?(module, aliases) and ast_contains?(fields, {:caller, :vm_internal})
 
-  defp vm_internal_cmd_constructor?({{:., _, [kernel, :struct]}, _, [module, fields]}),
-    do:
-      Macro.to_string(kernel) == "Kernel" and cmd_module?(module) and
-        ast_contains?(fields, {:caller, :vm_internal})
+  defp vm_internal_cmd_constructor?(
+         {{:., _, [kernel, :struct]}, _, [module, fields]},
+         aliases
+       ),
+       do:
+         Macro.to_string(kernel) == "Kernel" and cmd_module?(module, aliases) and
+           ast_contains?(fields, {:caller, :vm_internal})
 
-  defp vm_internal_cmd_constructor?({{:., _, [module, :new]}, _, [_target, _action, _args, ctx]}),
-    do: cmd_module?(module) and ast_contains?(ctx, {:caller, :vm_internal})
+  defp vm_internal_cmd_constructor?(
+         {{:., _, [module, :new]}, _, [_target, _action, _args, ctx]},
+         aliases
+       ),
+       do: cmd_module?(module, aliases) and ast_contains?(ctx, {:caller, :vm_internal})
 
-  defp vm_internal_cmd_constructor?(_node), do: false
+  defp vm_internal_cmd_constructor?(_node, _aliases), do: false
 
-  defp cmd_module?(module), do: Macro.to_string(module) in ["Cmd", "Ezagent.Cmd"]
+  defp cmd_module?(module, aliases) do
+    name = Macro.to_string(module)
+    name in ["Cmd", "Ezagent.Cmd"] or Map.get(aliases, name) == "Ezagent.Cmd"
+  end
 
   defp direct_handler_call?({{:., _, [_module, handler]}, _, args})
        when handler in [:handle_persist_caps, :handle_store_cap, :handle_remove_cap] and
@@ -299,6 +322,8 @@ defmodule Ezagent.Invariants.EntityCapsMutationBoundaryTest do
   end
 
   defp definitions(ast, file) do
+    aliases = aliases(ast)
+
     {_ast, definitions} =
       Macro.prewalk(ast, [], fn
         {kind, _, [head, clauses]} = node, acc when kind in [:def, :defp] and is_list(clauses) ->
@@ -309,7 +334,8 @@ defmodule Ezagent.Invariants.EntityCapsMutationBoundaryTest do
             name: name,
             arity: arity,
             ast: node,
-            body: Keyword.fetch!(clauses, :do)
+            body: Keyword.fetch!(clauses, :do),
+            aliases: aliases
           }
 
           {node, [definition | acc]}
@@ -320,7 +346,18 @@ defmodule Ezagent.Invariants.EntityCapsMutationBoundaryTest do
 
     if String.ends_with?(file, ".exs") do
       top_level = strip_module_definitions(ast)
-      [%{file: file, name: :__script__, arity: 0, ast: top_level, body: top_level} | definitions]
+
+      [
+        %{
+          file: file,
+          name: :__script__,
+          arity: 0,
+          ast: top_level,
+          body: top_level,
+          aliases: aliases
+        }
+        | definitions
+      ]
     else
       definitions
     end
