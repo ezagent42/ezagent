@@ -29,7 +29,14 @@ defmodule EzagentPluginHello.KanbanDelegation do
 
   @doc "Delegate one instruction under the authenticated sender's persisted capabilities."
   @spec delegate(URI.t(), String.t(), URI.t()) ::
-          {:ok, %{kanban_uri: URI.t(), node_id: String.t(), path: String.t()}}
+          {:ok,
+           %{
+             kanban_uri: URI.t(),
+             node_id: String.t(),
+             path: String.t(),
+             title: String.t(),
+             status: atom() | nil
+           }}
           | {:error, term()}
   def delegate(%URI{} = session_uri, instruction, %URI{} = sender_uri)
       when is_binary(instruction) do
@@ -48,11 +55,14 @@ defmodule EzagentPluginHello.KanbanDelegation do
              :attach_artifact,
              %{id: node_id, artifact: source_artifact(session_uri, instruction)},
              ctx
-           ) do
+           ),
+         {:ok, task} <- task_snapshot(kanban_uri, node_id, ctx) do
       {:ok,
        %{
          kanban_uri: kanban_uri,
          node_id: node_id,
+         title: Map.get(task, :title, instruction),
+         status: Map.get(task, :status),
          path: "/plugins/kanban/" <> URI.encode_www_form(URI.to_string(kanban_uri))
        }}
     end
@@ -101,6 +111,22 @@ defmodule EzagentPluginHello.KanbanDelegation do
       {:ok, %{tree: %{root_id: root_id}}} -> {:ok, root_id}
       {:error, reason} -> {:error, reason}
       other -> {:error, {:invalid_kanban_tree, other}}
+    end
+  end
+
+  defp task_snapshot(kanban_uri, node_id, ctx) do
+    case dispatch(kanban_uri, :get_tree, %{}, ctx) do
+      {:ok, %{tree: %{nodes: nodes}}} when is_map(nodes) ->
+        case Map.fetch(nodes, node_id) do
+          {:ok, node} -> {:ok, node}
+          :error -> {:error, :delegated_node_missing}
+        end
+
+      {:error, reason} ->
+        {:error, reason}
+
+      other ->
+        {:error, {:invalid_kanban_tree, other}}
     end
   end
 
@@ -172,7 +198,15 @@ defmodule EzagentPluginHello.KanbanDelegation do
           session_uri,
           actor,
           gettext("Delegated to Kanban: %{instruction}", instruction: instruction),
-          %{"type" => "open_url", "value" => result.path}
+          %{
+            "type" => "open_url",
+            "value" => result.path,
+            "kind" => "hello_kanban_receipt",
+            "board_uri" => uri_to_string(result.kanban_uri),
+            "node_id" => result.node_id,
+            "title" => result.title,
+            "status" => to_string(result.status || :unknown)
+          }
         )
 
       {:error, reason} ->

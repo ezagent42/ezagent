@@ -74,20 +74,28 @@ render the result exactly once without creating another node on refresh.
 
 ### Status presentation
 
-Status badges are projections of real Kanban data, not a new workflow engine.
-The closed mapping is:
+Status badges are a creation-time receipt from the real Kanban node, not a new
+workflow engine or a copied Kanban read model. The closed mapping follows the
+current Kanban state machine:
 
 ```text
-unassigned / pending -> 待派
-assigned / in_progress -> 进行中
-pr_open -> PR 已开
-merged / done -> 已合并
+unassigned -> 待派
+claimed -> 已认领
+doing -> 进行中
+done -> 已完成
 ```
 
 Only statuses represented by the current Kanban model are rendered. Unknown
 values use a neutral `处理中` label and preserve the raw value for inspection;
-the demo must not simulate later states. Building GitHub event ingestion or a
-new Kanban state machine is out of scope.
+the demo must not simulate later states.
+
+PR #1374 makes the ownership boundary explicit: a `kanban-manager` passive
+agent remains the sole board data host; socialware sessions receive operate or
+read access through `Mount`. Hello therefore stores and renders only the board
+URI/node reference carried by the successful delegation message. It does not
+copy the board, continuously mirror status, or become a second Kanban data
+owner. Once #1374/#1376 are on `main`, the creation seam can adopt
+`BoardProvision`/`Mount` without changing the Hello receipt contract.
 
 ## Architecture
 
