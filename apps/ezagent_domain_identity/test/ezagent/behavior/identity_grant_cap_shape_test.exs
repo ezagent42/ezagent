@@ -131,6 +131,7 @@ defmodule Ezagent.ActionSet.IdentityGrantCapShapeTest do
   defp admin_ctx do
     %{
       caller: @granter,
+      self_uri: @granter,
       caps: MapSet.new([Ezagent.Capability.admin_genesis_cap()])
     }
   end

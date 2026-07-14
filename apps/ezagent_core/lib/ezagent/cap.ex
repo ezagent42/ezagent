@@ -54,8 +54,12 @@ defmodule Ezagent.Cap do
         grantee_uri: nil,
         granted_by: %URI{scheme: "entity"} = granted_by
       }) do
-    :telemetry.execute(@legacy_fallback_event, %{count: 1}, %{granted_by: granted_by})
-    true
+    if require_signature?() do
+      false
+    else
+      :telemetry.execute(@legacy_fallback_event, %{count: 1}, %{granted_by: granted_by})
+      true
+    end
   end
 
   def verify(
@@ -189,6 +193,13 @@ defmodule Ezagent.Cap do
   defp receiver_matches?(%Capability{signature: nil}, _receiver_uri), do: true
   defp receiver_matches?(%Capability{grantee_uri: receiver_uri}, receiver_uri), do: true
   defp receiver_matches?(_cap, _receiver_uri), do: false
+
+  defp require_signature? do
+    :ezagent_core
+    |> Application.get_env(__MODULE__, [])
+    |> Keyword.get(:signing, [])
+    |> Keyword.get(:require_signature, false)
+  end
 
   defp sign_artifact(%Capability{} = cap) do
     version = Signing.active_key_version()
