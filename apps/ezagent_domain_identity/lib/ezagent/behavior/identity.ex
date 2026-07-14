@@ -164,7 +164,7 @@ defmodule Ezagent.ActionSet.Identity do
           {caps, :none}
       end
 
-    caps = Ezagent.Cap.verified_set(caps)
+    caps = Ezagent.Cap.verified_set(caps, Map.get(args, :uri))
 
     state =
       case recipe_binding do
@@ -300,7 +300,7 @@ defmodule Ezagent.ActionSet.Identity do
     with {:ok, base_state, binding_caps, binding_update} <-
            reconcile_recipe_binding(state, uri) do
       merged = merge_caps_by_identity(base_state.caps, user_caps ++ binding_caps)
-      verified_caps = Ezagent.Cap.verified_set(merged)
+      verified_caps = Ezagent.Cap.verified_set(merged, uri)
 
       reconciled =
         base_state
@@ -611,7 +611,7 @@ defmodule Ezagent.ActionSet.IdentityAdmin do
   def handle_absorb_cap(_args, _ctx), do: {:error, :unauthorized}
 
   defp store_verified_cap(cap_struct, ctx, event_attrs) do
-    if Ezagent.Cap.verify(cap_struct) do
+    if Ezagent.Cap.verify_for(cap_struct, Map.get(ctx, :self_uri)) do
       current_caps = ctx[:read].(:caps, MapSet.new())
 
       # Dedup by identity-tuple BEFORE adding (codex review HIGH-1
