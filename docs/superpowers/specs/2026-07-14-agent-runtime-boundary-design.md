@@ -190,6 +190,12 @@ or `SpawnRegistry.spawn/1` are violations only when the API/call site is an
 agent-lifecycle seam identified by the closed classifier. Legal Session lifecycle
 calls must remain negative fixtures.
 
+In particular, `SessionCreator.demand_spawn_member/1` is a mixed-target wrapper:
+the current callers pass one explicit Session URI and three explicit Agent/member
+URIs. ARB-1 must classify those invocation edges (or first split the wrapper into
+syntactically distinct target-specific APIs); it must not infer Agent ownership
+from the wrapper parameter name or mark the shared body universally forbidden.
+
 ### 7.4 Debt allowlist
 
 Each allowance contains:

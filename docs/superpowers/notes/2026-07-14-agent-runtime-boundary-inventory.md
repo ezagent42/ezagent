@@ -22,7 +22,10 @@ Allowed classes are exactly `agent_materialization`, `agent_ensure_live`,
 
 | Path:line | Resolved call | Class | Agent target proof | Disposition | Slice |
 |---|---|---|---|---|---|
-| `apps/ezagent_domain_session/lib/ezagent_domain_instance_message/session_creator.ex:409` | `Ezagent.SpawnRegistry.spawn/1` | `agent_materialization` | `demand_spawn_member/1` is invoked for declared session members before join | allowlisted debt | ARB-3 |
+| `apps/ezagent_domain_session/lib/ezagent_domain_instance_message/session_creator.ex:197` | `EzagentDomainInstanceMessage.SessionCreator.demand_spawn_member/1 → Ezagent.SpawnRegistry.spawn/1` | `legal_session_lifecycle` | argument is explicitly `session_uri` | legal | none |
+| `apps/ezagent_domain_session/lib/ezagent_domain_instance_message/session_creator/definition_agents.ex:613` | `EzagentDomainInstanceMessage.SessionCreator.demand_spawn_member/1 → Ezagent.SpawnRegistry.spawn/1` | `agent_materialization` | argument is explicitly `member_uri` in Agent definition join | allowlisted debt | ARB-3 |
+| `apps/ezagent_domain_session/lib/ezagent_domain_instance_message/session_creator/template_team.ex:233` | `EzagentDomainInstanceMessage.SessionCreator.demand_spawn_member/1 → Ezagent.SpawnRegistry.spawn/1` | `agent_materialization` | argument is explicitly `member_uri` in declared Agent team | allowlisted debt | ARB-3 |
+| `apps/ezagent_domain_session/lib/ezagent_domain_instance_message/session_creator/materializer.ex:anchor_pending_1375` | `EzagentDomainInstanceMessage.SessionCreator.demand_spawn_member/1 → Ezagent.SpawnRegistry.spawn/1` | `agent_materialization` | argument is explicitly `member_uri` while joining materialized members | anchor_pending_1375 | ARB-3 |
 | `apps/ezagent_domain_session/lib/ezagent_domain_instance_message/session_creator/template_team.ex:205` | `Ezagent.Entity.Agent.spawn_from_template_content/5` | `agent_materialization` | explicit Agent module and `agent_uri` | allowlisted debt | ARB-3 |
 | `apps/ezagent_domain_session/lib/ezagent_domain_instance_message/session_creator/rollback.ex:35` | `Ezagent.Session.SessionManager.stop/1` | `agent_executor_control` | argument is the orchestrator Agent URI | allowlisted debt | ARB-4 |
 | `apps/ezagent_domain_session/lib/ezagent_domain_instance_message/session_creator/rollback.ex:48` | `Ezagent.Lifecycle.destroy/2` | `agent_destroy` | argument is `orchestrator_uri` | allowlisted debt | ARB-4 |
@@ -45,6 +48,7 @@ Allowed classes are exactly `agent_materialization`, `agent_ensure_live`,
 | `apps/ezagent_domain_session/lib/ezagent/domain/agent.ex:376` | `Ezagent.Domain.Pty.Server.phase/1` | `agent_executor_control` | explicit cc Agent executor phase probe | allowlisted debt | ARB-2 |
 | `apps/ezagent_domain_session/lib/ezagent/e2e/scenarios/agent_contract_g4.ex:458` | `Ezagent.SpawnRegistry.spawn/1` | `legal_session_lifecycle` | scenario helper argument is a Session URI | legal | none |
 | `apps/ezagent_domain_session/lib/ezagent/e2e/scenarios/agent_contract_g4.ex:552` | `Ezagent.SpawnRegistry.spawn_detailed/1` | `agent_materialization` | variable is explicitly `agent_uri` | allowlisted debt | ARB-3 |
+| `apps/ezagent_domain_session/lib/ezagent/e2e/scenarios/agent_contract_g4.ex:209` | `Ezagent.Session.SessionManager.ensure_started/1` | `agent_executor_control` | aliased call receives `orchestrator_uri` and starts its SessionManager executor | allowlisted debt | ARB-3 |
 | `apps/ezagent_domain_session/lib/ezagent/template/generic_session.ex:110` | `Ezagent.SpawnRegistry.spawn/1` | `legal_session_lifecycle` | argument is explicitly `session_uri` | legal | none |
 | `apps/ezagent_domain_session/lib/ezagent/entity/session_template.ex:808` | `Ezagent.SpawnRegistry.spawn/1` | `legal_session_lifecycle` | target is the SessionTemplate's own template URI | legal | none |
 | `apps/ezagent_domain_session/lib/ezagent/behavior/template.ex:648` | `Ezagent.SpawnRegistry.spawn/1` | `legal_session_lifecycle` | target is a SessionTemplate URI being rehydrated | legal | none |
@@ -59,9 +63,13 @@ older `/4` or `/5` APIs.
 
 ## Closure search reconciliation
 
-The primary search returned 76 textual hits. Thirty were call expressions and are
-all represented above. The other 46 are aliases, moduledocs, comments, or deleted
-API history; they have no executable lifecycle edge and therefore no table row.
+The primary search returned 76 textual hits. Twenty-nine are executable calls in
+the closed lifecycle family; 47 are aliases, moduledocs, comments, or deleted API
+history. Twenty-eight calls have direct rows above. The remaining expression is the
+polymorphic `demand_spawn_member/1` wrapper definition at `session_creator.ex:409`.
+It cannot honestly receive one class from syntax alone: its four known invocation
+edges are inventoried separately above (one Session target, three Agent/member
+targets). The four edge rows replace a false whole-wrapper classification.
 
 The required closure search for `KindRegistry`, `LocalRuntime`,
 `Invocation.dispatch`, and wrapper definitions returned 87 textual hits. It added
@@ -81,14 +89,30 @@ non-lifecycle families:
   `ensure_orchestrator_binding/2`, and `SessionManager.ensure_for_session/1` name
   Session/SessionTemplate state or bindings. Their bodies either perform legal
   template/session lifecycle or conversation-plane work.
-- `compensate_spawned_members/1`, `demand_spawn_member/1`,
-  `reap_spawned_worker/3`, and `ensure_orchestrator/…` are lifecycle wrappers whose
-  underlying forbidden calls already have rows above. The ARB-1 classifier must
-  retain wrapper fixtures so renaming or hiding a call does not erase the debt.
+- `compensate_spawned_members/1`, `reap_spawned_worker/3`, and
+  `ensure_orchestrator/…` are lifecycle wrappers whose underlying forbidden calls
+  already have rows above. `demand_spawn_member/1` is different: it is
+  mixed-target, and its four invocation edges are the classification unit.
 - `e2e/scenarios/agent_contract_g4.ex` is under `lib`, so its two runtime calls are
   intentionally inventoried rather than silently treated as test-only.
 
 Thus no unexplained call in the closed lifecycle API family remains.
+
+## ARB-1 classifier constraint for the mixed-target wrapper
+
+ARB-1 must not classify the body of `demand_spawn_member/1` as universally
+Agent-targeted. The planned AST scanner explicitly does not claim dataflow
+analysis, so a row anchored only at `SpawnRegistry.spawn(member_uri)` would produce
+a false positive for the legal Session caller. Task 2 must instead do one of these:
+
+1. classify the four statically named invocation edges and keep the wrapper body as
+   a known mixed-target sink; or
+2. introduce a syntactically distinct Agent-only facade before allowing a body
+   anchor.
+
+While PR #1375 is pending, the materializer invocation edge remains
+`anchor_pending_1375`. A broad wrapper allowance, path allowance, or guessed target
+from the parameter name is forbidden.
 
 ## Precision self-review
 
