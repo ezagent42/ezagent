@@ -6,6 +6,8 @@ defmodule Ezagent.Invariants.EntityCapsMutationBoundaryTest do
   use ExUnit.Case, async: true
 
   @facade "apps/ezagent_domain_identity/lib/ezagent/entity_caps.ex"
+  @identity_facade "apps/ezagent_domain_identity/lib/ezagent/identity.ex"
+  @cascade_hook "apps/ezagent_core/lib/ezagent/kind/cascade_hook.ex"
   @identity_behavior "apps/ezagent_domain_identity/lib/ezagent/behavior/identity.ex"
   @actions [:persist_caps, :store_cap, :remove_cap]
 
@@ -19,7 +21,13 @@ defmodule Ezagent.Invariants.EntityCapsMutationBoundaryTest do
              @facade => %{persist_caps: 1, store_cap: 1, remove_cap: 1}
            }
 
-    assert vm_internal_cmd_builders() == MapSet.new([{@facade, :dispatch_mutation, 3}])
+    assert vm_internal_cmd_builders() ==
+             MapSet.new([
+               {@cascade_hook, :maybe_enqueue, 1},
+               {@facade, :dispatch_mutation, 3},
+               {@identity_facade, :absorb_cap, 2}
+             ])
+
     assert direct_handler_calls() == MapSet.new()
   end
 
@@ -68,7 +76,7 @@ defmodule Ezagent.Invariants.EntityCapsMutationBoundaryTest do
       Code.string_to_quoted("""
       defmodule Escape do
         alias Ezagent.EntityCaps, as: EC
-        import Ezagent.EntityCaps, only: [grant: 2]
+        import EC, only: [grant: 2]
 
         def direct(uri, cap), do: EC.grant(uri, cap)
         def imported(uri, cap), do: grant(uri, cap)
@@ -95,6 +103,18 @@ defmodule Ezagent.Invariants.EntityCapsMutationBoundaryTest do
       """)
 
     assert count_ast(ast, &direct_handler_call?/1) == 5
+  end
+
+  test "VM-internal producer scanner catches struct/2 and Cmd.new with dynamic actions" do
+    {:ok, ast} =
+      Code.string_to_quoted("""
+      alias Ezagent.Cmd
+      %Cmd{target: target, action: dynamic_action, args: args, ctx: %{caller: :vm_internal}}
+      struct(Cmd, target: target, action: dynamic_action, args: args, ctx: %{caller: :vm_internal})
+      Cmd.new(target, dynamic_action, args, %{caller: :vm_internal})
+      """)
+
+    assert count_ast(ast, &vm_internal_cmd_constructor?/1) == 3
   end
 
   defp action_literals do
@@ -136,14 +156,7 @@ defmodule Ezagent.Invariants.EntityCapsMutationBoundaryTest do
   defp vm_internal_cmd_builders do
     production_definitions()
     |> Enum.filter(fn definition ->
-      count_ast(definition.body, fn
-        {:%, _, [_struct, {:%{}, _, fields}]} when is_list(fields) ->
-          match?({:action, _, nil}, Keyword.get(fields, :action)) and
-            ast_contains?(fields, {:caller, :vm_internal})
-
-        _ ->
-          false
-      end) > 0
+      count_ast(definition.body, &vm_internal_cmd_constructor?/1) > 0
     end)
     |> Enum.map(&{&1.file, &1.name, &1.arity})
     |> MapSet.new()
@@ -157,6 +170,25 @@ defmodule Ezagent.Invariants.EntityCapsMutationBoundaryTest do
     |> Enum.map(&{&1.file, &1.name, &1.arity})
     |> MapSet.new()
   end
+
+  defp vm_internal_cmd_constructor?({:%, _, [module, {:%{}, _, fields}]})
+       when is_list(fields),
+       do: cmd_module?(module) and ast_contains?(fields, {:caller, :vm_internal})
+
+  defp vm_internal_cmd_constructor?({:struct, _, [module, fields]}),
+    do: cmd_module?(module) and ast_contains?(fields, {:caller, :vm_internal})
+
+  defp vm_internal_cmd_constructor?({{:., _, [kernel, :struct]}, _, [module, fields]}),
+    do:
+      Macro.to_string(kernel) == "Kernel" and cmd_module?(module) and
+        ast_contains?(fields, {:caller, :vm_internal})
+
+  defp vm_internal_cmd_constructor?({{:., _, [module, :new]}, _, [_target, _action, _args, ctx]}),
+    do: cmd_module?(module) and ast_contains?(ctx, {:caller, :vm_internal})
+
+  defp vm_internal_cmd_constructor?(_node), do: false
+
+  defp cmd_module?(module), do: Macro.to_string(module) in ["Cmd", "Ezagent.Cmd"]
 
   defp direct_handler_call?({{:., _, [_module, handler]}, _, args})
        when handler in [:handle_persist_caps, :handle_store_cap, :handle_remove_cap] and
@@ -180,7 +212,7 @@ defmodule Ezagent.Invariants.EntityCapsMutationBoundaryTest do
   defp entity_caps_grant_calls(asts) do
     Enum.flat_map(asts, fn {file, ast} ->
       aliases = aliases(ast)
-      imported? = imports_entity_caps?(ast)
+      imported? = imports_entity_caps?(ast, aliases)
 
       ast
       |> definitions(file)
@@ -240,9 +272,9 @@ defmodule Ezagent.Invariants.EntityCapsMutationBoundaryTest do
     aliases
   end
 
-  defp imports_entity_caps?(ast) do
+  defp imports_entity_caps?(ast, aliases) do
     count_ast(ast, fn
-      {:import, _, [module | _]} -> Macro.to_string(module) == "Ezagent.EntityCaps"
+      {:import, _, [module | _]} -> entity_caps_module?(module, aliases)
       _ -> false
     end) > 0
   end
@@ -344,7 +376,9 @@ defmodule Ezagent.Invariants.EntityCapsMutationBoundaryTest do
         "remove_cap",
         "handle_persist_caps",
         "handle_store_cap",
-        "handle_remove_cap"
+        "handle_remove_cap",
+        "vm_internal",
+        "Cmd"
       ],
       &String.contains?(node, &1)
     )

@@ -417,6 +417,72 @@ defmodule Ezagent.EntityCapsTest do
       assert {:ok, %{version: version}} = SnapshotStore.latest(agent)
       assert version == initial_version
     end
+
+    test "user delete-first and mutation-first races cannot revive provisioning or Kind state" do
+      for first <- [:delete, :mutation] do
+        user = user_uri("user-transition-#{first}")
+        cap = issued_cap(user, :send)
+        assert {:ok, _user} = Ezagent.Users.create_read_only(user, [])
+
+        operations = %{
+          delete: fn -> Ezagent.Users.delete(user) end,
+          mutation: fn -> EntityCaps.grant(user, cap) end
+        }
+
+        {first_result, second_result} =
+          run_ordered_transitions(user, operations[first], operations[opposite(first)])
+
+        case first do
+          :delete ->
+            assert first_result == :ok
+            assert second_result == {:error, :not_found}
+
+          :mutation ->
+            assert first_result == :ok
+            assert second_result == :ok
+        end
+
+        assert is_nil(Ezagent.Users.get_by_uri(user))
+        assert is_nil(Ezagent.Ecto.KindSnapshot.get(URI.to_string(user)))
+        wait_until(fn -> Ezagent.KindRegistry.lookup(user) == :error end)
+      end
+    end
+
+    test "snapshot-backed delete-first and mutation-first races cannot revive durable or live state" do
+      for first <- [:delete, :mutation] do
+        agent = agent_uri("snapshot-transition-#{first}")
+        cap = issued_cap(agent, :send)
+
+        assert {:ok, _snapshot} =
+                 SnapshotStore.write(
+                   agent,
+                   %{identity: %{state: %{caps: MapSet.new()}}},
+                   kind_type: :agent,
+                   version: 0
+                 )
+
+        operations = %{
+          delete: fn -> Ezagent.Lifecycle.destroy(agent, :transition_test) end,
+          mutation: fn -> EntityCaps.grant(agent, cap) end
+        }
+
+        {first_result, second_result} =
+          run_ordered_transitions(agent, operations[first], operations[opposite(first)])
+
+        case first do
+          :delete ->
+            assert first_result == :ok
+            assert second_result == {:error, :not_found}
+
+          :mutation ->
+            assert first_result == :ok
+            assert second_result == :ok
+        end
+
+        assert {:error, :not_found} = SnapshotStore.latest(agent)
+        wait_until(fn -> Ezagent.KindRegistry.lookup(agent) == :error end)
+      end
+    end
   end
 
   defp issued_cap(receiver, action) do
@@ -465,6 +531,56 @@ defmodule Ezagent.EntityCapsTest do
       timeout: :infinity
     )
     |> Enum.map(fn {:ok, result} -> result end)
+  end
+
+  defp run_ordered_transitions(uri, first_operation, second_operation) do
+    parent = self()
+    ref = make_ref()
+
+    first =
+      Task.async(fn ->
+        Ezagent.Lifecycle.with_entity_transition(uri, fn ->
+          send(parent, {ref, :first_locked, self()})
+
+          receive do
+            {^ref, :run_first} -> first_operation.()
+          end
+        end)
+      end)
+
+    assert_receive {^ref, :first_locked, first_pid}, 1_000
+
+    second =
+      Task.async(fn ->
+        assert transition_lock_available?(uri) == false
+        send(parent, {ref, :second_observed_lock})
+        result = second_operation.()
+        send(parent, {ref, :second_done})
+        result
+      end)
+
+    assert_receive {^ref, :second_observed_lock}, 1_000
+    send(first_pid, {ref, :run_first})
+
+    first_result = Task.await(first, 10_000)
+    second_result = Task.await(second, 10_000)
+    assert_receive {^ref, :second_done}
+    {first_result, second_result}
+  end
+
+  defp opposite(:delete), do: :mutation
+  defp opposite(:mutation), do: :delete
+
+  defp transition_lock_available?(uri) do
+    stable_key = uri |> Ezagent.URI.instance() |> Ezagent.URI.stable_key()
+    lock_id = {{:ezagent_entity_transition, stable_key}, self()}
+
+    if :global.set_lock(lock_id, [node()], 0) do
+      :global.del_lock(lock_id, [node()])
+      true
+    else
+      false
+    end
   end
 
   defp wait_until_ready(uri),

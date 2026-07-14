@@ -100,6 +100,17 @@ defmodule Ezagent.UsersTest do
     end
   end
 
+  describe "delete/1" do
+    test "a self-target call is rejected before the provisioning row is deleted" do
+      uri = Ezagent.URI.user("team-alpha", "self-delete-#{System.unique_integer([:positive])}")
+      assert {:ok, _user} = Users.create_read_only(uri, [])
+      assert :ok = Ezagent.KindRegistry.put_new(uri)
+
+      assert {:error, :cannot_self_destroy} = Users.delete(uri)
+      assert %{uri: ^uri} = Users.get_by_uri(uri)
+    end
+  end
+
   describe "set_password/2" do
     test "updates an existing user's hash" do
       uri = "entity://team-alpha/user/setpw-#{System.unique_integer([:positive])}"

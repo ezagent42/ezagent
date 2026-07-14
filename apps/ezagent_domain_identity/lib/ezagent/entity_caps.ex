@@ -24,7 +24,17 @@ defmodule Ezagent.EntityCaps do
   * `persist/2`, `grant/2`, and `revoke/2` return `:ok` or `{:error, reason}`.
   """
 
-  alias Ezagent.{Capability, Cmd, Kind, ReadyGate, Router, SnapshotStore, SpawnRegistry}
+  alias Ezagent.{
+    Capability,
+    Cmd,
+    Kind,
+    Lifecycle,
+    ReadyGate,
+    Router,
+    SnapshotStore,
+    SpawnRegistry
+  }
+
   alias Ezagent.EntityCaps.UserStore
 
   @type caps :: [Capability.t()] | MapSet.t(Capability.t())
@@ -61,9 +71,12 @@ defmodule Ezagent.EntityCaps do
   def persist(uri, caps) do
     uri = parse_uri(uri)
 
-    with :ok <- validate_issued_caps(caps, uri),
-         :ok <- ensure_mutation_target(uri) do
-      dispatch_mutation(uri, :persist_caps, %{caps: Enum.to_list(caps)})
+    with :ok <- validate_issued_caps(caps, uri) do
+      Lifecycle.with_entity_transition(uri, fn ->
+        with :ok <- ensure_mutation_target(uri) do
+          dispatch_mutation(uri, :persist_caps, %{caps: Enum.to_list(caps)})
+        end
+      end)
     end
   end
 
@@ -73,9 +86,12 @@ defmodule Ezagent.EntityCaps do
     uri = parse_uri(uri)
 
     with :ok <- validate_issued_caps([cap], uri),
-         {:ok, [_verified]} <- validate_caps([cap], uri),
-         :ok <- ensure_mutation_target(uri) do
-      dispatch_mutation(uri, :store_cap, %{cap: cap})
+         {:ok, [_verified]} <- validate_caps([cap], uri) do
+      Lifecycle.with_entity_transition(uri, fn ->
+        with :ok <- ensure_mutation_target(uri) do
+          dispatch_mutation(uri, :store_cap, %{cap: cap})
+        end
+      end)
     end
   end
 
@@ -84,9 +100,11 @@ defmodule Ezagent.EntityCaps do
   def revoke(uri, %Capability{} = cap) do
     uri = parse_uri(uri)
 
-    with :ok <- ensure_mutation_target(uri) do
-      dispatch_mutation(uri, :remove_cap, %{cap: cap})
-    end
+    Lifecycle.with_entity_transition(uri, fn ->
+      with :ok <- ensure_mutation_target(uri) do
+        dispatch_mutation(uri, :remove_cap, %{cap: cap})
+      end
+    end)
   end
 
   @doc false
@@ -155,10 +173,21 @@ defmodule Ezagent.EntityCaps do
         {:error, :not_found}
       end
     else
-      case SpawnRegistry.ensure_live(uri) do
-        {:ok, _status} -> :ok
-        {:error, {:already_registered, _winner}} -> :ok
-        {:error, _reason} = error -> error
+      case Ezagent.KindRegistry.lookup(uri) do
+        {:ok, _pid} ->
+          :ok
+
+        :error ->
+          with {:ok, _snapshot} <- SnapshotStore.latest(uri) do
+            case SpawnRegistry.ensure_live(uri) do
+              {:ok, _status} -> :ok
+              {:error, {:already_registered, _winner}} -> :ok
+              {:error, _reason} = error -> error
+            end
+          else
+            {:error, :not_found} -> {:error, :not_found}
+            {:error, _reason} = error -> error
+          end
       end
     end
   end
