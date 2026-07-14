@@ -209,6 +209,25 @@ defmodule Ezagent.PluginCc.Integration.CcConfigHomeCredentialsTest do
     end
 
     test "an admin (host-operator) installer still gets a credentialled plain cc agent" do
+      host_dir = Path.join(System.tmp_dir!(), "cc-host-login-#{uniq()}")
+      File.mkdir_p!(host_dir)
+
+      File.write!(
+        Path.join(host_dir, ".credentials.json"),
+        Jason.encode!(%{"claudeAiOauth" => %{"accessToken" => "test-only-token"}})
+      )
+
+      previous_config_dir = System.get_env("CLAUDE_CONFIG_DIR")
+      System.put_env("CLAUDE_CONFIG_DIR", host_dir)
+
+      on_exit(fn ->
+        if previous_config_dir,
+          do: System.put_env("CLAUDE_CONFIG_DIR", previous_config_dir),
+          else: System.delete_env("CLAUDE_CONFIG_DIR")
+
+        File.rm_rf(host_dir)
+      end)
+
       ws = Ezagent.URI.workspace(:system)
 
       {:ok, session_uri, _} =
