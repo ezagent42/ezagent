@@ -31,8 +31,63 @@ chain-tested through Kanban instead of stopping at backend seams.
    Kanban" (or equivalent wording). Hello creates a task in the workspace's
    default Kanban and replies with a confirmation and link.
 
-The primary Kanban entry is conversational. This increment does not add a page
-CTA as a second source of truth.
+The public product surface also exposes one explicit CTA that focuses the
+existing delegation form. It is not a second mutation path: both the CTA and
+the conversation wording converge on the same authenticated dispatcher and
+`KanbanDelegation` service.
+
+## Recording-ready product surface follow-up
+
+The shipped technical path is real, but its first browser proof was visually
+too sparse for a product demo. The recording-ready follow-up adopts the IA
+patterns from the Flywheel `product-detail.html` reference without copying its
+homesite glass styling into World.
+
+### Hello entry composition
+
+The approved hello seed page is a catalog-valid `@json-render` tree composed
+from the existing 36-component catalog. Above the persistent prompt bar it
+shows:
+
+- the Hello product name and a concise description;
+- three capability explanations: generate a live page, refine it through a
+  second prompt, and delegate confirmed work to Kanban;
+- a cobalt primary CTA labelled `派个任务` that focuses the one existing
+  `#hello-prompt-form` input;
+- an honest boundary note: `松耦合，非最终挂载` with a short explanation that
+  #1360 Layer B is not part of this increment.
+
+The visual language stays cobalt + zinc, uses the existing renderer/catalog,
+and adds no World route, World bundle import, catalog component, or World
+`styles.css` edit.
+
+### Delegation feedback
+
+After authentication and successful dispatch, the returned hello page exposes
+an explicit result block with the real Kanban URI, node id, task title, current
+status, and a link to the existing World Kanban surface. The server remains the
+authority for these values; the browser never fabricates a successful node.
+
+The login continuation stores a bounded, signed pending action. Once consumed,
+it stores a bounded signed success receipt so the returned public surface can
+render the result exactly once without creating another node on refresh.
+
+### Status presentation
+
+Status badges are projections of real Kanban data, not a new workflow engine.
+The closed mapping is:
+
+```text
+unassigned / pending -> 待派
+assigned / in_progress -> 进行中
+pr_open -> PR 已开
+merged / done -> 已合并
+```
+
+Only statuses represented by the current Kanban model are rendered. Unknown
+values use a neutral `处理中` label and preserve the raw value for inspection;
+the demo must not simulate later states. Building GitHub event ingestion or a
+new Kanban state machine is out of scope.
 
 ## Architecture
 
@@ -211,8 +266,10 @@ Before return:
 ## Explicit non-goals
 
 - Implementing #1360 Layer B cross-session live mounting.
-- Adding a page CTA as a second delegation entry.
+- Adding a second delegation mutation path; the page CTA may only focus or
+  submit through the existing authenticated delegation contract.
 - Letting concierge mutate the page or Kanban.
 - Building a second Kanban UI inside hello.
+- Building new PR/GitHub event ingestion solely for the recording.
 - Editing shared World `styles.css`.
 - Replacing the existing authentication or Kanban dispatch contracts.
