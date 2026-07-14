@@ -206,3 +206,32 @@ mix ezagent.demo.seed_cc_sandbox \
 
 两个 PR 合入后，本分支先 rebase 到最新 `origin/main`，重跑 inventory 和全部
 gate，再进入正式 return。
+
+## 9. 执行状态
+
+### 已完成（不依赖 #1375/#1379）
+
+- [x] ARB-0 生命周期 inventory：34 行闭合表；primary search 76 = 28 个
+  executable expressions + 48 个 prose/history hits；混合 target wrapper 按调用
+  边分类。
+- [x] ARB-1 scanner fixture 骨架：qualified、alias、parent alias、声明顺序、
+  module/function/block、sibling `case/cond/fn` clause 词法作用域均有 fixture。
+- [x] 合法反例：Session destroy、SessionTemplate ensure-live、member dispatch、
+  Kind lookup 不会被 blanket-ban。
+- [x] credential 脱敏验收模板已准备。
+
+实现提交：
+
+- `01bb6cc56` — 初版 inventory 与批准文档；
+- `abf1227a9` — 补 aliased executor call 与混合 wrapper 调用边；
+- `26098dc6d` — 统一 inventory 记账；
+- `f49470d6a` — Task 2 AST scanner + 词法 alias fixtures。
+
+### 当前等待
+
+- Task 3 exact repository allowlist/final anchors：等待 #1375 合入后 rebase；
+- creator Terminal `/login` live acceptance：等待 #1375 合入并部署；
+- capability-issuing Facade slice：等待 #1379 合入；
+- 完整 `mix precommit` 复验：Task 2 focused 9/9 绿；此前 full precommit 被共享
+  test DB 的残留 `probe-*` workspace 行触发 3 个既有 visibility invariant 失败，
+  不在本任务中用清库或绕过手段掩盖。
