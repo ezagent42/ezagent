@@ -249,6 +249,14 @@ defmodule EzagentWeb.Router do
     # Must be inside `:require_entity` so anonymous traffic can't spam
     # session-clearing POSTs.
     post "/workspaces/switch", WorkspaceSwitchController, :switch
+
+    # T6.4 — receive a SHARED kanban board. A logged-in user clicks a share link
+    # (`?token=` signed by the world `kanban.share_board` action + their own
+    # `session_uri`); the controller verifies the read-only token and
+    # `Mount.mount`s the board read-only into their session (token IS the
+    # share-time authorization — the sharer had access; the receiver just mounts).
+    # Behind RequireEntity so the clicker is a resolved principal.
+    get "/socialware/kanban/receive", Socialware.KanbanShareController, :claim
   end
 
   # Liveness probe — plain JSON, no Ezagent dispatch path involved.
