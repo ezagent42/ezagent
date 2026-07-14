@@ -4,14 +4,16 @@
 
 **Scope:** `apps/ezagent_domain_session/lib/**/*.ex` production sources
 
-**Baseline:** `origin/main` fetched 2026-07-14; PR #1375 head is not an ancestor of
-`origin/main` and remains pending.
+**Baseline:** branch rebased onto `origin/main` at `ca65f5266`; the approved
+#1375/#1379 contracts are present in the rebased source.
 
 This is the closed ARB-0 input to the ARB-1 AST classifier. Rows describe call
 expressions, not prose or comments. `Path:line` is evidence for this baseline, not
-the eventual gate key. The gate uses a unique source anchor. The one materializer
-row has no line by design: PR #1375 changes that file, so its final anchor must be
-regenerated after merge and rebase.
+the eventual gate key. The gate uses a unique source anchor in the stable form
+`<def-kind>:<name>/<arity>|<normalized resolved call expression>`. Combining the
+enclosing definition identity with the call prevents an allowance from transferring
+to the same primitive moved elsewhere in one file. The two materializer anchors
+were regenerated from the rebased source before the ARB-1 allowlist was frozen.
 
 Allowed classes are exactly `agent_materialization`, `agent_ensure_live`,
 `agent_executor_control`, `agent_destroy`,
@@ -25,13 +27,13 @@ Allowed classes are exactly `agent_materialization`, `agent_ensure_live`,
 | `apps/ezagent_domain_session/lib/ezagent_domain_instance_message/session_creator.ex:197` | `EzagentDomainInstanceMessage.SessionCreator.demand_spawn_member/1 → Ezagent.SpawnRegistry.spawn/1` | `legal_session_lifecycle` | argument is explicitly `session_uri` | legal | none |
 | `apps/ezagent_domain_session/lib/ezagent_domain_instance_message/session_creator/definition_agents.ex:613` | `EzagentDomainInstanceMessage.SessionCreator.demand_spawn_member/1 → Ezagent.SpawnRegistry.spawn/1` | `agent_materialization` | argument is explicitly `member_uri` in Agent definition join | allowlisted debt | ARB-3 |
 | `apps/ezagent_domain_session/lib/ezagent_domain_instance_message/session_creator/template_team.ex:233` | `EzagentDomainInstanceMessage.SessionCreator.demand_spawn_member/1 → Ezagent.SpawnRegistry.spawn/1` | `agent_materialization` | argument is explicitly `member_uri` in declared Agent team | allowlisted debt | ARB-3 |
-| `apps/ezagent_domain_session/lib/ezagent_domain_instance_message/session_creator/materializer.ex:anchor_pending_1375` | `EzagentDomainInstanceMessage.SessionCreator.demand_spawn_member/1 → Ezagent.SpawnRegistry.spawn/1` | `agent_materialization` | argument is explicitly `member_uri` while joining materialized members | anchor_pending_1375 | ARB-3 |
+| `apps/ezagent_domain_session/lib/ezagent_domain_instance_message/session_creator/materializer.ex:417` | `EzagentDomainInstanceMessage.SessionCreator.demand_spawn_member/1 → Ezagent.SpawnRegistry.spawn/1` | `agent_materialization` | argument is explicitly `member_uri` while joining materialized members | allowlisted debt | ARB-3 |
 | `apps/ezagent_domain_session/lib/ezagent_domain_instance_message/session_creator/template_team.ex:205` | `Ezagent.Entity.Agent.spawn_from_template_content/5` | `agent_materialization` | explicit Agent module and `agent_uri` | allowlisted debt | ARB-3 |
 | `apps/ezagent_domain_session/lib/ezagent_domain_instance_message/session_creator/rollback.ex:35` | `Ezagent.Session.SessionManager.stop/1` | `agent_executor_control` | argument is the orchestrator Agent URI | allowlisted debt | ARB-4 |
 | `apps/ezagent_domain_session/lib/ezagent_domain_instance_message/session_creator/rollback.ex:48` | `Ezagent.Lifecycle.destroy/2` | `agent_destroy` | argument is `orchestrator_uri` | allowlisted debt | ARB-4 |
 | `apps/ezagent_domain_session/lib/ezagent_domain_instance_message/session_creator/rollback.ex:73` | `Ezagent.Lifecycle.destroy/2` | `legal_session_lifecycle` | argument is explicitly `session_uri` | legal | none |
 | `apps/ezagent_domain_session/lib/ezagent_domain_instance_message/session_creator/rollback.ex:80` | `Ezagent.Lifecycle.destroy/2` | `agent_destroy` | helper compensates `spawned_uris`, the freshly materialized Agent members | allowlisted debt | ARB-4 |
-| `apps/ezagent_domain_session/lib/ezagent_domain_instance_message/session_creator/materializer.ex:anchor_pending_1375` | `Ezagent.Session.SessionManager.stop/1` | `agent_executor_control` | `evict_orchestrator_runtime/1` receives an orchestrator Agent URI | anchor_pending_1375 | ARB-4 |
+| `apps/ezagent_domain_session/lib/ezagent_domain_instance_message/session_creator/materializer.ex:497` | `Ezagent.Session.SessionManager.stop/1` | `agent_executor_control` | `evict_orchestrator_runtime/1` receives an orchestrator Agent URI | allowlisted debt | ARB-4 |
 | `apps/ezagent_domain_session/lib/ezagent/behavior/session/delivery.ex:286` | `Ezagent.SpawnRegistry.ensure_live/1` | `agent_ensure_live` | guarded by `receive_prefix == :agent`; argument is recipient Agent URI | allowlisted debt | ARB-3 |
 | `apps/ezagent_domain_session/lib/ezagent/behavior/session/teardown.ex:151` | `Ezagent.Session.SessionManager.stop/1` | `agent_executor_control` | argument is the session's orchestrator Agent URI | allowlisted debt | ARB-4 |
 | `apps/ezagent_domain_session/lib/ezagent/behavior/session/teardown.ex:245` | `Ezagent.Lifecycle.destroy/2` | `agent_destroy` | `reap_spawned_worker/3` receives a spawned worker Agent URI | allowlisted debt | ARB-4 |
@@ -107,14 +109,25 @@ Agent-targeted. The planned AST scanner explicitly does not claim dataflow
 analysis, so a row anchored only at `SpawnRegistry.spawn(member_uri)` would produce
 a false positive for the legal Session caller. Task 2 must instead do one of these:
 
-1. classify the four statically named invocation edges and keep the wrapper body as
-   a known mixed-target sink; or
+1. classify invocation edges whose direct argument is syntactically named as an
+   Agent/member/orchestrator/worker target, independent of file path, and keep the
+   wrapper body as a known mixed-target sink; or
 2. introduce a syntactically distinct Agent-only facade before allowing a body
    anchor.
 
-While PR #1375 is pending, the materializer invocation edge remains
-`anchor_pending_1375`. A broad wrapper allowance, path allowance, or guessed target
-from the parameter name is forbidden.
+The materializer invocation edge is frozen at line 417 after the upstream merge and
+rebase. A broad wrapper allowance, path allowance, or guessed target from the
+parameter name remains forbidden.
+
+The classifier does not perform dataflow. Direct variables named `agent_uri`,
+`member_uri`, `orchestrator_uri`, `recipient_uri`, or `worker_uri` are syntactic
+Agent-target proof; `session_uri` remains legal even in rollback/teardown files.
+Two pre-existing generic-`uri` inventory seams are closed by their enclosing
+definition identities (`compensate_spawned_members/1` and
+`evict_orchestrator_runtime/1`) plus their exact repository-relative paths and
+normalized calls. The non-activating `lifecycle_status/1` read uses the same
+inventory-specific triple, so none of these exceptional rules transfers to a
+same-named function in another Session file.
 
 ## Precision self-review
 
@@ -134,8 +147,7 @@ from the parameter name is forbidden.
 
 ## Upstream checkpoint
 
-After `git fetch origin main`, PR #1375 head
-`56da6c0caf2e86dd14751a6c8eca9c2bd95fcb8d` was not an ancestor of fetched
-`origin/main`. No PR head was merged or cherry-picked. The materializer line is
-therefore provisional and must be regenerated after #1375 lands; no final gate
-line/source anchor is frozen here.
+The branch was rebased onto `origin/main` at `ca65f5266` after #1375/#1379 landed.
+Source verification froze the materializer Agent invocation at line 417 and the
+orchestrator `SessionManager.stop/1` call at line 497. Both now have exact
+allowlisted-debt dispositions for ARB-3 and ARB-4 respectively.
