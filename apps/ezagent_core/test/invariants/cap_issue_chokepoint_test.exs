@@ -11,6 +11,8 @@ defmodule Ezagent.Invariants.CapIssueChokepointTest do
   """
   use ExUnit.Case, async: true
 
+  alias EzagentCore.CapsJsonScanner, as: Scanner
+
   @mint_candidates %{
     "apps/ezagent_core/lib/ezagent/cap.ex" => 1,
     "apps/ezagent_core/lib/ezagent/capability/normalize.ex" => 3,
@@ -200,7 +202,7 @@ defmodule Ezagent.Invariants.CapIssueChokepointTest do
 
   test "`:no_caps` caps_json writers pass a literal empty cap list" do
     for {file, :no_caps} <- @caps_json_writers do
-      args = repo_root() |> Path.join(file) |> users_create_cap_args()
+      args = repo_root() |> Path.join(file) |> Scanner.users_create_cap_args()
 
       assert args != [], "#{file} is declared `:no_caps` but calls no Users.create"
 
@@ -233,7 +235,7 @@ defmodule Ezagent.Invariants.CapIssueChokepointTest do
 
   defp users_create_sites do
     caps_json_source_files()
-    |> Enum.filter(fn {_rel, abs} -> users_create_cap_args(abs) != [] end)
+    |> Enum.filter(fn {_rel, abs} -> Scanner.users_create_cap_args(abs) != [] end)
     |> Enum.map(fn {rel, _abs} -> rel end)
     |> MapSet.new()
   end
@@ -283,115 +285,54 @@ defmodule Ezagent.Invariants.CapIssueChokepointTest do
   #   Users.create/3,4          — caps are the 3rd positional arg
   #   Users.create_read_only/2  — caps are the 2nd (and the /1 clause defaults [])
   #
-  # ## The first cut of this scanner could be trivially evaded
+  # ## WHAT THIS SCANNER CAN AND CANNOT SEE — read before trusting it
   #
-  # It matched only a bare remote call whose alias's last segment was literally
-  # `Users`, with `length(args) >= 3`. Measured: it saw NONE of these.
+  # It has been evaded three times. Each time the fix was "teach it one more
+  # spelling", and each time it was still wrong. So the boundary is stated up
+  # front, and it is a REAL boundary, not a to-do:
   #
-  #     uri |> Ezagent.Users.create(pw, caps)      # a PIPE — the idiomatic form!
-  #     alias Ezagent.Users, as: U; U.create(...)  # last segment is :U
-  #     apply(Ezagent.Users, :create, [...])       # not a remote-call node
-  #     &Ezagent.Users.create/3                    # a capture node
+  # SEEN (each verified by a fixture that goes red):
+  #     Ezagent.Users.create(uri, pw, caps)        plain remote call
+  #     uri |> Ezagent.Users.create(pw, caps)      pipe (the arg sits OUTSIDE
+  #                                                the call node — an arity
+  #                                                guard silently under-counts)
+  #     alias Ezagent.Users, as: U; U.create(...)  alias, incl. `as:` and
+  #                                                `alias Ezagent.{Users, ...}`
+  #     import Ezagent.Users; create(...)          import → bare local call
+  #     @users Ezagent.Users; @users.create(...)   module attribute
+  #     apply(Ezagent.Users, :create, [...])       apply with a literal module
+  #     &Ezagent.Users.create/3                    capture (caps arg invisible →
+  #                                                recorded `:opaque`, which
+  #                                                CANNOT be classified
+  #                                                `:no_caps`; a human must decide)
   #
-  # A gate whose whole purpose is to catch the NEXT bypass, and which a pipe
-  # walks straight past, is worse than no gate: it is false comfort. So the
-  # scanner now resolves `alias`, expands `|>`, and understands `apply/3` and
-  # captures.
+  # NOT SEEN — and nothing else sees it either:
+  #     m = Module.concat([:Ezagent, :Users])      the module atom is resolved
+  #     m.create(uri, pw, forged_caps)             at RUNTIME
   #
-  # A capture or a dynamic `apply` hides the caps argument, so it cannot be
-  # classified `:no_caps` — it is recorded as `:opaque` and forces a human
-  # decision in `@caps_json_writers`.
+  # Leg 3a does NOT back this up. An evasive CALLER does not write `caps_json:`
+  # — `users.ex` does, on its behalf. Leg 3a catches a new WRITER FUNCTION, not
+  # an unenumerated caller. (An earlier version of this comment claimed it was a
+  # "structural backstop" for exactly this case. That was false.)
+  #
+  # ## So what does this gate actually prove?
+  #
+  # Only this: **every STATICALLY RESOLVABLE call to a `caps_json` writer is
+  # enumerated, and every assignment to the column is enumerated.** It does NOT
+  # prove "every cap in `users.caps_json` passed `Cap.issue/3`". A source scan
+  # cannot prove that — the property is about what happens at RUNTIME, and the
+  # gap is not closable by a better scanner.
+  #
+  # Closing it for real means making the property structural: have `Cap.issue/3`
+  # record what it issued and have `Ezagent.Users` REFUSE a cap that was never
+  # issued. Then the spelling of the call stops mattering. That changes core and
+  # a public API contract, so it is a decision, not a test fix — see
+  # `docs/notes/2026-07-14-cap-issue-structural-enforcement.md`.
   #
   # Residual limitation, named honestly: a macro that GENERATES the call, or a
   # module atom built at runtime, is still invisible to a source scan. That is
   # deliberate obfuscation rather than an accident, and leg 3a below (the column
   # itself) is the structural backstop for it.
-  defp users_create_cap_args(file) do
-    ast = quoted!(file)
-    aliases = collect_aliases(ast)
-
-    {_ast, acc} =
-      ast
-      |> expand_pipes()
-      |> Macro.prewalk([], fn node, acc -> {node, collect_site(node, aliases) ++ acc} end)
-
-    Enum.reverse(acc)
-  end
-
-  # `alias Ezagent.Users, as: U` / `alias Ezagent.Users` → what `U` / `Users` mean.
-  defp collect_aliases(ast) do
-    {_ast, map} =
-      Macro.prewalk(ast, %{}, fn
-        {:alias, _, [{:__aliases__, _, mod} | opts]} = node, acc ->
-          as =
-            case opts do
-              [kw] when is_list(kw) ->
-                case Keyword.get(kw, :as) do
-                  {:__aliases__, _, seg} -> seg
-                  _ -> [List.last(mod)]
-                end
-
-              _ ->
-                [List.last(mod)]
-            end
-
-          {node, Map.put(acc, as, mod)}
-
-        node, acc ->
-          {node, acc}
-      end)
-
-    map
-  end
-
-  # `a |> M.f(b)` parses with `a` OUTSIDE the call node, so an arity guard on the
-  # call's args silently under-counts. Rewrite pipes into ordinary calls first.
-  defp expand_pipes(ast) do
-    Macro.prewalk(ast, fn
-      {:|>, _, [lhs, {call, meta, args}]} when is_list(args) -> {call, meta, [lhs | args]}
-      node -> node
-    end)
-  end
-
-  defp resolve(mod, aliases), do: Map.get(aliases, mod, mod)
-
-  defp users?(mod, aliases), do: List.last(resolve(mod, aliases)) == :Users
-
-  # A plain (or piped, or aliased) remote call.
-  defp collect_site({{:., _, [{:__aliases__, _, mod}, fun]}, _, args}, aliases)
-       when is_list(args) do
-    if users?(mod, aliases), do: caps_arg(fun, args), else: []
-  end
-
-  # `apply(Users, :create, [uri, pw, caps])`
-  defp collect_site({:apply, _, [{:__aliases__, _, mod}, fun, args]}, aliases)
-       when is_atom(fun) do
-    cond do
-      not users?(mod, aliases) -> []
-      is_list(args) -> caps_arg(fun, args)
-      # a runtime-built arg list hides the caps
-      writer?(fun) -> [:opaque]
-      true -> []
-    end
-  end
-
-  # `&Users.create/3` — the caps argument is not visible at the capture site.
-  defp collect_site(
-         {:&, _, [{:/, _, [{{:., _, [{:__aliases__, _, mod}, fun]}, _, _}, _arity]}]},
-         aliases
-       ) do
-    if users?(mod, aliases) and writer?(fun), do: [:opaque], else: []
-  end
-
-  defp collect_site(_node, _aliases), do: []
-
-  defp writer?(fun), do: fun in [:create, :create_read_only]
-
-  defp caps_arg(:create, args) when length(args) >= 3, do: [Enum.at(args, 2)]
-  defp caps_arg(:create_read_only, args) when length(args) >= 2, do: [Enum.at(args, 1)]
-  # `create_read_only/1` defaults to `[]` — no caps, nothing to police.
-  defp caps_arg(_fun, _args), do: []
-
   defp provenance_constructors do
     source_files()
     |> Enum.reduce(%{}, fn {relative, absolute}, acc ->
