@@ -179,6 +179,12 @@ defmodule EzagentWeb.Socialware.ChatFeedController do
   defp page(session_uri, token) do
     session = session_uri |> uri_to_string() |> escape()
     token = escape(token)
+    csrf = Plug.CSRFProtection.get_csrf_token() |> escape()
+
+    delegation_attr =
+      if Ezagent.URI.type?(session_uri, :hello),
+        do: ~s( data-hello-delegation-endpoint="/hello/delegate"),
+        else: ""
 
     """
     <!doctype html>
@@ -192,7 +198,7 @@ defmodule EzagentWeb.Socialware.ChatFeedController do
         <script defer type="module" src="/assets/js/viewer_app.js"></script>
       </head>
       <body class="min-h-screen bg-background text-foreground antialiased">
-        <main id="socialware-viewer-root" class="block min-h-screen w-full px-4 py-8 sm:py-12" data-session-uri="#{session}" data-token="#{token}" data-socket-path="/socialware_chat_socket" data-topic-prefix="socialware:chat_feed"></main>
+        <main id="socialware-viewer-root" class="block min-h-screen w-full px-4 py-8 sm:py-12" data-session-uri="#{session}" data-token="#{token}" data-socket-path="/socialware_chat_socket" data-topic-prefix="socialware:chat_feed" data-csrf-token="#{csrf}"#{delegation_attr}></main>
       </body>
     </html>
     """

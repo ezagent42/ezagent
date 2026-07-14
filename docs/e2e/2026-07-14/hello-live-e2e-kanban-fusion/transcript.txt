@@ -1,0 +1,47 @@
+2026-07-14 Asia/Shanghai — redacted live transcript
+
+[public entry]
+GET /hello/fusion
+resolved session: session://demo/hello/fusion
+HTTP: 200
+browser assertion: #hello-prompt-form exists
+browser assertion: #hello-delegate-login label = 登录并交给 Kanban
+anonymous rendered page: Seed page — the hello builder is live.
+
+[anonymous continuation]
+instruction: 完成官网首程验收并生成截图 companion
+POST /hello/delegate
+redirect: /login?return_to=%2Fhello%2Fdelegate%2Fresume
+login principal: entity://system/user/admin
+resume: /hello/delegate/resume
+return: /hello/fusion
+
+[real Kanban result]
+board: entity://demo/agent/hello-kanban
+node: n1
+title: 完成官网首程验收并生成截图 companion
+status: unassigned
+artifact.tool: hello
+artifact.kind: hello_source
+artifact.ref: session://demo/hello/fusion
+artifact.url: /hello/fusion
+node count after resume: 1
+boundary: loose-coupled copy; #1360 Layer B not implemented
+
+[real DeepSeek attempt]
+backend: deepseek
+model: deepseek-chat
+transport: EzagentPluginCurlAgent.BridgeAdapter -> ApiClient -> :httpc
+endpoint: https://api.deepseek.com/chat/completions
+proxy result: endpoint reached (the earlier connect timeout no longer occurs)
+provider result: HTTP 401 authentication_error; local DeepSeek key is invalid
+honesty note: no stub or shell curl output is reported as model generation
+
+[deterministic product contracts]
+Spec.validate -> TurnDriver -> Surface -> ExternalFeed: covered by
+apps/ezagent_plugin_hello/test/integration/hello_page_e2e_test.exs
+second validated page changes anonymous live view: covered in the same suite
+concierge read-only/no Surface mutation: covered by product integration tests
+catalog parity: exactly 36 components, covered by Spec/catalog tests
+hello -> Kanban real node/artifact: covered by product integration tests and
+the live board result above

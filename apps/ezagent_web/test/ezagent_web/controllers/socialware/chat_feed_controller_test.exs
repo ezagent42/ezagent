@@ -358,6 +358,8 @@ defmodule EzagentWeb.Socialware.ChatFeedControllerTest do
       assert body =~ ~s(data-socket-path="/socialware_chat_socket")
       assert body =~ ~s(data-topic-prefix="socialware:chat_feed")
       assert body =~ URI.to_string(session_uri)
+      assert body =~ ~s(data-hello-delegation-endpoint="/hello/delegate")
+      assert body =~ ~s(data-csrf-token=")
     end
 
     test "anonymous + private hello session → bounce /login" do
