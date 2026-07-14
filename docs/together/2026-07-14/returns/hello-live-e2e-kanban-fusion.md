@@ -1,6 +1,6 @@
 > **Task:** hello-live-e2e-kanban-fusion
 > **Branch:** `feat/hello-recording-ready`
-> **PR:** pending follow-up PR (the original #1383 is already merged)
+> **PR:** https://github.com/ezagent42/ezagent/pull/1396 (the original #1383 is already merged)
 > **Dev:** zhaomato / Codex
 > **returned_at:** 2026-07-14 19:56 +0800
 > **deadline:** 2026-07-14 23:59 +0800
@@ -37,7 +37,7 @@
 | 7 | hello -> Kanban real product connection | met | live board `entity://system/agent/hello-kanban`, node `n1`, raw `unassigned` -> `待派`, `hello_source` artifact; screenshots 04/05 |
 | 8 | Browser screenshots + transcript | met for recording-ready product flow | five screenshots + redacted transcript; DeepSeek credential failure is recorded honestly |
 | 9 | Loose coupling explicitly not #1360 Layer B | met | README/transcript boundary statement |
-| 10 | Static gates, regression, PR-head CI, rebase main | local met / PR CI pending | rebased on `origin/main@b29f0fc93`; final `mix precommit` exited 0; PR-head CI starts after push |
+| 10 | Static gates, regression, PR-head CI, rebase main | met | rebased on `origin/main@b29f0fc93`; final `mix precommit` exited 0; PR #1396 required checks passed |
 
 **Method friction:** The handoff assumed a valid DeepSeek credential and a
 browser-ready Linux host. The local key was only proven present, not accepted by
@@ -49,7 +49,8 @@ availability before treating the six-point proof as closed-set deliverable.
 
 - Rebase base: `origin/main@b29f0fc93`; feature head before this ledger-only
   update: `ef84180dc`.
-- PR-head CI: pending the follow-up PR.
+- PR-head CI: PR #1396 required checks passed (deterministic gate, gitleaks,
+  dev-together return advisory, and skill protection).
 - Local PostgreSQL was restored as the repository-declared Docker service after
   the previous container disappeared mid-`precommit`; PostgreSQL client tooling
   was restored for the home-migration backup/restore tests.
@@ -57,8 +58,7 @@ availability before treating the six-point proof as closed-set deliverable.
   the World PTY authorization regression (5 consecutive runs), the manifest
   installer regression, the CC credential fixture suite, and final
   clean-process `mix precommit` all pass locally.
-- PR-head CI remains the final machine return gate before this return is
-  accepted.
+- The machine return gate is met on PR #1396.
 - Merge request: do not call the DeepSeek 6-point line fully met until a valid
   key reruns the live generation/PATCH steps. The completed hello entry,
   continuation, and loose-coupled Kanban connection are ready for review.
