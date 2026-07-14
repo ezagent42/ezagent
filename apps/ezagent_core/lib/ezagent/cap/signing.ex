@@ -97,12 +97,18 @@ defmodule Ezagent.Cap.Signing do
 
   @doc "Return RFC 8785 JCS bytes for the signed capability payload."
   @spec signing_payload(Capability.t()) :: binary()
-  def signing_payload(%Capability{} = cap) do
+  def signing_payload(%Capability{grantee_uri: grantee_uri} = cap),
+    do: signing_payload(cap, grantee_uri)
+
+  @doc false
+  @spec signing_payload(Capability.t(), URI.t()) :: binary()
+  def signing_payload(%Capability{grantee_uri: grantee_uri} = cap, grantee_uri) do
     %{
       "action" => canon_atom(Capability.action_of(cap)),
       "behavior" => canon_module(cap.behavior),
       "granted_at" => canon_timestamp(cap.granted_at),
       "granted_by" => canon_uri(cap.granted_by),
+      "grantee" => canon_uri(grantee_uri),
       "instance" => canon_instance(cap.instance),
       "key_id" => canon_string(cap.key_id),
       "kind" => canon_atom(cap.kind),

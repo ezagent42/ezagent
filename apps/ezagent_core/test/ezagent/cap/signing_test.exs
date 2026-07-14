@@ -7,6 +7,8 @@ defmodule Ezagent.Cap.SigningTest do
   @seed "0123456789abcdef0123456789abcdef"
   @workspace Ezagent.URI.new!("workspace://team-alpha")
   @issuer Ezagent.URI.new!("entity://team-alpha/user/issuer")
+  @grantee Ezagent.URI.new!("entity://team-alpha/user/alice")
+  @other_grantee Ezagent.URI.new!("entity://team-alpha/user/bob")
   @instance Ezagent.URI.new!("session://team-alpha/default/chat")
 
   setup do
@@ -31,6 +33,7 @@ defmodule Ezagent.Cap.SigningTest do
 
       assert Signing.verify(cap, signature, public_key)
       refute Signing.verify(%{cap | action: :receive}, signature, public_key)
+      refute Signing.verify(%{cap | grantee_uri: @other_grantee}, signature, public_key)
     end
   end
 
@@ -44,7 +47,8 @@ defmodule Ezagent.Cap.SigningTest do
         workspace_uri: :any,
         granted_by: @issuer,
         granted_at: ~U[2026-07-14 12:34:56.789123Z],
-        key_id: "v1|cafe\u{0301}"
+        key_id: "v1|cafe\u{0301}",
+        grantee_uri: @grantee
       }
 
       payload = Signing.signing_payload(cap)
@@ -56,7 +60,26 @@ defmodule Ezagent.Cap.SigningTest do
       assert payload =~ "\"action\":\"any\""
       assert payload =~ "\"granted_at\":\"2026-07-14T12:34:56.789Z\""
       assert payload =~ "\"key_id\":\"v1|caf\u{00E9}\""
+      assert payload =~ "\"grantee\":\"#{Ezagent.URI.stable_key(@grantee)}\""
       refute payload =~ "cafe\u{0301}"
+    end
+
+    test "uses only the artifact's grantee for the explicit payload form" do
+      cap = golden_cap()
+
+      assert Signing.signing_payload(cap) == Signing.signing_payload(cap, @grantee)
+
+      assert_raise FunctionClauseError, fn ->
+        Signing.signing_payload(cap, @other_grantee)
+      end
+    end
+
+    test "requires a concrete URI grantee" do
+      for invalid_grantee <- [nil, :any, :not_a_uri] do
+        assert_raise ArgumentError, ~r/cap signing URI is not canonicalizable/, fn ->
+          Signing.signing_payload(%{golden_cap() | grantee_uri: invalid_grantee})
+        end
+      end
     end
 
     test "renders the existing single scope tuple as its ordered JCS scope array" do
@@ -68,7 +91,8 @@ defmodule Ezagent.Cap.SigningTest do
         workspace_uri: @workspace,
         granted_by: @issuer,
         granted_at: ~U[2026-07-14 12:34:56.789123Z],
-        key_id: Signing.key_id(1, Signing.trust_domain(@workspace))
+        key_id: Signing.key_id(1, Signing.trust_domain(@workspace)),
+        grantee_uri: @grantee
       }
 
       assert Signing.signing_payload(cap) =~
@@ -88,10 +112,10 @@ defmodule Ezagent.Cap.SigningTest do
       {_public_key, private_key} = Signing.derive_keypair(cap.granted_by, trust_domain, 1)
 
       assert Signing.signing_payload(cap) ==
-               ~s({"action":"send","behavior":"Ezagent.ActionSet.Session","granted_at":"2026-07-14T12:34:56.789Z","granted_by":"entity://team-alpha/user/issuer","instance":"session://team-alpha/default/chat","key_id":"v1|dzp3b3Jrc3BhY2U6Ly90ZWFtLWFscGhh","kind":"session","v":1,"workspace_uri":"workspace://team-alpha"})
+               ~s({"action":"send","behavior":"Ezagent.ActionSet.Session","granted_at":"2026-07-14T12:34:56.789Z","granted_by":"entity://team-alpha/user/issuer","grantee":"entity://team-alpha/user/alice","instance":"session://team-alpha/default/chat","key_id":"v1|dzp3b3Jrc3BhY2U6Ly90ZWFtLWFscGhh","kind":"session","v":1,"workspace_uri":"workspace://team-alpha"})
 
       assert Signing.sign(cap, private_key) |> Base.encode16(case: :lower) ==
-               "2b7e291598966fc248f39b4fe28e06eb6df21bdb1933ec709933943fa4718f8ee8ee327314fea909bb7e768bfd8fc3b50e7d97c8a22821f9fc25c96c71e70508"
+               "69a2f021e317c6f29135e403d5cc2ce33df2fe9a8a46cfe072410470212a2ef442f1abad31d9539c39fd9addb8e8c36975c1d2849232639ca3ac44987116790e"
     end
   end
 
@@ -187,7 +211,8 @@ defmodule Ezagent.Cap.SigningTest do
       workspace_uri: @workspace,
       granted_by: @issuer,
       granted_at: ~U[2026-07-14 12:34:56.789123Z],
-      key_id: "v1|dzp3b3Jrc3BhY2U6Ly90ZWFtLWFscGhh"
+      key_id: "v1|dzp3b3Jrc3BhY2U6Ly90ZWFtLWFscGhh",
+      grantee_uri: @grantee
     }
   end
 
