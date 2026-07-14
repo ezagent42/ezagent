@@ -648,7 +648,7 @@ defmodule Ezagent.CapabilityTest do
   end
 
   describe "Phase-4 signing fields serialization" do
-    test "nil signing fields round-trip through the caps_json wire shape" do
+    test "nil signing and grantee fields round-trip through the caps_json wire shape" do
       original = %Capability{
         kind: :user,
         behavior: Ezagent.ActionSet.Session,
@@ -663,17 +663,23 @@ defmodule Ezagent.CapabilityTest do
 
       assert stored["signature"] == nil
       assert stored["key_id"] == nil
+      assert stored["grantee_uri"] == nil
 
       restored = stored |> Jason.encode!() |> Jason.decode!() |> Capability.from_map()
 
       assert restored == original
       assert restored.signature == nil
       assert restored.key_id == nil
+      assert restored.grantee_uri == nil
+
+      legacy = Map.delete(stored, "grantee_uri")
+      assert Capability.from_map(legacy).grantee_uri == nil
     end
 
-    test "raw signature and key id round-trip through base64url caps_json fields" do
+    test "raw signature, key id, and grantee URI round-trip through caps_json fields" do
       signature = :binary.copy(<<0, 255, 128, 1>>, 16)
       key_id = "v1|dzp3b3Jrc3BhY2U6Ly90ZWFtLWFscGhh"
+      grantee_uri = Ezagent.URI.new!("entity://team-alpha/user/bob")
 
       original =
         struct(Capability, %{
@@ -685,24 +691,28 @@ defmodule Ezagent.CapabilityTest do
           granted_by: @user_uri,
           granted_at: @now,
           signature: signature,
-          key_id: key_id
+          key_id: key_id,
+          grantee_uri: grantee_uri
         })
 
       stored = Capability.to_map(original)
 
       assert stored["signature"] == Base.url_encode64(signature, padding: false)
       assert stored["key_id"] == key_id
+      assert stored["grantee_uri"] == URI.to_string(grantee_uri)
 
       restored = stored |> Jason.encode!() |> Jason.decode!() |> Capability.from_map()
 
       assert restored == original
       assert restored.signature == signature
       assert restored.key_id == key_id
+      assert restored.grantee_uri == grantee_uri
     end
 
-    test "explicit Jason encoder uses the same signing-field wire representation" do
+    test "explicit Jason encoder uses the same signing and grantee field wire representation" do
       signature = :binary.copy(<<255, 0>>, 32)
       key_id = "v2|YToq"
+      grantee_uri = Ezagent.URI.new!("entity://team-alpha/user/bob")
 
       cap =
         struct(Capability, %{
@@ -714,13 +724,18 @@ defmodule Ezagent.CapabilityTest do
           granted_by: @user_uri,
           granted_at: @now,
           signature: signature,
-          key_id: key_id
+          key_id: key_id,
+          grantee_uri: grantee_uri
         })
 
       decoded = cap |> Jason.encode!() |> Jason.decode!()
 
       assert decoded["signature"] == Base.url_encode64(signature, padding: false)
       assert decoded["key_id"] == key_id
+      assert decoded["grantee_uri"] == URI.to_string(grantee_uri)
+
+      decoded_nil_grantee = %{cap | grantee_uri: nil} |> Jason.encode!() |> Jason.decode!()
+      assert decoded_nil_grantee["grantee_uri"] == nil
     end
 
     test "from_map rejects a malformed encoded signature" do
