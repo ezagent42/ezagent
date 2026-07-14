@@ -116,9 +116,14 @@ defmodule Ezagent.Cap.SigningTest do
       assert key_id == "v17|dzp3b3Jrc3BhY2U6Ly90ZWFtLWFscGhh"
       assert :error = Signing.parse_key_id(key_id, @workspace)
 
+      assert_raise ArgumentError, fn ->
+        Signing.parse_key_id(key_id, nil)
+      end
+
       current_key_id = Signing.key_id(1, Signing.trust_domain(@workspace))
 
       assert {:ok, 1} = Signing.parse_key_id(current_key_id, @workspace)
+      assert :error = Signing.parse_key_id(current_key_id, :any)
       assert :error = Signing.parse_key_id(key_id, :any)
       assert :error = Signing.parse_key_id("v17|not+base64url", @workspace)
       assert :error = Signing.parse_key_id("v17|", @workspace)

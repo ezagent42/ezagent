@@ -56,8 +56,9 @@ defmodule Ezagent.Cap.Signing do
   def parse_key_id(key_id, workspace_uri)
       when is_binary(key_id) do
     with {:ok, version, domain} <- parse_key_id(key_id),
-         true <- configured_key_version?(version),
-         true <- domain == trust_domain(workspace_uri) do
+         expected_domain <- trust_domain(workspace_uri),
+         true <- domain == expected_domain,
+         true <- configured_key_version?(version) do
       {:ok, version}
     else
       _ -> :error
