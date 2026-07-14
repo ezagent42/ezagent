@@ -41,6 +41,7 @@ defmodule EzagentDomainInstanceMessage.Integration.DefaultSessionTemplateSeedTes
     # the assertion doesn't depend on whether the boot-time write
     # landed before the test owner took over the connection. Idempotent
     # (content-addressable) — no-op when the row already exists.
+    :ok = recover_failed_system_default_template()
     :ok = EzagentDomainInstanceMessage.Application.seed_default_session_template_now()
     :ok = seed_orchestrator_recipe()
     :ok
@@ -175,6 +176,25 @@ defmodule EzagentDomainInstanceMessage.Integration.DefaultSessionTemplateSeedTes
     # The carve-out only applies in :test — guard that we ARE in test env
     # (otherwise this assertion is meaningless).
     assert Mix.env() == :test
+  end
+
+  test "test re-seed retires a failed boot-seeded default template incarnation" do
+    assert {:ok, current_hash} =
+             Ezagent.TemplateTags.resolve(
+               Ezagent.URI.workspace(:system),
+               "default",
+               "current"
+             )
+
+    default_uri =
+      Ezagent.URI.new!(default_template_uri_prefix("system") <> current_hash)
+
+    :ok = Ezagent.ReadyGate.mark_failed(default_uri)
+    assert Ezagent.ReadyGate.status(default_uri) == :failed
+
+    assert :ok = recover_failed_system_default_template()
+    assert :ok = EzagentDomainInstanceMessage.Application.seed_default_session_template_now()
+    assert Ezagent.ReadyGate.status(default_uri) == :ready
   end
 
   # ── Task #58 — default SessionTemplate ⇄ cc decoupling ──────────────
@@ -341,6 +361,44 @@ defmodule EzagentDomainInstanceMessage.Integration.DefaultSessionTemplateSeedTes
   defp snapshot_exists?(prefix) do
     KindSnapshot.list_all()
     |> Enum.any?(fn snap -> is_binary(snap.uri) and String.starts_with?(snap.uri, prefix) end)
+  end
+
+  # The boot seed runs outside each test's Sandbox owner. A live default
+  # template left behind by that boot process can therefore reach
+  # ReadyGate=:failed after its DB owner disappears, while its durable snapshot
+  # remains valid. `persist_version_as_system/2` then sees an already-started
+  # Kind and dispatches into the failed gate. This sync test module owns the
+  # deterministic re-seed, so retire only that failed live incarnation first;
+  # the normal seed immediately restores it from the retained snapshot.
+  defp recover_failed_system_default_template do
+    KindSnapshot.list_in_workspace(@workspace_uri_str)
+    |> Enum.filter(fn snap ->
+      is_binary(snap.uri) and
+        String.starts_with?(snap.uri, default_template_uri_prefix("system"))
+    end)
+    |> Enum.each(fn snap ->
+      uri = Ezagent.URI.new!(snap.uri)
+
+      if Ezagent.ReadyGate.status(uri) == :failed do
+        :ok = Ezagent.Kind.terminate(uri)
+        :ok = wait_until_unregistered(uri, 100)
+      end
+    end)
+
+    :ok
+  end
+
+  defp wait_until_unregistered(_uri, 0), do: {:error, :timeout}
+
+  defp wait_until_unregistered(uri, attempts_left) do
+    case Ezagent.KindRegistry.lookup(uri) do
+      :error ->
+        :ok
+
+      {:ok, _pid} ->
+        Process.sleep(10)
+        wait_until_unregistered(uri, attempts_left - 1)
+    end
   end
 
   defp seed_orchestrator_recipe do
