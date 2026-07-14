@@ -23,6 +23,7 @@ defmodule EzagentPluginKanban.E2E.BoardForwardTest do
   alias Ezagent.Entity.User
   alias Ezagent.{AgentFlavorRegistry, Agent.RecipeRegistry, Invocation}
   alias Ezagent.Socialware.BoardProvision
+  alias Ezagent.Socialware.MountRow
   alias EzagentPluginKanban.Application, as: KanbanApp
 
   @flavor "t5b-native"
@@ -131,6 +132,12 @@ defmodule EzagentPluginKanban.E2E.BoardForwardTest do
       assert minted_read.behavior == Ezagent.ActionSet.Kanban
       assert minted_read.instance == Ezagent.URI.instance(board_uri)
       refute minted_read.instance == :any
+
+      # 挂载落表:to_session 有指向该板的 read 挂载行(转发 = read)
+      fwd_mount = MountRow.get(to_session, board_uri, to_assistant, Ezagent.ActionSet.Kanban)
+      assert fwd_mount != nil
+      assert fwd_mount.access == "read"
+      assert Enum.any?(MountRow.list_for_session(to_session), &(&1.id == fwd_mount.id))
 
       # 先由板主人(admin)在板上建一个根节点,好让只读读到东西
       assert {:ok, %{id: "n1"}} =

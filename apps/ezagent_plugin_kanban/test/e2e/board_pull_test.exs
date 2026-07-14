@@ -20,6 +20,7 @@ defmodule EzagentPluginKanban.E2E.BoardPullTest do
   alias Ezagent.Entity.User
   alias Ezagent.{AgentFlavorRegistry, Agent.RecipeRegistry, Invocation}
   alias Ezagent.Socialware.BoardProvision
+  alias Ezagent.Socialware.MountRow
   alias EzagentPluginKanban.Application, as: KanbanApp
 
   @flavor "t5a-native"
@@ -102,6 +103,12 @@ defmodule EzagentPluginKanban.E2E.BoardPullTest do
                minted,
                &(URI.to_string(&1.granted_by) == URI.to_string(alice_ctx.caller))
              )
+
+      # 挂载落表:session B 有指向该板的 operate 挂载行(拉板 = operate)
+      pull_mount = MountRow.get(session_b, board_uri, assistant_uri, Ezagent.ActionSet.Kanban)
+      assert pull_mount != nil
+      assert pull_mount.access == "operate"
+      assert Enum.any?(MountRow.list_for_session(session_b), &(&1.id == pull_mount.id))
 
       # (a) assistant 持指向该板的实例精确 add_node cap
       assert eventually(fn -> holds_board_cap?(assistant_uri, board_uri, :add_node) end)
