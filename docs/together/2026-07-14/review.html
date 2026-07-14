@@ -29,7 +29,7 @@
 <p>回顾时间：2026-07-14（lead close）。来源：GitHub PR 合并状态、chat returns（今日无 <code>returns/</code> 目录，从 <code>gh pr list --state merged</code> 与 PR 描述回填）。本页按既有形式整理：先看产品大局，再看合并结果、未合并风险和流程沉淀。</p>
 
 <div>
-  <span class="kpi"><b>11</b>工作/文档 PR 已合入</span>
+  <span class="kpi"><b>13</b>工作/文档 PR 已合入</span>
   <span class="kpi"><b>5</b>PR 保持 held/open</span>
   <span class="kpi"><b>6/196</b>真数据回填签名命中</span>
   <span class="kpi"><b>22/0</b>ed25519 crypto 单测</span>
@@ -58,6 +58,18 @@
   <td>#1402</td>
   <td>gaga</td>
   <td>只减不增的 <code>agent_runtime_boundary</code> 架构门禁（Session 域调用 Agent 生命周期）+ 绕过场景对抗测试；<b>LiveAuth 改读 Ed25519 校验的 live Identity caps</b>（<code>Identity.read_entity_caps → Cap.verified_set</code>）而非旧 <code>caps_json</code>——修复运行时已授予的 creator cap 在 Web/Terminal 授权中不可见的真 canary bug（dual-read 安全：未签名 cap 仍授权）。</td>
+</tr>
+<tr>
+  <td><b>HomeLive fail-closed（授权越权）</b></td>
+  <td>#1403</td>
+  <td>gaga</td>
+  <td>HomeLive 不再在身份无效/不可解析时回落到 <code>entity://system/user/admin</code>（坏 cookie → admin 能力是真实越权）；改为清 session + 重定向登录，SessionController 同步；回归 + 架构反回落不变量测试。<b>已在 main，尚未部署 canary</b>（auth 路径改动，压住）。</td>
+</tr>
+<tr>
+  <td><b>bridge-join / agent-fault 恢复 SPEC</b></td>
+  <td>#1405</td>
+  <td>gaga</td>
+  <td>纯设计（3 文档、0 代码）；实测<b>证伪了「缺凭证」归因</b>（无凭证 claude 照样发完整 MCP initialize）；Option B（移除 session→agent 边）已锁；把 bridge-join 的 revoke-DLQ 与 entity-caps #1394 连成同一个静默丢弃病。<b>实现未锁定——2 个 lead 决策待拍</b>（#1394 统一底座 + cap-revoke 选项 1/2/3）。</td>
 </tr>
 <tr>
   <td><b>cbac Phase-4 ed25519 签名</b></td>
@@ -128,7 +140,7 @@
 <ol>
 <li><b>把 W29 demo 端到端串一遍</b>——Hello↔Kanban 融合（#1383）已落地，缺的一段是 派活→平台 agent 出 PR→合→看板流转。分工：gaga 测试 demo 路径 → allen 验收 → ruihua 从产品角度完善。（jjkysy 明天可能没时间。）</li>
 <li><b>gaga：AgentRuntime 边界已合（#1402）；</b>下一步 = ARB-2~5 存量迁移 + 一批 LiveAuth/caps 审计项——<b>⚠ 其中「EntityCaps 持久化统一」须与 codex entity-caps D 协调，别同改 caps 持久化面。</b></li>
-<li><b>bridge-join 不是 demo 阻塞（被绕过、非遗忘）：</b>急症那半（新建超时 + @orchestrator 变哑）已修（#1294，canary 实证 #1367）；剩下的 cc-PTY bridge-join 慢激活由 cc-headless（<code>:in_process_sync</code>，无 bridge-join 风险）绕过。作为 cc-PTY 专项 latent 项延后（仅当真 PTY agent 上生产时才修）。demo 跑 cc-headless。</li>
+<li><b>bridge-join——归因已更正（#1405），仍非 demo 阻塞、但有真实安全维度：</b>demo 侧被 cc-headless（<code>:in_process_sync</code>，无 bridge-join 风险）绕过、急症半已 canary 证（#1294，canary 实证 #1367），故对 demo 不阻塞。但 codex #1405 调查<b>实测证伪了此前的「缺凭证」归因</b>（无凭证 claude 照样完成完整 MCP initialize 握手——「无 creds ⇒ 无 bridge join」三处全错）；真根因未知、设计刻意不依赖病因。两个真问题浮现：(a) <code>ReadyGate.:failed</code>（投递闸）挡住 <code>pty.write</code>/<code>pty.restart</code>（管理 action）→ agent 一坏，创建者能看终端却不能写/重启（#1375 给的 3 权限有 2 个在最需要时是死的）；(b) <b>cap-revoke 生产今天就被 DLQ</b>——一次 transport 超时把一条 pending <code>:revoke_cap</code> 丢进 DLQ → cap 留着，与 entity-caps #1394 gap A 同一个静默丢弃病。#1405 纯设计，实现卡在 2 个 lead 决策。</li>
 <li><b>等 codex 两份返工</b>（entity-caps A/B/D；cap-signing no-tail 发现文档）→ lead 验收 + 决定 re-provision-签名 构建与 enforce 时点。Enforce 保持关闭，直到审计证明 0 个未签名的 authorizer cap。</li>
 <li><b>ruihua rebase #1378</b>（CONFLICTING）→ lead 合入；继续 #1388。</li>
 <li><b>流程：把 §4 规则 1（auth 不变量/迁移 enforce 前必须过真数据 E2E）确立为常设 gate。</b></li>
