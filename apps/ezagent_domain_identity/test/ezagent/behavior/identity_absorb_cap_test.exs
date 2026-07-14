@@ -1,8 +1,8 @@
 defmodule Ezagent.ActionSet.IdentityAbsorbCapTest do
   use EzagentCore.DataCase, async: false
 
-  alias Ezagent.ActionSet.IdentityAdmin
-  alias Ezagent.Capability
+  alias Ezagent.{Cap, Capability}
+  alias Ezagent.ActionSet.{Identity, IdentityAdmin}
 
   @workspace URI.new!("workspace://team-alpha")
   @issuer URI.new!("entity://team-alpha/user/issuer")
@@ -65,6 +65,37 @@ defmodule Ezagent.ActionSet.IdentityAbsorbCapTest do
 
     assert {:emit, :cap_granted, %{via_absorb: true}} =
              Enum.find(effects, &match?({:emit, :cap_granted, _}, &1))
+  end
+
+  test "a signed artifact enters only the named entity slice" do
+    assert {:ok, artifact} = Cap.issue({:genesis, @issuer}, @user, artifact())
+
+    assert {:ok, %{caps: [^artifact]}, _effects} =
+             IdentityAdmin.handle_absorb_cap(%{artifact: artifact}, ctx(@user))
+
+    assert {:error, :invalid_cap_artifact} =
+             IdentityAdmin.handle_absorb_cap(%{artifact: artifact}, ctx(@agent))
+  end
+
+  test "identity create rejects a signed artifact issued to another entity" do
+    assert {:ok, artifact} = Cap.issue({:genesis, @issuer}, @agent, artifact())
+
+    assert {:ok, state} = Identity.create(%{uri: @user, initial_caps: [artifact]})
+    refute MapSet.member?(state.caps, artifact)
+  end
+
+  test "identity activate keeps the receiver's signed artifact and drops another receiver's" do
+    assert {:ok, alice_artifact} = Cap.issue({:genesis, @issuer}, @user, artifact())
+    assert {:ok, agent_artifact} = Cap.issue({:genesis, @issuer}, @agent, artifact())
+
+    assert {:ok, %{}, reconciled} =
+             Identity.activate(
+               %{caps: MapSet.new([alice_artifact, agent_artifact])},
+               %{self_uri: @user}
+             )
+
+    assert MapSet.member?(reconciled.caps, alice_artifact)
+    refute MapSet.member?(reconciled.caps, agent_artifact)
   end
 
   test "absorbing the same identity twice replaces metadata without growing the set" do

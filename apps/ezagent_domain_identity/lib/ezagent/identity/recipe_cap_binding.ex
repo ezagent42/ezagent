@@ -190,6 +190,7 @@ defmodule Ezagent.Identity.RecipeCapBinding do
       cap.kind != :agent -> {:error, :kind_mismatch}
       not same_uri?(cap.instance, agent_uri) -> {:error, :target_mismatch}
       not same_uri?(cap.workspace_uri, workspace_uri) -> {:error, :workspace_mismatch}
+      not Ezagent.Cap.verify_for(cap, agent_uri) -> {:error, :invalid_cap_artifact}
       true -> :ok
     end
   end
@@ -216,7 +217,11 @@ defmodule Ezagent.Identity.RecipeCapBinding do
   defp artifact_identity(%Capability{} = cap) do
     cap
     |> Capability.to_map()
-    |> Map.drop(["granted_at"])
+    # An issuance artifact's signature covers its fresh `granted_at` stamp.
+    # Both fields therefore vary on a retry even when the recipe proposal is
+    # logically identical. Binding idempotence is about that proposal, not
+    # the cryptographic envelope selected for a particular issuance attempt.
+    |> Map.drop(["granted_at", "signature"])
     |> :erlang.term_to_binary([:deterministic])
   end
 

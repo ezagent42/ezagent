@@ -43,7 +43,10 @@ defmodule Ezagent.Capability do
             instance: nil,
             workspace_uri: nil,
             granted_by: nil,
-            granted_at: nil
+            granted_at: nil,
+            signature: nil,
+            key_id: nil,
+            grantee_uri: nil
 
   @type scope_tuple ::
           {:within_session, URI.t()}
@@ -57,7 +60,10 @@ defmodule Ezagent.Capability do
           instance: URI.t() | :any | scope_tuple(),
           workspace_uri: URI.t() | :any,
           granted_by: URI.t() | :plugin_declared,
-          granted_at: DateTime.t() | :compile_time
+          granted_at: DateTime.t() | :compile_time,
+          signature: binary() | nil,
+          key_id: String.t() | nil,
+          grantee_uri: URI.t() | nil
         }
 
   # Sentinel values for declarative caps (e.g. those returned by
@@ -576,7 +582,18 @@ defimpl Jason.Encoder, for: Ezagent.Capability do
         instance: json_safe(cap.instance),
         workspace_uri: json_safe(cap.workspace_uri),
         granted_by: json_safe(cap.granted_by),
-        granted_at: cap.granted_at
+        granted_at: cap.granted_at,
+        signature:
+          case cap.signature do
+            nil -> nil
+            signature when is_binary(signature) -> Base.url_encode64(signature, padding: false)
+          end,
+        key_id: cap.key_id,
+        grantee_uri:
+          case cap.grantee_uri do
+            nil -> nil
+            %URI{} = uri -> URI.to_string(uri)
+          end
       },
       opts
     )
