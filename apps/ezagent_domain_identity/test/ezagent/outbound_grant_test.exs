@@ -11,6 +11,12 @@ defmodule Ezagent.OutboundGrantTest do
     Ezagent.URI.new!("session://#{workspace}/default/#{name}")
   end
 
+  defp action_uri(%URI{} = uri), do: %{uri | query: "action=identity.list_caps"}
+
+  defp invalid_principal_type(workspace, name) do
+    Ezagent.URI.new!("entity://#{workspace}/banana/#{name}")
+  end
+
   defp issued_attrs(overrides \\ %{}) do
     workspace = Map.get(overrides, :workspace, "team-alpha")
     issuer = Map.get(overrides, :issuer, entity_uri(workspace, "issuer"))
@@ -22,7 +28,7 @@ defmodule Ezagent.OutboundGrantTest do
       Capability.cap(
         :user,
         Ezagent.ActionSet.Identity,
-        :list_caps,
+        Map.get(overrides, :action, :list_caps),
         grantee,
         cap_workspace
       )
@@ -59,6 +65,17 @@ defmodule Ezagent.OutboundGrantTest do
 
       assert [^grant] = OutboundGrant.list_by_granter(attrs.issuer)
       assert [^grant] = OutboundGrant.list_by_grantee(attrs.grantee)
+    end
+
+    test "cap identity is the canonical five-axis identity including action" do
+      attrs = issued_attrs(%{action: :list_caps})
+      other_action_attrs = issued_attrs(%{action: :grant_cap})
+
+      assert {:ok, first} = OutboundGrant.record(attrs)
+      assert {:ok, second} = OutboundGrant.record(other_action_attrs)
+
+      refute first.cap_identity == second.cap_identity
+      assert first.grantee_uri == second.grantee_uri
     end
 
     test "accepts exactly the closed subtype set" do
@@ -145,8 +162,27 @@ defmodule Ezagent.OutboundGrantTest do
     test "returns not_found for an unknown id or natural key" do
       attrs = issued_attrs()
 
-      assert {:error, :not_found} = OutboundGrant.revoke(Ecto.UUID.generate())
+      assert {:error, :not_found} = OutboundGrant.revoke(String.duplicate("a", 64))
       assert {:error, :not_found} = OutboundGrant.revoke(attrs)
+    end
+
+    test "trusted system-scope id revoke accepts only lowercase SHA256 row ids" do
+      assert {:error, :invalid_id} = OutboundGrant.revoke(Ecto.UUID.generate())
+      assert {:error, :invalid_id} = OutboundGrant.revoke(String.duplicate("A", 64))
+      assert {:error, :invalid_id} = OutboundGrant.revoke(String.duplicate("g", 64))
+      assert {:error, :invalid_id} = OutboundGrant.revoke(String.duplicate("a", 63))
+    end
+
+    test "natural-key revoke scopes both mutation and reload by grantee workspace" do
+      attrs = issued_attrs()
+      assert {:ok, grant} = OutboundGrant.record(attrs)
+
+      grant
+      |> Ecto.Changeset.change(workspace_uri: "workspace://team-beta")
+      |> Repo.update!()
+
+      assert {:error, :not_found} = OutboundGrant.revoke(attrs)
+      assert Repo.get!(OutboundGrant, grant.id).revoked_at == nil
     end
   end
 
@@ -174,6 +210,36 @@ defmodule Ezagent.OutboundGrantTest do
 
       assert {:error, :invalid_access} =
                attrs |> Map.put(:access, %{level: "manage"}) |> OutboundGrant.record()
+    end
+
+    test "rejects action-bearing issuer, decision owner, and grantee before canonicalization" do
+      attrs = issued_attrs()
+
+      for {field, error} <- [
+            issuer: :invalid_issuer,
+            decision_owner: :invalid_decision_owner,
+            grantee: :invalid_grantee
+          ] do
+        assert {:error, ^error} =
+                 attrs
+                 |> Map.update!(field, &action_uri/1)
+                 |> OutboundGrant.record()
+      end
+    end
+
+    test "rejects non-principal entity types for every actor" do
+      attrs = issued_attrs()
+
+      for {field, error} <- [
+            issuer: :invalid_issuer,
+            decision_owner: :invalid_decision_owner,
+            grantee: :invalid_grantee
+          ] do
+        assert {:error, ^error} =
+                 attrs
+                 |> Map.put(field, invalid_principal_type("team-alpha", Atom.to_string(field)))
+                 |> OutboundGrant.record()
+      end
     end
 
     test "rejects artifact issuer and grantee mismatches" do
@@ -213,6 +279,25 @@ defmodule Ezagent.OutboundGrantTest do
       refute source =~ "RecipeCapBinding"
       refute source =~ "CompositionBinding"
       refute source =~ "socialware_mounts"
+    end
+
+    test "no runtime consumer calls OutboundGrant before P5 integration" do
+      apps_dir = Path.expand("../../..", __DIR__)
+      definition = Path.expand("../../lib/ezagent/outbound_grant.ex", __DIR__)
+
+      callers =
+        apps_dir
+        |> Path.join("*/lib/**/*.ex")
+        |> Path.wildcard()
+        |> Enum.reject(&(&1 == definition))
+        |> Enum.filter(fn path ->
+          Regex.match?(
+            ~r/\b(?:Ezagent\.)?OutboundGrant\.(?:record|revoke|list_by_granter|list_by_grantee)\s*\(/,
+            File.read!(path)
+          )
+        end)
+
+      assert callers == []
     end
   end
 end

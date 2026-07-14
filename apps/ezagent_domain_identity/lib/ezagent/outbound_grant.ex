@@ -87,14 +87,25 @@ defmodule Ezagent.OutboundGrant do
 
   Repeating a revoke preserves the first revocation timestamp. Natural-key
   revocation goes through the same canonicalizer as `record/1`, so it cannot
-  accidentally widen into a partial capability match.
+  accidentally widen into a partial capability match and both its update and
+  reload stay scoped to the grantee-derived workspace.
+
+  The binary-id form is deliberately a trusted system-scope mutation: a row
+  id carries no tenant context, so its caller MUST already have authorized
+  cross-workspace ledger administration. It accepts only this module's
+  64-character lowercase SHA256 row-id shape. Tenant-facing callers should use
+  the natural-key attrs form.
   """
   @spec revoke(String.t() | record_attrs()) :: {:ok, t()} | {:error, term()}
-  def revoke(id) when is_binary(id), do: revoke_id(id)
+  def revoke(id) when is_binary(id) do
+    with :ok <- validate_row_id(id) do
+      revoke_trusted_id(id)
+    end
+  end
 
   def revoke(attrs) when is_map(attrs) do
     with {:ok, normalized} <- normalize_attrs(attrs) do
-      revoke_id(normalized.id)
+      revoke_scoped(normalized.id, normalized.workspace_uri)
     end
   end
 
@@ -134,16 +145,43 @@ defmodule Ezagent.OutboundGrant do
     |> Repo.insert(on_conflict: :nothing, conflict_target: :id)
   end
 
-  defp revoke_id(id) do
+  defp revoke_trusted_id(id) do
+    id
+    |> global_id_query()
+    |> revoke_query()
+  end
+
+  defp revoke_scoped(id, workspace_uri) do
+    id
+    |> scoped_id_query(workspace_uri)
+    |> revoke_query()
+  end
+
+  defp global_id_query(id) do
+    from(grant in __MODULE__, where: grant.id == ^id)
+  end
+
+  defp scoped_id_query(id, workspace_uri) do
+    __MODULE__
+    |> Ezagent.Persistence.scope_by_workspace(workspace_uri)
+    |> where([grant], grant.id == ^id)
+  end
+
+  defp revoke_query(query) do
     now = DateTime.utc_now()
 
-    from(grant in __MODULE__, where: grant.id == ^id and is_nil(grant.revoked_at))
+    query
+    |> where([grant], is_nil(grant.revoked_at))
     |> Repo.update_all(set: [revoked_at: now, updated_at: now])
 
-    case Repo.get(__MODULE__, id) do
+    case Repo.one(query) do
       nil -> {:error, :not_found}
       %__MODULE__{} = grant -> {:ok, grant}
     end
+  end
+
+  defp validate_row_id(id) do
+    if String.match?(id, ~r/\A[0-9a-f]{64}\z/), do: :ok, else: {:error, :invalid_id}
   end
 
   defp changeset(grant, attrs) do
@@ -175,7 +213,7 @@ defmodule Ezagent.OutboundGrant do
         decision_owner_uri: decision_owner.string,
         grantee_uri: grantee.string,
         cap: cap_map,
-        cap_identity: cap_identity(cap_map),
+        cap_identity: cap_identity(cap),
         subtype: subtype,
         session_scope_uri: session_scope,
         access: access
@@ -291,8 +329,8 @@ defmodule Ezagent.OutboundGrant do
   defp validate_cap_workspace(_cap, _workspace_uri), do: {:error, :cap_workspace_mismatch}
 
   defp canonical_entity(%URI{} = uri) do
-    with {:ok, canonical} <- canonical_uri(uri),
-         true <- canonical.uri.scheme == "entity" do
+    with true <- Ezagent.URI.bare_principal?(uri),
+         {:ok, canonical} <- canonical_uri(uri) do
       {:ok,
        Map.put(
          canonical,
@@ -331,11 +369,24 @@ defmodule Ezagent.OutboundGrant do
     |> Jason.decode!()
   end
 
-  defp cap_identity(cap_map) do
-    cap_map
-    |> Map.take(~w(kind behavior action instance workspace_uri))
+  # `Capability.identity_key/1` is the SSOT for the logical five axes. Walk
+  # every returned axis so nested scope URIs are stable too, then hash the
+  # deterministic tuple without duplicating the field list here.
+  defp cap_identity(cap) when is_struct(cap, Capability) do
+    cap
+    |> Capability.identity_key()
+    |> Tuple.to_list()
+    |> Enum.map(&canonical_identity_axis/1)
+    |> List.to_tuple()
     |> deterministic_hash()
   end
+
+  defp canonical_identity_axis(%URI{} = uri), do: Ezagent.URI.stable_key(uri)
+
+  defp canonical_identity_axis({scope, %URI{} = uri}),
+    do: {scope, Ezagent.URI.stable_key(uri)}
+
+  defp canonical_identity_axis(axis), do: axis
 
   defp natural_id(attrs) do
     attrs
