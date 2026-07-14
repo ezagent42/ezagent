@@ -18,7 +18,7 @@ defmodule EzagentPluginHello.RegistrationTest do
 
   alias Ezagent.Agent.Recipe
   alias Ezagent.Agent.RecipeRegistry
-  alias Ezagent.ActionSet.{HelloBuilder, HelloConcierge, HelloOrchestrator}
+  alias Ezagent.ActionSet.{HelloBuilder, HelloConcierge, HelloDispatcher, HelloOrchestrator}
   alias EzagentPluginHello.Application, as: HelloApp
 
   setup do
@@ -33,13 +33,27 @@ defmodule EzagentPluginHello.RegistrationTest do
     refute :grant_cap in Ezagent.ActionSet.Identity.actions()
   end
 
-  test "all six hello role recipes are published in roles/0" do
+  test "all seven hello role recipes are published in roles/0" do
     assert HelloApp.hello_front_desk_recipe() in HelloApp.roles()
     assert HelloApp.hello_builder_recipe() in HelloApp.roles()
     assert HelloApp.hello_concierge_recipe() in HelloApp.roles()
     assert HelloApp.hello_llm_recipe() in HelloApp.roles()
     assert HelloApp.hello_sharer_recipe() in HelloApp.roles()
     assert HelloApp.hello_publisher_recipe() in HelloApp.roles()
+    assert HelloApp.hello_dispatcher_recipe() in HelloApp.roles()
+  end
+
+  test "hello.dispatcher recipe owns only the Kanban delegation action" do
+    assert {:ok, %Recipe{} = role} = Recipe.new(HelloApp.hello_dispatcher_recipe())
+
+    assert role.name == "hello.dispatcher"
+    assert role.behaviors == [HelloDispatcher]
+    refute role.passive
+
+    assert [%{behavior: HelloDispatcher, action: :delegate_to_kanban} = cap] =
+             role.requested_caps
+
+    refute Map.has_key?(cap, :kind)
   end
 
   test "hello.llm curl recipe carries provider/model + credential_optional in config" do
@@ -131,7 +145,17 @@ defmodule EzagentPluginHello.RegistrationTest do
     {:ok, defn} = Ezagent.Socialware.Definition.new(attrs)
 
     role_names = Enum.map(defn.roles, & &1.role_name) |> Enum.sort()
-    assert role_names == ["builder", "concierge", "front-desk", "llm", "publisher", "sharer"]
+
+    assert role_names == [
+             "builder",
+             "concierge",
+             "dispatcher",
+             "front-desk",
+             "llm",
+             "publisher",
+             "sharer"
+           ]
+
     assert Enum.all?(defn.roles, &(&1.fill == :agent))
     assert Enum.find(defn.roles, &(&1.role_name == "front-desk")).flavor == "hello"
 

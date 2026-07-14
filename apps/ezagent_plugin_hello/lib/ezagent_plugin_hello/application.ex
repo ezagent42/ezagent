@@ -98,7 +98,8 @@ defmodule EzagentPluginHello.Application do
       hello_concierge_recipe(),
       hello_llm_recipe(),
       hello_sharer_recipe(),
-      hello_publisher_recipe()
+      hello_publisher_recipe(),
+      hello_dispatcher_recipe()
     ]
 
   @doc "The `hello.front-desk` role — the invisible per-session chat relay that dispatches to builder/concierge via their dispatchable actions."
@@ -175,6 +176,18 @@ defmodule EzagentPluginHello.Application do
       name: "hello.publisher",
       behaviors: [Ezagent.ActionSet.HelloPublisher],
       requested_caps: [%{behavior: Ezagent.ActionSet.HelloPublisher, action: :publish}]
+    }
+  end
+
+  @doc "The `hello.dispatcher` role — delegates an authenticated hello instruction to the workspace Kanban."
+  @spec hello_dispatcher_recipe() :: map()
+  def hello_dispatcher_recipe do
+    %{
+      name: "hello.dispatcher",
+      behaviors: [Ezagent.ActionSet.HelloDispatcher],
+      requested_caps: [
+        %{behavior: Ezagent.ActionSet.HelloDispatcher, action: :delegate_to_kanban}
+      ]
     }
   end
 

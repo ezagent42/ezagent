@@ -161,7 +161,13 @@ defmodule EzagentPluginHello.App do
         %{role_name: "concierge", fill: :agent, recipe: "hello.concierge", flavor: "native"},
         %{role_name: "llm", fill: :agent, recipe: "hello.llm", flavor: "curl"},
         %{role_name: "sharer", fill: :agent, recipe: "hello.sharer", flavor: "native"},
-        %{role_name: "publisher", fill: :agent, recipe: "hello.publisher", flavor: "native"}
+        %{role_name: "publisher", fill: :agent, recipe: "hello.publisher", flavor: "native"},
+        %{
+          role_name: "dispatcher",
+          fill: :agent,
+          recipe: "hello.dispatcher",
+          flavor: "native"
+        }
       ],
       routing_rules: [
         %{

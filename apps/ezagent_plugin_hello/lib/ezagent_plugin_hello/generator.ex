@@ -56,7 +56,8 @@ defmodule EzagentPluginHello.Generator do
   owner is here to build, and a mis-route to the builder is recoverable (it
   just regenerates), whereas losing a build request is not.
   """
-  @spec classify_intent(URI.t(), String.t()) :: :builder | :concierge | :sharer | :publisher
+  @spec classify_intent(URI.t(), String.t()) ::
+          :builder | :concierge | :sharer | :publisher | :dispatcher
   def classify_intent(%URI{} = session_uri, user_text) when is_binary(user_text) do
     case call_llm(session_uri, Prompts.route_system(), user_text) do
       {:ok, %{content: content}} when is_binary(content) ->
@@ -73,11 +74,13 @@ defmodule EzagentPluginHello.Generator do
   ASK→:concierge, anything else→:builder (fail-open to build, the owner default).
   Pure — split out so the routing policy is unit-testable without the LLM.
   """
-  @spec interpret_intent(String.t()) :: :builder | :concierge | :sharer | :publisher
+  @spec interpret_intent(String.t()) ::
+          :builder | :concierge | :sharer | :publisher | :dispatcher
   def interpret_intent(content) when is_binary(content) do
     up = String.upcase(content)
 
     cond do
+      String.contains?(up, "KANBAN") -> :dispatcher
       String.contains?(up, "SHARE") -> :sharer
       String.contains?(up, "PUBLISH") -> :publisher
       String.contains?(up, "ASK") -> :concierge
