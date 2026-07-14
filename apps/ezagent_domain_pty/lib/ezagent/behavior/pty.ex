@@ -1,7 +1,7 @@
 defmodule Ezagent.ActionSet.Pty do
   @moduledoc """
-  Pty Behavior — `:write` action for an Agent Kind backed by a local
-  `Ezagent.Domain.Pty.Server`.
+  Pty Behavior — `:write` and `:restart` actions for an Agent Kind backed by a
+  local `Ezagent.Domain.Pty.Server`.
 
   ## PR #146 (SPEC v2 §5.7) — agent-direct dispatch
 
@@ -25,7 +25,8 @@ defmodule Ezagent.ActionSet.Pty do
   `"Elixir.Ezagent.ActionSet.Pty"`) continue to resolve.
 
   The Behavior MODULE lives in `ezagent_domain_pty`; the
-  REGISTRATION (binding Agent Kind → :write → this module) happens
+  REGISTRATION (binding Agent Kind → each action → this module, in a
+  loop over `actions/0`) happens
   in `EzagentDomainInstanceMessage.Application.start/2` where the
   `Ezagent.Entity.Agent` Kind is defined. `ezagent_domain_session`
   gains `:ezagent_domain_pty` as an in-umbrella dep so this
@@ -37,13 +38,24 @@ defmodule Ezagent.ActionSet.Pty do
   → CapBAC step 5.5 → audit telemetry → PtyServer write. The xterm.js
   hook never touches the PtyServer directly or pushes raw PubSub.
 
-  ## Cap shape
+  ## Cap shape (CHANGED 2026-07-14 — the terminal belongs to the creator)
+
+  PTY actions are gated on the agent's **MANAGE** cap, NOT on a `Pty` cap:
 
   - `kind: :agent`
-  - `behavior: Ezagent.ActionSet.Pty`
-  - `instance: entity://agent/<flavor>_<name>` (per-agent) or `:any`
+  - `behavior: Ezagent.ActionSet.Manage`
+  - `action: :any`
+  - `instance: entity://<ws>/agent/<flavor>_<name>` — the one agent
 
-  Admin's triple-`:any` passes. Grant per-agent for non-admin users.
+  This is the cap `CreatorGrant.manage_cap/4` already mints for the creator at
+  agent creation, so no grant and no backfill are needed. Admin's triple-`:any`
+  still passes. Terminal READS (`Ezagent.Domain.Pty.Access`) use the same cap, so
+  one authority covers watch + type + restart.
+
+  A `behavior: Ezagent.ActionSet.Pty` cap authorizes **nothing** any more — see
+  `required_caps/0` for why (nothing in the repo ever minted one, so the creator
+  could neither type into nor watch the terminal of the agent they had just
+  created). It fails closed.
 
   ## Migration to §2.2 declarative contract (Phase 2.5 — 2026-05-28)
 
@@ -98,7 +110,7 @@ defmodule Ezagent.ActionSet.Pty do
 
   Naming (§11 NP-1/NP-2/NP-3 audit): `Ezagent.ActionSet.Pty` — a domain
   module (`apps/ezagent_domain_pty`) naming its own domain concept
-  (`Pty`), single `:write` action whose intent the name tracks exactly.
+  (`Pty`), whose actions the name tracks exactly.
   NO violation; kept as-is (a rename would touch the `:pty` snapshot
   slice key + every DB cap grant referencing `"Elixir.Ezagent.ActionSet.Pty"`
   for no clarity gain).
@@ -106,21 +118,58 @@ defmodule Ezagent.ActionSet.Pty do
 
   use Ezagent.Lifecycle
 
-  action :write,
+  action(:write,
     args: %{bytes: :string},
     returns: %{bytes_written: :integer},
     caps: [:write],
     modes: [:call, :cast],
     description: "Write raw bytes to the agent's PTY input stream"
+  )
 
-  # SPEC `docs/superpowers/specs/2026-05-25-caps-cleanup-v1-r4-impl.md` §2.
-  # Pty is registered on the Agent Kind — kind axis is `:agent`. The
-  # macro-derived default would be `:any`; we override to preserve
-  # the `:agent` axis the CapabilityRegistry needs to match the
-  # existing grants.
+  action(:restart,
+    args: %{},
+    returns: %{restarted: :boolean},
+    caps: [:restart],
+    modes: [:call],
+    description: "Clear a respawn-breaker halt and respawn the agent's PTY subprocess"
+  )
+
+  # SPEC `docs/superpowers/specs/2026-05-25-caps-cleanup-v1-r4-impl.md` §2 — Pty
+  # is registered on the Agent Kind, so the kind axis is `:agent` (the
+  # macro-derived default would be `:any`).
+  #
+  # Allen, 2026-07-14 — **the terminal belongs to the creator**, and the
+  # creator's authority over an agent IS the Manage cap they already receive at
+  # creation (`CreatorGrant.manage_cap/4`; #533 §3.3 — "any management action on
+  # THIS instance"). So every PTY action is gated on that one authority rather
+  # than on a separate Pty cap that nothing in the repo ever mints.
+  #
+  # This is the established idiom, not a new one: `ConfigGovernance` gates all
+  # seven of its CR actions the same way, and `ConfigEvolve` likewise (lead
+  # decision OQ-4 — "the agent's MANAGE cap, no separate publish/reviewer cap").
+  # `Kind.Runtime` overwrites the needed-cap's ACTION with the dispatched action
+  # but honours the declared BEHAVIOR (`runtime.ex:468`), so a single held
+  # `cap(:agent, Manage, :any, <this agent>)` satisfies `:write` and `:restart`
+  # alike — and `Ezagent.Domain.Pty.Access` gates terminal READS on the same cap.
+  #
+  # What this buys: Allen's 2026-07-10 decision ("a user may deliberately create
+  # a credential-less cc agent and run `claude /login` inside its PTY") becomes
+  # executable with ZERO new grants and ZERO backfill — every agent that already
+  # exists works immediately, because its creator already holds the cap. Before
+  # this, the creator could neither type into nor even watch the terminal of the
+  # agent they had just created; only an admin could.
+  #
+  # Consequence, deliberately accepted: a hand-provisioned `Pty` cap (nothing in
+  # the repo mints one) no longer authorizes `pty.write`. It fails CLOSED
+  # (`:unauthorized`), and re-granting is a Manage cap on the instance.
+  #
+  # Pinned by the authz tests in `pty_test.exs`.
   def required_caps do
+    manage = Ezagent.Capability.cap(:agent, Ezagent.ActionSet.Manage, :any)
+
     %{
-      write: Ezagent.Capability.cap(:agent, __MODULE__, :write)
+      write: manage,
+      restart: manage
     }
   end
 
@@ -183,6 +232,26 @@ defmodule Ezagent.ActionSet.Pty do
 
   def handle_write(_args, _ctx),
     do: {:error, {:invalid_args, :bytes_required}}
+
+  @doc """
+  Clear a respawn-breaker halt and respawn the agent's PTY subprocess.
+
+  Gated by the MANAGE authority (see `required_caps/0`) — recovering a dead
+  agent is a management act on the instance, not terminal typing. The creator's
+  existing `cap(:agent, Manage, :any, <this agent>)` therefore carries it.
+  """
+  def handle_restart(_args, ctx) do
+    case Map.get(ctx, :self_uri) do
+      %URI{} = agent_uri ->
+        case Ezagent.Domain.Pty.restart(agent_uri) do
+          :ok -> {:ok, %{restarted: true}, []}
+          {:error, reason} -> {:error, reason}
+        end
+
+      _ ->
+        {:error, :no_self_uri}
+    end
+  end
 
   # PR-OWN-4 (caps-data-ownership SPEC #306 §6): per-entity Behavior
   # — the entity (user / agent) owns its own state for this Behavior.

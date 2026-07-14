@@ -546,25 +546,39 @@ defmodule Ezagent.World.ConversationActions do
   @spec switch_to_pty(Phoenix.LiveView.Socket.t(), URI.t(), String.t()) ::
           {:noreply, Phoenix.LiveView.Socket.t()}
   def switch_to_pty(socket, %URI{} = _session_uri, agent_str) when is_binary(agent_str) do
+    # `agent_str` is CLIENT input (the `session.pty.open` event's "agent" field),
+    # so this is a full PTY read exit — it subscribes to the live output stream
+    # and pushes liveness/phase. Without the gate any authenticated user could
+    # open any agent's terminal in any workspace from inside a conversation.
+    # Same authority as every other exit: the agent's Manage cap.
+    caps = Map.get(socket.assigns, :current_caps, MapSet.new())
+
     case parse_agent_uri(agent_str) do
       {:ok, %URI{} = agent_uri} ->
-        subscribe_pty(agent_uri)
-
-        {:noreply,
-         push_world_state(socket, %{
-           "active_view" => "pty",
-           "active_pty_agent_uri" => uri_string(agent_uri),
-           "agent_uri" => uri_string(agent_uri),
-           "agent_detail_path" =>
-             "/identities/agents/#{URI.encode_www_form(URI.to_string(agent_uri))}",
-           "agent_status" => jsonable(Ezagent.Domain.Agent.lifecycle_status(agent_uri)),
-           "pty_alive" => Ezagent.Domain.Pty.alive?(agent_uri),
-           "pty_phase" => pty_phase(agent_uri)
-         })}
+        if Ezagent.Domain.Pty.Access.may_read?(agent_uri, caps) do
+          subscribe_pty(agent_uri)
+          push_pty_view(socket, agent_uri)
+        else
+          {:noreply, assign(socket, :last_dispatch_status, "error:unauthorized")}
+        end
 
       :error ->
         {:noreply, assign(socket, :last_dispatch_status, "error:bad_agent_uri")}
     end
+  end
+
+  defp push_pty_view(socket, %URI{} = agent_uri) do
+    {:noreply,
+     push_world_state(socket, %{
+       "active_view" => "pty",
+       "active_pty_agent_uri" => uri_string(agent_uri),
+       "agent_uri" => uri_string(agent_uri),
+       "agent_detail_path" =>
+         "/identities/agents/#{URI.encode_www_form(URI.to_string(agent_uri))}",
+       "agent_status" => jsonable(Ezagent.Domain.Agent.lifecycle_status(agent_uri)),
+       "pty_alive" => Ezagent.Domain.Pty.alive?(agent_uri),
+       "pty_phase" => pty_phase(agent_uri)
+     })}
   end
 
   @doc """

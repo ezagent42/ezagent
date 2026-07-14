@@ -368,6 +368,27 @@ defmodule EzagentDomainInstanceMessage.SessionCreator.Materializer do
   wildcard-action cap whose target Behavior has no data owner (Identity's
   grant boundary correctly requires admin authority for that shape). The
   issued cap still records `granted_by: owner_uri`.
+
+  > ### ⚠️ READ BEFORE WIRING THIS UP
+  >
+  > **This function currently has ZERO callers** (repo-wide, including tests).
+  > Since 2026-07-14 an agent's `cap(:agent, Manage, :any, <agent>)` also carries
+  > its **PTY** — `pty.write` and `pty.restart` are gated on the Manage authority
+  > (`Ezagent.ActionSet.Pty.required_caps/0`), and `Ezagent.Domain.Pty.Access` gates
+  > terminal *reads* on it too. Allen, 2026-07-14: "the terminal belongs to the
+  > creator."
+  >
+  > So wiring this call in does not just make the owner the orchestrator's
+  > *manager* — it hands them **arbitrary command execution inside the
+  > orchestrator's sandbox** (typing into a PTY is running commands) and the
+  > ability to watch everything that scrolls through it.
+  >
+  > That may well be intended — a session's orchestrator is materialized for its
+  > owner, and the moduledoc above says this grant exists precisely to give the
+  > owner the same authority "every other created Kind grants its creator". But it
+  > is a **decision**, not a detail: confirm the orchestrator is per-owner and not
+  > shared across a workspace before enabling it. If it is shared, every session
+  > owner gets a shell in the same agent.
   """
   @spec grant_owner_orchestrator_manage_cap(URI.t(), URI.t()) :: :ok | {:error, term()}
   def grant_owner_orchestrator_manage_cap(%URI{} = orchestrator_uri, %URI{} = owner_uri) do
