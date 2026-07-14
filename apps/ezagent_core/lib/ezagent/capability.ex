@@ -581,7 +581,11 @@ defimpl Jason.Encoder, for: Ezagent.Capability do
         workspace_uri: json_safe(cap.workspace_uri),
         granted_by: json_safe(cap.granted_by),
         granted_at: cap.granted_at,
-        signature: encode_signature(cap.signature),
+        signature:
+          case cap.signature do
+            nil -> nil
+            signature when is_binary(signature) -> Base.url_encode64(signature, padding: false)
+          end,
         key_id: cap.key_id
       },
       opts
@@ -593,9 +597,4 @@ defimpl Jason.Encoder, for: Ezagent.Capability do
   defp json_safe(%URI{} = u), do: URI.to_string(u)
   defp json_safe(t) when is_tuple(t), do: t |> Tuple.to_list() |> Enum.map(&json_safe/1)
   defp json_safe(v), do: v
-
-  defp encode_signature(nil), do: nil
-
-  defp encode_signature(signature) when is_binary(signature),
-    do: Base.url_encode64(signature, padding: false)
 end
