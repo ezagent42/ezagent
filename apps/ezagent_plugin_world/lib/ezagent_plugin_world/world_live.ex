@@ -213,7 +213,7 @@ defmodule EzagentPluginWorld.WorldLive do
   # Both views store the agent URI with a plain `URI.to_string/1` (only
   # `agent_detail_path` is www-form-encoded), so a direct compare is right.
   defp active_pty_agent?(socket, %URI{} = agent_uri) do
-    pty_agent_uri_str(socket.assigns[:world_state] || %{}) == URI.to_string(agent_uri)
+    pty_agent_uri_str(socket.assigns[:world_state] || %{}) == encode_uri(agent_uri)
   end
 
   @impl true
