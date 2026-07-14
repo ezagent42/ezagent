@@ -131,9 +131,9 @@ defmodule Ezagent.Socialware.AnonUser do
           join_cap(session_uri) | Ezagent.Socialware.Installation.anon_view_caps(session_uri)
         ]
 
-        case Users.create_read_only(anon_uri, born_with) do
-          {:ok, _row} -> {:ok, anon_uri}
-          {:error, _} = err -> err
+        with {:ok, issued} <- issue_born_with(born_with, anon_uri, session_uri),
+             {:ok, _row} <- Users.create_read_only(anon_uri, issued) do
+          {:ok, anon_uri}
         end
       end
     else
@@ -149,6 +149,40 @@ defmodule Ezagent.Socialware.AnonUser do
   # `granted_by` = the session owner (the configurer of the public_view rule);
   # for a not-yet-owner-claimed session it falls back to the admin entity —
   # Decision #154's named extreme-case granter — never a `system://` principal.
+  # Decision #162 (ISSUE → STORE → VERIFY): `Users.create_read_only/2` writes
+  # straight into `users.caps_json`, and `Behavior.Identity.post_init/2`
+  # reconciles the user Kind's cap slice FROM that column — so anything put
+  # there IS authority granted. These caps used to go in without ever passing
+  # `Ezagent.Cap.issue/3`, i.e. without `authorize_grant/3` ever running.
+  #
+  # Unlike `create_user` (the arbitrary-cap oracle fixed in this PR), nothing
+  # here is caller-supplied: both shapes are code-constructed and narrow. The
+  # exposure was therefore latent, not live. But an ungated write path is one
+  # `Installation.anon_view_caps/1` change away from handing an ANONYMOUS,
+  # unauthenticated visitor an unbounded capability — and nothing would have
+  # stopped it.
+  #
+  # `{:rule, :anon_public_view_mint, granter}` is the right authorization: there
+  # is no human granting anything here, it is a system rule, and the rule branch
+  # of `authorize_grant/3` enforces `rule_cap_bounded?/1` — a concrete instance
+  # AND a concrete action. So an anon can no longer be BORN with a wildcard,
+  # structurally, whatever a future definition declares.
+  defp issue_born_with(caps, %URI{} = anon_uri, %URI{} = session_uri) do
+    granter = public_view_granter(session_uri)
+
+    caps
+    |> Enum.reduce_while({:ok, []}, fn cap, {:ok, acc} ->
+      case Ezagent.Cap.issue({:rule, :anon_public_view_mint, granter}, anon_uri, cap) do
+        {:ok, artifact} -> {:cont, {:ok, [artifact | acc]}}
+        {:error, reason} -> {:halt, {:error, {:anon_cap_refused, reason}}}
+      end
+    end)
+    |> case do
+      {:ok, issued} -> {:ok, Enum.reverse(issued)}
+      {:error, _} = error -> error
+    end
+  end
+
   defp join_cap(%URI{} = session_uri) do
     %Ezagent.Capability{
       kind: :session,

@@ -747,7 +747,18 @@ defmodule Ezagent.AutoService.Tier1Seed do
     join_cap = cap.(:join)
     send_cap = cap.(:send)
 
-    _ = Ezagent.Users.create_read_only(member_uri, [join_cap, send_cap])
+    # Decision #162 — caps reaching `users.caps_json` must pass `Cap.issue/3`.
+    # A seed runs with shell access (admin-equivalent), so it takes that
+    # authority through the chokepoint rather than forging provenance past it.
+    issued =
+      Enum.map([join_cap, send_cap], fn c ->
+        {:ok, artifact} =
+          Ezagent.Cap.issue({:genesis, Ezagent.Entity.User.admin_uri()}, member_uri, c)
+
+        artifact
+      end)
+
+    _ = Ezagent.Users.create_read_only(member_uri, issued)
     _ = Ezagent.Entity.spawn_principal(member_uri)
 
     _ =

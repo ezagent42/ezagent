@@ -78,7 +78,25 @@ defmodule Ezagent.Invariants.CapIssueChokepointTest do
     "apps/ezagent_domain_identity/lib/mix/tasks/ezagent.user.create.ex" => :issued,
     "apps/ezagent_domain_identity/lib/ezagent/registration.ex" => :no_caps,
     "apps/ezagent_domain_identity/lib/ezagent_domain_identity/application.ex" =>
-      :genesis_bootstrap
+      :genesis_bootstrap,
+
+    # The anonymous-viewer mint. `Users.create_read_only/2` is a caps_json writer
+    # too — the first version of this gate scanned only `Users.create/3,4` and
+    # MISSED it, which is exactly the false comfort a gate must not give. Its
+    # caps are code-constructed and narrow (a session join + public view reads),
+    # never caller-supplied, so the exposure was latent rather than live; it now
+    # issues under `{:rule, :anon_public_view_mint, _}`, whose rule branch
+    # enforces `rule_cap_bounded?/1` — an anon cannot be BORN with a wildcard.
+    "apps/ezagent_domain_socialware/lib/ezagent/socialware/anon_user.ex" => :issued,
+
+    # Seed scripts. `scripts/*.exs` is NOT `apps/**/*.ex` — the first cut of this
+    # gate scanned only the latter, so these were invisible to it while forging
+    # provenance-bearing caps and storing them via `create_read_only/2`. Running
+    # a seed means shell access, which is admin-equivalent, so they now issue
+    # under `{:genesis, admin}`: the same power, taken through the front door.
+    "scripts/world_e2e_seed.exs" => :issued,
+    "scripts/autoservice_tier1_seed.exs" => :issued,
+    "scripts/cc_headless_sdk_sidecar_e2e_seed.exs" => :no_caps
   }
 
   test "provenance-bearing capability construction allowlist can only shrink" do
@@ -162,20 +180,40 @@ defmodule Ezagent.Invariants.CapIssueChokepointTest do
            "there must be exactly one root of trust, found: #{inspect(roots)}"
   end
 
+  # Leg 3 scans a WIDER surface than legs 1-2: `caps_json` is written from
+  # `scripts/*.exs` too, and scanning only `apps/**/*.ex` is precisely how the
+  # first cut of this gate missed the seeds. Legs 1-2 keep their own (narrower)
+  # file set so their ratchets stay comparable.
+  defp caps_json_source_files do
+    root = repo_root()
+
+    (Path.wildcard(Path.join(root, "apps/**/*.ex")) ++
+       Path.wildcard(Path.join(root, "scripts/**/*.exs")))
+    |> Enum.reject(&String.contains?(&1, "/test/"))
+    |> Enum.map(&{String.replace_prefix(&1, root <> "/", ""), &1})
+  end
+
   defp users_create_sites do
-    source_files()
+    caps_json_source_files()
     |> Enum.filter(fn {_rel, abs} -> users_create_cap_args(abs) != [] end)
     |> Enum.map(fn {rel, _abs} -> rel end)
     |> MapSet.new()
   end
 
-  # The 3rd positional arg of every `Users.create(...)` / `Ezagent.Users.create(...)`.
+  # EVERY `Users.*` entry point that writes the `caps_json` column, and the
+  # argument carrying the caps:
+  #
+  #   Users.create/3,4          — caps are the 3rd positional arg
+  #   Users.create_read_only/2  — caps are the 2nd (and the /1 clause defaults [])
+  #
+  # Missing the second one is how the first cut of this gate gave false comfort.
+  # If a new `caps_json` writer is added to `Ezagent.Users`, it MUST be taught
+  # here or the enumeration silently stops covering it.
   defp users_create_cap_args(file) do
     {_ast, acc} =
       Macro.prewalk(quoted!(file), [], fn
-        {{:., _, [{:__aliases__, _, mod}, :create]}, _, args} = node, acc
-        when length(args) >= 3 ->
-          if List.last(mod) == :Users, do: {node, [Enum.at(args, 2) | acc]}, else: {node, acc}
+        {{:., _, [{:__aliases__, _, mod}, fun]}, _, args} = node, acc ->
+          {node, collect_caps_arg(List.last(mod), fun, args) ++ acc}
 
         node, acc ->
           {node, acc}
@@ -183,6 +221,15 @@ defmodule Ezagent.Invariants.CapIssueChokepointTest do
 
     Enum.reverse(acc)
   end
+
+  defp collect_caps_arg(:Users, :create, args) when length(args) >= 3,
+    do: [Enum.at(args, 2)]
+
+  defp collect_caps_arg(:Users, :create_read_only, args) when length(args) >= 2,
+    do: [Enum.at(args, 1)]
+
+  # `create_read_only/1` defaults to `[]` — no caps, nothing to police.
+  defp collect_caps_arg(_mod, _fun, _args), do: []
 
   defp provenance_constructors do
     source_files()
