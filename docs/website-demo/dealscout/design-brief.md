@@ -11,7 +11,11 @@
 
 | 页面 | 作用 | 状态 |
 |------|------|------|
-| **index.html** | 撮合入口：描述需求 → AI 匹配 → 查看结果 → 牵线 | 🆕 新建 |
+| **index.html** | 撮合入口：描述需求 → AI 匹配 → 查看结果 → 牵线 · 保存搜索 | 🆕 新建 |
+| `profile/index.html` | 个人名片：身份 + 行业标签 + 资源/需求 | 🆕 新建 |
+| `connection/request-sent.html` | 牵线请求已发送 + 等待对方确认 | 🆕 新建 |
+| `connection/inbox.html` | 牵线收件箱：查看请求 + 接受/拒绝 | 🆕 新建 |
+| `notification/saved.html` | 保存的搜索 + 新匹配通知 | 🆕 新建 |
 | `../flywheel/gallery.html` | Gallery 货架入口 | 🟡 已存在 |
 
 ### 流转
@@ -19,10 +23,19 @@
 ```
 mainsite.html / flywheel/gallery.html
   → dealscout/index.html
-    ① 描述需求（我正在找…）
-    ② AI 生成匹配（mock 匹配池）
-    ③ 查看匹配结果卡片（匹配度 + 简介）
-    ④ 选中牵线 → 进入 workspace
+    ├── profile/index.html                [名片：先建名片，匹配更准]
+    │     └── → dealscout/index.html      (保存后返回)
+    │
+    ├── ① 描述需求 → ② AI 匹配 → ③ 查看结果
+    │     ├── 选中牵线 → connection/request-sent.html  [等待对方确认]
+    │     │     └── → connection/inbox.html              [对方视角：接受/拒绝]
+    │     │           ├── 接受 → workspace
+    │     │           └── 拒绝 → 通知发送方
+    │     │
+    │     └── 保存搜索 → notification/saved.html        [异步通知]
+    │           └── 新匹配 → 回 dealscout/index.html
+    │
+    └── connection/inbox.html             [牵线收件箱：查看他人请求]
 ```
 
 ## 2. index.html 设计
