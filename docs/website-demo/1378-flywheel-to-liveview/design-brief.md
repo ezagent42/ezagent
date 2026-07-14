@@ -1,0 +1,105 @@
+# Design Brief: #1372 飞轮 IA/视觉 → world/hello LiveView 面
+
+> **目标**：将 #1372 飞轮原型的 IA 结构和视觉方向映射到真实 world/hello 面，作为 zhaomato hello live E2E + hello↔kanban 融合的设计参照。
+> **受众**：zhaomato（hello 产品面开发）
+> **不做**：不改代码、不统一视觉风格（flywheel 和 world 各自保持风格）
+> **PR**：#1378
+
+---
+
+## 1. IA 映射表：flywheel → 真实面
+
+| Flywheel 页面 | 作用 | 对应真实面 | 当前状态 |
+|--------------|------|-----------|---------|
+| **gallery.html** | 产品货架（搜索/筛选/瀑布流卡片） | WorldLive `/plugins` + 待建 Gallery API（W-G1） | `/plugins` 只显示已安装插件，不是 marketplace gallery |
+| **product-detail.html** | 产品详情（manifest + Try + Fork CTA） | Hello external feed `/socialware/external` + 待建产品详情页 | 无产品详情页；hello external feed 是 AI 生成页面的查看器，不带 metadata |
+| **world-step.html** | 构建/Fork 中转（发布表单占位） | WorldLive 内待建发布入口（W-G2） + Fork 触发（W-G3） | Fork 后端已落地（`session.fork_config`），CR 管线已落地——缺前端入口和表单 |
+| **publish-landing.html** | 发布确认 + 卡片进入货架（闭环反馈） | 待建（H-G4） | 无 |
+| **gallery → product → world → publish → gallery 闭环** | 5 步飞轮 | hello 自举链：greeter → live 回复 → concierge → kanban 派活 → agent 产 PR → CI/merge/deploy → 看板流转 | hello live E2E 待建（zhaomato 当前任务） |
+
+### 关键映射
+
+```
+Flywheel 飞轮                    Hello 自举链
+──────────────────────────────────────────────────
+gallery 浏览产品              →  kanban 看板（任务可见）
+product-detail 查看+T/F       →  hello 入口页（greeter + 功能说明）
+Try 试用                      →  进 hello session 真交互
+Fork 改造                     →  kanban 派活给 agent
+Publish 发布                  →  agent 产 PR → CI merge
+publish-landing 确认          →  看板流转 → 三面绿 ✓
+```
+
+---
+
+## 2. 视觉方向：从 flywheel 提取可移植模式
+
+### 可移植到 shadcn 体系的模式
+
+| Flywheel 模式 | 描述 | shadcn 对应 |
+|--------------|------|------------|
+| **卡片瀑布流** | CSS columns，`270px` 最小列宽，hover 上浮 3px | shadcn Card + Grid（`repeat(auto-fill, minmax(270px, 1fr))`） |
+| **产品身份 glyph** | 每个产品一个中文字形 + 颜色，圆角头像 | 已有的 `avatar.ex`（procedural conic gradient）可扩展 |
+| **双语文案** | `中文 · English` 并存，EN 用 Space Mono 小写 | Viewer SPA 已支持；hello @json-render 的 Text/Heading 组件可用 |
+| **闭环反馈** | "刚上架 · new" badge，卡片动画滑入 | shadcn Badge + CSS animation；CR 状态变更时触发 |
+| **搜索/筛选** | 实时过滤，中文 + 英文匹配，分类 chip | shadcn Input + Tabs/Badge 组合 |
+| **"占位页"策略** | 未实现功能用虚线框 + 待办列表标明，不伪造 | 在 hello kanban 连接处用 `EmptyState` 原语明确标注 "松耦合，非最终挂载" |
+| **Manifest 条纹网格** | 键值对网格展示 product metadata | shadcn Table 或 Description List 原语 |
+
+### 不可移植的（保持各自风格）
+
+- Flywheel 的暗色玻璃 + 渐变背景 → 不进 world
+- World 的 3 面板 IM 布局 → 不进 homesite
+- 两者共用：cobalt `#0B5CFF` 主色、Inter/Space Mono 字体、`--radius` 圆角
+
+---
+
+## 3. Hello↔Kanban 连接点的设计方向
+
+### Flywheel 的 "试用 → Fork → 发布" 流
+
+```
+gallery 看中一个产品
+  → product-detail 查看详情
+    → Try 试用（进 world 试玩）
+    → Fork（一键复制到自己 workspace）
+      → world-step 改造它
+        → publish-landing 发布确认
+          → 回到 gallery（新产品上架 ✨）
+```
+
+### 对应到自举链的 "hello 派活 → kanban → agent 产 PR"
+
+```
+hello 入口页（greeter 欢迎 + 说明功能）
+  → 用户输入需求（真 prompt）
+    → hello 生成 @json-render 页面（live 渲染）
+      → concierge 确认需求
+        → 派活到 kanban（"hello↔kanban 连接点"）
+          → kanban 看板显示任务
+            → agent 接任务、产 PR
+              → PR merge → 看板流转 ✓
+```
+
+### 设计提示
+
+1. **hello 入口页**：参照 flywheel `product-detail.html` 的结构——产品名、描述、功能说明、CTA（"开始使用" / "派个任务"）
+2. **hello→kanban 连接点**：参照 flywheel 的 "Fork" 按钮——一个明确的 CTA，触发后看板创建任务。标注 "松耦合，非最终挂载"
+3. **kanban 任务卡**：参照 flywheel 产品卡片的 glyph/color 身份系统，给不同任务类型分配视觉标识
+4. **闭环反馈**：任务完成后 kanban 看板上的状态流转，参照 flywheel 的 "刚上架 · new" → "live" 状态变化
+
+---
+
+## 4. 不做的事
+
+- ❌ 不把 homesite 暗色玻璃风格写进 world 的 Tailwind/shacdn 体系
+- ❌ 不修改任何 `.ex` / `.tsx` / `.heex` 代码
+- ❌ 不设计 Gallery API 的后端实现（那是 W-G1~G6，后端工程任务）
+- ❌ 不替代 hello @json-render catalog（36 组件已定义，本次不增不减）
+- ❌ 不新建 LiveView 页面或路由
+
+---
+
+## 5. 与 page-flow.md 的关系
+
+本文件夹是 **设计参考层**——不在 mainsite 的导航流中，但为真实 world/hello 面的开发提供 IA/视觉方向。交付后更新 `doc/page-flow.md` 的设计参考节。
