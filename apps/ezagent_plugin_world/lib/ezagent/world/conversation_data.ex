@@ -17,7 +17,7 @@ defmodule Ezagent.World.ConversationData do
   # React side draws with. Any other view classifies by its declared target
   # (external json-render surface) or falls through to "unsupported" (honest
   # placeholder, never silently hidden).
-  @native_react_ids %{conversation: "chat", pty: "pty"}
+  @native_react_ids %{conversation: "chat", pty: "pty", kanban_board: "kanban"}
 
   @doc """
   Build the React `conversation` island state for a session.
@@ -57,8 +57,7 @@ defmodule Ezagent.World.ConversationData do
       "installed_socialwares" => installed_socialwares(session_uri),
       "unfilled_agent_role_slots" =>
         EzagentDomainInstanceMessage.SessionCreator.unfilled_agent_role_slots(session_uri),
-      "degraded_operates_edges" =>
-        Ezagent.Socialware.CompositionCaps.degraded_edges(session_uri),
+      "degraded_operates_edges" => Ezagent.Socialware.CompositionCaps.degraded_edges(session_uri),
       "invite_candidates" => invite_candidates(session_uri, caller_uri, workspace_uri, members),
       "routing_entity_candidates" =>
         routing_entity_candidates(caller_uri, workspace_uri, members),
@@ -105,10 +104,13 @@ defmodule Ezagent.World.ConversationData do
     session_uri |> session_views(caller_uri) |> Enum.map(& &1["id"])
   end
 
-  # Classify a registered view into a world React render mode. `:conversation`
-  # and `:pty` have world-native React renderers; `:page`/`:hello_page` and any
-  # view declaring an external render target draw through the external surface
-  # (iframe); everything else is an honest "unsupported" placeholder.
+  # Classify a registered view into a world React render mode. `:conversation`,
+  # `:pty` and `:kanban_board` have world-native React renderers (the native
+  # mapping is checked FIRST, so `:kanban_board` mounts the rich interactive
+  # board even though it also declares an external render target); `:page`/
+  # `:hello_page` and any other view declaring an external render target draw
+  # through the external surface (iframe); everything else is an honest
+  # "unsupported" placeholder.
   defp render_mode(id, mod) do
     cond do
       Map.has_key?(@native_react_ids, id) -> Map.fetch!(@native_react_ids, id)

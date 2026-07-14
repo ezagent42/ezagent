@@ -79,12 +79,45 @@ defmodule Ezagent.World.KanbanData do
     "kanban-manager"
     |> Ezagent.Agent.RecipeResolver.list_by_recipe(workspace_scope(ctx))
     |> Enum.filter(&visible?(&1, ctx))
-    |> Enum.map(fn %URI{} = uri ->
-      %{"uri" => encode_uri(uri), "name" => uri_name(uri), "path" => detail_path(uri)}
-    end)
+    |> Enum.map(&board_row/1)
   rescue
     _ -> []
   end
+
+  # board URI → 前端行（列表项 + dispatch 目标 + 详情路径）。list_instances 与
+  # session_boards 同形复用。
+  defp board_row(%URI{} = uri),
+    do: %{"uri" => encode_uri(uri), "name" => uri_name(uri), "path" => detail_path(uri)}
+
+  @doc """
+  某个 session 所属 workspace 的 kanban-manager boards，按 CBAC 权属对 caller 收敛。
+
+  与 `list_instances/1` 的区别只在 workspace 来源：这里从 **session URI** 解析
+  （`Ezagent.URI.workspace_of/1`，board 是 workspace 级 actor、不经 session 成员表，
+  参照 `EzagentPluginKanban.ActionSet.KanbanRender.boards_for/1` 的解析方式），
+  而非 ctx 的 `workspace_uri`。枚举经 `list_by_recipe`（快照来源，覆盖 dormant），
+  复用同一 `visible?/2`（admin 全见 / own / 持 board-cap）。返回与 `list_instances/1`
+  同形的 board 行。session 无法解析出 workspace（`:any`）→ `[]`。
+  """
+  @spec session_boards(URI.t(), map()) :: [map()]
+  def session_boards(%URI{} = session_uri, ctx) do
+    case Ezagent.URI.workspace_of(session_uri) do
+      %URI{} = ws ->
+        "kanban-manager"
+        |> Ezagent.Agent.RecipeResolver.list_by_recipe(ws)
+        |> Enum.filter(&visible?(&1, ctx))
+        |> Enum.map(&board_row/1)
+
+      _ ->
+        []
+    end
+  rescue
+    _ -> []
+  catch
+    _, _ -> []
+  end
+
+  def session_boards(_, _), do: []
 
   # --- 发现按 CBAC 权属收敛（Task 2） ------------------------------------
   # fail-open（谁都看到全 workspace 的板）→ 权属过滤：
