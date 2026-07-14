@@ -1,66 +1,79 @@
 # AgentRuntime Boundary Return
 
-**Returned at:** 2026-07-14 Asia/Taipei
-
-**Last refreshed:** 2026-07-14 after rebase onto `origin/main@b29f0fc93`
-
-**Status:** implementation complete for the approved ARB-0/ARB-1 scope; return is
-conditionally ready because two upstream/environment gates remain red.
+> **Task:** gagameow-agent-runtime-boundary
+> **Branch:** `spec/agent-runtime-boundary`
+> **PR:** pending
+> **Dev:** gagameow / Codex
+> **returned_at:** 2026-07-14 22:37 +0800
+> **deadline:** 2026-07-14 23:59 +0800
+> **deadline_status:** on_time
 
 ## Delivered
 
 - Approved domain-agent narrow Facade ownership design; no core AgentRuntime,
-  command bus, Port behaviour or duplicate PTY policy.
+  command bus, Port behaviour, or duplicate PTY policy.
 - Closed 34-edge Session→Agent lifecycle inventory.
 - Syntax-only AST scanner over every Session production source.
-- Exact 24-entry current-debt allowlist with stale, duplicate, schema and
-  replacement checks.
-- Adversarial fixtures for qualified/aliased/imported calls and lexical scope,
-  including grouped aliases with options.
-- Independent architecture verdict: `SOUND`; no remaining Critical/High finding.
+- Exact current-debt allowlist with stale, duplicate, schema, and replacement checks.
+- Adversarial fixtures for qualified, aliased, imported, grouped-alias, and lexical-scope calls.
+- Independent architecture verdict `SOUND`; final code review found no Critical or Important issue.
+- Canary investigation found LiveAuth reading stale `users.caps_json`; the immediate hot-state
+  fix now reads receiver-aware verified Identity state for both User and Agent principals.
 
-ARB-2 through ARB-5 remain follow-up migration slices. This return does not claim
-that the current 24-entry debt has already been removed.
+ARB-2 through ARB-5 remain follow-up migration slices. The additional Caps audit items are
+recorded in the homework document and intentionally remain outside this return's completed DoD.
 
-## Verification after the latest rebase
+## DoD reconciliation
+
+| # | DoD line | status | proof / open decision |
+|---|---|---|---|
+| 1 | Close the Session→Agent lifecycle inventory | met | 34-edge table in the homework/design artifacts |
+| 2 | Add an exact structural gate for current Session-owned lifecycle debt | met | focused AgentRuntime architecture suite: 23/23 |
+| 3 | Prove qualified, alias, import, and grouped-alias bypasses fail | met | adversarial scanner fixtures; independent verdict `SOUND` |
+| 4 | Preserve sanctioned negative fixtures and stale-allowlist enforcement | met | focused gate suite and full precommit |
+| 5 | Rebase onto current `origin/main` and run full machine gates | met locally | base `be23fcf97`; full precommit exit 0; PR CI URL to be added after creation |
+| 6 | Complete creator Terminal product-call and restart-persistence canary acceptance | deferred | operational follow-up; no longer blocks the structural ARB-0/ARB-1 PR |
+
+**Method friction:** shared local test DB retained four `probe-*` workspaces from old test
+runs, producing false visibility-invariant failures. After confirming they were isolated
+test-only rows, they were deleted transactionally and the invariant was rerun clean. Future
+test isolation should prevent durable probe names from escaping a test transaction.
+
+## Verification
 
 | Gate | Result |
 |---|---|
-| touched-file format check | PASS |
 | focused AgentRuntime architecture test | PASS — 23 tests, 0 failures |
+| LiveAuth User/Agent regression | PASS — 2 tests, 0 failures |
+| workspace visibility invariant | PASS — 10 tests, 0 failures after local test-data cleanup |
 | `mix ezagent.arch.scan` | PASS |
 | `mix ezagent.doc.scan` | PASS |
+| `mix ezagent.uri_query.scan` | PASS |
 | `mix ezagent.check_invariants` | PASS |
-| architecture + invariants suite | BLOCKED — 484 tests, 3 existing shared-DB visibility failures caused by residual `probe-*` workspaces |
-| `mix ezagent.uri_query.scan` | BLOCKED — `apps/ezagent_plugin_world/lib/ezagent_plugin_world/world_live.ex:216`, also present on `origin/main` |
-| latest-main focused rerun | PASS — 23 tests, 0 failures on `b29f0fc93` |
-| `SHELL=/bin/bash mix precommit` | BLOCKED — the URI-query violation remains; after installing local web dependencies, World tests still reproduce an upstream PTY state timeout |
+| touched-file format check | PASS |
+| `git diff --check` | PASS |
+| `SHELL=/bin/bash mix precommit` | PASS — exit 0 |
+| PR CI | PENDING — PR not created yet |
 
-No database cleanup, gate bypass or unrelated upstream fix was folded into this
-branch to manufacture a green result.
+## Rebase and scope
 
-## Upstream and follow-up boundaries
+- Rebase base: `origin/main@be23fcf97a17da9f667b7ec3acccb1d3aedf4e2d`, containing
+  PR #1375, #1379, #1399, #1400, and #1401.
+- Branch state before push: ahead 16, behind 0.
+- The shared-DB cleanup affected only local `127.0.0.1:55432/ezagent_pg_compat_test`;
+  no canary database row was modified.
+- LiveAuth's remaining durable SSOT, HomeLive fail-closed, member-cap reader, cap-count UI,
+  email boundary, and no-tail enforcement tasks will be handled after this PR is established.
 
-- PR #1375 and #1379 are present in the rebase baseline.
-- PR #1381 is merged and correctly limits its claim to statically resolvable cap writers.
-- PR #1382 lead-locks runtime structural enforcement as Ed25519-signed capability
-  artifacts. Authority-persisting Agent Facade work waits for that Phase-4
-  implementation/migration; it must not add an ETS fingerprint alternative.
-- Read-only canary inspection confirms #1375 is deployed: the healthy container
-  `ezagent-canary-ezagent-1` runs image `ezagent:22d966b04`, whose application
-  commit descends from `ca65f5266`. The public `/_health` endpoint returns 200.
-- `test-zyli-cc-1` now starts Claude and joins `agent_bridge:cc`, showing a
-  credential-bearing runtime, but parks on an unrecognized interactive dialog.
-  No terminal input or other production mutation was performed. Product-call and
-  restart-persistence acceptance therefore remain incomplete.
+## Deferred follow-ups / lead decisions
 
-## Requested lead action
+1. Schedule ARB-2..ARB-5 as shrink-only slices until the lifecycle allowlist reaches zero.
+2. Complete creator Terminal normal product-call, credential status, and restart-persistence
+   acceptance as an operational follow-up.
+3. Process Caps audit work in priority order after this PR: `AUTH-FAIL-1`, then the
+   `EntityCaps`-dependent LiveAuth migration/cold matrix, then P1/P2 reader/display/boundary work.
 
-1. Review/merge this ARB-0/ARB-1 gate independently of ARB-2..ARB-5.
-2. Resolve or separately waive the upstream URI-query and World PTY-test failures
-   with evidence.
-3. Run the return branch in a clean CI database. The repo's `pnpm-lock.yaml` must
-   also be synchronized with the four dependencies already present in
-   `apps/ezagent_web/assets/package.json`; local verification used
-   `pnpm install --lockfile=false` without repository changes.
-4. Schedule ARB-2..ARB-5 as shrink-only slices until the allowlist reaches zero.
+## Merge request
+
+Push `spec/agent-runtime-boundary`, create a PR targeting `main`, wait for protected CI, then
+replace the pending PR/CI fields above with the actual URL and final status before lead merge.

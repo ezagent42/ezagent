@@ -81,7 +81,7 @@ Session 面不再直接负责 agent 的物化、复活、就绪、停止、销�
 - [ ] 跑 gate 专项测试。
 - [ ] 跑 core architecture + invariants。
 - [ ] 跑 `mix ezagent.arch.scan`、`mix ezagent.check_invariants`。
-- [ ] 最终跑 `mix precommit`。
+- [x] 最终跑 `mix precommit`。
 - [ ] PR head CI 绿，并 rebase 到当前 `origin/main`。
 
 ## 4. 运维轨作业清单
@@ -247,8 +247,94 @@ gate，再进入正式 return。
   已将 structural enforcement 锁定为 Ed25519 signed artifact；本 slice 等待其
   P1–P6 实现及迁移状态，不吸纳 #1381 的 ETS fingerprint 草案；
 - Task 5 post-rebase 验证：focused 23/23、`arch.scan`、`doc.scan`、
-  `check_invariants` 通过。完整 precommit 被 `origin/main` 同样存在的
-  `world_live.ex:216` URI-query violation 阻塞；组合 architecture+invariants 仍被
-  共享 test DB 残留 `probe-*` workspace 触发 3 个 visibility invariant 失败。
-  补齐本地 web node_modules 后，纯 main 仍复现 World PTY state timeout；
-  `pnpm-lock.yaml` 也落后于 `package.json` 的四个依赖。
+  `check_invariants` 通过。确认 4 条 `probe-*` workspace 仅是本机共享 test DB
+  的无价值旧测试残留后，已精确事务删除并复核残留为 0；workspace visibility
+  invariant 10/10 通过，最终 `SHELL=/bin/bash mix precommit` exit 0。该清理未访问
+  或修改 canary/线上数据。
+
+## 10. 新增任务：Caps 真相源与 fail-closed 治理
+
+### 10.1 审计结论
+
+canary 实测发现新建 agent 的 creator Manage cap 已进入在线 Identity slice，
+但 `LiveAuth` 仍从 `users.caps_json` 读取权限，导致 World 页面与 Terminal 的授权
+判断不一致。局部修复已将 LiveAuth 收敛到
+`Ezagent.Identity.read_entity_caps/1`；该 reader 负责 live slice → durable snapshot
+回退，并在读取边界执行 receiver-aware `Ezagent.Cap.verified_set/2`。
+
+全局审计同时登记以下后续问题：
+
+| ID | 优先级 | 问题 | 风险/验收方向 | 状态 |
+|---|---:|---|---|---|
+| CAP-SOT-0 | P0 | LiveAuth 使用旧 `users.caps_json` | 热态先从 receiver-aware verified reader 取当前权限；`EntityCaps` facade 落地后迁到统一 facade，覆盖 cold User/Agent | 热态修复及 post-rebase 验证完成，待 facade 迁移 |
+| CAP-SOT-1 | P0 | User/Agent 有两个物理 durable store，调用方容易选错 | 遵循 #1394 lead-locked 方案：User=`caps_json`、Agent=snapshot，统一经 `Ezagent.EntityCaps` facade；不做物理 SSOT 大迁移 | 已被 entity-caps scoped D 接管，待合入 |
+| CAP-SOT-2 | P0 | grant/revoke 与 User `caps_json`/live slice 未形成统一持久化语义 | 通过 `EntityCaps.grant/revoke/persist` 保证 revoke 后 cold restart 不复活，并补 grant→revoke→stop→restart 回归 | 已被 entity-caps scoped A/D 接管，待合入 |
+| AUTH-FAIL-1 | P0 | `HomeLive` 对异常或过期 identity cookie 回退 admin URI | malformed/stale cookie 必须 fail closed，清 session 或跳转登录，绝不获得 admin principal | 待独立修复 |
+| CAP-READ-1 | P1 | `member_cap.ex` 的 snapshot cap 幂等读取未 verify | 改用 verified reader 或把该读取封装为非授权用途，并用 gate 防止被授权路径复用 | 待处理 |
+| CAP-DISPLAY-1 | P2 | World 用户列表 `cap_count` 读取旧 `users.caps_json` | 展示与真实 verified caps 一致；不得影响授权语义 | 待处理 |
+| CAP-BOUNDARY-1 | P1 | email inbound 构造固定 ephemeral self-cap，未走 issue/verified-set | 明确为受控边界例外并加 invariant，或迁移到正式 issuance reader | 待裁定 |
+| CAP-PROVENANCE-1 | P0 | Phase-4 已签发 Ed25519 artifact，但仍处于 dual-read | #1399 已合入；完成 no-tail 重签、审计 unsigned=0 后才允许 `require_signature:true` | 机制已合入，迁移/enforce 未完成 |
+
+补充约束：`origin/main` 的 #1399 已使新 `Cap.issue/3` 产出 receiver-bound Ed25519
+签名，并使 `verify/1` 校验签名；但默认仍为 `require_signature:false`。unsigned
+legacy Caps 会走 telemetry 标记的兼容读取，因此当前只能表述为“签名机制已落地、
+生产仍在 dual-read 迁移期”，不能表述为“全链只接受密码学验证的 Caps”。真实
+canary 数据审计显示旧 EventLog backfill 仅能处理 196 个 Caps 中的 6 个，no-tail
+必须走正常 `Cap.issue/3` 重新授权/重签，而不是盲签或继续修补该 backfill。
+
+### 10.2 处理顺序与拆分
+
+1. **先 rebase 并重审 CAP-SOT-0（当前分支，已完成）：**保留 canary 差异回归，
+   并按 #1399 的 receiver-bound signature 重新验证；在 `EntityCaps` 尚未落地时
+   不得把 `read_entity_caps/1` 宣称为 User/Agent 最终统一 SSOT facade。
+2. **跟随 entity-caps scoped A/D 关闭 CAP-SOT-1 + CAP-SOT-2：**不另造第三套
+   reader。D 统一 `load/persist/grant/revoke` API，A 提供 grant/revoke durable retry；
+   合入后将 LiveAuth 迁到 facade，并补 online/cold/restart 矩阵。
+3. **并行独立处理 AUTH-FAIL-1（独立安全修复 PR）：**不依赖 Caps durable
+   truth 设计，可直接按 fail-closed 原则 TDD；优先级与 CAP-SOT-1/2 同为 P0。
+4. **随后处理 CAP-READ-1 + CAP-DISPLAY-1：**先封住非 verified reader 的复用
+   风险，再统一 UI 读模型；不得以展示修复替代授权修复。
+5. **单独裁定 CAP-BOUNDARY-1：**确认 email inbound 的 authority provenance 后再
+   决定 gate exception 或正式迁移，不与前述 PR 混改。
+6. **CAP-PROVENANCE-1 执行 no-tail 升级：**#1399 机制不再等待；按 #1400/#1401
+   handoff 逐类验证正常 re-derive 是否签名，对 stored User Caps 经 `Cap.issue/3`
+   重签并重写，最终 audit unsigned authorizer caps = 0 后才翻
+   `require_signature:true`。
+
+每个 P0 任务的共同 Definition of Done：
+
+- 授权决策只消费 verified caps reader，不直接消费 `users.caps_json`；
+- 覆盖 online、cold、grant、revoke、restart 五类状态转换；
+- malformed/stale identity 输入 fail closed；
+- focused tests、capability invariants、`arch.scan`、`check_invariants` 和
+  `mix precommit` 均通过；若基线污染阻塞，必须提供纯 main 对照证据，不得标完成。
+
+### 10.3 当前日任务汇总
+
+#### 已完成
+
+- ARB-0 inventory、ARB-1 scanner fixtures、Task 3 exact gate 和 Task 4 独立攻防
+  复核（`SOUND`）。
+- PR #1375/#1379 合入后的 rebase 与语义复核。
+- 已 rebase 到包含 #1399/#1400/#1401 的最新 `origin/main`（`be23fcf97`），当前
+  分支 ahead 15、behind 0；LiveAuth 回归已按 receiver-bound Ed25519 签名重审。
+- canary 上复现 LiveAuth/Terminal capability 差异并定位到双读取源。
+- CAP-SOT-0 热态代码与 User/Agent 回归测试已实现；focused capability gates、
+  `arch.scan`、`check_invariants`、`git diff --check` 已通过。
+- Caps 全局读取/冷启动/fail-open 审计完成，本节新增任务已登记并排序。
+- #1399 Ed25519 signing 已在 `origin/main`；已确认当前是 receiver-bound signed
+  issue + dual-read verify，而不是 enforce 模式。
+- 本地共享 test DB 的 4 条 `probe-*` 旧 workspace 已精确事务清理；visibility
+  invariant 10/10、最终 `SHELL=/bin/bash mix precommit` 均通过（exit 0）。
+
+#### 未完成
+
+- CAP-SOT-0 热态修复已提交在当前分支，尚待形成 PR；`EntityCaps` facade 合入后
+  还需迁移 LiveAuth 并补 cold User、grant/revoke/restart 完整矩阵。
+- Task 5 最终 evidence 汇总与 dev-together return 尚未完成。
+- creator Terminal 的正常产品调用、credential authenticated 状态和 restart
+  persistence 验收尚未完成。
+- CAP-SOT-1/2 等待 entity-caps scoped A/D；AUTH-FAIL-1、CAP-READ-1、
+  CAP-DISPLAY-1、CAP-BOUNDARY-1 均未实施。
+- CAP-PROVENANCE-1 的签名机制已完成，但 no-tail 重签、真实数据审计
+  unsigned=0、`require_signature:true` enforce flip 均未完成。
