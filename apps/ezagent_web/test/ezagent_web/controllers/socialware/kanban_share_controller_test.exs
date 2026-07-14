@@ -1,0 +1,354 @@
+defmodule EzagentWeb.Socialware.KanbanShareControllerTest do
+  @moduledoc """
+  T6.4 acceptance —— 分享看板（生成链接 → 点击把板只读加进对方 session tab）。
+
+  两块：
+    * **分享侧** `Ezagent.World.KanbanActions.share_link/2`：板主人（对板有 access）→
+      得到一个可 `Phoenix.Token.verify` 的只读 token 链接；无 access 的路人 → `{:error,
+      :no_access}`。
+    * **接收侧** `GET /socialware/kanban/receive?token=&session_uri=`
+      （`EzagentWeb.Socialware.KanbanShareController`）：有效 token → 板只读挂进点击者
+      session（`MountRow` 有 `access="read"` 行）+ 点击者 kanban-assistant 自身份 dispatch
+      `kanban.get_tree` 成、`kanban.add_node` 被拒（只读）；无效/篡改 token → 403、不挂载。
+
+  端到端：接收侧用的 token 就是分享侧用板主人 socket 真签出来的（同 salt/endpoint）。
+  """
+
+  use EzagentWeb.ConnCase, async: false
+
+  alias Ezagent.Workspace
+  alias Ezagent.Entity.User
+  alias Ezagent.{AgentFlavorRegistry, Agent.RecipeRegistry, Invocation}
+  alias Ezagent.Socialware.MountRow
+  alias Ezagent.World.KanbanActions
+  alias EzagentPluginKanban.Application, as: KanbanApp
+
+  @flavor "t64-native"
+  @share_salt "world_kanban_share"
+  @share_max_age 604_800
+  @read_actions [:get_tree, :export_markmap]
+
+  setup do
+    {:ok, _apps} = Application.ensure_all_started(:ezagent_domain_session)
+
+    case EzagentDomainInstanceMessage.UriQueryResolvers.register() do
+      :ok -> :ok
+      {:error, {:already_registered, _attr}} -> :ok
+    end
+
+    ws_name = "t64-#{u()}"
+    {:ok, _ws_pid} = Workspace.create(ws_name, %{})
+    workspace_uri = URI.new!("workspace://#{ws_name}")
+
+    admin_ctx = %{
+      caller: User.admin_uri(),
+      caps: MapSet.new([Ezagent.Capability.admin_genesis_cap()])
+    }
+
+    :ok =
+      AgentFlavorRegistry.register(%{
+        flavor: @flavor,
+        kind: Ezagent.Entity.Agent,
+        template_class: nil,
+        cap_policy: &cap_policy/1
+      })
+
+    {:ok, _} = RecipeRegistry.seed_role_if_absent(KanbanApp.kanban_manager_recipe())
+
+    {:ok, ws_name: ws_name, workspace_uri: workspace_uri, admin_ctx: admin_ctx}
+  end
+
+  defp cap_policy(requested_caps) do
+    allowed =
+      requested_caps
+      |> Enum.map(fn c -> {Map.get(c, :behavior), Map.get(c, :action)} end)
+      |> MapSet.new()
+
+    fn needed ->
+      MapSet.member?(allowed, {Map.get(needed, :behavior), Map.get(needed, :action)})
+    end
+  end
+
+  # ── (a) 分享侧：share_link ────────────────────────────────────────────
+
+  @tag :integration
+  test "share_link: 板主人得到可 verify 的只读 token 链接;无 access 的路人被拒",
+       %{ws_name: ws_name, workspace_uri: workspace_uri} do
+    skip_if_no_entity_spawn(fn ->
+      owner_ctx = user_with_create_cap(ws_name, workspace_uri, "owner")
+      board_uri = create_board_owned_by(workspace_uri, "b-#{u()}", owner_ctx)
+
+      # 板主人 socket → 得到接收链接，token 可 verify 回 board + 只读意图
+      assert {:ok, link} = KanbanActions.share_link(share_socket(owner_ctx), s(board_uri))
+      assert String.starts_with?(link, "/socialware/kanban/receive?token=")
+
+      token = extract_token(link)
+
+      assert {:ok, payload} =
+               Phoenix.Token.verify(@endpoint, @share_salt, token, max_age: @share_max_age)
+
+      assert payload["board"] == s(board_uri)
+      assert payload["behavior"] == "Ezagent.ActionSet.Kanban"
+      assert payload["access"] == "read"
+
+      # 无 access 的路人（非板主人、无 cap）→ 拒
+      stranger = spawn_user(ws_name, "stranger")
+      stranger_ctx = %{caller: stranger, caps: MapSet.new()}
+
+      assert {:error, :no_access} =
+               KanbanActions.share_link(share_socket(stranger_ctx), s(board_uri))
+
+      # 坏 URI → 拒
+      assert {:error, :bad_kanban_uri} =
+               KanbanActions.share_link(share_socket(owner_ctx), "not a uri")
+    end)
+  end
+
+  # ── (b) 接收侧：GET /socialware/kanban/receive ───────────────────────
+
+  @tag :integration
+  test "receive: 有效 token → 只读挂进点击者 session(get_tree 成/add_node 拒);篡改 token → 403",
+       %{ws_name: ws_name, workspace_uri: workspace_uri, admin_ctx: admin_ctx, conn: conn} do
+    skip_if_no_entity_spawn(fn ->
+      owner_ctx = user_with_create_cap(ws_name, workspace_uri, "owner")
+      board_uri = create_board_owned_by(workspace_uri, "b-#{u()}", owner_ctx)
+
+      # 在板上建个根（admin 身份，板主人不持板动作 cap），好让只读读到东西
+      assert {:ok, %{id: "n1"}} =
+               board_dispatch(board_uri, :add_node, %{parent_id: "", title: "根"}, admin_ctx)
+
+      # 点击者 = 登录用户，在自己的 session（有 kanban-assistant 成员 + clicker 是成员）
+      clicker = spawn_user(ws_name, "clicker")
+
+      {clicker_session, clicker_assistant} =
+        clicker_session(ws_name, workspace_uri, clicker, admin_ctx)
+
+      # 端到端：token 由板主人 socket 真签
+      {:ok, link} = KanbanActions.share_link(share_socket(owner_ctx), s(board_uri))
+      token = extract_token(link)
+
+      out =
+        conn
+        |> sign_in(ws_name, clicker)
+        |> get(~p"/socialware/kanban/receive?#{[token: token, session_uri: s(clicker_session)]}")
+
+      # 成功 → 302 重定向到看板详情页
+      assert redirected_to(out) =~ "/plugins/kanban/"
+
+      # 挂载表有指向该板的 read 行
+      row = MountRow.get(clicker_session, board_uri, clicker_assistant, Ezagent.ActionSet.Kanban)
+      assert row != nil
+      assert row.access == "read"
+
+      assert Enum.map(row_actions(row), &to_string/1) |> Enum.sort() ==
+               Enum.map(@read_actions, &to_string/1) |> Enum.sort()
+
+      # 点击者 assistant 持只读钥匙：get_tree 成、add_node（写）拒
+      assert eventually(fn -> holds_board_cap?(clicker_assistant, board_uri, :get_tree) end)
+      refute holds_board_cap?(clicker_assistant, board_uri, :add_node)
+      assert {:ok, %{tree: _}} = dispatch_as(clicker_assistant, board_uri, :get_tree, %{})
+
+      assert {:error, :unauthorized} =
+               dispatch_as(clicker_assistant, board_uri, :add_node, %{parent_id: "n1", title: "子"})
+
+      # 篡改 token → 403、不新增挂载
+      bad =
+        conn
+        |> sign_in(ws_name, clicker)
+        |> get(
+          ~p"/socialware/kanban/receive?#{[token: "garbage", session_uri: s(clicker_session)]}"
+        )
+
+      assert bad.status == 403
+    end)
+  end
+
+  @tag :integration
+  test "receive: 匿名(未登录)被 RequireEntity 挡在 /login",
+       %{ws_name: ws_name, conn: conn} do
+    out =
+      get(
+        conn,
+        ~p"/socialware/kanban/receive?#{[token: "x", session_uri: "session://#{ws_name}/default/none"]}"
+      )
+
+    assert redirected_to(out) == "/login"
+  end
+
+  # ── helpers ───────────────────────────────────────────────────────────
+
+  defp u, do: System.unique_integer([:positive])
+  defp s(%URI{} = uri), do: URI.to_string(uri)
+
+  defp share_socket(%{caller: %URI{} = caller, caps: caps}) do
+    %Phoenix.LiveView.Socket{endpoint: @endpoint}
+    |> Phoenix.Component.assign(:current_entity_uri, caller)
+    |> Phoenix.Component.assign(:current_caps, caps)
+    |> Phoenix.Component.assign(:current_workspace_uri, workspace_of(caller))
+  end
+
+  # entity://<ws>/user/... → workspace://<ws>（read_ctx 需要 current_workspace_uri）。
+  defp workspace_of(%URI{host: ws}), do: URI.new!("workspace://#{ws}")
+
+  defp sign_in(conn, ws, %URI{} = entity_uri) do
+    Plug.Test.init_test_session(conn, %{
+      "current_entity_uri" => URI.to_string(entity_uri),
+      "current_workspace_uri" => "workspace://" <> ws
+    })
+  end
+
+  defp extract_token(link) do
+    %URI{query: query} = URI.parse(link)
+    query |> URI.decode_query() |> Map.fetch!("token")
+  end
+
+  defp user_with_create_cap(ws_name, workspace_uri, label) do
+    user_uri = URI.new!("entity://#{ws_name}/user/#{label}-#{u()}")
+
+    create_cap =
+      Ezagent.Capability.cap(
+        :workspace,
+        Ezagent.ActionSet.Workspace,
+        :create_agent,
+        workspace_uri,
+        workspace_uri
+      )
+
+    {:ok, _pid} =
+      Ezagent.Kind.spawn(User, %{
+        uri: user_uri,
+        initial_caps:
+          MapSet.new([
+            %{create_cap | granted_by: User.admin_uri(), granted_at: DateTime.utc_now()}
+          ])
+      })
+
+    on_exit(fn -> Ezagent.Kind.terminate(user_uri) end)
+    %{caller: user_uri, caps: Ezagent.Identity.list_caps_for(user_uri)}
+  end
+
+  defp spawn_user(ws_name, label) do
+    user_uri = URI.new!("entity://#{ws_name}/user/#{label}-#{u()}")
+    {:ok, _pid} = Ezagent.Kind.spawn(User, %{uri: user_uri, initial_caps: MapSet.new()})
+    on_exit(fn -> Ezagent.Kind.terminate(user_uri) end)
+    user_uri
+  end
+
+  defp create_board_owned_by(workspace_uri, name, ctx) do
+    assert {:ok, %{agent_uri: uri}} =
+             Workspace.create_agent(
+               workspace_uri,
+               %{flavor: @flavor, name: name, role: "kanban-manager", cwd: "", with_pty: false},
+               ctx
+             )
+
+    uri
+  end
+
+  # 点击者自己的 session：clicker 是成员 + 一个 kanban-assistant 成员（收只读钥匙）。
+  defp clicker_session(ws_name, workspace_uri, clicker_uri, admin_ctx) do
+    assistant_uri = live_agent(ws_name, "kanban-assistant-#{u()}")
+    session_uri = URI.new!("session://#{ws_name}/default/t64-#{u()}")
+
+    {:ok, _sess_pid} =
+      Ezagent.Kind.spawn(Ezagent.Entity.Session, %{
+        uri: session_uri,
+        behaviors: Ezagent.Entity.Session.behaviors(),
+        owner_uri: User.admin_uri()
+      })
+
+    :ok = Ezagent.WorkspaceRegistry.bind(session_uri, workspace_uri)
+    on_exit(fn -> Ezagent.Kind.terminate(session_uri) end)
+
+    :ok = join_member(session_uri, clicker_uri, "member", admin_ctx)
+    :ok = join_member(session_uri, assistant_uri, "kanban-assistant", admin_ctx)
+
+    {session_uri, assistant_uri}
+  end
+
+  defp live_agent(ws_name, name) do
+    uri = Ezagent.URI.agent(ws_name, name)
+    owner = User.admin_uri()
+
+    {:ok, _pid} =
+      Ezagent.Kind.spawn(Ezagent.Entity.Agent, %{
+        uri: uri,
+        behaviors: Ezagent.Entity.Agent.base_behaviors(),
+        creator_uri: owner,
+        initial_caps: MapSet.new()
+      })
+
+    :ok = Ezagent.WorkspaceRegistry.bind(uri, URI.new!("workspace://#{ws_name}"))
+    :ok = Ezagent.AgentLineage.record(uri, owner)
+    on_exit(fn -> Ezagent.Kind.terminate(uri) end)
+    uri
+  end
+
+  defp join_member(session_uri, member_uri, role_name, %{caller: caller, caps: caps}) do
+    target = Ezagent.URI.new!("#{URI.to_string(session_uri)}?action=session.join")
+
+    case Invocation.dispatch(%Invocation{
+           target: target,
+           mode: :call,
+           args: %{member: member_uri, role_name: role_name},
+           ctx: %{caller: caller, caps: caps, reply: {:caller_inbox, self()}}
+         }) do
+      :ok -> :ok
+      {:ok, _} -> :ok
+      other -> flunk("join failed: #{inspect(other)}")
+    end
+  end
+
+  defp board_dispatch(board_uri, action, args, %{caller: caller, caps: caps}) do
+    Ezagent.Router.dispatch(
+      Ezagent.Cmd.new(
+        Ezagent.URI.with_action(board_uri, :kanban, action),
+        action,
+        args,
+        %{mode: :call, caller: caller, caps: caps, reply: {:caller_inbox, self()}}
+      )
+    )
+  end
+
+  defp dispatch_as(caller_uri, board_uri, action, args) do
+    board_dispatch(board_uri, action, args, %{
+      caller: caller_uri,
+      caps: MapSet.new(Ezagent.Identity.list_caps_for(caller_uri))
+    })
+  end
+
+  defp holds_board_cap?(grantee, board_uri, action) do
+    Enum.any?(Ezagent.Identity.list_caps_for(grantee), fn cap ->
+      cap.kind == :agent and cap.behavior == Ezagent.ActionSet.Kanban and
+        cap.action == action and
+        cap.instance == Ezagent.URI.instance(board_uri)
+    end)
+  end
+
+  defp row_actions(%MountRow{actions_json: json}) when is_binary(json) do
+    {:ok, list} = Jason.decode(json)
+    list
+  end
+
+  defp eventually(fun, attempts \\ 50)
+  defp eventually(fun, attempts) when attempts <= 1, do: fun.()
+
+  defp eventually(fun, attempts) do
+    if fun.() do
+      true
+    else
+      Process.sleep(10)
+      eventually(fun, attempts - 1)
+    end
+  end
+
+  defp skip_if_no_entity_spawn(body) do
+    if not function_exported?(Ezagent.SpawnRegistry, :registered_schemes, 0) or
+         "entity" not in Ezagent.SpawnRegistry.registered_schemes() do
+      IO.puts(:stderr, "SKIP: entity spawn fn not registered (test bootstrap incomplete)")
+      :ok
+    else
+      body.()
+    end
+  end
+end

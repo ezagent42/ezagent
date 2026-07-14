@@ -126,6 +126,16 @@ defmodule Ezagent.World.KanbanData do
   # ctx 的 caller 身份字段 = `:caller_uri` / `:caller_caps`（world `KanbanActions.read_ctx`
   # 注入；`caller_caps` 是 mount 期注入的 caller 身份 cap 快照，即触发这次读的 caller 当时
   # 持有的全量 cap 集）。
+  @doc """
+  发起人对某块板是否有 access（可见即可分享）—— admin / 板主人（`data_owner`）/ 持指向该板
+  的 cap。ctx 用 `KanbanActions.read_ctx` 形状（`:caller_uri` / `:caller_caps`）。
+
+  分享看板（T6.4，`Ezagent.World.KanbanActions.share_link/2`）的 access gate 复用这同一条
+  发现可见性谓词（`visible?/2`），不新发明授权：能看见（own / 持 cap / admin）即可分享。
+  """
+  @spec can_share?(URI.t(), map()) :: boolean()
+  def can_share?(%URI{} = board_uri, ctx), do: visible?(board_uri, ctx)
+
   defp visible?(%URI{} = board_uri, ctx) do
     caller = Map.get(ctx, :caller_uri)
     caps = Map.get(ctx, :caller_caps) || MapSet.new()
