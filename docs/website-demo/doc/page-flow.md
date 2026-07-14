@@ -57,6 +57,8 @@ mainsite.html ──────────────────────
   │     └── → world-demo.html             (成就卡片)
   │     └── → mainsite.html#worldcup      (成就卡片)
   │
+  ├── recruit-publish-flow/publish-entry.html  [L1] Builder 发布入口
+  │
   └── flywheel/gallery.html               [L1] Gallery 货架入口
         │
         ├── flywheel/product-detail.html  [L2] 产品详情
@@ -69,9 +71,14 @@ mainsite.html ──────────────────────
         │
         └── recruit/index.html            [L2] 手搓挑战（抽卡）
               │
-              └── world/workspace.html     [L3] 工作台
-                    └── → recruit/index.html  (再抽一张)
-                    └── → mainsite.html#intro (返回官网)
+              ├── world/workspace.html     [L3] 工作台（抽卡后进入）
+              │     └── → recruit/index.html  (再抽一张)
+              │     └── → mainsite.html#intro (返回官网)
+              │
+              └── recruit-publish-flow/publish-entry.html  [L3] Builder 发布入口
+                    │     ① 输入领域 → ② 选 agent → ③ 填写发布说明 → ④ 提交审核
+                    │     ⬇ 审核中（占位）
+                    └── → flywheel/gallery.html  (审核通过后上架)
 ```
 
 ### 返回路径
