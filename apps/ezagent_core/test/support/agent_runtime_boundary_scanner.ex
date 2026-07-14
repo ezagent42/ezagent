@@ -32,6 +32,7 @@ defmodule EzagentCore.AgentRuntimeBoundaryScanner do
   @domain_agent_path "apps/ezagent_domain_session/lib/ezagent/domain/agent.ex"
   @materializer_path "apps/ezagent_domain_session/lib/ezagent_domain_instance_message/session_creator/materializer.ex"
   @rollback_path "apps/ezagent_domain_session/lib/ezagent_domain_instance_message/session_creator/rollback.ex"
+  @imports_key :__agent_runtime_boundary_imports__
 
   @spec scan_source(Path.t(), String.t()) :: [map()]
   def scan_source(path, source) do
@@ -41,7 +42,7 @@ defmodule EzagentCore.AgentRuntimeBoundaryScanner do
         emit_warnings: false
       )
 
-    {offenders, _aliases} = walk(ast, %{}, path, nil)
+    {offenders, _aliases} = walk(ast, %{}, path, "root")
     offenders
   end
 
@@ -97,10 +98,33 @@ defmodule EzagentCore.AgentRuntimeBoundaryScanner do
     walk_sequence(expressions, aliases, path, definition)
   end
 
+  defp walk(
+         {:alias, _meta, [{{:., _, [base_ast, :{}]}, _, member_asts}]},
+         aliases,
+         _path,
+         _definition
+       ) do
+    base_module = resolve_module(base_ast, aliases)
+
+    aliases =
+      Enum.reduce(member_asts, aliases, fn {:__aliases__, _, parts}, aliases ->
+        module = Module.concat([base_module | parts])
+        Map.put(aliases, parts |> List.last(), module)
+      end)
+
+    {[], aliases}
+  end
+
   defp walk({:alias, _meta, [{:__aliases__, _, parts} | options]}, aliases, _path, _definition) do
     module = resolve_alias_parts(parts, aliases)
     alias_name = options |> List.first([]) |> Keyword.get(:as) |> alias_name(module)
     {[], Map.put(aliases, alias_name, module)}
+  end
+
+  defp walk({:import, _meta, [{:__aliases__, _, parts} | _options]}, aliases, _path, _definition) do
+    module = resolve_alias_parts(parts, aliases)
+    imports = aliases |> Map.get(@imports_key, MapSet.new()) |> MapSet.put(module)
+    {[], Map.put(aliases, @imports_key, imports)}
   end
 
   defp walk({form, _meta, arguments}, aliases, path, _definition)
@@ -195,6 +219,29 @@ defmodule EzagentCore.AgentRuntimeBoundaryScanner do
       :error ->
         nil
     end
+  end
+
+  defp classify_call({function, metadata, arguments}, aliases, path, definition)
+       when is_atom(function) and is_list(arguments) and not is_nil(definition) do
+    aliases
+    |> Map.get(@imports_key, MapSet.new())
+    |> Enum.find_value(fn module ->
+      case classify(module, function, arguments, path, definition) do
+        {:ok, class} ->
+          %{
+            path: path,
+            line: Keyword.get(metadata, :line, 1),
+            module: module,
+            function: function,
+            arity: length(arguments),
+            class: class,
+            source_anchor: source_anchor(definition, module, function, arguments)
+          }
+
+        :error ->
+          nil
+      end
+    end)
   end
 
   defp classify_call(_node, _aliases, _path, _definition), do: nil

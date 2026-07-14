@@ -331,6 +331,30 @@ defmodule EzagentCore.AgentRuntimeBoundaryTest do
              Scanner.scan_source("bad.ex", source)
   end
 
+  test "scanner catches Agent materialization through a grouped alias" do
+    source = """
+    defmodule BadSession do
+      alias Ezagent.Entity.{Agent, User}
+      def run(manifest), do: Agent.spawn_from_manifest(manifest)
+    end
+    """
+
+    assert [%{class: :agent_materialization, module: Ezagent.Entity.Agent, line: 3}] =
+             Scanner.scan_source("grouped_alias.ex", source)
+  end
+
+  test "scanner catches Agent materialization through an imported local call" do
+    source = """
+    defmodule BadSession do
+      import Ezagent.Entity.Agent
+      def run(manifest), do: spawn_from_manifest(manifest)
+    end
+    """
+
+    assert [%{class: :agent_materialization, module: Ezagent.Entity.Agent, line: 3}] =
+             Scanner.scan_source("imported_agent.ex", source)
+  end
+
   test "scanner leaves legal lifecycle and conversation calls alone" do
     legal_sources = [
       "Ezagent.Lifecycle.destroy(session_uri, :session_delete)",
