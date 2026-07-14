@@ -99,7 +99,7 @@ defmodule EzagentCore.AgentRuntimeBoundaryScanner do
   end
 
   defp walk(
-         {:alias, _meta, [{{:., _, [base_ast, :{}]}, _, member_asts}]},
+         {:alias, _meta, [{{:., _, [base_ast, :{}]}, _, member_asts} | _options]},
          aliases,
          _path,
          _definition

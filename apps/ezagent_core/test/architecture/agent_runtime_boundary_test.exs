@@ -343,6 +343,18 @@ defmodule EzagentCore.AgentRuntimeBoundaryTest do
              Scanner.scan_source("grouped_alias.ex", source)
   end
 
+  test "scanner catches grouped Agent alias with keyword options" do
+    source = """
+    defmodule BadSession do
+      alias Ezagent.Entity.{Agent, User}, warn: false
+      def run(manifest), do: Agent.spawn_from_manifest(manifest)
+    end
+    """
+
+    assert [%{class: :agent_materialization, module: Ezagent.Entity.Agent, line: 3}] =
+             Scanner.scan_source("grouped_alias_options.ex", source)
+  end
+
   test "scanner catches Agent materialization through an imported local call" do
     source = """
     defmodule BadSession do
