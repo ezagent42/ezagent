@@ -3,12 +3,13 @@ name: CI
 # LAYERED merge gate (design C1). Two jobs, cheap-first:
 #
 #   job `gate`       — ubuntu-latest, ~2-3 min. The DETERMINISTIC required
-#                      gate: compile --warnings-as-errors, format, the two
-#                      static invariant tasks, and the arch/invariant ExUnit
-#                      subset (never-flake tests that catch real regressions
-#                      fast — e.g. NoBehaviorModuleReferenceTest caught a
-#                      retired-module ref that flake noise had hidden). Does
-#                      NOT run the full suite, so it is fast and stable.
+#                      gate: frontend TypeScript, compile
+#                      --warnings-as-errors, format, the two static invariant
+#                      tasks, and the arch/invariant ExUnit subset (never-flake
+#                      tests that catch real regressions fast — e.g.
+#                      NoBehaviorModuleReferenceTest caught a retired-module
+#                      ref that flake noise had hidden). Does NOT run the full
+#                      suite, so it is fast and stable.
 #
 #   job `full-suite` — self-hosted macOS (the lead's dev machine), needs:
 #                      [gate]. The EXACT `mix ci.local` end-to-end flow (pnpm
@@ -68,6 +69,24 @@ jobs:
     steps:
       - uses: actions/checkout@v4
 
+      - name: Set up Node
+        uses: actions/setup-node@v4
+        with:
+          node-version: "22"
+
+      - name: Frontend typecheck
+        run: |
+          corepack enable
+          corepack prepare pnpm@10.23.0 --activate
+          for assets_dir in \
+            apps/ezagent_web/assets \
+            apps/ezagent_plugin_world/assets \
+            apps/ezagent_plugin_hello/assets
+          do
+            pnpm --dir "$assets_dir" install --frozen-lockfile
+            pnpm --dir "$assets_dir" typecheck
+          done
+
       - name: Set up Elixir/OTP
         uses: erlef/setup-beam@v1
         with:
@@ -87,9 +106,6 @@ jobs:
       - name: Fetch Elixir deps
         run: mix deps.get
 
-      # No pnpm/node here on purpose: the gate never runs the web app's tests,
-      # and esbuild is not a Mix compiler, so `mix compile` + the core/domain
-      # arch/invariant suite need only BEAM + Postgres.
       - name: Compile (warnings-as-errors)
         run: mix compile --warnings-as-errors --force
 

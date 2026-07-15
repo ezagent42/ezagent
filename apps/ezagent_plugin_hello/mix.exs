@@ -10,7 +10,7 @@ defmodule EzagentPluginHello.MixProject do
       config_path: "../../config/config.exs",
       deps_path: "../../deps",
       lockfile: "../../mix.lock",
-      elixir: "~> 1.15",
+      elixir: "~> 1.19",
       elixirc_paths: elixirc_paths(Mix.env()),
       # Plugin authoring contract §3.2 — the non-bypassable app-level gate
       # (verifies declared kinds/behaviors/templates exist + implement their

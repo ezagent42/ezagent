@@ -5,7 +5,7 @@ import {Badge, Button, EmptyState, Input, Stat} from "./ui/primitives"
 
 type DataRow = Record<string, unknown>
 
-type AdminState = {
+export type AdminState = {
   audit_rows?: DataRow[]
   bindings?: DataRow[]
   bridges?: DataRow[]

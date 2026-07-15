@@ -133,6 +133,7 @@ export type IdentitiesState = {
   entity_uri?: string | null
   entities?: IdentityRow[]
   error?: string
+  caps_path?: string | null
   extensions?: ExtensionRow[]
   filter?: string
   flavors?: string[]
@@ -157,7 +158,7 @@ export type IdentitiesState = {
   cwd_required_flavors?: string[]
   cwd_required_with_pty_flavors?: string[]
   script_required_flavors?: string[]
-  create_error?: string
+  create_error?: string | null
   action_error?: string
   agent_not_found?: boolean
   cascade?: CascadeState
@@ -767,7 +768,7 @@ function AgentDetail({state, onDeleteAgent}: {state: IdentitiesState; onDeleteAg
                   {f.key}
                   <span className="ml-1 text-[10px] text-muted-foreground/60">({f.source})</span>
                 </dt>
-                <dd className="text-sm text-foreground truncate max-w-[200px]" title={f.value ?? ""}>
+                <dd className="text-sm text-foreground truncate max-w-[200px]" title={formatConfigValue(f.value)}>
                   {formatConfigValue(f.value)}
                 </dd>
               </div>

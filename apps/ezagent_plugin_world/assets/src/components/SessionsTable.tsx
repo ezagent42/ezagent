@@ -46,7 +46,7 @@ type CreateOptions = {
   socialware_content_hash?: string
 }
 
-type SessionsState = {
+export type SessionsState = {
   current_session_uri?: string | null
   sessions?: SessionRow[]
   templates?: string[]

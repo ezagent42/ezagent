@@ -852,7 +852,7 @@ export function Conversation({
                         )}
                       </div>
                       {message.text && <p className={bubbleTextClass(mine, kind)}>{message.text}</p>}
-                      {message.render && typeof message.render === "object" && (
+                      {message.render != null && typeof message.render === "object" && (
                         <JsonRenderBubble
                           spec={message.render}
                           css={message.render_css}

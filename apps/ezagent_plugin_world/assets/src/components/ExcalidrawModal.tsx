@@ -1,5 +1,7 @@
 import {lazy, Suspense, useState} from "react"
 
+import {restoreElements} from "@excalidraw/excalidraw"
+import type {ExcalidrawImperativeAPI, ExcalidrawInitialDataState} from "@excalidraw/excalidraw/types"
 import "@excalidraw/excalidraw/index.css"
 
 import {Button} from "./ui/primitives"
@@ -9,7 +11,7 @@ const Excalidraw = lazy(() =>
   import("@excalidraw/excalidraw").then((m) => ({default: m.Excalidraw})),
 )
 
-type ExcalidrawAPI = {getSceneElements: () => unknown[]} | null
+type ExcalidrawAPI = ExcalidrawImperativeAPI | null
 
 /**
  * 内嵌 excalidraw 编辑器（弹窗）。
@@ -31,11 +33,11 @@ export function ExcalidrawModal({
   const [api, setApi] = useState<ExcalidrawAPI>(null)
   const [tooBig, setTooBig] = useState(false)
 
-  let initialData: {elements: unknown[]} | undefined
+  let initialData: ExcalidrawInitialDataState | undefined
   try {
     if (initial) {
       const parsed = JSON.parse(initial)
-      if (Array.isArray(parsed?.elements)) initialData = {elements: parsed.elements}
+      if (Array.isArray(parsed?.elements)) initialData = {elements: restoreElements(parsed.elements, null)}
     }
   } catch {
     initialData = undefined
@@ -78,7 +80,7 @@ export function ExcalidrawModal({
           <div style={{position: "absolute", inset: 0}}>
             <Suspense fallback={<div className="p-6 text-sm text-muted-foreground">加载画板中…</div>}>
               <Excalidraw
-                excalidrawAPI={(a: unknown) => setApi(a as ExcalidrawAPI)}
+                excalidrawAPI={(nextApi) => setApi(nextApi)}
                 initialData={initialData}
                 viewModeEnabled={readOnly}
               />

@@ -15,7 +15,7 @@ defmodule EzagentPluginConforming.MixProject do
     [
       app: :ezagent_plugin_conforming,
       version: "0.1.0",
-      elixir: "~> 1.15",
+      elixir: "~> 1.19",
       compilers: Mix.compilers() ++ [:ezagent_plugin_check],
       deps: deps()
     ]
