@@ -55,5 +55,12 @@ mounting model.
 - Product evidence: real DeepSeek generation, second-prompt edit, concierge
   read-only hash check, anonymous view, real Kanban node, screenshots and video.
 
-The current-main rebase, PR URL, and required CI results are filled by the
-replacement PR closeout rather than asserted prematurely here.
+## Replacement PR closeout
+
+- PR: https://github.com/ezagent42/ezagent/pull/1425
+- Main ancestry at closeout: 0 commits behind, 15 commits ahead.
+- GitHub mergeability: mergeable; repository review/approval remains outside
+  this implementation handoff.
+- Required checks: deterministic gate, gitleaks, return advisory, and
+  dev-together ownership gate all passed. The macOS full-suite and dispatch
+  canary jobs were conditionally skipped by the workflow.
