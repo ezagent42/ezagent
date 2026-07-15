@@ -14,10 +14,17 @@ defmodule Ezagent.Email.InboundTest do
 
   alias Ezagent.Email.{Inbound, InboundBinding}
   alias Ezagent.ExternalMirror.BindingRow
+  alias EzagentCore.Repo
 
   @target "human@example.com"
   @ws "workspace://system"
   @alias "inbox-alias@ezagent.chat"
+
+  setup do
+    cap_config = Application.fetch_env!(:ezagent_core, Ezagent.Cap)
+    on_exit(fn -> Application.put_env(:ezagent_core, Ezagent.Cap, cap_config) end)
+    :ok
+  end
 
   # Create a verified email binding (parent row + email-meta row) for a fresh
   # session. Returns {session_uri, binding_row_id}.
@@ -194,6 +201,19 @@ defmodule Ezagent.Email.InboundTest do
       assert dispatched(agent) == []
       assert deleted(agent) == [r["key"]]
     end
+
+    test "unbind cascades the projection → rejected, deleted" do
+      {_session_uri, row_id} = verified_binding!()
+      assert {:ok, :deleted} = BindingRow.delete_by_id(row_id)
+      assert Repo.get(InboundBinding, row_id) == nil
+
+      {agent, opts} = harness()
+      r = rec(@alias)
+
+      assert {:skipped, :no_binding} = Inbound.process_record(r, opts)
+      assert dispatched(agent) == []
+      assert deleted(agent) == [r["key"]]
+    end
   end
 
   describe "loop guard (MED 8) — reject + DELETE, no inject" do
@@ -246,6 +266,19 @@ defmodule Ezagent.Email.InboundTest do
       assert dispatched(agent) == []
       assert deleted(agent) == []
     end
+
+    test "a capability signing failure retains the inbox item" do
+      {_su, _row_id} = verified_binding!()
+      replace_seed_provider(fn _version -> {:error, :signer_unavailable} end)
+      {agent, opts} = harness()
+      r = rec(@alias)
+
+      assert {:error, {:cap_issue_failed, %RuntimeError{}}} =
+               Inbound.process_record(r, opts)
+
+      assert dispatched(agent) == []
+      assert deleted(agent) == []
+    end
   end
 
   describe "binding provenance join" do
@@ -289,5 +322,16 @@ defmodule Ezagent.Email.InboundTest do
       assert dispatched(agent) == []
       assert deleted(agent) != []
     end
+  end
+
+  defp replace_seed_provider(seed_provider) do
+    config = Application.fetch_env!(:ezagent_core, Ezagent.Cap)
+    signing = Keyword.fetch!(config, :signing)
+
+    Application.put_env(
+      :ezagent_core,
+      Ezagent.Cap,
+      Keyword.put(config, :signing, Keyword.put(signing, :seed_provider, seed_provider))
+    )
   end
 end

@@ -7,6 +7,7 @@ defmodule Ezagent.Email.Inbound.Authority.Reader do
   alias Ezagent.ExternalMirror.BindingRow
   alias EzagentCore.Repo
 
+  @doc false
   @spec read(String.t()) :: {InboundBinding.t(), BindingRow.t() | nil} | nil
   def read(local_address) when is_binary(local_address) do
     Repo.one(

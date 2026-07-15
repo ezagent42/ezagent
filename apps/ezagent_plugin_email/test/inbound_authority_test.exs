@@ -13,8 +13,14 @@ defmodule Ezagent.Email.Inbound.AuthorityTest do
   @workspace "workspace://system"
 
   setup do
-    config = Application.get_env(:ezagent_plugin_email, Authority, [])
-    on_exit(fn -> Application.put_env(:ezagent_plugin_email, Authority, config) end)
+    authority_config = Application.fetch_env(:ezagent_plugin_email, Authority)
+    cap_config = Application.fetch_env!(:ezagent_core, Ezagent.Cap)
+
+    on_exit(fn ->
+      restore_env(:ezagent_plugin_email, Authority, authority_config)
+      Application.put_env(:ezagent_core, Ezagent.Cap, cap_config)
+    end)
+
     :ok
   end
 
@@ -139,4 +145,33 @@ defmodule Ezagent.Email.Inbound.AuthorityTest do
     assert {:retry, {:binding_reader_failed, %RuntimeError{message: "reader unavailable"}}} =
              Authority.issue(%{"to" => "any@ezagent.chat"})
   end
+
+  test "deleting the parent binding cascades the projection and removes authority" do
+    fixture = binding_fixture()
+
+    assert {:ok, :deleted} = BindingRow.delete_by_id(fixture.row.id)
+    assert Repo.get(InboundBinding, fixture.row.id) == nil
+    assert {:reject, :no_binding} = Authority.issue(record(fixture))
+  end
+
+  test "signing infrastructure failure is retryable" do
+    fixture = binding_fixture()
+    replace_seed_provider(fn _version -> {:error, :signer_unavailable} end)
+
+    assert {:retry, {:cap_issue_failed, %RuntimeError{}}} = Authority.issue(record(fixture))
+  end
+
+  defp replace_seed_provider(seed_provider) do
+    config = Application.fetch_env!(:ezagent_core, Ezagent.Cap)
+    signing = Keyword.fetch!(config, :signing)
+
+    Application.put_env(
+      :ezagent_core,
+      Ezagent.Cap,
+      Keyword.put(config, :signing, Keyword.put(signing, :seed_provider, seed_provider))
+    )
+  end
+
+  defp restore_env(app, key, {:ok, value}), do: Application.put_env(app, key, value)
+  defp restore_env(app, key, :error), do: Application.delete_env(app, key)
 end

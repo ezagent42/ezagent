@@ -19,6 +19,13 @@ defmodule Ezagent.Email.Inbound.Authority do
           caps: MapSet.t(Ezagent.Capability.t())
         }
 
+  @doc """
+  Decide and issue authority for one inbox record from fresh durable evidence.
+
+  Deterministic authorization failures return `{:reject, reason}`. Reader or
+  signing infrastructure failures return `{:retry, reason}` so the poller can
+  retain the message.
+  """
   @spec issue(map()) :: {:ok, decision()} | {:reject, atom()} | {:retry, term()}
   def issue(record) when is_map(record) do
     local_address = record |> Map.get("to") |> normalize_address()
