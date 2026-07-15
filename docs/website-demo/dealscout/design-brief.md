@@ -3,7 +3,20 @@
 > **目标**：投融资撮合 socialware 的静态原型——用户描述需求，AI 匹配信号，双方牵线。
 > **受众**：研发——理解撮合类 socialware 的产品形态
 > **约束**：本文件夹是设计参照，不替代研发的技术方案
-> **PR**：#1378
+> **PR**：#1388
+
+---
+
+## 0. 实现路径（重要）
+
+DealScout 是一个 **组合 socialware**（composite socialware）：
+- **hello** 负责页面渲染——通过 @json-render spec 动态生成 UI（36 组件 catalog：Card / Grid / Heading / Text / Button / Badge / Input / …）
+- **crawler plugin** 负责数据——爬取外部信号，dispatch `refresh_page` 触发 hello 重建页面
+- 用户交互动作（牵线、接受/拒绝）→ 后端 dispatch action（参照 kanban 的 `dispatch 板动作` 模式）
+
+**本文件夹的 HTML 原型是设计 spec**——告诉研发 hello 应该生成什么样的页面。原型组件均在 catalog 内，可直接映射为 @json-render spec。
+
+参考：`docs/together/2026-07-06/handoffs/system-mechanism-feedback.md` — "dealscout v2 e2e 再证：crawl 完成 dispatch `refresh_page` → handler 真跑 → 页面重建"
 
 ---
 
