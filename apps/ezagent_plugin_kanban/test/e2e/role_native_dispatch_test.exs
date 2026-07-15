@@ -87,9 +87,9 @@ defmodule EzagentPluginKanban.E2E.RoleNativeDispatchTest do
       assert {:ok, _pid} = Ezagent.KindRegistry.lookup(agent_uri)
 
       # RF-1: kanban.add_node dispatches via per-instance resolution on the
-      # generic Entity.Agent host (which declares NO kanban). Building a ROOT
-      # node is admin-gated (per-node owner authz, R2), so dispatch as admin —
-      # K2 is the dispatch/slice gate; the per-node owner gate is K3's subject.
+      # generic Entity.Agent host (which declares NO kanban). 新协作模型：加节点
+      # 不再门控（任何持 cap 成员可加，自动认领给 caller），这里 dispatch as admin
+      # 只为拿一个 caller — K2 是 dispatch/slice gate，per-node owner 授权是 K3 的主题。
       assert {:ok, %{id: "n1"}} =
                dispatch(agent_uri, :add_node, %{parent_id: "", title: "根"}, admin_ctx),
              "kanban.add_node did NOT dispatch via per-instance resolution (RF-1)"

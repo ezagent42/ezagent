@@ -26,9 +26,11 @@ defmodule Ezagent.ActionSet.Kanban do
   本 Behavior 在运行时经 `Shared.stages/1` / `Shared.config_get/3` 读回（read-through over
   `RecipeRegistry`）。这样业务语义不进 layer-1 代码（taxonomy 红线 1+2）。
 
-  ## 权限 = admin + 节点 owner（per-node，在 handler 内查；data_owner 是 per-instance）
-  改一个节点 = `ctx.caller == node.owner` 或 caller 持 wildcard cap(admin)；未认领节点
-  任意成员可 `claim`。**不变式**：`owner==nil ⟺ status==:unassigned`。
+  ## 权限 = board_admin(版主) + 节点 owner（per-node，在 handler 内查；data_owner 是 per-instance）
+  改一个节点 = `ctx.caller == node.owner` 或 caller 是 `board_admin`（本板 data_owner=版主，
+  **或**全局 wildcard cap）——版主可编辑本板任何节点（C2）。加任何节点=自动认领给 caller
+  （H1，单根先行 H5）；退领需空（H3）；删=drop 子树，board_admin 兜底，否则子树须全「自己
+  认领或未认领」（H2）。**不变式**：`owner==nil ⟺ status==:unassigned`。
   """
 
   use Ezagent.Lifecycle
@@ -48,7 +50,8 @@ defmodule Ezagent.ActionSet.Kanban do
     returns: %{id: :string},
     caps: [:add_node],
     modes: [:call],
-    description: "新增节点；parent_id=\"\" 建根（建根=admin；加子=父节点owner或admin）"
+    description:
+      "新增节点；parent_id=\"\" 建根（单根：已有根则 :root_exists）。任何成员可加（cap gate 在 dispatch 层）；新节点自动认领给 caller（H1）"
   )
 
   action(:rename_node,
@@ -96,7 +99,7 @@ defmodule Ezagent.ActionSet.Kanban do
     returns: %{},
     caps: [:unclaim_node],
     modes: [:call],
-    description: "退领(owner=nil,status→unassigned)"
+    description: "退领(owner=nil,status→unassigned)；有内容(artifacts/metrics)不能退(H3)"
   )
 
   action(:set_status,
@@ -160,7 +163,7 @@ defmodule Ezagent.ActionSet.Kanban do
     returns: %{count: :integer},
     caps: [:import_markmap],
     modes: [:call],
-    description: "覆盖导入(admin)"
+    description: "覆盖导入(board_admin=版主/wildcard)"
   )
 
   # ---------------------------------------------------------------
@@ -256,20 +259,25 @@ defmodule Ezagent.ActionSet.Kanban do
   # ---------------------------------------------------------------
 
   @doc false
+  # H1：加任何节点（根/子）= 创建者自动认领（owner=caller, status=:claimed）。任何持板
+  # operate cap 的成员都能加（cap gate 在 dispatch 层，handler 内不再门控加节点）。
+  # H5：单根先行 —— parent_id==nil 仅当 root_id==nil 允许；已有根再传 nil → :root_exists。
   def handle_add_node(args, ctx) do
     parent_id = nilify(Map.get(args, :parent_id))
     title = Map.fetch!(args, :title)
     %{nodes: nodes, root_id: root_id, seq: seq} = t = tree(ctx)
+    caller = caller_str(ctx)
 
     cond do
-      parent_id == nil and not admin?(ctx) ->
-        {:error, :forbidden}
+      parent_id == nil and root_id != nil ->
+        {:error, :root_exists}
 
       parent_id != nil and not Map.has_key?(nodes, parent_id) ->
         {:error, :parent_not_found}
 
-      parent_id != nil and not owner_or_admin?(ctx, nodes[parent_id]) ->
-        {:error, :forbidden}
+      # 自动认领需 caller（谁认领这个新节点）。dispatch 边界总带 caller；缺则拒。
+      caller == nil ->
+        {:error, :no_caller}
 
       true ->
         new_seq = seq + 1
@@ -280,7 +288,9 @@ defmodule Ezagent.ActionSet.Kanban do
         # （插入校验在 set_stage 收口）。
         stages = Shared.stages(ctx)
         stage = if parent_id, do: nodes[parent_id].stage, else: List.first(stages)
-        node = new_node(parent_id, title, order, stage)
+
+        # H1 自动认领：新节点 owner=caller, status=:claimed（一出生就有属性，H7）。
+        node = new_node(parent_id, title, order, stage, caller, :claimed)
         new_root = root_id || if(parent_id == nil, do: id, else: nil)
 
         {:ok, %{id: id},
@@ -352,8 +362,10 @@ defmodule Ezagent.ActionSet.Kanban do
       not Map.has_key?(t.nodes, id) ->
         {:error, :node_not_found}
 
-      not owner_or_admin?(ctx, t.nodes[id]) ->
-        {:error, :forbidden}
+      # H2：删=drop 子树。board_admin（版主/wildcard）兜底可删任何；否则子树内每个节点
+      # 须 owner==caller 或未认领（未认领恒空谁都可删）；含他人已认领后代 → 挡（保护别人的活）。
+      not drop_authorized?(ctx, t.nodes, id) ->
+        {:error, :forbidden_mixed_ownership}
 
       true ->
         node = t.nodes[id]
@@ -469,8 +481,30 @@ defmodule Ezagent.ActionSet.Kanban do
   end
 
   @doc false
-  def handle_unclaim_node(%{id: id}, ctx),
-    do: update_node(ctx, id, &%{&1 | owner: nil, status: :unassigned})
+  # H3：取消认领需空 —— 有「内容」（artifacts 或 metrics；子节点不算内容，C3）的节点
+  # 不能 unclaim（否则未认领节点会带内容，破坏「未认领恒为空」）。仅 owner/board_admin 可退。
+  # 成功 → owner=nil, status=:unassigned（→ 未认领=空=谁都可删可重认领）。
+  def handle_unclaim_node(%{id: id}, ctx) do
+    t = tree(ctx)
+
+    cond do
+      not Map.has_key?(t.nodes, id) ->
+        {:error, :node_not_found}
+
+      not owner_or_admin?(ctx, t.nodes[id]) ->
+        {:error, :forbidden}
+
+      has_content?(t.nodes[id]) ->
+        {:error, :has_content_cannot_unclaim}
+
+      true ->
+        node = %{t.nodes[id] | owner: nil, status: :unassigned}
+        {:ok, %{}, [commit(%{t | nodes: Map.put(t.nodes, id, node)})]}
+    end
+  end
+
+  # 「内容」= artifacts 或 metrics（C3：子节点不算内容，结构容器仍可退领）。
+  defp has_content?(node), do: node.artifacts != [] or node.metrics != []
 
   @doc false
   def handle_set_status(%{id: id, status: status}, ctx) do
@@ -590,7 +624,8 @@ defmodule Ezagent.ActionSet.Kanban do
   @doc false
   def handle_import_markmap(%{markdown: markdown}, ctx) do
     cond do
-      not admin?(ctx) ->
+      # 覆盖导入 = 板级动作，版主（board_admin）能覆盖导入自己的板（C2）。
+      not board_admin?(ctx) ->
         {:error, :forbidden}
 
       true ->
@@ -649,21 +684,23 @@ defmodule Ezagent.ActionSet.Kanban do
 
   defp empty_tree, do: Shared.empty_tree()
 
-  defp new_node(parent_id, title, order, stage) do
+  # owner/status 参数化：add_node 自动认领传 (caller, :claimed)；import 批量传 (nil, :unassigned)。
+  defp new_node(parent_id, title, order, stage, owner, status) do
     %{
       parent_id: parent_id,
       title: title,
       order: order,
       stage: stage,
-      owner: nil,
-      status: :unassigned,
+      owner: owner,
+      status: status,
       artifacts: [],
       metrics: []
     }
   end
 
+  # markmap 覆盖导入的节点始终**未认领**（owner=nil, status=:unassigned）——一批空拓扑。
   defp enrich_parsed(%{parent_id: p, title: t, order: o}, import_default_stage),
-    do: new_node(p, t, o, import_default_stage)
+    do: new_node(p, t, o, import_default_stage, nil, :unassigned)
 
   defp tree(ctx), do: Shared.tree(ctx)
 
@@ -693,9 +730,25 @@ defmodule Ezagent.ActionSet.Kanban do
 
   defp owner_or_admin?(ctx, node), do: Shared.owner_or_admin?(ctx, node)
 
-  defp admin?(ctx), do: Shared.admin?(ctx)
+  # 板级 admin = 版主（本板 data_owner）或全局 wildcard（C2）；用于建根删除兜底 / 覆盖导入。
+  defp board_admin?(ctx), do: Shared.board_admin?(ctx)
 
   defp caller_str(ctx), do: Shared.caller_str(ctx)
+
+  # H2 drop 授权：board_admin 兜底可删任何；否则子树内每个节点须 owner==caller 或未认领。
+  defp drop_authorized?(ctx, nodes, id) do
+    board_admin?(ctx) or
+      (fn ->
+         caller = caller_str(ctx)
+
+         nodes
+         |> subtree_ids(id)
+         |> Enum.all?(fn nid ->
+           o = nodes[nid].owner
+           o == nil or o == caller
+         end)
+       end).()
+  end
 
   # --- 解析/归一 ------------------------------------------------------
 

@@ -164,11 +164,9 @@ defmodule EzagentPluginKanban.E2E.BoardProvisionGrantTest do
       refute minted_add.instance == :any
 
       # (c) assistant 自身份 dispatch kanban.add_node 到新板成功(经 minted 钥匙)。
-      # admin 播根 → assistant 认领根 → assistant 在自己认领的节点下 add_node 子 = 真正成功。
+      # 新协作模型：加节点自动认领 —— assistant 自身份加根(自动认领)再在自己节点下加子 = 真正成功。
       assert {:ok, %{id: "n1"}} =
-               dispatch(board_uri, :add_node, %{parent_id: "", title: "根"}, admin_ctx)
-
-      assert {:ok, %{}} = dispatch_as(assistant_uri, board_uri, :claim_node, %{id: "n1"})
+               dispatch_as(assistant_uri, board_uri, :add_node, %{parent_id: "", title: "根"})
 
       assert {:ok, %{id: child_id}} =
                dispatch_as(assistant_uri, board_uri, :add_node, %{parent_id: "n1", title: "子"})
