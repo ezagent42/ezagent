@@ -1641,3 +1641,9 @@ merged into `domain-agent-handoff` or left with a concrete blocker/decision.
 > false-negatives (an aliased or reformatted call can't slip past); the teeth-test
 > catches a TOOTHLESS gate regardless of cause (e.g. a matcher that silently matches
 > nothing after a refactor). Batch 2 needs both, same as batch 1.
+
+---
+
+## Kanban read-only share — verify reflux live in a real deploy env (from #1425, 2026-07-15)
+
+Data-reflux is proven at code+test level (board_forward_test). But the Hello receipt UI is a delegation-time SNAPSHOT (not live); the live surface is the World Kanban receiver tab, which the disposable stack could not stand up to record. **Verify live reflux on a full deployed world stack + decide the Hello-receipt-snapshot UX (auto-refresh vs link to live board).** Detail: docs/notes/2026-07-15-kanban-reflux-deploy-verify.md
