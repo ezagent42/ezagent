@@ -15,10 +15,20 @@ defmodule Ezagent.Agent.RetirementObligations do
         {:ok, existing}
 
       nil ->
-        %RetirementObligation{}
-        |> RetirementObligation.create_changeset(attrs)
-        |> Repo.insert()
-        |> recover_concurrent_insert(identity)
+        result =
+          %RetirementObligation{}
+          |> RetirementObligation.create_changeset(attrs)
+          |> Repo.insert()
+          |> recover_concurrent_insert(identity)
+
+        case result do
+          {:ok, obligation} ->
+            emit(:created, obligation)
+            result
+
+          _ ->
+            result
+        end
     end
   end
 
@@ -46,8 +56,15 @@ defmodule Ezagent.Agent.RetirementObligations do
       claim_locked(obligation, now, lease_seconds, Keyword.get(opts, :allow_failed, false))
     end)
     |> case do
-      {:ok, result} -> result
-      {:error, reason} -> {:error, reason}
+      {:ok, {:ok, %RetirementObligation{} = obligation} = result} ->
+        emit(:attempted, obligation)
+        result
+
+      {:ok, result} ->
+        result
+
+      {:error, reason} ->
+        {:error, reason}
     end
   end
 
@@ -56,13 +73,24 @@ defmodule Ezagent.Agent.RetirementObligations do
   def mark_running(id) do
     obligation = get!(id)
 
-    obligation
-    |> RetirementObligation.transition_changeset(%{
-      status: :running,
-      attempts: obligation.attempts + 1,
-      last_error: nil
-    })
-    |> Repo.update()
+    result =
+      obligation
+      |> RetirementObligation.transition_changeset(%{
+        status: :running,
+        attempts: obligation.attempts + 1,
+        last_error: nil
+      })
+      |> Repo.update()
+
+    case result do
+      {:ok, updated} ->
+        emit(if(updated.status == :failed, do: :failed, else: :retry_scheduled), updated)
+
+      _ ->
+        :ok
+    end
+
+    result
   end
 
   defp claim_locked(nil, _now, _lease_seconds, _allow_failed), do: {:error, :not_found}
@@ -137,16 +165,24 @@ defmodule Ezagent.Agent.RetirementObligations do
   @spec resolve(pos_integer()) ::
           {:ok, RetirementObligation.t()} | {:error, Ecto.Changeset.t()}
   def resolve(id) do
-    id
-    |> get!()
-    |> RetirementObligation.transition_changeset(%{
-      status: :resolved,
-      pending_steps: %{},
-      last_error: nil,
-      next_attempt_at: nil,
-      resolved_at: DateTime.utc_now()
-    })
-    |> Repo.update()
+    result =
+      id
+      |> get!()
+      |> RetirementObligation.transition_changeset(%{
+        status: :resolved,
+        pending_steps: %{},
+        last_error: nil,
+        next_attempt_at: nil,
+        resolved_at: DateTime.utc_now()
+      })
+      |> Repo.update()
+
+    case result do
+      {:ok, obligation} -> emit(:resolved, obligation)
+      _ -> :ok
+    end
+
+    result
   end
 
   @spec list_due(pos_integer()) :: [RetirementObligation.t()]
@@ -174,5 +210,13 @@ defmodule Ezagent.Agent.RetirementObligations do
     else
       error
     end
+  end
+
+  defp emit(event, obligation) do
+    :telemetry.execute(
+      [:ezagent, :agent, :retirement_obligation, event],
+      %{count: 1},
+      %{obligation_id: obligation.id, status: obligation.status, attempts: obligation.attempts}
+    )
   end
 end
