@@ -1,6 +1,6 @@
-# Cap-signing: one verifying authorization chokepoint, principal-agnostic caps — DESIGN (v7)
+# Cap-signing: two symmetric chokepoints (verify + issue), principal-agnostic caps — DESIGN (v8)
 
-**Status**: v7 — nails the two mechanisms the v6 review left open. v6 review confirmed the big design SOUND: the one-API + explicit-holder consolidation closes every named forgery path; holders are all derivable; principal-agnostic signing is viable (the signing primitive is already URI-generic). This version specifies (a) an honest, enforceable authorization boundary and (b) a non-spoofable issue-authority. Pending re-review.
+**Status**: v8 — v7 review CLOSED Hole 2 (honest authorization boundary) and found no new holes; residual was Hole 3's two completeness gaps (issuance-site enumeration incomplete; genesis root unspecified). v8 closes them symmetrically: the issue-authority check lives IN the `Cap.issue` chokepoint (so it covers every issuance site uniformly, exactly as `authorize/3` covers every consumer), and genesis is pinned to a single fixed admin-only root. Pending re-review.
 **Supersedes**: self-healer spec (retired) + CapStore-consistency design of v1–v3 (out of scope). PR #1424 shelved.
 **Implementer**: coordinator (Claude) directly (app + ezagent-deploy cutover).
 
@@ -18,7 +18,7 @@ Capabilities are **forgeable / tamperable / retargetable** under soft verificati
 ## 4. Invariant
 1. **Born signed, uniformly** — minted only via `Cap.issue`, signed identically for every granter principal (HKDF key per principal URI, no type paths).
 2. **One verifying authorization chokepoint** — a single `authorize/3` decides every authorization: it verifies the presented cap (signature + crypto + grantee == the explicit holder) AND matches the needed shape. Every authorization consumer routes through it.
-3. **Issue-authority is a signed capability** — a cap `granted_by P` may be minted only if the issuer *is* `P` (proven by runtime principal identity) OR holds a signed **issue-authority cap** from `P`. No claimed-URI context is trusted as proof.
+3. **Issue-authority, enforced at the issuance chokepoint** — a cap `granted_by P` may be minted only if the issuer *is* `P` (proven by runtime principal identity) OR holds a signed **issue-authority cap** from `P`. No claimed-URI context is trusted as proof. **This check lives inside `Cap.issue` itself** — the single chokepoint every cap passes (invariant 1) — so it covers every issuance site uniformly, symmetric with `authorize/3` on the consumption side. Two chokepoints: `Cap.issue` gates who may mint; `authorize/3` gates who may use.
 
 ## 5. The authorization chokepoint (invariant 2) — SOUND per v6 review
 - **One API** `authorize(holder_uri, presented_caps, needed) :: :ok | :error`: verify (signed, crypto-valid, grantee == `holder_uri`) then match `needed`. Verify is intrinsic; receiver-blind matching is impossible.
@@ -33,22 +33,20 @@ Perfect structural prevention of direct cap-field authorization is **not achieva
 - **Remove boolean-returning dynamic `holds_cap?` overrides** so no callback hides an unverified decision from the central path (this IS structurally enforceable — delete the override surface).
 - **Optional future hardening (NOT in X scope):** an **opaque capability representation** (authority stored as a verified signed blob, readable only via `authorize/3`) would make direct field-authz impossible. Large representation change; deferred.
 
-## 7. Issue-authority (invariant 3) — non-spoofable, sites enumerated (v6 Hole 3)
-- **Proof of control**: mint `granted_by P` requires the issuer to *be* `P` — i.e., the executing runtime principal's identity is `P` (not a URI value passed in a call) — OR the issuer presents a signed **issue-authority cap** `P → issuer: may issue granted_by=P for shape S` (itself verified via §5). Genesis is the sole root: admin's own signed authority (no `{:genesis, any_uri}` wildcard; no `{:rule, name, P}` path that names P without proving control).
-- **Enumerated rule-driven sites** (each classified; "on behalf of P" ⇒ needs an issue-authority cap):
-  - **Cross-session forward**: granter = source session (self-control: runs in source session), grantee = `msg.sender`, target = dest session, shape = `session.send(target)`, `same_workspace`. Self-control ✓.
-  - **Workspace self / agent reply**: `caller == granted_by == principal`. Self-control ✓.
-  - **Session join / participation** (stamps session-owner or admin as granter): the Session process is not the owner → requires the Session to hold a signed **issue-authority cap from the session-owner** (owner delegates member-cap issuance to its session), verified at issue. If absent, granter is the session itself (self-control) with membership modeled accordingly.
-  - **Template materialization** (owner as granter): same — issuer holds owner's issue-authority cap, or granter is the materializer principal.
-  - **Anonymous public-view** (mints as session-owner/admin): issuer holds the owner's issue-authority cap; else the anon principal grants to itself.
-  - **Verified-email binding** (`binding_actor`): issuer holds `binding_actor`'s issue-authority cap.
-- The relational binding (granter/grantee/target/shape/workspace) is signed cap data, verified uniformly; no principal-type special rule.
+## 7. Issue-authority — enforced at the `Cap.issue` chokepoint (v7 Hole 3)
+- **The check is central, not per-site.** `Cap.issue` refuses to mint `granted_by P` unless the issuer *is* `P` (the executing runtime principal's identity is `P` — not a URI value passed in a call) OR the issuer presents a signed **issue-authority cap** `P → issuer: may issue granted_by=P for shape S` (itself verified via §5). Because every cap is born through `Cap.issue` (invariant 1), this covers **every** issuance site uniformly. So the enumeration is a **migration worklist, not a completeness proof**: any site that doesn't supply valid proof fail-louds at `Cap.issue` (symmetric with a consumer that doesn't call `authorize/3`). No `{:genesis, any_uri}` wildcard; no `{:rule, name, P}` path that names `P` without proving control — both deleted.
+- **Genesis root (pinned).** Genesis is a **single fixed root**: the bootstrap admin identity only. `Cap.issue`'s genesis path signs **exactly one** grantee — `admin` — invoked only by the boot bootstrap, and is the sole cap whose authority is self-asserted (the root of trust). It is signed, not the current unsigned arbitrary-P constructor. Every other principal's authority descends from admin via normal signed issuance / issue-authority caps. There is no "genesis for an arbitrary `P`."
+- **Known migration worklist** (from v6/v7 reviews — classify each as self-control / issue-authority-cap / re-home; not exhaustive, `Cap.issue` catches the rest):
+  - *Self-control ✓*: cross-session forward (granter = source session, grantee = `msg.sender`, target = dest session, `same_workspace`), workspace-self, agent-reply (`caller == granted_by`).
+  - *Was `{:genesis, arbitrary_P}` — must re-express*: creator-manage `{:genesis, creator_uri}`, responsibility-assignment `{:genesis, ctx.caller}` → these are an entity minting for another; re-home granter to the acting entity (self-control) or require an issue-authority cap. NOT genesis.
+  - *"On behalf of P" — needs P's issue-authority cap (or re-home granter)*: session-join/participation (owner→session), template materialization (owner), anonymous public-view (owner/admin), verified-email binding (`binding_actor`), workspace-membership issuance, external-mirror worker inline admin cap, plus generic/background sites (Identity facade, user creation, workspace initial caps, composition caps, recipe binding, Mix tasks, world layout bootstrap).
+- Relational binding (granter/grantee/target/shape/workspace) is signed cap data, verified uniformly; no principal-type special rule.
 
 ## 8. Method (full consolidation)
 1. Build `authorize/3` (verify + match, explicit holder); widen holder-less seams.
 2. Migrate **every** consumer (§5); delete direct cap-field authz matching; remove dynamic `holds_cap?` boolean overrides.
 3. Ship the honest regression gate (§6) + site-granular exemptions + adversarial fixtures.
-4. Issue-authority (§7): implement runtime-principal proof + signed issue-authority caps; migrate the enumerated sites; delete `{:genesis, any_uri}` and control-less `{:rule, name, P}`.
+4. Issue-authority (§7): enforce the check INSIDE `Cap.issue` (fail-loud reveals the issuance-site worklist, symmetric with §5); pin genesis to the single signed admin root; migrate/re-home each site (self-control vs issue-authority cap); delete `{:genesis, any_uri}` and control-less `{:rule, name, P}`.
 5. Extend HKDF signing to all principals; delete dual-read / `verify_for` / `require_signature`.
 6. Delete the self-healer. Fail-loud + telemetry on reject.
 7. Wipe+reseed cutover (deploy scope).
