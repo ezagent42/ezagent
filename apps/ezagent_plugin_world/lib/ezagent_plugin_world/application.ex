@@ -13,6 +13,7 @@ defmodule EzagentPluginWorld.Application do
   @impl Application
   def start(_type, _args) do
     with {:ok, pid} <- Ezagent.Plugin.boot(__MODULE__) do
+      :ok = Ezagent.Cap.ReissuePolicy.Registry.register(Ezagent.World.CapReissuePolicy, 40)
       register_session_views()
       {:ok, pid}
     end

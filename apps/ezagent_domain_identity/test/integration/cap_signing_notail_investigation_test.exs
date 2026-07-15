@@ -21,22 +21,11 @@ defmodule Ezagent.CapSigningNotailInvestigationTest do
 
   test "normal lifecycle paths expose signed and bypassed cap classes" do
     before = inventory()
-    {:ok, report_before} = Ezagent.Identity.CapSigningBackfill.dry_run()
     started = start_reactivation_apps!()
     on_exit(fn -> Enum.each(Enum.reverse(started), &Application.stop/1) end)
     after_reactivation = inventory()
-    {:ok, report_after} = Ezagent.Identity.CapSigningBackfill.dry_run()
 
-    assert before == after_reactivation
-
-    assert report_summary(report_before) == %{
-             scanned: 15,
-             would_sign: 0,
-             quarantined: 8,
-             skipped: 7
-           }
-
-    assert report_summary(report_after) == report_summary(report_before)
+    assert logical_inventory(before) == logical_inventory(after_reactivation)
 
     suffix = System.unique_integer([:positive])
     admin = Ezagent.Entity.User.admin_uri()
@@ -231,7 +220,9 @@ defmodule Ezagent.CapSigningNotailInvestigationTest do
     |> Enum.sort()
   end
 
-  defp report_summary(report), do: Map.drop(report, [:entries])
+  defp logical_inventory(entries) do
+    Enum.map(entries, fn entry -> Tuple.delete_at(entry, tuple_size(entry) - 1) end)
+  end
 
   defp holder_inventory(holder) do
     durable_candidates()

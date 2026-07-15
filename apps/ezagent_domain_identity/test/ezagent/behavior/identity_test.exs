@@ -136,6 +136,7 @@ defmodule Ezagent.ActionSet.IdentityTest do
                :grant_cap,
                :revoke_cap,
                :absorb_cap,
+               :heal_cap,
                :persist_caps,
                :store_cap,
                :remove_cap

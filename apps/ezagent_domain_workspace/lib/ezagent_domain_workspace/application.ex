@@ -31,6 +31,7 @@ defmodule EzagentDomainWorkspace.Application do
   @impl true
   def start(_type, _args) do
     :ok = register_workspace_behavior()
+    :ok = Ezagent.Cap.ReissuePolicy.Registry.register(Ezagent.Workspace.CapReissuePolicy, 20)
 
     children = [
       {DynamicSupervisor, name: Ezagent.Workspace.Supervisor, strategy: :one_for_one}

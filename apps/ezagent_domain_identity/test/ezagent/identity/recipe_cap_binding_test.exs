@@ -199,6 +199,40 @@ defmodule Ezagent.Identity.RecipeCapBindingTest do
 
       assert RecipeCapBinding.fetch(agent_uri) == :not_found
     end
+
+    test "refresh_exact re-issues an authoritative unsigned binding under exact CAS" do
+      agent_uri = agent_uri()
+
+      assert {:ok, %{caps: [signed], version: 1}} =
+               RecipeCapBinding.issue_and_upsert(
+                 agent_uri,
+                 "legacy-refresh",
+                 @admin_uri,
+                 [proposal(agent_uri)]
+               )
+
+      legacy = %{signed | signature: nil, key_id: nil, grantee_uri: nil}
+      binding = Repo.get!(RecipeCapBinding, URI.to_string(agent_uri))
+
+      binding
+      |> Ecto.Changeset.change(%{
+        artifacts: %{"caps" => [Capability.to_map(legacy)]},
+        content_hash: binding_content_hash(binding, [legacy])
+      })
+      |> Repo.update!()
+
+      assert {:ok, %{caps: [^legacy]}} = RecipeCapBinding.fetch(agent_uri)
+      assert Ezagent.Cap.verify_for(legacy, agent_uri)
+      refute Ezagent.Cap.signed_and_valid?(legacy, agent_uri)
+
+      assert {:ok, %{replacement: replacement, version: 2}} =
+               RecipeCapBinding.refresh_exact(agent_uri, legacy)
+
+      assert Ezagent.Cap.signed_and_valid?(replacement, agent_uri)
+      assert {:ok, %{caps: [^replacement], version: 2}} = RecipeCapBinding.fetch(agent_uri)
+
+      assert {:ok, :no_match} = RecipeCapBinding.refresh_exact(agent_uri, legacy)
+    end
   end
 
   describe "failure compensation" do
@@ -278,7 +312,7 @@ defmodule Ezagent.Identity.RecipeCapBindingTest do
   defp artifact_identity(cap) do
     cap
     |> Capability.to_map()
-    |> Map.drop(["granted_at"])
+    |> Map.drop(["granted_at", "signature"])
     |> :erlang.term_to_binary([:deterministic])
   end
 end

@@ -42,10 +42,11 @@ defmodule Ezagent.Invariants.CapIssueChokepointTest do
   @mint_candidate_sites 33
 
   @caps_writers %{
-    "apps/ezagent_domain_identity/lib/ezagent/behavior/identity.ex" => 1
+    "apps/ezagent_domain_identity/lib/ezagent/behavior/identity.ex" => 1,
+    "apps/ezagent_domain_identity/lib/ezagent/identity/cap/heal_executor.ex" => 1
   }
-  @caps_writer_files 1
-  @caps_writer_sites 1
+  @caps_writer_files 2
+  @caps_writer_sites 2
 
   # ------------------------------------------------------------------
   # Leg 3 (2026-07-14) — `users.caps_json` is a BACK DOOR into the cap slice.

@@ -324,6 +324,8 @@ defmodule Ezagent.ActionSet.Identity do
     with {:ok, base_state, binding_caps, binding_update} <-
            reconcile_recipe_binding(state, uri) do
       merged = merge_caps_by_identity(base_state.caps, user_caps ++ binding_caps)
+      plan = Ezagent.Identity.CapReconciler.plan(merged, uri)
+      _ = Ezagent.Identity.CapSelfHeal.enqueue_plan(uri, plan)
       verified_caps = Ezagent.Cap.verified_set(merged, uri)
 
       reconciled =
@@ -471,6 +473,7 @@ defmodule Ezagent.ActionSet.Identity do
   end
 
   def handle_cascade_notify_managers(_args, _ctx), do: {:error, :unauthorized}
+
 end
 
 defmodule Ezagent.ActionSet.IdentityAdmin do
@@ -548,6 +551,14 @@ defmodule Ezagent.ActionSet.IdentityAdmin do
     modes: [:cast]
   )
 
+  action(:heal_cap,
+    args: %{request: :map},
+    returns: %{status: :atom},
+    caps: [{:heal_cap, kind: :user, workspace_scoped?: false}],
+    description: "replace one exact legacy cap with an authorized signed artifact",
+    modes: [:cast]
+  )
+
   action(:persist_caps,
     args: %{caps: {:list, :map}},
     returns: %{caps: {:list, :map}},
@@ -573,7 +584,8 @@ defmodule Ezagent.ActionSet.IdentityAdmin do
   )
 
   @doc "VM-internal self-store is provenance-gated in the handler, not by a held cap."
-  def cap_exempt_actions, do: [:absorb_cap, :persist_caps, :store_cap, :remove_cap]
+  def cap_exempt_actions,
+    do: [:absorb_cap, :heal_cap, :persist_caps, :store_cap, :remove_cap]
 
   # =================================================================
   # Explicit `required_caps/0` — preserved `kind: :user` axis.
@@ -589,14 +601,6 @@ defmodule Ezagent.ActionSet.IdentityAdmin do
   @doc "`false` — admin grant/revoke routinely crosses workspaces, so the required cap is NOT workspace-scoped."
   def workspace_scoped?, do: false
 
-  # =================================================================
-  # Lifecycle state — `create/1` delegates to `Identity.create/1`, the
-  # shared `:identity` slice shape (Phase B; was `init_slice/1`). The
-  # `state_slice:` override pins the key to `:identity`. The caps_json
-  # reconcile lives on `Identity.activate/2`; IdentityAdmin's `activate`
-  # is the macro no-op.
-  # =================================================================
-
   @impl Ezagent.Lifecycle
   def create(args) do
     # Defer to Identity for slice shape — both Behaviors share it.
@@ -606,13 +610,6 @@ defmodule Ezagent.ActionSet.IdentityAdmin do
   @doc "`:no_owner` for all subjects (PR-OWN-3): admin grant/revoke authority comes from the caller's admin cap, not from per-entity data-ownership."
   def data_owner(_), do: :no_owner
 
-  # =================================================================
-  # New-contract action handlers (§6.2 — replace invoke/4)
-  # =================================================================
-
-  # Bug 2 fix (Allen 2026-05-26) — `cap` arrives as one of three
-  # shapes (struct / atom-keyed map / string-keyed map). `normalize!`
-  # coerces all three to the canonical struct.
   @doc """
   Store a capability artifact already authorized by `Ezagent.Cap.issue/3`.
 
@@ -639,6 +636,25 @@ defmodule Ezagent.ActionSet.IdentityAdmin do
   end
 
   def handle_absorb_cap(_args, _ctx), do: {:error, :unauthorized}
+
+  @doc "Execute one post-ready, exact-artifact capability heal from the durable outbox."
+  def handle_heal_cap(
+        %{request: %Ezagent.Cap.HealRequest{} = request},
+        %{caller: :vm_internal} = ctx
+      ) do
+    receiver = Map.fetch!(ctx, :self_uri)
+    current_caps = ctx[:read].(:caps, MapSet.new()) |> Enum.to_list()
+
+    case request.action do
+      {:quarantine, reason} ->
+        Ezagent.Identity.Cap.HealExecutor.quarantine(receiver, request, reason)
+
+      _action ->
+        Ezagent.Identity.Cap.HealExecutor.execute(receiver, current_caps, request)
+    end
+  end
+
+  def handle_heal_cap(_args, _ctx), do: {:error, :unauthorized}
 
   @doc "VM-internal storage action used by `Ezagent.EntityCaps.persist/2` for a live entity."
   def handle_persist_caps(%{caps: caps}, %{caller: :vm_internal} = ctx) when is_list(caps) do
@@ -686,6 +702,7 @@ defmodule Ezagent.ActionSet.IdentityAdmin do
       new_caps = MapSet.new(persistable)
 
       with :ok <- persist_entity_caps(Map.get(ctx, :self_uri), new_caps) do
+        :ok = Ezagent.Identity.CapQuarantine.close(Map.fetch!(ctx, :self_uri), cap)
         {:ok, %{caps: MapSet.to_list(new_caps)}, [set_caps_effect(new_caps)]}
       end
     else
@@ -743,6 +760,8 @@ defmodule Ezagent.ActionSet.IdentityAdmin do
 
     case Ezagent.Capability.revoke(current_caps, cap_struct) do
       {:ok, new_caps} ->
+        :ok = Ezagent.Identity.CapQuarantine.close(Map.fetch!(ctx, :self_uri), cap_struct)
+
         notify_cap_change(
           ctx,
           :cap_revoked,

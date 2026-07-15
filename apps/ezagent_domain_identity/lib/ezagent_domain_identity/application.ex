@@ -61,6 +61,13 @@ defmodule EzagentDomainIdentity.Application do
   @impl true
   def start(_type, _args) do
     :ok = register_identity_behaviors()
+    :ok = Ezagent.Cap.ReissuePolicy.Registry.register(Ezagent.Identity.CapReissuePolicy, 10)
+
+    :ok =
+      Ezagent.Cap.ReissuePolicy.Registry.register(
+        Ezagent.Identity.RecipeCapReissuePolicy,
+        90
+      )
 
     # Agent-owned config-evolve (spec 2026-06-11 §6): the durable-config
     # ConfigStore/ConfigObject/ConfigProjection moved here from socialware.

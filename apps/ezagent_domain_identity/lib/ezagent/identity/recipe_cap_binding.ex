@@ -68,6 +68,42 @@ defmodule Ezagent.Identity.RecipeCapBinding do
   end
 
   @doc """
+  Refresh an unsigned binding only while its exact captured artifact is current.
+
+  This is the binding-home CAS used by cap self-heal. Normal idempotent upsert
+  intentionally preserves a same-content binding; this operation instead
+  advances the version after re-issuing the complete authoritative recipe set.
+  """
+  @spec refresh_exact(URI.t(), Capability.t()) ::
+          {:ok, %{caps: [Capability.t()], replacement: Capability.t(), version: pos_integer()}}
+          | {:ok, :no_match}
+          | {:error, term()}
+  def refresh_exact(%URI{} = agent_uri, %Capability{} = expected) do
+    canonical = agent_uri |> Ezagent.URI.instance() |> URI.to_string()
+
+    with {:ok, captured} <- binding_for_refresh(canonical, expected),
+         {:ok, issued} <- issue_all(captured.agent_uri, captured.issuer_uri, captured.caps),
+         :ok <-
+           validate_issued_set(
+             issued,
+             captured.agent_uri,
+             captured.workspace_uri,
+             captured.issuer_uri
+           ),
+         {:ok, refreshed} <- cas_refresh(captured, issued),
+         %Capability{} = replacement <-
+           Enum.find(refreshed.caps, fn cap ->
+             Capability.identity_key(cap) == Capability.identity_key(expected)
+           end) do
+      {:ok, Map.put(refreshed, :replacement, replacement)}
+    else
+      :no_match -> {:ok, :no_match}
+      nil -> {:error, :replacement_missing}
+      {:error, _reason} = error -> error
+    end
+  end
+
+  @doc """
   Fetch an active binding by canonical agent instance.
 
   Tombstoned, malformed, corrupted, or structurally invalid rows fail closed as
@@ -152,6 +188,105 @@ defmodule Ezagent.Identity.RecipeCapBinding do
     |> case do
       {:ok, issued} -> {:ok, Enum.reverse(issued)}
       {:error, _reason} = error -> error
+    end
+  end
+
+  defp binding_for_refresh(canonical, expected) do
+    case Repo.get(__MODULE__, canonical) do
+      %__MODULE__{tombstoned_at: nil} = binding ->
+        with {:ok, agent_uri} <- parse_uri(binding.agent_uri),
+             {:ok, workspace_uri} <- parse_uri(binding.workspace_uri),
+             {:ok, issuer_uri} <- parse_uri(binding.issuer_uri),
+             {:ok, ^workspace_uri} <- validate_binding_uris(agent_uri, issuer_uri),
+             true <- binding.version > 0 and binding.recipe_name != "",
+             {:ok, caps} <- decode_caps(binding.artifacts),
+             true <- canonical_caps(caps) == caps,
+             true <- valid_refresh_content?(binding, caps),
+             true <- exact_binding_cap?(caps, expected) do
+          {:ok,
+           %{
+             agent_uri: agent_uri,
+             agent_key: canonical,
+             workspace_uri: workspace_uri,
+             issuer_uri: issuer_uri,
+             recipe_name: binding.recipe_name,
+             version: binding.version,
+             caps: caps,
+             content_hash: binding.content_hash
+           }}
+        else
+          false -> :no_match
+          _ -> {:error, :invalid_binding}
+        end
+
+      _ ->
+        :no_match
+    end
+  end
+
+  defp valid_refresh_content?(binding, caps) do
+    attrs = %{
+      agent_uri: binding.agent_uri,
+      workspace_uri: binding.workspace_uri,
+      recipe_name: binding.recipe_name,
+      issuer_uri: binding.issuer_uri
+    }
+
+    content_hash(attrs, caps) == binding.content_hash
+  end
+
+  defp exact_binding_cap?(caps, expected) do
+    same_identity =
+      Enum.filter(caps, fn cap ->
+        Capability.identity_key(cap) == Capability.identity_key(expected)
+      end)
+
+    same_identity == [expected]
+  end
+
+  defp cas_refresh(captured, issued) do
+    agent_key = captured.agent_key
+
+    Repo.transaction(fn ->
+      current =
+        from(binding in __MODULE__,
+          where: binding.agent_uri == ^agent_key,
+          lock: "FOR UPDATE"
+        )
+        |> Repo.one()
+
+      with %__MODULE__{tombstoned_at: nil} = current <- current,
+           true <- current.version == captured.version,
+           true <- current.content_hash == captured.content_hash,
+           {:ok, current_caps} <- decode_caps(current.artifacts),
+           true <- current_caps === captured.caps do
+        attrs =
+          binding_attrs(
+            captured.agent_uri,
+            captured.workspace_uri,
+            captured.recipe_name,
+            captured.issuer_uri,
+            issued
+          )
+          |> Map.put(:version, current.version + 1)
+          |> Map.put(:tombstoned_at, nil)
+          |> Map.put(:gc_pruned_at, nil)
+
+        current
+        |> changeset(attrs)
+        |> Repo.update()
+        |> case do
+          {:ok, updated} -> fetched(updated, canonical_caps(issued))
+          {:error, changeset} -> Repo.rollback(changeset)
+        end
+      else
+        _ -> Repo.rollback(:cas_miss)
+      end
+    end)
+    |> case do
+      {:ok, fetched} -> {:ok, fetched}
+      {:error, :cas_miss} -> {:ok, :no_match}
+      {:error, reason} -> {:error, reason}
     end
   end
 

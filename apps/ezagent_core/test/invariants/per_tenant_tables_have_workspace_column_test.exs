@@ -105,6 +105,9 @@ defmodule EzagentCore.Invariants.PerTenantTablesHaveWorkspaceColumnTest do
     # Phase 3 S5 — pre-issued recipe artifacts are keyed to one concrete agent;
     # the binding must stay inside that agent's workspace boundary.
     {Ezagent.Identity.RecipeCapBinding, "recipe_cap_bindings"},
+    # Signing self-heal quarantine is keyed by a holder in one workspace;
+    # strict audits and operator resolution must never cross tenant boundaries.
+    {Ezagent.Identity.CapQuarantine, "cap_quarantine"},
     # Entity-caps scoped Task B — the outbound audit/revoke ledger is tenant-owned
     # by the grantee workspace, even when the accountable issuer is cross-workspace.
     {Ezagent.OutboundGrant, "outbound_grants"},

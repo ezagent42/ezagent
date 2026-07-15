@@ -50,7 +50,7 @@ Reproduce the coordinator's setup on this host. **NEVER** use the live `canary`/
           EZAGENT_SIGNING_SEED_V1="<a ≥32-byte string>"    # runtime_seed needs ≥ @hash_size (32) bytes
    export NO_PROXY=127.0.0.1,localhost
    mix ecto.migrate     # expect "already up" — Phase-4 adds NO columns (signature lives in caps_json JSON)
-   mix run <your_test>.exs   # e.g. Ezagent.Identity.CapSigningBackfill.dry_run() → {would_sign,quarantined,skipped}
+   mix ezagent.caps.signing_audit --strict   # independent four-source signing audit
    ```
    Note: `mix run` scripts may boot the app (activation writes snapshots to the throwaway DB — fine, it's disposable). Prefer a proper ExUnit test with a sandbox for the empirical audit to avoid boot side-effects (the coordinator's ad-hoc `mix run` harness was unclean — write it as a test).
 

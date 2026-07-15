@@ -2,10 +2,10 @@ defmodule Ezagent.Cap.DeliveryOutbox.Envelope do
   @moduledoc false
 
   alias Ezagent.{Capability, Invocation}
-  alias Ezagent.Cap.Delivery
+  alias Ezagent.Cap.{Delivery, HealRequest}
 
   @version 1
-  @delivery_actions [:absorb_cap, :revoke_cap]
+  @delivery_actions [:absorb_cap, :revoke_cap, :heal_cap]
   @keys [
     :authorization_rule,
     :caller,
@@ -71,6 +71,7 @@ defmodule Ezagent.Cap.DeliveryOutbox.Envelope do
       case envelope.op do
         :absorb_cap -> %{artifact: envelope.cap}
         :revoke_cap -> %{cap: envelope.cap}
+        :heal_cap -> %{request: envelope.cap}
       end
 
     ctx = %{
@@ -104,14 +105,15 @@ defmodule Ezagent.Cap.DeliveryOutbox.Envelope do
   @spec invocation_identity(Invocation.t()) ::
           {:ok, String.t()} | {:error, :invalid_delivery_envelope}
   def invocation_identity(%Invocation{args: args}) do
-    case Map.get(args, :artifact) || Map.get(args, :cap) do
+    case Map.get(args, :artifact) || Map.get(args, :cap) || Map.get(args, :request) do
       %Capability{} = cap -> {:ok, payload_identity(cap)}
+      %HealRequest{} = request -> {:ok, payload_identity(request)}
       _ -> {:error, :invalid_delivery_envelope}
     end
   end
 
   @doc false
-  @spec operation!(Invocation.t()) :: :absorb_cap | :revoke_cap
+  @spec operation!(Invocation.t()) :: :absorb_cap | :revoke_cap | :heal_cap
   def operation!(%Invocation{} = invocation) do
     case Ezagent.URI.behavior_action(invocation.target) do
       {:ok, {:identity, action}} when action in @delivery_actions -> action
@@ -119,9 +121,10 @@ defmodule Ezagent.Cap.DeliveryOutbox.Envelope do
   end
 
   @doc false
-  @spec payload_identity(Capability.t()) :: String.t()
-  def payload_identity(%Capability{} = cap) do
-    :crypto.hash(:sha256, :erlang.term_to_binary(cap))
+  @spec payload_identity(Capability.t() | HealRequest.t()) :: String.t()
+  def payload_identity(payload)
+      when is_struct(payload, Capability) or is_struct(payload, HealRequest) do
+    :crypto.hash(:sha256, :erlang.term_to_binary(payload, [:deterministic]))
     |> Base.encode16(case: :lower)
   end
 
@@ -133,6 +136,22 @@ defmodule Ezagent.Cap.DeliveryOutbox.Envelope do
     case Ezagent.URI.behavior_action(target) do
       {:ok, {:identity, :absorb_cap}} -> {:ok, {:identity_absorb, :absorb_cap, cap}}
       _ -> :error
+    end
+  end
+
+  defp producer_parts(%Invocation{
+         target: target,
+         args: %{request: %HealRequest{} = request},
+         ctx: %{caller: :vm_internal, cap_delivery_producer: :identity_heal}
+       }) do
+    case Ezagent.URI.behavior_action(target) do
+      {:ok, {:identity, :heal_cap}} ->
+        if HealRequest.valid?(request),
+          do: {:ok, {:identity_heal, :heal_cap, request}},
+          else: :error
+
+      _ ->
+        :error
     end
   end
 
@@ -194,20 +213,26 @@ defmodule Ezagent.Cap.DeliveryOutbox.Envelope do
            producer: producer,
            target_uri: target_uri,
            op: op,
-           cap: %Capability{} = cap,
+           cap: payload,
            caller: caller,
            caps: caps,
            authorization_rule: rule
          },
          %Delivery{} = delivery
        )
-       when producer in [:identity_absorb, :identity_revoke] and
+       when producer in [:identity_absorb, :identity_revoke, :identity_heal] and
               op in @delivery_actions and is_binary(target_uri) and is_list(caps) do
-    expected_producer = if op == :absorb_cap, do: :identity_absorb, else: :identity_revoke
+    expected_producer =
+      case op do
+        :absorb_cap -> :identity_absorb
+        :revoke_cap -> :identity_revoke
+        :heal_cap -> :identity_heal
+      end
 
     if producer == expected_producer and target_uri == delivery.target_uri and
          op == delivery.op and delivery.payload_version == @version and
-         payload_identity(cap) == delivery.payload_identity and valid_caller?(caller) and
+         valid_payload?(op, payload) and payload_identity(payload) == delivery.payload_identity and
+         valid_caller?(caller) and
          Enum.all?(caps, &match?(%Capability{}, &1)) and (is_nil(rule) or is_atom(rule)) do
       :ok
     else
@@ -216,4 +241,8 @@ defmodule Ezagent.Cap.DeliveryOutbox.Envelope do
   end
 
   defp validate(_, _), do: {:error, :invalid_shape}
+
+  defp valid_payload?(op, %Capability{}) when op != :heal_cap, do: true
+  defp valid_payload?(:heal_cap, %HealRequest{} = request), do: HealRequest.valid?(request)
+  defp valid_payload?(_op, _payload), do: false
 end

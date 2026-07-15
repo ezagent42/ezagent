@@ -18,8 +18,6 @@ defmodule Ezagent.Invariants.EntityCapsAccessGateTest do
                               :load, 1},
                              {"apps/ezagent_domain_identity/lib/ezagent/entity_caps/user_store.ex",
                               :update_locked, 2},
-                             {"apps/ezagent_domain_identity/lib/ezagent/identity/cap_signing_backfill.ex",
-                              :user_candidates, 0},
                              {"apps/ezagent_domain_identity/lib/ezagent/identity/grant_migration.ex",
                               :gate, 0},
                              {"apps/ezagent_domain_identity/lib/ezagent/identity/grant_migration.ex",
@@ -31,8 +29,6 @@ defmodule Ezagent.Invariants.EntityCapsAccessGateTest do
                                        :snapshot_caps, 1},
                                       {"apps/ezagent_domain_identity/lib/ezagent/identity/grant_migration.ex",
                                        :rewrite_identity_caps, 1},
-                                      {"apps/ezagent_domain_identity/lib/ezagent/identity/cap_signing_backfill.ex",
-                                       :identity_caps, 1},
                                       {"apps/ezagent_core/lib/ezagent/kind/snapshot.ex",
                                        :verify_snapshot_caps, 2}
                                     ])

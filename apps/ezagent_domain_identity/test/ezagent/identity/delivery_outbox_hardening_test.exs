@@ -5,7 +5,9 @@ defmodule Ezagent.Identity.DeliveryOutboxHardeningTest do
 
   alias Ezagent.Cap.Delivery
   alias Ezagent.Cap.DeliveryOutbox
+  alias Ezagent.Cap.DeliveryOutbox.Envelope
   alias Ezagent.Cap.DeliveryOutbox.Sweeper
+  alias Ezagent.Cap.HealRequest
   alias Ezagent.{Capability, Invocation}
   alias EzagentCore.Repo
 
@@ -160,6 +162,33 @@ defmodule Ezagent.Identity.DeliveryOutboxHardeningTest do
     assert envelope.target_uri == URI.to_string(target)
     assert envelope.caller == :vm_internal
     assert envelope.caps == []
+    refute contains_pid?(envelope)
+
+    terminate(target, pid)
+  end
+
+  test "a heal request persists its exact CAS artifact in a dedicated durable envelope" do
+    {target, pid} = spawn_target("heal-envelope")
+    :ok = Ezagent.ReadyGate.put(target, :not_ready)
+    expected = capability(target)
+
+    request = %HealRequest{
+      expected: expected,
+      class: :identity_self,
+      action: {:reissue, {:genesis, target}}
+    }
+
+    assert :ok = Ezagent.Identity.CapSelfHeal.enqueue(target, request)
+
+    delivery = one_delivery!(target)
+    envelope = :erlang.binary_to_term(delivery.payload, [:safe])
+
+    assert delivery.op == :heal_cap
+    assert envelope.op == :heal_cap
+    assert envelope.producer == :identity_heal
+    assert envelope.cap === request
+    assert envelope.target_uri == URI.to_string(target)
+    assert delivery.payload_identity == Envelope.payload_identity(request)
     refute contains_pid?(envelope)
 
     terminate(target, pid)

@@ -61,6 +61,7 @@ defmodule EzagentDomainInstanceMessage.Application do
   @impl true
   def start(_type, _args) do
     :ok = register_session_behaviors()
+    :ok = Ezagent.Cap.ReissuePolicy.Registry.register(Ezagent.Session.CapReissuePolicy, 30)
     :ok = declare_routing_tables()
 
     # PR-8 (transport #53) — the orchestrator-MCP transport subsystem

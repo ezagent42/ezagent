@@ -7,6 +7,7 @@ defmodule Ezagent.Invariants.EntityCapsMutationBoundaryTest do
 
   @facade "apps/ezagent_domain_identity/lib/ezagent/entity_caps.ex"
   @identity_facade "apps/ezagent_domain_identity/lib/ezagent/identity.ex"
+  @self_heal "apps/ezagent_domain_identity/lib/ezagent/identity/cap_self_heal.ex"
   @cascade_hook "apps/ezagent_core/lib/ezagent/kind/cascade_hook.ex"
   @identity_behavior "apps/ezagent_domain_identity/lib/ezagent/behavior/identity.ex"
   @actions [:persist_caps, :store_cap, :remove_cap]
@@ -25,7 +26,8 @@ defmodule Ezagent.Invariants.EntityCapsMutationBoundaryTest do
              MapSet.new([
                {@cascade_hook, :maybe_enqueue, 1},
                {@facade, :dispatch_mutation, 3},
-               {@identity_facade, :absorb_cap, 2}
+               {@identity_facade, :absorb_cap, 2},
+               {@self_heal, :enqueue, 2}
              ])
 
     assert direct_handler_calls() == MapSet.new()

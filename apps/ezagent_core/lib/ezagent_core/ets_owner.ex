@@ -36,6 +36,7 @@ defmodule EzagentCore.EtsOwner do
     # ordinary Kind ready transitions avoid a cross-workspace DB query. The
     # outbox rows remain authoritative and the Sweeper rehydrates this cache.
     {Ezagent.Cap.DeliveryOutbox, :set},
+    {Ezagent.Cap.ReissuePolicy.Registry, :set},
     {Ezagent.Idempotency, :set},
     {Ezagent.BehaviorRegistry, :set},
     {Ezagent.RoutingRegistry, :set},
