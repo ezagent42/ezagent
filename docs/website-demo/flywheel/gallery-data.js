@@ -29,9 +29,9 @@
     {
       name: 'dealscout-matching', version: '1.1.0',
       title: '投融资撮合树洞 · DealScout matching',
-      description: '说出你在找什么钱 / 项目 / 联合创始人，AI 循着信号把对的那一方捞到面前，你挑对上的牵成一条线。',
+      description: '说出你找什么，AI 从互联网捞信号，把对的那一方捞到你面前，撮合双方牵线。',
       owner: 'DealScout 团队 · DealScout', category: 'match', glyph: '撮', color: 'var(--jade)',
-      tryUrl: '../dealscout/', visibility: 'public_view', hires: 412, rating: '4.8', seed: true,
+      tryUrl: '../dealscout/index.html', visibility: 'public_view', hires: 412, rating: '4.8', seed: true,
     },
     {
       name: 'cs-desk', version: '1.4.2',

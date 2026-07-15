@@ -59,6 +59,12 @@ mainsite.html ──────────────────────
   │
   ├── recruit/index.html                  [L1] 专家招募 · Expert Recruit
   ├── dealscout/index.html                [L1] 投融资撮合 · DealScout
+  │     ├── dealscout/notification/saved.html  (保存的搜索)
+  │     ├── dealscout/connection/inbox.html    (牵线收件箱)
+  │     │     ├── dealscout/connection/request-sent.html  (发送牵线请求)
+  │     │     └── dealscout/connection/world-placeholder.html  (world 占位)
+  │     └── dealscout/service-blueprint.md     (服务蓝图)
+  │
   ├── recruit-publish-flow/publish-entry.html  [L1] Builder 发布入口
   │
   └── flywheel/gallery.html               [L1] Gallery 货架入口
