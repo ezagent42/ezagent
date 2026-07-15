@@ -77,7 +77,10 @@
 6. **ruihua** demo 产品完善（Feishu 设计输入）+ #1378 rebase。
 
 **Coordinator（allenwoods + CC，含 codex = lead 轨道）职责:**
-- **验收 codex 两份返工:** entity-caps scoped A/B/D 实现（`feat/entity-caps-scoped`）+ cap-signing 无尾巴调查 findings（`feat/cap-signing-notail-upgrade`）→ 定无尾巴 re-provision 升级实现 & **enforce 时机**（enforce 不翻直到 audit=0 未签名 authorizer cap）。
+- **验收 codex 两份返工:**
+  - **cap-signing 无尾巴调查（`feat/cap-signing-notail-upgrade`）已返 → coordinator verdict `NEEDS-REVISION`（窄口径）:** 结论**接受**（wildcard 根因=raw artifact 缺 grantee/key_id 非 crypto edge，无需 genesis 豁免；逐类差分代码验证过；15-vs-196 grounding 修正接受；0-tail 顺序合理）→ **re-issue-signed + audit 设计可现在开始**；**阻塞 B1**：调查测试 `before==after` 复跑 2/2 红（启 plugin apps 会改 durable inventory，硬编码 `scanned:15` 非 hermetic），codex 须查因 + 去耦才可当回归 gate。**enforce 仍不翻直到 audit=0。**
+  - **entity-caps scoped A/B/D（`feat/entity-caps-scoped`）** 仍在 lead 轨道（codex 执行）开发。
+- **★ 执行边界 lead 已定（capability-auth-followups，配合 gaga #1406 总纲）:** **lead 轨道独占 Task 2（codex 执行） = EntityCaps A/B/D**（`feat/entity-caps-scoped`，写侧走 `Cap.issue` + 写侧 arch gate 禁止 EntityCaps 外直读写 caps_json）；**gaga 拥有 #1406 sequencing 总纲 + Task 3-6 reader 迁移 + Task 7 no-tail ops，但 Task 3-6 等 lead 轨道 A/B/D（`EntityCaps.load` 契约）落地后再开——entity-caps-patch 完成后由 coordinator 通知 gaga**。gaga 当前继续 **AgentRuntime ARB 迁移 + demo 测试**（不重叠、不阻塞）。#1406 尊重去中心化（不建第三库、不物理统一），与本 plan §0 outbox 边界一致。**decision A（#1394 统一底座）= 只投递不做真相源的 durable-op outbox；禁止回读 outbox 当权威。** 写侧 arch gate 须与 lead 轨道迁移码的 allowlist 协调（别自锁）。
 - **demo 端到端集成粘合 + 验收:** 把 hello live E2E + hello↔kanban 松耦合 + 派活→PR→合→看板流转拼成端到端链，canary 实测验收（gaga 测 → lead 验）。
 - **★ 拍 #1405 的 2 个决策（阻塞 bridge-join/agent-fault 实现）:**
   - **决策 A（#1394 统一底座）:** bridge-join 故障投递 + entity-caps cap 投递合成一套 durable-delivery。**推荐：一张通用 durable-op outbox**——把 entity-caps A 的 outbox 泛化成通用底座，fault-envelope + cap-op 作两类 producer/consumer，共用 retry/backoff（north-star 不许两套 retry）。

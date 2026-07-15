@@ -171,7 +171,13 @@
 <div class="coord">
 <b>Coordinator（allenwoods + CC，含 codex = lead 轨道）职责：</b>
 <ul>
-<li><b>验收 codex 两份返工：</b> entity-caps scoped A/B/D 实现（<code>feat/entity-caps-scoped</code>）+ cap-signing 无尾巴调查 findings（<code>feat/cap-signing-notail-upgrade</code>）→ 定无尾巴 re-provision 升级实现 &amp; <b>enforce 时机</b>（enforce 不翻直到 audit=0 未签名 authorizer cap）。</li>
+<li><b>验收 codex 两份返工：</b>
+  <ul>
+  <li><b>cap-signing 无尾巴调查（<code>feat/cap-signing-notail-upgrade</code>）已返 → coordinator verdict <code>NEEDS-REVISION</code>（窄口径）：</b> 结论<b>接受</b>（wildcard 根因=raw artifact 缺 grantee/key_id 非 crypto edge，无需 genesis 豁免；逐类差分代码验证过；15-vs-196 grounding 修正接受；0-tail 顺序合理）→ <b>re-issue-signed + audit 设计可现在开始</b>；<b>阻塞 B1</b>：调查测试 <code>before==after</code> 复跑 2/2 红（启 plugin apps 会改 durable inventory，硬编码 <code>scanned:15</code> 非 hermetic），codex 须查因 + 去耦才可当回归 gate。<b>enforce 仍不翻直到 audit=0。</b></li>
+  <li><b>entity-caps scoped A/B/D（<code>feat/entity-caps-scoped</code>）</b> 仍在 lead 轨道（codex 执行）开发。</li>
+  </ul>
+</li>
+<li><b>★ 执行边界 lead 已定（capability-auth-followups，配合 gaga <code>#1406</code> 总纲）：</b> <b>lead 轨道独占 Task 2（codex 执行） = EntityCaps A/B/D</b>（<code>feat/entity-caps-scoped</code>，写侧走 <code>Cap.issue</code> + 写侧 arch gate 禁止 EntityCaps 外直读写 caps_json）；<b>gaga 拥有 <code>#1406</code> sequencing 总纲 + Task 3-6 reader 迁移 + Task 7 no-tail ops，但 Task 3-6 等 lead 轨道 A/B/D（<code>EntityCaps.load</code> 契约）落地后再开——entity-caps-patch 完成后由 coordinator 通知 gaga</b>。gaga 当前继续 <b>AgentRuntime ARB 迁移 + demo 测试</b>（不重叠、不阻塞）。<code>#1406</code> 尊重去中心化（不建第三库、不物理统一），与本 plan §0 outbox 边界一致。<b>decision A（<code>#1394</code> 统一底座）= 只投递不做真相源的 durable-op outbox；禁止回读 outbox 当权威。</b> 写侧 arch gate 须与 lead 轨道迁移码的 allowlist 协调（别自锁）。</li>
 <li><b>demo 端到端集成粘合 + 验收：</b> 把 hello live E2E + hello↔kanban 松耦合 + 派活→PR→合→看板流转拼成端到端链，canary 实测验收（gaga 测 → lead 验）。</li>
 <li><b>★ 拍 <code>#1405</code> 的 2 个决策（阻塞 bridge-join/agent-fault 实现）：</b>
   <ul>
