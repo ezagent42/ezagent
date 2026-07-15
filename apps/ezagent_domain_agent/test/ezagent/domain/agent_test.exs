@@ -169,6 +169,103 @@ defmodule Ezagent.Domain.AgentTest do
     end
   end
 
+  describe "ensure_deliverable/1" do
+    test "returns not_created for an Agent URI with no durable state" do
+      agent_uri = Ezagent.URI.new!("entity://team-alpha/agent/never-created-#{u()}")
+
+      assert {:error, :not_created} = Agent.ensure_deliverable(agent_uri)
+    end
+
+    test "reports an already-live Agent without replacing its process" do
+      agent_uri = Ezagent.URI.new!("entity://team-alpha/agent/already-live-#{u()}")
+      put_flavors(%{agent_uri => "py"})
+      {:ok, pid} = Ezagent.Kind.spawn(Ezagent.Entity.Agent, %{uri: agent_uri})
+
+      assert {:ok, :live} = Agent.ensure_deliverable(agent_uri)
+      assert {:ok, ^pid} = Ezagent.KindRegistry.lookup(agent_uri)
+    end
+  end
+
+  describe "ensure_declared_member/1" do
+    test "starts an absent declared Agent through the owner-gated runtime" do
+      agent_uri = Ezagent.URI.new!("entity://team-alpha/agent/declared-member-#{u()}")
+      put_flavors(%{agent_uri => "py"})
+
+      assert {:ok, pid} = Agent.ensure_declared_member(agent_uri)
+      assert is_pid(pid)
+      assert {:ok, ^pid} = Ezagent.KindRegistry.lookup(agent_uri)
+    end
+
+    test "reuses the existing process for an already-live declared Agent" do
+      agent_uri = Ezagent.URI.new!("entity://team-alpha/agent/declared-live-#{u()}")
+      put_flavors(%{agent_uri => "future"})
+      {:ok, pid} = Ezagent.Kind.spawn(Ezagent.Entity.Agent, %{uri: agent_uri})
+
+      assert {:ok, ^pid} = Agent.ensure_declared_member(agent_uri)
+    end
+  end
+
+  describe "materialization command boundary" do
+    test "declared materialization preserves atomic adoption metadata" do
+      agent_uri = Ezagent.URI.new!("entity://team-alpha/agent/materialized-live-#{u()}")
+      put_flavors(%{agent_uri => "future"})
+      {:ok, pid} = Ezagent.Kind.spawn(Ezagent.Entity.Agent, %{uri: agent_uri})
+
+      assert {:ok, :already_started, ^pid} = Agent.materialize_declared(agent_uri)
+    end
+
+    test "template materialization preserves the owner implementation's invalid-argument result" do
+      assert {:error, :invalid_spawn_from_template_content_args} =
+               Agent.materialize_from_template(%{}, :invalid, :invalid, :invalid, [])
+    end
+
+    test "manifest materialization preserves the owner implementation's invalid-argument result" do
+      assert {:error, :invalid_spawn_from_manifest_args} =
+               Agent.materialize_from_manifest(:invalid, %{}, :invalid, :invalid, :invalid, [])
+    end
+  end
+
+  describe "retire_spawned/4" do
+    test "refuses retirement when the claimed provenance is absent" do
+      agent_uri = Ezagent.URI.new!("entity://team-alpha/agent/foreign-#{u()}")
+      owner_uri = Ezagent.URI.new!("entity://team-alpha/user/owner-#{u()}")
+
+      assert {:error, :unverified_spawn_provenance} =
+               Agent.retire_spawned(agent_uri, owner_uri, :rollback)
+    end
+
+    test "retires an Agent whose durable lineage reaches the claimed root" do
+      agent_uri = Ezagent.URI.new!("entity://team-alpha/agent/retire-#{u()}")
+      owner_uri = Ezagent.URI.new!("entity://team-alpha/user/owner-#{u()}")
+      put_flavors(%{agent_uri => "future"})
+      :ok = Ezagent.AgentLineage.record(agent_uri, owner_uri)
+      {:ok, _pid} = Ezagent.Kind.spawn(Ezagent.Entity.Agent, %{uri: agent_uri})
+
+      assert {:ok, %{termination: :destroyed, provenance: :verified}} =
+               Agent.retire_spawned(agent_uri, owner_uri, :rollback)
+
+      assert :error = Ezagent.KindRegistry.lookup(agent_uri)
+    end
+
+    test "records a durable cleanup obligation for the explicit unverified fallback" do
+      agent_uri = Ezagent.URI.new!("entity://team-alpha/agent/legacy-#{u()}")
+
+      assert {:partial,
+              %{termination: :destroyed, provenance: :unverified, cleanup_obligation: :dlq}} =
+               Agent.retire_spawned(agent_uri, nil, :session_delete,
+                 allow_unverified_fallback: true
+               )
+
+      assert [[payload]] =
+               EzagentCore.Repo.query!(
+                 "SELECT payload FROM dlq WHERE reason = 'agent_retirement_cleanup' " <>
+                   "ORDER BY id DESC LIMIT 1"
+               ).rows
+
+      assert Jason.decode!(payload)["target"] == URI.to_string(agent_uri)
+    end
+  end
+
   defp put_flavors(flavors) when is_map(flavors) do
     by_uri =
       Map.new(flavors, fn {uri, flavor} ->

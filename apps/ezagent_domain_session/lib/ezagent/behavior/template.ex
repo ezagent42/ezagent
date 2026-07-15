@@ -381,7 +381,7 @@ defmodule Ezagent.ActionSet.Template do
              {:ok, workspace_uri} <- resolve_workspace_uri(content, args, self_uri),
              spawned_by <- resolve_spawned_by(args, ctx),
              {:ok, spawn_result} when is_map(spawn_result) <-
-               Ezagent.Entity.Agent.spawn_from_template_content(
+               Ezagent.Domain.Agent.materialize_from_template(
                  content,
                  instance_uri,
                  spawned_by,

@@ -610,7 +610,7 @@ defmodule EzagentDomainInstanceMessage.SessionCreator.DefinitionAgents do
   end
 
   defp join_member(%URI{} = session_uri, %URI{} = member_uri, role_name) do
-    _ = SessionCreator.demand_spawn_member(member_uri)
+    _ = Ezagent.Domain.Agent.ensure_declared_member(member_uri)
     target = Ezagent.URI.with_action(session_uri, :session, :join)
     admin = Ezagent.Entity.User.admin_uri()
 
@@ -773,7 +773,6 @@ defmodule EzagentDomainInstanceMessage.SessionCreator.DefinitionAgents do
 
   defp passive_recipe?(recipe),
     do: Map.get(recipe, :passive, Map.get(recipe, "passive", false)) == true
-
 
   defp existing_member_for_role(%URI{} = session_uri, role_name) do
     Members.role_name_to_uri(read_members(session_uri), role_name)

@@ -94,7 +94,7 @@ defmodule Ezagent.ActionSet.Session.Teardown do
         :ok
 
       {:error, reason} ->
-        handle_reap_error(worker_uri, reason, mode)
+        handle_reap_error(worker_uri, owner_uri, reason, mode)
     end
   end
 
@@ -235,19 +235,22 @@ defmodule Ezagent.ActionSet.Session.Teardown do
   # best-effort cascade falls back to the VM-internal `Lifecycle.destroy/2`
   # primitive (its `Sandbox.destroy/2` lifecycle hook GCs the config_dir too).
   # Strict reaps surface the error (fail-closed authorization).
-  defp handle_reap_error(%URI{} = worker_uri, reason, :best_effort) do
+  defp handle_reap_error(%URI{} = worker_uri, owner_uri, reason, :best_effort) do
     Logger.warning(
       "Session.Teardown.cascade: owner-authority reap of #{inspect(worker_uri)} failed " <>
         "(#{inspect(reason)}) — falling back to VM-internal Lifecycle.destroy (junk/" <>
         "ownerless/dead-orchestrator safety net, SPEC §2.4)."
     )
 
-    _ = Ezagent.Lifecycle.destroy(worker_uri, :session_delete)
-    _ = Ezagent.AgentLineage.forget(worker_uri)
+    _ =
+      Ezagent.Domain.Agent.retire_spawned(worker_uri, owner_uri, :session_delete,
+        allow_unverified_fallback: true
+      )
+
     :ok
   end
 
-  defp handle_reap_error(_worker_uri, reason, :strict),
+  defp handle_reap_error(_worker_uri, _owner_uri, reason, :strict),
     do: {:error, {:worker_teardown_failed, reason}}
 
   defp safe(fun) do

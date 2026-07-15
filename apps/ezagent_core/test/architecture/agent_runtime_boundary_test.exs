@@ -13,177 +13,27 @@ defmodule EzagentCore.AgentRuntimeBoundaryTest do
                   "*.ex"
                 ])
 
-  @allowlist [
-    %{
-      path: "apps/ezagent_domain_session/lib/ezagent/behavior/session/delivery.ex",
-      class: :agent_ensure_live,
-      source_anchor:
-        "def:dispatch_receive_call/3|Ezagent.SpawnRegistry.ensure_live(recipient_uri)",
-      reason: "ARB-3 delivery cutover"
-    },
-    %{
-      path: "apps/ezagent_domain_session/lib/ezagent/behavior/session/teardown.ex",
-      class: :agent_executor_control,
-      source_anchor:
-        "def:cascade_teardown/2|Ezagent.Session.SessionManager.stop(orchestrator_uri)",
-      reason: "ARB-4 executor retirement cutover"
-    },
-    %{
-      path: "apps/ezagent_domain_session/lib/ezagent/behavior/session/teardown.ex",
-      class: :agent_destroy,
-      source_anchor:
-        "defp:handle_reap_error/3|Ezagent.Lifecycle.destroy(worker_uri, :session_delete)",
-      reason: "ARB-4 member retirement cutover"
-    },
-    %{
-      path: "apps/ezagent_domain_session/lib/ezagent/behavior/template.ex",
-      class: :agent_materialization,
-      source_anchor:
-        "defp:instantiate_agent_template/2|Ezagent.Entity.Agent.spawn_from_template_content(content, instance_uri, spawned_by, workspace_uri, [ caller: Map.get(ctx, :caller), caps: Map.get(ctx, :caps), source_template_uri: self_uri, explicit_source: Map.get(args, :explicit_source) ])",
-      reason: "ARB-3 materialization cutover"
-    },
-    %{
-      path: "apps/ezagent_domain_session/lib/ezagent/domain/agent.ex",
-      class: :legal_conversation_or_read,
-      source_anchor: "def:lifecycle_status/1|Ezagent.KindRegistry.lookup(agent_uri)",
-      reason: "ARB-2 facade ownership correction"
-    },
-    %{
-      path: "apps/ezagent_domain_session/lib/ezagent/domain/agent.ex",
-      class: :agent_executor_control,
-      source_anchor: "defp:delegate_alive_status/2|Ezagent.Domain.Pty.alive?(agent_uri)",
-      reason: "ARB-2 facade ownership correction"
-    },
-    %{
-      path: "apps/ezagent_domain_session/lib/ezagent/domain/agent.ex",
-      class: :agent_executor_control,
-      source_anchor: "defp:delegate_alive_status/2|Ezagent.Domain.Pty.status(agent_uri)",
-      reason: "ARB-2 facade ownership correction"
-    },
-    %{
-      path: "apps/ezagent_domain_session/lib/ezagent/domain/agent.ex",
-      class: :agent_config_or_credential_control,
-      source_anchor:
-        "def:read_sandbox/2|Ezagent.ActionSet.Sandbox.read_persisted_state(agent_uri)",
-      reason: "ARB-2 facade ownership correction"
-    },
-    %{
-      path: "apps/ezagent_domain_session/lib/ezagent/domain/agent.ex",
-      class: :agent_config_or_credential_control,
-      source_anchor:
-        "defp:trusted_config_dir/1|Ezagent.ActionSet.Sandbox.read_persisted_state(agent_uri)",
-      reason: "ARB-2 facade ownership correction"
-    },
-    %{
-      path: "apps/ezagent_domain_session/lib/ezagent/domain/agent.ex",
-      class: :agent_executor_control,
-      source_anchor: "def:subprocess_phase/1|Ezagent.Domain.Pty.Server.phase(agent_uri)",
-      reason: "ARB-2 facade ownership correction"
-    },
-    %{
-      path: "apps/ezagent_domain_session/lib/ezagent/e2e/scenarios/agent_contract_g4.ex",
-      class: :agent_executor_control,
-      source_anchor:
-        "defp:provision_orchestrator_and_worker/1|Ezagent.Session.SessionManager.ensure_started([ orchestrator_uri: orchestrator_uri, session_uri: session_uri, workspace_uri: ws, owner_uri: orchestrator_uri ])",
-      reason: "ARB-3 executor materialization cutover"
-    },
-    %{
-      path: "apps/ezagent_domain_session/lib/ezagent/e2e/scenarios/agent_contract_g4.ex",
-      class: :agent_materialization,
-      source_anchor: "def:instantiate/3|Ezagent.SpawnRegistry.spawn_detailed(agent_uri)",
-      reason: "ARB-3 materialization cutover"
-    },
-    %{
-      path: "apps/ezagent_domain_session/lib/ezagent/entity/session/orchestrator.ex",
-      class: :agent_executor_control,
-      source_anchor:
-        "def:register_orchestrator_mcp_context/6|Ezagent.Session.SessionManager.ensure_started([ orchestrator_uri: orchestrator_uri, session_uri: session_uri, workspace_uri: workspace_uri, owner_uri: owner_uri, parent_template_uri: parent_template_uri ])",
-      reason: "ARB-3 executor materialization cutover"
-    },
-    %{
-      path: "apps/ezagent_domain_session/lib/ezagent/orchestrator/tools.ex",
-      class: :agent_materialization,
-      source_anchor:
-        "defp:do_spawn_member/8|Ezagent.Entity.Agent.spawn_from_template_content(content, member_uri, caller, workspace_uri, [caller: caller, caps: caps, source_template_uri: source_template_uri])",
-      reason: "ARB-3 materialization cutover"
-    },
-    %{
-      path: "apps/ezagent_domain_session/lib/ezagent/orchestrator/tools/member_template.ex",
-      class: :agent_materialization,
-      source_anchor:
-        "defp:spawn_fresh_member/8|Ezagent.Entity.Agent.spawn_from_template_content(content, member_uri, caller, workspace_uri, [caller: caller, caps: caps, source_template_uri: source_template_uri])",
-      reason: "ARB-3 materialization cutover"
-    },
-    %{
-      path: "apps/ezagent_domain_session/lib/ezagent/orchestrator/tools/participants.ex",
-      class: :agent_materialization,
-      source_anchor:
-        "defp:spawn_manifest_participant/7|Ezagent.Entity.Agent.spawn_from_manifest(manifest, slots, member_uri, caller, workspace_uri, [caller: caller, caps: caps])",
-      reason: "ARB-3 materialization cutover"
-    },
-    %{
-      path:
-        "apps/ezagent_domain_session/lib/ezagent_domain_instance_message/session_creator/definition_agents.ex",
-      class: :agent_materialization,
-      source_anchor:
-        "defp:join_member/3|EzagentDomainInstanceMessage.SessionCreator.demand_spawn_member(member_uri)",
-      reason: "ARB-3 materialization cutover"
-    },
-    %{
-      path:
-        "apps/ezagent_domain_session/lib/ezagent_domain_instance_message/session_creator/materializer.ex",
-      class: :agent_materialization,
-      source_anchor:
-        "def:join_session_members/2|EzagentDomainInstanceMessage.SessionCreator.demand_spawn_member(member_uri)",
-      reason: "ARB-3 materialization cutover"
-    },
-    %{
-      path:
-        "apps/ezagent_domain_session/lib/ezagent_domain_instance_message/session_creator/materializer.ex",
-      class: :agent_executor_control,
-      source_anchor: "defp:evict_orchestrator_runtime/1|Ezagent.Session.SessionManager.stop(uri)",
-      reason: "ARB-4 executor retirement cutover"
-    },
-    %{
-      path:
-        "apps/ezagent_domain_session/lib/ezagent_domain_instance_message/session_creator/rollback.ex",
-      class: :agent_executor_control,
-      source_anchor:
-        "def:rollback_session/3|Ezagent.Session.SessionManager.stop(orchestrator_uri)",
-      reason: "ARB-4 executor retirement cutover"
-    },
-    %{
-      path:
-        "apps/ezagent_domain_session/lib/ezagent_domain_instance_message/session_creator/rollback.ex",
-      class: :agent_destroy,
-      source_anchor:
-        "def:rollback_session/3|Ezagent.Lifecycle.destroy(orchestrator_uri, :rollback)",
-      reason: "ARB-4 orchestrator retirement cutover"
-    },
-    %{
-      path:
-        "apps/ezagent_domain_session/lib/ezagent_domain_instance_message/session_creator/rollback.ex",
-      class: :agent_destroy,
-      source_anchor: "def:compensate_spawned_members/1|Ezagent.Lifecycle.destroy(uri, :rollback)",
-      reason: "ARB-4 member retirement cutover"
-    },
-    %{
-      path:
-        "apps/ezagent_domain_session/lib/ezagent_domain_instance_message/session_creator/template_team.ex",
-      class: :agent_materialization,
-      source_anchor:
-        "defp:ensure_legacy_member_present/6|Ezagent.Entity.Agent.spawn_from_template_content(content, agent_uri, granted_by, workspace_uri, [ caller: granted_by, caps: EzagentDomainInstanceMessage.SessionCreator.list_caps_for_materialization(granted_by), source_template_uri: source_template_uri ])",
-      reason: "ARB-3 materialization cutover"
-    },
-    %{
-      path:
-        "apps/ezagent_domain_session/lib/ezagent_domain_instance_message/session_creator/template_team.ex",
-      class: :agent_materialization,
-      source_anchor:
-        "defp:ensure_legacy_member_present/6|EzagentDomainInstanceMessage.SessionCreator.demand_spawn_member(member_uri)",
-      reason: "ARB-3 materialization cutover"
-    }
-  ]
+  @session_agent_facade Path.join([
+                          @repo_root,
+                          "apps",
+                          "ezagent_domain_session",
+                          "lib",
+                          "ezagent",
+                          "domain",
+                          "agent.ex"
+                        ])
+  @owned_agent_facade Path.join([
+                        @repo_root,
+                        "apps",
+                        "ezagent_domain_agent",
+                        "lib",
+                        "ezagent",
+                        "domain",
+                        "agent.ex"
+                      ])
+  @agent_mix Path.join([@repo_root, "apps", "ezagent_domain_agent", "mix.exs"])
+
+  @allowlist []
 
   test "repository Agent runtime crossings are exactly allowlisted" do
     paths = Path.wildcard(@session_glob)
@@ -198,6 +48,18 @@ defmodule EzagentCore.AgentRuntimeBoundaryTest do
     assert result.multiply_matched_allowances == []
     assert result.unallowlisted_offenders == []
     assert result.invalid_allowances == []
+  end
+
+  test "Agent lifecycle facade is owned by domain-agent without a reverse session or plugin dependency" do
+    refute File.exists?(@session_agent_facade)
+    assert File.exists?(@owned_agent_facade)
+
+    facade_source = File.read!(@owned_agent_facade)
+    assert facade_source =~ "defmodule Ezagent.Domain.Agent do"
+
+    dependency_source = File.read!(@agent_mix)
+    refute dependency_source =~ "{:ezagent_domain_session,"
+    refute dependency_source =~ ~r/{:ezagent_plugin_[a-z0-9_]+,/
   end
 
   test "validator reports a stale exact allowance" do
@@ -410,7 +272,7 @@ defmodule EzagentCore.AgentRuntimeBoundaryTest do
            ) == []
   end
 
-  test "scanner classifies SessionManager only for syntactically proven Agent targets" do
+  test "scanner treats SessionManager as the legal Session-owned conversation executor" do
     source = """
     Ezagent.Session.SessionManager.stop(orchestrator_uri)
     Ezagent.Session.SessionManager.stop(worker_uri)
@@ -418,11 +280,7 @@ defmodule EzagentCore.AgentRuntimeBoundaryTest do
     Ezagent.Session.SessionManager.ensure_started(session_uri: session_uri)
     """
 
-    assert [
-             %{class: :agent_executor_control, line: 1},
-             %{class: :agent_executor_control, line: 2},
-             %{class: :agent_executor_control, line: 3}
-           ] = Scanner.scan_source("session_manager_precision.ex", source)
+    assert Scanner.scan_source("session_manager_precision.ex", source) == []
   end
 
   test "inventory-only generic target seams do not transfer to another Session path" do

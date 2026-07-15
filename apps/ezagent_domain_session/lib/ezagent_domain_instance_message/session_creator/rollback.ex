@@ -45,7 +45,11 @@ defmodule EzagentDomainInstanceMessage.SessionCreator.Rollback do
         end)
       end
 
-      safe(:destroy_orchestrator, fn -> Ezagent.Lifecycle.destroy(orchestrator_uri, :rollback) end)
+      safe(:destroy_orchestrator, fn ->
+        Ezagent.Domain.Agent.retire_spawned(orchestrator_uri, owner_uri, :rollback,
+          allow_unverified_fallback: true
+        )
+      end)
 
       safe(:unbind_orchestrator, fn -> Ezagent.WorkspaceRegistry.unbind(orchestrator_uri) end)
       forget_lineage(orchestrator_uri)
@@ -77,7 +81,7 @@ defmodule EzagentDomainInstanceMessage.SessionCreator.Rollback do
 
   def compensate_spawned_members(spawned_uris) when is_list(spawned_uris) do
     Enum.each(spawned_uris, fn %URI{} = uri ->
-      safe(:destroy_spawned_member, fn -> Ezagent.Lifecycle.destroy(uri, :rollback) end)
+      safe(:destroy_spawned_member, fn -> retire_recorded_agent(uri, :rollback) end)
       safe(:unbind_spawned_member, fn -> Ezagent.WorkspaceRegistry.unbind(uri) end)
       forget_lineage(uri)
     end)
@@ -108,6 +112,18 @@ defmodule EzagentDomainInstanceMessage.SessionCreator.Rollback do
     end
 
     :ok
+  end
+
+  defp retire_recorded_agent(%URI{} = uri, reason) do
+    provenance_root =
+      case Ezagent.AgentLineage.lookup(uri) do
+        {:ok, parent_uri} -> parent_uri
+        :error -> nil
+      end
+
+    Ezagent.Domain.Agent.retire_spawned(uri, provenance_root, reason,
+      allow_unverified_fallback: true
+    )
   end
 
   defp revoke_owner_orchestrator_admin_cap(

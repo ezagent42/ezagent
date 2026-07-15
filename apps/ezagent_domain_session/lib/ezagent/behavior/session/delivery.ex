@@ -283,7 +283,7 @@ defmodule Ezagent.ActionSet.Session.Delivery do
     # ({:error, :not_created}); `user` recipients are passive inboxes that do not
     # need a live process, so they are left untouched.
     if receive_prefix == :agent do
-      _ = Ezagent.SpawnRegistry.ensure_live(recipient_uri)
+      _ = Ezagent.Domain.Agent.ensure_deliverable(recipient_uri)
     end
 
     receive_target = Ezagent.URI.with_action(recipient_uri, receive_prefix, :receive)

@@ -131,7 +131,7 @@ defmodule Ezagent.Orchestrator.Tools.Participants do
        ) do
     member_uri = manifest_member_uri(manifest, role_name, workspace_uri, session_uri)
 
-    case Ezagent.Entity.Agent.spawn_from_manifest(
+    case Ezagent.Domain.Agent.materialize_from_manifest(
            manifest,
            slots,
            member_uri,

@@ -130,7 +130,7 @@ No-back-compat policy means the repository must not keep two permanent facade ho
 | From | To | Decision |
 |---|---|---|
 | core | domain-agent/session/plugin | Deny. |
-| domain-agent | core | Allow. |
+| domain-agent | core + identity + agent-bridge | Allow; domain-agent remains a leaf and uses runtime-optional probes for flavor domains. |
 | domain-agent | domain-session | Deny; prevents cycle and ownership reversal. |
 | domain-agent | flavor plugin at compile time | Deny; use existing registration/contracts/data. |
 | domain-session | domain-agent public facade | Allow. |
@@ -155,11 +155,30 @@ No-back-compat policy means the repository must not keep two permanent facade ho
 
 - direct `Ezagent.Entity.Agent.spawn_from_*` calls;
 - direct agent-targeted `SpawnRegistry.spawn*` or `ensure_live` decisions;
-- direct executor/sidecar start/stop from Session;
+- direct Agent executor/sidecar start/stop from Session; the Session-owned
+  `SessionManager` conversation executor remains legal even though its binding key
+  is an orchestrator URI;
 - direct agent-targeted `Ezagent.Lifecycle.destroy` fallback;
 - direct Agent Sandbox/config/credential application;
 - direct flavor plugin runtime calls;
 - wrapper functions in Session whose only purpose is to conceal one of the above.
+
+### 6.1 Locked follow-up decisions (2026-07-15)
+
+`Ezagent.Session.SessionManager` owns the Session conversation executor: its
+binding contains an orchestrator URI, but it does not start, stop or own the Agent
+Kind, PTY or flavor sidecar. Exact `SessionManager.ensure_started/1` and `stop/1`
+seams are therefore legal Session lifecycle and must be pinned by narrow positive
+and negative scanner fixtures rather than hidden behind a domain-agent facade.
+
+Session code must not call `Ezagent.Lifecycle.destroy/2` for Agent targets.
+Domain-agent will expose a provenance-gated retirement operation. Session retains
+the policy decision and sequencing (membership, lineage and teardown reason), while
+domain-agent validates the supplied provenance, performs authorized cleanup, and
+may use VM-internal termination only as an explicit last resort. A last-resort
+termination returns structured partial success, emits telemetry/audit evidence and
+creates a durable cleanup obligation; it never converts incomplete cleanup into
+unconditional success.
 
 ## 7. Static gate
 
@@ -287,6 +306,9 @@ materializations; it does not directly repair an existing target agent.
 
 - Expected facade failures use `{:error, reason}`; no convenience rescue may turn
   lifecycle failure into success.
+- Agent retirement distinguishes complete cleanup from
+  `{:partial, :terminated, cleanup_obligation}`; partial cleanup is never reported
+  as plain `:ok`.
 - Session receives domain-level reasons, not PID/sidecar/plugin internals.
 - Workspace owner checks remain in core/runtime chokepoints.
 - CapBAC checks remain at their existing sanctioned owners.

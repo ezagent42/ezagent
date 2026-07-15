@@ -202,7 +202,7 @@ defmodule EzagentDomainInstanceMessage.SessionCreator.TemplateTeam do
       workspace_name = Ezagent.URI.workspace_name!(workspace_uri)
       agent_uri = Ezagent.URI.agent(workspace_name, instance_name)
 
-      case Ezagent.Entity.Agent.spawn_from_template_content(
+      case Ezagent.Domain.Agent.materialize_from_template(
              content,
              agent_uri,
              granted_by,
@@ -230,7 +230,7 @@ defmodule EzagentDomainInstanceMessage.SessionCreator.TemplateTeam do
        ) do
     case member_uri_field(member, :uri) do
       %URI{} = member_uri ->
-        _ = EzagentDomainInstanceMessage.SessionCreator.demand_spawn_member(member_uri)
+        _ = Ezagent.Domain.Agent.ensure_declared_member(member_uri)
         {:ok, member_uri, false}
 
       _ ->

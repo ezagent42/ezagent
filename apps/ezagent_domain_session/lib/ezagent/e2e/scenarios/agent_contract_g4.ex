@@ -549,7 +549,7 @@ defmodule Ezagent.E2E.Scenarios.AgentContractG4 do
     def instantiate(_tmpl_name, %{"agent_uri" => uri_str}, _workspace_uri) do
       agent_uri = Ezagent.URI.new!(uri_str)
 
-      case Ezagent.SpawnRegistry.spawn_detailed(agent_uri) do
+      case Ezagent.Domain.Agent.materialize_declared(agent_uri) do
         {:ok, :started, _pid} -> {:ok, [agent_uri], %{fresh?: true}}
         {:ok, :already_started, _pid} -> {:ok, [agent_uri], %{fresh?: false}}
         {:error, _} = err -> err

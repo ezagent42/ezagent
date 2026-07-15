@@ -414,7 +414,7 @@ defmodule EzagentDomainInstanceMessage.SessionCreator.Materializer do
     target = Ezagent.URI.with_action(session_uri, :session, :join)
 
     Enum.reduce_while(members, :ok, fn %URI{} = member_uri, :ok ->
-      _ = EzagentDomainInstanceMessage.SessionCreator.demand_spawn_member(member_uri)
+      _ = Ezagent.Domain.Agent.ensure_declared_member(member_uri)
 
       admin_uri = Ezagent.Entity.User.admin_uri()
 
