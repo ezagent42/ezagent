@@ -45,18 +45,20 @@ defmodule EzagentDomainInstanceMessage.SessionCreator.Rollback do
         end)
       end
 
-      safe(:destroy_orchestrator, fn ->
-        Ezagent.Domain.Agent.retire_spawned(orchestrator_uri, owner_uri, :rollback,
-          allow_unverified_fallback: true
+      retirement = retire_orchestrator(orchestrator_uri, session_uri, owner_uri, workspace_uri)
+
+      if retirement_evidence_transferred?(retirement) do
+        safe(:unbind_orchestrator, fn -> Ezagent.WorkspaceRegistry.unbind(orchestrator_uri) end)
+        forget_lineage(orchestrator_uri)
+
+        safe(:orchestrator_live_join_clear, fn ->
+          Ezagent.Agent.LiveJoinRegistry.clear(orchestrator_uri)
+        end)
+      else
+        Logger.error(
+          "rollback preserved orchestrator evidence after retirement failed: #{inspect(retirement)}"
         )
-      end)
-
-      safe(:unbind_orchestrator, fn -> Ezagent.WorkspaceRegistry.unbind(orchestrator_uri) end)
-      forget_lineage(orchestrator_uri)
-
-      safe(:orchestrator_live_join_clear, fn ->
-        Ezagent.Agent.LiveJoinRegistry.clear(orchestrator_uri)
-      end)
+      end
     end
 
     if match?(%URI{}, owner_uri) and match?(%URI{}, workspace_uri) do
@@ -79,11 +81,15 @@ defmodule EzagentDomainInstanceMessage.SessionCreator.Rollback do
     :ok
   end
 
-  def compensate_spawned_members(spawned_uris) when is_list(spawned_uris) do
+  def compensate_spawned_members(spawned_uris, context)
+      when is_list(spawned_uris) and is_map(context) do
     Enum.each(spawned_uris, fn %URI{} = uri ->
-      safe(:destroy_spawned_member, fn -> retire_recorded_agent(uri, :rollback) end)
-      safe(:unbind_spawned_member, fn -> Ezagent.WorkspaceRegistry.unbind(uri) end)
-      forget_lineage(uri)
+      retirement = Ezagent.Domain.Agent.retire_spawned(uri, context)
+
+      if retirement_evidence_transferred?(retirement) do
+        safe(:unbind_spawned_member, fn -> Ezagent.WorkspaceRegistry.unbind(uri) end)
+        forget_lineage(uri)
+      end
     end)
 
     :ok
@@ -114,17 +120,35 @@ defmodule EzagentDomainInstanceMessage.SessionCreator.Rollback do
     :ok
   end
 
-  defp retire_recorded_agent(%URI{} = uri, reason) do
-    provenance_root =
-      case Ezagent.AgentLineage.lookup(uri) do
-        {:ok, parent_uri} -> parent_uri
-        :error -> nil
-      end
-
-    Ezagent.Domain.Agent.retire_spawned(uri, provenance_root, reason,
-      allow_unverified_fallback: true
-    )
+  defp retire_orchestrator(
+         %URI{} = orchestrator_uri,
+         %URI{} = session_uri,
+         %URI{} = owner_uri,
+         %URI{} = workspace_uri
+       ) do
+    Ezagent.Domain.Agent.retire_spawned(orchestrator_uri, %{
+      caller: owner_uri,
+      caps: MapSet.new(),
+      workspace_uri: workspace_uri,
+      provenance_root: owner_uri,
+      creation_attempt_id: "session-create:#{Ezagent.URI.stable_key(session_uri)}",
+      created_agent_uris: [orchestrator_uri],
+      reason: :rollback
+    })
   end
+
+  defp retire_orchestrator(_orchestrator_uri, _session_uri, _owner_uri, _workspace_uri),
+    do: {:error, %{termination: :not_destroyed, reason: :missing_retirement_context}}
+
+  defp retirement_evidence_transferred?({:ok, %{cleanup: :complete}}), do: true
+
+  defp retirement_evidence_transferred?(
+         {:partial, %{cleanup: :pending, obligation_id: obligation_id}}
+       )
+       when is_integer(obligation_id),
+       do: true
+
+  defp retirement_evidence_transferred?(_), do: false
 
   defp revoke_owner_orchestrator_admin_cap(
          %URI{} = session_uri,

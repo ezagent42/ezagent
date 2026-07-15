@@ -225,47 +225,6 @@ defmodule Ezagent.Domain.AgentTest do
     end
   end
 
-  describe "retire_spawned/4" do
-    test "refuses retirement when the claimed provenance is absent" do
-      agent_uri = Ezagent.URI.new!("entity://team-alpha/agent/foreign-#{u()}")
-      owner_uri = Ezagent.URI.new!("entity://team-alpha/user/owner-#{u()}")
-
-      assert {:error, :unverified_spawn_provenance} =
-               Agent.retire_spawned(agent_uri, owner_uri, :rollback)
-    end
-
-    test "retires an Agent whose durable lineage reaches the claimed root" do
-      agent_uri = Ezagent.URI.new!("entity://team-alpha/agent/retire-#{u()}")
-      owner_uri = Ezagent.URI.new!("entity://team-alpha/user/owner-#{u()}")
-      put_flavors(%{agent_uri => "future"})
-      :ok = Ezagent.AgentLineage.record(agent_uri, owner_uri)
-      {:ok, _pid} = Ezagent.Kind.spawn(Ezagent.Entity.Agent, %{uri: agent_uri})
-
-      assert {:ok, %{termination: :destroyed, provenance: :verified}} =
-               Agent.retire_spawned(agent_uri, owner_uri, :rollback)
-
-      assert :error = Ezagent.KindRegistry.lookup(agent_uri)
-    end
-
-    test "records a durable cleanup obligation for the explicit unverified fallback" do
-      agent_uri = Ezagent.URI.new!("entity://team-alpha/agent/legacy-#{u()}")
-
-      assert {:partial,
-              %{termination: :destroyed, provenance: :unverified, cleanup_obligation: :dlq}} =
-               Agent.retire_spawned(agent_uri, nil, :session_delete,
-                 allow_unverified_fallback: true
-               )
-
-      assert [[payload]] =
-               EzagentCore.Repo.query!(
-                 "SELECT payload FROM dlq WHERE reason = 'agent_retirement_cleanup' " <>
-                   "ORDER BY id DESC LIMIT 1"
-               ).rows
-
-      assert Jason.decode!(payload)["target"] == URI.to_string(agent_uri)
-    end
-  end
-
   defp put_flavors(flavors) when is_map(flavors) do
     by_uri =
       Map.new(flavors, fn {uri, flavor} ->

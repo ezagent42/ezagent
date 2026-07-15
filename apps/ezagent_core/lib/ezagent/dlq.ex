@@ -38,8 +38,7 @@ defmodule Ezagent.DLQ do
     :idempotency_duplicate_marker,
     :buffer_full,
     :never_ready,
-    :stale_incarnation,
-    :agent_retirement_cleanup
+    :stale_incarnation
   ]
 
   @doc """

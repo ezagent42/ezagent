@@ -204,8 +204,16 @@ defmodule EzagentDomainInstanceMessage.Integration.SpawnedParticipantTeardownTes
       assert worker in Participants.list_participants(session_uri)
       :ok = Phoenix.PubSub.subscribe(EzagentCore.PubSub, "esr:session_membership:changes")
 
-      assert {:ok, %{status: :removed, torn_down: :worker}} =
+      assert {:ok,
+              %{
+                status: :removed,
+                torn_down: :worker,
+                cleanup: :pending,
+                cleanup_obligation_id: obligation_id
+              }} =
                Participants.remove_participant(session_uri, worker, op_ctx(owner, session_uri))
+
+      assert is_integer(obligation_id)
 
       assert :gone = wait_until_gone(worker)
       refute worker in Participants.list_participants(session_uri)
@@ -250,7 +258,8 @@ defmodule EzagentDomainInstanceMessage.Integration.SpawnedParticipantTeardownTes
       # {:spawned_by, owner} cap, which matches the worker via the transitive
       # lineage walk — authorized WITHOUT admin and WITHOUT the orchestrator's
       # cap #2 (which is moot — the orchestrator isn't even live).
-      assert :ok = Teardown.reap_spawned_worker(worker, owner, :strict)
+      assert {:ok, %{termination: :destroyed, cleanup: :complete}} =
+               Teardown.reap_spawned_worker(worker, owner, :strict)
 
       assert_receive {:gc_called, ^worker, ^config_dir}, 2_000
       assert :gone = wait_until_gone(worker)
@@ -282,8 +291,8 @@ defmodule EzagentDomainInstanceMessage.Integration.SpawnedParticipantTeardownTes
     end
   end
 
-  describe "dead-orchestrator / junk-session fallback (SPEC §2.4 / §4.2)" do
-    test "best-effort reap with an absent owner cap falls back to Lifecycle.destroy" do
+  describe "best-effort teardown preserves evidence without authority" do
+    test "an absent owner cap cannot trigger an unverified VM destroy" do
       config_dir = "/tmp/f7b-fallback-#{uniq()}"
 
       owner = URI.new!("entity://system/user/junk-#{uniq()}")
@@ -293,12 +302,11 @@ defmodule EzagentDomainInstanceMessage.Integration.SpawnedParticipantTeardownTes
       worker = spawn_worker(config_dir)
       :ok = AgentLineage.record(worker, owner)
 
-      # best_effort: owner cap absent → VM-internal Lifecycle.destroy primitive
-      # reaps the worker anyway (legitimate, not a forged cap).
-      assert :ok = Teardown.reap_spawned_worker(worker, owner, :best_effort)
+      assert {:error, {:worker_teardown_failed, _}} =
+               Teardown.reap_spawned_worker(worker, owner, :best_effort)
 
-      assert :gone = wait_until_gone(worker)
-      assert :error == AgentLineage.lookup(worker)
+      assert {:ok, _pid} = KindRegistry.lookup(worker)
+      assert {:ok, ^owner} = AgentLineage.lookup(worker)
     end
   end
 

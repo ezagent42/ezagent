@@ -25,21 +25,15 @@ defmodule Ezagent.ActionSet.Session.Teardown do
   #     single worker in `:strict` mode — a missing owner teardown cap FAILS
   #     CLOSED (`{:error, _}`), the load-bearing authorization (SPEC §7
   #     "Self-leave privilege" / "Destroying a non-spawned participant").
-  #   * `cascade_teardown` (the delete-session path, ridden by `Session.destroy/2`
-  #     so EVERY delete path cascades — SPEC §4.1) reaps every participant +
-  #     the orchestrator in `:best_effort` mode: a reap whose owner cap is
-  #     somehow ABSENT (junk/ownerless/legacy session) falls back to the
-  #     VM-internal `Ezagent.Lifecycle.destroy/2` primitive — the SAME primitive
-  #     create-rollback uses (`SessionCreator.Rollback`). That is a legitimate
-  #     system-internal teardown, NOT a forged cap (SPEC §2.4 documented
-  #     fallback).
+  #   * `cascade_teardown` uses the same explicit authority and provenance
+  #     contract. Missing authority leaves the Agent and its durable evidence
+  #     intact; it never falls through to an unverified VM destroy.
 
   require Logger
 
   alias Ezagent.ActionSet.Session.RoutingPrune
-  alias Ezagent.Invocation
 
-  @typedoc "Reap mode: strict fails closed; best_effort falls back to the VM primitive."
+  @typedoc "Call-site intent; both modes fail closed on missing authority."
   @type mode :: :strict | :best_effort
 
   @doc """
@@ -64,7 +58,8 @@ defmodule Ezagent.ActionSet.Session.Teardown do
       when is_map(participant_meta) do
     if spawned_worker?(participant_meta, participant_uri, owner_uri) do
       case reap_spawned_worker(participant_uri, owner_uri, mode) do
-        :ok -> {:ok, :worker}
+        {:ok, _report} -> {:ok, :worker}
+        {:partial, report} -> {:partial, %{resource: :worker, retirement: report}}
         {:error, _} = err -> err
       end
     else
@@ -86,15 +81,22 @@ defmodule Ezagent.ActionSet.Session.Teardown do
 
   Already-gone workers are idempotent `:ok`.
   """
-  @spec reap_spawned_worker(URI.t(), URI.t() | nil, mode()) :: :ok | {:error, term()}
+  @spec reap_spawned_worker(URI.t(), URI.t() | nil, mode()) ::
+          {:ok, map()} | {:partial, map()} | {:error, term()}
   def reap_spawned_worker(%URI{} = worker_uri, owner_uri, mode) do
-    case owner_destroy_dispatch(worker_uri, owner_uri) do
-      :ok ->
-        _ = Ezagent.AgentLineage.forget(worker_uri)
-        :ok
+    context = retirement_context(worker_uri, owner_uri, mode)
 
-      {:error, reason} ->
-        handle_reap_error(worker_uri, owner_uri, reason, mode)
+    case Ezagent.Domain.Agent.retire_spawned(worker_uri, context) do
+      {:ok, report} ->
+        _ = Ezagent.AgentLineage.forget(worker_uri)
+        {:ok, report}
+
+      {:partial, %{obligation_id: _} = report} ->
+        _ = Ezagent.AgentLineage.forget(worker_uri)
+        {:partial, report}
+
+      {:error, report} ->
+        {:error, {:worker_teardown_failed, report}}
     end
   end
 
@@ -177,81 +179,29 @@ defmodule Ezagent.ActionSet.Session.Teardown do
 
   defp has_spawn_facet?(_), do: false
 
-  # Dispatch `sandbox.destroy` on the worker AS the OWNER. The dispatch authz
-  # chokepoint (`Kind.Runtime` step 5.5 `granted_via_holds_cap?`) resolves the
-  # owner's SLICE caps itself — including the `{:spawned_by, owner_uri}` teardown
-  # cap — so this domain module does NOT read caps (cap-check only at the
-  # chokepoint; `feedback`/CapCheckOnlyAtChokepoint p6). An owner without the
-  # teardown cap → step 5.5 denies → `{:error, :unauthorized}` (strict fails
-  # closed; best-effort falls back). Mirrors the result handling of the
-  # orchestrator's `Tools.terminate_worker/3` (already-gone is idempotent `:ok`).
-  # A `%URI{}`-less owner (ownerless junk session) → `{:error, :no_owner}`.
-  defp owner_destroy_dispatch(%URI{} = worker_uri, %URI{} = owner_uri) do
-    result =
-      Invocation.dispatch(%Invocation{
-        target: Ezagent.URI.with_action(worker_uri, :sandbox, :destroy),
-        mode: :call,
-        args: %{},
-        ctx: %{
-          caller: owner_uri,
-          caps: MapSet.new(),
-          reply: {:caller_inbox, self()}
-        }
-      })
-
-    interpret_destroy_result(result)
+  defp retirement_context(%URI{} = worker_uri, %URI{} = owner_uri, mode) do
+    %{
+      caller: owner_uri,
+      caps: MapSet.new(),
+      workspace_uri: Ezagent.URI.workspace_of(worker_uri),
+      provenance_root: owner_uri,
+      creation_attempt_id: "session-teardown:#{Ezagent.URI.stable_key(worker_uri)}",
+      created_agent_uris: [worker_uri],
+      reason: {:session_teardown, mode}
+    }
   end
 
-  defp owner_destroy_dispatch(_worker_uri, _owner_uri), do: {:error, :no_owner}
-
-  defp interpret_destroy_result({:ok, %{destroyed: true, cleanup: :ok}}), do: :ok
-
-  # `destroyed: true` means the worker PROCESS is IRREVERSIBLY terminating
-  # (Sandbox always schedules termination), even when the plugin config_dir FS
-  # cleanup FAILED. The worker is gone, so the membership teardown MUST still
-  # proceed — returning an error here would abort the leave and leave a zombie
-  # member referencing a dead worker with no {:member_left} (codex Q4 follow-up /
-  # SPEC §7 'Silent orphan'). The FS leak is logged by Sandbox (slice preserved
-  # for retry) + here for out-of-band cleanup; it does NOT block membership drop.
-  defp interpret_destroy_result({:ok, %{destroyed: true, cleanup: {:error, reason}}}) do
-    Logger.warning(
-      "Session.Teardown: worker reaped (process terminating) but its config_dir " <>
-        "cleanup FAILED (#{inspect(reason)}) — FS dir leaked, slice preserved for " <>
-        "out-of-band retry; membership teardown proceeds (no zombie)."
-    )
-
-    :ok
+  defp retirement_context(%URI{} = worker_uri, _owner_uri, mode) do
+    %{
+      caller: worker_uri,
+      caps: MapSet.new(),
+      workspace_uri: Ezagent.URI.workspace_of(worker_uri),
+      provenance_root: worker_uri,
+      creation_attempt_id: "session-teardown:#{Ezagent.URI.stable_key(worker_uri)}",
+      created_agent_uris: [],
+      reason: {:session_teardown, mode}
+    }
   end
-
-  defp interpret_destroy_result({:ok, %{destroyed: true}}), do: :ok
-  defp interpret_destroy_result({:ok, {:ok, :terminated}}), do: :ok
-  defp interpret_destroy_result({:ok, :terminated}), do: :ok
-  defp interpret_destroy_result({:error, :no_such_actor}), do: :ok
-  defp interpret_destroy_result({:error, :not_ready}), do: :ok
-  defp interpret_destroy_result({:error, _} = err), do: err
-  defp interpret_destroy_result(other), do: {:error, {:unexpected_terminate_result, other}}
-
-  # SPEC §2.4 documented fallback: an absent/insufficient owner cap on the
-  # best-effort cascade falls back to the VM-internal `Lifecycle.destroy/2`
-  # primitive (its `Sandbox.destroy/2` lifecycle hook GCs the config_dir too).
-  # Strict reaps surface the error (fail-closed authorization).
-  defp handle_reap_error(%URI{} = worker_uri, owner_uri, reason, :best_effort) do
-    Logger.warning(
-      "Session.Teardown.cascade: owner-authority reap of #{inspect(worker_uri)} failed " <>
-        "(#{inspect(reason)}) — falling back to VM-internal Lifecycle.destroy (junk/" <>
-        "ownerless/dead-orchestrator safety net, SPEC §2.4)."
-    )
-
-    _ =
-      Ezagent.Domain.Agent.retire_spawned(worker_uri, owner_uri, :session_delete,
-        allow_unverified_fallback: true
-      )
-
-    :ok
-  end
-
-  defp handle_reap_error(_worker_uri, _owner_uri, reason, :strict),
-    do: {:error, {:worker_teardown_failed, reason}}
 
   defp safe(fun) do
     fun.()
