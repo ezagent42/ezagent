@@ -1,0 +1,132 @@
+<!DOCTYPE html>
+<html lang="zh" data-theme="light">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>我的名片 · Profile · Ezagent</title>
+<link rel="stylesheet" href="https://cdn.jsdelivr.net/gh/ezagent42/design-system@main/styles.css">
+<style>
+  body{max-width:720px;margin:40px auto;padding:0 24px 80px;background:var(--ground);color:var(--ink);font-family:var(--font-ui);font-weight:450;-webkit-font-smoothing:antialiased}
+  .back{display:inline-block;margin-bottom:24px;font-size:13px;color:var(--ink-3);text-decoration:none;transition:color .15s var(--ease-out)}
+  .back:hover{color:var(--accent)}
+
+  .layout{display:flex;gap:32px;align-items:flex-start;flex-wrap:wrap}
+  .main-col{flex:1;min-width:300px}
+
+  h1{font-family:var(--font-cn);font-size:28px;font-weight:600;margin:0 0 6px;letter-spacing:-.01em}
+  .sub{color:var(--ink-3);font-size:14px;margin-bottom:28px}
+
+  /* Card preview */
+  .card-preview{width:320px;flex-shrink:0;position:sticky;top:24px;padding:28px 24px;background:var(--card);border-radius:var(--r-lg);box-shadow:var(--shadow-card)}
+  .card-preview .over{font-family:var(--font-mono);font-size:11px;letter-spacing:.14em;text-transform:uppercase;color:var(--ink-3);margin-bottom:16px}
+  .card-preview .av{width:64px;height:64px;border-radius:var(--r-md);display:grid;place-items:center;font-size:28px;font-weight:700;color:#fff;margin-bottom:16px;background:var(--accent)}
+  .card-preview .name{font-family:var(--font-cn);font-weight:700;font-size:20px;color:var(--ink);margin-bottom:4px}
+  .card-preview .org{font-size:13px;color:var(--ink-3);margin-bottom:12px}
+  .card-preview .tags{display:flex;gap:4px;flex-wrap:wrap;margin-bottom:16px}
+  .card-preview .tags span{font-size:10px;padding:3px 10px;border-radius:var(--r-pill);background:var(--ground-2);color:var(--ink-3)}
+  .card-preview .section{margin-top:14px;padding-top:14px;border-top:1px solid var(--line)}
+  .card-preview .section .sl{font-size:11px;font-weight:600;color:var(--ink-2);margin-bottom:6px}
+  .card-preview .section .sv{font-size:12px;color:var(--ink-3);line-height:1.6}
+  .card-preview .pub-link{margin-top:14px;font-family:var(--font-mono);font-size:11px;color:var(--ink-4);word-break:break-all}
+
+  /* Edit form */
+  .field{margin:14px 0}
+  .field label{display:block;font-size:12px;font-weight:600;margin-bottom:4px;color:var(--ink-2)}
+  .field input,.field textarea{width:100%;padding:10px 14px;border:1px solid var(--line);border-radius:var(--r-md);font-size:13px;font-family:inherit;background:var(--card);color:var(--ink);resize:vertical;box-sizing:border-box;transition:border-color .15s var(--ease-out),box-shadow .15s var(--ease-out)}
+  .field input:focus,.field textarea:focus{outline:none;border-color:var(--accent);box-shadow:0 0 0 3px var(--accent-wash)}
+
+  .tags-input{display:flex;flex-wrap:wrap;gap:6px;margin:8px 0;align-items:center}
+  .tags-input .tag{padding:5px 12px;border-radius:var(--r-pill);font-size:11px;cursor:pointer;background:var(--ground-2);color:var(--ink-2);transition:all .12s var(--ease-out);border:1px solid transparent;display:inline-flex;align-items:center;gap:4px}
+  .tags-input .tag:hover{background:var(--ground-hover)}
+  .tags-input .tag.sel{background:var(--accent);color:var(--on-accent)}
+  .tags-input .tag .rm{font-size:10px;opacity:.6;cursor:pointer}
+  .tags-input .tag .rm:hover{opacity:1}
+  .tag-add{padding:5px 12px;border:1px dashed var(--line);border-radius:var(--r-pill);font-size:11px;color:var(--ink-4);cursor:text;min-width:80px;outline:none;background:transparent}
+  .tag-add:focus{border-color:var(--accent)}
+
+  .btn{font-family:var(--font-ui);font-size:14px;font-weight:600;padding:10px 24px;border-radius:var(--r-pill);border:0;cursor:pointer;text-decoration:none;display:inline-flex;align-items:center;gap:6px;transition:all .15s var(--ease-out);min-height:44px}
+  .btn.primary{background:var(--accent);color:var(--on-accent)}
+  .btn.primary:hover{transform:translateY(-1px);box-shadow:0 4px 16px rgba(11,92,255,.4)}
+  .btn.ghost{background:var(--ground-2);color:var(--ink-2)}
+  .btn.ghost:hover{background:var(--ground-hover);color:var(--ink)}
+  .actions{margin-top:24px;display:flex;gap:10px}
+
+  .empty-hint{padding:14px 18px;border:2px dashed var(--line);border-radius:var(--r-lg);text-align:center;color:var(--ink-4);font-size:12px;margin-top:24px}
+</style>
+</head>
+<body>
+
+<a class="back" href="../achievement-center.html">← 返回成就中心 · Back</a>
+
+<h1>我的名片 · Profile</h1>
+<p class="sub">你的个人名片。dealscout 等 socialware 通过公开面读取名片信息来做更精准的匹配。</p>
+
+<div class="layout">
+  <div class="main-col" id="editArea">
+    <h2 style="font-family:var(--font-cn);font-size:17px;font-weight:600;margin-bottom:8px">编辑名片 · Edit</h2>
+    <p class="sec-desc" style="font-size:13px;color:var(--ink-3);margin:0 0 14px">填写你的身份信息、行业标签和资源/需求。这些会出现在你的公开名片上。</p>
+    <div class="field"><label>姓名 · Name</label><input type="text" id="pName" placeholder="你的姓名" oninput="up()"></div>
+    <div class="field"><label>机构 · Organization</label><input type="text" id="pOrg" placeholder="公司/基金/机构" oninput="up()"></div>
+    <div class="field"><label>角色 · Role</label><input type="text" id="pRole" placeholder="创始人 / 投资人 / …" oninput="up()"></div>
+
+    <h2 style="font-family:var(--font-cn);font-size:17px;font-weight:600;margin:28px 0 8px">行业标签 · Industry tags</h2>
+    <p class="sec-desc" style="font-size:13px;color:var(--ink-3);margin:0 0 10px">选择或输入你的行业关键词。</p>
+    <div class="tags-input" id="suggestedTags">
+      <span class="tag" onclick="toggleTag(this)">FinTech</span>
+      <span class="tag" onclick="toggleTag(this)">AI / Agent</span>
+      <span class="tag" onclick="toggleTag(this)">SaaS</span>
+      <span class="tag" onclick="toggleTag(this)">跨境</span>
+      <span class="tag" onclick="toggleTag(this)">Web3</span>
+      <span class="tag" onclick="toggleTag(this)">医疗健康</span>
+      <span class="tag" onclick="toggleTag(this)">消费</span>
+      <span class="tag" onclick="toggleTag(this)">企业服务</span>
+      <span class="tag" onclick="toggleTag(this)">硬科技</span>
+    </div>
+    <span class="tag-add" contenteditable="true" onkeydown="addCustom(event)" onblur="addCustomBlur(event)" placeholder="自定义标签…"></span>
+
+    <h2 style="font-family:var(--font-cn);font-size:17px;font-weight:600;margin:28px 0 8px">资源与需求 · Have &amp; Need</h2>
+    <p class="sec-desc" style="font-size:13px;color:var(--ink-3);margin:0 0 10px">这些信息会被 dealscout 读取，用于匹配撮合。</p>
+    <div class="field"><label>我有什么 · What I have</label><textarea id="pHave" rows="2" placeholder="资金、人脉、行业经验、技术、牌照…" oninput="up()"></textarea></div>
+    <div class="field"><label>我在找什么 · What I need</label><textarea id="pNeed" rows="2" placeholder="钱、项目、联合创始人、退出机会…" oninput="up()"></textarea></div>
+
+    <div class="actions">
+      <button class="btn primary" onclick="save()">保存名片 · Save →</button>
+    </div>
+    <div class="empty-hint" style="margin-top:28px">架构说明：Profile 是独立 socialware（<code>uses: ["hello"]</code>）。数据存储在 user identity 的 config slice。公开面 <code>session://system/profile/&lt;name&gt;</code> 供 dealscout 等读取。</div>
+  </div>
+
+  <!-- Preview -->
+  <div class="card-preview" id="previewCard">
+    <div class="over">公开名片预览 · Public card</div>
+    <div class="av" id="pcAv">你</div>
+    <div class="name" id="pcName">你的姓名</div>
+    <div class="org" id="pcOrg">机构 · 角色</div>
+    <div class="tags" id="pcTags"></div>
+    <div class="section"><div class="sl">我有什么 · What I have</div><div class="sv" id="pcHave">—</div></div>
+    <div class="section"><div class="sl">我在找什么 · What I need</div><div class="sv" id="pcNeed">—</div></div>
+    <div class="pub-link">session://system/profile/demo</div>
+  </div>
+</div>
+
+<script>
+var tags=[];
+function toggleTag(el){el.classList.toggle('sel');up();}
+function getTags(){var t=[];document.querySelectorAll('#suggestedTags .tag.sel').forEach(function(x){t.push(x.textContent.trim());});return t.concat(tags);}
+function addCustom(e){if(e.key==='Enter'){e.preventDefault();var v=(e.target.textContent||'').trim();if(v&&tags.indexOf(v)===-1){tags.push(v);e.target.textContent='';up();}}}
+function addCustomBlur(e){var v=(e.target.textContent||'').trim();if(v&&tags.indexOf(v)===-1){tags.push(v);e.target.textContent='';up();}}
+
+function up(){
+  var n=document.getElementById('pName').value||'你的姓名';
+  document.getElementById('pcName').textContent=n;
+  document.getElementById('pcAv').textContent=n.charAt(0)||'你';
+  document.getElementById('pcOrg').textContent=(document.getElementById('pOrg').value||'机构')+' · '+(document.getElementById('pRole').value||'角色');
+  var all=getTags();
+  document.getElementById('pcTags').innerHTML=all.length?all.map(function(t){return'<span>'+t+'</span>';}).join(''):'<span>未添加标签</span>';
+  document.getElementById('pcHave').textContent=document.getElementById('pHave').value||'—';
+  document.getElementById('pcNeed').textContent=document.getElementById('pNeed').value||'—';
+}
+function save(){alert('名片已保存 · Profile saved（demo）');location.href='../achievement-center.html';}
+up();
+</script>
+</body>
+</html>
