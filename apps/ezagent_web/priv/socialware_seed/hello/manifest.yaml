@@ -4,6 +4,7 @@ title: "Pure-config hello"
 description: "Hello socialware authored as a manifest."
 uses:
   - hello
+  - kanban
 requires:
   - orchestrator
 bases:
