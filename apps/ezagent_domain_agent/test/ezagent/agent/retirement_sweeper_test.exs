@@ -32,10 +32,51 @@ defmodule Ezagent.Agent.RetirementSweeperTest do
     assert resolved.attempts == 1
   end
 
+  test "replays a termination that was persisted before dispatch" do
+    suffix = System.unique_integer([:positive])
+    agent_uri = Ezagent.URI.new!("entity://system/agent/crash-window-#{suffix}")
+    caller_uri = Ezagent.Entity.User.admin_uri()
+    {:ok, _pid} = Ezagent.Kind.spawn(Ezagent.Entity.Agent, %{uri: agent_uri})
+    :ok = Ezagent.WorkspaceRegistry.bind(agent_uri, Ezagent.URI.new!("workspace://system"))
+
+    {:ok, obligation} =
+      RetirementObligations.create_pending(%{
+        agent_uri: URI.to_string(agent_uri),
+        workspace_uri: "workspace://system",
+        provenance_root_uri: URI.to_string(caller_uri),
+        creation_attempt_id: "crash-window-#{suffix}",
+        retirement_reason: "rollback",
+        pending_steps: %{
+          "sandbox_destroy" => %{
+            "agent_uri" => URI.to_string(agent_uri),
+            "caller_uri" => URI.to_string(caller_uri)
+          }
+        }
+      })
+
+    assert {:ok, :resolved} = RetirementSweeper.retry(obligation.id)
+    assert RetirementObligations.get!(obligation.id).status == :resolved
+    assert :gone = wait_until_gone(agent_uri)
+  end
+
   defmodule CleanupRecorder do
     def destroy_config_dir(agent_uri, config_dir) do
       send(self(), {:cleanup_retried, agent_uri, config_dir})
       :ok
+    end
+  end
+
+  defp wait_until_gone(uri, tries \\ 50)
+  defp wait_until_gone(_uri, 0), do: :still_alive
+
+  defp wait_until_gone(uri, tries) do
+    case Ezagent.KindRegistry.lookup(uri) do
+      :error ->
+        :gone
+
+      {:ok, _pid} ->
+        Process.sleep(10)
+        wait_until_gone(uri, tries - 1)
     end
   end
 end

@@ -6,6 +6,7 @@ defmodule Ezagent.Agent.RetirementSweeper do
   require Logger
 
   alias Ezagent.Agent.RetirementObligations
+  alias Ezagent.Invocation
 
   @default_interval :timer.minutes(1)
   @default_batch_size 25
@@ -79,6 +80,38 @@ defmodule Ezagent.Agent.RetirementSweeper do
   end
 
   defp execute_steps(%{agent_uri: agent_uri, pending_steps: pending_steps}) do
+    with :ok <- execute_termination(agent_uri, pending_steps),
+         :ok <- execute_cleanup(agent_uri, pending_steps) do
+      :ok
+    end
+  end
+
+  defp execute_termination(agent_uri, %{
+         "sandbox_destroy" => %{"caller_uri" => caller_uri}
+       }) do
+    result =
+      Invocation.dispatch(%Invocation{
+        target: Ezagent.URI.with_action(URI.new!(agent_uri), :sandbox, :destroy),
+        mode: :call,
+        args: %{},
+        ctx: %{
+          caller: URI.new!(caller_uri),
+          caps: MapSet.new(),
+          reply: {:caller_inbox, self()}
+        }
+      })
+
+    case result do
+      {:ok, %{destroyed: true}} -> :ok
+      {:error, reason} when reason in [:no_such_actor, :not_ready] -> :ok
+      {:error, reason} -> {:error, {:termination_retry_failed, reason}}
+      other -> {:error, {:unexpected_termination_retry_result, other}}
+    end
+  end
+
+  defp execute_termination(_agent_uri, _pending_steps), do: :ok
+
+  defp execute_cleanup(agent_uri, pending_steps) do
     case pending_steps do
       %{
         "sandbox_cleanup" => %{
@@ -95,6 +128,12 @@ defmodule Ezagent.Agent.RetirementSweeper do
           {:error, _reason} = error -> error
           other -> {:error, {:cleanup_failed, other}}
         end
+
+      %{"sandbox_destroy" => _} ->
+        :ok
+
+      %{} = steps when map_size(steps) == 0 ->
+        :ok
 
       other ->
         {:error, {:unsupported_pending_steps, other}}

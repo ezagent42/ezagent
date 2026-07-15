@@ -86,24 +86,34 @@ defmodule Ezagent.Agent.Retirement do
       provenance_root_uri: URI.to_string(context.provenance_root),
       creation_attempt_id: context.creation_attempt_id,
       retirement_reason: inspect(context.reason),
-      pending_steps: sandbox_cleanup_step(agent_uri)
+      pending_steps: retirement_steps(agent_uri, context.caller)
     })
   end
 
-  defp sandbox_cleanup_step(agent_uri) do
-    case Ezagent.ActionSet.Sandbox.read_persisted_state(agent_uri) do
-      %{config_dir_path: path, template_class: template_class}
-      when is_binary(path) and not is_nil(template_class) ->
-        %{
-          "sandbox_cleanup" => %{
-            "config_dir_path" => path,
-            "template_class" => inspect(template_class)
-          }
-        }
+  defp retirement_steps(agent_uri, caller_uri) do
+    termination = %{
+      "sandbox_destroy" => %{
+        "agent_uri" => URI.to_string(agent_uri),
+        "caller_uri" => URI.to_string(caller_uri)
+      }
+    }
 
-      _ ->
-        %{"sandbox_destroy" => %{"agent_uri" => URI.to_string(agent_uri)}}
-    end
+    cleanup =
+      case Ezagent.ActionSet.Sandbox.read_persisted_state(agent_uri) do
+        %{config_dir_path: path, template_class: template_class}
+        when is_binary(path) and not is_nil(template_class) ->
+          %{
+            "sandbox_cleanup" => %{
+              "config_dir_path" => path,
+              "template_class" => inspect(template_class)
+            }
+          }
+
+        _ ->
+          %{}
+      end
+
+    Map.merge(termination, cleanup)
   end
 
   defp dispatch_destroy(agent_uri, context, obligation) do
@@ -130,6 +140,8 @@ defmodule Ezagent.Agent.Retirement do
          {:ok, %{destroyed: true, cleanup: {:error, reason}}},
          obligation
        ) do
+    cleanup_steps = Map.delete(obligation.pending_steps, "sandbox_destroy")
+    _ = RetirementObligations.update_pending_steps(obligation.id, cleanup_steps)
     _ = RetirementObligations.record_failure(obligation.id, reason)
 
     {:partial,
