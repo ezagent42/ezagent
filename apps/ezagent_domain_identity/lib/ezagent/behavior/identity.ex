@@ -473,7 +473,6 @@ defmodule Ezagent.ActionSet.Identity do
   end
 
   def handle_cascade_notify_managers(_args, _ctx), do: {:error, :unauthorized}
-
 end
 
 defmodule Ezagent.ActionSet.IdentityAdmin do
@@ -647,7 +646,7 @@ defmodule Ezagent.ActionSet.IdentityAdmin do
 
     case request.action do
       {:quarantine, reason} ->
-        Ezagent.Identity.Cap.HealExecutor.quarantine(receiver, request, reason)
+        Ezagent.Identity.Cap.HealExecutor.quarantine(receiver, current_caps, request, reason)
 
       _action ->
         Ezagent.Identity.Cap.HealExecutor.execute(receiver, current_caps, request)
@@ -664,7 +663,8 @@ defmodule Ezagent.ActionSet.IdentityAdmin do
          {:ok, persistable} <- Ezagent.EntityCaps.prepare_for_storage(caps, receiver, true) do
       new_caps = MapSet.new(persistable)
 
-      with :ok <- persist_entity_caps(receiver, new_caps) do
+      with :ok <- Ezagent.EntityCaps.UserStore.persist_if_present(receiver, new_caps),
+           :ok <- Ezagent.Identity.CapQuarantine.close_resolved_all(receiver, new_caps) do
         {:ok, %{caps: MapSet.to_list(new_caps)}, [set_caps_effect(new_caps)]}
       end
     else
@@ -684,7 +684,8 @@ defmodule Ezagent.ActionSet.IdentityAdmin do
          {:ok, persistable} <- Ezagent.EntityCaps.prepare_for_storage(updated, receiver, true) do
       new_caps = MapSet.new(persistable)
 
-      with :ok <- persist_entity_caps(receiver, new_caps) do
+      with :ok <- Ezagent.EntityCaps.UserStore.persist_if_present(receiver, new_caps) do
+        :ok = Ezagent.Identity.CapQuarantine.close_resolved(receiver, cap)
         {:ok, %{caps: MapSet.to_list(new_caps)}, [set_caps_effect(new_caps)]}
       end
     end
@@ -701,8 +702,10 @@ defmodule Ezagent.ActionSet.IdentityAdmin do
            Ezagent.EntityCaps.prepare_for_storage(updated, Map.get(ctx, :self_uri), true) do
       new_caps = MapSet.new(persistable)
 
-      with :ok <- persist_entity_caps(Map.get(ctx, :self_uri), new_caps) do
-        :ok = Ezagent.Identity.CapQuarantine.close(Map.fetch!(ctx, :self_uri), cap)
+      with :ok <-
+             Ezagent.EntityCaps.UserStore.persist_if_present(Map.get(ctx, :self_uri), new_caps) do
+        receiver = Map.fetch!(ctx, :self_uri)
+        Ezagent.Identity.CapQuarantine.close_revoked(receiver, current_caps, cap)
         {:ok, %{caps: MapSet.to_list(new_caps)}, [set_caps_effect(new_caps)]}
       end
     else
@@ -727,6 +730,9 @@ defmodule Ezagent.ActionSet.IdentityAdmin do
         |> MapSet.new()
 
       new_caps = MapSet.put(deduped, cap_struct)
+
+      :ok =
+        Ezagent.Identity.CapQuarantine.close_resolved(Map.fetch!(ctx, :self_uri), cap_struct)
 
       notify_cap_change(ctx, :cap_granted, "A new capability was granted to you.", cap_struct)
 
@@ -760,25 +766,29 @@ defmodule Ezagent.ActionSet.IdentityAdmin do
 
     case Ezagent.Capability.revoke(current_caps, cap_struct) do
       {:ok, new_caps} ->
-        :ok = Ezagent.Identity.CapQuarantine.close(Map.fetch!(ctx, :self_uri), cap_struct)
+        receiver = Map.fetch!(ctx, :self_uri)
 
-        notify_cap_change(
-          ctx,
-          :cap_revoked,
-          "A capability was revoked from you.",
-          cap_struct
-        )
+        with :ok <- Ezagent.EntityCaps.UserStore.persist_if_present(receiver, new_caps) do
+          Ezagent.Identity.CapQuarantine.close_revoked(receiver, current_caps, cap_struct)
 
-        {:ok, %{caps: MapSet.to_list(new_caps)},
-         [
-           set_caps_effect(new_caps),
-           {:emit, :cap_revoked,
-            %{
-              target_uri: Map.get(ctx, :self_uri) |> uri_to_str(),
-              cap: cap_struct,
-              at: DateTime.utc_now()
-            }}
-         ]}
+          notify_cap_change(
+            ctx,
+            :cap_revoked,
+            "A capability was revoked from you.",
+            cap_struct
+          )
+
+          {:ok, %{caps: MapSet.to_list(new_caps)},
+           [
+             set_caps_effect(new_caps),
+             {:emit, :cap_revoked,
+              %{
+                target_uri: receiver |> uri_to_str(),
+                cap: cap_struct,
+                at: DateTime.utc_now()
+              }}
+           ]}
+        end
 
       {:error, :cannot_revoke_admin} = err ->
         err
@@ -787,16 +797,6 @@ defmodule Ezagent.ActionSet.IdentityAdmin do
 
   defp uri_to_str(%URI{} = uri), do: URI.to_string(uri)
   defp uri_to_str(other), do: inspect(other)
-
-  defp persist_entity_caps(%URI{} = uri, caps) do
-    if Ezagent.URI.type?(uri, :user) do
-      Ezagent.EntityCaps.UserStore.persist(uri, MapSet.to_list(caps))
-    else
-      :ok
-    end
-  end
-
-  defp persist_entity_caps(_uri, _caps), do: :ok
 
   defp replace_cap(caps, cap) do
     caps

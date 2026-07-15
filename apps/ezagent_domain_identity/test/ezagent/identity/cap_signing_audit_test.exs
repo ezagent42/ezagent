@@ -105,6 +105,32 @@ defmodule Ezagent.Identity.CapSigningAuditTest do
     assert CapSigningAudit.clean?(report)
   end
 
+  test "a malformed tombstoned binding is not counted as live unsigned authority" do
+    agent = unique_agent("audit-tombstoned-malformed")
+    now = DateTime.utc_now()
+
+    %RecipeCapBinding{
+      agent_uri: URI.to_string(agent),
+      workspace_uri: "workspace://team-alpha",
+      recipe_name: "retired-fixture",
+      issuer_uri: URI.to_string(Ezagent.Entity.User.admin_uri()),
+      artifacts: %{"not_caps" => :malformed},
+      content_hash: "retired-malformed",
+      version: 1,
+      tombstoned_at: now,
+      inserted_at: now,
+      updated_at: now
+    }
+    |> Repo.insert!()
+
+    entries = CapSigningAudit.collect_entries()
+    report = CapSigningAudit.scan_entries(entries, [Ezagent.Identity.CapReissuePolicy])
+
+    refute Enum.any?(entries.recipe_cap_bindings, &(&1.holder_uri == URI.to_string(agent)))
+    assert report.totals.unsigned_authorizer == 0
+    assert report.unsigned_by_source == %{}
+  end
+
   defp entry(source, holder, cap), do: %{source: source, holder_uri: holder, cap: cap}
 
   defp unique_user(prefix) do

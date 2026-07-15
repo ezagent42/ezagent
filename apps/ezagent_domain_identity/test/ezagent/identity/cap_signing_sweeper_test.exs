@@ -3,7 +3,9 @@ defmodule Ezagent.Identity.CapSigningSweeperTest do
 
   alias Ezagent.Capability
   alias Ezagent.EntityCaps.UserStore
-  alias Ezagent.Identity.{CapSigningAudit, CapSigningSweeper}
+  alias Ezagent.Identity.{CapSelfHeal, CapSigningAudit, CapSigningSweeper, RecipeCapBinding}
+  alias Ezagent.Cap.Delivery
+  alias EzagentCore.Repo
 
   test "a failed enqueue leaves the exact durable candidate eligible for the next pass" do
     holder = user_uri("retry")
@@ -85,6 +87,96 @@ defmodule Ezagent.Identity.CapSigningSweeperTest do
     assert Ezagent.Cap.signed_and_valid?(artifact, holder)
   end
 
+  test "one sweep repairs an unsigned snapshot when caps_json already has the signed replacement" do
+    holder = user_uri("half-written")
+    legacy = legacy_identity_cap(holder)
+    signed = Ezagent.Test.CapHelper.issue!(holder, legacy)
+
+    assert {:ok, _user} = Ezagent.Users.create(holder, nil, [signed])
+    assert {:ok, _pid} = Ezagent.SpawnRegistry.spawn(holder)
+    on_exit(fn -> Ezagent.Kind.terminate(holder) end)
+    assert_eventually(fn -> Ezagent.ReadyGate.status(holder) == :ready end)
+
+    # Recreate the crash window after activation: live + caps_json are signed,
+    # but the last durable snapshot commit still contains the unsigned token.
+    insert_snapshot!(holder, legacy)
+
+    assert holder_unsigned_count(holder) == 1
+
+    result = CapSigningSweeper.sweep()
+    assert result.enqueue_errors == []
+    assert result.enqueued_holders == 1
+
+    assert_eventually(fn -> holder_unsigned_count(holder) == 0 end)
+
+    entries = CapSigningAudit.collect_entries()
+
+    assert Enum.any?(entries.kind_snapshots, fn
+             %{holder_uri: ^holder, cap: cap} -> cap === signed
+             _entry -> false
+           end)
+  end
+
+  test "a never-created agent refreshes its unsigned recipe binding without becoming live" do
+    holder = Ezagent.URI.agent("team-alpha", "pre-agent-#{System.unique_integer([:positive])}")
+    proposal = legacy_agent_cap(holder)
+    issuer = Ezagent.Entity.User.admin_uri()
+
+    assert {:ok, %{caps: [signed], version: version}} =
+             RecipeCapBinding.issue_and_upsert(holder, "pre-agent-recipe", issuer, [proposal])
+
+    binding = Repo.get!(RecipeCapBinding, URI.to_string(holder))
+    unsigned = %{signed | signature: nil}
+
+    binding
+    |> Ecto.Changeset.change(artifacts: %{"caps" => [Capability.to_map(unsigned)]})
+    |> Repo.update!()
+
+    assert :error = Ezagent.KindRegistry.lookup(holder)
+    assert is_nil(Ezagent.Ecto.KindSnapshot.get(URI.to_string(holder)))
+    assert holder_unsigned_count(holder) == 1
+
+    result = CapSigningSweeper.sweep()
+    assert result.enqueue_errors == []
+    assert result.refreshed_bindings == 1
+
+    assert_eventually(fn -> holder_unsigned_count(holder) == 0 end)
+    assert :error = Ezagent.KindRegistry.lookup(holder)
+    assert is_nil(Ezagent.Ecto.KindSnapshot.get(URI.to_string(holder)))
+
+    assert {:ok, %{caps: [refreshed], version: refreshed_version}} =
+             RecipeCapBinding.fetch(holder)
+
+    assert refreshed_version == version + 1
+    assert Ezagent.Cap.signed_and_valid?(refreshed, holder)
+  end
+
+  test "repeated sweeps of one residual cap reuse one durable heal delivery" do
+    holder = user_uri("outbox-idempotent")
+    legacy = legacy_identity_cap(holder)
+
+    entries = %{
+      users_caps_json: [entry(:users_caps_json, holder, legacy)],
+      kind_snapshots: [],
+      recipe_cap_bindings: [],
+      cap_quarantine: []
+    }
+
+    Enum.each(1..4, fn _round ->
+      result = CapSigningSweeper.sweep_entries(entries, &CapSelfHeal.enqueue_plan/2)
+      assert result.enqueue_errors == []
+    end)
+
+    target = holder |> Ezagent.URI.instance() |> URI.to_string()
+
+    count =
+      Delivery
+      |> Ecto.Query.where([delivery], delivery.target_uri == ^target and delivery.op == :heal_cap)
+      |> Repo.aggregate(:count, :id)
+
+    assert count == 1
+  end
+
   defp entry(source, holder, cap), do: %{source: source, holder_uri: holder, cap: cap}
 
   defp user_uri(prefix) do
@@ -96,6 +188,18 @@ defmodule Ezagent.Identity.CapSigningSweeperTest do
       kind: :user,
       behavior: Ezagent.ActionSet.Identity,
       action: :list_caps,
+      instance: holder,
+      workspace_uri: Ezagent.URI.workspace("team-alpha"),
+      granted_by: Ezagent.Entity.User.admin_uri(),
+      granted_at: DateTime.utc_now()
+    }
+  end
+
+  defp legacy_agent_cap(holder) do
+    %Capability{
+      kind: :agent,
+      behavior: Ezagent.ActionSet.Sandbox,
+      action: :update_config,
       instance: holder,
       workspace_uri: Ezagent.URI.workspace("team-alpha"),
       granted_by: Ezagent.Entity.User.admin_uri(),

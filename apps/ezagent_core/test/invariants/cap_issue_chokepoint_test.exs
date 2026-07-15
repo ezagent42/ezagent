@@ -13,6 +13,11 @@ defmodule Ezagent.Invariants.CapIssueChokepointTest do
 
   alias EzagentCore.CapsJsonScanner, as: Scanner
 
+  defmodule RejectingPolicy do
+    def classify(_cap), do: :not_mine
+    def reissue_action(_cap, _receiver), do: {:quarantine, :not_mine}
+  end
+
   @mint_candidates %{
     "apps/ezagent_core/lib/ezagent/cap.ex" => 1,
     "apps/ezagent_core/lib/ezagent/capability/normalize.ex" => 3,
@@ -53,7 +58,11 @@ defmodule Ezagent.Invariants.CapIssueChokepointTest do
     },
     "apps/ezagent_domain_identity/lib/ezagent/behavior/identity.ex" => %{
       count: 1,
-      coverage: [{:resolver, Ezagent.Identity.CapReissuePolicy}]
+      coverage: [
+        {:resolver, Ezagent.Identity.CapReissuePolicy, :identity_self},
+        {:resolver, Ezagent.Identity.CapReissuePolicy, :agent_sandbox_self},
+        {:resolver, Ezagent.Identity.CapReissuePolicy, :agent_config_evolve_self}
+      ]
     },
     "apps/ezagent_domain_identity/lib/ezagent/behavior/workspace_user_admin.ex" => %{
       count: 1,
@@ -65,11 +74,21 @@ defmodule Ezagent.Invariants.CapIssueChokepointTest do
     },
     "apps/ezagent_domain_identity/lib/ezagent/identity/recipe_cap_binding.ex" => %{
       count: 1,
-      coverage: [{:resolver, Ezagent.Identity.RecipeCapReissuePolicy}]
+      coverage: [
+        {:resolver, Ezagent.Identity.RecipeCapReissuePolicy, :agent_recipe_candidate}
+      ]
+    },
+    "apps/ezagent_domain_identity/lib/ezagent/identity/cap/heal_executor.ex" => %{
+      count: 1,
+      coverage: [
+        {:resolver, Ezagent.Identity.CapReissuePolicy, :identity_self},
+        {:resolver, Ezagent.Session.CapReissuePolicy, :session_participation},
+        {:resolver, Ezagent.Workspace.CapReissuePolicy, :creator_manage}
+      ]
     },
     "apps/ezagent_domain_identity/lib/ezagent_domain_identity/application.ex" => %{
       count: 1,
-      coverage: [{:resolver, Ezagent.Identity.CapReissuePolicy}]
+      coverage: [{:resolver, Ezagent.Identity.CapReissuePolicy, :admin_genesis}]
     },
     "apps/ezagent_domain_identity/lib/mix/tasks/ezagent.user.create.ex" => %{
       count: 1,
@@ -79,67 +98,88 @@ defmodule Ezagent.Invariants.CapIssueChokepointTest do
     # its one concrete session.send class is covered by the session resolver.
     "apps/ezagent_plugin_email/lib/ezagent/email/inbound/authority.ex" => %{
       count: 1,
-      coverage: [{:resolver, Ezagent.Session.CapReissuePolicy}]
+      coverage: [{:resolver, Ezagent.Session.CapReissuePolicy, :session_participation}]
     },
     "apps/ezagent_domain_session/lib/ezagent/behavior/session/member_cap.ex" => %{
       count: 1,
-      coverage: [{:resolver, Ezagent.Session.CapReissuePolicy}]
+      coverage: [{:resolver, Ezagent.Session.CapReissuePolicy, :session_participation}]
     },
     "apps/ezagent_domain_session/lib/ezagent/behavior/session/membership.ex" => %{
       count: 2,
-      coverage: [{:resolver, Ezagent.Session.CapReissuePolicy}]
+      coverage: [{:resolver, Ezagent.Session.CapReissuePolicy, :session_participation}]
     },
     "apps/ezagent_domain_session/lib/ezagent/behavior/template.ex" => %{
       count: 1,
-      coverage: [{:resolver, Ezagent.Session.CapReissuePolicy}]
+      coverage: [{:resolver, Ezagent.Session.CapReissuePolicy, :session_template_owner}]
     },
     "apps/ezagent_domain_session/lib/ezagent/entity/session/orchestrator/caps.ex" => %{
       count: 1,
-      coverage: [{:resolver, Ezagent.Session.CapReissuePolicy}]
+      coverage: [
+        {:resolver, Ezagent.Session.CapReissuePolicy, :orchestrator_admin},
+        {:resolver, Ezagent.Session.CapReissuePolicy, :orchestrator_delegation},
+        {:resolver, Ezagent.Session.CapReissuePolicy, :orchestrator_template}
+      ]
     },
     "apps/ezagent_domain_session/lib/ezagent/entity/session_template.ex" => %{
       count: 1,
-      coverage: [{:resolver, Ezagent.Session.CapReissuePolicy}]
+      coverage: [{:resolver, Ezagent.Session.CapReissuePolicy, :session_template_owner}]
     },
     "apps/ezagent_domain_session/lib/ezagent/orchestrator/tools/templates.ex" => %{
       count: 1,
-      coverage: [{:resolver, Ezagent.Session.CapReissuePolicy}]
+      coverage: [{:resolver, Ezagent.Session.CapReissuePolicy, :orchestrator_template}]
     },
     "apps/ezagent_domain_session/lib/ezagent/session/member_cap_migration.ex" => %{
       count: 1,
-      coverage: [{:resolver, Ezagent.Session.CapReissuePolicy}]
+      coverage: [{:resolver, Ezagent.Session.CapReissuePolicy, :session_participation}]
     },
     "apps/ezagent_domain_session/lib/ezagent/socialware/composition_caps.ex" => %{
       count: 2,
       coverage: [:explicit_quarantine]
     },
     "apps/ezagent_domain_session/lib/ezagent_domain_instance_message/session_creator/definition_agents.ex" =>
-      %{count: 1, coverage: [{:resolver, Ezagent.Identity.RecipeCapReissuePolicy}]},
+      %{
+        count: 1,
+        coverage: [
+          {:resolver, Ezagent.Identity.RecipeCapReissuePolicy, :agent_recipe_candidate}
+        ]
+      },
     "apps/ezagent_domain_session/lib/ezagent_domain_instance_message/session_creator/materializer.ex" =>
-      %{count: 4, coverage: [{:resolver, Ezagent.Session.CapReissuePolicy}]},
+      %{
+        count: 4,
+        coverage: [
+          {:resolver, Ezagent.Session.CapReissuePolicy, :session_participation},
+          {:resolver, Ezagent.Session.CapReissuePolicy, :session_owner_teardown},
+          {:resolver, Ezagent.Session.CapReissuePolicy, :orchestrator_admin}
+        ]
+      },
     "apps/ezagent_domain_socialware/lib/ezagent/socialware/anon_user.ex" => %{
       count: 1,
-      coverage: [{:resolver, Ezagent.Session.CapReissuePolicy}]
+      coverage: [{:resolver, Ezagent.Session.CapReissuePolicy, :session_participation}]
     },
     "apps/ezagent_domain_workspace/lib/ezagent/behavior/workspace.ex" => %{
       count: 1,
-      coverage: [{:resolver, Ezagent.Workspace.CapReissuePolicy}]
+      coverage: [
+        {:resolver, Ezagent.Workspace.CapReissuePolicy, :workspace_member_create_session}
+      ]
     },
     "apps/ezagent_domain_workspace/lib/ezagent/workspace.ex" => %{
       count: 2,
-      coverage: [:explicit_quarantine, {:resolver, Ezagent.Workspace.CapReissuePolicy}]
+      coverage: [
+        :explicit_quarantine,
+        {:resolver, Ezagent.Workspace.CapReissuePolicy, :creator_manage}
+      ]
     },
     "apps/ezagent_domain_workspace/lib/ezagent/workspace/responsibility_assignments.ex" => %{
       count: 1,
-      coverage: [{:resolver, Ezagent.Workspace.CapReissuePolicy}]
+      coverage: [{:resolver, Ezagent.Workspace.CapReissuePolicy, :workspace_responsibility}]
     },
     "apps/ezagent_plugin_world/lib/ezagent/world/layout_bootstrap.ex" => %{
       count: 1,
-      coverage: [{:resolver, Ezagent.World.CapReissuePolicy}]
+      coverage: [{:resolver, Ezagent.World.CapReissuePolicy, :world_layout_manage}]
     },
     "apps/ezagent_web/lib/ezagent_web/socialware/anon_takeover.ex" => %{
       count: 1,
-      coverage: [{:resolver, Ezagent.Session.CapReissuePolicy}]
+      coverage: [{:resolver, Ezagent.Session.CapReissuePolicy, :session_participation}]
     }
   }
 
@@ -151,44 +191,50 @@ defmodule Ezagent.Invariants.CapIssueChokepointTest do
     "apps/ezagent_core/lib/ezagent/creator_grant.ex" => [:explicit_quarantine],
     "apps/ezagent_core/lib/ezagent/kind/runtime.ex" => [:explicit_quarantine],
     "apps/ezagent_domain_identity/lib/ezagent/behavior/identity.ex" => [
-      {:resolver, Ezagent.Identity.CapReissuePolicy}
+      {:resolver, Ezagent.Identity.CapReissuePolicy, :identity_self},
+      {:resolver, Ezagent.Identity.CapReissuePolicy, :agent_sandbox_self},
+      {:resolver, Ezagent.Identity.CapReissuePolicy, :agent_config_evolve_self}
     ],
     "apps/ezagent_domain_identity/lib/ezagent/identity.ex" => [:explicit_quarantine],
     "apps/ezagent_domain_session/lib/ezagent/behavior/template.ex" => [
-      {:resolver, Ezagent.Session.CapReissuePolicy}
+      {:resolver, Ezagent.Session.CapReissuePolicy, :session_template_owner}
     ],
     "apps/ezagent_domain_session/lib/ezagent/e2e/scenarios/agent_contract_g4.ex" => [
       :explicit_quarantine
     ],
     "apps/ezagent_domain_session/lib/ezagent/entity/session/orchestrator/caps.ex" => [
-      {:resolver, Ezagent.Session.CapReissuePolicy}
+      {:resolver, Ezagent.Session.CapReissuePolicy, :orchestrator_admin},
+      {:resolver, Ezagent.Session.CapReissuePolicy, :orchestrator_delegation},
+      {:resolver, Ezagent.Session.CapReissuePolicy, :orchestrator_template}
     ],
     "apps/ezagent_domain_session/lib/ezagent/entity/session_template.ex" => [
-      {:resolver, Ezagent.Session.CapReissuePolicy}
+      {:resolver, Ezagent.Session.CapReissuePolicy, :session_template_owner}
     ],
     "apps/ezagent_domain_session/lib/ezagent/orchestrator/tools/templates.ex" => [
-      {:resolver, Ezagent.Session.CapReissuePolicy}
+      {:resolver, Ezagent.Session.CapReissuePolicy, :orchestrator_template}
     ],
     "apps/ezagent_domain_session/lib/ezagent_domain_instance_message/session_creator/definition_agents.ex" =>
       [
-        {:resolver, Ezagent.Identity.RecipeCapReissuePolicy}
+        {:resolver, Ezagent.Identity.RecipeCapReissuePolicy, :agent_recipe_candidate}
       ],
     "apps/ezagent_domain_session/lib/ezagent_domain_instance_message/session_creator/materializer.ex" =>
       [
-        {:resolver, Ezagent.Session.CapReissuePolicy}
+        {:resolver, Ezagent.Session.CapReissuePolicy, :session_participation},
+        {:resolver, Ezagent.Session.CapReissuePolicy, :session_owner_teardown},
+        {:resolver, Ezagent.Session.CapReissuePolicy, :orchestrator_admin}
       ],
     "apps/ezagent_domain_session/lib/ezagent_domain_instance_message/session_creator/rollback.ex" =>
       [
         :explicit_quarantine
       ],
     "apps/ezagent_domain_socialware/lib/ezagent/socialware/anon_user.ex" => [
-      {:resolver, Ezagent.Session.CapReissuePolicy}
+      {:resolver, Ezagent.Session.CapReissuePolicy, :session_participation}
     ],
     "apps/ezagent_domain_workspace/lib/ezagent/behavior/workspace.ex" => [
-      {:resolver, Ezagent.Workspace.CapReissuePolicy}
+      {:resolver, Ezagent.Workspace.CapReissuePolicy, :workspace_member_create_session}
     ],
     "apps/ezagent_plugin_world/lib/ezagent/world/layout_bootstrap.ex" => [
-      {:resolver, Ezagent.World.CapReissuePolicy}
+      {:resolver, Ezagent.World.CapReissuePolicy, :world_layout_manage}
     ],
     "apps/ezagent_plugin_world/lib/ezagent/world/workspace_plugin_actions.ex" => [
       :explicit_quarantine
@@ -281,6 +327,55 @@ defmodule Ezagent.Invariants.CapIssueChokepointTest do
         classification <- coverage do
       assert valid_coverage?(classification)
     end
+  end
+
+  test "an exported resolver that does not classify the issued cap is not coverage" do
+    refute valid_coverage?({:resolver, RejectingPolicy})
+  end
+
+  test "the issuance scanner recognizes aliased Cap and Grant calls" do
+    assert issue_site?(quote(do: Cap.issue(:authorization, :receiver, :cap))) == 1
+    assert issue_site?(quote(do: Grant.grant_cap(:receiver, :cap, :authorization))) == 1
+
+    assert issue_site?(
+             quote(
+               do:
+                 Grant.grant_cap_returning_effect(
+                   :receiver,
+                   :cap,
+                   :authorization,
+                   :result
+                 )
+             )
+           ) == 1
+
+    assert issue_site?(
+             quote(do: Issuer.issue(:authorization, :receiver, :cap)),
+             %{Issuer: [:Ezagent, :Cap]}
+           ) == 1
+  end
+
+  test "workspace member create_session issuance is claimed by the workspace policy" do
+    workspace = Ezagent.URI.workspace("team-alpha")
+
+    cap = %Ezagent.Capability{
+      kind: :workspace,
+      behavior: Ezagent.ActionSet.Workspace,
+      action: :create_session,
+      instance: workspace,
+      workspace_uri: workspace,
+      granted_by: Ezagent.Entity.User.admin_uri(),
+      granted_at: ~U[2026-07-15 00:00:00Z]
+    }
+
+    assert {:ok, :workspace_member_create_session} =
+             Ezagent.Workspace.CapReissuePolicy.classify(cap)
+
+    assert {:reissue, {:rule, :workspace_membership, _issuer}} =
+             Ezagent.Workspace.CapReissuePolicy.reissue_action(
+               cap,
+               Ezagent.URI.user("team-alpha", "member")
+             )
   end
 
   test "explicit caps-slice writer allowlist can only shrink" do
@@ -517,37 +612,200 @@ defmodule Ezagent.Invariants.CapIssueChokepointTest do
   defp issue_sites do
     source_files()
     |> Enum.reduce(%{}, fn {relative, absolute}, acc ->
-      {_ast, count} =
-        absolute
-        |> quoted!()
-        |> Macro.prewalk(0, fn node, count -> {node, count + issue_site?(node)} end)
+      count =
+        if relative == "apps/ezagent_domain_identity/lib/ezagent/identity/grant.ex" do
+          # The canonical Grant wrapper's internal `Cap.issue/3` is not a
+          # product issue-site. Its callers are the surface this gate proves.
+          0
+        else
+          ast = quoted!(absolute)
+          aliases = issue_aliases(ast)
+
+          {_ast, count} =
+            Macro.prewalk(ast, 0, fn node, count ->
+              {node, count + issue_site?(node, aliases)}
+            end)
+
+          count
+        end
 
       if count == 0, do: acc, else: Map.put(acc, relative, count)
     end)
   end
 
-  defp issue_site?({{:., _, [{:__aliases__, _, [:Ezagent, :Cap]}, :issue]}, _, _args}), do: 1
+  defp issue_site?(node), do: issue_site?(node, default_issue_aliases())
 
-  defp issue_site?(
-         {{:., _, [{:__aliases__, _, [:Ezagent, :Identity, :Grant]}, function]}, _, _args}
-       )
-       when function in [:grant_cap, :grant_cap_via_router, :grant_cap_effect],
-       do: 1
-
-  defp issue_site?({{:., _, [{:__aliases__, _, module}, :issue_and_upsert]}, _, _args}) do
-    if List.last(module) == :RecipeCapBinding, do: 1, else: 0
+  defp issue_site?({{:., _, [{:__aliases__, _, module}, :issue]}, _, _args}, aliases) do
+    if resolve_issue_alias(module, aliases) == [:Ezagent, :Cap], do: 1, else: 0
   end
 
-  defp issue_site?(_node), do: 0
+  defp issue_site?({{:., _, [{:__aliases__, _, module}, function]}, _, _args}, aliases)
+       when function in [
+              :grant_cap,
+              :grant_cap_via_router,
+              :grant_cap_effect,
+              :grant_cap_returning_effect
+            ] do
+    if resolve_issue_alias(module, aliases) == [:Ezagent, :Identity, :Grant], do: 1, else: 0
+  end
+
+  defp issue_site?(
+         {{:., _, [{:__aliases__, _, module}, :issue_and_upsert]}, _, _args},
+         aliases
+       ) do
+    if List.last(resolve_issue_alias(module, aliases)) == :RecipeCapBinding, do: 1, else: 0
+  end
+
+  defp issue_site?(_node, _aliases), do: 0
+
+  defp issue_aliases(ast) do
+    {_ast, aliases} =
+      Macro.prewalk(ast, %{}, fn
+        {:alias, _, [{:__aliases__, _, module}]} = node, aliases ->
+          {node, Map.put(aliases, List.last(module), module)}
+
+        {:alias, _, [{:__aliases__, _, module}, opts]} = node, aliases when is_list(opts) ->
+          alias_name =
+            case Keyword.get(opts, :as) do
+              {:__aliases__, _, [name]} -> name
+              _ -> List.last(module)
+            end
+
+          {node, Map.put(aliases, alias_name, module)}
+
+        node, aliases ->
+          {node, aliases}
+      end)
+
+    Map.merge(default_issue_aliases(), aliases)
+  end
+
+  defp resolve_issue_alias([head | tail] = module, aliases) do
+    case Map.fetch(aliases, head) do
+      {:ok, prefix} -> prefix ++ tail
+      :error -> module
+    end
+  end
+
+  defp default_issue_aliases do
+    %{
+      Cap: [:Ezagent, :Cap],
+      Grant: [:Ezagent, :Identity, :Grant],
+      RecipeCapBinding: [:Ezagent, :Identity, :RecipeCapBinding]
+    }
+  end
 
   defp valid_coverage?(:explicit_quarantine), do: true
 
-  defp valid_coverage?({:resolver, module}) do
+  defp valid_coverage?({:resolver, module, sample}) do
     Code.ensure_loaded?(module) and function_exported?(module, :classify, 1) and
-      function_exported?(module, :reissue_action, 2)
+      function_exported?(module, :reissue_action, 2) and
+      match?({:ok, _class}, module.classify(coverage_cap(sample)))
   end
 
+  defp valid_coverage?({:resolver, _module}), do: false
+
   defp valid_coverage?(_classification), do: false
+
+  defp coverage_cap(:admin_genesis), do: Ezagent.Capability.admin_genesis_cap()
+
+  defp coverage_cap(:identity_self) do
+    sample_cap(:user, Ezagent.ActionSet.Identity, :list_caps, sample_user())
+  end
+
+  defp coverage_cap(:agent_sandbox_self) do
+    sample_cap(:agent, Ezagent.ActionSet.Sandbox, :update_config, sample_agent())
+  end
+
+  defp coverage_cap(:agent_config_evolve_self) do
+    sample_cap(:agent, Ezagent.ActionSet.ConfigEvolve, :reconcile_cascade, sample_agent())
+  end
+
+  defp coverage_cap(:agent_recipe_candidate) do
+    sample_cap(:agent, Ezagent.ActionSet.Sandbox, :update_config, sample_agent())
+  end
+
+  defp coverage_cap(:session_participation) do
+    sample_cap(:session, Ezagent.ActionSet.Session, :send, sample_session())
+  end
+
+  defp coverage_cap(:session_owner_teardown) do
+    sample_cap(
+      :agent,
+      Ezagent.ActionSet.Sandbox,
+      :destroy,
+      {:spawned_by, sample_user()}
+    )
+  end
+
+  defp coverage_cap(:session_template_owner) do
+    sample_cap(
+      :session_template,
+      Ezagent.ActionSet.Template,
+      :any,
+      {:within_workspace, sample_workspace()}
+    )
+  end
+
+  defp coverage_cap(:orchestrator_admin) do
+    sample_cap(:session, Ezagent.ActionSet.OrchestratorAdmin, :restart, sample_session())
+  end
+
+  defp coverage_cap(:orchestrator_delegation) do
+    sample_cap(:agent, :any, :any, {:spawned_by, sample_user()})
+  end
+
+  defp coverage_cap(:orchestrator_template) do
+    sample_cap(
+      :agent_template,
+      Ezagent.ActionSet.Template,
+      :any,
+      {:within_workspace, sample_workspace()}
+    )
+  end
+
+  defp coverage_cap(:creator_manage) do
+    sample_cap(:agent, Ezagent.ActionSet.Manage, :any, sample_agent())
+  end
+
+  defp coverage_cap(:workspace_responsibility) do
+    sample_cap(
+      :workspace,
+      Ezagent.ActionSet.Session,
+      :send,
+      {:within_workspace, sample_workspace()}
+    )
+  end
+
+  defp coverage_cap(:workspace_member_create_session) do
+    sample_cap(
+      :workspace,
+      Ezagent.ActionSet.Workspace,
+      :create_session,
+      sample_workspace()
+    )
+  end
+
+  defp coverage_cap(:world_layout_manage) do
+    sample_cap(:workspace, Ezagent.World.Behavior.Layout, :manage, sample_workspace())
+  end
+
+  defp sample_cap(kind, behavior, action, instance) do
+    %Ezagent.Capability{
+      kind: kind,
+      behavior: behavior,
+      action: action,
+      instance: instance,
+      workspace_uri: sample_workspace(),
+      granted_by: Ezagent.Entity.User.admin_uri(),
+      granted_at: ~U[2026-07-15 00:00:00Z]
+    }
+  end
+
+  defp sample_workspace, do: Ezagent.URI.workspace("team-alpha")
+  defp sample_user, do: Ezagent.URI.user("team-alpha", "coverage-user")
+  defp sample_agent, do: Ezagent.URI.agent("team-alpha", "coverage-agent")
+  defp sample_session, do: Ezagent.URI.session("team-alpha", "default", "coverage")
 
   defp source_files do
     root = repo_root()

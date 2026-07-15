@@ -8,6 +8,7 @@ defmodule Ezagent.Identity.CapSelfHeal do
 
   alias Ezagent.{Cmd, Router}
   alias Ezagent.Cap.HealRequest
+  alias Ezagent.Cap.DeliveryOutbox.Envelope
 
   @doc false
   @spec enqueue_plan(URI.t(), Ezagent.Identity.CapReconciler.plan()) ::
@@ -35,7 +36,10 @@ defmodule Ezagent.Identity.CapSelfHeal do
 
     if match?({:error, _reason}, result) do
       require Logger
-      Logger.warning("cap self-heal enqueue failed holder=#{inspect(holder_uri)} result=#{inspect(result)}")
+
+      Logger.warning(
+        "cap self-heal enqueue failed holder=#{inspect(holder_uri)} result=#{inspect(result)}"
+      )
     end
 
     result
@@ -55,7 +59,8 @@ defmodule Ezagent.Identity.CapSelfHeal do
         caps: MapSet.new(),
         mode: :cast,
         reply: :ignore,
-        cap_delivery_producer: :identity_heal
+        cap_delivery_producer: :identity_heal,
+        idempotency_key: "cap-heal:" <> Envelope.payload_identity(request)
       }
     }
     |> Router.dispatch()

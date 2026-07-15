@@ -3,6 +3,7 @@ defmodule Ezagent.Identity.Cap.HealExecutor do
 
   alias Ezagent.{Cap, Capability}
   alias Ezagent.Cap.HealRequest
+  alias Ezagent.EntityCaps.SnapshotStore
   alias Ezagent.EntityCaps.UserStore
   alias Ezagent.Identity.{CapQuarantine, RecipeCapBinding}
 
@@ -12,19 +13,21 @@ defmodule Ezagent.Identity.Cap.HealExecutor do
   def execute(%URI{} = receiver, current_caps, %HealRequest{} = request)
       when is_list(current_caps) do
     user_caps = if Ezagent.URI.type?(receiver, :user), do: UserStore.load(receiver), else: []
+    snapshot_caps = durable_snapshot_caps(receiver)
 
     current_exact_present? = exact_cap_present?(current_caps, request.expected)
     user_exact_present? = exact_cap_present?(user_caps, request.expected)
-    exact_present? = current_exact_present? or user_exact_present?
+    snapshot_exact_present? = exact_cap_present?(snapshot_caps, request.expected)
+    exact_present? = current_exact_present? or user_exact_present? or snapshot_exact_present?
 
     if exact_present? or match?({:refresh_binding, _ref}, request.action) do
       execute_present(
         receiver,
         current_caps,
-        user_caps,
+        user_caps ++ snapshot_caps,
         request,
         exact_present?,
-        user_exact_present?
+        user_exact_present? or snapshot_exact_present?
       )
     else
       :ok = CapQuarantine.close(receiver, request.expected)
@@ -33,10 +36,29 @@ defmodule Ezagent.Identity.Cap.HealExecutor do
   end
 
   @doc false
-  @spec quarantine(URI.t(), HealRequest.t(), term()) :: {:ok, map(), []} | {:error, term()}
-  def quarantine(%URI{} = receiver, %HealRequest{} = request, reason) do
-    with :ok <- CapQuarantine.record(receiver, request.expected, request.class, reason) do
-      {:ok, %{status: :quarantined}, []}
+  @spec quarantine(URI.t(), [Capability.t()], HealRequest.t(), term()) ::
+          {:ok, map(), []} | {:error, term()}
+  def quarantine(%URI{} = receiver, current_caps, %HealRequest{} = request, reason)
+      when is_list(current_caps) do
+    durable_caps =
+      if(Ezagent.URI.type?(receiver, :user), do: UserStore.load(receiver), else: []) ++
+        durable_snapshot_caps(receiver)
+
+    caps = current_caps ++ durable_caps
+
+    cond do
+      signed_identity_replacement?(caps, request.expected, receiver) ->
+        :ok = CapQuarantine.close_resolved(receiver, request.expected)
+        {:ok, %{status: :stale}, []}
+
+      not exact_cap_present?(caps, request.expected) ->
+        :ok = CapQuarantine.close(receiver, request.expected)
+        {:ok, %{status: :stale}, []}
+
+      true ->
+        with :ok <- CapQuarantine.record(receiver, request.expected, request.class, reason) do
+          {:ok, %{status: :quarantined}, []}
+        end
     end
   end
 
@@ -52,6 +74,7 @@ defmodule Ezagent.Identity.Cap.HealExecutor do
       {:ok, %Capability{} = replacement} ->
         with :ok <- apply_exact_heal(receiver, request.expected, replacement) do
           :ok = CapQuarantine.close(receiver, request.expected)
+
           healed_caps =
             replace_or_materialize(
               current_caps,
@@ -90,9 +113,13 @@ defmodule Ezagent.Identity.Cap.HealExecutor do
 
   defp resolve_replacement(receiver, current_caps, request) do
     existing =
-      Enum.find(current_caps, fn cap ->
-        Capability.identity_key(cap) == Capability.identity_key(request.expected) and
-          Cap.signed_and_valid?(cap, receiver)
+      Enum.find(current_caps, fn
+        %Capability{} = cap ->
+          Capability.identity_key(cap) == Capability.identity_key(request.expected) and
+            Cap.signed_and_valid?(cap, receiver)
+
+        _other ->
+          false
       end)
 
     if existing do
@@ -131,10 +158,18 @@ defmodule Ezagent.Identity.Cap.HealExecutor do
 
   defp apply_exact_heal(receiver, expected, replacement) do
     with true <- Cap.signed_and_valid?(replacement, receiver),
-         :ok <- heal_user_home(receiver, expected, replacement) do
+         :ok <- heal_user_home(receiver, expected, replacement),
+         :ok <- heal_snapshot_home(receiver, expected, replacement) do
       :ok
     else
       false -> {:error, :invalid_cap_artifact}
+      {:error, _reason} = error -> error
+    end
+  end
+
+  defp heal_snapshot_home(receiver, expected, replacement) do
+    case SnapshotStore.heal_exact(receiver, expected, replacement) do
+      result when result in [:replaced, :no_match] -> :ok
       {:error, _reason} = error -> error
     end
   end
@@ -165,6 +200,26 @@ defmodule Ezagent.Identity.Cap.HealExecutor do
 
   defp exact_cap_present?(caps, expected), do: Enum.any?(caps, &(&1 === expected))
 
+  defp signed_identity_replacement?(caps, expected, receiver) do
+    expected_key = Capability.identity_key(expected)
+
+    Enum.any?(caps, fn
+      %Capability{} = cap ->
+        Capability.identity_key(cap) == expected_key and
+          Cap.signed_and_valid?(cap, receiver)
+
+      _other ->
+        false
+    end)
+  end
+
+  defp durable_snapshot_caps(receiver) do
+    case SnapshotStore.load(receiver) do
+      {:ok, caps} -> caps
+      _ -> []
+    end
+  end
+
   defp replace_or_materialize(caps, expected, replacement, user_exact_present?) do
     cond do
       exact_cap_present?(caps, expected) ->
@@ -180,6 +235,10 @@ defmodule Ezagent.Identity.Cap.HealExecutor do
 
   defp same_identity_present?(caps, expected) do
     expected_key = Capability.identity_key(expected)
-    Enum.any?(caps, &(Capability.identity_key(&1) == expected_key))
+
+    Enum.any?(caps, fn
+      %Capability{} = cap -> Capability.identity_key(cap) == expected_key
+      _other -> false
+    end)
   end
 end

@@ -6,6 +6,7 @@ defmodule EzagentCore.Repo.Migrations.CreateCapQuarantine do
       add :workspace_uri, :string, null: false
       add :holder_uri, :string, null: false
       add :cap_identity, :string, null: false
+      add :artifact_hash, :string, null: false
       add :granted_by, :string, null: false
       add :class, :string, null: false
       add :reason, :text, null: false

@@ -176,13 +176,15 @@ defmodule Ezagent.Identity.CapSigningAudit do
     RecipeCapBinding
     |> Repo.all()
     |> Enum.flat_map(fn binding ->
-      excluded = if binding.tombstoned_at, do: :tombstoned_binding, else: nil
-
-      binding.artifacts
-      |> binding_caps()
-      |> case do
-        {:ok, caps} -> collect_caps(:recipe_cap_bindings, binding.agent_uri, caps, excluded)
-        {:error, reason} -> [error_entry(:recipe_cap_bindings, binding.agent_uri, reason)]
+      if binding.tombstoned_at do
+        []
+      else
+        binding.artifacts
+        |> binding_caps()
+        |> case do
+          {:ok, caps} -> collect_caps(:recipe_cap_bindings, binding.agent_uri, caps)
+          {:error, reason} -> [error_entry(:recipe_cap_bindings, binding.agent_uri, reason)]
+        end
       end
     end)
   end

@@ -17,7 +17,7 @@ defmodule Ezagent.Identity.CapSigningSweeper do
   require Logger
 
   alias Ezagent.Capability
-  alias Ezagent.Identity.{CapReconciler, CapSelfHeal, CapSigningAudit}
+  alias Ezagent.Identity.{CapReconciler, CapSelfHeal, CapSigningAudit, RecipeCapBinding}
 
   @cap_sources [:users_caps_json, :kind_snapshots, :recipe_cap_bindings]
   @default_interval_ms 15 * 60 * 1000
@@ -27,6 +27,7 @@ defmodule Ezagent.Identity.CapSigningSweeper do
           candidates: non_neg_integer(),
           holders: non_neg_integer(),
           enqueued_holders: non_neg_integer(),
+          refreshed_bindings: non_neg_integer(),
           enqueue_errors: [{URI.t(), term()}],
           unrepairable_entries: non_neg_integer(),
           open_quarantined: non_neg_integer()
@@ -71,24 +72,31 @@ defmodule Ezagent.Identity.CapSigningSweeper do
   @spec sweep_entries(map(), (URI.t(), CapReconciler.plan() -> :ok | {:error, term()})) ::
           result()
   def sweep_entries(entries, enqueue_fun) when is_map(entries) and is_function(enqueue_fun, 2) do
-    {grouped, unrepairable_entries} = collect_candidates(entries)
+    {grouped, binding_candidates, unrepairable_entries} = collect_candidates(entries)
+
+    binding_holders = binding_candidates |> Enum.map(&elem(&1, 0)) |> MapSet.new()
+    all_holders = MapSet.union(MapSet.new(Map.keys(grouped)), binding_holders)
 
     initial = %{
       scanned_sources: 4,
-      candidates: grouped |> Map.values() |> Enum.sum_by(&length/1),
-      holders: map_size(grouped),
+      candidates:
+        grouped |> Map.values() |> Enum.sum_by(&length/1) |> Kernel.+(length(binding_candidates)),
+      holders: MapSet.size(all_holders),
       enqueued_holders: 0,
+      refreshed_bindings: 0,
       enqueue_errors: [],
       unrepairable_entries: unrepairable_entries,
       open_quarantined: count_open_quarantine(entries)
     }
+
+    result = refresh_bindings(binding_candidates, initial)
 
     grouped
     |> Enum.sort_by(fn {holder, _caps} ->
       {holder.scheme, holder.userinfo, holder.host, holder.port, holder.path, holder.query,
        holder.fragment}
     end)
-    |> Enum.reduce(initial, fn {holder, caps}, result ->
+    |> Enum.reduce(result, fn {holder, caps}, result ->
       plan = CapReconciler.plan(caps, holder)
 
       case safe_enqueue(enqueue_fun, holder, plan) do
@@ -103,11 +111,73 @@ defmodule Ezagent.Identity.CapSigningSweeper do
   end
 
   defp collect_candidates(entries) do
-    Enum.reduce(@cap_sources, {%{}, 0}, fn source, acc ->
+    {grouped, malformed} =
+      Enum.reduce(@cap_sources -- [:recipe_cap_bindings], {%{}, 0}, fn source, acc ->
+        entries
+        |> Map.get(source, [])
+        |> Enum.reduce(acc, &collect_entry/2)
+      end)
+
+    {binding_candidates, malformed} =
       entries
-      |> Map.get(source, [])
-      |> Enum.reduce(acc, &collect_entry/2)
+      |> Map.get(:recipe_cap_bindings, [])
+      |> Enum.reduce({[], malformed}, &collect_binding_entry/2)
+
+    {grouped, Enum.reverse(binding_candidates), malformed}
+  end
+
+  defp collect_binding_entry(%{excluded: _reason}, acc), do: acc
+
+  defp collect_binding_entry(%{error: _reason}, {candidates, malformed}) do
+    {candidates, malformed + 1}
+  end
+
+  defp collect_binding_entry(
+         %{holder_uri: %URI{} = holder, cap: %Capability{} = cap},
+         {candidates, malformed}
+       ) do
+    cond do
+      sentinel?(cap) or Ezagent.Cap.signed_and_valid?(cap, holder) ->
+        {candidates, malformed}
+
+      Enum.any?(candidates, fn {seen_holder, seen_cap} ->
+        seen_holder == holder and seen_cap === cap
+      end) ->
+        {candidates, malformed}
+
+      true ->
+        {[{holder, cap} | candidates], malformed}
+    end
+  end
+
+  defp collect_binding_entry(_entry, {candidates, malformed}) do
+    {candidates, malformed + 1}
+  end
+
+  defp refresh_bindings(candidates, result) do
+    Enum.reduce(candidates, result, fn {holder, expected}, acc ->
+      case safe_refresh_binding(holder, expected) do
+        {:ok, %{}} ->
+          %{acc | refreshed_bindings: acc.refreshed_bindings + 1}
+
+        {:ok, :no_match} ->
+          acc
+
+        {:error, reason} ->
+          %{
+            acc
+            | enqueue_errors: [{holder, {:binding_refresh_failed, reason}} | acc.enqueue_errors]
+          }
+      end
     end)
+  end
+
+  defp safe_refresh_binding(holder, expected) do
+    RecipeCapBinding.refresh_exact(holder, expected)
+  rescue
+    error -> {:error, {:exception, error.__struct__, Exception.message(error)}}
+  catch
+    kind, reason -> {:error, {kind, reason}}
   end
 
   defp collect_entry(%{excluded: _reason}, acc), do: acc
@@ -204,6 +274,7 @@ defmodule Ezagent.Identity.CapSigningSweeper do
         candidates: 0,
         holders: 0,
         enqueued_holders: 0,
+        refreshed_bindings: 0,
         enqueue_errors: [{Ezagent.Entity.User.admin_uri(), {:sweep_failed, error.__struct__}}],
         unrepairable_entries: 0,
         open_quarantined: 0

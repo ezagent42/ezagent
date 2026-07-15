@@ -17,6 +17,14 @@ defmodule Ezagent.Workspace.CapReissuePolicy do
     do: {:ok, :creator_manage}
 
   def classify(%Capability{
+        kind: :workspace,
+        behavior: Ezagent.ActionSet.Workspace,
+        action: :create_session,
+        instance: %URI{scheme: "workspace"}
+      }),
+      do: {:ok, :workspace_member_create_session}
+
+  def classify(%Capability{
         behavior: behavior,
         instance: {:within_workspace, %URI{scheme: "workspace"}}
       })
@@ -27,7 +35,23 @@ defmodule Ezagent.Workspace.CapReissuePolicy do
 
   @impl true
   def reissue_action(
-        %{__struct__: Capability, behavior: Ezagent.ActionSet.Manage, granted_by: %URI{} = issuer},
+        %{
+          __struct__: Capability,
+          kind: :workspace,
+          behavior: Ezagent.ActionSet.Workspace,
+          action: :create_session,
+          granted_by: %URI{} = issuer
+        },
+        _receiver
+      ),
+      do: {:reissue, {:rule, :workspace_membership, issuer}}
+
+  def reissue_action(
+        %{
+          __struct__: Capability,
+          behavior: Ezagent.ActionSet.Manage,
+          granted_by: %URI{} = issuer
+        },
         %URI{} = receiver
       ) do
     if same_uri?(issuer, receiver),
