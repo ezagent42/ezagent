@@ -234,8 +234,11 @@ defmodule Ezagent.ActionSet.Session.MemberCap do
   # race just re-grants (`handle_grant_cap` dedups by `identity_key`, never
   # duplicates). A member with no snapshot yet (brand-new) reads `[]` → grants.
   @spec member_snapshot_caps(URI.t()) :: [Ezagent.Capability.t()]
-  defp member_snapshot_caps(%URI{} = member_uri),
-    do: Ezagent.EntityCaps.load_persisted(member_uri)
+  defp member_snapshot_caps(%URI{} = member_uri) do
+    Ezagent.EntityCaps.load_persisted(member_uri)
+  rescue
+    _ -> []
+  end
 
   # The member-cap granter = the session OWNER (owner-rooted, #154), read from
   # `ctx` so it is NEVER a self-call to the Session Kind. An ownerless session
