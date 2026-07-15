@@ -2,6 +2,7 @@ defmodule Ezagent.Agent.Retirement do
   @moduledoc "Authorized and transaction-provenanced Agent retirement."
 
   alias Ezagent.Invocation
+  alias Ezagent.Agent.RetirementObligations
 
   @required_context_keys [
     :caller,
@@ -26,10 +27,16 @@ defmodule Ezagent.Agent.Retirement do
          :ok <- validate_agent_target(agent_uri),
          :ok <- validate_workspace(agent_uri, context.workspace_uri),
          :ok <- validate_creation_inventory(agent_uri, context.created_agent_uris),
-         :ok <- validate_provenance(agent_uri, context.provenance_root) do
-      dispatch_destroy(agent_uri, context)
+         :ok <- validate_provenance(agent_uri, context.provenance_root),
+         {:ok, obligation} <- persist_obligation(agent_uri, context) do
+      dispatch_destroy(agent_uri, context, obligation)
     else
-      {:error, reason} -> {:error, %{termination: :not_destroyed, reason: reason}}
+      {:error, %Ecto.Changeset{} = changeset} ->
+        {:error,
+         %{termination: :not_destroyed, reason: {:obligation_persist_failed, changeset.errors}}}
+
+      {:error, reason} ->
+        {:error, %{termination: :not_destroyed, reason: reason}}
     end
   end
 
@@ -72,7 +79,34 @@ defmodule Ezagent.Agent.Retirement do
       else: {:error, :provenance_mismatch}
   end
 
-  defp dispatch_destroy(agent_uri, context) do
+  defp persist_obligation(agent_uri, context) do
+    RetirementObligations.create_pending(%{
+      agent_uri: URI.to_string(agent_uri),
+      workspace_uri: URI.to_string(context.workspace_uri),
+      provenance_root_uri: URI.to_string(context.provenance_root),
+      creation_attempt_id: context.creation_attempt_id,
+      retirement_reason: inspect(context.reason),
+      pending_steps: sandbox_cleanup_step(agent_uri)
+    })
+  end
+
+  defp sandbox_cleanup_step(agent_uri) do
+    case Ezagent.ActionSet.Sandbox.read_persisted_state(agent_uri) do
+      %{config_dir_path: path, template_class: template_class}
+      when is_binary(path) and not is_nil(template_class) ->
+        %{
+          "sandbox_cleanup" => %{
+            "config_dir_path" => path,
+            "template_class" => inspect(template_class)
+          }
+        }
+
+      _ ->
+        %{"sandbox_destroy" => %{"agent_uri" => URI.to_string(agent_uri)}}
+    end
+  end
+
+  defp dispatch_destroy(agent_uri, context, obligation) do
     result =
       Invocation.dispatch(%Invocation{
         target: Ezagent.URI.with_action(agent_uri, :sandbox, :destroy),
@@ -85,23 +119,56 @@ defmodule Ezagent.Agent.Retirement do
         }
       })
 
-    interpret_destroy_result(result)
+    interpret_destroy_result(result, obligation)
   end
 
-  defp interpret_destroy_result({:ok, %{destroyed: true, cleanup: :ok}}),
-    do: {:ok, %{termination: :destroyed, cleanup: :complete}}
+  defp interpret_destroy_result({:ok, %{destroyed: true, cleanup: :ok}}, obligation) do
+    resolve_complete(obligation)
+  end
 
-  defp interpret_destroy_result({:ok, %{destroyed: true, cleanup: {:error, reason}}}),
-    do: {:partial, %{termination: :destroyed, cleanup: :pending, failures: [reason]}}
+  defp interpret_destroy_result(
+         {:ok, %{destroyed: true, cleanup: {:error, reason}}},
+         obligation
+       ) do
+    _ = RetirementObligations.record_failure(obligation.id, reason)
 
-  defp interpret_destroy_result({:ok, %{destroyed: true}}),
-    do: {:ok, %{termination: :destroyed, cleanup: :complete}}
+    {:partial,
+     %{
+       termination: :destroyed,
+       cleanup: :pending,
+       obligation_id: obligation.id,
+       failures: [reason]
+     }}
+  end
 
-  defp interpret_destroy_result({:error, reason}),
-    do: {:error, %{termination: :not_destroyed, reason: reason}}
+  defp interpret_destroy_result({:ok, %{destroyed: true}}, obligation),
+    do: resolve_complete(obligation)
 
-  defp interpret_destroy_result(other),
-    do: {:error, %{termination: :not_destroyed, reason: {:unexpected_destroy_result, other}}}
+  defp interpret_destroy_result({:error, reason}, obligation) do
+    _ = RetirementObligations.resolve(obligation.id)
+    {:error, %{termination: :not_destroyed, reason: reason}}
+  end
+
+  defp interpret_destroy_result(other, obligation) do
+    _ = RetirementObligations.resolve(obligation.id)
+    {:error, %{termination: :not_destroyed, reason: {:unexpected_destroy_result, other}}}
+  end
+
+  defp resolve_complete(obligation) do
+    case RetirementObligations.resolve(obligation.id) do
+      {:ok, _resolved} ->
+        {:ok, %{termination: :destroyed, cleanup: :complete}}
+
+      {:error, changeset} ->
+        {:partial,
+         %{
+           termination: :destroyed,
+           cleanup: :pending,
+           obligation_id: obligation.id,
+           failures: [{:obligation_resolve_failed, changeset.errors}]
+         }}
+    end
+  end
 
   defp match_uri?(%URI{} = left, %URI{} = right), do: same_uri?(left, right)
   defp match_uri?(left, %URI{} = right) when is_binary(left), do: left == URI.to_string(right)

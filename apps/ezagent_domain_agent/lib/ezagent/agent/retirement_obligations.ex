@@ -55,6 +55,15 @@ defmodule Ezagent.Agent.RetirementObligations do
     |> Repo.update()
   end
 
+  @spec update_pending_steps(pos_integer(), map()) ::
+          {:ok, RetirementObligation.t()} | {:error, Ecto.Changeset.t()}
+  def update_pending_steps(id, pending_steps) when is_map(pending_steps) do
+    id
+    |> get!()
+    |> RetirementObligation.transition_changeset(%{pending_steps: pending_steps})
+    |> Repo.update()
+  end
+
   @spec resolve(pos_integer()) ::
           {:ok, RetirementObligation.t()} | {:error, Ecto.Changeset.t()}
   def resolve(id) do
