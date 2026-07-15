@@ -18,21 +18,24 @@
 
   /* Hero state — centered input */
   .hero{position:absolute;inset:0;display:flex;flex-direction:column;align-items:center;justify-content:center;padding:40px 24px;transition:all .5s var(--ease-out)}
-  .hero.done{top:0;bottom:auto;padding:24px 24px 12px;transform:none;justify-content:flex-start}
+  .hero.done{top:0;bottom:auto;padding:16px 24px 8px;transform:none;justify-content:flex-start}
   .hero h1{font-family:var(--font-cn);font-size:32px;font-weight:600;margin:0 0 8px;text-align:center;transition:all .5s var(--ease-out)}
-  .hero.done h1{font-size:16px;margin:0;opacity:.7}
+  .hero.done h1{font-size:15px;margin:0;opacity:.7}
   .hero .tagline{color:var(--ink-3);font-size:14px;margin-bottom:24px;text-align:center;transition:all .5s var(--ease-out)}
-  .hero.done .tagline{font-size:0;margin:0;opacity:0;height:0;overflow:hidden}
+  .hero.done .tagline{display:none}
 
-  /* Input box */
-  .input-box{width:100%;max-width:560px;display:flex;gap:10px;align-items:flex-end;transition:all .5s var(--ease-out)}
-  .hero.done .input-box{max-width:100%}
-  .input-box textarea{flex:1;padding:14px 16px;border:1px solid var(--line);border-radius:var(--r-lg);font-size:14px;font-family:inherit;background:var(--card);color:var(--ink);resize:none;box-sizing:border-box;min-height:56px;max-height:56px;transition:all .3s var(--ease-out),border-color .15s var(--ease-out),box-shadow .15s var(--ease-out)}
-  .hero:not(.done) .input-box textarea{min-height:72px;max-height:72px;font-size:16px}
-  .input-box textarea:focus{outline:none;border-color:var(--accent);box-shadow:0 0 0 3px var(--accent-wash)}
-
+  /* Input in hero */
+  .hero-input{width:100%;max-width:580px;display:flex;gap:10px;align-items:flex-end;transition:all .5s var(--ease-out)}
+  .hero-input textarea{flex:1;padding:16px 18px;border:1px solid var(--line);border-radius:var(--r-lg);font-size:16px;font-family:inherit;background:var(--card);color:var(--ink);resize:none;box-sizing:border-box;min-height:88px;overflow-y:auto;transition:border-color .15s var(--ease-out),box-shadow .15s var(--ease-out)}
+  .hero-input textarea:focus{outline:none;border-color:var(--accent);box-shadow:0 0 0 3px var(--accent-wash)}
   .intent-hint{font-size:12px;color:var(--ink-4);margin-top:6px;text-align:center;transition:all .5s var(--ease-out)}
-  .hero.done .intent-hint{font-size:0;margin:0;opacity:0;height:0;overflow:hidden}
+  .hero.done .intent-hint{display:none}
+
+  /* Bottom bar in results mode */
+  .bottom-bar{display:none;padding:12px 16px;border-top:1px solid var(--line);background:var(--ground);flex-shrink:0}
+  .bottom-bar.show{display:flex;gap:10px;align-items:flex-end}
+  .bottom-bar textarea{flex:1;padding:12px 16px;border:1px solid var(--line);border-radius:var(--r-lg);font-size:14px;font-family:inherit;background:var(--card);color:var(--ink);resize:none;box-sizing:border-box;height:48px;overflow-y:auto;transition:border-color .15s var(--ease-out),box-shadow .15s var(--ease-out)}
+  .bottom-bar textarea:focus{outline:none;border-color:var(--accent);box-shadow:0 0 0 3px var(--accent-wash)}
 
   /* Results area */
   .results-panel{display:none;flex:1;overflow-y:auto;padding:0 16px 16px}
@@ -96,7 +99,7 @@
   <div class="hero" id="hero">
     <h1>投融资撮合树洞 · DealScout</h1>
     <p class="tagline">说出你找什么——AI 从互联网捞信号，把对的那一方捞到你面前。</p>
-    <div class="input-box">
+    <div class="hero-input">
       <textarea id="needDesc" placeholder="描述你正在找什么…&#10;&#10;例：我在做跨境支付 SaaS，需要对接 FinTech A 轮基金" onkeydown="if(event.key==='Enter'&amp;&amp;!event.shiftKey){event.preventDefault();runMatch();}"></textarea>
       <button class="btn primary" id="matchBtn" onclick="runMatch()">发送 · Send</button>
     </div>
@@ -120,6 +123,11 @@
       </div>
     </div>
   </div>
+</div>
+
+<div class="bottom-bar" id="bottomBar">
+  <textarea id="needDesc2" placeholder="继续描述…" onkeydown="if(event.key==='Enter'&&!event.shiftKey){event.preventDefault();runMatch2();}"></textarea>
+  <button class="btn primary" onclick="runMatch2()">发送 · Send</button>
 </div>
 
 <div class="empty-hint">后端待建：互联网爬取 + 语义匹配 + dispatch refresh_page（参照 dealscout-refresh-v2）</div>
@@ -150,9 +158,7 @@ function detectIntent(text){
   return detected;
 }
 
-function runMatch(){
-  var desc=(document.getElementById('needDesc').value||'').trim();
-  if(!desc){alert('请输入你正在找什么');return;}
+function doMatch(desc){
   var intent=detectIntent(desc);
   var scored=LEADS.map(function(d){
     var s=d.score;if(d.type===intent)s+=15;
@@ -161,12 +167,9 @@ function runMatch(){
   });
   scored.sort(function(a,b){return b.s-a.s;});
   _results=scored.slice(0,5);
-
-  // Hero → done (shrink to top)
   document.getElementById('hero').classList.add('done');
-  document.querySelector('.hero .tagline').style.display='none';
-
-  // Show results
+  document.getElementById('bottomBar').classList.add('show');
+  document.getElementById('needDesc2').value=desc;
   document.getElementById('count').textContent=_results.length+' 个匹配 · AI 判断意图：'+({funding:'找钱',project:'找项目',cofounder:'找联合创始人',exit:'找退出'})[intent];
   document.getElementById('matchList').innerHTML=_results.map(function(r,i){
     return'<div class="match-card" data-idx="'+i+'" onclick="showDetail('+i+')">'
@@ -180,6 +183,17 @@ function runMatch(){
   selMatch=null;
   document.querySelectorAll('.match-card').forEach(function(m){m.classList.remove('sel');});
   showEmptyDetail();
+}
+function runMatch(){
+  var desc=(document.getElementById('needDesc').value||'').trim();
+  if(!desc){alert('请输入你正在找什么');return;}
+  doMatch(desc);
+}
+function runMatch2(){
+  var desc=(document.getElementById('needDesc2').value||'').trim();
+  if(!desc){alert('请输入你正在找什么');return;}
+  document.getElementById('needDesc').value=desc;
+  doMatch(desc);
 }
 
 function showDetail(idx){
