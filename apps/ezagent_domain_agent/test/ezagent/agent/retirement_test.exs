@@ -79,6 +79,21 @@ defmodule Ezagent.Agent.RetirementTest do
     assert {:ok, _pid} = Ezagent.KindRegistry.lookup(agent_uri)
   end
 
+  test "a completed creation attempt is idempotent", %{
+    agent_uri: agent_uri,
+    owner_uri: owner_uri,
+    ctx: ctx
+  } do
+    :ok = AgentLineage.record(agent_uri, owner_uri)
+    authorized_ctx = %{ctx | caps: MapSet.new([Ezagent.Capability.admin_genesis_cap()])}
+
+    assert {:ok, %{termination: :destroyed, cleanup: :complete}} =
+             Agent.retire_spawned(agent_uri, authorized_ctx)
+
+    assert {:ok, %{termination: :destroyed, cleanup: :complete, idempotent: true}} =
+             Agent.retire_spawned(agent_uri, authorized_ctx)
+  end
+
   test "persists a recoverable obligation before terminating when cleanup fails", %{
     agent_uri: agent_uri,
     owner_uri: owner_uri,

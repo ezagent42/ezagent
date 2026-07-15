@@ -28,7 +28,9 @@ defmodule Ezagent.Agent.Retirement do
          :ok <- validate_creation_inventory(agent_uri, context),
          :ok <- validate_provenance(agent_uri, context.provenance_root),
          {:ok, obligation} <- persist_obligation(agent_uri, context) do
-      dispatch_destroy(agent_uri, context, obligation)
+      if obligation.status == :resolved,
+        do: {:ok, %{termination: :destroyed, cleanup: :complete, idempotent: true}},
+        else: dispatch_destroy(agent_uri, context, obligation)
     else
       {:error, %Ecto.Changeset{} = changeset} ->
         {:error,
@@ -160,9 +162,38 @@ defmodule Ezagent.Agent.Retirement do
   defp interpret_destroy_result({:ok, %{destroyed: true}}, obligation),
     do: resolve_complete(obligation)
 
-  defp interpret_destroy_result({:error, reason}, obligation) do
+  defp interpret_destroy_result({:error, reason}, obligation)
+       when reason in [:unauthorized, :identity_read_unavailable] do
     _ = RetirementObligations.resolve(obligation.id)
     {:error, %{termination: :not_destroyed, reason: reason}}
+  end
+
+  defp interpret_destroy_result({:error, :no_such_actor}, obligation) do
+    remaining = Map.delete(obligation.pending_steps, "sandbox_destroy")
+
+    if map_size(remaining) == 0 do
+      resolve_complete(obligation)
+    else
+      _ = RetirementObligations.update_pending_steps(obligation.id, remaining)
+
+      {:partial,
+       %{
+         termination: :destroyed,
+         cleanup: :pending,
+         obligation_id: obligation.id,
+         failures: [:termination_already_absent]
+       }}
+    end
+  end
+
+  defp interpret_destroy_result({:error, reason}, obligation) do
+    {:error,
+     %{
+       termination: :unknown,
+       cleanup: :pending,
+       obligation_id: obligation.id,
+       reason: reason
+     }}
   end
 
   defp interpret_destroy_result(other, obligation) do
