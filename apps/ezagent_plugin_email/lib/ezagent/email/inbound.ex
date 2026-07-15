@@ -8,18 +8,17 @@ defmodule Ezagent.Email.Inbound do
   1. **Loop/bounce guard** (`Inbound.Guard.accept_for_injection?/1`) —
      reject + `DELETE` (do NOT inject) bounces / auto-replies / bulk. FIRST,
      so a bounce of our own outbound never re-enters as fresh inbound.
-  2. **Address resolution** — `InboundBinding.by_local_address(To:)` →
-     binding row → `(session_uri, target_id)`. No row → log + `DELETE`.
-  3. **Verification + authentication** — the binding must be `:verified`
-     (durable status) AND `Guard.authenticated?/2` (SPF/DKIM/DMARC PASS AND
-     `From == target_id`). No degrade-to-allow. Fail → log + `DELETE`.
+  2. **Authority decision** — `Inbound.Authority` freshly joins the email
+     projection to its durable ExternalMirror binding, verifies every scope
+     axis, and authenticates the current sender. Deterministic denial logs +
+     `DELETE`; reader/signing infrastructure failure retains the item.
   4. **Dedup** — a deterministic message id
      `hash(session_uri <> "/" <> normalized Message-ID)` (the
      `BindingRow.row_id` 24-hex shape) so a re-delivered poll cannot
      double-inject (`MessageStore` `on_conflict: :nothing`).
   5. **Inject** — dispatch `<session_uri>?action=session.send` (mode
-     `:call`) under the restricted synthetic participant (`Inbound.Principal`)
-     with `body._email_origin = true` (self-echo guard).
+     `:call`) under the restricted synthetic participant issued by
+     `Inbound.Authority`, with `body._email_origin = true` (self-echo guard).
   6. **Update threading** — record the human's `Message-ID` as the next
      `In-Reply-To` target (durable `ThreadState`).
   7. **`DELETE` only AFTER a successful inject** (at-least-once; the
@@ -32,6 +31,8 @@ defmodule Ezagent.Email.Inbound do
     and `Ezagent.Email.delete/1`; injected in tests.
   - `:dispatch_fun` (app env) — default `Ezagent.Invocation.dispatch/1`;
     injected so unit tests need not boot a live Session Kind.
+  - `:authority_fun` is a per-call test seam for result finalization; production
+    always defaults to `Inbound.Authority.issue/1`.
 
   `process_record/2` is the per-record pipeline, called by the loop AND
   directly by tests. It returns `{:injected, msg_id} | {:skipped, reason} |
@@ -42,8 +43,8 @@ defmodule Ezagent.Email.Inbound do
 
   require Logger
 
-  alias Ezagent.Email.{InboundBinding, ThreadState}
-  alias Ezagent.Email.Inbound.{Guard, Principal}
+  alias Ezagent.Email.ThreadState
+  alias Ezagent.Email.Inbound.{Authority, Guard}
 
   @default_interval_ms 30_000
 
@@ -101,11 +102,24 @@ defmodule Ezagent.Email.Inbound do
   def process_record(rec, opts \\ []) when is_map(rec) do
     key = Map.get(rec, "key")
 
-    with :ok <- Guard.accept_for_injection?(rec) |> reject_to_skip(),
-         {:ok, meta} <- resolve_binding(rec),
-         :ok <- verified_gate(meta),
-         :ok <- Guard.authenticated?(rec, meta.target_id) |> reject_to_skip() do
-      inject_and_finalize(rec, meta, key, opts)
+    with :ok <- Guard.accept_for_injection?(rec) |> reject_to_skip() do
+      case authority_fun(opts).(rec) do
+        {:ok, decision} ->
+          inject_and_finalize(rec, decision, key, opts)
+
+        {:reject, reason} ->
+          Logger.info("Email.Inbound: rejecting #{inspect(key)} — #{reason}")
+          delete_item(key, opts)
+          {:skipped, reason}
+
+        {:retry, reason} ->
+          Logger.warning(
+            "Email.Inbound: authority unavailable for #{inspect(key)} " <>
+              "(retained for retry): #{inspect(reason)}"
+          )
+
+          {:error, reason}
+      end
     else
       {:skip, reason} ->
         # A guard/auth/address failure → DELETE without injecting (no bounce
@@ -116,13 +130,20 @@ defmodule Ezagent.Email.Inbound do
     end
   end
 
-  defp inject_and_finalize(rec, meta, key, opts) do
-    session_uri = Ezagent.URI.new!(meta.session_uri)
+  defp inject_and_finalize(rec, decision, key, opts) do
+    session_uri = decision.session_uri
     msg_id = deterministic_id(session_uri, Map.get(rec, "messageId"))
 
-    case inject(rec, meta, session_uri, msg_id, opts) do
+    case dispatch_inbound(
+           rec,
+           session_uri,
+           msg_id,
+           decision.principal_uri,
+           decision.caps,
+           opts
+         ) do
       :ok ->
-        update_inbound_threading(meta.binding_row_id, rec, session_uri)
+        update_inbound_threading(decision.binding_row_id, rec, session_uri)
         # DELETE only AFTER a successful inject (at-least-once; the
         # deterministic id makes a pre-DELETE re-poll idempotent).
         delete_item(key, opts)
@@ -140,24 +161,7 @@ defmodule Ezagent.Email.Inbound do
     end
   end
 
-  # Resolve the inbound `To:` to its binding metadata. No row → skip+delete.
-  defp resolve_binding(rec) do
-    to = rec |> Map.get("to") |> normalize_to()
-
-    case to && InboundBinding.by_local_address(to) do
-      %InboundBinding{} = meta -> {:ok, meta}
-      _ -> {:skip, :no_binding}
-    end
-  end
-
-  defp verified_gate(%InboundBinding{verification_status: "verified"}), do: :ok
-  defp verified_gate(%InboundBinding{}), do: {:skip, :not_verified}
-
-  # Inject the inbound email as a session message under the restricted
-  # participant, stamping `_email_origin` for the self-echo guard.
-  defp inject(rec, _meta, session_uri, msg_id, opts) do
-    {principal_uri, caps} = Principal.mint(session_uri)
-
+  defp dispatch_inbound(rec, session_uri, msg_id, principal_uri, caps, opts) do
     body = %{
       text: Map.get(rec, "text") || "",
       attachments: [],
@@ -236,9 +240,6 @@ defmodule Ezagent.Email.Inbound do
     |> String.downcase()
   end
 
-  defp normalize_to(nil), do: nil
-  defp normalize_to(to) when is_binary(to), do: to |> String.trim() |> String.downcase()
-
   defp grow_chain(nil, root, human_mid) when root == human_mid, do: human_mid
   defp grow_chain(nil, root, human_mid), do: root <> " " <> human_mid
 
@@ -247,6 +248,8 @@ defmodule Ezagent.Email.Inbound do
 
   defp reject_to_skip(:ok), do: :ok
   defp reject_to_skip({:reject, reason}), do: {:skip, reason}
+
+  defp authority_fun(opts), do: Keyword.get(opts, :authority_fun, &Authority.issue/1)
 
   defp delete_item(nil, _opts), do: :ok
 

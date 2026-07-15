@@ -23,12 +23,12 @@
   var active = body.getAttribute('data-fw-nav') || 'explore';
   var nav = document.createElement('nav'); nav.className = 'fwnav';
   nav.innerHTML =
-    '<a class="brand" href="../index.html"><img src="ds/ezagent-logo.png" alt="Ezagent"><span>EZAGENT</span></a>'
+    '<a class="brand" href="../mainsite.html"><img src="https://cdn.jsdelivr.net/gh/ezagent42/design-system@main/assets/ezagent-logo.png" alt="Ezagent"><span>EZAGENT</span></a>'
     + '<div class="tabs">'
-    + '<a class="tab' + (active === 'home' ? ' active' : '') + '" href="../index.html#intro">官网 · Home</a>'
+    + '<a class="tab' + (active === 'home' ? ' active' : '') + '" href="../mainsite.html#intro">官网 · Home</a>'
     + '<a class="tab' + (active === 'explore' ? ' active' : '') + '" href="gallery.html">探索 · Explore</a>'
     + '</div>'
     + '<span class="spacer"></span>'
-    + '<a class="ghbtn" href="../index.html">← 返回官网 · Home</a>';
+    + '<a class="ghbtn" href="../mainsite.html">← 返回官网 · Home</a>';
   body.insertBefore(nav, body.firstChild);
 })();

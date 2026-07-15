@@ -1,0 +1,138 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>dev-together 回顾 — 2026-07-15</title>
+<style>
+  body{font:14px/1.6 -apple-system,"Segoe UI",Roboto,"PingFang SC","Microsoft YaHei",sans-serif;color:#1a1a1a;max-width:1100px;margin:24px auto;padding:0 20px;background:#fff}
+  h1{font-size:24px;border-bottom:3px solid #2563eb;padding-bottom:8px}
+  h2{font-size:19px;margin-top:32px;color:#1e40af;border-left:4px solid #2563eb;padding-left:10px}
+  h3{font-size:15px;margin-top:20px;color:#374151}
+  .tablewrap{width:100%;overflow-x:auto;margin:12px 0}
+  table{border-collapse:collapse;width:100%;font-size:13px;min-width:560px}
+  th,td{border:1px solid #d1d5db;padding:7px 9px;text-align:left;vertical-align:top}
+  th{background:#eff6ff;font-weight:600}
+  tr:nth-child(even){background:#f9fafb}
+  .kpi{display:inline-block;margin:6px 14px 6px 0;padding:10px 16px;background:#f1f5f9;border-radius:8px}
+  .kpi b{font-size:22px;color:#2563eb;display:block}
+  .big{background:#fffbeb;border:1px solid #fde68a;border-radius:8px;padding:12px 16px;margin:14px 0}
+  .risk{background:#fef2f2;border:1px solid #fecaca;border-radius:8px;padding:12px 16px;margin:14px 0}
+  .interim{background:#eef2ff;border:1px solid #c7d2fe;border-radius:8px;padding:12px 16px;margin:14px 0;color:#3730a3}
+  .ok{background:#dcfce7;color:#166534}.warn{background:#fef3c7;color:#92400e}.hold{background:#fee2e2;color:#991b1b}
+  .pill{display:inline-block;padding:1px 7px;border-radius:10px;font-size:11px;font-weight:600}
+  blockquote{margin:10px 0;padding:8px 14px;background:#f8fafc;border-left:3px solid #94a3b8;color:#475569}
+  code{background:#f1f5f9;padding:1px 5px;border-radius:4px;font-size:12px}
+</style>
+</head>
+<body>
+<h1>dev-together 回顾 · 2026-07-15</h1>
+
+<div class="interim">
+<b>⏳ 本页为 v1 中间稿。</b> 今晚（真正 EOD）会补齐：codex 的 no-tail 构建返工、gaga 的 provisioning + #1405、更多 demo 验证。这一版覆盖到下午 ~afternoon，EOD 会再更新一次。
+</div>
+
+<div class="big">
+<b>产品大局：</b>今天是 <b>CapBAC 签名工程整条线塌进 <code>main</code></b> 的一天——entity-caps 底座、grantee-signing（经对抗性证明）、no-tail 自愈设计（两轮 codex 审查 → SOUND）全部落地；同时 <b>W29 demo 在真 canary 上完成了分段验证</b>（并当场确认 CapBAC <b>正在生产上执行拦截</b>），<b>capability-auth-followup readers</b> 也已交付。本周需要的安全地基现已就位；剩下的是 codex 的 no-tail 构建、demo 的 dev-loop provisioning、以及（刻意推迟的）enforce 翻转。
+</div>
+
+<div>
+  <span class="kpi"><b>13</b>今日合入 PR 数</span>
+  <span class="kpi"><b>塌进 main</b>CapBAC 线状态</span>
+  <span class="kpi"><b>分段验证</b>demo（+2 真 bug）</span>
+  <span class="kpi"><b>OFF</b>enforce（dual-read）</span>
+</div>
+
+<h2>§1 今日工作统计（按领域 / PR / 负责人）</h2>
+<div class="tablewrap">
+<table>
+<tr><th>领域</th><th>PR</th><th>负责人</th></tr>
+<tr>
+  <td><b>entity-caps A/B/D 底座</b></td>
+  <td>#1409 durable delivery outbox + <code>OutboundGrant</code> ledger + <code>EntityCaps</code> facade + 写侧架构门禁（canary 部署绿）</td>
+  <td><b>allen</b>（lead 轨道；codex 构建）</td>
+</tr>
+<tr>
+  <td><b>grantee-signing（C）</b></td>
+  <td>#1386 spec 修订；#1410 finalize + <b>对抗性证明</b>（retargeting 在 Cap seam 与 <code>EntityCaps.load</code> 封闭；全部 8 个 verify chokepoint 均 receiver-aware，0 gap）</td>
+  <td><b>allen</b>（lead 轨道）</td>
+</tr>
+<tr>
+  <td><b>cap-signing no-tail（设计）</b></td>
+  <td>#1413 自愈 spec <b>v3</b> + codex 构建 handoff（两轮 codex 对抗审查 → SOUND）；#1414 handoff-convention 修订；#1408 verdict/boundary 折叠</td>
+  <td><b>allen</b>（lead 轨道）</td>
+</tr>
+<tr>
+  <td><b>capability-auth follow-ups</b></td>
+  <td>#1406 program plan；#1412 <b>Task 3-6 readers</b>（LiveAuth / MemberCap / world-count → 改读已验证 <code>EntityCaps</code>，fail-closed）+ <b>email-inbound authority seam</b>（移除未签名的 inline mint）</td>
+  <td><b>gaga</b></td>
+</tr>
+<tr>
+  <td><b>W29 demo（分段验证）</b></td>
+  <td>#1416 真 canary partial-E2E 证据 + blockers（CapBAC 确认<b>拒绝</b>未授权 kanban 写入；发现 2 个真 bug）；#1417 dev-loop provisioning 架构约束</td>
+  <td><b>gaga</b>（验证）；<b>allen</b>（约束）</td>
+</tr>
+<tr>
+  <td><b>协调 / 产品</b></td>
+  <td>#1420 gaga↔codex cap-gate 重叠说明；#1378 官网 demo 重构 + 飞轮 design-brief；#1421 ruihua daily</td>
+  <td><b>allen</b> / <b>ruihua</b></td>
+</tr>
+</table>
+</div>
+<p style="color:#6b7280;font-size:12px">说明：CapBAC 栈里以 <code>allenwoods</code> 署名的 PR 实为经 codex + coordinator 工具驱动的 lead 轨道构建产出。</p>
+
+<h2>§2 计划 vs 实际（accounting）</h2>
+<h3>计划 vs 实际</h3>
+<p><b>计划（0715 plan §1/§2）：</b>头号目标 = W29 demo 首次端到端完整跑通（gaga 测 → allen 验收 → ruihua 完善）；并行 lead 轨道 = 接住 codex 两次返工 → no-tail 升级 + enforce 时机。</p>
+<p><b>实际：</b><b>CapBAC 线主导并基本完成</b>——entity-caps A/B/D 验收+合入+部署，grantee-signing 已证明，no-tail 设计+审查+交接完成，auth-followup readers 已交付。<b>demo 推进到一次严谨的分段验证</b>（#1416）——精确钉出剩余缺口而非硬凑一次完整 E2E，是诚实且高价值的结果。所以「lead 轨道」超额交付；「头号目标」（完整 demo E2E）<b>尚未跑通</b>，现卡在 4 个具体 provisioning 缺口（#1417）。</p>
+
+<h3>今日 returns</h3>
+<div class="tablewrap">
+<table>
+<tr><th>Return</th><th>负责人</th></tr>
+<tr><td><code>capability-auth-followups.md</code></td><td>gaga</td></tr>
+<tr><td><code>demo-e2e-dispatch.md</code> + 证据</td><td>gaga</td></tr>
+<tr><td><code>ruihua-daily.md</code></td><td>ruihua</td></tr>
+<tr><td><code>notes/cap-gate-overlap-gaga-codex.md</code></td><td>allen</td></tr>
+</table>
+</div>
+
+<h2>§3 质量与风险判断</h2>
+<ul>
+<li><b>两轮 codex 对抗审查在写任何代码之前抓出了真实设计缺陷</b>——v1（7 处）与 v2（更多）：最要命的一处是 <code>verify_for/2</code> 在 dual-read 下会接受未签名 cap，若拿它当「已签名」分类器，整套审计会退化成 false-zero no-op。v3 用 <code>signed_and_valid?/2</code> 修好它 + 另外 8 处；coordinator 验证 SOUND。<b>这是 spec→对抗审查→修订 循环在为自己买单。</b></li>
+<li><b>CapBAC 已在 live demo 上证明正在执行</b>（#1416：kanban write-config / create-card 被精确地 capability-denied）。我们一整天建的安全在生产语境里真的咬合。</li>
+</ul>
+<div class="risk">
+<b>⚠ Enforce（正确地）仍然 OFF。</b> dual-read 保持；<code>require_signature:true</code> 的翻转是刻意的手动 lead 决策，须在 no-tail 排空使 audit=0 + 一次真 canary 数据 E2E 之后才做。
+</div>
+<ul>
+<li><b>gaga #1412 ↔ codex no-tail 在共享 cap gate/chokepoint 面上有重叠</b>——已记录（#1420）+ 协调方案已中继（codex 在 gaga 之上 rebase-merge；email inbound 已完成）。#1412 先落地；codex rebase 跟上。</li>
+</ul>
+<div class="risk">
+<b>⚠ demo 未跑通是真实缺口，如实标注。</b> 4 个 dev-loop provisioning 缺口（凭证继承、worktree/cwd、GitHub 认证、kanban cap）现已有架构约束（#1417）。Hello↔kanban 仍是松耦合（#1360 Layer B 待做），未做任何美化掩饰。
+</div>
+<ul>
+<li><b>待确认的验证：</b>#1412 在 <code>main</code> 上的 mac full-suite 在写稿时仍在跑（gate + gitleaks 已绿）——EOD 确认全绿。</li>
+</ul>
+
+<h2>§4 流程沉淀（Act）</h2>
+<ol>
+<li><b>强化——SPEC → codex 对抗审查 → 修订，先于构建。</b> no-tail spec 走了两轮审查，每轮都抓出真实架构缺陷（分类器语义、ABA-unsafe CAS、quarantine 生命周期、required-sweeper、flip fence）。在 spec 阶段抓住这些省下了一个坏掉的构建。循环跑到 SOUND 为止。</li>
+<li><b>纠正失手——handoff = 自驱整段到目标分支，而非逐 phase PR 合并。</b> 第一次 no-tail handoff 错误地把每个 phase 卡在 coordinator review 上；已修（#1414）为既定约定（<code>feedback_phased_handoff_target_branch_no_wait</code> / <code>feedback_codex_handoff_self_merge_target</code>）：codex 自驱 P0→P3 到一条目标分支，coordinator 一次性验收+合并。规则本在记忆里；失手在于应用。</li>
+<li><b>强化——裸 <code>mix test</code> ≠ 本 umbrella 的验收信号。</b> entity-caps 复验显示 76/78「失败」是 harness 产物（未加载 sibling app 的 UndefinedFunctionError + SQL-Sandbox ownership）；CI <code>gate</code> 才是权威信号。红色复跑先对 ci.local 对账，再怪代码。</li>
+<li><b>确认有效——诚实的分段验证胜过伪造的绿。</b> gaga 的 #1416 在不走任何 raw-RPC / live-DB / 提权捷径的前提下推进了 demo 并钉出真实缺口。这就是标准。</li>
+</ol>
+
+<h2>§5 明日 / EOD 建议（中间稿，EOD 会敲实）</h2>
+<ul>
+<li><b>codex：no-tail 构建</b>（自驱 <code>feat/cap-signing-notail-upgrade</code> P0→P3）→ coordinator 验收+合并 → canary 排空 → audit=0 → <b>lead 手动 enforce 翻转</b>（安全终局）。codex 在 rebase 时协调 #1412 gate 重叠。</li>
+<li><b>gaga：W29 demo dev-loop provisioning</b>（4 个缺口，按 #1417 约束——GitHub-as-plugin、凭证继承拆分、worktree/cwd-before-sidecar、kanban cap via governance）+ <b>#1405 fault-recovery 上层</b> + AgentRuntime ARB-2~5。</li>
+<li><b>W29 demo：</b>provisioning 落地后，串通「agent 真的开出一个 PR → CI → 合并 → kanban 流转」这一段；gaga 测 → allen 验收 → ruihua 完善。</li>
+<li><b>ruihua：</b>#1388 DealScout（dating-style 双向匹配）+ #1419 Profile socialware 继续。</li>
+<li><b>#1403</b> canary 部署（auth 修复，压住）——lead 择时。</li>
+<li>确认 #1412 main full-suite 全绿。</li>
+</ul>
+
+<p style="margin-top:30px;color:#9ca3af;font-size:12px">对应 Markdown：<code>docs/together/2026-07-15/review.md</code>。本 HTML 参考既有 review 页面结构撰写；v1 中间稿，EOD 更新。</p>
+</body>
+</html>

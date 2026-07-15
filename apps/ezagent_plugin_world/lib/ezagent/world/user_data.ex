@@ -27,7 +27,7 @@ defmodule Ezagent.World.UserData do
       uri_str = URI.to_string(user.uri)
       online? = Ezagent.Presence.present?(user.uri)
       profile = Ezagent.Entity.Profile.get(user.uri)
-      cap_count = length(user.caps)
+      cap_count = verified_cap_count(user.uri)
 
       %{
         "uri" => uri_str,
@@ -59,7 +59,7 @@ defmodule Ezagent.World.UserData do
     user = Ezagent.Users.get_by_uri(user_uri)
     profile = Ezagent.Entity.Profile.get(user_uri)
     user_uri_str = URI.to_string(user_uri)
-    cap_count = length(user.caps)
+    cap_count = verified_cap_count(user_uri)
 
     base
     |> Map.put("user_uri", user_uri_str)
@@ -137,6 +137,14 @@ defmodule Ezagent.World.UserData do
   end
 
   defp user_name(_), do: nil
+
+  defp verified_cap_count(%URI{} = user_uri) do
+    user_uri
+    |> Ezagent.EntityCaps.load()
+    |> length()
+  rescue
+    _ -> 0
+  end
 
   defp caps_path(uri_str), do: "/identities/users/#{URI.encode_www_form(uri_str)}/caps"
   defp detail_path(uri_str), do: "/identities/users/#{URI.encode_www_form(uri_str)}"

@@ -19,6 +19,12 @@ defmodule Ezagent.ActionSet.Session.MemberCapJoinTest do
   alias Ezagent.Capability
   alias Ezagent.ActionSet.Session.Membership
 
+  setup do
+    cap_config = Application.fetch_env!(:ezagent_core, Ezagent.Cap)
+    on_exit(fn -> Application.put_env(:ezagent_core, Ezagent.Cap, cap_config) end)
+    :ok
+  end
+
   defp uniq, do: System.unique_integer([:positive])
 
   defp new_session(prefix, owner) do
@@ -48,7 +54,10 @@ defmodule Ezagent.ActionSet.Session.MemberCapJoinTest do
 
   defp agent_member(prefix) do
     uri = Ezagent.URI.entity(:system, :agent, "#{prefix}-#{uniq()}")
-    {:ok, _pid} = Ezagent.Kind.spawn(Ezagent.Entity.Agent, %{uri: uri, initial_caps: MapSet.new()})
+
+    {:ok, _pid} =
+      Ezagent.Kind.spawn(Ezagent.Entity.Agent, %{uri: uri, initial_caps: MapSet.new()})
+
     :ok = Ezagent.WorkspaceRegistry.bind(uri, Ezagent.Capability.workspace_of(uri))
     uri
   end
@@ -93,9 +102,15 @@ defmodule Ezagent.ActionSet.Session.MemberCapJoinTest do
 
   defp wait_member_cap(entity_uri, session_uri, retries \\ 100) do
     cond do
-      member_cap(entity_uri, session_uri) -> member_cap(entity_uri, session_uri)
-      retries > 0 -> Process.sleep(10); wait_member_cap(entity_uri, session_uri, retries - 1)
-      true -> nil
+      member_cap(entity_uri, session_uri) ->
+        member_cap(entity_uri, session_uri)
+
+      retries > 0 ->
+        Process.sleep(10)
+        wait_member_cap(entity_uri, session_uri, retries - 1)
+
+      true ->
+        nil
     end
   end
 
@@ -106,7 +121,13 @@ defmodule Ezagent.ActionSet.Session.MemberCapJoinTest do
   # `identity_key/1` differs from the concrete member-cap, so exact-identity
   # idempotency must still grant the concrete cap.
   defp broad_session_cap(session_uri) do
-    Capability.cap(:session, Ezagent.ActionSet.Session, :any, session_uri, Capability.workspace_of(session_uri))
+    Capability.cap(
+      :session,
+      Ezagent.ActionSet.Session,
+      :any,
+      session_uri,
+      Capability.workspace_of(session_uri)
+    )
   end
 
   # Grant a wildcard-action cap (needs ADMIN authority — the rule tag is rejected
@@ -157,9 +178,15 @@ defmodule Ezagent.ActionSet.Session.MemberCapJoinTest do
       end)
 
     cond do
-      present? -> :ok
-      retries > 0 -> Process.sleep(10); wait_snapshot_has(member_uri, cap, retries - 1)
-      true -> flunk("broad cap never appeared in #{URI.to_string(member_uri)} snapshot")
+      present? ->
+        :ok
+
+      retries > 0 ->
+        Process.sleep(10)
+        wait_snapshot_has(member_uri, cap, retries - 1)
+
+      true ->
+        flunk("broad cap never appeared in #{URI.to_string(member_uri)} snapshot")
     end
   end
 
@@ -222,6 +249,40 @@ defmodule Ezagent.ActionSet.Session.MemberCapJoinTest do
              "cap(:session, Session, :receive, S) — exact-identity idempotency, not matches?/2 (HIGH)"
   end
 
+  test "an invalid-signature persisted artifact does not suppress the required join grant" do
+    owner = confirmed_user("owner-invalid-signature")
+    session = new_session("mc-invalid-signature", owner)
+    member = URI.new!("entity://system/user/member-invalid-signature-#{uniq()}")
+    valid = issued_member_cap(owner, member, session)
+    invalid = %{valid | action: :send}
+
+    assert {:ok, _row} = Ezagent.Users.create(member, "pw-not-secret-#{uniq()}", [invalid])
+    assert {:ok, _pid} = Ezagent.SpawnRegistry.spawn(member)
+
+    _ = dispatch_join(session, member)
+
+    assert wait_member_cap(member, session),
+           "a bad signature must be treated as grant not observed"
+  end
+
+  test "a valid artifact bound to another receiver does not suppress the required join grant" do
+    owner = confirmed_user("owner-wrong-receiver")
+    session = new_session("mc-wrong-receiver", owner)
+    member = URI.new!("entity://system/user/member-wrong-receiver-#{uniq()}")
+    other = URI.new!("entity://system/user/other-wrong-receiver-#{uniq()}")
+    wrong_receiver = issued_member_cap(owner, other, session)
+
+    assert {:ok, _row} =
+             Ezagent.Users.create(member, "pw-not-secret-#{uniq()}", [wrong_receiver])
+
+    assert {:ok, _pid} = Ezagent.SpawnRegistry.spawn(member)
+
+    _ = dispatch_join(session, member)
+
+    assert wait_member_cap(member, session),
+           "another receiver's artifact must be treated as grant not observed"
+  end
+
   test "join role-conflict preflight → NO orphaned member-cap [test 23 subset]" do
     owner = confirmed_user("owner")
     session = new_session("mc-conflict", owner)
@@ -265,6 +326,20 @@ defmodule Ezagent.ActionSet.Session.MemberCapJoinTest do
 
     refute member_cap(second, session),
            "a role-conflict rejection must NOT orphan a member-cap (grant is AFTER the preflight)"
+  end
+
+  defp issued_member_cap(owner, receiver, session) do
+    requested =
+      Capability.cap(
+        :session,
+        Ezagent.ActionSet.Session,
+        :receive,
+        session,
+        Capability.workspace_of(session)
+      )
+
+    {:ok, cap} = Ezagent.Cap.issue({:genesis, owner}, receiver, requested)
+    cap
   end
 
   test "join failure AFTER grant → compensating revoke leaves no member-cap [test 23 subset]" do

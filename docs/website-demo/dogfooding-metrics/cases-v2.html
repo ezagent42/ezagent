@@ -1,0 +1,221 @@
+<!DOCTYPE html>
+<html lang="zh" data-theme="light">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>案例 · Ezagent builds Ezagent · Cases · Ezagent</title>
+<meta name="description" content="Ezagent 案例 — 团队用 ezagent 做自己的研发，更快了。Real metrics from our own development.">
+<!-- 官网 demo · Cases 案例研究页（dogfooding 案例 #1）。结构参考飞书客户案例页（左侧纵向目录 + 简洁分段）。
+     复用 docs/website-demo/mainsite.html 通用构件与样式(styles.css)；本页特有构件用页内 <style>。 -->
+<link rel="stylesheet" href="styles.css">
+<style>
+/* ── Cases 页特有构件 ── */
+/* 两栏：左侧纵向目录 rail（主内容区内）+ 正文 */
+.caselayout{display:grid;grid-template-columns:128px 1fr;gap:44px;align-items:start;margin-top:var(--gap-grid)}
+.subnav{position:sticky;top:96px;display:flex;flex-direction:column;gap:2px}
+.subnav a{font-family:var(--font-mono);font-size:12px;color:var(--ink-3);padding:9px 12px;border-radius:var(--r-sm);border-left:2px solid transparent;transition:all 150ms var(--ease-out)}
+.subnav a:hover{color:var(--ink);background:var(--ground-2);border-left-color:var(--line)}
+.subnav a.active{color:var(--accent-press);border-left-color:var(--accent);background:var(--accent-wash)}
+/* 跳转到达:章节标题闪烁两次 */
+@keyframes flash2{0%,100%{background-color:transparent;box-shadow:0 0 0 4px transparent}15%,55%{background-color:var(--accent-wash);box-shadow:0 0 0 4px var(--accent-wash)}35%,75%{background-color:transparent;box-shadow:0 0 0 4px transparent}}
+h2.flashing{animation:flash2 1.1s ease-in-out;border-radius:8px}
+/* hero 成果数字带 */
+.herostats{display:flex;flex-wrap:wrap;gap:18px;padding:0 80px 40px}
+.herostats .hs{flex:1;min-width:150px;background:var(--ground-2);border-radius:var(--r-md);padding:18px 20px}
+.herostats .hs b{display:block;font-family:var(--font-ui);font-weight:800;font-size:34px;line-height:1;letter-spacing:-.02em;color:var(--accent)}
+.herostats .hs span{display:block;font-size:13px;color:var(--ink-2);margin-top:8px}
+.herostats .hs .src{font-family:var(--font-mono);font-size:10px;color:var(--ink-4);margin-top:6px}
+/* 客户简介行 */
+.intro{display:flex;gap:30px;align-items:flex-start;padding:28px 32px;flex-wrap:wrap}
+.intro .lead2{flex:1;min-width:260px;font-size:15px;line-height:1.75;color:var(--ink-2)}
+.intro .facts{display:flex;flex-direction:column;gap:9px;min-width:200px}
+.intro .facts div{display:flex;justify-content:space-between;gap:16px;font-size:13px;border-bottom:1px solid var(--line);padding-bottom:8px}
+.intro .facts .k{color:var(--ink-3);font-family:var(--font-mono);font-size:11px}
+.intro .facts .v{color:var(--ink);font-weight:600}
+/* 解决方案：编号场景行 */
+.scn{display:flex;gap:20px;padding:24px 30px;align-items:flex-start}
+.scn+.scn{margin-top:12px}
+.scn .no{flex:none;width:42px;height:42px;border-radius:var(--r-md);background:var(--accent);color:var(--on-accent);display:grid;place-items:center;font-family:var(--font-mono);font-weight:700;font-size:16px}
+.scn .body{flex:1}
+.scn h3{font-family:var(--font-cn);font-weight:600;font-size:18px}
+.scn p{color:var(--ink-2);font-size:14.5px;line-height:1.65;margin-top:6px}
+/* 成效补充行 */
+.r-more{margin-top:16px;font-size:14px;line-height:1.8;color:var(--ink-2)}
+.r-more b{color:var(--ink)}
+/* pull-quote 证言 */
+.quote{margin-top:50px;padding:46px 52px;text-align:center;background:#14131C;color:#F4F2EC;border-radius:var(--r-lg)}
+:root[data-theme="dark"] .quote{background:#000}
+.quote .q{font-family:var(--font-cn);font-weight:500;font-size:clamp(20px,2.6vw,27px);line-height:1.5;max-width:28ch;margin:0 auto}
+.quote .by{font-family:var(--font-mono);font-size:12px;color:#85837B;margin-top:20px}
+/* CTA */
+.ctaband{margin-top:var(--gap-grid);padding:32px 38px;display:flex;align-items:center;gap:18px;flex-wrap:wrap;background:var(--accent-wash);border-radius:var(--r-lg)}
+.ctaband .t{font-family:var(--font-cn);font-weight:600;font-size:19px;color:var(--accent-press)}
+.ctaband .btn{margin-left:auto}
+@media (max-width:860px){
+  .caselayout{grid-template-columns:1fr;gap:0}.subnav{display:none}
+  .herostats{padding:0 26px 26px}.scn{padding:22px 22px}.quote{padding:34px 24px}
+}
+</style>
+</head>
+<body>
+
+<!-- nav：复用首页 nav 构件 -->
+<nav class="nav">
+  <a class="brand" href="mainsite.html"><img class="logo light" src="../assets/images/ezagent-logo.png" alt="Ezagent" width="26" height="26"><img class="logo dark" src="../assets/images/ezagent-logo-dark.png" alt="Ezagent" width="26" height="26"><span class="wm">EZAGENT</span></a>
+  <div class="tabs">
+    <a class="tab" href="mainsite.html">介绍<span class="en">Intro</span></a>
+    <a class="tab" href="mainsite.html#worldcup">world.cup<span class="en">Progress</span></a>
+    <a class="tab" href="mainsite.html#contributors">团队<span class="en">Team</span></a>
+    <a class="tab active" href="cases-v2.html">案例<span class="en">Cases</span></a>
+  </div>
+  <span class="spacer"></span>
+  <a class="ghbtn" href="https://github.com/ezagent42" target="_blank" rel="noopener">↗ GitHub</a>
+  <a class="loginbtn" href="../login.html" rel="noopener">登录 · Login</a>
+  <button class="iconbtn" id="theme" title="切换主题 · Theme" aria-label="切换主题">
+    <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><path d="M21 12.8A9 9 0 1 1 11.2 3a7 7 0 0 0 9.8 9.8../svg>
+  </button>
+</nav>
+
+<div class="wrap">
+
+  <p class="crumb" style="margin:20px 0 0"><a href="mainsite.html">首页</a> / <a href="cases-v2.html">案例</a> / Ezagent builds Ezagent</p>
+
+  <!-- HERO -->
+  <div class="hero card">
+    <div class="inner">
+      <span class="badge success"><span class="dot"></span>Case 01 · 自举实证</span>
+      <h1>我们用 <span class="hl">Ezagent</span> 构建 Ezagent。</h1>
+      <div class="sub">We build Ezagent on Ezagent.</div>
+      <p class="lead">Ezagent 开发团队把自己的研发和协作，都放在 ezagent 上跑。下面的数字，全部来自我们自己的代码仓库。</p>
+    </div>
+    <div class="herostats">
+      <div class="hs"><b>1.8×</b><span>研发交付提速</span><span class="src">git · 前后对比</span></div>
+      <div class="hs"><b>194</b><span>合并 PR · 8 天</span><span class="src">git · 06-22→30</span></div>
+      <div class="hs"><b>7</b><span>并行贡献者</span><span class="src">git</span></div>
+      <div class="hs"><b>228</b><span>主干提交</span><span class="src">git · 8 天</span></div>
+    </div>
+  </div>
+
+  <div class="banner">
+    <span class="badge neutral"><span class="dot"></span>DEMO</span>
+    <span>样张。标 <b style="color:var(--jade)">真实</b> 的数字来自本仓库 git 与 dev-together 记录；标 <b style="color:#9A7B00">示例</b> 的待度量。口径见 <a href="metrics-spec-draft.md" style="text-decoration:underline">metrics-spec-draft.md</a>。</span>
+  </div>
+
+  <!-- 两栏：左侧纵向目录（主内容区内）+ 正文 -->
+  <div class="caselayout">
+    <nav class="subnav">
+      <a href="#overview">概览</a>
+      <a href="#challenge">挑战</a>
+      <a href="#solution">解决方案</a>
+      <a href="#results">成效</a>
+      <a href="#method">方法与口径</a>
+    </nav>
+    <div class="casemain">
+
+  <!-- 概览 -->
+      <div class="sec-head" style="margin-top:8px" id="overview"><span class="over">概览</span><h2>客户：我们自己</h2></div>
+      <div class="intro card">
+        <div class="lead2">Ezagent 是给组织用的 AI agent 工作台。开发它的团队，自己每天就用它干活——既是作者，也是第一批用户。产品好不好用，我们天天在验证。</div>
+        <div class="facts">
+          <div><span class="k">行业</span><span class="v">AI 基础设施 / 开发者工具</span></div>
+          <div><span class="k">团队</span><span class="v">7 名工程师 + 多个 AI agent</span></div>
+          <div><span class="k">用在哪</span><span class="v">研发编排 · 组织协作</span></div>
+          <div><span class="k">时间窗</span><span class="v">2026-06-22 → 06-30（8 天）</span></div>
+        </div>
+      </div>
+
+      <!-- 挑战 -->
+      <div class="sec-head" id="challenge"><span class="over">挑战</span><h2>多人加多 agent，难在哪</h2>
+        <p class="sub">一群工程师和一堆 AI agent 一起开发，常卡在三件事上。</p>
+      </div>
+      <div class="cs-grid">
+        <div class="cs-block card"><span class="eyebrow">01</span><h3>对不齐</h3><p>谁在做什么、做到哪，没有统一视图，跨人协作要反复同步。</p></div>
+        <div class="cs-block card"><span class="eyebrow">02</span><h3>容易漏</h3><p>任务在人和 agent 之间传递时，要求和过往决策容易丢。</p></div>
+        <div class="cs-block card"><span class="eyebrow">03</span><h3>返工多</h3><p>方向或验收没说清，问题常到合并前才发现，重做代价大。</p></div>
+      </div>
+
+      <!-- 解决方案 -->
+      <div class="sec-head" id="solution"><span class="over">解决方案</span><h2>把每天的活，统一管起来</h2>
+        <p class="sub">用 ezagent 加 dev-together，做三件事。</p>
+      </div>
+      <div class="scn card">
+        <div class="no">01</div>
+        <div class="body"><h3>每天一个闭环</h3><p>计划 → 交接 → 交付 → 复盘。每个任务都有人负责、有验收标准、有记录，多人多 agent 一起干也不打架。</p></div>
+      </div>
+      <div class="scn card">
+        <div class="no">02</div>
+        <div class="body"><h3>消息和上下文不丢</h3><p>活儿都经 ezagent 流转，先存下来再处理、出错能恢复；上下文跟着任务走，少了重复沟通。</p></div>
+      </div>
+      <div class="scn card">
+        <div class="no">03</div>
+        <div class="body"><h3>整个组织都在用</h3><p>不只研发——协作、socialware、看板也都跑在 ezagent 上，团队在真用中不断发现并修掉产品问题。</p></div>
+      </div>
+
+      <!-- 成效 -->
+      <div class="sec-head" id="results"><span class="over">成效</span><h2>用 Ezagent 做研发，更快了</h2>
+        <p class="sub">下面是我们自己仓库里的真实数据。</p>
+      </div>
+      <div class="ba card">
+        <h3>开始统一编排前 / 后</h3>
+        <div class="barrow"><span class="nm">之前</span><div class="track"><div class="fill before" data-w="56">94 ../div></div></div>
+        <div class="barrow"><span class="nm">之后</span><div class="track"><div class="fill after" data-w="100">170 ../div></div></div>
+        <p class="delta">每周合并的 PR 多了 <b>≈ 1.8 倍</b>（之前 2026-06-01→21 三周，之后 06-22→30）。</p>
+        <p class="foot-note">数据来自本仓库 <span class="mono">git</span> + <span class="mono">gh pr</span>，按周折算。这段时间也有招人、流程改进等其他因素，没有剔除，所以只当方向参考。这份提速归功于「用 ezagent 的方式做研发」，不是某个大模型本身。</p>
+      </div>
+      <p class="r-more">同一段时间，团队还完成了 <b>37 次任务交接、35 次交付闭环</b>（dev-together 记录）。<br>
+      交付周期、一次过率、能力扩张这几项，等按统一口径度量后再补——没有真数据前，我们不写。</p>
+
+      <!-- 证言 -->
+      <div class="quote">
+        <p class="q">“官网说的话，不能比产品本身更成熟——所以这里只放能复算的真实数字。”</p>
+        <p class="by">—— Ezagent 团队</p>
+      </div>
+
+      <!-- 方法与口径 -->
+      <div class="sec-head" id="method"><span class="over">方法与口径</span><h2>数据怎么来的</h2>
+        <p class="sub">真实数字都能按统一口径复算；没有可靠数据时用案例说话，不编。</p>
+      </div>
+      <div class="banner" style="margin-top:0">
+        <span class="badge neutral"><span class="dot"></span>口径</span>
+        <span>指标定义、前后对比基线、诚实护栏，见 <a href="metrics-spec-draft.md" style="text-decoration:underline">metrics-spec-draft.md</a>。这是我们自己的案例，之后会补上外部用户的。</span>
+      </div>
+
+      <!-- CTA + more -->
+      <div class="ctaband">
+        <span class="t">想看 Ezagent 怎么跑起来？</span>
+        <a class="btn primary" href="mainsite.html#products">了解产品 →</a>
+      </div>
+      <div class="more">
+        <span class="badge info"><span class="dot"></span>More coming</span>
+        <span>更多用 Ezagent 提效降本的案例，陆续添加中。</span>
+      </div>
+
+    </div><!-- /casemain -->
+  </div><!-- /caselayout -->
+
+  <footer><div>组织的 IDE · Organization IDE — Ezagent</div><div class="mono">Cases · Case 01 自举 · 真实数据取自本仓库</div></footer>
+</div>
+
+<script>
+document.getElementById('theme').addEventListener('click',()=>{const r=document.documentElement;r.dataset.theme=r.dataset.theme==='dark'?'light':'dark';});
+const reduce=matchMedia('(prefers-reduced-motion:reduce)').matches;
+const io=new IntersectionObserver((es)=>{es.forEach(e=>{if(!e.isIntersecting)return;io.unobserve(e.target);
+  e.target.querySelectorAll('.fill[data-w]').forEach(f=>{if(reduce){f.style.width=f.dataset.w+'%';}else{requestAnimationFrame(()=>f.style.width=f.dataset.w+'%');}});
+});},{threshold:.3});
+document.querySelectorAll('.ba').forEach(s=>io.observe(s));
+// 子导航点击:平滑滚动,让章节标题落在视口中央(不被顶栏遮挡)
+document.querySelectorAll('.subnav a[href^="#"]').forEach(a=>a.addEventListener('click',e=>{
+  const t=document.getElementById(a.getAttribute('href').slice(1));
+  if(t){e.preventDefault();t.scrollIntoView({behavior:reduce?'auto':'smooth',block:'center'});history.replaceState(null,'','#'+t.id);
+    const hd=t.querySelector('h2')||t;
+    setTimeout(()=>{hd.classList.remove('flashing');void hd.offsetWidth;hd.classList.add('flashing');
+      hd.addEventListener('animationend',()=>hd.classList.remove('flashing'),{once:true});}, reduce?0:360);
+  }
+}));
+// 滚动时高亮当前章节(标题接近视口中央时激活)
+const navlinks=[...document.querySelectorAll('.subnav a[href^="#"]')];
+const spy=new IntersectionObserver(es=>es.forEach(en=>{if(en.isIntersecting)navlinks.forEach(l=>l.classList.toggle('active',l.getAttribute('href')==='#'+en.target.id));}),{rootMargin:'-45% 0px -45% 0px'});
+['overview','challenge','solution','results','method'].forEach(id=>{const el=document.getElementById(id);if(el)spy.observe(el);});
+</script>
+</body>
+</html>
