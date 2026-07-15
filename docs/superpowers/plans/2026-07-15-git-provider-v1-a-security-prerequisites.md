@@ -182,13 +182,9 @@ Do not use `sudo` or mutate host users. If the current test environment already 
 
 - [ ] **Step 3: Write the decision**
 
-The note ends with exactly one line:
-
-```text
-SSH broker isolation: GO — <named mechanism and evidence test>
-```
-
-or:
+The note ends with exactly one decision line. A GO line starts with `SSH broker
+isolation: GO —` and then names candidate A, B, or C plus the exact evidence test
+path. A NO-GO line is exactly:
 
 ```text
 SSH broker isolation: NO-GO — no approved agent-inaccessible credential boundary exists
