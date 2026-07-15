@@ -66,4 +66,34 @@ defmodule Ezagent.Agent.RetirementObligationsTest do
     assert {:ok, reclaimed} = RetirementObligations.claim(pending.id)
     assert reclaimed.attempts == 2
   end
+
+  test "exhausted automatic retries require an explicit operator claim" do
+    previous = Application.get_env(:ezagent_domain_agent, :retirement_max_attempts)
+    Application.put_env(:ezagent_domain_agent, :retirement_max_attempts, 1)
+
+    on_exit(fn ->
+      if is_nil(previous),
+        do: Application.delete_env(:ezagent_domain_agent, :retirement_max_attempts),
+        else: Application.put_env(:ezagent_domain_agent, :retirement_max_attempts, previous)
+    end)
+
+    suffix = System.unique_integer([:positive])
+
+    {:ok, pending} =
+      RetirementObligations.create_pending(%{
+        agent_uri: "entity://team-alpha/agent/exhausted-#{suffix}",
+        workspace_uri: "workspace://team-alpha",
+        provenance_root_uri: "entity://team-alpha/user/owner-#{suffix}",
+        creation_attempt_id: "exhausted-attempt-#{suffix}",
+        retirement_reason: "rollback",
+        pending_steps: %{"sandbox_destroy" => %{}}
+      })
+
+    assert {:ok, running} = RetirementObligations.claim(pending.id)
+    assert {:ok, failed} = RetirementObligations.record_failure(running.id, :eacces)
+    assert failed.status == :failed
+    assert {:error, :failed} = RetirementObligations.claim(failed.id)
+    assert {:ok, reopened} = RetirementObligations.claim(failed.id, allow_failed: true)
+    assert reopened.status == :running
+  end
 end

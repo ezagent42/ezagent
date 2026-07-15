@@ -43,7 +43,7 @@ defmodule Ezagent.Agent.RetirementObligations do
           )
         )
 
-      claim_locked(obligation, now, lease_seconds)
+      claim_locked(obligation, now, lease_seconds, Keyword.get(opts, :allow_failed, false))
     end)
     |> case do
       {:ok, result} -> result
@@ -65,18 +65,27 @@ defmodule Ezagent.Agent.RetirementObligations do
     |> Repo.update()
   end
 
-  defp claim_locked(nil, _now, _lease_seconds), do: {:error, :not_found}
+  defp claim_locked(nil, _now, _lease_seconds, _allow_failed), do: {:error, :not_found}
 
-  defp claim_locked(%RetirementObligation{status: :resolved}, _now, _lease_seconds),
-    do: {:ok, :already_resolved}
+  defp claim_locked(
+         %RetirementObligation{status: :resolved},
+         _now,
+         _lease_seconds,
+         _allow_failed
+       ),
+       do: {:ok, :already_resolved}
 
-  defp claim_locked(%RetirementObligation{status: :failed}, _now, _lease_seconds),
+  defp claim_locked(%RetirementObligation{status: :failed}, _now, _lease_seconds, false),
     do: {:error, :failed}
+
+  defp claim_locked(%RetirementObligation{status: :failed} = obligation, now, seconds, true),
+    do: claim_for_lease(obligation, now, seconds)
 
   defp claim_locked(
          %RetirementObligation{status: :running, next_attempt_at: lease} = obligation,
          now,
-         seconds
+         seconds,
+         _allow_failed
        )
        when not is_nil(lease) do
     if DateTime.compare(lease, now) == :gt,
@@ -84,7 +93,7 @@ defmodule Ezagent.Agent.RetirementObligations do
       else: claim_for_lease(obligation, now, seconds)
   end
 
-  defp claim_locked(%RetirementObligation{} = obligation, now, lease_seconds),
+  defp claim_locked(%RetirementObligation{} = obligation, now, lease_seconds, _allow_failed),
     do: claim_for_lease(obligation, now, lease_seconds)
 
   defp claim_for_lease(obligation, now, lease_seconds) do
@@ -101,12 +110,17 @@ defmodule Ezagent.Agent.RetirementObligations do
   @spec record_failure(pos_integer(), term()) ::
           {:ok, RetirementObligation.t()} | {:error, Ecto.Changeset.t()}
   def record_failure(id, reason) do
-    id
-    |> get!()
+    obligation = get!(id)
+    max_attempts = Application.get_env(:ezagent_domain_agent, :retirement_max_attempts, 10)
+    exhausted? = obligation.attempts >= max_attempts
+    delay_seconds = min(Integer.pow(2, max(obligation.attempts - 1, 0)), 3_600)
+
+    obligation
     |> RetirementObligation.transition_changeset(%{
-      status: :pending,
+      status: if(exhausted?, do: :failed, else: :pending),
       last_error: inspect(reason),
-      next_attempt_at: DateTime.utc_now()
+      next_attempt_at:
+        if(exhausted?, do: nil, else: DateTime.add(DateTime.utc_now(), delay_seconds, :second))
     })
     |> Repo.update()
   end

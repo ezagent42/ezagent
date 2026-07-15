@@ -22,9 +22,9 @@ defmodule Ezagent.Agent.RetirementSweeper do
     |> Enum.map(fn obligation -> {obligation.id, retry(obligation.id)} end)
   end
 
-  @spec retry(pos_integer()) :: {:ok, :resolved} | {:error, term()}
-  def retry(id) do
-    case RetirementObligations.claim(id) do
+  @spec retry(pos_integer(), keyword()) :: {:ok, :resolved} | {:error, term()}
+  def retry(id, opts \\ []) do
+    case RetirementObligations.claim(id, allow_failed: Keyword.get(opts, :operator, false)) do
       {:ok, :already_resolved} ->
         {:ok, :resolved}
 

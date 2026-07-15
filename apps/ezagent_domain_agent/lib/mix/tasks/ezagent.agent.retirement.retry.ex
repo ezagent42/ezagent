@@ -23,8 +23,17 @@ defmodule Mix.Tasks.Ezagent.Agent.Retirement.Retry do
 
       [id] ->
         case Integer.parse(id) do
-          {parsed, ""} -> report({parsed, RetirementSweeper.retry(parsed)})
-          _ -> Mix.raise("obligation id must be a positive integer")
+          {parsed, ""} when parsed > 0 ->
+            case RetirementSweeper.retry(parsed, operator: true) do
+              {:ok, :resolved} ->
+                report({parsed, {:ok, :resolved}})
+
+              {:error, reason} ->
+                Mix.raise("obligation #{parsed} retry failed: #{inspect(reason)}")
+            end
+
+          _ ->
+            Mix.raise("obligation id must be a positive integer")
         end
 
       _ ->
