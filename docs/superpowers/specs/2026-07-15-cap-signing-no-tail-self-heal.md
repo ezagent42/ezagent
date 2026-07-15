@@ -4,7 +4,7 @@
 
 > **v3 predicate note:** wherever earlier drafts said "signed" or "signed-ness-keyed," read **`signed_and_valid?/2`** (§4.0) — signature+key_id+grantee_uri present AND cryptographic `Signing.verify` passes for the receiver, independent of the `require_signature?` flag. `verify_for/2` is NEVER a signed-ness classifier here.
 **Date:** 2026-07-15
-**Owner branch (codex builds here):** `feat/cap-signing-notail-upgrade` (codex owns; lands sub-steps; coordinator reviews + merges to `main`).
+**Owner branch (codex builds here):** `feat/cap-signing-notail-upgrade` (codex owns fully; self-drives ALL phases onto it continuously — no PR, no per-phase coordinator gate; returns the target-branch HEAD at the end; coordinator does acceptance + the single merge to `main`).
 **Depends on:** Phase-4 ed25519 signing on main, dual-read (`docs/superpowers/specs/2026-07-14-cbac-phase4-ed25519-signing.md`, merge `e9b99443e`); Phase-3 cap self-store (`Cap.issue` → STORE → VERIFY, capbac.md §4.5); #154 no-unowned-caps; the #1409 write-side arch gate (`apps/ezagent_core/test/invariants/entity_caps_access_gate_test.exs`).
 **Grounded in (MUST READ before building):**
 - `docs/notes/2026-07-14-cap-signing-investigation-findings.md` — codex's **empirical** per-class differential (which cap classes are born unsigned; the wildcard-`ArgumentError` root cause); the authoritative source for §7's table. *Provenance: authored by codex on `feat/cap-signing-notail-upgrade` (commit `c86069aa4`) and copied onto this spec branch so the grounding lands self-contained when the coordinator merges to `main`.*
@@ -222,7 +222,7 @@ Signed caps are **node-portable** in a mutually-trusting distributed deployment.
 
 ## 6. Phasing
 
-Each phase is a codex sub-step: full `mix ci.local` green + rebased on main before self-merge; Elixir via editor; `MIX_TEST_PARTITION` for parallel tests.
+Each phase is a commit on the target branch `feat/cap-signing-notail-upgrade`: full `mix ci.local` green + gates + rebased on latest `main` before landing — codex self-drives P0→P3 continuously (no per-phase coordinator gate, no PR); the coordinator reviews the target branch at the end + merges to `main` once. Elixir via editor; `MIX_TEST_PARTITION` for parallel tests.
 
 **Phase 0 — fix future issue sites + close seed-writer hole, still dual-read.** (a) Route the born-unsigned **structural** classes (user/agent/template self `Identity.list_caps`; agent self `Sandbox.update_config` + `ConfigEvolve.reconcile_cascade`) through a provable-authority `Cap.issue` at construction, so *newly created* entities are born signed. (b) Close the caps_json seed-writer hole (§4.6 a′): make `Users.create`/`create_read_only` born-signed or validated so no allowlisted seam can grow a NEW unsigned tail. No enforce change. (Differential §"建议顺序 1".)
 
