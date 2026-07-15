@@ -44,6 +44,7 @@ defmodule Ezagent.Email.Inbound do
 
   alias Ezagent.Email.{InboundBinding, ThreadState}
   alias Ezagent.Email.Inbound.{Guard, Principal}
+  alias Ezagent.ExternalMirror.BindingRow
 
   @default_interval_ms 30_000
 
@@ -155,9 +156,49 @@ defmodule Ezagent.Email.Inbound do
 
   # Inject the inbound email as a session message under the restricted
   # participant, stamping `_email_origin` for the self-echo guard.
-  defp inject(rec, _meta, session_uri, msg_id, opts) do
-    {principal_uri, caps} = Principal.mint(session_uri)
+  defp inject(rec, meta, session_uri, msg_id, opts) do
+    with {:ok, binding_actor} <- binding_actor(meta, session_uri),
+         {:ok, {principal_uri, caps}} <- Principal.mint(session_uri, binding_actor) do
+      dispatch_inbound(rec, session_uri, msg_id, principal_uri, caps, opts)
+    else
+      {:error, _reason} = error -> error
+    end
+  end
 
+  defp binding_actor(meta, session_uri) do
+    session_uri
+    |> BindingRow.list_for_session()
+    |> Enum.find(&(&1.id == meta.binding_row_id))
+    |> case do
+      %BindingRow{} = row ->
+        if binding_authority_matches?(row, meta, session_uri) do
+          case Ezagent.URI.new!(row.bound_by) do
+            %URI{scheme: "entity"} = actor -> {:ok, actor}
+            _ -> {:error, :binding_actor_invalid}
+          end
+        else
+          {:error, :binding_authority_mismatch}
+        end
+
+      _ ->
+        {:error, :binding_actor_missing}
+    end
+  rescue
+    _ -> {:error, :binding_actor_invalid}
+  end
+
+  defp binding_authority_matches?(row, meta, session_uri) do
+    session = URI.to_string(session_uri)
+    workspace = session_uri |> Ezagent.Capability.workspace_of() |> URI.to_string()
+
+    row.session_uri == session and
+      row.adapter_id == "email" and
+      row.target_id == meta.target_id and
+      row.workspace_uri == meta.workspace_uri and
+      row.workspace_uri == workspace
+  end
+
+  defp dispatch_inbound(rec, session_uri, msg_id, principal_uri, caps, opts) do
     body = %{
       text: Map.get(rec, "text") || "",
       attachments: [],

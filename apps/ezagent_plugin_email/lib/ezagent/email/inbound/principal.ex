@@ -4,7 +4,7 @@ defmodule Ezagent.Email.Inbound.Principal do
   (#88 PR-2 / SPEC §4.6 / BLOCKER 2 part 3 / plan D5).
 
   Inbound email MUST NOT be injected under an arbitrary or admin caller.
-  This mints a least-privilege EPHEMERAL identity to carry into the
+  This derives a least-privilege EPHEMERAL identity to carry into the
   injection dispatch ctx:
 
   - **Principal URI** — a synthetic, workspace-scoped
@@ -17,18 +17,13 @@ defmodule Ezagent.Email.Inbound.Principal do
     session in its workspace. Nothing else (cannot bind, list, or reach
     any other session).
 
-  ## Why an ephemeral ctx-cap (not a grant, not a Catalog principal)
+  ## Why a receiver-bound issued ctx-cap
 
-  Per `capbac.md` §3, a dispatch authorizes when `ctx.caps` contains a cap
-  matching the needed shape (path 1 `granted_via_ctx_caps?`) — the cap is
-  never persisted and `granted_by` is not consulted on this path. So this
-  mirrors `Ezagent.ActionSet.Agent.Receive`'s self-authority carried inline
-  at the dispatch (capbac §7): the cap goes straight into the injection
-  `ctx.caps`, NOT through `Ezagent.Identity.Grant` (that chokepoint is for
-  PERSISTED grant/revoke and is grep-gated to `:grant_cap`/`:revoke_cap`),
-  and NOT via a new `system://` Catalog principal (those are persisted
-  standing authority). `granted_by` is the synthetic participant itself
-  (genuine self-authority, a real entity URI).
+  A verified inbound binding is a narrow authorization rule configured by an
+  authenticated binding actor. `Ezagent.Cap.issue/3` records that actor as
+  provenance, binds the signature to the synthetic receiver, and returns an
+  artifact used only in this dispatch's `ctx.caps`. It is never persisted and
+  creates no Catalog principal or third authority category.
 
   The cap's `behavior` is the SINGLE behavior the dispatcher resolves for
   `Session :send` (via `BehaviorRegistry`), pinned for least-privilege.
@@ -37,34 +32,37 @@ defmodule Ezagent.Email.Inbound.Principal do
   require Logger
 
   @doc """
-  Build `{principal_uri, caps}` for injecting one inbound email into
+  Build `{:ok, {principal_uri, caps}}` for injecting one inbound email into
   `session_uri`. `caps` is a `MapSet` holding exactly the one `session.send`
   cap, scoped to this session.
   """
-  @spec mint(URI.t()) :: {URI.t(), MapSet.t(Ezagent.Capability.t())}
-  def mint(%URI{} = session_uri) do
+  @spec mint(URI.t(), URI.t()) ::
+          {:ok, {URI.t(), MapSet.t(Ezagent.Capability.t())}} | {:error, term()}
+  def mint(%URI{} = session_uri, %URI{} = binding_actor) do
     workspace_name = Ezagent.URI.workspace_name!(session_uri)
     principal_uri = Ezagent.URI.entity(workspace_name, :user, "email-" <> short_id())
 
-    caps = MapSet.new([send_cap(session_uri, principal_uri)])
-    {principal_uri, caps}
+    case Ezagent.Cap.issue(
+           {:rule, :verified_email_binding, binding_actor},
+           principal_uri,
+           send_cap(session_uri)
+         ) do
+      {:ok, cap} -> {:ok, {principal_uri, MapSet.new([cap])}}
+      {:error, _reason} = error -> error
+    end
   end
 
   # The single narrow send cap. Concrete-URI instance (matches ONLY this
   # session's `session.send` need) + the dispatcher-resolved behavior for
-  # `Session :send`. `granted_by` = the synthetic participant (self-authority,
-  # a real entity — provenance-only; the step-5.5 authorizer is `ctx.caps`,
-  # never routed through Grant).
-  defp send_cap(%URI{} = session_uri, %URI{} = principal_uri) do
-    %Ezagent.Capability{
-      kind: :session,
-      behavior: send_behavior(),
-      action: :send,
-      instance: Ezagent.URI.instance(session_uri),
-      workspace_uri: Ezagent.Capability.workspace_of(session_uri),
-      granted_by: principal_uri,
-      granted_at: DateTime.utc_now()
-    }
+  # `Session :send`. Provenance and receiver binding are stamped only by Cap.issue/3.
+  defp send_cap(%URI{} = session_uri) do
+    Ezagent.Capability.cap(
+      :session,
+      send_behavior(),
+      :send,
+      Ezagent.URI.instance(session_uri),
+      Ezagent.Capability.workspace_of(session_uri)
+    )
   end
 
   # The behavior module the dispatcher resolves for `Session :send` (so the

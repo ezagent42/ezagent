@@ -235,4 +235,46 @@ defmodule Ezagent.Email.InboundTest do
       assert Agent.get(agent, & &1.deleted) == []
     end
   end
+
+  describe "binding provenance join" do
+    test "a corrupt email projection cannot borrow authority from an unrelated binding" do
+      session_uri =
+        Ezagent.URI.new!(
+          "session://system/default/in-corrupt-#{System.unique_integer([:positive])}"
+        )
+
+      row_id = BindingRow.row_id(session_uri, "slack", "unrelated-target")
+
+      assert {:ok, _row} =
+               BindingRow.insert(%{
+                 id: row_id,
+                 session_uri: URI.to_string(session_uri),
+                 adapter_id: "slack",
+                 target_id: "unrelated-target",
+                 opts_json: "{}",
+                 bound_by: "entity://system/user/admin",
+                 bound_at: DateTime.utc_now() |> DateTime.truncate(:microsecond),
+                 workspace_uri: @ws
+               })
+
+      local_address = "corrupt-#{System.unique_integer([:positive])}@ezagent.chat"
+
+      assert {:ok, {_, _token}} =
+               InboundBinding.record(%{
+                 binding_row_id: row_id,
+                 local_address: local_address,
+                 session_uri: URI.to_string(session_uri),
+                 target_id: @target,
+                 workspace_uri: "workspace://wrong"
+               })
+
+      assert {:ok, _row} = InboundBinding.mark_verified(row_id)
+      {agent, opts} = harness()
+
+      assert {:error, :binding_authority_mismatch} =
+               Inbound.process_record(rec(local_address), opts)
+
+      assert dispatched(agent) == []
+    end
+  end
 end
