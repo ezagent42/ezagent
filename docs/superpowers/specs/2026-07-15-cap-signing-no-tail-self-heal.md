@@ -5,7 +5,7 @@
 **Owner branch (codex builds here):** `feat/cap-signing-notail-upgrade` (codex owns; lands sub-steps; coordinator reviews + merges to `main`).
 **Depends on:** Phase-4 ed25519 signing on main, dual-read (`docs/superpowers/specs/2026-07-14-cbac-phase4-ed25519-signing.md`, merge `e9b99443e`); Phase-3 cap self-store (`Cap.issue` → STORE → VERIFY, capbac.md §4.5); #154 no-unowned-caps; the #1409 write-side arch gate (`apps/ezagent_core/test/invariants/entity_caps_access_gate_test.exs`).
 **Grounded in (MUST READ before building):**
-- `docs/notes/2026-07-14-cap-signing-investigation-findings.md` — codex's **empirical** per-class differential (which cap classes are born unsigned; the wildcard-`ArgumentError` root cause). *Note: this note currently lives on `feat/cap-signing-notail-upgrade`, commit `c86069aa4`; it is the authoritative source for §7's table.*
+- `docs/notes/2026-07-14-cap-signing-investigation-findings.md` — codex's **empirical** per-class differential (which cap classes are born unsigned; the wildcard-`ArgumentError` root cause); the authoritative source for §7's table. *Provenance: authored by codex on `feat/cap-signing-notail-upgrade` (commit `c86069aa4`) and copied onto this spec branch so the grounding lands self-contained when the coordinator merges to `main`.*
 - `docs/notes/2026-07-14-cap-signing-upgrade-real-data.md` — the "no big code fix; re-issue through `Cap.issue`" framing + the retired-EventLog-backfill finding.
 - `docs/superpowers/handoffs/2026-07-14-cap-signing-notail-upgrade-codex-handoff.md`.
 
@@ -101,30 +101,30 @@ A held unsigned cap is quarantined (dropped from the durable set on the write pa
 - the resolved issuer entity does not exist / is not loadable;
 - `Cap.issue` under the derived tag returns `{:error, _}` (the issuer no longer holds the authority — `authorize_grant` denies).
 
-Quarantine is **report-and-hold**, never blind-sign. Under dual-read a quarantined cap continues to be accepted as legacy by `verify/1` (no behaviour change tonight); the audit (§4.6) counts it as an unsigned-authorizer blocker so the tail cannot silently reach 0 by hiding un-resolvable caps. At enforce, `verify/1` returns false for it → it is denied and surfaces (no silent drop — §4.5).
+Quarantine is **report-and-hold**, never blind-sign. Under dual-read a quarantined cap continues to be accepted as legacy by `verify/1` (no behaviour change tonight); the audit (§4.7) counts it as an unsigned-authorizer blocker so the tail cannot silently reach 0 by hiding un-resolvable caps. At enforce, `verify/1` returns false for it → it is denied and surfaces (no silent drop — §4.6).
 
 ### 4.4 Where the self-heal runs (write-path lifecycle points; reads stay pure)
 1. **Entity activation** (`Behavior.Identity.activate/2`): after the existing merge, run the reconciler over the merged held set. Fold `reissue` results into the persistent `state.caps`; the existing `{:ok, %{}, reconciled}` return already triggers a **snapshot rewrite** (a write path) so signed structural/genesis caps become durable. Same-version idempotency (recipe binding) is bypassed because the reconciler keys on signed-ness, not binding version.
-2. **User `caps_json` rewrite**: when a user Kind activates (or on any facade write), if `caps_json` holds unsigned authorizer caps that resolve, re-issue them and rewrite `caps_json` **through `EntityCaps.persist`** (now accepted — they are signed) → the `UserStore.update_locked/2` transactional write. This is a write path and stays inside the #1409 allowlist.
-3. **Materialization** (session/creator/template/orchestrator): these already `Cap.issue` on *fresh* materialize (§7). The self-heal adds nothing new to the fresh path; existing unsigned equivalents are healed via path (1)/(2) when the holding entity next activates, OR via the operator's re-materialize step (§6 phasing) which refreshes the binding version and forces re-issue.
+2. **User `caps_json` rewrite**: when a user Kind activates (or on any facade write), if `caps_json` holds unsigned authorizer caps that resolve, re-issue them and rewrite `caps_json` **through `EntityCaps.persist`** (now accepted — they are signed) → the `UserStore.update_locked/2` transactional write. This is a write path and stays inside the #1409 allowlist. **`caps_json` needs its OWN write trigger, not just a snapshot rewrite:** it is re-read as the durable *seed* on every user activation (`behavior/identity.ex:296-317` unions `UserStore.load(uri)` into the slice), so healing only the snapshot slice does NOT stick — the next activate re-merges the still-unsigned seed. The heal is complete only when `caps_json` itself is rewritten signed. A builder must not read "heal on activate" as "snapshot rewrite is enough" for users.
+3. **Materialization** (session/creator/template/orchestrator): these already `Cap.issue` on *fresh* materialize (§7). The self-heal adds nothing new to the fresh path. **Existing unsigned equivalents are healed automatically via path (1)/(2)** when the holding entity next activates — the signed-ness-keyed reconciler re-issues them *without* a binding-version bump or a re-materialize (that is the whole point of keying on signed-ness, §3.3). Operator re-materialize (§6) is an **optional accelerator** for cold entities that rarely activate, never the required path to 0 (decision #2 — the mechanism is automatic).
 
-**Reads stay pure (decision #3):** `EntityCaps.load` / `load_persisted` are untouched — they filter via `verified_set` and never write. If a read is the first thing to observe an unsigned cap, the correction is deferred to the next write-path activation, or enqueued async (§4.7).
+**Reads stay pure (decision #3):** `EntityCaps.load` / `load_persisted` are untouched — they filter via `verified_set` and never write. If a read is the first thing to observe an unsigned cap, the correction is deferred to the next write-path activation, or enqueued async (§4.5).
 
-### 4.7 Async carrier — deliberate sync-vs-async choice
+### 4.5 Async carrier — deliberate sync-vs-async choice
 The re-issue itself (ed25519 sign) is cheap and can run inline on the write path. The concern is the **durable rewrite** surviving a crash mid-drain, and not coupling drain latency to every cold-start activate.
 
 - **Recommended:** re-issue **inline** in the write-path reconciler (cheap, deterministic), and STORE the signed artifact through the **existing durable write lane** — `EntityCaps.persist` for `caps_json`, and the already-durable `:vm_internal absorb_cap` → `Cap.DeliveryOutbox` retry lane for the live `:identity` slice. The outbox **already supports `:absorb_cap`** envelopes (`delivery_outbox.ex` moduledoc; `Envelope.eligible?`), so a healed artifact rides the existing absorb path with **no new envelope type**. This is the least-new-surface option and reuses a proven durable-retry boundary.
 - **Rejected:** a bespoke "re-sign" outbox envelope type. `DeliveryOutbox.Envelope.eligible?` is scoped to `:absorb_cap`/`:revoke_cap`; a new type is new surface for no gain over routing the healed artifact as an `:absorb_cap` store.
 - **Constraint (hard):** whichever lane, it is invoked from a **write path or a background sweeper**, never from `load`. The impl-plan picks inline-vs-sweeper per class; the invariant is reads-don't-write.
 
-### 4.5 Double gate against regression (decision #6)
+### 4.6 Double gate against regression (decision #6)
 - **(a) Static write-side gate — extend #1409.** `entity_caps_access_gate_test.exs` already forbids any executable consumer reading/writing `users.caps_json` or reaching into snapshot `:identity` caps outside the `EntityCaps` facade + a function-level allowlist. The self-heal's durable writes MUST route through the facade (so they need **no** new allowlist entry); the retired backfill's entries are **removed** from the allowlist (§8). Adding a new direct caps_json/snapshot writer trips this gate — that is the intended guard.
 - **(b) NEW runtime invariant — enforce-mode fail-loud.** Add an invariant/architecture test asserting that, **when `require_signature: true`**, an unsigned authorizer cap can neither be persisted nor pass verification silently:
   - `persist`/`grant` already fail closed via `validate_issued_caps` (any env) — pin this with a test that persisting an unsigned authorizer cap returns `{:error, :invalid_cap_artifact}`.
   - `Cap.verify/1` under enforce returns `false` for the unsigned `granted_by: entity` clause (`cap.ex:51-63`) — pin that this denies rather than legacy-accepts.
   - Complements codex's existing `cap_signing_fail_loud_test.exs` (verify callers never rescue an infra failure to a silent `false`). Together: unsigned → denied + surfaced; infra failure → raised, never masked.
 
-### 4.6 The audit task (go/no-go + progress meter)
+### 4.7 The audit task (go/no-go + progress meter)
 A `mix` task (distinct name — the existing `mix ezagent.caps.audit` is the unrelated `data_owner/1` audit; use e.g. `mix ezagent.caps.signing_audit`) that:
 - scans **both** durable homes directly: every `users.caps_json` row and every `kind_snapshots` latest identity slice (reusing codex's `test/support/caps_json_scanner.ex` shape where possible);
 - classifies each cap: **signed** / **unsigned-authorizer** / **quarantined (unresolvable)** / **sentinel-excluded** (declared/needed markers that are not authorizers);
@@ -146,13 +146,13 @@ It is **not** the EventLog backfill and shares no code with it. Its "by class" b
 
 | # | Decision | Realized in |
 |---|---|---|
-| 1 | 0 unsigned tail → enforce-flippable | Goal §2; audit §4.6 gates it |
+| 1 | 0 unsigned tail → enforce-flippable | Goal §2; audit §4.7 gates it |
 | 2 | Automatic self-heal on write-path lifecycle | §4.1, §4.4 |
-| 3 | No read-path mutation | §4.4, §4.7 (constraint) |
+| 3 | No read-path mutation | §4.4, §4.5 (constraint) |
 | 4 | Quarantine, never blind-sign | §4.3 |
 | 5 | Genesis self-signs, no exemption | §4.2 row 1; §7 genesis row |
-| 6 | Double gate | §4.5 (a static / b runtime) |
-| 7 | Independent audit, not EventLog backfill | §4.6; §8 retires backfill |
+| 6 | Double gate | §4.6 (a static / b runtime) |
+| 7 | Independent audit, not EventLog backfill | §4.7; §8 retires backfill |
 | 8 | Hermetic tests | §4.8 |
 | 9 | Manual flip, canary E2E first | §6 phase 4; §9 acceptance |
 | 10 | Readers already receiver-aware | out of scope (§2) |
@@ -169,7 +169,7 @@ Each phase is a codex sub-step: full `mix ci.local` green + rebased on main befo
 
 **Phase 2 — the signing audit task + both gates.** `mix ezagent.caps.signing_audit [--strict]`; the new enforce-mode fail-loud runtime invariant; extend/clean the #1409 allowlist. Hermetic tests throughout.
 
-**Phase 3 — drain on canary.** In the isolated canary-data env (throwaway PG, restored dump — NEVER live stacks): re-activate/re-materialize entities (self-healing classes re-sign), run the operator re-materialize for classes needing a binding-version refresh, and let the write-path self-heal drain `caps_json` + structural snapshots. Re-run the audit; iterate until `--strict` = 0. Quarantined caps are investigated + reported to the lead, never force-signed.
+**Phase 3 — drain on canary.** In the isolated canary-data env (throwaway PG, restored dump — NEVER live stacks): the write-path self-heal drains `caps_json` + structural snapshots + idempotent-skip classes **automatically as entities activate** (decision #2). Re-activation is the trigger, not a manual per-cap script. Operator re-materialize is an **optional accelerator** for entities that do not naturally activate during the drain window. Re-run the audit; iterate until `--strict` = 0. Quarantined caps are investigated + reported to the lead, never force-signed.
 
 **Phase 4 — manual enforce flip (NOT in this spec).** Lead decision, after audit=0 on real canary data + a real-canary-data E2E confirming `require_signature: true` denies nothing legitimate. This spec stops before the flip.
 
@@ -204,7 +204,7 @@ From the empirical differential (`docs/notes/2026-07-14-cap-signing-investigatio
 
 ## 8. Retiring the EventLog backfill (decision #7)
 
-`Ezagent.Identity.CapSigningBackfill` and its test are deleted. Its two residual entries in the #1409 gate allowlist (`cap_signing_backfill.ex` → `user_candidates/0` in `@raw_user_caps_allowlist`; `identity_caps/1` in `@snapshot_identity_caps_allowlist`, `entity_caps_access_gate_test.exs:21-22,38-39`) are removed in the same PR — leaving them makes the gate reference a deleted module and drift. Any doc/runbook referencing `dry_run/1` as the gate is updated to point at the new signing audit (§4.6). Enumerate every reference (grep `CapSigningBackfill`) before deletion so main stays green.
+`Ezagent.Identity.CapSigningBackfill` and its test are deleted. Its two residual entries in the #1409 gate allowlist (`cap_signing_backfill.ex` → `user_candidates/0` in `@raw_user_caps_allowlist`; `identity_caps/1` in `@snapshot_identity_caps_allowlist`, `entity_caps_access_gate_test.exs:21-22,38-39`) are removed in the same PR — leaving them makes the gate reference a deleted module and drift. Any doc/runbook referencing `dry_run/1` as the gate is updated to point at the new signing audit (§4.7). Enumerate every reference (grep `CapSigningBackfill`) before deletion so main stays green.
 
 ---
 
@@ -223,7 +223,7 @@ From the empirical differential (`docs/notes/2026-07-14-cap-signing-investigatio
 
 ## 10. Risks
 
-- **R1 — the per-class table is code-grounded, empirically confirmed on a small clean dump, but the "196" scale is unreproducible (§3.5).** The audit (§4.6) is the reconciliation: it reports the *actual* per-class unsigned inventory on whatever real data it is pointed at. Treat §7 as the map, the audit as the territory. If the audit surfaces a class not in §7, that is a finding to fold back, not a spec failure.
+- **R1 — the per-class table is code-grounded, empirically confirmed on a small clean dump, but the "196" scale is unreproducible (§3.5).** The audit (§4.7) is the reconciliation: it reports the *actual* per-class unsigned inventory on whatever real data it is pointed at. Treat §7 as the map, the audit as the territory. If the audit surfaces a class not in §7, that is a finding to fold back, not a spec failure.
 - **R2 — idempotent-skip classes.** If the reconciler's signed-ness key is implemented as "authority-equivalent already held" (the trap in §3.3), legacy unsigned caps will be silently skipped and the tail never reaches 0. Mitigation: the reconciler MUST key on signature presence/validity; a test drives a legacy-unsigned-equivalent through activate and asserts it is re-issued (fails if the skip fires).
 - **R3 — re-issue authority no longer resolvable.** A legacy cap whose issuer entity was deleted, or whose issuer no longer holds the authority, cannot be re-issued. This is expected → quarantine (§4.3); at enforce it is denied. The audit counts it, so the tail cannot reach 0 while such caps exist — forcing an explicit lead decision on each (never a blind-sign).
 - **R4 — activate-path cost / coupling.** Running the reconciler on every cold-start activate adds work and couples re-sign failure to activation. Mitigation: the reconciler is a no-op fast-path when all held caps are already signed (the steady state); the durable store lane is the existing durable-retry outbox, so a transient store failure retries without failing activation.
@@ -235,5 +235,5 @@ From the empirical differential (`docs/notes/2026-07-14-cap-signing-investigatio
 ## 11. Open questions (genuinely unresolved — the §1 decisions are LOCKED, not listed here)
 
 1. **Session/creator/template legacy caps: re-issue in place, or safe-replace?** The differential notes these can be "显式 re-issue 或先安全替换" (re-issue OR safely replace). Re-issue preserves the exact identity_key + provenance; safe-replace (revoke legacy + grant fresh) is simpler but changes `granted_at` and briefly de-authorizes. **Recommendation:** re-issue in place (identity-preserving) for the drain; use safe-replace only where the original authority is unresolvable-but-re-derivable from live session/membership state. Needs a lead/codex call per class in the impl-plan.
-2. **Async carrier scope.** §4.7 recommends reusing the `:absorb_cap` outbox lane for the live-slice store and `EntityCaps.persist` for `caps_json`. Is a background **sweeper** (drain-on-boot over pending-unsigned) also wanted for entities that rarely activate, or is "heal on next natural activation + the operator re-materialize step" sufficient for the canary drain? The former reaches 0 faster with no manual step; the latter is less new surface. Recommendation: rely on natural activation + operator re-materialize for Phase 3; add a sweeper only if the audit plateaus above 0 on cold entities.
+2. **Cold-entity reach: sweeper, or rely on natural activation?** The automatic write-path self-heal (§4.4) drives the tail to 0 as entities activate — no manual step. The only gap is an entity that never activates during the drain window. Options to close it: a background **sweeper** (drain-on-boot over pending-unsigned durable rows, fully automatic, more new surface), vs. the operator's optional re-materialize accelerator (less surface, one manual nudge). Recommendation: rely on natural activation for Phase 3; add a sweeper only if the audit plateaus above 0 on genuinely-cold entities. Either way the mechanism stays automatic (decision #2) — the re-materialize is an accelerator, never the required path.
 3. **Audit source-of-truth for `kind_snapshots`.** The audit must read the *latest* snapshot per entity; confirm whether reading only `kind_snapshots` latest rows (vs also live slices) can miss a live-but-un-snapshotted unsigned cap. Recommendation: audit reads durable homes only (the enforce target is durable); a live-only unsigned cap is transient and heals on next snapshot — but confirm no class holds authorizer caps live-only across restarts.
