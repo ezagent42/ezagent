@@ -22,7 +22,7 @@
 ### Task 1: Durable Retirement Obligation Store
 
 **Files:**
-- Create: `apps/ezagent_core/priv/repo/migrations/20260715000000_agent_retirement_obligations.exs`
+- Create: `apps/ezagent_core/priv/repo_pg/migrations/20260715000000_agent_retirement_obligations.exs`
 - Create: `apps/ezagent_domain_agent/lib/ezagent/agent/retirement_obligation.ex`
 - Create: `apps/ezagent_domain_agent/lib/ezagent/agent/retirement_obligations.ex`
 - Test: `apps/ezagent_domain_agent/test/ezagent/agent/retirement_obligations_test.exs`
