@@ -234,6 +234,18 @@ defmodule Ezagent.Email.InboundTest do
       assert {:error, :unauthorized} = Inbound.process_record(r, opts)
       assert Agent.get(agent, & &1.deleted) == []
     end
+
+    test "an authority reader failure retains the inbox item" do
+      {agent, opts} = harness()
+      authority_fun = fn _record -> {:retry, {:binding_reader_failed, :unavailable}} end
+      r = rec("reader-failure@ezagent.chat")
+
+      assert {:error, {:binding_reader_failed, :unavailable}} =
+               Inbound.process_record(r, Keyword.put(opts, :authority_fun, authority_fun))
+
+      assert dispatched(agent) == []
+      assert deleted(agent) == []
+    end
   end
 
   describe "binding provenance join" do
@@ -271,10 +283,11 @@ defmodule Ezagent.Email.InboundTest do
       assert {:ok, _row} = InboundBinding.mark_verified(row_id)
       {agent, opts} = harness()
 
-      assert {:error, :binding_authority_mismatch} =
+      assert {:skipped, :binding_authority_mismatch} =
                Inbound.process_record(rec(local_address), opts)
 
       assert dispatched(agent) == []
+      assert deleted(agent) != []
     end
   end
 end

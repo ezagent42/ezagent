@@ -12,7 +12,8 @@ defmodule Ezagent.Email.Inbound.PrincipalTest do
   """
   use EzagentCore.DataCase, async: false
 
-  alias Ezagent.Email.Inbound.Principal
+  alias Ezagent.Email.{InboundBinding, Inbound.Authority}
+  alias Ezagent.ExternalMirror.BindingRow
 
   @binding_actor Ezagent.URI.new!("entity://system/user/admin")
 
@@ -24,6 +25,41 @@ defmodule Ezagent.Email.Inbound.PrincipalTest do
 
   defp session_uri(name \\ "p-#{System.unique_integer([:positive])}") do
     Ezagent.URI.new!("session://system/default/#{name}")
+  end
+
+  defp issue_for(%URI{} = session_uri) do
+    target = "principal-#{System.unique_integer([:positive])}@example.com"
+    local = "principal-#{System.unique_integer([:positive])}@ezagent.chat"
+    row_id = BindingRow.row_id(session_uri, "email", target)
+
+    {:ok, _} =
+      BindingRow.insert(%{
+        id: row_id,
+        session_uri: URI.to_string(session_uri),
+        adapter_id: "email",
+        target_id: target,
+        opts_json: "{}",
+        bound_by: URI.to_string(@binding_actor),
+        bound_at: DateTime.utc_now() |> DateTime.truncate(:microsecond),
+        workspace_uri: URI.to_string(Ezagent.Capability.workspace_of(session_uri))
+      })
+
+    {:ok, {_, _token}} =
+      InboundBinding.record(%{
+        binding_row_id: row_id,
+        local_address: local,
+        session_uri: URI.to_string(session_uri),
+        target_id: target,
+        workspace_uri: URI.to_string(Ezagent.Capability.workspace_of(session_uri))
+      })
+
+    {:ok, _} = InboundBinding.mark_verified(row_id)
+
+    Authority.issue(%{
+      "to" => local,
+      "from" => target,
+      "authResults" => "spf=pass dkim=pass dmarc=pass"
+    })
   end
 
   # The needed-cap shape dispatch step 5.5 derives for `Session :send` on a
@@ -39,22 +75,22 @@ defmodule Ezagent.Email.Inbound.PrincipalTest do
     }
   end
 
-  test "mint/1 builds a synthetic entity principal URI in the session workspace" do
+  test "authority builds a synthetic entity principal URI in the session workspace" do
     su = session_uri()
-    {:ok, {principal_uri, _caps}} = Principal.mint(su, @binding_actor)
+    {:ok, %{principal_uri: principal_uri}} = issue_for(su)
 
     assert %URI{scheme: "entity"} = principal_uri
     assert String.starts_with?(URI.to_string(principal_uri), "entity://system/user/email-")
   end
 
   test "mints EXACTLY one cap" do
-    {:ok, {_uri, caps}} = Principal.mint(session_uri(), @binding_actor)
+    {:ok, %{caps: caps}} = issue_for(session_uri())
     assert MapSet.size(caps) == 1
   end
 
   test "the minted cap authorizes session.send on THIS session (real matcher)" do
     su = session_uri()
-    {:ok, {_uri, caps}} = Principal.mint(su, @binding_actor)
+    {:ok, %{caps: caps}} = issue_for(su)
     [cap] = MapSet.to_list(caps)
 
     assert Ezagent.Capability.matches?(cap, needed_send(su))
@@ -67,7 +103,7 @@ defmodule Ezagent.Email.Inbound.PrincipalTest do
   # check / live E2E; the email plugin test harness does not boot a live
   # Session Kind tree.)
   test "the minted cap's behavior is the registered Session :send behavior" do
-    {:ok, {_uri, caps}} = Principal.mint(session_uri(), @binding_actor)
+    {:ok, %{caps: caps}} = issue_for(session_uri())
     [cap] = MapSet.to_list(caps)
 
     assert cap.kind == :session
@@ -78,7 +114,7 @@ defmodule Ezagent.Email.Inbound.PrincipalTest do
   test "the minted cap is DENIED for a different session (least-privilege)" do
     su = session_uri()
     other = session_uri()
-    {:ok, {_uri, caps}} = Principal.mint(su, @binding_actor)
+    {:ok, %{caps: caps}} = issue_for(su)
     [cap] = MapSet.to_list(caps)
 
     refute Ezagent.Capability.matches?(cap, needed_send(other))
@@ -86,7 +122,7 @@ defmodule Ezagent.Email.Inbound.PrincipalTest do
 
   test "the minted cap does NOT authorize a different action (e.g. :bind)" do
     su = session_uri()
-    {:ok, {_uri, caps}} = Principal.mint(su, @binding_actor)
+    {:ok, %{caps: caps}} = issue_for(su)
     [cap] = MapSet.to_list(caps)
 
     needed_bind = %{
@@ -101,7 +137,7 @@ defmodule Ezagent.Email.Inbound.PrincipalTest do
   end
 
   test "the authenticated binding actor is signed provenance and the synthetic participant is the receiver" do
-    {:ok, {principal_uri, caps}} = Principal.mint(session_uri(), @binding_actor)
+    {:ok, %{principal_uri: principal_uri, caps: caps}} = issue_for(session_uri())
     [cap] = MapSet.to_list(caps)
 
     assert cap.granted_by == @binding_actor
@@ -119,7 +155,7 @@ defmodule Ezagent.Email.Inbound.PrincipalTest do
         template_name: "default"
       )
 
-    {:ok, {principal_uri, caps}} = Principal.mint(su, @binding_actor)
+    {:ok, %{principal_uri: principal_uri, caps: caps}} = issue_for(su)
     message = Ezagent.Message.new(principal_uri, %{text: "inbound", attachments: []})
 
     enable_signature_enforcement!()

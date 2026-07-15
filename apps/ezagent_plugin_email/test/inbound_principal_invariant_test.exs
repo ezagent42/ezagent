@@ -1,15 +1,19 @@
 defmodule Ezagent.Email.Inbound.PrincipalInvariantTest do
   use ExUnit.Case, async: true
 
-  @principal Path.expand("../lib/ezagent/email/inbound/principal.ex", __DIR__)
+  @email_lib Path.expand("../lib/ezagent/email", __DIR__)
+  @authority Path.join(@email_lib, "inbound/authority.ex")
 
-  test "inbound authority is issued at the Cap chokepoint and never hand-stamped" do
-    source = File.read!(@principal)
+  test "email has one authority issuance home and no arbitrary principal mint API" do
+    sources =
+      @email_lib
+      |> Path.join("**/*.ex")
+      |> Path.wildcard()
+      |> Map.new(&{&1, File.read!(&1)})
 
-    assert source =~ "Ezagent.Cap.issue"
-    assert source =~ "{:rule, :verified_email_binding, binding_actor}"
-    refute source =~ "%Ezagent.Capability{"
-    refute source =~ "granted_by:"
-    refute source =~ "granted_at:"
+    issue_homes = for {path, source} <- sources, source =~ "Ezagent.Cap.issue", do: path
+
+    assert issue_homes == [@authority]
+    refute function_exported?(Ezagent.Email.Inbound.Principal, :mint, 2)
   end
 end
