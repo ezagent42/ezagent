@@ -36,7 +36,8 @@ defmodule EzagentDomainAgent.Application do
       # #505 — carries AgentBridge connect events into TransportReadiness so a
       # bridge-backed agent's ReadyGate flips to :ready on the real bind even when
       # the bind lands AFTER the Kind's ready announce (fresh-spawn ordering).
-      Ezagent.Agent.TransportReadinessListener
+      Ezagent.Agent.TransportReadinessListener,
+      Ezagent.Agent.RetirementSweeper
     ]
 
     result =
