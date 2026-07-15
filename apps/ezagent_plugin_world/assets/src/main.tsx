@@ -3,14 +3,14 @@ import {createRoot, type Root} from "react-dom/client"
 import {ArrowLeft, Boxes, Check, ChevronDown, ChevronRight, Lock, LogOut, Moon, Plus, Sun, User} from "lucide-react"
 
 import {Button} from "./components/ui/primitives"
-import {AdminSurface} from "./components/Admin"
+import {AdminSurface, type AdminState} from "./components/Admin"
 import {Conversation, type ConversationState} from "./components/Conversation"
 import {IdentitiesSurface, type IdentitiesState} from "./components/Identities"
 import {LayoutEditor} from "./components/LayoutEditor"
 import {PtyTerminalSurface} from "./components/PtyTerminal"
-import {Kanban} from "./components/Kanban"
+import {Kanban, type KanbanState} from "./components/Kanban"
 import {Overview} from "./components/Overview"
-import {SessionsTable} from "./components/SessionsTable"
+import {SessionsTable, type SessionsState} from "./components/SessionsTable"
 import {WorldHello} from "./components/WorldHello"
 import {ManageFrame, WorkspacePluginSurface, type WorkspacePluginState} from "./components/WorkspacePlugin"
 import {isPrimaryNavActive, pageTitleForComponent, primaryNavItems, sectionRoot as worldSectionRoot} from "../js/world_ia.js"
@@ -645,7 +645,6 @@ function WorkspaceSwitcher({
     <div className="relative max-w-full" ref={ref}>
       <button
         type="button"
-        aria-label="Account menu"
         aria-haspopup="menu"
         aria-expanded={open}
         aria-label={`Switch workspace: ezagent / ${label}`}
@@ -878,6 +877,7 @@ type RenderContext = {
     },
   ) => void
   onPublishTemplate: (sessionUri: string, name: string) => void
+  onForkConfig: (sessionUri: string) => void
   onManageLayout: (layout: WorldLayout) => void
   onCreateAgent: (agent: Record<string, unknown>) => void
   onCreateUser: (user: Record<string, unknown>) => void
@@ -922,7 +922,7 @@ const PLUGIN_PAGE_RENDERERS: Record<
   kanban: (component, context) => (
     <ManageFrame key={component.id} active="plugins" title="Kanban">
       <Kanban
-        state={{...context.state, component: component.type}}
+        state={{...context.state, component: component.type} as KanbanState}
         onAction={context.onWorkspacePluginAction}
       />
     </ManageFrame>
@@ -946,7 +946,7 @@ function renderLayoutComponent(component: NonNullable<WorldLayout["components"]>
       )
 
     case "sessions":
-      return <SessionsTable key={component.id} state={context.state} onJoin={context.onJoin} onCreate={context.onCreateSession} />
+      return <SessionsTable key={component.id} state={context.state as SessionsState} onJoin={context.onJoin} onCreate={context.onCreateSession} />
 
     case "conversation":
       return (
@@ -964,7 +964,7 @@ function renderLayoutComponent(component: NonNullable<WorldLayout["components"]>
           onLoadOlder={context.onLoadOlder}
           onMarkDisplayed={context.onMarkDisplayed}
           onInvite={context.onInvite}
-          onAssignRole={context.onAssignRole}
+          onForkConfig={context.onForkConfig}
           onRemoveParticipant={context.onRemoveParticipant}
           onUninstallSocialware={context.onUninstallSocialware}
           onPtyInput={context.onPtyInput}
@@ -989,7 +989,7 @@ function renderLayoutComponent(component: NonNullable<WorldLayout["components"]>
       return <Overview key={component.id} state={context.state} />
 
     case "admin":
-      return <AdminSurface key={component.id} state={{...context.state, component: component.type}} onAction={context.onAdminAction} />
+      return <AdminSurface key={component.id} state={{...context.state, component: component.type} as AdminState} onAction={context.onAdminAction} />
 
     case "workspace_plugins":
       return (

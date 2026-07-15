@@ -25,7 +25,7 @@ type Node = {
   stage: string | null
   owner: string | null
   status: string | null
-  artifacts?: unknown[]
+  artifacts?: {kind?: string; content?: string; ref?: string}[]
   metrics?: unknown[]
 }
 type Tree = {nodes: Record<string, Node>; root_id: string | null}
