@@ -18,8 +18,11 @@ defmodule Mix.Tasks.Ezagent.Agent.Retirement.Retry do
 
     case args do
       ["--all"] ->
-        RetirementSweeper.run_due()
-        |> Enum.each(&report/1)
+        failures = run_all_due([])
+
+        if failures != [] do
+          Mix.raise("#{length(failures)} retirement obligation retry(s) failed")
+        end
 
       [id] ->
         case Integer.parse(id) do
@@ -45,4 +48,22 @@ defmodule Mix.Tasks.Ezagent.Agent.Retirement.Retry do
 
   defp report({id, {:error, reason}}),
     do: Mix.shell().error("obligation #{id} remains pending: #{inspect(reason)}")
+
+  defp run_all_due(failures) do
+    case RetirementSweeper.run_due() do
+      [] ->
+        Enum.reverse(failures)
+
+      results ->
+        Enum.each(results, &report/1)
+
+        new_failures =
+          Enum.reduce(results, failures, fn
+            {id, {:error, reason}}, acc -> [{id, reason} | acc]
+            {_id, {:ok, :resolved}}, acc -> acc
+          end)
+
+        run_all_due(new_failures)
+    end
+  end
 end

@@ -16,6 +16,7 @@ defmodule Ezagent.Agent.RetirementObligation do
     field(:pending_steps, :map)
     field(:attempts, :integer, default: 0)
     field(:last_error, :string)
+    field(:claim_token, :string)
     field(:next_attempt_at, :utc_datetime_usec)
     field(:resolved_at, :utc_datetime_usec)
 
@@ -54,6 +55,7 @@ defmodule Ezagent.Agent.RetirementObligation do
       :status,
       :attempts,
       :last_error,
+      :claim_token,
       :next_attempt_at,
       :resolved_at,
       :pending_steps

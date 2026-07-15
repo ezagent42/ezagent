@@ -48,11 +48,12 @@ defmodule Ezagent.Agent.RetirementSweeper do
 
   defp execute_claimed(obligation) do
     with :ok <- execute_steps(obligation),
-         {:ok, _resolved} <- RetirementObligations.resolve(obligation.id) do
+         {:ok, _resolved} <-
+           RetirementObligations.resolve(obligation.id, obligation.claim_token) do
       {:ok, :resolved}
     else
       {:error, reason} ->
-        _ = RetirementObligations.record_failure(obligation.id, reason)
+        _ = RetirementObligations.record_failure(obligation.id, reason, obligation.claim_token)
         {:error, reason}
     end
   end
@@ -103,7 +104,7 @@ defmodule Ezagent.Agent.RetirementSweeper do
 
     case result do
       {:ok, %{destroyed: true}} -> :ok
-      {:error, reason} when reason in [:no_such_actor, :not_ready] -> :ok
+      {:error, :no_such_actor} -> :ok
       {:error, reason} -> {:error, {:termination_retry_failed, reason}}
       other -> {:error, {:unexpected_termination_retry_result, other}}
     end
@@ -142,8 +143,11 @@ defmodule Ezagent.Agent.RetirementSweeper do
 
   defp record_claimed_failure(id, reason) do
     case RetirementObligations.get(id) do
-      %{status: :running} -> RetirementObligations.record_failure(id, reason)
-      _ -> :ok
+      %{status: :running, claim_token: token} ->
+        RetirementObligations.record_failure(id, reason, token)
+
+      _ ->
+        :ok
     end
   end
 

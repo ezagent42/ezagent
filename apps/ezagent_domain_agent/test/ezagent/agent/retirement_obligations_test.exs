@@ -22,11 +22,13 @@ defmodule Ezagent.Agent.RetirementObligationsTest do
     assert {:ok, duplicate} = RetirementObligations.create_pending(attrs)
     assert duplicate.id == pending.id
 
-    assert {:ok, running} = RetirementObligations.mark_running(pending.id)
+    assert {:ok, running} = RetirementObligations.claim(pending.id)
     assert running.status == :running
     assert running.attempts == 1
 
-    assert {:ok, retryable} = RetirementObligations.record_failure(pending.id, :eacces)
+    assert {:ok, retryable} =
+             RetirementObligations.record_failure(pending.id, :eacces, running.claim_token)
+
     assert retryable.status == :pending
     assert retryable.last_error == ":eacces"
 
@@ -65,6 +67,10 @@ defmodule Ezagent.Agent.RetirementObligationsTest do
 
     assert {:ok, reclaimed} = RetirementObligations.claim(pending.id)
     assert reclaimed.attempts == 2
+    assert reclaimed.claim_token != claimed.claim_token
+    assert {:error, :stale_claim} = RetirementObligations.resolve(pending.id, claimed.claim_token)
+    assert {:ok, resolved} = RetirementObligations.resolve(pending.id, reclaimed.claim_token)
+    assert resolved.status == :resolved
   end
 
   test "exhausted automatic retries require an explicit operator claim" do
@@ -90,7 +96,8 @@ defmodule Ezagent.Agent.RetirementObligationsTest do
       })
 
     assert {:ok, running} = RetirementObligations.claim(pending.id)
-    assert {:ok, failed} = RetirementObligations.record_failure(running.id, :eacces)
+    assert {:ok, failed} =
+             RetirementObligations.record_failure(running.id, :eacces, running.claim_token)
     assert failed.status == :failed
     assert {:error, :failed} = RetirementObligations.claim(failed.id)
     assert {:ok, reopened} = RetirementObligations.claim(failed.id, allow_failed: true)

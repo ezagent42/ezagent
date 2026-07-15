@@ -197,8 +197,13 @@ defmodule Ezagent.Agent.Retirement do
   end
 
   defp interpret_destroy_result(other, obligation) do
-    _ = RetirementObligations.resolve(obligation.id)
-    {:error, %{termination: :not_destroyed, reason: {:unexpected_destroy_result, other}}}
+    {:error,
+     %{
+       termination: :unknown,
+       cleanup: :pending,
+       obligation_id: obligation.id,
+       reason: {:unexpected_destroy_result, other}
+     }}
   end
 
   defp resolve_complete(obligation) do
@@ -206,13 +211,13 @@ defmodule Ezagent.Agent.Retirement do
       {:ok, _resolved} ->
         {:ok, %{termination: :destroyed, cleanup: :complete}}
 
-      {:error, changeset} ->
+      {:error, reason} ->
         {:partial,
          %{
            termination: :destroyed,
            cleanup: :pending,
            obligation_id: obligation.id,
-           failures: [{:obligation_resolve_failed, changeset.errors}]
+           failures: [{:obligation_resolve_failed, reason}]
          }}
     end
   end

@@ -68,31 +68,6 @@ defmodule Ezagent.Agent.RetirementObligations do
     end
   end
 
-  @spec mark_running(pos_integer()) ::
-          {:ok, RetirementObligation.t()} | {:error, Ecto.Changeset.t()}
-  def mark_running(id) do
-    obligation = get!(id)
-
-    result =
-      obligation
-      |> RetirementObligation.transition_changeset(%{
-        status: :running,
-        attempts: obligation.attempts + 1,
-        last_error: nil
-      })
-      |> Repo.update()
-
-    case result do
-      {:ok, updated} ->
-        emit(if(updated.status == :failed, do: :failed, else: :retry_scheduled), updated)
-
-      _ ->
-        :ok
-    end
-
-    result
-  end
-
   defp claim_locked(nil, _now, _lease_seconds, _allow_failed), do: {:error, :not_found}
 
   defp claim_locked(
@@ -130,27 +105,37 @@ defmodule Ezagent.Agent.RetirementObligations do
       status: :running,
       attempts: obligation.attempts + 1,
       last_error: nil,
+      claim_token: Ecto.UUID.generate(),
       next_attempt_at: DateTime.add(now, lease_seconds, :second)
     })
     |> Repo.update()
   end
 
-  @spec record_failure(pos_integer(), term()) ::
-          {:ok, RetirementObligation.t()} | {:error, Ecto.Changeset.t()}
-  def record_failure(id, reason) do
+  def record_failure(id, reason, claim_token \\ nil) do
     obligation = get!(id)
     max_attempts = Application.get_env(:ezagent_domain_agent, :retirement_max_attempts, 10)
     exhausted? = obligation.attempts >= max_attempts
-    delay_seconds = min(Integer.pow(2, max(obligation.attempts - 1, 0)), 3_600)
+    exponent = obligation.attempts |> max(1) |> min(12) |> Kernel.-(1)
+    delay_seconds = min(Integer.pow(2, exponent), 3_600)
 
-    obligation
-    |> RetirementObligation.transition_changeset(%{
-      status: if(exhausted?, do: :failed, else: :pending),
-      last_error: inspect(reason),
-      next_attempt_at:
-        if(exhausted?, do: nil, else: DateTime.add(DateTime.utc_now(), delay_seconds, :second))
-    })
-    |> Repo.update()
+    result =
+      conditional_transition(id, claim_token, %{
+        status: if(exhausted?, do: :failed, else: :pending),
+        last_error: inspect(reason),
+        claim_token: nil,
+        next_attempt_at:
+          if(exhausted?, do: nil, else: DateTime.add(DateTime.utc_now(), delay_seconds, :second))
+      })
+
+    case result do
+      {:ok, updated} ->
+        emit(if(updated.status == :failed, do: :failed, else: :retry_scheduled), updated)
+
+      _ ->
+        :ok
+    end
+
+    result
   end
 
   @spec update_pending_steps(pos_integer(), map()) ::
@@ -162,20 +147,16 @@ defmodule Ezagent.Agent.RetirementObligations do
     |> Repo.update()
   end
 
-  @spec resolve(pos_integer()) ::
-          {:ok, RetirementObligation.t()} | {:error, Ecto.Changeset.t()}
-  def resolve(id) do
+  def resolve(id, claim_token \\ nil) do
     result =
-      id
-      |> get!()
-      |> RetirementObligation.transition_changeset(%{
+      conditional_transition(id, claim_token, %{
         status: :resolved,
         pending_steps: %{},
         last_error: nil,
+        claim_token: nil,
         next_attempt_at: nil,
         resolved_at: DateTime.utc_now()
       })
-      |> Repo.update()
 
     case result do
       {:ok, obligation} -> emit(:resolved, obligation)
@@ -209,6 +190,22 @@ defmodule Ezagent.Agent.RetirementObligations do
       end
     else
       error
+    end
+  end
+
+  defp conditional_transition(id, claim_token, attrs) do
+    base = from(o in RetirementObligation, where: o.id == ^id)
+
+    query =
+      if is_binary(claim_token) do
+        from(o in base, where: o.status == :running and o.claim_token == ^claim_token)
+      else
+        from(o in base, where: o.status == :pending)
+      end
+
+    case Repo.update_all(query, set: Map.to_list(attrs) ++ [updated_at: DateTime.utc_now()]) do
+      {1, _} -> {:ok, get!(id)}
+      {0, _} -> {:error, :stale_claim}
     end
   end
 
