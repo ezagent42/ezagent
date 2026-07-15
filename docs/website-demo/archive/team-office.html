@@ -1,0 +1,414 @@
+<!DOCTYPE html>
+<html lang="zh" data-theme="light">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>这支队伍怎么发布 · Team office · Ezagent</title>
+<meta name="description" content="Ezagent contributors — 一间会动的办公室。每个真实成员一张桌，坐在屏前操作电脑，屏幕上是他正在做的项目。">
+<!--
+  team-office.html · contributors「办公室」demo（FP6 衍生）
+  ─────────────────────────────────────────────────────────────────────
+  复用 index.html 的设计系统 token + fu(FadeUpBlur) 入场 + reduced-motion 块。
+  数据走同一个 mock-ezagent-api.js 的 EZ.contributors()（遵 #1072：业务数据只在数据层）。
+  参考观感：office-loop.mp4（近俯视工位网格，每桌一个小人敲彩色键盘，屏幕放各自的活）。
+  风格：扁平矢量 + De Stijl 原色键盘 + 几何小人（圆头+剩影肩），非像素、非渐变。
+  v1：先把框架立起来（9 桌 = 9 真人 + 敲键微动 + 屏幕分角色）。细节后续迭代。
+-->
+<style>
+@import url('https://fonts.googleapis.com/css2?family=Inter:wght@400;450;500;600;700;800&family=Noto+Sans+SC:wght@400;500;700&family=Noto+Serif+SC:wght@400;500;600;700&family=Space+Mono:wght@400;700&display=swap');
+:root{
+  --ground:#E8E8EB;--ground-2:#EFEFF1;--ground-hover:#E4E4E8;--card:#FFFFFF;
+  --ink:#17171B;--ink-2:#56565E;--ink-3:#8A8A92;--ink-4:#B6B6BC;--line:#E2E2E6;
+  --red:#D81830;--blueink:#0048A8;--yellow:#FFD400;--jade:#0FA06E;
+  --blue:#0B5CFF;--blue-deep:#0040C4;--blue-wash:#E7EEFF;--orange:#FF8A1E;
+  --jade-wash:#DCF1E8;--red-wash:#FAE0E3;--yellow-wash:#FFF4CC;--orange-wash:#FFEBD6;
+  --accent:var(--blue);--accent-hover:#1466FF;--accent-press:var(--blue-deep);
+  --accent-wash:var(--blue-wash);--on-accent:#FFFFFF;--focus-ring:rgba(11,92,255,.45);
+  --success:var(--jade);--danger:var(--red);--warning:var(--orange);
+  --font-ui:'Inter',system-ui,-apple-system,sans-serif;
+  --font-cn:'Noto Serif SC','Songti SC',serif;
+  --font-cn-ui:'Noto Sans SC','PingFang SC',sans-serif;
+  --font-mono:'Space Mono',ui-monospace,Menlo,monospace;
+  --r-sm:10px;--r-md:16px;--r-lg:22px;--r-pill:999px;
+  --shadow-sm:0 1px 2px rgba(15,15,15,.04),0 8px 24px -12px rgba(15,15,15,.14);
+  --shadow-card:0 60px 80px rgba(15,15,15,.07),0 25px 33px rgba(15,15,15,.05),0 13.4px 17.9px rgba(15,15,15,.045),0 7.5px 10px rgba(15,15,15,.04),0 4px 5.3px rgba(15,15,15,.03),0 1.7px 2.2px rgba(15,15,15,.022);
+  --ease-out:cubic-bezier(.16,1,.3,1);--dur-base:250ms;--dur-enter:500ms;
+  --gap-grid:22px;--pad-page-x:44px;--container:1280px;
+  /* desk surfaces */
+  --desk:#FFFFFF;--desk-edge:#E9E9ED;--screen-dark:#14131C;--seat:#2A2832;
+}
+:root[data-theme="dark"]{
+  --ground:#16151C;--ground-2:#211F2A;--ground-hover:#2A2834;--card:#1E1C26;
+  --ink:#F4F2EC;--ink-2:#B6B4AC;--ink-3:#85837B;--ink-4:#56544D;--line:#332F3B;
+  --red:#FF5A4D;--blueink:#4D8DF0;--yellow:#FFD84D;--jade:#34D6A0;
+  --blue:#5AA2FF;--blue-deep:#A9CBFF;--blue-wash:#1E2A40;--orange:#FFA94D;
+  --jade-wash:#173A2E;--red-wash:#3E211E;--yellow-wash:#3A3416;--orange-wash:#3A2A16;
+  --accent-hover:#74B2FF;--on-accent:#0E1A2E;--focus-ring:rgba(90,162,255,.5);
+  --shadow-card:inset 0 0 0 1px rgba(244,242,236,.07),0 26px 60px -20px rgba(0,0,0,.72);
+  --shadow-sm:inset 0 0 0 1px rgba(244,242,236,.06),0 10px 26px -12px rgba(0,0,0,.6);
+  --desk:#272531;--desk-edge:#332F3B;--screen-dark:#0C0B12;--seat:#0A0910;
+}
+*{box-sizing:border-box}
+html{scroll-behavior:smooth}
+body{margin:0;background:var(--ground);color:var(--ink);font-family:var(--font-cn-ui),var(--font-ui);
+  font-weight:450;-webkit-font-smoothing:antialiased;transition:background var(--dur-base) var(--ease-out)}
+h1,h2,h3,p{margin:0}
+.mono{font-family:var(--font-mono);letter-spacing:.02em}
+.over{font-family:var(--font-mono);font-size:11px;letter-spacing:.14em;text-transform:uppercase;color:var(--ink-3)}
+.wrap{max-width:var(--container);margin:0 auto;padding:0 var(--pad-page-x);
+  height:100vh;display:flex;flex-direction:column;overflow:hidden}   /* 一屏放下全部桌子 */
+
+/* slim header */
+.bar{flex:none;display:flex;align-items:center;gap:14px;padding:16px 0 4px}
+.brand{display:flex;align-items:center;gap:10px;font-family:var(--font-ui);font-weight:800;letter-spacing:-.01em;font-size:17px}
+.brand .cube{width:22px;height:22px}
+.bar .spacer{flex:1}
+.iconbtn{appearance:none;border:0;cursor:pointer;width:38px;height:38px;border-radius:var(--r-pill);background:var(--ground-2);color:var(--ink-2);display:grid;place-items:center;transition:all 150ms var(--ease-out)}
+.iconbtn:hover{background:var(--ground-hover);color:var(--ink)}
+.backlink{font-family:var(--font-mono);font-size:12px;color:var(--ink-2);padding:9px 16px;border-radius:var(--r-pill);background:var(--ground-2);transition:all 150ms var(--ease-out)}
+.backlink:hover{background:var(--ink);color:var(--card)}
+a{color:inherit;text-decoration:none}
+
+/* section head（slim，给桌子让出一屏高度）*/
+.sec-head{flex:none;margin:10px 0 8px}
+.sec-head h2{font-family:var(--font-cn);font-weight:600;font-size:clamp(20px,2.6vw,27px);line-height:1.15;margin-top:4px}
+.sec-head .sub{color:var(--ink-2);margin-top:4px;font-size:13.5px;max-width:74ch}
+
+/* ── 办公室地板（一屏平面图：左栏 Allen+AI / 过道 / 右栏 6 人 pod 3×2）──────── */
+#floor{flex:1;min-height:0;display:flex;align-items:center;gap:clamp(16px,2.4vw,38px);padding:2px 0}
+.col-left{flex:0 0 21%;display:flex;flex-direction:column;justify-content:center;gap:clamp(5px,1.4vh,18px)}
+.col-left .seat:first-child{margin-bottom:clamp(4px,1vh,14px)}   /* Allen 与 AI 之间留缝 */
+.pod-right{flex:1;display:grid;grid-template-columns:1fr 1fr;align-content:center;
+  gap:clamp(5px,1.4vh,18px) clamp(18px,2.6vw,44px);
+  padding-left:clamp(16px,2.4vw,42px);border-left:1px solid var(--line)}  /* 中间过道 */
+.seat{position:relative;display:flex;flex-direction:column;align-items:center;gap:7px;
+  animation:fu var(--dur-enter) var(--ease-out) both}
+.desk{position:relative;width:100%;max-width:min(150px,15.6vh);cursor:default}   /* 随视口高度缩放，保证一屏 */
+.desk svg{display:block;width:100%;height:auto;overflow:visible;transition:filter 220ms var(--ease-out)}
+/* hover：不抬桌，凑近看屏幕（peek），并暂停该桌动画让人看清 */
+.seat:hover .desk svg{filter:drop-shadow(0 14px 18px rgba(15,15,15,.12))}
+.seat:hover .anim,.seat:hover .person{animation-play-state:paused}
+
+/* hover peek：把这个人电脑屏幕放大成可读窗口 ───────────────────────────────── */
+.peek{position:absolute;left:50%;top:0;z-index:30;width:252px;
+  transform:translate(-50%,calc(-100% + 6px)) scale(.96);transform-origin:bottom center;
+  opacity:0;pointer-events:none;transition:opacity .18s var(--ease-out),transform .26s var(--ease-out)}
+.seat:hover .peek{opacity:1;transform:translate(-50%,calc(-100% - 8px)) scale(1)}
+.peek-win{border-radius:13px;overflow:hidden;background:var(--card);box-shadow:var(--shadow-card)}
+.peek-bar{display:flex;align-items:center;gap:6px;padding:8px 12px;background:var(--ground-2)}
+.peek-bar .pd{width:8px;height:8px;border-radius:50%}
+.peek-bar .pd.r{background:var(--red)}.peek-bar .pd.y{background:var(--yellow)}.peek-bar .pd.g{background:var(--jade)}
+.peek-app{margin-left:6px;font-family:var(--font-mono);font-size:10.5px;color:var(--ink-3);overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+.peek-body{padding:14px 15px 16px;font-family:var(--font-mono);font-size:11px;line-height:1.7;min-height:92px}
+.peek-code .peek-body,.peek-cube .peek-body{background:var(--screen-dark);color:#D8D8DE}
+.peek-canvas .peek-body{background:#F7F7F9;color:var(--ink)}
+.pk-mut{color:var(--ink-3)}.pk-g{color:var(--jade)}.pk-c{color:var(--blue)}.pk-y{color:var(--orange)}.pk-d{color:var(--ink-3)}
+.pk-hl{color:#fff;font-weight:700;margin:4px 0;font-family:var(--font-cn-ui);font-size:12px;line-height:1.5}
+.peek-canvas .pk-hl{color:var(--ink)}
+.pk-caret{animation:caret 1s steps(1) infinite}
+.pk-chips{display:flex;gap:6px;margin-bottom:9px}.pk-chips i{width:28px;height:15px;border-radius:4px;display:block}
+.pk-art{font-family:var(--font-cn-ui);font-weight:600;font-size:13px;margin-bottom:5px;color:var(--ink)}
+.pk-meta{color:var(--ink-3);font-size:10px}
+.pk-ag{text-align:center}.pk-ag svg{margin:0 auto 6px;display:block}
+.pk-line{color:var(--blue)}
+
+/* peek 底部身份说明（track 等完整信息移到 hover 这里）*/
+.peek-cap{padding:9px 13px 11px;font-family:var(--font-cn-ui);font-size:11px;color:var(--ink-2);
+  background:var(--card);border-top:1px solid var(--line);line-height:1.5}
+.peek-cap b{color:var(--ink);font-family:var(--font-cn);font-weight:600}
+.peek-cap .pc-gh{font-family:var(--font-mono);font-size:9.5px;color:var(--ink-3);margin-left:5px}
+
+/* 铭牌（一屏精简：名字 + 角色，track 进 hover）*/
+.plate{text-align:center;line-height:1.25}
+.plate .nm{font-family:var(--font-cn);font-weight:600;font-size:13.5px;color:var(--ink)}
+.plate .badge{display:inline-flex;align-items:center;gap:4px;margin-top:4px;font-family:var(--font-mono);
+  font-size:9px;font-weight:700;letter-spacing:.03em;padding:2px 8px;border-radius:var(--r-pill)}
+.plate .badge .dot{width:4px;height:4px;border-radius:50%;background:currentColor}
+.badge.lead{background:var(--orange-wash);color:var(--orange)}
+.badge.dev{background:var(--blue-wash);color:var(--blue-deep)}
+.badge.designer{background:var(--jade-wash);color:var(--jade)}
+.badge.agent{background:var(--ground-2);color:var(--ink-3)}
+
+footer{flex:none;margin:4px 0 8px;color:var(--ink-3);font-size:11px;text-align:center;line-height:1.5}
+footer .mono{font-size:10px}
+footer .l1{display:none}   /* 一屏下只保留一行脚注 */
+
+/* ── 微动作 keyframes ─────────────────────────────────────────────────────── */
+@keyframes fu{from{opacity:0;transform:translateY(20px);filter:blur(8px)}to{opacity:1;transform:none;filter:blur(0)}}
+@keyframes headBob{0%,100%{transform:translateY(0)}50%{transform:translateY(1.3px)}}
+@keyframes handL{0%,100%{transform:translateY(0)}40%{transform:translateY(-1.6px)}}
+@keyframes handR{0%,100%{transform:translateY(-1.6px)}45%{transform:translateY(0)}}
+@keyframes caret{0%,49%{opacity:1}50%,100%{opacity:0}}
+@keyframes codeline{0%,100%{opacity:.25}50%{opacity:1}}
+@keyframes cubeSpin{0%,100%{transform:translateY(0) rotate(-4deg)}50%{transform:translateY(-2px) rotate(4deg)}}
+@keyframes think{0%,80%,100%{opacity:.2}40%{opacity:1}}
+/* 偶尔起身：大部分时间坐着，周期末短暂站起再坐回（每人时长/相位不同）*/
+@keyframes standUp{0%,86%,100%{transform:translateY(0)}90%,96%{transform:translateY(-20px)}}
+.anim{transform-box:fill-box;transform-origin:center}
+
+@media (prefers-reduced-motion:reduce){*{animation:none!important}}
+/* 矮屏：收掉副标题与多余边距，给桌子腾高度 */
+@media (max-height:840px){.sec-head .sub{display:none}.sec-head{margin:6px 0 4px}.bar{padding:12px 0 2px}}
+/* 屏太小/太矮时退出“一屏”模式，改竖向滚动，避免挤压 */
+@media (max-width:880px),(max-height:600px){
+  .wrap{height:auto;overflow:visible;padding-bottom:24px}
+  #floor{flex-direction:column;align-items:stretch;gap:24px}
+  .col-left{flex:none;display:grid;grid-template-columns:repeat(3,1fr)}
+  .col-left .seat:first-child{margin-bottom:0}
+  .pod-right{border-left:0;padding-left:0;border-top:1px solid var(--line);padding-top:22px}
+  .desk{max-width:168px}
+  .sec-head h2{font-size:24px}
+}
+@media (max-width:560px){.col-left,.pod-right{grid-template-columns:1fr 1fr}.wrap{padding:0 20px}}
+</style>
+</head>
+<body>
+
+<div class="wrap">
+  <header class="bar">
+    <div class="brand"><svg class="cube" viewBox="0 0 24 24" aria-hidden="true"><path d="M12 2l9 5-9 5-9-5z" fill="#FFD400"/><path d="M3 7l9 5v10l-9-5z" fill="#D81830"/><path d="M21 7l-9 5v10l9-5z" fill="#0048A8"/></svg><span>EZAGENT</span></div>
+    <span class="spacer"></span>
+    <a class="backlink" href="index.html#contributors">← 返回官网 · Back</a>
+    <button class="iconbtn" id="theme" title="切换主题 · Theme" aria-label="切换主题">
+      <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><path d="M21 12.8A9 9 0 1 1 11.2 3a7 7 0 0 0 9.8 9.8z"/></svg>
+    </button>
+  </header>
+
+  <div class="sec-head">
+    <span class="over">Contributors · 团队</span>
+    <h2>这支队伍怎么发布</h2>
+    <p class="sub">一间会动的办公室 — 每个真实成员一张桌，坐在屏前操作电脑，屏幕上是他正在做的项目。数据源 docs/together/team.md。</p>
+  </div>
+
+  <div id="floor"></div>
+
+  <footer>
+    <div class="l1">组织的 IDE · Organization IDE — Ezagent</div>
+    <div class="mono">这支队伍怎么发布 · 办公室 demo · 数据走 EZ.contributors() · hover 看屏</div>
+  </footer>
+</div>
+
+<script src="assets/js/mock-ezagent-api.js"></script>
+<script>
+const $=(s,r=document)=>r.querySelector(s);
+const el=(t,c,h)=>{const e=document.createElement(t);if(c)e.className=c;if(h!=null)e.innerHTML=h;return e};
+const hashN=(s,m)=>[...(s||'')].reduce((a,c)=>a+c.charCodeAt(0),0)%m;
+
+/* 座位平面图（来自 20260629 floor-plan）：左栏 Allen + AI；右栏 6 人 pod 3×2 ──── */
+const COL_LEFT=['allenwoods','claude','codex'];     // 左栏：队长在上，两个 agent 在下
+const POD=[                                          // 右栏 pod（成对，顺序照平面图）
+  'jjkysy','gagameow',
+  'ruihuachen-designer','zyli-developer',
+  'FatNine','zhaomaota97',
+];
+
+$('#theme').addEventListener('click',()=>{const r=document.documentElement;r.dataset.theme=r.dataset.theme==='dark'?'light':'dark'});
+
+/* role → 屏幕类型 / 键盘色 / badge 文案 ─────────────────────────────────────── */
+const KBD=['var(--red)','var(--blue)','var(--yellow)','var(--jade)','var(--blueink)','var(--orange)'];
+const ROLE_SCREEN={lead:'code','human-dev':'code',designer:'canvas',agent:'cube'};
+const ROLE_BADGE={lead:'lead',
+  'human-dev':'dev',designer:'designer',agent:'agent'};
+const ROLE_CN={lead:'lead · 队长','human-dev':'dev · 开发',designer:'designer · 设计',agent:'agent · AI'};
+
+/* 屏幕内容（按矩形自适应，可放进任意尺寸的屏）──────────────────────────────── */
+function screen(type,x,y,w,h,delay){
+  if(type==='canvas'){
+    const p=Math.round(w*0.08);
+    return `<rect x="${x}" y="${y}" width="${w}" height="${h}" rx="3" fill="#F4F4F6"/>
+      <rect x="${x+p}" y="${y+p}" width="${Math.round(w*0.36)}" height="${Math.round(h*0.44)}" rx="3" fill="var(--blue)"/>
+      <rect x="${x+Math.round(w*0.52)}" y="${y+p}" width="${Math.round(w*0.4)}" height="${Math.round(h*0.18)}" rx="3" fill="var(--yellow)"/>
+      <rect x="${x+Math.round(w*0.52)}" y="${y+Math.round(h*0.34)}" width="${Math.round(w*0.4)}" height="${Math.round(h*0.16)}" rx="3" fill="var(--red)"/>
+      <rect class="anim" x="${x+p}" y="${y+Math.round(h*0.62)}" width="${w-p*2}" height="${Math.round(h*0.16)}" rx="3" fill="var(--jade)" style="animation:codeline 2.8s var(--ease-out) infinite;animation-delay:${delay}s"/>`;
+  }
+  if(type==='cube'){
+    const f=Math.min(w,h)/58,hw=13*f,hh=7*f,dep=14*f,cx=x+w/2,ty=y+h*0.18,my=ty+hh;
+    const dy=y+h-7,dxs=[cx-9,cx,cx+9];
+    return `<rect x="${x}" y="${y}" width="${w}" height="${h}" rx="3" fill="var(--screen-dark)"/>
+      <g class="anim" style="transform-origin:${cx}px ${(my+dep/2).toFixed(1)}px;animation:cubeSpin 2.8s var(--ease-out) infinite;animation-delay:${delay}s">
+        <path d="M${cx} ${ty.toFixed(1)} l${hw.toFixed(1)} ${hh.toFixed(1)} l${-hw.toFixed(1)} ${hh.toFixed(1)} l${-hw.toFixed(1)} ${-hh.toFixed(1)} z" fill="var(--yellow)"/>
+        <path d="M${(cx-hw).toFixed(1)} ${my.toFixed(1)} l${hw.toFixed(1)} ${hh.toFixed(1)} v${dep.toFixed(1)} l${-hw.toFixed(1)} ${-hh.toFixed(1)} z" fill="var(--red)"/>
+        <path d="M${(cx+hw).toFixed(1)} ${my.toFixed(1)} l${-hw.toFixed(1)} ${hh.toFixed(1)} v${dep.toFixed(1)} l${hw.toFixed(1)} ${-hh.toFixed(1)} z" fill="var(--blueink)"/>
+      </g>
+      <g fill="var(--blue)">${dxs.map((dx,i)=>`<circle class="anim" cx="${dx}" cy="${dy.toFixed(1)}" r="2.3" style="animation:think 1.4s infinite;animation-delay:${i*0.2}s"/>`).join('')}</g>`;
+  }
+  // code（默认）
+  const p=Math.round(w*0.08),lx=x+p,lw=w-p*2,n=4,step=(h-8)/(n+0.6);
+  const cols=['var(--jade)','var(--ink-4)','var(--blue)','var(--orange)'],ws=[.5,.78,.62,.42];
+  let g=`<rect x="${x}" y="${y}" width="${w}" height="${h}" rx="3" fill="var(--screen-dark)"/>`;
+  g+=`<g class="anim" style="animation:codeline 2.4s var(--ease-out) infinite;animation-delay:${delay}s">`;
+  for(let i=0;i<n;i++)g+=`<rect x="${lx}" y="${(y+5+step*i).toFixed(1)}" width="${Math.round(lw*ws[i])}" height="3.2" rx="1.6" fill="${cols[i]}"/>`;
+  g+=`</g><rect class="anim" x="${lx}" y="${(y+5+step*n).toFixed(1)}" width="6" height="3.2" fill="#fff" style="animation:caret 1s steps(1) infinite;animation-delay:${delay}s"/>`;
+  return g;
+}
+/* 一台显示器（外框 + 屏 + 颈托落到桌面）─────────────────────────────────────── */
+function monitor(x,y,w,h,type,delay){
+  return `<rect x="${x}" y="${y}" width="${w}" height="${h}" rx="6" fill="#0F0E16"/>
+    ${screen(type,x+5,y+5,w-10,h-13,delay)}
+    <rect x="${(x+w/2-7)}" y="${y+h-2}" width="14" height="14" fill="var(--desk-edge)"/>`;
+}
+/* 笔记本（架在支架上，立于大屏旁边；屏上有内容）──────────────────────────────── */
+function laptopOnStand(cx,delay){
+  const w=52,h=38,x=cx-w/2,y=24;
+  return `<g>
+    <!-- 铝色支架（A 形 + 底座）-->
+    <path d="M${cx-7} ${y+h} L${cx+7} ${y+h} L${cx+13} 90 L${cx-13} 90 Z" fill="#CBCBD2"/>
+    <ellipse cx="${cx}" cy="90" rx="17" ry="4.5" fill="#BEBEC6"/>
+    <!-- 笔记本：屏框 + 内容（迷你终端）-->
+    <rect x="${x}" y="${y}" width="${w}" height="${h}" rx="5" fill="#0F0E16"/>
+    ${screen('code',x+5,y+5,w-10,h-13,delay)}
+    <!-- 键盘面薄片：区分于普通显示器 -->
+    <path d="M${x+3} ${y+h+7} L${x+w-3} ${y+h+7} L${x+w-6} ${y+h} L${x+6} ${y+h} Z" fill="#DADAE0"/>
+  </g>`;
+}
+
+/* 显示器布局：Allen + 张宁 双等屏；其余真人 大屏+笔记本；agent 单屏 ───────────── */
+const PERSONA={allenwoods:'dual',zhaomaota97:'dual'};
+const monLayout=m=>PERSONA[m.gh]||(m.role==='agent'?'solo':'biglaptop');
+
+/* 桌面个性化道具（扁平矢量 · De Stijl 配色 · 摆在桌面右前角）──────────────────── */
+const PROPS={
+  allenwoods:['coffee','plant'],          // 队长：咖啡 + 绿植
+  jjkysy:['books'],                        // 架构/原则把关：书堆
+  gagameow:['coffee'],                     // 咖啡
+  'zyli-developer':['walnuts'],            // 文玩核桃 ×2
+  zhaomaota97:['sticky'],                  // 前端：便签
+  FatNine:['can'],                         // 能量罐
+  'ruihuachen-designer':['milktea'],       // 奶茶
+};
+function propSVG(k){
+  switch(k){
+    case 'milktea': return `<rect x="-8" y="-1" width="16" height="4" rx="2" fill="#fff" stroke="var(--line)"/>
+      <path d="M-7 3 L7 3 L5 18 L-5 18 Z" fill="#fff" stroke="var(--line)"/>
+      <path d="M-5.4 9 L5.4 9 L4.4 18 L-4.4 18 Z" fill="#E7C9A0"/>
+      <circle cx="-2" cy="16" r="1.3" fill="#3A2A1A"/><circle cx="2" cy="16" r="1.3" fill="#3A2A1A"/><circle cx="0" cy="14" r="1.3" fill="#3A2A1A"/>
+      <rect x="3" y="-11" width="3" height="14" rx="1.5" fill="var(--red)" transform="rotate(13 4 -4)"/>`;
+    case 'walnuts': return `<circle cx="-5" cy="13" r="6" fill="#9A6B3F"/><path d="M-5 7.5 V18.5" stroke="#6E4A28" stroke-width="1.2"/>
+      <circle cx="7" cy="14" r="6" fill="#85572F"/><path d="M7 8.5 V19.5" stroke="#5C3D20" stroke-width="1.2"/>`;
+    case 'coffee': return `<circle cx="0" cy="12" r="7" fill="#fff" stroke="var(--line)"/><circle cx="0" cy="12" r="4.4" fill="#5A3A22"/>
+      <path d="M7 9 q5.5 0 5.5 4 q0 4 -5.5 4" fill="none" stroke="var(--line)" stroke-width="1.6"/>`;
+    case 'plant': return `<path d="M-5 9 L5 9 L4 18 L-4 18 Z" fill="var(--orange)"/>
+      <circle cx="-3" cy="6" r="4" fill="var(--jade)"/><circle cx="3.2" cy="5" r="4.6" fill="#0FA06E"/><circle cx="0" cy="2.5" r="4" fill="var(--jade)"/>`;
+    case 'books': return `<rect x="-8" y="13" width="16" height="4.4" rx="1" fill="var(--blue)"/>
+      <rect x="-7" y="8.6" width="15" height="4.4" rx="1" fill="var(--red)"/><rect x="-6" y="4.2" width="13" height="4.4" rx="1" fill="var(--yellow)"/>`;
+    case 'can': return `<rect x="-5" y="2" width="10" height="16" rx="3" fill="var(--jade)"/><rect x="-5" y="2" width="10" height="4" rx="2" fill="var(--ink-4)"/>
+      <rect x="-1.6" y="7" width="3" height="9" rx="1.5" fill="#fff" opacity=".45"/>`;
+    case 'sticky': return `<g transform="rotate(-8)"><rect x="-7" y="3" width="15" height="15" rx="1.5" fill="var(--yellow)"/>
+      <rect x="-4" y="7" width="9" height="1.6" rx=".8" fill="#C9A800"/><rect x="-4" y="10.5" width="6.5" height="1.6" rx=".8" fill="#C9A800"/></g>`;
+    default: return '';
+  }
+}
+function propsFor(m){return (PROPS[m.gh]||[]).map((k,i)=>`<g transform="translate(${172+i*22},147)">${propSVG(k)}</g>`).join('');}
+
+/* ── 一张桌的 SVG（近俯视：后排显示器 / 中间键盘+手 / 近处小人）─────────────── */
+function deskSVG(m){
+  const kbd=KBD[hashN(m.gh,KBD.length)];
+  const type=ROLE_SCREEN[m.role]||'code';
+  const delay=(hashN(m.gh,28)/10).toFixed(2);          // 错峰相位，整屋不同步
+  const standDur=17+hashN(m.gh,9);                     // 17–25s：起身周期，每人不同
+  const standDelay=(hashN(m.gh+'x',170)/10).toFixed(1);// 0–17s：起身相位错开
+  const typeDur=(0.74+hashN(m.gh,5)/20).toFixed(2);    // 0.74–0.94s：打字快慢不同
+  const bobDur=(2.4+hashN(m.gh,8)/10).toFixed(2);      // 2.4–3.1s：点头节奏不同
+  const lay=monLayout(m);
+  let mon='';
+  if(lay==='dual')      mon=monitor(30,16,84,58,type,delay)+monitor(126,16,84,58,type,delay);
+  else if(lay==='solo') mon=monitor(78,16,84,58,type,delay);                     // agent：统一 84 单屏
+  else                  mon=monitor(44,16,84,58,type,delay)+laptopOnStand(162,delay); // 大屏 + 旁边支架笔记本
+  return `<svg viewBox="0 0 240 250" role="img" aria-label="${m.cn} 的工位">
+    <!-- 地面投影 -->
+    <ellipse cx="120" cy="222" rx="96" ry="15" fill="rgba(15,15,15,.07)"/>
+    <!-- 桌面（近俯视，略带前宽透视） -->
+    <path d="M44 86 L196 86 L210 168 L30 168 Z" fill="var(--desk)" stroke="var(--desk-edge)" stroke-width="1.5"/>
+    <!-- 显示器（按个人布局） -->
+    ${mon}
+    <!-- 键盘（De Stijl 原色） -->
+    <rect x="86" y="120" width="68" height="20" rx="4" fill="${kbd}"/>
+    <g opacity=".28" fill="#000">
+      <rect x="92" y="125" width="8" height="4" rx="1"/><rect x="104" y="125" width="8" height="4" rx="1"/>
+      <rect x="116" y="125" width="8" height="4" rx="1"/><rect x="128" y="125" width="8" height="4" rx="1"/>
+      <rect x="140" y="125" width="8" height="4" rx="1"/>
+      <rect x="98" y="132" width="44" height="4" rx="2"/>
+    </g>
+    <!-- 桌面个性化道具 -->
+    ${propsFor(m)}
+    <!-- 办公椅（近俯视：五爪滚轮底座 + 座垫 + 靠背 + 扶手，中灰与近黑小人拉开层次）-->
+    <g fill="var(--ink-3)">
+      <g stroke="var(--ink-3)" stroke-width="6" stroke-linecap="round">
+        <line x1="120" y1="210" x2="120" y2="240"/>
+        <line x1="120" y1="210" x2="92"  y2="232"/>
+        <line x1="120" y1="210" x2="148" y2="232"/>
+        <line x1="120" y1="210" x2="97"  y2="204"/>
+        <line x1="120" y1="210" x2="143" y2="204"/>
+      </g>
+      <circle cx="120" cy="240" r="4"/><circle cx="92" cy="232" r="4"/><circle cx="148" cy="232" r="4"/>
+      <circle cx="97" cy="204" r="4"/><circle cx="143" cy="204" r="4"/>
+      <ellipse cx="120" cy="204" rx="31" ry="15"/>
+      <rect x="83" y="182" width="11" height="36" rx="5.5"/>
+      <rect x="146" y="182" width="11" height="36" rx="5.5"/>
+      <path d="M95 200 Q95 148 120 148 Q145 148 145 200 Z"/>
+    </g>
+    ${m.role!=='agent'?`<!-- 小人（坐着打字+点头，偶尔起身；每人节奏不同）。agent 座位空着，只有电脑在动 -->
+    <g class="person" style="animation:standUp ${standDur}s var(--ease-out) infinite;animation-delay:-${standDelay}s">
+      <g fill="var(--seat)">
+        <rect x="97" y="146" width="12" height="56" rx="6"/>
+        <rect x="131" y="146" width="12" height="56" rx="6"/>
+        <path d="M94 214 Q120 174 146 214 Z"/>
+        <circle class="anim" cx="120" cy="166" r="18" style="transform-origin:120px 166px;animation:headBob ${bobDur}s var(--ease-out) infinite;animation-delay:${delay}s"/>
+      </g>
+      <rect class="anim" x="96" y="137" width="14" height="11" rx="5" fill="var(--seat)" style="transform-origin:center;animation:handL ${typeDur}s var(--ease-out) infinite;animation-delay:${delay}s"/>
+      <rect class="anim" x="130" y="137" width="14" height="11" rx="5" fill="var(--seat)" style="transform-origin:center;animation:handR ${typeDur}s var(--ease-out) infinite;animation-delay:${delay}s"/>
+    </g>`:''}
+  </svg>`;
+}
+
+/* hover peek：把这个人电脑屏幕放大成可读窗口（app 名 + track 当文件名 + 内容）── */
+function peekHTML(m){
+  const type=ROLE_SCREEN[m.role]||'code';
+  let app,body;
+  if(type==='canvas'){
+    app='Canvas · 版式';
+    body=`<div class="pk-chips"><i style="background:var(--blue)"></i><i style="background:var(--yellow)"></i><i style="background:var(--red)"></i><i style="background:var(--jade)"></i></div>
+      <div class="pk-art">${m.track}</div><div class="pk-meta">frame 1 / 3 · 为每个客户实时重组</div>`;
+  }else if(type==='cube'){
+    app='agent-loop';
+    body=`<div class="pk-ag"><svg viewBox="0 0 40 40" width="42" height="42"><path d="M20 8l11 6-11 6-11-6z" fill="var(--yellow)"/><path d="M9 14l11 6v12l-11-6z" fill="var(--red)"/><path d="M31 14l-11 6v12l11-6z" fill="var(--blueink)"/></svg>
+      <div class="pk-line">thinking… <span class="pk-caret">▌</span></div><div class="pk-hl">${m.track}</div></div>`;
+  }else{
+    app='~/ezagent — zsh';
+    body=`<div><span class="pk-g">➜</span> <span class="pk-c">ezagent</span> <span class="pk-d">git:(</span><span class="pk-y">main</span><span class="pk-d">)</span></div>
+      <div class="pk-mut"># 正在做 · now</div><div class="pk-hl">${m.track}</div>
+      <div><span class="pk-g">●</span> compiling… <span class="pk-caret">▌</span></div>`;
+  }
+  return `<div class="peek peek-${type}" aria-hidden="true"><div class="peek-win">
+    <div class="peek-bar"><i class="pd r"></i><i class="pd y"></i><i class="pd g"></i><span class="peek-app">${app}</span></div>
+    <div class="peek-body">${body}</div>
+    <div class="peek-cap"><b>${m.cn}</b><span class="pc-gh">@${m.gh}</span><br>${m.track}</div></div></div>`;
+}
+
+/* ── 渲染整间办公室（按 LAYOUT 分区落座）────────────────────────────────── */
+function seatNode(m,i){
+  const seat=el('div','seat');
+  seat.style.animationDelay=(i*70)+'ms';   // 桌子错峰浮入
+  seat.innerHTML=`
+    ${peekHTML(m)}
+    <div class="desk">${deskSVG(m)}</div>
+    <div class="plate">
+      <div class="nm">${m.cn}</div>
+      <div class="badge ${ROLE_BADGE[m.role]||'agent'}"><span class="dot"></span>${ROLE_CN[m.role]||m.role}</div>
+    </div>`;
+  return seat;
+}
+(async()=>{
+  const floor=$('#floor');
+  const list=await EZ.contributors();
+  const byGh=Object.fromEntries(list.map(m=>[m.gh,m]));
+  let i=0;
+  const left=el('div','col-left');
+  COL_LEFT.forEach(gh=>{const m=byGh[gh];if(m)left.appendChild(seatNode(m,i++))});
+  const pod=el('div','pod-right');
+  POD.forEach(gh=>{const m=byGh[gh];if(m)pod.appendChild(seatNode(m,i++))});
+  floor.append(left,pod);
+})();
+</script>
+</body>
+</html>

@@ -136,8 +136,8 @@ footer{margin:50px 0 0;text-align:center;font-family:var(--font-mono);font-size:
 <div id="modalRoot"></div>
 <div class="toast" id="toast"></div>
 
-<script src="demo-state.js"></script>
-<script src="site-nav.js"></script>
+<script src="assets/js/demo-state.js"></script>
+<script src="assets/js/site-nav.js"></script>
 <script>
 const $=(s,r=document)=>r.querySelector(s);
 const el=(t,c,h)=>{const e=document.createElement(t);if(c)e.className=c;if(h!=null)e.innerHTML=h;return e;};
@@ -190,8 +190,8 @@ const FN=[
   {color:'var(--accent)',title:'我的指挥官驾照',sub:'查看测试结果 · 重新测一次',go:()=>location.href='driver-license.html',glyph:'<rect x="3" y="6" width="18" height="12" rx="2"/><path d="M3 10h18"/>'},
   {color:'var(--blueink)',title:'角色档案',sub:'查看 / 编辑职业 · 行业 · 画像',go:openProfile,glyph:'<path d="M12 12a4 4 0 1 0 0-8 4 4 0 0 0 0 8zM4 20a8 8 0 0 1 16 0"/>'},
   {color:'var(--red)',title:'提交反馈',sub:'想法 / 痛点随时提，可多次',go:openFeedback,glyph:'<path d="M21 15a2 2 0 0 1-2 2H7l-4 4V5a2 2 0 0 1 2-2h14a2 2 0 0 1 2 2z"/>'},
-  {color:'var(--orange)',title:'试玩产品',sub:'world / hello 亲手跑一次',go:()=>{EZD.unlock('try');render();window.open('world-demo.html','_blank');},glyph:'<path d="M7 4v16l13-8z"/>'},
-  {color:'var(--jade)',title:'world.cup 路线图',sub:'给功能投票 / 押注，影响优先级',go:()=>{EZD.unlock('vote');location.href='index.html#worldcup';},glyph:'<path d="M12 4l8 8M12 4l-8 8M12 4v16"/>'},
+  {color:'var(--orange)',title:'试玩产品',sub:'world / hello 亲手跑一次',go:()=>{EZD.unlock('try');render();window.open('world/demo.html','_blank');},glyph:'<path d="M7 4v16l13-8z"/>'},
+  {color:'var(--jade)',title:'world.cup 路线图',sub:'给功能投票 / 押注，影响优先级',go:()=>{EZD.unlock('vote');location.href='mainsite.html#worldcup';},glyph:'<path d="M12 4l8 8M12 4l-8 8M12 4v16"/>'},
 ];
 function renderFn(){
   const l=$('#fnList');l.innerHTML='';

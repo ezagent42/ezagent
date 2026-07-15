@@ -1,0 +1,237 @@
+<!DOCTYPE html>
+<html lang="zh" data-theme="light">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>你的 workspace · world · Ezagent</title>
+<meta name="description" content="你刚招进的专业 agent，进了你的 workspace，正带着职业经验干活，而且留下了。这就是 world。">
+<!-- world-workspace · 招进 workspace 之后的落点：mock 工作台，聚焦补能力（专业成员已入组 + 干活 + 持久）。 -->
+<style>
+@import url('https://fonts.googleapis.com/css2?family=Inter:wght@400;450;500;600;700;800&family=Noto+Sans+SC:wght@400;500;700&family=Noto+Serif+SC:wght@400;500;600;700&family=Space+Mono:wght@400;700&display=swap');
+:root{
+  --ground:#E8E8EB;--ground-2:#EFEFF1;--ground-hover:#E4E4E8;--card:#FFFFFF;
+  --ink:#17171B;--ink-2:#56565E;--ink-3:#8A8A92;--ink-4:#B6B6BC;--line:#E2E2E6;
+  --red:#D81830;--blueink:#0048A8;--yellow:#FFD400;--jade:#0FA06E;
+  --blue:#0B5CFF;--blue-deep:#0040C4;--blue-wash:#E7EEFF;--orange:#FF8A1E;
+  --jade-wash:#DCF1E8;--red-wash:#FAE0E3;--yellow-wash:#FFF4CC;--orange-wash:#FFEBD6;
+  --accent:var(--blue);--accent-hover:#1466FF;--accent-press:var(--blue-deep);--accent-wash:var(--blue-wash);--on-accent:#fff;--focus-ring:rgba(11,92,255,.45);
+  --font-ui:'Inter',system-ui,-apple-system,sans-serif;--font-cn:'Noto Serif SC','Songti SC',serif;
+  --font-cn-ui:'Noto Sans SC','PingFang SC',sans-serif;--font-mono:'Space Mono',ui-monospace,Menlo,monospace;
+  --r-sm:10px;--r-md:16px;--r-lg:22px;--r-pill:999px;
+  --shadow-sm:0 1px 2px rgba(15,15,15,.04),0 8px 24px -12px rgba(15,15,15,.14);
+  --shadow-card:0 60px 80px rgba(15,15,15,.07),0 25px 33px rgba(15,15,15,.05),0 7.5px 10px rgba(15,15,15,.04),0 1.7px 2.2px rgba(15,15,15,.022);
+  --shadow-accent:0 10px 24px -8px rgba(11,92,255,.5);
+  --glass-bg:rgba(255,255,255,.55);--glass-edge:inset 0 0 0 1px rgba(255,255,255,.65);--glass-blur:blur(14px) saturate(1.4);
+  --ease-out:cubic-bezier(.16,1,.3,1);--dur-enter:500ms;--stage:#14131C;
+}
+:root[data-theme="dark"]{
+  --ground:#16151C;--ground-2:#211F2A;--ground-hover:#2A2834;--card:#1E1C26;
+  --ink:#F4F2EC;--ink-2:#B6B4AC;--ink-3:#85837B;--ink-4:#56544D;--line:#332F3B;
+  --blue:#5AA2FF;--accent-press:#A9CBFF;--blue-wash:#1E2A40;--on-accent:#0E1A2E;--accent-hover:#74B2FF;--focus-ring:rgba(90,162,255,.5);
+  --jade:#34D6A0;--jade-wash:#173A2E;--red:#FF5A4D;--red-wash:#3E211E;--yellow:#FFD84D;--yellow-wash:#3A3416;--orange:#FFA94D;--orange-wash:#3A2A16;
+  --glass-bg:rgba(42,41,54,.5);--glass-edge:inset 0 0 0 1px rgba(244,242,236,.13);
+  --shadow-card:inset 0 0 0 1px rgba(244,242,236,.07),0 26px 60px -20px rgba(0,0,0,.72);
+  --shadow-sm:inset 0 0 0 1px rgba(244,242,236,.06),0 10px 26px -12px rgba(0,0,0,.6);
+}
+*{box-sizing:border-box}
+html{overflow-x:hidden}
+body{margin:0;background:var(--ground);color:var(--ink);font-family:var(--font-cn-ui),var(--font-ui);font-weight:450;-webkit-font-smoothing:antialiased}
+h1,h2,h3,p{margin:0}a{color:inherit;text-decoration:none}
+.over{font-family:var(--font-mono);font-size:11px;letter-spacing:.14em;text-transform:uppercase;color:var(--ink-3)}
+.wrap{max-width:1060px;margin:0 auto;padding:26px 24px 70px}
+.fu{animation:fu var(--dur-enter) var(--ease-out) both}
+@keyframes fu{from{opacity:0;transform:translateY(14px);filter:blur(6px)}to{opacity:1;transform:none;filter:blur(0)}}
+@media (prefers-reduced-motion:reduce){*{animation:none!important}}
+
+/* head */
+.ws-head{text-align:center;margin-top:6px}
+.ws-head h1{font-family:var(--font-cn);font-weight:600;font-size:clamp(24px,4vw,34px);line-height:1.2;margin-top:12px}
+.ws-head h1 em{font-style:normal;color:var(--accent)}
+.ws-head .sub{color:var(--ink-2);font-size:14.5px;line-height:1.6;margin:12px auto 0;max-width:44ch}
+.ws-head .sub b{color:var(--ink);font-weight:600}
+
+/* workspace frame */
+.ws-frame{margin-top:24px;background:var(--card);border-radius:var(--r-lg);box-shadow:var(--shadow-card);overflow:hidden}
+.ws-bar{display:flex;align-items:center;gap:9px;padding:12px 20px;border-bottom:1px solid var(--line);font-family:var(--font-mono);font-size:12px;color:var(--ink-3)}
+.live{width:8px;height:8px;border-radius:50%;background:var(--jade);flex:none;animation:livep 1.8s ease-in-out infinite}
+@keyframes livep{0%,100%{box-shadow:0 0 0 0 rgba(15,160,110,.5)}50%{box-shadow:0 0 0 7px rgba(15,160,110,0)}}
+.ws-bar .uri{color:var(--ink-2)}
+.ws-bar .spacer{flex:1}
+.ws-bar .tag{border:1px solid var(--line);border-radius:var(--r-pill);padding:2px 9px;color:var(--ink-3)}
+.ws-grid{display:grid;grid-template-columns:230px 1fr;min-height:440px}
+@media(max-width:720px){.ws-grid{grid-template-columns:1fr}}
+
+/* members */
+.ws-side{border-right:1px solid var(--line);padding:16px 14px}
+@media(max-width:720px){.ws-side{border-right:0;border-bottom:1px solid var(--line)}}
+.ws-side-lbl{font-family:var(--font-mono);font-size:10.5px;letter-spacing:.1em;text-transform:uppercase;color:var(--ink-3);margin:2px 4px 12px}
+.mem{display:flex;align-items:center;gap:10px;padding:9px 10px;border-radius:var(--r-md);margin-bottom:4px}
+.mem .av{width:34px;height:34px;border-radius:10px;flex:none;display:grid;place-items:center;font-family:var(--font-cn);font-weight:600;font-size:15px;color:#fff}
+.mem .nm{font-family:var(--font-cn-ui);font-size:13.5px;color:var(--ink);font-weight:500;line-height:1.3}
+.mem .rl{font-family:var(--font-mono);font-size:10px;color:var(--ink-3);margin-top:2px}
+.mem.you .av{background:var(--ink-4)}
+.mem.old{opacity:.5}
+.mem.old .av{background:var(--ink-4)}
+.mem.old .badge-i{font-family:var(--font-mono);font-size:9px;color:var(--ink-3);border:1px solid var(--line);border-radius:var(--r-pill);padding:1px 6px;margin-left:auto}
+.mem.pro{background:var(--card);box-shadow:var(--shadow-sm);position:relative}
+.mem.pro .av{background:var(--rc,var(--accent));box-shadow:0 8px 18px -8px var(--rc,var(--accent))}
+.mem.pro .nm{font-weight:600}
+.mem.pro .badge-p{display:inline-block;font-family:var(--font-mono);font-size:9px;color:#fff;background:var(--rc,var(--accent));border-radius:var(--r-pill);padding:2px 7px;margin-top:4px}
+.mem-note{font-family:var(--font-cn-ui);font-size:11.5px;color:var(--ink-3);line-height:1.5;margin:12px 6px 0}
+
+/* work surface */
+.ws-main{padding:20px 22px;display:flex;flex-direction:column;gap:13px}
+.turn{max-width:88%}
+.turn .who{font-family:var(--font-mono);font-size:10px;color:var(--ink-3);margin-bottom:5px}
+.turn .body{font-size:14px;line-height:1.62;padding:11px 15px;border-radius:14px}
+.turn.you{align-self:flex-end}
+.turn.you .who{text-align:right}
+.turn.you .body{background:var(--ground-2);color:var(--ink);border-bottom-right-radius:5px}
+.turn.agent{align-self:flex-start}
+.turn.agent .who{color:var(--rc,var(--accent))}
+.turn.agent .body{background:color-mix(in srgb,var(--rc,var(--accent)) 12%,transparent);border:1px solid color-mix(in srgb,var(--rc,var(--accent)) 38%,transparent);color:var(--ink);border-bottom-left-radius:5px}
+.turn.agent .body .ln{margin-top:5px}.turn.agent .body .ln:first-child{margin-top:0}
+.turn.sys{align-self:center;max-width:94%}
+.turn.sys .who{display:none}
+.turn.sys .body{background:transparent;border:1px dashed var(--line);color:var(--ink-3);font-family:var(--font-mono);font-size:12px;text-align:center}
+.typing .body{display:inline-flex;gap:5px;align-items:center}
+.typing .dot{width:6px;height:6px;border-radius:50%;background:var(--rc,var(--accent));animation:tb 1.2s infinite}
+.typing .dot:nth-child(2){animation-delay:.2s}.typing .dot:nth-child(3){animation-delay:.4s}
+@keyframes tb{0%,60%,100%{opacity:.3}30%{opacity:1}}
+.persist{align-self:center;display:inline-flex;align-items:center;gap:8px;font-family:var(--font-cn-ui);font-size:12.5px;color:var(--jade);background:var(--jade-wash);border-radius:var(--r-pill);padding:7px 14px;margin-top:2px}
+.persist svg{width:14px;height:14px}
+
+/* value callouts */
+.vals{display:grid;grid-template-columns:repeat(3,1fr);gap:14px;margin-top:20px}
+@media(max-width:640px){.vals{grid-template-columns:1fr}}
+.val{background:var(--card);border-radius:var(--r-lg);box-shadow:var(--shadow-sm);padding:16px 18px}
+.val .vk{font-family:var(--font-mono);font-size:10.5px;letter-spacing:.08em;text-transform:uppercase;color:var(--accent)}
+.val .vt{font-family:var(--font-cn);font-weight:600;font-size:15.5px;margin-top:7px;color:var(--ink)}
+.val .vd{font-size:12.5px;color:var(--ink-2);line-height:1.55;margin-top:6px}
+
+/* closing */
+.closing{text-align:center;margin-top:30px}
+.closing .big{font-family:var(--font-cn);font-weight:600;font-size:clamp(19px,3.2vw,24px);line-height:1.45;max-width:26ch;margin:0 auto;color:var(--ink)}
+.closing .big em{font-style:normal;color:var(--accent)}
+.closing .row{display:flex;gap:12px;justify-content:center;flex-wrap:wrap;margin-top:22px}
+.btn{appearance:none;border:0;cursor:pointer;font-family:var(--font-ui);font-weight:600;font-size:14px;padding:12px 22px;border-radius:var(--r-pill);transition:transform 150ms var(--ease-out),background 150ms;display:inline-flex;align-items:center;gap:7px}
+.btn.primary{background:var(--accent);color:var(--on-accent);box-shadow:var(--shadow-accent)}
+.btn.primary:hover{transform:translateY(-2px);background:var(--accent-hover)}
+.btn.ghost{background:var(--ground-2);color:var(--ink)}
+.btn.ghost:hover{background:var(--ground-hover)}
+.note{font-family:var(--font-mono);font-size:11px;color:var(--ink-3);text-align:center;margin-top:30px}
+</style>
+</head>
+<body data-ez-nav="">
+<div class="wrap">
+  <div class="ws-head fu">
+    <span class="over">world · 你的 workspace</span>
+    <h1>你招进的那个专业 agent，<br><em>进来了</em>，还留下了。</h1>
+    <p class="sub">你没自己搓，你把一个<b>带真实职业经验</b>的 agent 招进了 workspace。看看它在做什么。</p>
+  </div>
+
+  <div class="ws-frame fu">
+    <div class="ws-bar">
+      <span class="live"></span>你的 workspace
+      <span class="uri">session://you/workspace</span>
+      <span class="spacer"></span>
+      <span class="tag">world · routing</span>
+    </div>
+    <div class="ws-grid">
+      <aside class="ws-side">
+        <div class="ws-side-lbl">成员 · members</div>
+        <div class="mem you"><div class="av">你</div><div><div class="nm">你</div><div class="rl">owner</div></div></div>
+        <div class="mem old"><div class="av" id="oldAv">法</div><div><div class="nm" id="oldNm">你手搓的法务 bot</div><div class="rl">自己搓的</div></div><span class="badge-i">入门</span></div>
+        <div class="mem pro" id="proMem"><div class="av" id="proAv">法</div><div><div class="nm" id="proNm">专业法务 agent</div><div class="rl" id="proBy">刚招进</div><span class="badge-p">专业 · 持久成员</span></div></div>
+        <p class="mem-note">这个专业成员<b>持久留在</b>你的 workspace —— 不是问一次就走的对话，是随叫随到的成员。</p>
+      </aside>
+      <main class="ws-main" id="surface"></main>
+    </div>
+  </div>
+
+  <div class="vals fu">
+    <div class="val"><div class="vk">补能力 · capability</div><div class="vt">职业级的能力进来了</div><div class="vd">你没变成大公司，也没自己硬搓 —— 缺的那个岗位，招一个专业的补上。</div></div>
+    <div class="val"><div class="vk">持久 · persistent</div><div class="vt">它留下，不是一次性</div><div class="vd">add_managed_member 把它招进同一个 session 并留下，能力留在你可应用的范围里。</div></div>
+    <div class="val"><div class="vk">协作 · collaborate</div><div class="vt">能和你其他 agent 协作</div><div class="vd">workspace 里的成员在一条 world 路由上流转消息，一起把你那件事干成。</div></div>
+  </div>
+
+  <div class="closing fu">
+    <p class="big">这就是 <em>world</em> —— 你的 agent 不是一个个手搓的，<br>是招进来的专业单元，在一个 workspace 里协作。</p>
+    <div class="row">
+      <button class="btn ghost" id="backBtn">← 返回市场</button>
+      <a class="btn ghost" href="mainsite.html#intro">看看 world / hello</a>
+      <a class="btn primary" href="../recruit/index.html">再抽一张职业卡 →</a>
+    </div>
+  </div>
+
+  <p class="note">原型 demo · workspace 为 mock，演示「招进 workspace」的效果与价值</p>
+</div>
+
+<script src="../assets/js/demo-state.js"></script>
+<script>window.EZD_SITE_ROOT = "../";</script>
+<script src="../assets/js/site-nav.js"></script>
+<script>
+const $=s=>document.querySelector(s);
+/* 每个职能：颜色 / 字形 / 用户提问 / 专业产出（招进后干的活）*/
+const WORK={
+  legal:{role:'法务',glyph:'法',rc:'var(--blueink)',on:'#fff',ask:'帮我看看这份 SaaS 合同有没有坑。',
+    work:['已过一遍，三处最该改：','① 第 7.2 条赔付无上限 → 建议封在 3× 月费内','② 数据处理条款没单独成 DPA 附件 → 补上，否则客户法务会砍','③ 自动续费缺 30 天书面退出窗口 → 加上更稳']},
+  growth:{role:'增长',glyph:'增',rc:'var(--blue)',on:'#fff',ask:'我做开发者 infra 工具，冷启动怎么获客？',
+    work:['别铺渠道，先做这三步：','① 埋进 r/selfhosted、Hacker News、一个垂直 Discord','② 首周只推一个 wedge 功能，配 changelog 做留存钩子','③ 前 100 个种子用户手动捞，一个个私信']},
+  cs:{role:'客服',glyph:'客',rc:'var(--jade)',on:'#fff',ask:'工单越来越多，快顶不住了。',
+    work:['先按「能否自助」把工单二分：','① 高频 Top 20 问题接进自助面，能挡掉约六成','② 剩下的按愤怒值排队，别按到达顺序','③ 一线只留一个升级按钮，其余自动流转']},
+  finance:{role:'财税',glyph:'财',rc:'var(--orange)',on:'#fff',ask:'刚开公司，账该怎么记？',
+    work:['先把三件事立起来：','① 每笔支出打研发 / 销售 / 管理标签，研发的留着加计扣除','② 社保个税按属地基数代扣代缴，别漏','③ 现金流看「还能跑几个月」，比看利润重要']},
+  brand:{role:'品牌',glyph:'牌',rc:'var(--red)',on:'#fff',ask:'帮我把品牌定位理一理。',
+    work:['先定这两样，其它才好推：','① 一句话定位 + 一个反差记忆点（绑一个竞品做对照）','② 色板给具体 HEX 和使用比例，语气给三正例三反例','别用「高端大气」这种词，落不了地']},
+  sales:{role:'销售',glyph:'销',rc:'var(--yellow)',on:'#17171B',ask:'手上一堆线索，怎么跟才不浪费？',
+    work:['先筛后跟，别撒网：','① 按「痛点触发事件」筛线索，没事件的先放','② 首访只做 BANT 资格确认（预算 / 决策人 / 时间线）','③ 演示前先拿到客户的成功标准，再定跟进节奏']},
+  design:{role:'设计',glyph:'设',rc:'var(--red)',on:'#fff',ask:'产品要上线了，视觉还很乱。',
+    work:['先搭骨架再抠细节：','① 从品牌色出一套 token（主色 / 中性 / 语义）','② 定 12 个基础组件，落地页照转化目标排层级','③ 物料用模板批量出，风格才统一']},
+  data:{role:'数据',glyph:'数',rc:'var(--jade)',on:'#fff',ask:'想看清增长到底卡在哪。',
+    work:['先把口径定死：','① 北极星 + 注册→激活→留存 三段漏斗，写清定义','② 该埋的点从「要回答的问题」倒推，给埋点表','③ 改动上线走 A/B，先算样本量再看显著性']},
+  content:{role:'内容',glyph:'文',rc:'var(--blue)',on:'#fff',ask:'想靠内容带点自然流量。',
+    work:['按能被搜到来选题：','① 从用户搜索词挖 5 个选题，各配大纲','② 一周一篇技术博客 + 社媒切片分发','③ 产品每次更新配 changelog，也是内容']},
+  hr:{role:'招聘',glyph:'聘',rc:'var(--orange)',on:'#fff',ask:'要招第一个后端，怎么招得到人？',
+    work:['JD 和渠道先对：','① JD 突出技术挑战和自主度，别堆福利','② 去对口的 3 个渠道（社区 / 内推 / 垂直招聘）','③ 面试给分层题和评分标准，别凭感觉']},
+};
+
+const P=new URLSearchParams(location.search);
+const roleKey=WORK[P.get('role')]?P.get('role'):'legal';
+const title=P.get('t')||'';
+const by=P.get('by')||'';
+const W=WORK[roleKey];
+
+/* 成员卡 */
+document.documentElement.style.setProperty('--none','');
+$('#oldAv').textContent=W.glyph; $('#oldNm').textContent='你手搓的'+W.role+' bot';
+const pro=$('#proMem'); pro.style.setProperty('--rc',W.rc);
+$('#proAv').textContent=W.glyph; $('#proAv').style.color=W.on;
+$('#proNm').textContent=title||('专业'+W.role+' agent');
+$('#proBy').textContent=(by? by.split(' · ')[0]+' · ':'')+'刚招进';
+
+/* 工作面：逐条浮现 + 打字指示 */
+const surface=$('#surface');
+function turn(cls,html){ const el=document.createElement('div'); el.className='turn fu '+cls; el.innerHTML=html; surface.appendChild(el); return el; }
+const wait=ms=>new Promise(r=>setTimeout(r,ms));
+async function play(){
+  const rc=W.rc, whoName='专业'+W.role+' agent';
+  turn('sys','<div class="body">'+whoName+' 已加入你的 workspace · add_managed_member</div>');
+  await wait(650);
+  turn('you','<div class="who">你</div><div class="body">'+W.ask+'</div>');
+  await wait(650);
+  const typing=turn('agent typing','<div class="who" style="color:'+rc+'">'+whoName+'</div><div class="body" style="border-color:color-mix(in srgb,'+rc+' 38%,transparent)"><span class="dot" style="background:'+rc+'"></span><span class="dot" style="background:'+rc+'"></span><span class="dot" style="background:'+rc+'"></span></div>');
+  await wait(1200);
+  typing.remove();
+  const lines=W.work.map(l=>'<div class="ln">'+l+'</div>').join('');
+  const ag=turn('agent','<div class="who" style="color:'+rc+'">'+whoName+'</div><div class="body" style="background:color-mix(in srgb,'+rc+' 12%,transparent);border:1px solid color-mix(in srgb,'+rc+' 38%,transparent)">'+lines+'</div>');
+  await wait(700);
+  const p=document.createElement('div'); p.className='persist fu';
+  p.innerHTML='<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"><path d="M20 6 9 17l-5-5"/></svg> TA 留下了 —— 持久成员，随叫随到，不是问完就走。';
+  surface.appendChild(p);
+}
+play();
+$('#backBtn').onclick=()=>{ if(history.length>1) history.back(); else location.href='../recruit/index.html'; };
+</script>
+</body>
+</html>

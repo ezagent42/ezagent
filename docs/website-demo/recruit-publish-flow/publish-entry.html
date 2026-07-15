@@ -1,0 +1,349 @@
+<!DOCTYPE html>
+<html lang="zh" data-theme="light">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>把你的 agent 发布上架 · Publish your agent · Ezagent</title>
+<meta name="description" content="选一个你在 workspace 里创建的 agent，把它发布到 Gallery 货架，让更多人试用和 Fork。">
+<link rel="stylesheet" href="https://cdn.jsdelivr.net/gh/ezagent42/design-system@main/styles.css">
+<style>
+  /* ── Layout ── */
+  body{max-width:1100px;margin:40px auto;padding:0 24px 80px;background:var(--ground);color:var(--ink);font-family:var(--font-ui);font-weight:450;-webkit-font-smoothing:antialiased}
+  .back{display:inline-block;margin-bottom:24px;font-size:13px;color:var(--ink-3);text-decoration:none;transition:color .15s var(--ease-out)}
+  .back:hover{color:var(--accent)}
+
+  .layout{display:grid;grid-template-columns:1fr 360px;gap:32px;align-items:start}
+  @media(max-width:860px){.layout{grid-template-columns:1fr}}
+
+  /* ── Header + steps ── */
+  .header-row{display:flex;align-items:baseline;justify-content:space-between;margin-bottom:8px;flex-wrap:wrap;gap:12px}
+  .header-row h1{font-family:var(--font-cn);font-size:28px;font-weight:600;margin:0;letter-spacing:-.01em}
+  .steps-inline{display:flex;align-items:center;gap:14px;padding:8px 16px;background:var(--glass-bg);backdrop-filter:var(--glass-blur);-webkit-backdrop-filter:var(--glass-blur);border-radius:var(--r-pill);box-shadow:var(--shadow-sm),var(--glass-edge)}
+  .steps-inline .dot{width:8px;height:8px;border-radius:50%;background:var(--line);transition:all .2s var(--ease-out)}
+  .steps-inline .step.active .dot{background:var(--accent);box-shadow:0 0 0 4px var(--accent-wash)}
+  .steps-inline .step.done .dot{background:var(--jade)}
+  .steps-inline .lbl{font-size:12px;color:var(--ink-4);white-space:nowrap;transition:color .2s var(--ease-out)}
+  .steps-inline .step.active .lbl{color:var(--accent);font-weight:600}
+  .steps-inline .step.done .lbl{color:var(--ink-2)}
+  .steps-inline .arr{color:var(--line);font-size:12px;margin:0 2px;transition:color .3s var(--ease-out)}
+  .steps-inline .arr.done{color:var(--jade)}
+  .sub{color:var(--ink-3);font-size:14px;margin-bottom:28px}
+
+  /* ── Step pages (FadeUpBlur) ── */
+  .page{display:none}
+  .page.active{display:block;animation:fu var(--dur-enter) var(--ease-out) both}
+  @keyframes fu{from{opacity:0;transform:translateY(20px);filter:blur(8px)}to{opacity:1;transform:none;filter:blur(0)}}
+  h2{font-family:var(--font-cn);font-size:17px;font-weight:600;margin:0 0 4px}
+  .sec-desc{font-size:13px;color:var(--ink-3);margin:0 0 14px}
+
+  /* ── Step 1: agent search + list ── */
+  .toolbar{display:flex;gap:8px;margin-bottom:12px;flex-wrap:wrap;align-items:center}
+  .search{flex:1;min-width:180px;padding:9px 16px;border:1px solid var(--line);border-radius:var(--r-pill);font-size:13px;font-family:inherit;background:var(--card);color:var(--ink);transition:border-color .15s var(--ease-out),box-shadow .15s var(--ease-out)}
+  .search:focus{outline:none;border-color:var(--accent);box-shadow:0 0 0 3px var(--accent-wash)}
+  .chips{display:flex;gap:4px;flex-wrap:wrap}
+  .chip{padding:5px 14px;border-radius:var(--r-pill);font-size:11px;cursor:pointer;background:var(--ground-2);color:var(--ink-2);border:1px solid transparent;transition:all .15s var(--ease-out);white-space:nowrap}
+  .chip:hover{background:var(--ground-hover);color:var(--ink)}
+  .chip.sel{background:var(--accent);color:var(--on-accent)}
+  .chip:focus-visible{outline:2px solid var(--accent);outline-offset:2px}
+  .count{font-family:var(--font-mono);font-size:11px;color:var(--ink-4)}
+
+  .agent-list{max-height:320px;overflow-y:auto}
+  .agent-row{display:flex;align-items:center;gap:14px;padding:12px 16px;background:var(--card);border:2px solid transparent;border-radius:var(--r-lg);margin-bottom:8px;cursor:pointer;transition:all .15s var(--ease-out);box-shadow:var(--shadow-sm)}
+  .agent-row:hover{border-color:var(--line);transform:translateY(-1px)}
+  .agent-row:focus-visible{outline:2px solid var(--accent);outline-offset:2px}
+  .agent-row.sel{border-color:var(--accent);background:var(--accent-wash)}
+  .agent-row .av{width:40px;height:40px;border-radius:var(--r-md);display:grid;place-items:center;font-size:17px;font-weight:700;color:#fff;flex-shrink:0}
+  .agent-row .info{flex:1;min-width:0}
+  .agent-row .name{font-weight:600;font-size:14px;color:var(--ink)}
+  .agent-row .role{font-size:11px;color:var(--ink-3);white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+  .agent-row .chk{width:20px;height:20px;border-radius:50%;border:2px solid var(--line);display:grid;place-items:center;flex-shrink:0;transition:all .15s var(--ease-out)}
+  .agent-row.sel .chk{border-color:var(--accent);background:var(--accent);color:#fff}
+  .agent-row.sel .chk::after{content:"✓";font-size:12px}
+  .none-found{padding:28px;text-align:center;color:var(--ink-4);font-size:13px}
+
+  /* ── Step 2: form + domain ── */
+  .field{margin:14px 0}
+  .field label{display:block;font-size:12px;font-weight:600;margin-bottom:4px;color:var(--ink-2)}
+  .field input,.field textarea{width:100%;padding:10px 14px;border:1px solid var(--line);border-radius:var(--r-md);font-size:13px;font-family:inherit;background:var(--card);color:var(--ink);resize:vertical;box-sizing:border-box;transition:border-color .15s var(--ease-out),box-shadow .15s var(--ease-out)}
+  .field input:focus,.field textarea:focus{outline:none;border-color:var(--accent);box-shadow:0 0 0 3px var(--accent-wash)}
+  .cover-upload{display:flex;align-items:center;justify-content:center;width:100%;height:104px;border:2px dashed var(--line);border-radius:var(--r-lg);cursor:pointer;color:var(--ink-4);font-size:13px;transition:all .15s var(--ease-out)}
+  .cover-upload:hover{border-color:var(--accent);color:var(--accent);background:var(--accent-wash)}
+  .cover-upload:focus-visible{outline:2px solid var(--accent);outline-offset:2px}
+  .cover-upload.done{border-style:solid;border-color:var(--jade);background:var(--jade-wash);color:var(--success)}
+
+  /* Domain */
+  .domains{display:flex;gap:6px;flex-wrap:wrap;margin:8px 0}
+  .dom-tag{padding:7px 18px;border-radius:var(--r-pill);font-size:12px;cursor:pointer;background:var(--ground-2);color:var(--ink-2);border:2px solid transparent;transition:all .15s var(--ease-out);min-height:38px;display:inline-flex;align-items:center}
+  .dom-tag:hover{border-color:var(--line);background:var(--ground-hover);color:var(--ink)}
+  .dom-tag:focus-visible{outline:2px solid var(--accent);outline-offset:2px}
+  .dom-tag.sel{border-color:var(--accent);background:var(--accent-wash);color:var(--accent);font-weight:600}
+  .dom-custom{display:none;margin-top:8px}
+  .dom-custom.show{display:block}
+  .dom-custom input{padding:8px 14px;border:1px solid var(--line);border-radius:var(--r-pill);font-size:12px;font-family:inherit;background:var(--card);color:var(--ink);width:220px;transition:border-color .15s var(--ease-out),box-shadow .15s var(--ease-out)}
+  .dom-custom input:focus{outline:none;border-color:var(--accent);box-shadow:0 0 0 3px var(--accent-wash)}
+
+  /* ── Buttons ── */
+  .nav-btns{display:flex;justify-content:space-between;margin-top:24px}
+  .btn{font-family:var(--font-ui);font-size:14px;font-weight:600;padding:10px 24px;border-radius:var(--r-pill);border:0;cursor:pointer;text-decoration:none;display:inline-flex;align-items:center;gap:6px;transition:all .15s var(--ease-out);min-height:44px}
+  .btn:focus-visible{outline:2px solid var(--accent);outline-offset:2px}
+  .btn.primary{background:var(--accent);color:var(--on-accent)}
+  .btn.primary:hover{transform:translateY(-1px);box-shadow:0 4px 16px rgba(11,92,255,.4)}
+  .btn.primary:active{transform:scale(.98)}
+  .btn.primary:disabled{opacity:.45;cursor:not-allowed;transform:none;box-shadow:none}
+  .btn.ghost{background:var(--ground-2);color:var(--ink-2)}
+  .btn.ghost:hover{background:var(--ground-hover);color:var(--ink)}
+  .btn.ghost:active{transform:scale(.98)}
+
+  /* ── Preview panel ── */
+  .preview-panel{position:sticky;top:24px}
+  .preview-card{padding:28px 24px;background:var(--card);border-radius:var(--r-lg);box-shadow:var(--shadow-card)}
+  .preview-card .over{font-family:var(--font-mono);font-size:11px;letter-spacing:.14em;text-transform:uppercase;color:var(--ink-3);margin-bottom:16px}
+  .pc{display:flex;gap:14px;align-items:flex-start}
+  .pc .av{width:48px;height:48px;border-radius:var(--r-md);display:grid;place-items:center;font-size:22px;font-weight:700;color:#fff;flex-shrink:0;transition:all .3s var(--ease-out)}
+  .pc .info{flex:1;min-width:0}
+  .pc .title{font-family:var(--font-cn);font-weight:700;font-size:16px;color:var(--ink);line-height:1.3;transition:all .2s var(--ease-out)}
+  .pc .desc{font-size:12px;color:var(--ink-3);margin:6px 0 10px;line-height:1.5;transition:all .2s var(--ease-out)}
+  .pc .tags{display:flex;gap:4px;flex-wrap:wrap}
+  .pc .tags span{font-size:10px;padding:2px 8px;border-radius:var(--r-pill);background:var(--ground-2);color:var(--ink-3)}
+  .pc .stat{font-family:var(--font-mono);font-size:11px;color:var(--ink-4);margin-top:10px}
+
+  /* Review states */
+  .review{display:none;margin-top:20px;padding:16px 18px;border:2px dashed var(--orange);border-radius:var(--r-md);background:var(--orange-wash)}
+  .review.show{display:block;animation:fu .3s var(--ease-out) both}
+  .review .tt{font-weight:700;font-size:13px;color:var(--orange)}
+  .review p{font-size:12px;color:var(--ink-3);margin:4px 0 0}
+  .approved{display:none;margin-top:20px;padding:16px 18px;border:2px solid var(--jade);border-radius:var(--r-md);background:var(--jade-wash)}
+  .approved.show{display:block;animation:fu .3s var(--ease-out) both}
+  .approved .tt{font-weight:700;font-size:13px;color:var(--success)}
+  .approved p{font-size:12px;color:var(--ink-3);margin:4px 0 0}
+  .approved .cta-wrap{margin-top:12px;display:flex;gap:10px;flex-wrap:wrap}
+
+  .empty-hint{padding:14px 18px;border:2px dashed var(--line);border-radius:var(--r-lg);text-align:center;color:var(--ink-4);font-size:12px;margin-top:20px}
+
+  @media(prefers-reduced-motion:reduce){
+    *,*::before,*::after{animation-duration:.01ms!important;transition-duration:.01ms!important}
+  }
+</style>
+</head>
+<body>
+
+<a class="back" href="../recruit/">← 返回手搓挑战 · Back</a>
+
+<div class="header-row">
+  <h1>把你的 agent 发布上架 · Publish your agent</h1>
+  <div class="steps-inline">
+    <span class="step active" data-step="1" onclick="goStep(1)" tabindex="0" role="button" aria-label="步骤 1：选 agent">
+      <span class="dot"></span> <span class="lbl">选 agent</span>
+    </span>
+    <span class="arr" id="arr12" aria-hidden="true">→</span>
+    <span class="step" data-step="2" onclick="goStep(2)" tabindex="0" role="button" aria-label="步骤 2：写说明 + 领域标签">
+      <span class="dot"></span> <span class="lbl">写说明 + 标签</span>
+    </span>
+  </div>
+</div>
+<p class="sub">选 agent → 写 marketplace 说明 → 打领域标签 → 提交审核 · Select · Describe · Tag · Submit</p>
+
+<div class="layout">
+
+<!-- ══════════════ LEFT ══════════════ -->
+<div>
+
+  <!-- Step 1 -->
+  <div class="page active" data-page="1">
+    <h2>选 agent · Select</h2>
+    <p class="sec-desc">从你的 workspace 中选择要发布的 agent。</p>
+    <div class="toolbar">
+      <input type="text" class="search" id="searchBox" placeholder="搜索 agent 名称或角色…" oninput="filterAgents()" aria-label="搜索 agent">
+    </div>
+    <div class="toolbar">
+      <div class="chips" id="filterChips">
+        <span class="chip sel" data-cat="" onclick="setFilter(this,'')" tabindex="0" role="button">全部 · All</span>
+        <span class="chip" data-cat="legal" onclick="setFilter(this,'legal')" tabindex="0" role="button">法务 · Legal</span>
+        <span class="chip" data-cat="recruit" onclick="setFilter(this,'recruit')" tabindex="0" role="button">招聘 · Recruit</span>
+        <span class="chip" data-cat="cs" onclick="setFilter(this,'cs')" tabindex="0" role="button">客服 · CS</span>
+        <span class="chip" data-cat="growth" onclick="setFilter(this,'growth')" tabindex="0" role="button">增长 · Growth</span>
+        <span class="chip" data-cat="dev" onclick="setFilter(this,'dev')" tabindex="0" role="button">研发 · Dev</span>
+        <span class="chip" data-cat="other" onclick="setFilter(this,'other')" tabindex="0" role="button">其他 · Other</span>
+      </div>
+    </div>
+    <div style="margin-bottom:8px"><span class="count" id="count"></span></div>
+    <div class="agent-list" id="agentList" role="listbox" aria-label="workspace agent 列表"></div>
+    <div class="nav-btns">
+      <span></span>
+      <button class="btn primary" id="step1Next" disabled onclick="goStep(2)">下一步 · Next →</button>
+    </div>
+  </div>
+
+  <!-- Step 2 -->
+  <div class="page" data-page="2">
+    <h2>写说明 + 标签 · Describe &amp; tag</h2>
+    <p class="sec-desc">这些文字会出现在 Gallery 货架的产品卡片上。</p>
+    <div class="field">
+      <label for="pubTitle">标题 · Title</label>
+      <input type="text" id="pubTitle" placeholder="在 Gallery 货架上显示的名称" oninput="updatePreview()">
+    </div>
+    <div class="field">
+      <label for="pubDesc">简介 · Description</label>
+      <textarea id="pubDesc" rows="3" placeholder="描述这个 agent 做什么、适合谁用" oninput="updatePreview()"></textarea>
+    </div>
+    <div class="field">
+      <label>封面图 · Cover image</label>
+      <div class="cover-upload" id="coverBox" onclick="mockUpload()" tabindex="0" role="button" aria-label="上传封面图">
+        点击上传封面图 · Click to upload
+      </div>
+    </div>
+
+    <h2 style="margin-top:28px">领域标签 · Domain tag</h2>
+    <p class="sec-desc">Gallery 用户按领域筛选 agent。给 agent 打一个领域标签。</p>
+    <div class="domains" id="domainTags">
+      <span class="dom-tag" data-domain="legal" onclick="pickDomain(this)" tabindex="0" role="button">法务 · 合规</span>
+      <span class="dom-tag" data-domain="recruit" onclick="pickDomain(this)" tabindex="0" role="button">招聘 · 人才</span>
+      <span class="dom-tag" data-domain="cs" onclick="pickDomain(this)" tabindex="0" role="button">客服 · 支持</span>
+      <span class="dom-tag" data-domain="growth" onclick="pickDomain(this)" tabindex="0" role="button">增长 · 营销</span>
+      <span class="dom-tag" data-domain="dev" onclick="pickDomain(this)" tabindex="0" role="button">研发 · 工程</span>
+      <span class="dom-tag" data-domain="other" onclick="pickDomain(this)" tabindex="0" role="button">其他 · Other</span>
+    </div>
+    <div class="dom-custom" id="domainCustom">
+      <input type="text" id="domainOther" placeholder="输入领域名称…" oninput="updatePreview()" aria-label="自定义领域名称">
+    </div>
+
+    <div class="nav-btns">
+      <button class="btn ghost" onclick="goStep(1)">← 上一步 · Back</button>
+      <button class="btn primary" id="submitBtn" onclick="submitReview()">提交审核 · Submit →</button>
+    </div>
+    <div class="empty-hint">后端待建：workspace agent 列表 API · 发布 CR（W-G2）· 合规审核（W-G6）</div>
+  </div>
+
+</div>
+
+<!-- ══════════════ RIGHT ══════════════ -->
+<div class="preview-panel">
+  <div class="preview-card">
+    <div class="over">Gallery 货架卡片预览 · Card preview</div>
+    <div class="pc">
+      <div class="av" id="pcAv" style="background:var(--accent)">A</div>
+      <div class="info">
+        <div class="title" id="pcTitle">你的 agent 名称</div>
+        <div class="desc" id="pcDesc">选中 agent 后生成预览</div>
+        <div class="tags" id="pcTags"></div>
+        <div class="stat" id="pcStat">new</div>
+      </div>
+    </div>
+    <div class="review" id="reviewBox" role="status" aria-live="polite">
+      <div class="tt">审核中 · Under review</div>
+      <p>agent 已提交审核。通过后自动上架到 Gallery。</p>
+    </div>
+    <div class="approved" id="approvedBox" role="status" aria-live="polite">
+      <div class="tt">✓ 审核通过 · Approved</div>
+      <p>agent 已上架到 Gallery 货架。</p>
+      <div class="cta-wrap">
+        <a class="btn primary" href="../flywheel/gallery.html">去 Gallery 货架看看 →</a>
+        <a class="btn ghost" href="../recruit/">← 回手搓挑战</a>
+      </div>
+    </div>
+  </div>
+</div>
+
+</div>
+
+<script>
+var currentStep=1;
+var WORKSPACE_AGENTS=[
+  {name:'合同红线审查官 · Contract Redline',role:'法务审查 agent · 按中/欧双辖区逐条标注',cat:'legal',glyph:'合',color:'var(--blueink)'},
+  {name:'商标抢注监控 · Trademark Watchdog',role:'知识产权 agent · 多辖区商标公告自动监测',cat:'legal',glyph:'标',color:'var(--jade)'},
+  {name:'NDA 快签助手 · NDA Quick Sign',role:'合同签署 agent · 标准 NDA 自动审核 + 签署',cat:'legal',glyph:'密',color:'var(--blue)'},
+  {name:'专家招募 · Expert Recruit',role:'招聘 agent · 按行业匹配专业 agent 进 workspace',cat:'recruit',glyph:'招',color:'var(--blue)'},
+  {name:'简历初筛官 · Resume Screener',role:'HR agent · 按 JD 自动筛选 + 排序候选人',cat:'recruit',glyph:'筛',color:'var(--jade)'},
+  {name:'客服分流台 · CS Triage',role:'客服 agent · 按问题类型自动分流 + 升级',cat:'cs',glyph:'分',color:'var(--orange)'},
+  {name:'FAQ 自助答 · FAQ Self-service',role:'知识库 agent · 常见问题自动匹配回复',cat:'cs',glyph:'答',color:'var(--jade)'},
+  {name:'增长实验分析 · Growth Experiment',role:'数据分析 agent · A/B 实验结果自动解读',cat:'growth',glyph:'实',color:'var(--jade)'},
+  {name:'SEO 内容优化 · SEO Content',role:'内容 agent · 关键词分析 + 内容结构建议',cat:'growth',glyph:'优',color:'var(--blue)'},
+  {name:'Code Review 助手 · CR Assistant',role:'研发 agent · 自动 review PR + 改进建议',cat:'dev',glyph:'审',color:'var(--blueink)'},
+  {name:'Bug 复现定位 · Bug Reproducer',role:'测试 agent · 从日志 + 截图定位复现步骤',cat:'dev',glyph:'虫',color:'var(--orange)'},
+  {name:'配置巡检官 · Config Auditor',role:'运维 agent · workspace 配置合规自动巡检',cat:'other',glyph:'巡',color:'var(--accent)'}
+];
+var filterCat='',selectedAgent='',selectedDomain='',selectedAgentData=null;
+
+function goStep(n){
+  if(n===2&&!selectedAgent){alert('请先选择一个 agent');return;}
+  currentStep=n;
+  var steps=document.querySelectorAll('.steps-inline .step');
+  steps.forEach(function(s,i){
+    s.classList.remove('active','done');
+    if(i+1<n)s.classList.add('done');
+    if(i+1===n)s.classList.add('active');
+    s.tabIndex=n===i+1?-1:0;
+  });
+  var arr=document.getElementById('arr12');
+  if(n>1)arr.classList.add('done');else arr.classList.remove('done');
+  document.querySelectorAll('.page').forEach(function(p){p.classList.remove('active');});
+  var pg=document.querySelector('.page[data-page="'+n+'"]');pg.classList.add('active');
+  if(n===2)document.getElementById('pubTitle').focus();
+}
+
+function renderAgents(){
+  var q=(document.getElementById('searchBox').value||'').toLowerCase();
+  var list=WORKSPACE_AGENTS.filter(function(a){
+    if(filterCat&&a.cat!==filterCat)return false;
+    if(q&&a.name.toLowerCase().indexOf(q)===-1&&a.role.toLowerCase().indexOf(q)===-1)return false;
+    return true;
+  });
+  document.getElementById('count').textContent=list.length+' 个 agent';
+  if(!list.length){document.getElementById('agentList').innerHTML='<div class="none-found">没有匹配的 agent</div>';return;}
+  document.getElementById('agentList').innerHTML=list.map(function(a){
+    var sel=selectedAgent===a.name;
+    return'<div class="agent-row'+(sel?' sel':'')+'" data-name="'+a.name+'" onclick="pickAgent(this)" tabindex="0" role="option" aria-selected="'+(sel?'true':'false')+'">'
+      +'<div class="av" style="background:'+a.color+'">'+a.glyph+'</div>'
+      +'<div class="info"><div class="name">'+a.name+'</div><div class="role">'+a.role+'</div></div>'
+      +'<div class="chk"></div></div>';
+  }).join('');
+}
+function setFilter(chip,cat){document.querySelectorAll('#filterChips .chip').forEach(function(c){c.classList.remove('sel');});chip.classList.add('sel');filterCat=cat;renderAgents();}
+function filterAgents(){renderAgents();}
+function pickAgent(el){
+  document.querySelectorAll('.agent-row').forEach(function(r){r.classList.remove('sel');r.setAttribute('aria-selected','false');});
+  el.classList.add('sel');el.setAttribute('aria-selected','true');selectedAgent=el.dataset.name;
+  selectedAgentData=WORKSPACE_AGENTS.filter(function(a){return a.name===selectedAgent;})[0];
+  document.getElementById('pubTitle').value=selectedAgent;
+  document.getElementById('step1Next').disabled=false;
+  updatePreview();
+}
+
+function mockUpload(){document.getElementById('coverBox').classList.add('done');document.getElementById('coverBox').innerHTML='✓ 封面已上传 · Cover uploaded（demo）';}
+function pickDomain(el){
+  document.querySelectorAll('.dom-tag').forEach(function(d){d.classList.remove('sel');});
+  el.classList.add('sel');selectedDomain=el.dataset.domain;
+  document.getElementById('domainCustom').classList.toggle('show',selectedDomain==='other');
+  if(selectedDomain==='other')setTimeout(function(){document.getElementById('domainOther').focus();},150);
+  updatePreview();
+}
+
+function updatePreview(){
+  var title=document.getElementById('pubTitle').value||(selectedAgentData?selectedAgentData.name:'你的 agent 名称');
+  var desc=document.getElementById('pubDesc').value||(selectedAgentData?selectedAgentData.role:'选中 agent 后生成预览');
+  document.getElementById('pcTitle').textContent=title;
+  document.getElementById('pcDesc').textContent=desc;
+  if(selectedAgentData){document.getElementById('pcAv').textContent=selectedAgentData.glyph;document.getElementById('pcAv').style.background=selectedAgentData.color;}
+  var dl='';if(selectedDomain==='other'){dl=document.getElementById('domainOther').value.trim()||'其他';}
+  else if(selectedDomain){var el=document.querySelector('.dom-tag[data-domain="'+selectedDomain+'"]');dl=el?el.textContent:selectedDomain;}
+  document.getElementById('pcTags').innerHTML=dl?'<span>'+dl+'</span>':'';
+  document.getElementById('pcStat').textContent=selectedAgentData?'new':'';
+}
+
+function submitReview(){
+  if(!selectedDomain){alert('请选择一个领域标签');return;}
+  if(selectedDomain==='other'&&!document.getElementById('domainOther').value.trim()){alert('请输入领域名称');return;}
+  document.getElementById('reviewBox').classList.add('show');
+  var btn=document.getElementById('submitBtn');btn.textContent='提交中…';btn.disabled=true;btn.style.opacity='0.6';
+  setTimeout(function(){
+    document.getElementById('reviewBox').classList.remove('show');
+    document.getElementById('approvedBox').classList.add('show');
+    document.querySelectorAll('.steps-inline .step').forEach(function(s){if(s.dataset.step==='2')s.classList.add('done');});
+    document.getElementById('arr12').classList.add('done');
+    document.getElementById('submitBtn').style.display='none';
+  },3000);
+}
+renderAgents();
+</script>
+</body>
+</html>
