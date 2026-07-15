@@ -43,7 +43,7 @@
 |---|----------|--------|-----------------------|
 | 1 | 三个 assets 的 `tsc --noEmit` 在 CI 中真实运行。 | met | `.github/workflows/ci.yml` 的 `Frontend lint, typecheck and unit tests` step；Web/World/Hello 本地 rebase 后各自 `typecheck` EXIT=0。 |
 | 2 | 构造类型错误证明 gate 会失败，再修复恢复绿色。 | met | 开发过程中注入负向类型错误，`tsc --noEmit` 非零退出；回滚 probe 后三项目 typecheck 恢复 EXIT=0。该 probe 不作为生产源码提交。 |
-| 3 | CI 绿，且分支 rebase 到 current `main`。 | not-met | 已 rebase 到 `origin/main` `c7beace664284f31298c524871d7fa5470e10052`；等本 return commit 推送后，以 PR-head CI run URL/结论替换本格。上一个等价功能 head `3351075ef` 已绿：https://github.com/ezagent42/ezagent/actions/runs/29402133418 。 |
+| 3 | CI 绿，且分支 rebase 到 current `main`。 | met | return document head `18db5ddc5` 的 CI **success**：https://github.com/ezagent42/ezagent/actions/runs/29403798001 ；rebase base = `origin/main` `c7beace664284f31298c524871d7fa5470e10052`。 |
 | 4 | 用户追加：补充前端单元测试并纳入 CI。 | met | Vitest 3 files / 10 tests 全绿；测试文件：`mention_autocomplete.test.js`、`SessionsTable.test.ts`、`catalog.test.ts`。 |
 | 5 | 用户追加：补充 ESLint 并纳入 CI。 | met | 三套 `pnpm lint` 均 EXIT=0、零 warning；三份 `eslint.config.mjs` + frozen lockfile 已提交。 |
 | 6 | 用户追加：相关版本统一为 Elixir 1.19 / OTP 28，且防止回漂。 | met | `.tool-versions`、CI、Docker、所有 Mix project/operator scripts 对齐；`toolchain_version_test.exs` 2 tests 通过。 |
@@ -81,8 +81,8 @@
 
 - Pre-rebase functional head `3351075ef`: **success** —
   https://github.com/ezagent42/ezagent/actions/runs/29402133418
-- Returned head: **pending until this return document is pushed** —
-  https://github.com/ezagent42/ezagent/pull/1415/checks
+- Return document head `18db5ddc5`: **success** —
+  https://github.com/ezagent42/ezagent/actions/runs/29403798001
 
 ### 已知本地环境限制
 
@@ -103,3 +103,4 @@ rebase 后单独完整通过。
 请 lead 在本 return commit 的 PR-head CI 绿色后，将 Draft PR #1415 按
 dev-together `push` / `close` 流程纳入今日 stack。分支已基于 current `main`，与其他
 任务没有已知 merge-order 依赖；PR 涉及 `.github/workflows/ci.yml` 和三个 assets 的
+配置/lockfile，若同日有其他 frontend CI 或 lockfile return，先让 lead 做冲突分析。
