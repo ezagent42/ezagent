@@ -14,7 +14,7 @@ defmodule EzagentPluginEmDual.MixProject do
     [
       app: :ezagent_plugin_em_dual,
       version: "0.1.0",
-      elixir: "~> 1.19",
+      elixir: "~> 1.15",
       compilers: Mix.compilers() ++ [:ezagent_plugin_check],
       deps: deps()
     ]

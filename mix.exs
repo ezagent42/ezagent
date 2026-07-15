@@ -5,7 +5,6 @@ defmodule EzagentCore.Umbrella.MixProject do
     [
       apps_path: "apps",
       version: "0.1.0",
-      elixir: "~> 1.19",
       package: package(),
       name: "Ezagent",
       start_permanent: Mix.env() == :prod,

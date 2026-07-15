@@ -10,7 +10,7 @@ defmodule EzagentPluginCurlAgent.MixProject do
       config_path: "../../config/config.exs",
       deps_path: "../../deps",
       lockfile: "../../mix.lock",
-      elixir: "~> 1.19",
+      elixir: "~> 1.15",
       elixirc_paths: elixirc_paths(Mix.env()),
       # Plugin authoring contract SPEC §3.2 — the non-bypassable
       # app-level gate. Runs after the app has compiled so its

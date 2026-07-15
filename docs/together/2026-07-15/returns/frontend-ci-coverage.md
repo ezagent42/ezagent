@@ -1,6 +1,6 @@
 # 前端 CI 覆盖续 · return
 
-> **Task:** zyli — 前端 CI 覆盖续（`tsc --noEmit`，用户追加 Elixir/OTP、Vitest、ESLint）
+> **Task:** zyli — 前端 CI 覆盖续（`tsc --noEmit`，用户追加 Vitest、ESLint）
 > **Branch:** `ci/frontend-tsc-noemit`
 > **PR:** https://github.com/ezagent42/ezagent/pull/1415
 > **Dev:** zyli-developer + Codex
@@ -34,8 +34,6 @@
    `pnpm install --frozen-lockfile` → `lint` → `typecheck` → `test`。
 5. 修复既有 TypeScript/ESLint 确定性问题，并补齐浏览器/Vite 声明；未改
    World 运行时 UI 行为。
-6. umbrella、所有 child/fixture Mix project、CI、Docker 和 kanban operator
-   scripts 统一到 Elixir 1.19 / OTP 28，并加入 toolchain drift invariant test。
 
 ## DoD reconciliation
 
@@ -43,14 +41,16 @@
 |---|----------|--------|-----------------------|
 | 1 | 三个 assets 的 `tsc --noEmit` 在 CI 中真实运行。 | met | `.github/workflows/ci.yml` 的 `Frontend lint, typecheck and unit tests` step；Web/World/Hello 本地 rebase 后各自 `typecheck` EXIT=0。 |
 | 2 | 构造类型错误证明 gate 会失败，再修复恢复绿色。 | met | 开发过程中注入负向类型错误，`tsc --noEmit` 非零退出；回滚 probe 后三项目 typecheck 恢复 EXIT=0。该 probe 不作为生产源码提交。 |
-| 3 | CI 绿，且分支 rebase 到 current `main`。 | met | return document head `18db5ddc5` 的 CI **success**：https://github.com/ezagent42/ezagent/actions/runs/29403798001 ；rebase base = `origin/main` `c7beace664284f31298c524871d7fa5470e10052`。 |
+| 3 | CI 绿，且分支 rebase 到 current `main`。 | met | return document head `18db5ddc5` 的 CI **success**：https://github.com/ezagent42/ezagent/actions/runs/29403798001 ；最新 rebase base = `origin/main` `3407c7de6571562a438b71c30b65c159c52103ee`。 |
 | 4 | 用户追加：补充前端单元测试并纳入 CI。 | met | Vitest 3 files / 10 tests 全绿；测试文件：`mention_autocomplete.test.js`、`SessionsTable.test.ts`、`catalog.test.ts`。 |
 | 5 | 用户追加：补充 ESLint 并纳入 CI。 | met | 三套 `pnpm lint` 均 EXIT=0、零 warning；三份 `eslint.config.mjs` + frozen lockfile 已提交。 |
-| 6 | 用户追加：相关版本统一为 Elixir 1.19 / OTP 28，且防止回漂。 | met | `.tool-versions`、CI、Docker、所有 Mix project/operator scripts 对齐；`toolchain_version_test.exs` 2 tests 通过。 |
+| 6 | 用户纠正范围：本 PR 只保留前端 CI，不包含 Elixir/OTP 全仓统一。 | met | 最终 diff 不再包含根/child/fixture `mix.exs`、kanban operator scripts 或 `toolchain_version_test.exs`；`apps/ezagent_cli/mix.exs` 已恢复到共同基点。 |
 
 **Method friction:** 今日 plan/handoff 把 ESLint/Vitest 列为后续分期，但任务执行中
 由用户明确追加到同一 PR；后续此类增量应在追加时同步扩写 handoff DoD，避免 return
-阶段才补闭集。另一次 rebase 后 `_build` 中旧 scanner BEAM 让 `arch.scan` 假报
+阶段才补闭集。Elixir/OTP 全仓统一也曾随版本核对进入本分支，但会扩大到 CLI、后端、
+插件和 fixture 的兼容性边界；用户确认本 PR 只做前端 CI 后已整体移除。另一次 rebase
+后 `_build` 中旧 scanner BEAM 让 `arch.scan` 假报
 `concatenated_namespace_modules: 1`；AST 对账确认源码候选全部已 sanctioned，执行
 `mix compile --force --warnings-as-errors` 后计数恢复 0。建议 rebase 后静态 scan 前先
 确保 scanner 已按新 main 重编译。
@@ -59,8 +59,8 @@
 
 ### Rebase
 
-- `rebase_base_sha`: `c7beace664284f31298c524871d7fa5470e10052`
-- code head before return document: `17b3ec034794da196a8baae100b9364bd9393845`
+- `rebase_base_sha`: `3407c7de6571562a438b71c30b65c159c52103ee`
+- code head before return document: `99393304d3e8d6e1a78748c79d552cd70afbd447`
 - `git merge-base HEAD origin/main` 与 `git rev-parse origin/main` 一致。
 
 ### 完整静态 gate（rebase 后，本地）
@@ -88,7 +88,7 @@
 
 `mix precommit` 已进入全量测试；仅两个既有 `HomeMigrationTest` 因本机没有
 `pg_dump` 返回 `{:missing_executable, "pg_dump"}`。这不是本分支代码失败；GitHub
-gate 使用 Elixir 1.19 / OTP 28 和 CI PostgreSQL 环境。四道 together 静态 gate 已在
+gate 使用 CI PostgreSQL 环境。四道 together 静态 gate 已在
 rebase 后单独完整通过。
 
 ## Deferred follow-ups / open decisions

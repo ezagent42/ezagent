@@ -10,7 +10,7 @@ defmodule EzagentPluginKanban.MixProject do
       config_path: "../../config/config.exs",
       deps_path: "../../deps",
       lockfile: "../../mix.lock",
-      elixir: "~> 1.19",
+      elixir: "~> 1.15",
       elixirc_paths: elixirc_paths(Mix.env()),
       # Plugin authoring contract — the non-bypassable app-level gate.
       compilers: Mix.compilers() ++ [:ezagent_plugin_check],

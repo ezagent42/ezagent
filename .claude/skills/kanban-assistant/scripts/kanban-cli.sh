@@ -7,6 +7,6 @@ ACTION="$1"
 ARGS_JSON="${2:-}"
 [ -z "$ARGS_JSON" ] && ARGS_JSON='{}'
 COOKIE=$(cat /home/yaosh/.ezagent/default/runtime/cookie)
-exec mise exec elixir@1.19.2-otp-28 erlang@28.3 -- \
+exec mise exec elixir@1.18.4-otp-27 erlang@27.3.4.13 -- \
   elixir --name "kanban_cli_$$@127.0.0.1" --cookie "$COOKIE" \
   "$(dirname "$0")/kanban_dispatch.exs" "$ACTION" "$ARGS_JSON"

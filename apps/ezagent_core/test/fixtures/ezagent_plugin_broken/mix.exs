@@ -21,7 +21,7 @@ defmodule EzagentPluginBroken.MixProject do
     [
       app: :ezagent_plugin_broken,
       version: "0.1.0",
-      elixir: "~> 1.19",
+      elixir: "~> 1.15",
       # Wire the gate — but application/0 below has NO :ezagent_plugin
       # key. That combination is the contract violation under test.
       compilers: Mix.compilers() ++ [:ezagent_plugin_check],
