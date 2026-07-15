@@ -125,6 +125,13 @@ defmodule EzagentWeb.MixProject do
       # registers the `kb` recipe + resource_types/0 registers the kb-store /
       # kb-source FsResolver types; Behavior.Kb loads per-instance via RF-1).
       {:ezagent_plugin_kb, in_umbrella: true},
+      # crawler（前名 dealscout，2026-07-07 分层 rename：plugin=通用爬取能力，
+      # dealscout 只是它 ship 的 demo socialware 名）— declared so the crawler
+      # plugin's OTP app boots (its roles/0 registers the dealscout demo
+      # recipes; zero background GenServers — crawl is agent-driven via
+      # :crawl_now, no poller/sweeper, 2026-07-10 段2). Locked by
+      # all_plugin_apps_wired_to_web.
+      {:ezagent_plugin_crawler, in_umbrella: true},
       {:jason, "~> 1.2"},
       {:bandit, "~> 1.5"}
     ]

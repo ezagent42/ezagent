@@ -1,0 +1,180 @@
+# dealscout demo socialware — a deploy-seed package (mirrors autoservice / hello
+# / kanban). Production carries this file in the release box; on a fresh stack
+# `Ezagent.Home.SocialwareSeed` copies it into the deployment home
+# (`$EZAGENT_HOME/<profile>/socialware/dealscout/`) and the late boot scan
+# `Ezagent.Socialware.ManifestSeed.scan_all!/1` resolves + publishes it through
+# the governed import lane (parse → ManifestResolver.resolve →
+# Conformance.check_candidate → publish_or_upgrade). There is ZERO self-publish
+# from the crawler plugin's boot AND zero plugin-side wrapper module (Decision
+# #156): tests drive this SAME file directly via
+# `Ezagent.Socialware.ShippedManifest.load!/2`
+# (`dealscout_manifest_test.exs` / `dealscout_manifest_publish_test.exs`).
+# Semantics are the judge: the published definition passes all 15
+# `Ezagent.Socialware.Conformance` assertions (15/15 green).
+#
+# Shape notes (what dealscout composes — 职责重划 2026-07-06 拍板；显示
+# 自包含 2026-07-10 段4 D2；零人工中继 2026-07-10 终段):
+#   * dealscout = 爬取 plugin `crawler` 的能力组合（discover agent 用 crawl
+#     能力爬线索 + crawler 自带的结构化线索 view 展示）。本文件是纯配置：
+#     bases/shape 是平台公开面组件（Session + Publisher.SessionImpl / Turn +
+#     Surface，hello 先例的同一套 domain ActionSet），`views:
+#     [crawler_render]` 经 crawler registered `LeadsView` 解析到
+#     `Ezagent.ActionSet.CrawlerRender` — 显示不再借 hello（D2 消掉
+#     LLM key / fake generator / 手工 mount 三个假点）。
+#   * shape 带 Crawler — 2026-07-07 真浏览器 e2e 修正：`:crawl_now` 的
+#     handler 读 `ctx.session_uri` + session 的 config slice → 宿主必须是
+#     session 本体，否则 live dispatch `{:unknown_action, :crawl_now}`。
+#   * roles — discover（`dealscout-discover` × py，2026-07-10 段3 D1：
+#     cc-headless 物化必崩是平台 gap、绕开不修，换 hello builder/responser
+#     已验证的 py 物化车道。py 车道真实契约 = 单方法 receive → 文本回复
+#     （Domain.Python V1 无 Python→BEAM 请求），所以 discover 的形态是
+#     "回复中自带触发"：被 @ 后 script 在自己 sandbox 真实爬 HN 公开检索源，
+#     把线索连同更新信号一起回进会话 → 下面的 routing 规则命中这条回复。
+#     script 见 `apps/ezagent_plugin_crawler/priv/python/discover.py`）
+#     + page（页面发布宿主，crawler 通用 `crawler-page` recipe × native——
+#     段4 D2 取代曾借 hello Generator 的临时 ALT：crawl/search 注入新线索后
+#     被直呼 dispatch `:publish_page`，supervised Task 里把会话留存线索驱动
+#     Turn/Surface 落 committed 公开页。page 是 dispatch-only 工具腿，
+#     **从不做 chat receiver**——native 无 bridge，receive 投递必丢（平台
+#     gap #1201 ②）。它必须留在 role 槽：直呼腿按 session members 的
+#     role_name facet 解析它的实例 URI（`crawler.ex` page_member_uri），
+#     所以 recipe 不能标 `passive: true`——RF-6 passive-join 三闸会在
+#     materialize 的 faceted session.join 当场拒（`session.ex:788-790`
+#     `{:passive_actor_cannot_join, _}`）。kanban 的 passive board 是
+#     workspace 级 URI-dispatch actor、不进 role 槽（kanban manifest 头注），
+#     形态不同；page 若要转那个形态是独立重构，等 Allen 拍板）。
+#   * routing_rules — ONLY the content-triggered update-signal rule,
+#     #1212-hardened to and(text_contains "__dealscout_update__", from_role
+#     discover). NEVER hello's `always → chat` rule (kanban-handoff red line).
+#     receiver = **dealscout-assistant**（2026-07-10 零人工中继 case-2，照
+#     kanban 先例"信号路由给专属操作员、操作员 dispatch 工具动作"：
+#     ① 曾经的 receiver `page` 是 native 工具，投递必丢 #1201 ②——工具
+#     从不收消息；这也与 #1319 L2 的 receivers_can_receive 断言相容（page
+#     不做 receiver 即可，page 槽本身保留）。
+#     ② 中间试过 receiver = orchestrator（requires 随装随在、唯一持
+#     within-session delegation 的执行者），真 e2e 三轮（09e/09g/09h）：
+#     cc 真脑一致拒绝"路由消息自证授权+用特权身份执行状态变更"（拒的是
+#     授权来源，不是动作本身；拒得对）。结论：duty 必须走安装者配置的
+#     可信 persona 渠道 → 专属操作员槽，职责在 recipe prompt 里。
+#     防回环：入库完成后 crawler emit 的信号 sender = 触发者（assistant），
+#     from_role discover 硬锁不再命中——一次 @discover 只跑一轮。
+#     The "__dealscout_update__" literal is the single contract point and THIS
+#     FILE is its authoritative carrier — the emit-side code constant
+#     `Ezagent.ActionSet.Crawler.update_signal/0` must stay byte-identical to
+#     it (the discover script's copy is substituted FROM that constant at
+#     recipe build), and the emit-side `Crawler.page_role/0` to the `page`
+#     ROLE-SLOT name (the caller-dispatch publish leg resolves the page member
+#     by that role_name; both locked config-driven by
+#     `dealscout_manifest_test.exs`, which reads the arg / role slots OUT of
+#     this parsed YAML).
+#   * prompt_templates — dealscout-crawl-directive：更新信号投递给
+#     orchestrator 时的渲染模板（PR-4 delivery transform，`{body}` 必须在场
+#     是 PromptTemplate v1 校验）。它是给 orchestrator 的**业务操作说明**
+#     （manifest 是 socialware 对平台 orchestrator 唯一的业务配置通道——
+#     orchestrator 的 persona/skill 是平台件，不为单个 socialware 改）。
+#     执行机制照 kanban-assistant skill 的 dispatch stand-in 先例
+#     （identity → target URI → Router.dispatch 不变式，kanban_dispatch.exs）；
+#     节点名/cookie 路径是 deployment 运行时细节，生产化收敛为 skill/工具面
+#     是 follow-up。
+#   * visibility_policy — public + supervised like hello/kanban, and
+#     web_anon_access: true（与 kanban 的 false 不同：dealscout 的公开面是给
+#     匿名访客看的线索页，产品语义要匿名可读）。
+name: dealscout
+version: "0.1.0"
+title: "DealScout"
+# 描述与真实数据源一致（D4 数据源诚实化，2026-07-10 段2）：当前唯一真源是
+# Hacker News（Algolia 公开检索 API，front_page + query 检索，无 token）——
+# 措辞是"科技创业/新品动态线索雷达"，不冒充商业/投融资数据（接商业源要
+# 选型+token+合规，是 follow-up 产品决策，不在本 manifest 假装已有）。
+# "发现"措辞与实现相符（段3 角色链路真化）：discover 是脚本车道（关键词粗筛，
+# 无 LLM），真"AI 发现"大脑是后续 curl-llm 槽的事，这里不冒充。
+description: "科技创业与新品动态线索雷达：discover 角色被 @ 后自动爬取 Hacker News 公开源发现线索，更新信号触发 orchestrator 自动入库并重建公开线索页（会话内 view + 匿名可读的 committed 公开页），全程零人工中继。"
+# uses 只剩 crawler（段4 D3 诚实化）：显示/页面发布都是 crawler 自带件
+# （LeadsView/CrawlerRender/CrawlerPage），bases/shape 引的 Session/Publisher/
+# Turn/Surface 是平台 domain ActionSet，不属于（也不再借）hello。
+uses:
+  - crawler
+# D5（段3，照 hello #1230）：安装时递归带上平台 orchestrator（框架 builtin
+# code-seed 定义，cc flavor 前台）——解"装完会话没人应答"（gap⑪）的最小正路，
+# 也是上面 routing 规则的 receiver 来源（requires 声明的 orchestrator 角色）。
+# conformance 的 requires_published / requires_cycle_free 断言覆盖本字段。
+requires:
+  - orchestrator
+bases:
+  - Ezagent.ActionSet.Session
+  - Ezagent.ActionSet.Publisher.SessionImpl
+shape:
+  - Ezagent.ActionSet.Turn
+  - Ezagent.ActionSet.Surface
+  - Ezagent.ActionSet.Crawler
+views:
+  - crawler_render
+roles:
+  - role_name: discover
+    fill: agent
+    recipe: dealscout-discover
+    flavor: py
+  # 入库操作员（2026-07-10 零人工中继 case-2，照 kanban-assistant 模具）：
+  # cc-headless 真脑，常设职责在 recipe prompt（materialize 时进它的
+  # CLAUDE.md——可信 persona 渠道；三轮 e2e 实证 cc 真脑拒绝"消息自证授权"，
+  # duty 必须来自安装者配置的常设上下文）。#1311 后 cc-headless 凭证自动
+  # 继承，物化即活。
+  - role_name: dealscout-assistant
+    fill: agent
+    recipe: dealscout-assistant
+    flavor: cc-headless
+  - role_name: page
+    fill: agent
+    recipe: crawler-page
+    flavor: native
+routing_rules:
+  - matcher:
+      type: and
+      items:
+        - type: text_contains
+          arg: "__dealscout_update__"
+        - type: from_role
+          arg: discover
+    receivers:
+      - dealscout-assistant
+    rule_set: dealscout-update
+    prompt_template_ref: dealscout-crawl-directive
+    position: 0
+prompt_templates:
+  # 更新信号 → dealscout-assistant 的触发投递渲染（PR-4 delivery transform）。
+  # {body} = discover 的原始信号回复（PromptTemplate v1 硬性要求在场）；
+  # {session} = 本会话 URI（delivery 渲染注入，assistant 的 dispatch 靶）。
+  # 注意分工：**职责与执行步骤在 assistant 的 recipe persona 里**（安装者
+  # 配置的可信常设上下文）；本模板只是触发事件的规整渲染——三轮 e2e 实证
+  # （09e/09g/09h）cc 真脑拒绝"消息自证授权/消息教它执行特权动作"（拒得
+  # 对），所以模板不再自证协议、不再内嵌执行机制，只报事实。
+  dealscout-crawl-directive: |
+    【dealscout 更新信号 · 平台路由投递给入库操作员】
+    会话：{session}
+    discover 报告发现新线索，原文：
+
+    {body}
+
+    （你是本会话的 dealscout-assistant；按你的常设职责处理本条。）
+legends:
+  dealscout:
+    member_set:
+      - discover
+      - dealscout-assistant
+      - page
+    bound_rule_set: dealscout-update
+    fold: false
+    # 协作协议速查（行话翻译，给不认识 dealscout 的人/agent 进场就能懂）。
+    # legend 机制只读 member_set/bound_rule_set/fold，多余 key 原样随行——
+    # protocol 是纯说明数据，不参与路由。
+    protocol: "协作协议速查：@ 一下 discover（发现角色），它会立刻爬公开源，把发现的线索连同更新信号一起回进会话；带信号的这条回复自动路由给 dealscout-assistant（入库操作员，cc 真脑），由它按常设职责用官方 CLI 跑本会话的 crawler.search/crawl_now 把线索正式入库——数据落结构化 slice，公开线索页随之自动重建，全程不需要任何人再做任何操作。人类成员也可以在会话里直接触发 crawl_now（装在本会话上的爬取动作，逐条注入线索并直接刷新页面）。消息里出现 \"__dealscout_update__\" 标记 = discover 在报告\"发现了新线索\"的更新信号；本 legend 绑定的 dealscout-update 规则只认 discover 发出的这个标记（from_role 硬锁），其他成员（包括入库完成后 crawler 自己 emit 的信号）不会再次触发——一次发现只跑一轮入库。page 角色是页面发布工具腿（dispatch-only），不接收聊天消息，不要 @ 它。"
+adapters:
+  - adapter_id: external_feed
+    role: customer
+    config: {}
+visibility_policy:
+  scope: public
+  publish_policy: supervised
+  web_anon_access: true
+owner_policy:
+  type: installer

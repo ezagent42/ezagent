@@ -1,0 +1,31 @@
+# 04e orchestrator 真脑重测（#1311 后新现实，gap⑪ 复测）—— 2026-07-10
+
+上一套证据（#1311 之前）orchestrator 未曾真回话过。本次同一会话内两问：
+
+## ① 普通话不 @（04a 截图）：60s+ 无回话——路由语义，如实记录
+
+- 05:37:30Z admin 发「大家好，这个会话是做什么的？请介绍一下。」（无 mention）
+- routing_traces id=1：**rule_id=no_match, receivers={}** —— 默认 rule 1
+  (`always → {$session_users,$mentions}`) 对 sender 本人不回投、会话无其他
+  human、无 mention → 零接收方。**"不 @ 没人应答"是现行路由规则语义**
+  （receivers 展开为空 → no_match），不是送达/大脑故障。
+
+## ② 真键盘 @orchestrator（04b 截图 autocomplete listbox）：**真回话 ✓**
+
+- 05:39:39Z admin 发「@orchestrator 请介绍一下这个会话是做什么的」
+  （结构化 mention，listbox 真实 click 插入）
+- routing_traces id=2：rule 1 命中 → orchestrator（entity://system/agent/0b401fdb-…）
+- **05:40:44Z orchestrator 回话（首包 ~65s，cc flavor 冷启）**——内容不是罐头：
+  正确说出 DealScout 是什么、数据源是 HN Algolia、discover/page 角色分工、
+  `__dealscout_update__` 信号语义、路由规则的 from_role 硬锁，甚至读懂了
+  会话名 dealscout-final-0710 的含义并主动提出"要我 @ discover 跑一次真实爬取吗"
+  （04c/04d 截图；manifest legend `protocol` 字段喂进了它的上下文——协作协议
+  速查设计生效）。
+- routing_traces id=3：回复回投 admin。
+
+## 判读
+
+**orchestrator（cc flavor 前台）真脑闭环 = 通**。#1311（cc-headless 宿主凭证
+继承）+ 既有 cc 车道在全新库、纯向导安装的会话上端到端回话，无任何手工
+凭证操作。gap⑪（"装完会话没人应答"）在 @ 路径上已消除；不 @ 的普通话
+仍无人应答是 rule 1 receivers 语义（见 ①），属产品路由策略问题而非缺陷回归。

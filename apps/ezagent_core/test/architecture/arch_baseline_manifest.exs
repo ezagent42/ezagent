@@ -352,7 +352,14 @@
   #   provider logic itself lives in the sibling `Ezagent.PluginCc.Provider` +
   #   thin `CcDeepseekAgent`/`CcHeadlessDeepseekAgent` shims (separate files, not
   #   counted here). Measured 1766→1786.
-  cc_codex_template_class_combined_loc: 1786,
+  # arch-cap-bump: +3 dealscout 零人工中继（2026-07-10，rebase 过 #1324 后实测）——
+  #   cc-headless SDK 车道死键补全：cc_agent `template_data_extra` 发射
+  #   `system_prompt`（消费链三级早已在，仅缺 producer 行；recipe
+  #   `config.system_prompt` 由此成为 cc-headless persona 车道）+
+  #   cc_headless_agent `sdk_sidecar_params` 补 `cmd_env`（T7d CLI 身份 env 的
+  #   SDK 车道 parity）。Measured 1786→1787（rebase 后实测；+1 净值——#1324 的
+  #   DeepSeek 重构已吸收原两处中的部分行）。
+  cc_codex_template_class_combined_loc: 1787,
   # P3 (resource-unification, SPEC §10 OI-3): the population-3 outside-core
   # callers (agent_bridge token registry, identity smtp_config, feishu app-cred +
   # inbox + plugin config, python log) migrated behind the `UriQuery` seam
@@ -409,7 +416,22 @@
   #   helper line (3 sites, not 12), plus {:set, :timeout_ms} (configure) and
   #   {:set, :python_phase} (handle_signal). 3 irreducible new sites (cross-slice
   #   stays 0); net +3.
-  set_effect_sites: 131,
+  # arch-cap-bump: dealscout(crawler) rebase — the ezagent_plugin_crawler plugin's
+  #   EzagentPluginCrawler.Config set-effect helpers (set_profile / set_keywords /
+  #   pin_batch / set_sources, each with a matching @spec line the scanner also
+  #   counts) contribute the crawler's Lifecycle-slice writes. This is the NET after
+  #   the Demo code-seed→YAML manifest migration (#1213) deleted the old self-publish
+  #   primitives' `{:set, …}` sites; measured 131 → 133 (cross-slice stays 0); net +2.
+  # arch-cap-bump: dealscout rework 段2 (2026-07-10) — RetentionSweeper 删除带走
+  #   Config.pin_batch/2（durable 批次 slice 从未接线，pin 无消费者）：其 @spec
+  #   `{:set, :pinned_batches, …}` 行 + 函数体 `{:set, :pinned_batches, …}` 行
+  #   两个计数点一起退场；measured 133 → 131 (cross-slice stays 0); net −2.
+  # arch-cap-bump: dealscout rework 段4 (2026-07-10) — 结构化线索留存（D2）：
+  #   `Ezagent.ActionSet.Crawler` 注入成功后的 `{:set, :items, merged}` effect
+  #   （P22 内常规 effect 路径，写自己 slice）= 1 个真实写点 + crawler.ex
+  #   moduledoc / crawler_render.ex moduledoc（读侧投影，×2）的 `{:set, :items,
+  #   ...}` 说明行 3 个计数点；measured 131 → 135 (cross-slice stays 0); net +4.
+  set_effect_sites: 135,
   cross_slice_set_violations: 0,
   missing_cap_check_mutating_actions: 0,
   kind_runtime_ordering_violations: 0,

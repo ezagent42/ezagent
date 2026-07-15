@@ -1,0 +1,62 @@
+# 06b 发现流证据 — @discover 真爬 + crawl_now/search 真 dispatch + slice 留存 + routing 审计（2026-07-10）
+
+## ① @discover（真键盘 autocomplete，05a/05b 截图）
+
+- composer 真键盘 `@dis` → `ul[role=listbox]` 出现 "discover ROLE" → 真实 click
+  插入结构化 mention → 追加文本 → Enter。
+- **3s 后** discover（py flavor，sandbox 真跑 discover.py）回复**真实爬取**的
+  HN 线索（05b 截图；条目是当日真实 HN 前排：GPT-5.6 1162 points /
+  EU Parliament Chat Control 1148 points / Show HN: 18 Words 等），回复自带
+  更新信号 `__dealscout_update__ 新线索 5 条（discover 爬取 HN 公开检索源）`。
+
+## ② routing 审计（DB routing_traces，真规则命中）
+
+```
+ id | rule_id  | receivers                                   | inserted_at
+  1 | no_match | {}                                          | 05:37:30  ← 普通话无 mention（见 04e）
+  2 | 1        | {agent/0b401fdb-…(orchestrator)}            | 05:39:39  ← @orchestrator mention
+  3 | 1        | {user/admin}                                | 05:40:44  ← orchestrator 回复回投
+  4 | 1        | {agent/98124379-…(discover)}                | 05:41:53  ← @discover mention
+  5 | 1        | {user/admin}                                | 05:41:56  ← discover 回复回投
+  6 | 2        | {agent/0e70d948-…(page)}                    | 05:41:57  ← 带信号回复 × from_role
+                                                                          discover 命中 rule 2 → page
+```
+
+## ③ 已知平台缺口（如实，不修——#1201 ②）
+
+rule 2 命中后对 native page 成员的 receive 投递死于 bridge 缺失（server log 原文）：
+
+```
+[warning] AgentBridge deliver dropped for entity://system/agent/0e70d948-…:
+:no_sandbox_respawn_state. Message from entity://system/agent/98124379-…:
+__dealscout_update__ 新线索 5 条（discover 爬取 HN 公开检索源）
+```
+
+生产腿是 Crawler 的 caller-dispatch 直呼（见 08c），chat 信号腿保留为声明式
+痕迹 + #1201 ② 修复后的回切靶子（manifest 注释同述）。
+
+## ④ crawl_now / search 真 dispatch（admin 身份，CapBAC 不绕过）
+
+dealscout_dispatch.exs（本目录随附）：`Ezagent.Entity.authenticate(token)` →
+caps → `Invocation.dispatch` :call；token 用 `mix ezagent.user.token
+entity://system/user/admin --mint` 自助铸造（**token 不入库**）。
+
+```
+crawler.crawl_now {}                 → {:ok, %{injected: 20}}   （05:45:12Z）
+crawler.search {"query":"AI agent"}  → {:ok, %{injected: 20}}   （05:52:5xZ，条目带 {search:public} 标注）
+```
+
+20 条真实线索逐条 session.send 入会话（06a 截图：线索消息 +
+"__dealscout_update__ 新线索 20 条（crawl）"chat 摘要）。
+
+## ⑤ 结构化留存（:crawler slice 的 :items，view/公开页的数据面）
+
+erpc 只读探针（server 节点内 `CrawlerRender.items_result/1`，段5 修复后的
+可辨别读接口）：
+
+```
+{:items, 20, [%{"retained_at" => "2026-07-10T05:45:11Z", "source" => "public",
+  "source_type" => "public", "summary" => "1162 points by logickkk1", ...}, ...]}
+```
+
+（search 一轮后按 url+title 去重累积 20→40 条，公开页计数同步，见 08a/08b。）
