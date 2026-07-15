@@ -2,7 +2,7 @@
 
 > **Task:** W29 Demo P0 — demo-e2e-dispatch
 > **Branch:** `feat/demo-e2e-dispatch`
-> **PR:** none
+> **PR:** https://github.com/ezagent42/ezagent/pull/1416
 > **Dev:** gagameow / Codex
 > **returned_at:** 2026-07-15 15:01 +0800
 > **deadline:** 2026-07-15 23:59 +0800
@@ -69,8 +69,8 @@ These preflights should be explicit gates before a future full demo run.
 - Branch: `feat/demo-e2e-dispatch`
 - Canary-test code baseline: `ae5a9bca9b2100cea5214b3c0a4ca513ad4588d7`
 - PR rebase base: `ced4195df04341890fd2c9f5332d9cfb054917c5`
-- Code PR/CI: none; this is a deferred operational return, not a merge-ready code
-  change.
+- Evidence PR: [#1416](https://github.com/ezagent42/ezagent/pull/1416); this is a
+  deferred operational return, not proof that the full E2E passed.
 - Documentation verification: `git diff --check` and evidence-file inventory are
   the applicable local gates.
 
