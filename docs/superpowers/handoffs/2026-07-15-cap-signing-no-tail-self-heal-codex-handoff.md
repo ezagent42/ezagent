@@ -1,7 +1,7 @@
 # Codex handoff — cap-signing no-tail self-healing upgrade
 
 **Spec (authoritative, build to it):** `docs/superpowers/specs/2026-07-15-cap-signing-no-tail-self-heal.md` (v3, coordinator-verified SOUND after two codex adversarial reviews).
-**Owner branch:** `feat/cap-signing-notail-upgrade` — you own it, land sub-steps, coordinator reviews + merges each to `main`. Reuse the artifacts already on that branch (`test/support/caps_json_scanner.ex`, `test/architecture/cap_signing_fail_loud_test.exs`, the investigation test).
+**Owner branch:** `feat/cap-signing-notail-upgrade` (base `origin/main`) — **you own it fully. Self-drive ALL phases onto this ONE branch, commit per phase, push incrementally. Do NOT open a PR, do NOT merge to `main`, and do NOT wait for coordinator review between phases — keep moving until the whole build (P0→P3) is done.** Then return the target-branch HEAD SHA to the coordinator, who does acceptance + the single merge to `main`. Reuse the artifacts already on that branch (`test/support/caps_json_scanner.ex`, `test/architecture/cap_signing_fail_loud_test.exs`, the investigation test).
 **Goal:** every existing authorizer cap becomes signed (0 unsigned tail) so the lead can later flip `require_signature: true`. **This work does NOT flip enforce** (dual-read stays; the flip is a separate manual lead decision).
 
 ## Non-negotiable constraints (the 9 hardening fixes — the two review rounds exist because these are subtle)
@@ -16,7 +16,7 @@
 9. **Resolver-coverage gate enumerates the FULL `Cap.issue` surface** (incl. responsibility_assignments, world layout_bootstrap), not just §7; unknown class → quarantine + flagged.
 Plus: **quarantine-never-blind-sign** (#154); **reads never write** (§4 decision 3); heal is **lifecycle-triggered, background-executed** (sync-in-activate deadlocks); genesis self-signs via `{:genesis, admin}` (no exemption).
 
-## Phasing (each phase = a sub-step: full `mix ci.local` green + rebased on main before self-merge; Elixir via editor; `MIX_TEST_PARTITION`)
+## Phasing (each phase = a commit ON THE TARGET BRANCH: full `mix ci.local` green + gates + rebased on latest `main` before landing; self-drive P0→P3 continuously, NO per-phase coordinator gate, NO PR; Elixir via editor; `MIX_TEST_PARTITION`)
 - **P0** — fix future issue-sites + seed-writers: route born-unsigned structural classes AND `Users.create`/`create_read_only` through provable-authority `Cap.issue` / validation so new entities are born signed. Dual-read unchanged.
 - **P1** — the reconciler (pure `plan/2` keyed on `signed_and_valid?/2`) + `CapReissuePolicy` registry + background-executed heal (enqueue on activate, post-ready worker re-issues via the existing outbox lane) + exact-artifact CAS + two-home convergence. Retire the EventLog `CapSigningBackfill` (module + test + mix task + gate allowlist + the handoff `dry_run` runbook ref).
 - **P2** — `mix ezagent.caps.signing_audit [--strict]` (4 sources, `signed_and_valid?`, both buckets) + the durable quarantine ledger with tombstoning + the enforce-mode fail-loud runtime invariant + the resolver-coverage gate. Hermetic tests throughout (no machine-coupled counts).
@@ -28,3 +28,6 @@ Spec §9 — audit=0 (unsigned-authorizer AND open-quarantine both 0, four sourc
 
 ## Open question for you to resolve in the impl-plan
 OQ-1 (spec §11): re-issue-in-place (identity-preserving, recommended default) vs safe-replace (revoke+regrant) per class — decide per class, in-place default; safe-replace only where the original authority is unresolvable-but-re-derivable from live session/membership state.
+
+## Return (how to hand back)
+Self-drive the whole build (P0→P3 code + the P3 sweeper/audit tooling; P4 enforce-flip is the lead's, NOT yours) onto `feat/cap-signing-notail-upgrade`, gating each phase on `mix ci.local` locally but **never blocking on the coordinator between phases**. When the whole build is done and the branch is green + rebased on latest `main`, **return the target-branch HEAD SHA + a per-phase summary** to the coordinator. Do NOT open a PR or merge to `main` — the coordinator does acceptance (independent verification) + the single merge. If you hit a genuine blocker that needs a lead decision, surface it and keep the rest moving.
