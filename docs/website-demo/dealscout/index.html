@@ -24,15 +24,15 @@
   .intent-hint{font-size:12px;color:var(--ink-4);margin-top:6px;text-align:center}
 
   /* Input in hero */
-  .hero-input{width:100%;max-width:580px;display:flex;gap:10px;align-items:stretch}
-  .hero-input textarea{flex:1;padding:16px 18px;border:1px solid var(--line);border-radius:var(--r-lg);font-size:16px;font-family:inherit;background:var(--card);color:var(--ink);resize:none;box-sizing:border-box;min-height:88px;overflow-y:auto;transition:border-color .15s var(--ease-out),box-shadow .15s var(--ease-out)}
+  .hero-input{width:100%;max-width:580px;position:relative}
+  .hero-input textarea{width:100%;padding:16px 56px 16px 18px;border:1px solid var(--line);border-radius:var(--r-lg);font-size:16px;font-family:inherit;background:var(--card);color:var(--ink);resize:none;box-sizing:border-box;min-height:88px;overflow-y:auto;transition:border-color .15s var(--ease-out),box-shadow .15s var(--ease-out)}
   .hero-input textarea:focus{outline:none;border-color:var(--accent);box-shadow:0 0 0 3px var(--accent-wash)}
-  .hero-input .btn.primary{align-self:flex-end}
+  .hero-input .btn.primary{position:absolute;bottom:16px;right:12px;padding:8px 16px;font-size:13px}
 
   /* Bottom bar in results mode */
   .bottom-bar{display:none;padding:12px 16px;border-top:1px solid var(--line);background:var(--ground);flex-shrink:0}
-  .bottom-bar.show{display:flex;gap:10px;align-items:center}
-  .bottom-bar textarea{flex:1;padding:12px 16px;border:1px solid var(--line);border-radius:var(--r-lg);font-size:14px;font-family:inherit;background:var(--card);color:var(--ink);resize:none;box-sizing:border-box;height:48px;overflow-y:auto;transition:border-color .15s var(--ease-out),box-shadow .15s var(--ease-out)}
+  .bottom-bar.show{display:flex;position:relative;max-width:100%}
+  .bottom-bar textarea{flex:1;padding:12px 56px 12px 16px;border:1px solid var(--line);border-radius:var(--r-lg);font-size:14px;font-family:inherit;background:var(--card);color:var(--ink);resize:none;box-sizing:border-box;height:48px;overflow-y:auto;transition:border-color .15s var(--ease-out),box-shadow .15s var(--ease-out)}
   .bottom-bar textarea:focus{outline:none;border-color:var(--accent);box-shadow:0 0 0 3px var(--accent-wash)}
 
   /* Results area */
@@ -125,7 +125,7 @@
 
 <div class="bottom-bar" id="bottomBar">
   <textarea id="needDesc2" placeholder="继续描述…" onkeydown="if(event.key==='Enter'&&!event.shiftKey){event.preventDefault();runMatch2();}"></textarea>
-  <button class="btn primary" onclick="runMatch2()">发送 · Send</button>
+  <button class="btn primary" style="position:absolute;bottom:16px;right:20px;padding:8px 16px;font-size:13px" onclick="runMatch2()">发送 · Send</button>
 </div>
 
 <div class="empty-hint">后端待建：互联网爬取 + 语义匹配 + dispatch refresh_page（参照 dealscout-refresh-v2）</div>
