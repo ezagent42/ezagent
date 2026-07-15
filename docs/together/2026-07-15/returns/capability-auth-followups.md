@@ -81,14 +81,15 @@ with `:no_binding`.
   per-tenant table inventory test to report `1 failure` out of 2094 core tests.
   The run later also logged a test-application teardown `noproc`. This is not
   claimed green; no changed file appears in either failure.
-- Clean PR-head CI: pending the final force-with-lease push below.
+- PR head `10f0e5380d6c8da7befaab4fb7562dd94dbad924`: deterministic
+  gate, gitleaks, return advisory, and dev-together ownership check PASS;
+  macOS full-suite and dispatch canary skipped by workflow policy.
 
 ## Remaining risk / handoff
 
 - Task 6 intentionally does not create an untrusted-plugin rule registry or
   immediate-revocation transaction protocol; both would exceed the accepted
   trusted-code model and this follow-up's scope.
-- Local full-suite proof is contaminated by shared test-database state, so the
-  clean PR runner is the final full-suite authority. If PR CI reproduces a
-  product failure, this return must be updated and the PR is not ready.
+- Local full-suite proof is contaminated by shared test-database state; the
+  clean deterministic PR runner passed on the recorded content head above.
 - Merge target is `main`. Do not self-merge; lead owns close.
