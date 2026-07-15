@@ -1,7 +1,7 @@
 # Agent skill 加载修复方案
 
 - **日期**:2026-07-15(同日两轮更新:codex 对抗性 review 11 条 findings 已消化;Allen PR 回复已并入)
-- **状态**:**D1 已裁**(Allen 2026-07-15:走显式路径)→ R1/R2 转入实施;R0 盘点脚本已按 codex findings 重写并本机复验;D2 澄清见 §3;新增 §6 gate 调研(Allen 问题)
+- **状态**:**D1、D2 均已裁**(2026-07-15:D1=显式路径/plugin-bundle,Allen;D2 第 3 层=路线 A boot 车道 + 两个策略子项,gaga/#1294 作者)→ R1/R2 转入实施;R0 盘点脚本已按 codex findings 重写并本机复验;新增 §6 gate 调研(Allen 问题)
 - **背景调查**:团队反馈"agent 无法 load skill,agent 读取 config dir 启动的路径不通"。根因排查结论见下 §1(gaga 2026-07-15,memory `project-headless-skill-loading-gap`)
 - **关联**:PR #1323(open,headless MCP 半边修复)、#1294(PTY 早于 config_dir 物化,已修)、#1405(bridge join 静默悬案,PTY 侧)、#1266(skill 分发 P1-P3)、#1332(builtin reseed 的 no-clobber + 显式 reseed 先例)
 
@@ -73,17 +73,23 @@ skill 分发管线的**写入侧是通的**:recipe `skills: [ref]` → `attach_r
 
 **R1 验收含 G1 读取侧 gate(见 §6)**。
 
-### R2 — 存量一次性 reseed(operator mix task)
+### R2 — 存量 reconcile:一套实现,双触发面【2026-07-15 已裁,含路线 A boot 车道】
 
-新任务 `mix ezagent.agents.reseed_skills [--all | --agent <uri>] [--dry-run]`,行为契约:
+一套共享的 skills-reconcile 实现,两个触发面:
 
-1. **只动 `<config_dir>/skills/` 子树**,不 rename home 本体、不动 marker、不碰凭证/CLAUDE.md 之外的任何文件 —— 不踩 #1096 类"脚下换目录"的雷(claude 启动时读 skill,刷完等下次重启自然生效)。
-2. 每个 ref 用 staging + rename 原子替换(仿 `SkillSeed` 的 `.staging-` 模式);来源 = `SkillRegistry.resolve(ref)`。
-3. 需要时幂等补 `CLAUDE.md` hint(复用 `OrchestratorBootstrap.install_role_sandbox/2` 的语义,"re-appends only if absent")。
-4. **default no-clobber、显式 operator 触发** —— 与 `mix ezagent.socialware.reseed_builtins <名> --force`(#1332)同一哲学,不发明新 Decision。
-5. headless agent 的 home 一并刷,但注明:**R1 未落地前刷了也读不到**,只是提前把字节备齐。
+- **boot 车道(自动,路线 A,gaga 已裁)**:每次重启在 `SkillSeed.boot!` 之后 sweep 全部 durable agent home;用 skills-manifest hash 戳做 O(1) 跳过未变更 agent;**fail-soft**(telemetry + 继续 boot,绝不挡启动)。镜像 SkillSeed/ManifestSeed 的 boot-lane 惯例。
+- **mix task(手动补刀)**:`mix ezagent.agents.reseed_skills [--all | --agent <uri>] [--dry-run]`,覆盖"运行中途 governance 发布 recipe 变更"与定点修复场景。
 
-执行顺序:**R0 盘点 → R1(#1323 车道)→ R2 sweep**。PTY 侧(orchestrator=cc-deepseek 等)不依赖 R1,R2 可先行受益。
+reconcile 行为契约(两面共用):
+
+1. **只动 `<config_dir>/skills/` 子树**,不 rename home 本体、不动 marker、不碰凭证/CLAUDE.md 之外的任何文件 —— 不踩 #1096/#1294"脚下换目录"的雷;**marker 短路与 respawn 不重物化两个钉死语义零改动**(这是路线 A 的立身之本)。
+2. 每个 ref 用 staging + rename 原子替换(仿 `SkillSeed` 的 `.staging-` 模式);来源 = `SkillRegistry.resolve(ref)`,期望 refs 经 `RecipeRegistry.lookup/2`(tenant-aware)。
+3. **覆盖策略(已裁)**:per-agent 副本 = 派生缓存,手改不存活 —— 覆盖 + telemetry(hash 三方比对识别手改并上报);定制走 EZAGENT_HOME 母本(SkillSeed 已有"手改保留")。
+4. **删除策略(已裁)**:recipe 已不再声明的 ref **保留 + telemetry**,v1 不自动删。
+5. 需要时幂等补 `CLAUDE.md` hint(复用 `OrchestratorBootstrap.install_role_sandbox/2` 的语义,"re-appends only if absent")。
+6. headless agent 的 home 一并刷(R1 未落地前读不到,只是字节备齐)。
+
+执行顺序:**R0 盘点 → R1(#1323 车道)→ R2 落地(boot 车道 + task)**。PTY 侧(orchestrator=cc-deepseek 等)不依赖 R1,R2 可先行受益。
 
 ---
 
@@ -93,12 +99,16 @@ skill 分发管线的**写入侧是通的**:recipe `skills: [ref]` → `attach_r
 - **D2【已澄清,维持 defer】**:Allen 问"自动重物化机制是指重启后加载 skill 到 EZAGENT_HOME 吗?是的话本次一起修" —— **不是那一层**。分三层说清:
   1. **重启 → EZAGENT_HOME**:已存在且有 gate。这正是 Allen 记忆中"deploy 时不把 skill 装进 docker"那次修复 —— **#1266**(`dd5216bfa` release-bundled skill registry + `234f7a063` seed skills into ezagent home):skills 打进各 app `priv/skills_seed/` 随 release 进 docker,`SkillSeed.boot!` 每次 boot 复制/升级进 `$EZAGENT_HOME/<profile>/skills/`(staging+rename 原子、operator 手改保留 —— 本机日志实证:kanban-assistant 曾被本地改过,release upgrade 被 SKIP 并保留 operator 版本)。gate = `skill_distribution_prod_shape_test.exs`。**本层无需再修**。
   2. **EZAGENT_HOME → per-agent config home(存量)**:断点 B 所在层,**本轮由 R2 修**(一次性 reseed task)。
-  3. **本层的"自动传播"**(recipe/seed 变更自动刷进存量 agent home,即原 D2 三态化):仍 defer —— 要动 marker 短路(home_runtime.ex:303)和 respawn 不重物化(spawn.ex:312)两个 #1294 后钉死的语义,须走完整 grill;现阶段"变更后手动跑一次 R2"够用。若 Allen 认为第 2 层的一次性修复不够、要第 3 层自动化,再单独立项过 grill。
+  3. **本层的"自动传播"【已裁,gaga(#1294 作者)2026-07-15:路线 A(boot 车道)】**:每次重启在 `SkillSeed.boot!` 之后加一步 boot sweep,把每个 durable agent home 的 `skills/` 子树 reconcile 到当前 recipe+seed。选 A 的关键理由:**#1294 钉死的两个语义零改动** —— sweep 不走 spawn 路径(marker 短路原样)、respawn 仍不重物化(spawn.ex:312 原样);boot 窗口里 PTY 尚未拉起,写的又只是 framework 独占的 skills 子树(per-ref staging+rename,**不 rename home 本体**),即使与早起的 respawn 相撞,最坏也只是"这一代进程用旧 skill、下次重启生效",不崩不哑。落选:路线 B(spawn/respawn 时 reconcile —— 要动两处钉死语义、过完整 grill,收益增量只有"运行中途变更+恰好 respawn"的罕见场景)、路线 C(纯手动 —— 存量更新依赖人记得跑 task,正是本次事故"静默 stale"的成因形态)。两个策略子项(gaga 同日拍,均按建议):
+     - **删除策略**:recipe 已不再声明的 ref(unresolvable)v1 **保留 + telemetry**,不自动删;
+     - **覆盖策略**:per-agent 副本定位为**派生缓存**(类比 node_modules)—— 手改不存活,sweep 覆盖 + telemetry(hash 三方比对识别手改);定制的正确层是 EZAGENT_HOME 母本(SkillSeed 在那层已有"手改保留");per-agent 合法 override 机制 v1 不开口。
+     实现与 R2 task 共用同一套 reconcile(见 §2 R2);运行中途(governance CR)发布的 recipe 变更等下次重启或手动 R2 —— 已接受的残留。
 
 ## 4. 边界(本方案刻意不做)
 
-- 不改 spawn / respawn 语义,不移除 marker 短路;
-- 不做任何自动重物化(那是 D2);
+- 不改 spawn / respawn 语义,不移除 marker 短路(路线 A 的 boot sweep 不经过这两处,零改动);
+- 不做 spawn/respawn 时的 reconcile(路线 B 落选),不做整 home 自动重物化;boot 车道的 skills-子树 sweep **属于**本方案范围(路线 A,已裁);
+- 不做 per-agent skill 的合法 override 机制(v1 不开口,见 §3 覆盖策略);
 - 不动 `ARCHITECTURE.md`;
 - 不处理 orphan home(盘点只列出,处置另议);
 - 断点 C(quiet no-attach)不在范围。
@@ -106,7 +116,7 @@ skill 分发管线的**写入侧是通的**:recipe `skills: [ref]` → `attach_r
 ## 5. 验证方式
 
 - **R1**:cc-headless e2e —— 起一个带 `skills: [ref]` 的 role agent,让它自述可用 skills / 实际 invoke 一次(可挂在 `scripts/cc_headless_sdk_sidecar_e2e_seed.exs` 之后);worker 侧加单测断言 options 携带 plugins/skills 配置。**含 §6 G1 gate**。
-- **R2**:sweep 前后各跑一次 R0 盘点,`missing`/`outdated` 归零(headless 项在 R1 前允许保留标注);抽查一个 PTY agent 重启后 claude 内可见 skill。
+- **R2(task + boot 车道)**:sweep 前后各跑一次 R0 盘点,`missing`/`outdated` 归零(headless 项在 R1 前允许保留标注);抽查一个 PTY agent 重启后 claude 内可见 skill。boot 车道专项:①改母本/recipe 后重启,存量 home 自动对齐(hash 相等);②手改某 agent 副本 → 重启被覆盖 + 手改覆盖 telemetry;③recipe 移除 ref → 副本保留 + telemetry;④注入失败(如权限)不挡 boot,telemetry 可见;⑤未变更 agent 走 manifest-hash 快速跳过(boot 耗时有界)。
 - 本地 dev boot 前置:`EZAGENT_SIGNING_SEED_V1`(≥32 字节,#1399 引入,#1401 runbook)+ `mix ecto.migrate`。已写入 `.claude/skills/ezagent-developer` 供测试指引。
 
 ## 6. gate 调研:为什么"测试环境 ≠ 部署环境"的 gate 漏过了本次 bug(Allen 问题)
