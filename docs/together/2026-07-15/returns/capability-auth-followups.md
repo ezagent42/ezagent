@@ -2,103 +2,93 @@
 > **Branch:** `fix/capability-auth-followups`
 > **PR:** https://github.com/ezagent42/ezagent/pull/1412
 > **Dev:** codex
-> **returned_at:** 2026-07-15T14:11:58+08:00
-> **deadline:** 2026-07-15 EOD +0800
-> **deadline_status:** met
+> **returned_at:** 2026-07-15
 
 ## Revision
 
-- Original base: `b050f15bcb17f7392dfb2a392bc220eb9c83fc1d`
-- Rebase base: `4956804acc4fdeb77a611c70edf389fc2b0f9e4e`
-- Implementation head before return/PR metadata: `c9c8645389423195972a8d826a31762fac9bb8cd`
-- PR creation head (includes this return record): `c302cba50070a0f3107596f324014c2d9113a67c`
-- CI-verified rebased PR head: `562df8bfccae3f215da58531da1760d3c6656829`
-- Commits:
-  - `6cfed613e test(web): close EntityCaps LiveAuth matrix`
-  - `164362ffb fix(session): verify member capability idempotency reads`
-  - `78780bb76 fix(world): count verified entity capabilities`
-  - `c9c864538 fix(email): pin inbound authority provenance`
+- Latest base: `c7beace664284f31298c524871d7fa5470e10052`
+- Implementation head before this return update:
+  `f4f5785d37817078ab9fa2a3fa197ac1254ce180`
+- Commits after the latest rebase:
+  - `a8ecc8efb test(web): close EntityCaps LiveAuth matrix`
+  - `2c195c924 fix(session): verify member capability idempotency reads`
+  - `4fa088871 fix(world): count verified entity capabilities`
+  - `99cfa656c fix(email): pin inbound authority provenance`
+  - `95c48c583 docs(together): return capability auth follow-ups`
+  - `b114a21b0 docs(capbac): define email inbound authority decision`
+  - `bd3bb1fc6 docs(capbac): plan email inbound authority decision`
+  - `6efaca159 fix(email): centralize inbound authority decisions`
+  - `f4f5785d3 test(email): cover authority removal and signing retry`
 
-## What changed
+## Result and DoD
 
-- LiveAuth now has the complete online/cold User+Agent, revoke/restart,
-  signature, receiver, reader-failure, and no-raw-fallback regression matrix.
-  Production already used `EntityCaps.load/1`, so this slice is test-only.
-- Session join idempotency continues to use `EntityCaps.load_persisted/1` and now
-  treats reader exceptions as “grant not observed.” Invalid-signature and
-  wrong-receiver persisted artifacts cannot suppress the required join grant.
-- World user list/detail capability counts use verified `EntityCaps.load/1`
-  results. Runtime/projection divergence, stale revoked rows, reader failure,
-  and removal of both raw-reader allowlist entries are pinned.
-- Email inbound authority is issued through `Cap.issue/3` under the existing
-  narrow `{:rule, :verified_email_binding, binding_actor}` category. The
-  durable binding's `bound_by` entity is provenance; the synthetic email
-  principal is the signed receiver. The previous unsigned hand-stamped inline
-  artifact and its constructor-gate exception are removed. The authority join
-  fails closed unless the durable row and email projection agree on session,
-  adapter, target, and workspace, and `bound_by` is an entity URI.
+| Task | status | result |
+|---|---|---|
+| 3 — LiveAuth | met | Complete online/cold User+cold Agent, revoke/restart, invalid signature, wrong receiver, reader failure, and no-raw-fallback matrix. Production already used `EntityCaps.load/1`, so this is honestly test-only. |
+| 4 — Session MemberCap | met | Uses `EntityCaps.load_persisted/1`; invalid/wrong-receiver artifacts do not suppress required grants; reader failure means “not observed”; invariant forbids `SnapshotStore.latest/1` fallback. |
+| 5 — World cap count | met | User list/detail count verified `EntityCaps.load/1` results; runtime-only grants count, stale revoked projection data does not, reader failure is zero, UI shape is unchanged, raw-reader exceptions removed. |
+| 6 — Email inbound authority | met | Replaced public inline unsigned minting with one private authority decision home. A fresh durable projection/parent join validates receiver, provenance, adapter, target, workspace, actor, and message authentication before `Cap.issue/3` issues one receiver-bound cap. Deterministic reject deletes; reader/signing/dispatch failure retains for retry. |
 
-## TDD evidence
+Task 6 is governed by
+`docs/superpowers/specs/2026-07-15-email-inbound-authority-decision.md`.
+The accepted threat model treats release-loaded domain/plugin code as trusted;
+generic rule issuance remains a trusted-code assertion. The authorization
+linearization point is the successful fresh durable join, so an operation
+already admitted may finish after a concurrent unbind. A normal unbind deletes
+the parent and cascades the email projection by FK; the next fresh read rejects
+with `:no_binding`.
 
-- Task 3: production behavior was already present from #1409; the expanded
-  user-facing mount matrix ran `7 tests, 0 failures`. No production rewrite was
-  made merely to manufacture a diff.
-- Task 4 RED: `member_cap_verified_reader_test.exs` ran `2 tests, 1 failure`
-  because the reader did not rescue infrastructure failure. GREEN: focused
-  session suite `10 tests, 0 failures`.
-- Task 5 RED: world focused suite ran `4 tests, 4 failures` against raw
-  `length(user.caps)`. GREEN: `4 tests, 0 failures` after the facade count.
-- Task 6 boundary RED: with `require_signature: true`, the old unsigned inline
-  cap still produced `{:ok, %{stored: true}}` through real
-  `Invocation.dispatch/1`. The new wished-for `mint/2` + invariant suite then
-  ran `9 tests, 9 failures`. GREEN: email focused + pipeline `18 tests, 0
-  failures`; signing/invariant group `16 tests, 0 failures`. Review follow-up
-  RED: a corrupt email projection borrowed provenance from an unrelated binding
-  and injected successfully (`10 tests, 1 failure`). GREEN: full email plugin
-  `87/0`; Cap signing/chokepoint focused group `29/0`.
-- Post-rebase combined evidence: core `34/0`, session `10/0`, email `87/0`,
-  world `4/0`, web `7/0`.
+## TDD and regression evidence
 
-## DoD reconciliation
+- Task 3: expanded LiveAuth matrix `7 tests, 0 failures`; no production rewrite.
+- Task 4 RED: reader-failure case initially failed (`2 tests, 1 failure`). GREEN:
+  member-cap focused suite `10 tests, 0 failures`.
+- Task 5 RED: four focused tests failed against `length(user.caps)`. GREEN:
+  focused world count suite `4 tests, 0 failures`.
+- Task 6 boundary RED: under real `require_signature: true` enforcement the old
+  unsigned inline artifact exposed the boundary. Wished-for Authority API suite
+  then failed `10/10`; pipeline validation RED failed `12/29`. GREEN after the
+  minimum authority implementation: `30/30` focused.
+- Review follow-up: real FK-cascade unbind and real signing-seed outage tests
+  pin delete/no-dispatch and retry/no-delete respectively. Focused authority +
+  pipeline: `25/25`.
+- Latest post-rebase regression: Cap/signing core `37/37`, email `102/102`,
+  world `202/202`, LiveAuth `7/7`, member-cap `10/10`.
 
-| # | DoD line | status | proof / open decision |
-|---|----------|--------|-----------------------|
-| 1 | LiveAuth complete verified EntityCaps matrix and no fallback | met | `apps/ezagent_web/test/ezagent_web/live_auth_caps_test.exs` |
-| 2 | MemberCap verified persisted-reader semantics and invariant | met | focused `10/0`; `member_cap_verified_reader_test.exs` |
-| 3 | World counts verified current caps, failure=0, stable output shape | met | focused `4/0`; raw-reader gate shrank by two entries |
-| 4 | Email inbound has reviewed receiver/provenance-bound authority | met | real enforcement dispatch; full email `87/0`; Cap signing/chokepoint `29/0` |
-| 5 | Complete local gates green | not-met | latest `origin/main` itself is red on arch/uri/check_invariants; see below |
-| 6 | Independent review has no Critical/Important | met | first review found two Important; rebased `c9c864538` contains both fixes; re-review: 0 Critical, 0 Important |
-| 7 | PR-head protected CI green | met | rebased `562df8bfc`: deterministic gate, gitleaks, return advisory, and ownership check passed; conditional macOS/canary jobs skipped |
+## Review
 
-**Method friction:** the Task 6 plan correctly required a real enforcement test:
-`require_signature` does not filter inline `ctx.caps`, which was not apparent
-from matcher-only tests. The repository's latest `main` is already red under
-three required static gates, so the machine return gate cannot be honestly
-claimed locally without an upstream repair.
+- Design review first challenged the public rule primitive and unbind race.
+  The user clarified the trusted release-code threat model; the revised design
+  explicitly records that boundary and the fresh-join linearization semantics.
+- Plan review: 0 Critical, 0 Important; approved.
+- Implementation review first found two Important coverage gaps and one Minor
+  environment-restore issue. The real reachable paths were added without
+  disabling FK constraints or manufacturing an orphan state.
+- Final independent review of `36268a1..0d5167f84` (content-equivalent before
+  the latest rebase): 0 Critical, 0 Important, 0 Minor; Ready.
 
 ## Gates
 
-- `mix ezagent.doc.scan`: PASS.
+- `mix ezagent.check_invariants`: PASS.
+- `mix ezagent.arch.scan`: PASS, including
+  `concatenated_namespace_modules: count=0 cap=0` after a fresh compile.
+- `mix ezagent.doc.scan`: PASS (`404/404` documented public defs baseline).
+- `mix ezagent.uri_query.scan`: PASS.
 - `git diff --check`: PASS.
-- Focused EntityCaps access/mutation and signing gates: PASS (`28/0`).
-- `mix ezagent.arch.scan`: FAIL on latest `origin/main` and this branch with the
-  same five pre-existing counters (SpawnRegistry call/module/off-chokepoint,
-  `spawn_fresh_unsanctioned`, `all_slices_unsanctioned`).
-- `mix ezagent.uri_query.scan`: FAIL on latest `origin/main` and this branch with
-  the same six pre-existing `home_path_in_runtime_code` findings.
-- `mix ezagent.check_invariants`: FAIL on four pre-existing
-  `apps/ezagent_domain_pty` `Phoenix.PubSub.broadcast` lines.
-- `SHELL=/bin/bash mix precommit`: started the full suite; core reported three
-  PostgreSQL sandbox/session-create timeouts and identity reported one existing
-  `ConfigEvolveTest` failure. Remaining apps were stopped after the failure was
-  established. No failure named a changed file.
-- PR #1412 rebased head `562df8bfc`: all required GitHub checks PASS. Conditional
-  macOS full-suite and canary jobs were skipped by workflow policy.
+- `SHELL=/bin/bash mix precommit`: all tests ran, but the shared local test DB
+  contained two tables not defined by this source checkout
+  (`agent_creation_inventory`, `agent_retirement_obligations`), causing the
+  per-tenant table inventory test to report `1 failure` out of 2094 core tests.
+  The run later also logged a test-application teardown `noproc`. This is not
+  claimed green; no changed file appears in either failure.
+- Clean PR-head CI: pending the final force-with-lease push below.
 
-## Remaining risk / merge request
+## Remaining risk / handoff
 
-- Local all-gate green remains unclaimable because the same static findings
-  reproduce on the rebased `origin/main`; that upstream debt is outside this
-  PR. Protected PR-head CI is green.
-- Merge target is `main`; do not self-merge. Lead owns close.
+- Task 6 intentionally does not create an untrusted-plugin rule registry or
+  immediate-revocation transaction protocol; both would exceed the accepted
+  trusted-code model and this follow-up's scope.
+- Local full-suite proof is contaminated by shared test-database state, so the
+  clean PR runner is the final full-suite authority. If PR CI reproduces a
+  product failure, this return must be updated and the PR is not ready.
+- Merge target is `main`. Do not self-merge; lead owns close.
