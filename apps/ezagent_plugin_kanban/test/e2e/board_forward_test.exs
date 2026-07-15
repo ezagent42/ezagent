@@ -144,7 +144,22 @@ defmodule EzagentPluginKanban.E2E.BoardForwardTest do
                dispatch(board_uri, :add_node, %{parent_id: "", title: "根"}, admin_ctx)
 
       # to_assistant 自身份跨 session dispatch kanban.get_tree 到该板成功(只读钥匙)
-      assert {:ok, %{tree: _tree}} = dispatch_as(to_assistant, board_uri, :get_tree, %{})
+      # 数据回流(1):接收方读到的是**挂载之后**源板新增的 n1 —— 证明是活引用、非挂载时快照拷贝
+      assert {:ok, %{tree: %{nodes: nodes_after_mount}}} =
+               dispatch_as(to_assistant, board_uri, :get_tree, %{})
+
+      assert Map.has_key?(nodes_after_mount, "n1"),
+             "接收方应读到挂载后源板新增的 n1(数据回流:活引用)"
+
+      # 数据回流(2):源板再改一次 → 接收方重读立即看到最新 —— 证明持续回流,非仅挂载时刻
+      assert {:ok, %{id: "n2"}} =
+               dispatch(board_uri, :add_node, %{parent_id: "n1", title: "回流验证节点"}, admin_ctx)
+
+      assert {:ok, %{tree: %{nodes: nodes_after_change}}} =
+               dispatch_as(to_assistant, board_uri, :get_tree, %{})
+
+      assert Map.has_key?(nodes_after_change, "n2"),
+             "接收方重读应看到源板最新新增的 n2(数据回流:每次读源板活数据)"
 
       # 只读:dispatch kanban.add_node(写)被拒(没给写钥匙)
       assert {:error, :unauthorized} =
