@@ -4,63 +4,69 @@
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
 <title>投融资撮合树洞 · DealScout · Ezagent</title>
-<meta name="description" content="说出你找什么——钱、项目、联合创始人。AI 循着信号把对的那一方捞到你面前。">
+<meta name="description" content="说出你找什么，AI 从互联网捞信号，把对的那一方捞到你面前。">
 <link rel="stylesheet" href="https://cdn.jsdelivr.net/gh/ezagent42/design-system@main/styles.css">
 <style>
-  body{max-width:1060px;margin:40px auto;padding:0 24px 80px;background:var(--ground);color:var(--ink);font-family:var(--font-ui);font-weight:450;-webkit-font-smoothing:antialiased}
-  .back{display:inline-block;margin-bottom:16px;font-size:13px;color:var(--ink-3);text-decoration:none;transition:color .15s var(--ease-out)}
-  .back:hover{color:var(--accent)}
+  body{margin:0;background:var(--ground);color:var(--ink);font-family:var(--font-ui);font-weight:450;-webkit-font-smoothing:antialiased;height:100vh;display:flex;flex-direction:column}
 
-  .top-nav{display:flex;gap:8px;margin-bottom:20px;flex-wrap:wrap}
+  .top-nav{display:flex;gap:8px;padding:12px 16px;flex-wrap:wrap;flex-shrink:0}
   .top-nav a{font-size:12px;color:var(--ink-3);text-decoration:none;padding:5px 12px;border-radius:var(--r-pill);background:var(--ground-2);transition:all .15s var(--ease-out)}
   .top-nav a:hover{background:var(--ground-hover);color:var(--ink)}
 
-  h1{font-family:var(--font-cn);font-size:28px;font-weight:600;margin:0 0 6px;letter-spacing:-.01em}
-  .sub{color:var(--ink-3);font-size:14px;margin-bottom:24px}
+  /* Main area fills space */
+  .main{flex:1;display:flex;overflow:hidden;position:relative}
 
-  /* Two-column: left=search+results, right=detail */
-  .layout{display:grid;grid-template-columns:1fr 360px;gap:28px;align-items:start}
-  @media(max-width:800px){.layout{grid-template-columns:1fr}}
+  /* Hero state — centered input */
+  .hero{position:absolute;inset:0;display:flex;flex-direction:column;align-items:center;justify-content:center;padding:40px 24px;transition:all .5s var(--ease-out)}
+  .hero.done{top:0;bottom:auto;padding:24px 24px 12px;transform:none;justify-content:flex-start}
+  .hero h1{font-family:var(--font-cn);font-size:32px;font-weight:600;margin:0 0 8px;text-align:center;transition:all .5s var(--ease-out)}
+  .hero.done h1{font-size:16px;margin:0;opacity:.7}
+  .hero .tagline{color:var(--ink-3);font-size:14px;margin-bottom:24px;text-align:center;transition:all .5s var(--ease-out)}
+  .hero.done .tagline{font-size:0;margin:0;opacity:0;height:0;overflow:hidden}
 
-  /* Left panel */
-  .left{}
-  .search-box{display:flex;gap:10px;margin-bottom:16px;align-items:flex-start}
-  .search-box textarea{flex:1;padding:14px 16px;border:1px solid var(--line);border-radius:var(--r-lg);font-size:14px;font-family:inherit;background:var(--card);color:var(--ink);resize:vertical;box-sizing:border-box;min-height:88px;transition:border-color .15s var(--ease-out),box-shadow .15s var(--ease-out)}
-  .search-box textarea:focus{outline:none;border-color:var(--accent);box-shadow:0 0 0 3px var(--accent-wash)}
-  .search-hint{font-size:12px;color:var(--ink-4);margin-bottom:16px}
+  /* Input box */
+  .input-box{width:100%;max-width:560px;display:flex;gap:10px;align-items:flex-end;transition:all .5s var(--ease-out)}
+  .hero.done .input-box{max-width:100%}
+  .input-box textarea{flex:1;padding:14px 16px;border:1px solid var(--line);border-radius:var(--r-lg);font-size:14px;font-family:inherit;background:var(--card);color:var(--ink);resize:none;box-sizing:border-box;min-height:56px;max-height:56px;transition:all .3s var(--ease-out),border-color .15s var(--ease-out),box-shadow .15s var(--ease-out)}
+  .hero:not(.done) .input-box textarea{min-height:72px;max-height:72px;font-size:16px}
+  .input-box textarea:focus{outline:none;border-color:var(--accent);box-shadow:0 0 0 3px var(--accent-wash)}
 
-  .results-head{display:flex;justify-content:space-between;align-items:center;margin-bottom:10px}
+  .intent-hint{font-size:12px;color:var(--ink-4);margin-top:6px;text-align:center;transition:all .5s var(--ease-out)}
+  .hero.done .intent-hint{font-size:0;margin:0;opacity:0;height:0;overflow:hidden}
+
+  /* Results area */
+  .results-panel{display:none;flex:1;overflow-y:auto;padding:0 16px 16px}
+  .results-panel.show{display:flex;gap:20px}
+  .results-panel .list-col{flex:1;min-width:0}
+  .results-head{display:flex;justify-content:space-between;align-items:center;margin-bottom:8px;position:sticky;top:0;background:var(--ground);padding:8px 0;z-index:1}
   .results-head .count{font-size:12px;color:var(--ink-4);font-family:var(--font-mono)}
 
   .match-card{display:flex;gap:14px;padding:14px 16px;background:var(--card);border:2px solid transparent;border-radius:var(--r-lg);margin-bottom:8px;cursor:pointer;transition:all .15s var(--ease-out);box-shadow:var(--shadow-sm)}
   .match-card:hover{border-color:var(--line);transform:translateY(-1px)}
   .match-card.sel{border-color:var(--accent);background:var(--accent-wash)}
-  .match-card .av{width:40px;height:40px;border-radius:var(--r-md);display:grid;place-items:center;font-size:17px;font-weight:700;color:#fff;flex-shrink:0}
-  .match-card .info{flex:1;min-width:0}
-  .match-card .name{font-weight:700;font-size:14px;color:var(--ink)}
-  .match-card .brief{font-size:12px;color:var(--ink-3);margin:3px 0 6px;line-height:1.4}
-  .match-card .tags{display:flex;gap:4px;flex-wrap:wrap}
+  .match-card .src{font-family:var(--font-mono);font-size:10px;color:var(--ink-4);margin-bottom:3px;text-transform:uppercase}
+  .match-card .title{font-weight:700;font-size:14px;color:var(--ink);line-height:1.4}
+  .match-card .summary{font-size:12px;color:var(--ink-3);margin:4px 0;line-height:1.5}
+  .match-card .tags{display:flex;gap:4px;flex-wrap:wrap;margin-top:6px}
   .match-card .tags span{font-size:10px;padding:2px 8px;border-radius:var(--r-pill);background:var(--ground-2);color:var(--ink-3)}
-  .match-card .score{font-family:var(--font-mono);font-size:18px;font-weight:700;color:var(--jade);flex-shrink:0;text-align:center}
+  .match-card .score{font-family:var(--font-mono);font-size:16px;font-weight:700;color:var(--jade);flex-shrink:0;text-align:center}
   .match-card .score .lbl{font-size:9px;color:var(--ink-4);font-weight:400}
-  .none-found{padding:32px;text-align:center;color:var(--ink-4);font-size:13px}
+  .none-found{padding:40px;text-align:center;color:var(--ink-4);font-size:13px}
 
-  /* Right: detail panel */
-  .detail-panel{position:sticky;top:24px}
-  .detail-card{padding:28px 24px;background:var(--card);border-radius:var(--r-lg);box-shadow:var(--shadow-card)}
-  .detail-card .over{font-family:var(--font-mono);font-size:11px;letter-spacing:.14em;text-transform:uppercase;color:var(--ink-3);margin-bottom:16px}
-  .detail-empty{padding:48px 28px;text-align:center;color:var(--ink-4);font-size:13px;line-height:1.6}
-  .detail-card .big-av{width:56px;height:56px;border-radius:var(--r-md);display:grid;place-items:center;font-size:26px;font-weight:700;color:#fff;margin-bottom:14px}
-  .detail-card .dname{font-family:var(--font-cn);font-weight:700;font-size:18px;color:var(--ink);margin-bottom:4px}
-  .detail-card .dbrief{font-size:13px;color:var(--ink-3);line-height:1.6;margin-bottom:12px}
-  .detail-card .dtags{display:flex;gap:4px;flex-wrap:wrap;margin-bottom:16px}
+  /* Detail panel */
+  .detail-col{width:340px;flex-shrink:0;display:none}
+  .detail-col.show{display:block}
+  .detail-card{padding:24px 20px;background:var(--card);border-radius:var(--r-lg);box-shadow:var(--shadow-card);position:sticky;top:16px}
+  .detail-card .over{font-family:var(--font-mono);font-size:11px;letter-spacing:.14em;text-transform:uppercase;color:var(--ink-3);margin-bottom:14px}
+  .detail-card .dsrc{font-family:var(--font-mono);font-size:10px;color:var(--ink-4);text-transform:uppercase;margin-bottom:6px}
+  .detail-card .dtitle{font-family:var(--font-cn);font-weight:700;font-size:17px;color:var(--ink);margin-bottom:6px;line-height:1.4}
+  .detail-card .dsum{font-size:13px;color:var(--ink-3);line-height:1.6;margin-bottom:12px}
+  .detail-card .dscore{font-family:var(--font-mono);font-size:22px;font-weight:700;color:var(--jade);margin-bottom:4px}
+  .detail-card .dtags{margin-top:12px;display:flex;gap:4px;flex-wrap:wrap}
   .detail-card .dtags span{font-size:10px;padding:3px 10px;border-radius:var(--r-pill);background:var(--ground-2);color:var(--ink-3)}
-  .detail-card .dscore{display:inline-flex;align-items:center;gap:6px;font-family:var(--font-mono);font-size:22px;font-weight:700;color:var(--jade);margin-bottom:4px}
-  .detail-card .dscore .unit{font-size:12px;color:var(--ink-4);font-weight:400}
-  .detail-card .dhave,.detail-card .dneed{font-size:12px;color:var(--ink-3);line-height:1.5;margin-top:10px;padding-top:10px;border-top:1px solid var(--line)}
-  .detail-card .dhave b,.detail-card .dneed b{color:var(--ink-2);font-weight:600}
+  .detail-empty{padding:48px 20px;text-align:center;color:var(--ink-4);font-size:13px}
+  .detail-actions{margin-top:20px;display:flex;gap:8px}
 
-  /* Buttons */
   .btn{font-family:var(--font-ui);font-size:14px;font-weight:600;padding:10px 24px;border-radius:var(--r-pill);border:0;cursor:pointer;text-decoration:none;display:inline-flex;align-items:center;gap:6px;transition:all .15s var(--ease-out);min-height:44px}
   .btn:focus-visible{outline:2px solid var(--accent);outline-offset:2px}
   .btn.primary{background:var(--accent);color:var(--on-accent)}
@@ -71,90 +77,76 @@
   .btn.ghost:hover{background:var(--ground-hover);color:var(--ink)}
   .btn.jade{background:var(--jade);color:#fff}
   .btn.jade:hover{transform:translateY(-1px);box-shadow:0 4px 16px rgba(15,160,110,.35)}
-  .actions{display:flex;gap:8px;margin-top:20px;flex-wrap:wrap}
+  .empty-hint{padding:14px 18px;border:2px dashed var(--line);border-radius:var(--r-lg);text-align:center;color:var(--ink-4);font-size:12px;margin:16px;flex-shrink:0}
 
-  .empty-hint{padding:14px 18px;border:2px dashed var(--line);border-radius:var(--r-lg);text-align:center;color:var(--ink-4);font-size:12px;margin-top:24px}
+  @media(max-width:800px){.results-panel.show{flex-direction:column}.detail-col{width:100%}}
   @media(prefers-reduced-motion:reduce){*,*::before,*::after{animation-duration:.01ms!important;transition-duration:.01ms!important}}
 </style>
 </head>
 <body>
 
-<a class="back" href="../flywheel/gallery.html">← 返回 Gallery · Back</a>
 <div class="top-nav">
   <a href="../achievement-center.html">我的名片 · Profile</a>
   <a href="connection/inbox.html">牵线收件箱 · Inbox <span style="font-family:var(--font-mono);color:var(--accent);font-weight:600">2</span></a>
   <a href="notification/saved.html">保存的搜索 · Saved <span style="font-family:var(--font-mono);color:var(--accent);font-weight:600">3</span></a>
 </div>
 
-<h1>投融资撮合树洞 · DealScout</h1>
-<p class="sub">说出你找什么——AI 帮你分析意图，循着信号把对的那一方捞到你面前。</p>
-
-<div class="layout">
-
-<!-- ══════════════ LEFT ══════════════ -->
-<div class="left">
-  <div class="search-box">
-    <textarea id="needDesc" placeholder="描述你正在找什么……&#10;&#10;例：我在做一个跨境支付 SaaS，天使轮刚关，需要对接 A 轮 FinTech 基金。&#10;&#10;直接写就好，不用选类型——AI 会自己判断你在找钱、找项目、还是找合伙人。"></textarea>
-  </div>
-  <div class="search-hint">AI 自动分析你的意图（找钱 / 找项目 / 找联合创始人 / 找退出），无需手动选择类型。</div>
-  <button class="btn primary" id="matchBtn" onclick="runMatch()">开始匹配 · Start matching →</button>
-
-  <div id="resultsArea" style="display:none;margin-top:20px">
-    <div class="results-head">
-      <span class="count" id="count"></span>
-      <button class="btn ghost" style="font-size:12px;padding:6px 14px;min-height:auto" onclick="saveSearch()">保存搜索 · Save</button>
+<div class="main">
+  <!-- Hero input -->
+  <div class="hero" id="hero">
+    <h1>投融资撮合树洞 · DealScout</h1>
+    <p class="tagline">说出你找什么——AI 从互联网捞信号，把对的那一方捞到你面前。</p>
+    <div class="input-box">
+      <textarea id="needDesc" placeholder="描述你正在找什么…&#10;&#10;例：我在做跨境支付 SaaS，需要对接 FinTech A 轮基金" onkeydown="if(event.key==='Enter'&amp;&amp;!event.shiftKey){event.preventDefault();runMatch();}"></textarea>
+      <button class="btn primary" id="matchBtn" onclick="runMatch()">发送 · Send</button>
     </div>
-    <div id="matchList"></div>
+    <p class="intent-hint">AI 自动分析意图（找钱 / 找项目 / 找合伙人 / 找退出），无需手动选择</p>
   </div>
-  <div class="empty-hint">后端待建：匹配信号池 API · 撮合算法 · DealScout workspace session</div>
+
+  <!-- Results + Detail -->
+  <div class="results-panel" id="resultsPanel">
+    <div class="list-col" id="listCol">
+      <div class="results-head">
+        <span class="count" id="count"></span>
+        <button class="btn ghost" style="font-size:12px;padding:6px 14px;min-height:auto" onclick="saveSearch()">保存搜索 · Save</button>
+      </div>
+      <div id="matchList"></div>
+    </div>
+    <div class="detail-col" id="detailCol">
+      <div class="detail-card" id="detailCard">
+        <div class="over">选中匹配详情</div>
+        <div class="detail-empty" id="detailEmpty">← 点击左侧结果查看详情</div>
+        <div id="detailContent" style="display:none"></div>
+      </div>
+    </div>
+  </div>
 </div>
 
-<!-- ══════════════ RIGHT ══════════════ -->
-<div class="detail-panel">
-  <div class="detail-card" id="detailCard">
-    <div class="over">选中匹配详情 · Match detail</div>
-    <div class="detail-empty" id="detailEmpty">← 输入需求，点击匹配，然后选中一个结果查看详情</div>
-    <div id="detailContent" style="display:none"></div>
-  </div>
-</div>
-
-</div>
+<div class="empty-hint">后端待建：互联网爬取 + 语义匹配 + dispatch refresh_page（参照 dealscout-refresh-v2）</div>
 
 <script>
-var DEALS = [
-  {name:'金沙江创投 · GSR Ventures',type:'funding',brief:'早期科技投资，偏好 FinTech / SaaS / AI。目前正在看跨境支付和合规科技方向。',tags:['FinTech','A轮','跨境','人民币+美元'],glyph:'金',color:'var(--jade)',score:94,have:'资金：双币基金，A轮为主',need:'跨境支付 SaaS 标的'},
-  {name:'红杉中国 · Sequoia China',type:'funding',brief:'全阶段科技基金。消费科技和企业服务团队都在看支付基础设施项目。',tags:['企业服务','B轮+','双币','支付'],glyph:'杉',color:'var(--blueink)',score:87,have:'资金：全阶段双币基金',need:'支付基础设施 + 企业服务'},
-  {name:'高瓴资本 · Hillhouse',type:'funding',brief:'长期结构性价值投资。对全球化 SaaS 有深度布局，偏好有网络效应的平台型项目。',tags:['全球化','SaaS','成长期','平台型'],glyph:'瓴',color:'var(--accent)',score:82,have:'资金：成长期 + 全球化资源',need:'平台型 SaaS'},
-  {name:'分布式实验室 · D-Labs',type:'project',brief:'Web3 基础设施早期孵化器。正在找支付/身份赛道团队合作，提供技术+资金+社区。',tags:['Web3','支付','孵化','技术社区'],glyph:'分',color:'var(--orange)',score:91,have:'技术+资金+社区资源',need:'支付/身份赛道团队'},
-  {name:'跨境支付合规平台 · CrossPay',type:'project',brief:'已获牌照的跨境支付中间件。找有商户资源的团队联合推向东南亚市场。',tags:['跨境','牌照','东南亚','商户端'],glyph:'跨',color:'var(--jade)',score:88,have:'牌照 + 技术中间件',need:'商户资源 + 东南亚落地团队'},
-  {name:'企业级 AI 助手 · EntBot',type:'project',brief:'为企业提供可私有化部署的 AI agent 平台。找懂合规场景的合伙人做行业垂直。',tags:['AI Agent','私有部署','合规','B2B'],glyph:'智',color:'var(--blue)',score:83,have:'AI agent 平台 + 私有部署能力',need:'合规行业合伙人'},
-  {name:'苏珩 · 企业法务 9 年',type:'cofounder',brief:'做过 200+ 合同审查系统，懂 NLP + 法律知识图谱。想找技术合伙人做 AI 法务 SaaS。',tags:['法务','NLP','SaaS','技术合伙人'],glyph:'法',color:'var(--blueink)',score:96,have:'NLP + 法律知识图谱 + 行业 know-how',need:'技术合伙人（全栈/后端）'},
-  {name:'马屿 · SaaS 客服负责人',type:'cofounder',brief:'在头部 SaaS 带过 40 人客服团队。想做 AI 客服分流产品，找技术合伙人 + 种子轮。',tags:['客服','AI','种子轮','技术合伙人'],glyph:'客',color:'var(--orange)',score:90,have:'客服行业经验 + 团队管理',need:'技术合伙人 + 种子轮资金'},
-  {name:'跨境 M&A 顾问 · BridgeCap',type:'exit',brief:'专注 500 万–5000 万美元的跨境并购。目前有 3 个买方在找亚太支付标的。',tags:['M&A','跨境','支付','买方代表'],glyph:'桥',color:'var(--jade)',score:89,have:'买方资源 + M&A 执行能力',need:'亚太支付标的（500万-5000万美元）'},
-  {name:'二级市场退出通道 · SecExit',type:'exit',brief:'为成长期 SaaS 公司提供二级市场流动性方案。已服务 12 家独角兽员工股权退出。',tags:['二级市场','SaaS','ESOP','流动性'],glyph:'退',color:'var(--blue)',score:78,have:'二级市场通道 + ESOP 方案',need:'成长期 SaaS 公司'},
+// Mock: internet-sourced leads (text summaries, not structured cards)
+var LEADS = [
+  {src:'techcrunch.com',title:'Cross-border payment startups raised $2.3B in Q1 2026',summary:'跨境支付赛道持续升温。Q1 全球交易额前三名：Stripe(1.2B)、Airwallex(800M)、PingPong(300M)。报告指出 FinTech 基金对合规科技和支付基础设施的偏好显著上升，尤其是亚太和拉美市场。',tags:['跨境支付','FinTech','A轮','融资'],score:94,type:'funding',url:'https://techcrunch.com/2026/04/cross-border-payments-q1'},
+  {src:'36kr.com',title:'红杉中国完成新一期 90 亿科技基金募集',summary:'红杉中国宣布完成新一期科技基金募集，规模 90 亿元人民币。重点投向 AI 应用、跨境支付、企业服务三大方向。LP 包括淡马锡、GIC 等主权基金，以及多家国内险资。基金管理合伙人表示将在未来 18 个月内完成 40-50 笔投资。',tags:['红杉','科技基金','AI','跨境'],score:91,type:'funding',url:'https://36kr.com/p/sequoia-china-new-fund'},
+  {src:'huggingface.co',title:'企业级 AI Agent 平台 EntBot 开源核心技术栈',summary:'EntBot 在 HuggingFace 上发布其 Agent 编排引擎，支持私有化部署和多模型切换。项目上线 48 小时获得 2.3k stars。团队正在寻找合规和金融行业的合作伙伴进行垂直场景落地。',tags:['AI Agent','开源','私有部署','合规'],score:88,type:'project',url:'https://huggingface.co/entbot/agent-engine'},
+  {src:'linkedin.com',title:'前蚂蚁跨境支付负责人寻求东南亚合伙人',summary:'曾任蚂蚁金服跨境支付事业部 P9，主导过支付宝东南亚本地钱包项目（GCash/TrueMoney/DANA）。目前独立创业，寻找熟悉东南亚支付牌照和商户拓展的联合创始人。',tags:['跨境支付','东南亚','联合创始人','蚂蚁'],score:96,type:'cofounder',url:'https://linkedin.com/in/example'},
+  {src:'bloomberg.com',title:'Goldman Sachs: 2026 年亚太 M&A 将增长 22%',summary:'高盛发布 2026 亚太并购展望：预计全年交易额将达 1.2 万亿美元，同比增长 22%。支付、物流、SaaS 为最活跃三大赛道。报告指出 500 万-5000 万美元的中型交易增速最快，主要由家族办公室和 PE 推动。',tags:['M&A','亚太','支付','中型交易'],score:85,type:'exit',url:'https://bloomberg.com/asia-ma-outlook-2026'},
+  {src:'theinformation.com',title:'Stripe 正在洽谈收购跨境支付合规平台 CrossPay',summary:'知情人士透露，Stripe 已进入收购 CrossPay 的尽调阶段。CrossPay 是一家东南亚跨境支付中间件公司，已获印尼、泰国、越南三国支付牌照。预计交易金额在 1.5-2 亿美元之间。',tags:['M&A','跨境','牌照','Stripe'],score:93,type:'exit',url:'https://theinformation.com/stripe-crosspay'},
+  {src:'xiaohongshu.com',title:'我做了 9 年企业法务，想找个技术合伙人做 AI 合同审查',summary:'小红书博主 @苏珩 发帖：做过 200+ 合同审查系统搭建，懂 NLP 和法律知识图谱。目前有一个 demo 能按中欧双辖区标注合同风险。想找全栈开发合伙人，最好有 SaaS 经验。',tags:['法务','AI','SaaS','技术合伙人'],score:90,type:'cofounder',url:'https://xiaohongshu.com/explore/example'},
+  {src:'cbinsights.com',title:'2026 FinTech 趋势：嵌入式金融和 AI 承保成为投资主线',summary:'CB Insights 年度报告指出 FinTech 投资正在从"支付通道"转向"决策引擎"——AI 驱动的风险评估、合规监控、个性化定价成为新增长点。报告追踪了 47 家获得 A/B 轮融资的 FinTech 公司，其中 12 家涉及跨境支付。',tags:['FinTech','AI','投资趋势','跨境'],score:82,type:'funding',url:'https://cbinsights.com/fintech-trends-2026'},
 ];
 
-var selMatch=null;
+var selMatch=null, _results=null;
 
-/* ── AI intent detection ── */
 function detectIntent(text){
-  var t=text.toLowerCase();
-  var scores={funding:0,project:0,cofounder:0,exit:0};
-  // funding signals
-  if(t.match(/融资|funding|找钱|基金|投资|a轮|b轮|c轮|天使|种子|vc|pe|美元|人民币/))scores.funding+=3;
-  if(t.match(/估值|term.?sheet|dd|尽调/))scores.funding+=2;
-  // project signals
-  if(t.match(/项目|project|标|收购|deal|机会|合作|对接|推|渠道/))scores.project+=3;
-  if(t.match(/牌照|商户|市场|落地|资源/))scores.project+=2;
-  // cofounder signals
-  if(t.match(/合伙人|co.?founder|联合创始|技术合伙|找.*人|团队|搭档/))scores.cofounder+=3;
-  if(t.match(/全栈|后端|前端|c.?t.?o|技术负责人/))scores.cofounder+=2;
-  // exit signals
-  if(t.match(/退出|exit|卖掉|m&a|并购|二级市场|流动性|esop|套现/))scores.exit+=3;
-  if(t.match(/买方|卖方|标的|收购/))scores.exit+=1;
-  // default: if nothing matched strongly, weight by general keywords
+  var t=text.toLowerCase(),s={funding:0,project:0,cofounder:0,exit:0};
+  if(t.match(/融资|funding|找钱|基金|投资|a轮|b轮|c轮|天使|种子|vc|pe|美元|人民币/))s.funding+=3;
+  if(t.match(/项目|project|标的|收购|deal|机会|合作|对接|推|渠道/))s.project+=3;
+  if(t.match(/合伙人|co.?founder|联合创始|技术合伙|找.*人|团队|搭档/))s.cofounder+=3;
+  if(t.match(/退出|exit|卖掉|m&a|并购|二级市场|流动性|esop|套现/))s.exit+=3;
   var max=0,detected='funding';
-  for(var k in scores){if(scores[k]>max){max=scores[k];detected=k;}}
+  for(var k in s){if(s[k]>max){max=s[k];detected=k;}}
   return detected;
 }
 
@@ -162,30 +154,29 @@ function runMatch(){
   var desc=(document.getElementById('needDesc').value||'').trim();
   if(!desc){alert('请输入你正在找什么');return;}
   var intent=detectIntent(desc);
-  // Score all deals by intent match + text relevance
-  var scored=DEALS.map(function(d){
-    var s=d.score; // base score
-    if(d.type===intent)s+=15; // intent boost
-    var q=desc.toLowerCase();
-    if(d.brief.toLowerCase().indexOf(q.split(' ')[0])>-1)s+=5;
-    d.tags.forEach(function(t){if(q.indexOf(t.toLowerCase())>-1)s+=3;});
+  var scored=LEADS.map(function(d){
+    var s=d.score;if(d.type===intent)s+=15;
+    d.tags.forEach(function(t){if(desc.toLowerCase().indexOf(t.toLowerCase())>-1)s+=3;});
     return {d:d,s:Math.min(99,s)};
   });
   scored.sort(function(a,b){return b.s-a.s;});
-  var results=scored.slice(0,5);
+  _results=scored.slice(0,5);
 
-  document.getElementById('count').textContent='为你找到 '+results.length+' 个匹配 · AI 判断意图：'+
-    ({funding:'找钱',project:'找项目',cofounder:'找联合创始人',exit:'找退出'})[intent];
-  document.getElementById('matchList').innerHTML=results.map(function(r,i){
+  // Hero → done (shrink to top)
+  document.getElementById('hero').classList.add('done');
+  document.querySelector('.hero .tagline').style.display='none';
+
+  // Show results
+  document.getElementById('count').textContent=_results.length+' 个匹配 · AI 判断意图：'+({funding:'找钱',project:'找项目',cofounder:'找联合创始人',exit:'找退出'})[intent];
+  document.getElementById('matchList').innerHTML=_results.map(function(r,i){
     return'<div class="match-card" data-idx="'+i+'" onclick="showDetail('+i+')">'
-      +'<div class="av" style="background:'+r.d.color+'">'+r.d.glyph+'</div>'
-      +'<div class="info"><div class="name">'+r.d.name+'</div><div class="brief">'+r.d.brief+'</div>'
+      +'<div class="info"><div class="src">'+r.d.src+'</div>'
+      +'<div class="title">'+r.d.title+'</div>'
+      +'<div class="summary">'+r.d.summary+'</div>'
       +'<div class="tags">'+r.d.tags.map(function(t){return'<span>'+t+'</span>';}).join('')+'</div></div>'
       +'<div class="score">'+r.s+'%<div class="lbl">匹配</div></div></div>';
   }).join('');
-  window._results=results; // store for detail lookup
-  document.getElementById('resultsArea').style.display='block';
-  // reset detail
+  document.getElementById('resultsPanel').classList.add('show');
   selMatch=null;
   document.querySelectorAll('.match-card').forEach(function(m){m.classList.remove('sel');});
   showEmptyDetail();
@@ -194,27 +185,28 @@ function runMatch(){
 function showDetail(idx){
   document.querySelectorAll('.match-card').forEach(function(m){m.classList.remove('sel');});
   document.querySelectorAll('.match-card')[idx].classList.add('sel');
-  var r=window._results[idx];selMatch=r;
+  var r=_results[idx];selMatch=r;
+  document.getElementById('detailCol').classList.add('show');
   document.getElementById('detailEmpty').style.display='none';
   var dc=document.getElementById('detailContent');dc.style.display='block';
-  dc.innerHTML='<div class="big-av" style="background:'+r.d.color+'">'+r.d.glyph+'</div>'
-    +'<div class="dname">'+r.d.name+'</div>'
-    +'<div class="dbrief">'+r.d.brief+'</div>'
+  dc.innerHTML='<div class="dsrc">'+r.d.src+'</div>'
+    +'<div class="dtitle"><a href="'+r.d.url+'" target="_blank" rel="noopener" style="color:inherit;text-decoration:underline">'+r.d.title+'</a></div>'
+    +'<div class="dsum">'+r.d.summary+'</div>'
+    +'<div class="dscore">'+r.s+'% 匹配度</div>'
     +'<div class="dtags">'+r.d.tags.map(function(t){return'<span>'+t+'</span>';}).join('')+'</div>'
-    +'<div class="dscore">'+r.s+'% <span class="unit">匹配度</span></div>'
-    +'<div class="dhave"><b>我有：</b>'+r.d.have+'</div>'
-    +'<div class="dneed"><b>找：</b>'+r.d.need+'</div>'
-    +'<div class="actions">'
-    +'<a class="btn jade" href="connection/request-sent.html?name='+encodeURIComponent(r.d.name)+'&glyph='+encodeURIComponent(r.d.glyph)+'&color='+encodeURIComponent(r.d.color)+'&score='+r.s+'&tags='+encodeURIComponent(r.d.tags.join(','))+'">牵线 · Connect →</a>'
+    +'<div class="detail-actions">'
+    +'<a class="btn jade" href="connection/request-sent.html?name='+encodeURIComponent(r.d.title)+'&tags='+encodeURIComponent(r.d.tags.join(','))+'&score='+r.s+'">牵线 · Connect →</a>'
+    +'<a class="btn ghost" href="'+r.d.url+'" target="_blank" rel="noopener">查看原文 · Source →</a>'
     +'</div>';
 }
-function showEmptyDetail(){
-  document.getElementById('detailEmpty').style.display='block';
-  document.getElementById('detailContent').style.display='none';
-}
-function saveSearch(){
-  alert('搜索已保存 · Search saved（demo）');location.href='notification/saved.html';
-}
+function showEmptyDetail(){document.getElementById('detailEmpty').style.display='block';document.getElementById('detailContent').style.display='none';document.getElementById('detailCol').classList.remove('show');}
+function saveSearch(){alert('搜索已保存 · Search saved（demo）');location.href='notification/saved.html';}
+
+// Check if coming from saved search
+(function(){
+  var q=new URLSearchParams(location.search).get('q');
+  if(q){document.getElementById('needDesc').value=q;runMatch();}
+})();
 </script>
 </body>
 </html>
