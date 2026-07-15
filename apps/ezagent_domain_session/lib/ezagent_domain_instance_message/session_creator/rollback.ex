@@ -122,7 +122,7 @@ defmodule EzagentDomainInstanceMessage.SessionCreator.Rollback do
 
   defp retire_orchestrator(
          %URI{} = orchestrator_uri,
-         %URI{} = session_uri,
+         %URI{} = _session_uri,
          %URI{} = owner_uri,
          %URI{} = workspace_uri
        ) do
@@ -131,8 +131,7 @@ defmodule EzagentDomainInstanceMessage.SessionCreator.Rollback do
       caps: MapSet.new(),
       workspace_uri: workspace_uri,
       provenance_root: owner_uri,
-      creation_attempt_id: "session-create:#{Ezagent.URI.stable_key(session_uri)}",
-      created_agent_uris: [orchestrator_uri],
+      creation_attempt_id: Ezagent.Agent.CreationInventory.attempt_id(orchestrator_uri),
       reason: :rollback
     })
   end

@@ -65,6 +65,15 @@ defmodule EzagentDomainInstanceMessage.Integration.SpawnedParticipantTeardownTes
     uri
   end
 
+  defp record_creation(agent_uri, spawned_by_uri) do
+    Ezagent.Agent.CreationInventory.record(
+      Ezagent.Agent.CreationInventory.attempt_id(agent_uri),
+      agent_uri,
+      spawned_by_uri,
+      @workspace_uri
+    )
+  end
+
   # Join `worker` into `session` carrying the `:source_template_uri` spawn facet
   # (the provenance marker a managed member gets at spawn) under admin authority.
   defp join_spawned(session_uri, worker_uri) do
@@ -154,6 +163,7 @@ defmodule EzagentDomainInstanceMessage.Integration.SpawnedParticipantTeardownTes
       worker = spawn_worker(config_dir)
       # Durable lineage: worker -> owner (the chain spawned_in_lineage? walks).
       :ok = AgentLineage.record(worker, owner)
+      :ok = record_creation(worker, owner)
       join_spawned(session_uri, worker)
       _rule = add_routing_rule(session_uri, worker)
 
@@ -199,6 +209,7 @@ defmodule EzagentDomainInstanceMessage.Integration.SpawnedParticipantTeardownTes
 
       worker = spawn_worker(config_dir, __MODULE__.RaisingGcStubClass)
       :ok = AgentLineage.record(worker, owner)
+      :ok = record_creation(worker, owner)
       join_spawned(session_uri, worker)
 
       assert worker in Participants.list_participants(session_uri)
@@ -247,6 +258,7 @@ defmodule EzagentDomainInstanceMessage.Integration.SpawnedParticipantTeardownTes
       orchestrator = URI.new!("entity://system/agent/crux-orch-#{uniq()}")
       :ok = AgentLineage.record(orchestrator, owner)
       :ok = AgentLineage.record(worker, orchestrator)
+      :ok = record_creation(worker, orchestrator)
 
       # Sanity: the transitive walk reaches the owner (the property the cap
       # match relies on); one hop (worker→orchestrator) does NOT reach owner.
@@ -279,6 +291,7 @@ defmodule EzagentDomainInstanceMessage.Integration.SpawnedParticipantTeardownTes
 
       worker = spawn_worker(config_dir)
       :ok = AgentLineage.record(worker, owner)
+      :ok = record_creation(worker, owner)
 
       # Strict reap: the dispatch runs under the OWNER's PERSISTED caps (empty of
       # the teardown cap) → sandbox.destroy is unauthorized → fail-closed.
@@ -301,6 +314,7 @@ defmodule EzagentDomainInstanceMessage.Integration.SpawnedParticipantTeardownTes
 
       worker = spawn_worker(config_dir)
       :ok = AgentLineage.record(worker, owner)
+      :ok = record_creation(worker, owner)
 
       assert {:error, {:worker_teardown_failed, _}} =
                Teardown.reap_spawned_worker(worker, owner, :best_effort)
@@ -321,6 +335,8 @@ defmodule EzagentDomainInstanceMessage.Integration.SpawnedParticipantTeardownTes
       w_b = spawn_worker(cfg_b)
       :ok = AgentLineage.record(w_a, owner)
       :ok = AgentLineage.record(w_b, owner)
+      :ok = record_creation(w_a, owner)
+      :ok = record_creation(w_b, owner)
       join_spawned(session_uri, w_a)
       join_spawned(session_uri, w_b)
       _ = add_routing_rule(session_uri, w_a)

@@ -185,8 +185,7 @@ defmodule Ezagent.ActionSet.Session.Teardown do
       caps: MapSet.new(),
       workspace_uri: Ezagent.URI.workspace_of(worker_uri),
       provenance_root: owner_uri,
-      creation_attempt_id: "session-teardown:#{Ezagent.URI.stable_key(worker_uri)}",
-      created_agent_uris: [worker_uri],
+      creation_attempt_id: Ezagent.Agent.CreationInventory.attempt_id(worker_uri),
       reason: {:session_teardown, mode}
     }
   end
@@ -197,8 +196,7 @@ defmodule Ezagent.ActionSet.Session.Teardown do
       caps: MapSet.new(),
       workspace_uri: Ezagent.URI.workspace_of(worker_uri),
       provenance_root: worker_uri,
-      creation_attempt_id: "session-teardown:#{Ezagent.URI.stable_key(worker_uri)}",
-      created_agent_uris: [],
+      creation_attempt_id: Ezagent.Agent.CreationInventory.attempt_id(worker_uri),
       reason: {:session_teardown, mode}
     }
   end

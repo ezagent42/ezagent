@@ -10,7 +10,6 @@ defmodule Ezagent.Agent.Retirement do
     :workspace_uri,
     :provenance_root,
     :creation_attempt_id,
-    :created_agent_uris,
     :reason
   ]
 
@@ -26,7 +25,7 @@ defmodule Ezagent.Agent.Retirement do
     with :ok <- validate_context(context),
          :ok <- validate_agent_target(agent_uri),
          :ok <- validate_workspace(agent_uri, context.workspace_uri),
-         :ok <- validate_creation_inventory(agent_uri, context.created_agent_uris),
+         :ok <- validate_creation_inventory(agent_uri, context),
          :ok <- validate_provenance(agent_uri, context.provenance_root),
          {:ok, obligation} <- persist_obligation(agent_uri, context) do
       dispatch_destroy(agent_uri, context, obligation)
@@ -47,7 +46,7 @@ defmodule Ezagent.Agent.Retirement do
     if Enum.all?(@required_context_keys, &Map.has_key?(context, &1)) and
          match?(%URI{}, context.caller) and match?(%URI{}, context.workspace_uri) and
          match?(%URI{}, context.provenance_root) and is_binary(context.creation_attempt_id) and
-         context.creation_attempt_id != "" and is_list(context.created_agent_uris) and
+         context.creation_attempt_id != "" and
          (match?(%MapSet{}, context.caps) or is_list(context.caps)) do
       :ok
     else
@@ -67,10 +66,15 @@ defmodule Ezagent.Agent.Retirement do
       else: {:error, :workspace_mismatch}
   end
 
-  defp validate_creation_inventory(agent_uri, created_agent_uris) do
-    if Enum.any?(created_agent_uris, &match_uri?(&1, agent_uri)),
-      do: :ok,
-      else: {:error, :creation_attempt_mismatch}
+  defp validate_creation_inventory(agent_uri, context) do
+    if Ezagent.Agent.CreationInventory.member?(
+         context.creation_attempt_id,
+         agent_uri,
+         context.provenance_root,
+         context.workspace_uri
+       ),
+       do: :ok,
+       else: {:error, :creation_attempt_mismatch}
   end
 
   defp validate_provenance(agent_uri, provenance_root) do
@@ -181,10 +185,6 @@ defmodule Ezagent.Agent.Retirement do
          }}
     end
   end
-
-  defp match_uri?(%URI{} = left, %URI{} = right), do: same_uri?(left, right)
-  defp match_uri?(left, %URI{} = right) when is_binary(left), do: left == URI.to_string(right)
-  defp match_uri?(_left, _right), do: false
 
   defp same_uri?(%URI{} = left, %URI{} = right),
     do: Ezagent.URI.stable_key(left) == Ezagent.URI.stable_key(right)

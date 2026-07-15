@@ -10,14 +10,22 @@ defmodule Ezagent.Agent.RetirementTest do
     workspace_uri = Ezagent.URI.new!("workspace://team-alpha")
     owner_uri = Ezagent.URI.new!("entity://team-alpha/user/owner-#{suffix}")
     agent_uri = Ezagent.URI.new!("entity://team-alpha/agent/worker-#{suffix}")
+    creation_attempt_id = Ezagent.Agent.CreationInventory.attempt_id(agent_uri)
+
+    :ok =
+      Ezagent.Agent.CreationInventory.record(
+        creation_attempt_id,
+        agent_uri,
+        owner_uri,
+        workspace_uri
+      )
 
     ctx = %{
       caller: owner_uri,
       caps: MapSet.new(),
       workspace_uri: workspace_uri,
       provenance_root: owner_uri,
-      creation_attempt_id: "attempt-#{suffix}",
-      created_agent_uris: [agent_uri],
+      creation_attempt_id: creation_attempt_id,
       reason: :rollback
     }
 
@@ -46,7 +54,7 @@ defmodule Ezagent.Agent.RetirementTest do
     :ok = Ezagent.AgentLineage.record(agent_uri, owner_uri)
 
     assert {:error, %{termination: :not_destroyed, reason: :creation_attempt_mismatch}} =
-             Agent.retire_spawned(agent_uri, %{ctx | created_agent_uris: []})
+             Agent.retire_spawned(agent_uri, %{ctx | creation_attempt_id: "unknown-attempt"})
   end
 
   test "rejects a target outside the claimed lineage", %{agent_uri: agent_uri, ctx: ctx} do
