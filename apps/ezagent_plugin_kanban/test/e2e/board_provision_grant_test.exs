@@ -119,7 +119,13 @@ defmodule EzagentPluginKanban.E2E.BoardProvisionGrantTest do
       # --- T4a 入口:建板 + 发钥匙 ----------------------------------------------
       board_name = "board-#{System.unique_integer([:positive])}"
 
-      assert {:ok, %{board_uri: board_uri, assistant_uri: minted_to, minted: minted}} =
+      assert {:ok,
+              %{
+                board_uri: board_uri,
+                assistant_uri: minted_to,
+                minted: minted,
+                creator_minted: creator_minted
+              }} =
                BoardProvision.create_board(
                  workspace_uri,
                  session_uri,
@@ -162,6 +168,28 @@ defmodule EzagentPluginKanban.E2E.BoardProvisionGrantTest do
       assert minted_add.behavior == Ezagent.ActionSet.Kanban
       assert minted_add.instance == Ezagent.URI.instance(board_uri)
       refute minted_add.instance == :any
+
+      # --- 分层债 ⑧:建板人(creator human)也当场拿到指向新板的 operate 钥匙 -------
+      # 之前只给 assistant 发钥匙,建板的人类只持 Manage cap(管 agent 生命周期),
+      # 读写自己的板全 unauthorized。修复后 create_board 给 creator 也 mount 一把
+      # 全动作 operate cap(granter = 板主人自己,{:held_by, creator} 自路径)。
+      assert length(creator_minted) ==
+               length(Ezagent.ActionSet.action_names(Ezagent.ActionSet.Kanban))
+
+      assert Enum.all?(
+               creator_minted,
+               &(URI.to_string(&1.granted_by) == URI.to_string(owner_uri))
+             )
+
+      # creator 持实例精确 operate cap + 挂载落表(session, board, creator)
+      assert eventually(fn -> holds_board_cap?(owner_uri, board_uri, :add_node) end)
+
+      creator_mount = MountRow.get(session_uri, board_uri, owner_uri, Ezagent.ActionSet.Kanban)
+      assert creator_mount != nil
+      assert creator_mount.access == "operate"
+
+      # creator 自身份 dispatch 读/写自己的板成功(⑧ 的直接验收:owner 不再 unauthorized)
+      assert {:ok, _tree} = dispatch_as(owner_uri, board_uri, :get_tree, %{})
 
       # (c) assistant 自身份 dispatch kanban.add_node 到新板成功(经 minted 钥匙)。
       # 新协作模型：加节点自动认领 —— assistant 自身份加根(自动认领)再在自己节点下加子 = 真正成功。

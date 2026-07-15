@@ -321,6 +321,69 @@ defmodule Ezagent.Socialware.Installation do
 
   def anon_view_caps(_), do: []
 
+  @doc """
+  分层债 ⑤ —— 给 **installer/owner** 授已装 socialware declared views 的 render cap。
+
+  `anon_view_caps/1` 只在匿名访客出生时铸 PUBLIC definition 的 view 读 cap;登录的
+  installer/owner 此前**什么 view cap 都没拿到**,装了带 view 的 socialware(如 kanban)
+  也看不到对应 tab(`SessionView.authorize_view/3` 拒)。本函数是通用修复(零业务字面):
+  对 session 已安装的**每个** definition(不分 public/private —— installer 自己装的都
+  能看)的 declared views,把 `cap(:session, view, action, <session>, <ws>)` 授给
+  `installer_uri`。
+
+  授权路:一切经 `Ezagent.Identity.Grant` chokepoint,tag =
+  `{:rule, :socialware_install_views, installer_uri}` —— 规则是「装了 socialware 的
+  session,其 installer 可看该 socialware 的 views」,configurer(= `granted_by`,#154
+  真实实体)= installer 自己。cap 是 concrete instance + concrete action →
+  `rule_cap_bounded?/1` 通过。**不**直接构造带 `granted_by` 的 `%Capability{}`(I7
+  mint 构造点 ratchet),bare cap 由 chokepoint 盖 provenance。
+
+  幂等:按 `Capability.identity_key/1` 对 installer 已持 cap 去重,重跑不重复发。
+  view 不存在 / session 无安装 / 非 session URI → `:ok` 无副作用(与 `anon_view_caps`
+  的 fail-safe 姿态一致);grant 失败 fail-loud(与 Materializer 的 owner-cap 授予一致)。
+
+  成员补发 TODO:后加入的成员目前没有 view-cap 补发点(join 流程只发 session 参与 cap),
+  见 docs/notes/2026-07-15-kanban-layering-debt.md ⑤。
+  """
+  @spec grant_installer_view_caps(URI.t(), URI.t()) :: :ok | {:error, term()}
+  def grant_installer_view_caps(%URI{scheme: "session"} = session_uri, %URI{} = installer_uri) do
+    instance = Ezagent.URI.instance(session_uri)
+    workspace = Ezagent.Capability.workspace_of(session_uri)
+
+    held_keys =
+      installer_uri
+      |> Ezagent.Identity.list_caps_for()
+      |> Enum.map(&Ezagent.Capability.identity_key/1)
+      |> MapSet.new()
+
+    session_uri
+    |> installed_definitions()
+    |> Enum.flat_map(fn %Definition{views: views} -> views end)
+    |> Enum.uniq()
+    |> Enum.flat_map(fn view -> for action <- view_actions(view), do: {view, action} end)
+    |> Enum.reduce_while(:ok, fn {view, action}, :ok ->
+      cap = Ezagent.Capability.cap(:session, view, action, instance, workspace)
+
+      if MapSet.member?(held_keys, Ezagent.Capability.identity_key(cap)) do
+        {:cont, :ok}
+      else
+        case Ezagent.Identity.Grant.grant_cap(
+               installer_uri,
+               cap,
+               {:rule, :socialware_install_views, installer_uri}
+             ) do
+          :ok ->
+            {:cont, :ok}
+
+          {:error, reason} ->
+            {:halt, {:error, {:installer_view_cap_grant_failed, view, action, reason}}}
+        end
+      end
+    end)
+  end
+
+  def grant_installer_view_caps(_session_uri, _installer_uri), do: :ok
+
   defp view_render_caps(view_module, instance, workspace, granter) when is_atom(view_module) do
     for action <- view_actions(view_module) do
       %Ezagent.Capability{

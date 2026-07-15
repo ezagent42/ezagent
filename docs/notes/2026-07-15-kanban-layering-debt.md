@@ -32,12 +32,14 @@
 - **根因**:看板 tab(`BoardView` SessionView)门控 cap = `cap(:session, Ezagent.ActionSet.KanbanRender, :kanban_render, session_instance, workspace)`(`kanban_render.ex:51 required_caps`)。session 安装时,这个 view render cap **只经 `installation.ex:307 anon_view_caps` 给匿名访客铸**(web_anon_access 的 public 视图),**没给登录的 installer/owner 和成员**。→ owner 无此 cap → tab 隐藏。
 - **修法**:session 安装时,给 installer/owner(和成员)也授 declared views 的 render cap(照 `anon_view_caps` 的 `view_render_caps` 逻辑,granter=owner/admin,走 Cap.issue)。归属:socialware 安装的 view-cap 授权(domain_session installation),平台侧。
 - **临时**:后台给测试用户手工铸 render cap 让测试继续(非产品修复)。
+- **✅ 已修(2026-07-16,installer/owner 部分)**:`Installation.grant_installer_view_caps/2`(通用,零 kanban 字面,ALL 已装 definition 的 declared views,经 Grant chokepoint `{:rule, :socialware_install_views, installer}`),挂在 `SessionCreator.finalize_fresh_session` + `verify_or_recreate` 两个 install 点。测试 `installer_view_caps_test.exs`。**TODO(成员)**:后加入成员无 view-cap 补发点(join 流程只发 session 参与 cap),待定补发机制。
 
 ## ⑥ installer/owner 没拿到 `create_agent` cap → UI 建不了板(与 ⑤ 同类)
 - **现象**:owner 在看板 tab 填「新导图名」点「+」→ 无反应、板没建。
 - **根因**:UI「建导图」dispatch `kanban.create` → `create_kanban`(kanban_actions.ex)→ `workspace.create_agent`(建 kanban-manager board agent),需 `cap(:workspace, Workspace, :create_agent)`。owner(installer)**没这个 cap**(日志 `create_agent` authz=`denied :unauthorized`)。
 - **根因同 ⑤**:session 安装只给 owner session 管理 cap,没给「用 kanban 所需的 cap」(create_agent 建板 + kanban_render 看 tab)。
 - **修法**:session 安装时给 installer/owner 授建板所需 cap(scoped `create_agent`,或让 UI 建板走 BoardProvision 用 owner 授权路)。归属:socialware 安装的 owner-cap 授权(domain_session)。
+- **⛔ 调查完毕,待 Allen 决策(2026-07-16)**:普通用户全链路**没有任何 `create_agent` 授点**(workspace `add_member` 只授 `:create_session`,`behavior/workspace.ex handle_add_member`;registration 无);`Ezagent.Domain.Agent.materialize_*`(#1411)是 trusted-internal 声明成员物化边界,**无 CapBAC 门**,给用户触发的建板用=绕过授权,不是干净路。三个选项:(a) workspace 成员一律授 scoped `create_agent`(照 `create_session`);(b) 装带 agent-host 的 socialware 时按 definition 声明给 installer 授 workspace-scoped `create_agent`(`{:rule,…}`,但=装即自升权);(c) 平台 rule 内联 authority 只放行「passive data-host agent」建板特例(ambient authority,#154 review surface)。全是平台级授权决策,未实施。
 
 ## ⑦ board owner 建不了根节点(建根硬要 admin wildcard,不认 board owner)
 - **现象**:board owner 在自己建的板上「建根节点」→「无权限,需 admin」。
@@ -50,3 +52,4 @@
 - **诊断**:owner 在 `entity://system/agent/testboard` 上持的 cap = `%Capability{kind: :agent, behavior: Ezagent.ActionSet.Manage, action: :any}`(agent 生命周期:terminate/destroy)。而 `kanban.get_tree`/`add_node` 要的是 `behavior: Ezagent.ActionSet.Kanban`(required_caps kanban.ex:220,kind `:any` 运行时替 `:agent`)。**behavior 轴对不上**(Manage ≠ Kanban,都非 `:any`)→ owner 的 `get_tree` dispatch = `{:error, :unauthorized}` → UI 读回空树(fail-safe)。
 - **统一根因**:`Workspace.create_agent` 给建者铸的是 **Manage**(管 agent),没铸 **Kanban operate cap**(操作看板 = `cap(:agent, Kanban, :any, board)`,正是 #1376 mount cap 的形)。所以 owner 能「管」这个 agent(销毁),却不能「用」这块看板(读/加/改节点)。⑤(看 tab 的 session render cap)/⑥(建板的 workspace create_agent cap)/⑦(建根 admin-gate)+ 本条(板级 operate cap)= 四个各自独立缺失的 cap,统一症状「owner 拿不到用自己 kanban 所需的 cap」。
 - **修法**:装 kanban / chat 建板后,给 owner(和 assistant「手」)铸指向该 board 的 Kanban operate cap(走 #1376 `Mount.mount`/`CompositionCaps.mint_cap`,granter=板主人)。这正是 #1374 chat-建板要接的「发钥匙」动作(plan 第 3 件)——当前 UI 建板走的老 `create_kanban` 只 create_agent+Manage,漏了铸 operate cap。归属:kanban 建板业务(#1374)+ mount infra(#1376)。
+- **✅ 已修(2026-07-16,create_board 路)**:`BoardProvision.create_board/5` 现在给**建板人**(owner_ctx.caller)也经 `Mount.mount/6` 挂全动作 operate 钥匙(granter=板主人自己,`{:held_by, owner}` 自路径,落挂载表可 reconcile),返回加 `:creator_minted`。测试 `board_provision_grant_test.exs`。**TODO(join 补发)**:`Mount.reconcile_session_mounts/1` 只按挂载行重发**已记录 grantee**,覆盖不了「新成员进 session 补发」;新成员 join 时的 board-key 补发机制待定。**注**:UI 建板(world `create_kanban`)仍走老直调 `Workspace.create_agent` 路(不发钥匙)——改走 `create_board` 依赖 ⑥ 的 create_agent 授权决策(Allen)。

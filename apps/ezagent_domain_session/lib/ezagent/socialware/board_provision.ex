@@ -40,15 +40,22 @@ defmodule Ezagent.Socialware.BoardProvision do
   @type result :: %{
           board_uri: URI.t(),
           assistant_uri: URI.t(),
-          minted: [Ezagent.Capability.t()]
+          minted: [Ezagent.Capability.t()],
+          creator_minted: [Ezagent.Capability.t()]
         }
 
   @doc """
-  建板(归属 = `owner_ctx` 的 caller)+ 当场给本 session 的 `assistant_role` 成员挂指向
-  新板的 `behavior` 操作钥匙(`access: :operate`)。见模块文档的参数/返回契约。
+  建板(归属 = `owner_ctx` 的 caller)+ 当场发两把钥匙:
 
-  挂载机制交给 `Mount.provision/6`(建宿主 + 当场挂 + 落挂载表);本函数只负责解析本 session
-  的 assistant(收钥匙人)并把 kanban 参数喂给 `Mount`。
+    1. 本 session 的 `assistant_role` 成员挂指向新板的 `behavior` 操作钥匙
+       (`access: :operate`,经 `Mount.provision/6` 建宿主 + 当场挂 + 落挂载表);
+    2. **建板人自己**(`owner_ctx.caller` = 板主人)也挂一把同款全动作 operate 钥匙
+       (分层债 ⑧:此前建板人只拿到 `Manage` cap —— 管 agent 生命周期,behavior 轴对不上
+       `behavior` 的操作 required_caps,读写自己的板全 unauthorized。经 `Mount.mount/6`
+       → `CompositionCaps.mint_cap/4` 唯一 mint chokepoint,granter = 板主人 =
+       建板人自己,`Cap.issue` 走 `{:held_by, owner}` 自路径,per-grantee 签名)。
+
+  见模块文档的参数/返回契约;返回增加 `:creator_minted`(发给建板人的钥匙)。
   """
   @spec create_board(URI.t(), URI.t(), map(), module(), map()) ::
           {:ok, result()} | {:error, term()}
@@ -59,11 +66,13 @@ defmodule Ezagent.Socialware.BoardProvision do
          {:ok, flavor} <- fetch(spec, :flavor),
          {:ok, assistant_role} <- fetch(spec, :assistant_role),
          {:ok, assistant_uri} <- resolve_assistant(session_uri, assistant_role),
+         {:ok, %URI{} = creator_uri} <- fetch_creator(owner_ctx),
+         actions = Map.get(spec, :actions) || Ezagent.ActionSet.action_names(behavior),
          provision_spec = %{
            name: name,
            flavor: flavor,
            role: board_role,
-           actions: Map.get(spec, :actions)
+           actions: actions
          },
          {:ok, %{target: board_uri, caps: minted}} <-
            Mount.provision(
@@ -73,10 +82,22 @@ defmodule Ezagent.Socialware.BoardProvision do
              assistant_uri,
              behavior,
              owner_ctx
-           ) do
-      {:ok, %{board_uri: board_uri, assistant_uri: assistant_uri, minted: minted}}
+           ),
+         # ⑧ 发给建板人的钥匙:同一条 mount 路(mint + 落挂载表,session 重启可 reconcile)。
+         {:ok, %{caps: creator_minted}} <-
+           Mount.mount(session_uri, board_uri, creator_uri, behavior, actions, access: :operate) do
+      {:ok,
+       %{
+         board_uri: board_uri,
+         assistant_uri: assistant_uri,
+         minted: minted,
+         creator_minted: creator_minted
+       }}
     end
   end
+
+  defp fetch_creator(%{caller: %URI{} = caller}), do: {:ok, caller}
+  defp fetch_creator(_owner_ctx), do: {:error, :board_creator_unresolved}
 
   @default_assistant_role "kanban-assistant"
   # 只读动作:转发发的钥匙只含这些(能看不能改)。kanban 读动作 = get_tree / export_markmap。
