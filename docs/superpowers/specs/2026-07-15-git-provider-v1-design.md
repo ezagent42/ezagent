@@ -377,7 +377,8 @@ precondition of agent startup:
 
 ```text
 agent dispatches to the pre-existing GitTaskAccess Resource
-  -> Router verifies instance/action cap before every effect
+  -> Router verifies the instance/action cap once at the dispatch chokepoint,
+     before the handler runs or any effect is produced/executed
   -> derive credential owner and provider binding from governed task state
   -> verify SSH identity and repository permissions
   -> clone/fetch repository cache as platform infrastructure
