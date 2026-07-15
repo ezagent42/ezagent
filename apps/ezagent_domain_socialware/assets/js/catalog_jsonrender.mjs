@@ -19,6 +19,33 @@ const h = React.createElement
 
 const catalog = defineCatalog(schema, {components: shadcnComponentDefinitions, actions: {}})
 
+const stableAffordanceIds = new Set([
+  "hello-product-entry",
+  "hello-task-cta",
+  "hello-coupling-boundary",
+])
+
+function stableIdFor(props) {
+  const classes = String((props && props.className) || "").split(/\s+/)
+  return classes.find((className) => stableAffordanceIds.has(className)) || null
+}
+
+function StableShadcn({component, props, emit, children}) {
+  const hostRef = React.useRef(null)
+  const stableId = stableIdFor(props)
+
+  React.useEffect(() => {
+    const element = hostRef.current && hostRef.current.firstElementChild
+    if (element && stableId) element.id = stableId
+  }, [stableId])
+
+  return h(
+    "span",
+    {ref: hostRef, style: {display: "contents"}},
+    h(component, {props, emit}, children),
+  )
+}
+
 // --- Real Tabs content-switching (override) ---------------------------------
 // The stock `@json-render/shadcn` Tabs renders the trigger labels from the
 // `tabs` prop but drops ALL default-slot `children` into the tab body
@@ -119,6 +146,7 @@ function TabsSwitch({props, children}) {
 //   - `@login`    → AUTH button: go to /login?return_to=… when logged out, and
 //                   swap its own label to the username when logged in (reads the
 //                   viewer identity `viewer_app.js` publishes on `jr-viewer`)
+//   - `@composer` → focus the viewer's single persistent prompt composer
 //   - anything else → open in a new tab (external links / GitHub; W3)
 // A Button also carrying `navTab: "<value>"` is a NAV TAB: besides dispatching
 // the switch, it LISTENS to `jr-tab-switch` and toggles its own `.active` class
@@ -165,6 +193,10 @@ function ButtonNav({props, emit}) {
         const back = window.location.pathname + window.location.search
         window.location.href = "/login?return_to=" + encodeURIComponent(back)
       }
+      return
+    }
+    if (url === "@composer") {
+      window.dispatchEvent(new CustomEvent("jr-composer-focus"))
       return
     }
     if (url && String(url).charAt(0) === "#") {
@@ -225,11 +257,29 @@ function ButtonNav({props, emit}) {
     }
     if (typeof emit === "function") emit(name)
   }
-  return h(shadcnComponents.Button, {props, emit: handleEmit})
+  return h(StableShadcn, {
+    component: shadcnComponents.Button,
+    props,
+    emit: handleEmit,
+  })
+}
+
+function CardStable({props, children, emit}) {
+  return h(StableShadcn, {component: shadcnComponents.Card, props, emit}, children)
+}
+
+function BadgeStable({props, emit}) {
+  return h(StableShadcn, {component: shadcnComponents.Badge, props, emit})
 }
 
 const {registry} = defineRegistry(catalog, {
-  components: {...shadcnComponents, Tabs: TabsSwitch, Button: ButtonNav},
+  components: {
+    ...shadcnComponents,
+    Tabs: TabsSwitch,
+    Button: ButtonNav,
+    Card: CardStable,
+    Badge: BadgeStable,
+  },
 })
 
 function Unknown({element}) {

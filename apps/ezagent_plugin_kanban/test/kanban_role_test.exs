@@ -103,45 +103,16 @@ defmodule EzagentPluginKanban.KanbanRoleTest do
     assert {:error, {:invalid_role_field, :requested_caps, :add_node}} = Recipe.new(bad)
   end
 
-  # kanban-team roles (S1) — the plugin's roles/0 grows from the single
-  # kanban-manager recipe to a three-role team: kanban-assistant (cc-headless
-  # coordinator) + dev-together (cc-headless developer) + kanban-manager. Both new
-  # recipes are role-slot shaped (skills + persona prompt; board authority is
-  # composition-minted),
-  # carry NO instance URI, and round-trip through Recipe.new/1.
-  describe "kanban-team roles (S1)" do
-    test "roles/0 declares kanban-manager, kanban-assistant, and dev-together" do
+  # 提纯(Task 1):`kanban-assistant` / `dev-together` 两个"脑"配方已从 plugin
+  # `roles/0` 搬到 sw seed 数据(`priv/socialware_seed/kanban/recipes.yaml`),由
+  # `ManifestSeed.scan_dir!` 在发布 manifest 前注册。plugin 现在只声明 board 工具
+  # (`kanban-manager`),不再声明脑。
+  describe "kanban-team 提纯:plugin roles/0 只留 board 工具" do
+    test "roles/0 只声明 kanban-manager(两个脑已搬进 sw seed recipes.yaml)" do
       names = Enum.map(KanbanApp.roles(), & &1.name)
-      assert "kanban-manager" in names
-      assert "kanban-assistant" in names
-      assert "dev-together" in names
-    end
-
-    test "kanban_assistant_recipe has no ambient board master key" do
-      recipe = KanbanApp.kanban_assistant_recipe()
-      assert recipe.name == "kanban-assistant"
-      assert recipe.skills == ["kanban-assistant"]
-      assert is_binary(recipe.prompt) and recipe.prompt != ""
-
-      assert recipe.requested_caps == []
-    end
-
-    test "dev_together_recipe wires the dev-together skill" do
-      recipe = KanbanApp.dev_together_recipe()
-      assert recipe.name == "dev-together"
-      assert recipe.skills == ["dev-together"]
-      assert is_binary(recipe.prompt) and recipe.prompt != ""
-      assert recipe.requested_caps == []
-    end
-
-    test "both new recipes round-trip through Recipe.new/1 (no instance URI, valid role-slot)" do
-      for recipe <- [KanbanApp.kanban_assistant_recipe(), KanbanApp.dev_together_recipe()] do
-        assert {:ok, %Recipe{} = role} = Recipe.new(recipe)
-        assert role.skills == recipe.skills
-        assert is_binary(role.prompt)
-        refute String.contains?(role.prompt, "://")
-        assert role.requested_caps == []
-      end
+      assert names == ["kanban-manager"]
+      refute "kanban-assistant" in names
+      refute "dev-together" in names
     end
   end
 end

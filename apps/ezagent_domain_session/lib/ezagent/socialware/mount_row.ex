@@ -1,0 +1,208 @@
+defmodule Ezagent.Socialware.MountRow do
+  @moduledoc """
+  Durable source-of-truth table for runtime *mounts* — the caps minted at
+  runtime when a grantee (e.g. an assistant) pulls / forwards / creates a
+  handle onto a data-host agent (the mount `target`).
+
+  Historically `mint_cap/4` minted the capability but wrote no table, so a
+  runtime mount had no SoT and reconcile could not see it. This table closes
+  that gap: one row per `(session_uri, target_uri, grantee_uri, behavior)`
+  natural key records which grantee holds which action set over which target,
+  under which access mode, granted by whom (= the target's data-owner).
+
+  ## Natural key & synthetic id
+
+  The primary key `:id` is a session-scoped SHA256 hash of the natural key
+  (see `mount_id/4`), mirroring `Ezagent.ExternalMirror.BindingRow.row_id/3`.
+  Including `session_uri` in the hash means two sessions mounting the same
+  target for the same grantee produce DIFFERENT ids — no cross-session key
+  collision. A `unique_index` on the four natural-key columns backs the
+  DB-side idempotency contract; `upsert/1` overwrites in place on conflict.
+
+  **Pure data module** — no dispatch, no cap minting. `mint_cap` (M2) and the
+  installation path (M3) call into this; this module only owns the table.
+
+  ## actions_json
+
+  The granted action set (e.g. `["get_tree", "export_markmap"]`) is a LIST, so
+  it is JSON-encoded into the `actions_json` `:text` column (the Ecto `:map`
+  type rejects a bare list). `upsert/1` accepts either an `:actions` list
+  (encoded here) or a pre-encoded `:actions_json` string.
+  """
+
+  use Ecto.Schema
+
+  import Ecto.Query
+
+  alias EzagentCore.Repo
+
+  @primary_key {:id, :string, autogenerate: false}
+  @timestamps_opts [type: :utc_datetime_usec]
+  schema "socialware_mounts" do
+    field(:session_uri, :string)
+    field(:target_uri, :string)
+    field(:grantee_uri, :string)
+    field(:behavior, :string)
+    field(:actions_json, :string, default: "[]")
+    field(:access, :string)
+    field(:granted_by, :string)
+    field(:workspace_uri, :string)
+    field(:mounted_at, :utc_datetime_usec)
+
+    timestamps()
+  end
+
+  @type t :: %__MODULE__{}
+
+  @cast_fields ~w(
+    id session_uri target_uri grantee_uri behavior actions_json
+    access granted_by workspace_uri mounted_at
+  )a
+
+  @required_fields ~w(
+    id session_uri target_uri grantee_uri behavior actions_json
+    access granted_by workspace_uri mounted_at
+  )a
+
+  @conflict_replace ~w(
+    actions_json access granted_by workspace_uri mounted_at updated_at
+  )a
+
+  @doc """
+  Insert or overwrite a mount row at its deterministic natural-key identity.
+
+  Accepts URI structs or strings for the URI fields, an `:actions` list (or a
+  pre-encoded `:actions_json` string), and an `:access` mode (`:read` |
+  `:operate` or the string forms). On natural-key conflict the mutable columns
+  are replaced in place, so a re-mount with a changed action set / access mode
+  updates the single row rather than duplicating it.
+  """
+  @spec upsert(map()) :: {:ok, t()} | {:error, Ecto.Changeset.t()}
+  def upsert(attrs) when is_map(attrs) do
+    normalized = normalize(attrs)
+
+    %__MODULE__{}
+    |> Ecto.Changeset.cast(normalized, @cast_fields)
+    |> Ecto.Changeset.validate_required(@required_fields)
+    |> Repo.insert(
+      on_conflict: {:replace, @conflict_replace},
+      conflict_target: [:id],
+      returning: true
+    )
+  end
+
+  @doc "List every mount row for `session_uri`, oldest first."
+  @spec list_for_session(URI.t() | String.t()) :: [t()]
+  def list_for_session(session_uri) do
+    session = uri_string(session_uri)
+
+    Repo.all(
+      from(m in __MODULE__,
+        where: m.session_uri == ^session,
+        order_by: [asc: m.mounted_at, asc: m.id]
+      )
+    )
+  end
+
+  @doc "Load one exact mount row by its natural key, or `nil`."
+  @spec get(URI.t() | String.t(), URI.t() | String.t(), URI.t() | String.t(), String.t() | atom()) ::
+          t() | nil
+  def get(session_uri, target_uri, grantee_uri, behavior) do
+    Repo.get(__MODULE__, mount_id(session_uri, target_uri, grantee_uri, behavior))
+  end
+
+  @doc """
+  Delete a mount row by its natural key. Returns `{:ok, :deleted}` when a row
+  matched and `{:ok, :not_found}` when none did (already gone / never mounted).
+  """
+  @spec delete_by_natural_key(
+          URI.t() | String.t(),
+          URI.t() | String.t(),
+          URI.t() | String.t(),
+          String.t() | atom()
+        ) :: {:ok, :deleted | :not_found}
+  def delete_by_natural_key(session_uri, target_uri, grantee_uri, behavior) do
+    id = mount_id(session_uri, target_uri, grantee_uri, behavior)
+
+    case Repo.delete_all(from(m in __MODULE__, where: m.id == ^id)) do
+      {0, _} -> {:ok, :not_found}
+      {n, _} when n >= 1 -> {:ok, :deleted}
+    end
+  end
+
+  @doc """
+  Deterministic, session-scoped SHA256 identity for a mount's natural key.
+
+  Same params → same id (so concurrent inserts collide on the primary key AND
+  the natural-key unique index). Because `session_uri` is part of the hashed
+  tuple, changing the session yields a different id — two sessions mounting the
+  same target/grantee/behavior never collide (mirrors
+  `Ezagent.ExternalMirror.BindingRow.row_id/3`). Returns a 24-hex prefix.
+  """
+  @spec mount_id(
+          URI.t() | String.t(),
+          URI.t() | String.t(),
+          URI.t() | String.t(),
+          String.t() | atom()
+        ) :: String.t()
+  def mount_id(session_uri, target_uri, grantee_uri, behavior) do
+    :crypto.hash(
+      :sha256,
+      Enum.join(
+        [
+          uri_string(session_uri),
+          uri_string(target_uri),
+          uri_string(grantee_uri),
+          behavior_string(behavior)
+        ],
+        "/"
+      )
+    )
+    |> Base.encode16(case: :lower)
+    |> String.slice(0, 24)
+  end
+
+  defp normalize(attrs) do
+    session = uri_string(Map.fetch!(attrs, :session_uri))
+    target = uri_string(Map.fetch!(attrs, :target_uri))
+    grantee = uri_string(Map.fetch!(attrs, :grantee_uri))
+    behavior = behavior_string(Map.fetch!(attrs, :behavior))
+
+    %{
+      id: mount_id(session, target, grantee, behavior),
+      session_uri: session,
+      target_uri: target,
+      grantee_uri: grantee,
+      behavior: behavior,
+      actions_json: actions_json(attrs),
+      access: access_string(attrs),
+      granted_by: uri_string(Map.get(attrs, :granted_by)),
+      workspace_uri: uri_string(Map.get(attrs, :workspace_uri)),
+      mounted_at: Map.get(attrs, :mounted_at) || DateTime.utc_now()
+    }
+  end
+
+  defp actions_json(attrs) do
+    cond do
+      is_binary(attrs[:actions_json]) -> attrs[:actions_json]
+      is_list(attrs[:actions]) -> Jason.encode!(attrs[:actions])
+      true -> "[]"
+    end
+  end
+
+  defp access_string(attrs) do
+    case Map.get(attrs, :access) do
+      value when is_atom(value) and not is_nil(value) -> Atom.to_string(value)
+      value when is_binary(value) -> value
+      _ -> nil
+    end
+  end
+
+  defp behavior_string(behavior) when is_atom(behavior), do: inspect(behavior)
+  defp behavior_string(behavior) when is_binary(behavior), do: behavior
+
+  defp uri_string(%URI{} = uri), do: URI.to_string(uri)
+  defp uri_string(value) when is_binary(value), do: value
+  defp uri_string(nil), do: nil
+  defp uri_string(value), do: to_string(value)
+end

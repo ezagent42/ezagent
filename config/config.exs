@@ -108,7 +108,8 @@ config :ezagent_plugin_world,
 # works in dev and prod. Rebuild with: cd apps/ezagent_plugin_hello/assets &&
 # PATH=~/.local/linux-node/bin:$PATH npm run build
 config :ezagent_plugin_hello,
-  hello_module_url: "/assets/hello/main.js"
+  hello_module_url: "/assets/hello/main.js",
+  kanban_published_read_adapter: EzagentWeb.Socialware.KanbanPublishedReadAdapter
 
 # i18n (#91) — the hello builder narration is authored with English msgids and
 # translated in priv/gettext/zh_CN. The narration runs in a Generator Task with

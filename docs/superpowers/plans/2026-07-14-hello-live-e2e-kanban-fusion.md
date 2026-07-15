@@ -371,3 +371,148 @@ Push `feat/hello-live-e2e-kanban-fusion`, create a PR targeting `main`, and incl
 - [ ] **Step 8: Monitor PR-head CI to green**
 
 Poll checks. For any red check, inspect logs, reproduce locally, fix with TDD, push, and repeat. Completion requires every required PR-head check green; do not report completion on pending/skipped-required checks.
+
+### Task 8: Replace the sparse seed with a recording-ready Hello product entry
+
+**Files:**
+- Modify: `apps/ezagent_plugin_hello/priv/seed_page/body.json`
+- Modify: `apps/ezagent_plugin_hello/priv/seed_page/shell.css`
+- Modify: `apps/ezagent_plugin_hello/test/integration/hello_page_e2e_test.exs`
+- Modify: `apps/ezagent_plugin_hello/assets/test/hello_delegation_surface_test.mjs`
+
+**Interfaces:**
+- Produces stable product affordances `#hello-product-entry`,
+  `#hello-task-cta`, and `#hello-coupling-boundary` through the existing
+  catalog/render path.
+- Consumes the existing `#hello-prompt-form`; no new route or mutation endpoint.
+
+- [ ] **Step 1: Add failing product-structure assertions**
+
+Assert the approved seed spec contains the Hello name, product description,
+three capability explanations, `派个任务`, and `松耦合，非最终挂载`. Assert the
+browser bundle wires the CTA to focus the existing instruction input and contains
+no direct Kanban mutation.
+
+- [ ] **Step 2: Run the focused ExUnit and JS tests RED**
+
+Run:
+
+```bash
+mix test apps/ezagent_plugin_hello/test/integration/hello_page_e2e_test.exs
+node --test apps/ezagent_plugin_hello/assets/test/hello_delegation_surface_test.mjs
+```
+
+Expected: missing product-entry copy/IDs and missing CTA focus behavior.
+
+- [ ] **Step 3: Implement the catalog-valid entry spec and scoped styling**
+
+Compose only existing catalog components. Keep cobalt + zinc tokens, responsive
+spacing, high-contrast CTA, and a neutral boundary panel. Do not add catalog
+components, a route, a World bundle import, or a World `styles.css` edit.
+
+- [ ] **Step 4: Wire CTA focus without creating a second submission path**
+
+Use one document event/data action owned by the viewer bundle to focus
+`input[name="instruction"]`. Submission remains the existing `/hello/delegate`
+form and authenticated dispatcher service.
+
+- [ ] **Step 5: Run focused tests GREEN and commit**
+
+```bash
+git add apps/ezagent_plugin_hello/priv/seed_page \
+  apps/ezagent_plugin_hello/test/integration/hello_page_e2e_test.exs \
+  apps/ezagent_plugin_hello/assets/test/hello_delegation_surface_test.mjs \
+  apps/ezagent_domain_socialware/assets/js/viewer_app.js
+git commit -m "feat(hello): present recording-ready product entry"
+```
+
+### Task 9: Return a real delegation receipt and truthful Kanban status badge
+
+**Files:**
+- Modify: `apps/ezagent_plugin_hello/lib/ezagent_plugin_hello/kanban_delegation.ex`
+- Modify: `apps/ezagent_web/lib/ezagent_web/controllers/hello_delegation_controller.ex`
+- Modify: `apps/ezagent_web/lib/ezagent_web/hello_delegation_continuation.ex`
+- Modify: `apps/ezagent_web/lib/ezagent_web/controllers/socialware/chat_feed_controller.ex`
+- Modify: `apps/ezagent_web/lib/ezagent_web/controllers/socialware/external_feed_controller.ex`
+- Modify: `apps/ezagent_domain_socialware/assets/js/viewer_app.js`
+- Modify: `apps/ezagent_web/test/ezagent_web/controllers/hello_delegation_controller_test.exs`
+- Modify: `apps/ezagent_web/test/ezagent_web/hello_delegation_continuation_test.exs`
+- Modify: `apps/ezagent_plugin_hello/test/ezagent_plugin_hello/kanban_delegation_test.exs`
+- Modify: `apps/ezagent_plugin_hello/assets/test/hello_delegation_surface_test.mjs`
+
+**Interfaces:**
+- Extends `KanbanDelegation.delegate/3` success with the real task title and
+  Kanban status.
+- Produces a bounded signed receipt containing only session URI, Kanban URI,
+  node id, task title, raw status, and World path.
+- Renders `#hello-kanban-result` from verified server data.
+
+- [ ] **Step 1: Add failing status and receipt tests**
+
+Assert a newly created node reports `unassigned`, maps to `待派`, and survives
+the login return as a signed receipt. Assert tampering, expiry, and refresh do
+not create a node or fabricate success.
+
+- [ ] **Step 2: Run focused tests RED**
+
+Expected: delegation result lacks title/status, continuation has no receipt API,
+and the browser result container stays empty.
+
+- [ ] **Step 3: Read the created node through sanctioned Kanban dispatch**
+
+After `add_node` and artifact attachment, dispatch `get_tree`, select the returned
+node id, and return its real `status`. Never read the Kanban state slice directly.
+
+- [ ] **Step 4: Sign and expose a bounded success receipt**
+
+Store the receipt token in the authenticated session after the asynchronous
+delegation settles, or make the controller's authenticated path synchronous
+within the existing dispatch budget. The returned Hello page receives only a
+verified escaped payload. Receipt rendering is idempotent and performs no write.
+
+- [ ] **Step 5: Render the closed truthful status mapping**
+
+Map `unassigned -> 待派`, `claimed -> 已认领`, `doing -> 进行中`, and
+`done -> 已完成`. Preserve unknown raw values under neutral `处理中`; do not
+invent `PR 已开` or `已合并` without corresponding real model data.
+
+- [ ] **Step 6: Run focused tests GREEN and commit**
+
+```bash
+git add apps/ezagent_plugin_hello apps/ezagent_web apps/ezagent_domain_socialware/assets/js/viewer_app.js
+git commit -m "feat(hello): show real Kanban delegation receipt"
+```
+
+### Task 10: Rebuild the recording proof and close PR #1383 again
+
+**Files:**
+- Replace screenshots in `docs/e2e/2026-07-14/hello-live-e2e-kanban-fusion/`
+- Modify: `docs/e2e/2026-07-14/hello-live-e2e-kanban-fusion/README.md`
+- Modify: `docs/e2e/2026-07-14/hello-live-e2e-kanban-fusion/transcript.txt`
+- Modify: `docs/together/2026-07-14/returns/hello-live-e2e-kanban-fusion.md`
+
+- [ ] **Step 1: Run targeted tests, asset build, and full `mix precommit`**
+
+Fix only branch-owned failures. Preserve the user's dirty `config/dev.exs` and
+World package lock without staging them.
+
+- [ ] **Step 2: Start the seeded Fusion demo through the sanctioned boot path**
+
+Use `HELLO_DEMO_SEED=1`, workspace `demo`, name `fusion`, and the current backend.
+Wait for `/_health` and `/hello/fusion` to return 200.
+
+- [ ] **Step 3: Capture recording-ready browser evidence**
+
+Capture the product entry, filled task, login continuation, real receipt with
+`待派`, and the existing World Kanban page containing the real node. Ensure CJK
+text renders legibly in the evidence browser.
+
+- [ ] **Step 4: Update evidence and return documents honestly**
+
+State that status badges project Kanban's real four-state model and that PR/merge
+event ingestion is not fabricated. Keep the Layer B boundary explicit.
+
+- [ ] **Step 5: Commit, rebase, push, and monitor PR-head CI**
+
+Rebase on latest `origin/main`, rerun targeted verification and `mix precommit`,
+push the branch, update PR #1383, and continue until every required check is green.

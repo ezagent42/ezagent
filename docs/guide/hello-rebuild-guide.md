@@ -2,27 +2,57 @@
 
 > 任何人在全新 DB / 全新部署上重建 hello session 和 v2 网站页面。
 
-## 一键重建
+## 全新数据库一键重建 Fusion 官网
+
+同事不需要、也不应该拿到原作者的数据库。完成迁移后，在自己的数据库上运行：
+
+```bash
+mix ezagent.demo.seed_hello_fusion
+```
+
+命令会通过正式 Ezagent API 幂等创建/修复：
+
+- `workspace://system`
+- `session://system/hello/fusion`
+- `priv/seed_page/body.json` 中的完整 Page
+- `priv/seed_page/shell.css` 中的完整样式
+
+然后正常启动服务：
+
+```bash
+PORT=10042 mix phx.server
+```
+
+访问：
+
+```text
+http://localhost:10042/hello/fusion
+```
+
+`mix ezagent.demo.seed_hello` 是通用的基础示例种子，写入 `Spec.seed()`，不能用于重建完整
+Fusion 官网。完整官网必须使用 `mix ezagent.demo.seed_hello_fusion`。
+
+## 启动时自动重建
 
 ```bash
 cd /home/ning/ezagent
-PORT=10042 HELLO_LLM_BACKEND=claude_code HELLO_DEMO_SEED=1 HELLO_DEMO_WS=system HELLO_DEMO_NAME=main mix phx.server
+PORT=10042 HELLO_LLM_BACKEND=claude_code HELLO_DEMO_SEED=1 HELLO_DEMO_WS=system HELLO_DEMO_NAME=fusion mix phx.server
 ```
 
-启动后 session `session://system/hello/main` 自动创建，v2 页面(body + shell CSS)自动写入。
+启动后 session `session://system/hello/fusion` 自动创建，完整 Fusion 页面(body + shell CSS)自动写入。
 
 ## 公开访问
 
 浏览器直接打开(不需要登录):
 
 ```
-http://localhost:10042/hello/main
+http://localhost:10042/hello/fusion
 ```
 
 或完整路径:
 
 ```
-/socialware/chat?session_uri=session://system/hello/main
+/socialware/chat?session_uri=session://system/hello/fusion
 ```
 
 ## Admin 登录

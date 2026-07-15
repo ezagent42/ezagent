@@ -28,7 +28,7 @@ defmodule EzagentWeb.HelloManifestDriftTest do
     "version" => "0.1.0",
     "title" => "Pure-config hello",
     "description" => "Hello socialware authored as a manifest.",
-    "uses" => ["hello"],
+    "uses" => ["hello", "kanban"],
     "requires" => ["orchestrator"],
     "bases" => [Ezagent.ActionSet.Session, Ezagent.ActionSet.Publisher.SessionImpl],
     "shape" => [
@@ -108,6 +108,7 @@ defmodule EzagentWeb.HelloManifestDriftTest do
 
   test "Demo.Hello.manifest_attrs/0 loads the shipped file verbatim" do
     assert Demo.Hello.manifest_attrs() == @reference
+    refute Enum.any?(@reference["roles"], &(&1["role_name"] == "board"))
   end
 
   test "the :name override replaces only the name, nothing else drifts" do

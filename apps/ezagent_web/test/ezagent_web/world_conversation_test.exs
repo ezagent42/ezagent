@@ -799,6 +799,21 @@ defmodule EzagentWeb.WorldConversationTest do
     {:ok, _agent_pid} =
       Ezagent.Kind.spawn(Ezagent.Entity.Agent, %{uri: agent_uri, initial_caps: MapSet.new()})
 
+    viewer_uri =
+      Ezagent.URI.new!(
+        "entity://system/user/world-pr4-pty-viewer-#{System.unique_integer([:positive])}"
+      )
+
+    manage_cap =
+      Ezagent.CreatorGrant.manage_cap(
+        :agent,
+        agent_uri,
+        Ezagent.Capability.workspace_of(agent_uri),
+        viewer_uri
+      )
+
+    :ok = create_read_only_user(viewer_uri, [manage_cap])
+
     on_exit(fn ->
       _ = Ezagent.Domain.Pty.stop(agent_uri)
       _ = Ezagent.Kind.terminate(agent_uri)
@@ -814,7 +829,8 @@ defmodule EzagentWeb.WorldConversationTest do
 
     assert is_pid(wait_for_pty_exec_pid(agent_uri))
 
-    {:ok, view, _html} = live(admin_conn(conn), "/sessions?session=#{encoded}")
+    {:ok, view, _html} =
+      live(workspace_conn(conn, "system", viewer_uri), "/sessions?session=#{encoded}")
 
     view
     |> element("#world-root")
@@ -1425,7 +1441,18 @@ defmodule EzagentWeb.WorldConversationTest do
     installer_ws = Ezagent.URI.workspace(installer_ws_name)
     installer_user = Ezagent.URI.entity(installer_ws_name, :user, "admin")
     admin = Ezagent.Entity.User.admin_uri()
-    :ok = create_read_only_user(installer_user, [])
+
+    installer_admin_cap = %Ezagent.Capability{
+      kind: :workspace,
+      behavior: Ezagent.ActionSet.Workspace,
+      action: :any,
+      instance: :any,
+      workspace_uri: installer_ws,
+      granted_by: admin,
+      granted_at: DateTime.utc_now()
+    }
+
+    :ok = create_read_only_user(installer_user, [installer_admin_cap])
     :ok = Ezagent.Workspace.add_member(installer_ws_name, installer_user)
     :ok = seed_py_recipe(recipe_name)
 

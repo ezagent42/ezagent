@@ -307,6 +307,43 @@ defmodule Ezagent.World.ConversationDataTest do
       refute "test_gated" in ids
     end
   end
+
+  # Task 1 — the kanban operating tab must classify as the world-native "kanban"
+  # render mode (not the read-only "external" json-render surface), so the SPA can
+  # mount a rich interactive board (Task 2). The classification is by view id
+  # (`:kanban_board`, mirroring `EzagentPluginKanban.BoardView.id/0`): even though
+  # the view also declares `external_render? => true`, the native mapping wins.
+  describe "session_views/2 kanban render mode" do
+    defmodule KanbanBoardView do
+      # Mirrors the classification-relevant traits of
+      # `EzagentPluginKanban.BoardView`: id :kanban_board + external_render? true.
+      @behaviour Ezagent.UI.SessionView
+      use Phoenix.Component
+      def id, do: :kanban_board
+      def label, do: "看板"
+      def icon, do: "square-kanban"
+      def applies_to?(%URI{}), do: true
+      def applies_to?(_), do: false
+      def view_behavior, do: nil
+      def external_render?, do: true
+      def external_render(_uri), do: %{"type" => "kanban_board"}
+      def render(assigns), do: ~H""
+    end
+
+    setup do
+      :ok = Ezagent.UI.SessionViewRegistry.init()
+      :ok = Ezagent.UI.SessionViewRegistry.register(Ezagent.World.ConversationView)
+      :ok = Ezagent.UI.SessionViewRegistry.register(KanbanBoardView)
+      %{session: Ezagent.URI.session("acme", "default", "kb1")}
+    end
+
+    test "the :kanban_board view classifies as native \"kanban\" mode", %{session: s} do
+      views = ConversationData.session_views(s, nil)
+      by_id = Map.new(views, &{&1["id"], &1})
+
+      assert by_id["kanban_board"]["mode"] == "kanban"
+    end
+  end
 end
 
 defmodule Ezagent.World.ConversationDataStateForTest do

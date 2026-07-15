@@ -141,12 +141,26 @@ defmodule Ezagent.World.KanbanActions do
       when is_binary(sha) and is_binary(path),
       do: act(socket, u, :attach_code_file, %{id: id, sha: sha, path: path})
 
+  def handle_dispatch(socket, "kanban.share_board", %{"kanban_uri" => u}) when is_binary(u),
+    do: share_board(socket, u)
+
   def handle_dispatch(socket, _action, _args),
     do: {:noreply, assign(socket, :last_dispatch_status, "error:unsupported_action")}
 
   # 上传 grant 校验（同 ConversationActions 的 anti-laundering：Phoenix.Token + uri↔caller↔session）。
   @upload_grant_salt "world_attach"
   @upload_grant_max_age 86_400
+
+  # 分享看板 token（T6.4）：照本模块 upload-grant 的 Phoenix.Token 模式（sign/verify +
+  # salt + max_age）。分享时校验发起人 access → 把 board + 只读意图签进 token → 拼接收链接；
+  # 接收侧（ezagent_web `KanbanShareController`）用同 salt/max_age verify + 直接
+  # `Mount.mount` 只读挂进点击者 session。
+  # salt/max_age 必须与接收侧常量逐一对齐；max_age（7 天）在接收侧 verify 时校验。
+  @share_board_salt "world_kanban_share"
+  # behavior 以字符串入 token（world 无 kanban plugin dep，不静态引模块；接收侧
+  # `Module.concat` 反解，同 `Mount.decode_behavior` 约定）。
+  @share_board_behavior "Ezagent.ActionSet.Kanban"
+  @share_board_receive_path "/socialware/kanban/receive"
 
   # --- 动作：dispatch（登录者身份）→ re-read 树 → push tree --------------
 
@@ -234,6 +248,72 @@ defmodule Ezagent.World.KanbanActions do
         {:noreply, assign(socket, :last_dispatch_status, "error:bad_kanban_uri")}
     end
   end
+
+  # --- 分享看板（T6.4）：校验 access → 签只读 token → 拼接收链接 -----------------
+
+  @doc """
+  分享看板 = 生成一个只读接收链接。
+
+  ① 校验发起人对这块板有 access —— 以自身份（登录者）dispatch `kanban.get_tree` 探针，
+     cap 校验落 dispatch chokepoint（不直读 cap 列表，同
+     `Ezagent.Socialware.BoardProvision.session_holds_board_cap?` 思路）；
+  ② `Phoenix.Token.sign` 把 board_uri + behavior + 只读意图签成 token（照本模块
+     upload-grant 的 sign/verify + salt + max_age 模式）；
+  ③ 拼成接收链接（接收 route 见 `EzagentWeb.Socialware.KanbanShareController`）。
+
+  授权只在**分享时**查（token 携带凭证），接收侧只管挂。返回 `{:ok, link}`（发起人有
+  access）或 `{:error, :no_access | :bad_kanban_uri}`。
+  """
+  @spec share_link(Phoenix.LiveView.Socket.t(), String.t()) ::
+          {:ok, String.t()} | {:error, :no_access | :bad_kanban_uri}
+  def share_link(socket, uri_str) do
+    case parse(uri_str) do
+      %URI{} = uri ->
+        if share_access?(socket, uri),
+          do: {:ok, build_share_link(socket, uri)},
+          else: {:error, :no_access}
+
+      :error ->
+        {:error, :bad_kanban_uri}
+    end
+  end
+
+  defp share_board(socket, uri_str) do
+    case share_link(socket, uri_str) do
+      {:ok, link} ->
+        {:noreply,
+         socket
+         |> assign(:last_dispatch_status, "ok")
+         |> push_event("world:state", %{"share_link" => link, "last_dispatch_status" => "ok"})}
+
+      {:error, reason} ->
+        {:noreply, assign(socket, :last_dispatch_status, "error:#{reason}")}
+    end
+  end
+
+  # 发起人对板是否有 access：复用 world 的发现可见性谓词（admin / 板主人 data_owner / 持指向
+  # 该板的 cap）—— 能看见即可分享。**不**用 dispatch 探针：kanban 板动作的 cap 由 session 的
+  # kanban-assistant（agent）持有，登录者（人）自身通常不持板动作 cap（他是 data_owner），
+  # 故以「登录者 own / 持 cap」判 access（同 `KanbanData.visible?` 的发现口径）。
+  defp share_access?(socket, %URI{} = uri) do
+    KanbanData.can_share?(uri, read_ctx(socket))
+  end
+
+  defp build_share_link(socket, %URI{} = uri) do
+    board_uri = encode_uri(uri)
+
+    payload = %{
+      "board" => board_uri,
+      "behavior" => @share_board_behavior,
+      "access" => "read"
+    }
+
+    # max_age 在接收侧 `Phoenix.Token.verify` 时校验（sign 不带 max_age）。
+    token = Phoenix.Token.sign(socket, @share_board_salt, payload)
+    @share_board_receive_path <> "?" <> URI.encode_query(token: token)
+  end
+
+  defp encode_uri(%URI{} = uri), do: URI.to_string(uri)
 
   # --- 上传文件挂到节点（v1.5）：验 upload grant 取 uploads URI → attach_artifact ----
 
@@ -343,7 +423,11 @@ defmodule Ezagent.World.KanbanActions do
 
   # read-side ctx（caller_uri/caller_caps/workspace_uri）给 KanbanData.read_tree/
   # board_state/list_instances。workspace_uri 让 list-by-role 限定在本 tenant（RF-7）。
-  defp read_ctx(socket) do
+  @doc """
+  KanbanData 读侧 ctx（caller 身份 + cap 快照 + workspace 域）——从 world socket assigns
+  取。`ConversationActions.switch_view`（切 kanban tab 载板）也复用此函数，故公开。
+  """
+  def read_ctx(socket) do
     %{
       caller_uri: socket.assigns.current_entity_uri,
       caller_caps: Map.get(socket.assigns, :current_caps, MapSet.new()),

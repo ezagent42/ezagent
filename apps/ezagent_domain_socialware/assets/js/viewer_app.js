@@ -225,6 +225,25 @@ function execNav(nav) {
   }
 }
 
+function latestKanbanReceipt(messages) {
+  if (!Array.isArray(messages)) return null
+  for (let i = messages.length - 1; i >= 0; i--) {
+    const nav = messages[i] && messages[i].nav
+    if (nav && nav.kind === "hello_kanban_receipt") return nav
+  }
+  return null
+}
+
+function kanbanStatusLabel(status) {
+  switch (String(status || "unknown")) {
+    case "unassigned": return "待派"
+    case "claimed": return "已认领"
+    case "doing": return "进行中"
+    case "done": return "已完成"
+    default: return "处理中"
+  }
+}
+
 function ViewerApp({sessionUri, token, socketPath, topicPrefix, delegationEndpoint, csrfToken}) {
   const [snapshot, setSnapshot] = useState(null)
   const [unauthorized, setUnauthorized] = useState(false)
@@ -556,8 +575,21 @@ body.jr-highlight [data-slot]{outline:1.5px solid rgba(217,70,239,.75);outline-o
 // chat.send), so a disabled input is the honest affordance, not a security gate.
 function PreviewBar({viewer, sessionUri, messages, chatOpen, setChatOpen, onJoin, onPost, onLogin, selected, onClearSelection, selectMode, onToggleSelect, jrHighlight, onToggleHighlight, delegationEndpoint, csrfToken}) {
   const [draft, setDraft] = useState("")
+  const instructionRef = useRef(null)
   const loggedIn = !!(viewer && viewer.logged_in)
   const member = loggedIn && !!viewer.member
+  const receipt = latestKanbanReceipt(messages)
+
+  useEffect(() => {
+    const focusComposer = () => {
+      if (instructionRef.current) {
+        instructionRef.current.focus()
+        instructionRef.current.scrollIntoView({behavior: "smooth", block: "center"})
+      }
+    }
+    window.addEventListener("jr-composer-focus", focusComposer)
+    return () => window.removeEventListener("jr-composer-focus", focusComposer)
+  }, [])
   // Unread hint on the open-session button: the chat panel no longer expands
   // inline, so a new reply (from @hello / the concierge) lights a red dot to tell
   // the member to open the session. Baseline = the message count at mount (so the
@@ -655,6 +687,7 @@ function PreviewBar({viewer, sessionUri, messages, chatOpen, setChatOpen, onJoin
           : null,
       ),
       React.createElement("input", {
+        ref: instructionRef,
         className: "previewbar-input",
         name: "instruction",
         value: draft,
@@ -700,7 +733,22 @@ function PreviewBar({viewer, sessionUri, messages, chatOpen, setChatOpen, onJoin
     chatOpen ? React.createElement(ChatPanel, {messages, onClose: () => setChatOpen(false)}) : null,
     chip,
     prompt,
-    React.createElement("div", {id: "hello-kanban-result", role: "status", "aria-live": "polite"}),
+    React.createElement(
+      "div",
+      {id: "hello-kanban-result", className: receipt ? "hello-kanban-result is-visible" : "hello-kanban-result", role: "status", "aria-live": "polite"},
+      receipt
+        ? React.createElement(
+            React.Fragment,
+            null,
+            React.createElement("span", {id: "hello-published-board-status", className: "hello-kanban-result-kicker"}, `KANBAN · 已发布只读看板 · r${receipt.publication_revision || 1}`),
+            React.createElement("strong", {className: "hello-kanban-result-title"}, receipt.title || "Kanban task"),
+            React.createElement("span", {className: "hello-kanban-result-status"}, kanbanStatusLabel(receipt.status)),
+            React.createElement("code", {className: "hello-kanban-result-ref"}, `${receipt.board_uri || ""} · ${receipt.node_id || ""}`),
+            React.createElement("span", {id: "hello-published-board-readonly", className: "hello-kanban-result-boundary"}, "访客接收后只读；修改仍由原 Kanban 管理"),
+            React.createElement("a", {className: "hello-kanban-result-link", href: receipt.value, target: "_blank", rel: "noreferrer"}, "接收只读看板 →"),
+          )
+        : null,
+    ),
   )
 }
 
@@ -822,6 +870,15 @@ body.jr-selecting .previewbar-wrap,body.jr-selecting .previewbar-wrap *{cursor:a
 .previewbar-chip-text{overflow:hidden;text-overflow:ellipsis;white-space:nowrap;font-weight:600;color:#333}
 .previewbar-chip-x{border:none;background:rgba(0,0,0,.08);color:#666;border-radius:999px;width:1.15rem;height:1.15rem;font-size:.7rem;cursor:pointer;flex-shrink:0;line-height:1}
 .previewbar-chip-x:hover{background:rgba(0,0,0,.14)}
+.hello-kanban-result{display:none}
+.hello-kanban-result.is-visible{display:grid;grid-template-columns:1fr auto;gap:.28rem .8rem;align-items:center;padding:.9rem 1rem;border-radius:1rem;background:rgba(255,255,255,.94);border:1px solid rgba(11,92,255,.18);box-shadow:0 14px 38px rgba(0,0,0,.14);backdrop-filter:blur(20px);-webkit-backdrop-filter:blur(20px)}
+.hello-kanban-result-kicker{grid-column:1/-1;font-size:.68rem;font-weight:800;letter-spacing:.11em;color:#0b5cff}
+.hello-kanban-result-title{font-size:.95rem;color:#17171b;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+.hello-kanban-result-status{justify-self:end;padding:.22rem .58rem;border-radius:999px;background:#e7eeff;color:#0040c4;font-size:.74rem;font-weight:800}
+.hello-kanban-result-ref{grid-column:1/-1;font-size:.68rem;color:#71717a;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+.hello-kanban-result-boundary{font-size:.72rem;color:#71717a}
+.hello-kanban-result-link{justify-self:end;color:#0b5cff;font-size:.78rem;font-weight:750;text-decoration:none}
+.hello-kanban-result-link:hover{text-decoration:underline}
 `
 
 // Pure shadcn page + AI CSS theme. The whole page is ONE shadcn json-render spec;

@@ -1,8 +1,9 @@
 import React from "react"
-import {Bug, Cable, CheckCircle2, ChevronUp, Copy, ExternalLink, LayoutGrid, Link2, Loader2, MessageSquare, MoreHorizontal, Paperclip, PanelTop, Plus, RotateCcw, Route, Send, Sparkles, TerminalSquare, Upload, UserMinus, UserPlus, Users, X} from "lucide-react"
+import {Bug, Cable, CheckCircle2, ChevronUp, Copy, ExternalLink, LayoutGrid, Link2, Loader2, MessageSquare, MoreHorizontal, Paperclip, PanelTop, Plus, RotateCcw, Route, Send, Sparkles, SquareKanban, TerminalSquare, Upload, UserMinus, UserPlus, Users, X} from "lucide-react"
 
 import {Button, Input, Modal, Select} from "./ui/primitives"
 import {JsonRenderBubble} from "./JsonRenderBubble"
+import {Kanban, type KanbanState} from "./Kanban"
 import {PtyTerminalSurface} from "./PtyTerminal"
 
 // Server-rendered attachment: an uploads URI carries a signed download `href`
@@ -46,6 +47,7 @@ const ICONS: Record<string, React.ComponentType<{className?: string; "aria-hidde
   link: Link2,
   "panel-top": PanelTop,
   sparkles: Sparkles,
+  "square-kanban": SquareKanban,
 }
 
 const iconFor = (name: string) => ICONS[name] ?? LayoutGrid
@@ -183,6 +185,10 @@ type Props = {
   onPtyInput: (bytes: string) => void
   onPtyResize: (size: {cols: number; rows: number}) => void
   onServerEvent?: (event: string, callback: (payload: unknown) => void) => void
+  // Kanban board actions (kanban.*) dispatched from the in-session board tab.
+  // Wired to the same `world:dispatch` path the plugin page uses
+  // (`onWorkspacePluginAction`); session-agnostic, so no session_uri is threaded.
+  onKanbanAction: (action: string, args: Record<string, unknown>) => void
   // Publish this (hello) session as a reusable SessionTemplate carrying the
   // current page + agent (not the chat history). Operator-only; the button lives
   // in the page-preview overlay, so it never shows on the public share page.
@@ -212,6 +218,7 @@ export function Conversation({
   onPtyInput,
   onPtyResize,
   onServerEvent,
+  onKanbanAction,
   onPublishTemplate,
 }: Props) {
   const sessionUri = state.session_uri || ""
@@ -260,6 +267,12 @@ export function Conversation({
   const [publishOpen, setPublishOpen] = React.useState(false)
   const [publishName, setPublishName] = React.useState("")
   const [published, setPublished] = React.useState(false)
+  // Kanban 分享链接：点分享 → dispatch kanban.share_board → 后端回推 world:state.share_link
+  // → 弹 modal 展示链接 + 自动复制到剪贴板（下方 useEffect 消费）。shareRequestedRef 保证
+  // 只有用户点了分享才弹（避免挂载时 state 里已有旧 share_link 就自弹）。
+  const [shareLink, setShareLink] = React.useState<string | null>(null)
+  const [shareCopied, setShareCopied] = React.useState(false)
+  const shareRequestedRef = React.useRef(false)
   const [ruleMatcherType, setRuleMatcherType] = React.useState("always")
   const [ruleMatcherArg, setRuleMatcherArg] = React.useState("")
   const [ruleReceivers, setRuleReceivers] = React.useState("")
@@ -516,6 +529,34 @@ export function Conversation({
     setPublished(true)
     window.setTimeout(() => setPublished(false), 3000)
   }
+
+  // 分享看板：dispatch kanban.share_board（复用 onKanbanAction=world:dispatch），后端回推
+  // share_link；标记 shareRequestedRef 让下方 effect 只在本次用户动作后弹链接。
+  const handleShareKanban = (kanbanUri: string) => {
+    if (!kanbanUri) return
+    shareRequestedRef.current = true
+    onKanbanAction("kanban.share_board", {kanban_uri: kanbanUri})
+  }
+
+  const copyShareLink = (link: string) => {
+    if (typeof navigator !== "undefined" && navigator.clipboard) {
+      navigator.clipboard
+        .writeText(link)
+        .then(() => {
+          setShareCopied(true)
+          window.setTimeout(() => setShareCopied(false), 2000)
+        })
+        .catch(() => undefined)
+    }
+  }
+
+  const kanbanShareLink = (state as unknown as KanbanState).share_link
+  React.useEffect(() => {
+    if (!kanbanShareLink || !shareRequestedRef.current) return
+    shareRequestedRef.current = false
+    setShareLink(kanbanShareLink)
+    copyShareLink(kanbanShareLink)
+  }, [kanbanShareLink])
 
   const toggleMembers = () => {
     if (membersOpen) setInviteOpen(false)
@@ -798,7 +839,15 @@ export function Conversation({
         </div>
 
         <div className="flex min-h-0 flex-1 overflow-hidden">
-          {activeMode === "pty" ? (
+          {activeMode === "kanban" ? (
+            // 权限门控的 session tab 里渲染富 Kanban 操作面（复用插件页同一组件）。
+            // board 数据来自 world:state 合并的看板字段（后端 session.view.switch 切到
+            // kanban_board 时经 KanbanData.session_boards 载入 + 自动选中首块板）；
+            // onAction 走现成 world:dispatch（onKanbanAction = onWorkspacePluginAction）。
+            <div className="min-w-0 flex-1 overflow-y-auto bg-[#fafafa]" data-world-subcomponent="kanban">
+              <Kanban state={state as unknown as KanbanState} onAction={onKanbanAction} onShare={handleShareKanban} />
+            </div>
+          ) : activeMode === "pty" ? (
             <div className="min-w-0 flex-1 overflow-y-auto bg-[#fafafa] p-4" data-world-subcomponent="pty">
               <PtyTerminalSurface
                 state={{...state, agent_uri: activePtyAgentUri}}
@@ -1352,6 +1401,44 @@ export function Conversation({
         </div>
       </div>
     )}
+
+    {shareCopied && (
+      <div className="pointer-events-none fixed inset-x-0 top-6 z-[100] flex justify-center">
+        <div className="ez-msg-in pointer-events-auto flex items-center gap-2 rounded-lg bg-card px-4 py-2.5 text-sm font-medium text-foreground shadow-lg ring-1 ring-border">
+          <CheckCircle2 aria-hidden="true" className="h-[18px] w-[18px] text-emerald-500" />
+          分享链接已复制
+        </div>
+      </div>
+    )}
+
+    <Modal
+      open={shareLink !== null}
+      title="看板分享链接"
+      footer={
+        <>
+          <Button variant="ghost" onClick={() => setShareLink(null)}>
+            关闭
+          </Button>
+          <Button onClick={() => shareLink && copyShareLink(shareLink)}>
+            <Copy aria-hidden="true" className="h-4 w-4" />
+            复制链接
+          </Button>
+        </>
+      }
+    >
+      <p className="mb-2 text-sm text-muted-foreground">
+        任何拿到此链接的人都能<strong>只读</strong>查看这块看板（链接 7 天内有效）。已自动复制到剪贴板。
+      </p>
+      <div className="flex items-center gap-2">
+        <input
+          readOnly
+          value={shareLink || ""}
+          onFocus={(e) => e.target.select()}
+          className="w-full rounded-[var(--radius)] border border-border bg-muted px-3 py-2 text-sm text-foreground outline-none"
+          data-world-kanban-share-link
+        />
+      </div>
+    </Modal>
 
     <Modal
       open={publishOpen}
