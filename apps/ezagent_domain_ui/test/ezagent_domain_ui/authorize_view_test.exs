@@ -71,7 +71,8 @@ defmodule Ezagent.UI.AuthorizeViewTest do
 
   defp live_user(caps) do
     uri = Ezagent.URI.new!("entity://system/user/authz-#{uniq()}")
-    {:ok, _} = Ezagent.Users.create_read_only(uri, caps)
+    signed_caps = Ezagent.Test.CapHelper.issue_all!(uri, caps)
+    {:ok, _} = Ezagent.Users.create_read_only(uri, signed_caps)
     {:ok, _pid} = Ezagent.SpawnRegistry.spawn(uri)
     uri
   end

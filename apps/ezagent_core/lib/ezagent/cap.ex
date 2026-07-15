@@ -69,16 +69,7 @@ defmodule Ezagent.Cap do
         } = cap
       )
       when is_binary(signature) and (is_struct(workspace_uri, URI) or workspace_uri == :any) do
-    with {:ok, version} <- Signing.parse_key_id(cap.key_id, workspace_uri),
-         %URI{scheme: "entity"} = granted_by <- cap.granted_by,
-         true <- valid_signed_shape?(cap) do
-      trust_domain = Signing.trust_domain(workspace_uri)
-      {public_key, _private_key} = Signing.derive_keypair(granted_by, trust_domain, version)
-
-      Signing.verify(cap, signature, public_key)
-    else
-      _ -> false
-    end
+    cryptographically_valid?(cap)
   end
 
   def verify(_artifact), do: false
@@ -100,6 +91,32 @@ defmodule Ezagent.Cap do
   end
 
   def verify_for(_artifact, _receiver_uri), do: false
+
+  @doc """
+  Return whether an artifact is signed, cryptographically valid, and bound to
+  `receiver_uri`.
+
+  This is deliberately independent of the temporary dual-read setting. Unlike
+  `verify_for/2`, it always rejects unsigned legacy artifacts, so reconciliation
+  and audit code cannot mistake "accepted during migration" for "signed".
+  """
+  @spec signed_and_valid?(term(), term()) :: boolean()
+  def signed_and_valid?(
+        %Capability{
+          signature: signature,
+          key_id: key_id,
+          grantee_uri: %URI{} = grantee_uri
+        } = cap,
+        %URI{} = receiver_uri
+      )
+      when is_binary(signature) and byte_size(signature) > 0 and is_binary(key_id) and
+             byte_size(key_id) > 0 do
+    Ezagent.URI.canonical?(grantee_uri) and Ezagent.URI.canonical?(receiver_uri) and
+      Ezagent.URI.stable_key(grantee_uri) == Ezagent.URI.stable_key(receiver_uri) and
+      cryptographically_valid?(cap)
+  end
+
+  def signed_and_valid?(_artifact, _receiver_uri), do: false
 
   @doc """
   Return the verified subset of a capability collection as a `MapSet`.
@@ -176,19 +193,50 @@ defmodule Ezagent.Cap do
          behavior: behavior,
          action: action,
          instance: instance,
+         workspace_uri: workspace_uri,
          granted_at: %DateTime{},
-         grantee_uri: %URI{}
+         grantee_uri: %URI{} = grantee_uri
        })
        when is_atom(kind) and is_atom(behavior) and is_atom(action) do
-    valid_signing_instance?(instance)
+    valid_signing_instance?(instance) and valid_trust_scope?(workspace_uri) and
+      Ezagent.URI.canonical?(grantee_uri)
   end
 
   defp valid_signed_shape?(_cap), do: false
 
   defp valid_signing_instance?(:any), do: true
-  defp valid_signing_instance?(%URI{}), do: true
-  defp valid_signing_instance?({tag, %URI{}}) when is_atom(tag), do: true
+  defp valid_signing_instance?(%URI{} = uri), do: Ezagent.URI.canonical?(uri)
+
+  defp valid_signing_instance?({tag, %URI{} = uri}) when is_atom(tag),
+    do: Ezagent.URI.canonical?(uri)
+
   defp valid_signing_instance?(_instance), do: false
+
+  defp valid_trust_scope?(:any), do: true
+  defp valid_trust_scope?(%URI{} = uri), do: Ezagent.URI.canonical?(uri)
+  defp valid_trust_scope?(_workspace_uri), do: false
+
+  defp cryptographically_valid?(
+         %Capability{
+           signature: signature,
+           workspace_uri: workspace_uri
+         } = cap
+       )
+       when is_binary(signature) and (is_struct(workspace_uri, URI) or workspace_uri == :any) do
+    with true <- valid_signed_shape?(cap),
+         {:ok, version} <- Signing.parse_key_id(cap.key_id, workspace_uri),
+         %URI{scheme: "entity"} = granted_by <- cap.granted_by,
+         true <- Ezagent.URI.canonical?(granted_by) do
+      trust_domain = Signing.trust_domain(workspace_uri)
+      {public_key, _private_key} = Signing.derive_keypair(granted_by, trust_domain, version)
+
+      Signing.verify(cap, signature, public_key)
+    else
+      _ -> false
+    end
+  end
+
+  defp cryptographically_valid?(_cap), do: false
 
   defp receiver_matches?(%Capability{signature: nil}, _receiver_uri), do: true
   defp receiver_matches?(%Capability{grantee_uri: receiver_uri}, receiver_uri), do: true

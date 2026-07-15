@@ -228,6 +228,22 @@ defmodule Ezagent.Invariants.CapIssueChokepointTest do
            "there must be exactly one root of trust, found: #{inspect(roots)}"
   end
 
+  test "seed writers reject anything not cryptographically signed for the row owner" do
+    source =
+      repo_root()
+      |> Path.join("apps/ezagent_domain_identity/lib/ezagent/users.ex")
+      |> File.read!()
+
+    create = between(source, "defp do_create", "@doc \"\"\"\n  Create a **read-only**")
+    read_only = between(source, "def create_read_only", "defp validate_issued_caps")
+    validator = between(source, "defp validate_issued_caps", "@doc \"\"\"\n  Delete a User")
+
+    assert create =~ "validate_issued_caps(final_caps, user_uri)"
+    assert read_only =~ "validate_issued_caps(caps, user_uri)"
+    assert validator =~ "Ezagent.Cap.signed_and_valid?"
+    refute validator =~ "verify_for"
+  end
+
   # Leg 3 scans a WIDER surface than legs 1-2: `caps_json` is written from
   # `scripts/*.exs` too, and scanning only `apps/**/*.ex` is precisely how the
   # first cut of this gate missed the seeds. Legs 1-2 keep their own (narrower)

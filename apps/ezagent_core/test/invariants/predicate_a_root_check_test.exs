@@ -31,6 +31,7 @@ defmodule Ezagent.Invariants.PredicateARootCheckTest do
   @moduletag :umbrella_only
 
   alias Ezagent.{Capability, Invocation, Message, Users}
+  alias EzagentCore.Repo
 
   # A 5-axis wildcard cap (the genesis shape) with the given granter. matches?/2
   # accepts it for ANY needed cap — so authorization hinges purely on predicate A.
@@ -76,6 +77,16 @@ defmodule Ezagent.Invariants.PredicateARootCheckTest do
     })
   end
 
+  defp create_legacy_user!(uri_str, cap) do
+    {:ok, _} = Users.create(uri_str, nil, [])
+    row = Repo.get_by!(Users, uri: uri_str)
+    caps_json = Jason.encode!([Capability.to_map(cap)])
+
+    row
+    |> Ecto.Changeset.change(%{caps_json: caps_json})
+    |> Repo.update!()
+  end
+
   describe "inline ctx.caps authorizer set" do
     test "a system://-granted wildcard cap does NOT authorize (predicate A rejects)" do
       caller = Ezagent.URI.new!("entity://team-alpha/user/preda_inline_sys")
@@ -101,7 +112,7 @@ defmodule Ezagent.Invariants.PredicateARootCheckTest do
   describe "slice-held authorizer set (stale-snapshot vector)" do
     test "a system://-granted wildcard never enters the live slice and cannot authorize" do
       uri_str = "entity://team-alpha/user/preda_held_sys_#{System.unique_integer([:positive])}"
-      {:ok, _} = Users.create(uri_str, nil, [wildcard_cap(system_granter())])
+      _row = create_legacy_user!(uri_str, wildcard_cap(system_granter()))
       uri = Ezagent.URI.new!(uri_str)
       {:ok, _pid} = Ezagent.SpawnRegistry.spawn(uri)
       session_uri = session()
@@ -117,7 +128,7 @@ defmodule Ezagent.Invariants.PredicateARootCheckTest do
 
     test "an entity holding an ENTITY-granted wildcard in its slice IS authorized (control)" do
       uri_str = "entity://team-alpha/user/preda_held_ent_#{System.unique_integer([:positive])}"
-      {:ok, _} = Users.create(uri_str, nil, [wildcard_cap(entity_granter())])
+      _row = create_legacy_user!(uri_str, wildcard_cap(entity_granter()))
       uri = Ezagent.URI.new!(uri_str)
       {:ok, _pid} = Ezagent.SpawnRegistry.spawn(uri)
       session_uri = session()

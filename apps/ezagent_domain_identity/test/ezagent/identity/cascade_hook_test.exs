@@ -11,6 +11,8 @@ defmodule Ezagent.Identity.CascadeHookTest do
 
   use EzagentCore.DataCase, async: false
 
+  import EzagentDomainIdentity.CapSigningTestHelpers
+
   alias Ezagent.Capability
   alias Ezagent.Identity.Cascade
 
@@ -21,7 +23,9 @@ defmodule Ezagent.Identity.CascadeHookTest do
   # user list, and `managers_of/1` must exclude it (deadlock + semantics).
   defp user_with_caps(ws_name, caps) do
     uri = URI.new!("entity://#{ws_name}/user/u-#{uniq()}")
-    {:ok, _row} = Ezagent.Users.create(uri, "pw-not-secret-#{uniq()}", caps)
+    {:ok, _row} =
+      Ezagent.Users.create(uri, "pw-not-secret-#{uniq()}", issue_all!(uri, caps))
+
     {:ok, _pid} = Ezagent.SpawnRegistry.spawn(uri)
     uri
   end

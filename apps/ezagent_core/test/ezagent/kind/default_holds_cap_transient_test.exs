@@ -24,6 +24,8 @@ defmodule Ezagent.Kind.DefaultHoldsCapTransientTest do
   """
   use EzagentCore.DataCase, async: false
 
+  import Ezagent.Test.CapHelper, only: [issue!: 2]
+
   @moduletag :umbrella_only
 
   alias Ezagent.{Capability, Kind, Users}
@@ -148,7 +150,7 @@ defmodule Ezagent.Kind.DefaultHoldsCapTransientTest do
   describe "happy path preserved" do
     test "a live entity holding a matching entity-granted cap IS authorized (true)" do
       uri_str = "entity://team-alpha/user/live_match_#{unique()}"
-      {:ok, _} = Users.create(uri_str, nil, [matching_held()])
+      {:ok, _} = Users.create(uri_str, nil, [issue!(uri_str, matching_held())])
       uri = Ezagent.URI.new!(uri_str)
       {:ok, _pid} = Ezagent.SpawnRegistry.spawn(uri)
 

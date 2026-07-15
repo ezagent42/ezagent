@@ -99,7 +99,8 @@ defmodule Ezagent.Domain.AgentReadTest do
   # Persist a User caller's caps into users.caps_json (the User SSOT; caller
   # Kind stays COLD), so route 2 can authorize it without activating the Kind.
   defp seed_caller_slice_caps(caller, caps) do
-    {:ok, _} = Ezagent.Users.create_read_only(caller, caps)
+    signed_caps = Ezagent.Test.CapHelper.issue_all!(caller, caps)
+    {:ok, _} = Ezagent.Users.create_read_only(caller, signed_caps)
 
     :ok
   end

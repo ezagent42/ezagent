@@ -5,7 +5,7 @@ defmodule Ezagent.ActionSet.IdentityTest do
   parity through Kind.Runtime lives in
   `identity_migration_parity_test.exs`.
   """
-  use ExUnit.Case, async: true
+  use EzagentCore.DataCase, async: false
   alias Ezagent.ActionSet.Identity
   alias Ezagent.Capability
 
@@ -34,6 +34,24 @@ defmodule Ezagent.ActionSet.IdentityTest do
       [self_cap] = MapSet.to_list(caps)
       assert self_cap.behavior == Identity
       assert self_cap.instance == uri
+      assert Ezagent.Cap.signed_and_valid?(self_cap, uri)
+    end
+
+    test "agent structural self caps are born signed through Cap.issue/3" do
+      uri = URI.new!("entity://team-alpha/agent/worker")
+
+      assert {:ok, %{caps: caps}} = Identity.create(%{uri: uri})
+      assert MapSet.size(caps) == 3
+
+      assert Enum.all?(caps, &Ezagent.Cap.signed_and_valid?(&1, uri))
+
+      assert Enum.map(caps, &{&1.behavior, Ezagent.Capability.action_of(&1)})
+             |> MapSet.new() ==
+               MapSet.new([
+                 {Identity, :list_caps},
+                 {Ezagent.ActionSet.Sandbox, :update_config},
+                 {Ezagent.ActionSet.ConfigEvolve, :reconcile_cascade}
+               ])
     end
 
     test "create without :uri arg yields empty MapSet" do

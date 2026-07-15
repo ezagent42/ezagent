@@ -9,6 +9,7 @@ defmodule Ezagent.Identity.GrantTest do
   use EzagentCore.DataCase, async: false
 
   import Ecto.Query
+  import EzagentDomainIdentity.CapSigningTestHelpers
 
   alias Ezagent.Cap.Delivery
   alias Ezagent.Capability
@@ -325,7 +326,7 @@ defmodule Ezagent.Identity.GrantTest do
 
       {:ok, _} = Ezagent.SpawnRegistry.spawn(@admin_uri)
       Ezagent.ReadyGate.await(@admin_uri, 2_000)
-      {:ok, _user} = Ezagent.Users.create(grantee, nil, [cap])
+      {:ok, _user} = Ezagent.Users.create(grantee, nil, [issue!(grantee, cap)])
 
       assert {:error, :no_such_actor} =
                Grant.revoke_cap(grantee, cap, {:held_by, @admin_uri})

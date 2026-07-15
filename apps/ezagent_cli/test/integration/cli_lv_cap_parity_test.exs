@@ -53,7 +53,8 @@ defmodule EzagentCli.Integration.CliLvCapParityTest do
   end
 
   defp create_user_with_caps(uri, extra_caps) when is_list(extra_caps) do
-    {:ok, _decoded} = Users.create(URI.to_string(uri), "test-password", extra_caps)
+    signed_caps = Ezagent.Test.CapHelper.issue_all!(uri, extra_caps)
+    {:ok, _decoded} = Users.create(URI.to_string(uri), "test-password", signed_caps)
     {:ok, _pid} = Ezagent.SpawnRegistry.spawn(uri)
     :ok
   end

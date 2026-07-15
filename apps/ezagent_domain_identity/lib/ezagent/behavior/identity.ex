@@ -212,21 +212,27 @@ defmodule Ezagent.ActionSet.Identity do
 
       caps
       |> MapSet.put(
-        self_scoped_cap(
-          :agent,
-          Ezagent.ActionSet.Sandbox,
-          :update_config,
-          instance,
-          workspace_uri
+        issue_structural_cap!(
+          uri,
+          self_scoped_cap(
+            :agent,
+            Ezagent.ActionSet.Sandbox,
+            :update_config,
+            instance,
+            workspace_uri
+          )
         )
       )
       |> MapSet.put(
-        self_scoped_cap(
-          :agent,
-          Ezagent.ActionSet.ConfigEvolve,
-          :reconcile_cascade,
-          instance,
-          workspace_uri
+        issue_structural_cap!(
+          uri,
+          self_scoped_cap(
+            :agent,
+            Ezagent.ActionSet.ConfigEvolve,
+            :reconcile_cascade,
+            instance,
+            workspace_uri
+          )
         )
       )
     else
@@ -247,17 +253,34 @@ defmodule Ezagent.ActionSet.Identity do
   end
 
   defp add_owner_identity_cap(caps, %URI{} = uri) do
-    self_identity_cap = %Ezagent.Capability{
-      kind: kind_for_uri(uri),
-      behavior: __MODULE__,
-      action: :list_caps,
-      instance: Ezagent.URI.instance(uri),
-      workspace_uri: Ezagent.Capability.workspace_of(uri),
-      granted_by: bootstrap_granter(),
-      granted_at: DateTime.utc_now()
-    }
+    self_identity_cap =
+      issue_structural_cap!(uri, %Ezagent.Capability{
+        kind: kind_for_uri(uri),
+        behavior: __MODULE__,
+        action: :list_caps,
+        instance: Ezagent.URI.instance(uri),
+        workspace_uri: Ezagent.Capability.workspace_of(uri),
+        granted_by: bootstrap_granter(),
+        granted_at: DateTime.utc_now()
+      })
 
     MapSet.put(caps, self_identity_cap)
+  end
+
+  defp issue_structural_cap!(%URI{} = receiver_uri, %Ezagent.Capability{} = proposal) do
+    admin = bootstrap_granter()
+
+    authorization =
+      if Ezagent.URI.stable_key(receiver_uri) == Ezagent.URI.stable_key(admin) do
+        {:genesis, admin}
+      else
+        {:admin, admin}
+      end
+
+    case Ezagent.Cap.issue(authorization, receiver_uri, proposal) do
+      {:ok, artifact} -> artifact
+      {:error, reason} -> raise "structural cap issuance failed: #{inspect(reason)}"
+    end
   end
 
   defp kind_for_uri(%URI{scheme: "entity"} = uri) do

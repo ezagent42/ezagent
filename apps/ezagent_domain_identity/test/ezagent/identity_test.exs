@@ -1,6 +1,8 @@
 defmodule Ezagent.IdentityTest do
   use EzagentCore.DataCase, async: false
 
+  import EzagentDomainIdentity.CapSigningTestHelpers
+
   describe "list_caps_for/1" do
     test "returns empty MapSet for not-yet-spawned user" do
       uri =
@@ -44,7 +46,7 @@ defmodule Ezagent.IdentityTest do
       valid = Ezagent.Capability.admin_genesis_cap()
       invalid = %{valid | granted_by: Ezagent.URI.new!("system://forged")}
 
-      assert {:ok, _user} = Ezagent.Users.create(uri, nil, [valid, invalid])
+      assert %{uri: ^uri} = create_legacy_user!(uri, nil, [valid, invalid])
 
       assert Ezagent.Identity.read_held_caps(uri) == MapSet.new([valid])
     end

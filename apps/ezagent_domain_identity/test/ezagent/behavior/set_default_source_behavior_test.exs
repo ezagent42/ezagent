@@ -14,6 +14,8 @@ defmodule Ezagent.Credential.SetDefaultSourceBehaviorTest do
 
   use EzagentCore.DataCase, async: false
 
+  import EzagentDomainIdentity.CapSigningTestHelpers
+
   alias Ezagent.Capability
   alias Ezagent.Credential.UserDefaultSource, as: UDS
   alias Ezagent.Users
@@ -48,7 +50,7 @@ defmodule Ezagent.Credential.SetDefaultSourceBehaviorTest do
 
     source = seed_agent("entity://#{@ws}/agent/alice-base-#{suffix}", owner_str, "cc")
 
-    {:ok, _} = Users.create(owner_str, "pw-not-secret", [set_cap(owner_uri)])
+    {:ok, _} = Users.create(owner_str, "pw-not-secret", [issue!(owner_uri, set_cap(owner_uri))])
     {:ok, _pid} = Ezagent.SpawnRegistry.spawn(owner_uri)
 
     {:ok, owner_uri: owner_uri, owner_str: owner_str, source: source}

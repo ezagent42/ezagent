@@ -74,7 +74,8 @@ defmodule Ezagent.Users do
 
   @doc """
   Create a new User row. `password` is bcrypt-hashed before insert.
-  Caps are `[Ezagent.Capability.t()]` — serialized via Jason.
+  Caps are issued `[Ezagent.Capability.t()]` artifacts bound to this user. An
+  unsigned, invalid, or differently-bound artifact is rejected before insert.
   """
   @spec create(URI.t() | String.t(), String.t() | nil, [Ezagent.Capability.t()], keyword()) ::
           {:ok, decoded()} | {:error, term()}
@@ -109,36 +110,41 @@ defmodule Ezagent.Users do
     #
     # Phase 9 PR-3 (SPEC v3 §4.5): default caps are workspace-scoped
     # — derive the user's workspace from their URI.
-    user_workspace = Ezagent.URI.entity_workspace_uri(Ezagent.URI.new!(uri_str))
+    user_uri = Ezagent.URI.new!(uri_str)
+    user_workspace = Ezagent.URI.entity_workspace_uri(user_uri)
     final_caps = Ezagent.Entity.User.default_caps(user_workspace) ++ caps
 
-    changeset =
-      %__MODULE__{}
-      |> Ecto.Changeset.change(%{
-        uri: uri_str,
-        password_hash: hash,
-        caps_json: encode_caps(final_caps),
-        # Phase 9 PR-6 (SPEC v3 §7) — derive the workspace_uri column
-        # from the entity URI so SELECTs can scope by workspace.
-        workspace_uri: URI.to_string(user_workspace),
-        # #154 spec 甲 — a normal `create/3` user is CONFIRMED.
-        confirmed: true,
-        # task #87 — operator/programmatic creation is trusted (email_verified
-        # defaults true); self-registration passes `email_verified: false` so
-        # the form-login gate holds until the email is confirmed.
-        email_verified: Keyword.get(opts, :email_verified, true)
-      })
-      |> Ecto.Changeset.unique_constraint(:uri, name: :users_uri_index)
+    with :ok <- validate_issued_caps(final_caps, user_uri) do
+      changeset =
+        %__MODULE__{}
+        |> Ecto.Changeset.change(%{
+          uri: uri_str,
+          password_hash: hash,
+          caps_json: encode_caps(final_caps),
+          # Phase 9 PR-6 (SPEC v3 §7) — derive the workspace_uri column
+          # from the entity URI so SELECTs can scope by workspace.
+          workspace_uri: URI.to_string(user_workspace),
+          # #154 spec 甲 — a normal `create/3` user is CONFIRMED.
+          confirmed: true,
+          # task #87 — operator/programmatic creation is trusted (email_verified
+          # defaults true); self-registration passes `email_verified: false` so
+          # the form-login gate holds until the email is confirmed.
+          email_verified: Keyword.get(opts, :email_verified, true)
+        })
+        |> Ecto.Changeset.unique_constraint(:uri, name: :users_uri_index)
 
-    case Repo.insert(changeset) do
-      {:ok, row} -> {:ok, decode(row)}
-      err -> err
+      case Repo.insert(changeset) do
+        {:ok, row} -> {:ok, decode(row)}
+        err -> err
+      end
     end
   end
 
   @doc """
   Create a **read-only** User row — NO password and a caps_json of EXACTLY the
   supplied `caps` (default `[]`, the empty-caps read-only-by-construction shape).
+  Every supplied cap must already be issued and cryptographically valid for the
+  new user; this writer never guesses an authorization recipe or blind-signs.
 
   Unlike `create/3`, this path does NOT prepend `Ezagent.Entity.User.default_caps/1`
   (the broad `{kind: :session, behavior: :any, action: :any}` baseline cap that lets
@@ -166,26 +172,37 @@ defmodule Ezagent.Users do
           {:ok, decoded()} | {:error, term()}
   def create_read_only(uri, caps \\ []) when is_list(caps) do
     uri_str = uri_to_str(uri)
-    user_workspace = Ezagent.URI.entity_workspace_uri(Ezagent.URI.new!(uri_str))
+    user_uri = Ezagent.URI.new!(uri_str)
+    user_workspace = Ezagent.URI.entity_workspace_uri(user_uri)
 
-    changeset =
-      %__MODULE__{}
-      |> Ecto.Changeset.change(%{
-        uri: uri_str,
-        password_hash: nil,
-        # NO default_caps — read-only-by-construction. The only caps written are
-        # the explicit narrow grants the caller supplies (default none).
-        caps_json: encode_caps(caps),
-        workspace_uri: URI.to_string(user_workspace),
-        # #154 spec 甲 — the anonymous-viewer mint is UNCONFIRMED. This (not the
-        # `anon-` URI name) is the source of truth for anon-ness.
-        confirmed: false
-      })
-      |> Ecto.Changeset.unique_constraint(:uri, name: :users_uri_index)
+    with :ok <- validate_issued_caps(caps, user_uri) do
+      changeset =
+        %__MODULE__{}
+        |> Ecto.Changeset.change(%{
+          uri: uri_str,
+          password_hash: nil,
+          # NO default_caps — read-only-by-construction. The only caps written are
+          # the explicit narrow grants the caller supplies (default none).
+          caps_json: encode_caps(caps),
+          workspace_uri: URI.to_string(user_workspace),
+          # #154 spec 甲 — the anonymous-viewer mint is UNCONFIRMED. This (not the
+          # `anon-` URI name) is the source of truth for anon-ness.
+          confirmed: false
+        })
+        |> Ecto.Changeset.unique_constraint(:uri, name: :users_uri_index)
 
-    case Repo.insert(changeset) do
-      {:ok, row} -> {:ok, decode(row)}
-      err -> err
+      case Repo.insert(changeset) do
+        {:ok, row} -> {:ok, decode(row)}
+        err -> err
+      end
+    end
+  end
+
+  defp validate_issued_caps(caps, %URI{} = receiver_uri) do
+    if Enum.all?(caps, &Ezagent.Cap.signed_and_valid?(&1, receiver_uri)) do
+      :ok
+    else
+      {:error, :invalid_cap_artifact}
     end
   end
 

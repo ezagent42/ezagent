@@ -1,6 +1,8 @@
 defmodule EzagentDomainIdentity.AdminRepairTest do
   use EzagentCore.DataCase, async: false
 
+  import EzagentDomainIdentity.CapSigningTestHelpers
+
   alias Ezagent.Entity.{Profile, User}
   alias Ezagent.Users
 
@@ -12,8 +14,10 @@ defmodule EzagentDomainIdentity.AdminRepairTest do
     # Start from an admin row with no password + unverified (worst case).
     case Users.get_by_uri(admin) do
       nil ->
+        admin_cap = issue!(admin, Ezagent.Capability.admin_genesis_cap(), {:genesis, admin})
+
         {:ok, _} =
-          Users.create(admin, nil, [Ezagent.Capability.admin_genesis_cap()],
+          Users.create(admin, nil, [admin_cap],
             email_verified: false
           )
 

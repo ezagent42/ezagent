@@ -28,6 +28,8 @@ defmodule Ezagent.ActionSet.WorkspaceUserAdminCapIssueTest do
   """
   use EzagentCore.DataCase, async: false
 
+  import EzagentDomainIdentity.CapSigningTestHelpers
+
   alias Ezagent.Entity.User
   alias Ezagent.Workspace
 
@@ -40,18 +42,18 @@ defmodule Ezagent.ActionSet.WorkspaceUserAdminCapIssueTest do
 
     # The workspace admin DURABLY holds exactly one cap: the right to call
     # create_user. Nothing else. This is the whole threat model.
-    {:ok, _} =
-      Ezagent.Users.create(ws_admin, nil, [
-        %Ezagent.Capability{
-          kind: :workspace,
-          behavior: Ezagent.ActionSet.WorkspaceUserAdmin,
-          action: :create_user,
-          instance: ws,
-          workspace_uri: ws,
-          granted_by: User.admin_uri(),
-          granted_at: DateTime.utc_now()
-        }
-      ])
+    create_user_cap =
+      issue!(ws_admin, %Ezagent.Capability{
+        kind: :workspace,
+        behavior: Ezagent.ActionSet.WorkspaceUserAdmin,
+        action: :create_user,
+        instance: ws,
+        workspace_uri: ws,
+        granted_by: User.admin_uri(),
+        granted_at: DateTime.utc_now()
+      })
+
+    {:ok, _} = Ezagent.Users.create(ws_admin, nil, [create_user_cap])
 
     # `Cap.issue({:held_by, _})` loads the granter's DURABLE authority through
     # `Ezagent.Identity` (the configured `authority_loader`), which reads the

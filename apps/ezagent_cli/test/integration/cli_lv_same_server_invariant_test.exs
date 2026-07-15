@@ -101,11 +101,14 @@ defmodule EzagentCli.Integration.CliRuntimeSameServerInvariantTest do
     # `team-alpha` too. Caps include `*` so step 5.5 isn't the test gate.
     caller_uri = ctx.caller_uri
 
+    signed_genesis =
+      Ezagent.Test.CapHelper.issue!(caller_uri, Ezagent.Capability.admin_genesis_cap())
+
     {:ok, _decoded} =
       Ezagent.Users.create(
         caller_uri,
         nil,
-        MapSet.to_list(MapSet.new([Ezagent.Capability.admin_genesis_cap()]))
+        [signed_genesis]
       )
 
     {plain_token, _row} = Ezagent.Entity.Token.mint(caller_uri, label: "test-cli-token")

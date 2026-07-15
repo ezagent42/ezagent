@@ -86,6 +86,25 @@ defmodule Ezagent.Test.CapHelper do
     struct!(Capability, merged)
   end
 
+  @doc "Issue a test capability through the production signing chokepoint."
+  @spec issue!(URI.t() | String.t(), Capability.t(), Ezagent.Cap.authorization() | nil) ::
+          Capability.t()
+  def issue!(receiver, %Capability{} = proposal, authorization \\ nil) do
+    receiver = if is_binary(receiver), do: Ezagent.URI.new!(receiver), else: receiver
+    authorization = authorization || {:genesis, proposal.granted_by}
+
+    case Ezagent.Cap.issue(authorization, receiver, proposal) do
+      {:ok, artifact} -> artifact
+      {:error, reason} -> raise "test cap issuance failed: #{inspect(reason)}"
+    end
+  end
+
+  @doc "Issue a collection of test capabilities through the production signing chokepoint."
+  @spec issue_all!(URI.t() | String.t(), Enumerable.t()) :: [Capability.t()]
+  def issue_all!(receiver, proposals) do
+    Enum.map(proposals, &issue!(receiver, &1))
+  end
+
   @doc """
   Build a `needed` map for `Ezagent.Capability.matches?/2` with test
   defaults — mirror of `cap/1` for the lookup side.

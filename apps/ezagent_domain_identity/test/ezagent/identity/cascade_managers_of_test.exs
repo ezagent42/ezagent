@@ -11,6 +11,8 @@ defmodule Ezagent.Identity.CascadeManagersOfTest do
 
   use EzagentCore.DataCase, async: false
 
+  import EzagentDomainIdentity.CapSigningTestHelpers
+
   alias Ezagent.Capability
   alias Ezagent.Identity.Cascade
 
@@ -20,7 +22,16 @@ defmodule Ezagent.Identity.CascadeManagersOfTest do
   # (initial caps → caps_json → `activate/2` union → live `:identity` slice).
   defp user_with_caps(ws_name, caps) do
     uri = URI.new!("entity://#{ws_name}/user/u-#{uniq()}")
-    {:ok, _row} = Ezagent.Users.create(uri, "pw-not-secret-#{uniq()}", caps)
+    {:ok, _row} =
+      Ezagent.Users.create(uri, "pw-not-secret-#{uniq()}", issue_all!(uri, caps))
+
+    {:ok, _pid} = Ezagent.SpawnRegistry.spawn(uri)
+    uri
+  end
+
+  defp user_with_legacy_caps(ws_name, caps) do
+    uri = URI.new!("entity://#{ws_name}/user/u-#{uniq()}")
+    _row = create_legacy_user!(uri, "pw-not-secret-#{uniq()}", caps)
     {:ok, _pid} = Ezagent.SpawnRegistry.spawn(uri)
     uri
   end
@@ -83,7 +94,7 @@ defmodule Ezagent.Identity.CascadeManagersOfTest do
       granted_at: DateTime.utc_now()
     }
 
-    _stale = user_with_caps("team-alpha", [system_granted])
+    _stale = user_with_legacy_caps("team-alpha", [system_granted])
     assert Cascade.managers_of(x) == []
   end
 

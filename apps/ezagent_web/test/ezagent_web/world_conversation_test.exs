@@ -1832,8 +1832,10 @@ defmodule EzagentWeb.WorldConversationTest do
   end
 
   defp create_read_only_user(uri, caps) do
+    signed_caps = Ezagent.Test.CapHelper.issue_all!(uri, caps)
+
     result =
-      case Ezagent.Users.create_read_only(uri, caps) do
+      case Ezagent.Users.create_read_only(uri, signed_caps) do
         {:ok, _} -> :ok
         {:error, %Ecto.Changeset{errors: [uri: {"has already been taken", _}]}} -> :ok
       end

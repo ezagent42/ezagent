@@ -306,6 +306,34 @@ defmodule Ezagent.CapTest do
     end
   end
 
+  describe "signed_and_valid?/2" do
+    test "classifies only a cryptographically valid artifact bound to the receiver" do
+      assert {:ok, artifact} = Cap.issue({:genesis, @issuer}, @target, signable_cap())
+
+      assert Cap.signed_and_valid?(artifact, @target)
+      refute Cap.signed_and_valid?(artifact, @other_target)
+      refute Cap.signed_and_valid?(%{artifact | action: :receive}, @target)
+      refute Cap.signed_and_valid?(%{artifact | signature: ""}, @target)
+      refute Cap.signed_and_valid?(%{artifact | key_id: ""}, @target)
+      refute Cap.signed_and_valid?(%{artifact | grantee_uri: nil}, @target)
+
+      noncanonical = %{artifact.grantee_uri | authority: artifact.grantee_uri.host}
+      refute Cap.signed_and_valid?(%{artifact | grantee_uri: noncanonical}, @target)
+    end
+
+    test "rejects a dual-read legacy artifact independently of signature enforcement" do
+      legacy = %{unstamped_cap() | granted_by: @issuer}
+
+      assert Cap.verify_for(legacy, @target)
+      refute Cap.signed_and_valid?(legacy, @target)
+
+      require_signature!()
+
+      refute Cap.verify_for(legacy, @target)
+      refute Cap.signed_and_valid?(legacy, @target)
+    end
+  end
+
   defp signable_cap do
     %{
       unstamped_cap()

@@ -37,12 +37,13 @@ defmodule Ezagent.UsersTest do
       assert decoded.password_hash == nil
     end
 
-    test "caller caps round-trip through JSON (no session baseline added — #154 甲-2)" do
-      uri = "entity://team-alpha/user/caps-#{System.unique_integer([:positive])}"
+    test "issued caller caps round-trip through JSON (no session baseline added — #154 甲-2)" do
+      uri = Ezagent.URI.user("team-alpha", "caps-#{System.unique_integer([:positive])}")
 
-      cap = %Ezagent.Capability{
+      proposal = %Ezagent.Capability{
         kind: :workspace,
         behavior: Ezagent.ActionSet.Workspace,
+        action: :read,
         instance: :any,
         # Phase 9 PR-3 (SPEC v3 §4): caps are now workspace-scoped.
         workspace_uri: URI.new!("workspace://team-alpha"),
@@ -50,6 +51,8 @@ defmodule Ezagent.UsersTest do
         granted_at: ~U[2026-05-16 00:00:00.000000Z]
       }
 
+      admin = Ezagent.Entity.User.admin_uri()
+      assert {:ok, cap} = Ezagent.Cap.issue({:genesis, admin}, uri, proposal)
       {:ok, decoded} = Users.create(uri, "x", [cap])
 
       assert Enum.any?(decoded.caps, fn c ->
@@ -64,6 +67,44 @@ defmodule Ezagent.UsersTest do
              "no session baseline should be added to the caller's caps"
 
       assert length(decoded.caps) == 1, "exactly the one caller-supplied cap"
+    end
+
+    test "rejects an unsigned authorizer cap without writing a row" do
+      uri = Ezagent.URI.user("team-alpha", "unsigned-#{System.unique_integer([:positive])}")
+
+      cap = %Ezagent.Capability{
+        kind: :workspace,
+        behavior: Ezagent.ActionSet.Workspace,
+        action: :read,
+        instance: :any,
+        workspace_uri: Ezagent.URI.workspace("team-alpha"),
+        granted_by: Ezagent.Entity.User.admin_uri(),
+        granted_at: DateTime.utc_now()
+      }
+
+      assert {:error, :invalid_cap_artifact} = Users.create(uri, "x", [cap])
+      assert Users.get_by_uri(uri) == nil
+    end
+
+    test "create_read_only rejects an unsigned authorizer cap without writing a row" do
+      uri =
+        Ezagent.URI.user(
+          "team-alpha",
+          "anon-unsigned-#{System.unique_integer([:positive])}"
+        )
+
+      cap = %Ezagent.Capability{
+        kind: :session,
+        behavior: Ezagent.ActionSet.Session,
+        action: :join,
+        instance: Ezagent.URI.new!("session://team-alpha/default/public"),
+        workspace_uri: Ezagent.URI.workspace("team-alpha"),
+        granted_by: Ezagent.Entity.User.admin_uri(),
+        granted_at: DateTime.utc_now()
+      }
+
+      assert {:error, :invalid_cap_artifact} = Users.create_read_only(uri, [cap])
+      assert Users.get_by_uri(uri) == nil
     end
 
     test "duplicate uri returns error" do

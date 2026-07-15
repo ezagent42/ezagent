@@ -50,10 +50,11 @@ defmodule Ezagent.E2E.Category05.Scenario15RevokeCapDenialTest do
 
   defp spawn_alice(caps \\ []) do
     uri_str = "entity://team-alpha/user/" <> uniq("alice")
-    {:ok, _} = Users.create(uri_str, nil, caps)
+    issued_caps = Enum.map(caps, &issue!(uri_str, &1))
+    {:ok, _} = Users.create(uri_str, nil, issued_caps)
     uri = Ezagent.URI.new!(uri_str)
     {:ok, _pid} = Ezagent.SpawnRegistry.spawn(uri)
-    {uri, MapSet.new(caps)}
+    {uri, MapSet.new(issued_caps)}
   end
 
   defp default_session(workspace_uri \\ URI.new!("workspace://system")) do

@@ -31,6 +31,8 @@ defmodule Ezagent.ActionSet.IdentityLifecycleColdLoadTest do
 
   use Ezagent.LifecycleCase, async: false
 
+  import EzagentDomainIdentity.CapSigningTestHelpers
+
   alias Ezagent.Ecto.KindSnapshot
   alias Ezagent.Invocation
 
@@ -164,7 +166,7 @@ defmodule Ezagent.ActionSet.IdentityLifecycleColdLoadTest do
         |> Map.put(:granted_by, URI.new!("entity://system/user/admin"))
         |> Map.put(:granted_at, DateTime.utc_now())
 
-      {:ok, _decoded} = Ezagent.Users.create(user_uri, nil, [extra_cap])
+      {:ok, _decoded} = Ezagent.Users.create(user_uri, nil, [issue!(user_uri, extra_cap)])
 
       :ok =
         Ezagent.BehaviorRegistry.register(
@@ -205,7 +207,7 @@ defmodule Ezagent.ActionSet.IdentityLifecycleColdLoadTest do
         |> Map.put(:granted_by, URI.new!("system://forged"))
         |> Map.put(:granted_at, DateTime.utc_now())
 
-      {:ok, _decoded} = Ezagent.Users.create(user_uri, nil, [invalid_cap])
+      _decoded = create_legacy_user!(user_uri, nil, [invalid_cap])
 
       :ok =
         Ezagent.BehaviorRegistry.register(

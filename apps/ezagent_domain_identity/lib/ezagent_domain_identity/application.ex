@@ -255,7 +255,14 @@ defmodule EzagentDomainIdentity.Application do
             # canonical self-granted wildcard from
             # `Ezagent.Capability.admin_genesis_cap/0` (granted_by the admin
             # entity), not the eliminated `system://bootstrap` principal.
-            admin_cap_list = [Ezagent.Capability.admin_genesis_cap()]
+            {:ok, admin_cap} =
+              Ezagent.Cap.issue(
+                {:genesis, admin_uri},
+                admin_uri,
+                Ezagent.Capability.admin_genesis_cap()
+              )
+
+            admin_cap_list = [admin_cap]
 
             case Ezagent.Users.create(admin_uri, nil, admin_cap_list) do
               {:ok, _decoded} ->
