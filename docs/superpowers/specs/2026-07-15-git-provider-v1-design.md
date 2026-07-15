@@ -21,8 +21,8 @@ V1 separates Git development access into four responsibilities:
    implementation, not a core-domain special case.
 3. **Task Workspace Provisioner** creates the clone and per-task worktree before
    an agent sidecar starts. It depends only on the provider contract.
-4. **Kanban/socialware governance** issues precise, signed, task-scoped caps via
-   `Cap.issue`; it does not write `caps_json` directly.
+4. **Kanban/socialware governance** issues precise, provenance-stamped,
+   task-scoped caps via `Cap.issue`; it does not write `caps_json` directly.
 
 The agent receives neither a GitHub token nor an SSH private key. It receives a
 capability to request a bounded operation. GitHub merge remains a lead/human
@@ -68,24 +68,21 @@ Kanban task + governed task caps
    GitTaskAccess Resource Kind/Behavior
                 |
         Router.dispatch + required_caps
-                |
-                v
-       Git Provider adapter contract
-        |           |            |
-        v           v            v
-   GitHub plugin  GitLab plugin  Gitea plugin
-        |                         (future)
-        +---- OAuth/API provider binding
-        |
-        v
-        Task Workspace Provisioner
-                |
-        Git Operation Broker
-                |
-        Entity SSH Identity ---- encrypted secret backend
-                |
-                v
-         isolated project_cwd
+                +------------------------+
+                |                        |
+                v                        v
+ provider-neutral Behavior      Task Workspace Provisioner
+                |                        |
+        adapter registry                 v
+       /        |       \         Git Operation Broker
+      v         v        v               |
+   GitHub    GitLab    Gitea              v
+   plugin    plugin    plugin     Entity SSH Identity
+   (first)          (future)              |
+                |                 encrypted secret backend
+                +-- normalized facts      |
+                                         v
+                                isolated project_cwd
                 |
                 v
       cc-headless / :in_process_sync
@@ -258,20 +255,28 @@ Provider account bindings are separately addressable Receiver Resources:
 resource://<workspace>/git_provider_binding/<stable-id>
 ```
 
-The provider binding owns external-account identity, provider-instance identity,
-readiness, and the encrypted OAuth-token reference. `GitRepository` is a
-`:cold_resource`; `GitTaskAccess` is a supervised `:hot_resource` for the active
-task generation; and `GitProviderBinding` is the external-integration Receiver
-Resource. Each declares Lifecycle plus its provider-neutral Behaviors. Provider
-plugins supply adapter implementations without introducing a URI scheme or Kind.
+The domain-owned provider-binding envelope is the source of truth for addressable
+identity, Entity association, provider adapter ID, and generic readiness. The
+provider plugin is the source of truth for provider-specific external-account
+metadata and the encrypted OAuth-token reference in its namespaced store.
+`GitRepository` is a `:cold_resource`; `GitTaskAccess` is a supervised
+`:hot_resource` for the active task generation; and `GitProviderBinding` is the
+external-integration Receiver Resource. Provider plugins supply adapter
+implementations without introducing a URI scheme or Kind.
 
 ### 5.3 Kind/Behavior/adapter dispatch path
 
-The domain owns provider-neutral Resource types, normalized request/result types,
-Behaviors, and adapter contract. Provider plugins register implementations at
-boot and attach provider-specific Lifecycle/operation handling behind those
-Behaviors. Core/domain code depends only on the contract; plugins depend on the
-contract; core/domain code never references the GitHub implementation.
+The domain owns and implements the provider-neutral Resource types, Lifecycle,
+operation Behaviors, and normalized request/result types exactly once. Provider
+plugins only register adapter implementations through the declared adapter
+callback/registry; they do not attach competing implementations of the
+provider-neutral Behavior/action namespace. Core/domain code depends only on the
+contract; plugins depend on the contract; core/domain code never references the
+GitHub implementation.
+
+If a provider binding needs provider-specific lifecycle state, its plugin may use
+a namespaced plugin Behavior/store on that binding. That state cannot duplicate
+or replace the provider-neutral operation actions.
 
 Every operation follows:
 
@@ -355,12 +360,24 @@ states separately.
 
 ### 7.1 Lifecycle ordering
 
-Provisioning is a precondition of agent startup:
+Governance/materialization first creates authoritative policy without any
+agent-triggered filesystem or provider effect:
 
 ```text
-task generation assigned
-  -> create/load durable provision record and GitTaskAccess Resource
-  -> Router dispatch verifies instance/action cap
+governed task generation assigned
+  -> governance creates GitTaskAccess policy using task URI + generation as its
+     idempotency key
+  -> governance creates/loads the provision record in planned state
+  -> governance calls Cap.issue for the exact Resource instance/actions
+  -> grantee agent self-stores and verifies the issued artifact
+```
+
+Only then may the agent request provisioning. Provisioning is a cap-checked
+precondition of agent startup:
+
+```text
+agent dispatches to the pre-existing GitTaskAccess Resource
+  -> Router verifies instance/action cap before every effect
   -> derive credential owner and provider binding from governed task state
   -> verify SSH identity and repository permissions
   -> clone/fetch repository cache as platform infrastructure
@@ -410,8 +427,8 @@ than optimistically moving cards before an external operation succeeds.
 
 ## 8. CapBAC and governance
 
-Socialware installation/governance issues signed, instance-scoped capabilities
-through `Cap.issue`. It must not directly mutate `caps_json`.
+Socialware installation/governance issues provenance-stamped, instance-scoped
+capabilities through `Cap.issue`. It must not directly mutate `caps_json`.
 
 Provider-neutral capability subjects/actions should express intent such as:
 
@@ -429,10 +446,14 @@ fields of that Resource and are rechecked by its Behavior before invoking an
 adapter or broker. They are not falsely represented as independent cap axes.
 
 The agent is the grantee/self-store owner. Governance is the issuer; it calls
-`Cap.issue`, produces the signed artifact, and follows ISSUE -> STORE -> VERIFY.
-The human credential owner and task owner are recorded separately. The provider
-binding is derived from the governed Resource record, never from caller-supplied
-account coordinates.
+`Cap.issue`, produces an issued artifact carrying accountable provenance, and
+follows ISSUE -> STORE -> VERIFY. Under the current same-BEAM/trusted-node model,
+`Cap.verify` verifies provenance shape; this design does not claim a
+cryptographic signature or cross-node absorb. If Capability Phase 4 lands first,
+its separately approved signing semantics apply without changing this dispatch
+boundary. The human credential owner and task owner are recorded separately. The
+provider binding is derived from the governed Resource record, never from
+caller-supplied account coordinates.
 
 Current Capability has no expiry axis. V1 therefore revokes the task-access caps
 and closes the Resource generation on terminal/cancelled state; the Behavior
@@ -496,7 +517,9 @@ Invariant tests permanently enforce: no new Git URI scheme; no direct
 Provisioner-to-provider operation call; every GitTaskAccess action declares a
 required cap; no token/key/path/fd/environment reaches an agent; no agent merge
 action; provision-before-sidecar ordering; task-generation idempotency; and a
-second fake provider passing the same contract suite.
+second fake provider passing the same contract suite without attaching a
+duplicate provider-neutral Behavior/action namespace. Unauthorized dispatch must
+produce no filesystem, provision-record, secret-store, or provider API mutation.
 
 ## 11. V1 delivery slices and estimate
 
