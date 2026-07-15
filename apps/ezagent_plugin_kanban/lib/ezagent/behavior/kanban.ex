@@ -191,11 +191,12 @@ defmodule Ezagent.ActionSet.Kanban do
   )
 
   action(:sync_miro,
-    args: %{},
+    args: %{name: :string},
     returns: %{board_id: :string},
     caps: [:sync_miro],
     modes: [:call],
-    description: "一键推 Miro（首次建板+绑定，之后复用同板同步）"
+    description:
+      "一键推 Miro（首次建板+绑定，之后复用同板同步）；name=本次同步的 Miro 板名（去gh 决策：同步时弹框填名，可选，缺省用 BoardConfig/URI 名）"
   )
 
   action(:set_board_config,

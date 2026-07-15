@@ -103,8 +103,9 @@ defmodule Ezagent.World.KanbanActions do
     do: select_board(socket, u)
 
   # 一键推 Miro：dispatch → 拿 board_id → 推 miro_board_url（出站动作，结果带链接）。
-  def handle_dispatch(socket, "kanban.sync_miro", %{"kanban_uri" => u}),
-    do: sync_miro(socket, u)
+  # name = 前端同步弹框填的 Miro 板名（去gh 决策），透传给 behavior（缺省用板配置/URI 名）。
+  def handle_dispatch(socket, "kanban.sync_miro", %{"kanban_uri" => u} = a),
+    do: sync_miro(socket, u, Map.get(a, "name"))
 
   def handle_dispatch(socket, "kanban.save_miro_creds", %{"access_token" => token} = a)
       when is_binary(token),
@@ -217,16 +218,18 @@ defmodule Ezagent.World.KanbanActions do
 
   # --- 一键推 Miro：dispatch → board_id → 推 miro_board_url -----------------
 
-  defp sync_miro(socket, uri_str) do
+  defp sync_miro(socket, uri_str, name) do
     case parse(uri_str) do
       %URI{} = uri ->
         :ok = KanbanData.ensure_spawned(uri)
+
+        args = if is_binary(name) and name != "", do: %{name: name}, else: %{}
 
         result =
           Invocation.dispatch(%Invocation{
             target: Ezagent.URI.with_action(uri, :kanban, :sync_miro),
             mode: :call,
-            args: %{},
+            args: args,
             ctx: ctx(socket)
           })
 

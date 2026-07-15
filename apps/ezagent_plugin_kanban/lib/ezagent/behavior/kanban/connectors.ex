@@ -103,15 +103,22 @@ defmodule Ezagent.ActionSet.Kanban.Connectors do
     end
   end
 
-  # 一键推 Miro：已绑定则 sync；未绑定则建板+绑定+sync。板名取本图配置或默认。
+  # 一键推 Miro：已绑定则 sync；未绑定则建板+绑定+sync。
+  # 板名解析序（去gh 决策：同步时弹框填名）：本次 args.name > 本图配置 > URI 名默认。
   @doc false
-  def sync_miro(_args, ctx) do
+  def sync_miro(args, ctx) do
     uri = ctx[:self_uri]
 
     miro_name =
-      case BoardConfig.read(uri).miro_board do
-        name when is_binary(name) and name != "" -> name
-        _ -> "ezagent: " <> uri_name(uri)
+      case Map.get(args, :name) do
+        name when is_binary(name) and name != "" ->
+          name
+
+        _ ->
+          case BoardConfig.read(uri).miro_board do
+            name when is_binary(name) and name != "" -> name
+            _ -> "ezagent: " <> uri_name(uri)
+          end
       end
 
     case MiroSync.sync_or_bind(uri, miro_name) do
