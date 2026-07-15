@@ -3,7 +3,7 @@ name: CI
 # LAYERED merge gate (design C1). Two jobs, cheap-first:
 #
 #   job `gate`       — ubuntu-latest, ~2-3 min. The DETERMINISTIC required
-#                      gate: frontend TypeScript, compile
+#                      gate: frontend TypeScript + unit tests, compile
 #                      --warnings-as-errors, format, the two static invariant
 #                      tasks, and the arch/invariant ExUnit subset (never-flake
 #                      tests that catch real regressions fast — e.g.
@@ -74,7 +74,7 @@ jobs:
         with:
           node-version: "22"
 
-      - name: Frontend typecheck
+      - name: Frontend typecheck and unit tests
         run: |
           corepack enable
           corepack prepare pnpm@10.23.0 --activate
@@ -85,6 +85,7 @@ jobs:
           do
             pnpm --dir "$assets_dir" install --frozen-lockfile
             pnpm --dir "$assets_dir" typecheck
+            pnpm --dir "$assets_dir" test
           done
 
       - name: Set up Elixir/OTP

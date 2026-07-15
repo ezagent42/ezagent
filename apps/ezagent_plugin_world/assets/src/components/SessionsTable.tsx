@@ -3,13 +3,13 @@ import {ArrowRight, Bot, Cable, Circle, Loader2, MessageSquare, Plus, UserRound,
 
 import {Button, Input, Select} from "./ui/primitives"
 
-type SessionRow = {
+export type SessionRow = {
   uri: string
   name?: string | null
   workspace_uri?: string | null
 }
 
-type SocialwareRow = {
+export type SocialwareRow = {
   name: string
   title?: string | null
   description?: string | null
@@ -20,12 +20,12 @@ type SocialwareRow = {
   roles?: SocialwareRole[]
 }
 
-type AgentOption = {
+export type AgentOption = {
   uri: string
   display_name?: string | null
 }
 
-type SocialwareRole = {
+export type SocialwareRole = {
   role_name: string
   fill: "agent" | "human"
   recipe?: string | null
@@ -33,14 +33,14 @@ type SocialwareRole = {
   agent_options?: AgentOption[]
 }
 
-type RoleSlotChoice = {
+export type RoleSlotChoice = {
   role_name: string
   mode: "fresh" | "reuse"
   flavor?: string
   agent_uri?: string
 }
 
-type CreateOptions = {
+export type CreateOptions = {
   role_slots?: RoleSlotChoice[]
   socialware_config_id?: string
   socialware_content_hash?: string
@@ -377,7 +377,7 @@ export function SessionsTable({state, onJoin, onCreate}: SessionsTableProps) {
   )
 }
 
-function filterSessions(sessions: SessionRow[], filter: string): SessionRow[] {
+export function filterSessions(sessions: SessionRow[], filter: string): SessionRow[] {
   const q = filter.trim().toLowerCase()
   if (!q) return sessions
 
@@ -388,7 +388,7 @@ function filterSessions(sessions: SessionRow[], filter: string): SessionRow[] {
   )
 }
 
-function displaySessionName(session: SessionRow): string {
+export function displaySessionName(session: SessionRow): string {
   if (session.name && session.name.trim()) return humanizeSessionName(session.name)
 
   const parts = session.uri.split("/")
@@ -400,12 +400,12 @@ function sessionDescription(session: SessionRow): string {
   return workspace ? `${workspace} 工作区` : "会话"
 }
 
-function workspaceLabel(uri?: string | null): string {
+export function workspaceLabel(uri?: string | null): string {
   if (!uri) return ""
   return uri.replace(/^workspace:\/\//, "")
 }
 
-function humanizeSessionName(value: string): string {
+export function humanizeSessionName(value: string): string {
   const trimmed = value.trim()
   if (!trimmed) return "会话"
   return trimmed
@@ -415,7 +415,10 @@ function humanizeSessionName(value: string): string {
     .replace(/\b([a-z])/g, (match) => match.toUpperCase())
 }
 
-function createOptionsFor(socialware: SocialwareRow, choices: Record<string, RoleSlotChoice>): CreateOptions {
+export function createOptionsFor(
+  socialware: SocialwareRow,
+  choices: Record<string, RoleSlotChoice>,
+): CreateOptions {
   const roleSlots = (socialware.roles || [])
     .filter((role) => role.fill === "agent")
     .map((role) => {
