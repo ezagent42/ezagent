@@ -1,95 +1,71 @@
-# Cap-signing: single strict invariant + CapStore ownership — DESIGN (v2)
+# Cap-signing: single strict invariant + CapStore ownership — DESIGN (v3)
 
-**Status**: design v2 — addresses the codex architecture review of v1 (5 under-specified areas). Pending re-review.
-**Supersedes**: `2026-07-15-cap-signing-no-tail-self-heal.md` (v3, self-healer) — retired. PR #1424 shelved.
-**Implementer**: coordinator (Claude) directly, NOT codex — app + ezagent-deploy cutover kept under one owner. codex's role is architecture-level adversarial review only.
-**Context**: self-use phase, no formal production → delete dual-read, hard cutover. Nearly all existing caps are unsigned (signing only began on canary 2026-07-15) → whole-population re-sign, not a trickle-drain.
+**Status**: design v3 — addresses codex arch reviews of v1 (7 holes) and v2 (gap-4 closed; remainder now concrete). Pending re-review.
+**Supersedes**: `2026-07-15-cap-signing-no-tail-self-heal.md` (self-healer) — retired. PR #1424 shelved.
+**Implementer**: coordinator (Claude) directly (app + ezagent-deploy cutover under one owner). codex = architecture review only.
+**Context**: self-use phase → delete dual-read, hard cutover. Existing caps are ~all unsigned → whole-population re-sign.
 
 ## 1. Why
+The self-healer failed twice on one bug class from two roots: **two verify predicates** and **many home-writers** that drift. v3 removes both roots and, per the v2 review, **separates cap authority storage from the snapshot blob** so a single owner can hold the invariant.
 
-Two adversarial rounds of the self-healer failed on one bug class, rooted in two facts: **two verify predicates** (`verify_for` dual-read kept creeping in as a classifier) and **many home-writers** (a cap lived in several stores that drifted). This design removes both root causes instead of reconciling their symptoms at runtime.
+## 2. Invariants
+1. **Born signed** — every authority cap is minted only via `Cap.issue/3` (signs).
+2. **One predicate** — `verify` is the single, **receiver-aware**, strict predicate (crypto-valid AND signed AND grantee bound to the receiving entity). Unsigned/invalid → fail-loud reject. Exactly one predicate; today's receiver comparison (`verify_for`) is folded into it, not deleted.
+3. **One owner** — `CapStore` is the only reader/writer of authority. Mutations are atomic + serialized per entity; durable authority stores are truth; the live slice is a derived cache.
 
-## 2. Invariants (north star)
+## 3. Authority vs non-authority (type split)
+- **Signed authority artifact** — grants power; MUST be signed + pass `verify`; CapStore-owned; lives only in authority stores (§4).
+- **Non-authority cap-shaped records** — never consulted as authority, never verified, not CapStore-owned, may be unsigned: `OutboundGrant` (audit/revoke ledger), `CompositionBinding` (derivation ledger, serialized without sig/key/grantee), EventLog/audit, recipe manifests, requested-cap descriptors. A build test asserts none is ever loaded into an authorization path.
 
-1. **Born signed.** Every *authority* capability is minted only through `Cap.issue/3`, which signs it. No other path mints authority.
-2. **One predicate.** `verify = signed_and_valid?` (signature + key_id + grantee-URI binding + crypto, receiver-aware) is the *only* authority predicate. Unsigned/invalid authority → rejected, fail-loud. `verify_for/2` and dual-read are deleted.
-3. **One owner.** A single `CapStore` is the only code that reads or writes any cap *authority* home. All mutation is atomic across the applicable homes; durable is the source of truth, live is a derived cache.
+## 4. Storage — cap authority SEPARATED from the snapshot blob (the key v3 decision)
+Today caps live in `caps_json` **and** the full-Kind snapshot blob (written by generic code, separately) → the generic snapshot writer can overwrite a CapStore cap update (resurrection), and "wipe snapshots" would destroy all state. v3 **removes caps from the snapshot blob entirely.**
 
-## 3. Authority vs non-authority (the type distinction — gap 4)
+Dedicated authority stores (CapStore-owned):
 
-Not every cap-shaped record is authority. The design splits two kinds:
+| Entity kind    | Durable authority store                       | Live cache |
+|----------------|-----------------------------------------------|------------|
+| User           | `users.caps_json`                             | live slice |
+| Ordinary Agent | new `entity_caps` table, keyed by entity URI  | live slice |
+| Recipe Agent   | recipe binding + `entity_caps`                | live slice |
 
-- **Signed authority artifact** — a real capability that grants power. MUST be signed; MUST pass `verify`; owned exclusively by CapStore. Lives only in authority homes (§3.1).
-- **Non-authority cap-shaped records** — never consulted as authority, never verified, not CapStore-owned, may be unsigned by design:
-  - `OutboundGrant` — audit/revoke ledger of what was issued (explicitly not an inbound authority source).
-  - `CompositionBinding` — a derivation ledger; its serialized copy deliberately omits signature/key_id/grantee.
-  - EventLog / audit copies, recipe manifests, and *requested-cap descriptors* (config, not grants).
+- **The snapshot blob no longer contains the cap slice.** Full-state snapshot persistence excludes caps; it can never write or resurrect authority. Activation loads non-cap state from the snapshot and **authority from CapStore's stores** (each artifact re-`verify`d at load).
+- CapStore is the *sole* writer of `caps_json` cap data, `entity_caps`, and recipe bindings.
+- Live slice = derived cache rebuilt from the stores on activation; never an independent authority source. `Kind.default_holds_cap?` / `EntityCaps.load` read the live cache, now guaranteed to mirror the stores.
 
-"All persisted **authority** is signed" — scoped to authority artifacts. Non-authority records are out of CapStore's ownership and out of `verify`. A build gate asserts non-authority records are never loaded into an authorization path.
+## 5. Mutation seam — per-entity serialization (gaps 1 & 3)
+A grant/revoke to entity X:
+- Takes a **per-entity lock** (row lock on X's authority store). Activation ALSO takes this lock when loading X's authority → a cold-target write and a concurrent activation **serialize on the lock** (no live/cold TOCTOU; no need to force-activate a cold target).
+- Writes all applicable authority stores in **one DB transaction** under the lock, with a **CAS** on X's cap-set revision (`rev` column; whole-set optimistic version; per-artifact only for targeted edits).
+- If X is **live**, the same serialized path updates X's live cache via X's mailbox (serializes with X's other state changes); if X is **cold**, only durable is written and X rebuilds live from the stores (under the lock) at next activation.
+- Caps being separated from the snapshot blob (§4) means no competing full-state writer can overwrite the update.
 
-## 3.1 Authority homes — complete per-kind matrix (gap 4)
+## 6. Boot / genesis / self-authority under strict verify (gap 2)
+**CapStore never issues — the domain layer issues (signs), CapStore persists.**
+- **Genesis admin cap**: provisioning issues `Cap.issue({:genesis, admin}, admin_uri, wildcard)` (genesis context authorizes structurally without loading prior authority — non-circular) and inserts the admin row **and** its signed genesis cap in **one transaction** (no capless-admin crash window).
+- **Inline/self authority**: enumerate every current unsigned inline/self/owner shape (self-cap, owner-cap, inline publish + subscribe authority in `kind/runtime.ex`). At spawn the domain layer issues each via `Cap.issue` with a **non-loading context** (a structural/genesis-like tag — NOT `{:held_by, new_entity}`, which loads the not-yet-existent entity's authority → circular). CapStore persists the signed self-caps; activation loads them into live. Self-dispatch presents the **already-in-hand signed self-cap from state** — no issuance/load at dispatch → the self-read deadlock `ctx.caps` exists for is not reintroduced, and `verify` passes.
 
-CapStore owns exactly these durable homes and the derived live cache:
+## 7. Verify & read contracts
+- **One receiver-aware predicate** `verify(artifact, receiver_uri)` = crypto-valid AND signed AND grantee-URI bound to `receiver_uri`. `verify_for` the *name* is removed; its receiver comparison IS this predicate. No receiver-blind predicate is used for authority.
+- **Fail-loud read**: CapStore.read returns only verified authority; an invalid/unsigned artifact in an authority store **raises** (post-cutover unsigned authority = corruption → crash, not silent drop — replacing today's silent-filter).
 
-| Entity kind      | Durable authority homes                    | Live cache |
-|------------------|--------------------------------------------|------------|
-| User             | `users.caps_json` + snapshot cap-slice     | live slice |
-| Ordinary Agent   | snapshot cap-slice                         | live slice |
-| Recipe Agent     | recipe binding + snapshot cap-slice        | live slice |
+## 8. Deleted
+`require_signature`/dual-read · `verify_for/2` as a separate predicate (folded into §7) · self-heal subsystem (reconciler, sweeper, quarantine+table, heal_executor, self_heal, snapshot_store CAS adapter, reissue_policy ×N + registry) · **the cap-delivery replay outbox** · caps in the snapshot blob (§4). `cap_signing_audit` survives only as a one-shot pre-cutover deploy check.
 
-- The **live slice** (in-memory in the Kind process) is a *cache*, rebuilt from durable on activation. It is never an independent authority source.
-- **There is no cap-delivery outbox** — see §3.2. There is no quarantine ledger (deleted with the self-healer).
-- Recipe binding is written before the agent process exists (it is designed to persist without dispatching to a grantee); CapStore owns that write directly.
+## 9. Layering (gap 6)
+`Identity.Grant` (sole grant/revoke authorization chokepoint) → `EntityCaps` (domain semantics, receiver-aware) → `CapStore` (persistence; sole authority-store writer; never authorizes/issues). Recipe handling splits: issuance/authorization (`Cap.issue`, domain) vs binding persistence (CapStore).
 
-## 3.2 Cap delivery = durable write, not a replay queue (gap 1)
+## 10. Enforcement (gap 5)
+Resolved structurally by §4's separation: the `entity_caps`/`caps_json`-cap/binding write functions are **private to CapStore**; the generic snapshot writer no longer touches caps. Runtime `verify` on every authority read + CAS on every mutation are the real guarantees. Two build tests are secondary regression aids: issuance only via `Cap.issue`; no module outside CapStore references the authority-store write functions.
 
-The v1 model omitted `cap_delivery_outbox`, a durable **replayable** store whose rows re-apply grant/revoke on boot/retry — a revoke-resurrection vector (a pending `:absorb_cap` row replays after a later revoke).
+## 11. Cutover (ezagent-deploy scope)
+Because caps are separated (§4), cutover wipes only the **authority stores** (`caps_json` cap data, `entity_caps`, recipe bindings) — NOT the full snapshots (non-cap state survives). Order: quiesce writers → wipe authority stores → deploy strict build → run signed seed (boot constructors §6 issue signed) → resume. No app-side migration code. Non-authority records exempt.
 
-**Resolution — delete the replay outbox.** A grant/revoke is applied by CapStore writing the *target's* durable authority home in one transaction. A cold target picks it up from durable on activation (live rebuilt from durable); a live target is updated via the seam in §3.3. No separate durable replay queue exists, so there is nothing to replay out of order. (Cross-node async delivery is a distribution concern, explicitly deferred; single logical node / shared-seed for now.)
+## 12. Testing
+- No module outside CapStore writes an authority store; issuance only via `Cap.issue`; generic snapshot never writes caps.
+- One receiver-aware `verify`: unsigned/invalid or wrong-receiver authority rejected; non-authority record never accepted as authority; invalid authority in a store raises on read.
+- Seam: mutation writes all applicable stores or none; cold-write vs concurrent-activation serialize on the per-entity lock (no TOCTOU); crash → durable consistent, live rebuilt; CAS rejects ABA (revoke→different-issuer regrant); revoke clears every store incl. binding.
+- Boot: signed genesis + admin row in one txn; every enumerated self/inline authority is signed and present; self-dispatch works and does not deadlock; strict verify holds end-to-end on a freshly seeded stack.
 
-## 3.3 The atomicity seam (gap 3)
-
-- **Mutations to a live entity run inside that entity's Kind mailbox** (serialized with all its other state changes). The handler performs one DB transaction writing all applicable durable homes, then updates the live slice in the same handler. Serialization + single-txn = no partial multi-home write.
-- **Mutations to a cold entity** write durable directly (no live to update). On activation the live slice is built from durable.
-- **Crash semantics**: the durable transaction is all-or-nothing; the live slice is *always* rebuilt from durable on (re)activation. So a crash can never strand live-only authority that diverges from durable.
-- **The generic snapshot writer must not independently write the cap slice.** The full-Kind snapshot persist either excludes the cap slice (CapStore owns it) or writes it only via CapStore, so a stale full-state snapshot cannot overwrite a CapStore cap update. The post-init best-effort snapshot path must not mutate cap authority.
-- **CAS**: a mutation compares against the entity's current cap-set revision (optimistic version) inside the mailbox-serialized transaction; a mismatch aborts. Because delivery is a direct durable write (no async replay), the CAS expectation is read and checked in the same serialized transaction — there is no cross-boundary stale replay to terminate.
-
-## 3.4 Boot / genesis / self-dispatch under strict verify (gap 2)
-
-Strict `verify` breaks two currently-unsigned paths; both are fixed at their source:
-
-- **Genesis admin cap.** First-boot provisioning currently writes a *raw* `admin_genesis_cap` into `caps_json`. Replace with a signed issuance: `Cap.issue({:genesis, admin}, admin_uri, wildcard)` (the genesis context authorizes structurally without loading prior authority — non-circular) → CapStore writes the signed artifact. Requires the signing seed present at boot (configured: `EZAGENT_SIGNING_SEED_V1`). Signed genesis is issued **before** the admin row / Kind is created.
-- **Inline self-authority (`ctx.caps`).** Self-dispatch currently injects raw unsigned caps to avoid a self-read deadlock. Replace with **pre-issued signed self-authority**: at spawn, CapStore issues the entity's bounded self-cap (signed) and stores it in the entity's own durable home; it is loaded into live state at activation. Self-dispatch then *presents the already-in-hand signed self-cap from state* — no issuance and no authority re-load at dispatch time, so the self-read deadlock is not reintroduced, and strict `verify` passes. (The failure mode to avoid: issuing/loading self-authority *at dispatch time*, which re-enters the loader. Pre-issue-at-spawn + carry-in-state avoids it.)
-
-## 4. Deleted
-
-`require_signature` / dual-read plumbing · `Cap.verify_for/2` · the self-heal subsystem (reconciler, sweeper, quarantine + table, heal_executor, self_heal, snapshot_store CAS adapter, all reissue_policy modules + registry) · the **cap-delivery replay outbox** (§3.2). `cap_signing_audit` survives only as a one-shot pre-cutover check run by deploy, not app runtime.
-
-## 5. Kept / changed
-
-- `Cap.issue` chokepoint + `Cap.Signing` — unchanged (seed configured).
-- `signed_and_valid?` → promoted to be the only `verify` (strict).
-- **Enforcement is structural, not source-scan (gap 5).** CapStore exposes the *only* API that constructs a persistable authority artifact and writes an authority home; the schema-level cap-write functions are private to CapStore (a module physically cannot write an authority home otherwise). Runtime `verify` on every authority read + CAS on every mutation are the real guarantees. Two build-time tests remain as *secondary* regression aids (not the invariant): issuance goes through `Cap.issue`; no module outside CapStore references the authority-home write functions.
-
-## 6. Layering call graph (gap 6)
-
-`Identity.Grant` (the single grant/revoke authorization chokepoint) → `EntityCaps` (domain semantics, receiver-aware) → `CapStore` (storage authority; sole home writer). Recipe handling is split: **issuance/authorization** (`Cap.issue`, in the domain layer) is separated from **binding persistence** (CapStore-owned). CapStore never authorizes or issues — it only persists already-signed artifacts and enforces CAS/atomicity.
-
-## 7. Cutover (ezagent-deploy scope — gap 7)
-
-Deploy runbook order, **out of app spec**: **quiesce writers / stop accepting traffic → wipe every authority + previously-replayable store (caps_json cap data, snapshots, recipe bindings; the outbox is gone) → deploy strict build → run signed seed → start / accept traffic.** No app-side migration code. The app's boot constructors (§3.4) issue signed authority, so a fresh reseed produces only signed authority. Non-authority records (composition bindings, audit) are exempt from "all signed."
-
-## 8. Testing
-
-- Structural: no module outside CapStore calls an authority-home write fn; issuance only via `Cap.issue`.
-- Strict `verify`: unsigned/invalid authority rejected at authorization; a non-authority record is never accepted as authority.
-- CapStore atomicity: a mutation writes all applicable durable homes or none; simulated mid-mutation crash → durable consistent, live rebuilt from it (regression for revoke-resurrection + partial write). Generic snapshot write cannot overwrite a CapStore cap update.
-- CapStore CAS: concurrent mutations don't lose updates; revoke→different-issuer regrant (ABA) rejected.
-- Revoke clears every applicable home (binding included).
-- Boot: signed genesis before admin row; self-dispatch works with pre-issued signed self-authority and does not deadlock; strict verify holds end-to-end on a freshly seeded stack.
-
-## 9. Resolved / open
-
-- **OQ-1 RESOLVED**: recipe binding is a CapStore-owned durable home (forced by invariant 3).
-- **OQ-2 (impl-level)**: CAS token granularity — whole-set optimistic version for mutations; per-artifact only for targeted single-cap edits. Resolve against real code at implementation.
+## 13. Open (impl-level)
+- CAS `rev` column placement + whole-set vs per-artifact granularity — resolve against code.
+- Exact non-loading issuance tag for self-authority (`{:genesis,…}` reuse vs a new `{:structural, entity}` tag).
