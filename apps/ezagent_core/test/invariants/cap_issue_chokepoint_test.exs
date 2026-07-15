@@ -35,12 +35,11 @@ defmodule Ezagent.Invariants.CapIssueChokepointTest do
       1,
     "apps/ezagent_domain_socialware/lib/ezagent/socialware/anon_user.ex" => 1,
     "apps/ezagent_domain_workspace/lib/ezagent/behavior/workspace.ex" => 1,
-    "apps/ezagent_plugin_email/lib/ezagent/email/inbound/principal.ex" => 1,
     "apps/ezagent_plugin_world/lib/ezagent/world/layout_bootstrap.ex" => 1,
     "apps/ezagent_plugin_world/lib/ezagent/world/workspace_plugin_actions.ex" => 1
   }
-  @mint_candidate_files 21
-  @mint_candidate_sites 34
+  @mint_candidate_files 20
+  @mint_candidate_sites 33
 
   @caps_writers %{
     "apps/ezagent_domain_identity/lib/ezagent/behavior/identity.ex" => 1
