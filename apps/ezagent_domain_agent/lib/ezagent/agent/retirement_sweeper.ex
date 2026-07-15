@@ -99,11 +99,11 @@ defmodule Ezagent.Agent.RetirementSweeper do
        }) do
     result =
       Invocation.dispatch(%Invocation{
-        target: Ezagent.URI.with_action(URI.new!(agent_uri), :sandbox, :destroy),
+        target: Ezagent.URI.with_action(Ezagent.URI.new!(agent_uri), :sandbox, :destroy),
         mode: :call,
         args: %{},
         ctx: %{
-          caller: URI.new!(caller_uri),
+          caller: Ezagent.URI.new!(caller_uri),
           caps: MapSet.new(),
           reply: {:caller_inbox, self()}
         }
@@ -129,7 +129,7 @@ defmodule Ezagent.Agent.RetirementSweeper do
       } ->
         with {:ok, module} <- existing_module(template_class),
              true <- function_exported?(module, :destroy_config_dir, 2),
-             :ok <- module.destroy_config_dir(URI.new!(agent_uri), config_dir) do
+             :ok <- module.destroy_config_dir(Ezagent.URI.new!(agent_uri), config_dir) do
           :ok
         else
           false -> {:error, {:cleanup_callback_missing, template_class}}

@@ -23,22 +23,22 @@ defmodule EzagentDomainAgent.Application do
 
   @impl Application
   def start(_type, _args) do
-    children = [
-      {EzagentDomainAgent.EtsOwner, []},
-      # Agent Kind DynamicSupervisor — 0 children at boot; agents demand-spawn
-      # / rehydrate lazily. Frozen name (D1a).
-      {DynamicSupervisor,
-       name: EzagentDomainInstanceMessage.AgentSupervisor, strategy: :one_for_one},
-      # AgentTemplate Kind DynamicSupervisor — 0 children at boot; templates
-      # materialize on admin create or snapshot restore. Frozen name (D1a).
-      {DynamicSupervisor,
-       name: EzagentDomainInstanceMessage.AgentTemplateSupervisor, strategy: :one_for_one},
-      # #505 — carries AgentBridge connect events into TransportReadiness so a
-      # bridge-backed agent's ReadyGate flips to :ready on the real bind even when
-      # the bind lands AFTER the Kind's ready announce (fresh-spawn ordering).
-      Ezagent.Agent.TransportReadinessListener,
-      Ezagent.Agent.RetirementSweeper
-    ]
+    children =
+      [
+        {EzagentDomainAgent.EtsOwner, []},
+        # Agent Kind DynamicSupervisor — 0 children at boot; agents demand-spawn
+        # / rehydrate lazily. Frozen name (D1a).
+        {DynamicSupervisor,
+         name: EzagentDomainInstanceMessage.AgentSupervisor, strategy: :one_for_one},
+        # AgentTemplate Kind DynamicSupervisor — 0 children at boot; templates
+        # materialize on admin create or snapshot restore. Frozen name (D1a).
+        {DynamicSupervisor,
+         name: EzagentDomainInstanceMessage.AgentTemplateSupervisor, strategy: :one_for_one},
+        # #505 — carries AgentBridge connect events into TransportReadiness so a
+        # bridge-backed agent's ReadyGate flips to :ready on the real bind even when
+        # the bind lands AFTER the Kind's ready announce (fresh-spawn ordering).
+        Ezagent.Agent.TransportReadinessListener
+      ] ++ retirement_children()
 
     result =
       Supervisor.start_link(children,
@@ -91,5 +91,9 @@ defmodule EzagentDomainAgent.Application do
     Code.ensure_loaded?(Mix) and Mix.env() == :test
   rescue
     _ -> false
+  end
+
+  defp retirement_children do
+    if test_env?(), do: [], else: [Ezagent.Agent.RetirementSweeper]
   end
 end

@@ -108,6 +108,8 @@ defmodule EzagentCore.Invariants.PerTenantTablesHaveWorkspaceColumnTest do
     # Entity-caps scoped Task B — the outbound audit/revoke ledger is tenant-owned
     # by the grantee workspace, even when the accountable issuer is cross-workspace.
     {Ezagent.OutboundGrant, "outbound_grants"},
+    {Ezagent.Agent.CreationInventoryEntry, "agent_creation_inventory"},
+    {Ezagent.Agent.RetirementObligation, "agent_retirement_obligations"},
     # Socialware composition-cap lane — every derivation row is scoped to the
     # concrete source/target workspace and is union-reconciled only within it.
     {Ezagent.Socialware.CompositionBinding, "socialware_composition_bindings"},
