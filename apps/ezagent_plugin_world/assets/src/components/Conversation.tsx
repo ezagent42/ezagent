@@ -1,5 +1,5 @@
 import React from "react"
-import {Bug, Cable, CheckCircle2, ChevronUp, Copy, ExternalLink, LayoutGrid, Link2, Loader2, Maximize2, MessageSquare, MoreHorizontal, Paperclip, PanelTop, Plus, RotateCcw, Route, Send, Sparkles, SquareKanban, TerminalSquare, Upload, UserMinus, UserPlus, Users, X} from "lucide-react"
+import {Bug, Cable, CheckCircle2, ChevronUp, Copy, ExternalLink, LayoutGrid, Link2, Loader2, MessageSquare, MoreHorizontal, Paperclip, PanelTop, Plus, RotateCcw, Route, Send, Sparkles, SquareKanban, TerminalSquare, Upload, UserMinus, UserPlus, Users, X} from "lucide-react"
 
 import {Button, Input, Modal, Select} from "./ui/primitives"
 import {JsonRenderBubble} from "./JsonRenderBubble"
