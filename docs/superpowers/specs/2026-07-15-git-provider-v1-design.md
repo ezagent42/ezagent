@@ -65,17 +65,24 @@ This design does not change the current W29 honesty label: the demo path remains
 Kanban task + governed task caps
                 |
                 v
-        Task Workspace Provisioner
+   GitTaskAccess Resource Kind/Behavior
+                |
+        Router.dispatch + required_caps
                 |
                 v
-       Git Provider contract/registry
+       Git Provider adapter contract
         |           |            |
         v           v            v
    GitHub plugin  GitLab plugin  Gitea plugin
         |                         (future)
-        +---- OAuth/API credential binding
+        +---- OAuth/API provider binding
         |
-        +---- Entity SSH Identity ---- encrypted secret backend
+        v
+        Task Workspace Provisioner
+                |
+        Git Operation Broker
+                |
+        Entity SSH Identity ---- encrypted secret backend
                 |
                 v
          isolated project_cwd
@@ -87,8 +94,13 @@ Kanban task + governed task caps
 The dependency direction is load-bearing:
 
 - AgentRuntime and Workspace Provisioner know the provider contract, not GitHub.
+- Every agent/provisioner request enters through an addressable Resource Kind,
+  Behavior, and `Router.dispatch`; the adapter registry is behind that dispatch
+  target and is never an authorization entry point.
 - GitHub-specific OAuth scopes, API responses, PRs, checks, and reviews stay in
   the GitHub plugin.
+- Generic SSH Git transport stays in the domain-owned Git Operation Broker, not
+  duplicated in every provider plugin.
 - Entity SSH Identity knows SSH identity, not GitHub repositories or OAuth.
 - Kanban describes repository intent and grants authority; it does not handle
   credentials or perform Git operations.
@@ -129,23 +141,32 @@ V1 rejects passphrase-protected keys, ECDSA, PEM/PKCS#1/PKCS#8 variants, malform
 keys, unsupported algorithms, and multiple-key bundles with a specific error.
 The UI states these limits before upload.
 
-### 4.3 Import and replacement transaction
+### 4.3 Import and replacement state machine
 
 ```text
 receive sensitive request
   -> parse with redaction-safe errors
   -> validate algorithm/policy
   -> derive public key and fingerprint
-  -> stage encrypted secret
-  -> verify provider connection when a provider binding exists
-  -> atomically switch the active secret reference
-  -> revoke/delete the staged or former secret according to retention policy
+  -> stage encrypted secret with operation/idempotency key
+  -> compare-and-swap active identity version
+  -> tombstone the former version after in-flight leases drain
+  -> asynchronously delete tombstoned secret with retry/reconciliation
 ```
 
+The metadata database and external secret backend are not assumed to share an
+atomic transaction. A versioned state machine provides caller-visible atomicity:
+only one version is `active`; staged versions are not usable; compare-and-swap
+serializes replace/revoke; each broker use holds a short lease on its version;
+and a reconciler recovers orphan `staged` or `tombstoned` versions after crashes.
 Failure before the pointer switch leaves the existing active identity usable.
 No response includes private material. The request path must disable body and
 parameter logging, and error reporting must receive only a redacted error code,
 algorithm, and fingerprint where available.
+
+Identity replacement is provider-independent. Provider-specific readiness tests
+run afterward through each provider binding and do not participate in the active
+identity pointer transition.
 
 V1 does not automatically delete an old public key from an external provider.
 The UI reports the old fingerprint and tells the user to remove it. Provider-key
@@ -160,14 +181,27 @@ The public interface exposes operations such as:
 - import identity;
 - get public metadata;
 - replace identity;
-- revoke identity;
-- request a bounded SSH authentication/signing context.
+- revoke identity.
 
-The final operation is internal and cap-gated. There is no `get_private_key`
-operation. Where a Git subprocess requires filesystem material, a broker creates
-a short-lived mode-0600 credential view outside the agent workspace, binds it to
-one operation, and removes it on completion. The path and contents are never
-returned to the agent.
+There is no `get_private_key`, generic `sign`, or credential-context operation.
+Only the internal Git Operation Broker may lease a secret version. The broker
+accepts structured repository/host/ref intent, pins host-key policy, launches the
+Git subprocess itself under OS-level isolation, and returns normalized results.
+It never returns a key path, file descriptor, handle, environment, or signing
+oracle to the agent or provider plugin. Credential artifacts are outside the
+workspace and are removed on success, error, timeout, cancellation, and broker
+crash recovery.
+
+### 4.5 Import threat controls
+
+Import requires recent user re-authentication and CSRF protection. The web edge
+enforces strict byte/line limits before parsing. Parsing uses a fixed error
+taxonomy rather than propagating library errors. Reverse proxy, APM, telemetry,
+crash reporting, and operator diagnostics use explicit allowlists/redaction; no
+plaintext temporary file is created. V1 does not promise reliable zeroization of
+BEAM heap data, so plaintext lifetime is minimized and parsing/brokering is
+isolated from long-lived Entity and LiveView processes. Tests cover exception and
+crash paths as well as successful import.
 
 ## 5. Provider-neutral Git contract
 
@@ -184,7 +218,7 @@ Core/domain code uses these terms:
 The first implementation maps change request to GitHub Pull Request. A later
 GitLab plugin maps it to Merge Request without changing callers.
 
-### 5.2 Repository reference
+### 5.2 Addressable Resource Kinds
 
 A Kanban card or socialware configuration supplies a normalized reference:
 
@@ -195,23 +229,72 @@ repository: ezagent-chat/ezagent
 base_ref: main
 ```
 
-The canonical resource identity should be provider-neutral, for example:
+The canonical repository identity uses Ezagent's existing `resource` scheme:
 
 ```text
-gitrepo://github/ezagent-chat/ezagent
+resource://<workspace>/git_repository/<stable-id>
 ```
 
-Self-hosted providers require an unambiguous provider instance/host in the
-resolved record. Callers must not infer provider solely from string matching a
-clone URL.
+There is no new `gitrepo://` scheme. The `GitRepository` cold Resource record
+contains provider adapter ID, provider instance/host, external repository ID,
+normalized owner/path, and canonical remote endpoints. Callers do not infer a
+provider solely by matching a clone URL.
 
-### 5.3 Contract operations
+Each governed task generation also receives an addressable authorization target:
+
+```text
+resource://<workspace>/git_task_access/<stable-task-generation-id>
+```
+
+The `GitTaskAccess` Resource policy immutably binds task URI, generation,
+credential-owner Entity, agent Entity, repository Resource URI, and allowed
+branch. Its lifecycle status changes through Behavior effects. It is the dispatch
+target for repository operations and is the current Capability model's instance
+boundary.
+
+Provider account bindings are separately addressable Receiver Resources:
+
+```text
+resource://<workspace>/git_provider_binding/<stable-id>
+```
+
+The provider binding owns external-account identity, provider-instance identity,
+readiness, and the encrypted OAuth-token reference. `GitRepository` is a
+`:cold_resource`; `GitTaskAccess` is a supervised `:hot_resource` for the active
+task generation; and `GitProviderBinding` is the external-integration Receiver
+Resource. Each declares Lifecycle plus its provider-neutral Behaviors. Provider
+plugins supply adapter implementations without introducing a URI scheme or Kind.
+
+### 5.3 Kind/Behavior/adapter dispatch path
+
+The domain owns provider-neutral Resource types, normalized request/result types,
+Behaviors, and adapter contract. Provider plugins register implementations at
+boot and attach provider-specific Lifecycle/operation handling behind those
+Behaviors. Core/domain code depends only on the contract; plugins depend on the
+contract; core/domain code never references the GitHub implementation.
+
+Every operation follows:
+
+```text
+caller
+  -> Router.dispatch(GitTaskAccess Resource URI + Behavior action)
+  -> required_caps / audit / lifecycle readiness
+  -> load immutable GitTaskAccess policy
+  -> resolve provider adapter behind the Resource target
+  -> provider API operation or domain Git Operation Broker
+  -> normalized result/effects
+```
+
+Direct Provisioner-to-plugin operation calls are forbidden. The adapter registry
+is dependency injection after authorization, not a callable bypass around Router.
+
+### 5.4 Contract operations
 
 V1 defines provider operations equivalent to:
 
 - resolve and normalize a repository reference;
-- check acting-user read/write access;
-- prepare bounded clone/fetch/push authentication;
+- check credential-owner read/write access under the governed delegation;
+- resolve canonical Git remote endpoints and provider permission facts;
 - create a change request;
 - read a change request;
 - list check/CI state;
@@ -223,7 +306,12 @@ later implement it for a separate lead-controlled path.
 The contract returns normalized data and structured errors. Raw GitHub response
 maps must not leak into Kanban or Workspace Provisioner state.
 
-### 5.4 Normalized errors
+Generic clone/fetch/push execution belongs to the Git Operation Broker. A provider
+adapter supplies provider-specific endpoint and permission facts and may select a
+declared transport strategy, but it does not handle raw SSH secrets or launch a
+credential-bearing subprocess.
+
+### 5.5 Normalized errors
 
 At minimum, callers can distinguish:
 
@@ -252,11 +340,12 @@ The GitHub plugin is the first provider adapter. It owns:
 - OAuth refresh/revocation behavior;
 - GitHub repository permission probing;
 - mapping GitHub PR/check/review APIs to the provider contract;
-- brokering clone/fetch/push using the Entity SSH identity.
+- resolving canonical GitHub SSH remote and host-key policy facts.
 
-The OAuth token is resolved for the acting Entity at operation time. It is not
-copied into an agent template, sidecar, `cc-headless` config directory, task
-workspace, prompt, or transcript.
+The OAuth token is resolved for the governed credential-owner Entity and provider
+binding at operation time. The caller cannot select another account in args. The
+token is not copied into an agent template, sidecar, `cc-headless` config
+directory, task workspace, prompt, or transcript.
 
 GitHub OAuth covers GitHub API operations. SSH identity covers Git transport.
 Possession of one does not imply possession of the other; readiness reports both
@@ -269,14 +358,16 @@ states separately.
 Provisioning is a precondition of agent startup:
 
 ```text
-task assigned
-  -> resolve repository/provider
-  -> verify task caps and acting-user provider binding
+task generation assigned
+  -> create/load durable provision record and GitTaskAccess Resource
+  -> Router dispatch verifies instance/action cap
+  -> derive credential owner and provider binding from governed task state
   -> verify SSH identity and repository permissions
   -> clone/fetch repository cache as platform infrastructure
   -> create a task-specific branch/worktree
   -> verify project_cwd exists and matches the task
-  -> start the agent sidecar with project_cwd
+  -> CAS provision state to ready
+  -> consume one sidecar-start token and start with project_cwd
 ```
 
 The sidecar MUST NOT start if provisioning fails. This prevents the observed
@@ -284,16 +375,24 @@ The sidecar MUST NOT start if provisioning fails. This prevents the observed
 
 ### 7.2 Isolation and cleanup
 
-- Every task has a unique worktree and working directory.
+- Every task generation has a unique deterministic branch/worktree identity.
 - Concurrent agents never share a mutable checkout.
 - The provisioner does not use a shared `git stash`.
 - Task completion/cancellation schedules cleanup.
-- A reaper handles abandoned worktrees using task ownership and age, without
-  deleting an active worktree.
+- A durable provision record keyed by task URI + generation owns state,
+  worktree path, branch, lease, and sidecar-start token.
+- Per-task locking plus compare-and-swap transitions make retries idempotent.
+- A reaper may remove a worktree only when its lease expired and no live process
+  or provision record matches that generation.
 
-The provisioner owns directories and Git lifecycle, not credentials. It asks a
-provider plugin for a bounded authentication context and destroys that context
-after the Git operation.
+The state machine covers `planned`, `provisioning`, `ready`, `sidecar_started`,
+`cleanup_pending`, `cleaned`, and `blocked`. Recovery handles crashes between Git
+and database steps, duplicate claims, timeout retries, cancellation racing
+startup, and concurrent reapers. A start token is valid for one generation and
+prevents two sidecars from claiming the same worktree.
+
+The provisioner owns directories and Git lifecycle, not credentials. Authorized
+Git transport is performed by the Git Operation Broker after Router dispatch.
 
 ### 7.3 Observable task states
 
@@ -301,7 +400,8 @@ Kanban can project the following normalized state flow:
 
 ```text
 assigned -> provisioning -> ready -> agent_working
-         -> pr_open -> ci_running -> review_ready -> done
+         -> change_request_open -> ci_running -> review_ready
+         -> awaiting_human_merge -> merged -> done
          -> blocked
 ```
 
@@ -310,7 +410,7 @@ than optimistically moving cards before an external operation succeeds.
 
 ## 8. CapBAC and governance
 
-Socialware installation/governance issues signed, board/task-scoped capabilities
+Socialware installation/governance issues signed, instance-scoped capabilities
 through `Cap.issue`. It must not directly mutate `caps_json`.
 
 Provider-neutral capability subjects/actions should express intent such as:
@@ -321,23 +421,28 @@ Provider-neutral capability subjects/actions should express intent such as:
 - checks read;
 - reviews read.
 
-The cap scope binds at least:
+V1 uses only Capability dimensions that exist today: kind, Behavior/action,
+instance, workspace, and provenance. The cap instance is the exact
+`GitTaskAccess` Resource URI. Task, generation, credential owner, agent,
+repository, provider instance, and allowed branch are immutable authoritative
+fields of that Resource and are rechecked by its Behavior before invoking an
+adapter or broker. They are not falsely represented as independent cap axes.
 
-- acting Entity;
-- agent Entity;
-- workspace/session/task;
-- provider instance;
-- repository;
-- branch or ref where relevant;
-- action;
-- expiry.
+The agent is the grantee/self-store owner. Governance is the issuer; it calls
+`Cap.issue`, produces the signed artifact, and follows ISSUE -> STORE -> VERIFY.
+The human credential owner and task owner are recorded separately. The provider
+binding is derived from the governed Resource record, never from caller-supplied
+account coordinates.
 
-A cap for one repository or task cannot authorize another. A branch-push cap
-does not imply change-request creation. No agent-facing V1 cap grants merge.
+Current Capability has no expiry axis. V1 therefore revokes the task-access caps
+and closes the Resource generation on terminal/cancelled state; the Behavior
+fails closed for any non-active generation. Time-based cap expiry is deferred to
+an independently approved Capability change and is not claimed by this design.
 
-Exact action names and URI query encodings must follow the current Behavior/Kind
-URI contract when the implementation plan is written; this design intentionally
-does not bypass that contract with raw RPC or arbitrary eval.
+A cap for one task-generation Resource cannot authorize another. Branch push
+does not imply change-request creation because they are distinct Behavior
+actions. No agent-facing V1 cap grants merge. Action names use the current
+Behavior/action query contract; no raw RPC or arbitrary eval is permitted.
 
 ## 9. User experience
 
@@ -373,30 +478,51 @@ The two readiness dimensions remain visible:
 - No private key or token is persisted in snapshots, events, audit arguments,
   task cards, Kanban projections, logs, transcripts, or error reports.
 - Sensitive request bodies are excluded from web/server logging.
-- All secret reads are bound to an authenticated acting Entity and a cap-checked
-  operation.
-- A provider binding is resolved by acting Entity + provider instance + provider
-  account + repository; there is no global fallback credential.
+- All secret reads are bound to an authenticated credential-owner Entity, active
+  task generation, and cap-checked operation.
+- Caller, grantee agent, credential owner, task owner, cap issuer, and audited
+  external actor are distinct recorded roles. A provider binding is derived from
+  immutable governed task state; there is no payload-selected or global fallback
+  credential.
 - Co-tenant credential lookup fails closed.
-- Audits include acting Entity, agent, task, provider, repository, operation,
-  safe request ID, result, and credential fingerprint/reference.
-- Secret replacement is atomic from the caller's view and failure preserves the
-  prior active credential.
+- Audits include caller, grantee agent, credential owner, cap issuer, task,
+  provider, repository, operation, safe request ID, result, and credential
+  fingerprint/reference.
+- Versioned secret replacement is atomic from the caller's view; reconciliation
+  handles cross-store failure and preserves the prior active credential before
+  compare-and-swap.
+
+Invariant tests permanently enforce: no new Git URI scheme; no direct
+Provisioner-to-provider operation call; every GitTaskAccess action declares a
+required cap; no token/key/path/fd/environment reaches an agent; no agent merge
+action; provision-before-sidecar ordering; task-generation idempotency; and a
+second fake provider passing the same contract suite.
 
 ## 11. V1 delivery slices and estimate
 
+Before implementation estimation is accepted, a mandatory discovery/go-no-go
+slice inventories the approved secret-store abstraction, encryption-key
+hierarchy, SSH parsing library, OS-process isolation primitive, and existing
+provider-adapter registration seam. It must demonstrate that secrets can be
+brokered without entering the agent process. If no approved primitive exists,
+the missing infrastructure is separately designed and estimated.
+
 Suggested independently reviewable slices:
 
-1. Provider-neutral contract, normalized repository reference, and fake-provider
-   contract tests: **1–3 engineer-days**.
-2. Entity SSH Identity, encrypted secret integration, generation/import,
-   replacement, and redaction tests: **3–5 engineer-days**.
-3. SSH settings UI and provider connection verification: **2–4 engineer-days**.
-4. GitHub OAuth/binding and repository/change-request/check/review adapter:
-   **4–7 engineer-days**.
-5. Workspace Provisioner lifecycle and task state projection: **4–7
+1. Discovery/go-no-go and threat-model evidence: **2–4 engineer-days**.
+2. Provider-neutral Resources/Behaviors/adapter contract and fake-provider
+   conformance/invariant tests: **3–5 engineer-days**.
+3. Entity SSH Identity, encrypted secret integration, versioned
+   generation/import/replacement/reconciliation, and redaction tests: **6–10
    engineer-days**.
-6. Cap governance wiring and real canary E2E evidence: **2–4 engineer-days**.
+4. SSH settings UI and post-replacement provider readiness: **3–5
+   engineer-days**.
+5. GitHub OAuth/binding and repository/change-request/check/review adapter:
+   **5–8 engineer-days**.
+6. Git Operation Broker plus idempotent Workspace Provisioner lifecycle:
+   **7–12 engineer-days**.
+7. Cap governance wiring, Kanban projection, and real canary E2E evidence: **3–5
+   engineer-days**.
 
 Supporting constrained private-key import adds approximately **5–8
 engineer-days** over generation-only support; including UI, audit, and leak-path
@@ -425,23 +551,29 @@ wildcard caps, deploy, or merge without lead authorization.
 - A user can connect a GitHub account and inspect API/Git readiness independently.
 - The agent cannot retrieve a GitHub token or SSH private key.
 - Repository and base ref come from the task, not a hard-coded GitHub path.
-- A valid isolated worktree exists before sidecar startup.
+- Repository, provider binding, and task authorization use registered
+  `resource://` identities; no provider introduces a new URI scheme.
+- Agent and Provisioner operations enter through Router/Behavior dispatch before
+  adapter resolution; a direct adapter call cannot authorize an operation.
+- A valid isolated worktree exists before sidecar startup, and duplicate claim or
+  recovery cannot start a second sidecar for the same task generation.
 - An authorized agent can push a task branch, create a real change request, and
   read checks/reviews through provider-neutral operations.
 - An unauthorized agent/repository/action fails closed at the CapBAC gate.
 - Kanban reflects confirmed task/provider facts and structured blockers.
-- Merge remains lead/human-controlled.
+- Merge remains lead/human-controlled, and `done` follows a confirmed merged or
+  explicitly accepted terminal fact.
 - A second provider can implement the provider contract without modifying
   Kanban, AgentRuntime, Entity SSH Identity, or Workspace Provisioner logic.
 
 ## 14. Deferred decisions
 
-- Secret backend product and encryption-key hierarchy, after inventorying the
-  currently approved operational secret facilities.
+- Secret backend product and encryption-key hierarchy, after the mandatory
+  discovery gate confirms the required interface and threat assumptions.
 - Passphrase UX and whether decryption is per operation or at import time.
 - Multiple identities and repository-specific key selection.
 - Automated public-key registration/removal on providers.
 - HTTPS Git credentials and GitHub App installation-token support.
 - Lead-controlled merge capability and protected-branch policy integration.
-- Stable URI/action spelling after review against the current URI SPEC and
-  action-axis migration state.
+- Time-based Capability expiry, requiring a separately approved Capability
+  model change.
