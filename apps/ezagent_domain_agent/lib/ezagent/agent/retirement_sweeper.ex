@@ -23,25 +23,37 @@ defmodule Ezagent.Agent.RetirementSweeper do
 
   @spec retry(pos_integer()) :: {:ok, :resolved} | {:error, term()}
   def retry(id) do
-    with {:ok, obligation} <- RetirementObligations.mark_running(id),
-         :ok <- execute_steps(obligation),
-         {:ok, _resolved} <- RetirementObligations.resolve(id) do
-      {:ok, :resolved}
-    else
+    case RetirementObligations.claim(id) do
+      {:ok, :already_resolved} ->
+        {:ok, :resolved}
+
+      {:ok, obligation} ->
+        execute_claimed(obligation)
+
       {:error, reason} ->
-        _ = RetirementObligations.record_failure(id, reason)
         {:error, reason}
     end
   rescue
     exception ->
       reason = {:rescue, exception}
-      _ = RetirementObligations.record_failure(id, reason)
+      record_claimed_failure(id, reason)
       {:error, reason}
   catch
     kind, value ->
       reason = {kind, value}
-      _ = RetirementObligations.record_failure(id, reason)
+      record_claimed_failure(id, reason)
       {:error, reason}
+  end
+
+  defp execute_claimed(obligation) do
+    with :ok <- execute_steps(obligation),
+         {:ok, _resolved} <- RetirementObligations.resolve(obligation.id) do
+      {:ok, :resolved}
+    else
+      {:error, reason} ->
+        _ = RetirementObligations.record_failure(obligation.id, reason)
+        {:error, reason}
+    end
   end
 
   @impl GenServer
@@ -86,6 +98,13 @@ defmodule Ezagent.Agent.RetirementSweeper do
 
       other ->
         {:error, {:unsupported_pending_steps, other}}
+    end
+  end
+
+  defp record_claimed_failure(id, reason) do
+    case RetirementObligations.get(id) do
+      %{status: :running} -> RetirementObligations.record_failure(id, reason)
+      _ -> :ok
     end
   end
 
