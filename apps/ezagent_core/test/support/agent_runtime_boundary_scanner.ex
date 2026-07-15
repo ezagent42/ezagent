@@ -286,6 +286,35 @@ defmodule EzagentCore.AgentRuntimeBoundaryScanner do
     end
   end
 
+  defp classify_contextual(
+         Ezagent.Session.SessionManager,
+         :stop,
+         [target],
+         _path,
+         _definition
+       ) do
+    if variable_name(target) in [:agent_uri, :member_uri, :worker_uri, :pty_uri, :sidecar_uri] do
+      {:ok, :agent_executor_control}
+    else
+      :error
+    end
+  end
+
+  defp classify_contextual(
+         Ezagent.Session.SessionManager,
+         :ensure_started,
+         [options],
+         _path,
+         _definition
+       )
+       when is_list(options) do
+    keys = Keyword.keys(options)
+
+    if :orchestrator_uri in keys and :session_uri in keys,
+      do: :error,
+      else: {:ok, :agent_executor_control}
+  end
+
   defp classify_contextual(_module, _function, _arguments, _path, _definition), do: :error
 
   defp repo_relative_path(path) do

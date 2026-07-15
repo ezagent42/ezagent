@@ -272,15 +272,23 @@ defmodule EzagentCore.AgentRuntimeBoundaryTest do
            ) == []
   end
 
-  test "scanner treats SessionManager as the legal Session-owned conversation executor" do
+  test "scanner allows only inventory-backed SessionManager executor seams" do
     source = """
     Ezagent.Session.SessionManager.stop(orchestrator_uri)
     Ezagent.Session.SessionManager.stop(worker_uri)
+    Ezagent.Session.SessionManager.stop(sidecar_uri)
+    Ezagent.Session.SessionManager.ensure_started(
+      orchestrator_uri: orchestrator_uri,
+      session_uri: session_uri
+    )
     Ezagent.Session.SessionManager.ensure_started(orchestrator_uri: orchestrator_uri)
-    Ezagent.Session.SessionManager.ensure_started(session_uri: session_uri)
     """
 
-    assert Scanner.scan_source("session_manager_precision.ex", source) == []
+    assert [
+             %{class: :agent_executor_control, function: :stop, line: 2},
+             %{class: :agent_executor_control, function: :stop, line: 3},
+             %{class: :agent_executor_control, function: :ensure_started, line: 8}
+           ] = Scanner.scan_source("session_manager_precision.ex", source)
   end
 
   test "inventory-only generic target seams do not transfer to another Session path" do
