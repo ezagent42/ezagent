@@ -290,6 +290,14 @@ defmodule Ezagent.Domain.Agent do
     do: Ezagent.LocalRuntime.ensure_started_detailed(agent_uri)
 
   @doc """
+  Retire an Agent under explicit authority and creation-attempt provenance.
+  """
+  @spec retire_spawned(URI.t(), map()) ::
+          {:ok, map()} | {:partial, map()} | {:error, map()}
+  def retire_spawned(%URI{} = agent_uri, context) when is_map(context),
+    do: Ezagent.Agent.Retirement.retire(agent_uri, context)
+
+  @doc """
   Permanently retire an Agent only when durable spawn lineage reaches `provenance_root`.
 
   `allow_unverified_fallback: true` is reserved for best-effort system cleanup.
