@@ -185,7 +185,7 @@ defmodule Ezagent.ActionSet.Session.Teardown do
       caps: MapSet.new(),
       workspace_uri: Ezagent.URI.workspace_of(worker_uri),
       provenance_root: owner_uri,
-      creation_attempt_id: Ezagent.Agent.CreationInventory.attempt_id(worker_uri),
+      creation_attempt_id: creation_attempt_id(worker_uri),
       reason: {:session_teardown, mode}
     }
   end
@@ -196,9 +196,19 @@ defmodule Ezagent.ActionSet.Session.Teardown do
       caps: MapSet.new(),
       workspace_uri: Ezagent.URI.workspace_of(worker_uri),
       provenance_root: worker_uri,
-      creation_attempt_id: Ezagent.Agent.CreationInventory.attempt_id(worker_uri),
+      creation_attempt_id: creation_attempt_id(worker_uri),
       reason: {:session_teardown, mode}
     }
+  end
+
+  defp creation_attempt_id(worker_uri) do
+    case Ezagent.Agent.CreationInventory.find_attempt(
+           worker_uri,
+           Ezagent.URI.workspace_of(worker_uri)
+         ) do
+      {:ok, attempt_id} -> attempt_id
+      {:error, _reason} -> "missing-creation-attempt"
+    end
   end
 
   defp safe(fun) do

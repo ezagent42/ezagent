@@ -815,7 +815,7 @@ defmodule Ezagent.Entity.Agent.TemplateSpawn do
 
   defp record_creation_inventory(workers, spawned_by_uri, workspace_uri) do
     Enum.reduce_while(workers, :ok, fn worker_uri, :ok ->
-      attempt_id = Ezagent.Agent.CreationInventory.attempt_id(worker_uri)
+      attempt_id = Ezagent.Agent.CreationInventory.new_attempt_id()
 
       case Ezagent.Agent.CreationInventory.record(
              attempt_id,

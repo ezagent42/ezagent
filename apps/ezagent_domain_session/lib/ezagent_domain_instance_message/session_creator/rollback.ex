@@ -131,13 +131,20 @@ defmodule EzagentDomainInstanceMessage.SessionCreator.Rollback do
       caps: MapSet.new(),
       workspace_uri: workspace_uri,
       provenance_root: owner_uri,
-      creation_attempt_id: Ezagent.Agent.CreationInventory.attempt_id(orchestrator_uri),
+      creation_attempt_id: creation_attempt_id(orchestrator_uri, workspace_uri),
       reason: :rollback
     })
   end
 
   defp retire_orchestrator(_orchestrator_uri, _session_uri, _owner_uri, _workspace_uri),
     do: {:error, %{termination: :not_destroyed, reason: :missing_retirement_context}}
+
+  defp creation_attempt_id(orchestrator_uri, workspace_uri) do
+    case Ezagent.Agent.CreationInventory.find_attempt(orchestrator_uri, workspace_uri) do
+      {:ok, attempt_id} -> attempt_id
+      {:error, _reason} -> "missing-creation-attempt"
+    end
+  end
 
   defp retirement_evidence_transferred?({:ok, %{cleanup: :complete}}), do: true
 

@@ -67,7 +67,7 @@ defmodule EzagentDomainInstanceMessage.Integration.SpawnedParticipantTeardownTes
 
   defp record_creation(agent_uri, spawned_by_uri) do
     Ezagent.Agent.CreationInventory.record(
-      Ezagent.Agent.CreationInventory.attempt_id(agent_uri),
+      Ezagent.Agent.CreationInventory.new_attempt_id(),
       agent_uri,
       spawned_by_uri,
       @workspace_uri

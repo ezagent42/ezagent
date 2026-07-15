@@ -10,7 +10,7 @@ defmodule Ezagent.Agent.RetirementTest do
     workspace_uri = Ezagent.URI.new!("workspace://team-alpha")
     owner_uri = Ezagent.URI.new!("entity://team-alpha/user/owner-#{suffix}")
     agent_uri = Ezagent.URI.new!("entity://team-alpha/agent/worker-#{suffix}")
-    creation_attempt_id = Ezagent.Agent.CreationInventory.attempt_id(agent_uri)
+    creation_attempt_id = Ezagent.Agent.CreationInventory.new_attempt_id()
 
     :ok =
       Ezagent.Agent.CreationInventory.record(
@@ -59,10 +59,10 @@ defmodule Ezagent.Agent.RetirementTest do
 
   test "rejects a target outside the claimed lineage", %{agent_uri: agent_uri, ctx: ctx} do
     other_owner = Ezagent.URI.new!("entity://team-alpha/user/other-owner")
-    :ok = Ezagent.AgentLineage.record(agent_uri, other_owner)
+    :ok = Ezagent.AgentLineage.record(agent_uri, ctx.provenance_root)
 
     assert {:error, %{termination: :not_destroyed, reason: :provenance_mismatch}} =
-             Agent.retire_spawned(agent_uri, ctx)
+             Agent.retire_spawned(agent_uri, %{ctx | provenance_root: other_owner})
   end
 
   test "lineage alone does not authorize retirement", %{
