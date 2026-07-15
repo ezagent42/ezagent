@@ -11,10 +11,12 @@ defmodule Ezagent.Agent.RetirementSweeper do
   @default_interval :timer.minutes(1)
   @default_batch_size 25
 
+  @doc false
   def start_link(opts) do
     GenServer.start_link(__MODULE__, opts, name: __MODULE__)
   end
 
+  @doc false
   @spec run_due(pos_integer()) :: [{pos_integer(), {:ok, :resolved} | {:error, term()}}]
   def run_due(limit \\ @default_batch_size) do
     limit
@@ -22,6 +24,7 @@ defmodule Ezagent.Agent.RetirementSweeper do
     |> Enum.map(fn obligation -> {obligation.id, retry(obligation.id)} end)
   end
 
+  @doc false
   @spec retry(pos_integer(), keyword()) :: {:ok, :resolved} | {:error, term()}
   def retry(id, opts \\ []) do
     case RetirementObligations.claim(id, allow_failed: Keyword.get(opts, :operator, false)) do

@@ -12,6 +12,7 @@ defmodule Ezagent.Agent.CreationInventoryEntry do
     timestamps(type: :utc_datetime_usec)
   end
 
+  @doc false
   def changeset(entry, attrs) do
     entry
     |> cast(attrs, [:creation_attempt_id, :agent_uri, :provenance_root_uri, :workspace_uri])

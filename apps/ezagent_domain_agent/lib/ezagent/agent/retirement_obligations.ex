@@ -6,6 +6,7 @@ defmodule Ezagent.Agent.RetirementObligations do
   alias Ezagent.Agent.RetirementObligation
   alias EzagentCore.Repo
 
+  @doc false
   @spec create_pending(map()) :: {:ok, RetirementObligation.t()} | {:error, Ecto.Changeset.t()}
   def create_pending(attrs) when is_map(attrs) do
     identity = Map.take(attrs, [:agent_uri, :creation_attempt_id, :retirement_reason])
@@ -32,12 +33,15 @@ defmodule Ezagent.Agent.RetirementObligations do
     end
   end
 
+  @doc false
   @spec get(pos_integer()) :: RetirementObligation.t() | nil
   def get(id), do: Repo.get(RetirementObligation, id)
 
+  @doc false
   @spec get!(pos_integer()) :: RetirementObligation.t()
   def get!(id), do: Repo.get!(RetirementObligation, id)
 
+  @doc false
   @spec claim(pos_integer(), keyword()) ::
           {:ok, RetirementObligation.t() | :already_resolved} | {:error, term()}
   def claim(id, opts \\ []) when is_integer(id) and id > 0 do
@@ -111,6 +115,7 @@ defmodule Ezagent.Agent.RetirementObligations do
     |> Repo.update()
   end
 
+  @doc false
   def record_failure(id, reason, claim_token \\ nil) do
     obligation = get!(id)
     max_attempts = Application.get_env(:ezagent_domain_agent, :retirement_max_attempts, 10)
@@ -138,6 +143,7 @@ defmodule Ezagent.Agent.RetirementObligations do
     result
   end
 
+  @doc false
   @spec update_pending_steps(pos_integer(), map()) ::
           {:ok, RetirementObligation.t()} | {:error, Ecto.Changeset.t()}
   def update_pending_steps(id, pending_steps) when is_map(pending_steps) do
@@ -147,6 +153,7 @@ defmodule Ezagent.Agent.RetirementObligations do
     |> Repo.update()
   end
 
+  @doc false
   def resolve(id, claim_token \\ nil) do
     result =
       conditional_transition(id, claim_token, %{
@@ -166,6 +173,7 @@ defmodule Ezagent.Agent.RetirementObligations do
     result
   end
 
+  @doc false
   @spec list_due(pos_integer()) :: [RetirementObligation.t()]
   def list_due(limit) when is_integer(limit) and limit > 0 do
     now = DateTime.utc_now()

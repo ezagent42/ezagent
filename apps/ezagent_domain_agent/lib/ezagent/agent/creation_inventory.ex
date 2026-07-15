@@ -6,8 +6,10 @@ defmodule Ezagent.Agent.CreationInventory do
   alias Ezagent.Agent.CreationInventoryEntry
   alias EzagentCore.Repo
 
+  @doc false
   def new_attempt_id, do: Ecto.UUID.generate()
 
+  @doc false
   def record(attempt_id, %URI{} = agent_uri, %URI{} = root_uri, %URI{} = workspace_uri)
       when is_binary(attempt_id) and attempt_id != "" do
     attrs = %{
@@ -35,6 +37,7 @@ defmodule Ezagent.Agent.CreationInventory do
     end
   end
 
+  @doc false
   def member?(attempt_id, %URI{} = agent_uri, %URI{} = _root_uri, %URI{} = workspace_uri) do
     case Repo.get_by(CreationInventoryEntry,
            creation_attempt_id: attempt_id,
@@ -52,6 +55,7 @@ defmodule Ezagent.Agent.CreationInventory do
     end
   end
 
+  @doc false
   def find_attempt(%URI{} = agent_uri, %URI{} = workspace_uri) do
     query =
       from(e in CreationInventoryEntry,

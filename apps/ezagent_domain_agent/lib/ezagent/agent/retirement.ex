@@ -21,6 +21,7 @@ defmodule Ezagent.Agent.Retirement do
         }
 
   @spec retire(URI.t(), map()) :: {:ok, report()} | {:partial, report()} | {:error, report()}
+  @doc false
   def retire(%URI{} = agent_uri, context) when is_map(context) do
     with :ok <- validate_context(context),
          :ok <- validate_agent_target(agent_uri),
@@ -97,10 +98,13 @@ defmodule Ezagent.Agent.Retirement do
   end
 
   defp retirement_steps(agent_uri, caller_uri) do
+    agent_uri_string = URI.to_string(agent_uri)
+    caller_uri_string = URI.to_string(caller_uri)
+
     termination = %{
       "sandbox_destroy" => %{
-        "agent_uri" => URI.to_string(agent_uri),
-        "caller_uri" => URI.to_string(caller_uri)
+        "agent_uri" => agent_uri_string,
+        "caller_uri" => caller_uri_string
       }
     }
 
