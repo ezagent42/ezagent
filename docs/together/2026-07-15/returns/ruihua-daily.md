@@ -49,7 +49,7 @@
 ## 下一步计划（必填）
 - #1378 等 lead merge
 - #1388 可 review merge——原型完整，后续迭代在后续 PR
-- 角色档案（achievement-center）独立开 PR
+- Profile socialware 独立 PR（P1）+ Notification plugin 调研（P2）+ Review 审核机制评估（P3）
 - 等 W29 demo gaga 测试 → allen 验收 → 我接手从产品角度完善
 
 ## 待办 / 阻塞
@@ -59,3 +59,28 @@
 ## 关联
 - Plan 任务 ① #1378 rebase ✅ · ② #1388 续 ✅ · ③ demo 产品完善 ⏳
 - #1378 / #1388 pending
+
+---
+
+## 下阶段规划（从今天工作中浮现的独立功能）
+
+以下功能在 flywheel 原型中作为 mock 存在，但从架构角度应独立为 plugin 或 socialware：
+
+### 1. Profile / 名片 — socialware
+
+- **形式**：socialware（`uses: ["hello"]`）
+- **理由**：用户产品——存身份/行业/资源/需求，对外暴露公开面。与 recruit/dealscout 同级，被其他 socialware 读取
+- **优先级**：P1——dealscout 需要它来做更精准匹配
+
+### 2. Notification / 通知 — plugin
+
+- **形式**：plugin（提供推送/飞书/邮件/浏览器通知机制）
+- **理由**：基础设施，多个 socialware 都需要——dealscout（新匹配通知）、kanban（任务分配通知）、hello（页面更新通知）。类比已有的 email plugin
+- **优先级**：P2——dealscout 的 "保存搜索 → 新匹配通知" 链路需要
+
+### 3. Review / 审核 — 待评估
+
+- **形式**：待定（可能是 plugin 中的 recipe，也可能是独立 socialware）
+- **背景**：W-G6 合规审核流程——发布到 Gallery 的产品需过审核后才能上架。当前 flywheel 原型中标记为待建
+- **待评估**：审核是平台级机制（所有发布都走）还是 per-socialware 的流程（每个 socialware 有自己的审核标准）？是谁审——管理员人工审、AI 自动审、还是两者结合？
+- **优先级**：P3——Gallery 货架本身还没建（W-G1），审核在 Gallery 之后
