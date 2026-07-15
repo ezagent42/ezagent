@@ -6,6 +6,7 @@
     "dev": "vite",
     "build": "vite build --logLevel warn",
     "check:mounts": "node scripts/check-mounts.mjs",
+    "lint": "eslint src --max-warnings 0",
     "typecheck": "tsc --noEmit",
     "test": "vitest run"
   },
@@ -29,11 +30,16 @@
     "xterm-addon-fit": "^0.8.0"
   },
   "devDependencies": {
+    "@eslint/js": "10.0.1",
     "@types/react": "^19.2.14",
     "@types/react-dom": "^19.2.3",
     "@types/dagre": "^0.7.53",
     "@tailwindcss/vite": "^4.3.1",
+    "eslint": "10.6.0",
+    "eslint-plugin-react-hooks": "7.1.1",
+    "globals": "17.7.0",
     "tailwindcss": "^4.3.1",
+    "typescript-eslint": "8.63.0",
     "vitest": "4.1.10"
   }
 }

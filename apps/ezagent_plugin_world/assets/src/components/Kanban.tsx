@@ -104,7 +104,6 @@ function KanbanList({state, onAction}: {state: KanbanState; onAction: Act}) {
 function KanbanDetail({state, onAction, onShare, onShareArtifact, onUploadFile}: {state: KanbanState; onAction: Act; onShare?: () => void; onShareArtifact?: (name: string, url: string) => void; onUploadFile?: UploadFn}) {
   const uri = state.kanban_uri as string
   const tree = state.tree || {nodes: {}, root_id: null}
-  const stages = state.stages || STAGES
   const statuses = state.statuses || ["claimed", "doing", "done"]
   const instances = state.instances || []
   const drops = tree.drops || []

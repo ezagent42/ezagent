@@ -1391,7 +1391,7 @@ type ConfigFieldWidgetProps = {
   onChange: (value: string) => void
 }
 
-function ConfigFieldWidget({field, value, schemaType, options, onChange}: ConfigFieldWidgetProps) {
+function ConfigFieldWidget({field: _field, value, schemaType, options, onChange}: ConfigFieldWidgetProps) {
   const strValue = String(value ?? "")
 
   switch (schemaType) {
