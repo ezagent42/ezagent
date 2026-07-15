@@ -248,6 +248,25 @@ defmodule Ezagent.CapTest do
       assert Cap.verify_for(legacy, @other_target)
     end
 
+    test "under signature enforcement a signed cap authorizes its grantee and rejects retargeting" do
+      # The durable proof that grantee-binding closes the retargeting hole:
+      # a cap signed for holder A must authorize A and be refused for any
+      # other holder B, with the ONLY difference between the two assertions
+      # being the receiver. Both branches run under the same enforce config
+      # against the same artifact, so an empty A-set (e.g. a config/seed
+      # mismatch) cannot make the B-rejection pass vacuously.
+      assert {:ok, cap} = Cap.issue({:genesis, @issuer}, @target, signable_cap())
+      require_signature!()
+
+      # holder A (the bound grantee) is authorized
+      assert Cap.verify_for(cap, @target)
+      assert Cap.verified_set([cap], @target) == MapSet.new([cap])
+
+      # holder B (retargeting to a different holder) is rejected
+      refute Cap.verify_for(cap, @other_target)
+      assert Cap.verified_set([cap], @other_target) == MapSet.new()
+    end
+
     test "keeps only legacy artifacts when a collection has no receiver URI" do
       assert {:ok, signed} = Cap.issue({:genesis, @issuer}, @target, signable_cap())
       legacy = %{unstamped_cap() | granted_by: @issuer}

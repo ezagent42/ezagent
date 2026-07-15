@@ -99,6 +99,31 @@ defmodule Ezagent.EntityCapsTest do
       :ok = Ezagent.Kind.terminate(agent)
     end
 
+    test "under signature enforcement load admits the bound grantee and excludes a retargeted cap" do
+      # Proves the retargeting hole stays closed at the EntityCaps.load/1
+      # boundary once enforce flips: a signed cap materialized under holder A
+      # is loaded for A but a cap issued to another holder is filtered out.
+      # Both the admit and the exclude run under the same require_signature:
+      # true config against the same durable snapshot, so the exclusion is
+      # non-vacuous (the bound cap is proven to still load).
+      agent = agent_uri("enforce-retarget")
+      bound = issued_cap(agent, :send)
+      wrong_receiver = issued_cap(agent_uri("enforce-other"), :join)
+
+      assert {:ok, _snapshot} =
+               SnapshotStore.write(
+                 agent,
+                 %{identity: %{state: %{caps: MapSet.new([bound, wrong_receiver])}}},
+                 kind_type: :agent
+               )
+
+      with_signature_enforced(fn ->
+        loaded = EntityCaps.load(agent)
+        assert cap_present?(loaded, bound)
+        refute cap_present?(loaded, wrong_receiver)
+      end)
+    end
+
     test "a transient live read fails closed instead of falling back to stale durable caps" do
       agent = agent_uri("transient")
       stale = issued_cap(agent, :history)
@@ -481,6 +506,23 @@ defmodule Ezagent.EntityCapsTest do
 
         assert {:error, :not_found} = SnapshotStore.latest(agent)
         wait_until(fn -> Ezagent.KindRegistry.lookup(agent) == :error end)
+      end
+    end
+  end
+
+  defp with_signature_enforced(fun) do
+    previous = Application.get_env(:ezagent_core, Cap)
+    cap_config = previous || []
+    signing = cap_config |> Keyword.get(:signing, []) |> Keyword.put(:require_signature, true)
+    Application.put_env(:ezagent_core, Cap, Keyword.put(cap_config, :signing, signing))
+
+    try do
+      fun.()
+    after
+      if is_nil(previous) do
+        Application.delete_env(:ezagent_core, Cap)
+      else
+        Application.put_env(:ezagent_core, Cap, previous)
       end
     end
   end
