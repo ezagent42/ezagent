@@ -21,8 +21,9 @@ V1 separates Git development access into four responsibilities:
    implementation, not a core-domain special case.
 3. **Task Workspace Provisioner** creates the clone and per-task worktree before
    an agent sidecar starts. It depends only on the provider contract.
-4. **Kanban/socialware governance** issues precise, provenance-stamped,
-   task-scoped caps via `Cap.issue`; it does not write `caps_json` directly.
+4. **Kanban/socialware governance** issues precise, signed, receiver-bound,
+   task-scoped capability artifacts via the current `Cap.issue/3`; it does not
+   write `caps_json` directly.
 
 The agent receives neither a GitHub token nor an SSH private key. It receives a
 capability to request a bounded operation. GitHub merge remains a lead/human
@@ -181,7 +182,7 @@ The public interface exposes operations such as:
 - revoke identity.
 
 There is no `get_private_key`, generic `sign`, or credential-context operation.
-Only the internal Git Operation Broker may lease a secret version. The broker
+Only an approved non-exporting Git Operation Broker may use a secret version. The broker
 accepts structured repository/host/ref intent, pins host-key policy, launches the
 Git subprocess itself under OS-level isolation, and returns normalized results.
 It never returns a key path, file descriptor, handle, environment, or signing
@@ -356,6 +357,28 @@ GitHub OAuth covers GitHub API operations. SSH identity covers Git transport.
 Possession of one does not imply possession of the other; readiness reports both
 states separately.
 
+### 6.1 Transport decision gate
+
+V1 distinguishes two transport strategies behind the same `GitTaskAccess`
+authorization and normalized change-request contract:
+
+1. **Generic SSH Git transport** clones/fetches/pushes through the domain Git
+   Operation Broker. It is allowed only after a prerequisite security plan proves
+   that a same-host agent cannot read, reuse, or observe credential material. The
+   current `Ezagent.Runtime.OsProcess` process-group lifecycle alone is not that
+   isolation boundary.
+2. **GitHub API commit transport** is a W29 acceleration candidate: for a public
+   repository, the workspace may clone without credentials; after the agent
+   produces a bounded diff, the GitHub plugin can use the credential owner's
+   OAuth token to create Git objects, a branch, and a pull request without
+   placing a Git credential in the agent or workspace.
+
+The prerequisite plan must prototype and choose the permitted strategy. A
+NO-GO for SSH isolation does not authorize a temporary key-file workaround. The
+GitHub API strategy, if chosen, is explicitly GitHub-specific and does not replace
+the later provider-neutral SSH transport. Private-repository checkout remains
+blocked until an approved authenticated checkout strategy exists.
+
 ## 7. Task Workspace Provisioner
 
 ### 7.1 Lifecycle ordering
@@ -410,7 +433,10 @@ startup, and concurrent reapers. A start token is valid for one generation and
 prevents two sidecars from claiming the same worktree.
 
 The provisioner owns directories and Git lifecycle, not credentials. Authorized
-Git transport is performed by the Git Operation Broker after Router dispatch.
+Git transport is performed by the approved Git Operation Broker after Router
+dispatch. If the prerequisite security gate cannot prove that the agent cannot
+access broker credential material, SSH transport is NO-GO and this path is not
+implemented.
 
 ### 7.3 Observable task states
 
@@ -428,8 +454,9 @@ than optimistically moving cards before an external operation succeeds.
 
 ## 8. CapBAC and governance
 
-Socialware installation/governance issues provenance-stamped, instance-scoped
-capabilities through `Cap.issue`. It must not directly mutate `caps_json`.
+Socialware installation/governance issues signed, receiver-bound,
+instance-scoped capabilities through the current `Cap.issue/3`. It must not
+directly mutate `caps_json`.
 
 Provider-neutral capability subjects/actions should express intent such as:
 
@@ -446,14 +473,14 @@ repository, provider instance, and allowed branch are immutable authoritative
 fields of that Resource and are rechecked by its Behavior before invoking an
 adapter or broker. They are not falsely represented as independent cap axes.
 
-The agent is the grantee/self-store owner. Governance is the issuer; it calls
-`Cap.issue`, produces an issued artifact carrying accountable provenance, and
-follows ISSUE -> STORE -> VERIFY. Under the current same-BEAM/trusted-node model,
-`Cap.verify` verifies provenance shape; this design does not claim a
-cryptographic signature or cross-node absorb. If Capability Phase 4 lands first,
-its separately approved signing semantics apply without changing this dispatch
-boundary. The human credential owner and task owner are recorded separately. The
-provider binding is derived from the governed Resource record, never from
+The agent is the grantee/self-store owner. Governance is the issuer and calls the
+current `Cap.issue(authorization, grantee_uri, capability)`, where authorization
+is one of the repository-supported `:held_by`, `:admin`, `:rule`, or `:genesis`
+forms. The returned artifact carries issuer provenance, exact `grantee_uri`, key
+selector, and cryptographic signature. The grantee follows ISSUE -> STORE ->
+`verify_for/2`; terminal/cancelled task generations revoke the per-action
+artifacts. The human credential owner and task owner are recorded separately.
+The provider binding is derived from the governed Resource record, never from
 caller-supplied account coordinates.
 
 Current Capability has no expiry axis. V1 therefore revokes the task-access caps
@@ -522,44 +549,40 @@ second fake provider passing the same contract suite without attaching a
 duplicate provider-neutral Behavior/action namespace. Unauthorized dispatch must
 produce no filesystem, provision-record, secret-store, or provider API mutation.
 
-## 11. V1 delivery slices and estimate
+## 11. Delivery program and planning gate
 
-Before implementation estimation is accepted, a mandatory discovery/go-no-go
-slice inventories the approved secret-store abstraction, encryption-key
-hierarchy, SSH parsing library, OS-process isolation primitive, and existing
-provider-adapter registration seam. It must demonstrate that secrets can be
-brokered without entering the agent process. If no approved primitive exists,
-the missing infrastructure is separately designed and estimated.
+V1 is delivered through five separately reviewed plans:
 
-Suggested independently reviewable slices:
+1. **A — security prerequisites:** secret backend/parser inventory, same-UID
+   exposure reproduction, broker-isolation GO/NO-GO, and GitHub API transport
+   prototype.
+2. **B — Git Domain spine:** exact Resources/Lifecycle/Behaviors, normalized
+   types, adapter boot/rollback, persistence, signed Cap ISSUE/STORE/VERIFY, and
+   unauthorized-no-effect invariants.
+3. **C — transport/workspace:** only the transport approved by A, durable
+   provisioning, and a provider-neutral pre-start port outside `plugin_cc`.
+4. **D — GitHub plugin:** complete OAuth lifecycle, Req adapter, real pull
+   request, and head-CI reads.
+5. **E — product acceptance:** settings, Kanban fact projection, agent-browser
+   evidence, and lead-authorized merge/done.
 
-1. Discovery/go-no-go and threat-model evidence: **2–4 engineer-days**.
-2. Provider-neutral Resources/Behaviors/adapter contract and fake-provider
-   conformance/invariant tests: **3–5 engineer-days**.
-3. Entity SSH Identity, encrypted secret integration, versioned
-   generation/import/replacement/reconciliation, and redaction tests: **6–10
-   engineer-days**.
-4. SSH settings UI and post-replacement provider readiness: **3–5
-   engineer-days**.
-5. GitHub OAuth/binding and repository/change-request/check/review adapter:
-   **5–8 engineer-days**.
-6. Git Operation Broker plus idempotent Workspace Provisioner lifecycle:
-   **7–12 engineer-days**.
-7. Cap governance wiring, Kanban projection, and real canary E2E evidence: **3–5
-   engineer-days**.
-
-Supporting constrained private-key import adds approximately **5–8
-engineer-days** over generation-only support; including UI, audit, and leak-path
-verification, reserve **7–12 engineer-days**.
-
-These estimates are planning ranges, not a commitment; implementation planning
-must first inventory the existing secret-store and provider-adapter primitives.
+Only Plan A is executable before its evidence is approved. Plans B–E are written
+one at a time after their consumed interfaces exist. No implementation estimate
+is accepted before Plan A resolves the secret backend and transport boundary; a
+NO-GO creates a separate prerequisite design rather than silently expanding or
+weakening a later task.
 
 ## 12. Relationship to the W29 first closed loop
 
-The W29 P0 demo does not wait for the whole self-service V1. It may use a test
-user's manually and safely provisioned SSH identity and GitHub OAuth binding to
-exercise the same production-facing provider and workspace boundaries.
+The W29 P0 demo does not wait for the whole self-service V1. Its transport is
+selected by the prerequisite security gate:
+
+- if generic SSH broker isolation is proven, it may use a test user's safely
+  provisioned SSH identity and GitHub OAuth binding through that broker;
+- otherwise, for an authorized public repository, it may use anonymous checkout
+  plus the GitHub API commit/branch/pull-request strategy;
+- if neither path is proven, it stops honestly at the generated workspace diff
+  and records the transport blocker.
 
 The evidence must state which self-service pieces are absent. It must not place
 a test token/private key in the agent, use raw RPC/eval/live-DB mutation, grant
@@ -594,6 +617,8 @@ wildcard caps, deploy, or merge without lead authorization.
 
 - Secret backend product and encryption-key hierarchy, after the mandatory
   discovery gate confirms the required interface and threat assumptions.
+- Generic SSH broker isolation mechanism; a GO requires executable evidence that
+  the agent cannot observe or reuse credential material.
 - Passphrase UX and whether decryption is per operation or at import time.
 - Multiple identities and repository-specific key selection.
 - Automated public-key registration/removal on providers.
