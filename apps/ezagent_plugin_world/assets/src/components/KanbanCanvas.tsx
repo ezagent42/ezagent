@@ -73,6 +73,9 @@ export function gateVerdict(node: {stage?: string | null; status?: string | null
 function MmNode({data}: {data: {node: Node; id: string; selected: boolean; onSelect: (id: string) => void; onAddChild: (id: string) => void}}) {
   const {node, id, selected, onSelect, onAddChild} = data
   const owner = node.owner ? node.owner.split("/").pop() : null
+  // 协作模型规则 2：未认领节点不显示任何属性（stage 徽章 / gate 评价都藏）——
+  // 只留状态圈（○=可认领的信号）、标题和「加子」按钮。
+  const unclaimed = !node.owner
   return (
     <div
       onClick={() => onSelect(id)}
@@ -81,10 +84,10 @@ function MmNode({data}: {data: {node: Node; id: string; selected: boolean; onSel
     >
       <Handle type="target" position={Position.Left} className="!bg-border" />
       <span className="text-muted-foreground">{STATUS_ICON[node.status || "unassigned"]}</span>
-      {node.stage && <span className="rounded bg-muted px-1 text-[10px] text-primary">{STAGE_LABEL[node.stage] || node.stage}</span>}
+      {!unclaimed && node.stage && <span className="rounded bg-muted px-1 text-[10px] text-primary">{STAGE_LABEL[node.stage] || node.stage}</span>}
       <span className="flex-1 truncate font-medium text-foreground" title={node.title}>{node.title}</span>
       {owner && <span className="text-[10px] text-muted-foreground">@{owner}</span>}
-      {(() => {
+      {!unclaimed && (() => {
         const gv = gateVerdict(node)
         if (gv.verdict === "warn") return <span title={gv.reason} className="text-amber-500">⚠</span>
         if (gv.verdict === "pass") return <span title="本棒已过 gate" className="text-green-600">✓</span>
@@ -152,7 +155,7 @@ export function KanbanCanvas(props: CanvasProps) {
 function Flow({uri, tree, selectedId, onSelectNode, onAction}: CanvasProps) {
   const {fitView} = useReactFlow()
   const onAddChild = useCallback((id: string) => {
-    const t = window.prompt("子节点标题")
+    const t = window.prompt("子节点标题（加完自动认领给你）")
     if (t && t.trim()) onAction("kanban.add_node", {kanban_uri: uri, parent_id: id, title: t.trim()})
   }, [onAction, uri])
 

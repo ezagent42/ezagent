@@ -917,8 +917,9 @@ const PLUGIN_PAGE_RENDERERS: Record<
   string,
   (component: NonNullable<WorldLayout["components"]>[number], context: RenderContext) => React.ReactElement
 > = {
-  // kanban 插件页 = 配置面（像 VSCode 插件设置）：只放出站连接器凭证（Miro / GitHub
-  // token）。mode="config" 强制渲 KanbanList，操作 UI（建树/认领/编辑）不在本页出——
+  // kanban 插件页 = 配置面（像 VSCode 插件设置）：只放出站连接器凭证（Miro token；
+  // GitHub 走独立 gh 插件，看板不登记 token）。mode="config" 强制渲 KanbanList，
+  // 操作 UI（建树/认领/编辑）不在本页出——
   // 那些走会话(session) tab 的富 Kanban（Conversation.tsx activeMode==="kanban"）。
   // 两条路都经 onWorkspacePluginAction → world:dispatch → PluginPageRegistry 白名单，
   // 白名单原样不动（改 mode 只影响本页渲染，不动 tab 的操作准入）。
