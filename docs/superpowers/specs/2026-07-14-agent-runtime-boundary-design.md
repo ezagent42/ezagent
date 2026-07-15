@@ -180,6 +180,65 @@ termination returns structured partial success, emits telemetry/audit evidence a
 creates a durable cleanup obligation; it never converts incomplete cleanup into
 unconditional success.
 
+### 6.2 Retirement contract amendment (review closure, 2026-07-15)
+
+Retirement separates four facts that must never be conflated:
+
+1. **authority** — the authenticated caller and caps may request destruction;
+2. **provenance** — the target belongs to the supplied creation/session root;
+3. **termination** — the Agent process and durable Kind state are gone;
+4. **cleanup** — filesystem, binding, lineage and sidecar resources are reconciled.
+
+Lineage is evidence of provenance, never authorization. The normal path carries an
+explicit retirement context with `caller`, `caps`, `workspace_uri`,
+`provenance_root`, creation-attempt identity and reason. It verifies an Agent target,
+workspace consistency and transaction-owned provenance, then uses the existing
+Sandbox destroy dispatch so CapBAC remains at its sanctioned chokepoint. A caller
+that passes provenance but lacks authority is denied.
+
+Rollback receives the trusted provenance root and created-Agent inventory from the
+creation attempt. It must not derive the proof root from the target's own lineage
+row. A target absent from that inventory, under another root or in another workspace
+is never retirement-eligible for that rollback.
+
+Retirement returns one of:
+
+```elixir
+{:ok, %{termination: :destroyed, cleanup: :complete}}
+{:partial, %{termination: :destroyed, cleanup: :pending, obligation_id: id, failures: failures}}
+{:error, %{termination: :not_destroyed, reason: reason}}
+```
+
+Session callers preserve these distinctions. They may remove binding/lineage only
+after complete cleanup, or after every remaining step has been durably captured by
+an obligation that retains the evidence required to retry it. An error without such
+an obligation leaves binding and lineage intact. Cascade teardown aggregates and
+surfaces partial/error reports instead of converting them to unconditional `:ok`.
+
+### 6.3 Durable retirement obligations
+
+Retirement cleanup uses a dedicated durable store, not the invocation DLQ. Each
+obligation records the Agent, workspace, provenance root, creation attempt, reason,
+pending steps, status, attempts, last error and timestamps. Status transitions are
+`pending -> running -> resolved`, with retry exhaustion represented as `failed`.
+Creation is idempotent for the same Agent/creation-attempt/retirement reason.
+
+A sweeper and an explicit operator retry surface execute pending steps and persist
+attempt/error state. Successful reconciliation marks the obligation resolved before
+discarding its remaining provenance evidence. Telemetry covers obligation creation,
+attempt, resolution and failure; the durable obligation itself is the audit and
+recovery record. A DB-write failure cannot be described as partial success: either
+termination has not occurred and the evidence remains intact, or an alternate
+durable record is committed before an irreversible fallback.
+
+### 6.4 Precise SessionManager classification
+
+The scanner recognizes only the inventory-backed conversation-executor shapes as
+legal `SessionManager.ensure_started/1` and `stop/1` seams. Positive fixtures pin
+those bindings; negative fixtures prove ordinary worker/member/PTY/sidecar lifecycle
+control is still classified. The scanner must not become blind to every
+`SessionManager` call merely because the module is Session-owned.
+
 ## 7. Static gate
 
 ### 7.1 Placement
@@ -306,9 +365,9 @@ materializations; it does not directly repair an existing target agent.
 
 - Expected facade failures use `{:error, reason}`; no convenience rescue may turn
   lifecycle failure into success.
-- Agent retirement distinguishes complete cleanup from
-  `{:partial, :terminated, cleanup_obligation}`; partial cleanup is never reported
-  as plain `:ok`.
+- Agent retirement distinguishes complete cleanup from structured partial success;
+  partial cleanup is never reported as plain `:ok`, and every partial result names
+  a persisted pending obligation.
 - Session receives domain-level reasons, not PID/sidecar/plugin internals.
 - Workspace owner checks remain in core/runtime chokepoints.
 - CapBAC checks remain at their existing sanctioned owners.
