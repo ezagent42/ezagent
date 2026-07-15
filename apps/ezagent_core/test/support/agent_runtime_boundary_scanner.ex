@@ -29,8 +29,6 @@ defmodule EzagentCore.AgentRuntimeBoundaryScanner do
     :legal_session_lifecycle
   ]
   @allowance_keys [:class, :path, :reason, :source_anchor]
-  @domain_agent_path "apps/ezagent_domain_session/lib/ezagent/domain/agent.ex"
-  @materializer_path "apps/ezagent_domain_session/lib/ezagent_domain_instance_message/session_creator/materializer.ex"
   @rollback_path "apps/ezagent_domain_session/lib/ezagent_domain_instance_message/session_creator/rollback.ex"
   @imports_key :__agent_runtime_boundary_imports__
 
@@ -275,45 +273,6 @@ defmodule EzagentCore.AgentRuntimeBoundaryScanner do
   end
 
   defp classify_contextual(
-         Ezagent.Session.SessionManager,
-         :stop,
-         [target],
-         path,
-         definition
-       ) do
-    if agent_target?(target) or
-         (variable_name(target) == :uri and path == @materializer_path and
-            definition == "defp:evict_orchestrator_runtime/1") do
-      {:ok, :agent_executor_control}
-    else
-      :error
-    end
-  end
-
-  defp classify_contextual(
-         Ezagent.Session.SessionManager,
-         :ensure_started,
-         arguments,
-         _path,
-         _definition
-       ) do
-    if Enum.any?(arguments, &agent_target?/1) or keyword_agent_target?(arguments) do
-      {:ok, :agent_executor_control}
-    else
-      :error
-    end
-  end
-
-  defp classify_contextual(Ezagent.KindRegistry, :lookup, [target], path, definition) do
-    if path == @domain_agent_path and definition == "def:lifecycle_status/1" and
-         variable_name(target) == :agent_uri do
-      {:ok, :legal_conversation_or_read}
-    else
-      :error
-    end
-  end
-
-  defp classify_contextual(
          EzagentDomainInstanceMessage.SessionCreator,
          :demand_spawn_member,
          arguments,
@@ -325,6 +284,26 @@ defmodule EzagentCore.AgentRuntimeBoundaryScanner do
     else
       :error
     end
+  end
+
+  defp classify_contextual(
+         Ezagent.Session.SessionManager,
+         :stop,
+         [_target],
+         _path,
+         _definition
+       ),
+       do: {:ok, :agent_executor_control}
+
+  defp classify_contextual(
+         Ezagent.Session.SessionManager,
+         :ensure_started,
+         [options],
+         _path,
+         _definition
+       )
+       when is_list(options) do
+    {:ok, :agent_executor_control}
   end
 
   defp classify_contextual(_module, _function, _arguments, _path, _definition), do: :error
@@ -339,19 +318,6 @@ defmodule EzagentCore.AgentRuntimeBoundaryScanner do
   end
 
   defp agent_target?(target), do: variable_name(target) in @agent_target_names
-
-  defp keyword_agent_target?(arguments) do
-    Enum.any?(arguments, fn
-      options when is_list(options) ->
-        Enum.any?(options, fn
-          {key, value} -> key in @agent_target_names and agent_target?(value)
-          _other -> false
-        end)
-
-      _argument ->
-        false
-    end)
-  end
 
   defp variable_name({name, _, context}) when is_atom(name) and is_atom(context), do: name
   defp variable_name(_target), do: nil

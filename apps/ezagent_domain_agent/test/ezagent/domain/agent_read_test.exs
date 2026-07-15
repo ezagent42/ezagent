@@ -8,7 +8,7 @@ defmodule Ezagent.Domain.AgentReadTest do
   AFTER each read — for ALL FOUR reads. Plus: two-route authz parity (§3.2 D3),
   the caps self-read exemption, wrong-target (instance-scope) denial, and the
   module-scoped "no hand-rolled Capability.matches?" assertion (§8.9) that the
-  global p3 probe cannot make (its allowlist covers the whole session dir).
+  global p3 probe cannot make (it covers presentation surfaces, not the owner facade).
   """
   use EzagentCore.DataCase, async: false
 
@@ -34,7 +34,8 @@ defmodule Ezagent.Domain.AgentReadTest do
 
   defp kind_live?(uri), do: match?({:ok, _pid}, Ezagent.KindRegistry.lookup(URI.to_string(uri)))
 
-  defp user(name), do: Ezagent.URI.entity(:team_alpha, :user, "#{name}-#{System.unique_integer([:positive])}")
+  defp user(name),
+    do: Ezagent.URI.entity(:team_alpha, :user, "#{name}-#{System.unique_integer([:positive])}")
 
   defp manage_cap(agent, workspace, granter),
     do: CreatorGrant.manage_cap(:agent, agent, workspace, granter)
@@ -109,12 +110,14 @@ defmodule Ezagent.Domain.AgentReadTest do
        %{agent: agent, workspace: workspace} do
     manager = user("mgr")
     :ok = seed_agent_snapshot(agent, workspace, manager)
+
     inline =
       MapSet.new([
         manage_cap(agent, workspace, manager),
         sandbox_cap(agent, manager),
         list_caps_cap(agent, manager)
       ])
+
     ctx = %{caller: manager, caps: inline}
 
     refute kind_live?(agent)
@@ -165,7 +168,9 @@ defmodule Ezagent.Domain.AgentReadTest do
     other = Ezagent.URI.entity(:team_alpha, :agent, "other-#{System.unique_integer([:positive])}")
     other_granter = user("og")
 
-    wrong_caps = MapSet.new([manage_cap(other, workspace, other_granter), sandbox_cap(other, other_granter)])
+    wrong_caps =
+      MapSet.new([manage_cap(other, workspace, other_granter), sandbox_cap(other, other_granter)])
+
     ctx = %{caller: other_granter, caps: wrong_caps}
 
     assert {:error, :unauthorized} = DomainAgent.read_config(agent, ctx)
@@ -242,6 +247,7 @@ defmodule Ezagent.Domain.AgentReadTest do
 
     # route 1 only — inline manage cap, empty slice.
     inline_only = user("inline")
+
     assert {:ok, _} =
              DomainAgent.read_config(agent, %{
                caller: inline_only,
@@ -265,7 +271,10 @@ defmodule Ezagent.Domain.AgentReadTest do
     manager = user("mgr")
     :ok = seed_agent_snapshot(agent, workspace, manager)
 
-    ctx = %{caller: manager, caps: MapSet.new([sandbox_cap(agent, manager), list_caps_cap(agent, manager)])}
+    ctx = %{
+      caller: manager,
+      caps: MapSet.new([sandbox_cap(agent, manager), list_caps_cap(agent, manager)])
+    }
 
     assert {:ok, caps} = DomainAgent.read_caps(agent, ctx)
     assert Enum.all?(caps, &match?(%Ezagent.Capability{}, &1))
@@ -283,6 +292,6 @@ defmodule Ezagent.Domain.AgentReadTest do
     refute src =~ "Capability.matches?",
            "Domain.Agent must NOT hand-roll Capability.matches? — route the match through " <>
              "Ezagent.Identity.caps_authorize?/2 (the chokepoint owner). The global p3 probe " <>
-             "allowlists the whole session dir so it cannot enforce this; SPEC §8.9."
+             "covers presentation surfaces, not the owner facade; SPEC §8.9."
   end
 end

@@ -277,7 +277,7 @@ defmodule Ezagent.Orchestrator.Tools do
     # `content` is the SAME snapshot the flavor (→ member_uri) was derived from
     # (codex P2) — no second read, so URI-flavor and spawned-content cannot diverge.
     with {:ok, _result} <-
-           Ezagent.Entity.Agent.spawn_from_template_content(
+           Ezagent.Domain.Agent.materialize_from_template(
              content,
              member_uri,
              caller,

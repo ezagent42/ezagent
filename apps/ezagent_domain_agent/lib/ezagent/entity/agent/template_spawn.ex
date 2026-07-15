@@ -447,7 +447,8 @@ defmodule Ezagent.Entity.Agent.TemplateSpawn do
         # (the agent never even came up).
         with :ok <- establish_post_spawn_obligations(workers, spawned_by_uri, workspace_uri),
              :ok <- record_sandbox_state(workers, instantiate_meta, template_class),
-             :ok <- mount_behavior_overlay(workers, behavior_overlay) do
+             :ok <- mount_behavior_overlay(workers, behavior_overlay),
+             :ok <- record_creation_inventory(workers, spawned_by_uri, workspace_uri) do
           :ok = Ezagent.AgentFlavorAttributes.put(instance_uri, flavor)
           {:ok, Map.merge(%{workers: workers, fresh?: fresh?}, role_degraded_passthrough)}
         else
@@ -810,6 +811,22 @@ defmodule Ezagent.Entity.Agent.TemplateSpawn do
   rescue
     error ->
       {:error, {:post_spawn_obligation_failed, :exception, error}}
+  end
+
+  defp record_creation_inventory(workers, spawned_by_uri, workspace_uri) do
+    Enum.reduce_while(workers, :ok, fn worker_uri, :ok ->
+      attempt_id = Ezagent.Agent.CreationInventory.new_attempt_id()
+
+      case Ezagent.Agent.CreationInventory.record(
+             attempt_id,
+             worker_uri,
+             spawned_by_uri,
+             workspace_uri
+           ) do
+        :ok -> {:cont, :ok}
+        {:error, reason} -> {:halt, {:error, {:creation_inventory_failed, reason}}}
+      end
+    end)
   end
 
   # codex round-10 HIGH-2 — undo everything `spawn_from_template_content/4`

@@ -1030,7 +1030,22 @@ defmodule Ezagent.ActionSet.Session.Membership do
         # member would reference a dead worker with no {:member_left} broadcast
         # (codex Q4 / SPEC §7 "Silent orphan"). So the prune is BEST-EFFORT once
         # the reap has happened.
-        {deleted, repointed} = prune_after_irreversible_reap(session_uri, participant_uri)
+        {deleted, repointed} =
+          case Ezagent.ActionSet.Session.RoutingPrune.prune_routing_rules_for(
+                 session_uri,
+                 participant_uri
+               ) do
+            {:ok, %{deleted_rules: deleted, repointed_rules: repointed}} ->
+              {deleted, repointed}
+
+            {:error, reason} ->
+              Logger.warning(
+                "remove_participant: routing prune failed after partial worker retirement: " <>
+                  inspect(reason)
+              )
+
+              {0, 0}
+          end
 
         # A2.4 (R3.1) — the security-critical member-cap REVOKE, CHECKED. Placed
         # after the teardown authority + prune have run so a rejected removal
@@ -1053,6 +1068,32 @@ defmodule Ezagent.ActionSet.Session.Membership do
            %{
              status: :removed,
              torn_down: :worker,
+             deleted_rules: deleted,
+             repointed_rules: repointed
+           }, leave}
+        end
+
+      {:partial, %{resource: :worker, retirement: retirement}} ->
+        # Termination is irreversible, while durable obligation ownership makes
+        # the remaining cleanup recoverable. Drop the zombie-prone membership,
+        # but expose the obligation instead of reporting full cleanup.
+        {deleted, repointed} = prune_worker_after_retirement(session_uri, participant_uri)
+
+        with :ok <-
+               Ezagent.Socialware.CompositionCaps.deactivate_member(
+                 session_uri,
+                 participant_uri,
+                 :role_departure
+               ),
+             :ok <- MemberCap.revoke_member_cap_checked(participant_uri, ctx) do
+          if leave_ref, do: Process.demonitor(leave_ref, [:flush])
+
+          {:ok,
+           %{
+             status: :removed,
+             torn_down: :worker,
+             cleanup: :pending,
+             cleanup_obligation_id: retirement.obligation_id,
              deleted_rules: deleted,
              repointed_rules: repointed
            }, leave}
@@ -1098,7 +1139,7 @@ defmodule Ezagent.ActionSet.Session.Membership do
   # being dropped regardless, so a prune failure is logged + swallowed (stale
   # rows for a now-dead member are harmless and get cleaned out-of-band) rather
   # than aborting the leave into a zombie-member orphan.
-  defp prune_after_irreversible_reap(%URI{} = session_uri, %URI{} = participant_uri) do
+  defp prune_worker_after_retirement(%URI{} = session_uri, %URI{} = participant_uri) do
     case Ezagent.ActionSet.Session.RoutingPrune.prune_routing_rules_for(
            session_uri,
            participant_uri

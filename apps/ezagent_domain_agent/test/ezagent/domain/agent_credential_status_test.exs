@@ -152,7 +152,9 @@ defmodule Ezagent.Domain.AgentCredentialStatusTest do
        %{agent: agent, config_dir: config_dir, flavor: flavor} do
     :ok = seed(agent, config_dir, flavor)
 
-    foreign = Ezagent.URI.entity(:team_beta, :agent, "foreign-#{System.unique_integer([:positive])}")
+    foreign =
+      Ezagent.URI.entity(:team_beta, :agent, "foreign-#{System.unique_integer([:positive])}")
+
     foreign_ws = Ezagent.Capability.workspace_of(foreign)
     granter = user("fg")
     ctx = %{caller: granter, caps: MapSet.new([manage_cap(foreign, foreign_ws, granter)])}

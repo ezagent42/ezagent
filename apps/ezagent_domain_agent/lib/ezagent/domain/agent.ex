@@ -9,11 +9,11 @@ defmodule Ezagent.Domain.Agent do
   contract): Domain UI MUST NOT import Plugin module functions. This
   facade is the sanctioned boundary.
 
-  ## Why this lives in `ezagent_domain_session`
+  ## Why this lives in `ezagent_domain_agent`
 
   Domain.Agent is the unifying domain model over the various agent
   flavors (cc, echo, curl, future). The Agent Kind itself lives in
-  `Ezagent.Entity.Agent` here in `ezagent_domain_session`, so the facade
+  `Ezagent.Entity.Agent` here in `ezagent_domain_agent`, so the facade
   belongs in the same app. Domain.Agent asks domain primitives, not
   plugin modules. A live `Ezagent.Domain.Pty` sidecar means the agent
   is PTY-backed, regardless of whether the flavor is cc, codex,
@@ -92,8 +92,10 @@ defmodule Ezagent.Domain.Agent do
 
   defp delegate_alive_status(flavor, agent_uri) do
     try do
-      if Code.ensure_loaded?(Ezagent.Domain.Pty) and Ezagent.Domain.Pty.alive?(agent_uri) do
-        %{phase: :alive, flavor: flavor, detail: Ezagent.Domain.Pty.status(agent_uri) || %{}}
+      pty = Ezagent.Domain.Pty
+
+      if Code.ensure_loaded?(pty) and apply(pty, :alive?, [agent_uri]) do
+        %{phase: :alive, flavor: flavor, detail: apply(pty, :status, [agent_uri]) || %{}}
       else
         %{phase: :alive, flavor: flavor, detail: %{}}
       end
@@ -219,6 +221,93 @@ defmodule Ezagent.Domain.Agent do
   """
   @spec read_status(URI.t()) :: status()
   def read_status(%URI{} = agent_uri), do: lifecycle_status(agent_uri)
+
+  @doc """
+  Ensure a previously-created Agent is live before Session delivery.
+
+  This is the Agent-owned command boundary for cold-member revival. It preserves
+  `Ezagent.LocalRuntime.ensure_live/1`'s tagged result so callers can distinguish
+  an already-live Agent, a rehydrated Agent, and a URI that was never created.
+  """
+  @spec ensure_deliverable(URI.t()) ::
+          {:ok, :live | :rehydrated} | {:error, term()}
+  def ensure_deliverable(%URI{} = agent_uri), do: Ezagent.LocalRuntime.ensure_live(agent_uri)
+
+  @doc """
+  Materialize an Agent from resolved template content.
+
+  Session-domain callers use this Agent-owned command boundary instead of
+  reaching into the Entity implementation directly. Return values and options
+  are passed through unchanged.
+  """
+  @spec materialize_from_template(map(), URI.t(), URI.t(), URI.t(), keyword()) ::
+          {:ok, map()} | {:error, term()}
+  def materialize_from_template(content, instance_uri, spawned_by_uri, workspace_uri, opts \\ []) do
+    Ezagent.Entity.Agent.spawn_from_template_content(
+      content,
+      instance_uri,
+      spawned_by_uri,
+      workspace_uri,
+      opts
+    )
+  end
+
+  @doc """
+  Materialize an Agent by selecting an executor from a manifest.
+
+  The Entity implementation remains responsible for flavor ordering,
+  adoption, rollback, and result metadata.
+  """
+  @spec materialize_from_manifest(map(), map(), URI.t(), URI.t(), URI.t(), keyword()) ::
+          {:ok, map()} | {:error, term()}
+  def materialize_from_manifest(
+        manifest,
+        slots,
+        instance_uri,
+        spawned_by_uri,
+        workspace_uri,
+        opts \\ []
+      ) do
+    Ezagent.Entity.Agent.spawn_from_manifest(
+      manifest,
+      slots,
+      instance_uri,
+      spawned_by_uri,
+      workspace_uri,
+      opts
+    )
+  end
+
+  @doc """
+  Materialize a declared Agent while preserving atomic freshness metadata.
+
+  This narrower boundary is used where callers must distinguish whether this
+  call started the process or adopted an already-running process.
+  """
+  @spec materialize_declared(URI.t()) ::
+          {:ok, :started | :already_started, pid()} | {:error, term()}
+  def materialize_declared(%URI{} = agent_uri),
+    do: Ezagent.LocalRuntime.ensure_started_detailed(agent_uri)
+
+  @doc """
+  Retire an Agent under explicit authority and creation-attempt provenance.
+  """
+  @spec retire_spawned(URI.t(), map()) ::
+          {:ok, map()} | {:partial, map()} | {:error, map()}
+  def retire_spawned(%URI{} = agent_uri, context) when is_map(context),
+    do: Ezagent.Agent.Retirement.retire(agent_uri, context)
+
+  @doc """
+  Ensure a declared Agent member has a local Kind process.
+
+  Unlike `ensure_deliverable/1`, this command may start an Agent that has no
+  durable snapshot yet. Callers must already have established the member's
+  declaration and URI; template materialization belongs to the separate
+  `materialize_*` facade commands.
+  """
+  @spec ensure_declared_member(URI.t()) :: {:ok, pid()} | {:error, term()}
+  def ensure_declared_member(%URI{} = agent_uri),
+    do: Ezagent.LocalRuntime.ensure_started(agent_uri)
 
   @doc """
   Read `agent_uri`'s NORMALIZED credential status (#160) WITHOUT activating it.
@@ -356,7 +445,7 @@ defmodule Ezagent.Domain.Agent do
   Routes to:
 
     * cc → `Ezagent.Domain.Pty.Server.phase/1`
-    * np → `Ezagent.Domain.Python.Server.phase/1`
+    * py → `Ezagent.Domain.Python.Server.phase/1`
     * other → `:dead` (no subprocess concept)
 
   Used by operator terminal surfaces so the badge stays consistent across
@@ -372,8 +461,10 @@ defmodule Ezagent.Domain.Agent do
   def subprocess_phase(%URI{} = agent_uri) do
     case resolve_flavor!(agent_uri) do
       "cc" ->
-        if Code.ensure_loaded?(Ezagent.Domain.Pty.Server) do
-          Ezagent.Domain.Pty.Server.phase(agent_uri)
+        pty_server = Ezagent.Domain.Pty.Server
+
+        if Code.ensure_loaded?(pty_server) do
+          apply(pty_server, :phase, [agent_uri])
         else
           :dead
         end

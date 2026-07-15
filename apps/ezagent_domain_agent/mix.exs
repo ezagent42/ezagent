@@ -35,10 +35,10 @@ defmodule EzagentDomainAgent.MixProject do
 
   defp deps do
     [
-      # Tier-2 Domain leaf (im → session → agent). Holds the Agent Kind +
-      # its transport seam (`agent.receive` → AgentBridge). Depends ONLY on
-      # core + the agent_bridge transport — never on the session/im domain
-      # nor on any plugin (PR-9a, #53). Identity/curl behaviors composed onto
+      # Tier-2 Domain leaf (im → session → agent). Holds the Agent Kind,
+      # its lifecycle/read facade, and its transport seam
+      # (`agent.receive` → AgentBridge). It never depends on the session/im
+      # domain nor on any plugin (PR-9a, #53). Identity/curl behaviors composed onto
       # the Agent Kind are referenced as bare atoms (runtime, via the umbrella
       # app load + the BehaviorRegistry), not compile deps.
       {:ezagent_core, in_umbrella: true},

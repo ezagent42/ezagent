@@ -33,7 +33,7 @@ defmodule EzagentCore.Invariants.NoSurfaceReadDispatchProbes do
       pattern:
         ~r/with_action\([^,]+,\s*:identity,\s*:list_caps\)|with_action\([^,]+,\s*:sandbox,\s*:read\)/,
       surface_only: true,
-      allowlist: ["apps/ezagent_domain_session/lib/ezagent/domain/agent.ex"]
+      allowlist: []
     },
 
     # p15 — FORM (ii): surface calls the dispatching READ FACADE directly. The
@@ -50,7 +50,7 @@ defmodule EzagentCore.Invariants.NoSurfaceReadDispatchProbes do
           "See SPEC §11.",
       pattern: ~r/(?:Ezagent\.)?Agent\.Config\.read_cascade\(|(?<![.\w])Config\.read_cascade\(/,
       surface_only: true,
-      allowlist: ["apps/ezagent_domain_session/lib/ezagent/domain/agent.ex"]
+      allowlist: []
     }
   ]
 

@@ -243,7 +243,7 @@ defmodule Ezagent.Orchestrator.Tools.MemberTemplate do
 
     member_uri = Ezagent.URI.agent(workspace_name, instance_name)
 
-    case Ezagent.Entity.Agent.spawn_from_template_content(
+    case Ezagent.Domain.Agent.materialize_from_template(
            content,
            member_uri,
            caller,
