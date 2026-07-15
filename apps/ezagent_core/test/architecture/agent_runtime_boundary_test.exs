@@ -33,7 +33,45 @@ defmodule EzagentCore.AgentRuntimeBoundaryTest do
                       ])
   @agent_mix Path.join([@repo_root, "apps", "ezagent_domain_agent", "mix.exs"])
 
-  @allowlist []
+  @allowlist [
+    %{
+      path: "apps/ezagent_domain_session/lib/ezagent/behavior/session/teardown.ex",
+      class: :agent_executor_control,
+      source_anchor:
+        "def:cascade_teardown/2|Ezagent.Session.SessionManager.stop(orchestrator_uri)",
+      reason: "Session-owned cascade stops its confirmed orchestrator executor"
+    },
+    %{
+      path: "apps/ezagent_domain_session/lib/ezagent/e2e/scenarios/agent_contract_g4.ex",
+      class: :agent_executor_control,
+      source_anchor:
+        "defp:provision_orchestrator_and_worker/1|Ezagent.Session.SessionManager.ensure_started([ orchestrator_uri: orchestrator_uri, session_uri: session_uri, workspace_uri: ws, owner_uri: orchestrator_uri ])",
+      reason:
+        "G4 scenario provisions the executor from an explicit orchestrator/session inventory"
+    },
+    %{
+      path: "apps/ezagent_domain_session/lib/ezagent/entity/session/orchestrator.ex",
+      class: :agent_executor_control,
+      source_anchor:
+        "def:register_orchestrator_mcp_context/6|Ezagent.Session.SessionManager.ensure_started([ orchestrator_uri: orchestrator_uri, session_uri: session_uri, workspace_uri: workspace_uri, owner_uri: owner_uri, parent_template_uri: parent_template_uri ])",
+      reason: "Session orchestrator registration owns executor startup"
+    },
+    %{
+      path:
+        "apps/ezagent_domain_session/lib/ezagent_domain_instance_message/session_creator/materializer.ex",
+      class: :agent_executor_control,
+      source_anchor: "defp:evict_orchestrator_runtime/1|Ezagent.Session.SessionManager.stop(uri)",
+      reason: "Materializer evicts the executor URI returned by its orchestrator inventory"
+    },
+    %{
+      path:
+        "apps/ezagent_domain_session/lib/ezagent_domain_instance_message/session_creator/rollback.ex",
+      class: :agent_executor_control,
+      source_anchor:
+        "def:rollback_session/3|Ezagent.Session.SessionManager.stop(orchestrator_uri)",
+      reason: "Create rollback stops the orchestrator executor captured by that create attempt"
+    }
+  ]
 
   test "repository Agent runtime crossings are exactly allowlisted" do
     paths = Path.wildcard(@session_glob)
@@ -260,16 +298,17 @@ defmodule EzagentCore.AgentRuntimeBoundaryTest do
            ] = Scanner.scan_source("direct_agent_seams.ex", source)
   end
 
-  test "scanner leaves Session lifecycle targets legal even in teardown-like paths" do
+  test "scanner distinguishes Session lifecycle from SessionManager executor control" do
     source = """
     Ezagent.Lifecycle.destroy(session_uri, :session_delete)
     Ezagent.Session.SessionManager.stop(session_uri)
     """
 
-    assert Scanner.scan_source(
-             "apps/ezagent_domain_session/lib/ezagent/behavior/session/teardown.ex",
-             source
-           ) == []
+    assert [%{class: :agent_executor_control, function: :stop, line: 2}] =
+             Scanner.scan_source(
+               "apps/ezagent_domain_session/lib/ezagent/behavior/session/teardown.ex",
+               source
+             )
   end
 
   test "scanner allows only inventory-backed SessionManager executor seams" do
@@ -285,8 +324,10 @@ defmodule EzagentCore.AgentRuntimeBoundaryTest do
     """
 
     assert [
+             %{class: :agent_executor_control, function: :stop, line: 1},
              %{class: :agent_executor_control, function: :stop, line: 2},
              %{class: :agent_executor_control, function: :stop, line: 3},
+             %{class: :agent_executor_control, function: :ensure_started, line: 4},
              %{class: :agent_executor_control, function: :ensure_started, line: 8}
            ] = Scanner.scan_source("session_manager_precision.ex", source)
   end
@@ -302,7 +343,11 @@ defmodule EzagentCore.AgentRuntimeBoundaryTest do
     ]
 
     for {source, path} <- sources do
-      assert Scanner.scan_source(path, source) == []
+      if String.contains?(source, "SessionManager") do
+        assert [%{class: :agent_executor_control}] = Scanner.scan_source(path, source)
+      else
+        assert Scanner.scan_source(path, source) == []
+      end
     end
   end
 
