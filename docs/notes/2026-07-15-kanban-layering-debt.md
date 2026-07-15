@@ -59,3 +59,10 @@
 - **⑥ 已修(过渡)**:`BoardProvision.create_board` 走 `{:rule, :socialware_runtime_provision, creator}` 一次性 scoped create_agent cap(Cap.issue chokepoint,transient 不落库),边界=①建板人须本 session 成员 ②只造 recipe `passive:true` 的 data-host。world create_kanban 改走 create_board(session-scoped)。**留 Allen**:rule 名进 Decision Log;「transient ctx-cap 不落库」用法确认(现有 rule-mint 全持久化,这是首个 transient 用例);要不要 workspace 级算力开关。
 - **⑦ 已修**:behavior 层 `board_admin?`(版主=data_owner 或全局 wildcard),建根门移除(collab 模型:任何成员可加,自动认领)。
 - **⑧ 已修**:create_board 给建板人也经 Mount.mount 发全动作 operate 钥匙(granter={:held_by,owner} 自路径),落挂载表。**成员 join 补发 board 钥匙仍缺**(reconcile_session_mounts 只重发已记录 grantee)→ TODO,与 ⑤ join 补发同一个洞:**「新成员进 session 拿到该 session 已挂资源的钥匙」没有机制**,建议并入 Allen #1394 Entity 双向-caps/mount 永久线。
+
+## e2e 新挖(2026-07-16,两账号真 UI,详见 docs/e2e/2026-07-16/README.md)
+- **⑨ 已修**:Mount.provision 建宿主 5s 超时半途崩→孤儿板(agent建成零钥匙零挂载行);deadline 30s 修复。
+- **⑩ 记录**:cc-headless 无凭证源→install 静默跳过角色,UI 无提示(仅 server log)。归 install/UX 面。
+- **⑪ 记录**:dev 无 socialware 发布车道(boot scan prod-only;mix import 撞运行 server 的 _build)。dev 体验债。
+- **⑫ 记录**:建会话向导「创建」按钮折叠线下,不 scroll 点不到。前端 UX。
+- **⑬ 记录**:dev 前端骨架屏(vite 冷启 + WS 退 longpoll 106:4),world React 挂载偶发失败。dev-env 债,查 WS 被拒原因。
