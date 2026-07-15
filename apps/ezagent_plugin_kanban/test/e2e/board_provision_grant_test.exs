@@ -73,27 +73,15 @@ defmodule EzagentPluginKanban.E2E.BoardProvisionGrantTest do
   test "chat 建板: 建出 board(owner=触发者) + 当场给本 session 的 kanban-assistant 发操作钥匙",
        %{ws_name: ws_name, workspace_uri: workspace_uri, admin_ctx: admin_ctx} do
     skip_if_no_entity_spawn(fn ->
-      # --- owner = 常规用户(会话 owner / 建板触发者),持 create_agent 权 ----------
+      # --- owner = 常规用户(会话 owner / 建板触发者)。⑥ 后**不再预授 create_agent**:
+      # 建板授权由 create_board 内的 {:rule, :socialware_runtime_provision, creator}
+      # 一次性 rule-authority 提供(成员守卫 + passive flavor 白名单),本测试即证明
+      # 「普通成员零 create_agent cap 也能建板」这条产品路。
       owner_uri =
         URI.new!("entity://#{ws_name}/user/board-owner-#{System.unique_integer([:positive])}")
 
-      create_cap =
-        Ezagent.Capability.cap(
-          :workspace,
-          Ezagent.ActionSet.Workspace,
-          :create_agent,
-          workspace_uri,
-          workspace_uri
-        )
-
       {:ok, _owner_pid} =
-        Ezagent.Kind.spawn(User, %{
-          uri: owner_uri,
-          initial_caps:
-            MapSet.new([
-              %{create_cap | granted_by: User.admin_uri(), granted_at: DateTime.utc_now()}
-            ])
-        })
+        Ezagent.Kind.spawn(User, %{uri: owner_uri, initial_caps: MapSet.new()})
 
       owner_ctx = %{caller: owner_uri, caps: Ezagent.Identity.list_caps_for(owner_uri)}
 
@@ -115,6 +103,8 @@ defmodule EzagentPluginKanban.E2E.BoardProvisionGrantTest do
       on_exit(fn -> Ezagent.Kind.terminate(session_uri) end)
 
       :ok = join_member(session_uri, assistant_uri, "kanban-assistant", admin_ctx)
+      # ⑥ 成员守卫:建板人必须是本 session 成员(collab 模型「编辑 session 成员可建板」)。
+      :ok = join_member(session_uri, owner_uri, "member", admin_ctx)
 
       # --- T4a 入口:建板 + 发钥匙 ----------------------------------------------
       board_name = "board-#{System.unique_integer([:positive])}"
