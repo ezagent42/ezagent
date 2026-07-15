@@ -917,11 +917,15 @@ const PLUGIN_PAGE_RENDERERS: Record<
   string,
   (component: NonNullable<WorldLayout["components"]>[number], context: RenderContext) => React.ReactElement
 > = {
-  // kanban 操作面（kanban-as-role K4）：复用 onWorkspacePluginAction 透传
-  // world:dispatch（kanban.* 动作经 WorldLive 的注册表准入子句路由到 KanbanActions）。
+  // kanban 插件页 = 配置面（像 VSCode 插件设置）：只放出站连接器凭证（Miro / GitHub
+  // token）。mode="config" 强制渲 KanbanList，操作 UI（建树/认领/编辑）不在本页出——
+  // 那些走会话(session) tab 的富 Kanban（Conversation.tsx activeMode==="kanban"）。
+  // 两条路都经 onWorkspacePluginAction → world:dispatch → PluginPageRegistry 白名单，
+  // 白名单原样不动（改 mode 只影响本页渲染，不动 tab 的操作准入）。
   kanban: (component, context) => (
     <ManageFrame key={component.id} active="plugins" title="Kanban">
       <Kanban
+        mode="config"
         state={{...context.state, component: component.type} as KanbanState}
         onAction={context.onWorkspacePluginAction}
       />
@@ -970,6 +974,7 @@ function renderLayoutComponent(component: NonNullable<WorldLayout["components"]>
           onPtyInput={context.onPtyInput}
           onPtyResize={context.onPtyResize}
           onServerEvent={context.onServerEvent}
+          onKanbanAction={context.onWorkspacePluginAction}
           onPublishTemplate={context.onPublishTemplate}
         />
       )

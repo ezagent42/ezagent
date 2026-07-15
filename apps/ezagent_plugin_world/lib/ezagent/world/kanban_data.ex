@@ -78,12 +78,115 @@ defmodule Ezagent.World.KanbanData do
   def list_instances(ctx) do
     "kanban-manager"
     |> Ezagent.Agent.RecipeResolver.list_by_recipe(workspace_scope(ctx))
-    |> Enum.map(fn %URI{} = uri ->
-      %{"uri" => encode_uri(uri), "name" => uri_name(uri), "path" => detail_path(uri)}
-    end)
+    |> Enum.filter(&visible?(&1, ctx))
+    |> Enum.map(&board_row/1)
   rescue
     _ -> []
   end
+
+  # board URI → 前端行（列表项 + dispatch 目标 + 详情路径）。list_instances 与
+  # session_boards 同形复用。
+  defp board_row(%URI{} = uri),
+    do: %{"uri" => encode_uri(uri), "name" => uri_name(uri), "path" => detail_path(uri)}
+
+  @doc """
+  某个 session 所属 workspace 的 kanban-manager boards，按 CBAC 权属对 caller 收敛。
+
+  与 `list_instances/1` 的区别只在 workspace 来源：这里从 **session URI** 解析
+  （`Ezagent.URI.workspace_of/1`，board 是 workspace 级 actor、不经 session 成员表，
+  参照 `EzagentPluginKanban.ActionSet.KanbanRender.boards_for/1` 的解析方式），
+  而非 ctx 的 `workspace_uri`。枚举经 `list_by_recipe`（快照来源，覆盖 dormant），
+  复用同一 `visible?/2`（admin 全见 / own / 持 board-cap）。返回与 `list_instances/1`
+  同形的 board 行。session 无法解析出 workspace（`:any`）→ `[]`。
+  """
+  @spec session_boards(URI.t(), map()) :: [map()]
+  def session_boards(%URI{} = session_uri, ctx) do
+    case Ezagent.URI.workspace_of(session_uri) do
+      %URI{} = ws ->
+        "kanban-manager"
+        |> Ezagent.Agent.RecipeResolver.list_by_recipe(ws)
+        |> Enum.filter(&visible?(&1, ctx))
+        |> Enum.map(&board_row/1)
+
+      _ ->
+        []
+    end
+  rescue
+    _ -> []
+  catch
+    _, _ -> []
+  end
+
+  def session_boards(_, _), do: []
+
+  # --- 发现按 CBAC 权属收敛（Task 2） ------------------------------------
+  # fail-open（谁都看到全 workspace 的板）→ 权属过滤：
+  #   * workspace admin（`Ezagent.Identity.AdminAuthority.admin?/2`）看全部；
+  #   * 普通用户只看到 own（板的 `data_owner` 是自己）或持有指向该板 cap 的板。
+  # ctx 的 caller 身份字段 = `:caller_uri` / `:caller_caps`（world `KanbanActions.read_ctx`
+  # 注入；`caller_caps` 是 mount 期注入的 caller 身份 cap 快照，即触发这次读的 caller 当时
+  # 持有的全量 cap 集）。
+  @doc """
+  发起人对某块板是否有 access（可见即可分享）—— admin / 板主人（`data_owner`）/ 持指向该板
+  的 cap。ctx 用 `KanbanActions.read_ctx` 形状（`:caller_uri` / `:caller_caps`）。
+
+  分享看板（T6.4，`Ezagent.World.KanbanActions.share_link/2`）的 access gate 复用这同一条
+  发现可见性谓词（`visible?/2`），不新发明授权：能看见（own / 持 cap / admin）即可分享。
+  """
+  @spec can_share?(URI.t(), map()) :: boolean()
+  def can_share?(%URI{} = board_uri, ctx), do: visible?(board_uri, ctx)
+
+  defp visible?(%URI{} = board_uri, ctx) do
+    caller = Map.get(ctx, :caller_uri)
+    caps = Map.get(ctx, :caller_caps) || MapSet.new()
+
+    Ezagent.Identity.AdminAuthority.admin?(caller, caps) or
+      owns_or_holds_cap?(caller, caps, board_uri)
+  end
+
+  defp visible?(_, _), do: false
+
+  defp owns_or_holds_cap?(caller, caps, board_uri),
+    do: owns_board?(caller, board_uri) or holds_board_cap?(caps, board_uri)
+
+  # own：板（kanban-manager agent）的 `data_owner`（经 creator / lineage）== caller。
+  # 与核心 dispatch chokepoint（`CapabilityRegistry.authorize_cap_shape` 的
+  # `caller == owner`）同款结构比对。模块可能尚未加载（world 无 kanban plugin dep）→
+  # 先 ensure_loaded；解析不出 owner（`:no_owner`/`:any`）保守判不可见。
+  defp owns_board?(%URI{} = caller, %URI{} = board_uri) do
+    _ = Code.ensure_loaded(Ezagent.ActionSet.Kanban)
+
+    case Ezagent.CapabilityRegistry.data_owner_of(
+           Ezagent.ActionSet.Kanban,
+           Ezagent.URI.instance(board_uri)
+         ) do
+      %URI{} = owner -> owner == caller
+      _ -> false
+    end
+  rescue
+    _ -> false
+  catch
+    _, _ -> false
+  end
+
+  defp owns_board?(_, _), do: false
+
+  # holds：caller 持有一张 instance 精确指向该板的 cap（Task 3/4/5 发钥匙的形状，
+  # 以及建板时的 creator-manage cap）。instance 经 `URI.instance/1` 归一化后结构比对。
+  defp holds_board_cap?(caps, %URI{} = board_uri) do
+    target = Ezagent.URI.instance(board_uri)
+
+    Enum.any?(caps, fn
+      %Ezagent.Capability{instance: %URI{} = inst} -> Ezagent.URI.instance(inst) == target
+      _ -> false
+    end)
+  rescue
+    _ -> false
+  catch
+    _, _ -> false
+  end
+
+  defp holds_board_cap?(_, _), do: false
 
   @doc "选中某个 kanban 的 state：`kanban_uri` + `tree` + 全量 `instances`（侧边栏切换用）。"
   @spec board_state(URI.t(), map()) :: map()

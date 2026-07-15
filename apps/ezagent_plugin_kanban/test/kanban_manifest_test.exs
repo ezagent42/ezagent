@@ -12,8 +12,8 @@ defmodule EzagentPluginKanban.KanbanManifestTest do
 
   Proves the YAML file exists + parses, that the parsed manifest resolves
   through `Ezagent.Socialware.ManifestResolver.resolve/1` (the fail-closed
-  authoring boundary), declares two active agent roles plus a passive board
-  data role with zero
+  authoring boundary), declares ONLY the two active agent roles (T4b: no board
+  role-slot, no assistant operate edges) with zero
   participant instance URIs (role-slot #1180), carries ONLY the #1190
   relay-back routing rule (never hello's `always → chat` — the handoff red
   line), and is public / supervised / non-anon / installer-owned. No DB here
@@ -32,8 +32,10 @@ defmodule EzagentPluginKanban.KanbanManifestTest do
   `relay-signal-check.sh` also locks). Three-way lock: manifest ⟷ spec literal
   ⟷ skill references.
 
-  The `kanban-manager` recipe remains `passive: true`; materialization binds it
-  as composition data without calling `session.join`, preserving RF-6.
+  The `kanban-manager` recipe stays in the plugin's `roles/0` (still `passive:
+  true`) so a board can be provisioned at RUNTIME via
+  `Ezagent.Socialware.BoardProvision.create_board` (T4a) — it is just no longer a
+  role-slot in this socialware Definition (T4b: install ≠ auto board).
   """
   use ExUnit.Case, async: true
 
@@ -95,12 +97,12 @@ defmodule EzagentPluginKanban.KanbanManifestTest do
     assert definition.name == name
   end
 
-  test "declares collaborators plus a passive board role and narrow operate edges" do
+  test "declares ONLY the two active brains — no board role-slot, no operate edges (T4b)" do
     definition = resolve!()
     agent_slots = Enum.filter(definition.roles, &(&1.fill == :agent))
 
+    # T4b:装 sw 只物化两个"脑",不再声明 board role,也不再声明 assistant 的 operates 边。
     assert Enum.sort(Enum.map(agent_slots, & &1.role_name)) == [
-             "board",
              "dev-together",
              "kanban-assistant"
            ]
@@ -112,50 +114,60 @@ defmodule EzagentPluginKanban.KanbanManifestTest do
       refute String.contains?(slot.role_name, "://")
     end)
 
-    board = Enum.find(agent_slots, &(&1.role_name == "board"))
+    # 没有 board role-slot(板改由 chat/BoardProvision 运行时建)。
+    refute Enum.any?(definition.roles, &(&1.role_name == "board"))
+
+    # kanban-assistant 不再带 install 期 operate 边(钥匙改由 create_board 运行时铸)。
     assistant = Enum.find(agent_slots, &(&1.role_name == "kanban-assistant"))
-    assert board.recipe == "kanban-manager"
-    assert board.flavor == "native"
-    assert length(assistant.operates) == 20
-
-    assert Enum.all?(
-             assistant.operates,
-             &(&1.role == "board" and &1.behavior == Ezagent.ActionSet.Kanban)
-           )
-
-    assert MapSet.new(assistant.operates, & &1.action) ==
-             MapSet.new(Ezagent.ActionSet.Kanban.actions())
+    assert Map.get(assistant, :operates, []) == []
   end
 
-  test "the :flavor option swaps all three slots' flavor (integration stub seam), nothing else" do
+  test "the :flavor option swaps both slots' flavor (integration stub seam), nothing else" do
     definition = resolve!(flavor: "kanban-demo-stub")
 
     assert Enum.map(definition.roles, & &1.flavor) == [
-             "kanban-demo-stub",
              "kanban-demo-stub",
              "kanban-demo-stub"
            ]
 
     assert Enum.sort(Enum.map(definition.roles, & &1.recipe)) == [
              "dev-together",
-             "kanban-assistant",
-             "kanban-manager"
+             "kanban-assistant"
            ]
   end
 
-  test "kanban-manager is the passive board role-slot" do
+  test "kanban-manager stays a plugin roles/0 recipe (runtime board provisioning), not a role-slot" do
     definition = resolve!()
 
-    assert %{recipe: "kanban-manager", role_name: "board"} =
-             Enum.find(definition.roles, &(&1.role_name == "board"))
+    # T4b:board role-slot 已删 —— Definition 不再声明 kanban-manager 槽。
+    refute Enum.any?(definition.roles, &(&1.recipe == "kanban-manager"))
 
+    # 但 recipe 仍在 plugin roles/0,供 BoardProvision.create_board 运行时建板用。
     assert "kanban-manager" in Enum.map(EzagentPluginKanban.Application.roles(), & &1.name)
   end
 
-  test "recipe names in role-slots are a subset of the kanban plugin roles/0 recipes" do
+  test "every role-slot recipe is declared by the sibling recipes.yaml (Task 1 提纯 + T4b)" do
     definition = resolve!()
-    declared = Enum.map(EzagentPluginKanban.Application.roles(), & &1.name)
-    Enum.each(definition.roles, fn slot -> assert slot.recipe in declared end)
+
+    plugin_declared = Enum.map(EzagentPluginKanban.Application.roles(), & &1.name)
+    # 提纯:plugin roles/0 只留 board 工具 recipe(kanban-manager),供运行时建板。
+    assert plugin_declared == ["kanban-manager"]
+
+    # 两个"脑"配方搬进 sw seed 同目录 recipes.yaml(部署时 ManifestSeed 在发布
+    # manifest 前注册),不再由 plugin 声明。
+    seed_declared =
+      ShippedManifest.path(@manifest_relpath)
+      |> Path.dirname()
+      |> Path.join("recipes.yaml")
+      |> File.read!()
+      |> then(&elem(ManifestYaml.parse(&1), 1))
+      |> Map.fetch!("recipes")
+      |> Enum.map(& &1["name"])
+
+    assert Enum.sort(seed_declared) == ["dev-together", "kanban-assistant"]
+
+    # T4b:definition.roles 只剩两个脑,都由 recipes.yaml 声明(无悬挂引用)。
+    Enum.each(definition.roles, fn slot -> assert slot.recipe in seed_declared end)
   end
 
   test "public + supervised + NON-anon visibility with installer owner (the hello diffs)" do

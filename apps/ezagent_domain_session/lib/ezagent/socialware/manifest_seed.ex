@@ -119,7 +119,8 @@ defmodule Ezagent.Socialware.ManifestSeed do
   end
 
   defp import_manifest_path(path) do
-    with {:ok, yaml} <- File.read(path),
+    with :ok <- seed_sibling_recipes(path),
+         {:ok, yaml} <- File.read(path),
          {:ok, attrs} <- ManifestYaml.parse(yaml) do
       case Map.get(attrs, "name") do
         name when is_binary(name) and name != "" ->
@@ -136,6 +137,56 @@ defmodule Ezagent.Socialware.ManifestSeed do
     else
       {:error, reason} -> {:error, {nil, reason}}
     end
+  end
+
+  # Seed the socialware package's own "brain" recipes BEFORE publishing its
+  # manifest — a sibling `recipes.yaml` (same dir as `manifest.yaml`) carries the
+  # data-role recipes (`%{name, skills, prompt}`) that the manifest's role slots
+  # reference by name. Registering them first is what lets the manifest resolve
+  # (`ManifestResolver` fails loud on an unknown recipe name-ref) + pass
+  # conformance. This is how a socialware ships its OWN collaborator recipes
+  # (kanban-assistant / dev-together) as SEED DATA instead of plugin code — the
+  # plugin keeps only the board TOOL (`kanban-manager` behaviors).
+  #
+  # Absent `recipes.yaml` → `:ok` (most packages carry none). A malformed one
+  # raises = fail-loud boot (same policy as a broken manifest).
+  defp seed_sibling_recipes(manifest_path) do
+    rp = Path.join(Path.dirname(manifest_path), "recipes.yaml")
+
+    with true <- File.exists?(rp),
+         {:ok, yaml} <- File.read(rp),
+         {:ok, %{"recipes" => list}} when is_list(list) <- ManifestYaml.parse(yaml) do
+      Enum.each(list, &seed_one_recipe(&1, rp))
+      :ok
+    else
+      false ->
+        :ok
+
+      {:ok, other} ->
+        raise "recipes.yaml at #{rp} must have a top-level `recipes:` list, got: #{inspect(other)}"
+
+      {:error, reason} ->
+        raise "recipes.yaml seed failed at #{rp}: #{inspect(reason)}"
+    end
+  end
+
+  defp seed_one_recipe(%{"name" => name} = r, rp) when is_binary(name) and name != "" do
+    recipe = %{
+      name: name,
+      skills: Map.get(r, "skills") || [],
+      prompt: Map.get(r, "prompt") || "",
+      behaviors: [],
+      requested_caps: []
+    }
+
+    case Ezagent.Agent.RecipeRegistry.seed_role_if_absent(recipe) do
+      {:ok, _} -> :ok
+      {:error, reason} -> raise "recipes.yaml recipe #{inspect(name)} at #{rp} failed to seed: #{inspect(reason)}"
+    end
+  end
+
+  defp seed_one_recipe(other, rp) do
+    raise "recipes.yaml at #{rp} has an invalid recipe entry (needs a string `name`): #{inspect(other)}"
   end
 
   # `uses` unsatisfied gets a human-readable message (the late lane runs after
