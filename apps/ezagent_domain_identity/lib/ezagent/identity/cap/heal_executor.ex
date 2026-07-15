@@ -13,12 +13,19 @@ defmodule Ezagent.Identity.Cap.HealExecutor do
       when is_list(current_caps) do
     user_caps = if Ezagent.URI.type?(receiver, :user), do: UserStore.load(receiver), else: []
 
-    exact_present? =
-      exact_cap_present?(current_caps, request.expected) or
-        exact_cap_present?(user_caps, request.expected)
+    current_exact_present? = exact_cap_present?(current_caps, request.expected)
+    user_exact_present? = exact_cap_present?(user_caps, request.expected)
+    exact_present? = current_exact_present? or user_exact_present?
 
     if exact_present? or match?({:refresh_binding, _ref}, request.action) do
-      execute_present(receiver, current_caps, user_caps, request, exact_present?)
+      execute_present(
+        receiver,
+        current_caps,
+        user_caps,
+        request,
+        exact_present?,
+        user_exact_present?
+      )
     else
       :ok = CapQuarantine.close(receiver, request.expected)
       {:ok, %{status: :stale}, []}
@@ -33,12 +40,25 @@ defmodule Ezagent.Identity.Cap.HealExecutor do
     end
   end
 
-  defp execute_present(receiver, current_caps, user_caps, request, exact_present?) do
+  defp execute_present(
+         receiver,
+         current_caps,
+         user_caps,
+         request,
+         exact_present?,
+         user_exact_present?
+       ) do
     case resolve_replacement(receiver, current_caps ++ user_caps, request) do
       {:ok, %Capability{} = replacement} ->
         with :ok <- apply_exact_heal(receiver, request.expected, replacement) do
           :ok = CapQuarantine.close(receiver, request.expected)
-          healed_caps = replace_exact(current_caps, request.expected, replacement)
+          healed_caps =
+            replace_or_materialize(
+              current_caps,
+              request.expected,
+              replacement,
+              user_exact_present?
+            )
 
           effects =
             if healed_caps == current_caps do
@@ -145,7 +165,21 @@ defmodule Ezagent.Identity.Cap.HealExecutor do
 
   defp exact_cap_present?(caps, expected), do: Enum.any?(caps, &(&1 === expected))
 
-  defp replace_exact(caps, expected, replacement) do
-    Enum.map(caps, fn cap -> if cap === expected, do: replacement, else: cap end)
+  defp replace_or_materialize(caps, expected, replacement, user_exact_present?) do
+    cond do
+      exact_cap_present?(caps, expected) ->
+        Enum.map(caps, fn cap -> if cap === expected, do: replacement, else: cap end)
+
+      user_exact_present? and not same_identity_present?(caps, expected) ->
+        [replacement | caps]
+
+      true ->
+        caps
+    end
+  end
+
+  defp same_identity_present?(caps, expected) do
+    expected_key = Capability.identity_key(expected)
+    Enum.any?(caps, &(Capability.identity_key(&1) == expected_key))
   end
 end

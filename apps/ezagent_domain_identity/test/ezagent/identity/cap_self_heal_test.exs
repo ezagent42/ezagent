@@ -46,6 +46,36 @@ defmodule Ezagent.Identity.CapSelfHealTest do
     assert UserStore.load(holder) == [newer]
   end
 
+  test "a user-home-only exact artifact materializes its healed replacement in the live slice" do
+    holder = user_uri("user-home-only")
+    other = user_uri("other-receiver")
+    expected = Ezagent.Test.CapHelper.issue!(other, legacy_sandbox_cap(holder))
+
+    EzagentDomainIdentity.CapSigningTestHelpers.create_legacy_user!(holder, nil, [expected])
+
+    request = %Ezagent.Cap.HealRequest{
+      expected: expected,
+      class: :agent_sandbox_self,
+      action: {:reissue, {:admin, Ezagent.Entity.User.admin_uri()}}
+    }
+
+    ctx = %{
+      caller: :vm_internal,
+      self_uri: holder,
+      read: fn :caps, _default -> MapSet.new() end
+    }
+
+    assert {:ok, %{status: :healed}, effects} =
+             Ezagent.ActionSet.IdentityAdmin.handle_heal_cap(%{request: request}, ctx)
+
+    assert {:set, :caps, %MapSet{} = healed_caps} =
+             Enum.find(effects, &match?({:set, :caps, _caps}, &1))
+
+    assert [replacement] = MapSet.to_list(healed_caps)
+    assert Ezagent.Cap.signed_and_valid?(replacement, holder)
+    assert [replacement] == UserStore.load(holder)
+  end
+
   test "a heal executed after revoke is stale and does not resurrect the removed artifact" do
     holder = user_uri("revoked-before-execute")
     expected = legacy_sandbox_cap(holder)

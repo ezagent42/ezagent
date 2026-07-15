@@ -155,8 +155,7 @@ defmodule EzagentWeb.LiveAuthCapsTest do
     invalid = %{issued_manage_cap(user_uri, workspace_uri, "invalid-target") | action: :send}
     wrong_receiver = issued_manage_cap(other_uri, workspace_uri, "wrong-target")
 
-    assert {:ok, _row} =
-             Ezagent.Users.create(user_uri, "test-password", [valid, invalid, wrong_receiver])
+    _row = create_legacy_user(user_uri, [valid, invalid, wrong_receiver])
 
     {:cont, socket} = mount(user_uri, workspace_uri)
     assert_cap_present(socket.assigns.current_caps, valid)
@@ -223,6 +222,23 @@ defmodule EzagentWeb.LiveAuthCapsTest do
 
     {:ok, cap} = Ezagent.Cap.issue({:genesis, receiver_uri}, receiver_uri, requested)
     cap
+  end
+
+  # The production seed writer rejects both of the malformed artifacts above.
+  # Persist them only at this fixture boundary to emulate an existing legacy
+  # row and keep the reader-side fail-closed regression meaningful.
+  defp create_legacy_user(uri, caps) do
+    {:ok, _row} = Ezagent.Users.create(uri, "test-password", [])
+    row = EzagentCore.Repo.get_by!(Ezagent.Users, uri: URI.to_string(uri))
+
+    caps_json =
+      caps
+      |> Enum.map(&Ezagent.Capability.to_map/1)
+      |> Jason.encode!()
+
+    row
+    |> Ecto.Changeset.change(%{caps_json: caps_json})
+    |> EzagentCore.Repo.update!()
   end
 
   defp assert_mount_has_cap(principal_uri, workspace_uri, cap) do

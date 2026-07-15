@@ -45,6 +45,26 @@ defmodule Ezagent.ActionSet.Session.MemberCapJoinTest do
     uri
   end
 
+  # These two negative-path tests need a durable pre-P0 artifact that the
+  # production writer now correctly rejects. Create the row through the real
+  # writer first, then deliberately emulate historical storage at the fixture
+  # boundary so the reader can still prove it ignores invalid authority.
+  defp create_legacy_user(uri, caps) do
+    {:ok, _row} = Ezagent.Users.create(uri, "pw-not-secret-#{uniq()}", [])
+
+    row =
+      EzagentCore.Repo.get_by!(Ezagent.Users, uri: URI.to_string(uri))
+
+    caps_json =
+      caps
+      |> Enum.map(&Ezagent.Capability.to_map/1)
+      |> Jason.encode!()
+
+    row
+    |> Ecto.Changeset.change(%{caps_json: caps_json})
+    |> EzagentCore.Repo.update!()
+  end
+
   defp unconfirmed_user(prefix) do
     uri = URI.new!("entity://system/user/anon-#{prefix}-#{uniq()}")
     {:ok, _row} = Ezagent.Users.create_read_only(uri)
@@ -256,7 +276,7 @@ defmodule Ezagent.ActionSet.Session.MemberCapJoinTest do
     valid = issued_member_cap(owner, member, session)
     invalid = %{valid | action: :send}
 
-    assert {:ok, _row} = Ezagent.Users.create(member, "pw-not-secret-#{uniq()}", [invalid])
+    _row = create_legacy_user(member, [invalid])
     assert {:ok, _pid} = Ezagent.SpawnRegistry.spawn(member)
 
     _ = dispatch_join(session, member)
@@ -272,8 +292,7 @@ defmodule Ezagent.ActionSet.Session.MemberCapJoinTest do
     other = URI.new!("entity://system/user/other-wrong-receiver-#{uniq()}")
     wrong_receiver = issued_member_cap(owner, other, session)
 
-    assert {:ok, _row} =
-             Ezagent.Users.create(member, "pw-not-secret-#{uniq()}", [wrong_receiver])
+    _row = create_legacy_user(member, [wrong_receiver])
 
     assert {:ok, _pid} = Ezagent.SpawnRegistry.spawn(member)
 

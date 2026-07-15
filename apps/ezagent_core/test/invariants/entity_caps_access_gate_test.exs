@@ -18,6 +18,9 @@ defmodule Ezagent.Invariants.EntityCapsAccessGateTest do
                               :load, 1},
                              {"apps/ezagent_domain_identity/lib/ezagent/entity_caps/user_store.ex",
                               :update_locked, 2},
+                             # Signing audit is a read-only, four-source acceptance gate.
+                             {"apps/ezagent_domain_identity/lib/ezagent/identity/cap_signing_audit.ex",
+                              :collect_users, 0},
                              {"apps/ezagent_domain_identity/lib/ezagent/identity/grant_migration.ex",
                               :gate, 0},
                              {"apps/ezagent_domain_identity/lib/ezagent/identity/grant_migration.ex",
@@ -29,6 +32,9 @@ defmodule Ezagent.Invariants.EntityCapsAccessGateTest do
                                        :snapshot_caps, 1},
                                       {"apps/ezagent_domain_identity/lib/ezagent/identity/grant_migration.ex",
                                        :rewrite_identity_caps, 1},
+                                      # Signing audit decodes the latest durable identity slice read-only.
+                                      {"apps/ezagent_domain_identity/lib/ezagent/identity/cap_signing_audit.ex",
+                                       :collect_snapshots, 0},
                                       {"apps/ezagent_core/lib/ezagent/kind/snapshot.ex",
                                        :verify_snapshot_caps, 2}
                                     ])
@@ -202,8 +208,9 @@ defmodule Ezagent.Invariants.EntityCapsAccessGateTest do
     snapshot_identity_shape?(definition.ast) or
       dotted_identity_caps?(definition.ast) or
       (ast_any?(definition.body, &snapshot_source?(&1, definition)) and
-         ast_any?(definition.ast, &identity_key_access?/1) and
-         ast_any?(definition.ast, &caps_key_access?/1))
+         ((ast_any?(definition.ast, &identity_key_access?/1) and
+             ast_any?(definition.ast, &caps_key_access?/1)) or
+            ast_any?(definition.body, &snapshot_identity_helper?/1)))
   end
 
   defp violation?(:persisted_only_consumer, definition),
@@ -379,6 +386,13 @@ defmodule Ezagent.Invariants.EntityCapsAccessGateTest do
     named_call?(node, :latest, ["Ezagent.SnapshotStore"], definition) or
       named_call?(node, :decode_state, ["Ezagent.Ecto.KindSnapshot"], definition)
   end
+
+  # The signing audit keeps its shape decoder in a pure helper. Teach the gate
+  # that a decoded snapshot piped into that helper is still raw identity-cap
+  # access, so the audit remains an explicit read-only allowlist entry instead
+  # of an interprocedural blind spot.
+  defp snapshot_identity_helper?({:identity_caps, _, args}) when is_list(args), do: true
+  defp snapshot_identity_helper?(_node), do: false
 
   defp identity_key_access?({{:., _, [module, function]}, _, args})
        when function in [:get, :fetch, :fetch!, :put, :update] and is_list(args),
