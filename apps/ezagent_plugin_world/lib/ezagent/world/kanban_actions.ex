@@ -300,8 +300,10 @@ defmodule Ezagent.World.KanbanActions do
   end
 
   defp build_share_link(socket, %URI{} = uri) do
+    board_uri = encode_uri(uri)
+
     payload = %{
-      "board" => URI.to_string(uri),
+      "board" => board_uri,
       "behavior" => @share_board_behavior,
       "access" => "read"
     }
@@ -310,6 +312,8 @@ defmodule Ezagent.World.KanbanActions do
     token = Phoenix.Token.sign(socket, @share_board_salt, payload)
     @share_board_receive_path <> "?" <> URI.encode_query(token: token)
   end
+
+  defp encode_uri(%URI{} = uri), do: URI.to_string(uri)
 
   # --- 上传文件挂到节点（v1.5）：验 upload grant 取 uploads URI → attach_artifact ----
 
