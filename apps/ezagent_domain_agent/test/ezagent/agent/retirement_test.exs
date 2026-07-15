@@ -65,6 +65,21 @@ defmodule Ezagent.Agent.RetirementTest do
              Agent.retire_spawned(agent_uri, %{ctx | provenance_root: other_owner})
   end
 
+  test "rejects a target whose current direct parent differs from creation inventory", %{
+    agent_uri: agent_uri,
+    owner_uri: owner_uri,
+    ctx: ctx
+  } do
+    intermediary_uri = Ezagent.URI.new!("entity://team-alpha/agent/intermediary")
+    :ok = Ezagent.AgentLineage.record(agent_uri, intermediary_uri)
+    :ok = Ezagent.AgentLineage.record(intermediary_uri, owner_uri)
+
+    assert Ezagent.AgentLineage.spawned_in_lineage?(agent_uri, owner_uri)
+
+    assert {:error, %{termination: :not_destroyed, reason: :creation_attempt_mismatch}} =
+             Agent.retire_spawned(agent_uri, ctx)
+  end
+
   test "lineage alone does not authorize retirement", %{
     agent_uri: agent_uri,
     owner_uri: owner_uri,

@@ -59,10 +59,70 @@ defmodule Ezagent.Agent.RetirementSweeperTest do
     assert :gone = wait_until_gone(agent_uri)
   end
 
+  test "an expired worker exception cannot overwrite a replacement claim" do
+    suffix = System.unique_integer([:positive])
+    agent_uri = "entity://team-alpha/agent/stale-worker-#{suffix}"
+
+    {:ok, obligation} =
+      RetirementObligations.create_pending(%{
+        agent_uri: agent_uri,
+        workspace_uri: "workspace://team-alpha",
+        provenance_root_uri: "entity://team-alpha/user/owner-#{suffix}",
+        creation_attempt_id: "attempt-#{suffix}",
+        retirement_reason: "rollback",
+        pending_steps: %{
+          "sandbox_cleanup" => %{
+            "config_dir_path" => "obligation:pending",
+            "template_class" => inspect(__MODULE__.LeaseReplacingCleanup)
+          }
+        }
+      })
+
+    {:ok, obligation} =
+      obligation
+      |> Ezagent.Agent.RetirementObligation.transition_changeset(%{
+        pending_steps: %{
+          "sandbox_cleanup" => %{
+            "config_dir_path" => "obligation:#{obligation.id}",
+            "template_class" => inspect(__MODULE__.LeaseReplacingCleanup)
+          }
+        }
+      })
+      |> EzagentCore.Repo.update()
+
+    assert {:error, {:rescue, %RuntimeError{message: "late cleanup failure"}}} =
+             RetirementSweeper.retry(obligation.id)
+
+    assert_receive {:replacement_claimed, replacement_token}
+
+    current = RetirementObligations.get!(obligation.id)
+    assert current.status == :running
+    assert current.claim_token == replacement_token
+    assert current.attempts == 2
+  end
+
   defmodule CleanupRecorder do
     def destroy_config_dir(agent_uri, config_dir) do
       send(self(), {:cleanup_retried, agent_uri, config_dir})
       :ok
+    end
+  end
+
+  defmodule LeaseReplacingCleanup do
+    def destroy_config_dir(_agent_uri, "obligation:" <> obligation_id) do
+      obligation_id = String.to_integer(obligation_id)
+      running = RetirementObligations.get!(obligation_id)
+
+      {:ok, _expired} =
+        running
+        |> Ezagent.Agent.RetirementObligation.transition_changeset(%{
+          next_attempt_at: DateTime.add(DateTime.utc_now(), -1, :second)
+        })
+        |> EzagentCore.Repo.update()
+
+      {:ok, replacement} = RetirementObligations.claim(obligation_id)
+      send(self(), {:replacement_claimed, replacement.claim_token})
+      raise RuntimeError, "late cleanup failure"
     end
   end
 
