@@ -21,8 +21,9 @@ defmodule EzagentPluginHello.KanbanPublishedRead do
               {:ok, PublishedBoardRef.t()} | {:error, error_reason()}
 
   @callback refresh_published_board(caller_ctx(), PublishedBoardRef.t()) ::
-              {:ok, map()} | {:error, error_reason()}
+              {:ok, PublishedBoardRef.t()} | {:error, error_reason()}
 
+  @doc "Publish a permission-checked, content-free reference to a Kanban board."
   @spec publish_board_read(caller_ctx(), URI.t(), URI.t()) ::
           {:ok, PublishedBoardRef.t()} | {:error, error_reason()}
   def publish_board_read(ctx, %URI{} = source_session_uri, %URI{} = board_uri)
@@ -30,8 +31,9 @@ defmodule EzagentPluginHello.KanbanPublishedRead do
     adapter().publish_board_read(ctx, source_session_uri, board_uri)
   end
 
+  @doc "Reissue a published board reference while preserving its stable identity."
   @spec refresh_published_board(caller_ctx(), PublishedBoardRef.t()) ::
-          {:ok, map()} | {:error, error_reason()}
+          {:ok, PublishedBoardRef.t()} | {:error, error_reason()}
   def refresh_published_board(ctx, %PublishedBoardRef{} = ref) when is_map(ctx) do
     adapter().refresh_published_board(ctx, ref)
   end

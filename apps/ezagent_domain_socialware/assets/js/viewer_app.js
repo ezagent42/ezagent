@@ -740,12 +740,12 @@ function PreviewBar({viewer, sessionUri, messages, chatOpen, setChatOpen, onJoin
         ? React.createElement(
             React.Fragment,
             null,
-            React.createElement("span", {className: "hello-kanban-result-kicker"}, "KANBAN · 已创建真实任务"),
+            React.createElement("span", {id: "hello-published-board-status", className: "hello-kanban-result-kicker"}, `KANBAN · 已发布只读看板 · r${receipt.publication_revision || 1}`),
             React.createElement("strong", {className: "hello-kanban-result-title"}, receipt.title || "Kanban task"),
             React.createElement("span", {className: "hello-kanban-result-status"}, kanbanStatusLabel(receipt.status)),
             React.createElement("code", {className: "hello-kanban-result-ref"}, `${receipt.board_uri || ""} · ${receipt.node_id || ""}`),
-            React.createElement("span", {className: "hello-kanban-result-boundary"}, "松耦合，非最终挂载"),
-            React.createElement("a", {className: "hello-kanban-result-link", href: receipt.value, target: "_blank", rel: "noreferrer"}, "打开 Kanban →"),
+            React.createElement("span", {id: "hello-published-board-readonly", className: "hello-kanban-result-boundary"}, "访客接收后只读；修改仍由原 Kanban 管理"),
+            React.createElement("a", {className: "hello-kanban-result-link", href: receipt.value, target: "_blank", rel: "noreferrer"}, "接收只读看板 →"),
           )
         : null,
     ),

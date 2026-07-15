@@ -1,7 +1,27 @@
 defmodule EzagentPluginHello.KanbanPublishedReadTest do
-  use ExUnit.Case, async: true
+  use ExUnit.Case, async: false
 
   alias EzagentPluginHello.{KanbanPublishedRead, PublishedBoardRef}
+
+  setup do
+    previous = Application.get_env(:ezagent_plugin_hello, :kanban_published_read_adapter)
+
+    Application.put_env(
+      :ezagent_plugin_hello,
+      :kanban_published_read_adapter,
+      EzagentPluginHello.KanbanPublishedRead.DependencyPending
+    )
+
+    on_exit(fn ->
+      if previous do
+        Application.put_env(:ezagent_plugin_hello, :kanban_published_read_adapter, previous)
+      else
+        Application.delete_env(:ezagent_plugin_hello, :kanban_published_read_adapter)
+      end
+    end)
+
+    :ok
+  end
 
   describe "PublishedBoardRef.new/1" do
     test "accepts stable identifiers and derives the entity-URI identity key" do

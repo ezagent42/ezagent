@@ -18,6 +18,7 @@ defmodule EzagentPluginHello.PublishedBoardRef do
 
   @forbidden_keys [:tree, :nodes, :tasks, :statuses, "tree", "nodes", "tasks", "statuses"]
 
+  @doc "Build a validated board publication reference without copied board contents."
   @spec new(map()) :: {:ok, t()} | {:error, term()}
   def new(attrs) when is_map(attrs) do
     with nil <- Enum.find(@forbidden_keys, &Map.has_key?(attrs, &1)),
@@ -43,6 +44,7 @@ defmodule EzagentPluginHello.PublishedBoardRef do
 
   def new(_attrs), do: {:error, {:invalid_field, :attrs}}
 
+  @doc "Return the source-session and board-URI tuple used for idempotent publication."
   @spec identity_key(t()) :: {String.t(), String.t()}
   def identity_key(%__MODULE__{} = ref) do
     {URI.to_string(ref.source_session_uri), URI.to_string(ref.board_uri)}

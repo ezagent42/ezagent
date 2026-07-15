@@ -22,6 +22,8 @@ defmodule EzagentWeb.Socialware.KanbanShareControllerTest do
   alias Ezagent.{AgentFlavorRegistry, Agent.RecipeRegistry, Invocation}
   alias Ezagent.Socialware.MountRow
   alias Ezagent.World.KanbanActions
+  alias EzagentPluginHello.PublishedBoardRef
+  alias EzagentWeb.Socialware.KanbanPublishedReadAdapter
   alias EzagentPluginKanban.Application, as: KanbanApp
 
   @flavor "t64-native"
@@ -124,9 +126,27 @@ defmodule EzagentWeb.Socialware.KanbanShareControllerTest do
       {clicker_session, clicker_assistant} =
         clicker_session(ws_name, workspace_uri, clicker, admin_ctx)
 
-      # 端到端：token 由板主人 socket 真签
-      {:ok, link} = KanbanActions.share_link(share_socket(owner_ctx), s(board_uri))
-      token = extract_token(link)
+      # 官网 Session 1 显式发布；再次发布沿同一 board URI 递增 revision，
+      # 只更新接收引用，不复制 Kanban tree。
+      publish_ctx =
+        owner_ctx
+        |> Map.put(:workspace_uri, workspace_uri)
+        |> Map.put(:endpoint, @endpoint)
+
+      assert {:ok, %PublishedBoardRef{revision: 1} = published} =
+               KanbanPublishedReadAdapter.publish_board_read(
+                 publish_ctx,
+                 URI.new!("session://#{ws_name}/default/author"),
+                 board_uri
+               )
+
+      assert {:ok, %PublishedBoardRef{revision: 2} = republished} =
+               KanbanPublishedReadAdapter.refresh_published_board(publish_ctx, published)
+
+      assert PublishedBoardRef.identity_key(republished) ==
+               PublishedBoardRef.identity_key(published)
+
+      token = extract_token(republished.receive_ref)
 
       out =
         conn
@@ -152,6 +172,17 @@ defmodule EzagentWeb.Socialware.KanbanShareControllerTest do
 
       assert {:error, :unauthorized} =
                dispatch_as(clicker_assistant, board_uri, :add_node, %{parent_id: "n1", title: "子"})
+
+      # 同一发布链接重复接收按 mount 自然键幂等，不产生第二份板数据/挂载。
+      again =
+        conn
+        |> sign_in(ws_name, clicker)
+        |> get(~p"/socialware/kanban/receive?#{[token: token]}")
+
+      assert redirected_to(again) =~ "/sessions?session="
+
+      assert MountRow.list_for_session(clicker_session)
+             |> Enum.count(&(&1.target_uri == s(board_uri))) == 1
 
       # 篡改 token → 403、不新增挂载
       bad =

@@ -13,7 +13,7 @@ defmodule EzagentPluginHello.KanbanDelegation do
 
   alias Ezagent.{Capability, Invocation, Workspace}
   alias Ezagent.Agent.RecipeResolver
-  alias EzagentPluginHello.{Members, TurnDriver}
+  alias EzagentPluginHello.{KanbanPublishedRead, Members, TurnDriver}
 
   @canonical_name "hello-kanban"
   @max_instruction 500
@@ -34,6 +34,7 @@ defmodule EzagentPluginHello.KanbanDelegation do
              kanban_uri: URI.t(),
              node_id: String.t(),
              path: String.t(),
+             publication_revision: pos_integer(),
              title: String.t(),
              status: atom() | nil
            }}
@@ -56,14 +57,17 @@ defmodule EzagentPluginHello.KanbanDelegation do
              %{id: node_id, artifact: source_artifact(session_uri, instruction)},
              ctx
            ),
-         {:ok, task} <- task_snapshot(kanban_uri, node_id, ctx) do
+         {:ok, task} <- task_snapshot(kanban_uri, node_id, ctx),
+         {:ok, published_ref} <-
+           KanbanPublishedRead.publish_board_read(ctx, session_uri, kanban_uri) do
       {:ok,
        %{
          kanban_uri: kanban_uri,
          node_id: node_id,
          title: Map.get(task, :title, instruction),
          status: Map.get(task, :status),
-         path: "/plugins/kanban/" <> URI.encode_www_form(URI.to_string(kanban_uri))
+         path: published_ref.receive_ref,
+         publication_revision: published_ref.revision
        }}
     end
   rescue
@@ -204,6 +208,7 @@ defmodule EzagentPluginHello.KanbanDelegation do
             "kind" => "hello_kanban_receipt",
             "board_uri" => uri_to_string(result.kanban_uri),
             "node_id" => result.node_id,
+            "publication_revision" => result.publication_revision,
             "title" => result.title,
             "status" => to_string(result.status || :unknown)
           }
