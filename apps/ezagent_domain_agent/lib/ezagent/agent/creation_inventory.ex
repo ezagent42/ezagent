@@ -57,7 +57,7 @@ defmodule Ezagent.Agent.CreationInventory do
       from(e in CreationInventoryEntry,
         where: e.agent_uri == ^URI.to_string(agent_uri),
         where: e.workspace_uri == ^URI.to_string(workspace_uri),
-        order_by: [desc: e.inserted_at],
+        order_by: [desc: e.inserted_at, desc: e.id],
         limit: 1
       )
 

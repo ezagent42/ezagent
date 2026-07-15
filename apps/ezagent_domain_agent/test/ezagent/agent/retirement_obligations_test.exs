@@ -69,6 +69,11 @@ defmodule Ezagent.Agent.RetirementObligationsTest do
     assert reclaimed.attempts == 2
     assert reclaimed.claim_token != claimed.claim_token
     assert {:error, :stale_claim} = RetirementObligations.resolve(pending.id, claimed.claim_token)
+
+    assert {:error, :stale_claim} =
+             RetirementObligations.record_failure(pending.id, :late_failure, claimed.claim_token)
+
+    assert RetirementObligations.get!(pending.id).claim_token == reclaimed.claim_token
     assert {:ok, resolved} = RetirementObligations.resolve(pending.id, reclaimed.claim_token)
     assert resolved.status == :resolved
   end
@@ -96,8 +101,10 @@ defmodule Ezagent.Agent.RetirementObligationsTest do
       })
 
     assert {:ok, running} = RetirementObligations.claim(pending.id)
+
     assert {:ok, failed} =
              RetirementObligations.record_failure(running.id, :eacces, running.claim_token)
+
     assert failed.status == :failed
     assert {:error, :failed} = RetirementObligations.claim(failed.id)
     assert {:ok, reopened} = RetirementObligations.claim(failed.id, allow_failed: true)

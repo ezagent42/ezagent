@@ -29,20 +29,24 @@ defmodule Ezagent.Agent.RetirementSweeper do
         {:ok, :resolved}
 
       {:ok, obligation} ->
-        execute_claimed(obligation)
+        execute_claimed_safely(obligation)
 
       {:error, reason} ->
         {:error, reason}
     end
+  end
+
+  defp execute_claimed_safely(obligation) do
+    execute_claimed(obligation)
   rescue
     exception ->
       reason = {:rescue, exception}
-      record_claimed_failure(id, reason)
+      _ = RetirementObligations.record_failure(obligation.id, reason, obligation.claim_token)
       {:error, reason}
   catch
     kind, value ->
       reason = {kind, value}
-      record_claimed_failure(id, reason)
+      _ = RetirementObligations.record_failure(obligation.id, reason, obligation.claim_token)
       {:error, reason}
   end
 
@@ -138,16 +142,6 @@ defmodule Ezagent.Agent.RetirementSweeper do
 
       other ->
         {:error, {:unsupported_pending_steps, other}}
-    end
-  end
-
-  defp record_claimed_failure(id, reason) do
-    case RetirementObligations.get(id) do
-      %{status: :running, claim_token: token} ->
-        RetirementObligations.record_failure(id, reason, token)
-
-      _ ->
-        :ok
     end
   end
 
