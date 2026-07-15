@@ -20,7 +20,63 @@ DealScout 是一个 **组合 socialware**（composite socialware）：
 
 ---
 
-## 1. 页面与流转
+## 1. 产品用户流程（DealScout 真实产品流）
+
+> 本节来自 PR #1191 的 handoff 文档（`docs/together/2026-07-05/handoffs/dealscout/`）+ E2E 验证（`docs/e2e/2026-07-07/dealscout-refresh-v2/`）。本文件夹的 HTML 原型是这些流程的 UI 参照。
+
+### 1.1 DealScout 是什么
+
+一个 **组合 socialware**（composite socialware）：**crawler plugin**（爬取外部投融资/商业线索） + **hello**（@json-render 动态渲染页面 + concierge 客服）。用户是 **两类对称的"找机会的人"**——创始人（找钱、找路演）和投资人（找项目、找标的）。
+
+### 1.2 两条价值腿
+
+| 腿 | 作用 | 机制 |
+|----|------|------|
+| **发现腿**（地基） | AI 千人千面主动发现 deal + 手动搜索 | 爬取后台定期爬外部源（HN/RSS/搜索 API）→ 线索落库 → AI 按用户 profile 匹配推送 |
+| **撮合腿**（亮点） | 公开面聊天连接双方 | DealScout 组合 hello 拿公开面 + concierge 客服。登录用户自助 join + 发言供线索，founder 看到发言者身份后 invite 进私有 session 深聊 |
+
+### 1.3 完整用户流程
+
+```
+1. 作者开发 plugin
+   写爬取代码 + recipe + Definition seed → 发布
+
+2. Admin 装配组合
+   安装 DealScout → 配置关键词/源/token → 组合 hello → 发布公开面
+
+3. 公开共享 session（线上运行）
+   ┌─────────────────────────────────────────────┐
+   │ 匿名访客                                      │
+   │   进入公开面 → 只读浏览线索页（hello 渲染）      │
+   │                                              │
+   │ 登录用户                                      │
+   │   进入公开面 → 自助 join → 发消息供线索          │
+   │   → concierge 客服回帖                        │
+   │                                              │
+   │ Founder（同一 session）                        │
+   │   看到发言者身份（登录=真实 URI）                │
+   │   → invite 进私有 session → 私密深聊           │
+   │   → 撮合成功                                   │
+   └─────────────────────────────────────────────┘
+
+4. 自动刷新（E2E 已验证，v2）
+   爬取完成 → dispatch refresh_page → handler 真跑
+   → TurnDriver 生成 → Surface approved → 浏览器渲出重建页面
+```
+
+### 1.4 与 HTML 原型的对应
+
+| 产品流 | 原型页面 | 说明 |
+|--------|---------|------|
+| 用户描述需求 / AI 匹配 | `index.html` 步骤 1-2 | 发现腿的 UI 参照 |
+| 牵线 + 双向确认 | `connection/` | 撮合腿的 UI 参照 |
+| 保存搜索 + 异步通知 | `notification/` | 第③腿（平台推荐）的占位 |
+| 公开面浏览（匿名） | 原型未覆盖 | hello 渲染的公开线索页 |
+| 公开面聊天 + invite | 原型未覆盖 | riding hello 的 concierge |
+
+---
+
+## 2. 页面与流转（HTML 原型）
 
 | 页面 | 作用 | 状态 |
 |------|------|------|
@@ -50,7 +106,7 @@ mainsite.html / flywheel/gallery.html
     └── connection/inbox.html             [牵线收件箱：查看他人请求]
 ```
 
-## 2. index.html 设计
+## 3. index.html 设计
 
 ### 页面结构（3 步）
 
@@ -64,7 +120,7 @@ mainsite.html / flywheel/gallery.html
 - 匹配卡片：glyph + 匹配度百分比 + 一句话简介 + 标签
 - "牵线"是主 CTA（cobalt 色），区别于 flywheel 的 "Fork"
 
-## 3. 与已有页面的关系
+## 4. 与已有页面的关系
 
 | 已有页面 | 本次是否改动 | 说明 |
 |---------|------------|------|
@@ -73,7 +129,7 @@ mainsite.html / flywheel/gallery.html
 | `flywheel/gallery.html` | 否 | |
 | `doc/page-flow.md` | 是——更新 | 交付后更新 |
 
-## 4. 不做的事
+## 5. 不做的事
 
 - ❌ 不实现真实匹配算法
 - ❌ 不涉及 hello/kanban 自举链
