@@ -103,7 +103,7 @@ defmodule Ezagent.ActionSet.Session.Reconcile do
     target_key = Ezagent.Capability.identity_key(member_cap(session_uri, ws))
 
     candidate
-    |> Ezagent.Identity.read_entity_caps()
+    |> Ezagent.EntityCaps.load()
     |> Enum.filter(&Ezagent.Capability.granted_by_entity?/1)
     |> Enum.any?(fn cap -> Ezagent.Capability.identity_key(cap) == target_key end)
   rescue

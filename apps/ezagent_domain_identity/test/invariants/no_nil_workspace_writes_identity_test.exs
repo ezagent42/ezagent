@@ -50,6 +50,23 @@ defmodule Ezagent.Invariants.NoNilWorkspaceWritesIdentityTest do
 
       assert {:error, _} = safe_insert(row)
     end
+
+    test "outbound_grants without workspace_uri raises NOT NULL violation" do
+      row =
+        %Ezagent.OutboundGrant{
+          id: "no-ws-outbound-grant",
+          issuer_uri: "entity://team-alpha/user/issuer",
+          decision_owner_uri: "entity://team-alpha/user/owner",
+          grantee_uri: "entity://team-alpha/user/grantee",
+          cap: %{"kind" => "user"},
+          cap_identity: "identity",
+          subtype: :runtime_mount,
+          access: %{}
+          # workspace_uri intentionally omitted
+        }
+
+      assert {:error, _} = safe_insert(row)
+    end
   end
 
   defp safe_insert(struct) do

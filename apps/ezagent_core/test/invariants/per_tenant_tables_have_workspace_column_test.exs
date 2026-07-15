@@ -105,6 +105,9 @@ defmodule EzagentCore.Invariants.PerTenantTablesHaveWorkspaceColumnTest do
     # Phase 3 S5 — pre-issued recipe artifacts are keyed to one concrete agent;
     # the binding must stay inside that agent's workspace boundary.
     {Ezagent.Identity.RecipeCapBinding, "recipe_cap_bindings"},
+    # Entity-caps scoped Task B — the outbound audit/revoke ledger is tenant-owned
+    # by the grantee workspace, even when the accountable issuer is cross-workspace.
+    {Ezagent.OutboundGrant, "outbound_grants"},
     # Socialware composition-cap lane — every derivation row is scoped to the
     # concrete source/target workspace and is union-reconciled only within it.
     {Ezagent.Socialware.CompositionBinding, "socialware_composition_bindings"},
@@ -129,7 +132,10 @@ defmodule EzagentCore.Invariants.PerTenantTablesHaveWorkspaceColumnTest do
     # Orchestration-as-socialware M1 — routing trace rows record the message
     # journey for operator debugging. A message belongs to one workspace, so
     # trace rows carry the same workspace partition.
-    {Ezagent.Routing.Trace, "routing_traces"}
+    {Ezagent.Routing.Trace, "routing_traces"},
+    # Entity capability grant/revoke delivery is scoped to the grantee's
+    # workspace. The singleton sweeper is the documented system-scope reader.
+    {Ezagent.Cap.Delivery, "cap_delivery_outbox"}
   ]
 
   # Per-tenant tables that have NO schema module (raw `Repo.insert_all`

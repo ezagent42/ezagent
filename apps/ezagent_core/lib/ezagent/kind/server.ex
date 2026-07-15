@@ -605,6 +605,8 @@ defmodule Ezagent.Kind.Server do
       {:ok, new_slice_state, result, slice_change_event, deferred} ->
         case commit_and_notify(state, new_slice_state, slice_change_event) do
           commit_ok when commit_ok in [:ok, :not_durable] ->
+            mark_cap_delivery_applied(inv)
+
             # P2.5c — the parent slice durably committed (or by-design has no
             # durability promise). NOW run the deferred post-commit
             # dispatches. They are already ref-substituted + enriched
@@ -623,10 +625,13 @@ defmodule Ezagent.Kind.Server do
             # — they would broadcast a "succeeded" state that won't
             # survive restart. Keep the in-memory slice un-advanced
             # and propagate the persistence error.
-            {:reply, {:error, {:persistence_failed, reason}}, state}
+            delivery_reason = {:persistence_failed, reason}
+            record_cap_delivery_failure(inv, delivery_reason)
+            {:reply, {:error, delivery_reason}, state}
         end
 
-      {:error, _} = err ->
+      {:error, reason} = err ->
+        record_cap_delivery_failure(inv, reason)
         {:reply, err, state}
     end
   end
@@ -637,6 +642,8 @@ defmodule Ezagent.Kind.Server do
       {:ok, new_slice_state, result, slice_change_event, deferred} ->
         case commit_and_notify(state, new_slice_state, slice_change_event) do
           commit_ok when commit_ok in [:ok, :not_durable] ->
+            mark_cap_delivery_applied(inv)
+
             # P2.5c — run the deferred post-commit dispatches AFTER the
             # parent slice durably committed (before replying to the caller,
             # mirroring the handle_call ordering).
@@ -650,12 +657,15 @@ defmodule Ezagent.Kind.Server do
             # branch: propagate the error to the caller, leave the
             # in-memory slice un-advanced.
             log_unobservable_cast_error(inv, {:persistence_failed, reason})
-            Ezagent.Invocation.reply(inv.ctx, {:error, {:persistence_failed, reason}})
+            delivery_reason = {:persistence_failed, reason}
+            record_cap_delivery_failure(inv, delivery_reason)
+            Ezagent.Invocation.reply(inv.ctx, {:error, delivery_reason})
             {:noreply, state}
         end
 
       {:error, reason} ->
         log_unobservable_cast_error(inv, reason)
+        record_cap_delivery_failure(inv, reason)
         Ezagent.Invocation.reply(inv.ctx, {:error, reason})
         {:noreply, state}
     end
@@ -684,6 +694,43 @@ defmodule Ezagent.Kind.Server do
     end
 
     :ok
+  end
+
+  defp mark_cap_delivery_applied(%Ezagent.Invocation{ctx: %{cap_delivery_id: id}} = inv)
+       when is_integer(id) do
+    case Ezagent.Cap.DeliveryOutbox.mark_applied(id, inv) do
+      :ok ->
+        :ok
+
+      {:error, reason} ->
+        require Logger
+
+        Logger.error(
+          "Kind.Server: cap delivery handler committed but outbox mark_applied failed " <>
+            "delivery_id=#{id} reason=#{inspect(reason)}; row remains pending for idempotent retry"
+        )
+
+        :ok
+    end
+  end
+
+  defp mark_cap_delivery_applied(%Ezagent.Invocation{}), do: :ok
+
+  defp record_cap_delivery_failure(%Ezagent.Invocation{} = inv, reason) do
+    case Ezagent.Cap.DeliveryOutbox.record_handler_failure(inv, reason) do
+      :ok ->
+        :ok
+
+      {:error, failure_reason} ->
+        require Logger
+
+        Logger.error(
+          "Kind.Server: cap delivery failure state update failed " <>
+            "reason=#{inspect(failure_reason)}; claim lease remains the retry backstop"
+        )
+
+        :ok
+    end
   end
 
   # Commit-then-notify ordering (codex PR-N1 round-2 MEDIUM +

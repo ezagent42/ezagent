@@ -177,6 +177,24 @@ defmodule EzagentDomainInstanceMessage.Integration.DefaultSessionTemplateSeedTes
     assert Mix.env() == :test
   end
 
+  test "test-only re-seed retires a failed boot-seeded default template incarnation" do
+    assert {:ok, current_hash} =
+             Ezagent.TemplateTags.resolve(
+               Ezagent.URI.workspace(:system),
+               "default",
+               "current"
+             )
+
+    default_uri =
+      Ezagent.URI.new!(default_template_uri_prefix("system") <> current_hash)
+
+    :ok = Ezagent.ReadyGate.mark_failed(default_uri)
+    assert Ezagent.ReadyGate.status(default_uri) == :failed
+
+    assert :ok = EzagentDomainInstanceMessage.Application.seed_default_session_template_now()
+    assert Ezagent.ReadyGate.status(default_uri) == :ready
+  end
+
   # ── Task #58 — default SessionTemplate ⇄ cc decoupling ──────────────
   #
   # The legacy orchestrator AgentTemplate URI seam is intentionally inert for

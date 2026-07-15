@@ -110,7 +110,7 @@ defmodule Ezagent.Domain.Agent do
   # activating it". A thin AUTHORIZE-then-DELEGATE layer (D2): the actual slice
   # reads stay in their owning, already-non-activating facades —
   #   config  → Ezagent.Agent.Config.read_cascade/4  (pure-DB ConfigEvolve)
-  #   caps    → Ezagent.Identity.read_entity_caps/1   (live slice → snapshot)
+  #   caps    → Ezagent.EntityCaps.load/1             (live slice → snapshot)
   #   sandbox → Ezagent.ActionSet.Sandbox.read_persisted_state/1 (live → snapshot)
   #   status  → lifecycle_status/1 (KindRegistry.lookup + guarded Domain.Pty)
   # so the de-activation machinery is DRY at one site per slice and every
@@ -161,7 +161,7 @@ defmodule Ezagent.Domain.Agent do
   Preserves the `identity.list_caps` dispatch gate (`cap(<entity_kind>, Identity,
   :list_caps)`, instance-scoped) via the two-route authz, PLUS the self-read
   exemption the dispatch honored (`caller == entity` → `:ok` even with no cap).
-  Delegates the read to the sanctioned owner `Ezagent.Identity.read_entity_caps/1`.
+  Delegates the read to the sanctioned storage facade `Ezagent.EntityCaps.load/1`.
   """
   @spec read_caps(URI.t(), read_ctx()) :: {:ok, [Ezagent.Capability.t()]} | {:error, term()}
   def read_caps(%URI{} = entity_uri, %{caller: _} = ctx) do
@@ -174,7 +174,7 @@ defmodule Ezagent.Domain.Agent do
     }
 
     if self_read?(ctx, entity_uri) or authorized?(needed, ctx) do
-      {:ok, Ezagent.Identity.read_entity_caps(entity_uri)}
+      {:ok, Ezagent.EntityCaps.load(entity_uri)}
     else
       {:error, :unauthorized}
     end
@@ -304,7 +304,7 @@ defmodule Ezagent.Domain.Agent do
       # nil caller has no slice to read; it falls through to route 1 only).
       match?(%URI{}, Map.get(ctx, :caller)) and
           Ezagent.Identity.caps_authorize?(
-            Ezagent.Identity.read_entity_caps(ctx.caller),
+            Ezagent.EntityCaps.load(ctx.caller),
             needed
           ) ->
         true
@@ -320,7 +320,7 @@ defmodule Ezagent.Domain.Agent do
   # owner re-checks the same predicate against the same needed cap.
   defp two_route_caps(%{caller: caller} = ctx) do
     inline = ctx |> Map.get(:caps, []) |> Enum.to_list()
-    slice = if match?(%URI{}, caller), do: Ezagent.Identity.read_entity_caps(caller), else: []
+    slice = if match?(%URI{}, caller), do: Ezagent.EntityCaps.load(caller), else: []
     MapSet.union(MapSet.new(inline), MapSet.new(slice))
   end
 

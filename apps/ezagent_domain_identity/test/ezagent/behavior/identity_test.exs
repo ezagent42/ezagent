@@ -113,7 +113,15 @@ defmodule Ezagent.ActionSet.IdentityTest do
       # Membership-cap B.3: :cascade_notify_managers added (cap-exempt post-commit
       # cascade sink — spec §10/K3).
       assert Identity.actions() == [:list_caps, :has_cap?, :cascade_notify_managers]
-      assert Ezagent.ActionSet.IdentityAdmin.actions() == [:grant_cap, :revoke_cap, :absorb_cap]
+
+      assert Ezagent.ActionSet.IdentityAdmin.actions() == [
+               :grant_cap,
+               :revoke_cap,
+               :absorb_cap,
+               :persist_caps,
+               :store_cap,
+               :remove_cap
+             ]
     end
 
     test "state_slice/0" do

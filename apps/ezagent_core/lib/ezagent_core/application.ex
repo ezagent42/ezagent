@@ -42,6 +42,7 @@ defmodule EzagentCore.Application do
         {Ecto.Migrator,
          repos: Application.fetch_env!(:ezagent_core, :ecto_repos),
          skip: EzagentCore.MigrationGate.skip?()},
+        Ezagent.Cap.DeliveryOutbox.Sweeper,
         {DNSCluster, query: Application.get_env(:ezagent_core, :dns_cluster_query) || :ignore},
 
         # ⑤ PubSub — needed by LiveView audit:stream + future view fan-outs.
@@ -198,7 +199,11 @@ defmodule EzagentCore.Application do
   # An invariant test (`audit_writer_test_env_isolation_test.exs`)
   # pins **both** halves: prod env children list MUST include the
   # writers, test env children list MUST NOT.
-  @writers_skipped_in_test [Ezagent.Audit.Writer, Ezagent.Snapshot.Writer]
+  @writers_skipped_in_test [
+    Ezagent.Audit.Writer,
+    Ezagent.Snapshot.Writer,
+    Ezagent.Cap.DeliveryOutbox.Sweeper
+  ]
 
   defp skip_in_test_env?(child),
     do: is_test?() and child in @writers_skipped_in_test

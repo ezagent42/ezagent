@@ -14,27 +14,30 @@ defmodule Ezagent.Invariants.CapVerifyLoadBoundariesTest do
 
   @identity_behavior "apps/ezagent_domain_identity/lib/ezagent/behavior/identity.ex"
   @identity_facade "apps/ezagent_domain_identity/lib/ezagent/identity.ex"
+  @entity_caps "apps/ezagent_domain_identity/lib/ezagent/entity_caps.ex"
   @recipe_cap_binding "apps/ezagent_domain_identity/lib/ezagent/identity/recipe_cap_binding.ex"
+  @outbound_grant "apps/ezagent_domain_identity/lib/ezagent/outbound_grant.ex"
   @snapshot "apps/ezagent_core/lib/ezagent/kind/snapshot.ex"
   @cap "apps/ezagent_core/lib/ezagent/cap.ex"
   @cli_dispatch "apps/ezagent_cli/lib/ezagent_cli/dispatch.ex"
 
   @verify_homes %{
     @identity_behavior => 3,
-    @identity_facade => 1,
+    @entity_caps => 1,
     @recipe_cap_binding => 1,
+    @outbound_grant => 1,
     @snapshot => 1
   }
-  @verify_home_count 6
+  @verify_home_count 7
 
-  test "I5 Cap verification boundary calls are exact, ratcheted, and at most six" do
+  test "I5 Cap verification boundary calls are exact, ratcheted, and at most seven" do
     actual = cap_verify_calls()
 
     assert actual == @verify_homes,
            "Cap verification moved outside the reviewed load boundaries:\n#{inspect(actual, pretty: true)}"
 
     assert Enum.sum(Map.values(@verify_homes)) == @verify_home_count
-    assert @verify_home_count <= 6
+    assert @verify_home_count <= 7
   end
 
   test "I5 named boundaries route through the reviewed verification helpers" do
@@ -49,16 +52,27 @@ defmodule Ezagent.Invariants.CapVerifyLoadBoundariesTest do
 
     store = definition_source(@identity_behavior, :store_verified_cap, 3)
     assert store =~ "Ezagent.Cap.verify_for"
-    assert store =~ "{:set, :caps, new_caps}"
+    assert store =~ "set_caps_effect(new_caps)"
+
+    assert definition_source(@identity_behavior, :set_caps_effect, 1) =~
+             "{:set, :caps, caps}"
 
     assert definition_source(@identity_facade, :list_caps_for, 1) =~ "verified_cap_set"
     assert definition_source(@identity_facade, :read_held_caps, 1) =~ "verified_cap_set"
-    assert definition_source(@identity_facade, :read_entity_caps, 1) =~ "verified_cap_list"
+
+    assert source(@identity_facade) =~
+             "defdelegate read_entity_caps(entity_uri), to: Ezagent.EntityCaps, as: :load"
 
     facade_verifier = definition_source(@identity_facade, :verified_cap_set, 2)
-    assert facade_verifier =~ "Ezagent.Cap.verified_set"
+    assert facade_verifier =~ "Ezagent.EntityCaps.verified_set"
+
+    entity_caps_verifier = definition_source(@entity_caps, :verified_set, 2)
+    assert entity_caps_verifier =~ "Ezagent.Cap.verified_set"
 
     assert definition_source(@recipe_cap_binding, :validate_artifact, 4) =~
+             "Ezagent.Cap.verify_for"
+
+    assert definition_source(@outbound_grant, :normalize_attrs, 1) =~
              "Ezagent.Cap.verify_for"
 
     assert definition_source(@snapshot, :load_with_fallback, 3) =~

@@ -608,7 +608,9 @@ defmodule EzagentDomainInstanceMessage.Application do
     # outside test env so a stale operator script can't accidentally
     # double-seed prod.
     if test_env?() do
-      ensure_default_session_template(workspace)
+      workspace
+      |> workspace_uri!()
+      |> do_seed_default_session_template(true)
     else
       {:error, :test_only}
     end
@@ -655,7 +657,13 @@ defmodule EzagentDomainInstanceMessage.Application do
     |> Enum.uniq_by(&URI.to_string/1)
   end
 
-  defp do_seed_default_session_template(%URI{scheme: "workspace"} = workspace_uri) do
+  defp do_seed_default_session_template(%URI{scheme: "workspace"} = workspace_uri),
+    do: do_seed_default_session_template(workspace_uri, false)
+
+  defp do_seed_default_session_template(
+         %URI{scheme: "workspace"} = workspace_uri,
+         retry_failed_incarnation?
+       ) do
     workspace_name = Ezagent.URI.workspace_name!(workspace_uri)
 
     content = %{
@@ -727,6 +735,11 @@ defmodule EzagentDomainInstanceMessage.Application do
 
             :ok
         end
+
+      {:error, :failed} when retry_failed_incarnation? ->
+        # SessionTemplate termination is synchronous; retry exactly once.
+        :ok = Ezagent.Kind.terminate(uri)
+        do_seed_default_session_template(workspace_uri, false)
 
       {:error, reason} ->
         require Logger

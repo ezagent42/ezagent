@@ -684,11 +684,68 @@ defmodule Ezagent.Lifecycle do
   """
   @spec destroy(URI.t() | String.t(), term()) :: :ok | {:error, :cannot_self_destroy}
   def destroy(uri, reason \\ :destroy) do
-    uri_str =
-      case uri do
-        %URI{} = u -> URI.to_string(u)
-        s when is_binary(s) -> s
+    uri = canonical_instance_uri(uri)
+
+    with_entity_transition(uri, fn -> do_destroy(uri, reason) end)
+  end
+
+  @doc """
+  Serialize an entity lifecycle transition on this node.
+
+  The resource key is the canonical instance URI, so action-qualified and
+  instance-only forms contend on the same lock. The requester is `self()`,
+  making same-process nesting reentrant (for example `Users.delete/1` wrapping
+  `destroy/2`) while preserving mutual exclusion between callers.
+
+  A target Kind may not synchronously transition itself. The guard runs both
+  before waiting and again after acquiring the lock so no row/process mutation
+  can slip through a registration change while the caller was queued.
+  """
+  @spec with_entity_transition(URI.t() | String.t(), (-> result)) ::
+          result | {:error, :cannot_self_destroy}
+        when result: term()
+  def with_entity_transition(uri, fun) when is_function(fun, 0) do
+    uri = canonical_instance_uri(uri)
+
+    if self_target?(uri) do
+      {:error, :cannot_self_destroy}
+    else
+      stable_key = Ezagent.URI.stable_key(uri)
+      held_key = {__MODULE__, :entity_transition_held, stable_key}
+
+      # `:global` accepts the same requester recursively, but an inner
+      # `trans/3` also calls `del_lock` when its callback returns. Re-entering
+      # `trans/3` here would therefore release the outer critical section too
+      # early. Keep one node-local lock per process/resource and run nested
+      # callbacks directly; the outer `after` remains the sole release point.
+      if Process.get(held_key, false) do
+        run_entity_transition(uri, fun)
+      else
+        lock_id = {{:ezagent_entity_transition, stable_key}, self()}
+
+        :global.trans(
+          lock_id,
+          fn ->
+            Process.put(held_key, true)
+
+            try do
+              run_entity_transition(uri, fun)
+            after
+              Process.delete(held_key)
+            end
+          end,
+          [node()]
+        )
       end
+    end
+  end
+
+  defp run_entity_transition(uri, fun) do
+    if self_target?(uri), do: {:error, :cannot_self_destroy}, else: fun.()
+  end
+
+  defp do_destroy(uri, reason) do
+    uri_str = Ezagent.URI.stable_key(uri)
 
     # 1. Run the developer destroy hooks against the live Kind (best-
     #    effort — a brutal kill may have skipped this, which is why the
@@ -723,6 +780,18 @@ defmodule Ezagent.Lifecycle do
         # NEVER proceed to the durable clear / terminate — that is the
         # torn "row gone but process alive" state F2 guards against.
         err
+    end
+  end
+
+  defp canonical_instance_uri(%URI{} = uri), do: Ezagent.URI.instance(uri)
+
+  defp canonical_instance_uri(uri) when is_binary(uri),
+    do: uri |> Ezagent.URI.new!() |> Ezagent.URI.instance()
+
+  defp self_target?(uri) do
+    case Ezagent.KindRegistry.lookup(uri) do
+      {:ok, pid} when is_pid(pid) -> pid == self()
+      :error -> false
     end
   end
 

@@ -16,9 +16,9 @@ defmodule Ezagent.Capability.Normalize do
       "kind" => atom_or_module_to_string(cap.kind),
       "behavior" => atom_or_module_to_string(cap.behavior),
       "action" => atom_or_module_to_string(Match.action_of(cap)),
-      "instance" => uri_or_any_to_string(cap.instance),
-      "workspace_uri" => uri_or_any_to_string(cap.workspace_uri),
-      "granted_by" => uri_or_any_to_string(cap.granted_by),
+      "instance" => instance_to_wire(cap.instance),
+      "workspace_uri" => workspace_to_wire(cap.workspace_uri),
+      "granted_by" => granted_by_to_wire(cap.granted_by),
       "granted_at" => DateTime.to_iso8601(cap.granted_at),
       "signature" => encode_signature(cap.signature),
       "key_id" => cap.key_id,
@@ -46,9 +46,9 @@ defmodule Ezagent.Capability.Normalize do
       kind: string_to_atom_or_module(Map.get(m, "kind")),
       behavior: string_to_atom_or_module(Map.get(m, "behavior")),
       action: string_to_atom_or_module(Map.get(m, "action")),
-      instance: string_to_uri_or_any(Map.get(m, "instance")),
-      workspace_uri: string_to_uri_or_any(Map.get(m, "workspace_uri", "any")),
-      granted_by: string_to_uri_or_any(Map.get(m, "granted_by")),
+      instance: instance_from_wire(Map.get(m, "instance")),
+      workspace_uri: workspace_from_wire(Map.get(m, "workspace_uri", "any")),
+      granted_by: granted_by_from_wire(Map.get(m, "granted_by")),
       granted_at: parse_datetime(Map.get(m, "granted_at")),
       signature: decode_signature(Map.get(m, "signature")),
       key_id: Map.get(m, "key_id"),
@@ -241,14 +241,53 @@ defmodule Ezagent.Capability.Normalize do
     ArgumentError -> :any
   end
 
-  defp uri_or_any_to_string(:any), do: "any"
-  defp uri_or_any_to_string(%URI{} = u), do: URI.to_string(u)
+  defp instance_to_wire(:any), do: "any"
+  defp instance_to_wire(%URI{} = uri), do: URI.to_string(uri)
+
+  defp instance_to_wire({scope, %URI{} = uri})
+       when scope in [:within_session, :within_workspace, :spawned_by] do
+    %{"scope" => Atom.to_string(scope), "uri" => Ezagent.URI.stable_key(uri)}
+  end
+
+  defp instance_to_wire(other), do: invalid_axis!(:instance, other)
+
+  defp workspace_to_wire(:any), do: "any"
+  defp workspace_to_wire(%URI{} = uri), do: URI.to_string(uri)
+  defp workspace_to_wire(other), do: invalid_axis!(:workspace_uri, other)
+
+  defp granted_by_to_wire(%URI{} = uri), do: URI.to_string(uri)
+  defp granted_by_to_wire(:plugin_declared), do: "plugin_declared"
+  defp granted_by_to_wire(other), do: invalid_axis!(:granted_by, other)
 
   defp uri_or_nil_to_string(nil), do: nil
   defp uri_or_nil_to_string(%URI{} = uri), do: URI.to_string(uri)
 
-  defp string_to_uri_or_any("any"), do: :any
-  defp string_to_uri_or_any(s) when is_binary(s), do: Ezagent.URI.new!(s)
+  defp instance_from_wire("any"), do: :any
+  defp instance_from_wire(s) when is_binary(s), do: Ezagent.URI.new!(s)
+
+  defp instance_from_wire(%{"scope" => "within_session", "uri" => uri}),
+    do: {:within_session, Ezagent.URI.new!(uri)}
+
+  defp instance_from_wire(%{"scope" => "within_workspace", "uri" => uri}),
+    do: {:within_workspace, Ezagent.URI.new!(uri)}
+
+  defp instance_from_wire(%{"scope" => "spawned_by", "uri" => uri}),
+    do: {:spawned_by, Ezagent.URI.new!(uri)}
+
+  defp instance_from_wire(other), do: invalid_axis!(:instance, other)
+
+  defp workspace_from_wire("any"), do: :any
+  defp workspace_from_wire(s) when is_binary(s), do: Ezagent.URI.new!(s)
+  defp workspace_from_wire(other), do: invalid_axis!(:workspace_uri, other)
+
+  defp granted_by_from_wire("plugin_declared"), do: :plugin_declared
+  defp granted_by_from_wire(s) when is_binary(s), do: Ezagent.URI.new!(s)
+  defp granted_by_from_wire(other), do: invalid_axis!(:granted_by, other)
+
+  defp invalid_axis!(axis, value) do
+    raise ArgumentError,
+          "Ezagent.Capability wire field #{axis} received an invalid axis value: #{inspect(value)}"
+  end
 
   defp string_to_uri_or_nil(nil), do: nil
   defp string_to_uri_or_nil(s) when is_binary(s), do: Ezagent.URI.new!(s)

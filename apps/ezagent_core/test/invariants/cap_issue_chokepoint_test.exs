@@ -43,10 +43,10 @@ defmodule Ezagent.Invariants.CapIssueChokepointTest do
   @mint_candidate_sites 34
 
   @caps_writers %{
-    "apps/ezagent_domain_identity/lib/ezagent/behavior/identity.ex" => 2
+    "apps/ezagent_domain_identity/lib/ezagent/behavior/identity.ex" => 1
   }
   @caps_writer_files 1
-  @caps_writer_sites 2
+  @caps_writer_sites 1
 
   # ------------------------------------------------------------------
   # Leg 3 (2026-07-14) — `users.caps_json` is a BACK DOOR into the cap slice.
@@ -127,11 +127,16 @@ defmodule Ezagent.Invariants.CapIssueChokepointTest do
       |> Path.join("apps/ezagent_domain_identity/lib/ezagent/behavior/identity.ex")
       |> File.read!()
 
+    persist = between(identity, "def handle_persist_caps", "defp store_verified_cap")
     store = between(identity, "defp store_verified_cap", "def handle_revoke_cap")
     revoke = between(identity, "def handle_revoke_cap", "defp uri_to_str")
+    writer = between(identity, "defp set_caps_effect", "defp normalize_artifact")
 
     assert store =~ "Ezagent.Cap.verify_for(cap_struct"
-    assert store =~ "{:set, :caps, new_caps}"
+    assert persist =~ "set_caps_effect(new_caps)"
+    assert store =~ "set_caps_effect(new_caps)"
+    assert revoke =~ "set_caps_effect(new_caps)"
+    assert writer =~ "{:set, :caps, caps}"
     assert revoke =~ "Ezagent.Capability.revoke(current_caps, cap_struct)"
     refute revoke =~ "MapSet.put"
   end
@@ -153,6 +158,10 @@ defmodule Ezagent.Invariants.CapIssueChokepointTest do
     # `create/3` and `create_read_only/2` — the two entry points the caller
     # allowlist below governs.
     "apps/ezagent_domain_identity/lib/ezagent/users.ex" => 2,
+
+    # EntityCaps is the sole post-create storage facade. It replaces the full
+    # verified set and cannot mint or authorize a grant by itself.
+    "apps/ezagent_domain_identity/lib/ezagent/entity_caps/user_store.ex" => 1,
 
     # Rewrites the retired Chat behavior name inside EXISTING artifacts. It
     # preserves authority rather than broadening it, and grants nothing new.

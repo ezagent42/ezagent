@@ -178,7 +178,7 @@ defmodule Ezagent.Session.MemberCapMigration do
     target_key = Ezagent.Capability.identity_key(member_cap(session_uri, ws))
 
     member_uri
-    |> Ezagent.Identity.read_entity_caps()
+    |> Ezagent.EntityCaps.load()
     |> Enum.any?(fn
       %Ezagent.Capability{} = cap -> Ezagent.Capability.identity_key(cap) == target_key
       _ -> false

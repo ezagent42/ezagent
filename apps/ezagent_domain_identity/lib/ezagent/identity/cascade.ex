@@ -11,7 +11,7 @@ defmodule Ezagent.Identity.Cascade do
     1. `ws = workspace_of(X)` — O(1) from the URI.
     2. candidates = `Ezagent.Users.list_in_workspace(ws)` (bounded per-workspace;
        Users ONLY — agents can't be notified yet, spec §11/S2).
-    3. per candidate, read **LIVE** caps via `Ezagent.Identity.read_entity_caps/1`
+    3. per candidate, read **LIVE** caps via `Ezagent.EntityCaps.load/1`
        (K5 — NOT `users.caps_json`), apply `Capability.granted_by_entity?/1` (K4 —
        so a stale/system-granted cap does not over-match), then match a
        `Manage`-over-`X` cap OR a workspace-admin cap via `Ezagent.Identity.Authority`.
@@ -19,7 +19,7 @@ defmodule Ezagent.Identity.Cascade do
 
   **Skip-self (deadlock + semantics):** the changed entity `X` is excluded from
   the candidate scan. The cascade runs as a post-commit dispatch INSIDE `X`'s own
-  `Kind.Server` (B.3); `read_entity_caps(X)` would be a `GenServer.call` to that
+  `Kind.Server` (B.3); `EntityCaps.load(X)` would be a `GenServer.call` to that
   same process — a self-slice deadlock (the `runtime.ex:393-407` hazard A2's
   `MemberReceive` also dodges). Semantically we notify `X`'s *managers*, never
   `X` itself, so the skip is correct regardless.
@@ -137,7 +137,7 @@ defmodule Ezagent.Identity.Cascade do
   defp manages_via_live_caps?(%URI{} = candidate, %URI{} = x, %URI{} = ws) do
     caps =
       candidate
-      |> Ezagent.Identity.read_entity_caps()
+      |> Ezagent.EntityCaps.load()
       |> Enum.filter(&Capability.granted_by_entity?/1)
 
     Authority.holds_manage_over_target?(caps, x) or Authority.workspace_admin?(caps, ws)

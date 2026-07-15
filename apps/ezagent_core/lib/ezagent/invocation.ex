@@ -125,9 +125,19 @@ defmodule Ezagent.Invocation do
            Ezagent.WorkspaceOwnerGate.assert_local_owner_for_uri(
              instance_uri,
              {:dispatch, target}
-           ),
-         :ok <- maybe_idempotency_check(ctx) do
-      dispatch_with_lazy_spawn(instance_uri, mode, inv)
+           ) do
+      cond do
+        Ezagent.Cap.DeliveryOutbox.replay?(inv) ->
+          dispatch_with_lazy_spawn(instance_uri, mode, inv)
+
+        Ezagent.Cap.DeliveryOutbox.eligible?(inv) ->
+          Ezagent.Cap.DeliveryOutbox.enqueue_and_attempt(inv)
+
+        true ->
+          with :ok <- maybe_idempotency_check(ctx) do
+            dispatch_with_lazy_spawn(instance_uri, mode, inv)
+          end
+      end
     end
   end
 
@@ -195,6 +205,9 @@ defmodule Ezagent.Invocation do
       {:error, :buffer_full} ->
         pending_delivery_overflow(instance_uri, inv)
 
+      {:error, :durable_pending} ->
+        {:error, :not_ready}
+
       {:error, :failed} ->
         {:error, :failed}
 
@@ -233,12 +246,16 @@ defmodule Ezagent.Invocation do
         # `:not_ready`. We bound the wait so a genuinely stuck `activate`
         # surfaces a DISTINCT `:activate_timeout` signal (never the
         # silent `:not_ready`), preserving let-it-crash visibility.
-        case Ezagent.ReadyGate.await(instance_uri, activate_budget_ms()) do
-          :ok ->
-            dispatch_with_lazy_spawn(instance_uri, mode, inv)
+        if Ezagent.Cap.DeliveryOutbox.replay?(inv) do
+          {:error, :not_ready}
+        else
+          case Ezagent.ReadyGate.await(instance_uri, activate_budget_ms()) do
+            :ok ->
+              dispatch_with_lazy_spawn(instance_uri, mode, inv)
 
-          {:error, :timeout} ->
-            {:error, :activate_timeout}
+            {:error, :timeout} ->
+              {:error, :activate_timeout}
+          end
         end
 
       {:unknown, _} ->
@@ -274,11 +291,15 @@ defmodule Ezagent.Invocation do
             {:error, :dead_target}
 
           {:not_ready, _incarnation} ->
-            Ezagent.PendingDelivery.buffer_if_not_ready_locked(
-              instance_uri,
-              inv,
-              expected_incarnation
-            )
+            if Ezagent.Cap.DeliveryOutbox.replay?(inv) do
+              {:error, :durable_pending}
+            else
+              Ezagent.PendingDelivery.buffer_if_not_ready_locked(
+                instance_uri,
+                inv,
+                expected_incarnation
+              )
+            end
 
           {:failed, _incarnation} ->
             {:error, :failed}
@@ -323,7 +344,10 @@ defmodule Ezagent.Invocation do
                 dispatch_with_lazy_spawn(instance_uri, mode, inv)
 
               m when m in [:call, :call_stream] ->
-                _ = Ezagent.ReadyGate.await(instance_uri, activate_budget_ms())
+                unless Ezagent.Cap.DeliveryOutbox.replay?(inv) do
+                  _ = Ezagent.ReadyGate.await(instance_uri, activate_budget_ms())
+                end
+
                 dispatch_with_lazy_spawn(instance_uri, mode, inv)
             end
 

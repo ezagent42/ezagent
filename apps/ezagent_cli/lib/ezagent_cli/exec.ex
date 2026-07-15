@@ -144,7 +144,7 @@ defmodule EzagentCli.Exec do
 
   defp resolve_caller(token) when is_binary(token) do
     case Ezagent.Authentication.authenticate(token) do
-      {:ok, uri} -> {:ok, uri, uri |> Ezagent.Identity.read_entity_caps() |> MapSet.new()}
+      {:ok, uri} -> {:ok, uri, uri |> Ezagent.EntityCaps.load() |> MapSet.new()}
       {:error, _} -> {:error, :invalid_token}
     end
   end
