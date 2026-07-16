@@ -86,3 +86,6 @@ tailwind-linux-x64
 # Playwright local artifacts (traces/screenshots/reports).
 **/test-results/
 **/playwright-report/
+
+# large video evidence — keep out of repo (PR-comment attach / external link)
+*.webm
