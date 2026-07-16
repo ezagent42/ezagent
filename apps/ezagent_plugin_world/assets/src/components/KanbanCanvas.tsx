@@ -100,8 +100,8 @@ function MmNode({data}: {data: {node: Node; id: string; selected: boolean; onSel
       {owner && <span className="text-[10px] text-muted-foreground">@{owner}</span>}
       {!unclaimed && (() => {
         const gv = gateVerdict(node)
-        if (gv.verdict === "warn") return <span title={gv.reason} className="text-amber-500">⚠</span>
-        if (gv.verdict === "pass") return <span title="本棒已过 gate" className="text-green-600">✓</span>
+        if (gv.verdict === "warn") return <span title={gv.reason} className="text-amber-500 dark:text-amber-400">⚠</span>
+        if (gv.verdict === "pass") return <span title="本棒已过 gate" className="text-green-600 dark:text-green-400">✓</span>
         return null
       })()}
       <button

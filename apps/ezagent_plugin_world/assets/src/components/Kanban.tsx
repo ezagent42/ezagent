@@ -480,7 +480,7 @@ function NodePanel({node, args, stages, statuses, callerUri, dropEntries = [], o
         const gv = gateVerdict(node)
         if (gv.verdict === "none") return null
         return (
-          <div className={`text-xs ${gv.verdict === "pass" ? "text-green-600" : "text-amber-600"}`}>
+          <div className={`text-xs ${gv.verdict === "pass" ? "text-green-600 dark:text-green-400" : "text-amber-600 dark:text-amber-400"}`}>
             {gv.verdict === "pass" ? "✓ 本棒已过 gate" : `⚠ gate 未过：${gv.reason}`}
           </div>
         )
@@ -491,7 +491,7 @@ function NodePanel({node, args, stages, statuses, callerUri, dropEntries = [], o
           <div className="font-semibold text-foreground">CI 评价 {node.ci.score}/{node.ci.max}</div>
           <ul className="mt-0.5 flex flex-col gap-0.5">
             {node.ci.criteria.map((c, i) => (
-              <li key={i} className={c.ok ? "text-green-600" : "text-amber-600"}>{c.ok ? "✓" : "○"} {c.name}</li>
+              <li key={i} className={c.ok ? "text-green-600 dark:text-green-400" : "text-amber-600 dark:text-amber-400"}>{c.ok ? "✓" : "○"} {c.name}</li>
             ))}
           </ul>
         </div>
