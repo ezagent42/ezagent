@@ -55,12 +55,16 @@ CSS = """
   .deploy div:last-child{border-right:0}
   .deploy .s{display:block;font-size:10px;color:#94a3b8}
   .risk{background:#fef2f2;border:1px solid #fecaca;border-radius:8px;padding:9px 14px;margin:2px 0 12px;font-size:12.5px}
-  .board{display:grid;grid-template-columns:118px repeat(4,minmax(210px,1fr));gap:8px;overflow-x:auto}
+  .board{display:grid;grid-template-columns:repeat(4,minmax(220px,1fr));gap:10px;overflow-x:auto}
+  .colwrap{display:flex;flex-direction:column;min-width:0}
   .colhead{font-weight:700;font-size:12px;text-align:center;padding:7px 4px;border-radius:6px 6px 0 0;color:#fff}
+  .colhead .cnt{background:rgba(255,255,255,.28);border-radius:8px;padding:0 6px;font-size:11px;margin-left:2px}
   .c-plan{background:#94a3b8}.c-wip{background:var(--blue)}.c-rev{background:var(--amber)}.c-done{background:var(--green)}
-  .lane{display:flex;flex-direction:column;justify-content:center;padding:8px;border-radius:6px;background:#fff;border:1px solid var(--line);border-left:4px solid var(--pc)}
-  .lane b{font-size:13px}.lane span{font-size:10.5px;color:#64748b}
-  .cell{display:flex;flex-direction:column;gap:6px;min-height:40px;padding:1px}
+  .cell{display:flex;flex-direction:column;gap:7px;min-height:40px;padding:6px 2px}
+  .owner{font-size:10px;color:#64748b;font-weight:600;margin-bottom:4px}
+  .odot{display:inline-block;width:8px;height:8px;border-radius:2px;margin-right:4px;vertical-align:middle}
+  .legend{margin:14px 0 2px;font-size:11.5px;color:#64748b}
+  .legend .lg{margin-right:14px;white-space:nowrap}
   .card{background:#fff;border:1px solid var(--line);border-left:3px solid var(--pc);border-radius:7px;padding:8px 9px;cursor:pointer;transition:box-shadow .12s,transform .12s}
   .card:hover{box-shadow:0 3px 10px rgba(0,0,0,.10);transform:translateY(-1px)}
   .card.done{background:#f6fefa;border-left-color:var(--green)}
@@ -122,7 +126,10 @@ JS = """
   document.addEventListener('keydown',function(ev){if(ev.key==='Escape')closeM();});
 """
 
-def render_card(card):
+def render_card(card, pcolor, pname):
+    color = pcolor.get(card.get("owner"), "#2563eb")
+    owner_tag = (f'<div class="owner"><span class="odot" style="background:{color}"></span>'
+                 f'{e(pname.get(card.get("owner"), card.get("owner","")))}</div>')
     acc = card.get("acceptance", []) or []
     done_n = sum(1 for a in acc if a.get("done"))
     total_n = len(acc)
@@ -160,7 +167,7 @@ def render_card(card):
         accm = accm[:-6] + extra_note + '</div>'
     cls = "card done" if is_done else "card"
     return (
-        f'<div class="{cls}">{rib}<div class="t">{e(card.get("title"))}</div>{goal}'
+        f'<div class="{cls}" style="--pc:{color}">{rib}{owner_tag}<div class="t">{e(card.get("title"))}</div>{goal}'
         f'{accm}<div class="meta">{"".join(pills)}</div>'
         f'<div class="detail" data-title="{e(card.get("title"))}" data-who="{e(card.get("who",""))}" '
         f"data-acc='{html.escape(acc_json, quote=True)}' "
@@ -177,6 +184,8 @@ def main():
 
     people = b.get("people", []) or []
     cards = b.get("cards", []) or []
+    pcolor = {p["id"]: p.get("color", "#2563eb") for p in people}
+    pname = {p["id"]: p.get("name", p["id"]) for p in people}
     for c in cards:
         c.setdefault("who", f'{c.get("owner","")}')
 
@@ -191,16 +200,19 @@ def main():
     deploy_html = "".join(f'<div><span class="s">{e(d.get("env"))}</span>{e(d.get("state"))}</div>' for d in (b.get("deploy", []) or []))
     risks_html = "<br>".join(e(r) for r in (b.get("risks", []) or []))
 
-    # board grid
-    grid = ['<div></div>'] + [f'<div class="colhead {c[2]}">{c[1]}</div>' for c in COLUMNS]
-    for p in people:
-        grid.append(f'<div class="lane" style="--pc:{p.get("color","#2563eb")}"><b>{e(p.get("name"))}</b><span>{e(p.get("track",""))}</span></div>')
-        for status, _, _ in COLUMNS:
-            cell_cards = [c for c in cards if c.get("owner") == p["id"] and
-                          (c.get("status") == status or (status == "wip" and c.get("status") == "blocked"))]
-            inner = "".join(render_card(c) for c in cell_cards)
-            grid.append(f'<div class="cell" style="--pc:{p.get("color","#2563eb")}">{inner}</div>')
-    board_html = "\n    ".join(grid)
+    # board: 4 status columns, cards flow within (person = colour + name tag, no swimlane)
+    order = {p["id"]: i for i, p in enumerate(people)}
+    cols = []
+    for status, label, cls in COLUMNS:
+        col_cards = [c for c in cards if c.get("status") == status
+                     or (status == "wip" and c.get("status") == "blocked")]
+        col_cards.sort(key=lambda c: order.get(c.get("owner"), 99))
+        inner = "".join(render_card(c, pcolor, pname) for c in col_cards)
+        cols.append(f'<div class="colwrap"><div class="colhead {cls}">{label} '
+                    f'<span class="cnt">{len(col_cards)}</span></div><div class="cell">{inner}</div></div>')
+    board_html = "\n    ".join(cols)
+    legend = " ".join(f'<span class="lg"><span class="odot" style="background:{p.get("color","#2563eb")}">'
+                      f'</span>{e(p.get("name"))}</span>' for p in people)
 
     # review / 复盘
     rv = b.get("review", {}) or {}
@@ -251,7 +263,8 @@ def main():
   <div class="risk"><b>风险：</b>{risks_html or '—'}</div>
   <div class="board">
     {board_html}
-  </div>{review_html}
+  </div>
+  <div class="legend">人：{legend}　·　卡片 = 一任务；☐/☑ = 验收（plan 写 · review 勾）；停在非「完成」列 = 明日结转</div>{review_html}
   <div class="foot">一块 <b>plan+review 合一</b> 的活看板：顶部全局大局（目标·进度·总效能）常驻；卡片可点开看完整验收/复盘/prompt；底部复盘汇总。<b>确定性渲染</b>：board.yaml → board2html.py，样式只住模板。</div>
 </div>
 <div class="modal" id="modal">
