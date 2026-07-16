@@ -147,11 +147,14 @@ defmodule Ezagent.ActionSet.Kanban.Shared do
   """
   def commit(tree), do: {:set, :tree, Map.put_new(tree, :drops, [])}
 
-  @doc "节点级授权：caller 是 canonical admin，或 node.owner == caller。"
+  @doc """
+  节点级授权（C2 版主兜底）：caller 是本板 admin（版主/canonical admin），或 node.owner == caller。
+  版主对本板任何节点有编辑权（rename/set_stage/set_status/attach/detach/set_metric …）。
+  """
   def owner_or_admin?(ctx, node),
-    do: admin?(ctx) or (node.owner != nil and node.owner == caller_str(ctx))
+    do: board_admin?(ctx) or (node.owner != nil and node.owner == caller_str(ctx))
 
-  @doc "已认证 presenter 是否为唯一 canonical admin root。"
+  @doc "已认证 presenter 是否为唯一 canonical admin root（真正全局 admin，非本板版主）。"
   def admin?(ctx) do
     case Map.get(ctx, :caller) do
       %URI{} = caller ->
@@ -162,6 +165,42 @@ defmodule Ezagent.ActionSet.Kanban.Shared do
         false
     end
   end
+
+  @doc """
+  本板 admin（C2 版主）判定：全局 wildcard admin，**或** caller == 本板 data_owner
+  （建板人 = 版主，H6）。data_owner 优先 ctx 直注 `:data_owner`（测试夹具），次选经
+  `ctx[:self_uri]` 解实例 URI → `Ezagent.ActionSet.Kanban.data_owner/1` 解析。
+  用于建根删除兜底 / 编辑兜底 / import 覆盖导入等**板级**授权（版主能管自己的板）。
+  """
+  def board_admin?(ctx), do: admin?(ctx) or board_owner_match?(ctx)
+
+  defp board_owner_match?(ctx) do
+    case {data_owner_str(ctx), caller_str(ctx)} do
+      {nil, _} -> false
+      {_, nil} -> false
+      {owner, caller} -> owner == caller
+    end
+  end
+
+  # 本板 data_owner 的字符串形式（版主比对用）：ctx 直注（测试）优先，次选 self_uri 解析。
+  defp data_owner_str(ctx) do
+    case ctx[:data_owner] do
+      %URI{} = u -> URI.to_string(u)
+      s when is_binary(s) and s != "" -> s
+      _ -> resolve_board_owner(ctx[:self_uri])
+    end
+  end
+
+  defp resolve_board_owner(%URI{} = self_uri) do
+    instance = Ezagent.URI.instance(self_uri)
+
+    case Ezagent.ActionSet.Kanban.data_owner(instance) do
+      %URI{} = u -> URI.to_string(u)
+      _ -> nil
+    end
+  end
+
+  defp resolve_board_owner(_), do: nil
 
   @doc "caller URI 的字符串形式（per-node owner 比对用）。"
   def caller_str(ctx) do

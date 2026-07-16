@@ -103,8 +103,9 @@ defmodule Ezagent.World.KanbanActions do
     do: select_board(socket, u)
 
   # 一键推 Miro：dispatch → 拿 board_id → 推 miro_board_url（出站动作，结果带链接）。
-  def handle_dispatch(socket, "kanban.sync_miro", %{"kanban_uri" => u}),
-    do: sync_miro(socket, u)
+  # name = 前端同步弹框填的 Miro 板名（去gh 决策），透传给 behavior（缺省用板配置/URI 名）。
+  def handle_dispatch(socket, "kanban.sync_miro", %{"kanban_uri" => u} = a),
+    do: sync_miro(socket, u, Map.get(a, "name"))
 
   def handle_dispatch(socket, "kanban.save_miro_creds", %{"access_token" => token} = a)
       when is_binary(token),
@@ -219,16 +220,18 @@ defmodule Ezagent.World.KanbanActions do
 
   # --- 一键推 Miro：dispatch → board_id → 推 miro_board_url -----------------
 
-  defp sync_miro(socket, uri_str) do
+  defp sync_miro(socket, uri_str, name) do
     case parse(uri_str) do
       %URI{} = uri ->
         :ok = KanbanData.ensure_spawned(uri)
+
+        args = if is_binary(name) and name != "", do: %{name: name}, else: %{}
 
         result =
           Invocation.dispatch(%Invocation{
             target: Ezagent.URI.with_action(uri, :kanban, :sync_miro),
             mode: :call,
-            args: %{},
+            args: args,
             ctx: ctx(socket),
             origin: :authenticated_external
           })
@@ -303,10 +306,8 @@ defmodule Ezagent.World.KanbanActions do
   end
 
   defp build_share_link(socket, %URI{} = uri) do
-    board_uri = encode_uri(uri)
-
     payload = %{
-      "board" => board_uri,
+      "board" => URI.to_string(uri),
       "behavior" => @share_board_behavior,
       "access" => "read"
     }
@@ -315,8 +316,6 @@ defmodule Ezagent.World.KanbanActions do
     token = Phoenix.Token.sign(socket, @share_board_salt, payload)
     @share_board_receive_path <> "?" <> URI.encode_query(token: token)
   end
-
-  defp encode_uri(%URI{} = uri), do: URI.to_string(uri)
 
   # --- 上传文件挂到节点（v1.5）：验 upload grant 取 uploads URI → attach_artifact ----
 
@@ -354,15 +353,18 @@ defmodule Ezagent.World.KanbanActions do
 
   defp verify_upload_grant(_socket, _grant, _caller), do: {:error, :no_caller}
 
-  # --- 新建 kanban = 创建一个 kanban-manager agent（role × flavor native）---
+  # --- 新建 kanban = 建板走 BoardProvision（⑥ 会诊 2026-07-16）---
   #
-  # kanban-as-role：看板不再是 `resource://<ws>/kanban/<name>` 独立 Kind，而是一个
-  # agent。新建 = `Ezagent.Workspace.create_agent`（RF-5a role-create 路径），flavor
-  # `native`（boot 注册的通用宿主，RF-8）× role `kanban-manager`（kanban plugin
-  # `roles/0` boot 注册的 recipe，含 24 个 behaviors + caps + passive:true）。创建后
-  # 该 agent 的 `entity://<ws>/agent/<name>` 即 board 的寻址 + dispatch 目标。
+  # kanban-as-role：看板 = 一个 passive native agent（role `kanban-manager`）。此前这里
+  # 直调 `Workspace.create_agent`——普通成员无 create_agent cap 必拒（分层债 ⑥）。现改走
+  # `Ezagent.Socialware.BoardProvision.create_board/5`（runtime 建板 glue）：成员守卫 +
+  # 一次性 rule-authority（{:rule, :socialware_runtime_provision, creator}，只造 passive
+  # native）+ 建完当场发两把钥匙（assistant + 建板人自己，落挂载表）。建板因此是
+  # **session-scoped**（collab 模型：板挂在会话、assistant 收钥匙）——无当前会话则拒。
+  # behavior 以字符串反解（world 无 kanban plugin dep，照 @share_board_behavior 约定）。
   defp create_kanban(socket, name) do
     workspace_uri = socket.assigns.current_workspace_uri
+    session_uri = socket.assigns[:current_session_uri]
     caller = socket.assigns.current_entity_uri
     caller_ctx = %{caller: caller, caps: Map.get(socket.assigns, :current_caps, MapSet.new())}
     clean = sanitize(name)
@@ -374,24 +376,28 @@ defmodule Ezagent.World.KanbanActions do
       not match?(%URI{scheme: "workspace"}, workspace_uri) ->
         {:noreply, assign(socket, :last_dispatch_status, "error:invalid_workspace")}
 
+      not match?(%URI{scheme: "session"}, session_uri) ->
+        {:noreply, assign(socket, :last_dispatch_status, "error:no_session_context")}
+
       true ->
-        case Ezagent.Workspace.create_agent(
+        case Ezagent.Socialware.BoardProvision.create_board(
                workspace_uri,
+               session_uri,
                %{
-                 flavor: @native_flavor,
                  name: clean,
-                 role: @kanban_role,
-                 cwd: "",
-                 with_pty: false
+                 board_role: @kanban_role,
+                 flavor: @native_flavor,
+                 assistant_role: "kanban-assistant"
                },
+               Module.concat([@share_board_behavior]),
                caller_ctx
              ) do
-          {:ok, %{agent_uri: agent_uri}} ->
+          {:ok, %{board_uri: board_uri}} ->
             # board_state 列出全量 instances（含新建的）+ 推该 agent 的空 board。
             {:noreply,
              socket
              |> assign(:last_dispatch_status, "ok")
-             |> push_event("world:state", KanbanData.board_state(agent_uri, read_ctx(socket)))}
+             |> push_event("world:state", KanbanData.board_state(board_uri, read_ctx(socket)))}
 
           {:error, reason} ->
             {:noreply, assign(socket, :last_dispatch_status, "error:#{reason(reason)}")}

@@ -121,9 +121,9 @@ defmodule Ezagent.World.KanbanDataTest do
       uri = spawn_board(ws, admin_ctx)
 
       {:ok, %{id: "n1"}} = dispatch(uri, :add_node, %{parent_id: "", title: "根"}, admin_ctx)
+      # collab H1:加节点自动认领给 caller(admin),无需再 claim_node。
       {:ok, %{id: "n2"}} = dispatch(uri, :add_node, %{parent_id: "n1", title: "功能"}, admin_ctx)
       {:ok, %{}} = dispatch(uri, :set_stage, %{id: "n2", stage: "metric"}, admin_ctx)
-      {:ok, %{}} = dispatch(uri, :claim_node, %{id: "n2"}, admin_ctx)
       {:ok, %{}} = dispatch(uri, :set_status, %{id: "n2", status: "doing"}, admin_ctx)
 
       tree = KanbanData.read_tree(uri, board_read_ctx(uri, ctx))
