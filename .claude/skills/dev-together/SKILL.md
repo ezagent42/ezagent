@@ -4,8 +4,9 @@ description: >-
   Use for the ezagent dev-together daily team workflow: plan tasks, generate
   handoffs, accept/dive into a handoff, return results, stack returned work,
   review-test-merge, close the day, and write retrospectives. Trigger on
-  dev-together commands (init, plan, handoff, dive, return, push, close, review)
-  and natural requests about daily task splitting, handoffs, merge ordering,
+  dev-together commands (init, plan, handoff, dive, return, push, close, review,
+  audit) and natural requests about daily task splitting, handoffs,
+  merge ordering, periodic productization-efficiency audits,
   definition of done, closeout, hooks, or team workflow. Do not trigger for
   unrelated one-off git operations, generic single-PR review, issue closing,
   non-dev brainstorming, or non-engineering handoffs.
@@ -29,6 +30,7 @@ Trigger on `dev-together <cmd>`:
 - `push`
 - `close`
 - `review`
+- `audit` (periodic, not daily)
 
 Also trigger on natural phrasings like:
 - "kick off the day / split today's tasks so the branches don't collide"
@@ -159,6 +161,12 @@ and its output artifact.
 | 6 | `push` | lead | stack the returns + analyze merge order → `stack.md` | [commands/push.md](commands/push.md) |
 | 7 | `close` | lead | review/test the stack, merge to `main` | [commands/close.md](commands/close.md) |
 | 8 | `review` | lead | end-of-day retrospective → `review.md` | [commands/review.md](commands/review.md) |
+
+**Periodic (not part of the daily cycle):**
+
+| Command | Role | Cadence | One-liner | Detail |
+|---------|------|---------|-----------|--------|
+| `audit` | lead | monthly / after each big milestone | read-only productization-efficiency checkup, full report delivered out-of-repo to the lead (S0 self-service rate, hub engineering-months, R&D efficiency, investment structure, capacity check; frozen metric definitions so runs stay comparable) | [commands/audit.md](commands/audit.md) |
 
 `brainstorm` is NOT a dev-together command — use **superpowers:brainstorming**
 directly inside `plan`/`handoff`.
