@@ -94,6 +94,8 @@ Commit candidate: `feat(git): scaffold provider-neutral domain app`
 - Create: `apps/ezagent_domain_git/lib/ezagent/domain_git/change_request.ex`
 - Create: `apps/ezagent_domain_git/lib/ezagent/domain_git/operation_context.ex`
 - Create: the five reviewed auxiliary type modules frozen in Task 0
+- Create: `apps/ezagent_domain_git/lib/ezagent/domain_git/validation_error.ex`
+- Create: `apps/ezagent_domain_git/lib/ezagent/domain_git/change_limits.ex`
 - Create: `apps/ezagent_domain_git/lib/ezagent/domain_git/error.ex`
 - Create: `apps/ezagent_domain_git/test/ezagent/domain_git/value_contract_test.exs`
 - Create: `apps/ezagent_domain_git/test/architecture/plan_a_contract_test.exs`
@@ -114,6 +116,12 @@ Commit candidate: `feat(git): scaffold provider-neutral domain app`
 8. Assert `CreateChangeRequest` has no `base_ref`; `Review` has `author_label` and no
    `author`/`:pending`; and check normalization/projection is total, including
    `:action_required`/`:other` remaining non-green.
+9. Before RED, obtain architecture approval for design §4.2. Then assert every
+   value has the exact `new/1` atom-keyed map boundary and closed, non-echoing
+   `ValidationError` results.
+10. Assert the exact domain-owned `ChangeLimits.current/0` defaults and deterministic
+    invalid-config failure. Cover `FileChange.validate_many/1` count/per-file/total
+    byte limits and prove invocation/adapter input cannot override them.
 
 Commit candidate: `feat(git): add provider-neutral operation values`
 

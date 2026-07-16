@@ -5,7 +5,7 @@
 > **returned_at:** deferred — WIP skeleton only
 > **deadline:** 2026-07-16 23:59 +0800
 > **deadline_status:** deferred
-> **Status:** WIP — Task 1 complete; CI/precommit/PR/merge completion is not claimed
+> **Status:** WIP — Task 1 complete; Task 2 contract amendment review required; CI/precommit/PR/merge completion is not claimed
 
 # Return summary
 
@@ -22,7 +22,8 @@ Tasks 2–12 remain deferred. No deployment or merge is authorized.
 | 2 | Freeze Plan A four structs, five callbacks/actions, and full error union | met for Task 0 | tracked design exact Elixir contracts |
 | 3 | Freeze five minimum provider-neutral auxiliary shapes | met for Task 0 | architecture review fixes applied: stored base/head authority, total check normalization, submitted/latest review events |
 | 4 | Record exact Tasks 2–3 assertions; keep SSH/merge absent | met for Task 0 | tracked design §13.1 and adapter section |
-| 5 | Scaffold and boundary-test the domain app | met for Task 1 | focused test 1/0; compile exit 0; undeclared-dependency/layer-purity gates 4/0 |
+| 5 | Scaffold and boundary-test the domain app | met for Task 1 | focused test 2/0; compile exit 0; undeclared-dependency/layer-purity gates 4/0 |
+| 5a | Freeze Task 2 construction and limit API | review required | docs-only `new/1`, `ValidationError`, `ChangeLimits`, and `validate_many/1` amendment; no RED implementation yet |
 | 6 | Implement/test the remaining domain spine | deferred | Tasks 2–12 not started |
 | 7 | PR-head CI green and rebased on main | deferred | explicitly not claimed by this WIP record |
 | 8 | Return/merge/deploy complete | deferred | lead flow and external-state operations not authorized |
@@ -47,6 +48,11 @@ Task 1 review fix: replaced the source-regex inventory with authoritative
 `Mix.Project.config()[:deps]` tuple normalization. The focused suite now includes a
 path-form forbidden-dependency fixture proving it is both inventoried and rejected
 when `in_umbrella: true` is absent.
+
+Task 2 pre-RED review amendment freezes the constructor/error/config boundary and
+promotes Plan A's tested prototype limits as operator-configurable, domain-owned V1
+defaults. This is documentation only and remains architecture-review-required; no
+Task 2 test, compile, precommit, CI, or readiness result is claimed.
 
 ## Deferred boundary
 
