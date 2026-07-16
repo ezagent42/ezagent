@@ -23,8 +23,13 @@ defmodule Ezagent.DomainGit.ChangeRequest do
   end
 
   @spec web_uri?(term()) :: boolean()
-  def web_uri?(%URI{scheme: scheme, host: host, userinfo: nil} = uri)
-      when scheme in ["http", "https"] and is_binary(host) and host != "" do
+  def web_uri?(%URI{scheme: "http", host: host, userinfo: nil} = uri)
+      when is_binary(host) and host != "" do
+    is_binary(uri.path) or is_nil(uri.path)
+  end
+
+  def web_uri?(%URI{scheme: "https", host: host, userinfo: nil} = uri)
+      when is_binary(host) and host != "" do
     is_binary(uri.path) or is_nil(uri.path)
   end
 
