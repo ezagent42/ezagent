@@ -33,7 +33,7 @@ deployment or merge is authorized.
 | 9 | Prove no-cap zero registry/Resource/provider effects | met for Task 11 | denial is `{:error, :unauthorized}`; diagnostics and policy slice are byte-for-byte equal; no call/mutation message |
 | 10 | Prove stale-base zero provider mutation | met for Task 11 | selected B callback is observed, `:stale_base` returned, no mutation or A callback observed |
 | 11 | Deterministic cleanup | met for Task 11 | adapter unregister and Resource teardown are registered with `on_exit`; no sleep or shared probe process |
-| 12 | PR-head CI green, rebased main, full precommit, PR/review/merge/deploy | deferred | Task 12 was explicitly excluded; open decision for lead is whether/when to run the external machine-return flow |
+| 12 | Rebase, full verification, broad review, and WIP PR handoff | deferred | Task 12 was explicitly excluded; merge and deploy are separate lead-authorized operations and are not part of Task 12 |
 
 ## Verification evidence
 
@@ -87,7 +87,8 @@ is still not claimed.
 GitHub plugin/API, credentials/tokens, checkout/worktrees, Kanban, canary, #1360
 Layer B final mount, real PR/CI/review/merge, full precommit, deployment, and merge
 remain out of scope. This return proves only a provider-neutral in-memory domain
-spine and is not a valid machine-gated final return until Task 12 is authorized.
+spine and is not a valid machine-gated WIP handoff until Task 12 is authorized.
+Merge and deployment remain outside Task 12 and require separate lead authorization.
 
 ## Task 11 environment, commands, and blockers
 
