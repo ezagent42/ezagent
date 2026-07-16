@@ -45,8 +45,21 @@ Execute only Plan A from
 | 1. Primitive inventory | complete | Secret Store absent; SSH parser absent; Cap signed/receiver-bound; OsProcess lifecycle-only; plugin rollback pattern reusable. See `docs/superpowers/notes/2026-07-16-git-provider-v1-a-inventory.md` | `8fcbfe1b1` |
 | 2. Same-UID reproduction | complete | Both mode-0600 known-path read and `/proc/<pid>/environ` observation reproduced under UID 1000; 2 tests, 0 failures. See `docs/superpowers/notes/2026-07-16-git-provider-v1-a-isolation-probe.md` | `1e8b913fd` |
 | 3. Broker GO/NO-GO | complete | Candidate D selected: no approved agent-inaccessible boundary. SSH remains disabled; public checkout + GitHub API is the viable Plan D route. See `docs/superpowers/notes/2026-07-16-git-provider-v1-a-broker-options.md` | `1c16e2d28` |
-| 4. GitHub API request-plan prototype | complete | Pure plan/local fake proves Git Data sequence, input bounds, base/ref checks, deterministic attempt planning, partial-failure sanitization, and credential-free plan. Provider replay remains a Plan D ledger/reconcile requirement. 5 tests, 0 failures. See `docs/superpowers/notes/2026-07-16-git-provider-v1-a-github-api-transport.md` | pending |
-| 5. Decision/interface closeout | pending | — | — |
+| 4. GitHub API request-plan prototype | complete | Pure plan/local fake proves Git Data sequence, input bounds, base/ref checks, deterministic attempt planning, partial-failure sanitization, and credential-free plan. Provider replay remains a Plan D ledger/reconcile requirement. 5 tests, 0 failures. See `docs/superpowers/notes/2026-07-16-git-provider-v1-a-github-api-transport.md` | `5a908b187`, hardened in `21334e29c` |
+| 5. Decision/interface closeout | complete | Four-way GO/NO-GO matrix, exact typed interfaces, roadmap/design update, two-pass architecture/security review with zero remaining Critical/Important. See `docs/superpowers/specs/2026-07-16-git-provider-v1-a-decisions.md` | `21334e29c` |
+
+## Verification result
+
+- Focused security/prototype suite: `7 tests, 0 failures`.
+- Static gates: `arch.scan`, `doc.scan`, `uri_query.scan`, and
+  `check_invariants` all pass.
+- `mix precommit` completed forced compilation but the umbrella test phase was
+  not green: `SkillRegistryTest` reproduced a seed/loaded-plugin mismatch;
+  `OrphanReaperTest` and one PTY test failed once and passed under
+  `mix test --failed`. The retry later stopped in web test setup because this
+  isolated worktree has no `assets/node_modules` (the root checkout does).
+- No failure points at either Plan A test. PR-head CI remains the authoritative
+  clean-environment machine gate.
 
 ## Verification commands
 
