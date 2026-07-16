@@ -75,9 +75,6 @@ defmodule Ezagent.ActionSet.GitTaskAccess do
   )
 
   @impl Ezagent.ActionSet
-  def cap_subjects, do: Enum.map(@actions, &{&1, "Git task operation #{&1}"})
-
-  @impl Ezagent.ActionSet
   def required_caps do
     Map.new(@actions, &{&1, Ezagent.Capability.cap(:resource, __MODULE__, &1)})
   end
