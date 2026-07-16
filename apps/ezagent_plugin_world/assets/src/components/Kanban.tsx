@@ -19,9 +19,13 @@ type Node = {
   artifacts?: Record<string, unknown>[]
   metrics?: Record<string, unknown>[]
   ci?: {score: number; max: number; markdown: string; criteria: {name: string; ok: boolean}[]}
+  // ㉕ 非破坏 drop 标（北极星不达标跟踪，节点保留；后端整棵子树都带标）
+  dropped?: boolean
 }
 
-type DropEntry = {title?: string; stage?: string; reason?: string; count?: number}
+// ㉕ 后 drop 历史 = %{id, reason, at, by}（图级，id 指向被 drop 的子树根）；
+// title/stage/count 是旧快照（drop 曾是删除）遗留的历史条目形状，渲染兼容两代。
+type DropEntry = {id?: string; reason?: string; at?: string; by?: string; title?: string; stage?: string; count?: number}
 type Tree = {nodes: Record<string, Node>; root_id: string | null; drops?: DropEntry[]}
 
 export type KanbanState = {
@@ -256,17 +260,16 @@ function KanbanDetail({state, onAction, onShare, onShareArtifact, onUploadFile}:
               「链接」产物）；Miro 板名只在「同步到 Miro」弹框临时填（set_board_config
               动作后端保留，只撤 UI 入口）。 */}
 
-          {/* drop 历史（全图属性）：任何棒 drop 都记一条，全图可见，不挂某个节点 */}
+          {/* drop 历史（全图属性）：任何棒 drop 都记一条，全图可见，不挂某个节点。
+              ㉕ 后 drop = 非破坏标记：新条目 %{id, reason, at, by}，节点还在树里。 */}
           {drops.length > 0 && (
             <div className="flex flex-shrink-0 flex-col rounded-md border border-border p-2">
               <div className="mb-1.5 text-xs font-semibold text-muted-foreground">drop 历史（{drops.length}）</div>
               <ul className="flex flex-col gap-1 text-xs">
                 {drops.map((d, i) => (
-                  <li key={i} className="flex items-start gap-1.5 rounded bg-amber-50 px-1.5 py-1 text-amber-700 dark:bg-amber-950/30 dark:text-amber-400">
+                  <li key={i} className="flex items-start gap-1.5 rounded bg-destructive/10 px-1.5 py-1 text-destructive">
                     <Scissors className="mt-0.5 h-3 w-3 flex-shrink-0" />
-                    <span className="flex-1 break-words">
-                      [{STAGE_LABEL[d.stage || ""] || d.stage}] {d.title} · 砍 {d.count} 节点{d.reason ? ` · ${d.reason}` : ""}
-                    </span>
+                    <span className="flex-1 break-words">{dropEntryLabel(d, tree)}</span>
                   </li>
                 ))}
               </ul>
@@ -276,7 +279,7 @@ function KanbanDetail({state, onAction, onShare, onShareArtifact, onUploadFile}:
           <div className="flex flex-shrink-0 flex-col rounded-md border border-border p-2">
             <div className="mb-1.5 text-xs font-semibold text-muted-foreground">节点属性</div>
             {sel ? (
-              <NodePanel node={sel} args={nodeArgs} stages={allowedStages} statuses={statuses} callerUri={state.caller_uri} onAction={onAction} onShareArtifact={onShareArtifact} onUploadFile={onUploadFile} />
+              <NodePanel node={sel} args={nodeArgs} stages={allowedStages} statuses={statuses} callerUri={state.caller_uri} dropEntries={dropHistoryFor(tree, selectedId)} onAction={onAction} onShareArtifact={onShareArtifact} onUploadFile={onUploadFile} />
             ) : (
               <p className="text-xs text-muted-foreground">点画布里的节点查看/编辑属性。</p>
             )}
@@ -316,12 +319,14 @@ function KanbanDetail({state, onAction, onShare, onShareArtifact, onUploadFile}:
 // * 规则 4：编辑控件只对认领人自己显示（版主由后端兜底放行；state 暂无 board owner
 //   字段，前端只按 node owner 判——版主看他人节点为只读展示）。
 // * 规则 5：删除 = 删整棵子树；子树含他人认领节点后端拒 forbidden_mixed_ownership。
-function NodePanel({node, args, stages, statuses, callerUri, onAction, onShareArtifact, onUploadFile}: {
+function NodePanel({node, args, stages, statuses, callerUri, dropEntries = [], onAction, onShareArtifact, onUploadFile}: {
   node: Node
   args: Record<string, unknown>
   stages: string[]
   statuses: string[]
   callerUri?: string | null
+  // ㉕ 本节点适用的 drop 记录（自己或祖先被 drop 的理由+历史，KanbanDetail 算好传入）
+  dropEntries?: DropEntry[]
   onAction: Act
   onShareArtifact?: (name: string, url: string) => void
   onUploadFile?: UploadFn
@@ -376,12 +381,31 @@ function NodePanel({node, args, stages, statuses, callerUri, onAction, onShareAr
     else setUploadErr("上传失败，请重试")
   }
 
+  // ㉕ 已 drop 节点（自己或祖先被标）：面板显示 drop 理由 + 历史
+  const dropBanner = node.dropped ? (
+    <div className="rounded-md border border-destructive/40 bg-destructive/10 px-2 py-1.5 text-xs text-destructive" data-world-kanban-dropped>
+      <div className="font-semibold">已 drop：北极星指标不达标（跟踪标记，节点保留）</div>
+      {dropEntries.length > 0 && (
+        <ul className="mt-0.5 flex flex-col gap-0.5">
+          {dropEntries.map((d, i) => (
+            <li key={i}>
+              {d.reason || "（未填理由）"}
+              {d.by ? ` · @${d.by.split("/").pop()}` : ""}
+              {d.at ? ` · ${new Date(d.at).toLocaleString()}` : ""}
+            </li>
+          ))}
+        </ul>
+      )}
+    </div>
+  ) : null
+
   // 规则 2：未认领节点 = 空容器，只出「加子」「认领」，不显示任何其他属性/操作入口。
   if (unclaimed) {
     return (
       <div className="flex flex-col gap-2 text-sm" data-world-kanban-node-unclaimed>
         <div className="font-medium text-foreground">{node.title}</div>
         <div className="text-xs text-muted-foreground">{STATUS_ICON.unassigned} 未认领</div>
+        {dropBanner}
         <p className="text-xs text-muted-foreground">未认领节点没有属性。认领后才有阶段/状态/产物，才能编辑。</p>
         <div className="flex items-center gap-1.5">
           <Button type="button" size="sm" variant="secondary" title="给本节点加一个子节点（加完自动认领给你）" onClick={addChild}>
@@ -417,6 +441,7 @@ function NodePanel({node, args, stages, statuses, callerUri, onAction, onShareAr
         {node.stage && <span className="rounded bg-muted px-1 text-primary">{STAGE_LABEL[node.stage] || node.stage}</span>}
         {owner && <span>@{owner}{isMine ? "（我）" : ""}</span>}
       </div>
+      {dropBanner}
       {/* 两按钮：加子 / 取消认领（规则 3 toggle——自己的节点出「取消认领」；他人认领的不出按钮。
           有内容（附件/指标）后端拒 has_content_cannot_unclaim → 顶部横幅提示先清空。） */}
       <div className="flex items-center gap-1.5">
@@ -590,21 +615,51 @@ function NodePanel({node, args, stages, statuses, callerUri, onAction, onShareAr
           >
             <Trash2 className="h-3 w-3" /> 删除（含子树）
           </button>
-          <button
-            type="button"
-            className="inline-flex items-center gap-1 text-amber-600 hover:underline"
-            title="指标不达标→砍整个子树+反哺最近痛点"
-            onClick={() => {
-              const reason = window.prompt("drop 原因（指标不达标说明）")
-              if (reason !== null) onAction("kanban.drop_subtree", {...args, reason})
-            }}
-          >
-            <Scissors className="h-3 w-3" /> drop
-          </button>
+          {/* ㉕ drop = 非破坏跟踪标记：节点及子树标红保留，不删除；已标过的不再出按钮（幂等 no-op） */}
+          {!node.dropped && (
+            <button
+              type="button"
+              className="inline-flex items-center gap-1 text-destructive hover:underline"
+              title="标记北极星指标不达标：节点及整棵子树渲红色边框做跟踪，节点保留不删除"
+              onClick={() => {
+                const reason = window.prompt("drop 理由（哪个指标不达标、为什么）")
+                if (reason !== null) onAction("kanban.drop_subtree", {...args, reason})
+              }}
+            >
+              <Scissors className="h-3 w-3" /> drop（标记不达标，不删除）
+            </button>
+          )}
         </div>
       )}
     </div>
   )
+}
+
+// ㉕ drop 历史条目 → 人话（兼容两代形状：新 %{id, reason, at, by} 指向仍在树里的
+// 节点；旧 %{title, stage, count} 是 drop 还是删除时代的遗留历史）。
+function dropEntryLabel(d: DropEntry, tree: Tree): string {
+  if (d.id) {
+    const title = tree.nodes[d.id]?.title || d.id
+    const when = d.at ? new Date(d.at).toLocaleString() : null
+    const by = d.by ? `@${d.by.split("/").pop()}` : null
+    return [title, d.reason || "（未填理由）", by, when].filter(Boolean).join(" · ")
+  }
+  const stage = d.stage ? `[${STAGE_LABEL[d.stage] || d.stage}] ` : ""
+  return `${stage}${d.title || ""} · 砍 ${d.count ?? "?"} 节点${d.reason ? ` · ${d.reason}` : ""}`
+}
+
+// ㉕ 选中节点适用的 drop 记录：drop 标记打在整棵子树上，但历史条目只记子树根——
+// 沿 parent 链向上找「自己或祖先」的条目，即本节点被标红的理由与历史。
+function dropHistoryFor(tree: Tree, id: string | null): DropEntry[] {
+  if (!id) return []
+  const chain = new Set<string>()
+  let cur: string | null = id
+  let guard = 0
+  while (cur && !chain.has(cur) && guard++ < 10000) {
+    chain.add(cur)
+    cur = tree.nodes[cur]?.parent_id ?? null
+  }
+  return (tree.drops || []).filter((d) => !!d.id && chain.has(d.id))
 }
 
 // ㉗④「内容」产物编辑器：照 ExcalidrawModal 的模态形态（弹大框），最简 md
