@@ -112,7 +112,7 @@ defmodule Ezagent.Kind.Runtime do
 
   @spec handle_dispatch(Ezagent.Invocation.t(), slice_state(), module(), URI.t()) :: result()
   def handle_dispatch(
-        %Ezagent.Invocation{target: target, args: args, ctx: ctx} = _inv,
+        %Ezagent.Invocation{target: target, args: args, ctx: ctx, origin: origin} = _inv,
         state,
         kind_module,
         self_uri
@@ -139,7 +139,8 @@ defmodule Ezagent.Kind.Runtime do
       |> Map.put(:session_uri, derive_session_uri(target))
       |> Map.put(:slice_change_cursor, slice_change_cursor)
 
-    with {:ok, {behavior_name_atom, action}} <- Ezagent.URI.behavior_action(target),
+    with :ok <- Ezagent.DispatchOrigin.validate(origin, ctx),
+         {:ok, {behavior_name_atom, action}} <- Ezagent.URI.behavior_action(target),
          {:ok, behavior_module} <-
            Ezagent.Kind.BehaviorSet.resolve_action(kind_module, action, state),
          :ok <- instance_set_gate(behavior_module, kind_module, state, target, enriched_ctx),

@@ -4,7 +4,7 @@ defmodule Ezagent.Cap.DeliveryOutbox.Envelope do
   alias Ezagent.{Capability, Invocation}
   alias Ezagent.Cap.Delivery
 
-  @version 1
+  @version 2
   @delivery_actions [:absorb_cap, :revoke_cap]
   @keys [
     :authorization_rule,
@@ -12,6 +12,7 @@ defmodule Ezagent.Cap.DeliveryOutbox.Envelope do
     :cap,
     :caps,
     :op,
+    :presenter,
     :producer,
     :target_uri,
     :version
@@ -44,6 +45,7 @@ defmodule Ezagent.Cap.DeliveryOutbox.Envelope do
          op: op,
          cap: cap,
          caller: caller,
+         presenter: caller,
          caps: caps,
          authorization_rule: rule
        }}
@@ -74,7 +76,7 @@ defmodule Ezagent.Cap.DeliveryOutbox.Envelope do
       end
 
     ctx = %{
-      caller: envelope.caller,
+      caller: envelope.presenter,
       caps: MapSet.new(envelope.caps),
       reply: :ignore,
       cap_delivery_producer: envelope.producer,
@@ -96,7 +98,8 @@ defmodule Ezagent.Cap.DeliveryOutbox.Envelope do
         |> Ezagent.URI.with_action(:identity, envelope.op),
       mode: :cast,
       args: args,
-      ctx: ctx
+      ctx: ctx,
+      origin: :trusted_internal
     }
   end
 
@@ -196,6 +199,7 @@ defmodule Ezagent.Cap.DeliveryOutbox.Envelope do
            op: op,
            cap: %Capability{} = cap,
            caller: caller,
+           presenter: presenter,
            caps: caps,
            authorization_rule: rule
          },
@@ -207,7 +211,8 @@ defmodule Ezagent.Cap.DeliveryOutbox.Envelope do
 
     if producer == expected_producer and target_uri == delivery.target_uri and
          op == delivery.op and delivery.payload_version == @version and
-         payload_identity(cap) == delivery.payload_identity and valid_caller?(caller) and
+         payload_identity(cap) == delivery.payload_identity and caller == presenter and
+         valid_caller?(presenter) and
          Enum.all?(caps, &match?(%Capability{}, &1)) and (is_nil(rule) or is_atom(rule)) do
       :ok
     else

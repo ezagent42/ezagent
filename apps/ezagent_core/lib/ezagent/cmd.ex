@@ -47,7 +47,7 @@ defmodule Ezagent.Cmd do
   """
 
   @enforce_keys [:target, :action, :args, :ctx]
-  defstruct [:target, :action, :args, :ctx]
+  defstruct [:target, :action, :args, :ctx, origin: :trusted_internal]
 
   @type ctx :: %{
           required(:caller) => URI.t() | :vm_internal,
@@ -62,7 +62,8 @@ defmodule Ezagent.Cmd do
           target: URI.t(),
           action: atom(),
           args: map(),
-          ctx: ctx()
+          ctx: ctx(),
+          origin: Ezagent.DispatchOrigin.t()
         }
 
   @doc """
@@ -103,6 +104,7 @@ defmodule Ezagent.Cmd do
       target: target_uri,
       action: action,
       args: args,
+      origin: :trusted_internal,
       ctx:
         Map.merge(
           %{
@@ -115,5 +117,20 @@ defmodule Ezagent.Cmd do
           Map.put(ctx, :caller, caller)
         )
     }
+  end
+
+  @doc "Build an external command and overwrite any caller supplied by the request."
+  @spec authenticated_external(URI.t() | String.t(), atom(), map(), URI.t(), map()) :: t()
+  def authenticated_external(target, action, args, %URI{} = presenter, ctx \\ %{}) do
+    target
+    |> new(action, args, Map.put(ctx, :caller, presenter))
+    |> Map.put(:origin, :authenticated_external)
+  end
+
+  @doc "Build a command minted by reviewed framework code."
+  @spec trusted_internal(URI.t() | String.t(), atom(), map(), URI.t() | :vm_internal, map()) ::
+          t()
+  def trusted_internal(target, action, args, caller, ctx \\ %{}) do
+    new(target, action, args, Map.put(ctx, :caller, caller))
   end
 end

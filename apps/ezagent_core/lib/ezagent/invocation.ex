@@ -79,13 +79,14 @@ defmodule Ezagent.Invocation do
         }
 
   @enforce_keys [:target, :mode, :args, :ctx]
-  defstruct [:target, :mode, :args, :ctx]
+  defstruct [:target, :mode, :args, :ctx, origin: :trusted_internal]
 
   @type t :: %__MODULE__{
           target: URI.t(),
           mode: mode(),
           args: map(),
-          ctx: ctx()
+          ctx: ctx(),
+          origin: Ezagent.DispatchOrigin.t()
         }
 
   # --- dispatch ----------------------------------------------------------
