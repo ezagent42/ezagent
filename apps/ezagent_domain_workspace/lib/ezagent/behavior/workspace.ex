@@ -443,7 +443,8 @@ defmodule Ezagent.ActionSet.Workspace do
     workspace_uri = Map.get(ctx, :self_uri)
     members = ctx[:read].(:members, MapSet.new())
 
-    with :ok <- Members.validate_member_prefix(uri, workspace_uri),
+    with :ok <- refute_deleted_member(uri),
+         :ok <- Members.validate_member_prefix(uri, workspace_uri),
          :ok <- Members.ensure_member_kind_spawned(uri) do
       new_members = MapSet.put(members, uri)
 
@@ -452,6 +453,17 @@ defmodule Ezagent.ActionSet.Workspace do
           grant_member_create_session_cap_effects(workspace_uri, uri)
 
       {:ok, %{}, effects}
+    end
+  end
+
+  # task #180 fork-#3: a TOMBSTONED user must not be re-added as a member — that
+  # would grant a fresh `create_session` cap + re-spawn the User Kind, partially
+  # resurrecting a deleted identity. Fail-loud before any grant/spawn.
+  defp refute_deleted_member(%URI{} = uri) do
+    if Ezagent.URI.type?(uri, :user) and Ezagent.Users.deleted?(uri) do
+      {:error, :member_is_deleted}
+    else
+      :ok
     end
   end
 
@@ -609,32 +621,10 @@ defmodule Ezagent.ActionSet.Workspace do
   end
 
   # --- create_agent (unified CLI/LV agent provisioning) ---------------
-  #
-  # SPEC `docs/superpowers/specs/2026-05-25-agent-create-cli-gui-parity.md`.
-  # Runs inside the Workspace Kind GenServer. The handler:
-  #
-  #   1. coerces + validates args
-  #   2. resolves the source agent's config dir (if `--from` set) via
-  #      a SYNCHRONOUS `Invocation.dispatch/1` of `sandbox.read` (we
-  #      need the return value to build the template, so this can't
-  #      be expressed as a `:dispatch` effect).
-  #   3. dispatches per-flavor to either Template Class registration
-  #      (cc/echo/codex) or direct `SpawnRegistry.spawn` (curl/np/other).
-  #   4. returns the slice mutation as a `:set` effect on
-  #      `:session_templates` (for flavors that register a template).
-  #
-  # cc / echo / codex:  register a Workspace-scoped template → mutate slice →
-  #             persist via Store.update_templates → call
-  #             Ezagent.Workspace.Loader.invoke_template (Template Class
-  #             instantiates Agent Kind + PtyServer).
-  # curl / other: direct SpawnRegistry.spawn (the only allowlisted call
-  #             site for `entity://agent/` URIs per the invariant test
-  #             `agent_create_single_path_test.exs`).
-  # PR-3V (gt_1000 burn-down): the `:create_agent` provisioning machinery
-  # was extracted VERBATIM to `Ezagent.ActionSet.Workspace.AgentCreate`
-  # (a separate concern from the #685 member-CapBAC handlers). This engine
-  # callback stays here (the runtime dispatches by module) and delegates the
-  # full `with` chain body to `AgentCreate.handle_create_agent/2`.
+  # SPEC `2026-05-25-agent-create-cli-gui-parity.md`. Runs inside the Workspace
+  # Kind. PR-3V (gt_1000 burn-down): the machinery was extracted VERBATIM to
+  # `Ezagent.ActionSet.Workspace.AgentCreate`; this engine callback stays here
+  # (runtime dispatches by module) and delegates the full `with` chain to it.
   @doc "Provision an agent in the workspace (unified CLI/LV path): coerce/validate args, optionally read a `--from` source agent's config, and per-flavor either register a Template Class (cc/echo/codex) or directly `SpawnRegistry.spawn` (curl/np/other). Delegates the full chain to `Ezagent.ActionSet.Workspace.AgentCreate`."
   defdelegate handle_create_agent(args, ctx), to: Ezagent.ActionSet.Workspace.AgentCreate
 
@@ -955,10 +945,9 @@ defmodule Ezagent.ActionSet.Workspace do
   defp revoke_member_create_session_cap_effects(_workspace_uri, _member_uri), do: []
 
   # Shared cap shape for the add/remove pair: the workspace-scoped
-  # `:create_session` grant. `granted_by`/`granted_at` are OVERWRITTEN by
-  # the chokepoint (`Ezagent.Identity.Grant.prepare/4`) per the
-  # authorization tag, so the placeholder values here are inert (revoke
-  # matches by identity_key, which excludes `granted_at`/`granted_by`).
+  # `:create_session` grant. `granted_by`/`granted_at` are OVERWRITTEN by the
+  # chokepoint (`Ezagent.Identity.Grant.prepare/4`), so placeholders are inert
+  # (revoke matches by identity_key, excluding `granted_at`/`granted_by`).
   defp member_create_session_cap(%URI{scheme: "workspace"} = workspace_uri) do
     %Ezagent.Capability{
       kind: :workspace,

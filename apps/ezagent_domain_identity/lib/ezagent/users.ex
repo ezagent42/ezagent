@@ -412,6 +412,7 @@ defmodule Ezagent.Users do
         now = DateTime.utc_now()
         by = uri_to_str(deleted_by)
         normalized_reason = normalize_reason(reason)
+        row_uri = Ezagent.URI.new!(row.uri)
 
         result =
           row
@@ -423,19 +424,21 @@ defmodule Ezagent.Users do
             # timestamp/actor (delete requires a prior disable, so these are set).
             disabled_at: row.disabled_at || now,
             disabled_by: row.disabled_by || by,
-            disabled_reason: row.disabled_reason || normalized_reason,
-            # REVOKE durable authority in caps_json (see @doc step 1). Empty JSON
-            # array. NOT sufficient alone — the snapshot destroy below is required.
-            caps_json: encode_caps([])
+            disabled_reason: row.disabled_reason || normalized_reason
           })
           |> Repo.update()
 
         case result do
-          {:ok, updated} ->
+          {:ok, _updated} ->
+            # REVOKE durable authority (see @doc step 1) through the SANCTIONED
+            # EntityCaps chokepoint — NOT a raw `caps_json` write here (the
+            # cap-issue / raw-user-caps gates forbid new hand-rolled cap-column
+            # sites; every authority write goes through `UserStore`). Empty set.
+            _ = Ezagent.EntityCaps.UserStore.persist(row_uri, [])
             # Clear the Kind + snapshot so `activate/2`'s caps-union has nothing
             # to resurrect (see @doc step 2). Best-effort.
             _ = destroy_kind_best_effort(uri)
-            {:ok, decode(updated)}
+            {:ok, decode(Repo.get_by(__MODULE__, uri: row.uri))}
 
           {:error, _changeset} ->
             {:error, :not_found}

@@ -268,6 +268,35 @@ defmodule Ezagent.Integration.DisableDeleteUserDispatchTest do
     end
   end
 
+  describe "add_member rejects a tombstoned user (task #180 fork-#3)" do
+    test "a deleted user cannot be re-added as a workspace member", %{
+      ws_name: ws_name,
+      workspace_uri: workspace_uri,
+      admin_ctx: admin_ctx,
+      user_uri_str: user_uri_str
+    } do
+      user_uri = URI.new!(user_uri_str)
+
+      # Offboard: disable → delete.
+      {:ok, _} =
+        Workspace.disable_user(workspace_uri, %{user_uri: user_uri_str, reason: "off"}, admin_ctx)
+
+      assert {:ok, _} =
+               Workspace.delete_user(
+                 workspace_uri,
+                 %{user_uri: user_uri_str, reason: "gone"},
+                 admin_ctx
+               )
+
+      assert Users.deleted?(user_uri_str)
+
+      # Re-adding the tombstoned URI is refused fail-loud (would otherwise grant a
+      # fresh create_session cap + respawn the Kind — partial resurrection).
+      assert {:error, :member_is_deleted} = Workspace.add_member(ws_name, user_uri)
+      refute member?(ws_name, user_uri_str)
+    end
+  end
+
   defp member?(ws_name, user_str) do
     case Ezagent.Workspace.Store.get_by_name(ws_name) do
       %{members: members} when is_list(members) ->

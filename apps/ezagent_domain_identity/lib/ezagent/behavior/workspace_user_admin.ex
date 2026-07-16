@@ -468,11 +468,11 @@ defmodule Ezagent.ActionSet.WorkspaceUserAdmin do
   # alone is not a sufficient boundary for global identity destruction.
   # `disable_user` (reversible) intentionally does NOT carry this gate.
   defp ensure_genesis_admin(%URI{} = actor) do
-    if Ezagent.URI.stable_key(actor) == Ezagent.URI.stable_key(Ezagent.Entity.User.admin_uri()) do
-      :ok
-    else
-      {:error, :genesis_admin_only}
-    end
+    # `Ezagent.Identity.admin?/1` is the SANCTIONED genesis-admin recognizer
+    # (the cap-check-chokepoint gate forbids hand-rolled admin-URI equality
+    # outside the canonical admin-definition module). It resolves to the genesis
+    # admin only — a workspace-admin holding the delete_user cap is still rejected.
+    if Ezagent.Identity.admin?(actor), do: :ok, else: {:error, :genesis_admin_only}
   end
 
   # An operator MUST NOT disable/delete their OWN account — that is an
