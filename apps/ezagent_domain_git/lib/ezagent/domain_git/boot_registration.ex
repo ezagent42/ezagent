@@ -50,14 +50,13 @@ defmodule Ezagent.DomainGit.BootRegistration do
 
   @impl true
   def handle_info(:reconcile_adapters, state) do
-    Enum.each(state.desired_adapters, fn {id, module} ->
-      case AdapterRegistry.register(id, module) do
-        :ok -> :ok
-        {:ok, :already_registered} -> :ok
-      end
-    end)
+    case reconcile_adapters(state.desired_adapters, state) do
+      {:ok, reconciled_state} ->
+        {:noreply, reconciled_state}
 
-    {:noreply, state}
+      {:error, reason, reconciled_state} ->
+        {:stop, {:adapter_reconciliation_failed, reason}, reconciled_state}
+    end
   end
 
   defp register_all(registrations, fail_at) do
@@ -116,5 +115,29 @@ defmodule Ezagent.DomainGit.BootRegistration do
 
   defp owned_capabilities(owned) do
     Enum.filter(owned, &match?({:capability, _, _, _}, &1))
+  end
+
+  defp reconcile_adapters(desired_adapters, state) do
+    Enum.reduce_while(desired_adapters, {:ok, state}, fn {id, module}, {:ok, current_state} ->
+      declaration = {:adapter, id, module}
+
+      case AdapterRegistry.register(id, module) do
+        :ok ->
+          owned_adapters =
+            if declaration in current_state.owned_adapters do
+              current_state.owned_adapters
+            else
+              [declaration | current_state.owned_adapters]
+            end
+
+          {:cont, {:ok, %{current_state | owned_adapters: owned_adapters}}}
+
+        {:ok, :already_registered} ->
+          {:cont, {:ok, current_state}}
+
+        {:error, reason} ->
+          {:halt, {:error, reason, current_state}}
+      end
+    end)
   end
 end
