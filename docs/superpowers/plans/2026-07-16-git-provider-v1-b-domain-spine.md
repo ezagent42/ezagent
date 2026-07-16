@@ -266,13 +266,15 @@ Commit candidate: `test(git): issue exact receiver-bound task caps`
 3. Write an authorized test using only Task 7's signed receiver-bound artifact and
    assert one fake adapter receives the handler-constructed `OperationContext`.
 4. Add failing mismatch tests for wrong resource, workspace, repository, provider,
-   unsupported action, `head_ref != allowed_head_ref`, stale `expected_base_sha`,
+   unsupported action, `head_ref != allowed_head_ref`, invalid
+   `expected_base_sha`, adapter-reported stale base before provider-side mutation,
    and attempted caller-supplied context/provider/base-ref coordinates.
 5. Implement `use Ezagent.Lifecycle` ActionSet with validation before registry lookup
    and adapter invocation. Select the adapter exclusively from stored Resource policy;
    request repository data is comparison-only. Resolve the authoritative base ref
-   from stored policy, require exact normalized head-ref equality, and check the
-   expected base SHA concurrency assertion before lookup/effects.
+   from stored policy, require exact normalized head-ref equality, and validate the
+   expected base SHA shape before lookup. The adapter compares that assertion with
+   the dynamic remote base and returns `:stale_base` before provider-side mutation.
 6. Use one per-test synchronous probe ref. If a fake callback is entered it must trip
    adapter, HTTP, secret, and filesystem bomb sentinels before returning. Run non-async
    or with unique process/registry names, clean with `on_exit`, and synchronize with a
