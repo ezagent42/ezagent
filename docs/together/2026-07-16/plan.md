@@ -40,9 +40,7 @@
 - **今日**：① 从 main（含 #1425）起干净分支；② 把 #1374 里**独有的「认领式协作白板改版」**（去 gh + 普通用户全链 + 协作白板 UX）抽出、和 #1425 已有的分享/挂载/cap **去重**，重开一个**干净 PR**；③ 关闭 #1374 和 #1376。
 - **验收**：新 PR 不含 #1425 已有的 mount/share/cap 代码、只留协作白板独有改动、gate 绿；#1374/#1376 已关。
 
-## Allen — 部署 + 统筹
+## Allen — 部署 + 统筹 + dev-together 模板统一
 - 部署：beta/stable 用新 seed（`EZAGENT_SIGNING_SEED_V1`）人工晋级；确认 canary 已载昨日全量。
 - 统筹各条 track、清障、验收合并；cap-signing 严格化实现稍后再定投入（spec+plan 已在 `feat/cap-strict-capstore`）。
-
-## 工具/流程
-- **dev-together HTML 模板统一**：plan 与 review 用同一套模板/CSS（即 2026-07-15 `review.html` 的风格——蓝色 h1 下边线 + 蓝左边线 h2 + `.kpi`/`.big`/`.risk`/表格），dev-together skill 的 review/plan 生成步骤固化引用同一模板，避免再出现风格不一致。
+- **dev-together HTML 模板统一**：plan 与 review 用同一套模板/CSS（即 2026-07-15 `review.html` 的风格——蓝色 h1 下边线 + 蓝左边线 h2 + `.kpi`/`.big`/`.risk`/表格），并把 dev-together skill 的 review/plan 生成步骤固化引用同一模板，避免再出现风格不一致。

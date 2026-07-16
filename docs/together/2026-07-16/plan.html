@@ -87,15 +87,11 @@
 </ul>
 <p><span class="acc">验收</span>：新 PR 不含 #1425 已有的 mount/share/cap 代码、只留协作白板独有改动、gate 绿；#1374/#1376 已关。</p>
 
-<h2>Allen — 部署 + 统筹</h2>
+<h2>Allen — 部署 + 统筹 + dev-together 模板统一</h2>
 <ul>
 <li><b>部署</b>：beta/stable 用新 seed（<code>EZAGENT_SIGNING_SEED_V1</code>）人工晋级；确认 canary 已载昨日全量。</li>
 <li><b>统筹</b>各条 track、清障、验收合并；cap-signing 严格化实现稍后再定投入（spec+plan 已在 <code>feat/cap-strict-capstore</code>）。</li>
-</ul>
-
-<h2>工具/流程</h2>
-<ul>
-<li><b>dev-together HTML 模板统一</b>：plan 与 review 用同一套模板/CSS（即 2026-07-15 <code>review.html</code> 的风格——蓝色 h1 下边线 + 蓝左边线 h2 + <code>.kpi</code>/<code>.big</code>/<code>.risk</code>/表格），dev-together skill 的 review/plan 生成步骤固化引用同一模板，避免再出现风格不一致。</li>
+<li><b>dev-together HTML 模板统一</b>：plan 与 review 用同一套模板/CSS（即 2026-07-15 <code>review.html</code> 的风格——蓝色 h1 下边线 + 蓝左边线 h2 + <code>.kpi</code>/<code>.big</code>/<code>.risk</code>/表格），并把 dev-together skill 的 review/plan 生成步骤固化引用同一模板，避免再出现风格不一致。</li>
 </ul>
 
 <p style="margin-top:30px;color:#9ca3af;font-size:12px">对应 Markdown：<code>docs/together/2026-07-16/plan.md</code>。本 HTML 使用 dev-together 共享模板（同 review/plan 一套 CSS）。</p>
