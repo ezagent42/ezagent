@@ -16,7 +16,8 @@ defmodule Ezagent.ActionSet.Kanban do
         owner:     user_uri | nil,                      # 认领人; 既问责又是权限闸
         status:    :unassigned|:claimed|:doing|:done,   # 粗4态(细状态归外部工具)
         artifacts: [%{tool,kind,ref,url}],              # 挂工具产物(github PR/飞书文档/xmind…)
-        metrics:   [%{name,target,current,unit}]        # 挂指标(价值/运营节点)
+        metrics:   [%{name,target,current,unit}],       # 挂指标(价值/运营节点)
+        dropped:   boolean                              # ㉕ 非破坏 drop 标(标红跟踪,不删)
       }
 
   ## stage 链 = LAYER-2 DATA（taxonomy §4.1）
@@ -29,8 +30,10 @@ defmodule Ezagent.ActionSet.Kanban do
   ## 权限 = board_admin(版主) + 节点 owner（per-node，在 handler 内查；data_owner 是 per-instance）
   改一个节点 = `ctx.caller == node.owner` 或 caller 是 `board_admin`（本板 data_owner=版主，
   **或**全局 wildcard cap）——版主可编辑本板任何节点（C2）。加任何节点=自动认领给 caller
-  （H1，单根先行 H5）；退领需空（H3）；删=drop 子树，board_admin 兜底，否则子树须全「自己
-  认领或未认领」（H2）。**不变式**：`owner==nil ⟺ status==:unassigned`。
+  （H1，单根先行 H5）；退领需空（H3）；**删除**（remove_node）=级联删子树，规则5 授权：
+  board_admin 兜底，否则子树须全「自己认领或未认领」（H2）；**drop**（drop_subtree）=
+  非破坏跟踪标记（㉕）：子树标 `dropped: true` 不删，权限=节点认领人（版主兜底）。
+  **不变式**：`owner==nil ⟺ status==:unassigned`。
   """
 
   use Ezagent.Lifecycle
@@ -139,7 +142,8 @@ defmodule Ezagent.ActionSet.Kanban do
     returns: %{},
     caps: [:drop_subtree],
     modes: [:call],
-    description: "砍子树(指标不达标 drop)+ 记进图级别 drop 历史(:drops, 全图属性)"
+    description:
+      "drop=非破坏跟踪标记(北极星指标不达标)：节点及子树标 dropped(不删)+ 记图级 drop 历史(:drops,%{id,reason,at,by})；权限=节点认领人(版主兜底)"
   )
 
   action(:get_tree,
@@ -336,6 +340,9 @@ defmodule Ezagent.ActionSet.Kanban do
   end
 
   @doc false
+  # 删除=级联删子树，授权走 collab 规则5（原 drop 的整树校验，㉕ 后 drop 改跟踪标记、
+  # 规则5 移到这里）：board_admin（版主/wildcard）兜底可删任何；否则子树内每个节点须
+  # owner==caller 或未认领（未认领恒空谁都可删）；含他人已认领后代 → 挡（保护别人的活）。
   def handle_remove_node(%{id: id}, ctx) do
     t = tree(ctx)
 
@@ -343,8 +350,8 @@ defmodule Ezagent.ActionSet.Kanban do
       not Map.has_key?(t.nodes, id) ->
         {:error, :node_not_found}
 
-      not owner_or_admin?(ctx, t.nodes[id]) ->
-        {:error, :forbidden}
+      not subtree_removal_authorized?(ctx, t.nodes, id) ->
+        {:error, :forbidden_mixed_ownership}
 
       true ->
         new_nodes = Map.drop(t.nodes, subtree_ids(t.nodes, id))
@@ -354,7 +361,12 @@ defmodule Ezagent.ActionSet.Kanban do
   end
 
   @doc false
-  # drop 闭环（片8）：砍子树 + 反哺最近 pain 祖先记一笔（指标不达标→drop→回 pain 重选）。
+  # ㉕ drop = **非破坏跟踪标记**（北极星指标不达标时标红跟踪，不是删除）：
+  #   ① 不删节点/子树 —— 节点及整棵子树打 `dropped: true`（前端渲染红框）；
+  #   ② `:drops` 图级历史追加 `%{id, reason, at, by}`（理由+时间+操作者）；
+  #   ③ 权限 = 节点认领人（owner==caller），版主/wildcard 兜底（C2）——不再整树校验
+  #      （删除的整树校验留在 remove_node，规则5 不变）；
+  #   ④ 幂等：已 dropped 的节点重复 drop 是 no-op（不重复记历史）。
   def handle_drop_subtree(%{id: id} = args, ctx) do
     reason = to_string(Map.get(args, :reason, ""))
     t = tree(ctx)
@@ -363,38 +375,38 @@ defmodule Ezagent.ActionSet.Kanban do
       not Map.has_key?(t.nodes, id) ->
         {:error, :node_not_found}
 
-      # H2：删=drop 子树。board_admin（版主/wildcard）兜底可删任何；否则子树内每个节点
-      # 须 owner==caller 或未认领（未认领恒空谁都可删）；含他人已认领后代 → 挡（保护别人的活）。
-      not drop_authorized?(ctx, t.nodes, id) ->
-        {:error, :forbidden_mixed_ownership}
+      not owner_or_admin?(ctx, t.nodes[id]) ->
+        {:error, :forbidden}
+
+      # ④ 幂等：已标过的节点再 drop → no-op（树不变、历史不追加）。
+      node_dropped?(t.nodes[id]) ->
+        {:ok, %{dropped: 0}, []}
 
       true ->
-        node = t.nodes[id]
-        dropped = subtree_ids(t.nodes, id)
-        nodes1 = Map.drop(t.nodes, dropped)
-        new_root = if id == t.root_id, do: nil, else: t.root_id
+        marked = subtree_ids(t.nodes, id)
 
-        # drop 历史 = **图级别属性**（不挂某个节点）：任何棒 drop 都追加一条到 tree.drops。
+        nodes1 =
+          Enum.reduce(marked, t.nodes, fn nid, acc ->
+            Map.update!(acc, nid, &Map.put(&1, :dropped, true))
+          end)
+
+        # drop 历史 = **图级别属性**（不挂某个节点）：任何 drop 都追加一条到 tree.drops。
         # drops 归在 tree 里（跟 nodes/root_id 一样是 board 级数据），经唯一 commit/1 收敛——
         # 不另开 set-effect 站点（守 moduledoc「所有写动作经唯一 commit/1」约定）。
         drop_entry = %{
-          title: node.title,
-          stage: to_string(node.stage),
+          id: id,
           reason: reason,
-          count: length(dropped)
+          at: DateTime.utc_now(),
+          by: caller_str(ctx)
         }
 
-        {:ok, %{dropped: length(dropped)},
-         [
-           commit(%{
-             t
-             | nodes: nodes1,
-               root_id: new_root,
-               drops: Map.get(t, :drops, []) ++ [drop_entry]
-           })
-         ]}
+        {:ok, %{dropped: length(marked)},
+         [commit(%{t | nodes: nodes1, drops: Map.get(t, :drops, []) ++ [drop_entry]})]}
     end
   end
+
+  # 旧快照的节点没有 :dropped 键 —— 读取一律带默认 false。
+  defp node_dropped?(node), do: Map.get(node, :dropped, false)
 
   @doc false
   def handle_set_stage(%{id: id, stage: stage}, ctx) do
@@ -558,7 +570,11 @@ defmodule Ezagent.ActionSet.Kanban do
   @doc false
   def handle_get_tree(_args, ctx) do
     t = tree(ctx)
-    inner = %{nodes: t.nodes, root_id: t.root_id}
+
+    # ㉕ 投影带 dropped 标：旧快照节点没有 :dropped 键，投影统一补默认 false，
+    # 前端（红框渲染）拿到的每个节点都有确定的 dropped 布尔。
+    nodes = Map.new(t.nodes, fn {id, n} -> {id, Map.put_new(n, :dropped, false)} end)
+    inner = %{nodes: nodes, root_id: t.root_id}
     stages = Shared.stages(ctx)
     ci_stage = Shared.config_atom(ctx, :ci_stage, List.last(stages))
 
@@ -695,7 +711,9 @@ defmodule Ezagent.ActionSet.Kanban do
       owner: owner,
       status: status,
       artifacts: [],
-      metrics: []
+      metrics: [],
+      # ㉕ 非破坏 drop 标记（true = 北极星不达标被标红跟踪，节点仍在）。
+      dropped: false
     }
   end
 
@@ -736,8 +754,9 @@ defmodule Ezagent.ActionSet.Kanban do
 
   defp caller_str(ctx), do: Shared.caller_str(ctx)
 
-  # H2 drop 授权：board_admin 兜底可删任何；否则子树内每个节点须 owner==caller 或未认领。
-  defp drop_authorized?(ctx, nodes, id) do
+  # 规则5 删除授权（原 H2 drop 授权，㉕ 后归 remove_node）：board_admin 兜底可删任何；
+  # 否则子树内每个节点须 owner==caller 或未认领（含他人已认领后代 → 挡）。
+  defp subtree_removal_authorized?(ctx, nodes, id) do
     board_admin?(ctx) or
       (fn ->
          caller = caller_str(ctx)
