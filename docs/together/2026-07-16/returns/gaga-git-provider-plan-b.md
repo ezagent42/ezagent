@@ -54,6 +54,14 @@ promotes Plan A's tested prototype limits as operator-configurable, domain-owned
 defaults. This is documentation only and remains architecture-review-required; no
 Task 2 test, compile, precommit, CI, or readiness result is claimed.
 
+Task 2 review fixes further freeze non-raising pre-child config validation, fixed
+non-echoing unknown-field handling, exact URI/ref rules, upstream capture ownership
+for filesystem kind, and shared lowercase V1 SHA-1 validation. The proposed
+`ObjectId` rename was not selected because Plan A's exact `ChangeRequest.head_sha`
+field and approved `CommitSha` auxiliary name are frozen; the shared validator
+prevents a raw-string bypass. Re-review is still required before RED, and no Task 2
+test or production result is claimed.
+
 ## Deferred boundary
 
 GitHub plugin, credentials/tokens, checkout/worktrees, Kanban, canary, #1360,

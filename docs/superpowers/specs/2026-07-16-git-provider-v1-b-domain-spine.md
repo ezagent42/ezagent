@@ -193,7 +193,9 @@ credential, credential reference, Req/client, local path, or Cap field.
 Constructors validate closed enums, required fields, normalized repository-relative
 paths, non-empty refs, URI axes, configured file size/count limits, and UTF-8 content
 before dispatch reaches an adapter. Deletes, binary changes, rename/mode changes,
-symlinks, submodules, traversal, absolute paths, and `.git` paths are rejected.
+traversal, absolute paths, and `.git` paths are rejected by these values. Symlink
+and submodule rejection belongs to the upstream capture boundary, because a
+provider-neutral `FileChange` contains bytes and cannot inspect filesystem kind.
 
 ### 4.2 Review-required value construction and limit amendment
 
@@ -212,19 +214,24 @@ trusted structs. Validation failures never echo rejected values.
         | :invalid_file_change
         | :change_limit_exceeded
         | {:missing_field, atom()}
-        | {:unknown_fields, [atom()]}
+        | :unknown_fields
         | {:invalid_field, atom()}
 ```
 
-Non-map or non-atom-key input returns `:invalid_attributes`; a missing exact field
-returns `{:missing_field, field}`; unknown atom keys return
-`{:unknown_fields, sorted_fields}`; and an invalid field value returns
-`{:invalid_field, field}`. Unknown fields are sorted deterministically. This type is
-distinct from the frozen provider/adapter `Ezagent.DomainGit.Error.t()` in §10.
+Validation order is fixed and non-echoing: reject a non-map or any non-atom key as
+`:invalid_attributes` without converting keys; then reject any unknown atom key as
+`:unknown_fields`; then report missing static allowed fields in deterministic module
+field order as `{:missing_field, field}`; then validate values and return
+`{:invalid_field, field}`. Missing/invalid field names are static schema atoms only.
+This type is distinct from the frozen provider/adapter
+`Ezagent.DomainGit.Error.t()` in §10.
 
-`Ezagent.DomainGit.ChangeLimits.current/0` owns the V1 collection safety limits.
-It reads `Application.get_env(:ezagent_domain_git, :change_limits, defaults)` with
-these exact keys and defaults:
+`Ezagent.DomainGit.ChangeLimits` is a closed struct with exactly `max_files`,
+`max_file_bytes`, and `max_total_bytes`. Its `current/0` owns the V1 collection
+safety limits and has the contract
+`{:ok, t()} | {:error, :invalid_change_limits_config}`. It reads runtime
+`Application.get_env(:ezagent_domain_git, :change_limits, defaults)` with these
+exact keys and defaults:
 
 ```elixir
 %{max_files: 100, max_file_bytes: 1_000_000, max_total_bytes: 5_000_000}
@@ -232,24 +239,46 @@ these exact keys and defaults:
 
 Defaults apply only when the whole configuration is absent. An explicitly
 configured value with missing or unknown keys, or a non-positive/non-integer limit,
-is a deterministic startup/configuration error; it never silently falls back.
+returns `{:error, :invalid_change_limits_config}`; it never raises, uses a bang
+path, or silently falls back. `EzagentDomainGit.Application.start/2` calls
+`current/0` before starting children and returns that error unchanged.
 These defaults are promoted from Plan A's tested prototype into domain-owned V1
 safety defaults. Operators may configure them; invocation and agent payloads may
 not supply or override them.
 
-`FileChange.new/1` validates a single V1 UTF-8 regular-file `:upsert`, including
-the repository-relative path and kind exclusions above, but applies no collection
+`FileChange.new/1` validates a single V1 UTF-8 regular-file-byte `:upsert`, including
+the repository-relative path exclusions above, but applies no collection
 limit. `FileChange.validate_many/1` accepts only a non-empty list of already-built
 `FileChange` structs, loads `ChangeLimits.current/0` internally, and returns
-`:ok | {:error, :invalid_file_change | :change_limit_exceeded}`. Count uses list
-length; per-file and aggregate size use `byte_size/1`.
+`:ok | {:error, :invalid_file_change | :change_limit_exceeded |
+:invalid_change_limits_config}`. Count uses list length; per-file and aggregate size
+use `byte_size/1`. Invocation attributes named `kind`, `mode`, or any rename/delete
+axis are forbidden unknown fields and return `:unknown_fields`; `FileChange` does
+not add a `kind` field or claim to detect symlinks/submodules.
 
-URI-bearing constructors require `%URI{}` values and validate the non-empty required
-URI axes under the current URI contract; parsing strings into URIs is outside the
-constructors. `CommitSha.new/1` accepts exactly a 40-character hexadecimal SHA-1,
-with lowercase or uppercase hex digits. Ref fields use the provider-neutral,
-Plan-A-prototype-safe ref syntax; they reject empty refs and unsafe syntax without
-accepting provider payloads.
+URI-bearing constructors require `%URI{}` values; parsing strings is outside them.
+`RepositoryRef.repository_uri` is a canonical Ezagent `resource` URI of type
+`git-repository`. `OperationContext.task_access_uri` is a canonical `resource` URI
+of type `git-task-access`; its `caller_uri` and `grantee_uri` are canonical Ezagent
+`entity` URIs. All four carry the same nonempty workspace axis. `ChangeRequest.url`
+and a non-nil `Check.url` are absolute `http`/`https` `%URI{}` values with a
+nonempty host and nil `userinfo`; `Check.url` may be nil. Provider web URLs are not
+validated as Ezagent six-scheme URIs.
+
+The exact ref subset is ASCII, 1..255 bytes, begins with an alphanumeric byte, and
+otherwise permits only `A-Z`, `a-z`, `0-9`, `.`, `_`, `/`, and `-`. It rejects a
+`refs/` prefix; leading/trailing `/` or `.`; `//`, `..`, `@{`; control/space; Git
+forbidden `~^:?*[\\`; and any slash segment that is empty, `.`, `..`, dot-prefixed,
+ends in `.lock`, or ends in `.`. Accepted refs are preserved exactly, never
+normalized. This applies to `RepositoryRef.base_ref` and
+`CreateChangeRequest.head_ref`.
+
+V1 uses one shared `valid_sha1?/1`/constructor validation: exactly 40 ASCII hex
+characters. `CommitSha.new/1` normalizes accepted uppercase to lowercase in its
+frozen `%{value: String.t()}` shape. `ChangeRequest.new/1` validates its frozen raw
+`head_sha: String.t()` through the same helper and stores the normalized lowercase
+string. `CreateChangeRequest.expected_base_sha` must already be a constructed
+`CommitSha`. SHA-256 requires a future contract revision and cannot silently pass.
 
 ## 5. GitTaskAccess Resource
 
@@ -446,6 +475,9 @@ unregisters every binding created by that attempt and stops its children, leavin
 partial global ETS state. Tests cover child-start failure, Nth-binding failure,
 repeat start, registry restart, and complete cleanup. Provider adapter declaration
 follows the same all-or-nothing boot contract without executing adapter callbacks.
+Before any child is started, `EzagentDomainGit.Application.start/2` calls
+`ChangeLimits.current/0`; invalid explicit configuration returns
+`{:error, :invalid_change_limits_config}` without raising and with zero children.
 
 ## 12. Explicit non-goals
 
@@ -498,6 +530,12 @@ Task 2's `plan_a_contract_test.exs` will assert:
 8. `ChangeLimits.current/0` has the exact domain-owned defaults/config validation,
    and `FileChange.validate_many/1` alone enforces non-empty collection count,
    per-file bytes, and aggregate bytes without caller overrides.
+9. config validation is non-raising and runs before application children;
+   `validate_many/1` propagates `:invalid_change_limits_config`;
+10. URI axes/web-URL distinctions, the exact preserved ref subset, shared lowercase
+    SHA-1 normalization, and rejection of SHA-256 are enforced;
+11. FileChange has no kind/mode/rename/delete axes, and capture-time
+    symlink/submodule rejection is not falsely claimed by the value constructor.
 
 Task 3 will extend that gate and its shared fake-adapter suite to assert:
 
