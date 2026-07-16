@@ -13,6 +13,22 @@
 
 ---
 
+## §0 Allen 决策修订（2026-07-16，lead）— 覆盖下方优先级，请据此重排
+
+> 本节由 lead 直接补入，记录 Allen 对本计划 7 项产品决策的裁定。**下方 §2 优先级表与 §3 各缺口以本节为准重排**（ruihua 后续把细节对齐进各 G 段）。
+
+1. **workspace 创建 = admin 建后拉人（beta）。** founder 注册即得 workspace 仍作为**任务**保留，但**降为非 P0（backlog）**。→ **G1（注册开关）/G2（邀请码 UI）/G3（workspace 创建 UI）自助闸门整体移出 beta 的 P0**（beta 用 admin 手动开通+拉人）。
+2. **每用户 own ≤1 workspace，可被加入多个。** → G3 收敛为「文档化单-own 行为」，不做多-workspace 创建 UI。
+3. **Agent/Key 模型 = 托管 agent（不是让外部企业自带 key）。** 路线：「一个 agent 服务多企业」，**实施上每个企业 workspace 里放一个 agent 分身（fork/clone），后端数据关联到共享的真·服务 agent**（保持每-workspace 独立 agent 实体、不破跨-workspace 隔离；底层共享）。→ **这是一条新的架构主线**（对接 agent-clone / domain.agent 原语 + cap-signing 的凭证归属），应单列，不再是「founder 自配自己的 key」那种 BYOK 形态。BYOK/登录仅用于**内部开发者**。
+4. **G4 不做 stub_grant，等 cap-signing 落地**（cap-signing 已 SOUND、7 轮评审通过、实现排期中）→ founder key 配置走正式 cap 路径。
+5. **G1/G2 是 UI 缺口，机制已存在。** 后端 `registration_open` + `registration_require_invite` + `invite_code` + `mix ezagent.invite` **均已实现**——缺的只是开关 UI / 邀请 UI / 关门页出口，**机制不用重造**。beta 用**邀请制**。
+6. **G5 = 建面向用户的可行动失败态 surface（"缺 key，找 admin"）。** 现状：`credential_status` 只面向 owner/admin，终端用户只得通用道歉；**没有通用可配置的用户侧报错机制**。→ G5 顺带做成**通用可配置错误机制**（把结构化失败态透给用户）更有价值。
+7. **beta 范围 = admin 手动开通 + 只验「配 key → agent 回复」核心价值闭环。** 与 ezagent 现有的开发自举一致——beta = 把自举那条路对外 dogfood 一遍，复用同一套机制、不新造。
+
+**重排后的 beta P0 实质** = 决策 6 的最小闭环（admin 开通 → 配 key〔待 cap-signing〕→ agent 回复）；G1/G2/G3 自助化推到「真要规模化自助」阶段；决策 3 的托管-分身架构单独立项。
+
+---
+
 ## §1 用户画像与场景前提
 
 | 维度 | 定义 |
