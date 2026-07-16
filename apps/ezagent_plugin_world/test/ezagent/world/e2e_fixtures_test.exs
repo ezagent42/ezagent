@@ -13,6 +13,12 @@ defmodule Ezagent.World.E2EFixturesTest do
     assert File.read!(@fixture_path) == E2EFixtures.manifest_json()
   end
 
+  test "generated JSON recursively sorts object keys across OTP versions" do
+    ordered_manifest = Jason.decode!(E2EFixtures.manifest_json(), objects: :ordered_objects)
+
+    assert_sorted_object_keys(ordered_manifest)
+  end
+
   test "Tier-1 family matrix is projected from registered layout slots" do
     families = E2EFixtures.fixture_families()
 
@@ -37,4 +43,20 @@ defmodule Ezagent.World.E2EFixturesTest do
     assert "chat.send" in DispatchContract.accepted_actions()
     assert "sessions.join" in DispatchContract.accepted_actions()
   end
+
+  defp assert_sorted_object_keys(%Jason.OrderedObject{values: values}) do
+    keys = Enum.map(values, fn {key, _value} -> key end)
+
+    assert keys == Enum.sort(keys)
+
+    for {_key, value} <- values do
+      assert_sorted_object_keys(value)
+    end
+  end
+
+  defp assert_sorted_object_keys(values) when is_list(values) do
+    Enum.each(values, &assert_sorted_object_keys/1)
+  end
+
+  defp assert_sorted_object_keys(_value), do: :ok
 end

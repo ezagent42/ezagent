@@ -125,7 +125,12 @@ defmodule Ezagent.World.E2EFixtures do
 
   @doc "Pretty JSON with a trailing newline, matching the checked-in file."
   @spec manifest_json() :: String.t()
-  def manifest_json, do: Jason.encode!(manifest(), pretty: true) <> "\n"
+  def manifest_json do
+    manifest()
+    |> canonical_json()
+    |> Jason.encode!(pretty: true)
+    |> Kernel.<>("\n")
+  end
 
   @doc "Fixture names and their production renderer families."
   @spec fixture_families() :: %{String.t() => atom()}
@@ -134,6 +139,19 @@ defmodule Ezagent.World.E2EFixtures do
       {name, SlotRegistry.renderer_family(slot_type)}
     end)
   end
+
+  defp canonical_json(%{} = map) do
+    map
+    |> Enum.map(fn {key, value} -> {key, canonical_json(value)} end)
+    |> Enum.sort_by(fn {key, _value} -> to_string(key) end)
+    |> Jason.OrderedObject.new()
+  end
+
+  defp canonical_json(list) when is_list(list) do
+    Enum.map(list, &canonical_json/1)
+  end
+
+  defp canonical_json(value), do: value
 
   defp fixture(slot_type, state) do
     slot = SlotRegistry.slot(slot_type) || raise "unregistered E2E fixture slot: #{slot_type}"
