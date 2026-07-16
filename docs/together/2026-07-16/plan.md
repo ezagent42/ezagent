@@ -43,3 +43,6 @@
 ## Allen — 部署 + 统筹
 - 部署：beta/stable 用新 seed（`EZAGENT_SIGNING_SEED_V1`）人工晋级；确认 canary 已载昨日全量。
 - 统筹各条 track、清障、验收合并；cap-signing 严格化实现稍后再定投入（spec+plan 已在 `feat/cap-strict-capstore`）。
+
+## 工具/流程
+- **dev-together HTML 模板统一**：plan 与 review 用同一套模板/CSS（即 2026-07-15 `review.html` 的风格——蓝色 h1 下边线 + 蓝左边线 h2 + `.kpi`/`.big`/`.risk`/表格），dev-together skill 的 review/plan 生成步骤固化引用同一模板，避免再出现风格不一致。
