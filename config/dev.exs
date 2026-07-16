@@ -13,6 +13,11 @@ config :ezagent_web, :world_host_scope, nil
 config :ezagent_web, EzagentWeb.Mailer, adapter: Swoosh.Adapters.Local
 config :ezagent_plugin_email, Ezagent.Email.Mailer, adapter: Swoosh.Adapters.Local
 
+# ⑮(2026-07-16 手动测试)——dev 下确认信/验证链接的域名要指本地 dev server,
+# 不是生产 app.ezagent.chat(config.exs 的 prod 默认):dev 用户点信里的链接才打得开。
+# 注意:runtime.exs 只在 EZAGENT_PUBLIC_HOST 显式设置(或 prod)时才覆盖此值。
+config :ezagent_plugin_email, :verification_base_url, "http://localhost:10042"
+
 config :ezagent_core, EzagentCore.Repo,
   username: System.get_env("POSTGRES_USER", "ezagent_pg_compat"),
   password: System.get_env("POSTGRES_PASSWORD", "ezagent_pg_compat"),

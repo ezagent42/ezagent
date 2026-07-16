@@ -57,7 +57,13 @@ config :ezagent_domain_session,
   public_host: public_host,
   public_port: public_port
 
-config :ezagent_plugin_email, :verification_base_url, public_origin
+# ⑮ runtime.exs 在 dev.exs 之后执行——无条件写会用 EZAGENT_PUBLIC_HOST 的默认值
+# (app.ezagent.chat)冲掉 dev.exs 的本地覆盖(http://localhost:10042),dev 用户
+# 点确认信链接打不开。只在显式给了 EZAGENT_PUBLIC_HOST(操作者明确要求)或 prod
+# (公网域名是该环境的正解)时覆盖;dev 缺省保 dev.exs 的本地值。
+if System.get_env("EZAGENT_PUBLIC_HOST") || config_env() == :prod do
+  config :ezagent_plugin_email, :verification_base_url, public_origin
+end
 
 # The block below contains prod specific runtime configuration.
 if config_env() == :prod do
