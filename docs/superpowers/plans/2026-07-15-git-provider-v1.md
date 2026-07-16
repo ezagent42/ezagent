@@ -22,15 +22,22 @@
 
 ## Plan A — Security prerequisites and W29 transport decision
 
-**Status:** executable now.
+**Status:** evidence complete; architecture/security review pending.
 
 **Outcome:** approved secret-use interface, SSH parser decision, demonstrated broker isolation or explicit SSH NO-GO, and a tested choice between generic SSH transport and public-checkout + GitHub API commit transport.
 
-**Stop condition:** no later plan begins until Plan A has an approved GO decision and concrete interface names/files.
+**Decision:** public anonymous checkout plus GitHub Git Data API is GO for
+downstream planning. Secret backend, SSH parser, and SSH broker isolation are
+NO-GO. Exact evidence and interfaces are in
+`docs/superpowers/specs/2026-07-16-git-provider-v1-a-decisions.md`.
+
+**Stop condition:** Plan B may be written after review approves the decision
+spec. Production GitHub OAuth/API work remains blocked on an approved encrypted
+token backend; SSH/private checkout remains blocked.
 
 ## Plan B — Git Domain spine
 
-**Status:** gated by Plan A; write after its interface decision.
+**Status:** eligible to write after Plan A architecture/security review.
 
 **Scope:** exact Resource Kinds/Lifecycle, provider-neutral structs/errors, Behavior actions, Router/CapabilityRegistry registration, adapter plugin declaration/boot rollback, persistence, current signed Cap issuance/self-store/verify/revoke, and unauthorized-no-effect invariants.
 
@@ -38,7 +45,7 @@
 
 ## Plan C — Transport and workspace provisioning
 
-**Status:** gated by Plans A and B.
+**Status:** gated by Plan B; public anonymous checkout only.
 
 **Scope:** implement only the transport approved by Plan A, durable provision state, deterministic per-generation worktree, lease/CAS/reaper/start token, and a provider-neutral pre-start prerequisite port owned outside `plugin_cc`.
 
@@ -46,7 +53,7 @@
 
 ## Plan D — GitHub plugin
 
-**Status:** gated by Plans A–C.
+**Status:** gated by Plans B–C and an approved encrypted token backend.
 
 **Scope:** OAuth authorize/callback with state/PKCE/session binding/replay protection, opaque token secret reference, refresh/revoke/disconnect, Req adapter, repository access, GitHub API transport if selected, pull request and head-CI reads.
 
@@ -54,7 +61,7 @@
 
 ## Plan E — Product UX, Kanban projection, and canary acceptance
 
-**Status:** gated by Plan D.
+**Status:** gated by Plan D; SSH identity UI excluded while SSH prerequisites are NO-GO.
 
 **Scope:** SSH identity import/generation UI if SSH transport was approved, GitHub connection UI, provider-neutral fact relay, Kanban detailed artifact projection while preserving its four-state core, agent-browser evidence, and dev-together return.
 

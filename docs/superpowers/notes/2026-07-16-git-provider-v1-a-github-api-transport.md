@@ -12,11 +12,11 @@ added.
 repository/ref metadata. It produces this ordered request plan:
 
 ```text
-GET base ref -> POST blobs -> POST tree -> POST commit -> POST ref -> POST pull
+GET base ref -> GET base commit/tree -> POST blobs -> POST tree -> POST commit -> POST ref -> POST pull
 ```
 
-The plan contains paths, request bodies, the expected base SHA, and a replay
-idempotency key. It contains no authorization header, token, or credential
+The plan contains paths, request bodies, the expected base SHA, and a
+deterministic attempt key. It contains no authorization header, token, or credential
 field. A local interpreter receives the sentinel authentication separately and
 returns only:
 
@@ -37,7 +37,7 @@ The executable prototype covers:
 - symlink and submodule changes are rejected;
 - file count, per-file bytes, and total bytes are bounded;
 - base SHA compare-before-write and strict base/head ref validation;
-- deterministic replay behavior from the idempotency key;
+- deterministic local planning/result behavior from the attempt key;
 - sanitized partial failures with no credential/header/raw-response leakage;
 - absence of authorization and sentinel material from the request plan.
 
@@ -70,6 +70,10 @@ Observed result:
 This is a pure local fake. It does not claim GitHub API compatibility until Plan
 D replaces it with a Req-backed GitHub plugin and contract tests against the
 approved provider boundary.
+
+It also does not prove provider-side replay idempotency. Plan D must persist an
+attempt ledger, look up the deterministic head branch/change request, reconcile
+partial success, and normalize ref/PR conflicts before retrying provider effects.
 
 ## Limitations
 

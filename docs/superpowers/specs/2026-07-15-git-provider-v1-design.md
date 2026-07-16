@@ -1,6 +1,6 @@
 # Git provider V1: Entity SSH identity, provider plugins, and task workspaces
 
-**Status:** proposed for lead review
+**Status:** Plan A evidence complete; downstream design narrowed pending review
 
 **Date:** 2026-07-15
 
@@ -31,6 +31,24 @@ operation in V1.
 
 This design does not change the current W29 honesty label: the demo path remains
 **loose-coupled, not the final mount; #1360 Layer B is still pending**.
+
+### 1.1 Plan A evidence update (2026-07-16)
+
+Plan A selected the narrow W29 route documented in
+`2026-07-16-git-provider-v1-a-decisions.md`:
+
+- encrypted secret backend: **NO-GO** (absent);
+- SSH private-key parser: **NO-GO** (absent);
+- agent-inaccessible SSH broker isolation: **NO-GO** (same-UID exposure
+  reproduced);
+- public anonymous checkout plus GitHub Git Data API change-request transport:
+  **GO for downstream planning**, backed by a pure local contract prototype.
+
+Therefore the Entity SSH Identity and generic SSH broker sections below remain
+the provider-neutral target design, not an authorized W29 implementation. No
+private-key import/generation UI, SSH transport, or private-repository checkout
+may be implemented from this document until the missing prerequisites receive
+their own approved design and executable evidence.
 
 ## 2. Goals and non-goals
 
@@ -367,15 +385,15 @@ authorization and normalized change-request contract:
    that a same-host agent cannot read, reuse, or observe credential material. The
    current `Ezagent.Runtime.OsProcess` process-group lifecycle alone is not that
    isolation boundary.
-2. **GitHub API commit transport** is a W29 acceleration candidate: for a public
+2. **GitHub API commit transport** is the selected W29 strategy: for a public
    repository, the workspace may clone without credentials; after the agent
    produces a bounded diff, the GitHub plugin can use the credential owner's
    OAuth token to create Git objects, a branch, and a pull request without
    placing a Git credential in the agent or workspace.
 
-The prerequisite plan must prototype and choose the permitted strategy. A
-NO-GO for SSH isolation does not authorize a temporary key-file workaround. The
-GitHub API strategy, if chosen, is explicitly GitHub-specific and does not replace
+Plan A reproduced the shared-UID exposure and selected the GitHub API strategy.
+The SSH path is NO-GO and does not authorize a temporary key-file workaround. The
+GitHub API strategy is explicitly GitHub-specific and does not replace
 the later provider-neutral SSH transport. Private-repository checkout remains
 blocked until an approved authenticated checkout strategy exists.
 
@@ -403,8 +421,8 @@ agent dispatches to the pre-existing GitTaskAccess Resource
   -> Router verifies the instance/action cap once at the dispatch chokepoint,
      before the handler runs or any effect is produced/executed
   -> derive credential owner and provider binding from governed task state
-  -> verify SSH identity and repository permissions
-  -> clone/fetch repository cache as platform infrastructure
+  -> verify repository visibility and provider permissions
+  -> anonymously clone/fetch the approved public repository cache as platform infrastructure
   -> create a task-specific branch/worktree
   -> verify project_cwd exists and matches the task
   -> CAS provision state to ready
@@ -566,29 +584,34 @@ V1 is delivered through five separately reviewed plans:
 5. **E — product acceptance:** settings, Kanban fact projection, agent-browser
    evidence, and lead-authorized merge/done.
 
-Only Plan A is executable before its evidence is approved. Plans B–E are written
-one at a time after their consumed interfaces exist. No implementation estimate
-is accepted before Plan A resolves the secret backend and transport boundary; a
-NO-GO creates a separate prerequisite design rather than silently expanding or
-weakening a later task.
+Plan A evidence is complete and its exact downstream interfaces are recorded in
+`2026-07-16-git-provider-v1-a-decisions.md`. Plan B becomes eligible to write
+after architecture/security review approves that decision. Plans C–E are written
+one at a time after their consumed interfaces exist. SSH and self-service secret
+storage remain separate prerequisite designs; their NO-GO does not silently
+expand or weaken a later task.
 
 ## 12. Relationship to the W29 first closed loop
 
 The W29 P0 demo does not wait for the whole self-service V1. Its transport is
 selected by the prerequisite security gate:
 
-- if generic SSH broker isolation is proven, it may use a test user's safely
-  provisioned SSH identity and GitHub OAuth binding through that broker;
-- otherwise, for an authorized public repository, it may use anonymous checkout
-  plus the GitHub API commit/branch/pull-request strategy;
-- if neither path is proven, it stops honestly at the generated workspace diff
-  and records the transport blocker.
+- for an authorized public repository, it may use anonymous checkout plus the
+  GitHub API commit/branch/pull-request strategy after the remaining GitHub token
+  backend and OAuth prerequisites are approved;
+- generic SSH transport and private-repository checkout remain blocked;
+- until the GitHub credential prerequisites are implemented and proven, it
+  stops honestly at the generated workspace diff and records the blocker.
 
 The evidence must state which self-service pieces are absent. It must not place
 a test token/private key in the agent, use raw RPC/eval/live-DB mutation, grant
 wildcard caps, deploy, or merge without lead authorization.
 
-## 13. Acceptance criteria
+## 13. Target product acceptance criteria
+
+These are the eventual provider V1 criteria, not claims made by Plan A. Items
+that depend on encrypted secret storage, SSH parsing, broker isolation, or
+private checkout are currently blocked by §1.1.
 
 - A user can generate or import a supported SSH private key.
 - Invalid/unsupported imports return redacted errors and preserve the old active

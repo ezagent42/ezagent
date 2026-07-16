@@ -1,4 +1,4 @@
-defmodule GithubGitDataPlan do
+defmodule Ezagent.TestSupport.GithubGitDataPlan do
   @moduledoc """
   Test-only pure request planner and local interpreter for a GitHub Git Data
   change request. It performs no HTTP and never accepts authentication in the
@@ -10,10 +10,15 @@ defmodule GithubGitDataPlan do
   @default_max_total_bytes 5_000_000
   @sha_pattern ~r/\A[0-9a-f]{40}\z/
   @ref_pattern ~r/\A[A-Za-z0-9][A-Za-z0-9._\/-]*\z/
+  @coordinate_pattern ~r/\A[A-Za-z0-9][A-Za-z0-9._-]*\z/
+  @operations [:base_ref, :base_commit, :blob, :tree, :commit, :ref, :pull]
 
   @spec build([map()], keyword()) :: {:ok, [map()]} | {:error, term()}
   def build(changes, opts) when is_list(changes) and is_list(opts) do
     with :ok <- validate_required_opts(opts),
+         :ok <- validate_coordinate(Keyword.fetch!(opts, :owner), :invalid_owner),
+         :ok <-
+           validate_coordinate(Keyword.fetch!(opts, :repository), :invalid_repository),
          :ok <- validate_ref(Keyword.fetch!(opts, :base_ref), :invalid_base_ref),
          :ok <- validate_ref(Keyword.fetch!(opts, :head_ref), :invalid_head_ref),
          :ok <- validate_sha(Keyword.fetch!(opts, :base_sha)),
@@ -39,7 +44,8 @@ defmodule GithubGitDataPlan do
         {:error, :base_sha_mismatch}
 
       fail_at = Keyword.get(opts, :fail_at) ->
-        {:error, {:provider_request_failed, fail_at, 502}}
+        operation = if fail_at in @operations, do: fail_at, else: :unknown
+        {:error, {:provider_request_failed, operation, 502}}
 
       true ->
         idempotency_key =
@@ -78,12 +84,14 @@ defmodule GithubGitDataPlan do
 
   defp validate_ref(ref, error)
        when is_binary(ref) and ref != "" do
-    segments = String.split(ref, "/")
+    segments = :binary.split(ref, "/", [:global])
 
     if Regex.match?(@ref_pattern, ref) and
          not String.starts_with?(ref, "refs/") and
          not String.ends_with?(ref, "/") and
+         not String.ends_with?(ref, ".") and
          not String.contains?(ref, "//") and
+         not String.contains?(ref, "..") and
          Enum.all?(segments, &valid_ref_segment?/1) do
       :ok
     else
@@ -93,8 +101,16 @@ defmodule GithubGitDataPlan do
 
   defp validate_ref(_ref, error), do: {:error, error}
 
+  defp validate_coordinate(value, error) when is_binary(value) do
+    if Regex.match?(@coordinate_pattern, value), do: :ok, else: {:error, error}
+  end
+
+  defp validate_coordinate(_value, error), do: {:error, error}
+
   defp valid_ref_segment?(segment) do
-    segment not in ["", ".", ".."] and not String.ends_with?(segment, ".lock")
+    segment not in ["", ".", ".."] and
+      not String.starts_with?(segment, ".") and
+      not String.ends_with?(segment, ".lock")
   end
 
   defp validate_sha(sha) when is_binary(sha) do
@@ -131,7 +147,7 @@ defmodule GithubGitDataPlan do
 
   defp valid_regular_change?(%{path: path, content: content, kind: :regular})
        when is_binary(path) and is_binary(content) do
-    valid_path?(path)
+    valid_path?(path) and String.valid?(content)
   end
 
   defp valid_regular_change?(_change), do: false
@@ -139,10 +155,21 @@ defmodule GithubGitDataPlan do
   defp valid_path?(path) do
     segments = Path.split(path)
 
-    Path.type(path) == :relative and
+    String.valid?(path) and
+      not control_byte?(path) and
+      Path.type(path) == :relative and
       path != "" and
+      not String.starts_with?(path, "/") and
+      not String.ends_with?(path, "/") and
+      not String.contains?(path, "//") and
       not String.contains?(path, "\\") and
       Enum.all?(segments, &(&1 not in ["", ".", "..", ".git"]))
+  end
+
+  defp control_byte?(value) do
+    value
+    |> :binary.bin_to_list()
+    |> Enum.any?(&(&1 < 32 or &1 == 127))
   end
 
   defp change_error(%{kind: kind}) when kind in [:symlink, :submodule],
@@ -167,6 +194,12 @@ defmodule GithubGitDataPlan do
       expected_sha: base_sha
     }
 
+    base_commit_request = %{
+      method: :get,
+      operation: :base_commit,
+      path: "#{root}/git/commits/#{base_sha}"
+    }
+
     blob_requests =
       Enum.map(changes, fn change ->
         mutation(:blob, "#{root}/git/blobs", idempotency_key, %{
@@ -182,7 +215,7 @@ defmodule GithubGitDataPlan do
 
     tail = [
       mutation(:tree, "#{root}/git/trees", idempotency_key, %{
-        base_tree: {:base_commit_tree, base_sha},
+        base_tree: {:result, :base_commit, :tree_sha},
         tree: tree_entries
       }),
       mutation(:commit, "#{root}/git/commits", idempotency_key, %{
@@ -202,7 +235,7 @@ defmodule GithubGitDataPlan do
       })
     ]
 
-    [base_request | blob_requests] ++ tail
+    [base_request, base_commit_request] ++ blob_requests ++ tail
   end
 
   defp mutation(operation, path, idempotency_key, body) do

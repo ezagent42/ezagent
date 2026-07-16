@@ -1,7 +1,7 @@
 defmodule Ezagent.Security.GithubApiCommitTransportTest do
   use ExUnit.Case, async: true
 
-  alias GithubGitDataPlan, as: Plan
+  alias Ezagent.TestSupport.GithubGitDataPlan, as: Plan
 
   @sentinel "EZAGENT_SECRET_SENTINEL_DO_NOT_SHIP"
   @base_sha String.duplicate("a", 40)
@@ -11,6 +11,7 @@ defmodule Ezagent.Security.GithubApiCommitTransportTest do
 
     assert Enum.map(request_plan, &{&1.method, &1.operation}) == [
              {:get, :base_ref},
+             {:get, :base_commit},
              {:post, :blob},
              {:post, :tree},
              {:post, :commit},
@@ -35,6 +36,10 @@ defmodule Ezagent.Security.GithubApiCommitTransportTest do
     for change <- [
           %{path: "../secret", content: "x", kind: :regular},
           %{path: "/absolute", content: "x", kind: :regular},
+          %{path: "safe//file", content: "x", kind: :regular},
+          %{path: "safe\0file", content: "x", kind: :regular},
+          %{path: <<"safe", 255>>, content: "x", kind: :regular},
+          %{path: "binary", content: <<255>>, kind: :regular},
           %{path: "safe", content: "x", kind: :symlink},
           %{path: "safe", content: "x", kind: :submodule}
         ] do
@@ -56,9 +61,17 @@ defmodule Ezagent.Security.GithubApiCommitTransportTest do
              )
   end
 
-  test "rejects invalid refs and detects a changed base sha" do
-    assert {:error, :invalid_head_ref} =
-             Plan.build(valid_changes(), valid_opts(head_ref: "refs/heads/../../main"))
+  test "rejects invalid coordinates and refs, and detects a changed base sha" do
+    for overrides <- [
+          [owner: "../other"],
+          [repository: "repo/other"],
+          [head_ref: "refs/heads/../../main"],
+          [head_ref: "feature..lock"],
+          [head_ref: "feature."],
+          [head_ref: "feature/.hidden"]
+        ] do
+      assert {:error, _reason} = Plan.build(valid_changes(), valid_opts(overrides))
+    end
 
     assert {:ok, request_plan} = Plan.build(valid_changes(), valid_opts())
 
@@ -69,7 +82,7 @@ defmodule Ezagent.Security.GithubApiCommitTransportTest do
              )
   end
 
-  test "replay is idempotent and partial failures expose no auth or raw response" do
+  test "local replay is deterministic and partial failures are allowlisted and redacted" do
     assert {:ok, request_plan} = Plan.build(valid_changes(), valid_opts())
 
     assert {:ok, first} = Plan.interpret(request_plan, auth: @sentinel)
@@ -90,6 +103,9 @@ defmodule Ezagent.Security.GithubApiCommitTransportTest do
     refute inspect(error) =~ @sentinel
     refute inspect(error) =~ "upstream internal response"
     refute inspect(error) =~ "authorization"
+
+    assert {:error, {:provider_request_failed, :unknown, 502}} =
+             Plan.interpret(request_plan, auth: @sentinel, fail_at: %{token: @sentinel})
   end
 
   defp valid_changes, do: [regular("docs/demo.md", "demo\n")]
