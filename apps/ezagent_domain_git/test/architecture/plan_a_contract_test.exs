@@ -61,34 +61,47 @@ defmodule EzagentDomainGit.Architecture.PlanAContractTest do
     end
   end
 
-  test "provider error source contains the exact frozen union and validation stays separate" do
+  test "provider error typespec is the exact frozen union and extra members are detected" do
     source = File.read!(Path.expand("../../lib/ezagent/domain_git/error.ex", __DIR__))
+    {:ok, ast} = Code.string_to_quoted(source)
+    actual = ast |> type_rhs!(:t) |> union_strings()
 
-    atom_members = [
-      :provider_account_not_connected,
-      :credential_backend_unavailable,
-      :repository_not_found,
-      :repository_read_denied,
-      :repository_write_denied,
-      :private_checkout_not_supported,
-      :base_ref_not_found,
-      :base_sha_mismatch,
-      :invalid_ref,
-      :invalid_file_change,
-      :change_limit_exceeded,
-      :change_request_conflict,
-      :checks_unavailable,
-      :provider_unavailable,
-      :authentication_rejected
-    ]
+    expected =
+      quote do
+        :provider_account_not_connected
+        | :credential_backend_unavailable
+        | :repository_not_found
+        | :repository_read_denied
+        | :repository_write_denied
+        | :private_checkout_not_supported
+        | :base_ref_not_found
+        | :base_sha_mismatch
+        | :invalid_ref
+        | :invalid_file_change
+        | :change_limit_exceeded
+        | :change_request_conflict
+        | :checks_unavailable
+        | :provider_unavailable
+        | :authentication_rejected
+        | {:provider_request_failed, operation :: atom(), status :: pos_integer()}
+      end
+      |> union_strings()
 
-    for member <- atom_members do
-      assert source =~ ":#{member}"
-    end
-
-    assert source =~ "{:provider_request_failed, operation :: atom(), status :: pos_integer()}"
-    refute source =~ ":invalid_attributes"
-    refute source =~ ":unknown_fields"
-    assert length(atom_members) == 15
+    assert actual == expected
+    refute union_strings(quote(do: :allowed | :extra)) == [":allowed"]
   end
+
+  defp type_rhs!(ast, name) do
+    {_ast, rhs} =
+      Macro.prewalk(ast, nil, fn
+        {:@, _, [{:type, _, [{:"::", _, [{^name, _, _}, rhs]}]}]} = node, nil -> {node, rhs}
+        node, found -> {node, found}
+      end)
+
+    rhs || flunk("missing @type #{name}")
+  end
+
+  defp union_strings(ast), do: ast |> union_members() |> Enum.map(&Macro.to_string/1)
+  defp union_members({:|, _, [left, right]}), do: union_members(left) ++ union_members(right)
+  defp union_members(member), do: [member]
 end

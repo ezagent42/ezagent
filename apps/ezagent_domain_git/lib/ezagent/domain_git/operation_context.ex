@@ -32,12 +32,19 @@ defmodule Ezagent.DomainGit.OperationContext do
         not RepositoryRef.ezagent_uri?(attrs[field], scheme, type)
       end)
 
+    case invalid do
+      {field, _role} ->
+        {:error, {:invalid_field, field}}
+
+      nil ->
+        validate_workspace_and_key(attrs)
+    end
+  end
+
+  defp validate_workspace_and_key(attrs) do
     task_workspace = workspace(attrs.task_access_uri)
 
     cond do
-      invalid ->
-        {:error, {:invalid_field, elem(invalid, 0)}}
-
       workspace(attrs.caller_uri) != task_workspace ->
         {:error, {:invalid_field, :caller_uri}}
 
