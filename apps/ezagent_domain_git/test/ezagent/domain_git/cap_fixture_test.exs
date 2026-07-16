@@ -1,5 +1,5 @@
 defmodule Ezagent.DomainGit.CapFixtureTest do
-  use ExUnit.Case, async: true
+  use ExUnit.Case, async: false
 
   alias Ezagent.{Cap, Capability, Invocation}
   alias Ezagent.DomainGit.TestSupport.GitCapFixture
@@ -41,7 +41,10 @@ defmodule Ezagent.DomainGit.CapFixtureTest do
 
     wrong_instance =
       required(fixture, @action,
-        instance: Ezagent.URI.resource("git-fixture", "git-task-access", "other-task")
+        instance:
+          Ezagent.URI.instance(
+            Ezagent.URI.resource("git-fixture", "git-task-access", "other-task")
+          )
       )
 
     wrong_workspace =
@@ -57,15 +60,63 @@ defmodule Ezagent.DomainGit.CapFixtureTest do
       File.read!(Path.expand("../../support/git_cap_fixture.ex", __DIR__))
 
     assert source =~ "Capability.cap("
+    assert source =~ "authorization = {:held_by, admin_uri}"
     assert source =~ "Cap.issue(authorization, grantee_uri, capability)"
     assert source =~ "Cap.verify_for(artifact, grantee_uri)"
     refute source =~ "%Capability{"
     refute source =~ ":any"
+    refute source =~ "{:genesis,"
 
     fixture = GitCapFixture.exact_task_cap(@action)
     refute is_nil(fixture.artifact.signature)
     refute fixture.artifact.instance == :any
     refute fixture.artifact.workspace_uri == :any
+  end
+
+  test "safely configures unique workspace, task resource, grantee, and action coordinates" do
+    suffix = System.unique_integer([:positive])
+    workspace_name = "git-fixture-#{suffix}"
+    task_access_id = "task-#{suffix}"
+    action = :list_reviews
+    grantee_uri = Ezagent.URI.entity(workspace_name, "agent", "worker-#{suffix}")
+
+    fixture =
+      GitCapFixture.exact_task_cap(action,
+        workspace_name: workspace_name,
+        task_access_id: task_access_id,
+        grantee_uri: grantee_uri
+      )
+
+    expected_task_uri =
+      Ezagent.URI.resource(workspace_name, "git-task-access", task_access_id)
+
+    assert fixture.task_access_uri == expected_task_uri
+    assert fixture.workspace_uri == Ezagent.URI.workspace(workspace_name)
+    assert fixture.grantee_uri == grantee_uri
+    assert fixture.artifact.action == action
+    assert fixture.artifact.instance == Ezagent.URI.instance(expected_task_uri)
+    assert Cap.verify_for(fixture.artifact, grantee_uri)
+
+    assert fixture.invocation.ctx == %{
+             caller: grantee_uri,
+             caps: MapSet.new([fixture.artifact]),
+             reply: {:caller_inbox, self()}
+           }
+  end
+
+  test "rejects unsafe fixture coordinate overrides" do
+    other_workspace_grantee = Ezagent.URI.entity("other-workspace", "agent", "worker")
+
+    assert_raise ArgumentError, fn ->
+      GitCapFixture.exact_task_cap(@action,
+        workspace_name: "git-fixture",
+        grantee_uri: other_workspace_grantee
+      )
+    end
+
+    assert_raise ArgumentError, fn ->
+      GitCapFixture.exact_task_cap(@action, capability: Capability.admin_genesis_cap())
+    end
   end
 
   defp required(fixture, action, overrides \\ []) do
