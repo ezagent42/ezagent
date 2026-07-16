@@ -4,8 +4,9 @@ description: >-
   Use for the ezagent dev-together daily team workflow: plan tasks, generate
   handoffs, accept/dive into a handoff, return results, stack returned work,
   review-test-merge, close the day, and write retrospectives. Trigger on
-  dev-together commands (init, plan, handoff, dive, return, push, close, review)
-  and natural requests about daily task splitting, handoffs, merge ordering,
+  dev-together commands (init, plan, handoff, dive, return, push, close, review,
+  audit) and natural requests about daily task splitting, handoffs,
+  merge ordering, periodic productization-efficiency audits,
   definition of done, closeout, hooks, or team workflow. Do not trigger for
   unrelated one-off git operations, generic single-PR review, issue closing,
   non-dev brainstorming, or non-engineering handoffs.
@@ -29,6 +30,7 @@ Trigger on `dev-together <cmd>`:
 - `push`
 - `close`
 - `review`
+- `audit` (periodic, not daily)
 
 Also trigger on natural phrasings like:
 - "kick off the day / split today's tasks so the branches don't collide"
@@ -134,11 +136,19 @@ edges). Example: 2026-06-24 (Wed) → `2026-W26`. Compute with
 - **Close PR state.** After `close`, every related GitHub PR is either merged
   through GitHub or explicitly closed/commented as subsumed by the `main` merge
   SHA. Never leave an open PR whose code already landed through the lead path.
-- **Team-facing render accompanies the record.** `review` writes both `review.md`
-  and its team-facing `review.html` (product-first, no Claude↔lead discussion
-  meta, self-contained inline CSS, house style) — the `.html` is the artifact the
-  team reads, `review.md` stays the machine/`plan` input. `plan` similarly carries
-  the analogous `plan.html` render. A missing `.html` means the step is incomplete.
+- **Team-facing render is deterministic — the model never hand-writes HTML.**
+  `plan` and `review` write their `.md` from the fixed templates in
+  `scripts/render/` (`plan.template.md` / `review.template.md`), then run
+  `scripts/render/md2html.sh <file>.md` to produce the `.html`. Presentation
+  (skeleton + house-style CSS) lives ONLY in
+  `scripts/render/dev-together.pandoc.html`, so every day is byte-identically
+  styled — no visual drift, no re-authored `<style>`. Content structure is pinned
+  by the markdown templates (per-track sections), and continuity is pinned by the
+  review template's **验收结果**（逐条对着当天 `plan` 的验收标准关）+ **结转明日**
+  （进次日 `plan`）. The `.html` is the team artifact (product-first, no Claude↔lead
+  meta); `.md` stays the machine/`plan` input. A missing `.html` — or a
+  hand-authored one — means the step is incomplete. To change the look, edit the
+  template, never the daily file.
 - **Superpowers SDD scratch.** When delegating to
   `superpowers:subagent-driven-development`, use the current Superpowers
   workspace convention: task briefs, reports, review diffs, and progress ledger
@@ -159,6 +169,12 @@ and its output artifact.
 | 6 | `push` | lead | stack the returns + analyze merge order → `stack.md` | [commands/push.md](commands/push.md) |
 | 7 | `close` | lead | review/test the stack, merge to `main` | [commands/close.md](commands/close.md) |
 | 8 | `review` | lead | end-of-day retrospective → `review.md` | [commands/review.md](commands/review.md) |
+
+**Periodic (not part of the daily cycle):**
+
+| Command | Role | Cadence | One-liner | Detail |
+|---------|------|---------|-----------|--------|
+| `audit` | lead | monthly / after each big milestone | read-only productization-efficiency checkup, full report delivered out-of-repo to the lead (S0 self-service rate, hub engineering-months, R&D efficiency, investment structure, capacity check; frozen metric definitions so runs stay comparable) | [commands/audit.md](commands/audit.md) |
 
 `brainstorm` is NOT a dev-together command — use **superpowers:brainstorming**
 directly inside `plan`/`handoff`.

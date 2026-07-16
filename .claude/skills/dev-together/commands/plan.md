@@ -53,7 +53,18 @@ section order is fixed so the format stops drifting and `plan.html` mirrors it
    to write `plan.md`. Never auto-finalize a plan the lead has not seen the
    per-dev task lists for.
 8. Write `docs/together/<date>/plan.md`: the **lead-confirmed** task list + scope
-   + branches + conflict map + the intended `handoff` order.
+   + branches + conflict map + the intended `handoff` order. Write it from the
+   fixed template `scripts/render/plan.template.md` (copy, fill the `{{...}}`
+   slots per person, delete the guide comments) — one track per person, each with
+   **目标 / 今日 / 验收 / 依赖 / PR**. The **验收** lines are the exact checklist
+   that day's `review` closes against, so make each one a decidable success
+   judgement, not a vague aim. **Carry over** every unclosed/blocked/`结转明日`
+   item from yesterday's `review.md` into the matching track's **今日** — from the
+   file, not from memory.
+9. **Render (deterministic — never hand-write HTML):**
+   `scripts/render/md2html.sh docs/together/<date>/plan.md`. Same pinned
+   skeleton + CSS as `review.html`; a missing `plan.html` means the step is
+   incomplete.
 
 ## Plan completeness gate
 

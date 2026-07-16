@@ -30,15 +30,24 @@ are unchanged.
    track — this is what tomorrow's `plan` derives from. `review` is the **only**
    writer of `current_track`/`latest_return`; `return`/`close` do NOT touch them
    (avoids double-write). A mid-stream pivot may be reflected by the lead.
-7. **Team-facing render (MANDATORY).** Alongside `review.md`, produce
-   `docs/together/<date>/review.html` — a clean, product-first rendering of the
-   day for the whole team: **product 大局 → task stats → efficiency →
-   risks/deferred → method deltas → next-day plan**. It is a team artifact, not a
-   worklog: **omit all Claude↔lead discussion meta**, keep it self-contained
-   (inline CSS, no external assets), and match the established house style (see
-   the prior examples `docs/together/2026-06-25/review.html` and
-   `docs/together/2026-06-30/review.html`). `review.html` must exist alongside
-   `review.md`; a missing render means `review` is incomplete.
+7. **Team-facing render (MANDATORY, deterministic — never hand-write HTML).**
+   Write `review.md` from the fixed template
+   `scripts/render/review.template.md` (copy it, fill the `{{...}}` slots per
+   track, delete the guide comments), then render:
+   `scripts/render/md2html.sh docs/together/<date>/review.md`. The script wraps
+   your markdown in the pinned skeleton + house-style CSS
+   (`scripts/render/dev-together.pandoc.html`) — presentation lives ONLY there,
+   so every day's HTML is byte-identically styled. Do **not** author `<style>`,
+   colors, or layout by hand; if the look needs to change, change the template,
+   not the daily file. The template already enforces the team-artifact shape
+   (KPIs → EOD headline → per-track **验收结果 + 结转明日** → risk → next-day) and
+   omits all Claude↔lead meta. `review.html` must exist alongside `review.md`;
+   a missing render means `review` is incomplete.
+
+   **Continuity is the point:** the per-track **验收结果** closes the *current
+   day's* `plan.md` acceptance criteria one by one (✅/❌/partial + evidence),
+   and **结转明日** feeds the next day's `plan`. Never skip either — that thread
+   is what stops the daily docs from drifting.
 
 ## Required accounting
 
