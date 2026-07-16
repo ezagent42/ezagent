@@ -45,7 +45,7 @@ Execute only Plan A from
 | 1. Primitive inventory | complete | Secret Store absent; SSH parser absent; Cap signed/receiver-bound; OsProcess lifecycle-only; plugin rollback pattern reusable. See `docs/superpowers/notes/2026-07-16-git-provider-v1-a-inventory.md` | `8fcbfe1b1` |
 | 2. Same-UID reproduction | complete | Both mode-0600 known-path read and `/proc/<pid>/environ` observation reproduced under UID 1000; 2 tests, 0 failures. See `docs/superpowers/notes/2026-07-16-git-provider-v1-a-isolation-probe.md` | `1e8b913fd` |
 | 3. Broker GO/NO-GO | complete | Candidate D selected: no approved agent-inaccessible boundary. SSH remains disabled; public checkout + GitHub API is the viable Plan D route. See `docs/superpowers/notes/2026-07-16-git-provider-v1-a-broker-options.md` | `1c16e2d28` |
-| 4. GitHub API request-plan prototype | complete | Pure plan/local fake proves Git Data sequence, input bounds, base/ref checks, idempotency, partial-failure sanitization, and credential-free plan. 5 tests, 0 failures. See `docs/superpowers/notes/2026-07-16-git-provider-v1-a-github-api-transport.md` | pending |
+| 4. GitHub API request-plan prototype | complete | Pure plan/local fake proves Git Data sequence, input bounds, base/ref checks, deterministic attempt planning, partial-failure sanitization, and credential-free plan. Provider replay remains a Plan D ledger/reconcile requirement. 5 tests, 0 failures. See `docs/superpowers/notes/2026-07-16-git-provider-v1-a-github-api-transport.md` | pending |
 | 5. Decision/interface closeout | pending | — | — |
 
 ## Verification commands
