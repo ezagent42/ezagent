@@ -14,9 +14,6 @@ defmodule Ezagent.Cap do
   """
 
   alias Ezagent.{Capability, CapabilityRegistry}
-  alias Ezagent.Cap.Signing
-
-  @legacy_fallback_event [:ezagent, :cap, :legacy_fallback]
 
   @type artifact :: Capability.t()
   @type authorization ::
@@ -34,8 +31,9 @@ defmodule Ezagent.Cap do
     {caps, context} = authorization_context(authorization)
 
     with :ok <- CapabilityRegistry.authorize_grant(caps, cap, context),
-         {:ok, artifact} <- prepare_provenance(authorization, grantee_uri, cap) do
-      {:ok, sign_artifact(artifact)}
+         {:ok, artifact} <- prepare_provenance(authorization, grantee_uri, cap),
+         {:ok, artifact} <- Ezagent.Cap.Authority.sign_for_target(artifact) do
+      {:ok, artifact}
     end
   end
 
@@ -48,38 +46,8 @@ defmodule Ezagent.Cap do
   to the caller. Unsigned artifacts remain on the temporary legacy #154 path.
   """
   @spec verify(term()) :: boolean()
-  def verify(%Capability{
-        signature: nil,
-        key_id: nil,
-        grantee_uri: nil,
-        granted_by: %URI{scheme: "entity"} = granted_by
-      }) do
-    if require_signature?() do
-      false
-    else
-      :telemetry.execute(@legacy_fallback_event, %{count: 1}, %{granted_by: granted_by})
-      true
-    end
-  end
-
-  def verify(
-        %Capability{
-          signature: signature,
-          workspace_uri: workspace_uri
-        } = cap
-      )
-      when is_binary(signature) and (is_struct(workspace_uri, URI) or workspace_uri == :any) do
-    with {:ok, version} <- Signing.parse_key_id(cap.key_id, workspace_uri),
-         %URI{scheme: "entity"} = granted_by <- cap.granted_by,
-         true <- valid_signed_shape?(cap) do
-      trust_domain = Signing.trust_domain(workspace_uri)
-      {public_key, _private_key} = Signing.derive_keypair(granted_by, trust_domain, version)
-
-      Signing.verify(cap, signature, public_key)
-    else
-      _ -> false
-    end
-  end
+  def verify(%Capability{grantee_uri: %URI{} = presenter} = artifact),
+    do: Ezagent.Cap.Authority.verify_for_target(artifact, presenter)
 
   def verify(_artifact), do: false
 
@@ -171,44 +139,9 @@ defmodule Ezagent.Cap do
   defp issuer({:rule, name, %URI{} = configurer}) when is_atom(name), do: configurer
   defp issuer({:genesis, %URI{} = granted_by}), do: granted_by
 
-  defp valid_signed_shape?(%Capability{
-         kind: kind,
-         behavior: behavior,
-         action: action,
-         instance: instance,
-         granted_at: %DateTime{},
-         grantee_uri: %URI{}
-       })
-       when is_atom(kind) and is_atom(behavior) and is_atom(action) do
-    valid_signing_instance?(instance)
-  end
-
-  defp valid_signed_shape?(_cap), do: false
-
-  defp valid_signing_instance?(:any), do: true
-  defp valid_signing_instance?(%URI{}), do: true
-  defp valid_signing_instance?({tag, %URI{}}) when is_atom(tag), do: true
-  defp valid_signing_instance?(_instance), do: false
-
   defp receiver_matches?(%Capability{signature: nil}, _receiver_uri), do: true
   defp receiver_matches?(%Capability{grantee_uri: receiver_uri}, receiver_uri), do: true
   defp receiver_matches?(_cap, _receiver_uri), do: false
-
-  defp require_signature? do
-    :ezagent_core
-    |> Application.get_env(__MODULE__, [])
-    |> Keyword.get(:signing, [])
-    |> Keyword.get(:require_signature, false)
-  end
-
-  defp sign_artifact(%Capability{} = cap) do
-    version = Signing.active_key_version()
-    trust_domain = Signing.trust_domain(cap.workspace_uri)
-    cap = %{cap | key_id: Signing.key_id(version, trust_domain)}
-    {_public_key, private_key} = Signing.derive_keypair(cap.granted_by, trust_domain, version)
-
-    %{cap | signature: Signing.sign(cap, private_key)}
-  end
 
   @doc false
   @spec authorization_context(authorization()) :: {MapSet.t(Capability.t()), map()}

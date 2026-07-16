@@ -16,6 +16,7 @@ defmodule Ezagent.Kind.Server do
     kind: module(),                # the Kind module (e.g. Ezagent.Entity.Agent)
     uri:  URI.t(),                 # this instance's URI
     state: %{atom() => map()},     # per-Behavior slices, keyed by behavior.state_slice()
+    authority: Ezagent.Cap.Authority.t(), # framework-private; never snapshotted
     post_init_queue: [{module(), term()}] # PR-EM-CORE: pending post-init continuations
                                           # populated by init/1, drained by chained
                                           # handle_continue/2 after :announce_ready
@@ -116,6 +117,7 @@ defmodule Ezagent.Kind.Server do
         {:stop, {:snapshot_load_failed, reason}}
 
       {:ok, slice_state} ->
+        authority = Ezagent.Cap.Authority.open(uri)
         # PR-EM-CORE: collect post_init/2 continuations in behaviors/0
         # declaration order. `post_init/2` is OPTIONAL — Behaviors that
         # don't export it (or return `:ok`) contribute nothing to the
@@ -126,6 +128,7 @@ defmodule Ezagent.Kind.Server do
           kind: kind_module,
           uri: uri,
           state: slice_state,
+          authority: authority,
           post_init_queue: post_init_queue,
           # #533 5a (§3.10.3) — the authenticated creator, threaded as a
           # create-arg exactly like Session's `owner_uri`. `nil` on rehydrate
@@ -519,6 +522,14 @@ defmodule Ezagent.Kind.Server do
   # must NOT name a Tier-2 supervisor constant. This synchronous query
   # lets a Tier-1 helper resolve the supervisor without that coupling.
   @impl true
+  def handle_call({:ezagent_cap_sign, cap}, _from, state) do
+    {:reply, {:ok, Ezagent.Cap.Authority.sign(state.authority, cap)}, state}
+  end
+
+  def handle_call({:ezagent_cap_verify, cap, presenter}, _from, state) do
+    {:reply, Ezagent.Cap.Authority.verify(state.authority, cap, presenter), state}
+  end
+
   def handle_call(:ezagent_kind_module, _from, %{kind: kind_module} = state) do
     {:reply, {:ok, kind_module}, state}
   end
@@ -601,7 +612,12 @@ defmodule Ezagent.Kind.Server do
   end
 
   def handle_call({:ezagent_dispatch, %Ezagent.Invocation{} = inv}, _from, state) do
-    case Ezagent.Kind.Runtime.handle_dispatch(inv, state.state, state.kind, state.uri) do
+    dispatch_result =
+      Ezagent.Cap.Authority.with_current(state.authority, fn ->
+        Ezagent.Kind.Runtime.handle_dispatch(inv, state.state, state.kind, state.uri)
+      end)
+
+    case dispatch_result do
       {:ok, new_slice_state, result, slice_change_event, deferred} ->
         case commit_and_notify(state, new_slice_state, slice_change_event) do
           commit_ok when commit_ok in [:ok, :not_durable] ->
@@ -638,7 +654,12 @@ defmodule Ezagent.Kind.Server do
 
   @impl true
   def handle_cast({:ezagent_dispatch, %Ezagent.Invocation{} = inv}, state) do
-    case Ezagent.Kind.Runtime.handle_dispatch(inv, state.state, state.kind, state.uri) do
+    dispatch_result =
+      Ezagent.Cap.Authority.with_current(state.authority, fn ->
+        Ezagent.Kind.Runtime.handle_dispatch(inv, state.state, state.kind, state.uri)
+      end)
+
+    case dispatch_result do
       {:ok, new_slice_state, result, slice_change_event, deferred} ->
         case commit_and_notify(state, new_slice_state, slice_change_event) do
           commit_ok when commit_ok in [:ok, :not_durable] ->
