@@ -42,7 +42,7 @@ code or tests; its verification is documentation/static consistency only.
 | Tasks 2–9 domain implementation | complete | closed values/errors, adapter contract/registry, ephemeral Resource lifecycle, exact signed-cap fixture, authorized ActionSet dispatch, and atomic boot registration are present in the inherited stack |
 | Task 10 structural gates | complete | provider-boundary, secret isolation, dynamic bypass, and URI scanner regression coverage integrated |
 | Task 11 integration proof | complete locally | real boot + pre-spawned Resource + two synchronized fakes + exact signed Cap + real Invocation/Router; exact routing/no cross-call, no-cap zero effects, stale zero mutation |
-| Task 12 verification/review/WIP handoff | in progress | rebased current main; doc/architecture/per-app gates repaired; final precommit completed with only recorded core baseline/local-state failures; broad review and Draft PR remain |
+| Task 12 verification/review/WIP handoff | complete locally | final clean precommit has only recorded core baseline/local-state failures; broad static review approved with no Critical/Important; current main unchanged; Draft PR handoff next |
 | External provider/operational breadth | out of scope | no GitHub, credentials, checkout/worktrees, Kanban, canary, merge, deploy, or #1360 final mount claimed |
 
 ## Changes
