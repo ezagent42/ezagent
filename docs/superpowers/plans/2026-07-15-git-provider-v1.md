@@ -18,7 +18,9 @@
 - Use Req for provider HTTP and `Ezagent.Runtime.OsProcess` for subprocess lifecycle.
 - Do not touch AgentRuntime ARB, EntityCaps A/B/D, `caps_json`, no-tail enforcement, or cc-PTY bridge join/#1405.
 - Do not deploy or merge without lead authorization.
-- Keep the W29 honesty label: loose-coupled, not final mount; #1360 Layer B pending.
+- Keep the Git transport honesty label: GitHub-specific and public-repository-only;
+  not final provider-neutral/private/SSH transport. Plan B does not depend on
+  #1360, which belongs to Hello↔Kanban cross-session live mounting.
 
 ## Plan A — Security prerequisites and W29 transport decision
 

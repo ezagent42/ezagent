@@ -34,8 +34,10 @@ governed public repository + base ref
   -> normalized change request/check/review facts
 ```
 
-Honesty label: **GitHub-specific public-repository bridge; loose-coupled, not
-final mount; #1360 Layer B pending.**
+Honesty label: **GitHub-specific and public-repository-only; not the final
+provider-neutral, private-repository, or SSH transport.** Plan B has no #1360
+dependency. #1360 belongs to the separate Hello↔Kanban cross-session live-mount
+and authorization line.
 
 ## 3. Approved downstream types
 
