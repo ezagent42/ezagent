@@ -254,14 +254,49 @@ defmodule Ezagent.Workspace.Provisioning do
           | {:error, term()}
   def disable_user(%URI{scheme: "workspace"} = workspace_uri, args, ctx)
       when is_map(args) and is_map(ctx) do
-    target = Ezagent.URI.with_action(workspace_uri, :workspace_user_admin, :disable_user)
+    dispatch_user_admin(workspace_uri, :disable_user, args, ctx)
+  end
+
+  @doc """
+  Dispatch the `:delete_user` action on Workspace Kind — the operator
+  offboarding entry (task #180) for a HARD, admin-only tombstone delete.
+
+  Same dispatch-backed path (CapBAC + audit + cross-workspace check) as
+  `disable_user/3`. `delete_user` carries its OWN cap subject, withheld
+  from workspace owners so only the admin wildcard authorizes it by
+  default. The action tears down the live User Kind and tombstones the
+  provisioning row (`Ezagent.Users.tombstone/3`) — the URI is NOT reclaimed
+  and the `:user_deleted` EventLog event preserves the audit trail.
+
+  `args` is `%{user_uri: String.t(), reason: String.t() | nil}`. `ctx`
+  carries `:caller` + `:caps`.
+
+  Returns `{:ok, %{user_uri, deleted_at, deleted_by}}` on success;
+  `{:error, reason}` on validation / cap denial / cross-workspace refusal /
+  unknown user.
+  """
+  @spec delete_user(URI.t(), map(), map()) ::
+          {:ok, %{user_uri: String.t(), deleted_at: String.t(), deleted_by: String.t()}}
+          | {:error, term()}
+  def delete_user(%URI{scheme: "workspace"} = workspace_uri, args, ctx)
+      when is_map(args) and is_map(ctx) do
+    dispatch_user_admin(workspace_uri, :delete_user, args, ctx)
+  end
+
+  # Shared dispatch for the WorkspaceUserAdmin offboarding actions. Unlike
+  # `create_user/3` these need NO post-dispatch facade step (no membership
+  # to add), so the dispatch result passes straight through. Targets the
+  # `:workspace_user_admin` slice (distinct cap subject from Behavior.Workspace).
+  defp dispatch_user_admin(%URI{scheme: "workspace"} = workspace_uri, action, args, ctx)
+       when action in [:disable_user, :delete_user] do
+    target = Ezagent.URI.with_action(workspace_uri, :workspace_user_admin, action)
     caller = Map.fetch!(ctx, :caller)
     caps = Map.fetch!(ctx, :caps)
 
     Router.dispatch(%Cmd{
       origin: :trusted_internal,
       target: target,
-      action: :disable_user,
+      action: action,
       args: args,
       ctx: %{mode: :call, caller: caller, caps: caps, reply: {:caller_inbox, self()}}
     })

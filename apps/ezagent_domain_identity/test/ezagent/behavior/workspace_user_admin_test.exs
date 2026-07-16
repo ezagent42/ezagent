@@ -27,7 +27,14 @@ defmodule Ezagent.ActionSet.WorkspaceUserAdminTest do
 
   describe "contract surface" do
     test "actions/0 lists user provisioning, offboarding, and workspace invite management" do
-      expected = [:create_user, :disable_user, :list_invites, :mint_invite, :revoke_invite]
+      expected = [
+        :create_user,
+        :delete_user,
+        :disable_user,
+        :list_invites,
+        :mint_invite,
+        :revoke_invite
+      ]
 
       assert Enum.sort(WUA.actions()) == Enum.sort(expected)
     end
@@ -48,7 +55,8 @@ defmodule Ezagent.ActionSet.WorkspaceUserAdminTest do
                "required_caps/0 missing #{action} — dispatch step 5.5 would crash"
       end
 
-      # Each action carves its OWN cap subject (distinct action axis).
+      # Each action carves its OWN cap subject (distinct action axis) — a
+      # holder of one is NOT authorized for another.
       for action <- WUA.actions() do
         %Ezagent.Capability{kind: kind, behavior: behavior, action: cap_action} = caps[action]
         assert kind == :workspace
@@ -154,6 +162,57 @@ defmodule Ezagent.ActionSet.WorkspaceUserAdminTest do
 
       assert {:error, :self_offboard_denied} =
                WUA.handle_disable_user(%{user_uri: self_uri}, ctx)
+    end
+  end
+
+  describe "disable_user / delete_user argument validation (pure, no DB)" do
+    for {name, fun} <- [
+          {"disable_user", :handle_disable_user},
+          {"delete_user", :handle_delete_user}
+        ] do
+      @fun fun
+
+      test "#{name}: missing user_uri returns {:error, :user_uri_required}" do
+        assert {:error, :user_uri_required} = apply(WUA, @fun, [%{}, empty_ctx()])
+      end
+
+      test "#{name}: non-entity URI surfaces as :bad_user_uri" do
+        assert {:error, {:bad_user_uri, "workspace://x", _}} =
+                 apply(WUA, @fun, [%{user_uri: "workspace://x"}, empty_ctx()])
+      end
+
+      test "#{name}: non-string reason is rejected" do
+        assert {:error, {:bad_reason, 123}} =
+                 apply(WUA, @fun, [%{user_uri: "entity://x/user/y", reason: 123}, empty_ctx()])
+      end
+
+      test "#{name}: cross-workspace user (vs self workspace) is refused before any DB write" do
+        # empty_ctx self_uri is workspace://x; the user is in team-alpha.
+        assert {:error, {:cross_workspace_user, _}} =
+                 apply(WUA, @fun, [%{user_uri: "entity://team-alpha/user/y"}, empty_ctx()])
+      end
+
+      test "#{name}: missing caller (actor) fails closed with :missing_actor" do
+        # In-workspace user + workspace self_uri, but empty_ctx has caller: nil,
+        # so the AUTHENTICATED-actor requirement fails before the domain call.
+        ctx = %{empty_ctx() | self_uri: Ezagent.URI.new!("workspace://team-alpha")}
+
+        assert {:error, :missing_actor} =
+                 apply(WUA, @fun, [%{user_uri: "entity://team-alpha/user/y"}, ctx])
+      end
+
+      test "#{name}: an operator cannot offboard their OWN account (self-lockout guard)" do
+        self_uri = "entity://team-alpha/user/me"
+
+        ctx = %{
+          empty_ctx()
+          | self_uri: Ezagent.URI.new!("workspace://team-alpha"),
+            caller: Ezagent.URI.new!(self_uri)
+        }
+
+        assert {:error, :self_offboard_denied} =
+                 apply(WUA, @fun, [%{user_uri: self_uri}, ctx])
+      end
     end
   end
 end

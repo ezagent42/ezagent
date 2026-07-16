@@ -52,6 +52,17 @@ defmodule Ezagent.Users do
     field(:disabled_at, :utc_datetime_usec)
     field(:disabled_by, :string)
     field(:disabled_reason, :string)
+    # Operator offboarding v1 (task #180) — HARD, admin-only `delete_user`
+    # TOMBSTONES the row (set `deleted_at/by/reason`) instead of purging
+    # it. The row is retained so the `users_uri_index` unique constraint
+    # keeps the URI occupied (no silent re-mint of an offboarded identity)
+    # and the row survives as an audit record. `tombstone/3` also sets the
+    # `disabled_*` fields above so the `verify_password` login gate fails
+    # closed, and tears down the live User Kind via `Lifecycle.destroy/2`.
+    # This intentionally does NOT reuse `delete/1` (the anon-GC hard purge).
+    field(:deleted_at, :utc_datetime_usec)
+    field(:deleted_by, :string)
+    field(:deleted_reason, :string)
     # PR #142: per-user `cli_token` field removed — bearer tokens now
     # live in `entity_tokens` (entity-agnostic, supports agents too).
     # See `Ezagent.Entity.Token`.
@@ -67,7 +78,10 @@ defmodule Ezagent.Users do
           email_verified: boolean(),
           disabled_at: DateTime.t() | nil,
           disabled_by: String.t() | nil,
-          disabled_reason: String.t() | nil
+          disabled_reason: String.t() | nil,
+          deleted_at: DateTime.t() | nil,
+          deleted_by: String.t() | nil,
+          deleted_reason: String.t() | nil
         }
 
   # --- write paths ---------------------------------------------------
@@ -289,12 +303,23 @@ defmodule Ezagent.Users do
     end
   end
 
-  @doc "Re-enable a soft-disabled user. Idempotent for already-enabled users."
-  @spec enable(URI.t() | String.t()) :: {:ok, decoded()} | {:error, :not_found}
+  @doc """
+  Re-enable a soft-disabled user. Idempotent for already-enabled users.
+
+  Refuses a TOMBSTONED user (`{:error, :user_deleted}`): a `delete_user`
+  is terminal, so `enable` must not clear the disable marker and report a
+  misleading success for an identity that stays effectively deleted (the
+  Kind is torn down and the demand-spawn guard + `verify_password`
+  `deleted_at` clause keep it dead regardless).
+  """
+  @spec enable(URI.t() | String.t()) :: {:ok, decoded()} | {:error, :not_found | :user_deleted}
   def enable(uri) do
     case Repo.get_by(__MODULE__, uri: uri_to_str(uri)) do
       nil ->
         {:error, :not_found}
+
+      %__MODULE__{deleted_at: %DateTime{}} ->
+        {:error, :user_deleted}
 
       row ->
         row
@@ -308,6 +333,93 @@ defmodule Ezagent.Users do
           {:ok, updated} -> {:ok, decode(updated)}
           {:error, _changeset} -> {:error, :not_found}
         end
+    end
+  end
+
+  @doc """
+  HARD-delete a real user by tombstoning — the admin-only operator
+  offboarding path (task #180). Distinct from `delete/1` (the anon-User
+  GC hard purge) and from `disable/3` (the reversible soft-disable).
+
+  Steps, in order:
+
+  1. Tear down the live User Kind + its snapshot via the sanctioned
+     `Ezagent.Lifecycle.destroy/2` teardown (hooks → snapshot + ever-created
+     marker clear → terminate). Idempotent — a never-spawned user is a
+     harmless no-op. Best-effort: a teardown crash must not strand the row
+     un-tombstoned, so it is caught and the DB write still runs (mirrors
+     `delete/1` + the anon-GC sweeper's try/rescue → `:ok`).
+
+  2. Mark the provisioning row `deleted_at/by/reason` AND `disabled_at/by/reason`.
+     Setting `disabled_*` makes the existing `verify_password` login gate fail
+     closed. Keeping the ROW (not deleting it) leaves the URI OCCUPIED under the
+     `users_uri_index` unique constraint, so `create/3` cannot silently re-mint
+     the offboarded identity — the safe default (no URI reclaim) per the task
+     #180 design note. The row also stands as a durable audit record alongside
+     the `:user_deleted` EventLog event the Router injects on dispatch.
+
+  Idempotent: tombstoning an already-tombstoned user preserves the original
+  timestamps/reason and returns the current decoded row. `{:error, :not_found}`
+  for an absent row.
+  """
+  @spec tombstone(URI.t() | String.t(), URI.t() | String.t(), String.t() | nil) ::
+          {:ok, decoded()} | {:error, :not_found}
+  def tombstone(uri, deleted_by, reason \\ nil) do
+    case Repo.get_by(__MODULE__, uri: uri_to_str(uri)) do
+      nil ->
+        {:error, :not_found}
+
+      %__MODULE__{deleted_at: %DateTime{}} = row ->
+        # Already tombstoned — idempotent. Still ensure the Kind is torn
+        # down (a snapshot could have been re-created by a stray demand-spawn
+        # between tombstoning and now); best-effort, never strands the row.
+        _ = destroy_kind_best_effort(uri)
+        {:ok, decode(row)}
+
+      row ->
+        _ = destroy_kind_best_effort(uri)
+        now = DateTime.utc_now()
+        by = uri_to_str(deleted_by)
+        normalized_reason = normalize_reason(reason)
+
+        row
+        |> Ecto.Changeset.change(%{
+          deleted_at: now,
+          deleted_by: by,
+          deleted_reason: normalized_reason,
+          # Fail the login gate closed. Preserve a pre-existing disable
+          # timestamp/actor if the user was already disabled before delete.
+          disabled_at: row.disabled_at || now,
+          disabled_by: row.disabled_by || by,
+          disabled_reason: row.disabled_reason || normalized_reason
+        })
+        |> Repo.update()
+        |> case do
+          {:ok, updated} -> {:ok, decode(updated)}
+          {:error, _changeset} -> {:error, :not_found}
+        end
+    end
+  end
+
+  defp destroy_kind_best_effort(uri) do
+    try do
+      Ezagent.Lifecycle.destroy(uri)
+    rescue
+      _ -> :ok
+    end
+  end
+
+  @doc """
+  Whether a user has been tombstoned (offboarded via `tombstone/3`).
+  Unknown users are NOT tombstoned (`false`) — absence is a distinct
+  condition from deletion (callers that must fail closed on absence use
+  `disabled?/1`, which treats unknown as disabled).
+  """
+  @spec deleted?(URI.t() | String.t()) :: boolean()
+  def deleted?(uri) do
+    case Repo.get_by(__MODULE__, uri: uri_to_str(uri)) do
+      %__MODULE__{deleted_at: %DateTime{}} -> true
+      _ -> false
     end
   end
 
@@ -349,6 +461,15 @@ defmodule Ezagent.Users do
     uri_str = uri_to_str(uri)
 
     case Repo.get_by(__MODULE__, uri: uri_str) do
+      # Tombstoned (offboarded via `tombstone/3`) OR soft-disabled — refuse
+      # login and run a dummy verify to avoid a timing leak. `tombstone/3`
+      # sets `disabled_at` too, so the `disabled_at` clause already covers
+      # the common case; the explicit `deleted_at` clause fails closed even
+      # for a row tombstoned without a disabled marker.
+      %__MODULE__{deleted_at: %DateTime{}} ->
+        Bcrypt.no_user_verify()
+        false
+
       %__MODULE__{disabled_at: %DateTime{}} ->
         Bcrypt.no_user_verify()
         false
@@ -451,7 +572,10 @@ defmodule Ezagent.Users do
       email_verified: row.email_verified == true,
       disabled_at: row.disabled_at,
       disabled_by: row.disabled_by,
-      disabled_reason: row.disabled_reason
+      disabled_reason: row.disabled_reason,
+      deleted_at: row.deleted_at,
+      deleted_by: row.deleted_by,
+      deleted_reason: row.deleted_reason
     }
   end
 

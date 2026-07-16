@@ -735,6 +735,9 @@ defmodule Ezagent.Workspace do
   @doc "See `Ezagent.Workspace.Provisioning.disable_user/3` (operator offboarding, task #180)."
   defdelegate disable_user(workspace_uri, args, ctx), to: Ezagent.Workspace.Provisioning
 
+  @doc "See `Ezagent.Workspace.Provisioning.delete_user/3` (operator offboarding, task #180)."
+  defdelegate delete_user(workspace_uri, args, ctx), to: Ezagent.Workspace.Provisioning
+
   @doc """
   Issue every requested capability from the CALLER's durable held authority,
   then hand the complete issued set to `agent_uri` for self-storage.

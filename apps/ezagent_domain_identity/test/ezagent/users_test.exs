@@ -187,6 +187,82 @@ defmodule Ezagent.UsersTest do
     end
   end
 
+  describe "tombstone/3 (operator offboarding hard-delete, task #180)" do
+    test "tombstones the row (preserved), blocks login, and does NOT reclaim the URI" do
+      uri = "entity://team-alpha/user/tomb-#{System.unique_integer([:positive])}"
+      admin = "entity://system/user/admin"
+
+      {:ok, _} = Users.create(uri, "secret", [])
+      assert Users.verify_password(uri, "secret")
+      refute Users.deleted?(uri)
+
+      assert {:ok, deleted} = Users.tombstone(uri, admin, "offboarded")
+      assert deleted.deleted_at
+      assert deleted.deleted_by == admin
+      assert deleted.deleted_reason == "offboarded"
+      # Login gate fails closed (tombstone also sets the disabled marker).
+      assert deleted.disabled_at
+      refute Users.verify_password(uri, "secret")
+      assert Users.deleted?(uri)
+
+      # DESTRUCTIVE but AUDIT-PRESERVING: the row is RETAINED (not purged),
+      # so the URI stays occupied and CANNOT be silently re-minted.
+      assert Users.get_by_uri(uri)
+      assert {:error, constraint} = Users.create(uri, "new-pass", [])
+      # A unique-constraint failure on the occupied URI — never a fresh row.
+      assert match?(%Ecto.Changeset{}, constraint) or is_atom(constraint) or is_tuple(constraint)
+      refute Users.verify_password(uri, "new-pass")
+    end
+
+    test "is idempotent and returns :not_found for unknown users" do
+      uri = "entity://team-alpha/user/tomb-idem-#{System.unique_integer([:positive])}"
+      admin = "entity://system/user/admin"
+
+      {:ok, _} = Users.create(uri, "secret", [])
+
+      assert {:ok, first} = Users.tombstone(uri, admin, "first")
+      assert {:ok, second} = Users.tombstone(uri, admin, "second")
+      assert first.deleted_at == second.deleted_at
+      assert second.deleted_reason == "first"
+
+      assert {:error, :not_found} =
+               Users.tombstone(
+                 "entity://team-alpha/user/no-such-#{System.unique_integer([:positive])}",
+                 admin,
+                 nil
+               )
+    end
+
+    test "enable/1 refuses a tombstoned user (delete is terminal — no misleading success)" do
+      uri = "entity://team-alpha/user/tomb-enable-#{System.unique_integer([:positive])}"
+      admin = "entity://system/user/admin"
+
+      {:ok, _} = Users.create(uri, "secret", [])
+      {:ok, _} = Users.tombstone(uri, admin, nil)
+
+      assert {:error, :user_deleted} = Users.enable(uri)
+      # Still tombstoned + login still blocked.
+      assert Users.deleted?(uri)
+      refute Users.verify_password(uri, "secret")
+    end
+
+    test "preserves a pre-existing disable timestamp/actor when deleting an already-disabled user" do
+      uri = "entity://team-alpha/user/tomb-disabled-#{System.unique_integer([:positive])}"
+      admin = "entity://system/user/admin"
+      first_actor = "entity://team-alpha/user/manager"
+
+      {:ok, _} = Users.create(uri, "secret", [])
+      {:ok, disabled} = Users.disable(uri, first_actor, "suspended")
+
+      assert {:ok, deleted} = Users.tombstone(uri, admin, "final offboard")
+      # The delete actor is recorded on the deleted_* fields...
+      assert deleted.deleted_by == admin
+      # ...but the earlier disable attribution is NOT overwritten.
+      assert deleted.disabled_at == disabled.disabled_at
+      assert deleted.disabled_by == first_actor
+    end
+  end
+
   describe "list_all/0 + get_by_uri/1" do
     test "lists every row + lookup roundtrip" do
       uri = "entity://team-alpha/user/list-#{System.unique_integer([:positive])}"
