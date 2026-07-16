@@ -491,10 +491,7 @@ defmodule Ezagent.UriQuery.Scan do
         _other -> []
       end)
 
-    # `userinfo: nil` marks validation of an external transport URL (for example
-    # an http(s) change-request link), not positional interpretation of an
-    # ezagent address. Keep those protocol values outside this URI-shape gate.
-    if (:host in keys or :path in keys) and :userinfo not in keys do
+    if (:host in keys or :path in keys) and not external_url_pattern?(pairs) do
       violation(
         :positional_uri_read,
         path,
@@ -506,6 +503,13 @@ defmodule Ezagent.UriQuery.Scan do
   end
 
   defp positional_uri_read_finding(_node, _path, _snippets), do: nil
+
+  defp external_url_pattern?(pairs) do
+    Enum.any?(pairs, fn
+      {:scheme, scheme} when scheme in ["http", "https"] -> true
+      _pair -> false
+    end)
+  end
 
   defp flavor_prefix_dependency_finding(
          {{:., meta, [{:__aliases__, _, [:String]}, :split]}, _, args},
@@ -615,6 +619,21 @@ defmodule Ezagent.UriQuery.Scan do
     end
   end
 
+  defp tenant_derivation_finding({kind, meta, [head, [do: body]]}, path, snippets)
+       when kind in [:def, :defp] do
+    uri_values = uri_pattern_values(head)
+
+    if direct_slash_split_of?(body, uri_values) do
+      violation(
+        :tenant_derivation,
+        path,
+        line(meta),
+        "workspace/session/worker derivation from URI segments must be centralized in Ezagent.URI or Ezagent.UriQuery",
+        snippet(snippets, meta)
+      )
+    end
+  end
+
   defp tenant_derivation_finding({:workspace_from_3seg_path, meta, _args}, path, snippets) do
     violation(
       :tenant_derivation,
@@ -631,10 +650,6 @@ defmodule Ezagent.UriQuery.Scan do
   # ezagent address. Provider refs and relative filesystem paths are independent
   # protocol values; treating every `String.split(value, "/")` as tenant
   # derivation made the gate reject unrelated validation code.
-  defp tenant_bearing_split?([{name, _meta, context} | _rest])
-       when is_atom(name) and is_atom(context),
-       do: name not in [:path, :ref]
-
   defp tenant_bearing_split?([expression | _rest]) do
     expression
     |> Macro.to_string()
@@ -642,6 +657,59 @@ defmodule Ezagent.UriQuery.Scan do
   end
 
   defp tenant_bearing_split?(_args), do: false
+
+  defp uri_pattern_values(head) do
+    {_head, values} =
+      Macro.prewalk(head, MapSet.new(), fn
+        {:=, _, [{:%, _, [{:__aliases__, _, [:URI]}, _]}, {name, _, context}]} = node, acc
+        when is_atom(name) and is_atom(context) ->
+          {node, MapSet.put(acc, name)}
+
+        {:%, _, [{:__aliases__, _, [:URI]}, {:%{}, _, pairs}]} = node, acc ->
+          bound =
+            Enum.flat_map(pairs, fn
+              {_key, {name, _, context}} when is_atom(name) and is_atom(context) ->
+                [name]
+
+              {_key, {:<>, _, [_prefix, {name, _, context}]}}
+              when is_atom(name) and is_atom(context) ->
+                [name]
+
+              _pair ->
+                []
+            end)
+
+          {node, Enum.reduce(bound, acc, &MapSet.put(&2, &1))}
+
+        node, acc ->
+          {node, acc}
+      end)
+
+    values
+  end
+
+  defp direct_slash_split_of?(body, uri_values) do
+    {_body, {_values, found?}} =
+      Macro.prewalk(body, {uri_values, false}, fn
+        {:=, _, [{name, _, context}, {{:., _, [{receiver, _, receiver_context}, :path]}, _, []}]} =
+            node,
+        {values, found?}
+        when is_atom(name) and is_atom(context) and is_atom(receiver) and
+               is_atom(receiver_context) ->
+          next = if MapSet.member?(values, receiver), do: MapSet.put(values, name), else: values
+          {node, {next, found?}}
+
+        {{:., _, [{:__aliases__, _, [:String]}, :split]}, _, [{name, _, context}, "/" | _]} = node,
+        {values, found?}
+        when is_atom(name) and is_atom(context) ->
+          {node, {values, found? or MapSet.member?(values, name)}}
+
+        node, acc ->
+          {node, acc}
+      end)
+
+    found?
+  end
 
   defp orchestrator_derivation_finding({name, meta, _args}, path, snippets)
        when name in [:derive_orchestrator_uri, :derive_orchestrator_instance_name] do

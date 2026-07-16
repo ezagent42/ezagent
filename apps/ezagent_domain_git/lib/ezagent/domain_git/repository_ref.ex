@@ -45,7 +45,8 @@ defmodule Ezagent.DomainGit.RepositoryRef do
   @spec ezagent_uri?(term(), String.t(), String.t()) :: boolean()
   def ezagent_uri?(%URI{} = uri, scheme, type) do
     Ezagent.URI.canonical?(uri) and Ezagent.URI.scheme?(uri, scheme) and
-      uri.query == nil and uri.fragment == nil and valid_uri_axes?(uri, type)
+      match?({:ok, _workspace}, Ezagent.URI.workspace_name(uri)) and uri.query == nil and
+      uri.fragment == nil and valid_uri_axes?(uri, type)
   end
 
   def ezagent_uri?(_uri, _scheme, _type), do: false

@@ -167,9 +167,8 @@ defmodule Ezagent.UriQuery.ScanTest do
       path =
         fixture!("external_url.ex", """
         defmodule Fixture.ExternalUrl do
-          def web?(%URI{scheme: scheme, host: host, userinfo: nil})
-              when scheme in ["http", "https"] and host != "",
-              do: true
+          def web?(%URI{scheme: "http", host: host, userinfo: nil}) when host != "", do: true
+          def web?(%URI{scheme: "https", host: host, userinfo: nil}) when host != "", do: true
 
           def web?(_uri), do: false
         end
@@ -194,6 +193,24 @@ defmodule Ezagent.UriQuery.ScanTest do
                path
                |> then(&Scan.scan_paths([&1]))
                |> violations_for(:tenant_derivation)
+    end
+
+    test "still classifies ezagent URI splits when bindings are named path or ref" do
+      path =
+        fixture!("opaque_uri_aliases.ex", """
+        defmodule Fixture.OpaqueUriAliases do
+          def workspace(%URI{scheme: "resource", path: path}), do: String.split(path, "/")
+          def workspace(%URI{scheme: "session", path: ref, userinfo: nil}), do: String.split(ref, "/")
+          def workspace(%URI{} = uri) do
+            path = uri.path
+            String.split(path, "/")
+          end
+        end
+        """)
+
+      violations = Scan.scan_paths([path])
+      assert length(violations_for(violations, :positional_uri_read)) == 2
+      assert length(violations_for(violations, :tenant_derivation)) == 3
     end
 
     test "classifies raw affected-scheme URI construction including interpolation" do

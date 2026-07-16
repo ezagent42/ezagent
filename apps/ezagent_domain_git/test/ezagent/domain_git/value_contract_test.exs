@@ -81,6 +81,24 @@ defmodule Ezagent.DomainGit.ValueContractTest do
              })
   end
 
+  test "typed Ezagent URI accessors preserve the former positional acceptance set" do
+    candidates = [
+      uri("resource://ws/git-repository/repo"),
+      uri("resource://ws/uploads/repo"),
+      uri("entity://ws/user/alice"),
+      %URI{scheme: "resource", host: "", path: "/git-repository/repo"},
+      %URI{scheme: "resource", host: "ws", path: "/git-repository/repo/extra"},
+      %URI{scheme: "resource", host: "ws", path: "/git-repository/repo", query: "x=1"}
+    ]
+
+    for candidate <- candidates,
+        {scheme, type} <- [{"resource", "git-repository"}, {"entity", nil}] do
+      assert RepositoryRef.ezagent_uri?(candidate, scheme, type) ==
+               legacy_ezagent_uri?(candidate, scheme, type),
+             "candidate=#{inspect(candidate)} scheme=#{scheme} type=#{inspect(type)}"
+    end
+  end
+
   test "provider web URLs are absolute safe HTTP(S), not Ezagent URIs" do
     attrs = %{
       external_id: "1",
@@ -241,4 +259,19 @@ defmodule Ezagent.DomainGit.ValueContractTest do
   rescue
     ArgumentError -> false
   end
+
+  defp legacy_ezagent_uri?(
+         %URI{scheme: scheme, host: host, path: "/" <> path} = uri,
+         scheme,
+         type
+       )
+       when is_binary(host) and host != "" do
+    Ezagent.URI.canonical?(uri) and uri.query == nil and uri.fragment == nil and
+      legacy_uri_path?(String.split(path, "/"), type)
+  end
+
+  defp legacy_ezagent_uri?(_uri, _scheme, _type), do: false
+  defp legacy_uri_path?([actual_type, name], nil), do: actual_type != "" and name != ""
+  defp legacy_uri_path?([type, name], type), do: name != ""
+  defp legacy_uri_path?(_segments, _type), do: false
 end
