@@ -32,6 +32,9 @@ defmodule EzagentPluginHello.KanbanDelegationTest do
     assert result.path =~ "/socialware/kanban/receive?token="
     assert result.publication_revision == 1
 
+    assert result.live_board_url ==
+             "/plugins/kanban/" <> URI.encode_www_form(URI.to_string(result.kanban_uri))
+
     assert {:ok, %{tree: tree}} = dispatch(result.kanban_uri, :get_tree, %{}, ctx.admin)
     node = tree.nodes[result.node_id]
 

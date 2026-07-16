@@ -32,6 +32,7 @@ defmodule EzagentPluginHello.KanbanDelegation do
           {:ok,
            %{
              kanban_uri: URI.t(),
+             live_board_url: String.t(),
              node_id: String.t(),
              path: String.t(),
              publication_revision: pos_integer(),
@@ -63,6 +64,7 @@ defmodule EzagentPluginHello.KanbanDelegation do
       {:ok,
        %{
          kanban_uri: kanban_uri,
+         live_board_url: world_kanban_url(kanban_uri),
          node_id: node_id,
          title: Map.get(task, :title, instruction),
          status: Map.get(task, :status),
@@ -206,6 +208,8 @@ defmodule EzagentPluginHello.KanbanDelegation do
             "type" => "open_url",
             "value" => result.path,
             "kind" => "hello_kanban_receipt",
+            "live_board_url" => result.live_board_url,
+            "snapshot" => true,
             "board_uri" => uri_to_string(result.kanban_uri),
             "node_id" => result.node_id,
             "publication_revision" => result.publication_revision,
@@ -237,6 +241,10 @@ defmodule EzagentPluginHello.KanbanDelegation do
       {:ok, name} -> name
       :error -> nil
     end
+  end
+
+  defp world_kanban_url(%URI{} = kanban_uri) do
+    "/plugins/kanban/" <> URI.encode_www_form(URI.to_string(kanban_uri))
   end
 
   defp uri_to_string(%URI{} = uri), do: URI.to_string(uri)
