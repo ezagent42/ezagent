@@ -41,6 +41,7 @@ defmodule Ezagent.Security.OsProcessSecretIsolationProbeTest do
     assert {:ok, @sentinel} = run_argv(["/bin/cat", secret_path])
   end
 
+  @tag :security_probe
   test "same-uid child environment is visible through proc", %{tmp_dir: tmp_dir} do
     {:ok, %{exec_pid: target_exec_pid, os_pid: target_os_pid}} =
       OsProcess.spawn(["/bin/sleep", "30"],

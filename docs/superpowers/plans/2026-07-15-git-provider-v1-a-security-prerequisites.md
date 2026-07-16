@@ -223,14 +223,14 @@ If the optional test file does not exist, omit it from `git add`.
 Build a pure request plan and interpret it with a local fake. The plan must contain this sequence:
 
 ```text
-GET base ref -> POST blobs -> POST tree -> POST commit -> POST ref -> POST pull
+GET base ref -> GET base commit/tree -> POST blobs -> POST tree -> POST commit -> POST ref -> POST pull
 ```
 
 The request planner accepts normalized file changes and returns no Authorization header or token field. The local interpreter injects sentinel authentication internally and returns only change-request ID/URL/head SHA.
 
 - [ ] **Step 2: Add security cases**
 
-Test path traversal rejection, symlink/submodule rejection, bounded file/count/total bytes, base-SHA mismatch, ref-name validation, replay idempotency key, partial failure, token/header redaction, and no raw GitHub response leakage.
+Test path traversal rejection, symlink/submodule rejection, bounded file/count/total bytes, base-SHA mismatch, repository/ref-name validation, deterministic attempt key, partial failure, token/header redaction, and no raw GitHub response leakage. The local fake does not claim provider-side replay idempotency; Plan D must implement lookup/reconcile/conflict handling.
 
 - [ ] **Step 3: Run the prototype**
 
