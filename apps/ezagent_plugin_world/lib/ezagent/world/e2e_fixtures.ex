@@ -57,13 +57,15 @@ defmodule Ezagent.World.E2EFixtures do
 
   defp fixture(slot_type, state) do
     slot = SlotRegistry.slot(slot_type) || raise "unregistered E2E fixture slot: #{slot_type}"
+    workspace_uri = "acme" |> Ezagent.URI.workspace() |> URI.to_string()
+    caller_uri = "acme" |> Ezagent.URI.user("allen") |> URI.to_string()
 
     %{
       "renderer_family" => Atom.to_string(slot.renderer_family),
       "slot_type" => slot_type,
       "layout" => %{
         "version" => 1,
-        "scope" => "workspace://acme",
+        "scope" => workspace_uri,
         "components" => [
           %{
             "id" => "e2e-#{slot_type}",
@@ -77,11 +79,11 @@ defmodule Ezagent.World.E2EFixtures do
       "caller" => %{
         "current_workspace_name" => "acme",
         "display_name" => "Allen",
-        "entity_uri" => "entity://acme/user/allen",
+        "entity_uri" => caller_uri,
         "is_system_member" => true,
-        "workspace_uri" => "workspace://acme",
+        "workspace_uri" => workspace_uri,
         "workspaces" => [
-          %{"current" => true, "name" => "acme", "uri" => "workspace://acme"}
+          %{"current" => true, "name" => "acme", "uri" => workspace_uri}
         ]
       }
     }

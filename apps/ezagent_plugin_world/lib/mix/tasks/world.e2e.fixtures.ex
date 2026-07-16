@@ -7,6 +7,8 @@ defmodule Mix.Tasks.World.E2e.Fixtures do
   """
   use Mix.Task
 
+  @builtin_uri_schemes ~w(entity workspace session template resource system)
+
   @shortdoc "Regenerate (or --check) World Tier-1 browser fixtures"
 
   @impl Mix.Task
@@ -14,6 +16,7 @@ defmodule Mix.Tasks.World.E2e.Fixtures do
     Mix.Task.run("app.config")
     {opts, _, _} = OptionParser.parse(args, switches: [check: :boolean])
     path = fixture_path()
+    ensure_builtin_uri_schemes!()
     generated = Ezagent.World.E2EFixtures.manifest_json()
 
     if opts[:check] do
@@ -44,6 +47,17 @@ defmodule Mix.Tasks.World.E2e.Fixtures do
       true ->
         Mix.raise("cannot locate world assets — run from the umbrella root or the plugin app")
     end
+  end
+
+  # `app.config` intentionally avoids booting the DB-backed umbrella. The
+  # projection still uses canonical Ezagent.URI builders, so seed the same
+  # built-in schemes that EzagentCore.Application installs during normal boot.
+  defp ensure_builtin_uri_schemes! do
+    :ok = Ezagent.URI.SchemeRegistry.init()
+
+    Enum.each(@builtin_uri_schemes, fn scheme ->
+      :ok = Ezagent.URI.SchemeRegistry.register(scheme)
+    end)
   end
 
   defp relative(path), do: Path.relative_to_cwd(path)

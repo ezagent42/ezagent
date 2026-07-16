@@ -8,8 +8,11 @@ defmodule Ezagent.World.StateContract do
   or changing a required field is caught by `mix world.e2e.fixtures --check`.
   """
 
-  @workspace_uri "workspace://acme"
-  @session_uri "session://acme/support/alpha-support"
+  @workspace_uri :fixture_workspace_uri
+  @session_uri :fixture_session_uri
+  @release_session_uri :fixture_release_session_uri
+  @caller_uri :fixture_caller_uri
+  @terminal_agent_uri :fixture_terminal_agent_uri
 
   @fixtures %{
     "overview" => %{
@@ -40,7 +43,7 @@ defmodule Ezagent.World.StateContract do
           %{"name" => "Alpha support", "uri" => @session_uri, "workspace_uri" => @workspace_uri},
           %{
             "name" => "Release room",
-            "uri" => "session://acme/support/release-room",
+            "uri" => @release_session_uri,
             "workspace_uri" => @workspace_uri
           }
         ],
@@ -53,7 +56,7 @@ defmodule Ezagent.World.StateContract do
       slot_type: "conversation",
       state: %{
         "active_view" => "conversation",
-        "caller_uri" => "entity://acme/user/allen",
+        "caller_uri" => @caller_uri,
         "component" => "conversation",
         "invite_candidates" => [],
         "members" => [],
@@ -84,7 +87,7 @@ defmodule Ezagent.World.StateContract do
       slot_type: "pty_terminal",
       state: %{
         "agent_status" => %{"flavor" => "cc", "phase" => "ready"},
-        "agent_uri" => "entity://acme/agent/terminal",
+        "agent_uri" => @terminal_agent_uri,
         "component" => "pty_terminal",
         "path" => "/identities/agents/terminal/pty",
         "pty_alive" => false,
@@ -127,7 +130,7 @@ defmodule Ezagent.World.StateContract do
 
   @doc "All deterministic minimum-state projections, keyed by fixture name."
   @spec fixtures() :: %{String.t() => %{slot_type: String.t(), state: map()}}
-  def fixtures, do: @fixtures
+  def fixtures, do: materialize(@fixtures)
 
   @doc "Required top-level state keys for one registered slot type."
   @spec required_keys(String.t()) :: [String.t()]
@@ -156,4 +159,26 @@ defmodule Ezagent.World.StateContract do
 
     state
   end
+
+  defp materialize(:fixture_workspace_uri),
+    do: "acme" |> Ezagent.URI.workspace() |> URI.to_string()
+
+  defp materialize(:fixture_session_uri),
+    do: "acme" |> Ezagent.URI.session("support", "alpha-support") |> URI.to_string()
+
+  defp materialize(:fixture_release_session_uri),
+    do: "acme" |> Ezagent.URI.session("support", "release-room") |> URI.to_string()
+
+  defp materialize(:fixture_caller_uri),
+    do: "acme" |> Ezagent.URI.user("allen") |> URI.to_string()
+
+  defp materialize(:fixture_terminal_agent_uri),
+    do: "acme" |> Ezagent.URI.agent("terminal") |> URI.to_string()
+
+  defp materialize(%{} = map) do
+    Map.new(map, fn {key, value} -> {key, materialize(value)} end)
+  end
+
+  defp materialize(list) when is_list(list), do: Enum.map(list, &materialize/1)
+  defp materialize(value), do: value
 end
