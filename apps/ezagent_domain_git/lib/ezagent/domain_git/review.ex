@@ -14,6 +14,7 @@ defmodule Ezagent.DomainGit.Review do
           submitted_at: DateTime.t() | nil
         }
 
+  @doc "Builds a normalized review event with a supported state and optional timestamp."
   @spec new(term()) :: {:ok, t()} | {:error, ValidationError.t()}
   def new(attrs) do
     with :ok <- ValidationError.validate_attrs(attrs, @fields, &validate_values/1) do

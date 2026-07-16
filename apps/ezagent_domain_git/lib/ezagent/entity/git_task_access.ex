@@ -87,6 +87,7 @@ defmodule Ezagent.Entity.GitTaskAccess do
     end
   end
 
+  @doc "Builds an action URI only when the action is part of the validated task policy."
   @spec action_uri(t(), atom()) :: {:ok, URI.t()} | {:error, term()}
   def action_uri(%__MODULE__{} = policy, action) do
     with {:ok, validated} <- revalidate(policy),
@@ -98,6 +99,7 @@ defmodule Ezagent.Entity.GitTaskAccess do
     end
   end
 
+  @doc "Builds a closed Git task-access policy after validating every authority coordinate."
   @spec new(term()) :: {:ok, t()} | {:error, term()}
   def new(attrs) when is_map(attrs) do
     with :ok <- validate_keys(attrs),

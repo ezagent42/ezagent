@@ -13,6 +13,7 @@ defmodule Ezagent.DomainGit.OperationContext do
           idempotency_key: String.t()
         }
 
+  @doc "Builds an operation context whose task, caller, and grantee share a workspace."
   @spec new(term()) :: {:ok, t()} | {:error, ValidationError.t()}
   def new(attrs) do
     with :ok <- ValidationError.validate_attrs(attrs, @fields, &validate_values/1) do

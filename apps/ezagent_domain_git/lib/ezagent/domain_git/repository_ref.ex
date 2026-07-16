@@ -25,6 +25,7 @@ defmodule Ezagent.DomainGit.RepositoryRef do
           visibility: :public | :private
         }
 
+  @doc "Builds validated provider-neutral coordinates for an Ezagent Git repository."
   @spec new(term()) :: {:ok, t()} | {:error, ValidationError.t()}
   def new(attrs) do
     with :ok <- ValidationError.validate_attrs(attrs, @fields, &validate_values/1) do
@@ -32,6 +33,7 @@ defmodule Ezagent.DomainGit.RepositoryRef do
     end
   end
 
+  @doc "Returns whether a value is an accepted provider branch or tag reference."
   @spec valid_ref?(term()) :: boolean()
   def valid_ref?(ref) when is_binary(ref) and byte_size(ref) in 1..255 do
     String.match?(ref, ~r/\A[A-Za-z0-9][A-Za-z0-9._\/-]*\z/) and
@@ -42,6 +44,7 @@ defmodule Ezagent.DomainGit.RepositoryRef do
 
   def valid_ref?(_ref), do: false
 
+  @doc "Returns whether a URI is canonical, action-free, and matches the requested axes."
   @spec ezagent_uri?(term(), String.t(), String.t()) :: boolean()
   def ezagent_uri?(%URI{} = uri, scheme, type) do
     Ezagent.URI.canonical?(uri) and Ezagent.URI.scheme?(uri, scheme) and

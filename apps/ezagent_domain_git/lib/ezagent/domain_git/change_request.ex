@@ -15,6 +15,7 @@ defmodule Ezagent.DomainGit.ChangeRequest do
           state: :open | :closed | :merged
         }
 
+  @doc "Builds normalized change-request facts, including a lowercase head SHA."
   @spec new(term()) :: {:ok, t()} | {:error, ValidationError.t()}
   def new(attrs) do
     with :ok <- ValidationError.validate_attrs(attrs, @fields, &validate_values/1) do
@@ -22,6 +23,7 @@ defmodule Ezagent.DomainGit.ChangeRequest do
     end
   end
 
+  @doc "Returns whether a value is an HTTP(S) URI with a host and no userinfo."
   @spec web_uri?(term()) :: boolean()
   def web_uri?(%URI{scheme: "http", host: host, userinfo: nil} = uri)
       when is_binary(host) and host != "" do

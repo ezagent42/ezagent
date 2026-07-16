@@ -7,6 +7,7 @@ defmodule Ezagent.DomainGit.ChangeRequestId do
   defstruct @fields
   @type t :: %__MODULE__{external_id: String.t()}
 
+  @doc "Builds a provider-neutral identity from a non-empty external identifier."
   @spec new(term()) :: {:ok, t()} | {:error, ValidationError.t()}
   def new(attrs) do
     with :ok <- ValidationError.validate_attrs(attrs, @fields, &validate_values/1) do

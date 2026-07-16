@@ -7,6 +7,7 @@ defmodule Ezagent.DomainGit.FileChange do
   defstruct @fields
   @type t :: %__MODULE__{path: String.t(), operation: :upsert, content: String.t()}
 
+  @doc "Builds a validated UTF-8 regular-file upsert."
   @spec new(term()) :: {:ok, t()} | {:error, ValidationError.t()}
   def new(attrs) do
     with :ok <- ValidationError.validate_attrs(attrs, @fields, &validate_values/1) do
@@ -14,6 +15,7 @@ defmodule Ezagent.DomainGit.FileChange do
     end
   end
 
+  @doc "Validates a non-empty collection of file changes against the configured limits."
   @spec validate_many(term()) ::
           :ok
           | {:error,
