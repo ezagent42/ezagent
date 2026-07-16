@@ -7,7 +7,10 @@ defmodule EzagentDomainGit.Application do
   def start(_type, _args) do
     with {:ok, _limits} <- Ezagent.DomainGit.ChangeLimits.current() do
       Supervisor.start_link(
-        [{Ezagent.DomainGit.AdapterRegistry, []}],
+        [
+          {Ezagent.DomainGit.AdapterRegistry, []},
+          Ezagent.DomainGit.TaskAccessSupervisor
+        ],
         strategy: :one_for_one,
         name: __MODULE__
       )

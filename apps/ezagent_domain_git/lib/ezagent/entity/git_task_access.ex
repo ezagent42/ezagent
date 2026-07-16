@@ -75,6 +75,9 @@ defmodule Ezagent.Entity.GitTaskAccess do
   def persistence, do: :ephemeral
 
   @impl Ezagent.Kind
+  def supervisor, do: Ezagent.DomainGit.TaskAccessSupervisor
+
+  @impl Ezagent.Kind
   def uri_from_args(%{policy: %__MODULE__{} = policy}), do: uri_from_args(policy)
 
   def uri_from_args(%__MODULE__{} = policy) do
