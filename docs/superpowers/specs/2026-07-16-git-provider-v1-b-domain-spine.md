@@ -309,6 +309,16 @@ path, validates all URI/workspace relationships, defines idempotent same-policy
 spawn and conflicting-policy collision behavior, and is removed on supervised
 teardown. There is no lazy snapshot activation in this slice.
 
+Task 5 attaches a minimal `Ezagent.ActionSet.GitTaskAccess` Lifecycle module so the
+policy is held by the live Resource process in its supported Behavior slice. This
+early module defines only validated `create/1` policy state: it declares no actions
+and performs no registry lookup, adapter callback, or operation effect. Because the
+standard Kind runtime reports a duplicate live URI as `{:already_registered, uri}`,
+the Task 6 spawn wrapper resolves idempotency by reading and revalidating that live
+slice: identical policy is success and any different policy is
+`:conflicting_initialization`. Task 8 extends the same module with the frozen action
+vocabulary; it does not create a second policy store.
+
 Adapter selection comes exclusively from this stored policy. A request-side
 `RepositoryRef`, where an action requires one, is only a normalized assertion that
 must equal the stored binding; it never selects or redirects the provider.
@@ -320,7 +330,8 @@ checked against the resolved authoritative base. The caller never supplies
 
 ## 6. ActionSet and actions
 
-`Ezagent.ActionSet.GitTaskAccess` uses `Ezagent.Lifecycle`. It is the only production
+`Ezagent.ActionSet.GitTaskAccess` uses `Ezagent.Lifecycle`. Task 5 creates its minimal
+policy-owning slice surface; Task 8 adds the actions below. It is the only production
 module allowed to resolve and invoke a Git adapter.
 
 Initial action vocabulary follows the Plan A contract:
