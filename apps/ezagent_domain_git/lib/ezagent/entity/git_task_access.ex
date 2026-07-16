@@ -16,6 +16,8 @@ defmodule Ezagent.Entity.GitTaskAccess do
 
   alias Ezagent.DomainGit.RepositoryRef
 
+  attach(Ezagent.ActionSet.GitTaskAccess)
+
   @resource_type "git-task-access"
   @actions [
     :resolve_repository,
@@ -67,56 +69,74 @@ defmodule Ezagent.Entity.GitTaskAccess do
         }
 
   @impl Ezagent.Kind
-  def behaviors, do: []
+  def behaviors, do: [Ezagent.ActionSet.GitTaskAccess]
 
   @impl Ezagent.Kind
   def persistence, do: :ephemeral
 
   @impl Ezagent.Kind
-  def uri_from_args(args) when is_map(args) do
-    workspace = args |> Map.fetch!(:workspace_uri) |> Ezagent.URI.workspace_name!()
-    Ezagent.URI.resource(workspace, @resource_type, Map.fetch!(args, :id))
+  def uri_from_args(%{policy: %__MODULE__{} = policy}), do: uri_from_args(policy)
+
+  def uri_from_args(%__MODULE__{} = policy) do
+    case revalidate(policy) do
+      {:ok, validated} -> build_uri(validated)
+      {:error, reason} -> raise ArgumentError, "invalid GitTaskAccess policy: #{inspect(reason)}"
+    end
   end
 
-  @spec action_uri(map() | t(), atom()) :: URI.t()
-  def action_uri(args, action) when action in @actions do
-    args
-    |> uri_from_args()
-    |> Ezagent.URI.with_action(:git_task_access, action)
+  @spec action_uri(t(), atom()) :: {:ok, URI.t()} | {:error, term()}
+  def action_uri(%__MODULE__{} = policy, action) do
+    with {:ok, validated} <- revalidate(policy),
+         :ok <- action_allowed(validated, action) do
+      {:ok,
+       validated
+       |> build_uri()
+       |> Ezagent.URI.with_action(:git_task_access, action)}
+    end
   end
 
   @spec new(term()) :: {:ok, t()} | {:error, term()}
   def new(attrs) when is_map(attrs) do
     with :ok <- validate_keys(attrs),
-         :ok <- validate_policy(attrs) do
-      {:ok, struct!(__MODULE__, attrs)}
+         {:ok, validated_repository} <- validate_policy(attrs) do
+      {:ok, struct!(__MODULE__, Map.put(attrs, :repository, validated_repository))}
     end
   end
 
   def new(_attrs), do: {:error, :invalid_attributes}
 
-  @doc "Initializes once, permits an identical retry, and rejects policy collision."
-  @spec initialize(nil | t(), term()) :: {:ok, t()} | {:error, term()}
-  def initialize(nil, attrs), do: new(attrs)
-
-  def initialize(%__MODULE__{} = current, attrs) do
-    case new(attrs) do
-      {:ok, ^current} -> {:ok, current}
-      {:ok, %__MODULE__{}} -> {:error, :conflicting_initialization}
-      {:error, reason} -> {:error, reason}
-    end
-  end
+  @doc "Revalidates a public policy struct before it reaches authority-sensitive code."
+  @spec revalidate(term()) :: {:ok, t()} | {:error, term()}
+  def revalidate(%__MODULE__{} = policy), do: policy |> Map.from_struct() |> new()
+  def revalidate(_policy), do: {:error, :invalid_attributes}
 
   @doc "Rejects invocation attempts to select stored policy coordinates."
   @spec validate_invocation(t(), term()) :: :ok | {:error, term()}
   def validate_invocation(%__MODULE__{} = policy, args) when is_map(args) do
-    case Enum.find(@policy_only_fields, &provided?(args, &1)) do
-      nil -> validate_requested_head(args, policy.allowed_head_ref)
-      field -> {:error, {:forbidden_invocation_field, field}}
+    with {:ok, validated} <- revalidate(policy) do
+      case Enum.find(@policy_only_fields, &provided?(args, &1)) do
+        nil -> validate_invocation_action(args, validated)
+        field -> {:error, {:forbidden_invocation_field, field}}
+      end
     end
   end
 
   def validate_invocation(%__MODULE__{}, _args), do: {:error, :invalid_invocation_args}
+
+  @doc "Compares a requested initialization with the authoritative live policy slice."
+  @spec initialization_result(URI.t(), t()) :: :ok | {:error, term()}
+  def initialization_result(%URI{} = uri, %__MODULE__{} = requested) do
+    with {:ok, validated_requested} <- revalidate(requested),
+         {:ok, %{policy: current}} <- Ezagent.Kind.get_slice(uri, :git_task_access),
+         {:ok, validated_current} <- revalidate_current(current) do
+      if validated_current == validated_requested,
+        do: :ok,
+        else: {:error, :conflicting_initialization}
+    else
+      {:ok, _unexpected_slice} -> {:error, :invalid_live_policy_slice}
+      {:error, reason} -> {:error, reason}
+    end
+  end
 
   defp validate_keys(attrs) do
     keys = Map.keys(attrs)
@@ -143,11 +163,12 @@ defmodule Ezagent.Entity.GitTaskAccess do
          :ok <- positive_generation(attrs.generation),
          :ok <- entity_in_workspace(:credential_owner_uri, attrs.credential_owner_uri, workspace),
          :ok <- agent_in_workspace(attrs.grantee_uri, workspace),
-         :ok <- repository_binding(attrs.repository, attrs.provider_adapter, workspace),
+         {:ok, repository} <-
+           repository_binding(attrs.repository, attrs.provider_adapter, workspace),
          :ok <- allowed_head_ref(attrs.allowed_head_ref),
          :ok <- allowed_actions(attrs.allowed_actions),
          :ok <- idempotency_inputs(attrs.idempotency_inputs, attrs.task_id, attrs.generation) do
-      :ok
+      {:ok, repository}
     end
   end
 
@@ -196,16 +217,20 @@ defmodule Ezagent.Entity.GitTaskAccess do
   defp agent_in_workspace(_uri, _workspace), do: {:error, {:invalid_field, :grantee_uri}}
 
   defp repository_binding(%RepositoryRef{} = repository, provider_adapter, workspace) do
-    cond do
-      Ezagent.URI.workspace_name(repository.repository_uri) != {:ok, workspace} ->
-        {:error, {:invalid_field, :repository}}
+    with {:ok, validated} <- RepositoryRef.new(Map.from_struct(repository)) do
+      cond do
+        Ezagent.URI.workspace_name(validated.repository_uri) != {:ok, workspace} ->
+          {:error, {:invalid_field, :repository}}
 
-      not is_atom(provider_adapter) or is_nil(provider_adapter) or
-          repository.provider_adapter != provider_adapter ->
-        {:error, {:invalid_field, :provider_adapter}}
+        not is_atom(provider_adapter) or is_nil(provider_adapter) or
+            validated.provider_adapter != provider_adapter ->
+          {:error, {:invalid_field, :provider_adapter}}
 
-      true ->
-        :ok
+        true ->
+          {:ok, validated}
+      end
+    else
+      {:error, _reason} -> {:error, {:invalid_field, :repository}}
     end
   end
 
@@ -240,20 +265,63 @@ defmodule Ezagent.Entity.GitTaskAccess do
   defp provided?(args, field),
     do: Map.has_key?(args, field) or Map.has_key?(args, Atom.to_string(field))
 
-  defp validate_requested_head(args, allowed_head_ref) do
-    case Map.fetch(args, :head_ref) do
-      :error ->
-        case Map.fetch(args, "head_ref") do
-          :error -> :ok
-          {:ok, ^allowed_head_ref} -> :ok
-          {:ok, _other} -> {:error, :head_ref_not_allowed}
+  defp build_uri(%__MODULE__{} = policy) do
+    workspace = Ezagent.URI.workspace_name!(policy.workspace_uri)
+    Ezagent.URI.resource(workspace, @resource_type, policy.id)
+  end
+
+  defp action_allowed(%__MODULE__{allowed_actions: actions}, action) do
+    if action in actions, do: :ok, else: {:error, :action_not_allowed}
+  end
+
+  defp validate_invocation_action(args, policy) do
+    with {:ok, action} <- fetch_action(args),
+         :ok <- action_allowed(policy, action),
+         :ok <- validate_requested_head(action, args, policy.allowed_head_ref) do
+      :ok
+    end
+  end
+
+  defp fetch_action(args) do
+    case {Map.fetch(args, :action), Map.fetch(args, "action")} do
+      {{:ok, _atom_action}, {:ok, _string_action}} ->
+        {:error, :ambiguous_action}
+
+      {{:ok, action}, :error} when is_atom(action) ->
+        {:ok, action}
+
+      {:error, {:ok, action}} when is_binary(action) ->
+        case Enum.find(@actions, &(Atom.to_string(&1) == action)) do
+          nil -> {:error, :action_not_allowed}
+          known -> {:ok, known}
         end
 
-      {:ok, ^allowed_head_ref} ->
-        :ok
+      _ ->
+        {:error, :action_required}
+    end
+  end
 
-      {:ok, _other} ->
-        {:error, :head_ref_not_allowed}
+  defp revalidate_current(current) do
+    case revalidate(current) do
+      {:ok, validated} -> {:ok, validated}
+      {:error, reason} -> {:error, {:invalid_current_policy, reason}}
+    end
+  end
+
+  defp validate_requested_head(:create_change_request, args, allowed_head_ref) do
+    case {Map.fetch(args, :head_ref), Map.fetch(args, "head_ref")} do
+      {{:ok, _atom_ref}, {:ok, _string_ref}} -> {:error, :ambiguous_head_ref}
+      {{:ok, ^allowed_head_ref}, :error} -> :ok
+      {:error, {:ok, ^allowed_head_ref}} -> :ok
+      _ -> {:error, :head_ref_not_allowed}
+    end
+  end
+
+  defp validate_requested_head(_action, args, _allowed_head_ref) do
+    case {Map.has_key?(args, :head_ref), Map.has_key?(args, "head_ref")} do
+      {true, true} -> {:error, :ambiguous_head_ref}
+      {false, false} -> :ok
+      _ -> {:error, :head_ref_not_allowed}
     end
   end
 end

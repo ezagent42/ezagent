@@ -180,6 +180,7 @@ Commit candidate: `feat(git): add validated adapter registry`
 **Expected files**
 
 - Create: `apps/ezagent_domain_git/lib/ezagent/entity/git_task_access.ex`
+- Create: `apps/ezagent_domain_git/lib/ezagent/behavior/git_task_access.ex`
 - Modify: `apps/ezagent_domain_git/lib/ezagent_domain_git/application.ex`
 - Create: `apps/ezagent_domain_git/test/ezagent/entity/git_task_access_test.exs`
 
@@ -195,6 +196,11 @@ Commit candidate: `feat(git): add validated adapter registry`
    `uri_from_args/1` using `Ezagent.URI.resource/3`. Use `with_action/3` for action
    targets and never concatenate URI strings.
 5. Specify idempotent same-policy initialization and reject conflicting initialization.
+   Attach the minimal Lifecycle policy slice now and prove this through a real
+   `Ezagent.Kind.spawn/2` plus live slice read. On the runtime's
+   `{:already_registered, uri}` collision, the Task 6 wrapper must compare the
+   requested validated policy with the revalidated live policy. Declare no actions,
+   adapter lookup, callbacks, or effects in this Task 5 Lifecycle surface.
 6. Run focused Kind and URI gates to GREEN.
 7. Assert `allowed_head_ref` is authoritative and cannot be changed or selected by
    invocation arguments.
@@ -247,11 +253,12 @@ Commit candidate: `test(git): issue exact receiver-bound task caps`
 
 **Expected files**
 
-- Create: `apps/ezagent_domain_git/lib/ezagent/action_set/git_task_access.ex`
+- Modify: `apps/ezagent_domain_git/lib/ezagent/behavior/git_task_access.ex`
 - Create: `apps/ezagent_domain_git/test/ezagent/action_set/git_task_access_test.exs`
 - Create: `apps/ezagent_domain_git/test/support/git_effect_probe.ex`
 
-1. Write the unauthorized test first. Dispatch through the real invocation path
+1. Extend Task 5's minimal policy-owning Lifecycle module. Write the unauthorized
+   test first. Dispatch through the real invocation path
    without the exact cap; assert the canonical authorization error and zero registry
    lookup, adapter callback, HTTP sentinel, secret sentinel, and filesystem probe.
 2. Run it and confirm RED for the missing Kind/ActionSet path—not because the test
