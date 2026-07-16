@@ -21,13 +21,20 @@ defmodule Ezagent.DomainGit.BootRegistration do
   def init(opts) do
     Process.flag(:trap_exit, true)
 
+    desired_adapters = Keyword.get(opts, :adapters, [])
+
     registrations =
       Enum.map(@actions, &{:capability, GitTaskAccess, &1, @action_set}) ++
-        Enum.map(Keyword.get(opts, :adapters, []), fn {id, module} -> {:adapter, id, module} end)
+        Enum.map(desired_adapters, fn {id, module} -> {:adapter, id, module} end)
 
     case register_all(registrations, Keyword.get(opts, :fail_at)) do
       {:ok, owned} ->
-        {:ok, owned}
+        {:ok,
+         %{
+           desired_adapters: desired_adapters,
+           owned_adapters: owned_adapters(owned),
+           owned_capabilities: owned_capabilities(owned)
+         }}
 
       {:error, reason, owned} ->
         rollback(owned)
@@ -36,25 +43,21 @@ defmodule Ezagent.DomainGit.BootRegistration do
   end
 
   @impl true
-  def terminate(_reason, owned) do
-    rollback(owned)
+  def terminate(_reason, state) do
+    rollback(state.owned_adapters ++ state.owned_capabilities)
     :ok
   end
 
   @impl true
-  def handle_info(:reconcile_adapters, owned) do
-    Enum.each(owned, fn
-      {:adapter, id, module} ->
-        case AdapterRegistry.register(id, module) do
-          :ok -> :ok
-          {:ok, :already_registered} -> :ok
-        end
-
-      _ ->
-        :ok
+  def handle_info(:reconcile_adapters, state) do
+    Enum.each(state.desired_adapters, fn {id, module} ->
+      case AdapterRegistry.register(id, module) do
+        :ok -> :ok
+        {:ok, :already_registered} -> :ok
+      end
     end)
 
-    {:noreply, owned}
+    {:noreply, state}
   end
 
   defp register_all(registrations, fail_at) do
@@ -105,5 +108,13 @@ defmodule Ezagent.DomainGit.BootRegistration do
       {:adapter, id, module} ->
         AdapterRegistry.unregister(id, module)
     end)
+  end
+
+  defp owned_adapters(owned) do
+    Enum.filter(owned, &match?({:adapter, _, _}, &1))
+  end
+
+  defp owned_capabilities(owned) do
+    Enum.filter(owned, &match?({:capability, _, _, _}, &1))
   end
 end
