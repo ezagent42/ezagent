@@ -10,7 +10,13 @@ are unchanged.
 **Do:** write `docs/together/<date>/review.md` covering:
 1. **What landed** — tasks merged to `main` (from `stack.md`), with shas.
 2. **Efficiency stats** — planned vs. returned vs. stacked vs. merged; cycle
-   times if available; how much was parallel vs. serial.
+   times if available; how much was parallel vs. serial. **加一行自动工时下界**:
+   跑 `uv run python .claude/skills/dev-together/scripts/pr_session_hours.py
+   ezagent42/ezagent "<今日日期>"`(commit 时间戳 session 聚类,git-hours 法),
+   把 `total_active_hours` 记入表格(方法与读数纪律见
+   `docs/together/2026-07-15/engineering-efficiency-analysis.md`:**下界、
+   非真实工时、禁止用于个人绩效**)。周五 review 额外跑一次 `">=<本周一>"`
+   的周窗口,积累效率时序数据。
 3. **Gaps** — deferred items (+ where they're tracked), skipped gates, conflicts
    hit, steps that needed a human and stalled, any DoD that slipped to "tests
    pass" only.
