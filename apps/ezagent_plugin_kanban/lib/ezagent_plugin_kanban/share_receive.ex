@@ -20,12 +20,18 @@ defmodule EzagentPluginKanban.ShareReceive do
     3. `Ezagent.Socialware.Mount.mount/6` 给该 session 的 kanban-assistant 挂
        `access: :read` 只读钥匙(`[:get_tree, :export_markmap]`)。授权只在**分享时**
        查(发起人有 access 才签得出 token),token 即凭证,接收侧只管挂;granter 仍 =
-       板主人(`Mount` 内部用板主人权铸,#154 mint chokepoint 不变);
-    4. **顺发 `kanban_render` render cap 给点击者**(㉜ 过渡:点开的人在该 session
-       看得到看板 tab;`{Session, :kanban_render}` view cap,走
-       `Ezagent.Identity.Grant` `{:rule, :socialware_install_views, clicker}` ——
-       与 install 侧 `grant_installer_view_caps` 同族)。best-effort:grant 失败只记
-       warning,不砸接收主链(挂载已成,tab 可由 join 补发/install 路补齐)。
+       板主人(`Mount` 内部用板主人权铸,#154 mint chokepoint 不变)。
+
+  ## TODO(㉜,等 Allen D3/D1)——点击者的 `kanban_render` view cap 不在这里发
+
+  fix-plan 曾计划接收时顺发 `{Session, :kanban_render}` render cap 给点击者
+  (㉜ 过渡:点开的人见看板 tab)。实做时撞 I12 paradigm-lock 铁闸
+  (cap_self_store_paradigm_lock_test / cap_check_only_at_chokepoint_test p6):
+  grant 驱动点与 absorb 生产者是 shrink-only 锁定名单,**任何新文件加 grant 点都
+  算 widen** —— 这正是 fix-plan X2 的病(「第 N 个 grant 点 = 第 N 个不同步的真相
+  源」)、且视图 cap 补发属 join-补发 ambient rule 家族(#154 review 面,Allen D1/D3
+  拍板后随 join hook 一并落)。故本模块只做挂载,tab 可见性留给 install /
+  join-补发路补齐。
 
   ## 为什么走 `Mount.mount` 直挂而不是 `BoardProvision.forward_board/5`
 
@@ -33,8 +39,6 @@ defmodule EzagentPluginKanban.ShareReceive do
   有 access),而接收场景点击者**不在** from_session —— 设计上授权在分享时已查,
   接收侧只管挂(与 controller 时代的口径一致)。
   """
-
-  require Logger
 
   alias Ezagent.ActionSet.Session.Members
   alias Ezagent.Socialware.Mount
@@ -47,7 +51,7 @@ defmodule EzagentPluginKanban.ShareReceive do
   @type receive_result :: %{session_uri: URI.t(), assistant_uri: URI.t()}
 
   @doc """
-  接收一块分享的板:落点解析 → 只读挂载 → 顺发 render cap。
+  接收一块分享的板:落点解析 → 只读挂载。
 
     * `payload` —— 已 verify 的 token payload(`%{"board" => str, "behavior" => str}`)。
     * `clicker` —— 点击者(登录用户)的 entity URI。
@@ -75,7 +79,6 @@ defmodule EzagentPluginKanban.ShareReceive do
            Mount.mount(session_uri, board_uri, assistant_uri, behavior, @read_actions,
              access: :read
            ) do
-      grant_render_cap(session_uri, clicker)
       {:ok, %{session_uri: session_uri, assistant_uri: assistant_uri}}
     end
   end
@@ -147,54 +150,6 @@ defmodule EzagentPluginKanban.ShareReceive do
     case Members.role_name_to_uri(members, @assistant_role) do
       %URI{} = uri -> {:ok, uri}
       _ -> {:error, :no_assistant_in_session}
-    end
-  end
-
-  # --- ㉜ 过渡:顺发 kanban_render view cap 给点击者 --------------------------
-
-  # 点开分享链接的人在落点 session 拿到 `{Session, :kanban_render}` render cap
-  # (T2-2b caller-aware view gate 认这把钥匙 → 看板 tab 对其可见)。与 install 侧
-  # `Installation.grant_installer_view_caps/2` 同款 cap 形 + 同族 rule tag。
-  # 幂等(已持同 identity_key 的 cap 跳过);失败只记 warning,不砸接收主链。
-  defp grant_render_cap(%URI{} = session_uri, %URI{} = clicker) do
-    instance = Ezagent.URI.instance(session_uri)
-    workspace = Ezagent.Capability.workspace_of(session_uri)
-
-    cap =
-      Ezagent.Capability.cap(
-        :session,
-        Ezagent.ActionSet.KanbanRender,
-        :kanban_render,
-        instance,
-        workspace
-      )
-
-    held_keys =
-      clicker
-      |> Ezagent.Identity.list_caps_for()
-      |> Enum.map(&Ezagent.Capability.identity_key/1)
-      |> MapSet.new()
-
-    if MapSet.member?(held_keys, Ezagent.Capability.identity_key(cap)) do
-      :ok
-    else
-      case Ezagent.Identity.Grant.grant_cap(
-             clicker,
-             cap,
-             {:rule, :socialware_install_views, clicker}
-           ) do
-        :ok ->
-          :ok
-
-        {:error, reason} ->
-          Logger.warning(
-            "ShareReceive.grant_render_cap/2: kanban_render grant FAILED for " <>
-              "clicker=#{URI.to_string(clicker)} session=#{URI.to_string(session_uri)}: " <>
-              "#{inspect(reason)} — receive succeeded, tab visibility left to install/join paths."
-          )
-
-          :ok
-      end
     end
   end
 end
