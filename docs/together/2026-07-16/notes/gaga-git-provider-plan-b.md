@@ -4,11 +4,11 @@
 
 **Track:** agent development bootstrap — provider-neutral Git domain spine
 
-**Owner:** gaga / Task 0–1 implementer
+**Owner:** gaga / Tasks 0–11 implementation stack
 
-**Worktree:** `/home/huangjiajia/ezagent/.worktrees/git-domain-spine`
+**Worktree:** `/home/huangjiajia/ezagent/.worktrees/plan-b-task11-integration`
 
-**Branch:** `feat/git-domain-spine`
+**Branch:** `test/git-task-dispatch-integration`
 
 **Baseline/head at Task 0 start:** `3ce1439afec1a1cfffd624fdff8667bb6f5b80a2`
 
@@ -17,10 +17,9 @@ record and does not claim #1423 is merged to `origin/main`.
 
 ## Scope and honesty boundary
 
-Task 0 freezes Plan A's contract. Task 1 adds only the independent
-`ezagent_domain_git` OTP-app scaffold and its dependency-boundary test. The app has
-no production Git domain types or behavior and depends inward only on
-`ezagent_core`.
+Tasks 0–11 implement and locally prove the provider-neutral, in-memory
+`ezagent_domain_git` spine. Task 11 adds only integration/support tests; it does not
+add an external provider or broaden the production boundary.
 
 No GitHub plugin, credential/token work, checkout/worktree provisioning, Kanban
 integration, canary, #1360, AgentRuntime ARB, EntityCaps, bridge join, SSH callback,
@@ -40,9 +39,10 @@ code or tests; its verification is documentation/static consistency only.
 | Preflight/read required evidence | complete | Read Task 0 brief, local design/plan, Plan A decisions/design/plan and daily records; inspected current Git terminology and W29 prototype |
 | Task 0 contract freeze | complete | Exact Plan A structs, callbacks/actions, and error union frozen; five auxiliary closed shapes corrected per architecture review |
 | Task 1 independent app scaffold | complete | Empty OTP supervision tree; exact approved umbrella deps `[:ezagent_core]`; dependency boundary test GREEN |
-| Task 2 construction-contract amendment | review required | `new/1`, closed `ValidationError`, domain-owned `ChangeLimits`, and `FileChange.validate_many/1` frozen docs-only before RED |
-| Task 2+ production implementation | deferred | No value types, adapter, Resource, ActionSet, registry, migrations, provider plugin, UI, workspace, or Kanban code |
-| CI/rebase/dev-together return | deferred | Not claimed by this Task 1 implementation slice |
+| Tasks 2–9 domain implementation | complete | closed values/errors, adapter contract/registry, ephemeral Resource lifecycle, exact signed-cap fixture, authorized ActionSet dispatch, and atomic boot registration are present in the inherited stack |
+| Task 10 structural gates | parallel/open at Task 11 start | owned by the parallel core-gate slice; Task 11 does not edit its files or claim its result |
+| Task 11 integration proof | complete locally | real boot + pre-spawned Resource + two synchronized fakes + exact signed Cap + real Invocation/Router; exact routing/no cross-call, no-cap zero effects, stale zero mutation |
+| Task 12 / external completion | open | no full precommit, GitHub, credentials, checkout/worktrees, Kanban, canary, PR/CI/review/merge, deploy, or #1360 final mount claimed |
 
 ## Changes
 
@@ -172,3 +172,35 @@ ValidationError callback spec now accepts tuple reasons.
 
 Post-fix full domain app: 17/0; warnings-as-errors compile passes; applicable core
 dependency/layer/URI gates: 13/0. Full precommit/CI remains unclaimed.
+
+## Task 11 integration proof
+
+Task 11 started from the integrated Tasks 0–9 base `c1ecc1a2d`; Task 10 ran in a
+parallel slice and its core-gate files were not touched here. Strict TDD first added
+the integration contract. Missing worktree dependencies and unset `SHELL` blocked
+Mix before ExUnit and were not counted as RED. With `SHELL=/bin/bash` and the main
+checkout's local `deps`/`_build`, the umbrella-root run reached the intended RED:
+3 tests, 3 failures because the synchronized adapters did not exist. The minimal
+test-support adapters/probe then produced GREEN: 3 tests, 0 failures.
+
+The proof observes real `EzagentDomainGit.Application`, `BootRegistration`,
+`AdapterRegistry`, `TaskAccessSupervisor`, and all five boot capability bindings;
+pre-spawns an ephemeral policy Resource; uses only Task 7's held-admin, exact
+receiver-bound signed artifact; and calls `Ezagent.Invocation.dispatch/1`. The two
+fakes synchronize directly with the owning test process through the handler-built
+idempotency coordinate, so absence assertions require neither sleep nor a shared
+probe. Every adapter registration and Resource is cleaned with `on_exit` plus
+explicit per-iteration teardown.
+
+Verified scope remains provider-neutral and in-memory. There is no GitHub API,
+credential, checkout/worktree provisioning, persistence claim, Kanban, canary,
+real PR/CI/review/merge, deployment, or #1360 Layer B final mount. Task 12 full
+precommit/CI/WIP-PR handoff remains open.
+
+Fresh verification passed focused integration 3/0, full domain 83/0,
+`ezagent.arch.scan`, and `ezagent.check_invariants`. Two inherited static debts are
+recorded rather than concealed: `ezagent.doc.scan` is 424 > 404 due to 20 public
+defs under existing domain `lib`, and hard-fail `ezagent.uri_query.scan` finds six
+existing domain-value heuristics (three positional URI reads and three tenant
+derivations). Task 11 changes test/docs only; it neither raises baselines nor edits
+the inherited production value modules.
