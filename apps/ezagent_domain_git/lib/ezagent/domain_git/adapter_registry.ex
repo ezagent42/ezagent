@@ -24,9 +24,7 @@ defmodule Ezagent.DomainGit.AdapterRegistry do
 
   @doc false
   @spec start_link(keyword()) :: GenServer.on_start()
-  def start_link(opts) do
-    GenServer.start_link(__MODULE__, opts, name: Keyword.get(opts, :name, __MODULE__))
-  end
+  def start_link(_opts), do: GenServer.start_link(__MODULE__, [], name: __MODULE__)
 
   @doc "Registers a provider id and its validated adapter module."
   @spec register(term(), term()) ::
@@ -39,29 +37,21 @@ defmodule Ezagent.DomainGit.AdapterRegistry do
   end
 
   @doc false
-  @spec lookup(provider_id()) :: {:ok, module()} | :error
-  def lookup(provider_id) when is_binary(provider_id) do
-    case :ets.lookup(@table, provider_id) do
-      [{^provider_id, adapter_module}] -> {:ok, adapter_module}
-      [] -> :error
-    end
-  end
+  @spec lookup_for_action_set(provider_id()) ::
+          {:ok, module()} | :error | {:error, :registry_unavailable}
+  def lookup_for_action_set(provider_id) when is_binary(provider_id),
+    do: safe_read(fn -> lookup_entry(provider_id) end)
 
-  def lookup(_provider_id), do: :error
+  def lookup_for_action_set(_provider_id), do: :error
 
-  @doc "Returns sorted, non-effectful adapter diagnostics for operators."
-  @spec list() :: [%{provider_id: provider_id(), module: module()}]
-  def list do
-    @table
-    |> :ets.tab2list()
-    |> Enum.map(fn {provider_id, adapter_module} ->
-      %{provider_id: provider_id, module: adapter_module}
-    end)
-    |> Enum.sort_by(& &1.provider_id)
-  end
+  @doc false
+  @spec list_for_diagnostics() ::
+          {:ok, [%{provider_id: provider_id(), module: module()}]}
+          | {:error, :registry_unavailable}
+  def list_for_diagnostics, do: safe_read(&diagnostic_entries/0)
 
   @impl true
-  def init(_opts) do
+  def init([]) do
     table =
       :ets.new(@table, [
         :named_table,
@@ -102,7 +92,7 @@ defmodule Ezagent.DomainGit.AdapterRegistry do
   defp validate_provider_id(provider_id), do: {:error, {:invalid_provider_id, provider_id}}
 
   defp validate_adapter(adapter_module) when is_atom(adapter_module) do
-    with {:module, ^adapter_module} <- Code.ensure_loaded(adapter_module),
+    with {_file, _load_type} <- :code.is_loaded(adapter_module),
          :ok <- validate_behaviour(adapter_module),
          :ok <- validate_callbacks(adapter_module) do
       :ok
@@ -139,5 +129,34 @@ defmodule Ezagent.DomainGit.AdapterRegistry do
     else
       {:error, {:missing_callbacks, missing}}
     end
+  end
+
+  defp lookup_entry(provider_id) do
+    case :ets.lookup(@table, provider_id) do
+      [{^provider_id, adapter_module}] -> {:ok, adapter_module}
+      [] -> :error
+    end
+  end
+
+  defp diagnostic_entries do
+    entries =
+      @table
+      |> :ets.tab2list()
+      |> Enum.map(fn {provider_id, adapter_module} ->
+        %{provider_id: provider_id, module: adapter_module}
+      end)
+      |> Enum.sort_by(& &1.provider_id)
+
+    {:ok, entries}
+  end
+
+  defp safe_read(read) do
+    if :ets.whereis(@table) == :undefined do
+      {:error, :registry_unavailable}
+    else
+      read.()
+    end
+  rescue
+    ArgumentError -> {:error, :registry_unavailable}
   end
 end

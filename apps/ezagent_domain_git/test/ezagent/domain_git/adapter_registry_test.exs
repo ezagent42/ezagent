@@ -2,9 +2,16 @@ defmodule Ezagent.DomainGit.AdapterRegistryTest do
   use ExUnit.Case, async: false
 
   alias Ezagent.DomainGit.AdapterRegistry
+  alias Ezagent.DomainGit.Diagnostics
   alias Ezagent.DomainGit.TestSupport.{FakeGitAdapterA, FakeGitAdapterB}
 
   import ExUnit.CaptureIO
+
+  setup do
+    assert {:module, FakeGitAdapterA} = Code.ensure_loaded(FakeGitAdapterA)
+    assert {:module, FakeGitAdapterB} = Code.ensure_loaded(FakeGitAdapterB)
+    :ok
+  end
 
   defmodule MissingBehaviour do
     def resolve_repository(_, _), do: raise("must not execute")
@@ -30,11 +37,11 @@ defmodule Ezagent.DomainGit.AdapterRegistryTest do
       id = unique_id("registered")
 
       assert :ok = AdapterRegistry.register(id, FakeGitAdapterA)
-      assert {:ok, FakeGitAdapterA} = AdapterRegistry.lookup(id)
+      assert {:ok, FakeGitAdapterA} = AdapterRegistry.lookup_for_action_set(id)
     end
 
     test "returns :error for an unknown provider" do
-      assert :error = AdapterRegistry.lookup(unique_id("unknown"))
+      assert :error = AdapterRegistry.lookup_for_action_set(unique_id("unknown"))
     end
 
     test "rejects invalid provider ids" do
@@ -50,7 +57,7 @@ defmodule Ezagent.DomainGit.AdapterRegistryTest do
       assert {:error, {:missing_behaviour, MissingBehaviour}} =
                AdapterRegistry.register(id, MissingBehaviour)
 
-      assert :error = AdapterRegistry.lookup(id)
+      assert :error = AdapterRegistry.lookup_for_action_set(id)
     end
 
     test "requires every exact adapter callback" do
@@ -60,7 +67,7 @@ defmodule Ezagent.DomainGit.AdapterRegistryTest do
       assert {:error, {:missing_callbacks, [list_reviews: 3]}} =
                AdapterRegistry.register(id, missing_callback)
 
-      assert :error = AdapterRegistry.lookup(id)
+      assert :error = AdapterRegistry.lookup_for_action_set(id)
     end
 
     test "same provider and module registration is idempotent" do
@@ -68,7 +75,7 @@ defmodule Ezagent.DomainGit.AdapterRegistryTest do
 
       assert :ok = AdapterRegistry.register(id, FakeGitAdapterA)
       assert {:ok, :already_registered} = AdapterRegistry.register(id, FakeGitAdapterA)
-      assert {:ok, FakeGitAdapterA} = AdapterRegistry.lookup(id)
+      assert {:ok, FakeGitAdapterA} = AdapterRegistry.lookup_for_action_set(id)
     end
 
     test "a conflicting duplicate is rejected without replacing the winner" do
@@ -79,14 +86,14 @@ defmodule Ezagent.DomainGit.AdapterRegistryTest do
       assert {:error, {:provider_conflict, ^id, FakeGitAdapterA, FakeGitAdapterB}} =
                AdapterRegistry.register(id, FakeGitAdapterB)
 
-      assert {:ok, FakeGitAdapterA} = AdapterRegistry.lookup(id)
+      assert {:ok, FakeGitAdapterA} = AdapterRegistry.lookup_for_action_set(id)
     end
 
     test "registration performs no adapter callback" do
       id = unique_id("callback-bomb")
 
       assert :ok = AdapterRegistry.register(id, CallbackBomb)
-      assert {:ok, CallbackBomb} = AdapterRegistry.lookup(id)
+      assert {:ok, CallbackBomb} = AdapterRegistry.lookup_for_action_set(id)
     end
 
     test "concurrent conflicts produce exactly one winner and no corrupt entry" do
@@ -106,11 +113,24 @@ defmodule Ezagent.DomainGit.AdapterRegistryTest do
       assert winner in [FakeGitAdapterA, FakeGitAdapterB]
       assert loser in [FakeGitAdapterA, FakeGitAdapterB]
       refute winner == loser
-      assert {:ok, ^winner} = AdapterRegistry.lookup(id)
+      assert {:ok, ^winner} = AdapterRegistry.lookup_for_action_set(id)
+    end
+
+    test "does not load an unloaded adapter module" do
+      {module, cleanup} = unloaded_adapter_fixture()
+      on_exit(cleanup)
+
+      assert :code.is_loaded(module) == false
+
+      assert {:error, {:invalid_adapter_module, ^module}} =
+               AdapterRegistry.register(unique_id("unloaded"), module)
+
+      assert :code.is_loaded(module) == false
+      refute_receive {:adapter_on_load, ^module}
     end
   end
 
-  describe "list/0" do
+  describe "Diagnostics.list_adapters/0" do
     test "returns deterministic non-effectful diagnostics without credentials" do
       id_b = unique_id("list-b")
       id_a = unique_id("list-a")
@@ -118,7 +138,7 @@ defmodule Ezagent.DomainGit.AdapterRegistryTest do
       assert :ok = AdapterRegistry.register(id_b, FakeGitAdapterB)
       assert :ok = AdapterRegistry.register(id_a, FakeGitAdapterA)
 
-      diagnostics = AdapterRegistry.list()
+      assert {:ok, diagnostics} = Diagnostics.list_adapters()
 
       assert Enum.any?(diagnostics, &match?(%{provider_id: ^id_a, module: FakeGitAdapterA}, &1))
       assert Enum.any?(diagnostics, &match?(%{provider_id: ^id_b, module: FakeGitAdapterB}, &1))
@@ -130,6 +150,41 @@ defmodule Ezagent.DomainGit.AdapterRegistryTest do
                  &(&1 in [:credential, :credentials, :token, :auth])
                )
              end)
+    end
+  end
+
+  describe "registry lifecycle" do
+    test "is a fixed singleton even when callers pass a name option" do
+      existing = Process.whereis(AdapterRegistry)
+
+      assert {:error, {:already_started, ^existing}} =
+               AdapterRegistry.start_link(name: unique_id("ignored-name"))
+    end
+
+    test "reads fail closed while unavailable and restart begins empty" do
+      id = unique_id("restart")
+      assert :ok = AdapterRegistry.register(id, FakeGitAdapterA)
+
+      assert :ok = Supervisor.terminate_child(EzagentDomainGit.Application, AdapterRegistry)
+
+      on_exit(fn ->
+        case Supervisor.restart_child(EzagentDomainGit.Application, AdapterRegistry) do
+          {:ok, _pid} -> :ok
+          {:error, :running} -> :ok
+        end
+      end)
+
+      assert {:error, :registry_unavailable} = AdapterRegistry.lookup_for_action_set(id)
+      assert {:error, :registry_unavailable} = Diagnostics.list_adapters()
+      assert :undefined = :ets.whereis(:ezagent_domain_git_adapter_registry)
+
+      assert {:ok, _pid} =
+               Supervisor.restart_child(EzagentDomainGit.Application, AdapterRegistry)
+
+      assert :error = AdapterRegistry.lookup_for_action_set(id)
+      assert {:ok, []} = Diagnostics.list_adapters()
+      assert :ok = AdapterRegistry.register(id, FakeGitAdapterA)
+      assert {:ok, FakeGitAdapterA} = AdapterRegistry.lookup_for_action_set(id)
     end
   end
 
@@ -153,5 +208,46 @@ defmodule Ezagent.DomainGit.AdapterRegistryTest do
 
     capture_io(:stderr, fn -> Code.compile_string(source) end)
     module
+  end
+
+  defp unloaded_adapter_fixture do
+    module = Module.concat(__MODULE__, "Unloaded#{System.unique_integer([:positive])}")
+    probe_key = {__MODULE__, module}
+    tmp_dir = Path.join(System.tmp_dir!(), "git-adapter-#{System.unique_integer([:positive])}")
+    File.mkdir_p!(tmp_dir)
+
+    source = """
+    defmodule #{inspect(module)} do
+      @behaviour Ezagent.DomainGit.Adapter
+      @on_load :observable_on_load
+      def observable_on_load do
+        if pid = :persistent_term.get(#{inspect(probe_key)}, nil),
+          do: send(pid, {:adapter_on_load, __MODULE__})
+        :ok
+      end
+      def resolve_repository(_, _), do: raise("must not execute")
+      def create_change_request(_, _, _, _), do: raise("must not execute")
+      def read_change_request(_, _, _), do: raise("must not execute")
+      def list_checks(_, _, _), do: raise("must not execute")
+      def list_reviews(_, _, _), do: raise("must not execute")
+    end
+    """
+
+    [{^module, beam}] = Code.compile_string(source)
+    :code.purge(module)
+    true = :code.delete(module)
+    File.write!(Path.join(tmp_dir, Atom.to_string(module) <> ".beam"), beam)
+    true = :code.add_patha(String.to_charlist(tmp_dir))
+    :persistent_term.put(probe_key, self())
+
+    cleanup = fn ->
+      :persistent_term.erase(probe_key)
+      :code.del_path(String.to_charlist(tmp_dir))
+      :code.purge(module)
+      :code.delete(module)
+      File.rm_rf!(tmp_dir)
+    end
+
+    {module, cleanup}
   end
 end
