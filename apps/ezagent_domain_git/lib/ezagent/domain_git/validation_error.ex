@@ -9,6 +9,7 @@ defmodule Ezagent.DomainGit.ValidationError do
           | {:missing_field, atom()}
           | {:invalid_field, atom()}
 
+  @doc "Validates atom-keyed attributes for exact fields before running value validation."
   @spec validate_attrs(term(), [atom()], (map() -> :ok | {:error, t()})) ::
           :ok | {:error, t()}
   def validate_attrs(attrs, fields, validate_values) when is_map(attrs) do
@@ -31,6 +32,7 @@ defmodule Ezagent.DomainGit.ValidationError do
 
   def validate_attrs(_attrs, _fields, _validate_values), do: {:error, :invalid_attributes}
 
+  @doc "Returns whether a value is a non-empty binary."
   @spec nonempty_string?(term()) :: boolean()
   def nonempty_string?(value), do: is_binary(value) and value != ""
 end

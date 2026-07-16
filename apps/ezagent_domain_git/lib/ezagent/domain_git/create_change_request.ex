@@ -13,6 +13,7 @@ defmodule Ezagent.DomainGit.CreateChangeRequest do
           expected_base_sha: CommitSha.t()
         }
 
+  @doc "Builds a validated provider-neutral request to create a change request."
   @spec new(term()) :: {:ok, t()} | {:error, ValidationError.t()}
   def new(attrs) do
     with :ok <- ValidationError.validate_attrs(attrs, @fields, &validate_values/1) do

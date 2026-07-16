@@ -15,6 +15,7 @@ defmodule Ezagent.DomainGit.ChangeLimits do
           max_total_bytes: pos_integer()
         }
 
+  @doc "Builds change limits from positive byte and file-count thresholds."
   @spec new(term()) :: {:ok, t()} | {:error, ValidationError.t()}
   def new(attrs) do
     with :ok <- ValidationError.validate_attrs(attrs, @fields, &validate_values/1) do
@@ -22,6 +23,7 @@ defmodule Ezagent.DomainGit.ChangeLimits do
     end
   end
 
+  @doc "Returns the configured change limits, falling back to the domain defaults."
   @spec current() :: {:ok, t()} | {:error, :invalid_change_limits_config}
   def current do
     config = Application.get_env(:ezagent_domain_git, :change_limits, @defaults)

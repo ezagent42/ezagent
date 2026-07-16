@@ -34,6 +34,7 @@ defmodule Ezagent.DomainGit.Check do
           url: URI.t() | nil
         }
 
+  @doc "Builds normalized check facts while enforcing status and conclusion consistency."
   @spec new(term()) :: {:ok, t()} | {:error, ValidationError.t()}
   def new(attrs) do
     with :ok <- ValidationError.validate_attrs(attrs, @fields, &validate_values/1) do
