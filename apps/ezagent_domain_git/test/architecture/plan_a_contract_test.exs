@@ -91,6 +91,69 @@ defmodule EzagentDomainGit.Architecture.PlanAContractTest do
     refute union_strings(quote(do: :allowed | :extra)) == [":allowed"]
   end
 
+  test "adapter exposes only the frozen callbacks and action vocabulary" do
+    assert Code.ensure_loaded?(Ezagent.DomainGit.Adapter)
+
+    assert Enum.sort(Ezagent.DomainGit.Adapter.behaviour_info(:callbacks)) ==
+             Enum.sort(
+               resolve_repository: 2,
+               create_change_request: 4,
+               read_change_request: 3,
+               list_checks: 3,
+               list_reviews: 3
+             )
+
+    source = File.read!(Path.expand("../../lib/ezagent/domain_git/adapter.ex", __DIR__))
+    {:ok, ast} = Code.string_to_quoted(source)
+
+    expected_actions =
+      quote do
+        :resolve_repository
+        | :create_change_request
+        | :read_change_request
+        | :list_checks
+        | :list_reviews
+      end
+      |> union_strings()
+
+    assert ast |> type_rhs!(:action) |> union_strings() == expected_actions
+
+    refute source =~ ~r/\b(merge|clone|fetch|push|ssh|checkout|credential)\b/i
+  end
+
+  test "adapter callback source has exact typed arguments and closed results" do
+    source = File.read!(Path.expand("../../lib/ezagent/domain_git/adapter.ex", __DIR__))
+
+    expected = [
+      {"resolve_repository", ["OperationContext.t()", "RepositoryRef.t()"], "RepositoryRef.t()"},
+      {"create_change_request",
+       [
+         "OperationContext.t()",
+         "RepositoryRef.t()",
+         "[FileChange.t()]",
+         "CreateChangeRequest.t()"
+       ], "ChangeRequest.t()"},
+      {"read_change_request",
+       ["OperationContext.t()", "RepositoryRef.t()", "ChangeRequestId.t()"], "ChangeRequest.t()"},
+      {"list_checks", ["OperationContext.t()", "RepositoryRef.t()", "CommitSha.t()"],
+       "[Check.t()]"},
+      {"list_reviews", ["OperationContext.t()", "RepositoryRef.t()", "ChangeRequestId.t()"],
+       "[Review.t()]"}
+    ]
+
+    normalized = String.replace(source, ~r/\s+/, "")
+
+    for {name, arguments, success} <- expected do
+      signature =
+        "@callback#{name}(#{Enum.join(arguments, ",")})::{:ok,#{success}}|{:error,Error.t()}"
+
+      assert normalized =~ String.replace(signature, ~r/\s+/, "")
+    end
+
+    refute source =~
+             ~r/\b(map\(\)|token|secret|credential|Req|client|checkout|local_path|Cap|provider_payload)\b/
+  end
+
   defp type_rhs!(ast, name) do
     {_ast, rhs} =
       Macro.prewalk(ast, nil, fn
