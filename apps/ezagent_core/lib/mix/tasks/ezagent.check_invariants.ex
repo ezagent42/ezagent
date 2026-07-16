@@ -107,6 +107,10 @@ defmodule Mix.Tasks.Ezagent.CheckInvariants do
     #   fan-out extracted verbatim from `server.ex` to keep that module under
     #   the oversized-module gate. Same category: operator-visibility fan-out,
     #   never an inbound message.)
+    # - `world/kanban_actions.ex` (2026-07-17, X1 推送环发布侧): kanban 写动作
+    #   成功后向 session :events topic 播 `{:kanban_changed, board_uri}` —— 同
+    #   presence_fanout / read_marker 一类的 §5.7.6 view fan-out(WorldLive 订阅者
+    #   重拉 board_state),never an inbound message。
     # Plus the standard exclusions (tests, this checker).
     {output, _exit_code} =
       System.cmd(
@@ -135,6 +139,7 @@ defmodule Mix.Tasks.Ezagent.CheckInvariants do
             "| grep -v 'apps/ezagent_domain_session/lib/ezagent_domain_instance_message/presence_fanout.ex' " <>
             "| grep -v 'apps/ezagent_domain_session/lib/ezagent/session/read_marker.ex' " <>
             "| grep -v 'apps/ezagent_plugin_cc/lib/ezagent/orchestrator/mcp_channel.ex' " <>
+            "| grep -v 'apps/ezagent_plugin_world/lib/ezagent/world/kanban_actions.ex' " <>
             "| grep -v 'ezagent.check_invariants.ex' " <>
             "| grep -v '^[^:]*:[0-9]*:[[:space:]]*#' " <>
             "| grep -v '`Phoenix\\.PubSub\\.broadcast' " <>

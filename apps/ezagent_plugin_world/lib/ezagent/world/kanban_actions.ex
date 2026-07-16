@@ -185,7 +185,10 @@ defmodule Ezagent.World.KanbanActions do
             origin: :authenticated_external
           })
 
-        {:noreply, push_tree(socket, uri, status_of(result))}
+        status = status_of(result)
+        if status == "ok", do: broadcast_kanban_changed(socket, uri)
+
+        {:noreply, push_tree(socket, uri, status)}
 
       :error ->
         {:noreply, assign(socket, :last_dispatch_status, "error:bad_kanban_uri")}
@@ -209,6 +212,7 @@ defmodule Ezagent.World.KanbanActions do
           })
 
         status = status_of(result)
+        if status == "ok", do: broadcast_kanban_changed(socket, uri)
 
         {:noreply,
          socket
@@ -457,6 +461,34 @@ defmodule Ezagent.World.KanbanActions do
 
       :error ->
         {:noreply, assign(socket, :last_dispatch_status, "error:bad_kanban_uri")}
+    end
+  end
+
+  # --- X1 推送环发布侧(㉘/㉒-① 的 kanban 半) ---------------------------------
+  #
+  # kanban 写动作成功后向**当前会话的 UI events topic**(`esr:session:<uri>:events`,
+  # chat_message / member_presence 同族的 view fan-out 面)广播一条轻事件
+  # `{:kanban_changed, board_uri}` —— 同会话其他在线成员的 WorldLive 已经经
+  # `ensure_session_subscribed` 订着这个 topic,收到后按自己的 `read_ctx` 重拉
+  # `board_state` 刷画布(操作方此前只 push 自己的 socket,别人的界面永远不动,㉘)。
+  #
+  # **不是 inbound dispatch 路**(P14 红线,事故 2.1):inbound 永远走
+  # `Ezagent.Invocation.dispatch/1`;这里是 §5.7.6 的 :events 观察者 fan-out,
+  # 与 presence_fanout / read_marker 同一类(invariant #1 allowlist 同步登记)。
+  # 无当前会话(如 /plugins/kanban 独立页操作)则无处可播,静默跳过。
+  defp broadcast_kanban_changed(socket, %URI{} = board_uri) do
+    case socket.assigns[:current_session_uri] do
+      %URI{} = session_uri ->
+        Phoenix.PubSub.broadcast(
+          EzagentCore.PubSub,
+          Ezagent.ActionSet.Session.session_events_topic(session_uri),
+          {:kanban_changed, board_uri}
+        )
+
+        :ok
+
+      _ ->
+        :ok
     end
   end
 
