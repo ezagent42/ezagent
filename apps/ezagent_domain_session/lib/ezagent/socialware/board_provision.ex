@@ -30,8 +30,10 @@ defmodule Ezagent.Socialware.BoardProvision do
     * `behavior` —— 操作 cap 的 ActionSet 模块(如 `Ezagent.ActionSet.Kanban`)。
     * `owner_ctx` —— `%{caller, caps}`:建板者(= 板主人),须持 `create_agent` 权。
 
-  返回 `{:ok, %{board_uri, assistant_uri, minted}}` 或 `{:error, reason}`。建板失败或 assistant
-  解析不出(本 session 无该 role 成员)则不发钥匙、整体失败(fail-closed)。
+  返回 `{:ok, %{board_uri, assistant_uri, minted}}` 或 `{:error, reason}`。建板失败则整体失败
+  (fail-closed);assistant 解析不出(本 session 无该 role 成员)**不再整体失败**(⑳):
+  assistant 钥匙只是 socialware 增强,跳过(`assistant_uri: nil, minted: []`),
+  建板人钥匙(plugin 基线)照发,留待 join 补发 / reconcile。
   """
 
   alias Ezagent.ActionSet.Session.Members
@@ -39,21 +41,24 @@ defmodule Ezagent.Socialware.BoardProvision do
 
   @type result :: %{
           board_uri: URI.t(),
-          assistant_uri: URI.t(),
+          assistant_uri: URI.t() | nil,
           minted: [Ezagent.Capability.t()],
           creator_minted: [Ezagent.Capability.t()]
         }
 
   @doc """
-  建板(归属 = `owner_ctx` 的 caller)+ 当场发两把钥匙:
+  建板(归属 = `owner_ctx` 的 caller)+ 发钥匙(主链一把 + 增强一把):
 
-    1. 本 session 的 `assistant_role` 成员挂指向新板的 `behavior` 操作钥匙
-       (`access: :operate`,经 `Mount.provision/6` 建宿主 + 当场挂 + 落挂载表);
-    2. **建板人自己**(`owner_ctx.caller` = 板主人)也挂一把同款全动作 operate 钥匙
-       (分层债 ⑧:此前建板人只拿到 `Manage` cap —— 管 agent 生命周期,behavior 轴对不上
-       `behavior` 的操作 required_caps,读写自己的板全 unauthorized。经 `Mount.mount/6`
-       → `CompositionCaps.mint_cap/4` 唯一 mint chokepoint,granter = 板主人 =
-       建板人自己,`Cap.issue` 走 `{:held_by, owner}` 自路径,per-grantee 签名)。
+    1. **建板人自己**(`owner_ctx.caller` = 板主人)挂一把全动作 operate 钥匙 —— **plugin
+       基线主链**(经 `Mount.provision/6` 建宿主 + 当场挂 + 落挂载表;分层债 ⑧:此前建板人
+       只拿到 `Manage` cap —— 管 agent 生命周期,behavior 轴对不上 `behavior` 的操作
+       required_caps,读写自己的板全 unauthorized。`CompositionCaps.mint_cap/4` 唯一 mint
+       chokepoint,granter = 板主人 = 建板人自己,`Cap.issue` 走 `{:held_by, owner}` 自路径,
+       per-grantee 签名);
+    2. 本 session 的 `assistant_role` 成员挂同款操作钥匙 —— **socialware 增强**(⑳):
+       assistant 解析成功才附加 `Mount.mount/6`;解析不出(本 session 无该 role 成员)
+       跳过 assistant 钥匙(`assistant_uri: nil, minted: []`),**不再整体失败**,
+       留待 join 补发 / reconcile。
 
   见模块文档的参数/返回契约;返回增加 `:creator_minted`(发给建板人的钥匙)。
   """
@@ -65,7 +70,6 @@ defmodule Ezagent.Socialware.BoardProvision do
          {:ok, board_role} <- fetch(spec, :board_role),
          {:ok, flavor} <- fetch(spec, :flavor),
          {:ok, assistant_role} <- fetch(spec, :assistant_role),
-         {:ok, assistant_uri} <- resolve_assistant(session_uri, assistant_role),
          {:ok, %URI{} = creator_uri} <- fetch_creator(owner_ctx),
          # ⑥ 建板授权(过渡,skill-1 会诊 2026-07-16;rule 名进 Decision Log 待 Allen):
          # collab 模型要「任何编辑 session 成员」能建板(建板人=版主);普通成员全链无
@@ -84,18 +88,20 @@ defmodule Ezagent.Socialware.BoardProvision do
            role: board_role,
            actions: actions
          },
-         {:ok, %{target: board_uri, caps: minted}} <-
+         # 主链(⑧+⑳):建宿主 + 当场给**建板人**发全动作 operate 钥匙(同一条 mount 路:
+         # mint + 落挂载表,session 重启可 reconcile)。
+         {:ok, %{target: board_uri, caps: creator_minted}} <-
            Mount.provision(
              session_uri,
              workspace_uri,
              provision_spec,
-             assistant_uri,
+             creator_uri,
              behavior,
              provision_ctx
            ),
-         # ⑧ 发给建板人的钥匙:同一条 mount 路(mint + 落挂载表,session 重启可 reconcile)。
-         {:ok, %{caps: creator_minted}} <-
-           Mount.mount(session_uri, board_uri, creator_uri, behavior, actions, access: :operate) do
+         # 增强(⑳):assistant 解析成功才附加挂钥匙;解析不出跳过(nil / []),不 fail。
+         {:ok, {assistant_uri, minted}} <-
+           mount_assistant(session_uri, board_uri, assistant_role, behavior, actions) do
       {:ok,
        %{
          board_uri: board_uri,
@@ -103,6 +109,24 @@ defmodule Ezagent.Socialware.BoardProvision do
          minted: minted,
          creator_minted: creator_minted
        }}
+    end
+  end
+
+  # ⑳ assistant 钥匙 = socialware 增强,非硬前置:本 session 无该 role 成员 → 跳过
+  # (`{nil, []}`,留待 join 补发/reconcile);成员在、挂载失败 → 真错误,原样上抛
+  # (fail-closed —— 那不是"没有 assistant",是发钥匙路坏了,不能静默)。
+  defp mount_assistant(session_uri, board_uri, assistant_role, behavior, actions) do
+    case resolve_assistant(session_uri, assistant_role) do
+      {:ok, %URI{} = assistant_uri} ->
+        case Mount.mount(session_uri, board_uri, assistant_uri, behavior, actions,
+               access: :operate
+             ) do
+          {:ok, %{caps: minted}} -> {:ok, {assistant_uri, minted}}
+          {:error, reason} -> {:error, reason}
+        end
+
+      {:error, _no_assistant} ->
+        {:ok, {nil, []}}
     end
   end
 
