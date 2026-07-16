@@ -163,6 +163,39 @@ defmodule Ezagent.UriQuery.ScanTest do
       assert [] = violations_for(violations, :tenant_derivation)
     end
 
+    test "does not classify external URL validation as an ezagent positional read" do
+      path =
+        fixture!("external_url.ex", """
+        defmodule Fixture.ExternalUrl do
+          def web?(%URI{scheme: scheme, host: host, userinfo: nil})
+              when scheme in ["http", "https"] and host != "",
+              do: true
+
+          def web?(_uri), do: false
+        end
+        """)
+
+      assert [] =
+               path
+               |> then(&Scan.scan_paths([&1]))
+               |> violations_for(:positional_uri_read)
+    end
+
+    test "does not classify provider refs or relative file paths as tenant derivation" do
+      path =
+        fixture!("relative_paths.ex", """
+        defmodule Fixture.RelativePaths do
+          def ref_segments(ref), do: String.split(ref, "/")
+          def file_segments(path), do: String.split(path, "/")
+        end
+        """)
+
+      assert [] =
+               path
+               |> then(&Scan.scan_paths([&1]))
+               |> violations_for(:tenant_derivation)
+    end
+
     test "classifies raw affected-scheme URI construction including interpolation" do
       path =
         fixture!("raw_uri.ex", """

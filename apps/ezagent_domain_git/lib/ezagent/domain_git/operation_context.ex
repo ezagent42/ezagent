@@ -59,5 +59,10 @@ defmodule Ezagent.DomainGit.OperationContext do
     end
   end
 
-  defp workspace(%URI{host: host}), do: host
+  defp workspace(uri) do
+    case Ezagent.URI.workspace_name(uri) do
+      {:ok, workspace} -> workspace
+      :error -> nil
+    end
+  end
 end
