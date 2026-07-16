@@ -9,6 +9,8 @@ export function latestUnseenNavMessage(messages, seenIds) {
     if (
       message &&
       message.id &&
+      typeof message.sender === "string" &&
+      message.sender.includes("/agent/") &&
       !seenIds.has(message.id) &&
       nav &&
       typeof nav === "object" &&

@@ -14,5 +14,12 @@ assert.equal(
   latestUnseenNavMessage([{id: "bad", nav: {type: "run_script", value: "x"}}], new Set()),
   null,
 )
+assert.equal(
+  latestUnseenNavMessage(
+    [{id: "user-nav", sender: "entity://system/user/admin", nav: {type: "switch_tab", value: "team"}}],
+    new Set(),
+  ),
+  null,
+)
 
 console.log("viewer navigation contract: ok")

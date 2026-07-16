@@ -739,7 +739,9 @@ function PreviewBar({viewer, sessionUri, messages, chatOpen, setChatOpen, onJoin
             React.createElement("span", {className: "hello-kanban-result-status"}, kanbanStatusLabel(receipt.status)),
             React.createElement("code", {className: "hello-kanban-result-ref"}, `${receipt.board_uri || ""} · ${receipt.node_id || ""}`),
             React.createElement("span", {id: "hello-published-board-readonly", className: "hello-kanban-result-boundary"}, "访客接收后只读；修改仍由原 Kanban 管理"),
-            React.createElement("a", {className: "hello-kanban-result-link", href: receipt.live_board_url, target: "_blank", rel: "noreferrer"}, "在 World Kanban 查看实时进度 →"),
+            receipt.live_board_url
+              ? React.createElement("a", {className: "hello-kanban-result-link", href: receipt.live_board_url, target: "_blank", rel: "noreferrer"}, "在 World Kanban 查看实时进度 →")
+              : null,
             React.createElement("a", {className: "hello-kanban-result-link is-secondary", href: receipt.value, target: "_blank", rel: "noreferrer"}, "接收只读看板"),
           )
         : null,
