@@ -5,13 +5,15 @@ defmodule EzagentPluginKanban.E2E.ShareReceiveTest do
   `EzagentWeb.Socialware.KanbanShareController` 搬入;web 全链回归见
   kanban_share_controller_test)。
 
-  证四件事:
+  证三件事:
     (a) 显式 `target_session` 落点:只读挂载(`MountRow` `access="read"` 行 +
         assistant 持只读钥匙,get_tree 成/add_node 拒);
-    (b) ㉜ 过渡:点击者顺拿落点 session 的 `{Session, :kanban_render}` view cap;
-    (c) `target_session=nil` 沿用现口径(首个带 kanban-assistant 的 session);
-    (d) 坏 board 字符串 → `:bad_board`;无 assistant 的显式落点 →
+    (b) `target_session=nil` 沿用现口径(首个带 kanban-assistant 的 session);
+    (c) 坏 board 字符串 → `:bad_board`;无 assistant 的显式落点 →
         `:no_assistant_in_session`。
+
+  (点击者的 `kanban_render` view cap **不在**接收链发 —— 撞 I12 grant 点
+  shrink-only 铁闸,归 join-补发/Allen D1/D3,见 ShareReceive moduledoc TODO。)
   """
 
   use EzagentCore.DataCase, async: false
@@ -67,7 +69,7 @@ defmodule EzagentPluginKanban.E2E.ShareReceiveTest do
   end
 
   @tag :integration
-  test "receive_shared_board: 显式落点只读挂载 + 点击者顺拿 kanban_render cap;nil 落点沿现口径;坏输入优雅报错",
+  test "receive_shared_board: 显式落点只读挂载;nil 落点沿现口径;坏输入优雅报错",
        %{ws_name: ws_name, workspace_uri: workspace_uri, admin_ctx: admin_ctx} do
     skip_if_no_entity_spawn(fn ->
       board_uri = create_board_as_admin(workspace_uri, "b-#{u()}", admin_ctx)
@@ -93,10 +95,7 @@ defmodule EzagentPluginKanban.E2E.ShareReceiveTest do
       assert {:error, :unauthorized} =
                dispatch_as(assistant_uri, board_uri, :add_node, %{parent_id: "", title: "x"})
 
-      # (b) ㉜ 过渡:点击者顺拿落点 session 的 kanban_render view cap。
-      assert eventually(fn -> holds_render_cap?(clicker, session_uri) end)
-
-      # (c) nil 落点:沿「首个带 kanban-assistant 的 session」现口径 —— clicker 是
+      # (b) nil 落点:沿「首个带 kanban-assistant 的 session」现口径 —— clicker 是
       # session 成员,解析回同一落点。
       assert {:ok, %{session_uri: ^session_uri}} =
                ShareReceive.receive_shared_board(payload, clicker)
@@ -105,7 +104,7 @@ defmodule EzagentPluginKanban.E2E.ShareReceiveTest do
       assert MountRow.list_for_session(session_uri)
              |> Enum.count(&(&1.target_uri == s(board_uri))) == 1
 
-      # (d) 坏 board → :bad_board;无 assistant 的显式落点 → :no_assistant_in_session。
+      # (c) 坏 board → :bad_board;无 assistant 的显式落点 → :no_assistant_in_session。
       assert {:error, :bad_board} =
                ShareReceive.receive_shared_board(
                  %{"board" => "not a uri", "behavior" => "Ezagent.ActionSet.Kanban"},
@@ -232,15 +231,6 @@ defmodule EzagentPluginKanban.E2E.ShareReceiveTest do
       cap.kind == :agent and cap.behavior == Ezagent.ActionSet.Kanban and
         cap.action == action and
         cap.instance == Ezagent.URI.instance(board_uri)
-    end)
-  end
-
-  defp holds_render_cap?(grantee, session_uri) do
-    instance = Ezagent.URI.instance(session_uri)
-
-    Enum.any?(Ezagent.Identity.list_caps_for(grantee), fn cap ->
-      cap.kind == :session and cap.behavior == Ezagent.ActionSet.KanbanRender and
-        cap.action == :kanban_render and cap.instance == instance
     end)
   end
 
