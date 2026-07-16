@@ -279,6 +279,27 @@ defmodule Ezagent.ActionSet.GitTaskAccessTest do
     assert {:error, :registry_unavailable} = dispatch(fixture, valid)
   end
 
+  test "malformed create requests keep construction errors and never reach lookup effects" do
+    fixture = GitCapFixture.exact_task_cap(:create_change_request)
+    policy = policy(fixture)
+    assert {:ok, _pid} = TaskAccessSupervisor.ensure_started(policy)
+    valid = operation_args(:create_change_request, policy)
+    ref = GitEffectProbe.ref()
+
+    cases = [
+      {"not-a-request", {:invalid_field, :request}},
+      {%{title: "missing head"}, {:invalid_field, :request}},
+      {%{valid.request | head_ref: "refs/invalid"}, {:invalid_field, :head_ref}},
+      {%{valid.request | expected_base_sha: %CommitSha{value: "bad"}},
+       {:invalid_field, :expected_base_sha}}
+    ]
+
+    Enum.each(cases, fn {request, reason} ->
+      assert {:error, ^reason} = dispatch(fixture, %{valid | request: request})
+      refute_received {:git_probe, ^ref, :adapter, _, _}
+    end)
+  end
+
   defp policy(fixture, provider_adapter \\ :"probe-git-adapter-a") do
     workspace = Ezagent.URI.workspace_name!(fixture.workspace_uri)
 
