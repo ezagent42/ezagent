@@ -1,5 +1,5 @@
 defmodule Ezagent.DomainGit.Integration.GitTaskDispatchTest do
-  use ExUnit.Case, async: false
+  use EzagentCore.DataCase, async: false
 
   alias Ezagent.DomainGit.{
     AdapterRegistry,
