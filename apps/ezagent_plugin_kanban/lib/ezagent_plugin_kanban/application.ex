@@ -22,7 +22,7 @@ defmodule EzagentPluginKanban.Application do
   路径（`Workspace.create_agent` flavor `native` × role `kanban-manager`），20 个 kanban
   behaviors 经 RF-1 在通用 `Entity.Agent` 宿主上 per-instance 加载。dispatch 到没 live 的
   agent 经 `SpawnRegistry.spawn` 从快照 rehydrate 起活（world 读模型在 dispatch 前
-  `KanbanData.ensure_spawned/1`，保 dormant 的 passive kanban-manager 复活）。
+  `EzagentPluginKanban.WorldData.ensure_spawned/1`，保 dormant 的 passive kanban-manager 复活）。
   """
 
   use Application

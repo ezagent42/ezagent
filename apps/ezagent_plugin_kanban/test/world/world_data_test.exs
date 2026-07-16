@@ -1,4 +1,4 @@
-defmodule Ezagent.World.KanbanDataTest do
+defmodule EzagentPluginKanban.WorldDataTest do
   @moduledoc """
   kanban-as-role K4 — world kanban read-model on the AS-ROLE path.
 
@@ -17,7 +17,7 @@ defmodule Ezagent.World.KanbanDataTest do
   """
   use EzagentCore.DataCase, async: false
 
-  alias Ezagent.World.KanbanData
+  alias EzagentPluginKanban.WorldData
   alias Ezagent.Workspace
   alias Ezagent.{AgentFlavorRegistry, Agent.RecipeRegistry}
   alias EzagentPluginKanban.Application, as: KanbanApp
@@ -25,12 +25,9 @@ defmodule Ezagent.World.KanbanDataTest do
   @flavor "world-kanban-native"
 
   setup do
-    # world has NO dep on the kanban plugin (it dispatches by URI). Under the
-    # umbrella the kanban MODULES are in the code path; this test needs only the
-    # `kanban-manager` recipe + the `Ezagent.ActionSet.Kanban` module (both
-    # available without starting the kanban OTP app), so we register the recipe
-    # manually below rather than `ensure_all_started(:ezagent_plugin_kanban)`
-    # (whose `.app` is absent in a per-app `mix test` context).
+    # 债②可搬半（2026-07-17）：本套件随 WorldData 从 world 搬进 kanban plugin。
+    # 仍手动 seed `kanban-manager` recipe（不依赖插件 OTP boot 顺序），只需
+    # domain_session 起来（dispatch/mount 链）。
     {:ok, _apps} = Application.ensure_all_started(:ezagent_domain_session)
 
     case EzagentDomainInstanceMessage.UriQueryResolvers.register() do
@@ -56,7 +53,7 @@ defmodule Ezagent.World.KanbanDataTest do
     admin_ctx = Ezagent.Test.CapHelper.signed_workspace_ctx!(workspace_uri, caller)
     caps = admin_ctx.caps
 
-    # read-side ctx (mirrors KanbanActions.read_ctx): caller + workspace scope.
+    # read-side ctx (mirrors WorldActions.read_ctx): caller + workspace scope.
     ctx = %{caller_uri: caller, caller_caps: caps, workspace_uri: workspace_uri}
 
     {:ok, ws_name: ws_name, workspace_uri: workspace_uri, admin_ctx: admin_ctx, ctx: ctx}
@@ -126,7 +123,7 @@ defmodule Ezagent.World.KanbanDataTest do
       {:ok, %{}} = dispatch(uri, :set_stage, %{id: "n2", stage: "metric"}, admin_ctx)
       {:ok, %{}} = dispatch(uri, :set_status, %{id: "n2", status: "doing"}, admin_ctx)
 
-      tree = KanbanData.read_tree(uri, board_read_ctx(uri, ctx))
+      tree = WorldData.read_tree(uri, board_read_ctx(uri, ctx))
       assert tree["root_id"] == "n1"
 
       n2 = tree["nodes"]["n2"]
@@ -143,7 +140,7 @@ defmodule Ezagent.World.KanbanDataTest do
     skip_if_no_entity_spawn(fn ->
       uri = spawn_board(ws, admin_ctx)
 
-      instances = KanbanData.list_instances(ctx)
+      instances = WorldData.list_instances(ctx)
       uris = Enum.map(instances, & &1["uri"])
       assert URI.to_string(uri) in uris
 
@@ -157,10 +154,10 @@ defmodule Ezagent.World.KanbanDataTest do
     skip_if_no_entity_spawn(fn ->
       _uri = spawn_board(ws, admin_ctx)
 
-      # route 须带 title/path:FP5 起 KanbanData 复用 route.title/route.path 渲染 H1+导航高亮,
+      # route 须带 title/path:FP5 起 WorldData 复用 route.title/route.path 渲染 H1+导航高亮,
       # 对齐 routes.ex 的 /plugins/kanban 列表页 route 形状
       state =
-        KanbanData.state_for(
+        WorldData.state_for(
           %{component: "kanban", title: "看板", path: "/plugins/kanban", entity_uri: nil},
           ctx
         )
@@ -191,11 +188,11 @@ defmodule Ezagent.World.KanbanDataTest do
 
       # list-by-role is snapshot-sourced → the manager STILL enumerates even when
       # the live Kind is gone (the whole point of RF-7 snapshot sourcing — HIGH-3).
-      uris = KanbanData.list_instances(ctx) |> Enum.map(& &1["uri"])
+      uris = WorldData.list_instances(ctx) |> Enum.map(& &1["uri"])
       assert URI.to_string(uri) in uris, "dormant passive manager must still list (HIGH-3)"
 
       # reading the board rehydrates it from snapshot (ensure_spawned) → tree renders.
-      tree = KanbanData.read_tree(uri, cold_read_ctx)
+      tree = WorldData.read_tree(uri, cold_read_ctx)
       assert tree["root_id"] == "n1"
       assert tree["nodes"]["n1"]["title"] == "持久根"
     end)

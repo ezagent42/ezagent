@@ -219,7 +219,7 @@ defmodule EzagentPluginWorld.WorldLive do
     do: {:noreply, push_inbound_event(socket, "slice_changed", event)}
 
   # X1 推送环消费半(㉘/㉒-① 的 kanban 侧):同会话成员的 kanban 写动作成功后,
-  # `Ezagent.World.KanbanActions.broadcast_kanban_changed` 往本会话 :events topic
+  # `EzagentPluginKanban.WorldActions.broadcast_kanban_changed` 往本会话 :events topic
   # 播 `{:kanban_changed, board_uri}` —— 收到后按**自己的** read_ctx 重拉
   # `board_state` 推给自己 socket(他人取消认领/加节点,我的画布即时刷新;
   # 无权者 get_tree 被 CBAC 拒 → board_state 回空树投影,不越权)。
@@ -228,9 +228,9 @@ defmodule EzagentPluginWorld.WorldLive do
      push_event(
        socket,
        "world:state",
-       Ezagent.World.KanbanData.board_state(
+       EzagentPluginKanban.WorldData.board_state(
          board_uri,
-         Ezagent.World.KanbanActions.read_ctx(socket)
+         EzagentPluginKanban.WorldActions.read_ctx(socket)
        )
      )}
   end

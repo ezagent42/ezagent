@@ -1,4 +1,4 @@
-defmodule Ezagent.World.KanbanData do
+defmodule EzagentPluginKanban.WorldData do
   @moduledoc """
   Read model for the world **kanban operating surface**（df-prd）。
 
@@ -21,12 +21,12 @@ defmodule Ezagent.World.KanbanData do
       （R3：caller=人类用户，per-node owner 授权在 Behavior 内如实判）。
 
   连接器配置（github_repo/miro 板名）、Miro 凭证连接状态、pr 节点的 CI 评价，
-  全部由 `:get_tree` dispatch 一并返回（Behavior 内只读投影），world 不直引 kanban
-  plugin 任何模块。GitHub 主动连接器已退役（gh 连通是 agent 的 CLI 行为），
+  全部由 `:get_tree` dispatch 一并返回（Behavior 内只读投影），world 侧不再持有 kanban
+  数据代码（债②可搬半 2026-07-17 搬进本 plugin）。GitHub 主动连接器已退役（gh 连通是 agent 的 CLI 行为），
   `github` 连接状态字段随之退役；`config.github_repo` 仍是纯数据（拼 git 链接用）。dormant 的 passive kanban-manager 经 `ensure_spawned/1`
   （`SpawnRegistry.spawn` 从快照 rehydrate）先起活，再 dispatch（HIGH-3 liveness）。
 
-  写动作在 `Ezagent.World.KanbanActions`；本模块只读。
+  写动作在 `EzagentPluginKanban.WorldActions`；本模块只读。
   """
 
   alias Ezagent.{Agent.RecipeRegistry, Invocation}
@@ -131,14 +131,14 @@ defmodule Ezagent.World.KanbanData do
   # fail-open（谁都看到全 workspace 的板）→ 权属过滤：
   #   * workspace admin（`Ezagent.Identity.AdminAuthority.admin?/2`）看全部；
   #   * 普通用户只看到 own（板的 `data_owner` 是自己）或持有指向该板 cap 的板。
-  # ctx 的 caller 身份字段 = `:caller_uri` / `:caller_caps`（world `KanbanActions.read_ctx`
+  # ctx 的 caller 身份字段 = `:caller_uri` / `:caller_caps`（world `WorldActions.read_ctx`
   # 注入；`caller_caps` 是 mount 期注入的 caller 身份 cap 快照，即触发这次读的 caller 当时
   # 持有的全量 cap 集）。
   @doc """
   发起人对某块板是否有 access（可见即可分享）—— admin / 板主人（`data_owner`）/ 持指向该板
-  的 cap。ctx 用 `KanbanActions.read_ctx` 形状（`:caller_uri` / `:caller_caps`）。
+  的 cap。ctx 用 `WorldActions.read_ctx` 形状（`:caller_uri` / `:caller_caps`）。
 
-  分享看板（T6.4，`Ezagent.World.KanbanActions.share_link/2`）的 access gate 复用这同一条
+  分享看板（T6.4，`EzagentPluginKanban.WorldActions.share_link/2`）的 access gate 复用这同一条
   发现可见性谓词（`visible?/2`），不新发明授权：能看见（own / 持 cap / admin）即可分享。
   """
   @spec can_share?(URI.t(), map()) :: boolean()
@@ -159,7 +159,7 @@ defmodule Ezagent.World.KanbanData do
 
   # own：板（kanban-manager agent）的 `data_owner`（经 creator / lineage）== caller。
   # 与核心 dispatch chokepoint（`CapabilityRegistry.authorize_cap_shape` 的
-  # `caller == owner`）同款结构比对。模块可能尚未加载（world 无 kanban plugin dep）→
+  # `caller == owner`）同款结构比对。ensure_loaded 保守保留（历史上本模块住 world、无 plugin dep）→
   # 先 ensure_loaded；解析不出 owner（`:no_owner`/`:any`）保守判不可见。
   defp owns_board?(%URI{} = caller, %URI{} = board_uri) do
     _ = Code.ensure_loaded(Ezagent.ActionSet.Kanban)

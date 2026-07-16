@@ -1,25 +1,25 @@
-defmodule Ezagent.World.KanbanDataScopeTest do
+defmodule EzagentPluginKanban.WorldDataScopeTest do
   @moduledoc """
   Task 2 —— 看板"发现"按 CBAC 权属收敛。
 
-  `KanbanData.list_instances/1` 从 fail-open（谁都看到全 workspace 的板）收敛成：
+  `WorldData.list_instances/1` 从 fail-open（谁都看到全 workspace 的板）收敛成：
 
     * **普通用户只看到自己有权的板**：own（板的 `data_owner` 是 caller）或持有
       指向该板的 cap（instance = board URI）；
     * **workspace admin 看全部**（`Ezagent.Identity.AdminAuthority.admin?/2`）。
 
   board = kanban-manager agent（`entity://<ws>/agent/<id>`），造法照
-  `Ezagent.World.KanbanDataTest`（同一 flavor / recipe / workspace setup）。
+  `EzagentPluginKanban.WorldDataTest`（同一 flavor / recipe / workspace setup）。
   """
   use EzagentCore.DataCase, async: false
 
-  alias Ezagent.World.KanbanData
+  alias EzagentPluginKanban.WorldData
   alias Ezagent.Workspace
   alias Ezagent.{AgentFlavorRegistry, Agent.RecipeRegistry, Capability}
   alias EzagentPluginKanban.Application, as: KanbanApp
 
   # 独立 flavor 名 —— AgentFlavorRegistry 是全局注册表（非 per-test sandbox），
-  # 与 KanbanDataTest 的 "world-kanban-native" 撞名会 raise（不同 cap_policy 闭包）。
+  # 与 WorldDataTest 的 "world-kanban-native" 撞名会 raise（不同 cap_policy 闭包）。
   @flavor "world-kanban-scope-native"
 
   setup do
@@ -133,7 +133,7 @@ defmodule Ezagent.World.KanbanDataScopeTest do
       b = spawn_board_as(ws, bob, bob_caps, "board-b")
 
       ctx_a = %{caller_uri: alice, caller_caps: MapSet.new(), workspace_uri: ws}
-      seen = uris(KanbanData.list_instances(ctx_a))
+      seen = uris(WorldData.list_instances(ctx_a))
 
       assert URI.to_string(a) in seen, "alice 应看到自己 own 的 board-a"
       refute URI.to_string(b) in seen, "alice 不应看到 bob 的 board-b"
@@ -155,7 +155,7 @@ defmodule Ezagent.World.KanbanDataScopeTest do
       b = spawn_board_as(ws, bob, bob_caps, "board-b")
 
       ctx_admin = %{caller_uri: admin, caller_caps: admin_caps, workspace_uri: ws}
-      seen = uris(KanbanData.list_instances(ctx_admin))
+      seen = uris(WorldData.list_instances(ctx_admin))
 
       assert URI.to_string(a) in seen and URI.to_string(b) in seen,
              "admin 应看到全 workspace 的板"
@@ -176,7 +176,7 @@ defmodule Ezagent.World.KanbanDataScopeTest do
         workspace_uri: ws
       }
 
-      seen = uris(KanbanData.list_instances(ctx_c))
+      seen = uris(WorldData.list_instances(ctx_c))
 
       assert URI.to_string(b) in seen, "carol 持 board-b 的 cap 应看到它"
       refute URI.to_string(a) in seen, "carol 无 board-a 的权，不应看到"
@@ -202,7 +202,7 @@ defmodule Ezagent.World.KanbanDataScopeTest do
 
       session = Ezagent.URI.session(ws_name, "default", "s1")
       ctx_a = %{caller_uri: alice, caller_caps: MapSet.new()}
-      seen = uris(KanbanData.session_boards(session, ctx_a))
+      seen = uris(WorldData.session_boards(session, ctx_a))
 
       assert URI.to_string(a) in seen, "alice 应看到自己 own 的 board-a"
       refute URI.to_string(b) in seen, "alice 不应看到 bob 的 board-b"
@@ -226,7 +226,7 @@ defmodule Ezagent.World.KanbanDataScopeTest do
 
       session = Ezagent.URI.session(ws_name, "default", "s1")
       ctx_admin = %{caller_uri: admin, caller_caps: admin_caps}
-      seen = uris(KanbanData.session_boards(session, ctx_admin))
+      seen = uris(WorldData.session_boards(session, ctx_admin))
 
       assert URI.to_string(a) in seen and URI.to_string(b) in seen,
              "admin 应看到该 workspace 全部板"
@@ -242,7 +242,7 @@ defmodule Ezagent.World.KanbanDataScopeTest do
       session = Ezagent.URI.session(ws_name, "default", "s1")
       ctx_c = %{caller_uri: carol, caller_caps: MapSet.new()}
 
-      seen = uris(KanbanData.session_boards(session, ctx_c))
+      seen = uris(WorldData.session_boards(session, ctx_c))
       refute URI.to_string(a) in seen, "carol 无权，不应看到 alice 的 board-a"
     end)
   end

@@ -5,7 +5,7 @@ defmodule Ezagent.Socialware.BoardProvision do
   挂载机制(发钥匙 + 落挂载表)全交给 `Ezagent.Socialware.Mount`;本模块只留**策略**:
   谁能建 / 拉 / 转发 / 删的授权守卫、目标 session 的 assistant 解析,再把参数喂给
   `Mount`。**零业务字面**(深扫 2026-07-16 默认值上提):behavior / assistant_role /
-  read_actions 全由调用方(kanban 侧代码,如 world `KanbanActions` /
+  read_actions 全由调用方(kanban 侧代码,如 world `WorldActions` /
   `EzagentPluginKanban.ShareReceive`)显式传入,本模块不再自带 kanban 默认值。
 
     1. **建板**(`create_board/5`)—— 归属 = 触发建板的 owner。经 `Mount.provision/6`:

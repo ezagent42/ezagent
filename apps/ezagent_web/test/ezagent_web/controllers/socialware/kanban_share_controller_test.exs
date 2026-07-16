@@ -3,7 +3,7 @@ defmodule EzagentWeb.Socialware.KanbanShareControllerTest do
   T6.4 acceptance —— 分享看板（生成链接 → 点击把板只读加进对方 session tab）。
 
   两块：
-    * **分享侧** `Ezagent.World.KanbanActions.share_link/2`：板主人（对板有 access）→
+    * **分享侧** `EzagentPluginKanban.WorldActions.share_link/2`：板主人（对板有 access）→
       得到一个可 `Phoenix.Token.verify` 的只读 token 链接；无 access 的路人 → `{:error,
       :no_access}`。
     * **接收侧** `GET /socialware/kanban/receive?token=`（**只带 token**，session 服务端解析）
@@ -21,7 +21,7 @@ defmodule EzagentWeb.Socialware.KanbanShareControllerTest do
   alias Ezagent.Entity.User
   alias Ezagent.{AgentFlavorRegistry, Agent.RecipeRegistry, Invocation}
   alias Ezagent.Socialware.MountRow
-  alias Ezagent.World.KanbanActions
+  alias EzagentPluginKanban.WorldActions
   alias EzagentPluginHello.PublishedBoardRef
   alias EzagentWeb.Socialware.KanbanPublishedReadAdapter
   alias EzagentPluginKanban.Application, as: KanbanApp
@@ -82,7 +82,7 @@ defmodule EzagentWeb.Socialware.KanbanShareControllerTest do
       board_uri = create_board_owned_by(workspace_uri, "b-#{u()}", owner_ctx)
 
       # 板主人 socket → 得到接收链接，token 可 verify 回 board + 只读意图
-      assert {:ok, link} = KanbanActions.share_link(share_socket(owner_ctx), s(board_uri))
+      assert {:ok, link} = WorldActions.share_link(share_socket(owner_ctx), s(board_uri))
       assert String.starts_with?(link, "/socialware/kanban/receive?token=")
 
       token = extract_token(link)
@@ -99,11 +99,11 @@ defmodule EzagentWeb.Socialware.KanbanShareControllerTest do
       stranger_ctx = %{caller: stranger, caps: MapSet.new()}
 
       assert {:error, :no_access} =
-               KanbanActions.share_link(share_socket(stranger_ctx), s(board_uri))
+               WorldActions.share_link(share_socket(stranger_ctx), s(board_uri))
 
       # 坏 URI → 拒
       assert {:error, :bad_kanban_uri} =
-               KanbanActions.share_link(share_socket(owner_ctx), "not a uri")
+               WorldActions.share_link(share_socket(owner_ctx), "not a uri")
     end)
   end
 

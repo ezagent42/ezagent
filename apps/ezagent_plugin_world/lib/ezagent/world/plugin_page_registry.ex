@@ -12,7 +12,7 @@ defmodule Ezagent.World.PluginPageRegistry do
     * `route` / `detail_route` — 列表页 + 详情页 pattern（`:param` 段捕获
       单个非空 path segment，语义同原 `[^/]+` 正则）
     * `nav` — 侧栏/patch 白名单派生用的 label + path
-    * `data_builder` — `state_for/2` 读模型模块（如 `Ezagent.World.KanbanData`）
+    * `data_builder` — `state_for/2` 读模型模块（如 `EzagentPluginKanban.WorldData`）
     * `renderer_families` — 注入 `SlotRegistry` 的 `[{type, title}]`
     * `action_prefixes` + `actions` — dispatch 准入：前缀是粗筛，`actions`
       是细白名单，**前缀命中后仍逐动作校验**（fail-closed，对齐 P22 精神）
@@ -23,7 +23,7 @@ defmodule Ezagent.World.PluginPageRegistry do
   """
 
   # kanban 动作细白名单——从 WorldLive `@kanban_actions` 逐字迁入（2026-07-09），
-  # 与 `Ezagent.World.KanbanActions.handle_dispatch/3` 的字面子句逐一等价
+  # 与 `EzagentPluginKanban.WorldActions.handle_dispatch/3` 的字面子句逐一等价
   # （等价锁在 plugin_page_registry_test.exs）。
   # ⑲（显式决策 2026-07-16）：`kanban.delete_board` 加入 dispatch 准入白名单（板主人删板）。
   @kanban_actions ~w(kanban.add_node kanban.rename_node kanban.move_node kanban.remove_node kanban.set_stage kanban.claim_node kanban.unclaim_node kanban.set_status kanban.attach_artifact kanban.detach_artifact kanban.set_metric kanban.create kanban.sync_miro kanban.save_miro_creds kanban.select_board kanban.drop_subtree kanban.set_board_config kanban.attach_upload kanban.register_pr kanban.attach_code_file kanban.share_board kanban.delete_board)
@@ -35,11 +35,11 @@ defmodule Ezagent.World.PluginPageRegistry do
       route: {"/plugins/kanban", :index},
       detail_route: {"/plugins/kanban/:id", :detail},
       nav: %{label: "看板", path: "/plugins/kanban"},
-      data_builder: Ezagent.World.KanbanData,
+      data_builder: EzagentPluginKanban.WorldData,
       renderer_families: [{"kanban", "看板"}],
       action_prefixes: ["kanban."],
       actions: @kanban_actions,
-      actions_module: Ezagent.World.KanbanActions
+      actions_module: EzagentPluginKanban.WorldActions
     }
   ]
 
