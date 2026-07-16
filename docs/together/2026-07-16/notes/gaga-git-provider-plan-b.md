@@ -40,6 +40,7 @@ code or tests; its verification is documentation/static consistency only.
 | Preflight/read required evidence | complete | Read Task 0 brief, local design/plan, Plan A decisions/design/plan and daily records; inspected current Git terminology and W29 prototype |
 | Task 0 contract freeze | complete | Exact Plan A structs, callbacks/actions, and error union frozen; five auxiliary closed shapes corrected per architecture review |
 | Task 1 independent app scaffold | complete | Empty OTP supervision tree; exact approved umbrella deps `[:ezagent_core]`; dependency boundary test GREEN |
+| Task 2 construction-contract amendment | review required | `new/1`, closed `ValidationError`, domain-owned `ChangeLimits`, and `FileChange.validate_many/1` frozen docs-only before RED |
 | Task 2+ production implementation | deferred | No value types, adapter, Resource, ActionSet, registry, migrations, provider plugin, UI, workspace, or Kanban code |
 | CI/rebase/dev-together return | deferred | Not claimed by this Task 1 implementation slice |
 
@@ -106,6 +107,18 @@ Task 0 review fixes applied after commit `c7de2619d`:
 
 Task 1 is complete on the inherited Plan A stack. Full CI, `mix precommit`, rebase,
 return readiness, deploy, and merge are not claimed. Task 2+ remains deferred.
+
+## Task 2 pre-RED contract amendment
+
+Task 2 stopped before RED because constructor signatures and configured limits were
+not frozen. The review-required amendment now freezes an exact atom-keyed-map
+`new/1` boundary for every value, a closed non-echoing `ValidationError`, and
+domain-owned `ChangeLimits.current/0` defaults of 100 files, 1,000,000 bytes per
+file, and 5,000,000 aggregate bytes. The defaults are promoted from Plan A's tested
+prototype; operators may configure them, but agents and adapter/invocation arguments
+cannot. `FileChange.validate_many/1` is the sole collection-limit boundary.
+
+No tests or production code begin until architecture review approves this amendment.
 
 ## Task 1 review-fix entry
 

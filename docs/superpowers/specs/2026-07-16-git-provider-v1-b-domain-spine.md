@@ -1,6 +1,6 @@
 # Git Domain Spine Design (Plan B Draft)
 
-**Status:** Task 0 contract freeze; auxiliary-type amendment corrected per architecture review
+**Status:** Task 0 contract freeze; value-construction amendment requires architecture review before Task 2 RED
 
 **Upstream:** Plan A decision records in `docs/superpowers/specs/2026-07-16-git-provider-v1-a-decisions.md`
 
@@ -195,6 +195,62 @@ paths, non-empty refs, URI axes, configured file size/count limits, and UTF-8 co
 before dispatch reaches an adapter. Deletes, binary changes, rename/mode changes,
 symlinks, submodules, traversal, absolute paths, and `.git` paths are rejected.
 
+### 4.2 Review-required value construction and limit amendment
+
+This amendment must receive architecture review before Task 2 writes its RED tests.
+Every value module in §4 and §4.1 exposes `new/1`. It accepts only a map whose exact
+atom-key set matches the frozen struct fields and returns
+`{:ok, t()}` or `{:error, Ezagent.DomainGit.ValidationError.t()}`. Constructors do
+not accept string-keyed maps, keyword lists, positional overloads, or partially
+trusted structs. Validation failures never echo rejected values.
+
+`Ezagent.DomainGit.ValidationError` is a closed pre-adapter construction type:
+
+```elixir
+@type t ::
+        :invalid_attributes
+        | :invalid_file_change
+        | :change_limit_exceeded
+        | {:missing_field, atom()}
+        | {:unknown_fields, [atom()]}
+        | {:invalid_field, atom()}
+```
+
+Non-map or non-atom-key input returns `:invalid_attributes`; a missing exact field
+returns `{:missing_field, field}`; unknown atom keys return
+`{:unknown_fields, sorted_fields}`; and an invalid field value returns
+`{:invalid_field, field}`. Unknown fields are sorted deterministically. This type is
+distinct from the frozen provider/adapter `Ezagent.DomainGit.Error.t()` in §10.
+
+`Ezagent.DomainGit.ChangeLimits.current/0` owns the V1 collection safety limits.
+It reads `Application.get_env(:ezagent_domain_git, :change_limits, defaults)` with
+these exact keys and defaults:
+
+```elixir
+%{max_files: 100, max_file_bytes: 1_000_000, max_total_bytes: 5_000_000}
+```
+
+Defaults apply only when the whole configuration is absent. An explicitly
+configured value with missing or unknown keys, or a non-positive/non-integer limit,
+is a deterministic startup/configuration error; it never silently falls back.
+These defaults are promoted from Plan A's tested prototype into domain-owned V1
+safety defaults. Operators may configure them; invocation and agent payloads may
+not supply or override them.
+
+`FileChange.new/1` validates a single V1 UTF-8 regular-file `:upsert`, including
+the repository-relative path and kind exclusions above, but applies no collection
+limit. `FileChange.validate_many/1` accepts only a non-empty list of already-built
+`FileChange` structs, loads `ChangeLimits.current/0` internally, and returns
+`:ok | {:error, :invalid_file_change | :change_limit_exceeded}`. Count uses list
+length; per-file and aggregate size use `byte_size/1`.
+
+URI-bearing constructors require `%URI{}` values and validate the non-empty required
+URI axes under the current URI contract; parsing strings into URIs is outside the
+constructors. `CommitSha.new/1` accepts exactly a 40-character hexadecimal SHA-1,
+with lowercase or uppercase hex digits. Ref fields use the provider-neutral,
+Plan-A-prototype-safe ref syntax; they reject empty refs and unsafe syntax without
+accepting provider payloads.
+
 ## 5. GitTaskAccess Resource
 
 Each development task receives a distinct Resource-pattern Kind instance. “Cold”
@@ -377,6 +433,9 @@ Plan B separately freezes closed pre-adapter errors for invalid construction,
 unknown adapter, policy mismatch, authorization, and unsupported action instead of
 smuggling them into provider errors. Secrets, raw HTTP bodies/headers, provider
 exception structs, request maps, and filesystem paths never escape in results/logs.
+Construction and collection-boundary failures use the closed
+`Ezagent.DomainGit.ValidationError.t()` from §4.2; they are not members of, and must
+not be converted into, this provider error union before adapter dispatch.
 
 ## 11. Boot, rollback, and restart
 
@@ -420,7 +479,7 @@ Task 2's `plan_a_contract_test.exs` will assert:
 
 1. exact namespaces under `Ezagent.DomainGit`: `RepositoryRef`, `FileChange`,
    `ChangeRequest`, `OperationContext`, `CreateChangeRequest`, `ChangeRequestId`,
-   `CommitSha`, `Check`, `Review`, and `Error`;
+   `CommitSha`, `Check`, `Review`, `ValidationError`, `ChangeLimits`, and `Error`;
 2. exact struct keys matching §4/§4.1, with no extra fields, including the absence
    of `CreateChangeRequest.base_ref`, `Review.author`, and any review `:pending`;
 3. closed enums for `FileChange.operation`, repository visibility,
@@ -434,6 +493,11 @@ Task 2's `plan_a_contract_test.exs` will assert:
 6. `Review.external_id` alone is the stable provider-event dedupe coordinate and
    `author_label` is structurally absent from authorization, identity matching,
    ownership, and dedupe code paths.
+7. every value constructor has the exact `new/1` map boundary and deterministic
+   closed validation errors in §4.2; rejected values are never returned;
+8. `ChangeLimits.current/0` has the exact domain-owned defaults/config validation,
+   and `FileChange.validate_many/1` alone enforces non-empty collection count,
+   per-file bytes, and aggregate bytes without caller overrides.
 
 Task 3 will extend that gate and its shared fake-adapter suite to assert:
 
