@@ -13,7 +13,7 @@ defmodule EzagentWeb.LiveAuthTest do
   `feedback_register_lookup_key_parity`.
 
   task #180 Change 3 — `on_mount(:require_entity, ...)` now EVICTS a user
-  disabled after login (active-session eviction). That recheck reads
+  disabled/deleted after login (active-session eviction). That recheck reads
   the `users` table, so this suite runs under `DataCase` (DB sandbox) and
   seeds the active user URIs it asserts `{:cont}` for.
   """
@@ -338,6 +338,23 @@ defmodule EzagentWeb.LiveAuthTest do
 
       assert {:redirect, %{to: "/login"}} = socket.redirected
       assert socket.assigns.flash["info"] =~ "revoked"
+    end
+
+    test "evicts a tombstoned (deleted) user" do
+      uri = "entity://team-alpha/user/evict-del-#{System.unique_integer([:positive])}"
+      {:ok, _} = Users.create(uri, "pw", [])
+      {:ok, _} = Users.disable(uri, "entity://system/user/admin", "off")
+      {:ok, _} = Users.tombstone(uri, "entity://system/user/admin", "gone")
+
+      assert {:halt, socket} =
+               LiveAuth.on_mount(
+                 :require_entity,
+                 %{},
+                 %{"current_entity_uri" => uri},
+                 build_socket()
+               )
+
+      assert {:redirect, %{to: "/login"}} = socket.redirected
     end
 
     test "an ACTIVE user still mounts (recheck is not a blanket denial)" do

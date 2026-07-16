@@ -200,19 +200,45 @@ defmodule Ezagent.ActionSet.WorkspaceUserAdminTest do
         assert {:error, :missing_actor} =
                  apply(WUA, @fun, [%{user_uri: "entity://team-alpha/user/y"}, ctx])
       end
+    end
 
-      test "#{name}: an operator cannot offboard their OWN account (self-lockout guard)" do
-        self_uri = "entity://team-alpha/user/me"
+    test "disable_user: an operator cannot disable their OWN account (self-lockout, no genesis gate)" do
+      self_uri = "entity://team-alpha/user/me"
 
-        ctx = %{
-          empty_ctx()
-          | self_uri: Ezagent.URI.new!("workspace://team-alpha"),
-            caller: Ezagent.URI.new!(self_uri)
-        }
+      ctx = %{
+        empty_ctx()
+        | self_uri: Ezagent.URI.new!("workspace://team-alpha"),
+          caller: Ezagent.URI.new!(self_uri)
+      }
 
-        assert {:error, :self_offboard_denied} =
-                 apply(WUA, @fun, [%{user_uri: self_uri}, ctx])
-      end
+      assert {:error, :self_offboard_denied} =
+               WUA.handle_disable_user(%{user_uri: self_uri}, ctx)
+    end
+
+    test "delete_user: a NON-genesis caller is rejected with :genesis_admin_only (Change 1)" do
+      # A workspace-scoped operator (not entity://system/user/admin) — even
+      # in-workspace + valid target — cannot invoke the global delete.
+      ctx = %{
+        empty_ctx()
+        | self_uri: Ezagent.URI.new!("workspace://team-alpha"),
+          caller: Ezagent.URI.new!("entity://team-alpha/user/operator")
+      }
+
+      assert {:error, :genesis_admin_only} =
+               WUA.handle_delete_user(%{user_uri: "entity://team-alpha/user/y"}, ctx)
+    end
+
+    test "delete_user: the genesis admin still cannot delete their OWN account (self-lockout)" do
+      admin = Ezagent.Entity.User.admin_uri()
+
+      ctx = %{
+        empty_ctx()
+        | self_uri: Ezagent.URI.new!("workspace://system"),
+          caller: admin
+      }
+
+      assert {:error, :self_offboard_denied} =
+               WUA.handle_delete_user(%{user_uri: URI.to_string(admin)}, ctx)
     end
   end
 end

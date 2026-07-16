@@ -199,14 +199,15 @@ defmodule Ezagent.ActionSet.WorkspaceUserAdmin do
     },
     caps: [{:delete_user, kind: :workspace}],
     description:
-      "Operator offboarding (task #180) — HARD, DESTRUCTIVE, admin-only " <>
-        "delete of a user in this workspace. TOMBSTONES the provisioning row " <>
-        "(`Ezagent.Users.tombstone/3`): REVOKES all durable caps (authority " <>
-        "stripped across every spawn/hydration path), tears down the live " <>
-        "User Kind, and blocks login — while keeping the URI occupied (no " <>
-        "silent re-mint) and the row + `:user_deleted` EventLog event as the " <>
-        "audit trail. Its OWN cap subject; withhold it from workspace owners " <>
-        "to keep delete strictly admin-gated (only the admin wildcard matches).",
+      "Operator offboarding (task #180) — HARD, DESTRUCTIVE, GENESIS-ADMIN-ONLY " <>
+        "delete of a GLOBAL user identity. Gated to `entity://system/user/admin` " <>
+        "at the invocation (a workspace-admin holding the cap is still rejected — " <>
+        "global identity destruction ≠ workspace member removal). REQUIRES the " <>
+        "target be soft-disabled first (`must_disable_first` otherwise). " <>
+        "TOMBSTONES the provisioning row (`Ezagent.Users.tombstone/3`): revokes " <>
+        "all durable caps, tears down the live User Kind, blocks login, keeps " <>
+        "the URI occupied (no re-mint) + row/EventLog as audit. The facade then " <>
+        "detaches the user from EVERY workspace's members (via `remove_member/2`).",
     modes: [:call]
   )
 
@@ -403,6 +404,7 @@ defmodule Ezagent.ActionSet.WorkspaceUserAdmin do
          {:ok, target_ws} <- require_workspace_uri(Map.get(ctx, :self_uri)),
          :ok <- ensure_user_in_target_workspace(user_uri, target_ws),
          {:ok, actor} <- require_actor(ctx),
+         :ok <- ensure_genesis_admin(actor),
          :ok <- refute_self(actor, user_uri),
          {:ok, decoded} <- Ezagent.Users.tombstone(user_uri, actor, reason) do
       result = %{
@@ -456,6 +458,22 @@ defmodule Ezagent.ActionSet.WorkspaceUserAdmin do
   # forgery vector). Step 5.5 has already authorized this caller.
   defp require_actor(%{caller: %URI{} = caller}), do: {:ok, caller}
   defp require_actor(_), do: {:error, :missing_actor}
+
+  # `delete_user` destroys a GLOBAL user identity — a platform-level op,
+  # distinct from workspace-scoped member removal (`Workspace.remove_member/2`).
+  # It is therefore restricted to the GENESIS admin (`entity://system/user/admin`),
+  # NOT merely any workspace-admin who happens to hold the `delete_user` cap.
+  # This is an INVOCATION gate (identity of the authenticated caller), so it
+  # holds even if the cap was granted to a workspace-admin — the cap subject
+  # alone is not a sufficient boundary for global identity destruction.
+  # `disable_user` (reversible) intentionally does NOT carry this gate.
+  defp ensure_genesis_admin(%URI{} = actor) do
+    if Ezagent.URI.stable_key(actor) == Ezagent.URI.stable_key(Ezagent.Entity.User.admin_uri()) do
+      :ok
+    else
+      {:error, :genesis_admin_only}
+    end
+  end
 
   # An operator MUST NOT disable/delete their OWN account — that is an
   # immediate self-lockout / self-destruction footgun. Mirrors the world

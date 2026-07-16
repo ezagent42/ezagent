@@ -192,7 +192,7 @@ defmodule EzagentWeb.LiveAuth do
           {:ok, uri} ->
             if user_offboarded?(uri) do
               # Active-session eviction (task #180 Change 3): a user
-              # disabled AFTER login is bounced on their next LV mount
+              # disabled/deleted AFTER login is bounced on their next LV mount
               # (connect / navigation / reconnect). Mirrors the HTTP-side
               # `RequireEntity` recheck; scoped to USER URIs so an agent LV
               # (bearer-authed) is never run through the user-table lookup
@@ -235,9 +235,9 @@ defmodule EzagentWeb.LiveAuth do
      |> assign(:workspaces, list_known_workspaces(uri, caps))}
   end
 
-  # True only when `uri` is a soft-disabled USER (`Users.disabled?/1`). Agent
-  # URIs are exempt — they are not `users` rows and `disabled?/1` fails closed on
-  # unknown.
+  # True only when `uri` is a USER that has been soft-disabled or tombstoned
+  # (`disabled_at` is set on both). Agent URIs are exempt — they are not
+  # `users` rows and `Ezagent.Users.disabled?/1` fails closed on unknown.
   defp user_offboarded?(%URI{} = uri) do
     match?({:ok, "user"}, Ezagent.URI.type(uri)) and Ezagent.Users.disabled?(uri)
   end

@@ -188,6 +188,35 @@ defmodule Ezagent.UsersTest do
   end
 
   describe "tombstone/3 (operator offboarding hard-delete, task #180)" do
+    # Change 2 (task #180): delete requires the target be soft-disabled first.
+    test "refuses a NOT-yet-disabled user with :must_disable_first, leaving it fully intact" do
+      uri = "entity://team-alpha/user/tomb-live-#{System.unique_integer([:positive])}"
+      admin = "entity://system/user/admin"
+
+      cap = %Ezagent.Capability{
+        kind: :workspace,
+        behavior: Ezagent.ActionSet.Workspace,
+        instance: :any,
+        workspace_uri: URI.new!("workspace://team-alpha"),
+        granted_by: Ezagent.URI.new!("entity://system/user/admin"),
+        granted_at: ~U[2026-05-16 00:00:00.000000Z]
+      }
+
+      {:ok, _} = Users.create(uri, "secret", [cap])
+
+      # Fail-loud BEFORE any teardown: caps intact, login works, not deleted.
+      assert {:error, :must_disable_first} = Users.tombstone(uri, admin, "oops")
+      assert Users.get_by_uri(uri).caps != []
+      assert Users.verify_password(uri, "secret")
+      refute Users.deleted?(uri)
+
+      # After disabling, delete succeeds.
+      {:ok, _} = Users.disable(uri, admin, "offboarding")
+      assert {:ok, deleted} = Users.tombstone(uri, admin, "confirmed")
+      assert deleted.deleted_at
+      assert deleted.caps == []
+    end
+
     test "revokes durable caps so no spawn/hydration path restores authority" do
       uri = "entity://team-alpha/user/tomb-caps-#{System.unique_integer([:positive])}"
       admin = "entity://system/user/admin"
@@ -203,6 +232,7 @@ defmodule Ezagent.UsersTest do
 
       {:ok, created} = Users.create(uri, "secret", [cap])
       assert length(created.caps) == 1
+      {:ok, _} = Users.disable(uri, admin, "offboarding")
 
       assert {:ok, deleted} = Users.tombstone(uri, admin, "offboarded")
       # Durable authority stripped — caps_json emptied. Both the spawn
@@ -220,6 +250,7 @@ defmodule Ezagent.UsersTest do
       {:ok, _} = Users.create(uri, "secret", [])
       assert Users.verify_password(uri, "secret")
       refute Users.deleted?(uri)
+      {:ok, _} = Users.disable(uri, admin, "offboarding")
 
       assert {:ok, deleted} = Users.tombstone(uri, admin, "offboarded")
       assert deleted.deleted_at
@@ -244,6 +275,7 @@ defmodule Ezagent.UsersTest do
       admin = "entity://system/user/admin"
 
       {:ok, _} = Users.create(uri, "secret", [])
+      {:ok, _} = Users.disable(uri, admin, "offboarding")
 
       assert {:ok, first} = Users.tombstone(uri, admin, "first")
       assert {:ok, second} = Users.tombstone(uri, admin, "second")
@@ -263,6 +295,7 @@ defmodule Ezagent.UsersTest do
       admin = "entity://system/user/admin"
 
       {:ok, _} = Users.create(uri, "secret", [])
+      {:ok, _} = Users.disable(uri, admin, "offboarding")
       {:ok, _} = Users.tombstone(uri, admin, nil)
 
       assert {:error, :user_deleted} = Users.enable(uri)

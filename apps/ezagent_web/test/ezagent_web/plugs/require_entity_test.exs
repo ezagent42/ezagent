@@ -6,7 +6,7 @@ defmodule EzagentWeb.Plugs.RequireEntityTest do
   the session (any entity, not just users).
 
   task #180 Change 3 — the plug also EVICTS a user whose account was
-  disabled AFTER login (active-session eviction). That recheck
+  disabled/deleted AFTER login (active-session eviction). That recheck
   reads the `users` table, so this suite runs under `DataCase` (DB
   sandbox) rather than the old async no-DB `ExUnit.Case`.
   """
@@ -112,6 +112,21 @@ defmodule EzagentWeb.Plugs.RequireEntityTest do
 
       assert conn2.halted
       assert ["/login"] = get_resp_header(conn2, "location")
+    end
+
+    test "a tombstoned (deleted) user is likewise bounced" do
+      uri = "entity://team-alpha/user/evict-del-#{System.unique_integer([:positive])}"
+      {:ok, _} = Users.create(uri, "pw", [])
+      {:ok, _} = Users.disable(uri, "entity://system/user/admin", "off")
+      {:ok, _} = Users.tombstone(uri, "entity://system/user/admin", "gone")
+
+      conn =
+        conn(:get, "/sessions")
+        |> init_test_session(%{"current_entity_uri" => uri})
+        |> RequireEntity.call([])
+
+      assert conn.halted
+      assert ["/login"] = get_resp_header(conn, "location")
     end
   end
 end

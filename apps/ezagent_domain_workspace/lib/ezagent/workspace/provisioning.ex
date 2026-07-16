@@ -280,8 +280,99 @@ defmodule Ezagent.Workspace.Provisioning do
           | {:error, term()}
   def delete_user(%URI{scheme: "workspace"} = workspace_uri, args, ctx)
       when is_map(args) and is_map(ctx) do
-    dispatch_user_admin(workspace_uri, :delete_user, args, ctx)
+    case dispatch_user_admin(workspace_uri, :delete_user, args, ctx) do
+      {:ok, %{user_uri: user_uri_str} = result} when is_binary(user_uri_str) ->
+        # Change 4 (task #180): destroying a GLOBAL user identity detaches the
+        # user from EVERY workspace they belong to — otherwise the tombstoned
+        # user lingers as a ghost `member_uris` entry (a dangling reference) in
+        # each workspace. Orchestrated at the FACADE in a load-bearing ORDER:
+        #
+        #   1. dispatch `delete_user` → action body marks the row deleted +
+        #      revokes durable caps (`Users.tombstone/3`), but leaves the live
+        #      User Kind UP.
+        #   2. detach from all workspaces (below) — `Workspace.remove_member/2`
+        #      revokes each membership's `create_session` cap by dispatching to
+        #      the LIVE User Kind; if the Kind were already destroyed this fails
+        #      `:no_such_actor`. So detach MUST precede teardown.
+        #   3. THEN tear the User Kind down (in-memory slice).
+        #
+        # All at the facade (caller process), NOT the action body: `delete_user`
+        # runs INSIDE the target Workspace Kind, so a `remove_member` there would
+        # re-enter that same Kind and DEADLOCK — the identical re-entrancy
+        # `create_user/3`'s facade `add_member` sidesteps. Membership removal is a
+        # STRUCTURAL consequence of the already-authorized (genesis-admin-gated)
+        # delete, so it uses the trusted `Workspace.remove_member/2`
+        # (self-authority), NOT the cap-checked `/3`.
+        #
+        # `delete_user` (global) = "detach from ALL workspaces + destroy
+        # identity"; `remove_member` (per-workspace) stays a separate, lighter
+        # op. They coincide only when the user is in exactly one workspace —
+        # `remove_member` is deliberately NOT made to auto-delete on last ws.
+        user_uri = Ezagent.URI.new!(user_uri_str)
+
+        case remove_from_all_workspaces(user_uri) do
+          :ok ->
+            _ = destroy_user_kind(user_uri)
+            {:ok, result}
+
+          {:error, reason} ->
+            {:error, {:delete_user_membership_cleanup_failed, reason}}
+        end
+
+      other ->
+        other
+    end
   end
+
+  # Tear down the (now-detached, caps-revoked) User Kind's live slice. Best-effort
+  # + idempotent — a never-spawned user is a no-op; a crash must not fail the
+  # already-committed delete. Runs LAST (see `delete_user/3`), after membership
+  # detach, because `remove_member`'s cap-revoke needs the Kind alive.
+  defp destroy_user_kind(%URI{} = user_uri) do
+    try do
+      Ezagent.Lifecycle.destroy(user_uri)
+    rescue
+      _ -> :ok
+    end
+  end
+
+  # Detach `user_uri` from every workspace whose `member_uris` lists it —
+  # enumerated from the SAME source `Workspace.Listing` reads (`Store.list_all/0`,
+  # the authoritative persisted `member_uris`). Zero memberships → clean no-op.
+  # Fail-LOUD on the first `remove_member` failure (`reduce_while` :halt) so a
+  # partial detach surfaces rather than silently leaving ghost members; because
+  # the user is ALREADY tombstoned, re-running `delete_user` is idempotent
+  # (`Users.tombstone/3` returns `{:ok, ...}` for an already-deleted row) and
+  # re-sweeps whatever memberships remain.
+  defp remove_from_all_workspaces(%URI{} = user_uri) do
+    user_str = URI.to_string(user_uri)
+
+    # `remove_member/2` sweeps the member's workspace-scoped `create_session`
+    # cap via a failure-propagating dispatch to the member's LIVE User Kind — so
+    # the Kind must be spawned or the sweep fails `:no_such_actor` (a member that
+    # never demand-spawned, e.g. an inactive one). Ensure it's up via the SAME
+    # facade pre-spawn `add_member` uses (`Workspace.ensure_member_spawned/1`,
+    # which routes through the sanctioned SpawnRegistry chokepoint — this module
+    # does NOT touch SpawnRegistry directly). `caps_json` is already emptied by
+    # the tombstone, so the spawned Kind holds no caps and the revoke is a
+    # harmless no-op; the Kind is torn down right after in `delete_user/3`.
+    _ = Workspace.ensure_member_spawned(user_uri)
+
+    Store.list_all()
+    |> Enum.filter(&user_member?(&1, user_str))
+    |> Enum.reduce_while(:ok, fn ws, :ok ->
+      case Workspace.remove_member(ws.name, user_uri) do
+        :ok -> {:cont, :ok}
+        {:ok, _} -> {:cont, :ok}
+        {:error, reason} -> {:halt, {:error, {ws.name, reason}}}
+      end
+    end)
+  end
+
+  defp user_member?(%{members: members}, user_str) when is_list(members),
+    do: Enum.any?(members, fn m -> URI.to_string(m) == user_str end)
+
+  defp user_member?(_, _), do: false
 
   # Shared dispatch for the WorkspaceUserAdmin offboarding actions. Unlike
   # `create_user/3` these need NO post-dispatch facade step (no membership

@@ -342,10 +342,16 @@ defmodule Ezagent.Users do
   offboarding path (task #180). Distinct from `delete/1` (the anon-User
   GC hard purge) and from `disable/3` (the reversible soft-disable).
 
+  **Precondition — the target MUST already be soft-disabled.** If `disabled_at`
+  is nil this returns `{:error, :must_disable_first}` fail-loud BEFORE any
+  mutation (no caps revoked, no Kind destroyed). This enforces the operator
+  flow disable → (cooling-off) → delete and prevents accidental hard-delete of
+  a live user (task #180 Change 2).
+
   Removes the offboarded user's authority and identity while preserving an
   audit trail:
 
-  1. **Mark the row + REVOKE all caps (the DB write happens FIRST).** Sets
+  1. **Mark the row + REVOKE all durable caps.** Sets
      `deleted_at/by/reason` AND `disabled_at/by/reason` (so the existing
      `verify_password` login gate fails closed) AND empties `caps_json`.
      Emptying caps is the load-bearing authority-revocation: EVERY spawn /
@@ -360,77 +366,70 @@ defmodule Ezagent.Users do
      the task #180 design note); the row + the `:user_deleted` EventLog event
      the Router injects on dispatch are the durable audit record.
 
-  2. **Tear down the live User Kind** via the sanctioned
-     `Ezagent.Lifecycle.destroy/2` teardown (hooks → snapshot + ever-created
-     marker clear → terminate). Best-effort + idempotent — a never-spawned
-     user is a harmless no-op; a teardown crash is caught (mirrors `delete/1`
-     + the anon-GC sweeper) and does NOT strand the already-revoked row.
-     Ordering the DB write BEFORE destroy closes the teardown/respawn race: a
-     demand-spawn concurrent with teardown hydrates the ALREADY-empty
-     `caps_json` and sees `deleted?/1` true.
+  2. **Live User Kind teardown is the CALLER's job, done AFTER membership
+     detach.** `tombstone/3` deliberately does NOT call `Ezagent.Lifecycle.destroy/2`
+     itself: `delete_user` must first detach the user from every workspace, and
+     `Workspace.remove_member/2` revokes the member's `create_session` cap by
+     dispatching to the LIVE user Kind — which would fail `:no_such_actor` if the
+     Kind were already torn down. So the `Ezagent.Workspace.Provisioning.delete_user/3`
+     facade orders it correctly: tombstone (row) → detach-all-workspaces → THEN
+     `Lifecycle.destroy/2`. `caps_json` is emptied here so DURABLE authority is
+     gone immediately (every spawn/hydration path re-reads it); the live Kind's
+     in-memory slice is cut by the facade's destroy.
 
-  NOTE (scope): this revokes DURABLE authority and blocks re-auth; an
-  already-live in-memory session's authority is cut on the next cap read
-  (the Kind is destroyed → re-hydrates empty). Active-session eviction of
-  HTTP/LiveView cookies is a separate cross-cutting concern (see PR #1441
-  notes), shared with the pre-existing `disable/3`.
+  NOTE (scope): this revokes DURABLE authority and blocks re-auth. Active-session
+  eviction of already-authenticated HTTP/LiveView cookies is handled at the web
+  auth chokepoint (`disabled?/1` recheck, task #180 Change 3), benefiting plain
+  `disable/3` too.
 
   Idempotent: tombstoning an already-tombstoned user preserves the original
   timestamps/reason and returns the current decoded row. `{:error, :not_found}`
-  for an absent row.
+  for an absent row. The disable-before-delete precondition returns
+  `{:error, :must_disable_first}` for a not-yet-disabled target.
   """
   @spec tombstone(URI.t() | String.t(), URI.t() | String.t(), String.t() | nil) ::
-          {:ok, decoded()} | {:error, :not_found}
+          {:ok, decoded()} | {:error, :not_found | :must_disable_first}
   def tombstone(uri, deleted_by, reason \\ nil) do
     case Repo.get_by(__MODULE__, uri: uri_to_str(uri)) do
       nil ->
         {:error, :not_found}
 
       %__MODULE__{deleted_at: %DateTime{}} = row ->
-        # Already tombstoned — idempotent. Still ensure the Kind is torn
-        # down (a snapshot could have been re-created by a stray demand-spawn
-        # between tombstoning and now); best-effort, never strands the row.
-        _ = destroy_kind_best_effort(uri)
+        # Already tombstoned — idempotent no-op (the facade re-runs the
+        # membership cascade + Kind destroy on a retry).
         {:ok, decode(row)}
+
+      %__MODULE__{disabled_at: nil} ->
+        # Disable-before-delete safety gate (task #180 Change 2): a HARD delete
+        # of a LIVE user is refused fail-loud BEFORE any mutation (no caps
+        # revoked, no row change). Enforces disable → (cooling-off) → delete and
+        # prevents accidental hard-delete of an active user. Re-enable-then-delete
+        # is the escape hatch if an operator changes their mind.
+        {:error, :must_disable_first}
 
       row ->
         now = DateTime.utc_now()
         by = uri_to_str(deleted_by)
         normalized_reason = normalize_reason(reason)
 
-        result =
-          row
-          |> Ecto.Changeset.change(%{
-            deleted_at: now,
-            deleted_by: by,
-            deleted_reason: normalized_reason,
-            # Fail the login gate closed. Preserve a pre-existing disable
-            # timestamp/actor if the user was already disabled before delete.
-            disabled_at: row.disabled_at || now,
-            disabled_by: row.disabled_by || by,
-            disabled_reason: row.disabled_reason || normalized_reason,
-            # REVOKE all durable authority (see @doc step 1). Empty JSON array.
-            caps_json: encode_caps([])
-          })
-          |> Repo.update()
-
-        # Write FIRST (above), THEN tear down the Kind (closes the race).
-        case result do
-          {:ok, updated} ->
-            _ = destroy_kind_best_effort(uri)
-            {:ok, decode(updated)}
-
-          {:error, _changeset} ->
-            {:error, :not_found}
+        row
+        |> Ecto.Changeset.change(%{
+          deleted_at: now,
+          deleted_by: by,
+          deleted_reason: normalized_reason,
+          # Fail the login gate closed. Preserve a pre-existing disable
+          # timestamp/actor (delete requires a prior disable, so these are set).
+          disabled_at: row.disabled_at || now,
+          disabled_by: row.disabled_by || by,
+          disabled_reason: row.disabled_reason || normalized_reason,
+          # REVOKE all durable authority (see @doc step 1). Empty JSON array.
+          caps_json: encode_caps([])
+        })
+        |> Repo.update()
+        |> case do
+          {:ok, updated} -> {:ok, decode(updated)}
+          {:error, _changeset} -> {:error, :not_found}
         end
-    end
-  end
-
-  defp destroy_kind_best_effort(uri) do
-    try do
-      Ezagent.Lifecycle.destroy(uri)
-    rescue
-      _ -> :ok
     end
   end
 

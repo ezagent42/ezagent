@@ -234,6 +234,18 @@ defmodule Ezagent.Workspace do
 
   defp ensure_member_kind_spawned_at_facade(_other), do: :ok
 
+  @doc """
+  Ensure a member's User Kind is spawned — the public entry the
+  `delete_user` membership-cascade (`Ezagent.Workspace.Provisioning`) uses so
+  `remove_member/2`'s live-Kind cap sweep has an actor to dispatch to. Reuses
+  the SAME facade pre-spawn `add_member/2` runs, keeping the `SpawnRegistry`
+  chokepoint reference in this (already-sanctioned) module. Best-effort:
+  returns `:ok` for a non-user URI or an already-running Kind.
+  """
+  @spec ensure_member_spawned(URI.t()) :: :ok | {:error, term()}
+  def ensure_member_spawned(%URI{} = member_uri),
+    do: ensure_member_kind_spawned_at_facade(member_uri)
+
   @spec remove_member(String.t(), URI.t()) :: :ok | {:error, term()}
   def remove_member(name, %URI{} = member_uri) do
     do_remove_member(name, member_uri, workspace_self_ctx(name, :remove_member))

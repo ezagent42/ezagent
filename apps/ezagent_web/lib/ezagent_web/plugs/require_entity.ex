@@ -34,7 +34,7 @@ defmodule EzagentWeb.Plugs.RequireEntity do
                   bounce(conn)
 
                 # Active-session eviction (task #180 Change 3): a user
-                # disabled AFTER login must be bounced on their next
+                # disabled/deleted AFTER login must be bounced on their next
                 # authenticated request — `verify_password/2` only gates the
                 # LOGIN, so without this recheck a live cookie survives until
                 # expiry. Scoped to USER URIs: `Users.disabled?/1` fails closed
@@ -61,9 +61,10 @@ defmodule EzagentWeb.Plugs.RequireEntity do
       match?({:ok, kind} when kind in ["user", "agent"], Ezagent.URI.type(uri))
   end
 
-  # True only when `uri` is a soft-disabled USER (`Users.disabled?/1`). Agent
-  # URIs are exempt — they are not `users` rows and `disabled?/1` fails closed on
-  # unknown, so an agent bearer must NOT be run through it.
+  # True only when `uri` is a USER that has been soft-disabled or tombstoned
+  # (`disabled_at` is set on both). Agent URIs are exempt — they are not
+  # `users` rows and `disabled?/1` fails closed on unknown, so an agent bearer
+  # must NOT be run through it.
   defp user_offboarded?(%URI{} = uri) do
     match?({:ok, "user"}, Ezagent.URI.type(uri)) and Ezagent.Users.disabled?(uri)
   end
