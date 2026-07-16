@@ -22,9 +22,10 @@ Decision:
 | GitHub API transport | narrow GO — pure local contract prototype for downstream planning |
 
 Selected W29 direction: public anonymous checkout plus a later GitHub-plugin Git
-Data API write path. This remains GitHub-specific, loose-coupled, not the final
-mount; #1360 Layer B is pending. Private checkout and all SSH transport remain
-blocked.
+Data API write path. This remains GitHub-specific and public-repository-only,
+not the final provider-neutral/private/SSH transport. Private checkout and all
+SSH transport remain blocked. Plan B has no #1360 dependency; #1360 is the
+separate Hello↔Kanban cross-session live-mount and authorization line.
 
 ## DoD reconciliation
 

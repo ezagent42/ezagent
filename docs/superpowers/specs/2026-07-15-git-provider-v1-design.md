@@ -29,8 +29,10 @@ The agent receives neither a GitHub token nor an SSH private key. It receives a
 capability to request a bounded operation. GitHub merge remains a lead/human
 operation in V1.
 
-This design does not change the current W29 honesty label: the demo path remains
-**loose-coupled, not the final mount; #1360 Layer B is still pending**.
+The W29 honesty boundary is specific to Git transport: the selected increment is
+**GitHub-specific and public-repository-only, not the final provider-neutral or
+private-repository transport**. It does not depend on #1360; that issue belongs
+to the separate Hello↔Kanban cross-session data-mount/authorization line.
 
 ### 1.1 Plan A evidence update (2026-07-16)
 
