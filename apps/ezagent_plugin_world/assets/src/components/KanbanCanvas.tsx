@@ -27,6 +27,8 @@ type Node = {
   status: string | null
   artifacts?: {kind?: string; content?: string; ref?: string}[]
   metrics?: unknown[]
+  // ㉕ 非破坏 drop 标：true = 北极星不达标被标红跟踪（节点仍在，后端整棵子树都带标）
+  dropped?: boolean
 }
 type Tree = {nodes: Record<string, Node>; root_id: string | null}
 type Act = (action: string, args: Record<string, unknown>) => void
@@ -76,10 +78,19 @@ function MmNode({data}: {data: {node: Node; id: string; selected: boolean; onSel
   // 协作模型规则 2：未认领节点不显示任何属性（stage 徽章 / gate 评价都藏）——
   // 只留状态圈（○=可认领的信号）、标题和「加子」按钮。
   const unclaimed = !node.owner
+  // ㉕ dropped（北极星不达标跟踪标）：红色边框——后端把整棵子树都打了标，
+  // 每个子孙节点自带 dropped=true，逐节点渲红即天然覆盖"含子树视觉"。
+  const dropped = node.dropped === true
+  const borderCls = dropped
+    ? `border-destructive ${selected ? "ring-1 ring-destructive" : ""}`
+    : selected
+      ? "border-primary ring-1 ring-primary"
+      : "border-border"
   return (
     <div
       onClick={() => onSelect(id)}
-      className={`flex items-center gap-1.5 rounded-md border bg-card px-2.5 py-2 text-sm shadow-sm transition ${selected ? "border-primary ring-1 ring-primary" : "border-border"}`}
+      title={dropped ? "已 drop：北极星指标不达标（跟踪标记，节点保留）" : undefined}
+      className={`flex items-center gap-1.5 rounded-md border px-2.5 py-2 text-sm shadow-sm transition ${dropped ? "bg-destructive/5" : "bg-card"} ${borderCls}`}
       style={{width: NODE_W, minHeight: NODE_H}}
     >
       <Handle type="target" position={Position.Left} className="!bg-border" />
