@@ -349,7 +349,9 @@ defmodule Ezagent.World.KanbanData do
       "owner" => Map.get(n, :owner),
       "status" => to_str(Map.get(n, :status)),
       "artifacts" => Enum.map(Map.get(n, :artifacts, []), &jsonable_artifact/1),
-      "metrics" => Enum.map(Map.get(n, :metrics, []), &jsonable_map/1)
+      "metrics" => Enum.map(Map.get(n, :metrics, []), &jsonable_map/1),
+      # ㉕ 非破坏 drop 标（前端红框渲染）；旧快照节点无该键 → false。
+      "dropped" => Map.get(n, :dropped, false)
     }
 
     # 片5：ci_stage 棒节点附 CI 评价摘要（Behavior 在 get_tree 里按 ci_stage 算好、

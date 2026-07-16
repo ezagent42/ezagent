@@ -369,19 +369,98 @@ defmodule Ezagent.ActionSet.KanbanTest do
     end
   end
 
-  describe "drop_subtree（H2 归属守卫）" do
-    test "owner drop 自己整子树（都自己认领）+ 记进图级别 drops" do
+  describe "drop_subtree（㉕ 非破坏跟踪标记）" do
+    test "认领人 drop 自己节点：子树标 dropped、节点不删 + drops 记 %{id, reason, at, by}" do
       # alice 建根+子（都 alice 自动认领）。
       {t, r} = add!(empty(), "", "根", user_ctx(empty(), @alice))
       {t2, c} = add!(t, r, "子", user_ctx(t, @alice))
 
       assert {:ok, %{dropped: 2}, e} =
-               Kanban.handle_drop_subtree(%{id: r, reason: "撤"}, user_ctx(t2, @alice))
+               Kanban.handle_drop_subtree(%{id: r, reason: "北极星不达标"}, user_ctx(t2, @alice))
 
+      t3 = committed(e)
+      # 非破坏：节点全都在，只是打了 dropped 标。
+      assert t3.nodes[r].dropped == true
+      assert t3.nodes[c].dropped == true
+      assert t3.root_id == r
+      assert t3.nodes[r].title == "根"
+
+      # drops 历史：%{id, reason, at, by}。
+      assert [%{id: ^r, reason: "北极星不达标", at: %DateTime{}, by: @alice}] = t3.drops
+    end
+
+    test "权限=节点认领人：他人不可 drop；版主/wildcard 兜底可" do
+      {t, r} = add!(empty(), "", "根", user_ctx(empty(), @alice))
+
+      # bob 不是认领人 → 拒。
+      assert {:error, :forbidden} =
+               Kanban.handle_drop_subtree(%{id: r, reason: "x"}, user_ctx(t, @bob))
+
+      # 版主（data_owner）兜底。
+      assert {:ok, %{dropped: 1}, _e} =
+               Kanban.handle_drop_subtree(%{id: r, reason: "版主标"}, moderator_ctx(t, @bob))
+
+      # wildcard admin 兜底。
+      assert {:ok, %{dropped: 1}, _e2} =
+               Kanban.handle_drop_subtree(%{id: r, reason: "admin标"}, admin_ctx(t))
+    end
+
+    test "子树含他人认领节点不再挡（跟踪标记非删除，整树标 dropped）" do
+      {t, r} = add!(empty(), "", "根", user_ctx(empty(), @alice))
+      {t2, gc} = add!(t, r, "bob子", user_ctx(t, @bob))
+
+      assert {:ok, %{dropped: 2}, e} =
+               Kanban.handle_drop_subtree(%{id: r, reason: "整线撤"}, user_ctx(t2, @alice))
+
+      t3 = committed(e)
+      # bob 的节点仍在（owner/内容不动），只带 dropped 标。
+      assert t3.nodes[gc].dropped == true
+      assert t3.nodes[gc].owner == @bob
+    end
+
+    test "重复 drop 幂等：不再追加 drops 历史、无副作用" do
+      {t, r} = add!(empty(), "", "根", user_ctx(empty(), @alice))
+
+      assert {:ok, %{dropped: 1}, e} =
+               Kanban.handle_drop_subtree(%{id: r, reason: "一次"}, user_ctx(t, @alice))
+
+      t2 = committed(e)
+
+      assert {:ok, %{dropped: 0}, e2} =
+               Kanban.handle_drop_subtree(%{id: r, reason: "两次"}, user_ctx(t2, @alice))
+
+      # 幂等：无 commit effect（树不变、历史不重复追加）。
+      assert e2 == []
+      assert length(t2.drops) == 1
+    end
+
+    test "get_tree 投影带 dropped 标（dropped=true / 未 drop=false）" do
+      {t, r} = add!(empty(), "", "根", user_ctx(empty(), @alice))
+      {t2, c} = add!(t, r, "活子", user_ctx(t, @alice))
+      {t3, d} = add!(t2, r, "撤子", user_ctx(t2, @alice))
+
+      {:ok, _res, e} = Kanban.handle_drop_subtree(%{id: d, reason: "撤"}, user_ctx(t3, @alice))
+      t4 = committed(e)
+
+      assert {:ok, %{tree: %{nodes: nodes}}, []} =
+               Kanban.handle_get_tree(%{}, user_ctx(t4, @alice))
+
+      assert nodes[d].dropped == true
+      assert nodes[r].dropped == false
+      assert nodes[c].dropped == false
+    end
+  end
+
+  describe "remove_node（规则5 删除授权：整子树同主/未认领，版主兜底）" do
+    test "整子树自己认领 → 级联删除成功" do
+      {t, r} = add!(empty(), "", "根", user_ctx(empty(), @alice))
+      {t2, c} = add!(t, r, "子", user_ctx(t, @alice))
+
+      assert {:ok, %{}, e} = Kanban.handle_remove_node(%{id: r}, user_ctx(t2, @alice))
       t3 = committed(e)
       refute Map.has_key?(t3.nodes, r)
       refute Map.has_key?(t3.nodes, c)
-      assert [%{title: "根", reason: "撤", count: 2}] = t3.drops
+      assert t3.root_id == nil
     end
 
     test "子树含他人已认领后代 → :forbidden_mixed_ownership" do
@@ -389,30 +468,24 @@ defmodule Ezagent.ActionSet.KanbanTest do
       {t2, _gc} = add!(t, r, "bob子", user_ctx(t, @bob))
 
       assert {:error, :forbidden_mixed_ownership} =
-               Kanban.handle_drop_subtree(%{id: r, reason: "x"}, user_ctx(t2, @alice))
+               Kanban.handle_remove_node(%{id: r}, user_ctx(t2, @alice))
     end
 
-    test "含未认领后代不挡（未认领谁都可删，只要其余是自己的）" do
+    test "含未认领后代不挡（未认领恒空谁都可删）" do
       {t, r} = add!(empty(), "", "根", user_ctx(empty(), @alice))
       {t2, gc} = add!(t, r, "结构子", user_ctx(t, @alice))
-      # gc 退领（空）→ 未认领后代。
       {:ok, %{}, e0} = Kanban.handle_unclaim_node(%{id: gc}, user_ctx(t2, @alice))
 
-      assert {:ok, %{dropped: 2}, _e} =
-               Kanban.handle_drop_subtree(%{id: r, reason: "x"}, user_ctx(committed(e0), @alice))
+      assert {:ok, %{}, _e} =
+               Kanban.handle_remove_node(%{id: r}, user_ctx(committed(e0), @alice))
     end
 
     test "版主 / wildcard 兜底可删他人任何子树" do
       {t, r} = add!(empty(), "", "根", user_ctx(empty(), @alice))
       {t2, _gc} = add!(t, r, "bob子", user_ctx(t, @bob))
 
-      # 版主（alice=data_owner）兜底。
-      assert {:ok, %{dropped: 2}, _e} =
-               Kanban.handle_drop_subtree(%{id: r, reason: "版主删"}, moderator_ctx(t2, @alice))
-
-      # wildcard admin 兜底。
-      assert {:ok, %{dropped: 2}, _e2} =
-               Kanban.handle_drop_subtree(%{id: r, reason: "admin删"}, admin_ctx(t2))
+      assert {:ok, %{}, _e} = Kanban.handle_remove_node(%{id: r}, moderator_ctx(t2, @alice))
+      assert {:ok, %{}, _e2} = Kanban.handle_remove_node(%{id: r}, admin_ctx(t2))
     end
   end
 
