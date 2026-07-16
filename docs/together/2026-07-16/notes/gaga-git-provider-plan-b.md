@@ -42,7 +42,8 @@ code or tests; its verification is documentation/static consistency only.
 | Tasks 2–9 domain implementation | complete | closed values/errors, adapter contract/registry, ephemeral Resource lifecycle, exact signed-cap fixture, authorized ActionSet dispatch, and atomic boot registration are present in the inherited stack |
 | Task 10 structural gates | parallel/open at Task 11 start | owned by the parallel core-gate slice; Task 11 does not edit its files or claim its result |
 | Task 11 integration proof | complete locally | real boot + pre-spawned Resource + two synchronized fakes + exact signed Cap + real Invocation/Router; exact routing/no cross-call, no-cap zero effects, stale zero mutation |
-| Task 12 / external completion | open | no full precommit, GitHub, credentials, checkout/worktrees, Kanban, canary, PR/CI/review/merge, deploy, or #1360 final mount claimed |
+| Task 12 verification/review/WIP handoff | open | no full precommit, CI, broad review, or WIP PR claimed; merge/deploy are separate lead-authorized operations |
+| External provider/operational breadth | out of scope | no GitHub, credentials, checkout/worktrees, Kanban, canary, merge, deploy, or #1360 final mount claimed |
 
 ## Changes
 
@@ -103,10 +104,13 @@ Task 0 review fixes applied after commit `c7de2619d`:
 - updated the executable plan, exact Tasks 2–3 assertions, return skeleton, and
   ignored execution report consistently.
 
-## Current boundary
+## Historical Task 1 checkpoint
 
-Task 1 is complete on the inherited Plan A stack. Full CI, `mix precommit`, rebase,
-return readiness, deploy, and merge are not claimed. Task 2+ remains deferred.
+At this checkpoint, Task 1 was complete on the inherited Plan A stack while Task 2+
+remained deferred. This paragraph is preserved as execution history; the current
+status is Tasks 0–11 locally implemented and verified as recorded above. Full Task
+12 verification/review/WIP handoff is still open, and merge/deploy require separate
+lead authorization.
 
 ## Task 2 pre-RED contract amendment
 
