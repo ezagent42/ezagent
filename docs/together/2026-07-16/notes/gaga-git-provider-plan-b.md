@@ -4,7 +4,7 @@
 
 **Track:** agent development bootstrap — provider-neutral Git domain spine
 
-**Owner:** gaga / Task 0 implementer
+**Owner:** gaga / Task 0–1 implementer
 
 **Worktree:** `/home/huangjiajia/ezagent/.worktrees/git-domain-spine`
 
@@ -17,10 +17,10 @@ record and does not claim #1423 is merged to `origin/main`.
 
 ## Scope and honesty boundary
 
-Task 0 is architecture/design documentation only. It freezes Plan A's four structs,
-five adapter callbacks/actions, and full error union, and proposes the five minimum
-auxiliary shapes that Plan A left undefined. It changes no production code, tests,
-dependencies, lockfile, `.gitignore`, or Plan A PR file.
+Task 0 freezes Plan A's contract. Task 1 adds only the independent
+`ezagent_domain_git` OTP-app scaffold and its dependency-boundary test. The app has
+no production Git domain types or behavior and depends inward only on
+`ezagent_core`.
 
 No GitHub plugin, credential/token work, checkout/worktree provisioning, Kanban
 integration, canary, #1360, AgentRuntime ARB, EntityCaps, bridge join, SSH callback,
@@ -39,8 +39,9 @@ code or tests; its verification is documentation/static consistency only.
 |---|---|---|
 | Preflight/read required evidence | complete | Read Task 0 brief, local design/plan, Plan A decisions/design/plan and daily records; inspected current Git terminology and W29 prototype |
 | Task 0 contract freeze | complete | Exact Plan A structs, callbacks/actions, and error union frozen; five auxiliary closed shapes corrected per architecture review |
-| Task 1+ production implementation | deferred | Must not start until #1423 lands and the branch is rebased onto current main |
-| CI/rebase/dev-together return | deferred | Not claimed by this initial Task 0 documentation slice |
+| Task 1 independent app scaffold | complete | Empty OTP supervision tree; exact approved umbrella deps `[:ezagent_core]`; dependency boundary test GREEN |
+| Task 2+ production implementation | deferred | No value types, adapter, Resource, ActionSet, registry, migrations, provider plugin, UI, workspace, or Kanban code |
+| CI/rebase/dev-together return | deferred | Not claimed by this Task 1 implementation slice |
 
 ## Changes
 
@@ -49,6 +50,9 @@ code or tests; its verification is documentation/static consistency only.
 - proposed closed `CreateChangeRequest`, `ChangeRequestId`, `CommitSha`, `Check`,
   and `Review` contracts with repository evidence;
 - created this durable ledger and an explicitly WIP return skeleton.
+- scaffolded the normally discovered `apps/ezagent_domain_git` OTP application;
+- added a domain-local architecture test enforcing the exact inward dependency and
+  forbidding provider, Phoenix, socialware/Kanban, and workspace-provision deps.
 
 ## Commands and results
 
@@ -59,6 +63,28 @@ rg (Git type/W29 terminology and prototype evidence) -> evidence cited in tracke
 git diff --check                                    -> PASS (no output)
 targeted rg consistency                             -> PASS; required contracts/exclusions present
 ```
+
+## Task 1 TDD evidence
+
+```text
+mix test test/architecture/dependency_boundary_test.exs
+  RED -> 1 test, 1 failure; actual [] != expected [:ezagent_core]
+
+mix compile
+  GREEN -> Generated ezagent_domain_git app; exit 0
+
+SHELL=/bin/bash mix test test/architecture/dependency_boundary_test.exs
+  GREEN -> 1 test, 0 failures
+
+SHELL=/bin/bash mix test \
+  apps/ezagent_core/test/architecture/undeclared_umbrella_dep_test.exs \
+  apps/ezagent_core/test/invariants/layer_purity_test.exs
+  GREEN -> 4 tests, 0 failures
+```
+
+The first post-change focused-test attempt was environment-blocked before ExUnit by
+`erlexec` because `SHELL` was unset; rerunning with `SHELL=/bin/bash` passed. The
+architecture-gate run emitted existing local seed-state warnings and passed.
 
 ## Review-fix change entry
 
@@ -76,7 +102,7 @@ Task 0 review fixes applied after commit `c7de2619d`:
 - updated the executable plan, exact Tasks 2–3 assertions, return skeleton, and
   ignored execution report consistently.
 
-## Blocker
+## Current boundary
 
-Production Task 1+ remains deferred until stacked dependency #1423 lands and this
-branch is rebased. CI/rebase/return/deploy/merge completion is not claimed.
+Task 1 is complete on the inherited Plan A stack. Full CI, `mix precommit`, rebase,
+return readiness, deploy, and merge are not claimed. Task 2+ remains deferred.
