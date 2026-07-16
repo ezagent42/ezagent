@@ -57,14 +57,13 @@ defmodule EzagentCore.Architecture.GitAdapterBoundaryScanner do
 
   defp adapter_effects(path, ast) do
     aliases = aliases(ast)
+    module_lookup? = contains_adapter_lookup?(ast, aliases)
 
     function_bodies(ast)
     |> Enum.flat_map(fn body ->
-      lookup? = contains_adapter_lookup?(body, aliases)
-
       {_body, findings} =
         Macro.prewalk(body, [], fn node, acc ->
-          if adapter_effect_call?(node, aliases, lookup?),
+          if adapter_effect_call?(node, aliases, module_lookup?),
             do: {node, [{path, line(node)} | acc]},
             else: {node, acc}
         end)
@@ -207,7 +206,7 @@ defmodule EzagentCore.Architecture.GitAdapterBoundaryScanner do
     {_ast, attrs} =
       Macro.prewalk(ast, %{}, fn
         {:@, _, [{name, _, [values]}]} = node, acc when is_atom(name) and is_list(values) ->
-          {node, Map.put(acc, name, Enum.filter(values, &is_atom/1))}
+          {node, Map.put(acc, name, struct_field_keys(values))}
 
         node, acc ->
           {node, acc}
@@ -216,7 +215,7 @@ defmodule EzagentCore.Architecture.GitAdapterBoundaryScanner do
     attrs
   end
 
-  defp expand_fields(fields, _attrs) when is_list(fields), do: Enum.filter(fields, &is_atom/1)
+  defp expand_fields(fields, _attrs) when is_list(fields), do: struct_field_keys(fields)
 
   defp expand_fields({:@, _, [{name, _, _}]}, attrs) when is_atom(name),
     do: Map.get(attrs, name, [])
@@ -225,6 +224,14 @@ defmodule EzagentCore.Architecture.GitAdapterBoundaryScanner do
     do: Map.get(attrs, name, [])
 
   defp expand_fields(_other, _attrs), do: []
+
+  defp struct_field_keys(fields) do
+    Enum.flat_map(fields, fn
+      field when is_atom(field) -> [field]
+      {field, _default} when is_atom(field) -> [field]
+      _other -> []
+    end)
+  end
 
   defp line({_form, meta, _args}) when is_list(meta), do: Keyword.get(meta, :line, 0)
   defp line(_node), do: 0
@@ -388,6 +395,29 @@ defmodule EzagentCore.Architecture.GitAdapterBoundaryTest do
       end
     end
 
+    test "module-local adapter selection taints split dynamic apply helpers independent of names" do
+      for apply_call <- [
+            "Kernel.apply(thing, operation, arguments)",
+            "apply(thing, operation, arguments)",
+            ":erlang.apply(thing, operation, arguments)"
+          ] do
+        source = """
+        defmodule Outside do
+          alias Ezagent.DomainGit.AdapterRegistry, as: Registry
+          def choose(id), do: Registry.lookup_for_action_set(id)
+          def execute(thing, operation, arguments), do: #{apply_call}
+          def run(id, operation, arguments) do
+            {:ok, selected} = choose(id)
+            execute(selected, operation, arguments)
+          end
+        end
+        """
+
+        findings = Scanner.scan_source("apps/other/lib/outside.ex", source).adapter_effects
+        assert length(findings) >= 2, apply_call
+      end
+    end
+
     test "forbidden fields and signatures cover expanded attributes and compound authority names" do
       fields =
         ~w(api_token credential_ref secret_ref http_client request_path working_tree_path capability_ref)
@@ -395,6 +425,14 @@ defmodule EzagentCore.Architecture.GitAdapterBoundaryTest do
       for field <- fields do
         source = "defmodule Value do\n@shape [:#{field}]\ndefstruct @shape\nend"
 
+        assert Scanner.scan_source("apps/ezagent_domain_git/lib/value.ex", source).forbidden_struct_fields !=
+                 []
+      end
+
+      for source <- [
+            "defmodule Value do\ndefstruct api_token: nil\nend",
+            "defmodule Value do\n@shape [api_token: nil]\ndefstruct @shape\nend"
+          ] do
         assert Scanner.scan_source("apps/ezagent_domain_git/lib/value.ex", source).forbidden_struct_fields !=
                  []
       end

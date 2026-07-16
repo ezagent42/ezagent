@@ -205,12 +205,24 @@ defmodule Ezagent.UriQuery.ScanTest do
             path = uri.path
             String.split(path, "/")
           end
+          def workspace(%URI{} = uri) do
+            %{path: path} = uri
+            String.split(path, "/")
+          end
+          def workspace(%URI{} = uri) do
+            path = Map.fetch!(uri, :path)
+            String.split(path, "/")
+          end
+          def workspace(%URI{} = uri) do
+            {:ok, path} = Map.fetch(uri, :path)
+            String.split(path, "/")
+          end
         end
         """)
 
       violations = Scan.scan_paths([path])
       assert length(violations_for(violations, :positional_uri_read)) == 2
-      assert length(violations_for(violations, :tenant_derivation)) == 3
+      assert length(violations_for(violations, :tenant_derivation)) == 6
     end
 
     test "classifies raw affected-scheme URI construction including interpolation" do
