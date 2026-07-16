@@ -5,7 +5,7 @@
 > **returned_at:** deferred — WIP skeleton only
 > **deadline:** 2026-07-16 23:59 +0800
 > **deadline_status:** deferred
-> **Status:** WIP — Task 1 complete; Task 2 contract amendment review required; CI/precommit/PR/merge completion is not claimed
+> **Status:** WIP — Tasks 1–2 complete; focused review pending; CI/precommit/PR/merge completion is not claimed
 
 # Return summary
 
@@ -23,8 +23,9 @@ Tasks 2–12 remain deferred. No deployment or merge is authorized.
 | 3 | Freeze five minimum provider-neutral auxiliary shapes | met for Task 0 | architecture review fixes applied: stored base/head authority, total check normalization, submitted/latest review events |
 | 4 | Record exact Tasks 2–3 assertions; keep SSH/merge absent | met for Task 0 | tracked design §13.1 and adapter section |
 | 5 | Scaffold and boundary-test the domain app | met for Task 1 | focused test 2/0; compile exit 0; undeclared-dependency/layer-purity gates 4/0 |
-| 5a | Freeze Task 2 construction and limit API | review required | docs-only `new/1`, `ValidationError`, `ChangeLimits`, and `validate_many/1` amendment; no RED implementation yet |
-| 6 | Implement/test the remaining domain spine | deferred | Tasks 2–12 not started |
+| 5a | Freeze Task 2 construction and limit API | met | approved contract through review fixes at `f93487535` |
+| 5b | Implement provider-neutral values | met for Task 2 | strict RED; full domain app 16/0; warning-clean compile; final applicable core static gates 12/0 |
+| 6 | Implement/test the remaining domain spine | deferred | Tasks 3–12 not started |
 | 7 | PR-head CI green and rebased on main | deferred | explicitly not claimed by this WIP record |
 | 8 | Return/merge/deploy complete | deferred | lead flow and external-state operations not authorized |
 
@@ -61,6 +62,13 @@ for filesystem kind, and shared lowercase V1 SHA-1 validation. The proposed
 field and approved `CommitSha` auxiliary name are frozen; the shared validator
 prevents a raw-string bypass. Re-review is still required before RED, and no Task 2
 test or production result is claimed.
+
+After approval, Task 2 captured RED for missing value structs and a separate
+path-control-byte regression, then reached GREEN: focused Task 2 14/0 and
+`mix compile --warnings-as-errors` exit 0. Final verification expands to the full
+domain app at 16/0 and applicable core dependency/layer/URI gates at 12/0. Full
+precommit, CI, PR readiness, provider integration, deployment, and merge are not
+claimed.
 
 ## Deferred boundary
 
