@@ -24,12 +24,7 @@ defmodule Ezagent.UriQuery.Scan do
 
   @affected_schemes ~w(entity session template resource workspace system)
   @per_tenant_schemes ~w(entity session template resource)
-  # External transport / protocol URL schemes legitimately in use (NOT ezagent
-  # addressing). This is the SINGLE authoritative allowlist — adding a new
-  # external URL scheme must be a deliberate edit here (forcing the author to
-  # declare "this is an external URL, not an ezagent URI"). The deleted
-  # `feishu://` scheme is intentionally EXCLUDED: feishu is reached via its
-  # `https://` API, not a `feishu://` URI (T1 project C).
+  # External transport/protocol URLs; additions must be explicitly classified.
   @external_url_allowlist ~w(postgresql unix http https ws test cc-bridge)
   @agent_flavor_prefixes ~w(cc_ codex_ curl_ echo_ np_)
   @known_categories [
@@ -54,9 +49,7 @@ defmodule Ezagent.UriQuery.Scan do
   @default_excluded_paths [
     "apps/ezagent_core/lib/ezagent/uri.ex",
     "apps/ezagent_core/lib/ezagent/uri_query/scan.ex",
-    # The scan's own data/anchor modules: they embed literal `resource://` and
-    # `Home.path` text in moduledocs + anchor/baseline tables, which would
-    # otherwise self-trip the raw-URI and home-path categories.
+    # Scan data/anchor modules embed literals that would otherwise self-trip.
     "apps/ezagent_core/lib/ezagent/uri_query/scan/home_path_exceptions.ex",
     "apps/ezagent_core/lib/ezagent/uri_query/scan/home_path_baseline.ex",
     "apps/ezagent_core/lib/mix/tasks/ezagent.uri_query.scan.ex"
@@ -115,9 +108,7 @@ defmodule Ezagent.UriQuery.Scan do
     |> Enum.flat_map(&Path.wildcard(Path.join(root, &1)))
     |> Enum.reject(&String.contains?(&1, "/_build/"))
     |> Enum.reject(&String.contains?(&1, "/deps/"))
-    # E2E scenario modules live under `lib/.../e2e/scenarios/` only so the running
-    # node loads them; they are TEST FIXTURES that legitimately build raw setup
-    # URIs (same latitude as `test/`). Exclude them from the production URI scan.
+    # Runtime-loaded E2E scenarios are test fixtures with raw setup URIs.
     |> Enum.reject(&String.contains?(&1, "/e2e/scenarios/"))
     |> Enum.uniq()
     |> Enum.sort()
@@ -168,21 +159,14 @@ defmodule Ezagent.UriQuery.Scan do
     |> Enum.reject(&is_nil/1)
   end
 
-  # ----------------------------------------------------------------------------
-  # home_path_in_runtime_code (Resource-unification P0.5)
-  #
   # Flags every `Ezagent.Home.path/1` / `Home.profile_dir/0` / `Home.home/0` call
   # in runtime app code, MINUS the line-anchored baseline (burn-down) and MINUS
   # the exact `Module.function/arity` exceptions. Anchor subtraction is by
   # enclosing-function identity (codex MEDIUM), never `{path, line}` alone.
-  # ----------------------------------------------------------------------------
-
   defp home_path_findings(ast, path, snippets, baseline, exceptions) do
     rel_path = normalize_path(path)
     fun_index = function_anchor_index(ast)
-    # Burn-down baseline tolerates AT MOST the recorded number of Home calls per
-    # anchored line (codex MEDIUM): a second call added on a baselined line is a
-    # NEW caller and must fire. Track remaining budget per line.
+    # A baseline tolerates only its recorded call count; extra calls still fire.
     baseline_budget = baseline_budget_for(baseline, rel_path)
 
     {findings, _budget} =
