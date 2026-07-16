@@ -24,25 +24,32 @@ defmodule Ezagent.DomainGit.TaskAccessSupervisor do
   def ensure_started(policy) do
     with {:ok, validated} <- GitTaskAccess.revalidate(policy) do
       uri = GitTaskAccess.uri_from_args(validated)
-
-      case Ezagent.Kind.spawn(GitTaskAccess, %{uri: uri, policy: validated}) do
-        {:ok, pid} ->
-          {:ok, pid}
-
-        {:error, {:already_registered, _uri}} ->
-          reconcile_duplicate(uri, validated)
-
-        {:error, reason} ->
-          {:error, reason}
-      end
+      with_lifecycle(uri, fn -> spawn_or_reconcile(uri, validated) end)
     end
   end
 
   @doc "Synchronously removes a live Resource; absent teardown is idempotent."
   @spec teardown(URI.t()) :: :ok | {:error, :teardown_incomplete}
   def teardown(%URI{} = uri) do
-    :ok = Ezagent.Kind.terminate(uri)
-    await_unregistered(uri, 100)
+    with_lifecycle(uri, fn ->
+      :ok = Ezagent.Kind.terminate(uri)
+      await_unregistered(uri, 100)
+    end)
+  end
+
+  @doc "Serializes a lifecycle or operation-entry decision for one Resource URI."
+  @spec with_lifecycle(URI.t(), (-> result)) :: result when result: var
+  def with_lifecycle(%URI{} = uri, fun) when is_function(fun, 0) do
+    lock_id = {{__MODULE__, URI.to_string(uri)}, self()}
+    :global.trans(lock_id, fun, [node()])
+  end
+
+  defp spawn_or_reconcile(uri, policy) do
+    case Ezagent.Kind.spawn(GitTaskAccess, %{uri: uri, policy: policy}) do
+      {:ok, pid} -> {:ok, pid}
+      {:error, {:already_registered, _uri}} -> reconcile_duplicate(uri, policy)
+      {:error, reason} -> {:error, reason}
+    end
   end
 
   defp reconcile_duplicate(uri, policy) do
