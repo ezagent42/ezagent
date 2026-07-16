@@ -188,6 +188,31 @@ defmodule Ezagent.UsersTest do
   end
 
   describe "tombstone/3 (operator offboarding hard-delete, task #180)" do
+    test "revokes durable caps so no spawn/hydration path restores authority" do
+      uri = "entity://team-alpha/user/tomb-caps-#{System.unique_integer([:positive])}"
+      admin = "entity://system/user/admin"
+
+      cap = %Ezagent.Capability{
+        kind: :workspace,
+        behavior: Ezagent.ActionSet.Workspace,
+        instance: :any,
+        workspace_uri: URI.new!("workspace://team-alpha"),
+        granted_by: Ezagent.URI.new!("entity://system/user/admin"),
+        granted_at: ~U[2026-05-16 00:00:00.000000Z]
+      }
+
+      {:ok, created} = Users.create(uri, "secret", [cap])
+      assert length(created.caps) == 1
+
+      assert {:ok, deleted} = Users.tombstone(uri, admin, "offboarded")
+      # Durable authority stripped — caps_json emptied. Both the spawn
+      # hydration source and the durable fallback read this, so an
+      # offboarded user has NO caps regardless of which spawn fn wins.
+      assert deleted.caps == []
+      assert Users.get_by_uri(uri).caps == []
+      assert Ezagent.EntityCaps.load_persisted(uri) == []
+    end
+
     test "tombstones the row (preserved), blocks login, and does NOT reclaim the URI" do
       uri = "entity://team-alpha/user/tomb-#{System.unique_integer([:positive])}"
       admin = "entity://system/user/admin"

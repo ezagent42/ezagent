@@ -200,12 +200,13 @@ defmodule Ezagent.ActionSet.WorkspaceUserAdmin do
     caps: [{:delete_user, kind: :workspace}],
     description:
       "Operator offboarding (task #180) — HARD, DESTRUCTIVE, admin-only " <>
-        "delete of a user in this workspace. Tears down the live User Kind " <>
-        "snapshot and TOMBSTONES the provisioning row (`Ezagent.Users.tombstone/3`): " <>
-        "the URI stays occupied so it cannot be silently re-minted, and the " <>
-        "row + `:user_deleted` EventLog event preserve the audit trail. " <>
-        "Its OWN cap subject; withhold it from workspace owners to keep " <>
-        "delete strictly admin-gated (only the admin wildcard matches by default).",
+        "delete of a user in this workspace. TOMBSTONES the provisioning row " <>
+        "(`Ezagent.Users.tombstone/3`): REVOKES all durable caps (authority " <>
+        "stripped across every spawn/hydration path), tears down the live " <>
+        "User Kind, and blocks login — while keeping the URI occupied (no " <>
+        "silent re-mint) and the row + `:user_deleted` EventLog event as the " <>
+        "audit trail. Its OWN cap subject; withhold it from workspace owners " <>
+        "to keep delete strictly admin-gated (only the admin wildcard matches).",
     modes: [:call]
   )
 

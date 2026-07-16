@@ -376,17 +376,30 @@ defmodule EzagentDomainIdentity.Application do
       SpawnRegistry.register("entity", fn uri ->
         case Ezagent.URI.type(uri) do
           {:ok, "user"} ->
-            if Ezagent.Users.deleted?(uri) do
-              # Operator offboarding (task #180): a TOMBSTONED user must not
-              # be resurrected by a stray demand-spawn — that would re-hydrate
-              # a live Kind (with its old caps_json) for an identity the
-              # operator deleted. Refuse fail-closed. The `users` row is
-              # retained (URI stays occupied) so `deleted?/1` keeps returning
-              # true; login is independently blocked at `verify_password`.
-              {:error, :user_deleted}
-            else
-              spawn_user_kind(uri)
-            end
+            # SPEC caps-cleanup-v1 §4.4 — admin's bootstrap caps come
+            # from `Ezagent.SystemPrincipal` (closed Catalog). Non-admin
+            # users have their caps hydrated from `users.caps_json` (the
+            # durable bootstrap record written by `Ezagent.Users.create/3`)
+            # so EVERY demand-spawn path (mix tasks, LV admin
+            # `Behavior.WorkspaceUserAdmin.create_user`, login-mediated
+            # `Entity.ensure_spawned/1`) lands the same cap set into the
+            # User Kind's `:identity` slice — independent of which spawn
+            # entry point ran first.
+            #
+            # Pre-fix (wildcard-cap-fix regression, 2026-05-26): non-admin
+            # users defaulted to `MapSet.new()`, so a `mix ezagent.user.create`
+            # that wrote a wildcard cap to `caps_json` produced a slice
+            # WITHOUT that wildcard — the slice was snapshotted in the
+            # default-only state, and `Kind.Snapshot.load_or_init/3`
+            # then preferred snapshot over `args[:initial_caps]` on every
+            # subsequent boot. The wildcard never reached dispatch step
+            # 5.5's `holds_cap?` lookup. PR-CC-2-v2 (#354) + #358
+            # unmasked this by removing the transitional bridge that
+            # was masking the divergence for `system://` principals.
+            initial_caps = User.initial_caps_for_spawn(uri)
+
+            # V1 prevention (Allen 2026-05-21): route via Ezagent.Kind.spawn/2.
+            Ezagent.Kind.spawn(User, %{uri: uri, initial_caps: initial_caps})
 
           other ->
             {:error, {:no_entity_host_handler, other}}
@@ -394,36 +407,6 @@ defmodule EzagentDomainIdentity.Application do
       end)
 
     :ok
-  end
-
-  # Extracted from the spawn fn so the tombstone guard stays a small,
-  # readable branch. Hydrates the User Kind's caps and routes through
-  # `Ezagent.Kind.spawn/2`.
-  defp spawn_user_kind(uri) do
-    # SPEC caps-cleanup-v1 §4.4 — admin's bootstrap caps come
-    # from `Ezagent.SystemPrincipal` (closed Catalog). Non-admin
-    # users have their caps hydrated from `users.caps_json` (the
-    # durable bootstrap record written by `Ezagent.Users.create/3`)
-    # so EVERY demand-spawn path (mix tasks, LV admin
-    # `Behavior.WorkspaceUserAdmin.create_user`, login-mediated
-    # `Entity.ensure_spawned/1`) lands the same cap set into the
-    # User Kind's `:identity` slice — independent of which spawn
-    # entry point ran first.
-    #
-    # Pre-fix (wildcard-cap-fix regression, 2026-05-26): non-admin
-    # users defaulted to `MapSet.new()`, so a `mix ezagent.user.create`
-    # that wrote a wildcard cap to `caps_json` produced a slice
-    # WITHOUT that wildcard — the slice was snapshotted in the
-    # default-only state, and `Kind.Snapshot.load_or_init/3`
-    # then preferred snapshot over `args[:initial_caps]` on every
-    # subsequent boot. The wildcard never reached dispatch step
-    # 5.5's `holds_cap?` lookup. PR-CC-2-v2 (#354) + #358
-    # unmasked this by removing the transitional bridge that
-    # was masking the divergence for `system://` principals.
-    initial_caps = User.initial_caps_for_spawn(uri)
-
-    # V1 prevention (Allen 2026-05-21): route via Ezagent.Kind.spawn/2.
-    Ezagent.Kind.spawn(User, %{uri: uri, initial_caps: initial_caps})
   end
 
   defp register_identity_behaviors do
