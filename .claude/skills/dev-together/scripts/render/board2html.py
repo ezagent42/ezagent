@@ -63,8 +63,12 @@ CSS = """
   .cell{display:flex;flex-direction:column;gap:7px;min-height:40px;padding:6px 2px}
   .owner{font-size:10px;color:#64748b;font-weight:600;margin-bottom:4px}
   .odot{display:inline-block;width:8px;height:8px;border-radius:2px;margin-right:4px;vertical-align:middle}
-  .legend{margin:14px 0 2px;font-size:11.5px;color:#64748b}
+  .legend{margin:2px 0 12px;font-size:11.5px;color:#64748b}
   .legend .lg{margin-right:14px;white-space:nowrap}
+  .recent{margin-top:8px;padding-top:8px;border-top:1px dashed #cbd5e1}
+  .rday{font-size:10.5px;font-weight:700;color:#94a3b8;margin:4px 0 4px}
+  .rchip{font-size:11px;color:#334155;background:#f6fefa;border:1px solid #d1fae5;border-left:3px solid var(--pc);border-radius:6px;padding:4px 8px;margin-bottom:4px}
+  .rchip .odot{margin-right:5px}
   .card{background:#fff;border:1px solid var(--line);border-left:3px solid var(--pc);border-radius:7px;padding:8px 9px;cursor:pointer;transition:box-shadow .12s,transform .12s}
   .card:hover{box-shadow:0 3px 10px rgba(0,0,0,.10);transform:translateY(-1px)}
   .card.done{background:#f6fefa;border-left-color:var(--green)}
@@ -200,6 +204,23 @@ def main():
     deploy_html = "".join(f'<div><span class="s">{e(d.get("env"))}</span>{e(d.get("state"))}</div>' for d in (b.get("deploy", []) or []))
     risks_html = "<br>".join(e(r) for r in (b.get("risks", []) or []))
 
+    # recent (prior-day) completions — compact chips appended under the 完成 column
+    recent = b.get("recent_done", []) or []
+    recent_html = ""
+    if recent:
+        by_date = {}
+        for r in recent:
+            by_date.setdefault(r.get("date", "近期"), []).append(r)
+        blocks = ""
+        for d, items in by_date.items():
+            chips = "".join(
+                f'<div class="rchip" style="--pc:{pcolor.get(it.get("owner"),"#2563eb")}">'
+                f'<span class="odot" style="background:{pcolor.get(it.get("owner"),"#2563eb")}"></span>'
+                f'{e(pname.get(it.get("owner"),it.get("owner","")))}：{e(it.get("title"))}'
+                f'{(" · #"+str(it["pr"])) if it.get("pr") else ""}</div>' for it in items)
+            blocks += f'<div class="rday">{e(d)} 完成</div>{chips}'
+        recent_html = f'<div class="recent">{blocks}</div>'
+
     # board: 4 status columns, cards flow within (person = colour + name tag, no swimlane)
     order = {p["id"]: i for i, p in enumerate(people)}
     cols = []
@@ -208,8 +229,9 @@ def main():
                      or (status == "wip" and c.get("status") == "blocked")]
         col_cards.sort(key=lambda c: order.get(c.get("owner"), 99))
         inner = "".join(render_card(c, pcolor, pname) for c in col_cards)
+        tail = recent_html if status == "done" else ""
         cols.append(f'<div class="colwrap"><div class="colhead {cls}">{label} '
-                    f'<span class="cnt">{len(col_cards)}</span></div><div class="cell">{inner}</div></div>')
+                    f'<span class="cnt">{len(col_cards)}</span></div><div class="cell">{inner}{tail}</div></div>')
     board_html = "\n    ".join(cols)
     legend = " ".join(f'<span class="lg"><span class="odot" style="background:{p.get("color","#2563eb")}">'
                       f'</span>{e(p.get("name"))}</span>' for p in people)
@@ -261,10 +283,10 @@ def main():
   </div>
   <div><div class="deploy">{deploy_html}</div></div>
   <div class="risk"><b>风险：</b>{risks_html or '—'}</div>
+  <div class="legend">人：{legend}　·　卡片 = 一任务；☐/☑ = 验收（plan 写 · review 勾）；停在非「完成」列 = 明日结转</div>
   <div class="board">
     {board_html}
-  </div>
-  <div class="legend">人：{legend}　·　卡片 = 一任务；☐/☑ = 验收（plan 写 · review 勾）；停在非「完成」列 = 明日结转</div>{review_html}
+  </div>{review_html}
   <div class="foot">一块 <b>plan+review 合一</b> 的活看板：顶部全局大局（目标·进度·总效能）常驻；卡片可点开看完整验收/复盘/prompt；底部复盘汇总。<b>确定性渲染</b>：board.yaml → board2html.py，样式只住模板。</div>
 </div>
 <div class="modal" id="modal">

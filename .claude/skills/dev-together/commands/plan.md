@@ -63,7 +63,10 @@ section order is fixed so the format stops drifting and `plan.html` mirrors it
    make each a decidable success judgement, not a vague aim. **Carry over** every
    unclosed/blocked card from yesterday's `board.yaml` (set `carryover: true`) —
    from the file, not from memory. (Branches + conflict map live in the card
-   `branch`/`deps` fields and the handoffs.)
+   `branch`/`deps` fields and the handoffs.) Also fill **`recent_done:`** from
+   yesterday's `board.yaml` `done` cards (owner/title/date/pr) — it renders under
+   the 完成 column so each person's recent delivery stays visible (the daily
+   columns only show today).
 9. **Render (deterministic — never hand-write HTML):**
    `uv run --with pyyaml python scripts/render/board2html.py docs/together/<date>/board.yaml`.
    Presentation lives only in `board2html.py`; a missing/hand-authored

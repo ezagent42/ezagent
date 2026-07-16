@@ -38,6 +38,14 @@ people:
   - {id: "jjkysy", name: "jjkysy", track: "协作白板抽取", color: "#65a30d"}
   - {id: "allen", name: "Allen", track: "部署 + 统筹", color: "#2563eb"}
 
+# 近期（昨日）完成 —— plan 从昨天 board.yaml 的 done 卡填这里，显示在「完成」列底部
+# 让每人的近期交付可见（当天列只显示当天）。
+recent_done:
+  - {owner: "zyli", title: "CI tsc+vitest 进 gate", date: "07-15", pr: 1415}
+  - {owner: "zhaomaota", title: "kanban 委派回流 (#1425)", date: "07-15", pr: 1425}
+  - {owner: "jjkysy", title: "mount/share/cap 白板基座", date: "07-15", pr: 1374}
+  - {owner: "allen", title: "stable 部署 + seed 修复", date: "07-15"}
+
 # 卡片：一任务一卡。status ∈ planned|wip|review|done|blocked（blocked 落在进行中列并标红）。
 # acceptance 每条 {text, done, evidence}：plan 写 text（done:false）、review 勾 done:true + 填 evidence。
 cards:
