@@ -955,7 +955,7 @@ export function Conversation({
             // board 数据来自 world:state 合并的看板字段（后端 session.view.switch 切到
             // kanban_board 时经 KanbanData.session_boards 载入 + 自动选中首块板）；
             // onAction 走现成 world:dispatch（onKanbanAction = onWorkspacePluginAction）。
-            <div className="min-w-0 flex-1 overflow-y-auto bg-[#fafafa]" data-world-subcomponent="kanban">
+            <div className="min-w-0 flex-1 overflow-y-auto bg-background" data-world-subcomponent="kanban">
               <Kanban state={state as unknown as KanbanState} onAction={onKanbanAction} onShare={handleShareKanban} onUploadFile={uploadForKanban} />
             </div>
           ) : activeMode === "pty" ? (
