@@ -63,6 +63,7 @@ defmodule Ezagent.DomainGit.TaskAccessLifecycleTest do
 
     assert Enum.all?(results, &match?({:ok, _pid}, &1))
     assert results |> Enum.map(fn {:ok, pid} -> pid end) |> Enum.uniq() |> length() == 1
+    assert length(child_pids()) == 1
 
     uri = GitTaskAccess.uri_from_args(policy)
 
@@ -121,22 +122,30 @@ defmodule Ezagent.DomainGit.TaskAccessLifecycleTest do
     assert {:ok, %{policy: ^policy}} = Ezagent.Kind.get_slice(uri, :git_task_access)
   end
 
-  test "after teardown completes no policy-slice entry can begin", %{policy: policy, uri: uri} do
-    assert {:ok, _pid} = TaskAccessSupervisor.ensure_started(policy)
+  test "teardown linearizes before a concurrent start, which becomes ready", %{
+    policy: policy,
+    uri: uri
+  } do
     parent = self()
 
-    reader =
+    teardown_task =
       Task.async(fn ->
-        receive do
-          :after_teardown ->
-            send(parent, {:sentinel_read, Ezagent.Kind.get_slice(uri, :git_task_access)})
-        end
+        TaskAccessSupervisor.with_lifecycle(uri, fn ->
+          send(parent, :teardown_entered)
+          receive do: (:finish_teardown -> TaskAccessSupervisor.teardown(uri))
+        end)
       end)
 
-    assert :ok = TaskAccessSupervisor.teardown(uri)
-    send(reader.pid, :after_teardown)
-    assert_receive {:sentinel_read, {:error, :not_found}}, 1_000
-    Task.await(reader)
+    assert_receive :teardown_entered
+    start_task = Task.async(fn -> TaskAccessSupervisor.ensure_started(policy) end)
+    assert Task.yield(start_task, 20) == nil
+    send(teardown_task.pid, :finish_teardown)
+
+    assert :ok = Task.await(teardown_task)
+    assert {:ok, live_pid} = Task.await(start_task)
+    assert {:ok, ^live_pid} = Ezagent.KindRegistry.lookup(uri)
+    assert Ezagent.ReadyGate.status(uri) == :ready
+    assert {:ok, %{policy: ^policy}} = Ezagent.Kind.get_slice(uri, :git_task_access)
   end
 
   defp policy(id) do
