@@ -112,11 +112,26 @@ defmodule Ezagent.Kind.Runtime do
 
   @spec handle_dispatch(Ezagent.Invocation.t(), slice_state(), module(), URI.t()) :: result()
   def handle_dispatch(
-        %Ezagent.Invocation{target: target, args: args, ctx: ctx, origin: origin} = _inv,
+        %Ezagent.Invocation{target: target} = invocation,
         state,
         kind_module,
         self_uri
       ) do
+    case Ezagent.URI.behavior_action(target) do
+      {:ok, {:cap, :grant}} ->
+        handle_grant(invocation, state, kind_module, self_uri)
+
+      _other ->
+        do_handle_dispatch(invocation, state, kind_module, self_uri)
+    end
+  end
+
+  defp do_handle_dispatch(
+         %Ezagent.Invocation{target: target, args: args, ctx: ctx, origin: origin} = _inv,
+         state,
+         kind_module,
+         self_uri
+       ) do
     started_at = System.monotonic_time(:microsecond)
 
     # Inject at this single point so plugins never plumb it themselves:
@@ -147,6 +162,14 @@ defmodule Ezagent.Kind.Runtime do
          # authz_check returns `{:ok, matched_cap}` (`nil` when authorized via a
          # slice-held cap / rule / exempt action) — same allow/deny decision;
          # matched_cap is the fact threaded into the cross-org Receipt below.
+         {:ok, verified_cap} <-
+           Ezagent.Cap.Verifier.authorize(
+             kind_module,
+             behavior_module,
+             action,
+             target,
+             enriched_ctx
+           ),
          {:ok, matched_cap} <-
            authz_check(kind_module, behavior_module, action, target, enriched_ctx),
          :ok <- workspace_isolation_check(behavior_module, target, enriched_ctx),
@@ -210,7 +233,14 @@ defmodule Ezagent.Kind.Runtime do
       # cross-workspace success path, record a durable fact keyed on
       # `matched_cap`. Never breaks/slows the reply (swallows all failures;
       # return ignored). See `Ezagent.Kind.Runtime.Receipt`.
-      _ = Receipt.maybe_emit(target, action, matched_cap, behavior_module, enriched_ctx)
+      _ =
+        Receipt.maybe_emit(
+          target,
+          action,
+          verified_cap || matched_cap,
+          behavior_module,
+          enriched_ctx
+        )
 
       # 3-tuple result shape carries an optional `slice_change_event`
       # for `Kind.Server` to fire after snapshot persistence. `nil`
@@ -233,6 +263,47 @@ defmodule Ezagent.Kind.Runtime do
         err
     end
   end
+
+  defp handle_grant(
+         %Ezagent.Invocation{
+           target: target,
+           args: %{grantee: %URI{} = grantee, cap: %Ezagent.Capability{} = cap},
+           ctx: ctx,
+           origin: origin
+         },
+         state,
+         kind_module,
+         self_uri
+       ) do
+    target_instance = Ezagent.URI.instance(target)
+
+    with :ok <- Ezagent.DispatchOrigin.validate(origin, ctx),
+         true <- Ezagent.URI.stable_key(target_instance) == Ezagent.URI.stable_key(self_uri),
+         true <-
+           match?(%URI{}, cap.instance) and
+             Ezagent.URI.stable_key(Ezagent.URI.instance(cap.instance)) ==
+               Ezagent.URI.stable_key(self_uri),
+         {:ok, _authority_cap} <-
+           Ezagent.Cap.Verifier.authorize(
+             kind_module,
+             Ezagent.Cap.Grant,
+             :grant,
+             target,
+             ctx
+           ),
+         %URI{} = presenter <- Map.get(ctx, :caller),
+         intent <- Ezagent.Cap.Grant.freeze(self_uri, presenter, grantee, cap),
+         {:ok, issued} <- Ezagent.Cap.Authority.issue_current(intent) do
+      {:ok, state, issued, nil, []}
+    else
+      {:error, reason} -> {:error, reason}
+      false -> {:error, :grant_target_mismatch}
+      _ -> {:error, :invalid_grant_intent}
+    end
+  end
+
+  defp handle_grant(_invocation, _state, _kind_module, _self_uri),
+    do: {:error, :invalid_grant_intent}
 
   # Lifecycle Phase A (SPEC §0.1 / §10-R2, F1a) — a SliceChange must
   # fire only on a change to the PERSISTABLE view of the slice. For a

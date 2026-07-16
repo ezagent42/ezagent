@@ -10,8 +10,17 @@ defmodule Ezagent.World.LayoutBootstrap do
     workspace_uri = Ezagent.URI.workspace(:system)
     cap = manage_cap(admin_uri, workspace_uri)
 
-    with :ok <- Ezagent.Entity.spawn_principal(admin_uri) do
+    with :ok <- ensure_system_workspace_runtime(),
+         :ok <- Ezagent.Entity.spawn_principal(admin_uri) do
       Ezagent.Identity.Grant.grant_cap(admin_uri, cap, {:admin, admin_uri})
+    end
+  end
+
+  defp ensure_system_workspace_runtime do
+    case Ezagent.Workspace.spawn_workspace("system") do
+      {:ok, _pid} -> :ok
+      {:error, {:already_started, _pid}} -> :ok
+      {:error, reason} -> {:error, {:system_workspace_runtime_failed, reason}}
     end
   end
 

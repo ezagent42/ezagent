@@ -465,39 +465,33 @@ defmodule Ezagent.Orchestrator.CcOrchestratorSeed do
     }
 
     target = Ezagent.URI.new!("#{URI.to_string(uri)}?action=template.write")
+    admin_uri = Ezagent.Entity.User.admin_uri()
 
-    case Ezagent.Invocation.dispatch(%Ezagent.Invocation{
-           target: target,
-           mode: :call,
-           args: %{content: content},
-           # #154 — `system://template-materialize` ELIMINATED. The CC
-           # orchestrator template seed is system-mediated materialization →
-           # runs under the genesis admin entity with an INLINE narrow
-           # `template.write` cap (granted_by admin; #533 will refine to
-           # per-creator authority). Same play as mix-task #833 / socialware-gc.
-           # behavior: :any avoids a cross-app `Behavior.Template` literal.
-           ctx: %{
-             caller: Ezagent.Entity.User.admin_uri(),
-             caps:
-               MapSet.new([
-                 %Ezagent.Capability{
-                   Ezagent.Capability.cap(
-                     :any,
-                     :any,
-                     :write,
-                     Ezagent.URI.instance(target),
-                     Ezagent.Capability.workspace_of(target)
-                   )
-                   | granted_by: Ezagent.Entity.User.admin_uri(),
-                     granted_at: DateTime.utc_now()
-                 }
-               ]),
-             reply: {:caller_inbox, self()}
-           }
-         }) do
-      {:ok, %{content: _}} -> :ok
-      {:error, _} = err -> err
-      other -> {:error, {:unexpected_template_write_result, other}}
+    requested =
+      Ezagent.Capability.cap(
+        :agent_template,
+        Ezagent.ActionSet.Template,
+        :write,
+        Ezagent.URI.instance(target),
+        Ezagent.Capability.workspace_of(target)
+      )
+
+    with {:ok, signed_cap} <- Ezagent.Cap.issue({:admin, admin_uri}, admin_uri, requested) do
+      case Ezagent.Invocation.dispatch(%Ezagent.Invocation{
+             target: target,
+             mode: :call,
+             args: %{content: content},
+             ctx: %{
+               caller: admin_uri,
+               caps: MapSet.new([signed_cap]),
+               reply: {:caller_inbox, self()}
+             },
+             origin: :trusted_internal
+           }) do
+        {:ok, %{content: _}} -> :ok
+        {:error, _} = err -> err
+        other -> {:error, {:unexpected_template_write_result, other}}
+      end
     end
   end
 
@@ -614,7 +608,8 @@ defmodule Ezagent.Orchestrator.CcOrchestratorSeed do
     # don't apply. Written with dot-access (not a `%URI{host:}` positional match)
     # + the rebuild split off the `URI.to_string` line so the source-scan
     # (positional_uri_read / uri_string_key) doesn't false-positive on it.
-    uri = URI.parse(ws_url) # uri-canonical-allow: ws(s):// network URL (orchestrator MCP mount), not an Ezagent-scheme URI — Ezagent.URI rejects non-Ezagent schemes
+    # uri-canonical-allow: ws(s):// network URL (orchestrator MCP mount), not an Ezagent-scheme URI — Ezagent.URI rejects non-Ezagent schemes
+    uri = URI.parse(ws_url)
 
     if is_binary(uri.scheme) and is_binary(uri.host) do
       rebased = %{uri | path: path, query: nil, fragment: nil}

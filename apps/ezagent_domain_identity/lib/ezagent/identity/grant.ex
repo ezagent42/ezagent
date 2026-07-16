@@ -114,9 +114,10 @@ defmodule Ezagent.Identity.Grant do
       {:ok, {target_uri, cap2, ctx}} ->
         cmd = %Cmd{
           target: target_uri,
-          action: :grant_cap,
+          action: :store_cap,
           args: %{cap: cap2},
-          ctx: Map.put(ctx, :reply, reply_for(reply_mode))
+          ctx: Map.put(ctx, :reply, reply_for(reply_mode)),
+          origin: :trusted_internal
         }
 
         normalize_dispatch_result(Router.dispatch(cmd))
@@ -152,9 +153,10 @@ defmodule Ezagent.Identity.Grant do
       {:ok, {target_uri, cap2, ctx}} ->
         cmd = %Cmd{
           target: target_uri,
-          action: :revoke_cap,
+          action: :remove_cap,
           args: %{cap: cap2},
-          ctx: Map.put(ctx, :reply, reply_for(reply_mode))
+          ctx: Map.put(ctx, :reply, reply_for(reply_mode)),
+          origin: :trusted_internal
         }
 
         normalize_dispatch_result(Router.dispatch(cmd))
@@ -211,22 +213,19 @@ defmodule Ezagent.Identity.Grant do
           {:ok, {URI.t(), Capability.t(), map()}} | {:error, term()}
   defp prepare(%URI{} = target, %Capability{} = cap, authorization, action)
        when action in [:grant_cap, :revoke_cap] do
-    {caps, caller, rule} = derive_context(authorization)
+    {_caps, _caller, _rule} = derive_context(authorization)
 
     artifact_result =
       case action do
         :grant_cap -> Cap.issue(authorization, target, cap)
-        :revoke_cap -> Cap.prepare_provenance(authorization, cap)
+        :revoke_cap -> {:ok, cap}
       end
 
     case artifact_result do
       {:ok, cap2} ->
-        ctx =
-          caps
-          |> build_ctx(caller, rule)
-          |> maybe_mark_issued(action)
+        ctx = storage_ctx(action)
 
-        target_uri = Ezagent.URI.with_action(target, :identity, action)
+        target_uri = Ezagent.URI.with_action(target, :identity, storage_action(action))
         {:ok, {target_uri, cap2, ctx}}
 
       {:error, _} = error ->
@@ -250,7 +249,8 @@ defmodule Ezagent.Identity.Grant do
           target: target_uri,
           mode: :call,
           args: %{cap: cap2},
-          ctx: Map.put(ctx, :reply, {:caller_inbox, self()})
+          ctx: Map.put(ctx, :reply, {:caller_inbox, self()}),
+          origin: :trusted_internal
         }
 
         normalize_dispatch_result(Invocation.dispatch(inv))
@@ -266,9 +266,10 @@ defmodule Ezagent.Identity.Grant do
       {:ok, {target_uri, cap2, ctx}} ->
         %Cmd{
           target: target_uri,
-          action: action,
+          action: storage_action(action),
           args: %{cap: cap2},
-          ctx: Map.put(ctx, :reply, reply_for(reply_mode))
+          ctx: Map.put(ctx, :reply, reply_for(reply_mode)),
+          origin: :trusted_internal
         }
 
       {:error, reason} ->
@@ -287,18 +288,13 @@ defmodule Ezagent.Identity.Grant do
   # `mode: :call` into the ctx would override the Router's `:cast`
   # derivation and DEADLOCK the deliberate fire-and-forget grant at
   # `Session.membership.grant_first_join_owner_cap/2` (site #10).
-  defp build_ctx(caps, caller, nil) do
-    %{caller: caller, caps: caps}
-  end
+  defp storage_ctx(:grant_cap), do: %{caller: :vm_internal, caps: MapSet.new()}
 
-  defp build_ctx(caps, caller, rule) when is_atom(rule) do
-    %{caller: caller, caps: caps, authorization_rule: rule}
-  end
+  defp storage_ctx(:revoke_cap),
+    do: %{caller: :vm_internal, caps: MapSet.new(), cap_delivery_producer: :identity_revoke}
 
-  defp maybe_mark_issued(ctx, :grant_cap), do: Map.put(ctx, :cap_issued, true)
-
-  defp maybe_mark_issued(ctx, :revoke_cap),
-    do: Map.put(ctx, :cap_delivery_producer, :identity_revoke)
+  defp storage_action(:grant_cap), do: :store_cap
+  defp storage_action(:revoke_cap), do: :remove_cap
 
   defp reply_for(:sync), do: {:caller_inbox, self()}
   defp reply_for(:async), do: :ignore

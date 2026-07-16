@@ -436,30 +436,24 @@ defmodule Ezagent.Entity.SessionTemplate do
   defp normalize_caps_set(_), do: MapSet.new()
 
   defp system_ctx do
-    # #154 — `system://template-materialize` ELIMINATED. The opts-less
-    # SessionTemplate system context (template.write/read materialization) now
-    # runs under the genesis admin entity with INLINE narrow `template.write` +
-    # `template.read` caps (granted_by admin; #533 refines to per-creator).
-    # This builder is target-agnostic (the dispatch sets the target), so the
-    # caps are `instance: :any`; behavior: :any avoids a cross-app Behavior.Template
-    # literal. Caller paths supplying their own ctx (`persist_version/3` with
-    # caller_opts) still preserve operator provenance per HIGH-9.
-    admin_uri = Ezagent.Entity.User.admin_uri()
-
-    %{
-      caller: admin_uri,
-      caps:
-        MapSet.new([
-          template_admin_cap(:write, admin_uri),
-          template_admin_cap(:read, admin_uri)
-        ]),
-      reply: {:caller_inbox, self()}
-    }
+    # The concrete target does not exist until `do_persist_version/3` computes
+    # its content-addressed URI. Keep only the canonical bootstrap identity
+    # here; `dispatch_write/3` obtains the target-signed capability from that
+    # target's sealed admin anchor after `ensure_kind_alive/1` has opened its
+    # authority compartment.
+    {:system_admin, Ezagent.Entity.User.admin_uri()}
   end
 
-  defp template_admin_cap(action, %URI{} = admin_uri) when is_atom(action) do
+  defp template_admin_cap(action, %URI{} = target, %URI{} = admin_uri)
+       when is_atom(action) do
     %Ezagent.Capability{
-      Ezagent.Capability.cap(:any, :any, action, :any, :any)
+      Ezagent.Capability.cap(
+        :session_template,
+        Ezagent.ActionSet.Template,
+        action,
+        Ezagent.URI.instance(target),
+        Ezagent.Capability.workspace_of(target)
+      )
       | granted_by: admin_uri,
         granted_at: DateTime.utc_now()
     }
@@ -820,14 +814,27 @@ defmodule Ezagent.Entity.SessionTemplate do
   # HIGH-9 — `ctx` is THREADED from the caller; the `:write` action is
   # CapBAC-checked against the caller's real authority. Only
   # `persist_version_as_system/2` passes a system (`admin`) ctx.
-  defp dispatch_write(uri, content, ctx) do
+  defp dispatch_write(uri, content, {:system_admin, %URI{} = admin_uri}) do
+    cap = template_admin_cap(:write, uri, admin_uri)
+
+    with {:ok, signed_cap} <- Ezagent.Cap.issue({:admin, admin_uri}, admin_uri, cap) do
+      dispatch_write(uri, content, %{
+        caller: admin_uri,
+        caps: MapSet.new([signed_cap]),
+        reply: {:caller_inbox, self()}
+      })
+    end
+  end
+
+  defp dispatch_write(uri, content, ctx) when is_map(ctx) do
     target = Ezagent.URI.with_action(uri, :template, :write)
 
     Ezagent.Invocation.dispatch(%Ezagent.Invocation{
       target: target,
       mode: :call,
       args: %{content: content},
-      ctx: ctx
+      ctx: ctx,
+      origin: :trusted_internal
     })
   end
 

@@ -290,13 +290,14 @@ defmodule EzagentDomainInstanceMessage.Application do
       # assert against.
       result =
         with :ok <- ensure_system_workspace_seeded_for_tests(),
-             :ok <- maybe_seed_stock_orchestrator_recipe_for_tests() do
+             :ok <- maybe_seed_stock_orchestrator_recipe_for_tests(),
+             {:ok, create_session_cap} <- system_create_session_cap() do
           Ezagent.Workspace.create_session(
             Ezagent.URI.workspace(:system),
             %{short_name: "main", template_name: "default"},
             %{
               caller: User.admin_uri(),
-              caps: MapSet.new([Ezagent.Capability.admin_genesis_cap()])
+              caps: MapSet.new([create_session_cap])
             }
           )
         end
@@ -332,6 +333,22 @@ defmodule EzagentDomainInstanceMessage.Application do
     Code.ensure_loaded?(Mix) and Mix.env() == :test
   rescue
     _ -> false
+  end
+
+  defp system_create_session_cap do
+    workspace_uri = Ezagent.URI.workspace(:system)
+    admin_uri = User.admin_uri()
+
+    requested =
+      Ezagent.Capability.cap(
+        :workspace,
+        Ezagent.ActionSet.Workspace,
+        :create_session,
+        Ezagent.URI.instance(workspace_uri),
+        Ezagent.Capability.workspace_of(workspace_uri)
+      )
+
+    Ezagent.Cap.issue({:admin, admin_uri}, admin_uri, requested)
   end
 
   # Register the delivery Task.Supervisors this app hosts (see the call
@@ -380,17 +397,26 @@ defmodule EzagentDomainInstanceMessage.Application do
   end
 
   defp ensure_system_workspace_seeded_for_tests do
-    case Ezagent.Workspace.Store.get_by_name("system") do
-      nil ->
-        case Ezagent.Workspace.create("system", %{created_by: User.admin_uri()}) do
-          {:ok, _pid} -> :ok
-          {:error, :workspace_exists} -> :ok
-          {:error, {:already_started, _pid}} -> :ok
-          {:error, reason} -> {:error, {:system_workspace_seed_failed, reason}}
-        end
+    persisted =
+      case Ezagent.Workspace.Store.get_by_name("system") do
+        nil ->
+          case Ezagent.Workspace.create("system", %{created_by: User.admin_uri()}) do
+            {:ok, _pid} -> :ok
+            {:error, :workspace_exists} -> :ok
+            {:error, {:already_started, _pid}} -> :ok
+            {:error, reason} -> {:error, {:system_workspace_seed_failed, reason}}
+          end
 
-      _ ->
-        :ok
+        _ ->
+          :ok
+      end
+
+    with :ok <- persisted do
+      case Ezagent.Workspace.spawn_workspace("system", %{created_by: User.admin_uri()}) do
+        {:ok, _pid} -> :ok
+        {:error, {:already_started, _pid}} -> :ok
+        {:error, reason} -> {:error, {:system_workspace_runtime_failed, reason}}
+      end
     end
   end
 

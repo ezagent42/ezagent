@@ -13,7 +13,7 @@ defmodule Ezagent.Cap do
   returning a signed artifact. Downstream handlers only store issued artifacts.
   """
 
-  alias Ezagent.{Capability, CapabilityRegistry}
+  alias Ezagent.Capability
 
   @type artifact :: Capability.t()
   @type authorization ::
@@ -29,10 +29,21 @@ defmodule Ezagent.Cap do
   def issue(authorization, %URI{} = grantee_uri, %Capability{} = cap) do
     {caps, context} = authorization_context(authorization)
 
-    with :ok <- authorize_issue(authorization, caps, cap, context),
-         {:ok, artifact} <- prepare_provenance(authorization, grantee_uri, cap),
-         {:ok, artifact} <- Ezagent.Cap.Authority.sign_for_target(artifact) do
-      {:ok, artifact}
+    with {:ok, target} <- Ezagent.Cap.Authority.target_uri(cap),
+         {:ok, authority_caps} <- authority_caps(authorization, target, caps) do
+      invocation = %Ezagent.Invocation{
+        target: Ezagent.URI.with_action(target, :cap, :grant),
+        mode: :call,
+        args: %{grantee: grantee_uri, cap: cap},
+        ctx: %{
+          caller: Map.fetch!(context, :caller),
+          caps: authority_caps,
+          reply: {:caller_inbox, self()}
+        },
+        origin: :trusted_internal
+      }
+
+      Ezagent.Invocation.dispatch(invocation)
     end
   end
 
@@ -176,15 +187,17 @@ defmodule Ezagent.Cap do
     loader.read_held_caps(actor)
   end
 
-  defp authorize_issue({:admin, %URI{} = admin}, _caps, _cap, _context) do
+  defp authority_caps({:admin, %URI{} = admin}, target, _caps) do
     if Ezagent.URI.stable_key(admin) ==
          Ezagent.URI.stable_key(Ezagent.URI.user(:system, :admin)) do
-      :ok
+      case Ezagent.Cap.Authority.anchor(target) do
+        {:ok, anchor} -> {:ok, MapSet.new([anchor])}
+        {:error, reason} -> {:error, reason}
+      end
     else
       {:error, :canonical_admin_required}
     end
   end
 
-  defp authorize_issue(_authorization, caps, cap, context),
-    do: CapabilityRegistry.authorize_grant(caps, cap, context)
+  defp authority_caps(_authorization, _target, caps), do: {:ok, caps}
 end

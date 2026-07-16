@@ -160,6 +160,31 @@ defmodule Ezagent.Cap.Authority do
     end
   end
 
+  @doc false
+  @spec verify_current(Capability.t(), URI.t()) :: boolean()
+  def verify_current(%Capability{} = cap, %URI{} = presenter) do
+    case Process.get({__MODULE__, :current}) do
+      %__MODULE__{} = authority -> verify(authority, cap, presenter)
+      nil -> false
+    end
+  end
+
+  @doc false
+  @spec issue_current(Ezagent.Cap.Grant.intent()) :: {:ok, Capability.t()} | {:error, term()}
+  def issue_current(%Ezagent.Cap.Grant{} = intent) do
+    case Process.get({__MODULE__, :current}) do
+      %__MODULE__{} = authority -> {:ok, Ezagent.Cap.Grant.issue(authority, intent)}
+      nil -> {:error, :authority_unavailable}
+    end
+  end
+
+  @doc false
+  @spec target_uri(Capability.t()) :: {:ok, URI.t()} | {:error, :concrete_target_required}
+  def target_uri(%Capability{instance: %URI{} = instance}),
+    do: {:ok, Ezagent.URI.instance(instance)}
+
+  def target_uri(%Capability{}), do: {:error, :concrete_target_required}
+
   defp key_id(public_key, generation) do
     fingerprint = :crypto.hash(:sha256, public_key) |> Base.url_encode64(padding: false)
     "kind-g#{generation}:#{fingerprint}"
