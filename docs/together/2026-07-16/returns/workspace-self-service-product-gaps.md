@@ -84,7 +84,7 @@ as ready-to-merge completion of #1436.
 |---|---|---|---|
 | G1-AC1 | Admin Settings exposes `registration_open`. | met | `registration-admin-settings.png`; `Admin.tsx`, `admin_actions.ex`, and `admin_data.ex`; save dispatch is admitted by `DispatchContract`. |
 | G1-AC2 | Admin Settings exposes `registration_require_invite`. | met | Same admin-only Manage -> System/Settings card and dispatch path as G1-AC1. |
-| G1-AC3 | Open registration shows a registration entry point. | met | Registration controller tests cover the open form. |
+| G1-AC3 | Open registration shows a registration entry point. | met | `registration-open.png`; a fresh anonymous browser session reached `/register` and rendered the account-creation form after the admin enabled public registration. |
 | G1-AC4 | Closed registration shows access-request and invite exits. | met | `registration-closed.png`; Playwright asserts both forms. |
 | G1-AC5 | Access request submission gives visible feedback. | met | `registration-request-received.png`; request persistence was verified as `pending` in PostgreSQL. |
 | G1-AC6 | Cold-start admin can find and operate the toggles without engineering help. | met | Real browser navigation from Manage -> System reached `/admin/settings`; save, reload persistence, and restore were verified on PostgreSQL 17 port 5432. `registration-non-admin-hidden.png` proves Alice sees no registration card on the same route. |
@@ -208,6 +208,10 @@ Canonical administrator sees registration controls in Manage -> System/Settings,
 
 ![Admin registration settings](evidence/workspace-self-service/registration-admin-settings.png)
 
+With public registration enabled, an anonymous visitor sees the complete account-creation form:
+
+![Open registration form](evidence/workspace-self-service/registration-open.png)
+
 Non-admin Alice sees SMTP on the same route, but no registration controls:
 
 ![Registration settings hidden from non-admin](evidence/workspace-self-service/registration-non-admin-hidden.png)
@@ -242,6 +246,7 @@ Access request gives a uniform confirmation:
 - World Vitest: 6 tests, 0 failures, including two admin/non-admin settings visibility cases.
 - World TypeScript and ESLint: PASS; Vite production build: PASS (existing Excalidraw dynamic-import warning only).
 - Real browser: Admin saw both registration switches in Manage -> System/Settings; Alice did not receive or render registration settings on the same URL.
+- Real browser: after enabling `registration_open`, a fresh anonymous session loaded `/register` with Email, Display name, Password, and Create account controls; screenshot captured as `registration-open.png`.
 - Admin changed `registration_open`, saved, reloaded to prove persistence, then restored it to `false` and reloaded again.
 - Full `mix precommit` was attempted twice; the command produced no final result before the 60-second and 300-second tool timeouts, so no full-precommit pass is claimed.
 
