@@ -9,7 +9,7 @@ defmodule Ezagent.DomainGit.Architecture.AdapterRegistryBoundaryTest do
   test "only the GitTaskAccess ActionSet may call adapter-selecting lookup" do
     app_root = Path.expand("../..", __DIR__)
     registry = Path.join(app_root, "lib/ezagent/domain_git/adapter_registry.ex")
-    future_action_set = Path.join(app_root, "lib/ezagent/action_set/git_task_access.ex")
+    action_set = Path.join(app_root, "lib/ezagent/behavior/git_task_access.ex")
 
     callers =
       app_root
@@ -20,7 +20,7 @@ defmodule Ezagent.DomainGit.Architecture.AdapterRegistryBoundaryTest do
         File.read!(path) =~ ~r/\b(?:AdapterRegistry\.)?lookup_for_action_set\s*\(/
       end)
 
-    assert callers -- [future_action_set] == [],
+    assert callers -- [action_set] == [],
            "adapter-selecting lookup callers outside GitTaskAccess: #{inspect(callers)}"
   end
 end
