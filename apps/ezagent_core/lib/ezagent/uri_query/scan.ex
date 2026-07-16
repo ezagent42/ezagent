@@ -491,7 +491,10 @@ defmodule Ezagent.UriQuery.Scan do
         _other -> []
       end)
 
-    if :host in keys or :path in keys do
+    # `userinfo: nil` marks validation of an external transport URL (for example
+    # an http(s) change-request link), not positional interpretation of an
+    # ezagent address. Keep those protocol values outside this URI-shape gate.
+    if (:host in keys or :path in keys) and :userinfo not in keys do
       violation(
         :positional_uri_read,
         path,
@@ -601,7 +604,7 @@ defmodule Ezagent.UriQuery.Scan do
          path,
          snippets
        ) do
-    if string_split_on?(args, "/") do
+    if string_split_on?(args, "/") and tenant_bearing_split?(args) do
       violation(
         :tenant_derivation,
         path,
@@ -623,6 +626,22 @@ defmodule Ezagent.UriQuery.Scan do
   end
 
   defp tenant_derivation_finding(_node, _path, _snippets), do: nil
+
+  # A slash split is reorder-sensitive only when it is interpreting an opaque
+  # ezagent address. Provider refs and relative filesystem paths are independent
+  # protocol values; treating every `String.split(value, "/")` as tenant
+  # derivation made the gate reject unrelated validation code.
+  defp tenant_bearing_split?([{name, _meta, context} | _rest])
+       when is_atom(name) and is_atom(context),
+       do: name not in [:path, :ref]
+
+  defp tenant_bearing_split?([expression | _rest]) do
+    expression
+    |> Macro.to_string()
+    |> String.match?(~r/(?:uri|session|workspace|worker)/i)
+  end
+
+  defp tenant_bearing_split?(_args), do: false
 
   defp orchestrator_derivation_finding({name, meta, _args}, path, snippets)
        when name in [:derive_orchestrator_uri, :derive_orchestrator_instance_name] do

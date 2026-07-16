@@ -43,10 +43,9 @@ defmodule Ezagent.DomainGit.RepositoryRef do
   def valid_ref?(_ref), do: false
 
   @spec ezagent_uri?(term(), String.t(), String.t()) :: boolean()
-  def ezagent_uri?(%URI{scheme: scheme, host: host, path: "/" <> path} = uri, scheme, type)
-      when is_binary(host) and host != "" do
-    Ezagent.URI.canonical?(uri) and uri.query == nil and uri.fragment == nil and
-      valid_uri_path?(String.split(path, "/"), type)
+  def ezagent_uri?(%URI{} = uri, scheme, type) do
+    Ezagent.URI.canonical?(uri) and Ezagent.URI.scheme?(uri, scheme) and
+      uri.query == nil and uri.fragment == nil and valid_uri_axes?(uri, type)
   end
 
   def ezagent_uri?(_uri, _scheme, _type), do: false
@@ -70,11 +69,12 @@ defmodule Ezagent.DomainGit.RepositoryRef do
       segment not in ["", ".", ".."] and not String.starts_with?(segment, ".") and
         not String.ends_with?(segment, [".lock", "."])
 
-  defp valid_uri_path?([actual_type, name], nil),
-    do: actual_type != "" and name != ""
+  defp valid_uri_axes?(uri, nil),
+    do:
+      match?({:ok, _type}, Ezagent.URI.type(uri)) and match?({:ok, _name}, Ezagent.URI.name(uri))
 
-  defp valid_uri_path?([type, name], type), do: name != ""
-  defp valid_uri_path?(_segments, _type), do: false
+  defp valid_uri_axes?(uri, type),
+    do: Ezagent.URI.type?(uri, type) and match?({:ok, _name}, Ezagent.URI.name(uri))
 
   defp invalid_result(checks) do
     case Enum.find(checks, fn {_field, valid?} -> not valid? end) do
