@@ -135,20 +135,9 @@ defmodule EzagentWeb.SessionController do
     case resolve_and_auth(email, password) do
       {:ok, uri_str} ->
         if login_verified?(uri_str) do
-          case PatDelivery.issue(conn, Ezagent.URI.new!(uri_str), return_to) do
-            {:ok, issued_conn} ->
-              redirect(issued_conn, to: "/login/token")
-
-            {:error, reason} ->
-              Logger.error("password login PAT mint failed for #{uri_str}: #{inspect(reason)}")
-
-              conn
-              |> put_status(:service_unavailable)
-              |> render_login_page(
-                cred_error: gettext("Sign-in token service is unavailable. Please try again."),
-                return_to: return_to
-              )
-          end
+          conn
+          |> SessionPrincipal.put(uri_str, workspace: nil)
+          |> redirect(to: return_to)
         else
           # Shown ONLY after a correct password, so it does not reveal which
           # emails are registered (anti-enumeration, Codex #7).

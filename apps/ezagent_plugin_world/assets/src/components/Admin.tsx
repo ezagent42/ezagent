@@ -21,6 +21,10 @@ export type AdminState = {
   session_uri?: string | null
   settings?: {
     error?: string
+    registration_flash?: string | null
+    registration_open?: boolean
+    registration_requests?: DataRow[]
+    registration_require_invite?: boolean
     smtp?: Record<string, unknown>
     smtp_configured?: boolean
     smtp_flash?: string | null
@@ -525,6 +529,10 @@ function SettingsPanel({
     tls: smtp.tls !== false,
   })
   const [recipient, setRecipient] = React.useState(settings.smtp_test_recipient || "")
+  const [registration, setRegistration] = React.useState({
+    open: settings.registration_open === true,
+    require_invite: settings.registration_require_invite === true,
+  })
 
   React.useEffect(() => {
     const next = state.settings?.smtp || {}
@@ -538,6 +546,10 @@ function SettingsPanel({
       password: "",
     }))
     setRecipient(state.settings?.smtp_test_recipient || "")
+    setRegistration({
+      open: state.settings?.registration_open === true,
+      require_invite: state.settings?.registration_require_invite === true,
+    })
   }, [state.settings])
 
   const fieldLabel = "grid gap-1 text-xs font-medium text-muted-foreground"
@@ -546,6 +558,51 @@ function SettingsPanel({
     <Surface component="settings">
       <SectionHeader eyebrow="Config" title="Settings" icon={<Settings className="h-4 w-4" />} />
       {settings.error && <p className="text-sm text-destructive">{settings.error}</p>}
+      <section className="grid gap-4 rounded-md border border-border bg-background p-4" data-world-registration-settings>
+        <div>
+          <h3 className="text-sm font-semibold text-foreground">Self-service registration</h3>
+          <p className="mt-1 text-sm text-muted-foreground">
+            Choose whether anyone can create a new workspace, or require an invite issued by an existing workspace owner.
+          </p>
+        </div>
+        <form
+          id="world-registration-settings-form"
+          className="grid gap-3"
+          onSubmit={(event) => {
+            event.preventDefault()
+            onAction("admin.registration.save", {registration})
+          }}
+        >
+          <label className="flex items-start gap-3 text-sm text-foreground">
+            <input
+              type="checkbox"
+              checked={registration.open}
+              onChange={(event) => setRegistration({...registration, open: event.target.checked})}
+            />
+            <span><strong className="block">Open public registration</strong><span className="text-muted-foreground">Each registration creates one new workspace and makes the registrant its owner.</span></span>
+          </label>
+          <label className="flex items-start gap-3 text-sm text-foreground">
+            <input
+              type="checkbox"
+              checked={registration.require_invite}
+              onChange={(event) => setRegistration({...registration, require_invite: event.target.checked})}
+            />
+            <span><strong className="block">Require an invite</strong><span className="text-muted-foreground">Valid workspace invite links still work when public registration is closed.</span></span>
+          </label>
+          <Button variant="primary" type="submit">Save registration settings</Button>
+        </form>
+        {settings.registration_flash && <p className="text-sm text-muted-foreground">{settings.registration_flash}</p>}
+        <div className="space-y-2">
+          <h4 className="text-xs font-semibold uppercase tracking-wide text-muted-foreground">Pending access requests</h4>
+          {(settings.registration_requests || []).map((request) => (
+            <div className="flex flex-wrap items-center justify-between gap-2 rounded-md border border-border px-3 py-2 text-sm" key={String(request.email)}>
+              <span>{String(request.email)}</span>
+              <span className="text-xs text-muted-foreground">{String(request.requested_at || "")}</span>
+            </div>
+          ))}
+          {(settings.registration_requests || []).length === 0 && <EmptyState label="No pending registration requests." />}
+        </div>
+      </section>
       <form
         id="world-smtp-form"
         className="grid gap-3 sm:grid-cols-2"

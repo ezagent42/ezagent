@@ -1,5 +1,6 @@
 {
   "accepted_actions": [
+    "admin.registration.save",
     "admin.smtp.save",
     "admin.smtp.test",
     "admin.smtp.update_recipient",
@@ -43,6 +44,8 @@
     "kanban.share_board",
     "kanban.sync_miro",
     "kanban.unclaim_node",
+    "kb.ingest",
+    "kb.query",
     "layout.manage",
     "profile.display_name.cancel",
     "profile.display_name.edit",
@@ -63,6 +66,8 @@
     "users.enable",
     "users.password.set",
     "users.profile.save",
+    "workspace.invite.mint",
+    "workspace.invite.revoke",
     "workspace.member.remove",
     "workspace.template.save"
   ],
