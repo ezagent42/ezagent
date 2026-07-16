@@ -1,6 +1,15 @@
-# kanban 修法计划 v2 —— X/Y 方向纠正版（2026-07-16，skill-1 重审）
+# kanban 修法计划 v3 —— 归属重切版（2026-07-16 晚）
 
-**术语纠正**：本版遵循用户口径 —— **Y = 看到的现象，X = 根因**。上一版（e015e630d）把标签用反了（X=现象、Y=真问题），方向也因此偏成"从现象归并"；本版从根因（X）出发定修法。所有锚点现读代码核实（HEAD `e015e630d`，代码同 `743ed6178`，其上只有 docs commit）。
+**术语纠正（沿 v2）**：本版遵循用户口径 —— **Y = 看到的现象，X = 根因**。v1 把标签用反了（X=现象、Y=真问题），方向也因此偏成"从现象归并"；v2 起从根因（X）出发定修法。所有锚点现读代码核实（HEAD `e015e630d`，代码同 `743ed6178`，其上只有 docs commit）。
+
+**归属重切（2026-07-16 晚，用户定，v2 的切法被否）**：v2 按"谁改哪个文件"切归属，把 kanban 前端整包给了 zyli——错。新原则：
+
+- **我们（PR #1374 线）**：kanban 是**自包含 plugin**，声明式插入 world——**所有围绕 kanban 自包含的东西都我们修，不交给任何人**，含 kanban 前端（Kanban.tsx / KanbanCanvas / kanban 面板 / 看板 tab 刷新 / 分享对话框 / drop 标红 / 删板 UI）。kanban 的界面不归 world 负责人管。
+- **Allen**：他在做**权限**（#1438 cap-signing per-Kind authority v7、#1412/#1409 capbac follow-ups）——**系统层面的权限/契约/rule 决策**给他，不实施。
+- **gaga**：他在做 **agent runtime**（#1434 skill 加载、#1423 Git provider/provisioning）——只给他 agent runtime 相关（#1323 headless-MCP、凭证供给、cc-headless）。
+- **zyli**：world（ezagent 界面）负责人——**除 kanban 以外的前端** + 推送环的 world 订阅/分发基建。
+
+X/Y 分析不变；下文各「归属」行与 §三、§四 已按新原则重写。
 
 输入 = `2026-07-15-kanban-layering-debt.md` 全部未修项（⑤-㉞ + 债③ + 规则8）+ `2026-07-15-kanban-collab-model.md`（模型定稿）。
 
@@ -20,7 +29,7 @@
   4. ㉞ 是这个 X 的可视化谎言：常驻 "✓已保存"（Kanban.tsx:661，`last_dispatch_status=="ok"` 常驻渲染）先摘掉换 per-action 轻提示；推送落地后如需再加真实同步指示。
   5. ㉒-② tab 态进 URL（view 深链 `/sessions?session=...&view=kanban_board`）——严格说不是推送环，但同批前端顺修。
 - **只修 Y 的诱惑**：给四个现象各加一个轮询 / 扩大 `@refresh_ms` / 操作完本地多推几次 —— 每多一个面就再赔一次，而且轮询治不了"别人的界面"。**红线**：不许 `PubSub.broadcast` 到 inbound topic（P14，事故 2.1）。
-- **归属**：发布侧（domain_session notify + kanban plugin emit）= **我，独立 PR**；订阅/处理/前端侧 = **zyli handoff**。两侧以 payload 约定为接口（见 zyli handoff §接口约定）。
+- **归属（重切）**：发布侧（domain_session membership `:notify` + kanban 写 action `:emit`，都在我们业务代码里）= **我**；world **订阅/分发基建**（WorldLive per-user/per-session 订阅、退订、事件转发到前端的通用通道）= **zyli**；**kanban 面的事件消费**（订 board events topic + 收到后按 `read_ctx` 重拉 `board_state` 推 `world:state`：㉒-① 建板列表刷新、㉘ 画布刷新、㉞ 摘假"已保存"）= **我**（kanban 前端归 kanban）；⑰ 会话列表/成员面板刷新 + ㉒-② tab 态深链 = **zyli**（world 会话面状态）。两侧接口 = payload 约定（见 zyli handoff §接口约定）。
 
 ### X2 —— 「人进入协作场景时的授权供给」没有产品化机制
 
@@ -44,7 +53,7 @@
   2. **读侧对照现状（㉑⑩）**：投影时把 role 已有成员的行剔除（对照 `:session` slice members 的 role_name）；建会话链路把已返回的 `%{skipped: ...}`（session_creator.ex:329-343）带回向导显示一次性提示。
   3. **上游供给（⑩ 根因侧）**：cc-headless 无凭证源 → install 静默 skip，凭证供给面 + skip 可观测归 **gaga**（provisioning 域）。
 - **只修 Y 的诱惑**：只把横幅改成会过期的 toast（⑩㉑ 消失但 ⑳ 还炸）；或给 skip 加自动重试把 best-effort 伪装成强保证（凭证不存在重试一万次也不存在）。
-- **归属**：1 = **我（本 PR）**；2 = **zyli**（world 投影/向导）；3 = **gaga handoff**。
+- **归属**：1 = **我（本 PR）**；2 = **zyli**（world 投影/向导——`unfilled_agent_role_slots` 是通用 role-slot 投影 + 建会话向导，属 world 会话面，非 kanban 界面）；3 = **gaga handoff**（上游 = `Ezagent.Agent.CredentialPrecondition` 判 NONE 即 skip 的凭证供给/绑定面）。
 
 ### X4 —— 看板面从 demo 长出来，没有经过设计规格
 
@@ -52,7 +61,7 @@
 - **X（一句话）**：这张面板没被设计过，是 demo 顺手长的；㉗ 就是规格书 —— **修 = 按规格一次重做，不是七个点补丁**。
 - **从 X 修**：一个前端 PR 按 ㉗ 规格重做节点面板（Kanban.tsx:519-596 产物区：「添加」+下拉 链接/内容/画图/附件、去 SHA 入口、补附件上传 `kanban.attach_upload` 通道已在、每产物删除钮 `detach_artifact` 动作已有 kanban.ex:536、「内容」弹大框 md 编辑器照 ExcalidrawModal 形态）+ ㉓ 移除本图配置块（:162-164, :265-280；Miro 板名只在 sync_miro 弹窗填 :212）+ ㉖ 标题就地编辑（替代 :596 `window.prompt`）/画布节点框自适应 + ⑫ 向导 max-height/按钮固定底（SessionsTable.tsx:180-255）+ ㉚ clipboard 回退+真实反馈（:63 附近）+ ⑱ 硬编码浅色换 token（Conversation.tsx:863/:684/:1724 及 Kanban/KanbanCanvas 同类；root data-theme 机制现成 root.html.heex:21）+ ㉞ 摘 :661。
 - **只修 Y 的诱惑**：逐点打补丁 —— 每个补丁都会在按规格重做时返工；或"顺手"改 behavior 动作签名（attach_code_file/set_board_config **动作保留**，只动 UI 入口）。
-- **归属**：**zyli handoff**（整包）。
+- **归属（重切）**：kanban 面板整包（㉗ 规格重做 + ㉓㉖㉚㉞ + Kanban/KanbanCanvas 里的硬编码浅色 token 化，随重做吸收）= **我（本 PR）**——kanban 自包含，它的界面自己修；⑫（建会话向导，SessionsTable）+ ⑱ 的 **Conversation 层**硬编码浅色（Conversation.tsx:863/:684/:1724）= **zyli**（world 会话面）。
 
 ### X5 —— dev 环境与 prod 车道分叉
 
@@ -71,11 +80,11 @@
 - **从 X 修**：先给闭环一个归宿，其余长在它上面：
   1. **债③（归宿）**：kanban plugin 新 `receive_shared_board(token_payload, clicker, target_session | nil)`（plugin 向下调 domain `Mount.mount` 合法；与债① 方向相反不冲突）：落点解析（nil 时沿用现口径）+ 只读 mount + **顺发 `kanban_render` render cap 给点击者**（㉜ 过渡：点开的人见 tab）。controller 瘦成 verify token（Phoenix.Token 属 web 层，留下）+ 调 plugin + redirect。
   2. **㉙ 分享到会话**：分享框加选项 —— 签同一 token，`session.send` 一条带板引用的结构化消息（气泡通道 JsonRenderBubble 现成）；"逻辑上都是一个链接，按点击者过滤"= 点击走同一 receive 链。
-  3. **㉝ unfurl**：Conversation 渲染识别 `/socialware/kanban/claim?token=` → 渲成 ㉙ 同款气泡；点击带**当前 session_uri** 走 `kanban.claim_shared`（修 controller 落点错位）。
+  3. **㉝ unfurl**：Conversation 渲染识别 `/socialware/kanban/receive?token=`（router.ex:261）→ 渲成 ㉙ 同款气泡；点击带**当前 session_uri** 走 `kanban.claim_shared`（修 controller 落点错位）。
   4. **规则8 申请编辑**：板新 action `request_edit`（pending 记进 `:kanban` slice）→ 批准气泡发到 mount 表 access=operate 的"编辑 session" chat（C4：批准人=版主 data_owner）→ 批准即 `Mount.mount` 升级 operate。可拆两步（先板面内批准，气泡后补）。依赖 X1 推送 + ㉙ 气泡形态。
   5. **⑯ ws 口径**：`forward_board` 有 `same_workspace` 硬守卫（board_provision.ex:267,:292）而链接分享路无 ws 检查——两路口径不一，**统一方向归 Allen**（用户倾向：系统支撑就放开）。
 - **只修 Y 的诱惑**：在 controller 里继续加 unfurl/气泡逻辑（P13 债滚大，将来搬家做两遍）；或先做前端 unfurl 再搬业务（同样做两遍）。
-- **归属**：plugin 侧动作（1、4 的 behavior、2 的 dispatch 接线）= **我**；气泡/unfurl 渲染 + 点击接线 = **zyli**；⑯ 口径 = **Allen**。
+- **归属（重切）**：plugin 侧动作（债③ receive、规则8 `request_edit`、㉙ 的 dispatch）+ **kanban 前端半边**（㉙ 分享对话框两选项 UI、㉝ 气泡**点击后的挂载动作**接线）= **我**；㉝ 的 **unfurl 渲染半边**（Conversation 消息渲染里识别链接渲成气泡——气泡是 chat 消息渲染，属 world）= **zyli**；⑯ ws 口径 = **Allen**。
 
 ---
 
@@ -83,28 +92,58 @@
 
 | 项 | 定性 | 修法 | 归属 |
 |---|---|---|---|
-| ㉕ drop 重定义 | 产品语义改写（非 UI 问题）：drop = 北极星不达标的**跟踪标红**，非删除 | `handle_drop_subtree`（kanban.ex:358-397）改非破坏标记：子树打 `dropped: true` + reason/at/by，不动 nodes；`:drops` 历史加 reason；授权改节点认领人 or `board_admin?`；`handle_get_tree`（:559）投影带标；前端红框 | behavior = **我（本 PR）**；红框渲染 = **zyli** |
-| ㉛ 装 sw 面 + 存模板 | 机制全在（install/retract #1245/`save_session_template`/`installed_definitions` installation.ex:470），缺会话设置面 | 已装列表 + 多选装卸 + "保存为 template" 接线 | **zyli** |
-| ⑲ 删板 UI | 机制在（建板人 Manage cap；#1411 retire 语义） | 我提供 `kanban.delete_board` dispatch 动作（校验 Manage → `Domain.Agent` retire + `Mount` 逐行 unmount，**不直调 terminate**）；前端删钮+确认框 | 动作 = **我**；UI = **zyli** |
+| ㉕ drop 重定义 | 产品语义改写（非 UI 问题）：drop = 北极星不达标的**跟踪标红**，非删除 | `handle_drop_subtree`（kanban.ex:358-397）改非破坏标记：子树打 `dropped: true` + reason/at/by，不动 nodes；`:drops` 历史加 reason；授权改节点认领人 or `board_admin?`；`handle_get_tree`（:559）投影带标；前端红框 | behavior + 红框渲染（KanbanCanvas）= **我（本 PR）** |
+| ㉛ 装 sw 面 + 存模板 | 机制全在（install/retract #1245/`save_session_template`/`installed_definitions` installation.ex:470），缺会话设置面 | 已装列表 + 多选装卸 + "保存为 template" 接线 | **zyli**（会话管理面，非 kanban 界面） |
+| ⑲ 删板 UI | 机制在（建板人 Manage cap；#1411 retire 语义） | `kanban.delete_board` dispatch 动作（校验 Manage → `Domain.Agent` retire + `Mount` 逐行 unmount，**不直调 terminate**）；导图列表删钮+确认框（Kanban.tsx） | 动作 + UI 都 = **我（本 PR）** |
 | gap3 残留（cc） | #1434 已修 prompt+skill（R1/R2）；**#1323 headless-MCP 仍未进 main**——助手有钥匙也没工具 dispatch | #1323 落 main + config_dir `.mcp.json` 读取 | **gaga handoff** |
 
 ---
 
-## 三、按负责人切 PR
+## 三、按负责人切 PR（归属重切版）
 
-分工事实：**我（jjkysy）= kanban plugin + sw 业务（本 PR #1374）**；**zyli = world 前端**；**gaga = AgentRuntime 域（cc/凭证/provisioning）**；**Allen = 平台架构决策**。
+分工原则（用户定）：**我（jjkysy）= kanban 自包含全部**（plugin + sw 业务 + kanban 前端）；**zyli = 除 kanban 外的 world 前端 + 推送订阅/分发基建**；**gaga = agent runtime**（cc/凭证/provisioning）；**Allen = 系统层面的权限/契约/rule 决策**。
 
 | # | PR | owner | 内容 | 依赖 |
 |---|---|---|---|---|
-| 1 | **本 PR #1374 收尾** | 我 | 已修 ⑤⑥⑦⑧⑨ 收口 + **债③** receive 搬家 + **⑳** assistant 降级为增强 + **㉕** drop 语义 + **⑲** delete_board 动作 + **⑮** dev.exs 一行 + 证据/文档收敛（PR 收尾规矩） | 无 |
-| 2 | **推送环发布侧**（独立 PR，我） | 我 | X1 发布侧：membership `:notify` + kanban 写 action `:emit`（含 payload 约定文档） | 无；与 zyli 订阅侧配对 |
-| 3 | **join 补发**（独立 PR，我，**等 Allen**） | 我 | X2 入口1：join hook（member view caps + mount operate 补发），零 kanban 字面 | Allen 拍 rule 名/授权面 |
-| 4 | **分享闭环二期**（独立 PR，我） | 我 | ㉙ 分享到会话 dispatch + 规则8 `request_edit` action（气泡 UI 归 zyli 侧） | PR1（receive 归宿）+ PR2（推送） |
-| 5 | **handoff → zyli** | zyli | 推送订阅侧 + ㉒-② 深链 + X4 面板规格整包 + ⑩㉑ 投影/向导 + ㉛⑲⑭ 管理面 UI + ㉙㉝ 气泡/unfurl 渲染 + ㉕ 红框 + ⑬ dev 前端 | 部分依赖 PR2 |
-| 6 | **handoff → gaga** | gaga | #1323 headless-MCP 落 main + cc 凭证供给面（install skip 上游 + 可观测） | 无 |
-| 7 | **handoff → Allen（决策单，不实施）** | Allen | join 补发 rule 家族（`:socialware_member_views`/`:socialware_runtime_provision` 进 Decision Log + transient ctx-cap 用法）+ #1394 永久线；⑥ create_agent 三选项；㉜step2 T2-2b tab 门控；⑯ 分享 ws 口径；⑪ dev boot-scan 口径（#1224）；债①②分层永久修 | — |
+| 1 | **本 PR #1374 收尾** | 我 | 已修 ⑤⑥⑦⑧⑨ 收口 + **债③** receive 搬 plugin + **⑳** assistant 降级为增强 + **㉕** drop 标红（behavior + KanbanCanvas 红框）+ **⑲** delete_board（动作 + 删板 UI）+ **⑮** dev.exs 一行 + **全部 kanban 前端**：㉗ 面板规格重做 + ㉓㉖㉚㉞ + ㉙ 分享框两选项 UI + ㉘/㉒-① 看板数据刷新的 kanban 侧（订 board topic + 重拉）+ ㉝ 点击挂载动作 + Kanban 组件深色 token 化 + 证据/文档收敛（PR 收尾规矩） | ㉘/㉒-① 前端消费依赖 zyli 订阅基建接口（payload 约定先行可并行） |
+| 2 | **推送环发布侧**（可并入 #1374 或独立小 PR，我） | 我 | X1 发布侧：membership `:notify` + kanban 写 action `:emit`（含 payload 约定文档） | 无；与 zyli 基建配对 |
+| 3 | **join 补发**（独立 PR，我，**等 Allen D1**） | 我 | X2 入口1：join hook（member view caps + mount operate 补发），domain_session 通用机制零 kanban 字面 | Allen 拍 rule 名/授权面 |
+| 4 | **分享闭环二期**（独立 PR，我） | 我 | ㉙ 分享到会话 dispatch + 规则8 `request_edit` action + ㉝ `claim_shared` 落点修正 | PR1（receive 归宿）+ PR2（推送）+ Allen D4（receive 签名的 ws 口径） |
+| 5 | **handoff → zyli** | zyli | **world（非 kanban）前端**：推送环订阅/分发基建（⑰㉒㉘ 的基建半边）+ ⑰ 会话列表/成员面板刷新 + ㉒-② tab 深链 + ⑱ Conversation 层深色 + ⑫ 向导按钮 + ⑩㉑ 投影/向导提示 + ㉛ 装 sw 面/存模板 + ⑭ 邀请码管理面 + ㉝ chat unfurl 渲染半边 + ⑬ dev 前端 | 基建与我 PR2 以 payload 约定为接口 |
+| 6 | **handoff → gaga** | gaga | **agent runtime**：#1323 headless-MCP 落 main + cc 凭证供给面（⑩ 静默 skip 上游 = `CredentialPrecondition`/绑定面 + 补物化 + 可观测） | 无 |
+| 7 | **handoff → Allen（决策单，不实施）** | Allen | D1 join 补发 ambient rule 家族（含 transient ctx-cap 用法 + #1394 永久线）；D2 ⑥ create_agent rule 追认（三选项）；D3 ㉜ tab 门控 view-cap 契约；D4 ⑯ 两条分享路 ws 口径；D6 债①②分层永久线（**mount 折 CompositionBinding**）；附带 D5 ⑪ dev boot-scan 口径（#1224） | — |
 
 handoff 文件：`docs/together/2026-07-16/handoffs/{allen-decisions,zyli-world-frontend,gaga-agent-runtime}.md`。
+
+## 四、深扫：plugin_kanban 之外的 kanban 硬编码（2026-07-16，老 kanban 已被 #1425 合入 main 后）
+
+口径：`grep -rn "kanban" apps/ --include=*.ex -i | grep -viE "plugin_kanban|test"`，47 个文件命中；另加前端 `apps/ezagent_plugin_world/assets/src/components/{Kanban,KanbanCanvas}.tsx`（债②前端半边）。逐条按**可剥 / 暂留（理由）/ 不动**三列判。
+
+### 可剥（本 PR / 短期）
+
+| 处 | 现状 | 剥法 |
+|---|---|---|
+| ezagent_web `kanban_share_controller.ex`（13 处业务字面：`@assistant_role "kanban-assistant"`、`resolve_target_session` 挑首个带 assistant 的 session、直调 `Mount.mount`） | 债③，P13 违反 | **本 PR**：业务搬 kanban plugin `receive_shared_board`（plugin 向下调 domain `Mount.mount` 合法，plugin→domain 是允许的依赖箭头，mix.exs 有先例注释）；controller 瘦成 verify token（Phoenix.Token 属 web 层留下）+ 调 plugin + redirect；router.ex:261 receive 路由留（纯 transport） |
+| domain_session `board_provision.ex` 里的 kanban **默认值**（`@default_assistant_role "kanban-assistant"` :176、只读动作 `get_tree/export_markmap` :177、doc 示例） | 债①残余：模块本体 #1425 后已参数化成"通用挂载 infra 的瘦 kanban 消费者"（:3 自述），字面只剩默认值 + 文档 | 短期可做：默认值上提到调用方（现调用方 world `kanban_actions.ex:380` 与分享链，债③ 后都是 kanban 侧代码），模块变零 kanban 字面；本体见「暂留」 |
+
+### 暂留（理由）
+
+| 处 | 现状 | 为什么等 |
+|---|---|---|
+| domain_session `board_provision.ex` 本体（create/pull/forward glue + `{:rule, :socialware_runtime_provision, creator}` 一次性 rule-mint） | 债① | 把建板策略搬回 plugin 的前置 = ① plugin 拿到合法的建-agent 授权路（Allen D2）② `Mount` 可 dispatch 化 / 折 `CompositionBinding`（Allen D6）；rule-mint 点搬进 plugin = plugin 持 rule authority（#154 review 面）。**权限改造前 Mount 保留，本体不动** |
+| world `plugin_page_registry.ex` kanban 条目 + `@kanban_actions` 白名单（:28-41） | 债②：注册表**机制**已通用（kanban 曾是 world 写死特例，2026-07-09 迁入注册表），但**条目**仍是 world 手写 | 条目改由 plugin 声明贡献 = plugin-UI 注册机制（Allen D6 平台线）。过渡：白名单随我们 PR 新动作（delete_board/claim_shared/request_edit）同步，**归我方维护** |
+| world `kanban_data.ex`（36 处）/ `kanban_actions.ex`（71 处）+ `Kanban.tsx`/`KanbanCanvas.tsx` | 债②：kanban 读模型/动作面/React 组件物理住 world | 物理搬 plugin 同等 D6（plugin 贡献 React 组件 + 数据 reader 的机制不存在）；**逻辑归属已重切给我方**（本轮所有 kanban 前端改动都发生在这几个文件），不再扩散新字面 |
+| world `conversation_data.ex:20` `@native_react_ids`（kanban_board→"kanban"）+ `conversation_actions.ex:542` `view_switch_updates` "kanban_board" 特例 + `state_contract.ex:75` "kanban" 页面项 | native React renderer 的写死映射，是 world:state 契约的一部分 | 同属 plugin 贡献组件机制（D6）；单点剥会破 state_contract 契约测试，等机制一次迁 |
+| ezagent_web `router.ex` `/plugins/kanban` 4 行 live 路由（:62-63/:105-106） | 页面路由字面 | 路由声明化属 D6；transport 层字面无业务逻辑，危害低 |
+
+### 不动
+
+| 族 | 处 | 理由 |
+|---|---|---|
+| hello 组合业务（gaga/hello 侧，列出即可） | plugin_hello：`kanban_delegation.ex`（33 处）、`hello_dispatcher.ex`（`delegate_to_kanban` 动作）、`kanban_published_read.ex` + `published_board_ref.ex`（port）、prompts/generator/router/application；ezagent_web：`kanban_published_read_adapter.ex`、`hello_delegation_controller.ex` + continuation | hello→kanban 委派/发布只读引用是 **hello 侧的跨-sw 组合业务**，不是 kanban 泄漏；port/adapter 姿势本身正确（"Kanban remains the sole board-data owner"）。将来债③/分享闭环搬 plugin 后，adapter 的 supplier（现调 `World.KanbanActions.share_link`）跟着换即可 |
+| 纯注释/文档举例（~25 文件） | core（role_seed_hook/socialware_seed/arch.scan/sandbox/recipe）、domain_agent（recipe_resolver/grant_recipe_caps/agent_passive_attributes/default_agent_seed 的 moduledoc 示例）、domain_ui（session_view/session_view_registry）、domain_session（installation/mount/manifest_seed/shipped_manifest/session_creator 注释）、plugin_native/py/kb/cc、world（navigation/routes/slot_registry/workspace_plugin_data/ui_surface_provider/world_live 注释） | 零行为字面，kanban 只作历史/示例引用；剥了没收益 |
+
+**结论**：真业务泄漏**现在可剥 1 处**（债③ share controller，本 PR 做）+ **半处**（BoardProvision 默认值上提，本 PR 顺手可做）；**暂留 5 组**（全卡 Allen D2/D6 的平台机制：plugin 建-agent 授权路、Mount dispatch 化、plugin-UI 注册）；**不动**：hello 组合一族 + ~25 文件纯注释。
 
 **风险提示（沿上一版仍有效）**：
 1. join 补发是新 ambient rule（#154 面），抢跑=又一轮 cap 返工——PR3 严格等 Allen。
