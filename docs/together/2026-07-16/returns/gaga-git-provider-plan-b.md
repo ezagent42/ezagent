@@ -4,7 +4,7 @@
 > **PR:** WIP, to be created after final verification/review
 > **Dev:** gaga / Codex
 > **returned_at:** 2026-07-16 23:03 +0800
-> **Status:** Tasks 0–12 implemented locally; broad review and Draft PR handoff in progress
+> **Status:** Tasks 0–12 implemented and reviewed; Draft PR handoff ready
 
 # Return summary
 
@@ -36,7 +36,7 @@ not implemented by Plan B. No deployment or merge is authorized or claimed.
 | 9 atomic boot | complete | registrations and boot Resource bindings fail/roll back as one startup boundary |
 | 10 structural gates | complete | dynamic-boundary, provider leakage, secret isolation, and URI scanner regressions |
 | 11 integration proof | complete | real boot + Resource + Invocation/Router/Kind + two synchronized fake adapters |
-| 12 handoff verification | in progress | rebased current main; docs, architecture, per-app and full umbrella verification recorded; broad review/PR pending |
+| 12 handoff verification | complete locally | current main unchanged after final fetch; verification and broad review recorded; Draft PR is the remaining external handoff action |
 
 ## Fresh verification evidence
 
@@ -106,6 +106,14 @@ The new signed-only consumption boundary increases the ratcheted core
 Git ActionSet file, asserts `authorize_receiver/3` contains both the signed-shape
 guard and `Cap.verify_for/2`, and retains the count cap at eight. Final static
 re-review reports no Critical or Important findings.
+
+The final clean single-process `mix precommit` ran after all review fixes. Every
+non-core app passed, including Web 359/0, Git domain 87/0, and CLI 37/0. Core was
+2124/5: exactly the recorded SkillRegistry local seed mismatch and four tests
+derived from current main's one URI scanner finding. No EntityCaps or capability
+verification-boundary failure remained. Log:
+`/tmp/plan-b-precommit-clean-final.log`. A final `git fetch origin main` confirmed
+both merge-base and `origin/main` remain `6bfe3d1b3`, so no rebase was required.
 
 ## Baseline reproduction
 
