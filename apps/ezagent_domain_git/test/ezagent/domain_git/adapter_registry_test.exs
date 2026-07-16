@@ -33,6 +33,17 @@ defmodule Ezagent.DomainGit.AdapterRegistryTest do
   end
 
   describe "register/2 and lookup/1" do
+    test "conditional unregister removes only the exact current declaration" do
+      id = unique_id("unregister")
+
+      assert :ok = AdapterRegistry.register(id, FakeGitAdapterA)
+      assert :ok = AdapterRegistry.unregister(id, FakeGitAdapterB)
+      assert {:ok, FakeGitAdapterA} = AdapterRegistry.lookup_for_action_set(id)
+      assert :ok = AdapterRegistry.unregister(id, FakeGitAdapterA)
+      assert :error = AdapterRegistry.lookup_for_action_set(id)
+      assert :ok = AdapterRegistry.unregister(id, FakeGitAdapterA)
+    end
+
     test "registers and resolves a validated provider adapter" do
       id = unique_id("registered")
 

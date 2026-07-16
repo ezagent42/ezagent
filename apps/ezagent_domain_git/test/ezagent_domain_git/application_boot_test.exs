@@ -1,0 +1,157 @@
+defmodule EzagentDomainGit.ApplicationBootTest do
+  use ExUnit.Case, async: false
+
+  alias Ezagent.DomainGit.AdapterRegistry
+  alias Ezagent.DomainGit.BootRegistration
+  alias Ezagent.DomainGit.TestSupport.{FakeGitAdapterA, FakeGitAdapterB}
+  alias Ezagent.Entity.GitTaskAccess
+
+  @actions [
+    :resolve_repository,
+    :create_change_request,
+    :read_change_request,
+    :list_checks,
+    :list_reviews
+  ]
+  @action_set Ezagent.ActionSet.GitTaskAccess
+
+  setup do
+    {:module, FakeGitAdapterA} = Code.ensure_loaded(FakeGitAdapterA)
+    {:module, FakeGitAdapterB} = Code.ensure_loaded(FakeGitAdapterB)
+    replace_registration([])
+    on_exit(fn -> replace_registration([]) end)
+    :ok
+  end
+
+  test "normal and repeated boot registers the complete action surface" do
+    Enum.each(@actions, fn action ->
+      assert {:ok, %{behavior: @action_set}} =
+               Ezagent.CapabilityRegistry.lookup_subject(GitTaskAccess, action)
+    end)
+
+    replace_registration([])
+
+    Enum.each(@actions, fn action ->
+      assert {:ok, %{behavior: @action_set}} =
+               Ezagent.CapabilityRegistry.lookup_subject(GitTaskAccess, action)
+    end)
+  end
+
+  test "adapter declaration and rollback never execute adapter callbacks" do
+    bomb = Ezagent.DomainGit.TestSupport.BootCallbackBomb
+    {:module, ^bomb} = Code.ensure_loaded(bomb)
+
+    assert :ok = replace_registration(adapters: [{"callback-bomb", bomb}])
+    assert {:ok, ^bomb} = AdapterRegistry.lookup_for_action_set("callback-bomb")
+
+    assert {:error, {:injected_registration_failure, 7}} =
+             replace_registration(
+               adapters: [{"callback-bomb", bomb}, {"never-reached", FakeGitAdapterB}],
+               fail_at: 7
+             )
+  end
+
+  test "Nth capability and adapter failures roll back attempt-owned rows only" do
+    assert {:error, {:injected_registration_failure, 3}} = replace_registration(fail_at: 3)
+    assert_no_actions()
+
+    preexisting = :resolve_repository
+    :ok = Ezagent.CapabilityRegistry.register(GitTaskAccess, preexisting, @action_set)
+    :ok = AdapterRegistry.register("preexisting-a", FakeGitAdapterA)
+
+    assert {:error, {:injected_registration_failure, 7}} =
+             replace_registration(
+               adapters: [
+                 {"preexisting-a", FakeGitAdapterA},
+                 {"attempt-b", FakeGitAdapterB}
+               ],
+               fail_at: 7
+             )
+
+    assert {:ok, %{behavior: @action_set}} =
+             Ezagent.CapabilityRegistry.lookup_subject(GitTaskAccess, preexisting)
+
+    assert {:ok, FakeGitAdapterA} = AdapterRegistry.lookup_for_action_set("preexisting-a")
+    assert :error = AdapterRegistry.lookup_for_action_set("attempt-b")
+  end
+
+  test "adapter registry restart reconciles declarations without partial ETS state" do
+    replace_registration(adapters: [{"boot-a", FakeGitAdapterA}, {"boot-b", FakeGitAdapterB}])
+
+    :ok = Supervisor.terminate_child(EzagentDomainGit.Application, AdapterRegistry)
+    assert {:ok, _pid} = Supervisor.restart_child(EzagentDomainGit.Application, AdapterRegistry)
+
+    assert_eventually(fn ->
+      AdapterRegistry.lookup_for_action_set("boot-a") == {:ok, FakeGitAdapterA} and
+        AdapterRegistry.lookup_for_action_set("boot-b") == {:ok, FakeGitAdapterB}
+    end)
+  end
+
+  test "later child failure rolls back the attempt and a subsequent application restart is complete" do
+    Enum.each(@actions, fn action ->
+      :ok = Ezagent.CapabilityRegistry.unregister(GitTaskAccess, action, @action_set)
+    end)
+
+    assert :ok = Application.stop(:ezagent_domain_git)
+
+    on_exit(fn ->
+      Application.delete_env(:ezagent_domain_git, :later_boot_children)
+      Application.ensure_all_started(:ezagent_domain_git)
+    end)
+
+    Application.put_env(:ezagent_domain_git, :later_boot_children, [
+      Ezagent.DomainGit.TestSupport.FailingBootChild
+    ])
+
+    assert {:error, _reason} = Application.ensure_all_started(:ezagent_domain_git)
+    assert :undefined = :ets.whereis(:ezagent_domain_git_adapter_registry)
+
+    assert_no_actions()
+
+    Application.delete_env(:ezagent_domain_git, :later_boot_children)
+    assert {:ok, _started} = Application.ensure_all_started(:ezagent_domain_git)
+
+    Enum.each(@actions, fn action ->
+      assert {:ok, %{behavior: @action_set}} =
+               Ezagent.CapabilityRegistry.lookup_subject(GitTaskAccess, action)
+    end)
+  end
+
+  defp replace_registration(opts) do
+    case Supervisor.terminate_child(EzagentDomainGit.Application, BootRegistration) do
+      :ok -> :ok
+      {:error, :not_found} -> :ok
+    end
+
+    case Supervisor.delete_child(EzagentDomainGit.Application, BootRegistration) do
+      :ok -> :ok
+      {:error, :not_found} -> :ok
+    end
+
+    case Supervisor.start_child(EzagentDomainGit.Application, {BootRegistration, opts}) do
+      {:ok, _pid} -> :ok
+      {:error, {reason, {:child, _, BootRegistration, _, _, _, _, _, _}}} -> {:error, reason}
+      {:error, reason} -> {:error, reason}
+    end
+  end
+
+  defp assert_no_actions do
+    Enum.each(@actions, fn action ->
+      assert :error = Ezagent.CapabilityRegistry.lookup_subject(GitTaskAccess, action)
+      assert :error = Ezagent.BehaviorRegistry.lookup(GitTaskAccess, action)
+    end)
+  end
+
+  defp assert_eventually(assertion, attempts \\ 50)
+
+  defp assert_eventually(assertion, attempts) when attempts > 0 do
+    if assertion.() do
+      :ok
+    else
+      Process.sleep(10)
+      assert_eventually(assertion, attempts - 1)
+    end
+  end
+
+  defp assert_eventually(_assertion, 0), do: flunk("condition did not become true")
+end

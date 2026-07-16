@@ -36,6 +36,12 @@ defmodule Ezagent.DomainGit.AdapterRegistry do
     end
   end
 
+  @doc "Removes a declaration only when it still points at the given module."
+  @spec unregister(provider_id(), module()) :: :ok
+  def unregister(provider_id, adapter_module)
+      when is_binary(provider_id) and is_atom(adapter_module),
+      do: GenServer.call(__MODULE__, {:unregister, provider_id, adapter_module})
+
   @doc false
   @spec lookup_for_action_set(provider_id()) ::
           {:ok, module()} | :error | {:error, :registry_unavailable}
@@ -60,7 +66,15 @@ defmodule Ezagent.DomainGit.AdapterRegistry do
         read_concurrency: true
       ])
 
-    {:ok, %{table: table}}
+    {:ok, %{table: table}, {:continue, :notify_boot_registration}}
+  end
+
+  @impl true
+  def handle_continue(:notify_boot_registration, state) do
+    if registration = Process.whereis(Ezagent.DomainGit.BootRegistration),
+      do: send(registration, :reconcile_adapters)
+
+    {:noreply, state}
   end
 
   @impl true
@@ -79,6 +93,16 @@ defmodule Ezagent.DomainGit.AdapterRegistry do
       end
 
     {:reply, reply, state}
+  end
+
+  @impl true
+  def handle_call({:unregister, provider_id, adapter_module}, _from, state) do
+    case :ets.lookup(@table, provider_id) do
+      [{^provider_id, ^adapter_module}] -> true = :ets.delete(@table, provider_id)
+      _ -> :ok
+    end
+
+    {:reply, :ok, state}
   end
 
   defp validate_provider_id(provider_id) when is_binary(provider_id) do
