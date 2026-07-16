@@ -43,8 +43,8 @@ Execute only Plan A from
 |---|---|---|---|
 | Baseline and ledger | complete | Worktree clean; rebased on current main; PR #1423 open Draft | `8fcbfe1b1` |
 | 1. Primitive inventory | complete | Secret Store absent; SSH parser absent; Cap signed/receiver-bound; OsProcess lifecycle-only; plugin rollback pattern reusable. See `docs/superpowers/notes/2026-07-16-git-provider-v1-a-inventory.md` | `8fcbfe1b1` |
-| 2. Same-UID reproduction | complete | Both mode-0600 known-path read and `/proc/<pid>/environ` observation reproduced under UID 1000; 2 tests, 0 failures. See `docs/superpowers/notes/2026-07-16-git-provider-v1-a-isolation-probe.md` | pending |
-| 3. Broker GO/NO-GO | pending | — | — |
+| 2. Same-UID reproduction | complete | Both mode-0600 known-path read and `/proc/<pid>/environ` observation reproduced under UID 1000; 2 tests, 0 failures. See `docs/superpowers/notes/2026-07-16-git-provider-v1-a-isolation-probe.md` | `1e8b913fd` |
+| 3. Broker GO/NO-GO | complete | Candidate D selected: no approved agent-inaccessible boundary. SSH remains disabled; public checkout + GitHub API is the viable Plan D route. See `docs/superpowers/notes/2026-07-16-git-provider-v1-a-broker-options.md` | pending |
 | 4. GitHub API request-plan prototype | pending | — | — |
 | 5. Decision/interface closeout | pending | — | — |
 
