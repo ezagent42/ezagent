@@ -72,7 +72,7 @@ defmodule Ezagent.DomainGit.AdapterRegistry do
   @impl true
   def handle_continue(:notify_boot_registration, state) do
     if registration = Process.whereis(Ezagent.DomainGit.BootRegistration),
-      do: send(registration, :reconcile_adapters)
+      do: send(registration, {:reconcile_adapters, self()})
 
     {:noreply, state}
   end

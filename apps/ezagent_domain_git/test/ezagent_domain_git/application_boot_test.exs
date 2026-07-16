@@ -122,6 +122,34 @@ defmodule EzagentDomainGit.ApplicationBootTest do
     :ok = AdapterRegistry.unregister("generation-a", FakeGitAdapterA)
   end
 
+  test "rapid registry restarts ignore stale and duplicate generation notifications" do
+    :ok = AdapterRegistry.unregister("rapid-a", FakeGitAdapterA)
+    replace_registration(adapters: [{"rapid-a", FakeGitAdapterA}])
+
+    :ok = :sys.suspend(BootRegistration)
+    :ok = Supervisor.terminate_child(EzagentDomainGit.Application, AdapterRegistry)
+
+    assert {:ok, first_generation} =
+             Supervisor.restart_child(EzagentDomainGit.Application, AdapterRegistry)
+
+    :ok = Supervisor.terminate_child(EzagentDomainGit.Application, AdapterRegistry)
+
+    assert {:ok, current_generation} =
+             Supervisor.restart_child(EzagentDomainGit.Application, AdapterRegistry)
+
+    refute first_generation == current_generation
+    :ok = :sys.resume(BootRegistration)
+
+    assert_eventually(fn ->
+      AdapterRegistry.lookup_for_action_set("rapid-a") == {:ok, FakeGitAdapterA}
+    end)
+
+    send(BootRegistration, {:reconcile_adapters, current_generation})
+    _state = :sys.get_state(BootRegistration)
+    replace_registration([])
+    assert :error = AdapterRegistry.lookup_for_action_set("rapid-a")
+  end
+
   test "TaskAccessSupervisor start failure follows the post-registration rollback path" do
     Enum.each(@actions, fn action ->
       :ok = Ezagent.CapabilityRegistry.unregister(GitTaskAccess, action, @action_set)

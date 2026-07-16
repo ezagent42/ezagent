@@ -32,6 +32,7 @@ defmodule Ezagent.DomainGit.BootRegistration do
         {:ok,
          %{
            desired_adapters: desired_adapters,
+           last_reconciled_generation: Process.whereis(AdapterRegistry),
            owned_adapters: owned_adapters(owned),
            owned_capabilities: owned_capabilities(owned)
          }}
@@ -49,17 +50,31 @@ defmodule Ezagent.DomainGit.BootRegistration do
   end
 
   @impl true
-  def handle_info(:reconcile_adapters, state) do
+  def handle_info({:reconcile_adapters, generation}, state) do
+    reconcile_generation(generation, Process.whereis(AdapterRegistry), state)
+  end
+
+  defp reconcile_generation(
+         generation,
+         generation,
+         %{last_reconciled_generation: generation} = state
+       ),
+       do: {:noreply, state}
+
+  defp reconcile_generation(generation, generation, state) do
     new_generation_state = %{state | owned_adapters: []}
 
     case reconcile_adapters(state.desired_adapters, new_generation_state) do
       {:ok, reconciled_state} ->
-        {:noreply, reconciled_state}
+        {:noreply, %{reconciled_state | last_reconciled_generation: generation}}
 
       {:error, reason, reconciled_state} ->
         {:stop, {:adapter_reconciliation_failed, reason}, reconciled_state}
     end
   end
+
+  defp reconcile_generation(_stale_generation, _current_generation, state),
+    do: {:noreply, state}
 
   defp register_all(registrations, fail_at) do
     registrations
