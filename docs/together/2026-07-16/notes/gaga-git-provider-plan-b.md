@@ -4,13 +4,13 @@
 
 **Track:** agent development bootstrap — provider-neutral Git domain spine
 
-**Owner:** gaga / Tasks 0–11 implementation stack
+**Owner:** gaga / Tasks 0–12 implementation stack
 
-**Worktree:** `/home/huangjiajia/ezagent/.worktrees/plan-b-task11-integration`
+**Worktree:** `/home/huangjiajia/ezagent/.worktrees/git-domain-spine`
 
-**Branch:** `test/git-task-dispatch-integration`
+**Branch:** `feat/git-domain-spine`
 
-**Baseline/head at Task 0 start:** `3ce1439afec1a1cfffd624fdff8667bb6f5b80a2`
+**Current rebased baseline:** `origin/main@6bfe3d1b3288c93c128449a1183922140db66217`
 
 **Stacked dependency:** Plan A PR #1423; this branch contains its landed decision
 record and does not claim #1423 is merged to `origin/main`.
@@ -40,9 +40,9 @@ code or tests; its verification is documentation/static consistency only.
 | Task 0 contract freeze | complete | Exact Plan A structs, callbacks/actions, and error union frozen; five auxiliary closed shapes corrected per architecture review |
 | Task 1 independent app scaffold | complete | Empty OTP supervision tree; exact approved umbrella deps `[:ezagent_core]`; dependency boundary test GREEN |
 | Tasks 2–9 domain implementation | complete | closed values/errors, adapter contract/registry, ephemeral Resource lifecycle, exact signed-cap fixture, authorized ActionSet dispatch, and atomic boot registration are present in the inherited stack |
-| Task 10 structural gates | parallel/open at Task 11 start | owned by the parallel core-gate slice; Task 11 does not edit its files or claim its result |
+| Task 10 structural gates | complete | provider-boundary, secret isolation, dynamic bypass, and URI scanner regression coverage integrated |
 | Task 11 integration proof | complete locally | real boot + pre-spawned Resource + two synchronized fakes + exact signed Cap + real Invocation/Router; exact routing/no cross-call, no-cap zero effects, stale zero mutation |
-| Task 12 verification/review/WIP handoff | open | no full precommit, CI, broad review, or WIP PR claimed; merge/deploy are separate lead-authorized operations |
+| Task 12 verification/review/WIP handoff | in progress | rebased current main; doc/architecture/per-app gates repaired; final precommit completed with only recorded core baseline/local-state failures; broad review and Draft PR remain |
 | External provider/operational breadth | out of scope | no GitHub, credentials, checkout/worktrees, Kanban, canary, merge, deploy, or #1360 final mount claimed |
 
 ## Changes
