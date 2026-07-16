@@ -12,7 +12,7 @@ defmodule Ezagent.Kind.TerminateTest do
   `terminate/1`; the call is idempotent (an absent URI returns `:ok`);
   and it stays best-effort under a garbage URI.
   """
-  use ExUnit.Case, async: false
+  use EzagentCore.DataCase, async: false
 
   alias Ezagent.Test.TestKind
 

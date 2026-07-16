@@ -184,6 +184,7 @@ defmodule EzagentWeb.WorldConversationTest do
     # Join so the member lands in the session slice members map.
     :ok =
       Ezagent.Invocation.dispatch(%Ezagent.Invocation{
+        origin: :trusted_internal,
         target: Ezagent.URI.with_action(session_uri, :session, :join),
         mode: :call,
         args: %{member: member_uri},
@@ -272,6 +273,7 @@ defmodule EzagentWeb.WorldConversationTest do
     # alice joins (she is NOT the viewer) → present in the session members.
     :ok =
       Ezagent.Invocation.dispatch(%Ezagent.Invocation{
+        origin: :trusted_internal,
         target: Ezagent.URI.with_action(session_uri, :session, :join),
         mode: :call,
         args: %{member: alice_uri},
@@ -318,6 +320,7 @@ defmodule EzagentWeb.WorldConversationTest do
     # a never-created session, so the session must exist before probing :attach.
     :ok =
       Ezagent.Invocation.dispatch(%Ezagent.Invocation{
+        origin: :trusted_internal,
         target: Ezagent.URI.with_action(session_uri, :session, :join),
         mode: :call,
         args: %{member: member_uri},
@@ -334,6 +337,7 @@ defmodule EzagentWeb.WorldConversationTest do
 
     attach = fn caller_uri, caps ->
       Ezagent.Invocation.dispatch(%Ezagent.Invocation{
+        origin: :trusted_internal,
         target: Ezagent.URI.with_action(session_uri, :session, :attach),
         mode: :call,
         args: %{filename: "x.txt"},
@@ -369,6 +373,7 @@ defmodule EzagentWeb.WorldConversationTest do
 
     :ok =
       Ezagent.Invocation.dispatch(%Ezagent.Invocation{
+        origin: :trusted_internal,
         target: Ezagent.URI.with_action(session_uri, :session, :join),
         mode: :call,
         args: %{member: no_attach_uri},
@@ -1704,6 +1709,7 @@ defmodule EzagentWeb.WorldConversationTest do
 
     :ok =
       Ezagent.Invocation.dispatch(%Ezagent.Invocation{
+        origin: :trusted_internal,
         target: Ezagent.URI.with_action(session_uri, :session, :join),
         mode: :call,
         args: %{member: anon_uri},

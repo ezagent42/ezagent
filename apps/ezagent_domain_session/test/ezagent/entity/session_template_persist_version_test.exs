@@ -23,6 +23,8 @@ defmodule Ezagent.Entity.SessionTemplatePersistVersionTest do
 
   use EzagentCore.DataCase, async: false
 
+  import Ezagent.Test.CapHelper, only: [signed_action_cap!: 2]
+
   alias Ezagent.{Invocation, KindRegistry}
   alias Ezagent.Ecto.KindSnapshot
   alias Ezagent.Entity.{SessionTemplate, User}
@@ -62,14 +64,16 @@ defmodule Ezagent.Entity.SessionTemplatePersistVersionTest do
 
   defp read(uri) do
     target = Ezagent.URI.new!("#{URI.to_string(uri)}?action=template.read")
+    admin = User.admin_uri()
 
     Invocation.dispatch(%Invocation{
+      origin: :trusted_internal,
       target: target,
       mode: :call,
       args: %{},
       ctx: %{
-        caller: User.admin_uri(),
-        caps: MapSet.new([Ezagent.Capability.admin_genesis_cap()]),
+        caller: admin,
+        caps: MapSet.new([signed_action_cap!(target, admin)]),
         reply: {:caller_inbox, self()}
       }
     })
@@ -178,15 +182,17 @@ defmodule Ezagent.Entity.SessionTemplatePersistVersionTest do
       track(wrong_uri)
 
       target = Ezagent.URI.new!("#{URI.to_string(wrong_uri)}?action=template.write")
+      admin = User.admin_uri()
 
       result =
         Invocation.dispatch(%Invocation{
+          origin: :trusted_internal,
           target: target,
           mode: :call,
           args: %{content: content},
           ctx: %{
-            caller: User.admin_uri(),
-            caps: MapSet.new([Ezagent.Capability.admin_genesis_cap()]),
+            caller: admin,
+            caps: MapSet.new([signed_action_cap!(target, admin)]),
             reply: {:caller_inbox, self()}
           }
         })

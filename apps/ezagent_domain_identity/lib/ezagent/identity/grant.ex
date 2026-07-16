@@ -26,8 +26,9 @@ defmodule Ezagent.Identity.Grant do
 
   ## The closed authorization-tag set
 
-  `prepare/4` derives the dispatch context from a single closed tagged value,
-  while `Ezagent.Cap` is the shared provenance primitive for grant and revoke.
+  `prepare/4` derives the dispatch context from a single closed tagged value.
+  Grant routes through `Ezagent.Cap.issue/3`; revoke transports the already
+  signed artifact without re-stamping or re-signing it.
   Each tag fixes BOTH which caps load into `ctx.caps` (the authorizer) AND the
   derived `granted_by` (always a real entity):
 
@@ -35,7 +36,6 @@ defmodule Ezagent.Identity.Grant do
   |-----|-------------------------|--------------|----------------------|
   | `{:held_by, actor}` | the actor's real cap slice | `actor` | `actor` |
   | `{:admin, admin}` | the admin's real cap slice | `admin` | `admin` |
-  | `{:rule, name, configurer}` | `[]` + `ctx.authorization_rule = name` | `configurer` | `configurer` |
 
   `{:held_by, actor}` subsumes self (actor == target owner), admin
   (actor holds admin caps), and #811 manager-delegation (actor holds a
@@ -68,7 +68,6 @@ defmodule Ezagent.Identity.Grant do
   @type authorization ::
           {:held_by, URI.t()}
           | {:admin, URI.t()}
-          | {:rule, atom(), URI.t()}
 
   @type grant_action :: :grant_cap | :revoke_cap
 
@@ -83,6 +82,23 @@ defmodule Ezagent.Identity.Grant do
   @spec grant_cap(URI.t(), Capability.t(), authorization()) :: :ok | {:error, term()}
   def grant_cap(%URI{} = target, %Capability{} = cap, authorization) do
     imperative_invocation(target, cap, authorization, :grant_cap)
+  end
+
+  @doc """
+  Issue and return a signed capability artifact without storing it.
+
+  This is the reviewed-code handoff for framework-owned principals that must
+  carry an inline capability immediately (for example, an internal worker
+  subscribing during activation). Issuance still runs through the target
+  Kind's cap-gated `K.grant`; this function adds no signer or key access.
+  """
+  @spec issue_cap(URI.t(), Capability.t(), authorization()) ::
+          {:ok, Capability.t()} | {:error, term()}
+  def issue_cap(%URI{} = grantee, %Capability{} = cap, authorization) do
+    case prepare(grantee, cap, authorization, :grant_cap) do
+      {:ok, {_target_uri, issued, _storage_ctx}} -> {:ok, issued}
+      {:error, _reason} = error -> error
+    end
   end
 
   @doc """
@@ -205,16 +221,14 @@ defmodule Ezagent.Identity.Grant do
 
   # ── CORE: prepare/4 — dispatch adapter over the Cap provenance seam ───
 
-  # Derives ctx.caps + ctx.caller + authorization_rule from the tag. Grant
-  # routes through Cap.issue/3; revoke routes through the SAME lower-level
-  # Cap.prepare_provenance/2 primitive without invoking grant authorization.
+  # Derives ctx.caps + ctx.caller from the tag. Grant routes through
+  # Cap.issue/3; revoke preserves the already-issued artifact without invoking
+  # grant authorization or creating a second signing path.
   # Returns the canonical {target_with_action, cap', ctx'} or {:error, _}.
   @spec prepare(URI.t(), Capability.t(), authorization(), grant_action()) ::
           {:ok, {URI.t(), Capability.t(), map()}} | {:error, term()}
   defp prepare(%URI{} = target, %Capability{} = cap, authorization, action)
        when action in [:grant_cap, :revoke_cap] do
-    {_caps, _caller, _rule} = derive_context(authorization)
-
     artifact_result =
       case action do
         :grant_cap -> Cap.issue(authorization, target, cap)
@@ -231,13 +245,6 @@ defmodule Ezagent.Identity.Grant do
       {:error, _} = error ->
         error
     end
-  end
-
-  # ── tag → {caps, caller, rule} ────────────────────────────────────────
-
-  defp derive_context(authorization) do
-    {caps, context} = Cap.authorization_context(authorization)
-    {caps, Map.fetch!(context, :caller), Map.get(context, :authorization_rule)}
   end
 
   # ── shared envelope helpers ───────────────────────────────────────────
@@ -288,7 +295,12 @@ defmodule Ezagent.Identity.Grant do
   # `mode: :call` into the ctx would override the Router's `:cast`
   # derivation and DEADLOCK the deliberate fire-and-forget grant at
   # `Session.membership.grant_first_join_owner_cap/2` (site #10).
-  defp storage_ctx(:grant_cap), do: %{caller: :vm_internal, caps: MapSet.new()}
+  defp storage_ctx(:grant_cap),
+    do: %{
+      caller: :vm_internal,
+      caps: MapSet.new(),
+      cap_delivery_producer: :identity_grant
+    }
 
   defp storage_ctx(:revoke_cap),
     do: %{caller: :vm_internal, caps: MapSet.new(), cap_delivery_producer: :identity_revoke}

@@ -148,8 +148,9 @@ defmodule Ezagent.Template.GenericSession do
                         granted_at: DateTime.utc_now()
                     }
                   ]),
-                reply: :ignore
-              }
+                reply: :ignore,
+              },
+              origin: :trusted_internal
             })
 
         _ ->

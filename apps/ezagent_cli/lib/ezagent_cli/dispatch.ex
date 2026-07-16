@@ -88,7 +88,8 @@ defmodule EzagentCli.Dispatch do
                 caps: caps,
                 reply: {:caller_inbox, self()},
                 deadline_ms: deadline_ms
-              }
+              },
+              origin: :trusted_internal
             }
 
             do_dispatch(inv, mode, deadline_ms)

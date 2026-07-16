@@ -52,7 +52,7 @@ defmodule EzagentPluginHello.HelloPublisherDispatchTest do
 
     # F1: a caller WITHOUT the :publish cap is rejected.
     result_denied =
-      Invocation.dispatch(%Invocation{
+      Invocation.dispatch(%Invocation{origin: :trusted_internal,
         target: target,
         mode: :call,
         args: args,
@@ -71,7 +71,7 @@ defmodule EzagentPluginHello.HelloPublisherDispatchTest do
       }
 
     result_allowed =
-      Invocation.dispatch(%Invocation{
+      Invocation.dispatch(%Invocation{origin: :trusted_internal,
         target: target,
         mode: :call,
         args: args,

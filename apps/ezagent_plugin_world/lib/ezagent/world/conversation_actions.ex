@@ -212,7 +212,8 @@ defmodule Ezagent.World.ConversationActions do
           target: target,
           mode: :cast,
           args: %{message: msg},
-          ctx: %{caller: caller, caps: caps, reply: :ignore}
+          ctx: %{caller: caller, caps: caps, reply: :ignore},
+          origin: :authenticated_external
         })
 
       case result do
@@ -690,7 +691,8 @@ defmodule Ezagent.World.ConversationActions do
         target: Ezagent.URI.with_action(session_uri, behavior_prefix, action),
         mode: :call,
         args: args,
-        ctx: %{caller: caller, caps: caps, reply: {:caller_inbox, self()}}
+        ctx: %{caller: caller, caps: caps, reply: {:caller_inbox, self()}},
+        origin: :authenticated_external
       })
 
     case result do
@@ -803,7 +805,8 @@ defmodule Ezagent.World.ConversationActions do
             target: Ezagent.URI.with_action(session_uri, :session, :join),
             mode: :call,
             args: %{member: member_uri},
-            ctx: %{caller: caller, caps: caps, reply: :ignore}
+            ctx: %{caller: caller, caps: caps, reply: :ignore},
+            origin: :authenticated_external
           })
 
         case result do
@@ -1096,7 +1099,8 @@ defmodule Ezagent.World.ConversationActions do
             target: Ezagent.URI.with_action(session_uri, :session, :join),
             mode: :call,
             args: %{member: caller_uri},
-            ctx: %{caller: caller_uri, caps: caps, reply: :ignore}
+            ctx: %{caller: caller_uri, caps: caps, reply: :ignore},
+            origin: :authenticated_external
           })
 
         case result do
@@ -1216,7 +1220,8 @@ defmodule Ezagent.World.ConversationActions do
         caller: socket.assigns.current_entity_uri,
         caps: MapSet.new(),
         reply: {:caller_inbox, self()}
-      }
+      },
+      origin: :authenticated_external
     })
   end
 

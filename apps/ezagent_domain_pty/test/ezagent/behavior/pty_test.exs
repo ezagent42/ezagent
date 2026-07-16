@@ -79,7 +79,8 @@ defmodule Ezagent.ActionSet.PtyTest do
 
     Enum.each(payloads, fn payload ->
       assert {:ok, %{bytes_written: 1}} =
-               Invocation.dispatch(%Invocation{
+               dispatch(%Invocation{
+                 origin: :trusted_internal,
                  target: target,
                  mode: :call,
                  args: %{bytes: payload},
@@ -104,8 +105,9 @@ defmodule Ezagent.ActionSet.PtyTest do
       reply: {:caller_inbox, self()}
     }
 
-    assert {:error, :unauthorized} =
-             Invocation.dispatch(%Invocation{
+    assert {:error, :missing_cap} =
+             dispatch(%Invocation{
+               origin: :trusted_internal,
                target: dispatch_target(agent_uri),
                mode: :call,
                args: %{bytes: "x"},
@@ -163,7 +165,8 @@ defmodule Ezagent.ActionSet.PtyTest do
     # passed and the handler ran.
     refute match?(
              {:error, :unauthorized},
-             Invocation.dispatch(%Invocation{
+             dispatch(%Invocation{
+               origin: :trusted_internal,
                target: restart_target(agent_uri),
                mode: :call,
                args: %{},
@@ -175,8 +178,9 @@ defmodule Ezagent.ActionSet.PtyTest do
   test "a manage cap for ANOTHER agent does NOT authorize pty.restart", %{agent_uri: agent_uri} do
     other = Ezagent.URI.new!("entity://team-alpha/agent/cc_someone-elses-agent")
 
-    assert {:error, :unauthorized} =
-             Invocation.dispatch(%Invocation{
+    assert {:error, :missing_cap} =
+             dispatch(%Invocation{
+               origin: :trusted_internal,
                target: restart_target(agent_uri),
                mode: :call,
                args: %{},
@@ -185,8 +189,9 @@ defmodule Ezagent.ActionSet.PtyTest do
   end
 
   test "a Pty cap does NOT authorize pty.restart either", %{agent_uri: agent_uri} do
-    assert {:error, :unauthorized} =
-             Invocation.dispatch(%Invocation{
+    assert {:error, :missing_cap} =
+             dispatch(%Invocation{
+               origin: :trusted_internal,
                target: restart_target(agent_uri),
                mode: :call,
                args: %{},
@@ -205,7 +210,8 @@ defmodule Ezagent.ActionSet.PtyTest do
     # `claude /login` into its PTY. That requires pty.write. The creator holds
     # ONE cap — the Manage cap from creation — and it must carry this.
     assert {:ok, %{bytes_written: 1}} =
-             Invocation.dispatch(%Invocation{
+             dispatch(%Invocation{
+               origin: :trusted_internal,
                target: dispatch_target(agent_uri),
                mode: :call,
                args: %{bytes: "x"},
@@ -225,8 +231,9 @@ defmodule Ezagent.ActionSet.PtyTest do
       reply: {:caller_inbox, self()}
     }
 
-    assert {:error, :unauthorized} =
-             Invocation.dispatch(%Invocation{
+    assert {:error, :missing_cap} =
+             dispatch(%Invocation{
+               origin: :trusted_internal,
                target: dispatch_target(agent_uri),
                mode: :call,
                args: %{bytes: "x"},
@@ -237,8 +244,9 @@ defmodule Ezagent.ActionSet.PtyTest do
   test "a manage cap for ANOTHER agent does NOT authorize pty.write", %{agent_uri: agent_uri} do
     other = Ezagent.URI.new!("entity://team-alpha/agent/cc_someone-elses-agent")
 
-    assert {:error, :unauthorized} =
-             Invocation.dispatch(%Invocation{
+    assert {:error, :missing_cap} =
+             dispatch(%Invocation{
+               origin: :trusted_internal,
                target: dispatch_target(agent_uri),
                mode: :call,
                args: %{bytes: "x"},
@@ -261,7 +269,8 @@ defmodule Ezagent.ActionSet.PtyTest do
     {:ok, _kind_pid} = EzagentDomainPty.Test.PtyAgentFixture.spawn(bare_uri)
 
     assert {:error, :no_pty_server} =
-             Invocation.dispatch(%Invocation{
+             dispatch(%Invocation{
+               origin: :trusted_internal,
                target: dispatch_target(bare_uri),
                mode: :call,
                args: %{bytes: "x"},
@@ -283,4 +292,10 @@ defmodule Ezagent.ActionSet.PtyTest do
 
   defp pty_slice_state(%{state: state}) when is_map(state), do: state
   defp pty_slice_state(slice), do: slice
+
+  defp dispatch(%Invocation{} = invocation) do
+    invocation
+    |> signed_invocation!(:pty_test)
+    |> Invocation.dispatch()
+  end
 end

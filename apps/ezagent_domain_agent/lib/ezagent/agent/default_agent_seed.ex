@@ -195,7 +195,8 @@ defmodule Ezagent.Agent.DefaultAgentSeed do
                  }
                ]),
              reply: {:caller_inbox, self()}
-           }
+           },
+           origin: :trusted_internal
          }) do
       {:ok, %{content: _}} -> :ok
       {:error, _} = err -> err

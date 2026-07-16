@@ -117,26 +117,32 @@ defmodule Ezagent.Workspace.ResponsibilityAssignment do
     |> Kernel.>(0)
   end
 
-  @doc "The P9 supervisor responsibility cap bundle for one workspace."
-  @spec supervisor_caps(URI.t()) :: [Capability.t()]
-  def supervisor_caps(%URI{} = workspace_uri) do
+  @doc "The P9 supervisor cap bundle signed by one concrete Session authority."
+  @spec supervisor_caps_for_session(URI.t(), URI.t()) :: [Capability.t()]
+  def supervisor_caps_for_session(%URI{} = session_uri, %URI{} = workspace_uri) do
     [
-      cap(:session, Ezagent.ActionSet.Session, :read_unfiltered, workspace_uri),
-      cap(:session, Ezagent.ActionSet.Turn, :claim, workspace_uri),
-      cap(:session, Ezagent.ActionSet.Turn, :settle, workspace_uri),
-      cap(:session, Ezagent.ActionSet.Surface, :approve, workspace_uri),
-      cap(:session, Ezagent.ActionSet.Surface, :commit_settlement, workspace_uri),
-      cap(:session, Ezagent.ActionSet.SupervisorApproval, :submit_verdict, workspace_uri)
+      cap(:session, Ezagent.ActionSet.Session, :read_unfiltered, session_uri, workspace_uri),
+      cap(:session, Ezagent.ActionSet.Turn, :claim, session_uri, workspace_uri),
+      cap(:session, Ezagent.ActionSet.Turn, :settle, session_uri, workspace_uri),
+      cap(:session, Ezagent.ActionSet.Surface, :approve, session_uri, workspace_uri),
+      cap(:session, Ezagent.ActionSet.Surface, :commit_settlement, session_uri, workspace_uri),
+      cap(
+        :session,
+        Ezagent.ActionSet.SupervisorApproval,
+        :submit_verdict,
+        session_uri,
+        workspace_uri
+      )
     ]
   end
 
   @doc "Responsibilities whose assignment grants a standing cap bundle."
   @spec bundled_caps(String.t(), URI.t()) :: [Capability.t()]
-  def bundled_caps("supervisor", %URI{} = workspace_uri), do: supervisor_caps(workspace_uri)
+  def bundled_caps("supervisor", %URI{} = _workspace_uri), do: []
   def bundled_caps(_responsibility, _workspace_uri), do: []
 
-  defp cap(kind, behavior, action, workspace_uri) do
-    Capability.cap(kind, behavior, action, {:within_workspace, workspace_uri}, workspace_uri)
+  defp cap(kind, behavior, action, session_uri, workspace_uri) do
+    Capability.cap(kind, behavior, action, Ezagent.URI.instance(session_uri), workspace_uri)
   end
 
   defp validate_responsibility(""), do: {:error, :empty_responsibility}

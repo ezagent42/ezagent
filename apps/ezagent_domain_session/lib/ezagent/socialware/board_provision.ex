@@ -260,7 +260,8 @@ defmodule Ezagent.Socialware.BoardProvision do
            target: target,
            mode: :call,
            args: %{},
-           ctx: %{caller: assistant_uri, caps: MapSet.new(), reply: {:caller_inbox, self()}}
+           ctx: %{caller: assistant_uri, caps: MapSet.new(), reply: {:caller_inbox, self()}},
+           origin: :trusted_internal
          }) do
       {:ok, _} -> true
       {:error, _} -> false

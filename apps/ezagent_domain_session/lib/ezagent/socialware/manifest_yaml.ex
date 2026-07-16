@@ -99,8 +99,7 @@ defmodule Ezagent.Socialware.ManifestYaml do
       workspace_uri: ws,
       caps:
         MapSet.new([
-          Governance.manage_cap(name, ws, admin),
-          Ezagent.Capability.admin_genesis_cap()
+          Governance.manage_cap(name, ws, admin)
         ])
     }
   end

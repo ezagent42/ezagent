@@ -316,7 +316,8 @@ defmodule Ezagent.Socialware.AnonUser.GC do
             }
           ]),
         reply: :ignore
-      }
+      },
+      origin: :trusted_internal
     })
 
     :ok

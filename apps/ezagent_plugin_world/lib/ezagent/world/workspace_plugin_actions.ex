@@ -619,7 +619,8 @@ defmodule Ezagent.World.WorkspacePluginActions do
            target: target,
            mode: :call,
            args: %{name: name, template: content},
-           ctx: %{caller: caller, caps: MapSet.new(), reply: :ignore}
+           ctx: %{caller: caller, caps: MapSet.new(), reply: :ignore},
+           origin: :authenticated_external
          }) do
       :ok -> :ok
       {:ok, _} -> :ok

@@ -860,7 +860,7 @@ defmodule EzagentDomainInstanceMessage.Application do
             Ezagent.Kind.spawn(User, %{uri: uri, initial_caps: initial_caps})
 
           {:ok, "agent"} ->
-            spawn_agent(uri)
+            AgentModuleResolver.spawn_agent(uri)
 
           other ->
             {:error, {:unknown_entity_host, other}}
@@ -982,44 +982,4 @@ defmodule EzagentDomainInstanceMessage.Application do
   # wizard's call to `Ezagent.Workspace.create_session/3` does the
   # bind + admin join in one place — same code path for every session,
   # including the default.
-
-  # PR #149 (SPEC v2 §5.14) + unify-uri-query PR-B — agent flavor
-  # resolution without `Ezagent.AgentTypeRegistry` or URI-name parsing.
-  # Three-step lookup:
-  #
-  # 1. Snapshot — restart case. KindSnapshot stores `kind_type` for
-  #    every persisted Kind; the chat plugin maps it back to the Kind
-  #    module. Fast, single DB row by URI.
-  # 2. Workspace template — first-spawn-after-template-creation case.
-  #    Walks `Ezagent.Workspace.Store.list_all/0` looking for a
-  #    session_template whose `agent_uri` matches; the template's
-  #    `class` string ("cc.agent" / "curl.agent" / ...) maps to a Kind
-  #    module.
-  # 3. Stored flavor — boot-time auto-spawn / CLI-driven spawn case.
-  #    The owning domain resolves `:flavor` through `Ezagent.UriQuery`,
-  #    then maps the stored flavor through `Ezagent.AgentFlavorRegistry`
-  #    (plugin authoring contract SPEC §6.3 / codex MEDIUM-5 — each
-  #    agent-flavor plugin declares `agent_flavors/0`,
-  #    `Ezagent.Plugin.boot/1` registers it).
-  defp spawn_agent(%URI{} = uri) do
-    case AgentModuleResolver.lookup_kind_module_for_agent(uri) do
-      {:ok, kind_module} ->
-        # V1 prevention (Allen 2026-05-21): route via Ezagent.Kind.spawn/2.
-        # Each agent Kind (Agent / CurlAgent / PyAgent) declares its own
-        # supervisor/0 callback; chat plugin no longer hardcodes
-        # `EzagentDomainInstanceMessage.AgentSupervisor` (CurlAgent in particular
-        # has its own InstanceSupervisor under the curl_agent plugin).
-        Ezagent.Kind.spawn(kind_module, %{uri: uri})
-
-      {:error, reason} ->
-        {:error, reason}
-
-      :error ->
-        {:error, {:no_kind_module_for_agent, URI.to_string(uri)}}
-    end
-  end
-
-  # Agent-URI → Kind-module resolution lives in
-  # `EzagentDomainInstanceMessage.AgentModuleResolver` (#25 Phase-3
-  # PR-3P); `spawn_agent/1` above delegates to it then spawns.
 end

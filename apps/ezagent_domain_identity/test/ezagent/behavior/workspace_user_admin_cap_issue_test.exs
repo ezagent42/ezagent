@@ -28,6 +28,8 @@ defmodule Ezagent.ActionSet.WorkspaceUserAdminCapIssueTest do
   """
   use EzagentCore.DataCase, async: false
 
+  import Ezagent.Test.CapHelper, only: [signed_required_cap!: 5]
+
   alias Ezagent.Entity.User
   alias Ezagent.Workspace
 
@@ -40,18 +42,19 @@ defmodule Ezagent.ActionSet.WorkspaceUserAdminCapIssueTest do
 
     # The workspace admin DURABLY holds exactly one cap: the right to call
     # create_user. Nothing else. This is the whole threat model.
-    {:ok, _} =
-      Ezagent.Users.create(ws_admin, nil, [
-        %Ezagent.Capability{
-          kind: :workspace,
-          behavior: Ezagent.ActionSet.WorkspaceUserAdmin,
-          action: :create_user,
-          instance: ws,
-          workspace_uri: ws,
-          granted_by: User.admin_uri(),
-          granted_at: DateTime.utc_now()
-        }
-      ])
+    create_user_target =
+      Ezagent.URI.with_action(ws, :workspace_user_admin, :create_user)
+
+    ws_admin_cap =
+      signed_required_cap!(
+        create_user_target,
+        :workspace,
+        Ezagent.ActionSet.WorkspaceUserAdmin,
+        :create_user,
+        ws_admin
+      )
+
+    {:ok, _} = Ezagent.Users.create(ws_admin, nil, [ws_admin_cap])
 
     # `Cap.issue({:held_by, _})` loads the granter's DURABLE authority through
     # `Ezagent.Identity` (the configured `authority_loader`), which reads the
@@ -72,9 +75,18 @@ defmodule Ezagent.ActionSet.WorkspaceUserAdminCapIssueTest do
 
     ws_admin_ctx = %{caller: ws_admin, caps: held}
 
+    admin_cap =
+      signed_required_cap!(
+        create_user_target,
+        :workspace,
+        Ezagent.ActionSet.WorkspaceUserAdmin,
+        :create_user,
+        User.admin_uri()
+      )
+
     admin_ctx = %{
       caller: User.admin_uri(),
-      caps: MapSet.new([Ezagent.Capability.admin_genesis_cap()])
+      caps: MapSet.new([admin_cap])
     }
 
     {:ok, ws_name: ws_name, ws: ws, ws_admin_ctx: ws_admin_ctx, admin_ctx: admin_ctx}
@@ -108,8 +120,8 @@ defmodule Ezagent.ActionSet.WorkspaceUserAdminCapIssueTest do
   end
 
   describe "a workspace admin cannot hand out authority they do not hold" do
-    test "minting a FULL WILDCARD (i.e. a second global admin) is refused", ctx do
-      assert {:error, {:cap_grant_refused, _cap, :wildcard_action_grant_requires_admin_authority}} =
+    test "minting a targetless FULL WILDCARD is refused", ctx do
+      assert {:error, {:cap_grant_refused, _cap, :concrete_target_required}} =
                create_user(ctx.ws, ctx.ws_admin_ctx, ctx.ws_name, "esc-wild", "*")
 
       refute_user_exists(ctx.ws_name, "esc-wild")
@@ -146,16 +158,12 @@ defmodule Ezagent.ActionSet.WorkspaceUserAdminCapIssueTest do
     end
   end
 
-  describe "admin retains full authority" do
-    test "admin may still mint a wildcard", ctx do
-      assert {:ok, %{caps_granted: 1}} =
+  describe "even admin must name a concrete target authority" do
+    test "admin cannot mint a targetless wildcard", ctx do
+      assert {:error, {:cap_grant_refused, _cap, :concrete_target_required}} =
                create_user(ctx.ws, ctx.admin_ctx, ctx.ws_name, "admin-minted", "*")
 
-      assert Enum.any?(
-               caps_of(ctx.ws_name, "admin-minted"),
-               &(&1.kind == :any and &1.behavior == :any)
-             ),
-             "admin's wildcard grant must land"
+      refute_user_exists(ctx.ws_name, "admin-minted")
     end
   end
 
@@ -163,8 +171,17 @@ defmodule Ezagent.ActionSet.WorkspaceUserAdminCapIssueTest do
     test "granted_by is the ACTUAL caller, not a laundered admin", ctx do
       # The old code stamped `granted_by: admin_uri()` no matter who called, so
       # the audit trail lied about who handed the authority out.
+      concrete_workspace_cap =
+        "workspace.workspace@workspace://#{ctx.ws_name}"
+
       assert {:ok, %{caps_granted: 1}} =
-               create_user(ctx.ws, ctx.admin_ctx, ctx.ws_name, "prov", "workspace.read")
+               create_user(
+                 ctx.ws,
+                 ctx.admin_ctx,
+                 ctx.ws_name,
+                 "prov",
+                 concrete_workspace_cap
+               )
 
       granted =
         ctx.ws_name

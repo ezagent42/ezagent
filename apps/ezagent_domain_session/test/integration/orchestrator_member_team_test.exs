@@ -31,6 +31,7 @@ defmodule EzagentDomainInstanceMessage.Integration.OrchestratorMemberTeamTest do
   alias Ezagent.Orchestrator.Tools
   alias Ezagent.Routing.{Matcher, Resolver}
   alias Ezagent.Socialware.DefinitionRegistry
+  import Ezagent.Test.CapHelper, only: [ensure_workspace_kind!: 1, signed_action_cap!: 2]
 
   defp uniq, do: System.unique_integer([:positive])
 
@@ -64,10 +65,12 @@ defmodule EzagentDomainInstanceMessage.Integration.OrchestratorMemberTeamTest do
     name = "pr8-seed-#{n}"
     uri = Ezagent.URI.new!("template://system/agent/#{name}")
     {:ok, _} = Ezagent.SpawnRegistry.spawn(uri)
+    target = URI.new!("#{URI.to_string(uri)}?action=template.write")
 
     {:ok, _} =
       Invocation.dispatch(%Invocation{
-        target: URI.new!("#{URI.to_string(uri)}?action=template.write"),
+        origin: :trusted_internal,
+        target: target,
         mode: :call,
         args: %{
           content: %{
@@ -80,7 +83,7 @@ defmodule EzagentDomainInstanceMessage.Integration.OrchestratorMemberTeamTest do
         },
         ctx: %{
           caller: User.admin_uri(),
-          caps: MapSet.new([Ezagent.Capability.admin_genesis_cap()]),
+          caps: MapSet.new([signed_action_cap!(target, User.admin_uri())]),
           reply: {:caller_inbox, self()}
         }
       })
@@ -130,7 +133,16 @@ defmodule EzagentDomainInstanceMessage.Integration.OrchestratorMemberTeamTest do
     {:ok, _pid} = Ezagent.Kind.spawn(Agent, %{uri: orchestrator_uri})
     :ok = Ezagent.WorkspaceRegistry.bind(orchestrator_uri, @workspace_uri)
 
-    caps = orchestrator_caps(session_uri, orchestrator_uri)
+    ensure_workspace_kind!(@workspace_uri)
+
+    :ok =
+      Ezagent.Entity.Session.Orchestrator.Caps.grant_orchestrator_scoped_caps(
+        orchestrator_uri,
+        session_uri,
+        User.admin_uri()
+      )
+
+    caps = orchestrator_uri |> Ezagent.EntityCaps.load() |> MapSet.new()
 
     # PR-8 (transport #53): `Tools` is now driven directly with the
     # orchestrator's caller `opts` — the exact context the session-side
@@ -147,32 +159,6 @@ defmodule EzagentDomainInstanceMessage.Integration.OrchestratorMemberTeamTest do
     ]
 
     {mcp, session_uri, @workspace_uri, orchestrator_uri}
-  end
-
-  # The four delegated caps the Generator grants an orchestrator (§1.4).
-  defp orchestrator_caps(session_uri, orchestrator_uri) do
-    base = [
-      %Capability{
-        kind: :session,
-        behavior: :any,
-        action: :any,
-        instance: {:within_session, session_uri},
-        workspace_uri: @workspace_uri,
-        granted_by: User.admin_uri(),
-        granted_at: DateTime.utc_now()
-      },
-      %Capability{
-        kind: :agent,
-        behavior: :any,
-        action: :any,
-        instance: {:spawned_by, orchestrator_uri},
-        workspace_uri: @workspace_uri,
-        granted_by: User.admin_uri(),
-        granted_at: DateTime.utc_now()
-      }
-    ]
-
-    MapSet.new(base)
   end
 
   test "orchestrator builds a relay team via members + rule-sets + legend, and it routes (NO baton)" do
@@ -307,19 +293,7 @@ defmodule EzagentDomainInstanceMessage.Integration.OrchestratorMemberTeamTest do
              "(got #{inspect(row.created_by)}); otherwise session_rule_set_rules drops it"
 
     # And it round-trips into the saved template's installed Socialware definition.
-    caps =
-      MapSet.put(
-        mcp[:caps],
-        %Capability{
-          kind: :session_template,
-          behavior: Ezagent.ActionSet.Template,
-          action: :any,
-          instance: {:within_workspace, @workspace_uri},
-          workspace_uri: @workspace_uri,
-          granted_by: User.admin_uri(),
-          granted_at: DateTime.utc_now()
-        }
-      )
+    caps = mcp[:caps]
 
     save_opts = [
       caller: orch,
@@ -354,12 +328,16 @@ defmodule EzagentDomainInstanceMessage.Integration.OrchestratorMemberTeamTest do
 
     {mcp, session_uri, _ws, _orch} = orchestrated_session(n)
 
-    # Strip the {:within_session, S} cap — the caller is now unauthorized.
+    # Strip the concrete Session.join cap — the caller is now unauthorized.
     no_session_caps =
       mcp[:caps]
       |> Enum.reject(fn
-        %Capability{kind: :session, instance: {:within_session, _}} -> true
-        _ -> false
+        %Capability{kind: :session, behavior: SessionBehavior, instance: %URI{} = target} = cap ->
+          Ezagent.Capability.action_of(cap) == :join and
+            Ezagent.URI.stable_key(target) == Ezagent.URI.stable_key(session_uri)
+
+        _ ->
+          false
       end)
       |> MapSet.new()
 

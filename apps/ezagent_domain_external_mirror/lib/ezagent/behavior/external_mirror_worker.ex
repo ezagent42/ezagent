@@ -179,6 +179,7 @@ defmodule Ezagent.ActionSet.ExternalMirrorWorker do
        adapter_id: Map.fetch!(args, :adapter_id),
        target_id: Map.fetch!(args, :target_id),
        opts: Map.get(args, :opts, %{}),
+       subscribe_cap: Map.fetch!(args, :subscribe_cap),
        # Remediation SPEC 2026-05-30 (C-A): seed the FIRST-subscribe cursor
        # from the Session's publisher cursor captured at BIND time (passed by
        # `Behavior.ExternalMirror.do_bind` as `initial_publisher_cursor`).
@@ -244,9 +245,10 @@ defmodule Ezagent.ActionSet.ExternalMirrorWorker do
   worker resumes from the right point.
   """
   @impl Ezagent.Lifecycle
-  def activate(state, %{self_uri: _self_uri}) do
+  def activate(state, %{self_uri: self_uri}) do
     adapter_module = AdapterRegistry.lookup!(state.adapter_id)
     binding_module = BindingRegistry.lookup!(state.adapter_id)
+    publish_cap = issue_publish_cap!(self_uri)
 
     # §10-R1 (remediation SPEC 2026-05-30 C-A) — DEFER the Session-Publisher
     # subscribe to a DETACHED Task, off this Worker's own GenServer.
@@ -287,6 +289,7 @@ defmodule Ezagent.ActionSet.ExternalMirrorWorker do
           adapter_module: adapter_module,
           binding_module: binding_module,
           binding_state: binding_state,
+          publish_cap: publish_cap,
           # OPTIMISTICALLY `:active` (the Worker IS the subscriber pid). The
           # Publisher fans replay/live events straight to the Worker mailbox
           # during the Task's `subscribe_from`; those `:publisher_event`
@@ -342,7 +345,7 @@ defmodule Ezagent.ActionSet.ExternalMirrorWorker do
       # T1: declarative cross-Kind dispatch effect (was an imperative
       # `Router.dispatch/1` call). The framework re-enters the Router
       # with this %Cmd{}; same CapBAC + idempotency + audit as before.
-      {:ok, [dispatch_publish_effect(self_uri, event)]}
+      {:ok, [dispatch_publish_effect(self_uri, event, ctx.transients[:publish_cap])]}
     else
       # Defensive: events shouldn't arrive while subscription_state
       # is :pending (we're not subscribed yet). Log + drop per
@@ -396,8 +399,9 @@ defmodule Ezagent.ActionSet.ExternalMirrorWorker do
   def handle_signal(:ezagent_worker_initial_subscribe, ctx) do
     session_uri = ctx.read.(:session_uri, nil)
     persisted_cursor = ctx.read.(:publisher_cursor, :latest)
+    subscribe_cap = ctx.read.(:subscribe_cap, nil)
 
-    spawn_initial_subscribe_task(session_uri, ctx.self_uri, persisted_cursor)
+    spawn_initial_subscribe_task(session_uri, ctx.self_uri, persisted_cursor, subscribe_cap)
     # Still optimistically `:active` from activate — nothing to commit yet.
     :ignore
   end
@@ -430,14 +434,27 @@ defmodule Ezagent.ActionSet.ExternalMirrorWorker do
   # `subscriber_pid` (so the Session fans publisher events to the Worker, not
   # the Task) and the Worker URI as the CapBAC caller; it sends the result
   # back as a signal.
-  defp spawn_initial_subscribe_task(nil, _self_uri, _cursor), do: :ok
+  defp spawn_initial_subscribe_task(nil, _self_uri, _cursor, _subscribe_cap), do: :ok
 
-  defp spawn_initial_subscribe_task(%URI{} = session_uri, %URI{} = self_uri, persisted_cursor) do
+  defp spawn_initial_subscribe_task(
+         %URI{} = session_uri,
+         %URI{} = self_uri,
+         persisted_cursor,
+         %Ezagent.Capability{} = subscribe_cap
+       ) do
     worker_pid = self()
 
     {:ok, _task_pid} =
       Task.Supervisor.start_child(Ezagent.ExternalMirror.SubscribeTaskSup, fn ->
-        result = do_initial_subscribe(session_uri, self_uri, worker_pid, persisted_cursor)
+        result =
+          do_initial_subscribe(
+            session_uri,
+            self_uri,
+            worker_pid,
+            persisted_cursor,
+            subscribe_cap
+          )
+
         send(worker_pid, {:ezagent_worker_subscribe_result, result})
       end)
 
@@ -452,13 +469,31 @@ defmodule Ezagent.ActionSet.ExternalMirrorWorker do
   # correct catch-up — `:latest` would silently DROP the spawn→subscribe
   # window. Dedup by `last_published_send_key` keeps replayed-but-already-
   # published events from re-hitting the external transport.
-  defp do_initial_subscribe(%URI{} = session_uri, %URI{} = self_uri, worker_pid, persisted_cursor) do
-    case subscribe_to_session_publisher_from(session_uri, self_uri, persisted_cursor, worker_pid) do
+  defp do_initial_subscribe(
+         %URI{} = session_uri,
+         %URI{} = self_uri,
+         worker_pid,
+         persisted_cursor,
+         subscribe_cap
+       ) do
+    case subscribe_to_session_publisher_from(
+           session_uri,
+           self_uri,
+           persisted_cursor,
+           subscribe_cap,
+           worker_pid
+         ) do
       {:ok, current_cursor} ->
         {:ok, current_cursor}
 
       {:error, :cursor_out_of_window} ->
-        subscribe_to_session_publisher_from(session_uri, self_uri, :earliest, worker_pid)
+        subscribe_to_session_publisher_from(
+          session_uri,
+          self_uri,
+          :earliest,
+          subscribe_cap,
+          worker_pid
+        )
 
       {:error, _reason} = err ->
         err
@@ -530,8 +565,14 @@ defmodule Ezagent.ActionSet.ExternalMirrorWorker do
   # or `:ignore`. `publisher_cursor` is read from `ctx.read` (state).
   defp attempt_resubscribe(ctx, session_uri, self_uri, attempt) do
     persisted_cursor = ctx.read.(:publisher_cursor, :latest)
+    subscribe_cap = ctx.read.(:subscribe_cap, nil)
 
-    case subscribe_to_session_publisher_from(session_uri, self_uri, persisted_cursor) do
+    case subscribe_to_session_publisher_from(
+           session_uri,
+           self_uri,
+           persisted_cursor,
+           subscribe_cap
+         ) do
       {:ok, current_cursor} ->
         {:ok, [{:set, :publisher_cursor, current_cursor}]}
 
@@ -546,7 +587,7 @@ defmodule Ezagent.ActionSet.ExternalMirrorWorker do
             "falling back to :latest. session=#{URI.to_string(session_uri)}"
         )
 
-        case subscribe_to_session_publisher_from(session_uri, self_uri, :latest) do
+        case subscribe_to_session_publisher_from(session_uri, self_uri, :latest, subscribe_cap) do
           {:ok, current_cursor} ->
             {:ok, [{:set, :publisher_cursor, current_cursor}]}
 
@@ -869,12 +910,19 @@ defmodule Ezagent.ActionSet.ExternalMirrorWorker do
   # `{:publisher_event, _}` fan-out + replay. Passed EXPLICITLY because the
   # initial subscribe runs in a detached Task. The re-subscribe paths
   # (`attempt_resubscribe`) run on the Worker process and default to `self()`.
-  defp subscribe_to_session_publisher_from(session_uri, self_uri, cursor, subscriber_pid \\ nil)
+  defp subscribe_to_session_publisher_from(
+         session_uri,
+         self_uri,
+         cursor,
+         subscribe_cap,
+         subscriber_pid \\ nil
+       )
 
   defp subscribe_to_session_publisher_from(
          %URI{} = session_uri,
          %URI{} = self_uri,
          cursor,
+         %Ezagent.Capability{} = subscribe_cap,
          sub_pid
        ) do
     subscriber_pid = sub_pid || self()
@@ -890,7 +938,7 @@ defmodule Ezagent.ActionSet.ExternalMirrorWorker do
         # comment block above for the self-authority rationale.
         %{
           caller: self_uri,
-          caps: worker_subscribe_caps(),
+          caps: [subscribe_cap],
           reply: {:caller_inbox, self()},
           # 2026-05-26 (Allen e2e blocker): Session.handle_call queues
           # subscribe_from behind concurrent list_bindings polls, chat
@@ -924,7 +972,11 @@ defmodule Ezagent.ActionSet.ExternalMirrorWorker do
   # "no imperative dispatch in developer code" Phase C gate). Routing the
   # publish through the Router (not invoking the binding inline) keeps step
   # 5.5 CapBAC + telemetry + idempotency on the publish path (P14 hygiene).
-  defp dispatch_publish_effect(%URI{} = self_uri, %Event{} = event) do
+  defp dispatch_publish_effect(
+         %URI{} = self_uri,
+         %Event{} = event,
+         %Ezagent.Capability{} = publish_cap
+       ) do
     # Scope idempotency to the Worker URI. Publisher cursors are local to
     # one publisher/session, while Ezagent.Idempotency is process-wide;
     # cursor-only keys would make different workers with cursor 1 collide.
@@ -944,7 +996,7 @@ defmodule Ezagent.ActionSet.ExternalMirrorWorker do
        # the internals comment block above.
        %{
          caller: self_uri,
-         caps: worker_publish_caps(self_uri),
+         caps: [publish_cap],
          reply: :ignore,
          command_uuid: idem,
          idempotency_key: idem
@@ -965,36 +1017,26 @@ defmodule Ezagent.ActionSet.ExternalMirrorWorker do
 
   # `:publish` self-dispatch cap — GENUINE self-authority, so `granted_by` =
   # `self_uri` (real entity per #154). Shape = `required_caps/0[:publish]`.
-  @doc false
-  def worker_publish_caps(%URI{} = self_uri) do
-    [
-      %Ezagent.Capability{
-        Ezagent.Capability.cap(:external_mirror_worker, __MODULE__, :publish)
-        | granted_by: self_uri,
-          granted_at: DateTime.utc_now()
-      }
-    ]
-  end
+  defp issue_publish_cap!(self_uri) do
+    requested =
+      Ezagent.Capability.cap(
+        :external_mirror_worker,
+        __MODULE__,
+        :publish,
+        Ezagent.URI.instance(self_uri),
+        Ezagent.Capability.workspace_of(self_uri)
+      )
 
-  # The `publisher.subscribe_from` cap — authority over the SESSION's
-  # Publisher (NOT self-authority), so `granted_by` is the genesis admin
-  # entity `entity://system/user/admin` (a real accountable entity, not a
-  # `system://` principal). The formal scope-bounded `{:within_session}`
-  # Cap 3 delegated at bind time (SPEC §7.3) stays PR-EM-3 future work. Same
-  # shape the deleted `worker-publish` entry held; `PublisherSI` is named at
-  # runtime (lives in `:ezagent_domain_session` — alias would cycle).
-  @doc false
-  def worker_subscribe_caps do
-    [
-      %Ezagent.Capability{
-        Ezagent.Capability.cap(
-          :session,
-          Ezagent.ActionSet.Publisher.SessionImpl,
-          :subscribe_from
-        )
-        | granted_by: Ezagent.URI.user(:system, :admin),
-          granted_at: DateTime.utc_now()
-      }
-    ]
+    case Ezagent.Identity.Grant.issue_cap(
+           self_uri,
+           requested,
+           {:admin, Ezagent.Entity.User.admin_uri()}
+         ) do
+      {:ok, cap} ->
+        cap
+
+      {:error, reason} ->
+        raise "failed to issue ExternalMirrorWorker publish cap: #{inspect(reason)}"
+    end
   end
 end

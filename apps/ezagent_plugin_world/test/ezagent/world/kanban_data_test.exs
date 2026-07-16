@@ -87,7 +87,7 @@ defmodule Ezagent.World.KanbanDataTest do
   end
 
   defp dispatch(uri, action, args, %{caller: caller, caps: caps}) do
-    Ezagent.Invocation.dispatch(%Ezagent.Invocation{
+    Ezagent.Invocation.dispatch(%Ezagent.Invocation{origin: :trusted_internal,
       target: Ezagent.URI.with_action(uri, :kanban, action),
       mode: :call,
       args: args,

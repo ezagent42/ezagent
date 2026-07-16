@@ -14,21 +14,13 @@ defmodule Ezagent.Invariants.CapIssueChokepointTest do
   alias EzagentCore.CapsJsonScanner, as: Scanner
 
   @mint_candidates %{
-    "apps/ezagent_core/lib/ezagent/cap.ex" => 1,
+    "apps/ezagent_core/lib/ezagent/cap/authority.ex" => 1,
     "apps/ezagent_core/lib/ezagent/capability/normalize.ex" => 3,
     "apps/ezagent_core/lib/ezagent/capability/parser.ex" => 2,
     "apps/ezagent_core/lib/ezagent/capability_registry.ex" => 1,
     "apps/ezagent_core/lib/ezagent/creator_grant.ex" => 1,
-    "apps/ezagent_core/lib/ezagent/kind/runtime.ex" => 1,
-    "apps/ezagent_domain_identity/lib/ezagent/behavior/identity.ex" => 2,
-    "apps/ezagent_domain_identity/lib/ezagent/identity.ex" => 2,
-    "apps/ezagent_domain_session/lib/ezagent/behavior/template.ex" => 2,
+    "apps/ezagent_domain_identity/lib/ezagent/identity.ex" => 1,
     "apps/ezagent_domain_session/lib/ezagent/e2e/scenarios/agent_contract_g4.ex" => 3,
-    "apps/ezagent_domain_session/lib/ezagent/entity/session/orchestrator/caps.ex" => 3,
-    "apps/ezagent_domain_session/lib/ezagent/entity/session_template.ex" => 1,
-    "apps/ezagent_domain_session/lib/ezagent/orchestrator/tools/templates.ex" => 1,
-    "apps/ezagent_domain_session/lib/ezagent_domain_instance_message/session_creator/definition_agents.ex" =>
-      1,
     "apps/ezagent_domain_session/lib/ezagent_domain_instance_message/session_creator/materializer.ex" =>
       4,
     "apps/ezagent_domain_session/lib/ezagent_domain_instance_message/session_creator/rollback.ex" =>
@@ -38,8 +30,8 @@ defmodule Ezagent.Invariants.CapIssueChokepointTest do
     "apps/ezagent_plugin_world/lib/ezagent/world/layout_bootstrap.ex" => 1,
     "apps/ezagent_plugin_world/lib/ezagent/world/workspace_plugin_actions.ex" => 1
   }
-  @mint_candidate_files 20
-  @mint_candidate_sites 33
+  @mint_candidate_files 13
+  @mint_candidate_sites 21
 
   @caps_writers %{
     "apps/ezagent_domain_identity/lib/ezagent/behavior/identity.ex" => 1
@@ -131,7 +123,7 @@ defmodule Ezagent.Invariants.CapIssueChokepointTest do
     revoke = between(identity, "def handle_revoke_cap", "defp uri_to_str")
     writer = between(identity, "defp set_caps_effect", "defp normalize_artifact")
 
-    assert store =~ "Ezagent.Cap.verify_for(cap_struct"
+    assert store =~ "Ezagent.Cap.storable_for?(cap_struct"
     assert persist =~ "set_caps_effect(new_caps)"
     assert store =~ "set_caps_effect(new_caps)"
     assert revoke =~ "set_caps_effect(new_caps)"

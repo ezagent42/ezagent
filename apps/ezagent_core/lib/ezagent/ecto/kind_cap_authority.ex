@@ -25,29 +25,38 @@ defmodule Ezagent.Ecto.KindCapAuthority do
     field :inserted_at, :utc_datetime_usec
   end
 
+  @doc false
   @spec active(String.t()) :: %__MODULE__{} | nil
   def active(uri) when is_binary(uri) do
     from(row in __MODULE__, where: row.uri == ^uri and row.active == true)
     |> Repo.one()
   end
 
+  @doc false
   @spec list(String.t()) :: [%__MODULE__{}]
   def list(uri) when is_binary(uri) do
     from(row in __MODULE__, where: row.uri == ^uri, order_by: [asc: row.generation])
     |> Repo.all()
   end
 
+  @doc false
   @spec insert(map()) :: {:ok, %__MODULE__{}} | {:error, Ecto.Changeset.t()}
   def insert(attrs) when is_map(attrs) do
     %__MODULE__{}
     |> Ecto.Changeset.change(attrs)
-    |> Ecto.Changeset.unique_constraint([:uri, :generation])
+    |> Ecto.Changeset.unique_constraint([:uri, :generation],
+      name: :kind_cap_authorities_pkey
+    )
+    |> Ecto.Changeset.unique_constraint([:uri, :generation],
+      name: :kind_cap_authorities_uri_generation_index
+    )
     |> Ecto.Changeset.unique_constraint(:uri,
       name: :kind_cap_authorities_one_active_per_uri
     )
     |> Repo.insert()
   end
 
+  @doc false
   @spec retire_active(String.t()) :: :ok
   def retire_active(uri) when is_binary(uri) do
     from(row in __MODULE__, where: row.uri == ^uri and row.active == true)

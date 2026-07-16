@@ -1,17 +1,9 @@
 defmodule EzagentCore.Invariants.DispatchUsesRequiredCapsStructTest do
   @moduledoc """
-  PR-CC-2-v2 §10(c) — dispatch step 5.5 (the authz chokepoint) MUST
-  read `behavior.required_caps/0` + `Kind.holds_cap?/2` to authorize
-  an invocation. The old path (`Capability.cap_for_action/3` + plain
-  `Capability.matches?/2` against `ctx.caps`) is the LEGACY fallback
-  for Behaviors that haven't declared `required_caps/0` yet (test
-  support shims); production Behaviors MUST declare.
-
-  This invariant verifies the runtime module's source references the
-  required-caps reading + Kind.holds_cap? gateway. A future refactor
-  that drops either reference would regress the structural goal of
-  this PR — every dispatch passes through the declarative-cap
-  chokepoint.
+  Dispatch step 5.5 MUST delegate to the target Kind's central capability
+  verifier. The verifier derives the concrete required capability, matches
+  the immutable intent, and verifies the target authority signature. Runtime
+  must not retain a parallel `Kind.holds_cap?` authorization path.
 
   See SPEC docs/superpowers/specs/2026-05-25-caps-cleanup-v1-r4-impl.md §10(g).
   """
@@ -23,18 +15,21 @@ defmodule EzagentCore.Invariants.DispatchUsesRequiredCapsStructTest do
   defp runtime_path,
     do: Path.join(umbrella_root(), "apps/ezagent_core/lib/ezagent/kind/runtime.ex")
 
-  test "Ezagent.Kind.Runtime references behavior.required_caps()" do
+  defp verifier_path,
+    do: Path.join(umbrella_root(), "apps/ezagent_core/lib/ezagent/cap/verifier.ex")
+
+  test "Runtime delegates authorization to the central verifier" do
     source = File.read!(runtime_path())
 
-    assert source =~ "behavior_module.required_caps()",
-           "runtime.ex must call behavior_module.required_caps() at step 5.5"
+    assert source =~ "Ezagent.Cap.Verifier.authorize("
+    refute source =~ "Ezagent.Kind.holds_cap?"
   end
 
-  test "Ezagent.Kind.Runtime references Ezagent.Kind.holds_cap?/3" do
-    source = File.read!(runtime_path())
+  test "central verifier binds action intent and verifies current target authority" do
+    source = File.read!(verifier_path())
 
-    assert source =~ "Ezagent.Kind.holds_cap?",
-           "runtime.ex must call Ezagent.Kind.holds_cap?/3 at step 5.5"
+    assert source =~ "Enum.find(verified, &Capability.matches?(&1, needed))"
+    assert source =~ "Authority.verify_current(cap, presenter)"
   end
 
   test "Ezagent.Kind.Runtime references Behavior.workspace_scoped?/1" do

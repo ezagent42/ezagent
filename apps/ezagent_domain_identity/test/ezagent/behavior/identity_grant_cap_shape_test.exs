@@ -18,6 +18,8 @@ defmodule Ezagent.ActionSet.IdentityGrantCapShapeTest do
   """
   use EzagentCore.DataCase, async: false
 
+  import Ezagent.Test.CapHelper, only: [authority_signed_cap_as!: 4]
+
   alias Ezagent.ActionSet.IdentityAdmin
   alias Ezagent.Capability
 
@@ -43,6 +45,10 @@ defmodule Ezagent.ActionSet.IdentityGrantCapShapeTest do
   # auxiliary effects. Dispatch-parity through Kind.Runtime is covered
   # by `identity_migration_parity_test.exs`.
   defp invoke_shim(:grant_cap, slice, args, ctx) do
+    cap = Capability.normalize!(args.cap, ctx.caller)
+    {:ok, authority} = Ezagent.Cap.Authority.open(cap.instance, cap.kind)
+    cap = authority_signed_cap_as!(authority, ctx.caller, ctx.self_uri, cap)
+
     handler_ctx =
       Map.put(ctx, :read, fn key, default ->
         case key do
@@ -51,7 +57,7 @@ defmodule Ezagent.ActionSet.IdentityGrantCapShapeTest do
         end
       end)
 
-    {:ok, result, effects} = IdentityAdmin.handle_grant_cap(args, handler_ctx)
+    {:ok, result, effects} = IdentityAdmin.handle_grant_cap(%{cap: cap}, handler_ctx)
 
     new_caps =
       case Enum.find(effects, &match?({:set, :caps, _}, &1)) do

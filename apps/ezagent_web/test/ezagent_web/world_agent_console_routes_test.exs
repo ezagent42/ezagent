@@ -202,6 +202,7 @@ defmodule EzagentWeb.WorldAgentConsoleRoutesTest do
   defp join_member!(%URI{} = session_uri, %URI{} = agent_uri) do
     result =
       Ezagent.Invocation.dispatch(%Ezagent.Invocation{
+        origin: :trusted_internal,
         target: Ezagent.URI.with_action(session_uri, :session, :join),
         mode: :call,
         args: %{member: agent_uri},

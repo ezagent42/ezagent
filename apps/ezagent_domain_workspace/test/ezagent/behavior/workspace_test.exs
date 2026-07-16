@@ -172,6 +172,7 @@ defmodule Ezagent.ActionSet.WorkspaceTest do
       # the user before driving the action.
       {:ok, _} = Ezagent.Users.create(member_uri, nil, [])
       slice = slice(%{})
+      _authority = install_test_authority!(workspace_uri, :workspace)
 
       ctx = %{self_uri: workspace_uri}
 
@@ -517,7 +518,7 @@ defmodule Ezagent.ActionSet.WorkspaceTest do
   end
 
   describe "Behavior contract" do
-    test "actions/0 lists all 14 actions" do
+    test "actions/0 lists all actions" do
       # SPEC 2026-05-25-agent-create-cli-gui-parity added `:create_agent`
       # as the 10th action — unified entry for CLI + LV agent creation.
       # SPEC 2026-05-26-session-create-orchestrator-unified Gap C added
@@ -538,6 +539,9 @@ defmodule Ezagent.ActionSet.WorkspaceTest do
                :assign_role,
                :unassign_role,
                :list_templates,
+               :list_agent_templates,
+               :list_session_templates,
+               :write_session_templates,
                :add_template,
                :remove_template,
                :list_routing_rules,

@@ -53,25 +53,20 @@ defmodule Ezagent.Entity.Session.Orchestrator.Caps do
          %URI{} = owner_uri,
          %URI{} = session_workspace
        ) do
-    desired = build_desired_caps(orchestrator_uri, session_uri, owner_uri, session_workspace)
+    desired = build_desired_caps(session_uri, session_workspace)
     # This reconciliation runs immediately after materialization, while the
     # transport may still be settling. Read the Identity slice directly so
     # deciding what to issue never dispatches through the readiness gate.
     current = Ezagent.EntityCaps.load(orchestrator_uri)
 
-    {genesis_caps, rule_caps} =
-      desired
-      |> Enum.split_with(&orchestrator_delegation_cap?/1)
-
     to_grant =
-      rule_caps
-      |> Enum.filter(&Ezagent.ActionSet.IdentityAdmin.rule_cap_bounded?/1)
-      |> Kernel.++(genesis_caps)
+      desired
       |> Enum.reject(fn want ->
         Enum.any?(current, &cap_equal_ignoring_metadata?(&1, want))
       end)
 
-    with {:ok, issued} <- issue_scoped_caps(orchestrator_uri, owner_uri, to_grant),
+    with :ok <- Ezagent.Identity.TargetAuthority.ensure(owner_uri, session_uri),
+         {:ok, issued} <- issue_scoped_caps(orchestrator_uri, owner_uri, session_uri, to_grant),
          :ok <- absorb_scoped_caps(orchestrator_uri, issued) do
       :ok
     else
@@ -82,12 +77,12 @@ defmodule Ezagent.Entity.Session.Orchestrator.Caps do
   # Authorize the complete desired set before the first artifact is handed to
   # the grantee. This preserves all-or-nothing ISSUE ordering even though
   # self-storage itself is deliberately fire-and-forget.
-  defp issue_scoped_caps(orchestrator_uri, owner_uri, caps) do
-    target = Ezagent.URI.instance(orchestrator_uri)
-
+  defp issue_scoped_caps(orchestrator_uri, owner_uri, session_uri, caps) do
     caps
     |> Enum.reduce_while({:ok, []}, fn cap, {:ok, issued} ->
-      case Ezagent.Cap.issue(grant_tag_for(cap, owner_uri), target, cap) do
+      authorization = grant_tag_for(cap, owner_uri, session_uri)
+
+      case Ezagent.Cap.issue(authorization, orchestrator_uri, cap) do
         {:ok, artifact} -> {:cont, {:ok, [artifact | issued]}}
         {:error, reason} -> {:halt, {:error, {:issue_failed, cap, reason}}}
       end
@@ -132,85 +127,57 @@ defmodule Ezagent.Entity.Session.Orchestrator.Caps do
         %URI{} = owner_uri,
         %URI{} = workspace_uri
       ) do
-    desired = build_desired_caps(orchestrator_uri, session_uri, owner_uri, workspace_uri)
+    desired = build_desired_caps(session_uri, workspace_uri)
 
     desired
-    |> Enum.filter(fn cap ->
-      orchestrator_delegation_cap?(cap) or
-        Ezagent.ActionSet.IdentityAdmin.rule_cap_bounded?(cap)
-    end)
     |> Enum.each(fn cap ->
-      _ = Ezagent.Identity.Grant.revoke_cap(orchestrator_uri, cap, grant_tag_for(cap, owner_uri))
+      _ =
+        Ezagent.Identity.Grant.revoke_cap(
+          orchestrator_uri,
+          cap,
+          grant_tag_for(cap, owner_uri, session_uri)
+        )
     end)
 
     :ok
   end
 
-  defp grant_tag_for(%Ezagent.Capability{} = cap, %URI{} = owner_uri) do
-    if orchestrator_delegation_cap?(cap) do
-      {:held_by, owner_uri}
+  defp grant_tag_for(%Ezagent.Capability{instance: %URI{} = target}, owner_uri, session_uri) do
+    if same_uri?(target, session_uri) do
+      if same_uri?(owner_uri, Ezagent.Entity.User.admin_uri()),
+        do: {:admin, owner_uri},
+        else: {:held_by, owner_uri}
     else
-      tag_for_rule(owner_uri)
+      {:admin, Ezagent.Entity.User.admin_uri()}
     end
   end
 
-  # Authorization tag for retained rule-bounded template caps. Orchestrator's
-  # two delegation caps are bounded by session/spawn lineage but intentionally
-  # behavior-wildcard; those use the owner's held authority without widening the
-  # generic rule-grant predicate.
-  defp tag_for_rule(%URI{} = owner_uri),
-    do: {:rule, :template_materialize, owner_uri}
+  defp build_desired_caps(%URI{} = session_uri, %URI{} = session_workspace) do
+    session_caps =
+      Ezagent.CapabilityRegistry.subjects_for_kind(Ezagent.Entity.Session)
+      |> Enum.reject(&Ezagent.Cap.Verifier.non_cap_action?(&1.behavior, &1.action))
+      |> Enum.map(fn subject ->
+        Ezagent.Capability.cap(
+          :session,
+          subject.behavior,
+          subject.action,
+          session_uri,
+          session_workspace
+        )
+      end)
 
-  defp orchestrator_delegation_cap?(%Ezagent.Capability{
-         kind: kind,
-         behavior: :any,
-         action: :any,
-         instance: instance
-       })
-       when kind in [:session, :agent] and
-              (is_tuple(instance) and tuple_size(instance) == 2) do
-    elem(instance, 0) in [:within_session, :spawned_by] and match?(%URI{}, elem(instance, 1))
-  end
+    workspace_caps =
+      for action <- [:list_agent_templates, :list_session_templates, :write_session_templates] do
+        Ezagent.Capability.cap(
+          :workspace,
+          Ezagent.ActionSet.Workspace,
+          action,
+          session_workspace,
+          session_workspace
+        )
+      end
 
-  defp orchestrator_delegation_cap?(_), do: false
-
-  defp build_desired_caps(
-         %URI{} = orchestrator_uri,
-         %URI{} = session_uri,
-         %URI{} = owner_uri,
-         %URI{} = session_workspace
-       ) do
-    # Cap #1 + #2 — unconditional scope-bounded delegation.
-    # SPEC 2026-05-27 capability-action-axis — orchestrator delegation
-    # is intentionally broad within the bounded scope (within-session
-    # for Cap #1, spawned-by for Cap #2). `action: :any` matches the
-    # `behavior: :any` axis — symmetric wildcard. The bound is the
-    # instance scope tuple, not the action narrowing.
-    unconditional = [
-      %Ezagent.Capability{
-        kind: :session,
-        behavior: :any,
-        action: :any,
-        instance: {:within_session, session_uri},
-        workspace_uri: session_workspace,
-        granted_by: owner_uri,
-        granted_at: nil
-      },
-      %Ezagent.Capability{
-        kind: :agent,
-        behavior: :any,
-        action: :any,
-        instance: {:spawned_by, orchestrator_uri},
-        workspace_uri: session_workspace,
-        granted_by: owner_uri,
-        granted_at: nil
-      }
-    ]
-
-    # Caps #3/#4 — gated by owner-cap preflight (§1.4).
-    template_caps = delegable_template_caps(owner_uri, session_workspace)
-
-    unconditional ++ template_caps
+    session_caps ++ workspace_caps
   end
 
   @doc """
@@ -238,51 +205,7 @@ defmodule Ezagent.Entity.Session.Orchestrator.Caps do
       a.granted_by == b.granted_by
   end
 
-  # ─────────────────────────────────────────────────────────────────────
-
-  # Owner-cap preflight for caps #3 and #4  (KEPT verbatim — round-1 §1.4)
-  # ─────────────────────────────────────────────────────────────────────
-
-  defp delegable_template_caps(%URI{} = owner_uri, %URI{} = session_workspace) do
-    # Owner authority must come from the non-spoofable held-cap loader used by
-    # `Cap.issue/3`, not from a readiness-gated call to the owner process.
-    owner_caps = Ezagent.Identity.read_held_caps(owner_uri)
-
-    workspace_name = Ezagent.URI.workspace_name!(session_workspace)
-
-    candidates = [
-      {:session_template, Ezagent.URI.template(workspace_name, :session, "_preflight@_")},
-      {:agent_template, Ezagent.URI.template(workspace_name, :agent, :_preflight)}
-    ]
-
-    candidates
-    |> Enum.filter(fn {kind, representative_uri} ->
-      needed = %{
-        kind: kind,
-        behavior: Ezagent.ActionSet.Template,
-        # SPEC 2026-05-27 capability-action-axis — orchestrator
-        # template delegation spans `:read`, `:write`, `:instantiate`,
-        # `:fork` (Tools.update_agent_template + save_template_as +
-        # fork + Generator instantiate). Bound by instance scope
-        # `:within_workspace`; action axis stays `:any` so orchestrator
-        # tooling works without one cap per action.
-        action: :any,
-        instance: representative_uri,
-        workspace_uri: session_workspace
-      }
-
-      Enum.any?(owner_caps, &Ezagent.Capability.matches?(&1, needed))
-    end)
-    |> Enum.map(fn {kind, _representative_uri} ->
-      %Ezagent.Capability{
-        kind: kind,
-        behavior: Ezagent.ActionSet.Template,
-        action: :any,
-        instance: {:within_workspace, session_workspace},
-        workspace_uri: session_workspace,
-        granted_by: owner_uri,
-        granted_at: nil
-      }
-    end)
+  defp same_uri?(%URI{} = left, %URI{} = right) do
+    Ezagent.URI.stable_key(left) == Ezagent.URI.stable_key(right)
   end
 end

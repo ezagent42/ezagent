@@ -79,7 +79,7 @@ defmodule Ezagent.Invocation do
         }
 
   @enforce_keys [:target, :mode, :args, :ctx]
-  defstruct [:target, :mode, :args, :ctx, origin: :trusted_internal]
+  defstruct [:target, :mode, :args, :ctx, origin: nil]
 
   @type t :: %__MODULE__{
           target: URI.t(),
@@ -119,10 +119,11 @@ defmodule Ezagent.Invocation do
     {:error, :unsupported_mode}
   end
 
-  def dispatch(%__MODULE__{target: target, mode: mode, ctx: ctx} = inv) do
+  def dispatch(%__MODULE__{target: target, mode: mode, ctx: ctx, origin: origin} = inv) do
     instance_uri = Ezagent.URI.instance(target)
 
-    with :ok <-
+    with :ok <- Ezagent.DispatchOrigin.validate(origin, ctx),
+         :ok <-
            Ezagent.WorkspaceOwnerGate.assert_local_owner_for_uri(
              instance_uri,
              {:dispatch, target}

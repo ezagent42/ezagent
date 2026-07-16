@@ -264,7 +264,7 @@ defmodule Ezagent.Socialware.AnonPublicViewGrantTest do
       target = Ezagent.URI.with_action(session, :session, :join)
 
       result =
-        Ezagent.Invocation.dispatch(%Ezagent.Invocation{
+        Ezagent.Invocation.dispatch(%Ezagent.Invocation{origin: :trusted_internal,
           target: target,
           mode: :call,
           args: %{member: anon},
@@ -290,7 +290,7 @@ defmodule Ezagent.Socialware.AnonPublicViewGrantTest do
       target_b = Ezagent.URI.with_action(session_b, :session, :join)
 
       result =
-        Ezagent.Invocation.dispatch(%Ezagent.Invocation{
+        Ezagent.Invocation.dispatch(%Ezagent.Invocation{origin: :trusted_internal,
           target: target_b,
           mode: :call,
           args: %{member: anon_a},

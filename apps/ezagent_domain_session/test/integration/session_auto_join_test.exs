@@ -73,7 +73,9 @@ defmodule EzagentDomainInstanceMessage.Integration.SessionAutoJoinTest do
       admin = User.admin_uri()
 
       {:ok, session_uri, _meta} =
-        EzagentDomainInstanceMessage.SessionCreator.create_session(short, admin, template_name: "default")
+        EzagentDomainInstanceMessage.SessionCreator.create_session(short, admin,
+          template_name: "default"
+        )
 
       assert wait_until(fn ->
                {members, _monitors, _slice} = session_members(session_uri)
@@ -98,7 +100,9 @@ defmodule EzagentDomainInstanceMessage.Integration.SessionAutoJoinTest do
       admin = User.admin_uri()
 
       {:ok, session_uri, _meta} =
-        EzagentDomainInstanceMessage.SessionCreator.create_session(short, admin, template_name: "default")
+        EzagentDomainInstanceMessage.SessionCreator.create_session(short, admin,
+          template_name: "default"
+        )
 
       # Wait for the creator-auto-join cast to land.
       assert wait_until(fn ->
@@ -125,15 +129,17 @@ defmodule EzagentDomainInstanceMessage.Integration.SessionAutoJoinTest do
       # monitors AND must NOT install a fresh ref (the existing one
       # is for the current pid).
       target = URI.new!("#{URI.to_string(session_uri)}?action=session.join")
+      cap = Ezagent.Test.CapHelper.signed_action_cap!(target, admin)
 
       :ok =
         Ezagent.Invocation.dispatch(%Ezagent.Invocation{
+          origin: :trusted_internal,
           target: target,
           mode: :cast,
           args: %{member: admin},
           ctx: %{
             caller: Ezagent.Entity.User.admin_uri(),
-            caps: MapSet.new([Ezagent.Capability.admin_genesis_cap()]),
+            caps: MapSet.new([cap]),
             reply: :ignore
           }
         })
@@ -153,7 +159,9 @@ defmodule EzagentDomainInstanceMessage.Integration.SessionAutoJoinTest do
       admin = User.admin_uri()
 
       {:ok, session_uri, _meta} =
-        EzagentDomainInstanceMessage.SessionCreator.create_session(short, admin, template_name: "default")
+        EzagentDomainInstanceMessage.SessionCreator.create_session(short, admin,
+          template_name: "default"
+        )
 
       # Wait for the creator-auto-join cast to land.
       assert wait_until(fn ->
@@ -167,16 +175,18 @@ defmodule EzagentDomainInstanceMessage.Integration.SessionAutoJoinTest do
       # Dispatch chat.join 5 more times — every one should be a no-op
       # at the slice level (online + monitor alive → short-circuit).
       target = URI.new!("#{URI.to_string(session_uri)}?action=session.join")
+      cap = Ezagent.Test.CapHelper.signed_action_cap!(target, admin)
 
       for _ <- 1..5 do
         :ok =
           Ezagent.Invocation.dispatch(%Ezagent.Invocation{
+            origin: :trusted_internal,
             target: target,
             mode: :cast,
             args: %{member: admin},
             ctx: %{
               caller: Ezagent.Entity.User.admin_uri(),
-              caps: MapSet.new([Ezagent.Capability.admin_genesis_cap()]),
+              caps: MapSet.new([cap]),
               reply: :ignore
             }
           })
@@ -271,7 +281,9 @@ defmodule EzagentDomainInstanceMessage.Integration.SessionAutoJoinTest do
     admin = User.admin_uri()
 
     {:ok, session_uri, _meta} =
-      EzagentDomainInstanceMessage.SessionCreator.create_session("#{prefix}-#{uniq()}", admin, template_name: "default")
+      EzagentDomainInstanceMessage.SessionCreator.create_session("#{prefix}-#{uniq()}", admin,
+        template_name: "default"
+      )
 
     {session_uri, admin}
   end
@@ -316,27 +328,35 @@ defmodule EzagentDomainInstanceMessage.Integration.SessionAutoJoinTest do
   end
 
   defp join_cast(session_uri, member_uri, facets) do
+    target = URI.new!("#{URI.to_string(session_uri)}?action=session.join")
+
     Ezagent.Invocation.dispatch(%Ezagent.Invocation{
-      target: URI.new!("#{URI.to_string(session_uri)}?action=session.join"),
+      origin: :trusted_internal,
+      target: target,
       mode: :cast,
       args: Map.put(facets, :member, member_uri),
-      ctx: join_ctx(:ignore)
+      ctx: join_ctx(target, :ignore)
     })
   end
 
   defp join_call(session_uri, member_uri, facets) do
+    target = URI.new!("#{URI.to_string(session_uri)}?action=session.join")
+
     Ezagent.Invocation.dispatch(%Ezagent.Invocation{
-      target: URI.new!("#{URI.to_string(session_uri)}?action=session.join"),
+      origin: :trusted_internal,
+      target: target,
       mode: :call,
       args: Map.put(facets, :member, member_uri),
-      ctx: join_ctx({:caller_inbox, self()})
+      ctx: join_ctx(target, {:caller_inbox, self()})
     })
   end
 
-  defp join_ctx(reply) do
+  defp join_ctx(target, reply) do
+    admin = Ezagent.Entity.User.admin_uri()
+
     %{
-      caller: Ezagent.Entity.User.admin_uri(),
-      caps: MapSet.new([Ezagent.Capability.admin_genesis_cap()]),
+      caller: admin,
+      caps: MapSet.new([Ezagent.Test.CapHelper.signed_action_cap!(target, admin)]),
       reply: reply
     }
   end

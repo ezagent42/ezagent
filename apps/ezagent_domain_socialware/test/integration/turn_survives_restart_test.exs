@@ -16,7 +16,7 @@ defmodule EzagentDomainSocialware.Integration.TurnSurvivesRestartTest do
   end
 
   defp dispatch(session_uri, action, args) do
-    Invocation.dispatch(%Invocation{
+    Invocation.dispatch(%Invocation{origin: :trusted_internal,
       target: target(session_uri, action),
       mode: :call,
       args: args,

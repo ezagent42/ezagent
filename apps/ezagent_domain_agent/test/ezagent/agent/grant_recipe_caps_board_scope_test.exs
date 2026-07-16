@@ -53,8 +53,8 @@ defmodule Mix.Tasks.Ezagent.Agent.GrantRecipeCapsBoardScopeTest do
 
   defp uniq, do: System.unique_integer([:positive])
 
-  defp spawn_bare_agent do
-    uri = Ezagent.URI.agent(:system, "t7g_grantee_#{uniq()}")
+  defp spawn_bare_agent(uri \\ nil) do
+    uri = uri || Ezagent.URI.agent(:system, "t7g_grantee_#{uniq()}")
 
     {:ok, _pid} =
       Ezagent.Kind.spawn(Ezagent.Entity.Agent, %{
@@ -126,6 +126,7 @@ defmodule Mix.Tasks.Ezagent.Agent.GrantRecipeCapsBoardScopeTest do
     test "grant_recipe_caps/4 scopes the override behavior to the BOARD instance" do
       agent_uri = spawn_bare_agent()
       board_uri = Ezagent.URI.agent(:system, "t7g_board_#{uniq()}")
+      _board_uri = spawn_bare_agent(board_uri)
 
       assert :ok =
                GrantRecipeCaps.grant_recipe_caps(
@@ -160,6 +161,16 @@ defmodule Mix.Tasks.Ezagent.Agent.GrantRecipeCapsBoardScopeTest do
       {:ok, agent_pid} = Ezagent.KindRegistry.lookup(agent_uri)
       :ok = Ezagent.ReadyGate.put(agent_uri, :not_ready)
       buffer_size_before = Ezagent.PendingDelivery.buffer_size(agent_uri)
+
+      applied_before =
+        Repo.aggregate(
+          from(delivery in Delivery,
+            where: delivery.target_uri == ^URI.to_string(agent_uri),
+            where: delivery.op == :absorb_cap,
+            where: delivery.status == :applied
+          ),
+          :count
+        )
 
       recipe = %{
         requested_caps: [
@@ -206,24 +217,28 @@ defmodule Mix.Tasks.Ezagent.Agent.GrantRecipeCapsBoardScopeTest do
 
       assert eventually(fn ->
                with {:ok, slice} <- Ezagent.Kind.get_slice(agent_uri, :identity) do
-                 caps = slice |> Ezagent.Kind.normalize_slice_view() |> Map.fetch!(:caps)
-
-                 Enum.any?(caps, fn cap ->
+                 slice
+                 |> Ezagent.Kind.normalize_slice_view()
+                 |> Map.fetch!(:caps)
+                 |> Enum.any?(fn cap ->
                    cap.behavior == Ezagent.ActionSet.ApiKeys and
                      cap.action == :put_api_key and
                      cap.instance == Ezagent.URI.instance(agent_uri)
-                 end) and
-                   Repo.aggregate(
-                     from(delivery in Delivery,
-                       where: delivery.target_uri == ^URI.to_string(agent_uri),
-                       where: delivery.op == :absorb_cap,
-                       where: delivery.status == :applied
-                     ),
-                     :count
-                   ) == 1
+                 end)
                else
                  _ -> false
                end
+             end)
+
+      assert eventually(fn ->
+               Repo.aggregate(
+                 from(delivery in Delivery,
+                   where: delivery.target_uri == ^URI.to_string(agent_uri),
+                   where: delivery.op == :absorb_cap,
+                   where: delivery.status == :applied
+                 ),
+                 :count
+               ) == applied_before + 1
              end)
     end
   end
@@ -250,37 +265,8 @@ defmodule Mix.Tasks.Ezagent.Agent.GrantRecipeCapsBoardScopeTest do
     test "complete ISSUE authorization finishes before any absorb hand-off" do
       agent_uri = spawn_bare_agent()
       caps_before = caps_for(agent_uri)
-      previous = Application.fetch_env!(:ezagent_core, Ezagent.Cap)
-
-      on_exit(fn ->
-        Application.put_env(:ezagent_core, Ezagent.Cap, previous)
-        Process.delete({AuthorityLoaderStub, :caps})
-      end)
-
-      Application.put_env(
-        :ezagent_core,
-        Ezagent.Cap,
-        Keyword.put(previous, :authority_loader, AuthorityLoaderStub)
-      )
-
-      Process.put({AuthorityLoaderStub, :caps}, MapSet.new())
       buffer_size_before = Ezagent.PendingDelivery.buffer_size(agent_uri)
-
-      permissive_proposal =
-        Ezagent.Capability.cap(
-          :agent,
-          PermissiveProposalBehavior,
-          :first,
-          Ezagent.URI.instance(agent_uri),
-          Ezagent.Capability.workspace_of(agent_uri)
-        )
-
-      assert {:ok, %Ezagent.Capability{behavior: PermissiveProposalBehavior}} =
-               Ezagent.Cap.issue(
-                 {:admin, Ezagent.Entity.User.admin_uri()},
-                 agent_uri,
-                 permissive_proposal
-               )
+      missing_target = Ezagent.URI.agent(:system, "t7g_missing_#{uniq()}")
 
       recipe = %{
         requested_caps: [
@@ -291,8 +277,12 @@ defmodule Mix.Tasks.Ezagent.Agent.GrantRecipeCapsBoardScopeTest do
 
       assert {:error,
               {:grant_failed, %Ezagent.Capability{behavior: AdminRequiredProposalBehavior},
-               :grant_owner_unresolvable}} =
-               GrantRecipeCaps.grant_recipe_caps(agent_uri, recipe, @telemetry_prefix)
+               {:no_kind_module_for_agent, missing_target_string}}} =
+               GrantRecipeCaps.grant_recipe_caps(agent_uri, recipe, @telemetry_prefix, %{
+                 AdminRequiredProposalBehavior => missing_target
+               })
+
+      assert missing_target_string == URI.to_string(missing_target)
 
       assert caps_for(agent_uri) == caps_before
       assert Ezagent.PendingDelivery.buffer_size(agent_uri) == buffer_size_before

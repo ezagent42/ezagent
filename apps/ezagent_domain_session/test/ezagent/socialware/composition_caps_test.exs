@@ -29,7 +29,8 @@ defmodule Ezagent.Socialware.CompositionCapsTest do
 
     assert eventually(fn -> holds_operate_cap?(source, target, :composition_owned_probe) end)
     assert {:ok, %{ok: true}} = dispatch_probe(source, target, :composition_owned_probe)
-    assert {:error, :unauthorized} = dispatch_probe(source, unrelated, :composition_owned_probe)
+    assert {:error, :invalid_cap_signature} =
+             dispatch_probe(source, unrelated, :composition_owned_probe)
   end
 
   test "foreign target degrades to participate-only and records the denied edge" do
@@ -624,7 +625,7 @@ defmodule Ezagent.Socialware.CompositionCapsTest do
   end
 
   defp dispatch_consent(caller, session, binding_id, side, command, idempotency_key) do
-    Ezagent.Invocation.dispatch(%Ezagent.Invocation{
+    Ezagent.Invocation.dispatch(%Ezagent.Invocation{origin: :trusted_internal,
       target: Ezagent.URI.with_action(session, :session, :composition_consent),
       mode: :call,
       args: %{
@@ -633,16 +634,24 @@ defmodule Ezagent.Socialware.CompositionCapsTest do
         command: command,
         idempotency_key: idempotency_key
       },
-      ctx: %{caller: caller, caps: MapSet.new(), reply: {:caller_inbox, self()}}
+      ctx: %{
+        caller: caller,
+        caps: MapSet.new(Ezagent.Identity.list_caps_for(caller)),
+        reply: {:caller_inbox, self()}
+      }
     })
   end
 
   defp dispatch_probe(caller, target, action) do
-    Ezagent.Invocation.dispatch(%Ezagent.Invocation{
+    Ezagent.Invocation.dispatch(%Ezagent.Invocation{origin: :trusted_internal,
       target: Ezagent.URI.with_action(target, :composition_owned_test, action),
       mode: :call,
       args: %{},
-      ctx: %{caller: caller, caps: MapSet.new(), reply: {:caller_inbox, self()}}
+      ctx: %{
+        caller: caller,
+        caps: MapSet.new(Ezagent.Identity.list_caps_for(caller)),
+        reply: {:caller_inbox, self()}
+      }
     })
   end
 
@@ -668,9 +677,13 @@ defmodule Ezagent.Socialware.CompositionCapsTest do
 
   defp workspace_uri, do: Ezagent.URI.new!("workspace://composition")
 
-  defp user_uri(name),
-    do:
-      Ezagent.URI.new!("entity://composition/user/#{name}-#{System.unique_integer([:positive])}")
+  defp user_uri(name) do
+    uri = Ezagent.URI.new!("entity://composition/user/#{name}-#{System.unique_integer([:positive])}")
+    {:ok, _} = Ezagent.Users.create(uri, "test-password-#{System.unique_integer([:positive])}", [])
+    {:ok, _} = Ezagent.SpawnRegistry.spawn(uri)
+    on_exit(fn -> Ezagent.Kind.terminate(uri) end)
+    uri
+  end
 
   defp agent_uri(name),
     do:

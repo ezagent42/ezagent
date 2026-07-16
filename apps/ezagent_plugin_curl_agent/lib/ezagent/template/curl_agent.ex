@@ -339,7 +339,8 @@ defmodule Ezagent.PluginCurlAgent.Template do
         caller: agent_uri,
         caps: caps,
         reply: {:caller_inbox, self()}
-      }
+      },
+      origin: :trusted_internal
     })
   end
 

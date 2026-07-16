@@ -40,7 +40,7 @@ defmodule Ezagent.World.SaveSessionTemplatePublicScopeGateTest do
         workspace_uri
       )
 
-    Ezagent.Identity.Grant.grant_cap(holder, cap, {:genesis, User.admin_uri()})
+    Ezagent.Identity.Grant.grant_cap(holder, cap, {:admin, User.admin_uri()})
   end
 
   defp public_socialware_form(name) do

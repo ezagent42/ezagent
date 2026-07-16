@@ -136,7 +136,7 @@ defmodule EzagentPluginKb.E2E.PluginPackageCodexGateTest do
   # --- helpers --------------------------------------------------------------
 
   defp dispatch_echo(agent_uri, text) do
-    Invocation.dispatch(%Invocation{
+    Invocation.dispatch(%Invocation{origin: :trusted_internal,
       target: Ezagent.URI.with_action(agent_uri, :echo, :echo_pkg),
       mode: :call,
       args: %{text: text},

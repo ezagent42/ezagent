@@ -315,6 +315,7 @@ defmodule EzagentWeb.Socialware.KanbanShareControllerTest do
     target = Ezagent.URI.new!("#{URI.to_string(session_uri)}?action=session.join")
 
     case Invocation.dispatch(%Invocation{
+           origin: :trusted_internal,
            target: target,
            mode: :call,
            args: %{member: member_uri, role_name: role_name},

@@ -77,7 +77,7 @@ defmodule Ezagent.World.AdmissionGateWorldInviteTest do
       Ezagent.Identity.Grant.grant_cap_via_router(
         granter,
         cap,
-        {:genesis, User.admin_uri()},
+        {:admin, User.admin_uri()},
         :sync
       )
   end

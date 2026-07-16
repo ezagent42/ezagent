@@ -2,6 +2,7 @@ defmodule Ezagent.SkillRegistryTest do
   use ExUnit.Case, async: true
 
   @skill_ref "ezagent-session-orchestrator"
+  @socialware_skill_refs ["dev-together", "kanban-assistant"]
 
   setup do
     registry = registry!()
@@ -30,7 +31,7 @@ defmodule Ezagent.SkillRegistryTest do
     File.write!(path, body)
   end
 
-  test "derived_recipe_skill_refs/0 is computed from plugin roles/0 recipes" do
+  test "derived_recipe_skill_refs/0 is computed from plugin and socialware recipes" do
     registry = registry!()
 
     derived = registry.derived_recipe_skill_refs()
@@ -40,6 +41,7 @@ defmodule Ezagent.SkillRegistryTest do
     # the derived set follows them). The bundle↔derivation consistency
     # invariant is the next test.
     assert @skill_ref in derived
+    assert Enum.all?(@socialware_skill_refs, &(&1 in derived))
     assert derived == derived |> Enum.uniq() |> Enum.sort()
   end
 

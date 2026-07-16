@@ -8,7 +8,7 @@ defmodule Ezagent.Invariants.MemberCapVerifiedReaderTest do
 
   test "member capability idempotency reads only through EntityCaps" do
     source = File.read!(@member_cap)
-    [reader] = Regex.run(~r/defp member_snapshot_caps.*?\n\s*# The member-cap granter/s, source)
+    [reader] = Regex.run(~r/defp member_snapshot_caps.*?\n\s*@spec member_cap/s, source)
 
     assert reader =~ "Ezagent.EntityCaps.load_persisted(member_uri)"
     refute reader =~ "SnapshotStore.latest"
@@ -18,7 +18,7 @@ defmodule Ezagent.Invariants.MemberCapVerifiedReaderTest do
 
   test "reader failures are treated as grant not observed" do
     source = File.read!(@member_cap)
-    [reader] = Regex.run(~r/defp member_snapshot_caps.*?\n\s*# The member-cap granter/s, source)
+    [reader] = Regex.run(~r/defp member_snapshot_caps.*?\n\s*@spec member_cap/s, source)
 
     assert reader =~ "rescue"
     assert reader =~ "_ -> []"

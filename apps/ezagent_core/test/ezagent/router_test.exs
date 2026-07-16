@@ -12,7 +12,7 @@ defmodule Ezagent.RouterTest do
   - `dispatch_saga/2` stubs cleanly when SagaRunner module missing
   """
 
-  use ExUnit.Case
+  use EzagentCore.DataCase, async: false
 
   alias Ezagent.{Cmd, Router, Test.TestKind, Test.TestBehavior}
 
@@ -29,17 +29,22 @@ defmodule Ezagent.RouterTest do
     {:ok, _pid} = Ezagent.Kind.Server.start_link({TestKind, %{uri: uri}})
     :ok = wait_until_ready(uri)
 
-    {:ok, target: uri}
+    presenter = Ezagent.URI.user(:system, :admin)
+    cap = signed_fixture_cap!(uri, :test, TestBehavior, :noop, presenter)
+    fail_cap = signed_fixture_cap!(uri, :test, TestBehavior, :fail, presenter)
+
+    {:ok, target: uri, presenter: presenter, cap: cap, fail_cap: fail_cap}
   end
 
   describe "dispatch/1 — happy path" do
-    test ":call returns the handler result", %{target: target} do
+    test ":call returns the handler result", %{target: target, presenter: presenter, cap: cap} do
       cmd =
         Cmd.new(target, :noop, %{msg: "hi-router"}, %{
-          caller: :vm_internal,
+          caller: presenter,
           reply: {:caller_inbox, self()},
-          caps: MapSet.new()
+          caps: MapSet.new([cap])
         })
+        |> Map.put(:origin, :trusted_internal)
 
       # Legacy dispatch path is cap-checked at step 5.5. The test
       # fixture TestBehavior is not cap-gated in the BehaviorRegistry
@@ -48,14 +53,19 @@ defmodule Ezagent.RouterTest do
       assert {:ok, %{echoed: "hi-router"}} = Router.dispatch(cmd)
     end
 
-    test ":cast returns :ok and delivers via caller_inbox", %{target: target} do
+    test ":cast returns :ok and delivers via caller_inbox", %{
+      target: target,
+      presenter: presenter,
+      cap: cap
+    } do
       cmd =
         Cmd.new(target, :noop, %{msg: "cast-router"}, %{
           mode: :cast,
-          caller: :vm_internal,
+          caller: presenter,
           reply: {:caller_inbox, self()},
-          caps: MapSet.new()
+          caps: MapSet.new([cap])
         })
+        |> Map.put(:origin, :trusted_internal)
 
       assert :ok = Router.dispatch(cmd)
       assert_receive {:ezagent_reply, {:ok, %{echoed: "cast-router"}}}, 500
@@ -71,12 +81,13 @@ defmodule Ezagent.RouterTest do
           %{msg: "x"},
           %{caller: :vm_internal, reply: {:caller_inbox, self()}, caps: MapSet.new()}
         )
+        |> Map.put(:origin, :trusted_internal)
 
       assert {:error, :no_such_actor} = Router.dispatch(cmd)
     end
 
     test ":call to not-ready actor waits through the activate window then serves (C-A readiness)",
-         %{target: target} do
+         %{target: target, presenter: presenter, cap: cap} do
       # Readiness contract (post-lifecycle remediation, spec C-A): a
       # synchronous dispatch to a `:not_ready` target waits-then-serves
       # rather than fail-fasting with `:not_ready`. Flip to ready from a
@@ -91,23 +102,29 @@ defmodule Ezagent.RouterTest do
 
       cmd =
         Cmd.new(target, :noop, %{msg: "x"}, %{
-          caller: :vm_internal,
+          caller: presenter,
           reply: {:caller_inbox, self()},
-          caps: MapSet.new()
+          caps: MapSet.new([cap])
         })
+        |> Map.put(:origin, :trusted_internal)
 
       assert {:ok, _result} = Router.dispatch(cmd)
     after
       :ok
     end
 
-    test "handler {:error, _} propagates as Router {:error, _}", %{target: target} do
+    test "handler {:error, _} propagates as Router {:error, _}", %{
+      target: target,
+      presenter: presenter,
+      fail_cap: fail_cap
+    } do
       cmd =
         Cmd.new(target, :fail, %{}, %{
-          caller: :vm_internal,
+          caller: presenter,
           reply: {:caller_inbox, self()},
-          caps: MapSet.new()
+          caps: MapSet.new([fail_cap])
         })
+        |> Map.put(:origin, :trusted_internal)
 
       assert {:error, :test_failure} = Router.dispatch(cmd)
     end

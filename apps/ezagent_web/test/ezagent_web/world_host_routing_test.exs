@@ -651,6 +651,7 @@ defmodule EzagentWeb.WorldHostRoutingTest do
 
   defp join_member_as_admin(session_uri, member_uri) do
     Ezagent.Invocation.dispatch(%Ezagent.Invocation{
+      origin: :trusted_internal,
       target: Ezagent.URI.with_action(session_uri, :session, :join),
       mode: :call,
       args: %{member: member_uri},

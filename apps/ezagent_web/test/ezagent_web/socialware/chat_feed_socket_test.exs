@@ -79,6 +79,7 @@ defmodule EzagentWeb.Socialware.ChatFeedSocketTest do
     target = URI.new!("#{URI.to_string(session)}?action=session.#{action}")
 
     Invocation.dispatch(%Invocation{
+      origin: :trusted_internal,
       target: target,
       mode: :call,
       args: %{member: member},
@@ -110,6 +111,7 @@ defmodule EzagentWeb.Socialware.ChatFeedSocketTest do
 
     {:ok, %{stored: true}} =
       Invocation.dispatch(%Invocation{
+        origin: :trusted_internal,
         target: target,
         mode: :call,
         args: %{message: msg},

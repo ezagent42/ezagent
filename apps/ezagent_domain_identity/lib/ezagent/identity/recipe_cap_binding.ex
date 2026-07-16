@@ -84,6 +84,34 @@ defmodule Ezagent.Identity.RecipeCapBinding do
     end
   end
 
+  @doc "Reconcile an active binding into an already-live agent Identity slice."
+  @spec sync_live(URI.t()) :: :ok | {:error, term()}
+  def sync_live(%URI{} = agent_uri) do
+    target = Ezagent.URI.with_action(Ezagent.URI.instance(agent_uri), :identity, :sync_recipe_binding)
+    reply =
+      if Ezagent.ReadyGate.status(Ezagent.URI.instance(agent_uri)) == :ready,
+        do: {:caller_inbox, self()},
+        else: :ignore
+
+    Ezagent.Router.dispatch(%Ezagent.Cmd{
+      target: target,
+      action: :sync_recipe_binding,
+      args: %{},
+      ctx: %{
+        caller: :vm_internal,
+        caps: MapSet.new(),
+        reply: reply
+      },
+      origin: :trusted_internal
+    })
+    |> case do
+      :ok -> :ok
+      {:ok, _result} -> :ok
+      {:error, _reason} = error -> error
+      other -> {:error, {:unexpected_sync_result, other}}
+    end
+  end
+
   @doc """
   Tombstone the active binding only when its version still matches.
 
@@ -190,7 +218,7 @@ defmodule Ezagent.Identity.RecipeCapBinding do
       cap.kind != :agent -> {:error, :kind_mismatch}
       not same_uri?(cap.instance, agent_uri) -> {:error, :target_mismatch}
       not same_uri?(cap.workspace_uri, workspace_uri) -> {:error, :workspace_mismatch}
-      not Ezagent.Cap.verify_for(cap, agent_uri) -> {:error, :invalid_cap_artifact}
+      not Ezagent.Cap.storable_for?(cap, agent_uri) -> {:error, :invalid_cap_artifact}
       true -> :ok
     end
   end

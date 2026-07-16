@@ -344,7 +344,8 @@ defmodule Ezagent.Workspace do
                  Map.merge(
                    workspace_self_ctx(name, :remove_cross_prefix_members),
                    %{mode: :call, reply: {:caller_inbox, self()}}
-                 )
+                 ),
+               origin: :trusted_internal
              }) do
           {:ok, %{removed: removed, kept_count: kept_count}} when is_list(removed) ->
             # Mutation already committed in slice. Persist the kept
@@ -393,7 +394,8 @@ defmodule Ezagent.Workspace do
              Map.merge(
                workspace_self_ctx(name, :list_members),
                %{mode: :call, reply: {:caller_inbox, self()}}
-             )
+             ),
+           origin: :trusted_internal
          }) do
       {:ok, %{members: members}} when is_list(members) -> {:ok, members}
       {:error, _} = err -> err
@@ -592,7 +594,8 @@ defmodule Ezagent.Workspace do
            target: target,
            action: action,
            args: args,
-           ctx: Map.merge(auth_ctx, %{mode: mode, reply: reply})
+           ctx: Map.merge(auth_ctx, %{mode: mode, reply: reply}),
+           origin: :trusted_internal
          }) do
       :ok -> :ok
       {:ok, _} -> :ok
@@ -629,36 +632,13 @@ defmodule Ezagent.Workspace do
   # `system://worker-publish` / `system://agent-internal`).
   defp workspace_self_ctx(name, action) when is_binary(name) and is_atom(action) do
     workspace_uri = Ezagent.URI.workspace(name)
+    admin = Ezagent.Entity.User.admin_uri()
+    target = Ezagent.URI.with_action(workspace_uri, :workspace, action)
 
-    %{
-      caller: workspace_uri,
-      caps: [workspace_self_cap(workspace_uri, action)]
-    }
-  end
-
-  # The workspace's OWN self-authority cap for the dispatched Workspace
-  # Behavior `action`, the step-5.5 authorizer for `workspace_self_ctx/2`.
-  # Shape mirrors `Ezagent.ActionSet.Workspace.required_caps/0[action]` =
-  # `cap(:workspace, Workspace, action)` but SCOPED to the concrete workspace
-  # (`instance`/`workspace_uri` derived from `workspace_uri`) for tightest
-  # least-privilege — the runtime substitutes the same concrete instance from
-  # the dispatch target, so concrete==concrete matches. `granted_by` =
-  # `workspace_uri` (genuine self-authority: a real entity per #154); it is
-  # provenance only (`matches?/2`/`identity_key/1` ignore it) on an INLINE
-  # authorizer cap that is never granted/persisted through
-  # `Ezagent.Identity.Grant`, so no grant-chokepoint route applies.
-  defp workspace_self_cap(%URI{} = workspace_uri, action) when is_atom(action) do
-    %Ezagent.Capability{
-      Ezagent.Capability.cap(
-        :workspace,
-        Ezagent.ActionSet.Workspace,
-        action,
-        Ezagent.URI.instance(workspace_uri),
-        Ezagent.Capability.workspace_of(workspace_uri)
-      )
-      | granted_by: workspace_uri,
-        granted_at: DateTime.utc_now()
-    }
+    case Ezagent.Cap.issue_for_action({:admin, admin}, admin, target) do
+      {:ok, cap} -> %{caller: admin, caps: [cap]}
+      {:error, reason} -> raise "workspace self-cap issuance failed: #{inspect(reason)}"
+    end
   end
 
   # --- listing -------------------------------------------------------
@@ -795,7 +775,13 @@ defmodule Ezagent.Workspace do
 
     caps
     |> Enum.reduce_while({:ok, []}, fn cap, {:ok, issued} ->
-      case Ezagent.Cap.issue({:held_by, caller}, target, cap) do
+      authorization =
+        if Ezagent.URI.stable_key(caller) ==
+             Ezagent.URI.stable_key(Ezagent.Entity.User.admin_uri()),
+           do: {:admin, caller},
+           else: {:held_by, caller}
+
+      case Ezagent.Cap.issue(authorization, target, cap) do
         {:ok, artifact} -> {:cont, {:ok, [{cap, artifact} | issued]}}
         {:error, reason} -> {:halt, {:error, {:grant_failed, cap, reason}}}
       end
@@ -855,10 +841,10 @@ defmodule Ezagent.Workspace do
     if Enum.any?(current, &Ezagent.CreatorGrant.same_authority?(&1, cap)) do
       :ok
     else
-      # Grant chokepoint (SPEC 2026-06-17 §3.5 site #3). `Manage :any` is
-      # a wildcard-action cap whose target Behavior has no data owner, so
-      # the creator must exercise authority it already holds. There is no
-      # caller-selectable genesis fallback under per-Kind authority.
+      # This is a reviewed framework creation site: successful creation is the
+      # policy decision that grants the creator management of the new target.
+      # The target Kind's K.grant verifier still authorizes and signs the exact
+      # artifact; canonical admin supplies its sealed per-target anchor.
       #
       # `:sync` (NOT the default `:async`): the base site dispatched with
       # `mode: :call`, and the create operation gates its success on this
@@ -869,20 +855,12 @@ defmodule Ezagent.Workspace do
       case Ezagent.Identity.Grant.grant_cap_via_router(
              creator_uri,
              cap,
-             creator_authorization(creator_uri),
+             {:admin, Ezagent.URI.user(:system, :admin)},
              :sync
            ) do
         :ok -> :ok
         {:error, reason} -> {:error, {:creator_manage_cap_grant_failed, reason}}
       end
     end
-  end
-
-  defp creator_authorization(creator_uri) do
-    admin = Ezagent.URI.user(:system, :admin)
-
-    if Ezagent.URI.stable_key(creator_uri) == Ezagent.URI.stable_key(admin),
-      do: {:admin, admin},
-      else: {:held_by, creator_uri}
   end
 end

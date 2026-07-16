@@ -188,7 +188,8 @@ defmodule EzagentPluginCc.BridgeAdapter do
                       }
                     ]),
                   reply: :ignore
-                }
+                },
+                origin: :authenticated_external
               })
 
             case result do

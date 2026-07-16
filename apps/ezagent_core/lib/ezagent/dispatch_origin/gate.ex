@@ -3,14 +3,15 @@ defmodule Ezagent.DispatchOrigin.Gate do
   Build-time source inventory for dispatch provenance.
 
   The gate parses every product Elixir source containing a dispatch envelope or
-  dispatch call. Struct defaults are positive `:trusted_internal` stamps;
-  explicit origin fields may only be one of the two positive values. The sole
+  dispatch call. Envelope defaults are deliberately unstamped; every product
+  constructor must explicitly choose one of the two positive values. The sole
   product exception is the Feishu HTTP webhook path, which deliberately passes
   `nil` into the shared dispatcher and is rejected until transport
   authentication is implemented.
   """
 
   @positive [:authenticated_external, :trusted_internal]
+  @dynamic_origin_sites ["inbound_dispatcher.ex", "ezagent/router.ex"]
 
   @type finding :: {String.t(), pos_integer(), term()}
 
@@ -48,12 +49,26 @@ defmodule Ezagent.DispatchOrigin.Gate do
   end
 
   defp inspect_node({:%, meta, [module_ast, {:%{}, _, fields}]} = node, findings, path) do
-    if envelope_module?(module_ast) do
+    if envelope_constructor?(module_ast, fields) do
       case Keyword.fetch(fields, :origin) do
-        {:ok, origin} when origin in @positive -> {node, findings}
-        {:ok, nil} -> {node, [{path, meta[:line] || 1, :unstamped_origin} | findings]}
-        {:ok, other} -> {node, [{path, meta[:line] || 1, {:invalid_origin, other}} | findings]}
-        :error -> {node, findings}
+        {:ok, origin} when origin in @positive ->
+          {node, findings}
+
+        {:ok, {:origin, _, _} = other} ->
+          if Enum.any?(@dynamic_origin_sites, &String.ends_with?(path, &1)) do
+            {node, findings}
+          else
+            {node, [{path, meta[:line] || 1, {:invalid_origin, other}} | findings]}
+          end
+
+        {:ok, nil} ->
+          {node, [{path, meta[:line] || 1, :unstamped_origin} | findings]}
+
+        {:ok, other} ->
+          {node, [{path, meta[:line] || 1, {:invalid_origin, other}} | findings]}
+
+        :error ->
+          {node, [{path, meta[:line] || 1, :missing_origin} | findings]}
       end
     else
       {node, findings}
@@ -62,8 +77,22 @@ defmodule Ezagent.DispatchOrigin.Gate do
 
   defp inspect_node(node, findings, _path), do: {node, findings}
 
-  defp envelope_module?({:__aliases__, _, parts}), do: List.last(parts) in [:Cmd, :Invocation]
-  defp envelope_module?(_module), do: false
+  defp envelope_constructor?(module_ast, fields) do
+    if Keyword.keyword?(fields) do
+      keys = fields |> Keyword.keys() |> MapSet.new()
+
+      case module_name(module_ast) do
+        :Cmd -> MapSet.subset?(MapSet.new([:target, :action, :args, :ctx]), keys)
+        :Invocation -> MapSet.subset?(MapSet.new([:target, :mode, :args, :ctx]), keys)
+        _ -> false
+      end
+    else
+      false
+    end
+  end
+
+  defp module_name({:__aliases__, _, parts}), do: List.last(parts)
+  defp module_name(_module), do: nil
 
   defp occurrences(source, needles) do
     Enum.reduce(needles, 0, fn needle, total ->

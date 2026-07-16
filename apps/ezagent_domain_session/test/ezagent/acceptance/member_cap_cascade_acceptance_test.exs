@@ -27,6 +27,7 @@ defmodule Ezagent.Acceptance.MemberCapCascadeAcceptanceTest do
   alias Ezagent.{Capability, Message}
   alias Ezagent.ActionSet.Session.Delivery
   alias Ezagent.Session.Participants
+  import Ezagent.Test.CapHelper, only: [signed_required_cap!: 5]
 
   defp uniq, do: System.unique_integer([:positive])
 
@@ -54,19 +55,27 @@ defmodule Ezagent.Acceptance.MemberCapCascadeAcceptanceTest do
   defp owned_agent(session_uri, prefix) do
     ws = Capability.workspace_of(session_uri)
     uri = Ezagent.URI.entity(:system, :agent, "#{prefix}-#{uniq()}")
-    {:ok, _pid} = Ezagent.Kind.spawn(Ezagent.Entity.Agent, %{uri: uri, initial_caps: MapSet.new()})
+
+    {:ok, _pid} =
+      Ezagent.Kind.spawn(Ezagent.Entity.Agent, %{uri: uri, initial_caps: MapSet.new()})
+
     :ok = Ezagent.WorkspaceRegistry.bind(uri, ws)
     uri
   end
 
   defp dispatch_join(session_uri, member_uri) do
+    target = URI.new!("#{URI.to_string(session_uri)}?action=session.join")
+    admin = Ezagent.Entity.User.admin_uri()
+    cap = Ezagent.Test.CapHelper.signed_action_cap!(target, admin)
+
     Ezagent.Invocation.dispatch(%Ezagent.Invocation{
-      target: URI.new!("#{URI.to_string(session_uri)}?action=session.join"),
+      origin: :trusted_internal,
+      target: target,
       mode: :call,
       args: %{member: member_uri},
       ctx: %{
-        caller: Ezagent.Entity.User.admin_uri(),
-        caps: MapSet.new([Capability.admin_genesis_cap()]),
+        caller: admin,
+        caps: MapSet.new([cap]),
         reply: :ignore
       }
     })
@@ -86,24 +95,27 @@ defmodule Ezagent.Acceptance.MemberCapCascadeAcceptanceTest do
 
   defp wait_member_cap(entity_uri, session_uri, retries \\ 200) do
     cond do
-      holds_member_cap?(entity_uri, session_uri) -> :ok
-      retries > 0 -> Process.sleep(10); wait_member_cap(entity_uri, session_uri, retries - 1)
-      true -> flunk("member-cap never landed for #{URI.to_string(entity_uri)}")
+      holds_member_cap?(entity_uri, session_uri) ->
+        :ok
+
+      retries > 0 ->
+        Process.sleep(10)
+        wait_member_cap(entity_uri, session_uri, retries - 1)
+
+      true ->
+        flunk("member-cap never landed for #{URI.to_string(entity_uri)}")
     end
   end
 
   defp op_ctx(%URI{} = caller, %URI{} = session_uri) do
-    cap = %Capability{
-      Capability.cap(
+    cap =
+      signed_required_cap!(
+        session_uri,
         :session,
         Ezagent.ActionSet.Session,
         :remove_participant,
-        session_uri,
-        Capability.workspace_of(session_uri)
+        caller
       )
-      | granted_by: caller,
-        granted_at: DateTime.utc_now()
-    }
 
     %{caller: caller, caps: MapSet.new([cap])}
   end
@@ -130,7 +142,12 @@ defmodule Ezagent.Acceptance.MemberCapCascadeAcceptanceTest do
     {:ok, session_pid_before} = Ezagent.KindRegistry.lookup(session)
 
     # The mounted member RECEIVES (holds the member-cap; in-handler authz passes).
-    Delivery.dispatch_receive_call(agent, Message.new(owner, %{text: "hello", attachments: []}), session)
+    Delivery.dispatch_receive_call(
+      agent,
+      Message.new(owner, %{text: "hello", attachments: []}),
+      session
+    )
+
     assert_receive {:agent_bridge_push, "to_claude", %{"content" => "hello"}}, 1_000
 
     # 🔴 defense-in-depth: remove ⇒ revoke the member-cap ⇒ the very next receive
@@ -140,7 +157,11 @@ defmodule Ezagent.Acceptance.MemberCapCascadeAcceptanceTest do
 
     refute holds_member_cap?(agent, session), "remove must have revoked the member-cap"
 
-    Delivery.dispatch_receive_call(agent, Message.new(owner, %{text: "again", attachments: []}), session)
+    Delivery.dispatch_receive_call(
+      agent,
+      Message.new(owner, %{text: "again", attachments: []}),
+      session
+    )
 
     refute_receive {:agent_bridge_push, "to_claude", %{"content" => "again"}}, 500
 
@@ -169,20 +190,24 @@ defmodule Ezagent.Acceptance.MemberCapCascadeAcceptanceTest do
 
   defp agent_in(ws, prefix) do
     uri = URI.new!("entity://#{ws}/agent/#{prefix}-#{uniq()}")
-    {:ok, _pid} = Ezagent.Kind.spawn(Ezagent.Entity.Agent, %{uri: uri, initial_caps: MapSet.new()})
+
+    {:ok, _pid} =
+      Ezagent.Kind.spawn(Ezagent.Entity.Agent, %{uri: uri, initial_caps: MapSet.new()})
+
     :ok = Ezagent.WorkspaceRegistry.bind(uri, Capability.workspace_of(uri))
     uri
   end
 
   # Grant `granter` durable manage-authority over `target` so `manages?/2` is true.
   defp grant_manage(granter, target) do
-    cap = Ezagent.CreatorGrant.manage_cap(:agent, target, Capability.workspace_of(target), granter)
+    cap =
+      Ezagent.CreatorGrant.manage_cap(:agent, target, Capability.workspace_of(target), granter)
 
     :ok =
       Ezagent.Identity.Grant.grant_cap_via_router(
         granter,
         cap,
-        {:genesis, Ezagent.Entity.User.admin_uri()},
+        {:admin, Ezagent.Entity.User.admin_uri()},
         :sync
       )
   end
@@ -193,13 +218,17 @@ defmodule Ezagent.Acceptance.MemberCapCascadeAcceptanceTest do
   # `ctx.caps`, so a genesis `ctx.caps` never suppresses the gate (a STRONGER proof:
   # even genesis-in-ctx does not let B's cross-owner pull mount).
   defp dispatch_as(session_uri, action, member_uri, caller) do
+    target = URI.new!("#{URI.to_string(session_uri)}?action=session.#{action}")
+    cap = Ezagent.Test.CapHelper.signed_action_cap!(target, caller)
+
     Ezagent.Invocation.dispatch(%Ezagent.Invocation{
-      target: URI.new!("#{URI.to_string(session_uri)}?action=session.#{action}"),
+      origin: :trusted_internal,
+      target: target,
       mode: :call,
       args: %{member: member_uri},
       ctx: %{
         caller: caller,
-        caps: MapSet.new([Capability.admin_genesis_cap()]),
+        caps: MapSet.new([cap]),
         reply: :ignore
       }
     })
@@ -306,13 +335,14 @@ defmodule Ezagent.Acceptance.MemberCapCascadeAcceptanceTest do
     _ = dispatch_join(session, agent)
     :ok = wait_member_cap(agent, session)
 
-    assert_receive {:notification, ^owner, grant_notif}, 2_000
+    assert_receive {:notification, ^owner, %{type: :entity_slice_changed} = grant_notif}, 2_000
     assert grant_notif.type == :entity_slice_changed
     assert grant_notif.source == Ezagent.Identity.Cascade
     assert grant_notif.body.uri == URI.to_string(agent)
     assert grant_notif.body.slice_key == :identity
     # Content-free: NO cap values, NO member list, NO caller.
-    assert Enum.sort(Map.keys(grant_notif.body)) == Enum.sort([:uri, :slice_key, :cursor, :event_at])
+    assert Enum.sort(Map.keys(grant_notif.body)) ==
+             Enum.sort([:uri, :slice_key, :cursor, :event_at])
 
     # Drain ALL remaining grant-era cascade notifications to quiescence, so the
     # post-revoke assert below cannot be satisfied by a leftover grant notice
@@ -325,7 +355,7 @@ defmodule Ezagent.Acceptance.MemberCapCascadeAcceptanceTest do
 
     refute holds_member_cap?(agent, session), "remove must have revoked the member-cap"
 
-    assert_receive {:notification, ^owner, revoke_notif}, 2_000
+    assert_receive {:notification, ^owner, %{type: :entity_slice_changed} = revoke_notif}, 2_000
     assert revoke_notif.type == :entity_slice_changed
     assert revoke_notif.body.uri == URI.to_string(agent)
     assert revoke_notif.body.slice_key == :identity
@@ -354,23 +384,21 @@ defmodule Ezagent.Acceptance.MemberCapCascadeAcceptanceTest do
         holder
       )
 
-    Ezagent.Invocation.dispatch(%Ezagent.Invocation{
-      target: URI.new!("#{URI.to_string(holder)}?action=identity.grant_cap"),
-      mode: :call,
-      args: %{cap: cap},
-      ctx: %{
-        caller: Ezagent.Entity.User.admin_uri(),
-        caps: MapSet.new([Capability.admin_genesis_cap()]),
-        reply: :ignore
-      }
-    })
+    :ok = Ezagent.Identity.TargetAuthority.ensure(holder, target)
+    Ezagent.Identity.Grant.grant_cap(holder, cap, {:held_by, holder})
   end
 
   defp wait_until(fun, retries \\ 200) do
     cond do
-      fun.() -> :ok
-      retries > 0 -> Process.sleep(10); wait_until(fun, retries - 1)
-      true -> flunk("condition never became true")
+      fun.() ->
+        :ok
+
+      retries > 0 ->
+        Process.sleep(10)
+        wait_until(fun, retries - 1)
+
+      true ->
+        flunk("condition never became true")
     end
   end
 end

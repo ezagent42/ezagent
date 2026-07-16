@@ -94,7 +94,7 @@ defmodule Ezagent.Socialware.AnonAccessMembershipTest do
   defp join(session_uri, member_uri) do
     target = Ezagent.URI.new!("#{URI.to_string(session_uri)}?action=session.join")
 
-    Ezagent.Invocation.dispatch(%Ezagent.Invocation{
+    Ezagent.Invocation.dispatch(%Ezagent.Invocation{origin: :trusted_internal,
       target: target,
       mode: :call,
       args: %{member: member_uri},

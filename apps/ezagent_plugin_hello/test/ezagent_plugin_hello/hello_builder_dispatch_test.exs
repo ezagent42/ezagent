@@ -79,7 +79,7 @@ defmodule EzagentPluginHello.HelloBuilderDispatchTest do
     args = %{session_uri: URI.to_string(session_uri), instruction: "refresh the hello page"}
 
     assert :ok =
-             Invocation.dispatch(%Invocation{
+             Invocation.dispatch(%Invocation{origin: :trusted_internal,
                target: target,
                mode: :cast,
                args: args,
@@ -89,7 +89,7 @@ defmodule EzagentPluginHello.HelloBuilderDispatchTest do
     refute_receive {:hello_rebuild_started, _, _}, 100
 
     assert :ok =
-             Invocation.dispatch(%Invocation{
+             Invocation.dispatch(%Invocation{origin: :trusted_internal,
                target: target,
                mode: :cast,
                args: args,
@@ -119,7 +119,7 @@ defmodule EzagentPluginHello.HelloBuilderDispatchTest do
 
   defp join_builder(session_uri, builder_uri) do
     :ok =
-      Invocation.dispatch(%Invocation{
+      Invocation.dispatch(%Invocation{origin: :trusted_internal,
         target: Ezagent.URI.with_action(session_uri, :session, :join),
         mode: :cast,
         args: %{member: builder_uri, role_name: "builder"},

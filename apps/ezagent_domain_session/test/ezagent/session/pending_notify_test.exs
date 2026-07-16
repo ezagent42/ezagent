@@ -11,6 +11,7 @@ defmodule Ezagent.ActionSet.Session.PendingNotifyTest do
   use EzagentCore.DataCase, async: false
 
   alias Ezagent.Capability
+  import Ezagent.Test.CapHelper, only: [signed_action_cap!: 2]
 
   defp uniq, do: System.unique_integer([:positive])
   defp new_ws, do: "admws-#{uniq()}"
@@ -35,31 +36,33 @@ defmodule Ezagent.ActionSet.Session.PendingNotifyTest do
 
   defp agent_member(ws, prefix) do
     uri = URI.new!("entity://#{ws}/agent/#{prefix}-#{uniq()}")
-    {:ok, _pid} = Ezagent.Kind.spawn(Ezagent.Entity.Agent, %{uri: uri, initial_caps: MapSet.new()})
+
+    {:ok, _pid} =
+      Ezagent.Kind.spawn(Ezagent.Entity.Agent, %{uri: uri, initial_caps: MapSet.new()})
+
     :ok = Ezagent.WorkspaceRegistry.bind(uri, Ezagent.Capability.workspace_of(uri))
     uri
   end
 
   defp grant_manage(granter, target) do
-    cap = Ezagent.CreatorGrant.manage_cap(:agent, target, Capability.workspace_of(target), granter)
+    cap =
+      Ezagent.CreatorGrant.manage_cap(:agent, target, Capability.workspace_of(target), granter)
 
-    :ok =
-      Ezagent.Identity.Grant.grant_cap_via_router(
-        granter,
-        cap,
-        {:genesis, Ezagent.Entity.User.admin_uri()},
-        :sync
-      )
+    :ok = Ezagent.Identity.TargetAuthority.ensure(granter, target)
+    :ok = Ezagent.Identity.Grant.grant_cap(granter, cap, {:held_by, granter})
   end
 
   defp dispatch_join(session_uri, member_uri, caller) do
+    target = URI.new!("#{URI.to_string(session_uri)}?action=session.join")
+
     Ezagent.Invocation.dispatch(%Ezagent.Invocation{
-      target: URI.new!("#{URI.to_string(session_uri)}?action=session.join"),
+      origin: :trusted_internal,
+      target: target,
       mode: :call,
       args: %{member: member_uri},
       ctx: %{
         caller: caller,
-        caps: MapSet.new([Capability.admin_genesis_cap()]),
+        caps: MapSet.new([signed_action_cap!(target, caller)]),
         reply: :ignore
       }
     })

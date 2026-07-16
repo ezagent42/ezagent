@@ -100,7 +100,7 @@ defmodule Ezagent.World.AgentDeleteAuthzLeakTest do
     join_target = URI.new!("#{URI.to_string(session_uri)}?action=session.join")
 
     :ok =
-      Ezagent.Invocation.dispatch(%Ezagent.Invocation{
+      Ezagent.Invocation.dispatch(%Ezagent.Invocation{origin: :trusted_internal,
         target: join_target,
         mode: :cast,
         args: %{member: agent_uri},

@@ -24,7 +24,7 @@ defmodule EzagentDomainInstanceMessage.Invariants.TemplateForkLineageTest do
 
   use EzagentCore.DataCase, async: false
 
-  alias Ezagent.{ActionSet, Capability, Invocation, KindRegistry, SpawnRegistry}
+  alias Ezagent.{Invocation, KindRegistry, SpawnRegistry}
   alias Ezagent.Ecto.KindSnapshot
   alias Ezagent.Entity.{AgentTemplate, SessionTemplate, User}
 
@@ -109,29 +109,26 @@ defmodule EzagentDomainInstanceMessage.Invariants.TemplateForkLineageTest do
 
   defp dispatch_admin(uri, action, args) do
     target = Ezagent.URI.new!("#{URI.to_string(uri)}?action=#{action}")
+    admin = User.admin_uri()
+    cap = Ezagent.Test.CapHelper.signed_action_cap!(target, admin)
 
     Invocation.dispatch(%Invocation{
+      origin: :trusted_internal,
       target: target,
       mode: :call,
       args: args,
       ctx: %{
-        caller: User.admin_uri(),
-        caps: MapSet.new([Ezagent.Capability.admin_genesis_cap()]),
+        caller: admin,
+        caps: MapSet.new([cap]),
         reply: {:caller_inbox, self()}
       }
     })
   end
 
-  # A `ActionSet.Template` cap on `:agent_template` workspace-bounded.
-  defp agent_template_cap do
-    %Capability{
-      kind: :agent_template,
-      behavior: ActionSet.Template,
-      instance: {:within_workspace, @workspace_uri},
-      workspace_uri: @workspace_uri,
-      granted_by: User.admin_uri(),
-      granted_at: DateTime.utc_now()
-    }
+  defp fork_cap(parent_uri, caller) do
+    parent_uri
+    |> Ezagent.URI.with_action(:template, :fork)
+    |> Ezagent.Test.CapHelper.signed_action_cap!(caller)
   end
 
   defp spawn_owner(caps) do
@@ -147,13 +144,14 @@ defmodule EzagentDomainInstanceMessage.Invariants.TemplateForkLineageTest do
   describe "AgentTemplate fork lineage (PR1 — fork lifted to ActionSet.Template)" do
     test "fork records parent_template_uri = the parent's URI" do
       {parent_uri, parent_content} = persist_agent_template("at-fl-parent-#{uniq()}")
-      owner_uri = spawn_owner([agent_template_cap()])
+      owner_uri = spawn_owner([])
+      cap = fork_cap(parent_uri, owner_uri)
 
       new_name = "at-fl-fork-#{uniq()}"
 
       assert {:ok, fork_uri} =
                AgentTemplate.fork(parent_uri, new_name,
-                 caps: [agent_template_cap()],
+                 caps: [cap],
                  caller: owner_uri
                )
 
@@ -185,20 +183,21 @@ defmodule EzagentDomainInstanceMessage.Invariants.TemplateForkLineageTest do
                  caller: owner_uri
                )
 
-      assert reason == :unauthorized,
+      assert reason == :missing_cap,
              "dispatch CapBAC must deny a caller with no AgentTemplate cap " <>
                "(got #{inspect(reason)})"
     end
 
     test "fork copies content but resets created_at to fork time" do
       {parent_uri, parent_content} = persist_agent_template("at-fl-copy-parent-#{uniq()}")
-      owner_uri = spawn_owner([agent_template_cap()])
+      owner_uri = spawn_owner([])
+      cap = fork_cap(parent_uri, owner_uri)
 
       before = DateTime.utc_now()
 
       assert {:ok, fork_uri} =
                AgentTemplate.fork(parent_uri, "at-fl-copy-fork-#{uniq()}",
-                 caps: [agent_template_cap()],
+                 caps: [cap],
                  caller: owner_uri
                )
 
@@ -222,7 +221,8 @@ defmodule EzagentDomainInstanceMessage.Invariants.TemplateForkLineageTest do
       # Gated by user_uri?/1 — agent-owned forks generate no
       # notification (consistent with Workspace.add_member precedent).
       {parent_uri, _content} = persist_agent_template("at-fl-notify-parent-#{uniq()}")
-      owner_uri = spawn_owner([agent_template_cap()])
+      owner_uri = spawn_owner([])
+      cap = fork_cap(parent_uri, owner_uri)
 
       :ok = Ezagent.Notifications.subscribe(owner_uri)
 
@@ -230,7 +230,7 @@ defmodule EzagentDomainInstanceMessage.Invariants.TemplateForkLineageTest do
 
       assert {:ok, fork_uri} =
                AgentTemplate.fork(parent_uri, new_name,
-                 caps: [agent_template_cap()],
+                 caps: [cap],
                  caller: owner_uri
                )
 
@@ -254,16 +254,8 @@ defmodule EzagentDomainInstanceMessage.Invariants.TemplateForkLineageTest do
     test "fork still records parent_template_uri = the parent's hash URI" do
       {parent_uri, _} = persist_session_parent("st-fl-parent-#{uniq()}")
 
-      session_cap = %Capability{
-        kind: :session_template,
-        behavior: ActionSet.Template,
-        instance: {:within_workspace, @workspace_uri},
-        workspace_uri: @workspace_uri,
-        granted_by: User.admin_uri(),
-        granted_at: DateTime.utc_now()
-      }
-
-      owner_uri = spawn_owner([session_cap])
+      owner_uri = spawn_owner([])
+      session_cap = fork_cap(parent_uri, owner_uri)
 
       assert {:ok, fork_uri} =
                SessionTemplate.fork(parent_uri, "st-fl-fork-#{uniq()}",

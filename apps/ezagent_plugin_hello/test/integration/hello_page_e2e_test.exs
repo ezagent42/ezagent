@@ -63,7 +63,7 @@ defmodule EzagentPluginHello.Integration.HelloPageE2ETest do
     {:ok, _row} = AnonBinding.touch(anon_uri, session_uri, DateTime.utc_now())
 
     :ok =
-      Ezagent.Invocation.dispatch(%Ezagent.Invocation{
+      Ezagent.Invocation.dispatch(%Ezagent.Invocation{origin: :trusted_internal,
         target: Ezagent.URI.with_action(session_uri, :session, :join),
         mode: :call,
         args: %{member: anon_uri},
@@ -195,7 +195,7 @@ defmodule EzagentPluginHello.Integration.HelloPageE2ETest do
     assert surface_after == surface_before
 
     assert {:ok, %{tree: tree}} =
-             Ezagent.Invocation.dispatch(%Ezagent.Invocation{
+             Ezagent.Invocation.dispatch(%Ezagent.Invocation{origin: :trusted_internal,
                target: Ezagent.URI.with_action(result.kanban_uri, :kanban, :get_tree),
                mode: :call,
                args: %{},

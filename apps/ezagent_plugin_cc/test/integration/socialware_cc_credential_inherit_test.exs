@@ -107,7 +107,7 @@ defmodule Ezagent.PluginCc.Integration.SocialwareCcCredentialInheritTest do
 
     {:ok, source_read_artifact} =
       Ezagent.Cap.issue(
-        {:genesis, User.admin_uri()},
+        {:admin, User.admin_uri()},
         installer_uri,
         GrantCap.read_cap_for(source_uri)
       )

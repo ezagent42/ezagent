@@ -70,7 +70,7 @@ defmodule Ezagent.Entity.SocialwareSubsetPublisherTest do
   # dispatch path. Each call appends a new version → the slice ALWAYS differs
   # from prior → SliceChange fires → the publisher trunk records it.
   defp mutate_surface_slice(session_uri, turn_id) do
-    Invocation.dispatch(%Invocation{
+    Invocation.dispatch(%Invocation{origin: :trusted_internal,
       target: Ezagent.URI.new!("#{URI.to_string(session_uri)}?action=surface.put_version"),
       mode: :call,
       args: %{turn_id: turn_id, tree: %{type: "text", props: %{text: turn_id}}},

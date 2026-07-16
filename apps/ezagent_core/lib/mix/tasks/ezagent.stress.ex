@@ -423,7 +423,8 @@ defmodule Mix.Tasks.Ezagent.Stress do
         target: target,
         mode: :cast,
         args: %{message: msg},
-        ctx: %{caller: admin, caps: caps, reply: :ignore}
+        ctx: %{caller: admin, caps: caps, reply: :ignore},
+        origin: :trusted_internal
       })
 
       if i < budget and interval_ms > 0, do: Process.sleep(interval_ms)
@@ -530,7 +531,8 @@ defmodule Mix.Tasks.Ezagent.Stress do
           caller: admin_uri(),
           caps: admin_caps(),
           reply: {:caller_inbox, self()}
-        }
+        },
+        origin: :trusted_internal
       })
 
     case result do

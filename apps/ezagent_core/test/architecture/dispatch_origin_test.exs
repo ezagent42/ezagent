@@ -23,6 +23,8 @@ defmodule Ezagent.Architecture.DispatchOriginTest do
 
     assert {:error, :unstamped_origin} =
              Ezagent.Kind.Runtime.handle_dispatch(invocation, %{}, TestKind, context.uri)
+
+    assert {:error, :unstamped_origin} = Invocation.dispatch(invocation)
   end
 
   test "external constructor overwrites request caller and rejects a stolen cap", context do
@@ -70,8 +72,16 @@ defmodule Ezagent.Architecture.DispatchOriginTest do
     paths = Path.wildcard(Path.join(root, "apps/*/lib/**/*.ex"))
     inventory = Gate.inventory(paths)
 
+    findings =
+      Enum.flat_map(paths, fn path ->
+        path
+        |> File.read!()
+        |> Gate.check_source(path)
+      end)
+
     assert inventory.dispatches > 0
     assert inventory.constructors > 0
+    assert findings == [], "unstamped product envelope constructors: #{inspect(findings)}"
 
     mutation = """
     def bad(target) do

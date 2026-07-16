@@ -21,7 +21,6 @@ defmodule Ezagent.Integration.ListByRoleTest do
   use EzagentCore.DataCase, async: false
 
   alias Ezagent.Workspace
-  alias Ezagent.Entity.User
   alias Ezagent.Workspace.RoleTestBehavior
 
   alias Ezagent.{
@@ -48,10 +47,7 @@ defmodule Ezagent.Integration.ListByRoleTest do
     {:ok, _ws_pid} = Workspace.create(ws_name, %{})
     workspace_uri = URI.new!("workspace://#{ws_name}")
 
-    admin_ctx = %{
-      caller: User.admin_uri(),
-      caps: MapSet.new([Ezagent.Capability.admin_genesis_cap()])
-    }
+    admin_ctx = signed_workspace_ctx!(workspace_uri)
 
     :ok =
       AgentFlavorRegistry.register(%{
@@ -149,7 +145,7 @@ defmodule Ezagent.Integration.ListByRoleTest do
       ws2_name = "rf7b-#{System.unique_integer([:positive])}"
       {:ok, _} = Workspace.create(ws2_name, %{})
       ws2_uri = URI.new!("workspace://#{ws2_name}")
-      a_ws2 = create_role_agent(ws2_name, ws2_uri, admin_ctx, @role_a)
+      a_ws2 = create_role_agent(ws2_name, ws2_uri, signed_workspace_ctx!(ws2_uri), @role_a)
 
       ws1_list = RecipeResolver.list_by_recipe(@role_a, workspace_uri)
       ws2_list = RecipeResolver.list_by_recipe(@role_a, ws2_uri)

@@ -25,6 +25,8 @@ defmodule EzagentDomainInstanceMessage.Integration.SpawnedParticipantTeardownTes
   alias Ezagent.Session.Participants
   alias EzagentDomainInstanceMessage.SessionCreator.Materializer
 
+  import Ezagent.Test.CapHelper, only: [signed_action_cap!: 2, signed_required_cap!: 5]
+
   # The `main` session lives in workspace://system; a worker spawned INTO a
   # session shares that session's workspace, so reaping it (session -> worker) is
   # same-workspace (step-5.6 isolation passes). Tests use the system workspace to
@@ -52,12 +54,19 @@ defmodule EzagentDomainInstanceMessage.Integration.SpawnedParticipantTeardownTes
 
     {:ok, _} =
       Invocation.dispatch(%Invocation{
+        origin: :trusted_internal,
         target: Ezagent.URI.new!("#{URI.to_string(uri)}?action=sandbox.update_config"),
         mode: :call,
         args: %{config_dir_path: config_dir, template_class: template_class},
         ctx: %{
           caller: User.admin_uri(),
-          caps: MapSet.new([Ezagent.Capability.admin_genesis_cap()]),
+          caps:
+            MapSet.new([
+              signed_action_cap!(
+                Ezagent.URI.new!("#{URI.to_string(uri)}?action=sandbox.update_config"),
+                User.admin_uri()
+              )
+            ]),
           reply: {:caller_inbox, self()}
         }
       })
@@ -81,12 +90,19 @@ defmodule EzagentDomainInstanceMessage.Integration.SpawnedParticipantTeardownTes
 
     :ok =
       Invocation.dispatch(%Invocation{
+        origin: :trusted_internal,
         target: Ezagent.URI.new!("#{URI.to_string(session_uri)}?action=session.join"),
         mode: :cast,
         args: %{member: worker_uri, source_template_uri: tmpl},
         ctx: %{
           caller: worker_uri,
-          caps: MapSet.new([Ezagent.Capability.admin_genesis_cap()]),
+          caps:
+            MapSet.new([
+              signed_action_cap!(
+                Ezagent.URI.new!("#{URI.to_string(session_uri)}?action=session.join"),
+                worker_uri
+              )
+            ]),
           reply: :ignore
         }
       })
@@ -97,17 +113,14 @@ defmodule EzagentDomainInstanceMessage.Integration.SpawnedParticipantTeardownTes
   end
 
   defp op_ctx(%URI{} = caller, %URI{} = session_uri) do
-    cap = %Ezagent.Capability{
-      Ezagent.Capability.cap(
+    cap =
+      signed_required_cap!(
+        session_uri,
         :session,
         Ezagent.ActionSet.Session,
         :remove_participant,
-        Ezagent.URI.instance(session_uri),
-        Ezagent.Capability.workspace_of(session_uri)
+        caller
       )
-      | granted_by: caller,
-        granted_at: DateTime.utc_now()
-    }
 
     %{caller: caller, caps: [cap]}
   end
@@ -161,6 +174,7 @@ defmodule EzagentDomainInstanceMessage.Integration.SpawnedParticipantTeardownTes
       config_dir = "/tmp/f7b-worker-#{uniq()}"
 
       worker = spawn_worker(config_dir)
+      :ok = Materializer.grant_owner_participant_teardown_cap(worker, owner, @workspace_uri)
       # Durable lineage: worker -> owner (the chain spawned_in_lineage? walks).
       :ok = AgentLineage.record(worker, owner)
       :ok = record_creation(worker, owner)
@@ -208,6 +222,7 @@ defmodule EzagentDomainInstanceMessage.Integration.SpawnedParticipantTeardownTes
       config_dir = "/tmp/f7b-cleanupfail-#{uniq()}"
 
       worker = spawn_worker(config_dir, __MODULE__.RaisingGcStubClass)
+      :ok = Materializer.grant_owner_participant_teardown_cap(worker, owner, @workspace_uri)
       :ok = AgentLineage.record(worker, owner)
       :ok = record_creation(worker, owner)
       join_spawned(session_uri, worker)
@@ -233,13 +248,11 @@ defmodule EzagentDomainInstanceMessage.Integration.SpawnedParticipantTeardownTes
     end
   end
 
-  describe "THE CRUX (SPEC §2.2) — non-admin owner cap reaps via TRANSITIVE lineage" do
-    test "a non-admin owner's {:spawned_by, owner} cap reaps an orchestrator-spawned worker (two-hop, no admin, no cap #2)" do
-      # This is the load-bearing end-to-end proof: the granted teardown cap (NOT
-      # an admin wildcard) authorizes the reap, and it reaches the worker through
-      # the FULL durable chain `worker → orchestrator → owner` (NOT a one-hop
-      # shortcut). If the transitive walk or the cap instance/workspace match
-      # were wrong, this fails while the admin/one-hop tests still pass.
+  describe "THE CRUX (SPEC §2.2) — concrete authority plus transitive provenance" do
+    test "a non-admin owner's target-signed cap reaps an orchestrator-spawned worker" do
+      # This is the load-bearing end-to-end proof: the concrete target-signed
+      # teardown cap authorizes the dispatch, while the full durable chain
+      # `worker → orchestrator → owner` independently proves provenance.
       config_dir = "/tmp/f7b-crux-#{uniq()}"
 
       # Non-admin confirmed user owner (no genesis wildcard short-circuit).
@@ -247,11 +260,16 @@ defmodule EzagentDomainInstanceMessage.Integration.SpawnedParticipantTeardownTes
       {:ok, _} = Ezagent.Users.create(owner, "pw-#{uniq()}", [])
       {:ok, _} = Ezagent.SpawnRegistry.spawn(owner)
 
-      # The ONLY authority granted: the create-time {:spawned_by, owner} teardown
-      # cap (granted_by: owner). No cap #2, no admin.
-      assert :ok = Materializer.grant_owner_participant_teardown_cap(owner, @workspace_uri)
-
       worker = spawn_worker(config_dir)
+
+      # The only authority granted is concrete to this worker. No admin cap and
+      # no broad lineage-scoped cap participates in dispatch authorization.
+      assert :ok =
+               Materializer.grant_owner_participant_teardown_cap(
+                 worker,
+                 owner,
+                 @workspace_uri
+               )
 
       # TWO HOPS: orchestrator is NOT live (it crashed / never mattered) — only
       # the durable lineage rows exist. worker → orchestrator → owner.
@@ -266,10 +284,8 @@ defmodule EzagentDomainInstanceMessage.Integration.SpawnedParticipantTeardownTes
 
       Phoenix.PubSub.subscribe(EzagentCore.PubSub, "test:f7b_gc:#{URI.to_string(worker)}")
 
-      # Strict reap, AS the non-admin owner: step-5.5 resolves the owner's
-      # {:spawned_by, owner} cap, which matches the worker via the transitive
-      # lineage walk — authorized WITHOUT admin and WITHOUT the orchestrator's
-      # cap #2 (which is moot — the orchestrator isn't even live).
+      # Strict reap as the non-admin owner requires both its exact signed cap
+      # and the transitive lineage proof; the orchestrator need not be live.
       assert {:ok, %{termination: :destroyed, cleanup: :complete}} =
                Teardown.reap_spawned_worker(worker, owner, :strict)
 
@@ -333,6 +349,8 @@ defmodule EzagentDomainInstanceMessage.Integration.SpawnedParticipantTeardownTes
       cfg_b = "/tmp/f7b-cascade-b-#{uniq()}"
       w_a = spawn_worker(cfg_a)
       w_b = spawn_worker(cfg_b)
+      :ok = Materializer.grant_owner_participant_teardown_cap(w_a, owner, @workspace_uri)
+      :ok = Materializer.grant_owner_participant_teardown_cap(w_b, owner, @workspace_uri)
       :ok = AgentLineage.record(w_a, owner)
       :ok = AgentLineage.record(w_b, owner)
       :ok = record_creation(w_a, owner)
@@ -365,12 +383,19 @@ defmodule EzagentDomainInstanceMessage.Integration.SpawnedParticipantTeardownTes
   end
 
   describe "#154-clean — the granted teardown cap has a real owner granter" do
-    test "session create grants owner cap(:agent, Sandbox, :destroy, {:spawned_by, owner}) granted_by: owner" do
+    test "materialization grants a concrete target-signed owner teardown cap" do
       owner = URI.new!("entity://system/user/clean-#{uniq()}")
       {:ok, _} = Ezagent.Users.create(owner, "pw-#{uniq()}", [])
       {:ok, _} = Ezagent.SpawnRegistry.spawn(owner)
 
-      assert :ok = Materializer.grant_owner_participant_teardown_cap(owner, @workspace_uri)
+      worker = spawn_worker("/tmp/f7b-clean-#{uniq()}")
+
+      assert :ok =
+               Materializer.grant_owner_participant_teardown_cap(
+                 worker,
+                 owner,
+                 @workspace_uri
+               )
 
       caps = Ezagent.Identity.list_caps_for(owner) |> MapSet.to_list()
 
@@ -379,9 +404,9 @@ defmodule EzagentDomainInstanceMessage.Integration.SpawnedParticipantTeardownTes
           %Ezagent.Capability{
             kind: :agent,
             behavior: Ezagent.ActionSet.Sandbox,
-            instance: {:spawned_by, %URI{} = p}
+            instance: %URI{} = target
           } = c ->
-            URI.to_string(p) == URI.to_string(owner) and
+            Ezagent.URI.stable_key(target) == Ezagent.URI.stable_key(worker) and
               Ezagent.Capability.action_of(c) == :destroy
 
           _ ->
@@ -389,20 +414,13 @@ defmodule EzagentDomainInstanceMessage.Integration.SpawnedParticipantTeardownTes
         end)
 
       assert teardown_cap,
-             "owner must hold the {:spawned_by, owner} Sandbox :destroy teardown cap"
+             "owner must hold the concrete worker Sandbox :destroy teardown cap"
 
-      # #154-clean: granted_by is the OWNER (the lineage root) — NOT a forged
-      # {:spawned_by, orchestrator} cap minted for an operator.
+      # Issuer provenance records the target authority's K.grant requestor.
       assert teardown_cap.granted_by == owner
-
-      refute Enum.any?(caps, fn
-               %Ezagent.Capability{instance: {:spawned_by, %URI{} = p}} = c ->
-                 Ezagent.URI.type?(p, :agent) and c.granted_by != owner
-
-               _ ->
-                 false
-             end),
-             "no forged/unowned {:spawned_by, _} cap may be minted"
+      assert is_binary(teardown_cap.signature)
+      assert is_binary(teardown_cap.key_id)
+      assert teardown_cap.grantee_uri == owner
     end
   end
 

@@ -218,7 +218,7 @@ defmodule Ezagent.PluginCurlAgent.CurlCascadeActivationTest do
     target = Ezagent.URI.with_action(source_uri, :api_keys, :put_api_key)
 
     assert {:ok, %{ok: true, provider: ^provider}} =
-             Invocation.dispatch(%Invocation{
+             Invocation.dispatch(%Invocation{origin: :trusted_internal,
                target: target,
                mode: :call,
                args: %{provider: provider, key: key},

@@ -76,7 +76,7 @@ defmodule Ezagent.World.AgentDeleteDispatchTest do
   defp dispatch_delete(agent_uri, caps, caller \\ User.admin_uri()) do
     target = Ezagent.URI.with_action(agent_uri, :manage, :delete)
 
-    Invocation.dispatch(%Invocation{
+    Invocation.dispatch(%Invocation{origin: :trusted_internal,
       target: target,
       mode: :call,
       args: %{},
@@ -160,7 +160,7 @@ defmodule Ezagent.World.AgentDeleteDispatchTest do
     target = URI.new!("#{URI.to_string(session_uri)}?action=session.join")
 
     :ok =
-      Invocation.dispatch(%Invocation{
+      Invocation.dispatch(%Invocation{origin: :trusted_internal,
         target: target,
         mode: :cast,
         args: %{member: agent_uri},

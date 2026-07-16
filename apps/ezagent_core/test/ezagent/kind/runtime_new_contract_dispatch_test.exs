@@ -41,7 +41,7 @@ defmodule Ezagent.Kind.RuntimeNewContractDispatchTest do
   # safe shared connection without re-globalizing it onto the test pid.
   use EzagentCore.DataCase, async: false
 
-  alias Ezagent.{BehaviorRegistry, Invocation}
+  alias Ezagent.{BehaviorRegistry, Capability, Invocation}
 
   # ---------------------------------------------------------------
   # Fixtures
@@ -231,6 +231,7 @@ defmodule Ezagent.Kind.RuntimeNewContractDispatchTest do
           %{msg: "from-effect-dispatch"},
           %{caller: :vm_internal, reply: :ignore, caps: MapSet.new()}
         )
+        |> Map.put(:origin, :trusted_internal)
 
       {:ok, :ok, [{:dispatch, cmd}]}
     end
@@ -310,6 +311,7 @@ defmodule Ezagent.Kind.RuntimeNewContractDispatchTest do
           %{},
           %{caller: :vm_internal, reply: {:caller_inbox, self()}, caps: MapSet.new()}
         )
+        |> Map.put(:origin, :trusted_internal)
 
       {:ok, :ok, [{:dispatch_returning, cmd, bind_as: :bumped}]}
     end
@@ -327,6 +329,7 @@ defmodule Ezagent.Kind.RuntimeNewContractDispatchTest do
           %{},
           %{caller: :vm_internal, reply: {:caller_inbox, self()}, caps: MapSet.new()}
         )
+        |> Map.put(:origin, :trusted_internal)
 
       {:ok, :ok,
        [
@@ -345,6 +348,7 @@ defmodule Ezagent.Kind.RuntimeNewContractDispatchTest do
           %{},
           %{caller: :vm_internal, reply: {:caller_inbox, self()}, caps: MapSet.new()}
         )
+        |> Map.put(:origin, :trusted_internal)
 
       {:ok, :ok,
        [
@@ -407,6 +411,7 @@ defmodule Ezagent.Kind.RuntimeNewContractDispatchTest do
       )
 
     self_uri = Ezagent.URI.new!("entity://team-alpha/agent/runtime-new-contract-test")
+    _authority = install_test_authority!(self_uri, :test_mixed)
 
     # Start with empty slices for each Behavior (defensive; mirrors
     # what Kind.Server.init/1 would have built via init_slice/1).
@@ -418,15 +423,29 @@ defmodule Ezagent.Kind.RuntimeNewContractDispatchTest do
   end
 
   defp invocation(self_uri, action, args) do
-    target_string = URI.to_string(%{self_uri | query: "action=mixed.#{action}"})
+    target = Ezagent.URI.with_action(self_uri, :mixed, action)
+    presenter = Ezagent.URI.new!("entity://team-alpha/user/runtime-contract-presenter")
+    authority = Process.get({Ezagent.Cap.Authority, :current})
+
+    requested =
+      Capability.cap(
+        :test_mixed,
+        NewContractBehavior,
+        action,
+        Ezagent.URI.instance(self_uri),
+        Capability.workspace_of(self_uri)
+      )
+
+    signed = authority_signed_cap!(authority, presenter, requested)
 
     %Invocation{
-      target: URI.parse(target_string),
+      origin: :trusted_internal,
+      target: target,
       mode: :call,
       args: args,
       ctx: %{
-        caller: :vm_internal,
-        caps: MapSet.new(),
+        caller: presenter,
+        caps: MapSet.new([signed]),
         reply: :ignore
       }
     }
@@ -516,18 +535,8 @@ defmodule Ezagent.Kind.RuntimeNewContractDispatchTest do
   # minimal ctx; this variant lets a test thread an arbitrary
   # payload into the handler.
   defp invocation_with_ctx(self_uri, action, args, extra_ctx) do
-    target_string = URI.to_string(%{self_uri | query: "action=mixed.#{action}"})
-
-    %Invocation{
-      target: URI.parse(target_string),
-      mode: :call,
-      args: args,
-      ctx:
-        Map.merge(
-          %{caller: :vm_internal, caps: MapSet.new(), reply: :ignore},
-          extra_ctx
-        )
-    }
+    invocation = invocation(self_uri, action, args)
+    %{invocation | ctx: Map.merge(invocation.ctx, extra_ctx)}
   end
 
   describe "Phase 1.5b — :notify effect" do

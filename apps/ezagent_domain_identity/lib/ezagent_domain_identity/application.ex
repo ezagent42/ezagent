@@ -91,7 +91,7 @@ defmodule EzagentDomainIdentity.Application do
         # PR-M (Allen 2026-05-20) — DB write skipped in :test env to
         # avoid Sandbox checkout contention. Tests that need the admin
         # row can call `Ezagent.Users.create(admin_uri, nil,
-        # MapSet.to_list(MapSet.new([Ezagent.Capability.admin_genesis_cap()])))` in setup. Dev/prod see
+        # an explicit legacy fixture cap list in setup. Dev/prod see
         # the seed on every boot (idempotent).
         :ok = maybe_ensure_admin_user()
         _ = maybe_seed_smtp_config()
@@ -213,14 +213,13 @@ defmodule EzagentDomainIdentity.Application do
       # V1 prevention (Allen 2026-05-21): route via Ezagent.Kind.spawn/2.
       # User Kind declares `EzagentDomainIdentity.Application.UserSupervisor`
       # via supervisor/0 — destination preserved.
-      # #154 genesis collapse (2026-06-20) — admin's genesis caps are the
-      # single canonical self-granted wildcard (`granted_by` the admin entity
-      # `entity://system/user/admin`), minted via
-      # `Ezagent.Capability.admin_genesis_cap/0`. The eliminated
-      # `system://bootstrap` principal no longer mediates this.
+      # Cap signing Path A: the admin Kind starts with an empty Identity cap
+      # store. Per-target authority anchors live only in the corresponding
+      # sealed authority row and are fetched on demand by `K.grant`; no ambient
+      # wildcard is stored in the admin slice.
       case Ezagent.Kind.spawn(User, %{
              uri: admin_uri,
-             initial_caps: MapSet.new([Ezagent.Capability.admin_genesis_cap()])
+             initial_caps: MapSet.new()
            }) do
         {:ok, _pid} ->
           :ok

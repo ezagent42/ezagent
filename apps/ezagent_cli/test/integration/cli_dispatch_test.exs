@@ -72,7 +72,7 @@ defmodule EzagentCli.Integration.CLIDispatchTest do
       target = Ezagent.URI.new!("workspace://#{name}?action=workspace.list_members")
 
       assert {:ok, %{members: members}} =
-               Ezagent.Invocation.dispatch(%Ezagent.Invocation{
+               Ezagent.Invocation.dispatch(%Ezagent.Invocation{origin: :trusted_internal,
                  target: target,
                  mode: :call,
                  args: %{},

@@ -141,7 +141,8 @@ defmodule EzagentPluginCodex.BridgeAdapter do
               }
             ]),
           reply: :ignore
-        }
+        },
+        origin: :authenticated_external
       })
     end
 

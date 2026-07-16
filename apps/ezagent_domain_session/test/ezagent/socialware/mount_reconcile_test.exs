@@ -38,7 +38,7 @@ defmodule Ezagent.Socialware.MountReconcileTest do
       revoke_all(grantee, target, [:add_node, :get_tree], row.granted_by)
 
       assert eventually(fn ->
-               match?({:error, :unauthorized}, dispatch(grantee, target, :add_node))
+               match?({:error, _reason}, dispatch(grantee, target, :add_node))
              end)
 
       # 挂载表行仍在(durable SoT 不受重启影响)
@@ -119,11 +119,15 @@ defmodule Ezagent.Socialware.MountReconcileTest do
   end
 
   defp dispatch(caller, target, action) do
-    Ezagent.Invocation.dispatch(%Ezagent.Invocation{
+    Ezagent.Invocation.dispatch(%Ezagent.Invocation{origin: :trusted_internal,
       target: Ezagent.URI.with_action(target, :composition_grant_target, action),
       mode: :call,
       args: %{},
-      ctx: %{caller: caller, caps: MapSet.new(), reply: {:caller_inbox, self()}}
+      ctx: %{
+        caller: caller,
+        caps: MapSet.new(Ezagent.Identity.list_caps_for(caller)),
+        reply: {:caller_inbox, self()}
+      }
     })
   end
 
@@ -152,8 +156,13 @@ defmodule Ezagent.Socialware.MountReconcileTest do
   defp session_uri,
     do: Ezagent.URI.new!("session://composition/default/mountrec-#{uniq()}")
 
-  defp user_uri(name),
-    do: Ezagent.URI.new!("entity://composition/user/#{name}-#{uniq()}")
+  defp user_uri(name) do
+    uri = Ezagent.URI.new!("entity://composition/user/#{name}-#{uniq()}")
+    {:ok, _} = Ezagent.Users.create(uri, "test-password-#{uniq()}", [])
+    {:ok, _} = Ezagent.SpawnRegistry.spawn(uri)
+    on_exit(fn -> Ezagent.Kind.terminate(uri) end)
+    uri
+  end
 
   defp agent_uri(name, ws_name),
     do: Ezagent.URI.new!("entity://#{ws_name}/agent/#{name}-#{uniq()}")

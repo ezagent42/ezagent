@@ -79,7 +79,8 @@ defmodule Ezagent.Workspace.ResponsibilityAssignments do
            target: target,
            action: action,
            args: args,
-           ctx: Map.merge(auth_ctx, %{mode: :call, reply: {:caller_inbox, self()}})
+           ctx: Map.merge(auth_ctx, %{mode: :call, reply: {:caller_inbox, self()}}),
+           origin: :trusted_internal
          }) do
       :ok -> :ok
       {:ok, _} -> :ok
@@ -122,9 +123,12 @@ defmodule Ezagent.Workspace.ResponsibilityAssignments do
   end
 
   defp grant_responsibility_caps(%URI{} = holder, responsibility, %URI{} = workspace_uri, ctx) do
-    ResponsibilityAssignment.bundled_caps(responsibility, workspace_uri)
+    _authorized_assigner = Map.fetch!(ctx, :caller)
+    admin = Ezagent.URI.user(:system, :admin)
+
+    responsibility_caps(responsibility, workspace_uri)
     |> Enum.reduce_while(:ok, fn cap, :ok ->
-      case Ezagent.Identity.Grant.grant_cap(holder, cap, {:held_by, Map.fetch!(ctx, :caller)}) do
+      case Ezagent.Identity.Grant.grant_cap(holder, cap, {:admin, admin}) do
         :ok -> {:cont, :ok}
         {:error, reason} -> {:halt, {:error, {:grant_responsibility_cap_failed, cap, reason}}}
       end
@@ -132,7 +136,7 @@ defmodule Ezagent.Workspace.ResponsibilityAssignments do
   end
 
   defp revoke_responsibility_caps(%URI{} = holder, responsibility, %URI{} = workspace_uri, ctx) do
-    ResponsibilityAssignment.bundled_caps(responsibility, workspace_uri)
+    responsibility_caps(responsibility, workspace_uri)
     |> Enum.reduce_while(:ok, fn cap, :ok ->
       case Ezagent.Identity.Grant.revoke_cap(holder, cap, {:held_by, Map.fetch!(ctx, :caller)}) do
         :ok -> {:cont, :ok}
@@ -140,4 +144,23 @@ defmodule Ezagent.Workspace.ResponsibilityAssignments do
       end
     end)
   end
+
+  defp responsibility_caps("supervisor", %URI{} = workspace_uri) do
+    session_facade =
+      Application.get_env(
+        :ezagent_domain_workspace,
+        :session_facade,
+        EzagentDomainInstanceMessage.SessionCreator
+      )
+
+    if Code.ensure_loaded?(session_facade) and
+         function_exported?(session_facade, :list_sessions, 1) do
+      session_facade.list_sessions(workspace_uri)
+      |> Enum.flat_map(&ResponsibilityAssignment.supervisor_caps_for_session(&1, workspace_uri))
+    else
+      []
+    end
+  end
+
+  defp responsibility_caps(_responsibility, _workspace_uri), do: []
 end

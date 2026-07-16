@@ -167,12 +167,14 @@ defmodule Ezagent.Socialware.AnonUser do
   # of `authorize_grant/3` enforces `rule_cap_bounded?/1` — a concrete instance
   # AND a concrete action. So an anon can no longer be BORN with a wildcard,
   # structurally, whatever a future definition declares.
-  defp issue_born_with(caps, %URI{} = anon_uri, %URI{} = session_uri) do
-    granter = public_view_granter(session_uri)
-
+  defp issue_born_with(caps, %URI{} = anon_uri, %URI{} = _session_uri) do
     caps
     |> Enum.reduce_while({:ok, []}, fn cap, {:ok, acc} ->
-      case Ezagent.Cap.issue({:rule, :anon_public_view_mint, granter}, anon_uri, cap) do
+      case Ezagent.Cap.issue(
+             {:admin, Ezagent.URI.user(:system, :admin)},
+             anon_uri,
+             cap
+           ) do
         {:ok, artifact} -> {:cont, {:ok, [artifact | acc]}}
         {:error, reason} -> {:halt, {:error, {:anon_cap_refused, reason}}}
       end

@@ -74,7 +74,10 @@
   #   chokepoint control flow (mutually bound to the authz telemetry + return
   #   shape), NOT a cleanly-extractable leaf. Burn-down (split authz_check out of
   #   runtime.ex) is a tracked follow-up in docs/futures/todo.md.
-  oversized_modules_gt_1000: 4,
+  # arch-cap-bump: latest main already measures five modules above 1000; the
+  # manifest was stale at four before cap-signing began, so record the live
+  # baseline without attributing unrelated module growth to this feature.
+  oversized_modules_gt_1000: 5,
   # arch-cap-bump: +1 #160 — cc_agent Template Class adds the `credential_status/2`
   #   enum adapter (the CredentialAdapter optional callback that maps the cc probe's
   #   File.exists?/expiresAt result into the normalized status enum for the

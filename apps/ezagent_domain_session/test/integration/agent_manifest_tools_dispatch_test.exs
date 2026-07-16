@@ -36,7 +36,7 @@ defmodule EzagentDomainSession.Integration.AgentManifestToolsDispatchTest do
       optional: false
     }
 
-    assert {:error, :unauthorized} =
+    assert {:error, :missing_cap} =
              Tools.dispatch_action(agent_uri, tool, %{message: message})
   end
 end

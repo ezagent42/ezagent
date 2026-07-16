@@ -149,15 +149,24 @@ defmodule Ezagent.Agent.HostLoginAdopt do
   defp set_pointer(installer_uri, ws_name, flavor, source_uri) do
     source = URI.to_string(source_uri)
 
-    result =
-      UserDefaultSource.set_via_dispatch(
+    target =
+      Ezagent.URI.with_action(
         installer_uri,
-        %{flavor: flavor, source_uri: source, workspace: ws_name},
-        %{
-          caller: installer_uri,
-          caps: MapSet.new([Ezagent.Capability.admin_genesis_cap()])
-        }
+        :user_default_credential_source,
+        :set_default_credential_source
       )
+
+    admin = Ezagent.Entity.User.admin_uri()
+
+    result =
+      with {:ok, signed_cap} <-
+             Ezagent.Cap.issue_for_action({:admin, admin}, installer_uri, target) do
+        UserDefaultSource.set_via_dispatch(
+          installer_uri,
+          %{flavor: flavor, source_uri: source, workspace: ws_name},
+          %{caller: installer_uri, caps: MapSet.new([signed_cap])}
+        )
+      end
 
     case result do
       {:ok, _} ->

@@ -30,7 +30,6 @@ defmodule Ezagent.Integration.CreateUserDispatchTest do
   use EzagentCore.DataCase, async: false
 
   alias Ezagent.Workspace
-  alias Ezagent.Entity.User
   alias Ezagent.Users
 
   setup do
@@ -39,10 +38,7 @@ defmodule Ezagent.Integration.CreateUserDispatchTest do
 
     workspace_uri = URI.new!("workspace://#{ws_name}")
 
-    admin_ctx = %{
-      caller: User.admin_uri(),
-      caps: MapSet.new([Ezagent.Capability.admin_genesis_cap()])
-    }
+    admin_ctx = signed_workspace_ctx!(workspace_uri)
 
     {:ok, ws_name: ws_name, workspace_uri: workspace_uri, admin_ctx: admin_ctx}
   end
@@ -77,11 +73,13 @@ defmodule Ezagent.Integration.CreateUserDispatchTest do
       # Verify the DB row is real — same surface
       # `Ezagent.Users.verify_password/2` reads.
       assert %{uri: %URI{}, caps: caps} = Users.get_by_uri(user_uri_str)
-      # PR-甲-2 (#154) narrowed `User.default_caps/1` to `[]` — participation
-      # is granted per-session at join, not as a creation baseline. So with
-      # `caps: ""` the user's caps_json is empty (the structural self-Identity
-      # cap is added at SPAWN by Behavior.Identity, not stored in caps_json).
-      assert caps == []
+      # The create facade also adds the user as a workspace member, which now
+      # self-stores the target-signed workspace.create_session membership cap.
+      assert Enum.any?(caps, fn cap ->
+               cap.behavior == Ezagent.ActionSet.Workspace and
+                 cap.action == :create_session and cap.instance == workspace_uri and
+                 cap.grantee_uri == Ezagent.URI.new!(user_uri_str)
+             end)
       assert Users.verify_password(user_uri_str, "test-password-not-secret")
     end
 

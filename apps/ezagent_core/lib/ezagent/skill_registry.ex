@@ -18,6 +18,7 @@ defmodule Ezagent.SkillRegistry do
   alias Ezagent.Agent.Recipe
 
   @source_rel "skills_seed"
+  @socialware_source_rel "socialware_seed"
   @marker "SKILL.md"
   @entries_key {__MODULE__, :entries}
   @ready_key {__MODULE__, :ready?}
@@ -96,17 +97,25 @@ defmodule Ezagent.SkillRegistry do
   end
 
   @doc """
-  Computes the runtime skill set from every loaded plugin module's `roles/0`.
+  Computes the runtime skill set from every loaded recipe authority.
 
-  This mirrors `Ezagent.Plugin.boot/1`'s role seed surface: each loaded
-  `ezagent_plugin_*` app contributes its plugin contract module, and each role
-  recipe is validated through `Ezagent.Agent.Recipe.new/1` before its `skills`
-  refs are collected.
+  This includes both `Ezagent.Plugin.boot/1`'s `roles/0` surface and sibling
+  `priv/socialware_seed/*/recipes.yaml` data recipes. Each recipe is validated
+  through `Ezagent.Agent.Recipe.new/1` before its `skills` refs are collected.
   """
   @spec derived_recipe_skill_refs() :: [String.t()]
   def derived_recipe_skill_refs do
-    loaded_plugin_modules()
-    |> derived_recipe_skill_refs()
+    plugin_refs =
+      loaded_plugin_modules()
+      |> derived_recipe_skill_refs()
+
+    socialware_refs =
+      socialware_seed_source_dirs()
+      |> Enum.flat_map(&socialware_recipe_skills!/1)
+
+    (plugin_refs ++ socialware_refs)
+    |> Enum.uniq()
+    |> Enum.sort()
   end
 
   @doc """
@@ -151,6 +160,16 @@ defmodule Ezagent.SkillRegistry do
   @doc "Backward-compatible name for the shipped `priv/skills_seed` source dirs."
   @spec source_dirs() :: [Path.t()]
   def source_dirs, do: seed_source_dirs()
+
+  defp socialware_seed_source_dirs do
+    for {app, _desc, _vsn} <- Application.loaded_applications(),
+        priv = safe_priv_dir(app),
+        priv != nil,
+        dir = Path.join(priv, @socialware_source_rel),
+        File.dir?(dir) do
+      dir
+    end
+  end
 
   @doc """
   Computes a deterministic hash over a skill directory closure.
@@ -204,6 +223,7 @@ defmodule Ezagent.SkillRegistry do
         app |> Atom.to_string() |> String.starts_with?("ezagent_plugin_"),
         mod = plugin_module_for(app),
         not is_nil(mod),
+        Code.ensure_loaded?(mod),
         function_exported?(mod, :roles, 0) do
       mod
     end
@@ -236,6 +256,53 @@ defmodule Ezagent.SkillRegistry do
                   inspect(reason)
       end
     end)
+  end
+
+  defp socialware_recipe_skills!(source_dir) do
+    source_dir
+    |> Path.join("*/recipes.yaml")
+    |> Path.wildcard()
+    |> Enum.flat_map(fn path ->
+      case path |> File.read!() |> YamlElixir.read_from_string() do
+        {:ok, %{"recipes" => recipes}} when is_list(recipes) ->
+          Enum.flat_map(recipes, &socialware_recipe_skills!(&1, path))
+
+        {:ok, other} ->
+          raise ArgumentError,
+                "#{path} must have a top-level recipes list for skill derivation, got: " <>
+                  inspect(other)
+
+        {:error, reason} ->
+          raise ArgumentError,
+                "#{path} is invalid YAML for skill derivation: #{inspect(reason)}"
+      end
+    end)
+  end
+
+  defp socialware_recipe_skills!(%{"name" => name} = attrs, path)
+       when is_binary(name) and name != "" do
+    recipe = %{
+      name: name,
+      skills: Map.get(attrs, "skills") || [],
+      prompt: Map.get(attrs, "prompt") || "",
+      behaviors: [],
+      requested_caps: []
+    }
+
+    case Recipe.new(recipe) do
+      {:ok, %Recipe{skills: skills}} ->
+        skills
+
+      {:error, reason} ->
+        raise ArgumentError,
+              "#{path} emitted invalid recipe #{inspect(name)} for skill derivation: " <>
+                inspect(reason)
+    end
+  end
+
+  defp socialware_recipe_skills!(other, path) do
+    raise ArgumentError,
+          "#{path} emitted invalid recipe for skill derivation: #{inspect(other)}"
   end
 
   defp safe_priv_dir(app) do

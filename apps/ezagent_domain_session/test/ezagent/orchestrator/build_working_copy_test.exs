@@ -21,18 +21,49 @@ defmodule Ezagent.Orchestrator.BuildWorkingCopyTest do
   alias Ezagent.Ecto.KindSnapshot
   alias Ezagent.Orchestrator.Tools
   alias Ezagent.Socialware.DefinitionRegistry
+  import Ezagent.Test.CapHelper, only: [signed_required_cap!: 5]
 
-  defp caps_3(workspace_uri) do
-    MapSet.new([
-      %Ezagent.Capability{
-        kind: :session_template,
-        behavior: Ezagent.ActionSet.Template,
-        instance: {:within_workspace, workspace_uri},
-        workspace_uri: workspace_uri,
-        granted_by: Ezagent.URI.new!("entity://system/user/admin"),
-        granted_at: DateTime.utc_now()
-      }
-    ])
+  setup do
+    restart_workspace!(Ezagent.URI.workspace("team-alpha"))
+    :ok
+  end
+
+  defp caps_3(workspace_uri, caller) do
+    cap =
+      signed_required_cap!(
+        workspace_uri,
+        :workspace,
+        Ezagent.ActionSet.Workspace,
+        :write_session_templates,
+        caller
+      )
+
+    MapSet.new([cap])
+  end
+
+  defp restart_workspace!(workspace_uri) do
+    terminate_workspace(workspace_uri)
+
+    {:ok, pid} =
+      Ezagent.Kind.spawn(Ezagent.Entity.Workspace, %{
+        uri: workspace_uri,
+        behaviors: Ezagent.Entity.Workspace.behaviors()
+      })
+
+    on_exit(fn -> terminate_workspace(workspace_uri) end)
+    pid
+  end
+
+  defp terminate_workspace(workspace_uri) do
+    case Ezagent.KindRegistry.lookup(workspace_uri) do
+      {:ok, pid} ->
+        if Process.alive?(pid) do
+          DynamicSupervisor.terminate_child(Ezagent.Workspace.Supervisor, pid)
+        end
+
+      :error ->
+        :ok
+    end
   end
 
   # A member-shaped live :chat slice: one in-session-template member with a
@@ -121,7 +152,7 @@ defmodule Ezagent.Orchestrator.BuildWorkingCopyTest do
                  session_uri: session_uri,
                  workspace_uri: ws,
                  caller: caller,
-                 caps: caps_3(ws)
+                 caps: caps_3(ws, caller)
                )
 
       assert template_uri.scheme == "template"
@@ -201,7 +232,7 @@ defmodule Ezagent.Orchestrator.BuildWorkingCopyTest do
                  session_uri: session_uri,
                  workspace_uri: ws,
                  caller: caller,
-                 caps: caps_3(ws)
+                 caps: caps_3(ws, caller)
                )
 
       [_name, uri_hash] =
@@ -252,7 +283,7 @@ defmodule Ezagent.Orchestrator.BuildWorkingCopyTest do
 
       caller = Ezagent.URI.new!("entity://team-alpha/agent/cc_orch")
       ws = Ezagent.URI.new!("workspace://team-alpha")
-      caps = caps_3(ws)
+      caps = caps_3(ws, caller)
 
       assert {:ok, uri_a} =
                Tools.save_template_as("gate-team",

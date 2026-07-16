@@ -71,6 +71,7 @@ defmodule EzagentDomainInstanceMessage.Integration.SessionTemplateMaterializeTes
     rows = rule_rows(session_uri)
     assert length(rows) == 1
     assert [%{receivers: stored_receivers}] = rows
+
     assert Enum.map(stored_receivers, &Ezagent.Routing.Receiver.decode_from_store/1) == [
              {:role, role_name}
            ]
@@ -82,7 +83,9 @@ defmodule EzagentDomainInstanceMessage.Integration.SessionTemplateMaterializeTes
     source_template_uri = seed_agent_template(n)
     template_name = "lazy-team-#{n}"
 
-    persist_template(relay_team_content(template_name, source_template_uri, role_name, "tpl_#{n}"))
+    persist_template(
+      relay_team_content(template_name, source_template_uri, role_name, "tpl_#{n}")
+    )
 
     assert {:ok, session_uri, %{}} =
              EzagentDomainInstanceMessage.SessionCreator.create_session(
@@ -119,7 +122,9 @@ defmodule EzagentDomainInstanceMessage.Integration.SessionTemplateMaterializeTes
     source_template_uri = seed_agent_template(n)
     template_name = "iso-team-#{n}"
 
-    persist_template(relay_team_content(template_name, source_template_uri, role_name, "tpl_#{n}"))
+    persist_template(
+      relay_team_content(template_name, source_template_uri, role_name, "tpl_#{n}")
+    )
 
     assert {:ok, session_a, %{}} =
              EzagentDomainInstanceMessage.SessionCreator.create_session(
@@ -314,10 +319,14 @@ defmodule EzagentDomainInstanceMessage.Integration.SessionTemplateMaterializeTes
   defp write_agent_template(name, extra) do
     uri = Ezagent.URI.new!("template://system/agent/#{name}")
     {:ok, _} = Ezagent.SpawnRegistry.spawn(uri)
+    admin = User.admin_uri()
+    target = URI.new!("#{URI.to_string(uri)}?action=template.write")
+    {:ok, signed_cap} = Ezagent.Cap.issue_for_action({:admin, admin}, admin, target)
 
     {:ok, _} =
       Invocation.dispatch(%Invocation{
-        target: URI.new!("#{URI.to_string(uri)}?action=template.write"),
+        origin: :trusted_internal,
+        target: target,
         mode: :call,
         args: %{
           content:
@@ -332,8 +341,8 @@ defmodule EzagentDomainInstanceMessage.Integration.SessionTemplateMaterializeTes
             )
         },
         ctx: %{
-          caller: User.admin_uri(),
-          caps: MapSet.new([Ezagent.Capability.admin_genesis_cap()]),
+          caller: admin,
+          caps: MapSet.new([signed_cap]),
           reply: {:caller_inbox, self()}
         }
       })
@@ -357,14 +366,18 @@ defmodule EzagentDomainInstanceMessage.Integration.SessionTemplateMaterializeTes
 
   defp dispatch_send(session_uri, text) do
     msg = Message.new(User.admin_uri(), %{text: text, attachments: []})
+    admin = User.admin_uri()
+    target = URI.new!("#{URI.to_string(session_uri)}?action=session.send")
+    {:ok, signed_cap} = Ezagent.Cap.issue_for_action({:admin, admin}, admin, target)
 
     Invocation.dispatch(%Invocation{
-      target: URI.new!("#{URI.to_string(session_uri)}?action=session.send"),
+      origin: :trusted_internal,
+      target: target,
       mode: :cast,
       args: %{message: msg},
       ctx: %{
-        caller: User.admin_uri(),
-        caps: MapSet.new([Ezagent.Capability.admin_genesis_cap()]),
+        caller: admin,
+        caps: MapSet.new([signed_cap]),
         reply: :ignore
       }
     })

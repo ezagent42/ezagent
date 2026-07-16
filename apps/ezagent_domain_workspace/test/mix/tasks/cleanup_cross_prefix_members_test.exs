@@ -110,7 +110,7 @@ defmodule Mix.Tasks.Ezagent.Workspace.CleanupCrossPrefixMembersTest do
       ws_uri = Ezagent.URI.new!("workspace://#{workspace_name}")
 
       {:ok, %{members: live_members}} =
-        Ezagent.Invocation.dispatch(%Ezagent.Invocation{
+        Ezagent.Invocation.dispatch(%Ezagent.Invocation{origin: :trusted_internal,
           target: Ezagent.URI.new!("workspace://#{workspace_name}?action=workspace.list_members"),
           mode: :call,
           args: %{},
@@ -118,19 +118,10 @@ defmodule Mix.Tasks.Ezagent.Workspace.CleanupCrossPrefixMembersTest do
           # elimination of `system://workspace-loader`).
           ctx: %{
             caller: ws_uri,
-            caps: [
-              %Ezagent.Capability{
-                Ezagent.Capability.cap(
-                  :workspace,
-                  Ezagent.ActionSet.Workspace,
-                  :list_members,
-                  Ezagent.URI.instance(ws_uri),
-                  Ezagent.Capability.workspace_of(ws_uri)
-                )
-                | granted_by: ws_uri,
-                  granted_at: DateTime.utc_now()
-              }
-            ],
+            caps: [signed_action_cap!(
+              Ezagent.URI.new!("workspace://#{workspace_name}?action=workspace.list_members"),
+              ws_uri
+            )],
             reply: {:caller_inbox, self()}
           }
         })

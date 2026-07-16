@@ -53,9 +53,10 @@ defmodule Ezagent.Identity do
                ctx: %{
                  mode: :call,
                  caller: user_uri,
-                 caps: bootstrap_self_cap(user_uri),
+                 caps: signed_self_cap(user_uri, target),
                  reply: {:caller_inbox, self()}
-               }
+               },
+               origin: :trusted_internal
              }) do
           {:ok, %{caps: caps}} when is_list(caps) -> verified_cap_set(caps, user_uri)
           _ -> MapSet.new()
@@ -83,54 +84,14 @@ defmodule Ezagent.Identity do
     end
   end
 
-  # Caller's own list_caps cap — per Q-MU-5 default. This is the
-  # "self-grant" needed to dispatch list_caps_for one's own URI without
-  # already having external caps. Since admin's caps include :any/:any/:any,
-  # this matters only for non-admin first-mount.
-  #
-  # Phase 9 PR-3 (SPEC v3 §4): the self-cap is scoped to the user's
-  # own workspace — they're reading their own caps, which lives in
-  # their workspace. `entity_workspace_uri/1` derives it from the
-  # 3-segment entity URI shape (`entity://user/<workspace>/<name>`).
-  defp bootstrap_self_cap(user_uri) do
-    workspace_uri = Ezagent.URI.entity_workspace_uri(user_uri)
+  defp signed_self_cap(user_uri, target) do
+    admin = Ezagent.URI.user(:system, :admin)
 
-    MapSet.new([
-      %Ezagent.Capability{
-        # Derive the kind axis from the URI — Identity lives on BOTH the
-        # User and the Agent Kind (Allen 2026-05-26). `identity.list_caps`'s
-        # needed cap has its kind substituted from the target Kind's
-        # type_name (`:user` / `:agent`), so a hardcoded `kind: :user`
-        # self-cap never authorizes an Agent reading its OWN caps — the
-        # exact regression that made `list_caps_for/1` return empty for
-        # orchestrator agents (OrchestratorMcpBridge unauthorized).
-        kind: self_cap_kind(user_uri),
-        behavior: Ezagent.ActionSet.Identity,
-        # SPEC 2026-05-27 capability-action-axis — self-cap is for
-        # `:list_caps` (Identity.actions/0 == [:list_caps, :has_cap?,
-        # :grant_cap, :revoke_cap]; the user-facing baseline is read).
-        action: :list_caps,
-        instance: user_uri,
-        workspace_uri: workspace_uri,
-        # #154 genesis collapse (2026-06-20) — this is the entity's OWN
-        # `:list_caps` self-cap (the "self-grant" above), so its `granted_by`
-        # is the entity ITSELF (self-authority, a real entity), not the
-        # eliminated `system://bootstrap` principal. Every cap now traces to a
-        # real entity; a self-cap traces to its owner.
-        granted_by: user_uri,
-        granted_at: ~U[2026-01-01 00:00:00Z]
-      }
-    ])
+    case Ezagent.Cap.issue_for_action({:admin, admin}, user_uri, target) do
+      {:ok, cap} -> MapSet.new([cap])
+      {:error, _reason} -> MapSet.new()
+    end
   end
-
-  # Identity is hosted on both the User and Agent Kind; the self-cap's
-  # kind axis must match the target Kind's `type_name/0` so it satisfies
-  # the runtime-substituted needed cap.
-  defp self_cap_kind(%URI{scheme: "entity"} = uri) do
-    if Ezagent.URI.type?(uri, :agent), do: :agent, else: :user
-  end
-
-  defp self_cap_kind(_), do: :user
 
   @doc """
   Phase 8c PR-F (Allen 2026-05-20) — does `entity_uri` belong to the
@@ -271,7 +232,8 @@ defmodule Ezagent.Identity do
         mode: :cast,
         reply: :ignore,
         cap_delivery_producer: :identity_absorb
-      }
+      },
+      origin: :trusted_internal
     }
 
     case Router.dispatch(cmd) do

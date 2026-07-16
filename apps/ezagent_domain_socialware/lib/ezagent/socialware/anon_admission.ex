@@ -104,7 +104,8 @@ defmodule Ezagent.Socialware.AnonAdmission do
       target: target,
       mode: :call,
       args: %{member: anon_uri},
-      ctx: %{caller: anon_uri, reply: :ignore}
+      ctx: %{caller: anon_uri, reply: :ignore},
+      origin: :authenticated_external
     })
   end
 

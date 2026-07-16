@@ -5,6 +5,7 @@ defmodule Ezagent.Session.RoleAssignmentTest do
   alias Ezagent.Capability
   alias Ezagent.Entity.Session
   alias Ezagent.Socialware.{Definition, DefinitionRegistry, Installation}
+  import Ezagent.Test.CapHelper, only: [signed_action_cap!: 2, signed_required_cap!: 5]
 
   @workspace URI.new!("workspace://system")
 
@@ -49,18 +50,24 @@ defmodule Ezagent.Session.RoleAssignmentTest do
         actor_uri: actor
       )
 
-    :ok = Installation.install_template_installs(session_uri, @workspace, %{installs: [name]}, actor)
+    :ok =
+      Installation.install_template_installs(session_uri, @workspace, %{installs: [name]}, actor)
+
     definition
   end
 
   defp join_user(session_uri, user_uri) do
+    caller = Ezagent.Entity.User.admin_uri()
+    target = Ezagent.URI.with_action(session_uri, :session, :join)
+
     Ezagent.Invocation.dispatch(%Ezagent.Invocation{
-      target: Ezagent.URI.with_action(session_uri, :session, :join),
+      origin: :trusted_internal,
+      target: target,
       mode: :call,
       args: %{member: user_uri},
       ctx: %{
-        caller: Ezagent.Entity.User.admin_uri(),
-        caps: MapSet.new([Capability.admin_genesis_cap()]),
+        caller: caller,
+        caps: MapSet.new([signed_action_cap!(target, caller)]),
         reply: {:caller_inbox, self()}
       }
     })
@@ -75,17 +82,13 @@ defmodule Ezagent.Session.RoleAssignmentTest do
   end
 
   defp assign_cap(session_uri, caller) do
-    %Capability{
-      Capability.cap(
-        :session,
-        Ezagent.ActionSet.Session,
-        :assign_role,
-        session_uri,
-        Capability.workspace_of(session_uri)
-      )
-      | granted_by: caller,
-        granted_at: DateTime.utc_now()
-    }
+    signed_required_cap!(
+      session_uri,
+      :session,
+      Ezagent.ActionSet.Session,
+      :assign_role,
+      caller
+    )
   end
 
   test "operator assigns an open human role to a joined user edge only" do

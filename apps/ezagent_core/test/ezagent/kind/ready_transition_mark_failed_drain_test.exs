@@ -12,16 +12,13 @@ defmodule Ezagent.Kind.ReadyTransitionMarkFailedDrainTest do
   `drain_pending_then_mark_ready/2` (which re-dispatches on `:ready`).
   """
   # Not async — shares the global ReadyGate / PendingDelivery ETS tables.
-  use ExUnit.Case
+  use EzagentCore.DataCase, async: false
 
   alias Ezagent.Kind.ReadyTransition
   alias Ezagent.PendingDelivery
   alias Ezagent.ReadyGate
 
   setup do
-    # DLQ.put writes to SQLite directly.
-    :ok = Ecto.Adapters.SQL.Sandbox.checkout(EzagentCore.Repo)
-
     uri =
       "entity://team-alpha/agent/never_ready-drain-test-#{System.unique_integer([:positive])}"
 
@@ -44,6 +41,7 @@ defmodule Ezagent.Kind.ReadyTransitionMarkFailedDrainTest do
     }
 
     %Ezagent.Invocation{
+      origin: :trusted_internal,
       target: Ezagent.URI.with_action(instance, :identity, :absorb_cap),
       mode: :cast,
       args: %{artifact: artifact},

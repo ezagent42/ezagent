@@ -3,8 +3,9 @@ defmodule EzagentCore.Invariants.RecipeCapBindingInvariantTest do
   Phase 3 S5 / I9 architecture lock for durable recipe-cap bindings.
 
   The binding is identity-owned, keyed identically by writer and readers, and
-  committed only after issuance but before a fresh agent can spawn. Definitive
-  spawn/join failures must conditionally tombstone the exact binding version.
+  committed immediately after a fresh agent establishes its per-Kind authority
+  and before it can join. Definitive bind/join failures must conditionally
+  tombstone the exact binding version and terminate the unjoined agent.
   """
   use ExUnit.Case, async: true
 
@@ -37,14 +38,16 @@ defmodule EzagentCore.Invariants.RecipeCapBindingInvariantTest do
     assert definition_source(@identity, :activate, 2) =~ "reconcile_recipe_binding"
   end
 
-  test "I9 fresh materialization binds before spawn and compensates by version" do
+  test "I9 fresh materialization spawns before binding, syncs, then joins" do
     materialize = definition_source(@materializer, :materialize_fresh_agent, 6)
+    refute materialize =~ "bind_recipe_caps"
 
-    assert ordered?(materialize, "bind_recipe_caps", "spawn_bound_agent")
-
-    spawn = definition_source(@materializer, :spawn_bound_agent, 8)
-    assert spawn =~ "spawn_agent"
+    spawn = definition_source(@materializer, :spawn_bound_agent, 7)
+    assert ordered?(spawn, "spawn_agent", "bind_recipe_caps")
+    assert ordered?(spawn, "bind_recipe_caps", "RecipeCapBinding.sync_live")
+    assert ordered?(spawn, "RecipeCapBinding.sync_live", "join_or_cleanup")
     assert spawn =~ "compensate_recipe_binding"
+    assert spawn =~ "terminate_worker"
 
     compensate = definition_source(@materializer, :compensate_recipe_binding, 2)
     assert compensate =~ "RecipeCapBinding.tombstone_if_version"

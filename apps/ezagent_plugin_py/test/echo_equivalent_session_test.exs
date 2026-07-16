@@ -114,7 +114,7 @@ defmodule Ezagent.PluginPy.EchoEquivalentSessionTest do
       Message.new(admin_uri, %{text: inbound_text, attachments: []}, mentions: [agent_uri])
 
     :ok =
-      Invocation.dispatch(%Invocation{
+      Invocation.dispatch(%Invocation{origin: :trusted_internal,
         target: URI.new!("#{URI.to_string(session_uri)}?action=session.send"),
         mode: :cast,
         args: %{message: inbound_msg},
@@ -133,7 +133,7 @@ defmodule Ezagent.PluginPy.EchoEquivalentSessionTest do
 
   defp join(session, member) do
     :ok =
-      Invocation.dispatch(%Invocation{
+      Invocation.dispatch(%Invocation{origin: :trusted_internal,
         target: URI.new!("#{URI.to_string(session)}?action=session.join"),
         mode: :cast,
         args: %{member: member},

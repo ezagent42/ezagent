@@ -84,14 +84,18 @@ defmodule EzagentDomainInstanceMessage.Integration.MentionGatedRoutingTest do
   end
 
   defp join(session, member) do
+    target = URI.new!("#{URI.to_string(session)}?action=session.join")
+    cap = Ezagent.Test.CapHelper.signed_action_cap!(target, member)
+
     :ok =
       Invocation.dispatch(%Invocation{
-        target: URI.new!("#{URI.to_string(session)}?action=session.join"),
+        origin: :trusted_internal,
+        target: target,
         mode: :cast,
         args: %{member: member},
         ctx: %{
           caller: member,
-          caps: MapSet.new([Ezagent.Capability.admin_genesis_cap()]),
+          caps: MapSet.new([cap]),
           reply: :ignore
         }
       })
@@ -103,14 +107,18 @@ defmodule EzagentDomainInstanceMessage.Integration.MentionGatedRoutingTest do
     msg =
       Message.new(sender, %{text: text, attachments: []}, mentions: mentions)
 
+    target = URI.new!("#{URI.to_string(session)}?action=session.send")
+    cap = Ezagent.Test.CapHelper.signed_action_cap!(target, sender)
+
     :ok =
       Invocation.dispatch(%Invocation{
-        target: URI.new!("#{URI.to_string(session)}?action=session.send"),
+        origin: :trusted_internal,
+        target: target,
         mode: :cast,
         args: %{message: msg},
         ctx: %{
           caller: sender,
-          caps: MapSet.new([Ezagent.Capability.admin_genesis_cap()]),
+          caps: MapSet.new([cap]),
           reply: :ignore
         }
       })

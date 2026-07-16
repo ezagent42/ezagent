@@ -160,7 +160,8 @@ defmodule Mix.Tasks.Ezagent.Demo.SeedCcAgent do
           }
         ],
         reply: :ignore
-      }
+      },
+      origin: :trusted_internal
     })
 
     :ok

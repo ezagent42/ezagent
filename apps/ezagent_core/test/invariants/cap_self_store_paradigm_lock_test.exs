@@ -18,6 +18,9 @@ defmodule Ezagent.Invariants.CapSelfStoreParadigmLockTest do
   @workspace_facade "apps/ezagent_domain_workspace/lib/ezagent/workspace.ex"
   @cap_delivery_schema "apps/ezagent_core/lib/ezagent/cap/delivery.ex"
   @cap_delivery_envelope "apps/ezagent_core/lib/ezagent/cap/delivery_outbox/envelope.ex"
+  @cap_verifier "apps/ezagent_core/lib/ezagent/cap/verifier.ex"
+  @config_evolve "apps/ezagent_domain_identity/lib/ezagent/behavior/config_evolve.ex"
+  @target_authority "apps/ezagent_domain_identity/lib/ezagent/identity/target_authority.ex"
 
   @legacy_grant_drivers %{
     "apps/ezagent_domain_session/lib/ezagent/behavior/session/member_cap.ex" => %{
@@ -65,21 +68,26 @@ defmodule Ezagent.Invariants.CapSelfStoreParadigmLockTest do
   ]
 
   @absorb_producers %{
+    @config_evolve => %{{:absorb_cap, 2} => 2},
     @recipe_grant_task => %{{:absorb_cap, 2} => 1},
     @orchestrator_caps => %{{:absorb_cap, 2} => 1},
     @composition_caps => %{{:absorb_cap, 2} => 1},
-    @workspace_facade => %{{:absorb_cap, 2} => 1}
+    @workspace_facade => %{{:absorb_cap, 2} => 1},
+    @target_authority => %{{:absorb_cap, 2} => 1}
   }
 
   @absorb_action_literals %{
     @cap_delivery_schema => 2,
     @cap_delivery_envelope => 6,
+    @cap_verifier => 1,
+    @config_evolve => 2,
     @recipe_grant_task => 1,
     @orchestrator_caps => 1,
     @composition_caps => 1,
     @identity_behavior => 3,
     @identity_facade => 2,
-    @workspace_facade => 1
+    @workspace_facade => 1,
+    @target_authority => 1
   }
 
   test "remaining issuer-driven grant sites are shrink-only migration debt" do

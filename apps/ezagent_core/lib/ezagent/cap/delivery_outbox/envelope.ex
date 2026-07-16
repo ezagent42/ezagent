@@ -4,10 +4,9 @@ defmodule Ezagent.Cap.DeliveryOutbox.Envelope do
   alias Ezagent.{Capability, Invocation}
   alias Ezagent.Cap.Delivery
 
-  @version 2
+  @version 3
   @delivery_actions [:absorb_cap, :revoke_cap]
   @keys [
-    :authorization_rule,
     :caller,
     :cap,
     :caps,
@@ -36,7 +35,7 @@ defmodule Ezagent.Cap.DeliveryOutbox.Envelope do
   @spec encode(Invocation.t()) :: {:ok, map()} | {:error, :invalid_delivery_envelope}
   def encode(%Invocation{} = invocation) do
     with {:ok, {producer, op, cap}} <- producer_parts(invocation),
-         {:ok, caller, caps, rule} <- allowlisted_context(invocation.ctx) do
+         {:ok, caller, caps} <- allowlisted_context(invocation.ctx) do
       {:ok,
        %{
          version: @version,
@@ -46,8 +45,7 @@ defmodule Ezagent.Cap.DeliveryOutbox.Envelope do
          cap: cap,
          caller: caller,
          presenter: caller,
-         caps: caps,
-         authorization_rule: rule
+         caps: caps
        }}
     else
       _ -> {:error, :invalid_delivery_envelope}
@@ -83,13 +81,6 @@ defmodule Ezagent.Cap.DeliveryOutbox.Envelope do
       cap_delivery_id: delivery.id,
       cap_delivery_claim_token: delivery.claim_token
     }
-
-    ctx =
-      if is_atom(envelope.authorization_rule) do
-        Map.put(ctx, :authorization_rule, envelope.authorization_rule)
-      else
-        ctx
-      end
 
     %Invocation{
       target:
@@ -155,17 +146,14 @@ defmodule Ezagent.Cap.DeliveryOutbox.Envelope do
 
   defp producer_parts(_), do: :error
 
-  defp allowlisted_context(%{caller: caller, caps: %MapSet{} = caps} = ctx) do
+  defp allowlisted_context(%{caller: caller, caps: %MapSet{} = caps}) do
     caps =
       caps
       |> MapSet.to_list()
       |> Enum.sort_by(&:erlang.term_to_binary(&1, [:deterministic]))
 
-    rule = Map.get(ctx, :authorization_rule)
-
-    if valid_caller?(caller) and Enum.all?(caps, &match?(%Capability{}, &1)) and
-         (is_nil(rule) or is_atom(rule)) do
-      {:ok, caller, caps, rule}
+    if valid_caller?(caller) and Enum.all?(caps, &match?(%Capability{}, &1)) do
+      {:ok, caller, caps}
     else
       :error
     end
@@ -200,8 +188,7 @@ defmodule Ezagent.Cap.DeliveryOutbox.Envelope do
            cap: %Capability{} = cap,
            caller: caller,
            presenter: presenter,
-           caps: caps,
-           authorization_rule: rule
+           caps: caps
          },
          %Delivery{} = delivery
        )
@@ -212,8 +199,7 @@ defmodule Ezagent.Cap.DeliveryOutbox.Envelope do
     if producer == expected_producer and target_uri == delivery.target_uri and
          op == delivery.op and delivery.payload_version == @version and
          payload_identity(cap) == delivery.payload_identity and caller == presenter and
-         valid_caller?(presenter) and
-         Enum.all?(caps, &match?(%Capability{}, &1)) and (is_nil(rule) or is_atom(rule)) do
+         valid_caller?(presenter) and Enum.all?(caps, &match?(%Capability{}, &1)) do
       :ok
     else
       {:error, :field_mismatch}

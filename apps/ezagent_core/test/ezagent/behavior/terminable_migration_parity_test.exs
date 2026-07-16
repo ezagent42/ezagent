@@ -30,9 +30,9 @@ defmodule Ezagent.ActionSet.TerminableMigrationParityTest do
   `TerminalLive`) keep pattern-matching unchanged.
   """
 
-  use ExUnit.Case, async: false
+  use EzagentCore.DataCase, async: false
 
-  alias Ezagent.{BehaviorRegistry, Invocation}
+  alias Ezagent.{BehaviorRegistry, Capability, Invocation}
   alias Ezagent.ActionSet.Terminable
 
   defmodule StubAgentKind do
@@ -55,10 +55,8 @@ defmodule Ezagent.ActionSet.TerminableMigrationParityTest do
         "entity://parity/agent/cc_terminable-#{System.unique_integer([:positive])}"
       )
 
-    # Bootstrap-admin caps satisfy the dispatch's CapBAC gate at step
-    # 5.5 — the `cap(:agent, Terminable, :terminate)` shape is covered
-    # by the admin's triple-:any cap.
-    admin_caps = MapSet.new([Ezagent.Capability.admin_genesis_cap()])
+    _authority = install_test_authority!(agent_uri, StubAgentKind.type_name())
+    admin_caps = :target_signed
 
     state = %{lifecycle: %{terminations: 0}}
 
@@ -71,11 +69,28 @@ defmodule Ezagent.ActionSet.TerminableMigrationParityTest do
     # action atom (via BehaviorRegistry), not by the `lifecycle.` prefix.
     target = Ezagent.URI.new!("#{URI.to_string(agent_uri)}?action=lifecycle.terminate")
 
+    presenter = Ezagent.URI.user(:system, :admin)
+    authority = Process.get({Ezagent.Cap.Authority, :current})
+
+    requested =
+      Capability.cap(
+        :agent,
+        Terminable,
+        :terminate,
+        agent_uri,
+        Capability.workspace_of(agent_uri)
+      )
+
+    signed = authority_signed_cap!(authority, presenter, requested)
+
+    assert caps == :target_signed
+
     %Invocation{
+      origin: :trusted_internal,
       target: target,
       mode: :call,
       args: %{},
-      ctx: %{caller: Ezagent.URI.new!("entity://system/user/admin"), caps: caps, reply: :sync}
+      ctx: %{caller: presenter, caps: MapSet.new([signed]), reply: :sync}
     }
   end
 

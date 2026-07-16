@@ -13,6 +13,7 @@ defmodule Ezagent.ActionSet.Session.MemberCapRemovalTest do
   use EzagentCore.DataCase, async: false
 
   alias Ezagent.Capability
+  import Ezagent.Test.CapHelper, only: [signed_action_cap!: 2, signed_required_cap!: 5]
   alias Ezagent.Session.Participants
 
   defp uniq, do: System.unique_integer([:positive])
@@ -36,13 +37,17 @@ defmodule Ezagent.ActionSet.Session.MemberCapRemovalTest do
   end
 
   defp dispatch_join(session_uri, member_uri) do
+    caller = Ezagent.Entity.User.admin_uri()
+    target = URI.new!("#{URI.to_string(session_uri)}?action=session.join")
+
     Ezagent.Invocation.dispatch(%Ezagent.Invocation{
-      target: URI.new!("#{URI.to_string(session_uri)}?action=session.join"),
+      origin: :trusted_internal,
+      target: target,
       mode: :call,
       args: %{member: member_uri},
       ctx: %{
-        caller: Ezagent.Entity.User.admin_uri(),
-        caps: MapSet.new([Capability.admin_genesis_cap()]),
+        caller: caller,
+        caps: MapSet.new([signed_action_cap!(target, caller)]),
         reply: :ignore
       }
     })
@@ -64,9 +69,15 @@ defmodule Ezagent.ActionSet.Session.MemberCapRemovalTest do
   # revocation (the grant-path reliability is A1's; A2.4 tests the REVOKE).
   defp wait_member_cap(entity_uri, session_uri, retries \\ 200) do
     cond do
-      holds_member_cap?(entity_uri, session_uri) -> :ok
-      retries > 0 -> Process.sleep(10); wait_member_cap(entity_uri, session_uri, retries - 1)
-      true -> flunk("member-cap never landed for #{URI.to_string(entity_uri)}")
+      holds_member_cap?(entity_uri, session_uri) ->
+        :ok
+
+      retries > 0 ->
+        Process.sleep(10)
+        wait_member_cap(entity_uri, session_uri, retries - 1)
+
+      true ->
+        flunk("member-cap never landed for #{URI.to_string(entity_uri)}")
     end
   end
 
@@ -81,17 +92,14 @@ defmodule Ezagent.ActionSet.Session.MemberCapRemovalTest do
   # Operator ctx: caller + an inline :remove_participant cap so the dispatch clears
   # the chokepoint; the handler's owner/self/admin gate is the real authorization.
   defp op_ctx(%URI{} = caller, %URI{} = session_uri) do
-    cap = %Capability{
-      Capability.cap(
+    cap =
+      signed_required_cap!(
+        session_uri,
         :session,
         Ezagent.ActionSet.Session,
         :remove_participant,
-        session_uri,
-        Capability.workspace_of(session_uri)
+        caller
       )
-      | granted_by: caller,
-        granted_at: DateTime.utc_now()
-    }
 
     %{caller: caller, caps: MapSet.new([cap])}
   end
@@ -123,7 +131,7 @@ defmodule Ezagent.ActionSet.Session.MemberCapRemovalTest do
     member = joined_member(session, "member")
 
     assert {:ok, %{status: :removed}} =
-             Participants.remove_participant(session, member, %{caller: member})
+             Participants.remove_participant(session, member, op_ctx(member, session))
 
     refute holds_member_cap?(member, session), "member-cap must be revoked on self-leave"
     refute Map.has_key?(read_members(session), member)
@@ -141,7 +149,10 @@ defmodule Ezagent.ActionSet.Session.MemberCapRemovalTest do
     assert {:error, :unauthorized} =
              Participants.remove_participant(session, member, op_ctx(stranger, session))
 
-    assert holds_member_cap?(member, session), "a rejected removal must leave the member-cap intact"
-    assert Map.has_key?(read_members(session), member), "a rejected removal must leave the roster intact"
+    assert holds_member_cap?(member, session),
+           "a rejected removal must leave the member-cap intact"
+
+    assert Map.has_key?(read_members(session), member),
+           "a rejected removal must leave the roster intact"
   end
 end

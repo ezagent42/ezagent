@@ -2,7 +2,8 @@ defmodule Mix.Tasks.Ezagent.Skills.RegenSeed do
   @shortdoc "Regenerate the release-bundled skills_seed from recipe declarations"
   @moduledoc """
   Regenerates `apps/ezagent_web/priv/skills_seed` from the runtime skill refs
-  derived from every loaded plugin module's `roles/0` recipes.
+  derived from every loaded plugin `roles/0` recipe and shipped socialware
+  `recipes.yaml` data recipe.
 
       mix ezagent.skills.regen_seed
 
@@ -28,10 +29,8 @@ defmodule Mix.Tasks.Ezagent.Skills.RegenSeed do
     source_root = Path.join([root, ".claude", "skills"])
     dest_root = Path.join([root, "apps", "ezagent_web", "priv", "skills_seed"])
 
-    refs =
-      root
-      |> plugin_modules_from_umbrella!()
-      |> Ezagent.SkillRegistry.derived_recipe_skill_refs()
+    _plugin_modules = plugin_modules_from_umbrella!(root)
+    refs = Ezagent.SkillRegistry.derived_recipe_skill_refs()
 
     File.rm_rf!(dest_root)
     File.mkdir_p!(dest_root)

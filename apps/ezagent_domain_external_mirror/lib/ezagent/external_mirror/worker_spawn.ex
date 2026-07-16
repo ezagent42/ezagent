@@ -76,12 +76,15 @@ defmodule Ezagent.ExternalMirror.WorkerSpawn do
     worker_uri = worker_uri_for(session_uri, adapter_id, target_id)
     binding_uri = URI.to_string(worker_uri)
 
+    subscribe_cap = issue_subscribe_cap!(session_uri, worker_uri)
+
     worker_args = %{
       uri: worker_uri,
       session_uri: session_uri,
       adapter_id: adapter_id,
       target_id: target_id,
-      opts: opts
+      opts: opts,
+      subscribe_cap: subscribe_cap
     }
 
     child_spec = %{
@@ -110,6 +113,29 @@ defmodule Ezagent.ExternalMirror.WorkerSpawn do
     }
 
     DynamicSupervisor.start_child(RootSupervisor, child_spec)
+  end
+
+  defp issue_subscribe_cap!(session_uri, worker_uri) do
+    requested =
+      Ezagent.Capability.cap(
+        :session,
+        Ezagent.ActionSet.Publisher.SessionImpl,
+        :subscribe_from,
+        Ezagent.URI.instance(session_uri),
+        Ezagent.Capability.workspace_of(session_uri)
+      )
+
+    case Ezagent.Identity.Grant.issue_cap(
+           worker_uri,
+           requested,
+           {:admin, Ezagent.Entity.User.admin_uri()}
+         ) do
+      {:ok, cap} ->
+        cap
+
+      {:error, reason} ->
+        raise "failed to issue ExternalMirrorWorker subscribe cap: #{inspect(reason)}"
+    end
   end
 
   @doc """

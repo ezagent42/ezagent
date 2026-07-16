@@ -34,14 +34,17 @@ defmodule EzagentDomainInstanceMessage.Integration.SandboxDestroyTest do
 
   defp dispatch(uri, action, args) do
     target = Ezagent.URI.new!("#{URI.to_string(uri)}?action=sandbox.#{action}")
+    admin = User.admin_uri()
+    cap = Ezagent.Test.CapHelper.signed_action_cap!(target, admin)
 
     Ezagent.Invocation.dispatch(%Ezagent.Invocation{
+      origin: :trusted_internal,
       target: target,
       mode: :call,
       args: args,
       ctx: %{
-        caller: User.admin_uri(),
-        caps: MapSet.new([Ezagent.Capability.admin_genesis_cap()]),
+        caller: admin,
+        caps: MapSet.new([cap]),
         reply: {:caller_inbox, self()}
       }
     })

@@ -1,114 +1,92 @@
 defmodule Ezagent.Invariants.CapSigningInvariantTest do
-  use ExUnit.Case, async: false
+  use EzagentCore.DataCase, async: false
 
-  alias Ezagent.{Cap, Capability}
-
-  @seed "0123456789abcdef0123456789abcdef"
-  @issuer Ezagent.URI.new!("entity://team-alpha/user/issuer")
-  @target Ezagent.URI.new!("entity://team-alpha/user/grantee")
-  @admin Ezagent.URI.new!("entity://system/user/admin")
+  alias Ezagent.{Cap, Capability, Invocation}
+  alias Ezagent.Test.{TestBehavior, TestKind}
 
   setup do
-    previous_cap_config = Application.get_env(:ezagent_core, Cap, [])
-    loader = EzagentCore.Test.CapAuthorityLoaderStub
+    :ok = Ezagent.BehaviorRegistry.register(TestKind, :noop, TestBehavior)
 
-    Application.put_env(:ezagent_core, loader, MapSet.new([Capability.admin_genesis_cap()]))
+    uri =
+      Ezagent.URI.new!(
+        "entity://team-alpha/agent/cap-invariant-#{System.unique_integer([:positive])}"
+      )
 
-    Application.put_env(
-      :ezagent_core,
-      Cap,
-      previous_cap_config
-      |> Keyword.put(:authority_loader, loader)
-      |> Keyword.put(:signing, signing_config(require_signature: false))
+    presenter = Ezagent.URI.new!("entity://team-alpha/user/cap-invariant-presenter")
+    assert {:ok, _pid} = Ezagent.Kind.Server.start_link({TestKind, %{uri: uri}})
+    assert :ok = await_ready(uri)
+
+    {:ok, uri: uri, presenter: presenter}
+  end
+
+  test "INV-SIGN-1: only a current target-signed, receiver-bound artifact authorizes", context do
+    assert {:ok, issued} =
+             Cap.issue(
+               {:admin, Ezagent.URI.user(:system, :admin)},
+               context.presenter,
+               action_cap(context.uri)
+             )
+
+    assert {:ok, %{echoed: "accepted"}} = invoke(context, issued, "accepted")
+
+    tampered = %{issued | action: :raise}
+    assert {:error, :invalid_cap_signature} = invoke(context, tampered, "blocked")
+    assert {:ok, %{count: 1, last_msg: "accepted"}} = Ezagent.Kind.get_slice(context.uri, :test)
+  end
+
+  test "INV-SIGN-2: private target authority never appears in the generic runtime view",
+       context do
+    assert {:ok, pid} = Ezagent.KindRegistry.lookup(context.uri)
+    private_key = :sys.get_state(pid).authority.private_key
+
+    assert {:ok, runtime_view} = Ezagent.Kind.runtime_view(context.uri)
+    refute Map.has_key?(runtime_view, :authority)
+    refute contains_binary?(runtime_view, private_key)
+
+    assert {:ok, slice} = Ezagent.Kind.get_raw_slice(context.uri, :test)
+    refute contains_binary?(slice, private_key)
+  end
+
+  defp invoke(context, cap, message) do
+    Invocation.dispatch(%Invocation{
+      target: Ezagent.URI.with_action(context.uri, :test, :noop),
+      mode: :call,
+      args: %{msg: message},
+      ctx: %{caller: context.presenter, caps: MapSet.new([cap]), reply: {:caller_inbox, self()}},
+      origin: :authenticated_external
+    })
+  end
+
+  defp action_cap(uri) do
+    Capability.cap(
+      :test,
+      TestBehavior,
+      :noop,
+      Ezagent.URI.instance(uri),
+      Capability.workspace_of(uri)
     )
-
-    on_exit(fn ->
-      Application.put_env(:ezagent_core, Cap, previous_cap_config)
-      Application.delete_env(:ezagent_core, loader)
-    end)
   end
 
-  test "INV-SIGN-1: every authorizer artifact in a receiver slice verifies under enforce" do
-    assert {:ok, issued} = Cap.issue({:genesis, @issuer}, @target, signable_cap())
+  defp contains_binary?(term, needle) when is_binary(term),
+    do: :binary.match(term, needle) != :nomatch
 
-    assert {:ok, genesis} =
-             Cap.issue({:genesis, @admin}, @admin, Capability.admin_genesis_cap())
+  defp contains_binary?(term, needle),
+    do: term |> :erlang.term_to_binary() |> contains_binary?(needle)
 
-    slices = [
-      {@target, MapSet.new([issued, Capability.cap(:session, Ezagent.ActionSet.Session, :send)])},
-      {@admin, MapSet.new([genesis])}
-    ]
+  defp await_ready(uri), do: await_ready(uri, System.monotonic_time(:millisecond) + 1_000)
 
-    enable_signature_enforcement!()
+  defp await_ready(uri, deadline) do
+    case Ezagent.ReadyGate.status(uri) do
+      :ready ->
+        :ok
 
-    authorizer_count =
-      for {holder, caps} <- slices,
-          %Capability{granted_by: granted_by} = cap <- caps,
-          granted_by != :plugin_declared do
-        assert Cap.verify(cap)
-        assert Cap.verify_for(cap, holder)
-        cap
-      end
-      |> length()
-
-    assert authorizer_count == 2
-  end
-
-  test "INV-SIGN-2: trusted signed artifacts raise when key material is unavailable" do
-    assert {:ok, issued} = Cap.issue({:genesis, @issuer}, @target, signable_cap())
-    replace_seed_provider(fn _version -> {:error, :missing_seed} end)
-
-    assert_raise RuntimeError, ~r/signing seed unavailable/, fn ->
-      Cap.verify(issued)
+      _ ->
+        if System.monotonic_time(:millisecond) >= deadline do
+          {:error, :timeout}
+        else
+          Process.sleep(5)
+          await_ready(uri, deadline)
+        end
     end
-
-    assert_raise RuntimeError, ~r/signing seed unavailable/, fn ->
-      Cap.verified_set([issued])
-    end
-  end
-
-  defp signable_cap do
-    %Capability{
-      kind: :session,
-      behavior: Ezagent.ActionSet.Session,
-      action: :send,
-      instance: Ezagent.URI.new!("session://team-alpha/default/chat"),
-      workspace_uri: Ezagent.URI.new!("workspace://team-alpha"),
-      granted_by: @issuer,
-      granted_at: ~U[2026-07-14 00:00:00Z]
-    }
-  end
-
-  defp signing_config(opts) do
-    [
-      seed_provider: fn
-        1 -> {:ok, @seed}
-        _version -> {:error, :missing_test_seed}
-      end,
-      active_key_version: 1,
-      require_signature: Keyword.fetch!(opts, :require_signature)
-    ]
-  end
-
-  defp enable_signature_enforcement! do
-    config = Application.fetch_env!(:ezagent_core, Cap)
-    signing = Keyword.fetch!(config, :signing)
-
-    Application.put_env(
-      :ezagent_core,
-      Cap,
-      Keyword.put(config, :signing, Keyword.put(signing, :require_signature, true))
-    )
-  end
-
-  defp replace_seed_provider(seed_provider) do
-    config = Application.fetch_env!(:ezagent_core, Cap)
-    signing = Keyword.fetch!(config, :signing)
-
-    Application.put_env(
-      :ezagent_core,
-      Cap,
-      Keyword.put(config, :signing, Keyword.put(signing, :seed_provider, seed_provider))
-    )
   end
 end

@@ -26,7 +26,7 @@ defmodule Ezagent.Socialware.ExternalDeliveryCursorTest do
   defp target(s, b, a), do: Ezagent.URI.new!("#{URI.to_string(s)}?action=#{b}.#{a}")
 
   defp dispatch(s, b, a, args) do
-    Invocation.dispatch(%Invocation{
+    Invocation.dispatch(%Invocation{origin: :trusted_internal,
       target: target(s, b, a),
       mode: :call,
       args: args,

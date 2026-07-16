@@ -166,14 +166,17 @@ defmodule EzagentDomainInstanceMessage.Integration.PresenceReadReceiptsE2ETest d
 
   defp chat_join(session_uri, member_uri) do
     target = URI.new!("#{URI.to_string(session_uri)}?action=session.join")
+    admin = Ezagent.Entity.User.admin_uri()
+    cap = Ezagent.Test.CapHelper.signed_action_cap!(target, admin)
 
     Invocation.dispatch(%Invocation{
+      origin: :trusted_internal,
       target: target,
       mode: :call,
       args: %{member: member_uri},
       ctx: %{
-        caller: Ezagent.Entity.User.admin_uri(),
-        caps: MapSet.new([Ezagent.Capability.admin_genesis_cap()]),
+        caller: admin,
+        caps: MapSet.new([cap]),
         reply: :inline
       }
     })
@@ -192,14 +195,16 @@ defmodule EzagentDomainInstanceMessage.Integration.PresenceReadReceiptsE2ETest d
       )
 
     target = URI.new!("#{URI.to_string(session_uri)}?action=session.send")
+    cap = Ezagent.Test.CapHelper.signed_action_cap!(target, admin_uri)
 
     Invocation.dispatch(%Invocation{
+      origin: :trusted_internal,
       target: target,
       mode: :call,
       args: %{message: msg},
       ctx: %{
         caller: admin_uri,
-        caps: MapSet.new([Ezagent.Capability.admin_genesis_cap()]),
+        caps: MapSet.new([cap]),
         reply: :inline
       }
     })

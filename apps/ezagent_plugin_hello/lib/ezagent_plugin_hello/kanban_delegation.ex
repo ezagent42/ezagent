@@ -187,7 +187,8 @@ defmodule EzagentPluginHello.KanbanDelegation do
       target: Ezagent.URI.with_action(kanban_uri, :kanban, action),
       mode: :call,
       args: args,
-      ctx: ctx
+      ctx: ctx,
+      origin: :trusted_internal
     })
   end
 

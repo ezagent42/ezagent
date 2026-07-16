@@ -62,18 +62,16 @@ defmodule Ezagent.Session.Participants do
     # self-scoped cap so the dispatch clears the chokepoint even when the caller
     # holds only the participation tier. (No-op for owner/admin callers, whose
     # passed caps already authorize.)
-    caps =
-      if caller == participant_uri,
-        do: MapSet.put(caps, Membership.self_remove_participant_cap(session_uri, caller)),
-        else: caps
-
     result =
-      Invocation.dispatch(%Invocation{
-        target: Ezagent.URI.with_action(session_uri, :session, :remove_participant),
-        mode: :call,
-        args: %{participant: participant_uri},
-        ctx: %{caller: caller, caps: caps, reply: {:caller_inbox, self()}}
-      })
+      with {:ok, caps} <- maybe_add_self_remove_cap(caps, session_uri, participant_uri, caller) do
+        Invocation.dispatch(%Invocation{
+          target: Ezagent.URI.with_action(session_uri, :session, :remove_participant),
+          mode: :call,
+          args: %{participant: participant_uri},
+          ctx: %{caller: caller, caps: caps, reply: {:caller_inbox, self()}},
+          origin: :trusted_internal
+        })
+      end
 
     case result do
       {:ok, %{status: :removed} = removal} -> {:ok, removal}
@@ -97,4 +95,21 @@ defmodule Ezagent.Session.Participants do
   defp to_cap_set(%MapSet{} = caps), do: caps
   defp to_cap_set(caps) when is_list(caps), do: MapSet.new(caps)
   defp to_cap_set(_), do: MapSet.new()
+
+  defp maybe_add_self_remove_cap(caps, session_uri, participant_uri, caller) do
+    if caller == participant_uri do
+      requested = Membership.self_remove_participant_cap(session_uri, caller)
+
+      case Ezagent.Cap.issue(
+             {:admin, Ezagent.Entity.User.admin_uri()},
+             caller,
+             requested
+           ) do
+        {:ok, artifact} -> {:ok, MapSet.put(caps, artifact)}
+        {:error, _reason} = error -> error
+      end
+    else
+      {:ok, caps}
+    end
+  end
 end

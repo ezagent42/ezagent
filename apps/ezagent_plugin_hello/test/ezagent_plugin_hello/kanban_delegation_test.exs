@@ -97,7 +97,7 @@ defmodule EzagentPluginHello.KanbanDelegationTest do
   end
 
   defp dispatch(board_uri, action, args, caller) do
-    Ezagent.Invocation.dispatch(%Ezagent.Invocation{
+    Ezagent.Invocation.dispatch(%Ezagent.Invocation{origin: :trusted_internal,
       target: Ezagent.URI.with_action(board_uri, :kanban, action),
       mode: :call,
       args: args,

@@ -33,9 +33,9 @@ defmodule Ezagent.ActionSet.SandboxMigrationParityTest do
   Kind.Runtime.handle_dispatch/4 path" as the gap that needs closing.
   """
 
-  use ExUnit.Case, async: false
+  use EzagentCore.DataCase, async: false
 
-  alias Ezagent.{BehaviorRegistry, Invocation}
+  alias Ezagent.{BehaviorRegistry, Capability, Invocation}
   alias Ezagent.ActionSet.Sandbox
 
   defmodule StubAgentKind do
@@ -58,7 +58,8 @@ defmodule Ezagent.ActionSet.SandboxMigrationParityTest do
     agent_uri =
       Ezagent.URI.new!("entity://parity/agent/cc_sandbox-#{System.unique_integer([:positive])}")
 
-    admin_caps = MapSet.new([Ezagent.Capability.admin_genesis_cap()])
+    _authority = install_test_authority!(agent_uri, StubAgentKind.type_name())
+    admin_caps = :target_signed
 
     # Lifecycle two-container slice — `init_slice/1` now returns
     # `%{state: ..., transients: %{}}` (SPEC §2.1). `create/1` (run on
@@ -72,11 +73,27 @@ defmodule Ezagent.ActionSet.SandboxMigrationParityTest do
   defp build_invocation(agent_uri, action, args, caps) do
     target = Ezagent.URI.new!("#{URI.to_string(agent_uri)}?action=sandbox.#{action}")
 
+    presenter = Ezagent.URI.user(:system, :admin)
+    authority = Process.get({Ezagent.Cap.Authority, :current})
+
+    requested =
+      Capability.cap(
+        :agent,
+        Sandbox,
+        action,
+        agent_uri,
+        Capability.workspace_of(agent_uri)
+      )
+
+    signed = authority_signed_cap!(authority, presenter, requested)
+    assert caps == :target_signed
+
     %Invocation{
+      origin: :trusted_internal,
       target: target,
       mode: :call,
       args: args,
-      ctx: %{caller: Ezagent.URI.new!("entity://system/user/admin"), caps: caps, reply: :sync}
+      ctx: %{caller: presenter, caps: MapSet.new([signed]), reply: :sync}
     }
   end
 

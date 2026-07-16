@@ -47,7 +47,7 @@ defmodule Ezagent.Cmd do
   """
 
   @enforce_keys [:target, :action, :args, :ctx]
-  defstruct [:target, :action, :args, :ctx, origin: :trusted_internal]
+  defstruct [:target, :action, :args, :ctx, origin: nil]
 
   @type ctx :: %{
           required(:caller) => URI.t() | :vm_internal,

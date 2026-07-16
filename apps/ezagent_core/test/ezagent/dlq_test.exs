@@ -27,6 +27,7 @@ defmodule Ezagent.DLQTest do
     )
 
     payload = %Ezagent.Invocation{
+      origin: :trusted_internal,
       target: Ezagent.URI.new!("entity://team-alpha/agent/echo_dlq-test?action=echo.say"),
       mode: :call,
       args: %{msg: "lost"},

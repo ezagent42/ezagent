@@ -9,7 +9,7 @@ defmodule Ezagent.Kind.ServerPostInitTest do
   §9 PR-EM-CORE for the requirements driving this test.
   """
 
-  use ExUnit.Case, async: true
+  use EzagentCore.DataCase, async: false
 
   require Logger
 
@@ -144,18 +144,30 @@ defmodule Ezagent.Kind.ServerPostInitTest do
     test "pre-ready buffered cast survives a crashing post-init continuation",
          %{suffix: suffix} do
       uri = Ezagent.URI.new!("entity://team-alpha/agent/test_crash_post_init-#{suffix}")
-      uri_str = URI.to_string(uri)
 
       :ok =
         Ezagent.BehaviorRegistry.register(PostInitCrashKind, :noop, PostInitCrashBehavior)
 
+      target = Ezagent.URI.with_action(uri, :test, :noop)
+      presenter = Ezagent.Entity.User.admin_uri()
+
+      cap =
+        signed_fixture_cap!(
+          uri,
+          PostInitCrashKind.type_name(),
+          PostInitCrashBehavior,
+          :noop,
+          presenter
+        )
+
       pre_inv = %Ezagent.Invocation{
-        target: URI.parse("#{uri_str}?action=test.noop"),
+        origin: :trusted_internal,
+        target: target,
         mode: :cast,
         args: %{},
         ctx: %{
-          caller: Ezagent.URI.new!("entity://system/user/admin"),
-          caps: MapSet.new([Ezagent.Capability.admin_genesis_cap()]),
+          caller: presenter,
+          caps: MapSet.new([cap]),
           reply: :ignore
         }
       }
@@ -221,13 +233,26 @@ defmodule Ezagent.Kind.ServerPostInitTest do
       # the round-2 HIGH-1 fix in place, this MUST buffer via
       # PendingDelivery (because ReadyGate is :not_ready) — NOT
       # land directly in the mailbox.
+      target = Ezagent.URI.with_action(uri, :test, :noop)
+      presenter = Ezagent.Entity.User.admin_uri()
+
+      cap =
+        signed_fixture_cap!(
+          uri,
+          SlowPostInitKind.type_name(),
+          SlowPostInitBehavior,
+          :noop,
+          presenter
+        )
+
       inv = %Ezagent.Invocation{
-        target: URI.parse("#{uri_str}?action=test.noop"),
+        origin: :trusted_internal,
+        target: target,
         mode: :cast,
         args: %{msg: "during-post-init"},
         ctx: %{
-          caller: Ezagent.URI.new!("entity://system/user/admin"),
-          caps: MapSet.new([Ezagent.Capability.admin_genesis_cap()]),
+          caller: presenter,
+          caps: MapSet.new([cap]),
           reply: {:caller_inbox, self()}
         }
       }
@@ -267,14 +292,26 @@ defmodule Ezagent.Kind.ServerPostInitTest do
 
       # Pre-buffer multiple casts (they all land in PendingDelivery
       # because the URI doesn't exist yet → dispatch buffers).
+      presenter = Ezagent.Entity.User.admin_uri()
+
+      cap =
+        signed_fixture_cap!(
+          uri,
+          SlowPostInitKind.type_name(),
+          SlowPostInitBehavior,
+          :noop,
+          presenter
+        )
+
       for n <- 1..3 do
         inv = %Ezagent.Invocation{
-          target: URI.parse("#{uri_str}?action=test.noop"),
+          origin: :trusted_internal,
+          target: Ezagent.URI.with_action(uri, :test, :noop),
           mode: :cast,
           args: %{msg: "pre-ready-#{n}"},
           ctx: %{
-            caller: Ezagent.URI.new!("entity://system/user/admin"),
-            caps: MapSet.new([Ezagent.Capability.admin_genesis_cap()]),
+            caller: presenter,
+            caps: MapSet.new([cap]),
             reply: :ignore
           }
         }

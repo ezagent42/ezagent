@@ -219,7 +219,8 @@ defmodule Mix.Tasks.Ezagent.ExternalMirrorTest do
         granted_at: DateTime.utc_now()
       }
 
-      :ok = spawn_user(caller_uri, MapSet.new([cap1]))
+      signed_cap1 = Ezagent.Test.CapHelper.signed_cap!(session_uri, caller_uri, cap1)
+      :ok = spawn_user(caller_uri, MapSet.new([signed_cap1]))
 
       stderr_output =
         ExUnit.CaptureIO.capture_io(:stderr, fn ->
@@ -588,7 +589,21 @@ defmodule Mix.Tasks.Ezagent.ExternalMirrorTest do
       :any -> :ok
     end
 
-    await_session_alive(session_uri, 50)
+    :ok = await_session_alive(session_uri, 50)
+
+    requested = %Capability{
+      kind: :any,
+      behavior: :any,
+      action: :any,
+      instance: session_uri,
+      workspace_uri: Capability.workspace_of(session_uri),
+      granted_by: Ezagent.Entity.User.admin_uri(),
+      granted_at: DateTime.utc_now()
+    }
+
+    signed = Ezagent.Test.CapHelper.signed_cap!(session_uri, owner_uri, requested)
+    :ok = Ezagent.Identity.absorb_cap(owner_uri, signed)
+    await_owner_cap(owner_uri, signed, 50)
   end
 
   defp spawn_user(%URI{} = user_uri, caps) do
@@ -619,19 +634,20 @@ defmodule Mix.Tasks.Ezagent.ExternalMirrorTest do
   defp owner_ctx(owner_uri) do
     %{
       caller: owner_uri,
-      caps:
-        MapSet.new([
-          %Capability{
-            kind: :any,
-            behavior: :any,
-            instance: :any,
-            workspace_uri: :any,
-            granted_by: Ezagent.URI.user(:system, :admin),
-            granted_at: ~U[2026-01-01 00:00:00Z]
-          }
-        ]),
+      caps: MapSet.new(Ezagent.Identity.list_caps_for(owner_uri)),
       reply: :ignore
     }
+  end
+
+  defp await_owner_cap(_owner_uri, _signed, 0), do: {:error, :timeout}
+
+  defp await_owner_cap(owner_uri, signed, retries) do
+    if signed in Ezagent.Identity.list_caps_for(owner_uri) do
+      :ok
+    else
+      Process.sleep(20)
+      await_owner_cap(owner_uri, signed, retries - 1)
+    end
   end
 
   defp unique_user_uri(prefix) do

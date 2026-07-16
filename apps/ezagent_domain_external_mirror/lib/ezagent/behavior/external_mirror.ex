@@ -40,7 +40,7 @@ defmodule Ezagent.ActionSet.ExternalMirror do
   the exact tuple the facade validated — so an attacker can't reuse
   one nonce for a different (target_id, adapter_id) pair.
 
-  Standard CapBAC step 5.5 (`Kind.Runtime.authz_check/4`) enforces
+  The central `Ezagent.Cap.Verifier` enforces
   Check 1 (session-level `Behavior.ExternalMirror` bind cap) BEFORE
   the action body runs — that's the dispatch-side gate every
   Behavior naturally inherits. Step 5.6 handles cross-workspace

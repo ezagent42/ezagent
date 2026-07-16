@@ -137,7 +137,7 @@ defmodule Ezagent.World.ConversationInviteCandidatesTest do
   end
 
   defp join_call(session_uri, member_uri, facets) do
-    Ezagent.Invocation.dispatch(%Ezagent.Invocation{
+    Ezagent.Invocation.dispatch(%Ezagent.Invocation{origin: :trusted_internal,
       target: URI.new!("#{URI.to_string(session_uri)}?action=session.join"),
       mode: :call,
       args: Map.put(facets, :member, member_uri),

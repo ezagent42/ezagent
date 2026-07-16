@@ -19,9 +19,10 @@ defmodule Ezagent.Session.Config.Admission do
   def check(%Operation{admission_gate: :workspace_caps}, _args, opts) do
     caps = Keyword.fetch!(opts, :caps)
     workspace_uri = Keyword.fetch!(opts, :workspace_uri)
+    caller = Keyword.fetch!(opts, :caller)
 
-    if template_cap?(caps, :agent_template, workspace_uri) or
-         template_cap?(caps, :session_template, workspace_uri) do
+    if template_cap?(caps, :agent_template, workspace_uri, caller) or
+         template_cap?(caps, :session_template, workspace_uri, caller) do
       :ok
     else
       gate_error(:workspace_caps, :unauthorized)
@@ -31,8 +32,9 @@ defmodule Ezagent.Session.Config.Admission do
   def check(%Operation{admission_gate: :template_write}, _args, opts) do
     caps = Keyword.fetch!(opts, :caps)
     workspace_uri = Keyword.fetch!(opts, :workspace_uri)
+    caller = Keyword.fetch!(opts, :caller)
 
-    if template_cap?(caps, :session_template, workspace_uri),
+    if template_write_cap?(caps, workspace_uri, caller),
       do: :ok,
       else: gate_error(:template_write, :unauthorized)
   end
@@ -75,26 +77,39 @@ defmodule Ezagent.Session.Config.Admission do
   end
 
   @doc false
-  @spec template_cap?(MapSet.t() | list(), :agent_template | :session_template, URI.t()) ::
+  @spec template_cap?(MapSet.t() | list(), :agent_template | :session_template, URI.t(), URI.t()) ::
           boolean()
-  def template_cap?(caps, kind, %URI{} = workspace_uri) do
-    workspace_name = Ezagent.URI.workspace_name!(workspace_uri)
-
-    representative =
+  def template_cap?(caps, kind, %URI{} = workspace_uri, %URI{} = caller) do
+    action =
       case kind do
-        :agent_template -> Ezagent.URI.template(workspace_name, :agent, :_catalog)
-        :session_template -> Ezagent.URI.template(workspace_name, :session, "_catalog@_")
+        :agent_template -> :list_agent_templates
+        :session_template -> :list_session_templates
       end
 
-    needed = %{
-      kind: kind,
-      behavior: Ezagent.ActionSet.Template,
-      action: :any,
-      instance: representative,
-      workspace_uri: workspace_uri
-    }
+    workspace_action_authorized?(caps, workspace_uri, caller, action)
+  end
 
-    Ezagent.Capability.Authorization.authorizes?(caps, needed)
+  @doc false
+  def template_write_cap?(caps, %URI{} = workspace_uri, %URI{} = caller) do
+    workspace_action_authorized?(caps, workspace_uri, caller, :write_session_templates)
+  end
+
+  defp workspace_action_authorized?(caps, workspace_uri, caller, action) do
+    target = Ezagent.URI.with_action(workspace_uri, :workspace, action)
+
+    case Ezagent.Invocation.dispatch(%Ezagent.Invocation{
+           target: target,
+           mode: :call,
+           args: %{},
+           ctx: %{caller: caller, caps: MapSet.new(caps), reply: {:caller_inbox, self()}},
+           origin: :trusted_internal
+         }) do
+      {:ok, _result} -> true
+      :ok -> true
+      _ -> false
+    end
+  rescue
+    _ -> false
   end
 
   defp session_slice(%URI{} = session_uri) do

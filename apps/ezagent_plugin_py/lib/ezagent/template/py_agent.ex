@@ -219,7 +219,8 @@ defmodule Ezagent.Template.PyAgent do
             caller: agent_uri,
             caps: [py_ensure_alive_self_cap(agent_uri)],
             reply: :ignore
-          }
+          },
+          origin: :trusted_internal
         })
 
       :ok

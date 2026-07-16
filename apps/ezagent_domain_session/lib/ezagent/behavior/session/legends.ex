@@ -28,40 +28,6 @@ defmodule Ezagent.ActionSet.Session.Legends do
   # orchestrator still installs legends via its `{:within_session, self}`
   # delegated cap (the `orchestrator_cap_present?` branch).
 
-  @doc false
-  @spec legends_write_authorized?(map()) :: boolean()
-  def legends_write_authorized?(ctx) do
-    session_self_caller?(ctx) or ConfigActions.orchestrator_cap_present?(ctx)
-  end
-
-  # True iff `ctx.caller` IS the session being acted on (`ctx.self_uri`) — the
-  # session writing its OWN legends/prompt-template slice. Only the trusted
-  # internal `system_set_*` path sets `caller == self_uri`; a user dispatch
-  # carries the user's own `entity://user/...` caller (set by the api/dispatch
-  # layer, NOT freely spoofable), so it can never present `caller == self_uri`.
-  defp session_self_caller?(ctx) do
-    with %URI{} = caller <- to_uri(Map.get(ctx, :caller)),
-         %URI{} = self_uri <- to_uri(Map.get(ctx, :self_uri)) do
-      same_instance?(caller, self_uri)
-    else
-      _ -> false
-    end
-  end
-
-  defp same_instance?(%URI{} = a, %URI{} = b) do
-    URI.to_string(Ezagent.URI.instance(a)) == URI.to_string(Ezagent.URI.instance(b))
-  end
-
-  defp to_uri(%URI{} = uri), do: uri
-
-  defp to_uri(s) when is_binary(s) do
-    Ezagent.URI.new!(s)
-  rescue
-    _ -> nil
-  end
-
-  defp to_uri(_), do: nil
-
   @doc """
   Read the session-scoped legend registry from a `:chat` slice, defaulting to
   `%{}` when the key is absent (a pre-PR-6 Session snapshot — see `create/1`).
@@ -114,21 +80,22 @@ defmodule Ezagent.ActionSet.Session.Legends do
   """
   @spec system_set_legends(URI.t(), Legend.registry()) :: {:ok, map()} | {:error, term()}
   def system_set_legends(%URI{} = session_uri, legends) when is_map(legends) do
-    case Ezagent.Router.dispatch(%Cmd{
-           target: session_uri,
-           action: :set_legends,
-           args: %{legends: legends},
-           # #154 — `system://session-internal` ELIMINATED. Session SELF-authority:
-           # caller = the session, inline cap granted_by the session.
-           ctx: %{
-             caller: session_uri,
-             caps: ConfigActions.session_self_cap(session_uri, :set_legends),
-             reply: {:caller_inbox, self()}
-           }
-         }) do
-      {:ok, %{legends: _} = ok} -> {:ok, ok}
-      {:error, _} = err -> err
-      other -> {:error, {:unexpected_set_legends_result, other}}
+    with {:ok, caps} <- ConfigActions.session_self_cap(session_uri, :set_legends) do
+      case Ezagent.Router.dispatch(%Cmd{
+             target: session_uri,
+             action: :set_legends,
+             args: %{legends: legends},
+             ctx: %{
+               caller: session_uri,
+               caps: caps,
+               reply: {:caller_inbox, self()}
+             },
+             origin: :trusted_internal
+           }) do
+        {:ok, %{legends: _} = ok} -> {:ok, ok}
+        {:error, _} = err -> err
+        other -> {:error, {:unexpected_set_legends_result, other}}
+      end
     end
   end
 end

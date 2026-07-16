@@ -35,6 +35,43 @@ defmodule Ezagent.Cap.Grant do
   end
 
   @doc false
+  @spec authorize_and_issue_current(
+          module() | atom(),
+          URI.t(),
+          Ezagent.DispatchOrigin.t(),
+          map(),
+          URI.t(),
+          Capability.t()
+        ) :: {:ok, Capability.t()} | {:error, term()}
+  def authorize_and_issue_current(
+        kind,
+        %URI{} = target,
+        origin,
+        ctx,
+        %URI{} = grantee,
+        %Capability{} = cap
+      ) do
+    target_instance = Ezagent.URI.instance(target)
+
+    with :ok <- Ezagent.DispatchOrigin.validate(origin, ctx),
+         true <-
+           match?(%URI{}, cap.instance) and
+             Ezagent.URI.stable_key(Ezagent.URI.instance(cap.instance)) ==
+               Ezagent.URI.stable_key(target_instance),
+         {:ok, _authority_cap} <-
+           Ezagent.Cap.Verifier.authorize(kind, __MODULE__, :grant, target, ctx),
+         %URI{} = presenter <- Map.get(ctx, :caller),
+         intent <- freeze(target_instance, presenter, grantee, cap),
+         {:ok, issued} <- Authority.issue_current(intent) do
+      {:ok, issued}
+    else
+      {:error, reason} -> {:error, reason}
+      false -> {:error, :grant_target_mismatch}
+      _ -> {:error, :invalid_grant_intent}
+    end
+  end
+
+  @doc false
   @spec issue(Authority.t(), intent()) :: Capability.t()
   def issue(%Authority{} = authority, %__MODULE__{} = intent) do
     artifact = %{

@@ -55,13 +55,18 @@ defmodule EzagentDomainInstanceMessage.Integration.SessionUnionKindDenialTest do
   end
 
   defp dispatch(session_uri, behavior, action, args) do
+    target = Ezagent.URI.new!("#{URI.to_string(session_uri)}?action=#{behavior}.#{action}")
+    admin = User.admin_uri()
+    cap = Ezagent.Test.CapHelper.signed_action_cap!(target, admin)
+
     Invocation.dispatch(%Invocation{
-      target: Ezagent.URI.new!("#{URI.to_string(session_uri)}?action=#{behavior}.#{action}"),
+      origin: :trusted_internal,
+      target: target,
       mode: :call,
       args: args,
       ctx: %{
-        caller: User.admin_uri(),
-        caps: MapSet.new([Ezagent.Capability.admin_genesis_cap()]),
+        caller: admin,
+        caps: MapSet.new([cap]),
         reply: {:caller_inbox, self()}
       }
     })

@@ -113,7 +113,7 @@ defmodule EzagentDomainInstanceMessage.E2E.Scenario33_FullStarTest do
   defp dispatch(uri, action, args) do
     target = Ezagent.URI.new!("#{URI.to_string(uri)}?action=#{action}")
 
-    Ezagent.Invocation.dispatch(%Ezagent.Invocation{
+    Ezagent.Invocation.dispatch(%Ezagent.Invocation{origin: :trusted_internal,
       target: target,
       mode: :call,
       args: args,

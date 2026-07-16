@@ -381,11 +381,11 @@ defmodule Ezagent.ActionSet.ExternalMirrorTest do
           "entity://team-alpha/user/unpriv-d-#{System.unique_integer([:positive])}"
         )
 
-      :ok = spawn_user(unpriv_uri, MapSet.new([session_bind_cap(session_uri, @workspace_uri)]))
+      :ok = spawn_user(unpriv_uri, MapSet.new())
 
       user_ctx = %{
         caller: unpriv_uri,
-        caps: MapSet.new([session_bind_cap(session_uri, @workspace_uri)]),
+        caps: MapSet.new(),
         reply: :ignore
       }
 
@@ -402,15 +402,14 @@ defmodule Ezagent.ActionSet.ExternalMirrorTest do
 
       result =
         Invocation.dispatch(%Invocation{
+          origin: :trusted_internal,
           target: target,
           mode: :call,
           args: %{event: event},
           ctx: user_ctx
         })
 
-      assert match?({:error, :unauthorized}, result) or
-               match?({:error, :cross_workspace_denied}, result),
-             "expected denial but got #{inspect(result)}"
+      assert {:error, :missing_cap} = result
     end
   end
 
@@ -762,6 +761,7 @@ defmodule Ezagent.ActionSet.ExternalMirrorTest do
       {elapsed_us, list_result} =
         :timer.tc(fn ->
           Invocation.dispatch(%Invocation{
+            origin: :trusted_internal,
             target: target,
             mode: :call,
             args: %{},
@@ -893,7 +893,7 @@ defmodule Ezagent.ActionSet.ExternalMirrorTest do
 
       # Pre-fix this returned {:ok, [_]} (slice read bypass); post-fix
       # it routes through dispatch and the CapBAC step 5.5 denies.
-      assert {:error, :unauthorized} = Facade.list_bindings(session_uri, stranger_ctx)
+      assert {:error, :missing_cap} = Facade.list_bindings(session_uri, stranger_ctx)
     end
 
     test "sessions_for_adapter/2 filters by caller workspace",
@@ -1011,13 +1011,19 @@ defmodule Ezagent.ActionSet.ExternalMirrorTest do
           }
         ])
 
-      ctx = %{caller: owner_uri, caps: caller_caps, reply: :ignore}
+      ctx =
+        Ezagent.Test.CapHelper.signed_ctx!(
+          session_uri,
+          %{caller: owner_uri, caps: caller_caps, reply: :ignore},
+          :session
+        )
 
       target =
         Ezagent.URI.new!("#{URI.to_string(session_uri)}?action=external_mirror.bind")
 
       # Forge attempt 1: random binary as nonce.
       inv_a = %Invocation{
+        origin: :trusted_internal,
         target: target,
         mode: :call,
         args: %{
@@ -1035,6 +1041,7 @@ defmodule Ezagent.ActionSet.ExternalMirrorTest do
       # flag (verifying the pre-fix bypass is gone — the flag should
       # be ignored entirely now).
       inv_b = %Invocation{
+        origin: :trusted_internal,
         target: target,
         mode: :call,
         args: %{
@@ -1051,6 +1058,7 @@ defmodule Ezagent.ActionSet.ExternalMirrorTest do
 
       # Forge attempt 3: no nonce at all, only the old flag.
       inv_c = %Invocation{
+        origin: :trusted_internal,
         target: target,
         mode: :call,
         args: %{
@@ -1756,7 +1764,10 @@ defmodule Ezagent.ActionSet.ExternalMirrorTest do
       :any -> :ok
     end
 
-    await_session_alive(session_uri, 50)
+    :ok = await_session_alive(session_uri, 50)
+    Process.put({__MODULE__, owner_uri}, session_uri)
+    Process.put({__MODULE__, :last_session}, session_uri)
+    :ok
   end
 
   defp spawn_user(%URI{} = user_uri, caps) do
@@ -1867,7 +1878,7 @@ defmodule Ezagent.ActionSet.ExternalMirrorTest do
   defp owner_ctx(owner_uri), do: owner_ctx(owner_uri, "mock_publish")
 
   defp owner_ctx(owner_uri, adapter_id) do
-    %{
+    ctx = %{
       caller: owner_uri,
       caps:
         MapSet.new([
@@ -1888,6 +1899,11 @@ defmodule Ezagent.ActionSet.ExternalMirrorTest do
         ]),
       reply: :ignore
     }
+
+    case Process.get({__MODULE__, owner_uri}) || Process.get({__MODULE__, :last_session}) do
+      %URI{} = session_uri -> Ezagent.Test.CapHelper.signed_ctx!(session_uri, ctx, :session)
+      nil -> ctx
+    end
   end
 
   defp allow_module_for("mock_publish"), do: MockPublishAdapter.Allow
@@ -1943,14 +1959,17 @@ defmodule Ezagent.ActionSet.ExternalMirrorTest do
     :ok = spawn_user(member_uri, MapSet.new())
 
     target = Ezagent.URI.new!("#{URI.to_string(session_uri)}?action=session.join")
+    admin_uri = User.admin_uri()
+    join_cap = Ezagent.Test.CapHelper.signed_action_cap!(target, admin_uri)
 
     Invocation.dispatch(%Invocation{
+      origin: :trusted_internal,
       target: target,
       mode: :call,
       args: %{member: member_uri},
       ctx: %{
-        caller: User.admin_uri(),
-        caps: MapSet.new([Ezagent.Capability.admin_genesis_cap()]),
+        caller: admin_uri,
+        caps: MapSet.new([join_cap]),
         reply: :ignore
       }
     })

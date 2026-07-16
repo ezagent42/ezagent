@@ -622,17 +622,11 @@ defmodule Ezagent.Socialware.DefinitionEditor do
   end
 
   defp read_chat_slice(%URI{} = session_uri) do
-    case Ezagent.KindRegistry.lookup(session_uri) do
-      {:ok, pid} ->
-        chat_slice =
-          pid
-          |> :sys.get_state()
-          |> Map.get(:state, %{})
-          |> Map.get(Ezagent.ActionSet.Session.state_slice(), %{})
-
+    case Ezagent.Kind.get_raw_slice(session_uri, :session) do
+      {:ok, chat_slice} ->
         Map.get(chat_slice, :state, chat_slice)
 
-      :error ->
+      {:error, _reason} ->
         %{}
     end
   end

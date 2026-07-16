@@ -384,7 +384,8 @@ defmodule EzagentPluginWorld.WorldLive do
         target: target,
         mode: :call,
         args: %{member: caller},
-        ctx: %{caller: caller, caps: caps, reply: :ignore}
+        ctx: %{caller: caller, caps: caps, reply: :ignore},
+        origin: :authenticated_external
       })
 
     case result do
@@ -444,7 +445,8 @@ defmodule EzagentPluginWorld.WorldLive do
         target: target,
         mode: :call,
         args: %{layout: layout},
-        ctx: %{caller: caller, caps: caps, reply: {:caller_inbox, self()}}
+        ctx: %{caller: caller, caps: caps, reply: {:caller_inbox, self()}},
+        origin: :authenticated_external
       })
 
     case result do
@@ -495,7 +497,8 @@ defmodule EzagentPluginWorld.WorldLive do
              target: Ezagent.URI.with_action(agent_uri, :identity, :put_api_key),
              mode: :call,
              args: %{provider: provider, key: key},
-             ctx: %{caller: caller, caps: caps, reply: :sync}
+             ctx: %{caller: caller, caps: caps, reply: :sync},
+             origin: :authenticated_external
            }) do
       refresh_api_keys_state(socket, agent_uri)
     else
@@ -538,7 +541,8 @@ defmodule EzagentPluginWorld.WorldLive do
              caller: socket.assigns.current_entity_uri,
              caps: Map.get(socket.assigns, :current_caps, MapSet.new()),
              reply: :ignore
-           }
+           },
+           origin: :authenticated_external
          }) do
       :ok -> :ok
       {:ok, _} -> :ok

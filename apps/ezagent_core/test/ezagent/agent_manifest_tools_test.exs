@@ -29,6 +29,7 @@ defmodule Ezagent.AgentManifest.ToolsTest do
 
     assert_received {:invocation,
                      %Invocation{
+                       origin: :trusted_internal,
                        target: ^target,
                        mode: :call,
                        args: %{"message" => "hello"},

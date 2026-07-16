@@ -324,7 +324,7 @@ defmodule Ezagent.Socialware.AnonUserGCTest do
   # Join via the PRODUCTION dispatch path, :call so it is synchronous.
   defp join(session_uri, member_uri) do
     {:ok, _} =
-      Ezagent.Invocation.dispatch(%Ezagent.Invocation{
+      Ezagent.Invocation.dispatch(%Ezagent.Invocation{origin: :trusted_internal,
         target: Ezagent.URI.new!("#{URI.to_string(session_uri)}?action=session.join"),
         mode: :call,
         args: %{member: member_uri},

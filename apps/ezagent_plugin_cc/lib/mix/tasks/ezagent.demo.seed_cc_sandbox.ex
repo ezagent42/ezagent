@@ -282,11 +282,12 @@ defmodule Mix.Tasks.Ezagent.Demo.SeedCcSandbox do
               # workspace axis is not the scoping dimension; the concrete
               # template `instance` is.
               granted_by: admin_uri,
-              granted_at: DateTime.utc_now()
+              granted_at: DateTime.utc_now(),
           }
         ],
         reply: {:caller_inbox, self()}
-      }
+      },
+      origin: :trusted_internal
     })
     |> case do
       {:ok, %{content: _}} -> :ok

@@ -96,6 +96,8 @@ defmodule Ezagent.Kind.DispatchAfterCommitTest do
     def create(_args), do: {:ok, %{marker: :initial, probe_count: 0}}
 
     def handle_trigger(_args, ctx) do
+      cap = :persistent_term.get({__MODULE__, :probe_cap})
+
       cmd =
         Ezagent.Cmd.new(
           ctx.self_uri,
@@ -103,7 +105,7 @@ defmodule Ezagent.Kind.DispatchAfterCommitTest do
           %{},
           # caller :vm_internal is the trusted-in-VM placeholder; enrichment
           # must rewrite it to the emitting Kind's self_uri.
-          %{caller: :vm_internal, reply: :ignore, caps: MapSet.new()}
+          %{caller: :vm_internal, reply: :ignore, caps: MapSet.new([cap])}
         )
 
       {:ok, :ok,
@@ -144,11 +146,13 @@ defmodule Ezagent.Kind.DispatchAfterCommitTest do
     end
 
     def handle_trigger_self_fail(_args, ctx) do
+      cap = :persistent_term.get({__MODULE__, :probe_fail_cap})
+
       cmd =
         Ezagent.Cmd.new(ctx.self_uri, :probe_fail, %{}, %{
           caller: :vm_internal,
           reply: :ignore,
-          caps: MapSet.new()
+          caps: MapSet.new([cap])
         })
 
       {:ok, :ok,
@@ -199,14 +203,30 @@ defmodule Ezagent.Kind.DispatchAfterCommitTest do
     {:ok, uri: uri}
   end
 
+  defp install_deferred_caps!(uri) do
+    :persistent_term.put(
+      {DacBehavior, :probe_cap},
+      signed_fixture_cap!(uri, DacKind.type_name(), DacBehavior, :probe, uri)
+    )
+
+    :persistent_term.put(
+      {DacBehavior, :probe_fail_cap},
+      signed_fixture_cap!(uri, DacKind.type_name(), DacBehavior, :probe_fail, uri)
+    )
+  end
+
   defp inv(uri, action) do
+    presenter = Ezagent.URI.new!("entity://system/user/admin")
+    cap = signed_fixture_cap!(uri, DacKind.type_name(), DacBehavior, action, presenter)
+
     %Invocation{
+      origin: :trusted_internal,
       target: Ezagent.URI.new!("#{URI.to_string(uri)}?action=dac.#{action}"),
       mode: :call,
       args: %{},
       ctx: %{
-        caller: Ezagent.URI.new!("entity://system/user/admin"),
-        caps: MapSet.new([Ezagent.Capability.admin_genesis_cap()]),
+        caller: presenter,
+        caps: MapSet.new([cap]),
         reply: :ignore
       }
     }
@@ -247,6 +267,7 @@ defmodule Ezagent.Kind.DispatchAfterCommitTest do
   test "deferred dispatch runs AFTER commit with self_uri caller (enrichment)", %{uri: uri} do
     {:ok, pid} = Ezagent.Kind.Server.start_link({DacKind, %{uri: uri}})
     :ok = wait_until_ready(uri, 1000)
+    install_deferred_caps!(uri)
 
     assert {:ok, :ok} = GenServer.call(pid, {:ezagent_dispatch, inv(uri, :trigger)})
 
@@ -274,6 +295,7 @@ defmodule Ezagent.Kind.DispatchAfterCommitTest do
   test "deferred dispatch is SKIPPED when the parent commit fails", %{uri: uri} do
     {:ok, pid} = Ezagent.Kind.Server.start_link({DacKind, %{uri: uri}})
     :ok = wait_until_ready(uri, 1000)
+    install_deferred_caps!(uri)
 
     # Force this URI's parent commit to fail.
     Application.put_env(
@@ -300,6 +322,7 @@ defmodule Ezagent.Kind.DispatchAfterCommitTest do
   test "a deferred dispatch that FAILS post-commit is logged, not silently dropped", %{uri: uri} do
     {:ok, pid} = Ezagent.Kind.Server.start_link({DacKind, %{uri: uri}})
     :ok = wait_until_ready(uri, 1000)
+    install_deferred_caps!(uri)
 
     log =
       capture_log(fn ->
@@ -321,6 +344,7 @@ defmodule Ezagent.Kind.DispatchAfterCommitTest do
        %{uri: uri} do
     {:ok, pid} = Ezagent.Kind.Server.start_link({DacKind, %{uri: uri}})
     :ok = wait_until_ready(uri, 1000)
+    install_deferred_caps!(uri)
 
     log =
       capture_log(fn ->

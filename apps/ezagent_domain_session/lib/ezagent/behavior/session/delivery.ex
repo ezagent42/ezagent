@@ -215,7 +215,8 @@ defmodule Ezagent.ActionSet.Session.Delivery do
           caller: msg.sender,
           caps: cross_session_send_caps(target_session_uri, source_session_uri),
           reply: :ignore
-        }
+        },
+        origin: :trusted_internal
       })
     else
       Logger.warning(
@@ -303,7 +304,8 @@ defmodule Ezagent.ActionSet.Session.Delivery do
           # presented it — the R1.1 bug) is DELETED.
           caps: MapSet.new(),
           reply: :ignore
-        }
+        },
+        origin: :trusted_internal
       })
 
     case result do

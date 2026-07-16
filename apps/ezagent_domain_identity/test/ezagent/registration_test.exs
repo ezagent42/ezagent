@@ -59,29 +59,35 @@ defmodule Ezagent.RegistrationTest do
   end
 
   test "create_principal/4 creates user + profile + spawns the Kind" do
+    workspace = "registration-#{System.unique_integer([:positive])}"
+    {:ok, _workspace} = Ezagent.Workspace.create(workspace, %{})
+
     assert {:ok, uri} =
              Registration.create_principal(
                "newbie",
                "New Bie",
                "newbie@good.com",
-               @test_workspace
+               workspace
              )
 
-    assert URI.to_string(uri) == "entity://#{@test_workspace}/user/newbie"
+    assert URI.to_string(uri) == "entity://#{workspace}/user/newbie"
     assert Ezagent.Users.get_by_uri(uri) != nil
 
     assert Profile.by_email("newbie@good.com").entity_uri ==
-             "entity://#{@test_workspace}/user/newbie"
+             "entity://#{workspace}/user/newbie"
 
     assert {:ok, _pid} = Ezagent.KindRegistry.lookup(uri)
   end
 
   test "create_principal/4 rejects a taken slug" do
+    workspace = "registration-#{System.unique_integer([:positive])}"
+    {:ok, _workspace} = Ezagent.Workspace.create(workspace, %{})
+
     {:ok, _} =
-      Registration.create_principal("dup", "Dup", "dup1@good.com", @test_workspace)
+      Registration.create_principal("dup", "Dup", "dup1@good.com", workspace)
 
     assert {:error, :slug_taken} =
-             Registration.create_principal("dup", "Dup2", "dup2@good.com", @test_workspace)
+             Registration.create_principal("dup", "Dup2", "dup2@good.com", workspace)
   end
 
   describe "register_with_password/4 (task #87)" do

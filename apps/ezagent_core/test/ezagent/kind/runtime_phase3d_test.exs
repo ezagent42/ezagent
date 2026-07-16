@@ -1,53 +1,64 @@
 defmodule Ezagent.Kind.RuntimePhase3dTest do
   @moduledoc """
-  Phase 3d runtime invariant gate (per memory
-  `feedback_completion_requires_invariant_test`):
-
-  Invariant #10 isn't truly tested by grep alone — a future refactor
-  might keep `Capability.matches?` in the file but stop calling it
-  from the dispatch path. This test exercises the actual dispatch
-  with a denying ctx and asserts the deny manifests as
-  `{:error, :unauthorized}` + `[:ezagent, :authz, :denied]` telemetry.
-
-  If this test starts failing, the cap-deny gate has been bypassed
-  somehow (stub revived, default cap silently injected, etc).
+  Runtime authorization invariant: every cap-gated dispatch reaches the
+  target Kind verifier and emits an explicit accepted or rejected outcome.
   """
 
   use EzagentCore.DataCase, async: false
 
-  # #52 Mode-A: cross-tier suite — references sibling-app modules; resolves
-  # only in the umbrella. Excluded standalone (`cd apps/ezagent_core && mix test`).
   @moduletag :umbrella_only
+
   alias Ezagent.Invocation
 
   setup do
-    # Sandbox provided by EzagentCore.DataCase (#92).
-    # Attach a telemetry handler for the duration of this test to capture
-    # :authz events. Detach in on_exit.
     test_pid = self()
-    handler_id = "phase3d-test-#{System.unique_integer([:positive])}"
+    handler_id = "target-verifier-#{System.unique_integer([:positive])}"
 
     :telemetry.attach_many(
       handler_id,
       [
-        [:ezagent, :authz, :granted],
-        [:ezagent, :authz, :denied]
+        [:ezagent, :cap, :verify, :accepted],
+        [:ezagent, :cap, :verify, :rejected]
       ],
-      fn event, _measurements, meta, _config ->
-        send(test_pid, {:authz_event, event, meta})
+      fn event, _measurements, metadata, _config ->
+        send(test_pid, {:verify_event, event, metadata})
       end,
       nil
     )
 
     on_exit(fn -> :telemetry.detach(handler_id) end)
-
     :ok
   end
 
-  # A live, cap-gated `:call` target spawned in-test (decoupled from any
-  # boot-seeded agent): a Session Kind's `session.send`. This file gates the
-  # AUTHZ invariant (granted/denied telemetry + `:unauthorized`), NOT any
-  # reply value — so the target need only be a cap-gated `:call` action.
+  test "empty cap set is rejected fail-loud and emits verifier telemetry" do
+    {target, message} = live_call_target()
+    presenter = Ezagent.URI.new!("entity://team-alpha/user/verifier-nobody")
+
+    assert {:error, :missing_cap} = dispatch(target, message, presenter, MapSet.new())
+
+    assert_receive {:verify_event, [:ezagent, :cap, :verify, :rejected], metadata}, 500
+    assert metadata.target == target
+    assert metadata.action == :send
+    assert metadata.presenter == presenter
+    assert metadata.reason == :missing_cap
+  end
+
+  test "target-minted cap is accepted and emits verifier telemetry" do
+    {target, message} = live_call_target()
+    presenter = Ezagent.Entity.User.admin_uri()
+    signed = signed_action_cap!(target, presenter)
+    flush_verify_events()
+
+    refute match?(
+             {:error, reason} when reason in [:missing_cap, :invalid_cap_signature],
+             dispatch(target, message, presenter, MapSet.new([signed]))
+           )
+
+    assert_receive {:verify_event, [:ezagent, :cap, :verify, :accepted], metadata}, 500
+    assert metadata.target == target
+    assert metadata.presenter == presenter
+  end
+
   defp live_call_target do
     short = "phase3d_#{System.unique_integer([:positive])}"
 
@@ -58,51 +69,25 @@ defmodule Ezagent.Kind.RuntimePhase3dTest do
         template_name: "default"
       )
 
-    msg = Ezagent.Message.new(Ezagent.Entity.User.admin_uri(), %{text: "x", attachments: []})
-    target = URI.new!("#{URI.to_string(session_uri)}?action=session.send")
-    {target, msg}
+    message = Ezagent.Message.new(Ezagent.Entity.User.admin_uri(), %{text: "x", attachments: []})
+    {Ezagent.URI.with_action(session_uri, :session, :send), message}
   end
 
-  test "dispatch with empty caps → {:error, :unauthorized} + :denied telemetry" do
-    {target, msg} = live_call_target()
-
-    inv = %Invocation{
+  defp dispatch(target, message, presenter, caps) do
+    Invocation.dispatch(%Invocation{
+      origin: :authenticated_external,
       target: target,
       mode: :call,
-      args: %{message: msg},
-      ctx: %{
-        caller: URI.new!("entity://team-alpha/user/nobody"),
-        caps: MapSet.new(),
-        reply: :ignore
-      }
-    }
-
-    assert {:error, :unauthorized} = Invocation.dispatch(inv)
-
-    # :denied telemetry fired
-    assert_receive {:authz_event, [:ezagent, :authz, :denied], meta}, 500
-    assert meta.target == target
-    assert meta.action == :send
+      args: %{message: message},
+      ctx: %{caller: presenter, caps: caps, reply: :ignore}
+    })
   end
 
-  test "dispatch with admin caps → success + :granted telemetry" do
-    {target, msg} = live_call_target()
-
-    inv = %Invocation{
-      target: target,
-      mode: :call,
-      args: %{message: msg},
-      ctx: %{
-        caller: Ezagent.Entity.User.admin_uri(),
-        caps: MapSet.new([Ezagent.Capability.admin_genesis_cap()]),
-        reply: :ignore
-      }
-    }
-
-    # Authz gate is what this file pins — the admin superset cap matches; the
-    # inner result shape is not asserted (it is NOT :unauthorized).
-    refute match?({:error, :unauthorized}, Invocation.dispatch(inv))
-
-    assert_receive {:authz_event, [:ezagent, :authz, :granted], _meta}, 500
+  defp flush_verify_events do
+    receive do
+      {:verify_event, _, _} -> flush_verify_events()
+    after
+      0 -> :ok
+    end
   end
 end

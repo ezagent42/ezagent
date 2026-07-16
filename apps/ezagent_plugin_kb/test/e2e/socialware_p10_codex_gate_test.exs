@@ -386,7 +386,7 @@ defmodule EzagentPluginKb.E2E.SocialwareP10CodexGateTest do
     issued_caps =
       Enum.map(caps, fn proposal ->
         {:ok, artifact} =
-          Ezagent.Cap.issue({:genesis, User.admin_uri()}, orchestrator_uri, proposal)
+          Ezagent.Cap.issue({:admin, User.admin_uri()}, orchestrator_uri, proposal)
 
         artifact
       end)
@@ -497,7 +497,7 @@ defmodule EzagentPluginKb.E2E.SocialwareP10CodexGateTest do
   end
 
   defp dispatch_call(session_uri, behavior, action, args, caller, caps) do
-    Invocation.dispatch(%Invocation{
+    Invocation.dispatch(%Invocation{origin: :trusted_internal,
       target: Ezagent.URI.with_action(session_uri, behavior, action),
       mode: :call,
       args: args,
@@ -509,7 +509,7 @@ defmodule EzagentPluginKb.E2E.SocialwareP10CodexGateTest do
     msg = Message.new(caller_uri, %{text: text, attachments: []})
 
     :ok =
-      Invocation.dispatch(%Invocation{
+      Invocation.dispatch(%Invocation{origin: :trusted_internal,
         target: Ezagent.URI.with_action(session_uri, :session, :send),
         mode: :cast,
         args: %{message: msg},
@@ -624,7 +624,7 @@ defmodule EzagentPluginKb.E2E.SocialwareP10CodexGateTest do
         workspace_uri
       )
 
-    Ezagent.Identity.Grant.grant_cap(holder, cap, {:genesis, User.admin_uri()})
+    Ezagent.Identity.Grant.grant_cap(holder, cap, {:admin, User.admin_uri()})
   end
 
   defp cleanup_session(session_uri) do

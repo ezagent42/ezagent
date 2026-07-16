@@ -228,7 +228,8 @@ defmodule EzagentWeb.HomeLive do
               }
             ]),
           reply: :ignore
-        }
+        },
+        origin: :authenticated_external
       })
 
     :ok

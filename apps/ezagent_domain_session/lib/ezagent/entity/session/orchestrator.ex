@@ -51,7 +51,7 @@ defmodule Ezagent.Entity.Session.Orchestrator do
   `EZAGENT_AGENT_ROLE` env var — entire SPEC Gap B was dead.
 
   Post-fix this branch reads the cc-orchestrator AgentTemplate's content
-  slice via `:sys.get_state` (the AgentTemplate Kind is the SOLE source
+  slice through the framework runtime view (the AgentTemplate Kind is the SOLE source
   of truth) and calls `Agent.spawn_from_template_content/4` — the same
   helper the `Behavior.Template :instantiate` action body calls, minus
   the dispatch-level CapBAC + the action-body's anti-cross-workspace
@@ -191,21 +191,15 @@ defmodule Ezagent.Entity.Session.Orchestrator do
   end
 
   defp orchestrator_member_uri(%URI{} = session_uri) do
-    case Ezagent.KindRegistry.lookup(session_uri) do
-      {:ok, pid} ->
-        chat_slice =
-          pid
-          |> :sys.get_state()
-          |> Map.get(:state, %{})
-          |> Map.get(Ezagent.ActionSet.Session.state_slice(), %{})
-
+    case Ezagent.Kind.get_raw_slice(session_uri, :session) do
+      {:ok, chat_slice} ->
         chat_persistent = Map.get(chat_slice, :state, chat_slice)
 
         chat_persistent
         |> Map.get(:members, %{})
         |> Ezagent.ActionSet.Session.Members.role_name_to_uri("orchestrator")
 
-      :error ->
+      {:error, _reason} ->
         nil
     end
   catch
@@ -359,24 +353,18 @@ defmodule Ezagent.Entity.Session.Orchestrator do
   """
   @spec read_template_working_copy(URI.t()) :: map()
   def read_template_working_copy(%URI{} = session_uri) do
-    case Ezagent.KindRegistry.lookup(session_uri) do
-      {:ok, pid} ->
+    case Ezagent.Kind.get_raw_slice(session_uri, :session) do
+      {:ok, chat_slice} ->
         # Lifecycle migration (SPEC 2026-05-29 §2.3C): the Chat slice is now
         # two-container; the persistent `template_working_copy` lives under
         # its `:state`. The outer `Map.get(:state, ...)` reaches the
         # per-Kind slice store; the inner one unwraps the Chat two-container
         # (falling through for a not-yet-converted flat slice).
-        chat_slice =
-          pid
-          |> :sys.get_state()
-          |> Map.get(:state, %{})
-          |> Map.get(Ezagent.ActionSet.Session.state_slice(), %{})
-
         chat_persistent = Map.get(chat_slice, :state, chat_slice)
 
         Ezagent.ActionSet.Session.template_working_copy(chat_persistent)
 
-      :error ->
+      {:error, _reason} ->
         Ezagent.ActionSet.Session.default_template_working_copy()
     end
   end
@@ -394,21 +382,15 @@ defmodule Ezagent.Entity.Session.Orchestrator do
   """
   @spec session_member_uris(URI.t()) :: [URI.t()]
   def session_member_uris(%URI{} = session_uri) do
-    case Ezagent.KindRegistry.lookup(session_uri) do
-      {:ok, pid} ->
-        chat_slice =
-          pid
-          |> :sys.get_state()
-          |> Map.get(:state, %{})
-          |> Map.get(Ezagent.ActionSet.Session.state_slice(), %{})
-
+    case Ezagent.Kind.get_raw_slice(session_uri, :session) do
+      {:ok, chat_slice} ->
         chat_persistent = Map.get(chat_slice, :state, chat_slice)
 
         chat_persistent
         |> Map.get(:members, %{})
         |> Map.keys()
 
-      :error ->
+      {:error, _reason} ->
         []
     end
   catch
@@ -486,18 +468,12 @@ defmodule Ezagent.Entity.Session.Orchestrator do
   """
   @spec session_legends(URI.t()) :: map()
   def session_legends(%URI{} = session_uri) do
-    case Ezagent.KindRegistry.lookup(session_uri) do
-      {:ok, pid} ->
-        chat_slice =
-          pid
-          |> :sys.get_state()
-          |> Map.get(:state, %{})
-          |> Map.get(Ezagent.ActionSet.Session.state_slice(), %{})
-
+    case Ezagent.Kind.get_raw_slice(session_uri, :session) do
+      {:ok, chat_slice} ->
         chat_persistent = Map.get(chat_slice, :state, chat_slice)
         Ezagent.ActionSet.Session.legends_of(chat_persistent)
 
-      :error ->
+      {:error, _reason} ->
         %{}
     end
   catch
@@ -585,39 +561,31 @@ defmodule Ezagent.Entity.Session.Orchestrator do
   @spec read_template_content(URI.t()) :: {:ok, map()} | {:error, term()}
   def read_template_content(%URI{} = session_template_uri) do
     target = Ezagent.URI.new!("#{URI.to_string(session_template_uri)}?action=template.read")
+    admin_uri = Ezagent.Entity.User.admin_uri()
 
-    case Ezagent.Invocation.dispatch(%Ezagent.Invocation{
-           target: target,
-           mode: :call,
-           args: %{},
-           # #154 — `system://template-materialize` ELIMINATED. Reading template
-           # content during materialization is system-mediated → runs under the
-           # genesis admin entity with an INLINE narrow `template.read` cap
-           # (granted_by admin; #533 refines). behavior: :any avoids a cross-app
-           # `Behavior.Template` literal.
-           ctx: %{
-             caller: Ezagent.Entity.User.admin_uri(),
-             caps:
-               MapSet.new([
-                 %Ezagent.Capability{
-                   Ezagent.Capability.cap(
-                     :any,
-                     :any,
-                     :read,
-                     Ezagent.URI.instance(target),
-                     Ezagent.Capability.workspace_of(target)
-                   )
-                   | granted_by: Ezagent.Entity.User.admin_uri(),
-                     granted_at: DateTime.utc_now()
-                 }
-               ]),
-             reply: {:caller_inbox, self()}
-           }
-         }) do
-      {:ok, %{content: content}} when is_map(content) -> {:ok, content}
-      {:ok, %{content: nil}} -> {:error, :session_template_not_populated}
-      {:error, _} = err -> err
-      other -> {:error, {:unexpected_template_read_result, other}}
+    with {:ok, signed_cap} <-
+           Ezagent.Cap.issue_for_action({:admin, admin_uri}, admin_uri, target) do
+      case Ezagent.Invocation.dispatch(%Ezagent.Invocation{
+             target: target,
+             mode: :call,
+             args: %{},
+             # #154 — `system://template-materialize` ELIMINATED. Reading template
+             # content during materialization is system-mediated → runs under the
+             # genesis admin entity with an INLINE narrow `template.read` cap
+             # (granted_by admin; #533 refines). behavior: :any avoids a cross-app
+             # `Behavior.Template` literal.
+             ctx: %{
+               caller: admin_uri,
+               caps: MapSet.new([signed_cap]),
+               reply: {:caller_inbox, self()}
+             },
+             origin: :trusted_internal
+           }) do
+        {:ok, %{content: content}} when is_map(content) -> {:ok, content}
+        {:ok, %{content: nil}} -> {:error, :session_template_not_populated}
+        {:error, _} = err -> err
+        other -> {:error, {:unexpected_template_read_result, other}}
+      end
     end
   end
 

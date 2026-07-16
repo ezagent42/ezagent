@@ -15,13 +15,19 @@ defmodule Ezagent.Cap.Verifier do
   code already executing in the BEAM is explicitly out of scope.
   """
 
-  alias Ezagent.{Cap, Capability}
+  alias Ezagent.Capability
   alias Ezagent.Cap.Authority
 
   @non_cap_actions %{
     Ezagent.ActionSet.Identity => MapSet.new([:cascade_notify_managers]),
     Ezagent.ActionSet.IdentityAdmin =>
-      MapSet.new([:absorb_cap, :persist_caps, :store_cap, :remove_cap]),
+      MapSet.new([
+        :absorb_cap,
+        :persist_caps,
+        :store_cap,
+        :remove_cap,
+        :sync_recipe_binding
+      ]),
     Ezagent.ActionSet.Agent.Receive => MapSet.new([:receive]),
     Ezagent.ActionSet.User.Receive => MapSet.new([:receive]),
     Ezagent.ActionSet.SocialwarePublisherRead => MapSet.new([:snapshot, :history]),
@@ -55,6 +61,10 @@ defmodule Ezagent.Cap.Verifier do
     |> MapSet.member?(action)
   end
 
+  @doc false
+  @spec non_cap_actions() :: %{module() => MapSet.t(atom())}
+  def non_cap_actions, do: @non_cap_actions
+
   defp verify_cap(
          kind_module,
          behavior_module,
@@ -62,23 +72,25 @@ defmodule Ezagent.Cap.Verifier do
          target,
          %{caller: %URI{} = presenter} = ctx
        ) do
-    needed = %{
-      kind: kind_module.type_name(),
-      behavior: behavior_module,
-      action: action,
-      instance: Ezagent.URI.instance(target),
-      workspace_uri: Capability.workspace_of(target)
-    }
+    needed = resolve_required_cap(kind_module, behavior_module, action, target)
 
-    candidates = candidate_caps(ctx, presenter, target)
+    candidates = candidate_caps(ctx)
 
-    case Enum.find(candidates, &valid_for?(&1, needed, presenter)) do
+    verified = Enum.filter(candidates, &verified_artifact?(&1, presenter))
+
+    case Enum.find(verified, &Capability.matches?(&1, needed)) do
       %Capability{} = cap ->
         emit(:accepted, kind_module, behavior_module, action, target, ctx)
         {:ok, cap}
 
       nil ->
-        reason = if Enum.empty?(candidates), do: :missing_cap, else: :invalid_cap_signature
+        reason =
+          cond do
+            Enum.empty?(candidates) -> :missing_cap
+            Enum.empty?(verified) -> :invalid_cap_signature
+            true -> :missing_cap
+          end
+
         emit(:rejected, kind_module, behavior_module, action, target, ctx, reason)
         {:error, reason}
     end
@@ -89,38 +101,61 @@ defmodule Ezagent.Cap.Verifier do
     {:error, :presenter_required}
   end
 
-  defp candidate_caps(ctx, presenter, target) do
-    inline = Map.get(ctx, :caps, MapSet.new()) || MapSet.new()
+  defp candidate_caps(ctx), do: Map.get(ctx, :caps, MapSet.new()) || MapSet.new()
 
-    held =
-      if same_instance?(presenter, target) do
-        MapSet.new()
-      else
-        try do
-          {caps, _context} = Cap.authorization_context({:held_by, presenter})
-          caps
-        rescue
-          _ -> MapSet.new()
-        catch
-          _, _ -> MapSet.new()
-        end
-      end
-
-    inline
-    |> Enum.concat(held)
-    |> Enum.uniq()
-  end
-
-  defp valid_for?(%Capability{} = cap, needed, presenter) do
-    Capability.matches?(cap, needed) and Authority.verify_current(cap, presenter)
+  defp verified_artifact?(%Capability{} = cap, presenter) do
+    Authority.verify_current(cap, presenter)
   rescue
     _ -> false
   end
 
-  defp valid_for?(_cap, _needed, _presenter), do: false
+  defp verified_artifact?(_cap, _presenter), do: false
 
-  defp same_instance?(presenter, target),
-    do: Ezagent.URI.stable_key(presenter) == Ezagent.URI.stable_key(Ezagent.URI.instance(target))
+  defp resolve_required_cap(kind_module, behavior_module, action, target) do
+    with true <- function_exported?(behavior_module, :required_caps, 0),
+         required when is_map(required) <- behavior_module.required_caps(),
+         %Capability{} = declared <- Map.get(required, action) do
+      %{
+        kind: if(declared.kind == :any, do: kind_type(kind_module), else: declared.kind),
+        behavior: declared.behavior,
+        action: action,
+        instance:
+          if(declared.instance == :any,
+            do: Ezagent.URI.instance(target),
+            else: declared.instance
+          ),
+        workspace_uri:
+          if(declared.workspace_uri == :any,
+            do: Capability.workspace_of(target),
+            else: declared.workspace_uri
+          )
+      }
+    else
+      _ ->
+        %{
+          kind: kind_type(kind_module),
+          behavior: behavior_module,
+          action: action,
+          instance: Ezagent.URI.instance(target),
+          workspace_uri: Capability.workspace_of(target)
+        }
+    end
+  rescue
+    _ ->
+      %{
+        kind: kind_type(kind_module),
+        behavior: behavior_module,
+        action: action,
+        instance: Ezagent.URI.instance(target),
+        workspace_uri: Capability.workspace_of(target)
+      }
+  end
+
+  defp kind_type(kind_module) when is_atom(kind_module) do
+    if function_exported?(kind_module, :type_name, 0),
+      do: kind_module.type_name(),
+      else: kind_module
+  end
 
   defp emit(outcome, kind, behavior, action, target, ctx, reason \\ nil) do
     :telemetry.execute(

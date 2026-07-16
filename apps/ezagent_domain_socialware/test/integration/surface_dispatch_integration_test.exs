@@ -20,7 +20,7 @@ defmodule EzagentDomainSocialware.Integration.SurfaceDispatchIntegrationTest do
   end
 
   defp dispatch(session_uri, behavior, action, args) do
-    Invocation.dispatch(%Invocation{
+    Invocation.dispatch(%Invocation{origin: :trusted_internal,
       target: target(session_uri, behavior, action),
       mode: :call,
       args: args,

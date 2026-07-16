@@ -368,7 +368,7 @@ defmodule Ezagent.PluginCc.Integration.CcAgentSandboxCredentialsTest do
         Message.new(admin_uri, %{text: inbound_text, attachments: []}, mentions: [agent_uri])
 
       :ok =
-        Invocation.dispatch(%Invocation{
+        Invocation.dispatch(%Invocation{origin: :trusted_internal,
           target: URI.new!("#{URI.to_string(session_uri)}?action=session.send"),
           mode: :cast,
           args: %{message: inbound_msg},
@@ -443,7 +443,7 @@ defmodule Ezagent.PluginCc.Integration.CcAgentSandboxCredentialsTest do
   # --- chat helpers --------------------------------------------------------
 
   defp chat_join(session_uri, member_uri) do
-    Invocation.dispatch(%Invocation{
+    Invocation.dispatch(%Invocation{origin: :trusted_internal,
       target: URI.new!("#{URI.to_string(session_uri)}?action=session.join"),
       mode: :call,
       args: %{member: member_uri},

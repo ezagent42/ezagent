@@ -219,6 +219,30 @@ defmodule Ezagent.ActionSet.Workspace do
     description: "list templates (SessionTemplate / AgentTemplate) bound to this workspace"
   )
 
+  action(:list_agent_templates,
+    args: %{},
+    returns: %{templates: {:list, :uri}},
+    caps: [:list_agent_templates],
+    modes: [:call],
+    description: "list AgentTemplate instances visible in this workspace"
+  )
+
+  action(:list_session_templates,
+    args: %{},
+    returns: %{templates: {:list, :uri}},
+    caps: [:list_session_templates],
+    modes: [:call],
+    description: "list SessionTemplate instances visible in this workspace"
+  )
+
+  action(:write_session_templates,
+    args: %{},
+    returns: %{},
+    caps: [:write_session_templates],
+    modes: [:call],
+    description: "authorize creation or publication of SessionTemplate versions in this workspace"
+  )
+
   action(:add_template,
     args: %{name: :string, template: :map},
     returns: %{},
@@ -358,6 +382,11 @@ defmodule Ezagent.ActionSet.Workspace do
       assign_role: Ezagent.Capability.cap(:workspace, __MODULE__, :assign_role),
       unassign_role: Ezagent.Capability.cap(:workspace, __MODULE__, :unassign_role),
       list_templates: Ezagent.Capability.cap(:workspace, __MODULE__, :list_templates),
+      list_agent_templates: Ezagent.Capability.cap(:workspace, __MODULE__, :list_agent_templates),
+      list_session_templates:
+        Ezagent.Capability.cap(:workspace, __MODULE__, :list_session_templates),
+      write_session_templates:
+        Ezagent.Capability.cap(:workspace, __MODULE__, :write_session_templates),
       add_template: Ezagent.Capability.cap(:workspace, __MODULE__, :add_template),
       remove_template: Ezagent.Capability.cap(:workspace, __MODULE__, :remove_template),
       list_routing_rules: Ezagent.Capability.cap(:workspace, __MODULE__, :list_routing_rules),
@@ -519,6 +548,31 @@ defmodule Ezagent.ActionSet.Workspace do
   @doc "List the workspace's session templates (the `:session_templates` name→template map)."
   def handle_list_templates(_args, ctx) do
     {:ok, %{templates: ctx[:read].(:session_templates, %{})}, []}
+  end
+
+  @doc false
+  def handle_list_agent_templates(_args, ctx),
+    do: list_template_instances(ctx, "agent_template", :agent)
+
+  @doc false
+  def handle_list_session_templates(_args, ctx),
+    do: list_template_instances(ctx, "session_template", :session)
+
+  @doc false
+  def handle_write_session_templates(_args, _ctx), do: {:ok, %{}, []}
+
+  defp list_template_instances(ctx, kind_type, uri_type) do
+    workspace_uri = Map.fetch!(ctx, :self_uri)
+
+    templates =
+      workspace_uri
+      |> Ezagent.Ecto.KindSnapshot.list_in_workspace()
+      |> Enum.filter(&(&1.kind_type == kind_type))
+      |> Enum.map(&Ezagent.URI.new!(&1.uri))
+      |> Enum.filter(&Ezagent.URI.type?(&1, uri_type))
+      |> Enum.sort_by(&Ezagent.URI.stable_key/1)
+
+    {:ok, %{templates: templates}, []}
   end
 
   @doc "Add (or overwrite) the session template `tmpl` under `name` in the workspace's `:session_templates` map."
@@ -987,6 +1041,6 @@ defmodule Ezagent.ActionSet.Workspace do
   # fallback `entity://system/user/admin` — the accountable entity for the
   # workspace-membership rule. (KNOWN OVER-GRANT note above unchanged.)
   defp member_create_session_authorization do
-    {:rule, :workspace_membership, Ezagent.Entity.User.admin_uri()}
+    {:admin, Ezagent.Entity.User.admin_uri()}
   end
 end

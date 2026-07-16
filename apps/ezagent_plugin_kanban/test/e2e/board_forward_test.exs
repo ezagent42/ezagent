@@ -339,7 +339,7 @@ defmodule EzagentPluginKanban.E2E.BoardForwardTest do
   defp join_member(session_uri, member_uri, role_name, %{caller: caller, caps: caps}) do
     target = Ezagent.URI.new!("#{URI.to_string(session_uri)}?action=session.join")
 
-    case Invocation.dispatch(%Invocation{
+    case Invocation.dispatch(%Invocation{origin: :trusted_internal,
            target: target,
            mode: :call,
            args: %{member: member_uri, role_name: role_name},

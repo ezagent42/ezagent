@@ -114,22 +114,6 @@ defmodule Ezagent.Cap.Authority do
   def verify(%__MODULE__{}, %Capability{}, %URI{}), do: false
 
   @doc false
-  @spec sign_for_target(Capability.t()) :: {:ok, Capability.t()} | {:error, term()}
-  def sign_for_target(%Capability{} = cap) do
-    with {:ok, target} <- authority_target(cap),
-         {:ok, pid} <- Ezagent.KindRegistry.lookup(target) do
-      if pid == self() do
-        case Process.get({__MODULE__, :current}) do
-          %__MODULE__{} = authority -> {:ok, sign(authority, cap)}
-          nil -> {:error, :authority_unavailable}
-        end
-      else
-        GenServer.call(pid, {:ezagent_cap_sign, cap})
-      end
-    end
-  end
-
-  @doc false
   @spec with_current(t(), (-> result)) :: result when result: term()
   def with_current(%__MODULE__{} = authority, fun) when is_function(fun, 0) do
     key = {__MODULE__, :current}
@@ -143,29 +127,29 @@ defmodule Ezagent.Cap.Authority do
   end
 
   @doc false
-  @spec verify_for_target(Capability.t(), URI.t()) :: boolean()
-  def verify_for_target(%Capability{} = cap, %URI{} = presenter) do
-    with {:ok, target} <- authority_target(cap),
-         {:ok, pid} <- Ezagent.KindRegistry.lookup(target) do
-      if pid == self() do
-        case Process.get({__MODULE__, :current}) do
-          %__MODULE__{} = authority -> verify(authority, cap, presenter)
-          nil -> false
-        end
-      else
-        GenServer.call(pid, {:ezagent_cap_verify, cap, presenter})
-      end
-    else
-      _ -> false
-    end
-  end
-
-  @doc false
   @spec verify_current(Capability.t(), URI.t()) :: boolean()
   def verify_current(%Capability{} = cap, %URI{} = presenter) do
     case Process.get({__MODULE__, :current}) do
       %__MODULE__{} = authority -> verify(authority, cap, presenter)
       nil -> false
+    end
+  end
+
+  @doc false
+  @spec current_target?(URI.t()) :: boolean()
+  def current_target?(%URI{} = target) do
+    case Process.get({__MODULE__, :current}) do
+      %__MODULE__{uri: uri} -> same_uri?(uri, Ezagent.URI.instance(target))
+      nil -> false
+    end
+  end
+
+  @doc false
+  @spec current_kind_type() :: {:ok, atom()} | {:error, :authority_unavailable}
+  def current_kind_type do
+    case Process.get({__MODULE__, :current}) do
+      %__MODULE__{kind_type: kind_type} -> {:ok, kind_type}
+      nil -> {:error, :authority_unavailable}
     end
   end
 
@@ -289,15 +273,4 @@ defmodule Ezagent.Cap.Authority do
 
   defp admin_uri, do: Ezagent.URI.user(:system, :admin)
   defp same_uri?(left, right), do: Ezagent.URI.stable_key(left) == Ezagent.URI.stable_key(right)
-
-  defp authority_target(%Capability{instance: %URI{} = instance}),
-    do: {:ok, Ezagent.URI.instance(instance)}
-
-  defp authority_target(%Capability{instance: {_scope, %URI{} = instance}}),
-    do: {:ok, Ezagent.URI.instance(instance)}
-
-  defp authority_target(%Capability{instance: :any, granted_by: %URI{} = granted_by}),
-    do: {:ok, Ezagent.URI.instance(granted_by)}
-
-  defp authority_target(%Capability{}), do: {:error, :missing_target_authority}
 end

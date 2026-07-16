@@ -206,7 +206,7 @@ defmodule EzagentDomainSocialware.Integration.TurnConfigEvolveRewireTest do
     cap = CreatorGrant.manage_cap(:agent, agent, workspace, manager_uri)
 
     {:ok, _} =
-      Invocation.dispatch(%Invocation{
+      Invocation.dispatch(%Invocation{origin: :trusted_internal,
         target:
           Ezagent.URI.new!("#{URI.to_string(manager_uri)}?action=identity_admin.revoke_cap"),
         mode: :call,
@@ -254,7 +254,7 @@ defmodule EzagentDomainSocialware.Integration.TurnConfigEvolveRewireTest do
   end
 
   defp dispatch_as(session, behavior, action, args, settler) do
-    Invocation.dispatch(%Invocation{
+    Invocation.dispatch(%Invocation{origin: :trusted_internal,
       target: Ezagent.URI.new!("#{URI.to_string(session)}?action=#{behavior}.#{action}"),
       mode: :call,
       args: args,

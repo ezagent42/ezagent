@@ -53,6 +53,7 @@ defmodule Ezagent.InvocationActivateBudgetTest do
     target = Ezagent.URI.new!("#{URI.to_string(uri)}?action=test.noop")
 
     inv = %Invocation{
+      origin: :trusted_internal,
       target: target,
       mode: :call,
       args: %{},

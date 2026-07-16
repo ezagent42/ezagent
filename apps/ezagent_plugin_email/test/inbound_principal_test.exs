@@ -164,7 +164,7 @@ defmodule Ezagent.Email.Inbound.PrincipalTest do
   end
 
   defp dispatch_send(session_uri, principal_uri, caps, message) do
-    Ezagent.Invocation.dispatch(%Ezagent.Invocation{
+    Ezagent.Invocation.dispatch(%Ezagent.Invocation{origin: :trusted_internal,
       target: Ezagent.URI.with_action(session_uri, :session, :send),
       mode: :call,
       args: %{message: message},

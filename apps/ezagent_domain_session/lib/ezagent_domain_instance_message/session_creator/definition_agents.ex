@@ -18,18 +18,18 @@ defmodule EzagentDomainInstanceMessage.SessionCreator.DefinitionAgents do
        re-materialize/repair has already bound the role, so skip.
     2. **resolve recipe by workspace** — `RecipeRegistry.lookup(workspace, name)`,
        fail-closed on `:error` (never a cap-less spawn; #1116).
-    3. **issue + bind** — resolve the recipe caps, run complete `Cap.issue`
-       authorization under the canonical admin issuer, and atomically upsert the
-       issued artifacts in the identity tier before any spawn.
-    4. **spawn** — recipe × declared flavor (default `cc`) →
+    3. **spawn + seal authority** — recipe × declared flavor (default `cc`) →
        `Agent.spawn_from_template_content` at a fresh uuid agent URI.
+    4. **issue + bind + sync** — with the target Kind live, resolve recipe caps
+       through its `K.grant`, atomically upsert the signed artifacts, and
+       version-reconcile them into the live Identity slice.
     5. **join + cleanup** — faceted `session.join` carrying `%{role_name: name}`;
        on a definitive spawn/join failure terminate the worker and conditionally
        tombstone the exact binding version.
-    6. **no post-spawn recipe grant** — `create/1` self-stores the exact issued
-       artifacts from the binding. The recipe-cap path never drives a cap write
-       into the new agent and therefore never waits for its transport readiness.
-       The separate orchestrator-scoped post-hook remains an S7 cutover.
+    6. **no cold-target signing bypass** — recipe artifacts can only be minted
+       after the target authority exists. Cold restart hydrates the durable
+       binding; live materialization uses a fixed VM-internal sync action, not a
+       second signer.
 
   Authority is SYSTEM-MEDIATED materialization (mirrors
   `Materializer.join_session_members`):
@@ -300,10 +300,6 @@ defmodule EzagentDomainInstanceMessage.SessionCreator.DefinitionAgents do
          # DoD 6). Without a credential source this agent can only boot "Not
          # logged in": skip the slot rather than join a silent zombie.
          :ok <- CredentialPrecondition.check_source(granted_by, workspace_uri, flavor),
-         # S5 I9/C2: complete Cap.issue authorization and commit the durable
-         # identity-tier binding before Kind.spawn. No DB transaction spans the
-         # spawn. create/1 can therefore self-store the issued artifacts.
-         {:ok, binding} <- bind_recipe_caps(planned_uri, recipe_name, recipe),
          :ok <-
            spawn_bound_agent(
              session_uri,
@@ -312,8 +308,7 @@ defmodule EzagentDomainInstanceMessage.SessionCreator.DefinitionAgents do
              recipe,
              recipe_name,
              role_name,
-             flavor,
-             binding
+             flavor
            ) do
       {:ok, planned_uri}
     end
@@ -326,41 +321,50 @@ defmodule EzagentDomainInstanceMessage.SessionCreator.DefinitionAgents do
          recipe,
          recipe_name,
          role_name,
-         flavor,
-         binding
+         flavor
        ) do
     workspace_uri = Ezagent.Capability.workspace_of(planned_uri)
 
-    result =
-      with :ok <-
-             spawn_agent(
-               workspace_uri,
-               granted_by,
-               planned_uri,
-               recipe,
-               recipe_name,
-               role_name,
-               flavor
-             ),
-           # Safety net for the class the pre-flight cannot see (#1311).
-           # This agent was just spawned by us — if it has no credentials,
-           # terminate it (it was never joined). REUSE path leaves its agent.
-           :ok <- verify_credentials_on_fresh(planned_uri, flavor),
-           :ok <- join_or_cleanup(session_uri, planned_uri, role_name, recipe) do
-        :ok
+    with :ok <-
+           spawn_agent(
+             workspace_uri,
+             granted_by,
+             planned_uri,
+             recipe,
+             recipe_name,
+             role_name,
+             flavor
+           ) do
+      case bind_recipe_caps(planned_uri, recipe_name, recipe) do
+        {:ok, binding} ->
+          result =
+            with :ok <- RecipeCapBinding.sync_live(planned_uri),
+                 # Safety net for the class the pre-flight cannot see (#1311).
+                 # This agent was just spawned by us — if it has no credentials,
+                 # terminate it (it was never joined). REUSE path leaves its agent.
+                 :ok <- verify_credentials_on_fresh(planned_uri, flavor),
+                 :ok <- join_or_cleanup(session_uri, planned_uri, role_name, recipe) do
+              :ok
+            end
+
+          case result do
+            :ok ->
+              :ok
+
+            {:skip, _reason} = skip ->
+              compensate_recipe_binding(planned_uri, binding)
+              skip
+
+            {:error, _reason} = error ->
+              _ = terminate_worker(planned_uri)
+              compensate_recipe_binding(planned_uri, binding)
+              error
+          end
+
+        {:error, _reason} = error ->
+          _ = terminate_worker(planned_uri)
+          error
       end
-
-    case result do
-      :ok ->
-        :ok
-
-      {:skip, _reason} = skip ->
-        compensate_recipe_binding(planned_uri, binding)
-        skip
-
-      {:error, _reason} = error ->
-        compensate_recipe_binding(planned_uri, binding)
-        error
     end
   end
 
@@ -394,18 +398,19 @@ defmodule EzagentDomainInstanceMessage.SessionCreator.DefinitionAgents do
          # to destroy — CRITICAL, codex r2).
          :ok <- verify_credentials_on_reuse(agent_uri, flavor_of(agent)),
          {:ok, recipe} <- lookup_recipe(workspace_uri, recipe_name),
-         # A reused agent already exists, so I9's pre-spawn ordering does not
-         # apply. Bind only after a successful join: an unrelated join failure
+         {:ok, reuse_caps} <- reuse_caps(session_uri, operator),
+         # A reused agent already exists. Bind only after a successful join: an unrelated join failure
          # must never tombstone or overwrite that agent's pre-existing binding.
          {:ok, ^agent_uri} <-
            Participants.add_participant(agent_uri, role_name,
              caller: operator,
-             caps: reuse_caps(session_uri, operator),
+             caps: reuse_caps,
              workspace_uri: workspace_uri,
              session_uri: session_uri,
              in_session_template: true
            ),
-         {:ok, _binding} <- bind_recipe_caps(agent_uri, recipe_name, recipe) do
+         {:ok, _binding} <- bind_recipe_caps(agent_uri, recipe_name, recipe),
+         :ok <- RecipeCapBinding.sync_live(agent_uri) do
       {:ok, agent_uri}
     else
       nil -> {:error, {:invalid_reuse_agent_uri, role_name}}
@@ -416,6 +421,29 @@ defmodule EzagentDomainInstanceMessage.SessionCreator.DefinitionAgents do
   end
 
   defp maybe_after_materialize(session_uri, workspace_uri, granted_by, agent, agent_uri) do
+    with :ok <-
+           Materializer.grant_owner_participant_teardown_cap(
+             agent_uri,
+             granted_by,
+             workspace_uri
+           ) do
+      maybe_after_orchestrator_materialize(
+        session_uri,
+        workspace_uri,
+        granted_by,
+        agent,
+        agent_uri
+      )
+    end
+  end
+
+  defp maybe_after_orchestrator_materialize(
+         session_uri,
+         workspace_uri,
+         granted_by,
+         agent,
+         agent_uri
+       ) do
     if orchestrator_recipe_slot?(agent) do
       parent_template_uri = parent_template_uri_for(session_uri)
 
@@ -490,19 +518,12 @@ defmodule EzagentDomainInstanceMessage.SessionCreator.DefinitionAgents do
   end
 
   defp reuse_caps(%URI{} = session_uri, %URI{} = operator) do
-    workspace_uri = Ezagent.Capability.workspace_of(session_uri)
+    target = Ezagent.URI.with_action(session_uri, :session, :join)
 
-    MapSet.new([
-      %Ezagent.Capability{
-        kind: :session,
-        behavior: :any,
-        action: :any,
-        instance: {:within_session, session_uri},
-        workspace_uri: workspace_uri,
-        granted_by: operator,
-        granted_at: DateTime.utc_now()
-      }
-    ])
+    case Ezagent.Cap.issue_for_action({:admin, Ezagent.Entity.User.admin_uri()}, operator, target) do
+      {:ok, cap} -> {:ok, MapSet.new([cap])}
+      {:error, _reason} = error -> error
+    end
   end
 
   # --- resolve --------------------------------------------------------------
@@ -615,16 +636,19 @@ defmodule EzagentDomainInstanceMessage.SessionCreator.DefinitionAgents do
     admin = Ezagent.Entity.User.admin_uri()
 
     result =
-      Invocation.dispatch(%Invocation{
-        target: target,
-        mode: :call,
-        args: %{member: member_uri, role_name: role_name},
-        ctx: %{
-          caller: admin,
-          caps: MapSet.new([join_cap(session_uri, admin)]),
-          reply: {:caller_inbox, self()}
-        }
-      })
+      with {:ok, cap} <- Ezagent.Cap.issue_for_action({:admin, admin}, admin, target) do
+        Invocation.dispatch(%Invocation{
+          target: target,
+          mode: :call,
+          args: %{member: member_uri, role_name: role_name},
+          ctx: %{
+            caller: admin,
+            caps: MapSet.new([cap]),
+            reply: {:caller_inbox, self()}
+          },
+          origin: :trusted_internal
+        })
+      end
 
     case result do
       :ok -> :ok
@@ -638,17 +662,20 @@ defmodule EzagentDomainInstanceMessage.SessionCreator.DefinitionAgents do
     target = Ezagent.URI.new!("#{URI.to_string(member_uri)}?action=sandbox.destroy")
     admin = Ezagent.Entity.User.admin_uri()
 
-    _ =
-      Invocation.dispatch(%Invocation{
-        target: target,
-        mode: :call,
-        args: %{},
-        ctx: %{
-          caller: admin,
-          caps: MapSet.new([destroy_cap(member_uri, admin)]),
-          reply: {:caller_inbox, self()}
-        }
-      })
+    with {:ok, cap} <- Ezagent.Cap.issue_for_action({:admin, admin}, admin, target) do
+      _ =
+        Invocation.dispatch(%Invocation{
+          target: target,
+          mode: :call,
+          args: %{},
+          ctx: %{
+            caller: admin,
+            caps: MapSet.new([cap]),
+            reply: {:caller_inbox, self()}
+          },
+          origin: :trusted_internal
+        })
+    end
 
     :ok
   end
@@ -657,7 +684,8 @@ defmodule EzagentDomainInstanceMessage.SessionCreator.DefinitionAgents do
 
   defp refresh_existing_binding(workspace_uri, agent_uri, recipe_name, role_name) do
     with {:ok, recipe} <- lookup_recipe(workspace_uri, recipe_name),
-         {:ok, _binding} <- bind_recipe_caps(agent_uri, recipe_name, recipe) do
+         {:ok, _binding} <- bind_recipe_caps(agent_uri, recipe_name, recipe),
+         :ok <- RecipeCapBinding.sync_live(agent_uri) do
       :ok
     else
       {:error, reason} -> {:error, {:agent_recipe_binding_refresh_failed, role_name, reason}}
@@ -690,36 +718,6 @@ defmodule EzagentDomainInstanceMessage.SessionCreator.DefinitionAgents do
 
         :ok
     end
-  end
-
-  # --- inline caps (system-mediated materialization) ------------------------
-
-  defp join_cap(%URI{} = session_uri, %URI{} = admin) do
-    %Ezagent.Capability{
-      Ezagent.Capability.cap(
-        :session,
-        :any,
-        :join,
-        Ezagent.URI.instance(session_uri),
-        Ezagent.Capability.workspace_of(session_uri)
-      )
-      | granted_by: admin,
-        granted_at: DateTime.utc_now()
-    }
-  end
-
-  defp destroy_cap(%URI{} = member_uri, %URI{} = admin) do
-    %Ezagent.Capability{
-      Ezagent.Capability.cap(
-        :agent,
-        :any,
-        :destroy,
-        Ezagent.URI.instance(member_uri),
-        Ezagent.Capability.workspace_of(member_uri)
-      )
-      | granted_by: admin,
-        granted_at: DateTime.utc_now()
-    }
   end
 
   # --- helpers --------------------------------------------------------------
@@ -779,19 +777,11 @@ defmodule EzagentDomainInstanceMessage.SessionCreator.DefinitionAgents do
   end
 
   defp read_members(%URI{} = session_uri) do
-    slice_module = Ezagent.ActionSet.Session.state_slice()
-
-    case Ezagent.KindRegistry.lookup(session_uri) do
-      {:ok, pid} ->
-        chat_slice =
-          pid
-          |> :sys.get_state()
-          |> Map.get(:state, %{})
-          |> Map.get(slice_module, %{})
-
+    case Ezagent.Kind.get_raw_slice(session_uri, :session) do
+      {:ok, chat_slice} ->
         Map.get(Map.get(chat_slice, :state, chat_slice), :members, %{})
 
-      :error ->
+      {:error, _reason} ->
         %{}
     end
   end

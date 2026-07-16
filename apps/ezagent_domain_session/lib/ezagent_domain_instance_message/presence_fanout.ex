@@ -97,7 +97,7 @@ defmodule EzagentDomainInstanceMessage.PresenceFanout do
     # this fills in the GAP for sessions whose members joined BEFORE
     # this Fanout's first boot.
     #
-    # `:sys.get_state` blocks on the Session GenServer. Use a short
+    # Kind slice reads serialize through the Session GenServer. Use a short
     # timeout per session + recover gracefully — bootstrap rebuild
     # is best-effort, not load-bearing for correctness (the
     # `:session_membership_change` PubSub remains the primary
@@ -240,14 +240,9 @@ defmodule EzagentDomainInstanceMessage.PresenceFanout do
   # member. Best-effort; failure is tolerated (next
   # :session_membership_change event will fix the index).
   defp add_session_members(state, session_uri) do
-    case Ezagent.KindRegistry.lookup(session_uri) do
-      {:ok, session_pid} ->
+    case Ezagent.Kind.get_raw_slice(session_uri, :session) do
+      {:ok, slice} ->
         try do
-          # :sys.get_state is a debugging primitive but it's the only
-          # way to read a Kind's slice without adding a new dispatch
-          # path. Short timeout — bootstrap is best-effort.
-          wrapper = :sys.get_state(session_pid, 1_000)
-          slice = get_in(wrapper, [:state, :session]) || %{}
           # Lifecycle migration (SPEC 2026-05-29 §2.3C): the Chat slice is
           # now two-container; `members` lives under `:state` (a flat slice
           # falls through unchanged).
@@ -262,7 +257,7 @@ defmodule EzagentDomainInstanceMessage.PresenceFanout do
             state
         end
 
-      :error ->
+      {:error, _reason} ->
         state
     end
   end

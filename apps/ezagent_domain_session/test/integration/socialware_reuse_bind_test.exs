@@ -10,6 +10,7 @@ defmodule Ezagent.Socialware.ReuseBindTest do
   alias Ezagent.Capability
   alias Ezagent.Identity.Authority
   alias Ezagent.Orchestrator.Tools.Participants
+  import Ezagent.Test.CapHelper, only: [signed_action_cap!: 2]
 
   defp uniq, do: System.unique_integer([:positive])
   defp new_ws, do: "reuse-bind-#{uniq()}"
@@ -50,29 +51,20 @@ defmodule Ezagent.Socialware.ReuseBindTest do
       Ezagent.Identity.Grant.grant_cap_via_router(
         granter,
         cap,
-        {:genesis, Ezagent.Entity.User.admin_uri()},
+        {:admin, Ezagent.Entity.User.admin_uri()},
         :sync
       )
   end
 
-  defp within_session_caps(session_uri) do
-    MapSet.new([
-      %Capability{
-        kind: :session,
-        behavior: :any,
-        action: :any,
-        instance: {:within_session, session_uri},
-        workspace_uri: Capability.workspace_of(session_uri),
-        granted_by: Ezagent.Entity.User.admin_uri(),
-        granted_at: DateTime.utc_now()
-      }
-    ])
+  defp within_session_caps(session_uri, caller) do
+    target = Ezagent.URI.with_action(session_uri, :session, :join)
+    MapSet.new([signed_action_cap!(target, caller)])
   end
 
   defp add_participant(session_uri, operator, member_uri, role_name) do
     Participants.add_participant(member_uri, role_name,
       caller: operator,
-      caps: within_session_caps(session_uri),
+      caps: within_session_caps(session_uri, operator),
       workspace_uri: Capability.workspace_of(session_uri),
       session_uri: session_uri
     )

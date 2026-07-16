@@ -33,18 +33,21 @@ defmodule Ezagent.Credential.AdoptTest do
   defp admin_caps(owner_str) do
     owner_uri = Ezagent.URI.new!(owner_str)
 
+    target =
+      Ezagent.URI.with_action(
+        owner_uri,
+        :user_default_credential_source,
+        :set_default_credential_source
+      )
+
     [
-      %Ezagent.Capability{
-        Ezagent.Capability.cap(
-          :user,
-          Ezagent.ActionSet.UserDefaultCredentialSource,
-          :set_default_credential_source,
-          Ezagent.URI.instance(owner_uri),
-          Ezagent.Capability.workspace_of(owner_uri)
-        )
-        | granted_by: admin_uri(),
-          granted_at: DateTime.utc_now()
-      }
+      signed_fixture_cap!(
+        target,
+        :user,
+        Ezagent.ActionSet.UserDefaultCredentialSource,
+        :set_default_credential_source,
+        admin_uri()
+      )
     ]
   end
 
@@ -90,7 +93,7 @@ defmodule Ezagent.Credential.AdoptTest do
     candidates = [ctx.base]
     eve = Ezagent.URI.new!("entity://#{@ws}/user/eve")
 
-    assert {:error, :unauthorized} =
+    assert {:error, :missing_cap} =
              Adopt.adopt(ctx.owner_str, @ws, "cc", candidates,
                caller: eve,
                caps: MapSet.new()

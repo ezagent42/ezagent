@@ -17,7 +17,7 @@ defmodule Ezagent.ActionSet.Identity do
   (deleted in PR-CC-1 — replaced by `Ezagent.SystemPrincipal.caps/1`
   reading the closed Catalog). Phase 3d puts them in **runtime slice**
   so:
-  - `:sys.get_state(admin_user_pid)` exposes the live caps (debuggable)
+  - the public Kind runtime view exposes the live caps (debuggable)
   - Phase 4+ admin grants new cap → mutate slice, not redeploy code
   - Agent Kinds also carry caps (different per agent), same shape
 
@@ -27,7 +27,7 @@ defmodule Ezagent.ActionSet.Identity do
 
   `init_slice(args)` reads `args[:initial_caps]` (default `MapSet.new()`).
   Chat plugin Application passes
-  `initial_caps: MapSet.new([Ezagent.Capability.admin_genesis_cap()])` when
+  an initial capability set when
   spawning admin User (PR-CC-1; replaces the previous deleted helper).
 
   ## Actions
@@ -148,16 +148,9 @@ defmodule Ezagent.ActionSet.Identity do
         list when is_list(list) -> MapSet.new(list)
       end
 
-    # PR-OWN-3 codex round-1 MED fix: provision the owner-derived
-    # safe Identity cap at slice init.
     {caps, recipe_binding} =
       case Map.get(args, :uri) do
         %URI{} = uri ->
-          caps =
-            caps
-            |> add_owner_identity_cap(uri)
-            |> add_agent_self_caps(uri)
-
           hydrate_recipe_binding(caps, uri)
 
         _ ->
@@ -196,90 +189,6 @@ defmodule Ezagent.ActionSet.Identity do
     end
   end
 
-  # Agent-owned config-evolve (spec 2026-06-11 rev 4) — every agent's base
-  # self-caps at create gain TWO self-scoped entries, held over ITSELF
-  # (instance: self), so the agent can:
-  #   1. project its durable config pointer into its own Sandbox cache
-  #      (the step-2 / boot-reconcile `Cmd(self, :update_config, …)`) — gated
-  #      by `cap(:agent, Sandbox, :update_config)`, and
-  #   2. run its own boot reconciliation (`reconcile_cascade`) — gated by
-  #      `cap(:agent, ConfigEvolve, :reconcile_cascade)`.
-  # User Kinds get neither (the cascade write + reconcile are agent-only).
-  defp add_agent_self_caps(caps, %URI{} = uri) do
-    if kind_for_uri(uri) == :agent do
-      instance = Ezagent.URI.instance(uri)
-      workspace_uri = Ezagent.Capability.workspace_of(uri)
-
-      caps
-      |> MapSet.put(
-        self_scoped_cap(
-          :agent,
-          Ezagent.ActionSet.Sandbox,
-          :update_config,
-          instance,
-          workspace_uri
-        )
-      )
-      |> MapSet.put(
-        self_scoped_cap(
-          :agent,
-          Ezagent.ActionSet.ConfigEvolve,
-          :reconcile_cascade,
-          instance,
-          workspace_uri
-        )
-      )
-    else
-      caps
-    end
-  end
-
-  defp self_scoped_cap(kind, behavior, action, instance, workspace_uri) do
-    %Ezagent.Capability{
-      kind: kind,
-      behavior: behavior,
-      action: action,
-      instance: instance,
-      workspace_uri: workspace_uri,
-      granted_by: bootstrap_granter(),
-      granted_at: DateTime.utc_now()
-    }
-  end
-
-  defp add_owner_identity_cap(caps, %URI{} = uri) do
-    self_identity_cap = %Ezagent.Capability{
-      kind: kind_for_uri(uri),
-      behavior: __MODULE__,
-      action: :list_caps,
-      instance: Ezagent.URI.instance(uri),
-      workspace_uri: Ezagent.Capability.workspace_of(uri),
-      granted_by: bootstrap_granter(),
-      granted_at: DateTime.utc_now()
-    }
-
-    MapSet.put(caps, self_identity_cap)
-  end
-
-  defp kind_for_uri(%URI{scheme: "entity"} = uri) do
-    if Ezagent.URI.type?(uri, :agent), do: :agent, else: :user
-  end
-
-  defp kind_for_uri(_), do: :user
-
-  # #154 genesis collapse: the fallback must not mint a `system://bootstrap/...`
-  # granter — predicate A rejects every `system://`-granted cap, so such a
-  # self-scoped/owner cap would be silently inert. `admin_uri/0` is
-  # `Ezagent.URI.user(:system, :admin)` (entity://system/user/admin), the
-  # canonical genesis admin entity defined in ezagent_core, so the fallback
-  # returns the same entity granter the primary branch would.
-  defp bootstrap_granter do
-    if function_exported?(Ezagent.Entity.User, :admin_uri, 0) do
-      Ezagent.Entity.User.admin_uri()
-    else
-      Ezagent.URI.user(:system, :admin)
-    end
-  end
-
   @doc "Cap data-owner for Identity: the entity OWNS its own `:identity` slice (PR-OWN-3 / SPEC #306 §3.3) — an entity URI is its own owner; `:any` is its own owner; anything else is `:no_owner`."
   def data_owner(%URI{} = entity_uri), do: entity_uri
   def data_owner(:any), do: :any
@@ -295,20 +204,15 @@ defmodule Ezagent.ActionSet.Identity do
   # or the union is a no-op).
   @impl Ezagent.Lifecycle
   def activate(%{caps: _existing_caps} = state, %{self_uri: %URI{scheme: "entity"} = uri}) do
+    original_state = state
+
     user_caps =
       if Ezagent.URI.type?(uri, :user), do: Ezagent.EntityCaps.UserStore.load(uri), else: []
 
-    with {:ok, base_state, binding_caps, binding_update} <-
-           reconcile_recipe_binding(state, uri) do
-      merged = merge_caps_by_identity(base_state.caps, user_caps ++ binding_caps)
-      verified_caps = Ezagent.Cap.verified_set(merged, uri)
+    state = Map.update!(state, :caps, &merge_caps_by_identity(&1, user_caps))
 
-      reconciled =
-        base_state
-        |> Map.put(:caps, verified_caps)
-        |> apply_recipe_binding_update(binding_update)
-
-      if reconciled == state do
+    with {:ok, reconciled} <- reconcile_recipe_binding_state(state, uri) do
+      if reconciled == original_state do
         {:ok, %{}}
       else
         {:ok, %{}, reconciled}
@@ -317,6 +221,21 @@ defmodule Ezagent.ActionSet.Identity do
   end
 
   def activate(_state, _ctx), do: {:ok, %{}}
+
+  @doc false
+  @spec reconcile_recipe_binding_state(map(), URI.t()) :: {:ok, map()} | {:error, term()}
+  def reconcile_recipe_binding_state(%{caps: _caps} = state, %URI{} = uri) do
+    with {:ok, base_state, binding_caps, binding_update} <-
+           reconcile_recipe_binding(state, uri) do
+      merged = merge_caps_by_identity(base_state.caps, binding_caps)
+      verified_caps = Ezagent.Cap.verified_set(merged, uri)
+
+      {:ok,
+       base_state
+       |> Map.put(:caps, verified_caps)
+       |> apply_recipe_binding_update(binding_update)}
+    end
+  end
 
   defp reconcile_recipe_binding(state, %URI{} = uri) do
     if Ezagent.URI.type?(uri, :agent) do
@@ -369,16 +288,10 @@ defmodule Ezagent.ActionSet.Identity do
     |> MapSet.new()
   end
 
-  defp restore_structural_caps(state, uri, old_binding_keys) do
-    structural_caps =
-      MapSet.new()
-      |> add_owner_identity_cap(uri)
-      |> add_agent_self_caps(uri)
-
+  defp restore_structural_caps(state, _uri, old_binding_keys) do
     caps =
       state.caps
       |> drop_caps_by_keys(old_binding_keys)
-      |> merge_caps_by_identity(structural_caps)
 
     Map.put(state, :caps, caps)
   end
@@ -549,8 +462,17 @@ defmodule Ezagent.ActionSet.IdentityAdmin do
     modes: [:call]
   )
 
+  action(:sync_recipe_binding,
+    args: %{},
+    returns: %{caps: {:list, :map}},
+    caps: [{:sync_recipe_binding, kind: :user, workspace_scoped?: false}],
+    description: "reconcile the live agent identity slice from its durable signed recipe binding",
+    modes: [:call]
+  )
+
   @doc "VM-internal self-store is provenance-gated in the handler, not by a held cap."
-  def cap_exempt_actions, do: [:absorb_cap, :persist_caps, :store_cap, :remove_cap]
+  def cap_exempt_actions,
+    do: [:absorb_cap, :persist_caps, :store_cap, :remove_cap, :sync_recipe_binding]
 
   # =================================================================
   # Explicit `required_caps/0` — preserved `kind: :user` axis.
@@ -673,8 +595,39 @@ defmodule Ezagent.ActionSet.IdentityAdmin do
 
   def handle_remove_cap(_args, _ctx), do: {:error, :unauthorized}
 
+  @doc "VM-internal reconcile after a live target has signed its recipe grants."
+  def handle_sync_recipe_binding(_args, %{caller: :vm_internal} = ctx) do
+    receiver = Map.get(ctx, :self_uri)
+
+    state = %{
+      caps: ctx[:read].(:caps, MapSet.new()),
+      recipe_binding_version: ctx[:read].(:recipe_binding_version, nil),
+      recipe_binding_keys: ctx[:read].(:recipe_binding_keys, MapSet.new())
+    }
+
+    with true <- Ezagent.URI.type?(receiver, :agent),
+         {:ok, reconciled} <-
+           Ezagent.ActionSet.Identity.reconcile_recipe_binding_state(state, receiver),
+         version when is_integer(version) <- Map.get(reconciled, :recipe_binding_version),
+         %MapSet{} = keys <- Map.get(reconciled, :recipe_binding_keys) do
+      {:ok, %{caps: MapSet.to_list(reconciled.caps)},
+       [
+         set_caps_effect(reconciled.caps),
+         {:set, :recipe_binding_version, version},
+         {:set, :recipe_binding_keys, keys}
+       ]}
+    else
+      false -> {:error, :agent_required}
+      nil -> {:error, :recipe_binding_not_found}
+      {:error, _reason} = error -> error
+      _ -> {:error, :invalid_recipe_binding_state}
+    end
+  end
+
+  def handle_sync_recipe_binding(_args, _ctx), do: {:error, :unauthorized}
+
   defp store_verified_cap(cap_struct, ctx, event_attrs) do
-    if Ezagent.Cap.verify_for(cap_struct, Map.get(ctx, :self_uri)) do
+    if Ezagent.Cap.storable_for?(cap_struct, Map.get(ctx, :self_uri)) do
       current_caps = ctx[:read].(:caps, MapSet.new())
 
       # Dedup by identity-tuple BEFORE adding (codex review HIGH-1
@@ -747,7 +700,7 @@ defmodule Ezagent.ActionSet.IdentityAdmin do
   defp uri_to_str(other), do: inspect(other)
 
   defp persist_entity_caps(%URI{} = uri, caps) do
-    if Ezagent.URI.type?(uri, :user) do
+    if Ezagent.URI.type?(uri, :user) and Ezagent.EntityCaps.UserStore.exists?(uri) do
       Ezagent.EntityCaps.UserStore.persist(uri, MapSet.to_list(caps))
     else
       :ok

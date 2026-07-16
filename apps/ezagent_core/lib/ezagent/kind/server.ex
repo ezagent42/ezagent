@@ -333,7 +333,9 @@ defmodule Ezagent.Kind.Server do
       [] ->
         if Ezagent.Kind.ReadyTransition.drain_then_mark_ready(uri_str, self()) == :ready do
           # Task #49 — invoke on_ready hooks AFTER ReadyGate flip.
-          run_on_ready_hooks(state.kind, uri, state.state)
+          Ezagent.Cap.Authority.with_current(state.authority, fn ->
+            run_on_ready_hooks(state.kind, uri, state.state)
+          end)
         end
 
         {:noreply, state}
@@ -361,10 +363,17 @@ defmodule Ezagent.Kind.Server do
   # down its host Kind on init; the Behavior author still sees the
   # warning in test runs.
   def handle_continue({:ezagent_post_init, [{behavior, term} | rest]}, state) do
-    %{kind: kind_module, uri: self_uri, state: slice_state} = state
+    %{kind: kind_module, uri: self_uri, state: slice_state, authority: authority} = state
 
     new_slice_state =
-      run_post_init_continuation(behavior, term, slice_state, kind_module, self_uri)
+      run_post_init_continuation(
+        behavior,
+        term,
+        slice_state,
+        kind_module,
+        self_uri,
+        authority
+      )
 
     commit_post_init(state, new_slice_state)
     new_state = %{state | state: new_slice_state}
@@ -383,7 +392,9 @@ defmodule Ezagent.Kind.Server do
              :ready do
           # Task #49 — invoke on_ready hooks AFTER ReadyGate flip.
           # Uses the post-init mutated slice state.
-          run_on_ready_hooks(new_state.kind, self_uri, new_state.state)
+          Ezagent.Cap.Authority.with_current(new_state.authority, fn ->
+            run_on_ready_hooks(new_state.kind, self_uri, new_state.state)
+          end)
         end
 
         {:noreply, new_state}
@@ -393,27 +404,36 @@ defmodule Ezagent.Kind.Server do
     end
   end
 
-  defp run_post_init_continuation(behavior, term, slice_state, kind_module, self_uri) do
-    if function_exported?(behavior, :handle_continue, 3) do
-      slice_key = behavior.state_slice()
-      slice = Map.get(slice_state, slice_key, %{})
-      ctx = %{kind_module: kind_module, self_uri: self_uri}
+  defp run_post_init_continuation(
+         behavior,
+         term,
+         slice_state,
+         kind_module,
+         self_uri,
+         authority
+       ) do
+    Ezagent.Cap.Authority.with_current(authority, fn ->
+      if function_exported?(behavior, :handle_continue, 3) do
+        slice_key = behavior.state_slice()
+        slice = Map.get(slice_state, slice_key, %{})
+        ctx = %{kind_module: kind_module, self_uri: self_uri}
 
-      case behavior.handle_continue(term, slice, ctx) do
-        {:ok, new_slice} -> Map.put(slice_state, slice_key, new_slice)
-        :ignore -> slice_state
+        case behavior.handle_continue(term, slice, ctx) do
+          {:ok, new_slice} -> Map.put(slice_state, slice_key, new_slice)
+          :ignore -> slice_state
+        end
+      else
+        require Logger
+
+        Logger.warning(
+          "Ezagent.Kind.Server: Behavior #{inspect(behavior)} returned " <>
+            "{:continue, #{inspect(term)}} from post_init/2 but does not " <>
+            "export handle_continue/3; dropping continuation. URI=#{URI.to_string(self_uri)}"
+        )
+
+        slice_state
       end
-    else
-      require Logger
-
-      Logger.warning(
-        "Ezagent.Kind.Server: Behavior #{inspect(behavior)} returned " <>
-          "{:continue, #{inspect(term)}} from post_init/2 but does not " <>
-          "export handle_continue/3; dropping continuation. URI=#{URI.to_string(self_uri)}"
-      )
-
-      slice_state
-    end
+    end)
   end
 
   # PR-EM-CORE codex round-1 MEDIUM-1 fix: route post-init slice
@@ -529,16 +549,13 @@ defmodule Ezagent.Kind.Server do
   # must NOT name a Tier-2 supervisor constant. This synchronous query
   # lets a Tier-1 helper resolve the supervisor without that coupling.
   @impl true
-  def handle_call({:ezagent_cap_sign, cap}, _from, state) do
-    {:reply, {:ok, Ezagent.Cap.Authority.sign(state.authority, cap)}, state}
-  end
-
-  def handle_call({:ezagent_cap_verify, cap, presenter}, _from, state) do
-    {:reply, Ezagent.Cap.Authority.verify(state.authority, cap, presenter), state}
-  end
-
   def handle_call(:ezagent_kind_module, _from, %{kind: kind_module} = state) do
     {:reply, {:ok, kind_module}, state}
+  end
+
+  def handle_call(:ezagent_runtime_view, _from, state) do
+    view = Map.take(state, [:kind, :uri, :state])
+    {:reply, {:ok, view}, state}
   end
 
   # PR-OWN-2 (caps-data-ownership SPEC #306 §7) — read a single
@@ -867,14 +884,19 @@ defmodule Ezagent.Kind.Server do
     end
   end
 
-  def handle_info(message, %{kind: kind_module, uri: self_uri, state: slice_state} = wrapper) do
+  def handle_info(
+        message,
+        %{kind: kind_module, uri: self_uri, state: slice_state, authority: authority} = wrapper
+      ) do
     # P1 (SPEC §3.1, E4) — only the INSTANCE effective set sees the mailbox
     # message, so an out-of-set behavior's handle_signal/handle_kind_message
     # never runs.
     new_slice_state =
-      Ezagent.Kind.BehaviorSet.materialized_set(kind_module, slice_state)
-      |> Enum.reduce(slice_state, fn behavior, acc_state ->
-        forward_to_behavior(behavior, message, acc_state, kind_module, self_uri)
+      Ezagent.Cap.Authority.with_current(authority, fn ->
+        Ezagent.Kind.BehaviorSet.materialized_set(kind_module, slice_state)
+        |> Enum.reduce(slice_state, fn behavior, acc_state ->
+          forward_to_behavior(behavior, message, acc_state, kind_module, self_uri)
+        end)
       end)
 
     # ExternalMirror PR-EM-0 codex round-1 HIGH fix (2026-05-25):
