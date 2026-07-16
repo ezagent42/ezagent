@@ -146,3 +146,16 @@ forms, asserts the exact dependency names, and separately requires every
 `ezagent_*` dependency to declare `in_umbrella: true`. A synthetic path-form
 fixture proves the forbidden dependency is inventoried and reported without
 mutating `mix.exs`.
+
+## Task 2 implementation
+
+After contract approval at `f93487535`, strict TDD captured the expected missing
+value-struct RED and a later path-control-byte RED. The final full domain app suite
+passes 16 tests with warning-clean compilation. Applicable final core
+undeclared-dependency, layer-purity, and URI-canonicalization gates pass 12 tests.
+
+Only approved provider-neutral values, `Error`, `ValidationError`, runtime
+`ChangeLimits`, collection validation, and pre-child application config validation
+were implemented. Adapter, registry, Resource, ActionSet, provider, HTTP/
+credentials, persistence, UI, and Kanban remain absent. Full precommit/CI/readiness
+is not claimed.
