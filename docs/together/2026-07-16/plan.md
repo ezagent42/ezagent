@@ -17,11 +17,15 @@
 - **今日**：**① CI 完善（P1）**——续 #1415（前端 tsc+vitest 已进 gate）的后续：Playwright/E2E smoke + 独立前端 CI workflow / 针对 CI 配置本身的回归测试。若接前端 Tier-1 Playwright handoff（`docs/superpowers/handoffs/2026-07-15-frontend-tier1-playwright-e2e-zyli-handoff.md`）：仅前端、跑 ubuntu gate、**fixture 从后端契约投影生成 + 漂移门**（杜绝 mock-drift）。**② UI（P2）**——和 ruihua 一起过 UI 完善问题清单，开始开发。
 - **验收**：CI 项目落地且绿（新增回归门存在、演示一次它能红）；UI 问题清单达成一致、有优先级。
 
-## ruihua — 企业自助 workspace（产品化）+ UI（与 zyli）
-- **目标**：把"企业自助开 workspace"从功能排查推进到**产品化可交付**。
-- **今日**：**①**（PR 落地后）拿到那条"效率统计 + 企业自助开 workspace 功能排查"PR，**从产品角度完善计划、明确验收标准**，作为下段规划。**②** 和 zyli 一起过 UI 完善问题、定优先级。
-- **验收**：workspace 自助开的产品计划有**明确、可验收的验收标准**（用户旅程 + 每步成功判据）；UI 问题清单对齐。
-- **PR**：那条 workspace PR（还在 commit，落地后填号）。
+## ruihua — 企业自助开通 workspace（产品化）+ UI（与 zyli）
+- **目标**：把 **#1427** 的"自助开通 workspace 缺口清单"从工程排查推进到**产品化、可交付、可验收**的下段规划。
+- **今日**：
+  - **① 接手 #1427**（`docs/plans/2026-07-16-workspace-self-service-gaps.md`）——里面已有 P0 硬闸门（G1 注册开关无 UI / G2 邀请码仅 CLI / G4 founder 无权自配 agent API key / G5 缺 key 失败态不可行动）、P1 可发现/可恢复、P2 业务闭环。**从产品角度完善**：把每条缺口写成**用户旅程 + 每步明确验收标准（成功判据）**，排出交付优先级与阶段。
+    - 注意 **G4 依赖 agent 授权模型收口**（= cap-signing 那条线），产品计划里把它标为**有依赖项**、给出"依赖未就绪时的降级/占位"方案。
+    - #1427 里的**工程效率分析**（`engineering-efficiency-analysis.md`，session 工时下界）作为**规划的产能参考**（读数纪律：下界、agent 墙钟≠人力、禁止个人绩效用途）。
+  - **② 和 zyli 一起过 UI 完善问题清单**、定优先级，开始开发。
+- **验收**：自助开通 workspace 的产品计划有**逐条、可验收的验收标准**（每条缺口 = 用户旅程 + 成功判据 + 优先级/阶段 + 依赖标注）；UI 问题清单与 zyli 对齐、有优先级。
+- **PR**：#1427（工程效率分析 + 自助开通 workspace 缺口清单）。
 
 ## zhaomaota — 收口 #1425 产品缺口（1）+ 分诊 #1134（2）
 - **目标**：Hello 官网是用户入口，把昨天合的 #1425 打磨到产品可用，并清掉陈旧 PR。
@@ -36,8 +40,6 @@
 - **今日**：① 从 main（含 #1425）起干净分支；② 把 #1374 里**独有的「认领式协作白板改版」**（去 gh + 普通用户全链 + 协作白板 UX）抽出、和 #1425 已有的分享/挂载/cap **去重**，重开一个**干净 PR**；③ 关闭 #1374 和 #1376。
 - **验收**：新 PR 不含 #1425 已有的 mount/share/cap 代码、只留协作白板独有改动、gate 绿；#1374/#1376 已关。
 
-## Allen — 部署 + cap-signing（稍后讨论）
-- 部署（beta/stable 用新 seed 晋级）你们来。cap-signing 严格化实现稍后与 Claude 讨论再定投入。
-
-## Claude（协调）
-- 盯 ruihua workspace PR 落地 → 纳入她 track + 转达。跟进 jjkysy 去重、zhaomaota 收口。cap-signing 已完成 spec+plan（`feat/cap-strict-capstore`），**按你指示暂缓实现**。团队清障 + 验收合并。
+## Allen — 部署 + 统筹
+- 部署：beta/stable 用新 seed（`EZAGENT_SIGNING_SEED_V1`）人工晋级；确认 canary 已载昨日全量。
+- 统筹各条 track、清障、验收合并；cap-signing 严格化实现稍后再定投入（spec+plan 已在 `feat/cap-strict-capstore`）。
