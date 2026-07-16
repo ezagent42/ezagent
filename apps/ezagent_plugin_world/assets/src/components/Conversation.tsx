@@ -592,6 +592,30 @@ export function Conversation({
     window.setTimeout(() => setPublished(false), 3000)
   }
 
+  // ㉗④ kanban 节点「附件」产物：复用平台 uploads 通道（与上方 chat 附件同一
+  // cap-authed 端点 /world/uploads），拿 {grant, name} 交给 Kanban 面板 dispatch
+  // kanban.attach_upload 挂节点。失败回 null（面板就地提示）。
+  const uploadForKanban = async (file: File): Promise<{grant: string; name: string} | null> => {
+    if (!sessionUri || file.size > MAX_FILE_BYTES) return null
+    const csrf = document.querySelector("meta[name='csrf-token']")?.getAttribute("content") || ""
+    const form = new FormData()
+    form.append("session", sessionUri)
+    form.append("file", file)
+    try {
+      const res = await fetch("/world/uploads", {
+        method: "POST",
+        headers: {"x-csrf-token": csrf},
+        body: form,
+        credentials: "same-origin",
+      })
+      if (!res.ok) return null
+      const data = (await res.json()) as {name?: string; grant?: string}
+      return data.grant ? {grant: data.grant, name: data.name || file.name} : null
+    } catch {
+      return null
+    }
+  }
+
   // 分享看板：dispatch kanban.share_board（复用 onKanbanAction=world:dispatch），后端回推
   // share_link；标记 shareRequestedRef 让下方 effect 只在本次用户动作后弹链接。
   const handleShareKanban = (kanbanUri: string) => {
@@ -916,7 +940,7 @@ export function Conversation({
             // kanban_board 时经 KanbanData.session_boards 载入 + 自动选中首块板）；
             // onAction 走现成 world:dispatch（onKanbanAction = onWorkspacePluginAction）。
             <div className="min-w-0 flex-1 overflow-y-auto bg-[#fafafa]" data-world-subcomponent="kanban">
-              <Kanban state={state as unknown as KanbanState} onAction={onKanbanAction} onShare={handleShareKanban} />
+              <Kanban state={state as unknown as KanbanState} onAction={onKanbanAction} onShare={handleShareKanban} onUploadFile={uploadForKanban} />
             </div>
           ) : activeMode === "pty" ? (
             <div className="min-w-0 flex-1 overflow-y-auto bg-[#fafafa] p-4" data-world-subcomponent="pty">
