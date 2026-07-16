@@ -31,7 +31,8 @@ type Tree = {nodes: Record<string, Node>; root_id: string | null; drops?: DropEn
 export type KanbanState = {
   component?: string
   kanban_uri?: string | null
-  instances?: {uri: string; name: string; path: string}[]
+  // owned = 登录者是板主人（data_owner）——⑲ 只对自己是版主的板出删除入口
+  instances?: {uri: string; name: string; path: string; owned?: boolean}[]
   tree?: Tree | null
   stages?: string[]
   statuses?: string[]
@@ -237,14 +238,30 @@ function KanbanDetail({state, onAction, onShare, onShareArtifact, onUploadFile}:
             <div className="mb-1.5 text-xs font-semibold text-muted-foreground">导图</div>
             <ul className="flex max-h-32 flex-col gap-0.5 overflow-y-auto">
               {instances.map((i) => (
-                <li key={i.uri}>
+                <li key={i.uri} className="group flex items-center gap-1">
                   <button
                     type="button"
                     onClick={() => onAction("kanban.select_board", {kanban_uri: i.uri})}
-                    className={`w-full truncate rounded px-2 py-1 text-left text-sm ${i.uri === state.kanban_uri ? "bg-accent font-medium text-foreground" : "text-muted-foreground hover:bg-muted"}`}
+                    className={`min-w-0 flex-1 truncate rounded px-2 py-1 text-left text-sm ${i.uri === state.kanban_uri ? "bg-accent font-medium text-foreground" : "text-muted-foreground hover:bg-muted"}`}
                   >
                     {i.name}
                   </button>
+                  {/* ⑲ 删板入口：只对自己是版主(data_owner)的板显示；确认后走
+                      kanban.delete_board(后端 caller==data_owner + Manage cap 校验兜底)。 */}
+                  {i.owned && (
+                    <button
+                      type="button"
+                      className="flex-shrink-0 rounded p-1 text-muted-foreground hover:bg-destructive/10 hover:text-destructive"
+                      title={`删除看板「${i.name}」（退休板 agent + 清挂载，不可恢复）`}
+                      data-world-kanban-delete-board
+                      onClick={() =>
+                        window.confirm(`删除看板「${i.name}」？\n\n板 agent 将退休、所有会话里的挂载会被清掉，不可恢复。`) &&
+                        onAction("kanban.delete_board", {kanban_uri: i.uri})
+                      }
+                    >
+                      <Trash2 className="h-3.5 w-3.5" />
+                    </button>
+                  )}
                 </li>
               ))}
             </ul>
@@ -803,6 +820,9 @@ const DISPATCH_ERR: Record<string, string> = {
   bad_pr_number: "PR 号无效：填数字，如 42",
   // 协作模型（2026-07-15）新错误码 → 人话
   root_exists: "已有根节点：本期单根，只能在现有节点下加子",
+  // ⑲ 删板
+  not_board_owner: "只有板主人（版主）能删除这块板",
+  no_session_context: "请先进入一个会话再操作看板",
   has_content_cannot_unclaim: "先清空附件/指标才能取消认领（或直接删除整棵子树）",
   forbidden_mixed_ownership: "子树里有他人认领的节点，不能删",
   identity_read_unavailable: "系统繁忙，请重试",
