@@ -36,26 +36,12 @@ defmodule Ezagent.Identity.Grant do
   | `{:held_by, actor}` | the actor's real cap slice | `actor` | `actor` |
   | `{:admin, admin}` | the admin's real cap slice | `admin` | `admin` |
   | `{:rule, name, configurer}` | `[]` + `ctx.authorization_rule = name` | `configurer` | `configurer` |
-  | `{:genesis, granted_by}` | `[admin_genesis_cap()]` (the admin-granted genesis wildcard) | `granted_by` | `granted_by` (MUST be entity) |
-
-  > NOTE (deviation from SPEC §2 table): for `{:genesis, …}` the `ctx.caller`
-  > is the ENTITY `granted_by`. `ctx.caps` carries the genesis authority
-  > (satisfying dispatch step 5.5 for wildcard / no-data-owner grants the
-  > entity caller's own caps lack), while `ctx.caller` stays the accountable
-  > entity so the issue-time `caller == owner` self-check still authorizes a
-  > concrete-data_owner grant. See `derive_context/1`.
 
   `{:held_by, actor}` subsumes self (actor == target owner), admin
   (actor holds admin caps), and #811 manager-delegation (actor holds a
   Manage cap over the target) — all decided by `ctx.caps` exactly as
-  before. `{:genesis, granted_by}` is the **extreme-fallback** tag (#154
-  genesis collapse, 2026-06-20): it supplies the canonical admin-granted
-  genesis wildcard as the AUTHORIZER for the rare grant whose target has
-  no data owner / a `behavior: :any` shape (rule-ineligible) that neither
-  `{:held_by}` nor `{:rule}` can authorize, while the granted cap's
-  `granted_by` stays a real entity (creator/owner). It replaced the retired
-  `{:system, principal, granted_by}` tag — there is no longer any
-  `system://` principal in the authorization path.
+  before. Bootstrap authority is represented only by the sealed per-Kind
+  admin anchor; there is no caller-selectable genesis authorization tag.
 
   `granted_by` is **derived from the tag** — never a parameter the
   caller can set to itself. `Ezagent.Cap` EXPLICITLY OVERWRITES the
@@ -73,7 +59,7 @@ defmodule Ezagent.Identity.Grant do
   `grant_cap_returning_effect/4`, `revoke_cap_returning_effect/4`)
   RAISE on a `prepare/4` error — an effect site cannot return an
   `{:error}` tuple as an effect, and a non-entity granter on a
-  `{:genesis, entity}` tag is a compile-fixed programmer error
+  authorization tag is a compile-fixed programmer error
   (fail-fast, let-it-crash).
   """
 
@@ -83,7 +69,6 @@ defmodule Ezagent.Identity.Grant do
           {:held_by, URI.t()}
           | {:admin, URI.t()}
           | {:rule, atom(), URI.t()}
-          | {:genesis, URI.t()}
 
   @type grant_action :: :grant_cap | :revoke_cap
 
@@ -289,8 +274,8 @@ defmodule Ezagent.Identity.Grant do
       {:error, reason} ->
         raise ArgumentError,
               "Ezagent.Identity.Grant: cannot build #{action} effect — #{inspect(reason)}. " <>
-                "An effect site cannot carry an {:error} tuple; a non-entity granted_by on a " <>
-                "{:genesis, entity} tag is a programmer error (Decision #154)."
+                "An effect site cannot carry an {:error} tuple; invalid authority is a " <>
+                "programmer error (Decision #154)."
     end
   end
 

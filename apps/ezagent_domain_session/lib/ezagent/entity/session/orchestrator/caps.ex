@@ -148,7 +148,7 @@ defmodule Ezagent.Entity.Session.Orchestrator.Caps do
 
   defp grant_tag_for(%Ezagent.Capability{} = cap, %URI{} = owner_uri) do
     if orchestrator_delegation_cap?(cap) do
-      {:genesis, owner_uri}
+      {:held_by, owner_uri}
     else
       tag_for_rule(owner_uri)
     end
@@ -156,7 +156,7 @@ defmodule Ezagent.Entity.Session.Orchestrator.Caps do
 
   # Authorization tag for retained rule-bounded template caps. Orchestrator's
   # two delegation caps are bounded by session/spawn lineage but intentionally
-  # behavior-wildcard; those use the genesis fallback above without widening the
+  # behavior-wildcard; those use the owner's held authority without widening the
   # generic rule-grant predicate.
   defp tag_for_rule(%URI{} = owner_uri),
     do: {:rule, :template_materialize, owner_uri}

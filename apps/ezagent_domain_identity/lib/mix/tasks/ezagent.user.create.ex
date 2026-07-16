@@ -231,7 +231,7 @@ defmodule Mix.Tasks.Ezagent.User.Create do
   #
   # The authority here really IS admin's: running a mix task means shell access
   # on the box, which is admin-equivalent. So say so explicitly —
-  # `{:genesis, admin}` loads that authority through the front door, runs the
+  # `{:admin, admin}` loads that authority through the front door, runs the
   # grant checks, and stamps accountable provenance. The `--allow-allcaps` guard
   # above still governs the `*` shorthand.
   #
@@ -242,7 +242,7 @@ defmodule Mix.Tasks.Ezagent.User.Create do
 
     requested
     |> Enum.reduce_while({:ok, []}, fn cap, {:ok, acc} ->
-      case Ezagent.Cap.issue({:genesis, admin}, user_uri, cap) do
+      case Ezagent.Cap.issue({:admin, admin}, user_uri, cap) do
         {:ok, artifact} -> {:cont, {:ok, [artifact | acc]}}
         {:error, reason} -> {:halt, {:error, {:cap_grant_refused, reason}}}
       end

@@ -13,13 +13,16 @@ defmodule Ezagent.Cap.Authority do
 
   alias Ezagent.Cap.Signing
   alias Ezagent.Capability
+  alias Ezagent.Ecto.KindCapAuthority
+  alias EzagentCore.Repo
 
   @derive {Inspect, except: [:private_key]}
-  @enforce_keys [:uri, :generation, :key_id, :public_key, :private_key]
-  defstruct [:uri, :generation, :key_id, :public_key, :private_key]
+  @enforce_keys [:uri, :kind_type, :generation, :key_id, :public_key, :private_key]
+  defstruct [:uri, :kind_type, :generation, :key_id, :public_key, :private_key]
 
   @opaque t :: %__MODULE__{
             uri: URI.t(),
+            kind_type: atom(),
             generation: pos_integer(),
             key_id: String.t(),
             public_key: binary(),
@@ -27,17 +30,51 @@ defmodule Ezagent.Cap.Authority do
           }
 
   @doc false
-  @spec open(URI.t()) :: t()
-  def open(%URI{} = uri) do
-    {public_key, private_key} = :crypto.generate_key(:eddsa, :ed25519)
+  @spec open(URI.t(), atom()) :: {:ok, t()} | {:error, term()}
+  def open(%URI{} = uri, kind_type) when is_atom(kind_type) do
+    uri_string = Ezagent.URI.stable_key(uri)
 
-    %__MODULE__{
-      uri: uri,
-      generation: 1,
-      key_id: key_id(public_key, 1),
-      public_key: public_key,
-      private_key: private_key
-    }
+    case KindCapAuthority.active(uri_string) do
+      %KindCapAuthority{} = row -> {:ok, from_row(row)}
+      nil -> genesis(uri, kind_type)
+    end
+  end
+
+  @doc false
+  @spec anchor(URI.t()) :: {:ok, Capability.t()} | {:error, :not_found}
+  def anchor(%URI{} = uri) do
+    case KindCapAuthority.active(Ezagent.URI.stable_key(uri)) do
+      %KindCapAuthority{anchor: anchor} -> {:ok, :erlang.binary_to_term(anchor, [:safe])}
+      nil -> {:error, :not_found}
+    end
+  end
+
+  @doc false
+  @spec retire(URI.t()) :: :ok
+  def retire(%URI{} = uri), do: KindCapAuthority.retire_active(Ezagent.URI.stable_key(uri))
+
+  @doc false
+  @spec regenesis(URI.t(), atom(), URI.t()) :: {:ok, t()} | {:error, term()}
+  def regenesis(%URI{} = uri, kind_type, %URI{} = presenter) when is_atom(kind_type) do
+    if same_uri?(presenter, admin_uri()) do
+      uri_string = Ezagent.URI.stable_key(uri)
+
+      Repo.transaction(fn ->
+        :ok = KindCapAuthority.retire_active(uri_string)
+        next_generation = next_generation(uri_string)
+
+        case insert_generation(uri, kind_type, next_generation) do
+          {:ok, authority} -> authority
+          {:error, reason} -> Repo.rollback(reason)
+        end
+      end)
+      |> case do
+        {:ok, authority} -> {:ok, authority}
+        {:error, reason} -> {:error, reason}
+      end
+    else
+      {:error, :admin_required}
+    end
   end
 
   @doc false
@@ -127,6 +164,106 @@ defmodule Ezagent.Cap.Authority do
     fingerprint = :crypto.hash(:sha256, public_key) |> Base.url_encode64(padding: false)
     "kind-g#{generation}:#{fingerprint}"
   end
+
+  defp genesis(uri, kind_type) do
+    uri_string = Ezagent.URI.stable_key(uri)
+
+    Repo.transaction(fn ->
+      case KindCapAuthority.list(uri_string) do
+        [] ->
+          unless same_uri?(uri, admin_uri()) do
+            case KindCapAuthority.active(Ezagent.URI.stable_key(admin_uri())) do
+              nil ->
+                case insert_generation(admin_uri(), :user, 1) do
+                  {:ok, _admin_authority} -> :ok
+                  {:error, reason} -> Repo.rollback(reason)
+                end
+
+              _row ->
+                :ok
+            end
+          end
+
+          case insert_generation(uri, kind_type, 1) do
+            {:ok, authority} -> authority
+            {:error, reason} -> Repo.rollback(reason)
+          end
+
+        _historical ->
+          Repo.rollback(:regenesis_required)
+      end
+    end)
+    |> case do
+      {:ok, authority} -> {:ok, authority}
+      {:error, reason} -> {:error, reason}
+    end
+  end
+
+  defp insert_generation(uri, kind_type, generation) do
+    {public_key, private_key} = :crypto.generate_key(:eddsa, :ed25519)
+
+    authority = %__MODULE__{
+      uri: uri,
+      kind_type: kind_type,
+      generation: generation,
+      key_id: key_id(public_key, generation),
+      public_key: public_key,
+      private_key: private_key
+    }
+
+    anchor =
+      %Capability{
+        kind: kind_type,
+        behavior: :any,
+        action: :grant,
+        instance: uri,
+        workspace_uri: Ezagent.Capability.workspace_of(uri),
+        granted_by: admin_uri(),
+        granted_at: DateTime.utc_now(),
+        grantee_uri: admin_uri()
+      }
+      |> then(&sign(authority, &1))
+
+    attrs = %{
+      uri: Ezagent.URI.stable_key(uri),
+      generation: generation,
+      kind_type: Atom.to_string(kind_type),
+      key_id: authority.key_id,
+      public_key: public_key,
+      private_key: private_key,
+      anchor: :erlang.term_to_binary(anchor, [:deterministic]),
+      sealed: true,
+      active: true,
+      inserted_at: DateTime.utc_now()
+    }
+
+    case KindCapAuthority.insert(attrs) do
+      {:ok, _row} -> {:ok, authority}
+      {:error, changeset} -> {:error, changeset}
+    end
+  end
+
+  defp from_row(%KindCapAuthority{} = row) do
+    %__MODULE__{
+      uri: Ezagent.URI.new!(row.uri),
+      kind_type: String.to_existing_atom(row.kind_type),
+      generation: row.generation,
+      key_id: row.key_id,
+      public_key: row.public_key,
+      private_key: row.private_key
+    }
+  end
+
+  defp next_generation(uri_string) do
+    uri_string
+    |> KindCapAuthority.list()
+    |> Enum.map(& &1.generation)
+    |> Enum.max(fn -> 0 end)
+    |> Kernel.+(1)
+  end
+
+  defp admin_uri, do: Ezagent.URI.user(:system, :admin)
+  defp same_uri?(left, right), do: Ezagent.URI.stable_key(left) == Ezagent.URI.stable_key(right)
 
   defp authority_target(%Capability{instance: %URI{} = instance}),
     do: {:ok, Ezagent.URI.instance(instance)}

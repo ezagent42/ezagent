@@ -11,7 +11,7 @@ defmodule Ezagent.World.LayoutBootstrap do
     cap = manage_cap(admin_uri, workspace_uri)
 
     with :ok <- Ezagent.Entity.spawn_principal(admin_uri) do
-      Ezagent.Identity.Grant.grant_cap(admin_uri, cap, {:genesis, admin_uri})
+      Ezagent.Identity.Grant.grant_cap(admin_uri, cap, {:admin, admin_uri})
     end
   end
 

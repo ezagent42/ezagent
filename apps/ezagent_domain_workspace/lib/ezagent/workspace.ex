@@ -857,12 +857,8 @@ defmodule Ezagent.Workspace do
     else
       # Grant chokepoint (SPEC 2026-06-17 §3.5 site #3). `Manage :any` is
       # a wildcard-action cap whose target Behavior has no data owner, so
-      # the grant boundary requires GENESIS authority — supplied by the
-      # `{:genesis, …}` tag (loads the canonical admin-granted genesis
-      # wildcard as `ctx.caps`). The entity `granted_by` is the CREATOR: the
-      # business authority comes from the successful create operation; the
-      # genesis cap only satisfies dispatch step 5.5. (#154 genesis collapse,
-      # 2026-06-20 — replaces the eliminated `{:system, bootstrap, …}` tag.)
+      # the creator must exercise authority it already holds. There is no
+      # caller-selectable genesis fallback under per-Kind authority.
       #
       # `:sync` (NOT the default `:async`): the base site dispatched with
       # `mode: :call`, and the create operation gates its success on this
@@ -873,12 +869,20 @@ defmodule Ezagent.Workspace do
       case Ezagent.Identity.Grant.grant_cap_via_router(
              creator_uri,
              cap,
-             {:genesis, creator_uri},
+             creator_authorization(creator_uri),
              :sync
            ) do
         :ok -> :ok
         {:error, reason} -> {:error, {:creator_manage_cap_grant_failed, reason}}
       end
     end
+  end
+
+  defp creator_authorization(creator_uri) do
+    admin = Ezagent.URI.user(:system, :admin)
+
+    if Ezagent.URI.stable_key(creator_uri) == Ezagent.URI.stable_key(admin),
+      do: {:admin, admin},
+      else: {:held_by, creator_uri}
   end
 end

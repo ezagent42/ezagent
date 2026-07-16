@@ -124,7 +124,7 @@ defmodule Ezagent.Workspace.ResponsibilityAssignments do
   defp grant_responsibility_caps(%URI{} = holder, responsibility, %URI{} = workspace_uri, ctx) do
     ResponsibilityAssignment.bundled_caps(responsibility, workspace_uri)
     |> Enum.reduce_while(:ok, fn cap, :ok ->
-      case Ezagent.Identity.Grant.grant_cap(holder, cap, {:genesis, Map.fetch!(ctx, :caller)}) do
+      case Ezagent.Identity.Grant.grant_cap(holder, cap, {:held_by, Map.fetch!(ctx, :caller)}) do
         :ok -> {:cont, :ok}
         {:error, reason} -> {:halt, {:error, {:grant_responsibility_cap_failed, cap, reason}}}
       end
@@ -134,7 +134,7 @@ defmodule Ezagent.Workspace.ResponsibilityAssignments do
   defp revoke_responsibility_caps(%URI{} = holder, responsibility, %URI{} = workspace_uri, ctx) do
     ResponsibilityAssignment.bundled_caps(responsibility, workspace_uri)
     |> Enum.reduce_while(:ok, fn cap, :ok ->
-      case Ezagent.Identity.Grant.revoke_cap(holder, cap, {:genesis, Map.fetch!(ctx, :caller)}) do
+      case Ezagent.Identity.Grant.revoke_cap(holder, cap, {:held_by, Map.fetch!(ctx, :caller)}) do
         :ok -> {:cont, :ok}
         {:error, reason} -> {:halt, {:error, {:revoke_responsibility_cap_failed, cap, reason}}}
       end

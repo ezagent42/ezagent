@@ -20,7 +20,6 @@ defmodule Ezagent.Cap do
           {:held_by, URI.t()}
           | {:admin, URI.t()}
           | {:rule, atom(), URI.t()}
-          | {:genesis, URI.t()}
 
   @doc """
   Authorize the issuer, stamp issuer provenance, and produce an artifact.
@@ -30,7 +29,7 @@ defmodule Ezagent.Cap do
   def issue(authorization, %URI{} = grantee_uri, %Capability{} = cap) do
     {caps, context} = authorization_context(authorization)
 
-    with :ok <- CapabilityRegistry.authorize_grant(caps, cap, context),
+    with :ok <- authorize_issue(authorization, caps, cap, context),
          {:ok, artifact} <- prepare_provenance(authorization, grantee_uri, cap),
          {:ok, artifact} <- Ezagent.Cap.Authority.sign_for_target(artifact) do
       {:ok, artifact}
@@ -137,7 +136,6 @@ defmodule Ezagent.Cap do
   defp issuer({:held_by, %URI{} = actor}), do: actor
   defp issuer({:admin, %URI{} = admin}), do: admin
   defp issuer({:rule, name, %URI{} = configurer}) when is_atom(name), do: configurer
-  defp issuer({:genesis, %URI{} = granted_by}), do: granted_by
 
   defp receiver_matches?(%Capability{signature: nil}, _receiver_uri), do: true
   defp receiver_matches?(%Capability{grantee_uri: receiver_uri}, receiver_uri), do: true
@@ -150,15 +148,23 @@ defmodule Ezagent.Cap do
   end
 
   def authorization_context({:admin, %URI{} = admin}) do
-    {load_held_caps(admin), %{caller: admin}}
+    canonical_admin = Ezagent.URI.user(:system, :admin)
+
+    caps =
+      if Ezagent.URI.stable_key(admin) == Ezagent.URI.stable_key(canonical_admin) do
+        case Ezagent.Cap.Authority.anchor(canonical_admin) do
+          {:ok, anchor} -> MapSet.new([anchor])
+          {:error, _} -> MapSet.new()
+        end
+      else
+        MapSet.new()
+      end
+
+    {caps, %{caller: admin}}
   end
 
   def authorization_context({:rule, name, %URI{} = configurer}) when is_atom(name) do
     {MapSet.new(), %{caller: configurer, authorization_rule: name}}
-  end
-
-  def authorization_context({:genesis, %URI{} = granted_by}) do
-    {MapSet.new([Capability.admin_genesis_cap()]), %{caller: granted_by}}
   end
 
   defp load_held_caps(actor) do
@@ -169,4 +175,16 @@ defmodule Ezagent.Cap do
 
     loader.read_held_caps(actor)
   end
+
+  defp authorize_issue({:admin, %URI{} = admin}, _caps, _cap, _context) do
+    if Ezagent.URI.stable_key(admin) ==
+         Ezagent.URI.stable_key(Ezagent.URI.user(:system, :admin)) do
+      :ok
+    else
+      {:error, :canonical_admin_required}
+    end
+  end
+
+  defp authorize_issue(_authorization, caps, cap, context),
+    do: CapabilityRegistry.authorize_grant(caps, cap, context)
 end

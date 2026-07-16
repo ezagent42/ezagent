@@ -8,7 +8,8 @@ defmodule Ezagent.Architecture.CapAuthorityConfinementTest do
   @allowed_secret_sites MapSet.new([
                           "ezagent/cap/authority.ex",
                           "ezagent/cap/verifier.ex",
-                          "ezagent/cap/grant.ex"
+                          "ezagent/cap/grant.ex",
+                          "ezagent/ecto/kind_cap_authority.ex"
                         ])
 
   test "Kind authority key never enters slices or snapshots" do
