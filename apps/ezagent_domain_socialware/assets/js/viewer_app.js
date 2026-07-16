@@ -4,6 +4,7 @@ import {createRoot} from "react-dom/client"
 import {JsonRenderPage} from "./catalog_jsonrender.mjs"
 import {PageShell} from "./theme_shell.mjs"
 import {isValidTree} from "./catalog.mjs"
+import {latestUnseenNavMessage} from "./viewer_nav.mjs"
 
 // Round-1 preview: a placeholder body shown inside the AI frame so its design is
 // visible for approval before real content is generated (round 2).
@@ -257,11 +258,11 @@ function ViewerApp({sessionUri, token, socketPath, topicPrefix, delegationEndpoi
   const [selectMode, setSelectMode] = useState(false)
   const [selected, setSelected] = useState(null)
   const channelRef = useRef(null)
-  // Concierge navigation actions (switch_tab / scroll_to / open_url): execute the
-  // newest UNSEEN concierge reply's nav on the page. NO inline answer bubble — the
-  // member reads the reply by opening the session (the unread dot points them
-  // there). `conciergeSeen` baselines existing history so only NEW replies act.
-  const conciergeSeen = useRef(null)
+  // Navigation actions (switch_tab / scroll_to / open_url): execute the newest
+  // UNSEEN whitelisted message nav. Agent URIs are UUID-based, so role identity
+  // must not be inferred from a URI name segment. Existing history is baselined
+  // so only replies arriving after mount can move the page.
+  const navigationSeen = useRef(null)
   // "Waiting for a reply" typing indicator; cleared only when a NEW agent message
   // arrives — NOT the member's own echoed message. `awaitBaseAgent` = the agent
   // message count captured at send time.
@@ -273,24 +274,16 @@ function ViewerApp({sessionUri, token, socketPath, topicPrefix, delegationEndpoi
     return () => document.body.classList.remove("jr-highlight")
   }, [jrHighlight])
 
-  // Execute the newest unseen concierge reply's nav action on the page.
+  // Execute the newest unseen whitelisted nav action on the page.
   useEffect(() => {
     const msgs = snapshot && Array.isArray(snapshot.chat) ? snapshot.chat : []
-    const isConcierge = (m) =>
-      m && typeof m.sender === "string" && m.sender.indexOf("/agent/concierge") !== -1
-    if (conciergeSeen.current === null) {
-      conciergeSeen.current = new Set(msgs.filter(isConcierge).map((m) => m.id))
+    if (navigationSeen.current === null) {
+      navigationSeen.current = new Set(msgs.map((m) => m && m.id).filter(Boolean))
       return
     }
-    let latest = null
-    for (let i = msgs.length - 1; i >= 0; i--) {
-      if (isConcierge(msgs[i])) {
-        latest = msgs[i]
-        break
-      }
-    }
-    if (!latest || conciergeSeen.current.has(latest.id)) return
-    conciergeSeen.current.add(latest.id)
+    const latest = latestUnseenNavMessage(msgs, navigationSeen.current)
+    if (!latest) return
+    navigationSeen.current.add(latest.id)
     execNav(latest.nav)
   }, [snapshot])
 
