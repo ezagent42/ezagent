@@ -1,9 +1,11 @@
-defmodule Ezagent.World.KanbanActions do
+defmodule EzagentPluginKanban.WorldActions do
   @moduledoc """
   Socket-side dispatch handlers for the world **kanban operating surface**。
 
-  对齐 `Ezagent.World.ConversationActions`：`WorldLive` 保持瘦 `handle_event` 子句、
-  委派到这里。
+  对齐 `Ezagent.World.ConversationActions` 的分工：`WorldLive` 保持瘦 `handle_event`
+  子句、经 `Ezagent.World.PluginPageRegistry` 条目的 `actions_module` 反射委派到这里
+  （债②可搬半 2026-07-17：本模块从 world 搬进 kanban plugin，world 只留 @pages
+  注册数据；dep 方向 world → plugin_kanban，本模块不得反向引 world 模块）。
 
   ## kanban-as-role（K4）
   看板 = 一个 agent（role `kanban-manager` × flavor `native`），board = 该 agent 的
@@ -20,15 +22,15 @@ defmodule Ezagent.World.KanbanActions do
   set_board_config / save_miro_creds）。GitHub 主动连接器（sync_github / push_pr /
   sync_prs / save_github_creds）已整体退役——gh 连通现在是 agent 的 CLI 行为，不走
   world 派发；留下的 register_pr / attach_code_file 是纯数据（拼 git 链接挂节点）。
-  world 只 dispatch + 刷 UI，不直引任何 kanban plugin 模块。dormant 的
-  passive kanban-manager 经 `KanbanData.ensure_spawned/1` 从快照 rehydrate 起活。
+  本模块只 dispatch + 刷 UI，world 侧不再持有任何 kanban 数据/动作代码。dormant 的
+  passive kanban-manager 经 `WorldData.ensure_spawned/1` 从快照 rehydrate 起活。
   """
 
   import Phoenix.Component, only: [assign: 3]
   import Phoenix.LiveView, only: [push_event: 3]
 
   alias Ezagent.Invocation
-  alias Ezagent.World.KanbanData
+  alias EzagentPluginKanban.WorldData
 
   # kanban-as-role：新建看板 = 创建 role `kanban-manager` × flavor `native` 的 agent。
   @kanban_role "kanban-manager"
@@ -163,7 +165,7 @@ defmodule Ezagent.World.KanbanActions do
   # `Mount.mount` 只读挂进点击者 session。
   # salt/max_age 必须与接收侧常量逐一对齐；max_age（7 天）在接收侧 verify 时校验。
   @share_board_salt "world_kanban_share"
-  # behavior 以字符串入 token（world 无 kanban plugin dep，不静态引模块；接收侧
+  # behavior 以字符串入 token（token payload 是 JSON-safe 字符串契约；接收侧
   # `Module.concat` 反解，同 `Mount.decode_behavior` 约定）。
   @share_board_behavior "Ezagent.ActionSet.Kanban"
   @share_board_receive_path "/socialware/kanban/receive"
@@ -173,7 +175,7 @@ defmodule Ezagent.World.KanbanActions do
   defp act(socket, uri_str, action, args) do
     case parse(uri_str) do
       %URI{} = uri ->
-        :ok = KanbanData.ensure_spawned(uri)
+        :ok = WorldData.ensure_spawned(uri)
         target = Ezagent.URI.with_action(uri, :kanban, action)
 
         result =
@@ -200,7 +202,7 @@ defmodule Ezagent.World.KanbanActions do
   defp act_board(socket, uri_str, action, args) do
     case parse(uri_str) do
       %URI{} = uri ->
-        :ok = KanbanData.ensure_spawned(uri)
+        :ok = WorldData.ensure_spawned(uri)
 
         result =
           Invocation.dispatch(%Invocation{
@@ -219,7 +221,7 @@ defmodule Ezagent.World.KanbanActions do
          |> assign(:last_dispatch_status, status)
          |> push_event(
            "world:state",
-           Map.put(KanbanData.board_state(uri, read_ctx(socket)), "last_dispatch_status", status)
+           Map.put(WorldData.board_state(uri, read_ctx(socket)), "last_dispatch_status", status)
          )}
 
       :error ->
@@ -232,7 +234,7 @@ defmodule Ezagent.World.KanbanActions do
   defp sync_miro(socket, uri_str, name) do
     case parse(uri_str) do
       %URI{} = uri ->
-        :ok = KanbanData.ensure_spawned(uri)
+        :ok = WorldData.ensure_spawned(uri)
 
         args = if is_binary(name) and name != "", do: %{name: name}, else: %{}
 
@@ -309,9 +311,9 @@ defmodule Ezagent.World.KanbanActions do
   # 发起人对板是否有 access：复用 world 的发现可见性谓词（admin / 板主人 data_owner / 持指向
   # 该板的 cap）—— 能看见即可分享。**不**用 dispatch 探针：kanban 板动作的 cap 由 session 的
   # kanban-assistant（agent）持有，登录者（人）自身通常不持板动作 cap（他是 data_owner），
-  # 故以「登录者 own / 持 cap」判 access（同 `KanbanData.visible?` 的发现口径）。
+  # 故以「登录者 own / 持 cap」判 access（同 `WorldData.visible?` 的发现口径）。
   defp share_access?(socket, %URI{} = uri) do
-    KanbanData.can_share?(uri, read_ctx(socket))
+    WorldData.can_share?(uri, read_ctx(socket))
   end
 
   defp build_share_link(socket, %URI{} = uri) do
@@ -370,7 +372,7 @@ defmodule Ezagent.World.KanbanActions do
   # 一次性 rule-authority（{:rule, :socialware_runtime_provision, creator}，只造 passive
   # native）+ 建完当场发两把钥匙（assistant + 建板人自己，落挂载表）。建板因此是
   # **session-scoped**（collab 模型：板挂在会话、assistant 收钥匙）——无当前会话则拒。
-  # behavior 以字符串反解（world 无 kanban plugin dep，照 @share_board_behavior 约定）。
+  # behavior 以字符串反解（token payload 字符串契约，照 @share_board_behavior 约定）。
   defp create_kanban(socket, name) do
     workspace_uri = socket.assigns.current_workspace_uri
     session_uri = socket.assigns[:current_session_uri]
@@ -406,7 +408,7 @@ defmodule Ezagent.World.KanbanActions do
             {:noreply,
              socket
              |> assign(:last_dispatch_status, "ok")
-             |> push_event("world:state", KanbanData.board_state(board_uri, read_ctx(socket)))}
+             |> push_event("world:state", WorldData.board_state(board_uri, read_ctx(socket)))}
 
           {:error, reason} ->
             {:noreply, assign(socket, :last_dispatch_status, "error:#{reason(reason)}")}
@@ -421,7 +423,7 @@ defmodule Ezagent.World.KanbanActions do
       %URI{} = uri ->
         # 板可能 dormant(BEAM 重启后休眠)——manage.delete 要 dispatch 进它自己的
         # Kind 进程,先照其它动作的口径起活(已 live 幂等)。
-        :ok = KanbanData.ensure_spawned(uri)
+        :ok = WorldData.ensure_spawned(uri)
 
         case Ezagent.Socialware.BoardProvision.delete_board(
                uri,
@@ -436,7 +438,7 @@ defmodule Ezagent.World.KanbanActions do
              |> push_event("world:state", %{
                "kanban_uri" => nil,
                "tree" => nil,
-               "instances" => KanbanData.list_instances(read_ctx(socket)),
+               "instances" => WorldData.list_instances(read_ctx(socket)),
                "last_dispatch_status" => "ok"
              })}
 
@@ -457,7 +459,7 @@ defmodule Ezagent.World.KanbanActions do
         {:noreply,
          socket
          |> assign(:last_dispatch_status, "ok")
-         |> push_event("world:state", KanbanData.board_state(uri, read_ctx(socket)))}
+         |> push_event("world:state", WorldData.board_state(uri, read_ctx(socket)))}
 
       :error ->
         {:noreply, assign(socket, :last_dispatch_status, "error:bad_kanban_uri")}
@@ -502,10 +504,10 @@ defmodule Ezagent.World.KanbanActions do
     }
   end
 
-  # read-side ctx（caller_uri/caller_caps/workspace_uri）给 KanbanData.read_tree/
+  # read-side ctx（caller_uri/caller_caps/workspace_uri）给 WorldData.read_tree/
   # board_state/list_instances。workspace_uri 让 list-by-role 限定在本 tenant（RF-7）。
   @doc """
-  KanbanData 读侧 ctx（caller 身份 + cap 快照 + workspace 域）——从 world socket assigns
+  WorldData 读侧 ctx（caller 身份 + cap 快照 + workspace 域）——从 world socket assigns
   取。`ConversationActions.switch_view`（切 kanban tab 载板）也复用此函数，故公开。
   """
   def read_ctx(socket) do
@@ -524,7 +526,7 @@ defmodule Ezagent.World.KanbanActions do
   defp kanban_uri(_socket, _a), do: nil
 
   defp push_tree(socket, uri, status) do
-    snapshot = KanbanData.board_snapshot(uri, read_ctx(socket))
+    snapshot = WorldData.board_snapshot(uri, read_ctx(socket))
 
     socket
     |> assign(:last_dispatch_status, status)

@@ -552,7 +552,7 @@ defmodule Ezagent.World.ConversationActions do
   end
 
   # Switching to the native kanban board tab loads the session's boards
-  # (`KanbanData.session_boards/2` — caller-cap filtered, session-workspace
+  # (`WorldData.session_boards/2` — caller-cap filtered, session-workspace
   # scoped) so the rich `<Kanban>` mounts WITH data instead of the plugin-page
   # Miro-config placeholder. With ≥1 board, auto-select the first: merge its full
   # snapshot (kanban_uri + tree + config + miro), then re-assert the session-scoped
@@ -560,14 +560,14 @@ defmodule Ezagent.World.ConversationActions do
   # (frontend renders its own empty/config state). fail-safe: any error falls back
   # to a plain active_view switch so the tab never wedges.
   defp view_switch_updates(socket, %URI{} = session_uri, "kanban_board") do
-    ctx = Ezagent.World.KanbanActions.read_ctx(socket)
-    boards = Ezagent.World.KanbanData.session_boards(session_uri, ctx)
+    ctx = EzagentPluginKanban.WorldActions.read_ctx(socket)
+    boards = EzagentPluginKanban.WorldData.session_boards(session_uri, ctx)
     base = %{"active_view" => "kanban_board", "instances" => boards}
 
     with [%{"uri" => uri} | _] when is_binary(uri) <- boards,
          {:ok, %URI{} = board_uri} <- Ezagent.URI.parse(uri) do
       base
-      |> Map.merge(Ezagent.World.KanbanData.board_state(board_uri, ctx))
+      |> Map.merge(EzagentPluginKanban.WorldData.board_state(board_uri, ctx))
       |> Map.merge(%{"active_view" => "kanban_board", "instances" => boards})
     else
       _ -> base

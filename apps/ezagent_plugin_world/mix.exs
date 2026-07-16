@@ -54,6 +54,12 @@ defmodule EzagentPluginWorld.MixProject do
       # seeded page but not the per-session builder). world already integrates the
       # hello vertical on the frontend (Page pane); this is the backend counterpart.
       {:ezagent_plugin_hello, in_umbrella: true},
+      # 债②可搬半（2026-07-17）：kanban 页面的数据/动作层（WorldData / WorldActions）
+      # 搬进 kanban plugin，world 只留 @pages 注册数据（PluginPageRegistry 条目引
+      # `EzagentPluginKanban.WorldData/WorldActions`，state_for_route 编译期 unroll +
+      # world_live 动态反射调用都要求模块在编译/运行期可见）。dep 方向 = world →
+      # plugin_kanban（hello 先例）；plugin_kanban 不得反向引 world 模块。
+      {:ezagent_plugin_kanban, in_umbrella: true},
       {:phoenix_live_view, ">= 0.0.0"},
       {:phoenix_html, "~> 4.1"},
       {:jason, "~> 1.2"}

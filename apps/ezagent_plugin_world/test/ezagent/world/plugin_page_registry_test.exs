@@ -50,10 +50,10 @@ defmodule Ezagent.World.PluginPageRegistryTest do
       assert page.route == {"/plugins/kanban", :index}
       assert page.detail_route == {"/plugins/kanban/:id", :detail}
       assert page.nav == %{label: "看板", path: "/plugins/kanban"}
-      assert page.data_builder == Ezagent.World.KanbanData
+      assert page.data_builder == EzagentPluginKanban.WorldData
       assert page.renderer_families == [{"kanban", "看板"}]
       assert page.action_prefixes == ["kanban."]
-      assert page.actions_module == Ezagent.World.KanbanActions
+      assert page.actions_module == EzagentPluginKanban.WorldActions
     end
   end
 
@@ -100,7 +100,7 @@ defmodule Ezagent.World.PluginPageRegistryTest do
       page = PluginPageRegistry.by_key("kanban")
 
       for action <- page.actions do
-        assert %{key: "kanban", actions_module: Ezagent.World.KanbanActions} =
+        assert %{key: "kanban", actions_module: EzagentPluginKanban.WorldActions} =
                  PluginPageRegistry.by_action(action)
       end
     end
@@ -124,11 +124,11 @@ defmodule Ezagent.World.PluginPageRegistryTest do
       assert PluginPageRegistry.by_key("kanban").actions == @legacy_kanban_actions
     end
 
-    test "registry whitelist equals the set of actions KanbanActions declares handlers for" do
-      # 从 KanbanActions 编译产物（abstract code）导出 handle_dispatch/3 的字面
+    test "registry whitelist equals the set of actions WorldActions declares handlers for" do
+      # 从 WorldActions 编译产物（abstract code）导出 handle_dispatch/3 的字面
       # action 子句集合——白名单必须与实际声明逐一等价，不多（放行无处理器的
       # 动作）也不少（注册表悄悄砍掉可用动作）。
-      declared = declared_actions(Ezagent.World.KanbanActions)
+      declared = declared_actions(EzagentPluginKanban.WorldActions)
       registry = MapSet.new(PluginPageRegistry.by_key("kanban").actions)
 
       assert MapSet.equal?(registry, declared),

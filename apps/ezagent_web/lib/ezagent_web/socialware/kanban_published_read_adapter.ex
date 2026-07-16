@@ -12,7 +12,7 @@ defmodule EzagentWeb.Socialware.KanbanPublishedReadAdapter do
 
   import Phoenix.Component, only: [assign: 3]
 
-  alias Ezagent.World.KanbanActions
+  alias EzagentPluginKanban.WorldActions
   alias EzagentPluginHello.PublishedBoardRef
 
   @impl true
@@ -62,7 +62,7 @@ defmodule EzagentWeb.Socialware.KanbanPublishedReadAdapter do
       |> assign(:current_caps, Map.get(ctx, :caps, MapSet.new()))
       |> assign(:current_workspace_uri, workspace_uri)
 
-    case KanbanActions.share_link(socket, URI.to_string(board_uri)) do
+    case WorldActions.share_link(socket, URI.to_string(board_uri)) do
       {:ok, receive_ref} -> {:ok, receive_ref}
       {:error, :no_access} -> {:error, :forbidden}
       {:error, :bad_kanban_uri} -> {:error, :not_found}

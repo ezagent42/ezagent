@@ -1,7 +1,7 @@
 defmodule EzagentWeb.Integration.KanbanChangedBroadcastTest do
   @moduledoc """
   X1 推送环**发布侧**(㉘/㉒-① 的 kanban 半)acceptance ——
-  `Ezagent.World.KanbanActions` 的写动作成功后,向当前会话的 UI events topic
+  `EzagentPluginKanban.WorldActions` 的写动作成功后,向当前会话的 UI events topic
   (`esr:session:<uri>:events`)广播 `{:kanban_changed, board_uri}`:
 
     (a) 写动作成功(add_node)→ 订着该 session topic 的进程(= 同会话其他成员的
@@ -22,7 +22,7 @@ defmodule EzagentWeb.Integration.KanbanChangedBroadcastTest do
   alias Ezagent.Workspace
   alias Ezagent.Entity.User
   alias Ezagent.{AgentFlavorRegistry, Agent.RecipeRegistry}
-  alias Ezagent.World.KanbanActions
+  alias EzagentPluginKanban.WorldActions
   alias EzagentPluginKanban.Application, as: KanbanApp
 
   @flavor "x1-native"
@@ -89,7 +89,7 @@ defmodule EzagentWeb.Integration.KanbanChangedBroadcastTest do
 
       # (a) 写动作成功 → 收到轻事件(payload = board URI,订阅者按自己 read_ctx 重拉)。
       {:noreply, _socket} =
-        KanbanActions.handle_dispatch(socket, "kanban.add_node", %{
+        WorldActions.handle_dispatch(socket, "kanban.add_node", %{
           "kanban_uri" => URI.to_string(board_uri),
           "parent_id" => "",
           "title" => "根"
@@ -99,7 +99,7 @@ defmodule EzagentWeb.Integration.KanbanChangedBroadcastTest do
 
       # (b) 写动作失败(节点不存在)→ 不广播。
       {:noreply, _socket} =
-        KanbanActions.handle_dispatch(socket, "kanban.rename_node", %{
+        WorldActions.handle_dispatch(socket, "kanban.rename_node", %{
           "kanban_uri" => URI.to_string(board_uri),
           "id" => "no-such-node",
           "title" => "x"
@@ -111,7 +111,7 @@ defmodule EzagentWeb.Integration.KanbanChangedBroadcastTest do
       no_session_socket = socket_for(workspace_uri, admin_ctx, nil)
 
       {:noreply, _socket} =
-        KanbanActions.handle_dispatch(no_session_socket, "kanban.add_node", %{
+        WorldActions.handle_dispatch(no_session_socket, "kanban.add_node", %{
           "kanban_uri" => URI.to_string(board_uri),
           "parent_id" => "n1",
           "title" => "子"

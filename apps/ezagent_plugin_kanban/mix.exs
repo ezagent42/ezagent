@@ -43,6 +43,11 @@ defmodule EzagentPluginKanban.MixProject do
       {:ezagent_core, in_umbrella: true},
       # Miro REST client JSON encode/decode（飞书也用，:httpc + Jason 不引重依赖）。
       {:jason, "~> 1.2"},
+      # 债②可搬半（2026-07-17）：world 的 kanban 数据/动作层搬进来（WorldData /
+      # WorldActions）。WorldActions 是 LiveView socket 侧 dispatcher
+      # （Phoenix.Component.assign / Phoenix.LiveView.push_event / Phoenix.Token），
+      # 与 world 同款声明（transitively 带 :phoenix）。
+      {:phoenix_live_view, ">= 0.0.0"},
       # kanban-as-role (K2/K3) integration tests: the role × native create path
       # lives in the workspace/agent/session domains. plugin → domain is the
       # allowed dependency arrow (mirrors ezagent_plugin_cc). The plugin's lib/

@@ -21,7 +21,7 @@ defmodule Ezagent.ActionSet.KanbanRender do
       `external_tree/1` 是 per-session 读入口 —— board 是 workspace 级 actor
       （非 session 成员，S2 建模修正），按 session 的 workspace 经
       `Agent.RecipeResolver.list_by_recipe("kanban-manager", ws)` 枚举（快照来源，
-      覆盖 dormant；`Ezagent.World.KanbanData.list_instances` 同款），取首个
+      覆盖 dormant；`EzagentPluginKanban.WorldData.list_instances` 同款），取首个
       board 读它的 `:kanban` slice。**零写**：无 `{:set, ...}`、无 dispatch 写
       action —— 这是投影，不是操作面（操作面是 pm 持 kanban action caps 对 board
       URI dispatch）。
@@ -94,7 +94,7 @@ defmodule Ezagent.ActionSet.KanbanRender do
 
   ## Task 2 —— read-side CBAC 收敛：为何这里不按 caller 权属过滤（需确认边界）
 
-  world 的"发现"列表（`Ezagent.World.KanbanData.list_instances/1`）已按 caller
+  world 的"发现"列表（`EzagentPluginKanban.WorldData.list_instances/1`）已按 caller
   own/持 cap 收敛（admin 见全 ws）。本入口是 **另一条读面**：SessionView 的
   `external_render/1` json-render 投影，其契约签名只有 `session_uri`
   （`Ezagent.UI.SessionView` `@callback external_render(session_uri :: URI.t())`）

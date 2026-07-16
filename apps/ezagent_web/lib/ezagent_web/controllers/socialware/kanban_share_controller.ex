@@ -1,7 +1,7 @@
 defmodule EzagentWeb.Socialware.KanbanShareController do
   @moduledoc """
   接收「分享的看板」链接(T6.4)的 **transport 落点** —— world 看板操作面
-  `kanban.share_board`(`Ezagent.World.KanbanActions.share_link/2`)生成的只读分享
+  `kanban.share_board`(`EzagentPluginKanban.WorldActions.share_link/2`)生成的只读分享
   链接指到这里。
 
   债③(2026-07-16):接收**业务**(落点 session 解析 + 只读挂载 + kanban 字面)已
@@ -18,7 +18,7 @@ defmodule EzagentWeb.Socialware.KanbanShareController do
   """
   use EzagentWeb, :controller
 
-  # salt/max_age 必须与分享侧 `Ezagent.World.KanbanActions` 常量逐一对齐。
+  # salt/max_age 必须与分享侧 `EzagentPluginKanban.WorldActions` 常量逐一对齐。
   @share_board_salt "world_kanban_share"
   # 7 天:与分享链接有效期一致(sign 不带 max_age,过期判定全在此 verify)。
   @share_board_max_age 604_800
