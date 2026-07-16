@@ -103,6 +103,25 @@ defmodule EzagentDomainGit.ApplicationBootTest do
     assert :error = AdapterRegistry.lookup_for_action_set("boot-b")
   end
 
+  test "registry generation restart does not carry stale ownership onto a third-party row" do
+    :ok = AdapterRegistry.unregister("generation-a", FakeGitAdapterA)
+    replace_registration(adapters: [{"generation-a", FakeGitAdapterA}])
+
+    :ok = :sys.suspend(BootRegistration)
+    :ok = Supervisor.terminate_child(EzagentDomainGit.Application, AdapterRegistry)
+    assert {:ok, _pid} = Supervisor.restart_child(EzagentDomainGit.Application, AdapterRegistry)
+    assert :ok = AdapterRegistry.register("generation-a", FakeGitAdapterA)
+    :ok = :sys.resume(BootRegistration)
+
+    assert_eventually(fn ->
+      AdapterRegistry.lookup_for_action_set("generation-a") == {:ok, FakeGitAdapterA}
+    end)
+
+    replace_registration([])
+    assert {:ok, FakeGitAdapterA} = AdapterRegistry.lookup_for_action_set("generation-a")
+    :ok = AdapterRegistry.unregister("generation-a", FakeGitAdapterA)
+  end
+
   test "TaskAccessSupervisor start failure follows the post-registration rollback path" do
     Enum.each(@actions, fn action ->
       :ok = Ezagent.CapabilityRegistry.unregister(GitTaskAccess, action, @action_set)
