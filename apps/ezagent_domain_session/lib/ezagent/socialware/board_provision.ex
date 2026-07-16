@@ -40,15 +40,22 @@ defmodule Ezagent.Socialware.BoardProvision do
   @type result :: %{
           board_uri: URI.t(),
           assistant_uri: URI.t(),
-          minted: [Ezagent.Capability.t()]
+          minted: [Ezagent.Capability.t()],
+          creator_minted: [Ezagent.Capability.t()]
         }
 
   @doc """
-  建板(归属 = `owner_ctx` 的 caller)+ 当场给本 session 的 `assistant_role` 成员挂指向
-  新板的 `behavior` 操作钥匙(`access: :operate`)。见模块文档的参数/返回契约。
+  建板(归属 = `owner_ctx` 的 caller)+ 当场发两把钥匙:
 
-  挂载机制交给 `Mount.provision/6`(建宿主 + 当场挂 + 落挂载表);本函数只负责解析本 session
-  的 assistant(收钥匙人)并把 kanban 参数喂给 `Mount`。
+    1. 本 session 的 `assistant_role` 成员挂指向新板的 `behavior` 操作钥匙
+       (`access: :operate`,经 `Mount.provision/6` 建宿主 + 当场挂 + 落挂载表);
+    2. **建板人自己**(`owner_ctx.caller` = 板主人)也挂一把同款全动作 operate 钥匙
+       (分层债 ⑧:此前建板人只拿到 `Manage` cap —— 管 agent 生命周期,behavior 轴对不上
+       `behavior` 的操作 required_caps,读写自己的板全 unauthorized。经 `Mount.mount/6`
+       → `CompositionCaps.mint_cap/4` 唯一 mint chokepoint,granter = 板主人 =
+       建板人自己,`Cap.issue` 走 `{:held_by, owner}` 自路径,per-grantee 签名)。
+
+  见模块文档的参数/返回契约;返回增加 `:creator_minted`(发给建板人的钥匙)。
   """
   @spec create_board(URI.t(), URI.t(), map(), module(), map()) ::
           {:ok, result()} | {:error, term()}
@@ -59,11 +66,23 @@ defmodule Ezagent.Socialware.BoardProvision do
          {:ok, flavor} <- fetch(spec, :flavor),
          {:ok, assistant_role} <- fetch(spec, :assistant_role),
          {:ok, assistant_uri} <- resolve_assistant(session_uri, assistant_role),
+         {:ok, %URI{} = creator_uri} <- fetch_creator(owner_ctx),
+         # ⑥ 建板授权(过渡,skill-1 会诊 2026-07-16;rule 名进 Decision Log 待 Allen):
+         # collab 模型要「任何编辑 session 成员」能建板(建板人=版主);普通成员全链无
+         # create_agent 授点。走产品规则 rule-tag(照 :socialware_install_views 同款家族)
+         # 铸一把**一次性** scoped create_agent cap,只并进本次 provision 的 dispatch ctx
+         # (不 absorb 不落库)——`Workspace.create_agent` 仍是唯一创建门。规则边界:
+         # ① caller 必须是本 session 成员(下方守卫);② 只造 recipe 声明 `passive: true`
+         # 的 data-host——不给任意算力 agent 开口。
+         :ok <- assert_creator_member(session_uri, creator_uri),
+         :ok <- assert_passive_recipe(board_role),
+         {:ok, provision_ctx} <- runtime_provision_ctx(workspace_uri, owner_ctx, creator_uri),
+         actions = Map.get(spec, :actions) || Ezagent.ActionSet.action_names(behavior),
          provision_spec = %{
            name: name,
            flavor: flavor,
            role: board_role,
-           actions: Map.get(spec, :actions)
+           actions: actions
          },
          {:ok, %{target: board_uri, caps: minted}} <-
            Mount.provision(
@@ -72,9 +91,85 @@ defmodule Ezagent.Socialware.BoardProvision do
              provision_spec,
              assistant_uri,
              behavior,
-             owner_ctx
-           ) do
-      {:ok, %{board_uri: board_uri, assistant_uri: assistant_uri, minted: minted}}
+             provision_ctx
+           ),
+         # ⑧ 发给建板人的钥匙:同一条 mount 路(mint + 落挂载表,session 重启可 reconcile)。
+         {:ok, %{caps: creator_minted}} <-
+           Mount.mount(session_uri, board_uri, creator_uri, behavior, actions, access: :operate) do
+      {:ok,
+       %{
+         board_uri: board_uri,
+         assistant_uri: assistant_uri,
+         minted: minted,
+         creator_minted: creator_minted
+       }}
+    end
+  end
+
+  defp fetch_creator(%{caller: %URI{} = caller}), do: {:ok, caller}
+  defp fetch_creator(_owner_ctx), do: {:error, :board_creator_unresolved}
+
+  # ⑥ 规则边界①:建板人必须是触发建板 session 的成员(复用转发守卫的成员边检查)。
+  defp assert_creator_member(session_uri, %URI{} = creator_uri) do
+    members =
+      case Ezagent.Kind.get_slice(session_uri, :session) do
+        {:ok, slice} when is_map(slice) -> Map.get(slice, :members, %{})
+        _ -> %{}
+      end
+
+    if caller_member?(members, creator_uri),
+      do: :ok,
+      else: {:error, :creator_not_session_member}
+  end
+
+  # ⑥ 规则边界②:只造 **passive data-host**(数据宿主,不进聊天不占算力)。判定按
+  # recipe 声明的 `passive: true`(RF-6 三闸的被动数据 actor,同 definition_agents 的
+  # `passive_recipe?`),不按 flavor 字符串——语义在 recipe 不在 flavor。任意算力 recipe
+  # (cc/cc-headless/py/codex 的脑)不走本规则——那是 orchestrator/权限持有者的事。
+  defp assert_passive_recipe(board_role) do
+    case Ezagent.Agent.RecipeRegistry.lookup(board_role) do
+      {:ok, recipe} ->
+        if Map.get(recipe, :passive, Map.get(recipe, "passive", false)) == true,
+          do: :ok,
+          else: {:error, {:recipe_not_passive, board_role}}
+
+      _ ->
+        {:error, {:board_recipe_unknown, board_role}}
+    end
+  end
+
+  # ⑥ 一次性 provision authority:经 `Cap.issue` 唯一 chokepoint,tag =
+  # `{:rule, :socialware_runtime_provision, creator}`(规则:「编辑 session 成员可在本
+  # workspace 造 passive data-host」,configurer = 建板人 = granted_by 真实实体 #154)。
+  # concrete instance + concrete action 过 `rule_cap_bounded?`。铸出的签名 artifact
+  # **只并进本次 dispatch ctx**(transient,不 absorb 不落库)——建板人不留任何 durable
+  # create_agent 权,下次建板重走本规则(含成员/flavor 守卫)。
+  defp runtime_provision_ctx(%URI{} = workspace_uri, owner_ctx, %URI{} = creator_uri) do
+    bare =
+      Ezagent.Capability.cap(
+        :workspace,
+        Ezagent.ActionSet.Workspace,
+        :create_agent,
+        Ezagent.URI.instance(workspace_uri),
+        workspace_uri
+      )
+
+    case Ezagent.Cap.issue(
+           {:rule, :socialware_runtime_provision, creator_uri},
+           creator_uri,
+           bare
+         ) do
+      {:ok, artifact} ->
+        caps =
+          owner_ctx
+          |> Map.get(:caps, MapSet.new())
+          |> MapSet.new()
+          |> MapSet.put(artifact)
+
+        {:ok, Map.put(owner_ctx, :caps, caps)}
+
+      {:error, reason} ->
+        {:error, {:runtime_provision_authority, reason}}
     end
   end
 
@@ -141,9 +236,7 @@ defmodule Ezagent.Socialware.BoardProvision do
     ① **在 from_session 里**(是 from_session 的成员),且
     ② **from_session 对这块板有 access** —— 即 from_session 的 `assistant_role` 成员持有一把
        指向这块板(instance 精确)的 `behavior` cap(这块板被 pull/create 进了 from_session)。
-  任一不满足 → `{:error, :no_forward_access}`。此外 board、来源 session、目标 session
-  必须属于同一 workspace；跨 workspace 在解析接收者和 mint/Mount 之前返回
-  `{:error, :cross_workspace_denied}`。**不要求 caller 是板主人**(那是拉板)。
+  任一不满足 → `{:error, :no_forward_access}`。**不要求 caller 是板主人**(那是拉板)。
 
     * `board_uri` —— 已存在的板(数据宿主)。
     * `from_session_uri` —— caller 所在、且对板有 access 的来源 session。
@@ -153,7 +246,7 @@ defmodule Ezagent.Socialware.BoardProvision do
       的 role_name(默认 `"kanban-assistant"`)、`:read_actions` 覆盖只读动作集。
 
   返回 `{:ok, %{assistant_uri, minted}}` 或
-  `{:error, :cross_workspace_denied | :no_forward_access | :no_assistant_in_target | term()}`。
+  `{:error, :no_forward_access | :no_assistant_in_target | term()}`。
   """
   @spec forward_board(URI.t(), URI.t(), URI.t(), module(), map()) ::
           {:ok, %{assistant_uri: URI.t(), minted: [Ezagent.Capability.t()]}} | {:error, term()}
@@ -168,8 +261,7 @@ defmodule Ezagent.Socialware.BoardProvision do
     assistant_role = Map.get(caller_ctx, :assistant_role, @default_assistant_role)
     read_actions = Map.get(caller_ctx, :read_actions, @default_read_actions)
 
-    with :ok <- same_workspace(board_uri, from_session_uri, to_session_uri),
-         :ok <-
+    with :ok <-
            assert_forward_access(
              board_uri,
              from_session_uri,
@@ -189,16 +281,6 @@ defmodule Ezagent.Socialware.BoardProvision do
            ) do
       {:ok, %{assistant_uri: assistant_uri, minted: minted}}
     end
-  end
-
-  defp same_workspace(board_uri, from_session_uri, to_session_uri) do
-    workspaces =
-      [board_uri, from_session_uri, to_session_uri]
-      |> Enum.map(&Ezagent.Capability.workspace_of/1)
-      |> Enum.map(&URI.to_string/1)
-      |> Enum.uniq()
-
-    if length(workspaces) == 1, do: :ok, else: {:error, :cross_workspace_denied}
   end
 
   # 转发守卫:caller 必须 ① 在 from_session 里 ② from_session 的 assistant 持指向该板的 cap

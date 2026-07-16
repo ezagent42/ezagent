@@ -150,6 +150,11 @@ defmodule EzagentPluginKanban.E2E.RoleNativeCreateTest do
 
       bob = %{caller: URI.new!("entity://#{ws_name}/user/bob"), caps: MapSet.new([member_cap])}
 
+      # 新协作模型：加节点自动认领（n1/n2 现由 admin 认领）。为验 per-node owner authz，
+      # admin（board_admin）先退领成未认领（节点空 → H3 允许），再让 alice/bob 认领。
+      assert {:ok, %{}} = dispatch(agent_uri, :unclaim_node, %{id: "n1"}, admin_ctx)
+      assert {:ok, %{}} = dispatch(agent_uri, :unclaim_node, %{id: "n2"}, admin_ctx)
+
       # alice claims n2 → owner = alice.
       assert {:ok, %{}} = dispatch(agent_uri, :claim_node, %{id: "n2"}, alice)
 

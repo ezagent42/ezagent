@@ -718,14 +718,17 @@ defmodule EzagentDomainInstanceMessage.SessionCreator do
          template_content
        ) do
     if session_complete?(session_uri, workspace_uri, effective_owner, template_content) do
-      case Installation.install_template_installs(
-             session_uri,
-             workspace_uri,
-             template_content,
-             effective_owner
-           ) do
-        :ok -> {:ok, session_uri, %{}}
-        {:error, reason} -> {:error, reason}
+      with :ok <-
+             Installation.install_template_installs(
+               session_uri,
+               workspace_uri,
+               template_content,
+               effective_owner
+             ),
+           # 分层债 ⑤(同 finalize_fresh_session)— idempotent 补发 installer/owner 的
+           # declared-view render cap,老 session 走 verify 路也能补齐。
+           :ok <- Installation.grant_installer_view_caps(session_uri, effective_owner) do
+        {:ok, session_uri, %{}}
       end
     else
       Logger.warning(
@@ -887,6 +890,12 @@ defmodule EzagentDomainInstanceMessage.SessionCreator do
                template_content,
                effective_owner
              ),
+           # 分层债 ⑤ — 装了带 declared views 的 socialware(如 kanban)后,installer/owner
+           # 也要拿到 view render cap(否则看不到对应 tab;此前只有匿名访客经
+           # `anon_view_caps` 拿到 PUBLIC views 的)。通用:任何 definition 的 views 同样
+           # 受益。走 Grant chokepoint(`{:rule, :socialware_install_views, owner}`)。
+           :ok <-
+             Installation.grant_installer_view_caps(session_uri, effective_owner),
            # rev6 step 4 — CONFIG ONLY (prompts / legends / routing rules).
            # Agent role slots are an AGENT transaction and are materialized
            # AFTER create returns, by `install_session_socialware/1`. See the

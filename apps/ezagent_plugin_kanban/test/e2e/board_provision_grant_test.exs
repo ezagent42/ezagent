@@ -71,27 +71,15 @@ defmodule EzagentPluginKanban.E2E.BoardProvisionGrantTest do
   test "chat 建板: 建出 board(owner=触发者) + 当场给本 session 的 kanban-assistant 发操作钥匙",
        %{ws_name: ws_name, workspace_uri: workspace_uri, admin_ctx: admin_ctx} do
     skip_if_no_entity_spawn(fn ->
-      # --- owner = 常规用户(会话 owner / 建板触发者),持 create_agent 权 ----------
+      # --- owner = 常规用户(会话 owner / 建板触发者)。⑥ 后**不再预授 create_agent**:
+      # 建板授权由 create_board 内的 {:rule, :socialware_runtime_provision, creator}
+      # 一次性 rule-authority 提供(成员守卫 + passive flavor 白名单),本测试即证明
+      # 「普通成员零 create_agent cap 也能建板」这条产品路。
       owner_uri =
         URI.new!("entity://#{ws_name}/user/board-owner-#{System.unique_integer([:positive])}")
 
-      create_cap =
-        Ezagent.Capability.cap(
-          :workspace,
-          Ezagent.ActionSet.Workspace,
-          :create_agent,
-          workspace_uri,
-          workspace_uri
-        )
-
-      create_cap =
-        Ezagent.Test.CapHelper.signed_cap!(workspace_uri, owner_uri, create_cap)
-
       {:ok, _owner_pid} =
-        Ezagent.Kind.spawn(User, %{
-          uri: owner_uri,
-          initial_caps: MapSet.new([create_cap])
-        })
+        Ezagent.Kind.spawn(User, %{uri: owner_uri, initial_caps: MapSet.new()})
 
       owner_ctx = %{caller: owner_uri, caps: Ezagent.Identity.list_caps_for(owner_uri)}
 
@@ -113,11 +101,19 @@ defmodule EzagentPluginKanban.E2E.BoardProvisionGrantTest do
       on_exit(fn -> Ezagent.Kind.terminate(session_uri) end)
 
       :ok = join_member(session_uri, assistant_uri, "kanban-assistant", admin_ctx)
+      # ⑥ 成员守卫:建板人必须是本 session 成员(collab 模型「编辑 session 成员可建板」)。
+      :ok = join_member(session_uri, owner_uri, "member", admin_ctx)
 
       # --- T4a 入口:建板 + 发钥匙 ----------------------------------------------
       board_name = "board-#{System.unique_integer([:positive])}"
 
-      assert {:ok, %{board_uri: board_uri, assistant_uri: minted_to, minted: minted}} =
+      assert {:ok,
+              %{
+                board_uri: board_uri,
+                assistant_uri: minted_to,
+                minted: minted,
+                creator_minted: creator_minted
+              }} =
                BoardProvision.create_board(
                  workspace_uri,
                  session_uri,
@@ -161,13 +157,32 @@ defmodule EzagentPluginKanban.E2E.BoardProvisionGrantTest do
       assert minted_add.instance == Ezagent.URI.instance(board_uri)
       refute minted_add.instance == :any
 
-      # (c) assistant 自身份 dispatch kanban.add_node 到新板成功(经 minted 钥匙)。
-      # canonical admin 经 board K.grant 播根 → assistant 认领根 → assistant 在自己认领的
-      # 节点下 add_node 子 = 真正成功。
-      assert {:ok, %{id: "n1"}} =
-               dispatch(board_uri, :add_node, %{parent_id: "", title: "根"}, admin_ctx)
+      # --- 分层债 ⑧:建板人(creator human)也当场拿到指向新板的 operate 钥匙 -------
+      # 之前只给 assistant 发钥匙,建板的人类只持 Manage cap(管 agent 生命周期),
+      # 读写自己的板全 unauthorized。修复后 create_board 给 creator 也 mount 一把
+      # 全动作 operate cap(granter = 板主人自己,{:held_by, creator} 自路径)。
+      assert length(creator_minted) ==
+               length(Ezagent.ActionSet.action_names(Ezagent.ActionSet.Kanban))
 
-      assert {:ok, %{}} = dispatch_as(assistant_uri, board_uri, :claim_node, %{id: "n1"})
+      assert Enum.all?(
+               creator_minted,
+               &(URI.to_string(&1.granted_by) == URI.to_string(owner_uri))
+             )
+
+      # creator 持实例精确 operate cap + 挂载落表(session, board, creator)
+      assert eventually(fn -> holds_board_cap?(owner_uri, board_uri, :add_node) end)
+
+      creator_mount = MountRow.get(session_uri, board_uri, owner_uri, Ezagent.ActionSet.Kanban)
+      assert creator_mount != nil
+      assert creator_mount.access == "operate"
+
+      # creator 自身份 dispatch 读/写自己的板成功(⑧ 的直接验收:owner 不再 unauthorized)
+      assert {:ok, _tree} = dispatch_as(owner_uri, board_uri, :get_tree, %{})
+
+      # (c) assistant 自身份 dispatch kanban.add_node 到新板成功(经 minted 钥匙)。
+      # 新协作模型：加节点自动认领 —— assistant 自身份加根(自动认领)再在自己节点下加子 = 真正成功。
+      assert {:ok, %{id: "n1"}} =
+               dispatch_as(assistant_uri, board_uri, :add_node, %{parent_id: "", title: "根"})
 
       assert {:ok, %{id: child_id}} =
                dispatch_as(assistant_uri, board_uri, :add_node, %{parent_id: "n1", title: "子"})
