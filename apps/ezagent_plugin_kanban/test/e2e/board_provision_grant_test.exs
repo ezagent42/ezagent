@@ -101,6 +101,7 @@ defmodule EzagentPluginKanban.E2E.BoardProvisionGrantTest do
       on_exit(fn -> Ezagent.Kind.terminate(session_uri) end)
 
       :ok = join_member(session_uri, assistant_uri, "kanban-assistant", admin_ctx)
+
       # ⑥ 成员守卫:建板人必须是本 session 成员(collab 模型「编辑 session 成员可建板」)。
       :ok = join_member(session_uri, owner_uri, "member", admin_ctx)
 
@@ -199,6 +200,80 @@ defmodule EzagentPluginKanban.E2E.BoardProvisionGrantTest do
 
       assert {:error, :invalid_cap_signature} =
                dispatch_as(assistant_uri, unrelated, :add_node, %{parent_id: "", title: "x"})
+    end)
+  end
+
+  @tag :integration
+  test "⑳ 无 assistant 会话建板成功: assistant 钥匙降级为增强,建板人钥匙照发",
+       %{ws_name: ws_name, workspace_uri: workspace_uri, admin_ctx: admin_ctx} do
+    skip_if_no_entity_spawn(fn ->
+      owner_uri =
+        URI.new!("entity://#{ws_name}/user/no-assist-#{System.unique_integer([:positive])}")
+
+      {:ok, _owner_pid} =
+        Ezagent.Kind.spawn(User, %{uri: owner_uri, initial_caps: MapSet.new()})
+
+      owner_ctx = %{caller: owner_uri, caps: Ezagent.Identity.list_caps_for(owner_uri)}
+
+      # session 里**没有** kanban-assistant 成员(只有建板人自己)。
+      session_uri =
+        URI.new!("session://#{ws_name}/default/t4a-na-#{System.unique_integer([:positive])}")
+
+      {:ok, _sess_pid} =
+        Ezagent.Kind.spawn(Ezagent.Entity.Session, %{
+          uri: session_uri,
+          behaviors: Ezagent.Entity.Session.behaviors(),
+          owner_uri: owner_uri
+        })
+
+      :ok = Ezagent.WorkspaceRegistry.bind(session_uri, workspace_uri)
+      on_exit(fn -> Ezagent.Kind.terminate(session_uri) end)
+      :ok = join_member(session_uri, owner_uri, "member", admin_ctx)
+
+      board_name = "board-na-#{System.unique_integer([:positive])}"
+
+      # ⑳:resolve_assistant 失败不再整体 fail —— assistant 钥匙跳过(nil / []),
+      # 主链(建宿主 + 建板人钥匙)照走。
+      assert {:ok,
+              %{
+                board_uri: board_uri,
+                assistant_uri: nil,
+                minted: [],
+                creator_minted: creator_minted
+              }} =
+               BoardProvision.create_board(
+                 workspace_uri,
+                 session_uri,
+                 %{
+                   name: board_name,
+                   board_role: "kanban-manager",
+                   flavor: @flavor,
+                   assistant_role: "kanban-assistant"
+                 },
+                 Ezagent.ActionSet.Kanban,
+                 owner_ctx
+               )
+
+      # 板存在 + 归属建板人
+      assert {:ok, _pid} = Ezagent.KindRegistry.lookup(board_uri)
+
+      assert URI.to_string(
+               Ezagent.CapabilityRegistry.data_owner_of(
+                 Ezagent.ActionSet.Kanban,
+                 Ezagent.URI.instance(board_uri)
+               )
+             ) == URI.to_string(owner_uri)
+
+      # 建板人钥匙照发(plugin 基线):全动作 + 挂载行 + 真 dispatch 通
+      assert length(creator_minted) ==
+               length(Ezagent.ActionSet.action_names(Ezagent.ActionSet.Kanban))
+
+      creator_mount = MountRow.get(session_uri, board_uri, owner_uri, Ezagent.ActionSet.Kanban)
+      assert creator_mount != nil
+      assert creator_mount.access == "operate"
+
+      assert eventually(fn -> holds_board_cap?(owner_uri, board_uri, :add_node) end)
+      assert {:ok, _tree} = dispatch_as(owner_uri, board_uri, :get_tree, %{})
     end)
   end
 
