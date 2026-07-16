@@ -44,8 +44,8 @@ Execute only Plan A from
 | Baseline and ledger | complete | Worktree clean; rebased on current main; PR #1423 open Draft | `8fcbfe1b1` |
 | 1. Primitive inventory | complete | Secret Store absent; SSH parser absent; Cap signed/receiver-bound; OsProcess lifecycle-only; plugin rollback pattern reusable. See `docs/superpowers/notes/2026-07-16-git-provider-v1-a-inventory.md` | `8fcbfe1b1` |
 | 2. Same-UID reproduction | complete | Both mode-0600 known-path read and `/proc/<pid>/environ` observation reproduced under UID 1000; 2 tests, 0 failures. See `docs/superpowers/notes/2026-07-16-git-provider-v1-a-isolation-probe.md` | `1e8b913fd` |
-| 3. Broker GO/NO-GO | complete | Candidate D selected: no approved agent-inaccessible boundary. SSH remains disabled; public checkout + GitHub API is the viable Plan D route. See `docs/superpowers/notes/2026-07-16-git-provider-v1-a-broker-options.md` | pending |
-| 4. GitHub API request-plan prototype | pending | — | — |
+| 3. Broker GO/NO-GO | complete | Candidate D selected: no approved agent-inaccessible boundary. SSH remains disabled; public checkout + GitHub API is the viable Plan D route. See `docs/superpowers/notes/2026-07-16-git-provider-v1-a-broker-options.md` | `1c16e2d28` |
+| 4. GitHub API request-plan prototype | complete | Pure plan/local fake proves Git Data sequence, input bounds, base/ref checks, idempotency, partial-failure sanitization, and credential-free plan. 5 tests, 0 failures. See `docs/superpowers/notes/2026-07-16-git-provider-v1-a-github-api-transport.md` | pending |
 | 5. Decision/interface closeout | pending | — | — |
 
 ## Verification commands
@@ -55,7 +55,9 @@ git diff --check
 SHELL=/bin/bash MIX_DEPS_PATH=/home/huangjiajia/ezagent/deps \
   MIX_BUILD_PATH="$PWD/_build" MIX_ENV=test mix test \
   apps/ezagent_core/test/security/os_process_secret_isolation_probe_test.exs --trace
-MIX_ENV=test mix test apps/ezagent_core/test/security/github_api_commit_transport_test.exs --trace
+SHELL=/bin/bash MIX_DEPS_PATH=/home/huangjiajia/ezagent/deps \
+  MIX_BUILD_PATH="$PWD/_build" MIX_ENV=test mix test \
+  apps/ezagent_core/test/security/github_api_commit_transport_test.exs --trace
 ```
 
 Additional focused commands and their exact results are appended to this ledger and the Plan A evidence notes as work proceeds.
