@@ -137,7 +137,7 @@ defmodule Ezagent.ActionSet.GitTaskAccessTest do
 
     refute_received {:git_probe, ^ref, :adapter, _, _}
 
-    wrong_head = %{valid | head_ref: "other", request: %{valid.request | head_ref: "other"}}
+    wrong_head = %{valid | request: %{valid.request | head_ref: "other"}}
     assert {:error, :head_ref_not_allowed} = dispatch(fixture, wrong_head)
     refute_received {:git_probe, ^ref, :adapter, _, _}
 
@@ -221,6 +221,64 @@ defmodule Ezagent.ActionSet.GitTaskAccessTest do
     refute_received {:git_probe, ^ref, :adapter, _, _}
   end
 
+  test "every action rejects unknown atom and string keys before adapter effects" do
+    forbidden = [
+      :credential,
+      :token,
+      :client,
+      :req,
+      :path,
+      :cap,
+      :context,
+      :provider_adapter,
+      :base_ref
+    ]
+
+    Enum.each(@actions, fn action ->
+      fixture = GitCapFixture.exact_task_cap(action)
+      policy = policy(fixture)
+      assert {:ok, _pid} = TaskAccessSupervisor.ensure_started(policy)
+      valid = operation_args(action, policy)
+      ref = GitEffectProbe.ref()
+
+      Enum.each(forbidden, fn key ->
+        assert {:error, {:unknown_invocation_keys, [^key]}} =
+                 dispatch(fixture, Map.put(valid, key, :attacker))
+
+        refute_received {:git_probe, ^ref, :adapter, _, _}
+      end)
+
+      assert {:error, {:unknown_invocation_keys, ["repository"]}} =
+               dispatch(fixture, Map.put(valid, "repository", policy.repository))
+
+      refute_received {:git_probe, ^ref, :adapter, _, _}
+      assert :ok = TaskAccessSupervisor.teardown(fixture.task_access_uri)
+    end)
+  end
+
+  test "authorization and static mismatches preserve their errors while adapter registry is unavailable" do
+    fixture = GitCapFixture.exact_task_cap(:resolve_repository)
+    policy = policy(fixture)
+    assert {:ok, _pid} = TaskAccessSupervisor.ensure_started(policy)
+    valid = operation_args(:resolve_repository, policy)
+
+    assert :ok =
+             Supervisor.terminate_child(
+               EzagentDomainGit.Application,
+               Ezagent.DomainGit.AdapterRegistry
+             )
+
+    on_exit(&restart_adapter_registry/0)
+
+    unauthorized = %{fixture.invocation | ctx: %{fixture.invocation.ctx | caps: MapSet.new()}}
+    assert {:error, :unauthorized} = Ezagent.Invocation.dispatch(unauthorized)
+
+    wrong_repository = %{policy.repository | external_id: "other"}
+    assert {:error, :repository_mismatch} = dispatch(fixture, %{repository: wrong_repository})
+
+    assert {:error, :registry_unavailable} = dispatch(fixture, valid)
+  end
+
   defp policy(fixture, provider_adapter \\ :"probe-git-adapter-a") do
     workspace = Ezagent.URI.workspace_name!(fixture.workspace_uri)
 
@@ -269,8 +327,7 @@ defmodule Ezagent.ActionSet.GitTaskAccessTest do
     %{
       repository: policy.repository,
       changes: [change],
-      request: request,
-      head_ref: request.head_ref
+      request: request
     }
   end
 
@@ -301,6 +358,14 @@ defmodule Ezagent.ActionSet.GitTaskAccessTest do
       {:git_probe, _, _, _} -> flush_probe()
     after
       0 -> :ok
+    end
+  end
+
+  defp restart_adapter_registry do
+    case Supervisor.restart_child(EzagentDomainGit.Application, Ezagent.DomainGit.AdapterRegistry) do
+      {:ok, _pid} -> :ok
+      {:ok, _pid, _info} -> :ok
+      {:error, :running} -> :ok
     end
   end
 end

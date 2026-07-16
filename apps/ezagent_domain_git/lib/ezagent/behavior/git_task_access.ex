@@ -26,6 +26,13 @@ defmodule Ezagent.ActionSet.GitTaskAccess do
     :list_checks,
     :list_reviews
   ]
+  @allowed_keys %{
+    resolve_repository: [:repository],
+    create_change_request: [:changes, :repository, :request],
+    read_change_request: [:change_request_id, :repository],
+    list_checks: [:commit_sha, :repository],
+    list_reviews: [:change_request_id, :repository]
+  }
 
   action(:resolve_repository,
     args: %{repository: :term},
@@ -36,15 +43,7 @@ defmodule Ezagent.ActionSet.GitTaskAccess do
   )
 
   action(:create_change_request,
-    args: %{
-      repository: :term,
-      changes: {:list, :term},
-      request: :term,
-      provider_adapter: {:option, :term},
-      base_ref: {:option, :term},
-      operation_context: {:option, :term},
-      workspace_uri: {:option, :term}
-    },
+    args: %{repository: :term, changes: {:list, :term}, request: :term},
     returns: :term,
     caps: [:create_change_request],
     modes: [:call],
@@ -128,13 +127,13 @@ defmodule Ezagent.ActionSet.GitTaskAccess do
   end
 
   defp validate_static_request(policy, action, %{repository: repository} = args) do
-    with :ok <- reject_request_coordinates(args),
+    with :ok <- validate_exact_keys(action, args),
          {:ok, repository} <- RepositoryRef.new(Map.from_struct(repository)),
          true <- repository == policy.repository,
          :ok <-
            GitTaskAccess.validate_invocation(
              policy,
-             args |> Map.delete(:repository) |> Map.put(:action, action)
+             invocation_comparison_args(action, args)
            ),
          :ok <- validate_action_values(action, args) do
       :ok
@@ -148,14 +147,17 @@ defmodule Ezagent.ActionSet.GitTaskAccess do
 
   defp validate_static_request(_policy, _action, _args), do: {:error, :repository_mismatch}
 
-  defp reject_request_coordinates(args) do
-    case Enum.find([:provider_adapter, :base_ref, :operation_context, :workspace_uri], fn field ->
-           Map.has_key?(args, field) or Map.has_key?(args, Atom.to_string(field))
-         end) do
-      nil -> :ok
-      field -> {:error, {:forbidden_invocation_field, field}}
-    end
+  defp validate_exact_keys(action, args) do
+    unknown =
+      args |> Map.keys() |> Enum.reject(&(&1 in Map.fetch!(@allowed_keys, action))) |> Enum.sort()
+
+    if unknown == [], do: :ok, else: {:error, {:unknown_invocation_keys, unknown}}
   end
+
+  defp invocation_comparison_args(:create_change_request, args),
+    do: %{action: :create_change_request, head_ref: args.request.head_ref}
+
+  defp invocation_comparison_args(action, _args), do: %{action: action}
 
   defp validate_action_values(:resolve_repository, _args), do: :ok
 
