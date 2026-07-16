@@ -84,6 +84,9 @@ defmodule EzagentWeb.MixProject do
       # layering hazard now closed).
       {:ezagent_domain_socialware, in_umbrella: true},
       {:ezagent_domain_agent_bridge, in_umbrella: true},
+      # Boot-lane skill reconcile + reseed_skills mix task hard-reference
+      # Ezagent.Home.SkillReconcile, defined in ezagent_domain_agent (#57 gate).
+      {:ezagent_domain_agent, in_umbrella: true},
       {:ezagent_domain_ui, in_umbrella: true},
       # World PR-0: host-scoped React/shadcn app mounted by LiveView.
       # Router references EzagentPluginWorld.WorldLive by module atom.

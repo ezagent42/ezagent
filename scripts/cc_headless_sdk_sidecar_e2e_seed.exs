@@ -17,7 +17,7 @@ real_sdk? = System.get_env("CC_HEADLESS_E2E_REAL_SDK") in ["1", "true", "TRUE", 
 config_dir =
   System.get_env("CC_HEADLESS_E2E_CONFIG_DIR") ||
     if real_sdk? do
-      Path.join(System.user_home!(), ".claude")
+      Path.join(System.tmp_dir!(), "ezagent-cc-headless-sdk-sidecar-config-#{uniq}")
     else
       Path.join(System.tmp_dir!(), "ezagent-cc-headless-sdk-sidecar-config-#{uniq}")
     end
