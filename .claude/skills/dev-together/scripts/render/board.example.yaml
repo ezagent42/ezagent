@@ -1,17 +1,19 @@
-# dev-together board.yaml — the single source of truth for one day.
-# `plan` writes it at start-of-day; `review` updates it at end-of-day.
-# Render with:  uv run --with pyyaml python board2html.py board.yaml board.html
-# (This file is a filled example — real days live at docs/together/<date>/board.yaml)
+# dev-together board.yaml — a DISPLAY page published each morning.
+# Model: the board for day N shows  PLAN(N) + DONE(N-1) + REVIEW(N-1).
+#   计划/进行中/待评审 columns = TODAY's plan (no card is `done` at publish time).
+#   完成 column            = YESTERDAY's done cards (the SAME full cards) — from `done_prev`.
+#   底部「昨日复盘」          = YESTERDAY's review — from `review`.
+# `plan` writes today's cards + carries yesterday's done cards → done_prev + yesterday's
+# review → review. Render:  uv run --with pyyaml python board2html.py board.yaml board.html
 
 date: "2026-07-16"
+prev_date: "07-15"
 north_star: "agent 开发自举 —— 平台能被用来开发 agent、企业能自助开 workspace 跑 dev-loop。"
 
-# 顶部进度条（1-2 条）。pct 驱动条宽；value 可覆盖右侧文字。
 progress:
   - {label: "本周「自举就绪度」", pct: 60}
-  - {label: "今日验收", pct: 42, value: "5 / 12 项已关"}
+  - {label: "昨日验收", pct: 100, value: "07-15 全绿"}
 
-# 总效能五块 ← #1427 工程效率分析 + #1431 audit（读数纪律：下界·agent 墙钟≠人力·禁个人绩效）
 efficiency:
   - {value: "1053", label: "近8周 merged PR"}
   - {value: "983h", label: "活跃工时下界"}
@@ -29,7 +31,6 @@ risks:
   - "G4（founder 自配 agent API key）依赖 cap-signing 授权模型收口"
   - "beta/stable 仍用旧 seed，晋级前确认新 seed 已载"
 
-# 泳道顺序 = people 顺序。color 给卡片/泳道上色。
 people:
   - {id: "gaga", name: "gaga", track: "agent 自举", color: "#7c3aed"}
   - {id: "zyli", name: "zyli", track: "CI→UI", color: "#0891b2"}
@@ -38,16 +39,7 @@ people:
   - {id: "jjkysy", name: "jjkysy", track: "协作白板抽取", color: "#65a30d"}
   - {id: "allen", name: "Allen", track: "部署 + 统筹", color: "#2563eb"}
 
-# 近期（昨日）完成 —— plan 从昨天 board.yaml 的 done 卡填这里，显示在「完成」列底部
-# 让每人的近期交付可见（当天列只显示当天）。
-recent_done:
-  - {owner: "zyli", title: "CI tsc+vitest 进 gate", date: "07-15", pr: 1415}
-  - {owner: "zhaomaota", title: "kanban 委派回流 (#1425)", date: "07-15", pr: 1425}
-  - {owner: "jjkysy", title: "mount/share/cap 白板基座", date: "07-15", pr: 1374}
-  - {owner: "allen", title: "stable 部署 + seed 修复", date: "07-15"}
-
-# 卡片：一任务一卡。status ∈ planned|wip|review|done|blocked（blocked 落在进行中列并标红）。
-# acceptance 每条 {text, done, evidence}：plan 写 text（done:false）、review 勾 done:true + 填 evidence。
+# ===== TODAY (07-16) plan — status ∈ planned|wip|review|blocked. NO `done` here. =====
 cards:
   - owner: "gaga"
     title: "Git provider provisioning（Plan A）"
@@ -57,22 +49,19 @@ cards:
     pr: {num: 1423, state: "draft"}
     acceptance:
       - {text: "Plan A 输出明确 transport 决策 + 接口", done: false}
-      - {text: "W29 最短路径原型：公共仓匿名 checkout + GitHub Git Data API 建 commit/branch/PR", done: false}
+      - {text: "W29 最短路径原型：公共仓匿名 checkout + GitHub Git Data API", done: false}
       - {text: "SSH 隔离证不出则诚实标 blocked，不用临时私钥", done: false}
-    review_note: "Plan A 安全前置 + W29 原型；不碰 canary/生产凭证/merge。"
-    prompt: "接 #1423 Plan A：安全前置（Secret Store / SSH parser / Cap / plugin 盘点 + sentinel 复现同 UID 凭证暴露 + SSH broker GO/NO-GO），并行 W29 最短路径原型。"
+    prompt: "接 #1423 Plan A：安全前置 + W29 最短路径原型；不碰 canary/生产凭证/merge。"
 
   - owner: "zyli"
     title: "CI 完善（第一优先级）"
     goal: "CI 是 dev-loop 地基"
     status: "wip"
-    who: "zyli · CI(P1) · #1415 merged"
-    pr: {num: 1415, state: "merged"}
+    who: "zyli · CI(P1)"
     acceptance:
       - {text: "Playwright/E2E smoke + 独立前端 CI workflow", done: false}
       - {text: "新增回归门存在且能演示一次红", done: false}
-      - {text: "fixture 从后端契约投影生成 + 漂移门", done: false}
-    review_note: "#1415（前端 tsc+vitest 进 gate）已合；今日续 E2E smoke。"
+      - {text: "fixture 从后端契约投影 + 漂移门", done: false}
     prompt: "续 #1415：加 Playwright/E2E smoke 与独立前端 CI workflow；fixture 从后端契约投影 + 漂移门。"
 
   - owner: "zyli"
@@ -91,23 +80,20 @@ cards:
     pr: {num: 1427, state: "open"}
     deps: ["依赖 cap-signing"]
     acceptance:
-      - {text: "每条缺口 = 用户旅程 + 每步明确验收标准（成功判据）", done: false}
+      - {text: "每条缺口 = 用户旅程 + 每步明确验收标准", done: false}
       - {text: "排出交付优先级与阶段", done: false}
-      - {text: "G4 标为有依赖项 + 依赖未就绪的降级/占位方案", done: false}
-    review_note: "接手 #1427 缺口清单（P0 硬闸门 G1/G2/G4/G5）；G4 依赖 cap-signing 授权模型收口。"
-    prompt: "接手 #1427：从产品角度把每条缺口写成用户旅程 + 每步验收标准，排优先级；G4 标依赖并给降级方案。并和 zyli 过 UI 清单。"
+      - {text: "G4 标为有依赖项 + 降级/占位方案", done: false}
+    prompt: "接手 #1427：每条缺口写成用户旅程 + 每步验收标准，排优先级；G4 标依赖并给降级方案。"
 
   - owner: "zhaomaota"
     title: "收口 #1425 产品缺口（主攻 1）"
     goal: "Hello 官网 = 用户入口"
     status: "wip"
-    who: "zhaomaota · 官网入口 · #1425 merged"
-    pr: {num: 1425, state: "merged"}
+    who: "zhaomaota · 官网入口"
     acceptance:
-      - {text: "Hello 回执改活刷新 / 明确引导去 World Kanban 看活板", done: false}
-      - {text: "补跨-workspace 接收拒绝测试（invariant #13）", done: false}
+      - {text: "Hello 回执改活刷新 / 引导 World Kanban", done: false}
+      - {text: "补跨-workspace 接收拒绝测试（inv #13）", done: false}
       - {text: "真实部署栈上验到回流", done: false}
-    review_note: "#1425 已合；回执现为委派时刻快照，需活刷新或引导。"
     prompt: "收口 #1425：回执改活刷新或引导 World Kanban；补跨-workspace 拒绝测试；真实栈录回流。"
 
   - owner: "zhaomaota"
@@ -117,7 +103,7 @@ cards:
     pr: {num: 1134, state: "open"}
     acceptance:
       - {text: "与 #1425 去重：rebase 抽独有重开，或关闭", done: false}
-    prompt: "分诊 #1134：与 #1425 去重，独有部分 rebase 重开干净 PR，否则关闭。"
+    prompt: "分诊 #1134：与 #1425 去重，独有部分 rebase 重开，否则关闭。"
 
   - owner: "jjkysy"
     title: "#1374/#1376 去重 → 干净白板 PR"
@@ -129,7 +115,7 @@ cards:
       - {text: "从 main（含 #1425）起干净分支", done: false}
       - {text: "抽 #1374 独有协作白板改版、与 #1425 去重", done: false}
       - {text: "新 PR gate 绿 + 关闭 #1374/#1376", done: false}
-    prompt: "从 main（含 #1425）起干净分支，抽 #1374 独有协作白板部分、与 #1425 去重，重开干净 PR，关闭 #1374/#1376。"
+    prompt: "从 main（含 #1425）起干净分支，抽 #1374 独有协作白板部分、与 #1425 去重，重开干净 PR，关 #1374/#1376。"
 
   - owner: "allen"
     title: "部署：beta/stable 晋级"
@@ -137,9 +123,8 @@ cards:
     status: "wip"
     who: "Allen · 部署"
     acceptance:
-      - {text: "canary 已载昨日全量", done: true, evidence: "✓ 重部成功"}
-      - {text: "beta/stable 用新 seed（EZAGENT_SIGNING_SEED_V1）人工晋级", done: false}
-    review_note: "canary 缺 seed freeze 已修复重部成功；beta/stable 晋级待办。"
+      - {text: "确认 canary 已载昨日全量", done: false}
+      - {text: "beta/stable 用新 seed 人工晋级", done: false}
 
   - owner: "allen"
     title: "cap-signing 严格化（per-Kind 授权）"
@@ -147,12 +132,11 @@ cards:
     status: "review"
     who: "Allen · 安全 · feat/cap-strict-capstore"
     branch: "feat/cap-strict-capstore"
-    flag: "codex 3 轮：威胁模型待定"
+    flag: "codex 4 轮 · Path A"
     acceptance:
-      - {text: "spec 重写为 per-Kind 自签自验模型", done: true, evidence: "✓ v3"}
-      - {text: "codex 对抗评审通过", done: false, evidence: "3 轮：同-BEAM 恶意代码防护需 Path A/B 岔路，待 Allen 定威胁模型"}
+      - {text: "spec 收敛（Path A：reviewed-code 威胁模型）", done: false, evidence: "v4 · codex round 4 评审中"}
       - {text: "按 PR 计划实现 + 部署 cutover", done: false}
-    review_note: "codex 3 轮把设计逼到基岩：授权/委派模型站得住，但密钥托管在单 BEAM 内挡不住恶意 in-VM 代码 → 待定 Path A（只防第一方）或 Path B（独立签名器=v11 复活）。"
+    review_note: "codex 3 轮逼到基岩 → Allen 定 Path A（只防第一方/reviewed-code）；v4 已起草，round 4 验 fail-open presenter。"
 
   - owner: "allen"
     title: "dev-together 看板统一"
@@ -161,31 +145,55 @@ cards:
     who: "Allen · 工具 · #1433"
     pr: {num: 1433, state: "open"}
     acceptance:
-      - {text: "确定性渲染流水线（board.yaml → board.html）", done: true, evidence: "✓ #1433"}
+      - {text: "确定性渲染流水线（board.yaml → board.html）", done: false, evidence: "#1433 迭代中"}
       - {text: "固化进 skill（plan/review 读写 board.yaml）", done: false}
-    review_note: "从 pandoc 文档流水线演进到 kanban 合一板：一块活板 = plan（开工）+ review（收工）。"
+
+# ===== YESTERDAY (07-15) done cards — shown in the 完成 column (same full cards) =====
+done_prev:
+  - owner: "zyli"
+    title: "CI tsc+vitest 进 gate"
+    goal: "前端类型/单测入门禁"
+    who: "zyli · CI · #1415 merged"
+    pr: {num: 1415, state: "merged"}
+    acceptance:
+      - {text: "前端 tsc + vitest 纳入 CI gate", done: true, evidence: "✓ #1415 已合入 main"}
+
+  - owner: "zhaomaota"
+    title: "kanban 委派回流（#1425）"
+    goal: "委派 + 回流"
+    who: "zhaomaota · #1425 merged"
+    pr: {num: 1425, state: "merged"}
+    acceptance:
+      - {text: "委派回流在代码+测试层验证", done: true, evidence: "✓ board_forward_test 1 test 0 failures"}
+      - {text: "合入 main", done: true, evidence: "✓ #1425"}
+
+  - owner: "jjkysy"
+    title: "mount/share/cap 白板基座"
+    who: "jjkysy · #1374"
+    pr: {num: 1374, state: "open"}
+    acceptance:
+      - {text: "mount/share/cap 基座在 #1425 落地", done: true, evidence: "✓ 已被 #1425 覆盖 → 今日抽独有部分重开"}
 
   - owner: "allen"
-    title: "canary 部署修复重上"
-    goal: "缺 seed 冻结 → 修复"
-    status: "done"
+    title: "stable 部署 + seed 修复"
+    goal: "canary 缺 seed 冻结 → 修复"
     who: "Allen · 部署"
     acceptance:
-      - {text: "定位 1.3 天冻结根因 = 缺 EZAGENT_SIGNING_SEED_V1", done: true, evidence: "✓ world 插件 boot :missing_seed"}
-      - {text: "补共享 seed 后 canary 重部", done: true, evidence: "✓ 载全量成功"}
-    review_note: "教训：dispatch 成功 ≠ 部署成功，要查 ezagent-deploy 仓库的实际 run。"
+      - {text: "定位冻结根因 = 缺 EZAGENT_SIGNING_SEED_V1", done: true, evidence: "✓ world 插件 boot :missing_seed"}
+      - {text: "补共享 seed 后 canary 重部载全量", done: true, evidence: "✓ 成功"}
+    review_note: "教训：dispatch 成功 ≠ 部署成功，查 ezagent-deploy 仓库实际 run。"
 
-# 收工填。review 汇总各卡验收结果 + 方法/事故。
+# ===== YESTERDAY (07-15) review — bottom 昨日复盘 =====
 review:
   method_deltas:
-    - "看板合一：plan 与 review 同一块板、验收清单同一张卡 → 结构上消除文档漂移。"
-    - "cap-signing 用 codex 对抗评审在实现前拦住基岩级架构问题（同-BEAM 隔离），避免大返工。"
+    - "canary 修复确立「dispatch 成功 ≠ 部署成功」的检查纪律。"
+    - "kanban 委派回流在代码+测试层验证到位，产品级收口结转今日。"
   incidents:
-    - "cap-signing 原「slice=隔离 / :sys.get_state 可硬化」判断被 codex 证伪 → 需 Path A/B 威胁模型决策。"
-    - "beta/stable 仍旧 seed，晋级前须确认。"
+    - "canary 因缺 EZAGENT_SIGNING_SEED_V1 冻结 1.3 天 → 补共享 seed 重部恢复。"
   delivery:
-    - {owner: "Allen", delivered: "#1433 渲染流水线 · cap spec v3", acceptance_result: "✅ #1433 · ⚠️ cap 待威胁模型决策", carryover: "cap Path A/B 决策 · beta/stable 晋级"}
-    - {owner: "zhaomaota", delivered: "#1425 已合", acceptance_result: "—（回执/回流收口进行中）", carryover: "回执活刷新 + 跨ws拒绝测试 + 真实栈验回流"}
+    - {owner: "zyli", delivered: "#1415 CI 门禁", acceptance_result: "✅ 已合", carryover: "E2E smoke + 独立 workflow"}
+    - {owner: "zhaomaota", delivered: "#1425 委派回流", acceptance_result: "✅ 代码+测试层", carryover: "回执活刷新 + 真实栈验回流"}
+    - {owner: "Allen", delivered: "stable 部署 + seed 修复", acceptance_result: "✅ canary 载全量", carryover: "beta/stable 晋级"}
   next_day:
-    - "cap-signing：按 Allen 定的 Path A/B 出 spec v4 / 或转 Path A 实现。"
-    - "gaga #1434 merged 后从 fresh main 起 Plan B。"
+    - "各 track 服务自举：gaga provisioning、zyli CI、ruihua 产品化、zhaomaota 收口、jjkysy 白板抽取。"
+    - "cap-signing 走 Path A、出 v4 过 codex round 4。"

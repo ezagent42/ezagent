@@ -204,34 +204,27 @@ def main():
     deploy_html = "".join(f'<div><span class="s">{e(d.get("env"))}</span>{e(d.get("state"))}</div>' for d in (b.get("deploy", []) or []))
     risks_html = "<br>".join(e(r) for r in (b.get("risks", []) or []))
 
-    # recent (prior-day) completions — compact chips appended under the 完成 column
-    recent = b.get("recent_done", []) or []
-    recent_html = ""
-    if recent:
-        by_date = {}
-        for r in recent:
-            by_date.setdefault(r.get("date", "近期"), []).append(r)
-        blocks = ""
-        for d, items in by_date.items():
-            chips = "".join(
-                f'<div class="rchip" style="--pc:{pcolor.get(it.get("owner"),"#2563eb")}">'
-                f'<span class="odot" style="background:{pcolor.get(it.get("owner"),"#2563eb")}"></span>'
-                f'{e(pname.get(it.get("owner"),it.get("owner","")))}：{e(it.get("title"))}'
-                f'{(" · #"+str(it["pr"])) if it.get("pr") else ""}</div>' for it in items)
-            blocks += f'<div class="rday">{e(d)} 完成</div>{chips}'
-        recent_html = f'<div class="recent">{blocks}</div>'
-
-    # board: 4 status columns, cards flow within (person = colour + name tag, no swimlane)
+    # This is a DISPLAY page published each morning: 计划/进行中/待评审 = TODAY's plan;
+    # 完成 = YESTERDAY's done cards (the same full cards); review = YESTERDAY's review.
+    prev_date = b.get("prev_date", "")
+    done_prev = b.get("done_prev", []) or []
+    for c in done_prev:
+        c["status"] = "done"
+        c.setdefault("who", c.get("owner", ""))
     order = {p["id"]: i for i, p in enumerate(people)}
     cols = []
     for status, label, cls in COLUMNS:
-        col_cards = [c for c in cards if c.get("status") == status
-                     or (status == "wip" and c.get("status") == "blocked")]
-        col_cards.sort(key=lambda c: order.get(c.get("owner"), 99))
+        if status == "done":
+            col_cards = list(done_prev)
+            if prev_date:
+                label = f'{label} · 昨日 {prev_date}'
+        else:
+            col_cards = [c for c in cards if c.get("status") == status
+                         or (status == "wip" and c.get("status") == "blocked")]
+        col_cards = sorted(col_cards, key=lambda c: order.get(c.get("owner"), 99))
         inner = "".join(render_card(c, pcolor, pname) for c in col_cards)
-        tail = recent_html if status == "done" else ""
         cols.append(f'<div class="colwrap"><div class="colhead {cls}">{label} '
-                    f'<span class="cnt">{len(col_cards)}</span></div><div class="cell">{inner}{tail}</div></div>')
+                    f'<span class="cnt">{len(col_cards)}</span></div><div class="cell">{inner}</div></div>')
     board_html = "\n    ".join(cols)
     legend = " ".join(f'<span class="lg"><span class="odot" style="background:{p.get("color","#2563eb")}">'
                       f'</span>{e(p.get("name"))}</span>' for p in people)
@@ -247,15 +240,16 @@ def main():
     nextday = "<br>".join("• " + e(x) for x in (rv.get("next_day", []) or []))
     review_html = ""
     if rv:
+        rv_date = f'（{e(prev_date)}）' if prev_date else ''
         review_html = f"""
   <div class="review">
-    <h2>今日复盘（收工填 · 卡片验收结果汇总 + 方法/事故）</h2>
+    <h2>昨日复盘{rv_date} · 卡片验收结果 + 方法/事故</h2>
     <div class="grid2">
       <div class="good"><b>方法沉淀</b><br>{md or '—'}</div>
-      <div class="inc"><b>今日风险/事故</b><br>{inc or '—'}</div>
+      <div class="inc"><b>风险/事故</b><br>{inc or '—'}</div>
     </div>
-    <table><tr><th>人</th><th>今日交付</th><th>验收结果</th><th>结转明日</th></tr>{rows}</table>
-    <h3 style="font-size:14px;color:#374151;margin-top:14px">明日建议</h3>
+    <table><tr><th>人</th><th>交付</th><th>验收结果</th><th>结转今日</th></tr>{rows}</table>
+    <h3 style="font-size:14px;color:#374151;margin-top:14px">今日建议</h3>
     <div style="font-size:12.5px;color:#475569">{nextday or '—'}</div>
   </div>"""
 
