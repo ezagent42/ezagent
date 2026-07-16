@@ -106,3 +106,13 @@ Task 0 review fixes applied after commit `c7de2619d`:
 
 Task 1 is complete on the inherited Plan A stack. Full CI, `mix precommit`, rebase,
 return readiness, deploy, and merge are not claimed. Task 2+ remains deferred.
+
+## Task 1 review-fix entry
+
+Review found the source-regex dependency inventory could miss valid Mix forms such
+as `{:ezagent_domain_identity, path: ...}`. The gate now reads the authoritative
+`Mix.Project.config()[:deps]`, normalizes valid two- and three-tuple dependency
+forms, asserts the exact dependency names, and separately requires every
+`ezagent_*` dependency to declare `in_umbrella: true`. A synthetic path-form
+fixture proves the forbidden dependency is inventoried and reported without
+mutating `mix.exs`.

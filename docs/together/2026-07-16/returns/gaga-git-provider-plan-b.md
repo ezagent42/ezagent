@@ -43,6 +43,11 @@ compile passed; the existing undeclared umbrella dependency and layer-purity gat
 passed 4 tests. The first green-test attempt was environment-blocked by unset
 `SHELL` during `erlexec` startup; `SHELL=/bin/bash` produced the reported pass.
 
+Task 1 review fix: replaced the source-regex inventory with authoritative
+`Mix.Project.config()[:deps]` tuple normalization. The focused suite now includes a
+path-form forbidden-dependency fixture proving it is both inventoried and rejected
+when `in_umbrella: true` is absent.
+
 ## Deferred boundary
 
 GitHub plugin, credentials/tokens, checkout/worktrees, Kanban, canary, #1360,
