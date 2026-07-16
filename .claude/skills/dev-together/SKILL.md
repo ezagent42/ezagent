@@ -86,14 +86,19 @@ standard + conflict/merge management:
 ## Artifacts — `docs/together/YYYY-MM-DD/` (one dated folder per day)
 ```
 docs/together/YYYY-MM-DD/
-├── plan.md             # lead (plan):    tasks, scope, per-task branches, conflict map
-├── plan.html           # lead (plan):    team-facing render of plan.md (product-first, no meta)
+├── board.yaml          # SINGLE SOURCE OF TRUTH — plan writes it (BOD), review updates it (EOD)
+├── board.html          # rendered kanban (plan+review 合一); regenerated from board.yaml, never hand-edited
 ├── handoffs/<task>.md  # lead (handoff): one reviewed handoff per task
 ├── returns/<task>.md   # dev  (return):  timestamped done + DoD artifact + merge request
-├── stack.md            # lead (push):    returns in analyzed merge order
-├── review.md           # lead (review):  end-of-day retrospective + next-day suggestions
-└── review.html         # lead (review):  team-facing render of review.md (product-first, no meta)
+└── stack.md            # lead (push):    returns in analyzed merge order
 ```
+**`board.yaml` replaces the old plan.md/plan.html/review.md/review.html four-file
+model.** It is one living kanban for the day: `plan` writes the cards with their
+acceptance checklists into status columns at start-of-day (the board *is* the
+plan); `review` moves cards, ticks acceptance with evidence, and fills the
+`review:` block at end-of-day (the board *is* the review). Cards left out of the
+`done` column are tomorrow's carryover. See `scripts/render/board.example.yaml`
+for the annotated schema.
 Durable design specs/notes still live in `docs/superpowers/`; `docs/together/` is
 the **daily operational record**.
 
@@ -136,19 +141,21 @@ edges). Example: 2026-06-24 (Wed) → `2026-W26`. Compute with
 - **Close PR state.** After `close`, every related GitHub PR is either merged
   through GitHub or explicitly closed/commented as subsumed by the `main` merge
   SHA. Never leave an open PR whose code already landed through the lead path.
-- **Team-facing render is deterministic — the model never hand-writes HTML.**
-  `plan` and `review` write their `.md` from the fixed templates in
-  `scripts/render/` (`plan.template.md` / `review.template.md`), then run
-  `scripts/render/md2html.sh <file>.md` to produce the `.html`. Presentation
-  (skeleton + house-style CSS) lives ONLY in
-  `scripts/render/dev-together.pandoc.html`, so every day is byte-identically
-  styled — no visual drift, no re-authored `<style>`. Content structure is pinned
-  by the markdown templates (per-track sections), and continuity is pinned by the
-  review template's **验收结果**（逐条对着当天 `plan` 的验收标准关）+ **结转明日**
-  （进次日 `plan`）. The `.html` is the team artifact (product-first, no Claude↔lead
-  meta); `.md` stays the machine/`plan` input. A missing `.html` — or a
-  hand-authored one — means the step is incomplete. To change the look, edit the
-  template, never the daily file.
+- **The board render is deterministic — the model never hand-writes HTML.**
+  `plan` and `review` edit **`board.yaml`** (structured card data); the `.html` is
+  produced only by
+  `uv run --with pyyaml python scripts/render/board2html.py docs/together/<date>/board.yaml`.
+  Presentation (kanban skeleton + house-style CSS + the clickable-card JS) lives
+  ONLY in `board2html.py`, so every day is byte-identically styled — no visual
+  drift, no re-authored `<style>`. Content structure is pinned by the yaml schema
+  (`scripts/render/board.example.yaml`); **continuity is pinned in the card
+  itself** — a card's `acceptance:` list is written by `plan` (`done: false`) and
+  ticked by `review` (`done: true` + `evidence`), and any card not in the `done`
+  column is tomorrow's carryover. `board.html` is the team artifact (product-first,
+  no Claude↔lead meta); `board.yaml` is the machine/`plan` input. A missing or
+  hand-authored `board.html` means the step is incomplete. To change the look,
+  edit `board2html.py`, never the daily file. (Requires `uv`; `pyyaml` is fetched
+  by `--with`, no repo dep.)
 - **Superpowers SDD scratch.** When delegating to
   `superpowers:subagent-driven-development`, use the current Superpowers
   workspace convention: task briefs, reports, review diffs, and progress ledger

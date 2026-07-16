@@ -52,19 +52,22 @@ section order is fixed so the format stops drifting and `plan.html` mirrors it
    add, drop, re-scope, or re-assign. Only after the lead confirms do you proceed
    to write `plan.md`. Never auto-finalize a plan the lead has not seen the
    per-dev task lists for.
-8. Write `docs/together/<date>/plan.md`: the **lead-confirmed** task list + scope
-   + branches + conflict map + the intended `handoff` order. Write it from the
-   fixed template `scripts/render/plan.template.md` (copy, fill the `{{...}}`
-   slots per person, delete the guide comments) — one track per person, each with
-   **目标 / 今日 / 验收 / 依赖 / PR**. The **验收** lines are the exact checklist
-   that day's `review` closes against, so make each one a decidable success
-   judgement, not a vague aim. **Carry over** every unclosed/blocked/`结转明日`
-   item from yesterday's `review.md` into the matching track's **今日** — from the
-   file, not from memory.
+8. Write `docs/together/<date>/board.yaml`: the **lead-confirmed** day, as
+   structured card data (copy `scripts/render/board.example.yaml`, fill it). It is
+   the single source of truth for the day. Set the `date`, `north_star`,
+   `progress`, `efficiency` (from the latest `pr_session_hours` / audit read),
+   `deploy`, `risks`, the `people` swimlanes, and one **card per task** —
+   `owner` / `title` / `goal` / `status: planned|wip` / `pr` / `deps` / an
+   `acceptance:` list (each `{text, done: false}`) / and the dev's `prompt`. The
+   `acceptance` texts are the exact checklist that day's `review` ticks against, so
+   make each a decidable success judgement, not a vague aim. **Carry over** every
+   unclosed/blocked card from yesterday's `board.yaml` (set `carryover: true`) —
+   from the file, not from memory. (Branches + conflict map live in the card
+   `branch`/`deps` fields and the handoffs.)
 9. **Render (deterministic — never hand-write HTML):**
-   `scripts/render/md2html.sh docs/together/<date>/plan.md`. Same pinned
-   skeleton + CSS as `review.html`; a missing `plan.html` means the step is
-   incomplete.
+   `uv run --with pyyaml python scripts/render/board2html.py docs/together/<date>/board.yaml`.
+   Presentation lives only in `board2html.py`; a missing/hand-authored
+   `board.html` means the step is incomplete.
 
 ## Plan completeness gate
 
