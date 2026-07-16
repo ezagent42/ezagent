@@ -53,22 +53,27 @@ defmodule EzagentCore.Architecture.GitAdapterBoundaryScanner do
     }
   end
 
-  defp adapter_effects(@action_set_path, _ast), do: []
-
   defp adapter_effects(path, ast) do
     aliases = aliases(ast)
     module_lookup? = contains_adapter_lookup?(ast, aliases)
 
-    function_bodies(ast)
-    |> Enum.flat_map(fn body ->
-      {_body, findings} =
-        Macro.prewalk(body, [], fn node, acc ->
-          if adapter_effect_call?(node, aliases, module_lookup?),
-            do: {node, [{path, line(node)} | acc]},
-            else: {node, acc}
-        end)
+    approved_action_set? =
+      path == @action_set_path and module_names(ast) == [Ezagent.ActionSet.GitTaskAccess]
 
-      findings
+    function_bodies(ast)
+    |> Enum.flat_map(fn {name, body} ->
+      if approved_action_set? and name in [:lookup_adapter, :invoke] do
+        []
+      else
+        {_body, findings} =
+          Macro.prewalk(body, [], fn node, acc ->
+            if adapter_effect_call?(node, aliases, module_lookup?),
+              do: {node, [{path, line(node)} | acc]},
+              else: {node, acc}
+          end)
+
+        findings
+      end
     end)
     |> Enum.uniq()
   end
@@ -243,14 +248,29 @@ defmodule EzagentCore.Architecture.GitAdapterBoundaryScanner do
   defp function_bodies(ast) do
     {_ast, bodies} =
       Macro.prewalk(ast, [], fn
-        {kind, _, [_head, [do: body]]} = node, acc when kind in [:def, :defp] ->
-          {node, [body | acc]}
+        {kind, _, [{name, _, _args}, [do: body]]} = node, acc
+        when kind in [:def, :defp] and is_atom(name) ->
+          {node, [{name, body} | acc]}
 
         node, acc ->
           {node, acc}
       end)
 
     bodies
+  end
+
+  defp module_names(ast) do
+    {_ast, names} =
+      Macro.prewalk(ast, [], fn
+        {:defmodule, _, [{:__aliases__, _, parts}, _body]} = node, acc
+        when is_list(parts) ->
+          {node, [Module.concat(parts) | acc]}
+
+        node, acc ->
+          {node, acc}
+      end)
+
+    Enum.reverse(names)
   end
 
   defp forbidden_field?(field) do
@@ -327,6 +347,29 @@ defmodule EzagentCore.Architecture.GitAdapterBoundaryTest do
 
       assert Scanner.scan_source("apps/ezagent_domain_git/lib/adapter_registry.ex", callback).adapter_effects !=
                []
+    end
+
+    test "action-set path permits effects only in the approved module and private chokepoints" do
+      path = "apps/ezagent_domain_git/lib/ezagent/behavior/git_task_access.ex"
+
+      extra_helper = """
+      defmodule Ezagent.ActionSet.GitTaskAccess do
+        def bypass(adapter), do: adapter.list_checks(:context, :repository, :sha)
+      end
+      """
+
+      extra_module = """
+      defmodule Ezagent.ActionSet.GitTaskAccess do
+        defp invoke(adapter), do: adapter.list_checks(:context, :repository, :sha)
+      end
+
+      defmodule HiddenBypass do
+        def invoke(adapter), do: adapter.list_checks(:context, :repository, :sha)
+      end
+      """
+
+      assert Scanner.scan_source(path, extra_helper).adapter_effects != []
+      assert Scanner.scan_source(path, extra_module).adapter_effects != []
     end
 
     test "positive fixtures plant every forbidden boundary crossing" do

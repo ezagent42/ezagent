@@ -50,7 +50,7 @@ Already verified after the current-main rebase and Task 12 fixes:
 
 ```text
 SHELL=/bin/bash mix cmd --app ezagent_domain_git mix test
-  -> 84 tests, 0 failures
+  -> 86 tests, 0 failures
 
 SHELL=/bin/bash mix test \
   apps/ezagent_domain_git/test/integration/git_task_dispatch_test.exs
@@ -79,10 +79,19 @@ Three serial full-precommit attempts were diagnostic, not green claims:
 
 3. The final run completed every umbrella app. All apps except core passed,
    including Web 359/0 (the prior teardown timeout did not reproduce), Git domain
-   84/0, and CLI 37/0. Core reported 2123 tests / 5 failures: the SkillRegistry
+   84/0 at that checkpoint, and CLI 37/0. Core reported 2123 tests / 5 failures: the SkillRegistry
    seed/runtime mismatch plus four scanner-task failures caused by current main's
    single `skill_reconcile.ex` URI finding. Therefore `mix precommit` is recorded
    as failed, not green. Full log: `/tmp/plan-b-precommit-3.log`.
+
+Broad static review then found and drove two TDD fixes before handoff. The real
+dispatch path now rejects a same-workspace wrong-caller replay and an invalid
+signature before adapter lookup/effects by requiring exact policy grantee,
+matching full capability axes, and `Cap.verify_for/2`. The repository scanner now
+allows adapter effects only in the sole intended ActionSet module's private
+`lookup_adapter`/`invoke` chokepoints, rather than exempting the whole file. RED
+was integration 5/2 plus scanner 11/1; GREEN is integration 5/0, scanner 11/0,
+full Git domain 86/0, and all doc/architecture/invariant gates above PASS.
 
 ## Baseline reproduction
 

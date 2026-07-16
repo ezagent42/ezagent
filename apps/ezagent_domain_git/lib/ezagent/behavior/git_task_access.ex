@@ -18,6 +18,8 @@ defmodule Ezagent.ActionSet.GitTaskAccess do
   }
 
   alias Ezagent.Entity.GitTaskAccess
+  alias Ezagent.Cap
+  alias Ezagent.Capability.Authorization
 
   @actions [
     :resolve_repository,
@@ -116,6 +118,7 @@ defmodule Ezagent.ActionSet.GitTaskAccess do
     TaskAccessSupervisor.with_lifecycle(uri, fn ->
       with {:ok, policy} <- GitTaskAccess.revalidate(ctx.read.(:policy, nil)),
            {:ok, validated_args} <- validate_static_request(policy, action, args),
+           :ok <- authorize_receiver(policy, action, ctx),
            {:ok, operation_context} <- operation_context(policy, action, ctx),
            {:ok, adapter} <- lookup_adapter(policy.provider_adapter) do
         invoke(adapter, action, operation_context, policy.repository, validated_args)
@@ -205,6 +208,26 @@ defmodule Ezagent.ActionSet.GitTaskAccess do
       idempotency_key:
         "#{policy.idempotency_inputs.task_id}:#{policy.idempotency_inputs.generation}:#{action}"
     })
+  end
+
+  defp authorize_receiver(policy, action, ctx) do
+    caller = Map.get(ctx, :caller)
+
+    needed = %{
+      kind: :resource,
+      behavior: __MODULE__,
+      action: action,
+      instance: Map.get(ctx, :self_uri),
+      workspace_uri: policy.workspace_uri
+    }
+
+    with true <- caller == policy.grantee_uri,
+         {:ok, cap} <- Authorization.authorizing_cap(Map.get(ctx, :caps), needed),
+         true <- Cap.verify_for(cap, caller) do
+      :ok
+    else
+      _ -> {:error, :unauthorized}
+    end
   end
 
   defp lookup_adapter(provider_adapter) do
