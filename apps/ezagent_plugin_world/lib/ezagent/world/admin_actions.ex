@@ -11,6 +11,11 @@ defmodule Ezagent.World.AdminActions do
   @doc "Route a world admin action to its handler."
   @spec handle_dispatch(Phoenix.LiveView.Socket.t(), String.t(), map()) ::
           {:noreply, Phoenix.LiveView.Socket.t()}
+  def handle_dispatch(socket, "admin.registration.save", %{"registration" => params})
+      when is_map(params) do
+    save_registration(socket, params)
+  end
+
   def handle_dispatch(socket, "admin.smtp.save", %{"smtp" => params}) when is_map(params) do
     save_smtp(socket, params)
   end
@@ -53,6 +58,34 @@ defmodule Ezagent.World.AdminActions do
 
   def handle_dispatch(socket, _action, _args) do
     {:noreply, assign(socket, :last_dispatch_status, "error:unsupported_action")}
+  end
+
+  @doc "Persist public-registration and invite requirements from the admin settings form."
+  @spec save_registration(Phoenix.LiveView.Socket.t(), map()) ::
+          {:noreply, Phoenix.LiveView.Socket.t()}
+  def save_registration(socket, params) do
+    if Ezagent.Identity.admin?(socket.assigns.current_entity_uri) do
+      open? = truthy?(Map.get(params, "open"))
+      require_invite? = truthy?(Map.get(params, "require_invite"))
+
+      :ok = Ezagent.AppSettings.put("registration_open", open?)
+      :ok = Ezagent.AppSettings.put("registration_require_invite", require_invite?)
+
+      put_settings(socket, %{"registration_flash" => "Registration settings saved."}, "ok")
+    else
+      put_settings(
+        socket,
+        %{"registration_flash" => "error:unauthorized"},
+        "error:unauthorized"
+      )
+    end
+  rescue
+    err ->
+      put_settings(
+        socket,
+        %{"registration_flash" => "error:#{inspect(err)}"},
+        "error:registration_save_failed"
+      )
   end
 
   @doc "Persist SMTP config from the world settings form."
@@ -267,6 +300,8 @@ defmodule Ezagent.World.AdminActions do
   defp reason_string(reason) when is_binary(reason), do: reason
   defp reason_string(reason) when is_atom(reason), do: Atom.to_string(reason)
   defp reason_string(reason), do: inspect(reason)
+
+  defp truthy?(value), do: value in [true, "true", "on", 1, "1"]
 
   defp put_external_mirror_state(socket, %URI{} = session_uri, status) do
     bindings = AdminData.external_mirror_bindings_for(session_uri)

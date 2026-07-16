@@ -44,13 +44,23 @@ defmodule Ezagent.World.WorkspacePluginData do
          %{component: component, name: name},
          base,
          _workspace,
-         _caller,
-         _caps
+         caller,
+         caps
        )
        when component in ["workspace_detail", "workspace_template_new"] do
     base
-    |> Map.merge(workspace_detail(name))
+    |> Map.merge(workspace_detail(name, caller, caps))
     |> maybe_put_template_mode(component)
+  end
+
+  defp component_state(
+         %{component: "kb"},
+         base,
+         workspace_uri,
+         _caller,
+         _caps
+       ) do
+    Map.put(base, "kb_agents", kb_agent_rows(workspace_uri))
   end
 
   defp component_state(%{component: "plugins"} = route, base, _workspace_uri, _caller, _caps) do
@@ -148,7 +158,7 @@ defmodule Ezagent.World.WorkspacePluginData do
     err -> [%{"error" => inspect(err)}]
   end
 
-  defp workspace_detail(name) when is_binary(name) do
+  defp workspace_detail(name, caller, caps) when is_binary(name) do
     case Ezagent.Workspace.Store.get_by_name(name) do
       nil ->
         %{"name" => name, "not_found" => true}
@@ -164,12 +174,44 @@ defmodule Ezagent.World.WorkspacePluginData do
           "routing_rules" => Enum.map(ws.routing_rules || [], &jsonable/1),
           "socialwares" => socialware_rows(ws.uri)
         }
+        |> Map.merge(invite_state(ws.uri, caller, caps))
     end
   rescue
     err -> %{"name" => name, "not_found" => true, "error" => inspect(err)}
   end
 
-  defp workspace_detail(_), do: %{"not_found" => true}
+  defp workspace_detail(_, _caller, _caps), do: %{"not_found" => true}
+
+  defp invite_state(%URI{} = workspace_uri, %URI{} = caller, caps) do
+    case Ezagent.Workspace.Invites.list(workspace_uri, %{caller: caller, caps: caps}) do
+      {:ok, %{invites: invites}} ->
+        %{"can_manage_invites" => true, "invites" => Enum.map(invites, &jsonable/1)}
+
+      {:error, _reason} ->
+        %{"can_manage_invites" => false, "invites" => []}
+    end
+  end
+
+  defp invite_state(_workspace_uri, _caller, _caps) do
+    %{"can_manage_invites" => false, "invites" => []}
+  end
+
+  defp kb_agent_rows(%URI{scheme: "workspace"} = workspace_uri) do
+    "kb"
+    |> Ezagent.Agent.RecipeResolver.list_by_recipe(workspace_uri)
+    |> Enum.map(fn uri ->
+      uri_string = encode_uri(uri)
+
+      %{
+        "uri" => uri_string,
+        "display_name" => display_name(uri_string) || Ezagent.URI.name!(uri)
+      }
+    end)
+  rescue
+    _ -> []
+  end
+
+  defp kb_agent_rows(_workspace_uri), do: []
 
   defp workspace_live?(%URI{} = uri) do
     Ezagent.LocalRuntime.kind_alive?(uri)

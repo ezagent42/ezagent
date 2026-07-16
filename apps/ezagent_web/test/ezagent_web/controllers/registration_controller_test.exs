@@ -2,13 +2,31 @@ defmodule EzagentWeb.RegistrationControllerTest do
   use EzagentWeb.ConnCase
 
   alias Ezagent.AppSettings
-  alias Ezagent.Entity.{InviteCode, MagicLinkToken, Profile}
+  alias Ezagent.Entity.{InviteCode, MagicLinkToken, Profile, RegistrationRequest}
   alias Ezagent.Users
 
   describe "GET /register gate (task #87)" do
-    test "closed by default → shows the closed notice", %{conn: conn} do
+    test "closed by default → shows request-access and invite paths", %{conn: conn} do
       body = conn |> get("/register") |> html_response(200)
       assert body =~ "Registration is currently closed"
+      assert body =~ ~s(id="registration-request-form")
+      assert body =~ ~s(id="invite-registration-form")
+    end
+
+    test "a valid invite deep link opens the registration form while public registration is closed",
+         %{conn: conn} do
+      code = mint_invite()
+
+      body = conn |> get("/register?invite=#{URI.encode_www_form(code)}") |> html_response(200)
+      assert body =~ ~s(name="email")
+      assert body =~ ~s(value="#{code}")
+      assert body =~ "readonly"
+    end
+
+    test "an invalid invite deep link stays closed with an actionable error", %{conn: conn} do
+      body = conn |> get("/register?invite=invalid") |> html_response(200)
+      assert body =~ "Registration is currently closed"
+      assert body =~ "invite code is not valid"
     end
 
     test "open → shows the email+password form", %{conn: conn} do
@@ -24,6 +42,21 @@ defmodule EzagentWeb.RegistrationControllerTest do
       AppSettings.put("registration_require_invite", true)
       body = conn |> get("/register") |> html_response(200)
       assert body =~ ~s(name="invite_code")
+    end
+  end
+
+  describe "POST /register/request" do
+    test "stores a normalized pending request and returns a uniform receipt", %{conn: conn} do
+      body =
+        conn
+        |> post("/register/request", %{"email" => "  Buyer@Example.com "})
+        |> html_response(200)
+
+      assert body =~ "Request received"
+
+      assert Enum.any?(RegistrationRequest.list_pending(), fn request ->
+               request.email == "buyer@example.com"
+             end)
     end
   end
 
@@ -46,11 +79,7 @@ defmodule EzagentWeb.RegistrationControllerTest do
       AppSettings.put("registration_open", true)
       AppSettings.put("registration_require_invite", true)
 
-      {:ok, {code, _}} =
-        InviteCode.mint(%{
-          workspace_uri: "workspace://team-alpha",
-          created_by: "entity://system/user/admin"
-        })
+      code = mint_invite()
 
       email = "reg#{System.unique_integer([:positive])}@ex.com"
 
@@ -92,11 +121,7 @@ defmodule EzagentWeb.RegistrationControllerTest do
       AppSettings.put("registration_open", true)
       AppSettings.put("registration_require_invite", true)
 
-      {:ok, {code, _}} =
-        InviteCode.mint(%{
-          workspace_uri: "workspace://team-alpha",
-          created_by: "entity://system/user/admin"
-        })
+      code = mint_invite()
 
       email = "conf#{System.unique_integer([:positive])}@ex.com"
 
@@ -115,5 +140,26 @@ defmodule EzagentWeb.RegistrationControllerTest do
       conn = get(conn, "/auth/confirm/bogus")
       assert redirected_to(conn) == "/login"
     end
+  end
+
+  defp mint_invite do
+    suffix = System.unique_integer([:positive])
+    workspace_name = "registration-controller-#{suffix}"
+    admin_uri = Ezagent.Entity.User.admin_uri()
+
+    {:ok, _workspace_pid} =
+      Ezagent.Workspace.create(workspace_name, %{
+        created_by: admin_uri
+      })
+
+    workspace_uri = Ezagent.URI.workspace(workspace_name)
+
+    {:ok, {code, _invite}} =
+      InviteCode.mint(%{
+        workspace_uri: URI.to_string(workspace_uri),
+        created_by: URI.to_string(admin_uri)
+      })
+
+    code
   end
 end

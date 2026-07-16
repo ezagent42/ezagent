@@ -26,16 +26,16 @@ defmodule Ezagent.ActionSet.WorkspaceUserAdminTest do
   end
 
   describe "contract surface" do
-    test "actions/0 lists :create_user only" do
-      assert WUA.actions() == [:create_user]
+    test "actions/0 lists user provisioning and workspace invite management" do
+      assert WUA.actions() == [:create_user, :mint_invite, :list_invites, :revoke_invite]
     end
 
     test "new-contract marker __behavior__?/0 is true" do
       assert WUA.__behavior__?() == true
     end
 
-    test "__action_names__/0 lists :create_user only" do
-      assert WUA.__action_names__() == [:create_user]
+    test "__action_names__/0 mirrors actions/0" do
+      assert WUA.__action_names__() == WUA.actions()
     end
 
     test "required_caps/0 has an entry per action with the SPEC v2 struct shape" do
@@ -58,8 +58,8 @@ defmodule Ezagent.ActionSet.WorkspaceUserAdminTest do
     end
 
     # Phase B: `init_slice/1` → `create/1` (PERSISTENT state).
-    test "create/1 starts with create_count: 0" do
-      assert WUA.create(%{}) == {:ok, %{create_count: 0}}
+    test "create/1 starts user and invite counters at zero" do
+      assert WUA.create(%{}) == {:ok, %{create_count: 0, invite_mutation_count: 0}}
     end
 
     test "__actions__/0 covers every action in actions/0" do
@@ -99,6 +99,13 @@ defmodule Ezagent.ActionSet.WorkspaceUserAdminTest do
 
       assert {:error, {:bad_workspace_uri, _}} =
                WUA.handle_create_user(%{user_uri: "entity://x/user/y"}, ctx)
+    end
+
+    test "mint_invite rejects invalid quotas before touching the store" do
+      ctx = %{empty_ctx() | caller: Ezagent.URI.new!("entity://x/user/owner")}
+
+      assert {:error, {:bad_max_uses, 0}} =
+               WUA.handle_mint_invite(%{max_uses: 0, expires_in_hours: 24}, ctx)
     end
   end
 end
