@@ -47,15 +47,28 @@ Self-use, disposable data → **wipe + reseed**: quiesce → wipe cap-bearing da
 - **admin root** + key-versioning + identity anchoring; bootstrap ordering.
 - **Delete**: dual-read / `verify_for` / `require_signature` / the self-healer / v11's central-signer + public-keyring machinery.
 
-## 9. Testing / gates
-- Forged / unsigned / wrong-action / wrong-presenter cap rejected at the ActionSet macro — a regression per representative action (session.send, create_session, PTY read, kanban write…).
-- A cap signed by a **different** Kind than the target is rejected → retarget closed.
-- `K.grant` rejects a caller lacking a valid authority-cap-on-`K` → issuance impersonation closed; recursion to admin root proven.
-- Verify is always local to the target (topology/multi-hop test).
-- **No-bypass build gates**: no action authorizes outside the ActionSet macro; no cap minted outside `K.grant`; every action with a cap requirement declares it.
-- Bootstrap: admin-first, each Kind anchored; strict verify holds end-to-end on a freshly seeded stack.
+## 9. Behavioral tests (the X holes, closed)
+Per representative cap-gated action (session.send, create_session, PTY read, kanban write, world read_unfiltered…):
+- **Forge/tamper** — an unsigned cap, and a cap whose fields were mutated after signing, are rejected fail-loud at the ActionSet macro.
+- **Retarget** — a cap signed by a **different** Kind than the target is rejected (verify uses the *target's* own key).
+- **Issuer-impersonation** — `K.grant` rejects a caller lacking a valid authority-cap-on-`K`; the delegation recursion to the admin root is exercised and proven non-circular.
+- **Bootstrap** — admin-first, each Kind anchored to `entity://admin`; strict verify holds end-to-end on a freshly seeded stack.
+- **Distribution locality** — verify is always local to the target Kind (topology/multi-hop test asserts no cross-node verify).
 
-## 10. Open (impl-level)
+## 10. Gate plan (this is a first-class deliverable, not just tests)
+Two enforcement layers, following the ezagent static-gate discipline (`check_invariants` → `ci.local` full-suite; run pre-push):
+
+**A. Completion / invariant gate — behavioral, fail-when-the-goal-is-unmet.** One end-to-end `/goal`-style test on a freshly seeded stack that a reviewer runs and reads pass/fail: forged, tampered, retargeted, and issuer-impersonated caps are EACH rejected fail-loud, and a legitimately `K.grant`-minted cap is accepted. This test **fails on today's `origin/main`** (soft dual-read accepts unsigned) — that red is the proof it gates the real hole.
+
+**B. Structural arch-gate — static AST/grep, enforces no-bypass, ratcheting.** In `check_invariants`:
+1. The symmetric **sign** primitive is referenced ONLY from the issuance chokepoint (`K.grant`); **verify** ONLY from the ActionSet macro. No other module calls them.
+2. **Every** cap-gated action DECLARES its ActionSet cap requirement (the macro is present); an action that consumes a cap without the declared macro is a gate failure.
+3. No authorization decision reads cap fields **outside** the ActionSet macro (best-effort AST — see limit below).
+4. The per-Kind **key** field is read ONLY inside sign/verify — not exfiltrated by any other code path.
+
+**Honest enforceability limit** (carried from the v11 work): caps are public Elixir structs, so "no cap-field authz outside the macro" is not *perfectly* statically provable — the guarantee is **runtime** (the dispatch pipeline consults ONLY the ActionSet macro for the authorization decision) **plus** the best-effort AST regression gate above. **The new model makes this gate materially stronger than v11**: v11 had to gate ~20 scattered cap-matcher consumers; here verification collapses to ONE dispatch macro and minting to ONE `K.grant`, so the "only-these-two-chokepoints" scan surface is minimal and the ratchet can hold at a tight bound.
+
+## 11. Open (impl-level)
 - Exact per-Kind key storage in the slice + activation-load; symmetric primitive (HMAC vs a symmetric AEAD/MAC).
 - The ActionSet macro's precise hook point in the dispatch pipeline (where authorize currently is).
 - admin-root key custody mechanism (mounted secret) + version scheme.
