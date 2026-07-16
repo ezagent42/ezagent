@@ -29,6 +29,7 @@
     "kanban.attach_upload",
     "kanban.claim_node",
     "kanban.create",
+    "kanban.delete_board",
     "kanban.detach_artifact",
     "kanban.drop_subtree",
     "kanban.move_node",
