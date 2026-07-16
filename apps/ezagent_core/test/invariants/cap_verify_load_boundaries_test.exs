@@ -9,6 +9,10 @@ defmodule Ezagent.Invariants.CapVerifyLoadBoundariesTest do
   `verified_set/2` before entering an entity slice. These checks do not claim
   cryptographic authority; the target Kind verifies its own signature at
   dispatch.
+
+  Git task access is the one signed-only consumption boundary: core remains in
+  legacy dual-read mode, while provider effects require an exact receiver-bound
+  artifact immediately before adapter selection.
   """
   use ExUnit.Case, async: true
 
@@ -20,6 +24,7 @@ defmodule Ezagent.Invariants.CapVerifyLoadBoundariesTest do
   @snapshot "apps/ezagent_core/lib/ezagent/kind/snapshot.ex"
   @cap "apps/ezagent_core/lib/ezagent/cap.ex"
   @cli_dispatch "apps/ezagent_cli/lib/ezagent_cli/dispatch.ex"
+  @git_task_access "apps/ezagent_domain_git/lib/ezagent/behavior/git_task_access.ex"
 
   @storage_homes %{
     @identity_behavior => 3,
@@ -79,6 +84,10 @@ defmodule Ezagent.Invariants.CapVerifyLoadBoundariesTest do
 
     assert definition_source(@outbound_grant, :normalize_attrs, 1) =~
              "Ezagent.Cap.storable_for?"
+
+    git_authorizer = definition_source(@git_task_access, :authorize_receiver, 3)
+    assert git_authorizer =~ "signed_for?"
+    assert git_authorizer =~ "Cap.verify_for"
 
     assert definition_source(@snapshot, :load_with_fallback, 3) =~
              "verify_snapshot_caps(receiver_uri)"

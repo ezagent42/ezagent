@@ -101,6 +101,12 @@ matches exact private signatures only: `defp lookup_adapter/1` and
 `defp invoke/5`; public same-name fixtures are rejected. Final focused integration
 is 6/0, scanner 11/0, and full Git domain 87/0.
 
+The new signed-only consumption boundary increases the ratcheted core
+`Cap.verify_for/2` homes from seven to eight. The invariant now names this exact
+Git ActionSet file, asserts `authorize_receiver/3` contains both the signed-shape
+guard and `Cap.verify_for/2`, and retains the count cap at eight. Final static
+re-review reports no Critical or Important findings.
+
 ## Baseline reproduction
 
 Clean detached `origin/main@6bfe3d1b3` in `/tmp/ezagent-origin-main-verify` reports
