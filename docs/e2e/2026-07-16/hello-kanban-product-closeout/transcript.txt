@@ -1,0 +1,25 @@
+Recording A — Hello snapshot receipt to live World Kanban
+
+- Open /hello/fusion.
+- Submit a unique authenticated delegation instruction.
+- Observe the Hello receipt: “委派快照 · 非实时状态”.
+- Follow “在 World Kanban 查看实时进度”.
+- Observe the delegated task on the concrete live board.
+- Claim the task and change status to “doing”.
+- Reload the board; “doing” remains visible.
+- Return to Hello; the receipt still identifies itself as a snapshot.
+
+Recording B — concierge navigation
+
+- Open /hello/fusion as the authenticated owner.
+- Submit “看看团队”.
+- Wait for the concierge navigation action.
+- Observe the Team tab selected and the core-team surface visible.
+- Verify 林懿伦 is visibly rendered before the recording succeeds.
+
+Environment notes
+
+- Disposable origin: http://127.0.0.1:10052
+- Video viewport: 1280×720, device scale factor 1
+- Credentials and model keys are supplied only through runtime environment;
+  no secret values are present in this evidence bundle.

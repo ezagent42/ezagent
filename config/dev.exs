@@ -4,8 +4,8 @@ import Config
 # Plug.Debugger usually catches first; this controls the fallback case).
 config :ezagent_web, :show_error_debug, true
 
-# Keep the operator console on world.localhost in local development.
-config :ezagent_web, :world_host_scope, "world."
+# Allow the operator console on localhost and tailnet IPs in local development.
+config :ezagent_web, :world_host_scope, nil
 
 # task #87 — in dev, email goes to the in-memory Local adapter (preview at
 # /dev/mailbox if mounted) so confirmation/reset links work with no SMTP.
@@ -62,9 +62,8 @@ config :ezagent_web, EzagentWeb.Endpoint,
   ]
 
 config :ezagent_plugin_world,
-  world_module_url:
-    "http://localhost:#{System.get_env("WORLD_VITE_PORT") || "5173"}/src/main.tsx",
-  world_css_url: nil
+  world_module_url: "/assets/world/main.js",
+  world_css_url: "/assets/world/world.css"
 
 # Resource-unification P2 — upload download-token signing secret (core-owned
 # config key). Wired to the same value as the web endpoint's secret_key_base so

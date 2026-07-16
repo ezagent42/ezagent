@@ -141,7 +141,9 @@ defmodule Ezagent.Socialware.BoardProvision do
     ① **在 from_session 里**(是 from_session 的成员),且
     ② **from_session 对这块板有 access** —— 即 from_session 的 `assistant_role` 成员持有一把
        指向这块板(instance 精确)的 `behavior` cap(这块板被 pull/create 进了 from_session)。
-  任一不满足 → `{:error, :no_forward_access}`。**不要求 caller 是板主人**(那是拉板)。
+  任一不满足 → `{:error, :no_forward_access}`。此外 board、来源 session、目标 session
+  必须属于同一 workspace；跨 workspace 在解析接收者和 mint/Mount 之前返回
+  `{:error, :cross_workspace_denied}`。**不要求 caller 是板主人**(那是拉板)。
 
     * `board_uri` —— 已存在的板(数据宿主)。
     * `from_session_uri` —— caller 所在、且对板有 access 的来源 session。
@@ -151,7 +153,7 @@ defmodule Ezagent.Socialware.BoardProvision do
       的 role_name(默认 `"kanban-assistant"`)、`:read_actions` 覆盖只读动作集。
 
   返回 `{:ok, %{assistant_uri, minted}}` 或
-  `{:error, :no_forward_access | :no_assistant_in_target | term()}`。
+  `{:error, :cross_workspace_denied | :no_forward_access | :no_assistant_in_target | term()}`。
   """
   @spec forward_board(URI.t(), URI.t(), URI.t(), module(), map()) ::
           {:ok, %{assistant_uri: URI.t(), minted: [Ezagent.Capability.t()]}} | {:error, term()}
@@ -166,7 +168,8 @@ defmodule Ezagent.Socialware.BoardProvision do
     assistant_role = Map.get(caller_ctx, :assistant_role, @default_assistant_role)
     read_actions = Map.get(caller_ctx, :read_actions, @default_read_actions)
 
-    with :ok <-
+    with :ok <- same_workspace(board_uri, from_session_uri, to_session_uri),
+         :ok <-
            assert_forward_access(
              board_uri,
              from_session_uri,
@@ -186,6 +189,16 @@ defmodule Ezagent.Socialware.BoardProvision do
            ) do
       {:ok, %{assistant_uri: assistant_uri, minted: minted}}
     end
+  end
+
+  defp same_workspace(board_uri, from_session_uri, to_session_uri) do
+    workspaces =
+      [board_uri, from_session_uri, to_session_uri]
+      |> Enum.map(&Ezagent.Capability.workspace_of/1)
+      |> Enum.map(&URI.to_string/1)
+      |> Enum.uniq()
+
+    if length(workspaces) == 1, do: :ok, else: {:error, :cross_workspace_denied}
   end
 
   # 转发守卫:caller 必须 ① 在 from_session 里 ② from_session 的 assistant 持指向该板的 cap

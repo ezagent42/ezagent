@@ -98,6 +98,7 @@ type WorldState = IdentitiesState & WorkspacePluginState & ConversationState & {
   component?: string
   current_session_uri?: string | null
   inbound_events?: Array<Record<string, unknown>>
+  kanban_uri?: string | null
   layout?: WorldLayout
   path?: string
   sessions?: Array<{
@@ -917,15 +918,15 @@ const PLUGIN_PAGE_RENDERERS: Record<
   string,
   (component: NonNullable<WorldLayout["components"]>[number], context: RenderContext) => React.ReactElement
 > = {
-  // kanban 插件页 = 配置面（像 VSCode 插件设置）：只放出站连接器凭证（Miro / GitHub
-  // token）。mode="config" 强制渲 KanbanList，操作 UI（建树/认领/编辑）不在本页出——
-  // 那些走会话(session) tab 的富 Kanban（Conversation.tsx activeMode==="kanban"）。
+  // Kanban index = connector config; a URI detail route = that board's live
+  // operating surface. Session tabs keep using the same rich Kanban component,
+  // while Hello receipts can deep-link to one concrete live board.
   // 两条路都经 onWorkspacePluginAction → world:dispatch → PluginPageRegistry 白名单，
   // 白名单原样不动（改 mode 只影响本页渲染，不动 tab 的操作准入）。
   kanban: (component, context) => (
     <ManageFrame key={component.id} active="plugins" title="Kanban">
       <Kanban
-        mode="config"
+        mode={context.state.kanban_uri ? "operate" : "config"}
         state={{...context.state, component: component.type} as KanbanState}
         onAction={context.onWorkspacePluginAction}
       />
