@@ -1,0 +1,112 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Dev-together · 2026-07-16 团队 plan</title>
+<style>
+  :root{ --bg:#f6f7f9; --card:#fff; --ink:#1a1d21; --muted:#5b6470; --line:#e5e8ec;
+         --accent:#2b6cb0; --ok:#1f9d55; --warn:#c05621; --chip:#eef2f7; }
+  @media (prefers-color-scheme: dark){
+    :root{ --bg:#14171a; --card:#1d2126; --ink:#e8eaed; --muted:#9aa4b0; --line:#2c323a;
+           --accent:#63b3ed; --ok:#48bb78; --warn:#ed8936; --chip:#252b33; } }
+  *{box-sizing:border-box}
+  body{margin:0;background:var(--bg);color:var(--ink);
+       font:15px/1.6 -apple-system,BlinkMacSystemFont,"Segoe UI","PingFang SC","Microsoft YaHei",sans-serif}
+  .wrap{max-width:900px;margin:0 auto;padding:28px 18px 60px}
+  header{margin-bottom:22px}
+  h1{font-size:22px;margin:0 0 6px}
+  .sub{color:var(--muted);font-size:14px}
+  .goal{background:var(--card);border:1px solid var(--line);border-left:4px solid var(--accent);
+        border-radius:10px;padding:14px 16px;margin:16px 0 26px}
+  .goal b{color:var(--accent)}
+  .note{color:var(--warn);font-size:13.5px;margin-top:6px}
+  .card{background:var(--card);border:1px solid var(--line);border-radius:12px;
+        padding:16px 18px;margin:14px 0;box-shadow:0 1px 2px rgba(0,0,0,.04)}
+  .who{display:flex;align-items:baseline;gap:10px;margin-bottom:8px}
+  .who h2{font-size:17px;margin:0}
+  .who .role{color:var(--muted);font-size:13px}
+  .row{margin:6px 0}
+  .k{display:inline-block;min-width:44px;color:var(--muted);font-weight:600;font-size:13px;
+     vertical-align:top}
+  .v{display:inline}
+  ul{margin:4px 0 4px 0;padding-left:20px}
+  li{margin:3px 0}
+  .chip{display:inline-block;background:var(--chip);border:1px solid var(--line);border-radius:6px;
+        padding:1px 7px;font-size:12px;color:var(--muted);margin-left:4px}
+  .acc{color:var(--ok);font-weight:600;font-size:13px}
+  code{background:var(--chip);border-radius:4px;padding:0 4px;font-size:13px}
+  b{font-weight:600}
+  .dep{color:var(--warn)}
+</style>
+</head>
+<body>
+<div class="wrap">
+<header>
+  <h1>Dev-together · 2026-07-16 团队 plan</h1>
+  <div class="sub">开工时在你的 prompt 里引用本页对应段落。</div>
+  <div class="goal">
+    本周目标：<b>agent 开发自举（dev-loop 自举）</b> —— 让平台能被用来开发 agent、企业用户能自助开 workspace 跑 dev-loop。今日各条 track 都服务这个目标。
+    <div class="note">注意：不要在中间分支上深挖过多——手段服务目标，别把支撑线做成 headline。</div>
+  </div>
+</header>
+
+<div class="card">
+  <div class="who"><h2>gaga</h2><span class="role">· agent 开发自举（Git provider dev-loop / provisioning）</span></div>
+  <div class="row"><span class="k">目标</span><span class="v">打通"企业/开发者在平台上自助开 workspace 并跑 agent dev-loop"的 provisioning（凭证隔离 + Git provider）。</span></div>
+  <div class="row"><span class="k">今日</span><span class="v">续 <b>#1423 Plan A</b>：安全前置（Secret Store / SSH parser / Cap / plugin 盘点 + sentinel 复现同 UID 凭证暴露 + SSH broker GO/NO-GO）+ <b>W29 最短路径原型</b>（公共仓库匿名 checkout + GitHub Git Data API 建 commit/branch/PR）。</span></div>
+  <div class="row"><span class="k acc">验收</span><span class="v">Plan A 输出明确 transport 决策 + 接口；不碰 canary/生产凭证/merge；SSH 隔离证不出就诚实标 blocked、不用临时私钥。<span class="chip">#1423 Draft</span></span></div>
+</div>
+
+<div class="card">
+  <div class="who"><h2>zyli</h2><span class="role">· CI 完善（第一优先级）→ UI 完善（与 ruihua）</span></div>
+  <div class="row"><span class="k">目标</span><span class="v">CI 是 dev-loop 的地基，先扎实；再和 ruihua 过 UI 并开始开发。</span></div>
+  <div class="row"><span class="k">今日</span><span class="v">
+    <b>① CI 完善（P1）</b>：续 #1415（前端 tsc+vitest 已进 gate）——Playwright/E2E smoke + 独立前端 CI workflow / 针对 CI 配置本身的回归测试。若接前端 Tier-1 Playwright handoff（<code>docs/superpowers/handoffs/2026-07-15-frontend-tier1-playwright-e2e-zyli-handoff.md</code>）：仅前端、跑 ubuntu gate、<b>fixture 从后端契约投影生成 + 漂移门</b>（杜绝 mock-drift）。<br>
+    <b>② UI（P2）</b>：和 ruihua 一起过 UI 完善问题、开始开发。</span></div>
+  <div class="row"><span class="k acc">验收</span><span class="v">CI 项目落地且绿（新增回归门存在、演示一次它能红）；UI 问题清单达成一致、有优先级。</span></div>
+</div>
+
+<div class="card">
+  <div class="who"><h2>ruihua</h2><span class="role">· 企业自助开通 workspace（产品化）+ UI（与 zyli）</span></div>
+  <div class="row"><span class="k">目标</span><span class="v">把 <b>#1427</b> 的"自助开通 workspace 缺口清单"从工程排查推进到<b>产品化、可交付、可验收</b>的下段规划。</span></div>
+  <div class="row"><span class="k">今日</span><span class="v">
+    <b>① 接手 #1427</b>（<code>docs/plans/2026-07-16-workspace-self-service-gaps.md</code>）——已有 P0 硬闸门（G1 注册开关无 UI / G2 邀请码仅 CLI / G4 founder 无权自配 agent API key / G5 缺 key 失败态不可行动）、P1 可发现/可恢复、P2 业务闭环。<b>从产品角度完善</b>：每条缺口写成<b>用户旅程 + 每步明确验收标准（成功判据）</b>，排出交付优先级与阶段。
+    <ul>
+      <li><span class="dep">G4 依赖 agent 授权模型收口</span>（= cap-signing 线）→ 标为<b>有依赖项</b>，给出"依赖未就绪时的降级/占位"方案。</li>
+      <li>#1427 的<b>工程效率分析</b>（<code>engineering-efficiency-analysis.md</code>，session 工时下界）作为<b>产能参考</b>（读数纪律：下界、agent 墙钟≠人力、禁止个人绩效用途）。</li>
+    </ul>
+    <b>② 和 zyli 一起过 UI 完善问题清单</b>、定优先级，开始开发。</span></div>
+  <div class="row"><span class="k acc">验收</span><span class="v">自助开通 workspace 产品计划逐条可验收（每条 = 用户旅程 + 成功判据 + 优先级/阶段 + 依赖标注）；UI 清单与 zyli 对齐、有优先级。<span class="chip">#1427</span></span></div>
+</div>
+
+<div class="card">
+  <div class="who"><h2>zhaomaota</h2><span class="role">· 收口 #1425 产品缺口 + 分诊 #1134</span></div>
+  <div class="row"><span class="k">目标</span><span class="v">Hello 官网是用户入口，把昨天合的 #1425 打磨到产品可用，并清掉陈旧 PR。</span></div>
+  <div class="row"><span class="k">今日</span><span class="v">
+    <b>① 收口 #1425 缺口</b>：Hello 回执现在是<b>委派时刻快照</b>（用户看不到回流）→ 改成<b>活刷新，或明确引导去 World Kanban 看活板</b>；补<b>跨-workspace 接收拒绝</b>测试（invariant #13）；在<b>真实部署栈</b>上验回流（disposable 栈起不来接收方的活 kanban tab）。参考 <code>docs/notes/2026-07-15-kanban-reflux-deploy-verify.md</code>。<br>
+    <b>② 分诊 #1134</b>（2 周前 hello PR：concierge + publish-as-template + 公开只读 + 官网导航 + world durable listings）：和 #1425 比，被覆盖还是有独有内容？<b>rebase 抽独有部分重开，或关闭</b>。</span></div>
+  <div class="row"><span class="k acc">验收</span><span class="v">① 回执不再误导用户 + 跨-workspace 拒绝有测试 + 真实栈上录到回流；② #1134 有明确处置。<span class="chip">#1425 已合</span><span class="chip">#1134 待分诊</span></span></div>
+</div>
+
+<div class="card">
+  <div class="who"><h2>jjkysy</h2><span class="role">· #1374/#1376 去重收口 → 干净协作白板 PR</span></div>
+  <div class="row"><span class="k">目标</span><span class="v">#1425（已合 main）已覆盖 mount/share/cap 基建；把 #1374 的独有部分干净化。</span></div>
+  <div class="row"><span class="k">今日</span><span class="v">
+    <ul>
+      <li>从 main（含 #1425）起<b>干净分支</b>；</li>
+      <li>把 #1374 里<b>独有的「认领式协作白板改版」</b>（去 gh + 普通用户全链 + 协作白板 UX）抽出，和 #1425 已有的分享/挂载/cap <b>去重</b>，重开一个<b>干净 PR</b>；</li>
+      <li><b>关闭 #1374 和 #1376</b>。</li>
+    </ul></span></div>
+  <div class="row"><span class="k acc">验收</span><span class="v">新 PR 不含 #1425 已有的 mount/share/cap 代码、只留协作白板独有改动、gate 绿；#1374/#1376 已关。</span></div>
+</div>
+
+<div class="card">
+  <div class="who"><h2>Allen</h2><span class="role">· 部署 + 统筹</span></div>
+  <div class="row"><span class="k">部署</span><span class="v">beta/stable 用新 seed（<code>EZAGENT_SIGNING_SEED_V1</code>）人工晋级；确认 canary 已载昨日全量。</span></div>
+  <div class="row"><span class="k">统筹</span><span class="v">各条 track 清障、验收合并；cap-signing 严格化实现稍后再定投入（spec+plan 已在 <code>feat/cap-strict-capstore</code>）。</span></div>
+</div>
+
+</div>
+</body>
+</html>
