@@ -19,7 +19,7 @@ defmodule Ezagent.DomainGit.FileChange do
           | {:error,
              :invalid_file_change | :change_limit_exceeded | :invalid_change_limits_config}
   def validate_many(changes) when is_list(changes) and changes != [] do
-    with true <- Enum.all?(changes, &match?(%__MODULE__{}, &1)),
+    with true <- Enum.all?(changes, &valid_struct?/1),
          {:ok, limits} <- ChangeLimits.current() do
       if length(changes) <= limits.max_files and
            Enum.all?(changes, &(byte_size(&1.content) <= limits.max_file_bytes)) and
@@ -35,6 +35,15 @@ defmodule Ezagent.DomainGit.FileChange do
   end
 
   def validate_many(_changes), do: {:error, :invalid_file_change}
+
+  defp valid_struct?(%__MODULE__{} = change) do
+    case new(Map.from_struct(change)) do
+      {:ok, _validated} -> true
+      {:error, _reason} -> false
+    end
+  end
+
+  defp valid_struct?(_change), do: false
 
   defp validate_values(attrs) do
     cond do

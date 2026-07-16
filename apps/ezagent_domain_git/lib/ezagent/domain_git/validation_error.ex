@@ -9,7 +9,7 @@ defmodule Ezagent.DomainGit.ValidationError do
           | {:missing_field, atom()}
           | {:invalid_field, atom()}
 
-  @spec validate_attrs(term(), [atom()], (map() -> :ok | {:error, atom()})) ::
+  @spec validate_attrs(term(), [atom()], (map() -> :ok | {:error, t()})) ::
           :ok | {:error, t()}
   def validate_attrs(attrs, fields, validate_values) when is_map(attrs) do
     keys = Map.keys(attrs)

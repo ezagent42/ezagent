@@ -64,6 +64,20 @@ defmodule Ezagent.DomainGit.ChangeLimitsTest do
     assert FileChange.validate_many([a]) == {:error, :invalid_change_limits_config}
   end
 
+  test "validate_many rejects forged FileChange structs without raising" do
+    forged = [
+      struct!(FileChange, path: "a", operation: :upsert, content: nil),
+      struct!(FileChange, path: "a", operation: :upsert, content: 123),
+      struct!(FileChange, path: "../a", operation: :upsert, content: "x"),
+      struct!(FileChange, path: "a", operation: :delete, content: "x"),
+      struct!(FileChange, path: "a", operation: :upsert, content: <<255>>)
+    ]
+
+    for change <- forged do
+      assert FileChange.validate_many([change]) == {:error, :invalid_file_change}
+    end
+  end
+
   defp restore(:absent), do: Application.delete_env(:ezagent_domain_git, :change_limits)
   defp restore(value), do: Application.put_env(:ezagent_domain_git, :change_limits, value)
 end

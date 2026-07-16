@@ -31,11 +31,16 @@ defmodule Ezagent.DomainGit.CreateChangeRequest do
       not RepositoryRef.valid_ref?(attrs.head_ref) ->
         {:error, {:invalid_field, :head_ref}}
 
-      not match?(%CommitSha{}, attrs.expected_base_sha) ->
+      not valid_commit_sha?(attrs.expected_base_sha) ->
         {:error, {:invalid_field, :expected_base_sha}}
 
       true ->
         :ok
     end
   end
+
+  defp valid_commit_sha?(%CommitSha{value: value}),
+    do: CommitSha.valid_sha1?(value) and value == String.downcase(value)
+
+  defp valid_commit_sha?(_value), do: false
 end

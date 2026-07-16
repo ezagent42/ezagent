@@ -159,3 +159,16 @@ Only approved provider-neutral values, `Error`, `ValidationError`, runtime
 were implemented. Adapter, registry, Resource, ActionSet, provider, HTTP/
 credentials, persistence, UI, and Kanban remain absent. Full precommit/CI/readiness
 is not claimed.
+
+## Task 2 review-fix implementation
+
+Regression RED reproduced three findings: forged nested `CommitSha` accepted,
+non-URI OperationContext input raised during workspace extraction, and forged
+FileChange content raised in `byte_size/1` (14 tests, 3 failures). Fixes validate
+URI roles before workspace access, require an exact lowercase SHA wrapper, and
+revalidate FileChange invariants before limits. The Error union gate now parses the
+actual `@type t` AST and an extra-member fixture proves drift detection. The
+ValidationError callback spec now accepts tuple reasons.
+
+Post-fix full domain app: 17/0; warnings-as-errors compile passes; applicable core
+dependency/layer/URI gates: 13/0. Full precommit/CI remains unclaimed.

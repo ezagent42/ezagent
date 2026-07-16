@@ -70,6 +70,12 @@ domain app at 16/0 and applicable core dependency/layer/URI gates at 12/0. Full
 precommit, CI, PR readiness, provider integration, deployment, and merge are not
 claimed.
 
+Task 2 review fixes captured 14/3 RED for unsafe nested SHA acceptance and two
+forged-input crashes, then GREEN at full domain app 17/0. The Error union assertion
+now parses actual union AST with an extra-member negative fixture. Warning-clean
+compile and applicable core dependency/layer/URI gates 13/0 pass; full precommit/CI
+is still not claimed.
+
 ## Deferred boundary
 
 GitHub plugin, credentials/tokens, checkout/worktrees, Kanban, canary, #1360,

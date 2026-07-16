@@ -66,6 +66,19 @@ defmodule Ezagent.DomainGit.ValueContractTest do
 
     assert {:error, {:invalid_field, :caller_uri}} =
              OperationContext.new(%{context | caller_uri: uri("entity://other/user/alice")})
+
+    for field <- [:task_access_uri, :caller_uri, :grantee_uri] do
+      assert {:error, {:invalid_field, ^field}} =
+               OperationContext.new(%{context | field => :not_a_uri})
+    end
+
+    assert {:error, {:invalid_field, :task_access_uri}} =
+             OperationContext.new(%{
+               context
+               | task_access_uri: nil,
+                 caller_uri: :also_invalid,
+                 grantee_uri: "not a URI"
+             })
   end
 
   test "provider web URLs are absolute safe HTTP(S), not Ezagent URIs" do
@@ -149,6 +162,20 @@ defmodule Ezagent.DomainGit.ValueContractTest do
     assert {:ok, %CommitSha{value: value}} = CommitSha.new(%{value: sha("A")})
     assert value == sha("a")
     assert {:error, {:invalid_field, :value}} = CommitSha.new(%{value: String.duplicate("a", 64)})
+
+    request = %{
+      title: "T",
+      body: "B",
+      head_ref: "feature/x",
+      expected_base_sha: struct!(CommitSha, value: sha())
+    }
+
+    assert {:ok, %CreateChangeRequest{}} = CreateChangeRequest.new(request)
+
+    for forged <- [struct!(CommitSha, value: "invalid"), struct!(CommitSha, value: sha("A"))] do
+      assert {:error, {:invalid_field, :expected_base_sha}} =
+               CreateChangeRequest.new(%{request | expected_base_sha: forged})
+    end
   end
 
   test "file changes are UTF-8 upserts with protected repository paths" do
