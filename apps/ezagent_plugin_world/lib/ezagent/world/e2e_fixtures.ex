@@ -17,21 +17,21 @@ defmodule Ezagent.World.E2EFixtures do
       {"sessions_table",
        %{
          "component" => "sessions_table",
-         "current_session_uri" => "session://acme/default/alpha-support",
+         "current_session_uri" => "session://acme/support/alpha-support",
          "path" => "/sessions",
          "sessions" => [
            %{
              "name" => "Alpha support",
-             "uri" => "session://acme/default/alpha-support",
+             "uri" => "session://acme/support/alpha-support",
              "workspace_uri" => "workspace://acme"
            },
            %{
              "name" => "Release room",
-             "uri" => "session://acme/default/release-room",
+             "uri" => "session://acme/support/release-room",
              "workspace_uri" => "workspace://acme"
            }
          ],
-         "templates" => ["default"],
+         "templates" => ["support"],
          "title" => "Chat",
          "workspace_uri" => "workspace://acme"
        }},
@@ -46,11 +46,11 @@ defmodule Ezagent.World.E2EFixtures do
          "messages" => [],
          "path" => "/sessions/alpha-support",
          "routing_rules" => [],
-         "session_uri" => "session://acme/default/alpha-support",
+         "session_uri" => "session://acme/support/alpha-support",
          "sessions" => [
            %{
              "name" => "Alpha support",
-             "uri" => "session://acme/default/alpha-support",
+             "uri" => "session://acme/support/alpha-support",
              "workspace_uri" => "workspace://acme"
            }
          ],

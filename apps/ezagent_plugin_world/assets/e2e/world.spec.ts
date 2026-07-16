@@ -1,6 +1,10 @@
 import {expect, test, type Page} from "@playwright/test"
+import generatedFixtures from "./fixtures/world.e2e.fixtures.json" with {type: "json"}
 
 type RecordedEvent = {event: string; payload: Record<string, unknown>}
+
+const sessionsFixtureUri = generatedFixtures.fixtures.sessions.state.current_session_uri
+const conversationFixtureUri = generatedFixtures.fixtures.conversation.state.session_uri
 
 async function openFixture(page: Page, fixture: string) {
   await page.goto(`/?fixture=${fixture}`)
@@ -53,7 +57,7 @@ test("all four primary navigation entries emit world:navigate", async ({page}) =
   await openFixture(page, "sessions")
 
   const expected = [
-    ["Chat", "/sessions?session=session%3A%2F%2Facme%2Fdefault%2Falpha-support"],
+    ["Chat", `/sessions?session=${encodeURIComponent(sessionsFixtureUri)}`],
     ["Agents", "/identities/agents"],
     ["Manage", "/workspaces"],
     ["Overview", "/overview"],
@@ -72,7 +76,7 @@ test("sessions interaction emits an admitted world:dispatch", async ({page}) => 
 
   await expect.poll(() => lastEvent(page)).toEqual({
     event: "world:dispatch",
-    payload: {action: "sessions.join", args: {session_uri: "session://acme/default/alpha-support"}},
+    payload: {action: "sessions.join", args: {session_uri: sessionsFixtureUri}},
   })
   expect(await page.evaluate(() => window.__WORLD_E2E__.contractViolation())).toBeNull()
 })
@@ -86,7 +90,7 @@ test("conversation composer emits chat.send", async ({page}) => {
     event: "world:dispatch",
     payload: {
       action: "chat.send",
-      args: {session_uri: "session://acme/default/alpha-support", text: "Tier-1 hello", grants: []},
+      args: {session_uri: conversationFixtureUri, text: "Tier-1 hello", grants: []},
     },
   })
   expect(await page.evaluate(() => window.__WORLD_E2E__.contractViolation())).toBeNull()
