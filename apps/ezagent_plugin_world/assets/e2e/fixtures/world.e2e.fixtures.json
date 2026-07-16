@@ -40,6 +40,7 @@
     "kanban.set_metric",
     "kanban.set_stage",
     "kanban.set_status",
+    "kanban.share_board",
     "kanban.sync_miro",
     "kanban.unclaim_node",
     "layout.manage",
