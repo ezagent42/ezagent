@@ -330,10 +330,14 @@ export function Conversation({
   const [publishName, setPublishName] = React.useState("")
   const [published, setPublished] = React.useState(false)
   // Kanban 分享链接：点分享 → dispatch kanban.share_board → 后端回推 world:state.share_link
-  // → 弹 modal 展示链接 + 自动复制到剪贴板（下方 useEffect 消费）。shareRequestedRef 保证
+  // → 弹 modal（㉙ 两选项：分享到会话 / 复制分享链接）。shareRequestedRef 保证
   // 只有用户点了分享才弹（避免挂载时 state 里已有旧 share_link 就自弹）。
   const [shareLink, setShareLink] = React.useState<string | null>(null)
-  const [shareCopied, setShareCopied] = React.useState(false)
+  // ㉚ 复制真实成败：copied=已复制 / failed=复制失败（回退也没成，提示手动复制）
+  const [shareCopyState, setShareCopyState] = React.useState<"copied" | "failed" | null>(null)
+  // ㉙ 分享到会话后的轻提示
+  const [sharedToSession, setSharedToSession] = React.useState(false)
+  const [shareBoardName, setShareBoardName] = React.useState<string | null>(null)
   const shareRequestedRef = React.useRef(false)
   const [ruleMatcherType, setRuleMatcherType] = React.useState("always")
   const [ruleMatcherArg, setRuleMatcherArg] = React.useState("")
@@ -621,27 +625,38 @@ export function Conversation({
   const handleShareKanban = (kanbanUri: string) => {
     if (!kanbanUri) return
     shareRequestedRef.current = true
+    setShareBoardName(kanbanUri.split("/").filter(Boolean).pop() || null)
     onKanbanAction("kanban.share_board", {kanban_uri: kanbanUri})
   }
 
-  const copyShareLink = (link: string) => {
-    if (typeof navigator !== "undefined" && navigator.clipboard) {
-      navigator.clipboard
-        .writeText(link)
-        .then(() => {
-          setShareCopied(true)
-          window.setTimeout(() => setShareCopied(false), 2000)
-        })
-        .catch(() => undefined)
-    }
+  // ㉚ 复制：navigator.clipboard 仅安全上下文（https/localhost）可用，经 http://<IP>
+  // 访问时静默失败——回退 textarea 选中 + document.execCommand("copy")，并把真实
+  // 成败反馈给用户（不再无条件宣称"已复制"）。
+  const copyShareLink = async (link: string) => {
+    const ok = await copyTextRobust(link)
+    setShareCopyState(ok ? "copied" : "failed")
+    if (ok) window.setTimeout(() => setShareCopyState((cur) => (cur === "copied" ? null : cur)), 2000)
+  }
+
+  // ㉙ 分享到会话：把带板引用的分享链接作为消息发进当前 session chat（现有
+  // session.send 通道）；消息文本带接收链接 → chat 渲染层的链接 unfurl 注册表
+  // （㉝，见 unfurl.tsx）把它渲成看板气泡（不显示裸链接）。
+  const shareToSession = (link: string) => {
+    if (!sessionUri) return
+    const label = shareBoardName ? `看板「${shareBoardName}」` : "看板"
+    onSend(sessionUri, `【看板分享】${label} ${link}`, [])
+    setShareLink(null)
+    setSharedToSession(true)
+    window.setTimeout(() => setSharedToSession(false), 2000)
   }
 
   const kanbanShareLink = (state as unknown as KanbanState).share_link
   React.useEffect(() => {
     if (!kanbanShareLink || !shareRequestedRef.current) return
     shareRequestedRef.current = false
+    setShareCopyState(null)
     setShareLink(kanbanShareLink)
-    copyShareLink(kanbanShareLink)
+    void copyShareLink(kanbanShareLink)
   }, [kanbanShareLink])
 
   const toggleMembers = () => {
@@ -1510,7 +1525,7 @@ export function Conversation({
       </div>
     )}
 
-    {shareCopied && (
+    {shareCopyState === "copied" && (
       <div className="pointer-events-none fixed inset-x-0 top-6 z-[100] flex justify-center">
         <div className="ez-msg-in pointer-events-auto flex items-center gap-2 rounded-lg bg-card px-4 py-2.5 text-sm font-medium text-foreground shadow-lg ring-1 ring-border">
           <CheckCircle2 aria-hidden="true" className="h-[18px] w-[18px] text-emerald-500" />
@@ -1519,24 +1534,45 @@ export function Conversation({
       </div>
     )}
 
+    {sharedToSession && (
+      <div className="pointer-events-none fixed inset-x-0 top-6 z-[100] flex justify-center">
+        <div className="ez-msg-in pointer-events-auto flex items-center gap-2 rounded-lg bg-card px-4 py-2.5 text-sm font-medium text-foreground shadow-lg ring-1 ring-border">
+          <CheckCircle2 aria-hidden="true" className="h-[18px] w-[18px] text-emerald-500" />
+          已分享到会话
+        </div>
+      </div>
+    )}
+
+    {/* ㉙ 分享两选项：①分享到会话（板引用发进当前 chat，渲成看板气泡）②复制分享链接 */}
     <Modal
       open={shareLink !== null}
-      title="看板分享链接"
+      title="分享看板"
       footer={
         <>
           <Button variant="ghost" onClick={() => setShareLink(null)}>
             关闭
           </Button>
-          <Button onClick={() => shareLink && copyShareLink(shareLink)}>
+          <Button variant="secondary" onClick={() => shareLink && copyShareLink(shareLink)} data-world-kanban-share-copy>
             <Copy aria-hidden="true" className="h-4 w-4" />
-            复制链接
+            复制分享链接
+          </Button>
+          <Button onClick={() => shareLink && shareToSession(shareLink)} disabled={!sessionUri} data-world-kanban-share-to-session>
+            <Send aria-hidden="true" className="h-4 w-4" />
+            分享到会话
           </Button>
         </>
       }
     >
       <p className="mb-2 text-sm text-muted-foreground">
-        任何拿到此链接的人都能<strong>只读</strong>查看这块看板（链接 7 天内有效）。已自动复制到剪贴板。
+        <strong>分享到会话</strong>：把看板以气泡发进当前会话的聊天（成员点击即可加入查看）。
+        <br />
+        <strong>复制分享链接</strong>：任何拿到链接的人都能<strong>只读</strong>查看这块看板（链接 7 天内有效）。
       </p>
+      {shareCopyState === "failed" && (
+        <p className="mb-2 text-xs text-destructive" role="alert">
+          自动复制失败（当前环境剪贴板不可用）——请点击下方输入框全选后手动复制。
+        </p>
+      )}
       <div className="flex items-center gap-2">
         <input
           readOnly
@@ -1783,6 +1819,35 @@ function splitReceiverText(value?: string | null) {
     .split(/[,\s]+/)
     .map((item) => item.trim())
     .filter(Boolean)
+}
+
+// ㉚ 剪贴板写入（真实成败）：先试 navigator.clipboard（仅 https/localhost 安全上下文
+// 可用）；失败回退临时 textarea 选中 + document.execCommand("copy")（http://<IP>
+// 场景）。两条路都失败返回 false，调用方给出手动复制指引。
+async function copyTextRobust(text: string): Promise<boolean> {
+  try {
+    if (typeof navigator !== "undefined" && navigator.clipboard) {
+      await navigator.clipboard.writeText(text)
+      return true
+    }
+  } catch {
+    // 继续走回退
+  }
+  try {
+    const ta = document.createElement("textarea")
+    ta.value = text
+    ta.setAttribute("readonly", "")
+    ta.style.position = "fixed"
+    ta.style.opacity = "0"
+    document.body.appendChild(ta)
+    ta.focus()
+    ta.select()
+    const ok = document.execCommand("copy")
+    document.body.removeChild(ta)
+    return ok
+  } catch {
+    return false
+  }
 }
 
 // Last path segment of an entity URI (e.g. entity://system/agent/codex-1 →
