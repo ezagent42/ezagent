@@ -325,8 +325,12 @@ must equal the stored binding; it never selects or redirects the provider.
 `CreateChangeRequest.head_ref` is the requested change branch and must equal the
 normalized stored-policy `allowed_head_ref` exactly before registry lookup.
 `CreateChangeRequest.expected_base_sha` is the caller's concurrency assertion and is
-checked against the resolved authoritative base. The caller never supplies
-`base_ref`, provider coordinates, or `OperationContext`.
+required to be a valid `CommitSha` before registry lookup. The current remote base
+SHA is dynamic provider state, not Resource policy: the selected adapter must compare
+the assertion with the remote authoritative base while executing
+`create_change_request/2` and return the frozen `:stale_base` error before creating
+provider-side change-request state. The caller never supplies `base_ref`, provider
+coordinates, or `OperationContext`.
 
 ## 6. ActionSet and actions
 
@@ -561,9 +565,11 @@ Task 3 will extend that gate and its shared fake-adapter suite to assert:
    checkout/local path, or Cap;
 5. callback/action inventories contain no merge, clone, fetch, push, SSH, checkout,
    or credential operation.
-6. create dispatch compares normalized `head_ref` to policy `allowed_head_ref`,
-   checks `expected_base_sha` against the authoritative resolved base, and rejects
-   mismatches before registry lookup; request input cannot select `base_ref`.
+6. create dispatch compares normalized `head_ref` to policy `allowed_head_ref` and
+   validates the `expected_base_sha` shape before registry lookup. The adapter checks
+   that assertion against the dynamic remote authoritative base and returns
+   `:stale_base` before provider-side mutation; request input cannot select
+   `base_ref`.
 7. check projection covers every status/conclusion pair per §4.1 and never treats
    `:action_required` or `:other` as green.
 
