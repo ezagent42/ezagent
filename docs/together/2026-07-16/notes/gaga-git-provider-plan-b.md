@@ -38,8 +38,8 @@ code or tests; its verification is documentation/static consistency only.
 | Task | Status | Result |
 |---|---|---|
 | Preflight/read required evidence | complete | Read Task 0 brief, local design/plan, Plan A decisions/design/plan and daily records; inspected current Git terminology and W29 prototype |
-| Task 0 contract freeze | complete with concern | Exact Plan A structs, callbacks/actions, and error union frozen; five auxiliary closed shapes proposed and explicitly review-gated |
-| Task 1+ production implementation | deferred | Must not start until architecture review approves the narrow auxiliary-type amendment |
+| Task 0 contract freeze | complete | Exact Plan A structs, callbacks/actions, and error union frozen; five auxiliary closed shapes corrected per architecture review |
+| Task 1+ production implementation | deferred | Must not start until #1423 lands and the branch is rebased onto current main |
 | CI/rebase/dev-together return | deferred | Not claimed by this initial Task 0 documentation slice |
 
 ## Changes
@@ -60,9 +60,23 @@ git diff --check                                    -> PASS (no output)
 targeted rg consistency                             -> PASS; required contracts/exclusions present
 ```
 
-## Blockers / review concern
+## Review-fix change entry
 
-Production Task 1+ is blocked on architecture review of the five auxiliary shapes.
-In particular, `Review.author` is proposed as display-only `String.t()` because an
-external provider reviewer need not have an Ezagent Entity URI. Review must confirm
-that this is sufficiently closed and provider-neutral; no code may silently guess.
+Task 0 review fixes applied after commit `c7de2619d`:
+
+- removed request-side `CreateChangeRequest.base_ref`; stored-policy-bound
+  `RepositoryRef.base_ref` is authoritative;
+- added authoritative policy `allowed_head_ref`, exact normalized equality before
+  registry lookup, and explicit expected-base-SHA concurrency semantics;
+- added total check normalization with `:action_required`/`:other` and a complete
+  non-green W29 projection rule;
+- changed `Review` to a submitted/latest event, removed `:pending`, renamed
+  `author` to display-only `author_label`, and made `external_id` the sole event
+  dedupe coordinate;
+- updated the executable plan, exact Tasks 2–3 assertions, return skeleton, and
+  ignored execution report consistently.
+
+## Blocker
+
+Production Task 1+ remains deferred until stacked dependency #1423 lands and this
+branch is rebased. CI/rebase/return/deploy/merge completion is not claimed.
