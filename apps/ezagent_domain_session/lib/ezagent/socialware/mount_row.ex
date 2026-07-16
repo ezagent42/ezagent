@@ -136,6 +136,23 @@ defmodule Ezagent.Socialware.MountRow do
     )
   end
 
+  @doc """
+  List every mount row pointing at `target_uri` (across ALL sessions), oldest
+  first — the reverse index a target (data-host) teardown needs to unmount
+  every grantee that still holds keys onto it.
+  """
+  @spec list_for_target(URI.t() | String.t()) :: [t()]
+  def list_for_target(target_uri) do
+    target = uri_string(target_uri)
+
+    Repo.all(
+      from(m in __MODULE__,
+        where: m.target_uri == ^target,
+        order_by: [asc: m.mounted_at, asc: m.id]
+      )
+    )
+  end
+
   @doc "Load one exact mount row by its natural key, or `nil`."
   @spec get(URI.t() | String.t(), URI.t() | String.t(), URI.t() | String.t(), String.t() | atom()) ::
           t() | nil

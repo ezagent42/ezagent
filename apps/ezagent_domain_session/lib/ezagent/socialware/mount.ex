@@ -155,6 +155,47 @@ defmodule Ezagent.Socialware.Mount do
   end
 
   @doc """
+  卸载一个 target(数据宿主)名下的**全部**挂载行(跨 session、跨 grantee)——宿主
+  被删除/退休时的挂载清理。逐行 `unmount/4`(撤钥匙 + 删行);单行失败只记 `:warning`
+  计入 `failed`,不牵连其余行(与 `reconcile_session_mounts/1` 同款 best-effort 姿态)。
+  返回 `{:ok, %{unmounted: n, failed: m}}`,永不 raise。
+  """
+  @spec unmount_all_for_target(URI.t()) ::
+          {:ok, %{unmounted: non_neg_integer(), failed: non_neg_integer()}}
+  def unmount_all_for_target(%URI{} = target_uri) do
+    target_uri
+    |> MountRow.list_for_target()
+    |> Enum.reduce(%{unmounted: 0, failed: 0}, fn %MountRow{} = row, acc ->
+      session = Ezagent.URI.new!(row.session_uri)
+      grantee = Ezagent.URI.new!(row.grantee_uri)
+      target = Ezagent.URI.new!(row.target_uri)
+
+      case unmount(session, target, grantee, decode_behavior(row.behavior)) do
+        {:ok, :unmounted} ->
+          %{acc | unmounted: acc.unmounted + 1}
+
+        {:error, reason} ->
+          Logger.warning(
+            "Mount.unmount_all_for_target/1: unmount FAILED for target=" <>
+              "#{row.target_uri} grantee=#{row.grantee_uri} behavior=#{row.behavior}: " <>
+              "#{inspect(reason)} — skipping (other mounts unaffected)."
+          )
+
+          %{acc | failed: acc.failed + 1}
+      end
+    end)
+    |> then(&{:ok, &1})
+  rescue
+    error ->
+      Logger.warning(
+        "Mount.unmount_all_for_target/1: mount scan failed for " <>
+          "#{URI.to_string(target_uri)}: #{inspect(error.__struct__)} — treated as no-op."
+      )
+
+      {:ok, %{unmounted: 0, failed: 0}}
+  end
+
+  @doc """
   建宿主 + 当场挂:`Ezagent.Workspace.create_agent/3` 建出数据宿主 agent(cap-gated,
   记 `AgentLineage` data_owner = `owner_ctx` 的 caller,#154),再对新宿主 `mount/6`
   给 `grantee_uri` 当场发操作钥匙(`access: :operate`)。

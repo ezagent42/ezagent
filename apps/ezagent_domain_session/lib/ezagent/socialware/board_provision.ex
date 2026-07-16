@@ -202,6 +202,59 @@ defmodule Ezagent.Socialware.BoardProvision do
   @default_read_actions [:get_tree, :export_markmap]
 
   @doc """
+  删板(⑲)—— 板 = 数据宿主 agent,**只有板主人(建板人 = `data_owner`)能删**;
+  建板人对板的生命周期权 = 建板时 create-entry 授予的 `Manage :any` cap(#533 §3.3)。
+
+  步骤(语义命令,**不直调 terminate**):
+    1. 授权:`caller_ctx.caller` 必须 == 这块板的 `data_owner`(同 `pull_board` 的
+       `assert_board_owner` 守卫),否则 `{:error, :not_board_owner}`;
+    2. 退休 agent:dispatch `manage.delete` 到板(cap 校验落 dispatch chokepoint ——
+       caller 须持 Manage cap;经 `Ezagent.Lifecycle.destroy` 走 destroy hooks +
+       清快照 + terminate)。为什么不是 `Ezagent.Domain.Agent.retire_spawned/2`:
+       retire 的 provenance 闸要求 `CreationInventory` 建档,而 direct-spawn 的
+       数据宿主(`Workspace.create_agent`,非 template spawn)不建档,`manage.delete`
+       是同一「语义命令退休」家族里对 direct-spawn 宿主成立的那条路;
+    3. 清挂载:`Mount.unmount_all_for_target/1` 逐行撤钥匙 + 删挂载行(跨 session、
+       跨 grantee,best-effort per row)。
+
+  返回 `{:ok, %{deleted: true, unmounted: n, failed: m}}` 或
+  `{:error, :not_board_owner | term()}`。
+  """
+  @spec delete_board(URI.t(), module(), map()) ::
+          {:ok, %{deleted: true, unmounted: non_neg_integer(), failed: non_neg_integer()}}
+          | {:error, term()}
+  def delete_board(%URI{} = board_uri, behavior, caller_ctx)
+      when is_atom(behavior) and is_map(caller_ctx) do
+    with :ok <- assert_board_owner(board_uri, behavior, caller_ctx),
+         {:ok, _} <- dispatch_manage_delete(board_uri, caller_ctx),
+         {:ok, %{unmounted: unmounted, failed: failed}} <-
+           Mount.unmount_all_for_target(board_uri) do
+      {:ok, %{deleted: true, unmounted: unmounted, failed: failed}}
+    end
+  end
+
+  # 语义删除命令:`?action=manage.delete` dispatch 进板自己的 Kind 进程(授权 =
+  # caller 持对这块板实例的 Manage cap,在 dispatch chokepoint 校验;handler 在
+  # reply 后 detached Task 里 Lifecycle.destroy —— 不在这里直调 terminate)。
+  defp dispatch_manage_delete(board_uri, %{caller: %URI{} = caller} = caller_ctx) do
+    case Ezagent.Invocation.dispatch(%Ezagent.Invocation{
+           target: Ezagent.URI.with_action(board_uri, :manage, :delete),
+           mode: :call,
+           args: %{},
+           ctx: %{
+             caller: caller,
+             caps: Map.get(caller_ctx, :caps, MapSet.new()),
+             reply: {:caller_inbox, self()}
+           }
+         }) do
+      {:ok, _} = ok -> ok
+      {:error, reason} -> {:error, {:board_delete_failed, reason}}
+    end
+  end
+
+  defp dispatch_manage_delete(_board_uri, _ctx), do: {:error, :not_board_owner}
+
+  @doc """
   拉板 —— 把一块**已存在**的板拉进 `target_session_uri`,给该 session 的 assistant 挂指向
   这块板的操作钥匙(`access: :operate`,数据跨 session 共享、板不进群、URI 寻址)。
 

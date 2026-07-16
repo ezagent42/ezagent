@@ -145,6 +145,11 @@ defmodule Ezagent.World.KanbanActions do
   def handle_dispatch(socket, "kanban.share_board", %{"kanban_uri" => u}) when is_binary(u),
     do: share_board(socket, u)
 
+  # ⑲ 删板:板主人(建板人)删除自己的板(语义命令 manage.delete + 清挂载,授权在
+  # BoardProvision.delete_board —— caller==data_owner + Manage cap 过 dispatch 校验)。
+  def handle_dispatch(socket, "kanban.delete_board", %{"kanban_uri" => u}) when is_binary(u),
+    do: delete_board(socket, u)
+
   def handle_dispatch(socket, _action, _args),
     do: {:noreply, assign(socket, :last_dispatch_status, "error:unsupported_action")}
 
@@ -402,6 +407,41 @@ defmodule Ezagent.World.KanbanActions do
           {:error, reason} ->
             {:noreply, assign(socket, :last_dispatch_status, "error:#{reason(reason)}")}
         end
+    end
+  end
+
+  # --- ⑲ 删板：BoardProvision.delete_board → 推刷新后的 boards 列表 -----------
+
+  defp delete_board(socket, uri_str) do
+    case parse(uri_str) do
+      %URI{} = uri ->
+        # 板可能 dormant(BEAM 重启后休眠)——manage.delete 要 dispatch 进它自己的
+        # Kind 进程,先照其它动作的口径起活(已 live 幂等)。
+        :ok = KanbanData.ensure_spawned(uri)
+
+        case Ezagent.Socialware.BoardProvision.delete_board(
+               uri,
+               Module.concat([@share_board_behavior]),
+               ctx(socket)
+             ) do
+          {:ok, _report} ->
+            # 板没了:清掉选中板,推刷新后的列表(前端回列表态)。
+            {:noreply,
+             socket
+             |> assign(:last_dispatch_status, "ok")
+             |> push_event("world:state", %{
+               "kanban_uri" => nil,
+               "tree" => nil,
+               "instances" => KanbanData.list_instances(read_ctx(socket)),
+               "last_dispatch_status" => "ok"
+             })}
+
+          {:error, reason} ->
+            {:noreply, assign(socket, :last_dispatch_status, "error:#{reason(reason)}")}
+        end
+
+      :error ->
+        {:noreply, assign(socket, :last_dispatch_status, "error:bad_kanban_uri")}
     end
   end
 
