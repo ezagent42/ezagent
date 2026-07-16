@@ -1,10 +1,10 @@
 > **Task:** gaga — Git Provider V1 Plan B domain spine
 > **Branch:** `feat/git-domain-spine`
 > **Baseline:** `origin/main@6bfe3d1b3288c93c128449a1183922140db66217`
-> **PR:** WIP, to be created after final verification/review
+> **PR:** Draft https://github.com/ezagent42/ezagent/pull/1445
 > **Dev:** gaga / Codex
 > **returned_at:** 2026-07-16 23:03 +0800
-> **Status:** Tasks 0–12 implemented and reviewed; Draft PR handoff ready
+> **Status:** Tasks 0–12 implemented, reviewed, and handed off in Draft PR #1445
 
 # Return summary
 
