@@ -79,15 +79,23 @@ defmodule Ezagent.World.KanbanData do
     "kanban-manager"
     |> Ezagent.Agent.RecipeResolver.list_by_recipe(workspace_scope(ctx))
     |> Enum.filter(&visible?(&1, ctx))
-    |> Enum.map(&board_row/1)
+    |> Enum.map(&board_row(&1, ctx))
   rescue
     _ -> []
   end
 
   # board URI → 前端行（列表项 + dispatch 目标 + 详情路径）。list_instances 与
-  # session_boards 同形复用。
-  defp board_row(%URI{} = uri),
-    do: %{"uri" => encode_uri(uri), "name" => uri_name(uri), "path" => detail_path(uri)}
+  # session_boards 同形复用。⑲ 删板 UI：`owned` = caller 是板主人（`data_owner`，
+  # 复用发现口径的 owns_board?/2）——前端只对自己是版主的板出删除入口
+  # （真授权仍在后端 `BoardProvision.delete_board` 的 caller==data_owner 校验）。
+  defp board_row(%URI{} = uri, ctx) do
+    %{
+      "uri" => encode_uri(uri),
+      "name" => uri_name(uri),
+      "path" => detail_path(uri),
+      "owned" => owns_board?(Map.get(ctx, :caller_uri), uri)
+    }
+  end
 
   @doc """
   某个 session 所属 workspace 的 kanban-manager boards，按 CBAC 权属对 caller 收敛。
@@ -106,7 +114,7 @@ defmodule Ezagent.World.KanbanData do
         "kanban-manager"
         |> Ezagent.Agent.RecipeResolver.list_by_recipe(ws)
         |> Enum.filter(&visible?(&1, ctx))
-        |> Enum.map(&board_row/1)
+        |> Enum.map(&board_row(&1, ctx))
 
       _ ->
         []
