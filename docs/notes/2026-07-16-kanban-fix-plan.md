@@ -84,7 +84,7 @@ X/Y 分析不变；下文各「归属」行与 §三、§四 已按新原则重�
   4. **规则8 申请编辑**：板新 action `request_edit`（pending 记进 `:kanban` slice）→ 批准气泡发到 mount 表 access=operate 的"编辑 session" chat（C4：批准人=版主 data_owner）→ 批准即 `Mount.mount` 升级 operate。可拆两步（先板面内批准，气泡后补）。依赖 X1 推送 + ㉙ 气泡形态。
   5. **⑯ ws 口径**：`forward_board` 有 `same_workspace` 硬守卫（board_provision.ex:267,:292）而链接分享路无 ws 检查——两路口径不一，**统一方向归 Allen**（用户倾向：系统支撑就放开）。
 - **只修 Y 的诱惑**：在 controller 里继续加 unfurl/气泡逻辑（P13 债滚大，将来搬家做两遍）；或先做前端 unfurl 再搬业务（同样做两遍）。
-- **归属（重切）**：plugin 侧动作（债③ receive、规则8 `request_edit`、㉙ 的 dispatch）+ **kanban 前端半边**（㉙ 分享对话框两选项 UI、㉝ 气泡**点击后的挂载动作**接线）= **我**；㉝ 的 **unfurl 渲染半边**（Conversation 消息渲染里识别链接渲成气泡——气泡是 chat 消息渲染，属 world）= **zyli**；⑯ ws 口径 = **Allen**。
+- **归属（重切）**：plugin 侧动作（债③ receive、规则8 `request_edit`、㉙ 的 dispatch）+ **kanban 前端半边**（㉙ 分享对话框两选项 UI、㉝ 气泡**点击后的挂载动作**接线）= **我**；㉝ **整条归我**（2026-07-16 用户改定：修完要靠它跑手动/自动 e2e 回归）——但**做成 world 通用机制**：chat 消息渲染支持「链接解析成气泡」的注册式扩展（plugin 声明链接模式 → 气泡渲染器 + 点击动作），装了 kanban plugin 时分享链接不显示原链接、直接渲 kanban 气泡、点击跳转/挂载；机制通用、kanban 是第一个消费者，其他 plugin 后续可复用。⑯ ws 口径 = **Allen**。
 
 ---
 
@@ -105,7 +105,7 @@ X/Y 分析不变；下文各「归属」行与 §三、§四 已按新原则重�
 
 | # | PR | owner | 内容 | 依赖 |
 |---|---|---|---|---|
-| 1 | **本 PR #1374 收尾** | 我 | 已修 ⑤⑥⑦⑧⑨ 收口 + **债③** receive 搬 plugin + **⑳** assistant 降级为增强 + **㉕** drop 标红（behavior + KanbanCanvas 红框）+ **⑲** delete_board（动作 + 删板 UI）+ **⑮** dev.exs 一行 + **全部 kanban 前端**：㉗ 面板规格重做 + ㉓㉖㉚㉞ + ㉙ 分享框两选项 UI + ㉘/㉒-① 看板数据刷新的 kanban 侧（订 board topic + 重拉）+ ㉝ 点击挂载动作 + Kanban 组件深色 token 化 + 证据/文档收敛（PR 收尾规矩） | ㉘/㉒-① 前端消费依赖 zyli 订阅基建接口（payload 约定先行可并行） |
+| 1 | **本 PR #1374 收尾** | 我 | 已修 ⑤⑥⑦⑧⑨ 收口 + **债③** receive 搬 plugin + **⑳** assistant 降级为增强 + **㉕** drop 标红（behavior + KanbanCanvas 红框）+ **⑲** delete_board（动作 + 删板 UI）+ **⑮** dev.exs 一行 + **全部 kanban 前端**：㉗ 面板规格重做 + ㉓㉖㉚㉞ + ㉙ 分享框两选项 UI + ㉘/㉒-① 看板数据刷新的 kanban 侧（订 board topic + 重拉）+ ㉝ **整条**（world 通用链接-unfurl 注册机制 + kanban 气泡渲染 + 点击跳转/挂载）+ Kanban 组件深色 token 化 + 证据/文档收敛（PR 收尾规矩） | ㉘/㉒-① 前端消费依赖 zyli 订阅基建接口（payload 约定先行可并行） |
 | 2 | **推送环发布侧**（可并入 #1374 或独立小 PR，我） | 我 | X1 发布侧：membership `:notify` + kanban 写 action `:emit`（含 payload 约定文档） | 无；与 zyli 基建配对 |
 | 3 | **join 补发**（独立 PR，我，**等 Allen D1**） | 我 | X2 入口1：join hook（member view caps + mount operate 补发），domain_session 通用机制零 kanban 字面 | Allen 拍 rule 名/授权面 |
 | 4 | **分享闭环二期**（独立 PR，我） | 我 | ㉙ 分享到会话 dispatch + 规则8 `request_edit` action + ㉝ `claim_shared` 落点修正 | PR1（receive 归宿）+ PR2（推送）+ Allen D4（receive 签名的 ws 口径） |
