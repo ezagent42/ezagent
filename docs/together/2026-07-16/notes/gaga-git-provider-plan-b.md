@@ -120,6 +120,23 @@ cannot. `FileChange.validate_many/1` is the sole collection-limit boundary.
 
 No tests or production code begin until architecture review approves this amendment.
 
+## Task 2 contract-review fixes
+
+Review adjudication closes the remaining ambiguity without starting RED. Limits are
+a closed struct and runtime `current/0` result, validated non-raising before any app
+child; unknown keys use fixed `:unknown_fields` with no echo. URI roles now separate
+canonical Ezagent resource/entity axes from absolute provider web URLs. The ref
+subset is exact and preservation-only. V1 SHA-1 validation is shared so both the
+frozen `CommitSha.value` and Plan A-frozen `ChangeRequest.head_sha` normalize to
+lowercase; SHA-256 needs a future contract revision.
+
+`FileChange` represents captured UTF-8 regular-file bytes and has no kind/mode/
+rename/delete axes. Symlink/submodule inspection stays at the upstream capture
+boundary. The reviewer alternative to rename the SHA field/type to `ObjectId` was
+not chosen because Plan A freezes `ChangeRequest.head_sha: String.t()` and the
+approved auxiliary name `CommitSha`; shared validation closes the V1 bypass without
+changing that exact contract. Re-review remains required before RED.
+
 ## Task 1 review-fix entry
 
 Review found the source-regex dependency inventory could miss valid Mix forms such

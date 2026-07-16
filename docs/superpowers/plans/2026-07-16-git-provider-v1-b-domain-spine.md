@@ -122,6 +122,13 @@ Commit candidate: `feat(git): scaffold provider-neutral domain app`
 10. Assert the exact domain-owned `ChangeLimits.current/0` defaults and deterministic
     invalid-config failure. Cover `FileChange.validate_many/1` count/per-file/total
     byte limits and prove invocation/adapter input cannot override them.
+11. Assert `ChangeLimits` exact struct fields and non-raising result contract,
+    application pre-child validation, and `validate_many/1` config-error propagation.
+12. Cover fixed non-echoing validation order, exact URI axes versus provider web
+    URLs, the preserved safe-ref subset, shared lowercase SHA-1 validation, and
+    explicit SHA-256 rejection.
+13. Structurally forbid FileChange `kind`, `mode`, rename, and delete axes; keep
+    symlink/submodule inspection at the upstream capture boundary.
 
 Commit candidate: `feat(git): add provider-neutral operation values`
 
