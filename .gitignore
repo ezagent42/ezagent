@@ -82,3 +82,7 @@ node_modules/
 backups/
 precommit.log
 tailwind-linux-x64
+
+# Playwright local artifacts (traces/screenshots/reports).
+**/test-results/
+**/playwright-report/

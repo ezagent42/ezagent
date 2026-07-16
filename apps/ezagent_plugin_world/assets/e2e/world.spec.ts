@@ -1,0 +1,126 @@
+import {expect, test, type Page} from "@playwright/test"
+
+type RecordedEvent = {event: string; payload: Record<string, unknown>}
+
+async function openFixture(page: Page, fixture: string) {
+  await page.goto(`/?fixture=${fixture}`)
+  await expect(page.locator("html")).toHaveAttribute("data-world-e2e-ready", "true")
+}
+
+async function recordedEvents(page: Page): Promise<RecordedEvent[]> {
+  return page.evaluate(() => window.__WORLD_E2E__.events)
+}
+
+async function lastEvent(page: Page): Promise<RecordedEvent> {
+  const events = await recordedEvents(page)
+  expect(events.length).toBeGreaterThan(0)
+  return events.at(-1) as RecordedEvent
+}
+
+test.beforeEach(async ({context}) => {
+  await context.route("**/*", async (route) => {
+    const url = new URL(route.request().url())
+    if (url.hostname !== "127.0.0.1" && url.hostname !== "localhost") {
+      await route.abort("blockedbyclient")
+      return
+    }
+    await route.continue()
+  })
+})
+
+const rendererMatrix = [
+  ["sessions", "sessions_table"],
+  ["conversation", "conversation"],
+  ["pty", "pty_terminal"],
+  ["admin", "dashboard"],
+  ["workspace_plugins", "workspaces_list"],
+] as const
+
+for (const [fixture, component] of rendererMatrix) {
+  test(`renders ${fixture} from the generated contract fixture`, async ({page}) => {
+    await openFixture(page, fixture)
+    await expect(page.locator(`[data-world-component="${component}"]`)).toBeVisible()
+    await expect(page.locator("[data-world-shell]")).toBeVisible()
+  })
+}
+
+test("renders the registered kanban plugin family", async ({page}) => {
+  await openFixture(page, "kanban")
+  await expect(page.getByRole("heading", {name: "看板 · 配置"})).toBeVisible()
+})
+
+test("all four primary navigation entries emit world:navigate", async ({page}) => {
+  await openFixture(page, "sessions")
+
+  const expected = [
+    ["Chat", "/sessions?session=session%3A%2F%2Facme%2Fdefault%2Falpha-support"],
+    ["Agents", "/identities/agents"],
+    ["Manage", "/workspaces"],
+    ["Overview", "/overview"],
+  ] as const
+
+  for (const [label, to] of expected) {
+    await page.evaluate(() => window.__WORLD_E2E__.clearEvents())
+    await page.getByRole("navigation", {name: "Primary"}).getByRole("link", {name: label}).click()
+    await expect.poll(() => lastEvent(page)).toEqual({event: "world:navigate", payload: {to}})
+  }
+})
+
+test("sessions interaction emits an admitted world:dispatch", async ({page}) => {
+  await openFixture(page, "sessions")
+  await page.locator("[data-world-session-rail]").getByRole("button", {name: /Alpha Support/}).click()
+
+  await expect.poll(() => lastEvent(page)).toEqual({
+    event: "world:dispatch",
+    payload: {action: "sessions.join", args: {session_uri: "session://acme/default/alpha-support"}},
+  })
+  expect(await page.evaluate(() => window.__WORLD_E2E__.contractViolation())).toBeNull()
+})
+
+test("conversation composer emits chat.send", async ({page}) => {
+  await openFixture(page, "conversation")
+  await page.getByLabel("消息").fill("Tier-1 hello")
+  await page.getByRole("button", {name: "发送"}).click()
+
+  await expect.poll(() => lastEvent(page)).toEqual({
+    event: "world:dispatch",
+    payload: {
+      action: "chat.send",
+      args: {session_uri: "session://acme/default/alpha-support", text: "Tier-1 hello", grants: []},
+    },
+  })
+  expect(await page.evaluate(() => window.__WORLD_E2E__.contractViolation())).toBeNull()
+})
+
+test("registered plugin interaction emits an admitted kanban action", async ({page}) => {
+  await openFixture(page, "kanban")
+  await page.getByLabel("Access Token").fill("fixture-token")
+  await page.getByRole("button", {name: "保存凭证"}).click()
+
+  await expect.poll(() => lastEvent(page)).toEqual({
+    event: "world:dispatch",
+    payload: {action: "kanban.save_miro_creds", args: {access_token: "fixture-token"}},
+  })
+  expect(await page.evaluate(() => window.__WORLD_E2E__.contractViolation())).toBeNull()
+})
+
+test("world:state server reply replaces layout and rerenders", async ({page}) => {
+  await openFixture(page, "sessions")
+  await expect(page.locator('[data-world-component="sessions_table"]')).toBeVisible()
+
+  await page.evaluate(() => window.__WORLD_E2E__.transitionTo("admin"))
+
+  await expect(page.locator('[data-world-component="dashboard"]')).toBeVisible()
+  await expect(page.locator('[data-world-component="sessions_table"]')).toHaveCount(0)
+})
+
+declare global {
+  interface Window {
+    __WORLD_E2E__: {
+      clearEvents: () => void
+      contractViolation: () => string | null
+      events: RecordedEvent[]
+      transitionTo: (name: string) => void
+    }
+  }
+}

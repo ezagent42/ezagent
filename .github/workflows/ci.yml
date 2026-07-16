@@ -2,8 +2,9 @@ name: CI
 
 # LAYERED merge gate (design C1). Two jobs, cheap-first:
 #
-#   job `gate`       — ubuntu-latest, ~2-3 min. The DETERMINISTIC required
-#                      gate: frontend lint + TypeScript + unit tests, compile
+#   job `gate`       — ubuntu-latest, ~3-5 min. The DETERMINISTIC required
+#                      gate: frontend lint + TypeScript + unit tests + Tier-1
+#                      Chromium, generated-fixture drift, compile
 #                      --warnings-as-errors, format, the two static invariant
 #                      tasks, and the arch/invariant ExUnit subset (never-flake
 #                      tests that catch real regressions fast — e.g.
@@ -89,6 +90,14 @@ jobs:
             pnpm --dir "$assets_dir" test
           done
 
+      - name: Install Tier-1 Chromium
+        run: pnpm --dir apps/ezagent_plugin_world/assets exec playwright install --with-deps chromium
+
+      # Browser runtime is frontend-only: static built main.js + generated
+      # contract fixtures + mocked pushEvent/onServerEvent. No Phoenix or DB.
+      - name: Frontend Tier-1 Playwright
+        run: pnpm --dir apps/ezagent_plugin_world/assets test:e2e
+
       - name: Set up Elixir/OTP
         uses: erlef/setup-beam@v1
         with:
@@ -110,6 +119,9 @@ jobs:
 
       - name: Compile (warnings-as-errors)
         run: mix compile --warnings-as-errors --force
+
+      - name: Check World Tier-1 fixture drift
+        run: mix world.e2e.fixtures --check
 
       - name: Check formatting
         run: mix format --check-formatted

@@ -7,8 +7,9 @@
     "build": "vite build --logLevel warn",
     "check:mounts": "node scripts/check-mounts.mjs",
     "lint": "eslint src --max-warnings 0",
-    "typecheck": "tsc --noEmit",
-    "test": "vitest run"
+    "test:e2e": "pnpm run build && playwright test",
+    "typecheck": "tsc --noEmit && tsc --noEmit -p tsconfig.e2e.json",
+    "test": "vitest run src"
   },
   "dependencies": {
     "@excalidraw/excalidraw": "^0.18.1",
@@ -30,6 +31,8 @@
     "xterm-addon-fit": "^0.8.0"
   },
   "devDependencies": {
+    "@playwright/test": "1.55.0",
+    "@types/node": "22.18.1",
     "@eslint/js": "10.0.1",
     "@types/react": "^19.2.14",
     "@types/react-dom": "^19.2.3",

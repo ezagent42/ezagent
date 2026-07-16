@@ -1,0 +1,411 @@
+{
+  "accepted_actions": [
+    "admin.smtp.save",
+    "admin.smtp.test",
+    "admin.smtp.update_recipient",
+    "agent.api_key.put",
+    "agents.config.delete_path",
+    "agents.config.repoint",
+    "agents.config.update",
+    "agents.create",
+    "agents.delete",
+    "auto_derive.credential_grant.revoke",
+    "auto_derive.default_source.set",
+    "chat.load_older",
+    "chat.mark_displayed",
+    "chat.send",
+    "cmdk.close",
+    "cmdk.open",
+    "cmdk.query",
+    "cmdk.select",
+    "external_mirror.bind",
+    "external_mirror.unbind",
+    "feishu.bind",
+    "feishu.unbind",
+    "kanban.add_node",
+    "kanban.attach_artifact",
+    "kanban.attach_code_file",
+    "kanban.attach_upload",
+    "kanban.claim_node",
+    "kanban.create",
+    "kanban.detach_artifact",
+    "kanban.drop_subtree",
+    "kanban.move_node",
+    "kanban.register_pr",
+    "kanban.remove_node",
+    "kanban.rename_node",
+    "kanban.save_miro_creds",
+    "kanban.select_board",
+    "kanban.set_board_config",
+    "kanban.set_metric",
+    "kanban.set_stage",
+    "kanban.set_status",
+    "kanban.sync_miro",
+    "kanban.unclaim_node",
+    "layout.manage",
+    "profile.display_name.cancel",
+    "profile.display_name.edit",
+    "profile.display_name.save",
+    "session.create",
+    "session.invite",
+    "session.orchestrator.restart",
+    "session.pty.open",
+    "session.remove_participant",
+    "session.routing.add",
+    "session.routing.toggle",
+    "session.socialware.uninstall",
+    "session.switch",
+    "session.view.switch",
+    "sessions.join",
+    "users.create",
+    "users.disable",
+    "users.enable",
+    "users.password.set",
+    "users.profile.save",
+    "workspace.member.remove",
+    "workspace.template.save"
+  ],
+  "fixtures": {
+    "admin": {
+      "caller": {
+        "current_workspace_name": "acme",
+        "display_name": "Allen",
+        "entity_uri": "entity://acme/user/allen",
+        "is_system_member": true,
+        "workspace_uri": "workspace://acme",
+        "workspaces": [
+          {
+            "current": true,
+            "name": "acme",
+            "uri": "workspace://acme"
+          }
+        ]
+      },
+      "layout": {
+        "components": [
+          {
+            "id": "e2e-dashboard",
+            "placement": {
+              "h": 12,
+              "w": 12,
+              "x": 0,
+              "y": 0
+            },
+            "type": "dashboard"
+          }
+        ],
+        "scope": "workspace://acme",
+        "version": 1
+      },
+      "plugin_nav": [
+        {
+          "label": "看板",
+          "path": "/plugins/kanban"
+        }
+      ],
+      "renderer_family": "admin",
+      "slot_type": "dashboard",
+      "state": {
+        "component": "dashboard",
+        "kpis": {
+          "agents": 2,
+          "entities": 4,
+          "sessions": 3
+        },
+        "path": "/admin",
+        "title": "Admin dashboard",
+        "workspace_uri": "workspace://acme"
+      }
+    },
+    "conversation": {
+      "caller": {
+        "current_workspace_name": "acme",
+        "display_name": "Allen",
+        "entity_uri": "entity://acme/user/allen",
+        "is_system_member": true,
+        "workspace_uri": "workspace://acme",
+        "workspaces": [
+          {
+            "current": true,
+            "name": "acme",
+            "uri": "workspace://acme"
+          }
+        ]
+      },
+      "layout": {
+        "components": [
+          {
+            "id": "e2e-conversation",
+            "placement": {
+              "h": 12,
+              "w": 12,
+              "x": 0,
+              "y": 0
+            },
+            "type": "conversation"
+          }
+        ],
+        "scope": "workspace://acme",
+        "version": 1
+      },
+      "plugin_nav": [
+        {
+          "label": "看板",
+          "path": "/plugins/kanban"
+        }
+      ],
+      "renderer_family": "conversation",
+      "slot_type": "conversation",
+      "state": {
+        "active_view": "conversation",
+        "caller_uri": "entity://acme/user/allen",
+        "component": "conversation",
+        "invite_candidates": [],
+        "members": [],
+        "messages": [],
+        "path": "/sessions/alpha-support",
+        "routing_rules": [],
+        "session_uri": "session://acme/default/alpha-support",
+        "sessions": [
+          {
+            "name": "Alpha support",
+            "uri": "session://acme/default/alpha-support",
+            "workspace_uri": "workspace://acme"
+          }
+        ],
+        "title": "Alpha support",
+        "views": [
+          {
+            "id": "conversation",
+            "label": "Conversation",
+            "mode": "chat"
+          }
+        ],
+        "workspace_uri": "workspace://acme"
+      }
+    },
+    "kanban": {
+      "caller": {
+        "current_workspace_name": "acme",
+        "display_name": "Allen",
+        "entity_uri": "entity://acme/user/allen",
+        "is_system_member": true,
+        "workspace_uri": "workspace://acme",
+        "workspaces": [
+          {
+            "current": true,
+            "name": "acme",
+            "uri": "workspace://acme"
+          }
+        ]
+      },
+      "layout": {
+        "components": [
+          {
+            "id": "e2e-kanban",
+            "placement": {
+              "h": 12,
+              "w": 12,
+              "x": 0,
+              "y": 0
+            },
+            "type": "kanban"
+          }
+        ],
+        "scope": "workspace://acme",
+        "version": 1
+      },
+      "plugin_nav": [
+        {
+          "label": "看板",
+          "path": "/plugins/kanban"
+        }
+      ],
+      "renderer_family": "kanban",
+      "slot_type": "kanban",
+      "state": {
+        "component": "kanban",
+        "instances": [],
+        "miro": {
+          "configured": false
+        },
+        "path": "/plugins/kanban",
+        "title": "Kanban",
+        "workspace_uri": "workspace://acme"
+      }
+    },
+    "pty": {
+      "caller": {
+        "current_workspace_name": "acme",
+        "display_name": "Allen",
+        "entity_uri": "entity://acme/user/allen",
+        "is_system_member": true,
+        "workspace_uri": "workspace://acme",
+        "workspaces": [
+          {
+            "current": true,
+            "name": "acme",
+            "uri": "workspace://acme"
+          }
+        ]
+      },
+      "layout": {
+        "components": [
+          {
+            "id": "e2e-pty_terminal",
+            "placement": {
+              "h": 12,
+              "w": 12,
+              "x": 0,
+              "y": 0
+            },
+            "type": "pty_terminal"
+          }
+        ],
+        "scope": "workspace://acme",
+        "version": 1
+      },
+      "plugin_nav": [
+        {
+          "label": "看板",
+          "path": "/plugins/kanban"
+        }
+      ],
+      "renderer_family": "pty",
+      "slot_type": "pty_terminal",
+      "state": {
+        "agent_status": {
+          "flavor": "cc",
+          "phase": "ready"
+        },
+        "agent_uri": "entity://acme/agent/terminal",
+        "component": "pty_terminal",
+        "path": "/identities/agents/terminal/pty",
+        "pty_alive": false,
+        "pty_phase": "stopped",
+        "title": "Terminal",
+        "workspace_uri": "workspace://acme"
+      }
+    },
+    "sessions": {
+      "caller": {
+        "current_workspace_name": "acme",
+        "display_name": "Allen",
+        "entity_uri": "entity://acme/user/allen",
+        "is_system_member": true,
+        "workspace_uri": "workspace://acme",
+        "workspaces": [
+          {
+            "current": true,
+            "name": "acme",
+            "uri": "workspace://acme"
+          }
+        ]
+      },
+      "layout": {
+        "components": [
+          {
+            "id": "e2e-sessions_table",
+            "placement": {
+              "h": 12,
+              "w": 12,
+              "x": 0,
+              "y": 0
+            },
+            "type": "sessions_table"
+          }
+        ],
+        "scope": "workspace://acme",
+        "version": 1
+      },
+      "plugin_nav": [
+        {
+          "label": "看板",
+          "path": "/plugins/kanban"
+        }
+      ],
+      "renderer_family": "sessions",
+      "slot_type": "sessions_table",
+      "state": {
+        "component": "sessions_table",
+        "current_session_uri": "session://acme/default/alpha-support",
+        "path": "/sessions",
+        "sessions": [
+          {
+            "name": "Alpha support",
+            "uri": "session://acme/default/alpha-support",
+            "workspace_uri": "workspace://acme"
+          },
+          {
+            "name": "Release room",
+            "uri": "session://acme/default/release-room",
+            "workspace_uri": "workspace://acme"
+          }
+        ],
+        "templates": [
+          "default"
+        ],
+        "title": "Chat",
+        "workspace_uri": "workspace://acme"
+      }
+    },
+    "workspace_plugins": {
+      "caller": {
+        "current_workspace_name": "acme",
+        "display_name": "Allen",
+        "entity_uri": "entity://acme/user/allen",
+        "is_system_member": true,
+        "workspace_uri": "workspace://acme",
+        "workspaces": [
+          {
+            "current": true,
+            "name": "acme",
+            "uri": "workspace://acme"
+          }
+        ]
+      },
+      "layout": {
+        "components": [
+          {
+            "id": "e2e-workspaces_list",
+            "placement": {
+              "h": 12,
+              "w": 12,
+              "x": 0,
+              "y": 0
+            },
+            "type": "workspaces_list"
+          }
+        ],
+        "scope": "workspace://acme",
+        "version": 1
+      },
+      "plugin_nav": [
+        {
+          "label": "看板",
+          "path": "/plugins/kanban"
+        }
+      ],
+      "renderer_family": "workspace_plugins",
+      "slot_type": "workspaces_list",
+      "state": {
+        "component": "workspaces_list",
+        "path": "/workspaces",
+        "title": "Workspaces",
+        "workspace_uri": "workspace://acme",
+        "workspaces": [
+          {
+            "detail_path": "/workspaces/acme",
+            "live": true,
+            "members_count": 2,
+            "name": "acme",
+            "routing_rules_count": 1,
+            "templates_count": 1,
+            "uri": "workspace://acme"
+          }
+        ]
+      }
+    }
+  },
+  "version": 1
+}

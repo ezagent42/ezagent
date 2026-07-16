@@ -246,13 +246,13 @@ defmodule EzagentPluginWorld.WorldLive do
     dispatch_layout_manage(socket, layout)
   end
 
-  @agent_actions ~w(agents.create agents.delete agents.config.update agents.config.delete_path agents.config.repoint)
+  @agent_actions Ezagent.World.DispatchContract.actions(:agent)
   def handle_event("world:dispatch", %{"action" => action, "args" => args}, socket)
       when action in @agent_actions and is_map(args) do
     AgentActions.handle_dispatch(socket, action, args)
   end
 
-  @user_actions ~w(users.create users.profile.save users.password.set users.disable users.enable)
+  @user_actions Ezagent.World.DispatchContract.actions(:user)
   def handle_event("world:dispatch", %{"action" => action, "args" => args}, socket)
       when action in @user_actions and is_map(args) do
     UserActions.handle_dispatch(socket, action, args)
@@ -266,25 +266,25 @@ defmodule EzagentPluginWorld.WorldLive do
     dispatch_api_key_put(socket, agent_uri_str, args)
   end
 
-  @cmdk_actions ~w(cmdk.open cmdk.close cmdk.query cmdk.select)
+  @cmdk_actions Ezagent.World.DispatchContract.actions(:cmdk)
   def handle_event("world:dispatch", %{"action" => action, "args" => args}, socket)
       when action in @cmdk_actions and is_map(args) do
     CommandPaletteActions.handle_dispatch(socket, action, args)
   end
 
-  @admin_actions ~w(admin.smtp.save admin.smtp.test admin.smtp.update_recipient external_mirror.bind external_mirror.unbind)
+  @admin_actions Ezagent.World.DispatchContract.actions(:admin)
   def handle_event("world:dispatch", %{"action" => action, "args" => args}, socket)
       when action in @admin_actions and is_map(args) do
     AdminActions.handle_dispatch(socket, action, args)
   end
 
-  @workspace_plugin_actions ~w(profile.display_name.edit profile.display_name.save profile.display_name.cancel feishu.bind feishu.unbind workspace.member.remove workspace.template.save auto_derive.default_source.set auto_derive.credential_grant.revoke)
+  @workspace_plugin_actions Ezagent.World.DispatchContract.actions(:workspace_plugin)
   def handle_event("world:dispatch", %{"action" => action, "args" => args}, socket)
       when action in @workspace_plugin_actions and is_map(args) do
     WorkspacePluginActions.handle_dispatch(socket, action, args)
   end
 
-  @conversation_actions ~w(chat.send chat.load_older chat.mark_displayed session.switch session.invite session.remove_participant session.socialware.uninstall session.create session.view.switch session.pty.open session.orchestrator.restart session.routing.add session.routing.toggle)
+  @conversation_actions Ezagent.World.DispatchContract.actions(:conversation)
   def handle_event("world:dispatch", %{"action" => action, "args" => args}, socket)
       when action in @conversation_actions and is_map(args) do
     ConversationActions.handle_dispatch(socket, action, args)
