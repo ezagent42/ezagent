@@ -61,8 +61,9 @@ defmodule EzagentCore.Architecture.GitAdapterBoundaryScanner do
       path == @action_set_path and module_names(ast) == [Ezagent.ActionSet.GitTaskAccess]
 
     function_bodies(ast)
-    |> Enum.flat_map(fn {name, body} ->
-      if approved_action_set? and name in [:lookup_adapter, :invoke] do
+    |> Enum.flat_map(fn {kind, name, arity, body} ->
+      if approved_action_set? and
+           {kind, name, arity} in [{:defp, :lookup_adapter, 1}, {:defp, :invoke, 5}] do
         []
       else
         {_body, findings} =
@@ -248,9 +249,13 @@ defmodule EzagentCore.Architecture.GitAdapterBoundaryScanner do
   defp function_bodies(ast) do
     {_ast, bodies} =
       Macro.prewalk(ast, [], fn
-        {kind, _, [{name, _, _args}, [do: body]]} = node, acc
+        {kind, _, [{name, _, args}, [do: body]]} = node, acc
+        when kind in [:def, :defp] and is_atom(name) and is_list(args) ->
+          {node, [{kind, name, length(args), body} | acc]}
+
+        {kind, _, [{name, _, nil}, [do: body]]} = node, acc
         when kind in [:def, :defp] and is_atom(name) ->
-          {node, [{name, body} | acc]}
+          {node, [{kind, name, 0, body} | acc]}
 
         node, acc ->
           {node, acc}
@@ -370,6 +375,14 @@ defmodule EzagentCore.Architecture.GitAdapterBoundaryTest do
 
       assert Scanner.scan_source(path, extra_helper).adapter_effects != []
       assert Scanner.scan_source(path, extra_module).adapter_effects != []
+
+      for public_chokepoint <- [
+            "def lookup_adapter(id), do: Ezagent.DomainGit.AdapterRegistry.lookup_for_action_set(id)",
+            "def invoke(adapter, context, repository, sha, extra), do: adapter.list_checks(context, repository, sha)"
+          ] do
+        source = "defmodule Ezagent.ActionSet.GitTaskAccess do\n#{public_chokepoint}\nend"
+        assert Scanner.scan_source(path, source).adapter_effects != [], public_chokepoint
+      end
     end
 
     test "positive fixtures plant every forbidden boundary crossing" do
