@@ -5,6 +5,7 @@ import {Button, Input, Modal, Select} from "./ui/primitives"
 import {JsonRenderBubble} from "./JsonRenderBubble"
 import {Kanban, type KanbanState} from "./Kanban"
 import {PtyTerminalSurface} from "./PtyTerminal"
+import {matchUnfurl} from "./unfurl"
 
 /** G5 structured error card pushed by ErrorRenderer */
 type DispatchErrorCard = {
@@ -991,6 +992,10 @@ export function Conversation({
                 messages.map((message) => {
                   const mine = message.sender === callerUri
                   const kind = message.sender_kind || "other"
+                  // ㉝ 链接 unfurl（注册表机制，见 unfurl.tsx）：消息文本命中已注册的
+                  // 链接模式（如 kanban 分享接收链接）→ 不显示裸链接，渲成对应气泡；
+                  // 去掉链接后的剩余文本作气泡标题。㉙「分享到会话」发的消息走同一路。
+                  const unfurl = message.text ? matchUnfurl(message.text) : null
                   return (
                     <div
                       key={message.id}
@@ -1010,7 +1015,10 @@ export function Conversation({
                           </span>
                         )}
                       </div>
-                      {message.text && <p className={bubbleTextClass(mine, kind)}>{message.text}</p>}
+                      {/* ㉝ unfurl 命中时裸链接不再显示;error_card(G5 source 2)始终
+                          附加渲染,绝不吞掉持久化文本(#1456 adversarial review #2)。 */}
+                      {message.text && !unfurl && <p className={bubbleTextClass(mine, kind)}>{message.text}</p>}
+                      {unfurl && unfurl.renderer.render(unfurl.url, unfurl.rest, {sessionUri, mine})}
                       {message.error_card && (
                         // Async agent-reply error (G5 source 2): the per-viewer
                         // card renders IN ADDITION to the text (adversarial
