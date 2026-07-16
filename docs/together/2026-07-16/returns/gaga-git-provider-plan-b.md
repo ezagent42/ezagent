@@ -1,126 +1,129 @@
 > **Task:** gaga — Git Provider V1 Plan B domain spine
-> **Branch:** `test/git-task-dispatch-integration`
-> **Stacked on:** Plan B Tasks 0–9 base `c1ecc1a2d`
-> **PR:** none
+> **Branch:** `feat/git-domain-spine`
+> **Baseline:** `origin/main@6bfe3d1b3288c93c128449a1183922140db66217`
+> **PR:** WIP, to be created after final verification/review
 > **Dev:** gaga / Codex
-> **returned_at:** 2026-07-16 22:01 +0800
-> **deadline:** 2026-07-16 23:59 +0800
-> **deadline_status:** deferred
-> **Status:** Task 11 locally verified; Task 12 full precommit/CI/PR handoff is explicitly deferred
+> **returned_at:** 2026-07-16 23:03 +0800
+> **Status:** Tasks 0–12 implemented locally; broad review and Draft PR handoff in progress
 
 # Return summary
 
-Tasks 0–11 now form a locally verified provider-neutral, in-memory Git domain
-spine. Task 11 proves the exact-resource authorization and adapter-dispatch path
-through real application boot, Resource lifecycle, Invocation, Router, and Kind
-runtime. Task 12 and all external-provider/operational completion remain open. No
-deployment or merge is authorized.
+Plan B delivers a provider-neutral, in-memory Git domain spine as one stacked
+change on `feat/git-domain-spine`. It includes the Plan A constraints and evidence,
+closed domain values, adapter contract/registry, ephemeral per-task access Resource,
+CapBAC-gated ActionSet dispatch, atomic boot registration, structural gates, and a
+real in-process integration proof through Invocation/Router/Kind to synchronized
+fake providers.
+
+This is not the original W29 external demo loop. GitHub plugin/API, user GitHub
+authorization, credentials, checkout/worktree provisioning, Kanban, canary,
+cc-headless execution, real PR/CI/review/merge, and #1360 Layer B final mounting are
+not implemented by Plan B. No deployment or merge is authorized or claimed.
 
 ## DoD reconciliation
 
-| # | DoD line | Status | Proof / open decision |
-|---|---|---|---|
-| 1 | Track refined Plan B design and executable plan | met for Task 0 | tracked spec/plan files on this branch |
-| 2 | Freeze Plan A four structs, five callbacks/actions, and full error union | met for Task 0 | tracked design exact Elixir contracts |
-| 3 | Freeze five minimum provider-neutral auxiliary shapes | met for Task 0 | architecture review fixes applied: stored base/head authority, total check normalization, submitted/latest review events |
-| 4 | Record exact Tasks 2–3 assertions; keep SSH/merge absent | met for Task 0 | tracked design §13.1 and adapter section |
-| 5 | Scaffold and boundary-test the domain app | met for Task 1 | focused test 2/0; compile exit 0; undeclared-dependency/layer-purity gates 4/0 |
-| 5a | Freeze Task 2 construction and limit API | met | approved contract through review fixes at `f93487535` |
-| 5b | Implement provider-neutral values | met for Task 2 | strict RED; full domain app 16/0; warning-clean compile; final applicable core static gates 12/0 |
-| 6 | Boot real Git supervisors/registrations and pre-spawn the authoritative ephemeral Resource | met for Task 11 | `git_task_dispatch_test.exs` asserts all real processes and five boot bindings before `TaskAccessSupervisor.ensure_started/1` |
-| 7 | Use two synchronized fakes, Task 7 exact held-admin signed artifact, and real Invocation/Router | met for Task 11 | integration proof passes for both providers with receiver-bound `Cap.verify_for/2` fixture |
-| 8 | Prove exact normalized routing with zero cross-provider call | met for Task 11 | provider A/B return distinct normalized `RepositoryRef` values; synchronized mailbox assertions exclude the other adapter |
-| 9 | Prove no-cap zero registry/Resource/provider effects | met for Task 11 | denial is `{:error, :unauthorized}`; diagnostics and policy slice are byte-for-byte equal; no call/mutation message |
-| 10 | Prove stale-base zero provider mutation | met for Task 11 | selected B callback is observed, `:stale_base` returned, no mutation or A callback observed |
-| 11 | Deterministic cleanup | met for Task 11 | adapter unregister and Resource teardown are registered with `on_exit`; no sleep or shared probe process |
-| 12 | Rebase, full verification, broad review, and WIP PR handoff | deferred | Task 12 was explicitly excluded; merge and deploy are separate lead-authorized operations and are not part of Task 12 |
+| Task | Status | Evidence |
+|---|---|---|
+| 0 contract/design freeze | complete | tracked design, plan, Plan A decisions and security constraints |
+| 1 independent domain app | complete | exact production dependency `:ezagent_core`; architecture dependency tests |
+| 2 closed values/limits/errors | complete | non-raising constructors, closed error union, configured aggregate limits |
+| 3 adapter contract | complete | five provider-neutral callbacks and normalized result contracts |
+| 4 adapter registry | complete | exact normalized repository routing and deterministic registration lifecycle |
+| 5 ephemeral task Resource | complete | policy state is in-memory, per-task, and supervised |
+| 6 capability contract | complete | five actions/subjects derived by the ActionSet macros |
+| 7 signed-cap test fixture | complete | real `Cap.issue({:held_by, admin_uri}, ...)`, receiver-bound verification |
+| 8 authorized dispatch | complete | exact-resource authorization before adapter effects |
+| 9 atomic boot | complete | registrations and boot Resource bindings fail/roll back as one startup boundary |
+| 10 structural gates | complete | dynamic-boundary, provider leakage, secret isolation, and URI scanner regressions |
+| 11 integration proof | complete | real boot + Resource + Invocation/Router/Kind + two synchronized fake adapters |
+| 12 handoff verification | in progress | rebased current main; docs, architecture, per-app and full umbrella verification recorded; broad review/PR pending |
 
-## Verification evidence
+## Fresh verification evidence
 
-Task 0 `git diff --check` and targeted contract/exclusion `rg` checks pass. The
-stacked Plan A environment probe is recorded as 7 tests, 0 failures; Task 0 itself
-adds no runtime code/tests. CI/rebase/return completion remains deferred.
+Environment: local Linux isolated worktree
+`/home/huangjiajia/ezagent/.worktrees/git-domain-spine`, Elixir 1.19.2,
+`SHELL=/bin/bash`. Dependencies/build assets are shared from the main checkout;
+the ignored web `node_modules` symlink is an environment prerequisite, not a
+tracked product change.
 
-Review-fix verification additionally confirms request-side `base_ref`,
-`Review.author`, and review `:pending` are absent, while `allowed_head_ref`, total
-check projection, `author_label`, and stable-event dedupe rules are present.
+Already verified after the current-main rebase and Task 12 fixes:
 
-Task 1 strict TDD captured the dependency boundary RED (`[]` versus
-`[:ezagent_core]`), then GREEN after adding only the approved dependency. Focused
-compile passed; the existing undeclared umbrella dependency and layer-purity gates
-passed 4 tests. The first green-test attempt was environment-blocked by unset
-`SHELL` during `erlexec` startup; `SHELL=/bin/bash` produced the reported pass.
+```text
+SHELL=/bin/bash mix cmd --app ezagent_domain_git mix test
+  -> 84 tests, 0 failures
 
-Task 1 review fix: replaced the source-regex inventory with authoritative
-`Mix.Project.config()[:deps]` tuple normalization. The focused suite now includes a
-path-form forbidden-dependency fixture proving it is both inventoried and rejected
-when `in_umbrella: true` is absent.
+SHELL=/bin/bash mix test \
+  apps/ezagent_domain_git/test/integration/git_task_dispatch_test.exs
+  -> 3 tests, 0 failures
 
-Task 2 pre-RED review amendment freezes the constructor/error/config boundary and
-promotes Plan A's tested prototype limits as operator-configurable, domain-owned V1
-defaults. This is documentation only and remains architecture-review-required; no
-Task 2 test, compile, precommit, CI, or readiness result is claimed.
+mix ezagent.doc.scan
+  -> PASS, 404/404 public definitions documented
 
-Task 2 review fixes further freeze non-raising pre-child config validation, fixed
-non-echoing unknown-field handling, exact URI/ref rules, upstream capture ownership
-for filesystem kind, and shared lowercase V1 SHA-1 validation. The proposed
-`ObjectId` rename was not selected because Plan A's exact `ChangeRequest.head_sha`
-field and approved `CommitSha` auxiliary name are frozen; the shared validator
-prevents a raw-string bypass. Re-review is still required before RED, and no Task 2
-test or production result is claimed.
+mix ezagent.arch.scan
+  -> PASS, all architecture counters within baseline; oversized files 4/4
 
-After approval, Task 2 captured RED for missing value structs and a separate
-path-control-byte regression, then reached GREEN: focused Task 2 14/0 and
-`mix compile --warnings-as-errors` exit 0. Final verification expands to the full
-domain app at 16/0 and applicable core dependency/layer/URI gates at 12/0. Full
-precommit, CI, PR readiness, provider integration, deployment, and merge are not
-claimed.
+focused core capability chokepoint regression
+  -> 1 test, 0 failures
+```
 
-Task 2 review fixes captured 14/3 RED for unsafe nested SHA acceptance and two
-forged-input crashes, then GREEN at full domain app 17/0. The Error union assertion
-now parses actual union AST with an extra-member negative fixture. Warning-clean
-compile and applicable core dependency/layer/URI gates 13/0 pass; full precommit/CI
-is still not claimed.
+Three serial full-precommit attempts were diagnostic, not green claims:
 
-## Deferred boundary
+1. The first stopped because an isolated worktree lacked web `node_modules`.
+   Clean `origin/main` reproduced that worktree-environment prerequisite.
+2. After linking the existing ignored assets, the second reached the full suite.
+   It exposed and led to fixes for two branch-owned issues: redundant manual
+   `cap_subjects/0` and per-app test dependence on the Identity sibling app. It
+   also reported unrelated/current-main state: the SkillRegistry seed bundle,
+   one URI scanner finding in `skill_reconcile.ex`, and a full-suite HomeLive
+   teardown timeout. The HomeLive test passes alone on clean current main (1/0).
 
-GitHub plugin/API, credentials/tokens, checkout/worktrees, Kanban, canary, #1360
-Layer B final mount, real PR/CI/review/merge, full precommit, deployment, and merge
-remain out of scope. This return proves only a provider-neutral in-memory domain
-spine and is not a valid machine-gated WIP handoff until Task 12 is authorized.
-Merge and deployment remain outside Task 12 and require separate lead authorization.
+3. The final run completed every umbrella app. All apps except core passed,
+   including Web 359/0 (the prior teardown timeout did not reproduce), Git domain
+   84/0, and CLI 37/0. Core reported 2123 tests / 5 failures: the SkillRegistry
+   seed/runtime mismatch plus four scanner-task failures caused by current main's
+   single `skill_reconcile.ex` URI finding. Therefore `mix precommit` is recorded
+   as failed, not green. Full log: `/tmp/plan-b-precommit-3.log`.
 
-## Task 11 environment, commands, and blockers
+## Baseline reproduction
 
-- Environment: local Linux worktree, Elixir 1.19.2, `SHELL=/bin/bash`; dependencies
-  and build artifacts reused from `/home/huangjiajia/ezagent/{deps,_build}` because
-  the isolated worktree had no local dependency tree.
-- TDD RED: after resolving that environment prerequisite, the focused umbrella
-  integration run reached ExUnit and failed 3/3 at adapter registration with
-  `{:invalid_adapter_module, SynchronizedGitAdapterA}`. Missing dependencies and
-  unset `SHELL` were recorded only as environment blockers, not counted as RED.
-- TDD GREEN: `mix test apps/ezagent_domain_git/test/integration/git_task_dispatch_test.exs`
-  passed 3 tests, 0 failures.
-- Full domain: `mix test apps/ezagent_domain_git/test` passed 83 tests, 0 failures.
-- Static gates: `mix ezagent.arch.scan` passed all counters and
-  `mix ezagent.check_invariants` passed all in-scope invariants. The inherited
-  Tasks 2–9 base is not fully static-green: `ezagent.doc.scan` reports exactly 20
-  undocumented public defs in existing `ezagent_domain_git/lib` code (424 > 404),
-  and hard-fail `ezagent.uri_query.scan` reports six existing domain-value findings
-  (three positional URI reads, three tenant-derivation heuristics). Task 11 adds no
-  `lib` code and does not weaken a baseline or hide these failures.
-- Blockers: Task 11's implementation proof has no blocker. The two inherited
-  static-gate failures require an owned follow-up before Task 12 can claim a valid
-  machine return. Full precommit, CI, PR, rebase-to-current-main, review, merge,
-  canary, and deployment were intentionally not run in Task 11.
+Clean detached `origin/main@6bfe3d1b3` in `/tmp/ezagent-origin-main-verify` reports
+exactly one hard URI scanner finding:
 
-**Method friction:** The worktree did not contain `deps/` or `_build/`, and direct
-app-only execution cannot load `Ezagent.Identity.read_held_caps/1`, which Task 7's
-real held-admin fixture requires. The truthful focused command therefore runs from
-the umbrella root with the shared local dependency/build paths and `SHELL` set.
+```text
+apps/ezagent_domain_agent/lib/ezagent/home/skill_reconcile.ex:142
+raw_uri_construction (string check for "entity://")
+```
 
-## Merge request
+The branch does not edit that file or conceal the finding. Clean main's
+`mix ezagent.arch.scan` passes with oversized-file count/cap 4/4. The isolated
+HomeLive wizard test on clean main passes 1/0.
 
-Commit the Task 11 slice on `test/git-task-dispatch-integration` and return its SHA
-to the lead. Do not push, open a PR, merge, deploy, or present this as Task 12/CI
-completion.
+## Reproduction commands
+
+```bash
+cd /home/huangjiajia/ezagent/.worktrees/git-domain-spine
+git status --short --branch
+git diff --check origin/main...HEAD
+SHELL=/bin/bash mix cmd --app ezagent_domain_git mix test
+SHELL=/bin/bash mix test apps/ezagent_domain_git/test/integration/git_task_dispatch_test.exs
+mix ezagent.doc.scan
+mix ezagent.arch.scan
+mix ezagent.check_invariants
+SHELL=/bin/bash mix precommit
+```
+
+## Honest boundary and next slices
+
+The delivered spine is provider-neutral but in-memory and loose-coupled. It does
+not contain GitHub-specific transport. The next independently reviewable slices
+are: GitHub plugin with per-user token brokering, entity SSH key management with
+public-key generation and optional private-key import, repository/worktree
+provisioning before sidecar start, then Kanban governance-cap issuance and the
+#1360 Layer B final mount. Those slices are required before the original canary
+Kanban-to-agent-to-real-PR demo can run.
+
+## Lead handoff
+
+Create/update a Draft PR only after final local verification and broad review.
+Do not deploy or merge. Allen/lead retains authorization for integration order,
+deployment, and merge.
