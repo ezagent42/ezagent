@@ -395,10 +395,13 @@ defmodule Ezagent.Users do
         {:error, :not_found}
 
       %__MODULE__{deleted_at: %DateTime{}} = row ->
-        # Already tombstoned — idempotent. Re-assert the Kind teardown in case a
-        # stray demand-spawn re-created it (best-effort).
+        # Already tombstoned — idempotent. Re-ASSERT the full revocation so a
+        # retry after a partial first pass (e.g. the `UserStore.persist` below
+        # failed, leaving stale caps_json → a caps_json-based resurrection) still
+        # converges: re-empty the caps + re-tear-down the Kind/snapshot.
+        _ = Ezagent.EntityCaps.UserStore.persist(Ezagent.URI.new!(row.uri), [])
         _ = destroy_kind_best_effort(uri)
-        {:ok, decode(row)}
+        {:ok, decode(Repo.get_by(__MODULE__, uri: row.uri))}
 
       %__MODULE__{disabled_at: nil} ->
         # Disable-before-delete safety gate (task #180 Change 2): a HARD delete
