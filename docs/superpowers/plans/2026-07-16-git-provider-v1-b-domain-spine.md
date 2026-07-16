@@ -1,9 +1,8 @@
 # Git Domain Spine (Plan B) Implementation Plan
 
-> Executed on branch `feat/git-domain-spine`, stacked on Plan A PR #1423. Task 0
-> documentation may land on this stack; the auxiliary shapes were corrected per
-> architecture review. Production Task 1+ remains gated on #1423 landing and rebase.
-> This plan authorizes no deploy or merge.
+> Tasks 0–11 are implemented on the local Plan B stack. Task 11 proves only the
+> provider-neutral in-memory domain spine. Task 12 full precommit, CI, WIP PR,
+> review, and lead-flow landing remain open. This plan authorizes no deploy or merge.
 
 **Goal:** Land a provider-neutral Git domain spine whose exact-resource CapBAC path
 dispatches authorized in-memory task actions to either of two fake adapters and
@@ -326,6 +325,14 @@ Commit candidate: `feat(git): make domain boot registration atomic`
 Commit candidate: `test(git): enforce provider and authorization boundaries`
 
 ## Task 11: integration proof and documentation
+
+**Implementation status (2026-07-16): complete locally.** The integration proof
+uses real boot registrations/supervisors, an explicitly spawned ephemeral Resource,
+two synchronized fakes, Task 7's exact signed artifact, and real Invocation/Router.
+It proves exact routing, normalized output, zero cross-provider calls, no-cap zero
+registry/Resource/provider mutation, stale-base zero provider mutation, and
+deterministic teardown. This status does not include Task 12 or any GitHub,
+credential, checkout, Kanban, canary, PR/CI/review/merge, deploy, or #1360 mount.
 
 **Expected files**
 

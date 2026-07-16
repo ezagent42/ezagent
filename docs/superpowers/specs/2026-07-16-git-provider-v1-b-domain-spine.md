@@ -1,12 +1,15 @@
 # Git Domain Spine Design (Plan B Draft)
 
-**Status:** Task 0 contract freeze; value-construction amendment requires architecture review before Task 2 RED
+**Status:** Tasks 0–11 implemented and locally verified through the provider-neutral
+in-memory integration proof; Task 12 full precommit/CI/WIP-PR handoff remains open
 
 **Upstream:** Plan A decision records in `docs/superpowers/specs/2026-07-16-git-provider-v1-a-decisions.md`
 
 **Stack:** branch `feat/git-domain-spine`, stacked on Plan A PR #1423
 
-This document authorizes neither deployment nor merge.
+This document authorizes neither deployment nor merge. The implemented boundary has
+no GitHub transport, credentials, checkout/worktree provisioning, Kanban integration,
+canary, real PR/CI/review/merge, deployment, or #1360 Layer B final mount.
 
 ## 1. Goal
 
@@ -580,3 +583,19 @@ This tracked Task 0 documentation is intentionally stacked on Plan A PR #1423 in
 branch is rebased onto current
 `origin/main`; then re-read current architecture gates and record any mainline drift.
 Only the authorized lead flow may merge, deploy, or promote the branch.
+
+## 15. Implementation truth through Task 11
+
+Tasks 0–11 now implement the provider-neutral in-memory domain spine described
+above. The Task 11 integration test boots the real domain application supervisors
+and registrations, pre-spawns an ephemeral `GitTaskAccess` Resource, registers two
+synchronized provider-neutral fakes, uses Task 7's held-admin exact
+receiver-bound signed artifact, and calls `Ezagent.Invocation.dispatch/1` through
+the real Router/Kind runtime. It proves exact provider selection and normalized
+results with no cross-provider call, no-cap denial with unchanged registry and
+Resource slice plus zero provider call/mutation, and stale-base rejection after
+the selected provider is entered but before provider-side mutation.
+
+This is not proof of any external provider or operational loop. GitHub,
+credentials, checkout/worktree provisioning, Kanban, canary, real PR/CI/review/
+merge, deployment, and #1360 Layer B final mount remain unimplemented here.
