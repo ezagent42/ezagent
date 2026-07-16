@@ -41,9 +41,9 @@ Execute only Plan A from
 
 | Task | Status | Result / evidence | Commit |
 |---|---|---|---|
-| Baseline and ledger | complete | Worktree clean; rebased on current main; PR #1423 open Draft | pending |
-| 1. Primitive inventory | complete | Secret Store absent; SSH parser absent; Cap signed/receiver-bound; OsProcess lifecycle-only; plugin rollback pattern reusable. See `docs/superpowers/notes/2026-07-16-git-provider-v1-a-inventory.md` | pending |
-| 2. Same-UID reproduction | pending | — | — |
+| Baseline and ledger | complete | Worktree clean; rebased on current main; PR #1423 open Draft | `8fcbfe1b1` |
+| 1. Primitive inventory | complete | Secret Store absent; SSH parser absent; Cap signed/receiver-bound; OsProcess lifecycle-only; plugin rollback pattern reusable. See `docs/superpowers/notes/2026-07-16-git-provider-v1-a-inventory.md` | `8fcbfe1b1` |
+| 2. Same-UID reproduction | complete | Both mode-0600 known-path read and `/proc/<pid>/environ` observation reproduced under UID 1000; 2 tests, 0 failures. See `docs/superpowers/notes/2026-07-16-git-provider-v1-a-isolation-probe.md` | pending |
 | 3. Broker GO/NO-GO | pending | — | — |
 | 4. GitHub API request-plan prototype | pending | — | — |
 | 5. Decision/interface closeout | pending | — | — |
@@ -52,7 +52,9 @@ Execute only Plan A from
 
 ```bash
 git diff --check
-MIX_ENV=test mix test apps/ezagent_core/test/security/os_process_secret_isolation_probe_test.exs --trace
+SHELL=/bin/bash MIX_DEPS_PATH=/home/huangjiajia/ezagent/deps \
+  MIX_BUILD_PATH="$PWD/_build" MIX_ENV=test mix test \
+  apps/ezagent_core/test/security/os_process_secret_isolation_probe_test.exs --trace
 MIX_ENV=test mix test apps/ezagent_core/test/security/github_api_commit_transport_test.exs --trace
 ```
 
