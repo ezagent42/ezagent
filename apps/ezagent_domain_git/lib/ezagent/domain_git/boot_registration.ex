@@ -50,7 +50,9 @@ defmodule Ezagent.DomainGit.BootRegistration do
 
   @impl true
   def handle_info(:reconcile_adapters, state) do
-    case reconcile_adapters(state.desired_adapters, state) do
+    new_generation_state = %{state | owned_adapters: []}
+
+    case reconcile_adapters(state.desired_adapters, new_generation_state) do
       {:ok, reconciled_state} ->
         {:noreply, reconciled_state}
 
