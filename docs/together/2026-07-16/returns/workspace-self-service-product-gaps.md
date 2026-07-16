@@ -48,7 +48,8 @@ as ready-to-merge completion of #1436.
 4. Workspace owners can mint, copy, list, and revoke invites through a
    capability-gated dispatch facade and World UI.
 5. Admin Settings can control public registration/invite requirements and list
-   pending access requests.
+   pending access requests. The registration card is rendered only for the
+   canonical administrator; the save action remains server-side admin guarded.
 6. Password and Magic Link login establish a `SessionPrincipal` and enter the
    product directly instead of forcing the PAT interstitial.
 7. World has a dedicated Knowledge Base surface for agent selection,
@@ -64,7 +65,7 @@ as ready-to-merge completion of #1436.
 
 | Gap | status | result |
 |---|---|---|
-| G1 registration controls and closed page | deferred | Core UI/API path is implemented; cold-start admin browser proof is still missing. |
+| G1 registration controls and closed page | met | Admin and non-admin browser proof confirms the controls live in Manage -> System/Settings and are visible only to the canonical administrator. |
 | G2 workspace invite UI | deferred | Mint/copy/list/revoke and invite registration are implemented; the full browser invite-to-membership journey is not automated. |
 | G3 workspace identity/create UX | deferred | One owned workspace is created and login enters World, but there is no explicit named-workspace success page; multi-create remains backlog per lead decision. |
 | G4 founder Agent Key authority | deferred | Formal API-key capabilities are issued and absorbed; key validation/readiness/live reply proof is incomplete. |
@@ -81,12 +82,12 @@ as ready-to-merge completion of #1436.
 
 | # | DoD line | status | proof / open decision |
 |---|---|---|---|
-| G1-AC1 | Admin Settings exposes `registration_open`. | met | `Admin.tsx`, `admin_actions.ex`, and `admin_data.ex`; save dispatch is admitted by `DispatchContract`. |
-| G1-AC2 | Admin Settings exposes `registration_require_invite`. | met | Same settings card and dispatch path as G1-AC1. |
+| G1-AC1 | Admin Settings exposes `registration_open`. | met | `registration-admin-settings.png`; `Admin.tsx`, `admin_actions.ex`, and `admin_data.ex`; save dispatch is admitted by `DispatchContract`. |
+| G1-AC2 | Admin Settings exposes `registration_require_invite`. | met | Same admin-only Manage -> System/Settings card and dispatch path as G1-AC1. |
 | G1-AC3 | Open registration shows a registration entry point. | met | Registration controller tests cover the open form. |
 | G1-AC4 | Closed registration shows access-request and invite exits. | met | `registration-closed.png`; Playwright asserts both forms. |
 | G1-AC5 | Access request submission gives visible feedback. | met | `registration-request-received.png`; request persistence was verified as `pending` in PostgreSQL. |
-| G1-AC6 | Cold-start admin can find and operate the toggles without engineering help. | deferred | Backend/controller coverage exists, but no admin Settings browser transcript/screenshot was captured. Lead decision: accept focused slice or require this proof before close. |
+| G1-AC6 | Cold-start admin can find and operate the toggles without engineering help. | met | Real browser navigation from Manage -> System reached `/admin/settings`; save, reload persistence, and restore were verified on PostgreSQL 17 port 5432. `registration-non-admin-hidden.png` proves Alice sees no registration card on the same route. |
 
 ### G2 ? workspace invite UI
 
@@ -203,6 +204,14 @@ harness.
 
 ### Browser screenshots
 
+Canonical administrator sees registration controls in Manage -> System/Settings, directly above SMTP:
+
+![Admin registration settings](evidence/workspace-self-service/registration-admin-settings.png)
+
+Non-admin Alice sees SMTP on the same route, but no registration controls:
+
+![Registration settings hidden from non-admin](evidence/workspace-self-service/registration-non-admin-hidden.png)
+
 Closed registration exposes both exits:
 
 ![Closed registration](evidence/workspace-self-service/registration-closed.png)
@@ -225,6 +234,16 @@ Access request gives a uniform confirmation:
 - Live registration Playwright: 2 passed.
 - Access request row verified in PostgreSQL with status `pending`.
 - World TypeScript, ESLint, and Vite production build passed.
+
+### Corrected admin-settings validation
+
+- PostgreSQL 17 listened on `127.0.0.1:5432`; the dev database was created and migrated through `20260716010000`.
+- `AdminDataTest`: 5 tests, 0 failures.
+- World Vitest: 6 tests, 0 failures, including two admin/non-admin settings visibility cases.
+- World TypeScript and ESLint: PASS; Vite production build: PASS (existing Excalidraw dynamic-import warning only).
+- Real browser: Admin saw both registration switches in Manage -> System/Settings; Alice did not receive or render registration settings on the same URL.
+- Admin changed `registration_open`, saved, reloaded to prove persistence, then restored it to `false` and reloaded again.
+- Full `mix precommit` was attempted twice; the command produced no final result before the 60-second and 300-second tool timeouts, so no full-precommit pass is claimed.
 
 ### Post-rebase validation
 
@@ -278,8 +297,7 @@ This return does **not** claim full precommit green.
 1. Decide whether PR #1440 should be reviewed as a smaller G1/G2 + founder-cap +
    KB/docs/browser-foundation slice, instead of being treated as completion of
    #1436.
-2. Require or explicitly defer the missing admin Settings and two-user invite
-   browser proofs.
+2. Require or explicitly defer the remaining two-user invite browser proof.
 3. Assign G4 key validation/readiness/live-reply completion after cap-signing
    lands; keep the implemented formal-cap path and do not reintroduce
    `:stub_grant`.

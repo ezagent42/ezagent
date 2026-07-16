@@ -20,6 +20,7 @@ export type AdminState = {
   rules?: DataRow[]
   session_uri?: string | null
   settings?: {
+    can_manage_registration?: boolean
     error?: string
     registration_flash?: string | null
     registration_open?: boolean
@@ -558,6 +559,7 @@ function SettingsPanel({
     <Surface component="settings">
       <SectionHeader eyebrow="Config" title="Settings" icon={<Settings className="h-4 w-4" />} />
       {settings.error && <p className="text-sm text-destructive">{settings.error}</p>}
+      {settings.can_manage_registration === true && (
       <section className="grid gap-4 rounded-md border border-border bg-background p-4" data-world-registration-settings>
         <div>
           <h3 className="text-sm font-semibold text-foreground">Self-service registration</h3>
@@ -603,6 +605,7 @@ function SettingsPanel({
           {(settings.registration_requests || []).length === 0 && <EmptyState label="No pending registration requests." />}
         </div>
       </section>
+      )}
       <form
         id="world-smtp-form"
         className="grid gap-3 sm:grid-cols-2"

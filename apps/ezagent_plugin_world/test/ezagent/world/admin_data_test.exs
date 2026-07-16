@@ -61,4 +61,14 @@ defmodule Ezagent.World.AdminDataTest do
     assert is_map(state["kpis"])
     assert state["available_sessions"] == []
   end
+
+  test "settings state does not expose registration controls to a non-admin caller" do
+    state = Ezagent.World.AdminData.settings_state(nil)
+
+    assert state["can_manage_registration"] == false
+    refute Map.has_key?(state, "registration_open")
+    refute Map.has_key?(state, "registration_require_invite")
+    refute Map.has_key?(state, "registration_requests")
+    assert is_map(state["smtp"])
+  end
 end
