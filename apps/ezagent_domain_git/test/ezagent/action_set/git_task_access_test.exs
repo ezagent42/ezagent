@@ -1,5 +1,5 @@
 defmodule Ezagent.ActionSet.GitTaskAccessTest do
-  use ExUnit.Case, async: false
+  use EzagentCore.DataCase, async: false
 
   alias Ezagent.DomainGit.{
     ChangeRequestId,

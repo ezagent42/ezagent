@@ -1,5 +1,5 @@
 defmodule Ezagent.DomainGit.TaskAccessLifecycleTest do
-  use ExUnit.Case, async: false
+  use EzagentCore.DataCase, async: false
 
   alias Ezagent.DomainGit.RepositoryRef
   alias Ezagent.DomainGit.TaskAccessSupervisor
