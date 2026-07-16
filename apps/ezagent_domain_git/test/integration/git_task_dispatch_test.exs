@@ -98,6 +98,41 @@ defmodule Ezagent.DomainGit.Integration.GitTaskDispatchTest do
     refute_received {:task11_provider_mutation, _, _}
   end
 
+  test "receiver-bound cap replay by another caller leaves both providers unchanged" do
+    fixture = fixture(:resolve_repository)
+    policy = policy(fixture, :"task11-sync-a")
+    start_resource(fixture, policy)
+    workspace = Ezagent.URI.workspace_name!(fixture.workspace_uri)
+
+    invocation = %{
+      fixture.invocation
+      | args: %{repository: policy.repository},
+        ctx: %{fixture.invocation.ctx | caller: Ezagent.URI.agent(workspace, "replay-attacker")}
+    }
+
+    assert {:error, :unauthorized} = Ezagent.Invocation.dispatch(invocation)
+    refute_received {:task11_adapter_call, _, _, _}
+    refute_received {:task11_provider_mutation, _, _}
+  end
+
+  test "invalid signed artifact leaves both providers unchanged" do
+    fixture = fixture(:resolve_repository)
+    policy = policy(fixture, :"task11-sync-a")
+    start_resource(fixture, policy)
+    [cap] = MapSet.to_list(fixture.invocation.ctx.caps)
+    invalid_cap = %{cap | signature: <<0>>}
+
+    invocation = %{
+      fixture.invocation
+      | args: %{repository: policy.repository},
+        ctx: %{fixture.invocation.ctx | caps: MapSet.new([invalid_cap])}
+    }
+
+    assert {:error, :unauthorized} = Ezagent.Invocation.dispatch(invocation)
+    refute_received {:task11_adapter_call, _, _, _}
+    refute_received {:task11_provider_mutation, _, _}
+  end
+
   test "stale create reaches only the selected provider and performs no provider mutation" do
     fixture = fixture(:create_change_request)
     policy = policy(fixture, :"task11-sync-b")
