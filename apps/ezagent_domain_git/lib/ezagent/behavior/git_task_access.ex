@@ -118,31 +118,29 @@ defmodule Ezagent.ActionSet.GitTaskAccess do
 
     TaskAccessSupervisor.with_lifecycle(uri, fn ->
       with {:ok, policy} <- GitTaskAccess.revalidate(ctx.read.(:policy, nil)),
-           :ok <- validate_static_request(policy, action, args),
+           {:ok, validated_args} <- validate_static_request(policy, action, args),
            {:ok, operation_context} <- operation_context(policy, action, ctx),
            {:ok, adapter} <- lookup_adapter(policy.provider_adapter) do
-        invoke(adapter, action, operation_context, policy.repository, args)
+        invoke(adapter, action, operation_context, policy.repository, validated_args)
       end
     end)
   end
 
   defp validate_static_request(policy, action, %{repository: repository} = args) do
     with :ok <- validate_exact_keys(action, args),
-         {:ok, repository} <- RepositoryRef.new(Map.from_struct(repository)),
+         {:ok, repository} <- validate_repository(repository),
          true <- repository == policy.repository,
+         {:ok, validated_args} <- validate_action_values(action, args),
          :ok <-
            GitTaskAccess.validate_invocation(
              policy,
-             invocation_comparison_args(action, args)
-           ),
-         :ok <- validate_action_values(action, args) do
-      :ok
+             invocation_comparison_args(action, validated_args)
+           ) do
+      {:ok, Map.put(validated_args, :repository, repository)}
     else
       false -> {:error, :repository_mismatch}
       {:error, reason} -> {:error, reason}
     end
-  rescue
-    _ -> {:error, :repository_mismatch}
   end
 
   defp validate_static_request(_policy, _action, _args), do: {:error, :repository_mismatch}
@@ -159,37 +157,48 @@ defmodule Ezagent.ActionSet.GitTaskAccess do
 
   defp invocation_comparison_args(action, _args), do: %{action: action}
 
-  defp validate_action_values(:resolve_repository, _args), do: :ok
+  defp validate_repository(%RepositoryRef{} = repository),
+    do: RepositoryRef.new(Map.from_struct(repository))
 
-  defp validate_action_values(:create_change_request, %{changes: changes, request: request}) do
+  defp validate_repository(_repository), do: {:error, :repository_mismatch}
+
+  defp validate_action_values(:resolve_repository, args), do: {:ok, args}
+
+  defp validate_action_values(
+         :create_change_request,
+         %{changes: changes, request: %CreateChangeRequest{} = request} = args
+       ) do
     with :ok <- FileChange.validate_many(changes),
-         {:ok, _request} <- CreateChangeRequest.new(Map.from_struct(request)) do
-      :ok
+         {:ok, validated_request} <- CreateChangeRequest.new(Map.from_struct(request)) do
+      {:ok, %{args | request: validated_request}}
     end
-  rescue
-    _ -> {:error, :invalid_create_request}
   end
 
-  defp validate_action_values(:read_change_request, %{change_request_id: id}),
-    do: validate_value(ChangeRequestId, id)
+  defp validate_action_values(:create_change_request, _args),
+    do: {:error, {:invalid_field, :request}}
 
-  defp validate_action_values(:list_checks, %{commit_sha: sha}),
-    do: validate_value(CommitSha, sha)
+  defp validate_action_values(:read_change_request, %{change_request_id: id} = args),
+    do: validate_value(args, :change_request_id, ChangeRequestId, id)
 
-  defp validate_action_values(:list_reviews, %{change_request_id: id}),
-    do: validate_value(ChangeRequestId, id)
+  defp validate_action_values(:list_checks, %{commit_sha: sha} = args),
+    do: validate_value(args, :commit_sha, CommitSha, sha)
+
+  defp validate_action_values(:list_reviews, %{change_request_id: id} = args),
+    do: validate_value(args, :change_request_id, ChangeRequestId, id)
 
   defp validate_action_values(_action, _args), do: {:error, :invalid_operation_arguments}
 
-  defp validate_value(module, value) do
-    module.new(Map.from_struct(value))
-    |> case do
-      {:ok, _validated} -> :ok
-      {:error, reason} -> {:error, reason}
+  defp validate_value(args, field, module, value) do
+    with {:ok, validated} <- rebuild_value(module, value) do
+      {:ok, Map.put(args, field, validated)}
     end
-  rescue
-    _ -> {:error, :invalid_operation_arguments}
   end
+
+  defp rebuild_value(ChangeRequestId, %ChangeRequestId{} = value),
+    do: ChangeRequestId.new(Map.from_struct(value))
+
+  defp rebuild_value(CommitSha, %CommitSha{} = value), do: CommitSha.new(Map.from_struct(value))
+  defp rebuild_value(_module, _value), do: {:error, :invalid_operation_arguments}
 
   defp operation_context(policy, action, ctx) do
     OperationContext.new(%{
