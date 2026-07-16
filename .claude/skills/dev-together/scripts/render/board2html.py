@@ -1,0 +1,304 @@
+#!/usr/bin/env python3
+"""dev-together: deterministic board.yaml -> board.html renderer.
+
+The board is a plan+review unified kanban: one board.yaml per day is the single
+source of truth. `plan` writes it at start-of-day (cards with acceptance
+checklists in their status columns); `review` updates it at end-of-day (move
+cards, tick acceptance with evidence, fill 复盘). This script renders it — the
+MODEL never hand-writes HTML; presentation lives only here.
+
+Usage:  uv run --with pyyaml python board2html.py <board.yaml> [board.html]
+        (default output = input with .yaml -> .html)
+
+board.yaml schema — see scripts/render/board.example.yaml for a filled example.
+"""
+import sys, html, json
+
+try:
+    import yaml
+except ImportError:
+    sys.exit("board2html: pyyaml missing. Run via: uv run --with pyyaml python board2html.py <board.yaml>")
+
+# ---- status column model ----
+COLUMNS = [("planned", "计划", "c-plan"),
+           ("wip", "进行中", "c-wip"),
+           ("review", "待评审 / 验收", "c-rev"),
+           ("done", "完成", "c-done")]
+PR_STATE_PILL = {"merged": "pr-merged", "open": "pr-open", "draft": "pr-draft"}
+
+def e(x):
+    return html.escape("" if x is None else str(x))
+
+CSS = """
+  :root{--ink:#1a1a1a;--line:#e2e8f0;--soft:#f8fafc;--blue:#2563eb;--blue-d:#1e40af;--green:#059669;--amber:#d97706;--red:#dc2626}
+  *{box-sizing:border-box}
+  body{font:14px/1.55 -apple-system,"Segoe UI",Roboto,"PingFang SC","Microsoft YaHei",sans-serif;color:var(--ink);margin:0;background:#eef2f7}
+  .wrap{max-width:1460px;margin:0 auto;padding:18px}
+  .hero{background:linear-gradient(135deg,#1e293b,#334155);color:#fff;border-radius:12px;padding:16px 20px;margin-bottom:14px}
+  .hero .row{display:flex;flex-wrap:wrap;gap:20px;align-items:center}
+  .hero h1{font-size:19px;margin:0 0 3px}
+  .hero .north{font-size:12.5px;color:#cbd5e1;max-width:640px}
+  .hero .north b{color:#fbbf24}
+  .prog{flex:1;min-width:220px}
+  .prog .lab{font-size:11px;color:#94a3b8;display:flex;justify-content:space-between;margin-bottom:4px}
+  .bar{height:9px;background:#0f172a;border-radius:6px;overflow:hidden}
+  .bar i{display:block;height:100%;background:linear-gradient(90deg,#22c55e,#16a34a)}
+  .bar.b i{background:linear-gradient(90deg,#38bdf8,#2563eb)}
+  .eff{display:flex;gap:0;background:#0f172a;border-radius:9px;overflow:hidden;flex-wrap:wrap}
+  .eff div{padding:8px 13px;border-right:1px solid #1e293b;text-align:center}
+  .eff div:last-child{border-right:0}
+  .eff b{display:block;font-size:17px;color:#7dd3fc;line-height:1.1}
+  .eff span{font-size:10px;color:#94a3b8}
+  .hero .src{font-size:10.5px;color:#64748b;margin-top:8px}
+  .deploy{display:inline-flex;border:1px solid var(--line);border-radius:8px;overflow:hidden;background:#fff;margin:0 10px 8px 0;vertical-align:top}
+  .deploy div{padding:6px 12px;font-size:12px;border-right:1px solid #eef2f7}
+  .deploy div:last-child{border-right:0}
+  .deploy .s{display:block;font-size:10px;color:#94a3b8}
+  .risk{background:#fef2f2;border:1px solid #fecaca;border-radius:8px;padding:9px 14px;margin:2px 0 12px;font-size:12.5px}
+  .board{display:grid;grid-template-columns:repeat(4,minmax(220px,1fr));gap:10px;overflow-x:auto}
+  .colwrap{display:flex;flex-direction:column;min-width:0}
+  .colhead{font-weight:700;font-size:12px;text-align:center;padding:7px 4px;border-radius:6px 6px 0 0;color:#fff}
+  .colhead .cnt{background:rgba(255,255,255,.28);border-radius:8px;padding:0 6px;font-size:11px;margin-left:2px}
+  .c-plan{background:#94a3b8}.c-wip{background:var(--blue)}.c-rev{background:var(--amber)}.c-done{background:var(--green)}
+  .cell{display:flex;flex-direction:column;gap:7px;min-height:40px;padding:6px 2px}
+  .owner{font-size:10px;color:#64748b;font-weight:600;margin-bottom:4px}
+  .odot{display:inline-block;width:8px;height:8px;border-radius:2px;margin-right:4px;vertical-align:middle}
+  .legend{margin:2px 0 12px;font-size:11.5px;color:#64748b}
+  .legend .lg{margin-right:14px;white-space:nowrap}
+  .recent{margin-top:8px;padding-top:8px;border-top:1px dashed #cbd5e1}
+  .rday{font-size:10.5px;font-weight:700;color:#94a3b8;margin:4px 0 4px}
+  .rchip{font-size:11px;color:#334155;background:#f6fefa;border:1px solid #d1fae5;border-left:3px solid var(--pc);border-radius:6px;padding:4px 8px;margin-bottom:4px}
+  .rchip .odot{margin-right:5px}
+  .card{background:#fff;border:1px solid var(--line);border-left:3px solid var(--pc);border-radius:7px;padding:8px 9px;cursor:pointer;transition:box-shadow .12s,transform .12s}
+  .card:hover{box-shadow:0 3px 10px rgba(0,0,0,.10);transform:translateY(-1px)}
+  .card.done{background:#f6fefa;border-left-color:var(--green)}
+  .card.done .t{color:#065f46}
+  .done-rib{display:inline-block;font-size:10px;font-weight:700;color:#fff;background:var(--green);border-radius:4px;padding:1px 6px;float:right}
+  .card .t{font-weight:600;font-size:12.5px;margin-bottom:3px}
+  .card .g{font-size:10.5px;color:#64748b;margin-bottom:6px}
+  .accm{font-size:11px;color:#475569;margin-bottom:6px}
+  .accm .d{color:var(--green)}.accm .o{color:#94a3b8}
+  .meta{display:flex;flex-wrap:wrap;gap:4px;align-items:center}
+  .pill{display:inline-block;padding:1px 7px;border-radius:10px;font-size:10.5px;font-weight:600}
+  .pr-merged{background:#dcfce7;color:#166534}.pr-open{background:#fef9c3;color:#854d0e}.pr-draft{background:#e0e7ff;color:#3730a3}
+  .dep{background:#fef3c7;color:#92400e}.carry{background:#f1f5f9;color:#475569}.more{background:#eff6ff;color:#1d4ed8}.blocked{background:#fee2e2;color:#991b1b}
+  .detail{display:none}
+  .review{margin-top:20px}
+  .review h2{font-size:17px;color:var(--blue-d);border-left:4px solid var(--blue);padding-left:10px;margin:18px 0 10px}
+  .grid2{display:grid;grid-template-columns:1fr 1fr;gap:12px}
+  .inc{background:#fef2f2;border:1px solid #fecaca;border-radius:8px;padding:10px 13px;font-size:12.5px}
+  .good{background:#f0fdf4;border:1px solid #bbf7d0;border-radius:8px;padding:10px 13px;font-size:12.5px}
+  .review table{border-collapse:collapse;width:100%;font-size:12.5px;margin-top:6px}
+  .review th,.review td{border:1px solid #d1d5db;padding:6px 9px;text-align:left}
+  .review th{background:#eff6ff}
+  .review tr:nth-child(even){background:#f9fafb}
+  .modal{display:none;position:fixed;inset:0;background:rgba(15,23,42,.55);z-index:50;align-items:center;justify-content:center;padding:20px}
+  .modal.on{display:flex}
+  .sheet{background:#fff;border-radius:12px;max-width:560px;width:100%;max-height:86vh;overflow:auto;padding:20px 22px;box-shadow:0 20px 60px rgba(0,0,0,.3)}
+  .sheet h3{margin:0 0 4px;font-size:16px}.sheet .who{font-size:12px;color:#64748b;margin-bottom:12px}
+  .sheet .sec{font-size:11px;font-weight:700;color:var(--blue-d);text-transform:uppercase;letter-spacing:.04em;margin:14px 0 5px}
+  .sheet ul.acc{list-style:none;margin:0;padding:0;font-size:13px}
+  .sheet ul.acc li{margin:4px 0;padding-left:20px;position:relative}
+  .sheet ul.acc li.done::before{content:"\\2611";position:absolute;left:0;color:var(--green)}
+  .sheet ul.acc li.todo::before{content:"\\2610";position:absolute;left:0;color:#94a3b8}
+  .sheet ul.acc li .ev{display:block;font-size:11px;color:var(--green)}
+  .sheet .rv{background:var(--soft);border-left:3px solid #94a3b8;padding:8px 12px;border-radius:0 6px 6px 0;font-size:12.5px;color:#475569}
+  .sheet .prompt{background:#0f172a;color:#e2e8f0;border-radius:8px;padding:10px 12px;font-size:11.5px;font-family:ui-monospace,Menlo,monospace;white-space:pre-wrap;margin-top:6px}
+  .btn{background:var(--green);color:#fff;border:0;border-radius:7px;padding:7px 14px;font-size:12.5px;font-weight:600;cursor:pointer;margin-top:8px}
+  .x{float:right;cursor:pointer;color:#94a3b8;font-size:20px;line-height:1;border:0;background:0}
+  .foot{margin-top:16px;padding-top:10px;border-top:1px solid var(--line);font-size:11.5px;color:#94a3b8}
+  @media(max-width:900px){.wrap{padding:10px}.grid2{grid-template-columns:1fr}.hero .row{gap:12px}.board{gap:6px}}
+"""
+
+JS = """
+  var M=document.getElementById('modal');
+  function openM(d){
+    document.getElementById('m-title').textContent=d.dataset.title;
+    document.getElementById('m-who').textContent=d.dataset.who;
+    var acc=JSON.parse(d.dataset.acc||'[]'), ul=document.getElementById('m-acc'); ul.innerHTML='';
+    acc.forEach(function(a){var li=document.createElement('li');li.className=a[0];li.textContent=a[1];if(a[2]){var ev=document.createElement('span');ev.className='ev';ev.textContent=a[2];li.appendChild(ev);}ul.appendChild(li);});
+    document.getElementById('m-rv').textContent=d.dataset.review||'\\u2014';
+    var pw=document.getElementById('m-pw');
+    if(d.dataset.prompt){pw.innerHTML='<div class="sec">\\u5f00\\u5de5 prompt</div><div class="prompt" id="m-prompt"></div><button class="btn" onclick="cp()">\\u590d\\u5236 prompt</button>';document.getElementById('m-prompt').textContent=d.dataset.prompt;}
+    else pw.innerHTML='';
+    M.classList.add('on');
+  }
+  function closeM(){M.classList.remove('on');}
+  function cp(){navigator.clipboard.writeText(document.getElementById('m-prompt').textContent);event.target.textContent='\\u5df2\\u590d\\u5236 \\u2713';}
+  document.querySelectorAll('.card').forEach(function(c){c.onclick=function(){var d=c.querySelector('.detail');if(d)openM(d);};});
+  M.onclick=function(ev){if(ev.target===M)closeM();};
+  document.addEventListener('keydown',function(ev){if(ev.key==='Escape')closeM();});
+"""
+
+def render_card(card, pcolor, pname):
+    color = pcolor.get(card.get("owner"), "#2563eb")
+    owner_tag = (f'<div class="owner"><span class="odot" style="background:{color}"></span>'
+                 f'{e(pname.get(card.get("owner"), card.get("owner","")))}</div>')
+    acc = card.get("acceptance", []) or []
+    done_n = sum(1 for a in acc if a.get("done"))
+    total_n = len(acc)
+    is_done = card.get("status") == "done"
+    # acceptance summary line
+    if total_n == 0:
+        accm = ''
+    elif is_done or done_n == total_n and total_n:
+        accm = f'<div class="accm"><span class="d">☑</span> 已验收 · {done_n}/{total_n}</div>'
+    else:
+        mark = '<span class="d">☑</span>' if done_n else '<span class="o">☐</span>'
+        accm = f'<div class="accm">{mark} {done_n}/{total_n} 验收</div>'
+    # meta pills
+    pills = []
+    pr = card.get("pr")
+    if pr:
+        cls = PR_STATE_PILL.get(pr.get("state", "open"), "pr-open")
+        label = f'#{pr["num"]} {pr.get("state","")}'.strip()
+        pills.append(f'<span class="pill {cls}">{e(label)}</span>')
+    if card.get("branch"):
+        pills.append(f'<span class="pill pr-draft">{e(card["branch"])}</span>')
+    for d in (card.get("deps") or []):
+        pills.append(f'<span class="pill dep">{e(d)}</span>')
+    if card.get("carryover"):
+        pills.append('<span class="pill carry">结转昨日</span>')
+    if card.get("status") == "blocked":
+        pills.append('<span class="pill blocked">阻塞</span>')
+    pills.append('<span class="pill more">详情</span>')
+    # detail data
+    acc_json = json.dumps([[("done" if a.get("done") else "todo"), a.get("text",""), a.get("evidence","")] for a in acc], ensure_ascii=False)
+    rib = '<span class="done-rib">DONE</span>' if is_done else ''
+    goal = f'<div class="g">{e(card.get("goal"))}</div>' if card.get("goal") else ''
+    extra_note = f' · <span style="color:var(--red)">{e(card["flag"])}</span>' if card.get("flag") else ''
+    if extra_note and accm:
+        accm = accm[:-6] + extra_note + '</div>'
+    cls = "card done" if is_done else "card"
+    return (
+        f'<div class="{cls}" style="--pc:{color}">{rib}{owner_tag}<div class="t">{e(card.get("title"))}</div>{goal}'
+        f'{accm}<div class="meta">{"".join(pills)}</div>'
+        f'<div class="detail" data-title="{e(card.get("title"))}" data-who="{e(card.get("who",""))}" '
+        f"data-acc='{html.escape(acc_json, quote=True)}' "
+        f'data-review="{e(card.get("review_note",""))}" data-prompt="{e(card.get("prompt",""))}"></div></div>'
+    )
+
+def main():
+    if len(sys.argv) < 2:
+        sys.exit("usage: board2html.py <board.yaml> [board.html]")
+    src = sys.argv[1]
+    out = sys.argv[2] if len(sys.argv) > 2 else (src[:-5] + ".html" if src.endswith(".yaml") else src + ".html")
+    with open(src, encoding="utf-8") as f:
+        b = yaml.safe_load(f)
+
+    people = b.get("people", []) or []
+    cards = b.get("cards", []) or []
+    pcolor = {p["id"]: p.get("color", "#2563eb") for p in people}
+    pname = {p["id"]: p.get("name", p["id"]) for p in people}
+    for c in cards:
+        c.setdefault("who", f'{c.get("owner","")}')
+
+    # hero
+    prog_html = ""
+    for i, pr in enumerate(b.get("progress", []) or []):
+        val = pr.get("value", f'{pr.get("pct","")}%')
+        bcls = "bar b" if i else "bar"
+        prog_html += (f'<div class="lab"{" style=\"margin-top:6px\"" if i else ""}><span>{e(pr.get("label"))}</span><span>{e(val)}</span></div>'
+                      f'<div class="{bcls}"><i style="width:{int(pr.get("pct",0))}%"></i></div>')
+    eff_html = "".join(f'<div><b>{e(t.get("value"))}</b><span>{e(t.get("label"))}</span></div>' for t in (b.get("efficiency", []) or []))
+    deploy_html = "".join(f'<div><span class="s">{e(d.get("env"))}</span>{e(d.get("state"))}</div>' for d in (b.get("deploy", []) or []))
+    risks_html = "<br>".join(e(r) for r in (b.get("risks", []) or []))
+
+    # This is a DISPLAY page published each morning: 计划/进行中/待评审 = TODAY's plan;
+    # 完成 = YESTERDAY's done cards (the same full cards); review = YESTERDAY's review.
+    prev_date = b.get("prev_date", "")
+    done_prev = b.get("done_prev", []) or []
+    for c in done_prev:
+        c["status"] = "done"
+        c.setdefault("who", c.get("owner", ""))
+    order = {p["id"]: i for i, p in enumerate(people)}
+    cols = []
+    for status, label, cls in COLUMNS:
+        if status == "done":
+            col_cards = list(done_prev)
+            if prev_date:
+                label = f'{label} · 昨日 {prev_date}'
+        else:
+            col_cards = [c for c in cards if c.get("status") == status
+                         or (status == "wip" and c.get("status") == "blocked")]
+        col_cards = sorted(col_cards, key=lambda c: order.get(c.get("owner"), 99))
+        inner = "".join(render_card(c, pcolor, pname) for c in col_cards)
+        cols.append(f'<div class="colwrap"><div class="colhead {cls}">{label} '
+                    f'<span class="cnt">{len(col_cards)}</span></div><div class="cell">{inner}</div></div>')
+    board_html = "\n    ".join(cols)
+    legend = " ".join(f'<span class="lg"><span class="odot" style="background:{p.get("color","#2563eb")}">'
+                      f'</span>{e(p.get("name"))}</span>' for p in people)
+
+    # review / 复盘
+    rv = b.get("review", {}) or {}
+    md = "<br>".join("• " + e(x) for x in (rv.get("method_deltas", []) or []))
+    inc = "<br>".join("• " + e(x) for x in (rv.get("incidents", []) or []))
+    rows = ""
+    for d in (rv.get("delivery", []) or []):
+        rows += (f'<tr><td>{e(d.get("owner"))}</td><td>{e(d.get("delivered"))}</td>'
+                 f'<td>{e(d.get("acceptance_result"))}</td><td>{e(d.get("carryover"))}</td></tr>')
+    nextday = "<br>".join("• " + e(x) for x in (rv.get("next_day", []) or []))
+    review_html = ""
+    if rv:
+        rv_date = f'（{e(prev_date)}）' if prev_date else ''
+        review_html = f"""
+  <div class="review">
+    <h2>昨日复盘{rv_date} · 卡片验收结果 + 方法/事故</h2>
+    <div class="grid2">
+      <div class="good"><b>方法沉淀</b><br>{md or '—'}</div>
+      <div class="inc"><b>风险/事故</b><br>{inc or '—'}</div>
+    </div>
+    <table><tr><th>人</th><th>交付</th><th>验收结果</th><th>结转今日</th></tr>{rows}</table>
+    <h3 style="font-size:14px;color:#374151;margin-top:14px">今日建议</h3>
+    <div style="font-size:12.5px;color:#475569">{nextday or '—'}</div>
+  </div>"""
+
+    title = f'dev-together 看板 · {e(b.get("date",""))}'
+    doc = f"""<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>{title}</title>
+<style>{CSS}</style>
+</head>
+<body>
+<div class="wrap">
+  <div class="hero">
+    <div class="row">
+      <div style="flex:2;min-width:280px">
+        <h1>dev-together · {e(b.get("date",""))}</h1>
+        <div class="north"><b>北极星：</b>{e(b.get("north_star",""))}</div>
+      </div>
+      <div class="prog">{prog_html}</div>
+    </div>
+    <div class="row" style="margin-top:12px"><div class="eff">{eff_html}</div></div>
+    <div class="src">总效能来源：{e(b.get("efficiency_source",""))}</div>
+  </div>
+  <div><div class="deploy">{deploy_html}</div></div>
+  <div class="risk"><b>风险：</b>{risks_html or '—'}</div>
+  <div class="legend">人：{legend}　·　卡片 = 一任务；☐/☑ = 验收（plan 写 · review 勾）；停在非「完成」列 = 明日结转</div>
+  <div class="board">
+    {board_html}
+  </div>{review_html}
+  <div class="foot">一块 <b>plan+review 合一</b> 的活看板：顶部全局大局（目标·进度·总效能）常驻；卡片可点开看完整验收/复盘/prompt；底部复盘汇总。<b>确定性渲染</b>：board.yaml → board2html.py，样式只住模板。</div>
+</div>
+<div class="modal" id="modal">
+  <div class="sheet">
+    <button class="x" onclick="closeM()">×</button>
+    <h3 id="m-title"></h3><div class="who" id="m-who"></div>
+    <div class="sec">验收标准 / 结果</div><ul class="acc" id="m-acc"></ul>
+    <div class="sec">复盘 / 状态</div><div class="rv" id="m-rv"></div>
+    <div id="m-pw"></div>
+  </div>
+</div>
+<script>{JS}</script>
+</body>
+</html>
+"""
+    with open(out, "w", encoding="utf-8") as f:
+        f.write(doc)
+    print(f"board2html: wrote {out}")
+
+if __name__ == "__main__":
+    main()

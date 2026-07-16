@@ -36,15 +36,22 @@ are unchanged.
    track — this is what tomorrow's `plan` derives from. `review` is the **only**
    writer of `current_track`/`latest_return`; `return`/`close` do NOT touch them
    (avoids double-write). A mid-stream pivot may be reflected by the lead.
-7. **Team-facing render (MANDATORY).** Alongside `review.md`, produce
-   `docs/together/<date>/review.html` — a clean, product-first rendering of the
-   day for the whole team: **product 大局 → task stats → efficiency →
-   risks/deferred → method deltas → next-day plan**. It is a team artifact, not a
-   worklog: **omit all Claude↔lead discussion meta**, keep it self-contained
-   (inline CSS, no external assets), and match the established house style (see
-   the prior examples `docs/together/2026-06-25/review.html` and
-   `docs/together/2026-06-30/review.html`). `review.html` must exist alongside
-   `review.md`; a missing render means `review` is incomplete.
+7. **Update the board (MANDATORY, deterministic — never hand-write HTML).**
+   `review` does NOT write a new file — it **updates the same
+   `docs/together/<date>/board.yaml`** the `plan` opened, then re-renders:
+   `uv run --with pyyaml python scripts/render/board2html.py docs/together/<date>/board.yaml`.
+   At EOD you: (a) **move each card** to its final `status` (`done` / `review` /
+   `wip` / `blocked`); (b) **tick its `acceptance:`** — set each `done: true` and
+   add `evidence:` (PR#/SHA/test result) — this IS the 验收结果, closing the
+   morning's acceptance one by one; (c) fill the `review:` block
+   (`method_deltas`, `incidents`, `delivery`, `next_day`). Presentation lives ONLY
+   in `board2html.py`; do not author `<style>`/layout by hand. A missing or
+   hand-authored `board.html` means `review` is incomplete.
+
+   **Continuity is welded into the card:** the same `acceptance:` list `plan`
+   wrote (`done: false`) is what `review` ticks (`done: true` + evidence), and any
+   card not moved to `done` is tomorrow's carryover — no separate 验收结果 doc to
+   drift against.
 
 ## Required accounting
 

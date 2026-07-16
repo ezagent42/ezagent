@@ -52,8 +52,25 @@ section order is fixed so the format stops drifting and `plan.html` mirrors it
    add, drop, re-scope, or re-assign. Only after the lead confirms do you proceed
    to write `plan.md`. Never auto-finalize a plan the lead has not seen the
    per-dev task lists for.
-8. Write `docs/together/<date>/plan.md`: the **lead-confirmed** task list + scope
-   + branches + conflict map + the intended `handoff` order.
+8. Write `docs/together/<date>/board.yaml`: the **lead-confirmed** day, as
+   structured card data (copy `scripts/render/board.example.yaml`, fill it). It is
+   the single source of truth for the day. Set the `date`, `north_star`,
+   `progress`, `efficiency` (from the latest `pr_session_hours` / audit read),
+   `deploy`, `risks`, the `people` swimlanes, and one **card per task** —
+   `owner` / `title` / `goal` / `status: planned|wip` / `pr` / `deps` / an
+   `acceptance:` list (each `{text, done: false}`) / and the dev's `prompt`. The
+   `acceptance` texts are the exact checklist that day's `review` ticks against, so
+   make each a decidable success judgement, not a vague aim. **Carry over** every
+   unclosed/blocked card from yesterday's `board.yaml` (set `carryover: true`) —
+   from the file, not from memory. (Branches + conflict map live in the card
+   `branch`/`deps` fields and the handoffs.) Also fill **`recent_done:`** from
+   yesterday's `board.yaml` `done` cards (owner/title/date/pr) — it renders under
+   the 完成 column so each person's recent delivery stays visible (the daily
+   columns only show today).
+9. **Render (deterministic — never hand-write HTML):**
+   `uv run --with pyyaml python scripts/render/board2html.py docs/together/<date>/board.yaml`.
+   Presentation lives only in `board2html.py`; a missing/hand-authored
+   `board.html` means the step is incomplete.
 
 ## Plan completeness gate
 
