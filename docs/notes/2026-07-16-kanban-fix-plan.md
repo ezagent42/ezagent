@@ -149,3 +149,8 @@ handoff 文件：`docs/together/2026-07-16/handoffs/{allen-decisions,zyli-world-
 1. join 补发是新 ambient rule（#154 面），抢跑=又一轮 cap 返工——PR3 严格等 Allen。
 2. ㉜ step2 谁"顺手"把 `applies_to?` 改恒 true 就撞 T2-2b 契约。
 3. PR2 的 `:emit` 别做成 inbound dispatch（P14）；订阅退订照 PTY 泄漏教训（world_live.ex:149-155 注释）。
+
+## 修正(2026-07-17,用户挑战+skill-1 实证):债② 砍一半,「暂留5组」改判
+用户记忆正确——world 注册机制覆盖度比上轮判的深:dispatch 层已是注册表反射(world_live.ex:297-306 经 PluginPageRegistry 动态调 actions_module.handle_dispatch)、数据 reader 有 @pages.data_builder 口、tab 注册本在 plugin 侧(BoardView)。
+- **升格为本轮可做**:`kanban_actions.ex` + `kanban_data.ex` 搬进 plugin_kanban(world 剩 @pages 一条注册数据 + mix dep,hello 先例;排在后端/前端批落地后做防冲突;注意 world_live state_for_route 编译期 unroll 依赖 dep 方向)。
+- **D6 缩窄为三处真缺口**:① @pages 条目 plugin 自声明(UiSurfaceProvider follow-up,registry moduledoc 自陈);② 前端插件 JS 分发(Kanban.tsx 出 world bundle,或 iframe 降级);③ conversation tab 三处特判(native 映射 conversation_data.ex:20/switch_view conversation_actions.ex:542-559/Conversation.tsx:842)。BoardProvision 本体仍等 Mount 可 dispatch(D6 原判不变)。
