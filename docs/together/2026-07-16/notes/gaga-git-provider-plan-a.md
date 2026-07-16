@@ -35,7 +35,9 @@ Execute only Plan A from
 - SSH transport is GO only with evidence that the agent cannot observe or reuse credential material.
 - GitHub API transport is explicitly GitHub-specific and public-checkout-only unless authenticated checkout is separately proven.
 - Plans B–E do not start in this work item.
-- Honest label remains: loose-coupled, not final mount; #1360 Layer B pending.
+- Honest transport label: GitHub-specific and public-repository-only; not final
+  provider-neutral/private/SSH transport. Plan B has no #1360 dependency;
+  #1360 is the separate Hello↔Kanban cross-session live-mount line.
 
 ## Execution log
 
