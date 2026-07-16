@@ -467,9 +467,17 @@ defmodule Ezagent.ActionSet.Workspace do
     workspace_uri = Map.get(ctx, :self_uri)
     members = ctx[:read].(:members, MapSet.new())
 
-    effects =
-      [{:set, :members, MapSet.delete(members, uri)}] ++
-        revoke_member_create_session_cap_effects(workspace_uri, uri)
+    # `:skip_cap_revoke` (ctx flag, not a public arg) — the `delete_user` cascade
+    # sets it for a TOMBSTONED member (caps_json emptied + Kind/snapshot destroyed,
+    # so the create_session cap is already gone and the live-Kind revoke would just
+    # fail `:no_such_actor`). Normal demotion keeps the revoke. Membership removal
+    # (the `:set`) runs either way.
+    revoke_effects =
+      if Map.get(ctx, :skip_cap_revoke, false),
+        do: [],
+        else: revoke_member_create_session_cap_effects(workspace_uri, uri)
+
+    effects = [{:set, :members, MapSet.delete(members, uri)}] ++ revoke_effects
 
     {:ok, %{}, effects}
   end

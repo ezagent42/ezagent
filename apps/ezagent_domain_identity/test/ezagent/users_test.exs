@@ -290,6 +290,29 @@ defmodule Ezagent.UsersTest do
                )
     end
 
+    test "disabled?/1 stays true for a tombstoned user even if disabled_at is cleared (enable/delete race)" do
+      uri = "entity://team-alpha/user/tomb-race-#{System.unique_integer([:positive])}"
+      admin = "entity://system/user/admin"
+
+      {:ok, _} = Users.create(uri, "secret", [])
+      {:ok, _} = Users.disable(uri, admin, "off")
+      {:ok, _} = Users.tombstone(uri, admin, "gone")
+      assert Users.disabled?(uri)
+
+      # Simulate a concurrent enable that cleared disabled_at AFTER the tombstone
+      # set deleted_at (the TOCTOU window). `disabled?/1` must STILL fail closed
+      # on deleted_at, so the eviction guard + PAT auth never re-admit the user.
+      row = EzagentCore.Repo.get_by(Users, uri: uri)
+      row |> Ecto.Changeset.change(%{disabled_at: nil}) |> EzagentCore.Repo.update!()
+
+      assert Users.deleted?(uri)
+
+      assert Users.disabled?(uri),
+             "a deleted user must read as disabled even with disabled_at nil"
+
+      refute Users.verify_password(uri, "secret")
+    end
+
     test "enable/1 refuses a tombstoned user (delete is terminal — no misleading success)" do
       uri = "entity://team-alpha/user/tomb-enable-#{System.unique_integer([:positive])}"
       admin = "entity://system/user/admin"

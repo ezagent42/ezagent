@@ -366,21 +366,21 @@ defmodule Ezagent.Users do
      the task #180 design note); the row + the `:user_deleted` EventLog event
      the Router injects on dispatch are the durable audit record.
 
-  2. **Live User Kind teardown is the CALLER's job, done AFTER membership
-     detach.** `tombstone/3` deliberately does NOT call `Ezagent.Lifecycle.destroy/2`
-     itself: `delete_user` must first detach the user from every workspace, and
-     `Workspace.remove_member/2` revokes the member's `create_session` cap by
-     dispatching to the LIVE user Kind — which would fail `:no_such_actor` if the
-     Kind were already torn down. So the `Ezagent.Workspace.Provisioning.delete_user/3`
-     facade orders it correctly: tombstone (row) → detach-all-workspaces → THEN
-     `Lifecycle.destroy/2`. `caps_json` is emptied here so DURABLE authority is
-     gone immediately (every spawn/hydration path re-reads it); the live Kind's
-     in-memory slice is cut by the facade's destroy.
+  2. **Tear down the live User Kind AND its snapshot** via `Ezagent.Lifecycle.destroy/2`.
+     This is LOAD-BEARING, not optional: emptying `caps_json` alone does NOT revoke
+     a previously-snapshotted user's authority, because `Behavior.Identity.activate/2`
+     UNIONS the snapshot's `state.caps` with the (now-empty) `caps_json` on every
+     spawn — so the snapshot must be cleared or a later spawn resurrects the old
+     caps. `destroy/2` clears the `kind_snapshots` row + ever-created marker +
+     terminates the Kind. Best-effort (caught) so a teardown crash does not strand
+     the already-revoked row. Because this runs in the ACTION body (universal across
+     CLI/API/facade dispatch), authority revocation + Kind teardown apply to EVERY
+     `delete_user` path, not just the facade.
 
-  NOTE (scope): this revokes DURABLE authority and blocks re-auth. Active-session
+  NOTE (scope): this revokes DURABLE authority + tears down the Kind. Active-session
   eviction of already-authenticated HTTP/LiveView cookies is handled at the web
-  auth chokepoint (`disabled?/1` recheck, task #180 Change 3), benefiting plain
-  `disable/3` too.
+  auth chokepoint (`disabled?/1` recheck, task #180 Change 3 — `disabled?/1` treats
+  `deleted_at` as disabled), benefiting plain `disable/3` too.
 
   Idempotent: tombstoning an already-tombstoned user preserves the original
   timestamps/reason and returns the current decoded row. `{:error, :not_found}`
@@ -395,8 +395,9 @@ defmodule Ezagent.Users do
         {:error, :not_found}
 
       %__MODULE__{deleted_at: %DateTime{}} = row ->
-        # Already tombstoned — idempotent no-op (the facade re-runs the
-        # membership cascade + Kind destroy on a retry).
+        # Already tombstoned — idempotent. Re-assert the Kind teardown in case a
+        # stray demand-spawn re-created it (best-effort).
+        _ = destroy_kind_best_effort(uri)
         {:ok, decode(row)}
 
       %__MODULE__{disabled_at: nil} ->
@@ -412,25 +413,40 @@ defmodule Ezagent.Users do
         by = uri_to_str(deleted_by)
         normalized_reason = normalize_reason(reason)
 
-        row
-        |> Ecto.Changeset.change(%{
-          deleted_at: now,
-          deleted_by: by,
-          deleted_reason: normalized_reason,
-          # Fail the login gate closed. Preserve a pre-existing disable
-          # timestamp/actor (delete requires a prior disable, so these are set).
-          disabled_at: row.disabled_at || now,
-          disabled_by: row.disabled_by || by,
-          disabled_reason: row.disabled_reason || normalized_reason,
-          # REVOKE all durable authority (see @doc step 1). Empty JSON array.
-          caps_json: encode_caps([])
-        })
-        |> Repo.update()
-        |> case do
-          {:ok, updated} -> {:ok, decode(updated)}
-          {:error, _changeset} -> {:error, :not_found}
+        result =
+          row
+          |> Ecto.Changeset.change(%{
+            deleted_at: now,
+            deleted_by: by,
+            deleted_reason: normalized_reason,
+            # Fail the login gate closed. Preserve a pre-existing disable
+            # timestamp/actor (delete requires a prior disable, so these are set).
+            disabled_at: row.disabled_at || now,
+            disabled_by: row.disabled_by || by,
+            disabled_reason: row.disabled_reason || normalized_reason,
+            # REVOKE durable authority in caps_json (see @doc step 1). Empty JSON
+            # array. NOT sufficient alone — the snapshot destroy below is required.
+            caps_json: encode_caps([])
+          })
+          |> Repo.update()
+
+        case result do
+          {:ok, updated} ->
+            # Clear the Kind + snapshot so `activate/2`'s caps-union has nothing
+            # to resurrect (see @doc step 2). Best-effort.
+            _ = destroy_kind_best_effort(uri)
+            {:ok, decode(updated)}
+
+          {:error, _changeset} ->
+            {:error, :not_found}
         end
     end
+  end
+
+  defp destroy_kind_best_effort(uri) do
+    Ezagent.Lifecycle.destroy(uri)
+  rescue
+    _ -> :ok
   end
 
   @doc """
@@ -447,10 +463,18 @@ defmodule Ezagent.Users do
     end
   end
 
-  @doc "Whether a user is soft-disabled. Unknown users fail closed as disabled."
+  @doc """
+  Whether a user is offboarded — soft-disabled OR tombstoned (deleted). Unknown
+  users fail closed as disabled. TREATS `deleted_at` AS disabled: a `delete_user`
+  always sets `disabled_at` too, but a concurrent `enable/1` could clear
+  `disabled_at` on a deleted row (TOCTOU); checking `deleted_at` here closes that
+  race for every `disabled?/1` caller (login/session eviction/PAT auth) so a
+  tombstoned principal is never re-admitted.
+  """
   @spec disabled?(URI.t() | String.t()) :: boolean()
   def disabled?(uri) do
     case Repo.get_by(__MODULE__, uri: uri_to_str(uri)) do
+      %__MODULE__{deleted_at: %DateTime{}} -> true
       %__MODULE__{disabled_at: %DateTime{}} -> true
       nil -> true
       _ -> false

@@ -193,7 +193,12 @@ defmodule Ezagent.Entity.Token do
     principal = Ezagent.URI.new!(entity_uri)
 
     if Ezagent.URI.type?(principal, :user) do
+      # A tombstoned (deleted) user sets `disabled_at` too, but a concurrent
+      # `enable/1` could clear it while `deleted_at` stays set — so reject on
+      # EITHER (mirrors `Ezagent.Users.disabled?/1`). PAT auth must not admit a
+      # deleted principal.
       case Ezagent.Users.get_by_uri(entity_uri) do
+        %{deleted_at: %DateTime{}} -> {:error, :disabled}
         %{disabled_at: %DateTime{}} -> {:error, :disabled}
         _ -> {:ok, principal}
       end

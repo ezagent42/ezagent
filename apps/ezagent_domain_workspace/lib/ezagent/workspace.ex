@@ -235,16 +235,20 @@ defmodule Ezagent.Workspace do
   defp ensure_member_kind_spawned_at_facade(_other), do: :ok
 
   @doc """
-  Ensure a member's User Kind is spawned — the public entry the
-  `delete_user` membership-cascade (`Ezagent.Workspace.Provisioning`) uses so
-  `remove_member/2`'s live-Kind cap sweep has an actor to dispatch to. Reuses
-  the SAME facade pre-spawn `add_member/2` runs, keeping the `SpawnRegistry`
-  chokepoint reference in this (already-sanctioned) module. Best-effort:
-  returns `:ok` for a non-user URI or an already-running Kind.
+  Detach a TOMBSTONED user from a workspace — the `delete_user` membership
+  cascade's removal primitive (`Ezagent.Workspace.Provisioning`). Same trusted
+  self-authority dispatch as `remove_member/2`, but sets `:skip_cap_revoke` in
+  the ctx so the action body skips the `create_session` cap sweep: the member is
+  already fully de-authorized (caps_json emptied + Kind/snapshot destroyed by
+  `Users.tombstone/3`), so the sweep is redundant AND would fail `:no_such_actor`
+  against the dead Kind. Membership removal still goes through the sanctioned
+  `remove_member` action — no hand-mutation of `member_uris`.
   """
-  @spec ensure_member_spawned(URI.t()) :: :ok | {:error, term()}
-  def ensure_member_spawned(%URI{} = member_uri),
-    do: ensure_member_kind_spawned_at_facade(member_uri)
+  @spec detach_deleted_member(String.t(), URI.t()) :: :ok | {:error, term()}
+  def detach_deleted_member(name, %URI{} = member_uri) do
+    ctx = Map.put(workspace_self_ctx(name, :remove_member), :skip_cap_revoke, true)
+    do_remove_member(name, member_uri, ctx)
+  end
 
   @spec remove_member(String.t(), URI.t()) :: :ok | {:error, term()}
   def remove_member(name, %URI{} = member_uri) do
