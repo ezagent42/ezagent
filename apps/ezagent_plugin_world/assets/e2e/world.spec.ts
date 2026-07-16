@@ -9,6 +9,7 @@ const conversationFixtureUri = generatedFixtures.fixtures.conversation.state.ses
 async function openFixture(page: Page, fixture: string) {
   await page.goto(`/?fixture=${fixture}`)
   await expect(page.locator("html")).toHaveAttribute("data-world-e2e-ready", "true")
+  await expect(page.locator("[data-world-mount-error]")).toHaveCount(0)
 }
 
 async function recordedEvents(page: Page): Promise<RecordedEvent[]> {
@@ -36,6 +37,7 @@ const rendererMatrix = [
   ["sessions", "sessions_table"],
   ["conversation", "conversation"],
   ["pty", "pty_terminal"],
+  ["overview", "overview"],
   ["admin", "dashboard"],
   ["workspace_plugins", "workspaces_list"],
 ] as const
@@ -77,6 +79,22 @@ test("sessions interaction emits an admitted world:dispatch", async ({page}) => 
   await expect.poll(() => lastEvent(page)).toEqual({
     event: "world:dispatch",
     payload: {action: "sessions.join", args: {session_uri: sessionsFixtureUri}},
+  })
+  expect(await page.evaluate(() => window.__WORLD_E2E__.contractViolation())).toBeNull()
+})
+
+test("sessions create form emits session.create", async ({page}) => {
+  await openFixture(page, "sessions")
+  await page.getByRole("button", {name: "新建会话"}).click()
+  await page.getByLabel("名称").fill("tier-1-room")
+  await page.getByRole("button", {name: "创建", exact: true}).click()
+
+  await expect.poll(() => lastEvent(page)).toEqual({
+    event: "world:dispatch",
+    payload: {
+      action: "session.create",
+      args: {short_name: "tier-1-room", template_name: "support"},
+    },
   })
   expect(await page.evaluate(() => window.__WORLD_E2E__.contractViolation())).toBeNull()
 })

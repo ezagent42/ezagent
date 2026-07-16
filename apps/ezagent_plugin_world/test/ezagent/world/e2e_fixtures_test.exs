@@ -1,10 +1,18 @@
 defmodule Ezagent.World.E2EFixturesTest do
   use ExUnit.Case, async: true
 
-  alias Ezagent.World.{DispatchContract, E2EFixtures, PluginPageRegistry, SlotRegistry}
+  alias Ezagent.World.{
+    DispatchContract,
+    E2EFixtures,
+    PluginPageRegistry,
+    SlotRegistry,
+    StateContract
+  }
 
   @fixture_path Path.expand("../../../assets/e2e/fixtures/world.e2e.fixtures.json", __DIR__)
-  @tier1_families MapSet.new(~w(admin conversation kanban pty sessions workspace_plugins)a)
+  @tier1_families MapSet.new(
+                    ~w(admin conversation kanban overview pty sessions workspace_plugins)a
+                  )
 
   test "checked-in browser fixtures are in sync with backend contract" do
     assert File.exists?(@fixture_path),
@@ -32,6 +40,17 @@ defmodule Ezagent.World.E2EFixturesTest do
     end
   end
 
+  test "every generated fixture satisfies the backend minimum-state contract" do
+    for {_name, %{slot_type: slot_type, state: state}} <- StateContract.fixtures() do
+      assert StateContract.validate!(slot_type, state) == state
+      assert Enum.sort(Map.keys(state)) == StateContract.required_keys(slot_type)
+    end
+
+    assert_raise ArgumentError, ~r/missing contract keys/, fn ->
+      StateContract.validate!("overview", %{"component" => "overview"})
+    end
+  end
+
   test "generated allowlist equals static dispatch contract plus registered plugin actions" do
     plugin_actions = PluginPageRegistry.pages() |> Enum.flat_map(& &1.actions)
 
@@ -41,6 +60,7 @@ defmodule Ezagent.World.E2EFixturesTest do
 
     assert E2EFixtures.manifest()["accepted_actions"] == DispatchContract.accepted_actions()
     assert "chat.send" in DispatchContract.accepted_actions()
+    assert "session.create" in DispatchContract.accepted_actions()
     assert "sessions.join" in DispatchContract.accepted_actions()
   end
 

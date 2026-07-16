@@ -1,0 +1,47 @@
+name: Frontend CI
+
+on:
+  workflow_call:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  frontend:
+    name: frontend (lint, types, unit, Tier-1 E2E)
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Set up Node
+        uses: actions/setup-node@v4
+        with:
+          node-version: "22"
+
+      - name: Enable pnpm
+        run: |
+          corepack enable
+          corepack prepare pnpm@10.23.0 --activate
+
+      - name: Frontend lint, typecheck and unit tests
+        run: |
+          for assets_dir in \
+            apps/ezagent_web/assets \
+            apps/ezagent_plugin_world/assets \
+            apps/ezagent_plugin_hello/assets
+          do
+            pnpm --dir "$assets_dir" install --frozen-lockfile
+            pnpm --dir "$assets_dir" lint
+            pnpm --dir "$assets_dir" typecheck
+            pnpm --dir "$assets_dir" test
+          done
+
+      - name: Install Tier-1 Chromium
+        run: pnpm --dir apps/ezagent_plugin_world/assets exec playwright install --with-deps chromium
+
+      # Frontend-only harness: built main.js + generated backend-contract
+      # projection + mocked pushEvent/onServerEvent. No Phoenix or DB.
+      - name: Frontend Tier-1 Playwright
+        run: pnpm --dir apps/ezagent_plugin_world/assets test:e2e

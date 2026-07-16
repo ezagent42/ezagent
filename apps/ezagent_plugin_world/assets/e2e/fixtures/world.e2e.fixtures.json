@@ -235,6 +235,68 @@
         "workspace_uri": "workspace://acme"
       }
     },
+    "overview": {
+      "caller": {
+        "current_workspace_name": "acme",
+        "display_name": "Allen",
+        "entity_uri": "entity://acme/user/allen",
+        "is_system_member": true,
+        "workspace_uri": "workspace://acme",
+        "workspaces": [
+          {
+            "current": true,
+            "name": "acme",
+            "uri": "workspace://acme"
+          }
+        ]
+      },
+      "layout": {
+        "components": [
+          {
+            "id": "e2e-overview",
+            "placement": {
+              "h": 12,
+              "w": 12,
+              "x": 0,
+              "y": 0
+            },
+            "type": "overview"
+          }
+        ],
+        "scope": "workspace://acme",
+        "version": 1
+      },
+      "plugin_nav": [
+        {
+          "label": "看板",
+          "path": "/plugins/kanban"
+        }
+      ],
+      "renderer_family": "overview",
+      "slot_type": "overview",
+      "state": {
+        "available_sessions": [
+          {
+            "name": "Alpha support",
+            "uri": "session://acme/support/alpha-support"
+          }
+        ],
+        "component": "overview",
+        "kpis": {
+          "agents": 2,
+          "entities": 4,
+          "kinds": 6,
+          "sessions": 3,
+          "workspaces": 1
+        },
+        "path": "/overview",
+        "session_template_names": [
+          "support"
+        ],
+        "title": "Overview",
+        "workspace_uri": "workspace://acme"
+      }
+    },
     "pty": {
       "caller": {
         "current_workspace_name": "acme",

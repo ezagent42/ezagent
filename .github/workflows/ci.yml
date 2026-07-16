@@ -1,10 +1,13 @@
 name: CI
 
-# LAYERED merge gate (design C1). Two jobs, cheap-first:
+# LAYERED merge gate (design C1). Frontend and backend run cheap-first:
+#
+#   job `frontend`   runs lint, TypeScript, unit tests and Tier-1 Chromium in
+#                    the reusable, Ubuntu-only frontend workflow.
 #
 #   job `gate`       — ubuntu-latest, ~3-5 min. The DETERMINISTIC required
-#                      gate: frontend lint + TypeScript + unit tests + Tier-1
-#                      Chromium, generated-fixture drift, compile
+#                      backend gate: generated-fixture drift, compile
+#                      after the reusable frontend gate passes,
 #                      --warnings-as-errors, format, the two static invariant
 #                      tasks, and the arch/invariant ExUnit subset (never-flake
 #                      tests that catch real regressions fast — e.g.
@@ -44,8 +47,13 @@ permissions:
   contents: read
 
 jobs:
+  frontend:
+    name: frontend regression gate
+    uses: ./.github/workflows/frontend-ci.yml
+
   gate:
     name: gate (deterministic)
+    needs: [frontend]
     runs-on: ubuntu-latest
     env:
       MIX_ENV: test
@@ -69,34 +77,6 @@ jobs:
           --health-retries 10
     steps:
       - uses: actions/checkout@v4
-
-      - name: Set up Node
-        uses: actions/setup-node@v4
-        with:
-          node-version: "22"
-
-      - name: Frontend lint, typecheck and unit tests
-        run: |
-          corepack enable
-          corepack prepare pnpm@10.23.0 --activate
-          for assets_dir in \
-            apps/ezagent_web/assets \
-            apps/ezagent_plugin_world/assets \
-            apps/ezagent_plugin_hello/assets
-          do
-            pnpm --dir "$assets_dir" install --frozen-lockfile
-            pnpm --dir "$assets_dir" lint
-            pnpm --dir "$assets_dir" typecheck
-            pnpm --dir "$assets_dir" test
-          done
-
-      - name: Install Tier-1 Chromium
-        run: pnpm --dir apps/ezagent_plugin_world/assets exec playwright install --with-deps chromium
-
-      # Browser runtime is frontend-only: static built main.js + generated
-      # contract fixtures + mocked pushEvent/onServerEvent. No Phoenix or DB.
-      - name: Frontend Tier-1 Playwright
-        run: pnpm --dir apps/ezagent_plugin_world/assets test:e2e
 
       - name: Set up Elixir/OTP
         uses: erlef/setup-beam@v1

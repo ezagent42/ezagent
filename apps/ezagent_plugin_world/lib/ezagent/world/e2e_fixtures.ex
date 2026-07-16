@@ -4,111 +4,13 @@ defmodule Ezagent.World.E2EFixtures do
 
   These fixtures intentionally contain no Repo/runtime calls. Renderer family,
   slot metadata, plugin navigation and admitted actions are projected from the
-  production registries; the state maps are minimal representative payloads for
-  the frontend-only gate. Real data builders and transport remain Tier-2.
+  production registries and `StateContract`; real data builders and transport
+  remain Tier-2.
   """
 
-  alias Ezagent.World.{DispatchContract, PluginPageRegistry, SlotRegistry}
+  alias Ezagent.World.{DispatchContract, PluginPageRegistry, SlotRegistry, StateContract}
 
   @version 1
-
-  @fixture_specs %{
-    "sessions" =>
-      {"sessions_table",
-       %{
-         "component" => "sessions_table",
-         "current_session_uri" => "session://acme/support/alpha-support",
-         "path" => "/sessions",
-         "sessions" => [
-           %{
-             "name" => "Alpha support",
-             "uri" => "session://acme/support/alpha-support",
-             "workspace_uri" => "workspace://acme"
-           },
-           %{
-             "name" => "Release room",
-             "uri" => "session://acme/support/release-room",
-             "workspace_uri" => "workspace://acme"
-           }
-         ],
-         "templates" => ["support"],
-         "title" => "Chat",
-         "workspace_uri" => "workspace://acme"
-       }},
-    "conversation" =>
-      {"conversation",
-       %{
-         "active_view" => "conversation",
-         "caller_uri" => "entity://acme/user/allen",
-         "component" => "conversation",
-         "invite_candidates" => [],
-         "members" => [],
-         "messages" => [],
-         "path" => "/sessions/alpha-support",
-         "routing_rules" => [],
-         "session_uri" => "session://acme/support/alpha-support",
-         "sessions" => [
-           %{
-             "name" => "Alpha support",
-             "uri" => "session://acme/support/alpha-support",
-             "workspace_uri" => "workspace://acme"
-           }
-         ],
-         "title" => "Alpha support",
-         "views" => [%{"id" => "conversation", "label" => "Conversation", "mode" => "chat"}],
-         "workspace_uri" => "workspace://acme"
-       }},
-    "kanban" =>
-      {"kanban",
-       %{
-         "component" => "kanban",
-         "instances" => [],
-         "miro" => %{"configured" => false},
-         "path" => "/plugins/kanban",
-         "title" => "Kanban",
-         "workspace_uri" => "workspace://acme"
-       }},
-    "pty" =>
-      {"pty_terminal",
-       %{
-         "agent_status" => %{"flavor" => "cc", "phase" => "ready"},
-         "agent_uri" => "entity://acme/agent/terminal",
-         "component" => "pty_terminal",
-         "path" => "/identities/agents/terminal/pty",
-         "pty_alive" => false,
-         "pty_phase" => "stopped",
-         "title" => "Terminal",
-         "workspace_uri" => "workspace://acme"
-       }},
-    "admin" =>
-      {"dashboard",
-       %{
-         "component" => "dashboard",
-         "kpis" => %{"agents" => 2, "entities" => 4, "sessions" => 3},
-         "path" => "/admin",
-         "title" => "Admin dashboard",
-         "workspace_uri" => "workspace://acme"
-       }},
-    "workspace_plugins" =>
-      {"workspaces_list",
-       %{
-         "component" => "workspaces_list",
-         "path" => "/workspaces",
-         "title" => "Workspaces",
-         "workspace_uri" => "workspace://acme",
-         "workspaces" => [
-           %{
-             "detail_path" => "/workspaces/acme",
-             "live" => true,
-             "members_count" => 2,
-             "name" => "acme",
-             "routing_rules_count" => 1,
-             "templates_count" => 1,
-             "uri" => "workspace://acme"
-           }
-         ]
-       }}
-  }
 
   @doc "JSON-able generated contract used by the static Playwright harness."
   @spec manifest() :: map()
@@ -117,8 +19,8 @@ defmodule Ezagent.World.E2EFixtures do
       "version" => @version,
       "accepted_actions" => DispatchContract.accepted_actions(),
       "fixtures" =>
-        Map.new(@fixture_specs, fn {name, {slot_type, state}} ->
-          {name, fixture(slot_type, state)}
+        Map.new(StateContract.fixtures(), fn {name, %{slot_type: slot_type, state: state}} ->
+          {name, fixture(slot_type, StateContract.validate!(slot_type, state))}
         end)
     }
   end
@@ -135,7 +37,7 @@ defmodule Ezagent.World.E2EFixtures do
   @doc "Fixture names and their production renderer families."
   @spec fixture_families() :: %{String.t() => atom()}
   def fixture_families do
-    Map.new(@fixture_specs, fn {name, {slot_type, _state}} ->
+    Map.new(StateContract.fixtures(), fn {name, %{slot_type: slot_type}} ->
       {name, SlotRegistry.renderer_family(slot_type)}
     end)
   end
