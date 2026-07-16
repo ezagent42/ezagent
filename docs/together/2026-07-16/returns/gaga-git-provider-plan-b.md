@@ -50,7 +50,7 @@ Already verified after the current-main rebase and Task 12 fixes:
 
 ```text
 SHELL=/bin/bash mix cmd --app ezagent_domain_git mix test
-  -> 86 tests, 0 failures
+  -> 87 tests, 0 failures
 
 SHELL=/bin/bash mix test \
   apps/ezagent_domain_git/test/integration/git_task_dispatch_test.exs
@@ -92,6 +92,14 @@ allows adapter effects only in the sole intended ActionSet module's private
 `lookup_adapter`/`invoke` chokepoints, rather than exempting the whole file. RED
 was integration 5/2 plus scanner 11/1; GREEN is integration 5/0, scanner 11/0,
 full Git domain 86/0, and all doc/architecture/invariant gates above PASS.
+
+Re-review closed the remaining dual-read escape hatch: this ActionSet explicitly
+requires non-empty signature/key id and exact signed grantee, so core's legacy
+unsigned-cap compatibility cannot authorize Git provider effects. A real-dispatch
+unsigned raw-cap test proves zero adapter effects. The scanner exemption also now
+matches exact private signatures only: `defp lookup_adapter/1` and
+`defp invoke/5`; public same-name fixtures are rejected. Final focused integration
+is 6/0, scanner 11/0, and full Git domain 87/0.
 
 ## Baseline reproduction
 

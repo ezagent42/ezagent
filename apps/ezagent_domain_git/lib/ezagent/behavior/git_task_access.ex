@@ -223,12 +223,27 @@ defmodule Ezagent.ActionSet.GitTaskAccess do
 
     with true <- caller == policy.grantee_uri,
          {:ok, cap} <- Authorization.authorizing_cap(Map.get(ctx, :caps), needed),
+         true <- signed_for?(cap, caller),
          true <- Cap.verify_for(cap, caller) do
       :ok
     else
       _ -> {:error, :unauthorized}
     end
   end
+
+  defp signed_for?(
+         %{
+           signature: signature,
+           key_id: key_id,
+           grantee_uri: grantee_uri
+         },
+         receiver
+       )
+       when is_binary(signature) and byte_size(signature) > 0 and is_binary(key_id) and
+              byte_size(key_id) > 0,
+       do: grantee_uri == receiver
+
+  defp signed_for?(_cap, _receiver), do: false
 
   defp lookup_adapter(provider_adapter) do
     case AdapterRegistry.lookup_for_action_set(Atom.to_string(provider_adapter)) do

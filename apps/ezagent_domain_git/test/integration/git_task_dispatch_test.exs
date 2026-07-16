@@ -133,6 +133,24 @@ defmodule Ezagent.DomainGit.Integration.GitTaskDispatchTest do
     refute_received {:task11_provider_mutation, _, _}
   end
 
+  test "unsigned raw capability leaves both providers unchanged" do
+    fixture = fixture(:resolve_repository)
+    policy = policy(fixture, :"task11-sync-a")
+    start_resource(fixture, policy)
+    [cap] = MapSet.to_list(fixture.invocation.ctx.caps)
+    raw_cap = %{cap | signature: nil, key_id: nil, grantee_uri: nil}
+
+    invocation = %{
+      fixture.invocation
+      | args: %{repository: policy.repository},
+        ctx: %{fixture.invocation.ctx | caps: MapSet.new([raw_cap])}
+    }
+
+    assert {:error, :unauthorized} = Ezagent.Invocation.dispatch(invocation)
+    refute_received {:task11_adapter_call, _, _, _}
+    refute_received {:task11_provider_mutation, _, _}
+  end
+
   test "stale create reaches only the selected provider and performs no provider mutation" do
     fixture = fixture(:create_change_request)
     policy = policy(fixture, :"task11-sync-b")
