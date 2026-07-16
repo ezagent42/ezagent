@@ -388,7 +388,8 @@ defmodule Ezagent.Users do
   `{:error, :must_disable_first}` for a not-yet-disabled target.
   """
   @spec tombstone(URI.t() | String.t(), URI.t() | String.t(), String.t() | nil) ::
-          {:ok, decoded()} | {:error, :not_found | :must_disable_first}
+          {:ok, decoded()}
+          | {:error, :not_found | :must_disable_first | {atom(), term()}}
   def tombstone(uri, deleted_by, reason \\ nil) do
     case Repo.get_by(__MODULE__, uri: uri_to_str(uri)) do
       nil ->
@@ -417,34 +418,49 @@ defmodule Ezagent.Users do
         normalized_reason = normalize_reason(reason)
         row_uri = Ezagent.URI.new!(row.uri)
 
-        result =
-          row
-          |> Ecto.Changeset.change(%{
-            deleted_at: now,
-            deleted_by: by,
-            deleted_reason: normalized_reason,
-            # Fail the login gate closed. Preserve a pre-existing disable
-            # timestamp/actor (delete requires a prior disable, so these are set).
-            disabled_at: row.disabled_at || now,
-            disabled_by: row.disabled_by || by,
-            disabled_reason: row.disabled_reason || normalized_reason
-          })
-          |> Repo.update()
+        # ATOMIC: the deleted/disabled marker AND the cap-clear (both writes to
+        # this user's row — the marker columns + `caps_json` via the sanctioned
+        # `UserStore` chokepoint) commit together or not at all. Propagates a
+        # cap-clear failure (rollback) instead of ignoring it — so tombstone
+        # never reports success with stale `caps_json` still authoritative.
+        txn =
+          Repo.transaction(fn ->
+            row
+            |> Ecto.Changeset.change(%{
+              deleted_at: now,
+              deleted_by: by,
+              deleted_reason: normalized_reason,
+              # Fail the login gate closed. Preserve a pre-existing disable
+              # timestamp/actor (delete requires a prior disable → these are set).
+              disabled_at: row.disabled_at || now,
+              disabled_by: row.disabled_by || by,
+              disabled_reason: row.disabled_reason || normalized_reason
+            })
+            |> Repo.update()
+            |> case do
+              {:ok, _updated} -> :ok
+              {:error, changeset} -> Repo.rollback({:row_update_failed, changeset})
+            end
 
-        case result do
-          {:ok, _updated} ->
             # REVOKE durable authority (see @doc step 1) through the SANCTIONED
-            # EntityCaps chokepoint — NOT a raw `caps_json` write here (the
-            # cap-issue / raw-user-caps gates forbid new hand-rolled cap-column
-            # sites; every authority write goes through `UserStore`). Empty set.
-            _ = Ezagent.EntityCaps.UserStore.persist(row_uri, [])
+            # EntityCaps chokepoint — never a raw `caps_json` write here.
+            case Ezagent.EntityCaps.UserStore.persist(row_uri, []) do
+              :ok -> :ok
+              {:error, reason} -> Repo.rollback({:caps_clear_failed, reason})
+            end
+          end)
+
+        case txn do
+          {:ok, :ok} ->
             # Clear the Kind + snapshot so `activate/2`'s caps-union has nothing
-            # to resurrect (see @doc step 2). Best-effort.
+            # to resurrect (see @doc step 2). Best-effort — a teardown crash does
+            # NOT undo the already-committed durable revocation; the idempotent
+            # retry branch re-asserts it.
             _ = destroy_kind_best_effort(uri)
             {:ok, decode(Repo.get_by(__MODULE__, uri: row.uri))}
 
-          {:error, _changeset} ->
-            {:error, :not_found}
+          {:error, reason} ->
+            {:error, reason}
         end
     end
   end

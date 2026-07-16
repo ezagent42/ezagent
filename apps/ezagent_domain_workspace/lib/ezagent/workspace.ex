@@ -161,7 +161,12 @@ defmodule Ezagent.Workspace do
         # `{:ok, _pid}`); the facade pre-spawn just narrows the
         # divergence window for paths where the Behavior would
         # otherwise be the only pre-spawner.
-        with :ok <- ensure_member_kind_spawned_at_facade(member_uri),
+        # task #180 fork-#3: refuse a TOMBSTONED user BEFORE the facade pre-spawn
+        # (the action body re-checks universally, but the facade must not spawn
+        # the dead User Kind first — respawning it reloads its slice and can drain
+        # queued authority). Fail-loud, no spawn.
+        with :ok <- refute_deleted_member_at_facade(member_uri),
+             :ok <- ensure_member_kind_spawned_at_facade(member_uri),
              :ok <-
                dispatch_mutation(name, "add_member", %{member: member_uri}, :call, dispatch_ctx),
              {:ok, _} <- Store.update_members(name, new_members) do
@@ -233,6 +238,14 @@ defmodule Ezagent.Workspace do
   end
 
   defp ensure_member_kind_spawned_at_facade(_other), do: :ok
+
+  defp refute_deleted_member_at_facade(%URI{} = uri) do
+    if Ezagent.URI.type?(uri, :user) and Ezagent.Users.deleted?(uri) do
+      {:error, :member_is_deleted}
+    else
+      :ok
+    end
+  end
 
   @doc """
   Detach a TOMBSTONED user from a workspace — the `delete_user` membership
