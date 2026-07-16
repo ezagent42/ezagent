@@ -194,6 +194,33 @@ defmodule EzagentPluginKanban.E2E.BoardForwardTest do
                  bob_ctx
                )
 
+      # --- (b3) 跨 workspace 接收在 mint/Mount 前拒绝 ----------------------
+      foreign_ws_name = "t5b-foreign-#{System.unique_integer([:positive])}"
+      {:ok, _foreign_ws_pid} = Workspace.create(foreign_ws_name, %{})
+      foreign_workspace_uri = URI.new!("workspace://#{foreign_ws_name}")
+
+      {foreign_session, foreign_assistant} =
+        session_with_assistant(foreign_ws_name, foreign_workspace_uri, admin_ctx)
+
+      assert {:error, :cross_workspace_denied} =
+               BoardProvision.forward_board(
+                 board_uri,
+                 from_session,
+                 foreign_session,
+                 Ezagent.ActionSet.Kanban,
+                 bob_ctx
+               )
+
+      assert MountRow.get(
+               foreign_session,
+               board_uri,
+               foreign_assistant,
+               Ezagent.ActionSet.Kanban
+             ) == nil
+
+      assert {:error, :unauthorized} =
+               dispatch_as(foreign_assistant, board_uri, :get_tree, %{})
+
       # --- (c) to_session 无 assistant → 拒 ---------------------------------
       no_assistant_session =
         session_without_assistant(ws_name, workspace_uri, alice_ctx.caller)
