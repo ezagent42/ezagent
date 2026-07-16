@@ -691,6 +691,47 @@ defmodule Ezagent.UriQuery.Scan do
   defp direct_slash_split_of?(body, uri_values) do
     {_body, {_values, found?}} =
       Macro.prewalk(body, {uri_values, false}, fn
+        {:=, _,
+         [
+           {:%{}, _, [{:path, {name, _, context}}]},
+           {receiver, _, receiver_context}
+         ]} = node,
+        {values, found?}
+        when is_atom(name) and is_atom(context) and is_atom(receiver) and
+               is_atom(receiver_context) ->
+          next = if MapSet.member?(values, receiver), do: MapSet.put(values, name), else: values
+          {node, {next, found?}}
+
+        {:=, _,
+         [
+           {name, _, context},
+           {{:., _, [{:__aliases__, _, [:Map]}, fetch]}, _,
+            [
+              {receiver, _, receiver_context},
+              :path
+            ]}
+         ]} = node,
+        {values, found?}
+        when fetch in [:fetch, :fetch!] and is_atom(name) and is_atom(context) and
+               is_atom(receiver) and is_atom(receiver_context) ->
+          next = if MapSet.member?(values, receiver), do: MapSet.put(values, name), else: values
+          {node, {next, found?}}
+
+        {:=, _,
+         [
+           {:ok, {name, _, context}},
+           {{:., _, [{:__aliases__, _, [:Map]}, :fetch]}, _,
+            [
+              {receiver, _, receiver_context},
+              :path
+            ]}
+         ]} = node,
+        {values, found?}
+        when is_atom(name) and is_atom(context) and is_atom(receiver) and
+               is_atom(receiver_context) ->
+          next = if MapSet.member?(values, receiver), do: MapSet.put(values, name), else: values
+          {node, {next, found?}}
+
         {:=, _, [{name, _, context}, {{:., _, [{receiver, _, receiver_context}, :path]}, _, []}]} =
             node,
         {values, found?}
