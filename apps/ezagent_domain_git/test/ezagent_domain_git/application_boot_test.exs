@@ -96,6 +96,11 @@ defmodule EzagentDomainGit.ApplicationBootTest do
       AdapterRegistry.lookup_for_action_set("preexisting-a") == {:ok, FakeGitAdapterA} and
         AdapterRegistry.lookup_for_action_set("boot-b") == {:ok, FakeGitAdapterB}
     end)
+
+    replace_registration([])
+
+    assert :error = AdapterRegistry.lookup_for_action_set("preexisting-a")
+    assert :error = AdapterRegistry.lookup_for_action_set("boot-b")
   end
 
   test "TaskAccessSupervisor start failure follows the post-registration rollback path" do
