@@ -107,4 +107,159 @@ defmodule Ezagent.PluginCc.Template.CcHeadlessAgentTest do
                Ezagent.PluginCc.Template.CcAgent.template_data_extra(content)
     end
   end
+
+  # ── G1 gate: R1 skill loading — sdk_sidecar_params ──────────────────────
+
+  describe "sdk_sidecar_params/2 — G1 gate: plugins + persona" do
+    setup do
+      tmp_dir = System.tmp_dir!()
+
+      agent_uri =
+        Ezagent.URI.new!(
+          "entity://test-ws/agent/cc-headless-g1-#{System.unique_integer([:positive])}"
+        )
+
+      {:ok, agent_uri: agent_uri, tmp_dir: tmp_dir}
+    end
+
+    test "includes plugins when config_dir has .claude-plugin/plugin.json", ctx do
+      config_dir = Path.join(ctx.tmp_dir, "g1-plugin-#{System.unique_integer([:positive])}")
+      File.mkdir_p!(Path.join(config_dir, ".claude-plugin"))
+      File.write!(Path.join([config_dir, ".claude-plugin", "plugin.json"]), "{}")
+
+      on_exit(fn -> File.rm_rf(config_dir) end)
+
+      # Use "agent_config_dir" (the post-materialization key set by
+      # put_agent_config_dir/2) so resolve_config_home/4 returns it
+      # directly without deriving a path from the agent URI.
+      tmpl = %{
+        "cwd" => ctx.tmp_dir,
+        "agent_config_dir" => config_dir
+      }
+
+      params = CcHeadlessAgent.sdk_sidecar_params(ctx.agent_uri, tmpl)
+
+      assert is_list(params.plugins), "plugins must be a list"
+      refute params.plugins == [], "plugins must not be empty when plugin manifest exists"
+
+      plugin = List.first(params.plugins)
+      assert is_map(plugin), "each plugin entry must be a map"
+      assert plugin["type"] == "local", "plugin type must be 'local'"
+      assert plugin["path"] == config_dir, "plugin path must be the config_dir"
+    end
+
+    test "plugins is empty list when config_dir has no .claude-plugin/" do
+      config_dir =
+        Path.join(System.tmp_dir!(), "g1-noplugin-#{System.unique_integer([:positive])}")
+
+      # Directory exists but no .claude-plugin/ subdirectory
+      File.mkdir_p!(config_dir)
+
+      on_exit(fn -> File.rm_rf(config_dir) end)
+
+      tmpl = %{
+        "cwd" => System.tmp_dir!(),
+        "config_dir" => config_dir
+      }
+
+      params =
+        CcHeadlessAgent.sdk_sidecar_params(
+          %URI{} = Ezagent.URI.new!("entity://test-ws/agent/noplugin"),
+          tmpl
+        )
+
+      assert params.plugins == [], "plugins must be empty when no plugin manifest"
+    end
+
+    test "system_prompt reads from sandbox_content.prompt (persona path)" do
+      persona = "这是角色的预设 persona。"
+
+      tmpl = %{
+        "cwd" => System.tmp_dir!(),
+        "sandbox_content" => %{skills: [], plugins: [], prompt: persona}
+      }
+
+      params =
+        CcHeadlessAgent.sdk_sidecar_params(
+          Ezagent.URI.new!("entity://test-ws/agent/persona"),
+          tmpl
+        )
+
+      assert params.system_prompt == persona,
+             "system_prompt must come from sandbox_content.prompt"
+    end
+
+    test "explicit system_prompt overrides sandbox_content.prompt" do
+      explicit = "operator override"
+      persona = "recipe persona"
+
+      tmpl = %{
+        "cwd" => System.tmp_dir!(),
+        "system_prompt" => explicit,
+        "sandbox_content" => %{skills: [], plugins: [], prompt: persona}
+      }
+
+      params =
+        CcHeadlessAgent.sdk_sidecar_params(
+          Ezagent.URI.new!("entity://test-ws/agent/explicit"),
+          tmpl
+        )
+
+      assert params.system_prompt == explicit,
+             "explicit system_prompt must override sandbox_content.prompt"
+    end
+
+    test "ensure_skill_tool adds Skill when plugins configured and allowed_tools explicit" do
+      config_dir = Path.join(System.tmp_dir!(), "g1-skill-#{System.unique_integer([:positive])}")
+      File.mkdir_p!(Path.join(config_dir, ".claude-plugin"))
+      File.write!(Path.join([config_dir, ".claude-plugin", "plugin.json"]), "{}")
+
+      on_exit(fn -> File.rm_rf(config_dir) end)
+
+      # Use "agent_config_dir" so resolve_config_home returns it directly.
+      # Simulate #1323 pattern: explicit allowed_tools with MCP tools but no Skill
+      tmpl = %{
+        "cwd" => System.tmp_dir!(),
+        "agent_config_dir" => config_dir,
+        "allowed_tools" => ["Read", "Bash", "mcp__playwright"]
+      }
+
+      params =
+        CcHeadlessAgent.sdk_sidecar_params(
+          Ezagent.URI.new!("entity://test-ws/agent/skill-merge"),
+          tmpl
+        )
+
+      assert "Skill" in params.allowed_tools,
+             "Skill must be merged into explicit allowed_tools when plugins are configured (G1 gate)"
+
+      assert "mcp__playwright" in params.allowed_tools,
+             "existing MCP tools must be preserved (#1323 merge)"
+    end
+
+    test "allowed_tools stays nil when nil and plugins configured (let SDK defaults apply)" do
+      config_dir =
+        Path.join(System.tmp_dir!(), "g1-default-#{System.unique_integer([:positive])}")
+
+      File.mkdir_p!(Path.join(config_dir, ".claude-plugin"))
+      File.write!(Path.join([config_dir, ".claude-plugin", "plugin.json"]), "{}")
+
+      on_exit(fn -> File.rm_rf(config_dir) end)
+
+      tmpl = %{
+        "cwd" => System.tmp_dir!(),
+        "agent_config_dir" => config_dir
+        # No allowed_tools key — SDK defaults apply
+      }
+
+      params =
+        CcHeadlessAgent.sdk_sidecar_params(
+          Ezagent.URI.new!("entity://test-ws/agent/default-tools"),
+          tmpl
+        )
+
+      assert is_nil(params.allowed_tools),
+             "allowed_tools must stay nil when not explicitly set (let SDK defaults apply)"
+    end
+  end
 end

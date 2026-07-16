@@ -267,6 +267,7 @@ defmodule Ezagent.Credential.HomeRuntime do
     result =
       with :ok <- Ezagent.Agent.Materializer.merge_layers(staging, layer_dirs),
            :ok <- materialize_sandbox_skills(staging, tmpl),
+           :ok <- materialize_plugin_manifest(staging, tmpl),
            :ok <- File.chmod(staging, 0o700),
            :ok <- File.write(Path.join(staging, Path.basename(marker)), "ok\n") do
         Ezagent.Agent.Materializer.materialize_with_grant(%{
@@ -323,6 +324,7 @@ defmodule Ezagent.Credential.HomeRuntime do
          :ok <- maybe_overlay(Keyword.get(swap_opts, :overlay), staging),
          :ok <- apply_derived_config(staging, tmpl),
          :ok <- materialize_sandbox_skills(staging, tmpl),
+         :ok <- materialize_plugin_manifest(staging, tmpl),
          :ok <- File.chmod(staging, 0o700),
          :ok <- chmod_credential_files(staging, template_module, opts),
          :ok <- File.write(Path.join(staging, marker_name), "ok\n"),
@@ -433,6 +435,36 @@ defmodule Ezagent.Credential.HomeRuntime do
       {:error, reason} ->
         {:error, {:skill_copy_failed, ref, reason}}
     end
+  end
+
+  # Writes .claude-plugin/plugin.json into the staging directory so the
+  # per-agent config_dir is a valid Claude Code plugin bundle. Headless
+  # flavors (cc-headless) load skills via the SDK's `plugins` parameter
+  # (bypassing `setting_sources=[]`); PTY flavors are unaffected by the
+  # extra file. Only materialized when sandbox skills are present.
+  defp materialize_plugin_manifest(staging, tmpl) when is_map(tmpl) do
+    case sandbox_skill_refs(tmpl) do
+      {:ok, []} -> :ok
+      :absent -> :ok
+      {:ok, _skills} -> write_plugin_manifest(staging)
+      {:error, _} = error -> error
+    end
+  end
+
+  defp write_plugin_manifest(staging) do
+    plugin_dir = Path.join(staging, ".claude-plugin")
+
+    with :ok <- File.mkdir_p(plugin_dir) do
+      File.write(Path.join(plugin_dir, "plugin.json"), plugin_manifest_json())
+    end
+  end
+
+  defp plugin_manifest_json do
+    Jason.encode!(%{
+      "name" => "ezagent-skills",
+      "version" => "1.0.0",
+      "description" => "Per-agent skill bundle materialized by Ezagent"
+    })
   end
 
   defp swap_into_place(staging, target) do

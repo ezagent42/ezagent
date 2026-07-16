@@ -36,6 +36,10 @@ defmodule EzagentWeb.Application do
         # EZAGENT_HOME and scan the single runtime origin before consumers read.
         :ok = Ezagent.Home.SkillSeed.boot!(index?: System.get_env("MIX_ENV") != "test")
 
+        # R2 boot lane: reconcile per-agent skill homes after seed + registry
+        # refresh. Fail-soft — telemetry + continue boot on any error.
+        _ = Ezagent.Home.SkillReconcile.reconcile_all(fail_soft: true)
+
         # sw-home lane (2026-07-07) — the ONE late socialware manifest scan.
         # P13 note: ezagent_web is transport, not business logic; this call is
         # ONLY a trigger. It lives here because ezagent_web depends on every

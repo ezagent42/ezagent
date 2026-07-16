@@ -29,11 +29,17 @@ from typing import Any
 from claude_agent_sdk import ClaudeAgentOptions, ClaudeSDKClient
 
 try:
-    from claude_agent_sdk.types import AssistantMessage, ResultMessage, TextBlock
+    from claude_agent_sdk.types import (
+        AssistantMessage,
+        ResultMessage,
+        SdkPluginConfig,
+        TextBlock,
+    )
 except ImportError:  # pragma: no cover - defensive across SDK releases
     AssistantMessage = object  # type: ignore[assignment,misc]
     ResultMessage = object  # type: ignore[assignment,misc]
     TextBlock = object  # type: ignore[assignment,misc]
+    SdkPluginConfig = dict  # type: ignore[assignment,misc]
 
 
 def env_json(name: str, default: Any) -> Any:
@@ -119,6 +125,14 @@ class Worker:
         mcp_servers = env_json("EZAGENT_CC_SDK_MCP_SERVERS", None)
         if mcp_servers:
             options.mcp_servers = mcp_servers
+
+        plugins = env_json("EZAGENT_CC_SDK_PLUGINS", [])
+        if plugins:
+            options.plugins = [
+                SdkPluginConfig(type=p["type"], path=p["path"])  # type: ignore[index,call-arg]
+                if isinstance(p, dict) else p
+                for p in plugins
+            ]
 
         self.client = ClaudeSDKClient(options)
         await self.client.connect()

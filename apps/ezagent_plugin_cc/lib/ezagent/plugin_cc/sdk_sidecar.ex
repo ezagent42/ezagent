@@ -266,6 +266,7 @@ defmodule EzagentPluginCc.SdkSidecar do
         |> maybe_json_env(~c"EZAGENT_CC_SDK_DISALLOWED_TOOLS", Map.get(args, :disallowed_tools))
         |> maybe_json_env(~c"EZAGENT_CC_SDK_MCP_SERVERS", Map.get(args, :mcp_servers))
         |> maybe_json_env(~c"EZAGENT_CC_SDK_ENV", Map.get(args, :cmd_env))
+        |> maybe_json_env(~c"EZAGENT_CC_SDK_PLUGINS", Map.get(args, :plugins))
 
       cmd = [runner | runner_args ++ [script]]
 

@@ -257,6 +257,8 @@ defmodule Ezagent.PluginCc.Template.CcHeadlessAgent do
         Map.get(tmpl, "agent_config_dir") ||
         Map.get(tmpl, "config_dir")
 
+    plugins = plugins_from_config_dir(config_dir)
+
     %{
       cwd: Map.fetch!(tmpl, "cwd"),
       config_dir: config_dir,
@@ -265,8 +267,8 @@ defmodule Ezagent.PluginCc.Template.CcHeadlessAgent do
       model: Map.get(tmpl, "model"),
       effort: Map.get(tmpl, "effort") || Map.get(tmpl, "claude_effort"),
       cli_path: Map.get(tmpl, "claude_cli_path"),
-      system_prompt: Map.get(tmpl, "system_prompt"),
-      allowed_tools: Map.get(tmpl, "allowed_tools"),
+      system_prompt: system_prompt_from(tmpl),
+      allowed_tools: ensure_skill_tool(Map.get(tmpl, "allowed_tools"), plugins != []),
       disallowed_tools: Map.get(tmpl, "disallowed_tools"),
       mcp_servers: Map.get(tmpl, "mcp_servers"),
       # Provider/backend env (anthropic|deepseek), ORTHOGONAL to the headless
@@ -278,7 +280,8 @@ defmodule Ezagent.PluginCc.Template.CcHeadlessAgent do
       cmd_env: provider_cmd_env(tmpl),
       uv_path: Map.get(tmpl, "uv_path"),
       python_path: Map.get(tmpl, "python_path"),
-      sdk_worker_path: Map.get(tmpl, "sdk_worker_path")
+      sdk_worker_path: Map.get(tmpl, "sdk_worker_path"),
+      plugins: plugins
     }
   end
 
@@ -290,6 +293,46 @@ defmodule Ezagent.PluginCc.Template.CcHeadlessAgent do
       {:error, _} -> %{}
     end
   end
+
+  # Persona: resolve the system prompt from the template. Explicit
+  # `system_prompt` key takes precedence (operator override — including
+  # explicit empty string); fallback reads `sandbox_content.prompt`
+  # (recipe persona, the §2 R1 mapping).
+  defp system_prompt_from(tmpl) do
+    if Map.has_key?(tmpl, "system_prompt") do
+      Map.get(tmpl, "system_prompt")
+    else
+      get_in(tmpl, ["sandbox_content", :prompt])
+    end
+  end
+
+  # Compute the SDK-side plugins list from the per-agent config_dir.
+  # When the config_dir carries `.claude-plugin/plugin.json` (materialized by
+  # HomeRuntime), the agent is its own plugin bundle — skills at
+  # `<config_dir>/skills/<ref>/` are discoverable via the SDK's plugin path,
+  # bypassing `setting_sources=[]`.
+  defp plugins_from_config_dir(nil), do: []
+
+  defp plugins_from_config_dir(config_dir) when is_binary(config_dir) do
+    if File.exists?(Path.join(config_dir, ".claude-plugin/plugin.json")) do
+      [%{"type" => "local", "path" => config_dir}]
+    else
+      []
+    end
+  end
+
+  # The SDK auto-adds `Skill` to allowed_tools when `skills` is explicitly set,
+  # but NOT when skills arrive via `plugins`. When the caller explicitly passes
+  # an allowed_tools list AND plugins are configured, ensure `Skill` is present
+  # so the agent can invoke plugin-loaded skills. When allowed_tools is nil,
+  # the SDK's default tool set applies — don't override it.
+  defp ensure_skill_tool(nil, _has_plugins?), do: nil
+
+  defp ensure_skill_tool(tools, true = _has_plugins?) when is_list(tools) do
+    if "Skill" not in tools, do: tools ++ ["Skill"], else: tools
+  end
+
+  defp ensure_skill_tool(tools, _has_plugins?), do: tools
 
   defp rollback_runtime(agent_uri) do
     _ = EzagentPluginCc.SdkSidecar.stop(agent_uri)
