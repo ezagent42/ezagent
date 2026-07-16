@@ -29,11 +29,13 @@ defmodule EzagentCore.FrontendCIContractTest do
           ~s(pnpm --dir "$assets_dir" lint),
           ~s(pnpm --dir "$assets_dir" typecheck),
           ~s(pnpm --dir "$assets_dir" test),
-          "playwright install --with-deps chromium",
-          "pnpm --dir apps/ezagent_plugin_world/assets test:e2e"
+          "playwright install --with-deps chromium"
         ] do
       assert source =~ required, "frontend CI lost required contract: #{required}"
     end
+
+    assert source =~
+             ~r/^\s*run: pnpm --dir apps\/ezagent_plugin_world\/assets test:e2e\s*$/m
 
     refute String.downcase(source) =~ "macos"
   end
