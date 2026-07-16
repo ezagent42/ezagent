@@ -1,10 +1,12 @@
 defmodule Ezagent.Socialware.BoardProvision do
   @moduledoc """
-  运行时 kanban "建板 / 拉板 / 转发" 入口 —— **通用挂载 infra 的瘦 kanban 消费者**。
+  运行时数据宿主 "建板 / 拉板 / 转发 / 删板" 入口 —— **通用挂载 infra 的瘦消费面**。
 
-  挂载机制(发钥匙 + 落挂载表)全交给 `Ezagent.Socialware.Mount`;本模块只留 **kanban 策略**:
-  谁能建 / 拉 / 转发的授权守卫、目标 session 的 assistant 解析、以及把 kanban 参数
-  (behavior=`Ezagent.ActionSet.Kanban`、role="kanban-assistant"、只读动作)喂给 `Mount`。
+  挂载机制(发钥匙 + 落挂载表)全交给 `Ezagent.Socialware.Mount`;本模块只留**策略**:
+  谁能建 / 拉 / 转发 / 删的授权守卫、目标 session 的 assistant 解析,再把参数喂给
+  `Mount`。**零业务字面**(深扫 2026-07-16 默认值上提):behavior / assistant_role /
+  read_actions 全由调用方(kanban 侧代码,如 world `KanbanActions` /
+  `EzagentPluginKanban.ShareReceive`)显式传入,本模块不再自带 kanban 默认值。
 
     1. **建板**(`create_board/5`)—— 归属 = 触发建板的 owner。经 `Mount.provision/6`:
        `Workspace.create_agent`(cap-gated,`data_owner` = `owner_ctx` 的 caller,即板主人,#154)
@@ -197,10 +199,6 @@ defmodule Ezagent.Socialware.BoardProvision do
     end
   end
 
-  @default_assistant_role "kanban-assistant"
-  # 只读动作:转发发的钥匙只含这些(能看不能改)。kanban 读动作 = get_tree / export_markmap。
-  @default_read_actions [:get_tree, :export_markmap]
-
   @doc """
   删板(⑲)—— 板 = 数据宿主 agent,**只有板主人(建板人 = `data_owner`)能删**;
   建板人对板的生命周期权 = 建板时 create-entry 授予的 `Manage :any` cap(#533 §3.3)。
@@ -272,18 +270,20 @@ defmodule Ezagent.Socialware.BoardProvision do
     * `board_uri` —— 已存在的板(数据宿主)。
     * `target_session_uri` —— 拉进的目标 session;assistant 从它的成员边解析。
     * `behavior` —— 操作 cap 的 ActionSet 模块(如 `Ezagent.ActionSet.Kanban`)。
-    * `caller_ctx` —— `%{caller, ...}`:发起拉板者,须 == 板主人;可选 `:assistant_role`
-      覆盖收钥匙成员的 role_name(默认 `"kanban-assistant"`)。
+    * `caller_ctx` —— `%{caller, assistant_role, ...}`:发起拉板者,须 == 板主人;
+      `:assistant_role`(**必填**,收钥匙成员的 role_name)—— 业务默认值(如
+      `"kanban-assistant"`)归调用方(plugin/world 的 kanban 侧代码),本模块零
+      kanban 字面(深扫 2026-07-16:默认值上提)。
 
-  返回 `{:ok, %{assistant_uri, minted}}` 或 `{:error, :not_board_owner | :no_assistant_in_target | term()}`。
+  返回 `{:ok, %{assistant_uri, minted}}` 或
+  `{:error, {:caller_ctx_missing, :assistant_role} | :not_board_owner | :no_assistant_in_target | term()}`。
   """
   @spec pull_board(URI.t(), URI.t(), module(), map()) ::
           {:ok, %{assistant_uri: URI.t(), minted: [Ezagent.Capability.t()]}} | {:error, term()}
   def pull_board(%URI{} = board_uri, %URI{} = target_session_uri, behavior, caller_ctx)
       when is_atom(behavior) and is_map(caller_ctx) do
-    assistant_role = Map.get(caller_ctx, :assistant_role, @default_assistant_role)
-
-    with :ok <- assert_board_owner(board_uri, behavior, caller_ctx),
+    with {:ok, assistant_role} <- fetch_ctx(caller_ctx, :assistant_role),
+         :ok <- assert_board_owner(board_uri, behavior, caller_ctx),
          {:ok, assistant_uri} <- resolve_target_assistant(target_session_uri, assistant_role),
          actions = Ezagent.ActionSet.action_names(behavior),
          {:ok, %{caps: minted}} <-
@@ -301,7 +301,7 @@ defmodule Ezagent.Socialware.BoardProvision do
 
   @doc """
   转发只读 —— 群里**任何成员**能做:把一块板从 `from_session_uri` 转发给 `to_session_uri`,
-  给 to_session 的 assistant 挂指向这块板的**只读**钥匙(默认 `[:get_tree, :export_markmap]`,
+  给 to_session 的 assistant 挂指向这块板的**只读**钥匙(`caller_ctx.read_actions`,
   `access: :read`),只能看不能改(数据跨 session 共享、板不进群、URI 寻址)。
 
   **对比拉板(`pull_board`)**:同一条 `Mount.mount/6`,只是 (1) 授权检查不同、(2) actions /
@@ -322,11 +322,14 @@ defmodule Ezagent.Socialware.BoardProvision do
     * `from_session_uri` —— caller 所在、且对板有 access 的来源 session。
     * `to_session_uri` —— 收只读钥匙的目标 session;assistant 从它的成员边解析。
     * `behavior` —— 操作/读 cap 的 ActionSet 模块(如 `Ezagent.ActionSet.Kanban`)。
-    * `caller_ctx` —— `%{caller, ...}`:发起转发者;可选 `:assistant_role` 覆盖两侧收/查钥匙成员
-      的 role_name(默认 `"kanban-assistant"`)、`:read_actions` 覆盖只读动作集。
+    * `caller_ctx` —— `%{caller, assistant_role, read_actions, ...}`:发起转发者;
+      `:assistant_role`(**必填**,两侧收/查钥匙成员的 role_name)+ `:read_actions`
+      (**必填**,只读动作集)—— 业务默认值(如 `"kanban-assistant"` /
+      `[:get_tree, :export_markmap]`)归调用方(kanban 侧代码),本模块零 kanban
+      字面(深扫 2026-07-16:默认值上提)。
 
   返回 `{:ok, %{assistant_uri, minted}}` 或
-  `{:error, :cross_workspace_denied | :no_forward_access | :no_assistant_in_target | term()}`。
+  `{:error, {:caller_ctx_missing, :assistant_role | :read_actions} | :cross_workspace_denied | :no_forward_access | :no_assistant_in_target | term()}`。
   """
   @spec forward_board(URI.t(), URI.t(), URI.t(), module(), map()) ::
           {:ok, %{assistant_uri: URI.t(), minted: [Ezagent.Capability.t()]}} | {:error, term()}
@@ -338,16 +341,16 @@ defmodule Ezagent.Socialware.BoardProvision do
         caller_ctx
       )
       when is_atom(behavior) and is_map(caller_ctx) do
-    assistant_role = Map.get(caller_ctx, :assistant_role, @default_assistant_role)
-    read_actions = Map.get(caller_ctx, :read_actions, @default_read_actions)
-
-    with :ok <- same_workspace(board_uri, from_session_uri, to_session_uri),
+    with {:ok, assistant_role} <- fetch_ctx(caller_ctx, :assistant_role),
+         {:ok, read_actions} <- fetch_ctx(caller_ctx, :read_actions),
+         :ok <- same_workspace(board_uri, from_session_uri, to_session_uri),
          :ok <-
            assert_forward_access(
              board_uri,
              from_session_uri,
              behavior,
              assistant_role,
+             List.first(read_actions),
              caller_ctx
            ),
          {:ok, assistant_uri} <- resolve_target_assistant(to_session_uri, assistant_role),
@@ -383,8 +386,10 @@ defmodule Ezagent.Socialware.BoardProvision do
          from_session_uri,
          behavior,
          assistant_role,
+         probe_action,
          %{caller: %URI{} = caller}
-       ) do
+       )
+       when is_atom(probe_action) and not is_nil(probe_action) do
     members =
       case Ezagent.Kind.get_slice(from_session_uri, :session) do
         {:ok, slice} when is_map(slice) -> Map.get(slice, :members, %{})
@@ -398,7 +403,7 @@ defmodule Ezagent.Socialware.BoardProvision do
       true ->
         case Members.role_name_to_uri(members, assistant_role) do
           %URI{} = from_assistant ->
-            if session_holds_board_cap?(from_assistant, behavior, board_uri),
+            if session_holds_board_cap?(from_assistant, behavior, board_uri, probe_action),
               do: :ok,
               else: {:error, :no_forward_access}
 
@@ -408,7 +413,7 @@ defmodule Ezagent.Socialware.BoardProvision do
     end
   end
 
-  defp assert_forward_access(_board_uri, _from, _behavior, _role, _ctx),
+  defp assert_forward_access(_board_uri, _from, _behavior, _role, _probe, _ctx),
     do: {:error, :no_forward_access}
 
   # caller 是否 from_session 的成员(成员边 key = 成员 URI,normalize 后比 instance)。
@@ -423,14 +428,13 @@ defmodule Ezagent.Socialware.BoardProvision do
 
   # from_session 的 assistant 对这块板是否有 access —— **不直读 cap 列表**(那会绕过 dispatch
   # chokepoint、把 cap 校验挪出许可路)。改让 assistant 以自身份对这块板 dispatch 一个只读动作
-  # (`:get_tree`, mode `:call`),cap 校验落在 dispatch 许可路上:`{:ok, _}` = 有钥匙(有权),
-  # 任何 `{:error, _}`(如 `:unauthorized`) = 没钥匙(无权)。严格 presenter 绑定要求把
-  # assistant 自持的 born-signed artifacts 明确装入 envelope；无 stamp 的 ambient fallback
-  # 已被删除。
-  # 目标动作 URI 的 slice 由 behavior 自身派生(`behavior.state_slice/0`,如 Kanban → `:kanban`),
-  # 不硬编码。
-  defp session_holds_board_cap?(assistant_uri, behavior, board_uri) do
-    target = Ezagent.URI.with_action(board_uri, behavior.state_slice(), :get_tree)
+  # (probe_action = 调用方 read_actions 的首个,mode `:call`),cap 校验落在 dispatch 许可路上:
+  # `{:ok, _}` = 有钥匙(有权),任何 `{:error, _}`(如 `:unauthorized`) = 没钥匙(无权)。
+  # 严格 presenter 绑定(#1457)要求把 assistant 自持的 born-signed artifacts 明确装入
+  # envelope;无 stamp 的 ambient fallback 已被删除。目标动作 URI 的 slice 由 behavior 自身
+  # 派生(`behavior.state_slice/0`),读探针动作由调用方给 —— 本模块零 kanban 字面。
+  defp session_holds_board_cap?(assistant_uri, behavior, board_uri, probe_action) do
+    target = Ezagent.URI.with_action(board_uri, behavior.state_slice(), probe_action)
 
     caps = assistant_uri |> Ezagent.EntityCaps.load() |> MapSet.new()
 
@@ -488,6 +492,16 @@ defmodule Ezagent.Socialware.BoardProvision do
     case Map.get(spec, key) do
       nil -> {:error, {:board_spec_missing, key}}
       "" -> {:error, {:board_spec_missing, key}}
+      v -> {:ok, v}
+    end
+  end
+
+  # 深扫 2026-07-16(默认值上提):assistant_role / read_actions 不再有模块级
+  # kanban 默认值 —— 业务字面归调用方(kanban 侧代码),缺了显式报错不静默兜底。
+  defp fetch_ctx(caller_ctx, key) do
+    case Map.get(caller_ctx, key) do
+      nil -> {:error, {:caller_ctx_missing, key}}
+      "" -> {:error, {:caller_ctx_missing, key}}
       v -> {:ok, v}
     end
   end

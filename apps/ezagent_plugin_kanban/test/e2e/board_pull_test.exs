@@ -128,7 +128,8 @@ defmodule EzagentPluginKanban.E2E.BoardPullTest do
       # (b) bob(非板主人)拉同一块板 → 拒。
       bob_ctx = %{
         caller: URI.new!("entity://#{ws_name}/user/bob-#{System.unique_integer([:positive])}"),
-        caps: MapSet.new()
+        caps: MapSet.new(),
+        assistant_role: "kanban-assistant"
       }
 
       assert {:error, :not_board_owner} =
@@ -203,7 +204,11 @@ defmodule EzagentPluginKanban.E2E.BoardPullTest do
         initial_caps: MapSet.new()
       })
 
-    Ezagent.Test.CapHelper.signed_workspace_ctx!(workspace_uri, user_uri)
+    # 深扫 2026-07-16(默认值上提):assistant_role 业务字面归调用方 —— caller_ctx 显式带。
+    # ctx 底座走 #1457 的 signed_workspace_ctx!(per-Kind 签名 workspace cap)。
+    workspace_uri
+    |> Ezagent.Test.CapHelper.signed_workspace_ctx!(user_uri)
+    |> Map.put(:assistant_role, "kanban-assistant")
   end
 
   # 建一块板,owner = ctx.caller(create_agent 记 lineage → data_owner)。
