@@ -1,8 +1,9 @@
 # Git Domain Spine (Plan B) Implementation Plan
 
 > Executed on branch `feat/git-domain-spine`, stacked on Plan A PR #1423. Task 0
-> documentation may land on this stack; production Task 1+ remains gated on the
-> narrow auxiliary-type architecture review. This plan authorizes no deploy or merge.
+> documentation may land on this stack; the auxiliary shapes were corrected per
+> architecture review. Production Task 1+ remains gated on #1423 landing and rebase.
+> This plan authorizes no deploy or merge.
 
 **Goal:** Land a provider-neutral Git domain spine whose exact-resource CapBAC path
 dispatches authorized in-memory task actions to either of two fake adapters and
@@ -57,8 +58,8 @@ drift.
 
 Checkpoint: stop if the auxiliary types cannot be approved without changing Plan A.
 
-Task 0 proposal and exact Tasks 2–3 assertions are frozen in the tracked design.
-The five proposed shapes are the only Plan A amendment and remain review-gated;
+Task 0's exact Tasks 2–3 assertions are frozen in the tracked design. The five
+shapes are the only Plan A amendment and incorporate architecture review fixes;
 generic SSH and merge callbacks remain absent.
 
 Commit candidate: `docs(git): freeze plan b domain contract`
@@ -110,6 +111,9 @@ Commit candidate: `feat(git): scaffold provider-neutral domain app`
    provider errors from closed pre-adapter construction/policy errors.
 7. Add a structural test scanning value modules for token/client/Req/Cap/local-path
    fields if the existing invariant suite has no reusable gate.
+8. Assert `CreateChangeRequest` has no `base_ref`; `Review` has `author_label` and no
+   `author`/`:pending`; and check normalization/projection is total, including
+   `:action_required`/`:other` remaining non-green.
 
 Commit candidate: `feat(git): add provider-neutral operation values`
 
@@ -169,7 +173,7 @@ Commit candidate: `feat(git): add validated adapter registry`
 2. Run focused tests and capture RED.
 3. Freeze a closed authoritative task policy: task, generation, `workspace_uri`,
    credential-owner/entity URI, assigned agent/grantee URI, normalized repository,
-   provider binding, allowed actions,
+   provider binding, normalized `allowed_head_ref`, allowed actions,
    and non-secret idempotency inputs. Invocation args may not provide context,
    provider selection, credential owner, or mutable policy coordinates.
 4. Implement `pattern: :resource`, `persistence/0 == :ephemeral`, and canonical
@@ -177,6 +181,8 @@ Commit candidate: `feat(git): add validated adapter registry`
    targets and never concatenate URI strings.
 5. Specify idempotent same-policy initialization and reject conflicting initialization.
 6. Run focused Kind and URI gates to GREEN.
+7. Assert `allowed_head_ref` is authoritative and cannot be changed or selected by
+   invocation arguments.
 
 Commit candidate: `feat(git): add task-scoped access resource`
 
@@ -238,10 +244,13 @@ Commit candidate: `test(git): issue exact receiver-bound task caps`
 3. Write an authorized test using only Task 7's signed receiver-bound artifact and
    assert one fake adapter receives the handler-constructed `OperationContext`.
 4. Add failing mismatch tests for wrong resource, workspace, repository, provider,
-   unsupported action, and attempted caller-supplied context/provider coordinates.
+   unsupported action, `head_ref != allowed_head_ref`, stale `expected_base_sha`,
+   and attempted caller-supplied context/provider/base-ref coordinates.
 5. Implement `use Ezagent.Lifecycle` ActionSet with validation before registry lookup
    and adapter invocation. Select the adapter exclusively from stored Resource policy;
-   request repository data is comparison-only.
+   request repository data is comparison-only. Resolve the authoritative base ref
+   from stored policy, require exact normalized head-ref equality, and check the
+   expected base SHA concurrency assertion before lookup/effects.
 6. Use one per-test synchronous probe ref. If a fake callback is entered it must trip
    adapter, HTTP, secret, and filesystem bomb sentinels before returning. Run non-async
    or with unique process/registry names, clean with `on_exit`, and synchronize with a

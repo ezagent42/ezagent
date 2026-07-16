@@ -19,7 +19,7 @@ amendment for five previously undefined provider-neutral types. Production Tasks
 |---|---|---|---|
 | 1 | Track refined Plan B design and executable plan | met for Task 0 | tracked spec/plan files on this branch |
 | 2 | Freeze Plan A four structs, five callbacks/actions, and full error union | met for Task 0 | tracked design exact Elixir contracts |
-| 3 | Propose five minimum provider-neutral auxiliary shapes | review required | narrow amendment documented; `Review.author` representation requires architecture review |
+| 3 | Freeze five minimum provider-neutral auxiliary shapes | met for Task 0 | architecture review fixes applied: stored base/head authority, total check normalization, submitted/latest review events |
 | 4 | Record exact Tasks 2–3 assertions; keep SSH/merge absent | met for Task 0 | tracked design §13.1 and adapter section |
 | 5 | Implement/test the domain spine | deferred | Tasks 1–12 not started |
 | 6 | PR-head CI green and rebased on main | deferred | explicitly not claimed by this WIP skeleton |
@@ -30,6 +30,10 @@ amendment for five previously undefined provider-neutral types. Production Tasks
 Task 0 `git diff --check` and targeted contract/exclusion `rg` checks pass. The
 stacked Plan A environment probe is recorded as 7 tests, 0 failures; Task 0 itself
 adds no runtime code/tests. CI/rebase/return completion remains deferred.
+
+Review-fix verification additionally confirms request-side `base_ref`,
+`Review.author`, and review `:pending` are absent, while `allowed_head_ref`, total
+check projection, `author_label`, and stable-event dedupe rules are present.
 
 ## Deferred boundary
 

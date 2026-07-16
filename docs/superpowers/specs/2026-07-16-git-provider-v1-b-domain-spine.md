@@ -1,6 +1,6 @@
 # Git Domain Spine Design (Plan B Draft)
 
-**Status:** Task 0 contract freeze; narrow auxiliary-type amendment requires architecture review before production scaffolding
+**Status:** Task 0 contract freeze; auxiliary-type amendment corrected per architecture review
 
 **Upstream:** Plan A decision records in `docs/superpowers/specs/2026-07-16-git-provider-v1-a-decisions.md`
 
@@ -103,11 +103,11 @@ identity plus the authoritative Resource policy. It is never accepted in invocat
 arguments. No value contains a token, credential reference, path to a credential,
 local checkout path, Req client, raw provider payload, or Cap.
 
-### 4.1 Narrow contract amendment requiring review
+### 4.1 Review-fixed narrow contract amendment
 
 Plan A references but does not define five types. Task 0 proposes these minimum
-closed, provider-neutral shapes; they are **not approved for production scaffolding
-until architecture review accepts this amendment**:
+closed, provider-neutral shapes, corrected to the architecture review's required
+authority, normalization, projection, and review-event decisions:
 
 ```elixir
 defmodule Ezagent.DomainGit.CreateChangeRequest do
@@ -115,7 +115,6 @@ defmodule Ezagent.DomainGit.CreateChangeRequest do
           title: String.t(),
           body: String.t(),
           head_ref: String.t(),
-          base_ref: String.t(),
           expected_base_sha: Ezagent.DomainGit.CommitSha.t()
         }
 end
@@ -130,7 +129,15 @@ end
 
 defmodule Ezagent.DomainGit.Check do
   @type status :: :queued | :in_progress | :completed
-  @type conclusion :: :succeeded | :failed | :cancelled | :skipped | :neutral | :timed_out
+  @type conclusion ::
+          :succeeded
+          | :failed
+          | :cancelled
+          | :skipped
+          | :neutral
+          | :timed_out
+          | :action_required
+          | :other
   @type t :: %__MODULE__{
           external_id: String.t(),
           name: String.t(),
@@ -141,10 +148,10 @@ defmodule Ezagent.DomainGit.Check do
 end
 
 defmodule Ezagent.DomainGit.Review do
-  @type state :: :pending | :approved | :changes_requested | :commented | :dismissed
+  @type state :: :approved | :changes_requested | :commented | :dismissed
   @type t :: %__MODULE__{
           external_id: String.t(),
-          author: String.t(),
+          author_label: String.t(),
           state: state(),
           submitted_at: DateTime.t() | nil
         }
@@ -153,8 +160,9 @@ end
 
 Evidence and rationale:
 
-- W29's tested request plan supplies `base_ref`, expected `base_sha`, `head_ref`,
-  `title`, and `body`; the deterministic idempotency key remains in
+- W29's tested request plan supplies expected `base_sha`, `head_ref`, `title`, and
+  `body`; the authoritative `base_ref` comes only from the stored-policy-bound
+  `RepositoryRef`, while the deterministic idempotency key remains in handler-built
   `OperationContext` (`apps/ezagent_core/test/security/github_api_commit_transport_test.exs:116`).
 - Plan A returns a provider external change-request id and a head SHA
   (`apps/ezagent_core/test/security/github_api_commit_transport_test.exs:21`), while
@@ -165,9 +173,19 @@ Evidence and rationale:
   (`docs/superpowers/specs/2026-07-15-git-provider-v1-design.md:228`). These shapes
   expose only lifecycle facts needed for `ci_running` and `review_ready`
   (`docs/superpowers/specs/2026-07-15-git-provider-v1-design.md:463`).
-- `Review.author` is display-only provider-neutral text, not an Ezagent identity or
-  authorization coordinate. Whether this is sufficiently narrow is the amendment's
-  explicit review concern; external reviewers need not have an Ezagent Entity URI.
+- `Review` is a normalized submitted/latest review event. Its `external_id` is the
+  stable provider event id used for dedupe. `author_label` is display-only and is
+  structurally forbidden for authorization, identity matching, ownership, or
+  dedupe; external reviewers need not have an Ezagent Entity URI.
+
+Check normalization is total: an unrecognized but legitimate provider terminal
+outcome becomes `:other`, never a raw provider string; an actionable, manual, or
+blocked outcome becomes `:action_required` when provider semantics require human
+action. `conclusion` is `nil` only while queued/in progress; every completed check
+has one closed conclusion. W29 projects `:queued` and `:in_progress` to `ci_running`. For `:completed`,
+`:succeeded`, `:neutral`, and `:skipped` are non-failing; `:failed`, `:timed_out`,
+and `:cancelled` are failing; `:action_required` and `:other` remain non-green and
+require inspection rather than being falsely projected green.
 
 These structs are closed. They accept no arbitrary maps, provider payloads, token,
 credential, credential reference, Req/client, local path, or Cap field.
@@ -199,8 +217,9 @@ remains canonical).
 
 The ephemeral Resource holds an authoritative closed task policy containing at
 least: task id, generation, `workspace_uri`, credential-owner/entity URI, assigned
-agent/grantee URI, normalized repository binding, provider adapter binding, allowed actions, and non-secret
-idempotency inputs. The policy is supplied only through the supported spawn/init
+agent/grantee URI, normalized repository binding, provider adapter binding,
+`allowed_head_ref`, allowed actions, and non-secret idempotency inputs. The policy is
+supplied only through the supported spawn/init
 path, validates all URI/workspace relationships, defines idempotent same-policy
 spawn and conflicting-policy collision behavior, and is removed on supervised
 teardown. There is no lazy snapshot activation in this slice.
@@ -208,6 +227,11 @@ teardown. There is no lazy snapshot activation in this slice.
 Adapter selection comes exclusively from this stored policy. A request-side
 `RepositoryRef`, where an action requires one, is only a normalized assertion that
 must equal the stored binding; it never selects or redirects the provider.
+`CreateChangeRequest.head_ref` is the requested change branch and must equal the
+normalized stored-policy `allowed_head_ref` exactly before registry lookup.
+`CreateChangeRequest.expected_base_sha` is the caller's concurrency assertion and is
+checked against the resolved authoritative base. The caller never supplies
+`base_ref`, provider coordinates, or `OperationContext`.
 
 ## 6. ActionSet and actions
 
@@ -397,14 +421,19 @@ Task 2's `plan_a_contract_test.exs` will assert:
 1. exact namespaces under `Ezagent.DomainGit`: `RepositoryRef`, `FileChange`,
    `ChangeRequest`, `OperationContext`, `CreateChangeRequest`, `ChangeRequestId`,
    `CommitSha`, `Check`, `Review`, and `Error`;
-2. exact struct keys matching §4/§4.1, with no extra fields;
+2. exact struct keys matching §4/§4.1, with no extra fields, including the absence
+   of `CreateChangeRequest.base_ref`, `Review.author`, and any review `:pending`;
 3. closed enums for `FileChange.operation`, repository visibility,
-   change-request state, and the proposed check/review states;
+   change-request state, all eight check conclusions, and the four submitted review
+   states; provider check strings must normalize to the closed union;
 4. `Ezagent.DomainGit.Error.t()` contains exactly all 15 atom members and the
    `{:provider_request_failed, atom(), pos_integer()}` member in §10;
 5. source and compiled struct inspection reject fields matching token, secret,
    credential, credential reference/path, Req/client, checkout/local path,
    provider payload/request/response, environment, callback, or Cap.
+6. `Review.external_id` alone is the stable provider-event dedupe coordinate and
+   `author_label` is structurally absent from authorization, identity matching,
+   ownership, and dedupe code paths.
 
 Task 3 will extend that gate and its shared fake-adapter suite to assert:
 
@@ -419,11 +448,16 @@ Task 3 will extend that gate and its shared fake-adapter suite to assert:
    checkout/local path, or Cap;
 5. callback/action inventories contain no merge, clone, fetch, push, SSH, checkout,
    or credential operation.
+6. create dispatch compares normalized `head_ref` to policy `allowed_head_ref`,
+   checks `expected_base_sha` against the authoritative resolved base, and rejects
+   mismatches before registry lookup; request input cannot select `base_ref`.
+7. check projection covers every status/conclusion pair per §4.1 and never treats
+   `:action_required` or `:other` as green.
 
 ## 14. Branching and landing
 
 This tracked Task 0 documentation is intentionally stacked on Plan A PR #1423 in
-`feat/git-domain-spine`. Do not begin production Task 1+ until the auxiliary-type
-amendment is approved, #1423 lands, and this branch is rebased onto current
+`feat/git-domain-spine`. Do not begin production Task 1+ until #1423 lands and this
+branch is rebased onto current
 `origin/main`; then re-read current architecture gates and record any mainline drift.
 Only the authorized lead flow may merge, deploy, or promote the branch.
