@@ -132,8 +132,7 @@ defmodule Ezagent.Workspace.TaskWorkspace.SidecarGateTest do
     now = DateTime.add(starting.start_lease_until, 1, :second)
 
     assert %{cleaned: 1, failed: 0} = Reconciler.recover_once(limit: 1, now: now)
-    assert_receive {:retire_agent, _, attempt_id}
-    assert attempt_id == Store.get(ready.id).creation_attempt_id
+    refute_receive {:retire_agent, _, _}
     assert Store.get(ready.id).status == :cleaned
     refute_receive {:instantiate_called, _}
   end

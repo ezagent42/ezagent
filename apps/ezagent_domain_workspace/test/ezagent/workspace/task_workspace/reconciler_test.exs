@@ -2,6 +2,7 @@ defmodule Ezagent.Workspace.TaskWorkspace.ReconcilerTest do
   use EzagentCore.DataCase, async: false
 
   alias Ezagent.Workspace.TaskWorkspace.{Paths, Provision, Reconciler, Store}
+  alias Ezagent.Agent.CreationInventory
   alias EzagentCore.Repo
 
   setup do
@@ -81,11 +82,17 @@ defmodule Ezagent.Workspace.TaskWorkspace.ReconcilerTest do
 
   test "ambiguous start transfers retirement evidence before Git cleanup" do
     ready = ready_row()
-    {:ok, _claimed} = Store.claim_start(ready.id, ready.start_token)
+    {:ok, claimed} = Store.claim_start(ready.id, ready.start_token)
+    record_receipt(claimed)
 
     assert {:ok, %Provision{status: :cleaned}} = Reconciler.cleanup(ready.id, :task_cancelled)
     assert_receive {:retire_agent, "entity://reconciler-team/agent/worker", attempt_id}
     assert attempt_id == Store.get(ready.id).creation_attempt_id
+    assert_receive {:retirement_facts, facts}
+    assert facts.attempt_id == claimed.creation_attempt_id
+    assert facts.agent_uri == Ezagent.URI.new!(claimed.agent_uri)
+    assert facts.root_uri == Ezagent.URI.new!(claimed.provenance_root_uri)
+    assert facts.workspace_uri == Ezagent.URI.new!(claimed.workspace_uri)
     assert_receive {:git_verify_absent, _}
   end
 
@@ -104,7 +111,8 @@ defmodule Ezagent.Workspace.TaskWorkspace.ReconcilerTest do
 
   test "a cleanup lease takeover after retirement fences the Git effect" do
     ready = ready_row()
-    {:ok, _claimed} = Store.claim_start(ready.id, ready.start_token)
+    {:ok, claimed} = Store.claim_start(ready.id, ready.start_token)
+    record_receipt(claimed)
 
     Application.put_env(:ezagent_domain_workspace, :task_workspace_retirement_hook, fn ->
       current = Repo.get!(Provision, ready.id)
@@ -154,6 +162,7 @@ defmodule Ezagent.Workspace.TaskWorkspace.ReconcilerTest do
   test "expired starting is retired and cleaned without another instantiate" do
     ready = ready_row("expired-start")
     {:ok, starting} = Store.claim_start(ready.id, ready.start_token, lease_seconds: 1)
+    record_receipt(starting)
     now = DateTime.add(starting.start_lease_until, 1, :second)
     agent_uri = starting.agent_uri
 
@@ -174,6 +183,48 @@ defmodule Ezagent.Workspace.TaskWorkspace.ReconcilerTest do
     assert path == starting.worktree_path
     assert Repo.get!(Provision, starting.id).status == :cleaned
     refute_receive {:instantiate_called, _}
+  end
+
+  test "expired starting without an exact receipt cleans Git without fake retirement" do
+    ready = ready_row("expired-no-receipt")
+    {:ok, starting} = Store.claim_start(ready.id, ready.start_token, lease_seconds: 1)
+    now = DateTime.add(starting.start_lease_until, 1, :second)
+
+    assert %{attempted: 1, cleaned: 1, failed: 0} =
+             Reconciler.recover_once(limit: 1, now: now)
+
+    refute_receive {:retire_agent, _, _}
+    assert_receive {:git_verify_absent, %{worktree_path: path}}
+    assert path == starting.worktree_path
+    assert Repo.get!(Provision, starting.id).status == :cleaned
+  end
+
+  test "exact receipt conflict remains cleanup-pending with a fixed auditable blocker" do
+    ready = ready_row("receipt-conflict")
+    {:ok, starting} = Store.claim_start(ready.id, ready.start_token, lease_seconds: 1)
+    now = DateTime.add(starting.start_lease_until, 1, :second)
+
+    agent = Ezagent.URI.new!(starting.agent_uri)
+    workspace = Ezagent.URI.new!(starting.workspace_uri)
+    conflicting_root = Ezagent.URI.user("reconciler-team", "other-owner")
+
+    assert {:ok, :inserted} =
+             CreationInventory.record_exact(
+               Repo,
+               starting.creation_attempt_id,
+               agent,
+               conflicting_root,
+               workspace
+             )
+
+    assert %{attempted: 1, cleaned: 0, failed: 1} =
+             Reconciler.recover_once(limit: 1, now: now)
+
+    blocked = Repo.get!(Provision, starting.id)
+    assert blocked.status == :cleanup_pending
+    assert blocked.blocker_code == "creation_receipt_conflict"
+    refute_receive {:retire_agent, _, _}
+    refute_receive {:git_verify_absent, _}
   end
 
   test "expired start recovery fences the stale original claimant" do
@@ -197,6 +248,7 @@ defmodule Ezagent.Workspace.TaskWorkspace.ReconcilerTest do
   test "nil start lease is conservatively recovered" do
     ready = ready_row("nil-start-lease")
     {:ok, starting} = Store.claim_start(ready.id, ready.start_token)
+    record_receipt(starting)
 
     starting
     |> Provision.transition_changeset(%{start_lease_until: nil})
@@ -242,6 +294,7 @@ defmodule Ezagent.Workspace.TaskWorkspace.ReconcilerTest do
   test "old start claimant cannot complete or fail after cleanup ownership is acquired" do
     ready = ready_row("cleanup-owned")
     {:ok, starting} = Store.claim_start(ready.id, ready.start_token, lease_seconds: 1)
+    record_receipt(starting)
     now = DateTime.add(starting.start_lease_until, 1, :second)
     parent = self()
 
@@ -302,6 +355,17 @@ defmodule Ezagent.Workspace.TaskWorkspace.ReconcilerTest do
       })
 
     ready
+  end
+
+  defp record_receipt(row) do
+    assert {:ok, _} =
+             CreationInventory.record_exact(
+               Repo,
+               row.creation_attempt_id,
+               Ezagent.URI.new!(row.agent_uri),
+               Ezagent.URI.new!(row.provenance_root_uri),
+               Ezagent.URI.new!(row.workspace_uri)
+             )
   end
 
   defp planned_row(suffix) do

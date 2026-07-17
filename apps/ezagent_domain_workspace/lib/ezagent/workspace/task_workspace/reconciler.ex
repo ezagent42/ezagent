@@ -124,12 +124,13 @@ defmodule Ezagent.Workspace.TaskWorkspace.Reconciler do
     do: cleanup(row.id, :resume_cleanup)
 
   defp claim_and_clean(pending, classification, paths) do
-    with {:ok, claimed} <-
+    with {:ok, ownership} <- recovery_ownership(pending, classification),
+         {:ok, claimed} <-
            Store.claim_cleanup(pending.id,
              expected_version: pending.state_version,
              lease_seconds: @cleanup_lease_seconds
            ),
-         :ok <- maybe_retire(claimed, classification),
+         :ok <- maybe_retire(claimed, ownership),
          :ok <- remove_exact(claimed, paths),
          {:ok, current} <- Store.validate_cleanup_claim(claimed.id, claimed.claim_token),
          {:ok, cleaned} <- Store.mark_cleaned(current.id, current.claim_token) do
@@ -137,11 +138,28 @@ defmodule Ezagent.Workspace.TaskWorkspace.Reconciler do
     end
   end
 
-  defp maybe_retire(_claimed, :never_started), do: :ok
+  defp recovery_ownership(_pending, :never_started), do: {:ok, :unowned}
 
-  defp maybe_retire(claimed, :ambiguous_or_live) do
+  defp recovery_ownership(pending, :ambiguous_or_live) do
+    case Store.classify_creation_receipt(pending) do
+      {:owned, facts} ->
+        {:ok, {:owned, facts}}
+
+      {:unowned, :creation_receipt_absent} ->
+        {:ok, :unowned}
+
+      {:error, :creation_receipt_conflict} = error ->
+        with {:ok, _blocked} <- Store.block_cleanup(pending.id, :creation_receipt_conflict) do
+          error
+        end
+    end
+  end
+
+  defp maybe_retire(_claimed, :unowned), do: :ok
+
+  defp maybe_retire(claimed, {:owned, facts}) do
     with {:ok, renewed} <- renew(claimed),
-         :ok <- retirement().retire(renewed) do
+         :ok <- retirement().retire(renewed, facts) do
       :ok
     end
   end

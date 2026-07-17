@@ -3,6 +3,7 @@ defmodule Ezagent.Workspace.TaskWorkspace.ReconcilerBootTest do
 
   alias Ezagent.Workspace.TaskWorkspace.ReconcilerBoot
   alias Ezagent.Workspace.TaskWorkspace.{Provision, Store}
+  alias Ezagent.Agent.CreationInventory
   alias EzagentCore.Repo
 
   setup do
@@ -85,7 +86,10 @@ defmodule Ezagent.Workspace.TaskWorkspace.ReconcilerBootTest do
         state_version: 1,
         start_token_consumed_at: at(0),
         start_claim_token: "boot-start-claim",
-        start_lease_until: at(30)
+        start_lease_until: at(30),
+        agent_uri: agent_uri(),
+        creation_attempt_id: "boot-active-attempt",
+        provenance_root_uri: root_uri()
       })
       |> Repo.update()
 
@@ -120,9 +124,14 @@ defmodule Ezagent.Workspace.TaskWorkspace.ReconcilerBootTest do
         state_version: 1,
         start_token_consumed_at: at(0),
         start_claim_token: "restart-start-claim",
-        start_lease_until: at(1)
+        start_lease_until: at(1),
+        agent_uri: agent_uri(),
+        creation_attempt_id: "boot-restart-attempt",
+        provenance_root_uri: root_uri()
       })
       |> Repo.update()
+
+    record_receipt(starting)
 
     parent = self()
 
@@ -159,9 +168,14 @@ defmodule Ezagent.Workspace.TaskWorkspace.ReconcilerBootTest do
         state_version: 1,
         start_token_consumed_at: at(0),
         start_claim_token: "active-start-claim",
-        start_lease_until: at(30)
+        start_lease_until: at(30),
+        agent_uri: agent_uri(),
+        creation_attempt_id: "boot-wait-attempt",
+        provenance_root_uri: root_uri()
       })
       |> Repo.update()
+
+    record_receipt(starting)
 
     {:ok, clock} = Agent.start_link(fn -> [at(0), at(31)] end)
     parent = self()
@@ -206,4 +220,18 @@ defmodule Ezagent.Workspace.TaskWorkspace.ReconcilerBootTest do
   end
 
   defp at(seconds), do: DateTime.add(~U[2026-07-17 00:00:00.000000Z], seconds, :second)
+
+  defp agent_uri, do: "entity://boot-recovery-team/agent/worker"
+  defp root_uri, do: "entity://boot-recovery-team/user/owner"
+
+  defp record_receipt(row) do
+    assert {:ok, _} =
+             CreationInventory.record_exact(
+               Repo,
+               row.creation_attempt_id,
+               Ezagent.URI.new!(row.agent_uri),
+               Ezagent.URI.new!(row.provenance_root_uri),
+               Ezagent.URI.new!(row.workspace_uri)
+             )
+  end
 end
