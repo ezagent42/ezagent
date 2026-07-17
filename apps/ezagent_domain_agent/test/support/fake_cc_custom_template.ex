@@ -13,9 +13,11 @@ defmodule Ezagent.Agent.FakeCcCustomTemplate do
   #     `"kimi"` classifies on `MOONSHOT_API_KEY` (the catalog's kimi env var),
   #     absent/unknown profile → `:unknown` (fail closed, never an alarm).
   #
-  # Registered as the `"cc-custom"` flavor by the tests that use it. The
-  # registration declaration (`kind` + `template_class`) must stay IDENTICAL at
-  # every registration site — `AgentFlavorRegistry.register/1` raises on a
+  # Registered under a UNIQUE fake flavor name per test
+  # (`"cc-custom-fake-#{System.unique_integer([:positive])}"`, never the real
+  # "cc-custom" — at umbrella root plugin_cc owns that name → CcCustomAgent).
+  # The registration declaration (`kind` + `template_class`) must stay IDENTICAL
+  # at every registration site — `AgentFlavorRegistry.register/1` raises on a
   # divergent re-registration.
   @behaviour Ezagent.Agent.CredentialAdapter
 

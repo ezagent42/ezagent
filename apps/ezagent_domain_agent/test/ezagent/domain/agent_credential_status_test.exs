@@ -174,9 +174,16 @@ defmodule Ezagent.Domain.AgentCredentialStatusTest do
   # domain_agent dep).
   describe "cc-custom persisted backend profile" do
     setup do
+      # UNIQUE per test (never the real "cc-custom"): at umbrella root plugin_cc
+      # boots first and owns "cc-custom" → CcCustomAgent, and
+      # `AgentFlavorRegistry.register/1` raises on a divergent re-registration.
+      # Shadows the outer context's `:flavor` — within this describe "flavor"
+      # IS the fake cc-custom flavor.
+      flavor = "cc-custom-fake-#{System.unique_integer([:positive])}"
+
       :ok =
         AgentFlavorRegistry.register(%{
-          flavor: "cc-custom",
+          flavor: flavor,
           kind: Ezagent.Agent.FakeCcCustomTemplate,
           template_class: Ezagent.Agent.FakeCcCustomTemplate
         })
@@ -207,7 +214,7 @@ defmodule Ezagent.Domain.AgentCredentialStatusTest do
           else: System.delete_env("MOONSHOT_API_KEY")
       end)
 
-      :ok
+      %{flavor: flavor}
     end
 
     # The production chain's non-activating rungs: launch attribute → durable
@@ -221,16 +228,16 @@ defmodule Ezagent.Domain.AgentCredentialStatusTest do
 
     defp resolve_cc_custom_flavor(_), do: :none
 
-    defp seed_cc_custom(agent, provider) do
-      :ok = Ezagent.AgentFlavorAttributes.put(agent, "cc-custom")
+    defp seed_cc_custom(agent, flavor, provider) do
+      :ok = Ezagent.AgentFlavorAttributes.put(agent, flavor)
 
       respawn_data =
         case provider do
           p when is_binary(p) and p != "" ->
-            %{"flavor" => "cc-custom", "provider" => p}
+            %{"flavor" => flavor, "provider" => p}
 
           _ ->
-            %{"flavor" => "cc-custom"}
+            %{"flavor" => flavor}
         end
 
       {:ok, _} =
@@ -252,31 +259,31 @@ defmodule Ezagent.Domain.AgentCredentialStatusTest do
     end
 
     test "persisted provider kimi, key unset → :missing; key set → :authenticated (non-activating)",
-         %{agent: agent, workspace: workspace} do
-      :ok = seed_cc_custom(agent, "kimi")
+         %{agent: agent, workspace: workspace, flavor: flavor} do
+      :ok = seed_cc_custom(agent, flavor, "kimi")
       owner = user("owner")
       ctx = %{caller: owner, caps: MapSet.new([manage_cap(agent, workspace, owner)])}
 
       refute kind_live?(agent)
 
-      assert {:ok, %{status: :missing, flavor: "cc-custom"}} =
+      assert {:ok, %{status: :missing, flavor: ^flavor}} =
                DomainAgent.read_credential_status(agent, ctx)
 
       System.put_env("MOONSHOT_API_KEY", "test-only-key")
 
-      assert {:ok, %{status: :authenticated, flavor: "cc-custom"}} =
+      assert {:ok, %{status: :authenticated, flavor: ^flavor}} =
                DomainAgent.read_credential_status(agent, ctx)
 
       refute kind_live?(agent), "read_credential_status must NOT activate the cold agent"
     end
 
     test "persisted cc-custom agent with NO provider → :unknown (never an alarm)",
-         %{agent: agent, workspace: workspace} do
-      :ok = seed_cc_custom(agent, nil)
+         %{agent: agent, workspace: workspace, flavor: flavor} do
+      :ok = seed_cc_custom(agent, flavor, nil)
       owner = user("owner")
       ctx = %{caller: owner, caps: MapSet.new([manage_cap(agent, workspace, owner)])}
 
-      assert {:ok, %{status: :unknown, flavor: "cc-custom"}} =
+      assert {:ok, %{status: :unknown, flavor: ^flavor}} =
                DomainAgent.read_credential_status(agent, ctx)
 
       refute kind_live?(agent)

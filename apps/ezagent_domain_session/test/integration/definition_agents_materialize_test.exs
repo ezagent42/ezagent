@@ -91,6 +91,20 @@ defmodule EzagentDomainInstanceMessage.Integration.DefinitionAgentsMaterializeTe
     @behaviour Ezagent.Kind.Template
     @behaviour Ezagent.Agent.CredentialAdapter
 
+    # ENV-backed credential — NO on-disk credential files (mirrors
+    # `FakeCcCustomTemplate`), so `check_source` takes the environment branch.
+    @impl Ezagent.Agent.CredentialAdapter
+    def credential_env_var, do: "MOONSHOT_API_KEY"
+
+    @impl Ezagent.Agent.CredentialAdapter
+    def credential_relpaths, do: []
+
+    @impl Ezagent.Agent.CredentialAdapter
+    def secret_relpaths, do: []
+
+    @impl Ezagent.Agent.CredentialAdapter
+    def auth_failure_signals, do: []
+
     @impl Ezagent.Agent.CredentialAdapter
     def credential_status(_home, opts) do
       case Keyword.get(opts, :backend_profile) do
@@ -230,6 +244,25 @@ defmodule EzagentDomainInstanceMessage.Integration.DefinitionAgentsMaterializeTe
         kind: Ezagent.Entity.Agent,
         template_class: EnvProfileStubTemplate
       })
+
+    # EnvProfileStubTemplate is a CREDENTIALLED flavor (declares the full
+    # CredentialAdapter declarative group), so `RecipeMaterializer.config_dir_ref/2`
+    # resolves a config home through the FsResolver — register the stub's
+    # `"<namespace>-agents"` type test-only (mirrors the plugin's
+    # `config_dir_resource_types/1` shape). Tolerate an earlier identical
+    # registration (first-writer-wins; only unregister when WE registered).
+    type = "definition_agents.env_profile_stub-agents"
+
+    case Ezagent.Resource.FsResolver.register_type(type, %{
+           backend_component: type,
+           authority: &Ezagent.Resource.FsResolver.config_dir_authority/2
+         }) do
+      :ok ->
+        on_exit(fn -> Ezagent.Resource.FsResolver.unregister_type(type) end)
+
+      {:error, {:already_registered, ^type}} ->
+        :ok
+    end
 
     flavor
   end

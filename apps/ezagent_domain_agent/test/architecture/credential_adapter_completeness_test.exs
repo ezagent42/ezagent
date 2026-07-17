@@ -37,8 +37,14 @@ defmodule Ezagent.Agent.Architecture.CredentialAdapterCompletenessTest do
     # "not silently stale" cross-check stays exhaustive.
     Ezagent.PluginCc.Template.CcDeepseekAgent,
     Ezagent.PluginCc.Template.CcHeadlessDeepseekAgent,
+    # cc-custom (PR-2/3): env-var auth per selected backend profile, NO on-disk
+    # credential — `credential_relpaths/0 == []`, likewise filtered out of the
+    # host_login_dir/0 requirement by `credential_bearing?/1`.
+    Ezagent.PluginCc.Template.CcCustomAgent,
+    Ezagent.PluginCc.Template.CcHeadlessCustomAgent,
     Ezagent.PluginCodex.Template.CodexAgent,
     Ezagent.PluginCodex.Template.CodexRemoteAgent
+>>>>>>> 8ad4ae1ac (test(cc-custom): unique test flavors + adapter roster + stub callbacks (PR-4 review))
   ]
 
   test "every credential-bearing CredentialAdapter exports host_login_dir/0" do
