@@ -122,6 +122,28 @@ defmodule Ezagent.PluginCc.Template.CcHeadlessAgentTest do
       {:ok, agent_uri: agent_uri, tmp_dir: tmp_dir}
     end
 
+    # #1323 threading lock: the launch glue must hand the sidecar the agent's
+    # cwd / config_dir / explicit MCP surface unchanged — config_dir is the
+    # anchor the worker resolves `.mcp.json` from (route B).
+    test "threads cwd / config_dir / explicit mcp_servers from the template", ctx do
+      tmpl = %{
+        "class" => "cc_headless.agent",
+        "cwd" => "/tmp/agent-cwd",
+        # resolve_config_home returns agent_config_dir verbatim when present
+        # (post-materialization key) — the dir the worker points mcp_servers at.
+        "agent_config_dir" => "/tmp/agent-cfg",
+        "allowed_tools" => ["Bash"],
+        "mcp_servers" => %{"custom" => %{"type" => "stdio", "command" => "x"}}
+      }
+
+      params = CcHeadlessAgent.sdk_sidecar_params(ctx.agent_uri, tmpl)
+
+      assert params.cwd == "/tmp/agent-cwd"
+      assert params.config_dir == "/tmp/agent-cfg"
+      assert params.allowed_tools == ["Bash"]
+      assert params.mcp_servers == %{"custom" => %{"type" => "stdio", "command" => "x"}}
+    end
+
     test "includes plugins when config_dir has .claude-plugin/plugin.json", ctx do
       config_dir = Path.join(ctx.tmp_dir, "g1-plugin-#{System.unique_integer([:positive])}")
       File.mkdir_p!(Path.join(config_dir, ".claude-plugin"))
