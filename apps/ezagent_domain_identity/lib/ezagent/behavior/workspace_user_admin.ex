@@ -127,6 +127,33 @@ defmodule Ezagent.ActionSet.WorkspaceUserAdmin do
     modes: [:call]
   )
 
+  action(:mint_invite,
+    args: %{
+      max_uses: :integer,
+      expires_in_hours: {:option, :integer}
+    },
+    returns: %{invite: :map},
+    caps: [{:mint_invite, kind: :workspace}],
+    description: "Mint a registration invite for this workspace.",
+    modes: [:call]
+  )
+
+  action(:list_invites,
+    args: %{},
+    returns: %{invites: {:list, :map}},
+    caps: [{:list_invites, kind: :workspace}],
+    description: "List registration invites for this workspace.",
+    modes: [:call]
+  )
+
+  action(:revoke_invite,
+    args: %{code: :string},
+    returns: %{invite: :map},
+    caps: [{:revoke_invite, kind: :workspace}],
+    description: "Revoke a registration invite for this workspace.",
+    modes: [:call]
+  )
+
   action(:disable_user,
     args: %{
       user_uri: :string,
@@ -157,6 +184,9 @@ defmodule Ezagent.ActionSet.WorkspaceUserAdmin do
   def required_caps do
     %{
       create_user: Ezagent.Capability.cap(:workspace, __MODULE__, :create_user),
+      mint_invite: Ezagent.Capability.cap(:workspace, __MODULE__, :mint_invite),
+      list_invites: Ezagent.Capability.cap(:workspace, __MODULE__, :list_invites),
+      revoke_invite: Ezagent.Capability.cap(:workspace, __MODULE__, :revoke_invite),
       disable_user: Ezagent.Capability.cap(:workspace, __MODULE__, :disable_user)
     }
   end
@@ -168,7 +198,7 @@ defmodule Ezagent.ActionSet.WorkspaceUserAdmin do
   # =================================================================
 
   @impl Ezagent.Lifecycle
-  def create(_args), do: {:ok, %{create_count: 0}}
+  def create(_args), do: {:ok, %{create_count: 0, invite_mutation_count: 0}}
 
   # PR-OWN-4: workspace-scoped, workspace-admin grantable.
   def data_owner(_), do: :any
@@ -214,6 +244,68 @@ defmodule Ezagent.ActionSet.WorkspaceUserAdmin do
   def handle_create_user(args, _ctx) do
     {:error, {:bad_args, "create_user requires {user_uri, password?, caps?}", args}}
   end
+
+  @doc "Mint a registration invite for the current workspace."
+  def handle_mint_invite(args, ctx) when is_map(args) do
+    max_uses = Map.get(args, :max_uses, 1)
+    expires_in_hours = Map.get(args, :expires_in_hours)
+
+    with {:ok, workspace_uri} <- require_workspace_uri(Map.get(ctx, :self_uri)),
+         {:ok, caller} <- require_entity_caller(Map.get(ctx, :caller)),
+         :ok <- validate_invite_options(max_uses, expires_in_hours),
+         {:ok, {raw, row}} <-
+           Ezagent.Entity.InviteCode.mint(%{
+             workspace_uri: URI.to_string(workspace_uri),
+             created_by: URI.to_string(caller),
+             max_uses: max_uses,
+             expires_at: invite_expiry(expires_in_hours)
+           }) do
+      cur = ctx[:read].(:invite_mutation_count, 0)
+      invite = invite_view(row, raw)
+
+      {:ok, %{invite: invite},
+       [
+         {:set, :invite_mutation_count, cur + 1},
+         {:emit, :workspace_invite_minted, Map.drop(invite, [:code])}
+       ]}
+    end
+  end
+
+  def handle_mint_invite(args, _ctx),
+    do: {:error, {:bad_args, "mint_invite requires a map", args}}
+
+  @doc "List registration invites belonging to the current workspace."
+  def handle_list_invites(_args, ctx) do
+    with {:ok, workspace_uri} <- require_workspace_uri(Map.get(ctx, :self_uri)) do
+      invites =
+        workspace_uri
+        |> URI.to_string()
+        |> Ezagent.Entity.InviteCode.list()
+        |> Enum.map(&invite_view/1)
+
+      {:ok, %{invites: invites}}
+    end
+  end
+
+  @doc "Revoke a registration invite after verifying workspace ownership."
+  def handle_revoke_invite(%{code: code}, ctx) when is_binary(code) and code != "" do
+    with {:ok, workspace_uri} <- require_workspace_uri(Map.get(ctx, :self_uri)),
+         {:ok, row} <- Ezagent.Entity.InviteCode.validate(code),
+         :ok <- ensure_invite_in_workspace(row, workspace_uri),
+         {:ok, revoked} <- Ezagent.Entity.InviteCode.revoke(code) do
+      cur = ctx[:read].(:invite_mutation_count, 0)
+      invite = invite_view(revoked)
+
+      {:ok, %{invite: invite},
+       [
+         {:set, :invite_mutation_count, cur + 1},
+         {:emit, :workspace_invite_revoked, Map.drop(invite, [:code])}
+       ]}
+    end
+  end
+
+  def handle_revoke_invite(args, _ctx),
+    do: {:error, {:bad_args, "revoke_invite requires {code}", args}}
 
   # =================================================================
   # disable_user — reversible soft-disable (task #180)
@@ -423,6 +515,59 @@ defmodule Ezagent.ActionSet.WorkspaceUserAdmin do
   end
 
   defp require_workspace_uri(other), do: {:error, {:bad_workspace_uri, other}}
+
+  defp validate_invite_options(max_uses, expires_in_hours) do
+    cond do
+      not is_integer(max_uses) or max_uses < 1 or max_uses > 10_000 ->
+        {:error, {:bad_max_uses, max_uses}}
+
+      not is_nil(expires_in_hours) and
+          (not is_integer(expires_in_hours) or expires_in_hours < 1 or
+             expires_in_hours > 24 * 365) ->
+        {:error, {:bad_expires_in_hours, expires_in_hours}}
+
+      true ->
+        :ok
+    end
+  end
+
+  defp invite_expiry(nil), do: nil
+
+  defp invite_expiry(hours) do
+    DateTime.add(DateTime.utc_now(), hours * 60 * 60, :second)
+  end
+
+  defp ensure_invite_in_workspace(row, workspace_uri) do
+    if row.workspace_uri == URI.to_string(workspace_uri) do
+      :ok
+    else
+      {:error, :invite_not_in_workspace}
+    end
+  end
+
+  defp invite_view(row, raw_code \\ nil) do
+    %{
+      id: row.id,
+      code: raw_code || row.code,
+      status: invite_status(row),
+      max_uses: row.max_uses,
+      used_count: row.used_count,
+      expires_at: row.expires_at,
+      created_by: row.created_by,
+      inserted_at: row.inserted_at,
+      revoked_at: row.revoked_at
+    }
+  end
+
+  defp invite_status(%{revoked_at: %DateTime{}}), do: "revoked"
+
+  defp invite_status(row) do
+    cond do
+      row.used_count >= row.max_uses -> "exhausted"
+      row.expires_at && DateTime.compare(DateTime.utc_now(), row.expires_at) == :gt -> "expired"
+      true -> "active"
+    end
+  end
 
   defp ensure_user_in_target_workspace(%URI{} = user_uri, %URI{scheme: "workspace"} = target_ws) do
     case Ezagent.URI.entity_workspace_uri(user_uri) do
