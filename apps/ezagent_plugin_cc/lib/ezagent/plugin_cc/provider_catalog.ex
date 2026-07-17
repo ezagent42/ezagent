@@ -44,6 +44,24 @@ defmodule Ezagent.PluginCc.ProviderCatalog do
         "ENABLE_TOOL_SEARCH" => "false",
         "CLAUDE_CODE_AUTO_COMPACT_WINDOW" => "1048576"
       }
+    },
+    # Kimi for Coding SUBSCRIPTION (kimi.com) — a first-party Moonshot product
+    # separate from the open platform: platform keys 401 here and subscription
+    # keys 401 there (verified 2026-07-18). Empirically proven values:
+    # POST {base}/v1/messages → 200, and a real `claude` turn with this exact
+    # block (design §2.4 local probe).
+    "kimi-coding" => %{
+      base_url: "https://api.kimi.com/coding",
+      api_key_env: "KIMI_CODING_API_KEY",
+      static_env: %{
+        "ANTHROPIC_MODEL" => "kimi-k3[1m]",
+        "ANTHROPIC_DEFAULT_OPUS_MODEL" => "kimi-k3[1m]",
+        "ANTHROPIC_DEFAULT_SONNET_MODEL" => "kimi-k3[1m]",
+        "ANTHROPIC_DEFAULT_HAIKU_MODEL" => "kimi-k3[1m]",
+        "CLAUDE_CODE_SUBAGENT_MODEL" => "kimi-k3[1m]",
+        "ENABLE_TOOL_SEARCH" => "false",
+        "CLAUDE_CODE_AUTO_COMPACT_WINDOW" => "1048576"
+      }
     }
   }
 

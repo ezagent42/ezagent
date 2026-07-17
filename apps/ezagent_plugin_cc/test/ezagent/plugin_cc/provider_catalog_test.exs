@@ -3,7 +3,7 @@ defmodule Ezagent.PluginCc.ProviderCatalogTest do
   alias Ezagent.PluginCc.ProviderCatalog
 
   test "names/0 is the closed sorted set" do
-    assert ProviderCatalog.names() == ["deepseek", "kimi"]
+    assert ProviderCatalog.names() == ["deepseek", "kimi", "kimi-coding"]
   end
 
   test "fetch/1 returns the documented DeepSeek profile (design §2.1)" do
@@ -37,6 +37,22 @@ defmodule Ezagent.PluginCc.ProviderCatalogTest do
            }
   end
 
+  test "fetch/1 returns the Kimi for Coding subscription profile (proven 2026-07-18)" do
+    assert {:ok, p} = ProviderCatalog.fetch("kimi-coding")
+    assert p.base_url == "https://api.kimi.com/coding"
+    assert p.api_key_env == "KIMI_CODING_API_KEY"
+
+    assert p.static_env == %{
+             "ANTHROPIC_MODEL" => "kimi-k3[1m]",
+             "ANTHROPIC_DEFAULT_OPUS_MODEL" => "kimi-k3[1m]",
+             "ANTHROPIC_DEFAULT_SONNET_MODEL" => "kimi-k3[1m]",
+             "ANTHROPIC_DEFAULT_HAIKU_MODEL" => "kimi-k3[1m]",
+             "CLAUDE_CODE_SUBAGENT_MODEL" => "kimi-k3[1m]",
+             "ENABLE_TOOL_SEARCH" => "false",
+             "CLAUDE_CODE_AUTO_COMPACT_WINDOW" => "1048576"
+           }
+  end
+
   test "fetch/1 rejects unknown and non-string names (closed catalog)" do
     assert ProviderCatalog.fetch("openai") == :error
     assert ProviderCatalog.fetch(:deepseek) == :error
@@ -51,7 +67,9 @@ defmodule Ezagent.PluginCc.ProviderCatalogTest do
       |> Enum.reject(&String.ends_with?(&1, "provider_catalog.ex"))
       |> Enum.filter(fn f ->
         src = File.read!(f)
-        String.contains?(src, "DEEPSEEK_API_KEY") or String.contains?(src, "MOONSHOT_API_KEY")
+
+        String.contains?(src, "DEEPSEEK_API_KEY") or String.contains?(src, "MOONSHOT_API_KEY") or
+          String.contains?(src, "KIMI_CODING_API_KEY")
       end)
 
     assert offenders == []
