@@ -63,6 +63,7 @@ defmodule Ezagent.ActionSet.PyAgent do
   require Logger
 
   alias Ezagent.{Cmd, Message}
+  alias Ezagent.Agent.ErrorSignal
   alias Ezagent.Domain.Python.AgentLifecycle
 
   @default_timeout_ms 10_000
@@ -182,7 +183,14 @@ defmodule Ezagent.ActionSet.PyAgent do
           )
         end
 
-        {:ok, %{ok: false, error: error_kind(reason)}, set_last(user_text, nil, reason)}
+        # G5 source 2 — a py failure was previously SILENT to the user (only
+        # `last_error` + this log line). Reply with the STRUCTURED error body
+        # so the shared error surface renders a per-viewer card.
+        effects =
+          set_last(user_text, nil, reason) ++
+            maybe_reply_error(source_session, self_uri, reason, in_msg_id)
+
+        {:ok, %{ok: false, error: error_kind(reason)}, effects}
     end
   end
 
@@ -261,14 +269,14 @@ defmodule Ezagent.ActionSet.PyAgent do
   defp maybe_reply_effect("", _self_uri, _text, _in_msg_id), do: []
   defp maybe_reply_effect(_, nil, _text, _in_msg_id), do: []
 
-  defp maybe_reply_effect(session_uri, %URI{} = self_uri, text, in_msg_id) do
+  defp maybe_reply_effect(session_uri, %URI{} = self_uri, text_or_body, in_msg_id) do
     case parse_session_uri(session_uri) do
       nil ->
         []
 
       %URI{} = session ->
         reply_msg =
-          Message.new(self_uri, %{text: text, attachments: []}, ref_id: in_msg_id)
+          Message.new(self_uri, reply_body(text_or_body), ref_id: in_msg_id)
 
         target = Ezagent.URI.with_action(session, :session, :send)
 
@@ -295,6 +303,14 @@ defmodule Ezagent.ActionSet.PyAgent do
         [{:dispatch, cmd}]
     end
   end
+
+  # G5 source 2 — structured error reply (see `Ezagent.ActionSet.CurlAgent`).
+  defp maybe_reply_error(session_uri, self_uri, reason, in_msg_id) do
+    maybe_reply_effect(session_uri, self_uri, ErrorSignal.reply_body(reason), in_msg_id)
+  end
+
+  defp reply_body(text) when is_binary(text), do: %{text: text, attachments: []}
+  defp reply_body(%{} = body), do: body
 
   defp parse_session_uri(%URI{scheme: "session"} = u), do: u
 

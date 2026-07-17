@@ -12,6 +12,7 @@ defmodule Ezagent.ActionSet.CcHeadlessAgent do
   require Logger
 
   alias Ezagent.{Cmd, Message}
+  alias Ezagent.Agent.ErrorSignal
 
   action(:cc_headless_sync_result,
     args: %{result: :term, source_session: {:option, :uri}, user_text: :string},
@@ -76,14 +77,12 @@ defmodule Ezagent.ActionSet.CcHeadlessAgent do
           )
         end
 
-        reply_text = "Claude Code SDK error: #{format_error(reason)}"
-
         effects =
           [
             {:set, :conversation,
              current_conv |> append_turn("user", user_text) |> trim(max_history)},
             {:set, :last_error, reason}
-          ] ++ maybe_reply_effect(source_session_uri, self_uri, reply_text, in_msg_id)
+          ] ++ maybe_reply_error(source_session_uri, self_uri, reason, in_msg_id)
 
         {:ok, %{ok: false, error: error_kind(reason)}, effects}
     end
@@ -98,13 +97,13 @@ defmodule Ezagent.ActionSet.CcHeadlessAgent do
   defp maybe_reply_effect("", _self_uri, _text, _in_msg_id), do: []
   defp maybe_reply_effect(_, nil, _text, _in_msg_id), do: []
 
-  defp maybe_reply_effect(session_uri, %URI{} = self_uri, text, in_msg_id) do
+  defp maybe_reply_effect(session_uri, %URI{} = self_uri, text_or_body, in_msg_id) do
     case parse_session_uri(session_uri) do
       nil ->
         []
 
       %URI{} = session ->
-        reply_msg = Message.new(self_uri, %{text: text, attachments: []}, ref_id: in_msg_id)
+        reply_msg = Message.new(self_uri, reply_body(text_or_body), ref_id: in_msg_id)
         target = Ezagent.URI.with_action(session, :session, :send)
 
         cmd =
@@ -131,6 +130,14 @@ defmodule Ezagent.ActionSet.CcHeadlessAgent do
     end
   end
 
+  # G5 source 2 — structured error reply (see `Ezagent.ActionSet.CurlAgent`).
+  defp maybe_reply_error(session_uri, self_uri, reason, in_msg_id) do
+    maybe_reply_effect(session_uri, self_uri, ErrorSignal.reply_body(reason), in_msg_id)
+  end
+
+  defp reply_body(text) when is_binary(text), do: %{text: text, attachments: []}
+  defp reply_body(%{} = body), do: body
+
   defp parse_session_uri(%URI{scheme: "session"} = u), do: u
 
   defp parse_session_uri(s) when is_binary(s) do
@@ -156,10 +163,6 @@ defmodule Ezagent.ActionSet.CcHeadlessAgent do
   defp error_kind(:sdk_sidecar_timeout), do: :sdk_sidecar_timeout
   defp error_kind({:sdk_sidecar_exit, _}), do: :sdk_sidecar_exit
   defp error_kind(_), do: :other
-
-  defp format_error({:sdk_worker_error, error}), do: to_string(error)
-  defp format_error({:sdk_sidecar_exit, status}), do: "sidecar exited with status #{status}"
-  defp format_error(reason), do: inspect(reason)
 
   @doc false
   def data_owner(instance), do: Ezagent.ActionSet.ApiKeys.data_owner(instance)
