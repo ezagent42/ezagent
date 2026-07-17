@@ -55,6 +55,9 @@ defmodule Ezagent.DomainGit.WorkspaceProvisionRegistry do
     do: {:reply, {:error, :conflicting_workspace_provisioner}, registered}
 
   if Mix.env() == :test do
+    def handle_call({:replace_for_test, nil}, _from, _registered),
+      do: {:reply, :ok, nil}
+
     def handle_call({:replace_for_test, implementation}, _from, registered) do
       case validate_implementation(implementation) do
         :ok -> {:reply, :ok, implementation}

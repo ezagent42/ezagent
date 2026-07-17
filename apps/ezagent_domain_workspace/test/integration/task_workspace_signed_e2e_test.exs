@@ -2,11 +2,14 @@ defmodule Ezagent.Workspace.TaskWorkspace.SignedE2ETest do
   use EzagentCore.DataCase, async: false
 
   alias Ezagent.DomainGit.{RepositoryRef, TaskAccessSupervisor}
+  alias Ezagent.DomainGit.WorkspaceProvisionRegistry
   alias Ezagent.Entity.GitTaskAccess
-  alias Ezagent.Workspace.TaskWorkspace.{AgentStart, Provision}
+  alias Ezagent.Workspace.TaskWorkspace.{AgentStart, Provision, Provisioner}
 
   setup do
     previous_home = System.get_env("EZAGENT_HOME")
+    previous_provisioner = WorkspaceProvisionRegistry.implementation()
+    :ok = WorkspaceProvisionRegistry.replace_for_test(Provisioner)
 
     root =
       Path.join(System.tmp_dir!(), "task-workspace-e2e-#{System.unique_integer([:positive])}")
@@ -38,6 +41,13 @@ defmodule Ezagent.Workspace.TaskWorkspace.SignedE2ETest do
       })
 
     on_exit(fn ->
+      :ok = WorkspaceProvisionRegistry.replace_for_test(nil)
+
+      case previous_provisioner do
+        {:ok, implementation} -> :ok = WorkspaceProvisionRegistry.register(implementation)
+        {:error, :workspace_provisioner_not_registered} -> :ok
+      end
+
       System.put_env("EZAGENT_HOME", previous_home || "")
       if is_nil(previous_home), do: System.delete_env("EZAGENT_HOME")
       Application.delete_env(:ezagent_domain_workspace, :task_workspace_remote_builder)
