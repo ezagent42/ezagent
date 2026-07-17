@@ -15,6 +15,9 @@ defmodule Ezagent.World.StateContract do
   @terminal_agent_uri :fixture_terminal_agent_uri
 
   @error_agent_uri :fixture_error_agent_uri
+  @opaque_agent_one_uri :fixture_opaque_agent_one_uri
+  @opaque_agent_two_uri :fixture_opaque_agent_two_uri
+  @billing_agent_uri :fixture_billing_agent_uri
   @fixtures %{
     "overview" => %{
       slot_type: "overview",
@@ -162,6 +165,46 @@ defmodule Ezagent.World.StateContract do
         "workspace_uri" => @workspace_uri
       }
     },
+    "agents_readable" => %{
+      slot_type: "agents_table",
+      state: %{
+        "agent_flavors" => ["cc", "curl"],
+        "agents" => [
+          %{
+            "alive" => true,
+            "credential_status" => %{"status" => "authenticated"},
+            "display_name" => "550e8400-e29b-41d4-a716-446655440000",
+            "flavor" => "cc",
+            "kind" => "agent",
+            "name" => "550e8400-e29b-41d4-a716-446655440000",
+            "uri" => @opaque_agent_one_uri
+          },
+          %{
+            "alive" => true,
+            "credential_status" => %{"status" => "missing"},
+            "display_name" => "550e8400-e29b-41d4-a716-446655440001",
+            "flavor" => "cc",
+            "kind" => "agent",
+            "name" => "550e8400-e29b-41d4-a716-446655440001",
+            "uri" => @opaque_agent_two_uri
+          },
+          %{
+            "alive" => false,
+            "credential_status" => %{"status" => "authenticated"},
+            "display_name" => "Billing Assistant",
+            "flavor" => "curl",
+            "kind" => "agent",
+            "name" => "billing-assistant",
+            "uri" => @billing_agent_uri
+          }
+        ],
+        "component" => "agents_table",
+        "filter" => "agents",
+        "path" => "/identities/agents",
+        "title" => "Agents",
+        "workspace_uri" => @workspace_uri
+      }
+    },
     "kanban" => %{
       slot_type: "kanban",
       state: %{
@@ -264,6 +307,15 @@ defmodule Ezagent.World.StateContract do
 
   defp materialize(:fixture_error_agent_uri),
     do: "acme" |> Ezagent.URI.agent("claude") |> URI.to_string()
+
+  defp materialize(:fixture_opaque_agent_one_uri),
+    do: "acme" |> Ezagent.URI.agent("550e8400-e29b-41d4-a716-446655440000") |> URI.to_string()
+
+  defp materialize(:fixture_opaque_agent_two_uri),
+    do: "acme" |> Ezagent.URI.agent("550e8400-e29b-41d4-a716-446655440001") |> URI.to_string()
+
+  defp materialize(:fixture_billing_agent_uri),
+    do: "acme" |> Ezagent.URI.agent("billing-assistant") |> URI.to_string()
 
   defp materialize(:fixture_terminal_agent_uri),
     do: "acme" |> Ezagent.URI.agent("terminal") |> URI.to_string()

@@ -13,7 +13,7 @@ type CredentialStatus = {
   checked_at?: string | null
 }
 
-type IdentityRow = {
+export type IdentityRow = {
   uri: string
   kind?: string
   name?: string
@@ -532,11 +532,77 @@ function UserDetail({
   )
 }
 
+export type AgentReadiness = "ready" | "missing-key" | "offline"
+
+const UUID_NAME = /^[0-9a-f]{8}-(?:[0-9a-f]{4}-){3}[0-9a-f]{12}$/i
+const OPAQUE_HEX_NAME = /^[0-9a-f]{24,32}$/i
+
+export function agentReadiness(agent: IdentityRow): AgentReadiness {
+  const credential = agent.credential_status?.status
+  if (credential === "missing" || credential === "expired") return "missing-key"
+  return agent.alive ? "ready" : "offline"
+}
+
+export function agentReadableName(agent: IdentityRow, index: number, agents: IdentityRow[]): string {
+  const preferred = agent.display_name || agent.name || ""
+  if (preferred && !UUID_NAME.test(preferred) && !OPAQUE_HEX_NAME.test(preferred)) return preferred
+
+  const flavor = agent.flavor || "agent"
+  const ordinal = agents
+    .slice(0, index + 1)
+    .filter((candidate) => {
+      const candidateName = candidate.display_name || candidate.name || ""
+      return candidate.flavor === agent.flavor && (UUID_NAME.test(candidateName) || OPAQUE_HEX_NAME.test(candidateName))
+    }).length
+
+  return flavorDisplayName(flavor) + " Agent #" + Math.max(ordinal, 1)
+}
+
+function flavorDisplayName(flavor: string): string {
+  const labels: Record<string, string> = {
+    cc: "Claude Code",
+    "cc-headless": "Claude Code",
+    codex: "Codex",
+    "codex-remote": "Codex Remote",
+    curl: "API",
+    py: "Python",
+    native: "Native",
+  }
+  return labels[flavor] || flavor.replace(/[-_]+/g, " ").replace(/\b\w/g, (letter) => letter.toUpperCase())
+}
+
+function AgentStatusBadge({status}: {status: AgentReadiness}) {
+  const meta = {
+    ready: {label: "Ready", className: "border-emerald-500/40 bg-emerald-500/10 text-emerald-600"},
+    "missing-key": {label: "Missing key", className: "border-amber-500/40 bg-amber-500/10 text-amber-700"},
+    offline: {label: "Offline", className: "border-border bg-muted/50 text-muted-foreground"},
+  }[status]
+
+  return (
+    <span
+      className={"inline-flex items-center rounded-full border px-2 py-0.5 text-[11px] font-medium " + meta.className}
+      data-world-agent-status={status}
+    >
+      {meta.label}
+    </span>
+  )
+}
+
+function agentContext(agent: IdentityRow, workspaceUri?: string | null) {
+  const workspace = workspaceUri?.replace(/^workspace:\/\//, "")
+  return [workspace, agent.flavor || "unknown"].filter(Boolean).join(" · ")
+}
+
 function AgentsTable({state}: {state: IdentitiesState}) {
   const agents = state.agents || []
+  const presentedAgents = agents.map((agent, index) => ({
+    ...agent,
+    readable_name: agentReadableName(agent, index, agents),
+    readiness: agentReadiness(agent),
+  }))
   const [query, setQuery] = React.useState("")
-  const filteredAgents = agents.filter((agent) => {
-    const haystack = [agent.display_name, agent.name, agent.uri, agent.flavor, agent.alive ? "live" : "registered", state.workspace_uri]
+  const filteredAgents = presentedAgents.filter((agent) => {
+    const haystack = [agent.readable_name, agent.display_name, agent.name, agent.uri, agent.flavor, agent.readiness, state.workspace_uri]
       .filter(Boolean)
       .join(" ")
       .toLowerCase()
@@ -572,13 +638,13 @@ function AgentsTable({state}: {state: IdentitiesState}) {
               key={agent.uri}
             >
               <span className="flex items-center justify-between gap-2">
-                <strong className="truncate text-sm text-foreground">{agent.display_name || agent.name || agent.uri}</strong>
+                <strong className="truncate text-sm text-foreground">{agent.readable_name}</strong>
                 <span className="flex shrink-0 items-center gap-1">
-                  <CredentialBadge credential={agent.credential_status} />
+                  <AgentStatusBadge status={agent.readiness} />
                   <span className="rounded-full border border-border px-2 py-0.5 text-[11px] text-muted-foreground">{agent.flavor || "unknown"}</span>
                 </span>
               </span>
-              <code className="mt-1 block truncate font-mono text-[11px] text-muted-foreground">{agent.uri}</code>
+              <span className="mt-1 block truncate text-[11px] text-muted-foreground" title={agent.uri}>{agentContext(agent, state.workspace_uri)}</span>
             </a>
           ))}
           {filteredAgents.length === 0 && <EmptyState label="No agents in this workspace." />}
@@ -614,10 +680,10 @@ function AgentsTable({state}: {state: IdentitiesState}) {
                 <div className="grid gap-2 rounded-md border border-border bg-background p-3 sm:grid-cols-[minmax(0,1fr)_auto]" key={agent.uri}>
                   <div className="min-w-0">
                     <div className="flex items-center gap-2">
-                      <strong className="block truncate text-foreground">{agent.display_name || agent.name || agent.uri}</strong>
-                      <CredentialBadge credential={agent.credential_status} />
+                      <strong className="block truncate text-foreground">{agent.readable_name}</strong>
+                      <AgentStatusBadge status={agent.readiness} />
                     </div>
-                    <code className={codeClass}>{agent.uri}</code>
+                    <span className="text-xs text-muted-foreground" title={agent.uri}>{agentContext(agent, state.workspace_uri)}</span>
                   </div>
                   <InlineLinks
                     links={[

@@ -37,6 +37,7 @@ const rendererMatrix = [
   ["sessions", "sessions_table"],
   ["conversation", "conversation"],
   ["actionable_errors", "conversation"],
+  ["agents_readable", "agents_table"],
   ["pty", "pty_terminal"],
   ["overview", "overview"],
   ["admin", "dashboard"],

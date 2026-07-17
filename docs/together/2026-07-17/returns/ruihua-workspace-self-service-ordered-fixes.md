@@ -39,14 +39,20 @@ per-tenant storage invariants。
 没有引入产品计划明确禁止的 `:stub_grant`。该项仍等待正式 capability-signing 以及
 hosted agent clone/provisioning contract；在依赖明确前不伪造临时授权或虚假的 ready 状态。
 
-### 下一项：G6 · UI readability
+### G6 · UI readability（进行中）
 
-本 PR 下一步按顺序处理：
+已完成第一项：
 
-1. Agent 列表用可识别名称和 ready / missing-key / offline 状态替代 UUID 噪音。
-2. 复核首登 PAT 中间页和 Continue 安全返回。
-3. 统一 session 名称提示与中文校验。
-4. 清理剩余 raw atom 用户错误；通用 Agent 失败已由 G5 覆盖。
+- Agent 列表把裸 UUID 主名称转换为稳定的 flavor 标签（例如 Claude Code Agent #1）。
+- 保留真实 profile display name，不覆盖 Billing Assistant 等已有名称。
+- 列表统一显示 Ready / Missing key / Offline，缺失或过期凭据优先显示 Missing key。
+- 完整 URI 不再作为列表主视觉，只保留在悬停信息中。
+
+剩余顺序：
+
+1. 复核首登 PAT 中间页和 Continue 安全返回。
+2. 统一 session 名称提示与中文校验。
+3. 清理剩余 raw atom 用户错误；通用 Agent 失败已由 G5 覆盖。
 
 ## 验证结果
 
@@ -64,7 +70,7 @@ hosted agent clone/provisioning contract；在依赖明确前不伪造临时授�
 | World ESLint | PASS，0 warnings |
 | World Vitest | PASS，9 / 9 |
 | 应用内浏览器交互验收 | PASS：三层卡片、founder 提醒、成功回执 |
-| 本机 Playwright CLI | 环境阻塞：缺少其专用 Chromium executable；不是产品断言失败，GitHub frontend gate继续执行 |
+| 本机 Playwright CLI | 环境阻塞：缺少其专用 Chromium executable；不是产品断言失败，GitHub frontend gate 继续执行 |
 
 ## 浏览器证据
 
@@ -79,6 +85,10 @@ hosted agent clone/provisioning contract；在依赖明确前不伪造临时授�
 提醒完成后页面就地显示成功回执：
 
 ![Founder 提醒成功回执](../evidence/g5-founder-reminder-receipt.png)
+
+G6 Agent 列表使用可读名称并同时展示三种可操作状态：
+
+![Agent 可读名称与 Ready、Missing key、Offline 状态](../evidence/g6-agent-readable-names-and-status.png)
 
 ## 交付说明
 
