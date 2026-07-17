@@ -161,7 +161,10 @@ defmodule EzagentCore.Invariants.PluginWorkspaceLocalityContractTest do
       "with {owner, _} <- {Ezagent.Agent.CreationInventory, :ok} do owner.record_exact(repo, a, b, c, d) end",
       "with %{owner: owner} <- %{owner: Ezagent.Agent.CreationInventory} do owner.record_exact(repo, a, b, c, d) end",
       "for {owner, _} <- [{Ezagent.Agent.CreationInventory, :ok}], do: owner.record_exact(repo, a, b, c, d)",
-      "for owner <- [String, Ezagent.Agent.CreationInventory], do: owner.arbitrary(value)"
+      "for owner <- [String, Ezagent.Agent.CreationInventory], do: owner.arbitrary(value)",
+      "configured_module().arbitrary(value)",
+      "for owner <- configured_modules(), do: owner.arbitrary(value)",
+      "with {owner, _} <- configured_pair() do owner.arbitrary(value) end"
     ]
 
     for source <- mutants do
@@ -430,7 +433,12 @@ defmodule EzagentCore.Invariants.PluginWorkspaceLocalityContractTest do
          calls
        )
        when is_atom(name) and is_list(args) do
-    module = ownership_value(module_ast, env, aliases)
+    module =
+      if match?({:unquote, _, [_]}, module_ast),
+        do: :safe_module,
+        else: ownership_value(module_ast, env, aliases)
+
+    module = module || dynamic_receiver_value(module_ast)
     call = ownership_call(module, name, length(args), meta[:line] || 1, function)
 
     calls =
@@ -580,6 +588,23 @@ defmodule EzagentCore.Invariants.PluginWorkspaceLocalityContractTest do
 
   defp ownership_value(ast, _env, aliases), do: resolve_module(ast, aliases)
 
+  defp dynamic_receiver_value({name, _, context})
+       when is_atom(name) and (is_atom(context) or is_nil(context)),
+       do: nil
+
+  defp dynamic_receiver_value({:__aliases__, _, _}), do: nil
+  defp dynamic_receiver_value({:unquote, _, [_]}), do: :safe_module
+
+  defp dynamic_receiver_value({name, _, args})
+       when name in [:backend, :adapter] and is_list(args),
+       do: :safe_module
+
+  defp dynamic_receiver_value({{:., _, [{:__aliases__, _, [:Mix]}, :shell]}, _, []}),
+    do: :safe_data
+
+  defp dynamic_receiver_value(module) when is_atom(module), do: nil
+  defp dynamic_receiver_value(_expression), do: :unknown_value
+
   defp generator_element([value]), do: value
   defp generator_element(values) when is_list(values), do: {:__joined_elements__, [], values}
   defp generator_element(value), do: value
@@ -630,8 +655,24 @@ defmodule EzagentCore.Invariants.PluginWorkspaceLocalityContractTest do
     if length(values) == 1, do: hd(values), else: :unknown
   end
 
-  defp ownership_abstract_value(rhs, env, aliases),
-    do: ownership_value(rhs, env, aliases) || :unknown_value
+  defp ownership_abstract_value(rhs, env, aliases) do
+    resolved = ownership_value(rhs, env, aliases)
+    source = Macro.to_string(rhs)
+
+    cond do
+      resolved ->
+        resolved
+
+      String.contains?(source, [
+        "TemplateResolver.resolve_agent_template_class",
+        "Application.get_env"
+      ]) ->
+        :safe_module
+
+      true ->
+        :unknown_value
+    end
+  end
 
   defp module_abstract?(value) when is_atom(value),
     do: value == :unknown or String.starts_with?(Atom.to_string(value), "Elixir.")
@@ -658,8 +699,8 @@ defmodule EzagentCore.Invariants.PluginWorkspaceLocalityContractTest do
     arity = if is_list(args_ast), do: length(args_ast), else: :dynamic
 
     ownership_call(module, name, arity, meta[:line] || 1, function) ||
-      if(module == :unknown,
-        do: %{module: :unknown, call: {name, arity}, line: meta[:line] || 1, function: function}
+      if(module in [:unknown, :unknown_value],
+        do: %{module: module, call: {name, arity}, line: meta[:line] || 1, function: function}
       )
   end
 
@@ -736,6 +777,11 @@ defmodule EzagentCore.Invariants.PluginWorkspaceLocalityContractTest do
 
   defp ownership_call(:unknown, name, arity, line, function),
     do: %{module: :unknown, call: {name, arity}, line: line, function: function}
+
+  defp ownership_call(:unknown_value, _name, 0, _line, _function), do: nil
+
+  defp ownership_call(:unknown_value, name, arity, line, function),
+    do: %{module: :unknown_value, call: {name, arity}, line: line, function: function}
 
   defp ownership_call(module, name, arity, line, function) do
     if forbidden_ownership_call?(module, name) do
