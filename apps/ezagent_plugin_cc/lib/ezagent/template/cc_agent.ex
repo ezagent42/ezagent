@@ -435,15 +435,7 @@ defmodule Ezagent.PluginCc.Template.CcAgent do
   def instantiate(_tmpl_name, tmpl, _workspace_uri), do: {:error, {:invalid_template, tmpl}}
 
   @impl Ezagent.Kind.Template
-  def instantiate(_tmpl_name, %{"agent_uri" => uri_str} = tmpl, workspace_uri,
-        launch_context: launch_context
-      ) do
-    instantiate_for_flavor(__MODULE__, uri_str, tmpl, workspace_uri,
-      launch_context: launch_context
-    )
-  end
-
-  def instantiate(_tmpl_name, _tmpl, _workspace_uri, _opts), do: {:error, :invalid_launch_options}
+  defdelegate instantiate(name, template, workspace, opts), to: __MODULE__.Instantiate
 
   # Flavor-parameterized instantiate body, shared with the custom-backend shim
   # (`CcCustomAgent`) so the STORED launch flavor is the caller's (`cc` vs

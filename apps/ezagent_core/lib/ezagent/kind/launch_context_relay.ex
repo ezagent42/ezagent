@@ -2,14 +2,19 @@ defmodule Ezagent.Kind.LaunchContextRelay do
   @moduledoc false
   use GenServer
 
+  @doc false
   def issue(context) do
     {:ok, relay} = GenServer.start(__MODULE__, {context, self()})
     relay
   end
 
+  @doc false
   def take(relay), do: safe_call(relay, :take, {:error, :launch_context_lost})
+  @doc false
   def commit(relay, child), do: safe_call(relay, {:commit, child}, :ok)
+  @doc false
   def discard(relay), do: safe_call(relay, :discard, :ok)
+  @doc false
   def force_discard(relay), do: safe_call(relay, :force_discard, :ok)
 
   @impl true

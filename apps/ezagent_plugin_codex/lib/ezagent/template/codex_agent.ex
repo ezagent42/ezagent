@@ -133,17 +133,10 @@ defmodule Ezagent.PluginCodex.Template.CodexAgent do
   def instantiate(_tmpl_name, tmpl, _workspace_uri), do: {:error, {:invalid_template, tmpl}}
 
   @impl Ezagent.Kind.Template
-  def instantiate(_tmpl_name, %{"agent_uri" => uri_str} = tmpl, workspace_uri,
-        launch_context: launch_context
-      ) do
-    instantiate_with_opts(uri_str, tmpl, workspace_uri, launch_context: launch_context)
-  end
-
-  def instantiate(_tmpl_name, _tmpl, _workspace_uri, _opts), do: {:error, :invalid_launch_options}
-
-  defp instantiate_with_opts(uri_str, tmpl, workspace_uri, opts) do
-    # SPEC 2026-05-27-uri-canonicalization §3 — boundary input routed
-    # through the canonical chokepoint. Parity with the cc Template
+  defdelegate instantiate(name, template, workspace, opts), to: __MODULE__.Instantiate
+  @doc false
+  def instantiate_with_opts(uri_str, tmpl, workspace_uri, opts) do
+    # SPEC URI-canonicalization §3 — route boundary input through the canonical
     # `EzagentPluginCc.Template.CcAgent`.
     agent_uri = Ezagent.URI.new!(uri_str)
 
@@ -214,7 +207,7 @@ defmodule Ezagent.PluginCodex.Template.CodexAgent do
     with {:ok, started_or_adopted} <- ensure_agent_kind(agent_uri, opts) do
       case started_or_adopted do
         :already_started ->
-          if owns_this_agent?(agent_uri, workspace_uri) do
+          if Ezagent.Agent.Ownership.workspace_match?(agent_uri, workspace_uri) do
             _ = ensure_subprocess_alive(agent_uri, tmpl)
           end
 
@@ -678,15 +671,6 @@ defmodule Ezagent.PluginCodex.Template.CodexAgent do
   defp agent_kind_alive?(agent_uri) do
     Ezagent.LocalRuntime.kind_alive?(agent_uri)
   end
-
-  defp owns_this_agent?(%URI{} = agent_uri, %URI{} = workspace_uri) do
-    case Ezagent.URI.workspace_name(agent_uri) do
-      {:ok, workspace} -> workspace == workspace_uri.host
-      :error -> false
-    end
-  end
-
-  defp owns_this_agent?(_agent_uri, _workspace_uri), do: false
 
   defp app_server_socket_path(agent_uri, tmpl) do
     Map.get(tmpl, "app_server_socket") || default_app_server_socket_path(agent_uri)
