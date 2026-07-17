@@ -254,7 +254,8 @@ defmodule Ezagent.Workspace.TaskWorkspace.Store do
     locked(id, fn
       %Provision{status: :starting, start_claim_token: ^start_claim_token} = row ->
         with :ok <- current_start_lease(row, now),
-             {:ok, handle} <- retirement_handle(retirement_handle) do
+             {:ok, handle} <- retirement_handle(retirement_handle),
+             :ok <- matching_creation_attempt(row, handle) do
           update_row(
             row,
             Map.merge(handle, %{
@@ -373,6 +374,11 @@ defmodule Ezagent.Workspace.TaskWorkspace.Store do
   end
 
   defp retirement_handle(_handle), do: {:error, :invalid_retirement_handle}
+
+  defp matching_creation_attempt(%Provision{creation_attempt_id: id}, %{creation_attempt_id: id}),
+    do: :ok
+
+  defp matching_creation_attempt(_row, _handle), do: {:error, :creation_attempt_mismatch}
 
   @doc "Moves a non-terminal provision into cleanup pending with a safe reason code."
   @spec request_cleanup(pos_integer(), atom()) ::

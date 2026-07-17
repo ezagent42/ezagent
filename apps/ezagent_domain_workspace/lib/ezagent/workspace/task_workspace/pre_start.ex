@@ -30,23 +30,35 @@ defmodule Ezagent.Workspace.TaskWorkspace.PreStart do
   def prepare(_ref), do: {:error, :workspace_not_ready}
 
   @impl true
-  def complete({id, start_token}, {:ok, %{workers: [%URI{} = agent_uri]}}) do
+  def complete({id, start_token}, {:ok, %{workers: [%URI{} = agent_uri], fresh?: true}}) do
     with %Provision{} = row <- Store.get(id),
          true <- row.agent_uri == URI.to_string(agent_uri),
          {:ok, workspace_uri} <- parse_uri(row.workspace_uri),
-         {:ok, attempt_id} <-
-           Ezagent.Agent.CreationInventory.find_attempt(agent_uri, workspace_uri),
          {:ok, provenance_root} <- Ezagent.AgentLineage.lookup(agent_uri),
          true <- row.provenance_root_uri == URI.to_string(provenance_root),
+         true <-
+           Ezagent.Agent.CreationInventory.member?(
+             row.creation_attempt_id,
+             agent_uri,
+             provenance_root,
+             workspace_uri
+           ),
          {:ok, _started} <-
            Store.mark_started(id, start_token, %{
              agent_uri: URI.to_string(agent_uri),
-             creation_attempt_id: attempt_id,
+             creation_attempt_id: row.creation_attempt_id,
              provenance_root_uri: URI.to_string(provenance_root)
            }) do
       :ok
     else
       _reason -> request_cleanup(id, :sidecar_start_ambiguous)
+    end
+  end
+
+  def complete({id, start_token}, {:ok, %{workers: [_agent_uri], fresh?: false}}) do
+    case Store.release_start(id, start_token) do
+      {:ok, _ready} -> {:error, :sidecar_start_not_fresh}
+      {:error, reason} -> {:error, reason}
     end
   end
 

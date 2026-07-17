@@ -37,6 +37,7 @@ defmodule Ezagent.Workspace.TaskWorkspace.SidecarGateTest do
       Application.delete_env(:ezagent_domain_workspace, :task_workspace_git_runner)
       Application.delete_env(:ezagent_domain_workspace, :sidecar_gate_test_owner)
       Application.delete_env(:ezagent_domain_workspace, :sidecar_gate_test_provenance)
+      Application.delete_env(:ezagent_domain_workspace, :sidecar_gate_fresh?)
       Application.delete_env(:ezagent_domain_workspace, :sidecar_gate_proof_row_id)
       Application.delete_env(:ezagent_domain_workspace, :provisioner_test_owner)
       Application.delete_env(:ezagent_domain_workspace, :provisioner_test_verify_result)
@@ -312,8 +313,73 @@ defmodule Ezagent.Workspace.TaskWorkspace.SidecarGateTest do
     assert {:ok, %{claim: claim}} = CorePreStart.prepare(ref)
     unknown_agent = Ezagent.URI.agent("sidecar-gate", "unknown")
 
-    assert :ok = CorePreStart.complete(claim, {:ok, %{workers: [unknown_agent]}})
+    assert :ok =
+             CorePreStart.complete(claim, {:ok, %{workers: [unknown_agent], fresh?: true}})
+
     assert Store.get(ready.id).status == :cleanup_pending
+  end
+
+  test "completion uses the prebound attempt even when a later inventory fact exists" do
+    agent_uri = Ezagent.URI.agent("sidecar-gate", "exact-attempt")
+    ready = ready_row(agent_uri)
+    ref = start_ref(ready.provision_id, ready.generation)
+    assert {:ok, %{claim: claim}} = CorePreStart.prepare(ref)
+    :ok = Ezagent.AgentLineage.record(agent_uri, Ezagent.URI.user("sidecar-gate", "owner"))
+
+    later = Ezagent.Agent.CreationInventory.new_attempt_id()
+
+    :ok =
+      Ezagent.Agent.CreationInventory.record(
+        later,
+        agent_uri,
+        Ezagent.URI.user("sidecar-gate", "owner"),
+        workspace_uri()
+      )
+
+    assert :ok = CorePreStart.complete(claim, {:ok, %{workers: [agent_uri], fresh?: true}})
+    assert Store.get(ready.id).creation_attempt_id == ready.creation_attempt_id
+    refute Store.get(ready.id).creation_attempt_id == later
+  end
+
+  test "adopted worker is rejected without transferring retirement ownership" do
+    ready = ready_row()
+    ref = start_ref(ready.provision_id, ready.generation)
+    assert {:ok, %{claim: claim}} = CorePreStart.prepare(ref)
+    agent_uri = Ezagent.URI.new!(ready.agent_uri)
+
+    assert {:error, :sidecar_start_not_fresh} =
+             CorePreStart.complete(claim, {:ok, %{workers: [agent_uri], fresh?: false}})
+
+    current = Store.get(ready.id)
+    assert current.status == :ready
+    assert current.start_token_consumed_at == nil
+    refute_receive {:retire_agent, _, _}
+  end
+
+  test "AgentStart rejects an adopted TemplateSpawn worker and cleanup never retires it", %{
+    flavor: flavor
+  } do
+    agent_uri = Ezagent.URI.agent("sidecar-gate", "adopted-through-template")
+    ready = ready_row(agent_uri)
+    Application.put_env(:ezagent_domain_workspace, :sidecar_gate_fresh?, false)
+
+    assert {:error, :sidecar_start_not_fresh} =
+             AgentStart.start(
+               %{flavor: flavor, project_cwd: "/untrusted"},
+               agent_uri,
+               Ezagent.URI.user("sidecar-gate", "owner"),
+               workspace_uri(),
+               %{
+                 provision_id: ready.provision_id,
+                 task_access_uri: task_access_uri(),
+                 task_uri: task_uri(),
+                 generation: ready.generation
+               }
+             )
+
+    assert Store.get(ready.id).status == :ready
+    assert {:ok, _pid} = Ezagent.KindRegistry.lookup(agent_uri)
+    refute_receive {:retire_agent, _, _}
   end
 
   defp ready_row(agent_uri \\ Ezagent.URI.agent("sidecar-gate", "reserved-worker")) do
