@@ -147,7 +147,10 @@ defmodule Ezagent.Workspace.TaskWorkspace.BoundaryTest do
       "def leak(opts) do\n  handle = Keyword.fetch!(opts, :launch_context)\n  sink(handle)\nend\ndefp sink(value), do: Jason.encode!(value)",
       "def leak(opts) do handle = Keyword.fetch!(opts, :launch_context); if flag, do: Jason.encode!(handle), else: :ok end",
       "def leak(opts) do handle = Keyword.fetch!(opts, :launch_context); sink1(:safe, handle) end\ndefp sink1(_a, value), do: sink2(value)\ndefp sink2(value), do: sink3(value)\ndefp sink3(value), do: sink4(value)\ndefp sink4(value), do: sink5(value)\ndefp sink5(value), do: sink6(value)\ndefp sink6(value), do: Jason.encode!(value)",
-      "def leak(opts) do handle = Keyword.fetch!(opts, :launch_context); serializer = if(flag, do: Jason, else: String); serializer.encode!(handle) end"
+      "def leak(opts) do handle = Keyword.fetch!(opts, :launch_context); serializer = if(flag, do: Jason, else: String); serializer.encode!(handle) end",
+      "def leak(opts) do handle = Keyword.fetch!(opts, :launch_context); if Jason.encode!(handle), do: :ok, else: :error end",
+      "def leak(opts) do handle = Keyword.fetch!(opts, :launch_context); case Jason.encode!(handle) do _ -> :ok end end",
+      "def leak(opts) do handle = Keyword.fetch!(opts, :launch_context); case value do x when Jason.encode!(handle) -> x; _ -> :ok end end"
     ]
 
     for source <- mutants do
@@ -191,6 +194,19 @@ defmodule Ezagent.Workspace.TaskWorkspace.BoundaryTest do
     """
 
     assert launch_context_leaks(branch_shadow) == []
+
+    for_shadow =
+      "def harmless(opts) do handle = Keyword.fetch!(opts, :launch_context); for x <- xs, do: (handle = :safe); Jason.encode!(handle) end"
+
+    try_shadow =
+      "def harmless(opts) do handle = Keyword.fetch!(opts, :launch_context); try do handle = :safe rescue _ -> :ok end; Jason.encode!(handle) end"
+
+    receive_shadow =
+      "def harmless(opts) do handle = Keyword.fetch!(opts, :launch_context); receive do _ -> handle = :safe after 0 -> :ok end; Jason.encode!(handle) end"
+
+    for source <- [for_shadow, try_shadow, receive_shadow] do
+      assert launch_context_leaks(source) != [], source
+    end
 
     second_map = """
     def prepare(ref) do
@@ -441,17 +457,48 @@ defmodule Ezagent.Workspace.TaskWorkspace.BoundaryTest do
     )
   end
 
-  defp launch_scan({kind, _, args}, state, function, path, aliases)
-       when kind in [:if, :case, :cond, :with] and is_list(args) do
-    branches = launch_branches(kind, args)
+  defp launch_scan({:if, _, [condition, opts]}, state, function, path, aliases) do
+    state = launch_scan(condition, state, function, path, aliases)
+    branches = [Keyword.get(opts, :do), Keyword.get(opts, :else)] |> Enum.reject(&is_nil/1)
     results = Enum.map(branches, &launch_scan(&1, state, function, path, aliases))
-
-    results =
-      if kind == :if and Keyword.get(List.last(args), :else) == nil,
-        do: [state | results],
-        else: results
-
+    results = if length(branches) < 2, do: [state | results], else: results
     merge_launch_states(results, state)
+  end
+
+  defp launch_scan({:case, _, [subject, opts]}, state, function, path, aliases) do
+    state = launch_scan(subject, state, function, path, aliases)
+    launch_clause_join(Keyword.get(opts, :do, []), state, function, path, aliases)
+  end
+
+  defp launch_scan({:cond, _, [opts]}, state, function, path, aliases),
+    do: launch_clause_join(Keyword.get(opts, :do, []), state, function, path, aliases)
+
+  defp launch_scan({:with, _, args}, state, function, path, aliases) do
+    opts = List.last(args)
+    with_state = launch_scan(Enum.drop(args, -1), state, function, path, aliases)
+    success = launch_scan(Keyword.get(opts, :do), with_state, function, path, aliases)
+    failure = launch_clause_join(Keyword.get(opts, :else, []), state, function, path, aliases)
+    merge_launch_states([success, failure], state)
+  end
+
+  defp launch_scan({:for, _, args}, state, function, path, aliases) do
+    child = launch_scan(args, state, function, path, aliases)
+    %{state | leaks: Enum.uniq(state.leaks ++ child.leaks)}
+  end
+
+  defp launch_scan({kind, _, [opts]}, state, function, path, aliases)
+       when kind in [:try, :receive] and is_list(opts) do
+    ordinary = [:do, :after] |> Enum.map(&Keyword.get(opts, &1)) |> Enum.reject(&is_nil/1)
+
+    clauses =
+      [:rescue, :catch, :else, :do, :after]
+      |> Enum.flat_map(&List.wrap(Keyword.get(opts, &1, [])))
+      |> Enum.filter(&match?({:->, _, _}, &1))
+
+    ordinary_states = Enum.map(ordinary, &launch_scan(&1, state, function, path, aliases))
+    clause_state = launch_clause_join(clauses, state, function, path, aliases)
+    merged = merge_launch_states([clause_state | ordinary_states], state)
+    %{state | leaks: Enum.uniq(state.leaks ++ merged.leaks)}
   end
 
   defp launch_scan({kind, _, args}, state, function, path, aliases)
@@ -472,6 +519,20 @@ defmodule Ezagent.Workspace.TaskWorkspace.BoundaryTest do
   defp launch_scan_children(nodes, state, function, path, aliases),
     do: Enum.reduce(List.wrap(nodes), state, &launch_scan(&1, &2, function, path, aliases))
 
+  defp launch_clause_join(clauses, state, function, path, aliases) do
+    results =
+      Enum.map(List.wrap(clauses), fn
+        {:->, _, [patterns, body]} ->
+          branch = launch_scan(patterns, state, function, path, aliases)
+          launch_scan(body, branch, function, path, aliases)
+
+        other ->
+          launch_scan(other, state, function, path, aliases)
+      end)
+
+    merge_launch_states(results, state)
+  end
+
   defp record_launch_state(node, state, function, path, aliases) do
     call_aliases = Map.merge(aliases, state.modules)
 
@@ -479,30 +540,6 @@ defmodule Ezagent.Workspace.TaskWorkspace.BoundaryTest do
       state
       | leaks: record_launch_leak(node, function, path, call_aliases, state.tainted, state.leaks)
     }
-  end
-
-  defp launch_branches(:if, [_condition, opts]),
-    do: [Keyword.get(opts, :do), Keyword.get(opts, :else)] |> Enum.reject(&is_nil/1)
-
-  defp launch_branches(:with, args) do
-    opts = List.last(args)
-
-    [
-      Enum.drop(args, -1),
-      Keyword.get(opts, :do) | launch_arrow_bodies(Keyword.get(opts, :else, []))
-    ]
-  end
-
-  defp launch_branches(_kind, args), do: launch_arrow_bodies(args)
-
-  defp launch_arrow_bodies(ast) do
-    {_ast, bodies} =
-      Macro.prewalk(ast, [], fn
-        {:->, _, [_patterns, body]} = node, acc -> {node, [body | acc]}
-        node, acc -> {node, acc}
-      end)
-
-    Enum.reverse(bodies)
   end
 
   defp merge_launch_states([], fallback), do: fallback
