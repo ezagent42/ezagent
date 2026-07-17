@@ -92,6 +92,14 @@ defmodule Ezagent.Invariants.KindInitPersistsInitialSnapshotTest do
     def supervisor, do: raise("supervisor resolution failed")
   end
 
+  defmodule EphemeralRelayProbeKind do
+    @behaviour Ezagent.Kind
+    def type_name, do: :ephemeral_relay_probe
+    def behaviors, do: [LaunchVisibilityProbeBehavior]
+    def persistence, do: :ephemeral
+    def before_start(args), do: BeforeStartProbeKind.before_start(args)
+  end
+
   defmodule ExitingSupervisorKind do
     @behaviour Ezagent.Kind
     def type_name, do: :exiting_supervisor_probe
@@ -116,18 +124,19 @@ defmodule Ezagent.Invariants.KindInitPersistsInitialSnapshotTest do
   end
 
   describe "before_start/1 ordering" do
-    test "store restart preserves a pending initial context and consumed restart state" do
+    test "launch context lives only in a private per-launch relay" do
       context = make_ref()
-      token = Ezagent.Kind.LaunchContextStore.issue(context)
-      old_store = Process.whereis(Ezagent.Kind.LaunchContextStore)
-      ref = Process.monitor(old_store)
-      Process.exit(old_store, :kill)
-      assert_receive {:DOWN, ^ref, :process, ^old_store, :killed}
+      relay = Ezagent.Kind.LaunchContextRelay.issue(context)
 
-      new_store = wait_for_store_restart(old_store)
-      assert is_pid(new_store)
-      assert {:ok, ^context} = Ezagent.Kind.LaunchContextStore.take(token)
-      assert :consumed = Ezagent.Kind.LaunchContextStore.take(token)
+      assert is_pid(relay)
+      assert nil == Process.whereis(Ezagent.Kind.LaunchContextRelay)
+      assert :undefined == :ets.whereis(Ezagent.Kind.LaunchContextRelay)
+      assert :undefined == :ets.whereis(Ezagent.Kind.LaunchContextStore)
+      refute function_exported?(Ezagent.Kind.LaunchContextRelay, :table, 0)
+      refute inspect(:sys.get_status(relay)) =~ inspect(context)
+      assert {:ok, ^context} = Ezagent.Kind.LaunchContextRelay.take(relay)
+      assert :ok = Ezagent.Kind.LaunchContextRelay.commit(relay)
+      assert :consumed = Ezagent.Kind.LaunchContextRelay.take(relay)
     end
 
     test "a lost pending token cannot become a context-free live Kind" do
@@ -137,6 +146,11 @@ defmodule Ezagent.Invariants.KindInitPersistsInitialSnapshotTest do
         )
 
       parent = self()
+
+      relay = Ezagent.Kind.LaunchContextRelay.issue(make_ref())
+      relay_ref = Process.monitor(relay)
+      Process.exit(relay, :kill)
+      assert_receive {:DOWN, ^relay_ref, :process, ^relay, :killed}
 
       task =
         Task.async(fn ->
@@ -148,7 +162,7 @@ defmodule Ezagent.Invariants.KindInitPersistsInitialSnapshotTest do
                uri: uri,
                probe_pid: parent,
                probe_result: :ok,
-               launch_context_token: make_ref()
+               launch_context_relay: relay
              }}
           )
         end)
@@ -165,15 +179,15 @@ defmodule Ezagent.Invariants.KindInitPersistsInitialSnapshotTest do
 
       {issuer, issuer_ref} =
         spawn_monitor(fn ->
-          token = Ezagent.Kind.LaunchContextStore.issue(context)
-          send(parent, {:issued, token})
+          relay = Ezagent.Kind.LaunchContextRelay.issue(context)
+          send(parent, {:issued, relay})
         end)
 
-      assert_receive {:issued, token}
+      assert_receive {:issued, relay}
+      relay_ref = Process.monitor(relay)
       assert_receive {:DOWN, ^issuer_ref, :process, ^issuer, :normal}
-      _ = :sys.get_state(Ezagent.Kind.LaunchContextStore)
-      assert {:error, :launch_context_lost} = Ezagent.Kind.LaunchContextStore.take(token)
-      refute inspect(:sys.get_status(Ezagent.Kind.LaunchContextStore)) =~ inspect(context)
+      assert_receive {:DOWN, ^relay_ref, :process, ^relay, reason}
+      assert reason in [:normal, :noproc]
     end
 
     test "raise and exit paths discard pending authority context" do
@@ -182,6 +196,7 @@ defmodule Ezagent.Invariants.KindInitPersistsInitialSnapshotTest do
             {ExitingSupervisorKind, :supervisor_resolution_failed}
           ] do
         context = make_ref()
+        relays_before = launch_context_relays()
 
         caught =
           try do
@@ -196,11 +211,7 @@ defmodule Ezagent.Invariants.KindInitPersistsInitialSnapshotTest do
 
         assert caught == expected
 
-        assert [] ==
-                 :ets.match_object(
-                   Ezagent.Kind.LaunchContextStore.table(),
-                   {:_, :pending, context, :_}
-                 )
+        assert launch_context_relays() == relays_before
       end
     end
 
@@ -294,6 +305,58 @@ defmodule Ezagent.Invariants.KindInitPersistsInitialSnapshotTest do
       refute_receive {:before_start_entered, ^replacement, ^launch_context}
     end
 
+    test "relay loss before initial take fails closed" do
+      relay = Ezagent.Kind.LaunchContextRelay.issue(make_ref())
+      ref = Process.monitor(relay)
+      Process.exit(relay, :kill)
+      assert_receive {:DOWN, ^ref, :process, ^relay, :killed}
+
+      uri =
+        Ezagent.URI.new!(
+          "entity://team-alpha/agent/lost-relay-#{System.unique_integer([:positive])}"
+        )
+
+      parent = self()
+
+      task =
+        Task.async(fn ->
+          Process.flag(:trap_exit, true)
+
+          Ezagent.Kind.Server.start_link(
+            {BeforeStartProbeKind,
+             %{uri: uri, probe_pid: parent, probe_result: :ok, launch_context_relay: relay}}
+          )
+        end)
+
+      assert {:error, :launch_context_lost} = Task.await(task)
+
+      refute_receive {:before_start_entered, _, _}
+      assert :error == Ezagent.KindRegistry.lookup(uri)
+    end
+
+    test "explicit Kind removal reclaims its consumed relay" do
+      uri =
+        Ezagent.URI.new!(
+          "entity://team-alpha/agent/relay-lifecycle-#{System.unique_integer([:positive])}"
+        )
+
+      assert {:ok, pid} =
+               Ezagent.Kind.spawn(
+                 EphemeralRelayProbeKind,
+                 %{uri: uri, probe_pid: self(), probe_result: :ok},
+                 launch_context: make_ref()
+               )
+
+      assert_receive {:before_start_entered, ^pid, _}
+      %{launch_context_relay: relay} = :sys.get_state(pid)
+      relay_ref = Process.monitor(relay)
+      assert Process.alive?(relay)
+
+      assert :ok = Ezagent.Kind.terminate(uri)
+      assert_receive {:DOWN, ^relay_ref, :process, ^relay, :normal}, 1_000
+      refute Process.alive?(pid)
+    end
+
     test "Kind.spawn/3 rejects unknown options before starting a child" do
       uri =
         Ezagent.URI.new!(
@@ -317,6 +380,7 @@ defmodule Ezagent.Invariants.KindInitPersistsInitialSnapshotTest do
         )
 
       launch_context = make_ref()
+      relays_before = launch_context_relays()
 
       output =
         capture_log(fn ->
@@ -329,14 +393,23 @@ defmodule Ezagent.Invariants.KindInitPersistsInitialSnapshotTest do
         end)
 
       refute output =~ inspect(launch_context)
+      assert launch_context_relays() == relays_before
     end
   end
 
-  defp wait_for_store_restart(old_store) do
-    case Process.whereis(Ezagent.Kind.LaunchContextStore) do
-      pid when is_pid(pid) and pid != old_store -> pid
-      _ -> wait_for_store_restart(old_store)
-    end
+  defp launch_context_relays do
+    Process.list()
+    |> Enum.filter(fn pid ->
+      case Process.info(pid, :dictionary) do
+        {:dictionary, dictionary} ->
+          Keyword.get(dictionary, :"$initial_call") ==
+            {Ezagent.Kind.LaunchContextRelay, :init, 1}
+
+        nil ->
+          false
+      end
+    end)
+    |> MapSet.new()
   end
 
   describe "init writes initial snapshot for non-ephemeral Kinds" do
