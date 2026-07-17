@@ -6,6 +6,17 @@ import {JsonRenderBubble} from "./JsonRenderBubble"
 import {Kanban, type KanbanState} from "./Kanban"
 import {PtyTerminalSurface} from "./PtyTerminal"
 
+/** G5 structured error card pushed by ErrorRenderer */
+type DispatchErrorCard = {
+  layer: 1 | 2 | 3
+  what: string
+  impact: string
+  fix_link?: string | null
+  fix_owner_name?: string | null
+  notify_action?: {action: string; args: Record<string, unknown>} | null
+  issue_id?: string | null
+}
+
 // Server-rendered attachment: an uploads URI carries a signed download `href`
 // (`message_row/2`); any other value renders as a plain label (`href: null`).
 type Attachment = {
@@ -136,6 +147,7 @@ export type ConversationState = {
   caller_uri?: string | null
   create_error?: string | null
   last_dispatch_status?: string | null
+  dispatch_error?: DispatchErrorCard | null
   is_hello?: boolean | null
   messages?: MessageRow[]
   oldest_cursor?: string | null
@@ -623,6 +635,29 @@ export function Conversation({
           >
             {state.create_error}
           </p>
+        )}
+        {state.dispatch_error && (
+          <div
+            className="mx-2.5 mt-2.5 rounded-md border border-destructive/40 bg-destructive/10 px-3 py-2 text-sm"
+            role="alert"
+            data-world-dispatch-error
+          >
+            <p className="font-semibold text-destructive">{state.dispatch_error.what}</p>
+            <p className="mt-1 text-muted-foreground">{state.dispatch_error.impact}</p>
+            {state.dispatch_error.layer === 1 && state.dispatch_error.fix_link && (
+              <a href={state.dispatch_error.fix_link} className="mt-2 inline-block text-primary underline">
+                前往修复 →
+              </a>
+            )}
+            {state.dispatch_error.layer === 2 && state.dispatch_error.fix_owner_name && (
+              <p className="mt-1 text-sm">
+                请联系 <span className="font-medium">{state.dispatch_error.fix_owner_name}</span> 修复此问题
+              </p>
+            )}
+            {state.dispatch_error.layer === 3 && (
+              <p className="mt-1 text-xs text-muted-foreground">此问题已自动登记，团队会跟进处理</p>
+            )}
+          </div>
         )}
         {creating && (
           <form

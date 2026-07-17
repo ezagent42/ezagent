@@ -701,7 +701,15 @@ defmodule Ezagent.World.ConversationActions do
         {:noreply, assign(socket, :last_dispatch_status, "ok")}
 
       {:error, reason} ->
-        {:noreply, assign(socket, :last_dispatch_status, "error:#{reason(reason)}")}
+        user_can_fix = Ezagent.Identity.AdminAuthority.admin?(caller, caps)
+
+        socket
+        |> assign(:last_dispatch_status, "error:#{reason(reason)}")
+        |> Ezagent.World.ErrorRenderer.push_dispatch_error_card(
+          reason,
+          user_can_fix: user_can_fix
+        )
+        |> then(&{:noreply, &1})
     end
   end
 
