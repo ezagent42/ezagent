@@ -11,6 +11,7 @@ defmodule Ezagent.Agent.LaunchCoordinatorTest do
     def resolve_launch(handle, agent_uri) do
       case :persistent_term.get({__MODULE__, handle}, :missing) do
         %{agent_uri: ^agent_uri} = facts -> {:ok, facts}
+        %{allow_mismatch?: true} = facts -> {:ok, Map.delete(facts, :allow_mismatch?)}
         :missing -> {:error, :unknown_launch}
         _facts -> {:error, :agent_uri_mismatch}
       end
@@ -33,6 +34,86 @@ defmodule Ezagent.Agent.LaunchCoordinatorTest do
           result
       end
     end
+  end
+
+  test "holds actor visibility behind the durable transaction commit" do
+    facts = facts()
+    handle = issue(facts)
+    Ezagent.Agent.TestLaunchPersistence.inject(facts.attempt_id, :barrier_before_commit, self())
+    on_exit(fn -> Ezagent.Agent.TestLaunchPersistence.clear(facts.attempt_id) end)
+
+    caller = spawn_kind(facts, handle)
+    assert_receive {:before_commit, attempt_id, transaction_pid}
+    assert attempt_id == facts.attempt_id
+    assert_absent_live_surfaces(facts.agent_uri)
+    assert_no_durable_facts(facts)
+
+    send(transaction_pid, :release_commit)
+    assert_receive {:spawn_result, ^caller, {:ok, child}}
+    assert {:ok, ^child} = Ezagent.KindRegistry.lookup(facts.agent_uri)
+    :ok = DynamicSupervisor.terminate_child(Ezagent.Entity.Agent.supervisor(), child)
+  end
+
+  for failed_write <- [:inventory, :lineage] do
+    test "injected #{failed_write} failure aborts real Agent initialization" do
+      failed_write = unquote(failed_write)
+      facts = facts()
+      handle = issue(facts)
+
+      Ezagent.Agent.TestLaunchPersistence.inject(
+        facts.attempt_id,
+        {:fail, failed_write},
+        self()
+      )
+
+      on_exit(fn -> Ezagent.Agent.TestLaunchPersistence.clear(facts.attempt_id) end)
+      caller = spawn_kind(facts, handle)
+
+      assert_receive {:persistence_failed, attempt_id, ^failed_write}
+      assert attempt_id == facts.attempt_id
+      assert_receive {:spawn_result, ^caller, {:error, _reason}}
+      assert_absent_live_surfaces(facts.agent_uri)
+      assert_no_durable_facts(facts)
+      assert :error = Ezagent.AgentLineage.lookup(facts.agent_uri)
+      assert :error = Ezagent.WorkspaceRegistry.lookup(facts.agent_uri)
+      refute_receive {:acknowledged, _}
+    end
+  end
+
+  test "lineage cache publication failure preserves exact durable replay" do
+    facts = facts()
+    handle = issue(facts)
+
+    Ezagent.Agent.TestLaunchPostCommitPublisher.inject(
+      facts.agent_uri,
+      :raise_lineage_cache,
+      self()
+    )
+
+    on_exit(fn -> Ezagent.Agent.TestLaunchPostCommitPublisher.clear(facts.agent_uri) end)
+
+    assert {:ok, first} = LaunchCoordinator.consume_before_start(facts.agent_uri, handle)
+    assert_receive {:lineage_cache_failed, agent_uri}
+    assert agent_uri == facts.agent_uri
+    assert_exact_durable_facts(facts)
+
+    Ezagent.Agent.TestLaunchPostCommitPublisher.clear(facts.agent_uri)
+    assert {:ok, ^first} = LaunchCoordinator.consume_before_start(facts.agent_uri, handle)
+    assert_exact_durable_facts(facts)
+  end
+
+  test "rejects independently resolved facts for a different requested Agent URI" do
+    facts = facts()
+    requested_uri = Ezagent.URI.new!("entity://team-alpha/agent/requested-#{uniq()}")
+    handle = issue(Map.put(facts, :allow_mismatch?, true))
+
+    assert {:error, :agent_uri_mismatch} =
+             LaunchCoordinator.consume_before_start(requested_uri, handle)
+
+    assert_no_durable_facts(facts)
+    assert :error = Ezagent.AgentLineage.lookup(facts.agent_uri)
+    assert :error = Ezagent.WorkspaceRegistry.lookup(facts.agent_uri)
+    refute_receive {:acknowledged, _}
   end
 
   setup do
@@ -210,6 +291,50 @@ defmodule Ezagent.Agent.LaunchCoordinatorTest do
     :persistent_term.put({Authority, handle}, facts)
     on_exit(fn -> :persistent_term.erase({Authority, handle}) end)
     handle
+  end
+
+  defp spawn_kind(facts, handle) do
+    owner = self()
+
+    spawn(fn ->
+      result =
+        Ezagent.Kind.spawn(Ezagent.Entity.Agent, %{uri: facts.agent_uri}, launch_context: handle)
+
+      send(owner, {:spawn_result, self(), result})
+    end)
+  end
+
+  defp assert_absent_live_surfaces(agent_uri) do
+    assert :error = Ezagent.KindRegistry.lookup(agent_uri)
+    assert :unknown = Ezagent.ReadyGate.status(URI.to_string(agent_uri))
+    assert nil == Ezagent.Ecto.KindSnapshot.get(URI.to_string(agent_uri))
+  end
+
+  defp assert_no_durable_facts(facts) do
+    assert {:error, :creation_attempt_not_found} =
+             CreationInventory.exact(
+               facts.attempt_id,
+               facts.agent_uri,
+               facts.root_uri,
+               facts.workspace_uri
+             )
+
+    assert nil == Repo.get(Ezagent.AgentLineage, URI.to_string(facts.agent_uri))
+  end
+
+  defp assert_exact_durable_facts(facts) do
+    assert {:ok, _entry} =
+             CreationInventory.exact(
+               facts.attempt_id,
+               facts.agent_uri,
+               facts.root_uri,
+               facts.workspace_uri
+             )
+
+    assert %Ezagent.AgentLineage{spawned_by: parent} =
+             Repo.get(Ezagent.AgentLineage, URI.to_string(facts.agent_uri))
+
+    assert parent == URI.to_string(facts.root_uri)
   end
 
   defp uniq, do: System.unique_integer([:positive])
