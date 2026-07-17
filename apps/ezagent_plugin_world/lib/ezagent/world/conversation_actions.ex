@@ -553,7 +553,7 @@ defmodule Ezagent.World.ConversationActions do
   def session_create_error_message(:invalid_workspace), do: "无效的工作区"
 
   def session_create_error_message(:invalid_short_name),
-    do: "会话名称含无效字符（如 : / ? # @ [ ]），请改用字母、数字、中文或连字符"
+    do: "会话名称仅支持字母、数字和 - . _ ~；中文名称暂不支持"
 
   def session_create_error_message({:invalid_template, _}),
     do: "该模板不能从这里直接创建（缺少额外参数）——请改选 default 或该模板自己的入口"

@@ -188,6 +188,9 @@ export function SessionsTable({state, onJoin, onCreate}: SessionsTableProps) {
                 placeholder="support-triage"
                 autoFocus
               />
+              <span className="text-[11px] font-normal text-muted-foreground">
+                支持字母、数字和 - . _ ~；中文名称暂不支持。
+              </span>
             </label>
             <label className="grid gap-1 text-xs font-medium text-muted-foreground" htmlFor="world-session-template">
               模板

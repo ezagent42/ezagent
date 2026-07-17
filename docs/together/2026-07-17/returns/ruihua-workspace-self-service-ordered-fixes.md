@@ -48,11 +48,15 @@ hosted agent clone/provisioning contract；在依赖明确前不伪造临时授�
 - 列表统一显示 Ready / Missing key / Offline，缺失或过期凭据优先显示 Missing key。
 - 完整 URI 不再作为列表主视觉，只保留在悬停信息中。
 
-剩余顺序：
+本轮继续完成：
 
-1. 复核首登 PAT 中间页和 Continue 安全返回。
-2. 统一 session 名称提示与中文校验。
-3. 清理剩余 raw atom 用户错误；通用 Agent 失败已由 G5 覆盖。
+- 密码登录直接返回安全的本地 `return_to`，不创建 PAT、不进入 token Continue 页面。
+- 外部或 protocol-relative `return_to` 一律回退到 `/sessions`。
+- session 名称表单、前置校验和错误文案统一为 strict URI 规则：仅支持字母、数字和 `- . _ ~`，明确说明中文名称暂不支持。
+
+剩余项：
+
+1. 清理非 Agent 场景中仍可能直出的 raw atom 用户错误；通用 Agent 失败已由 G5 覆盖。
 
 ## 验证结果
 
@@ -68,8 +72,10 @@ hosted agent clone/provisioning contract；在依赖明确前不伪造临时授�
 | World fixture drift | PASS |
 | World TypeScript（含 E2E tsconfig） | PASS |
 | World ESLint | PASS，0 warnings |
-| World Vitest | PASS，9 / 9 |
-| 应用内浏览器交互验收 | PASS：三层卡片、founder 提醒、成功回执 |
+| World Vitest | PASS，12 / 12 |
+| 登录 Continue / 安全返回控制器测试 | PASS，11 / 0 |
+| session 名称规则 World 测试 | PASS，14 / 0 |
+| 应用内浏览器交互验收 | PASS：三层卡片、founder 提醒、成功回执、Agent 三态、session 名称提示 |
 | 本机 Playwright CLI | 环境阻塞：缺少其专用 Chromium executable；不是产品断言失败，GitHub frontend gate 继续执行 |
 
 ## 浏览器证据
@@ -89,6 +95,10 @@ hosted agent clone/provisioning contract；在依赖明确前不伪造临时授�
 G6 Agent 列表使用可读名称并同时展示三种可操作状态：
 
 ![Agent 可读名称与 Ready、Missing key、Offline 状态](../evidence/g6-agent-readable-names-and-status.png)
+
+新建会话表单与后端校验使用同一条 strict URI 规则：
+
+![Session 名称规则提示](../evidence/g6-session-name-rule.png)
 
 ## 交付说明
 

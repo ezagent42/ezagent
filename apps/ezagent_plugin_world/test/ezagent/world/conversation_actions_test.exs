@@ -140,9 +140,11 @@ defmodule Ezagent.World.ConversationActionsTest do
       end
     end
 
-    test ":invalid_short_name maps to a friendly, non-empty message" do
+    test ":invalid_short_name states the same ASCII rule shown by the forms" do
       msg = ConversationActions.session_create_error_message(:invalid_short_name)
-      assert is_binary(msg) and msg != ""
+      assert msg =~ "字母、数字"
+      assert msg =~ "中文名称暂不支持"
+      refute msg =~ "中文或连字符"
     end
   end
 

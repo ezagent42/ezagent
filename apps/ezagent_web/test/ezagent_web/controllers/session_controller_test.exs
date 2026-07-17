@@ -82,6 +82,58 @@ defmodule EzagentWeb.SessionControllerTest do
       assert Ezagent.Entity.Token.list(uri) == []
     end
 
+    test "valid login returns directly to a safe local page without a PAT interstitial" do
+      n = System.unique_integer([:positive])
+      email = "return#{n}@ex.com"
+      uri = Ezagent.URI.user("team-alpha", "return#{n}")
+      {:ok, _} = Ezagent.Users.create(uri, "secret123", [], email_verified: true)
+
+      {:ok, _} =
+        Ezagent.Entity.Profile.upsert(%{
+          entity_uri: URI.to_string(uri),
+          display_name: "Return",
+          email: email
+        })
+
+      conn =
+        build_conn()
+        |> Plug.Test.init_test_session(%{})
+        |> post("/login", %{
+          "email" => email,
+          "password" => "secret123",
+          "return_to" => "/hello/launch"
+        })
+
+      assert redirected_to(conn) == "/hello/launch"
+      refute Plug.Conn.get_session(conn, :pending_personal_access_token)
+      refute Plug.Conn.get_session(conn, :pending_pat_return_to)
+    end
+
+    test "unsafe return_to falls back to /sessions" do
+      n = System.unique_integer([:positive])
+      email = "unsafe-return#{n}@ex.com"
+      uri = Ezagent.URI.user("team-alpha", "unsafe-return#{n}")
+      {:ok, _} = Ezagent.Users.create(uri, "secret123", [], email_verified: true)
+
+      {:ok, _} =
+        Ezagent.Entity.Profile.upsert(%{
+          entity_uri: URI.to_string(uri),
+          display_name: "Safe",
+          email: email
+        })
+
+      conn =
+        build_conn()
+        |> Plug.Test.init_test_session(%{})
+        |> post("/login", %{
+          "email" => email,
+          "password" => "secret123",
+          "return_to" => "//evil.example/phish"
+        })
+
+      assert redirected_to(conn) == "/sessions"
+    end
+
     test "unverified email → generic 'confirm your email', no session (after correct password)" do
       n = System.unique_integer([:positive])
       email = "unv#{n}@ex.com"
