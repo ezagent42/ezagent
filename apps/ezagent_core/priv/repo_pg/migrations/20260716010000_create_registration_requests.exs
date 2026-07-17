@@ -2,6 +2,8 @@ defmodule EzagentCore.Repo.Migrations.CreateRegistrationRequests do
   use Ecto.Migration
 
   def change do
+    # Pre-tenant by design: the requester has not selected or created a
+    # workspace yet, so assigning workspace_uri here would invent ownership.
     create table(:registration_requests) do
       add(:email, :string, null: false)
       add(:status, :string, null: false, default: "pending")

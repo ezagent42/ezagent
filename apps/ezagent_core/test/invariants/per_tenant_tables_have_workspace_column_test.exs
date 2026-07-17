@@ -166,6 +166,8 @@ defmodule EzagentCore.Invariants.PerTenantTablesHaveWorkspaceColumnTest do
       "Global system config (SMTP, registration domains) — system scope by design.",
     "magic_link_tokens" =>
       "Cross-workspace by design — email-based pre-login, no workspace context at mint time.",
+    "registration_requests" =>
+      "Pre-tenant access request — no workspace has been selected or created when the email is submitted.",
     "feishu_user_bindings" =>
       "Plugin-owned mapping; workspace inherent in bound user_uri downstream.",
     # Remediation C-B (#114): durable backing for the `Ezagent.AgentLineage`
