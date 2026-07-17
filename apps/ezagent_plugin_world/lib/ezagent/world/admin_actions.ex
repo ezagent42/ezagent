@@ -6,6 +6,8 @@ defmodule Ezagent.World.AdminActions do
   import Phoenix.Component, only: [assign: 3]
   import Phoenix.LiveView, only: [push_event: 3]
 
+  require Logger
+
   alias Ezagent.World.AdminData
 
   @doc "Route a world admin action to its handler."
@@ -110,12 +112,14 @@ defmodule Ezagent.World.AdminActions do
 
     :ok = Ezagent.AppSettings.put("smtp_config", cfg)
 
-    put_settings(socket, %{"smtp_flash" => "SMTP config saved.", "smtp_test_result" => nil}, "ok")
+    put_settings(socket, %{"smtp_flash" => "SMTP 配置已保存", "smtp_test_result" => nil}, "ok")
   rescue
     err ->
+      Logger.warning("admin smtp save failed: #{Exception.message(err)}")
+
       put_settings(
         socket,
-        %{"smtp_flash" => nil, "smtp_test_result" => "error:#{inspect(err)}"},
+        %{"smtp_flash" => nil, "smtp_test_result" => "error:smtp_save_failed"},
         "error:smtp_save_failed"
       )
   end
@@ -157,11 +161,13 @@ defmodule Ezagent.World.AdminActions do
             )
 
           {:error, reason} ->
+            Logger.warning("admin smtp test send failed: #{inspect(reason)}")
+
             put_settings(
               socket,
               %{
                 "smtp_test_recipient" => recipient,
-                "smtp_test_result" => "error:#{inspect(reason)}"
+                "smtp_test_result" => "error:smtp_send_failed"
               },
               "error:smtp_send_failed"
             )

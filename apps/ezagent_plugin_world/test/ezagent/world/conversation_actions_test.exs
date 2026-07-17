@@ -90,6 +90,8 @@ defmodule Ezagent.World.ConversationActionsTest do
     test "an unknown reason still produces a non-empty message (never a silent drop)" do
       msg = ConversationActions.session_create_error_message(:some_unmapped_reason)
       assert is_binary(msg) and msg != ""
+      assert msg =~ "联系 workspace founder"
+      refute msg =~ "some_unmapped_reason"
     end
 
     test "unsupported Claude dev-channel errors get a concise operator message" do

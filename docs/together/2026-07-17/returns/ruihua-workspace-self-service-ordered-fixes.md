@@ -39,7 +39,7 @@ per-tenant storage invariants。
 没有引入产品计划明确禁止的 `:stub_grant`。该项仍等待正式 capability-signing 以及
 hosted agent clone/provisioning contract；在依赖明确前不伪造临时授权或虚假的 ready 状态。
 
-### G6 · UI readability（进行中）
+### G6 · UI readability（完成）
 
 已完成第一项：
 
@@ -55,9 +55,12 @@ hosted agent clone/provisioning contract；在依赖明确前不伪造临时授�
 - session 展示名支持中文、英文字母、数字、下划线和连字符，限制 2–30 个字符；两个创建入口提供实时行内校验。
 - 中文展示名在 dispatch boundary 转为 percent-encoded canonical URI segment，Session 列表安全解码显示，保持 strict URI 不变量。
 
-剩余项：
+最后一项已完成：
 
-1. 清理非 Agent 场景中仍可能直出的 raw atom 用户错误；通用 Agent 失败已由 G5 覆盖。
+- Session 创建/发布未知错误统一为中文重试与联系 founder 建议，不再显示 raw reason。
+- Identity/User 创建、授权、配置、API Key、扩展读取失败不再把 atom/tuple/exception 送入 UI。
+- Manage/SMTP 使用稳定结果码，前端映射为中文可行动消息；技术原因只写服务端日志。
+- 会话角色槽位、授权降级和 Workspace 模板/详情页不再直接渲染 backend reason。
 
 ## 验证结果
 
@@ -73,9 +76,10 @@ hosted agent clone/provisioning contract；在依赖明确前不伪造临时授�
 | World fixture drift | PASS |
 | World TypeScript（含 E2E tsconfig） | PASS |
 | World ESLint | PASS，0 warnings |
-| World Vitest | PASS，15 / 15 |
+| World Vitest | PASS，17 / 17 |
 | 登录 Continue / 安全返回控制器测试 | PASS，11 / 0 |
 | session 名称规则 World 测试 | PASS，14 / 0 |
+| G6 用户可见错误映射聚焦测试 | PASS，24 / 0 |
 | 应用内浏览器交互验收 | PASS：三层卡片、founder 提醒、成功回执、Agent 三态、中文 session 名称可提交 |
 | 本机 Playwright CLI | 环境阻塞：缺少其专用 Chromium executable；不是产品断言失败，GitHub frontend gate 继续执行 |
 

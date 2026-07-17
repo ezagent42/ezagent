@@ -1285,7 +1285,8 @@ export function Conversation({
                 {" · 未装载"}
                 {slot.reason === "missing_credentials" &&
                   "：缺少 Claude 凭证，请在设置中绑定 Claude 登录后再试"}
-                {slot.reason !== "missing_credentials" && `（${slot.reason}）`}
+                {slot.reason !== "missing_credentials" &&
+                  "：暂时无法自动装载，请联系 workspace founder"}
               </p>
             ))}
           </div>
@@ -1296,7 +1297,7 @@ export function Conversation({
             {degradedOperatesEdges.map((edge) => (
               <p key={edge.request_id || `${edge.source_role}:${edge.target_role}:${edge.behavior}:${edge.action}`} className="text-[12px] leading-relaxed text-muted-foreground">
                 <strong className="font-medium text-amber-400">{edge.source_role}</strong>
-                {` · 仅参与，暂不能操作 ${edge.target_role}.${edge.action}（${edge.reason}；目标授权 ${edge.target_approval || "pending"}；来源授权 ${edge.source_approval || "pending"}）`}
+                {" · 当前只能参与，暂不能执行此角色操作（授权尚未就绪，请联系 workspace founder）"}
               </p>
             ))}
           </div>

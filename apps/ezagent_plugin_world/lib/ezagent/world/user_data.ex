@@ -112,16 +112,16 @@ defmodule Ezagent.World.UserData do
   def error_message(:self_disable_denied), do: "不能禁用当前登录用户"
   def error_message({:already_exists, uri}), do: "同名 user 已存在：#{uri}"
 
-  def error_message(%Ecto.Changeset{} = changeset),
-    do: "保存失败：#{inspect(changeset.errors)}"
+  def error_message(%Ecto.Changeset{}),
+    do: "保存失败，请检查填写内容后重试"
 
   def error_message({:bad_name, name}),
     do: "name 不合法（字母数字开头，仅 字母/数字/-/_）：#{name}"
 
-  def error_message({:profile_failed, reason}), do: "保存 profile 失败：#{inspect(reason)}"
+  def error_message({:profile_failed, _reason}), do: "保存个人资料失败，请稍后重试"
   def error_message({:bad_workspace_uri, _}), do: "无效的 workspace"
   def error_message({:error, reason}), do: error_message(reason)
-  def error_message(other), do: "操作失败：#{inspect(other)}"
+  def error_message(_other), do: "操作失败，请稍后重试；如持续失败，请联系 workspace founder"
 
   defp profile_display_name(%{display_name: name}) when is_binary(name) and name != "", do: name
   defp profile_display_name(_), do: nil

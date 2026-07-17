@@ -541,7 +541,7 @@ defmodule Ezagent.World.ConversationActions do
           {:noreply,
            socket
            |> assign(:last_dispatch_status, "error:#{reason(reason)}")
-           |> push_event("world:state", %{"publish_error" => "发布失败：#{reason(reason)}"})}
+           |> push_event("world:state", %{"publish_error" => publish_error_message(reason)})}
       end
     end
   end
@@ -579,9 +579,14 @@ defmodule Ezagent.World.ConversationActions do
     if unsupported_claude_dev_channels?(reason) do
       "创建会话失败：当前 Claude Code 不支持 cc orchestrator 所需的开发通道参数，请升级 Claude Code 或改用 codex flavor。"
     else
-      "创建会话失败：#{reason(reason)}"
+      "创建会话失败，请稍后重试；如持续失败，请联系 workspace founder"
     end
   end
+
+  defp publish_error_message(:unauthorized), do: "没有发布模板的权限，请联系 workspace founder"
+
+  defp publish_error_message(_reason),
+    do: "发布失败，请稍后重试；如持续失败，请联系 workspace founder"
 
   defp unsupported_claude_dev_channels?({:unsupported_claude_dev_channels, _}), do: true
 

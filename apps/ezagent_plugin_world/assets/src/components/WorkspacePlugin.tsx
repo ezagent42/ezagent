@@ -383,7 +383,7 @@ function SessionTemplateList({
     <section className={subsectionClass} data-world-component="workspace-templates">
       <Header eyebrow="Templates" title="Session templates" compact />
       {state.template_notice && <p className="text-sm text-emerald-600 dark:text-emerald-400">{state.template_notice}</p>}
-      {state.template_error && <p className="text-sm text-destructive">{state.template_error}</p>}
+      {state.template_error && <p className="text-sm text-destructive">模板操作失败，请稍后重试；如持续失败，请联系 workspace founder</p>}
       <DataTable component="workspace-templates" title="Saved templates" rows={state.session_templates || []} nested />
     </section>
   )
@@ -569,7 +569,7 @@ function TemplateBuilder({
     >
       <Header eyebrow="Builder" title="Template setup" compact />
       {state.template_notice && <p className="text-sm text-emerald-600 dark:text-emerald-400">{state.template_notice}</p>}
-      {state.template_error && <p className="text-sm text-destructive">{state.template_error}</p>}
+      {state.template_error && <p className="text-sm text-destructive">模板操作失败，请稍后重试；如持续失败，请联系 workspace founder</p>}
       <form
         id="world-session-template-form"
         className="grid gap-4"
@@ -1044,7 +1044,7 @@ function AutoDerive({
     return (
       <section className={surfaceClass} data-world-component="auto_derive">
         <Header eyebrow="Auto derive" title={`Kind ${state.kind || "unknown"}`} icon={<Layers className="h-4 w-4" />} />
-        {state.detail_error && <p className="text-sm text-destructive">{state.detail_error}</p>}
+        {state.detail_error && <p className="text-sm text-destructive">详情读取失败，请稍后重试；如持续失败，请联系 workspace founder</p>}
         {state.auto_derive_notice && <p className="text-sm text-emerald-600 dark:text-emerald-400">{String(state.auto_derive_notice)}</p>}
         {cascade && <CredentialCascadePanel cascade={cascade} onAction={onAction} />}
         {state.detail && (

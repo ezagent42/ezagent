@@ -273,11 +273,11 @@ defmodule Ezagent.World.IdentityData do
       {:error, :agent_not_found} ->
         Map.put(base, "config_error", "Agent 不存在")
 
-      {:error, reason} ->
-        Map.put(base, "config_error", "配置读取失败：#{inspect(reason)}")
+      {:error, _reason} ->
+        Map.put(base, "config_error", "配置读取失败，请稍后重试")
     end
   rescue
-    err -> Map.put(base, "config_error", "配置读取异常：#{inspect(err)}")
+    _err -> Map.put(base, "config_error", "配置读取异常，请稍后重试")
   end
 
   defp component_state(_route, base, _workspace, _caller, _caps), do: base
@@ -411,8 +411,8 @@ defmodule Ezagent.World.IdentityData do
   def create_error_message({:grant_failed, _cap, {:unknown_action, :grant_cap}}),
     do: "该 flavor 不支持授予 caps（其 Kind 未实现 Identity 授予）——请将 caps 留空，或改用 cc / curl"
 
-  def create_error_message({:grant_failed, _cap, reason}),
-    do: "授予 caps 失败：#{inspect(reason)}"
+  def create_error_message({:grant_failed, _cap, _reason}),
+    do: "授予权限失败，请检查当前账号权限后重试"
 
   def create_error_message(
         {:cascade_spawn_failed,
@@ -427,7 +427,7 @@ defmodule Ezagent.World.IdentityData do
       ),
       do: codex_app_server_error_message(output)
 
-  def create_error_message(other), do: "创建失败：#{inspect(other)}"
+  def create_error_message(_other), do: "创建失败，请稍后重试；如持续失败，请联系 workspace founder"
 
   defp codex_app_server_error_message(output) when is_binary(output) and output != "" do
     "Codex app-server 启动失败：#{String.trim(output)}"
@@ -471,7 +471,7 @@ defmodule Ezagent.World.IdentityData do
     |> Ezagent.Domain.Agent.lifecycle_status()
     |> jsonable()
   rescue
-    err -> %{"phase" => "error", "detail" => inspect(err)}
+    _err -> %{"phase" => "error", "detail" => "状态读取失败，请稍后重试"}
   end
 
   defp bridge_entry(%URI{} = agent_uri) do
@@ -526,11 +526,11 @@ defmodule Ezagent.World.IdentityData do
       # `{:unknown_action, :list_api_keys}`. Surface that as a clean "unsupported"
       # marker so the page shows a friendly notice instead of a raw error tuple.
       {:error, {:unknown_action, _}} -> %{"unsupported" => true}
-      {:error, reason} -> %{"error" => inspect(reason)}
-      other -> %{"error" => inspect(other)}
+      {:error, _reason} -> %{"error" => "API Key 列表读取失败，请稍后重试"}
+      _other -> %{"error" => "API Key 列表读取失败，请稍后重试"}
     end
   rescue
-    err -> %{"error" => inspect(err)}
+    _err -> %{"error" => "API Key 列表读取失败，请稍后重试"}
   end
 
   defp lookup_creator_uri(%URI{} = agent_uri) do
@@ -586,14 +586,14 @@ defmodule Ezagent.World.IdentityData do
       {:ok, %{config_dir_path: nil}} ->
         %{"config_dir_path" => nil, "extensions" => [], "notice" => "no_config_dir"}
 
-      {:error, reason} ->
-        %{"config_dir_path" => nil, "extensions" => [], "error" => inspect(reason)}
+      {:error, _reason} ->
+        %{"config_dir_path" => nil, "extensions" => [], "error" => "扩展列表读取失败，请稍后重试"}
 
-      other ->
-        %{"config_dir_path" => nil, "extensions" => [], "error" => inspect(other)}
+      _other ->
+        %{"config_dir_path" => nil, "extensions" => [], "error" => "扩展列表读取失败，请稍后重试"}
     end
   rescue
-    err -> %{"config_dir_path" => nil, "extensions" => [], "error" => inspect(err)}
+    _err -> %{"config_dir_path" => nil, "extensions" => [], "error" => "扩展列表读取失败，请稍后重试"}
   end
 
   # Read the agent's sandbox state for the DETAIL / extension panels WITHOUT

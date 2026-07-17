@@ -85,10 +85,15 @@ defmodule Ezagent.World.IdentityDataTest do
              {:grant_failed, cap, {:unknown_action, :grant_cap}}
            ) =~ "不支持授予 caps"
 
-    assert Ezagent.World.IdentityData.create_error_message({:grant_failed, cap, :boom}) =~
-             "授予 caps 失败"
+    grant_message =
+      Ezagent.World.IdentityData.create_error_message({:grant_failed, cap, :boom})
 
-    assert is_binary(Ezagent.World.IdentityData.create_error_message({:weird, :tuple}))
+    assert grant_message =~ "授予权限失败"
+    refute grant_message =~ "boom"
+
+    fallback = Ezagent.World.IdentityData.create_error_message({:weird, :tuple})
+    assert fallback =~ "联系 workspace founder"
+    refute fallback =~ "weird"
   end
 
   test "create_error_message gives py's :missing_script a friendly hint, not a raw atom (F6)" do

@@ -100,6 +100,18 @@ function adminBody(state: AdminState, onAction: (action: string, args: Record<st
   }
 }
 
+
+const SMTP_RESULT_MESSAGES: Record<string, string> = {
+  "ok:delivered": "测试邮件已发送，请检查收件箱",
+  "error:recipient_required": "请填写测试收件邮箱",
+  "error:smtp_not_configured": "请先保存 SMTP 配置，再发送测试邮件",
+  "error:smtp_save_failed": "SMTP 配置保存失败，请检查填写内容后重试",
+  "error:smtp_send_failed": "测试邮件发送失败，请检查 SMTP 配置和网络后重试",
+}
+
+export function smtpTestResultMessage(result: string): string {
+  return SMTP_RESULT_MESSAGES[result] || "SMTP 操作失败，请检查配置后重试"
+}
 export function AdminSurface({
   state,
   onAction = () => undefined,
@@ -677,7 +689,7 @@ function SettingsPanel({
       </form>
       {settings.smtp_test_result && (
         <p className={settings.smtp_test_result.startsWith("ok:") ? "text-sm text-emerald-600 dark:text-emerald-400" : "text-sm text-destructive"}>
-          {settings.smtp_test_result}
+          {smtpTestResultMessage(settings.smtp_test_result)}
         </p>
       )}
     </Surface>
