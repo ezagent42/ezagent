@@ -141,7 +141,10 @@ defmodule Ezagent.Workspace.TaskWorkspace.BoundaryTest do
       "opaque = Keyword.fetch!(opts, :launch_context)\nraise \"bad context \#{inspect(opaque)}\"",
       "def instantiate(_a, _b, _c, opts) do\n  handle = Keyword.fetch!(opts, :launch_context)\n  Jason.encode!(%{context: handle})\nend",
       "def instantiate(_a, _b, _c, opts) do\n  handle = Map.get(opts, :launch_context)\n  Repo.insert!(%Row{value: handle})\nend",
-      "def instantiate(_a, _b, _c, launch_context: handle) do\n  payload = handle\n  :persistent_term.put(:context, payload)\nend"
+      "def instantiate(_a, _b, _c, launch_context: handle) do\n  payload = handle\n  :persistent_term.put(:context, payload)\nend",
+      "def leak(opts) do\n  handle = Keyword.fetch!(opts, :launch_context)\n  (fn -> handle = :safe_value end).()\n  Jason.encode!(handle)\nend",
+      "def leak(opts) do\n  serializer = Jason\n  handle = Keyword.fetch!(opts, :launch_context)\n  serializer.encode!(handle)\n  serializer = String\nend",
+      "def leak(opts) do\n  handle = Keyword.fetch!(opts, :launch_context)\n  sink(handle)\nend\ndefp sink(value), do: Jason.encode!(value)"
     ]
 
     for source <- mutants do
@@ -311,6 +314,8 @@ defmodule Ezagent.Workspace.TaskWorkspace.BoundaryTest do
   defp launch_context_leaks(source, path \\ "<mutation>") do
     ast = Code.string_to_quoted!(source)
     aliases = collect_module_aliases(ast)
+    helper_sinks = sink_helper_summaries(ast, aliases)
+    aliases = Map.put(aliases, "__sink_helpers__", helper_sinks)
 
     ast
     |> lexical_scopes()
@@ -329,7 +334,38 @@ defmodule Ezagent.Workspace.TaskWorkspace.BoundaryTest do
     |> Enum.sort_by(&{&1.line, &1.kind})
   end
 
+  defp sink_helper_summaries(ast, aliases) do
+    Enum.reduce(1..4, MapSet.new(), fn _pass, summaries ->
+      aliases = Map.put(aliases, "__sink_helpers__", summaries)
+
+      ast
+      |> lexical_scopes()
+      |> Enum.reduce(summaries, fn {function, scope}, acc ->
+        scope
+        |> function_parameter_variables()
+        |> Enum.with_index()
+        |> Enum.reduce(acc, fn {params, index}, inner_acc ->
+          if params != MapSet.new() and
+               scan_launch_scope(scope, function, "<summary>", aliases, params) != [] do
+            MapSet.put(inner_acc, {function, index})
+          else
+            inner_acc
+          end
+        end)
+      end)
+    end)
+  end
+
+  defp function_parameter_variables({kind, _meta, [{_name, _head_meta, args} | _]})
+       when kind in [:def, :defp],
+       do: Enum.map(args || [], &variables_in/1)
+
+  defp function_parameter_variables(_scope), do: []
+
   defp scan_launch_scope(scope, function, path, aliases, initial_tainted) do
+    nested_lines = nested_scope_assignment_lines(scope)
+    aliases = Map.put(aliases, "__current_function__", function)
+
     {_scope, {_tainted, leaks}} =
       Macro.prewalk(scope, {initial_tainted, []}, fn
         {:=, _meta, [left, right]} = node, {tainted, leaks} ->
@@ -339,7 +375,11 @@ defmodule Ezagent.Workspace.TaskWorkspace.BoundaryTest do
             if authority_source?(right) or tainted_node?(right, tainted) do
               MapSet.union(tainted, assigned)
             else
-              MapSet.difference(tainted, assigned)
+              if MapSet.member?(nested_lines, node |> elem(1) |> Keyword.get(:line, 1)) do
+                tainted
+              else
+                MapSet.difference(tainted, assigned)
+              end
             end
 
           {node, {tainted, record_launch_leak(node, function, path, aliases, tainted, leaks)}}
@@ -465,6 +505,24 @@ defmodule Ezagent.Workspace.TaskWorkspace.BoundaryTest do
       if(function == :send, do: :process_retention, else: :rendered_error)
   end
 
+  defp launch_context_leak_kind({function, _meta, args}, tainted, aliases)
+       when is_atom(function) and is_list(args) do
+    helpers = Map.get(aliases, "__sink_helpers__", MapSet.new())
+    current = Map.get(aliases, "__current_function__")
+
+    if current == {function, length(args)} do
+      false
+    else
+      args
+      |> Enum.with_index()
+      |> Enum.any?(fn {arg, index} ->
+        tainted_node?(arg, tainted) and
+          MapSet.member?(helpers, {{function, length(args)}, index})
+      end)
+      |> then(&(&1 && :local_helper_escape))
+    end
+  end
+
   defp launch_context_leak_kind(_node, _tainted, _aliases), do: false
 
   defp collect_module_aliases(ast) do
@@ -494,18 +552,43 @@ defmodule Ezagent.Workspace.TaskWorkspace.BoundaryTest do
         {:=, _meta, [{name, _var_meta, context}, rhs]} = node, bindings
         when is_atom(name) and (is_atom(context) or is_nil(context)) ->
           module = resolve_sink_assignment(rhs, aliases, bindings)
+          key = Atom.to_string(name)
+          existing = Map.get(bindings, key)
 
-          {node,
-           if(module,
-             do: Map.put(bindings, Atom.to_string(name), module),
-             else: Map.delete(bindings, Atom.to_string(name))
-           )}
+          next =
+            cond do
+              known_sink_module?(existing) and not known_sink_module?(module) -> existing
+              module -> module
+              true -> existing
+            end
+
+          {node, if(next, do: Map.put(bindings, key, next), else: bindings)}
 
         node, bindings ->
           {node, bindings}
       end)
 
     bindings
+  end
+
+  defp nested_scope_assignment_lines(ast) do
+    {_ast, lines} =
+      Macro.prewalk(ast, MapSet.new(), fn
+        {kind, _meta, _args} = node, lines
+        when kind in [:fn, :if, :case, :cond, :with, :for, :quote] ->
+          {_node, nested} =
+            Macro.prewalk(node, MapSet.new(), fn
+              {:=, meta, _args} = child, acc -> {child, MapSet.put(acc, meta[:line] || 1)}
+              child, acc -> {child, acc}
+            end)
+
+          {node, MapSet.union(lines, nested)}
+
+        node, lines ->
+          {node, lines}
+      end)
+
+    lines
   end
 
   defp resolve_sink_assignment({:__aliases__, _meta, [first | rest]} = ast, aliases, bindings) do
@@ -516,6 +599,11 @@ defmodule Ezagent.Workspace.TaskWorkspace.BoundaryTest do
   end
 
   defp resolve_sink_assignment(_rhs, _aliases, _bindings), do: nil
+
+  defp known_sink_module?(module) when is_atom(module),
+    do: Regex.match?(~r/(?:Repo|Ecto|Snapshot|Jason|JSON|Yaml|Logger|Config)$/, inspect(module))
+
+  defp known_sink_module?(_module), do: false
 
   defp module_from_alias({:__aliases__, _meta, parts}) do
     if Enum.all?(parts, &is_atom/1), do: Module.concat(parts)
