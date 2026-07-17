@@ -3,7 +3,8 @@ defmodule Ezagent.Workspace.TaskWorkspace.SidecarGateTest do
 
   alias Ezagent.Kind.Template.PreStart, as: CorePreStart
   alias Ezagent.Workspace.TaskWorkspace.AgentStart.Ref
-  alias Ezagent.Workspace.TaskWorkspace.{AgentStart, PreStart, Store}
+  alias Ezagent.Workspace.TaskWorkspace.{AgentStart, Paths, PreStart, Reconciler, Store}
+  alias EzagentCore.Repo
 
   setup do
     :ok = CorePreStart.replace_for_test(PreStart)
@@ -37,6 +38,9 @@ defmodule Ezagent.Workspace.TaskWorkspace.SidecarGateTest do
       Application.delete_env(:ezagent_domain_workspace, :sidecar_gate_test_owner)
       Application.delete_env(:ezagent_domain_workspace, :sidecar_gate_test_provenance)
       Application.delete_env(:ezagent_domain_workspace, :sidecar_gate_proof_row_id)
+      Application.delete_env(:ezagent_domain_workspace, :provisioner_test_owner)
+      Application.delete_env(:ezagent_domain_workspace, :task_workspace_retirement)
+      Application.delete_env(:ezagent_domain_workspace, :provisioner_test_verify_absent_result)
     end)
 
     %{flavor: flavor}
@@ -76,6 +80,57 @@ defmodule Ezagent.Workspace.TaskWorkspace.SidecarGateTest do
     assert abandoned.start_token_consumed_at
     assert abandoned.agent_uri == URI.to_string(agent_uri)
     assert abandoned.provenance_root_uri == "entity://sidecar-gate/user/owner"
+  end
+
+  test "caller death after real prepare leaves starting for fenced recovery" do
+    ready = recovery_ready_row(Ezagent.URI.agent("sidecar-gate", "dead-caller"))
+    ref = start_ref(ready.provision_id, ready.generation)
+    parent = self()
+
+    Application.put_env(
+      :ezagent_domain_workspace,
+      :task_workspace_git_runner,
+      EzagentDomainWorkspace.TestSupport.FakeTaskWorkspaceGitRunner
+    )
+
+    Application.put_env(:ezagent_domain_workspace, :provisioner_test_owner, self())
+
+    caller =
+      spawn(fn ->
+        send(parent, {:caller_ready, self()})
+
+        receive do
+          :prepare -> :ok
+        end
+
+        result = CorePreStart.prepare(ref)
+        send(parent, {:prepared_before_death, self(), result})
+        Process.sleep(:infinity)
+      end)
+
+    assert_receive {:caller_ready, ^caller}
+    Ecto.Adapters.SQL.Sandbox.allow(Repo, self(), caller)
+    send(caller, :prepare)
+    assert_receive {:prepared_before_death, ^caller, {:ok, %{claim: _claim}}}
+    Process.exit(caller, :kill)
+    refute Process.alive?(caller)
+
+    starting = Store.get(ready.id)
+    assert starting.status == :starting
+
+    Application.put_env(
+      :ezagent_domain_workspace,
+      :task_workspace_retirement,
+      EzagentDomainWorkspace.TestSupport.FakeTaskWorkspaceRetirement
+    )
+
+    Application.put_env(:ezagent_domain_workspace, :provisioner_test_verify_absent_result, :ok)
+    now = DateTime.add(starting.start_lease_until, 1, :second)
+
+    assert %{cleaned: 1, failed: 0} = Reconciler.recover_once(limit: 1, now: now)
+    assert_receive {:retire_agent, _, nil}
+    assert Store.get(ready.id).status == :cleaned
+    refute_receive {:instantiate_called, _}
   end
 
   test "mismatched start coordinates cannot poison a ready row" do
@@ -249,6 +304,48 @@ defmodule Ezagent.Workspace.TaskWorkspace.SidecarGateTest do
         workspace_uri: URI.to_string(workspace_uri()),
         task_access_uri: URI.to_string(task_access_uri()),
         task_uri: URI.to_string(task_uri()),
+        generation: ready.generation
+      })
+
+    bound
+  end
+
+  defp recovery_ready_row(agent_uri) do
+    stored = attrs()
+    {:ok, planned} = Store.create_planned(stored)
+    {:ok, claimed} = Store.claim_provision(planned.id, lease_seconds: 135)
+
+    {:ok, paths} =
+      Paths.derive(%{
+        provision_id: planned.provision_id,
+        workspace_uri: Ezagent.URI.new!(planned.workspace_uri),
+        task_uri: Ezagent.URI.new!(planned.task_uri),
+        generation: planned.generation,
+        task_access_uri: Ezagent.URI.new!(planned.task_access_uri),
+        repository_uri: Ezagent.URI.new!(planned.repository_uri),
+        checkout_fingerprint: planned.checkout_fingerprint,
+        base_ref: planned.base_ref,
+        allowed_head_ref: planned.allowed_head_ref
+      })
+
+    {:ok, ready} =
+      Store.mark_ready(planned.id, claimed.claim_token, %{
+        expected_version: claimed.state_version,
+        cache_identity: paths.cache_identity,
+        worktree_identity: paths.worktree_identity,
+        worktree_path: paths.worktree_path,
+        resolved_base_commit: String.duplicate("a", 40),
+        local_branch_ref: "refs/heads/ezagent/task/proof/g3",
+        remote_url: "https://git.example.test/acme/widgets.git"
+      })
+
+    {:ok, bound} =
+      Store.bind_start_intent(ready.provision_id, %{
+        agent_uri: URI.to_string(agent_uri),
+        provenance_root_uri: URI.to_string(Ezagent.URI.user("sidecar-gate", "owner")),
+        workspace_uri: ready.workspace_uri,
+        task_access_uri: ready.task_access_uri,
+        task_uri: ready.task_uri,
         generation: ready.generation
       })
 

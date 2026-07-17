@@ -27,6 +27,7 @@ defmodule Ezagent.Workspace.TaskWorkspace.ReconcilerBootTest do
             :provisioner_test_owner,
             :task_workspace_git_runner,
             :task_workspace_retirement,
+            :task_workspace_retirement_hook,
             :provisioner_test_verify_absent_result
           ],
           do: Application.delete_env(:ezagent_domain_workspace, key)
@@ -107,6 +108,86 @@ defmodule Ezagent.Workspace.TaskWorkspace.ReconcilerBootTest do
     assert_receive {:waited_for_start, 30_001}
     assert result.second.cleaned == 1
     assert Repo.get!(Provision, starting.id).status == :cleaned
+  end
+
+  test "supervised boot process recovers expired starting after restart" do
+    {:ok, row} = Store.create_planned(attrs())
+
+    {:ok, starting} =
+      row
+      |> Provision.transition_changeset(%{
+        status: :starting,
+        state_version: 1,
+        start_token_consumed_at: at(0),
+        start_claim_token: "restart-start-claim",
+        start_lease_until: at(1)
+      })
+      |> Repo.update()
+
+    parent = self()
+
+    Application.put_env(:ezagent_domain_workspace, :task_workspace_retirement_hook, fn ->
+      send(parent, {:boot_retiring, self()})
+
+      receive do
+        :continue -> :ok
+      end
+    end)
+
+    {:ok, supervisor} =
+      Supervisor.start_link(
+        [{ReconcilerBoot, limit: 1, now_fun: fn -> at(2) end}],
+        strategy: :one_for_one
+      )
+
+    assert_receive {:boot_retiring, boot_pid}
+    assert Process.alive?(boot_pid)
+    send(boot_pid, :continue)
+    ref = Process.monitor(boot_pid)
+    assert_receive {:DOWN, ^ref, :process, ^boot_pid, :normal}
+    assert Repo.get!(Provision, starting.id).status == :cleaned
+    Supervisor.stop(supervisor)
+  end
+
+  test "supervised boot process waits for active starting then runs its second pass" do
+    {:ok, row} = Store.create_planned(attrs())
+
+    {:ok, starting} =
+      row
+      |> Provision.transition_changeset(%{
+        status: :starting,
+        state_version: 1,
+        start_token_consumed_at: at(0),
+        start_claim_token: "active-start-claim",
+        start_lease_until: at(30)
+      })
+      |> Repo.update()
+
+    {:ok, clock} = Agent.start_link(fn -> [at(0), at(31)] end)
+    parent = self()
+
+    now_fun = fn -> Agent.get_and_update(clock, fn [now | rest] -> {now, rest} end) end
+
+    wait_fun = fn milliseconds ->
+      send(parent, {:supervised_boot_waiting, self(), milliseconds})
+
+      receive do
+        :continue -> :ok
+      end
+    end
+
+    {:ok, supervisor} =
+      Supervisor.start_link(
+        [{ReconcilerBoot, limit: 1, now_fun: now_fun, wait_fun: wait_fun}],
+        strategy: :one_for_one
+      )
+
+    assert_receive {:supervised_boot_waiting, boot_pid, 30_001}
+    send(boot_pid, :continue)
+    ref = Process.monitor(boot_pid)
+    assert_receive {:DOWN, ^ref, :process, ^boot_pid, :normal}
+    assert Repo.get!(Provision, starting.id).status == :cleaned
+    Supervisor.stop(supervisor)
   end
 
   defp attrs do

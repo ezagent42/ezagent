@@ -188,6 +188,86 @@ defmodule Ezagent.Workspace.TaskWorkspace.ReconcilerTest do
              Store.fail_start(starting.id, starting.start_claim_token, :stale_worker)
   end
 
+  test "nil start lease is conservatively recovered" do
+    ready = ready_row("nil-start-lease")
+    {:ok, starting} = Store.claim_start(ready.id, ready.start_token)
+
+    starting
+    |> Provision.transition_changeset(%{start_lease_until: nil})
+    |> Repo.update!()
+
+    assert %{attempted: 1, cleaned: 1, failed: 0} = Reconciler.recover_once(limit: 1)
+    assert_receive {:retire_agent, _, nil}
+    assert Repo.get!(Provision, starting.id).status == :cleaned
+  end
+
+  test "a competing start reclaim makes a stale recovery snapshot a benign skip" do
+    ready = ready_row("reclaim-race")
+    {:ok, stale} = Store.claim_start(ready.id, ready.start_token, lease_seconds: 1)
+    recovery_now = DateTime.add(stale.start_lease_until, 1, :second)
+
+    result =
+      Reconciler.recover_once(
+        limit: 1,
+        now: recovery_now,
+        after_candidate_list: fn [candidate] ->
+          assert candidate.state_version == stale.state_version
+
+          {:ok, reclaimed} =
+            Store.claim_start(stale.id, stale.start_token,
+              now: recovery_now,
+              lease_seconds: 60
+            )
+
+          send(self(), {:reclaimed, reclaimed})
+        end
+      )
+
+    assert %{attempted: 1, cleaned: 0, failed: 0} = result
+    assert_receive {:reclaimed, reclaimed}
+    current = Repo.get!(Provision, stale.id)
+    assert current.status == :starting
+    assert current.start_claim_token == reclaimed.start_claim_token
+    refute_receive {:retire_agent, _, _}
+    refute_receive {:git_remove, _}
+  end
+
+  test "old start claimant cannot complete or fail after cleanup ownership is acquired" do
+    ready = ready_row("cleanup-owned")
+    {:ok, starting} = Store.claim_start(ready.id, ready.start_token, lease_seconds: 1)
+    now = DateTime.add(starting.start_lease_until, 1, :second)
+    parent = self()
+
+    Application.put_env(:ezagent_domain_workspace, :task_workspace_retirement_hook, fn ->
+      send(parent, {:cleanup_owned, self()})
+
+      receive do
+        :continue_cleanup -> :ok
+      end
+    end)
+
+    recovery = Task.async(fn -> Reconciler.recover_once(limit: 1, now: now) end)
+    assert_receive {:cleanup_owned, recovery_pid}
+
+    owned = Repo.get!(Provision, starting.id)
+    assert owned.status == :cleanup_pending
+    assert is_binary(owned.claim_token)
+
+    assert {:error, :invalid_start_transition} =
+             Store.mark_started(starting.id, starting.start_claim_token, %{
+               agent_uri: starting.agent_uri,
+               creation_attempt_id: "stale-attempt",
+               provenance_root_uri: starting.provenance_root_uri
+             })
+
+    assert {:error, :invalid_start_transition} =
+             Store.fail_start(starting.id, starting.start_claim_token, :stale_worker)
+
+    refute_receive {:git_remove, _}
+    send(recovery_pid, :continue_cleanup)
+    assert %{cleaned: 1, failed: 0} = Task.await(recovery)
+  end
+
   defp ready_row(suffix \\ "one") do
     row = planned_row(suffix)
     {:ok, claim} = Store.claim_provision(row.id)
