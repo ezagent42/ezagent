@@ -26,16 +26,16 @@ defmodule Ezagent.ActionSet.WorkspaceUserAdminTest do
   end
 
   describe "contract surface" do
-    test "actions/0 lists :create_user only" do
-      assert WUA.actions() == [:create_user]
+    test "actions/0 lists create_user + disable_user" do
+      assert Enum.sort(WUA.actions()) == [:create_user, :disable_user]
     end
 
     test "new-contract marker __behavior__?/0 is true" do
       assert WUA.__behavior__?() == true
     end
 
-    test "__action_names__/0 lists :create_user only" do
-      assert WUA.__action_names__() == [:create_user]
+    test "__action_names__/0 covers both actions" do
+      assert Enum.sort(WUA.__action_names__()) == [:create_user, :disable_user]
     end
 
     test "required_caps/0 has an entry per action with the SPEC v2 struct shape" do
@@ -46,10 +46,14 @@ defmodule Ezagent.ActionSet.WorkspaceUserAdminTest do
                "required_caps/0 missing #{action} — dispatch step 5.5 would crash"
       end
 
-      %Ezagent.Capability{kind: kind, behavior: behavior} = caps[:create_user]
-      assert kind == :workspace
-      assert behavior == Ezagent.ActionSet.WorkspaceUserAdmin
-      refute behavior == Ezagent.ActionSet.Workspace
+      # Each action carves its OWN cap subject (distinct action axis).
+      for action <- [:create_user, :disable_user] do
+        %Ezagent.Capability{kind: kind, behavior: behavior, action: cap_action} = caps[action]
+        assert kind == :workspace
+        assert behavior == Ezagent.ActionSet.WorkspaceUserAdmin
+        assert cap_action == action
+        refute behavior == Ezagent.ActionSet.Workspace
+      end
     end
 
     test "state_slice/0 is :workspace_user_admin (distinct from :workspace)" do
@@ -99,6 +103,48 @@ defmodule Ezagent.ActionSet.WorkspaceUserAdminTest do
 
       assert {:error, {:bad_workspace_uri, _}} =
                WUA.handle_create_user(%{user_uri: "entity://x/user/y"}, ctx)
+    end
+  end
+
+  describe "disable_user argument validation (pure, no DB)" do
+    test "missing user_uri returns {:error, :user_uri_required}" do
+      assert {:error, :user_uri_required} = WUA.handle_disable_user(%{}, empty_ctx())
+    end
+
+    test "non-entity URI surfaces as :bad_user_uri" do
+      assert {:error, {:bad_user_uri, "workspace://x", _}} =
+               WUA.handle_disable_user(%{user_uri: "workspace://x"}, empty_ctx())
+    end
+
+    test "non-string reason is rejected" do
+      assert {:error, {:bad_reason, 123}} =
+               WUA.handle_disable_user(%{user_uri: "entity://x/user/y", reason: 123}, empty_ctx())
+    end
+
+    test "cross-workspace user (vs self workspace) is refused before any DB write" do
+      # empty_ctx self_uri is workspace://x; the user is in team-alpha.
+      assert {:error, {:cross_workspace_user, _}} =
+               WUA.handle_disable_user(%{user_uri: "entity://team-alpha/user/y"}, empty_ctx())
+    end
+
+    test "missing caller (actor) fails closed with :missing_actor" do
+      ctx = %{empty_ctx() | self_uri: Ezagent.URI.new!("workspace://team-alpha")}
+
+      assert {:error, :missing_actor} =
+               WUA.handle_disable_user(%{user_uri: "entity://team-alpha/user/y"}, ctx)
+    end
+
+    test "an operator cannot disable their OWN account (self-lockout guard)" do
+      self_uri = "entity://team-alpha/user/me"
+
+      ctx = %{
+        empty_ctx()
+        | self_uri: Ezagent.URI.new!("workspace://team-alpha"),
+          caller: Ezagent.URI.new!(self_uri)
+      }
+
+      assert {:error, :self_offboard_denied} =
+               WUA.handle_disable_user(%{user_uri: self_uri}, ctx)
     end
   end
 end

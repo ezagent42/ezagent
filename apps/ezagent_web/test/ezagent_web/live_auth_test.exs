@@ -11,10 +11,32 @@ defmodule EzagentWeb.LiveAuthTest do
   `Ezagent.URI.entity_workspace_uri/1`, which pattern-matches a
   3-segment URI → `MatchError` → 500 at GET /sessions. Memory
   `feedback_register_lookup_key_parity`.
+
+  task #180 Change 3 — `on_mount(:require_entity, ...)` now EVICTS a user
+  disabled after login (active-session eviction). That recheck reads
+  the `users` table, so this suite runs under `DataCase` (DB sandbox) and
+  seeds the active user URIs it asserts `{:cont}` for.
   """
-  use ExUnit.Case, async: true
+  use EzagentCore.DataCase, async: false
 
   alias EzagentWeb.LiveAuth
+  alias Ezagent.Users
+
+  # Seed the ACTIVE user URIs the `{:cont}` parity tests below assert on, so
+  # the Change 3 recheck (`Users.disabled?/1`, fail-closed on unknown) lets
+  # them through. Agent URIs and the `:halt` parse-rejection cases never reach
+  # the recheck.
+  setup do
+    for uri <- [
+          "entity://team-alpha/user/admin",
+          "entity://team-alpha/user/alice",
+          "entity://system/user/linyilun"
+        ] do
+      {:ok, _} = Users.create(uri, "pw", [])
+    end
+
+    :ok
+  end
 
   # `parse_entity_uri/1` is private — we exercise it via the public
   # `on_mount(:require_entity, ...)` entry point. A stale 2-segment
@@ -286,6 +308,51 @@ defmodule EzagentWeb.LiveAuthTest do
 
       assert socket_after.assigns.workspace_name == "h2oslabs",
              "label MUST follow the cookie's current_workspace_uri after a switch"
+    end
+  end
+
+  describe "on_mount(:require_entity, ...) — active-session eviction (task #180 Change 3)" do
+    test "evicts a user disabled AFTER login on the next LV mount" do
+      uri = "entity://team-alpha/user/evict-#{System.unique_integer([:positive])}"
+      {:ok, _} = Users.create(uri, "pw", [])
+
+      # Active → mounts.
+      assert {:cont, _} =
+               LiveAuth.on_mount(
+                 :require_entity,
+                 %{},
+                 %{"current_entity_uri" => uri},
+                 build_socket()
+               )
+
+      # Operator disables; next mount is bounced.
+      {:ok, _} = Users.disable(uri, "entity://system/user/admin", "offboarded")
+
+      assert {:halt, socket} =
+               LiveAuth.on_mount(
+                 :require_entity,
+                 %{},
+                 %{"current_entity_uri" => uri},
+                 build_socket()
+               )
+
+      assert {:redirect, %{to: "/login"}} = socket.redirected
+      assert socket.assigns.flash["info"] =~ "revoked"
+    end
+
+    test "an ACTIVE user still mounts (recheck is not a blanket denial)" do
+      uri = "entity://team-alpha/user/active-#{System.unique_integer([:positive])}"
+      {:ok, _} = Users.create(uri, "pw", [])
+
+      assert {:cont, socket} =
+               LiveAuth.on_mount(
+                 :require_entity,
+                 %{},
+                 %{"current_entity_uri" => uri},
+                 build_socket()
+               )
+
+      assert %URI{scheme: "entity"} = socket.assigns.current_entity_uri
     end
   end
 
