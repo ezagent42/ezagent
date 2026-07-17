@@ -81,6 +81,57 @@ defmodule EzagentDomainInstanceMessage.Integration.DefinitionAgentsMaterializeTe
     end
   end
 
+  # An ENV-credential flavor whose probe is PROFILE-DRIVEN (mirrors cc-custom):
+  # `credential_status/2` classifies on the `:backend_profile` opt — "kimi"
+  # reads `MOONSHOT_API_KEY`; no/unknown profile → `:unknown` (fail closed).
+  # Declares NO on-disk credential files, so `check_source` takes the
+  # environment branch and the role slot's `provider` opt decides the verdict.
+  defmodule EnvProfileStubTemplate do
+    @moduledoc false
+    @behaviour Ezagent.Kind.Template
+    @behaviour Ezagent.Agent.CredentialAdapter
+
+    @impl Ezagent.Agent.CredentialAdapter
+    def credential_status(_home, opts) do
+      case Keyword.get(opts, :backend_profile) do
+        "kimi" ->
+          case System.get_env("MOONSHOT_API_KEY") do
+            key when is_binary(key) and key != "" ->
+              %{status: :authenticated, detail: nil, expires_at: nil}
+
+            _ ->
+              %{status: :missing, detail: "MOONSHOT_API_KEY not set", expires_at: nil}
+          end
+
+        _ ->
+          %{status: :unknown, detail: nil, expires_at: nil}
+      end
+    end
+
+    @impl Ezagent.Kind.Template
+    def template_name, do: "definition_agents.env_profile_stub"
+
+    @impl Ezagent.Kind.Template
+    def validate(%{"agent_uri" => agent_uri}) when is_binary(agent_uri), do: :ok
+    def validate(_), do: {:error, :invalid_env_profile_stub_template}
+
+    @impl Ezagent.Kind.Template
+    def instantiate(_name, data, _workspace_uri) do
+      uri = Ezagent.URI.new!(data["agent_uri"])
+
+      case Ezagent.Kind.spawn(Ezagent.Entity.Agent, %{
+             uri: uri,
+             behaviors: Ezagent.Entity.Agent.base_behaviors(),
+             role: data["role"]
+           }) do
+        {:ok, _pid} -> {:ok, [uri], %{fresh?: true, config_dir_path: nil}}
+        {:error, {:already_started, _pid}} -> {:ok, [uri], %{fresh?: false}}
+        {:error, {:already_registered, _}} -> {:ok, [uri], %{fresh?: false}}
+        {:error, reason} -> {:error, reason}
+      end
+    end
+  end
+
   defmodule NeverReadyTemplate do
     @moduledoc false
     @behaviour Ezagent.Kind.Template
@@ -165,6 +216,19 @@ defmodule EzagentDomainInstanceMessage.Integration.DefinitionAgentsMaterializeTe
         flavor: flavor,
         kind: Ezagent.Entity.Agent,
         template_class: DeepseekMissingStubTemplate
+      })
+
+    flavor
+  end
+
+  defp register_env_profile_flavor(n) do
+    flavor = "definition_agents_env_profile_#{n}"
+
+    :ok =
+      Ezagent.AgentFlavorRegistry.register(%{
+        flavor: flavor,
+        kind: Ezagent.Entity.Agent,
+        template_class: EnvProfileStubTemplate
       })
 
     flavor
@@ -986,6 +1050,94 @@ defmodule EzagentDomainInstanceMessage.Integration.DefinitionAgentsMaterializeTe
     members = members_of(session_uri)
     assert %URI{} = SessionBehavior.role_name_to_uri(members, ok_role)
     assert SessionBehavior.role_name_to_uri(members, cred_missing_role) == nil
+  end
+
+  test "a role slot's provider threads into the credential precondition (the cc-custom seam)" do
+    n = uniq()
+    session_uri = live_session(n)
+    recipe_name = seed_recipe(n)
+    env_flavor = register_env_profile_flavor(n)
+
+    previous = System.get_env("MOONSHOT_API_KEY")
+    System.delete_env("MOONSHOT_API_KEY")
+
+    on_exit(fn ->
+      if previous,
+        do: System.put_env("MOONSHOT_API_KEY", previous),
+        else: System.delete_env("MOONSHOT_API_KEY")
+    end)
+
+    role = "kimi-role-#{n}"
+
+    # Profile key UNSET: the selected profile's credential is unavailable → the
+    # slot is skipped loudly (never a silent zombie), with the
+    # `:credential_unavailable` reason from the environment branch.
+    assert {:ok, summary} =
+             DefinitionAgents.materialize_definition_agents(
+               session_uri,
+               @workspace_uri,
+               @owner_uri,
+               [
+                 %{
+                   "provider" => "kimi",
+                   recipe: recipe_name,
+                   role_name: role,
+                   flavor: env_flavor
+                 }
+               ]
+             )
+
+    assert [%{role_name: ^role, reason: {:credential_unavailable, ^env_flavor}}] =
+             summary.skipped
+
+    assert summary.satisfied == []
+
+    # Profile key SET: the SAME slot materializes and joins — the provider was
+    # threaded, not hardcoded.
+    System.put_env("MOONSHOT_API_KEY", "test-only-key")
+
+    assert {:ok, summary2} =
+             DefinitionAgents.materialize_definition_agents(
+               session_uri,
+               @workspace_uri,
+               @owner_uri,
+               [
+                 %{
+                   "provider" => "kimi",
+                   recipe: recipe_name,
+                   role_name: role,
+                   flavor: env_flavor
+                 }
+               ]
+             )
+
+    assert summary2.skipped == []
+    assert summary2.satisfied == [role]
+
+    members = members_of(session_uri)
+    assert %URI{} = member = SessionBehavior.role_name_to_uri(members, role)
+    on_exit(fn -> terminate(member) end)
+  end
+
+  test "a role slot with NO provider on an env-credential flavor fails closed (skip)" do
+    n = uniq()
+    session_uri = live_session(n)
+    recipe_name = seed_recipe(n)
+    env_flavor = register_env_profile_flavor(n)
+    role = "no-profile-#{n}"
+
+    assert {:ok, summary} =
+             DefinitionAgents.materialize_definition_agents(
+               session_uri,
+               @workspace_uri,
+               @owner_uri,
+               [%{recipe: recipe_name, role_name: role, flavor: env_flavor}]
+             )
+
+    assert [%{role_name: ^role, reason: {:credential_unavailable, ^env_flavor}}] =
+             summary.skipped
+
+    assert summary.satisfied == []
   end
 
   defp scoped_orchestrator_cap?(%Ezagent.Capability{} = cap) do

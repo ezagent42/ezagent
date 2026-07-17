@@ -280,6 +280,7 @@ defmodule EzagentDomainInstanceMessage.SessionCreator.DefinitionAgents do
          role_name
        ) do
     flavor = flavor_of(agent)
+    provider = provider_of(agent)
 
     with {:ok, recipe} <- lookup_recipe(workspace_uri, recipe_name),
          {:ok, planned_uri} <-
@@ -298,8 +299,10 @@ defmodule EzagentDomainInstanceMessage.SessionCreator.DefinitionAgents do
            ),
          # Chain C — the adopt above NO-OPS for a non-admin installer (#161 /
          # DoD 6). Without a credential source this agent can only boot "Not
-         # logged in": skip the slot rather than join a silent zombie.
-         :ok <- CredentialPrecondition.check_source(granted_by, workspace_uri, flavor),
+         # logged in": skip the slot rather than join a silent zombie. The role
+         # slot's `provider` (cc-custom) names the backend profile whose env key
+         # gates this check; plain-cc/legacy slots carry none (opt NOT passed).
+         :ok <- check_credential_source(granted_by, workspace_uri, flavor, provider),
          # S5 I9/C2: complete Cap.issue authorization and commit the durable
          # identity-tier binding before Kind.spawn. No DB transaction spans the
          # spawn. create/1 can therefore self-store the issued artifacts.
@@ -313,11 +316,25 @@ defmodule EzagentDomainInstanceMessage.SessionCreator.DefinitionAgents do
              recipe_name,
              role_name,
              flavor,
+             provider,
              binding
            ) do
       {:ok, planned_uri}
     end
   end
+
+  # The cc-custom seam: only a non-empty role-slot `provider` passes the
+  # `backend_profile` opt down — plain-cc/legacy slots call the unchanged
+  # `check_source/3` path (byte-unchanged legacy behavior).
+  defp check_credential_source(installer, workspace_uri, flavor, provider)
+       when is_binary(provider) and provider != "",
+       do:
+         CredentialPrecondition.check_source(installer, workspace_uri, flavor,
+           backend_profile: provider
+         )
+
+  defp check_credential_source(installer, workspace_uri, flavor, _no_provider),
+    do: CredentialPrecondition.check_source(installer, workspace_uri, flavor)
 
   defp spawn_bound_agent(
          session_uri,
@@ -327,6 +344,7 @@ defmodule EzagentDomainInstanceMessage.SessionCreator.DefinitionAgents do
          recipe_name,
          role_name,
          flavor,
+         provider,
          binding
        ) do
     workspace_uri = Ezagent.Capability.workspace_of(planned_uri)
@@ -340,7 +358,8 @@ defmodule EzagentDomainInstanceMessage.SessionCreator.DefinitionAgents do
                recipe,
                recipe_name,
                role_name,
-               flavor
+               flavor,
+               provider
              ),
            # Safety net for the class the pre-flight cannot see (#1311).
            # This agent was just spawned by us — if it has no credentials,
@@ -534,23 +553,35 @@ defmodule EzagentDomainInstanceMessage.SessionCreator.DefinitionAgents do
          recipe,
          recipe_name,
          role_name,
-         flavor
+         flavor,
+         provider
        ) do
     source_template_uri = Ezagent.URI.template(:system, :agent, recipe_name)
 
-    case Ezagent.Agent.RecipeMaterializer.create_agent_from_recipe(%{
-           recipe: recipe,
-           recipe_name: recipe_name,
-           role_name: role_name,
-           flavor: flavor,
-           agent_uri: planned_uri,
-           workspace_uri: workspace_uri,
-           owner_uri: granted_by,
-           caller: granted_by,
-           caps: SessionCreator.list_caps_for_materialization(granted_by),
-           source_template_uri: source_template_uri,
-           description: @agent_description
-         }) do
+    spawn_opts = %{
+      recipe: recipe,
+      recipe_name: recipe_name,
+      role_name: role_name,
+      flavor: flavor,
+      agent_uri: planned_uri,
+      workspace_uri: workspace_uri,
+      owner_uri: granted_by,
+      caller: granted_by,
+      caps: SessionCreator.list_caps_for_materialization(granted_by),
+      source_template_uri: source_template_uri,
+      description: @agent_description
+    }
+
+    # The cc-custom seam: the role slot's selected backend profile rides into
+    # the materialized content's `provider` — only when the slot declares one
+    # (plain-cc/legacy slots keep the byte-unchanged opts map).
+    spawn_opts =
+      case provider do
+        p when is_binary(p) and p != "" -> Map.put(spawn_opts, :provider, p)
+        _ -> spawn_opts
+      end
+
+    case Ezagent.Agent.RecipeMaterializer.create_agent_from_recipe(spawn_opts) do
       {:ok, _outcome} ->
         :ok
 
@@ -829,6 +860,16 @@ defmodule EzagentDomainInstanceMessage.SessionCreator.DefinitionAgents do
     case Map.get(agent, :flavor) || Map.get(agent, "flavor") do
       flavor when is_binary(flavor) and flavor != "" -> flavor
       _ -> "cc"
+    end
+  end
+
+  # The role slot's OPTIONAL cc-custom backend profile (atom or string key).
+  # Absent/empty → nil: plain-cc and legacy slots carry no profile, and the
+  # credential seams below must see NO opt at all (byte-unchanged behavior).
+  defp provider_of(agent) do
+    case Map.get(agent, :provider) || Map.get(agent, "provider") do
+      provider when is_binary(provider) and provider != "" -> provider
+      _ -> nil
     end
   end
 end

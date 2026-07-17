@@ -139,6 +139,48 @@ defmodule Ezagent.PluginCc.Integration.CcConfigHomeCredentialsTest do
                  "cc-deepseek"
                )
     end
+
+    test "cc-custom skips when the SELECTED profile's key is missing, proceeds when present" do
+      previous = System.get_env("MOONSHOT_API_KEY")
+      System.delete_env("MOONSHOT_API_KEY")
+
+      on_exit(fn ->
+        if previous,
+          do: System.put_env("MOONSHOT_API_KEY", previous),
+          else: System.delete_env("MOONSHOT_API_KEY")
+      end)
+
+      installer = Ezagent.URI.user(:system, "kimi#{uniq()}")
+
+      assert {:skip, {:credential_unavailable, "cc-custom"}} =
+               CredentialPrecondition.check_source(
+                 installer,
+                 Ezagent.URI.workspace(:system),
+                 "cc-custom",
+                 backend_profile: "kimi"
+               )
+
+      System.put_env("MOONSHOT_API_KEY", "test-only-key")
+
+      assert :ok =
+               CredentialPrecondition.check_source(
+                 installer,
+                 Ezagent.URI.workspace(:system),
+                 "cc-custom",
+                 backend_profile: "kimi"
+               )
+    end
+
+    test "cc-custom with NO profile context fails closed (skip, never a silent pass)" do
+      installer = Ezagent.URI.user(:system, "nop#{uniq()}")
+
+      assert {:skip, {:credential_unavailable, "cc-custom"}} =
+               CredentialPrecondition.check_source(
+                 installer,
+                 Ezagent.URI.workspace(:system),
+                 "cc-custom"
+               )
+    end
   end
 
   describe "automatic role materialization (chain C)" do
@@ -284,7 +326,10 @@ defmodule Ezagent.PluginCc.Integration.CcConfigHomeCredentialsTest do
         # isolation properties are a separate coverage gap — see PR body / #1324.)
         installs: [
           "chat",
-          %{ref: "orchestrator", config: %{role_slots: [%{role_name: "orchestrator", flavor: "cc"}]}}
+          %{
+            ref: "orchestrator",
+            config: %{role_slots: [%{role_name: "orchestrator", flavor: "cc"}]}
+          }
         ],
         legends: %{},
         routing_rules: [],
