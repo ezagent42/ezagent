@@ -136,6 +136,41 @@ defmodule Ezagent.Workspace.TaskWorkspace.ProvisionerTest do
              :cleaned
   end
 
+  test "indeterminate worktree add persists effect proof and cleanup converges before retry" do
+    fixture = start_policy(:public)
+    {:ok, paths} = Ezagent.Workspace.TaskWorkspace.Paths.derive(git_attrs(fixture))
+    prepared = Map.merge(paths, prepared_proof())
+
+    Application.put_env(
+      :ezagent_domain_workspace,
+      :provisioner_test_prepare_result,
+      {:error, {:worktree_add_failed, :git_command_timeout}, prepared}
+    )
+
+    Application.put_env(
+      :ezagent_domain_workspace,
+      :provisioner_test_verify_absent_result,
+      {:error, :worktree_still_present}
+    )
+
+    Application.put_env(:ezagent_domain_workspace, :provisioner_test_remove_clears, true)
+
+    assert {:error, :checkout_unavailable} = Provisioner.prepare(fixture.request)
+    assert_receive {:git_prepare, _}
+    assert_receive {:git_remove, %{worktree_path: worktree_path}}
+    assert worktree_path == paths.worktree_path
+
+    assert %Provision{
+             status: :cleaned,
+             worktree_path: ^worktree_path,
+             resolved_base_commit: resolved_base_commit
+           } = Repo.get_by!(Provision, provision_id: fixture.request.provision_id)
+
+    assert resolved_base_commit == prepared.resolved_base_commit
+    assert {:error, :provision_cancelled} = Provisioner.prepare(fixture.request)
+    refute_receive {:git_prepare, _}
+  end
+
   test "cancelled generation and an active path owner never run a second effect" do
     cancelled = start_policy(:public)
     assert {:ok, row} = Store.create_planned(planned_attrs(cancelled))
@@ -418,6 +453,17 @@ defmodule Ezagent.Workspace.TaskWorkspace.ProvisionerTest do
     )
 
     paths
+  end
+
+  defp git_attrs(fixture) do
+    %{
+      workspace_uri: fixture.policy.workspace_uri,
+      repository_uri: fixture.policy.repository.repository_uri,
+      provision_id: fixture.request.provision_id,
+      generation: fixture.request.generation,
+      base_ref: fixture.policy.repository.base_ref,
+      allowed_head_ref: fixture.policy.allowed_head_ref
+    }
   end
 
   defp prepared_result do

@@ -152,17 +152,22 @@ defmodule Ezagent.Workspace.TaskWorkspace.Store do
   def fail_provision(id, claim_token, reason, opts)
       when is_binary(claim_token) and is_atom(reason) and not is_nil(reason) and is_list(opts) do
     now = Keyword.get(opts, :now, DateTime.utc_now())
+    effect_proof = Keyword.get(opts, :effect_proof)
 
     locked(id, fn
       %Provision{status: :provisioning, claim_token: ^claim_token} = row ->
-        with :ok <- current_lease(row.lease_until, now, :provision_lease_expired) do
-          update_row(row, %{
-            status: :cleanup_pending,
-            state_version: row.state_version + 1,
-            cleanup_reason: Atom.to_string(reason),
-            claim_token: nil,
-            lease_until: nil
-          })
+        with :ok <- current_lease(row.lease_until, now, :provision_lease_expired),
+             {:ok, proof} <- failure_effect_values(effect_proof) do
+          update_row(
+            row,
+            Map.merge(proof, %{
+              status: :cleanup_pending,
+              state_version: row.state_version + 1,
+              cleanup_reason: Atom.to_string(reason),
+              claim_token: nil,
+              lease_until: nil
+            })
+          )
         end
 
       %Provision{status: :provisioning} ->
@@ -704,6 +709,26 @@ defmodule Ezagent.Workspace.TaskWorkspace.Store do
       {:error, :invalid_ready_attributes}
     end
   end
+
+  defp failure_effect_values(nil), do: {:ok, %{}}
+
+  defp failure_effect_values(attrs) when is_map(attrs) do
+    keys = [
+      :cache_identity,
+      :worktree_identity,
+      :worktree_path,
+      :resolved_base_commit,
+      :local_branch_ref
+    ]
+
+    if Enum.all?(keys, &(is_binary(Map.get(attrs, &1)) and Map.get(attrs, &1) != "")) do
+      {:ok, Map.take(attrs, keys)}
+    else
+      {:error, :invalid_failure_effect_proof}
+    end
+  end
+
+  defp failure_effect_values(_attrs), do: {:error, :invalid_failure_effect_proof}
 
   defp validate_create_keys(attrs) do
     keys = Map.keys(attrs)

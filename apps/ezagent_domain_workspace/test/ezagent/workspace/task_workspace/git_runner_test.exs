@@ -180,6 +180,55 @@ defmodule Ezagent.Workspace.TaskWorkspace.GitRunnerTest do
     assert String.trim(git!(other_worktree, ["rev-parse", "HEAD"])) == first.resolved_base_commit
   end
 
+  test "same-target retry converges without force-updating its checked-out branch", %{root: root} do
+    %{origin: origin} = local_origin_with_source!(root)
+    request = request(remote_url: origin, allow_local_fixture: true)
+
+    assert {:ok, first} = GitRunner.prepare(request)
+    assert {:ok, retried} = GitRunner.prepare(request)
+
+    assert retried.worktree_path == first.worktree_path
+    assert retried.local_branch_ref == first.local_branch_ref
+    assert retried.resolved_base_commit == first.resolved_base_commit
+    refute Enum.any?(retried.argv_history, &Enum.member?(&1, "-f"))
+    refute Enum.any?(retried.argv_history, &("add" in &1 and "worktree" in &1))
+  end
+
+  test "worktree parsing handles spaces and canonical symlink aliases", %{root: root} do
+    actual_home = Path.join(root, "actual home with spaces")
+    linked_home = Path.join(root, "linked-home")
+    File.mkdir_p!(actual_home)
+    File.ln_s!(actual_home, linked_home)
+    System.put_env("EZAGENT_HOME", linked_home)
+    %{origin: origin} = local_origin_with_source!(root)
+    request = request(remote_url: origin, allow_local_fixture: true)
+
+    assert {:ok, first} = GitRunner.prepare(request)
+    assert {:ok, retried} = GitRunner.prepare(request)
+    assert retried.worktree_path == first.worktree_path
+    assert :ok = GitRunner.verify(retried)
+  end
+
+  test "one unexpected ref probe failure is propagated even when the other ref exists" do
+    executor =
+      probe_executor(%{
+        head: {:error, :git_command_timeout},
+        tag: {:ok, %{stdout: "", stderr: "", exit_status: 0}}
+      })
+
+    assert {:error, :git_command_timeout} = GitRunner.prepare(request(executor: executor))
+  end
+
+  test "both unexpected ref probe failures propagate the first failure" do
+    executor =
+      probe_executor(%{
+        head: {:error, :git_output_limit_exceeded},
+        tag: {:error, {:git_exit, 128}}
+      })
+
+    assert {:error, :git_output_limit_exceeded} = GitRunner.prepare(request(executor: executor))
+  end
+
   test "fetch and branch command plan owns refs and preserves anonymous execution" do
     owner = self()
 
@@ -528,6 +577,29 @@ defmodule Ezagent.Workspace.TaskWorkspace.GitRunnerTest do
       "worktree" in argv and "list" in argv -> :worktree_list
       "branch" in argv -> :branch
       "worktree" in argv and "add" in argv -> :worktree_add
+    end
+  end
+
+  defp probe_executor(results) do
+    fn argv, _opts ->
+      cond do
+        Enum.take(argv, -3) == ["remote", "get-url", "origin"] ->
+          {:ok,
+           %{
+             stdout: "https://git.example.test/acme/widgets.git\n",
+             stderr: "",
+             exit_status: 0
+           }}
+
+        "show-ref" in argv and Enum.at(argv, -1) =~ "/heads/" ->
+          results.head
+
+        "show-ref" in argv ->
+          results.tag
+
+        true ->
+          {:ok, %{stdout: "", stderr: "", exit_status: 0}}
+      end
     end
   end
 

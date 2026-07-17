@@ -152,6 +152,7 @@ defmodule Ezagent.Workspace.TaskWorkspace.Provisioner do
          true <- Store.worktree_path_available?(claimed.id, paths.worktree_path) do
       case serialized_prepare(paths.cache_identity, git_request) do
         {:ok, prepared} -> finish_prepared(claimed, request, prepared)
+        {:error, reason, prepared} -> fail_claim(claimed, prepared, normalize_failure(reason))
         {:error, reason} -> fail_claim(claimed, nil, normalize_failure(reason))
         _unexpected -> fail_claim(claimed, nil, :checkout_unavailable)
       end
@@ -178,28 +179,28 @@ defmodule Ezagent.Workspace.TaskWorkspace.Provisioner do
       ready_result(ready)
     else
       false ->
-        fail_claim(claimed, prepared, :task_policy_mismatch)
+        fail_claim(claimed, nil, :task_policy_mismatch)
 
       {:error, :provision_lease_lost} ->
-        fail_claim(claimed, prepared, :provision_lease_lost)
+        fail_claim(claimed, nil, :provision_lease_lost)
 
       {:error, :provision_lease_expired} ->
-        fail_claim(claimed, prepared, :provision_lease_lost)
+        fail_claim(claimed, nil, :provision_lease_lost)
 
       {:error, :invalid_provision_transition} ->
-        fail_claim(claimed, prepared, :provision_lease_lost)
+        fail_claim(claimed, nil, :provision_lease_lost)
 
       {:error, :task_policy_mismatch} ->
-        fail_claim(claimed, prepared, :task_policy_mismatch)
+        fail_claim(claimed, nil, :task_policy_mismatch)
 
       {:error, :task_access_not_found} ->
-        fail_claim(claimed, prepared, :task_policy_mismatch)
+        fail_claim(claimed, nil, :task_policy_mismatch)
 
       {:error, :private_checkout_not_supported} ->
-        fail_claim(claimed, prepared, :task_policy_mismatch)
+        fail_claim(claimed, nil, :task_policy_mismatch)
 
       {:error, _reason} ->
-        fail_claim(claimed, prepared, :workspace_not_ready)
+        fail_claim(claimed, nil, :workspace_not_ready)
     end
   end
 
@@ -209,8 +210,10 @@ defmodule Ezagent.Workspace.TaskWorkspace.Provisioner do
     end)
   end
 
-  defp fail_claim(claimed, _prepared, blocker) do
-    case Store.fail_provision(claimed.id, claimed.claim_token, blocker) do
+  defp fail_claim(claimed, prepared, blocker) do
+    opts = if is_map(prepared), do: [effect_proof: prepared], else: []
+
+    case Store.fail_provision(claimed.id, claimed.claim_token, blocker, opts) do
       {:ok, pending} ->
         _ = Reconciler.cleanup(pending.id, blocker)
         {:error, blocker}
