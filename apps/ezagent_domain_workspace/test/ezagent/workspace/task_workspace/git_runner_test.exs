@@ -107,6 +107,54 @@ defmodule Ezagent.Workspace.TaskWorkspace.GitRunnerTest do
     refute File.exists?(ready.worktree_path)
   end
 
+  test "exact verification rejects commit, branch, origin, and dirty-tree drift", %{root: root} do
+    for mutation <- [:other_commit, :other_branch, :other_origin, :dirty_file] do
+      origin = local_origin!(root)
+
+      assert {:ok, ready} =
+               GitRunner.prepare(
+                 request(
+                   remote_url: origin,
+                   allow_local_fixture: true,
+                   repository_uri:
+                     Ezagent.URI.resource(
+                       "git-runner-team",
+                       "git-repository",
+                       "widgets-#{mutation}"
+                     ),
+                   provision_id: "proof-#{mutation}",
+                   generation: System.unique_integer([:positive])
+                 )
+               )
+
+      case mutation do
+        :other_commit ->
+          File.write!(Path.join(ready.worktree_path, "commit-drift"), "drift\n")
+          git!(ready.worktree_path, ["add", "commit-drift"])
+          commit_fixture!(ready.worktree_path, "commit drift")
+
+        :other_branch ->
+          git!(ready.worktree_path, ["checkout", "-b", "other-branch"])
+
+        :other_origin ->
+          git!(ready.worktree_path, ["remote", "set-url", "origin", Path.join(root, "other.git")])
+
+        :dirty_file ->
+          File.write!(Path.join(ready.worktree_path, "untracked"), "dirty\n")
+      end
+
+      expected =
+        if mutation == :dirty_file, do: :workspace_not_clean, else: :workspace_checkout_mismatch
+
+      assert {:error, ^expected} = GitRunner.verify(ready)
+    end
+  end
+
+  test "exact verification requires the complete persisted proof" do
+    assert {:error, :invalid_ready_workspace} =
+             GitRunner.verify(%{cache_path: "/cache", worktree_path: "/worktree"})
+  end
+
   test "reused cache fetches a moved base ref and creates the deterministic branch", %{root: root} do
     %{origin: origin, source: source} = local_origin_with_source!(root)
     first = request(remote_url: origin, allow_local_fixture: true, generation: 1)
@@ -380,23 +428,30 @@ defmodule Ezagent.Workspace.TaskWorkspace.GitRunnerTest do
     executor = fn argv, _opts ->
       send(owner, {:verify_argv, argv})
 
-      if "list" in argv do
-        {:ok, %{stdout: "worktree #{worktree}-attacker\nHEAD abc\n", stderr: "", exit_status: 0}}
-      else
-        {:ok, %{stdout: "true\n", stderr: "", exit_status: 0}}
-      end
+      stdout =
+        cond do
+          "list" in argv -> "worktree #{worktree}-attacker\nHEAD abc\n"
+          "remote" in argv -> "https://git.example.test/acme/widgets.git\n"
+          true -> ""
+        end
+
+      {:ok, %{stdout: stdout, stderr: "", exit_status: 0}}
     end
 
-    assert {:error, :worktree_verification_failed} =
+    assert {:error, :workspace_checkout_mismatch} =
              GitRunner.verify(%{
                cache_path: Path.join(System.tmp_dir!(), "cache.git"),
                worktree_path: worktree,
+               remote_url: "https://git.example.test/acme/widgets.git",
+               resolved_base_commit: String.duplicate("a", 40),
+               local_branch_ref: "refs/heads/ezagent/task/proof/g1",
                runner_opts: %{executor: executor}
              })
 
     assert_receive {:verify_argv, argv}
+    assert "remote" in argv
+    assert_receive {:verify_argv, argv}
     assert "list" in argv
-    refute_receive {:verify_argv, _}
   end
 
   test "an existing cache must match the requested origin before worktree creation" do

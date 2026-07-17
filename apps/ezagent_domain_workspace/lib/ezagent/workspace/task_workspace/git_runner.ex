@@ -116,6 +116,7 @@ defmodule Ezagent.Workspace.TaskWorkspace.GitRunner do
                branch_owner_argv
              ] ++ worktree_history,
          base_ref: request.base_ref,
+         remote_url: request.remote_url,
          resolved_base_commit: resolved_sha,
          local_branch_ref: local_branch,
          allowed_head_ref: request.allowed_head_ref,
@@ -127,22 +128,40 @@ defmodule Ezagent.Workspace.TaskWorkspace.GitRunner do
   def prepare(%{visibility: _other}), do: {:error, :invalid_visibility}
   def prepare(_request), do: {:error, :invalid_git_request}
 
-  @doc "Verifies that Git recognizes the expected cache-owned worktree."
+  @doc "Verifies the exact governed origin, registration, checkout, and cleanliness proof."
   @spec verify(map()) :: :ok | {:error, term()}
-  def verify(%{cache_path: cache, worktree_path: worktree} = ready)
-      when is_binary(cache) and is_binary(worktree) do
+  def verify(
+        %{
+          cache_path: cache,
+          worktree_path: worktree,
+          remote_url: remote,
+          resolved_base_commit: commit,
+          local_branch_ref: branch
+        } = ready
+      )
+      when is_binary(cache) and is_binary(worktree) and is_binary(remote) and
+             is_binary(commit) and is_binary(branch) and remote != "" and commit != "" and
+             branch != "" do
     opts = command_opts(Map.get(ready, :runner_opts, %{}))
+    remote_argv = git_argv(["--git-dir", cache, "remote", "get-url", "origin"])
     list_argv = git_argv(["--git-dir", cache, "worktree", "list", "--porcelain", "-z"])
-    inside_argv = git_argv(["-C", worktree, "rev-parse", "--is-inside-work-tree"])
+    head_argv = git_argv(["-C", worktree, "rev-parse", "HEAD"])
+    branch_argv = git_argv(["-C", worktree, "symbolic-ref", "-q", "HEAD"])
+    status_argv = git_argv(["-C", worktree, "status", "--porcelain=v1", "--untracked-files=all"])
 
-    with {:ok, list} <- execute(list_argv, opts),
+    with {:ok, origin} <- execute(remote_argv, opts),
+         true <- String.trim(origin.stdout) == remote,
+         {:ok, list} <- execute(list_argv, opts),
          true <- listed_worktree?(list.stdout, worktree),
-         {:ok, inside} <- execute(inside_argv, opts),
-         true <- String.trim(inside.stdout) == "true" do
-      :ok
+         {:ok, head} <- execute(head_argv, opts),
+         true <- String.trim(head.stdout) == commit,
+         {:ok, symbolic} <- execute(branch_argv, opts),
+         true <- String.trim(symbolic.stdout) == branch,
+         {:ok, status} <- execute(status_argv, opts) do
+      if status.stdout == "", do: :ok, else: {:error, :workspace_not_clean}
     else
-      false -> {:error, :worktree_verification_failed}
-      {:error, _reason} = error -> error
+      false -> {:error, :workspace_checkout_mismatch}
+      {:error, _reason} -> {:error, :workspace_checkout_mismatch}
     end
   end
 

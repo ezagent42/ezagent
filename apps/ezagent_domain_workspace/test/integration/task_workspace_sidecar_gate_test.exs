@@ -36,6 +36,7 @@ defmodule Ezagent.Workspace.TaskWorkspace.SidecarGateTest do
       Application.delete_env(:ezagent_domain_workspace, :task_workspace_git_runner)
       Application.delete_env(:ezagent_domain_workspace, :sidecar_gate_test_owner)
       Application.delete_env(:ezagent_domain_workspace, :sidecar_gate_test_provenance)
+      Application.delete_env(:ezagent_domain_workspace, :sidecar_gate_proof_row_id)
     end)
 
     %{flavor: flavor}
@@ -86,7 +87,9 @@ defmodule Ezagent.Workspace.TaskWorkspace.SidecarGateTest do
         expected_version: claimed.state_version,
         cache_identity: "cache-proof",
         worktree_identity: "worktree-proof",
-        worktree_path: canonical_cwd()
+        worktree_path: canonical_cwd(),
+        resolved_base_commit: String.duplicate("a", 40),
+        local_branch_ref: "refs/heads/ezagent/task/proof/g3"
       })
 
     valid = %{
@@ -178,8 +181,26 @@ defmodule Ezagent.Workspace.TaskWorkspace.SidecarGateTest do
 
     ref = start_ref(ready.provision_id, ready.generation)
 
-    assert {:error, :workspace_not_ready} = CorePreStart.prepare(ref)
+    assert {:error, :workspace_checkout_mismatch} = CorePreStart.prepare(ref)
     assert Store.get(ready.id).status == :cleanup_pending
+  end
+
+  test "the start claim is durable and its persisted proof is complete before verification" do
+    ready = ready_row()
+    ref = start_ref(ready.provision_id, ready.generation)
+    Application.put_env(:ezagent_domain_workspace, :sidecar_gate_proof_row_id, ready.id)
+
+    assert {:ok, %{claim: {id, token}}} = PreStart.prepare(ref)
+    assert_receive {:proof_called, proof, :starting, ^token}
+    assert id == ready.id
+
+    assert proof == %{
+             cache_path: Path.join(Path.dirname(ready.worktree_path), ready.cache_identity),
+             worktree_path: ready.worktree_path,
+             remote_url: ready.remote_url,
+             resolved_base_commit: ready.resolved_base_commit,
+             local_branch_ref: ready.local_branch_ref
+           }
   end
 
   test "instantiate error requests cleanup and consumed token cannot retry" do
@@ -215,7 +236,10 @@ defmodule Ezagent.Workspace.TaskWorkspace.SidecarGateTest do
         expected_version: claimed.state_version,
         cache_identity: "cache-proof",
         worktree_identity: "worktree-proof",
-        worktree_path: canonical_cwd()
+        worktree_path: canonical_cwd(),
+        resolved_base_commit: String.duplicate("a", 40),
+        local_branch_ref: "refs/heads/ezagent/task/proof/g3",
+        remote_url: "https://git.example.test/acme/widgets.git"
       })
 
     {:ok, bound} =
