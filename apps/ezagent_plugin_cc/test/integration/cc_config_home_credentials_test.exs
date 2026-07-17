@@ -112,11 +112,12 @@ defmodule Ezagent.PluginCc.Integration.CcConfigHomeCredentialsTest do
 
       installer = Ezagent.URI.user(:system, "deepseek#{uniq()}")
 
-      assert {:skip, {:credential_unavailable, "cc-deepseek"}} =
+      assert {:skip, {:credential_unavailable, "cc-custom"}} =
                CredentialPrecondition.check_source(
                  installer,
                  Ezagent.URI.workspace(:system),
-                 "cc-deepseek"
+                 "cc-custom",
+                 backend_profile: "deepseek"
                )
     end
 
@@ -136,7 +137,8 @@ defmodule Ezagent.PluginCc.Integration.CcConfigHomeCredentialsTest do
                CredentialPrecondition.check_source(
                  installer,
                  Ezagent.URI.workspace(:system),
-                 "cc-deepseek"
+                 "cc-custom",
+                 backend_profile: "deepseek"
                )
     end
 
@@ -318,12 +320,14 @@ defmodule Ezagent.PluginCc.Integration.CcConfigHomeCredentialsTest do
         # non-admin installer's un-fillable slot is skipped loudly). That rule is
         # a `cc`-flavor (OAuth / `.credentials.json`) property. #1332 switched the
         # stock "orchestrator" socialware definition's DEFAULT flavor to
-        # `cc-deepseek` (a shared-platform DEEPSEEK_API_KEY credential — a
-        # DIFFERENT isolation model with no host login and no per-installer
-        # skip), which would otherwise silently retarget these tests off the
-        # behaviour they guard. The role-slot flavor choice re-pins to `cc` so
-        # the #161 coverage is preserved. (cc-deepseek's own shared-key
-        # isolation properties are a separate coverage gap — see PR body / #1324.)
+        # `cc-deepseek`, and cc-custom-backends PR-5 then generalized it to
+        # `cc-custom` + the "deepseek" provider profile (a shared-platform
+        # DEEPSEEK_API_KEY credential — a DIFFERENT isolation model with no host
+        # login and no per-installer skip), which would otherwise silently
+        # retarget these tests off the behaviour they guard. The role-slot
+        # flavor choice re-pins to `cc` so the #161 coverage is preserved.
+        # (cc-custom's own shared-key isolation properties are a separate
+        # coverage gap — see PR body / #1324.)
         installs: [
           "chat",
           %{

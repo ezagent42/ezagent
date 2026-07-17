@@ -499,29 +499,34 @@ defmodule Ezagent.Socialware.DefinitionRegistry do
         title: "Orchestrator",
         description: "Stock cc orchestrator team front desk.",
         # `uses: ["cc"]` names the PLUGIN dependency (conformance checks
-        # `uses_plugins_installed`); it stays "cc" because `cc-deepseek` is a
-        # PROVIDER FLAVOR hosted by the `ezagent_plugin_cc` plugin, not a
-        # separate plugin.
+        # `uses_plugins_installed`); it stays "cc" because `cc-custom` is a
+        # provider-configurable FLAVOR hosted by the `ezagent_plugin_cc`
+        # plugin, not a separate plugin.
         uses: ["cc"],
         roles: [
           %{
             role_name: "orchestrator",
             fill: :agent,
             recipe: "orchestrator",
-            # cc-deepseek (flavors merged #1324; orchestrator switched in #1332):
-            # the orchestrator authenticates via DEEPSEEK_API_KEY, needs no host
+            # cc-custom + the "deepseek" backend profile (flavors merged #1324;
+            # orchestrator switched in #1332; flavor generalized to cc-custom in
+            # cc-custom-backends PR-5): the orchestrator authenticates via
+            # DEEPSEEK_API_KEY, needs no host
             # `~/.claude` OAuth login (no #161 co-tenant issue), and boots
             # authenticated. #1332 switched the cc-orchestrator AgentTemplate seed
             # (`CcOrchestratorSeed`) to `cc-deepseek` but NOT this app-definition
             # role flavor, so `App=Orchestrator` still installed a `cc` orchestrator
-            # from the stored socialware definition. This brings the two seed
-            # representations into agreement. NOTE (default no-clobber policy): a
+            # from the stored socialware definition; that change (and this PR-5
+            # generalization, which adds the additive role-slot `provider` key —
+            # spec 2026-07-17 Q2) brings the two seed representations into
+            # agreement. NOTE (default no-clobber policy, UNCHANGED): a
             # stored orchestrator definition that already diverges from this code
             # (e.g. the pre-#1332 `cc` one) is NOT auto-migrated on boot — the boot
             # seed surfaces the divergence and leaves it as-is; applying this code
             # version is an explicit `reseed_builtin_definition/1` /
             # `mix ezagent.socialware.reseed_builtins orchestrator --force`.
-            flavor: "cc-deepseek"
+            flavor: "cc-custom",
+            provider: "deepseek"
           }
         ],
         views: [],
