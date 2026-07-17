@@ -118,6 +118,21 @@ defmodule Ezagent.DomainGit.D0BackendContractTest do
     assert :ok = D0.Conformance.authorization_cases(descriptor)
   end
 
+  @tag :d0_in_process_credential
+  test "in-process fake satisfies the shared credential lease contract" do
+    start_supervised!({D0.InProcessFake, name: D0.InProcessFake})
+
+    descriptor = %{
+      credential: D0.InProcessFake,
+      adapter_probe: D0.AdapterProbe,
+      reset: fn -> D0.InProcessFake.reset(D0.InProcessFake) end,
+      advance_time: fn seconds -> D0.InProcessFake.advance_time(D0.InProcessFake, seconds) end,
+      provider_effect_count: fn -> D0.InProcessFake.provider_effect_count(D0.InProcessFake) end
+    }
+
+    assert :ok = D0.Conformance.credential_cases(descriptor)
+  end
+
   defp collect_atoms(term) when is_atom(term), do: MapSet.new([term])
 
   defp collect_atoms(term) when is_tuple(term) do
