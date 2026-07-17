@@ -1,5 +1,5 @@
 defmodule Ezagent.DomainGit.D0BackendContractTest do
-  use ExUnit.Case, async: true
+  use ExUnit.Case, async: false
 
   alias Ezagent.DomainGit.D0BackendReuseGate, as: D0
 
@@ -98,6 +98,24 @@ defmodule Ezagent.DomainGit.D0BackendContractTest do
              lease_id: "lease_opaque_1",
              nested: [%{"authorization_ref" => "auth_opaque_1"}]
            })
+  end
+
+  @tag :d0_in_process_authorization
+  test "in-process fake satisfies the shared authorization contract" do
+    start_supervised!({D0.InProcessFake, name: D0.InProcessFake})
+
+    descriptor = %{
+      authorization: D0.InProcessFake,
+      reset: fn -> D0.InProcessFake.reset(D0.InProcessFake) end,
+      advance_time: fn seconds -> D0.InProcessFake.advance_time(D0.InProcessFake, seconds) end,
+      authorization_count: fn -> D0.InProcessFake.authorization_count(D0.InProcessFake) end,
+      credential_store_count: fn ->
+        D0.InProcessFake.credential_store_count(D0.InProcessFake)
+      end,
+      provider_effect_count: fn -> D0.InProcessFake.provider_effect_count(D0.InProcessFake) end
+    }
+
+    assert :ok = D0.Conformance.authorization_cases(descriptor)
   end
 
   defp collect_atoms(term) when is_atom(term), do: MapSet.new([term])
