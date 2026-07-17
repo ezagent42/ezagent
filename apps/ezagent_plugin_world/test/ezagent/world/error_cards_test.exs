@@ -11,7 +11,7 @@ defmodule Ezagent.World.ErrorCardsTest do
   alias Ezagent.Agent.ErrorSignal
   alias Ezagent.World.ErrorCards
 
-  @row %{"id" => "msg-123", "text" => "[agent error] no_api_key"}
+  @row %{"id" => "msg-123", "text" => "[agent error] no_api_key", "sender_kind" => "agent"}
 
   defp ctx(can_fix, founder \\ "allen") do
     %{user_can_fix: can_fix, fix_owner_display_name: founder}
@@ -20,6 +20,19 @@ defmodule Ezagent.World.ErrorCardsTest do
   test "a body without an error payload passes through unchanged" do
     body = %{text: "hello", attachments: []}
     assert ErrorCards.enrich(@row, body, ctx(false)) == @row
+  end
+
+  # Adversarial review #1 — forgeable cards: a NON-agent sender (user/plugin)
+  # smuggling an `error` payload into a normal chat body must NOT produce a
+  # card (nor its founder-notify action). sender_kind is server-derived from
+  # the sender URI, not caller-supplied body data.
+  test "a user-sent message with a forged error payload is NOT enriched" do
+    body = ErrorSignal.reply_body({:no_api_key, "deepseek"})
+
+    for kind <- ["user", "other", nil] do
+      row = Map.put(@row, "sender_kind", kind)
+      assert ErrorCards.enrich(row, body, ctx(false)) == row
+    end
   end
 
   test "the lazy viewer-ctx fun is NOT resolved for ordinary messages" do

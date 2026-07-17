@@ -72,24 +72,35 @@ defmodule Ezagent.World.ErrorCards do
         row
 
       wire ->
-        ctx = resolve_ctx(viewer_ctx)
+        # Sender gate (adversarial review #1 — forgeable error cards):
+        # only enrich rows whose sender is an agent entity. The sender_kind
+        # is computed server-side from the sender URI by `message_row/2`
+        # via `URI.type?(uri, :agent)`, so a user/plugin can NOT sell a
+        # user message as an agent-authored error. A full platform-level
+        # provenance check (`session.send` validating sender==caller) is a
+        # follow-up — this guard closes the shallow spoof surface.
+        if Map.get(row, "sender_kind") != "agent" do
+          row
+        else
+          ctx = resolve_ctx(viewer_ctx)
 
-        reason =
-          case ErrorSignal.decode(wire) do
-            {:ok, r} -> r
-            :error -> nil
-          end
+          reason =
+            case ErrorSignal.decode(wire) do
+              {:ok, r} -> r
+              :error -> nil
+            end
 
-        code = if reason != nil, do: Ezagent.World.ErrorMatcher.match({:error, reason})
+          code = if reason != nil, do: Ezagent.World.ErrorMatcher.match({:error, reason})
 
-        card =
-          Ezagent.World.ErrorRenderer.render(code,
-            user_can_fix: Map.get(ctx, :user_can_fix, false),
-            fix_owner_display_name: Map.get(ctx, :fix_owner_display_name),
-            issue_ref: Map.get(row, "id")
-          )
+          card =
+            Ezagent.World.ErrorRenderer.render(code,
+              user_can_fix: Map.get(ctx, :user_can_fix, false),
+              fix_owner_display_name: Map.get(ctx, :fix_owner_display_name),
+              issue_ref: Map.get(row, "id")
+            )
 
-        Map.put(row, "error_card", card)
+          Map.put(row, "error_card", card)
+        end
     end
   end
 

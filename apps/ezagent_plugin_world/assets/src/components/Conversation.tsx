@@ -34,9 +34,9 @@ type MessageRow = {
   render?: unknown
   // Optional per-card CSS theme (a user's explicit style ask), scoped to the card.
   render_css?: string | null
-  // G5 source 2 — per-viewer error card attached by `enrich_error_card/3` when
-  // the message body carries a structured agent error. When present the bubble
-  // renders the card instead of the degraded fallback `text`.
+  // G5 source 2 — per-viewer error card attached by `ErrorCards.enrich/3` when
+  // an AGENT-sent message body carries a structured error. Rendered in
+  // addition to `text` (a card never suppresses persisted message content).
   error_card?: DispatchErrorCard | null
   attachments?: Attachment[]
   at?: string | null
@@ -971,10 +971,12 @@ export function Conversation({
                           </span>
                         )}
                       </div>
-                      {message.error_card ? (
-                        // Async agent-reply error (G5 source 2): render the
-                        // per-viewer card; the raw `text` is only the degraded
-                        // fallback for surfaces without card support.
+                      {message.text && <p className={bubbleTextClass(mine, kind)}>{message.text}</p>}
+                      {message.error_card && (
+                        // Async agent-reply error (G5 source 2): the per-viewer
+                        // card renders IN ADDITION to the text (adversarial
+                        // review #2 — a card must never suppress persisted
+                        // message content).
                         <div
                           className="mt-1 rounded-md border border-destructive/40 bg-destructive/10 px-3 py-2 text-sm"
                           role="alert"
@@ -982,8 +984,6 @@ export function Conversation({
                         >
                           <ErrorCardContent card={message.error_card} pushEvent={pushEvent} />
                         </div>
-                      ) : (
-                        message.text && <p className={bubbleTextClass(mine, kind)}>{message.text}</p>
                       )}
                       {message.render != null && typeof message.render === "object" && (
                         <JsonRenderBubble
