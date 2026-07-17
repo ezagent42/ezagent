@@ -180,6 +180,44 @@ correction follows it as a separate docs-only commit; its SHA is intentionally
 reported in the execution report after creation rather than recursively listed
 inside itself.
 
+## Final re-review correction
+
+Commit `6379ab19b` closes the final ownership and verification findings.
+
+- Workspace completion now uses the provision row's prebound
+  `creation_attempt_id` and verifies that exact inventory fact. A later inventory
+  entry cannot replace it, and `Store.mark_started/4` rejects a mismatched handle
+  without overwriting the reservation.
+- The generic template pre-start outcome now carries `fresh?`. Workspace accepts
+  only `fresh?: true`; an adopted worker releases the start reservation back to
+  retryable `ready`, remains live, and is never treated as retirement-owned by
+  the provision.
+- Git proof-command exits (origin, registration list, rev-parse, symbolic-ref,
+  and status) are positive checkout mismatches and enter the invalid-checkout
+  cleanup lane. Spawn, timeout, output-limit, signal, and transport failures stay
+  `checkout_unavailable` and non-destructive. Detached HEAD is covered as a
+  symbolic-ref mismatch.
+- Exact `now == start_lease_until` tests prove completion/renewal fail and a new
+  claimant may take over at the boundary.
+
+TDD RED observed Agent TemplateSpawn `14 tests, 2 failures` and the focused
+Workspace set `66 tests, 5 failures`, each failing on the missing re-review
+behavior. GREEN observed Agent TemplateSpawn `14/0`, focused Workspace `66/0`,
+adopted TemplateSpawn integration `15/0`, and the fresh full Workspace suite
+`319 tests, 0 failures`. Full Agent remained `154 tests, 1 failure` at the same
+pre-existing ReadyGate/DLQ observation race.
+
+The five fresh static gates observed: doc `404/404` pass; invariant and lifecycle
+pass; architecture failed only `oversized_modules_gt_1000` at `5/4`; URI-query
+failed only the existing `skill_reconcile.ex:142` raw-construction baseline.
+The post-correction fresh `SHELL=/bin/bash mix precommit` completed non-zero.
+It reproduced the same architecture `5/4`, SkillRegistry seed-set, and single
+URI-query baselines in core, then accumulated shared-state/order failures in
+later apps. The independently green Workspace result remained `319/0`; the
+aggregate run later contaminated Web (`362 tests, 63 failures`, predominantly
+`/login` redirects, plus one teardown timeout). This is recorded as non-green;
+no project-wide success is claimed.
+
 ## Residual concerns and non-deliverables
 
 - Project precommit remains red for the explicitly separated baselines and
