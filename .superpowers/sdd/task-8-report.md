@@ -67,3 +67,10 @@ The original regex scanner under-counted parenthesized migration calls. This fol
 - Froze the branch migration budget to the four existing `20260717001000`–`04000` files; a differently numbered `20260718001000` receipt migration is mutation-tested as forbidden.
 - Signed winner cleanup now asserts the actual `retirement_facts` facade payload matches the post-commit facts for attempt, Agent, provenance root, and workspace. The adopted flow asserts neither retirement message form is emitted.
 - Review-closure focused run: Core 9 tests and Workspace 19 tests, all with zero failures.
+
+## Lexical-flow review closure
+
+- Plugin ownership analysis now tracks module values assigned to variables per enclosing function and source line, including rebinding, variable remote calls, variable-module `apply/3`, alias chains, and quoted `unquote` generation. A safe module rebind is mutation-tested as a non-violation.
+- Launch authority taint now starts from real `:launch_context` map/keyword patterns, `Keyword`/`Map` extraction, and launch authority/relay operations. It propagates in lexical function scope through renamed values and containers, clears on safe shadowing, and resolves aliased or variable sink modules.
+- Authored-map exceptions are pinned to exact file, function, kind, and source line rather than whole functions. A second map in the sanctioned `prepare/1` function followed by serialization is mutation-tested as forbidden.
+- Final focused verification: Core 9 tests and Workspace 19 tests, all with zero failures.

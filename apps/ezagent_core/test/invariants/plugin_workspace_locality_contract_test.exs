@@ -136,7 +136,10 @@ defmodule EzagentCore.Invariants.PluginWorkspaceLocalityContractTest do
       "alias Ezagent.{AgentLineage, WorkspaceRegistry}\nAgentLineage.record(agent, root)",
       "import Ezagent.AgentLineage, only: [record_exact: 3]\nrecord_exact(repo, agent, root)",
       "alias Ezagent.Agent.CreationInventory, as: Inventory\napply(Inventory, :record_exact, args)",
-      "alias Ezagent.Agent.CreationInventory, as: Inventory\nKernel.apply(Inventory, dynamic_fun, args)"
+      "alias Ezagent.Agent.CreationInventory, as: Inventory\nKernel.apply(Inventory, dynamic_fun, args)",
+      "owner = Ezagent.Agent.CreationInventory\napply(owner, :record_exact, args)",
+      "registry = Ezagent.WorkspaceRegistry\nregistry.bind(agent, workspace)",
+      "alias Ezagent.Agent.CreationInventory, as: Inventory\nowner = Inventory\nquote do: apply(unquote(owner), :record_exact, args)"
     ]
 
     for source <- mutants do
@@ -144,6 +147,11 @@ defmodule EzagentCore.Invariants.PluginWorkspaceLocalityContractTest do
     end
 
     assert ownership_calls("# Inventory.record_exact(x)\n\"WorkspaceRegistry.bind(x)\"") == []
+
+    safe_rebind =
+      "owner = Ezagent.Agent.CreationInventory\nowner = String\napply(owner, :upcase, [\"ok\"])"
+
+    assert ownership_calls(safe_rebind) == []
   end
 
   test "ownership allowlist is exact by file, enclosing function, module, and call" do
@@ -243,32 +251,67 @@ defmodule EzagentCore.Invariants.PluginWorkspaceLocalityContractTest do
   defp ownership_calls(source) do
     ast = Code.string_to_quoted!(source)
     aliases = collect_aliases(ast)
-    imports = collect_imports(ast, aliases)
     functions = collect_functions(ast)
+    imports = collect_imports(ast, aliases)
+    bindings = collect_module_bindings(ast, aliases, functions)
 
     {_ast, calls} =
       Macro.prewalk(ast, [], fn
         {{:., _dot_meta, [{:__aliases__, _, [:Kernel]}, :apply]}, meta,
          [module_ast, name_ast, args_ast]} = node,
         calls ->
-          call = dynamic_apply_call(module_ast, name_ast, args_ast, meta, aliases, functions)
+          line = meta[:line] || 1
+          function = enclosing_function(functions, line)
+
+          call =
+            dynamic_apply_call(
+              module_ast,
+              name_ast,
+              args_ast,
+              line,
+              aliases,
+              bindings,
+              function
+            )
+
           {node, maybe_add_call(calls, call)}
 
         {{:., _dot_meta, [module_ast, name]}, meta, args} = node, calls
         when is_atom(name) and is_list(args) ->
-          module = resolve_module(module_ast, aliases)
-          call = ownership_call(module, name, length(args), meta[:line] || 1, functions)
+          line = meta[:line] || 1
+          function = enclosing_function(functions, line)
+          module = resolve_module(module_ast, aliases, bindings, function, line)
+          call = ownership_call(module, name, length(args), line, function)
           {node, maybe_add_call(calls, call)}
 
         {:apply, meta, [module_ast, name_ast, args_ast]} = node, calls ->
-          call = dynamic_apply_call(module_ast, name_ast, args_ast, meta, aliases, functions)
+          line = meta[:line] || 1
+          function = enclosing_function(functions, line)
+
+          call =
+            dynamic_apply_call(
+              module_ast,
+              name_ast,
+              args_ast,
+              line,
+              aliases,
+              bindings,
+              function
+            )
+
           {node, maybe_add_call(calls, call)}
 
         {name, meta, args} = node, calls when is_atom(name) and is_list(args) ->
           imported_module = imported_owner(imports, name, length(args))
 
           call =
-            ownership_call(imported_module, name, length(args), meta[:line] || 1, functions)
+            ownership_call(
+              imported_module,
+              name,
+              length(args),
+              meta[:line] || 1,
+              enclosing_function(functions, meta[:line] || 1)
+            )
 
           {node, maybe_add_call(calls, call)}
 
@@ -329,6 +372,27 @@ defmodule EzagentCore.Invariants.PluginWorkspaceLocalityContractTest do
     imports
   end
 
+  defp collect_module_bindings(ast, aliases, functions) do
+    Enum.reduce(1..3, %{}, fn _pass, bindings ->
+      {_ast, next} =
+        Macro.prewalk(ast, bindings, fn
+          {:=, meta, [{name, _var_meta, context}, rhs]} = node, acc
+          when is_atom(name) and (is_atom(context) or is_nil(context)) ->
+            function = enclosing_function(functions, meta[:line] || 1)
+
+            line = meta[:line] || 1
+            module = resolve_module(rhs, aliases, acc, function, line)
+            entries = Map.get(acc, {function, name}, [])
+            {node, Map.put(acc, {function, name}, entries ++ [{line, module}])}
+
+          node, acc ->
+            {node, acc}
+        end)
+
+      next
+    end)
+  end
+
   defp collect_functions(ast) do
     {_ast, functions} =
       Macro.prewalk(ast, [], fn
@@ -353,6 +417,27 @@ defmodule EzagentCore.Invariants.PluginWorkspaceLocalityContractTest do
   defp resolve_module(module, _aliases) when is_atom(module), do: module
   defp resolve_module(_module, _aliases), do: nil
 
+  defp resolve_module({:unquote, _meta, [inner]}, aliases, bindings, function, line),
+    do: resolve_module(inner, aliases, bindings, function, line)
+
+  defp resolve_module({name, _meta, context}, _aliases, bindings, function, line)
+       when is_atom(name) and (is_atom(context) or is_nil(context)),
+       do: binding_at(bindings, {function, name}, line)
+
+  defp resolve_module(module_ast, aliases, _bindings, _function, _line),
+    do: resolve_module(module_ast, aliases)
+
+  defp binding_at(bindings, key, line) do
+    bindings
+    |> Map.get(key, [])
+    |> Enum.take_while(fn {binding_line, _module} -> binding_line <= line end)
+    |> List.last()
+    |> case do
+      {_line, module} -> module
+      nil -> nil
+    end
+  end
+
   defp alias_name({:__aliases__, _meta, [name]}), do: Atom.to_string(name)
   defp alias_name(_ast), do: nil
 
@@ -362,22 +447,30 @@ defmodule EzagentCore.Invariants.PluginWorkspaceLocalityContractTest do
     end)
   end
 
-  defp dynamic_apply_call(module_ast, name_ast, args_ast, meta, aliases, functions) do
-    module = resolve_module(module_ast, aliases)
+  defp dynamic_apply_call(
+         module_ast,
+         name_ast,
+         args_ast,
+         line,
+         aliases,
+         bindings,
+         function
+       ) do
+    module = resolve_module(module_ast, aliases, bindings, function, line)
     name = if is_atom(name_ast), do: name_ast, else: :__dynamic_apply__
     arity = if is_list(args_ast), do: length(args_ast), else: :dynamic
-    ownership_call(module, name, arity, meta[:line] || 1, functions)
+    ownership_call(module, name, arity, line, function)
   end
 
-  defp ownership_call(nil, _name, _arity, _line, _functions), do: nil
+  defp ownership_call(nil, _name, _arity, _line, _function), do: nil
 
-  defp ownership_call(module, name, arity, line, functions) do
+  defp ownership_call(module, name, arity, line, function) do
     if forbidden_ownership_call?(module, name) do
       %{
         module: module,
         call: {name, arity},
         line: line,
-        function: enclosing_function(functions, line)
+        function: function
       }
     end
   end
