@@ -183,6 +183,7 @@ inside itself.
 ## Final re-review correction
 
 Commit `6379ab19b` closes the final ownership and verification findings.
+Commit `fc393f09c` adds the explicit missing-worktree-registration proof test.
 
 - Workspace completion now uses the provision row's prebound
   `creation_attempt_id` and verifies that exact inventory fact. A later inventory
@@ -206,6 +207,7 @@ behavior. GREEN observed Agent TemplateSpawn `14/0`, focused Workspace `66/0`,
 adopted TemplateSpawn integration `15/0`, and the fresh full Workspace suite
 `319 tests, 0 failures`. Full Agent remained `154 tests, 1 failure` at the same
 pre-existing ReadyGate/DLQ observation race.
+The final isolated GitRunner file observed `28 tests, 0 failures`.
 
 The five fresh static gates observed: doc `404/404` pass; invariant and lifecycle
 pass; architecture failed only `oversized_modules_gt_1000` at `5/4`; URI-query
