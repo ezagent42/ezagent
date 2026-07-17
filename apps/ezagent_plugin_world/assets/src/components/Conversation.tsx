@@ -1,6 +1,7 @@
 import React from "react"
 import {Bug, Cable, CheckCircle2, ChevronUp, Copy, ExternalLink, LayoutGrid, Link2, Loader2, MessageSquare, MoreHorizontal, Paperclip, PanelTop, Plus, RotateCcw, Route, Send, Sparkles, SquareKanban, TerminalSquare, Upload, UserMinus, UserPlus, Users, X} from "lucide-react"
 
+import {type ActionableError, ActionableErrorCard} from "./ActionableErrorCard"
 import {Button, Input, Modal, Select} from "./ui/primitives"
 import {JsonRenderBubble} from "./JsonRenderBubble"
 import {Kanban, type KanbanState} from "./Kanban"
@@ -19,6 +20,7 @@ type MessageRow = {
   sender_display?: string | null
   sender_kind?: string | null
   text?: string | null
+  actionable_error?: ActionableError | null
   // Optional json-render node tree — a table/card shown inline in the bubble.
   render?: unknown
   // Optional per-card CSS theme (a user's explicit style ask), scoped to the card.
@@ -900,7 +902,8 @@ export function Conversation({
                           </span>
                         )}
                       </div>
-                      {message.text && <p className={bubbleTextClass(mine, kind)}>{message.text}</p>}
+                      {message.text && !message.actionable_error && <p className={bubbleTextClass(mine, kind)}>{message.text}</p>}
+                      {message.actionable_error && <ActionableErrorCard error={message.actionable_error} />}
                       {message.render != null && typeof message.render === "object" && (
                         <JsonRenderBubble
                           spec={message.render}

@@ -161,9 +161,14 @@ defmodule Ezagent.ActionSet.CurlAgentTest do
 
       ctx = %{
         read: fn
-          :max_history, _ -> 20
-          :conversation, _ -> [%{role: "user", content: "earlier"}, %{role: "assistant", content: "ok"}]
-          _, d -> d
+          :max_history, _ ->
+            20
+
+          :conversation, _ ->
+            [%{role: "user", content: "earlier"}, %{role: "assistant", content: "ok"}]
+
+          _, d ->
+            d
         end,
         self_uri: agent_uri,
         caller: session_uri
@@ -178,7 +183,9 @@ defmodule Ezagent.ActionSet.CurlAgentTest do
       assert {:ok, %{ok: true, tokens: 8}, effects} =
                CurlAgent.handle_sync_result(args, ctx)
 
-      assert {:set, :last_tokens, ^usage} = Enum.find(effects, &match?({:set, :last_tokens, _}, &1))
+      assert {:set, :last_tokens, ^usage} =
+               Enum.find(effects, &match?({:set, :last_tokens, _}, &1))
+
       assert {:set, :last_error, nil} in effects
 
       {:set, :conversation, conv} = Enum.find(effects, &match?({:set, :conversation, _}, &1))
@@ -226,8 +233,49 @@ defmodule Ezagent.ActionSet.CurlAgentTest do
       dispatches = Enum.filter(effects, &match?({:dispatch, _}, &1))
       assert [{:dispatch, %Ezagent.Cmd{} = cmd}] = dispatches
       assert cmd.action == :send
-      assert %Ezagent.Message{body: %{text: text}} = cmd.args.message
+      assert %Ezagent.Message{body: %{text: text, actionable_error: error}} = cmd.args.message
       assert text =~ "no API key for provider `deepseek`"
+      assert error["code"] == "agent.credentials_missing"
+      assert error["layer"] == 1
+      assert error["action"]["href"] =~ "/identities/agents/"
+      assert error["action"]["href"] =~ "/api-keys"
+    end
+  end
+
+  describe "handle_sync_result/2 — configured upstream failures" do
+    test "classifies unauthorized, quota, timeout and unknown replies without parsing prose" do
+      agent_uri = Ezagent.URI.new!("entity://team-alpha/agent/curl_failures")
+      session_uri = Ezagent.URI.new!("session://team-alpha/default/main")
+
+      ctx = %{
+        read: fn
+          :max_history, _ -> 20
+          :conversation, _ -> []
+          _, default -> default
+        end,
+        self_uri: agent_uri
+      }
+
+      cases = [
+        {{:http, 401, ""}, "agent.request_unauthorized", 2},
+        {{:http, 429, ""}, "agent.provider_quota_exceeded", 2},
+        {{:transport, :timeout}, "agent.network_timeout", 1},
+        {{:decode, :invalid_json}, "agent.unclassified_failure", 3}
+      ]
+
+      for {reason, code, layer} <- cases do
+        args = %{
+          result: {:error, reason},
+          source_session: session_uri,
+          user_text: "hello"
+        }
+
+        assert {:ok, %{ok: false}, effects} = CurlAgent.handle_sync_result(args, ctx)
+        assert {:dispatch, %Ezagent.Cmd{} = cmd} = Enum.find(effects, &match?({:dispatch, _}, &1))
+        assert %{actionable_error: error} = cmd.args.message.body
+        assert error["code"] == code
+        assert error["layer"] == layer
+      end
     end
   end
 

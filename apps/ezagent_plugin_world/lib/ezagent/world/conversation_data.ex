@@ -496,6 +496,7 @@ defmodule Ezagent.World.ConversationData do
       "sender_display" =>
         Map.get(display_map, sender_str) || Ezagent.EntityPresenter.display(sender_str),
       "sender_kind" => sender_kind(sender_str),
+      "actionable_error" => Ezagent.Message.Body.actionable_error(msg.body),
       "text" => body_text(msg.body),
       # Optional json-render node tree — when present the world bubble renders it
       # with the json-render engine (like the preview), not plain text. `render_css`

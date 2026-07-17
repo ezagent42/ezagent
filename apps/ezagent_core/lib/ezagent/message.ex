@@ -59,7 +59,8 @@ defmodule Ezagent.Message do
 
   @type body_shape :: %{
           required(:text) => String.t(),
-          required(:attachments) => [URI.t()]
+          required(:attachments) => [URI.t()],
+          optional(:actionable_error) => map()
         }
 
   @type t :: %__MODULE__{

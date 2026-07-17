@@ -25,6 +25,12 @@ defmodule Ezagent.Message.Body do
   def body_attachments(%{"attachments" => list}) when is_list(list), do: list
   def body_attachments(_), do: []
 
+  @doc "The body's structured actionable error, or nil when absent."
+  @spec actionable_error(term()) :: map() | nil
+  def actionable_error(%{actionable_error: error}) when is_map(error), do: error
+  def actionable_error(%{"actionable_error" => error}) when is_map(error), do: error
+  def actionable_error(_), do: nil
+
   @doc "The first attachment's `:local_path` (atom- or string-keyed), or `nil` when none/blank."
   @spec first_attachment_path(term()) :: String.t() | nil
   def first_attachment_path([]), do: nil

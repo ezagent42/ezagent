@@ -87,6 +87,7 @@ defmodule Ezagent.ActionSet.CurlAgent do
   require Logger
 
   alias Ezagent.{Cmd, Message}
+  alias Ezagent.Message.ActionableError
 
   action(:reset_conversation,
     args: %{},
@@ -248,16 +249,27 @@ defmodule Ezagent.ActionSet.CurlAgent do
         {:ok, %{ok: true, tokens: usage.total}, effects}
 
       {:error, {:no_api_key, provider}} ->
+        action_href = "/identities/agents/#{maybe_encode_uri(self_uri)}/api-keys"
+
         reply_text =
           "no API key for provider `#{provider}` — please add one at " <>
-            "/identities/agents/#{maybe_encode_uri(self_uri)}/api-keys"
+            action_href
+
+        reply_body =
+          actionable_reply(
+            reply_text,
+            ActionableError.new(:missing_credentials,
+              action_href: action_href,
+              detail: "provider=#{provider}"
+            )
+          )
 
         effects =
           [
             {:set, :conversation,
              current_conv |> append_turn("user", user_text) |> trim(max_history)},
             {:set, :last_error, {:no_api_key, provider}}
-          ] ++ maybe_reply_effect(source_session_uri, self_uri, reply_text, in_msg_id)
+          ] ++ maybe_reply_effect(source_session_uri, self_uri, reply_body, in_msg_id)
 
         {:ok, %{ok: false, error: :no_api_key}, effects}
 
@@ -269,13 +281,14 @@ defmodule Ezagent.ActionSet.CurlAgent do
         end
 
         reply_text = "upstream API error: #{format_error(reason)}"
+        reply_body = actionable_reply(reply_text, actionable_error(reason))
 
         effects =
           [
             {:set, :conversation,
              current_conv |> append_turn("user", user_text) |> trim(max_history)},
             {:set, :last_error, reason}
-          ] ++ maybe_reply_effect(source_session_uri, self_uri, reply_text, in_msg_id)
+          ] ++ maybe_reply_effect(source_session_uri, self_uri, reply_body, in_msg_id)
 
         {:ok, %{ok: false, error: error_kind(reason)}, effects}
     end
@@ -290,17 +303,17 @@ defmodule Ezagent.ActionSet.CurlAgent do
 
   # Build a single `{:dispatch, %Cmd{}}` effect when source session +
   # self URI are both well-formed; otherwise emit nothing.
-  defp maybe_reply_effect(nil, _self_uri, _text, _in_msg_id), do: []
-  defp maybe_reply_effect("", _self_uri, _text, _in_msg_id), do: []
-  defp maybe_reply_effect(_, nil, _text, _in_msg_id), do: []
+  defp maybe_reply_effect(nil, _self_uri, _body, _in_msg_id), do: []
+  defp maybe_reply_effect("", _self_uri, _body, _in_msg_id), do: []
+  defp maybe_reply_effect(_, nil, _body, _in_msg_id), do: []
 
-  defp maybe_reply_effect(session_uri, %URI{} = self_uri, text, in_msg_id) do
+  defp maybe_reply_effect(session_uri, %URI{} = self_uri, body, in_msg_id) do
     case parse_session_uri(session_uri) do
       nil ->
         []
 
       %URI{} = session ->
-        reply_msg = Message.new(self_uri, %{text: text, attachments: []}, ref_id: in_msg_id)
+        reply_msg = Message.new(self_uri, normalize_reply_body(body), ref_id: in_msg_id)
         target = Ezagent.URI.with_action(session, :session, :send)
 
         cmd =
@@ -342,6 +355,14 @@ defmodule Ezagent.ActionSet.CurlAgent do
     end
   end
 
+  defp actionable_reply(text, error),
+    do: %{text: text, attachments: [], actionable_error: error}
+
+  defp normalize_reply_body(text) when is_binary(text), do: %{text: text, attachments: []}
+
+  defp normalize_reply_body(%{text: text} = body) when is_binary(text),
+    do: Map.put_new(body, :attachments, [])
+
   defp parse_session_uri(%URI{scheme: "session"} = u), do: u
 
   defp parse_session_uri(s) when is_binary(s) do
@@ -369,6 +390,27 @@ defmodule Ezagent.ActionSet.CurlAgent do
   defp format_error({:transport, reason}), do: "transport: #{inspect(reason)}"
   defp format_error({:decode, _}), do: "could not decode response"
   defp format_error(other), do: inspect(other)
+
+  defp actionable_error({:http, status, _body}) when status in [401, 403],
+    do: ActionableError.new(:unauthorized, detail: "HTTP #{status}")
+
+  defp actionable_error({:http, 429, _body}),
+    do: ActionableError.new(:quota_exceeded, detail: "HTTP 429")
+
+  defp actionable_error({:transport, reason}) do
+    kind = if timeout_reason?(reason), do: :network_timeout, else: :unknown
+    ActionableError.new(kind, detail: inspect(reason))
+  end
+
+  defp actionable_error(reason),
+    do: ActionableError.new(:unknown, detail: inspect(reason))
+
+  defp timeout_reason?(reason) when reason in [:timeout, :connect_timeout, :checkout_timeout],
+    do: true
+
+  defp timeout_reason?(%{reason: reason}), do: timeout_reason?(reason)
+  defp timeout_reason?({reason, _detail}), do: timeout_reason?(reason)
+  defp timeout_reason?(_reason), do: false
 
   # Allen 2026-05-26 — the data owner is the entity URI recorded in the
   # `:api_keys` slice's `:creator_uri`.
