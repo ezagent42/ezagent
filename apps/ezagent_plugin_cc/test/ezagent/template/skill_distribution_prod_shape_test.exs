@@ -26,10 +26,11 @@ defmodule Ezagent.PluginCc.Template.SkillDistributionProdShapeTest do
 
       refs = Ezagent.SkillRegistry.derived_recipe_skill_refs()
       # Membership, not a hand-counted exact list (IC-3): the derived set
-      # follows every plugin's roles/0. The load-bearing invariant is the
-      # next line — bundle == derivation — plus the resolve loop below.
+      # follows every plugin's roles/0. Deployment-level recipe sources may
+      # add bundle refs outside that plugin-derived floor; every derived ref
+      # must still be bundled and resolve below.
       assert @skill_ref in refs
-      assert Ezagent.SkillRegistry.seed_bundle_refs() == refs
+      assert refs -- Ezagent.SkillRegistry.seed_bundle_refs() == []
 
       for ref <- refs do
         assert {:ok, {source_dir, _hash}} = Ezagent.SkillRegistry.resolve(ref)
