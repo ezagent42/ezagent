@@ -87,7 +87,7 @@ config :ezagent_core, Ezagent.Uploads.DownloadToken,
 # orchestrator flavor's ONLY credential is the API-key env var the selected
 # cc-custom catalog profile names — DEEPSEEK_API_KEY for the stock "deepseek"
 # profile (no OAuth, no `.credentials.json`). Its
-# credential pre-check (`Provider.ensure_api_key/1` at `instantiate/3`) runs in
+# credential pre-check (`Provider.ensure_api_key/2` at `instantiate/3`) runs in
 # EVERY env — it is NOT test-stubbed — so keyless CI cannot materialize the
 # orchestrator and the socialware-install lane skips it. A clearly-fake DUMMY
 # key satisfies that pre-flight check WITHOUT ever reaching the network: in

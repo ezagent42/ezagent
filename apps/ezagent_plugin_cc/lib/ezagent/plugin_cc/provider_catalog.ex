@@ -49,7 +49,7 @@ defmodule Ezagent.PluginCc.ProviderCatalog do
     # separate from the open platform: platform keys 401 here and subscription
     # keys 401 there (verified 2026-07-18). Empirically proven values:
     # POST {base}/v1/messages → 200, and a real `claude` turn with this exact
-    # block (design §2.4 local probe).
+    # block (proven 2026-07-18; evidence docs/e2e/2026-07-17/cc-custom-live-proof/05-kimi-coding-lane.md).
     "kimi-coding" => %{
       base_url: "https://api.kimi.com/coding",
       api_key_env: "KIMI_CODING_API_KEY",

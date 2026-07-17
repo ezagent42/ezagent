@@ -97,6 +97,17 @@ shows base URL + model; send `hi`, a normal reply confirms end-to-end.
 Vendor caveats: `/model` menu doesn't list Kimi models; WebFetch tool
 unsupported by the endpoint.
 
+**Two first-party Kimi products (PR-7 discovery, 2026-07-18):** Moonshot
+issues keys from TWO incompatible surfaces — the **open platform**
+(`platform.moonshot.ai` / `.cn`, pay-per-token; base
+`https://api.moonshot.ai/anthropic`) and the **Kimi for Coding subscription**
+(`kimi.com`; base `https://api.kimi.com/coding`). Each surface's keys 401 on
+the other (verified empirically). The lead's placed key is a subscription
+key, so the catalog ships BOTH profiles (`kimi` + `kimi-coding`, §4.1); the
+vendor guide above describes the open-platform surface, and the subscription
+profile's values were proven empirically (`POST /v1/messages` → 200 + a real
+`claude` turn; evidence `docs/e2e/2026-07-17/cc-custom-live-proof/05-kimi-coding-lane.md`).
+
 **Schema consequence:** the env block is per-profile DATA with an open-valued
 static map (Kimi needs two vars DeepSeek doesn't; DeepSeek needs
 `CLAUDE_CODE_EFFORT_LEVEL` Kimi doesn't document). The catalog must not
@@ -254,7 +265,9 @@ New module `Ezagent.PluginCc.ProviderCatalog` — pure data + lookup, no I/O:
 (Values per the current vendor guide, §2.1 — incl. the `[1m]` context tag,
 which is §10 Q1's default answer; the deploy override covers either choice.)
 
-…and the Kimi entry per §2.2. Closed set: `names/0 → ["deepseek", "kimi"]`,
+…and the Kimi entries per §2.2 (open platform `kimi`, plus `kimi-coding`
+for the Kimi for Coding subscription surface discovered in PR-7). Closed
+set: `names/0 → ["deepseek", "kimi", "kimi-coding"]`,
 `fetch/1 → {:ok, profile} | :error`. Profile values overridable via
 `config :ezagent_plugin_cc` (same override pattern as today's
 `:deepseek_base_url` etc., generalized per profile) so a deploy can retarget
