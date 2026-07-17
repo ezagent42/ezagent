@@ -5,6 +5,7 @@ defmodule Ezagent.Entity.AgentTemplateSpawnSandboxMaterializationTest do
   alias Ezagent.Agent.TemplateOverlayTestBehavior
   alias Ezagent.Kind.Template.PreStart
   alias Ezagent.TestSupport.TemplatePreStartProbe
+  alias EzagentDomainAgent.TestSupport.FreshPreStartTemplateClass
   alias EzagentDomainAgent.TestSupport.PreStartTemplateClass
 
   defmodule PreinitializedSandboxTemplate do
@@ -426,6 +427,100 @@ defmodule Ezagent.Entity.AgentTemplateSpawnSandboxMaterializationTest do
 
       assert_receive {:instantiate_called, %{"cwd" => "/authored/cwd"}}
       refute_receive {:pre_start_prepare, _}
+      refute_receive {:pre_start_complete, _, _}
+    end
+  end
+
+  describe "trusted pre-start fresh lifecycle" do
+    setup do
+      unique = System.unique_integer([:positive])
+      flavor = "fresh-pre-start-#{unique}"
+      worker = Ezagent.URI.agent("fresh-pre-start-#{unique}", "worker")
+      spawned_by = Ezagent.URI.user("fresh-pre-start-#{unique}", "owner")
+      workspace = Ezagent.URI.workspace("fresh-pre-start-#{unique}")
+
+      Application.put_env(:ezagent_core, :template_pre_start_test_owner, self())
+      Application.put_env(:ezagent_domain_agent, :fresh_pre_start_owner, self())
+      :ok = PreStart.replace_for_test(TemplatePreStartProbe)
+
+      :ok =
+        Ezagent.AgentFlavorRegistry.register(%{
+          flavor: flavor,
+          kind: Ezagent.Entity.Agent,
+          template_class: FreshPreStartTemplateClass
+        })
+
+      on_exit(fn ->
+        _ = Ezagent.Kind.terminate(worker)
+        :ok = PreStart.replace_for_test(nil)
+        Application.delete_env(:ezagent_core, :template_pre_start_test_owner)
+        Application.delete_env(:ezagent_core, :template_pre_start_prepare_result)
+        Application.delete_env(:ezagent_core, :template_pre_start_complete_result)
+        Application.delete_env(:ezagent_domain_agent, :fresh_pre_start_owner)
+      end)
+
+      %{
+        content: %{flavor: flavor, project_cwd: "/authored/cwd"},
+        instance_uri: worker,
+        owner_uri: spawned_by,
+        workspace_uri: workspace
+      }
+    end
+
+    test "completion observes every helper-owned fresh-spawn obligation", fixture do
+      prepare_success()
+      worker = fixture.instance_uri
+      spawned_by = fixture.owner_uri
+      workspace = fixture.workspace_uri
+
+      Application.put_env(:ezagent_core, :template_pre_start_complete_result, fn ->
+        assert {:ok, _attempt} =
+                 Ezagent.Agent.CreationInventory.find_attempt(worker, workspace)
+
+        assert {:ok, ^spawned_by} = Ezagent.AgentLineage.lookup(worker)
+        assert {:ok, ^workspace} = Ezagent.WorkspaceRegistry.lookup(worker)
+        assert {:ok, _flavor} = Ezagent.AgentFlavorAttributes.get(worker)
+        :ok
+      end)
+
+      assert {:ok, %{workers: [^worker], fresh?: true}} = spawn_with_reference(fixture)
+      assert_receive {:instantiate_called, ^worker}
+      assert_receive {:pre_start_complete, "claim-one", {:ok, %{workers: [^worker]}}}
+      refute_receive {:pre_start_complete, _, _}
+    end
+
+    test "post-spawn failure completes once after the existing rollback", fixture do
+      prepare_success()
+      worker = fixture.instance_uri
+
+      Application.put_env(:ezagent_core, :template_pre_start_complete_result, fn ->
+        assert :error = Ezagent.KindRegistry.lookup(worker)
+        assert :error = Ezagent.AgentLineage.lookup(worker)
+        assert :error = Ezagent.WorkspaceRegistry.lookup(worker)
+
+        assert {:error, :creation_attempt_not_found} =
+                 Ezagent.Agent.CreationInventory.find_attempt(worker, fixture.workspace_uri)
+
+        assert :none = Ezagent.AgentFlavorAttributes.get(worker)
+        :ok
+      end)
+
+      assert {:error,
+              {:behavior_overlay_mount_failed, ^worker, String, {:not_a_behavior, String}}} =
+               TemplateSpawn.spawn_from_template_content(
+                 fixture.content,
+                 worker,
+                 fixture.owner_uri,
+                 fixture.workspace_uri,
+                 pre_start_ref: %{opaque: :reference},
+                 behavior_overlay: [String]
+               )
+
+      assert_receive {:pre_start_complete, "claim-one",
+                      {:error,
+                       {:behavior_overlay_mount_failed, ^worker, String,
+                        {:not_a_behavior, String}}}}
+
       refute_receive {:pre_start_complete, _, _}
     end
   end
