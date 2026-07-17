@@ -97,7 +97,11 @@ defmodule Ezagent.Invariants.CapIssueChokepointTest do
     # under `{:genesis, admin}`: the same power, taken through the front door.
     "scripts/world_e2e_seed.exs" => :issued,
     "scripts/autoservice_tier1_seed.exs" => :issued,
-    "scripts/cc_headless_sdk_sidecar_e2e_seed.exs" => :no_caps
+    "scripts/cc_headless_sdk_sidecar_e2e_seed.exs" => :no_caps,
+    # G5 scenario-B seed (founder + member + keyless curl agent): every cap
+    # goes through `Ezagent.Cap.issue({:genesis, admin}, ...)` — same front
+    # door as the other seed scripts above.
+    "scripts/g5_e2e_seed.exs" => :issued
   }
 
   test "provenance-bearing capability construction allowlist can only shrink" do
