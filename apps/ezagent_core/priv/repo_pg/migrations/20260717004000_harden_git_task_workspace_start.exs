@@ -12,6 +12,7 @@ defmodule EzagentCore.Repo.Migrations.HardenGitTaskWorkspaceStart do
       add :start_lease_until, :utc_datetime_usec
       add :resolved_base_commit, :string
       add :local_branch_ref, :string
+      add :remote_url, :text
     end
 
     create index(:git_task_workspace_provisions, [:status, :start_lease_until],
@@ -69,6 +70,7 @@ defmodule EzagentCore.Repo.Migrations.HardenGitTaskWorkspaceStart do
       remove :start_lease_until
       remove :resolved_base_commit
       remove :local_branch_ref
+      remove :remote_url
     end
   end
 end

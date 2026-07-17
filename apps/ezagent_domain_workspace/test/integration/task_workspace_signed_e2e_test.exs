@@ -1,15 +1,17 @@
 defmodule Ezagent.Workspace.TaskWorkspace.SignedE2ETest do
   use EzagentCore.DataCase, async: false
 
+  alias Ezagent.Kind.Template.PreStart, as: CorePreStart
   alias Ezagent.DomainGit.{RepositoryRef, TaskAccessSupervisor}
   alias Ezagent.DomainGit.WorkspaceProvisionRegistry
   alias Ezagent.Entity.GitTaskAccess
-  alias Ezagent.Workspace.TaskWorkspace.{AgentStart, Provision, Provisioner}
+  alias Ezagent.Workspace.TaskWorkspace.{AgentStart, PreStart, Provision, Provisioner}
 
   setup do
     previous_home = System.get_env("EZAGENT_HOME")
     previous_provisioner = WorkspaceProvisionRegistry.implementation()
     :ok = WorkspaceProvisionRegistry.replace_for_test(Provisioner)
+    :ok = CorePreStart.replace_for_test(PreStart)
 
     root =
       Path.join(System.tmp_dir!(), "task-workspace-e2e-#{System.unique_integer([:positive])}")
@@ -42,6 +44,7 @@ defmodule Ezagent.Workspace.TaskWorkspace.SignedE2ETest do
 
     on_exit(fn ->
       :ok = WorkspaceProvisionRegistry.replace_for_test(nil)
+      :ok = CorePreStart.replace_for_test(nil)
 
       case previous_provisioner do
         {:ok, implementation} -> :ok = WorkspaceProvisionRegistry.register(implementation)
@@ -113,6 +116,37 @@ defmodule Ezagent.Workspace.TaskWorkspace.SignedE2ETest do
     assert Repo.aggregate(Provision, :count) == 0
     assert tree_entries(fixture.root) == before_entries
     refute_receive {:instantiate_called, _}
+  end
+
+  test "commit, branch, and dirty-tree drift each prevent AgentStart instantiate", fixture do
+    for mutation <- [:other_commit, :other_branch, :dirty_file] do
+      context = start_policy(:public)
+      Application.put_env(:ezagent_domain_workspace, :sidecar_gate_test_provenance, context.owner)
+      assert {:ok, ready} = dispatch(context, :provision_workspace)
+      mutate_worktree!(ready.cwd, mutation)
+      agent_uri = Ezagent.URI.agent(context.workspace_name, "worker")
+
+      assert {:error, reason} =
+               AgentStart.start(
+                 %{flavor: fixture.flavor, project_cwd: "/untrusted"},
+                 agent_uri,
+                 context.owner,
+                 context.workspace_uri,
+                 %{
+                   provision_id: ready.provision_id,
+                   task_access_uri: context.task_access_uri,
+                   task_uri: context.task_uri,
+                   generation: ready.generation
+                 }
+               )
+
+      expected =
+        if mutation == :dirty_file, do: :workspace_not_clean, else: :workspace_checkout_mismatch
+
+      assert reason == expected
+      refute_receive {:instantiate_called, _}
+      assert Repo.get_by!(Provision, provision_id: ready.provision_id).status == :cleanup_pending
+    end
   end
 
   defp start_policy(visibility) do
@@ -229,5 +263,26 @@ defmodule Ezagent.Workspace.TaskWorkspace.SignedE2ETest do
   defp git!(cd, args) do
     {_output, 0} = System.cmd("git", args, cd: cd, stderr_to_stdout: true)
     :ok
+  end
+
+  defp mutate_worktree!(cwd, :other_commit) do
+    File.write!(Path.join(cwd, "commit-drift"), "drift\n")
+    git!(cwd, ["add", "commit-drift"])
+
+    git!(cwd, [
+      "-c",
+      "user.name=Fixture",
+      "-c",
+      "user.email=fixture@example.test",
+      "commit",
+      "-m",
+      "commit drift"
+    ])
+  end
+
+  defp mutate_worktree!(cwd, :other_branch), do: git!(cwd, ["checkout", "-b", "other-branch"])
+
+  defp mutate_worktree!(cwd, :dirty_file) do
+    File.write!(Path.join(cwd, "untracked"), "dirty\n")
   end
 end
