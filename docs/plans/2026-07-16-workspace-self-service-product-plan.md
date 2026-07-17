@@ -1,15 +1,14 @@
 # 企业自助开通 workspace：产品化计划
 
-> 2026-07-16 · ruihua（designer）
+> 2026-07-16 · ruihua（designer）· **v2（按 §0 Allen 决策修订）**
 > 基于 Allen 的工程缺口清单（PR #1427）逐条撰写用户旅程、验收标准与优先级排序。
-> G4 含依赖未就绪时的降级/占位方案。
+> **v2 变更：** lead 补入 §0（7 条裁定）→ beta 范围收缩为 G4+G5，G1/G2/G3 降 backlog，
+> G4 不做 stub_grant，G5 升级为通用错误机制，托管 agent 分身架构单独立项。
+> 各 G 段已对齐 §0。
 >
 > **信息来源：** 本计划的事实基础（现状证据、代码位置、冷启动实测结果）全部来自
 > Allen 的缺口清单（基于 main 分支 commit `eb2b56a88` 的冷启动实测 + 静态代码核查）。
 > 未独立验证代码现状；如果缺口清单有过时之处，本计划会继承。
->
-> **产能参考：** 工程效率分析（近 8 周基线）— 人类 ~1.35 人月/月（下界，实际 2.5-4×）；
-> 产品化投入占 ~45%。本计划覆盖的缺口属「产品化」类别，是当前投入主线。
 
 ---
 
@@ -29,36 +28,52 @@
 
 ---
 
-## §1 用户画像与场景前提
+## §1 用户画像与场景前提（按 §0 Allen 决策修订）
 
-| 维度 | 定义 |
-|------|------|
-| **目标用户** | 企业 founder / 首位使用者 — 可能是业务负责人，非技术人员 |
-| **场景** | 浏览器冷启动，**零工程师介入**。从打开登录页开始，一切通过点击和输入完成 |
-| **形态前提** | SaaS 托管共享实例，workspace 分租户，企业用户只接触浏览器面 |
-| **成功定义** | 不靠工程师走完「注册 → 配 key → 发首条消息 → 看到 agent 回复」整链 |
-| **已验证可自助** | 注册表单、建 session、选模板 materialize agent、消息路由与回复闭环、匿名访客公开页 — 这些不在缺口内 |
+| 维度 | 修订前（v1） | **修订后（v2，§0 裁定）** |
+|------|------------|--------------------------|
+| **目标用户** | 企业 founder / 浏览器冷启动、零工程师 | **beta：被 admin 邀请加入 workspace 的企业用户。** workspace 由 admin 手动创建并拉人（决策 ①） |
+| **Agent/Key 模型** | founder 自配 Anthropic/OpenAI key（BYOK） | **托管 agent**：一 agent 服多企业，每 workspace 一个分身。BYOK 仅内部开发者（决策 ③） |
+| **注册方式** | 开放注册 or 邀请制（未定） | **beta 邀请制**。`registration_open`/`invite_code` 机制已存在，只缺 UI（决策 ⑤） |
+| **成功定义** | 不靠工程师走完「注册 → 配 key → agent 回复」 | **beta：admin 手动开通 workspace → cap-signing 就绪后配 key → agent 回复**（决策 ⑦） |
+| **已验证可自助** | 注册表单、建 session、选模板、消息路由、公开页 | 同左，但这些都不在 beta 范围——beta 只验核心闭环 |
 
 ---
 
-## §2 缺口总览（优先级排序）
+## §2 缺口总览（按 §0 重排）
 
-| 阶段 | 优先级 | 缺口 | 用户影响一句话 | 依赖 | 预估工程投入 |
-|------|--------|------|--------------|------|-------------|
-| **第一批** | P0 | G1 注册开关无 UI | 用户根本看不到注册入口 | 无 | ~1-2d |
-| | P0 | G2 邀请码仅 CLI | founder 无法邀请同事 | 无 | ~1-2d |
-| | P0 | G3 workspace 创建无 UI | 产品决策未定：多 workspace 还是单租户？ | 无（但需产品决策） | ~0.5-2d（取决于决策） |
-| **第二批** | P0 | **G4 founder 无权自配 agent API key** ⚠️ | agent 跑不起来，用户卡在核心价值门前 | **cap-signing 线** | ~2-4d（含降级方案） |
-| | P0 | G5 缺 key 失败态不可行动 | agent 坏了但用户不知道为什么、怎么修 | G4（key 能配才有意义） | ~1-2d |
-| **第三批** | P1 | G6 UI 可读性 | 用户面对 UUID 和裸 atom 报错，无法识别和操作 | 无 | ~2-4d |
-| | P1 | G7 onboarding 向导缺失 | 注册后不知道该干什么 | G4（配 key 是 onboarding 核心步） | ~3-5d |
-| **第四批** | P2 | G8 企业资料/KB 导入无 UI | 真实业务数据进不来 | 无 | ~3-5d |
-| | P2 | G9 企业用户文档为零 | 用户遇到问题无自助途径 | 无 | ~2-4d（持续） |
-| | P2 | G10 浏览器 E2E CI 锁定 | 闸门可能被后续 PR 焊回 | 前序缺口落地 | ~3-5d |
+### beta 范围（本次交付）
 
-> **产能校准：** 按人类 1.35 人月/月（下界），产品化 ~45% 投入比例，每月约 **0.6 人月**可用于产品化缺口。
-> 第一批+第二批（P0 核心 5 条，打通注册→配 key→发消息）估计需 **7-14 工程日**（约 0.4-0.7 人月，即 2-4 周日历时间）。
-> 全部 10 条估计需 **18-33 工程日**（约 0.9-1.7 人月，即 1-2 月日历时间）。
+| 优先级 | 缺口 | 一句话 | 依赖 | 说明 |
+|--------|------|--------|------|------|
+| **beta P0** | G4 agent key 配置（cap-signing 路径） | 配 key 是 agent 可用的前提 | **cap-signing 线**（已 SOUND，实现排期中） | 不做 stub_grant（决策 ④）。走正式 cap 路径：entity-caps 签发 `agent:key:write` → founder 配 key → agent 就绪 |
+| **beta P0** | **G5 可行动失败态 surface（升级）** | 用户遇到错误时知道缺什么、找谁 | G4（key 能配、agent 能跑，失败态才有意义） | 决策 ⑥ 升级为**通用可配置错误机制**——不只为「缺 key」这一个 case，而是建一套结构化失败态透给用户的 infrastructure |
+
+### beta 外围（beta 期间由 admin 手动操作，缺口保留但不做 UI）
+
+| 优先级 | 缺口 | 一句话 | 说明 |
+|--------|------|--------|------|
+| backlog | G1 注册开关 UI | 机制已存在（`registration_open`），缺 UI | beta 邀请制，admin 手动管理。自助 UI 推到「规模化自助」阶段（决策 ①⑤） |
+| backlog | G2 邀请码 UI | 机制已存在（`invite_code` + `mix ezagent.invite`），缺 UI | beta 期间 admin 走 CLI 邀请。UI 到规模化阶段再做（决策 ①⑤） |
+| backlog | G3 workspace 创建 | 收敛为文档化「每用户 own ≤1、可被加入多个」 | 不做多 workspace UI 创建。founder 注册即得 workspace 降为非 P0 任务（决策 ①②） |
+
+### beta 外（后续阶段）
+
+| 优先级 | 缺口 | 一句话 | 说明 |
+|--------|------|--------|------|
+| P1（post-beta） | G6 UI 可读性 | UUID/atom/404/矛盾提示 | beta 范围外。beta 期间 admin 可绕过大部分可读性问题 |
+| P1（post-beta） | G7 onboarding 向导 | 注册后无引导 | beta 范围外。admin 手动拉人 + 当面引导 |
+| P2（post-beta） | G8 KB 导入 UI | 真实数据进不来 | beta 范围外 |
+| P2（post-beta） | G9 企业用户文档 | 无自助文档 | beta 范围外 |
+| P2（post-beta） | G10 E2E CI 锁定 | 防回退 | beta 范围外。E2E 场景改锚 beta 闭环（admin 开通 → 配 key → agent 回复） |
+
+### 单独立项
+
+| 项 | 说明 |
+|----|------|
+| **托管 agent 分身架构** | 决策 ③：一 agent 服多企业、每 workspace 一个分身。对接 agent-clone / domain.agent + cap-signing 凭证归属。**非本计划范围** |
+
+> **产能参考：** beta P0（G4 + G5）是两条有依赖的工程线——G4 等 cap-signing 实现（排期中），G5 是新建通用错误机制（无现成 infrastructure）。不适用 v1 的「X 工程日」估算方式——两条都取决于 cap-signing 排期和错误机制设计，而非纯 UI 工作量。
 
 ---
 
@@ -68,7 +83,9 @@
 
 ### G1: 注册开关无 UI
 
-**优先级:** P0（第一批） | **依赖:** 无 | **阶段:** 拆闸门
+**优先级:** backlog（beta 不交付） | **依赖:** 无 | **阶段:** 规模化自助时再做
+
+> **§0 裁定（决策 ①⑤）：** beta 走邀请制，workspace = admin 手动建后拉人。`registration_open` / `registration_require_invite` 机制已存在——只缺 UI，机制不用重造。自助注册 UI 推到「真要规模化自助」阶段。
 
 #### 现状
 
@@ -78,7 +95,7 @@ G1 涉及两个页面、两个角色：
 
 **用户侧 — 关门页（`/register` 未开放时）：** 用户访问注册页，看到「当前未开放注册。」一行纯文字，没有申请入口、没有邀请码入口、没有联系方式的出口。
 
-#### Happy path 旅程
+#### Happy path 旅程（规模化自助阶段启用）
 
 **Admin 操作注册开关（Settings 页面）**
 
@@ -95,26 +112,21 @@ G1 涉及两个页面、两个角色：
 - 「申请注册」按钮 → 提交邮箱 → 「已收到申请，我们会尽快联系你」
 - 或「已有邀请码？」→ 输入邀请码进入注册
 
-**成功终点：** Admin 在 Settings 页面自主控制注册开关；注册关闭时用户有「申请注册」和「邀请码注册」两条出口，不再面对纯文字死胡同。
+#### 验收标准（启用时）
 
-#### 验收标准
-
-- [ ] AC1: `/admin/settings` 页面有 `registration_open` 开关（ON/OFF），admin 点一次即可切换
+- [ ] AC1: `/admin/settings` 页面有 `registration_open` 开关（ON/OFF）
 - [ ] AC2: `/admin/settings` 页面有 `registration_require_invite` 开关
-- [ ] AC3: 注册开放时，未登录用户看到注册入口（按钮 / 链接）
-- [ ] AC4: 注册关闭时，关门页显示申请入口（提交邮箱）+ 邀请码入口，而非纯文字「未开放注册。」
-- [ ] AC5: 申请提交后有反馈（弹窗 / toast），不静默
-- [ ] AC6: 冷启动实测：不靠工程师，admin 能找到并操作注册开关
-
-#### 情绪曲线
-
-😤 挫败（关门页没出口）→ 😊 满意（有申请入口 / 等开放通知）→ 😊 满意（admin 一键开启注册）
+- [ ] AC3: 注册开放时，未登录用户看到注册入口
+- [ ] AC4: 注册关闭时，关门页显示申请入口 + 邀请码入口
+- [ ] AC5: 申请提交后有反馈（弹窗 / toast）
 
 ---
 
 ### G2: 邀请码仅 CLI
 
-**优先级:** P0（第一批） | **依赖:** 无 | **阶段:** 拆闸门
+**优先级:** backlog（beta 不交付） | **依赖:** 无 | **阶段:** 规模化自助时再做
+
+> **§0 裁定（决策 ①⑤）：** beta 邀请制，admin 走 CLI 邀请。`invite_code` + `mix ezagent.invite` 机制已存在——只缺 UI。邀请 UI 推到规模化阶段。
 
 #### 现状（用户视角）
 
@@ -152,7 +164,9 @@ founder 注册完想邀请同事加入 workspace，发现……根本没有界�
 
 ### G3: workspace 显式创建无 UI
 
-**优先级:** P0（第一批） | **依赖:** 无（但需产品决策） | **阶段:** 拆闸门
+**优先级:** backlog（beta 不交付） | **依赖:** 无 | **阶段:** 文档化即可
+
+> **§0 裁定（决策 ①②）：** 每用户 own ≤1 workspace，可被加入多个。founder 注册即得 workspace 降为非 P0 任务。G3 收敛为「文档化单-own 行为」——不做多 workspace 创建 UI。以下用户旅程保留，在规模化阶段或需要开放多 workspace 时启用。
 
 #### 现状（用户视角）
 
@@ -165,7 +179,7 @@ founder 注册完想邀请同事加入 workspace，发现……根本没有界�
 | **A: 明确「一注册一租户」** | 注册即 workspace，不开放 UI 创建 | 简单清晰，但 founder 无法创建多个 workspace（如测试/生产分离） | 最小（文档化现有行为） |
 | **B: 开放 UI 创建** | 在 world 中加 `workspace.create` action + UI | 灵活，但增加管理复杂度 | 中等（需前后端 + cap 模型） |
 
-**建议：** 短期选 **A**（一注册一租户），在注册成功页显式告知「你的 workspace `<name>` 已创建」+ 引导进入。中期再评估是否需要 B。这样不阻塞 G1-G2 的推进节奏。
+**已裁定（§0 决策 ②）：** 每用户 own ≤1 workspace，可被加入多个。不做多 workspace 创建 UI。
 
 #### Happy path 旅程（方案 A：短期）
 
@@ -195,106 +209,93 @@ founder 注册完想邀请同事加入 workspace，发现……根本没有界�
 
 ---
 
-### G4: founder 无权自配 agent API key ⚠️ 有依赖
+### G4: agent key 配置 — 走 cap-signing 正式路径
 
-**优先级:** P0（第二批） | **依赖:** cap-signing 线（agent 授权模型收口） | **阶段:** 核心价值链路
+**优先级:** beta P0 | **依赖:** cap-signing 线（硬依赖，不降级） | **阶段:** 核心价值链路
+
+> **§0 裁定（决策 ③④）：** BYOK/登录仅内部开发者。外部企业用**托管 agent**——一 agent 服多企业、每 workspace 一个分身。**G4 不做 stub_grant**，等 cap-signing 落地后走正式 cap 路径。cap-signing spec 已 SOUND（7 轮评审通过），实现排期中。
 
 #### 现状（用户视角）
 
-界面上的 agent Keys 配置页明明存在，但 founder 点进去操作就报 `:unauthorized`。用户不知道「我已经注册了、创建了 workspace、配了 agent——为什么我无权给我自己的 agent 配 key？」这是一个产品信任问题：连自己的 agent 都控制不了，是这个平台不让我用。
+当前 agent 需要 key 才能调用 AI 模型。但 key 管理的权限路径（`agent.api_key.put`）对 founder 返回 `:unauthorized`。这是架构决策——key 管理权限走 capability，不走 role check，cap-signing 就绪前 founder 无合法的 cap 凭证。
 
-#### 长期路径（cap-signing 就绪后）
+#### Happy path（cap-signing 就绪后）
 
-founder 在 workspace 创建时，entity-caps 自动签发 `agent:key:write` capability（scope: workspace），覆盖 founder 在自己 workspace 下的 key 管理权限。这套路径依赖：
-1. cap-signing 严格签名落地（`feat/cap-strict-capstore` v11 SOUND，实现待排期）
-2. entity-caps 在 workspace 创建事件上触发 `Cap.issue`（grantee = founder）
-3. `agent.api_key.put` action 的 authorize 走 `EntityCaps.load` 验证（而非 role check）
+**Step 1 — Workspace 创建时自动授权。** Admin 创建 workspace → entity-caps 给 founder 签发 `agent:key:write` cap（scope: workspace）。此步在 cap-signing 实现中完成，对用户透明。
 
-#### 短期降级/占位方案（cap-signing 未就绪时）
+**Step 2 — 进入 Agent Keys 页。** founder 在 workspace 设置 → 「Agent Keys」→ 页面正常加载（`EntityCaps.load` 验证通过）。
 
-**核心思路：** 不等到 cap-signing 整条线落地，先打一条临时通道让 founder 能配 key。用 `:stub_grant` telemetry 标记，与现有 stub 模式一致（参考 `authz_check/2` 的 `:stub_grant` 先例）。
+**Step 3 — 填入 key。** founder 选择 provider → 粘贴 key → 点击「验证」。
 
-**具体方案：**
+**Step 4 — 即时校验反馈。** 绿色 ✓「Key 有效，已保存」或红色 ✗「Key 无效：<原因>」。
 
-1. **注册时生成 admin PAT。** founder 注册时，系统自动生成一个 workspace-scoped Personal Access Token（scope: `workspace:admin`），存入 founder 的 credential store。
-2. **Agent Keys 页面向 founder 开放。** 在 `agent.api_key.put` 的 authz 路径上，加一个 `:stub_grant` 分支：如果 caller 是 workspace founder + target workspace 是 caller 自己的 workspace → grant，同时打 `:stub_grant` telemetry 事件。
-3. **用户旅程不变。** founder 进入 Agent Keys 页 → 填入 API key → 验证通过 → agent 可用。用户感知不到 stub_grant 和正式 cap 的区别。
-4. **切换条件。** cap-signing 落地 + entity-caps 在 workspace 创建时签发 `agent:key:write` 给 founder → `agent.api_key.put` 的 authorize 切换到 `EntityCaps.load` 路径 → 移除 `:stub_grant` 分支 → `:stub_grant` telemetry 归零。
+**Step 5 — Agent 可用。** agent 状态变为「就绪」→ 发送消息 → agent 正常回复。
 
-**风险与缓解：**
-
-| 风险 | 缓解 |
-|------|------|
-| stub_grant 期间 founder 权限比最终模型宽 | 范围限于自己 workspace，且 `:stub_grant` telemetry 持续监控，可审计 |
-| 切换时遗忘移除 stub 分支 | `:stub_grant` telemetry 归零 = 切换成功的信号；加入 G10 E2E 验证 |
-| workspace founder 角色变更（转移 founder）时 stub 仍生效 | stub 校验 caller == workspace.original_founder（不可转移字段），而非动态 role |
-
-#### Happy path 旅程（降级方案下的用户体验）
-
-**Step 1 — 进入 Agent Keys 页。** founder 在 workspace 设置 → 「Agent Keys」→ 页面正常加载，不再报 `:unauthorized`。
-
-**Step 2 — 填入 API key。** founder 看到「添加 API Key」表单：选择 provider（Anthropic / OpenAI / …），粘贴 key，点击「验证」。
-
-**Step 3 — 即时校验反馈。** 系统验证 key 有效性 → 绿色 ✓「Key 有效，已保存」或红色 ✗「Key 无效：<具体原因>」。
-
-**Step 4 — Agent 可用。** 回到 agent 页面 → agent 状态从「未配置 key」变为「就绪」→ 发送消息 → agent 正常回复。
-
-**成功终点：** founder 在浏览器里独立完成 agent key 配置，无需工程师介入，agent 能正常回复消息。
+**成功终点：** cap-signing 落地后，founder 在浏览器里独立完成 key 配置，agent 能正常回复。
 
 #### 验收标准
 
-- [ ] AC1: founder 能访问自己 workspace 的 Agent Keys 页面，不报 `:unauthorized`
-- [ ] AC2: founder 能填入 API key 并保存
+- [ ] AC1: cap-signing 实现后，founder 能访问 Agent Keys 页面，不报 `:unauthorized`
+- [ ] AC2: founder 能填入 key 并保存
 - [ ] AC3: key 填入后有即时校验反馈（有效 / 无效 + 原因）
 - [ ] AC4: key 配置成功后，agent 状态变为「就绪」
-- [ ] AC5: `:stub_grant` telemetry 事件在 founder 访问 Agent Keys 页时被触发（可审计）
-- [ ] AC6: 非 founder 的 workspace member 访问 Agent Keys 页仍被正确拒绝
-- [ ] AC7: 冷启动实测：founder 从注册到 agent 正常回复，全流程无 `:unauthorized` 阻断
+- [ ] AC5: 非 founder 的 member 访问 Agent Keys 页被正确拒绝
+- [ ] AC6: 冷启动实测：admin 开通 workspace → founder 配 key → agent 回复，全流程无权限阻断
 
 #### 情绪曲线
 
-😤 挫败（明明有界面却 `:unauthorized`，感觉平台不让我用）→ 😊 顺利（填 key → 验证通过 → agent 能用了）→ 😊 信任（「我能控制我的 agent」）
+😤 挫败（有界面却 `:unauthorized`）→ 😊 顺利（cap-signing 落地 → 配 key → agent 可用）
 
 ---
 
-### G5: 缺 key 失败态不可行动
+### G5: 可行动失败态 surface（升级为通用可配置错误机制）
 
-**优先级:** P0（第二批） | **依赖:** G4（key 能配才有意义） | **阶段:** 核心价值链路
+**优先级:** beta P0 | **依赖:** G4（agent 能跑起来，失败态才有意义） | **阶段:** 核心价值链路
+
+> **§0 裁定（决策 ⑥）：** 现状 `credential_status` 只面向 owner/admin，终端用户只得通用道歉——没有通用可配置的用户侧报错机制。G5 升级：不只做「缺 key」这一个 case，而是建一套**结构化失败态透给用户的 infrastructure**。
 
 #### 现状（用户视角）
 
-用户发送消息给 agent，agent 回复一段通用道歉文案（类似「抱歉，我无法处理这个请求」），**但不告诉用户为什么、缺什么、去哪修**。用户只能猜测：是 agent 坏了？是我问的问题不对？只有 workspace owner/admin 能在另一个页面看到 `credential_status`，普通成员完全没有线索。
+用户发送消息给 agent，agent 回复一段通用道歉文案（类似「抱歉，我无法处理这个请求」），但不告诉用户为什么、缺什么、去哪修。用户只能猜测。`credential_status` 仅 owner + ws-admin 可见，普通成员完全没有线索。更根本的问题：**整个平台没有一套「错误 → 结构化 → 用户可行动」的机制**——agent 缺 key、权限不足、网络超时、配额耗尽……每种失败都是同一句道歉。
 
 #### Happy path 旅程
 
-**Step 1 — 用户发消息给 agent。** 消息发送正常。如果 agent 缺 key → 不走通用道歉文案。
+**Step 1 — Agent 执行失败。** 任何操作失败（缺 key / 权限不足 / 配额耗尽 / 网络超时 / …），agent 不走通用道歉文案。
 
-**Step 2 — agent 回复显式化。** agent 回复：「⚠️ 我还没有配置 API Key，无法调用 AI 模型。请前往 [Agent Keys 设置] 配置 Anthropic / OpenAI API Key。」（含直达链接，可点击跳转）。
+**Step 2 — 结构化错误透出。** agent 回复一条**结构化失败消息**：
+- **发生了什么**（如「未配置 API Key」）
+- **影响**（如「无法调用 AI 模型」）
+- **谁可以修**（如「请联系 workspace founder `<name>`」）
+- **行动入口**（如「前往 Agent Keys 设置」链接，或「发送提醒给 founder」按钮）
 
-**Step 3 — 跳转配置。** 用户点击链接 → 跳转到 Agent Keys 页（如无权限则显示「请联系 workspace founder `<name>` 配置 Agent Key」，并给出一键 @founder 或发送提醒的入口）。
+**Step 3 — 权限感知的行动入口。**
+- 当前用户**有权限修复**（如 founder 看到缺 key）→ 直达修复页面的链接
+- 当前用户**无权限修复**（如普通成员看到缺 key）→ 指名谁能修 + 一键发送提醒
 
-**Step 4 — 配置完成。** founder 配好 key 后，agent 状态自动感知（poll 或 push），用户再次发消息 → agent 正常回复。
+**Step 4 — 通用错误注册机制（infrastructure 层）。** 后端提供可配置的错误码注册表：每个 action/handler 可注册失败码 → 映射到结构化文案（中文 + 英文）→ 前端统一渲染。新 case 只需注册错误码，不用各处手写提示。
 
-**成功终点：** 任何用户遇到 agent 无法回复时，都能从 agent 的回复中知道**缺什么 + 去哪配**，且有一条可操作的路径。
+**成功终点：** 任何用户遇到 agent 失败时，从回复中知道发生了什么 + 谁可以修 + 下一步怎么做。平台新增失败 case 时只需加一条错误码注册，不用改 UI。
 
 #### 验收标准
 
-- [ ] AC1: agent 缺 key 时，回复消息明确说明缺的是什么（API Key），而非通用道歉
-- [ ] AC2: 回复中含直达 Agent Keys 页的链接（可点击跳转）
-- [ ] AC3: 如果当前用户无权配 key（非 founder），回复说明「请联系谁」（指名 founder）+ 可操作入口（一键发送提醒 / @founder）
-- [ ] AC4: key 配置完成后，agent 状态自动更新，无需用户刷新页面
-- [ ] AC5: key 填入时有即时校验反馈（有效/无效/网络错误/格式错误）—— 而非静默保存后 agent 仍不能用
-- [ ] AC6: 冷启动实测：新注册用户在无 key 状态下发消息 → 看到明确指引 → 按指引操作 → agent 最终能回复
+- [ ] AC1: agent 失败时（缺 key / 权限不足 / 配额耗尽 / 网络超时），回复为结构化失败消息（含「发生了什么 + 谁可以修 + 行动入口」），而非通用道歉
+- [ ] AC2: 有权限的用户看到直达修复页面的链接
+- [ ] AC3: 无权限的用户看到「指名谁可以修」+ 一键发送提醒入口
+- [ ] AC4: 后端有错误码注册机制——新增失败 case = 注册一条错误码，无需改前端
+- [ ] AC5: 错误消息支持中文（beta 范围）
+- [ ] AC6: 冷启动实测：普通成员在 agent 失败时能理解发生了什么 + 知道找谁修
 
 #### 情绪曲线
 
-😤 困惑（agent 不说话，不知道为什么）→ 😌 明白（agent 告诉了我缺什么 + 去哪配）→ 😊 解决（配好 key，agent 能用了）
+😤 困惑（agent 不说话，不知道为什么）→ 😌 明白（agent 告诉我缺什么 + 找谁能修）→ 😊 解决（找到 founder → 配好 key → agent 能用了）
 
 ---
 
 ### G6: UI 可读性
 
-**优先级:** P1（第三批） | **依赖:** 无 | **阶段:** 体验打磨
+**优先级:** P1（post-beta） | **依赖:** 无 | **阶段:** beta 后体验打磨
+
+> **§0 裁定（决策 ⑦）：** beta 范围 = admin 手动开通 + 配 key → agent 回复。UI 可读性在 beta 外——beta 期间 admin 可绕过大部分可读性问题（admin 认识 UUID、理解 atom）。以下用户旅程保留，post-beta 启用。
 
 #### 现状（用户视角）
 
@@ -361,7 +362,9 @@ founder 在 workspace 创建时，entity-caps 自动签发 `agent:key:write` cap
 
 ### G7: onboarding 向导 + 应用 gallery 缺失
 
-**优先级:** P1（第三批） | **依赖:** G4（配 key 是 onboarding 核心步） | **阶段:** 体验打磨
+**优先级:** P1（post-beta） | **依赖:** G4 | **阶段:** beta 后体验打磨
+
+> **§0 裁定（决策 ⑦）：** beta 范围外——beta 用户由 admin 手动拉入 + 当面引导，不需要 onboarding 向导。
 
 #### 现状（用户视角）
 
@@ -401,7 +404,9 @@ founder 在 workspace 创建时，entity-caps 自动签发 `agent:key:write` cap
 
 ### G8: 企业资料/KB 导入无 UI
 
-**优先级:** P2（第四批） | **依赖:** 无 | **阶段:** 业务闭环
+**优先级:** P2（post-beta） | **依赖:** 无 | **阶段:** 业务闭环（beta 后）
+
+> **§0 裁定（决策 ⑦）：** beta 范围外。
 
 #### 现状（用户视角）
 
@@ -439,7 +444,9 @@ founder 在 workspace 创建时，entity-caps 自动签发 `agent:key:write` cap
 
 ### G9: 企业用户文档为零
 
-**优先级:** P2（第四批） | **依赖:** 无 | **阶段:** 业务闭环
+**优先级:** P2（post-beta） | **依赖:** 无 | **阶段:** 业务闭环（beta 后）
+
+> **§0 裁定（决策 ⑦）：** beta 范围外。
 
 #### 现状（用户视角）
 
@@ -474,7 +481,9 @@ founder 在 workspace 创建时，entity-caps 自动签发 `agent:key:write` cap
 
 ### G10: 无浏览器级 E2E 锁定
 
-**优先级:** P2（第四批） | **依赖:** 前序缺口落地后 | **阶段:** 防回退
+**优先级:** P2（post-beta） | **依赖:** 前序缺口落地后 | **阶段:** 防回退（beta 后）
+
+> **§0 裁定（决策 ⑦）：** beta 范围外。E2E 场景改锚 beta 闭环：admin 开通 → 配 key → agent 回复。
 
 #### 现状（用户视角）
 
@@ -507,86 +516,58 @@ founder 在 workspace 创建时，entity-caps 自动签发 `agent:key:write` cap
 
 ---
 
-## §4 优先级排序说明
+## §4 优先级排序说明（按 §0 修订）
 
 ### 排序逻辑
 
-按「**用户冷启动能走到第几步**」排列：
+v2 排序基于 §0 Allen 的 7 条裁定，核心变化：**beta 范围 = admin 手动开通 → 配 key（cap-signing 正式路径）→ agent 回复**。
 
-| 用户想做的事 | 被哪个缺口卡住 | 阶段 |
-|-------------|--------------|------|
-| 1. 看到注册入口 | G1 — 关门页没出口 | **第一批：拆闸门** |
-| 2. 邀请同事加入 | G2 — 邀请码无 UI | |
-| 3. 知道自己在哪个 workspace | G3 — workspace 身份不可见 | |
-| 4. 让 agent 能跑起来 | **G4 — 无权配 key** | **第二批：核心价值** |
-| 5. agent 不工作时知道怎么修 | G5 — 失败态不可行动 | |
-| 6. 能识别和管理 agent | G6 — UUID/atom/404 | **第三批：不再迷路** |
-| 7. 知道接下来做什么 | G7 — 无 onboarding | |
-| 8. 导入真实业务数据 | G8 — KB 无 UI | **第四批：真实使用** |
-| 9. 遇到问题能自己解决 | G9 — 无用户文档 | |
-| — 团队防回退 | G10 — 无 E2E 锁定 | |
+| 用户想做的事 | 对应缺口 | beta 状态 |
+|-------------|---------|-----------|
+| 1. Admin 能开通 workspace 并拉人 | G1/G2/G3 机制已存在，缺 UI | **backlog**（beta 由 admin 手动操作） |
+| 2. Founder 能配 key，agent 能跑 | **G4 — cap-signing 正式路径** | **beta P0** |
+| 3. 遇到失败知道缺什么、找谁 | **G5 — 通用错误机制** | **beta P0** |
+| 4. 界面能看懂 | G6 — UI 可读性 | post-beta |
+| 5–9. 导入数据 / 自助文档 / E2E… | G7–G10 | post-beta |
 
-### 为什么 G4 在第二批而非第一批
+### v1 → v2 关键变化
 
-G4 依赖 cap-signing 线。即使降级方案就位，也需要 2-4d 工程投入。而 G1/G2/G3 都是无依赖、低投入（1-2d each）的纯 UI 缺口——先拆这些闸门，用户可以「进门」（能注册 + 能邀请人 + 感知 workspace）。进门后再解决「做事」（配 key → 发消息 → 看价值）。
+| v1 假设 | v2 裁定 | 影响 |
+|---------|---------|------|
+| 企业用户浏览器冷启动自助注册 | beta = admin 手动建 workspace + 邀请制 | G1/G2/G3 移出 beta P0 |
+| Founder 自配 BYOK（Anthropic/OpenAI key） | 托管 agent，一 agent 服多企业、每 workspace 一个分身 | BYOK 仅内部开发者；外部企业不配 key |
+| G4 做 stub_grant 降级 | 不做 stub，等 cap-signing 正式路径 | G4 是硬依赖，不降级 |
+| G5 = agent 缺 key 的友好提示 | G5 = 通用可配置错误机制（infrastructure） | 范围升级：从单 case → 平台级能力 |
+| 10 条缺口 4 批排期 | beta 只含 G4+G5 两条 | 投入焦点大幅收窄 |
 
 ### 工程效率参考
 
-| 参考维度 | 数值 | 对规划的指导 |
-|---------|------|------------|
-| 人类月均投入（下界） | ~1.35 人月/月 | 全队每人月可用于产品化缺口的约 0.6 人月 |
-| 实际人类投入（估计） | 2.5-4 人月/月 | 单个缺口（1-2d）在多人并行下可快速收敛 |
-| 产品化占比 | ~45% | 这批缺口天然属于产品化类别，与当前投入结构吻合 |
+v1 的产能估算（人类 1.35 人月/月下界、产品化 ~45%）不再适用于 v2——beta P0 的两条（G4 + G5）都不是纯 UI 工作：
+- **G4** 依赖 cap-signing 实现（排期中，不是本计划能估的）
+- **G5** 是新建通用错误 infrastructure（无现成机制，需设计 + 实现）
 
-> 注意：以上数字为**聚合层面产能参考**，不用于排定「哪天做完哪条」的精确时间表。实际排期由 lead 统筹各 track 后定。
+实际排期由 lead 统筹 cap-signing 实现排期 + G5 设计评审后定。
 
 ---
 
-## §5 G4 降级方案详述
+## §5 G4 降级方案 — 已废弃
 
-### 依赖链
+> **§0 裁定（决策 ④）：G4 不做 stub_grant。** 原 v1 的「Founder PAT Auto-Provision + Stub Grant」降级方案被否决。G4 走 cap-signing 正式路径（spec 已 SOUND，7 轮评审通过，实现排期中）。cap-signing 落地前 G4 为硬阻塞。本节仅保留作为决策记录。
 
-```
-cap-signing 严格签名 (feat/cap-strict-capstore v11 SOUND, 实现待排期)
-  └─ entity-caps 在 workspace 创建时签发 agent:key:write cap
-       └─ agent.api_key.put 的 authorize 走 EntityCaps.load
-            └─ founder 能配 key ✅
-```
-
-当前状态：cap-signing 的 spec 已 SOUND（v11，11 轮对抗评审），但**实现排期未定**。no-tail 自愈路径已废（#1424 draft 搁置）。严格签名实现可能是数周级的工作。
-
-### 短期降级方案（本计划建议）
-
-**方案名：** Founder PAT Auto-Provision + Stub Grant
-
-**流程：**
-
-1. **注册时**：系统在 `registration.ex` 的 workspace 创建步骤中，自动生成一个 workspace-scoped PAT（scope: `workspace:admin`），存入 founder credential store。
-2. **Agent Keys 访问时**：`agent.api_key.put` 的 authz 路径新增 `:stub_grant` 分支：
-   - 条件：`caller == workspace.original_founder AND target_workspace == caller.workspace`
-   - 行为：grant → 打 `:stub_grant` telemetry（`[:ezagent, :authz, :stub_grant]`）
-   - 非 founder 的访问仍走原路径（正确拒绝）
-3. **切换时**：cap-signing 落地后 → entity-caps 签发 `agent:key:write` 给 founder → authz 切换到 `EntityCaps.load` → 移除 stub 分支 → `:stub_grant` telemetry 归零 = 切换确认信号。
-
-### 为什么不直接修 role check
-
-当前 authz 模型的 role check 有意不覆盖 key 管理——这是架构决策，不是 bug。直接加 role check 会让「key 管理权限」的语义散落在两处（role + cap），增加后续清理难度。stub_grant 的优点是：
-- **显式标记为临时**：`:stub_grant` telemetry 本身就是「这个分支待移除」的标记
-- **对齐最终模型**：stub_grant 的语义是「模拟 cap」，而非「新增 role 规则」
-- **可审计**：每次 stub_grant 触发都记录，切换后归零 = 证据
+v1 降级方案摘要（已否决，仅供参考）：注册时自动生成 workspace-scoped PAT → `agent.api_key.put` 加 `:stub_grant` 分支 → cap-signing 落地后切换。否决理由：cap-signing 已 SOUND 且排期中，不值得为临时路径增加 authz 复杂度。stub_grant 的语义污染（临时分支 → 遗忘 → 变成生产债务）风险高于等待 cap-signing 的成本。
 
 ---
 
 ## §6 验证 Checklist
 
 - [ ] 每条缺口有「用户旅程」（Step 1 → Step N，描述用户做什么 + 系统响应什么）
-- [ ] 每条缺口有「验收标准」（逐条可验证的 AC，含冷启动实测视角）
-- [ ] 每条缺口有「优先级」（P0/P1/P2）和「阶段归属」（第一批/第二批/第三批/第四批）
-- [ ] 每条缺口有「依赖标注」（无 / 依赖哪个缺口 / 依赖外部线）
-- [ ] G4 含长期路径 + 短期降级方案 + 切换条件 + 风险与缓解
-- [ ] 优先级排序有明确的「用户走到第几步」逻辑
-- [ ] 工程效率分析作为产能参考被引用（附读数纪律）
-- [ ] G0 标注为运营侧，不写用户旅程
+- [ ] 每条缺口有「验收标准」（逐条可验证的 AC）
+- [ ] 每条缺口有「优先级」（beta P0 / backlog / post-beta）和「依赖标注」
+- [ ] G4 走 cap-signing 正式路径（不做 stub_grant）
+- [ ] G5 升级为通用可配置错误机制（非仅缺 key case）
+- [ ] G1/G2/G3 标为 backlog，注明「机制已存在、缺 UI」
+- [ ] 托管 agent 分身架构单独立项（不在本计划范围）
+- [ ] §0 Allen 决策修订作为本计划的权威覆盖
 
 ---
 
@@ -594,18 +575,20 @@ cap-signing 严格签名 (feat/cap-strict-capstore v11 SOUND, 实现待排期)
 
 | 项 | 原因 |
 |----|------|
-| G0（bootstrap 断点） | 运营侧缺口，目标用户不是企业用户；用户旅程不适用 |
+| G0（bootstrap 断点） | 运营侧缺口，目标用户不是企业用户 |
+| 托管 agent 分身架构 | 决策 ③ 单独立项，对接 agent-clone / domain.agent |
 | 组织/中枢-成员层级 | 单企业自助不需要（原缺口清单已标注） |
 | 计费/配额/运营 dashboard | 归商业化/稳定性轨道 |
 | self-host 自助安装器 | 归中枢客户交付轨道 |
 | UI 开发实施 | designer track 做产品计划，不写代码 |
 | #1388 DealScout 合并 | 等 lead 操作 |
-| W29 demo 产品完善 | 周目标已变更为 dev-loop 自举 |
 
 ---
 
 ## §8 下一步
 
-1. **本计划交 lead review** — 确认优先级排序和 G4 降级方案是否与工程现实对齐
-2. **与 zyli UI 对齐** — 拿本计划中的 G6（UI 可读性）和 G7（onboarding）作为 UI 优先级的讨论起点
-3. **G3 产品决策** — lead 拍板「一注册一租户」vs「开放 UI 创建」，锁定后 G3 的验收标准可去重
+1. **本计划交 lead 确认** — §0 已由 lead 直接补入并裁定，本次修订将各 G 段对齐 §0。确认后本计划可锁版
+2. **G4 不单独行动** — 等 cap-signing 实现排期，不发明降级路径
+3. **G5 通用错误机制** — 需要独立的设计评审（错误码注册表 schema + 前端渲染契约 + 首批注册的错误码清单）。本计划中的用户旅程和 AC 可作为需求输入
+4. **G6 UI 可读性** — 虽然 post-beta，但和 zyli 的 UI 对齐可以基于 G6 的 5 个痛点讨论（痛点本身不受 beta 范围影响）
+5. **托管 agent 分身架构** — 单独立项，不在本计划内追踪
