@@ -32,6 +32,8 @@ defmodule Ezagent.DomainGit.D0BackendReuseGate.Types do
     :operation_grant_missing,
     :operation_grant_invalid,
     :operation_not_permitted,
+    :request_plan_invalid,
+    :provider_response_invalid,
     :lease_not_found,
     :lease_expired,
     :lease_already_consumed,
