@@ -25,11 +25,6 @@ defmodule EzagentCore.Application do
         # domain when an authoritative preparation implementation is present.
         Ezagent.Kind.Template.PreStart,
 
-        # Runtime-only, one-use transport for authority-bearing Kind launch
-        # context. Child specs retain only an opaque token; the first init
-        # consumes the context so permanent restarts cannot replay it.
-        Ezagent.Kind.LaunchContextStore,
-
         # ② stdlib Registry for URI → pid (Ezagent.KindRegistry wraps this).
         {Registry, keys: :unique, name: Ezagent.KindRegistry},
 

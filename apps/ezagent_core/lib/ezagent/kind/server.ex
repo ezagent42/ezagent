@@ -108,10 +108,10 @@ defmodule Ezagent.Kind.Server do
     uri = Map.fetch!(args, :uri)
     uri_str = URI.to_string(uri)
 
-    {launch_context, args} =
-      case Map.pop(args, :launch_context_token) do
-        {nil, args} -> {:absent, args}
-        {token, args} -> {Ezagent.Kind.LaunchContextStore.take(token), args}
+    {launch_context, launch_context_relay, args} =
+      case Map.pop(args, :launch_context_relay) do
+        {nil, args} -> {:absent, nil, args}
+        {relay, args} -> {Ezagent.Kind.LaunchContextRelay.take(relay), relay, args}
       end
 
     hook_args =
@@ -124,7 +124,7 @@ defmodule Ezagent.Kind.Server do
 
     with hook_args when is_map(hook_args) <- hook_args,
          :ok <- run_before_start(kind_module, hook_args) do
-      init_after_before_start(kind_module, args, uri, uri_str)
+      init_after_before_start(kind_module, args, uri, uri_str, launch_context_relay)
     else
       {:error, :launch_context_lost} -> {:stop, :launch_context_lost}
       {:error, reason} -> {:stop, {:before_start_failed, reason}}
@@ -139,7 +139,7 @@ defmodule Ezagent.Kind.Server do
     end
   end
 
-  defp init_after_before_start(kind_module, args, uri, uri_str) do
+  defp init_after_before_start(kind_module, args, uri, uri_str, launch_context_relay) do
     # #108 — the snapshot READ is a DB access too; `Snapshot.safe_load_or_init/3`
     # surfaces sandbox-owner-death (OwnershipError/:exit) as a clean `{:stop,…}`
     # instead of an uncaught init crash, symmetric with the WRITE
@@ -163,6 +163,9 @@ defmodule Ezagent.Kind.Server do
             uri: uri,
             state: slice_state,
             authority: authority,
+            # Framework-only retained launch receipt. It is an inert pid after
+            # the first take and never enters Behavior args or persisted state.
+            launch_context_relay: launch_context_relay,
             post_init_queue: post_init_queue,
             # #533 5a (§3.10.3) — the authenticated creator, threaded as a
             # create-arg exactly like Session's `owner_uri`. `nil` on rehydrate
@@ -199,6 +202,10 @@ defmodule Ezagent.Kind.Server do
               case persist_initial_snapshot(uri, kind_module, slice_state) do
                 :ok ->
                   schedule_periodic_snapshot(kind_module)
+
+                  if launch_context_relay,
+                    do: :ok = Ezagent.Kind.LaunchContextRelay.commit(launch_context_relay)
+
                   {:ok, state, {:continue, :announce_ready}}
 
                 {:error, reason} ->
@@ -588,6 +595,10 @@ defmodule Ezagent.Kind.Server do
   def handle_call(:ezagent_runtime_view, _from, state) do
     view = Map.take(state, [:kind, :uri, :state])
     {:reply, {:ok, view}, state}
+  end
+
+  def handle_call(:ezagent_launch_context_relay, _from, state) do
+    {:reply, Map.get(state, :launch_context_relay), state}
   end
 
   # PR-OWN-2 (caps-data-ownership SPEC #306 §7) — read a single

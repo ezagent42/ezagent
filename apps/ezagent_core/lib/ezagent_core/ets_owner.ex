@@ -46,7 +46,6 @@ defmodule EzagentCore.EtsOwner do
     {Ezagent.RoutingRegistry, :set},
     {Ezagent.SpawnRegistry, :set},
     {Ezagent.TemplateRegistry, :set},
-    {Ezagent.Kind.LaunchContextStore, :set},
     # role-as-data (SPEC §3): `Ezagent.Agent.RecipeRegistry`'s ETS cache moved to
     # `EzagentDomainAgent.EtsOwner`. The registry now resolves read-through over
     # `Ezagent.Socialware.ConfigStore` (an `ezagent_domain_identity` concern), so

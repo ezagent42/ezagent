@@ -393,14 +393,14 @@ defmodule Ezagent.Kind do
   end
 
   defp do_spawn_with_strategy(kind_module, params, opts, strategy) do
-    {params, launch_token} =
+    {params, launch_relay} =
       case Keyword.fetch(opts, :launch_context) do
         :error ->
           {params, nil}
 
         {:ok, launch_context} ->
-          token = Ezagent.Kind.LaunchContextStore.issue(launch_context)
-          {Map.put(params, :launch_context_token, token), token}
+          relay = Ezagent.Kind.LaunchContextRelay.issue(launch_context)
+          {Map.put(params, :launch_context_relay, relay), relay}
       end
 
     try do
@@ -460,7 +460,7 @@ defmodule Ezagent.Kind do
 
       result
     after
-      if launch_token, do: Ezagent.Kind.LaunchContextStore.discard(launch_token)
+      if launch_relay, do: Ezagent.Kind.LaunchContextRelay.discard(launch_relay)
     end
   end
 
@@ -572,12 +572,15 @@ defmodule Ezagent.Kind do
 
     with {:ok, pid} <- Ezagent.KindRegistry.lookup(uri),
          {:ok, kind_module} <- safe_kind_module(pid) do
+      launch_context_relay = safe_launch_context_relay(pid)
+
       case terminate_strategy(kind_module) do
         :standard ->
           supervisor = resolve_supervisor(kind_module)
 
           case DynamicSupervisor.terminate_child(supervisor, pid) do
             :ok ->
+              discard_launch_context_relay(launch_context_relay)
               :ok
 
             {:error, :not_found} ->
@@ -608,6 +611,18 @@ defmodule Ezagent.Kind do
     _ -> :ok
   catch
     _, _ -> :ok
+  end
+
+  defp safe_launch_context_relay(pid) do
+    GenServer.call(pid, :ezagent_launch_context_relay)
+  catch
+    :exit, _reason -> nil
+  end
+
+  defp discard_launch_context_relay(nil), do: :ok
+
+  defp discard_launch_context_relay(relay) do
+    Ezagent.Kind.LaunchContextRelay.force_discard(relay)
   end
 
   defp terminate_strategy(kind_module) do
