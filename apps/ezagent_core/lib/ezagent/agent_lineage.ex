@@ -114,6 +114,38 @@ defmodule Ezagent.AgentLineage do
     :ok
   end
 
+  @doc "Persist an exact lineage fact through the caller's Repo without updating ETS."
+  @spec record_exact(module(), URI.t() | String.t(), URI.t() | String.t()) ::
+          {:ok, :inserted | :exists} | {:error, :lineage_conflict}
+  def record_exact(repo, agent_uri, spawned_by) when is_atom(repo) do
+    a = uri_to_str(agent_uri)
+    s = uri_to_str(spawned_by)
+
+    case repo.insert_all(
+           __MODULE__,
+           [%{agent_uri: a, spawned_by: s, inserted_at: DateTime.utc_now()}],
+           on_conflict: :nothing,
+           conflict_target: [:agent_uri]
+         ) do
+      {1, _} ->
+        {:ok, :inserted}
+
+      {0, _} ->
+        case repo.get(__MODULE__, a) do
+          %__MODULE__{spawned_by: ^s} -> {:ok, :exists}
+          %__MODULE__{} -> {:error, :lineage_conflict}
+          nil -> {:error, :lineage_conflict}
+        end
+    end
+  end
+
+  @doc "Publish a committed lineage fact to the ETS read cache."
+  @spec publish_cache(URI.t() | String.t(), URI.t() | String.t()) :: :ok
+  def publish_cache(agent_uri, spawned_by) do
+    :ets.insert(@table, {uri_to_str(agent_uri), uri_to_str(spawned_by)})
+    :ok
+  end
+
   @doc """
   Look up the direct spawner of `agent_uri`. Returns
   `{:ok, %URI{} = spawned_by_uri}` or `:error`.
