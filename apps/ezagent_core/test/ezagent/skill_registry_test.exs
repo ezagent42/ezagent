@@ -45,11 +45,16 @@ defmodule Ezagent.SkillRegistryTest do
     assert derived == derived |> Enum.uniq() |> Enum.sort()
   end
 
-  test "seed_bundle_refs/0 matches the derived runtime skill set" do
+  test "seed_bundle_refs/0 covers the plugin-derived runtime skill set" do
     registry = registry!()
 
     assert @skill_ref in registry.seed_bundle_refs()
-    assert registry.seed_bundle_refs() == registry.derived_recipe_skill_refs()
+
+    # Deployment-level recipe sources (for example socialware seed recipes)
+    # may require bundled skills without declaring them through a plugin's
+    # roles/0 callback. Plugin-derived refs therefore form the required floor,
+    # not the complete bundle.
+    assert registry.derived_recipe_skill_refs() -- registry.seed_bundle_refs() == []
   end
 
   test "resolve/1 reads the runtime origin after an explicit scan" do
