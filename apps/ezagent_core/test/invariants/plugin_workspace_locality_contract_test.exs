@@ -10,6 +10,8 @@ defmodule EzagentCore.Invariants.PluginWorkspaceLocalityContractTest do
 
   use ExUnit.Case, async: true
 
+  alias EzagentCore.TestSupport.LegacyDynamicReceiverBaseline
+
   @forbidden_patterns [
     kind_registry_lookup:
       {~r/(?<![\.\w])(?:Ezagent\.)?KindRegistry\.lookup\s*\(/,
@@ -164,7 +166,15 @@ defmodule EzagentCore.Invariants.PluginWorkspaceLocalityContractTest do
       "for owner <- [String, Ezagent.Agent.CreationInventory], do: owner.arbitrary(value)",
       "configured_module().arbitrary(value)",
       "for owner <- configured_modules(), do: owner.arbitrary(value)",
-      "with {owner, _} <- configured_pair() do owner.arbitrary(value) end"
+      "with {owner, _} <- configured_pair() do owner.arbitrary(value) end",
+      "apply(configured_module(), :record_exact, args)",
+      "owner = configured_module(); apply(owner, :record_exact, args)",
+      "Kernel.apply(configured_module(), :record_exact, args)",
+      "apply(configured_module(), configured_fun(), configured_args())",
+      "def backend, do: Ezagent.Agent.CreationInventory; backend().record_exact(repo, a, b, c, d)",
+      "owner = Application.get_env(:app, :ownership_module); owner.record_exact(repo, a, b, c, d)",
+      "quote do: unquote(owner).record_exact(repo, a, b, c, d)",
+      "owner = configured_module(); owner.rehydrate()"
     ]
 
     for source <- mutants do
@@ -177,6 +187,31 @@ defmodule EzagentCore.Invariants.PluginWorkspaceLocalityContractTest do
       "owner = Ezagent.Agent.CreationInventory\nowner = String\napply(owner, :upcase, [\"ok\"])"
 
     assert ownership_calls(safe_rebind) == []
+  end
+
+  test "legacy dynamic receiver baseline is exact and changed-line ratcheted" do
+    root = repo_root()
+
+    actual =
+      root
+      |> production_plugin_files()
+      |> Enum.flat_map(fn full_path ->
+        path = Path.relative_to(full_path, root)
+
+        full_path
+        |> File.read!()
+        |> ownership_calls()
+        |> Enum.filter(&(&1.module == :unknown_value))
+        |> Enum.map(&legacy_site(path, &1))
+      end)
+      |> Enum.sort()
+
+    assert actual == Enum.sort(LegacyDynamicReceiverBaseline.sites())
+
+    [site | rest] = actual
+    refute site in rest
+    refute put_elem(site, 1, elem(site, 1) + 1) in actual
+    refute put_elem(site, 5, String.duplicate("0", 64)) in actual
   end
 
   test "ownership allowlist is exact by file, enclosing function, module, and call" do
@@ -266,6 +301,7 @@ defmodule EzagentCore.Invariants.PluginWorkspaceLocalityContractTest do
     full_path
     |> File.read!()
     |> ownership_calls()
+    |> Enum.reject(&legacy_receiver_baseline?(path, &1))
     |> Enum.reject(&ownership_allowlisted?(path, &1))
     |> Enum.map(fn call ->
       {path, call.line, :atomic_ownership_access,
@@ -279,8 +315,30 @@ defmodule EzagentCore.Invariants.PluginWorkspaceLocalityContractTest do
     imports = collect_imports(ast, aliases)
     {_env, calls} = ownership_scan(ast, %{}, aliases, imports, {:__module__, 0}, [])
 
-    calls |> Enum.uniq() |> Enum.sort_by(&{&1.line, &1.module, &1.call})
+    lines = String.split(source, "\n")
+
+    calls
+    |> Enum.uniq()
+    |> Enum.map(fn call ->
+      source_line = Enum.at(lines, call.line - 1, "")
+      Map.put(call, :line_fingerprint, sha256(source_line))
+    end)
+    |> Enum.sort_by(&{&1.line, &1.module, &1.call})
   end
+
+  defp legacy_receiver_baseline?(path, %{module: :unknown_value} = call),
+    do: legacy_site(path, call) in LegacyDynamicReceiverBaseline.sites()
+
+  defp legacy_receiver_baseline?(_path, _call), do: false
+
+  defp legacy_site(path, call) do
+    {name, arity} = call.call
+    kind = if name == :__dynamic_apply__, do: :apply, else: :remote
+    {path, call.line, call.function, kind, "#{name}/#{arity}", call.line_fingerprint}
+  end
+
+  defp sha256(value),
+    do: :crypto.hash(:sha256, value) |> Base.encode16(case: :lower)
 
   defp ownership_scan({:__block__, _, nodes}, env, aliases, imports, function, calls) do
     Enum.reduce(nodes, {env, calls}, fn node, {next_env, next_calls} ->
@@ -290,6 +348,8 @@ defmodule EzagentCore.Invariants.PluginWorkspaceLocalityContractTest do
 
   defp ownership_scan({kind, _, [{name, _, args}, body]}, env, aliases, imports, _function, calls)
        when kind in [:def, :defp] and is_atom(name) do
+    env = bind_data_patterns(args || [], env)
+
     {_child_env, calls} =
       ownership_scan(body, env, aliases, imports, {name, length(args || [])}, calls)
 
@@ -305,6 +365,8 @@ defmodule EzagentCore.Invariants.PluginWorkspaceLocalityContractTest do
          calls
        )
        when kind in [:def, :defp] and is_atom(name) do
+    env = bind_data_patterns(args || [], env)
+
     {_child_env, calls} =
       ownership_scan(body, env, aliases, imports, {name, length(args || [])}, calls)
 
@@ -314,7 +376,7 @@ defmodule EzagentCore.Invariants.PluginWorkspaceLocalityContractTest do
   defp ownership_scan({:=, _, [{name, _, context}, rhs]}, env, aliases, imports, function, calls)
        when is_atom(name) and (is_atom(context) or is_nil(context)) do
     {_rhs_env, calls} = ownership_scan(rhs, env, aliases, imports, function, calls)
-    {Map.put(env, name, ownership_value(rhs, env, aliases)), calls}
+    {Map.put(env, name, receiver_value(rhs, env, aliases)), calls}
   end
 
   defp ownership_scan({:<-, _, [pattern, rhs]}, env, aliases, imports, function, calls) do
@@ -323,7 +385,9 @@ defmodule EzagentCore.Invariants.PluginWorkspaceLocalityContractTest do
   end
 
   defp ownership_scan({:fn, _, clauses}, env, aliases, imports, function, calls) do
-    calls = scan_ownership_children(clauses, env, aliases, imports, function, calls)
+    {_child_env, calls} =
+      ownership_clause_join(clauses, env, aliases, imports, function, calls)
+
     {env, calls}
   end
 
@@ -433,12 +497,7 @@ defmodule EzagentCore.Invariants.PluginWorkspaceLocalityContractTest do
          calls
        )
        when is_atom(name) and is_list(args) do
-    module =
-      if match?({:unquote, _, [_]}, module_ast),
-        do: :safe_module,
-        else: ownership_value(module_ast, env, aliases)
-
-    module = module || dynamic_receiver_value(module_ast)
+    module = receiver_value(module_ast, env, aliases)
     call = ownership_call(module, name, length(args), meta[:line] || 1, function)
 
     calls =
@@ -473,6 +532,10 @@ defmodule EzagentCore.Invariants.PluginWorkspaceLocalityContractTest do
       if is_tuple(node), do: Tuple.to_list(node), else: if(is_list(node), do: node, else: [])
 
     {env, scan_ownership_children(children, env, aliases, imports, function, calls)}
+  end
+
+  defp bind_data_patterns(patterns, env) do
+    Enum.reduce(variables_in(patterns), env, &Map.put(&2, &1, :safe_data))
   end
 
   defp ownership_branch_join(branches, env, aliases, imports, function, calls, include_missing?) do
@@ -529,8 +592,16 @@ defmodule EzagentCore.Invariants.PluginWorkspaceLocalityContractTest do
     results =
       Enum.map(clauses, fn
         {:->, _, [patterns, body]} ->
+          binding_patterns =
+            Enum.map(patterns, fn
+              {:when, _, [pattern | _guards]} -> pattern
+              pattern -> pattern
+            end)
+
+          branch_env = bind_data_patterns(binding_patterns, env)
+
           {branch_env, branch_calls} =
-            ownership_scan(patterns, env, aliases, imports, function, calls)
+            ownership_scan(patterns, branch_env, aliases, imports, function, calls)
 
           ownership_scan(body, branch_env, aliases, imports, function, branch_calls)
 
@@ -584,26 +655,23 @@ defmodule EzagentCore.Invariants.PluginWorkspaceLocalityContractTest do
        when is_atom(name) and (is_atom(context) or is_nil(context)),
        do: Map.get(env, name)
 
-  defp ownership_value(module, _env, _aliases) when is_atom(module), do: nil
+  defp ownership_value({{:., _, [{:__aliases__, _, [:Mix]}, :shell]}, _, []}, _env, _aliases),
+    do: :safe_data
+
+  defp ownership_value({{:., _, [receiver, _field]}, _, []}, env, aliases) do
+    if receiver_value(receiver, env, aliases) == :safe_data, do: :safe_data
+  end
+
+  defp ownership_value(value, _env, _aliases)
+       when is_binary(value) or is_number(value) or is_list(value),
+       do: :safe_data
+
+  defp ownership_value(module, _env, _aliases) when is_atom(module), do: module
 
   defp ownership_value(ast, _env, aliases), do: resolve_module(ast, aliases)
 
-  defp dynamic_receiver_value({name, _, context})
-       when is_atom(name) and (is_atom(context) or is_nil(context)),
-       do: nil
-
-  defp dynamic_receiver_value({:__aliases__, _, _}), do: nil
-  defp dynamic_receiver_value({:unquote, _, [_]}), do: :safe_module
-
-  defp dynamic_receiver_value({name, _, args})
-       when name in [:backend, :adapter] and is_list(args),
-       do: :safe_module
-
-  defp dynamic_receiver_value({{:., _, [{:__aliases__, _, [:Mix]}, :shell]}, _, []}),
-    do: :safe_data
-
-  defp dynamic_receiver_value(module) when is_atom(module), do: nil
-  defp dynamic_receiver_value(_expression), do: :unknown_value
+  defp receiver_value(ast, env, aliases),
+    do: ownership_value(ast, env, aliases) || :unknown_value
 
   defp generator_element([value]), do: value
   defp generator_element(values) when is_list(values), do: {:__joined_elements__, [], values}
@@ -657,21 +725,7 @@ defmodule EzagentCore.Invariants.PluginWorkspaceLocalityContractTest do
 
   defp ownership_abstract_value(rhs, env, aliases) do
     resolved = ownership_value(rhs, env, aliases)
-    source = Macro.to_string(rhs)
-
-    cond do
-      resolved ->
-        resolved
-
-      String.contains?(source, [
-        "TemplateResolver.resolve_agent_template_class",
-        "Application.get_env"
-      ]) ->
-        :safe_module
-
-      true ->
-        :unknown_value
-    end
+    resolved || :unknown_value
   end
 
   defp module_abstract?(value) when is_atom(value),
@@ -694,7 +748,7 @@ defmodule EzagentCore.Invariants.PluginWorkspaceLocalityContractTest do
   end
 
   defp dynamic_ownership_call(module_ast, name_ast, args_ast, meta, env, aliases, function) do
-    module = ownership_value(module_ast, env, aliases)
+    module = receiver_value(module_ast, env, aliases)
     name = if is_atom(name_ast), do: name_ast, else: :__dynamic_apply__
     arity = if is_list(args_ast), do: length(args_ast), else: :dynamic
 
@@ -777,8 +831,6 @@ defmodule EzagentCore.Invariants.PluginWorkspaceLocalityContractTest do
 
   defp ownership_call(:unknown, name, arity, line, function),
     do: %{module: :unknown, call: {name, arity}, line: line, function: function}
-
-  defp ownership_call(:unknown_value, _name, 0, _line, _function), do: nil
 
   defp ownership_call(:unknown_value, name, arity, line, function),
     do: %{module: :unknown_value, call: {name, arity}, line: line, function: function}
