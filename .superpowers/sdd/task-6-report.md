@@ -43,3 +43,24 @@ without `instantiate/4` executed its `/3` effect instead of failing closed.
 
 No launch context is serialized, logged, persisted, or inserted into Template
 data. The pre-existing untracked handoff file was preserved and excluded.
+
+## Important review correction after `56da93593`
+
+- The option-aware core wrapper no longer invokes the persistent flavor store
+  or delete hooks before/after `instantiate/4`. Legacy `/3` and option-free
+  behavior retain their existing hook lifecycle unchanged.
+- TemplateSpawn no longer restores an adopted Plan C flavor after the fact or
+  deletes pre-existing flavor state on a Plan C instantiate failure. The only
+  Plan C flavor write remains the fresh final obligation, after exact receipt
+  acceptance, sandbox state, and behavior overlay completion.
+- The adopted regression now probes `AgentFlavorAttributes` from inside the
+  deterministic instantiate barrier. RED observed the requested flavor there;
+  GREEN observes the original `"preexisting-flavor"`, proving no transient
+  losing-attempt write occurred.
+- Plan C test Template Classes start the declared Agent Kind directly because
+  first-start resolution may no longer rely on a prematurely persisted flavor
+  attribute. No implicit process-local resolver channel was added.
+
+Fresh verification: exact Task 6 command `32 tests, 0 failures`; core Template
+plus Task 5 transport regressions `86 tests, 0 failures`; touched files formatted
+and `git diff --check` clean.

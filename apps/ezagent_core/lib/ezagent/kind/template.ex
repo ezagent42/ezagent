@@ -388,7 +388,7 @@ defmodule Ezagent.Kind.Template do
       when is_atom(class_module) and is_map(tmpl_data) and is_list(opts) do
     with :ok <- validate_instantiate_callback(class_module, opts),
          {:ok, data} <- maybe_allocate_config_dir(class_module, tmpl_data),
-         :ok <- maybe_store_agent_flavor(class_module, data) do
+         :ok <- maybe_store_agent_flavor(class_module, data, opts) do
       result =
         case opts do
           [] ->
@@ -406,7 +406,7 @@ defmodule Ezagent.Kind.Template do
           ok
 
         {:error, _reason} = error ->
-          delete_agent_flavor(data)
+          maybe_delete_agent_flavor(data, opts)
           error
       end
     end
@@ -450,7 +450,9 @@ defmodule Ezagent.Kind.Template do
     end
   end
 
-  defp maybe_store_agent_flavor(class_module, tmpl_data) do
+  defp maybe_store_agent_flavor(_class_module, _tmpl_data, launch_context: _context), do: :ok
+
+  defp maybe_store_agent_flavor(class_module, tmpl_data, []) do
     case Map.get(tmpl_data, "agent_uri") do
       s when is_binary(s) and s != "" ->
         s
@@ -461,6 +463,9 @@ defmodule Ezagent.Kind.Template do
         :ok
     end
   end
+
+  defp maybe_delete_agent_flavor(_tmpl_data, launch_context: _context), do: :ok
+  defp maybe_delete_agent_flavor(tmpl_data, []), do: delete_agent_flavor(tmpl_data)
 
   defp delete_agent_flavor(tmpl_data) do
     case Map.get(tmpl_data, "agent_uri") do

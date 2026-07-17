@@ -409,6 +409,7 @@ defmodule Ezagent.Entity.AgentTemplateSpawnSandboxMaterializationTest do
       :ok = Ezagent.AgentFlavorAttributes.put(fixture.instance_uri, "preexisting-flavor")
 
       assert {:error, :sidecar_start_not_fresh} = spawn_with_reference(fixture)
+      assert_receive {:flavor_during_instantiate, {:ok, "preexisting-flavor"}}
       assert_receive {:instantiate_called, data}
       assert data["cwd"] == "/safe/task"
       refute Map.has_key?(fixture.content, :pre_start_ref)

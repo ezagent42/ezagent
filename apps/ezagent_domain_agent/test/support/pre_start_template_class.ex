@@ -24,14 +24,17 @@ defmodule EzagentDomainAgent.TestSupport.PreStartTemplateClass do
 
   defp instantiate_with_opts(data) do
     owner = Application.fetch_env!(:ezagent_domain_agent, :pre_start_test_owner)
+    agent_uri = Ezagent.URI.new!(Map.fetch!(data, "agent_uri"))
+
+    send(owner, {:flavor_during_instantiate, Ezagent.AgentFlavorAttributes.get(agent_uri)})
     send(owner, {:instantiate_called, data})
 
     case Application.get_env(:ezagent_domain_agent, :pre_start_test_mode, :success) do
       :success ->
-        {:ok, [Ezagent.URI.new!(Map.fetch!(data, "agent_uri"))], %{fresh?: false}}
+        {:ok, [agent_uri], %{fresh?: false}}
 
       :claimed_fresh ->
-        {:ok, [Ezagent.URI.new!(Map.fetch!(data, "agent_uri"))], %{fresh?: true}}
+        {:ok, [agent_uri], %{fresh?: true}}
 
       :error ->
         {:error, :instantiate_failed}

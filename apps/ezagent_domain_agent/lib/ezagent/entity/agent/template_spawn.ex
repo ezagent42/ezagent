@@ -374,8 +374,6 @@ defmodule Ezagent.Entity.Agent.TemplateSpawn do
        ) do
     with {:ok, data} <-
            Ezagent.Entity.AgentTemplate.to_template_data(template_content_map, instance_uri) do
-      previous_flavor = Ezagent.AgentFlavorAttributes.get(instance_uri)
-
       case instantiate_workers(template_class, data, workspace_uri, pre_start_ref) do
         {:ok, workers, false, _instantiate_meta, %{claim: _claim} = pre_start_completion} ->
           result =
@@ -385,7 +383,6 @@ defmodule Ezagent.Entity.Agent.TemplateSpawn do
             )
 
           revoke_cascade_grant_best_effort(instance_uri)
-          restore_agent_flavor(instance_uri, previous_flavor)
           result
 
         {:ok, workers, fresh?, instantiate_meta, pre_start_completion} ->
@@ -406,7 +403,7 @@ defmodule Ezagent.Entity.Agent.TemplateSpawn do
 
         {:error, reason, pre_start_completion} ->
           revoke_cascade_grant_best_effort(instance_uri)
-          Ezagent.AgentFlavorAttributes.delete(instance_uri)
+          delete_agent_flavor_unless_pre_start(instance_uri, pre_start_completion)
           finalize_pre_start(pre_start_completion, {:error, reason})
 
         {:error, reason} ->
@@ -423,7 +420,7 @@ defmodule Ezagent.Entity.Agent.TemplateSpawn do
     else
       {:error, _reason} = err ->
         revoke_cascade_grant_best_effort(instance_uri)
-        Ezagent.AgentFlavorAttributes.delete(instance_uri)
+        delete_agent_flavor_unless_pre_start(instance_uri, pre_start_ref)
         err
     end
   end
@@ -739,13 +736,10 @@ defmodule Ezagent.Entity.Agent.TemplateSpawn do
     end
   end
 
-  defp restore_agent_flavor(instance_uri, {:ok, flavor}) do
-    Ezagent.AgentFlavorAttributes.put(instance_uri, flavor)
-  end
+  defp delete_agent_flavor_unless_pre_start(instance_uri, nil),
+    do: Ezagent.AgentFlavorAttributes.delete(instance_uri)
 
-  defp restore_agent_flavor(instance_uri, :none) do
-    Ezagent.AgentFlavorAttributes.delete(instance_uri)
-  end
+  defp delete_agent_flavor_unless_pre_start(_instance_uri, _pre_start), do: :ok
 
   defp finalize_pre_start(nil, result), do: result
 
