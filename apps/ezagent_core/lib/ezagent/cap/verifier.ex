@@ -72,7 +72,7 @@ defmodule Ezagent.Cap.Verifier do
          target,
          %{caller: %URI{} = presenter} = ctx
        ) do
-    needed = resolve_required_cap(kind_module, behavior_module, action, target)
+    needed = required_cap(kind_module, behavior_module, action, target)
 
     candidates = candidate_caps(ctx)
 
@@ -111,7 +111,9 @@ defmodule Ezagent.Cap.Verifier do
 
   defp verified_artifact?(_cap, _presenter), do: false
 
-  defp resolve_required_cap(kind_module, behavior_module, action, target) do
+  @doc false
+  @spec required_cap(module() | atom(), module(), atom(), URI.t()) :: map()
+  def required_cap(kind_module, behavior_module, action, target) do
     with true <- function_exported?(behavior_module, :required_caps, 0),
          required when is_map(required) <- behavior_module.required_caps(),
          %Capability{} = declared <- Map.get(required, action) do

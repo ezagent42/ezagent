@@ -745,7 +745,9 @@ defmodule Ezagent.Integration.CreateAgentDispatchTest do
           cap.action == :any and
           URI.to_string(cap.instance) == URI.to_string(instance_uri) and
           URI.to_string(cap.workspace_uri) == URI.to_string(workspace_uri) and
-          URI.to_string(cap.granted_by) == URI.to_string(User.admin_uri())
+          URI.to_string(cap.granted_by) == URI.to_string(creator_uri) and
+          URI.to_string(cap.grantee_uri) == URI.to_string(creator_uri) and
+          is_binary(cap.signature) and byte_size(cap.signature) > 0
 
       _ ->
         false

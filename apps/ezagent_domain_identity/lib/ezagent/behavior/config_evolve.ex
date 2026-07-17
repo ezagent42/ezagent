@@ -212,10 +212,10 @@ defmodule Ezagent.ActionSet.ConfigEvolve do
   def handle_signal(@ce_reconcile_signal, ctx) do
     self_uri = Map.get(ctx, :self_uri)
 
-    # `Cap.issue_for_action/3` recognizes the current target authority and runs
-    # K.grant in-process, avoiding a synchronous self-call. Keep the bootstrap
-    # in this Kind turn so authority DB access cannot outlive its sandbox owner;
-    # the two absorb casts and the reconcile cast retain mailbox order.
+    # `Cap.issue/3` recognizes the current target authority and runs K.grant
+    # in-process, avoiding a synchronous self-call. Keep the bootstrap in this
+    # Kind turn so authority DB access cannot outlive its sandbox owner; the two
+    # absorb casts and the reconcile cast retain mailbox order.
     :ok = issue_self_caps_and_reconcile(self_uri)
     {:ok, []}
   end
@@ -224,13 +224,29 @@ defmodule Ezagent.ActionSet.ConfigEvolve do
 
   defp issue_self_caps_and_reconcile(%URI{} = self_uri) do
     admin = Ezagent.URI.user(:system, :admin)
-    reconcile_target = Ezagent.URI.with_action(self_uri, :config_evolve, :reconcile_cascade)
-    update_target = Ezagent.URI.with_action(self_uri, :sandbox, :update_config)
+
+    reconcile_requested =
+      Ezagent.Capability.cap(
+        :agent,
+        __MODULE__,
+        :reconcile_cascade,
+        Ezagent.URI.instance(self_uri),
+        Ezagent.Capability.workspace_of(self_uri)
+      )
+
+    update_requested =
+      Ezagent.Capability.cap(
+        :agent,
+        Ezagent.ActionSet.Sandbox,
+        :update_config,
+        Ezagent.URI.instance(self_uri),
+        Ezagent.Capability.workspace_of(self_uri)
+      )
 
     with {:ok, reconcile_cap} <-
-           Ezagent.Cap.issue_for_action({:admin, admin}, self_uri, reconcile_target),
+           Ezagent.Cap.issue({:admin, admin}, self_uri, reconcile_requested),
          {:ok, update_cap} <-
-           Ezagent.Cap.issue_for_action({:admin, admin}, self_uri, update_target) do
+           Ezagent.Cap.issue({:admin, admin}, self_uri, update_requested) do
       :ok = Ezagent.Identity.absorb_cap(self_uri, reconcile_cap)
       :ok = Ezagent.Identity.absorb_cap(self_uri, update_cap)
 

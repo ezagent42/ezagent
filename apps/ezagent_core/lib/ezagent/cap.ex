@@ -80,8 +80,9 @@ defmodule Ezagent.Cap do
 
     with {:ok, {_behavior, action}} <- Ezagent.URI.behavior_action(target),
          {:ok, pid} <- Ezagent.LocalRuntime.ensure_started(instance),
-         {:ok, kind_module} <- kind_module(pid, instance),
-         {:ok, needed} <- needed_for(kind_module, action, target),
+         {:ok, {kind_module, behavior_module}} <- action_context(pid, instance, action),
+         needed <-
+           Ezagent.Cap.Verifier.required_cap(kind_module, behavior_module, action, target),
          requested <-
            Capability.cap(
              needed.kind,
@@ -94,15 +95,40 @@ defmodule Ezagent.Cap do
     end
   end
 
-  defp kind_module(pid, instance) when pid == self() do
-    if Ezagent.Cap.Authority.current_target?(instance) do
-      Ezagent.Cap.Authority.current_kind_type()
+  defp action_context(pid, instance, action) when pid == self() do
+    with true <- Ezagent.Cap.Authority.current_target?(instance),
+         {:ok, kind_type} <- Ezagent.Cap.Authority.current_kind_type(),
+         {:ok, {kind_module, behavior_module}} <- registered_subject(kind_type, action) do
+      {:ok, {kind_module, behavior_module}}
     else
-      {:error, :self_target_without_authority}
+      false -> {:error, :self_target_without_authority}
+      :error -> {:error, {:unknown_action, action}}
+      {:error, _reason} = error -> error
     end
   end
 
-  defp kind_module(pid, _instance), do: GenServer.call(pid, :ezagent_kind_module)
+  defp action_context(pid, _instance, action) do
+    with {:ok, %{kind: kind_module, state: slice_state}} <-
+           GenServer.call(pid, :ezagent_runtime_view),
+         {:ok, behavior_module} <-
+           Ezagent.Kind.BehaviorSet.resolve_action(kind_module, action, slice_state) do
+      {:ok, {kind_module, behavior_module}}
+    end
+  end
+
+  defp registered_subject(kind_type, action) do
+    Ezagent.BehaviorRegistry.list_all()
+    |> Enum.find_value(:error, fn
+      {{kind_module, ^action}, behavior_module} ->
+        if function_exported?(kind_module, :type_name, 0) and
+             kind_module.type_name() == kind_type,
+           do: {:ok, {kind_module, behavior_module}},
+           else: false
+
+      _entry ->
+        false
+    end)
+  end
 
   defp ensure_issue_target(%URI{} = target) do
     if Ezagent.Cap.Authority.current_target?(target) do
@@ -135,35 +161,6 @@ defmodule Ezagent.Cap do
 
       _ ->
         Ezagent.Invocation.dispatch(invocation)
-    end
-  end
-
-  defp needed_for(kind_module, action, target) do
-    if function_exported?(kind_module, :type_name, 0) do
-      {:ok, Ezagent.CapabilityRegistry.needed_for(kind_module, action, target)}
-    else
-      subject =
-        Ezagent.CapabilityRegistry.list_grantable()
-        |> Enum.find(fn subject ->
-          subject.action == action and
-            function_exported?(subject.kind, :type_name, 0) and
-            subject.kind.type_name() == kind_module
-        end)
-
-      case subject do
-        %{behavior: behavior} ->
-          {:ok,
-           %{
-             kind: kind_module,
-             behavior: behavior,
-             action: action,
-             instance: Ezagent.URI.instance(target),
-             workspace_uri: Capability.workspace_of(target)
-           }}
-
-        nil ->
-          {:error, {:unknown_cap_subject, kind_module, action}}
-      end
     end
   end
 

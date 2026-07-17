@@ -7,11 +7,10 @@ defmodule Ezagent.ActionSet.Kanban.Shared do
   - 读：`tree/1`（经 `ctx[:read]`）；
   - 写：`commit/1`——**全 Behavior 唯一的 `tree set-effect（经 commit/1 收口）` 字面**（main + connectors
     所有树变更都经此收敛，守 moduledoc「所有写动作经唯一 commit/1」约定）；
-  - 授权：`owner_or_admin?/2` / `admin?/1`（per-node owner 或 wildcard cap）；
+  - 授权：`owner_or_admin?/2` / `admin?/1`（per-node owner 或 canonical admin）；
   - 归一：`normalize_artifact/1`（artifact 进节点快照前归一 + content 限长）。
   """
 
-  alias Ezagent.Capability
   alias Ezagent.Agent.RecipeRegistry
 
   # inline 内容上限——artifact 进节点快照(真相源)，CI 关键内容(Gherkin/spec)走 inline
@@ -148,18 +147,20 @@ defmodule Ezagent.ActionSet.Kanban.Shared do
   """
   def commit(tree), do: {:set, :tree, Map.put_new(tree, :drops, [])}
 
-  @doc "节点级授权：caller 是 wildcard admin，或 node.owner == caller。"
+  @doc "节点级授权：caller 是 canonical admin，或 node.owner == caller。"
   def owner_or_admin?(ctx, node),
     do: admin?(ctx) or (node.owner != nil and node.owner == caller_str(ctx))
 
-  @doc "caller 是否持 wildcard(admin) cap。"
+  @doc "已认证 presenter 是否为唯一 canonical admin root。"
   def admin?(ctx) do
-    ctx
-    |> Map.get(:caps, MapSet.new())
-    |> Enum.any?(fn
-      %Capability{kind: :any} -> true
-      _ -> false
-    end)
+    case Map.get(ctx, :caller) do
+      %URI{} = caller ->
+        Ezagent.URI.stable_key(caller) ==
+          Ezagent.URI.stable_key(Ezagent.Entity.User.admin_uri())
+
+      _ ->
+        false
+    end
   end
 
   @doc "caller URI 的字符串形式（per-node owner 比对用）。"

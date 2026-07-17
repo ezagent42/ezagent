@@ -39,10 +39,8 @@ defmodule EzagentPluginKanban.E2E.BoardProvisionGrantTest do
     {:ok, _ws_pid} = Workspace.create(ws_name, %{})
     workspace_uri = URI.new!("workspace://#{ws_name}")
 
-    admin_ctx = %{
-      caller: User.admin_uri(),
-      caps: MapSet.new([Ezagent.Capability.admin_genesis_cap()])
-    }
+    admin_ctx =
+      Ezagent.Test.CapHelper.signed_workspace_ctx!(workspace_uri, User.admin_uri())
 
     :ok =
       AgentFlavorRegistry.register(%{
@@ -86,13 +84,13 @@ defmodule EzagentPluginKanban.E2E.BoardProvisionGrantTest do
           workspace_uri
         )
 
+      create_cap =
+        Ezagent.Test.CapHelper.signed_cap!(workspace_uri, owner_uri, create_cap)
+
       {:ok, _owner_pid} =
         Ezagent.Kind.spawn(User, %{
           uri: owner_uri,
-          initial_caps:
-            MapSet.new([
-              %{create_cap | granted_by: User.admin_uri(), granted_at: DateTime.utc_now()}
-            ])
+          initial_caps: MapSet.new([create_cap])
         })
 
       owner_ctx = %{caller: owner_uri, caps: Ezagent.Identity.list_caps_for(owner_uri)}
@@ -164,7 +162,8 @@ defmodule EzagentPluginKanban.E2E.BoardProvisionGrantTest do
       refute minted_add.instance == :any
 
       # (c) assistant 自身份 dispatch kanban.add_node 到新板成功(经 minted 钥匙)。
-      # admin 播根 → assistant 认领根 → assistant 在自己认领的节点下 add_node 子 = 真正成功。
+      # canonical admin 经 board K.grant 播根 → assistant 认领根 → assistant 在自己认领的
+      # 节点下 add_node 子 = 真正成功。
       assert {:ok, %{id: "n1"}} =
                dispatch(board_uri, :add_node, %{parent_id: "", title: "根"}, admin_ctx)
 
@@ -183,7 +182,7 @@ defmodule EzagentPluginKanban.E2E.BoardProvisionGrantTest do
           admin_ctx
         )
 
-      assert {:error, :unauthorized} =
+      assert {:error, :invalid_cap_signature} =
                dispatch_as(assistant_uri, unrelated, :add_node, %{parent_id: "", title: "x"})
     end)
   end
@@ -222,7 +221,11 @@ defmodule EzagentPluginKanban.E2E.BoardProvisionGrantTest do
   defp join_member(session_uri, member_uri, role_name, %{caller: caller, caps: caps}) do
     target = Ezagent.URI.new!("#{URI.to_string(session_uri)}?action=session.join")
 
-    case Invocation.dispatch(%Invocation{origin: :trusted_internal,
+    caps =
+      MapSet.new([Ezagent.Test.CapHelper.signed_action_cap!(target, caller) | Enum.to_list(caps)])
+
+    case Invocation.dispatch(%Invocation{
+           origin: :trusted_internal,
            target: target,
            mode: :call,
            args: %{member: member_uri, role_name: role_name},
@@ -235,9 +238,18 @@ defmodule EzagentPluginKanban.E2E.BoardProvisionGrantTest do
   end
 
   defp dispatch(board_uri, action, args, %{caller: caller, caps: caps}) do
+    target = Ezagent.URI.with_action(board_uri, :kanban, action)
+
+    caps =
+      if caller == User.admin_uri() do
+        MapSet.new([Ezagent.Test.CapHelper.signed_action_cap!(target, caller)])
+      else
+        caps
+      end
+
     Ezagent.Router.dispatch(
       Ezagent.Cmd.new(
-        Ezagent.URI.with_action(board_uri, :kanban, action),
+        target,
         action,
         args,
         %{mode: :call, caller: caller, caps: caps, reply: {:caller_inbox, self()}}

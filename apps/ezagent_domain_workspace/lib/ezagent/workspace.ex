@@ -818,14 +818,12 @@ defmodule Ezagent.Workspace do
   Grant the creator the abstract `Behavior.Manage :any` cap for a newly
   created Kind instance.
 
-  The creation path injects the concrete `kind` axis (`:session`, `:agent`,
-  ...). The cap itself is built by `Ezagent.CreatorGrant`; this facade only
-  performs the Identity dispatch under the closed bootstrap system principal
-  because `Manage :any` is a wildcard-action cap whose target Behavior has
-  no data owner; Identity's grant boundary correctly requires admin authority
-  for that shape. The issued cap still records `granted_by: creator_uri`
-  because the business authority comes from the successful create operation,
-  not from the system principal.
+  The creation path first installs the target-signed canonical-admin to creator
+  delegation. That explicit delegation is the reviewed creation/custody step
+  which lets the creator invoke this Kind's `K.grant`; the creator then issues
+  and stores its own concrete Manage cap. The cap therefore records the real
+  business authority (`granted_by: creator_uri`) rather than laundering the
+  successful create through ambient admin authority.
   """
   @spec grant_creator_manage_cap(atom(), URI.t(), URI.t(), URI.t()) :: :ok | {:error, term()}
   def grant_creator_manage_cap(
@@ -836,30 +834,34 @@ defmodule Ezagent.Workspace do
       )
       when is_atom(kind) do
     cap = Ezagent.CreatorGrant.manage_cap(kind, instance_uri, workspace_uri, creator_uri)
-    current = Ezagent.Identity.list_caps_for(creator_uri)
 
-    if Enum.any?(current, &Ezagent.CreatorGrant.same_authority?(&1, cap)) do
-      :ok
-    else
-      # This is a reviewed framework creation site: successful creation is the
-      # policy decision that grants the creator management of the new target.
-      # The target Kind's K.grant verifier still authorizes and signs the exact
-      # artifact; canonical admin supplies its sealed per-target anchor.
-      #
-      # `:sync` (NOT the default `:async`): the base site dispatched with
-      # `mode: :call`, and the create operation gates its success on this
-      # grant (`with :ok <- grant_creator_manage_cap/4`). `:cast` would
-      # silently swallow a grant failure — reporting a successful create
-      # while the creator does NOT hold the Manage cap. Force synchronous,
-      # error-propagating `:call` mode.
-      case Ezagent.Identity.Grant.grant_cap_via_router(
-             creator_uri,
-             cap,
-             {:admin, Ezagent.URI.user(:system, :admin)},
-             :sync
-           ) do
-        :ok -> :ok
-        {:error, reason} -> {:error, {:creator_manage_cap_grant_failed, reason}}
+    with :ok <- Ezagent.Identity.TargetAuthority.ensure(creator_uri, instance_uri) do
+      current = Ezagent.Identity.list_caps_for(creator_uri)
+
+      if Enum.any?(current, &Ezagent.CreatorGrant.same_authority?(&1, cap)) do
+        :ok
+      else
+        authorization =
+          if Ezagent.URI.stable_key(creator_uri) ==
+               Ezagent.URI.stable_key(Ezagent.Entity.User.admin_uri()),
+             do: {:admin, creator_uri},
+             else: {:held_by, creator_uri}
+
+        # `:sync` (NOT the default `:async`): the base site dispatched with
+        # `mode: :call`, and the create operation gates its success on this
+        # grant (`with :ok <- grant_creator_manage_cap/4`). `:cast` would
+        # silently swallow a grant failure — reporting a successful create
+        # while the creator does NOT hold the Manage cap. Force synchronous,
+        # error-propagating `:call` mode.
+        case Ezagent.Identity.Grant.grant_cap_via_router(
+               creator_uri,
+               cap,
+               authorization,
+               :sync
+             ) do
+          :ok -> :ok
+          {:error, reason} -> {:error, {:creator_manage_cap_grant_failed, reason}}
+        end
       end
     end
   end
