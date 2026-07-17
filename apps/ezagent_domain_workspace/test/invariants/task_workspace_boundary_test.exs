@@ -3,6 +3,12 @@ defmodule Ezagent.Workspace.TaskWorkspace.BoundaryTest do
 
   @forbidden_secret_field ~r/(^|_)(access_token|auth_blob|key_material|credential_ref|authorization_header|private_key|secret|credential|environment)($|_)/
   @lifecycle_fields ~w(claim_token start_token start_claim_token start_token_consumed_at cleanup_reason cleaned_at)
+  @migration_paths ~w(
+    apps/ezagent_core/priv/repo_pg/migrations/20260717001000_create_git_task_workspace_provisions.exs
+    apps/ezagent_core/priv/repo_pg/migrations/20260717002000_add_checkout_fingerprint_to_git_task_workspace_provisions.exs
+    apps/ezagent_core/priv/repo_pg/migrations/20260717003000_add_retirement_handle_to_git_task_workspace_provisions.exs
+    apps/ezagent_core/priv/repo_pg/migrations/20260717004000_harden_git_task_workspace_start.exs
+  )
 
   test "cc plugin has no task-workspace transport knowledge" do
     refute_source_under(
@@ -32,6 +38,38 @@ defmodule Ezagent.Workspace.TaskWorkspace.BoundaryTest do
 
   test "durable provision schema contains no credential material" do
     refute_secret_schema_and_migration_fields()
+  end
+
+  test "secret field scanner parses all supported schema and migration call syntaxes" do
+    for source <- [
+          "field(:credential_ref, :string)",
+          "field :credential_ref, :string",
+          "add(:credential_ref, :text)",
+          "add :credential_ref, :text"
+        ] do
+      assert extract_call_names(source) == ["credential_ref"]
+      assert forbidden_field_names(extract_call_names(source)) == ["credential_ref"]
+    end
+  end
+
+  test "secret field scanner allows exact lifecycle names but rejects deceptive variants" do
+    source = """
+    field(:claim_token, :string)
+    field :start_token, :string
+    add(:cleanup_reason, :text)
+    add :claim_token_credential_ref, :text
+    "field(:credential_ref, :string)"
+    # add :private_key, :text
+    """
+
+    assert extract_call_names(source) == [
+             "claim_token",
+             "start_token",
+             "cleanup_reason",
+             "claim_token_credential_ref"
+           ]
+
+    assert forbidden_field_names(extract_call_names(source)) == ["claim_token_credential_ref"]
   end
 
   test "task workspace start bridge has exact production call sites" do
@@ -103,34 +141,46 @@ defmodule Ezagent.Workspace.TaskWorkspace.BoundaryTest do
       "apps/ezagent_domain_workspace/lib/ezagent/workspace/task_workspace/provision.ex"
       |> project_path()
       |> File.read!()
-      |> extract_names(~r/field\(\s*:(?<name>[a-zA-Z0-9_]+)/)
+      |> extract_call_names([:field])
 
     migration_names =
-      "apps/ezagent_core/priv/repo_pg/migrations/*.exs"
-      |> project_path()
-      |> Path.wildcard()
-      |> Enum.flat_map(fn path ->
-        source = File.read!(path)
-
-        if String.contains?(source, "git_task_workspace_provisions") do
-          extract_names(source, ~r/add\s+:(?<name>[a-zA-Z0-9_]+)/)
-        else
-          []
-        end
+      Enum.flat_map(@migration_paths, fn path ->
+        path
+        |> project_path()
+        |> File.read!()
+        |> extract_call_names([:add])
       end)
 
     names = Enum.uniq(schema_names ++ migration_names)
-    lifecycle_names = Enum.filter(names, &(&1 in @lifecycle_fields))
-    forbidden = Enum.filter(names -- lifecycle_names, &Regex.match?(@forbidden_secret_field, &1))
+    forbidden = forbidden_field_names(names)
 
-    assert Enum.sort(lifecycle_names) == Enum.sort(Enum.filter(@lifecycle_fields, &(&1 in names)))
+    assert length(schema_names) == 30
+    assert length(migration_names) == 30
+    assert Enum.all?(@lifecycle_fields, &(&1 in names))
     assert forbidden == []
   end
 
-  defp extract_names(source, regex) do
-    regex
-    |> Regex.scan(source, capture: ["name"])
-    |> List.flatten()
+  defp extract_call_names(source, calls \\ [:field, :add]) do
+    ast = Code.string_to_quoted!(source)
+
+    {_ast, names} =
+      Macro.prewalk(ast, [], fn
+        {call, _meta, [name | _args]} = node, acc when is_atom(name) ->
+          if call in calls,
+            do: {node, [Atom.to_string(name) | acc]},
+            else: {node, acc}
+
+        node, acc ->
+          {node, acc}
+      end)
+
+    Enum.reverse(names)
+  end
+
+  defp forbidden_field_names(names) do
+    names
+    |> Enum.reject(&(&1 in @lifecycle_fields))
+    |> Enum.filter(&Regex.match?(@forbidden_secret_field, &1))
   end
 
   defp project_path(path), do: Path.join(project_root(), path)
