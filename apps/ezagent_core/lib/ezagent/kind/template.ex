@@ -409,7 +409,7 @@ defmodule Ezagent.Kind.Template do
       s when is_binary(s) and s != "" ->
         s
         |> Ezagent.URI.new!()
-        |> Ezagent.Kind.Template.FlavorHook.store(class_module)
+        |> Ezagent.Kind.Template.AttributeHook.store(class_module)
 
       _ ->
         :ok
@@ -421,7 +421,7 @@ defmodule Ezagent.Kind.Template do
       s when is_binary(s) and s != "" ->
         s
         |> Ezagent.URI.new!()
-        |> Ezagent.Kind.Template.FlavorHook.delete()
+        |> Ezagent.Kind.Template.AttributeHook.delete()
 
       _ ->
         :ok

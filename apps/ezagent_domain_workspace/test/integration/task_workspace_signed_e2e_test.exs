@@ -80,7 +80,7 @@ defmodule Ezagent.Workspace.TaskWorkspace.SignedE2ETest do
 
     agent_uri = Ezagent.URI.agent(context.workspace_name, "worker")
 
-    assert {:ok, %{fresh?: false}} =
+    assert {:ok, %{fresh?: true}} =
              AgentStart.start(
                %{flavor: fixture.flavor, project_cwd: "/untrusted"},
                agent_uri,
@@ -94,6 +94,14 @@ defmodule Ezagent.Workspace.TaskWorkspace.SignedE2ETest do
                }
              )
 
+    assert {:ok, attempt_id} =
+             Ezagent.Agent.CreationInventory.find_attempt(agent_uri, context.workspace_uri)
+
+    assert is_binary(attempt_id)
+    assert {:ok, owner_uri} = Ezagent.AgentLineage.lookup(agent_uri)
+    assert owner_uri == context.owner
+    assert Repo.get_by!(Provision, provision_id: ready.provision_id).status == :sidecar_started
+
     assert_receive {:instantiate_called, %{"cwd" => cwd}}
     assert cwd == ready.cwd
     refute_receive {:instantiate_called, _}
@@ -101,8 +109,17 @@ defmodule Ezagent.Workspace.TaskWorkspace.SignedE2ETest do
     assert {:ok, %{status: :cleaned}} = dispatch(context, :cleanup_workspace)
     assert_receive {:retire_agent, agent_uri_string, _attempt}
     assert agent_uri_string == URI.to_string(agent_uri)
+    cleaned = Repo.get_by!(Provision, provision_id: ready.provision_id)
+
+    assert :ok =
+             Ezagent.Workspace.TaskWorkspace.GitRunner.verify_absent(%{
+               cache_path: Path.join(Path.dirname(cleaned.worktree_path), cleaned.cache_identity),
+               worktree_path: cleaned.worktree_path,
+               worktree_identity: cleaned.worktree_identity
+             })
+
     refute File.exists?(ready.cwd)
-    assert Repo.get_by!(Provision, provision_id: ready.provision_id).status == :cleaned
+    assert cleaned.status == :cleaned
   end
 
   test "unauthorized and private provision attempts have zero effects", fixture do
