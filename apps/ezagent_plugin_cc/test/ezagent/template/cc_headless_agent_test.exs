@@ -144,6 +144,24 @@ defmodule Ezagent.PluginCc.Template.CcHeadlessAgentTest do
       assert params.mcp_servers == %{"custom" => %{"type" => "stdio", "command" => "x"}}
     end
 
+    # PTY parity (live e2e 2026-07-17): PTY `claude` runs with
+    # `--dangerously-skip-permissions` (spawn_plan.ex argv); headless ran
+    # `permission_mode=default`, so with NOBODY able to answer a prompt, every
+    # Read of skill references / Bash outside cwd / Write hung on approval and
+    # the kanban-assistant could not execute its own skill. The real boundary
+    # for a role-agent is CapBAC on every CLI dispatch — not the local prompt.
+    test "permission_mode defaults to bypassPermissions (PTY parity), template overrides", ctx do
+      base = %{"cwd" => "/tmp/agent-cwd", "agent_config_dir" => "/tmp/agent-cfg"}
+
+      assert CcHeadlessAgent.sdk_sidecar_params(ctx.agent_uri, base).permission_mode ==
+               "bypassPermissions"
+
+      explicit = Map.put(base, "permission_mode", "default")
+
+      assert CcHeadlessAgent.sdk_sidecar_params(ctx.agent_uri, explicit).permission_mode ==
+               "default"
+    end
+
     test "includes plugins when config_dir has .claude-plugin/plugin.json", ctx do
       config_dir = Path.join(ctx.tmp_dir, "g1-plugin-#{System.unique_integer([:positive])}")
       File.mkdir_p!(Path.join(config_dir, ".claude-plugin"))

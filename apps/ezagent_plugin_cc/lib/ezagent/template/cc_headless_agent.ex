@@ -263,7 +263,16 @@ defmodule Ezagent.PluginCc.Template.CcHeadlessAgent do
       cwd: Map.fetch!(tmpl, "cwd"),
       config_dir: config_dir,
       session_id: Map.get(tmpl, "claude_session_id") || new_session_id(),
-      permission_mode: Map.get(tmpl, "permission_mode", "default"),
+      # PTY parity (live e2e 2026-07-17): the PTY flavor launches `claude` with
+      # `--dangerously-skip-permissions` (SpawnPlan argv); headless ran
+      # `permission_mode=default`, and since a headless sidecar has NOBODY to
+      # answer a prompt, every skill-reference Read / outside-cwd Bash / Write
+      # hung on approval — the kanban-assistant could not execute its own
+      # skill's CLI. `bypassPermissions` is the SDK equivalent of the PTY flag;
+      # the actual security boundary for a role-agent is CapBAC on every CLI
+      # dispatch (token + caps), not the unanswerable local prompt. An explicit
+      # template value still overrides.
+      permission_mode: Map.get(tmpl, "permission_mode", "bypassPermissions"),
       model: Map.get(tmpl, "model"),
       effort: Map.get(tmpl, "effort") || Map.get(tmpl, "claude_effort"),
       cli_path: Map.get(tmpl, "claude_cli_path"),
