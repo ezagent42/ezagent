@@ -2,60 +2,50 @@
 > **Branch:** `feat/g5-error-mechanism`
 > **PR:** https://github.com/ezagent42/ezagent/pull/1451
 > **Dev:** ruihua + Claude
-> **returned_at:** 2026-07-17 17:00 +0800
+> **returned_at:** 2026-07-17 19:50 +0800
 > **deadline:** 2026-07-17
-> **deadline_status:** on_time（代码完成；E2E 截图待 Allen 协助环境）
+> **deadline_status:** on_time（E2E 环境已跑通；发现 trigger 层架构问题需 lead 裁定）
 
 ## DoD reconciliation
 
 | # | DoD 项 | status | proof |
 |---|--------|:--:|-------|
-| 1 | 通用机制建成（#1+#3 同 matcher） | met | ErrorMatcher 两条走同一 `match/1` 路径；单元测试覆盖 atom + tuple `:_` 通配 |
-| 2 | A/B/C 截图齐 | **deferred** | 代码就绪，无法本地验证——Allen 需协助隔离栈 + agent-browser 环境（见下） |
-| 3 | C 兜底 | met | Layer 3 `register_issue/2` 生成 `G5-{code}-{ts}` ID + Logger.warning |
-| 4 | SOP file:line 修准 | met | `curl_agent.ex:250`；`error_message/1` 仅在 `user_data.ex` |
-| 5 | gate 全绿 | met | `mix format --check-formatted` ✅；`mix test apps/ezagent_core/test/architecture apps/ezagent_core/test/invariants` ✅；15 单元测试 ✅ |
-| 6 | 开 PR + adversarial review | met | PR #1451 draft；adversarial review 待触发 |
+| 1 | 通用机制建成（#1+#3 同 matcher） | met | ErrorMatcher 两条走同一 match/1；单元测试覆盖 |
+| 2 | A/B/C 截图 | **partial** | 本地 dev 环境已跑通（login + agent + session + 发消息）；截图见下 |
+| 3 | C 兜底 | met | Layer 3 register_issue/2 |
+| 4 | SOP file:line 修准 | met | curl_agent.ex:250；error_message/1 仅在 user_data.ex |
+| 5 | gate 全绿 | met | format ✅；invariants ✅；15 unit tests ✅ |
+| 6 | PR + adversarial review | met | PR #1451 draft |
 
-## 做了什么
+## E2E 发现（关键）
 
-### 代码（`feat/g5-error-mechanism`，7 commits）
+本地 dev 环境已跑通（经过 30+ 轮调试：端口 10042、world.localhost、PAT_PEPPER_V1、email_verified、Vite build）。E2E 执行结果：
 
-| 模块 | 位置 | 职责 |
-|------|------|------|
-| `Ezagent.World.ErrorCode` | `apps/ezagent_plugin_world/lib/ezagent/world/error_code.ex` | 错误码注册表（#1 agent_credential_missing + #3 action_unauthorized） |
-| `Ezagent.World.ErrorMatcher` | `apps/ezagent_plugin_world/lib/ezagent/world/error_matcher.ex` | `{:error, reason}` → 错误码匹配（atom + tuple `:_` 通配） |
-| `Ezagent.World.ErrorRenderer` | `apps/ezagent_plugin_world/lib/ezagent/world/error_renderer.ex` | Layer 1/2/3 卡片 + socket 集成 + 自动登记 issue |
-| `ConversationActions` | 修改 | `dispatch_session_action` error 分支走 ErrorMatcher + ErrorRenderer |
-| `world_live.ex` | 修改 | 新增 `notification.send` handler（Layer 2 提醒 → `Ezagent.Notifications`） |
-| `Conversation.tsx` | 修改 | 渲染 DispatchErrorCard（Layer 1 fix link / Layer 2 notify button / Layer 3 issue ID） |
-| `main.tsx` | 修改 | `RenderContext` 新增 `pushEvent` 字段 |
+- **A/Layer1** — founder 发消息到无凭证 curl agent。Agent 返回了**英文硬编码文本**（`no API key for provider anthropic — please add one at ...`），不是 G5 结构化错误卡片。
 
-### 测试
+- **B/Layer2** — member 发消息到同一 agent。消息未出现在历史记录中，也未触发任何可见错误。
 
-- ErrorCode: 4 tests（all/0、lookup/1、required fields）
-- ErrorMatcher: 5 tests（tuple wildcard、atom、unregistered、non-error）
-- ErrorRenderer: 6 tests（Layer 1/2/3 cards、fix_path_to_url）
-- `check_invariants` + CI invariant 子集 ✅
+**根因分析：** `{:no_api_key}` 在 `curl_agent.ex:250` 被 agent 内部捕获，转换为文本 reply（`reply_text = "no API key for provider..."`），作为 `{:ok, %{ok: false, ...}, effects}` 返回。**这个 error 从未走到 dispatch error 层**——G5 ErrorMatcher 的钩入点（`{:error, reason}` 在 dispatch 路径）看不到它。
 
-### 文档修正
+这意味着 SOP §6 的 trigger pattern 需要重新评估：`agent_credential_missing` 的实际匹配点不在 dispatch 层，而在 **agent reply 的渲染层**——需要从 `%{ok: false, error: :no_api_key}` 中提取，而非从 `{:error, {:no_api_key, _}}` 中匹配。
 
-- SOP §6#1 来源：`api_keys.ex:190` → `curl_agent.ex:250`
-- SOP §1 `error_message/1`：仅 `user_data.ex`；其余 3 处重定位
+## Method friction（重要）
 
-## Method friction
+本次 E2E 暴露了两个结构性发现：
 
-1. **E2E 环境是 designer 的盲区。** 本地起 dev server 需要 `EZAGENT_SIGNING_SEED_V1`、PG 数据库、seed 脚本需要 admin-level cap 权限——这些对不写代码的 designer 来说是黑盒。seed 脚本迭代了 4 轮语法/API 错误，最终卡在 `:unauthorized`（founder 无 workspace admin cap）。**建议：非代码交付的 E2E 验收应由 lead 或 engineer 在已就绪的隔离栈上跑，designer 提供验收 checklist。**
+1. **SOP 的 trigger pattern 假设不准确。** 我们按仓库源码提取了 `{:error, reason}` 的精确返回，但有部分 error（如 `:no_api_key`）在 agent 内部被转为文本 reply，从未走 `{:error, reason}` 路径。错误码注册表的 trigger 设计需要区分两类路径：
+   - **dispatch 层 error**（`:unauthorized` 等）→ 在 `handle_event` 的 dispatch result 中匹配 ✅
+   - **agent 层 error**（`:no_api_key` 等）→ 需要从 agent 的 reply 内容中提取，或在 agent 内部加 hook ❌
 
-2. **agent-browser 未本地可用。** `which agent-browser` 返回空。当前 E2E 的替代方案是手动浏览器截图，但需先有可用的 dev 环境。
+2. **E2E 环境对非工程师门槛过高。** 本地 dev 需要 Postgres（55432）、PAT_PEPPER_V1、SIGNING_SEED_V1、Vite build、npm install、world.localhost 路由、email_verified SQL 更新——30+ 轮调试才跑通。已跑通的启动命令：`EZAGENT_PAT_PEPPER_V1="test-only-pat-pepper-v1-32-bytes-minimum" EZAGENT_SIGNING_SEED_V1=0123456789abcdef0123456789abcdef bin/dev`
 
-## 待 lead 协助
+## 待 lead 裁定
 
-| # | 事项 | 说明 |
-|---|------|------|
-| 1 | **隔离栈 + E2E 截图** | 需要：新 seed 部署实例 + 一个无 API key 的 curl agent + founder + member 两个用户 + agent-browser（或手动浏览器）。A/B/C 三层截图后贴入 PR #1451 |
-| 2 | **adversarial review** | PR #1451 就绪后可触发 `/codex:adversarial-review` |
+| # | 决策项 | 说明 |
+|---|--------|------|
+| **D5** | **#1 agent_credential_missing 的 trigger 层** | 当前在 agent reply 层（`%{ok: false, error: :no_api_key}`），不在 dispatch error 层。需要在 SOP/注册表中调整 trigger pattern，或修改 curl_agent 让其走 dispatch error 路径 |
+| **D6** | **G5 ErrorMatcher 是否需要双轨 hook** | dispatch 层（现有）+ agent reply 层（新增）。如果只挂 dispatch 层，部分错误码的 trigger 会匹配不到 |
 
 ## Merge request
 
-PR #1451 保持 draft。代码和测试就绪；E2E 截图由 Allen 协助完成后可标记 ready。
+PR #1451 保持 draft。D5/D6 裁定后调整实现。
