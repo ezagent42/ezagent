@@ -142,7 +142,13 @@ defmodule EzagentCore.Invariants.PluginWorkspaceLocalityContractTest do
       "alias Ezagent.Agent.CreationInventory, as: Inventory\nowner = Inventory\nquote do: apply(unquote(owner), :record_exact, args)",
       "owner = Ezagent.Agent.CreationInventory\n(fn -> owner = String; owner end).()\napply(owner, :record_exact, args)",
       "owner = Ezagent.Agent.CreationInventory\nif(flag, do: (owner = String))\napply(owner, :record_exact, args)",
-      "owner = Ezagent.Agent.CreationInventory\nquote(do: (owner = String))\napply(owner, :record_exact, args)"
+      "owner = Ezagent.Agent.CreationInventory\nquote(do: (owner = String))\napply(owner, :record_exact, args)",
+      "owner = String\n(fn -> owner = Ezagent.Agent.CreationInventory; apply(owner, :record_exact, args) end).()",
+      "owner = String\nif flag, do: (owner = Ezagent.Agent.CreationInventory; apply(owner, :record_exact, args))",
+      "owner = String\ncase value do :x -> owner = Ezagent.Agent.CreationInventory; apply(owner, :record_exact, args); _ -> :ok end",
+      "owner = String\nquote do owner = Ezagent.Agent.CreationInventory; apply(owner, :record_exact, args) end",
+      "(fn -> owner = String end).(); owner = Ezagent.Agent.CreationInventory; apply(owner, :record_exact, args)",
+      "owner = if(flag, do: Ezagent.Agent.CreationInventory, else: String); apply(owner, :record_exact, args)"
     ]
 
     for source <- mutants do
@@ -254,75 +260,210 @@ defmodule EzagentCore.Invariants.PluginWorkspaceLocalityContractTest do
   defp ownership_calls(source) do
     ast = Code.string_to_quoted!(source)
     aliases = collect_aliases(ast)
-    functions = collect_functions(ast)
     imports = collect_imports(ast, aliases)
-    bindings = collect_module_bindings(ast, aliases, functions)
-
-    {_ast, calls} =
-      Macro.prewalk(ast, [], fn
-        {{:., _dot_meta, [{:__aliases__, _, [:Kernel]}, :apply]}, meta,
-         [module_ast, name_ast, args_ast]} = node,
-        calls ->
-          line = meta[:line] || 1
-          function = enclosing_function(functions, line)
-
-          call =
-            dynamic_apply_call(
-              module_ast,
-              name_ast,
-              args_ast,
-              line,
-              aliases,
-              bindings,
-              function
-            )
-
-          {node, maybe_add_call(calls, call)}
-
-        {{:., _dot_meta, [module_ast, name]}, meta, args} = node, calls
-        when is_atom(name) and is_list(args) ->
-          line = meta[:line] || 1
-          function = enclosing_function(functions, line)
-          module = resolve_module(module_ast, aliases, bindings, function, line)
-          call = ownership_call(module, name, length(args), line, function)
-          {node, maybe_add_call(calls, call)}
-
-        {:apply, meta, [module_ast, name_ast, args_ast]} = node, calls ->
-          line = meta[:line] || 1
-          function = enclosing_function(functions, line)
-
-          call =
-            dynamic_apply_call(
-              module_ast,
-              name_ast,
-              args_ast,
-              line,
-              aliases,
-              bindings,
-              function
-            )
-
-          {node, maybe_add_call(calls, call)}
-
-        {name, meta, args} = node, calls when is_atom(name) and is_list(args) ->
-          imported_module = imported_owner(imports, name, length(args))
-
-          call =
-            ownership_call(
-              imported_module,
-              name,
-              length(args),
-              meta[:line] || 1,
-              enclosing_function(functions, meta[:line] || 1)
-            )
-
-          {node, maybe_add_call(calls, call)}
-
-        node, calls ->
-          {node, calls}
-      end)
+    {_env, calls} = ownership_scan(ast, %{}, aliases, imports, {:__module__, 0}, [])
 
     calls |> Enum.uniq() |> Enum.sort_by(&{&1.line, &1.module, &1.call})
+  end
+
+  defp ownership_scan({:__block__, _, nodes}, env, aliases, imports, function, calls) do
+    Enum.reduce(nodes, {env, calls}, fn node, {next_env, next_calls} ->
+      ownership_scan(node, next_env, aliases, imports, function, next_calls)
+    end)
+  end
+
+  defp ownership_scan({kind, _, [{name, _, args}, body]}, env, aliases, imports, _function, calls)
+       when kind in [:def, :defp] and is_atom(name) do
+    {_child_env, calls} =
+      ownership_scan(body, env, aliases, imports, {name, length(args || [])}, calls)
+
+    {env, calls}
+  end
+
+  defp ownership_scan(
+         {kind, _, [{:when, _, [{name, _, args} | _guards]}, body]},
+         env,
+         aliases,
+         imports,
+         _function,
+         calls
+       )
+       when kind in [:def, :defp] and is_atom(name) do
+    {_child_env, calls} =
+      ownership_scan(body, env, aliases, imports, {name, length(args || [])}, calls)
+
+    {env, calls}
+  end
+
+  defp ownership_scan({:=, _, [{name, _, context}, rhs]}, env, aliases, imports, function, calls)
+       when is_atom(name) and (is_atom(context) or is_nil(context)) do
+    {_rhs_env, calls} = ownership_scan(rhs, env, aliases, imports, function, calls)
+    {Map.put(env, name, ownership_value(rhs, env, aliases)), calls}
+  end
+
+  defp ownership_scan({:fn, _, clauses}, env, aliases, imports, function, calls) do
+    calls = scan_ownership_children(clauses, env, aliases, imports, function, calls)
+    {env, calls}
+  end
+
+  defp ownership_scan({:quote, _, args}, env, aliases, imports, function, calls) do
+    calls = scan_ownership_children(args, env, aliases, imports, function, calls)
+    {env, calls}
+  end
+
+  defp ownership_scan({kind, _, args}, env, aliases, imports, function, calls)
+       when kind in [:if, :case, :cond, :with] and is_list(args) do
+    branches = ownership_branches(kind, args)
+
+    results =
+      Enum.map(branches, fn branch ->
+        ownership_scan(branch, env, aliases, imports, function, calls)
+      end)
+
+    branch_envs = Enum.map(results, &elem(&1, 0))
+
+    branch_envs =
+      if kind == :if and Keyword.get(List.last(args), :else) == nil,
+        do: [env | branch_envs],
+        else: branch_envs
+
+    {merge_ownership_envs(branch_envs), Enum.flat_map(results, &elem(&1, 1)) |> Enum.uniq()}
+  end
+
+  defp ownership_scan(
+         {{:., _, [kernel, :apply]}, meta, [module_ast, name_ast, args_ast]} = node,
+         env,
+         aliases,
+         imports,
+         function,
+         calls
+       ) do
+    if resolve_module(kernel, aliases) == Kernel do
+      call = dynamic_ownership_call(module_ast, name_ast, args_ast, meta, env, aliases, function)
+      {env, maybe_add_call(calls, call)}
+    else
+      scan_ownership_children(Tuple.to_list(node), env, aliases, imports, function, calls)
+      |> then(&{env, &1})
+    end
+  end
+
+  defp ownership_scan(
+         {:apply, meta, [module_ast, name_ast, args_ast]},
+         env,
+         aliases,
+         _imports,
+         function,
+         calls
+       ) do
+    call = dynamic_ownership_call(module_ast, name_ast, args_ast, meta, env, aliases, function)
+    {env, maybe_add_call(calls, call)}
+  end
+
+  defp ownership_scan(
+         {{:., _, [module_ast, name]}, meta, args},
+         env,
+         aliases,
+         imports,
+         function,
+         calls
+       )
+       when is_atom(name) and is_list(args) do
+    module = ownership_value(module_ast, env, aliases)
+    call = ownership_call(module, name, length(args), meta[:line] || 1, function)
+
+    calls =
+      scan_ownership_children(args, env, aliases, imports, function, maybe_add_call(calls, call))
+
+    {env, calls}
+  end
+
+  defp ownership_scan({name, meta, args}, env, aliases, imports, function, calls)
+       when is_atom(name) and is_list(args) do
+    call =
+      ownership_call(
+        imported_owner(imports, name, length(args)),
+        name,
+        length(args),
+        meta[:line] || 1,
+        function
+      )
+
+    {env,
+     scan_ownership_children(args, env, aliases, imports, function, maybe_add_call(calls, call))}
+  end
+
+  defp ownership_scan(node, env, aliases, imports, function, calls) do
+    children =
+      if is_tuple(node), do: Tuple.to_list(node), else: if(is_list(node), do: node, else: [])
+
+    {env, scan_ownership_children(children, env, aliases, imports, function, calls)}
+  end
+
+  defp scan_ownership_children(nodes, env, aliases, imports, function, calls) do
+    Enum.reduce(List.wrap(nodes), calls, fn child, acc ->
+      {_child_env, next} = ownership_scan(child, env, aliases, imports, function, acc)
+      next
+    end)
+  end
+
+  defp ownership_branches(:if, [_condition, opts]),
+    do: [Keyword.get(opts, :do), Keyword.get(opts, :else)] |> Enum.reject(&is_nil/1)
+
+  defp ownership_branches(:with, args) do
+    opts = List.last(args)
+    clauses = Enum.drop(args, -1)
+    [clauses, Keyword.get(opts, :do) | ownership_arrow_bodies(Keyword.get(opts, :else, []))]
+  end
+
+  defp ownership_branches(_kind, args), do: ownership_arrow_bodies(args)
+
+  defp ownership_arrow_bodies(args) do
+    {_ast, bodies} =
+      Macro.prewalk(args, [], fn
+        {:->, _, [_patterns, body]} = node, acc -> {node, [body | acc]}
+        node, acc -> {node, acc}
+      end)
+
+    Enum.reverse(bodies)
+  end
+
+  defp merge_ownership_envs([]), do: %{}
+
+  defp merge_ownership_envs([first | rest]) do
+    keys = [first | rest] |> Enum.flat_map(&Map.keys/1) |> MapSet.new()
+
+    Enum.reduce(keys, %{}, fn key, acc ->
+      values = Enum.map([first | rest], &Map.get(&1, key))
+      Map.put(acc, key, if(Enum.uniq(values) |> length() == 1, do: hd(values), else: :unknown))
+    end)
+  end
+
+  defp ownership_value({:unquote, _, [inner]}, env, aliases),
+    do: ownership_value(inner, env, aliases)
+
+  defp ownership_value({:if, _, [_condition, opts]}, env, aliases) do
+    values =
+      [Keyword.get(opts, :do), Keyword.get(opts, :else)]
+      |> Enum.map(&ownership_value(&1, env, aliases))
+
+    if Enum.uniq(values) |> length() == 1, do: hd(values), else: :unknown
+  end
+
+  defp ownership_value({name, _, context}, env, _aliases)
+       when is_atom(name) and (is_atom(context) or is_nil(context)),
+       do: Map.get(env, name)
+
+  defp ownership_value(ast, _env, aliases), do: resolve_module(ast, aliases)
+
+  defp dynamic_ownership_call(module_ast, name_ast, args_ast, meta, env, aliases, function) do
+    module = ownership_value(module_ast, env, aliases)
+    name = if is_atom(name_ast), do: name_ast, else: :__dynamic_apply__
+    arity = if is_list(args_ast), do: length(args_ast), else: :dynamic
+
+    ownership_call(module, name, arity, meta[:line] || 1, function) ||
+      if(module == :unknown,
+        do: %{module: :unknown, call: {name, arity}, line: meta[:line] || 1, function: function}
+      )
   end
 
   defp collect_aliases(ast) do
@@ -375,67 +516,6 @@ defmodule EzagentCore.Invariants.PluginWorkspaceLocalityContractTest do
     imports
   end
 
-  defp collect_module_bindings(ast, aliases, functions) do
-    nested_lines = nested_scope_assignment_lines(ast)
-
-    Enum.reduce(1..3, %{}, fn _pass, bindings ->
-      {_ast, next} =
-        Macro.prewalk(ast, bindings, fn
-          {:=, meta, [{name, _var_meta, context}, rhs]} = node, acc
-          when is_atom(name) and (is_atom(context) or is_nil(context)) ->
-            line = meta[:line] || 1
-            function = enclosing_function(functions, line)
-
-            if MapSet.member?(nested_lines, line) do
-              {node, acc}
-            else
-              module = resolve_module(rhs, aliases, acc, function, line)
-              entries = Map.get(acc, {function, name}, [])
-              {node, Map.put(acc, {function, name}, entries ++ [{line, module}])}
-            end
-
-          node, acc ->
-            {node, acc}
-        end)
-
-      next
-    end)
-  end
-
-  defp nested_scope_assignment_lines(ast) do
-    {_ast, lines} =
-      Macro.prewalk(ast, MapSet.new(), fn
-        {kind, _meta, _args} = node, lines
-        when kind in [:fn, :if, :case, :cond, :with, :for, :quote] ->
-          {_node, nested} =
-            Macro.prewalk(node, MapSet.new(), fn
-              {:=, meta, _args} = child, acc -> {child, MapSet.put(acc, meta[:line] || 1)}
-              child, acc -> {child, acc}
-            end)
-
-          {node, MapSet.union(lines, nested)}
-
-        node, lines ->
-          {node, lines}
-      end)
-
-    lines
-  end
-
-  defp collect_functions(ast) do
-    {_ast, functions} =
-      Macro.prewalk(ast, [], fn
-        {kind, meta, [{name, _head_meta, args} | _]} = node, functions
-        when kind in [:def, :defp] and is_atom(name) ->
-          {node, [{meta[:line] || 1, {name, length(args || [])}} | functions]}
-
-        node, functions ->
-          {node, functions}
-      end)
-
-    Enum.sort(functions)
-  end
-
   defp resolve_module({:__aliases__, _meta, [first | rest]}, aliases) do
     case Map.get(aliases, Atom.to_string(first)) do
       nil -> Module.concat([first | rest])
@@ -446,27 +526,6 @@ defmodule EzagentCore.Invariants.PluginWorkspaceLocalityContractTest do
   defp resolve_module(module, _aliases) when is_atom(module), do: module
   defp resolve_module(_module, _aliases), do: nil
 
-  defp resolve_module({:unquote, _meta, [inner]}, aliases, bindings, function, line),
-    do: resolve_module(inner, aliases, bindings, function, line)
-
-  defp resolve_module({name, _meta, context}, _aliases, bindings, function, line)
-       when is_atom(name) and (is_atom(context) or is_nil(context)),
-       do: binding_at(bindings, {function, name}, line)
-
-  defp resolve_module(module_ast, aliases, _bindings, _function, _line),
-    do: resolve_module(module_ast, aliases)
-
-  defp binding_at(bindings, key, line) do
-    bindings
-    |> Map.get(key, [])
-    |> Enum.take_while(fn {binding_line, _module} -> binding_line <= line end)
-    |> List.last()
-    |> case do
-      {_line, module} -> module
-      nil -> nil
-    end
-  end
-
   defp alias_name({:__aliases__, _meta, [name]}), do: Atom.to_string(name)
   defp alias_name(_ast), do: nil
 
@@ -474,21 +533,6 @@ defmodule EzagentCore.Invariants.PluginWorkspaceLocalityContractTest do
     Enum.find_value(imports, fn {module, only} ->
       if only == :all or {name, arity} in only, do: module
     end)
-  end
-
-  defp dynamic_apply_call(
-         module_ast,
-         name_ast,
-         args_ast,
-         line,
-         aliases,
-         bindings,
-         function
-       ) do
-    module = resolve_module(module_ast, aliases, bindings, function, line)
-    name = if is_atom(name_ast), do: name_ast, else: :__dynamic_apply__
-    arity = if is_list(args_ast), do: length(args_ast), else: :dynamic
-    ownership_call(module, name, arity, line, function)
   end
 
   defp ownership_call(nil, _name, _arity, _line, _function), do: nil
@@ -522,16 +566,6 @@ defmodule EzagentCore.Invariants.PluginWorkspaceLocalityContractTest do
     do: name in [:consume_before_start, :__dynamic_apply__]
 
   defp forbidden_ownership_call?(_module, _name), do: false
-
-  defp enclosing_function(functions, line) do
-    functions
-    |> Enum.take_while(fn {function_line, _function} -> function_line <= line end)
-    |> List.last()
-    |> case do
-      {_line, function} -> function
-      nil -> {:__module__, 0}
-    end
-  end
 
   defp maybe_add_call(calls, nil), do: calls
   defp maybe_add_call(calls, call), do: [call | calls]
