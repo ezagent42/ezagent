@@ -125,15 +125,19 @@ SDK sidecar `env=`:
   both vendors' documented values fit; (c) the tiered model env vars are
   honored by the real binary; (d) no key material left the box.
 
-### 2.4 Real vendor probes — BLOCKED, exact commands for lead authorization
+### 2.4 Real vendor probes — commands (local run authorized 2026-07-17, §10 Q3)
 
-This session has **no `DEEPSEEK_API_KEY` and no `MOONSHOT_API_KEY`** in its
-authorized environment (presence-checked, never printed). Per the handoff, no
-deploy state was touched. The lead-authorized live proof commands (run on the
-deploy host or any env holding the keys; they print no secret):
+This session had **no `DEEPSEEK_API_KEY` and no `MOONSHOT_API_KEY`** in its
+environment (presence-checked, never printed), so research-phase probing was
+blocked. The lead has since authorized the **local** PR-7 run: the operator
+places the keys in `~/.ezagent/default/credentials/cc-custom.env`
+(git-ignored, chmod 600 — see §10 Q3) and the proof commands source it
+(`set -a; . ~/.ezagent/default/credentials/cc-custom.env; set +a`) so the
+value never appears in command text, transcripts, logs, or the repo:
 
 ```bash
 # DeepSeek — through the same env-block seam the product uses
+set -a; . ~/.ezagent/default/credentials/cc-custom.env; set +a
 env ANTHROPIC_BASE_URL=https://api.deepseek.com/anthropic \
     ANTHROPIC_AUTH_TOKEN="$DEEPSEEK_API_KEY" \
     ANTHROPIC_MODEL=deepseek-v4-pro \
@@ -486,22 +490,42 @@ reseed; the catalog holds no state, so rollback is code-only.
 ## 9. Deferrals (explicit, lead-adjudicated)
 
 All §1 non-goals; plus: `ANTHROPIC_SMALL_FAST_MODEL` (neither vendor documents
-it now — not emitted), `deepseek-v4-pro` vs `deepseek-v4-pro[1m]` final string
-(locked at PR-7 live proof against the real endpoint; catalog ships documented
-values with the deploy override as the escape hatch), curl-agent deepseek
-renaming (untouched), Kimi variants beyond `kimi-k3` (catalog extension when a
-second model tier is product-required).
+it now — not emitted), Kimi variants beyond `kimi-k3` (catalog extension when a
+second model tier is product-required), curl-agent deepseek
+renaming (untouched). The `[1m]` model-tag question is resolved (§10 Q1):
+catalog ships `deepseek-v4-pro[1m]`; PR-7 live proof re-confirms the string
+against the real endpoint (deploy override is the escape hatch).
 
-## 10. Open questions for the lead
+## 10. Open questions for the lead — RESOLVED 2026-07-17
 
-1. **`deepseek-v4-pro[1m]` vs `deepseek-v4-pro`** as the shipped catalog value
-   (docs recommend `[1m]`; current code ships plain). Default: follow the docs.
-2. Role-slot `provider` key in socialware definitions (§4.5 link 3) — additive
-   key on role maps (`definition_registry`); the threading mechanism already
-   exists (`template_content/2` merges optional fields into content), so this
-   is a confirmation, not a new seam. Default: proceed as specced.
-3. Live-proof environment: which host holds both keys for PR-7, and is a
-   billable minimal probe authorized there?
+1. **`deepseek-v4-pro[1m]` vs `deepseek-v4-pro`** — **RESOLVED: ship the
+   documented `[1m]` values** (lead, 2026-07-17). Catalog example in §4.1
+   stands as written; PR-7 live proof re-confirms against the real endpoint.
+2. **Role-slot `provider` key** — **RESOLVED: approved** (lead, 2026-07-17).
+   Additive key on definition role maps, threaded per §4.5 link 3.
+3. **Live-proof environment** — **RESOLVED: local** (lead, 2026-07-17). PR-7
+   runs on the local dev host. Credential handoff for it:
+
+   - The current credential mechanism is **process-env only**:
+     `Provider.api_key/0` = `System.get_env("DEEPSEEK_API_KEY")`
+     (`provider.ex:42,90`) — no DB store, no file in the repo, no vault, no
+     rotation. Deploy supplies it via `docker-compose.disp.yml:27-28`
+     (`env_file: ./secrets/ezagent.env`, git-ignored, operator-maintained);
+     test/CI supply a dummy (`config/test.exs:86-100`, `ci.yml:179-185`);
+     local e2e precedent is operator-per-run injection
+     (`DEEPSEEK_API_KEY=sk-... bash docs/e2e/auto/run.sh`,
+     `docs/e2e/scenario-07-curl-roundtrip.md:64` — "key 绝不入库").
+   - cc-custom keeps this contract verbatim, generalized: the catalog
+     allowlists the env-var NAME per profile; the operator supplies the VALUE
+     through the process env. Nothing else changes.
+   - For the local PR-7 proof the operator places the keys in a
+     **git-ignored, chmod-600 env file outside the repo** (house style, cf.
+     `docker/secrets/` + `~/.ezagent/<profile>/credentials/`):
+     `~/.ezagent/default/credentials/cc-custom.env` containing
+     `DEEPSEEK_API_KEY=...` / `MOONSHOT_API_KEY=...`. The proof commands
+     source it (`set -a; . <file>; set +a`) so the value never appears in
+     command text, chat, transcripts, logs, or the repo. The agent performing
+     the proof references only the file PATH.
 
 ## 11. Build DoD (goal-derived, closed set)
 
