@@ -51,3 +51,38 @@ Every command is a binary argv list with credential helpers disabled, the fixed 
 
 - Focused test startup emits pre-existing socialware/skill seed warnings; they are unrelated to this change.
 - No push, merge, rebase, deploy, or precommit was run.
+
+## Review-finding fix cycle
+
+### RED evidence
+
+Command:
+
+`SHELL=/bin/bash mix test apps/ezagent_domain_workspace/test/ezagent/workspace/task_workspace/git_runner_test.exs apps/ezagent_domain_workspace/test/ezagent/workspace/task_workspace/provisioner_test.exs`
+
+Result: 36 tests, 5 failures. Each failure reproduced a requested finding:
+
+- one unexpected probe failure plus a present ref was incorrectly accepted;
+- two unexpected probe failures became `:base_ref_not_found`;
+- an indeterminate worktree-add effect cleaned up but discarded its durable path/proof;
+- exact same-target retry attempted `branch -f` and failed;
+- a symlinked canonical target was misclassified as a different owner.
+
+### GREEN evidence
+
+Command:
+
+`SHELL=/bin/bash mix test apps/ezagent_domain_workspace/test/ezagent/workspace/task_workspace/git_runner_test.exs apps/ezagent_domain_workspace/test/ezagent/workspace/task_workspace/provisioner_test.exs apps/ezagent_domain_workspace/test/ezagent/workspace/task_workspace/store_test.exs`
+
+Result: 59 tests, 0 failures. The only additional runtime output was a pre-existing erlexec `pid not alive` warning from the deadline test.
+
+### Fix details and self-review
+
+- Ref probes now use `show-ref --verify --quiet`; only decoded exit status 1 means absence. Timeout, spawn/output errors, signals, and every other exit propagate. Both probes still execute, with the head-side unexpected failure returned first when both fail.
+- erlexec wait statuses are decoded through `:exec.status/1`, so real Git absence matches the executor contract instead of exposing encoded wait integers.
+- An indeterminate `worktree add` returns the complete canonical effect proof. Provisioner persists that proof atomically while moving the claim to cleanup pending, then delegates removal and verification to the existing Reconciler/cache-lock ownership lane. The retry test proves cleanup reaches `:cleaned` and no second Git prepare occurs.
+- `worktree list --porcelain -z` is used for preparation and verification. NUL records preserve spaces without Git quoting ambiguity.
+- Same-target retries inspect the registered branch and HEAD. They converge only when the intended directory exists, resolves to the same filesystem object, and the commit matches; they run neither `branch -f` nor `worktree add`. Different target, missing directory, or commit mismatch fails closed.
+- Paths continue to originate exclusively from `Paths.derive/1` and `FsResolver`. Alias comparison uses expanded paths plus filesystem device/inode identity for existing targets, covering intermediate symlinks without a shell or caller-selected path.
+- Worst-case command accounting remains eleven groups: nine fresh-prepare commands plus the two post-prepare verification commands. Same-target convergence uses fewer commands, so the existing lease budget remains conservative and accurate.
+- Reviewed for shell use, inherited environment, caller refspec/local-branch input, ad hoc deletion, and duplicate cleanup ownership; none were introduced.

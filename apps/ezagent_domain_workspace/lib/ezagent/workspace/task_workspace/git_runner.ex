@@ -67,8 +67,10 @@ defmodule Ezagent.Workspace.TaskWorkspace.GitRunner do
          {:ok, _fetch} <- execute(fetch_argv, opts),
          head_ref = "refs/ezagent/origin/heads/#{request.base_ref}",
          tag_ref = "refs/ezagent/origin/tags/#{request.base_ref}",
-         head_probe = git_argv(["--git-dir", paths.cache_path, "show-ref", "--verify", head_ref]),
-         tag_probe = git_argv(["--git-dir", paths.cache_path, "show-ref", "--verify", tag_ref]),
+         head_probe =
+           git_argv(["--git-dir", paths.cache_path, "show-ref", "--verify", "--quiet", head_ref]),
+         tag_probe =
+           git_argv(["--git-dir", paths.cache_path, "show-ref", "--verify", "--quiet", tag_ref]),
          {:ok, resolved_ref} <-
            resolve_exactly_one_ref(head_ref, head_probe, tag_ref, tag_probe, opts),
          resolve_argv =
@@ -84,30 +86,23 @@ defmodule Ezagent.Workspace.TaskWorkspace.GitRunner do
          local_branch = local_branch_ref(request),
          local_branch_name = String.replace_prefix(local_branch, "refs/heads/", ""),
          branch_owner_argv =
-           git_argv(["--git-dir", paths.cache_path, "worktree", "list", "--porcelain"]),
+           git_argv(["--git-dir", paths.cache_path, "worktree", "list", "--porcelain", "-z"]),
          {:ok, branch_owners} <- execute(branch_owner_argv, opts),
-         :ok <- branch_available(branch_owners.stdout, local_branch, paths.worktree_path),
-         branch_argv =
-           git_argv([
-             "--git-dir",
-             paths.cache_path,
-             "branch",
-             "-f",
+         proof =
+           Map.merge(paths, %{
+             resolved_base_commit: resolved_sha,
+             local_branch_ref: local_branch
+           }),
+         {:ok, worktree_history} <-
+           prepare_worktree(
+             branch_owners.stdout,
+             local_branch,
              local_branch_name,
-             resolved_sha
-           ]),
-         {:ok, _branch} <- execute(branch_argv, opts),
-         :ok <- File.mkdir_p(Path.dirname(paths.worktree_path)),
-         worktree_argv <-
-           git_argv([
-             "--git-dir",
-             paths.cache_path,
-             "worktree",
-             "add",
-             paths.worktree_path,
-             local_branch_name
-           ]),
-         {:ok, _result} <- execute_worktree_add(worktree_argv, request) do
+             resolved_sha,
+             paths,
+             proof,
+             opts
+           ) do
       {:ok,
        Map.merge(paths, %{
          argv_history:
@@ -118,10 +113,8 @@ defmodule Ezagent.Workspace.TaskWorkspace.GitRunner do
                head_probe,
                tag_probe,
                resolve_argv,
-               branch_owner_argv,
-               branch_argv,
-               worktree_argv
-             ],
+               branch_owner_argv
+             ] ++ worktree_history,
          base_ref: request.base_ref,
          resolved_base_commit: resolved_sha,
          local_branch_ref: local_branch,
@@ -139,7 +132,7 @@ defmodule Ezagent.Workspace.TaskWorkspace.GitRunner do
   def verify(%{cache_path: cache, worktree_path: worktree} = ready)
       when is_binary(cache) and is_binary(worktree) do
     opts = command_opts(Map.get(ready, :runner_opts, %{}))
-    list_argv = git_argv(["--git-dir", cache, "worktree", "list", "--porcelain"])
+    list_argv = git_argv(["--git-dir", cache, "worktree", "list", "--porcelain", "-z"])
     inside_argv = git_argv(["-C", worktree, "rev-parse", "--is-inside-work-tree"])
 
     with {:ok, list} <- execute(list_argv, opts),
@@ -180,7 +173,7 @@ defmodule Ezagent.Workspace.TaskWorkspace.GitRunner do
   def verify_absent(%{cache_path: cache, worktree_path: worktree} = ready)
       when is_binary(cache) and is_binary(worktree) do
     if File.exists?(cache) do
-      argv = git_argv(["--git-dir", cache, "worktree", "list", "--porcelain"])
+      argv = git_argv(["--git-dir", cache, "worktree", "list", "--porcelain", "-z"])
 
       with {:ok, result} <- execute(argv, command_opts(Map.get(ready, :runner_opts, %{}))),
            false <- listed_worktree?(result.stdout, worktree),
@@ -198,7 +191,7 @@ defmodule Ezagent.Workspace.TaskWorkspace.GitRunner do
   def verify_absent(_ready), do: {:error, :invalid_ready_workspace}
 
   defp remove_if_unregistered(cache, worktree, ready, opts, original_error) do
-    list_argv = git_argv(["--git-dir", cache, "worktree", "list", "--porcelain"])
+    list_argv = git_argv(["--git-dir", cache, "worktree", "list", "--porcelain", "-z"])
 
     case execute(list_argv, opts) do
       {:ok, result} ->
@@ -287,8 +280,15 @@ defmodule Ezagent.Workspace.TaskWorkspace.GitRunner do
     )
   end
 
-  def handle_info({:EXIT, exec_pid, {:exit_status, status}}, %{exec_pid: exec_pid} = state),
-    do: reply_and_stop({:error, {:git_exit, status}}, state)
+  def handle_info({:EXIT, exec_pid, {:exit_status, status}}, %{exec_pid: exec_pid} = state) do
+    error =
+      case :exec.status(status) do
+        {:status, exit_status} -> {:git_exit, exit_status}
+        {:signal, _signal, _core_dump?} -> :git_process_failed
+      end
+
+    reply_and_stop({:error, error}, state)
+  end
 
   def handle_info({:EXIT, exec_pid, _reason}, %{exec_pid: exec_pid} = state),
     do: reply_and_stop({:error, :git_process_failed}, state)
@@ -334,14 +334,24 @@ defmodule Ezagent.Workspace.TaskWorkspace.GitRunner do
   end
 
   defp resolve_exactly_one_ref(head_ref, head_argv, tag_ref, tag_argv, opts) do
-    head? = match?({:ok, _}, execute(head_argv, opts))
-    tag? = match?({:ok, _}, execute(tag_argv, opts))
+    head = probe_ref(head_argv, opts)
+    tag = probe_ref(tag_argv, opts)
 
-    case {head?, tag?} do
-      {true, false} -> {:ok, head_ref}
-      {false, true} -> {:ok, tag_ref}
-      {false, false} -> {:error, :base_ref_not_found}
-      {true, true} -> {:error, :ambiguous_base_ref}
+    case {head, tag} do
+      {{:error, reason}, _tag} -> {:error, reason}
+      {_head, {:error, reason}} -> {:error, reason}
+      {:present, :absent} -> {:ok, head_ref}
+      {:absent, :present} -> {:ok, tag_ref}
+      {:absent, :absent} -> {:error, :base_ref_not_found}
+      {:present, :present} -> {:error, :ambiguous_base_ref}
+    end
+  end
+
+  defp probe_ref(argv, opts) do
+    case execute(argv, opts) do
+      {:ok, _result} -> :present
+      {:error, {:git_exit, 1}} -> :absent
+      {:error, reason} -> {:error, reason}
     end
   end
 
@@ -353,32 +363,103 @@ defmodule Ezagent.Workspace.TaskWorkspace.GitRunner do
       else: {:error, :invalid_resolved_object_id}
   end
 
-  defp branch_available(porcelain, branch_ref, expected_path) do
-    conflict? =
-      porcelain
-      |> String.split("\n\n", trim: true)
-      |> Enum.any?(fn entry ->
-        lines = String.split(entry, "\n", trim: true)
-        path = field_value(lines, "worktree ")
-        branch = field_value(lines, "branch ")
+  defp prepare_worktree(
+         porcelain,
+         branch_ref,
+         branch_name,
+         resolved_sha,
+         paths,
+         proof,
+         opts
+       ) do
+    case branch_owner(porcelain, branch_ref, paths.worktree_path) do
+      :available ->
+        branch_argv =
+          git_argv([
+            "--git-dir",
+            paths.cache_path,
+            "branch",
+            "-f",
+            branch_name,
+            resolved_sha
+          ])
 
-        branch == branch_ref and is_binary(path) and
-          Path.expand(path) != Path.expand(expected_path)
-      end)
+        worktree_argv =
+          git_argv([
+            "--git-dir",
+            paths.cache_path,
+            "worktree",
+            "add",
+            paths.worktree_path,
+            branch_name
+          ])
 
-    if conflict?, do: {:error, :workspace_branch_conflict}, else: :ok
+        with {:ok, _branch} <- execute(branch_argv, opts),
+             :ok <- File.mkdir_p(Path.dirname(paths.worktree_path)) do
+          case execute(worktree_argv, opts) do
+            {:ok, _result} -> {:ok, [branch_argv, worktree_argv]}
+            {:error, reason} -> {:error, {:worktree_add_failed, reason}, proof}
+          end
+        end
+
+      {:same_target, ^resolved_sha} ->
+        {:ok, []}
+
+      {:same_target, _other_sha} ->
+        {:error, :workspace_branch_conflict}
+
+      :conflict ->
+        {:error, :workspace_branch_conflict}
+    end
   end
 
-  defp field_value(lines, prefix) do
-    Enum.find_value(lines, fn line ->
-      if String.starts_with?(line, prefix), do: String.replace_prefix(line, prefix, "")
+  defp branch_owner(porcelain, branch_ref, expected_path) do
+    porcelain
+    |> worktree_entries()
+    |> Enum.find(&(&1.branch == branch_ref))
+    |> case do
+      nil ->
+        :available
+
+      %{path: path, head: head} ->
+        if File.dir?(expected_path) and same_path?(path, expected_path),
+          do: {:same_target, head},
+          else: :conflict
+    end
+  end
+
+  defp worktree_entries(porcelain) do
+    porcelain
+    |> String.split(<<0, 0>>, trim: true)
+    |> Enum.map(fn record ->
+      fields = String.split(record, <<0>>, trim: true)
+
+      %{
+        path: field_value(fields, "worktree "),
+        head: field_value(fields, "HEAD "),
+        branch: field_value(fields, "branch ")
+      }
     end)
   end
 
-  defp execute_worktree_add(argv, request) do
-    case execute(argv, command_opts(request)) do
-      {:ok, result} -> {:ok, result}
-      {:error, reason} -> {:error, {:worktree_add_failed, reason}}
+  defp field_value(fields, prefix) do
+    Enum.find_value(fields, fn field ->
+      if String.starts_with?(field, prefix), do: String.replace_prefix(field, prefix, "")
+    end)
+  end
+
+  defp same_path?(left, right) do
+    left = Path.expand(left)
+    right = Path.expand(right)
+
+    case {File.stat(left), File.stat(right)} do
+      {{:ok, left_stat}, {:ok, right_stat}} ->
+        left_stat.inode == right_stat.inode and
+          left_stat.major_device == right_stat.major_device and
+          left_stat.minor_device == right_stat.minor_device
+
+      _missing ->
+        left == right
     end
   end
 
@@ -470,11 +551,11 @@ defmodule Ezagent.Workspace.TaskWorkspace.GitRunner do
   end
 
   defp listed_worktree?(porcelain, expected_path) do
-    expected = "worktree " <> Path.expand(expected_path)
-
     porcelain
-    |> String.split("\n", trim: true)
-    |> Enum.any?(&(&1 == expected))
+    |> worktree_entries()
+    |> Enum.any?(fn %{path: path} ->
+      is_binary(path) and same_path?(path, expected_path)
+    end)
   end
 
   defp command_opts(request) do
