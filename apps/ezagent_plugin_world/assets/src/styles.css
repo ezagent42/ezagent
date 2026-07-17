@@ -149,3 +149,23 @@
 @media (prefers-reduced-motion: reduce) {
   .world-toast-enter, .world-toast-exit { animation: none; }
 }
+
+/* e2e r07 残留:React Flow 自带 Controls(缩放 +/−/⛶)是库 CSS 白底,深色下刺眼——
+   按主题 token 覆盖(亮暗两态都吃 token,不硬编码色)。 */
+.react-flow__controls {
+  box-shadow: none;
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  overflow: hidden;
+}
+.react-flow__controls-button {
+  background: var(--card);
+  border-bottom: 1px solid var(--border);
+  color: var(--foreground);
+}
+.react-flow__controls-button:hover {
+  background: var(--muted);
+}
+.react-flow__controls-button svg {
+  fill: currentColor;
+}

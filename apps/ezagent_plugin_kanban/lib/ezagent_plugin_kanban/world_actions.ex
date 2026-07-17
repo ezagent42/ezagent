@@ -405,6 +405,10 @@ defmodule EzagentPluginKanban.WorldActions do
              ) do
           {:ok, %{board_uri: board_uri}} ->
             # board_state 列出全量 instances（含新建的）+ 推该 agent 的空 board。
+            # 建板也广播 {:kanban_changed}（e2e r08 残留：专用路径漏接任务6的广播，
+            # 本人列表与同会话其他成员都靠它刷新）。
+            broadcast_kanban_changed(socket, board_uri)
+
             {:noreply,
              socket
              |> assign(:last_dispatch_status, "ok")
@@ -431,7 +435,9 @@ defmodule EzagentPluginKanban.WorldActions do
                ctx(socket)
              ) do
           {:ok, _report} ->
-            # 板没了:清掉选中板,推刷新后的列表(前端回列表态)。
+            # 板没了:清掉选中板,推刷新后的列表(前端回列表态);同会话其他成员靠广播刷新。
+            broadcast_kanban_changed(socket, uri)
+
             {:noreply,
              socket
              |> assign(:last_dispatch_status, "ok")
