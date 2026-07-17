@@ -253,6 +253,11 @@ defmodule EzagentDomainInstanceMessage.SessionCreator do
   # telemetry, where operators (not end users) look.
   defp reason_tag({:no_credential_source, _flavor}), do: :missing_credentials
   defp reason_tag({:config_home_without_credentials, _flavor}), do: :missing_credentials
+  # Env-backed flavors (deepseek today; #1449 cc-custom profiles) fail with a
+  # DIFFERENT fix path — a deploy-env provider key, not a Claude login/source —
+  # so the UI/operator must not read it as "adopt a credential source" (任务 B
+  # DoD-3: 区分"缺 Claude 凭证" vs "缺 provider key").
+  defp reason_tag({:credential_unavailable, _flavor}), do: :missing_provider_credential
   defp reason_tag(_other), do: :unavailable
 
   @doc """
