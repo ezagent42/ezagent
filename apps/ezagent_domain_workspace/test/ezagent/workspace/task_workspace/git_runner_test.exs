@@ -228,6 +228,25 @@ defmodule Ezagent.Workspace.TaskWorkspace.GitRunnerTest do
              GitRunner.verify(verification_fixture(executor))
   end
 
+  test "missing worktree registration is a positive checkout mismatch" do
+    executor = fn argv, _opts ->
+      if "worktree" in argv and "list" in argv do
+        {:ok,
+         %{
+           stdout:
+             "worktree /another-worktree\0HEAD #{String.duplicate("a", 40)}\0branch refs/heads/other\0\0",
+           stderr: "",
+           exit_status: 0
+         }}
+      else
+        verification_success(argv)
+      end
+    end
+
+    assert {:error, :workspace_checkout_mismatch} =
+             GitRunner.verify(verification_fixture(executor))
+  end
+
   test "reused cache fetches a moved base ref and creates the deterministic branch", %{root: root} do
     %{origin: origin, source: source} = local_origin_with_source!(root)
     first = request(remote_url: origin, allow_local_fixture: true, generation: 1)
