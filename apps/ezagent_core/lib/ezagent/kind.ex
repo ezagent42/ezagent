@@ -388,10 +388,18 @@ defmodule Ezagent.Kind do
         params,
         validated_opts,
         strategy,
+        &start_child/3,
         &await_ready_after_spawn/2
       )
     end
   end
+
+  defp start_child(kind_module, params, {:standard, supervisor}) do
+    DynamicSupervisor.start_child(supervisor, {Ezagent.Kind.Server, {kind_module, params}})
+  end
+
+  defp start_child(_kind_module, params, {:custom, module, function}),
+    do: apply(module, function, [params])
 
   # Only await when a process actually exists (fresh start OR idempotent
   # already-started). Other errors short-circuit. `params` without a `:uri`
