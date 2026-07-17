@@ -5,6 +5,12 @@ deadline_status: completed_with_branch_baseline_gate
 
 ## Outcome
 
+> **Hardening amendment:** the crash-recovery, fresh-spawn ordering, and exact
+> Git checkout claims in this original return were not supported by the evidence
+> available when it was written. They are superseded by the fresh machine
+> evidence and corrected claim boundaries in
+> [gaga-git-provider-plan-c-hardening.md](gaga-git-provider-plan-c-hardening.md).
+
 Plan C is implemented on `feat/git-domain-spine`. A receiver-bound
 `GitTaskAccess` capability now gates public-repository workspace provisioning
 and cleanup. The Workspace Domain owns durable generation state, canonical
@@ -25,18 +31,16 @@ production backend, Plan E UI, or Kanban behavior is included.
 - `git_task_workspace_provisions` durably records tenant, generation, checkout
   fingerprint, lease/token fencing, canonical paths, cleanup state, and Agent
   retirement intent. Three forward migrations are included.
-- Public anonymous checkout uses argv-only erlexec-backed execution, a cleared
-  environment, bounded output/deadlines, exact origin/worktree proof, and
-  node-local cache serialization. Private repositories fail before row/path/Git
-  effects.
+- Public anonymous checkout and exact Git state are claimed only to the extent
+  demonstrated by the hardening return linked above.
 - Provision claims are token/lease fenced. A stale worker cannot cancel a new
   claim or delete its artifact. Final policy reload rechecks public visibility
   and the immutable checkout fingerprint.
 - The generic core pre-start gate accepts only an opaque trusted option,
   injects only transient `cwd`, wraps the one Template instantiate seam, and
   completes exactly once without downstream vocabulary in core.
-- Start intent is durably bound before instantiate. Concurrent starts consume
-  one token; crash-before-complete retains exact Agent identity for recovery.
+- Start lifecycle, crash/restart recovery, fresh-spawn ordering, and fetched
+  branch/commit evidence are claimed only in the hardening return linked above.
 - Cleanup is idempotent and token fenced. Ambiguous/live starts use
   `Ezagent.Domain.Agent.retire_spawned/2` with durable held authority; cleanup
   derives and matches canonical paths, removes under the cache lock, and proves
