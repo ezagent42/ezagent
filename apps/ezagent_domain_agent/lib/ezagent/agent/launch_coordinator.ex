@@ -7,8 +7,19 @@ defmodule Ezagent.Agent.LaunchCoordinator do
   happen only after commit and are consistency operations, never ownership.
   """
 
-  alias Ezagent.Agent.{CreationInventory, LaunchAuthority}
+  alias Ezagent.Agent.LaunchAuthority
   alias EzagentCore.Repo
+
+  @persistence Application.compile_env(
+                 :ezagent_domain_agent,
+                 :launch_persistence,
+                 Ezagent.Agent.LaunchPersistence.Production
+               )
+  @post_commit_publisher Application.compile_env(
+                           :ezagent_domain_agent,
+                           :launch_post_commit_publisher,
+                           Ezagent.Agent.LaunchPostCommitPublisher.Production
+                         )
 
   @type receipt :: %{
           attempt_id: String.t(),
@@ -79,28 +90,18 @@ defmodule Ezagent.Agent.LaunchCoordinator do
   end
 
   defp commit(facts) do
+    :ok = @persistence.before_transaction(facts)
+
     Repo.transaction(fn ->
-      with {:ok, _} <-
-             CreationInventory.record_exact(
-               Repo,
-               facts.attempt_id,
-               facts.agent_uri,
-               facts.root_uri,
-               facts.workspace_uri
-             ),
-           {:ok, _} <-
-             Ezagent.AgentLineage.record_exact(Repo, facts.agent_uri, facts.root_uri) do
-        receipt(facts)
-      else
+      case @persistence.persist(Repo, facts) do
+        {:ok, receipt} -> receipt
         {:error, reason} -> Repo.rollback(reason)
       end
     end)
   end
 
   defp publish_after_commit(facts) do
-    best_effort(fn -> Ezagent.AgentLineage.publish_cache(facts.agent_uri, facts.root_uri) end)
-    best_effort(fn -> Ezagent.WorkspaceRegistry.bind(facts.agent_uri, facts.workspace_uri) end)
-    best_effort(fn -> LaunchAuthority.acknowledge(facts.issuer_ref) end)
+    best_effort(fn -> @post_commit_publisher.publish(facts) end)
     :ok
   end
 
@@ -110,15 +111,6 @@ defmodule Ezagent.Agent.LaunchCoordinator do
     catch
       _kind, _reason -> :ok
     end
-  end
-
-  defp receipt(facts) do
-    %{
-      attempt_id: facts.attempt_id,
-      agent_uri: facts.agent_uri,
-      root_uri: facts.root_uri,
-      workspace_uri: facts.workspace_uri
-    }
   end
 
   defp fetch(facts, key) do
