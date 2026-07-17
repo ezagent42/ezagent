@@ -54,6 +54,16 @@ defmodule Ezagent.Entity.Agent do
   @impl Ezagent.Kind
   def type_name, do: :agent
 
+  @impl Ezagent.Kind
+  def before_start(%{launch_context: launch_context, uri: %URI{} = uri}) do
+    case Ezagent.Agent.LaunchCoordinator.consume_before_start(uri, launch_context) do
+      {:ok, _receipt} -> :ok
+      {:error, _reason} = error -> error
+    end
+  end
+
+  def before_start(_args), do: :ok
+
   @doc """
   List the agent URIs in `ws` — workspace-scoped, type-filtered, covering LIVE
   **and** DORMANT agents (membership-cap unification R1.4, spec test 26).
