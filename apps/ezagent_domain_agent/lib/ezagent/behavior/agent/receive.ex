@@ -338,6 +338,9 @@ defmodule Ezagent.ActionSet.Agent.Receive do
   end
 
   defp sync_result_action("cc-headless"), do: :cc_headless_sync_result
+  # cc-custom (provider-profile) headless variant — same headless SDK sidecar,
+  # same unique reply action; ONE clause serves every catalog profile.
+  defp sync_result_action("cc-headless-custom"), do: :cc_headless_sync_result
   # DeepSeek provider variant of cc-headless — same headless SDK sidecar, same
   # unique reply action (it carries the `Ezagent.ActionSet.CcHeadlessAgent`
   # behavior); only the backend LLM differs. Without this clause the reply falls

@@ -98,7 +98,8 @@ defmodule EzagentPluginCc.Application do
       Ezagent.PluginCc.Template.CcDeepseekAgent,
       Ezagent.PluginCc.Template.CcHeadlessDeepseekAgent,
       # Custom-backend flavor (closed-catalog "provider" selects the backend).
-      Ezagent.PluginCc.Template.CcCustomAgent
+      Ezagent.PluginCc.Template.CcCustomAgent,
+      Ezagent.PluginCc.Template.CcHeadlessCustomAgent
     ]
 
   @impl Ezagent.Plugin
@@ -151,6 +152,16 @@ defmodule EzagentPluginCc.Application do
         kind: Ezagent.Entity.Agent,
         template_class: Ezagent.PluginCc.Template.CcCustomAgent,
         bridge_adapter: EzagentPluginCc.CcCustomBridgeAdapter
+      },
+      # The headless twin of "cc-custom": same closed-catalog "provider"
+      # contract, same fail-closed validation — over the headless SDK-sidecar
+      # transport (cc_headless_behaviors + :in_process_sync bridge).
+      %{
+        flavor: "cc-headless-custom",
+        kind: Ezagent.Entity.Agent,
+        template_class: Ezagent.PluginCc.Template.CcHeadlessCustomAgent,
+        bridge_adapter: EzagentPluginCc.CcHeadlessCustomBridgeAdapter,
+        instance_behaviors: &Ezagent.Entity.Agent.cc_headless_behaviors/0
       }
     ]
   end

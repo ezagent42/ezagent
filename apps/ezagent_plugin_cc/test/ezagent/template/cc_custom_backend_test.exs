@@ -11,10 +11,16 @@ defmodule Ezagent.PluginCc.Template.CcCustomBackendTest do
   host-login), the fail-fast launchability gate, cold-restart flavor
   re-resolution, the per-profile PTY launch env (+ no leak into the default
   anthropic cc path), and the bridge adapter shape.
+
+  The `"cc-headless-custom"` describe covers the headless transport twin:
+  registration with the `cc_headless_behaviors` instance set, the same
+  fail-closed profile contract on the `"cc_headless_custom.agent"` class, the
+  profile env block threaded as the SDK sidecar `cmd_env`, cold-restart flavor
+  re-resolution, and the `sync_result_action` reply-route clause.
   """
   use EzagentCore.DataCase, async: false
 
-  alias Ezagent.PluginCc.Template.{CcAgent, CcCustomAgent}
+  alias Ezagent.PluginCc.Template.{CcAgent, CcCustomAgent, CcHeadlessAgent, CcHeadlessCustomAgent}
 
   @key "sk-deepseek-test-abc123"
 
@@ -289,6 +295,107 @@ defmodule Ezagent.PluginCc.Template.CcCustomBackendTest do
       assert CcCustomBridgeAdapter.transport_class() == :subprocess_ws
       assert CcCustomBridgeAdapter.socket_path() == "/agent_bridge"
       assert CcCustomBridgeAdapter.channel_topic_prefix() == "agent_bridge:cc-custom:"
+    end
+  end
+
+  # ── cc-headless-custom: the headless transport twin ──────────────────────
+
+  describe "cc-headless-custom" do
+    test "registered with the cc-headless behavior set" do
+      by = Map.new(EzagentPluginCc.Application.agent_flavors(), &{&1.flavor, &1})
+
+      assert %{kind: Ezagent.Entity.Agent, template_class: CcHeadlessCustomAgent} =
+               by["cc-headless-custom"]
+
+      assert is_function(by["cc-headless-custom"].instance_behaviors, 0)
+
+      assert {:ok, EzagentPluginCc.CcHeadlessCustomBridgeAdapter} =
+               Ezagent.AgentBridge.AdapterRegistry.lookup("cc-headless-custom")
+    end
+
+    test "validate requires a catalog profile (same contract as pty)" do
+      base = %{
+        "class" => "cc_headless_custom.agent",
+        "agent_uri" => "entity://team-alpha/agent/cch_cu",
+        "cwd" => "/tmp"
+      }
+
+      assert CcHeadlessCustomAgent.validate(base) == {:error, :missing_backend_profile}
+      assert CcHeadlessCustomAgent.validate(Map.put(base, "provider", "kimi")) == :ok
+    end
+
+    test "instantiate fail-fast on missing key" do
+      without_key()
+
+      tmpl = %{
+        "class" => "cc_headless_custom.agent",
+        "agent_uri" => "entity://team-alpha/agent/cch_cu-missing",
+        "cwd" => "/tmp",
+        "provider" => "deepseek"
+      }
+
+      assert {:error, {:backend_api_key_missing, "deepseek", %URI{}}} =
+               CcHeadlessCustomAgent.instantiate(
+                 "cc_headless_custom.agent",
+                 tmpl,
+                 workspace_uri()
+               )
+    end
+
+    test "headless sidecar params thread the profile block (both vendors)" do
+      with_key()
+      uri = Ezagent.URI.new!("entity://team-alpha/agent/cch_cu")
+
+      params =
+        CcHeadlessAgent.sdk_sidecar_params(uri, %{"cwd" => "/tmp", "provider" => "deepseek"})
+
+      assert map_size(params.cmd_env) == 8
+      assert params.cmd_env["ANTHROPIC_AUTH_TOKEN"] == @key
+
+      System.put_env("MOONSHOT_API_KEY", "sk-kimi-test-xyz")
+      on_exit(fn -> System.delete_env("MOONSHOT_API_KEY") end)
+
+      params2 = CcHeadlessAgent.sdk_sidecar_params(uri, %{"cwd" => "/tmp", "provider" => "kimi"})
+      assert map_size(params2.cmd_env) == 9
+      assert params2.cmd_env["ANTHROPIC_BASE_URL"] == "https://api.moonshot.ai/anthropic"
+    end
+
+    test "cold restart resolves the headless custom flavor" do
+      assert {:ok, "cc-headless-custom"} =
+               Ezagent.AgentFlavorResolver.resolve_flavor_from_sandbox(%{
+                 respawn_template_data: %{
+                   "flavor" => "cc-headless-custom",
+                   "provider" => "deepseek",
+                   "class" => "cc_headless_custom.agent",
+                   "cwd" => "/tmp"
+                 }
+               })
+    end
+
+    test "sync_result_action routes cc-headless-custom replies to :cc_headless_sync_result" do
+      # The clause under test is private (`Agent.Receive.sync_result_action/1`);
+      # the public delivery path (`Agent.Delivery.deliver_agent_receive/2` →
+      # the {:sync, flavor, result} branch) requires a live SDK sidecar, so no
+      # clean unit seam exists — assert the clause via a source check instead.
+      receive_ex =
+        Path.join([
+          __DIR__,
+          "..",
+          "..",
+          "..",
+          "..",
+          "ezagent_domain_agent",
+          "lib",
+          "ezagent",
+          "behavior",
+          "agent",
+          "receive.ex"
+        ])
+
+      src = File.read!(receive_ex)
+
+      assert src =~
+               ~s|sync_result_action("cc-headless-custom"), do: :cc_headless_sync_result|
     end
   end
 
