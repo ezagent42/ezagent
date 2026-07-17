@@ -175,7 +175,8 @@ defmodule EzagentCore.Invariants.PluginWorkspaceLocalityContractTest do
       "owner = Application.get_env(:app, :ownership_module); owner.record_exact(repo, a, b, c, d)",
       "quote do: unquote(owner).record_exact(repo, a, b, c, d)",
       "owner = configured_module(); owner.rehydrate()",
-      "def leak(owner), do: owner.record_exact(repo, a, b, c, d)"
+      "def leak(owner), do: owner.record_exact(repo, a, b, c, d)",
+      "def leak(%{owner: owner}), do: owner.rehydrate()"
     ]
 
     for source <- mutants do
@@ -852,8 +853,6 @@ defmodule EzagentCore.Invariants.PluginWorkspaceLocalityContractTest do
 
   defp ownership_call(:unknown_value, name, arity, line, function),
     do: %{module: :unknown_value, call: {name, arity}, line: line, function: function}
-
-  defp ownership_call(:safe_data, _name, 0, _line, _function), do: nil
 
   defp ownership_call(:safe_data, name, arity, line, function),
     do: %{module: :unknown_value, call: {name, arity}, line: line, function: function}
