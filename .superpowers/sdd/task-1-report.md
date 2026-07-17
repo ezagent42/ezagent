@@ -237,3 +237,28 @@ SHELL=/bin/bash MIX_ENV=test mix test apps/ezagent_core/test/invariants/single_s
 ```
 
 Per correction instructions, the full precommit suite was not run.
+
+---
+
+## Fourth review correction — 2026-07-18
+
+Moved relay commitment across the OTP init-ack boundary. `Kind.Server.init/1`
+now only atomically takes and removes the raw context. The issuing
+`Kind.spawn/3` commits only after `DynamicSupervisor.start_child/2` returns
+`{:ok, child}`; every returned failure (including `:already_started`) is
+force-discarded, while the existing `after` cleanup covers raise/exit paths.
+
+Until acknowledgement, the relay monitors both issuer and taken child. Either
+may go down independently without leaking the relay; both gone reclaims it. A
+replacement's second `take` proves the supervisor retained the child spec,
+returns only `:consumed`, and promotes the relay to committed restart state.
+
+Added a deterministic regression that blocks the hook after `take`, kills the
+child before its init acknowledgement, observes the failed start, and verifies
+the relay exits. No sleeps or polling were added.
+
+Fresh focused verification: `38 tests, 0 failures`.
+
+Fresh required invariants: `4 tests, 0 failures`; the existing six-entry
+workspace-locality debt warning was emitted. Touched-file formatting and
+`git diff --check` passed. Per instruction, no full precommit was run.

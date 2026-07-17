@@ -135,7 +135,7 @@ defmodule Ezagent.Invariants.KindInitPersistsInitialSnapshotTest do
       refute function_exported?(Ezagent.Kind.LaunchContextRelay, :table, 0)
       refute inspect(:sys.get_status(relay)) =~ inspect(context)
       assert {:ok, ^context} = Ezagent.Kind.LaunchContextRelay.take(relay)
-      assert :ok = Ezagent.Kind.LaunchContextRelay.commit(relay)
+      assert :ok = Ezagent.Kind.LaunchContextRelay.commit(relay, self())
       assert :consumed = Ezagent.Kind.LaunchContextRelay.take(relay)
     end
 
@@ -252,6 +252,34 @@ defmodule Ezagent.Invariants.KindInitPersistsInitialSnapshotTest do
       assert {:ok, ^server_pid} = Task.await(task)
       assert %KindSnapshot{kind_type: "before_start_probe"} = KindSnapshot.get(uri_str)
       assert {:ok, ^server_pid} = Ezagent.KindRegistry.lookup(uri)
+    end
+
+    test "post-take child death before init acknowledgement reclaims the relay" do
+      uri =
+        Ezagent.URI.new!(
+          "entity://team-alpha/agent/test_before-start-pre-ack-#{System.unique_integer([:positive])}"
+        )
+
+      relays_before = launch_context_relays()
+      parent = self()
+
+      task =
+        Task.async(fn ->
+          Ezagent.Kind.spawn(
+            BeforeStartProbeKind,
+            %{uri: uri, probe_pid: parent, probe_result: :block},
+            launch_context: make_ref()
+          )
+        end)
+
+      assert_receive {:before_start_entered, child, _context}
+      assert [relay] = MapSet.to_list(MapSet.difference(launch_context_relays(), relays_before))
+      relay_ref = Process.monitor(relay)
+      Process.exit(child, :kill)
+
+      assert {:error, :killed} = Task.await(task)
+      assert_receive {:DOWN, ^relay_ref, :process, ^relay, :normal}
+      assert launch_context_relays() == relays_before
     end
 
     test "rejection leaves no snapshot, readiness registration, or live Kind" do

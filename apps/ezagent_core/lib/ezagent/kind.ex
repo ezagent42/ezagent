@@ -424,6 +424,12 @@ defmodule Ezagent.Kind do
             apply(mod, fun, [params])
         end
 
+      case {launch_relay, result} do
+        {nil, _result} -> :ok
+        {relay, {:ok, child}} -> Ezagent.Kind.LaunchContextRelay.commit(relay, child)
+        {relay, _failed_result} -> Ezagent.Kind.LaunchContextRelay.force_discard(relay)
+      end
+
       # Readiness contract (remediation SPEC 2026-05-30 C-A): a `Kind.Server`
       # returns from `start_child` BEFORE its post-init/`activate` phase
       # completes (`handle_continue` runs async; ReadyGate stays `:not_ready`
