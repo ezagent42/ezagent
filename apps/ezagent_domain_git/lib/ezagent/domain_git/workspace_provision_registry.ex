@@ -30,6 +30,13 @@ defmodule Ezagent.DomainGit.WorkspaceProvisionRegistry do
   @spec implementation() :: {:ok, module()} | {:error, :workspace_provisioner_not_registered}
   def implementation, do: GenServer.call(__MODULE__, :implementation)
 
+  if Mix.env() == :test do
+    @doc false
+    def replace_for_test(implementation) do
+      GenServer.call(__MODULE__, {:replace_for_test, implementation})
+    end
+  end
+
   @impl true
   def init(nil), do: {:ok, nil}
 
@@ -46,6 +53,15 @@ defmodule Ezagent.DomainGit.WorkspaceProvisionRegistry do
 
   def handle_call({:register, _implementation}, _from, registered),
     do: {:reply, {:error, :conflicting_workspace_provisioner}, registered}
+
+  if Mix.env() == :test do
+    def handle_call({:replace_for_test, implementation}, _from, registered) do
+      case validate_implementation(implementation) do
+        :ok -> {:reply, :ok, implementation}
+        {:error, _reason} = error -> {:reply, error, registered}
+      end
+    end
+  end
 
   def handle_call(:implementation, _from, nil),
     do: {:reply, {:error, :workspace_provisioner_not_registered}, nil}

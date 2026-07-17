@@ -30,12 +30,15 @@ defmodule EzagentDomainWorkspace.Application do
 
   @impl true
   def start(_type, _args) do
+    :ok = register_task_workspace_infrastructure()
     :ok = register_workspace_behavior()
 
-    children = [
-      {DynamicSupervisor, name: Ezagent.Workspace.Supervisor, strategy: :one_for_one},
-      {Task.Supervisor, name: Ezagent.Workspace.CapGrantSupervisor}
-    ]
+    children =
+      [
+        {Registry, keys: :unique, name: Ezagent.Workspace.TaskWorkspace.CacheLockRegistry},
+        {DynamicSupervisor, name: Ezagent.Workspace.Supervisor, strategy: :one_for_one},
+        {Task.Supervisor, name: Ezagent.Workspace.CapGrantSupervisor}
+      ] ++ Application.get_env(:ezagent_domain_workspace, :later_boot_children, [])
 
     if test_env?() and Code.ensure_loaded?(EzagentCore.DataCase) and
          function_exported?(EzagentCore.DataCase, :register_async_drain_supervisor, 1) do
@@ -51,6 +54,19 @@ defmodule EzagentDomainWorkspace.Application do
     Code.ensure_loaded?(Mix) and Mix.env() == :test
   rescue
     _ -> false
+  end
+
+  defp register_task_workspace_infrastructure do
+    :ok =
+      Ezagent.Resource.FsResolver.Registry.register_all([
+        Ezagent.Workspace.TaskWorkspace.Paths.resource_type()
+      ])
+
+    :ok =
+      Ezagent.DomainGit.WorkspaceProvisionRegistry.register(
+        Ezagent.Workspace.TaskWorkspace.Provisioner
+      )
+    :ok
   end
 
   defp register_workspace_behavior do

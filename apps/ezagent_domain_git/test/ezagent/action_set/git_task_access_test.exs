@@ -30,7 +30,21 @@ defmodule Ezagent.ActionSet.GitTaskAccessTest do
   @actions @provider_actions ++ [:provision_workspace, :cleanup_workspace]
 
   setup_all do
-    :ok = Ezagent.DomainGit.WorkspaceProvisionRegistry.register(WorkspaceProvisionProbe)
+    registry = Ezagent.DomainGit.WorkspaceProvisionRegistry
+    original = registry.implementation()
+    :ok = registry.replace_for_test(WorkspaceProvisionProbe)
+
+    on_exit(fn ->
+      case original do
+        {:ok, implementation} ->
+          :ok = registry.replace_for_test(implementation)
+
+        {:error, :workspace_provisioner_not_registered} ->
+          :ok = Supervisor.terminate_child(EzagentDomainGit.Application, registry)
+          {:ok, _pid} = Supervisor.restart_child(EzagentDomainGit.Application, registry)
+      end
+    end)
+
     :ok
   end
 
