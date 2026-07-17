@@ -48,6 +48,33 @@ defmodule Ezagent.PluginCc.Provider do
   def provider_of(_), do: nil
 
   @doc """
+  Fail-closed template-data profile gate shared by the custom-backend Template
+  Classes (`CcCustomAgent` / `CcHeadlessCustomAgent`): `:ok` iff `tmpl` names
+  a known catalog profile under the `"provider"` key — REQUIRED user input,
+  never injected. Absent → `{:error, :missing_backend_profile}`; unknown
+  (`"anthropic"` is NOT a catalog profile) / non-string →
+  `{:error, {:unknown_backend_profile, value}}`.
+  """
+  @spec check_backend_profile(map()) ::
+          :ok
+          | {:error, :missing_backend_profile}
+          | {:error, {:unknown_backend_profile, term()}}
+  def check_backend_profile(tmpl) when is_map(tmpl) do
+    case Map.get(tmpl, @provider_key) do
+      nil ->
+        {:error, :missing_backend_profile}
+
+      name when is_binary(name) ->
+        if ProviderCatalog.known?(name),
+          do: :ok,
+          else: {:error, {:unknown_backend_profile, name}}
+
+      bad ->
+        {:error, {:unknown_backend_profile, bad}}
+    end
+  end
+
+  @doc """
   The launch-time env map to MERGE into the claude launch env for `tmpl`.
 
     * no provider / explicit anthropic → `{:ok, %{}}` (default cc path

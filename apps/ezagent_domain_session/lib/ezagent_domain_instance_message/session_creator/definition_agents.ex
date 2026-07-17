@@ -591,9 +591,10 @@ defmodule EzagentDomainInstanceMessage.SessionCreator.DefinitionAgents do
         # SAME "credential-less role → SKIP, not fatal" class the pre-flight
         # `CredentialPrecondition.check_source/3` catches — it just surfaces one
         # layer later, at spawn, for flavors whose credential is an ENV VAR
-        # (`DEEPSEEK_API_KEY`) rather than a config-home FILE, so `check_source`
+        # (the selected catalog profile's API-key var) rather than a config-home
+        # FILE, so `check_source`
         # (file-based `credential_bearing?/1`) waves them through. Without this,
-        # a keyless env (every CI without `DEEPSEEK_API_KEY`) turns the
+        # a keyless env (every CI without the profile's key) turns the
         # orchestrator slot into a HARD `{:agent_spawn_failed, …}` that halts the
         # whole batch (and, via the unhandled 3-tuple, CRASHED the install
         # transaction) — so a co-declared credential-less role (e.g. the py
@@ -610,8 +611,8 @@ defmodule EzagentDomainInstanceMessage.SessionCreator.DefinitionAgents do
 
   # NARROW by design: only a KNOWN missing-credential spawn reason reclassifies
   # to a skip. Every other spawn failure stays a hard error (a bug, not the
-  # environment — §"Skip vs fail"). Env-var-credential flavors (cc-custom
-  # profiles; cc-deepseek until its retirement) fail this way; file-credential
+  # environment — §"Skip vs fail"). Env-var-credential flavors (the cc-custom
+  # catalog profiles) fail this way; file-credential
   # flavors are already pre-skipped by `CredentialPrecondition.check_source/3`.
   defp credential_missing_spawn_reason?({:backend_api_key_missing, _, _}), do: true
   defp credential_missing_spawn_reason?({:backend_api_key_missing, _}), do: true

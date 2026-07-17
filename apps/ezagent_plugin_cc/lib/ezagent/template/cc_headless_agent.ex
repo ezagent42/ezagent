@@ -78,9 +78,9 @@ defmodule Ezagent.PluginCc.Template.CcHeadlessAgent do
   def validate(_), do: {:error, :not_a_map}
 
   # Every cc_headless.agent validation check AFTER the class-string check, shared
-  # with the deepseek provider shim (`CcHeadlessDeepseekAgent`) so its
+  # with the custom-backend provider shim (`CcHeadlessCustomAgent`) so its
   # `validate/1` reuses the exact rules while accepting its own
-  # `"cc_headless_deepseek.agent"` class.
+  # `"cc_headless_custom.agent"` class.
   @doc false
   @spec validate_after_class(map()) :: :ok | {:error, term()}
   def validate_after_class(tmpl) when is_map(tmpl) do
@@ -99,10 +99,10 @@ defmodule Ezagent.PluginCc.Template.CcHeadlessAgent do
 
   def instantiate(_tmpl_name, tmpl, _workspace_uri), do: {:error, {:invalid_template, tmpl}}
 
-  # Flavor-parameterized instantiate body, shared with the deepseek provider
-  # shim (`CcHeadlessDeepseekAgent`) so the STORED launch flavor is the caller's
-  # flavor (`cc-headless` vs `cc-headless-deepseek`) while the SDK-sidecar spawn
-  # path stays this single module. The provider dimension rides in `tmpl` as a
+  # Flavor-parameterized instantiate body, shared with the custom-backend
+  # provider shim (`CcHeadlessCustomAgent`) so the STORED launch flavor is the
+  # caller's flavor (`cc-headless` vs `cc-headless-custom`) while the SDK-sidecar
+  # spawn path stays this single module. The provider dimension rides in `tmpl` as a
   # `"provider"` data field (read by `sdk_sidecar_params/2` → the sidecar's
   # `EZAGENT_CC_SDK_ENV` passthrough → the Python worker's SDK `env=`).
   @doc false
@@ -248,7 +248,7 @@ defmodule Ezagent.PluginCc.Template.CcHeadlessAgent do
     end
   end
 
-  # Public (`@doc false`) so the deepseek-backend test can assert the provider
+  # Public (`@doc false`) so the cc-custom-backend test can assert the provider
   # env (`cmd_env`) threaded into the sidecar without starting a real sidecar.
   @doc false
   def sdk_sidecar_params(agent_uri, tmpl) do
@@ -291,9 +291,9 @@ defmodule Ezagent.PluginCc.Template.CcHeadlessAgent do
       {:ok, env} ->
         env
 
-      # Unreachable when the flavor's instantiate/3 gates correctly (the
-      # deepseek shim's ensure_api_key/2 fail-fast today, cc-headless-custom's
-      # gate later) — this raise is the defense line for a template that
+      # Unreachable when the flavor's instantiate/3 gates correctly
+      # (`CcHeadlessCustomAgent`'s `Provider.ensure_api_key/2` fail-fast runs
+      # before this) — this raise is the defense line for a template that
       # bypassed those gates. Fail loud so the misconfiguration is visible; no
       # silent fallback to the default anthropic path (precedent:
       # CcAgent.reject_stale_config_dir_data_key!/1).

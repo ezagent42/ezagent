@@ -145,12 +145,12 @@ defmodule Ezagent.PluginCc.Template.SpawnPlan do
         |> put_claude_config_dir(config_home, tmpl)
         |> maybe_put_orchestrator_recipe_env(tmpl)
         |> maybe_put_cli_identity_env(agent_uri, tmpl)
-        # Provider env LAST so the DeepSeek block (ANTHROPIC_BASE_URL/
-        # ANTHROPIC_AUTH_TOKEN/…) authoritatively points claude at the DeepSeek
-        # endpoint. Empty for anthropic — the default cc path is unchanged.
+        # Provider env LAST so the catalog profile's block (ANTHROPIC_BASE_URL/
+        # ANTHROPIC_AUTH_TOKEN/…) authoritatively points claude at the selected
+        # backend endpoint. Empty for anthropic — the default cc path is unchanged.
         |> Map.merge(provider_env)
-        # Bridge-topic override so a deepseek sidecar joins
-        # `agent_bridge:cc-deepseek:<uri>` (matching its resolved flavor) instead
+        # Bridge-topic override so a custom-backend sidecar joins
+        # `agent_bridge:cc-custom:<uri>` (matching its resolved flavor) instead
         # of the sidecar's `agent_bridge:cc:` default. Empty for anthropic.
         |> Map.merge(Ezagent.PluginCc.Provider.bridge_topic_env(tmpl, agent_uri))
 
@@ -349,7 +349,7 @@ defmodule Ezagent.PluginCc.Template.SpawnPlan do
 
   # Orchestrator-only `.mcp.json` opts (transport #53 / Phase 7 PR-5). For an
   # orchestrator agent — gated on `role == "orchestrator"` via
-  # `CcAgent.orchestrator_recipe?/1`, FLAVOR-AGNOSTIC so a cc-deepseek
+  # `CcAgent.orchestrator_recipe?/1`, FLAVOR-AGNOSTIC so a cc-custom
   # orchestrator gets it too and a normal cc agent never does — thread the
   # orchestrator-socket WS URL + the seed-exported tool-schema path so
   # `McpConfigWriter` writes the second `esr-orchestrator` server (the bridge

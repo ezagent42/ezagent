@@ -94,9 +94,6 @@ defmodule EzagentPluginCc.Application do
     do: [
       Ezagent.PluginCc.Template.CcAgent,
       Ezagent.PluginCc.Template.CcHeadlessAgent,
-      # DeepSeek provider variants (backend dimension, orthogonal to transport).
-      Ezagent.PluginCc.Template.CcDeepseekAgent,
-      Ezagent.PluginCc.Template.CcHeadlessDeepseekAgent,
       # Custom-backend flavor (closed-catalog "provider" selects the backend).
       Ezagent.PluginCc.Template.CcCustomAgent,
       Ezagent.PluginCc.Template.CcHeadlessCustomAgent
@@ -119,26 +116,6 @@ defmodule EzagentPluginCc.Application do
         kind: Ezagent.Entity.Agent,
         template_class: Ezagent.PluginCc.Template.CcHeadlessAgent,
         bridge_adapter: EzagentPluginCc.CcHeadlessBridgeAdapter,
-        instance_behaviors: &Ezagent.Entity.Agent.cc_headless_behaviors/0
-      },
-      # --- DeepSeek provider variants (backend dimension) --------------------
-      # Same transport/bridge/behaviors as cc / cc-headless; the ONLY difference
-      # is the LLM backend (DeepSeek's Anthropic-compatible endpoint via the
-      # "deepseek" catalog profile's env block, API-key auth — no OAuth login).
-      # Distinct flavors because AgentFlavorRegistry enforces 1:1
-      # flavor↔template_class; all provider behaviour lives in
-      # `Ezagent.PluginCc.Provider` + `Ezagent.PluginCc.ProviderCatalog`.
-      %{
-        flavor: "cc-deepseek",
-        kind: Ezagent.Entity.Agent,
-        template_class: Ezagent.PluginCc.Template.CcDeepseekAgent,
-        bridge_adapter: EzagentPluginCc.DeepseekBridgeAdapter
-      },
-      %{
-        flavor: "cc-headless-deepseek",
-        kind: Ezagent.Entity.Agent,
-        template_class: Ezagent.PluginCc.Template.CcHeadlessDeepseekAgent,
-        bridge_adapter: EzagentPluginCc.CcHeadlessDeepseekBridgeAdapter,
         instance_behaviors: &Ezagent.Entity.Agent.cc_headless_behaviors/0
       },
       # --- Custom-backend flavor (backend dimension) ---------------------------

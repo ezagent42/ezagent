@@ -17,9 +17,18 @@ defmodule Ezagent.PluginCc.Template.CcCustomBackendTest do
   fail-closed profile contract on the `"cc_headless_custom.agent"` class, the
   profile env block threaded as the SDK sidecar `cmd_env`, cold-restart flavor
   re-resolution, and the `sync_result_action` reply-route clause.
+
+  The `Ezagent.PluginCc.Provider` describes (ported from the retired
+  cc-deepseek suite — full parity map in
+  `docs/superpowers/specs/2026-07-17-cc-custom-backends-design.md` Appendix B)
+  cover the shared facade directly: `profile_env/1` / `provider_env/1` per
+  profile (both vendors), the fail-closed unknown/missing-key error shapes,
+  `ensure_api_key/2`, `credential_status/1`, and the headless
+  `sdk_sidecar_params/2` fail-closed defense line.
   """
   use EzagentCore.DataCase, async: false
 
+  alias Ezagent.PluginCc.Provider
   alias Ezagent.PluginCc.Template.{CcAgent, CcCustomAgent, CcHeadlessAgent, CcHeadlessCustomAgent}
 
   @key "sk-deepseek-test-abc123"
@@ -38,6 +47,94 @@ defmodule Ezagent.PluginCc.Template.CcCustomBackendTest do
 
   defp with_key, do: System.put_env("DEEPSEEK_API_KEY", @key)
   defp without_key, do: System.delete_env("DEEPSEEK_API_KEY")
+
+  # ── Provider: profile env assembly + fail-closed contract ───────────────
+  # Ported from the retired cc-deepseek suite (Appendix B row 1) — these are
+  # direct unit tests of the shared `Ezagent.PluginCc.Provider` facade, not
+  # specific to either transport class, so they have no other home now that
+  # cc_deepseek_backend_test.exs is gone.
+
+  describe "Provider.profile_env/1 + provider_env/1" do
+    test "deepseek profile assembles the documented 8-var block, token from its env var" do
+      with_key()
+
+      assert {:ok, env} = Provider.profile_env("deepseek")
+
+      assert env == %{
+               "ANTHROPIC_BASE_URL" => "https://api.deepseek.com/anthropic",
+               "ANTHROPIC_AUTH_TOKEN" => @key,
+               "ANTHROPIC_MODEL" => "deepseek-v4-pro[1m]",
+               "ANTHROPIC_DEFAULT_OPUS_MODEL" => "deepseek-v4-pro[1m]",
+               "ANTHROPIC_DEFAULT_SONNET_MODEL" => "deepseek-v4-pro[1m]",
+               "ANTHROPIC_DEFAULT_HAIKU_MODEL" => "deepseek-v4-flash",
+               "CLAUDE_CODE_SUBAGENT_MODEL" => "deepseek-v4-flash",
+               "CLAUDE_CODE_EFFORT_LEVEL" => "max"
+             }
+    end
+
+    test "kimi profile assembles the documented 9-var block" do
+      System.put_env("MOONSHOT_API_KEY", "sk-kimi-test-xyz")
+      on_exit(fn -> System.delete_env("MOONSHOT_API_KEY") end)
+
+      assert {:ok, env} = Provider.profile_env("kimi")
+      assert map_size(env) == 9
+      assert env["ANTHROPIC_BASE_URL"] == "https://api.moonshot.ai/anthropic"
+      assert env["ANTHROPIC_AUTH_TOKEN"] == "sk-kimi-test-xyz"
+      assert env["ANTHROPIC_MODEL"] == "kimi-k3"
+      assert env["ENABLE_TOOL_SEARCH"] == "false"
+      assert env["CLAUDE_CODE_AUTO_COMPACT_WINDOW"] == "1048576"
+    end
+
+    test "missing key → {:error, {:backend_api_key_missing, profile}}" do
+      without_key()
+      assert Provider.profile_env("deepseek") == {:error, {:backend_api_key_missing, "deepseek"}}
+    end
+
+    test "empty-string key counts as missing (parity with unset)" do
+      System.put_env("DEEPSEEK_API_KEY", "")
+      assert Provider.profile_env("deepseek") == {:error, {:backend_api_key_missing, "deepseek"}}
+    end
+
+    test "unknown profile → {:error, {:unknown_backend_profile, name}} (fail closed)" do
+      assert Provider.profile_env("bogus") == {:error, {:unknown_backend_profile, "bogus"}}
+    end
+
+    test "provider_env/1: no key → {:ok, %{}}; explicit anthropic → {:ok, %{}}" do
+      with_key()
+      assert Provider.provider_env(%{}) == {:ok, %{}}
+      assert Provider.provider_env(%{"provider" => "anthropic"}) == {:ok, %{}}
+    end
+
+    test "provider_env/1: known profile → block; unknown → fail closed (NEVER silent anthropic)" do
+      with_key()
+      assert {:ok, env} = Provider.provider_env(%{"provider" => "deepseek"})
+      assert env["ANTHROPIC_AUTH_TOKEN"] == @key
+
+      assert {:error, {:unknown_backend_profile, "bogus"}} =
+               Provider.provider_env(%{"provider" => "bogus"})
+    end
+
+    test "ensure_api_key/2 gates on the profile's own env var" do
+      without_key()
+      uri = Ezagent.URI.new!("entity://team-alpha/agent/cc_x")
+
+      assert {:error, {:backend_api_key_missing, "deepseek", ^uri}} =
+               Provider.ensure_api_key("deepseek", uri)
+
+      with_key()
+      assert Provider.ensure_api_key("deepseek", uri) == :ok
+    end
+
+    test "credential_status/1 is per-profile; nil/unknown → :unknown (never an alarm)" do
+      with_key()
+      assert %{status: :authenticated} = Provider.credential_status("deepseek")
+      without_key()
+      assert %{status: :missing, detail: detail} = Provider.credential_status("deepseek")
+      assert detail =~ "DEEPSEEK_API_KEY"
+      assert %{status: :unknown} = Provider.credential_status(nil)
+      assert %{status: :unknown} = Provider.credential_status("bogus")
+    end
+  end
 
   # ── Registration ─────────────────────────────────────────────────────────
 
@@ -85,6 +182,11 @@ defmodule Ezagent.PluginCc.Template.CcCustomBackendTest do
                CcCustomAgent.validate(Map.put(@base, "provider", "anthropic"))
     end
 
+    test "non-string provider → {:unknown_backend_profile, bad} (fail closed)" do
+      assert {:error, {:unknown_backend_profile, 123}} =
+               CcCustomAgent.validate(Map.put(@base, "provider", 123))
+    end
+
     test "rejects the wrong class" do
       tmpl = Map.put(@base, "provider", "deepseek")
 
@@ -115,6 +217,10 @@ defmodule Ezagent.PluginCc.Template.CcCustomBackendTest do
       assert CcCustomAgent.secret_relpaths() == []
       assert CcCustomAgent.host_login_dir() == nil
       assert Ezagent.Agent.CredentialAdapter.host_login_source_dir(CcCustomAgent) == :none
+    end
+
+    test "is a credentialled flavor (so the credential-status router probes it)" do
+      assert Ezagent.Agent.CredentialAdapter.credentialled?(CcCustomAgent)
     end
 
     test "credential_status/2 is profile-driven via opts" do
@@ -309,8 +415,18 @@ defmodule Ezagent.PluginCc.Template.CcCustomBackendTest do
 
       assert is_function(by["cc-headless-custom"].instance_behaviors, 0)
 
+      assert {:ok, %{template_class: CcHeadlessCustomAgent}} =
+               Ezagent.AgentFlavorRegistry.lookup("cc-headless-custom")
+
       assert {:ok, EzagentPluginCc.CcHeadlessCustomBridgeAdapter} =
                Ezagent.AgentBridge.AdapterRegistry.lookup("cc-headless-custom")
+    end
+
+    test "template metadata: class name + cc-headless config_dir namespace" do
+      assert CcHeadlessCustomAgent.template_name() == "cc_headless_custom.agent"
+
+      assert CcHeadlessCustomAgent.config_dir_namespace() ==
+               CcHeadlessAgent.config_dir_namespace()
     end
 
     test "validate requires a catalog profile (same contract as pty)" do
@@ -322,6 +438,46 @@ defmodule Ezagent.PluginCc.Template.CcCustomBackendTest do
 
       assert CcHeadlessCustomAgent.validate(base) == {:error, :missing_backend_profile}
       assert CcHeadlessCustomAgent.validate(Map.put(base, "provider", "kimi")) == :ok
+    end
+
+    test "validate rejects unknown / anthropic / non-string providers (fail closed, drift guard vs pty)" do
+      base = %{
+        "class" => "cc_headless_custom.agent",
+        "agent_uri" => "entity://team-alpha/agent/cch_cu-neg",
+        "cwd" => "/tmp"
+      }
+
+      assert {:error, {:unknown_backend_profile, "bogus"}} =
+               CcHeadlessCustomAgent.validate(Map.put(base, "provider", "bogus"))
+
+      assert {:error, {:unknown_backend_profile, "anthropic"}} =
+               CcHeadlessCustomAgent.validate(Map.put(base, "provider", "anthropic"))
+
+      assert {:error, {:unknown_backend_profile, 123}} =
+               CcHeadlessCustomAgent.validate(Map.put(base, "provider", 123))
+    end
+
+    test "validate rejects the wrong class" do
+      tmpl = %{
+        "class" => "cc_headless_custom.agent",
+        "agent_uri" => "entity://team-alpha/agent/cch_cu-wrongclass",
+        "cwd" => "/tmp",
+        "provider" => "deepseek"
+      }
+
+      assert {:error, {:wrong_class, "cc_headless.agent"}} =
+               CcHeadlessCustomAgent.validate(%{tmpl | "class" => "cc_headless.agent"})
+    end
+
+    test "template_data_extra/1 passes the content provider through (curl-pattern content seam)" do
+      data = CcHeadlessCustomAgent.template_data_extra(%{provider: "kimi", model: "x"})
+      assert data["provider"] == "kimi"
+      assert data["model"] == "x"
+
+      refute Map.has_key?(
+               CcHeadlessCustomAgent.template_data_extra(%{model: "x"}),
+               "provider"
+             )
     end
 
     test "instantiate fail-fast on missing key" do
@@ -342,6 +498,33 @@ defmodule Ezagent.PluginCc.Template.CcCustomBackendTest do
                )
     end
 
+    test "credential adapter: no on-disk credential, no host login" do
+      assert CcHeadlessCustomAgent.credential_relpaths() == []
+      assert CcHeadlessCustomAgent.secret_relpaths() == []
+      assert CcHeadlessCustomAgent.host_login_dir() == nil
+
+      assert Ezagent.Agent.CredentialAdapter.host_login_source_dir(CcHeadlessCustomAgent) ==
+               :none
+    end
+
+    test "is a credentialled flavor (so the credential-status router probes it)" do
+      assert Ezagent.Agent.CredentialAdapter.credentialled?(CcHeadlessCustomAgent)
+    end
+
+    test "credential_status/2 is profile-driven via opts" do
+      with_key()
+
+      assert %{status: :authenticated} =
+               CcHeadlessCustomAgent.credential_status(nil, backend_profile: "deepseek")
+
+      without_key()
+
+      assert %{status: :missing} =
+               CcHeadlessCustomAgent.credential_status(nil, backend_profile: "deepseek")
+
+      assert %{status: :unknown} = CcHeadlessCustomAgent.credential_status(nil, [])
+    end
+
     test "headless sidecar params thread the profile block (both vendors)" do
       with_key()
       uri = Ezagent.URI.new!("entity://team-alpha/agent/cch_cu")
@@ -360,12 +543,29 @@ defmodule Ezagent.PluginCc.Template.CcCustomBackendTest do
       assert params2.cmd_env["ANTHROPIC_BASE_URL"] == "https://api.moonshot.ai/anthropic"
     end
 
-    test "cold restart resolves the headless custom flavor" do
+    test "default anthropic headless path threads an empty cmd_env (no leak)" do
+      with_key()
+      uri = Ezagent.URI.new!("entity://team-alpha/agent/cch_plain")
+      params = CcHeadlessAgent.sdk_sidecar_params(uri, %{"cwd" => "/tmp"})
+      assert params.cmd_env == %{}
+    end
+
+    test "cold restart resolves the headless custom flavor (both resolver paths)" do
       assert {:ok, "cc-headless-custom"} =
                Ezagent.AgentFlavorResolver.resolve_flavor_from_sandbox(%{
                  respawn_template_data: %{
                    "flavor" => "cc-headless-custom",
                    "provider" => "deepseek",
+                   "class" => "cc_headless_custom.agent",
+                   "cwd" => "/tmp"
+                 }
+               })
+
+      # belt-and-suspenders: even without the persisted "flavor" key, the
+      # distinct template_name resolves the flavor via the class-name fallback.
+      assert {:ok, "cc-headless-custom"} =
+               Ezagent.AgentFlavorResolver.resolve_flavor_from_sandbox(%{
+                 respawn_template_data: %{
                    "class" => "cc_headless_custom.agent",
                    "cwd" => "/tmp"
                  }
@@ -396,6 +596,36 @@ defmodule Ezagent.PluginCc.Template.CcCustomBackendTest do
 
       assert src =~
                ~s|sync_result_action("cc-headless-custom"), do: :cc_headless_sync_result|
+    end
+
+    test "headless custom adapter is in_process_sync (same as cc-headless)" do
+      alias EzagentPluginCc.CcHeadlessCustomBridgeAdapter
+      assert CcHeadlessCustomBridgeAdapter.flavor() == "cc-headless-custom"
+      assert CcHeadlessCustomBridgeAdapter.transport_class() == :in_process_sync
+    end
+  end
+
+  # ── Headless defense line: provider errors raise, never silent anthropic ──
+  # Ported from the retired cc-deepseek suite (Appendix B) — exercises the
+  # shared `CcHeadlessAgent.sdk_sidecar_params/2` fail-closed raise directly;
+  # not specific to either custom-backend class.
+
+  describe "headless provider_cmd_env fail-closed defense line" do
+    test "raises on unknown profile (fail closed, no silent anthropic)" do
+      uri = Ezagent.URI.new!("entity://team-alpha/agent/cch_bogus")
+
+      assert_raise ArgumentError, ~r/unknown_backend_profile/, fn ->
+        CcHeadlessAgent.sdk_sidecar_params(uri, %{"cwd" => "/tmp", "provider" => "bogus"})
+      end
+    end
+
+    test "raises when the profile key is missing (fail closed)" do
+      without_key()
+      uri = Ezagent.URI.new!("entity://team-alpha/agent/cch_nokey")
+
+      assert_raise ArgumentError, ~r/backend_api_key_missing/, fn ->
+        CcHeadlessAgent.sdk_sidecar_params(uri, %{"cwd" => "/tmp", "provider" => "deepseek"})
+      end
     end
   end
 

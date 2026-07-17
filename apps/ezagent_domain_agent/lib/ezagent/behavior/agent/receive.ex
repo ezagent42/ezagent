@@ -341,11 +341,6 @@ defmodule Ezagent.ActionSet.Agent.Receive do
   # cc-custom (provider-profile) headless variant — same headless SDK sidecar,
   # same unique reply action; ONE clause serves every catalog profile.
   defp sync_result_action("cc-headless-custom"), do: :cc_headless_sync_result
-  # DeepSeek provider variant of cc-headless — same headless SDK sidecar, same
-  # unique reply action (it carries the `Ezagent.ActionSet.CcHeadlessAgent`
-  # behavior); only the backend LLM differs. Without this clause the reply falls
-  # to the default `:sync_result` (which curl claims globally) and is dropped.
-  defp sync_result_action("cc-headless-deepseek"), do: :cc_headless_sync_result
   defp sync_result_action("py"), do: :py_sync_result
   # hello's in-process router flavor — a UNIQUE action so it is not shadowed by the
   # default `:sync_result` that `curl` claims globally on `Entity.Agent` (mirrors

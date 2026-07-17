@@ -12,8 +12,8 @@ defmodule Ezagent.Orchestrator.CcOrchestratorSeed do
 
   - `flavor: "cc-custom"` + `provider: "deepseek"` — the orchestrator is a
     `claude` PTY agent on the provider-configurable cc-custom facility
-    (cc-custom-backends PR-5; the vendor-specific cc-deepseek flavor from
-    #1324 is retired): it authenticates via the
+    (cc-custom-backends PR-5; #1324's vendor-specific deepseek flavor is
+    retired, PR-6): it authenticates via the
     API-key env var the `"deepseek"` catalog profile names, so it needs no
     host `~/.claude` OAuth login (no #161
     co-tenant issue) and boots authenticated (no exit-256 / bridge-join timeout
@@ -432,9 +432,9 @@ defmodule Ezagent.Orchestrator.CcOrchestratorSeed do
         "The session orchestrator — an LLM-driven manager that composes " <>
           "and routes a team of worker agents via the 7 orchestration tools.",
       # cc-custom + the "deepseek" backend profile (cc-custom-backends PR-5;
-      # #1324's vendor-specific cc-deepseek flavor is retired): the
-      # orchestrator authenticates via DEEPSEEK_API_KEY — the env var the
-      # "deepseek" catalog profile names — so it has no
+      # #1324's vendor-specific deepseek flavor is retired, PR-6): the
+      # orchestrator authenticates via the API-key env var the "deepseek"
+      # catalog profile names, so it has no
       # `.credentials.json`, no dependency on the
       # host `~/.claude` OAuth login (#161), and boots authenticated — no
       # exit-256 / bridge-join timeout from a missing host login. The profile

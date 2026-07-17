@@ -50,7 +50,7 @@ defmodule Ezagent.PluginCc.Template.CcHeadlessCustomAgent do
   agent still has a config home, it just holds no secret.
   """
 
-  alias Ezagent.PluginCc.{Provider, ProviderCatalog}
+  alias Ezagent.PluginCc.Provider
   alias Ezagent.PluginCc.Template.CcAgent
   alias Ezagent.PluginCc.Template.CcHeadlessAgent
 
@@ -65,7 +65,7 @@ defmodule Ezagent.PluginCc.Template.CcHeadlessCustomAgent do
   # Reuse cc-headless's config_dir namespace: the shared config-home + SDK
   # sidecar paths materialize under the CcHeadlessAgent identity, so a
   # divergent namespace here would mismatch those paths (same reasoning as the
-  # deepseek headless shim).
+  # pty twin's reuse of cc's namespace).
   @impl Ezagent.Kind.Template
   def config_dir_namespace, do: CcHeadlessAgent.config_dir_namespace()
 
@@ -120,8 +120,10 @@ defmodule Ezagent.PluginCc.Template.CcHeadlessCustomAgent do
 
   @impl Ezagent.Kind.Template
   def validate(tmpl) when is_map(tmpl) do
+    # Fail-closed profile gate (shared facade): "provider" is REQUIRED user
+    # input naming a closed catalog profile — see Provider.check_backend_profile/1.
     with :ok <- check_class(tmpl),
-         :ok <- check_provider(tmpl),
+         :ok <- Provider.check_backend_profile(tmpl),
          :ok <- CcHeadlessAgent.validate_after_class(tmpl) do
       :ok
     end
@@ -133,30 +135,12 @@ defmodule Ezagent.PluginCc.Template.CcHeadlessCustomAgent do
   defp check_class(%{"class" => other}), do: {:error, {:wrong_class, other}}
   defp check_class(_), do: {:error, :missing_class_field}
 
-  # Fail-closed profile gate: "provider" is REQUIRED user input naming a
-  # closed catalog profile. Absent → :missing_backend_profile; unknown
-  # ("anthropic" is NOT a profile) / non-string → :unknown_backend_profile.
-  defp check_provider(tmpl) do
-    case Map.get(tmpl, Provider.provider_key()) do
-      nil ->
-        {:error, :missing_backend_profile}
-
-      name when is_binary(name) ->
-        if ProviderCatalog.known?(name),
-          do: :ok,
-          else: {:error, {:unknown_backend_profile, name}}
-
-      bad ->
-        {:error, {:unknown_backend_profile, bad}}
-    end
-  end
-
   # --- instantiate (fail-closed profile gate + fail-fast API-key gate) -------
 
   @impl Ezagent.Kind.Template
   def instantiate(_tmpl_name, %{"agent_uri" => uri_str} = tmpl, workspace_uri) do
     with {:ok, agent_uri} <- parse_uri(uri_str),
-         :ok <- check_provider(tmpl),
+         :ok <- Provider.check_backend_profile(tmpl),
          # Launchability gate FIRST — a missing profile API key is a clear
          # error BEFORE any Kind spawn / config-dir materialize / sidecar
          # start, never an opaque sidecar boot failure.
