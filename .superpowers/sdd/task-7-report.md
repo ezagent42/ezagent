@@ -91,6 +91,15 @@ Write failures use the Task 4 test-build hooks inside real Agent initialization;
 cache publication failure uses the real postcommit publisher and SQL rehydrate;
 all concurrency and crash boundaries use process messages without sleeps.
 
+Follow-up review made three boundaries explicit: the adopted Agent is safely
+terminated and monitored during teardown; case 7 makes the test Template Class
+return a real post-`Kind.spawn` sidecar error after the coordinator receipt has
+committed; and case 8 discards both lineage and workspace ETS entries, then uses
+a fresh BEAM process and Repo checkout to reload the SQL receipt and republish
+both production caches before recovery. The permanent-identity contract is now
+stated in the design: one Agent URI has one final receipt, and destroy/recreate
+requires a new URI.
+
 Fresh correction verification:
 
 ```text

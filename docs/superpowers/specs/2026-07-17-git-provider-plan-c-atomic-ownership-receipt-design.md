@@ -359,15 +359,22 @@ existing Agent.
 ## Concurrent attempts
 
 Two attempts targeting the same URI may both prepare, but DynamicSupervisor
-still selects exactly one winner. Only the winner's child init executes the
-creation transaction. The loser receives `:already_started`, its handle remains
-unconsumed, and its attempt has no ownership receipt.
+alone cannot elect the ownership winner: child initialization commits before
+Kind registration makes the supervisor winner observable. The transaction
+therefore fences on a unique `agent_uri` receipt key. Exactly one initialization
+commits; a concurrent different attempt conflicts, its handle conveys no
+ownership, and recovery must never retire the winner.
 
 If both handles somehow reach one new child, init accepts exactly the handle in
 its child spec; the coordinator's one-use claim and unique exact receipt keys
 reject replay. A later retry of the winning attempt is idempotent only when all
 four identity coordinates match. A different attempt cannot adopt the winning
 receipt, even when Agent URI, root, and workspace happen to match.
+
+For Plan C, an Agent URI is a permanent creation identity and has exactly one
+final ownership receipt. Destroying that Agent does not make its URI reusable;
+a later ownership lifecycle must use a new Agent URI. A reincarnation protocol
+would require explicit receipt retirement/versioning and is outside Plan C.
 
 ## Failure, rollback, and idempotency
 
@@ -394,7 +401,9 @@ receipt and already carries the durable workspace coordinate; it needs no
 pending/confirmed column. AgentLineage is already durable. The implementation
 therefore needs no new table or column: it adds transaction-aware exact-write
 APIs over the existing inventory and lineage schemas, and treats
-WorkspaceRegistry as a post-commit consistency cache.
+WorkspaceRegistry as a post-commit consistency cache. The `agent_uri` unique
+index is the transaction-level winner fence described above, not a liveness
+constraint.
 
 This branch has an explicit migration budget: `20260717004000` is the only
 allowed Plan C forward migration. Nothing in this branch is integrated yet.

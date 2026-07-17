@@ -46,7 +46,8 @@ defmodule Ezagent.Workspace.TaskWorkspace.AtomicOwnershipTest do
             :provisioner_test_owner,
             :task_workspace_git_runner,
             :task_workspace_retirement,
-            :provisioner_test_verify_absent_result
+            :provisioner_test_verify_absent_result,
+            :atomic_sidecar_failure
           ],
           do: Application.delete_env(:ezagent_domain_workspace, key)
     end)
@@ -100,6 +101,7 @@ defmodule Ezagent.Workspace.TaskWorkspace.AtomicOwnershipTest do
     assert {:error, :creation_attempt_not_found} = receipt(row)
     pending = force_pending(Store.get(row.id), :adopted_caller_crash)
     recover_unowned(pending)
+    terminate_agent(agent)
   end
 
   test "4 concurrent production starts yield one SQL receipt and loser owns nothing", %{
@@ -163,14 +165,18 @@ defmodule Ezagent.Workspace.TaskWorkspace.AtomicOwnershipTest do
     flavor: flavor
   } do
     row = ready_row("sidecar-failure")
-    Ezagent.Agent.TestTemplateSpawn.inject(:barrier_before_complete, self())
-    caller = start_caller(row, flavor)
-    assert_receive {:template_spawn_before_complete, _, {:ok, %{fresh?: true}}, _}
-    Process.exit(caller, :kill)
+    Application.put_env(:ezagent_domain_workspace, :atomic_sidecar_failure, true)
+    assert {:error, :injected_sidecar_failure} = start(row, flavor)
+    assert_receive {:sidecar_failed_after_receipt, agent}
+    assert agent == uri(row.agent_uri)
+    assert {:ok, _receipt} = receipt(Store.get(row.id))
     recover_owned(Store.get(row.id))
+    terminate_agent(agent)
   end
 
-  test "8 durable SQL receipt survives cache-process state recycling", %{flavor: flavor} do
+  test "8 fresh BEAM recovery process rehydrates caches from durable SQL receipt", %{
+    flavor: flavor
+  } do
     row = ready_row("restart")
     Ezagent.Agent.TestTemplateSpawn.inject(:barrier_before_complete, self())
     caller = start_caller(row, flavor)
@@ -178,9 +184,26 @@ defmodule Ezagent.Workspace.TaskWorkspace.AtomicOwnershipTest do
     Process.exit(caller, :kill)
     :ets.delete(Ezagent.AgentLineage.table(), row.agent_uri)
     :ets.delete(Ezagent.WorkspaceRegistry.table(), row.agent_uri)
-    :ok = Ezagent.AgentLineage.rehydrate()
-    assert {:ok, _} = receipt(Repo.get!(Provision, row.id))
-    recover_owned(Repo.get!(Provision, row.id))
+    assert :error = Ezagent.AgentLineage.lookup(uri(row.agent_uri))
+    assert :error = Ezagent.WorkspaceRegistry.lookup(uri(row.agent_uri))
+
+    recovery_reader =
+      Task.async(fn ->
+        durable = Repo.get!(Provision, row.id)
+        {:owned, facts} = Store.classify_creation_receipt(durable)
+        :ok = Ezagent.AgentLineage.publish_cache(facts.agent_uri, facts.root_uri)
+        :ok = Ezagent.WorkspaceRegistry.bind(facts.agent_uri, facts.workspace_uri)
+        {durable, facts}
+      end)
+
+    Ecto.Adapters.SQL.Sandbox.allow(Repo, self(), recovery_reader.pid)
+    {reloaded, facts} = Task.await(recovery_reader, 5_000)
+    assert facts.attempt_id == row.creation_attempt_id
+    assert {:ok, root} = Ezagent.AgentLineage.lookup(uri(row.agent_uri))
+    assert root == uri(row.provenance_root_uri)
+    assert {:ok, rebound_workspace} = Ezagent.WorkspaceRegistry.lookup(uri(row.agent_uri))
+    assert rebound_workspace == uri(row.workspace_uri)
+    recover_owned(reloaded)
   end
 
   test "9 coordinator replay is exact and reconciler blocks durable coordinate conflict", %{
@@ -258,6 +281,23 @@ defmodule Ezagent.Workspace.TaskWorkspace.AtomicOwnershipTest do
 
   defp claim_only(row),
     do: Store.claim_start(row.id, row.start_token, lease_seconds: 1) |> elem(1)
+
+  defp terminate_agent(agent_uri) do
+    case Ezagent.KindRegistry.lookup(agent_uri) do
+      {:ok, pid} ->
+        monitor = Process.monitor(pid)
+        :ok = DynamicSupervisor.terminate_child(Ezagent.Entity.Agent.supervisor(), pid)
+        assert_receive {:DOWN, ^monitor, :process, ^pid, _reason}
+
+        case Ezagent.KindRegistry.lookup(agent_uri) do
+          :error -> :ok
+          {:ok, stale_pid} -> refute Process.alive?(stale_pid)
+        end
+
+      :error ->
+        :ok
+    end
+  end
 
   defp receipt(row),
     do:
