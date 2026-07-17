@@ -19,10 +19,10 @@ admin = Ezagent.Entity.User.admin_uri()
 
 # ── Helpers ──
 
-cap = fn member_uri, action, instance, kind \\ :session, behavior \\ Ezagent.ActionSet.Session ->
+cap = fn member_uri, action, instance ->
   %Capability{
-    kind: kind,
-    behavior: behavior,
+    kind: :session,
+    behavior: Ezagent.ActionSet.Session,
     action: action,
     instance: instance,
     workspace_uri: ws,
