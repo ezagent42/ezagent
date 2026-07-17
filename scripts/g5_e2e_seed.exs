@@ -93,16 +93,28 @@ IO.puts("  passwords set (both users: e2etest123)")
 
 IO.puts("[2/4] Creating curl agent (no API key — will trigger {:no_api_key})...")
 
-# Determine workspace — use the admin's workspace
+# Create a curl agent via system admin (has all caps)
 admin_ws = Ezagent.Workspace.Store.get_by_name("system")
 IO.puts("  workspace: #{URI.to_string(admin_ws.uri)}")
 
-# Create a curl agent via provisioning
 agent_name = "g5-e2e-agent-#{:os.system_time(:second)}"
+
+# Issue workspace create_agent cap to admin (needed for Provisioning.create_agent dispatch)
+create_agent_cap = %Capability{
+  kind: :workspace,
+  behavior: Ezagent.ActionSet.Workspace,
+  action: :create_agent,
+  instance: admin_ws.uri,
+  workspace_uri: ws,
+  granted_by: admin,
+  granted_at: DateTime.utc_now()
+}
+[{:ok, signed_cap}] = Ezagent.Cap.issue({:genesis, admin}, admin, create_agent_cap)
+
 {:ok, %{agent_uri: agent_uri}} = Ezagent.Workspace.Provisioning.create_agent(
   admin_ws.uri,
   %{name: agent_name, flavor: "curl"},
-  %{caller: founder_uri, caps: MapSet.new()}
+  %{caller: admin, caps: MapSet.new([signed_cap])}
 )
 IO.puts("  agent: #{URI.to_string(agent_uri)}")
 
