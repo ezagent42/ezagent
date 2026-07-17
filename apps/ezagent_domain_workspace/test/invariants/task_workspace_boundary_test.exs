@@ -150,7 +150,9 @@ defmodule Ezagent.Workspace.TaskWorkspace.BoundaryTest do
       "def leak(opts) do handle = Keyword.fetch!(opts, :launch_context); serializer = if(flag, do: Jason, else: String); serializer.encode!(handle) end",
       "def leak(opts) do handle = Keyword.fetch!(opts, :launch_context); if Jason.encode!(handle), do: :ok, else: :error end",
       "def leak(opts) do handle = Keyword.fetch!(opts, :launch_context); case Jason.encode!(handle) do _ -> :ok end end",
-      "def leak(opts) do handle = Keyword.fetch!(opts, :launch_context); case value do x when Jason.encode!(handle) -> x; _ -> :ok end end"
+      "def leak(opts) do handle = Keyword.fetch!(opts, :launch_context); case value do x when Jason.encode!(handle) -> x; _ -> :ok end end",
+      "def leak(opts) do with value <- Keyword.fetch!(opts, :launch_context) do Jason.encode!(value) end end",
+      "def leak(opts) do for value <- [Keyword.fetch!(opts, :launch_context)], do: Jason.encode!(value) end"
     ]
 
     for source <- mutants do
@@ -457,6 +459,34 @@ defmodule Ezagent.Workspace.TaskWorkspace.BoundaryTest do
     )
   end
 
+  defp launch_scan({:<-, _, [left, right]} = node, state, function, path, aliases) do
+    state = launch_scan(right, state, function, path, aliases)
+    assigned = variables_in(left)
+    tainted? = authority_source_node?(right) or tainted_node?(right, state.tainted)
+
+    tainted =
+      if tainted?,
+        do: MapSet.union(state.tainted, assigned),
+        else: MapSet.difference(state.tainted, assigned)
+
+    modules =
+      Enum.reduce(assigned, state.modules, fn variable, acc ->
+        Map.put(
+          acc,
+          Atom.to_string(variable),
+          launch_generator_module_value(right, state.modules, aliases)
+        )
+      end)
+
+    record_launch_state(
+      node,
+      %{state | tainted: tainted, modules: modules},
+      function,
+      path,
+      aliases
+    )
+  end
+
   defp launch_scan({:if, _, [condition, opts]}, state, function, path, aliases) do
     state = launch_scan(condition, state, function, path, aliases)
     branches = [Keyword.get(opts, :do), Keyword.get(opts, :else)] |> Enum.reject(&is_nil/1)
@@ -477,7 +507,10 @@ defmodule Ezagent.Workspace.TaskWorkspace.BoundaryTest do
     opts = List.last(args)
     with_state = launch_scan(Enum.drop(args, -1), state, function, path, aliases)
     success = launch_scan(Keyword.get(opts, :do), with_state, function, path, aliases)
-    failure = launch_clause_join(Keyword.get(opts, :else, []), state, function, path, aliases)
+
+    failure =
+      launch_clause_join(Keyword.get(opts, :else, []), with_state, function, path, aliases)
+
     merge_launch_states([success, failure], state)
   end
 
@@ -576,6 +609,21 @@ defmodule Ezagent.Workspace.TaskWorkspace.BoundaryTest do
 
   defp launch_module_value(ast, modules, aliases),
     do: resolve_sink_assignment(ast, aliases, modules)
+
+  defp launch_generator_module_value([value], modules, aliases),
+    do: launch_module_value(value, modules, aliases)
+
+  defp launch_generator_module_value(value, modules, aliases),
+    do: launch_module_value(value, modules, aliases)
+
+  defp authority_source_node?(node) do
+    {_node, found?} =
+      Macro.prewalk(node, false, fn child, found? ->
+        {child, found? or authority_source?(child)}
+      end)
+
+    found?
+  end
 
   defp record_launch_leak(node, function, path, aliases, tainted, leaks) do
     case launch_context_leak_kind(node, tainted, aliases) do

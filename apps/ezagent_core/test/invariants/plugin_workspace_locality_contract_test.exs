@@ -152,7 +152,11 @@ defmodule EzagentCore.Invariants.PluginWorkspaceLocalityContractTest do
       "owner = Ezagent.Agent.CreationInventory; if apply(owner, :record_exact, args), do: :ok, else: :error",
       "owner = Ezagent.Agent.CreationInventory; case apply(owner, :record_exact, args) do _ -> :ok end",
       "owner = Ezagent.Agent.CreationInventory; case value do x when apply(owner, :record_exact, args) -> x; _ -> :ok end",
-      "owner = if(flag, do: Ezagent.Agent.CreationInventory, else: String); owner.record_exact(repo, a, b, c, d)"
+      "owner = if(flag, do: Ezagent.Agent.CreationInventory, else: String); owner.record_exact(repo, a, b, c, d)",
+      "with owner <- Ezagent.Agent.CreationInventory do owner.record_exact(repo, a, b, c, d) end",
+      "for owner <- [Ezagent.Agent.CreationInventory], do: owner.record_exact(repo, a, b, c, d)",
+      "owner = if(flag, do: Ezagent.Agent.CreationInventory, else: String); owner.lookup(value)",
+      "owner = if(flag, do: Ezagent.Agent.CreationInventory, else: String); owner.arbitrary(value)"
     ]
 
     for source <- mutants do
@@ -305,6 +309,12 @@ defmodule EzagentCore.Invariants.PluginWorkspaceLocalityContractTest do
     {Map.put(env, name, ownership_value(rhs, env, aliases)), calls}
   end
 
+  defp ownership_scan({:<-, _, [{name, _, context}, rhs]}, env, aliases, imports, function, calls)
+       when is_atom(name) and (is_atom(context) or is_nil(context)) do
+    {_rhs_env, calls} = ownership_scan(rhs, env, aliases, imports, function, calls)
+    {Map.put(env, name, ownership_generator_value(rhs, env, aliases)), calls}
+  end
+
   defp ownership_scan({:fn, _, clauses}, env, aliases, imports, function, calls) do
     calls = scan_ownership_children(clauses, env, aliases, imports, function, calls)
     {env, calls}
@@ -347,7 +357,14 @@ defmodule EzagentCore.Invariants.PluginWorkspaceLocalityContractTest do
       ownership_scan(Keyword.get(opts, :do), with_env, aliases, imports, function, calls)
 
     {_else_env, calls} =
-      ownership_clause_join(Keyword.get(opts, :else, []), env, aliases, imports, function, calls)
+      ownership_clause_join(
+        Keyword.get(opts, :else, []),
+        with_env,
+        aliases,
+        imports,
+        function,
+        calls
+      )
 
     {env, calls}
   end
@@ -433,6 +450,12 @@ defmodule EzagentCore.Invariants.PluginWorkspaceLocalityContractTest do
      scan_ownership_children(args, env, aliases, imports, function, maybe_add_call(calls, call))}
   end
 
+  defp ownership_scan(nodes, env, aliases, imports, function, calls) when is_list(nodes) do
+    Enum.reduce(nodes, {env, calls}, fn node, {next_env, next_calls} ->
+      ownership_scan(node, next_env, aliases, imports, function, next_calls)
+    end)
+  end
+
   defp ownership_scan(node, env, aliases, imports, function, calls) do
     children =
       if is_tuple(node), do: Tuple.to_list(node), else: if(is_list(node), do: node, else: [])
@@ -462,7 +485,8 @@ defmodule EzagentCore.Invariants.PluginWorkspaceLocalityContractTest do
          _function,
          calls,
          _include_missing?
-       ), do: {env, calls}
+       ),
+       do: {env, calls}
 
   defp ownership_branch_join_nonempty(
          branches,
@@ -540,6 +564,9 @@ defmodule EzagentCore.Invariants.PluginWorkspaceLocalityContractTest do
        do: Map.get(env, name)
 
   defp ownership_value(ast, _env, aliases), do: resolve_module(ast, aliases)
+
+  defp ownership_generator_value([value], env, aliases), do: ownership_value(value, env, aliases)
+  defp ownership_generator_value(value, env, aliases), do: ownership_value(value, env, aliases)
 
   defp dynamic_ownership_call(module_ast, name_ast, args_ast, meta, env, aliases, function) do
     module = ownership_value(module_ast, env, aliases)
@@ -623,11 +650,8 @@ defmodule EzagentCore.Invariants.PluginWorkspaceLocalityContractTest do
 
   defp ownership_call(nil, _name, _arity, _line, _function), do: nil
 
-  defp ownership_call(:unknown, name, arity, line, function) do
-    if name in [:record, :record_exact, :bind, :resolve, :acknowledge, :consume_before_start] do
-      %{module: :unknown, call: {name, arity}, line: line, function: function}
-    end
-  end
+  defp ownership_call(:unknown, name, arity, line, function),
+    do: %{module: :unknown, call: {name, arity}, line: line, function: function}
 
   defp ownership_call(module, name, arity, line, function) do
     if forbidden_ownership_call?(module, name) do
