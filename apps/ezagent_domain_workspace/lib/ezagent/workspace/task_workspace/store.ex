@@ -412,6 +412,54 @@ defmodule Ezagent.Workspace.TaskWorkspace.Store do
 
   def request_cleanup(_id, _reason), do: {:error, :invalid_cleanup_reason}
 
+  @doc "Classifies exact durable Agent ownership for recovery without guessing."
+  @spec classify_creation_receipt(Provision.t()) ::
+          {:owned, map()}
+          | {:unowned, :creation_receipt_absent}
+          | {:error, :creation_receipt_conflict}
+  def classify_creation_receipt(%Provision{} = row) do
+    with {:ok, attempt_id} <- exact_attempt(row.creation_attempt_id),
+         {:ok, agent_uri} <- exact_uri(row.agent_uri),
+         {:ok, root_uri} <- exact_uri(row.provenance_root_uri),
+         {:ok, workspace_uri} <- exact_uri(row.workspace_uri) do
+      facts = %{
+        attempt_id: attempt_id,
+        agent_uri: agent_uri,
+        root_uri: root_uri,
+        workspace_uri: workspace_uri
+      }
+
+      case Ezagent.Agent.CreationInventory.exact(
+             attempt_id,
+             agent_uri,
+             root_uri,
+             workspace_uri
+           ) do
+        {:ok, _receipt} -> {:owned, facts}
+        {:error, :creation_attempt_not_found} -> {:unowned, :creation_receipt_absent}
+        {:error, :creation_fact_conflict} -> {:error, :creation_receipt_conflict}
+      end
+    else
+      {:error, _reason} -> {:error, :creation_receipt_conflict}
+    end
+  end
+
+  @doc "Persists a fixed recovery blocker while leaving cleanup retryable and auditable."
+  @spec block_cleanup(pos_integer(), atom()) :: {:ok, Provision.t()} | {:error, term()}
+  def block_cleanup(id, blocker) when is_atom(blocker) and not is_nil(blocker) do
+    locked(id, fn
+      %Provision{status: :cleanup_pending} = row ->
+        update_row(row, %{
+          blocker_code: Atom.to_string(blocker),
+          claim_token: nil,
+          lease_until: nil
+        })
+
+      %Provision{} ->
+        {:error, :invalid_cleanup_transition}
+    end)
+  end
+
   @doc "CAS transition for a ready row proven invalid before start was claimed."
   @spec request_invalid_ready_cleanup(pos_integer(), non_neg_integer(), atom()) ::
           {:ok, :never_started, Provision.t()} | {:error, term()}
@@ -657,6 +705,17 @@ defmodule Ezagent.Workspace.TaskWorkspace.Store do
 
   defp invalidate_unused_start_token(%Provision{start_token_consumed_at: nil}), do: nil
   defp invalidate_unused_start_token(%Provision{start_token: token}), do: token
+
+  defp exact_attempt(value) when is_binary(value) and value != "", do: {:ok, value}
+  defp exact_attempt(_value), do: {:error, :invalid_creation_attempt}
+
+  defp exact_uri(value) when is_binary(value) and value != "" do
+    {:ok, Ezagent.URI.new!(value)}
+  rescue
+    _ -> {:error, :invalid_creation_coordinate}
+  end
+
+  defp exact_uri(_value), do: {:error, :invalid_creation_coordinate}
 
   defp claim_expired_start(%Provision{start_lease_until: lease} = row, now, lease_seconds)
        when not is_nil(lease) do
