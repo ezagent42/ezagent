@@ -117,13 +117,16 @@ defmodule Ezagent.Kind.Server do
     hook_args =
       case launch_context do
         {:ok, context} -> Map.put(args, :launch_context, context)
-        :error -> args
+        :consumed -> args
         :absent -> args
+        {:error, reason} -> {:error, reason}
       end
 
-    with :ok <- run_before_start(kind_module, hook_args) do
+    with hook_args when is_map(hook_args) <- hook_args,
+         :ok <- run_before_start(kind_module, hook_args) do
       init_after_before_start(kind_module, args, uri, uri_str)
     else
+      {:error, :launch_context_lost} -> {:stop, :launch_context_lost}
       {:error, reason} -> {:stop, {:before_start_failed, reason}}
     end
   end
