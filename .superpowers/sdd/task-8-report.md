@@ -74,3 +74,9 @@ The original regex scanner under-counted parenthesized migration calls. This fol
 - Launch authority taint now starts from real `:launch_context` map/keyword patterns, `Keyword`/`Map` extraction, and launch authority/relay operations. It propagates in lexical function scope through renamed values and containers, clears on safe shadowing, and resolves aliased or variable sink modules.
 - Authored-map exceptions are pinned to exact file, function, kind, and source line rather than whole functions. A second map in the sanctioned `prepare/1` function followed by serialization is mutation-tested as forbidden.
 - Final focused verification: Core 9 tests and Workspace 19 tests, all with zero failures.
+
+## Nested-scope and call-flow review closure
+
+- Nested `fn`/branch/quote assignments no longer replace an outer forbidden plugin module binding; same-scope safe rebinding remains supported. Mutants cover nested `fn`, `if`, and quoted shadowing before outer `apply/3`.
+- Authority taint treats nested safe assignments conservatively without clearing the outer handle, retains sink-module identity at earlier call sites despite later safe rebinding, and summarizes local helper sinks by exact parameter position through a bounded callgraph fixpoint.
+- Reviewer mutants for nested handle shadowing, serializer use before later rebinding, and `sink(handle) -> helper(value) -> Jason.encode!` are all enforced.

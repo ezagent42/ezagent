@@ -139,7 +139,10 @@ defmodule EzagentCore.Invariants.PluginWorkspaceLocalityContractTest do
       "alias Ezagent.Agent.CreationInventory, as: Inventory\nKernel.apply(Inventory, dynamic_fun, args)",
       "owner = Ezagent.Agent.CreationInventory\napply(owner, :record_exact, args)",
       "registry = Ezagent.WorkspaceRegistry\nregistry.bind(agent, workspace)",
-      "alias Ezagent.Agent.CreationInventory, as: Inventory\nowner = Inventory\nquote do: apply(unquote(owner), :record_exact, args)"
+      "alias Ezagent.Agent.CreationInventory, as: Inventory\nowner = Inventory\nquote do: apply(unquote(owner), :record_exact, args)",
+      "owner = Ezagent.Agent.CreationInventory\n(fn -> owner = String; owner end).()\napply(owner, :record_exact, args)",
+      "owner = Ezagent.Agent.CreationInventory\nif(flag, do: (owner = String))\napply(owner, :record_exact, args)",
+      "owner = Ezagent.Agent.CreationInventory\nquote(do: (owner = String))\napply(owner, :record_exact, args)"
     ]
 
     for source <- mutants do
@@ -373,17 +376,23 @@ defmodule EzagentCore.Invariants.PluginWorkspaceLocalityContractTest do
   end
 
   defp collect_module_bindings(ast, aliases, functions) do
+    nested_lines = nested_scope_assignment_lines(ast)
+
     Enum.reduce(1..3, %{}, fn _pass, bindings ->
       {_ast, next} =
         Macro.prewalk(ast, bindings, fn
           {:=, meta, [{name, _var_meta, context}, rhs]} = node, acc
           when is_atom(name) and (is_atom(context) or is_nil(context)) ->
-            function = enclosing_function(functions, meta[:line] || 1)
-
             line = meta[:line] || 1
-            module = resolve_module(rhs, aliases, acc, function, line)
-            entries = Map.get(acc, {function, name}, [])
-            {node, Map.put(acc, {function, name}, entries ++ [{line, module}])}
+            function = enclosing_function(functions, line)
+
+            if MapSet.member?(nested_lines, line) do
+              {node, acc}
+            else
+              module = resolve_module(rhs, aliases, acc, function, line)
+              entries = Map.get(acc, {function, name}, [])
+              {node, Map.put(acc, {function, name}, entries ++ [{line, module}])}
+            end
 
           node, acc ->
             {node, acc}
@@ -391,6 +400,26 @@ defmodule EzagentCore.Invariants.PluginWorkspaceLocalityContractTest do
 
       next
     end)
+  end
+
+  defp nested_scope_assignment_lines(ast) do
+    {_ast, lines} =
+      Macro.prewalk(ast, MapSet.new(), fn
+        {kind, _meta, _args} = node, lines
+        when kind in [:fn, :if, :case, :cond, :with, :for, :quote] ->
+          {_node, nested} =
+            Macro.prewalk(node, MapSet.new(), fn
+              {:=, meta, _args} = child, acc -> {child, MapSet.put(acc, meta[:line] || 1)}
+              child, acc -> {child, acc}
+            end)
+
+          {node, MapSet.union(lines, nested)}
+
+        node, lines ->
+          {node, lines}
+      end)
+
+    lines
   end
 
   defp collect_functions(ast) do
