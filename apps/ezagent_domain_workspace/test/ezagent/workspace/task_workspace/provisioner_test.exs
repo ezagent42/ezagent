@@ -16,7 +16,13 @@ defmodule Ezagent.Workspace.TaskWorkspace.ProvisionerTest do
     )
 
     Application.put_env(:ezagent_domain_workspace, :provisioner_test_owner, self())
-    Application.delete_env(:ezagent_domain_workspace, :provisioner_test_prepare_result)
+
+    Application.put_env(
+      :ezagent_domain_workspace,
+      :provisioner_test_prepare_result,
+      prepared_result()
+    )
+
     Application.delete_env(:ezagent_domain_workspace, :provisioner_test_verify_result)
     Application.delete_env(:ezagent_domain_workspace, :provisioner_test_delay)
     Application.delete_env(:ezagent_domain_workspace, :provisioner_test_verify_hook)
@@ -57,6 +63,13 @@ defmodule Ezagent.Workspace.TaskWorkspace.ProvisionerTest do
     assert_receive {:git_prepare, %{remote_url: "https://git.example.test/acme/widgets.git"}}
     refute_receive {:git_prepare, _}
     assert Repo.aggregate(Provision, :count) == 1
+
+    assert %Provision{
+             resolved_base_commit: resolved_base_commit,
+             local_branch_ref: "refs/heads/ezagent/task/0123456789abcdef01234567/g1"
+           } = Repo.get_by!(Provision, provision_id: fixture.request.provision_id)
+
+    assert resolved_base_commit == String.duplicate("a", 40)
   end
 
   test "private policy fails before row, path, or Git process" do
@@ -104,7 +117,12 @@ defmodule Ezagent.Workspace.TaskWorkspace.ProvisionerTest do
              only_row()
 
     second = start_policy(:public, "second")
-    Application.delete_env(:ezagent_domain_workspace, :provisioner_test_prepare_result)
+
+    Application.put_env(
+      :ezagent_domain_workspace,
+      :provisioner_test_prepare_result,
+      prepared_result()
+    )
 
     Application.put_env(
       :ezagent_domain_workspace,
@@ -149,7 +167,9 @@ defmodule Ezagent.Workspace.TaskWorkspace.ProvisionerTest do
                expected_version: owner_claim.state_version,
                cache_identity: "cache-owner",
                worktree_identity: "worktree-owner",
-               worktree_path: conflict_paths.worktree_path
+               worktree_path: conflict_paths.worktree_path,
+               resolved_base_commit: String.duplicate("b", 40),
+               local_branch_ref: "refs/heads/ezagent/task/fedcba9876543210fedcba98/g1"
              })
 
     assert {:error, :worktree_conflict} = Provisioner.prepare(conflict.request)
@@ -246,7 +266,12 @@ defmodule Ezagent.Workspace.TaskWorkspace.ProvisionerTest do
         allowed_head_ref: fixture.policy.allowed_head_ref
       })
 
-    Application.put_env(:ezagent_domain_workspace, :provisioner_test_prepare_result, {:ok, paths})
+    Application.put_env(
+      :ezagent_domain_workspace,
+      :provisioner_test_prepare_result,
+      {:ok, Map.merge(paths, prepared_proof())}
+    )
+
     assert {:ok, %{status: :ready}} = Provisioner.prepare(fixture.request)
 
     cleanup_request = %{fixture.request | operation: :cleanup}
@@ -386,8 +411,32 @@ defmodule Ezagent.Workspace.TaskWorkspace.ProvisionerTest do
         allowed_head_ref: fixture.policy.allowed_head_ref
       })
 
-    Application.put_env(:ezagent_domain_workspace, :provisioner_test_prepare_result, {:ok, paths})
+    Application.put_env(
+      :ezagent_domain_workspace,
+      :provisioner_test_prepare_result,
+      {:ok, Map.merge(paths, prepared_proof())}
+    )
+
     paths
+  end
+
+  defp prepared_result do
+    {:ok,
+     Map.merge(
+       %{
+         cache_identity: "cache-fixture",
+         worktree_identity: "worktree-fixture",
+         worktree_path: "/tmp/ezagent-task-worktree-fixture"
+       },
+       prepared_proof()
+     )}
+  end
+
+  defp prepared_proof do
+    %{
+      resolved_base_commit: String.duplicate("a", 40),
+      local_branch_ref: "refs/heads/ezagent/task/0123456789abcdef01234567/g1"
+    }
   end
 
   defp other_repository_uri(fixture) do

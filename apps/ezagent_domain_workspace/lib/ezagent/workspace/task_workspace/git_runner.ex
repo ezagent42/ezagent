@@ -25,9 +25,21 @@ defmodule Ezagent.Workspace.TaskWorkspace.GitRunner do
         }
 
   @doc false
-  def maximum_provision_duration_ms, do: @default_deadline_ms * 4
+  def maximum_provision_duration_ms, do: @default_deadline_ms * 11
 
-  @doc "Prepares a bare cache and isolated detached worktree."
+  @doc false
+  @spec local_branch_ref(map()) :: String.t()
+  def local_branch_ref(%{provision_id: provision_id, generation: generation}) do
+    digest =
+      :sha256
+      |> :crypto.hash(provision_id)
+      |> Base.encode16(case: :lower)
+      |> binary_part(0, 24)
+
+    "refs/heads/ezagent/task/#{digest}/g#{generation}"
+  end
+
+  @doc "Prepares a bare cache and isolated attached worktree."
   @spec prepare(map()) :: {:ok, map()} | {:error, term()}
   def prepare(%{visibility: :private}), do: {:error, :private_checkout_not_supported}
 
@@ -38,6 +50,53 @@ defmodule Ezagent.Workspace.TaskWorkspace.GitRunner do
          {:ok, paths} <- Paths.derive(request),
          :ok <- File.mkdir_p(Path.dirname(paths.cache_path)),
          {:ok, clone_history} <- ensure_cache(request, paths),
+         opts = command_opts(request),
+         remote_argv =
+           git_argv(["--git-dir", paths.cache_path, "remote", "get-url", "origin"]),
+         :ok <- execute_matching_remote(remote_argv, opts, request.remote_url),
+         fetch_argv =
+           git_argv([
+             "--git-dir",
+             paths.cache_path,
+             "fetch",
+             "--prune",
+             "origin",
+             "+refs/heads/*:refs/ezagent/origin/heads/*",
+             "+refs/tags/*:refs/ezagent/origin/tags/*"
+           ]),
+         {:ok, _fetch} <- execute(fetch_argv, opts),
+         head_ref = "refs/ezagent/origin/heads/#{request.base_ref}",
+         tag_ref = "refs/ezagent/origin/tags/#{request.base_ref}",
+         head_probe = git_argv(["--git-dir", paths.cache_path, "show-ref", "--verify", head_ref]),
+         tag_probe = git_argv(["--git-dir", paths.cache_path, "show-ref", "--verify", tag_ref]),
+         {:ok, resolved_ref} <-
+           resolve_exactly_one_ref(head_ref, head_probe, tag_ref, tag_probe, opts),
+         resolve_argv =
+           git_argv([
+             "--git-dir",
+             paths.cache_path,
+             "rev-parse",
+             "--verify",
+             "#{resolved_ref}^{commit}"
+           ]),
+         {:ok, resolved} <- execute(resolve_argv, opts),
+         {:ok, resolved_sha} <- validate_object_id(resolved.stdout),
+         local_branch = local_branch_ref(request),
+         local_branch_name = String.replace_prefix(local_branch, "refs/heads/", ""),
+         branch_owner_argv =
+           git_argv(["--git-dir", paths.cache_path, "worktree", "list", "--porcelain"]),
+         {:ok, branch_owners} <- execute(branch_owner_argv, opts),
+         :ok <- branch_available(branch_owners.stdout, local_branch, paths.worktree_path),
+         branch_argv =
+           git_argv([
+             "--git-dir",
+             paths.cache_path,
+             "branch",
+             "-f",
+             local_branch_name,
+             resolved_sha
+           ]),
+         {:ok, _branch} <- execute(branch_argv, opts),
          :ok <- File.mkdir_p(Path.dirname(paths.worktree_path)),
          worktree_argv <-
            git_argv([
@@ -45,15 +104,27 @@ defmodule Ezagent.Workspace.TaskWorkspace.GitRunner do
              paths.cache_path,
              "worktree",
              "add",
-             "--detach",
              paths.worktree_path,
-             request.base_ref
+             local_branch_name
            ]),
          {:ok, _result} <- execute_worktree_add(worktree_argv, request) do
       {:ok,
        Map.merge(paths, %{
-         argv_history: clone_history ++ [worktree_argv],
+         argv_history:
+           clone_history ++
+             [
+               remote_argv,
+               fetch_argv,
+               head_probe,
+               tag_probe,
+               resolve_argv,
+               branch_owner_argv,
+               branch_argv,
+               worktree_argv
+             ],
          base_ref: request.base_ref,
+         resolved_base_commit: resolved_sha,
+         local_branch_ref: local_branch,
          allowed_head_ref: request.allowed_head_ref,
          runner_opts: retained_runner_opts(request)
        })}
@@ -236,7 +307,7 @@ defmodule Ezagent.Workspace.TaskWorkspace.GitRunner do
 
   defp ensure_cache(request, paths) do
     if File.dir?(paths.cache_path) do
-      verify_cache_remote(request, paths.cache_path)
+      {:ok, []}
     else
       argv = git_argv(["clone", "--bare", request.remote_url, paths.cache_path])
 
@@ -251,18 +322,57 @@ defmodule Ezagent.Workspace.TaskWorkspace.GitRunner do
     end
   end
 
-  defp verify_cache_remote(request, cache_path) do
-    argv = git_argv(["--git-dir", cache_path, "remote", "get-url", "origin"])
+  defp matching_remote(result, expected) do
+    if String.trim(result.stdout) == expected, do: :ok, else: {:error, :cache_remote_mismatch}
+  end
 
-    case execute(argv, command_opts(request)) do
-      {:ok, result} ->
-        if String.trim(result.stdout) == request.remote_url,
-          do: {:ok, [argv]},
-          else: {:error, :cache_remote_mismatch}
-
-      {:error, _reason} ->
-        {:error, :cache_remote_mismatch}
+  defp execute_matching_remote(argv, opts, expected) do
+    case execute(argv, opts) do
+      {:ok, result} -> matching_remote(result, expected)
+      {:error, _reason} -> {:error, :cache_remote_mismatch}
     end
+  end
+
+  defp resolve_exactly_one_ref(head_ref, head_argv, tag_ref, tag_argv, opts) do
+    head? = match?({:ok, _}, execute(head_argv, opts))
+    tag? = match?({:ok, _}, execute(tag_argv, opts))
+
+    case {head?, tag?} do
+      {true, false} -> {:ok, head_ref}
+      {false, true} -> {:ok, tag_ref}
+      {false, false} -> {:error, :base_ref_not_found}
+      {true, true} -> {:error, :ambiguous_base_ref}
+    end
+  end
+
+  defp validate_object_id(stdout) do
+    object_id = String.trim(stdout)
+
+    if Regex.match?(~r/\A(?:[0-9a-f]{40}|[0-9a-f]{64})\z/, object_id),
+      do: {:ok, object_id},
+      else: {:error, :invalid_resolved_object_id}
+  end
+
+  defp branch_available(porcelain, branch_ref, expected_path) do
+    conflict? =
+      porcelain
+      |> String.split("\n\n", trim: true)
+      |> Enum.any?(fn entry ->
+        lines = String.split(entry, "\n", trim: true)
+        path = field_value(lines, "worktree ")
+        branch = field_value(lines, "branch ")
+
+        branch == branch_ref and is_binary(path) and
+          Path.expand(path) != Path.expand(expected_path)
+      end)
+
+    if conflict?, do: {:error, :workspace_branch_conflict}, else: :ok
+  end
+
+  defp field_value(lines, prefix) do
+    Enum.find_value(lines, fn line ->
+      if String.starts_with?(line, prefix), do: String.replace_prefix(line, prefix, "")
+    end)
   end
 
   defp execute_worktree_add(argv, request) do
