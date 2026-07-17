@@ -13,6 +13,9 @@ import {Overview} from "./components/Overview"
 import {SessionsTable, type SessionsState} from "./components/SessionsTable"
 import {WorldHello} from "./components/WorldHello"
 import {ManageFrame, WorkspacePluginSurface, type WorkspacePluginState} from "./components/WorkspacePlugin"
+import {ErrorMessageCard} from "./components/ErrorMessageCard"
+import {matchDispatchError} from "./lib/errorMatcher"
+import {renderError, type RenderedError} from "./lib/errorRenderer"
 import {isPrimaryNavActive, pageTitleForComponent, primaryNavItems, sectionRoot as worldSectionRoot} from "../js/world_ia.js"
 import slotManifest from "./slots.manifest.json"
 import "./styles.css"
@@ -119,6 +122,7 @@ type WorldState = IdentitiesState & WorkspacePluginState & ConversationState & {
   }>
   title?: string
   workspace_uri?: string | null
+  last_dispatch_status?: string | null
 }
 
 const roots = new WeakMap<HTMLElement, Root>()
@@ -139,6 +143,12 @@ export function mountWorld(element: HTMLElement, options: WorldMountOptions = {}
 function WorldApp({layout, state: initialState, pluginNav, caller, pushEvent, onServerEvent}: WorldMountOptions) {
   const [currentLayout, setCurrentLayout] = React.useState<WorldLayout>(() => initialState?.layout || layout || {})
   const [state, setState] = React.useState<WorldState>(() => initialState || {})
+  const [errorCard, setErrorCard] = React.useState<RenderedError | null>(() => {
+    const match = matchDispatchError(initialState?.last_dispatch_status)
+    return match.code === "unknown" && !initialState?.last_dispatch_status?.startsWith("error:")
+      ? null
+      : renderError(match.code, caller || {})
+  })
 
   const navItems = React.useMemo<typeof NAV_ITEMS>(() => {
     const seen = new Set(NAV_ITEMS.map((item) => item.href))
@@ -161,6 +171,11 @@ function WorldApp({layout, state: initialState, pluginNav, caller, pushEvent, on
         return clearSessionCreatePending ? {...merged, session_create_pending: false} : merged
       })
       if (next.layout) setCurrentLayout(next.layout)
+
+      if (next.last_dispatch_status) {
+        const match = matchDispatchError(next.last_dispatch_status)
+        setErrorCard(renderError(match.code, caller || {}))
+      }
     })
 
     onServerEvent("world:url", (payload) => {
@@ -249,6 +264,16 @@ function WorldApp({layout, state: initialState, pluginNav, caller, pushEvent, on
         </header>
 
         <main className={fullBleed ? "h-full min-h-0 min-w-0 overflow-hidden" : "h-full min-h-0 min-w-0 overflow-auto p-4 sm:p-6"} data-world-content>
+          {errorCard && (
+            <div className="mb-4">
+              <ErrorMessageCard
+                error={errorCard}
+                onDismiss={() => setErrorCard(null)}
+                onAction={(action, args) => pushEvent?.("world:dispatch", {action, args})}
+                onNavigate={(href) => pushEvent?.("world:navigate", {to: href})}
+              />
+            </div>
+          )}
           {!fullBleed && (
             <header className="mb-5 flex flex-col items-start justify-between gap-3 sm:flex-row sm:items-center sm:gap-4">
               <div className="min-w-0 flex-1 sm:flex-none">
