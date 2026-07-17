@@ -58,7 +58,7 @@ for {uri, label, caps} <- [
   {member_uri, "member", [join_member, send_member]}
 ] do
   case Ezagent.Users.create_read_only(uri, issue.(uri, caps)) do
-    {:ok, _} -> IO.puts("  #{label}: created #{EzUri.to_string(uri)}")
+    {:ok, _} -> IO.puts("  #{label}: created #{URI.to_string(uri)}")
     {:error, %Ecto.Changeset{errors: [uri: {"has already been taken", _}]}} ->
       IO.puts("  #{label}: already exists")
     other -> IO.puts("  #{label}: #{inspect(other)}")
@@ -95,7 +95,7 @@ IO.puts("[2/4] Creating curl agent (no API key — will trigger {:no_api_key})..
 
 # Determine workspace — use the admin's workspace
 {:ok, admin_ws} = Ezagent.Workspace.Store.get_by_name("system")
-IO.puts("  workspace: #{EzUri.to_string(admin_ws.uri)}")
+IO.puts("  workspace: #{URI.to_string(admin_ws.uri)}")
 
 # Create a curl agent via provisioning
 agent_name = "g5-e2e-agent-#{:os.system_time(:second)}"
@@ -104,7 +104,7 @@ agent_name = "g5-e2e-agent-#{:os.system_time(:second)}"
   %{name: agent_name, flavor: "curl"},
   %{caller: founder_uri, caps: MapSet.new()}
 )
-IO.puts("  agent: #{EzUri.to_string(agent_uri)}")
+IO.puts("  agent: #{URI.to_string(agent_uri)}")
 
 # Verify NO api key is set (intentional)
 IO.puts("  agent has NO api key — E2E will trigger {:no_api_key}")
@@ -131,7 +131,7 @@ Then in your browser (http://localhost:4000):
 
 A / Layer 1 (founder sees fix link):
   Login: g5-founder@e2e.local / e2etest123
-  → Create a session with agent "#{EzUri.to_string(agent_uri)}"
+  → Create a session with agent "#{URI.to_string(agent_uri)}"
   → Send: "hello"
   → 📸 EXPECT: card "Agent 未配置凭证" + impact + fix link
 
