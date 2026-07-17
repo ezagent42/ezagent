@@ -74,6 +74,11 @@ defmodule Ezagent.PluginCc.Template.CcDeepseekBackendTest do
       assert Provider.profile_env("deepseek") == {:error, {:backend_api_key_missing, "deepseek"}}
     end
 
+    test "empty-string key counts as missing (parity with unset)" do
+      System.put_env("DEEPSEEK_API_KEY", "")
+      assert Provider.profile_env("deepseek") == {:error, {:backend_api_key_missing, "deepseek"}}
+    end
+
     test "unknown profile → {:error, {:unknown_backend_profile, name}} (fail closed)" do
       assert Provider.profile_env("bogus") == {:error, {:unknown_backend_profile, "bogus"}}
     end
@@ -424,6 +429,27 @@ defmodule Ezagent.PluginCc.Template.CcDeepseekBackendTest do
       uri = Ezagent.URI.new!("entity://team-alpha/agent/cch_plain")
       params = CcHeadlessAgent.sdk_sidecar_params(uri, %{"cwd" => "/tmp"})
       assert params.cmd_env == %{}
+    end
+  end
+
+  # ── Headless defense line: provider errors raise, never silent anthropic ──
+
+  describe "headless provider_cmd_env fail-closed defense line" do
+    test "raises on unknown profile (fail closed, no silent anthropic)" do
+      uri = Ezagent.URI.new!("entity://team-alpha/agent/cch_bogus")
+
+      assert_raise ArgumentError, ~r/unknown_backend_profile/, fn ->
+        CcHeadlessAgent.sdk_sidecar_params(uri, %{"cwd" => "/tmp", "provider" => "bogus"})
+      end
+    end
+
+    test "raises when the profile key is missing (fail closed)" do
+      without_key()
+      uri = Ezagent.URI.new!("entity://team-alpha/agent/cch_nokey")
+
+      assert_raise ArgumentError, ~r/backend_api_key_missing/, fn ->
+        CcHeadlessAgent.sdk_sidecar_params(uri, %{"cwd" => "/tmp", "provider" => "deepseek"})
+      end
     end
   end
 

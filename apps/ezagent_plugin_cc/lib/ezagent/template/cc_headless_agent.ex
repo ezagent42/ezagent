@@ -288,10 +288,24 @@ defmodule Ezagent.PluginCc.Template.CcHeadlessAgent do
 
   defp provider_cmd_env(tmpl) do
     case Ezagent.PluginCc.Provider.provider_env(tmpl) do
-      {:ok, env} -> env
-      # Unreachable for deepseek (instantiate gates the key first); a bare {} is
-      # a safe no-op for the sidecar's `maybe_json_env` (skips empty maps).
-      {:error, _} -> %{}
+      {:ok, env} ->
+        env
+
+      # Unreachable when the flavor's instantiate/3 gates correctly (the
+      # deepseek shim's ensure_api_key/2 fail-fast today, cc-headless-custom's
+      # gate later) — this raise is the defense line for a template that
+      # bypassed those gates. Fail loud so the misconfiguration is visible; no
+      # silent fallback to the default anthropic path (precedent:
+      # CcAgent.reject_stale_config_dir_data_key!/1).
+      {:error, reason} ->
+        raise ArgumentError,
+              "cc-headless: provider " <>
+                inspect(Ezagent.PluginCc.Provider.provider_of(tmpl)) <>
+                " failed closed — " <>
+                inspect(reason) <>
+                ". Refusing to silently fall back to the default anthropic path; " <>
+                "the flavor's instantiate/3 should have gated this before spawn " <>
+                "(fail loud so the misconfiguration is visible, no silent fallback)."
     end
   end
 
