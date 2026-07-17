@@ -3,7 +3,7 @@ defmodule Ezagent.DomainGit.D0BackendReuseGate.InProcessFake do
 
   use GenServer
 
-  alias Ezagent.DomainGit.D0BackendReuseGate.SensitiveCredential
+  alias Ezagent.DomainGit.D0BackendReuseGate.{RemoteSeal, SensitiveCredential}
 
   @behaviour Ezagent.DomainGit.D0BackendReuseGate.ProviderAuthorizationBackend
   @behaviour Ezagent.DomainGit.D0BackendReuseGate.CredentialBackend
@@ -46,6 +46,9 @@ defmodule Ezagent.DomainGit.D0BackendReuseGate.InProcessFake do
   @impl Ezagent.DomainGit.D0BackendReuseGate.CredentialBackend
   def lease_for_operation(request),
     do: GenServer.call(__MODULE__, {:lease_for_operation, request})
+
+  def lease_for_operation_sealed(request),
+    do: GenServer.call(__MODULE__, {:lease_for_operation_sealed, request})
 
   @impl Ezagent.DomainGit.D0BackendReuseGate.CredentialBackend
   def consume_lease(request), do: GenServer.call(__MODULE__, {:consume_lease, request})
@@ -120,32 +123,11 @@ defmodule Ezagent.DomainGit.D0BackendReuseGate.InProcessFake do
   end
 
   def handle_call({:lease_for_operation, request}, _from, state) do
-    with {:ok, record} <- fetch_credential(state, request.credential_ref),
-         :ok <- validate_scope(record.scope, request.expected_scope),
-         :ok <- validate_version(record.version, request.expected_version),
-         :ok <- validate_active(record.status),
-         :ok <- validate_operation_grant(request) do
-      lease_id = "lease-#{map_size(state.leases) + 1}"
-      expires_at = DateTime.add(state.now, 30, :second)
+    issue_lease(request, state, :sensitive)
+  end
 
-      lease_record = %{
-        scope: record.scope,
-        version: record.version,
-        expires_at: expires_at,
-        status: :available
-      }
-
-      lease = %{
-        lease_id: lease_id,
-        sensitive: %SensitiveCredential{value: record.secret},
-        expires_at: expires_at,
-        observed_version: record.version
-      }
-
-      {:reply, {:ok, lease}, put_in(state.leases[lease_id], lease_record)}
-    else
-      {:error, reason} -> {:reply, {:error, reason}, state}
-    end
+  def handle_call({:lease_for_operation_sealed, request}, _from, state) do
+    issue_lease(request, state, :sealed)
   end
 
   def handle_call({:prepare_lease, request}, _from, state) do
@@ -246,6 +228,40 @@ defmodule Ezagent.DomainGit.D0BackendReuseGate.InProcessFake do
 
       _ ->
         {:reply, {:error, :invalid_authorization_subject}, state}
+    end
+  end
+
+  defp issue_lease(request, state, response_kind) when response_kind in [:sensitive, :sealed] do
+    with {:ok, record} <- fetch_credential(state, request.credential_ref),
+         :ok <- validate_scope(record.scope, request.expected_scope),
+         :ok <- validate_version(record.version, request.expected_version),
+         :ok <- validate_active(record.status),
+         :ok <- validate_operation_grant(request) do
+      lease_id = "lease-#{map_size(state.leases) + 1}"
+      expires_at = DateTime.add(state.now, 30, :second)
+
+      lease_record = %{
+        scope: record.scope,
+        version: record.version,
+        expires_at: expires_at,
+        status: :available
+      }
+
+      lease = %{
+        lease_id: lease_id,
+        expires_at: expires_at,
+        observed_version: record.version
+      }
+
+      lease =
+        case response_kind do
+          :sensitive -> Map.put(lease, :sensitive, %SensitiveCredential{value: record.secret})
+          :sealed -> Map.put(lease, :sealed_credential, RemoteSeal.seal(record.secret))
+        end
+
+      {:reply, {:ok, lease}, put_in(state.leases[lease_id], lease_record)}
+    else
+      {:error, reason} -> {:reply, {:error, reason}, state}
     end
   end
 

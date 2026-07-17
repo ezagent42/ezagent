@@ -6,11 +6,11 @@ defmodule Ezagent.DomainGit.D0BackendReuseGate.RemoteShapedFake do
 
   alias Ezagent.DomainGit.D0BackendReuseGate.{
     InProcessFake,
+    RemoteSeal,
     RemoteTransport,
     SensitiveCredential
   }
 
-  @seal_key :crypto.hash(:sha256, "ezagent-d0-remote-shaped-fake")
   @tamper_key {__MODULE__, :tamper_next_sealed_response}
 
   def reset, do: call(:reset, %{})
@@ -53,7 +53,7 @@ defmodule Ezagent.DomainGit.D0BackendReuseGate.RemoteShapedFake do
       {:ok, %{sealed_credential: sealed} = lease} ->
         sealed = maybe_tamper(sealed)
 
-        case unseal(sealed) do
+        case RemoteSeal.unseal(sealed) do
           {:ok, value} ->
             sensitive = %SensitiveCredential{value: value}
             {:ok, lease |> Map.delete(:sealed_credential) |> Map.put(:sensitive, sensitive)}
@@ -116,53 +116,21 @@ defmodule Ezagent.DomainGit.D0BackendReuseGate.RemoteShapedFake do
   defp dispatch(:status, request), do: InProcessFake.status(request)
 
   defp dispatch(:lease_for_operation, request) do
-    case InProcessFake.lease_for_operation(request) do
-      {:ok, %{sensitive: %SensitiveCredential{value: value}} = lease} ->
-        {:ok, lease |> Map.delete(:sensitive) |> Map.put(:sealed_credential, seal(value))}
-
-      other ->
-        other
-    end
+    InProcessFake.lease_for_operation_sealed(request)
   end
 
   defp dispatch(:consume_lease, request), do: InProcessFake.consume_lease(request)
   defp dispatch(:revoke, request), do: InProcessFake.revoke(request)
 
   defp seal_material(%{credential_material: material} = request) do
-    request |> Map.delete(:credential_material) |> Map.put(:sealed_credential, seal(material))
+    request
+    |> Map.delete(:credential_material)
+    |> Map.put(:sealed_credential, RemoteSeal.seal(material))
   end
 
   defp unseal_material(%{sealed_credential: sealed} = request) do
-    {:ok, value} = unseal(sealed)
+    {:ok, value} = RemoteSeal.unseal(sealed)
     request |> Map.delete(:sealed_credential) |> Map.put(:credential_material, value)
-  end
-
-  defp seal(value) when is_binary(value) do
-    iv = :crypto.strong_rand_bytes(12)
-
-    {ciphertext, tag} =
-      :crypto.crypto_one_time_aead(:aes_256_gcm, @seal_key, iv, value, <<>>, true)
-
-    Base.url_encode64(iv <> tag <> ciphertext, padding: false)
-  end
-
-  defp unseal(sealed) do
-    with {:ok, raw} <- Base.url_decode64(sealed, padding: false),
-         <<iv::binary-size(12), tag::binary-size(16), ciphertext::binary>> <- raw,
-         value when is_binary(value) <-
-           :crypto.crypto_one_time_aead(
-             :aes_256_gcm,
-             @seal_key,
-             iv,
-             ciphertext,
-             <<>>,
-             tag,
-             false
-           ) do
-      {:ok, value}
-    else
-      _ -> {:error, :provider_response_invalid}
-    end
   end
 
   defp maybe_tamper(sealed) do
