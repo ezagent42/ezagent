@@ -66,3 +66,29 @@ Fresh correction verification after formatting:
   — Agent suite 11 tests, 0 failures; Session suite 6 tests, 0 failures.
 - `SHELL=/bin/bash MIX_ENV=test mix test apps/ezagent_core/test/invariants/kind_provenance_test.exs`
   — 1 test, 0 failures.
+
+## Second review correction after `5e242ad5e`
+
+- Removed the configurable `LaunchPersistence` behaviour, production adapter,
+  and test configuration. `LaunchCoordinator` again visibly and directly calls
+  the fixed `CreationInventory.record_exact/5` and
+  `AgentLineage.record_exact/3` APIs inside its transaction.
+- Retained only a compile-time test-build hook around the fixed calls. The
+  production build compiles the hook as a direct no-op and exposes no runtime
+  or configuration-selected ownership persistence extension point.
+- Moved the deterministic barrier inside `Repo.transaction`, after both exact
+  writes return and immediately before the transaction callback returns. The
+  real `Kind.spawn/3` test uses a separate PostgreSQL connection to prove
+  KindSnapshot, inventory, and lineage are externally invisible while the
+  transaction is blocked, while KindRegistry and ReadyGate are also absent.
+  Releasing the barrier commits the facts before the child becomes visible.
+- Inventory failure remains injected before its fixed call; lineage failure is
+  injected after inventory and before its fixed call, proving rollback through
+  real Agent initialization.
+
+Fresh second-correction verification after formatting:
+
+- `SHELL=/bin/bash MIX_ENV=test mix test apps/ezagent_domain_agent/test/ezagent/agent/launch_coordinator_test.exs apps/ezagent_domain_session/test/ezagent/entity/agent_spawn_fresh_test.exs`
+  — Agent suite 11 tests, 0 failures; Session suite 6 tests, 0 failures.
+- `SHELL=/bin/bash MIX_ENV=test mix test apps/ezagent_core/test/invariants/kind_provenance_test.exs`
+  — 1 test, 0 failures.

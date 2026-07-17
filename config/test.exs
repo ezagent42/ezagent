@@ -1,7 +1,6 @@
 import Config
 
 config :ezagent_domain_agent,
-  launch_persistence: Ezagent.Agent.TestLaunchPersistence,
   launch_post_commit_publisher: Ezagent.Agent.TestLaunchPostCommitPublisher
 
 config :ezagent_domain_identity, Ezagent.Entity.Token,
