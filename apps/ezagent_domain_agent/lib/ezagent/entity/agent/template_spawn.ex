@@ -246,6 +246,7 @@ defmodule Ezagent.Entity.Agent.TemplateSpawn do
         opts
       )
       when is_map(template_content_map) and is_list(opts) do
+    {pre_start_ref, opts} = Keyword.pop(opts, :pre_start_ref)
     behavior_overlay = Keyword.get(opts, :behavior_overlay, [])
 
     with {:ok, template_class} <-
@@ -278,7 +279,8 @@ defmodule Ezagent.Entity.Agent.TemplateSpawn do
              spawned_by_uri,
              workspace_uri,
              flavor,
-             behavior_overlay
+             behavior_overlay,
+             pre_start_ref
            ) do
       {:ok, result}
     end
@@ -367,12 +369,13 @@ defmodule Ezagent.Entity.Agent.TemplateSpawn do
          spawned_by_uri,
          workspace_uri,
          flavor,
-         behavior_overlay
+         behavior_overlay,
+         pre_start_ref
        ) do
     with {:ok, data} <-
            Ezagent.Entity.AgentTemplate.to_template_data(template_content_map, instance_uri),
          {:ok, workers, fresh?, instantiate_meta} <-
-           instantiate_workers(template_class, data, workspace_uri) do
+           instantiate_workers(template_class, data, workspace_uri, pre_start_ref) do
       instantiate_meta = put_respawn_flavor(instantiate_meta, template_content_map)
 
       # codex PR #408 review HIGH-3 — surface role-bootstrap degradation
@@ -573,7 +576,27 @@ defmodule Ezagent.Entity.Agent.TemplateSpawn do
   # `:config_dir_path` for cc). The legacy 2-element `{:ok, workers}`
   # form has no signal — `fresh?` defaults conservatively to `false`
   # and meta is an empty map.
-  defp instantiate_workers(template_class, data, %URI{} = workspace_uri) do
+  defp instantiate_workers(template_class, data, workspace_uri, nil),
+    do: instantiate_workers_direct(template_class, data, workspace_uri)
+
+  defp instantiate_workers(template_class, data, %URI{} = workspace_uri, pre_start_ref) do
+    with {:ok, %{cwd: cwd, claim: claim}} <-
+           Ezagent.Kind.Template.PreStart.prepare(pre_start_ref) do
+      result =
+        try do
+          {:returned,
+           instantiate_workers_direct(template_class, Map.put(data, "cwd", cwd), workspace_uri)}
+        rescue
+          exception -> {:raised, :error, exception, __STACKTRACE__}
+        catch
+          kind, reason -> {:raised, kind, reason, __STACKTRACE__}
+        end
+
+      complete_pre_start(claim, result)
+    end
+  end
+
+  defp instantiate_workers_direct(template_class, data, %URI{} = workspace_uri) do
     # PR-3 (domain.agent D2) — route through the core contract-boundary wrapper so
     # the per-agent config_dir TARGET is domain-allocated + provided as data
     # (`"allocated_config_dir"`) before the plugin materializes into it.
@@ -595,6 +618,24 @@ defmodule Ezagent.Entity.Agent.TemplateSpawn do
       other ->
         {:error, {:unexpected_instantiate_result, other}}
     end
+  end
+
+  defp complete_pre_start(claim, {:returned, result}) do
+    outcome =
+      case result do
+        {:ok, _workers, _fresh?, _meta} -> :ok
+        {:error, reason} -> {:error, reason}
+      end
+
+    case Ezagent.Kind.Template.PreStart.complete(claim, outcome) do
+      :ok -> result
+      {:error, _reason} = error -> error
+    end
+  end
+
+  defp complete_pre_start(claim, {:raised, kind, reason, stacktrace}) do
+    _ = Ezagent.Kind.Template.PreStart.complete(claim, {:error, {kind, reason}})
+    :erlang.raise(kind, reason, stacktrace)
   end
 
   # PR3 2026-05-24 — dispatch `sandbox.update_config` on each worker URI
