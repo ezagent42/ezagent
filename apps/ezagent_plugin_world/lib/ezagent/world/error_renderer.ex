@@ -36,21 +36,23 @@ defmodule Ezagent.World.ErrorRenderer do
   `fix_owner_display_name` is the human-readable name of the fix_owner
   (e.g., the workspace founder's display name).
   """
-  @spec render(ErrorCode.t() | nil, keyword()) :: card()
+  @spec render(map() | nil, keyword()) :: card()
   def render(nil, _opts) do
-    # Layer 3 — unregistered error
+    # Layer 3 — unregistered error: auto-register issue
+    issue_id = register_issue(nil, _opts)
+
     %{
       layer: 3,
       what: "Agent 执行时遇到内部错误",
-      impact: "无法完成你的请求。此问题已自动登记，团队会跟进处理",
+      impact: "无法完成你的请求。此问题已自动登记（#{issue_id}），团队会跟进处理",
       fix_link: nil,
       fix_owner_name: nil,
       notify_action: nil,
-      issue_id: nil
+      issue_id: issue_id
     }
   end
 
-  def render(%ErrorCode{} = code, opts) do
+  def render(code, opts) when is_map(code) and is_map_key(code, :code) do
     user_can_fix = Keyword.get(opts, :user_can_fix, false)
     fix_owner_name = Keyword.get(opts, :fix_owner_display_name)
 
@@ -100,6 +102,8 @@ defmodule Ezagent.World.ErrorRenderer do
   end
 
   defp layer3_fallback(code) do
+    issue_id = register_issue(code, [])
+
     %{
       layer: 3,
       what: code.message.what,
@@ -107,8 +111,19 @@ defmodule Ezagent.World.ErrorRenderer do
       fix_link: nil,
       fix_owner_name: nil,
       notify_action: nil,
-      issue_id: nil
+      issue_id: issue_id
     }
+  end
+
+  defp register_issue(code_or_nil, _opts) do
+    code_str = if code_or_nil, do: code_or_nil.code, else: "unregistered"
+    ts = System.os_time(:second)
+    issue_id = "G5-#{code_str}-#{ts}"
+
+    require Logger
+    Logger.warning("[G5 Layer3] Auto-registered issue #{issue_id}: error_code=#{code_str}")
+
+    issue_id
   end
 
   @doc false

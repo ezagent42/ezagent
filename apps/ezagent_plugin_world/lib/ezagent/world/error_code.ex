@@ -29,7 +29,7 @@ defmodule Ezagent.World.ErrorCode do
       # 1 — agent_credential_missing
       %{
         code: "agent_credential_missing",
-        trigger: {:error, {:no_api_key, _}},
+        trigger: {:error, {:no_api_key, :_}},
         category: :credential,
         message: %{
           what: "Agent 未配置凭证",

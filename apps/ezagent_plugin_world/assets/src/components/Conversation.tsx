@@ -197,6 +197,7 @@ type Props = {
   onPtyInput: (bytes: string) => void
   onPtyResize: (size: {cols: number; rows: number}) => void
   onServerEvent?: (event: string, callback: (payload: unknown) => void) => void
+  pushEvent?: (event: string, payload: unknown) => void
   // Kanban board actions (kanban.*) dispatched from the in-session board tab.
   // Wired to the same `world:dispatch` path the plugin page uses
   // (`onWorkspacePluginAction`); session-agnostic, so no session_uri is threaded.
@@ -230,6 +231,7 @@ export function Conversation({
   onPtyInput,
   onPtyResize,
   onServerEvent,
+  pushEvent,
   onKanbanAction,
   onPublishTemplate,
 }: Props) {
@@ -650,9 +652,22 @@ export function Conversation({
               </a>
             )}
             {state.dispatch_error.layer === 2 && state.dispatch_error.fix_owner_name && (
-              <p className="mt-1 text-sm">
-                请联系 <span className="font-medium">{state.dispatch_error.fix_owner_name}</span> 修复此问题
-              </p>
+              <div className="mt-2">
+                <p className="text-sm">
+                  请联系 <span className="font-medium">{state.dispatch_error.fix_owner_name}</span> 修复此问题
+                </p>
+                <button
+                  className="mt-1.5 rounded bg-destructive px-3 py-1 text-xs font-medium text-destructive-foreground hover:bg-destructive/90"
+                  onClick={() => {
+                    if (state.dispatch_error?.notify_action && pushEvent) {
+                      pushEvent("world:dispatch", state.dispatch_error.notify_action)
+                    }
+                  }}
+                  data-world-dispatch-error-notify
+                >
+                  发送提醒给 {state.dispatch_error.fix_owner_name}
+                </button>
+              </div>
             )}
             {state.dispatch_error.layer === 3 && (
               <p className="mt-1 text-xs text-muted-foreground">此问题已自动登记，团队会跟进处理</p>

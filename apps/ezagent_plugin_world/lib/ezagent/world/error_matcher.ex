@@ -37,7 +37,7 @@ defmodule Ezagent.World.ErrorMatcher do
 
   @doc false
   def trigger_matches?({:error, pattern}, reason) when is_tuple(pattern) do
-    tuple_pattern_match?(pattern, reason, Tuple.size(pattern))
+    tuple_pattern_match?(pattern, reason, tuple_size(pattern))
   end
 
   def trigger_matches?({:error, pattern}, reason) when is_atom(pattern) do
