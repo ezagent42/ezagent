@@ -277,12 +277,25 @@ defmodule Ezagent.PluginCc.Template.CcHeadlessAgent do
       # worker applies it as the Claude Code SDK subprocess `env=`, so headless
       # deepseek talks to the DeepSeek endpoint exactly like the pty path. The
       # deepseek instantiate already fail-fasts on a missing DEEPSEEK_API_KEY.
-      cmd_env: provider_cmd_env(tmpl),
+      #
+      # ALSO carries the CLI-identity credential for ROLE-agents (#1323 落 main /
+      # Phase 3 ③ T7d parity): the SAME `SpawnPlan.maybe_put_cli_identity_env/3`
+      # seam the PTY flavor uses, so a headless role-agent (e.g. the
+      # kanban-assistant) can drive the ezagent CLI as itself from its Bash
+      # tool (`EZAGENT_USER_TOKEN` → `EzagentCli.Exec`). Role-less agents get
+      # provider env only — no behavior change.
+      cmd_env: cmd_env(agent_uri, tmpl),
       uv_path: Map.get(tmpl, "uv_path"),
       python_path: Map.get(tmpl, "python_path"),
       sdk_worker_path: Map.get(tmpl, "sdk_worker_path"),
       plugins: plugins
     }
+  end
+
+  defp cmd_env(agent_uri, tmpl) do
+    tmpl
+    |> provider_cmd_env()
+    |> Ezagent.PluginCc.Template.SpawnPlan.maybe_put_cli_identity_env(agent_uri, tmpl)
   end
 
   defp provider_cmd_env(tmpl) do
