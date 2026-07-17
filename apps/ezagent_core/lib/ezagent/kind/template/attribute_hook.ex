@@ -6,16 +6,19 @@ defmodule Ezagent.Kind.Template.AttributeHook do
   @callback store_attributes(URI.t(), module()) :: :ok | {:error, term()}
   @callback delete_attributes(URI.t()) :: :ok | {:error, term()}
 
+  @doc "Registers a downstream template-attribute hook."
   @spec register(module()) :: :ok
   def register(module) when is_atom(module) do
     :persistent_term.put(@hooks_key, Enum.uniq([module | hooks()]))
     :ok
   end
 
+  @doc "Stores downstream attributes for a newly instantiated template."
   @spec store(URI.t(), module()) :: :ok | {:error, term()}
   def store(%URI{} = instance_uri, class_module) when is_atom(class_module),
     do: invoke_hooks(:store_attributes, [instance_uri, class_module])
 
+  @doc "Deletes downstream attributes for a retired template instance."
   @spec delete(URI.t()) :: :ok | {:error, term()}
   def delete(%URI{} = instance_uri), do: invoke_hooks(:delete_attributes, [instance_uri])
 
