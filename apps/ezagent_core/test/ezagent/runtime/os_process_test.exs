@@ -240,4 +240,27 @@ defmodule Ezagent.Runtime.OsProcessTest do
       :ok = OsProcess.stop(ep)
     end
   end
+
+  test "clear_env starts the child from only the explicitly supplied environment" do
+    Process.flag(:trap_exit, true)
+    previous = System.get_env("EZAGENT_OSPROCESS_SECRET")
+    System.put_env("EZAGENT_OSPROCESS_SECRET", "must-not-cross-boundary")
+
+    on_exit(fn ->
+      if previous,
+        do: System.put_env("EZAGENT_OSPROCESS_SECRET", previous),
+        else: System.delete_env("EZAGENT_OSPROCESS_SECRET")
+    end)
+
+    {:ok, %{exec_pid: exec_pid, os_pid: os_pid}} =
+      OsProcess.spawn(["/usr/bin/env"],
+        cd: System.tmp_dir!(),
+        clear_env: true,
+        env: %{"ONLY_THIS" => "present"}
+      )
+
+    assert_receive {:stdout, ^os_pid, output}, 2_000
+    assert IO.iodata_to_binary(output) == "ONLY_THIS=present\n"
+    assert_receive {:EXIT, ^exec_pid, :normal}, 2_000
+  end
 end
