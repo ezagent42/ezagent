@@ -718,12 +718,21 @@ defmodule Ezagent.Entity.Agent.TemplateSpawn do
   end
 
   defp finish_after_prepare(pre_start_completion, {:returned, result}) do
+    test_hook_before_complete(pre_start_completion, result)
     finalize_pre_start(pre_start_completion, result)
   end
 
   defp finish_after_prepare(pre_start_completion, {:raised, kind, reason, stacktrace}) do
     _ = complete_error_best_effort(pre_start_completion, kind, reason)
     :erlang.raise(kind, reason, stacktrace)
+  end
+
+  if Mix.env() == :test do
+    defp test_hook_before_complete(completion, result) do
+      Ezagent.Agent.TestTemplateSpawn.hook(:before_complete, completion, result)
+    end
+  else
+    defp test_hook_before_complete(_completion, _result), do: :ok
   end
 
   defp complete_error_best_effort(pre_start_completion, kind, reason) do

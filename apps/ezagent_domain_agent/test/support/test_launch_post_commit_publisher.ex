@@ -18,6 +18,13 @@ defmodule Ezagent.Agent.TestLaunchPostCommitPublisher do
     ensure_started()
 
     case Agent.get(__MODULE__, &Map.get(&1, URI.to_string(facts.agent_uri))) do
+      {:barrier_after_commit, owner} ->
+        send(owner, {:launch_receipt_committed, facts, self()})
+
+        receive do
+          :release_after_commit -> Production.publish(facts)
+        end
+
       {:raise_lineage_cache, owner} ->
         send(owner, {:lineage_cache_failed, facts.agent_uri})
         raise "injected lineage cache publication failure"
