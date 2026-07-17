@@ -19,16 +19,21 @@ sanitized/destroyed; the operator should rotate the DeepSeek key).
 | Proof | Result |
 |---|---|
 | CLI probe — DeepSeek (`deepseek-v4-pro[1m]` per catalog) | **PASS** (exit 0, `ok`, 7.5 s) |
-| CLI probe — Kimi (`kimi-k3`) | **BLOCKED at vendor** — 401 Invalid Authentication, all endpoints/schemes (operator key issue) |
+| CLI probe — Kimi platform profile (`kimi-k3`, moonshot.ai) | **Vendor 401** — the placed key is a Kimi for Coding SUBSCRIPTION key, not an open-platform key (root-caused 2026-07-18; see `05-kimi-coding-lane.md`) |
+| CLI probe — kimi-coding (`kimi-k3[1m]`, api.kimi.com/coding) | **PASS** (exit 0, `ok`, 6.3 s) |
 | Boot: seeded cc-orchestrator = cc-custom + deepseek | **PASS** (template content read live) |
 | cc-custom PTY + deepseek: create via product dispatch | **PASS** (fork → write → instantiate) |
 | cc-custom PTY: spawn, model identity, bridge topic | **PASS** (`deepseek-v4-pro[1m]` in TUI; `agent_bridge:cc-custom:` joined) |
 | cc-custom PTY: cold restart re-resolves flavor+profile | **PASS** (flavor/provider re-read from `respawn_template_data`; no secret persisted) |
-| cc-custom PTY: chat round-trip through world UI | **PASS** (`ds-pong`, ~11 s) |
-| cc-headless-custom + kimi: live spawn + chat | **NOT PROVEN** — vendor 401 (primary); three ad-hoc create lanes each independently blocked (secondary, see `04-findings.md` F2/F3/F4) |
+| cc-custom PTY + deepseek: chat round-trip (world UI) | **PASS** (`ds-pong`, ~11 s) |
+| cc-custom PTY + kimi-coding: create / spawn / model identity | **PASS** (`kimi-k3[1m] · API Usage Billing` in TUI; `agent_bridge:cc-custom:` joined) |
+| cc-custom PTY + kimi-coding: chat round-trip (world UI) | **PASS** (`kc-pong`, ~4 s) |
+| cc-custom PTY + kimi-coding: cold-restart spot check | **PASS** (flavor+profile re-resolve; PTY respawns; zero persisted secret) |
+| cc-headless-custom live spawn (any profile) | **NOT PROVEN** — ad-hoc lanes each independently blocked (F2/F3/F4; pre-existing/generic) |
 | Negative: `provider: "bogus"` at create | **PASS** — `{:invalid_template_data, {:unknown_backend_profile, "bogus"}}`, no spawn |
 | Negative: keyless create (deepseek) | **PASS** — `{:backend_api_key_missing, "deepseek", <uri>}` before any spawn |
 | Negative: keyless orchestrator socialware slot | **PASS** — SKIPS with `{:credential_unavailable, "cc-custom"}`; install completes (chain-C) |
+| Negative sanity: platform-kimi 401 is vendor-reject, not our gates | **PASS** — with `MOONSHOT_API_KEY` present the launch env builds; the 401 comes from the vendor (`05-kimi-coding-lane.md` §1) |
 
 ## Files
 
@@ -41,21 +46,30 @@ sanitized/destroyed; the operator should rotate the DeepSeek key).
 - `04-findings.md` — F1 secret-in-crash-log (CRITICAL, pre-existing class),
   F2/F4 pre-existing template-path bugs, F3 flavor-config gap, F5 CLI chat
   gap, F6 environment notes.
-- `server-run2-excerpts.txt` — sanitized server-log excerpts of the product
-  run (spawn, bridge join, TUI banner, chat round-trip).
+- `05-kimi-coding-lane.md` — the 2026-07-18 kimi-coding completion: unblock
+  context, both kimi-surface CLI probes (subscription PASS / platform 401
+  negative sanity), the cc-custom PTY product proof on `kimi-coding`, the
+  cold-restart spot check.
+- `server-run2-excerpts.txt` — sanitized server-log excerpts of the deepseek
+  product run (spawn, bridge join, TUI banner, chat round-trip).
 - `server-run3-keyless-excerpts.txt` — the keyless-run SKIP lines verbatim.
-- `shots/` — `chat-roundtrip-deepseek.png` (the `ds-pong` reply bubble),
+- `server-run4-5-kimi-coding-excerpts.txt` — sanitized excerpts of the
+  kimi-coding run (spawn, banner, chat) + the cold-restart respawn.
+- `shots/` — `chat-roundtrip-both-vendors.png` (one session, `ds-pong` +
+  `kc-pong`), `chat-roundtrip-deepseek.png`,
   `keyless-orchestrator-skip.png` (1-member session after the skip),
   `keyless-install-form.png`.
 
 ## Operator follow-ups (out-of-band)
 
-1. **Replace `MOONSHOT_API_KEY`** — the placed key is rejected by the vendor
-   (see `01-cli-probes.md`); re-running this proof with a valid key exercises
-   the kimi lane (its spawn-lane gaps are tracked in `04-findings.md`).
-2. **Rotate `DEEPSEEK_API_KEY`** — F1: it landed in local PtyServer crash logs
-   on this host (destroyed here, but treat as exposed).
-3. Normalize the credentials file to LF and `chmod 600`.
+1. ~~Replace `MOONSHOT_API_KEY`~~ — RESOLVED 2026-07-18: the key is a Kimi
+   for Coding subscription key; the catalog now carries the matching
+   `kimi-coding` profile (commit `11770568c`) and this directory proves the
+   lane end-to-end. An open-platform key would be needed only to use the
+   `kimi` (platform) profile.
+2. **Rotate `DEEPSEEK_API_KEY` and `KIMI_CODING_API_KEY`** — F1: both landed
+   in local PtyServer crash logs on this host (destroyed here, but treat as
+   exposed).
 
 ## Cleanliness proof (run before commit)
 

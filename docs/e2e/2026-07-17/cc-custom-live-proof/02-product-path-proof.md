@@ -96,6 +96,12 @@ esr-bridge channel` → reply posted back to the session.
 
 ## Agent 2 — cc-headless-custom on `kimi` — NOT live-provable (two independent blockers)
 
+> **2026-07-18 update:** blocker 1 was root-caused — the key is a Kimi for
+> Coding subscription key; the new `kimi-coding` catalog profile
+> (`11770568c`) is proven end-to-end (CLI probe, cc-custom PTY create/spawn/
+> chat, cold restart) in `05-kimi-coding-lane.md`. Blocker 2 (the headless
+> ad-hoc spawn lanes) stands as documented below.
+
 1. **Vendor blocker (primary):** the operator-supplied `MOONSHOT_API_KEY` is
    rejected by the vendor with 401 Invalid Authentication on every probed
    surface (see `01-cli-probes.md` forensics). Even a perfectly spawned kimi
