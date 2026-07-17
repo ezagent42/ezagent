@@ -11,12 +11,6 @@ defmodule EzagentCore.Invariants.PluginWorkspaceLocalityContractTest do
   use ExUnit.Case, async: true
 
   @forbidden_patterns [
-    atomic_ownership_write:
-      {~r/(?<![\.\w])(?:Ezagent\.)?(?:(?:Agent\.)?CreationInventory|AgentLineage|WorkspaceRegistry)\.[a-z_][a-z_0-9!?]*\s*\(|(?<![\.\w])(?:Ezagent\.)?Agent\.(?:LaunchAuthority|LaunchCoordinator)\.(?:resolve|acknowledge|consume_before_start)\s*\(/,
-       "Plugins must not access or interpret atomic Agent ownership facts."},
-    task_workspace_store:
-      {~r/(?<![\.\w])(?:Ezagent\.)?Workspace\.TaskWorkspace\.(?:Provision|Store|LaunchAuthority)\b/,
-       "Plugins must not access TaskWorkspace persistence or launch authority."},
     kind_registry_lookup:
       {~r/(?<![\.\w])(?:Ezagent\.)?KindRegistry\.lookup\s*\(/,
        "Use owner-gated core APIs instead of direct KindRegistry lookup."},
@@ -31,39 +25,38 @@ defmodule EzagentCore.Invariants.PluginWorkspaceLocalityContractTest do
        "Do not call/cast workspace-bound Kind pids directly from plugins."}
   ]
 
-  @allowlist [
+  @ownership_allowlist [
     %{
       path: "apps/ezagent_plugin_cc/lib/mix/tasks/ezagent.demo.seed_cc_agent.ex",
-      line: 118,
-      key: :atomic_ownership_write,
-      line_substring: "Ezagent.WorkspaceRegistry.bind(",
-      reason:
-        "existing demo seed workspace binding predates Plan C and does not access the atomic receipt"
+      function: {:ensure_session_alive, 1},
+      module: Ezagent.WorkspaceRegistry,
+      call: {:bind, 2},
+      reason: "existing demo session rebind predates Plan C"
     },
     %{
       path: "apps/ezagent_plugin_hello/lib/ezagent_plugin_hello/app.ex",
-      line: 210,
-      key: :atomic_ownership_write,
-      line_substring: "WorkspaceRegistry.bind(session_uri, workspace)",
-      reason:
-        "existing hello session binding predates Plan C and does not access the atomic receipt"
+      function: {:bind_workspace, 2},
+      module: Ezagent.WorkspaceRegistry,
+      call: {:bind, 2},
+      reason: "existing hello session binding predates Plan C"
     },
     %{
       path: "apps/ezagent_plugin_protocol_api/lib/ezagent/protocol_api/conversation_registry.ex",
-      line: 55,
-      key: :atomic_ownership_write,
-      line_substring: "WorkspaceRegistry.bind(session_uri, workspace_uri)",
-      reason:
-        "existing protocol session binding predates Plan C and does not access the atomic receipt"
+      function: {:create_stateless, 2},
+      module: Ezagent.WorkspaceRegistry,
+      call: {:bind, 2},
+      reason: "existing protocol stateless session binding predates Plan C"
     },
     %{
       path: "apps/ezagent_plugin_protocol_api/lib/ezagent/protocol_api/conversation_registry.ex",
-      line: 92,
-      key: :atomic_ownership_write,
-      line_substring: "WorkspaceRegistry.bind(session_uri, workspace_uri)",
-      reason:
-        "existing protocol session rebind predates Plan C and does not access the atomic receipt"
-    },
+      function: {:create_and_bind, 3},
+      module: Ezagent.WorkspaceRegistry,
+      call: {:bind, 2},
+      reason: "existing protocol conversation session binding predates Plan C"
+    }
+  ]
+
+  @allowlist [
     %{
       path: "apps/ezagent_plugin_cc/lib/ezagent/orchestrator/cc_orchestrator_seed.ex",
       line: 172,
@@ -120,7 +113,9 @@ defmodule EzagentCore.Invariants.PluginWorkspaceLocalityContractTest do
     violations =
       root
       |> production_plugin_files()
-      |> Enum.flat_map(&violations_in_file(root, &1))
+      |> Enum.flat_map(fn path ->
+        violations_in_file(root, path) ++ ownership_violations_in_file(root, path)
+      end)
 
     assert violations == [],
            """
@@ -132,6 +127,43 @@ defmodule EzagentCore.Invariants.PluginWorkspaceLocalityContractTest do
            Add a centralized allowlist entry only for system-global metadata or
            code that is already owner-gated before this local runtime access.
            """
+  end
+
+  test "ownership scanner rejects alias, multiline, import, and apply escapes" do
+    mutants = [
+      "alias Ezagent.Agent.CreationInventory, as: Inventory\nInventory.record_exact(repo, a, b, c, d)",
+      "alias Ezagent.WorkspaceRegistry\nWorkspaceRegistry\n. bind(agent, workspace)",
+      "alias Ezagent.{AgentLineage, WorkspaceRegistry}\nAgentLineage.record(agent, root)",
+      "import Ezagent.AgentLineage, only: [record_exact: 3]\nrecord_exact(repo, agent, root)",
+      "alias Ezagent.Agent.CreationInventory, as: Inventory\napply(Inventory, :record_exact, args)",
+      "alias Ezagent.Agent.CreationInventory, as: Inventory\nKernel.apply(Inventory, dynamic_fun, args)"
+    ]
+
+    for source <- mutants do
+      assert ownership_calls(source) != [], source
+    end
+
+    assert ownership_calls("# Inventory.record_exact(x)\n\"WorkspaceRegistry.bind(x)\"") == []
+  end
+
+  test "ownership allowlist is exact by file, enclosing function, module, and call" do
+    root = repo_root()
+
+    for entry <- @ownership_allowlist do
+      calls =
+        root
+        |> Path.join(entry.path)
+        |> File.read!()
+        |> ownership_calls()
+
+      assert Enum.any?(calls, fn call ->
+               call.function == entry.function and call.module == entry.module and
+                 call.call == entry.call
+             end),
+             "stale ownership allowlist entry: #{inspect(entry)}"
+
+      assert is_binary(entry.reason) and String.trim(entry.reason) != ""
+    end
   end
 
   test "allowlist entries remain exact and justified" do
@@ -168,8 +200,6 @@ defmodule EzagentCore.Invariants.PluginWorkspaceLocalityContractTest do
     assert warning =~ "kind_registry_lookup="
     assert warning =~ "spawn_registry="
     assert warning =~ "genserver_to_pid="
-    assert warning =~ "atomic_ownership_write="
-    assert warning =~ "task_workspace_store="
     assert warning =~ "docs/superpowers/specs/2026-06-24-workspace-locality-plugin-contract.md"
 
     assert workspace_locality_debt_enforced?(%{"ENFORCE_WORKSPACE_LOCALITY_DEBT" => "1"})
@@ -195,6 +225,200 @@ defmodule EzagentCore.Invariants.PluginWorkspaceLocalityContractTest do
       if File.dir?(lib_dir), do: list_ex_files(lib_dir), else: []
     end)
     |> Enum.sort()
+  end
+
+  defp ownership_violations_in_file(root, full_path) do
+    path = Path.relative_to(full_path, root)
+
+    full_path
+    |> File.read!()
+    |> ownership_calls()
+    |> Enum.reject(&ownership_allowlisted?(path, &1))
+    |> Enum.map(fn call ->
+      {path, call.line, :atomic_ownership_access,
+       "#{inspect(call.module)}.#{elem(call.call, 0)}/#{elem(call.call, 1)} in #{inspect(call.function)}"}
+    end)
+  end
+
+  defp ownership_calls(source) do
+    ast = Code.string_to_quoted!(source)
+    aliases = collect_aliases(ast)
+    imports = collect_imports(ast, aliases)
+    functions = collect_functions(ast)
+
+    {_ast, calls} =
+      Macro.prewalk(ast, [], fn
+        {{:., _dot_meta, [{:__aliases__, _, [:Kernel]}, :apply]}, meta,
+         [module_ast, name_ast, args_ast]} = node,
+        calls ->
+          call = dynamic_apply_call(module_ast, name_ast, args_ast, meta, aliases, functions)
+          {node, maybe_add_call(calls, call)}
+
+        {{:., _dot_meta, [module_ast, name]}, meta, args} = node, calls
+        when is_atom(name) and is_list(args) ->
+          module = resolve_module(module_ast, aliases)
+          call = ownership_call(module, name, length(args), meta[:line] || 1, functions)
+          {node, maybe_add_call(calls, call)}
+
+        {:apply, meta, [module_ast, name_ast, args_ast]} = node, calls ->
+          call = dynamic_apply_call(module_ast, name_ast, args_ast, meta, aliases, functions)
+          {node, maybe_add_call(calls, call)}
+
+        {name, meta, args} = node, calls when is_atom(name) and is_list(args) ->
+          imported_module = imported_owner(imports, name, length(args))
+
+          call =
+            ownership_call(imported_module, name, length(args), meta[:line] || 1, functions)
+
+          {node, maybe_add_call(calls, call)}
+
+        node, calls ->
+          {node, calls}
+      end)
+
+    calls |> Enum.uniq() |> Enum.sort_by(&{&1.line, &1.module, &1.call})
+  end
+
+  defp collect_aliases(ast) do
+    {_ast, aliases} =
+      Macro.prewalk(ast, %{}, fn
+        {:alias, _meta, [{{:., _, [base_ast, :{}]}, _, children}]} = node, aliases ->
+          base = resolve_module(base_ast, aliases)
+
+          aliases =
+            Enum.reduce(children, aliases, fn child, acc ->
+              child_name = alias_name(child)
+
+              if base && child_name,
+                do: Map.put(acc, child_name, Module.concat(base, child_name)),
+                else: acc
+            end)
+
+          {node, aliases}
+
+        {:alias, _meta, [module_ast]} = node, aliases ->
+          module = resolve_module(module_ast, aliases)
+          as = module && module |> Module.split() |> List.last()
+          {node, if(module && as, do: Map.put(aliases, as, module), else: aliases)}
+
+        {:alias, _meta, [module_ast, opts]} = node, aliases when is_list(opts) ->
+          module = resolve_module(module_ast, aliases)
+          as_ast = Keyword.get(opts, :as)
+          as = alias_name(as_ast) || (module && module |> Module.split() |> List.last())
+          {node, if(module && as, do: Map.put(aliases, as, module), else: aliases)}
+
+        node, aliases ->
+          {node, aliases}
+      end)
+
+    aliases
+  end
+
+  defp collect_imports(ast, aliases) do
+    {_ast, imports} =
+      Macro.prewalk(ast, [], fn
+        {:import, _meta, [module_ast | opts]} = node, imports ->
+          module = resolve_module(module_ast, aliases)
+          only = opts |> List.first([]) |> Keyword.get(:only, :all)
+          {node, if(module, do: [{module, only} | imports], else: imports)}
+
+        node, imports ->
+          {node, imports}
+      end)
+
+    imports
+  end
+
+  defp collect_functions(ast) do
+    {_ast, functions} =
+      Macro.prewalk(ast, [], fn
+        {kind, meta, [{name, _head_meta, args} | _]} = node, functions
+        when kind in [:def, :defp] and is_atom(name) ->
+          {node, [{meta[:line] || 1, {name, length(args || [])}} | functions]}
+
+        node, functions ->
+          {node, functions}
+      end)
+
+    Enum.sort(functions)
+  end
+
+  defp resolve_module({:__aliases__, _meta, [first | rest]}, aliases) do
+    case Map.get(aliases, Atom.to_string(first)) do
+      nil -> Module.concat([first | rest])
+      base -> Module.concat([base | rest])
+    end
+  end
+
+  defp resolve_module(module, _aliases) when is_atom(module), do: module
+  defp resolve_module(_module, _aliases), do: nil
+
+  defp alias_name({:__aliases__, _meta, [name]}), do: Atom.to_string(name)
+  defp alias_name(_ast), do: nil
+
+  defp imported_owner(imports, name, arity) do
+    Enum.find_value(imports, fn {module, only} ->
+      if only == :all or {name, arity} in only, do: module
+    end)
+  end
+
+  defp dynamic_apply_call(module_ast, name_ast, args_ast, meta, aliases, functions) do
+    module = resolve_module(module_ast, aliases)
+    name = if is_atom(name_ast), do: name_ast, else: :__dynamic_apply__
+    arity = if is_list(args_ast), do: length(args_ast), else: :dynamic
+    ownership_call(module, name, arity, meta[:line] || 1, functions)
+  end
+
+  defp ownership_call(nil, _name, _arity, _line, _functions), do: nil
+
+  defp ownership_call(module, name, arity, line, functions) do
+    if forbidden_ownership_call?(module, name) do
+      %{
+        module: module,
+        call: {name, arity},
+        line: line,
+        function: enclosing_function(functions, line)
+      }
+    end
+  end
+
+  defp forbidden_ownership_call?(module, _name)
+       when module in [
+              Ezagent.Agent.CreationInventory,
+              Ezagent.AgentLineage,
+              Ezagent.WorkspaceRegistry,
+              Ezagent.Workspace.TaskWorkspace.Provision,
+              Ezagent.Workspace.TaskWorkspace.Store,
+              Ezagent.Workspace.TaskWorkspace.LaunchAuthority
+            ],
+       do: true
+
+  defp forbidden_ownership_call?(Ezagent.Agent.LaunchAuthority, name),
+    do: name in [:resolve, :acknowledge, :__dynamic_apply__]
+
+  defp forbidden_ownership_call?(Ezagent.Agent.LaunchCoordinator, name),
+    do: name in [:consume_before_start, :__dynamic_apply__]
+
+  defp forbidden_ownership_call?(_module, _name), do: false
+
+  defp enclosing_function(functions, line) do
+    functions
+    |> Enum.take_while(fn {function_line, _function} -> function_line <= line end)
+    |> List.last()
+    |> case do
+      {_line, function} -> function
+      nil -> {:__module__, 0}
+    end
+  end
+
+  defp maybe_add_call(calls, nil), do: calls
+  defp maybe_add_call(calls, call), do: [call | calls]
+
+  defp ownership_allowlisted?(path, call) do
+    Enum.any?(@ownership_allowlist, fn entry ->
+      entry.path == path and entry.function == call.function and entry.module == call.module and
+        entry.call == call.call
+    end)
   end
 
   defp violations_in_file(root, full_path) do

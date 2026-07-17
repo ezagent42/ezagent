@@ -141,6 +141,11 @@ defmodule Ezagent.Workspace.TaskWorkspace.SignedE2ETest do
     assert_receive {:retire_agent, agent_uri_string, retirement_attempt}
     assert agent_uri_string == URI.to_string(agent_uri)
     assert retirement_attempt == facts.attempt_id
+    assert_receive {:retirement_facts, retirement_facts}
+    assert retirement_facts.attempt_id == facts.attempt_id
+    assert retirement_facts.agent_uri == facts.agent_uri
+    assert retirement_facts.root_uri == facts.root_uri
+    assert retirement_facts.workspace_uri == facts.workspace_uri
     cleaned = Repo.get_by!(Provision, provision_id: ready.provision_id)
 
     assert :ok =
@@ -182,6 +187,7 @@ defmodule Ezagent.Workspace.TaskWorkspace.SignedE2ETest do
 
     assert {:ok, %{status: :cleaned}} = dispatch(context, :cleanup_workspace)
     refute_receive {:retire_agent, _, _}
+    refute_receive {:retirement_facts, _}
     assert {:ok, _pid} = Ezagent.KindRegistry.lookup(agent_uri)
   end
 
