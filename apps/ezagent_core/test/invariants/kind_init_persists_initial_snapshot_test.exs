@@ -84,7 +84,135 @@ defmodule Ezagent.Invariants.KindInitPersistsInitialSnapshotTest do
     end
   end
 
+  defmodule RaisingSupervisorKind do
+    @behaviour Ezagent.Kind
+    def type_name, do: :raising_supervisor_probe
+    def behaviors, do: []
+    def persistence, do: :ephemeral
+    def supervisor, do: raise("supervisor resolution failed")
+  end
+
+  defmodule ExitingSupervisorKind do
+    @behaviour Ezagent.Kind
+    def type_name, do: :exiting_supervisor_probe
+    def behaviors, do: []
+    def persistence, do: :ephemeral
+    def supervisor, do: exit(:supervisor_resolution_failed)
+  end
+
+  defmodule CustomStrategyProbe do
+    def spawn(params) do
+      send(Map.fetch!(params, :probe_pid), :custom_strategy_invoked)
+      {:ok, self()}
+    end
+  end
+
+  defmodule CustomStrategyKind do
+    @behaviour Ezagent.Kind
+    def type_name, do: :custom_strategy_probe
+    def behaviors, do: []
+    def persistence, do: :ephemeral
+    def spawn_strategy, do: {:custom, CustomStrategyProbe, :spawn}
+  end
+
   describe "before_start/1 ordering" do
+    test "store restart preserves a pending initial context and consumed restart state" do
+      context = make_ref()
+      token = Ezagent.Kind.LaunchContextStore.issue(context)
+      old_store = Process.whereis(Ezagent.Kind.LaunchContextStore)
+      ref = Process.monitor(old_store)
+      Process.exit(old_store, :kill)
+      assert_receive {:DOWN, ^ref, :process, ^old_store, :killed}
+
+      new_store = wait_for_store_restart(old_store)
+      assert is_pid(new_store)
+      assert {:ok, ^context} = Ezagent.Kind.LaunchContextStore.take(token)
+      assert :consumed = Ezagent.Kind.LaunchContextStore.take(token)
+    end
+
+    test "a lost pending token cannot become a context-free live Kind" do
+      uri =
+        Ezagent.URI.new!(
+          "entity://team-alpha/agent/test_before-start-lost-#{System.unique_integer([:positive])}"
+        )
+
+      parent = self()
+
+      task =
+        Task.async(fn ->
+          Process.flag(:trap_exit, true)
+
+          Ezagent.Kind.Server.start_link(
+            {BeforeStartProbeKind,
+             %{
+               uri: uri,
+               probe_pid: parent,
+               probe_result: :ok,
+               launch_context_token: make_ref()
+             }}
+          )
+        end)
+
+      assert {:error, :launch_context_lost} = Task.await(task)
+
+      refute_receive {:before_start_entered, _, _}
+      assert :error == Ezagent.KindRegistry.lookup(uri)
+    end
+
+    test "issuer death abandons a pending context without exposing it in status" do
+      parent = self()
+      context = make_ref()
+
+      {issuer, issuer_ref} =
+        spawn_monitor(fn ->
+          token = Ezagent.Kind.LaunchContextStore.issue(context)
+          send(parent, {:issued, token})
+        end)
+
+      assert_receive {:issued, token}
+      assert_receive {:DOWN, ^issuer_ref, :process, ^issuer, :normal}
+      _ = :sys.get_state(Ezagent.Kind.LaunchContextStore)
+      assert {:error, :launch_context_lost} = Ezagent.Kind.LaunchContextStore.take(token)
+      refute inspect(:sys.get_status(Ezagent.Kind.LaunchContextStore)) =~ inspect(context)
+    end
+
+    test "raise and exit paths discard pending authority context" do
+      for {kind, expected} <- [
+            {RaisingSupervisorKind, RuntimeError},
+            {ExitingSupervisorKind, :supervisor_resolution_failed}
+          ] do
+        context = make_ref()
+
+        caught =
+          try do
+            Ezagent.Kind.spawn(kind, %{uri: URI.parse("entity://team-alpha/agent/failure")},
+              launch_context: context
+            )
+          rescue
+            error -> error.__struct__
+          catch
+            :exit, reason -> reason
+          end
+
+        assert caught == expected
+
+        assert [] ==
+                 :ets.match_object(
+                   Ezagent.Kind.LaunchContextStore.table(),
+                   {:_, :pending, context, :_}
+                 )
+      end
+    end
+
+    test "custom spawn strategy fails closed before invocation" do
+      assert {:error, :launch_context_unsupported} =
+               Ezagent.Kind.spawn(CustomStrategyKind, %{probe_pid: self()},
+                 launch_context: make_ref()
+               )
+
+      refute_receive :custom_strategy_invoked
+    end
+
     test "blocks snapshot and live registration until the hook succeeds" do
       uri =
         Ezagent.URI.new!(
@@ -201,6 +329,13 @@ defmodule Ezagent.Invariants.KindInitPersistsInitialSnapshotTest do
         end)
 
       refute output =~ inspect(launch_context)
+    end
+  end
+
+  defp wait_for_store_restart(old_store) do
+    case Process.whereis(Ezagent.Kind.LaunchContextStore) do
+      pid when is_pid(pid) and pid != old_store -> pid
+      _ -> wait_for_store_restart(old_store)
     end
   end
 
