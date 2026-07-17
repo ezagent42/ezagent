@@ -19,6 +19,11 @@ defmodule EzagentDomainWorkspace.TestSupport.TaskWorkspaceTemplateClass do
 
   @impl true
   def instantiate(_name, data, _workspace_uri, launch_context: launch_context) do
+    send(Application.fetch_env!(:ezagent_domain_workspace, :sidecar_gate_test_owner), {
+      :launch_context_received,
+      launch_context
+    })
+
     instantiate_with_opts(data, launch_context: launch_context)
   end
 

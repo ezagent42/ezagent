@@ -39,10 +39,9 @@ defmodule Ezagent.Workspace.TaskWorkspace.PreStart do
     with %Provision{} = row <- Store.get(id),
          true <- row.agent_uri == URI.to_string(agent_uri),
          {:ok, workspace_uri} <- parse_uri(row.workspace_uri),
-         {:ok, provenance_root} <- Ezagent.AgentLineage.lookup(agent_uri),
-         true <- row.provenance_root_uri == URI.to_string(provenance_root),
-         true <-
-           Ezagent.Agent.CreationInventory.member?(
+         {:ok, provenance_root} <- parse_uri(row.provenance_root_uri),
+         {:ok, _receipt} <-
+           Ezagent.Agent.CreationInventory.exact(
              row.creation_attempt_id,
              agent_uri,
              provenance_root,
@@ -56,7 +55,11 @@ defmodule Ezagent.Workspace.TaskWorkspace.PreStart do
            }) do
       :ok
     else
-      _reason -> fail_start(id, start_token, :sidecar_start_ambiguous)
+      {:error, reason} when reason in [:creation_attempt_not_found, :creation_fact_conflict] ->
+        fail_start(id, start_token, :ownership_receipt_missing)
+
+      _reason ->
+        fail_start(id, start_token, :sidecar_start_ambiguous)
     end
   end
 

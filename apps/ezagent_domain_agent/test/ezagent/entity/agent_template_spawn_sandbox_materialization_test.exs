@@ -341,6 +341,12 @@ defmodule Ezagent.Entity.AgentTemplateSpawnSandboxMaterializationTest do
           template_class: PreStartTemplateClass
         })
 
+      Application.put_env(
+        :ezagent_core,
+        :template_pre_start_prepare_result,
+        {:ok, %{cwd: "/safe/task", claim: "claim-one", launch_context: make_ref()}}
+      )
+
       on_exit(fn ->
         :ok = PreStart.replace_for_test(nil)
         Application.delete_env(:ezagent_core, :template_pre_start_test_owner)
@@ -377,6 +383,26 @@ defmodule Ezagent.Entity.AgentTemplateSpawnSandboxMaterializationTest do
       refute_receive {:instantiate_called, _}
     end
 
+    test "prepared launch context requires instantiate/4 before template effects", fixture do
+      prepare_success()
+      flavor = "missing-launch-context-#{System.unique_integer([:positive])}"
+
+      :ok =
+        Ezagent.AgentFlavorRegistry.register(%{
+          flavor: flavor,
+          kind: Ezagent.Entity.Agent,
+          template_class: EzagentDomainAgent.TestSupport.MissingLaunchContextTemplateClass
+        })
+
+      assert {:error, :template_launch_context_not_supported} =
+               spawn_with_reference(%{fixture | content: %{fixture.content | flavor: flavor}})
+
+      refute_receive :missing_arity_effect
+
+      assert_receive {:pre_start_complete, "claim-one",
+                      {:error, :template_launch_context_not_supported}}
+    end
+
     test "adopted pre-start rejects before overwriting flavor metadata",
          fixture do
       prepare_success()
@@ -399,6 +425,28 @@ defmodule Ezagent.Entity.AgentTemplateSpawnSandboxMaterializationTest do
 
       assert {:error, :instantiate_failed} = spawn_with_reference(fixture)
       assert_receive {:pre_start_complete, "claim-one", {:error, :instantiate_failed}}
+      refute_receive {:pre_start_complete, _, _}
+    end
+
+    test "claimed fresh without an actor-init receipt fails before completion starts it",
+         fixture do
+      Application.put_env(
+        :ezagent_core,
+        :template_pre_start_prepare_result,
+        {:ok,
+         %{
+           cwd: "/safe/task",
+           claim: "claim-one",
+           creation_attempt_id: Ecto.UUID.generate(),
+           launch_context: make_ref()
+         }}
+      )
+
+      Application.put_env(:ezagent_domain_agent, :pre_start_test_mode, :claimed_fresh)
+
+      assert {:error, :ownership_receipt_missing} = spawn_with_reference(fixture)
+      assert :error = Ezagent.KindRegistry.lookup(fixture.instance_uri)
+      assert_receive {:pre_start_complete, "claim-one", {:error, :ownership_receipt_missing}}
       refute_receive {:pre_start_complete, _, _}
     end
 
@@ -432,8 +480,10 @@ defmodule Ezagent.Entity.AgentTemplateSpawnSandboxMaterializationTest do
           :exit -> assert caught_reason == :instantiate_exited
         end
 
-        assert [{PreStartTemplateClass, :instantiate, 3, _location} | _rest] =
-                 caught_stacktrace
+        assert Enum.any?(caught_stacktrace, fn
+                 {PreStartTemplateClass, :instantiate_with_opts, 1, _location} -> true
+                 _frame -> false
+               end)
 
         assert_receive {:pre_start_complete, "claim-one", {:error, {^expected_kind, _reason}}}
         assert_receive {:completion_failure_attempted, ^mode}
@@ -496,7 +546,7 @@ defmodule Ezagent.Entity.AgentTemplateSpawnSandboxMaterializationTest do
     end
 
     test "completion observes every helper-owned fresh-spawn obligation", fixture do
-      prepare_success()
+      prepare_legacy_success()
       worker = fixture.instance_uri
       spawned_by = fixture.owner_uri
       workspace = fixture.workspace_uri
@@ -521,7 +571,7 @@ defmodule Ezagent.Entity.AgentTemplateSpawnSandboxMaterializationTest do
     end
 
     test "successful-spawn completion error is returned without rolling back", fixture do
-      prepare_success()
+      prepare_legacy_success()
       worker = fixture.instance_uri
       owner = fixture.owner_uri
       workspace = fixture.workspace_uri
@@ -536,7 +586,7 @@ defmodule Ezagent.Entity.AgentTemplateSpawnSandboxMaterializationTest do
     end
 
     test "post-spawn failure completes once after the existing rollback", fixture do
-      prepare_success()
+      prepare_legacy_success()
       worker = fixture.instance_uri
 
       Application.put_env(:ezagent_core, :template_pre_start_complete_result, fn ->
@@ -544,8 +594,16 @@ defmodule Ezagent.Entity.AgentTemplateSpawnSandboxMaterializationTest do
         assert :error = Ezagent.AgentLineage.lookup(worker)
         assert :error = Ezagent.WorkspaceRegistry.lookup(worker)
 
-        assert {:error, :creation_attempt_not_found} =
+        assert {:ok, attempt_id} =
                  Ezagent.Agent.CreationInventory.find_attempt(worker, fixture.workspace_uri)
+
+        assert {:ok, _receipt} =
+                 Ezagent.Agent.CreationInventory.exact(
+                   attempt_id,
+                   worker,
+                   fixture.owner_uri,
+                   fixture.workspace_uri
+                 )
 
         assert :none = Ezagent.AgentFlavorAttributes.get(worker)
         :ok
@@ -582,6 +640,14 @@ defmodule Ezagent.Entity.AgentTemplateSpawnSandboxMaterializationTest do
   end
 
   defp prepare_success do
+    Application.put_env(
+      :ezagent_core,
+      :template_pre_start_prepare_result,
+      {:ok, %{cwd: "/safe/task", claim: "claim-one", launch_context: make_ref()}}
+    )
+  end
+
+  defp prepare_legacy_success do
     Application.put_env(
       :ezagent_core,
       :template_pre_start_prepare_result,
