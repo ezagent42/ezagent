@@ -108,8 +108,21 @@ defmodule Ezagent.Kind.Server do
     uri = Map.fetch!(args, :uri)
     uri_str = URI.to_string(uri)
 
-    with :ok <- run_before_start(kind_module, args) do
-      init_after_before_start(kind_module, Map.delete(args, :launch_context), uri, uri_str)
+    {launch_context, args} =
+      case Map.pop(args, :launch_context_token) do
+        {nil, args} -> {:absent, args}
+        {token, args} -> {Ezagent.Kind.LaunchContextStore.take(token), args}
+      end
+
+    hook_args =
+      case launch_context do
+        {:ok, context} -> Map.put(args, :launch_context, context)
+        :error -> args
+        :absent -> args
+      end
+
+    with :ok <- run_before_start(kind_module, hook_args) do
+      init_after_before_start(kind_module, args, uri, uri_str)
     else
       {:error, reason} -> {:stop, {:before_start_failed, reason}}
     end

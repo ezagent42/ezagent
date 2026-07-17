@@ -8,6 +8,13 @@ defmodule Ezagent.SpawnRegistryTest do
   alias Ezagent.SpawnRegistry
 
   describe "register/2 + spawn/1" do
+    test "unknown options fail closed" do
+      uri = URI.parse("unknown-options-#{System.unique_integer([:positive])}://x")
+
+      assert {:error, [:launch_context_typo]} =
+               SpawnRegistry.spawn_detailed(uri, launch_context_typo: make_ref())
+    end
+
     test "option-bearing spawn transports launch context unchanged to an arity-two registration" do
       test_pid = self()
       scheme = "spawnreg-opts-#{System.unique_integer([:positive])}"

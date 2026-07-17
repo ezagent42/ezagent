@@ -23,7 +23,7 @@ defmodule Ezagent.SpawnRegistry do
 
   ## Idempotency
 
-  `spawn/1` is safe to re-call for a URI that's already alive — it
+  `spawn/1,2` is safe to re-call for a URI that's already alive — it
   looks up `KindRegistry` first and returns `{:ok, pid}` for the
   existing process. This matters because Loader runs at app start
   and plugins may also spawn their own canonical Kinds (admin User,
@@ -32,7 +32,7 @@ defmodule Ezagent.SpawnRegistry do
   `spawn/1` collapses "this call started it" and "it already existed"
   into one `{:ok, pid}`. A caller that needs the distinction — e.g.
   `update_agent_template`'s rollback-safe swap, which must NOT adopt a
-  worker another process created — uses `spawn_detailed/1`, which
+  worker another process created — uses `spawn_detailed/1,2`, which
   preserves the atomic `DynamicSupervisor` outcome
   (`{:ok, :started, pid}` vs `{:ok, :already_started, pid}`).
 
@@ -74,6 +74,10 @@ defmodule Ezagent.SpawnRegistry do
 
   @doc """
   Spawn (or look up an existing) Kind at the given URI.
+
+  The option-bearing form accepts only `:launch_context`. Unknown options fail
+  closed. A legacy arity-one registration is used only with empty options;
+  supplying launch context to it returns `{:error, :launch_context_unsupported}`.
 
   Returns `{:ok, pid}` either way. `{:error, :no_spawn_fn}` if no
   plugin registered the URI's scheme.
@@ -151,6 +155,9 @@ defmodule Ezagent.SpawnRegistry do
   @doc """
   Spawn (or look up an existing) Kind at the given URI, PRESERVING the
   atomic "this call won the start" signal.
+
+  `spawn_detailed/2` validates the frozen `:launch_context` option surface;
+  unsupported options are returned as an error before lookup or invocation.
 
   This is the structural fix for codex round-6 HIGH-1: the freshness
   of a worker MUST come from the atomic spawn result, never from a
