@@ -312,33 +312,31 @@ defmodule Ezagent.DomainGit.D0BackendReuseGate.InProcessFake do
   end
 
   defp validate_subject(%{
-         owner_uri: %URI{
-           scheme: "entity",
-           host: workspace,
-           path: "/user/" <> owner_name,
-           query: nil,
-           fragment: nil
-         },
-         workspace_uri: %URI{
-           scheme: "workspace",
-           host: workspace,
-           path: path,
-           query: nil,
-           fragment: nil
-         },
+         owner_uri: %URI{} = owner_uri,
+         workspace_uri: %URI{} = workspace_uri,
          provider_id: provider_id,
          governed_host: governed_host,
          connection_id: connection_id,
          connection_version: version
        })
        when is_integer(version) and version >= 0 do
-    if path in [nil, ""] and
-         Enum.all?(
-           [workspace, owner_name, provider_id, governed_host, connection_id],
-           &nonempty?/1
-         ),
-       do: :ok,
-       else: {:error, :invalid_authorization_subject}
+    with true <- Ezagent.URI.scheme?(owner_uri, :entity),
+         true <- Ezagent.URI.type?(owner_uri, :user),
+         {:ok, owner_name} <- Ezagent.URI.name(owner_uri),
+         {:ok, owner_workspace} <- Ezagent.URI.workspace_name(owner_uri),
+         {:ok, subject_workspace} <- Ezagent.URI.workspace_name(workspace_uri),
+         true <- owner_workspace == subject_workspace,
+         true <- workspace_uri == Ezagent.URI.workspace(subject_workspace),
+         true <- owner_uri == Ezagent.URI.user(owner_workspace, owner_name),
+         true <-
+           Enum.all?(
+             [owner_workspace, owner_name, provider_id, governed_host, connection_id],
+             &nonempty?/1
+           ) do
+      :ok
+    else
+      _ -> {:error, :invalid_authorization_subject}
+    end
   end
 
   defp validate_subject(_subject), do: {:error, :invalid_authorization_subject}

@@ -80,7 +80,7 @@ defmodule Ezagent.DomainGit.D0BackendReuseGate.RemoteTransport do
     raise ArgumentError, "runtime identity cannot cross the serialized boundary"
   end
 
-  defp encode_value(%URI{} = uri), do: %{"$uri" => URI.to_string(uri)}
+  defp encode_value(%URI{} = uri), do: %{"$uri" => Ezagent.URI.stable_key(uri)}
   defp encode_value(%DateTime{} = value), do: %{"$datetime" => DateTime.to_iso8601(value)}
   defp encode_value(value) when is_atom(value), do: %{"$atom" => Atom.to_string(value)}
 

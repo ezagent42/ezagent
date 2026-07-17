@@ -161,7 +161,10 @@ defmodule Ezagent.DomainGit.D0BackendReuseGate.Conformance do
       %{subject() | owner_uri: Ezagent.URI.user("other", "alice")},
       %{subject() | owner_uri: Ezagent.URI.agent("acme", "alice")},
       %{subject() | workspace_uri: Ezagent.URI.workspace("other")},
-      %{subject() | workspace_uri: Ezagent.URI.new!("workspace://acme?unexpected=true")}
+      %{
+        subject()
+        | workspace_uri: Ezagent.URI.with_action(Ezagent.URI.workspace("acme"), :unexpected, true)
+      }
     ]
 
     for invalid <- invalid_subjects do
