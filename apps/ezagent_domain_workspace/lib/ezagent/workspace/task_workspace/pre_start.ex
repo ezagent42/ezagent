@@ -100,7 +100,7 @@ defmodule Ezagent.Workspace.TaskWorkspace.PreStart do
 
   defp request_cleanup(id, reason) do
     case Store.request_cleanup(id, reason) do
-      {:ok, _row} -> :ok
+      {:ok, _classification, _row} -> :ok
       {:error, cleanup_reason} -> {:error, cleanup_reason}
     end
   end

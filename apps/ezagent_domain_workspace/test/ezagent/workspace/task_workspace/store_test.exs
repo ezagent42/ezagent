@@ -165,12 +165,13 @@ defmodule Ezagent.Workspace.TaskWorkspace.StoreTest do
                creation_attempt_id: "attempt-1",
                provenance_root_uri: "entity://acme/user/owner"
              })
+
     assert started.status == :sidecar_started
   end
 
   test "cleanup lease is exclusive, reclaimable, and token-bound" do
     {:ok, row} = Store.create_planned(attrs())
-    assert {:ok, pending} = Store.request_cleanup(row.id, :task_cancelled)
+    assert {:ok, :never_started, pending} = Store.request_cleanup(row.id, :task_cancelled)
     assert pending.status == :cleanup_pending
 
     assert {:ok, first} =
@@ -198,9 +199,80 @@ defmodule Ezagent.Workspace.TaskWorkspace.StoreTest do
     assert %DateTime{} = cleaned.cleaned_at
   end
 
+  test "cleanup request atomically invalidates an unused start token and classifies no start" do
+    {:ok, row} = Store.create_planned(attrs())
+    {:ok, claimed} = Store.claim_provision(row.id, now: at(0), lease_seconds: 30)
+
+    {:ok, ready} =
+      Store.mark_ready(row.id, claimed.claim_token, ready_attrs(claimed.state_version),
+        now: at(1)
+      )
+
+    assert {:ok, :never_started, pending} =
+             Store.request_cleanup(ready.id, :task_cancelled)
+
+    assert pending.status == :cleanup_pending
+    assert pending.start_token == nil
+    assert {:error, :invalid_start_transition} = Store.claim_start(ready.id, ready.start_token)
+  end
+
+  test "cleanup request classifies a consumed start as ambiguous or live" do
+    {:ok, row} = Store.create_planned(attrs())
+    {:ok, claimed} = Store.claim_provision(row.id, now: at(0), lease_seconds: 30)
+
+    {:ok, ready} =
+      Store.mark_ready(row.id, claimed.claim_token, ready_attrs(claimed.state_version),
+        now: at(1)
+      )
+
+    {:ok, _starting} = Store.claim_start(ready.id, ready.start_token)
+
+    assert {:ok, :ambiguous_or_live, pending} =
+             Store.request_cleanup(ready.id, :task_cancelled)
+
+    assert pending.start_token == ready.start_token
+  end
+
+  test "invalid ready cleanup is a versioned CAS and never races a consumed start" do
+    {:ok, row} = Store.create_planned(attrs())
+    {:ok, claimed} = Store.claim_provision(row.id, now: at(0), lease_seconds: 30)
+
+    {:ok, ready} =
+      Store.mark_ready(row.id, claimed.claim_token, ready_attrs(claimed.state_version),
+        now: at(1)
+      )
+
+    {:ok, _starting} = Store.claim_start(ready.id, ready.start_token)
+
+    assert {:error, :start_ambiguous_or_live} =
+             Store.request_invalid_ready_cleanup(
+               ready.id,
+               ready.state_version,
+               :workspace_missing
+             )
+  end
+
+  test "cleanup claim must be current before an external effect" do
+    {:ok, row} = Store.create_planned(attrs())
+    {:ok, :never_started, pending} = Store.request_cleanup(row.id, :task_cancelled)
+    {:ok, first} = Store.claim_cleanup(pending.id, now: at(0), lease_seconds: 30)
+    {:ok, second} = Store.claim_cleanup(pending.id, now: at(31), lease_seconds: 30)
+
+    assert {:error, :cleanup_lease_lost} =
+             Store.validate_cleanup_claim(first.id, first.claim_token, now: at(32))
+
+    assert {:ok, renewed} =
+             Store.renew_cleanup_claim(second.id, second.claim_token,
+               now: at(32),
+               lease_seconds: 30
+             )
+
+    assert DateTime.compare(renewed.lease_until, at(62)) == :eq
+  end
+
   test "expired cleanup holder cannot complete before another claimant reclaims" do
     {:ok, row} = Store.create_planned(attrs())
-    {:ok, pending} = Store.request_cleanup(row.id, :task_cancelled)
+    {:ok, :never_started, pending} = Store.request_cleanup(row.id, :task_cancelled)
     {:ok, claimed} = Store.claim_cleanup(pending.id, now: at(0), lease_seconds: 30)
 
     assert {:error, :cleanup_lease_expired} =
@@ -211,10 +283,10 @@ defmodule Ezagent.Workspace.TaskWorkspace.StoreTest do
 
   test "repeated cleanup request preserves an active cleanup claim" do
     {:ok, row} = Store.create_planned(attrs())
-    {:ok, pending} = Store.request_cleanup(row.id, :task_cancelled)
+    {:ok, :never_started, pending} = Store.request_cleanup(row.id, :task_cancelled)
     {:ok, claimed} = Store.claim_cleanup(pending.id, now: at(0), lease_seconds: 30)
 
-    assert {:ok, same} = Store.request_cleanup(row.id, :different_reason)
+    assert {:ok, :never_started, same} = Store.request_cleanup(row.id, :different_reason)
     assert same.id == claimed.id
     assert same.state_version == claimed.state_version
     assert same.claim_token == claimed.claim_token
@@ -225,12 +297,12 @@ defmodule Ezagent.Workspace.TaskWorkspace.StoreTest do
   test "recoverable listing is bounded and excludes terminal rows" do
     {:ok, first} = Store.create_planned(attrs("a"))
     {:ok, second} = Store.create_planned(attrs("b"))
-    {:ok, pending} = Store.request_cleanup(second.id, :task_cancelled)
+    {:ok, :never_started, pending} = Store.request_cleanup(second.id, :task_cancelled)
     {:ok, cleanup} = Store.claim_cleanup(pending.id, now: at(0), lease_seconds: 30)
     {:ok, _cleaned} = Store.mark_cleaned(cleanup.id, cleanup.claim_token, now: at(1))
 
-    assert [%Provision{id: id}] = Store.list_recoverable(1)
-    assert id == first.id
+    assert Store.list_recovery_candidates(1, now: at(2)) == []
+    assert first.status == :planned
   end
 
   test "recoverable listing skips active leases" do

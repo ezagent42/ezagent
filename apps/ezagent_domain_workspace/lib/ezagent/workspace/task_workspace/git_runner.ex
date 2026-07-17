@@ -90,13 +90,72 @@ defmodule Ezagent.Workspace.TaskWorkspace.GitRunner do
       when is_binary(cache) and is_binary(worktree) do
     argv = git_argv(["--git-dir", cache, "worktree", "remove", "--force", worktree])
 
-    case execute(argv, command_opts(Map.get(ready, :runner_opts, %{}))) do
-      {:ok, _result} -> :ok
-      {:error, _reason} = error -> error
+    if File.exists?(cache) do
+      opts = command_opts(Map.get(ready, :runner_opts, %{}))
+
+      case execute(argv, opts) do
+        {:ok, _result} -> remove_exact_residual(worktree, ready)
+        {:error, _reason} = error -> remove_if_unregistered(cache, worktree, ready, opts, error)
+      end
+    else
+      remove_exact_residual(worktree, ready)
     end
   end
 
   def remove(_ready), do: {:error, :invalid_ready_workspace}
+
+  @doc "Verifies the exact worktree is absent from Git and the filesystem."
+  @spec verify_absent(map()) :: :ok | {:error, term()}
+  def verify_absent(%{cache_path: cache, worktree_path: worktree} = ready)
+      when is_binary(cache) and is_binary(worktree) do
+    if File.exists?(cache) do
+      argv = git_argv(["--git-dir", cache, "worktree", "list", "--porcelain"])
+
+      with {:ok, result} <- execute(argv, command_opts(Map.get(ready, :runner_opts, %{}))),
+           false <- listed_worktree?(result.stdout, worktree),
+           false <- File.exists?(worktree) do
+        :ok
+      else
+        true -> {:error, :worktree_still_present}
+        {:error, _reason} = error -> error
+      end
+    else
+      if File.exists?(worktree), do: {:error, :worktree_still_present}, else: :ok
+    end
+  end
+
+  def verify_absent(_ready), do: {:error, :invalid_ready_workspace}
+
+  defp remove_if_unregistered(cache, worktree, ready, opts, original_error) do
+    list_argv = git_argv(["--git-dir", cache, "worktree", "list", "--porcelain"])
+
+    case execute(list_argv, opts) do
+      {:ok, result} ->
+        if listed_worktree?(result.stdout, worktree),
+          do: original_error,
+          else: remove_exact_residual(worktree, ready)
+
+      {:error, _reason} ->
+        original_error
+    end
+  end
+
+  defp remove_exact_residual(worktree, %{worktree_identity: identity})
+       when is_binary(identity) and identity != "" do
+    expanded = Path.expand(worktree)
+
+    if Path.type(worktree) == :absolute and expanded == worktree and
+         Path.dirname(expanded) != expanded and Path.basename(expanded) == identity do
+      case File.rm_rf(worktree) do
+        {:ok, _removed} -> :ok
+        {:error, reason, _path} -> {:error, {:worktree_residual_remove_failed, reason}}
+      end
+    else
+      {:error, :invalid_ready_workspace}
+    end
+  end
+
+  defp remove_exact_residual(_worktree, _ready), do: {:error, :invalid_ready_workspace}
 
   @doc false
   @impl true
