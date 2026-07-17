@@ -37,8 +37,8 @@ defmodule Ezagent.Agent.Architecture.CredentialAdapterCompletenessTest do
     # "not silently stale" cross-check stays exhaustive.
     Ezagent.PluginCc.Template.CcDeepseekAgent,
     Ezagent.PluginCc.Template.CcHeadlessDeepseekAgent,
-    Ezagent.Template.CodexAgent,
-    Ezagent.Template.CodexRemoteAgent
+    Ezagent.PluginCodex.Template.CodexAgent,
+    Ezagent.PluginCodex.Template.CodexRemoteAgent
   ]
 
   test "every credential-bearing CredentialAdapter exports host_login_dir/0" do
