@@ -18,7 +18,10 @@ defmodule EzagentDomainGit.Application do
       later_children = Application.get_env(:ezagent_domain_git, :later_boot_children, [])
 
       case Supervisor.start_link(
-             [{Ezagent.DomainGit.AdapterRegistry, []}],
+             [
+               {Ezagent.DomainGit.AdapterRegistry, []},
+               {Ezagent.DomainGit.WorkspaceProvisionRegistry, []}
+             ],
              strategy: :one_for_one,
              name: __MODULE__
            ) do
