@@ -13,7 +13,8 @@ defmodule Ezagent.DomainGit.Integration.GitTaskDispatchTest do
   alias Ezagent.DomainGit.TestSupport.{
     GitCapFixture,
     SynchronizedGitAdapterA,
-    SynchronizedGitAdapterB
+    SynchronizedGitAdapterB,
+    WorkspaceProvisionProbe
   }
 
   alias Ezagent.Entity.GitTaskAccess
@@ -23,7 +24,9 @@ defmodule Ezagent.DomainGit.Integration.GitTaskDispatchTest do
     :create_change_request,
     :read_change_request,
     :list_checks,
-    :list_reviews
+    :list_reviews,
+    :provision_workspace,
+    :cleanup_workspace
   ]
   @providers [
     {:"task11-sync-a", "task11-sync-a", SynchronizedGitAdapterA, "sync-a"},
@@ -35,6 +38,10 @@ defmodule Ezagent.DomainGit.Integration.GitTaskDispatchTest do
     assert Process.whereis(AdapterRegistry)
     assert Process.whereis(TaskAccessSupervisor)
     assert Process.whereis(Ezagent.DomainGit.BootRegistration)
+
+    Process.register(self(), :git_task_workspace_effect_probe)
+
+    :ok = Ezagent.DomainGit.WorkspaceProvisionRegistry.register(WorkspaceProvisionProbe)
 
     Enum.each(@actions, fn action ->
       assert {:ok, %{behavior: Ezagent.ActionSet.GitTaskAccess}} =
@@ -53,6 +60,78 @@ defmodule Ezagent.DomainGit.Integration.GitTaskDispatchTest do
     end)
 
     :ok
+  end
+
+  test "workspace authorization mismatches never call the provision port" do
+    fixture = fixture(:resolve_repository)
+    policy = policy(fixture, :"task11-sync-a")
+    start_resource(fixture, policy)
+    task_uri = task_uri(policy)
+    valid = workspace_invocation(fixture, :provision_workspace, task_uri, policy.generation)
+
+    attacker = Ezagent.URI.agent(Ezagent.URI.workspace_name!(fixture.workspace_uri), "attacker")
+    wrong_receiver = %{valid | ctx: %{valid.ctx | caller: attacker}}
+    assert {:error, :unauthorized} = Ezagent.Invocation.dispatch(wrong_receiver)
+    refute_receive {:workspace_effect, _, _}
+
+    wrong_workspace_cap =
+      workspace_artifact(
+        fixture,
+        :provision_workspace,
+        fixture.grantee_uri,
+        Ezagent.URI.workspace("other"),
+        fixture.task_access_uri
+      )
+
+    wrong_workspace = %{valid | ctx: %{valid.ctx | caps: MapSet.new([wrong_workspace_cap])}}
+    assert {:error, :unauthorized} = Ezagent.Invocation.dispatch(wrong_workspace)
+
+    refute_receive {:workspace_effect, _, _}
+
+    wrong_instance = Ezagent.URI.resource("git-task11-other", "git-task-access", "other")
+
+    wrong_instance_cap =
+      workspace_artifact(
+        fixture,
+        :provision_workspace,
+        fixture.grantee_uri,
+        fixture.workspace_uri,
+        wrong_instance
+      )
+
+    wrong_instance_invocation = %{
+      valid
+      | ctx: %{valid.ctx | caps: MapSet.new([wrong_instance_cap])}
+    }
+
+    assert {:error, :unauthorized} = Ezagent.Invocation.dispatch(wrong_instance_invocation)
+
+    refute_receive {:workspace_effect, _, _}
+
+    cleanup_cap = workspace_artifact(fixture, :cleanup_workspace, fixture.grantee_uri)
+
+    wrong_action =
+      %{
+        valid
+        | target:
+            Ezagent.URI.with_action(
+              fixture.task_access_uri,
+              :git_task_access,
+              :provision_workspace
+            ),
+          ctx: %{valid.ctx | caps: MapSet.new([cleanup_cap])}
+      }
+
+    assert {:error, :unauthorized} = Ezagent.Invocation.dispatch(wrong_action)
+    refute_receive {:workspace_effect, _, _}
+
+    [artifact] = MapSet.to_list(valid.ctx.caps)
+    unsigned = %{artifact | signature: nil, key_id: nil, grantee_uri: nil}
+
+    unsigned_invocation = %{valid | ctx: %{valid.ctx | caps: MapSet.new([unsigned])}}
+    assert {:error, :unauthorized} = Ezagent.Invocation.dispatch(unsigned_invocation)
+
+    refute_receive {:workspace_effect, _, _}
   end
 
   test "real boot, exact signed cap, and Router dispatch select only the policy provider" do
@@ -199,7 +278,12 @@ defmodule Ezagent.DomainGit.Integration.GitTaskDispatchTest do
         repository: repository,
         provider_adapter: provider,
         allowed_head_ref: "task/task-11",
-        allowed_actions: [:resolve_repository, :create_change_request],
+        allowed_actions: [
+          :resolve_repository,
+          :create_change_request,
+          :provision_workspace,
+          :cleanup_workspace
+        ],
         idempotency_inputs: %{task_id: "owner-#{owner_id(self())}", generation: 1}
       })
 
@@ -223,6 +307,42 @@ defmodule Ezagent.DomainGit.Integration.GitTaskDispatchTest do
       })
 
     %{repository: policy.repository, changes: [change], request: request}
+  end
+
+  defp workspace_invocation(fixture, action, task_uri, generation) do
+    artifact = workspace_artifact(fixture, action, fixture.grantee_uri)
+
+    %{
+      fixture.invocation
+      | target: Ezagent.URI.with_action(fixture.task_access_uri, :git_task_access, action),
+        args: %{task_uri: task_uri, generation: generation},
+        ctx: %{fixture.invocation.ctx | caps: MapSet.new([artifact])}
+    }
+  end
+
+  defp workspace_artifact(
+         fixture,
+         action,
+         receiver,
+         workspace_uri \\ nil,
+         task_access_uri \\ nil
+       ) do
+    capability =
+      Ezagent.Capability.cap(
+        :resource,
+        Ezagent.ActionSet.GitTaskAccess,
+        action,
+        Ezagent.URI.instance(task_access_uri || fixture.task_access_uri),
+        workspace_uri || fixture.workspace_uri
+      )
+
+    {:ok, artifact} = Ezagent.Cap.issue({:held_by, fixture.governance_uri}, receiver, capability)
+    artifact
+  end
+
+  defp task_uri(policy) do
+    workspace = Ezagent.URI.workspace_name!(policy.workspace_uri)
+    Ezagent.URI.resource(workspace, "kanban-task", policy.task_id)
   end
 
   defp owner_id(pid) do

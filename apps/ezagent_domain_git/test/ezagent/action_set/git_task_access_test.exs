@@ -14,44 +14,28 @@ defmodule Ezagent.ActionSet.GitTaskAccessTest do
     GitCapFixture,
     GitEffectProbe,
     ProbeGitAdapterA,
-    ProbeGitAdapterB
+    ProbeGitAdapterB,
+    WorkspaceProvisionProbe
   }
 
   alias Ezagent.Entity.GitTaskAccess
 
-  @actions [
+  @provider_actions [
     :resolve_repository,
     :create_change_request,
     :read_change_request,
     :list_checks,
     :list_reviews
   ]
+  @actions @provider_actions ++ [:provision_workspace, :cleanup_workspace]
 
   setup_all do
-    Enum.each(@actions, fn action ->
-      :ok =
-        Ezagent.CapabilityRegistry.register(
-          GitTaskAccess,
-          action,
-          Ezagent.ActionSet.GitTaskAccess
-        )
-    end)
-
-    on_exit(fn ->
-      Enum.each(@actions, fn action ->
-        :ok =
-          Ezagent.CapabilityRegistry.unregister(
-            GitTaskAccess,
-            action,
-            Ezagent.ActionSet.GitTaskAccess
-          )
-      end)
-    end)
-
+    :ok = Ezagent.DomainGit.WorkspaceProvisionRegistry.register(WorkspaceProvisionProbe)
     :ok
   end
 
   setup do
+    Process.register(self(), :git_task_workspace_effect_probe)
     start_supervised!({GitEffectProbe, self()})
     register_adapter("probe-git-adapter-a", ProbeGitAdapterA)
     register_adapter("probe-git-adapter-b", ProbeGitAdapterB)
@@ -60,6 +44,106 @@ defmodule Ezagent.ActionSet.GitTaskAccessTest do
     assert {:ok, _pid} = TaskAccessSupervisor.ensure_started(policy)
     on_exit(fn -> TaskAccessSupervisor.teardown(fixture.task_access_uri) end)
     %{fixture: fixture, policy: policy}
+  end
+
+  test "authorized exact task generation provisions through the registered port", %{
+    fixture: fixture,
+    policy: policy
+  } do
+    task_uri = task_uri(policy)
+    invocation = workspace_invocation(fixture, :provision_workspace, task_uri, policy.generation)
+
+    assert {:ok, %{status: :ready}} = Ezagent.Invocation.dispatch(invocation)
+
+    assert_receive {:workspace_effect, :prepare,
+                    %{task_uri: ^task_uri, generation: 1, operation: :prepare}}
+  end
+
+  test "wrong generation and unknown arguments stop before workspace effects", %{
+    fixture: fixture,
+    policy: policy
+  } do
+    task_uri = task_uri(policy)
+
+    assert {:error, :task_generation_mismatch} =
+             fixture
+             |> workspace_invocation(:provision_workspace, task_uri, policy.generation + 1)
+             |> Ezagent.Invocation.dispatch()
+
+    refute_receive {:workspace_effect, _, _}
+
+    invocation =
+      fixture
+      |> workspace_invocation(:provision_workspace, task_uri, policy.generation)
+      |> Map.update!(:args, &Map.put(&1, :local_path, "/tmp/forged"))
+
+    assert {:error, {:unknown_invocation_keys, [:local_path]}} =
+             Ezagent.Invocation.dispatch(invocation)
+
+    refute_receive {:workspace_effect, _, _}
+
+    string_key_invocation = %{
+      invocation
+      | args: %{"task_uri" => task_uri, generation: policy.generation}
+    }
+
+    assert {:error, {:invalid_args, [{[:task_uri], :missing}]}} =
+             Ezagent.Invocation.dispatch(string_key_invocation)
+
+    refute_receive {:workspace_effect, _, _}
+  end
+
+  test "provision capability cannot invoke cleanup", %{fixture: fixture, policy: policy} do
+    cleanup_invocation =
+      workspace_invocation(fixture, :cleanup_workspace, task_uri(policy), policy.generation)
+
+    provision_only = workspace_artifact(fixture, :provision_workspace, fixture.grantee_uri)
+
+    invocation = %{
+      cleanup_invocation
+      | ctx: %{cleanup_invocation.ctx | caps: MapSet.new([provision_only])}
+    }
+
+    assert {:error, :unauthorized} = Ezagent.Invocation.dispatch(invocation)
+    refute_receive {:workspace_effect, _, _}
+  end
+
+  test "authorized exact cleanup capability invokes the cleanup port", %{
+    fixture: fixture,
+    policy: policy
+  } do
+    task_uri = task_uri(policy)
+    invocation = workspace_invocation(fixture, :cleanup_workspace, task_uri, policy.generation)
+
+    assert {:ok, %{status: :cleaned}} = Ezagent.Invocation.dispatch(invocation)
+
+    assert_receive {:workspace_effect, :cleanup,
+                    %{task_uri: ^task_uri, generation: 1, operation: :cleanup}}
+  end
+
+  test "authorization and generation failures do not consult the provision registry", %{
+    fixture: fixture,
+    policy: policy
+  } do
+    :ok =
+      Supervisor.terminate_child(
+        EzagentDomainGit.Application,
+        Ezagent.DomainGit.WorkspaceProvisionRegistry
+      )
+
+    on_exit(&restart_workspace_registry/0)
+    task_uri = task_uri(policy)
+    valid = workspace_invocation(fixture, :provision_workspace, task_uri, policy.generation)
+    unauthorized = %{valid | ctx: %{valid.ctx | caps: MapSet.new()}}
+
+    assert {:error, :unauthorized} = Ezagent.Invocation.dispatch(unauthorized)
+
+    assert {:error, :task_generation_mismatch} =
+             fixture
+             |> workspace_invocation(:provision_workspace, task_uri, policy.generation + 1)
+             |> Ezagent.Invocation.dispatch()
+
+    refute_receive {:workspace_effect, _, _}
   end
 
   test "real dispatch denies missing exact capability before the handler", %{fixture: fixture} do
@@ -91,7 +175,7 @@ defmodule Ezagent.ActionSet.GitTaskAccessTest do
   end
 
   test "all five closed operations dispatch and callback trips every effect sentinel" do
-    Enum.each(@actions, fn action ->
+    Enum.each(@provider_actions, fn action ->
       fixture = GitCapFixture.exact_task_cap(action)
       policy = policy(fixture)
       assert {:ok, _pid} = TaskAccessSupervisor.ensure_started(policy)
@@ -234,7 +318,7 @@ defmodule Ezagent.ActionSet.GitTaskAccessTest do
       :base_ref
     ]
 
-    Enum.each(@actions, fn action ->
+    Enum.each(@provider_actions, fn action ->
       fixture = GitCapFixture.exact_task_cap(action)
       policy = policy(fixture)
       assert {:ok, _pid} = TaskAccessSupervisor.ensure_started(policy)
@@ -361,6 +445,36 @@ defmodule Ezagent.ActionSet.GitTaskAccessTest do
   defp operation_args(:list_reviews, policy),
     do: %{repository: policy.repository, change_request_id: %ChangeRequestId{external_id: "1"}}
 
+  defp workspace_invocation(fixture, action, task_uri, generation) do
+    artifact = workspace_artifact(fixture, action, fixture.grantee_uri)
+
+    %{
+      fixture.invocation
+      | target: Ezagent.URI.with_action(fixture.task_access_uri, :git_task_access, action),
+        args: %{task_uri: task_uri, generation: generation},
+        ctx: %{fixture.invocation.ctx | caps: MapSet.new([artifact])}
+    }
+  end
+
+  defp workspace_artifact(fixture, action, receiver) do
+    capability =
+      Ezagent.Capability.cap(
+        :resource,
+        Ezagent.ActionSet.GitTaskAccess,
+        action,
+        Ezagent.URI.instance(fixture.task_access_uri),
+        fixture.workspace_uri
+      )
+
+    {:ok, artifact} = Ezagent.Cap.issue({:held_by, fixture.governance_uri}, receiver, capability)
+    artifact
+  end
+
+  defp task_uri(policy) do
+    workspace = Ezagent.URI.workspace_name!(policy.workspace_uri)
+    Ezagent.URI.resource(workspace, "kanban-task", policy.task_id)
+  end
+
   defp dispatch(fixture, args),
     do: Ezagent.Invocation.dispatch(%{fixture.invocation | args: args})
 
@@ -388,5 +502,18 @@ defmodule Ezagent.ActionSet.GitTaskAccessTest do
       {:ok, _pid, _info} -> :ok
       {:error, :running} -> :ok
     end
+  end
+
+  defp restart_workspace_registry do
+    case Supervisor.restart_child(
+           EzagentDomainGit.Application,
+           Ezagent.DomainGit.WorkspaceProvisionRegistry
+         ) do
+      {:ok, _pid} -> :ok
+      {:ok, _pid, _info} -> :ok
+      {:error, :running} -> :ok
+    end
+
+    :ok = Ezagent.DomainGit.WorkspaceProvisionRegistry.register(WorkspaceProvisionProbe)
   end
 end

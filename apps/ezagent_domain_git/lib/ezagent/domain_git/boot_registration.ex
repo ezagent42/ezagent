@@ -11,7 +11,9 @@ defmodule Ezagent.DomainGit.BootRegistration do
     :create_change_request,
     :read_change_request,
     :list_checks,
-    :list_reviews
+    :list_reviews,
+    :provision_workspace,
+    :cleanup_workspace
   ]
   @action_set Ezagent.ActionSet.GitTaskAccess
 
