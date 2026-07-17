@@ -87,7 +87,56 @@ defmodule Ezagent.Workspace.TaskWorkspace.GitRunnerTest do
     assert File.dir?(ready.worktree_path)
     assert :ok = GitRunner.verify(ready)
     assert :ok = GitRunner.remove(ready)
+    assert :ok = GitRunner.verify_absent(ready)
     refute File.exists?(ready.worktree_path)
+  end
+
+  test "absence requires both no exact Git registration and no exact directory", %{root: root} do
+    worktree = Path.join(root, "still-present")
+    File.mkdir_p!(worktree)
+
+    executor = fn _argv, _opts ->
+      {:ok, %{stdout: "", stderr: "", exit_status: 0}}
+    end
+
+    assert {:error, :worktree_still_present} =
+             GitRunner.verify_absent(%{
+               cache_path: Path.join(root, "cache.git"),
+               worktree_path: worktree,
+               runner_opts: %{executor: executor}
+             })
+  end
+
+  test "absence is idempotent when neither exact cache nor worktree exists", %{root: root} do
+    assert :ok =
+             GitRunner.verify_absent(%{
+               cache_path: Path.join(root, "missing-cache.git"),
+               worktree_path: Path.join(root, "missing-worktree")
+             })
+  end
+
+  test "remove clears only an exact unregistered residual directory", %{root: root} do
+    worktree = Path.join(root, "canonical-target")
+    unrelated = Path.join(root, "unrelated")
+    File.mkdir_p!(worktree)
+    File.mkdir_p!(unrelated)
+
+    executor = fn argv, _opts ->
+      if "remove" in argv,
+        do: {:error, :not_registered},
+        else: {:ok, %{stdout: "", stderr: "", exit_status: 0}}
+    end
+
+    assert :ok =
+             GitRunner.remove(%{
+               cache_path: Path.join(root, "cache.git"),
+               worktree_path: worktree,
+               worktree_identity: "canonical-target",
+               runner_opts: %{executor: executor}
+             })
+
+    refute File.exists?(worktree)
+    assert File.dir?(unrelated)
   end
 
   test "the command owner enforces its deadline", %{root: root} do

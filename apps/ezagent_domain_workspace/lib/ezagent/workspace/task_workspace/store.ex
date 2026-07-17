@@ -283,27 +283,66 @@ defmodule Ezagent.Workspace.TaskWorkspace.Store do
   defp retirement_handle(_handle), do: {:error, :invalid_retirement_handle}
 
   @doc "Moves a non-terminal provision into cleanup pending with a safe reason code."
-  @spec request_cleanup(pos_integer(), atom()) :: {:ok, Provision.t()} | {:error, term()}
+  @spec request_cleanup(pos_integer(), atom()) ::
+          {:ok, :never_started | :ambiguous_or_live, Provision.t()} | {:error, term()}
   def request_cleanup(id, reason) when is_atom(reason) and not is_nil(reason) do
     locked(id, fn
       %Provision{status: :cleanup_pending} = row ->
-        {:ok, row}
+        {:ok, start_classification(row), row}
 
       %Provision{status: :cleaned} ->
         {:error, :already_cleaned}
 
       %Provision{} = row ->
-        update_row(row, %{
-          status: :cleanup_pending,
-          state_version: row.state_version + 1,
-          cleanup_reason: Atom.to_string(reason),
-          claim_token: nil,
-          lease_until: nil
-        })
+        classification = start_classification(row)
+
+        case update_row(row, %{
+               status: :cleanup_pending,
+               state_version: row.state_version + 1,
+               cleanup_reason: Atom.to_string(reason),
+               claim_token: nil,
+               lease_until: nil,
+               start_token: invalidate_unused_start_token(row)
+             }) do
+          {:ok, pending} -> {:ok, classification, pending}
+          {:error, _reason} = error -> error
+        end
     end)
   end
 
   def request_cleanup(_id, _reason), do: {:error, :invalid_cleanup_reason}
+
+  @doc "CAS transition for a ready row proven invalid before start was claimed."
+  @spec request_invalid_ready_cleanup(pos_integer(), non_neg_integer(), atom()) ::
+          {:ok, :never_started, Provision.t()} | {:error, term()}
+  def request_invalid_ready_cleanup(id, expected_version, reason)
+      when is_integer(expected_version) and is_atom(reason) and not is_nil(reason) do
+    locked(id, fn
+      %Provision{status: :ready, state_version: ^expected_version, start_token_consumed_at: nil} =
+          row ->
+        case update_row(row, %{
+               status: :cleanup_pending,
+               state_version: row.state_version + 1,
+               cleanup_reason: Atom.to_string(reason),
+               start_token: nil,
+               claim_token: nil,
+               lease_until: nil
+             }) do
+          {:ok, pending} -> {:ok, :never_started, pending}
+          {:error, _reason} = error -> error
+        end
+
+      %Provision{status: :ready, start_token_consumed_at: consumed_at}
+      when not is_nil(consumed_at) ->
+        {:error, :start_ambiguous_or_live}
+
+      %Provision{status: :ready} ->
+        {:error, :stale_ready_version}
+
+      %Provision{} ->
+        {:error, :invalid_cleanup_transition}
+    end)
+  end
 
   @doc "Claims an unclaimed or expired cleanup operation."
   @spec claim_cleanup(pos_integer(), keyword()) :: {:ok, Provision.t()} | {:error, term()}
@@ -314,6 +353,48 @@ defmodule Ezagent.Workspace.TaskWorkspace.Store do
 
     locked(id, fn provision ->
       claim_cleanup_locked(provision, now, lease_seconds, expected_version)
+    end)
+  end
+
+  @doc "Checks that a cleanup lease still owns the next external effect."
+  @spec validate_cleanup_claim(pos_integer(), String.t(), keyword()) ::
+          {:ok, Provision.t()} | {:error, term()}
+  def validate_cleanup_claim(id, claim_token, opts \\ []) do
+    now = Keyword.get(opts, :now, DateTime.utc_now())
+
+    locked(id, fn
+      %Provision{status: :cleanup_pending, claim_token: ^claim_token} = row ->
+        case current_lease(row.lease_until, now, :cleanup_lease_expired) do
+          :ok -> {:ok, row}
+          {:error, _reason} = error -> error
+        end
+
+      %Provision{status: :cleanup_pending} ->
+        {:error, :cleanup_lease_lost}
+
+      %Provision{} ->
+        {:error, :invalid_cleanup_transition}
+    end)
+  end
+
+  @doc "Renews only the current unexpired cleanup lease."
+  @spec renew_cleanup_claim(pos_integer(), String.t(), keyword()) ::
+          {:ok, Provision.t()} | {:error, term()}
+  def renew_cleanup_claim(id, claim_token, opts \\ []) do
+    now = Keyword.get(opts, :now, DateTime.utc_now())
+    lease_seconds = Keyword.get(opts, :lease_seconds, 60)
+
+    locked(id, fn
+      %Provision{status: :cleanup_pending, claim_token: ^claim_token} = row ->
+        with :ok <- current_lease(row.lease_until, now, :cleanup_lease_expired) do
+          update_row(row, %{lease_until: DateTime.add(now, lease_seconds, :second)})
+        end
+
+      %Provision{status: :cleanup_pending} ->
+        {:error, :cleanup_lease_lost}
+
+      %Provision{} ->
+        {:error, :invalid_cleanup_transition}
     end)
   end
 
@@ -344,22 +425,33 @@ defmodule Ezagent.Workspace.TaskWorkspace.Store do
     end)
   end
 
-  @doc "Lists a bounded oldest-first recovery batch, excluding terminal records."
+  @doc "Compatibility name for the durable-only bounded recovery query."
   @spec list_recoverable(pos_integer()) :: [Provision.t()]
-  def list_recoverable(limit) when is_integer(limit) and limit > 0 do
-    now = DateTime.utc_now()
+  def list_recoverable(limit), do: list_recovery_candidates(limit)
+
+  @doc "Lists only durable cleanup/recovery candidates in a bounded batch."
+  @spec list_recovery_candidates(pos_integer(), keyword()) :: [Provision.t()]
+  def list_recovery_candidates(limit, opts \\ []) when is_integer(limit) and limit > 0 do
+    now = Keyword.get(opts, :now, DateTime.utc_now())
 
     Repo.all(
       from(p in Provision,
         where:
-          p.status in [:planned, :ready, :blocked] or
-            (p.status in [:provisioning, :cleanup_pending] and
-               (is_nil(p.lease_until) or p.lease_until <= ^now)),
+          (p.status == :provisioning and (is_nil(p.lease_until) or p.lease_until <= ^now)) or
+            (p.status == :cleanup_pending and
+               (is_nil(p.lease_until) or p.lease_until <= ^now)) or
+            (p.status == :ready and is_nil(p.start_token_consumed_at)),
         order_by: [asc: p.inserted_at, asc: p.id],
         limit: ^limit
       )
     )
   end
+
+  defp start_classification(%Provision{start_token_consumed_at: nil}), do: :never_started
+  defp start_classification(%Provision{}), do: :ambiguous_or_live
+
+  defp invalidate_unused_start_token(%Provision{start_token_consumed_at: nil}), do: nil
+  defp invalidate_unused_start_token(%Provision{start_token: token}), do: token
 
   defp claim_provision_locked(
          %Provision{status: :provisioning, lease_until: lease} = row,

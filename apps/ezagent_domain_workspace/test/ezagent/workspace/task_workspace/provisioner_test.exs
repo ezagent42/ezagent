@@ -107,7 +107,7 @@ defmodule Ezagent.Workspace.TaskWorkspace.ProvisionerTest do
   test "cancelled generation and an active path owner never run a second effect" do
     cancelled = start_policy(:public)
     assert {:ok, row} = Store.create_planned(planned_attrs(cancelled))
-    assert {:ok, _pending} = Store.request_cleanup(row.id, :task_cancelled)
+    assert {:ok, :never_started, _pending} = Store.request_cleanup(row.id, :task_cancelled)
 
     assert {:error, :provision_cancelled} = Provisioner.prepare(cancelled.request)
     refute_receive {:git_prepare, _}
@@ -147,7 +147,7 @@ defmodule Ezagent.Workspace.TaskWorkspace.ProvisionerTest do
 
     Application.put_env(:ezagent_domain_workspace, :provisioner_test_verify_hook, fn ->
       row = Repo.get_by!(Provision, provision_id: fixture.request.provision_id)
-      {:ok, _pending} = Store.request_cleanup(row.id, :task_cancelled)
+      {:ok, :never_started, _pending} = Store.request_cleanup(row.id, :task_cancelled)
       :ok
     end)
 
@@ -198,6 +198,31 @@ defmodule Ezagent.Workspace.TaskWorkspace.ProvisionerTest do
   test "provision lease exceeds bounded lock wait plus the Git command budget" do
     assert Provisioner.provision_lease_seconds() * 1_000 >
              5_000 + Ezagent.Workspace.TaskWorkspace.GitRunner.maximum_provision_duration_ms()
+  end
+
+  test "cleanup revalidates policy coordinates and completes the durable row" do
+    fixture = start_policy(:public)
+
+    {:ok, paths} =
+      Ezagent.Workspace.TaskWorkspace.Paths.derive(%{
+        workspace_uri: fixture.policy.workspace_uri,
+        repository_uri: fixture.policy.repository.repository_uri,
+        provision_id: fixture.request.provision_id,
+        generation: fixture.request.generation,
+        base_ref: fixture.policy.repository.base_ref,
+        allowed_head_ref: fixture.policy.allowed_head_ref
+      })
+
+    Application.put_env(:ezagent_domain_workspace, :provisioner_test_prepare_result, {:ok, paths})
+    assert {:ok, %{status: :ready}} = Provisioner.prepare(fixture.request)
+
+    cleanup_request = %{fixture.request | operation: :cleanup}
+
+    assert {:ok, %{status: :cleaned, provision_id: provision_id}} =
+             Provisioner.cleanup(cleanup_request)
+
+    assert provision_id == fixture.request.provision_id
+    assert_receive {:git_verify_absent, _}
   end
 
   test "failed prepared worktree waits for the same cache lock before removal" do

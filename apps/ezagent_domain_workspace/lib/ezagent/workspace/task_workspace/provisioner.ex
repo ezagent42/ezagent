@@ -5,7 +5,15 @@ defmodule Ezagent.Workspace.TaskWorkspace.Provisioner do
 
   alias Ezagent.DomainGit.WorkspaceProvisionPort.Request
   alias Ezagent.Entity.GitTaskAccess
-  alias Ezagent.Workspace.TaskWorkspace.{CacheLock, GitRunner, Paths, Provision, Store}
+
+  alias Ezagent.Workspace.TaskWorkspace.{
+    CacheLock,
+    GitRunner,
+    Paths,
+    Provision,
+    Reconciler,
+    Store
+  }
 
   @test_env Mix.env() == :test
   @wait_ms 2_000
@@ -15,7 +23,7 @@ defmodule Ezagent.Workspace.TaskWorkspace.Provisioner do
 
   @impl true
   def prepare(%Request{operation: :prepare} = request) do
-    with {:ok, policy} <- load_policy(request),
+    with {:ok, policy} <- load_policy(request, :provision_workspace),
          :ok <- public_repository(policy),
          {:ok, row} <- create_plan(request, policy) do
       converge(row, request, policy)
@@ -26,7 +34,19 @@ defmodule Ezagent.Workspace.TaskWorkspace.Provisioner do
   def prepare(_request), do: {:error, :invalid_provision_request}
 
   @impl true
-  def cleanup(%Request{operation: :cleanup}), do: {:error, :cleanup_incomplete}
+  def cleanup(%Request{operation: :cleanup} = request) do
+    with {:ok, policy} <- load_policy(request, :cleanup_workspace),
+         %Provision{} = row <- Store.get_by_provision_id(request.provision_id),
+         true <- exact_cleanup_identity?(row, request, policy),
+         {:ok, cleaned} <- Reconciler.cleanup(row.id, :task_cleanup_requested) do
+      {:ok, %{status: :cleaned, provision_id: cleaned.provision_id}}
+    else
+      nil -> {:error, :workspace_not_found}
+      false -> {:error, :task_policy_mismatch}
+      {:error, _reason} = error -> error
+    end
+  end
+
   def cleanup(%Request{}), do: {:error, :invalid_provision_operation}
   def cleanup(_request), do: {:error, :invalid_provision_request}
 
@@ -61,14 +81,14 @@ defmodule Ezagent.Workspace.TaskWorkspace.Provisioner do
     div(total_ms + 999, 1_000)
   end
 
-  defp load_policy(request) do
+  defp load_policy(request, action) do
     case Ezagent.Kind.get_slice(request.task_access_uri, :git_task_access) do
       {:ok, %{policy: candidate}} ->
         with {:ok, policy} <- GitTaskAccess.revalidate(candidate),
              true <- GitTaskAccess.uri_from_args(policy) == request.task_access_uri,
              :ok <-
                GitTaskAccess.validate_invocation(policy, %{
-                 action: :provision_workspace,
+                 action: action,
                  task_uri: request.task_uri,
                  generation: request.generation
                }) do
@@ -152,7 +172,7 @@ defmodule Ezagent.Workspace.TaskWorkspace.Provisioner do
 
   defp finish_prepared(claimed, request, prepared) do
     with :ok <- runner().verify(prepared),
-         {:ok, current_policy} <- load_policy(request),
+         {:ok, current_policy} <- load_policy(request, :provision_workspace),
          :ok <- public_repository(current_policy),
          true <- policy_matches_row?(current_policy, claimed),
          {:ok, ready} <-
@@ -303,6 +323,12 @@ defmodule Ezagent.Workspace.TaskWorkspace.Provisioner do
       checkout_fingerprint(policy) == row.checkout_fingerprint and
       policy.repository.base_ref == row.base_ref and
       policy.allowed_head_ref == row.allowed_head_ref and policy.generation == row.generation
+  end
+
+  defp exact_cleanup_identity?(row, request, policy) do
+    row.task_access_uri == URI.to_string(request.task_access_uri) and
+      row.task_uri == URI.to_string(request.task_uri) and row.generation == request.generation and
+      policy_matches_row?(policy, row)
   end
 
   defp runner do

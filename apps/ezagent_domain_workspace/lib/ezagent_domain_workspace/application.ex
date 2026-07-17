@@ -38,7 +38,9 @@ defmodule EzagentDomainWorkspace.Application do
         {Registry, keys: :unique, name: Ezagent.Workspace.TaskWorkspace.CacheLockRegistry},
         {DynamicSupervisor, name: Ezagent.Workspace.Supervisor, strategy: :one_for_one},
         {Task.Supervisor, name: Ezagent.Workspace.CapGrantSupervisor}
-      ] ++ Application.get_env(:ezagent_domain_workspace, :later_boot_children, [])
+      ] ++
+        recovery_children() ++
+        Application.get_env(:ezagent_domain_workspace, :later_boot_children, [])
 
     if test_env?() and Code.ensure_loaded?(EzagentCore.DataCase) and
          function_exported?(EzagentCore.DataCase, :register_async_drain_supervisor, 1) do
@@ -54,6 +56,12 @@ defmodule EzagentDomainWorkspace.Application do
     Code.ensure_loaded?(Mix) and Mix.env() == :test
   rescue
     _ -> false
+  end
+
+  defp recovery_children do
+    if test_env?(),
+      do: [],
+      else: [{Ezagent.Workspace.TaskWorkspace.ReconcilerBoot, []}]
   end
 
   defp register_task_workspace_infrastructure do
