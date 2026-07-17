@@ -510,7 +510,7 @@ defmodule Ezagent.Entity.Agent.TemplateSpawn do
       # leaks because `Sandbox.invoke(:destroy, ...)` would never run
       # (the agent never even came up).
       with :ok <-
-             establish_ownership_obligations(
+             Ezagent.Entity.Agent.OwnershipObligations.establish(
                workers,
                spawned_by_uri,
                workspace_uri,
@@ -929,15 +929,6 @@ defmodule Ezagent.Entity.Agent.TemplateSpawn do
   end
 
   # PR3 2026-05-24 — additional rollback (beyond `undo_fresh_workers/1`)
-  # for the case where `record_sandbox_state/3` itself fails: the per-
-  # agent config_dir was created by the plugin's `instantiate/3` but
-  # the slice was never populated, so `Sandbox.invoke(:destroy, ...)`
-  # would never know to clean it up. Call the plugin's
-  # `destroy_config_dir/2` directly with the path we know
-  # PR-3 (domain.agent D2/DD-1) — the per-agent config_dir path authority is core
-  # (`Ezagent.Sandbox.ConfigDir`), NOT the plugin. The domain derives the dir from
-  # the agent URI + the class's namespace (no dependency on a plugin path builder)
-  # and asks the plugin only to MATERIALIZE-cleanup it via `destroy_config_dir/2`.
   defp cleanup_partial_config_dirs(workers, template_class) do
     cond do
       not is_atom(template_class) ->
@@ -954,69 +945,6 @@ defmodule Ezagent.Entity.Agent.TemplateSpawn do
           _ = template_class.destroy_config_dir(worker_uri, dir)
         end)
     end
-  end
-
-  # codex round-10 HIGH-2 — establish lineage + workspace binding for
-  # each freshly-created worker as a CHECKED step. `record_lineage/2`
-  # always returns `:ok`; `bind_workspace/2` may not — a failure here is
-  # returned as `{:error, {:post_spawn_obligation_failed, _}}` (NOT
-  # raised) so the caller can self-clean. `Enum.reduce_while/3` stops at
-  # the first failure.
-  defp establish_post_spawn_obligations(workers, spawned_by_uri, workspace_uri) do
-    Enum.reduce_while(workers, :ok, fn worker_uri, :ok ->
-      with :ok <- record_lineage(worker_uri, spawned_by_uri),
-           :ok <- bind_workspace(worker_uri, workspace_uri) do
-        {:cont, :ok}
-      else
-        other ->
-          {:halt, {:error, {:post_spawn_obligation_failed, worker_uri, other}}}
-      end
-    end)
-  rescue
-    error ->
-      {:error, {:post_spawn_obligation_failed, :exception, error}}
-  end
-
-  defp establish_ownership_obligations(workers, spawned_by_uri, workspace_uri, nil) do
-    with :ok <- establish_post_spawn_obligations(workers, spawned_by_uri, workspace_uri) do
-      record_creation_inventory(workers, spawned_by_uri, workspace_uri)
-    end
-  end
-
-  defp establish_ownership_obligations(
-         workers,
-         spawned_by_uri,
-         workspace_uri,
-         attempt_id
-       )
-       when is_binary(attempt_id) and attempt_id != "" do
-    Enum.reduce_while(workers, :ok, fn worker_uri, :ok ->
-      case Ezagent.Agent.CreationInventory.exact(
-             attempt_id,
-             worker_uri,
-             spawned_by_uri,
-             workspace_uri
-           ) do
-        {:ok, _receipt} -> {:cont, :ok}
-        {:error, _reason} -> {:halt, {:error, :ownership_receipt_missing}}
-      end
-    end)
-  end
-
-  defp record_creation_inventory(workers, spawned_by_uri, workspace_uri) do
-    Enum.reduce_while(workers, :ok, fn worker_uri, :ok ->
-      attempt_id = Ezagent.Agent.CreationInventory.new_attempt_id()
-
-      case Ezagent.Agent.CreationInventory.record(
-             attempt_id,
-             worker_uri,
-             spawned_by_uri,
-             workspace_uri
-           ) do
-        :ok -> {:cont, :ok}
-        {:error, reason} -> {:halt, {:error, {:creation_inventory_failed, reason}}}
-      end
-    end)
   end
 
   # codex round-10 HIGH-2 — undo everything `spawn_from_template_content/4`
@@ -1046,10 +974,4 @@ defmodule Ezagent.Entity.Agent.TemplateSpawn do
 
     :ok
   end
-
-  defp bind_workspace(worker_uri, workspace_uri),
-    do: Ezagent.Entity.Agent.SpawnObligations.bind_workspace(worker_uri, workspace_uri)
-
-  defp record_lineage(agent_uri, granted_by),
-    do: Ezagent.Entity.Agent.SpawnObligations.record_lineage(agent_uri, granted_by)
 end
