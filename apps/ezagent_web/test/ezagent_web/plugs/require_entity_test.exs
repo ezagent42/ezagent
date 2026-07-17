@@ -4,13 +4,19 @@ defmodule EzagentWeb.Plugs.RequireEntityTest do
   `current_user_uri` renamed to `current_entity_uri`. The plug
   now accepts both entity://user/* and entity://agent/* URIs in
   the session (any entity, not just users).
+
+  task #180 Change 3 — the plug also EVICTS a user whose account was
+  disabled AFTER login (active-session eviction). That recheck
+  reads the `users` table, so this suite runs under `DataCase` (DB
+  sandbox) rather than the old async no-DB `ExUnit.Case`.
   """
-  use ExUnit.Case, async: true
+  use EzagentCore.DataCase, async: false
 
   import Plug.Test
   import Plug.Conn
 
   alias EzagentWeb.Plugs.RequireEntity
+  alias Ezagent.Users
 
   describe "RequireEntity plug" do
     test "redirects to /login + halts when no session" do
@@ -23,7 +29,10 @@ defmodule EzagentWeb.Plugs.RequireEntityTest do
       assert ["/login"] = get_resp_header(conn, "location")
     end
 
-    test "passes through + assigns current_entity_uri for entity://user/*" do
+    test "passes through + assigns current_entity_uri for an ACTIVE entity://user/*" do
+      # Seeded, not disabled → the Change 3 recheck lets it through.
+      {:ok, _} = Users.create("entity://system/user/admin", "pw", [])
+
       conn =
         conn(:get, "/admin")
         |> init_test_session(%{"current_entity_uri" => "entity://system/user/admin"})
@@ -36,7 +45,7 @@ defmodule EzagentWeb.Plugs.RequireEntityTest do
                conn.assigns.current_entity_uri
     end
 
-    test "passes through + assigns current_entity_uri for entity://agent/*" do
+    test "passes through + assigns current_entity_uri for entity://agent/* (agents exempt from user recheck)" do
       conn =
         conn(:get, "/admin")
         |> init_test_session(%{"current_entity_uri" => "entity://team-alpha/agent/cc_test"})
@@ -74,6 +83,33 @@ defmodule EzagentWeb.Plugs.RequireEntityTest do
         assert conn.halted, "raw #{inspect(raw)} should have halted"
         assert ["/login"] = get_resp_header(conn, "location")
       end
+    end
+  end
+
+  describe "active-session eviction (task #180 Change 3)" do
+    test "a user disabled AFTER login is bounced to /login on the next request" do
+      uri = "entity://team-alpha/user/evict-#{System.unique_integer([:positive])}"
+      {:ok, _} = Users.create(uri, "pw", [])
+
+      # First request: active → passes through.
+      conn =
+        conn(:get, "/sessions")
+        |> init_test_session(%{"current_entity_uri" => uri})
+        |> RequireEntity.call([])
+
+      refute conn.halted
+
+      # Operator disables the account.
+      {:ok, _} = Users.disable(uri, "entity://system/user/admin", "offboarded")
+
+      # Next request: the live cookie is now evicted.
+      conn2 =
+        conn(:get, "/sessions")
+        |> init_test_session(%{"current_entity_uri" => uri})
+        |> RequireEntity.call([])
+
+      assert conn2.halted
+      assert ["/login"] = get_resp_header(conn2, "location")
     end
   end
 end

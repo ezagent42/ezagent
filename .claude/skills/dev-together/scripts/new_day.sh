@@ -57,4 +57,13 @@ _returned handoffs in analyzed merge order · dependencies · conflict check · 
 STACK
 fi
 
+# Board's yesterday = the day whose output the 完成 column shows and whose
+# efficiency (with an up/down delta vs the day before) the board reports.
+PREV="$(date -j -v-1d -f %Y-%m-%d "$DATE" +%F 2>/dev/null \
+        || date -d "$DATE -1 day" +%F 2>/dev/null || echo '<prev_date>')"
+
 echo "dev-together: $DIR ready (handoffs/ returns/ plan.md stack.md)"
+echo "dev-together: next → fill $DIR/board.yaml (copy scripts/render/board.example.yaml)."
+echo "  auto efficiency + up/down delta (splice into board.yaml before render):"
+echo "    uv run python .claude/skills/dev-together/scripts/board_efficiency.py ezagent42/ezagent $PREV"
+echo "  then render: uv run --with pyyaml python .claude/skills/dev-together/scripts/render/board2html.py $DIR/board.yaml"

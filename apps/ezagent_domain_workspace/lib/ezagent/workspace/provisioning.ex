@@ -229,4 +229,37 @@ defmodule Ezagent.Workspace.Provisioning do
         other
     end
   end
+
+  @doc """
+  Dispatch the `:disable_user` action on Workspace Kind — the operator
+  offboarding entry (task #180) for a REVERSIBLE soft-disable.
+
+  The unified CLI (`mix ezagent workspace disable_user ...`), the world admin
+  UI, and any programmatic caller all reach the same dispatch-backed path, so
+  step 5.5 CapBAC + audit telemetry + the action body's cross-workspace check
+  on the target user all fire. The `disabled_by` attribution is the
+  authenticated `ctx.caller`, NOT a caller-supplied arg. No post-dispatch step
+  (unlike `create_user`'s membership add) — the dispatch result passes through.
+
+  `args` is `%{user_uri: String.t(), reason: String.t() | nil}`. `ctx` carries
+  `:caller` + `:caps`. Returns `{:ok, %{user_uri, disabled_at, disabled_by}}`
+  on success; `{:error, reason}` on validation / cap denial / cross-workspace
+  refusal / unknown user.
+  """
+  @spec disable_user(URI.t(), map(), map()) ::
+          {:ok, %{user_uri: String.t(), disabled_at: String.t(), disabled_by: String.t()}}
+          | {:error, term()}
+  def disable_user(%URI{scheme: "workspace"} = workspace_uri, args, ctx)
+      when is_map(args) and is_map(ctx) do
+    target = Ezagent.URI.with_action(workspace_uri, :workspace_user_admin, :disable_user)
+    caller = Map.fetch!(ctx, :caller)
+    caps = Map.fetch!(ctx, :caps)
+
+    Router.dispatch(%Cmd{
+      target: target,
+      action: :disable_user,
+      args: args,
+      ctx: %{mode: :call, caller: caller, caps: caps, reply: {:caller_inbox, self()}}
+    })
+  end
 end

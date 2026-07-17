@@ -29,6 +29,27 @@ PR_STATE_PILL = {"merged": "pr-merged", "open": "pr-open", "draft": "pr-draft"}
 def e(x):
     return html.escape("" if x is None else str(x))
 
+def eff_delta_chip(delta):
+    """Optional up/down delta chip rendered right next to an efficiency value.
+
+    Reads the *sign glyph* the caller already chose (board_efficiency.py emits
+    ↓/↑): starts with ↓/-/▼ → red (down), ↑/+/▲ → green (up), else neutral.
+    All styling is inline so it always wins over `.eff b`/`.eff span` and adds
+    no CSS surface — entries with no `delta` render byte-identically to before.
+    """
+    if delta is None or str(delta).strip() == "":
+        return ""
+    d = str(delta).strip()
+    head = d[0]
+    if head in "↓-▼":
+        color = "#f87171"   # down = red
+    elif head in "↑+▲":
+        color = "#4ade80"   # up = green
+    else:
+        color = "#94a3b8"   # neutral
+    return (f'<span style="color:{color};font-size:11px;font-weight:700;'
+            f'margin-left:5px;vertical-align:1px">{e(d)}</span>')
+
 CSS = """
   :root{--ink:#1a1a1a;--line:#e2e8f0;--soft:#f8fafc;--blue:#2563eb;--blue-d:#1e40af;--green:#059669;--amber:#d97706;--red:#dc2626}
   *{box-sizing:border-box}
@@ -200,7 +221,7 @@ def main():
         bcls = "bar b" if i else "bar"
         prog_html += (f'<div class="lab"{" style=\"margin-top:6px\"" if i else ""}><span>{e(pr.get("label"))}</span><span>{e(val)}</span></div>'
                       f'<div class="{bcls}"><i style="width:{int(pr.get("pct",0))}%"></i></div>')
-    eff_html = "".join(f'<div><b>{e(t.get("value"))}</b><span>{e(t.get("label"))}</span></div>' for t in (b.get("efficiency", []) or []))
+    eff_html = "".join(f'<div><b>{e(t.get("value"))}{eff_delta_chip(t.get("delta"))}</b><span>{e(t.get("label"))}</span></div>' for t in (b.get("efficiency", []) or []))
     deploy_html = "".join(f'<div><span class="s">{e(d.get("env"))}</span>{e(d.get("state"))}</div>' for d in (b.get("deploy", []) or []))
     risks_html = "<br>".join(e(r) for r in (b.get("risks", []) or []))
 

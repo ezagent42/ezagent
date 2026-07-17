@@ -14,13 +14,20 @@ progress:
   - {label: "本周「自举就绪度」", pct: 60}
   - {label: "昨日验收", pct: 100, value: "07-15 全绿"}
 
+# efficiency: stat cards in the hero. Optional `delta:` on any entry renders a
+# small colored chip right next to the value: starts with ↓/-/▼ → red (down),
+# ↑/+/▲ → green (up), else neutral. `plan` does NOT hand-type these — it runs
+#   uv run python scripts/board_efficiency.py ezagent42/ezagent <prev_date>
+# and splices the emitted efficiency:/efficiency_source: fragment in verbatim
+# (each stat = yesterday's value + delta vs the day before). Entries with no
+# `delta` render exactly as before (backward-compatible). Example daily fragment:
 efficiency:
-  - {value: "1053", label: "近8周 merged PR"}
-  - {value: "983h", label: "活跃工时下界"}
-  - {value: "6.14", label: "人月投入"}
+  - {value: "20.6h", delta: "↓30", label: "07-16 活跃工时(git下界) · 昨 50.7h"}
+  - {value: "12", delta: "↓7", label: "07-16 merged PR · 昨 19"}
+  - {value: "0.13", delta: "↓0.19", label: "07-16 折算人月(160h) · 昨 0.32"}
+  # a stat with no delta still renders (e.g. a longer-horizon audit read):
   - {value: "56%", label: "agent 墙钟"}
-  - {value: "44%", label: "人类"}
-efficiency_source: "#1427 工程效率分析（session 工时下界 · git-hours） · #1431 audit 产品化效率体检"
+efficiency_source: "07-16 实测 pr_session_hours.py（git-hours 下界 · ~1min 可复算）；'Allen Woods'作者=协调 agent 墙钟非人力；当日产出或次日才合入、此法略低估。"
 
 deploy:
   - {env: "canary", state: "✅ 全量"}

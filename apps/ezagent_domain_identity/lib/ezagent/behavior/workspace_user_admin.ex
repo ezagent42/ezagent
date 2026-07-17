@@ -34,7 +34,7 @@ defmodule Ezagent.ActionSet.WorkspaceUserAdmin do
   Kind is impossible. The Workspace Kind is the natural parent
   (matches the `:create_agent` pattern from PR #344 case study).
 
-  ## Action
+  ## Actions
 
   - `:create_user` — args `%{user_uri: String.t(), password: String.t() | nil,
     caps: String.t() | nil}` → `%{user_uri, caps_granted, password_set, spawned}`.
@@ -45,6 +45,16 @@ defmodule Ezagent.ActionSet.WorkspaceUserAdmin do
     dispatch target's workspace. Bootstrap admin (`:any` target) is
     exempt because step 5.5 already validated cross-workspace
     authority.
+
+  - `:disable_user` — args `%{user_uri: String.t(), reason: String.t() | nil}`
+    → `%{user_uri, disabled_at, disabled_by}`. Operator offboarding (task
+    #180): REVERSIBLE soft-disable via `Ezagent.Users.disable/3`. Cuts access
+    (login gate fails closed + active-session eviction at the web auth
+    chokepoint) while preserving identity/history/attribution; `enable`
+    reverses it. Own cap subject; `disabled_by` is the authenticated caller.
+
+    (The HARD, irreversible `delete_user` counterpart is split to a separate
+    task — branch `feat/delete-user-atomic-revocation`.)
 
   ## Slice
 
@@ -144,15 +154,40 @@ defmodule Ezagent.ActionSet.WorkspaceUserAdmin do
     modes: [:call]
   )
 
+  action(:disable_user,
+    args: %{
+      user_uri: :string,
+      reason: {:option, :string}
+    },
+    returns: %{
+      user_uri: :string,
+      disabled_at: :string,
+      disabled_by: :string
+    },
+    caps: [{:disable_user, kind: :workspace}],
+    description:
+      "Operator offboarding (task #180) — REVERSIBLE soft-disable of a user " <>
+        "in this workspace. Cuts access (the login gate fails closed and any " <>
+        "live session is evicted on next request/mount) while preserving " <>
+        "identity, history, and attribution; `enable` reverses it. Wraps " <>
+        "`Ezagent.Users.disable/3` with the AUTHENTICATED caller as " <>
+        "`disabled_by` (attribution is never a caller-supplied arg). Its OWN " <>
+        "cap subject, distinct from `create_user`.",
+    modes: [:call]
+  )
+
   # =================================================================
-  # Explicit `required_caps/0` — preserves `kind: :workspace` axis.
+  # Explicit `required_caps/0` — preserves `kind: :workspace` axis. Each
+  # action carves its OWN cap subject (distinct action axis), so a holder of
+  # one is NOT authorized for another.
   # =================================================================
   def required_caps do
     %{
       create_user: Ezagent.Capability.cap(:workspace, __MODULE__, :create_user),
       mint_invite: Ezagent.Capability.cap(:workspace, __MODULE__, :mint_invite),
       list_invites: Ezagent.Capability.cap(:workspace, __MODULE__, :list_invites),
-      revoke_invite: Ezagent.Capability.cap(:workspace, __MODULE__, :revoke_invite)
+      revoke_invite: Ezagent.Capability.cap(:workspace, __MODULE__, :revoke_invite),
+      disable_user: Ezagent.Capability.cap(:workspace, __MODULE__, :disable_user)
     }
   end
 
@@ -273,8 +308,87 @@ defmodule Ezagent.ActionSet.WorkspaceUserAdmin do
     do: {:error, {:bad_args, "revoke_invite requires {code}", args}}
 
   # =================================================================
+  # disable_user — reversible soft-disable (task #180)
+  # =================================================================
+
+  @doc """
+  Handle `:disable_user` — reversible soft-disable (task #180). Validates the
+  target user URI is in the dispatch target's workspace, then wraps
+  `Ezagent.Users.disable/3` with the AUTHENTICATED `ctx.caller` as the
+  `disabled_by` actor and emits a `:user_disabled` audit event.
+  """
+  def handle_disable_user(args, ctx) when is_map(args) do
+    with {:ok, user_uri_str, reason} <- coerce_user_action_args(args),
+         {:ok, user_uri} <- parse_user_uri(user_uri_str),
+         {:ok, target_ws} <- require_workspace_uri(Map.get(ctx, :self_uri)),
+         :ok <- ensure_user_in_target_workspace(user_uri, target_ws),
+         {:ok, actor} <- require_actor(ctx),
+         :ok <- refute_self(actor, user_uri),
+         {:ok, decoded} <- Ezagent.Users.disable(user_uri, actor, reason) do
+      result = %{
+        user_uri: URI.to_string(decoded.uri),
+        disabled_at: to_iso8601(decoded.disabled_at),
+        disabled_by: decoded.disabled_by || URI.to_string(actor)
+      }
+
+      {:ok, result,
+       [
+         {:emit, :user_disabled,
+          %{
+            user_uri: URI.to_string(decoded.uri),
+            workspace_uri: URI.to_string(target_ws),
+            disabled_by: URI.to_string(actor),
+            reason: reason,
+            at: decoded.disabled_at || DateTime.utc_now()
+          }}
+       ]}
+    end
+  end
+
+  def handle_disable_user(args, _ctx) do
+    {:error, {:bad_args, "disable_user requires {user_uri, reason?}", args}}
+  end
+
+  # =================================================================
   # Helpers
   # =================================================================
+
+  # Arg coercion for disable_user: a required `user_uri` string + an optional
+  # `reason` string.
+  defp coerce_user_action_args(args) do
+    user_uri = Map.get(args, :user_uri)
+    reason = Map.get(args, :reason)
+
+    cond do
+      not is_binary(user_uri) or user_uri == "" ->
+        {:error, :user_uri_required}
+
+      not (is_nil(reason) or is_binary(reason)) ->
+        {:error, {:bad_reason, reason}}
+
+      true ->
+        {:ok, user_uri, reason}
+    end
+  end
+
+  # The actor (`disabled_by`) is the AUTHENTICATED caller from the dispatch ctx
+  # — NEVER a caller-supplied arg (attribution forgery vector). Step 5.5 has
+  # already authorized this caller.
+  defp require_actor(%{caller: %URI{} = caller}), do: {:ok, caller}
+  defp require_actor(_), do: {:error, :missing_actor}
+
+  # An operator MUST NOT disable their OWN account — an immediate self-lockout
+  # footgun. Mirrors the world admin UI's `ensure_not_self` guard.
+  defp refute_self(%URI{} = actor, %URI{} = user_uri) do
+    if Ezagent.URI.stable_key(actor) == Ezagent.URI.stable_key(user_uri) do
+      {:error, :self_offboard_denied}
+    else
+      :ok
+    end
+  end
+
+  defp to_iso8601(%DateTime{} = dt), do: DateTime.to_iso8601(dt)
+  defp to_iso8601(_), do: nil
 
   # -----------------------------------------------------------------
   # The ISSUE chokepoint (Decision #162: ISSUE → STORE → VERIFY)
