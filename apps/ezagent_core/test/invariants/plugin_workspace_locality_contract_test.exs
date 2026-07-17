@@ -174,7 +174,8 @@ defmodule EzagentCore.Invariants.PluginWorkspaceLocalityContractTest do
       "def backend, do: Ezagent.Agent.CreationInventory; backend().record_exact(repo, a, b, c, d)",
       "owner = Application.get_env(:app, :ownership_module); owner.record_exact(repo, a, b, c, d)",
       "quote do: unquote(owner).record_exact(repo, a, b, c, d)",
-      "owner = configured_module(); owner.rehydrate()"
+      "owner = configured_module(); owner.rehydrate()",
+      "def leak(owner), do: owner.record_exact(repo, a, b, c, d)"
     ]
 
     for source <- mutants do
@@ -535,8 +536,28 @@ defmodule EzagentCore.Invariants.PluginWorkspaceLocalityContractTest do
   end
 
   defp bind_data_patterns(patterns, env) do
-    Enum.reduce(variables_in(patterns), env, &Map.put(&2, &1, :safe_data))
+    Enum.reduce(List.wrap(patterns), env, &bind_data_pattern/2)
   end
+
+  defp bind_data_pattern({:when, _, [pattern | _guards]}, env),
+    do: bind_data_pattern(pattern, env)
+
+  defp bind_data_pattern({:=, _, [left, right]} = pattern, env) do
+    value = if data_pattern?(left) or data_pattern?(right), do: :safe_data, else: :unknown_value
+    Enum.reduce(variables_in(pattern), env, &Map.put(&2, &1, value))
+  end
+
+  defp bind_data_pattern(pattern, env) do
+    value = if data_pattern?(pattern), do: :safe_data, else: :unknown_value
+    Enum.reduce(variables_in(pattern), env, &Map.put(&2, &1, value))
+  end
+
+  defp data_pattern?({:%, _, [_module, {:%{}, _, _fields}]}), do: true
+  defp data_pattern?({:%{}, _, _fields}), do: true
+  defp data_pattern?({:{}, _, _items}), do: true
+  defp data_pattern?(pattern) when is_tuple(pattern) and tuple_size(pattern) != 3, do: true
+  defp data_pattern?(pattern) when is_list(pattern), do: true
+  defp data_pattern?(_pattern), do: false
 
   defp ownership_branch_join(branches, env, aliases, imports, function, calls, include_missing?) do
     branches = Enum.reject(branches, &is_nil/1)
@@ -654,9 +675,6 @@ defmodule EzagentCore.Invariants.PluginWorkspaceLocalityContractTest do
   defp ownership_value({name, _, context}, env, _aliases)
        when is_atom(name) and (is_atom(context) or is_nil(context)),
        do: Map.get(env, name)
-
-  defp ownership_value({{:., _, [{:__aliases__, _, [:Mix]}, :shell]}, _, []}, _env, _aliases),
-    do: :safe_data
 
   defp ownership_value({{:., _, [receiver, _field]}, _, []}, env, aliases) do
     if receiver_value(receiver, env, aliases) == :safe_data, do: :safe_data
@@ -833,6 +851,11 @@ defmodule EzagentCore.Invariants.PluginWorkspaceLocalityContractTest do
     do: %{module: :unknown, call: {name, arity}, line: line, function: function}
 
   defp ownership_call(:unknown_value, name, arity, line, function),
+    do: %{module: :unknown_value, call: {name, arity}, line: line, function: function}
+
+  defp ownership_call(:safe_data, _name, 0, _line, _function), do: nil
+
+  defp ownership_call(:safe_data, name, arity, line, function),
     do: %{module: :unknown_value, call: {name, arity}, line: line, function: function}
 
   defp ownership_call(module, name, arity, line, function) do
