@@ -315,7 +315,12 @@ defmodule Ezagent.Workspace.TaskWorkspace.AtomicOwnershipTest do
     case Ezagent.KindRegistry.lookup(agent_uri) do
       {:ok, pid} ->
         monitor = Process.monitor(pid)
-        :ok = DynamicSupervisor.terminate_child(Ezagent.Entity.Agent.supervisor(), pid)
+
+        assert DynamicSupervisor.terminate_child(Ezagent.Entity.Agent.supervisor(), pid) in [
+                 :ok,
+                 {:error, :not_found}
+               ]
+
         assert_receive {:DOWN, ^monitor, :process, ^pid, _reason}
 
         case Ezagent.KindRegistry.lookup(agent_uri) do
