@@ -6,16 +6,30 @@ defmodule EzagentDomainWorkspace.TestSupport.FakeTaskWorkspaceGitRunner do
     send(owner, {:git_prepare, request})
     Process.sleep(Application.get_env(:ezagent_domain_workspace, :provisioner_test_delay, 0))
 
-    Application.get_env(
-      :ezagent_domain_workspace,
-      :provisioner_test_prepare_result,
-      {:ok,
-       %{
-         cache_identity: "cache-fixture",
-         worktree_identity: "worktree-fixture",
-         worktree_path: "/tmp/ezagent-task-worktree-fixture"
-       }}
-    )
+    result =
+      Application.get_env(
+        :ezagent_domain_workspace,
+        :provisioner_test_prepare_result,
+        {:ok,
+         %{
+           cache_identity: "cache-fixture",
+           worktree_identity: "worktree-fixture",
+           worktree_path: "/tmp/ezagent-task-worktree-fixture"
+         }}
+      )
+
+    deterministic_ref = Ezagent.Workspace.TaskWorkspace.GitRunner.local_branch_ref(request)
+
+    case result do
+      {:ok, prepared} ->
+        {:ok, Map.put(prepared, :local_branch_ref, deterministic_ref)}
+
+      {:error, reason, prepared} ->
+        {:error, reason, Map.put(prepared, :local_branch_ref, deterministic_ref)}
+
+      other ->
+        other
+    end
   end
 
   def verify(ready) do

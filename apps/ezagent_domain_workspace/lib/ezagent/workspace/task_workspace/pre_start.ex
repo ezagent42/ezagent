@@ -13,8 +13,14 @@ defmodule Ezagent.Workspace.TaskWorkspace.PreStart do
     with %Provision{} = row <- Store.get_by_provision_id(ref.provision_id),
          :ok <- exact_identity(row, ref),
          {:ok, claimed} <- claim(row),
+         :ok <- reserve_creation_identity(claimed),
          :ok <- verify(claimed) do
-      {:ok, %{cwd: claimed.worktree_path, claim: {claimed.id, claimed.start_claim_token}}}
+      {:ok,
+       %{
+         cwd: claimed.worktree_path,
+         claim: {claimed.id, claimed.start_claim_token},
+         creation_attempt_id: claimed.creation_attempt_id
+       }}
     else
       nil -> {:error, :workspace_not_ready}
       {:error, reason} = error -> maybe_cleanup(ref.provision_id, reason, error)
@@ -86,12 +92,36 @@ defmodule Ezagent.Workspace.TaskWorkspace.PreStart do
          :ok <- PreStartVerifier.verify(proof) do
       :ok
     else
-      false -> fail_proof(row, :workspace_checkout_mismatch)
-      {:error, reason} -> fail_proof(row, reason)
+      false ->
+        fail_proof(row, :workspace_checkout_mismatch)
+
+      {:error, reason} when reason in [:workspace_checkout_mismatch, :workspace_not_clean] ->
+        fail_proof(row, reason)
+
+      {:error, :checkout_unavailable} ->
+        release_claim(row)
+
+      {:error, _reason} ->
+        release_claim(row)
     end
   end
 
   defp maybe_cleanup(_provision_id, _reason, error), do: error
+
+  defp reserve_creation_identity(row) do
+    with {:ok, agent} <- parse_uri(row.agent_uri),
+         {:ok, root} <- parse_uri(row.provenance_root_uri),
+         {:ok, workspace} <- parse_uri(row.workspace_uri) do
+      Ezagent.Agent.CreationInventory.record(row.creation_attempt_id, agent, root, workspace)
+    end
+  end
+
+  defp release_claim(row) do
+    case Store.release_start(row.id, row.start_claim_token) do
+      {:ok, _ready} -> {:error, :checkout_unavailable}
+      {:error, _reason} -> {:error, :sidecar_start_claim_lost}
+    end
+  end
 
   defp fail_proof(row, reason) do
     case Store.fail_start(row.id, row.start_claim_token, reason) do

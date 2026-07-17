@@ -48,12 +48,14 @@ defmodule Ezagent.Workspace.TaskWorkspace.Store do
             task_uri: ^task_uri,
             generation: ^generation,
             agent_uri: nil,
-            provenance_root_uri: nil
+            provenance_root_uri: nil,
+            creation_attempt_id: nil
           } = row ->
             with :ok <- intent_authority(agent_uri, root_uri, workspace_uri) do
               update_row(row, %{
                 agent_uri: agent_uri,
                 provenance_root_uri: root_uri,
+                creation_attempt_id: Ezagent.Agent.CreationInventory.new_attempt_id(),
                 state_version: row.state_version + 1
               })
             end
@@ -157,7 +159,7 @@ defmodule Ezagent.Workspace.TaskWorkspace.Store do
     locked(id, fn
       %Provision{status: :provisioning, claim_token: ^claim_token} = row ->
         with :ok <- current_lease(row.lease_until, now, :provision_lease_expired),
-             {:ok, proof} <- failure_effect_values(effect_proof) do
+             {:ok, proof} <- failure_effect_values(effect_proof, row) do
           update_row(
             row,
             Map.merge(proof, %{
@@ -192,7 +194,7 @@ defmodule Ezagent.Workspace.TaskWorkspace.Store do
       %Provision{status: :provisioning, claim_token: ^claim_token} = provision ->
         with :ok <- current_lease(provision.lease_until, now, :provision_lease_expired),
              :ok <- expected_version(provision, attrs, :stale_provision_version),
-             {:ok, ready} <- ready_values(attrs) do
+             {:ok, ready} <- ready_values(attrs, provision) do
           update_row(provision, %{
             status: :ready,
             state_version: provision.state_version + 1,
@@ -307,6 +309,30 @@ defmodule Ezagent.Workspace.TaskWorkspace.Store do
 
   def fail_start(_id, _start_claim_token, _reason, _opts),
     do: {:error, :invalid_cleanup_reason}
+
+  @doc "Releases a current start claim after checkout infrastructure is unavailable."
+  def release_start(id, start_claim_token, opts \\ []) do
+    now = Keyword.get(opts, :now, DateTime.utc_now())
+
+    locked(id, fn
+      %Provision{status: :starting, start_claim_token: ^start_claim_token} = row ->
+        with :ok <- current_start_lease(row, now) do
+          update_row(row, %{
+            status: :ready,
+            state_version: row.state_version + 1,
+            start_token_consumed_at: nil,
+            start_claim_token: nil,
+            start_lease_until: nil
+          })
+        end
+
+      %Provision{status: :starting} ->
+        {:error, :sidecar_start_claim_lost}
+
+      %Provision{} ->
+        {:error, :invalid_start_transition}
+    end)
+  end
 
   @doc "Renews only the current unexpired start lease."
   @spec renew_start_claim(pos_integer(), String.t(), keyword()) ::
@@ -756,7 +782,7 @@ defmodule Ezagent.Workspace.TaskWorkspace.Store do
   defp expected_version(%Provision{state_version: version}, version, _error), do: :ok
   defp expected_version(%Provision{}, _version, error), do: {:error, error}
 
-  defp ready_values(attrs) do
+  defp ready_values(attrs, provision) do
     keys = [
       :cache_identity,
       :worktree_identity,
@@ -765,16 +791,19 @@ defmodule Ezagent.Workspace.TaskWorkspace.Store do
       :local_branch_ref
     ]
 
-    if Enum.all?(keys, &(is_binary(Map.get(attrs, &1)) and Map.get(attrs, &1) != "")) do
+    if Enum.all?(keys, &(is_binary(Map.get(attrs, &1)) and Map.get(attrs, &1) != "")) and
+         valid_commit?(attrs.resolved_base_commit) and
+         attrs.local_branch_ref ==
+           Ezagent.Workspace.TaskWorkspace.GitRunner.local_branch_ref(provision) do
       {:ok, Map.take(attrs, keys)}
     else
       {:error, :invalid_ready_attributes}
     end
   end
 
-  defp failure_effect_values(nil), do: {:ok, %{}}
+  defp failure_effect_values(nil, _provision), do: {:ok, %{}}
 
-  defp failure_effect_values(attrs) when is_map(attrs) do
+  defp failure_effect_values(attrs, provision) when is_map(attrs) do
     keys = [
       :cache_identity,
       :worktree_identity,
@@ -783,14 +812,22 @@ defmodule Ezagent.Workspace.TaskWorkspace.Store do
       :local_branch_ref
     ]
 
-    if Enum.all?(keys, &(is_binary(Map.get(attrs, &1)) and Map.get(attrs, &1) != "")) do
+    if Enum.all?(keys, &(is_binary(Map.get(attrs, &1)) and Map.get(attrs, &1) != "")) and
+         valid_commit?(attrs.resolved_base_commit) and
+         attrs.local_branch_ref ==
+           Ezagent.Workspace.TaskWorkspace.GitRunner.local_branch_ref(provision) do
       {:ok, Map.take(attrs, keys)}
     else
       {:error, :invalid_failure_effect_proof}
     end
   end
 
-  defp failure_effect_values(_attrs), do: {:error, :invalid_failure_effect_proof}
+  defp failure_effect_values(_attrs, _provision), do: {:error, :invalid_failure_effect_proof}
+
+  defp valid_commit?(value) when is_binary(value),
+    do: Regex.match?(~r/\A(?:[0-9a-f]{40}|[0-9a-f]{64})\z/, value)
+
+  defp valid_commit?(_value), do: false
 
   defp validate_create_keys(attrs) do
     keys = Map.keys(attrs)

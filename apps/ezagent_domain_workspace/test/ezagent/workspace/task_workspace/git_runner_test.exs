@@ -155,6 +155,27 @@ defmodule Ezagent.Workspace.TaskWorkspace.GitRunnerTest do
              GitRunner.verify(%{cache_path: "/cache", worktree_path: "/worktree"})
   end
 
+  test "verification classifies every executor failure as checkout unavailable" do
+    for failure <- [
+          :git_command_timeout,
+          :git_output_limit_exceeded,
+          {:spawn_failed, :enoent},
+          {:git_exit, 128},
+          {:signal, :sigkill}
+        ] do
+      ready = %{
+        cache_path: "/cache",
+        worktree_path: "/worktree",
+        remote_url: "https://git.example.test/acme/widgets.git",
+        resolved_base_commit: String.duplicate("a", 40),
+        local_branch_ref: "refs/heads/ezagent/task/fixture/g1",
+        runner_opts: %{executor: fn _argv, _opts -> {:error, failure} end}
+      }
+
+      assert {:error, :checkout_unavailable} = GitRunner.verify(ready)
+    end
+  end
+
   test "reused cache fetches a moved base ref and creates the deterministic branch", %{root: root} do
     %{origin: origin, source: source} = local_origin_with_source!(root)
     first = request(remote_url: origin, allow_local_fixture: true, generation: 1)

@@ -39,6 +39,7 @@ defmodule Ezagent.Workspace.TaskWorkspace.SidecarGateTest do
       Application.delete_env(:ezagent_domain_workspace, :sidecar_gate_test_provenance)
       Application.delete_env(:ezagent_domain_workspace, :sidecar_gate_proof_row_id)
       Application.delete_env(:ezagent_domain_workspace, :provisioner_test_owner)
+      Application.delete_env(:ezagent_domain_workspace, :provisioner_test_verify_result)
       Application.delete_env(:ezagent_domain_workspace, :task_workspace_retirement)
       Application.delete_env(:ezagent_domain_workspace, :provisioner_test_verify_absent_result)
     end)
@@ -74,12 +75,14 @@ defmodule Ezagent.Workspace.TaskWorkspace.SidecarGateTest do
 
     assert ready.agent_uri == URI.to_string(agent_uri)
     assert ready.provenance_root_uri == "entity://sidecar-gate/user/owner"
+    assert is_binary(ready.creation_attempt_id)
     assert {:ok, %{claim: _claim}} = CorePreStart.prepare(ref)
 
     abandoned = Store.get(ready.id)
     assert abandoned.start_token_consumed_at
     assert abandoned.agent_uri == URI.to_string(agent_uri)
     assert abandoned.provenance_root_uri == "entity://sidecar-gate/user/owner"
+    assert abandoned.creation_attempt_id == ready.creation_attempt_id
   end
 
   test "caller death after real prepare leaves starting for fenced recovery" do
@@ -128,7 +131,8 @@ defmodule Ezagent.Workspace.TaskWorkspace.SidecarGateTest do
     now = DateTime.add(starting.start_lease_until, 1, :second)
 
     assert %{cleaned: 1, failed: 0} = Reconciler.recover_once(limit: 1, now: now)
-    assert_receive {:retire_agent, _, nil}
+    assert_receive {:retire_agent, _, attempt_id}
+    assert attempt_id == Store.get(ready.id).creation_attempt_id
     assert Store.get(ready.id).status == :cleaned
     refute_receive {:instantiate_called, _}
   end
@@ -144,7 +148,7 @@ defmodule Ezagent.Workspace.TaskWorkspace.SidecarGateTest do
         worktree_identity: "worktree-proof",
         worktree_path: canonical_cwd(),
         resolved_base_commit: String.duplicate("a", 40),
-        local_branch_ref: "refs/heads/ezagent/task/proof/g3"
+        local_branch_ref: Ezagent.Workspace.TaskWorkspace.GitRunner.local_branch_ref(claimed)
       })
 
     valid = %{
@@ -222,6 +226,10 @@ defmodule Ezagent.Workspace.TaskWorkspace.SidecarGateTest do
     assert started.status == :sidecar_started
     assert started.agent_uri == "entity://sidecar-gate/agent/worker-#{unique}"
     assert is_binary(started.creation_attempt_id)
+
+    assert {:ok, started.creation_attempt_id} ==
+             Ezagent.Agent.CreationInventory.find_attempt(agent_uri, workspace_uri())
+
     assert started.provenance_root_uri == "entity://sidecar-gate/user/owner"
   end
 
@@ -238,6 +246,32 @@ defmodule Ezagent.Workspace.TaskWorkspace.SidecarGateTest do
 
     assert {:error, :workspace_checkout_mismatch} = CorePreStart.prepare(ref)
     assert Store.get(ready.id).status == :cleanup_pending
+  end
+
+  test "checkout availability failure releases the start claim for a safe retry" do
+    ready = ready_row()
+
+    Application.put_env(
+      :ezagent_domain_workspace,
+      :task_workspace_git_runner,
+      EzagentDomainWorkspace.TestSupport.FakeTaskWorkspaceGitRunner
+    )
+
+    Application.put_env(:ezagent_domain_workspace, :provisioner_test_owner, self())
+
+    Application.put_env(
+      :ezagent_domain_workspace,
+      :provisioner_test_verify_result,
+      {:error, :checkout_unavailable}
+    )
+
+    assert {:error, :checkout_unavailable} =
+             CorePreStart.prepare(start_ref(ready.provision_id, ready.generation))
+
+    retryable = Store.get(ready.id)
+    assert retryable.status == :ready
+    assert retryable.start_token_consumed_at == nil
+    refute_receive {:instantiate_called, _}
   end
 
   test "the start claim is durable and its persisted proof is complete before verification" do
@@ -293,7 +327,7 @@ defmodule Ezagent.Workspace.TaskWorkspace.SidecarGateTest do
         worktree_identity: "worktree-proof",
         worktree_path: canonical_cwd(),
         resolved_base_commit: String.duplicate("a", 40),
-        local_branch_ref: "refs/heads/ezagent/task/proof/g3",
+        local_branch_ref: Ezagent.Workspace.TaskWorkspace.GitRunner.local_branch_ref(claimed),
         remote_url: "https://git.example.test/acme/widgets.git"
       })
 
@@ -335,7 +369,7 @@ defmodule Ezagent.Workspace.TaskWorkspace.SidecarGateTest do
         worktree_identity: paths.worktree_identity,
         worktree_path: paths.worktree_path,
         resolved_base_commit: String.duplicate("a", 40),
-        local_branch_ref: "refs/heads/ezagent/task/proof/g3",
+        local_branch_ref: Ezagent.Workspace.TaskWorkspace.GitRunner.local_branch_ref(claimed),
         remote_url: "https://git.example.test/acme/widgets.git"
       })
 
