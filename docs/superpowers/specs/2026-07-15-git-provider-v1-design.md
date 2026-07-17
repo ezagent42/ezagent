@@ -1,6 +1,6 @@
 # Git provider V1: Entity SSH identity, provider plugins, and task workspaces
 
-**Status:** Plan A evidence complete; downstream design narrowed pending review
+**Status:** Plan A and Plan B evidence complete; downstream roadmap amended 2026-07-17
 
 **Date:** 2026-07-15
 
@@ -8,6 +8,12 @@
 
 **Context:** W29 dev-loop demo provisioning gaps; extends the constraints in
 `docs/superpowers/notes/2026-07-15-demo-provisioning-constraints.md`
+
+**Roadmap amendment:**
+`2026-07-17-git-provider-v1-downstream-roadmap-amendment.md` restores the
+Plan A-frozen C/D/E ordering, keeps OAuth-first provider connection, and adds a
+narrow OneAuth/OneSystem replacement seam before Plan D. The amendment does not
+change the completed Plan A or Plan B contracts.
 
 ## 1. Decision summary
 
@@ -581,8 +587,12 @@ V1 is delivered through five separately reviewed plans:
    unauthorized-no-effect invariants.
 3. **C — transport/workspace:** only the transport approved by A, durable
    provisioning, and a provider-neutral pre-start port outside `plugin_cc`.
-4. **D — GitHub plugin:** complete OAuth lifecycle, Req adapter, real pull
-   request, and head-CI reads.
+4. **D — provider connection + GitHub plugin:** first run the narrow D0 reuse
+   gate from the 2026-07-17 roadmap amendment, then implement an OAuth-first,
+   provider-neutral connection lifecycle, the GitHub connection driver, Req
+   adapter, real pull request, and head-CI reads. OneAuth/OneSystem remain
+   replaceable backends until D0 proves a production-safe integration; current
+   social-login tokens and generic decrypt APIs are not accepted shortcuts.
 5. **E — product acceptance:** settings, Kanban fact projection, agent-browser
    evidence, and lead-authorized merge/done.
 
