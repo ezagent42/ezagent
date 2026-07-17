@@ -84,7 +84,7 @@ defmodule Mix.Tasks.Ezagent.Session.ReinstallSocialware do
   defp parse_session_uri!(str) do
     case Ezagent.URI.parse(String.trim(str)) do
       {:ok, %URI{scheme: "session"} = uri} -> uri
-      {:ok, %URI{} = other} -> Mix.raise("not a session:// URI: #{URI.to_string(other)}")
+      {:ok, %URI{} = other} -> Mix.raise("not a session URI: #{URI.to_string(other)}")
       _ -> Mix.raise("bad session URI: #{inspect(str)}")
     end
   end
