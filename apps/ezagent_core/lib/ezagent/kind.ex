@@ -378,95 +378,18 @@ defmodule Ezagent.Kind do
   def spawn(kind_module, params, opts \\ [])
       when is_atom(kind_module) and is_map(params) and is_list(opts) do
     with {:ok, validated_opts} <- Keyword.validate(opts, [:launch_context]) do
-      do_spawn(kind_module, params, validated_opts)
-    end
-  end
+      strategy = spawn_strategy(kind_module)
 
-  defp do_spawn(kind_module, params, opts) do
-    strategy = spawn_strategy(kind_module)
+      strategy =
+        if strategy == :standard, do: {:standard, resolve_supervisor(kind_module)}, else: strategy
 
-    if Keyword.has_key?(opts, :launch_context) and strategy != :standard do
-      {:error, :launch_context_unsupported}
-    else
-      do_spawn_with_strategy(kind_module, params, opts, strategy)
-    end
-  end
-
-  defp do_spawn_with_strategy(kind_module, params, opts, strategy) do
-    {params, launch_relay} =
-      case Keyword.fetch(opts, :launch_context) do
-        :error ->
-          {params, nil}
-
-        {:ok, launch_context} ->
-          relay = Ezagent.Kind.LaunchContextRelay.issue(launch_context)
-          {Map.put(params, :launch_context_relay, relay), relay}
-      end
-
-    try do
-      result =
-        case strategy do
-          :standard ->
-            supervisor = resolve_supervisor(kind_module)
-
-            DynamicSupervisor.start_child(
-              supervisor,
-              {Ezagent.Kind.Server, {kind_module, params}}
-            )
-
-          {:custom, mod, fun} when is_atom(mod) and is_atom(fun) ->
-            # Domain-owned supervision-tree layering (e.g. ExternalMirror's
-            # two-tier RootSupervisor → PerBindingSupervisor → Kind.Server,
-            # SPEC `docs/superpowers/specs/2026-05-24-external-mirror-domain.md`
-            # §6.3). The custom function returns the same on_start_child
-            # shape so idempotent reconcilers can match `{:error,
-            # {:already_started, pid}}`.
-            apply(mod, fun, [params])
-        end
-
-      case {launch_relay, result} do
-        {nil, _result} -> :ok
-        {relay, {:ok, child}} -> Ezagent.Kind.LaunchContextRelay.commit(relay, child)
-        {relay, _failed_result} -> Ezagent.Kind.LaunchContextRelay.force_discard(relay)
-      end
-
-      # Readiness contract (remediation SPEC 2026-05-30 C-A): a `Kind.Server`
-      # returns from `start_child` BEFORE its post-init/`activate` phase
-      # completes (`handle_continue` runs async; ReadyGate stays `:not_ready`
-      # through it — see `Kind.Server` invariant #3, external CALLS fail-fast
-      # while not-ready). So a caller doing the natural `spawn` then
-      # synchronous `dispatch` (`spawn_session(...) ; join(...)`, create→use,
-      # template seed #50) raced the activate window and got
-      # `{:error, :not_ready}`. We close the window at the SPAWN boundary
-      # (NOT by buffering calls — that risks the re-entrant deadlock invariant
-      # #3 deliberately avoids): await `:ready` here so every post-spawn
-      # synchronous dispatch observes a fully-initialised Kind. Best-effort —
-      # a genuinely slow/looping `activate` degrades to the prior behaviour
-      # (logged; first dispatch may still see `:not_ready`) rather than failing
-      # the spawn.
-      #
-      # `:standard`-strategy ONLY (remediation SPEC 2026-05-30, second pass):
-      # `{:custom, …}` Kinds (today: ExternalMirrorWorker) own their OWN
-      # readiness sequencing inside a domain supervision tree, and — critically
-      # — their `activate` does a synchronous `:call` BACK to the Kind that
-      # spawned them (the Worker subscribes to its Session Publisher). When the
-      # spawning Kind runs `Kind.spawn(Worker)` from INSIDE its own
-      # `handle_call` (the canonical `external_mirror.bind` flow), awaiting the
-      # Worker's `:ready` here is a re-entrant DEADLOCK: spawn-await blocks the
-      # Session while the Worker's `activate` subscribe `:call` blocks on that
-      # same Session. The custom-spawn contract is "spawn returns immediately;
-      # the Kind self-sequences its own post-spawn readiness/subscribe" — so we
-      # do NOT await it. No caller synchronously dispatches to a freshly-spawned
-      # custom Kind (the Worker is reached only via Publisher fan-out, which it
-      # subscribes to itself), so the readiness window C-A closes does not apply.
-      case strategy do
-        :standard -> await_ready_after_spawn(result, params)
-        _ -> :ok
-      end
-
-      result
-    after
-      if launch_relay, do: Ezagent.Kind.LaunchContextRelay.discard(launch_relay)
+      Ezagent.Kind.Spawner.spawn(
+        kind_module,
+        params,
+        validated_opts,
+        strategy,
+        &await_ready_after_spawn/2
+      )
     end
   end
 

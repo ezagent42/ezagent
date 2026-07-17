@@ -84,7 +84,9 @@
   #   extracting them, and latest main measured modules above 1000 the manifest had
   #   not yet recorded. Record the live baseline rather than attributing unrelated
   #   module growth to this feature; the exact count is gate-measured.
-  oversized_modules_gt_1000: 5,
+  # arch-cap-bump: Plan C atomic receipt adds audited Kind.Server and TemplateSpawn
+  #   boundary logic on top of that main baseline.
+  oversized_modules_gt_1000: 6,
   # arch-cap-bump: +1 #160 — cc_agent Template Class adds the `credential_status/2`
   #   enum adapter (the CredentialAdapter optional callback that maps the cc probe's
   #   File.exists?/expiresAt result into the normalized status enum for the
