@@ -190,19 +190,20 @@ defmodule EzagentWeb.LiveAuth do
       uri_str when is_binary(uri_str) ->
         case parse_entity_uri(uri_str) do
           {:ok, uri} ->
-            workspace_uri = parse_workspace_uri(session["current_workspace_uri"], uri)
-            is_system_member = system_member?(uri)
-            caps = load_caps(uri)
-
-            {:cont,
-             socket
-             |> assign(:current_entity_uri, uri)
-             |> assign(:current_workspace_uri, workspace_uri)
-             |> assign(:workspace_name, workspace_name_from_uri(workspace_uri))
-             |> assign(:is_admin?, admin?(uri))
-             |> assign(:is_system_member?, is_system_member)
-             |> assign(:current_caps, caps)
-             |> assign(:workspaces, list_known_workspaces(uri, caps))}
+            if user_offboarded?(uri) do
+              # Active-session eviction (task #180 Change 3): a user
+              # disabled AFTER login is bounced on their next LV mount
+              # (connect / navigation / reconnect). Mirrors the HTTP-side
+              # `RequireEntity` recheck; scoped to USER URIs so an agent LV
+              # (bearer-authed) is never run through the user-table lookup
+              # (`Users.disabled?/1` fails closed on unknown).
+              {:halt,
+               socket
+               |> put_flash(:info, "Your access has been revoked. Please sign in again.")
+               |> redirect(to: "/login")}
+            else
+              mount_authed_socket(session, socket, uri)
+            end
 
           :error ->
             # Malformed / non-entity / stale pre-Phase-9 2-segment URI
@@ -216,6 +217,29 @@ defmodule EzagentWeb.LiveAuth do
              |> redirect(to: "/login")}
         end
     end
+  end
+
+  defp mount_authed_socket(session, socket, %URI{} = uri) do
+    workspace_uri = parse_workspace_uri(session["current_workspace_uri"], uri)
+    is_system_member = system_member?(uri)
+    caps = load_caps(uri)
+
+    {:cont,
+     socket
+     |> assign(:current_entity_uri, uri)
+     |> assign(:current_workspace_uri, workspace_uri)
+     |> assign(:workspace_name, workspace_name_from_uri(workspace_uri))
+     |> assign(:is_admin?, admin?(uri))
+     |> assign(:is_system_member?, is_system_member)
+     |> assign(:current_caps, caps)
+     |> assign(:workspaces, list_known_workspaces(uri, caps))}
+  end
+
+  # True only when `uri` is a soft-disabled USER (`Users.disabled?/1`). Agent
+  # URIs are exempt — they are not `users` rows and `disabled?/1` fails closed on
+  # unknown.
+  defp user_offboarded?(%URI{} = uri) do
+    match?({:ok, "user"}, Ezagent.URI.type(uri)) and Ezagent.Users.disabled?(uri)
   end
 
   # Phase 9 PR-8 (SPEC v3 §13.3) — `is_system_member?` is the
