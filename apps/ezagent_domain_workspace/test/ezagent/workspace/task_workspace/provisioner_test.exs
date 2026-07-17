@@ -66,10 +66,13 @@ defmodule Ezagent.Workspace.TaskWorkspace.ProvisionerTest do
 
     assert %Provision{
              resolved_base_commit: resolved_base_commit,
-             local_branch_ref: "refs/heads/ezagent/task/0123456789abcdef01234567/g1"
+             local_branch_ref: local_branch_ref
            } = Repo.get_by!(Provision, provision_id: fixture.request.provision_id)
 
     assert resolved_base_commit == String.duplicate("a", 40)
+
+    assert local_branch_ref ==
+             Ezagent.Workspace.TaskWorkspace.GitRunner.local_branch_ref(fixture.request)
   end
 
   test "private policy fails before row, path, or Git process" do
@@ -204,7 +207,8 @@ defmodule Ezagent.Workspace.TaskWorkspace.ProvisionerTest do
                worktree_identity: "worktree-owner",
                worktree_path: conflict_paths.worktree_path,
                resolved_base_commit: String.duplicate("b", 40),
-               local_branch_ref: "refs/heads/ezagent/task/fedcba9876543210fedcba98/g1"
+               local_branch_ref:
+                 Ezagent.Workspace.TaskWorkspace.GitRunner.local_branch_ref(owner_claim)
              })
 
     assert {:error, :worktree_conflict} = Provisioner.prepare(conflict.request)

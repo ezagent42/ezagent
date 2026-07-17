@@ -36,9 +36,21 @@ defmodule EzagentCore.Repo.Migrations.HardenGitTaskWorkspaceStart do
                "status IN ('planned', 'provisioning', 'ready', 'starting', 'sidecar_started', " <>
                  "'blocked', 'cleanup_pending', 'cleaned')"
            )
+
+    create constraint(
+             :git_task_workspace_provisions,
+             :git_task_workspace_provisions_start_identity_check,
+             check:
+               "status != 'starting' OR (agent_uri IS NOT NULL AND creation_attempt_id IS NOT NULL AND provenance_root_uri IS NOT NULL)"
+           )
   end
 
   def down do
+    drop constraint(
+           :git_task_workspace_provisions,
+           :git_task_workspace_provisions_start_identity_check
+         )
+
     execute """
     UPDATE git_task_workspace_provisions
        SET status = 'cleanup_pending',

@@ -71,6 +71,10 @@ defmodule Ezagent.Workspace.TaskWorkspace.ReconcilerTest do
 
     assert %{attempted: 1, cleaned: 0, failed: 1} = Reconciler.recover_once(limit: 1)
     assert Repo.get!(Provision, ready.id).status == :ready
+    assert_receive {:git_verify, proof}
+    assert proof.remote_url == ready.remote_url
+    assert proof.resolved_base_commit == ready.resolved_base_commit
+    assert proof.local_branch_ref == ready.local_branch_ref
     refute_receive {:git_remove, _}
     refute_receive {:git_verify_absent, _}
   end
@@ -80,7 +84,8 @@ defmodule Ezagent.Workspace.TaskWorkspace.ReconcilerTest do
     {:ok, _claimed} = Store.claim_start(ready.id, ready.start_token)
 
     assert {:ok, %Provision{status: :cleaned}} = Reconciler.cleanup(ready.id, :task_cancelled)
-    assert_receive {:retire_agent, "entity://reconciler-team/agent/worker", nil}
+    assert_receive {:retire_agent, "entity://reconciler-team/agent/worker", attempt_id}
+    assert attempt_id == Store.get(ready.id).creation_attempt_id
     assert_receive {:git_verify_absent, _}
   end
 
@@ -163,7 +168,8 @@ defmodule Ezagent.Workspace.TaskWorkspace.ReconcilerTest do
     assert %{attempted: 1, cleaned: 1, failed: 0} =
              Reconciler.recover_once(limit: 10, now: now)
 
-    assert_receive {:retire_agent, ^agent_uri, nil}
+    assert_receive {:retire_agent, ^agent_uri, attempt_id}
+    assert attempt_id == starting.creation_attempt_id
     assert_receive {:git_remove, %{worktree_path: path}}
     assert path == starting.worktree_path
     assert Repo.get!(Provision, starting.id).status == :cleaned
@@ -197,7 +203,8 @@ defmodule Ezagent.Workspace.TaskWorkspace.ReconcilerTest do
     |> Repo.update!()
 
     assert %{attempted: 1, cleaned: 1, failed: 0} = Reconciler.recover_once(limit: 1)
-    assert_receive {:retire_agent, _, nil}
+    assert_receive {:retire_agent, _, attempt_id}
+    assert attempt_id == Store.get(starting.id).creation_attempt_id
     assert Repo.get!(Provision, starting.id).status == :cleaned
   end
 
@@ -280,7 +287,8 @@ defmodule Ezagent.Workspace.TaskWorkspace.ReconcilerTest do
         worktree_identity: paths.worktree_identity,
         worktree_path: paths.worktree_path,
         resolved_base_commit: String.duplicate("a", 40),
-        local_branch_ref: "refs/heads/ezagent/task/reconciler/g1"
+        local_branch_ref: Ezagent.Workspace.TaskWorkspace.GitRunner.local_branch_ref(claim),
+        remote_url: "https://git.example.test/acme/widgets.git"
       })
 
     {:ok, ready} =

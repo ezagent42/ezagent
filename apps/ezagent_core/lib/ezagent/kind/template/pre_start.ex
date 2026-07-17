@@ -33,7 +33,7 @@ defmodule Ezagent.Kind.Template.PreStart do
   @spec prepare(term()) :: {:ok, %{cwd: String.t(), claim: reference()}} | {:error, term()}
   def prepare(reference) do
     with {:ok, implementation} <- GenServer.call(__MODULE__, :implementation),
-         {:ok, %{cwd: cwd, claim: implementation_claim}}
+         {:ok, %{cwd: cwd, claim: implementation_claim} = prepared}
          when is_binary(cwd) and cwd != "" <- invoke(implementation, :prepare, [reference]),
          token = make_ref(),
          :ok <-
@@ -41,7 +41,7 @@ defmodule Ezagent.Kind.Template.PreStart do
              __MODULE__,
              {:put_pending, token, implementation, implementation_claim, self()}
            ) do
-      {:ok, %{cwd: cwd, claim: token}}
+      {:ok, prepared |> Map.put(:claim, token)}
     else
       {:error, _reason} = error -> error
       _other -> {:error, :invalid_template_pre_start_result}

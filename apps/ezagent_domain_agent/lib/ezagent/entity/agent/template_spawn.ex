@@ -502,7 +502,13 @@ defmodule Ezagent.Entity.Agent.TemplateSpawn do
       with :ok <- establish_post_spawn_obligations(workers, spawned_by_uri, workspace_uri),
            :ok <- record_sandbox_state(workers, instantiate_meta, template_class),
            :ok <- mount_behavior_overlay(workers, behavior_overlay),
-           :ok <- record_creation_inventory(workers, spawned_by_uri, workspace_uri) do
+           :ok <-
+             record_creation_inventory(
+               workers,
+               spawned_by_uri,
+               workspace_uri,
+               Map.get(instantiate_meta, :creation_attempt_id)
+             ) do
         :ok = Ezagent.AgentFlavorAttributes.put(instance_uri, flavor)
         {:ok, Map.merge(%{workers: workers, fresh?: fresh?}, role_degraded_passthrough)}
       else
@@ -622,9 +628,9 @@ defmodule Ezagent.Entity.Agent.TemplateSpawn do
   end
 
   defp instantiate_workers(template_class, data, %URI{} = workspace_uri, pre_start_ref) do
-    with {:ok, %{cwd: cwd, claim: claim}} <-
+    with {:ok, %{cwd: cwd, claim: claim} = prepared} <-
            Ezagent.Kind.Template.PreStart.prepare(pre_start_ref) do
-      completion = %{claim: claim}
+      completion = %{claim: claim, creation_attempt_id: Map.get(prepared, :creation_attempt_id)}
 
       try do
         case instantiate_workers_direct(
@@ -632,8 +638,12 @@ defmodule Ezagent.Entity.Agent.TemplateSpawn do
                Map.put(data, "cwd", cwd),
                workspace_uri
              ) do
-          {:ok, workers, fresh?, meta} -> {:ok, workers, fresh?, meta, completion}
-          {:error, reason} -> {:error, reason, completion}
+          {:ok, workers, fresh?, meta} ->
+            meta = Map.put(meta, :creation_attempt_id, completion.creation_attempt_id)
+            {:ok, workers, fresh?, meta, completion}
+
+          {:error, reason} ->
+            {:error, reason, completion}
         end
       rescue
         exception -> {:raised, :error, exception, __STACKTRACE__, completion}
@@ -918,10 +928,25 @@ defmodule Ezagent.Entity.Agent.TemplateSpawn do
       {:error, {:post_spawn_obligation_failed, :exception, error}}
   end
 
-  defp record_creation_inventory(workers, spawned_by_uri, workspace_uri) do
+  defp record_creation_inventory(workers, spawned_by_uri, workspace_uri, nil) do
     Enum.reduce_while(workers, :ok, fn worker_uri, :ok ->
       attempt_id = Ezagent.Agent.CreationInventory.new_attempt_id()
 
+      case Ezagent.Agent.CreationInventory.record(
+             attempt_id,
+             worker_uri,
+             spawned_by_uri,
+             workspace_uri
+           ) do
+        :ok -> {:cont, :ok}
+        {:error, reason} -> {:halt, {:error, {:creation_inventory_failed, reason}}}
+      end
+    end)
+  end
+
+  defp record_creation_inventory(workers, spawned_by_uri, workspace_uri, attempt_id)
+       when is_binary(attempt_id) and attempt_id != "" do
+    Enum.reduce_while(workers, :ok, fn worker_uri, :ok ->
       case Ezagent.Agent.CreationInventory.record(
              attempt_id,
              worker_uri,

@@ -161,7 +161,7 @@ defmodule Ezagent.Workspace.TaskWorkspace.GitRunner do
       if status.stdout == "", do: :ok, else: {:error, :workspace_not_clean}
     else
       false -> {:error, :workspace_checkout_mismatch}
-      {:error, _reason} -> {:error, :workspace_checkout_mismatch}
+      {:error, _reason} -> {:error, :checkout_unavailable}
     end
   end
 

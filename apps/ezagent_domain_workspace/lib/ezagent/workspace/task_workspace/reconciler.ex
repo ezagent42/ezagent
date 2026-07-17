@@ -60,11 +60,23 @@ defmodule Ezagent.Workspace.TaskWorkspace.Reconciler do
 
   defp recover(%Provision{status: :ready} = row, _now) do
     with {:ok, paths} <- canonical_paths(row) do
-      case runner().verify(paths) do
+      proof =
+        Map.merge(paths, %{
+          remote_url: row.remote_url,
+          resolved_base_commit: row.resolved_base_commit,
+          local_branch_ref: row.local_branch_ref
+        })
+
+      case runner().verify(proof) do
         :ok ->
           {:skip, :ready_workspace_valid}
 
-        {:error, :worktree_verification_failed} ->
+        {:error, reason}
+        when reason in [
+               :worktree_verification_failed,
+               :workspace_checkout_mismatch,
+               :workspace_not_clean
+             ] ->
           with {:ok, :never_started, pending} <-
                  Store.request_invalid_ready_cleanup(
                    row.id,

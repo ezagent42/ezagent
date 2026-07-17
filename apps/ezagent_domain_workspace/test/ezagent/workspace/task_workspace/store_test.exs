@@ -450,7 +450,7 @@ defmodule Ezagent.Workspace.TaskWorkspace.StoreTest do
       worktree_identity: "worktree-task-one-1",
       worktree_path: "/safe/workspaces/task-one-1",
       resolved_base_commit: String.duplicate("a", 40),
-      local_branch_ref: "refs/heads/ezagent/task/0123456789abcdef01234567/g1"
+      local_branch_ref: "refs/heads/ezagent/task/ddaf3b818c7535a72662923c/g1"
     }
   end
 
