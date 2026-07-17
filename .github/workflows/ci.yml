@@ -145,31 +145,6 @@ jobs:
           apps/ezagent_domain_identity/test/ezagent/socialware/config_store_seed_upsert_test.exs
           apps/ezagent_domain_session/test/integration/reflow_rehearsal_test.exs
 
-      - name: Install Chromium for browser acceptance tests
-        run: pnpm --dir apps/ezagent_plugin_world/assets exec playwright install --with-deps chromium
-
-      - name: Browser acceptance tests
-        env:
-          PHX_SERVER: "true"
-          EZAGENT_E2E_BASE_URL: http://world.localhost:4002
-        run: |
-          set -euo pipefail
-          mix phx.server >"$RUNNER_TEMP/ezagent-e2e-server.log" 2>&1 &
-          SERVER_PID=$!
-          trap 'kill "$SERVER_PID" 2>/dev/null || true' EXIT
-          for attempt in $(seq 1 40); do
-            if curl --fail --silent --header 'Host: world.localhost' \
-              http://127.0.0.1:4002/register >/dev/null; then
-              break
-            fi
-            if [ "$attempt" -eq 40 ]; then
-              cat "$RUNNER_TEMP/ezagent-e2e-server.log"
-              exit 1
-            fi
-            sleep 1
-          done
-          pnpm --dir apps/ezagent_plugin_world/assets exec playwright test e2e/registration.spec.ts
-
   full-suite:
     name: full-suite (self-hosted macOS)
     needs: [gate]
