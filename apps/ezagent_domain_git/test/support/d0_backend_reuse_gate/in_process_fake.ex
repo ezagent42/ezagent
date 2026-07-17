@@ -3,6 +3,8 @@ defmodule Ezagent.DomainGit.D0BackendReuseGate.InProcessFake do
 
   use GenServer
 
+  alias Ezagent.DomainGit.D0BackendReuseGate.SensitiveCredential
+
   @behaviour Ezagent.DomainGit.D0BackendReuseGate.ProviderAuthorizationBackend
   @behaviour Ezagent.DomainGit.D0BackendReuseGate.CredentialBackend
 
@@ -15,6 +17,8 @@ defmodule Ezagent.DomainGit.D0BackendReuseGate.InProcessFake do
   def authorization_count(server), do: GenServer.call(server, :authorization_count)
   def credential_store_count(server), do: GenServer.call(server, :credential_store_count)
   def provider_effect_count(server), do: GenServer.call(server, :provider_effect_count)
+  def prepare_lease(request), do: GenServer.call(__MODULE__, {:prepare_lease, request})
+  def record_provider_effect, do: GenServer.call(__MODULE__, :record_provider_effect)
 
   @impl Ezagent.DomainGit.D0BackendReuseGate.ProviderAuthorizationBackend
   def begin_authorization(request),
@@ -31,22 +35,23 @@ defmodule Ezagent.DomainGit.D0BackendReuseGate.InProcessFake do
     do: GenServer.call(__MODULE__, {:cancel_authorization, request})
 
   @impl Ezagent.DomainGit.D0BackendReuseGate.CredentialBackend
-  def store(_request), do: {:error, :credential_backend_unavailable}
+  def store(request), do: GenServer.call(__MODULE__, {:store, request})
 
   @impl Ezagent.DomainGit.D0BackendReuseGate.CredentialBackend
-  def replace(_request), do: {:error, :credential_backend_unavailable}
+  def replace(request), do: GenServer.call(__MODULE__, {:replace, request})
 
   @impl Ezagent.DomainGit.D0BackendReuseGate.CredentialBackend
-  def status(_request), do: {:error, :credential_backend_unavailable}
+  def status(request), do: GenServer.call(__MODULE__, {:status, request})
 
   @impl Ezagent.DomainGit.D0BackendReuseGate.CredentialBackend
-  def lease_for_operation(_request), do: {:error, :credential_backend_unavailable}
+  def lease_for_operation(request),
+    do: GenServer.call(__MODULE__, {:lease_for_operation, request})
 
   @impl Ezagent.DomainGit.D0BackendReuseGate.CredentialBackend
-  def consume_lease(_request), do: {:error, :credential_backend_unavailable}
+  def consume_lease(request), do: GenServer.call(__MODULE__, {:consume_lease, request})
 
   @impl Ezagent.DomainGit.D0BackendReuseGate.CredentialBackend
-  def revoke(_request), do: {:error, :credential_backend_unavailable}
+  def revoke(request), do: GenServer.call(__MODULE__, {:revoke, request})
 
   @impl GenServer
   def init(:ok), do: {:ok, initial_state()}
@@ -67,6 +72,118 @@ defmodule Ezagent.DomainGit.D0BackendReuseGate.InProcessFake do
 
   def handle_call(:provider_effect_count, _from, state),
     do: {:reply, state.provider_effect_count, state}
+
+  def handle_call(:record_provider_effect, _from, state) do
+    {:reply, :ok, %{state | provider_effect_count: state.provider_effect_count + 1}}
+  end
+
+  def handle_call({:store, request}, _from, state) do
+    if request.expected_absent == true and state.credentials == %{} do
+      record = %{
+        scope: request.scope,
+        secret: request.credential_material,
+        version: 1,
+        status: :active,
+        expires_at: nil
+      }
+
+      {:reply, {:ok, public_record("cred-1", record)},
+       put_in(state.credentials["cred-1"], record)}
+    else
+      {:reply, {:error, :credential_store_failed}, state}
+    end
+  end
+
+  def handle_call({:status, request}, _from, state) do
+    with {:ok, record} <- fetch_credential(state, request.credential_ref),
+         :ok <- validate_scope(record.scope, request.expected_scope) do
+      {:reply,
+       {:ok, %{status: record.status, version: record.version, expires_at: record.expires_at}},
+       state}
+    else
+      {:error, reason} -> {:reply, {:error, reason}, state}
+    end
+  end
+
+  def handle_call({:replace, request}, _from, state) do
+    with {:ok, record} <- fetch_credential(state, request.credential_ref),
+         :ok <- validate_scope(record.scope, request.expected_scope),
+         :ok <- validate_version(record.version, request.expected_version),
+         :ok <- validate_active(record.status) do
+      updated = %{record | secret: request.credential_material, version: record.version + 1}
+
+      {:reply, {:ok, public_record(request.credential_ref, updated)},
+       put_in(state.credentials[request.credential_ref], updated)}
+    else
+      {:error, reason} -> {:reply, {:error, reason}, state}
+    end
+  end
+
+  def handle_call({:lease_for_operation, request}, _from, state) do
+    with {:ok, record} <- fetch_credential(state, request.credential_ref),
+         :ok <- validate_scope(record.scope, request.expected_scope),
+         :ok <- validate_version(record.version, request.expected_version),
+         :ok <- validate_active(record.status),
+         :ok <- validate_operation_grant(request) do
+      lease_id = "lease-#{map_size(state.leases) + 1}"
+      expires_at = DateTime.add(state.now, 30, :second)
+
+      lease_record = %{
+        scope: record.scope,
+        version: record.version,
+        expires_at: expires_at,
+        status: :available
+      }
+
+      lease = %{
+        lease_id: lease_id,
+        sensitive: %SensitiveCredential{value: record.secret},
+        expires_at: expires_at,
+        observed_version: record.version
+      }
+
+      {:reply, {:ok, lease}, put_in(state.leases[lease_id], lease_record)}
+    else
+      {:error, reason} -> {:reply, {:error, reason}, state}
+    end
+  end
+
+  def handle_call({:prepare_lease, request}, _from, state) do
+    with {:ok, lease} <- fetch_lease(state, request.lease_id),
+         :ok <- validate_scope(lease.scope, request.expected_scope),
+         :ok <- validate_version(lease.version, request.expected_version),
+         :ok <- validate_lease_time(lease, state.now),
+         :ok <- validate_lease_available(lease.status) do
+      {:reply, :ok, put_in(state.leases[request.lease_id].status, :in_use)}
+    else
+      {:error, reason} -> {:reply, {:error, reason}, state}
+    end
+  end
+
+  def handle_call({:consume_lease, request}, _from, state) do
+    with {:ok, lease} <- fetch_lease(state, request.lease_id),
+         :ok <- validate_scope(lease.scope, request.expected_scope),
+         :ok <- validate_version(lease.version, request.expected_version),
+         :ok <- validate_lease_time(lease, state.now),
+         :ok <- validate_lease_in_use(lease.status) do
+      {:reply, :ok, put_in(state.leases[request.lease_id].status, :consumed)}
+    else
+      {:error, reason} -> {:reply, {:error, reason}, state}
+    end
+  end
+
+  def handle_call({:revoke, request}, _from, state) do
+    with {:ok, record} <- fetch_credential(state, request.credential_ref),
+         :ok <- validate_scope(record.scope, request.expected_scope),
+         :ok <- validate_version(record.version, request.expected_version) do
+      updated = %{record | version: record.version + 1, status: :revoked}
+
+      {:reply, {:ok, public_record(request.credential_ref, updated)},
+       put_in(state.credentials[request.credential_ref], updated)}
+    else
+      {:error, reason} -> {:reply, {:error, reason}, state}
+    end
+  end
 
   def handle_call({:begin_authorization, request}, _from, state) do
     with :ok <- validate_subject(request.subject),
@@ -216,10 +333,83 @@ defmodule Ezagent.DomainGit.D0BackendReuseGate.InProcessFake do
   defp nonempty?(value), do: is_binary(value) and value != ""
   defp field(map, key), do: Map.get(map, key) || Map.get(map, Atom.to_string(key))
 
+  defp fetch_credential(state, credential_ref) do
+    case Map.fetch(state.credentials, credential_ref) do
+      {:ok, record} -> {:ok, record}
+      :error -> {:error, :credential_not_found}
+    end
+  end
+
+  defp fetch_lease(state, lease_id) do
+    case Map.fetch(state.leases, lease_id) do
+      {:ok, lease} -> {:ok, lease}
+      :error -> {:error, :lease_not_found}
+    end
+  end
+
+  defp validate_scope(actual, expected) do
+    cond do
+      actual.governed_host != expected.governed_host -> {:error, :credential_host_mismatch}
+      actual != expected -> {:error, :credential_scope_mismatch}
+      true -> :ok
+    end
+  end
+
+  defp validate_version(actual, expected) when actual == expected, do: :ok
+  defp validate_version(_actual, _expected), do: {:error, :credential_version_conflict}
+
+  defp validate_active(:active), do: :ok
+  defp validate_active(:revoked), do: {:error, :credential_revoked}
+
+  defp validate_operation_grant(%{operation_grant: nil}),
+    do: {:error, :operation_grant_missing}
+
+  defp validate_operation_grant(%{operation_grant: grant} = request) when is_map(grant) do
+    expected = %{
+      receiver: :provider_adapter,
+      credential_ref: request.credential_ref,
+      expected_scope: request.expected_scope,
+      expected_version: request.expected_version,
+      operation_class: request.operation_class
+    }
+
+    cond do
+      map_size(grant) == 0 ->
+        {:error, :operation_grant_invalid}
+
+      Map.get(grant, :receiver) != :provider_adapter ->
+        {:error, :operation_grant_invalid}
+
+      Map.get(grant, :operation_class) != request.operation_class ->
+        {:error, :operation_not_permitted}
+
+      grant != expected ->
+        {:error, :operation_grant_invalid}
+
+      true ->
+        :ok
+    end
+  end
+
+  defp validate_operation_grant(_request), do: {:error, :operation_grant_invalid}
+
+  defp validate_lease_time(lease, now) do
+    if DateTime.compare(lease.expires_at, now) == :gt, do: :ok, else: {:error, :lease_expired}
+  end
+
+  defp validate_lease_available(:available), do: :ok
+  defp validate_lease_available(_status), do: {:error, :lease_already_consumed}
+  defp validate_lease_in_use(:in_use), do: :ok
+  defp validate_lease_in_use(_status), do: {:error, :lease_already_consumed}
+
+  defp public_record(ref, record),
+    do: %{credential_ref: ref, version: record.version, status: record.status}
+
   defp initial_state do
     %{
       authorizations: %{},
       credentials: %{},
+      leases: %{},
       now: @now,
       credential_store_count: 0,
       provider_effect_count: 0

@@ -18,6 +18,143 @@ defmodule Ezagent.DomainGit.D0BackendReuseGate.Conformance do
     :ok
   end
 
+  @spec credential_cases(map()) :: :ok
+  def credential_cases(descriptor) do
+    store_and_status_case(descriptor)
+    cas_race_case(descriptor)
+    scope_and_version_cases(descriptor)
+    proof_cases(descriptor)
+    lease_use_and_reuse_case(descriptor)
+    lease_expiry_case(descriptor)
+    revoke_case(descriptor)
+    :ok
+  end
+
+  defp store_and_status_case(descriptor) do
+    reset(descriptor)
+    assert {:ok, record} = credential(descriptor).store(store_request())
+    assert record == %{credential_ref: "cred-1", version: 1, status: :active}
+    refute inspect(record) =~ "gho-D0-SENTINEL"
+
+    assert {:ok, status} = credential(descriptor).status(status_request(record))
+    assert status == %{status: :active, version: 1, expires_at: nil}
+    assert Types.safe_envelope?(status)
+    assert Map.fetch!(descriptor, :provider_effect_count).() == 0
+  end
+
+  defp cas_race_case(descriptor) do
+    reset(descriptor)
+    {:ok, record} = credential(descriptor).store(store_request())
+    request = replace_request(record, "gho-D0-ROTATED")
+
+    results =
+      1..2
+      |> Task.async_stream(fn _ -> credential(descriptor).replace(request) end,
+        max_concurrency: 2,
+        ordered: false
+      )
+      |> Enum.map(fn {:ok, result} -> result end)
+
+    assert Enum.count(results, &match?({:ok, %{version: 2}}, &1)) == 1
+    assert Enum.count(results, &(&1 == {:error, :credential_version_conflict})) == 1
+    assert Map.fetch!(descriptor, :provider_effect_count).() == 0
+  end
+
+  defp scope_and_version_cases(descriptor) do
+    for {change, error} <- [
+          {{:owner_uri, Ezagent.URI.user("acme", "bob")}, :credential_scope_mismatch},
+          {{:workspace_uri, Ezagent.URI.workspace("other")}, :credential_scope_mismatch},
+          {{:provider_id, "gitlab"}, :credential_scope_mismatch},
+          {{:governed_host, "git.example"}, :credential_host_mismatch}
+        ] do
+      reset(descriptor)
+      {:ok, record} = credential(descriptor).store(store_request())
+      {field, value} = change
+      bad_scope = Map.put(scope(), field, value)
+
+      assert {:error, ^error} =
+               credential(descriptor).lease_for_operation(
+                 lease_request(record, expected_scope: bad_scope)
+               )
+
+      assert Map.fetch!(descriptor, :provider_effect_count).() == 0
+    end
+
+    reset(descriptor)
+    {:ok, record} = credential(descriptor).store(store_request())
+
+    assert {:error, :credential_version_conflict} =
+             credential(descriptor).lease_for_operation(
+               lease_request(record, expected_version: 99)
+             )
+  end
+
+  defp proof_cases(descriptor) do
+    for {proof, error} <- [
+          {nil, :operation_grant_missing},
+          {%{}, :operation_grant_invalid},
+          {%{receiver: :agent}, :operation_grant_invalid},
+          {%{receiver: :provider_adapter, operation_class: :list_checks},
+           :operation_not_permitted}
+        ] do
+      reset(descriptor)
+      {:ok, record} = credential(descriptor).store(store_request())
+
+      assert {:error, ^error} =
+               credential(descriptor).lease_for_operation(
+                 lease_request(record, operation_grant: proof)
+               )
+
+      assert Map.fetch!(descriptor, :provider_effect_count).() == 0
+    end
+  end
+
+  defp lease_use_and_reuse_case(descriptor) do
+    reset(descriptor)
+    {:ok, record} = credential(descriptor).store(store_request())
+    request = lease_request(record)
+    assert {:ok, lease} = credential(descriptor).lease_for_operation(request)
+    refute inspect(lease) =~ "gho-D0-SENTINEL"
+
+    consume = consume_request(lease, record)
+    assert {:ok, response} = adapter_probe(descriptor).request_with_lease(lease, consume)
+    assert response == %{status: 200, body: %{"login" => "alice-gh"}}
+    refute inspect(response) =~ "gho-D0-SENTINEL"
+    assert Map.fetch!(descriptor, :provider_effect_count).() == 1
+
+    assert {:error, :lease_already_consumed} =
+             adapter_probe(descriptor).request_with_lease(lease, consume)
+
+    assert Map.fetch!(descriptor, :provider_effect_count).() == 1
+  end
+
+  defp lease_expiry_case(descriptor) do
+    reset(descriptor)
+    {:ok, record} = credential(descriptor).store(store_request())
+    {:ok, lease} = credential(descriptor).lease_for_operation(lease_request(record))
+    Map.fetch!(descriptor, :advance_time).(31)
+
+    assert {:error, :lease_expired} =
+             adapter_probe(descriptor).request_with_lease(lease, consume_request(lease, record))
+
+    assert Map.fetch!(descriptor, :provider_effect_count).() == 0
+  end
+
+  defp revoke_case(descriptor) do
+    reset(descriptor)
+    {:ok, record} = credential(descriptor).store(store_request())
+    assert {:ok, revoked} = credential(descriptor).revoke(revoke_request(record))
+    assert revoked == %{credential_ref: "cred-1", version: 2, status: :revoked}
+
+    assert {:error, :credential_revoked} =
+             credential(descriptor).lease_for_operation(%{
+               lease_request(record)
+               | expected_version: 2
+             })
+
+    assert Map.fetch!(descriptor, :provider_effect_count).() == 0
+  end
+
   defp invalid_subject_case(descriptor) do
     invalid_subjects = [
       %{subject() | owner_uri: Ezagent.URI.workspace("acme")},
@@ -197,7 +334,87 @@ defmodule Ezagent.DomainGit.D0BackendReuseGate.Conformance do
     }
   end
 
+  defp scope do
+    %{
+      owner_uri: Ezagent.URI.user("acme", "alice"),
+      workspace_uri: Ezagent.URI.workspace("acme"),
+      provider_id: "github",
+      governed_host: "github.com",
+      connection_id: "conn-1"
+    }
+  end
+
+  defp store_request do
+    %{
+      scope: scope(),
+      credential_material: "gho-D0-SENTINEL",
+      expected_absent: true,
+      correlation_id: "corr-store-1"
+    }
+  end
+
+  defp status_request(record) do
+    %{
+      credential_ref: record.credential_ref,
+      expected_scope: scope(),
+      correlation_id: "corr-status-1"
+    }
+  end
+
+  defp replace_request(record, material) do
+    %{
+      credential_ref: record.credential_ref,
+      expected_scope: scope(),
+      expected_version: record.version,
+      credential_material: material,
+      correlation_id: "corr-replace-1"
+    }
+  end
+
+  defp lease_request(record, overrides \\ []) do
+    base = %{
+      credential_ref: record.credential_ref,
+      expected_scope: scope(),
+      expected_version: record.version,
+      operation_grant: valid_operation_grant(record),
+      operation_class: :create_change_request,
+      correlation_id: "corr-lease-1"
+    }
+
+    Enum.into(overrides, base)
+  end
+
+  defp valid_operation_grant(record) do
+    %{
+      receiver: :provider_adapter,
+      credential_ref: record.credential_ref,
+      expected_scope: scope(),
+      expected_version: record.version,
+      operation_class: :create_change_request
+    }
+  end
+
+  defp consume_request(lease, record) do
+    %{
+      lease_id: lease.lease_id,
+      expected_scope: scope(),
+      expected_version: record.version,
+      correlation_id: "corr-consume-1"
+    }
+  end
+
+  defp revoke_request(record) do
+    %{
+      credential_ref: record.credential_ref,
+      expected_scope: scope(),
+      expected_version: record.version,
+      correlation_id: "corr-revoke-1"
+    }
+  end
+
   defp authorization(descriptor), do: Map.fetch!(descriptor, :authorization)
+  defp credential(descriptor), do: Map.fetch!(descriptor, :credential)
+  defp adapter_probe(descriptor), do: Map.fetch!(descriptor, :adapter_probe)
   defp reset(descriptor), do: Map.fetch!(descriptor, :reset).()
 
   defp assert_no_effects(descriptor, opts \\ []) do
