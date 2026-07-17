@@ -202,10 +202,6 @@ defmodule Ezagent.Kind.Server do
               case persist_initial_snapshot(uri, kind_module, slice_state) do
                 :ok ->
                   schedule_periodic_snapshot(kind_module)
-
-                  if launch_context_relay,
-                    do: :ok = Ezagent.Kind.LaunchContextRelay.commit(launch_context_relay)
-
                   {:ok, state, {:continue, :announce_ready}}
 
                 {:error, reason} ->
