@@ -100,3 +100,6 @@
 - **㉛-设计意图(2026-07-17 用户澄清)**:template 与 sw **刻意不绑定**——一个 session 可关联**多个** socialware;session template 可从某个 sw 出发继续搭建 agent 等、**沉淀成新的 sw**,也可拉取多个 sw 组合。⟹ ㉛ 的「装 sw 面」要按多装/组合/存模板→发布成新 sw 的闭环设计(非单选绑定)。同步进 zyli #1443 的 ㉛ 节。
 - **㉟-根因确认(2026-07-17)**:「关联了 sw 却没看板」双层根因——表层=误选 builtin「socialware」条目(㉟命名);深层=tab 出现与否取决于「装没装 kanban sw+render cap」(⑤门控模型),违背 ㉜「tab=plugin 级恒显」。**㉜(D3)+㉛(多 sw 绑定面)落地后此坑消失**:tab 恒在,sw 事后可在 ㉛ 面加/换;残余=⑩装了但角色静默跳过仍需提示(gaga/zyli)。
 - **㊱ 记录(2026-07-17 手测r3)**:没有删除 session 的 UI(domain 有 teardown/retire 语义,界面无入口)。归属:world 会话管理面(zyli #1443 追加)。
+- **㊲ 记录(2026-07-17 r3)**:节点产物「附件(图片/文件)」点打开 → **forbidden**——uploads 下载 token 授权拒(疑 token 只对上传者/特定 receiver 有效,或 TTL 300s 过期;链接形 /uploads/download?token=...超长)。下载功能预期存在但打不开。归属:kanban 产物打开路 × uploads DownloadToken 授权(查 token 签发的 receiver/ttl)。
+- **㊳ 记录(2026-07-17 r3)**:「链接」产物点打开被拼了 localhost 前缀(相对化),外部网址应直接原样新窗打开。前端 open 逻辑没区分绝对 http(s) URL。归属:kanban 前端(我们)。
+- **㊴ 记录(2026-07-17 r3,㉗迭代规格)**:链接产物应有「打开/编辑」两选项;填写时是**两个连续弹窗**(prompt 链)→ 改成**一个小表单窗**;编辑=打开原值就地改保存。归属:kanban 前端(我们)。
