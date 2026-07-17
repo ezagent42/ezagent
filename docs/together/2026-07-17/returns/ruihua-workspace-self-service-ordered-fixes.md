@@ -62,6 +62,20 @@ hosted agent clone/provisioning contract；在依赖明确前不伪造临时授�
 - Manage/SMTP 使用稳定结果码，前端映射为中文可行动消息；技术原因只写服务端日志。
 - 会话角色槽位、授权降级和 Workspace 模板/详情页不再直接渲染 backend reason。
 
+### G7 · onboarding + 应用 Gallery（部分完成，依赖阻塞）
+
+已完成不依赖 G4 的 AC6 / AC7：
+
+- 会话侧栏增加“应用 Gallery”入口，普通用户无需进入模板管理页。
+- Gallery 卡片展示应用名称、一句话描述和去重后的可读 flavor 标签。
+- 选择卡片后直接打开新建会话表单，并预选对应 socialware。
+- Tier-1 E2E 覆盖“打开 Gallery → 看到 3 张卡片 → 选择应用 → 表单预选”。
+
+AC1–AC5 onboarding 向导仍依赖 G4：当前 capability-signing 与 hosted agent clone/provisioning
+尚未就绪，不能伪造“配置凭证 → Agent ready → 首条回复”的完成步骤。依赖落地后再实现首次进入自动向导、
+步骤进度、跳过和 Settings 重开入口。
+
+
 ## 验证结果
 
 验证数据库为 PostgreSQL，端口 **5432**。
@@ -76,7 +90,7 @@ hosted agent clone/provisioning contract；在依赖明确前不伪造临时授�
 | World fixture drift | PASS |
 | World TypeScript（含 E2E tsconfig） | PASS |
 | World ESLint | PASS，0 warnings |
-| World Vitest | PASS，17 / 17 |
+| World Vitest | PASS，18 / 18 |
 | 登录 Continue / 安全返回控制器测试 | PASS，11 / 0 |
 | session 名称规则 World 测试 | PASS，14 / 0 |
 | G6 用户可见错误映射聚焦测试 | PASS，24 / 0 |
@@ -104,6 +118,10 @@ G6 Agent 列表使用可读名称并同时展示三种可操作状态：
 新建会话输入“客服会话”后没有校验错误，创建按钮可用；内部仍使用 canonical URI：
 
 ![中文 Session 名称可创建](../evidence/g6-session-chinese-name.jpg)
+
+G7 普通用户可从会话侧栏浏览应用名称、描述与 flavor 标签：
+
+![应用 Gallery](../evidence/g7-application-gallery.jpg)
 
 ## 交付说明
 

@@ -629,6 +629,44 @@
             "workspace_uri": "workspace://acme"
           }
         ],
+        "socialwares": [
+          {
+            "description": "整理客户问题、分派处理并生成清晰回复。",
+            "name": "support-triage",
+            "roles": [
+              {
+                "fill": "agent",
+                "flavor": "cc",
+                "role_name": "support"
+              }
+            ],
+            "title": "客户支持协作"
+          },
+          {
+            "description": "跟踪发布准备、风险和跨角色交接。",
+            "name": "release-coordination",
+            "roles": [
+              {
+                "fill": "agent",
+                "flavor": "codex",
+                "role_name": "coordinator"
+              }
+            ],
+            "title": "发布协调"
+          },
+          {
+            "description": "汇总资料并生成结构化研究结论。",
+            "name": "research-brief",
+            "roles": [
+              {
+                "fill": "agent",
+                "flavor": "py",
+                "role_name": "researcher"
+              }
+            ],
+            "title": "研究简报"
+          }
+        ],
         "templates": [
           "support"
         ],

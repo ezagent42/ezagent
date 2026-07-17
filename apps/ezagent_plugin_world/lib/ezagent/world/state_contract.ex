@@ -51,6 +51,32 @@ defmodule Ezagent.World.StateContract do
             "workspace_uri" => @workspace_uri
           }
         ],
+        "socialwares" => [
+          %{
+            "name" => "support-triage",
+            "title" => "客户支持协作",
+            "description" => "整理客户问题、分派处理并生成清晰回复。",
+            "roles" => [
+              %{"role_name" => "support", "fill" => "agent", "flavor" => "cc"}
+            ]
+          },
+          %{
+            "name" => "release-coordination",
+            "title" => "发布协调",
+            "description" => "跟踪发布准备、风险和跨角色交接。",
+            "roles" => [
+              %{"role_name" => "coordinator", "fill" => "agent", "flavor" => "codex"}
+            ]
+          },
+          %{
+            "name" => "research-brief",
+            "title" => "研究简报",
+            "description" => "汇总资料并生成结构化研究结论。",
+            "roles" => [
+              %{"role_name" => "researcher", "fill" => "agent", "flavor" => "py"}
+            ]
+          }
+        ],
         "templates" => ["support"],
         "title" => "Chat",
         "workspace_uri" => @workspace_uri

@@ -101,6 +101,22 @@ test("sessions create form emits session.create", async ({page}) => {
   expect(await page.evaluate(() => window.__WORLD_E2E__.contractViolation())).toBeNull()
 })
 
+test("application gallery shows readable cards and preselects the chosen app", async ({page}) => {
+  await openFixture(page, "sessions")
+  await page.getByRole("button", {name: "应用 Gallery"}).click()
+
+  const gallery = page.locator("[data-world-app-gallery]")
+  await expect(gallery).toBeVisible()
+  await expect(gallery.locator("[data-world-app-gallery-card]")).toHaveCount(3)
+  await expect(gallery.getByText("客户支持协作")).toBeVisible()
+  await expect(gallery.getByText("Claude Code")).toBeVisible()
+
+  await gallery.locator('[data-world-app-gallery-card="support-triage"]').click()
+
+  await expect(page.locator("#world-session-create-form")).toBeVisible()
+  await expect(page.locator("#world-session-socialware")).toHaveValue("support-triage")
+})
+
 test("conversation composer emits chat.send", async ({page}) => {
   await openFixture(page, "conversation")
   await page.getByLabel("消息").fill("Tier-1 hello")

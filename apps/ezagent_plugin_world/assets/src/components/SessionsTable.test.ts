@@ -5,6 +5,7 @@ import {
   displaySessionName,
   filterSessions,
   humanizeSessionName,
+  socialwareFlavorLabels,
   workspaceLabel,
   type RoleSlotChoice,
   type SessionRow,
@@ -36,6 +37,22 @@ describe("session presentation helpers", () => {
     expect(humanizeSessionName("conv_release_readiness")).toBe("Release Readiness")
     expect(workspaceLabel("workspace://demo")).toBe("demo")
     expect(workspaceLabel(null)).toBe("")
+  })
+})
+
+describe("application gallery", () => {
+  it("shows stable readable flavor tags without duplicates", () => {
+    const socialware: SocialwareRow = {
+      name: "support-room",
+      roles: [
+        {role_name: "lead", fill: "agent", flavor: "cc"},
+        {role_name: "reviewer", fill: "agent", flavor: "cc"},
+        {role_name: "runner", fill: "agent", flavor: "py"},
+        {role_name: "owner", fill: "human"},
+      ],
+    }
+
+    expect(socialwareFlavorLabels(socialware)).toEqual(["Claude Code", "Python"])
   })
 })
 

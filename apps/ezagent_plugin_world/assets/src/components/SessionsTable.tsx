@@ -1,5 +1,5 @@
 import React from "react"
-import {ArrowRight, Bot, Cable, Circle, Loader2, MessageSquare, Plus, UserRound, X} from "lucide-react"
+import {ArrowRight, Bot, Cable, Circle, LayoutGrid, Loader2, MessageSquare, Plus, UserRound, X} from "lucide-react"
 
 import {Button, Input, Select} from "./ui/primitives"
 import {SESSION_NAME_HINT, sessionNameError} from "./sessionName"
@@ -47,6 +47,19 @@ export type CreateOptions = {
   socialware_content_hash?: string
 }
 
+const FLAVOR_LABELS: Record<string, string> = {
+  cc: "Claude Code",
+  codex: "Codex",
+  py: "Python",
+  native: "Native",
+}
+
+export function socialwareFlavorLabels(socialware: SocialwareRow): string[] {
+  return Array.from(
+    new Set((socialware.roles || []).filter((role) => role.fill === "agent").map((role) => FLAVOR_LABELS[role.flavor || ""] || role.flavor || "Agent")),
+  )
+}
+
 export type SessionsState = {
   current_session_uri?: string | null
   sessions?: SessionRow[]
@@ -68,6 +81,7 @@ export function SessionsTable({state, onJoin, onCreate}: SessionsTableProps) {
   const sessions = state?.sessions || []
   const currentSessionUri = state?.current_session_uri
   const templates = state?.templates && state.templates.length > 0 ? state.templates : ["default"]
+  const [galleryOpen, setGalleryOpen] = React.useState(false)
   const socialwares = state?.socialwares || []
   const [creating, setCreating] = React.useState(false)
   const [filter, setFilter] = React.useState("")
@@ -144,15 +158,34 @@ export function SessionsTable({state, onJoin, onCreate}: SessionsTableProps) {
             </h2>
             <p className="text-xs text-muted-foreground">当前工作区</p>
           </div>
-          <Button
-            type="button"
-            size="icon"
-            variant={creating ? "secondary" : "default"}
-            onClick={() => setCreating((open) => !open)}
-            aria-label={creating ? "关闭新建会话表单" : "新建会话"}
-          >
-            {creating ? <X aria-hidden="true" /> : <Plus aria-hidden="true" />}
-          </Button>
+          <div className="flex items-center gap-1">
+            <Button
+              type="button"
+              size="icon"
+              variant={galleryOpen ? "secondary" : "ghost"}
+              onClick={() => {
+                setGalleryOpen((open) => !open)
+                setCreating(false)
+              }}
+              aria-label={galleryOpen ? "关闭应用 Gallery" : "应用 Gallery"}
+              title="应用 Gallery"
+              data-world-app-gallery-entry
+            >
+              {galleryOpen ? <X aria-hidden="true" /> : <LayoutGrid aria-hidden="true" />}
+            </Button>
+            <Button
+              type="button"
+              size="icon"
+              variant={creating ? "secondary" : "default"}
+              onClick={() => {
+                setCreating((open) => !open)
+                setGalleryOpen(false)
+              }}
+              aria-label={creating ? "关闭新建会话表单" : "新建会话"}
+            >
+              {creating ? <X aria-hidden="true" /> : <Plus aria-hidden="true" />}
+            </Button>
+          </div>
         </div>
 
         <div className="border-b border-border px-3 py-3">
@@ -163,6 +196,57 @@ export function SessionsTable({state, onJoin, onCreate}: SessionsTableProps) {
             placeholder="筛选会话、模板、状态"
           />
         </div>
+
+        {galleryOpen && (
+          <section
+            className="m-3 grid gap-3 rounded-lg border border-border bg-muted/30 p-3"
+            aria-labelledby="world-app-gallery-title"
+            data-world-app-gallery
+          >
+            <div className="flex items-start justify-between gap-2">
+              <div>
+                <h3 id="world-app-gallery-title" className="text-sm font-semibold text-foreground">
+                  应用 Gallery
+                </h3>
+                <p className="text-[11px] text-muted-foreground">选择一个应用，开始创建对应会话。</p>
+              </div>
+              <span className="text-[11px] text-muted-foreground">{socialwares.length} 个应用</span>
+            </div>
+            {socialwares.length === 0 ? (
+              <p className="text-xs text-muted-foreground">暂无已发布应用。</p>
+            ) : (
+              <div className="grid gap-2">
+                {socialwares.map((socialware) => (
+                  <button
+                    key={socialware.name}
+                    type="button"
+                    className="grid gap-1.5 rounded-md border border-border bg-background p-3 text-left transition hover:border-primary/50 hover:bg-accent/50 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
+                    onClick={() => {
+                      setSocialwareRef(socialware.name)
+                      setCreating(true)
+                      setGalleryOpen(false)
+                    }}
+                    data-world-app-gallery-card={socialware.name}
+                  >
+                    <span className="text-sm font-semibold text-foreground">
+                      {socialware.title || socialware.name}
+                    </span>
+                    <span className="line-clamp-2 text-[11px] leading-relaxed text-muted-foreground">
+                      {socialware.description || "为当前工作区创建一个可复用的协作会话。"}
+                    </span>
+                    <span className="flex flex-wrap gap-1 pt-1">
+                      {socialwareFlavorLabels(socialware).map((label) => (
+                        <span key={label} className="rounded-full bg-muted px-2 py-0.5 text-[10px] font-medium text-muted-foreground">
+                          {label}
+                        </span>
+                      ))}
+                    </span>
+                  </button>
+                ))}
+              </div>
+            )}
+          </section>
+        )}
 
         {state?.create_error && (
           <p
