@@ -48,6 +48,15 @@ defmodule Ezagent.World.ConversationActions do
     with_session(socket, sid, &mark_displayed(socket, &1, mid), on_error: {:noreply, socket})
   end
 
+  def handle_dispatch(
+        socket,
+        "chat.error.notify_admin",
+        %{"session_uri" => sid, "msg_id" => msg_id}
+      )
+      when is_binary(msg_id) and msg_id != "" do
+    with_session(socket, sid, &notify_error_admin(socket, &1, msg_id))
+  end
+
   def handle_dispatch(socket, "session.switch", %{"session_uri" => sid}) do
     with_session(socket, sid, fn uri ->
       Ezagent.World.ConversationSessionState.switch_session(socket, uri)
@@ -239,7 +248,8 @@ defmodule Ezagent.World.ConversationActions do
       ConversationData.load_older(
         session_uri,
         before,
-        Map.get(socket.assigns, :current_caps, MapSet.new())
+        Map.get(socket.assigns, :current_caps, MapSet.new()),
+        socket.assigns.current_entity_uri
       )
 
     {:noreply,
@@ -264,6 +274,94 @@ defmodule Ezagent.World.ConversationActions do
 
     {:noreply, socket}
   end
+
+  @doc false
+  @spec notify_error_admin(Phoenix.LiveView.Socket.t(), URI.t(), String.t()) ::
+          {:noreply, Phoenix.LiveView.Socket.t()}
+  def notify_error_admin(socket, %URI{} = session_uri, msg_id)
+      when is_binary(msg_id) and msg_id != "" do
+    caller = socket.assigns.current_entity_uri
+    workspace_uri = socket.assigns.current_workspace_uri
+
+    result =
+      with %URI{scheme: "workspace"} <- workspace_uri,
+           true <- same_action_uri?(Ezagent.Capability.workspace_of(session_uri), workspace_uri),
+           %{members: members, created_by: %URI{} = founder_uri, name: workspace_name} <-
+             Ezagent.Workspace.Store.get_by_name(workspace_uri.host),
+           true <- workspace_member?(caller, members),
+           false <- same_action_uri?(caller, founder_uri),
+           true <- user_uri?(founder_uri),
+           {:ok, %Ezagent.Message{} = message} <- Ezagent.MessageStore.by_id(msg_id),
+           true <- same_action_uri?(message.session_uri, session_uri),
+           true <- agent_uri?(message.sender),
+           %{"code" => error_code, "title" => error_title} = error <-
+             Ezagent.Message.Body.actionable_error(message.body),
+           "agent.api_keys.put" <- Map.get(error, "permission"),
+           repair_href when is_binary(repair_href) and repair_href != "" <-
+             get_in(error, ["action", "href"]),
+           :ok <-
+             Ezagent.Notifications.notify(founder_uri, %{
+               type: :agent_repair_requested,
+               body: %{
+                 text:
+                   "#{Ezagent.EntityPresenter.display(URI.to_string(caller))} 请求修复 " <>
+                     "#{Ezagent.EntityPresenter.display(URI.to_string(message.sender))}：#{error_title}",
+                 workspace_name: workspace_name,
+                 workspace_uri: URI.to_string(workspace_uri),
+                 agent_name: Ezagent.EntityPresenter.display(URI.to_string(message.sender)),
+                 agent_uri: URI.to_string(message.sender),
+                 error_code: error_code,
+                 error_description: error_title,
+                 requested_by: URI.to_string(caller),
+                 requested_by_name: Ezagent.EntityPresenter.display(URI.to_string(caller)),
+                 repair_href: repair_href,
+                 message_id: message.id
+               },
+               source: __MODULE__,
+               dedup_key: "agent-repair:#{message.id}:#{URI.to_string(caller)}"
+             }) do
+        {:ok, founder_uri}
+      else
+        false -> {:error, :not_allowed}
+        nil -> {:error, :workspace_not_found}
+        :error -> {:error, :message_not_found}
+        {:error, reason} -> {:error, reason}
+        _ -> {:error, :invalid_repair_request}
+      end
+
+    case result do
+      {:ok, founder_uri} ->
+        founder_name = Ezagent.EntityPresenter.display(URI.to_string(founder_uri))
+
+        {:noreply,
+         socket
+         |> assign(:last_dispatch_status, "ok:error_reminder_sent")
+         |> push_event("actionable_error:reminder_sent", %{
+           "message_id" => msg_id,
+           "founder_name" => founder_name
+         })}
+
+      {:error, reason} ->
+        {:noreply, assign(socket, :last_dispatch_status, "error:#{reason(reason)}")}
+    end
+  end
+
+  defp workspace_member?(%URI{} = caller, members) when is_list(members) do
+    Ezagent.Identity.admin?(caller) or Enum.any?(members, &same_action_uri?(&1, caller))
+  end
+
+  defp workspace_member?(_caller, _members), do: false
+
+  defp user_uri?(%URI{scheme: "entity"} = uri), do: Ezagent.URI.type?(uri, :user)
+  defp user_uri?(_uri), do: false
+
+  defp agent_uri?(%URI{scheme: "entity"} = uri), do: Ezagent.URI.type?(uri, :agent)
+  defp agent_uri?(_uri), do: false
+
+  defp same_action_uri?(%URI{} = left, %URI{} = right),
+    do: URI.to_string(left) == URI.to_string(right)
+
+  defp same_action_uri?(_left, _right), do: false
 
   @doc """
   Create a new session in the caller's current workspace via

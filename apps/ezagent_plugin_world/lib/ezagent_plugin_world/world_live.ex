@@ -172,7 +172,13 @@ defmodule EzagentPluginWorld.WorldLive do
 
   def handle_info({:chat_message, %URI{} = source_uri, %Ezagent.Message{} = msg}, socket) do
     if same_uri?(source_uri, socket.assigns[:current_session_uri]) do
-      row = Ezagent.World.ConversationData.message_row(msg)
+      row =
+        Ezagent.World.ConversationData.message_row(msg, %{
+          caller_uri: socket.assigns.current_entity_uri,
+          caller_caps: Map.get(socket.assigns, :current_caps, MapSet.new()),
+          workspace_uri: socket.assigns.current_workspace_uri
+        })
+
       {:noreply, push_event(socket, "chat:message", %{"message" => row})}
     else
       {:noreply, socket}

@@ -182,6 +182,7 @@ type Props = {
   onLoadOlder: (sessionUri: string, before: string) => void
   onMarkDisplayed: (sessionUri: string, msgId: string) => void
   onInvite: (sessionUri: string, member: string) => void
+  onNotifyError: (sessionUri: string, msgId: string) => void
   onRemoveParticipant: (sessionUri: string, participant: string) => void
   onUninstallSocialware: (sessionUri: string, ref: string) => void
   onPtyInput: (bytes: string) => void
@@ -217,6 +218,7 @@ export function Conversation({
   onLoadOlder,
   onMarkDisplayed,
   onInvite,
+  onNotifyError,
   onPtyInput,
   onPtyResize,
   onServerEvent,
@@ -225,6 +227,8 @@ export function Conversation({
 }: Props) {
   const sessionUri = state.session_uri || ""
   const callerUri = state.caller_uri || ""
+  const [reminderReceipts, setReminderReceipts] = React.useState<Record<string, string>>({})
+
   const sessions = state.sessions || []
   const templates = state.templates && state.templates.length > 0 ? state.templates : ["default"]
   const routingRules = state.routing_rules || []
@@ -396,6 +400,15 @@ export function Conversation({
       if (next.human_role_slots) setHumanRoleSlots(next.human_role_slots)
       if (next.invite_candidates) setInviteCandidates(next.invite_candidates)
       if (next.routing_entity_candidates) setRoutingEntityCandidates(next.routing_entity_candidates)
+    })
+
+    onServerEvent("actionable_error:reminder_sent", (payload) => {
+      const receipt = payload as {message_id?: string; founder_name?: string}
+      if (!receipt.message_id || !receipt.founder_name) return
+      setReminderReceipts((current) => ({
+        ...current,
+        [receipt.message_id!]: `已通知 ${receipt.founder_name}`,
+      }))
     })
 
     return undefined
@@ -903,7 +916,15 @@ export function Conversation({
                         )}
                       </div>
                       {message.text && !message.actionable_error && <p className={bubbleTextClass(mine, kind)}>{message.text}</p>}
-                      {message.actionable_error && <ActionableErrorCard error={message.actionable_error} />}
+                      {message.actionable_error && (
+                        <ActionableErrorCard
+                          error={message.actionable_error}
+                          receipt={reminderReceipts[message.id]}
+                          onAction={message.actionable_error.action?.kind === "notify_admin"
+                            ? () => onNotifyError(sessionUri, message.id)
+                            : undefined}
+                        />
+                      )}
                       {message.render != null && typeof message.render === "object" && (
                         <JsonRenderBubble
                           spec={message.render}

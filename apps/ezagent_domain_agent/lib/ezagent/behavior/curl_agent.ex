@@ -249,7 +249,7 @@ defmodule Ezagent.ActionSet.CurlAgent do
         {:ok, %{ok: true, tokens: usage.total}, effects}
 
       {:error, {:no_api_key, provider}} ->
-        action_href = "/identities/agents/#{maybe_encode_uri(self_uri)}/api-keys"
+        action_href = api_key_action_href(self_uri)
 
         reply_text =
           "no API key for provider `#{provider}` — please add one at " <>
@@ -281,7 +281,7 @@ defmodule Ezagent.ActionSet.CurlAgent do
         end
 
         reply_text = "upstream API error: #{format_error(reason)}"
-        reply_body = actionable_reply(reply_text, actionable_error(reason))
+        reply_body = actionable_reply(reply_text, actionable_error(reason, self_uri))
 
         effects =
           [
@@ -381,6 +381,9 @@ defmodule Ezagent.ActionSet.CurlAgent do
   defp maybe_encode_uri(%URI{} = u), do: URI.encode_www_form(URI.to_string(u))
   defp maybe_encode_uri(_), do: "unknown"
 
+  defp api_key_action_href(self_uri),
+    do: "/identities/agents/#{maybe_encode_uri(self_uri)}/api-keys"
+
   defp error_kind({:http, _, _}), do: :http_error
   defp error_kind({:transport, _}), do: :transport_error
   defp error_kind({:decode, _}), do: :decode_error
@@ -391,18 +394,26 @@ defmodule Ezagent.ActionSet.CurlAgent do
   defp format_error({:decode, _}), do: "could not decode response"
   defp format_error(other), do: inspect(other)
 
-  defp actionable_error({:http, status, _body}) when status in [401, 403],
-    do: ActionableError.new(:unauthorized, detail: "HTTP #{status}")
+  defp actionable_error({:http, status, _body}, self_uri) when status in [401, 403],
+    do:
+      ActionableError.new(:unauthorized,
+        action_href: api_key_action_href(self_uri),
+        detail: "HTTP #{status}"
+      )
 
-  defp actionable_error({:http, 429, _body}),
-    do: ActionableError.new(:quota_exceeded, detail: "HTTP 429")
+  defp actionable_error({:http, 429, _body}, self_uri),
+    do:
+      ActionableError.new(:quota_exceeded,
+        action_href: api_key_action_href(self_uri),
+        detail: "HTTP 429"
+      )
 
-  defp actionable_error({:transport, reason}) do
+  defp actionable_error({:transport, reason}, _self_uri) do
     kind = if timeout_reason?(reason), do: :network_timeout, else: :unknown
     ActionableError.new(kind, detail: inspect(reason))
   end
 
-  defp actionable_error(reason),
+  defp actionable_error(reason, _self_uri),
     do: ActionableError.new(:unknown, detail: inspect(reason))
 
   defp timeout_reason?(reason) when reason in [:timeout, :connect_timeout, :checkout_timeout],

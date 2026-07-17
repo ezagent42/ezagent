@@ -23,7 +23,8 @@ defmodule Ezagent.Message.ActionableError do
       "what_happened" => "这个 Agent 尚未配置调用模型所需的 API Key。",
       "impact" => "本次消息未能交给模型处理，Agent 无法生成回复。",
       "next_step" => "配置 API Key 后，重新发送本条消息。",
-      "action" => %{"label" => "配置 API Key"}
+      "action" => %{"label" => "配置 API Key"},
+      "permission" => "agent.api_keys.put"
     },
     unauthorized: %{
       "code" => "agent.request_unauthorized",
@@ -32,7 +33,8 @@ defmodule Ezagent.Message.ActionableError do
       "title" => "模型服务拒绝了请求",
       "what_happened" => "当前凭据没有权限访问所配置的模型或接口。",
       "impact" => "本次消息未被模型服务处理。",
-      "next_step" => "请 workspace 管理员检查 Agent 的凭据与模型权限。"
+      "next_step" => "请 workspace 管理员检查 Agent 的凭据与模型权限。",
+      "permission" => "agent.api_keys.put"
     },
     quota_exceeded: %{
       "code" => "agent.provider_quota_exceeded",
@@ -41,7 +43,8 @@ defmodule Ezagent.Message.ActionableError do
       "title" => "模型服务额度不足",
       "what_happened" => "模型服务返回了额度或速率限制。",
       "impact" => "Agent 暂时无法继续生成回复。",
-      "next_step" => "请 workspace 管理员检查服务额度；恢复后重新发送本条消息。"
+      "next_step" => "请 workspace 管理员检查服务额度；恢复后重新发送本条消息。",
+      "permission" => "agent.api_keys.put"
     },
     network_timeout: %{
       "code" => "agent.network_timeout",

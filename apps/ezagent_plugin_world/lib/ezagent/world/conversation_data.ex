@@ -39,7 +39,7 @@ defmodule Ezagent.World.ConversationData do
     workspace_uri = Map.fetch!(opts, :workspace_uri)
     sessions = Map.fetch!(opts, :sessions)
     caller_caps = Map.get(opts, :caller_caps, MapSet.new())
-    messages = load_messages(session_uri, caller_caps)
+    messages = load_messages(session_uri, caller_uri, workspace_uri, caller_caps)
     members = member_options(session_uri)
 
     %{
@@ -361,15 +361,25 @@ defmodule Ezagent.World.ConversationData do
   Returns `{rows, next_oldest_cursor}` for the island to prepend; an invalid
   cursor yields `{[], nil}` (no paging).
   """
-  @spec load_older(URI.t(), String.t(), Enumerable.t()) :: {[map()], String.t() | nil}
-  def load_older(%URI{} = session_uri, before, caller_caps \\ MapSet.new())
+  @spec load_older(URI.t(), String.t(), Enumerable.t(), URI.t() | nil) ::
+          {[map()], String.t() | nil}
+  def load_older(
+        %URI{} = session_uri,
+        before,
+        caller_caps \\ MapSet.new(),
+        caller_uri \\ nil
+      )
       when is_binary(before) do
     case DateTime.from_iso8601(before) do
       {:ok, cursor, _offset} ->
         rows =
           older_messages(session_uri, cursor, caller_caps)
           |> Enum.reverse()
-          |> messages_to_rows()
+          |> messages_to_rows(%{
+            caller_uri: caller_uri,
+            caller_caps: caller_caps,
+            workspace_uri: Ezagent.Capability.workspace_of(session_uri)
+          })
 
         {rows, oldest_cursor_iso(rows)}
 
@@ -398,19 +408,29 @@ defmodule Ezagent.World.ConversationData do
   end
 
   @doc "Render-ready row for a single message (resolves the sender display)."
-  @spec message_row(Ezagent.Message.t()) :: map()
-  def message_row(%Ezagent.Message{} = msg), do: message_row(msg, %{})
+  @spec message_row(Ezagent.Message.t(), map()) :: map()
+  def message_row(%Ezagent.Message{} = msg, viewer_opts \\ %{}) when is_map(viewer_opts),
+    do: message_row(msg, %{}, viewer_opts)
 
   @doc "Oldest-visible-cursor (ISO-8601) for backwards paging; `nil` when empty."
   @spec oldest_cursor_iso([map()]) :: String.t() | nil
   def oldest_cursor_iso([%{"at" => at} | _]) when is_binary(at), do: at
   def oldest_cursor_iso(_), do: nil
 
-  defp load_messages(%URI{} = session_uri, caller_caps) do
+  defp load_messages(
+         %URI{} = session_uri,
+         caller_uri,
+         workspace_uri,
+         caller_caps
+       ) do
     session_uri
     |> recent_messages(caller_caps)
     |> Enum.reverse()
-    |> messages_to_rows()
+    |> messages_to_rows(%{
+      caller_uri: caller_uri,
+      caller_caps: caller_caps,
+      workspace_uri: workspace_uri
+    })
   end
 
   defp recent_messages(%URI{} = session_uri, caller_caps) do
@@ -481,13 +501,66 @@ defmodule Ezagent.World.ConversationData do
   defp same_uri?(%URI{} = left, %URI{} = right), do: URI.to_string(left) == URI.to_string(right)
   defp same_uri?(_, _), do: false
 
-  defp messages_to_rows(messages) when is_list(messages) do
+  defp messages_to_rows(messages, viewer_opts) when is_list(messages) and is_map(viewer_opts) do
     sender_uris = Enum.map(messages, fn %Ezagent.Message{sender: s} -> URI.to_string(s) end)
     display_map = Ezagent.EntityPresenter.display_many(sender_uris)
-    Enum.map(messages, &message_row(&1, display_map))
+    Enum.map(messages, &message_row(&1, display_map, viewer_opts))
   end
 
-  defp message_row(%Ezagent.Message{} = msg, display_map) do
+  defp project_actionable_error(%Ezagent.Message{} = msg, viewer_opts) do
+    case Ezagent.Message.Body.actionable_error(msg.body) do
+      %{"permission" => "agent.api_keys.put"} = error ->
+        project_api_key_error(error, msg.sender, viewer_opts)
+
+      error ->
+        error
+    end
+  end
+
+  defp project_api_key_error(
+         error,
+         %URI{} = agent_uri,
+         %{caller_uri: %URI{} = caller, caller_caps: caps} = viewer_opts
+       ) do
+    if Ezagent.World.IdentityData.can_edit_api_keys?(agent_uri, caller, caps) do
+      Map.put(error, "layer", 1)
+    else
+      project_admin_repair(error, Map.get(viewer_opts, :workspace_uri))
+    end
+  end
+
+  defp project_api_key_error(error, _agent_uri, _viewer_opts), do: error
+
+  defp project_admin_repair(error, %URI{scheme: "workspace"} = workspace_uri) do
+    case Ezagent.Workspace.Store.get_by_name(workspace_uri.host) do
+      %{created_by: %URI{} = founder_uri} ->
+        display_name = Ezagent.EntityPresenter.display(URI.to_string(founder_uri))
+
+        error
+        |> Map.put("layer", 2)
+        |> Map.put(
+          "next_step",
+          "请联系 workspace founder #{display_name}，由其检查 Agent 的凭据配置。"
+        )
+        |> Map.put("repair_owner", %{
+          "uri" => URI.to_string(founder_uri),
+          "display_name" => display_name
+        })
+        |> Map.put("action", %{
+          "kind" => "notify_admin",
+          "label" => "发送提醒给 #{display_name}"
+        })
+
+      _ ->
+        error
+        |> Map.put("layer", 3)
+        |> Map.delete("action")
+    end
+  end
+
+  defp project_admin_repair(error, _workspace_uri), do: error
+
+  defp message_row(%Ezagent.Message{} = msg, display_map, viewer_opts) do
     sender_str = URI.to_string(msg.sender)
 
     %{
@@ -496,7 +569,7 @@ defmodule Ezagent.World.ConversationData do
       "sender_display" =>
         Map.get(display_map, sender_str) || Ezagent.EntityPresenter.display(sender_str),
       "sender_kind" => sender_kind(sender_str),
-      "actionable_error" => Ezagent.Message.Body.actionable_error(msg.body),
+      "actionable_error" => project_actionable_error(msg, viewer_opts),
       "text" => body_text(msg.body),
       # Optional json-render node tree — when present the world bubble renders it
       # with the json-render engine (like the preview), not plain text. `render_css`

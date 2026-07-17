@@ -17,7 +17,7 @@ defmodule Ezagent.World.DispatchContract do
     workspace_plugin:
       ~w(profile.display_name.edit profile.display_name.save profile.display_name.cancel feishu.bind feishu.unbind workspace.member.remove workspace.invite.mint workspace.invite.revoke workspace.template.save kb.query kb.ingest auto_derive.default_source.set auto_derive.credential_grant.revoke),
     conversation:
-      ~w(chat.send chat.load_older chat.mark_displayed session.switch session.invite session.remove_participant session.socialware.uninstall session.create session.view.switch session.pty.open session.orchestrator.restart session.routing.add session.routing.toggle)
+      ~w(chat.send chat.load_older chat.mark_displayed chat.error.notify_admin session.switch session.invite session.remove_participant session.socialware.uninstall session.create session.view.switch session.pty.open session.orchestrator.restart session.routing.add session.routing.toggle)
   }
 
   @direct_actions ~w(sessions.join layout.manage agent.api_key.put)

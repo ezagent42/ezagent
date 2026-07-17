@@ -12,6 +12,7 @@
     "agents.delete",
     "auto_derive.credential_grant.revoke",
     "auto_derive.default_source.set",
+    "chat.error.notify_admin",
     "chat.load_older",
     "chat.mark_displayed",
     "chat.send",

@@ -1,5 +1,5 @@
 import React from "react"
-import {AlertTriangle, ArrowUpRight} from "lucide-react"
+import {AlertTriangle, ArrowUpRight, CheckCircle2, Send} from "lucide-react"
 
 export type ActionableError = {
   code: string
@@ -12,6 +12,7 @@ export type ActionableError = {
   action?: {
     label: string
     href?: string | null
+    kind?: "notify_admin" | null
   }
   detail?: string | null
   ticket?: string | null
@@ -23,7 +24,15 @@ const layerLabel = (layer?: number) => {
   return "需要排查"
 }
 
-export function ActionableErrorCard({error}: {error: ActionableError}) {
+export function ActionableErrorCard({
+  error,
+  onAction,
+  receipt,
+}: {
+  error: ActionableError
+  onAction?: () => void
+  receipt?: string | null
+}) {
   const warning = error.severity === "warning"
 
   return (
@@ -73,6 +82,25 @@ export function ActionableErrorCard({error}: {error: ActionableError}) {
             {error.ticket && <span>工单 {error.ticket}</span>}
             {error.detail && <span className="break-all">诊断 {error.detail}</span>}
           </div>
+        )}
+
+        {error.action?.kind === "notify_admin" && !receipt && (
+          <button
+            type="button"
+            onClick={onAction}
+            disabled={!onAction}
+            className="inline-flex items-center gap-1.5 rounded-md bg-foreground px-2.5 py-1.5 text-[11.5px] font-semibold text-background transition-opacity hover:opacity-85 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring disabled:cursor-not-allowed disabled:opacity-50"
+          >
+            <Send aria-hidden="true" className="h-3.5 w-3.5" />
+            {error.action.label}
+          </button>
+        )}
+
+        {receipt && (
+          <p className="inline-flex items-center gap-1.5 text-[11.5px] font-semibold text-emerald-700" data-reminder-receipt>
+            <CheckCircle2 aria-hidden="true" className="h-4 w-4" />
+            {receipt}
+          </p>
         )}
 
         {error.action?.href && (

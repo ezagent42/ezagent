@@ -550,7 +550,8 @@ defmodule Ezagent.World.IdentityData do
   # `agent_api_keys_live.ex`). Never hand-roll an inline caller/admin-principal
   # equality here — that reconstructs the predicate, drifts from the gate, and
   # the p13 probe rejects it (#154).
-  defp can_edit_api_keys?(%URI{} = agent_uri, %URI{} = caller_uri, caps) do
+  @doc false
+  def can_edit_api_keys?(%URI{} = agent_uri, %URI{} = caller_uri, caps) do
     creator_uri = lookup_creator_uri(agent_uri)
     workspace_uri = Ezagent.URI.entity_workspace_uri(agent_uri)
 
@@ -567,7 +568,7 @@ defmodule Ezagent.World.IdentityData do
       Ezagent.Identity.caps_authorize?(caps, needed)
   end
 
-  defp can_edit_api_keys?(_agent_uri, _caller, _caps), do: false
+  def can_edit_api_keys?(_agent_uri, _caller, _caps), do: false
 
   defp list_extensions(%URI{} = agent_uri, caller_uri, caller_caps) do
     with {:ok, template_class} <-

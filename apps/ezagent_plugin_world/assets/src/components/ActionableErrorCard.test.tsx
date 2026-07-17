@@ -49,4 +49,32 @@ describe("ActionableErrorCard", () => {
     expect(html).toContain("需要管理员")
     expect(html).not.toContain("<a ")
   })
+  it("renders a founder reminder action and replaces it with a receipt", () => {
+    const error = {
+      code: "agent.credentials_missing",
+      severity: "error" as const,
+      layer: 2,
+      title: "Credentials missing",
+      what_happened: "The provider rejected the request.",
+      impact: "The agent cannot reply.",
+      next_step: "Ask the workspace founder to repair it.",
+      action: {label: "Notify founder", kind: "notify_admin" as const},
+    }
+
+    const actionHtml = renderToStaticMarkup(
+      <ActionableErrorCard error={error} onAction={() => undefined} />,
+    )
+
+    expect(actionHtml).toContain("<button")
+    expect(actionHtml).toContain("Notify founder")
+    expect(actionHtml).not.toContain("data-reminder-receipt")
+
+    const receiptHtml = renderToStaticMarkup(
+      <ActionableErrorCard error={error} receipt="Reminder sent" />,
+    )
+
+    expect(receiptHtml).toContain("data-reminder-receipt")
+    expect(receiptHtml).toContain("Reminder sent")
+    expect(receiptHtml).not.toContain("<button")
+  })
 })

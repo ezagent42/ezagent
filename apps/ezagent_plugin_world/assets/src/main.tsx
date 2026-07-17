@@ -1,6 +1,6 @@
 import React from "react"
 import {createRoot, type Root} from "react-dom/client"
-import {ArrowLeft, Boxes, Check, ChevronDown, ChevronRight, Lock, LogOut, Moon, Plus, Sun, User} from "lucide-react"
+import {ArrowLeft, Bell, Boxes, Check, ChevronDown, ChevronRight, Lock, LogOut, Moon, Plus, Sun, User, X} from "lucide-react"
 
 import {Button} from "./components/ui/primitives"
 import {AdminSurface, type AdminState} from "./components/Admin"
@@ -139,6 +139,7 @@ export function mountWorld(element: HTMLElement, options: WorldMountOptions = {}
 function WorldApp({layout, state: initialState, pluginNav, caller, pushEvent, onServerEvent}: WorldMountOptions) {
   const [currentLayout, setCurrentLayout] = React.useState<WorldLayout>(() => initialState?.layout || layout || {})
   const [state, setState] = React.useState<WorldState>(() => initialState || {})
+  const [inboxNotice, setInboxNotice] = React.useState<{text: string; href?: string} | null>(null)
 
   const navItems = React.useMemo<typeof NAV_ITEMS>(() => {
     const seen = new Set(NAV_ITEMS.map((item) => item.href))
@@ -166,6 +167,17 @@ function WorldApp({layout, state: initialState, pluginNav, caller, pushEvent, on
     onServerEvent("world:url", (payload) => {
       const next = payload as {path?: string}
       if (next.path && typeof window !== "undefined") window.history.pushState({}, "", next.path)
+    })
+
+    onServerEvent("world:inbound", (payload) => {
+      const event = payload as {
+        type?: string
+        payload?: {payload?: {body?: {text?: string; repair_href?: string}}}
+      }
+      const body = event.payload?.payload?.body
+      if (event.type === "notification" && body?.text) {
+        setInboxNotice({text: body.text, href: body.repair_href})
+      }
     })
 
     return undefined
@@ -378,6 +390,12 @@ function WorldApp({layout, state: initialState, pluginNav, caller, pushEvent, on
                     args: {session_uri: sessionUri},
                   })
                 },
+                onNotifyError: (sessionUri, msgId) => {
+                  pushEvent?.("world:dispatch", {
+                    action: "chat.error.notify_admin",
+                    args: {session_uri: sessionUri, msg_id: msgId},
+                  })
+                },
                 onLoadOlder: (sessionUri, before) => {
                   pushEvent?.("world:dispatch", {
                     action: "chat.load_older",
@@ -461,6 +479,31 @@ function WorldApp({layout, state: initialState, pluginNav, caller, pushEvent, on
             )}
           </div>
         </main>
+        {inboxNotice && (
+          <aside
+            className="fixed bottom-4 right-4 z-50 w-[min(390px,calc(100vw-2rem))] rounded-xl border border-border bg-card p-3.5 shadow-2xl"
+            role="status"
+            data-world-inbox-notice
+          >
+            <div className="flex items-start gap-2.5">
+              <span className="rounded-lg bg-primary/10 p-2 text-primary">
+                <Bell aria-hidden="true" className="h-4 w-4" />
+              </span>
+              <div className="min-w-0 flex-1">
+                <p className="text-[11px] font-semibold uppercase tracking-[0.12em] text-muted-foreground">站内提醒</p>
+                <p className="mt-1 text-[13px] leading-relaxed text-foreground">{inboxNotice.text}</p>
+                {inboxNotice.href && (
+                  <a className="mt-2 inline-flex text-[12px] font-semibold text-primary underline underline-offset-2" href={inboxNotice.href}>
+                    前往处理
+                  </a>
+                )}
+              </div>
+              <button type="button" onClick={() => setInboxNotice(null)} aria-label="关闭提醒" className="rounded-md p-1 text-muted-foreground hover:bg-muted hover:text-foreground">
+                <X aria-hidden="true" className="h-4 w-4" />
+              </button>
+            </div>
+          </aside>
+        )}
       </div>
     )
   }
@@ -902,6 +945,7 @@ type RenderContext = {
   onLoadOlder: (sessionUri: string, before: string) => void
   onMarkDisplayed: (sessionUri: string, msgId: string) => void
   onInvite: (sessionUri: string, member: string) => void
+  onNotifyError: (sessionUri: string, msgId: string) => void
   onAssignRole: (sessionUri: string, member: string, roleName: string) => void
   onRemoveParticipant: (sessionUri: string, participant: string) => void
   onUninstallSocialware: (sessionUri: string, ref: string) => void
@@ -969,6 +1013,7 @@ function renderLayoutComponent(component: NonNullable<WorldLayout["components"]>
           onLoadOlder={context.onLoadOlder}
           onMarkDisplayed={context.onMarkDisplayed}
           onInvite={context.onInvite}
+          onNotifyError={context.onNotifyError}
           onForkConfig={context.onForkConfig}
           onRemoveParticipant={context.onRemoveParticipant}
           onUninstallSocialware={context.onUninstallSocialware}
