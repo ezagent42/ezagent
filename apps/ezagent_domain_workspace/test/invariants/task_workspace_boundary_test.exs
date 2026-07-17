@@ -144,7 +144,10 @@ defmodule Ezagent.Workspace.TaskWorkspace.BoundaryTest do
       "def instantiate(_a, _b, _c, launch_context: handle) do\n  payload = handle\n  :persistent_term.put(:context, payload)\nend",
       "def leak(opts) do\n  handle = Keyword.fetch!(opts, :launch_context)\n  (fn -> handle = :safe_value end).()\n  Jason.encode!(handle)\nend",
       "def leak(opts) do\n  serializer = Jason\n  handle = Keyword.fetch!(opts, :launch_context)\n  serializer.encode!(handle)\n  serializer = String\nend",
-      "def leak(opts) do\n  handle = Keyword.fetch!(opts, :launch_context)\n  sink(handle)\nend\ndefp sink(value), do: Jason.encode!(value)"
+      "def leak(opts) do\n  handle = Keyword.fetch!(opts, :launch_context)\n  sink(handle)\nend\ndefp sink(value), do: Jason.encode!(value)",
+      "def leak(opts) do handle = Keyword.fetch!(opts, :launch_context); if flag, do: Jason.encode!(handle), else: :ok end",
+      "def leak(opts) do handle = Keyword.fetch!(opts, :launch_context); sink1(:safe, handle) end\ndefp sink1(_a, value), do: sink2(value)\ndefp sink2(value), do: sink3(value)\ndefp sink3(value), do: sink4(value)\ndefp sink4(value), do: sink5(value)\ndefp sink5(value), do: sink6(value)\ndefp sink6(value), do: Jason.encode!(value)",
+      "def leak(opts) do handle = Keyword.fetch!(opts, :launch_context); serializer = if(flag, do: Jason, else: String); serializer.encode!(handle) end"
     ]
 
     for source <- mutants do
@@ -163,6 +166,31 @@ defmodule Ezagent.Workspace.TaskWorkspace.BoundaryTest do
     """
 
     assert launch_context_leaks(shadowed) == []
+
+    safe_sink_rebind = """
+    def harmless(opts) do
+      serializer = Jason
+      handle = Keyword.fetch!(opts, :launch_context)
+      serializer = String
+      serializer.upcase(handle)
+    end
+    """
+
+    assert launch_context_leaks(safe_sink_rebind) == []
+
+    branch_shadow = """
+    def harmless(opts) do
+      handle = Keyword.fetch!(opts, :launch_context)
+      if flag do
+        handle = :safe
+        Jason.encode!(handle)
+      else
+        :ok
+      end
+    end
+    """
+
+    assert launch_context_leaks(branch_shadow) == []
 
     second_map = """
     def prepare(ref) do
@@ -320,13 +348,11 @@ defmodule Ezagent.Workspace.TaskWorkspace.BoundaryTest do
     ast
     |> lexical_scopes()
     |> Enum.flat_map(fn {function, scope} ->
-      scope_aliases = Map.merge(aliases, collect_sink_bindings(scope, aliases))
-
       scan_launch_scope(
         scope,
         function,
         path,
-        scope_aliases,
+        aliases,
         authority_source_variables(scope)
       )
     end)
@@ -335,9 +361,13 @@ defmodule Ezagent.Workspace.TaskWorkspace.BoundaryTest do
   end
 
   defp sink_helper_summaries(ast, aliases) do
-    Enum.reduce(1..4, MapSet.new(), fn _pass, summaries ->
-      aliases = Map.put(aliases, "__sink_helpers__", summaries)
+    sink_helper_fixpoint(ast, aliases, MapSet.new())
+  end
 
+  defp sink_helper_fixpoint(ast, aliases, summaries) do
+    summary_aliases = Map.put(aliases, "__sink_helpers__", summaries)
+
+    next =
       ast
       |> lexical_scopes()
       |> Enum.reduce(summaries, fn {function, scope}, acc ->
@@ -346,14 +376,15 @@ defmodule Ezagent.Workspace.TaskWorkspace.BoundaryTest do
         |> Enum.with_index()
         |> Enum.reduce(acc, fn {params, index}, inner_acc ->
           if params != MapSet.new() and
-               scan_launch_scope(scope, function, "<summary>", aliases, params) != [] do
+               scan_launch_scope(scope, function, "<summary>", summary_aliases, params) != [] do
             MapSet.put(inner_acc, {function, index})
           else
             inner_acc
           end
         end)
       end)
-    end)
+
+    if next == summaries, do: next, else: sink_helper_fixpoint(ast, aliases, next)
   end
 
   defp function_parameter_variables({kind, _meta, [{_name, _head_meta, args} | _]})
@@ -363,33 +394,151 @@ defmodule Ezagent.Workspace.TaskWorkspace.BoundaryTest do
   defp function_parameter_variables(_scope), do: []
 
   defp scan_launch_scope(scope, function, path, aliases, initial_tainted) do
-    nested_lines = nested_scope_assignment_lines(scope)
     aliases = Map.put(aliases, "__current_function__", function)
-
-    {_scope, {_tainted, leaks}} =
-      Macro.prewalk(scope, {initial_tainted, []}, fn
-        {:=, _meta, [left, right]} = node, {tainted, leaks} ->
-          assigned = variables_in(left)
-
-          tainted =
-            if authority_source?(right) or tainted_node?(right, tainted) do
-              MapSet.union(tainted, assigned)
-            else
-              if MapSet.member?(nested_lines, node |> elem(1) |> Keyword.get(:line, 1)) do
-                tainted
-              else
-                MapSet.difference(tainted, assigned)
-              end
-            end
-
-          {node, {tainted, record_launch_leak(node, function, path, aliases, tainted, leaks)}}
-
-        node, {tainted, leaks} ->
-          {node, {tainted, record_launch_leak(node, function, path, aliases, tainted, leaks)}}
-      end)
-
+    state = %{tainted: initial_tainted, modules: %{}, leaks: []}
+    %{leaks: leaks} = launch_scan(scope, state, function, path, aliases)
     leaks
   end
+
+  defp launch_scan({:__block__, _, nodes}, state, function, path, aliases),
+    do: Enum.reduce(nodes, state, &launch_scan(&1, &2, function, path, aliases))
+
+  defp launch_scan({kind, _, [{_name, _, _args}, body]}, state, function, path, aliases)
+       when kind in [:def, :defp],
+       do: launch_scan(body, state, function, path, aliases)
+
+  defp launch_scan(
+         {kind, _, [{:when, _, [_head | _guards]}, body]},
+         state,
+         function,
+         path,
+         aliases
+       )
+       when kind in [:def, :defp],
+       do: launch_scan(body, state, function, path, aliases)
+
+  defp launch_scan({:=, _, [left, right]} = node, state, function, path, aliases) do
+    state = launch_scan(right, state, function, path, aliases)
+    assigned = variables_in(left)
+    tainted? = authority_source?(right) or tainted_node?(right, state.tainted)
+
+    tainted =
+      if tainted?,
+        do: MapSet.union(state.tainted, assigned),
+        else: MapSet.difference(state.tainted, assigned)
+
+    modules =
+      Enum.reduce(assigned, state.modules, fn variable, acc ->
+        Map.put(acc, Atom.to_string(variable), launch_module_value(right, state.modules, aliases))
+      end)
+
+    record_launch_state(
+      node,
+      %{state | tainted: tainted, modules: modules},
+      function,
+      path,
+      aliases
+    )
+  end
+
+  defp launch_scan({kind, _, args}, state, function, path, aliases)
+       when kind in [:if, :case, :cond, :with] and is_list(args) do
+    branches = launch_branches(kind, args)
+    results = Enum.map(branches, &launch_scan(&1, state, function, path, aliases))
+
+    results =
+      if kind == :if and Keyword.get(List.last(args), :else) == nil,
+        do: [state | results],
+        else: results
+
+    merge_launch_states(results, state)
+  end
+
+  defp launch_scan({kind, _, args}, state, function, path, aliases)
+       when kind in [:fn, :quote] do
+    child = launch_scan_children(args, state, function, path, aliases)
+    %{state | leaks: Enum.uniq(state.leaks ++ child.leaks)}
+  end
+
+  defp launch_scan(node, state, function, path, aliases) do
+    state = record_launch_state(node, state, function, path, aliases)
+
+    children =
+      if is_tuple(node), do: Tuple.to_list(node), else: if(is_list(node), do: node, else: [])
+
+    launch_scan_children(children, state, function, path, aliases)
+  end
+
+  defp launch_scan_children(nodes, state, function, path, aliases),
+    do: Enum.reduce(List.wrap(nodes), state, &launch_scan(&1, &2, function, path, aliases))
+
+  defp record_launch_state(node, state, function, path, aliases) do
+    call_aliases = Map.merge(aliases, state.modules)
+
+    %{
+      state
+      | leaks: record_launch_leak(node, function, path, call_aliases, state.tainted, state.leaks)
+    }
+  end
+
+  defp launch_branches(:if, [_condition, opts]),
+    do: [Keyword.get(opts, :do), Keyword.get(opts, :else)] |> Enum.reject(&is_nil/1)
+
+  defp launch_branches(:with, args) do
+    opts = List.last(args)
+
+    [
+      Enum.drop(args, -1),
+      Keyword.get(opts, :do) | launch_arrow_bodies(Keyword.get(opts, :else, []))
+    ]
+  end
+
+  defp launch_branches(_kind, args), do: launch_arrow_bodies(args)
+
+  defp launch_arrow_bodies(ast) do
+    {_ast, bodies} =
+      Macro.prewalk(ast, [], fn
+        {:->, _, [_patterns, body]} = node, acc -> {node, [body | acc]}
+        node, acc -> {node, acc}
+      end)
+
+    Enum.reverse(bodies)
+  end
+
+  defp merge_launch_states([], fallback), do: fallback
+
+  defp merge_launch_states(states, fallback) do
+    # A disagreement is the taint lattice's unknown value.  Unknown remains
+    # conservatively tainted at a later sink; only unanimous clean branches
+    # may clear a binding.
+    tainted = states |> Enum.flat_map(&MapSet.to_list(&1.tainted)) |> MapSet.new()
+
+    module_keys = states |> Enum.flat_map(&Map.keys(&1.modules)) |> MapSet.new()
+
+    modules =
+      Enum.reduce(module_keys, %{}, fn key, acc ->
+        values = Enum.map(states, &Map.get(&1.modules, key))
+        Map.put(acc, key, if(Enum.uniq(values) |> length() == 1, do: hd(values), else: :unknown))
+      end)
+
+    leaks = states |> Enum.flat_map(& &1.leaks) |> Enum.uniq()
+    %{fallback | tainted: tainted, modules: modules, leaks: leaks}
+  end
+
+  defp launch_module_value({:if, _, [_condition, opts]}, modules, aliases) do
+    values =
+      [Keyword.get(opts, :do), Keyword.get(opts, :else)]
+      |> Enum.map(&launch_module_value(&1, modules, aliases))
+
+    if Enum.uniq(values) |> length() == 1, do: hd(values), else: :unknown
+  end
+
+  defp launch_module_value({name, _, context}, modules, _aliases)
+       when is_atom(name) and (is_atom(context) or is_nil(context)),
+       do: Map.get(modules, Atom.to_string(name))
+
+  defp launch_module_value(ast, modules, aliases),
+    do: resolve_sink_assignment(ast, aliases, modules)
 
   defp record_launch_leak(node, function, path, aliases, tainted, leaks) do
     case launch_context_leak_kind(node, tainted, aliases) do
@@ -495,8 +644,11 @@ defmodule Ezagent.Workspace.TaskWorkspace.BoundaryTest do
          aliases
        )
        when is_atom(function) and is_list(args) do
-    sink = resolve_sink_module(module, aliases) <> "." <> Atom.to_string(function)
-    tainted_node?(node, tainted) && leak_sink_kind(sink, args)
+    resolved = resolve_sink_module(module, aliases)
+    sink = resolved <> "." <> Atom.to_string(function)
+
+    tainted_node?(node, tainted) &&
+      if(resolved == ":unknown", do: :unknown_remote_sink, else: leak_sink_kind(sink, args))
   end
 
   defp launch_context_leak_kind({function, _meta, args} = node, tainted, _aliases)
@@ -546,51 +698,6 @@ defmodule Ezagent.Workspace.TaskWorkspace.BoundaryTest do
     aliases
   end
 
-  defp collect_sink_bindings(scope, aliases) do
-    {_scope, bindings} =
-      Macro.prewalk(scope, %{}, fn
-        {:=, _meta, [{name, _var_meta, context}, rhs]} = node, bindings
-        when is_atom(name) and (is_atom(context) or is_nil(context)) ->
-          module = resolve_sink_assignment(rhs, aliases, bindings)
-          key = Atom.to_string(name)
-          existing = Map.get(bindings, key)
-
-          next =
-            cond do
-              known_sink_module?(existing) and not known_sink_module?(module) -> existing
-              module -> module
-              true -> existing
-            end
-
-          {node, if(next, do: Map.put(bindings, key, next), else: bindings)}
-
-        node, bindings ->
-          {node, bindings}
-      end)
-
-    bindings
-  end
-
-  defp nested_scope_assignment_lines(ast) do
-    {_ast, lines} =
-      Macro.prewalk(ast, MapSet.new(), fn
-        {kind, _meta, _args} = node, lines
-        when kind in [:fn, :if, :case, :cond, :with, :for, :quote] ->
-          {_node, nested} =
-            Macro.prewalk(node, MapSet.new(), fn
-              {:=, meta, _args} = child, acc -> {child, MapSet.put(acc, meta[:line] || 1)}
-              child, acc -> {child, acc}
-            end)
-
-          {node, MapSet.union(lines, nested)}
-
-        node, lines ->
-          {node, lines}
-      end)
-
-    lines
-  end
-
   defp resolve_sink_assignment({:__aliases__, _meta, [first | rest]} = ast, aliases, bindings) do
     Map.get(bindings, Atom.to_string(first)) ||
       Map.get(aliases, Atom.to_string(first)) ||
@@ -599,11 +706,6 @@ defmodule Ezagent.Workspace.TaskWorkspace.BoundaryTest do
   end
 
   defp resolve_sink_assignment(_rhs, _aliases, _bindings), do: nil
-
-  defp known_sink_module?(module) when is_atom(module),
-    do: Regex.match?(~r/(?:Repo|Ecto|Snapshot|Jason|JSON|Yaml|Logger|Config)$/, inspect(module))
-
-  defp known_sink_module?(_module), do: false
 
   defp module_from_alias({:__aliases__, _meta, parts}) do
     if Enum.all?(parts, &is_atom/1), do: Module.concat(parts)
