@@ -10,6 +10,28 @@ defmodule Ezagent.Workspace.TaskWorkspace.StoreTest do
 
     assert {:error, :conflicting_provision_identity} =
              Store.create_planned(%{attrs() | repository_uri: repository_uri("other")})
+
+    assert {:error, :conflicting_provision_identity} =
+             Store.create_planned(%{attrs() | checkout_fingerprint: "different-checkout"})
+  end
+
+  test "stale provision token cannot clean up a replacement claim" do
+    {:ok, row} = Store.create_planned(attrs())
+    {:ok, first} = Store.claim_provision(row.id, now: at(0), lease_seconds: 30)
+    {:ok, second} = Store.claim_provision(row.id, now: at(31), lease_seconds: 30)
+
+    assert {:error, :provision_lease_lost} =
+             Store.fail_provision(row.id, first.claim_token, :checkout_unavailable)
+
+    current = Repo.get!(Provision, row.id)
+    assert current.status == :provisioning
+    assert current.claim_token == second.claim_token
+
+    assert {:ok, pending} =
+             Store.fail_provision(row.id, second.claim_token, :checkout_unavailable, now: at(32))
+
+    assert pending.status == :cleanup_pending
+    assert pending.claim_token == nil
   end
 
   test "concurrent identity creation converges on one row" do
@@ -242,6 +264,7 @@ defmodule Ezagent.Workspace.TaskWorkspace.StoreTest do
       generation: 1,
       task_access_uri: "resource://task-workspace-store/git-task-access/task-access-#{suffix}",
       repository_uri: repository_uri(suffix),
+      checkout_fingerprint: "checkout-#{suffix}",
       base_ref: "main",
       allowed_head_ref: "task/task-#{suffix}",
       visibility: :public

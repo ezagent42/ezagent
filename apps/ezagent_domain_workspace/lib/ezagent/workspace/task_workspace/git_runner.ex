@@ -24,6 +24,9 @@ defmodule Ezagent.Workspace.TaskWorkspace.GitRunner do
           exit_status: non_neg_integer()
         }
 
+  @doc false
+  def maximum_provision_duration_ms, do: @default_deadline_ms * 4
+
   @doc "Prepares a bare cache and isolated detached worktree."
   @spec prepare(map()) :: {:ok, map()} | {:error, term()}
   def prepare(%{visibility: :private}), do: {:error, :private_checkout_not_supported}

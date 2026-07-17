@@ -10,6 +10,8 @@ defmodule Ezagent.Workspace.TaskWorkspace.Provisioner do
   @test_env Mix.env() == :test
   @wait_ms 2_000
   @poll_ms 10
+  @cache_lock_timeout_ms 5_000
+  @lease_safety_ms 10_000
 
   @impl true
   def prepare(%Request{operation: :prepare} = request) do
@@ -27,6 +29,37 @@ defmodule Ezagent.Workspace.TaskWorkspace.Provisioner do
   def cleanup(%Request{operation: :cleanup}), do: {:error, :cleanup_incomplete}
   def cleanup(%Request{}), do: {:error, :invalid_provision_operation}
   def cleanup(_request), do: {:error, :invalid_provision_request}
+
+  @doc false
+  def checkout_fingerprint(%GitTaskAccess{} = policy) do
+    repository = policy.repository
+
+    :sha256
+    |> :crypto.hash([
+      URI.to_string(repository.repository_uri),
+      <<0>>,
+      Atom.to_string(repository.provider_adapter),
+      <<0>>,
+      String.downcase(repository.provider_host),
+      <<0>>,
+      repository.external_id,
+      <<0>>,
+      repository.owner_path,
+      <<0>>,
+      repository.base_ref,
+      <<0>>,
+      Atom.to_string(repository.visibility)
+    ])
+    |> Base.encode16(case: :lower)
+  end
+
+  @doc false
+  def provision_lease_seconds do
+    total_ms =
+      @cache_lock_timeout_ms + GitRunner.maximum_provision_duration_ms() + @lease_safety_ms
+
+    div(total_ms + 999, 1_000)
+  end
 
   defp load_policy(request) do
     case Ezagent.Kind.get_slice(request.task_access_uri, :git_task_access) do
@@ -67,6 +100,7 @@ defmodule Ezagent.Workspace.TaskWorkspace.Provisioner do
       generation: request.generation,
       task_access_uri: URI.to_string(request.task_access_uri),
       repository_uri: URI.to_string(policy.repository.repository_uri),
+      checkout_fingerprint: checkout_fingerprint(policy),
       base_ref: policy.repository.base_ref,
       allowed_head_ref: policy.allowed_head_ref,
       visibility: policy.repository.visibility
@@ -89,7 +123,10 @@ defmodule Ezagent.Workspace.TaskWorkspace.Provisioner do
     do: {:error, :workspace_not_ready}
 
   defp converge(%Provision{} = row, request, policy) do
-    case Store.claim_provision(row.id, expected_version: row.state_version) do
+    case Store.claim_provision(row.id,
+           expected_version: row.state_version,
+           lease_seconds: provision_lease_seconds()
+         ) do
       {:ok, claimed} -> run_claim(claimed, request, policy)
       {:error, :provision_already_claimed} -> await_terminal(row.id)
       {:error, :invalid_provision_transition} -> converge_current(row.id)
@@ -116,6 +153,7 @@ defmodule Ezagent.Workspace.TaskWorkspace.Provisioner do
   defp finish_prepared(claimed, request, prepared) do
     with :ok <- runner().verify(prepared),
          {:ok, current_policy} <- load_policy(request),
+         :ok <- public_repository(current_policy),
          true <- policy_matches_row?(current_policy, claimed),
          {:ok, ready} <-
            Store.mark_ready(claimed.id, claimed.claim_token, %{
@@ -126,32 +164,63 @@ defmodule Ezagent.Workspace.TaskWorkspace.Provisioner do
            }) do
       ready_result(ready)
     else
-      false -> fail_claim(claimed, prepared, :task_policy_mismatch)
-      {:error, :provision_lease_lost} -> fail_claim(claimed, prepared, :provision_lease_lost)
-      {:error, :provision_lease_expired} -> fail_claim(claimed, prepared, :provision_lease_lost)
+      false ->
+        fail_claim(claimed, prepared, :task_policy_mismatch)
+
+      {:error, :provision_lease_lost} ->
+        fail_claim(claimed, prepared, :provision_lease_lost)
+
+      {:error, :provision_lease_expired} ->
+        fail_claim(claimed, prepared, :provision_lease_lost)
+
       {:error, :invalid_provision_transition} ->
         fail_claim(claimed, prepared, :provision_lease_lost)
 
-      {:error, :task_policy_mismatch} -> fail_claim(claimed, prepared, :task_policy_mismatch)
-      {:error, :task_access_not_found} -> fail_claim(claimed, prepared, :task_policy_mismatch)
-      {:error, _reason} -> fail_claim(claimed, prepared, :workspace_not_ready)
+      {:error, :task_policy_mismatch} ->
+        fail_claim(claimed, prepared, :task_policy_mismatch)
+
+      {:error, :task_access_not_found} ->
+        fail_claim(claimed, prepared, :task_policy_mismatch)
+
+      {:error, :private_checkout_not_supported} ->
+        fail_claim(claimed, prepared, :task_policy_mismatch)
+
+      {:error, _reason} ->
+        fail_claim(claimed, prepared, :workspace_not_ready)
     end
   end
 
   defp serialized_prepare(cache_identity, request) do
-    CacheLock.with_lock(cache_identity, fn -> runner().prepare(request) end)
+    CacheLock.with_lock(cache_identity, @cache_lock_timeout_ms, fn ->
+      runner().prepare(request)
+    end)
   end
 
   defp fail_claim(claimed, prepared, blocker) do
-    if is_map(prepared), do: runner().remove(prepared)
-    _ = Store.request_cleanup(claimed.id, blocker)
-    {:error, blocker}
+    case Store.fail_provision(claimed.id, claimed.claim_token, blocker) do
+      {:ok, _pending} ->
+        if is_map(prepared), do: serialized_remove(prepared)
+        {:error, blocker}
+
+      {:error, reason} when reason in [:provision_lease_lost, :provision_lease_expired] ->
+        {:error, :provision_lease_lost}
+
+      {:error, _reason} ->
+        {:error, blocker}
+    end
+  end
+
+  defp serialized_remove(%{cache_identity: cache_identity} = prepared) do
+    CacheLock.with_lock(cache_identity, @cache_lock_timeout_ms, fn ->
+      runner().remove(prepared)
+    end)
   end
 
   defp normalize_failure(:worktree_verification_failed), do: :workspace_not_ready
   defp normalize_failure(:git_command_timeout), do: :checkout_unavailable
   defp normalize_failure(:git_output_limit_exceeded), do: :checkout_unavailable
   defp normalize_failure(:cache_remote_mismatch), do: :anonymous_checkout_denied
+  defp normalize_failure(:cache_lock_timeout), do: :checkout_unavailable
   defp normalize_failure({:cache_clone_failed, _}), do: :checkout_unavailable
   defp normalize_failure({:worktree_add_failed, _}), do: :checkout_unavailable
   defp normalize_failure(_reason), do: :checkout_unavailable
@@ -231,6 +300,7 @@ defmodule Ezagent.Workspace.TaskWorkspace.Provisioner do
   defp policy_matches_row?(policy, row) do
     URI.to_string(policy.workspace_uri) == row.workspace_uri and
       URI.to_string(policy.repository.repository_uri) == row.repository_uri and
+      checkout_fingerprint(policy) == row.checkout_fingerprint and
       policy.repository.base_ref == row.base_ref and
       policy.allowed_head_ref == row.allowed_head_ref and policy.generation == row.generation
   end
