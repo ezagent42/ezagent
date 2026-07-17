@@ -4,6 +4,8 @@ defmodule Ezagent.Agent.CreationInventoryEntry do
   use Ecto.Schema
   import Ecto.Changeset
 
+  @type t :: %__MODULE__{}
+
   schema "agent_creation_inventory" do
     field(:creation_attempt_id, :string)
     field(:agent_uri, :string)
