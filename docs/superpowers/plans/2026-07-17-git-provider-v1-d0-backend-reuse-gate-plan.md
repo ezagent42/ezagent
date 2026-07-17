@@ -227,7 +227,7 @@ Expected: credential callback is missing/unavailable; provider count stays zero.
 
 - [ ] **Step 3: Implement minimal credential boundary**
 
-Private records contain `%{scope: scope, secret: "gho-D0-SENTINEL", version: n, status: :active, expires_at: ts}`. `lease_for_operation/1` checks ref → scope/host → status → version → proof, then returns `%Types.CredentialLease{lease_ref: opaque, sensitive: %Types.SensitiveCredential{}, expires_at: short_deadline, operation_digest: digest}`. The backend accepts no request plan and performs no HTTP. `AdapterProbe.request_with_lease/2` alone unwraps the wrapper in a private function, models authorization injection and Req ownership, scrubs the response, then calls `consume_lease/1`. Consumption is atomic; expiry, reuse, scope mismatch, and consume failure use closed errors. Expose no secret getter.
+Private records contain `%{scope: scope, secret: "gho-D0-SENTINEL", version: n, status: :active, expires_at: ts}`. `lease_for_operation/1` checks ref → scope/host → status → version → proof → closed `operation_class`, then returns `%Types.CredentialLease{lease_id: opaque, sensitive_credential: %Types.SensitiveCredential{}, observed_version: n, expires_at: short_deadline}`. The backend accepts no request plan and performs no HTTP. `AdapterProbe.request_with_lease/2` alone unwraps the wrapper in a private function, models authorization injection and Req ownership, scrubs the response, then calls `consume_lease/1` with `lease_id`, exact scope/version, and correlation id. Consumption is atomic; expiry, reuse, scope mismatch, and consume failure use closed errors. Expose no secret getter.
 
 - [ ] **Step 4: Verify GREEN**
 
