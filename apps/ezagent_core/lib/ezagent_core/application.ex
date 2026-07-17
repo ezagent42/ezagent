@@ -21,6 +21,10 @@ defmodule EzagentCore.Application do
         # dormant (zero real types registered).
         Ezagent.Resource.FsResolver.Registry,
 
+        # Generic single-use launch gate, registered by the owning downstream
+        # domain when an authoritative preparation implementation is present.
+        Ezagent.Kind.Template.PreStart,
+
         # ② stdlib Registry for URI → pid (Ezagent.KindRegistry wraps this).
         {Registry, keys: :unique, name: Ezagent.KindRegistry},
 

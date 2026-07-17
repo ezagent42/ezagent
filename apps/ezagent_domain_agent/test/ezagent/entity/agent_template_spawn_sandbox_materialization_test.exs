@@ -3,6 +3,9 @@ defmodule Ezagent.Entity.AgentTemplateSpawnSandboxMaterializationTest do
 
   alias Ezagent.Entity.Agent.TemplateSpawn
   alias Ezagent.Agent.TemplateOverlayTestBehavior
+  alias Ezagent.Kind.Template.PreStart
+  alias Ezagent.TestSupport.TemplatePreStartProbe
+  alias EzagentDomainAgent.TestSupport.PreStartTemplateClass
 
   defmodule PreinitializedSandboxTemplate do
     @behaviour Ezagent.Kind.Template
@@ -319,6 +322,130 @@ defmodule Ezagent.Entity.AgentTemplateSpawnSandboxMaterializationTest do
              )
 
     assert wait_until_deregistered(agent_uri)
+  end
+
+  describe "trusted pre-start option" do
+    setup do
+      unique = System.unique_integer([:positive])
+      flavor = "pre-start-#{unique}"
+      Application.put_env(:ezagent_core, :template_pre_start_test_owner, self())
+      Application.put_env(:ezagent_domain_agent, :pre_start_test_owner, self())
+      :ok = PreStart.replace_for_test(TemplatePreStartProbe)
+
+      :ok =
+        Ezagent.AgentFlavorRegistry.register(%{
+          flavor: flavor,
+          kind: Ezagent.Entity.Agent,
+          template_class: PreStartTemplateClass
+        })
+
+      on_exit(fn ->
+        :ok = PreStart.replace_for_test(nil)
+        Application.delete_env(:ezagent_core, :template_pre_start_test_owner)
+        Application.delete_env(:ezagent_core, :template_pre_start_prepare_result)
+        Application.delete_env(:ezagent_domain_agent, :pre_start_test_owner)
+        Application.delete_env(:ezagent_domain_agent, :pre_start_test_mode)
+      end)
+
+      %{
+        content: %{flavor: flavor, project_cwd: "/authored/cwd"},
+        instance_uri: Ezagent.URI.agent("pre-start-#{unique}", "worker"),
+        owner_uri: Ezagent.URI.user("pre-start-#{unique}", "owner"),
+        workspace_uri: Ezagent.URI.workspace("pre-start-#{unique}")
+      }
+    end
+
+    test "preparation failure prevents instantiate", fixture do
+      Application.put_env(
+        :ezagent_core,
+        :template_pre_start_prepare_result,
+        {:error, :workspace_not_ready}
+      )
+
+      assert {:error, :workspace_not_ready} = spawn_with_reference(fixture)
+      refute_receive {:instantiate_called, _}
+      refute_receive {:pre_start_complete, _, _}
+    end
+
+    test "missing implementation fails closed before instantiate", fixture do
+      :ok = PreStart.replace_for_test(nil)
+
+      assert {:error, :template_pre_start_not_registered} = spawn_with_reference(fixture)
+      refute_receive {:instantiate_called, _}
+    end
+
+    test "authoritative cwd overwrites only transient instantiate data and completes success",
+         fixture do
+      prepare_success()
+
+      assert {:ok, %{fresh?: false}} = spawn_with_reference(fixture)
+      assert_receive {:instantiate_called, data}
+      assert data["cwd"] == "/safe/task"
+      refute Map.has_key?(fixture.content, :pre_start_ref)
+      refute Map.has_key?(data, "pre_start_ref")
+      assert_receive {:pre_start_complete, "claim-one", :ok}
+    end
+
+    test "instantiate error completes exactly once", fixture do
+      prepare_success()
+      Application.put_env(:ezagent_domain_agent, :pre_start_test_mode, :error)
+
+      assert {:error, :instantiate_failed} = spawn_with_reference(fixture)
+      assert_receive {:pre_start_complete, "claim-one", {:error, :instantiate_failed}}
+      refute_receive {:pre_start_complete, _, _}
+    end
+
+    test "instantiate raise and exit both complete exactly once before propagating", fixture do
+      for {mode, expected_kind} <- [raise: :error, exit: :exit] do
+        prepare_success()
+        Application.put_env(:ezagent_domain_agent, :pre_start_test_mode, mode)
+
+        caught =
+          try do
+            spawn_with_reference(fixture)
+            :not_raised
+          catch
+            kind, _reason -> kind
+          end
+
+        assert caught == expected_kind
+        assert_receive {:pre_start_complete, "claim-one", {:error, {^expected_kind, _reason}}}
+        refute_receive {:pre_start_complete, _, _}
+      end
+    end
+
+    test "no reference preserves the existing path without consulting the gate", fixture do
+      assert {:ok, %{fresh?: false}} =
+               TemplateSpawn.spawn_from_template_content(
+                 fixture.content,
+                 fixture.instance_uri,
+                 fixture.owner_uri,
+                 fixture.workspace_uri,
+                 []
+               )
+
+      assert_receive {:instantiate_called, %{"cwd" => "/authored/cwd"}}
+      refute_receive {:pre_start_prepare, _}
+      refute_receive {:pre_start_complete, _, _}
+    end
+  end
+
+  defp spawn_with_reference(fixture) do
+    TemplateSpawn.spawn_from_template_content(
+      fixture.content,
+      fixture.instance_uri,
+      fixture.owner_uri,
+      fixture.workspace_uri,
+      pre_start_ref: %{opaque: :reference}
+    )
+  end
+
+  defp prepare_success do
+    Application.put_env(
+      :ezagent_core,
+      :template_pre_start_prepare_result,
+      {:ok, %{cwd: "/safe/task", claim: "claim-one"}}
+    )
   end
 
   defp wait_until_deregistered(uri, attempts \\ 50)
