@@ -374,7 +374,18 @@ defmodule Ezagent.Entity.Agent.TemplateSpawn do
        ) do
     with {:ok, data} <-
            Ezagent.Entity.AgentTemplate.to_template_data(template_content_map, instance_uri) do
+      previous_flavor = Ezagent.AgentFlavorAttributes.get(instance_uri)
+
       case instantiate_workers(template_class, data, workspace_uri, pre_start_ref) do
+        {:ok, workers, false, _instantiate_meta, %{claim: _claim} = pre_start_completion} ->
+          revoke_cascade_grant_best_effort(instance_uri)
+          restore_agent_flavor(instance_uri, previous_flavor)
+
+          finalize_pre_start(
+            pre_start_completion,
+            {:ok, %{workers: workers, fresh?: false}}
+          )
+
         {:ok, workers, fresh?, instantiate_meta, pre_start_completion} ->
           run_after_prepare(pre_start_completion, fn ->
             complete_spawn_obligations(
@@ -714,7 +725,25 @@ defmodule Ezagent.Entity.Agent.TemplateSpawn do
     end
   end
 
+  defp restore_agent_flavor(instance_uri, {:ok, flavor}) do
+    Ezagent.AgentFlavorAttributes.put(instance_uri, flavor)
+  end
+
+  defp restore_agent_flavor(instance_uri, :none) do
+    Ezagent.AgentFlavorAttributes.delete(instance_uri)
+  end
+
   defp finalize_pre_start(nil, result), do: result
+
+  defp finalize_pre_start(%{claim: claim}, {:ok, %{workers: workers, fresh?: false}}) do
+    case Ezagent.Kind.Template.PreStart.complete(
+           claim,
+           {:ok, %{workers: workers, fresh?: false}}
+         ) do
+      :ok -> {:error, :sidecar_start_not_fresh}
+      {:error, _reason} = error -> error
+    end
+  end
 
   defp finalize_pre_start(%{claim: claim}, {:ok, %{workers: workers, fresh?: fresh?}} = result) do
     case Ezagent.Kind.Template.PreStart.complete(
