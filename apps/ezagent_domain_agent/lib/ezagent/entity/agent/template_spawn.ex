@@ -716,8 +716,11 @@ defmodule Ezagent.Entity.Agent.TemplateSpawn do
 
   defp finalize_pre_start(nil, result), do: result
 
-  defp finalize_pre_start(%{claim: claim}, {:ok, %{workers: workers}} = result) do
-    case Ezagent.Kind.Template.PreStart.complete(claim, {:ok, %{workers: workers}}) do
+  defp finalize_pre_start(%{claim: claim}, {:ok, %{workers: workers, fresh?: fresh?}} = result) do
+    case Ezagent.Kind.Template.PreStart.complete(
+           claim,
+           {:ok, %{workers: workers, fresh?: fresh?}}
+         ) do
       :ok -> result
       {:error, _reason} = error -> error
     end

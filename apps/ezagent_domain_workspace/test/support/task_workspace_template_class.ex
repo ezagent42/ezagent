@@ -20,9 +20,10 @@ defmodule EzagentDomainWorkspace.TestSupport.TaskWorkspaceTemplateClass do
     })
 
     agent_uri = Ezagent.URI.new!(Map.fetch!(data, "agent_uri"))
+    fresh? = Application.get_env(:ezagent_domain_workspace, :sidecar_gate_fresh?, true)
 
     with {:ok, _pid} <- Ezagent.LocalRuntime.ensure_started(agent_uri) do
-      {:ok, [agent_uri], %{fresh?: true}}
+      {:ok, [agent_uri], %{fresh?: fresh?}}
     end
   end
 end

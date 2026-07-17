@@ -177,12 +177,12 @@ defmodule Ezagent.Workspace.TaskWorkspace.StoreTest do
     assert first.start_claim_token != second.start_claim_token
 
     assert {:error, :sidecar_start_claim_lost} =
-             Store.mark_started(first.id, first.start_claim_token, retirement_handle(),
+             Store.mark_started(first.id, first.start_claim_token, retirement_handle(first),
                now: at(32)
              )
 
     assert {:ok, started} =
-             Store.mark_started(second.id, second.start_claim_token, retirement_handle(),
+             Store.mark_started(second.id, second.start_claim_token, retirement_handle(second),
                now: at(32)
              )
 
@@ -236,13 +236,65 @@ defmodule Ezagent.Workspace.TaskWorkspace.StoreTest do
       Store.claim_start(ready.id, ready.start_token, now: at(0), lease_seconds: 30)
 
     assert {:error, :sidecar_start_claim_lost} =
-             Store.mark_started(starting.id, starting.start_claim_token, retirement_handle(),
-               now: at(31)
-             )
+             Store.mark_started(
+               starting.id,
+               starting.start_claim_token,
+               retirement_handle(starting), now: at(31))
 
     current = Repo.get!(Provision, ready.id)
     assert current.status == :starting
     assert current.start_claim_token == starting.start_claim_token
+  end
+
+  test "start lease boundary is expired for completion and renewable takeover" do
+    ready = ready_row()
+    {:ok, first} = Store.claim_start(ready.id, ready.start_token, now: at(0), lease_seconds: 30)
+
+    assert {:error, :sidecar_start_claim_lost} =
+             Store.mark_started(first.id, first.start_claim_token, retirement_handle(first),
+               now: at(30)
+             )
+
+    assert {:error, :sidecar_start_claim_lost} =
+             Store.renew_start_claim(first.id, first.start_claim_token,
+               now: at(30),
+               lease_seconds: 30
+             )
+
+    assert {:ok, second} =
+             Store.claim_start(first.id, first.start_token, now: at(30), lease_seconds: 30)
+
+    assert second.start_claim_token != first.start_claim_token
+  end
+
+  test "mark_started rejects a retirement attempt other than the prebound identity" do
+    ready = ready_row()
+
+    handle = %{
+      agent_uri: "entity://task-workspace-store/agent/worker",
+      provenance_root_uri: "entity://task-workspace-store/user/owner",
+      creation_attempt_id: "unused"
+    }
+
+    {:ok, bound} =
+      Store.bind_start_intent(ready.provision_id, %{
+        agent_uri: handle.agent_uri,
+        provenance_root_uri: handle.provenance_root_uri,
+        workspace_uri: ready.workspace_uri,
+        task_access_uri: ready.task_access_uri,
+        task_uri: ready.task_uri,
+        generation: ready.generation
+      })
+
+    {:ok, starting} =
+      Store.claim_start(bound.id, bound.start_token, now: at(0), lease_seconds: 30)
+
+    mismatched = %{handle | creation_attempt_id: "later-attempt"}
+
+    assert {:error, :creation_attempt_mismatch} =
+             Store.mark_started(starting.id, starting.start_claim_token, mismatched, now: at(1))
+
+    assert Repo.get!(Provision, starting.id).creation_attempt_id == bound.creation_attempt_id
   end
 
   test "concurrent start claims have exactly one winner" do
@@ -463,7 +515,17 @@ defmodule Ezagent.Workspace.TaskWorkspace.StoreTest do
         now: at(-1)
       )
 
-    ready
+    {:ok, bound} =
+      Store.bind_start_intent(ready.provision_id, %{
+        agent_uri: "entity://task-workspace-store/agent/worker",
+        provenance_root_uri: "entity://task-workspace-store/user/owner",
+        workspace_uri: ready.workspace_uri,
+        task_access_uri: ready.task_access_uri,
+        task_uri: ready.task_uri,
+        generation: ready.generation
+      })
+
+    bound
   end
 
   defp retirement_handle do
@@ -473,6 +535,9 @@ defmodule Ezagent.Workspace.TaskWorkspace.StoreTest do
       provenance_root_uri: "entity://acme/user/owner"
     }
   end
+
+  defp retirement_handle(%Provision{} = row),
+    do: %{retirement_handle() | creation_attempt_id: row.creation_attempt_id}
 
   defp at(seconds), do: DateTime.add(~U[2026-07-17 00:00:00.000000Z], seconds, :second)
 end

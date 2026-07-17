@@ -155,12 +155,11 @@ defmodule Ezagent.Workspace.TaskWorkspace.GitRunnerTest do
              GitRunner.verify(%{cache_path: "/cache", worktree_path: "/worktree"})
   end
 
-  test "verification classifies every executor failure as checkout unavailable" do
+  test "verification classifies infrastructure executor failures as checkout unavailable" do
     for failure <- [
           :git_command_timeout,
           :git_output_limit_exceeded,
           {:spawn_failed, :enoent},
-          {:git_exit, 128},
           {:signal, :sigkill}
         ] do
       ready = %{
@@ -174,6 +173,59 @@ defmodule Ezagent.Workspace.TaskWorkspace.GitRunnerTest do
 
       assert {:error, :checkout_unavailable} = GitRunner.verify(ready)
     end
+  end
+
+  test "verification classifies proof-command git exits as checkout mismatch" do
+    for failing_command <- [:origin, :list, :head, :branch, :status] do
+      executor = fn argv, _opts ->
+        command =
+          cond do
+            Enum.take(argv, -3) == ["remote", "get-url", "origin"] -> :origin
+            "worktree" in argv -> :list
+            "rev-parse" in argv -> :head
+            "symbolic-ref" in argv -> :branch
+            "status" in argv -> :status
+          end
+
+        if command == failing_command do
+          {:error, {:git_exit, 128}}
+        else
+          stdout =
+            case command do
+              :origin ->
+                "https://git.example.test/acme/widgets.git\n"
+
+              :list ->
+                "worktree /worktree\0HEAD #{String.duplicate("a", 40)}\0branch refs/heads/ezagent/task/fixture/g1\0\0"
+
+              :head ->
+                String.duplicate("a", 40) <> "\n"
+
+              :branch ->
+                "refs/heads/ezagent/task/fixture/g1\n"
+
+              :status ->
+                ""
+            end
+
+          {:ok, %{stdout: stdout, stderr: "", exit_status: 0}}
+        end
+      end
+
+      assert {:error, :workspace_checkout_mismatch} =
+               GitRunner.verify(verification_fixture(executor))
+    end
+  end
+
+  test "detached HEAD is a positive checkout mismatch" do
+    executor = fn argv, _opts ->
+      if "symbolic-ref" in argv,
+        do: {:error, {:git_exit, 1}},
+        else: verification_success(argv)
+    end
+
+    assert {:error, :workspace_checkout_mismatch} =
+             GitRunner.verify(verification_fixture(executor))
   end
 
   test "reused cache fetches a moved base ref and creates the deterministic branch", %{root: root} do
@@ -677,6 +729,39 @@ defmodule Ezagent.Workspace.TaskWorkspace.GitRunnerTest do
           {:ok, %{stdout: "", stderr: "", exit_status: 0}}
       end
     end
+  end
+
+  defp verification_fixture(executor) do
+    %{
+      cache_path: "/cache",
+      worktree_path: "/worktree",
+      remote_url: "https://git.example.test/acme/widgets.git",
+      resolved_base_commit: String.duplicate("a", 40),
+      local_branch_ref: "refs/heads/ezagent/task/fixture/g1",
+      runner_opts: %{executor: executor}
+    }
+  end
+
+  defp verification_success(argv) do
+    stdout =
+      cond do
+        Enum.take(argv, -3) == ["remote", "get-url", "origin"] ->
+          "https://git.example.test/acme/widgets.git\n"
+
+        "worktree" in argv ->
+          "worktree /worktree\0HEAD #{String.duplicate("a", 40)}\0branch refs/heads/ezagent/task/fixture/g1\0\0"
+
+        "rev-parse" in argv ->
+          String.duplicate("a", 40) <> "\n"
+
+        "symbolic-ref" in argv ->
+          "refs/heads/ezagent/task/fixture/g1\n"
+
+        true ->
+          ""
+      end
+
+    {:ok, %{stdout: stdout, stderr: "", exit_status: 0}}
   end
 
   defp git!(cd, args) do

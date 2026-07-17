@@ -386,7 +386,9 @@ defmodule Ezagent.Entity.AgentTemplateSpawnSandboxMaterializationTest do
       assert data["cwd"] == "/safe/task"
       refute Map.has_key?(fixture.content, :pre_start_ref)
       refute Map.has_key?(data, "pre_start_ref")
-      assert_receive {:pre_start_complete, "claim-one", {:ok, %{workers: [_worker]}}}
+
+      assert_receive {:pre_start_complete, "claim-one",
+                      {:ok, %{workers: [_worker], fresh?: false}}}
     end
 
     test "instantiate error completes exactly once", fixture do
@@ -509,7 +511,10 @@ defmodule Ezagent.Entity.AgentTemplateSpawnSandboxMaterializationTest do
 
       assert {:ok, %{workers: [^worker], fresh?: true}} = spawn_with_reference(fixture)
       assert_receive {:instantiate_called, ^worker}
-      assert_receive {:pre_start_complete, "claim-one", {:ok, %{workers: [^worker]}}}
+
+      assert_receive {:pre_start_complete, "claim-one",
+                      {:ok, %{workers: [^worker], fresh?: true}}}
+
       refute_receive {:pre_start_complete, _, _}
     end
 
