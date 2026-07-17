@@ -32,7 +32,7 @@ per-tenant storage invariants。
 - SQLite/PostgreSQL 双迁移均包含 `workspace_uri NOT NULL`，并已纳入 per-tenant invariant。
 - 新增 World Tier-1 fixture 和交互用例，覆盖三层卡片、提醒 dispatch 与“已通知 陈瑞华”回执。
 
-## 暂缓项
+## 后续完成与依赖项
 
 ### G4 · Founder Agent Key authority
 
@@ -75,6 +75,35 @@ AC1–AC5 onboarding 向导仍依赖 G4：当前 capability-signing 与 hosted a
 尚未就绪，不能伪造“配置凭证 → Agent ready → 首条回复”的完成步骤。依赖落地后再实现首次进入自动向导、
 步骤进度、跳过和 Settings 重开入口。
 
+### G8 · 企业资料 / KB 导入 UI（代码完成）
+
+本阶段提交：`a695b9a86 feat(world): add workspace KB imports`。
+
+- Manage → Knowledge Base 提供“粘贴文本”“上传文件”“已注册来源”三个入口。
+- 粘贴文本要求标题和正文；上传支持单个或批量 `.txt` / `.md`，每次最多 10 个，单文件最大 256 KB。
+- 前端显示读取、解析和写入状态；服务端返回逐文档 indexed / failed 结果、chunk 数和稳定错误码。
+- 新来源使用 `resource://<workspace>/kb-source/<unique-name>`，经 `Ezagent.Resource.FsResolver`
+  解析后独占创建；不接受客户端路径，不覆盖已有来源。
+- 写入前按目标 Agent、workspace 和 `kb.ingest` concrete cap shape 做权限预检；KB Behavior dispatch
+  在索引前再次执行 CapBAC。无权限请求不创建文件，索引失败会清理本次新建来源。
+- 服务端再次校验标题、UTF-8、空内容、文件类型、字节大小和批量上限，不把浏览器校验当作安全边界。
+
+当前 G8 代码与聚焦测试已推送；浏览器交互截图将在下一阶段验证后追加到同一 PR。
+
+## 十项清单当前状态
+
+| Gap | 状态 | 说明 |
+|---|---|---|
+| G1 | 完成 | 管理员注册设置、开放注册、关闭时申请/邀请入口均已实现 |
+| G2 | 部分完成 | 邀请 UI 与注册链接已实现；仍需 AC7 冷启动浏览器全流程证据 |
+| G3 | 部分完成 | 已显示当前 workspace 并文档化单-own；仍需显示 Founder / Member 角色 |
+| G4 | 依赖阻塞 | 等待 capability-signing 与 hosted agent provisioning contract |
+| G5 | 完成 | 三层可行动错误、founder 提醒、修复回执和未知错误工单已完成 |
+| G6 | 完成 | 可读 Agent、登录返回、中文 Session 名和用户可见错误均已完成 |
+| G7 | 部分完成 | Gallery AC6 / AC7 完成；onboarding AC1–AC5 依赖 G4 |
+| G8 | 代码完成 | 文本 / 文件导入、受控存储、逐文档反馈和测试完成；待补浏览器证据 |
+| G9 | 部分完成 | 中英文第一天文档已有；产品内帮助入口、搜索和首次提示未完成 |
+| G10 | 部分完成 | PR 浏览器 gate 及 G5/G6 场景已有；完整 ready / reply 链依赖 G4 |
 
 ## 验证结果
 
@@ -90,12 +119,16 @@ AC1–AC5 onboarding 向导仍依赖 G4：当前 capability-signing 与 hosted a
 | World fixture drift | PASS |
 | World TypeScript（含 E2E tsconfig） | PASS |
 | World ESLint | PASS，0 warnings |
-| World Vitest | PASS，18 / 18 |
+| World Vitest | PASS，20 / 20 |
 | 登录 Continue / 安全返回控制器测试 | PASS，11 / 0 |
 | session 名称规则 World 测试 | PASS，14 / 0 |
 | G6 用户可见错误映射聚焦测试 | PASS，24 / 0 |
+| G8 KB 受控来源、校验、清理与未授权无落盘 | PASS，5 / 0（PostgreSQL 5432） |
+| G8 TypeScript + 聚焦 Vitest | PASS，2 / 0 |
+| G8 World 前端完整 lint / Vitest / production build | PASS，0 warnings / 20 tests / build success |
 | 应用内浏览器交互验收 | PASS：三层卡片、founder 提醒、成功回执、Agent 三态、中文 session 名称可提交 |
 | 本机 Playwright CLI | 环境阻塞：缺少其专用 Chromium executable；不是产品断言失败，GitHub frontend gate 继续执行 |
+| `mix precommit` | 本阶段未运行；按用户要求在代码完成后统一由 PR 执行 |
 
 ## 浏览器证据
 
@@ -125,5 +158,6 @@ G7 普通用户可从会话侧栏浏览应用名称、描述与 flavor 标签：
 
 ## 交付说明
 
-请在 PR #1447 按 G1、G5、G6 的顺序审阅。G4 的依赖阻塞已显式保留，不应把“没有
-`:stub_grant`”误判为遗漏；这是 #1436 的架构决定。
+请在 PR #1447 按 G1、G5、G6、G7 Gallery、G8 KB 导入的顺序审阅。G4 的依赖阻塞已显式保留，
+不应把“没有 `:stub_grant`”误判为遗漏；这是 #1436 的架构决定。G8 实现提交为 `a695b9a86`；
+下一阶段补浏览器证据后，再继续处理不依赖 G4 的 G2 / G3 / G9 收尾项。
