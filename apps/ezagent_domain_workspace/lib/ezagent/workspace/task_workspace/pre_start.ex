@@ -4,7 +4,7 @@ defmodule Ezagent.Workspace.TaskWorkspace.PreStart do
   @behaviour Ezagent.Kind.Template.PreStart
 
   alias Ezagent.Workspace.TaskWorkspace.AgentStart.Ref
-  alias Ezagent.Workspace.TaskWorkspace.{GitRunner, Provision, Store}
+  alias Ezagent.Workspace.TaskWorkspace.{GitRunner, PreStartVerifier, Provision, Store}
 
   @start_lease_safety_ms 10_000
 
@@ -83,7 +83,7 @@ defmodule Ezagent.Workspace.TaskWorkspace.PreStart do
     }
 
     with true <- Path.expand(row.worktree_path) == row.worktree_path,
-         :ok <- runner().verify(proof) do
+         :ok <- PreStartVerifier.verify(proof) do
       :ok
     else
       false -> fail_proof(row, :workspace_checkout_mismatch)
@@ -122,12 +122,5 @@ defmodule Ezagent.Workspace.TaskWorkspace.PreStart do
       {:ok, %URI{} = uri} -> {:ok, uri}
       {:error, _reason} -> {:error, :invalid_retirement_handle}
     end
-  end
-
-  if Mix.env() == :test do
-    defp runner,
-      do: Application.get_env(:ezagent_domain_workspace, :task_workspace_git_runner, GitRunner)
-  else
-    defp runner, do: GitRunner
   end
 end

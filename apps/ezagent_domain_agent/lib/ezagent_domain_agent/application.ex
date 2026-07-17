@@ -52,7 +52,7 @@ defmodule EzagentDomainAgent.Application do
     :ok = CapabilityRegistry.register(Agent, :receive, AgentReceive)
     :ok = Ezagent.Agent.TransportReadiness.init()
     :ok = Ezagent.ReadyGate.register_external_gate(Ezagent.Agent.TransportReadiness)
-    :ok = Ezagent.Kind.Template.FlavorHook.register(Ezagent.Agent.FlavorTemplateHook)
+    :ok = Ezagent.Kind.Template.AttributeHook.register(Ezagent.Agent.FlavorTemplateHook)
     :ok = Ezagent.Plugin.FlavorPublishHook.register(Ezagent.Agent.FlavorPublishHook)
     # role-as-data (SPEC §4): register the role-seed hook impl so each plugin's
     # `roles/0` is seeded as a role ConfigObject at boot. Registered HERE (before

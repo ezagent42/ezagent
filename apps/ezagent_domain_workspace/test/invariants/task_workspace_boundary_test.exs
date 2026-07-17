@@ -1,6 +1,9 @@
 defmodule Ezagent.Workspace.TaskWorkspace.BoundaryTest do
   use ExUnit.Case, async: true
 
+  @forbidden_secret_field ~r/(^|_)(access_token|auth_blob|key_material|credential_ref|authorization_header|private_key|secret|credential|environment)($|_)/
+  @lifecycle_fields ~w(claim_token start_token start_claim_token start_token_consumed_at cleanup_reason cleaned_at)
+
   test "cc plugin has no task-workspace transport knowledge" do
     refute_source_under(
       "apps/ezagent_plugin_cc/lib",
@@ -28,8 +31,28 @@ defmodule Ezagent.Workspace.TaskWorkspace.BoundaryTest do
   end
 
   test "durable provision schema contains no credential material" do
-    refute_schema_fields(
-      ~w(token credential secret private_key authorization_header environment)a
+    refute_secret_schema_and_migration_fields()
+  end
+
+  test "task workspace start bridge has exact production call sites" do
+    assert_only_production_calls("pre_start_ref:", [
+      "apps/ezagent_domain_workspace/lib/ezagent/workspace/task_workspace/agent_start.ex"
+    ])
+
+    assert_only_production_calls("AgentStart.start(", [])
+  end
+
+  test "core template vocabulary remains domain neutral" do
+    refute_source_under(
+      "apps/ezagent_core/lib/ezagent/kind/template",
+      ~r/Git|Workspace|Task|provider|flavor|recipe|plugin/
+    )
+  end
+
+  test "production pre-start has no configurable runner seam" do
+    refute_source_under(
+      "apps/ezagent_domain_workspace/lib/ezagent/workspace/task_workspace/pre_start.ex",
+      ~r/Application\.get_env[\s\S]*task_workspace_git_runner/
     )
   end
 
@@ -44,11 +67,16 @@ defmodule Ezagent.Workspace.TaskWorkspace.BoundaryTest do
   end
 
   defp source_files(root) do
-    root
-    |> project_path()
-    |> Path.join("**/*.{ex,exs}")
-    |> Path.wildcard()
-    |> Enum.map(&Path.relative_to(&1, project_root()))
+    absolute = project_path(root)
+
+    if File.regular?(absolute) do
+      [root]
+    else
+      absolute
+      |> Path.join("**/*.{ex,exs}")
+      |> Path.wildcard()
+      |> Enum.map(&Path.relative_to(&1, project_root()))
+    end
   end
 
   defp refute_source_under(root, regex) do
@@ -70,20 +98,39 @@ defmodule Ezagent.Workspace.TaskWorkspace.BoundaryTest do
     assert Enum.sort(callers) == Enum.sort(allowed)
   end
 
-  defp refute_schema_fields(fields) do
-    schema =
-      project_path(
-        "apps/ezagent_domain_workspace/lib/ezagent/workspace/task_workspace/provision.ex"
-      )
+  defp refute_secret_schema_and_migration_fields do
+    schema_names =
+      "apps/ezagent_domain_workspace/lib/ezagent/workspace/task_workspace/provision.ex"
+      |> project_path()
       |> File.read!()
+      |> extract_names(~r/field\(\s*:(?<name>[a-zA-Z0-9_]+)/)
 
-    names =
-      ~r/field\(\s*:(?<name>[a-zA-Z0-9_]+)/
-      |> Regex.scan(schema, capture: ["name"])
-      |> List.flatten()
-      |> Enum.map(&String.to_atom/1)
+    migration_names =
+      "apps/ezagent_core/priv/repo_pg/migrations/*.exs"
+      |> project_path()
+      |> Path.wildcard()
+      |> Enum.flat_map(fn path ->
+        source = File.read!(path)
 
-    assert MapSet.disjoint?(MapSet.new(names), MapSet.new(fields))
+        if String.contains?(source, "git_task_workspace_provisions") do
+          extract_names(source, ~r/add\s+:(?<name>[a-zA-Z0-9_]+)/)
+        else
+          []
+        end
+      end)
+
+    names = Enum.uniq(schema_names ++ migration_names)
+    lifecycle_names = Enum.filter(names, &(&1 in @lifecycle_fields))
+    forbidden = Enum.filter(names -- lifecycle_names, &Regex.match?(@forbidden_secret_field, &1))
+
+    assert Enum.sort(lifecycle_names) == Enum.sort(Enum.filter(@lifecycle_fields, &(&1 in names)))
+    assert forbidden == []
+  end
+
+  defp extract_names(source, regex) do
+    regex
+    |> Regex.scan(source, capture: ["name"])
+    |> List.flatten()
   end
 
   defp project_path(path), do: Path.join(project_root(), path)

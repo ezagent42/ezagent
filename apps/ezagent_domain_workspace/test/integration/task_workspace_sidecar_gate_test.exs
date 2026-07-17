@@ -201,7 +201,7 @@ defmodule Ezagent.Workspace.TaskWorkspace.SidecarGateTest do
     agent_uri = Ezagent.URI.agent("sidecar-gate", "worker-#{unique}")
     ready = ready_row(agent_uri)
 
-    assert {:ok, %{fresh?: false}} =
+    assert {:ok, %{fresh?: true}} =
              AgentStart.start(
                %{flavor: flavor, project_cwd: "/untrusted/authored"},
                agent_uri,

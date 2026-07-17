@@ -20,13 +20,9 @@ defmodule EzagentDomainWorkspace.TestSupport.TaskWorkspaceTemplateClass do
     })
 
     agent_uri = Ezagent.URI.new!(Map.fetch!(data, "agent_uri"))
-    owner_uri = Application.fetch_env!(:ezagent_domain_workspace, :sidecar_gate_test_provenance)
-    workspace_uri = Ezagent.URI.workspace_of(agent_uri)
-    attempt_id = Ezagent.Agent.CreationInventory.new_attempt_id()
-    :ok = Ezagent.AgentLineage.record(agent_uri, owner_uri)
-    :ok = Ezagent.WorkspaceRegistry.bind(agent_uri, workspace_uri)
-    :ok = Ezagent.Agent.CreationInventory.record(attempt_id, agent_uri, owner_uri, workspace_uri)
 
-    {:ok, [agent_uri], %{fresh?: false}}
+    with {:ok, _pid} <- Ezagent.LocalRuntime.ensure_started(agent_uri) do
+      {:ok, [agent_uri], %{fresh?: true}}
+    end
   end
 end
