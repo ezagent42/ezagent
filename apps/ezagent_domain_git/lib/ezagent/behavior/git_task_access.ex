@@ -164,18 +164,21 @@ defmodule Ezagent.ActionSet.GitTaskAccess do
            {:ok, validated_args} <- validate_workspace_request(policy, action, args),
            :ok <- authorize_receiver(policy, action, ctx),
            {:ok, request} <-
-             WorkspaceProvisionPort.Request.new(%{
-               task_access_uri: task_access_uri,
-               task_uri: validated_args.task_uri,
-               generation: validated_args.generation,
-               operation: operation,
-               provision_id:
-                 provision_id(
-                   policy.workspace_uri,
-                   validated_args.task_uri,
-                   validated_args.generation
-                 )
-             }),
+             WorkspaceProvisionPort.Request.new_authorized(
+               %{
+                 task_access_uri: task_access_uri,
+                 task_uri: validated_args.task_uri,
+                 generation: validated_args.generation,
+                 operation: operation,
+                 provision_id:
+                   provision_id(
+                     policy.workspace_uri,
+                     validated_args.task_uri,
+                     validated_args.generation
+                   )
+               },
+               policy
+             ),
            {:ok, implementation} <- WorkspaceProvisionRegistry.implementation() do
         invoke_workspace(implementation, operation, request)
       end

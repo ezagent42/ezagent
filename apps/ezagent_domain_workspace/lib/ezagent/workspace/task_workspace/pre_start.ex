@@ -106,9 +106,9 @@ defmodule Ezagent.Workspace.TaskWorkspace.PreStart do
   end
 
   defp parse_uri(value) when is_binary(value) do
-    case URI.new(value) do
+    case Ezagent.URI.parse(value) do
       {:ok, %URI{} = uri} -> {:ok, uri}
-      {:error, _part} -> {:error, :invalid_retirement_handle}
+      {:error, _reason} -> {:error, :invalid_retirement_handle}
     end
   end
 

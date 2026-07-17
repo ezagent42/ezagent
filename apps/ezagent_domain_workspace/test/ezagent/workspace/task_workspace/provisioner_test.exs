@@ -20,6 +20,8 @@ defmodule Ezagent.Workspace.TaskWorkspace.ProvisionerTest do
     Application.delete_env(:ezagent_domain_workspace, :provisioner_test_verify_result)
     Application.delete_env(:ezagent_domain_workspace, :provisioner_test_delay)
     Application.delete_env(:ezagent_domain_workspace, :provisioner_test_verify_hook)
+    Application.delete_env(:ezagent_domain_workspace, :provisioner_test_remove_clears)
+    Application.delete_env(:ezagent_domain_workspace, :provisioner_test_verify_absent_result)
 
     on_exit(fn ->
       Application.delete_env(:ezagent_domain_workspace, :task_workspace_git_runner)
@@ -28,6 +30,8 @@ defmodule Ezagent.Workspace.TaskWorkspace.ProvisionerTest do
       Application.delete_env(:ezagent_domain_workspace, :provisioner_test_verify_result)
       Application.delete_env(:ezagent_domain_workspace, :provisioner_test_delay)
       Application.delete_env(:ezagent_domain_workspace, :provisioner_test_verify_hook)
+      Application.delete_env(:ezagent_domain_workspace, :provisioner_test_remove_clears)
+      Application.delete_env(:ezagent_domain_workspace, :provisioner_test_verify_absent_result)
     end)
 
     :ok
@@ -63,6 +67,16 @@ defmodule Ezagent.Workspace.TaskWorkspace.ProvisionerTest do
     refute_receive {:git_prepare, _}
   end
 
+  test "missing or forged authorized policy fails closed before effects" do
+    fixture = start_policy(:public)
+
+    assert {:error, :task_policy_mismatch} =
+             Provisioner.prepare(%{fixture.request | task_policy: nil})
+
+    assert Repo.aggregate(Provision, :count) == 0
+    refute_receive {:git_prepare, _}
+  end
+
   test "stored fingerprint drift blocks before Git effect" do
     fixture = start_policy(:public)
 
@@ -86,7 +100,7 @@ defmodule Ezagent.Workspace.TaskWorkspace.ProvisionerTest do
 
     assert {:error, :checkout_unavailable} = Provisioner.prepare(fixture.request)
 
-    assert %Provision{status: :cleanup_pending, cleanup_reason: "checkout_unavailable"} =
+    assert %Provision{status: :cleaned, cleanup_reason: "checkout_unavailable"} =
              only_row()
 
     second = start_policy(:public, "second")
@@ -101,7 +115,7 @@ defmodule Ezagent.Workspace.TaskWorkspace.ProvisionerTest do
     assert {:error, :workspace_not_ready} = Provisioner.prepare(second.request)
 
     assert Repo.get_by!(Provision, provision_id: second.request.provision_id).status ==
-             :cleanup_pending
+             :cleaned
   end
 
   test "cancelled generation and an active path owner never run a second effect" do
@@ -176,8 +190,17 @@ defmodule Ezagent.Workspace.TaskWorkspace.ProvisionerTest do
     refute is_nil(current.claim_token)
   end
 
-  test "final policy reload rejects visibility drift before publishing ready" do
+  test "authorized policy envelope remains authoritative during preparation" do
     fixture = start_policy(:public)
+    _paths = configure_canonical_prepare(fixture)
+
+    Application.put_env(
+      :ezagent_domain_workspace,
+      :provisioner_test_verify_absent_result,
+      {:error, :worktree_still_present}
+    )
+
+    Application.put_env(:ezagent_domain_workspace, :provisioner_test_remove_clears, true)
 
     Application.put_env(:ezagent_domain_workspace, :provisioner_test_verify_hook, fn ->
       :ok = Ezagent.DomainGit.TaskAccessSupervisor.teardown(fixture.request.task_access_uri)
@@ -187,17 +210,27 @@ defmodule Ezagent.Workspace.TaskWorkspace.ProvisionerTest do
       :ok
     end)
 
-    assert {:error, :task_policy_mismatch} = Provisioner.prepare(fixture.request)
+    assert {:ok, %{status: :ready}} = Provisioner.prepare(fixture.request)
     assert_receive {:git_prepare, _}
-    assert_receive {:git_remove, _}
+    refute_receive {:git_remove, _}
 
-    assert %Provision{status: :cleanup_pending, cleanup_reason: "task_policy_mismatch"} =
+    assert %Provision{status: :ready} =
              Repo.get_by!(Provision, provision_id: fixture.request.provision_id)
   end
 
   test "provision lease exceeds bounded lock wait plus the Git command budget" do
     assert Provisioner.provision_lease_seconds() * 1_000 >
              5_000 + Ezagent.Workspace.TaskWorkspace.GitRunner.maximum_provision_duration_ms()
+  end
+
+  test "provision failures do not call Git removal outside the reconciler" do
+    source =
+      File.read!(
+        Path.expand("../../../../lib/ezagent/workspace/task_workspace/provisioner.ex", __DIR__)
+      )
+
+    refute source =~ "runner().remove"
+    refute source =~ "serialized_remove"
   end
 
   test "cleanup revalidates policy coordinates and completes the durable row" do
@@ -223,10 +256,14 @@ defmodule Ezagent.Workspace.TaskWorkspace.ProvisionerTest do
 
     assert provision_id == fixture.request.provision_id
     assert_receive {:git_verify_absent, _}
+
+    assert {:ok, %{status: :cleaned, provision_id: ^provision_id}} =
+             Provisioner.cleanup(cleanup_request)
   end
 
   test "failed prepared worktree waits for the same cache lock before removal" do
     fixture = start_policy(:public)
+    paths = configure_canonical_prepare(fixture)
     owner = self()
 
     Application.put_env(:ezagent_domain_workspace, :provisioner_test_verify_hook, fn ->
@@ -240,12 +277,20 @@ defmodule Ezagent.Workspace.TaskWorkspace.ProvisionerTest do
       {:error, :worktree_verification_failed}
     )
 
+    Application.put_env(
+      :ezagent_domain_workspace,
+      :provisioner_test_verify_absent_result,
+      {:error, :worktree_still_present}
+    )
+
+    Application.put_env(:ezagent_domain_workspace, :provisioner_test_remove_clears, true)
+
     provision = Task.async(fn -> Provisioner.prepare(fixture.request) end)
     assert_receive {:verify_paused, worker}
 
     holder =
       Task.async(fn ->
-        Ezagent.Workspace.TaskWorkspace.CacheLock.with_lock("cache-fixture", 1_000, fn ->
+        Ezagent.Workspace.TaskWorkspace.CacheLock.with_lock(paths.cache_identity, 1_000, fn ->
           send(owner, {:remove_lock_held, self()})
           receive do: (:release_remove_lock -> :ok)
         end)
@@ -298,13 +343,17 @@ defmodule Ezagent.Workspace.TaskWorkspace.ProvisionerTest do
 
     task_uri = Ezagent.URI.resource(workspace, "kanban-task", task_id)
 
-    request = %Request{
-      task_access_uri: task_access_uri,
-      task_uri: task_uri,
-      generation: 1,
-      operation: :prepare,
-      provision_id: "provision-#{suffix}-#{System.unique_integer([:positive])}"
-    }
+    {:ok, request} =
+      Request.new_authorized(
+        %{
+          task_access_uri: task_access_uri,
+          task_uri: task_uri,
+          generation: 1,
+          operation: :prepare,
+          provision_id: "provision-#{suffix}-#{System.unique_integer([:positive])}"
+        },
+        policy
+      )
 
     %{policy: policy, request: request}
   end
@@ -324,6 +373,21 @@ defmodule Ezagent.Workspace.TaskWorkspace.ProvisionerTest do
       allowed_head_ref: policy.allowed_head_ref,
       visibility: policy.repository.visibility
     }
+  end
+
+  defp configure_canonical_prepare(fixture) do
+    {:ok, paths} =
+      Ezagent.Workspace.TaskWorkspace.Paths.derive(%{
+        workspace_uri: fixture.policy.workspace_uri,
+        repository_uri: fixture.policy.repository.repository_uri,
+        provision_id: fixture.request.provision_id,
+        generation: fixture.request.generation,
+        base_ref: fixture.policy.repository.base_ref,
+        allowed_head_ref: fixture.policy.allowed_head_ref
+      })
+
+    Application.put_env(:ezagent_domain_workspace, :provisioner_test_prepare_result, {:ok, paths})
+    paths
   end
 
   defp other_repository_uri(fixture) do

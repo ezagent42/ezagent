@@ -11,11 +11,12 @@ defmodule Ezagent.Workspace.TaskWorkspace.Reconciler do
   @doc "Requests and completes cleanup of one durable provision row."
   @spec cleanup(pos_integer(), atom()) :: {:ok, Provision.t()} | {:error, term()}
   def cleanup(id, reason) when is_integer(id) and is_atom(reason) do
-    with %Provision{} = row <- Store.get(id),
+    with %Provision{status: status} = row when status != :cleaned <- Store.get(id),
          {:ok, paths} <- canonical_paths(row),
          {:ok, classification, pending} <- Store.request_cleanup(id, reason) do
       claim_and_clean(pending, classification, paths)
     else
+      %Provision{status: :cleaned} = cleaned -> {:ok, cleaned}
       nil -> {:error, :workspace_not_found}
       {:error, _reason} = error -> error
     end
@@ -29,8 +30,12 @@ defmodule Ezagent.Workspace.TaskWorkspace.Reconciler do
         }
   def recover_once(opts \\ []) do
     limit = Keyword.get(opts, :limit, 50)
+    now = Keyword.get(opts, :now, DateTime.utc_now())
+    effects = Store.list_effect_recovery_candidates(limit, now: now)
+    ready_limit = max(limit - length(effects), 0)
+    candidates = effects ++ Store.list_ready_recovery_candidates(ready_limit)
 
-    Store.list_recovery_candidates(limit)
+    candidates
     |> Enum.reduce(%{attempted: 0, cleaned: 0, failed: 0}, fn row, report ->
       result = recover(row)
       report = %{report | attempted: report.attempted + 1}
@@ -58,7 +63,7 @@ defmodule Ezagent.Workspace.TaskWorkspace.Reconciler do
         :ok ->
           {:skip, :ready_workspace_valid}
 
-        {:error, _reason} ->
+        {:error, :worktree_verification_failed} ->
           with {:ok, :never_started, pending} <-
                  Store.request_invalid_ready_cleanup(
                    row.id,
@@ -67,6 +72,9 @@ defmodule Ezagent.Workspace.TaskWorkspace.Reconciler do
                  ) do
             claim_and_clean(pending, :never_started, paths)
           end
+
+        {:error, reason} ->
+          {:error, {:ready_verification_unavailable, reason}}
       end
     end
   end
