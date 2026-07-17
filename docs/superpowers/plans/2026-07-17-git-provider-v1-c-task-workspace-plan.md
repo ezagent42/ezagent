@@ -303,6 +303,8 @@ git commit -m "feat(workspace): persist task workspace lifecycle"
 ### Task 4: Derive Safe Paths and Execute Anonymous Git Plans
 
 **Files:**
+- Modify: `apps/ezagent_core/lib/ezagent/runtime/os_process.ex`
+- Modify: `apps/ezagent_core/test/ezagent/runtime/os_process_test.exs`
 - Create: `apps/ezagent_domain_workspace/lib/ezagent/workspace/task_workspace/paths.ex`
 - Create: `apps/ezagent_domain_workspace/lib/ezagent/workspace/task_workspace/git_runner.ex`
 - Create: `apps/ezagent_domain_workspace/test/ezagent/workspace/task_workspace/paths_test.exs`
