@@ -121,10 +121,10 @@ defmodule EzagentPluginCc.Application do
       # --- DeepSeek provider variants (backend dimension) --------------------
       # Same transport/bridge/behaviors as cc / cc-headless; the ONLY difference
       # is the LLM backend (DeepSeek's Anthropic-compatible endpoint via the
-      # DeepSeek env block, API-key auth from DEEPSEEK_API_KEY — no OAuth login).
+      # "deepseek" catalog profile's env block, API-key auth — no OAuth login).
       # Distinct flavors because AgentFlavorRegistry enforces 1:1
-      # flavor↔template_class; all DeepSeek behaviour lives in
-      # `Ezagent.PluginCc.Provider`.
+      # flavor↔template_class; all provider behaviour lives in
+      # `Ezagent.PluginCc.Provider` + `Ezagent.PluginCc.ProviderCatalog`.
       %{
         flavor: "cc-deepseek",
         kind: Ezagent.Entity.Agent,

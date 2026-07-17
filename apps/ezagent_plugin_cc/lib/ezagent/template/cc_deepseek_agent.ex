@@ -17,8 +17,8 @@ defmodule Ezagent.PluginCc.Template.CcDeepseekAgent do
 
     * `instantiate/3` injects `"provider" => "deepseek"` into the template data
       (also emitted by `template_data_extra/1`), which `SpawnPlan.build_claude_cmd/3`
-      reads to merge `Ezagent.PluginCc.Provider.deepseek_env/0` (the 8-var
-      DeepSeek Claude Code env block) into the PTY `cmd_env`.
+      reads to merge `Ezagent.PluginCc.Provider.profile_env/1` (the profile's
+      static env block + base URL + auth token) into the PTY `cmd_env`.
     * The flavor `"cc-deepseek"` is stored explicitly (`instantiate_for_flavor`)
       AND persisted into `respawn_template_data["flavor"]`, so a cold restart
       re-resolves the flavor → this Class → the DeepSeek env (the property the
@@ -26,14 +26,16 @@ defmodule Ezagent.PluginCc.Template.CcDeepseekAgent do
 
   ## Credential contract — API key, NOT OAuth
 
-  DeepSeek authenticates via `ANTHROPIC_AUTH_TOKEN` (read from `DEEPSEEK_API_KEY`),
+  DeepSeek authenticates via `ANTHROPIC_AUTH_TOKEN` (read from the env var the
+  `"deepseek"` catalog profile names — see `Ezagent.PluginCc.ProviderCatalog`),
   so a deepseek agent has **no `.credentials.json` and no dependency on the host
   `~/.claude` OAuth login**. The CredentialAdapter therefore declares NO
   credential files (`credential_relpaths/0 == []`), NO host-login source
   (`host_login_dir/0 == nil`, so the #1201 host-login-adopt seam no-ops), and a
-  `credential_status/2` that gates purely on `DEEPSEEK_API_KEY`. Launchability is
-  gated fail-fast in `instantiate/3` (a clear `:deepseek_api_key_missing` error
-  before any Kind spawn / transport-join wait), not by an on-disk credential.
+  `credential_status/2` that gates purely on the profile's API-key env var.
+  Launchability is gated fail-fast in `instantiate/3` (a clear
+  `:backend_api_key_missing` error before any Kind spawn / transport-join
+  wait), not by an on-disk credential.
 
   The per-agent `config_dir` (for settings / skills / MCP) reuses cc's `"cc"`
   namespace so the shared `CcAgent.Spawn` config-home + destroy paths stay
@@ -65,7 +67,7 @@ defmodule Ezagent.PluginCc.Template.CcDeepseekAgent do
   @impl Ezagent.Agent.CredentialAdapter
   def credential_env_var, do: CcAgent.credential_env_var()
 
-  # No on-disk login state — DeepSeek's credential is the DEEPSEEK_API_KEY env.
+  # No on-disk login state — DeepSeek's credential is the profile's API-key env.
   @impl Ezagent.Agent.CredentialAdapter
   def credential_relpaths, do: []
 
@@ -77,9 +79,9 @@ defmodule Ezagent.PluginCc.Template.CcDeepseekAgent do
   @impl Ezagent.Agent.CredentialAdapter
   def auth_failure_signals, do: CcAgent.auth_failure_signals()
 
-  # Credential = the DEEPSEEK_API_KEY env; config_dir is irrelevant here.
+  # Credential = the "deepseek" profile's API-key env; config_dir is irrelevant here.
   @impl Ezagent.Agent.CredentialAdapter
-  def credential_status(_home, _opts \\ []), do: Provider.credential_status()
+  def credential_status(_home, _opts \\ []), do: Provider.credential_status("deepseek")
 
   # No host-login concept — the installer host-login-adopt seam no-ops (nil).
   @impl Ezagent.Agent.CredentialAdapter
@@ -91,10 +93,10 @@ defmodule Ezagent.PluginCc.Template.CcDeepseekAgent do
   def template_data_extra(content) when is_map(content) do
     content
     |> CcAgent.template_data_extra()
-    |> Map.put(Provider.provider_key(), Provider.deepseek())
+    |> Map.put(Provider.provider_key(), "deepseek")
   end
 
-  def template_data_extra(_), do: %{Provider.provider_key() => Provider.deepseek()}
+  def template_data_extra(_), do: %{Provider.provider_key() => "deepseek"}
 
   @impl Ezagent.Kind.Template
   defdelegate config_schema, to: Ezagent.PluginCc.Template.CcAgent.ConfigSchema, as: :fields
@@ -122,13 +124,13 @@ defmodule Ezagent.PluginCc.Template.CcDeepseekAgent do
   @impl Ezagent.Kind.Template
   def instantiate(_tmpl_name, %{"agent_uri" => uri_str} = tmpl, workspace_uri) do
     with {:ok, agent_uri} <- parse_uri(uri_str),
-         # Launchability gate FIRST — a missing DEEPSEEK_API_KEY is a clear
+         # Launchability gate FIRST — a missing profile API key is a clear
          # error BEFORE any Kind spawn / config-dir materialize / transport-join
          # wait, never an opaque bridge-join timeout.
-         :ok <- Provider.ensure_api_key(agent_uri) do
+         :ok <- Provider.ensure_api_key("deepseek", agent_uri) do
       tmpl =
         tmpl
-        |> Map.put(Provider.provider_key(), Provider.deepseek())
+        |> Map.put(Provider.provider_key(), "deepseek")
         # Persist the flavor so Spawn's `Map.put_new("flavor", "cc")` no-ops and
         # cold-restart flavor resolution reads "cc-deepseek".
         |> Map.put("flavor", @flavor)

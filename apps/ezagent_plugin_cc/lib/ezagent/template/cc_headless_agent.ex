@@ -271,12 +271,13 @@ defmodule Ezagent.PluginCc.Template.CcHeadlessAgent do
       allowed_tools: ensure_skill_tool(Map.get(tmpl, "allowed_tools"), plugins != []),
       disallowed_tools: Map.get(tmpl, "disallowed_tools"),
       mcp_servers: Map.get(tmpl, "mcp_servers"),
-      # Provider/backend env (anthropic|deepseek), ORTHOGONAL to the headless
-      # transport. anthropic → %{} (unchanged). deepseek → the 8-var DeepSeek
-      # block; the sidecar exports it as `EZAGENT_CC_SDK_ENV` and the Python
-      # worker applies it as the Claude Code SDK subprocess `env=`, so headless
-      # deepseek talks to the DeepSeek endpoint exactly like the pty path. The
-      # deepseek instantiate already fail-fasts on a missing DEEPSEEK_API_KEY.
+      # Provider/backend env (anthropic | custom-backend profile), ORTHOGONAL
+      # to the headless transport. anthropic → %{} (unchanged). A catalog
+      # profile → its env block; the sidecar exports it as `EZAGENT_CC_SDK_ENV`
+      # and the Python worker applies it as the Claude Code SDK subprocess
+      # `env=`, so a headless custom-backend agent talks to the vendor endpoint
+      # exactly like the pty path. The custom-backend instantiate already
+      # fail-fasts on a missing profile API key.
       cmd_env: provider_cmd_env(tmpl),
       uv_path: Map.get(tmpl, "uv_path"),
       python_path: Map.get(tmpl, "python_path"),

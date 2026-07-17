@@ -11,8 +11,9 @@ defmodule Ezagent.Orchestrator.CcOrchestratorSeed do
   config, no system prompt. PR-5 makes the seed populate a real slice:
 
   - `flavor: "cc-deepseek"` — the orchestrator is a `claude` PTY agent on the
-    DeepSeek backend (flavor merged in #1324): it authenticates via
-    `DEEPSEEK_API_KEY`, so it needs no host `~/.claude` OAuth login (no #161
+    DeepSeek backend (flavor merged in #1324): it authenticates via the
+    API-key env var the `"deepseek"` catalog profile names, so it needs no
+    host `~/.claude` OAuth login (no #161
     co-tenant issue) and boots authenticated (no exit-256 / bridge-join timeout
     from a missing login). The deepseek flavor is a PROVIDER shim over cc that
     reuses the cc config namespace, so `.mcp.json` generation is unchanged.
@@ -429,7 +430,8 @@ defmodule Ezagent.Orchestrator.CcOrchestratorSeed do
         "The session orchestrator — an LLM-driven manager that composes " <>
           "and routes a team of worker agents via the 7 orchestration tools.",
       # cc-deepseek (flavor merged in #1324): the orchestrator authenticates via
-      # DEEPSEEK_API_KEY, so it has no `.credentials.json`, no dependency on the
+      # the API-key env var the "deepseek" catalog profile names, so it has no
+      # `.credentials.json`, no dependency on the
       # host `~/.claude` OAuth login (#161), and boots authenticated — no
       # exit-256 / bridge-join timeout from a missing host login. It reuses cc's
       # config_dir namespace + the shared `CcAgent.Spawn` chokepoint, so
@@ -614,7 +616,8 @@ defmodule Ezagent.Orchestrator.CcOrchestratorSeed do
     # don't apply. Written with dot-access (not a `%URI{host:}` positional match)
     # + the rebuild split off the `URI.to_string` line so the source-scan
     # (positional_uri_read / uri_string_key) doesn't false-positive on it.
-    uri = URI.parse(ws_url) # uri-canonical-allow: ws(s):// network URL (orchestrator MCP mount), not an Ezagent-scheme URI — Ezagent.URI rejects non-Ezagent schemes
+    # uri-canonical-allow: ws(s):// network URL (orchestrator MCP mount), not an Ezagent-scheme URI — Ezagent.URI rejects non-Ezagent schemes
+    uri = URI.parse(ws_url)
 
     if is_binary(uri.scheme) and is_binary(uri.host) do
       rebased = %{uri | path: path, query: nil, fragment: nil}

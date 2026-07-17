@@ -579,11 +579,11 @@ defmodule EzagentDomainInstanceMessage.SessionCreator.DefinitionAgents do
 
   # NARROW by design: only a KNOWN missing-credential spawn reason reclassifies
   # to a skip. Every other spawn failure stays a hard error (a bug, not the
-  # environment — §"Skip vs fail"). Today the only env-var-credential flavor that
-  # fails this way is deepseek (`DEEPSEEK_API_KEY`); file-credential flavors are
-  # already pre-skipped by `CredentialPrecondition.check_source/3`.
-  defp credential_missing_spawn_reason?({:deepseek_api_key_missing, _}), do: true
-  defp credential_missing_spawn_reason?(:deepseek_api_key_missing), do: true
+  # environment — §"Skip vs fail"). Env-var-credential flavors (cc-custom
+  # profiles; cc-deepseek until its retirement) fail this way; file-credential
+  # flavors are already pre-skipped by `CredentialPrecondition.check_source/3`.
+  defp credential_missing_spawn_reason?({:backend_api_key_missing, _, _}), do: true
+  defp credential_missing_spawn_reason?({:backend_api_key_missing, _}), do: true
   defp credential_missing_spawn_reason?(_), do: false
 
   # Faceted `session.join` carrying the `%{role_name: name}` facet. On failure,

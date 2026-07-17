@@ -21,7 +21,8 @@ defmodule Ezagent.PluginCc.Template.CcHeadlessDeepseekAgent do
 
   ## Credential contract
 
-  Identical to `CcDeepseekAgent`: API-key via `DEEPSEEK_API_KEY`, no OAuth, no
+  Identical to `CcDeepseekAgent`: API-key via the env var the `"deepseek"`
+  catalog profile names (see `Ezagent.PluginCc.ProviderCatalog`), no OAuth, no
   `.credentials.json`, host-login-adopt no-op, fail-fast launchability gate in
   `instantiate/3`. See `CcDeepseekAgent` + `Ezagent.PluginCc.Provider`.
   """
@@ -56,7 +57,7 @@ defmodule Ezagent.PluginCc.Template.CcHeadlessDeepseekAgent do
   def auth_failure_signals, do: CcAgent.auth_failure_signals()
 
   @impl Ezagent.Agent.CredentialAdapter
-  def credential_status(_home, _opts \\ []), do: Provider.credential_status()
+  def credential_status(_home, _opts \\ []), do: Provider.credential_status("deepseek")
 
   @impl Ezagent.Agent.CredentialAdapter
   def host_login_dir, do: nil
@@ -67,10 +68,10 @@ defmodule Ezagent.PluginCc.Template.CcHeadlessDeepseekAgent do
   def template_data_extra(content) when is_map(content) do
     content
     |> CcHeadlessAgent.template_data_extra()
-    |> Map.put(Provider.provider_key(), Provider.deepseek())
+    |> Map.put(Provider.provider_key(), "deepseek")
   end
 
-  def template_data_extra(_), do: %{Provider.provider_key() => Provider.deepseek()}
+  def template_data_extra(_), do: %{Provider.provider_key() => "deepseek"}
 
   @impl Ezagent.Kind.Template
   def compile(resolved, params),
@@ -95,10 +96,10 @@ defmodule Ezagent.PluginCc.Template.CcHeadlessDeepseekAgent do
   @impl Ezagent.Kind.Template
   def instantiate(_tmpl_name, %{"agent_uri" => uri_str} = tmpl, workspace_uri) do
     with {:ok, agent_uri} <- parse_uri(uri_str),
-         :ok <- Provider.ensure_api_key(agent_uri) do
+         :ok <- Provider.ensure_api_key("deepseek", agent_uri) do
       tmpl =
         tmpl
-        |> Map.put(Provider.provider_key(), Provider.deepseek())
+        |> Map.put(Provider.provider_key(), "deepseek")
         |> Map.put("flavor", @flavor)
 
       CcHeadlessAgent.instantiate_for_flavor(__MODULE__, uri_str, tmpl, workspace_uri)

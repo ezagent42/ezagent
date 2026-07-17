@@ -36,61 +36,82 @@ defmodule Ezagent.PluginCc.Template.CcDeepseekBackendTest do
   defp with_key, do: System.put_env("DEEPSEEK_API_KEY", @key)
   defp without_key, do: System.delete_env("DEEPSEEK_API_KEY")
 
-  # ── Provider: the 8-var DeepSeek Claude Code env block ──────────────────
+  # ── Provider: profile env assembly + fail-closed contract ───────────────
 
-  describe "Provider.deepseek_env/0" do
-    test "assembles all 8 vars, ANTHROPIC_AUTH_TOKEN from DEEPSEEK_API_KEY" do
+  describe "Provider.profile_env/1 + provider_env/1" do
+    test "deepseek profile assembles the documented 8-var block, token from its env var" do
       with_key()
 
-      assert {:ok, env} = Provider.deepseek_env()
+      assert {:ok, env} = Provider.profile_env("deepseek")
 
       assert env == %{
                "ANTHROPIC_BASE_URL" => "https://api.deepseek.com/anthropic",
                "ANTHROPIC_AUTH_TOKEN" => @key,
-               "ANTHROPIC_MODEL" => "deepseek-v4-pro",
-               "ANTHROPIC_DEFAULT_OPUS_MODEL" => "deepseek-v4-pro",
-               "ANTHROPIC_DEFAULT_SONNET_MODEL" => "deepseek-v4-pro",
+               "ANTHROPIC_MODEL" => "deepseek-v4-pro[1m]",
+               "ANTHROPIC_DEFAULT_OPUS_MODEL" => "deepseek-v4-pro[1m]",
+               "ANTHROPIC_DEFAULT_SONNET_MODEL" => "deepseek-v4-pro[1m]",
                "ANTHROPIC_DEFAULT_HAIKU_MODEL" => "deepseek-v4-flash",
                "CLAUDE_CODE_SUBAGENT_MODEL" => "deepseek-v4-flash",
                "CLAUDE_CODE_EFFORT_LEVEL" => "max"
              }
-
-      assert map_size(env) == 8
     end
 
-    test "fails when DEEPSEEK_API_KEY is unset (fail-fast, not a nil token)" do
+    test "kimi profile assembles the documented 9-var block" do
+      System.put_env("MOONSHOT_API_KEY", "sk-kimi-test-xyz")
+      on_exit(fn -> System.delete_env("MOONSHOT_API_KEY") end)
+
+      assert {:ok, env} = Provider.profile_env("kimi")
+      assert map_size(env) == 9
+      assert env["ANTHROPIC_BASE_URL"] == "https://api.moonshot.ai/anthropic"
+      assert env["ANTHROPIC_AUTH_TOKEN"] == "sk-kimi-test-xyz"
+      assert env["ANTHROPIC_MODEL"] == "kimi-k3"
+      assert env["ENABLE_TOOL_SEARCH"] == "false"
+      assert env["CLAUDE_CODE_AUTO_COMPACT_WINDOW"] == "1048576"
+    end
+
+    test "missing key → {:error, {:backend_api_key_missing, profile}}" do
       without_key()
-      assert Provider.deepseek_env() == {:error, :deepseek_api_key_missing}
+      assert Provider.profile_env("deepseek") == {:error, {:backend_api_key_missing, "deepseek"}}
     end
 
-    test "fails when DEEPSEEK_API_KEY is empty" do
-      System.put_env("DEEPSEEK_API_KEY", "")
-      assert Provider.deepseek_env() == {:error, :deepseek_api_key_missing}
+    test "unknown profile → {:error, {:unknown_backend_profile, name}} (fail closed)" do
+      assert Provider.profile_env("bogus") == {:error, {:unknown_backend_profile, "bogus"}}
     end
-  end
 
-  describe "Provider.provider_env/1 — anthropic default must not leak DeepSeek vars" do
-    test "no `provider` key → {:ok, %{}} even when DEEPSEEK_API_KEY is set" do
+    test "provider_env/1: no key → {:ok, %{}}; explicit anthropic → {:ok, %{}}" do
       with_key()
-      assert {:ok, env} = Provider.provider_env(%{})
-      assert env == %{}
+      assert Provider.provider_env(%{}) == {:ok, %{}}
+      assert Provider.provider_env(%{"provider" => "anthropic"}) == {:ok, %{}}
     end
 
-    test "explicit anthropic → {:ok, %{}}" do
-      with_key()
-      assert {:ok, %{}} = Provider.provider_env(%{"provider" => "anthropic"})
-    end
-
-    test "deepseek → the 8-var block" do
+    test "provider_env/1: known profile → block; unknown → fail closed (NEVER silent anthropic)" do
       with_key()
       assert {:ok, env} = Provider.provider_env(%{"provider" => "deepseek"})
-      assert map_size(env) == 8
       assert env["ANTHROPIC_AUTH_TOKEN"] == @key
+
+      assert {:error, {:unknown_backend_profile, "bogus"}} =
+               Provider.provider_env(%{"provider" => "bogus"})
     end
 
-    test "unknown provider is fail-safe (treated as anthropic — no DeepSeek env)" do
+    test "ensure_api_key/2 gates on the profile's own env var" do
+      without_key()
+      uri = Ezagent.URI.new!("entity://team-alpha/agent/cc_x")
+
+      assert {:error, {:backend_api_key_missing, "deepseek", ^uri}} =
+               Provider.ensure_api_key("deepseek", uri)
+
       with_key()
-      assert {:ok, %{}} = Provider.provider_env(%{"provider" => "bogus"})
+      assert Provider.ensure_api_key("deepseek", uri) == :ok
+    end
+
+    test "credential_status/1 is per-profile; nil/unknown → :unknown (never an alarm)" do
+      with_key()
+      assert %{status: :authenticated} = Provider.credential_status("deepseek")
+      without_key()
+      assert %{status: :missing, detail: detail} = Provider.credential_status("deepseek")
+      assert detail =~ "DEEPSEEK_API_KEY"
+      assert %{status: :unknown} = Provider.credential_status(nil)
+      assert %{status: :unknown} = Provider.credential_status("bogus")
     end
   end
 
@@ -186,8 +207,8 @@ defmodule Ezagent.PluginCc.Template.CcDeepseekBackendTest do
 
   # ── Fail-fast launchability gate ────────────────────────────────────────
 
-  describe "instantiate/3 fail-fast when DEEPSEEK_API_KEY is missing" do
-    test "pty flavor returns a clear :deepseek_api_key_missing (no opaque timeout)" do
+  describe "instantiate/3 fail-fast when the profile API key is missing" do
+    test "pty flavor returns a clear :backend_api_key_missing (no opaque timeout)" do
       without_key()
 
       tmpl = %{
@@ -196,11 +217,11 @@ defmodule Ezagent.PluginCc.Template.CcDeepseekBackendTest do
         "cwd" => "/tmp"
       }
 
-      assert {:error, {:deepseek_api_key_missing, %URI{}}} =
+      assert {:error, {:backend_api_key_missing, "deepseek", %URI{}}} =
                CcDeepseekAgent.instantiate("cc_deepseek.agent", tmpl, workspace_uri())
     end
 
-    test "headless flavor returns a clear :deepseek_api_key_missing" do
+    test "headless flavor returns a clear :backend_api_key_missing" do
       without_key()
 
       tmpl = %{
@@ -209,7 +230,7 @@ defmodule Ezagent.PluginCc.Template.CcDeepseekBackendTest do
         "cwd" => "/tmp"
       }
 
-      assert {:error, {:deepseek_api_key_missing, %URI{}}} =
+      assert {:error, {:backend_api_key_missing, "deepseek", %URI{}}} =
                CcHeadlessDeepseekAgent.instantiate(
                  "cc_headless_deepseek.agent",
                  tmpl,

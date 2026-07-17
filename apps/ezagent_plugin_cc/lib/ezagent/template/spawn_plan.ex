@@ -92,19 +92,21 @@ defmodule Ezagent.PluginCc.Template.SpawnPlan do
           {:ok, {[String.t()], map()}}
           | {:error,
              :claude_not_found
-             | :deepseek_api_key_missing
+             | {:unknown_backend_profile, String.t()}
+             | {:backend_api_key_missing, String.t()}
              | {:unsupported_claude_dev_channels, String.t()}}
   def build_claude_cmd(%URI{} = agent_uri, agent_cwd, tmpl)
       when is_binary(agent_cwd) and is_map(tmpl) do
     with {:ok, claude_path} <- resolve_claude_executable(agent_uri),
          :ok <- ensure_dev_channels_supported(claude_path),
-         # Provider/backend dimension (anthropic|deepseek), ORTHOGONAL to
-         # transport. anthropic → %{} (the normal cc env is UNCHANGED — no
-         # DeepSeek vars leak in). deepseek → the 8-var block from
-         # DEEPSEEK_API_KEY, or a fail-fast :deepseek_api_key_missing (the
-         # deepseek instantiate already gates this before spawn; kept here as
-         # defense so the raw builder never emits a half-configured deepseek
-         # launch).
+         # Provider/backend dimension (anthropic | custom-backend profile),
+         # ORTHOGONAL to transport. anthropic → %{} (the normal cc env is
+         # UNCHANGED — no vendor vars leak in). A catalog profile → its env
+         # block (key from the profile's own allowlisted env var), or a
+         # fail-fast {:backend_api_key_missing, name} (the custom-backend
+         # instantiate already gates this before spawn; kept here as defense
+         # so the raw builder never emits a half-configured custom-backend
+         # launch). Unknown profile names fail CLOSED.
          {:ok, provider_env} <- Ezagent.PluginCc.Provider.provider_env(tmpl) do
       config_home = CcAgent.resolve_config_home(agent_uri, tmpl)
 

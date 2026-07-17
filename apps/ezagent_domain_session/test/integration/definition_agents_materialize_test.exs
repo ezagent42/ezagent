@@ -59,11 +59,11 @@ defmodule EzagentDomainInstanceMessage.Integration.DefinitionAgentsMaterializeTe
     end
   end
 
-  # A flavor whose credential is an ENV VAR (like deepseek's `DEEPSEEK_API_KEY`),
+  # A flavor whose credential is an ENV VAR (like deepseek's API-key env var),
   # so the file-based pre-flight `CredentialPrecondition.check_source/3` waves it
   # through and the missing-credential surfaces only at spawn as
-  # `{:deepseek_api_key_missing, uri}`. Mirrors the real cc-deepseek orchestrator
-  # in a keyless env (every CI without the key).
+  # `{:backend_api_key_missing, profile, uri}`. Mirrors the real cc-deepseek
+  # orchestrator in a keyless env (every CI without the key).
   defmodule DeepseekMissingStubTemplate do
     @moduledoc false
     @behaviour Ezagent.Kind.Template
@@ -77,7 +77,7 @@ defmodule EzagentDomainInstanceMessage.Integration.DefinitionAgentsMaterializeTe
 
     @impl Ezagent.Kind.Template
     def instantiate(_name, data, _workspace_uri) do
-      {:error, {:deepseek_api_key_missing, Ezagent.URI.new!(data["agent_uri"])}}
+      {:error, {:backend_api_key_missing, "deepseek", Ezagent.URI.new!(data["agent_uri"])}}
     end
   end
 
@@ -943,7 +943,8 @@ defmodule EzagentDomainInstanceMessage.Integration.DefinitionAgentsMaterializeTe
   end
 
   # Regression (WorldConversationTest PR-6 / O-1 flake): a role whose spawn fails
-  # with a MISSING-CREDENTIAL reason (`:deepseek_api_key_missing`, the keyless-CI
+  # with a MISSING-CREDENTIAL reason (`{:backend_api_key_missing, _, _}`, the
+  # keyless-CI
   # condition for the cc-deepseek orchestrator) must be classified as a SKIP, not
   # a hard error — so the batch CONTINUES and a co-declared credential-less role
   # (the py helper) still materializes. Pre-fix, the credential-missing role
