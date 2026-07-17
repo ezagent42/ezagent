@@ -7,9 +7,9 @@ defmodule Ezagent.PluginCc.Template.CcPtyLaunchChokepointTest do
   through the credential-grant gate. The chokepoint is the call chain in
   `cc_agent/spawn.ex`:
 
-      Domain.Pty.start  ⟵ start_pty/2 ⟵ ensure_pty_server/4 ⟵ {spawn_for_local_pty/3, respawn_subprocess/2}
+      Domain.Pty.start  ⟵ start_pty/2 ⟵ ensure_pty_server/4 ⟵ {spawn_for_local_pty/4, respawn_subprocess/2}
 
-  where `spawn_for_local_pty/3` (fresh spawn) and `respawn_subprocess/2`
+  where `spawn_for_local_pty/4` (fresh spawn) and `respawn_subprocess/2`
   (cold restart) are the ONLY public entrypoints and each runs the grant
   gate before launching.
 
@@ -38,7 +38,7 @@ defmodule Ezagent.PluginCc.Template.CcPtyLaunchChokepointTest do
   @launcher_id {:start_pty, 2}
   @allowed_callers %{
     {:start_pty, 2} => MapSet.new([{:ensure_pty_server, 4}]),
-    {:ensure_pty_server, 4} => MapSet.new([{:spawn_for_local_pty, 3}, {:respawn_subprocess, 2}])
+    {:ensure_pty_server, 4} => MapSet.new([{:spawn_for_local_pty, 4}, {:respawn_subprocess, 2}])
   }
 
   # Per-file %{{name, arity} => %{private, locals (MapSet of referenced

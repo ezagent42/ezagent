@@ -369,6 +369,7 @@ defmodule Ezagent.Workspace.TaskWorkspace.StoreTest do
         now: at(1)
       )
 
+    {:ok, ready} = bind_start_intent(ready)
     {:ok, _starting} = Store.claim_start(ready.id, ready.start_token)
 
     assert {:ok, :ambiguous_or_live, pending} =
@@ -386,6 +387,7 @@ defmodule Ezagent.Workspace.TaskWorkspace.StoreTest do
         now: at(1)
       )
 
+    {:ok, ready} = bind_start_intent(ready)
     {:ok, _starting} = Store.claim_start(ready.id, ready.start_token)
 
     assert {:error, :start_ambiguous_or_live} =
@@ -515,17 +517,20 @@ defmodule Ezagent.Workspace.TaskWorkspace.StoreTest do
         now: at(-1)
       )
 
-    {:ok, bound} =
-      Store.bind_start_intent(ready.provision_id, %{
-        agent_uri: "entity://task-workspace-store/agent/worker",
-        provenance_root_uri: "entity://task-workspace-store/user/owner",
-        workspace_uri: ready.workspace_uri,
-        task_access_uri: ready.task_access_uri,
-        task_uri: ready.task_uri,
-        generation: ready.generation
-      })
+    {:ok, bound} = bind_start_intent(ready)
 
     bound
+  end
+
+  defp bind_start_intent(ready) do
+    Store.bind_start_intent(ready.provision_id, %{
+      agent_uri: "entity://task-workspace-store/agent/worker",
+      provenance_root_uri: "entity://task-workspace-store/user/owner",
+      workspace_uri: ready.workspace_uri,
+      task_access_uri: ready.task_access_uri,
+      task_uri: ready.task_uri,
+      generation: ready.generation
+    })
   end
 
   defp retirement_handle do
