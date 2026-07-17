@@ -141,7 +141,10 @@ defmodule EzagentCore.Invariants.PerTenantTablesHaveWorkspaceColumnTest do
     {Ezagent.Routing.Trace, "routing_traces"},
     # Entity capability grant/revoke delivery is scoped to the grantee's
     # workspace. The singleton sweeper is the documented system-scope reader.
-    {Ezagent.Cap.Delivery, "cap_delivery_outbox"}
+    {Ezagent.Cap.Delivery, "cap_delivery_outbox"},
+    # Git task workspace lifecycle rows contain canonical checkout and Agent
+    # retirement coordinates for exactly one workspace generation.
+    {Ezagent.Workspace.TaskWorkspace.Provision, "git_task_workspace_provisions"}
   ]
 
   # Per-tenant tables that have NO schema module (raw `Repo.insert_all`
