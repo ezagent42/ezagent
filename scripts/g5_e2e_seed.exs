@@ -124,8 +124,8 @@ IO.puts("  agent has NO api key — E2E will trigger {:no_api_key}")
 # ── Step 3: Open registration ──
 
 IO.puts("[3/4] Configuring registration...")
-Ezagent.AppSettings.put(:registration_open, true)
-Ezagent.AppSettings.put(:registration_require_invite, false)
+Ezagent.AppSettings.put("registration_open", true)
+Ezagent.AppSettings.put("registration_require_invite", false)
 
 # ── Step 4: Print instructions ──
 
