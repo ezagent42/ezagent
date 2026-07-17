@@ -39,7 +39,7 @@ defmodule Ezagent.Kind.Template.PreStart do
          :ok <-
            GenServer.call(
              __MODULE__,
-             {:put_pending, token, implementation, implementation_claim}
+             {:put_pending, token, implementation, implementation_claim, self()}
            ) do
       {:ok, %{cwd: cwd, claim: token}}
     else
@@ -65,7 +65,7 @@ defmodule Ezagent.Kind.Template.PreStart do
   def complete(_claim, _outcome), do: {:error, :invalid_template_pre_start_claim}
 
   @impl true
-  def init(nil), do: {:ok, %{implementation: nil, pending: %{}}}
+  def init(nil), do: {:ok, %{implementation: nil, pending: %{}, monitors: %{}}}
 
   @impl true
   def handle_call({:register, implementation}, _from, %{implementation: nil} = state) do
@@ -83,13 +83,13 @@ defmodule Ezagent.Kind.Template.PreStart do
 
   if @test_env do
     def handle_call({:replace_for_test, nil}, _from, state) do
-      {:reply, :ok, %{state | implementation: nil, pending: %{}}}
+      {:reply, :ok, reset_pending(%{state | implementation: nil})}
     end
 
     def handle_call({:replace_for_test, implementation}, _from, state) do
       case validate_implementation(implementation) do
         :ok ->
-          {:reply, :ok, %{state | implementation: implementation, pending: %{}}}
+          {:reply, :ok, reset_pending(%{state | implementation: implementation})}
 
         {:error, _reason} = error ->
           {:reply, error, state}
@@ -103,9 +103,22 @@ defmodule Ezagent.Kind.Template.PreStart do
   def handle_call(:implementation, _from, state),
     do: {:reply, {:ok, state.implementation}, state}
 
-  def handle_call({:put_pending, token, implementation, implementation_claim}, _from, state) do
-    pending = Map.put(state.pending, token, {implementation, implementation_claim})
-    {:reply, :ok, %{state | pending: pending}}
+  def handle_call(
+        {:put_pending, token, implementation, implementation_claim, caller},
+        _from,
+        state
+      ) do
+    monitor = Process.monitor(caller)
+
+    pending =
+      Map.put(state.pending, token, %{
+        implementation: implementation,
+        claim: implementation_claim,
+        monitor: monitor
+      })
+
+    monitors = Map.put(state.monitors, monitor, token)
+    {:reply, :ok, %{state | pending: pending, monitors: monitors}}
   end
 
   def handle_call({:take_pending, claim}, _from, state) do
@@ -113,8 +126,23 @@ defmodule Ezagent.Kind.Template.PreStart do
       {nil, _pending} ->
         {:reply, {:error, :invalid_template_pre_start_claim}, state}
 
-      {pending_claim, pending} ->
-        {:reply, {:ok, pending_claim}, %{state | pending: pending}}
+      {%{implementation: implementation, claim: implementation_claim, monitor: monitor}, pending} ->
+        Process.demonitor(monitor, [:flush])
+        monitors = Map.delete(state.monitors, monitor)
+
+        {:reply, {:ok, {implementation, implementation_claim}},
+         %{state | pending: pending, monitors: monitors}}
+    end
+  end
+
+  @impl true
+  def handle_info({:DOWN, monitor, :process, _pid, _reason}, state) do
+    case Map.pop(state.monitors, monitor) do
+      {nil, _monitors} ->
+        {:noreply, state}
+
+      {token, monitors} ->
+        {:noreply, %{state | pending: Map.delete(state.pending, token), monitors: monitors}}
     end
   end
 
@@ -142,4 +170,9 @@ defmodule Ezagent.Kind.Template.PreStart do
   defp normalize_complete(:ok), do: :ok
   defp normalize_complete({:error, _reason} = error), do: error
   defp normalize_complete(_other), do: {:error, :invalid_template_pre_start_complete_result}
+
+  defp reset_pending(state) do
+    Enum.each(state.monitors, fn {monitor, _token} -> Process.demonitor(monitor, [:flush]) end)
+    %{state | pending: %{}, monitors: %{}}
+  end
 end
