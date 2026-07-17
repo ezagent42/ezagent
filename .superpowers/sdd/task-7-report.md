@@ -94,9 +94,12 @@ all concurrency and crash boundaries use process messages without sleeps.
 Follow-up review made three boundaries explicit: the adopted Agent is safely
 terminated and monitored during teardown; case 7 makes the test Template Class
 return a real post-`Kind.spawn` sidecar error after the coordinator receipt has
-committed; and case 8 discards both lineage and workspace ETS entries, then uses
-a fresh BEAM process and Repo checkout to reload the SQL receipt and republish
-both production caches before recovery. The permanent-identity contract is now
+committed; and case 8 commits through the production path using a bounded
+non-Sandbox pool, discards both lineage and workspace ETS entries, actually
+terminates/restarts the application-owned Repo process, then reloads the SQL
+receipt and republishes both production caches before recovery. Its `after`
+block removes every committed restart fixture and restores the Sandbox Repo
+configuration. The permanent-identity contract is now
 stated in the design: one Agent URI has one final receipt, and destroy/recreate
 requires a new URI.
 
