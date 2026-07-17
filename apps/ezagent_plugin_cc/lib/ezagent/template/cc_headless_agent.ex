@@ -268,10 +268,16 @@ defmodule Ezagent.PluginCc.Template.CcHeadlessAgent do
       # `permission_mode=default`, and since a headless sidecar has NOBODY to
       # answer a prompt, every skill-reference Read / outside-cwd Bash / Write
       # hung on approval — the kanban-assistant could not execute its own
-      # skill's CLI. `bypassPermissions` is the SDK equivalent of the PTY flag;
-      # the actual security boundary for a role-agent is CapBAC on every CLI
-      # dispatch (token + caps), not the unanswerable local prompt. An explicit
-      # template value still overrides.
+      # skill's CLI. `bypassPermissions` is the SDK equivalent of the PTY flag.
+      #
+      # Scope of the argument (codex review of PR #1452): this is a BEHAVIOR
+      # PARITY claim with the PTY flavor, not a full-boundary claim. CapBAC
+      # bounds what the agent can DISPATCH through the ezagent CLI (token +
+      # caps on every action); it does NOT bound Bash/Read/Write/network on
+      # the shared host — neither does the PTY flavor today. Tightening both
+      # flavors behind per-agent OS isolation (or a role-gated bypass) is a
+      # platform decision tracked in the task-A return's open decisions.
+      # An explicit template value still overrides.
       permission_mode: Map.get(tmpl, "permission_mode", "bypassPermissions"),
       model: Map.get(tmpl, "model"),
       effort: Map.get(tmpl, "effort") || Map.get(tmpl, "claude_effort"),
