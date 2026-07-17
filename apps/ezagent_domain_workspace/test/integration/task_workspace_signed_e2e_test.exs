@@ -10,6 +10,7 @@ defmodule Ezagent.Workspace.TaskWorkspace.SignedE2ETest do
   setup do
     previous_home = System.get_env("EZAGENT_HOME")
     previous_provisioner = WorkspaceProvisionRegistry.implementation()
+    previous_pre_start = GenServer.call(CorePreStart, :implementation)
     :ok = WorkspaceProvisionRegistry.replace_for_test(Provisioner)
     :ok = CorePreStart.replace_for_test(PreStart)
 
@@ -44,11 +45,15 @@ defmodule Ezagent.Workspace.TaskWorkspace.SignedE2ETest do
 
     on_exit(fn ->
       :ok = WorkspaceProvisionRegistry.replace_for_test(nil)
-      :ok = CorePreStart.replace_for_test(nil)
 
       case previous_provisioner do
         {:ok, implementation} -> :ok = WorkspaceProvisionRegistry.register(implementation)
         {:error, :workspace_provisioner_not_registered} -> :ok
+      end
+
+      case previous_pre_start do
+        {:ok, implementation} -> :ok = CorePreStart.replace_for_test(implementation)
+        {:error, :template_pre_start_not_registered} -> :ok = CorePreStart.replace_for_test(nil)
       end
 
       System.put_env("EZAGENT_HOME", previous_home || "")
