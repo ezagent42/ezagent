@@ -415,6 +415,45 @@ defmodule Ezagent.Workspace.TaskWorkspace.Store do
     end)
   end
 
+  @doc "CAS transition for an expired start claim whose external result is ambiguous."
+  @spec request_expired_start_cleanup(
+          pos_integer(),
+          non_neg_integer(),
+          String.t(),
+          DateTime.t()
+        ) :: {:ok, :ambiguous_or_live, Provision.t()} | {:error, term()}
+  def request_expired_start_cleanup(id, expected_version, start_claim_token, %DateTime{} = now)
+      when is_integer(expected_version) and is_binary(start_claim_token) do
+    locked(id, fn
+      %Provision{
+        status: :starting,
+        state_version: ^expected_version,
+        start_claim_token: ^start_claim_token
+      } = row ->
+        if is_nil(row.start_lease_until) or
+             DateTime.compare(row.start_lease_until, now) != :gt do
+          case update_row(row, %{
+                 status: :cleanup_pending,
+                 state_version: row.state_version + 1,
+                 cleanup_reason: "expired_start_lease",
+                 start_claim_token: nil,
+                 start_lease_until: nil
+               }) do
+            {:ok, pending} -> {:ok, :ambiguous_or_live, pending}
+            {:error, _reason} = error -> error
+          end
+        else
+          {:error, :start_lease_active}
+        end
+
+      %Provision{status: :starting} ->
+        {:error, :sidecar_start_claim_lost}
+
+      %Provision{} ->
+        {:error, :invalid_cleanup_transition}
+    end)
+  end
+
   @doc "Claims an unclaimed or expired cleanup operation."
   @spec claim_cleanup(pos_integer(), keyword()) :: {:ok, Provision.t()} | {:error, term()}
   def claim_cleanup(id, opts \\ []) do
@@ -519,6 +558,8 @@ defmodule Ezagent.Workspace.TaskWorkspace.Store do
       from(p in Provision,
         where:
           (p.status == :provisioning and (is_nil(p.lease_until) or p.lease_until <= ^now)) or
+            (p.status == :starting and
+               (is_nil(p.start_lease_until) or p.start_lease_until <= ^now)) or
             (p.status == :cleanup_pending and
                (is_nil(p.lease_until) or p.lease_until <= ^now)),
         order_by: [asc: p.inserted_at, asc: p.id],
@@ -549,11 +590,31 @@ defmodule Ezagent.Workspace.TaskWorkspace.Store do
     Repo.all(
       from(p in Provision,
         where:
-          p.status in [:provisioning, :cleanup_pending] and not is_nil(p.lease_until) and
-            p.lease_until > ^now,
-        order_by: [asc: p.lease_until],
+          (p.status in [:provisioning, :cleanup_pending] and not is_nil(p.lease_until) and
+             p.lease_until > ^now) or
+            (p.status == :starting and not is_nil(p.start_lease_until) and
+               p.start_lease_until > ^now),
+        order_by: [
+          asc:
+            fragment(
+              "CASE WHEN ? = 'starting' THEN ? ELSE ? END",
+              p.status,
+              p.start_lease_until,
+              p.lease_until
+            ),
+          asc: p.id
+        ],
         limit: ^limit,
-        select: p.lease_until
+        select:
+          type(
+            fragment(
+              "CASE WHEN ? = 'starting' THEN ? ELSE ? END",
+              p.status,
+              p.start_lease_until,
+              p.lease_until
+            ),
+            :utc_datetime_usec
+          )
       )
     )
     |> Enum.max_by(&DateTime.to_unix(&1, :microsecond), fn -> nil end)
