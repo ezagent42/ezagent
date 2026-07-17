@@ -75,7 +75,11 @@ defmodule Ezagent.World.ConversationDataVisibilityTest do
 
     cursor = DateTime.add(base, 10, :second) |> DateTime.to_iso8601()
 
-    assert {rows, _cursor} = ConversationData.load_older(session_uri, cursor)
+    viewer_ctx = %{user_can_fix: false, fix_owner_display_name: nil}
+
+    assert {rows, _cursor} =
+             ConversationData.load_older(session_uri, cursor, MapSet.new(), viewer_ctx)
+
     assert Enum.map(rows, &Map.fetch!(&1, "text")) == ["public-old", "public-new"]
   end
 end

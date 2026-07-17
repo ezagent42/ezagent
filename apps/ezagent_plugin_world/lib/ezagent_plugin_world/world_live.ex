@@ -172,7 +172,17 @@ defmodule EzagentPluginWorld.WorldLive do
 
   def handle_info({:chat_message, %URI{} = source_uri, %Ezagent.Message{} = msg}, socket) do
     if same_uri?(source_uri, socket.assigns[:current_session_uri]) do
-      row = Ezagent.World.ConversationData.message_row(msg)
+      # G5 source 2 — attach the per-viewer error card when the reply body
+      # carries a structured agent-error payload (lazy ctx: no admin/founder
+      # lookup on ordinary messages).
+      row =
+        msg
+        |> Ezagent.World.ConversationData.message_row()
+        |> Ezagent.World.ErrorCards.enrich(
+          msg.body,
+          Ezagent.World.ErrorCards.live_viewer_ctx(socket)
+        )
+
       {:noreply, push_event(socket, "chat:message", %{"message" => row})}
     else
       {:noreply, socket}
@@ -291,51 +301,20 @@ defmodule EzagentPluginWorld.WorldLive do
   end
 
   # G5 Layer 2 notification: user clicks "send reminder" on an error card.
-  def handle_event("world:dispatch", %{"action" => "notification.send", "args" => %{"type" => "error_fix_request", "body" => body}}, socket)
+  def handle_event(
+        "world:dispatch",
+        %{
+          "action" => "notification.send",
+          "args" => %{"type" => "error_fix_request", "body" => body}
+        },
+        socket
+      )
       when is_map(body) do
-    caller = socket.assigns.current_entity_uri
-
-    case resolve_founder_for_notify(socket) do
-      %URI{} = founder_uri ->
-        Ezagent.Notifications.notify(founder_uri, %{
-          type: :error_fix_request,
-          body: Map.merge(body, %{
-            caller_name: entity_display_name(caller),
-            workspace: entity_display_name(socket.assigns.current_workspace_uri)
-          }),
-          source: __MODULE__
-        })
-
-        {:noreply, assign(socket, :last_dispatch_status, "ok")}
-
-      nil ->
-        {:noreply, assign(socket, :last_dispatch_status, "error:no_founder")}
+    case Ezagent.World.ErrorCards.send_fix_request(socket, body) do
+      :ok -> {:noreply, assign(socket, :last_dispatch_status, "ok")}
+      :no_founder -> {:noreply, assign(socket, :last_dispatch_status, "error:no_founder")}
     end
   end
-
-  defp resolve_founder_for_notify(socket) do
-    case Map.get(socket.assigns, :current_workspace_uri) do
-      %URI{} = ws_uri ->
-        case Ezagent.URI.name(ws_uri) do
-          {:ok, name} when is_binary(name) and name != "" ->
-            case Ezagent.Workspace.Store.get_by_name(name) do
-              %{members: [%URI{} = founder | _]} -> founder
-              _ -> nil
-            end
-          _ -> nil
-        end
-      _ -> nil
-    end
-  end
-
-  defp entity_display_name(%URI{} = uri) do
-    case Ezagent.URI.name(uri) do
-      {:ok, name} -> name
-      _ -> Ezagent.URI.stable_key(uri)
-    end
-  end
-
-  defp entity_display_name(_), do: "unknown"
 
   # 插件页面动作（`Ezagent.World.PluginPageRegistry`）：fail-closed 准入——
   # action 命中某页面的前缀 **且** 在其细白名单内才路由到该页面的
