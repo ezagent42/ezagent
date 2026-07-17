@@ -71,6 +71,37 @@ defmodule EzagentPluginCc.SdkSidecarErlexecTest do
 
   # ─── Step 1: JSON round-trip ───────────────────────────────────────────────
 
+  # Task A (#1323 落 main) — live-e2e-found gap: the PTY flavor's cwd is
+  # created only as a SIDE EFFECT of `McpConfigWriter.write_with_token!`
+  # (cwd-level .mcp.json write); the headless path never calls the writer, so
+  # on a fresh host the sidecar crash-looped with
+  # "Cannot chdir to '~/.ezagent/<role>'". The sidecar must ensure its own cwd.
+  describe "cwd materialization" do
+    test "sidecar creates a nonexistent cwd instead of crash-looping", ctx do
+      cwd =
+        Path.join(
+          System.tmp_dir!(),
+          "sdk-sidecar-fresh-cwd-#{System.unique_integer([:positive])}"
+        )
+
+      refute File.dir?(cwd)
+      on_exit(fn -> File.rm_rf(cwd) end)
+
+      params = %{
+        cwd: cwd,
+        config_dir: cwd,
+        python_path: find_python3(),
+        sdk_worker_path: ctx.script_path
+      }
+
+      assert {:ok, _pid} = SdkSidecar.start(ctx.agent_uri, params)
+      assert File.dir?(cwd)
+
+      assert {:ok, %{content: "pong"}} =
+               SdkSidecar.query(ctx.agent_uri, "ping", timeout: 15_000)
+    end
+  end
+
   describe "JSON round-trip (erlexec transport)" do
     test "query/3 returns {:ok, %{content: 'pong'}} via stub worker", ctx do
       :ok = start_sidecar(ctx.agent_uri, ctx.script_path)

@@ -272,8 +272,14 @@ defmodule EzagentPluginCc.SdkSidecar do
 
   defp start_process(args) do
     with {:ok, {runner, runner_args}} <- sdk_runner(args),
-         {:ok, script} <- sdk_worker_path(args) do
-      cwd = Map.fetch!(args, :cwd)
+         {:ok, script} <- sdk_worker_path(args),
+         cwd = Map.fetch!(args, :cwd),
+         # The PTY flavor's cwd exists only as a SIDE EFFECT of
+         # `McpConfigWriter.write_with_token!` (cwd-level .mcp.json write); the
+         # headless path never calls the writer, so on a fresh host erlexec
+         # crash-looped with "Cannot chdir to <cwd>". Own the cwd explicitly —
+         # fail tagged (not silent) when it cannot be created.
+         :ok <- ensure_cwd(cwd) do
       env = worker_env(args)
 
       cmd = [runner | runner_args ++ [script]]
@@ -370,6 +376,13 @@ defmodule EzagentPluginCc.SdkSidecar do
     end
   rescue
     ArgumentError -> default
+  end
+
+  defp ensure_cwd(cwd) when is_binary(cwd) do
+    case File.mkdir_p(cwd) do
+      :ok -> :ok
+      {:error, reason} -> {:error, {:sdk_cwd_unavailable, cwd, reason}}
+    end
   end
 
   defp maybe_env(env, _key, value) when value in [nil, ""], do: env
