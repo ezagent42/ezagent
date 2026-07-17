@@ -58,17 +58,18 @@ defmodule Ezagent.LocalRuntime do
   already-owner-gated `SpawnRegistry.spawn/1`; on a non-owner runtime returns the
   gate's `{:error, _}` instead of materialising a foreign agent locally.
   """
-  @spec ensure_started(URI.t()) :: {:ok, pid()} | {:error, term()}
-  def ensure_started(%URI{} = uri), do: SpawnRegistry.spawn(uri)
+  @spec ensure_started(URI.t(), keyword()) :: {:ok, pid()} | {:error, term()}
+  def ensure_started(%URI{} = uri, opts \\ []), do: SpawnRegistry.spawn(uri, opts)
 
   @doc """
   Like `ensure_started/1` but returns whether the Kind was freshly started or was
   already running. Delegates to the already-owner-gated
   `SpawnRegistry.spawn_detailed/1`.
   """
-  @spec ensure_started_detailed(URI.t()) ::
+  @spec ensure_started_detailed(URI.t(), keyword()) ::
           {:ok, :started | :already_started, pid()} | {:error, term()}
-  def ensure_started_detailed(%URI{} = uri), do: SpawnRegistry.spawn_detailed(uri)
+  def ensure_started_detailed(%URI{} = uri, opts \\ []),
+    do: SpawnRegistry.spawn_detailed(uri, opts)
 
   @doc """
   Owner-gated ensure-live: return the live Kind for `uri`, rehydrating it from
