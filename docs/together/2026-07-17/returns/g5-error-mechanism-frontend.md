@@ -120,7 +120,9 @@ dataset 有 error,DOM 无 `[data-error-code]` 卡片
 
 同一触发路径(同名重复建 agent → `error:{:already_exists,...}`):卡片实时渲染,
 `data-error-code="unknown"`、`data-error-layer="3"`,dismiss 按钮可用
-(证据 `../evidence/g5-live-card-rendered.png`)。
+(证据 `../evidence/g5-live-card-rendered.png`——真实运行截图:页面顶部 info tone 的
+G5 错误卡片「Agent 执行时遇到错误 / 无法完成你的请求 / 此问题已自动登记,系统管理员会处理。」,
+下方是表单原有的 raw 错误横幅「同名 agent 已存在:…」,两条错误通道同框对比)。
 
 | 验证项 | 结果 |
 |---|---|
@@ -132,4 +134,5 @@ dataset 有 error,DOM 无 `[data-error-code]` 卡片
 
 验证环境备注:worktree server 需 `EZAGENT_PAT_PEPPER_V1` + `EZAGENT_SIGNING_SEED_V1`
 (旧分支登录铸 PAT / plugin boot 所需);world UI 走 `http://world.localhost:10042`;
-admin 密码 `worlddev`。
+admin 密码 `worlddev`;headless 浏览器截图中文需用户级字体
+`~/.local/share/fonts/NotoSansSC.ttf`(本机无系统 CJK 字体,否则全是豆腐块)。
