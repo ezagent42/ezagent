@@ -148,7 +148,11 @@ defmodule EzagentCore.Invariants.PluginWorkspaceLocalityContractTest do
       "owner = String\ncase value do :x -> owner = Ezagent.Agent.CreationInventory; apply(owner, :record_exact, args); _ -> :ok end",
       "owner = String\nquote do owner = Ezagent.Agent.CreationInventory; apply(owner, :record_exact, args) end",
       "(fn -> owner = String end).(); owner = Ezagent.Agent.CreationInventory; apply(owner, :record_exact, args)",
-      "owner = if(flag, do: Ezagent.Agent.CreationInventory, else: String); apply(owner, :record_exact, args)"
+      "owner = if(flag, do: Ezagent.Agent.CreationInventory, else: String); apply(owner, :record_exact, args)",
+      "owner = Ezagent.Agent.CreationInventory; if apply(owner, :record_exact, args), do: :ok, else: :error",
+      "owner = Ezagent.Agent.CreationInventory; case apply(owner, :record_exact, args) do _ -> :ok end",
+      "owner = Ezagent.Agent.CreationInventory; case value do x when apply(owner, :record_exact, args) -> x; _ -> :ok end",
+      "owner = if(flag, do: Ezagent.Agent.CreationInventory, else: String); owner.record_exact(repo, a, b, c, d)"
     ]
 
     for source <- mutants do
@@ -311,23 +315,60 @@ defmodule EzagentCore.Invariants.PluginWorkspaceLocalityContractTest do
     {env, calls}
   end
 
-  defp ownership_scan({kind, _, args}, env, aliases, imports, function, calls)
-       when kind in [:if, :case, :cond, :with] and is_list(args) do
-    branches = ownership_branches(kind, args)
+  defp ownership_scan({:if, _, [condition, opts]}, env, aliases, imports, function, calls) do
+    {env, calls} = ownership_scan(condition, env, aliases, imports, function, calls)
 
-    results =
-      Enum.map(branches, fn branch ->
-        ownership_scan(branch, env, aliases, imports, function, calls)
-      end)
+    ownership_branch_join(
+      [Keyword.get(opts, :do), Keyword.get(opts, :else)],
+      env,
+      aliases,
+      imports,
+      function,
+      calls,
+      true
+    )
+  end
 
-    branch_envs = Enum.map(results, &elem(&1, 0))
+  defp ownership_scan({:case, _, [subject, opts]}, env, aliases, imports, function, calls) do
+    {env, calls} = ownership_scan(subject, env, aliases, imports, function, calls)
+    ownership_clause_join(Keyword.get(opts, :do, []), env, aliases, imports, function, calls)
+  end
 
-    branch_envs =
-      if kind == :if and Keyword.get(List.last(args), :else) == nil,
-        do: [env | branch_envs],
-        else: branch_envs
+  defp ownership_scan({:cond, _, [opts]}, env, aliases, imports, function, calls),
+    do: ownership_clause_join(Keyword.get(opts, :do, []), env, aliases, imports, function, calls)
 
-    {merge_ownership_envs(branch_envs), Enum.flat_map(results, &elem(&1, 1)) |> Enum.uniq()}
+  defp ownership_scan({:with, _, args}, env, aliases, imports, function, calls) do
+    opts = List.last(args)
+
+    {with_env, calls} =
+      ownership_scan(Enum.drop(args, -1), env, aliases, imports, function, calls)
+
+    {_, calls} =
+      ownership_scan(Keyword.get(opts, :do), with_env, aliases, imports, function, calls)
+
+    {_else_env, calls} =
+      ownership_clause_join(Keyword.get(opts, :else, []), env, aliases, imports, function, calls)
+
+    {env, calls}
+  end
+
+  defp ownership_scan({:for, _, args}, env, aliases, imports, function, calls) do
+    {_child_env, child_calls} = ownership_scan(args, env, aliases, imports, function, calls)
+    {env, child_calls}
+  end
+
+  defp ownership_scan({kind, _, [opts]}, env, aliases, imports, function, calls)
+       when kind in [:try, :receive] and is_list(opts) do
+    ordinary = [:do, :after] |> Enum.map(&Keyword.get(opts, &1)) |> Enum.reject(&is_nil/1)
+
+    clauses =
+      [:rescue, :catch, :else, :do, :after]
+      |> Enum.flat_map(&List.wrap(Keyword.get(opts, &1, [])))
+      |> Enum.filter(&match?({:->, _, _}, &1))
+
+    {_env, calls} = ownership_branch_join(ordinary, env, aliases, imports, function, calls, false)
+    {_env, calls} = ownership_clause_join(clauses, env, aliases, imports, function, calls)
+    {env, calls}
   end
 
   defp ownership_scan(
@@ -399,32 +440,77 @@ defmodule EzagentCore.Invariants.PluginWorkspaceLocalityContractTest do
     {env, scan_ownership_children(children, env, aliases, imports, function, calls)}
   end
 
+  defp ownership_branch_join(branches, env, aliases, imports, function, calls, include_missing?) do
+    branches = Enum.reject(branches, &is_nil/1)
+
+    ownership_branch_join_nonempty(
+      branches,
+      env,
+      aliases,
+      imports,
+      function,
+      calls,
+      include_missing?
+    )
+  end
+
+  defp ownership_branch_join_nonempty(
+         [],
+         env,
+         _aliases,
+         _imports,
+         _function,
+         calls,
+         _include_missing?
+       ), do: {env, calls}
+
+  defp ownership_branch_join_nonempty(
+         branches,
+         env,
+         aliases,
+         imports,
+         function,
+         calls,
+         include_missing?
+       ) do
+    results = Enum.map(branches, &ownership_scan(&1, env, aliases, imports, function, calls))
+    branch_envs = Enum.map(results, &elem(&1, 0))
+
+    branch_envs =
+      if include_missing? and length(branches) < 2, do: [env | branch_envs], else: branch_envs
+
+    {merge_ownership_envs(branch_envs), Enum.flat_map(results, &elem(&1, 1)) |> Enum.uniq()}
+  end
+
+  defp ownership_clause_join(clauses, env, aliases, imports, function, calls) do
+    ownership_clause_join_nonempty(List.wrap(clauses), env, aliases, imports, function, calls)
+  end
+
+  defp ownership_clause_join_nonempty([], env, _aliases, _imports, _function, calls),
+    do: {env, calls}
+
+  defp ownership_clause_join_nonempty(clauses, env, aliases, imports, function, calls) do
+    results =
+      Enum.map(clauses, fn
+        {:->, _, [patterns, body]} ->
+          {branch_env, branch_calls} =
+            ownership_scan(patterns, env, aliases, imports, function, calls)
+
+          ownership_scan(body, branch_env, aliases, imports, function, branch_calls)
+
+        other ->
+          ownership_scan(other, env, aliases, imports, function, calls)
+      end)
+
+    {merge_ownership_envs(Enum.map(results, &elem(&1, 0))),
+     Enum.flat_map(results, &elem(&1, 1)) |> Enum.uniq()}
+  end
+
   defp scan_ownership_children(nodes, env, aliases, imports, function, calls) do
     Enum.reduce(List.wrap(nodes), calls, fn child, acc ->
       {_child_env, next} = ownership_scan(child, env, aliases, imports, function, acc)
       next
     end)
-  end
-
-  defp ownership_branches(:if, [_condition, opts]),
-    do: [Keyword.get(opts, :do), Keyword.get(opts, :else)] |> Enum.reject(&is_nil/1)
-
-  defp ownership_branches(:with, args) do
-    opts = List.last(args)
-    clauses = Enum.drop(args, -1)
-    [clauses, Keyword.get(opts, :do) | ownership_arrow_bodies(Keyword.get(opts, :else, []))]
-  end
-
-  defp ownership_branches(_kind, args), do: ownership_arrow_bodies(args)
-
-  defp ownership_arrow_bodies(args) do
-    {_ast, bodies} =
-      Macro.prewalk(args, [], fn
-        {:->, _, [_patterns, body]} = node, acc -> {node, [body | acc]}
-        node, acc -> {node, acc}
-      end)
-
-    Enum.reverse(bodies)
   end
 
   defp merge_ownership_envs([]), do: %{}
@@ -536,6 +622,12 @@ defmodule EzagentCore.Invariants.PluginWorkspaceLocalityContractTest do
   end
 
   defp ownership_call(nil, _name, _arity, _line, _function), do: nil
+
+  defp ownership_call(:unknown, name, arity, line, function) do
+    if name in [:record, :record_exact, :bind, :resolve, :acknowledge, :consume_before_start] do
+      %{module: :unknown, call: {name, arity}, line: line, function: function}
+    end
+  end
 
   defp ownership_call(module, name, arity, line, function) do
     if forbidden_ownership_call?(module, name) do
