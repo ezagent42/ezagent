@@ -13,7 +13,9 @@
 - Authoritative design: `docs/superpowers/specs/2026-07-17-git-provider-plan-c-atomic-ownership-receipt-design.md`.
 - Run commands from `/home/huangjiajia/ezagent/.worktrees/git-domain-spine` with `SHELL=/bin/bash`; focused tests use `SHELL=/bin/bash MIX_ENV=test mix ...`.
 - Every behavior change follows strict RED → GREEN → REFACTOR; observe the named failure before implementation and named pass before commit.
-- Core must not reference CreationInventory, LaunchCoordinator, Agent ownership, Workspace Store/Provision, Git, task, provider, flavor, recipe, or plugin vocabulary.
+- Core owns only generic launch-option transport and the non-bypassable before-live lifecycle hook. It must not reference Agent-domain ownership modules (`Ezagent.Agent.LaunchAuthority`, `Ezagent.Agent.LaunchCoordinator`, `Ezagent.Agent.CreationInventory`), Workspace Store/Provision modules, or take a core-to-domain/plugin compile dependency.
+- Core must treat `:launch_context` as an opaque runtime-only value: copy it unchanged through the sanctioned Kind spawn path, but never inspect its shape, derive fresh/adopted ownership from it, consume or acknowledge it, serialize it, log it, persist it, include it in snapshots/telemetry/crash text, or retain it across restart.
+- Existing legitimate Core vocabulary and owner-gated mechanisms (`WorkspaceOwnerGate`, `LocalRuntime`, `SpawnRegistry`, plugin-facing documentation) are baseline, not violations. Structural tests must use exact forbidden module/call-site checks plus changed-line ratchets; they must not impose a whole-file zero-match ban on words such as Agent, Workspace, task, flavor, recipe, provider, or plugin.
 - Plugins transport only the opaque option. They never inspect, serialize, log, cache, replace, consume it, or write inventory, lineage, WorkspaceRegistry, Provision, or retirement state.
 - Opaque context never enters caller-authored Template/recipe/manifest data, URI queries, snapshots, logs, telemetry, crash text, argv/env, config directories, or provider requests.
 - Preserve CapBAC retirement gates, exact `Ezagent.URI` parsing, same-workspace Agent/root validation, owner gating, and receiver-bound authority. URI membership alone never proves ownership.
@@ -96,7 +98,7 @@ Run Step 2, then:
 SHELL=/bin/bash MIX_ENV=test mix test apps/ezagent_core/test/invariants/single_spawn_entry_test.exs apps/ezagent_core/test/invariants/plugin_workspace_locality_contract_test.exs
 ```
 
-Expected: all selected tests pass with zero failures and core source contains none of the forbidden domain terms.
+Expected: all selected tests pass with zero failures; Core has no new umbrella dependency or Agent-domain ownership-module reference, and the option is transported unchanged without inspection, persistence, logging, telemetry, or restart retention. Existing Core Workspace/plugin vocabulary remains allowed and unchanged-line baseline matches are not failures.
 
 - [ ] **Step 5: Commit**
 
@@ -398,7 +400,7 @@ git commit -m "fix(workspace): gate recovery retirement on exact receipt"
 
 - [ ] **Step 1: Write failing structural and E2E assertions**
 
-Freeze approved production sites for `pre_start_ref:` and launch issuance. Assert core has no Agent-domain launch/receipt references; plugins do not call inventory, lineage, WorkspaceRegistry, Provision/Store, or authority resolve/ack. Token-aware scans allow runtime option plumbing but reject `launch_context` in Template maps, JSON/YAML, Logger/telemetry, argv/env, config writers, or rendered errors. Assert no secret-like schema fields and no `20260717005000*`. Signed E2E pauses after receipt commit, verifies exact facts, releases completion, and proves cleanup retires exact attempt; adopted signed flow emits no retirement.
+Freeze approved production sites for `pre_start_ref:` and launch issuance. Assert Core has no exact references to Agent-domain ownership modules, no reverse umbrella dependency, and no code that destructures, reads fields from, serializes, logs, persists, snapshots, emits telemetry for, or retains `launch_context` across restart. Use AST/token-aware exact checks and changed-line ratchets; do not reject existing legitimate Workspace/plugin vocabulary. Assert plugins do not call inventory, lineage, WorkspaceRegistry, Provision/Store, or authority resolve/ack. Token-aware scans allow runtime option plumbing but reject `launch_context` in Template maps, JSON/YAML, Logger/telemetry, argv/env, config writers, or rendered errors. Assert no secret-like schema fields and no `20260717005000*`. Signed E2E pauses after receipt commit, verifies exact facts, releases completion, and proves cleanup retires exact attempt; adopted signed flow emits no retirement.
 
 - [ ] **Step 2: Run RED**
 
