@@ -402,8 +402,10 @@ defmodule Ezagent.Entity.Agent.TemplateSpawn do
           {:error, reason}
 
         {:raised, kind, reason, stacktrace, pre_start_completion} ->
-          _ = finalize_pre_start(pre_start_completion, {:error, {kind, reason}})
-          :erlang.raise(kind, reason, stacktrace)
+          finish_after_prepare(
+            pre_start_completion,
+            {:raised, kind, reason, stacktrace}
+          )
       end
     else
       {:error, _reason} = err ->
@@ -666,19 +668,39 @@ defmodule Ezagent.Entity.Agent.TemplateSpawn do
   end
 
   defp run_after_prepare(pre_start_completion, operation) do
+    operation
+    |> capture_operation()
+    |> then(&finish_after_prepare(pre_start_completion, &1))
+  end
+
+  defp capture_operation(operation) do
     try do
-      result = operation.()
-      finalize_pre_start(pre_start_completion, result)
+      {:returned, operation.()}
     rescue
       exception ->
-        stacktrace = __STACKTRACE__
-        _ = finalize_pre_start(pre_start_completion, {:error, {:error, exception}})
-        :erlang.raise(:error, exception, stacktrace)
+        {:raised, :error, exception, __STACKTRACE__}
     catch
       kind, reason ->
-        stacktrace = __STACKTRACE__
-        _ = finalize_pre_start(pre_start_completion, {:error, {kind, reason}})
-        :erlang.raise(kind, reason, stacktrace)
+        {:raised, kind, reason, __STACKTRACE__}
+    end
+  end
+
+  defp finish_after_prepare(pre_start_completion, {:returned, result}) do
+    finalize_pre_start(pre_start_completion, result)
+  end
+
+  defp finish_after_prepare(pre_start_completion, {:raised, kind, reason, stacktrace}) do
+    _ = complete_error_best_effort(pre_start_completion, kind, reason)
+    :erlang.raise(kind, reason, stacktrace)
+  end
+
+  defp complete_error_best_effort(pre_start_completion, kind, reason) do
+    try do
+      finalize_pre_start(pre_start_completion, {:error, {kind, reason}})
+    rescue
+      _exception -> :completion_failed
+    catch
+      _kind, _reason -> :completion_failed
     end
   end
 
