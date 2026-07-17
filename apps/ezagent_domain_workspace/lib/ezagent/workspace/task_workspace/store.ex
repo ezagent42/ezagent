@@ -66,6 +66,38 @@ defmodule Ezagent.Workspace.TaskWorkspace.Store do
     end)
   end
 
+  @doc "Moves only the current, unexpired provision claim into cleanup pending."
+  @spec fail_provision(pos_integer(), String.t(), atom(), keyword()) ::
+          {:ok, Provision.t()} | {:error, term()}
+  def fail_provision(id, claim_token, reason, opts \\ [])
+
+  def fail_provision(id, claim_token, reason, opts)
+      when is_binary(claim_token) and is_atom(reason) and not is_nil(reason) and is_list(opts) do
+    now = Keyword.get(opts, :now, DateTime.utc_now())
+
+    locked(id, fn
+      %Provision{status: :provisioning, claim_token: ^claim_token} = row ->
+        with :ok <- current_lease(row.lease_until, now, :provision_lease_expired) do
+          update_row(row, %{
+            status: :cleanup_pending,
+            state_version: row.state_version + 1,
+            cleanup_reason: Atom.to_string(reason),
+            claim_token: nil,
+            lease_until: nil
+          })
+        end
+
+      %Provision{status: :provisioning} ->
+        {:error, :provision_lease_lost}
+
+      %Provision{} ->
+        {:error, :invalid_provision_transition}
+    end)
+  end
+
+  def fail_provision(_id, _claim_token, _reason, _opts),
+    do: {:error, :invalid_cleanup_reason}
+
   @doc "Commits a verified ready workspace for the current provision lease."
   @spec mark_ready(pos_integer(), String.t(), map(), keyword()) ::
           {:ok, Provision.t()} | {:error, term()}

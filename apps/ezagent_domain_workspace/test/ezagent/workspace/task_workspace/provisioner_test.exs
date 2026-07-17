@@ -142,7 +142,7 @@ defmodule Ezagent.Workspace.TaskWorkspace.ProvisionerTest do
     refute_receive {:git_prepare, _}
   end
 
-  test "lease loss after Git success cannot publish ready and removes the prepared worktree" do
+  test "cancellation after Git success fences ready and leaves cleanup to its owner" do
     fixture = start_policy(:public)
 
     Application.put_env(:ezagent_domain_workspace, :provisioner_test_verify_hook, fn ->
@@ -153,10 +153,86 @@ defmodule Ezagent.Workspace.TaskWorkspace.ProvisionerTest do
 
     assert {:error, :provision_lease_lost} = Provisioner.prepare(fixture.request)
     assert_receive {:git_prepare, _}
-    assert_receive {:git_remove, _}
+    refute_receive {:git_remove, _}
 
     assert Repo.get_by!(Provision, provision_id: fixture.request.provision_id).status ==
              :cleanup_pending
+  end
+
+  test "lease takeover fences stale failure without deleting the replacement artifact" do
+    fixture = start_policy(:public)
+
+    Application.put_env(:ezagent_domain_workspace, :provisioner_test_verify_hook, fn ->
+      row = Repo.get_by!(Provision, provision_id: fixture.request.provision_id)
+      {:ok, _replacement} = Store.claim_provision(row.id, now: DateTime.add(row.lease_until, 1))
+      :ok
+    end)
+
+    assert {:error, :provision_lease_lost} = Provisioner.prepare(fixture.request)
+    refute_receive {:git_remove, _}
+
+    current = Repo.get_by!(Provision, provision_id: fixture.request.provision_id)
+    assert current.status == :provisioning
+    refute is_nil(current.claim_token)
+  end
+
+  test "final policy reload rejects visibility drift before publishing ready" do
+    fixture = start_policy(:public)
+
+    Application.put_env(:ezagent_domain_workspace, :provisioner_test_verify_hook, fn ->
+      :ok = Ezagent.DomainGit.TaskAccessSupervisor.teardown(fixture.request.task_access_uri)
+      private_repository = %{fixture.policy.repository | visibility: :private}
+      private_policy = %{fixture.policy | repository: private_repository}
+      {:ok, _pid} = Ezagent.DomainGit.TaskAccessSupervisor.ensure_started(private_policy)
+      :ok
+    end)
+
+    assert {:error, :task_policy_mismatch} = Provisioner.prepare(fixture.request)
+    assert_receive {:git_prepare, _}
+    assert_receive {:git_remove, _}
+
+    assert %Provision{status: :cleanup_pending, cleanup_reason: "task_policy_mismatch"} =
+             Repo.get_by!(Provision, provision_id: fixture.request.provision_id)
+  end
+
+  test "provision lease exceeds bounded lock wait plus the Git command budget" do
+    assert Provisioner.provision_lease_seconds() * 1_000 >
+             5_000 + Ezagent.Workspace.TaskWorkspace.GitRunner.maximum_provision_duration_ms()
+  end
+
+  test "failed prepared worktree waits for the same cache lock before removal" do
+    fixture = start_policy(:public)
+    owner = self()
+
+    Application.put_env(:ezagent_domain_workspace, :provisioner_test_verify_hook, fn ->
+      send(owner, {:verify_paused, self()})
+      receive do: (:continue_verify -> :ok)
+    end)
+
+    Application.put_env(
+      :ezagent_domain_workspace,
+      :provisioner_test_verify_result,
+      {:error, :worktree_verification_failed}
+    )
+
+    provision = Task.async(fn -> Provisioner.prepare(fixture.request) end)
+    assert_receive {:verify_paused, worker}
+
+    holder =
+      Task.async(fn ->
+        Ezagent.Workspace.TaskWorkspace.CacheLock.with_lock("cache-fixture", 1_000, fn ->
+          send(owner, {:remove_lock_held, self()})
+          receive do: (:release_remove_lock -> :ok)
+        end)
+      end)
+
+    assert_receive {:remove_lock_held, holder_pid}
+    send(worker, :continue_verify)
+    refute_receive {:git_remove, _}, 50
+    send(holder_pid, :release_remove_lock)
+    assert_receive {:git_remove, _}
+    assert {:error, :workspace_not_ready} = Task.await(provision)
+    assert :ok = Task.await(holder)
   end
 
   defp start_policy(visibility, suffix \\ "one") do
@@ -218,6 +294,7 @@ defmodule Ezagent.Workspace.TaskWorkspace.ProvisionerTest do
       generation: fixture.request.generation,
       task_access_uri: URI.to_string(fixture.request.task_access_uri),
       repository_uri: URI.to_string(policy.repository.repository_uri),
+      checkout_fingerprint: Provisioner.checkout_fingerprint(policy),
       base_ref: policy.repository.base_ref,
       allowed_head_ref: policy.allowed_head_ref,
       visibility: policy.repository.visibility

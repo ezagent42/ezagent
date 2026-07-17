@@ -22,6 +22,7 @@ defmodule Ezagent.Workspace.TaskWorkspace.Provision do
     :generation,
     :task_access_uri,
     :repository_uri,
+    :checkout_fingerprint,
     :base_ref,
     :allowed_head_ref
   ]
@@ -49,6 +50,7 @@ defmodule Ezagent.Workspace.TaskWorkspace.Provision do
     field(:generation, :integer)
     field(:task_access_uri, :string)
     field(:repository_uri, :string)
+    field(:checkout_fingerprint, :string)
     field(:base_ref, :string)
     field(:allowed_head_ref, :string)
     field(:status, Ecto.Enum, values: @statuses, default: :planned)
