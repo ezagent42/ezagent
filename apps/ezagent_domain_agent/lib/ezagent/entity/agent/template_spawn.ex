@@ -623,7 +623,7 @@ defmodule Ezagent.Entity.Agent.TemplateSpawn do
   defp complete_pre_start(claim, {:returned, result}) do
     outcome =
       case result do
-        {:ok, _workers, _fresh?, _meta} -> :ok
+        {:ok, workers, _fresh?, _meta} -> {:ok, %{workers: workers}}
         {:error, reason} -> {:error, reason}
       end
 

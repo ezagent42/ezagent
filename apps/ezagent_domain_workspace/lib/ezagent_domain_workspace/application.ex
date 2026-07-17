@@ -58,6 +58,9 @@ defmodule EzagentDomainWorkspace.Application do
 
   defp register_task_workspace_infrastructure do
     :ok =
+      Ezagent.Kind.Template.PreStart.register(Ezagent.Workspace.TaskWorkspace.PreStart)
+
+    :ok =
       Ezagent.Resource.FsResolver.Registry.register_all([
         Ezagent.Workspace.TaskWorkspace.Paths.resource_type()
       ])

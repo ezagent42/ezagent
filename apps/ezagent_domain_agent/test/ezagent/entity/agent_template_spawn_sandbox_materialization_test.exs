@@ -383,7 +383,7 @@ defmodule Ezagent.Entity.AgentTemplateSpawnSandboxMaterializationTest do
       assert data["cwd"] == "/safe/task"
       refute Map.has_key?(fixture.content, :pre_start_ref)
       refute Map.has_key?(data, "pre_start_ref")
-      assert_receive {:pre_start_complete, "claim-one", :ok}
+      assert_receive {:pre_start_complete, "claim-one", {:ok, %{workers: [_worker]}}}
     end
 
     test "instantiate error completes exactly once", fixture do

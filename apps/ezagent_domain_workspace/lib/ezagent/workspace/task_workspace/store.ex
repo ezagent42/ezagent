@@ -18,6 +18,84 @@ defmodule Ezagent.Workspace.TaskWorkspace.Store do
   def get(id) when is_integer(id) and id > 0, do: Repo.get(Provision, id)
   def get(_id), do: nil
 
+  @doc "Loads a provision by its opaque public identity."
+  @spec get_by_provision_id(String.t()) :: Provision.t() | nil
+  def get_by_provision_id(provision_id) when is_binary(provision_id) and provision_id != "",
+    do: Repo.get_by(Provision, provision_id: provision_id)
+
+  def get_by_provision_id(_provision_id), do: nil
+
+  @doc "Binds deterministic Agent retirement intent before sidecar instantiation."
+  @spec bind_start_intent(String.t(), map()) :: {:ok, Provision.t()} | {:error, term()}
+  def bind_start_intent(provision_id, %{
+        agent_uri: agent_uri,
+        provenance_root_uri: root_uri,
+        workspace_uri: workspace_uri,
+        task_access_uri: task_access_uri,
+        task_uri: task_uri,
+        generation: generation
+      })
+      when is_binary(provision_id) and is_binary(agent_uri) and agent_uri != "" and
+             is_binary(root_uri) and root_uri != "" and is_binary(workspace_uri) and
+             is_binary(task_access_uri) and is_binary(task_uri) and is_integer(generation) do
+    case get_by_provision_id(provision_id) do
+      %Provision{id: id} ->
+        locked(id, fn
+          %Provision{
+            status: :ready,
+            workspace_uri: ^workspace_uri,
+            task_access_uri: ^task_access_uri,
+            task_uri: ^task_uri,
+            generation: ^generation,
+            agent_uri: nil,
+            provenance_root_uri: nil
+          } = row ->
+            with :ok <- intent_authority(agent_uri, root_uri, workspace_uri) do
+              update_row(row, %{
+                agent_uri: agent_uri,
+                provenance_root_uri: root_uri,
+                state_version: row.state_version + 1
+              })
+            end
+
+          %Provision{
+            status: :ready,
+            workspace_uri: ^workspace_uri,
+            task_access_uri: ^task_access_uri,
+            task_uri: ^task_uri,
+            generation: ^generation,
+            agent_uri: ^agent_uri,
+            provenance_root_uri: ^root_uri
+          } = row ->
+            {:ok, row}
+
+          %Provision{status: :ready} ->
+            {:error, :conflicting_sidecar_start_intent}
+
+          %Provision{} ->
+            {:error, :workspace_not_ready}
+        end)
+
+      nil ->
+        {:error, :workspace_not_ready}
+    end
+  end
+
+  def bind_start_intent(_provision_id, _intent), do: {:error, :invalid_sidecar_start_intent}
+
+  defp intent_authority(agent_uri, root_uri, workspace_uri) do
+    with {:ok, agent} <- URI.new(agent_uri),
+         {:ok, root} <- URI.new(root_uri),
+         {:ok, workspace} <- URI.new(workspace_uri),
+         true <- Ezagent.URI.scheme?(agent, :entity) and Ezagent.URI.type?(agent, :agent),
+         true <- Ezagent.URI.workspace_of(agent) == workspace,
+         true <- Ezagent.URI.workspace_of(root) == workspace do
+      :ok
+    else
+      _ -> {:error, :sidecar_start_authority_mismatch}
+    end
+  end
+
   @doc "Returns whether no other non-cleaned provision owns the exact worktree path."
   @spec worktree_path_available?(pos_integer(), String.t()) :: boolean()
   def worktree_path_available?(provision_id, path)
@@ -154,8 +232,10 @@ defmodule Ezagent.Workspace.TaskWorkspace.Store do
   end
 
   @doc "Records that sidecar instantiation succeeded for a consumed start token."
-  @spec mark_started(pos_integer(), String.t()) :: {:ok, Provision.t()} | {:error, term()}
-  def mark_started(id, start_token) when is_binary(start_token) do
+  @spec mark_started(pos_integer(), String.t(), map()) ::
+          {:ok, Provision.t()} | {:error, term()}
+  def mark_started(id, start_token, retirement_handle)
+      when is_binary(start_token) and is_map(retirement_handle) do
     locked(id, fn
       %Provision{
         status: :ready,
@@ -163,7 +243,12 @@ defmodule Ezagent.Workspace.TaskWorkspace.Store do
         start_token_consumed_at: consumed_at
       } = row
       when not is_nil(consumed_at) ->
-        update_row(row, %{status: :sidecar_started, state_version: row.state_version + 1})
+        with {:ok, handle} <- retirement_handle(retirement_handle) do
+          update_row(
+            row,
+            Map.merge(handle, %{status: :sidecar_started, state_version: row.state_version + 1})
+          )
+        end
 
       %Provision{status: :ready, start_token: ^start_token} ->
         {:error, :start_token_not_claimed}
@@ -175,6 +260,27 @@ defmodule Ezagent.Workspace.TaskWorkspace.Store do
         {:error, :invalid_start_transition}
     end)
   end
+
+  def mark_started(_id, _start_token, _retirement_handle),
+    do: {:error, :invalid_retirement_handle}
+
+  defp retirement_handle(%{
+         agent_uri: agent_uri,
+         creation_attempt_id: creation_attempt_id,
+         provenance_root_uri: provenance_root_uri
+       })
+       when is_binary(agent_uri) and agent_uri != "" and is_binary(creation_attempt_id) and
+              creation_attempt_id != "" and is_binary(provenance_root_uri) and
+              provenance_root_uri != "" do
+    {:ok,
+     %{
+       agent_uri: agent_uri,
+       creation_attempt_id: creation_attempt_id,
+       provenance_root_uri: provenance_root_uri
+     }}
+  end
+
+  defp retirement_handle(_handle), do: {:error, :invalid_retirement_handle}
 
   @doc "Moves a non-terminal provision into cleanup pending with a safe reason code."
   @spec request_cleanup(pos_integer(), atom()) :: {:ok, Provision.t()} | {:error, term()}

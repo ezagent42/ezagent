@@ -159,7 +159,12 @@ defmodule Ezagent.Workspace.TaskWorkspace.StoreTest do
     assert Enum.count(results, &match?({:ok, %Provision{}}, &1)) == 1
     assert Enum.count(results, &(&1 == {:error, :start_token_consumed})) == 7
 
-    assert {:ok, started} = Store.mark_started(row.id, ready.start_token)
+    assert {:ok, started} =
+             Store.mark_started(row.id, ready.start_token, %{
+               agent_uri: "entity://acme/agent/worker",
+               creation_attempt_id: "attempt-1",
+               provenance_root_uri: "entity://acme/user/owner"
+             })
     assert started.status == :sidecar_started
   end
 

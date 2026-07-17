@@ -40,7 +40,10 @@ defmodule Ezagent.Workspace.TaskWorkspace.Provision do
     :attempts,
     :blocker_code,
     :cleanup_reason,
-    :cleaned_at
+    :cleaned_at,
+    :agent_uri,
+    :creation_attempt_id,
+    :provenance_root_uri
   ]
 
   schema "git_task_workspace_provisions" do
@@ -66,6 +69,9 @@ defmodule Ezagent.Workspace.TaskWorkspace.Provision do
     field(:blocker_code, :string)
     field(:cleanup_reason, :string)
     field(:cleaned_at, :utc_datetime_usec)
+    field(:agent_uri, :string)
+    field(:creation_attempt_id, :string)
+    field(:provenance_root_uri, :string)
 
     timestamps(type: :utc_datetime_usec)
   end
