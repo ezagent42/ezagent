@@ -103,6 +103,14 @@ configuration. The permanent-identity contract is now
 stated in the design: one Agent URI has one final receipt, and destroy/recreate
 requires a new URI.
 
+The Repo-mode helper establishes its outer `try/after` before changing either
+application configuration or Sandbox state. Case 8 first injects a failure in
+the initial restart callback, then proves the original configuration is restored
+and a fresh Sandbox checkout can execute SQL before running the real restart
+scenario. Restoration starts a bounded two-connection Sandbox pool to avoid a
+restart-time connection surge, then restores the exact configured pool size in
+application state.
+
 Fresh correction verification:
 
 ```text

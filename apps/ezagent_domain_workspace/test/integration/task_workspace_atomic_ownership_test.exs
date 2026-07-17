@@ -186,56 +186,52 @@ defmodule Ezagent.Workspace.TaskWorkspace.AtomicOwnershipTest do
     original_repo_config = Application.fetch_env!(:ezagent_core, Repo)
     terminate_atomic_agents()
 
-    Application.put_env(
-      :ezagent_core,
-      Repo,
-      original_repo_config
-      |> Keyword.put(:pool, DBConnection.ConnectionPool)
-      |> Keyword.put(:pool_size, 2)
-    )
-
-    restart_repo!()
-
-    try do
-      row = ready_row("restart")
-      Ezagent.Agent.TestTemplateSpawn.inject(:barrier_before_complete, self())
-      caller = start_caller(row, flavor)
-      assert_receive {:template_spawn_before_complete, _, {:ok, %{fresh?: true}}, _}
-      Process.exit(caller, :kill)
-      terminate_agent(uri(row.agent_uri))
-
-      :ets.delete(Ezagent.AgentLineage.table(), row.agent_uri)
-      :ets.delete(Ezagent.WorkspaceRegistry.table(), row.agent_uri)
-      assert :error = Ezagent.AgentLineage.lookup(uri(row.agent_uri))
-      assert :error = Ezagent.WorkspaceRegistry.lookup(uri(row.agent_uri))
-
-      original_repo_pid = Process.whereis(Repo)
-      restart_repo!()
-      restarted_repo_pid = Process.whereis(Repo)
-      refute restarted_repo_pid == original_repo_pid
-
-      reloaded = Repo.get!(Provision, row.id)
-      {:owned, facts} = Store.classify_creation_receipt(reloaded)
-      :ok = Ezagent.AgentLineage.publish_cache(facts.agent_uri, facts.root_uri)
-      :ok = Ezagent.WorkspaceRegistry.bind(facts.agent_uri, facts.workspace_uri)
-
-      assert facts.attempt_id == row.creation_attempt_id
-      assert {:ok, root} = Ezagent.AgentLineage.lookup(uri(row.agent_uri))
-      assert root == uri(row.provenance_root_uri)
-      assert {:ok, rebound_workspace} = Ezagent.WorkspaceRegistry.lookup(uri(row.agent_uri))
-      assert rebound_workspace == uri(row.workspace_uri)
-      recover_owned(reloaded)
-    after
-      terminate_atomic_agents()
-
-      try do
-        cleanup_committed_atomic_rows()
-      after
-        Application.put_env(:ezagent_core, Repo, original_repo_config)
-        restart_repo!()
-        Ecto.Adapters.SQL.Sandbox.mode(Repo, :manual)
-      end
+    assert_raise RuntimeError, "injected first Repo restart failure", fn ->
+      with_production_repo(original_repo_config, fn -> flunk("operation must not run") end, fn ->
+        raise "injected first Repo restart failure"
+      end)
     end
+
+    assert Application.fetch_env!(:ezagent_core, Repo) == original_repo_config
+    assert :ok = Ecto.Adapters.SQL.Sandbox.checkout(Repo)
+    assert %{rows: [[1]]} = Ecto.Adapters.SQL.query!(Repo, "SELECT 1", [])
+    assert :ok = Ecto.Adapters.SQL.Sandbox.checkin(Repo)
+
+    with_production_repo(original_repo_config, fn ->
+      try do
+        row = ready_row("restart")
+        Ezagent.Agent.TestTemplateSpawn.inject(:barrier_before_complete, self())
+        caller = start_caller(row, flavor)
+        assert_receive {:template_spawn_before_complete, _, {:ok, %{fresh?: true}}, _}
+        Process.exit(caller, :kill)
+        terminate_agent(uri(row.agent_uri))
+
+        :ets.delete(Ezagent.AgentLineage.table(), row.agent_uri)
+        :ets.delete(Ezagent.WorkspaceRegistry.table(), row.agent_uri)
+        assert :error = Ezagent.AgentLineage.lookup(uri(row.agent_uri))
+        assert :error = Ezagent.WorkspaceRegistry.lookup(uri(row.agent_uri))
+
+        original_repo_pid = Process.whereis(Repo)
+        restart_repo!()
+        restarted_repo_pid = Process.whereis(Repo)
+        refute restarted_repo_pid == original_repo_pid
+
+        reloaded = Repo.get!(Provision, row.id)
+        {:owned, facts} = Store.classify_creation_receipt(reloaded)
+        :ok = Ezagent.AgentLineage.publish_cache(facts.agent_uri, facts.root_uri)
+        :ok = Ezagent.WorkspaceRegistry.bind(facts.agent_uri, facts.workspace_uri)
+
+        assert facts.attempt_id == row.creation_attempt_id
+        assert {:ok, root} = Ezagent.AgentLineage.lookup(uri(row.agent_uri))
+        assert root == uri(row.provenance_root_uri)
+        assert {:ok, rebound_workspace} = Ezagent.WorkspaceRegistry.lookup(uri(row.agent_uri))
+        assert rebound_workspace == uri(row.workspace_uri)
+        recover_owned(reloaded)
+      after
+        terminate_atomic_agents()
+        cleanup_committed_atomic_rows()
+      end
+    end)
   end
 
   test "9 coordinator replay is exact and reconciler blocks durable coordinate conflict", %{
@@ -342,6 +338,26 @@ defmodule Ezagent.Workspace.TaskWorkspace.AtomicOwnershipTest do
     :ok = Supervisor.terminate_child(EzagentCore.Supervisor, Repo)
     {:ok, _pid} = Supervisor.restart_child(EzagentCore.Supervisor, Repo)
     :ok
+  end
+
+  defp with_production_repo(original_repo_config, operation, restart \\ &restart_repo!/0) do
+    try do
+      Application.put_env(
+        :ezagent_core,
+        Repo,
+        original_repo_config
+        |> Keyword.put(:pool, DBConnection.ConnectionPool)
+        |> Keyword.put(:pool_size, 2)
+      )
+
+      restart.()
+      operation.()
+    after
+      Application.put_env(:ezagent_core, Repo, Keyword.put(original_repo_config, :pool_size, 2))
+      restart_repo!()
+      Application.put_env(:ezagent_core, Repo, original_repo_config)
+      Ecto.Adapters.SQL.Sandbox.mode(Repo, :manual)
+    end
   end
 
   defp cleanup_committed_atomic_rows do
