@@ -25,6 +25,7 @@ defmodule EzagentDomainAgent.Application do
   def start(_type, _args) do
     children =
       [
+        Ezagent.Agent.LaunchAuthority,
         {EzagentDomainAgent.EtsOwner, []},
         # Agent Kind DynamicSupervisor — 0 children at boot; agents demand-spawn
         # / rehydrate lazily. Frozen name (D1a).
