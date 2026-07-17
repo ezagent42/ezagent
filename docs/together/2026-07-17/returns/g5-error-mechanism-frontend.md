@@ -119,10 +119,30 @@ dataset 有 error,DOM 无 `[data-error-code]` 卡片
 ### 修复后实机验证
 
 同一触发路径(同名重复建 agent → `error:{:already_exists,...}`):卡片实时渲染,
-`data-error-code="unknown"`、`data-error-layer="3"`,dismiss 按钮可用
-(证据 `../evidence/g5-live-card-rendered.png`——真实运行截图:页面顶部 info tone 的
-G5 错误卡片「Agent 执行时遇到错误 / 无法完成你的请求 / 此问题已自动登记,系统管理员会处理。」,
-下方是表单原有的 raw 错误横幅「同名 agent 已存在:…」,两条错误通道同框对比)。
+`data-error-code="unknown"`、`data-error-layer="3"`,dismiss 按钮可用。
+
+### 第二轮:改为浮动 toast(2026-07-17 晚,产品反馈后)
+
+反馈:文档流内嵌卡片会顶动页面 DOM,不可接受。改为仿 LiveView flash
+(`core_components.ex` 的 `fixed right-4 z-50 w-80 sm:w-96` 惯例)的浮动 toast:
+
+- `main.tsx`:卡片容器改为 `fixed right-4 top-4 z-50`(`data-world-error-toast`),
+  **不占文档流、不影响现有 DOM**;
+- 新增 `ERROR_TOAST_AUTO_DISMISS_MS = 5000` 自动消失(新错误重置计时,手动 dismiss 清定时器);
+- 顺带修复一个边界:连续两次**完全相同**的失败,后端 assign 字符串不变 →
+  LV 不重复 patch data 属性 → 第二次 toast 弹不出。引入 `pendingDispatch`:
+  岛内发起 `world:dispatch` 时置位,跟随的 `world:state` 事件到达时主动经
+  `getDispatchStatus()` 重读 dataset 重建卡片;全部 ~30 个岛内 dispatch 调用点
+  统一走 `sendEvent` 包装。
+
+实机验证(10043 端口,同名重复建 agent):
+
+| 验证项 | 结果 |
+|---|---|
+| toast 浮动渲染(fixed,DOM 不被顶动) | PASS,证据 `../evidence/g5-live-error-toast.png` |
+| 5s 后自动消失 | PASS |
+| 相同错误再次触发 → toast 再次弹出 | PASS |
+| tsc / eslint / vitest(22) | PASS |
 
 | 验证项 | 结果 |
 |---|---|

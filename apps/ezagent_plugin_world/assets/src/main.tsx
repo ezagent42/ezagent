@@ -32,6 +32,8 @@ type SlotManifest = {
 }
 
 const SLOTS = (slotManifest as SlotManifest).slots
+// G5 错误 toast 自动消失时长(仿 LiveView flash 的轻量通知语义)。
+const ERROR_TOAST_AUTO_DISMISS_MS = 5000
 const FULL_BLEED_FAMILIES = new Set(["admin", "conversation", "kanban", "pty", "sessions", "workspace_plugins"])
 const FULL_BLEED_TYPES = new Set(["agents_table"])
 
@@ -83,6 +85,8 @@ type WorldMountOptions = {
   // WorldRenderer.updated() 通过它把 data-last-dispatch 同步进来
   // （phx-update="ignore" 下 data 属性仍会被 LiveView patch，但 React 不会自动重读）。
   registerDispatchStatusListener?: (listener: ((status: string | null) => void) | null) => void
+  // 直接读 island 根元素当前的 data-last-dispatch（比 world:state payload 新）。
+  getDispatchStatus?: () => string | null
 }
 
 type WorkspaceNavItem = {
@@ -144,6 +148,7 @@ export function mountWorld(element: HTMLElement, options: WorldMountOptions = {}
   root.render(
     <WorldApp
       {...options}
+      getDispatchStatus={() => element.dataset.lastDispatch || null}
       registerDispatchStatusListener={(listener) => {
         dispatchStatusListener.current = listener
       }}
@@ -159,11 +164,23 @@ export function mountWorld(element: HTMLElement, options: WorldMountOptions = {}
   }
 }
 
-function WorldApp({layout, state: initialState, pluginNav, caller, pushEvent, onServerEvent, registerDispatchStatusListener}: WorldMountOptions) {
+function WorldApp({layout, state: initialState, pluginNav, caller, pushEvent, onServerEvent, registerDispatchStatusListener, getDispatchStatus}: WorldMountOptions) {
   const [currentLayout, setCurrentLayout] = React.useState<WorldLayout>(() => initialState?.layout || layout || {})
   const [state, setState] = React.useState<WorldState>(() => initialState || {})
   const [errorCard, setErrorCard] = React.useState<RenderedError | null>(() =>
     errorCardForStatus(initialState?.last_dispatch_status, caller || {}),
+  )
+
+  // 岛内发起的 world:dispatch 计数。后端对「相同 error 字符串」不会重复 patch
+  // data 属性,所以跟随本次 dispatch 的 world:state 事件到达时,要主动重读
+  // dataset 重建卡片(连续两次相同失败也能再次弹出 toast)。
+  const pendingDispatch = React.useRef(false)
+  const sendEvent = React.useCallback<NonNullable<WorldMountOptions["pushEvent"]>>(
+    (event, payload, onReply) => {
+      if (event === "world:dispatch") pendingDispatch.current = true
+      pushEvent?.(event, payload, onReply)
+    },
+    [pushEvent],
   )
 
   const navItems = React.useMemo<typeof NAV_ITEMS>(() => {
@@ -183,6 +200,14 @@ function WorldApp({layout, state: initialState, pluginNav, caller, pushEvent, on
     return () => registerDispatchStatusListener(null)
   }, [registerDispatchStatusListener, caller])
 
+  // toast 自动消失:有新错误时重置计时,手动 dismiss 时一并清掉定时器。
+  React.useEffect(() => {
+    if (!errorCard) return undefined
+
+    const timer = window.setTimeout(() => setErrorCard(null), ERROR_TOAST_AUTO_DISMISS_MS)
+    return () => window.clearTimeout(timer)
+  }, [errorCard])
+
   React.useEffect(() => {
     if (!onServerEvent) return undefined
 
@@ -197,7 +222,12 @@ function WorldApp({layout, state: initialState, pluginNav, caller, pushEvent, on
       })
       if (next.layout) setCurrentLayout(next.layout)
 
-      if ("last_dispatch_status" in next) {
+      if (pendingDispatch.current) {
+        // 本次 world:state 跟随岛内发起的 dispatch:以 dataset 里的最新
+        // last_dispatch_status 为准(payload 不带这个 key)。
+        pendingDispatch.current = false
+        setErrorCard(errorCardForStatus(getDispatchStatus?.() ?? null, caller || {}))
+      } else if ("last_dispatch_status" in next) {
         setErrorCard(errorCardForStatus(next.last_dispatch_status, caller || {}))
       }
     })
@@ -227,6 +257,18 @@ function WorldApp({layout, state: initialState, pluginNav, caller, pushEvent, on
         className="grid h-dvh min-h-0 grid-rows-[auto_minmax(0,1fr)] overflow-hidden bg-background text-foreground sm:grid-rows-[54px_minmax(0,1fr)]"
         data-world-shell="prototype"
       >
+        {errorCard && (
+          // 浮动 toast:fixed 定位不占文档流(与 core_components flash 同款
+          // right-4 + z-50 + w-80/sm:w-96 惯例),数秒后自动消失。
+          <div className="fixed right-4 top-4 z-50 w-80 max-w-[calc(100vw-2rem)] sm:w-96" data-world-error-toast>
+            <ErrorMessageCard
+              error={errorCard}
+              onDismiss={() => setErrorCard(null)}
+              onAction={(action, args) => sendEvent("world:dispatch", {action, args})}
+              onNavigate={(href) => sendEvent("world:navigate", {to: href})}
+            />
+          </div>
+        )}
         <header
           className="grid grid-cols-1 items-center gap-3 border-b border-border bg-card px-3 py-2 shadow-sm sm:grid-cols-[250px_minmax(260px,1fr)_auto] sm:px-3.5 sm:py-0"
           data-world-topbar
@@ -288,16 +330,6 @@ function WorldApp({layout, state: initialState, pluginNav, caller, pushEvent, on
         </header>
 
         <main className={fullBleed ? "h-full min-h-0 min-w-0 overflow-hidden" : "h-full min-h-0 min-w-0 overflow-auto p-4 sm:p-6"} data-world-content>
-          {errorCard && (
-            <div className="mb-4">
-              <ErrorMessageCard
-                error={errorCard}
-                onDismiss={() => setErrorCard(null)}
-                onAction={(action, args) => pushEvent?.("world:dispatch", {action, args})}
-                onNavigate={(href) => pushEvent?.("world:navigate", {to: href})}
-              />
-            </div>
-          )}
           {!fullBleed && (
             <header className="mb-5 flex flex-col items-start justify-between gap-3 sm:flex-row sm:items-center sm:gap-4">
               <div className="min-w-0 flex-1 sm:flex-none">
@@ -310,7 +342,7 @@ function WorldApp({layout, state: initialState, pluginNav, caller, pushEvent, on
           )}
           <CommandPalette
             cmdk={state.cmdk}
-            onAction={(action, args) => pushEvent?.("world:dispatch", {action, args})}
+            onAction={(action, args) => sendEvent("world:dispatch", {action, args})}
           />
 
           <div className={fullBleed ? "h-full min-h-0 min-w-0" : "grid min-w-0 gap-4"} data-component-count={components.length}>
@@ -320,7 +352,7 @@ function WorldApp({layout, state: initialState, pluginNav, caller, pushEvent, on
                 state,
                 pushEvent,
                 onJoin: (sessionUri) => {
-                  pushEvent?.("world:dispatch", {
+                  sendEvent("world:dispatch", {
                     action: "sessions.join",
                     args: {session_uri: sessionUri},
                   })
@@ -332,179 +364,179 @@ function WorldApp({layout, state: initialState, pluginNav, caller, pushEvent, on
                   if (options?.socialware_config_id) args.socialware_config_id = options.socialware_config_id
                   if (options?.socialware_content_hash) args.socialware_content_hash = options.socialware_content_hash
                   setState((current) => ({...current, session_create_pending: true, create_error: null}))
-                  pushEvent?.("world:dispatch", {
+                  sendEvent("world:dispatch", {
                     action: "session.create",
                     args,
                   })
                 },
                 onPublishTemplate: (sessionUri, name) => {
-                  pushEvent?.("world:dispatch", {
+                  sendEvent("world:dispatch", {
                     action: "session.publish_template",
                     args: {session_uri: sessionUri, name},
                   })
                 },
                 onManageLayout: (nextLayout) => {
                   setCurrentLayout(nextLayout)
-                  pushEvent?.("world:dispatch", {
+                  sendEvent("world:dispatch", {
                     action: "layout.manage",
                     args: {layout: nextLayout},
                   })
                 },
                 onCreateAgent: (agent) => {
-                  pushEvent?.("world:dispatch", {
+                  sendEvent("world:dispatch", {
                     action: "agents.create",
                     args: {agent},
                   })
                 },
                 onCreateUser: (user) => {
-                  pushEvent?.("world:dispatch", {
+                  sendEvent("world:dispatch", {
                     action: "users.create",
                     args: {user},
                   })
                 },
                 onSaveUserProfile: (payload) => {
-                  pushEvent?.("world:dispatch", {
+                  sendEvent("world:dispatch", {
                     action: "users.profile.save",
                     args: payload,
                   })
                 },
                 onSetUserPassword: (payload) => {
-                  pushEvent?.("world:dispatch", {
+                  sendEvent("world:dispatch", {
                     action: "users.password.set",
                     args: payload,
                   })
                 },
                 onDisableUser: (payload) => {
-                  pushEvent?.("world:dispatch", {
+                  sendEvent("world:dispatch", {
                     action: "users.disable",
                     args: payload,
                   })
                 },
                 onEnableUser: (payload) => {
-                  pushEvent?.("world:dispatch", {
+                  sendEvent("world:dispatch", {
                     action: "users.enable",
                     args: payload,
                   })
                 },
                 onDeleteAgent: (agentUri: string) => {
-                  pushEvent?.("world:dispatch", {
+                  sendEvent("world:dispatch", {
                     action: "agents.delete",
                     args: {agent_uri: agentUri},
                   })
                 },
                 onConfigUpdate: (agentUri: string, key: string, patch: Record<string, unknown>) => {
-                  pushEvent?.("world:dispatch", {
+                  sendEvent("world:dispatch", {
                     action: "agents.config.update",
                     args: {agent_uri: agentUri, layer: "user", key, patch},
                   })
                 },
                 onConfigDeletePath: (agentUri: string, key: string, path: string[]) => {
-                  pushEvent?.("world:dispatch", {
+                  sendEvent("world:dispatch", {
                     action: "agents.config.delete_path",
                     args: {agent_uri: agentUri, layer: "user", key, path},
                   })
                 },
                 onPutApiKey: (payload) => {
-                  pushEvent?.("world:dispatch", {
+                  sendEvent("world:dispatch", {
                     action: "agent.api_key.put",
                     args: payload,
                   })
                 },
                 onAdminAction: (action, args) => {
-                  pushEvent?.("world:dispatch", {action, args})
+                  sendEvent("world:dispatch", {action, args})
                 },
                 onWorkspacePluginAction: (action, args) => {
-                  pushEvent?.("world:dispatch", {action, args})
+                  sendEvent("world:dispatch", {action, args})
                 },
                 onChatSend: (sessionUri, text, grants) => {
-                  pushEvent?.("world:dispatch", {
+                  sendEvent("world:dispatch", {
                     action: "chat.send",
                     args: {session_uri: sessionUri, text, grants},
                   })
                 },
                 onSessionSwitch: (sessionUri) => {
-                  pushEvent?.("world:dispatch", {
+                  sendEvent("world:dispatch", {
                     action: "session.switch",
                     args: {session_uri: sessionUri},
                   })
                 },
                 onLoadOlder: (sessionUri, before) => {
-                  pushEvent?.("world:dispatch", {
+                  sendEvent("world:dispatch", {
                     action: "chat.load_older",
                     args: {session_uri: sessionUri, before},
                   })
                 },
                 onMarkDisplayed: (sessionUri, msgId) => {
-                  pushEvent?.("world:dispatch", {
+                  sendEvent("world:dispatch", {
                     action: "chat.mark_displayed",
                     args: {session_uri: sessionUri, msg_id: msgId},
                   })
                 },
                 onInvite: (sessionUri, member) => {
-                  pushEvent?.("world:dispatch", {
+                  sendEvent("world:dispatch", {
                     action: "session.invite",
                     args: {session_uri: sessionUri, member},
                   })
                 },
                 onAssignRole: (sessionUri, member, roleName) => {
-                  pushEvent?.("world:dispatch", {
+                  sendEvent("world:dispatch", {
                     action: "session.assign_role",
                     args: {session_uri: sessionUri, member, role_name: roleName},
                   })
                 },
                 onRemoveParticipant: (sessionUri, participant) => {
-                  pushEvent?.("world:dispatch", {
+                  sendEvent("world:dispatch", {
                     action: "session.remove_participant",
                     args: {session_uri: sessionUri, participant},
                   })
                 },
                 onUninstallSocialware: (sessionUri, ref) => {
-                  pushEvent?.("world:dispatch", {
+                  sendEvent("world:dispatch", {
                     action: "session.socialware.uninstall",
                     args: {session_uri: sessionUri, ref},
                   })
                 },
                 onSessionViewSwitch: (sessionUri, view) => {
-                  pushEvent?.("world:dispatch", {
+                  sendEvent("world:dispatch", {
                     action: "session.view.switch",
                     args: {session_uri: sessionUri, view},
                   })
                 },
                 onOpenSessionPty: (sessionUri, agent) => {
-                  pushEvent?.("world:dispatch", {
+                  sendEvent("world:dispatch", {
                     action: "session.pty.open",
                     args: {session_uri: sessionUri, agent},
                   })
                 },
                 onForkConfig: (sessionUri) => {
-                  pushEvent?.("world:dispatch", {
+                  sendEvent("world:dispatch", {
                     action: "session.fork_config",
                     args: {session_uri: sessionUri},
                   })
                 },
                 onRestartOrchestrator: (sessionUri) => {
-                  pushEvent?.("world:dispatch", {
+                  sendEvent("world:dispatch", {
                     action: "session.orchestrator.restart",
                     args: {session_uri: sessionUri},
                   })
                 },
                 onAddRoutingRule: (sessionUri, rule) => {
-                  pushEvent?.("world:dispatch", {
+                  sendEvent("world:dispatch", {
                     action: "session.routing.add",
                     args: {session_uri: sessionUri, rule},
                   })
                 },
                 onToggleRoutingRule: (sessionUri, rule) => {
-                  pushEvent?.("world:dispatch", {
+                  sendEvent("world:dispatch", {
                     action: "session.routing.toggle",
                     args: {session_uri: sessionUri, ...rule},
                   })
                 },
                 onPtyInput: (bytes) => {
-                  pushEvent?.("pty_input", {bytes})
+                  sendEvent("pty_input", {bytes})
                 },
                 onPtyResize: (size) => {
-                  pushEvent?.("pty_resize", size)
+                  sendEvent("pty_resize", size)
                 },
                 onServerEvent,
               }),
