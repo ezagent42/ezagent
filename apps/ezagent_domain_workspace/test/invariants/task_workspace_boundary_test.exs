@@ -152,7 +152,12 @@ defmodule Ezagent.Workspace.TaskWorkspace.BoundaryTest do
       "def leak(opts) do handle = Keyword.fetch!(opts, :launch_context); case Jason.encode!(handle) do _ -> :ok end end",
       "def leak(opts) do handle = Keyword.fetch!(opts, :launch_context); case value do x when Jason.encode!(handle) -> x; _ -> :ok end end",
       "def leak(opts) do with value <- Keyword.fetch!(opts, :launch_context) do Jason.encode!(value) end end",
-      "def leak(opts) do for value <- [Keyword.fetch!(opts, :launch_context)], do: Jason.encode!(value) end"
+      "def leak(opts) do for value <- [Keyword.fetch!(opts, :launch_context)], do: Jason.encode!(value) end",
+      "def leak(opts) do handle = Keyword.fetch!(opts, :launch_context); with handle <- :safe, false <- true do :ok else _ -> Jason.encode!(handle) end end",
+      "def leak(opts) do with {value, _} <- {Keyword.fetch!(opts, :launch_context), :ok} do Jason.encode!(value) end end",
+      "def leak(opts) do with %{value: value} <- %{value: Keyword.fetch!(opts, :launch_context)} do Jason.encode!(value) end end",
+      "def leak(opts) do for {value, _} <- [{Keyword.fetch!(opts, :launch_context), :ok}], do: Jason.encode!(value) end",
+      "def leak(opts) do for value <- [:safe, Keyword.fetch!(opts, :launch_context)], do: Jason.encode!(value) end"
     ]
 
     for source <- mutants do
@@ -461,30 +466,8 @@ defmodule Ezagent.Workspace.TaskWorkspace.BoundaryTest do
 
   defp launch_scan({:<-, _, [left, right]} = node, state, function, path, aliases) do
     state = launch_scan(right, state, function, path, aliases)
-    assigned = variables_in(left)
-    tainted? = authority_source_node?(right) or tainted_node?(right, state.tainted)
-
-    tainted =
-      if tainted?,
-        do: MapSet.union(state.tainted, assigned),
-        else: MapSet.difference(state.tainted, assigned)
-
-    modules =
-      Enum.reduce(assigned, state.modules, fn variable, acc ->
-        Map.put(
-          acc,
-          Atom.to_string(variable),
-          launch_generator_module_value(right, state.modules, aliases)
-        )
-      end)
-
-    record_launch_state(
-      node,
-      %{state | tainted: tainted, modules: modules},
-      function,
-      path,
-      aliases
-    )
+    state = bind_launch_pattern(left, launch_generator_element(right), state, aliases)
+    record_launch_state(node, state, function, path, aliases)
   end
 
   defp launch_scan({:if, _, [condition, opts]}, state, function, path, aliases) do
@@ -509,7 +492,7 @@ defmodule Ezagent.Workspace.TaskWorkspace.BoundaryTest do
     success = launch_scan(Keyword.get(opts, :do), with_state, function, path, aliases)
 
     failure =
-      launch_clause_join(Keyword.get(opts, :else, []), with_state, function, path, aliases)
+      launch_clause_join(Keyword.get(opts, :else, []), state, function, path, aliases)
 
     merge_launch_states([success, failure], state)
   end
@@ -610,11 +593,75 @@ defmodule Ezagent.Workspace.TaskWorkspace.BoundaryTest do
   defp launch_module_value(ast, modules, aliases),
     do: resolve_sink_assignment(ast, aliases, modules)
 
-  defp launch_generator_module_value([value], modules, aliases),
-    do: launch_module_value(value, modules, aliases)
+  defp launch_generator_element([value]), do: value
 
-  defp launch_generator_module_value(value, modules, aliases),
-    do: launch_module_value(value, modules, aliases)
+  defp launch_generator_element(values) when is_list(values),
+    do: {:__joined_elements__, [], values}
+
+  defp launch_generator_element(value), do: value
+
+  defp bind_launch_pattern({name, _, context}, rhs, state, aliases)
+       when is_atom(name) and name != :_ and (is_atom(context) or is_nil(context)),
+       do: put_launch_binding(state, name, rhs, aliases)
+
+  defp bind_launch_pattern({:{}, _, patterns}, {:{}, _, values}, state, aliases)
+       when length(patterns) == length(values),
+       do:
+         Enum.zip(patterns, values)
+         |> Enum.reduce(state, fn {pattern, value}, acc ->
+           bind_launch_pattern(pattern, value, acc, aliases)
+         end)
+
+  defp bind_launch_pattern(patterns, values, state, aliases)
+       when is_tuple(patterns) and is_tuple(values) and tuple_size(patterns) == tuple_size(values) and
+              tuple_size(patterns) != 3,
+       do: bind_launch_pattern(Tuple.to_list(patterns), Tuple.to_list(values), state, aliases)
+
+  defp bind_launch_pattern({:%{}, _, patterns}, {:%{}, _, values}, state, aliases),
+    do:
+      Enum.reduce(patterns, state, fn {key, pattern}, acc ->
+        bind_launch_pattern(pattern, Keyword.get(values, key), acc, aliases)
+      end)
+
+  defp bind_launch_pattern({:|, _, [head, tail]}, [first | rest], state, aliases) do
+    state = bind_launch_pattern(head, first, state, aliases)
+    bind_launch_pattern(tail, rest, state, aliases)
+  end
+
+  defp bind_launch_pattern(patterns, values, state, aliases)
+       when is_list(patterns) and is_list(values) and length(patterns) == length(values),
+       do:
+         Enum.zip(patterns, values)
+         |> Enum.reduce(state, fn {pattern, value}, acc ->
+           bind_launch_pattern(pattern, value, acc, aliases)
+         end)
+
+  defp bind_launch_pattern(pattern, rhs, state, aliases),
+    do: Enum.reduce(variables_in(pattern), state, &put_launch_binding(&2, &1, rhs, aliases))
+
+  defp put_launch_binding(state, name, rhs, aliases) do
+    tainted? = launch_abstract_tainted?(rhs, state.tainted)
+
+    tainted =
+      if tainted?, do: MapSet.put(state.tainted, name), else: MapSet.delete(state.tainted, name)
+
+    module = launch_abstract_module(rhs, state.modules, aliases)
+    %{state | tainted: tainted, modules: Map.put(state.modules, Atom.to_string(name), module)}
+  end
+
+  defp launch_abstract_tainted?({:__joined_elements__, _, values}, tainted),
+    do: Enum.any?(values, &(authority_source_node?(&1) or tainted_node?(&1, tainted)))
+
+  defp launch_abstract_tainted?(rhs, tainted),
+    do: authority_source_node?(rhs) or tainted_node?(rhs, tainted)
+
+  defp launch_abstract_module({:__joined_elements__, _, values}, modules, aliases) do
+    values = Enum.map(values, &launch_module_value(&1, modules, aliases)) |> Enum.uniq()
+    if length(values) == 1, do: hd(values), else: :unknown
+  end
+
+  defp launch_abstract_module(rhs, modules, aliases),
+    do: launch_module_value(rhs, modules, aliases) || :unknown
 
   defp authority_source_node?(node) do
     {_node, found?} =

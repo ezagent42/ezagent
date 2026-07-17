@@ -156,7 +156,12 @@ defmodule EzagentCore.Invariants.PluginWorkspaceLocalityContractTest do
       "with owner <- Ezagent.Agent.CreationInventory do owner.record_exact(repo, a, b, c, d) end",
       "for owner <- [Ezagent.Agent.CreationInventory], do: owner.record_exact(repo, a, b, c, d)",
       "owner = if(flag, do: Ezagent.Agent.CreationInventory, else: String); owner.lookup(value)",
-      "owner = if(flag, do: Ezagent.Agent.CreationInventory, else: String); owner.arbitrary(value)"
+      "owner = if(flag, do: Ezagent.Agent.CreationInventory, else: String); owner.arbitrary(value)",
+      "owner = Ezagent.Agent.CreationInventory; with owner <- String, false <- true do :ok else _ -> owner.record_exact(repo, a, b, c, d) end",
+      "with {owner, _} <- {Ezagent.Agent.CreationInventory, :ok} do owner.record_exact(repo, a, b, c, d) end",
+      "with %{owner: owner} <- %{owner: Ezagent.Agent.CreationInventory} do owner.record_exact(repo, a, b, c, d) end",
+      "for {owner, _} <- [{Ezagent.Agent.CreationInventory, :ok}], do: owner.record_exact(repo, a, b, c, d)",
+      "for owner <- [String, Ezagent.Agent.CreationInventory], do: owner.arbitrary(value)"
     ]
 
     for source <- mutants do
@@ -309,10 +314,9 @@ defmodule EzagentCore.Invariants.PluginWorkspaceLocalityContractTest do
     {Map.put(env, name, ownership_value(rhs, env, aliases)), calls}
   end
 
-  defp ownership_scan({:<-, _, [{name, _, context}, rhs]}, env, aliases, imports, function, calls)
-       when is_atom(name) and (is_atom(context) or is_nil(context)) do
+  defp ownership_scan({:<-, _, [pattern, rhs]}, env, aliases, imports, function, calls) do
     {_rhs_env, calls} = ownership_scan(rhs, env, aliases, imports, function, calls)
-    {Map.put(env, name, ownership_generator_value(rhs, env, aliases)), calls}
+    {bind_ownership_pattern(pattern, generator_element(rhs), env, aliases), calls}
   end
 
   defp ownership_scan({:fn, _, clauses}, env, aliases, imports, function, calls) do
@@ -359,7 +363,7 @@ defmodule EzagentCore.Invariants.PluginWorkspaceLocalityContractTest do
     {_else_env, calls} =
       ownership_clause_join(
         Keyword.get(opts, :else, []),
-        with_env,
+        env,
         aliases,
         imports,
         function,
@@ -544,7 +548,16 @@ defmodule EzagentCore.Invariants.PluginWorkspaceLocalityContractTest do
 
     Enum.reduce(keys, %{}, fn key, acc ->
       values = Enum.map([first | rest], &Map.get(&1, key))
-      Map.put(acc, key, if(Enum.uniq(values) |> length() == 1, do: hd(values), else: :unknown))
+      distinct = Enum.uniq(values)
+
+      value =
+        cond do
+          length(distinct) == 1 -> hd(distinct)
+          Enum.any?(distinct, &module_abstract?/1) -> :unknown
+          true -> :unknown_value
+        end
+
+      Map.put(acc, key, value)
     end)
   end
 
@@ -563,10 +576,81 @@ defmodule EzagentCore.Invariants.PluginWorkspaceLocalityContractTest do
        when is_atom(name) and (is_atom(context) or is_nil(context)),
        do: Map.get(env, name)
 
+  defp ownership_value(module, _env, _aliases) when is_atom(module), do: nil
+
   defp ownership_value(ast, _env, aliases), do: resolve_module(ast, aliases)
 
-  defp ownership_generator_value([value], env, aliases), do: ownership_value(value, env, aliases)
-  defp ownership_generator_value(value, env, aliases), do: ownership_value(value, env, aliases)
+  defp generator_element([value]), do: value
+  defp generator_element(values) when is_list(values), do: {:__joined_elements__, [], values}
+  defp generator_element(value), do: value
+
+  defp bind_ownership_pattern({name, _, context}, rhs, env, aliases)
+       when is_atom(name) and name != :_ and (is_atom(context) or is_nil(context)),
+       do: Map.put(env, name, ownership_abstract_value(rhs, env, aliases))
+
+  defp bind_ownership_pattern({:{}, _, patterns}, {:{}, _, values}, env, aliases)
+       when length(patterns) == length(values),
+       do:
+         Enum.zip(patterns, values)
+         |> Enum.reduce(env, fn {pattern, value}, acc ->
+           bind_ownership_pattern(pattern, value, acc, aliases)
+         end)
+
+  defp bind_ownership_pattern(patterns, values, env, aliases)
+       when is_tuple(patterns) and is_tuple(values) and tuple_size(patterns) == tuple_size(values) and
+              tuple_size(patterns) != 3,
+       do: bind_ownership_pattern(Tuple.to_list(patterns), Tuple.to_list(values), env, aliases)
+
+  defp bind_ownership_pattern({:%{}, _, patterns}, {:%{}, _, values}, env, aliases),
+    do:
+      Enum.reduce(patterns, env, fn {key, pattern}, acc ->
+        bind_ownership_pattern(pattern, Keyword.get(values, key), acc, aliases)
+      end)
+
+  defp bind_ownership_pattern({:|, _, [head, tail]}, [first | rest], env, aliases) do
+    env = bind_ownership_pattern(head, first, env, aliases)
+    bind_ownership_pattern(tail, rest, env, aliases)
+  end
+
+  defp bind_ownership_pattern(patterns, values, env, aliases)
+       when is_list(patterns) and is_list(values) and length(patterns) == length(values),
+       do:
+         Enum.zip(patterns, values)
+         |> Enum.reduce(env, fn {pattern, value}, acc ->
+           bind_ownership_pattern(pattern, value, acc, aliases)
+         end)
+
+  defp bind_ownership_pattern(pattern, rhs, env, aliases) do
+    value = ownership_abstract_value(rhs, env, aliases)
+    Enum.reduce(variables_in(pattern), env, &Map.put(&2, &1, value))
+  end
+
+  defp ownership_abstract_value({:__joined_elements__, _, values}, env, aliases) do
+    values = Enum.map(values, &ownership_abstract_value(&1, env, aliases)) |> Enum.uniq()
+    if length(values) == 1, do: hd(values), else: :unknown
+  end
+
+  defp ownership_abstract_value(rhs, env, aliases),
+    do: ownership_value(rhs, env, aliases) || :unknown_value
+
+  defp module_abstract?(value) when is_atom(value),
+    do: value == :unknown or String.starts_with?(Atom.to_string(value), "Elixir.")
+
+  defp module_abstract?(_value), do: false
+
+  defp variables_in(node) do
+    {_node, variables} =
+      Macro.prewalk(node, MapSet.new(), fn
+        {name, _meta, context} = variable, acc
+        when is_atom(name) and name != :_ and (is_atom(context) or is_nil(context)) ->
+          {variable, MapSet.put(acc, name)}
+
+        child, acc ->
+          {child, acc}
+      end)
+
+    variables
+  end
 
   defp dynamic_ownership_call(module_ast, name_ast, args_ast, meta, env, aliases, function) do
     module = ownership_value(module_ast, env, aliases)
