@@ -113,7 +113,7 @@ create_agent_cap = %Capability{
 
 {:ok, %{agent_uri: agent_uri}} = Ezagent.Workspace.Provisioning.create_agent(
   admin_ws.uri,
-  %{name: agent_name, flavor: "curl"},
+  %{name: agent_name, flavor: "curl", cwd: "/tmp", with_pty: false},
   %{caller: admin, caps: MapSet.new([signed_cap])}
 )
 IO.puts("  agent: #{URI.to_string(agent_uri)}")
