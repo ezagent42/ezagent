@@ -12,6 +12,23 @@ defmodule Ezagent.Workspace.TaskWorkspace.Store do
   alias EzagentCore.Repo
 
   @create_keys Provision.immutable_fields() ++ [:visibility]
+
+  @doc "Loads a provision by its database id."
+  @spec get(pos_integer()) :: Provision.t() | nil
+  def get(id) when is_integer(id) and id > 0, do: Repo.get(Provision, id)
+  def get(_id), do: nil
+
+  @doc "Returns whether no other non-cleaned provision owns the exact worktree path."
+  @spec worktree_path_available?(pos_integer(), String.t()) :: boolean()
+  def worktree_path_available?(provision_id, path)
+      when is_integer(provision_id) and is_binary(path) do
+    not Repo.exists?(
+      from(p in Provision,
+        where: p.id != ^provision_id and p.worktree_path == ^path and p.status != :cleaned
+      )
+    )
+  end
+
   @doc "Creates an idempotent public-repository provision plan."
   @spec create_planned(map()) :: {:ok, Provision.t()} | {:error, term()}
   def create_planned(%{visibility: :private}), do: {:error, :private_checkout_not_supported}

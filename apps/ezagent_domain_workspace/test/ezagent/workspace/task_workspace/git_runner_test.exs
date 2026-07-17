@@ -1,7 +1,6 @@
 defmodule Ezagent.Workspace.TaskWorkspace.GitRunnerTest do
   use ExUnit.Case, async: false
 
-  alias Ezagent.Resource.FsResolver
   alias Ezagent.Workspace.TaskWorkspace.{GitRunner, Paths}
 
   setup do
@@ -12,11 +11,7 @@ defmodule Ezagent.Workspace.TaskWorkspace.GitRunnerTest do
 
     System.put_env("EZAGENT_HOME", root)
 
-    {type, spec} = Paths.resource_type()
-    :ok = FsResolver.register_type(type, spec)
-
     on_exit(fn ->
-      FsResolver.unregister_type(type)
       restore_env("EZAGENT_HOME", previous_home)
       File.rm_rf!(root)
     end)
@@ -185,6 +180,24 @@ defmodule Ezagent.Workspace.TaskWorkspace.GitRunnerTest do
 
     executor = fn _argv, _opts -> flunk("invalid executable reached command execution") end
     assert {:error, :invalid_git_executable} = GitRunner.prepare(request(executor: executor))
+  end
+
+  test "a failed cache clone removes its partial destination" do
+    owner = self()
+
+    executor = fn argv, _opts ->
+      destination = List.last(argv)
+      File.mkdir_p!(destination)
+      File.write!(Path.join(destination, "partial"), "incomplete")
+      send(owner, {:partial_cache, destination})
+      {:error, :simulated_clone_failure}
+    end
+
+    assert {:error, {:cache_clone_failed, :simulated_clone_failure}} =
+             GitRunner.prepare(request(executor: executor))
+
+    assert_receive {:partial_cache, destination}
+    refute File.exists?(destination)
   end
 
   test "production source has no shell, System.cmd, or naked Port entry" do

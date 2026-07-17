@@ -15,8 +15,17 @@ defmodule Ezagent.DomainGit.WorkspaceProvisionPortTest do
   end
 
   setup do
+    original = WorkspaceProvisionRegistry.implementation()
     restart_registry()
-    on_exit(&restart_registry/0)
+
+    on_exit(fn ->
+      restart_registry()
+
+      case original do
+        {:ok, implementation} -> :ok = WorkspaceProvisionRegistry.register(implementation)
+        {:error, :workspace_provisioner_not_registered} -> :ok
+      end
+    end)
   end
 
   test "registers exactly one conforming implementation idempotently" do

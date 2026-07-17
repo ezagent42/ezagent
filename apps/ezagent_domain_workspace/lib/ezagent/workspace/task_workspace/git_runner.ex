@@ -179,8 +179,12 @@ defmodule Ezagent.Workspace.TaskWorkspace.GitRunner do
       argv = git_argv(["clone", "--bare", request.remote_url, paths.cache_path])
 
       case execute(argv, command_opts(request)) do
-        {:ok, _result} -> {:ok, [argv]}
-        {:error, reason} -> {:error, {:cache_clone_failed, reason}}
+        {:ok, _result} ->
+          {:ok, [argv]}
+
+        {:error, reason} ->
+          File.rm_rf(paths.cache_path)
+          {:error, {:cache_clone_failed, reason}}
       end
     end
   end

@@ -1,7 +1,6 @@
 defmodule Ezagent.Workspace.TaskWorkspace.PathsTest do
   use ExUnit.Case, async: false
 
-  alias Ezagent.Resource.FsResolver
   alias Ezagent.Workspace.TaskWorkspace.Paths
 
   setup do
@@ -12,11 +11,7 @@ defmodule Ezagent.Workspace.TaskWorkspace.PathsTest do
 
     System.put_env("EZAGENT_HOME", root)
 
-    {type, spec} = Paths.resource_type()
-    :ok = FsResolver.register_type(type, spec)
-
     on_exit(fn ->
-      FsResolver.unregister_type(type)
       restore_env("EZAGENT_HOME", previous_home)
       File.rm_rf!(root)
     end)

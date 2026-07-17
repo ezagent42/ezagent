@@ -41,7 +41,7 @@ defmodule Ezagent.DomainGit.Integration.GitTaskDispatchTest do
 
     Process.register(self(), :git_task_workspace_effect_probe)
 
-    :ok = Ezagent.DomainGit.WorkspaceProvisionRegistry.register(WorkspaceProvisionProbe)
+    restore_provisioner = install_workspace_probe()
 
     Enum.each(@actions, fn action ->
       assert {:ok, %{behavior: Ezagent.ActionSet.GitTaskAccess}} =
@@ -54,12 +54,37 @@ defmodule Ezagent.DomainGit.Integration.GitTaskDispatchTest do
     end)
 
     on_exit(fn ->
+      restore_provisioner.()
+
       Enum.each(@providers, fn {_provider, id, module, _label} ->
         :ok = AdapterRegistry.unregister(id, module)
       end)
     end)
 
     :ok
+  end
+
+  defp install_workspace_probe do
+    registry = Ezagent.DomainGit.WorkspaceProvisionRegistry
+    original = registry.implementation()
+    :ok = registry.replace_for_test(WorkspaceProvisionProbe)
+
+    fn ->
+      unless Process.whereis(registry) do
+        {:ok, _pid} = Supervisor.restart_child(EzagentDomainGit.Application, registry)
+      end
+
+      case original do
+        {:ok, implementation} ->
+          :ok = registry.replace_for_test(implementation)
+
+        {:error, :workspace_provisioner_not_registered} ->
+          :ok = Supervisor.terminate_child(EzagentDomainGit.Application, registry)
+          {:ok, _pid} = Supervisor.restart_child(EzagentDomainGit.Application, registry)
+      end
+
+      :ok
+    end
   end
 
   test "workspace authorization mismatches never call the provision port" do
