@@ -53,13 +53,22 @@ defmodule Ezagent.Kind.Template.PreStartTest do
       end
     end)
 
-    caller = Task.async(fn -> PreStart.prepare(:opaque) end)
+    caller =
+      Task.async(fn ->
+        result = PreStart.prepare(:opaque)
+        send(owner, {:prepare_result, result})
+
+        receive do
+          :release_caller -> result
+        end
+      end)
+
     assert_receive {:prepare_callback_pid, callback_pid}
     assert callback_pid == caller.pid
 
     assert :ok = PreStart.register(TemplatePreStartProbe)
     send(caller.pid, :release_prepare)
-    assert {:ok, %{claim: claim}} = Task.await(caller)
+    assert_receive {:prepare_result, {:ok, %{claim: claim}}}
 
     Application.put_env(:ezagent_core, :template_pre_start_complete_result, fn ->
       send(owner, {:complete_callback_pid, self()})
@@ -69,6 +78,43 @@ defmodule Ezagent.Kind.Template.PreStartTest do
     assert :ok = PreStart.complete(claim, :ok)
     assert_receive {:complete_callback_pid, callback_pid}
     assert callback_pid == self()
+
+    send(caller.pid, :release_caller)
+    assert {:ok, %{claim: ^claim}} = Task.await(caller)
+  end
+
+  test "caller death releases an uncompleted transient claim" do
+    :ok = PreStart.register(TemplatePreStartProbe)
+    prepare_success()
+    owner = self()
+
+    caller =
+      spawn(fn ->
+        {:ok, %{claim: claim}} = PreStart.prepare(:opaque)
+        send(owner, {:prepared_claim, claim})
+        Process.sleep(:infinity)
+      end)
+
+    assert_receive {:prepared_claim, claim}
+    Process.exit(caller, :kill)
+
+    assert eventually(fn -> :sys.get_state(PreStart).pending == %{} end)
+    assert {:error, :invalid_template_pre_start_claim} = PreStart.complete(claim, :ok)
+    refute_receive {:pre_start_complete, _, _}
+  end
+
+  test "normal completion removes its monitor and calls downstream exactly once" do
+    :ok = PreStart.register(TemplatePreStartProbe)
+    prepare_success()
+
+    assert {:ok, %{claim: claim}} = PreStart.prepare(:opaque)
+    assert :ok = PreStart.complete(claim, :ok)
+    assert_receive {:pre_start_complete, :implementation_claim, :ok}
+    refute_receive {:pre_start_complete, _, _}
+
+    assert %{pending: %{}, monitors: %{}} = :sys.get_state(PreStart)
+    assert {:error, :invalid_template_pre_start_claim} = PreStart.complete(claim, :ok)
+    refute_receive {:pre_start_complete, _, _}
   end
 
   test "invalid implementation prepare results fail closed without creating a claim" do
@@ -84,6 +130,26 @@ defmodule Ezagent.Kind.Template.PreStartTest do
 
     for forbidden <- ["Git", "TaskWorkspace", "GitTaskAccess", "plugin_cc", "provider", "flavor"] do
       refute source =~ forbidden
+    end
+  end
+
+  defp prepare_success do
+    Application.put_env(
+      :ezagent_core,
+      :template_pre_start_prepare_result,
+      {:ok, %{cwd: "/safe/task", claim: :implementation_claim}}
+    )
+  end
+
+  defp eventually(fun, attempts \\ 100)
+  defp eventually(_fun, 0), do: false
+
+  defp eventually(fun, attempts) do
+    if fun.() do
+      true
+    else
+      Process.sleep(10)
+      eventually(fun, attempts - 1)
     end
   end
 end
