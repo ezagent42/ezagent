@@ -108,9 +108,15 @@ idempotency.
   `skill_reconcile.ex:142` violation.
 - `mix ezagent.check_invariants`: exit 0.
 - `mix ezagent.check_invariants.lifecycle`: exit 0.
-- `SHELL=/bin/bash mix precommit`: exit 2. It ran all umbrella apps; core
-  observed `2 doctests, 2134 tests, 6 failures`. The project-wide gate is not
-  claimed green. Exact classifications follow.
+- The sole `SHELL=/bin/bash mix precommit` run occurred before the four API
+  documentation fixes and exited 2. It ran all umbrella apps; core observed
+  `2 doctests, 2134 tests, 6 failures`, including the then-current `408/404`
+  documentation regression. No second full precommit was run after the API docs
+  were fixed, so this return does not claim that final documentation state was
+  covered by precommit. After the fixes, only `mix format --check-formatted`,
+  `git diff --check`, and the five independent architecture/static gates were
+  rerun. The project-wide gate is not claimed green. Exact classifications
+  follow.
 
 Repeated startup warnings were the stored/code `orchestrator` socialware
 divergence and operator-edited `dev-together` / `kanban-assistant` seed bundles
@@ -140,7 +146,14 @@ expected exercised-failure logs; none counted as test failures.
 The hardening-specific documentation regression was fixed without raising the
 ratchet baseline. No other in-scope gate failure remains.
 
-## Hardening commits
+## Complete hardening commit set
+
+### Design and plan
+
+- `f1fed04a3` docs(git): design task workspace hardening
+- `eb32b4898` docs(git): plan task workspace hardening
+
+### Implementation and tests
 
 - `d0dca6690` feat(workspace): persist task start claims
 - `a08bc4e69` feat(workspace): fence durable task starts
@@ -157,8 +170,15 @@ ratchet baseline. No other in-scope gate failure remains.
 - `5450bafb5` test(workspace): prove hardened task lifecycle
 - `613a1c9da` fix(workspace): parse secret fields from AST
 
-The documentation commit created by this return follows this list and contains
-only API documentation plus the two return artifacts.
+### Return documentation
+
+- `2498f9479` docs(together): return git provider plan c hardening
+
+Commit `2498f9479` contains the four API documentation annotations that restored
+the `404/404` doc baseline plus the two return artifacts. This post-review
+correction follows it as a separate docs-only commit; its SHA is intentionally
+reported in the execution report after creation rather than recursively listed
+inside itself.
 
 ## Residual concerns and non-deliverables
 
