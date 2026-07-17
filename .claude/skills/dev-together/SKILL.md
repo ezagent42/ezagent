@@ -156,6 +156,15 @@ edges). Example: 2026-06-24 (Wed) → `2026-W26`. Compute with
   hand-authored `board.html` means the step is incomplete. To change the look,
   edit `board2html.py`, never the daily file. (Requires `uv`; `pyyaml` is fetched
   by `--with`, no repo dep.)
+- **Efficiency stats are auto-computed with an up/down delta — never hand-typed.**
+  `plan` runs `scripts/board_efficiency.py ezagent42/ezagent <prev_date>` (the
+  board's yesterday), which measures that day's git-hours lower bound + merged-PR
+  count + 折算人月 and each stat's delta vs the day before, and prints an
+  `efficiency:`/`efficiency_source:` YAML fragment to splice into `board.yaml`.
+  Each `efficiency` entry may carry an optional `delta:` string; `board2html.py`
+  renders it as a small colored chip right next to the value — `↓`/`-`/`▼` red
+  (down), `↑`/`+`/`▲` green (up), else neutral. Entries with no `delta` render
+  exactly as before (backward-compatible). See `scripts/render/board.example.yaml`.
 - **Superpowers SDD scratch.** When delegating to
   `superpowers:subagent-driven-development`, use the current Superpowers
   workspace convention: task briefs, reports, review diffs, and progress ledger
