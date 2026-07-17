@@ -145,6 +145,21 @@ jobs:
           apps/ezagent_domain_identity/test/ezagent/socialware/config_store_seed_upsert_test.exs
           apps/ezagent_domain_session/test/integration/reflow_rehearsal_test.exs
 
+      - name: Set up Node for browser acceptance tests
+        uses: actions/setup-node@v4
+        with:
+          node-version: "22"
+
+      - name: Enable pnpm for browser acceptance tests
+        run: |
+          corepack enable
+          corepack prepare pnpm@10.23.0 --activate
+
+      - name: Install World browser acceptance dependencies
+        run: >-
+          pnpm --dir apps/ezagent_plugin_world/assets
+          install --frozen-lockfile
+
       - name: Install Chromium for browser acceptance tests
         run: pnpm --dir apps/ezagent_plugin_world/assets exec playwright install --with-deps chromium
 
