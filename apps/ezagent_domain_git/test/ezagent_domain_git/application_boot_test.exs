@@ -11,7 +11,9 @@ defmodule EzagentDomainGit.ApplicationBootTest do
     :create_change_request,
     :read_change_request,
     :list_checks,
-    :list_reviews
+    :list_reviews,
+    :provision_workspace,
+    :cleanup_workspace
   ]
   @action_set Ezagent.ActionSet.GitTaskAccess
 
@@ -44,10 +46,10 @@ defmodule EzagentDomainGit.ApplicationBootTest do
     assert :ok = replace_registration(adapters: [{"callback-bomb", bomb}])
     assert {:ok, ^bomb} = AdapterRegistry.lookup_for_action_set("callback-bomb")
 
-    assert {:error, {:injected_registration_failure, 7}} =
+    assert {:error, {:injected_registration_failure, 9}} =
              replace_registration(
                adapters: [{"callback-bomb", bomb}, {"never-reached", FakeGitAdapterB}],
-               fail_at: 7
+               fail_at: 9
              )
   end
 
@@ -61,14 +63,14 @@ defmodule EzagentDomainGit.ApplicationBootTest do
     :ok = AdapterRegistry.unregister("attempt-b", FakeGitAdapterB)
     :ok = AdapterRegistry.register("preexisting-a", FakeGitAdapterA)
 
-    assert {:error, {:injected_registration_failure, 8}} =
+    assert {:error, {:injected_registration_failure, 10}} =
              replace_registration(
                adapters: [
                  {"preexisting-a", FakeGitAdapterA},
                  {"attempt-b", FakeGitAdapterB},
                  {"never-reached", Ezagent.DomainGit.TestSupport.BootCallbackBomb}
                ],
-               fail_at: 8
+               fail_at: 10
              )
 
     assert {:ok, %{behavior: @action_set}} =

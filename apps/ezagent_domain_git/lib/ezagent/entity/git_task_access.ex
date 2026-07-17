@@ -24,7 +24,9 @@ defmodule Ezagent.Entity.GitTaskAccess do
     :create_change_request,
     :read_change_request,
     :list_checks,
-    :list_reviews
+    :list_reviews,
+    :provision_workspace,
+    :cleanup_workspace
   ]
   @fields [
     :id,
@@ -282,10 +284,42 @@ defmodule Ezagent.Entity.GitTaskAccess do
   defp validate_invocation_action(args, policy) do
     with {:ok, action} <- fetch_action(args),
          :ok <- action_allowed(policy, action),
+         :ok <- validate_task_coordinates(action, args, policy),
          :ok <- validate_requested_head(action, args, policy.allowed_head_ref) do
       :ok
     end
   end
+
+  defp validate_task_coordinates(action, args, policy)
+       when action in [:provision_workspace, :cleanup_workspace] do
+    with {:ok, task_uri} <- Map.fetch(args, :task_uri),
+         true <- exact_task_uri?(task_uri, policy),
+         {:ok, generation} <- Map.fetch(args, :generation),
+         true <- generation == policy.generation do
+      :ok
+    else
+      :error -> {:error, :task_coordinates_required}
+      false -> task_coordinate_error(args, policy)
+    end
+  end
+
+  defp validate_task_coordinates(_action, _args, _policy), do: :ok
+
+  defp task_coordinate_error(args, policy) do
+    if exact_task_uri?(Map.get(args, :task_uri), policy),
+      do: {:error, :task_generation_mismatch},
+      else: {:error, :task_uri_mismatch}
+  end
+
+  defp exact_task_uri?(%URI{scheme: "resource"} = task_uri, policy) do
+    workspace = Ezagent.URI.workspace_name!(policy.workspace_uri)
+
+    task_uri == Ezagent.URI.resource(workspace, "kanban-task", policy.task_id)
+  rescue
+    _ -> false
+  end
+
+  defp exact_task_uri?(_task_uri, _policy), do: false
 
   defp fetch_action(args) do
     case {Map.fetch(args, :action), Map.fetch(args, "action")} do

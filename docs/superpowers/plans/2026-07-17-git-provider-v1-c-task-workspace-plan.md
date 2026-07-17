@@ -34,6 +34,7 @@
 - Modify `apps/ezagent_domain_git/lib/ezagent_domain_git/application.ex`: start the registry before task resources.
 - Modify `apps/ezagent_domain_git/lib/ezagent/entity/git_task_access.ex`: add the two action atoms and exact argument-policy comparisons.
 - Modify `apps/ezagent_domain_git/lib/ezagent/behavior/git_task_access.ex`: declare actions, validate args, and call the port only after authorization.
+- Modify `apps/ezagent_domain_git/lib/ezagent/domain_git/boot_registration.ex`: register the two new action capabilities during real application boot.
 
 **Workspace Domain persistence and effects**
 
@@ -154,8 +155,10 @@ git commit -m "feat(git): add workspace provision port"
 **Files:**
 - Modify: `apps/ezagent_domain_git/lib/ezagent/entity/git_task_access.ex`
 - Modify: `apps/ezagent_domain_git/lib/ezagent/behavior/git_task_access.ex`
+- Modify: `apps/ezagent_domain_git/lib/ezagent/domain_git/boot_registration.ex`
 - Modify: `apps/ezagent_domain_git/test/ezagent/action_set/git_task_access_test.exs`
 - Modify: `apps/ezagent_domain_git/test/integration/git_task_dispatch_test.exs`
+- Modify: `apps/ezagent_domain_git/test/ezagent_domain_git/application_boot_test.exs`
 
 **Interfaces:**
 - Consumes: Task 1 registry and request struct.

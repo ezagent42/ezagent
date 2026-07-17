@@ -14,7 +14,9 @@ defmodule Ezagent.ActionSet.GitTaskAccess do
     FileChange,
     OperationContext,
     RepositoryRef,
-    TaskAccessSupervisor
+    TaskAccessSupervisor,
+    WorkspaceProvisionPort,
+    WorkspaceProvisionRegistry
   }
 
   alias Ezagent.Entity.GitTaskAccess
@@ -26,14 +28,18 @@ defmodule Ezagent.ActionSet.GitTaskAccess do
     :create_change_request,
     :read_change_request,
     :list_checks,
-    :list_reviews
+    :list_reviews,
+    :provision_workspace,
+    :cleanup_workspace
   ]
   @allowed_keys %{
     resolve_repository: [:repository],
     create_change_request: [:changes, :repository, :request],
     read_change_request: [:change_request_id, :repository],
     list_checks: [:commit_sha, :repository],
-    list_reviews: [:change_request_id, :repository]
+    list_reviews: [:change_request_id, :repository],
+    provision_workspace: [:generation, :task_uri],
+    cleanup_workspace: [:generation, :task_uri]
   }
 
   action(:resolve_repository,
@@ -76,6 +82,22 @@ defmodule Ezagent.ActionSet.GitTaskAccess do
     description: "List reviews for a task-bound change request"
   )
 
+  action(:provision_workspace,
+    args: %{task_uri: :term, generation: :integer},
+    returns: :term,
+    caps: [:provision_workspace],
+    modes: [:call],
+    description: "Prepare the exact task generation workspace"
+  )
+
+  action(:cleanup_workspace,
+    args: %{task_uri: :term, generation: :integer},
+    returns: :term,
+    caps: [:cleanup_workspace],
+    modes: [:call],
+    description: "Clean the exact task generation workspace"
+  )
+
   @impl Ezagent.ActionSet
   def required_caps do
     Map.new(@actions, &{&1, Ezagent.Capability.cap(:resource, __MODULE__, &1)})
@@ -112,6 +134,14 @@ defmodule Ezagent.ActionSet.GitTaskAccess do
   @doc false
   def handle_list_reviews(args, ctx), do: dispatch_operation(:list_reviews, args, ctx)
 
+  @doc false
+  def handle_provision_workspace(args, ctx),
+    do: dispatch_workspace_operation(:provision_workspace, :prepare, args, ctx)
+
+  @doc false
+  def handle_cleanup_workspace(args, ctx),
+    do: dispatch_workspace_operation(:cleanup_workspace, :cleanup, args, ctx)
+
   defp dispatch_operation(action, args, ctx) do
     uri = Map.fetch!(ctx, :self_uri)
 
@@ -125,6 +155,47 @@ defmodule Ezagent.ActionSet.GitTaskAccess do
       end
     end)
   end
+
+  defp dispatch_workspace_operation(action, operation, args, ctx) do
+    task_access_uri = Map.fetch!(ctx, :self_uri)
+
+    TaskAccessSupervisor.with_lifecycle(task_access_uri, fn ->
+      with {:ok, policy} <- GitTaskAccess.revalidate(ctx.read.(:policy, nil)),
+           {:ok, validated_args} <- validate_workspace_request(policy, action, args),
+           :ok <- authorize_receiver(policy, action, ctx),
+           {:ok, request} <-
+             WorkspaceProvisionPort.Request.new(%{
+               task_access_uri: task_access_uri,
+               task_uri: validated_args.task_uri,
+               generation: validated_args.generation,
+               operation: operation,
+               provision_id:
+                 provision_id(
+                   policy.workspace_uri,
+                   validated_args.task_uri,
+                   validated_args.generation
+                 )
+             }),
+           {:ok, implementation} <- WorkspaceProvisionRegistry.implementation() do
+        invoke_workspace(implementation, operation, request)
+      end
+    end)
+  end
+
+  defp validate_workspace_request(policy, action, args) when is_map(args) do
+    with :ok <- validate_exact_keys(action, args),
+         :ok <-
+           GitTaskAccess.validate_invocation(policy, %{
+             action: action,
+             task_uri: Map.get(args, :task_uri),
+             generation: Map.get(args, :generation)
+           }) do
+      {:ok, args}
+    end
+  end
+
+  defp validate_workspace_request(_policy, _action, _args),
+    do: {:error, :invalid_operation_arguments}
 
   defp validate_static_request(policy, action, %{repository: repository} = args) do
     with :ok <- validate_exact_keys(action, args),
@@ -221,7 +292,7 @@ defmodule Ezagent.ActionSet.GitTaskAccess do
       workspace_uri: policy.workspace_uri
     }
 
-    with true <- caller == policy.grantee_uri,
+    with true <- authorized_receiver?(action, caller, policy),
          {:ok, cap} <- Authorization.authorizing_cap(Map.get(ctx, :caps), needed),
          true <- signed_for?(cap, caller),
          true <- Cap.verify_for(cap, caller) do
@@ -230,6 +301,14 @@ defmodule Ezagent.ActionSet.GitTaskAccess do
       _ -> {:error, :unauthorized}
     end
   end
+
+  defp authorized_receiver?(:provision_workspace, caller, policy),
+    do: caller == policy.grantee_uri
+
+  defp authorized_receiver?(:cleanup_workspace, caller, policy),
+    do: caller == policy.grantee_uri
+
+  defp authorized_receiver?(_action, caller, policy), do: caller == policy.grantee_uri
 
   defp signed_for?(
          %{
@@ -267,4 +346,22 @@ defmodule Ezagent.ActionSet.GitTaskAccess do
 
   defp invoke(adapter, :list_reviews, context, repository, args),
     do: adapter.list_reviews(context, repository, args.change_request_id)
+
+  defp invoke_workspace(implementation, :prepare, request),
+    do: implementation.prepare(request)
+
+  defp invoke_workspace(implementation, :cleanup, request),
+    do: implementation.cleanup(request)
+
+  defp provision_id(workspace_uri, task_uri, generation) do
+    :sha256
+    |> :crypto.hash([
+      URI.to_string(workspace_uri),
+      <<0>>,
+      URI.to_string(task_uri),
+      <<0>>,
+      Integer.to_string(generation)
+    ])
+    |> Base.encode16(case: :lower)
+  end
 end
