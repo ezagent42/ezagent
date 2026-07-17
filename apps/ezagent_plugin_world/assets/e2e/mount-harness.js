@@ -34,6 +34,20 @@ const pushEvent = (event, payload, onReply) => {
   }
 
   events.push({event, payload})
+
+  if (
+    event === "world:dispatch" &&
+    payload?.action === "chat.error.notify_admin" &&
+    payload?.args?.msg_id
+  ) {
+    setTimeout(() => {
+      emit("actionable_error:reminder_sent", {
+        message_id: payload.args.msg_id,
+        founder_name: "陈瑞华",
+      })
+    }, 0)
+  }
+
   onReply?.({ok: true})
 }
 

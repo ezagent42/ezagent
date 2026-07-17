@@ -14,6 +14,7 @@ defmodule Ezagent.World.StateContract do
   @caller_uri :fixture_caller_uri
   @terminal_agent_uri :fixture_terminal_agent_uri
 
+  @error_agent_uri :fixture_error_agent_uri
   @fixtures %{
     "overview" => %{
       slot_type: "overview",
@@ -68,6 +69,95 @@ defmodule Ezagent.World.StateContract do
           %{"name" => "Alpha support", "uri" => @session_uri, "workspace_uri" => @workspace_uri}
         ],
         "title" => "Alpha support",
+        "views" => [%{"id" => "conversation", "label" => "Conversation", "mode" => "chat"}],
+        "workspace_uri" => @workspace_uri
+      }
+    },
+    "actionable_errors" => %{
+      slot_type: "conversation",
+      state: %{
+        "active_view" => "conversation",
+        "caller_uri" => @caller_uri,
+        "component" => "conversation",
+        "invite_candidates" => [],
+        "members" => [],
+        "messages" => [
+          %{
+            "id" => "g5-layer-1",
+            "sender" => @error_agent_uri,
+            "sender_display" => "Claude Agent #1",
+            "sender_kind" => "agent",
+            "text" => "missing credentials",
+            "attachments" => [],
+            "at" => "2026-07-17T04:20:00Z",
+            "actionable_error" => %{
+              "code" => "agent.credentials_missing",
+              "severity" => "error",
+              "layer" => 1,
+              "title" => "Agent 缺少访问凭据",
+              "what_happened" => "这个 Agent 尚未配置调用模型所需的 API Key。",
+              "impact" => "本次消息未能交给模型处理，Agent 无法生成回复。",
+              "next_step" => "配置 API Key 后，重新发送本条消息。",
+              "action" => %{
+                "label" => "配置 API Key",
+                "href" => "/identities/agents/claude/api-keys"
+              }
+            }
+          },
+          %{
+            "id" => "g5-layer-2",
+            "sender" => @error_agent_uri,
+            "sender_display" => "Claude Agent #1",
+            "sender_kind" => "agent",
+            "text" => "missing credentials",
+            "attachments" => [],
+            "at" => "2026-07-17T04:21:00Z",
+            "actionable_error" => %{
+              "code" => "agent.credentials_missing",
+              "severity" => "error",
+              "layer" => 2,
+              "title" => "Agent 缺少访问凭据",
+              "what_happened" => "这个 Agent 尚未配置调用模型所需的 API Key。",
+              "impact" => "本次消息未能交给模型处理，Agent 无法生成回复。",
+              "next_step" => "请联系 workspace founder 陈瑞华，由其检查 Agent 的凭据配置。",
+              "action" => %{
+                "label" => "发送提醒给陈瑞华",
+                "kind" => "notify_admin"
+              }
+            }
+          },
+          %{
+            "id" => "g5-layer-3",
+            "sender" => @error_agent_uri,
+            "sender_display" => "Claude Agent #1",
+            "sender_kind" => "agent",
+            "text" => "unknown failure",
+            "attachments" => [],
+            "at" => "2026-07-17T04:22:00Z",
+            "actionable_error" => %{
+              "code" => "agent.unclassified_failure",
+              "severity" => "error",
+              "layer" => 3,
+              "title" => "Agent 遇到未识别的错误",
+              "what_happened" => "系统暂时无法将这次失败归入已知类型。",
+              "impact" => "本次消息未能完成处理。",
+              "next_step" => "此问题已自动登记（登记号 #1042），团队会跟进处理。",
+              "ticket" => "#1042",
+              "detail" => "decode=:invalid_json"
+            }
+          }
+        ],
+        "path" => "/sessions/alpha-support",
+        "routing_rules" => [],
+        "session_uri" => @session_uri,
+        "sessions" => [
+          %{
+            "name" => "Alpha support",
+            "uri" => @session_uri,
+            "workspace_uri" => @workspace_uri
+          }
+        ],
+        "title" => "G5 可行动失败态",
         "views" => [%{"id" => "conversation", "label" => "Conversation", "mode" => "chat"}],
         "workspace_uri" => @workspace_uri
       }
@@ -171,6 +261,9 @@ defmodule Ezagent.World.StateContract do
 
   defp materialize(:fixture_caller_uri),
     do: "acme" |> Ezagent.URI.user("allen") |> URI.to_string()
+
+  defp materialize(:fixture_error_agent_uri),
+    do: "acme" |> Ezagent.URI.agent("claude") |> URI.to_string()
 
   defp materialize(:fixture_terminal_agent_uri),
     do: "acme" |> Ezagent.URI.agent("terminal") |> URI.to_string()

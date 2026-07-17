@@ -73,6 +73,138 @@
     "workspace.template.save"
   ],
   "fixtures": {
+    "actionable_errors": {
+      "caller": {
+        "current_workspace_name": "acme",
+        "display_name": "Allen",
+        "entity_uri": "entity://acme/user/allen",
+        "is_system_member": true,
+        "workspace_uri": "workspace://acme",
+        "workspaces": [
+          {
+            "current": true,
+            "name": "acme",
+            "uri": "workspace://acme"
+          }
+        ]
+      },
+      "layout": {
+        "components": [
+          {
+            "id": "e2e-conversation",
+            "placement": {
+              "h": 12,
+              "w": 12,
+              "x": 0,
+              "y": 0
+            },
+            "type": "conversation"
+          }
+        ],
+        "scope": "workspace://acme",
+        "version": 1
+      },
+      "plugin_nav": [
+        {
+          "label": "看板",
+          "path": "/plugins/kanban"
+        }
+      ],
+      "renderer_family": "conversation",
+      "slot_type": "conversation",
+      "state": {
+        "active_view": "conversation",
+        "caller_uri": "entity://acme/user/allen",
+        "component": "conversation",
+        "invite_candidates": [],
+        "members": [],
+        "messages": [
+          {
+            "actionable_error": {
+              "action": {
+                "href": "/identities/agents/claude/api-keys",
+                "label": "配置 API Key"
+              },
+              "code": "agent.credentials_missing",
+              "impact": "本次消息未能交给模型处理，Agent 无法生成回复。",
+              "layer": 1,
+              "next_step": "配置 API Key 后，重新发送本条消息。",
+              "severity": "error",
+              "title": "Agent 缺少访问凭据",
+              "what_happened": "这个 Agent 尚未配置调用模型所需的 API Key。"
+            },
+            "at": "2026-07-17T04:20:00Z",
+            "attachments": [],
+            "id": "g5-layer-1",
+            "sender": "entity://acme/agent/claude",
+            "sender_display": "Claude Agent #1",
+            "sender_kind": "agent",
+            "text": "missing credentials"
+          },
+          {
+            "actionable_error": {
+              "action": {
+                "kind": "notify_admin",
+                "label": "发送提醒给陈瑞华"
+              },
+              "code": "agent.credentials_missing",
+              "impact": "本次消息未能交给模型处理，Agent 无法生成回复。",
+              "layer": 2,
+              "next_step": "请联系 workspace founder 陈瑞华，由其检查 Agent 的凭据配置。",
+              "severity": "error",
+              "title": "Agent 缺少访问凭据",
+              "what_happened": "这个 Agent 尚未配置调用模型所需的 API Key。"
+            },
+            "at": "2026-07-17T04:21:00Z",
+            "attachments": [],
+            "id": "g5-layer-2",
+            "sender": "entity://acme/agent/claude",
+            "sender_display": "Claude Agent #1",
+            "sender_kind": "agent",
+            "text": "missing credentials"
+          },
+          {
+            "actionable_error": {
+              "code": "agent.unclassified_failure",
+              "detail": "decode=:invalid_json",
+              "impact": "本次消息未能完成处理。",
+              "layer": 3,
+              "next_step": "此问题已自动登记（登记号 #1042），团队会跟进处理。",
+              "severity": "error",
+              "ticket": "#1042",
+              "title": "Agent 遇到未识别的错误",
+              "what_happened": "系统暂时无法将这次失败归入已知类型。"
+            },
+            "at": "2026-07-17T04:22:00Z",
+            "attachments": [],
+            "id": "g5-layer-3",
+            "sender": "entity://acme/agent/claude",
+            "sender_display": "Claude Agent #1",
+            "sender_kind": "agent",
+            "text": "unknown failure"
+          }
+        ],
+        "path": "/sessions/alpha-support",
+        "routing_rules": [],
+        "session_uri": "session://acme/support/alpha-support",
+        "sessions": [
+          {
+            "name": "Alpha support",
+            "uri": "session://acme/support/alpha-support",
+            "workspace_uri": "workspace://acme"
+          }
+        ],
+        "title": "G5 可行动失败态",
+        "views": [
+          {
+            "id": "conversation",
+            "label": "Conversation",
+            "mode": "chat"
+          }
+        ],
+        "workspace_uri": "workspace://acme"
+      }
+    },
     "admin": {
       "caller": {
         "current_workspace_name": "acme",

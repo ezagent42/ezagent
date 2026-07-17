@@ -36,6 +36,7 @@ test.beforeEach(async ({context}) => {
 const rendererMatrix = [
   ["sessions", "sessions_table"],
   ["conversation", "conversation"],
+  ["actionable_errors", "conversation"],
   ["pty", "pty_terminal"],
   ["overview", "overview"],
   ["admin", "dashboard"],
@@ -114,6 +115,30 @@ test("conversation composer emits chat.send", async ({page}) => {
   expect(await page.evaluate(() => window.__WORLD_E2E__.contractViolation())).toBeNull()
 })
 
+test("actionable errors render all three layers and the founder reminder receipt", async ({page}) => {
+  await openFixture(page, "actionable_errors")
+  await expect(page.locator("[data-actionable-error]")).toHaveCount(3)
+  await expect(page.getByText("可自行处理")).toBeVisible()
+  await expect(page.getByText("需要管理员")).toBeVisible()
+  await expect(page.getByText("需要排查")).toBeVisible()
+  await expect(page.getByText("工单 #1042")).toBeVisible()
+
+  await page.getByRole("button", {name: "发送提醒给陈瑞华"}).click()
+
+  await expect.poll(() => lastEvent(page)).toEqual({
+    event: "world:dispatch",
+    payload: {
+      action: "chat.error.notify_admin",
+      args: {
+        session_uri: conversationFixtureUri,
+        msg_id: "g5-layer-2",
+      },
+    },
+  })
+
+  await expect(page.getByText("已通知 陈瑞华")).toBeVisible()
+  expect(await page.evaluate(() => window.__WORLD_E2E__.contractViolation())).toBeNull()
+})
 test("registered plugin interaction emits an admitted kanban action", async ({page}) => {
   await openFixture(page, "kanban")
   await page.getByLabel("Access Token").fill("fixture-token")
