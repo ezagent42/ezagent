@@ -209,42 +209,40 @@ founder 注册完想邀请同事加入 workspace，发现……根本没有界�
 
 ---
 
-### G4: agent key 配置 — 走 cap-signing 正式路径
+### G4: agent 凭证就绪 — 走 cap-signing 正式路径
 
 **优先级:** beta P0 | **依赖:** cap-signing 线（硬依赖，不降级） | **阶段:** 核心价值链路
 
-> **§0 裁定（决策 ③④）：** BYOK/登录仅内部开发者。外部企业用**托管 agent**——一 agent 服多企业、每 workspace 一个分身。**G4 不做 stub_grant**，等 cap-signing 落地后走正式 cap 路径。cap-signing spec 已 SOUND（7 轮评审通过），实现排期中。
+> **§0 裁定（决策 ③④）：** BYOK/登录仅内部开发者。外部企业用**托管 agent**——一 agent 服多企业、每 workspace 一个分身，平台管理凭证。**G4 不做 stub_grant**，等 cap-signing 落地后走正式 cap 路径。cap-signing spec 已 SOUND（7 轮评审通过），实现排期中。
 
 #### 现状（用户视角）
 
-当前 agent 需要 key 才能调用 AI 模型。但 key 管理的权限路径（`agent.api_key.put`）对 founder 返回 `:unauthorized`。这是架构决策——key 管理权限走 capability，不走 role check，cap-signing 就绪前 founder 无合法的 cap 凭证。
+当前 agent 需要有效凭证才能调用 AI 模型。凭证管理权限（`agent.api_key.put`）走 capability 而非 role check——cap-signing 就绪前，founder 无合法的 cap 凭证，访问 Agent Keys 页面返回 `:unauthorized`。**理想模型下**（决策 ③），外部企业用户不需要自行获取或粘贴 key——agent 凭证由平台托管，但托管所需的 cap 授权链路同样依赖 cap-signing。
 
 #### Happy path（cap-signing 就绪后）
 
+> **注意：** 托管 agent 模型下「配 key」的具体交互形态，取决于决策 ③ 的 agent 分身架构设计——key 可能由平台自动 provisioning，也可能由 admin 集中配置。以下旅程描述的是 **cap-signing 就绪后、founder 有 `agent:key:write` cap 时的最小交互**，具体 UI 形态待托管 agent 架构设计确定后对齐。
+
 **Step 1 — Workspace 创建时自动授权。** Admin 创建 workspace → entity-caps 给 founder 签发 `agent:key:write` cap（scope: workspace）。此步在 cap-signing 实现中完成，对用户透明。
 
-**Step 2 — 进入 Agent Keys 页。** founder 在 workspace 设置 → 「Agent Keys」→ 页面正常加载（`EntityCaps.load` 验证通过）。
+**Step 2 — Agent 凭证就绪。** Workspace 中的 agent 分身已关联平台托管的 API 凭证（由 admin 在 workspace provisioning 时配置，或平台自动注入——具体机制取决于决策 ③ 的 agent 分身架构）。
 
-**Step 3 — 填入 key。** founder 选择 provider → 粘贴 key → 点击「验证」。
+**Step 3 — Agent 可用。** founder 进入 workspace → agent 状态为「就绪」→ 发送消息 → agent 正常回复。
 
-**Step 4 — 即时校验反馈。** 绿色 ✓「Key 有效，已保存」或红色 ✗「Key 无效：<原因>」。
-
-**Step 5 — Agent 可用。** agent 状态变为「就绪」→ 发送消息 → agent 正常回复。
-
-**成功终点：** cap-signing 落地后，founder 在浏览器里独立完成 key 配置，agent 能正常回复。
+**成功终点：** cap-signing 落地 + 托管 agent 凭证就绪后，founder 进入 workspace 即可直接使用 agent，无需自行获取或粘贴 key。
 
 #### 验收标准
 
-- [ ] AC1: cap-signing 实现后，founder 能访问 Agent Keys 页面，不报 `:unauthorized`
-- [ ] AC2: founder 能填入 key 并保存
-- [ ] AC3: key 填入后有即时校验反馈（有效 / 无效 + 原因）
-- [ ] AC4: key 配置成功后，agent 状态变为「就绪」
-- [ ] AC5: 非 founder 的 member 访问 Agent Keys 页被正确拒绝
-- [ ] AC6: 冷启动实测：admin 开通 workspace → founder 配 key → agent 回复，全流程无权限阻断
+- [ ] AC1: cap-signing 实现后，founder 持有 `agent:key:write` cap（由 entity-caps 在 workspace 创建时签发）
+- [ ] AC2: Agent 凭证由平台/管理员配置（非 founder 自行粘贴 BYOK），具体交互形态取决于决策 ③ agent 分身架构
+- [ ] AC3: founder 进入 workspace 后，agent 状态为「就绪」（凭证已就绪）
+- [ ] AC4: founder 发送消息 → agent 正常回复
+- [ ] AC5: 非 founder 的 member 无权修改 agent 凭证配置
+- [ ] AC6: 冷启动实测：admin 开通 workspace → founder 可直接使用 agent（无需自行获取/粘贴 key）
 
 #### 情绪曲线
 
-😤 挫败（有界面却 `:unauthorized`）→ 😊 顺利（cap-signing 落地 → 配 key → agent 可用）
+😤 挫败（有界面却 `:unauthorized`，无法使用 agent）→ 😊 顺利（cap-signing 落地 → agent 凭证就绪 → agent 可用）
 
 ---
 
