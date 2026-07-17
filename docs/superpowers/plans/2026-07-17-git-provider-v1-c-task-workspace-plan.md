@@ -29,6 +29,7 @@
 **Domain Git contract and authorization**
 
 - Create `apps/ezagent_domain_git/lib/ezagent/domain_git/workspace_provision_port.ex`: closed request/result/error structs plus implementation behaviour.
+- Create `apps/ezagent_domain_git/lib/ezagent/domain_git/workspace_provision_port/request.ex`: closed request struct (separate file per the repository's no-nested-modules rule).
 - Create `apps/ezagent_domain_git/lib/ezagent/domain_git/workspace_provision_registry.ex`: single implementation registration and lookup; no authorization.
 - Modify `apps/ezagent_domain_git/lib/ezagent_domain_git/application.ex`: start the registry before task resources.
 - Modify `apps/ezagent_domain_git/lib/ezagent/entity/git_task_access.ex`: add the two action atoms and exact argument-policy comparisons.
@@ -65,6 +66,7 @@
 
 **Files:**
 - Create: `apps/ezagent_domain_git/lib/ezagent/domain_git/workspace_provision_port.ex`
+- Create: `apps/ezagent_domain_git/lib/ezagent/domain_git/workspace_provision_port/request.ex`
 - Create: `apps/ezagent_domain_git/lib/ezagent/domain_git/workspace_provision_registry.ex`
 - Create: `apps/ezagent_domain_git/test/ezagent/domain_git/workspace_provision_port_test.exs`
 - Modify: `apps/ezagent_domain_git/lib/ezagent_domain_git/application.ex`
@@ -121,36 +123,16 @@ Expected: FAIL because both modules are undefined.
 defmodule Ezagent.DomainGit.WorkspaceProvisionPort do
   @type operation :: :prepare | :cleanup
 
-  defmodule Request do
-    @enforce_keys [:task_access_uri, :task_uri, :generation, :operation, :provision_id]
-    defstruct @enforce_keys
-    @fields @enforce_keys
-
-    @type t :: %__MODULE__{
-            task_access_uri: URI.t(),
-            task_uri: URI.t(),
-            generation: non_neg_integer(),
-            operation: Ezagent.DomainGit.WorkspaceProvisionPort.operation(),
-            provision_id: String.t()
-          }
-
-    def new(attrs) when is_map(attrs) do
-      keys = Map.keys(attrs)
-
-      cond do
-        Enum.any?(keys, &(not is_atom(&1))) -> {:error, :invalid_attributes}
-        Enum.any?(keys, &(&1 not in @fields)) -> {:error, :unknown_fields}
-        missing = Enum.find(@fields, &(not Map.has_key?(attrs, &1))) ->
-          {:error, {:missing_field, missing}}
-        true -> {:ok, struct!(__MODULE__, attrs)}
-      end
-    end
-  end
-
   @callback prepare(Request.t()) :: {:ok, map()} | {:error, term()}
   @callback cleanup(Request.t()) :: {:ok, map()} | {:error, term()}
 end
 ```
+
+Put the `Request` struct and its `new/1` closed-field validation in the separate
+`workspace_provision_port/request.ex` file; its type is `%__MODULE__{task_access_uri:
+URI.t(), task_uri: URI.t(), generation: non_neg_integer(), operation:
+Ezagent.DomainGit.WorkspaceProvisionPort.operation(), provision_id: String.t()}`.
+Do not nest it inside the behaviour module.
 
 Implement the registry as an owner GenServer with idempotent same-module registration, conflicting-module rejection, behaviour/callback validation, and no callback execution during registration. Start it before `TaskAccessSupervisor`.
 
