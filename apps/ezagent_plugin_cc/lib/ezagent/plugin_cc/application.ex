@@ -96,7 +96,9 @@ defmodule EzagentPluginCc.Application do
       Ezagent.PluginCc.Template.CcHeadlessAgent,
       # DeepSeek provider variants (backend dimension, orthogonal to transport).
       Ezagent.PluginCc.Template.CcDeepseekAgent,
-      Ezagent.PluginCc.Template.CcHeadlessDeepseekAgent
+      Ezagent.PluginCc.Template.CcHeadlessDeepseekAgent,
+      # Custom-backend flavor (closed-catalog "provider" selects the backend).
+      Ezagent.PluginCc.Template.CcCustomAgent
     ]
 
   @impl Ezagent.Plugin
@@ -137,6 +139,18 @@ defmodule EzagentPluginCc.Application do
         template_class: Ezagent.PluginCc.Template.CcHeadlessDeepseekAgent,
         bridge_adapter: EzagentPluginCc.CcHeadlessDeepseekBridgeAdapter,
         instance_behaviors: &Ezagent.Entity.Agent.cc_headless_behaviors/0
+      },
+      # --- Custom-backend flavor (backend dimension) ---------------------------
+      # ONE flavor for every custom backend: the REQUIRED "provider" template-
+      # data key names a closed ProviderCatalog profile (fail-closed validation
+      # — absent/unknown rejects; "anthropic" is NOT a profile). Same transport/
+      # bridge/behaviors as cc; all vendor behaviour lives in
+      # `Ezagent.PluginCc.Provider` + `Ezagent.PluginCc.ProviderCatalog`.
+      %{
+        flavor: "cc-custom",
+        kind: Ezagent.Entity.Agent,
+        template_class: Ezagent.PluginCc.Template.CcCustomAgent,
+        bridge_adapter: EzagentPluginCc.CcCustomBridgeAdapter
       }
     ]
   end
