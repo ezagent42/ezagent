@@ -171,7 +171,7 @@ jobs:
           set -euo pipefail
           mix phx.server >"$RUNNER_TEMP/ezagent-e2e-server.log" 2>&1 &
           SERVER_PID=$!
-          trap 'kill "$SERVER_PID" 2>/dev/null || true' EXIT
+          trap 'status=$?; if [ "$status" -ne 0 ]; then cat "$RUNNER_TEMP/ezagent-e2e-server.log"; fi; kill "$SERVER_PID" 2>/dev/null || true; exit "$status"' EXIT
           for attempt in $(seq 1 40); do
             if curl --fail --silent --header 'Host: world.localhost' \
               http://127.0.0.1:4002/register >/dev/null; then
