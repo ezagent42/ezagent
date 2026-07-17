@@ -35,3 +35,16 @@ Baseline: `6a3100d7ff574b386d4ffc5294d16ff13295e95b`
 - `git diff --check`: clean.
 
 No push, merge, rebase, deploy, or `mix precommit` was run. The unrelated handoff file was preserved and excluded from the commit.
+
+## Secret-scanner follow-up
+
+The original regex scanner under-counted parenthesized migration calls. This follow-up replaces it with `Code.string_to_quoted!/1` plus AST traversal of actual local `field` and `add` call nodes, including nested module/block forms while excluding comments and string contents.
+
+- Explicit schema files scanned: 1 task-workspace provision schema.
+- Explicit migration files scanned: 4 (`17001000`, `17002000`, `17003000`, `17004000`).
+- Actual schema field calls: 30.
+- Actual migration add calls: 30 (correcting the earlier regex-derived count of 5).
+- Supported and mutation-tested forms: `field(:name, ...)`, `field :name, ...`, `add(:name, ...)`, and `add :name, ...`.
+- Mutation coverage proves `credential_ref` is rejected in all four forms, exact lifecycle names are allowed, `claim_token_credential_ref` is still rejected, and deceptive comment/string contents are not treated as calls.
+- RED: boundary test compilation failed because the AST extractor/classifier did not exist.
+- GREEN: boundary 11 tests, focused Task 8 16 tests, and complete hardening suite 108 tests; all had 0 failures.
