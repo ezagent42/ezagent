@@ -40,6 +40,7 @@ defmodule EzagentDomainWorkspace.MixProject do
     [
       {:ezagent_core, in_umbrella: true},
       {:ezagent_domain_agent, in_umbrella: true},
+      {:ezagent_domain_git, in_umbrella: true},
       # Workspace.Loader uses admin caps from User Kind.
       {:ezagent_domain_identity, in_umbrella: true}
     ]
