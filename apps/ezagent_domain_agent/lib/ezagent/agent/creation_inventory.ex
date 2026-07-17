@@ -27,7 +27,7 @@ defmodule Ezagent.Agent.CreationInventory do
            CreationInventoryEntry,
            [Map.merge(attrs, %{inserted_at: now, updated_at: now})],
            on_conflict: :nothing,
-           conflict_target: [:creation_attempt_id, :agent_uri]
+           conflict_target: [:agent_uri]
          ) do
       {1, _} -> {:ok, :inserted}
       {0, _} -> classify_existing(repo, attrs)
@@ -125,11 +125,10 @@ defmodule Ezagent.Agent.CreationInventory do
 
   defp classify_existing(repo, attrs) do
     case repo.get_by(CreationInventoryEntry,
-           creation_attempt_id: attrs.creation_attempt_id,
            agent_uri: attrs.agent_uri
          ) do
       %CreationInventoryEntry{} = entry ->
-        if exact_fact?(entry, attrs),
+        if entry.creation_attempt_id == attrs.creation_attempt_id and exact_fact?(entry, attrs),
           do: {:ok, :exists},
           else: {:error, :creation_fact_conflict}
 

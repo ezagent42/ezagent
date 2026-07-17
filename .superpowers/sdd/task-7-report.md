@@ -67,3 +67,38 @@ SHELL=/bin/bash MIX_ENV=test mix test \
 Touched files were formatted with `mix format`; `git diff --check` completed
 without errors. Full `mix precommit` was intentionally not run per the Task 7
 brief.
+
+## Correction after production-path review
+
+The original matrix was rejected because nine cases inserted or classified
+facts directly. The correction replaces those fixtures with real
+`AgentStart -> TemplateSpawn -> Kind.spawn -> LaunchCoordinator` execution.
+Test-build-only barriers now stop the child immediately after the SQL commit
+and stop TemplateSpawn immediately before `PreStart.complete/2`; caller death
+at either boundary leaves the durable Provision for `recover_once/1`.
+
+The production race test found an additional defect: the inventory unique key
+`(creation_attempt_id, agent_uri)` allowed two concurrent attempts to both own
+one Agent URI. The corrected schema fences `agent_uri` itself, and
+`record_exact/5` treats a different attempt for that URI as a fixed creation
+fact conflict. This makes the SQL row the winner election rather than an ETS or
+caller-local observation.
+
+Every owned case now invokes `Reconciler.recover_once/1` and asserts the fake
+retirement's exact attempt, Agent, root, and workspace facts. Every unowned case
+invokes recovery, observes exact Git verification, and asserts zero retirement.
+Write failures use the Task 4 test-build hooks inside real Agent initialization;
+cache publication failure uses the real postcommit publisher and SQL rehydrate;
+all concurrency and crash boundaries use process messages without sleeps.
+
+Fresh correction verification:
+
+```text
+SHELL=/bin/bash MIX_ENV=test mix test \
+  apps/ezagent_domain_workspace/test/ezagent/workspace/task_workspace/reconciler_test.exs \
+  apps/ezagent_domain_workspace/test/ezagent/workspace/task_workspace/reconciler_boot_test.exs \
+  apps/ezagent_domain_workspace/test/integration/task_workspace_atomic_ownership_test.exs \
+  apps/ezagent_domain_workspace/test/integration/task_workspace_sidecar_gate_test.exs
+
+47 tests, 0 failures
+```

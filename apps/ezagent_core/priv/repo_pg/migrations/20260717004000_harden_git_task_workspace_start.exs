@@ -19,6 +19,10 @@ defmodule EzagentCore.Repo.Migrations.HardenGitTaskWorkspaceStart do
              name: :git_task_workspace_provisions_start_recovery_index
            )
 
+    create unique_index(:agent_creation_inventory, [:agent_uri],
+             name: :agent_creation_inventory_agent_winner_index
+           )
+
     execute """
     UPDATE git_task_workspace_provisions
        SET status = 'cleanup_pending',
@@ -46,6 +50,10 @@ defmodule EzagentCore.Repo.Migrations.HardenGitTaskWorkspaceStart do
   end
 
   def down do
+    drop_if_exists unique_index(:agent_creation_inventory, [:agent_uri],
+                     name: :agent_creation_inventory_agent_winner_index
+                   )
+
     drop constraint(
            :git_task_workspace_provisions,
            :git_task_workspace_provisions_start_identity_check
