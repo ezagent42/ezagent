@@ -201,6 +201,7 @@ defmodule Ezagent.Workspace.TaskWorkspace.Store do
             worktree_path: ready.worktree_path,
             resolved_base_commit: ready.resolved_base_commit,
             local_branch_ref: ready.local_branch_ref,
+            remote_url: Map.get(attrs, :remote_url),
             claim_token: nil,
             lease_until: nil,
             start_token: Ecto.UUID.generate(),

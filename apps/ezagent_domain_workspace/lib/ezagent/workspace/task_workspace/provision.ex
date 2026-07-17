@@ -42,6 +42,7 @@ defmodule Ezagent.Workspace.TaskWorkspace.Provision do
     :start_lease_until,
     :resolved_base_commit,
     :local_branch_ref,
+    :remote_url,
     :attempts,
     :blocker_code,
     :cleanup_reason,
@@ -74,6 +75,7 @@ defmodule Ezagent.Workspace.TaskWorkspace.Provision do
     field(:start_lease_until, :utc_datetime_usec)
     field(:resolved_base_commit, :string)
     field(:local_branch_ref, :string)
+    field(:remote_url, :string)
     field(:attempts, :integer, default: 0)
     field(:blocker_code, :string)
     field(:cleanup_reason, :string)

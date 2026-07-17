@@ -1,5 +1,5 @@
 defmodule EzagentDomainWorkspace.TestSupport.FailingTaskWorkspaceProofRunner do
   @moduledoc false
 
-  def verify(_proof), do: {:error, :worktree_verification_failed}
+  def verify(_proof), do: {:error, :workspace_checkout_mismatch}
 end

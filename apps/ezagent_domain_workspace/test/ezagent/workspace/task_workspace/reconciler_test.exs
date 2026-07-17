@@ -155,7 +155,9 @@ defmodule Ezagent.Workspace.TaskWorkspace.ReconcilerTest do
         expected_version: claim.state_version,
         cache_identity: paths.cache_identity,
         worktree_identity: paths.worktree_identity,
-        worktree_path: paths.worktree_path
+        worktree_path: paths.worktree_path,
+        resolved_base_commit: String.duplicate("a", 40),
+        local_branch_ref: "refs/heads/ezagent/task/reconciler/g1"
       })
 
     {:ok, ready} =

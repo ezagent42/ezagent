@@ -4,7 +4,9 @@ defmodule Ezagent.Workspace.TaskWorkspace.PreStart do
   @behaviour Ezagent.Kind.Template.PreStart
 
   alias Ezagent.Workspace.TaskWorkspace.AgentStart.Ref
-  alias Ezagent.Workspace.TaskWorkspace.{Provision, Store}
+  alias Ezagent.Workspace.TaskWorkspace.{GitRunner, Provision, Store}
+
+  @start_lease_safety_ms 10_000
 
   @impl true
   def prepare(%Ref{} = ref) do
@@ -12,7 +14,7 @@ defmodule Ezagent.Workspace.TaskWorkspace.PreStart do
          :ok <- exact_identity(row, ref),
          {:ok, claimed} <- claim(row),
          :ok <- verify(claimed) do
-      {:ok, %{cwd: claimed.worktree_path, claim: {claimed.id, claimed.start_token}}}
+      {:ok, %{cwd: claimed.worktree_path, claim: {claimed.id, claimed.start_claim_token}}}
     else
       nil -> {:error, :workspace_not_ready}
       {:error, reason} = error -> maybe_cleanup(ref.provision_id, reason, error)
@@ -58,11 +60,12 @@ defmodule Ezagent.Workspace.TaskWorkspace.PreStart do
   end
 
   defp claim(row) do
-    case Store.claim_start(row.id, row.start_token) do
+    case Store.claim_start(row.id, row.start_token, lease_seconds: start_lease_seconds()) do
       {:ok, claimed} ->
         {:ok, claimed}
 
-      {:error, reason} when reason in [:start_token_consumed, :invalid_start_transition] ->
+      {:error, reason}
+      when reason in [:start_token_consumed, :start_already_claimed, :invalid_start_transition] ->
         {:error, :sidecar_start_already_consumed}
 
       {:error, _reason} ->
@@ -73,30 +76,39 @@ defmodule Ezagent.Workspace.TaskWorkspace.PreStart do
   defp verify(row) do
     proof = %{
       cache_path: Path.join(Path.dirname(row.worktree_path), row.cache_identity),
-      worktree_path: row.worktree_path
+      worktree_path: row.worktree_path,
+      remote_url: row.remote_url,
+      resolved_base_commit: row.resolved_base_commit,
+      local_branch_ref: row.local_branch_ref
     }
 
     with true <- Path.expand(row.worktree_path) == row.worktree_path,
          :ok <- runner().verify(proof) do
       :ok
     else
-      _ -> {:error, :workspace_not_ready}
-    end
-  end
-
-  defp maybe_cleanup(provision_id, :workspace_not_ready, error) do
-    case Store.get_by_provision_id(provision_id) do
-      %Provision{status: :ready, start_token_consumed_at: consumed_at} = row
-      when not is_nil(consumed_at) ->
-        _ = Store.request_cleanup(row.id, :workspace_not_ready)
-        error
-
-      _ ->
-        error
+      false -> fail_proof(row, :workspace_checkout_mismatch)
+      {:error, reason} -> fail_proof(row, reason)
     end
   end
 
   defp maybe_cleanup(_provision_id, _reason, error), do: error
+
+  defp fail_proof(row, reason) do
+    case Store.fail_start(row.id, row.start_claim_token, reason) do
+      {:ok, _pending} ->
+        {:error, reason}
+
+      {:error, lost} when lost in [:sidecar_start_claim_lost, :invalid_start_transition] ->
+        {:error, :sidecar_start_claim_lost}
+
+      {:error, _reason} ->
+        {:error, reason}
+    end
+  end
+
+  defp start_lease_seconds do
+    div(GitRunner.maximum_provision_duration_ms() + @start_lease_safety_ms + 999, 1_000)
+  end
 
   defp request_cleanup(id, reason) do
     case Store.request_cleanup(id, reason) do
@@ -112,11 +124,10 @@ defmodule Ezagent.Workspace.TaskWorkspace.PreStart do
     end
   end
 
-  defp runner do
-    Application.get_env(
-      :ezagent_domain_workspace,
-      :task_workspace_git_runner,
-      Ezagent.Workspace.TaskWorkspace.GitRunner
-    )
+  if Mix.env() == :test do
+    defp runner,
+      do: Application.get_env(:ezagent_domain_workspace, :task_workspace_git_runner, GitRunner)
+  else
+    defp runner, do: GitRunner
   end
 end

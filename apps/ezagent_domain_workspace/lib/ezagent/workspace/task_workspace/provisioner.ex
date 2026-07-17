@@ -174,7 +174,16 @@ defmodule Ezagent.Workspace.TaskWorkspace.Provisioner do
              worktree_identity: prepared.worktree_identity,
              worktree_path: prepared.worktree_path,
              resolved_base_commit: prepared.resolved_base_commit,
-             local_branch_ref: prepared.local_branch_ref
+             local_branch_ref: prepared.local_branch_ref,
+             remote_url:
+               Map.get(
+                 prepared,
+                 :remote_url,
+                 anonymous_remote(
+                   current_policy.repository.provider_host,
+                   current_policy.repository.owner_path
+                 )
+               )
            }) do
       ready_result(ready)
     else
