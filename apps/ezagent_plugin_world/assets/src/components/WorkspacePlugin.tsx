@@ -1,7 +1,7 @@
 import React from "react"
-import {BadgeCheck, Bot, Boxes, Cable, Check, ChevronRight, Copy, Layers, Pencil, Plug, Plus, Save, TicketCheck, Trash2, UserRound, X} from "lucide-react"
+import {BadgeCheck, Bot, Boxes, Cable, Check, ChevronRight, Copy, FileText, Layers, LoaderCircle, Pencil, Plug, Plus, Save, TicketCheck, Trash2, Upload, UserRound, X} from "lucide-react"
 
-import {Button, EmptyState, Input, Stat} from "./ui/primitives"
+import {Button, EmptyState, Input, Stat, Textarea} from "./ui/primitives"
 
 type DataRow = Record<string, unknown>
 
@@ -25,6 +25,7 @@ export type WorkspacePluginState = {
   kb_agents?: DataRow[]
   kb_error?: string | null
   kb_hits?: DataRow[]
+  kb_import_results?: DataRow[]
   kb_notice?: string | null
   focus_slug?: string | null
   instances?: DataRow[]
@@ -389,6 +390,10 @@ function SessionTemplateList({
   )
 }
 
+type KbImportMode = "paste" | "files" | "registered"
+
+const MAX_KB_FILE_BYTES = 256_000
+
 function KnowledgeBase({
   state,
   onAction,
@@ -400,23 +405,82 @@ function KnowledgeBase({
   const [agentUri, setAgentUri] = React.useState(String(agents[0]?.uri || ""))
   const [query, setQuery] = React.useState("")
   const [sourceUri, setSourceUri] = React.useState("")
+  const [importMode, setImportMode] = React.useState<KbImportMode>("paste")
+  const [title, setTitle] = React.useState("")
+  const [content, setContent] = React.useState("")
+  const [files, setFiles] = React.useState<File[]>([])
+  const [clientError, setClientError] = React.useState("")
+  const [isImporting, setIsImporting] = React.useState(false)
 
   React.useEffect(() => {
     if (!agentUri && agents[0]?.uri) setAgentUri(String(agents[0].uri))
   }, [agents, agentUri])
 
+  React.useEffect(() => {
+    if (state.kb_import_results || state.kb_error || state.kb_notice) setIsImporting(false)
+  }, [state.kb_import_results, state.kb_error, state.kb_notice])
+
+  function importDocuments(documents: Array<{title: string; content: string; filename?: string}>) {
+    setClientError("")
+    setIsImporting(true)
+    onAction("kb.ingest", {agent_uri: agentUri, documents})
+  }
+
+  async function importFiles() {
+    if (files.length === 0) {
+      setClientError("请先选择 .txt 或 .md 文件。")
+      return
+    }
+
+    setClientError("")
+    setIsImporting(true)
+
+    try {
+      const documents = await Promise.all(
+        files.map(async (file) => ({
+          title: file.name.replace(/\.(txt|md)$/i, ""),
+          filename: file.name,
+          content: await file.text(),
+        })),
+      )
+      onAction("kb.ingest", {agent_uri: agentUri, documents})
+    } catch {
+      setIsImporting(false)
+      setClientError("无法读取所选文件，请重新选择。")
+    }
+  }
+
+  function selectFiles(selected: File[]) {
+    const unsupported = selected.find((file) => !/\.(txt|md)$/i.test(file.name))
+    const oversized = selected.find((file) => file.size > MAX_KB_FILE_BYTES)
+
+    if (unsupported) {
+      setFiles([])
+      setClientError(`${unsupported.name}：仅支持 .txt 和 .md 文件。`)
+    } else if (oversized) {
+      setFiles([])
+      setClientError(`${oversized.name}：文件不能超过 256 KB。`)
+    } else if (selected.length > 10) {
+      setFiles([])
+      setClientError("每次最多导入 10 个文件。")
+    } else {
+      setFiles(selected)
+      setClientError("")
+    }
+  }
+
   return (
     <section className={surfaceClass} data-world-component="kb">
-      <Header eyebrow="Plugin" title="Knowledge Base" icon={<Layers className="h-4 w-4" />} />
+      <Header eyebrow="Workspace" title="知识库" icon={<Layers className="h-4 w-4" />} />
       <p className="text-sm text-muted-foreground">
-        Ingest registered workspace sources and search them with provenance through a passive KB Agent.
+        导入团队资料并通过 KB Agent 检索。每条结果都会保留来源，便于核对答案依据。
       </p>
       {agents.length === 0 ? (
-        <EmptyState label="No KB Agent is available in this workspace. Create a role-based Agent with the kb recipe first." />
+        <EmptyState label="当前 workspace 还没有 KB Agent。请先创建一个使用 kb recipe 的 Agent。" />
       ) : (
         <>
           <label className={fieldLabelClass} htmlFor="world-kb-agent">
-            KB Agent
+            使用的 KB Agent
             <select
               id="world-kb-agent"
               className={selectClass}
@@ -430,27 +494,132 @@ function KnowledgeBase({
               ))}
             </select>
           </label>
-          {state.kb_notice && <p className="text-sm text-emerald-600 dark:text-emerald-400">{humanKbMessage(state.kb_notice)}</p>}
-          {state.kb_error && <p className="text-sm text-destructive">{humanKbMessage(state.kb_error)}</p>}
-          <form
-            id="world-kb-ingest-form"
-            className="grid gap-3 rounded-md border border-border bg-background p-3 sm:grid-cols-[1fr_auto] sm:items-end"
-            onSubmit={(event) => {
-              event.preventDefault()
-              onAction("kb.ingest", {agent_uri: agentUri, source_uri: sourceUri})
-            }}
-          >
-            <label className={fieldLabelClass} htmlFor="world-kb-source-uri">
-              Source URI
-              <Input
-                id="world-kb-source-uri"
-                value={sourceUri}
-                onChange={(event) => setSourceUri(event.target.value)}
-                placeholder="resource://my-workspace/kb-source/handbook"
-              />
-            </label>
-            <Button type="submit">Ingest source</Button>
-          </form>
+          <section className="space-y-3 rounded-md border border-border bg-background p-4" aria-labelledby="world-kb-import-title">
+            <div className="flex flex-wrap items-center justify-between gap-3">
+              <div>
+                <h3 id="world-kb-import-title" className="text-sm font-semibold text-foreground">导入资料</h3>
+                <p className="mt-1 text-xs text-muted-foreground">支持粘贴文本，或一次上传最多 10 个 .txt / .md 文件。</p>
+              </div>
+              <div className="inline-flex rounded-md border border-border bg-muted/40 p-1" role="group" aria-label="导入方式">
+                {([
+                  ["paste", "粘贴文本"],
+                  ["files", "上传文件"],
+                  ["registered", "已注册来源"],
+                ] as Array<[KbImportMode, string]>).map(([mode, label]) => (
+                  <button
+                    key={mode}
+                    type="button"
+                    aria-pressed={importMode === mode}
+                    className={[
+                      "rounded px-3 py-1.5 text-xs font-medium transition",
+                      importMode === mode ? "bg-background text-foreground shadow-sm" : "text-muted-foreground hover:text-foreground",
+                    ].join(" ")}
+                    onClick={() => {
+                      setImportMode(mode)
+                      setClientError("")
+                    }}
+                  >
+                    {label}
+                  </button>
+                ))}
+              </div>
+            </div>
+
+            {importMode === "paste" && (
+              <form
+                id="world-kb-paste-form"
+                className="grid gap-3"
+                onSubmit={(event) => {
+                  event.preventDefault()
+                  if (!title.trim() || !content.trim()) {
+                    setClientError("请填写标题和正文。")
+                    return
+                  }
+                  importDocuments([{title: title.trim(), content}])
+                }}
+              >
+                <label className={fieldLabelClass} htmlFor="world-kb-paste-title">
+                  标题
+                  <Input id="world-kb-paste-title" value={title} maxLength={120} onChange={(event) => setTitle(event.target.value)} placeholder="例如：事故响应手册" />
+                </label>
+                <label className={fieldLabelClass} htmlFor="world-kb-paste-content">
+                  正文
+                  <Textarea id="world-kb-paste-content" value={content} onChange={(event) => setContent(event.target.value)} placeholder="粘贴需要供 Agent 检索的内容……" />
+                </label>
+                <Button variant="primary" type="submit" disabled={isImporting} className="w-fit">
+                  {isImporting ? <LoaderCircle className="h-4 w-4 animate-spin" /> : <FileText className="h-4 w-4" />}
+                  {isImporting ? "正在解析并写入…" : "导入知识库"}
+                </Button>
+              </form>
+            )}
+
+            {importMode === "files" && (
+              <div id="world-kb-file-form" className="grid gap-3">
+                <label className="grid cursor-pointer gap-2 rounded-md border border-dashed border-border bg-muted/20 p-5 text-center hover:bg-muted/40" htmlFor="world-kb-files">
+                  <Upload className="mx-auto h-6 w-6 text-muted-foreground" />
+                  <span className="text-sm font-medium text-foreground">选择 .txt 或 .md 文件</span>
+                  <span className="text-xs text-muted-foreground">单个文件不超过 256 KB，可批量选择</span>
+                  <input
+                    id="world-kb-files"
+                    className="sr-only"
+                    type="file"
+                    accept=".txt,.md,text/plain,text/markdown"
+                    multiple
+                    onChange={(event) => selectFiles(Array.from(event.target.files || []))}
+                  />
+                </label>
+                {files.length > 0 && (
+                  <ul className="grid gap-1 text-xs text-muted-foreground" id="world-kb-selected-files">
+                    {files.map((file) => <li key={`${file.name}-${file.size}`}>{file.name} · {Math.ceil(file.size / 1024)} KB</li>)}
+                  </ul>
+                )}
+                <Button variant="primary" type="button" disabled={isImporting} className="w-fit" onClick={() => void importFiles()}>
+                  {isImporting ? <LoaderCircle className="h-4 w-4 animate-spin" /> : <Upload className="h-4 w-4" />}
+                  {isImporting ? "正在解析并写入…" : `导入 ${files.length || "所选"} 个文件`}
+                </Button>
+              </div>
+            )}
+
+            {importMode === "registered" && (
+              <form
+                id="world-kb-ingest-form"
+                className="grid gap-3 sm:grid-cols-[1fr_auto] sm:items-end"
+                onSubmit={(event) => {
+                  event.preventDefault()
+                  onAction("kb.ingest", {agent_uri: agentUri, source_uri: sourceUri})
+                }}
+              >
+                <label className={fieldLabelClass} htmlFor="world-kb-source-uri">
+                  Source URI
+                  <Input id="world-kb-source-uri" value={sourceUri} onChange={(event) => setSourceUri(event.target.value)} placeholder="resource://my-workspace/kb-source/handbook" />
+                </label>
+                <Button type="submit">导入来源</Button>
+              </form>
+            )}
+
+            <div aria-live="polite" className="space-y-2">
+              {isImporting && <p className="text-sm text-muted-foreground">正在读取、解析并写入知识库，请稍候…</p>}
+              {clientError && <p className="text-sm text-destructive">{clientError}</p>}
+              {state.kb_notice && <p className="text-sm text-emerald-600 dark:text-emerald-400">{humanKbMessage(state.kb_notice)}</p>}
+              {state.kb_error && <p className="text-sm text-destructive">{humanKbMessage(state.kb_error)}</p>}
+            </div>
+
+            {(state.kb_import_results || []).length > 0 && (
+              <div className="grid gap-2" id="world-kb-import-results">
+                {(state.kb_import_results || []).map((result, index) => (
+                  <div className="flex items-start justify-between gap-3 rounded-md border border-border px-3 py-2 text-sm" key={`${String(result.title)}-${index}`}>
+                    <div>
+                      <p className="font-medium text-foreground">{String(result.title || "未命名资料")}</p>
+                      {Boolean(result.reason) && <p className="mt-0.5 text-xs text-destructive">{humanKbMessage(String(result.reason))}</p>}
+                    </div>
+                    <span className={result.status === "indexed" ? "text-xs font-medium text-emerald-600" : "text-xs font-medium text-destructive"}>
+                      {result.status === "indexed" ? `已写入 ${String(result.chunks || 0)} 个片段` : "导入失败"}
+                    </span>
+                  </div>
+                ))}
+              </div>
+            )}
+          </section>
           <form
             id="world-kb-query-form"
             className="grid gap-3 rounded-md border border-border bg-background p-3 sm:grid-cols-[1fr_auto] sm:items-end"
@@ -460,27 +629,27 @@ function KnowledgeBase({
             }}
           >
             <label className={fieldLabelClass} htmlFor="world-kb-query">
-              Search
+              检索知识库
               <Input
                 id="world-kb-query"
                 value={query}
                 onChange={(event) => setQuery(event.target.value)}
-                placeholder="What is our incident response policy?"
+                placeholder="例如：严重事故应该如何升级？"
               />
             </label>
-            <Button variant="primary" type="submit">Search KB</Button>
+            <Button variant="primary" type="submit">搜索</Button>
           </form>
           <div className="space-y-2" id="world-kb-hits">
             {(state.kb_hits || []).map((hit, index) => (
               <article className="space-y-2 rounded-md border border-border bg-background p-3" key={String(hit.chunk_id || index)}>
                 <div className="flex flex-wrap items-center justify-between gap-2 text-xs text-muted-foreground">
-                  <code>{String(hit.source_uri || "unknown source")}</code>
-                  <span>score {String(hit.score ?? "-")}</span>
+                  <code>{String(hit.source_uri || "未知来源")}</code>
+                  <span>相关度 {String(hit.score ?? "-")}</span>
                 </div>
                 <p className="whitespace-pre-wrap text-sm text-foreground">{String(hit.text || "")}</p>
               </article>
             ))}
-            {(state.kb_hits || []).length === 0 && <EmptyState label="Search results will appear here." />}
+            {(state.kb_hits || []).length === 0 && <EmptyState label="搜索结果会显示在这里。" />}
           </div>
         </>
       )}
@@ -489,11 +658,34 @@ function KnowledgeBase({
 }
 
 function humanKbMessage(message: string) {
-  if (message === "query_complete") return "Search complete."
-  if (message.startsWith("ingested:")) return `Ingested ${message.split(":")[1]} chunks.`
-  if (message === "unauthorized") return "You do not have permission to perform this KB operation."
-  if (message === "query_required") return "Enter a search query."
-  if (message === "source_uri_required") return "Enter a registered kb-source URI."
+  const messages: Record<string, string> = {
+    all_documents_failed: "所有资料均导入失败，请查看每条失败原因。",
+    content_not_utf8: "文件不是有效的 UTF-8 文本。",
+    content_required: "正文不能为空。",
+    content_too_large: "文件超过 256 KB。",
+    documents_required: "请至少提供一份资料。",
+    identity_read_unavailable: "暂时无法读取权限信息，请稍后重试。",
+    indexing_failed: "写入索引失败，请稍后重试。",
+    invalid_document: "资料格式无效。",
+    invalid_kb_agent: "所选 KB Agent 无效或不属于当前 workspace。",
+    kb_source_type_unavailable: "知识库来源存储尚未启用，请联系管理员。",
+    query_complete: "搜索完成。",
+    query_required: "请输入搜索内容。",
+    some_documents_failed: "部分资料导入失败，请查看每条失败原因。",
+    source_uri_required: "请输入已注册的 kb-source URI。",
+    title_required: "标题不能为空。",
+    title_too_long: "标题不能超过 120 个字符。",
+    too_many_documents: "每次最多导入 10 个文件。",
+    unauthorized: "你没有向这个 KB Agent 写入资料的权限。",
+    unsupported_file_type: "仅支持 .txt 和 .md 文件。",
+    workspace_unavailable: "当前 workspace 不可用。",
+  }
+  if (message.startsWith("ingested:")) return `已写入 ${message.split(":")[1]} 个片段。`
+  if (message.startsWith("imported:")) {
+    const [, indexed, total] = message.split(":")
+    return `已完成 ${indexed}/${total} 份资料的导入。`
+  }
+  if (messages[message]) return messages[message]
   return message
 }
 

@@ -6,10 +6,13 @@ defmodule Ezagent.World.WorkspacePluginActions do
   import Phoenix.Component, only: [assign: 3]
   import Phoenix.LiveView, only: [push_event: 3, push_patch: 2]
 
-  alias Ezagent.World.{CredentialCascade, WorkspacePluginData}
+  alias Ezagent.World.{CredentialCascade, KbSourceStore, WorkspacePluginData}
 
   @default_world_template_installs ["chat"]
   @foundation_socialware_refs ["chat", "orchestrator", "socialware"]
+  @kb_behavior Ezagent.ActionSet.Kb
+  @max_kb_documents 10
+  @kb_validation_errors ~w(title_required title_too_long content_required content_not_utf8 content_too_large unsupported_file_type)a
 
   @doc "Route a workspace/plugin/profile world action to its handler."
   @spec handle_dispatch(Phoenix.LiveView.Socket.t(), String.t(), map()) ::
@@ -44,6 +47,13 @@ defmodule Ezagent.World.WorkspacePluginActions do
   def handle_dispatch(socket, "kb.query", %{"agent_uri" => agent_uri, "query" => query} = args)
       when is_binary(agent_uri) and is_binary(query) do
     query_kb(socket, agent_uri, query, integer_arg(args, "k", 5))
+  end
+
+  def handle_dispatch(socket, "kb.ingest", %{
+        "agent_uri" => agent_uri,
+        "documents" => documents
+      }) when is_binary(agent_uri) and is_list(documents) do
+    ingest_kb_documents(socket, agent_uri, documents)
   end
 
   def handle_dispatch(socket, "kb.ingest", %{
@@ -260,6 +270,139 @@ defmodule Ezagent.World.WorkspacePluginActions do
         put_world_state(socket, %{"kb_error" => reason(reason)}, "error:kb_ingest_failed")
     end
   end
+
+  @doc "Persist and ingest one or more pasted/uploaded workspace KB documents."
+  @spec ingest_kb_documents(Phoenix.LiveView.Socket.t(), String.t(), [map()]) ::
+          {:noreply, Phoenix.LiveView.Socket.t()}
+  def ingest_kb_documents(socket, agent_uri, documents)
+      when is_binary(agent_uri) and is_list(documents) do
+    with :ok <- validate_document_batch(documents),
+         {:ok, uri} <- kb_agent_uri(socket, agent_uri),
+         :ok <- authorize_kb_ingest(socket, uri),
+         %URI{} = workspace_uri <- socket.assigns.current_workspace_uri do
+      results = Enum.map(documents, &ingest_kb_document(socket, uri, workspace_uri, &1))
+      indexed = Enum.count(results, &(&1["status"] == "indexed"))
+      total = length(results)
+
+      {kb_error, dispatch_status} =
+        cond do
+          indexed == total -> {nil, "ok"}
+          indexed == 0 -> {"all_documents_failed", "error:kb_import_failed"}
+          true -> {"some_documents_failed", "ok"}
+        end
+
+      put_world_state(
+        socket,
+        %{
+          "kb_import_results" => results,
+          "kb_notice" => "imported:#{indexed}:#{total}",
+          "kb_error" => kb_error
+        },
+        dispatch_status
+      )
+    else
+      {:error, error} ->
+        put_world_state(
+          socket,
+          %{
+            "kb_import_results" => [],
+            "kb_notice" => nil,
+            "kb_error" => kb_import_error(error)
+          },
+          "error:kb_import_failed"
+        )
+
+      _ ->
+        put_world_state(
+          socket,
+          %{"kb_error" => "workspace_unavailable"},
+          "error:kb_import_failed"
+        )
+    end
+  rescue
+    _error in Ezagent.Kind.IdentityReadError ->
+      put_world_state(
+        socket,
+        %{"kb_error" => "identity_read_unavailable"},
+        "error:kb_import_failed"
+      )
+  end
+
+  defp ingest_kb_document(socket, agent_uri, workspace_uri, document) do
+    title = document |> Map.get("title", "Untitled") |> to_string()
+
+    case KbSourceStore.store(workspace_uri, document) do
+      {:ok, source} ->
+        case dispatch_kb(socket, agent_uri, :ingest, %{source_uri: source.source_uri}) do
+          {:ok, %{chunks: chunks}} ->
+            %{
+              "title" => source.title,
+              "source_uri" => source.source_uri,
+              "status" => "indexed",
+              "chunks" => chunks
+            }
+
+          {:error, error} ->
+            :ok = KbSourceStore.cleanup(source)
+
+            %{
+              "title" => source.title,
+              "status" => "failed",
+              "reason" => kb_import_error(error)
+            }
+        end
+
+      {:error, error} ->
+        %{
+          "title" => title,
+          "status" => "failed",
+          "reason" => kb_import_error(error)
+        }
+    end
+  end
+
+  defp validate_document_batch([]), do: {:error, :documents_required}
+
+  defp validate_document_batch(documents) when length(documents) > @max_kb_documents,
+    do: {:error, :too_many_documents}
+
+  defp validate_document_batch(documents) do
+    if Enum.all?(documents, &is_map/1), do: :ok, else: {:error, :invalid_document}
+  end
+
+  # This mirrors dispatch's concrete required-cap shape. Dispatch remains the
+  # authority and checks again before indexing; the preflight prevents a denied
+  # caller from creating even a temporary kb-source file.
+  defp authorize_kb_ingest(socket, agent_uri) do
+    needed =
+      Ezagent.Capability.cap(
+        :agent,
+        @kb_behavior,
+        :ingest,
+        Ezagent.URI.instance(agent_uri),
+        Ezagent.Capability.workspace_of(agent_uri)
+      )
+
+    caps = Map.get(socket.assigns, :current_caps, MapSet.new())
+    needed_map = Map.take(needed, [:kind, :behavior, :action, :instance, :workspace_uri])
+
+    cond do
+      Ezagent.Capability.Authorization.authorizes?(caps, needed_map) -> :ok
+      Ezagent.Kind.default_holds_cap?(socket.assigns.current_entity_uri, needed) -> :ok
+      true -> {:error, :unauthorized}
+    end
+  end
+
+  defp kb_import_error(error) when error in @kb_validation_errors,
+    do: Atom.to_string(error)
+
+  defp kb_import_error(error)
+       when error in [:documents_required, :too_many_documents, :invalid_document, :unauthorized,
+                      :identity_read_unavailable, :invalid_kb_agent, :workspace_unavailable,
+                      :kb_source_type_unavailable],
+       do: Atom.to_string(error)
+
+  defp kb_import_error(_error), do: "indexing_failed"
 
   defp kb_agent_uri(socket, raw) do
     with {:ok, %URI{scheme: "entity"} = uri} <- Ezagent.URI.parse(String.trim(raw)),
