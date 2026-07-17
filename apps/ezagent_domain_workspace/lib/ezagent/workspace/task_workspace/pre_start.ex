@@ -13,13 +13,18 @@ defmodule Ezagent.Workspace.TaskWorkspace.PreStart do
     with %Provision{} = row <- Store.get_by_provision_id(ref.provision_id),
          :ok <- exact_identity(row, ref),
          {:ok, claimed} <- claim(row),
-         :ok <- reserve_creation_identity(claimed),
-         :ok <- verify(claimed) do
+         :ok <- verify(claimed),
+         launch_context when is_reference(launch_context) <-
+           Ezagent.Workspace.TaskWorkspace.LaunchAuthority.issue(
+             claimed.id,
+             claimed.start_claim_token
+           ) do
       {:ok,
        %{
          cwd: claimed.worktree_path,
          claim: {claimed.id, claimed.start_claim_token},
-         creation_attempt_id: claimed.creation_attempt_id
+         creation_attempt_id: claimed.creation_attempt_id,
+         launch_context: launch_context
        }}
     else
       nil -> {:error, :workspace_not_ready}
@@ -119,14 +124,6 @@ defmodule Ezagent.Workspace.TaskWorkspace.PreStart do
   end
 
   defp maybe_cleanup(_provision_id, _reason, error), do: error
-
-  defp reserve_creation_identity(row) do
-    with {:ok, agent} <- parse_uri(row.agent_uri),
-         {:ok, root} <- parse_uri(row.provenance_root_uri),
-         {:ok, workspace} <- parse_uri(row.workspace_uri) do
-      Ezagent.Agent.CreationInventory.record(row.creation_attempt_id, agent, root, workspace)
-    end
-  end
 
   defp release_claim(row) do
     case Store.release_start(row.id, row.start_claim_token) do
