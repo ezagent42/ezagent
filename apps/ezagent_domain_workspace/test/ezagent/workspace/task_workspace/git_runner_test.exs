@@ -50,24 +50,40 @@ defmodule Ezagent.Workspace.TaskWorkspace.GitRunnerTest do
 
     executor = fn argv, opts ->
       send(owner, {:argv, argv, opts})
-      {:ok, %{stdout: "", stderr: "", exit_status: 0}}
+
+      cond do
+        Enum.take(argv, -3) == ["remote", "get-url", "origin"] ->
+          {:ok,
+           %{
+             stdout: "https://git.example.test/acme/widgets.git\n",
+             stderr: "",
+             exit_status: 0
+           }}
+
+        "show-ref" in argv and Enum.at(argv, -1) =~ "/tags/" ->
+          {:error, {:git_exit, 1}}
+
+        "rev-parse" in argv ->
+          {:ok, %{stdout: String.duplicate("a", 40) <> "\n", stderr: "", exit_status: 0}}
+
+        true ->
+          {:ok, %{stdout: "", stderr: "", exit_status: 0}}
+      end
     end
 
     assert {:ok, ready} = GitRunner.prepare(request(executor: executor))
-    assert_receive {:argv, clone, clone_opts}
-    assert_receive {:argv, worktree, worktree_opts}
+    commands = collect_argv([])
 
-    for argv <- [clone, worktree] do
+    for {argv, opts} <- commands do
       assert is_list(argv)
       assert Enum.all?(argv, &is_binary/1)
       assert "credential.helper=" in argv
       assert "core.askPass=" in argv
       refute Enum.any?(argv, &String.contains?(&1, ["token", "password", "private_key"]))
+      assert opts.env == %{"GIT_CONFIG_NOSYSTEM" => "1", "GIT_TERMINAL_PROMPT" => "0"}
     end
 
-    assert clone_opts[:env] == %{"GIT_CONFIG_NOSYSTEM" => "1", "GIT_TERMINAL_PROMPT" => "0"}
-    assert worktree_opts[:env] == clone_opts[:env]
-    assert ready.argv_history == [clone, worktree]
+    assert ready.argv_history == Enum.map(commands, &elem(&1, 0))
   end
 
   test "prepare creates and verifies an isolated worktree from an explicit local fixture", %{
@@ -89,6 +105,149 @@ defmodule Ezagent.Workspace.TaskWorkspace.GitRunnerTest do
     assert :ok = GitRunner.remove(ready)
     assert :ok = GitRunner.verify_absent(ready)
     refute File.exists?(ready.worktree_path)
+  end
+
+  test "reused cache fetches a moved base ref and creates the deterministic branch", %{root: root} do
+    %{origin: origin, source: source} = local_origin_with_source!(root)
+    first = request(remote_url: origin, allow_local_fixture: true, generation: 1)
+
+    assert {:ok, prepared_one} = GitRunner.prepare(first)
+    moved_sha = advance_origin_main!(source)
+
+    second = request(remote_url: origin, allow_local_fixture: true, generation: 2)
+    assert {:ok, prepared_two} = GitRunner.prepare(second)
+
+    assert prepared_two.resolved_base_commit == moved_sha
+    assert prepared_two.local_branch_ref == GitRunner.local_branch_ref(second)
+
+    assert String.trim(git!(prepared_two.worktree_path, ["symbolic-ref", "HEAD"])) ==
+             prepared_two.local_branch_ref
+
+    refute prepared_one.resolved_base_commit == prepared_two.resolved_base_commit
+  end
+
+  test "reused cache fetches a newly-created base ref", %{root: root} do
+    %{origin: origin, source: source} = local_origin_with_source!(root)
+
+    assert {:ok, _prepared} =
+             GitRunner.prepare(
+               request(remote_url: origin, allow_local_fixture: true, generation: 1)
+             )
+
+    new_sha = create_origin_branch!(source, "release")
+
+    request =
+      request(
+        remote_url: origin,
+        allow_local_fixture: true,
+        base_ref: "release",
+        generation: 2
+      )
+
+    assert {:ok, prepared} = GitRunner.prepare(request)
+    assert prepared.resolved_base_commit == new_sha
+    assert prepared.local_branch_ref == GitRunner.local_branch_ref(request)
+  end
+
+  test "an exact head and tag collision is rejected as ambiguous", %{root: root} do
+    %{origin: origin, source: source} = local_origin_with_source!(root)
+    git!(source, ["tag", "main"])
+    git!(source, ["push", "origin", "refs/tags/main"])
+
+    assert {:error, :ambiguous_base_ref} =
+             GitRunner.prepare(
+               request(remote_url: origin, allow_local_fixture: true, base_ref: "main")
+             )
+  end
+
+  test "a deterministic branch checked out by another worktree is not reset", %{root: root} do
+    %{origin: origin} = local_origin_with_source!(root)
+
+    assert {:ok, first} =
+             GitRunner.prepare(
+               request(remote_url: origin, allow_local_fixture: true, generation: 1)
+             )
+
+    target = request(remote_url: origin, allow_local_fixture: true, generation: 2)
+    branch_ref = GitRunner.local_branch_ref(target)
+    branch_name = String.replace_prefix(branch_ref, "refs/heads/", "")
+    other_worktree = Path.join(root, "other-branch-owner")
+
+    git!(root, ["--git-dir", first.cache_path, "branch", branch_name, first.resolved_base_commit])
+    git!(root, ["--git-dir", first.cache_path, "worktree", "add", other_worktree, branch_name])
+
+    assert {:error, :workspace_branch_conflict} = GitRunner.prepare(target)
+    assert String.trim(git!(other_worktree, ["rev-parse", "HEAD"])) == first.resolved_base_commit
+  end
+
+  test "fetch and branch command plan owns refs and preserves anonymous execution" do
+    owner = self()
+
+    executor = fn argv, opts ->
+      send(owner, {:planned_argv, argv, opts})
+
+      stdout =
+        cond do
+          Enum.take(argv, -3) == ["remote", "get-url", "origin"] ->
+            "https://git.example.test/acme/widgets.git\n"
+
+          "show-ref" in argv and Enum.at(argv, -1) =~ "/heads/" ->
+            "a" <> String.duplicate("0", 39) <> " refs/ezagent/origin/heads/main\n"
+
+          "show-ref" in argv ->
+            ""
+
+          "rev-parse" in argv ->
+            String.duplicate("a", 40) <> "\n"
+
+          true ->
+            ""
+        end
+
+      if "show-ref" in argv and Enum.at(argv, -1) =~ "/tags/" do
+        {:error, {:git_exit, 1}}
+      else
+        {:ok, %{stdout: stdout, stderr: "", exit_status: 0}}
+      end
+    end
+
+    assert {:ok, prepared} = GitRunner.prepare(request(executor: executor))
+    commands = collect_planned_argv([])
+    argv_plans = Enum.map(commands, &elem(&1, 0))
+
+    assert Enum.map(argv_plans, &command_kind/1) == [
+             :clone,
+             :remote,
+             :fetch,
+             :head_probe,
+             :tag_probe,
+             :resolve,
+             :worktree_list,
+             :branch,
+             :worktree_add
+           ]
+
+    assert Enum.any?(commands, fn {argv, _opts} ->
+             Enum.take(argv, -4) == [
+               "--prune",
+               "origin",
+               "+refs/heads/*:refs/ezagent/origin/heads/*",
+               "+refs/tags/*:refs/ezagent/origin/tags/*"
+             ]
+           end)
+
+    refute Enum.any?(commands, fn {argv, _opts} ->
+             Enum.any?(argv, &(&1 == prepared.local_branch_ref)) and "fetch" in argv
+           end)
+
+    refute Enum.any?(argv_plans, &Enum.member?(&1, "task/task-one"))
+
+    for {argv, opts} <- commands do
+      assert is_list(argv)
+      assert opts.env == %{"GIT_CONFIG_NOSYSTEM" => "1", "GIT_TERMINAL_PROMPT" => "0"}
+      refute Map.has_key?(opts, :shell)
+      refute Enum.any?(argv, &String.contains?(&1, ["token", "password", "private_key"]))
+    end
   end
 
   test "absence requires both no exact Git registration and no exact directory", %{root: root} do
@@ -283,6 +442,10 @@ defmodule Ezagent.Workspace.TaskWorkspace.GitRunnerTest do
   end
 
   defp local_origin!(test_root) do
+    local_origin_with_source!(test_root).origin
+  end
+
+  defp local_origin_with_source!(test_root) do
     root = Path.join(test_root, "origin-#{System.unique_integer([:positive])}")
     source = Path.join(root, "source")
     origin = Path.join(root, "origin.git")
@@ -306,7 +469,66 @@ defmodule Ezagent.Workspace.TaskWorkspace.GitRunnerTest do
     git!(source, ["remote", "add", "origin", origin])
     git!(source, ["push", "origin", "main"])
     git!(root, ["--git-dir", origin, "symbolic-ref", "HEAD", "refs/heads/main"])
-    origin
+    %{origin: origin, source: source}
+  end
+
+  defp advance_origin_main!(source) do
+    File.write!(Path.join(source, "README.md"), "moved\n")
+    git!(source, ["add", "README.md"])
+    commit_fixture!(source, "move main")
+    git!(source, ["push", "origin", "main"])
+    String.trim(git!(source, ["rev-parse", "HEAD"]))
+  end
+
+  defp create_origin_branch!(source, branch) do
+    git!(source, ["checkout", "-b", branch])
+    File.write!(Path.join(source, "NEW.md"), "new ref\n")
+    git!(source, ["add", "NEW.md"])
+    commit_fixture!(source, "new ref")
+    git!(source, ["push", "origin", branch])
+    String.trim(git!(source, ["rev-parse", "HEAD"]))
+  end
+
+  defp commit_fixture!(source, message) do
+    git!(source, [
+      "-c",
+      "user.name=Fixture",
+      "-c",
+      "user.email=fixture@example.test",
+      "commit",
+      "-m",
+      message
+    ])
+  end
+
+  defp collect_planned_argv(acc) do
+    receive do
+      {:planned_argv, argv, opts} -> collect_planned_argv([{argv, opts} | acc])
+    after
+      0 -> Enum.reverse(acc)
+    end
+  end
+
+  defp collect_argv(acc) do
+    receive do
+      {:argv, argv, opts} -> collect_argv([{argv, opts} | acc])
+    after
+      0 -> Enum.reverse(acc)
+    end
+  end
+
+  defp command_kind(argv) do
+    cond do
+      "clone" in argv -> :clone
+      "remote" in argv -> :remote
+      "fetch" in argv -> :fetch
+      "show-ref" in argv and Enum.at(argv, -1) =~ "/heads/" -> :head_probe
+      "show-ref" in argv -> :tag_probe
+      "rev-parse" in argv -> :resolve
+      "worktree" in argv and "list" in argv -> :worktree_list
+      "branch" in argv -> :branch
+      "worktree" in argv and "add" in argv -> :worktree_add
+    end
   end
 
   defp git!(cd, args) do

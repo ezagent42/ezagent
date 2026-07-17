@@ -171,7 +171,9 @@ defmodule Ezagent.Workspace.TaskWorkspace.Provisioner do
              expected_version: claimed.state_version,
              cache_identity: prepared.cache_identity,
              worktree_identity: prepared.worktree_identity,
-             worktree_path: prepared.worktree_path
+             worktree_path: prepared.worktree_path,
+             resolved_base_commit: prepared.resolved_base_commit,
+             local_branch_ref: prepared.local_branch_ref
            }) do
       ready_result(ready)
     else
@@ -281,6 +283,8 @@ defmodule Ezagent.Workspace.TaskWorkspace.Provisioner do
        task_uri: row.task_uri,
        generation: row.generation,
        cwd: row.worktree_path,
+       resolved_base_commit: row.resolved_base_commit,
+       local_branch_ref: row.local_branch_ref,
        start_token: row.start_token
      }}
   end

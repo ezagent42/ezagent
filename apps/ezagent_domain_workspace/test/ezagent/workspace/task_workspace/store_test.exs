@@ -448,7 +448,9 @@ defmodule Ezagent.Workspace.TaskWorkspace.StoreTest do
       expected_version: expected_version,
       cache_identity: "cache-widgets-main",
       worktree_identity: "worktree-task-one-1",
-      worktree_path: "/safe/workspaces/task-one-1"
+      worktree_path: "/safe/workspaces/task-one-1",
+      resolved_base_commit: String.duplicate("a", 40),
+      local_branch_ref: "refs/heads/ezagent/task/0123456789abcdef01234567/g1"
     }
   end
 

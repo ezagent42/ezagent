@@ -194,6 +194,8 @@ defmodule Ezagent.Workspace.TaskWorkspace.Store do
             cache_identity: ready.cache_identity,
             worktree_identity: ready.worktree_identity,
             worktree_path: ready.worktree_path,
+            resolved_base_commit: ready.resolved_base_commit,
+            local_branch_ref: ready.local_branch_ref,
             claim_token: nil,
             lease_until: nil,
             start_token: Ecto.UUID.generate(),
@@ -688,7 +690,13 @@ defmodule Ezagent.Workspace.TaskWorkspace.Store do
   defp expected_version(%Provision{}, _version, error), do: {:error, error}
 
   defp ready_values(attrs) do
-    keys = [:cache_identity, :worktree_identity, :worktree_path]
+    keys = [
+      :cache_identity,
+      :worktree_identity,
+      :worktree_path,
+      :resolved_base_commit,
+      :local_branch_ref
+    ]
 
     if Enum.all?(keys, &(is_binary(Map.get(attrs, &1)) and Map.get(attrs, &1) != "")) do
       {:ok, Map.take(attrs, keys)}
