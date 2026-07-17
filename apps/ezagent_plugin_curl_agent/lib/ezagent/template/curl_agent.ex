@@ -178,6 +178,21 @@ defmodule Ezagent.PluginCurlAgent.Template do
 
   @impl Ezagent.Kind.Template
   def instantiate(_tmpl_name, %{"agent_uri" => agent_uri_str} = tmpl, _workspace_uri) do
+    instantiate_with_opts(agent_uri_str, tmpl, [])
+  end
+
+  def instantiate(_tmpl_name, tmpl, _workspace_uri), do: {:error, {:invalid_template, tmpl}}
+
+  @impl Ezagent.Kind.Template
+  def instantiate(_tmpl_name, %{"agent_uri" => agent_uri_str} = tmpl, _workspace_uri,
+        launch_context: launch_context
+      ) do
+    instantiate_with_opts(agent_uri_str, tmpl, launch_context: launch_context)
+  end
+
+  def instantiate(_tmpl_name, _tmpl, _workspace_uri, _opts), do: {:error, :invalid_launch_options}
+
+  defp instantiate_with_opts(agent_uri_str, tmpl, opts) do
     agent_uri = Ezagent.URI.new!(agent_uri_str)
 
     init_args = %{
@@ -219,7 +234,7 @@ defmodule Ezagent.PluginCurlAgent.Template do
     # `{:error, {:already_started, pid}}` (it pre-existed). Thread that
     # ground truth out as `%{fresh?: _}` so `update_agent_template`'s
     # swap can refuse adopting a worker it did not create.
-    case Ezagent.Kind.spawn(Ezagent.Entity.Agent, init_args) do
+    case Ezagent.Kind.spawn(Ezagent.Entity.Agent, init_args, opts) do
       {:ok, _pid} ->
         case materialize_credential_slice(agent_uri, tmpl) do
           :ok ->
@@ -245,8 +260,6 @@ defmodule Ezagent.PluginCurlAgent.Template do
         {:error, reason}
     end
   end
-
-  def instantiate(_tmpl_name, tmpl, _workspace_uri), do: {:error, {:invalid_template, tmpl}}
 
   defp selected_credential_source(tmpl) do
     case Map.get(tmpl, "cascade_resolution") || Map.get(tmpl, :cascade_resolution) do

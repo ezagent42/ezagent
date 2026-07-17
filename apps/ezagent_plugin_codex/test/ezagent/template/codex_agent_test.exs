@@ -3,6 +3,16 @@ defmodule Ezagent.PluginCodex.Template.CodexAgentTest do
 
   alias Ezagent.PluginCodex.Template.CodexAgent
 
+  test "instantiate/4 accepts only launch_context and instantiate/3 remains available" do
+    assert function_exported?(CodexAgent, :instantiate, 3)
+    assert function_exported?(CodexAgent, :instantiate, 4)
+
+    assert {:error, :invalid_launch_options} =
+             CodexAgent.instantiate("test", %{}, URI.new!("workspace://test"),
+               launch_context_typo: make_ref()
+             )
+  end
+
   describe "validate/1 — agent_uri" do
     test "accepts entity://agent/<name> without flavor prefix" do
       assert :ok =

@@ -94,10 +94,21 @@ defmodule Ezagent.PluginCc.Template.CcHeadlessAgent do
 
   @impl Ezagent.Kind.Template
   def instantiate(_tmpl_name, %{"agent_uri" => uri_str} = tmpl, workspace_uri) do
-    instantiate_for_flavor(__MODULE__, uri_str, tmpl, workspace_uri)
+    instantiate_for_flavor(__MODULE__, uri_str, tmpl, workspace_uri, [])
   end
 
   def instantiate(_tmpl_name, tmpl, _workspace_uri), do: {:error, {:invalid_template, tmpl}}
+
+  @impl Ezagent.Kind.Template
+  def instantiate(_tmpl_name, %{"agent_uri" => uri_str} = tmpl, workspace_uri,
+        launch_context: launch_context
+      ) do
+    instantiate_for_flavor(__MODULE__, uri_str, tmpl, workspace_uri,
+      launch_context: launch_context
+    )
+  end
+
+  def instantiate(_tmpl_name, _tmpl, _workspace_uri, _opts), do: {:error, :invalid_launch_options}
 
   # Flavor-parameterized instantiate body, shared with the custom-backend
   # provider shim (`CcHeadlessCustomAgent`) so the STORED launch flavor is the
@@ -106,20 +117,20 @@ defmodule Ezagent.PluginCc.Template.CcHeadlessAgent do
   # `"provider"` data field (read by `sdk_sidecar_params/2` → the sidecar's
   # `EZAGENT_CC_SDK_ENV` passthrough → the Python worker's SDK `env=`).
   @doc false
-  @spec instantiate_for_flavor(module(), String.t(), map(), URI.t()) ::
+  @spec instantiate_for_flavor(module(), String.t(), map(), URI.t(), keyword()) ::
           {:ok, [URI.t()], map()} | {:error, term()}
-  def instantiate_for_flavor(flavor_class, uri_str, tmpl, workspace_uri)
+  def instantiate_for_flavor(flavor_class, uri_str, tmpl, workspace_uri, opts)
       when is_atom(flavor_class) and is_binary(uri_str) and is_map(tmpl) do
     agent_uri = Ezagent.URI.new!(uri_str)
 
     with :ok <- Ezagent.AgentFlavorAttributes.put_from_template_class(agent_uri, flavor_class) do
       cond do
-        agent_kind_alive?(agent_uri) ->
+        opts == [] and agent_kind_alive?(agent_uri) ->
           {:ok, [agent_uri], %{fresh?: false}}
 
         true ->
           with {:ok, tmpl} <- ensure_config_home(agent_uri, tmpl) do
-            spawn_for_headless(agent_uri, tmpl, workspace_uri)
+            spawn_for_headless(agent_uri, tmpl, workspace_uri, opts)
           end
       end
     end
@@ -161,10 +172,10 @@ defmodule Ezagent.PluginCc.Template.CcHeadlessAgent do
 
   # ---- Spawn path ---------------------------------------------------------
 
-  defp spawn_for_headless(agent_uri, tmpl, _workspace_uri) do
+  defp spawn_for_headless(agent_uri, tmpl, _workspace_uri, opts) do
     claude_session_id = Map.get(tmpl, "claude_session_id") || new_session_id()
 
-    with {:ok, started_or_adopted} <- ensure_agent_kind(agent_uri, claude_session_id) do
+    with {:ok, started_or_adopted} <- ensure_agent_kind(agent_uri, claude_session_id, opts) do
       case started_or_adopted do
         :already_started ->
           _ = ensure_subprocess_alive(agent_uri, tmpl)
@@ -245,14 +256,14 @@ defmodule Ezagent.PluginCc.Template.CcHeadlessAgent do
 
   # ---- Agent Kind ---------------------------------------------------------
 
-  defp ensure_agent_kind(agent_uri, claude_session_id) do
+  defp ensure_agent_kind(agent_uri, claude_session_id, opts) do
     init_args = %{
       uri: agent_uri,
       behaviors: Ezagent.Entity.Agent.cc_headless_behaviors(),
       claude_session_id: claude_session_id
     }
 
-    case Ezagent.Kind.spawn(Ezagent.Entity.Agent, init_args) do
+    case Ezagent.Kind.spawn(Ezagent.Entity.Agent, init_args, opts) do
       {:ok, _pid} -> {:ok, :started}
       {:error, {:already_started, _pid}} -> {:ok, :already_started}
       {:error, reason} -> {:error, {:agent_spawn_failed, reason}}

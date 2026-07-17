@@ -3,6 +3,16 @@ defmodule Ezagent.PluginCodex.Template.CodexRemoteAgentTest do
 
   alias Ezagent.PluginCodex.Template.CodexRemoteAgent
 
+  test "instantiate/4 accepts only launch_context and instantiate/3 remains available" do
+    assert function_exported?(CodexRemoteAgent, :instantiate, 3)
+    assert function_exported?(CodexRemoteAgent, :instantiate, 4)
+
+    assert {:error, :invalid_launch_options} =
+             CodexRemoteAgent.instantiate("test", %{}, URI.new!("workspace://test"),
+               launch_context_typo: make_ref()
+             )
+  end
+
   describe "template_name/0" do
     test "returns codex_remote.agent" do
       assert CodexRemoteAgent.template_name() == "codex_remote.agent"

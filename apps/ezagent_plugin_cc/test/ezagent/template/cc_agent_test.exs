@@ -14,6 +14,27 @@ defmodule Ezagent.PluginCc.Template.CcAgentTest do
 
   alias Ezagent.PluginCc.Template.CcAgent
 
+  describe "launch-context callback matrix" do
+    test "all cc variants expose instantiate/4 while retaining instantiate/3" do
+      modules = [
+        CcAgent,
+        Ezagent.PluginCc.Template.CcHeadlessAgent,
+        Ezagent.PluginCc.Template.CcDeepseekAgent,
+        Ezagent.PluginCc.Template.CcHeadlessDeepseekAgent
+      ]
+
+      for module <- modules do
+        assert function_exported?(module, :instantiate, 3)
+        assert function_exported?(module, :instantiate, 4)
+
+        assert {:error, :invalid_launch_options} =
+                 module.instantiate("test", %{}, URI.new!("workspace://test"),
+                   launch_context_typo: make_ref()
+                 )
+      end
+    end
+  end
+
   describe "template_name/0" do
     test "returns 'cc.agent'" do
       assert CcAgent.template_name() == "cc.agent"
