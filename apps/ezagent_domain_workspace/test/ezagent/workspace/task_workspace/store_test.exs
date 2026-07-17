@@ -1,0 +1,264 @@
+defmodule Ezagent.Workspace.TaskWorkspace.StoreTest do
+  use EzagentCore.DataCase, async: false
+
+  alias Ezagent.Workspace.TaskWorkspace.{Provision, Store}
+
+  test "identity is idempotent and conflicting immutable fields fail" do
+    assert {:ok, first} = Store.create_planned(attrs())
+    assert {:ok, same} = Store.create_planned(attrs())
+    assert first.id == same.id
+
+    assert {:error, :conflicting_provision_identity} =
+             Store.create_planned(%{attrs() | repository_uri: repository_uri("other")})
+  end
+
+  test "concurrent identity creation converges on one row" do
+    results =
+      1..8
+      |> Task.async_stream(fn _ -> Store.create_planned(attrs()) end,
+        max_concurrency: 8,
+        timeout: :infinity
+      )
+      |> Enum.map(fn {:ok, {:ok, row}} -> row end)
+
+    assert results |> Enum.map(& &1.id) |> Enum.uniq() |> length() == 1
+    assert Repo.aggregate(Provision, :count) == 1
+  end
+
+  test "private visibility is rejected before a provision row" do
+    assert {:error, :private_checkout_not_supported} =
+             Store.create_planned(%{attrs() | visibility: :private})
+
+    assert Repo.aggregate(Provision, :count) == 0
+  end
+
+  test "expired provision lease is reclaimable and stale token or version cannot commit ready" do
+    {:ok, row} = Store.create_planned(attrs())
+
+    assert {:ok, first} =
+             Store.claim_provision(row.id,
+               now: at(0),
+               lease_seconds: 30,
+               expected_version: row.state_version
+             )
+
+    assert {:error, :provision_already_claimed} =
+             Store.claim_provision(row.id, now: at(10), lease_seconds: 30)
+
+    assert {:ok, second} =
+             Store.claim_provision(row.id,
+               now: at(31),
+               lease_seconds: 30,
+               expected_version: first.state_version
+             )
+
+    assert {:error, :provision_lease_lost} =
+             Store.mark_ready(row.id, first.claim_token, ready_attrs(second.state_version),
+               now: at(32)
+             )
+
+    assert {:error, :stale_provision_version} =
+             Store.mark_ready(
+               row.id,
+               second.claim_token,
+               ready_attrs(first.state_version),
+               now: at(32)
+             )
+
+    assert {:ok, ready} =
+             Store.mark_ready(
+               row.id,
+               second.claim_token,
+               ready_attrs(second.state_version),
+               now: at(32)
+             )
+
+    assert ready.status == :ready
+    assert ready.state_version == second.state_version + 1
+    assert is_binary(ready.start_token)
+    assert ready.claim_token == nil
+    assert ready.lease_until == nil
+  end
+
+  test "expired provision holder cannot commit before another claimant reclaims" do
+    {:ok, row} = Store.create_planned(attrs())
+    {:ok, claimed} = Store.claim_provision(row.id, now: at(0), lease_seconds: 30)
+
+    assert {:error, :provision_lease_expired} =
+             Store.mark_ready(
+               row.id,
+               claimed.claim_token,
+               ready_attrs(claimed.state_version),
+               now: at(31)
+             )
+
+    assert Repo.get!(Provision, row.id).status == :provisioning
+  end
+
+  test "concurrent provision claims have exactly one winner" do
+    {:ok, row} = Store.create_planned(attrs())
+
+    results =
+      1..8
+      |> Task.async_stream(
+        fn _ ->
+          Store.claim_provision(row.id,
+            now: at(0),
+            lease_seconds: 30,
+            expected_version: row.state_version
+          )
+        end,
+        max_concurrency: 8,
+        timeout: :infinity
+      )
+      |> Enum.map(fn {:ok, result} -> result end)
+
+    assert Enum.count(results, &match?({:ok, %Provision{}}, &1)) == 1
+    assert Enum.count(results, &match?({:error, _}, &1)) == 7
+  end
+
+  test "start token is single-use under concurrent claims" do
+    {:ok, row} = Store.create_planned(attrs())
+    {:ok, claimed} = Store.claim_provision(row.id, now: at(0), lease_seconds: 30)
+
+    {:ok, ready} =
+      Store.mark_ready(row.id, claimed.claim_token, ready_attrs(claimed.state_version),
+        now: at(1)
+      )
+
+    results =
+      1..8
+      |> Task.async_stream(fn _ -> Store.claim_start(row.id, ready.start_token) end,
+        max_concurrency: 8,
+        timeout: :infinity
+      )
+      |> Enum.map(fn {:ok, result} -> result end)
+
+    assert Enum.count(results, &match?({:ok, %Provision{}}, &1)) == 1
+    assert Enum.count(results, &(&1 == {:error, :start_token_consumed})) == 7
+
+    assert {:ok, started} = Store.mark_started(row.id, ready.start_token)
+    assert started.status == :sidecar_started
+  end
+
+  test "cleanup lease is exclusive, reclaimable, and token-bound" do
+    {:ok, row} = Store.create_planned(attrs())
+    assert {:ok, pending} = Store.request_cleanup(row.id, :task_cancelled)
+    assert pending.status == :cleanup_pending
+
+    assert {:ok, first} =
+             Store.claim_cleanup(row.id,
+               now: at(0),
+               lease_seconds: 30,
+               expected_version: pending.state_version
+             )
+
+    assert {:error, :cleanup_already_claimed} =
+             Store.claim_cleanup(row.id, now: at(10), lease_seconds: 30)
+
+    assert {:ok, second} =
+             Store.claim_cleanup(row.id,
+               now: at(31),
+               lease_seconds: 30,
+               expected_version: first.state_version
+             )
+
+    assert {:error, :cleanup_lease_lost} =
+             Store.mark_cleaned(row.id, first.claim_token, now: at(32))
+
+    assert {:ok, cleaned} = Store.mark_cleaned(row.id, second.claim_token, now: at(32))
+    assert cleaned.status == :cleaned
+    assert %DateTime{} = cleaned.cleaned_at
+  end
+
+  test "expired cleanup holder cannot complete before another claimant reclaims" do
+    {:ok, row} = Store.create_planned(attrs())
+    {:ok, pending} = Store.request_cleanup(row.id, :task_cancelled)
+    {:ok, claimed} = Store.claim_cleanup(pending.id, now: at(0), lease_seconds: 30)
+
+    assert {:error, :cleanup_lease_expired} =
+             Store.mark_cleaned(claimed.id, claimed.claim_token, now: at(31))
+
+    assert Repo.get!(Provision, row.id).status == :cleanup_pending
+  end
+
+  test "repeated cleanup request preserves an active cleanup claim" do
+    {:ok, row} = Store.create_planned(attrs())
+    {:ok, pending} = Store.request_cleanup(row.id, :task_cancelled)
+    {:ok, claimed} = Store.claim_cleanup(pending.id, now: at(0), lease_seconds: 30)
+
+    assert {:ok, same} = Store.request_cleanup(row.id, :different_reason)
+    assert same.id == claimed.id
+    assert same.state_version == claimed.state_version
+    assert same.claim_token == claimed.claim_token
+    assert same.lease_until == claimed.lease_until
+    assert same.cleanup_reason == "task_cancelled"
+  end
+
+  test "recoverable listing is bounded and excludes terminal rows" do
+    {:ok, first} = Store.create_planned(attrs("a"))
+    {:ok, second} = Store.create_planned(attrs("b"))
+    {:ok, pending} = Store.request_cleanup(second.id, :task_cancelled)
+    {:ok, cleanup} = Store.claim_cleanup(pending.id, now: at(0), lease_seconds: 30)
+    {:ok, _cleaned} = Store.mark_cleaned(cleanup.id, cleanup.claim_token, now: at(1))
+
+    assert [%Provision{id: id}] = Store.list_recoverable(1)
+    assert id == first.id
+  end
+
+  test "recoverable listing skips active leases" do
+    {:ok, row} = Store.create_planned(attrs())
+
+    assert {:ok, _claimed} =
+             Store.claim_provision(row.id,
+               now: DateTime.utc_now(),
+               lease_seconds: 60
+             )
+
+    assert Store.list_recoverable(10) == []
+  end
+
+  test "schema has no credential, secret, or raw Git output fields" do
+    forbidden = [
+      :credential,
+      :credential_ref,
+      :secret,
+      :access_token,
+      :private_key,
+      :git_output,
+      :stdout,
+      :stderr
+    ]
+
+    fields = Provision.__schema__(:fields)
+    assert Enum.all?(forbidden, &(&1 not in fields))
+  end
+
+  defp attrs(suffix \\ "one") do
+    %{
+      provision_id: "provision-#{suffix}",
+      workspace_uri: "workspace://task-workspace-store",
+      task_uri: "resource://task-workspace-store/kanban-task/task-#{suffix}",
+      generation: 1,
+      task_access_uri: "resource://task-workspace-store/git-task-access/task-access-#{suffix}",
+      repository_uri: repository_uri(suffix),
+      base_ref: "main",
+      allowed_head_ref: "task/task-#{suffix}",
+      visibility: :public
+    }
+  end
+
+  defp repository_uri(suffix),
+    do: "resource://task-workspace-store/git-repository/repository-#{suffix}"
+
+  defp ready_attrs(expected_version) do
+    %{
+      expected_version: expected_version,
+      cache_identity: "cache-widgets-main",
+      worktree_identity: "worktree-task-one-1",
+      worktree_path: "/safe/workspaces/task-one-1"
+    }
+  end
+
+  defp at(seconds), do: DateTime.add(~U[2026-07-17 00:00:00.000000Z], seconds, :second)
+end
