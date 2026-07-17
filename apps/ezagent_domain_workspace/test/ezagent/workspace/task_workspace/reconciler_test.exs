@@ -30,6 +30,7 @@ defmodule Ezagent.Workspace.TaskWorkspace.ReconcilerTest do
             :task_workspace_retirement_result,
             :task_workspace_retirement_hook,
             :provisioner_test_verify_absent_result,
+            :provisioner_test_remove_clears,
             :provisioner_test_remove_result,
             :provisioner_test_verify_result
           ],
@@ -143,6 +144,48 @@ defmodule Ezagent.Workspace.TaskWorkspace.ReconcilerTest do
 
     assert %{attempted: 2, cleaned: 1} = Reconciler.recover_once(limit: 2)
     assert Repo.get!(Provision, pending.id).status == :cleaned
+  end
+
+  test "expired starting is retired and cleaned without another instantiate" do
+    ready = ready_row("expired-start")
+    {:ok, starting} = Store.claim_start(ready.id, ready.start_token, lease_seconds: 1)
+    now = DateTime.add(starting.start_lease_until, 1, :second)
+    agent_uri = starting.agent_uri
+
+    Application.put_env(
+      :ezagent_domain_workspace,
+      :provisioner_test_verify_absent_result,
+      {:error, :worktree_still_present}
+    )
+
+    Application.put_env(:ezagent_domain_workspace, :provisioner_test_remove_clears, true)
+
+    assert %{attempted: 1, cleaned: 1, failed: 0} =
+             Reconciler.recover_once(limit: 10, now: now)
+
+    assert_receive {:retire_agent, ^agent_uri, nil}
+    assert_receive {:git_remove, %{worktree_path: path}}
+    assert path == starting.worktree_path
+    assert Repo.get!(Provision, starting.id).status == :cleaned
+    refute_receive {:instantiate_called, _}
+  end
+
+  test "expired start recovery fences the stale original claimant" do
+    ready = ready_row("stale-start")
+    {:ok, starting} = Store.claim_start(ready.id, ready.start_token, lease_seconds: 1)
+    now = DateTime.add(starting.start_lease_until, 1, :second)
+
+    assert %{cleaned: 1, failed: 0} = Reconciler.recover_once(limit: 10, now: now)
+
+    assert {:error, :invalid_start_transition} =
+             Store.mark_started(starting.id, starting.start_claim_token, %{
+               agent_uri: starting.agent_uri,
+               creation_attempt_id: "stale-attempt",
+               provenance_root_uri: starting.provenance_root_uri
+             })
+
+    assert {:error, :invalid_start_transition} =
+             Store.fail_start(starting.id, starting.start_claim_token, :stale_worker)
   end
 
   defp ready_row(suffix \\ "one") do

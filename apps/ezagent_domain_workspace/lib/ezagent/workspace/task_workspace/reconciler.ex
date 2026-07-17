@@ -37,7 +37,7 @@ defmodule Ezagent.Workspace.TaskWorkspace.Reconciler do
 
     candidates
     |> Enum.reduce(%{attempted: 0, cleaned: 0, failed: 0}, fn row, report ->
-      result = recover(row)
+      result = recover(row, now)
       report = %{report | attempted: report.attempted + 1}
 
       case result do
@@ -57,7 +57,7 @@ defmodule Ezagent.Workspace.TaskWorkspace.Reconciler do
     end)
   end
 
-  defp recover(%Provision{status: :ready} = row) do
+  defp recover(%Provision{status: :ready} = row, _now) do
     with {:ok, paths} <- canonical_paths(row) do
       case runner().verify(paths) do
         :ok ->
@@ -79,10 +79,23 @@ defmodule Ezagent.Workspace.TaskWorkspace.Reconciler do
     end
   end
 
-  defp recover(%Provision{status: :provisioning} = row),
+  defp recover(%Provision{status: :provisioning} = row, _now),
     do: cleanup(row.id, :expired_provision_lease)
 
-  defp recover(%Provision{status: :cleanup_pending} = row),
+  defp recover(%Provision{status: :starting} = row, now) do
+    with {:ok, paths} <- canonical_paths(row),
+         {:ok, :ambiguous_or_live, pending} <-
+           Store.request_expired_start_cleanup(
+             row.id,
+             row.state_version,
+             row.start_claim_token,
+             now
+           ) do
+      claim_and_clean(pending, :ambiguous_or_live, paths)
+    end
+  end
+
+  defp recover(%Provision{status: :cleanup_pending} = row, _now),
     do: cleanup(row.id, :resume_cleanup)
 
   defp claim_and_clean(pending, classification, paths) do
