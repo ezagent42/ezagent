@@ -61,6 +61,8 @@ defmodule Ezagent.DomainGit.D0BackendContractTest do
              :operation_grant_missing,
              :operation_grant_invalid,
              :operation_not_permitted,
+             :request_plan_invalid,
+             :provider_response_invalid,
              :lease_not_found,
              :lease_expired,
              :lease_already_consumed,
@@ -133,6 +135,183 @@ defmodule Ezagent.DomainGit.D0BackendContractTest do
     assert :ok = D0.Conformance.credential_cases(descriptor)
   end
 
+  @tag :d0_remote_shaped
+  test "remote-shaped fake satisfies shared contracts without serializing sensitive wrappers" do
+    start_supervised!({D0.InProcessFake, name: D0.InProcessFake})
+    D0.RemoteTransport.reset_payloads()
+
+    descriptor = %{
+      authorization: D0.RemoteShapedFake,
+      credential: D0.RemoteShapedFake,
+      adapter_probe: D0.RemoteAdapterProbe,
+      reset: fn -> D0.RemoteShapedFake.reset() end,
+      advance_time: &D0.RemoteShapedFake.advance_time/1,
+      authorization_count: &D0.RemoteShapedFake.authorization_count/0,
+      credential_store_count: &D0.RemoteShapedFake.credential_store_count/0,
+      provider_effect_count: &D0.RemoteShapedFake.provider_effect_count/0
+    }
+
+    assert :ok = D0.Conformance.authorization_cases(descriptor)
+    assert :ok = D0.Conformance.credential_cases(descriptor)
+
+    payloads = D0.RemoteTransport.payloads()
+    assert payloads != []
+    assert Enum.all?(payloads, &is_binary/1)
+    refute Enum.any?(payloads, &String.contains?(&1, "gho-D0-SENTINEL"))
+    refute Enum.any?(payloads, &String.contains?(&1, "SensitiveCredential"))
+    assert Enum.any?(payloads, &String.contains?(&1, "sealed_credential"))
+  end
+
+  @tag :d0_remote_shaped
+  test "remote-shaped fake reconciles after-commit response loss by correlation id" do
+    start_supervised!({D0.InProcessFake, name: D0.InProcessFake})
+    D0.RemoteTransport.reset_payloads()
+    :ok = D0.RemoteShapedFake.reset()
+
+    subject = remote_subject()
+
+    {:ok, started} =
+      D0.RemoteShapedFake.begin_authorization(%{
+        subject: subject,
+        acquisition_method: "oauth_user",
+        requested_permissions_digest: "requested-digest-1",
+        redirect_uri_id: "github-callback",
+        correlation_id: "corr-remote-begin"
+      })
+
+    callback_request = %{
+      authorization_ref: started.authorization_ref,
+      expected_subject: subject,
+      correlation_id: "corr-remote-callback",
+      callback_envelope: %{
+        state: started.redirect["state"],
+        pkce_digest: started.redirect["pkce_digest"],
+        governed_host: "github.com",
+        external_account_id: "github-user-42",
+        acquisition_origin: :repository_consent
+      }
+    }
+
+    D0.RemoteTransport.fail_next(:after_commit)
+
+    assert {:error, :authorization_backend_unavailable} =
+             D0.RemoteShapedFake.consume_callback(callback_request)
+
+    assert {:ok, %{external_account_id: "github-user-42"}} =
+             D0.RemoteShapedFake.consume_callback(callback_request)
+
+    scope = remote_scope()
+
+    {:ok, record} =
+      D0.RemoteShapedFake.store(%{
+        scope: scope,
+        credential_material: "gho-D0-SENTINEL",
+        expected_absent: true,
+        correlation_id: "corr-remote-store"
+      })
+
+    replace_request = %{
+      credential_ref: record.credential_ref,
+      expected_scope: scope,
+      expected_version: 1,
+      credential_material: "gho-D0-ROTATED",
+      correlation_id: "corr-remote-replace"
+    }
+
+    D0.RemoteTransport.fail_next(:after_commit)
+
+    assert {:error, :credential_backend_unavailable} =
+             D0.RemoteShapedFake.replace(replace_request)
+
+    assert {:ok, %{version: 2}} = D0.RemoteShapedFake.replace(replace_request)
+
+    lease_request = %{
+      credential_ref: record.credential_ref,
+      expected_scope: scope,
+      expected_version: 2,
+      operation_class: :create_change_request,
+      operation_grant: %{
+        receiver: :provider_adapter,
+        credential_ref: record.credential_ref,
+        expected_scope: scope,
+        expected_version: 2,
+        operation_class: :create_change_request
+      },
+      correlation_id: "corr-remote-lease"
+    }
+
+    D0.RemoteTransport.fail_next(:after_commit)
+
+    assert {:error, :credential_backend_unavailable} =
+             D0.RemoteShapedFake.lease_for_operation(lease_request)
+
+    assert {:ok, %{lease_id: lease_id}} = D0.RemoteShapedFake.lease_for_operation(lease_request)
+    assert lease_id == "lease-1"
+  end
+
+  @tag :d0_remote_shaped
+  test "remote serializer rejects sensitive wrappers in requests and responses" do
+    sensitive = %D0.SensitiveCredential{value: "gho-D0-SENTINEL"}
+    D0.RemoteTransport.reset_payloads()
+
+    request_error =
+      assert_raise ArgumentError, ~r/SensitiveCredential cannot cross/, fn ->
+        D0.RemoteTransport.round_trip(:probe, %{sensitive: sensitive}, fn _, _ -> :ok end)
+      end
+
+    refute Exception.message(request_error) =~ "gho-D0-SENTINEL"
+    assert D0.RemoteTransport.payloads() == []
+
+    response_error =
+      assert_raise ArgumentError, ~r/SensitiveCredential cannot cross/, fn ->
+        D0.RemoteTransport.round_trip(:probe, %{safe: "opaque-ref"}, fn _, _ ->
+          %{sensitive: sensitive}
+        end)
+      end
+
+    refute Exception.message(response_error) =~ "gho-D0-SENTINEL"
+    refute Enum.any?(D0.RemoteTransport.payloads(), &String.contains?(&1, "gho-D0-SENTINEL"))
+  end
+
+  @tag :d0_remote_shaped
+  test "tampered sealed lease fails closed without wrapper or provider effect" do
+    start_supervised!({D0.InProcessFake, name: D0.InProcessFake})
+    D0.RemoteTransport.reset_payloads()
+    :ok = D0.RemoteShapedFake.reset()
+    scope = remote_scope()
+
+    {:ok, record} =
+      D0.RemoteShapedFake.store(%{
+        scope: scope,
+        credential_material: "gho-D0-SENTINEL",
+        expected_absent: true,
+        correlation_id: "corr-tamper-store"
+      })
+
+    request = %{
+      credential_ref: record.credential_ref,
+      expected_scope: scope,
+      expected_version: 1,
+      operation_class: :create_change_request,
+      operation_grant: %{
+        receiver: :provider_adapter,
+        credential_ref: record.credential_ref,
+        expected_scope: scope,
+        expected_version: 1,
+        operation_class: :create_change_request
+      },
+      correlation_id: "corr-tamper-lease"
+    }
+
+    :ok = D0.RemoteShapedFake.tamper_next_sealed_response()
+
+    assert {:error, :provider_response_invalid} =
+             D0.RemoteShapedFake.lease_for_operation(request)
+
+    assert D0.RemoteShapedFake.provider_effect_count() == 0
+    refute Enum.any?(D0.RemoteTransport.payloads(), &String.contains?(&1, "gho-D0-SENTINEL"))
+  end
+
   defp collect_atoms(term) when is_atom(term), do: MapSet.new([term])
 
   defp collect_atoms(term) when is_tuple(term) do
@@ -146,4 +325,18 @@ defmodule Ezagent.DomainGit.D0BackendContractTest do
   end
 
   defp collect_atoms(_term), do: MapSet.new()
+
+  defp remote_subject do
+    Map.put(remote_scope(), :connection_version, 1)
+  end
+
+  defp remote_scope do
+    %{
+      owner_uri: Ezagent.URI.user("acme", "alice"),
+      workspace_uri: Ezagent.URI.workspace("acme"),
+      provider_id: "github",
+      governed_host: "github.com",
+      connection_id: "conn-1"
+    }
+  end
 end

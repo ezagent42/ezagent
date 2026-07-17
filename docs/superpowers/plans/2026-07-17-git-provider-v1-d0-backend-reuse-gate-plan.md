@@ -79,7 +79,8 @@ assert D0.Types.credential_errors() == [
   :credential_scope_mismatch, :credential_host_mismatch, :credential_revoked,
   :credential_expired, :credential_refresh_required,
   :credential_version_conflict, :operation_grant_missing,
-  :operation_grant_invalid, :operation_not_permitted, :lease_not_found,
+  :operation_grant_invalid, :operation_not_permitted, :request_plan_invalid,
+  :provider_response_invalid, :lease_not_found,
   :lease_expired, :lease_already_consumed, :lease_scope_mismatch,
   :lease_consume_failed, :credential_store_failed,
   :credential_replace_failed, :credential_revoke_failed
