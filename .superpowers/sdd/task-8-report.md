@@ -59,3 +59,11 @@ The original regex scanner under-counted parenthesized migration calls. This fol
 - Signed adopted E2E proves there is no receipt and cleanup emits no retirement.
 - RED: the new plugin gate found four historical WorkspaceRegistry calls; the first leak scanner also rejected legitimate in-memory relay plumbing, motivating the sink-aware AST gate.
 - GREEN: focused Task 8 run reported Core 7 tests and Workspace 19 tests, all with zero failures.
+
+## Review closure
+
+- Replaced the Plan C plugin ownership line regex with AST call analysis that resolves ordinary, renamed, and grouped aliases; imported local calls; multiline remote calls; and `apply/3`. Historical WorkspaceRegistry debt is now allowlisted only by exact file, enclosing function, module, and call identity.
+- Replaced spelling-only secrecy checks with taint propagation through rebinding plus explicit authored, persistence, restart-retention, process, external, observability, serialization, and rendered-error sinks. Negative mutants cover atom/string keys, Repo aliases, Ecto, snapshots, persistent term, ETS, process dictionary/state/messages, argv/env/config, logs, telemetry, serialization, and errors.
+- Froze the branch migration budget to the four existing `20260717001000`–`04000` files; a differently numbered `20260718001000` receipt migration is mutation-tested as forbidden.
+- Signed winner cleanup now asserts the actual `retirement_facts` facade payload matches the post-commit facts for attempt, Agent, provenance root, and workspace. The adopted flow asserts neither retirement message form is emitted.
+- Review-closure focused run: Core 9 tests and Workspace 19 tests, all with zero failures.
