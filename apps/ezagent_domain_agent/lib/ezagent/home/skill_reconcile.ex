@@ -140,7 +140,9 @@ defmodule Ezagent.Home.SkillReconcile do
 
   defp agent_row?(%{kind_type: nil, uri: uri}) when is_binary(uri) do
     case parse_uri(uri) do
-      {:ok, %URI{} = agent_uri} -> Ezagent.URI.type?(agent_uri, :agent)
+      {:ok, %URI{} = agent_uri} ->
+        Ezagent.URI.scheme?(agent_uri, :entity) and Ezagent.URI.type?(agent_uri, :agent)
+
       _ -> false
     end
   end

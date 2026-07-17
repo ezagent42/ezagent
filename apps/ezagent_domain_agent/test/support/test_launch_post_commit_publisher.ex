@@ -5,19 +5,19 @@ defmodule Ezagent.Agent.TestLaunchPostCommitPublisher do
 
   def inject(agent_uri, instruction, owner) do
     ensure_started()
-    Agent.update(__MODULE__, &Map.put(&1, URI.to_string(agent_uri), {instruction, owner}))
+    Agent.update(__MODULE__, &Map.put(&1, agent_uri, {instruction, owner}))
   end
 
   def clear(agent_uri) do
     ensure_started()
-    Agent.update(__MODULE__, &Map.delete(&1, URI.to_string(agent_uri)))
+    Agent.update(__MODULE__, &Map.delete(&1, agent_uri))
   end
 
   @impl true
   def publish(facts) do
     ensure_started()
 
-    case Agent.get(__MODULE__, &Map.get(&1, URI.to_string(facts.agent_uri))) do
+    case Agent.get(__MODULE__, &Map.get(&1, facts.agent_uri)) do
       {:barrier_after_commit, owner} ->
         send(owner, {:launch_receipt_committed, facts, self()})
 
