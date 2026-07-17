@@ -34,6 +34,7 @@ defmodule Ezagent.Workspace.TaskWorkspace.Reconciler do
     effects = Store.list_effect_recovery_candidates(limit, now: now)
     ready_limit = max(limit - length(effects), 0)
     candidates = effects ++ Store.list_ready_recovery_candidates(ready_limit)
+    after_candidate_list(opts, candidates)
 
     candidates
     |> Enum.reduce(%{attempted: 0, cleaned: 0, failed: 0}, fn row, report ->
@@ -83,15 +84,27 @@ defmodule Ezagent.Workspace.TaskWorkspace.Reconciler do
     do: cleanup(row.id, :expired_provision_lease)
 
   defp recover(%Provision{status: :starting} = row, now) do
-    with {:ok, paths} <- canonical_paths(row),
-         {:ok, :ambiguous_or_live, pending} <-
-           Store.request_expired_start_cleanup(
+    with {:ok, paths} <- canonical_paths(row) do
+      case Store.request_expired_start_cleanup(
              row.id,
              row.state_version,
              row.start_claim_token,
              now
            ) do
-      claim_and_clean(pending, :ambiguous_or_live, paths)
+        {:ok, :ambiguous_or_live, pending} ->
+          claim_and_clean(pending, :ambiguous_or_live, paths)
+
+        {:error, reason}
+        when reason in [
+               :sidecar_start_claim_lost,
+               :start_lease_active,
+               :invalid_cleanup_transition
+             ] ->
+          {:skip, :stale_start_snapshot}
+
+        {:error, _reason} = error ->
+          error
+      end
     end
   end
 
@@ -199,5 +212,16 @@ defmodule Ezagent.Workspace.TaskWorkspace.Reconciler do
           Ezagent.Workspace.TaskWorkspace.Retirement
         ),
       else: Ezagent.Workspace.TaskWorkspace.Retirement
+  end
+
+  if Mix.env() == :test do
+    defp after_candidate_list(opts, candidates) do
+      case Keyword.get(opts, :after_candidate_list) do
+        hook when is_function(hook, 1) -> hook.(candidates)
+        nil -> :ok
+      end
+    end
+  else
+    defp after_candidate_list(_opts, _candidates), do: :ok
   end
 end
