@@ -18,6 +18,7 @@ defmodule Ezagent.World.ConversationActions do
 
   alias Ezagent.ActionSet.Session.Membership
   alias Ezagent.Invocation
+  alias Ezagent.Message.ActionableErrorRepairRequest
   alias Ezagent.World.ConversationData
   alias Ezagent.World.ConversationRoutingForm
   alias EzagentDomainInstanceMessage.Routing.MentionRouting
@@ -294,11 +295,28 @@ defmodule Ezagent.World.ConversationActions do
            {:ok, %Ezagent.Message{} = message} <- Ezagent.MessageStore.by_id(msg_id),
            true <- same_action_uri?(message.session_uri, session_uri),
            true <- agent_uri?(message.sender),
+           false <-
+             Ezagent.World.IdentityData.can_edit_api_keys?(
+               message.sender,
+               caller,
+               Map.get(socket.assigns, :current_caps, MapSet.new())
+             ),
            %{"code" => error_code, "title" => error_title} = error <-
              Ezagent.Message.Body.actionable_error(message.body),
            "agent.api_keys.put" <- Map.get(error, "permission"),
            repair_href when is_binary(repair_href) and repair_href != "" <-
              get_in(error, ["action", "href"]),
+           {:ok, _repair_request} <-
+             ActionableErrorRepairRequest.request(%{
+               message_id: message.id,
+               workspace_uri: workspace_uri,
+               agent_uri: message.sender,
+               error_code: error_code,
+               error_title: error_title,
+               requested_by: caller,
+               assigned_to: founder_uri,
+               repair_href: repair_href
+             }),
            :ok <-
              Ezagent.Notifications.notify(founder_uri, %{
                type: :agent_repair_requested,
@@ -323,6 +341,7 @@ defmodule Ezagent.World.ConversationActions do
         {:ok, founder_uri}
       else
         false -> {:error, :not_allowed}
+        true -> {:error, :not_allowed}
         nil -> {:error, :workspace_not_found}
         :error -> {:error, :message_not_found}
         {:error, reason} -> {:error, reason}

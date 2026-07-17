@@ -42,6 +42,10 @@ defmodule EzagentCore.Invariants.PerTenantTablesHaveWorkspaceColumnTest do
   # `mix test apps/ezagent_core` in isolation).
   @per_tenant_schemas [
     {Ezagent.Message, "messages"},
+    # G5 actionable-error workflows are scoped to the workspace that owns the
+    # failed agent and message; neither issue nor repair handoff may cross tenants.
+    {Ezagent.Message.ActionableErrorIssue, "actionable_error_issues"},
+    {Ezagent.Message.ActionableErrorRepairRequest, "actionable_error_repair_requests"},
     {Ezagent.Ecto.KindSnapshot, "kind_snapshots"},
     {Ezagent.Users, "users"},
     {Ezagent.Entity.Token, "entity_tokens"},

@@ -503,6 +503,13 @@ defmodule EzagentPluginWorld.WorldLive do
              args: %{provider: provider, key: key},
              ctx: %{caller: caller, caps: caps, reply: :sync}
            }) do
+      {:ok, _completed_count} =
+        Ezagent.Message.ActionableErrorRepairRequest.complete_for_agent(
+          agent_uri,
+          caller,
+          Ezagent.EntityPresenter.display(URI.to_string(caller))
+        )
+
       refresh_api_keys_state(socket, agent_uri)
     else
       false ->

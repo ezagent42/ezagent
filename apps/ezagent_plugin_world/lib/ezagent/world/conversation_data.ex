@@ -507,59 +507,6 @@ defmodule Ezagent.World.ConversationData do
     Enum.map(messages, &message_row(&1, display_map, viewer_opts))
   end
 
-  defp project_actionable_error(%Ezagent.Message{} = msg, viewer_opts) do
-    case Ezagent.Message.Body.actionable_error(msg.body) do
-      %{"permission" => "agent.api_keys.put"} = error ->
-        project_api_key_error(error, msg.sender, viewer_opts)
-
-      error ->
-        error
-    end
-  end
-
-  defp project_api_key_error(
-         error,
-         %URI{} = agent_uri,
-         %{caller_uri: %URI{} = caller, caller_caps: caps} = viewer_opts
-       ) do
-    if Ezagent.World.IdentityData.can_edit_api_keys?(agent_uri, caller, caps) do
-      Map.put(error, "layer", 1)
-    else
-      project_admin_repair(error, Map.get(viewer_opts, :workspace_uri))
-    end
-  end
-
-  defp project_api_key_error(error, _agent_uri, _viewer_opts), do: error
-
-  defp project_admin_repair(error, %URI{scheme: "workspace"} = workspace_uri) do
-    case Ezagent.Workspace.Store.get_by_name(workspace_uri.host) do
-      %{created_by: %URI{} = founder_uri} ->
-        display_name = Ezagent.EntityPresenter.display(URI.to_string(founder_uri))
-
-        error
-        |> Map.put("layer", 2)
-        |> Map.put(
-          "next_step",
-          "请联系 workspace founder #{display_name}，由其检查 Agent 的凭据配置。"
-        )
-        |> Map.put("repair_owner", %{
-          "uri" => URI.to_string(founder_uri),
-          "display_name" => display_name
-        })
-        |> Map.put("action", %{
-          "kind" => "notify_admin",
-          "label" => "发送提醒给 #{display_name}"
-        })
-
-      _ ->
-        error
-        |> Map.put("layer", 3)
-        |> Map.delete("action")
-    end
-  end
-
-  defp project_admin_repair(error, _workspace_uri), do: error
-
   defp message_row(%Ezagent.Message{} = msg, display_map, viewer_opts) do
     sender_str = URI.to_string(msg.sender)
 
@@ -569,7 +516,7 @@ defmodule Ezagent.World.ConversationData do
       "sender_display" =>
         Map.get(display_map, sender_str) || Ezagent.EntityPresenter.display(sender_str),
       "sender_kind" => sender_kind(sender_str),
-      "actionable_error" => project_actionable_error(msg, viewer_opts),
+      "actionable_error" => Ezagent.World.ActionableErrorPresenter.project(msg, viewer_opts),
       "text" => body_text(msg.body),
       # Optional json-render node tree — when present the world bubble renders it
       # with the json-render engine (like the preview), not plain text. `render_css`

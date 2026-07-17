@@ -124,6 +124,71 @@ defmodule Ezagent.World.ConversationActionableErrorTest do
     assert notification_body.error_code == "agent.credentials_missing"
     assert notification_body.requested_by == URI.to_string(member)
     assert notification_body.repair_href == repair_href
+
+    admin_socket =
+      build_socket(
+        current_entity_uri: Ezagent.Entity.User.admin_uri(),
+        current_workspace_uri: workspace_uri,
+        current_caps: MapSet.new()
+      )
+
+    assert {:noreply, admin_socket} =
+             ConversationActions.notify_error_admin(admin_socket, session_uri, written.id)
+
+    assert admin_socket.assigns.last_dispatch_status == "error:not_allowed"
+    [request] = Ezagent.Message.ActionableErrorRepairRequest.list_for_agent(agent)
+    assert request.status == "open"
+
+    :ok = Ezagent.Notifications.subscribe(member)
+
+    assert {:ok, 1} =
+             Ezagent.Message.ActionableErrorRepairRequest.complete_for_agent(
+               agent,
+               founder,
+               "Founder Chen"
+             )
+
+    assert_receive {:notification, ^member,
+                    %{type: :agent_repair_completed, body: completion_body}}
+
+    assert completion_body.agent_uri == URI.to_string(agent)
+    assert completion_body.error_code == "agent.credentials_missing"
+    assert completion_body.repaired_by_name == "Founder Chen"
+    assert completion_body.text =~ "Founder Chen"
+    assert completion_body.repaired_by == URI.to_string(founder)
+
+    [completed_request] =
+      Ezagent.Message.ActionableErrorRepairRequest.list_for_agent(agent)
+
+    assert completed_request.status == "completed"
+    assert %DateTime{} = completed_request.completed_at
+  end
+
+  test "persisted unclassified failures show the automatic issue registration number" do
+    suffix = System.unique_integer([:positive])
+    workspace_name = "issue-row-#{suffix}"
+    workspace_uri = Ezagent.URI.workspace(workspace_name)
+    session_uri = Ezagent.URI.session(workspace_name, "default", "main")
+    agent = Ezagent.URI.new!("entity://issue-row-#{suffix}/agent/curl")
+
+    :ok = Ezagent.WorkspaceRegistry.bind(session_uri, workspace_uri)
+    on_exit(fn -> Ezagent.WorkspaceRegistry.unbind(session_uri) end)
+
+    message =
+      Ezagent.Message.new(agent, %{
+        text: "unknown failure",
+        attachments: [],
+        actionable_error: ActionableError.new(:unknown, detail: "decode=:invalid_json")
+      })
+
+    assert {:ok, written} = Ezagent.MessageStore.write(message, session_uri)
+    row = ConversationData.message_row(written)
+    ticket = row["actionable_error"]["ticket"]
+
+    assert ticket =~ "#"
+    assert row["actionable_error"]["layer"] == 3
+    assert row["actionable_error"]["next_step"] =~ "已自动登记"
+    assert row["actionable_error"]["next_step"] =~ ticket
   end
 
   defp build_socket(assigns) do

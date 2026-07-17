@@ -94,12 +94,37 @@ defmodule Ezagent.MessageStore do
     case Repo.insert(msg_with_session, on_conflict: :nothing, conflict_target: :id) do
       {:ok, _} ->
         case Repo.get(Message, msg.id) do
-          %Message{} = persisted -> {:ok, persisted}
-          nil -> {:error, {:persisted_row_missing, msg.id}}
+          %Message{} = persisted ->
+            _ = maybe_register_actionable_issue(persisted)
+            {:ok, persisted}
+
+          nil ->
+            {:error, {:persisted_row_missing, msg.id}}
         end
 
       {:error, reason} ->
         {:error, reason}
+    end
+  end
+
+  defp maybe_register_actionable_issue(%Message{} = message) do
+    case Ezagent.Message.Body.actionable_error(message.body) do
+      %{"code" => "agent.unclassified_failure"} = error ->
+        case Ezagent.Message.ActionableErrorIssue.register(%{
+               message_id: message.id,
+               code: "agent.unclassified_failure",
+               workspace_uri: message.workspace_uri,
+               agent_uri: message.sender,
+               session_uri: message.session_uri,
+               detail: Map.get(error, "detail"),
+               occurred_at: message.inserted_at
+             }) do
+          {:ok, _issue} -> :ok
+          {:error, _changeset} -> :error
+        end
+
+      _ ->
+        :ok
     end
   end
 
