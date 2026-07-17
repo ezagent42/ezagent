@@ -9,6 +9,10 @@ defmodule Ezagent.Workspace.TaskWorkspace.BoundaryTest do
     apps/ezagent_core/priv/repo_pg/migrations/20260717003000_add_retirement_handle_to_git_task_workspace_provisions.exs
     apps/ezagent_core/priv/repo_pg/migrations/20260717004000_harden_git_task_workspace_start.exs
   )
+  @ownership_migration_paths ~w(
+    apps/ezagent_core/priv/repo_pg/migrations/20260715001000_agent_creation_inventory.exs
+    apps/ezagent_core/priv/repo_pg/migrations/20260717004000_harden_git_task_workspace_start.exs
+  )
 
   test "cc plugin has no task-workspace transport knowledge" do
     refute_source_under(
@@ -78,6 +82,63 @@ defmodule Ezagent.Workspace.TaskWorkspace.BoundaryTest do
     ])
 
     assert_only_production_calls("AgentStart.start(", [])
+
+    assert_only_production_calls("LaunchAuthority.issue(", [
+      "apps/ezagent_domain_workspace/lib/ezagent/workspace/task_workspace/pre_start.ex"
+    ])
+  end
+
+  test "core transports launch context without inspecting its value" do
+    offenders =
+      for path <- source_files("apps/ezagent_core/lib"),
+          read <- opaque_context_reads(File.read!(project_path(path))),
+          do: {path, read}
+
+    assert offenders == []
+  end
+
+  test "launch context stays out of authored, serialized, logged, and process data" do
+    offenders =
+      for path <- production_source_files(),
+          leak <- launch_context_leaks(File.read!(project_path(path))),
+          do: {path, leak}
+
+    assert offenders == []
+  end
+
+  test "launch context leak scanner handles multiline sinks and authored map keys" do
+    source = """
+    Logger.info(
+      "context=\#{inspect(launch_context)}"
+    )
+
+    Jason.encode!(%{"launch_context" => launch_context})
+    System.cmd("tool", [inspect(launch_context)])
+    """
+
+    assert length(launch_context_leaks(source)) >= 3
+  end
+
+  test "ownership schemas contain no secret material and no forbidden follow-up migration" do
+    names =
+      Enum.flat_map(@ownership_migration_paths, fn path ->
+        path
+        |> project_path()
+        |> File.read!()
+        |> extract_call_names([:add])
+      end)
+
+    inventory_schema_names =
+      "apps/ezagent_domain_agent/lib/ezagent/agent/creation_inventory_entry.ex"
+      |> project_path()
+      |> File.read!()
+      |> extract_call_names([:field])
+
+    assert forbidden_field_names(names ++ inventory_schema_names) == []
+
+    assert Path.wildcard(
+             project_path("apps/ezagent_core/priv/repo_pg/migrations/20260717005000*.exs")
+           ) == []
   end
 
   test "core template vocabulary remains domain neutral" do
@@ -115,6 +176,12 @@ defmodule Ezagent.Workspace.TaskWorkspace.BoundaryTest do
       |> Path.wildcard()
       |> Enum.map(&Path.relative_to(&1, project_root()))
     end
+  end
+
+  defp production_source_files do
+    project_path("apps/*/lib/**/*.{ex,exs}")
+    |> Path.wildcard()
+    |> Enum.map(&Path.relative_to(&1, project_root()))
   end
 
   defp refute_source_under(root, regex) do
@@ -175,6 +242,99 @@ defmodule Ezagent.Workspace.TaskWorkspace.BoundaryTest do
       end)
 
     Enum.reverse(names)
+  end
+
+  defp launch_context_leaks(source) do
+    ast = Code.string_to_quoted!(source)
+
+    {_ast, leaks} =
+      Macro.prewalk(ast, [], fn node, leaks ->
+        if launch_context_leak?(node) do
+          line = node |> elem(1) |> Keyword.get(:line, 1)
+          {node, [{line, Macro.to_string(node)} | leaks]}
+        else
+          {node, leaks}
+        end
+      end)
+
+    leaks |> Enum.uniq() |> Enum.sort()
+  end
+
+  defp opaque_context_reads(source) do
+    ast = Code.string_to_quoted!(source)
+
+    {_ast, reads} =
+      Macro.prewalk(ast, [], fn node, reads ->
+        if opaque_context_read?(node) do
+          line = node |> elem(1) |> Keyword.get(:line, 1)
+          {node, [{line, Macro.to_string(node)} | reads]}
+        else
+          {node, reads}
+        end
+      end)
+
+    reads |> Enum.uniq() |> Enum.sort()
+  end
+
+  defp opaque_context_read?({{:., _dot_meta, [module, _function]}, _meta, args} = node)
+       when is_list(args) do
+    accessor? =
+      Macro.to_string(module) in ["Map", "Access", "Keyword", "launch_context"]
+
+    accessor? and contains_launch_context_variable?(node)
+  end
+
+  defp opaque_context_read?({:=, _meta, [left, right]} = node) do
+    structured? = match?({:%{}, _, _}, left) or match?({:%{}, _, _}, right)
+    structured? and contains_launch_context_variable?(node)
+  end
+
+  defp opaque_context_read?(_node), do: false
+
+  defp contains_launch_context_variable?(node) do
+    {_node, found?} =
+      Macro.prewalk(node, false, fn
+        {:launch_context, _meta, context} = variable, _found?
+        when is_atom(context) or is_nil(context) ->
+          {variable, true}
+
+        child, found? ->
+          {child, found?}
+      end)
+
+    found?
+  end
+
+  defp launch_context_leak?({:%{}, _meta, pairs}) do
+    Enum.any?(pairs, fn
+      {"launch_context", _value} -> true
+      _pair -> false
+    end)
+  end
+
+  defp launch_context_leak?({:<<>>, _meta, _parts} = node),
+    do: contains_launch_context_variable?(node)
+
+  defp launch_context_leak?({{:., _dot_meta, [module, function]}, _meta, args} = node)
+       when is_atom(function) and is_list(args) do
+    sink = Macro.to_string(module) <> "." <> Atom.to_string(function)
+    launch_context_node?(node) and leak_sink?(sink)
+  end
+
+  defp launch_context_leak?({function, _meta, args} = node)
+       when function in [:inspect, :raise, :reraise] and is_list(args),
+       do: launch_context_node?(node)
+
+  defp launch_context_leak?(_node), do: false
+
+  defp launch_context_node?(node),
+    do: String.contains?(Macro.to_string(node), "launch_context")
+
+  defp leak_sink?(sink) do
+    Regex.match?(
+      ~r/^(?:Logger\.|:telemetry\.|Jason\.|JSON\.|Yaml\.|YAML\.|System\.(?:cmd|put_env|get_env|fetch_env)|Application\.put_env|Port\.open|File\.(?:write|write!)|Config\.)/,
+      sink
+    )
   end
 
   defp forbidden_field_names(names) do
