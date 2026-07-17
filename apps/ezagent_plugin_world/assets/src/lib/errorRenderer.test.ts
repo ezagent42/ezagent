@@ -1,5 +1,5 @@
 import {describe, expect, it} from "vitest"
-import {renderError, categoryTone} from "./errorRenderer"
+import {renderError, categoryTone, errorCardForStatus} from "./errorRenderer"
 
 describe("renderError", () => {
   it("renders Layer 1 when user can fix", () => {
@@ -26,6 +26,33 @@ describe("renderError", () => {
     const rendered = renderError("unknown", {is_system_member: true})
     expect(rendered.layer).toBe(3)
     expect(rendered.what).toBe("Agent 执行时遇到错误")
+  })
+})
+
+describe("errorCardForStatus", () => {
+  it("returns null for null/undefined/ok/idle so successful dispatches clear the card", () => {
+    expect(errorCardForStatus(null, {})).toBeNull()
+    expect(errorCardForStatus(undefined, {})).toBeNull()
+    expect(errorCardForStatus("ok", {})).toBeNull()
+    expect(errorCardForStatus("idle", {})).toBeNull()
+  })
+
+  it("renders Layer 1 for a mapped error when the user can fix", () => {
+    const card = errorCardForStatus("error:no_api_key", {is_system_member: true})
+    expect(card?.code).toBe("agent_credential_missing")
+    expect(card?.layer).toBe(1)
+  })
+
+  it("renders Layer 2 for a mapped error when the user cannot fix", () => {
+    const card = errorCardForStatus("error:no_api_key", {is_system_member: false})
+    expect(card?.code).toBe("agent_credential_missing")
+    expect(card?.layer).toBe(2)
+  })
+
+  it("renders Layer 3 unknown card for unmapped backend reasons", () => {
+    const card = errorCardForStatus('error:{:already_exists, "entity://system/agent/x"}', {is_system_member: true})
+    expect(card?.code).toBe("unknown")
+    expect(card?.layer).toBe(3)
   })
 })
 

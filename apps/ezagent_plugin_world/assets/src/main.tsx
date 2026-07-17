@@ -14,8 +14,7 @@ import {SessionsTable, type SessionsState} from "./components/SessionsTable"
 import {WorldHello} from "./components/WorldHello"
 import {ManageFrame, WorkspacePluginSurface, type WorkspacePluginState} from "./components/WorkspacePlugin"
 import {ErrorMessageCard} from "./components/ErrorMessageCard"
-import {matchDispatchError} from "./lib/errorMatcher"
-import {renderError, type RenderedError} from "./lib/errorRenderer"
+import {errorCardForStatus, type RenderedError} from "./lib/errorRenderer"
 import {isPrimaryNavActive, pageTitleForComponent, primaryNavItems, sectionRoot as worldSectionRoot} from "../js/world_ia.js"
 import slotManifest from "./slots.manifest.json"
 import "./styles.css"
@@ -81,6 +80,9 @@ type WorldMountOptions = {
   }
   pushEvent?: (event: string, payload: unknown, onReply?: (reply: unknown) => void) => void
   onServerEvent?: (event: string, callback: (payload: unknown) => void) => void
+  // WorldRenderer.updated() 通过它把 data-last-dispatch 同步进来
+  // （phx-update="ignore" 下 data 属性仍会被 LiveView patch，但 React 不会自动重读）。
+  registerDispatchStatusListener?: (listener: ((status: string | null) => void) | null) => void
 }
 
 type WorkspaceNavItem = {
@@ -127,28 +129,42 @@ type WorldState = IdentitiesState & WorkspacePluginState & ConversationState & {
 
 const roots = new WeakMap<HTMLElement, Root>()
 
-export function mountWorld(element: HTMLElement, options: WorldMountOptions = {}) {
+export type WorldHandle = {
+  unmount: () => void
+  // LiveView hook 侧桥：把最新的 data-last-dispatch 值推给已挂载的 WorldApp。
+  setDispatchStatus: (status: string | null) => void
+}
+
+export function mountWorld(element: HTMLElement, options: WorldMountOptions = {}): WorldHandle {
   roots.get(element)?.unmount()
 
+  const dispatchStatusListener: {current: ((status: string | null) => void) | null} = {current: null}
   const root = createRoot(element)
   roots.set(element, root)
-  root.render(<WorldApp {...options} />)
+  root.render(
+    <WorldApp
+      {...options}
+      registerDispatchStatusListener={(listener) => {
+        dispatchStatusListener.current = listener
+      }}
+    />,
+  )
 
-  return () => {
-    root.unmount()
-    roots.delete(element)
+  return {
+    unmount: () => {
+      root.unmount()
+      roots.delete(element)
+    },
+    setDispatchStatus: (status) => dispatchStatusListener.current?.(status),
   }
 }
 
-function WorldApp({layout, state: initialState, pluginNav, caller, pushEvent, onServerEvent}: WorldMountOptions) {
+function WorldApp({layout, state: initialState, pluginNav, caller, pushEvent, onServerEvent, registerDispatchStatusListener}: WorldMountOptions) {
   const [currentLayout, setCurrentLayout] = React.useState<WorldLayout>(() => initialState?.layout || layout || {})
   const [state, setState] = React.useState<WorldState>(() => initialState || {})
-  const [errorCard, setErrorCard] = React.useState<RenderedError | null>(() => {
-    const match = matchDispatchError(initialState?.last_dispatch_status)
-    return match.code === "unknown" && !initialState?.last_dispatch_status?.startsWith("error:")
-      ? null
-      : renderError(match.code, caller || {})
-  })
+  const [errorCard, setErrorCard] = React.useState<RenderedError | null>(() =>
+    errorCardForStatus(initialState?.last_dispatch_status, caller || {}),
+  )
 
   const navItems = React.useMemo<typeof NAV_ITEMS>(() => {
     const seen = new Set(NAV_ITEMS.map((item) => item.href))
@@ -158,6 +174,15 @@ function WorldApp({layout, state: initialState, pluginNav, caller, pushEvent, on
       .map((item) => ({label: item.label, href: item.path}))
     return [...NAV_ITEMS, ...pluginItems]
   }, [pluginNav])
+  React.useEffect(() => {
+    if (!registerDispatchStatusListener) return undefined
+
+    registerDispatchStatusListener((status) => {
+      setErrorCard(errorCardForStatus(status, caller || {}))
+    })
+    return () => registerDispatchStatusListener(null)
+  }, [registerDispatchStatusListener, caller])
+
   React.useEffect(() => {
     if (!onServerEvent) return undefined
 
@@ -172,9 +197,8 @@ function WorldApp({layout, state: initialState, pluginNav, caller, pushEvent, on
       })
       if (next.layout) setCurrentLayout(next.layout)
 
-      if (next.last_dispatch_status) {
-        const match = matchDispatchError(next.last_dispatch_status)
-        setErrorCard(renderError(match.code, caller || {}))
+      if ("last_dispatch_status" in next) {
+        setErrorCard(errorCardForStatus(next.last_dispatch_status, caller || {}))
       }
     })
 

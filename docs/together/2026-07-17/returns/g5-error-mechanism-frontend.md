@@ -87,3 +87,49 @@
 
 请在 PR #1450 审阅前端切片。本 PR 可与后端 G5 并行 review，也可等 #1447 合并后再合，
 没有 merge-order 依赖。
+
+---
+
+## 修复轮(2026-07-17 晚,实机验证后)
+
+### 发现的阻断缺口
+
+实机验证发现 ErrorMessageCard 在真实 world app 里**永远无法渲染**(修复前):
+初始 mount 的 `data-world-state` 不含 `last_dispatch_status`(mount 永远 assign `"idle"`),
+且全 plugin 没有任何一处 `world:state` 推送携带该 key;岛是 `phx-update="ignore"`,
+后端 assign 只更新 `data-last-dispatch` 属性(debug surface),React mount 后不再重读。
+
+实机复现:同名重复建 agent 触发真实后端 `error:{:already_exists,...}` →
+dataset 有 error,DOM 无 `[data-error-code]` 卡片
+(证据 `../evidence/g5-live-verification-no-card.png`)。
+
+### 修复内容(保持纯前端 scope)
+
+- `world_renderer.js`:新增 `updated()`——data 属性会穿过 `phx-update="ignore"` 被 patch
+  (repo 内 `uri_picker.js` 同款先例),把最新 `data-last-dispatch` 经
+  `WorldHandle.setDispatchStatus` 推进 React;带去重。
+- `main.tsx`:`mountWorld` 返回值从 unmount 函数改为 `WorldHandle {unmount, setDispatchStatus}`;
+  `WorldApp` 新增 `registerDispatchStatusListener` 桥。
+- `errorRenderer.ts`:新增 `errorCardForStatus(status, user)`——初始 mount、`world:state`
+  推送、dataset 同步三条路径共用同一规则:`"error:"` 前缀才出卡,`ok`/`idle`/null 清卡。
+- `errorMatcher.ts`:导出 `DISPATCH_ERROR_PREFIX` 常量供统一判断。
+- 测试:`errorRenderer.test.ts` 新增 4 个 `errorCardForStatus` 用例
+  (ok/idle 清卡、mapped Layer 1/2、unmapped Layer 3)。
+
+### 修复后实机验证
+
+同一触发路径(同名重复建 agent → `error:{:already_exists,...}`):卡片实时渲染,
+`data-error-code="unknown"`、`data-error-layer="3"`,dismiss 按钮可用
+(证据 `../evidence/g5-live-card-rendered.png`)。
+
+| 验证项 | 结果 |
+|---|---|
+| TypeScript `npx tsc --noEmit` | PASS |
+| ESLint `npx eslint src --max-warnings 0` | PASS,0 warnings |
+| Vitest `npx vitest run src` | PASS,22 tests |
+| 实机:错误出现 → 卡片渲染(Layer 3) | PASS |
+| 实机:dismiss | PASS |
+
+验证环境备注:worktree server 需 `EZAGENT_PAT_PEPPER_V1` + `EZAGENT_SIGNING_SEED_V1`
+(旧分支登录铸 PAT / plugin boot 所需);world UI 走 `http://world.localhost:10042`;
+admin 密码 `worlddev`。

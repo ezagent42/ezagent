@@ -4,7 +4,7 @@ import {ERROR_CODES, UNKNOWN_ERROR, type ErrorCategory, type ErrorMatch} from ".
 // 最小可行阶段复用 `last_dispatch_status` 字符串，格式为 "error:<reason>"；
 // 后续后端可直接推送结构化错误码，前端只需扩展 matchReason 即可。
 
-const DISPATCH_ERROR_PREFIX = "error:"
+export const DISPATCH_ERROR_PREFIX = "error:"
 
 export function matchDispatchError(status: string | null | undefined): ErrorMatch {
   if (!status || !status.startsWith(DISPATCH_ERROR_PREFIX)) {

@@ -1,4 +1,5 @@
 import {ERROR_CODES, UNKNOWN_ERROR, type ErrorCategory, type ErrorCode} from "./errorCodes"
+import {DISPATCH_ERROR_PREFIX, matchDispatchError} from "./errorMatcher"
 
 export type ErrorLayer = 1 | 2 | 3
 
@@ -77,6 +78,16 @@ function canFixPath(_entry: ErrorCode, user: CurrentUser): boolean {
   // 最小可行：system member 或 workspace founder 可修复。
   // 后续后端通过 caller caps 精确判断时，替换为传入的 capability 检查。
   return user.is_system_member === true
+}
+
+// 把 `last_dispatch_status` 统一翻译成卡片（或 null）。初始 mount、
+// `world:state` 推送和 WorldRenderer.updated() 的 data-last-dispatch 同步
+// 共用这一条规则：只有 "error:" 前缀的状态才渲染卡片；
+// "ok" / "idle" / null 一律清卡（成功 dispatch 覆盖旧的失败态）。
+export function errorCardForStatus(status: string | null | undefined, user: CurrentUser): RenderedError | null {
+  if (!status || !status.startsWith(DISPATCH_ERROR_PREFIX)) return null
+  const match = matchDispatchError(status)
+  return renderError(match.code, user)
 }
 
 export function categoryTone(category: ErrorCategory): "danger" | "warning" | "info" {
