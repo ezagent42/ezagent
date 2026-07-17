@@ -61,7 +61,7 @@ defmodule Ezagent.PluginCc.Template.CcAgent.Spawn do
   # Both steps are idempotent: SpawnRegistry returns
   # `{:error, {:already_started, _}}` for an existing Agent Kind, and
   # the PtyServer's :via Registry collapses concurrent starts.
-  def spawn_for_local_pty(agent_uri, tmpl, workspace_uri) do
+  def spawn_for_local_pty(agent_uri, tmpl, workspace_uri, opts \\ []) do
     cwd = Map.fetch!(tmpl, "cwd")
 
     # codex round-6 HIGH-1 — `ensure_agent_kind/1` reports whether THIS
@@ -85,7 +85,8 @@ defmodule Ezagent.PluginCc.Template.CcAgent.Spawn do
       |> put_agent_config_dir(config_dir)
       |> Map.put_new("flavor", "cc")
 
-    with {:ok, started_or_adopted} <- ensure_agent_kind(agent_uri, config_dir, tmpl_with_dir) do
+    with {:ok, started_or_adopted} <-
+           ensure_agent_kind(agent_uri, config_dir, tmpl_with_dir, opts) do
       case started_or_adopted do
         :already_started ->
           # Codex PR3 round-2 HIGH-2 — DO NOT call create_agent_config_dir
@@ -248,7 +249,7 @@ defmodule Ezagent.PluginCc.Template.CcAgent.Spawn do
   # hold the public ReadyGate at `:not_ready`. The config directory is still
   # materialized only after this call wins `:started`, preserving the
   # loser-does-not-touch-config-dir race invariant above.
-  defp ensure_agent_kind(agent_uri, config_dir, tmpl_with_dir) do
+  defp ensure_agent_kind(agent_uri, config_dir, tmpl_with_dir, opts) do
     init_args = %{
       uri: agent_uri,
       config_dir_path: config_dir,
@@ -256,7 +257,7 @@ defmodule Ezagent.PluginCc.Template.CcAgent.Spawn do
       respawn_template_data: tmpl_with_dir
     }
 
-    case Ezagent.Kind.spawn(Ezagent.Entity.Agent, init_args) do
+    case Ezagent.Kind.spawn(Ezagent.Entity.Agent, init_args, opts) do
       {:ok, _pid} ->
         {:ok, :started}
 

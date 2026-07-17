@@ -88,6 +88,11 @@ defmodule Ezagent.Kind.Template do
               | {:ok, [URI.t()], instantiate_meta()}
               | {:error, term()}
 
+  @callback instantiate(template_name(), template_data(), URI.t(), keyword()) ::
+              {:ok, [URI.t()]}
+              | {:ok, [URI.t()], instantiate_meta()}
+              | {:error, term()}
+
   @doc """
   Declares whether this Template Class can be instantiated directly from the
   generic "New session" picker — i.e. whether `instantiate/3` succeeds given
@@ -294,6 +299,7 @@ defmodule Ezagent.Kind.Template do
   @callback config_dir_namespace() :: String.t()
 
   @optional_callbacks [
+    instantiate: 4,
     validate: 1,
     compile: 2,
     template_data_extra: 1,

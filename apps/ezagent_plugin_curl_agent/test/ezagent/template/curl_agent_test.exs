@@ -3,6 +3,16 @@ defmodule Ezagent.PluginCurlAgent.TemplateTest do
 
   alias Ezagent.PluginCurlAgent.Template
 
+  test "instantiate/4 accepts only launch_context and instantiate/3 remains available" do
+    assert function_exported?(Template, :instantiate, 3)
+    assert function_exported?(Template, :instantiate, 4)
+
+    assert {:error, :invalid_launch_options} =
+             Template.instantiate("test", %{}, URI.new!("workspace://test"),
+               launch_context_typo: make_ref()
+             )
+  end
+
   describe "validate/1 — PR #141 strict entity://team-alpha/agent/curl_<name> shape" do
     test "happy path" do
       assert :ok =

@@ -361,7 +361,7 @@ defmodule Ezagent.Workspace.TaskWorkspace.SidecarGateTest do
   } do
     agent_uri = Ezagent.URI.agent("sidecar-gate", "adopted-through-template")
     ready = ready_row(agent_uri)
-    Application.put_env(:ezagent_domain_workspace, :sidecar_gate_fresh?, false)
+    assert {:ok, _pid} = Ezagent.Kind.spawn(Ezagent.Entity.Agent, %{uri: agent_uri})
 
     assert {:error, :sidecar_start_not_fresh} =
              AgentStart.start(

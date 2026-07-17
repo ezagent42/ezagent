@@ -127,6 +127,21 @@ defmodule Ezagent.PluginCodex.Template.CodexAgent do
 
   @impl Ezagent.Kind.Template
   def instantiate(_tmpl_name, %{"agent_uri" => uri_str} = tmpl, workspace_uri) do
+    instantiate_with_opts(uri_str, tmpl, workspace_uri, [])
+  end
+
+  def instantiate(_tmpl_name, tmpl, _workspace_uri), do: {:error, {:invalid_template, tmpl}}
+
+  @impl Ezagent.Kind.Template
+  def instantiate(_tmpl_name, %{"agent_uri" => uri_str} = tmpl, workspace_uri,
+        launch_context: launch_context
+      ) do
+    instantiate_with_opts(uri_str, tmpl, workspace_uri, launch_context: launch_context)
+  end
+
+  def instantiate(_tmpl_name, _tmpl, _workspace_uri, _opts), do: {:error, :invalid_launch_options}
+
+  defp instantiate_with_opts(uri_str, tmpl, workspace_uri, opts) do
     # SPEC 2026-05-27-uri-canonicalization §3 — boundary input routed
     # through the canonical chokepoint. Parity with the cc Template
     # `EzagentPluginCc.Template.CcAgent`.
@@ -134,16 +149,14 @@ defmodule Ezagent.PluginCodex.Template.CodexAgent do
 
     with :ok <- Ezagent.AgentFlavorAttributes.put_from_template_class(agent_uri, __MODULE__) do
       cond do
-        fully_alive?(agent_uri) ->
+        opts == [] and fully_alive?(agent_uri) ->
           {:ok, [agent_uri], %{fresh?: false}}
 
         true ->
-          spawn_for_codex(agent_uri, tmpl, workspace_uri)
+          spawn_for_codex(agent_uri, tmpl, workspace_uri, opts)
       end
     end
   end
-
-  def instantiate(_tmpl_name, tmpl, _workspace_uri), do: {:error, {:invalid_template, tmpl}}
 
   @impl Ezagent.UI.Form
   def form_fields do
@@ -197,8 +210,8 @@ defmodule Ezagent.PluginCodex.Template.CodexAgent do
     |> Map.put("class", template_name())
   end
 
-  defp spawn_for_codex(agent_uri, tmpl, workspace_uri) do
-    with {:ok, started_or_adopted} <- ensure_agent_kind(agent_uri) do
+  defp spawn_for_codex(agent_uri, tmpl, workspace_uri, opts) do
+    with {:ok, started_or_adopted} <- ensure_agent_kind(agent_uri, opts) do
       case started_or_adopted do
         :already_started ->
           if owns_this_agent?(agent_uri, workspace_uri) do
@@ -597,8 +610,8 @@ defmodule Ezagent.PluginCodex.Template.CodexAgent do
       "CODEX_HOME."
   end
 
-  defp ensure_agent_kind(agent_uri) do
-    case Ezagent.LocalRuntime.ensure_started_detailed(agent_uri) do
+  defp ensure_agent_kind(agent_uri, opts) do
+    case Ezagent.LocalRuntime.ensure_started_detailed(agent_uri, opts) do
       {:ok, :started, _pid} -> {:ok, :started}
       {:ok, :already_started, _pid} -> {:ok, :already_started}
       {:error, reason} -> {:error, {:agent_spawn_failed, reason}}

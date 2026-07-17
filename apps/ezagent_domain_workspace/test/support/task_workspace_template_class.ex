@@ -14,16 +14,24 @@ defmodule EzagentDomainWorkspace.TestSupport.TaskWorkspaceTemplateClass do
 
   @impl true
   def instantiate(_name, data, _workspace_uri) do
+    instantiate_with_opts(data, [])
+  end
+
+  @impl true
+  def instantiate(_name, data, _workspace_uri, launch_context: launch_context) do
+    instantiate_with_opts(data, launch_context: launch_context)
+  end
+
+  defp instantiate_with_opts(data, opts) do
     send(Application.fetch_env!(:ezagent_domain_workspace, :sidecar_gate_test_owner), {
       :instantiate_called,
       data
     })
 
     agent_uri = Ezagent.URI.new!(Map.fetch!(data, "agent_uri"))
-    fresh? = Application.get_env(:ezagent_domain_workspace, :sidecar_gate_fresh?, true)
 
-    with {:ok, _pid} <- Ezagent.LocalRuntime.ensure_started(agent_uri) do
-      {:ok, [agent_uri], %{fresh?: fresh?}}
+    with {:ok, status, _pid} <- Ezagent.LocalRuntime.ensure_started_detailed(agent_uri, opts) do
+      {:ok, [agent_uri], %{fresh?: status == :started}}
     end
   end
 end
