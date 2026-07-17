@@ -80,19 +80,50 @@ defmodule Ezagent.Workspace.TaskWorkspace.SignedE2ETest do
 
     agent_uri = Ezagent.URI.agent(context.workspace_name, "worker")
 
-    assert {:ok, %{fresh?: true}} =
-             AgentStart.start(
-               %{flavor: fixture.flavor, project_cwd: "/untrusted"},
+    Ezagent.Agent.TestLaunchPostCommitPublisher.inject(
+      agent_uri,
+      :barrier_after_commit,
+      self()
+    )
+
+    on_exit(fn -> Ezagent.Agent.TestLaunchPostCommitPublisher.clear(agent_uri) end)
+
+    start_task =
+      Task.async(fn ->
+        AgentStart.start(
+          %{flavor: fixture.flavor, project_cwd: "/untrusted"},
+          agent_uri,
+          context.owner,
+          context.workspace_uri,
+          %{
+            provision_id: ready.provision_id,
+            task_access_uri: context.task_access_uri,
+            task_uri: context.task_uri,
+            generation: ready.generation
+          }
+        )
+      end)
+
+    Ecto.Adapters.SQL.Sandbox.allow(Repo, self(), start_task.pid)
+
+    assert_receive {:launch_receipt_committed, facts, init_pid}
+    provision = Repo.get_by!(Provision, provision_id: ready.provision_id)
+    assert facts.attempt_id == provision.creation_attempt_id
+    assert facts.agent_uri == agent_uri
+    assert facts.root_uri == context.owner
+    assert facts.workspace_uri == context.workspace_uri
+
+    assert {:ok, receipt} =
+             Ezagent.Agent.CreationInventory.exact(
+               facts.attempt_id,
                agent_uri,
                context.owner,
-               context.workspace_uri,
-               %{
-                 provision_id: ready.provision_id,
-                 task_access_uri: context.task_access_uri,
-                 task_uri: context.task_uri,
-                 generation: ready.generation
-               }
+               context.workspace_uri
              )
+
+    assert receipt.creation_attempt_id == facts.attempt_id
+    send(init_pid, :release_after_commit)
+    assert {:ok, %{fresh?: true}} = Task.await(start_task, 5_000)
 
     assert {:ok, attempt_id} =
              Ezagent.Agent.CreationInventory.find_attempt(agent_uri, context.workspace_uri)
@@ -107,8 +138,9 @@ defmodule Ezagent.Workspace.TaskWorkspace.SignedE2ETest do
     refute_receive {:instantiate_called, _}
 
     assert {:ok, %{status: :cleaned}} = dispatch(context, :cleanup_workspace)
-    assert_receive {:retire_agent, agent_uri_string, _attempt}
+    assert_receive {:retire_agent, agent_uri_string, retirement_attempt}
     assert agent_uri_string == URI.to_string(agent_uri)
+    assert retirement_attempt == facts.attempt_id
     cleaned = Repo.get_by!(Provision, provision_id: ready.provision_id)
 
     assert :ok =
@@ -120,6 +152,37 @@ defmodule Ezagent.Workspace.TaskWorkspace.SignedE2ETest do
 
     refute File.exists?(ready.cwd)
     assert cleaned.status == :cleaned
+  end
+
+  test "signed adopted Agent has no receipt and cleanup never retires it", fixture do
+    context = start_policy(:public)
+    Application.put_env(:ezagent_domain_workspace, :sidecar_gate_test_provenance, context.owner)
+    assert {:ok, ready} = dispatch(context, :provision_workspace)
+    agent_uri = Ezagent.URI.agent(context.workspace_name, "worker")
+    assert {:ok, _pid} = Ezagent.Kind.spawn(Ezagent.Entity.Agent, %{uri: agent_uri})
+    :ok = Ezagent.AgentLineage.record(agent_uri, context.owner)
+    :ok = Ezagent.WorkspaceRegistry.bind(agent_uri, context.workspace_uri)
+
+    assert {:error, :sidecar_start_not_fresh} =
+             AgentStart.start(
+               %{flavor: fixture.flavor, project_cwd: "/untrusted"},
+               agent_uri,
+               context.owner,
+               context.workspace_uri,
+               %{
+                 provision_id: ready.provision_id,
+                 task_access_uri: context.task_access_uri,
+                 task_uri: context.task_uri,
+                 generation: ready.generation
+               }
+             )
+
+    assert {:error, :creation_attempt_not_found} =
+             Ezagent.Agent.CreationInventory.find_attempt(agent_uri, context.workspace_uri)
+
+    assert {:ok, %{status: :cleaned}} = dispatch(context, :cleanup_workspace)
+    refute_receive {:retire_agent, _, _}
+    assert {:ok, _pid} = Ezagent.KindRegistry.lookup(agent_uri)
   end
 
   test "unauthorized and private provision attempts have zero effects", fixture do

@@ -48,3 +48,14 @@ The original regex scanner under-counted parenthesized migration calls. This fol
 - Mutation coverage proves `credential_ref` is rejected in all four forms, exact lifecycle names are allowed, `claim_token_credential_ref` is still rejected, and deceptive comment/string contents are not treated as calls.
 - RED: boundary test compilation failed because the AST extractor/classifier did not exist.
 - GREEN: boundary 11 tests, focused Task 8 16 tests, and complete hardening suite 108 tests; all had 0 failures.
+
+## Atomic ownership receipt follow-up
+
+- Froze the sole TaskWorkspace launch-authority issuance site and `pre_start_ref:` constructor site.
+- Added AST-aware gates that keep the opaque context out of authored maps, logging, telemetry, serialization, environment, argv, files/config, and rendered errors, while forbidding Core field reads/destructuring.
+- Added receipt schema/migration secret checks, a `20260717005000*` migration ban, and a Core ownership-implementation purity gate.
+- Extended the plugin locality gate to reject receipt, lineage, WorkspaceRegistry, TaskWorkspace persistence, and launch-authority access. Four historical WorkspaceRegistry writes are pinned by exact file/line/call entries; no Plan C receipt access is allowlisted.
+- Signed winner E2E pauses deterministically after receipt commit, verifies exact attempt/agent/root/workspace facts, then proves cleanup retires the exact attempt.
+- Signed adopted E2E proves there is no receipt and cleanup emits no retirement.
+- RED: the new plugin gate found four historical WorkspaceRegistry calls; the first leak scanner also rejected legitimate in-memory relay plumbing, motivating the sink-aware AST gate.
+- GREEN: focused Task 8 run reported Core 7 tests and Workspace 19 tests, all with zero failures.

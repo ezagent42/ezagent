@@ -11,6 +11,12 @@ defmodule EzagentCore.Invariants.PluginWorkspaceLocalityContractTest do
   use ExUnit.Case, async: true
 
   @forbidden_patterns [
+    atomic_ownership_write:
+      {~r/(?<![\.\w])(?:Ezagent\.)?(?:(?:Agent\.)?CreationInventory|AgentLineage|WorkspaceRegistry)\.[a-z_][a-z_0-9!?]*\s*\(|(?<![\.\w])(?:Ezagent\.)?Agent\.(?:LaunchAuthority|LaunchCoordinator)\.(?:resolve|acknowledge|consume_before_start)\s*\(/,
+       "Plugins must not access or interpret atomic Agent ownership facts."},
+    task_workspace_store:
+      {~r/(?<![\.\w])(?:Ezagent\.)?Workspace\.TaskWorkspace\.(?:Provision|Store|LaunchAuthority)\b/,
+       "Plugins must not access TaskWorkspace persistence or launch authority."},
     kind_registry_lookup:
       {~r/(?<![\.\w])(?:Ezagent\.)?KindRegistry\.lookup\s*\(/,
        "Use owner-gated core APIs instead of direct KindRegistry lookup."},
@@ -26,6 +32,38 @@ defmodule EzagentCore.Invariants.PluginWorkspaceLocalityContractTest do
   ]
 
   @allowlist [
+    %{
+      path: "apps/ezagent_plugin_cc/lib/mix/tasks/ezagent.demo.seed_cc_agent.ex",
+      line: 118,
+      key: :atomic_ownership_write,
+      line_substring: "Ezagent.WorkspaceRegistry.bind(",
+      reason:
+        "existing demo seed workspace binding predates Plan C and does not access the atomic receipt"
+    },
+    %{
+      path: "apps/ezagent_plugin_hello/lib/ezagent_plugin_hello/app.ex",
+      line: 210,
+      key: :atomic_ownership_write,
+      line_substring: "WorkspaceRegistry.bind(session_uri, workspace)",
+      reason:
+        "existing hello session binding predates Plan C and does not access the atomic receipt"
+    },
+    %{
+      path: "apps/ezagent_plugin_protocol_api/lib/ezagent/protocol_api/conversation_registry.ex",
+      line: 55,
+      key: :atomic_ownership_write,
+      line_substring: "WorkspaceRegistry.bind(session_uri, workspace_uri)",
+      reason:
+        "existing protocol session binding predates Plan C and does not access the atomic receipt"
+    },
+    %{
+      path: "apps/ezagent_plugin_protocol_api/lib/ezagent/protocol_api/conversation_registry.ex",
+      line: 92,
+      key: :atomic_ownership_write,
+      line_substring: "WorkspaceRegistry.bind(session_uri, workspace_uri)",
+      reason:
+        "existing protocol session rebind predates Plan C and does not access the atomic receipt"
+    },
     %{
       path: "apps/ezagent_plugin_cc/lib/ezagent/orchestrator/cc_orchestrator_seed.ex",
       line: 172,
@@ -130,6 +168,8 @@ defmodule EzagentCore.Invariants.PluginWorkspaceLocalityContractTest do
     assert warning =~ "kind_registry_lookup="
     assert warning =~ "spawn_registry="
     assert warning =~ "genserver_to_pid="
+    assert warning =~ "atomic_ownership_write="
+    assert warning =~ "task_workspace_store="
     assert warning =~ "docs/superpowers/specs/2026-06-24-workspace-locality-plugin-contract.md"
 
     assert workspace_locality_debt_enforced?(%{"ENFORCE_WORKSPACE_LOCALITY_DEBT" => "1"})
