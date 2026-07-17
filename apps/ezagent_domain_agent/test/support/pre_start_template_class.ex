@@ -14,12 +14,24 @@ defmodule EzagentDomainAgent.TestSupport.PreStartTemplateClass do
 
   @impl true
   def instantiate(_name, data, _workspace_uri) do
+    instantiate_with_opts(data)
+  end
+
+  @impl true
+  def instantiate(_name, data, _workspace_uri, launch_context: _launch_context) do
+    instantiate_with_opts(data)
+  end
+
+  defp instantiate_with_opts(data) do
     owner = Application.fetch_env!(:ezagent_domain_agent, :pre_start_test_owner)
     send(owner, {:instantiate_called, data})
 
     case Application.get_env(:ezagent_domain_agent, :pre_start_test_mode, :success) do
       :success ->
         {:ok, [Ezagent.URI.new!(Map.fetch!(data, "agent_uri"))], %{fresh?: false}}
+
+      :claimed_fresh ->
+        {:ok, [Ezagent.URI.new!(Map.fetch!(data, "agent_uri"))], %{fresh?: true}}
 
       :error ->
         {:error, :instantiate_failed}

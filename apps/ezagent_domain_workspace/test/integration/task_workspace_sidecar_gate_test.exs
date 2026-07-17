@@ -221,6 +221,8 @@ defmodule Ezagent.Workspace.TaskWorkspace.SidecarGateTest do
              )
 
     assert_receive {:instantiate_called, data}
+    assert_receive {:launch_context_received, launch_context}
+    assert is_reference(launch_context)
     assert data["cwd"] == canonical_cwd()
     refute Map.has_key?(data, "pre_start_ref")
     started = Store.get(ready.id)
@@ -361,7 +363,13 @@ defmodule Ezagent.Workspace.TaskWorkspace.SidecarGateTest do
   } do
     agent_uri = Ezagent.URI.agent("sidecar-gate", "adopted-through-template")
     ready = ready_row(agent_uri)
+    original_root = Ezagent.URI.user("sidecar-gate", "original-owner")
+    original_workspace = workspace_uri()
     assert {:ok, _pid} = Ezagent.Kind.spawn(Ezagent.Entity.Agent, %{uri: agent_uri})
+    :ok = Ezagent.AgentLineage.record(agent_uri, original_root)
+    :ok = Ezagent.WorkspaceRegistry.bind(agent_uri, original_workspace)
+    :ok = Ezagent.AgentFlavorAttributes.put(agent_uri, "original-flavor")
+    assert {:ok, original_sandbox} = Ezagent.Kind.get_slice(agent_uri, :sandbox)
 
     assert {:error, :sidecar_start_not_fresh} =
              AgentStart.start(
@@ -379,6 +387,14 @@ defmodule Ezagent.Workspace.TaskWorkspace.SidecarGateTest do
 
     assert Store.get(ready.id).status == :ready
     assert {:ok, _pid} = Ezagent.KindRegistry.lookup(agent_uri)
+    assert {:ok, ^original_root} = Ezagent.AgentLineage.lookup(agent_uri)
+    assert {:ok, ^original_workspace} = Ezagent.WorkspaceRegistry.lookup(agent_uri)
+    assert {:ok, "original-flavor"} = Ezagent.AgentFlavorAttributes.get(agent_uri)
+    assert {:ok, ^original_sandbox} = Ezagent.Kind.get_slice(agent_uri, :sandbox)
+
+    assert {:error, :creation_attempt_not_found} =
+             Ezagent.Agent.CreationInventory.find_attempt(agent_uri, workspace_uri())
+
     refute_receive {:retire_agent, _, _}
   end
 

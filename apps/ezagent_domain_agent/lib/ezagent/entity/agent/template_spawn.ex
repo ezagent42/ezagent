@@ -378,13 +378,15 @@ defmodule Ezagent.Entity.Agent.TemplateSpawn do
 
       case instantiate_workers(template_class, data, workspace_uri, pre_start_ref) do
         {:ok, workers, false, _instantiate_meta, %{claim: _claim} = pre_start_completion} ->
+          result =
+            finalize_pre_start(
+              pre_start_completion,
+              {:ok, %{workers: workers, fresh?: false}}
+            )
+
           revoke_cascade_grant_best_effort(instance_uri)
           restore_agent_flavor(instance_uri, previous_flavor)
-
-          finalize_pre_start(
-            pre_start_completion,
-            {:ok, %{workers: workers, fresh?: false}}
-          )
+          result
 
         {:ok, workers, fresh?, instantiate_meta, pre_start_completion} ->
           run_after_prepare(pre_start_completion, fn ->
@@ -510,16 +512,15 @@ defmodule Ezagent.Entity.Agent.TemplateSpawn do
       # itself fails — otherwise the agent terminates but the dir
       # leaks because `Sandbox.invoke(:destroy, ...)` would never run
       # (the agent never even came up).
-      with :ok <- establish_post_spawn_obligations(workers, spawned_by_uri, workspace_uri),
-           :ok <- record_sandbox_state(workers, instantiate_meta, template_class),
-           :ok <- mount_behavior_overlay(workers, behavior_overlay),
-           :ok <-
-             record_creation_inventory(
+      with :ok <-
+             establish_ownership_obligations(
                workers,
                spawned_by_uri,
                workspace_uri,
                Map.get(instantiate_meta, :creation_attempt_id)
-             ) do
+             ),
+           :ok <- record_sandbox_state(workers, instantiate_meta, template_class),
+           :ok <- mount_behavior_overlay(workers, behavior_overlay) do
         :ok = Ezagent.AgentFlavorAttributes.put(instance_uri, flavor)
         {:ok, Map.merge(%{workers: workers, fresh?: fresh?}, role_degraded_passthrough)}
       else
@@ -641,13 +642,19 @@ defmodule Ezagent.Entity.Agent.TemplateSpawn do
   defp instantiate_workers(template_class, data, %URI{} = workspace_uri, pre_start_ref) do
     with {:ok, %{cwd: cwd, claim: claim} = prepared} <-
            Ezagent.Kind.Template.PreStart.prepare(pre_start_ref) do
-      completion = %{claim: claim, creation_attempt_id: Map.get(prepared, :creation_attempt_id)}
+      completion = %{
+        claim: claim,
+        creation_attempt_id: Map.get(prepared, :creation_attempt_id)
+      }
+
+      launch_context = Map.get(prepared, :launch_context)
 
       try do
         case instantiate_workers_direct(
                template_class,
                Map.put(data, "cwd", cwd),
-               workspace_uri
+               workspace_uri,
+               launch_context
              ) do
           {:ok, workers, fresh?, meta} ->
             meta = Map.put(meta, :creation_attempt_id, completion.creation_attempt_id)
@@ -665,14 +672,21 @@ defmodule Ezagent.Entity.Agent.TemplateSpawn do
   end
 
   defp instantiate_workers_direct(template_class, data, %URI{} = workspace_uri) do
+    instantiate_workers_direct(template_class, data, workspace_uri, nil)
+  end
+
+  defp instantiate_workers_direct(template_class, data, %URI{} = workspace_uri, launch_context) do
     # PR-3 (domain.agent D2) — route through the core contract-boundary wrapper so
     # the per-agent config_dir TARGET is domain-allocated + provided as data
     # (`"allocated_config_dir"`) before the plugin materializes into it.
+    opts = if is_nil(launch_context), do: [], else: [launch_context: launch_context]
+
     case Ezagent.Kind.Template.provision_and_instantiate(
            template_class,
            template_class.template_name(),
            data,
-           workspace_uri
+           workspace_uri,
+           opts
          ) do
       {:ok, workers, meta} when is_list(workers) and is_map(meta) ->
         {:ok, workers, Map.get(meta, :fresh?, false) == true, meta}
@@ -960,25 +974,36 @@ defmodule Ezagent.Entity.Agent.TemplateSpawn do
       {:error, {:post_spawn_obligation_failed, :exception, error}}
   end
 
-  defp record_creation_inventory(workers, spawned_by_uri, workspace_uri, nil) do
-    Enum.reduce_while(workers, :ok, fn worker_uri, :ok ->
-      attempt_id = Ezagent.Agent.CreationInventory.new_attempt_id()
+  defp establish_ownership_obligations(workers, spawned_by_uri, workspace_uri, nil) do
+    with :ok <- establish_post_spawn_obligations(workers, spawned_by_uri, workspace_uri) do
+      record_creation_inventory(workers, spawned_by_uri, workspace_uri)
+    end
+  end
 
-      case Ezagent.Agent.CreationInventory.record(
+  defp establish_ownership_obligations(
+         workers,
+         spawned_by_uri,
+         workspace_uri,
+         attempt_id
+       )
+       when is_binary(attempt_id) and attempt_id != "" do
+    Enum.reduce_while(workers, :ok, fn worker_uri, :ok ->
+      case Ezagent.Agent.CreationInventory.exact(
              attempt_id,
              worker_uri,
              spawned_by_uri,
              workspace_uri
            ) do
-        :ok -> {:cont, :ok}
-        {:error, reason} -> {:halt, {:error, {:creation_inventory_failed, reason}}}
+        {:ok, _receipt} -> {:cont, :ok}
+        {:error, _reason} -> {:halt, {:error, :ownership_receipt_missing}}
       end
     end)
   end
 
-  defp record_creation_inventory(workers, spawned_by_uri, workspace_uri, attempt_id)
-       when is_binary(attempt_id) and attempt_id != "" do
+  defp record_creation_inventory(workers, spawned_by_uri, workspace_uri) do
     Enum.reduce_while(workers, :ok, fn worker_uri, :ok ->
+      attempt_id = Ezagent.Agent.CreationInventory.new_attempt_id()
+
       case Ezagent.Agent.CreationInventory.record(
              attempt_id,
              worker_uri,
