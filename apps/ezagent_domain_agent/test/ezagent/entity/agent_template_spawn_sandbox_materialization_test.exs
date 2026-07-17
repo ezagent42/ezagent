@@ -330,6 +330,7 @@ defmodule Ezagent.Entity.AgentTemplateSpawnSandboxMaterializationTest do
       unique = System.unique_integer([:positive])
       flavor = "pre-start-#{unique}"
       Application.put_env(:ezagent_core, :template_pre_start_test_owner, self())
+      Application.delete_env(:ezagent_core, :template_pre_start_complete_result)
       Application.put_env(:ezagent_domain_agent, :pre_start_test_owner, self())
       :ok = PreStart.replace_for_test(TemplatePreStartProbe)
 
@@ -344,6 +345,7 @@ defmodule Ezagent.Entity.AgentTemplateSpawnSandboxMaterializationTest do
         :ok = PreStart.replace_for_test(nil)
         Application.delete_env(:ezagent_core, :template_pre_start_test_owner)
         Application.delete_env(:ezagent_core, :template_pre_start_prepare_result)
+        Application.delete_env(:ezagent_core, :template_pre_start_complete_result)
         Application.delete_env(:ezagent_domain_agent, :pre_start_test_owner)
         Application.delete_env(:ezagent_domain_agent, :pre_start_test_mode)
       end)
@@ -400,17 +402,38 @@ defmodule Ezagent.Entity.AgentTemplateSpawnSandboxMaterializationTest do
       for {mode, expected_kind} <- [raise: :error, exit: :exit] do
         prepare_success()
         Application.put_env(:ezagent_domain_agent, :pre_start_test_mode, mode)
+        test_pid = self()
 
-        caught =
+        Application.put_env(:ezagent_core, :template_pre_start_complete_result, fn ->
+          send(test_pid, {:completion_failure_attempted, mode})
+
+          case mode do
+            :raise -> raise "completion raised"
+            :exit -> exit(:completion_exited)
+          end
+        end)
+
+        {caught_kind, caught_reason, caught_stacktrace} =
           try do
             spawn_with_reference(fixture)
             :not_raised
           catch
-            kind, _reason -> kind
+            kind, reason -> {kind, reason, __STACKTRACE__}
           end
 
-        assert caught == expected_kind
+        assert caught_kind == expected_kind
+
+        case mode do
+          :raise -> assert %RuntimeError{message: "instantiate raised"} = caught_reason
+          :exit -> assert caught_reason == :instantiate_exited
+        end
+
+        assert [{PreStartTemplateClass, :instantiate, 3, _location} | _rest] =
+                 caught_stacktrace
+
         assert_receive {:pre_start_complete, "claim-one", {:error, {^expected_kind, _reason}}}
+        assert_receive {:completion_failure_attempted, ^mode}
+        refute_receive {:completion_failure_attempted, ^mode}
         refute_receive {:pre_start_complete, _, _}
       end
     end
@@ -440,6 +463,7 @@ defmodule Ezagent.Entity.AgentTemplateSpawnSandboxMaterializationTest do
       workspace = Ezagent.URI.workspace("fresh-pre-start-#{unique}")
 
       Application.put_env(:ezagent_core, :template_pre_start_test_owner, self())
+      Application.delete_env(:ezagent_core, :template_pre_start_complete_result)
       Application.put_env(:ezagent_domain_agent, :fresh_pre_start_owner, self())
       :ok = PreStart.replace_for_test(TemplatePreStartProbe)
 
@@ -485,6 +509,21 @@ defmodule Ezagent.Entity.AgentTemplateSpawnSandboxMaterializationTest do
 
       assert {:ok, %{workers: [^worker], fresh?: true}} = spawn_with_reference(fixture)
       assert_receive {:instantiate_called, ^worker}
+      assert_receive {:pre_start_complete, "claim-one", {:ok, %{workers: [^worker]}}}
+      refute_receive {:pre_start_complete, _, _}
+    end
+
+    test "successful-spawn completion error is returned without rolling back", fixture do
+      prepare_success()
+      worker = fixture.instance_uri
+      owner = fixture.owner_uri
+      workspace = fixture.workspace_uri
+      Application.put_env(:ezagent_core, :template_pre_start_complete_result, {:error, :rejected})
+
+      assert {:error, :rejected} = spawn_with_reference(fixture)
+      assert {:ok, _pid} = Ezagent.KindRegistry.lookup(worker)
+      assert {:ok, ^owner} = Ezagent.AgentLineage.lookup(worker)
+      assert {:ok, ^workspace} = Ezagent.WorkspaceRegistry.lookup(worker)
       assert_receive {:pre_start_complete, "claim-one", {:ok, %{workers: [^worker]}}}
       refute_receive {:pre_start_complete, _, _}
     end
