@@ -20,9 +20,10 @@ defmodule Ezagent.Workspace.TaskWorkspace.BoundaryTest do
     20260717004000_harden_git_task_workspace_start.exs
   )
   @launch_context_allowlist [
-    {"apps/ezagent_domain_agent/lib/ezagent/entity/agent.ex", {:before_start, 1}, :authored_map},
+    {"apps/ezagent_domain_agent/lib/ezagent/entity/agent.ex", {:before_start, 1}, :authored_map,
+     58},
     {"apps/ezagent_domain_workspace/lib/ezagent/workspace/task_workspace/pre_start.ex",
-     {:prepare, 1}, :authored_map}
+     {:prepare, 1}, :authored_map, 23}
   ]
 
   test "cc plugin has no task-workspace transport knowledge" do
@@ -121,27 +122,57 @@ defmodule Ezagent.Workspace.TaskWorkspace.BoundaryTest do
     mutants = [
       "%{launch_context: launch_context}",
       "%{\"launch_context\" => launch_context}",
-      "opaque = launch_context\nRepo.insert!(%Row{value: opaque})",
-      "alias EzagentCore.Repo, as: Storage\nopaque = launch_context\nStorage.insert!(%Row{value: opaque})",
-      "opaque = launch_context\nEcto.Multi.put(multi, :context, opaque)",
-      "opaque = launch_context\nEzagent.SnapshotStore.write(uri, :slice, opaque)",
-      "opaque = launch_context\n:persistent_term.put(:context, opaque)",
-      "opaque = launch_context\n:ets.insert(:contexts, {:context, opaque})",
-      "opaque = launch_context\nProcess.put(:context, opaque)",
-      "opaque = launch_context\nMap.put(state, :context, opaque)",
-      "opaque = launch_context\nsend(pid, {:context, opaque})",
-      "opaque = launch_context\nSystem.cmd(\"tool\", [inspect(opaque)])",
-      "opaque = launch_context\nSystem.put_env(\"CONTEXT\", inspect(opaque))",
-      "opaque = launch_context\nApplication.put_env(:app, :context, opaque)",
-      "opaque = launch_context\nLogger.info(\"context=\#{inspect(opaque)}\")",
-      "opaque = launch_context\n:telemetry.execute([:launch], %{}, %{context: opaque})",
-      "opaque = launch_context\nJason.encode!(%{context: opaque})",
-      "opaque = launch_context\nraise \"bad context \#{inspect(opaque)}\""
+      "opaque = Keyword.fetch!(opts, :launch_context)\nRepo.insert!(%Row{value: opaque})",
+      "alias EzagentCore.Repo, as: Storage\nopaque = Keyword.fetch!(opts, :launch_context)\nStorage.insert!(%Row{value: opaque})",
+      "opaque = Keyword.fetch!(opts, :launch_context)\nEcto.Multi.put(multi, :context, opaque)",
+      "opaque = Keyword.fetch!(opts, :launch_context)\nEzagent.SnapshotStore.write(uri, :slice, opaque)",
+      "opaque = Keyword.fetch!(opts, :launch_context)\n:persistent_term.put(:context, opaque)",
+      "opaque = Keyword.fetch!(opts, :launch_context)\n:ets.insert(:contexts, {:context, opaque})",
+      "opaque = Keyword.fetch!(opts, :launch_context)\nProcess.put(:context, opaque)",
+      "opaque = Keyword.fetch!(opts, :launch_context)\nMap.put(state, :context, opaque)",
+      "opaque = Keyword.fetch!(opts, :launch_context)\nsend(pid, {:context, opaque})",
+      "opaque = Keyword.fetch!(opts, :launch_context)\nSystem.cmd(\"tool\", [inspect(opaque)])",
+      "opaque = Keyword.fetch!(opts, :launch_context)\nSystem.put_env(\"CONTEXT\", inspect(opaque))",
+      "opaque = Keyword.fetch!(opts, :launch_context)\nApplication.put_env(:app, :context, opaque)",
+      "opaque = Keyword.fetch!(opts, :launch_context)\nLogger.info(\"context=\#{inspect(opaque)}\")",
+      "opaque = Keyword.fetch!(opts, :launch_context)\n:telemetry.execute([:launch], %{}, %{context: opaque})",
+      "opaque = Keyword.fetch!(opts, :launch_context)\nJason.encode!(%{context: opaque})",
+      "serializer = Jason\nopaque = Keyword.fetch!(opts, :launch_context)\nserializer.encode!(%{context: opaque})",
+      "opaque = Keyword.fetch!(opts, :launch_context)\nraise \"bad context \#{inspect(opaque)}\"",
+      "def instantiate(_a, _b, _c, opts) do\n  handle = Keyword.fetch!(opts, :launch_context)\n  Jason.encode!(%{context: handle})\nend",
+      "def instantiate(_a, _b, _c, opts) do\n  handle = Map.get(opts, :launch_context)\n  Repo.insert!(%Row{value: handle})\nend",
+      "def instantiate(_a, _b, _c, launch_context: handle) do\n  payload = handle\n  :persistent_term.put(:context, payload)\nend"
     ]
 
     for source <- mutants do
       assert launch_context_leaks(source) != [], source
     end
+
+    assert launch_context_leaks("def harmless(launch_context), do: Jason.encode!(launch_context)") ==
+             []
+
+    shadowed = """
+    def harmless(opts) do
+      handle = Keyword.fetch!(opts, :launch_context)
+      handle = :safe_value
+      Jason.encode!(handle)
+    end
+    """
+
+    assert launch_context_leaks(shadowed) == []
+
+    second_map = """
+    def prepare(ref) do
+      handle = Keyword.fetch!(ref, :launch_context)
+      safe = %{launch_context: handle}
+      Jason.encode!(safe)
+    end
+    """
+
+    assert launch_context_leaks(
+             second_map,
+             "apps/ezagent_domain_workspace/lib/ezagent/workspace/task_workspace/pre_start.ex"
+           ) != []
   end
 
   test "ownership schemas contain no secret material and no forbidden follow-up migration" do
@@ -279,30 +310,87 @@ defmodule Ezagent.Workspace.TaskWorkspace.BoundaryTest do
 
   defp launch_context_leaks(source, path \\ "<mutation>") do
     ast = Code.string_to_quoted!(source)
-    tainted = tainted_variables(ast, MapSet.new([:launch_context]))
-    functions = collect_functions(ast)
     aliases = collect_module_aliases(ast)
 
-    {_ast, leaks} =
-      Macro.prewalk(ast, [], fn node, leaks ->
-        kind = launch_context_leak_kind(node, tainted, aliases)
+    ast
+    |> lexical_scopes()
+    |> Enum.flat_map(fn {function, scope} ->
+      scope_aliases = Map.merge(aliases, collect_sink_bindings(scope, aliases))
 
-        if kind do
-          line = node |> elem(1) |> Keyword.get(:line, 1)
-          function = enclosing_function(functions, line)
-          leak = %{line: line, function: function, kind: kind, expression: Macro.to_string(node)}
+      scan_launch_scope(
+        scope,
+        function,
+        path,
+        scope_aliases,
+        authority_source_variables(scope)
+      )
+    end)
+    |> Enum.uniq()
+    |> Enum.sort_by(&{&1.line, &1.kind})
+  end
 
-          if launch_context_allowlisted?(path, leak) do
-            {node, leaks}
-          else
-            {node, [leak | leaks]}
-          end
-        else
-          {node, leaks}
-        end
+  defp scan_launch_scope(scope, function, path, aliases, initial_tainted) do
+    {_scope, {_tainted, leaks}} =
+      Macro.prewalk(scope, {initial_tainted, []}, fn
+        {:=, _meta, [left, right]} = node, {tainted, leaks} ->
+          assigned = variables_in(left)
+
+          tainted =
+            if authority_source?(right) or tainted_node?(right, tainted) do
+              MapSet.union(tainted, assigned)
+            else
+              MapSet.difference(tainted, assigned)
+            end
+
+          {node, {tainted, record_launch_leak(node, function, path, aliases, tainted, leaks)}}
+
+        node, {tainted, leaks} ->
+          {node, {tainted, record_launch_leak(node, function, path, aliases, tainted, leaks)}}
       end)
 
-    leaks |> Enum.uniq() |> Enum.sort()
+    leaks
+  end
+
+  defp record_launch_leak(node, function, path, aliases, tainted, leaks) do
+    case launch_context_leak_kind(node, tainted, aliases) do
+      false ->
+        leaks
+
+      kind ->
+        line = node |> elem(1) |> Keyword.get(:line, 1)
+        leak = %{line: line, function: function, kind: kind, expression: Macro.to_string(node)}
+        if launch_context_allowlisted?(path, leak), do: leaks, else: [leak | leaks]
+    end
+  end
+
+  defp lexical_scopes(ast) do
+    {_ast, scopes} =
+      Macro.prewalk(ast, [], fn
+        {kind, _meta, [{name, _head_meta, args} | _]} = node, scopes
+        when kind in [:def, :defp] and is_atom(name) ->
+          {node, [{{name, length(args || [])}, node} | scopes]}
+
+        node, scopes ->
+          {node, scopes}
+      end)
+
+    case scopes do
+      [] -> [{{:__module__, 0}, ast}]
+      _ -> Enum.reverse(scopes)
+    end
+  end
+
+  defp authority_source_variables(scope) do
+    {_scope, variables} =
+      Macro.prewalk(scope, MapSet.new(), fn
+        {key, value} = node, variables when key in [:launch_context, "launch_context"] ->
+          {node, MapSet.union(variables, variables_in(value))}
+
+        node, variables ->
+          {node, variables}
+      end)
+
+    variables
   end
 
   defp opaque_context_reads(source) do
@@ -400,6 +488,35 @@ defmodule Ezagent.Workspace.TaskWorkspace.BoundaryTest do
     aliases
   end
 
+  defp collect_sink_bindings(scope, aliases) do
+    {_scope, bindings} =
+      Macro.prewalk(scope, %{}, fn
+        {:=, _meta, [{name, _var_meta, context}, rhs]} = node, bindings
+        when is_atom(name) and (is_atom(context) or is_nil(context)) ->
+          module = resolve_sink_assignment(rhs, aliases, bindings)
+
+          {node,
+           if(module,
+             do: Map.put(bindings, Atom.to_string(name), module),
+             else: Map.delete(bindings, Atom.to_string(name))
+           )}
+
+        node, bindings ->
+          {node, bindings}
+      end)
+
+    bindings
+  end
+
+  defp resolve_sink_assignment({:__aliases__, _meta, [first | rest]} = ast, aliases, bindings) do
+    Map.get(bindings, Atom.to_string(first)) ||
+      Map.get(aliases, Atom.to_string(first)) ||
+      module_from_alias(ast) ||
+      (rest == [] && first)
+  end
+
+  defp resolve_sink_assignment(_rhs, _aliases, _bindings), do: nil
+
   defp module_from_alias({:__aliases__, _meta, parts}) do
     if Enum.all?(parts, &is_atom/1), do: Module.concat(parts)
   end
@@ -414,6 +531,11 @@ defmodule Ezagent.Workspace.TaskWorkspace.BoundaryTest do
       nil -> Module.concat([first | rest]) |> inspect()
       base -> Module.concat([base | rest]) |> inspect()
     end
+  end
+
+  defp resolve_sink_module({name, _meta, context}, aliases)
+       when is_atom(name) and (is_atom(context) or is_nil(context)) do
+    aliases |> Map.get(Atom.to_string(name), name) |> inspect()
   end
 
   defp resolve_sink_module(module, _aliases) when is_atom(module), do: inspect(module)
@@ -453,22 +575,23 @@ defmodule Ezagent.Workspace.TaskWorkspace.BoundaryTest do
 
   defp state_like?(_node), do: false
 
-  defp tainted_variables(ast, tainted) do
-    {_ast, expanded} =
-      Macro.prewalk(ast, tainted, fn
-        {:=, _meta, [left, right]} = node, current ->
-          if tainted_node?(right, current) do
-            {node, MapSet.union(current, variables_in(left))}
-          else
-            {node, current}
-          end
+  defp authority_source?({{:., _meta, [module, function]}, _call_meta, args})
+       when is_atom(function) and is_list(args) do
+    module_name = Macro.to_string(module)
 
-        node, current ->
-          {node, current}
-      end)
+    extraction? =
+      module_name in ["Keyword", "Map"] and function in [:get, :get_lazy, :fetch, :fetch!] and
+        Enum.any?(args, &(&1 in [:launch_context, "launch_context"]))
 
-    if expanded == tainted, do: expanded, else: tainted_variables(ast, expanded)
+    issuance? =
+      function in [:issue, :take] and
+        (String.ends_with?(module_name, "LaunchAuthority") or
+           String.ends_with?(module_name, "LaunchContextRelay"))
+
+    extraction? or issuance?
   end
+
+  defp authority_source?(_node), do: false
 
   defp variables_in(node) do
     {_node, variables} =
@@ -488,32 +611,8 @@ defmodule Ezagent.Workspace.TaskWorkspace.BoundaryTest do
     not MapSet.disjoint?(variables_in(node), tainted)
   end
 
-  defp collect_functions(ast) do
-    {_ast, functions} =
-      Macro.prewalk(ast, [], fn
-        {kind, meta, [{name, _head_meta, args} | _]} = node, functions
-        when kind in [:def, :defp] and is_atom(name) ->
-          {node, [{meta[:line] || 1, {name, length(args || [])}} | functions]}
-
-        node, functions ->
-          {node, functions}
-      end)
-
-    Enum.sort(functions)
-  end
-
-  defp enclosing_function(functions, line) do
-    functions
-    |> Enum.take_while(fn {function_line, _function} -> function_line <= line end)
-    |> List.last()
-    |> case do
-      {_line, function} -> function
-      nil -> {:__module__, 0}
-    end
-  end
-
   defp launch_context_allowlisted?(path, leak) do
-    {path, leak.function, leak.kind} in @launch_context_allowlist
+    {path, leak.function, leak.kind, leak.line} in @launch_context_allowlist
   end
 
   defp forbidden_plan_c_migrations(names) do
