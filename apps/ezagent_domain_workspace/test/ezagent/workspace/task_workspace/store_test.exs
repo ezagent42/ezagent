@@ -3,6 +3,21 @@ defmodule Ezagent.Workspace.TaskWorkspace.StoreTest do
 
   alias Ezagent.Workspace.TaskWorkspace.{Provision, Store}
 
+  test "provision schema exposes durable start and checkout proof fields" do
+    assert :starting in Provision.statuses()
+
+    fields = Provision.__schema__(:fields)
+
+    for field <- [
+          :start_claim_token,
+          :start_lease_until,
+          :resolved_base_commit,
+          :local_branch_ref
+        ] do
+      assert field in fields
+    end
+  end
+
   test "identity is idempotent and conflicting immutable fields fail" do
     assert {:ok, first} = Store.create_planned(attrs())
     assert {:ok, same} = Store.create_planned(attrs())
