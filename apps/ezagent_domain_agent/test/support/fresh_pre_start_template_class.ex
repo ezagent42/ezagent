@@ -20,8 +20,9 @@ defmodule EzagentDomainAgent.TestSupport.FreshPreStartTemplateClass do
     worker = Ezagent.URI.new!(Map.fetch!(data, "agent_uri"))
     send(owner, {:instantiate_called, worker})
 
-    with {:ok, :started, _pid} <- Ezagent.LocalRuntime.ensure_started_detailed(worker, opts) do
-      {:ok, [worker], %{fresh?: true}}
+    case Ezagent.Kind.spawn(Ezagent.Entity.Agent, %{uri: worker}, opts) do
+      {:ok, _pid} -> {:ok, [worker], %{fresh?: true}}
+      {:error, reason} -> {:error, reason}
     end
   end
 end

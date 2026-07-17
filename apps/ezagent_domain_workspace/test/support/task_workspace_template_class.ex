@@ -35,8 +35,17 @@ defmodule EzagentDomainWorkspace.TestSupport.TaskWorkspaceTemplateClass do
 
     agent_uri = Ezagent.URI.new!(Map.fetch!(data, "agent_uri"))
 
-    with {:ok, status, _pid} <- Ezagent.LocalRuntime.ensure_started_detailed(agent_uri, opts) do
-      {:ok, [agent_uri], %{fresh?: status == :started}}
+    case Ezagent.KindRegistry.lookup(agent_uri) do
+      {:ok, _pid} ->
+        {:ok, [agent_uri], %{fresh?: false}}
+
+      :error ->
+        case Ezagent.Kind.spawn(Ezagent.Entity.Agent, %{uri: agent_uri}, opts) do
+          {:ok, _pid} -> {:ok, [agent_uri], %{fresh?: true}}
+          {:error, {:already_started, _pid}} -> {:ok, [agent_uri], %{fresh?: false}}
+          {:error, {:already_registered, _pid}} -> {:ok, [agent_uri], %{fresh?: false}}
+          {:error, reason} -> {:error, reason}
+        end
     end
   end
 end
