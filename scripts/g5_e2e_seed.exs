@@ -109,7 +109,7 @@ create_agent_cap = %Capability{
   granted_by: admin,
   granted_at: DateTime.utc_now()
 }
-[{:ok, signed_cap}] = Ezagent.Cap.issue({:genesis, admin}, admin, create_agent_cap)
+{:ok, signed_cap} = Ezagent.Cap.issue({:genesis, admin}, admin, create_agent_cap)
 
 {:ok, %{agent_uri: agent_uri}} = Ezagent.Workspace.Provisioning.create_agent(
   admin_ws.uri,
