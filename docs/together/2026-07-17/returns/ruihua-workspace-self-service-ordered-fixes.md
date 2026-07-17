@@ -52,7 +52,8 @@ hosted agent clone/provisioning contract；在依赖明确前不伪造临时授�
 
 - 密码登录直接返回安全的本地 `return_to`，不创建 PAT、不进入 token Continue 页面。
 - 外部或 protocol-relative `return_to` 一律回退到 `/sessions`。
-- session 名称表单、前置校验和错误文案统一为 strict URI 规则：仅支持字母、数字和 `- . _ ~`，明确说明中文名称暂不支持。
+- session 展示名支持中文、英文字母、数字、下划线和连字符，限制 2–30 个字符；两个创建入口提供实时行内校验。
+- 中文展示名在 dispatch boundary 转为 percent-encoded canonical URI segment，Session 列表安全解码显示，保持 strict URI 不变量。
 
 剩余项：
 
@@ -72,10 +73,10 @@ hosted agent clone/provisioning contract；在依赖明确前不伪造临时授�
 | World fixture drift | PASS |
 | World TypeScript（含 E2E tsconfig） | PASS |
 | World ESLint | PASS，0 warnings |
-| World Vitest | PASS，12 / 12 |
+| World Vitest | PASS，15 / 15 |
 | 登录 Continue / 安全返回控制器测试 | PASS，11 / 0 |
 | session 名称规则 World 测试 | PASS，14 / 0 |
-| 应用内浏览器交互验收 | PASS：三层卡片、founder 提醒、成功回执、Agent 三态、session 名称提示 |
+| 应用内浏览器交互验收 | PASS：三层卡片、founder 提醒、成功回执、Agent 三态、中文 session 名称可提交 |
 | 本机 Playwright CLI | 环境阻塞：缺少其专用 Chromium executable；不是产品断言失败，GitHub frontend gate 继续执行 |
 
 ## 浏览器证据
@@ -96,9 +97,9 @@ G6 Agent 列表使用可读名称并同时展示三种可操作状态：
 
 ![Agent 可读名称与 Ready、Missing key、Offline 状态](../evidence/g6-agent-readable-names-and-status.png)
 
-新建会话表单与后端校验使用同一条 strict URI 规则：
+新建会话输入“客服会话”后没有校验错误，创建按钮可用；内部仍使用 canonical URI：
 
-![Session 名称规则提示](../evidence/g6-session-name-rule.png)
+![中文 Session 名称可创建](../evidence/g6-session-chinese-name.jpg)
 
 ## 交付说明
 

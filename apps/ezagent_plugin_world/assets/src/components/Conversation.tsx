@@ -3,6 +3,7 @@ import {Bug, Cable, CheckCircle2, ChevronUp, Copy, ExternalLink, LayoutGrid, Lin
 
 import {type ActionableError, ActionableErrorCard} from "./ActionableErrorCard"
 import {Button, Input, Modal, Select} from "./ui/primitives"
+import {SESSION_NAME_HINT, sessionNameError} from "./sessionName"
 import {JsonRenderBubble} from "./JsonRenderBubble"
 import {Kanban, type KanbanState} from "./Kanban"
 import {PtyTerminalSurface} from "./PtyTerminal"
@@ -527,11 +528,12 @@ export function Conversation({
     setUploadError(null)
   }
 
+  const newSessionNameError = newSessionName.trim() ? sessionNameError(newSessionName) : null
   const submitCreate = (event: React.FormEvent) => {
     event.preventDefault()
     const trimmed = newSessionName.trim()
     const template = newSessionTemplate.trim() || "default"
-    if (!trimmed || createPending) return
+    if (!trimmed || sessionNameError(trimmed) || createPending) return
     onCreate?.(trimmed, template)
   }
 
@@ -655,8 +657,14 @@ export function Conversation({
                 placeholder="support-triage"
                 autoFocus
               />
-              <span className="text-[11px] font-normal text-muted-foreground">
-                支持字母、数字和 - . _ ~；中文名称暂不支持。
+                minLength={2}
+                maxLength={30}
+                aria-invalid={newSessionNameError ? "true" : undefined}
+              <span
+                className={newSessionNameError ? "text-[11px] font-normal text-destructive" : "text-[11px] font-normal text-muted-foreground"}
+                data-world-session-name-error={newSessionNameError ? "true" : undefined}
+              >
+                {newSessionNameError || SESSION_NAME_HINT}
               </span>
             </label>
             <label className="grid gap-1 text-[11px] font-medium text-muted-foreground" htmlFor="world-conversation-session-template">
@@ -673,7 +681,7 @@ export function Conversation({
                 ))}
               </Select>
             </label>
-            <Button type="submit" size="sm" disabled={createPending || !newSessionName.trim()}>
+            <Button type="submit" size="sm" disabled={createPending || !newSessionName.trim() || Boolean(newSessionNameError)}>
               {createPending ? <Loader2 className="animate-spin" aria-hidden="true" /> : <Plus aria-hidden="true" />}
               {createPending ? "创建中" : "创建"}
             </Button>

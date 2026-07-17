@@ -2,6 +2,7 @@ import React from "react"
 import {ArrowRight, Bot, Cable, Circle, Loader2, MessageSquare, Plus, UserRound, X} from "lucide-react"
 
 import {Button, Input, Select} from "./ui/primitives"
+import {SESSION_NAME_HINT, sessionNameError} from "./sessionName"
 
 export type SessionRow = {
   uri: string
@@ -116,13 +117,14 @@ export function SessionsTable({state, onJoin, onCreate}: SessionsTableProps) {
   }, [selectedSocialware])
 
   const filteredSessions = filterSessions(sessions, filter)
+  const nameError = shortName.trim() ? sessionNameError(shortName) : null
 
   const submit = (event: React.FormEvent) => {
     event.preventDefault()
     const trimmed = shortName.trim()
     const template = templateName.trim() || "default"
     const installRef = socialwareRef.trim()
-    if (!trimmed || createPending) return
+    if (!trimmed || sessionNameError(trimmed) || createPending) return
     const createOptions = selectedSocialware ? createOptionsFor(selectedSocialware, roleChoices) : undefined
     onCreate?.(trimmed, template, installRef || undefined, createOptions)
   }
@@ -187,9 +189,15 @@ export function SessionsTable({state, onJoin, onCreate}: SessionsTableProps) {
                 onChange={(event) => setShortName(event.target.value)}
                 placeholder="support-triage"
                 autoFocus
+                minLength={2}
+                maxLength={30}
+                aria-invalid={nameError ? "true" : undefined}
               />
-              <span className="text-[11px] font-normal text-muted-foreground">
-                支持字母、数字和 - . _ ~；中文名称暂不支持。
+              <span
+                className={nameError ? "text-[11px] font-normal text-destructive" : "text-[11px] font-normal text-muted-foreground"}
+                data-world-session-name-error={nameError ? "true" : undefined}
+              >
+                {nameError || SESSION_NAME_HINT}
               </span>
             </label>
             <label className="grid gap-1 text-xs font-medium text-muted-foreground" htmlFor="world-session-template">
@@ -253,7 +261,7 @@ export function SessionsTable({state, onJoin, onCreate}: SessionsTableProps) {
                 )}
               </div>
             )}
-            <Button type="submit" size="sm" disabled={createPending || !shortName.trim()}>
+            <Button type="submit" size="sm" disabled={createPending || !shortName.trim() || Boolean(nameError)}>
               {createPending ? <Loader2 className="animate-spin" aria-hidden="true" /> : <Plus aria-hidden="true" />}
               {createPending ? "创建中" : "创建"}
             </Button>

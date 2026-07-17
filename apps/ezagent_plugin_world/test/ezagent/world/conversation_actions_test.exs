@@ -123,28 +123,40 @@ defmodule Ezagent.World.ConversationActionsTest do
       assert URI.to_string(uri) == "session://ezagent/hello/hello-world"
     end
 
-    test "CJK / reserved names are rejected cleanly (Ezagent.URI parses strictly)" do
-      # Ezagent.URI.new! rejects raw CJK in a segment, so a CJK name must be caught
-      # by uri_safe_short_name?/1 (→ :invalid_short_name) rather than crash the build.
-      refute ConversationActions.uri_safe_short_name?("客服-会话")
-      assert_raise ArgumentError, fn -> Ezagent.URI.session("ezagent", "hello", "客服-会话") end
+    test "CJK display names use canonical percent-encoded URI segments" do
+      display_name = "客服会话"
+      assert ConversationActions.valid_session_name?(display_name)
+
+      segment = ConversationActions.session_uri_segment(display_name)
+      assert segment == URI.encode(display_name, &URI.char_unreserved?/1)
+
+      uri = Ezagent.URI.session("ezagent", "hello", segment)
+      assert URI.to_string(uri) =~ segment
+      assert Ezagent.World.ConversationSessionState.session_display_name(uri) == display_name
+      assert_raise ArgumentError, fn -> Ezagent.URI.session("ezagent", "hello", display_name) end
     end
 
-    test "uri_safe_short_name?/1 allows the URI unreserved set, rejects the rest" do
-      for ok <- ["hello-world", "multi-space", "abc_123", "a.b~c", "Session1"] do
-        assert ConversationActions.uri_safe_short_name?(ok), "expected #{ok} allowed"
+    test "valid_session_name?/1 accepts product characters and rejects reserved ones" do
+      for ok <- ["客服会话", "客服-会话", "hello-world", "abc_123", "Session1"] do
+        assert ConversationActions.valid_session_name?(ok), "expected #{ok} allowed"
       end
 
-      for bad <- ["a/b", "a:b", "a?b", "a#b", "a@b", "a[b", "a b", "客服", ""] do
-        refute ConversationActions.uri_safe_short_name?(bad), "expected #{inspect(bad)} rejected"
+      for bad <- ["a/b", "a:b", "a?b", "a#b", "a@b", "a[b", "a b", "a.b", "a~b", ""] do
+        refute ConversationActions.valid_session_name?(bad),
+               "expected #{inspect(bad)} rejected"
       end
     end
 
-    test ":invalid_short_name states the same ASCII rule shown by the forms" do
+    test "session name errors match the Chinese 2-30 character form rule" do
+      assert ConversationActions.session_create_error_message(:short_name_too_short) =~
+               "至少需要 2 个字符"
+
+      assert ConversationActions.session_create_error_message(:short_name_too_long) =~
+               "不能超过 30 个字符"
+
       msg = ConversationActions.session_create_error_message(:invalid_short_name)
-      assert msg =~ "字母、数字"
-      assert msg =~ "中文名称暂不支持"
-      refute msg =~ "中文或连字符"
+      assert msg =~ "中文"
+      refute msg =~ "invalid_short_name"
     end
   end
 

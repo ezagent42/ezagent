@@ -405,16 +405,22 @@ defmodule Ezagent.World.ConversationActions do
       when is_binary(short_name) and is_binary(template_name) do
     workspace_uri = socket.assigns.current_workspace_uri
     caller = socket.assigns.current_entity_uri
-    # Session names are URI path segments, so collapse whitespace and reject
-    # remaining URI-structural chars with a clear error.
-    short_name = sanitize_short_name(short_name)
+    # Keep the user-facing name separate from its canonical URI segment. CJK is
+    # percent-encoded for the strict URI boundary and decoded again for display.
+    display_name = sanitize_short_name(short_name)
     template_name = String.trim(template_name)
 
     cond do
-      short_name == "" ->
+      display_name == "" ->
         {:noreply, push_session_create_error(socket, :short_name_required)}
 
-      not uri_safe_short_name?(short_name) ->
+      String.length(display_name) < 2 ->
+        {:noreply, push_session_create_error(socket, :short_name_too_short)}
+
+      String.length(display_name) > 30 ->
+        {:noreply, push_session_create_error(socket, :short_name_too_long)}
+
+      not valid_session_name?(display_name) ->
         {:noreply, push_session_create_error(socket, :invalid_short_name)}
 
       template_name == "" ->
@@ -433,7 +439,13 @@ defmodule Ezagent.World.ConversationActions do
                install_config
              ) do
           {:ok, create_template_name} ->
-            do_create_session(socket, workspace_uri, caller, short_name, create_template_name)
+            do_create_session(
+              socket,
+              workspace_uri,
+              caller,
+              session_uri_segment(display_name),
+              create_template_name
+            )
 
           {:error, reason} ->
             {:noreply, push_session_create_error(socket, reason)}
@@ -549,11 +561,13 @@ defmodule Ezagent.World.ConversationActions do
   @doc false
   @spec session_create_error_message(term()) :: String.t()
   def session_create_error_message(:short_name_required), do: "请填写会话名称"
+  def session_create_error_message(:short_name_too_short), do: "会话名称至少需要 2 个字符"
+  def session_create_error_message(:short_name_too_long), do: "会话名称不能超过 30 个字符"
   def session_create_error_message(:template_required), do: "请选择会话模板"
   def session_create_error_message(:invalid_workspace), do: "无效的工作区"
 
   def session_create_error_message(:invalid_short_name),
-    do: "会话名称仅支持字母、数字和 - . _ ~；中文名称暂不支持"
+    do: "会话名称仅支持中文、英文字母、数字、下划线和连字符"
 
   def session_create_error_message({:invalid_template, _}),
     do: "该模板不能从这里直接创建（缺少额外参数）——请改选 default 或该模板自己的入口"
@@ -579,10 +593,8 @@ defmodule Ezagent.World.ConversationActions do
 
   defp unsupported_claude_dev_channels?(_), do: false
 
-  # Trim + collapse any run of (Unicode) whitespace to a single "-", so a name
-  # like "hello world" becomes the URI-safe "hello-world" instead of crashing the
-  # `session://<ws>/<template>/<name>` parse. Non-whitespace chars (incl. CJK) are
-  # untouched here; `uri_safe_short_name?/1` rejects the few that still break a URI.
+  # Trim + collapse Unicode whitespace to "-". The normalized value remains the
+  # display name; `session_uri_segment/1` handles canonical URI encoding.
   @doc false
   @spec sanitize_short_name(String.t()) :: String.t()
   def sanitize_short_name(name) when is_binary(name) do
@@ -591,16 +603,18 @@ defmodule Ezagent.World.ConversationActions do
     |> String.replace(~r/\s+/u, "-")
   end
 
-  # A session name is a URI path segment, and `Ezagent.URI.new!` parses STRICTLY —
-  # it rejects spaces, CJK, and other non-ASCII / reserved chars (not just the
-  # gen-delims). So allow only the URI "unreserved" set `[A-Za-z0-9-._~]`; anything
-  # else (incl. CJK) gets a clear :invalid_short_name error instead of a raw
-  # ArgumentError crash. (CJK session names would need percent-encoding + a display
-  # layer that decodes them — a separate, larger change, not done here.)
+  # Product display names accept Unicode letters/numbers; identifiers remain
+  # canonical URI segments after percent-encoding at the dispatch boundary.
   @doc false
-  @spec uri_safe_short_name?(String.t()) :: boolean()
-  def uri_safe_short_name?(name) when is_binary(name) do
-    name != "" and Regex.match?(~r/\A[A-Za-z0-9._~-]+\z/, name)
+  @spec valid_session_name?(String.t()) :: boolean()
+  def valid_session_name?(name) when is_binary(name) do
+    name != "" and Regex.match?(~r/\A[\p{L}\p{N}_-]+\z/u, name)
+  end
+
+  @doc false
+  @spec session_uri_segment(String.t()) :: String.t()
+  def session_uri_segment(display_name) when is_binary(display_name) do
+    URI.encode(display_name, &URI.char_unreserved?/1)
   end
 
   @doc false

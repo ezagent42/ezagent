@@ -49,11 +49,23 @@ defmodule Ezagent.World.ConversationSessionState do
 
     %{
       "uri" => uri,
-      "name" => session_uri.path || session_uri.host || uri,
+      "name" => session_display_name(session_uri),
       "workspace_uri" => workspace
     }
   end
 
+  @doc false
+  @spec session_display_name(URI.t()) :: String.t()
+  def session_display_name(%URI{path: path} = session_uri) when is_binary(path) do
+    case path |> String.split("/", trim: true) |> List.last() do
+      nil -> uri_string(session_uri)
+      segment -> URI.decode(segment)
+    end
+  rescue
+    ArgumentError -> path
+  end
+
+  def session_display_name(%URI{} = session_uri), do: uri_string(session_uri)
   @doc false
   @spec state_for(URI.t(), Phoenix.LiveView.Socket.t()) :: map()
   def state_for(%URI{} = session_uri, socket) do
