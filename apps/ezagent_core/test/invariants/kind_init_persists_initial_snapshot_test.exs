@@ -39,6 +39,85 @@ defmodule Ezagent.Invariants.KindInitPersistsInitialSnapshotTest do
 
   alias Ezagent.Ecto.KindSnapshot
 
+  defmodule BeforeStartProbeKind do
+    @behaviour Ezagent.Kind
+
+    @impl Ezagent.Kind
+    def type_name, do: :before_start_probe
+
+    @impl Ezagent.Kind
+    def behaviors, do: [Ezagent.Test.TestBehavior]
+
+    @impl Ezagent.Kind
+    def persistence, do: {:snapshot, :on_change}
+
+    @impl Ezagent.Kind
+    def before_start(%{probe_pid: probe_pid, probe_result: {:error, reason}}) do
+      send(probe_pid, {:before_start_entered, self()})
+      {:error, reason}
+    end
+
+    def before_start(%{probe_pid: probe_pid, probe_result: :block} = args) do
+      send(probe_pid, {:before_start_entered, self(), Map.fetch!(args, :launch_context)})
+
+      receive do
+        :release_before_start -> :ok
+      end
+    end
+  end
+
+  describe "before_start/1 ordering" do
+    test "blocks snapshot and live registration until the hook succeeds" do
+      uri =
+        Ezagent.URI.new!(
+          "entity://team-alpha/agent/test_before-start-block-#{System.unique_integer([:positive])}"
+        )
+
+      uri_str = URI.to_string(uri)
+      parent = self()
+      launch_context = make_ref()
+
+      task =
+        Task.async(fn ->
+          Ezagent.Kind.spawn(
+            BeforeStartProbeKind,
+            %{uri: uri, probe_pid: parent, probe_result: :block},
+            launch_context: launch_context
+          )
+        end)
+
+      assert_receive {:before_start_entered, server_pid, ^launch_context}
+      assert nil == KindSnapshot.get(uri_str)
+      assert :error == Ezagent.KindRegistry.lookup(uri)
+      assert :unknown == Ezagent.ReadyGate.status(uri_str)
+
+      send(server_pid, :release_before_start)
+      assert {:ok, ^server_pid} = Task.await(task)
+      assert %KindSnapshot{kind_type: "before_start_probe"} = KindSnapshot.get(uri_str)
+      assert {:ok, ^server_pid} = Ezagent.KindRegistry.lookup(uri)
+    end
+
+    test "rejection leaves no snapshot, readiness registration, or live Kind" do
+      uri =
+        Ezagent.URI.new!(
+          "entity://team-alpha/agent/test_before-start-reject-#{System.unique_integer([:positive])}"
+        )
+
+      uri_str = URI.to_string(uri)
+
+      assert {:error, {:before_start_failed, :probe_rejected}} =
+               Ezagent.Kind.spawn(
+                 BeforeStartProbeKind,
+                 %{uri: uri, probe_pid: self(), probe_result: {:error, :probe_rejected}}
+               )
+
+      assert_receive {:before_start_entered, _server_pid}
+      assert nil == KindSnapshot.get(uri_str)
+      assert :error == Ezagent.KindRegistry.lookup(uri)
+      assert :unknown == Ezagent.ReadyGate.status(uri_str)
+    end
+  end
+
   describe "init writes initial snapshot for non-ephemeral Kinds" do
     test "{:snapshot, :on_change} — row exists immediately after spawn" do
       uri =

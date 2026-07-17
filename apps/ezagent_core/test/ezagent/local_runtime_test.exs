@@ -12,7 +12,7 @@ defmodule Ezagent.LocalRuntimeTest do
   """
   use ExUnit.Case, async: false
 
-  alias Ezagent.{KindRegistry, LocalRuntime, RuntimeIdentity, WorkspacePlacement}
+  alias Ezagent.{KindRegistry, LocalRuntime, RuntimeIdentity, SpawnRegistry, WorkspacePlacement}
 
   defmodule RemoteResolver do
     @behaviour Ezagent.WorkspacePlacement
@@ -38,6 +38,24 @@ defmodule Ezagent.LocalRuntimeTest do
   defp restore(key, val), do: Application.put_env(:ezagent_core, key, val)
 
   describe "single-node (default local owner)" do
+    test "ensure_started_detailed/2 delegates launch context unchanged" do
+      test_pid = self()
+      scheme = "local-runtime-opts-#{System.unique_integer([:positive])}"
+      launch_context = make_ref()
+
+      SpawnRegistry.register(scheme, fn uri, opts ->
+        send(test_pid, {:local_runtime_spawn, uri, opts})
+        {:ok, self()}
+      end)
+
+      uri = URI.parse("#{scheme}://x")
+
+      assert {:ok, :started, _pid} =
+               LocalRuntime.ensure_started_detailed(uri, launch_context: launch_context)
+
+      assert_receive {:local_runtime_spawn, ^uri, [launch_context: ^launch_context]}
+    end
+
     test "kind_alive?/1 is false for an unregistered URI (gate passes, lookup empty)", %{uri: uri} do
       refute LocalRuntime.kind_alive?(uri)
     end
@@ -77,6 +95,11 @@ defmodule Ezagent.LocalRuntimeTest do
     test "ensure_started_detailed/1 also returns the gate error, never spawns", %{uri: uri} do
       assert {:error, {:not_workspace_owner, _ws, "remote-node", "test-node-a", {:spawn, _}}} =
                LocalRuntime.ensure_started_detailed(uri)
+    end
+
+    test "ensure_started_detailed/2 preserves the owner-gate error", %{uri: uri} do
+      assert {:error, {:not_workspace_owner, _ws, "remote-node", "test-node-a", {:spawn, _}}} =
+               LocalRuntime.ensure_started_detailed(uri, launch_context: make_ref())
     end
   end
 end

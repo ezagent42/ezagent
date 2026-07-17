@@ -1,4 +1,6 @@
 defmodule Ezagent.Kind do
+  import Kernel, except: [spawn: 3]
+
   @moduledoc """
   Kind — contract for a Kind type module.
 
@@ -29,6 +31,8 @@ defmodule Ezagent.Kind do
     supervisors are encouraged when the Kind wants its own restart
     policy or domain-app ownership boundary.
   - `snapshot_version/0`: integer rev for snapshot schema migration.
+  - `before_start/1`: run a fallible hook before snapshot loading and live
+    registration. Runtime-only launch context is available only to this hook.
 
   ## V1 structural prevention (Phase 9 follow-up, Allen 2026-05-21)
 
@@ -54,6 +58,7 @@ defmodule Ezagent.Kind do
   @callback uri_from_args(args :: map()) :: URI.t()
   @callback snapshot_version() :: non_neg_integer()
   @callback supervisor() :: module()
+  @callback before_start(args :: map()) :: :ok | {:error, term()}
 
   @typedoc """
   Spawn-strategy override for Kinds that need a non-standard
@@ -190,7 +195,8 @@ defmodule Ezagent.Kind do
     spawn_strategy: 0,
     terminate_strategy: 0,
     holds_cap?: 2,
-    requires_explicit_behavior_set?: 0
+    requires_explicit_behavior_set?: 0,
+    before_start: 1
   ]
 
   @doc """
@@ -362,8 +368,15 @@ defmodule Ezagent.Kind do
 
       Ezagent.Kind.spawn(Ezagent.Entity.Session, %{uri: session_uri})
   """
-  @spec spawn(module(), map()) :: DynamicSupervisor.on_start_child()
-  def spawn(kind_module, params) when is_atom(kind_module) and is_map(params) do
+  @spec spawn(module(), map(), keyword()) :: DynamicSupervisor.on_start_child()
+  def spawn(kind_module, params, opts \\ [])
+      when is_atom(kind_module) and is_map(params) and is_list(opts) do
+    params =
+      case Keyword.fetch(opts, :launch_context) do
+        {:ok, launch_context} -> Map.put(params, :launch_context, launch_context)
+        :error -> params
+      end
+
     strategy = spawn_strategy(kind_module)
 
     result =

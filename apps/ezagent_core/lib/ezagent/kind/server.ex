@@ -108,6 +108,22 @@ defmodule Ezagent.Kind.Server do
     uri = Map.fetch!(args, :uri)
     uri_str = URI.to_string(uri)
 
+    with :ok <- run_before_start(kind_module, args) do
+      init_after_before_start(kind_module, Map.delete(args, :launch_context), uri, uri_str)
+    else
+      {:error, reason} -> {:stop, {:before_start_failed, reason}}
+    end
+  end
+
+  defp run_before_start(kind_module, args) do
+    if function_exported?(kind_module, :before_start, 1) do
+      kind_module.before_start(args)
+    else
+      :ok
+    end
+  end
+
+  defp init_after_before_start(kind_module, args, uri, uri_str) do
     # #108 — the snapshot READ is a DB access too; `Snapshot.safe_load_or_init/3`
     # surfaces sandbox-owner-death (OwnershipError/:exit) as a clean `{:stop,…}`
     # instead of an uncaught init crash, symmetric with the WRITE
