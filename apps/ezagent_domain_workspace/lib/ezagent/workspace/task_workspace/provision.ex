@@ -9,6 +9,7 @@ defmodule Ezagent.Workspace.TaskWorkspace.Provision do
     :planned,
     :provisioning,
     :ready,
+    :starting,
     :sidecar_started,
     :blocked,
     :cleanup_pending,
@@ -37,6 +38,10 @@ defmodule Ezagent.Workspace.TaskWorkspace.Provision do
     :lease_until,
     :start_token,
     :start_token_consumed_at,
+    :start_claim_token,
+    :start_lease_until,
+    :resolved_base_commit,
+    :local_branch_ref,
     :attempts,
     :blocker_code,
     :cleanup_reason,
@@ -65,6 +70,10 @@ defmodule Ezagent.Workspace.TaskWorkspace.Provision do
     field(:lease_until, :utc_datetime_usec)
     field(:start_token, :string)
     field(:start_token_consumed_at, :utc_datetime_usec)
+    field(:start_claim_token, :string)
+    field(:start_lease_until, :utc_datetime_usec)
+    field(:resolved_base_commit, :string)
+    field(:local_branch_ref, :string)
     field(:attempts, :integer, default: 0)
     field(:blocker_code, :string)
     field(:cleanup_reason, :string)
