@@ -42,7 +42,7 @@ defmodule EzagentCore.Invariants.RecipeCapBindingInvariantTest do
 
     assert ordered?(materialize, "bind_recipe_caps", "spawn_bound_agent")
 
-    spawn = definition_source(@materializer, :spawn_bound_agent, 8)
+    spawn = definition_source(@materializer, :spawn_bound_agent, 9)
     assert spawn =~ "spawn_agent"
     assert spawn =~ "compensate_recipe_binding"
 
