@@ -94,12 +94,12 @@ IO.puts("  passwords set (both users: e2etest123)")
 IO.puts("[2/4] Creating curl agent (no API key — will trigger {:no_api_key})...")
 
 # Determine workspace — use the admin's workspace
-{:ok, admin_ws} = Ezagent.Workspace.Store.get_by_name("system")
+admin_ws = Ezagent.Workspace.Store.get_by_name("system")
 IO.puts("  workspace: #{URI.to_string(admin_ws.uri)}")
 
 # Create a curl agent via provisioning
 agent_name = "g5-e2e-agent-#{:os.system_time(:second)}"
-{:ok, agent_uri} = Ezagent.Workspace.Provisioning.create_agent(
+{:ok, %{agent_uri: agent_uri}} = Ezagent.Workspace.Provisioning.create_agent(
   admin_ws.uri,
   %{name: agent_name, flavor: "curl"},
   %{caller: founder_uri, caps: MapSet.new()}
