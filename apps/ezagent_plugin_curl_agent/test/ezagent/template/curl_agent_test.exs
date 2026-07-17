@@ -1,14 +1,49 @@
 defmodule Ezagent.PluginCurlAgent.TemplateTest do
-  use ExUnit.Case, async: true
+  use EzagentCore.DataCase, async: false
 
   alias Ezagent.PluginCurlAgent.Template
 
-  test "instantiate/4 accepts only launch_context and instantiate/3 remains available" do
+  test "instantiate/4 forwards the identical launch context to Kind.spawn/3" do
+    launch_context = make_ref()
+    suffix = System.unique_integer([:positive])
+
+    tmpl = %{
+      "class" => "curl.agent",
+      "agent_uri" => "entity://test/agent/curl-launch-#{suffix}",
+      "provider" => "test",
+      "api_url" => "https://example.invalid/chat",
+      "model" => "test-model"
+    }
+
+    Ezagent.Agent.TemplateLaunchTrace.trace_call(Ezagent.Kind, :spawn, 3, fn ->
+      assert {:error, _reason} =
+               Template.instantiate("test", tmpl, URI.new!("workspace://test"),
+                 launch_context: launch_context
+               )
+
+      assert_receive {:trace, _, :call,
+                      {Ezagent.Kind, :spawn,
+                       [Ezagent.Entity.Agent, _, [launch_context: ^launch_context]]}}
+    end)
+  end
+
+  test "instantiate/3 remains available and sole-option validation uses valid data" do
     assert function_exported?(Template, :instantiate, 3)
     assert function_exported?(Template, :instantiate, 4)
 
+    assert {:error, {:invalid_template, %{}}} =
+             Template.instantiate("test", %{}, URI.new!("workspace://test"))
+
+    tmpl = %{
+      "class" => "curl.agent",
+      "agent_uri" => "entity://test/agent/curl-invalid-options",
+      "provider" => "test",
+      "api_url" => "https://example.invalid/chat",
+      "model" => "test-model"
+    }
+
     assert {:error, :invalid_launch_options} =
-             Template.instantiate("test", %{}, URI.new!("workspace://test"),
+             Template.instantiate("test", tmpl, URI.new!("workspace://test"),
                launch_context_typo: make_ref()
              )
   end
