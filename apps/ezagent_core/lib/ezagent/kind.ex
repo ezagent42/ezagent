@@ -36,7 +36,7 @@ defmodule Ezagent.Kind do
 
   ## V1 structural prevention (Phase 9 follow-up, Allen 2026-05-21)
 
-  All Kind processes must be spawned via `Ezagent.Kind.spawn/2` — the
+  All Kind processes must be spawned via `Ezagent.Kind.spawn/2,3` — the
   sole programmatic entry. Direct `DynamicSupervisor.start_child` for
   Kind modules is caught by the CI gate
   `Ezagent.Invariants.SingleSpawnEntryTest` plus the runtime invariant
@@ -339,6 +339,11 @@ defmodule Ezagent.Kind do
   @doc """
   The SOLE programmatic entry for spawning a Kind process.
 
+  `spawn/3` accepts only `launch_context: opaque_term`. Unknown options fail
+  closed. The context is made available solely to `before_start/1` on the
+  winning initial start; it is absent from behavior initialization, live state,
+  snapshots, and permanent-child restarts.
+
   Determines the target `DynamicSupervisor` via `kind_module.supervisor/0`
   (each Kind declares its own; defaults to `Ezagent.KindSupervisor`
   when not defined). Calls `DynamicSupervisor.start_child/2` with the
@@ -368,13 +373,24 @@ defmodule Ezagent.Kind do
 
       Ezagent.Kind.spawn(Ezagent.Entity.Session, %{uri: session_uri})
   """
-  @spec spawn(module(), map(), keyword()) :: DynamicSupervisor.on_start_child()
+  @spec spawn(module(), map(), keyword()) ::
+          DynamicSupervisor.on_start_child() | {:error, [atom()]}
   def spawn(kind_module, params, opts \\ [])
       when is_atom(kind_module) and is_map(params) and is_list(opts) do
-    params =
+    with {:ok, validated_opts} <- Keyword.validate(opts, [:launch_context]) do
+      do_spawn(kind_module, params, validated_opts)
+    end
+  end
+
+  defp do_spawn(kind_module, params, opts) do
+    {params, launch_token} =
       case Keyword.fetch(opts, :launch_context) do
-        {:ok, launch_context} -> Map.put(params, :launch_context, launch_context)
-        :error -> params
+        :error ->
+          {params, nil}
+
+        {:ok, launch_context} ->
+          token = Ezagent.Kind.LaunchContextStore.issue(launch_context)
+          {Map.put(params, :launch_context_token, token), token}
       end
 
     strategy = spawn_strategy(kind_module)
@@ -394,6 +410,8 @@ defmodule Ezagent.Kind do
           # {:already_started, pid}}`.
           apply(mod, fun, [params])
       end
+
+    if launch_token, do: Ezagent.Kind.LaunchContextStore.discard(launch_token)
 
     # Readiness contract (remediation SPEC 2026-05-30 C-A): a `Kind.Server`
     # returns from `start_child` BEFORE its post-init/`activate` phase

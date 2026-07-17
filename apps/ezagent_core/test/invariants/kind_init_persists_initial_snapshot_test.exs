@@ -32,12 +32,25 @@ defmodule Ezagent.Invariants.KindInitPersistsInitialSnapshotTest do
   """
 
   use EzagentCore.DataCase, async: false
+  import ExUnit.CaptureLog
 
   # #52 Mode-A: cross-tier suite — references sibling-app modules; resolves
   # only in the umbrella. Excluded standalone (`cd apps/ezagent_core && mix test`).
   @moduletag :umbrella_only
 
   alias Ezagent.Ecto.KindSnapshot
+
+  defmodule LaunchVisibilityProbeBehavior do
+    @behaviour Ezagent.ActionSet
+    def actions, do: []
+    def interface, do: %{}
+    def required_caps, do: %{}
+    def cap_subjects, do: []
+    def state_slice, do: :launch_visibility_probe
+    def persistence, do: :ephemeral
+    def init_slice(args), do: %{saw_launch_context?: Map.has_key?(args, :launch_context)}
+    def data_owner(_), do: :any
+  end
 
   defmodule BeforeStartProbeKind do
     @behaviour Ezagent.Kind
@@ -46,7 +59,7 @@ defmodule Ezagent.Invariants.KindInitPersistsInitialSnapshotTest do
     def type_name, do: :before_start_probe
 
     @impl Ezagent.Kind
-    def behaviors, do: [Ezagent.Test.TestBehavior]
+    def behaviors, do: [LaunchVisibilityProbeBehavior]
 
     @impl Ezagent.Kind
     def persistence, do: {:snapshot, :on_change}
@@ -63,6 +76,11 @@ defmodule Ezagent.Invariants.KindInitPersistsInitialSnapshotTest do
       receive do
         :release_before_start -> :ok
       end
+    end
+
+    def before_start(%{probe_pid: probe_pid} = args) do
+      send(probe_pid, {:before_start_entered, self(), Map.get(args, :launch_context, :absent)})
+      :ok
     end
   end
 
@@ -115,6 +133,74 @@ defmodule Ezagent.Invariants.KindInitPersistsInitialSnapshotTest do
       assert nil == KindSnapshot.get(uri_str)
       assert :error == Ezagent.KindRegistry.lookup(uri)
       assert :unknown == Ezagent.ReadyGate.status(uri_str)
+    end
+
+    test "supervised replacement does not replay context and behavior/live state cannot see it" do
+      uri =
+        Ezagent.URI.new!(
+          "entity://team-alpha/agent/test_before-start-restart-#{System.unique_integer([:positive])}"
+        )
+
+      launch_context = make_ref()
+
+      assert {:ok, pid} =
+               Ezagent.Kind.spawn(
+                 BeforeStartProbeKind,
+                 %{uri: uri, probe_pid: self(), probe_result: :ok},
+                 launch_context: launch_context
+               )
+
+      assert_receive {:before_start_entered, ^pid, ^launch_context}
+      refute inspect(:sys.get_state(pid)) =~ inspect(launch_context)
+      assert %{launch_visibility_probe: %{saw_launch_context?: false}} = :sys.get_state(pid).state
+
+      snapshot = KindSnapshot.get(URI.to_string(uri))
+      refute inspect(:erlang.binary_to_term(snapshot.state_binary)) =~ inspect(launch_context)
+
+      ref = Process.monitor(pid)
+      Process.exit(pid, :kill)
+      assert_receive {:DOWN, ^ref, :process, ^pid, :killed}
+
+      assert_receive {:before_start_entered, replacement, :absent}
+      assert replacement != pid
+      refute_receive {:before_start_entered, ^replacement, ^launch_context}
+    end
+
+    test "Kind.spawn/3 rejects unknown options before starting a child" do
+      uri =
+        Ezagent.URI.new!(
+          "entity://team-alpha/agent/test_before-start-options-#{System.unique_integer([:positive])}"
+        )
+
+      assert {:error, [:launch_context_typo]} =
+               Ezagent.Kind.spawn(
+                 BeforeStartProbeKind,
+                 %{uri: uri, probe_pid: self(), probe_result: :ok},
+                 launch_context_typo: make_ref()
+               )
+
+      refute_receive {:before_start_entered, _, _}
+    end
+
+    test "rejection output does not expose the launch handle" do
+      uri =
+        Ezagent.URI.new!(
+          "entity://team-alpha/agent/test_before-start-redaction-#{System.unique_integer([:positive])}"
+        )
+
+      launch_context = make_ref()
+
+      output =
+        capture_log(fn ->
+          assert {:error, {:before_start_failed, :probe_rejected}} =
+                   Ezagent.Kind.spawn(
+                     BeforeStartProbeKind,
+                     %{uri: uri, probe_pid: self(), probe_result: {:error, :probe_rejected}},
+                     launch_context: launch_context
+                   )
+        end)
+
+      refute output =~ inspect(launch_context)
     end
   end
 
