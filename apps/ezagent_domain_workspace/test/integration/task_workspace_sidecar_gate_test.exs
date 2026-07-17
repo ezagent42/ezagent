@@ -382,6 +382,51 @@ defmodule Ezagent.Workspace.TaskWorkspace.SidecarGateTest do
     refute_receive {:retire_agent, _, _}
   end
 
+  test "late claimant completion cannot mutate a takeover claim" do
+    agent_uri =
+      Ezagent.URI.agent("sidecar-gate", "takeover-#{System.unique_integer([:positive])}")
+
+    ready = ready_row(agent_uri)
+
+    assert {:ok, first} =
+             Store.claim_start(ready.id, ready.start_token,
+               now: at(0),
+               lease_seconds: 30
+             )
+
+    assert {:ok, second} =
+             Store.claim_start(ready.id, ready.start_token,
+               now: at(30),
+               lease_seconds: 60
+             )
+
+    outcomes = [
+      {:error, :instantiate_failed},
+      {:ok,
+       %{
+         workers: [Ezagent.URI.agent("sidecar-gate", "wrong-worker")],
+         fresh?: true
+       }}
+    ]
+
+    for outcome <- outcomes do
+      before = Store.get(ready.id)
+
+      assert {:error, :sidecar_start_claim_lost} =
+               PreStart.complete({first.id, first.start_claim_token}, outcome)
+
+      after_completion = Store.get(ready.id)
+      assert after_completion.status == before.status
+      assert after_completion.start_claim_token == second.start_claim_token
+      assert after_completion.start_claim_token == before.start_claim_token
+      assert after_completion.start_lease_until == before.start_lease_until
+      assert after_completion.state_version == before.state_version
+      refute_receive {:retire_agent, _, _}
+      refute_receive {:git_remove, _, _}
+      refute_receive {:git_verify_absent, _, _}
+    end
+  end
+
   defp ready_row(agent_uri \\ Ezagent.URI.agent("sidecar-gate", "reserved-worker")) do
     {:ok, planned} = Store.create_planned(attrs())
     {:ok, claimed} = Store.claim_provision(planned.id, lease_seconds: 135)
@@ -469,6 +514,7 @@ defmodule Ezagent.Workspace.TaskWorkspace.SidecarGateTest do
   end
 
   defp canonical_cwd, do: "/tmp/task-workspace-proof"
+  defp at(seconds), do: DateTime.add(~U[2026-07-17 00:00:00.000000Z], seconds, :second)
 
   defp start_ref(provision_id, generation) do
     %Ref{

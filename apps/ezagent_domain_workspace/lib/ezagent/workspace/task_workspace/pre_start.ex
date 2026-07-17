@@ -51,7 +51,7 @@ defmodule Ezagent.Workspace.TaskWorkspace.PreStart do
            }) do
       :ok
     else
-      _reason -> request_cleanup(id, :sidecar_start_ambiguous)
+      _reason -> fail_start(id, start_token, :sidecar_start_ambiguous)
     end
   end
 
@@ -62,8 +62,8 @@ defmodule Ezagent.Workspace.TaskWorkspace.PreStart do
     end
   end
 
-  def complete({id, _start_token}, {:error, _reason}) do
-    request_cleanup(id, :sidecar_start_failed)
+  def complete({id, start_token}, {:error, _reason}) do
+    fail_start(id, start_token, :sidecar_start_failed)
   end
 
   def complete(_claim, _outcome), do: {:error, :invalid_task_workspace_start_claim}
@@ -152,10 +152,16 @@ defmodule Ezagent.Workspace.TaskWorkspace.PreStart do
     div(GitRunner.maximum_provision_duration_ms() + @start_lease_safety_ms + 999, 1_000)
   end
 
-  defp request_cleanup(id, reason) do
-    case Store.request_cleanup(id, reason) do
-      {:ok, _classification, _row} -> :ok
-      {:error, cleanup_reason} -> {:error, cleanup_reason}
+  defp fail_start(id, start_token, reason) do
+    case Store.fail_start(id, start_token, reason) do
+      {:ok, _pending} ->
+        :ok
+
+      {:error, lost} when lost in [:sidecar_start_claim_lost, :invalid_start_transition] ->
+        {:error, :sidecar_start_claim_lost}
+
+      {:error, failure_reason} ->
+        {:error, failure_reason}
     end
   end
 

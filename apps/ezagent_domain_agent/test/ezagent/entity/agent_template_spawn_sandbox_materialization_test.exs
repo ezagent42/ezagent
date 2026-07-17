@@ -377,15 +377,17 @@ defmodule Ezagent.Entity.AgentTemplateSpawnSandboxMaterializationTest do
       refute_receive {:instantiate_called, _}
     end
 
-    test "authoritative cwd overwrites only transient instantiate data and completes success",
+    test "adopted pre-start rejects before overwriting flavor metadata",
          fixture do
       prepare_success()
+      :ok = Ezagent.AgentFlavorAttributes.put(fixture.instance_uri, "preexisting-flavor")
 
-      assert {:ok, %{fresh?: false}} = spawn_with_reference(fixture)
+      assert {:error, :sidecar_start_not_fresh} = spawn_with_reference(fixture)
       assert_receive {:instantiate_called, data}
       assert data["cwd"] == "/safe/task"
       refute Map.has_key?(fixture.content, :pre_start_ref)
       refute Map.has_key?(data, "pre_start_ref")
+      assert {:ok, "preexisting-flavor"} = Ezagent.AgentFlavorAttributes.get(fixture.instance_uri)
 
       assert_receive {:pre_start_complete, "claim-one",
                       {:ok, %{workers: [_worker], fresh?: false}}}
