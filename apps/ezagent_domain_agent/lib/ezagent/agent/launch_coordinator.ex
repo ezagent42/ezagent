@@ -7,14 +7,9 @@ defmodule Ezagent.Agent.LaunchCoordinator do
   happen only after commit and are consistency operations, never ownership.
   """
 
-  alias Ezagent.Agent.LaunchAuthority
+  alias Ezagent.Agent.{CreationInventory, LaunchAuthority}
   alias EzagentCore.Repo
 
-  @persistence Application.compile_env(
-                 :ezagent_domain_agent,
-                 :launch_persistence,
-                 Ezagent.Agent.LaunchPersistence.Production
-               )
   @post_commit_publisher Application.compile_env(
                            :ezagent_domain_agent,
                            :launch_post_commit_publisher,
@@ -90,14 +85,31 @@ defmodule Ezagent.Agent.LaunchCoordinator do
   end
 
   defp commit(facts) do
-    :ok = @persistence.before_transaction(facts)
-
     Repo.transaction(fn ->
-      case @persistence.persist(Repo, facts) do
-        {:ok, receipt} -> receipt
+      with :ok <- test_hook(:before_inventory, facts),
+           {:ok, _} <-
+             CreationInventory.record_exact(
+               Repo,
+               facts.attempt_id,
+               facts.agent_uri,
+               facts.root_uri,
+               facts.workspace_uri
+             ),
+           :ok <- test_hook(:before_lineage, facts),
+           {:ok, _} <-
+             Ezagent.AgentLineage.record_exact(Repo, facts.agent_uri, facts.root_uri),
+           :ok <- test_hook(:before_commit, facts) do
+        receipt(facts)
+      else
         {:error, reason} -> Repo.rollback(reason)
       end
     end)
+  end
+
+  if Mix.env() == :test do
+    defp test_hook(stage, facts), do: Ezagent.Agent.TestLaunchPersistence.hook(stage, facts)
+  else
+    defp test_hook(_stage, _facts), do: :ok
   end
 
   defp publish_after_commit(facts) do
@@ -111,6 +123,15 @@ defmodule Ezagent.Agent.LaunchCoordinator do
     catch
       _kind, _reason -> :ok
     end
+  end
+
+  defp receipt(facts) do
+    %{
+      attempt_id: facts.attempt_id,
+      agent_uri: facts.agent_uri,
+      root_uri: facts.root_uri,
+      workspace_uri: facts.workspace_uri
+    }
   end
 
   defp fetch(facts, key) do

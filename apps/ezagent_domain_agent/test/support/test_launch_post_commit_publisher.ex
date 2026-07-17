@@ -28,7 +28,7 @@ defmodule Ezagent.Agent.TestLaunchPostCommitPublisher do
   end
 
   defp ensure_started do
-    case Agent.start_link(fn -> %{} end, name: __MODULE__) do
+    case Agent.start(fn -> %{} end, name: __MODULE__) do
       {:ok, _pid} -> :ok
       {:error, {:already_started, _pid}} -> :ok
     end

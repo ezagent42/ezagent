@@ -45,11 +45,12 @@ defmodule Ezagent.Agent.LaunchCoordinatorTest do
     caller = spawn_kind(facts, handle)
     assert_receive {:before_commit, attempt_id, transaction_pid}
     assert attempt_id == facts.attempt_id
-    assert_absent_live_surfaces(facts.agent_uri)
-    assert_no_durable_facts(facts)
+    assert_absent_runtime_surfaces(facts.agent_uri)
+    assert_transaction_invisible(facts)
 
     send(transaction_pid, :release_commit)
     assert_receive {:spawn_result, ^caller, {:ok, child}}
+    assert_exact_durable_facts(facts)
     assert {:ok, ^child} = Ezagent.KindRegistry.lookup(facts.agent_uri)
     :ok = DynamicSupervisor.terminate_child(Ezagent.Entity.Agent.supervisor(), child)
   end
@@ -305,9 +306,39 @@ defmodule Ezagent.Agent.LaunchCoordinatorTest do
   end
 
   defp assert_absent_live_surfaces(agent_uri) do
+    assert_absent_runtime_surfaces(agent_uri)
+    assert nil == Ezagent.Ecto.KindSnapshot.get(URI.to_string(agent_uri))
+  end
+
+  defp assert_absent_runtime_surfaces(agent_uri) do
     assert :error = Ezagent.KindRegistry.lookup(agent_uri)
     assert :unknown = Ezagent.ReadyGate.status(URI.to_string(agent_uri))
-    assert nil == Ezagent.Ecto.KindSnapshot.get(URI.to_string(agent_uri))
+  end
+
+  defp assert_transaction_invisible(facts) do
+    connection_options = Keyword.drop(Repo.config(), [:pool, :pool_size])
+    {:ok, connection} = Postgrex.start_link(connection_options)
+
+    assert %{rows: [[0]]} =
+             Postgrex.query!(
+               connection,
+               "SELECT count(*) FROM kind_snapshots WHERE uri = $1",
+               [URI.to_string(facts.agent_uri)]
+             )
+
+    assert %{rows: [[0]]} =
+             Postgrex.query!(
+               connection,
+               "SELECT count(*) FROM agent_creation_inventory WHERE creation_attempt_id = $1 AND agent_uri = $2",
+               [facts.attempt_id, URI.to_string(facts.agent_uri)]
+             )
+
+    assert %{rows: [[0]]} =
+             Postgrex.query!(
+               connection,
+               "SELECT count(*) FROM agent_lineage WHERE agent_uri = $1",
+               [URI.to_string(facts.agent_uri)]
+             )
   end
 
   defp assert_no_durable_facts(facts) do
