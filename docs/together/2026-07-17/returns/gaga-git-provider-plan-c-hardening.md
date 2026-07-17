@@ -229,3 +229,28 @@ no project-wide success is claimed.
 - Node-local cache locking is not cross-node serialization; durable fencing is
   authoritative across competing workers.
 - No integration action, push, merge, rebase, or deployment was performed.
+
+## Final stale-completion and adopted-worker correction
+
+Commit `ba8ccd4ac` fences every TaskWorkspace pre-start completion with the
+exact start-claim token. Both instantiate errors and successful results that
+fail validation now use `Store.fail_start/3`; a late claimant returns
+`:sidecar_start_claim_lost` and cannot change the takeover claimant's status,
+token, lease, or version, nor request cleanup.
+
+TemplateSpawn now treats `fresh?: false` under a trusted pre-start claim as a
+read-only rejection path. It skips sandbox and post-spawn obligations, restores
+the pre-existing flavor attribute after the core instantiate hook, revokes only
+the grant minted by this attempt, completes the pre-start claim, and returns
+exactly `{:error, :sidecar_start_not_fresh}`. Generic adopted flows without a
+pre-start claim keep their previous behavior.
+
+TDD RED reproduced both defects. GREEN observed the focused Agent suite at
+`14/0`, the focused Workspace suite at `16/0`, and the fresh full Workspace
+suite at `321/0`. Full Agent remained `154/1` at the same pre-existing
+ReadyGate/DLQ observation race. Invariant and lifecycle tasks passed. The
+architecture gate retained only the existing oversized-module baseline
+(`5/4`). A fresh precommit invocation compiled every umbrella application with
+warnings-as-errors and entered the test phase; concurrent agents sharing the
+build directory then made the later static rerun inconclusive, so no new
+project-wide green claim is made.
