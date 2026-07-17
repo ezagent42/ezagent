@@ -57,3 +57,13 @@
 - Exactly one Plan C forward migration remains: 04000. Its `up` adds nullable `remote_url`; its `down` removes it after dropping the dependent recovery index and restoring the pre-start status constraint.
 - The integration test uses actual provisioning, actual Git mutations, actual `AgentStart`, and the real production proof runner; only sidecar instantiate remains the established probe boundary.
 - The unrelated handoff remains untouched and untracked.
+
+## Singleton isolation follow-up
+
+- `task_workspace_signed_e2e_test.exs` now snapshots `CorePreStart` with its registry `:implementation` call before installing Workspace `PreStart`.
+- `on_exit` restores the exact captured module with `replace_for_test/1`; it restores `nil` only when the captured result was `{:error, :template_pre_start_not_registered}`. It no longer blindly clears a prior registration.
+- A separate isolation test was not added because `CorePreStart` exposes no public implementation getter; the setup uses the same internal registry query that production `prepare/1` uses, and full-suite order independence is the behavioral assertion.
+- Signed E2E command: `SHELL=/bin/bash mix test apps/ezagent_domain_workspace/test/integration/task_workspace_signed_e2e_test.exs` — 3 tests, 0 failures.
+- Three-file focused command: `SHELL=/bin/bash mix test apps/ezagent_domain_workspace/test/integration/task_workspace_signed_e2e_test.exs apps/ezagent_domain_workspace/test/integration/task_workspace_sidecar_gate_test.exs apps/ezagent_domain_workspace/test/ezagent/workspace/task_workspace/git_runner_test.exs` — 37 tests, 0 failures.
+- Full Workspace command: `SHELL=/bin/bash mix test apps/ezagent_domain_workspace/test` — 296 tests, 0 failures.
+- `mix format` completed for the integration test; final `git diff --check` is clean.
