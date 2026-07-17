@@ -102,10 +102,9 @@ defmodule Ezagent.World.Routes do
       path == "/plugins/kb" ->
         %{
           group: :workspace_plugins,
-          component: "plugins",
+          component: "kb",
           title: "Knowledge Base",
-          path: path,
-          focus_slug: "kb"
+          path: path
         }
 
       path == "/plugins/feishu/bindings" ->
