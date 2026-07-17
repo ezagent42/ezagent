@@ -154,34 +154,111 @@ defmodule Ezagent.Workspace.TaskWorkspace.StoreTest do
     assert Enum.count(results, &match?({:error, _}, &1)) == 7
   end
 
-  test "start token is single-use under concurrent claims" do
-    {:ok, row} = Store.create_planned(attrs())
-    {:ok, claimed} = Store.claim_provision(row.id, now: at(0), lease_seconds: 30)
+  test "claim_start moves ready to a leased starting state" do
+    ready = ready_row()
 
-    {:ok, ready} =
-      Store.mark_ready(row.id, claimed.claim_token, ready_attrs(claimed.state_version),
-        now: at(1)
-      )
+    assert {:ok, starting} =
+             Store.claim_start(ready.id, ready.start_token,
+               now: at(0),
+               lease_seconds: 30
+             )
+
+    assert starting.status == :starting
+    assert is_binary(starting.start_claim_token)
+    assert starting.start_token_consumed_at == at(0)
+    assert starting.start_lease_until == at(30)
+  end
+
+  test "stale start claimant cannot complete after lease takeover" do
+    ready = ready_row()
+    {:ok, first} = Store.claim_start(ready.id, ready.start_token, now: at(0), lease_seconds: 30)
+    {:ok, second} = Store.claim_start(ready.id, ready.start_token, now: at(31), lease_seconds: 30)
+
+    assert first.start_claim_token != second.start_claim_token
+
+    assert {:error, :sidecar_start_claim_lost} =
+             Store.mark_started(first.id, first.start_claim_token, retirement_handle(),
+               now: at(32)
+             )
+
+    assert {:ok, started} =
+             Store.mark_started(second.id, second.start_claim_token, retirement_handle(),
+               now: at(32)
+             )
+
+    assert started.status == :sidecar_started
+    assert started.start_claim_token == nil
+    assert started.start_lease_until == nil
+  end
+
+  test "current start claimant can renew and only it can fail into ambiguous cleanup" do
+    ready = ready_row()
+    {:ok, first} = Store.claim_start(ready.id, ready.start_token, now: at(0), lease_seconds: 30)
+    {:ok, second} = Store.claim_start(ready.id, ready.start_token, now: at(31), lease_seconds: 30)
+
+    assert {:error, :sidecar_start_claim_lost} =
+             Store.renew_start_claim(first.id, first.start_claim_token,
+               now: at(32),
+               lease_seconds: 30
+             )
+
+    assert {:ok, renewed} =
+             Store.renew_start_claim(second.id, second.start_claim_token,
+               now: at(32),
+               lease_seconds: 30
+             )
+
+    assert renewed.start_lease_until == at(62)
+
+    assert {:error, :sidecar_start_claim_lost} =
+             Store.fail_start(first.id, first.start_claim_token, :sidecar_start_failed,
+               now: at(33)
+             )
+
+    assert {:ok, pending} =
+             Store.fail_start(second.id, second.start_claim_token, :sidecar_start_failed,
+               now: at(33)
+             )
+
+    assert pending.status == :cleanup_pending
+    assert pending.cleanup_reason == "sidecar_start_failed"
+    assert pending.start_claim_token == nil
+    assert pending.start_lease_until == nil
+
+    assert {:ok, :ambiguous_or_live, ^pending} =
+             Store.request_cleanup(pending.id, :different_reason)
+  end
+
+  test "expired start holder cannot complete without takeover" do
+    ready = ready_row()
+
+    {:ok, starting} =
+      Store.claim_start(ready.id, ready.start_token, now: at(0), lease_seconds: 30)
+
+    assert {:error, :sidecar_start_claim_lost} =
+             Store.mark_started(starting.id, starting.start_claim_token, retirement_handle(),
+               now: at(31)
+             )
+
+    current = Repo.get!(Provision, ready.id)
+    assert current.status == :starting
+    assert current.start_claim_token == starting.start_claim_token
+  end
+
+  test "concurrent start claims have exactly one winner" do
+    ready = ready_row()
 
     results =
-      1..8
-      |> Task.async_stream(fn _ -> Store.claim_start(row.id, ready.start_token) end,
-        max_concurrency: 8,
+      1..20
+      |> Task.async_stream(
+        fn _ -> Store.claim_start(ready.id, ready.start_token, now: at(0), lease_seconds: 30) end,
+        max_concurrency: 20,
         timeout: :infinity
       )
       |> Enum.map(fn {:ok, result} -> result end)
 
     assert Enum.count(results, &match?({:ok, %Provision{}}, &1)) == 1
-    assert Enum.count(results, &(&1 == {:error, :start_token_consumed})) == 7
-
-    assert {:ok, started} =
-             Store.mark_started(row.id, ready.start_token, %{
-               agent_uri: "entity://acme/agent/worker",
-               creation_attempt_id: "attempt-1",
-               provenance_root_uri: "entity://acme/user/owner"
-             })
-
-    assert started.status == :sidecar_started
+    assert Enum.count(results, &(&1 == {:error, :start_already_claimed})) == 19
   end
 
   test "cleanup lease is exclusive, reclaimable, and token-bound" do
@@ -372,6 +449,26 @@ defmodule Ezagent.Workspace.TaskWorkspace.StoreTest do
       cache_identity: "cache-widgets-main",
       worktree_identity: "worktree-task-one-1",
       worktree_path: "/safe/workspaces/task-one-1"
+    }
+  end
+
+  defp ready_row do
+    {:ok, row} = Store.create_planned(attrs())
+    {:ok, claimed} = Store.claim_provision(row.id, now: at(-2), lease_seconds: 30)
+
+    {:ok, ready} =
+      Store.mark_ready(row.id, claimed.claim_token, ready_attrs(claimed.state_version),
+        now: at(-1)
+      )
+
+    ready
+  end
+
+  defp retirement_handle do
+    %{
+      agent_uri: "entity://acme/agent/worker",
+      creation_attempt_id: "attempt-1",
+      provenance_root_uri: "entity://acme/user/owner"
     }
   end
 

@@ -210,18 +210,19 @@ defmodule Ezagent.Workspace.TaskWorkspace.Store do
     end)
   end
 
-  @doc "Consumes the ready record's start token exactly once."
-  @spec claim_start(pos_integer(), String.t()) :: {:ok, Provision.t()} | {:error, term()}
-  def claim_start(id, start_token) when is_binary(start_token) do
+  @doc "Claims an unused or expired start operation with a fenced lease."
+  @spec claim_start(pos_integer(), String.t(), keyword()) ::
+          {:ok, Provision.t()} | {:error, term()}
+  def claim_start(id, start_token, opts \\ []) when is_binary(start_token) and is_list(opts) do
+    now = Keyword.get(opts, :now, DateTime.utc_now())
+    lease_seconds = Keyword.get(opts, :lease_seconds, 60)
+
     locked(id, fn
       %Provision{status: :ready, start_token: ^start_token, start_token_consumed_at: nil} = row ->
-        update_row(row, %{
-          state_version: row.state_version + 1,
-          start_token_consumed_at: DateTime.utc_now()
-        })
+        claim_start_lease(row, now, lease_seconds)
 
-      %Provision{status: :ready, start_token: ^start_token} ->
-        {:error, :start_token_consumed}
+      %Provision{status: :starting, start_token: ^start_token} = row ->
+        claim_expired_start(row, now, lease_seconds)
 
       %Provision{status: :ready} ->
         {:error, :start_token_mismatch}
@@ -231,38 +232,95 @@ defmodule Ezagent.Workspace.TaskWorkspace.Store do
     end)
   end
 
-  @doc "Records that sidecar instantiation succeeded for a consumed start token."
-  @spec mark_started(pos_integer(), String.t(), map()) ::
+  @doc "Records sidecar instantiation only for the current unexpired start claim."
+  @spec mark_started(pos_integer(), String.t(), map(), keyword()) ::
           {:ok, Provision.t()} | {:error, term()}
-  def mark_started(id, start_token, retirement_handle)
-      when is_binary(start_token) and is_map(retirement_handle) do
+  def mark_started(id, start_claim_token, retirement_handle, opts \\ [])
+
+  def mark_started(id, start_claim_token, retirement_handle, opts)
+      when is_binary(start_claim_token) and is_map(retirement_handle) and is_list(opts) do
+    now = Keyword.get(opts, :now, DateTime.utc_now())
+
     locked(id, fn
-      %Provision{
-        status: :ready,
-        start_token: ^start_token,
-        start_token_consumed_at: consumed_at
-      } = row
-      when not is_nil(consumed_at) ->
-        with {:ok, handle} <- retirement_handle(retirement_handle) do
+      %Provision{status: :starting, start_claim_token: ^start_claim_token} = row ->
+        with :ok <- current_start_lease(row, now),
+             {:ok, handle} <- retirement_handle(retirement_handle) do
           update_row(
             row,
-            Map.merge(handle, %{status: :sidecar_started, state_version: row.state_version + 1})
+            Map.merge(handle, %{
+              status: :sidecar_started,
+              state_version: row.state_version + 1,
+              start_claim_token: nil,
+              start_lease_until: nil
+            })
           )
         end
 
-      %Provision{status: :ready, start_token: ^start_token} ->
-        {:error, :start_token_not_claimed}
-
-      %Provision{status: :ready} ->
-        {:error, :start_token_mismatch}
+      %Provision{status: :starting} ->
+        {:error, :sidecar_start_claim_lost}
 
       %Provision{} ->
         {:error, :invalid_start_transition}
     end)
   end
 
-  def mark_started(_id, _start_token, _retirement_handle),
+  def mark_started(_id, _start_claim_token, _retirement_handle, _opts),
     do: {:error, :invalid_retirement_handle}
+
+  @doc "Moves only the current unexpired start claim into cleanup pending."
+  @spec fail_start(pos_integer(), String.t(), atom(), keyword()) ::
+          {:ok, Provision.t()} | {:error, term()}
+  def fail_start(id, start_claim_token, reason, opts \\ [])
+
+  def fail_start(id, start_claim_token, reason, opts)
+      when is_binary(start_claim_token) and is_atom(reason) and not is_nil(reason) and
+             is_list(opts) do
+    now = Keyword.get(opts, :now, DateTime.utc_now())
+
+    locked(id, fn
+      %Provision{status: :starting, start_claim_token: ^start_claim_token} = row ->
+        with :ok <- current_start_lease(row, now) do
+          update_row(row, %{
+            status: :cleanup_pending,
+            state_version: row.state_version + 1,
+            cleanup_reason: Atom.to_string(reason),
+            start_claim_token: nil,
+            start_lease_until: nil
+          })
+        end
+
+      %Provision{status: :starting} ->
+        {:error, :sidecar_start_claim_lost}
+
+      %Provision{} ->
+        {:error, :invalid_start_transition}
+    end)
+  end
+
+  def fail_start(_id, _start_claim_token, _reason, _opts),
+    do: {:error, :invalid_cleanup_reason}
+
+  @doc "Renews only the current unexpired start lease."
+  @spec renew_start_claim(pos_integer(), String.t(), keyword()) ::
+          {:ok, Provision.t()} | {:error, term()}
+  def renew_start_claim(id, start_claim_token, opts \\ []) do
+    now = Keyword.get(opts, :now, DateTime.utc_now())
+    lease_seconds = Keyword.get(opts, :lease_seconds, 60)
+
+    locked(id, fn
+      %Provision{status: :starting, start_claim_token: ^start_claim_token} = row ->
+        with :ok <- current_start_lease(row, now),
+             :ok <- valid_lease(now, lease_seconds) do
+          update_row(row, %{start_lease_until: DateTime.add(now, lease_seconds, :second)})
+        end
+
+      %Provision{status: :starting} ->
+        {:error, :sidecar_start_claim_lost}
+
+      %Provision{} ->
+        {:error, :invalid_start_transition}
+    end)
+  end
 
   defp retirement_handle(%{
          agent_uri: agent_uri,
@@ -302,7 +360,9 @@ defmodule Ezagent.Workspace.TaskWorkspace.Store do
                cleanup_reason: Atom.to_string(reason),
                claim_token: nil,
                lease_until: nil,
-               start_token: invalidate_unused_start_token(row)
+               start_token: invalidate_unused_start_token(row),
+               start_claim_token: nil,
+               start_lease_until: nil
              }) do
           {:ok, pending} -> {:ok, classification, pending}
           {:error, _reason} = error -> error
@@ -334,6 +394,9 @@ defmodule Ezagent.Workspace.TaskWorkspace.Store do
 
       %Provision{status: :ready, start_token_consumed_at: consumed_at}
       when not is_nil(consumed_at) ->
+        {:error, :start_ambiguous_or_live}
+
+      %Provision{status: :starting} ->
         {:error, :start_ambiguous_or_live}
 
       %Provision{status: :ready} ->
@@ -493,6 +556,35 @@ defmodule Ezagent.Workspace.TaskWorkspace.Store do
 
   defp invalidate_unused_start_token(%Provision{start_token_consumed_at: nil}), do: nil
   defp invalidate_unused_start_token(%Provision{start_token: token}), do: token
+
+  defp claim_expired_start(%Provision{start_lease_until: lease} = row, now, lease_seconds)
+       when not is_nil(lease) do
+    if DateTime.compare(lease, now) == :gt,
+      do: {:error, :start_already_claimed},
+      else: claim_start_lease(row, now, lease_seconds)
+  end
+
+  defp claim_expired_start(%Provision{} = row, now, lease_seconds),
+    do: claim_start_lease(row, now, lease_seconds)
+
+  defp claim_start_lease(row, now, lease_seconds) do
+    with :ok <- valid_lease(now, lease_seconds) do
+      update_row(row, %{
+        status: :starting,
+        state_version: row.state_version + 1,
+        start_token_consumed_at: row.start_token_consumed_at || now,
+        start_claim_token: Ecto.UUID.generate(),
+        start_lease_until: DateTime.add(now, lease_seconds, :second)
+      })
+    end
+  end
+
+  defp current_start_lease(%Provision{} = row, now) do
+    case current_lease(row.start_lease_until, now, :sidecar_start_claim_lost) do
+      :ok -> :ok
+      {:error, _reason} -> {:error, :sidecar_start_claim_lost}
+    end
+  end
 
   defp claim_provision_locked(
          %Provision{status: :provisioning, lease_until: lease} = row,
