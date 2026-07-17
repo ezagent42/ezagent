@@ -82,26 +82,17 @@ defmodule Ezagent.Workspace.TaskWorkspace.Provisioner do
   end
 
   defp load_policy(request, action) do
-    case Ezagent.Kind.get_slice(request.task_access_uri, :git_task_access) do
-      {:ok, %{policy: candidate}} ->
-        with {:ok, policy} <- GitTaskAccess.revalidate(candidate),
-             true <- GitTaskAccess.uri_from_args(policy) == request.task_access_uri,
-             :ok <-
-               GitTaskAccess.validate_invocation(policy, %{
-                 action: action,
-                 task_uri: request.task_uri,
-                 generation: request.generation
-               }) do
-          {:ok, policy}
-        else
-          _ -> {:error, :task_policy_mismatch}
-        end
-
-      {:error, :not_found} ->
-        {:error, :task_access_not_found}
-
-      _ ->
-        {:error, :task_access_not_found}
+    with {:ok, policy} <- GitTaskAccess.revalidate(request.task_policy),
+         true <- GitTaskAccess.uri_from_args(policy) == request.task_access_uri,
+         :ok <-
+           GitTaskAccess.validate_invocation(policy, %{
+             action: action,
+             task_uri: request.task_uri,
+             generation: request.generation
+           }) do
+      {:ok, policy}
+    else
+      _ -> {:error, :task_policy_mismatch}
     end
   rescue
     _ -> {:error, :task_policy_mismatch}
@@ -216,10 +207,10 @@ defmodule Ezagent.Workspace.TaskWorkspace.Provisioner do
     end)
   end
 
-  defp fail_claim(claimed, prepared, blocker) do
+  defp fail_claim(claimed, _prepared, blocker) do
     case Store.fail_provision(claimed.id, claimed.claim_token, blocker) do
-      {:ok, _pending} ->
-        if is_map(prepared), do: serialized_remove(prepared)
+      {:ok, pending} ->
+        _ = Reconciler.cleanup(pending.id, blocker)
         {:error, blocker}
 
       {:error, reason} when reason in [:provision_lease_lost, :provision_lease_expired] ->
@@ -228,12 +219,6 @@ defmodule Ezagent.Workspace.TaskWorkspace.Provisioner do
       {:error, _reason} ->
         {:error, blocker}
     end
-  end
-
-  defp serialized_remove(%{cache_identity: cache_identity} = prepared) do
-    CacheLock.with_lock(cache_identity, @cache_lock_timeout_ms, fn ->
-      runner().remove(prepared)
-    end)
   end
 
   defp normalize_failure(:worktree_verification_failed), do: :workspace_not_ready
@@ -303,7 +288,7 @@ defmodule Ezagent.Workspace.TaskWorkspace.Provisioner do
   defp git_request(request, policy) do
     repository = policy.repository
 
-    %{
+    base = %{
       workspace_uri: policy.workspace_uri,
       repository_uri: repository.repository_uri,
       remote_url: anonymous_remote(repository.provider_host, repository.owner_path),
@@ -313,6 +298,29 @@ defmodule Ezagent.Workspace.TaskWorkspace.Provisioner do
       allowed_head_ref: policy.allowed_head_ref,
       visibility: repository.visibility
     }
+
+    test_remote(base, request, policy)
+  end
+
+  if @test_env do
+    defp test_remote(base, request, policy) do
+      case Application.get_env(:ezagent_domain_workspace, :task_workspace_remote_builder) do
+        builder when is_function(builder, 2) ->
+          case builder.(request, policy) do
+            %{remote_url: remote_url, allow_local_fixture: true}
+            when is_binary(remote_url) ->
+              Map.merge(base, %{remote_url: remote_url, allow_local_fixture: true})
+
+            _ ->
+              base
+          end
+
+        _ ->
+          base
+      end
+    end
+  else
+    defp test_remote(base, _request, _policy), do: base
   end
 
   defp anonymous_remote(host, owner_path), do: "https://#{host}/#{owner_path}.git"

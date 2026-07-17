@@ -30,6 +30,15 @@ defmodule EzagentDomainWorkspace.TestSupport.FakeTaskWorkspaceGitRunner do
   def remove(ready) do
     owner = Application.fetch_env!(:ezagent_domain_workspace, :provisioner_test_owner)
     send(owner, {:git_remove, ready})
+
+    if Application.get_env(:ezagent_domain_workspace, :provisioner_test_remove_clears, false),
+      do:
+        Application.put_env(
+          :ezagent_domain_workspace,
+          :provisioner_test_verify_absent_result,
+          :ok
+        )
+
     Application.get_env(:ezagent_domain_workspace, :provisioner_test_remove_result, :ok)
   end
 

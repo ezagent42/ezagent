@@ -84,9 +84,9 @@ defmodule Ezagent.Workspace.TaskWorkspace.Store do
   def bind_start_intent(_provision_id, _intent), do: {:error, :invalid_sidecar_start_intent}
 
   defp intent_authority(agent_uri, root_uri, workspace_uri) do
-    with {:ok, agent} <- URI.new(agent_uri),
-         {:ok, root} <- URI.new(root_uri),
-         {:ok, workspace} <- URI.new(workspace_uri),
+    with {:ok, agent} <- Ezagent.URI.parse(agent_uri),
+         {:ok, root} <- Ezagent.URI.parse(root_uri),
+         {:ok, workspace} <- Ezagent.URI.parse(workspace_uri),
          true <- Ezagent.URI.scheme?(agent, :entity) and Ezagent.URI.type?(agent, :agent),
          true <- Ezagent.URI.workspace_of(agent) == workspace,
          true <- Ezagent.URI.workspace_of(root) == workspace do
@@ -433,18 +433,59 @@ defmodule Ezagent.Workspace.TaskWorkspace.Store do
   @spec list_recovery_candidates(pos_integer(), keyword()) :: [Provision.t()]
   def list_recovery_candidates(limit, opts \\ []) when is_integer(limit) and limit > 0 do
     now = Keyword.get(opts, :now, DateTime.utc_now())
+    effects = list_effect_recovery_candidates(limit, now: now)
+    effects ++ list_ready_recovery_candidates(max(limit - length(effects), 0))
+  end
+
+  @doc "Lists cleanup and expired provision effects before proof-only ready checks."
+  def list_effect_recovery_candidates(limit, opts \\ [])
+
+  def list_effect_recovery_candidates(limit, opts)
+      when is_integer(limit) and limit > 0 do
+    now = Keyword.get(opts, :now, DateTime.utc_now())
 
     Repo.all(
       from(p in Provision,
         where:
           (p.status == :provisioning and (is_nil(p.lease_until) or p.lease_until <= ^now)) or
             (p.status == :cleanup_pending and
-               (is_nil(p.lease_until) or p.lease_until <= ^now)) or
-            (p.status == :ready and is_nil(p.start_token_consumed_at)),
+               (is_nil(p.lease_until) or p.lease_until <= ^now)),
         order_by: [asc: p.inserted_at, asc: p.id],
         limit: ^limit
       )
     )
+  end
+
+  def list_effect_recovery_candidates(0, _opts), do: []
+
+  @doc "Lists bounded ready rows whose external proof must be checked."
+  def list_ready_recovery_candidates(limit) when is_integer(limit) and limit > 0 do
+    Repo.all(
+      from(p in Provision,
+        where: p.status == :ready and is_nil(p.start_token_consumed_at),
+        order_by: [asc: p.inserted_at, asc: p.id],
+        limit: ^limit
+      )
+    )
+  end
+
+  def list_ready_recovery_candidates(0), do: []
+
+  @doc "Returns the latest active lease deadline in one bounded recovery window."
+  def latest_active_recovery_lease_deadline(limit, opts \\ []) do
+    now = Keyword.get(opts, :now, DateTime.utc_now())
+
+    Repo.all(
+      from(p in Provision,
+        where:
+          p.status in [:provisioning, :cleanup_pending] and not is_nil(p.lease_until) and
+            p.lease_until > ^now,
+        order_by: [asc: p.lease_until],
+        limit: ^limit,
+        select: p.lease_until
+      )
+    )
+    |> Enum.max_by(&DateTime.to_unix(&1, :microsecond), fn -> nil end)
   end
 
   defp start_classification(%Provision{start_token_consumed_at: nil}), do: :never_started

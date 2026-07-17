@@ -20,6 +20,7 @@ defmodule Ezagent.Workspace.TaskWorkspace.ReconcilerTest do
     )
 
     Application.put_env(:ezagent_domain_workspace, :provisioner_test_verify_absent_result, :ok)
+    Application.delete_env(:ezagent_domain_workspace, :provisioner_test_verify_result)
 
     on_exit(fn ->
       for key <- [
@@ -29,7 +30,8 @@ defmodule Ezagent.Workspace.TaskWorkspace.ReconcilerTest do
             :task_workspace_retirement_result,
             :task_workspace_retirement_hook,
             :provisioner_test_verify_absent_result,
-            :provisioner_test_remove_result
+            :provisioner_test_remove_result,
+            :provisioner_test_verify_result
           ],
           do: Application.delete_env(:ezagent_domain_workspace, key)
     end)
@@ -44,6 +46,32 @@ defmodule Ezagent.Workspace.TaskWorkspace.ReconcilerTest do
     assert_receive {:git_verify_absent, %{worktree_path: path}}
     assert path == ready.worktree_path
     refute_receive {:retire_agent, _, _}
+  end
+
+  test "terminal cleanup retry is idempotent and performs no second effect" do
+    ready = ready_row()
+    assert {:ok, cleaned} = Reconciler.cleanup(ready.id, :task_cancelled)
+    assert_receive {:git_verify_absent, _}
+
+    assert {:ok, same} = Reconciler.cleanup(ready.id, :task_cancelled)
+    assert same.id == cleaned.id
+    assert same.cleaned_at == cleaned.cleaned_at
+    refute_receive {:git_verify_absent, _}
+  end
+
+  test "transient ready verification failure is non-destructive" do
+    ready = ready_row()
+
+    Application.put_env(
+      :ezagent_domain_workspace,
+      :provisioner_test_verify_result,
+      {:error, :git_command_timeout}
+    )
+
+    assert %{attempted: 1, cleaned: 0, failed: 1} = Reconciler.recover_once(limit: 1)
+    assert Repo.get!(Provision, ready.id).status == :ready
+    refute_receive {:git_remove, _}
+    refute_receive {:git_verify_absent, _}
   end
 
   test "ambiguous start transfers retirement evidence before Git cleanup" do
@@ -106,6 +134,15 @@ defmodule Ezagent.Workspace.TaskWorkspace.ReconcilerTest do
     assert %{attempted: 2, cleaned: 1, failed: 1} = Reconciler.recover_once(limit: 2)
     assert Repo.get!(Provision, good.id).status == :cleaned
     assert Repo.get!(Provision, bad.id).status == :ready
+  end
+
+  test "cleanup lane is not starved by older valid ready rows" do
+    for suffix <- ~w(valid-a valid-b valid-c), do: ready_row(suffix)
+    pending = planned_row("pending")
+    {:ok, :never_started, _pending} = Store.request_cleanup(pending.id, :task_cancelled)
+
+    assert %{attempted: 2, cleaned: 1} = Reconciler.recover_once(limit: 2)
+    assert Repo.get!(Provision, pending.id).status == :cleaned
   end
 
   defp ready_row(suffix \\ "one") do

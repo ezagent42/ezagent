@@ -326,7 +326,7 @@ defmodule Ezagent.Workspace.TaskWorkspace.GitRunner do
   end
 
   defp validate_https(remote) do
-    case URI.new(remote) do
+    case Ezagent.URI.strict_external_new(remote) do
       {:ok, %URI{userinfo: userinfo}} when not is_nil(userinfo) ->
         {:error, :remote_userinfo_not_allowed}
 

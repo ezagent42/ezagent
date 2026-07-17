@@ -7,7 +7,7 @@ defmodule Ezagent.DomainGit.WorkspaceProvisionPort.Request do
   """
 
   @enforce_keys [:task_access_uri, :task_uri, :generation, :operation, :provision_id]
-  defstruct @enforce_keys
+  defstruct @enforce_keys ++ [:task_policy]
 
   @fields @enforce_keys
 
@@ -16,7 +16,8 @@ defmodule Ezagent.DomainGit.WorkspaceProvisionPort.Request do
           task_uri: URI.t(),
           generation: non_neg_integer(),
           operation: Ezagent.DomainGit.WorkspaceProvisionPort.operation(),
-          provision_id: String.t()
+          provision_id: String.t(),
+          task_policy: Ezagent.Entity.GitTaskAccess.t() | nil
         }
 
   @doc "Builds a request only when every key belongs to the closed contract."
@@ -40,4 +41,13 @@ defmodule Ezagent.DomainGit.WorkspaceProvisionPort.Request do
   end
 
   def new(_attrs), do: {:error, :invalid_attributes}
+
+  @doc false
+  def new_authorized(attrs, %Ezagent.Entity.GitTaskAccess{} = task_policy) do
+    with {:ok, request} <- new(attrs) do
+      {:ok, %{request | task_policy: task_policy}}
+    end
+  end
+
+  def new_authorized(_attrs, _task_policy), do: {:error, :invalid_task_policy}
 end
