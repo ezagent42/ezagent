@@ -218,6 +218,11 @@ defmodule EzagentWeb.Socialware.KanbanShareControllerTest do
   defp workspace_of(%URI{host: ws}), do: URI.new!("workspace://#{ws}")
 
   defp sign_in(conn, ws, %URI{} = entity_uri) do
+    case Ezagent.Users.get_by_uri(entity_uri) do
+      nil -> {:ok, _user} = Ezagent.Users.create(URI.to_string(entity_uri), nil, [])
+      _user -> :ok
+    end
+
     Plug.Test.init_test_session(conn, %{
       "current_entity_uri" => URI.to_string(entity_uri),
       "current_workspace_uri" => "workspace://" <> ws
