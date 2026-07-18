@@ -47,6 +47,11 @@ export function ErrorMessageCard({error, onDismiss, onAction, onNavigate}: Error
         <div className="min-w-0 flex-1">
           <p className="font-medium text-foreground">{error.what}</p>
           <p className="mt-1 text-muted-foreground">{error.impact}</p>
+          {error.detail && (
+            <p className="mt-1.5 break-all font-mono text-xs text-muted-foreground/80" data-error-detail>
+              {error.detail}
+            </p>
+          )}
           {(error.primaryAction || error.secondaryAction) && (
             <div className="mt-2.5 flex flex-wrap items-center gap-2">
               {error.primaryAction && (

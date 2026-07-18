@@ -9,6 +9,9 @@ export type RenderedError = {
   what: string
   impact: string
   layer: ErrorLayer
+  // 具体错误内容(从 last_dispatch_status 的 raw reason 清理而来),
+  // 给用户/支持人员定位用;注册表文案只覆盖通用描述。
+  detail?: string
   primaryAction?: {
     label: string
     href?: string
@@ -86,8 +89,20 @@ function canFixPath(_entry: ErrorCode, user: CurrentUser): boolean {
 // "ok" / "idle" / null 一律清卡（成功 dispatch 覆盖旧的失败态）。
 export function errorCardForStatus(status: string | null | undefined, user: CurrentUser): RenderedError | null {
   if (!status || !status.startsWith(DISPATCH_ERROR_PREFIX)) return null
+  const reason = status.slice(DISPATCH_ERROR_PREFIX.length)
   const match = matchDispatchError(status)
-  return renderError(match.code, user)
+  const detail = errorDetail(reason)
+  return {...renderError(match.code, user), ...(detail ? {detail} : {})}
+}
+
+// 把后端 raw reason 清理成可展示的具体错误内容:去掉 Elixir inspect 的
+// 包装(最外层 {…}、atom 前缀冒号、字符串引号),保留 reason 本体。
+// 例:`{:already_exists, "entity://system/agent/x"}` → `already_exists, entity://system/agent/x`
+export function errorDetail(reason: string): string {
+  let detail = reason.trim()
+  if (detail.startsWith("{") && detail.endsWith("}")) detail = detail.slice(1, -1)
+  if (detail.startsWith(":")) detail = detail.slice(1)
+  return detail.replaceAll('"', "").trim()
 }
 
 export function categoryTone(category: ErrorCategory): "danger" | "warning" | "info" {

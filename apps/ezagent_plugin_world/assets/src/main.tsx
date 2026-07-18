@@ -34,6 +34,8 @@ type SlotManifest = {
 const SLOTS = (slotManifest as SlotManifest).slots
 // G5 错误 toast 自动消失时长(仿 LiveView flash 的轻量通知语义)。
 const ERROR_TOAST_AUTO_DISMISS_MS = 5000
+// 退出动画时长:到点后先播动画,播完才真正移除 toast 内容。
+const ERROR_TOAST_EXIT_MS = 180
 const FULL_BLEED_FAMILIES = new Set(["admin", "conversation", "kanban", "pty", "sessions", "workspace_plugins"])
 const FULL_BLEED_TYPES = new Set(["agents_table"])
 
@@ -170,6 +172,26 @@ function WorldApp({layout, state: initialState, pluginNav, caller, pushEvent, on
   const [errorCard, setErrorCard] = React.useState<RenderedError | null>(() =>
     errorCardForStatus(initialState?.last_dispatch_status, caller || {}),
   )
+  // toast 横向滑动:exiting=true 时播退出动画,动画结束才真正移除内容;
+  // toastSeq 每次出新卡 +1,作为 key 强制重挂载以重播进入动画。
+  const [toastExiting, setToastExiting] = React.useState(false)
+  const [toastSeq, setToastSeq] = React.useState(0)
+  const errorCardRef = React.useRef<RenderedError | null>(errorCard)
+  React.useEffect(() => {
+    errorCardRef.current = errorCard
+  }, [errorCard])
+
+  // 统一的出卡/收卡入口(稳定 identity,供各事件回调使用):
+  // 新卡 → 重置退出态并重播进入动画;null → 有卡时播退出动画而不是直接清空。
+  const applyErrorCard = React.useCallback((card: RenderedError | null) => {
+    if (card) {
+      setToastExiting(false)
+      setErrorCard(card)
+      setToastSeq((seq) => seq + 1)
+    } else if (errorCardRef.current) {
+      setToastExiting(true)
+    }
+  }, [])
 
   // 岛内发起的 world:dispatch 计数。后端对「相同 error 字符串」不会重复 patch
   // data 属性,所以跟随本次 dispatch 的 world:state 事件到达时,要主动重读
@@ -195,18 +217,28 @@ function WorldApp({layout, state: initialState, pluginNav, caller, pushEvent, on
     if (!registerDispatchStatusListener) return undefined
 
     registerDispatchStatusListener((status) => {
-      setErrorCard(errorCardForStatus(status, caller || {}))
+      applyErrorCard(errorCardForStatus(status, caller || {}))
     })
     return () => registerDispatchStatusListener(null)
-  }, [registerDispatchStatusListener, caller])
+  }, [registerDispatchStatusListener, caller, applyErrorCard])
 
-  // toast 自动消失:有新错误时重置计时,手动 dismiss 时一并清掉定时器。
+  // toast 自动消失:有新错误时重置计时;到点先播退出动画,动画结束才移除。
   React.useEffect(() => {
-    if (!errorCard) return undefined
+    if (!errorCard || toastExiting) return undefined
 
-    const timer = window.setTimeout(() => setErrorCard(null), ERROR_TOAST_AUTO_DISMISS_MS)
+    const timer = window.setTimeout(() => setToastExiting(true), ERROR_TOAST_AUTO_DISMISS_MS)
     return () => window.clearTimeout(timer)
-  }, [errorCard])
+  }, [errorCard, toastExiting])
+
+  React.useEffect(() => {
+    if (!toastExiting) return undefined
+
+    const timer = window.setTimeout(() => {
+      setErrorCard(null)
+      setToastExiting(false)
+    }, ERROR_TOAST_EXIT_MS)
+    return () => window.clearTimeout(timer)
+  }, [toastExiting])
 
   React.useEffect(() => {
     if (!onServerEvent) return undefined
@@ -226,9 +258,9 @@ function WorldApp({layout, state: initialState, pluginNav, caller, pushEvent, on
         // 本次 world:state 跟随岛内发起的 dispatch:以 dataset 里的最新
         // last_dispatch_status 为准(payload 不带这个 key)。
         pendingDispatch.current = false
-        setErrorCard(errorCardForStatus(getDispatchStatus?.() ?? null, caller || {}))
+        applyErrorCard(errorCardForStatus(getDispatchStatus?.() ?? null, caller || {}))
       } else if ("last_dispatch_status" in next) {
-        setErrorCard(errorCardForStatus(next.last_dispatch_status, caller || {}))
+        applyErrorCard(errorCardForStatus(next.last_dispatch_status, caller || {}))
       }
     })
 
@@ -238,7 +270,7 @@ function WorldApp({layout, state: initialState, pluginNav, caller, pushEvent, on
     })
 
     return undefined
-  }, [onServerEvent])
+  }, [onServerEvent, caller, getDispatchStatus, applyErrorCard])
 
   const components = [...(currentLayout.components || [])].sort(
     (a, b) => (a.placement?.y || 0) - (b.placement?.y || 0),
@@ -259,11 +291,16 @@ function WorldApp({layout, state: initialState, pluginNav, caller, pushEvent, on
       >
         {errorCard && (
           // 浮动 toast:fixed 定位不占文档流(与 core_components flash 同款
-          // right-4 + z-50 + w-80/sm:w-96 惯例),数秒后自动消失。
-          <div className="fixed right-4 top-4 z-50 w-80 max-w-[calc(100vw-2rem)] sm:w-96" data-world-error-toast>
+          // right-4 + z-50 + w-80/sm:w-96 惯例),数秒后自动消失;
+          // 出现/消失都做横向滑动(key=toastSeq 保证重复错误重播进入动画)。
+          <div
+            key={toastSeq}
+            className={`fixed right-4 top-4 z-50 w-80 max-w-[calc(100vw-2rem)] sm:w-96 ${toastExiting ? "world-toast-exit" : "world-toast-enter"}`}
+            data-world-error-toast
+          >
             <ErrorMessageCard
               error={errorCard}
-              onDismiss={() => setErrorCard(null)}
+              onDismiss={() => applyErrorCard(null)}
               onAction={(action, args) => sendEvent("world:dispatch", {action, args})}
               onNavigate={(href) => sendEvent("world:navigate", {to: href})}
             />

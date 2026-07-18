@@ -878,9 +878,12 @@ function AgentNewForm({state, onCreateAgent}: {state: IdentitiesState; onCreateA
     customCwdMissing ||
     missingRequiredConfigKeys.length > 0
 
+  // 依赖整个 state(每次 world:state 推送都是新对象),不能只依赖
+  // state.create_error——连续两次相同的错误文案相等,effect 不重跑,
+  // creating 会卡死导致后续提交被 submitDisabled 拦截。
   React.useEffect(() => {
     setCreating(false)
-  }, [state.create_error])
+  }, [state])
 
   const handleSubmit = (event: React.FormEvent) => {
     event.preventDefault()

@@ -1,5 +1,5 @@
 import {describe, expect, it} from "vitest"
-import {renderError, categoryTone, errorCardForStatus} from "./errorRenderer"
+import {renderError, categoryTone, errorCardForStatus, errorDetail} from "./errorRenderer"
 
 describe("renderError", () => {
   it("renders Layer 1 when user can fix", () => {
@@ -53,6 +53,22 @@ describe("errorCardForStatus", () => {
     const card = errorCardForStatus('error:{:already_exists, "entity://system/agent/x"}', {is_system_member: true})
     expect(card?.code).toBe("unknown")
     expect(card?.layer).toBe(3)
+  })
+
+  it("attaches the cleaned raw reason as detail", () => {
+    const tuple = errorCardForStatus('error:{:already_exists, "entity://system/agent/x"}', {})
+    expect(tuple?.detail).toBe("already_exists, entity://system/agent/x")
+
+    const atom = errorCardForStatus("error:no_api_key", {})
+    expect(atom?.detail).toBe("no_api_key")
+  })
+})
+
+describe("errorDetail", () => {
+  it("strips Elixir inspect wrapping", () => {
+    expect(errorDetail('{:already_exists, "entity://system/agent/x"}')).toBe("already_exists, entity://system/agent/x")
+    expect(errorDetail(":script_immutable")).toBe("script_immutable")
+    expect(errorDetail("bad_member_uri")).toBe("bad_member_uri")
   })
 })
 
