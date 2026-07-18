@@ -113,6 +113,19 @@ defmodule Ezagent.CapabilityRegistryTest do
   end
 
   describe "register/3 — idempotency + conflict" do
+    test "register_owned atomically distinguishes acquired from identical ownership" do
+      action = :mock_test_action_d2
+      :ok = CapabilityRegistry.unregister(Session, action, MockDispatchableBehavior)
+
+      assert :acquired =
+               CapabilityRegistry.register_owned(Session, action, MockDispatchableBehavior)
+
+      assert :existing_identical =
+               CapabilityRegistry.register_owned(Session, action, MockDispatchableBehavior)
+
+      assert {:ok, MockDispatchableBehavior} = BehaviorRegistry.lookup(Session, action)
+    end
+
     test "same (kind, action, behavior) triple twice is idempotent (no raise)" do
       :ok = CapabilityRegistry.register(Session, :mock_test_action_d2, MockDispatchableBehavior)
       :ok = CapabilityRegistry.register(Session, :mock_test_action_d2, MockDispatchableBehavior)

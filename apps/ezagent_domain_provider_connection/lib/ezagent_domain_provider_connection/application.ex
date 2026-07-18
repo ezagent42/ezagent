@@ -29,20 +29,15 @@ defmodule EzagentDomainProviderConnection.Application do
 
   defp register_actions do
     Enum.reduce_while(ProviderConnection.actions(), {:ok, []}, fn action, {:ok, owned} ->
-      case CapabilityRegistry.lookup_subject(User, action) do
-        {:ok, %{behavior: ProviderConnection}} ->
+      case CapabilityRegistry.register_owned(User, action, ProviderConnection) do
+        :existing_identical ->
           {:cont, {:ok, owned}}
 
-        :error ->
-          try do
-            :ok = CapabilityRegistry.register(User, action, ProviderConnection)
-            {:cont, {:ok, [action | owned]}}
-          rescue
-            error -> {:halt, {:error, error, owned}}
-          end
+        :acquired ->
+          {:cont, {:ok, [action | owned]}}
 
-        {:ok, subject} ->
-          {:halt, {:error, {:action_conflict, action, subject.behavior}, owned}}
+        {:error, reason} ->
+          {:halt, {:error, reason, owned}}
       end
     end)
   end
