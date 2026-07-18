@@ -69,6 +69,42 @@ builtin `chat` definition 的全部内容:`name: "chat", bases: Session.chat_beh
 
 ---
 
-## 四、一句话总结
+## 四、倒转方案验证(2026-07-18 续:「把 kanban 操作物化成 Message」可行性四点实证)
+
+> 用户模型倒转:「过滤」只是显示层(kanban tab 操作=对 kanban-manager 说话,不必显示在 chat);真正的 X 是 kanban 操作**没有物化成消息**。若 attach_artifact 物化为 Message(人↔板对话的一次发言、带附件),现有「Message 参与者」下载授权原样成立,契约零改动。逐点验证:
+
+### 4.1 消息物化点:现在零 Message,最小物化改动在 plugin 层,不撞 P14/RF-6
+
+- **现状确认**:kanban 写动作(含 attach_artifact)全程零 Message 行。UI 路径 `world_actions.ex:175-198 act()` → `Invocation.dispatch` → 板 `:kanban` slice `:set`;dispatch 层的留痕只有 EventLog 审计(`apps/ezagent_core/lib/ezagent/router.ex:247-257`,`:router_dispatch_ok` append,非 Message)。Message 的唯二写点都在 domain_session:`behavior/session.ex:578`(handle_send)和 `behavior/turn.ex:604`。
+- **最小物化改动**:kanban `world_actions` 在 act 成功路径补一发 `session.send` dispatch——sender=**人**(当前登录者,非板),`body.attachments=[upload_uri]`,`hops: 0`,`visibility: :internal`。纯 plugin 层,零 core 改动。
+- **P14 干净**:走 dispatch 唯一路径,人持自己的 session member cap(人本来就在这个 session)。**RF-6 不撞**:RF-6 挡的是 passive actor 作 chat **receiver**(resolver.ex:234-242 fan-out 末端过滤);此处板既非 sender 也非 receiver——`hops: 0` 时 handle_send **存了但整个跳过 fan-out**(session.ex:613-615,`stored: true, dropped: :hop_exhausted`),没有任何 recipient 被铸 `:receive` cap。Message.sender 类型上允许 entity://agent(message.ex:69,`sender: %URI{}` 无 scheme 限制),但板无需发言、也没有 send cap,不必作对话方入表。
+- **覆盖缺口(诚实)**:cc assistant 经 composition operate 边直接 dispatch 的 attach 不经 world UI,不会物化——UI 层物化天然只覆盖人手操作。
+
+### 4.2 对话容器:(a) 当前 session 机制现成但参与≠钥匙;(b) 板容器机制勉强能装但三处失洽
+
+- **(a) 当前 session**:机制零改动。但「参与者」在 serve-time 复查里=该 session **发过言的人**(`uploads_controller.ex:149-154`,`caller_sent_in_any_session?`——连从没发言的正式成员都 403),与㊵「参与=持钥」不一致的场景:①潜水成员;②人本位分享后的跨 session 点击者(见 4.4)。
+- **(b) 板自身作容器**:表机制上**勉强**能装——`messages.session_uri` 只是 Ecto.URI 列,entity:// URI 也能派生 workspace(`uri.ex:710-714`,`workspace_of(%URI{scheme: "entity"})`→ `MessageStore.write/2:73` 的 `workspace_uri_for!` 不 raise)。但三处失洽:①板是 passive native agent,不消费 `ActionSet.Session`,**没有 send dispatch 可走**→只能 MessageStore 直写绕 dispatch(P14 张力;turn.ex:604 直写是 domain 层特例,plugin 层直写是新破例);②所有 chat 读路(replay/ConversationView/membership authorize)都键在 session:// 上,板容器消息对全系统不可见,只服务 uploads 授权一个查询——为一个查询发明一类幽灵消息;③「板容器参与者」=对板**行使过写钥匙**的人,仍 ⊊ 钥匙持有者(只读 sharee 永远没"发过言",见 4.4)。
+- **结论**:2a 与㊵不一致,2b 也只是「行使过钥匙」≈「持钥」的真子集且机制别扭——两条都到不了㊵。
+
+### 4.3 显示过滤:现成机制,零新成本
+
+「不显示于 chat」两件套都是现成的:`visibility: :internal`(message.ex:121-123)——普通成员读 `recent_visible_in_session`(world conversation_data.ex:420)看不到 :internal,仅 `read_unfiltered` cap 持有者(管理面,conversation_data.ex:417-418)可见;加 `hops: 0` 跳过全部路由副作用(session.ex:613-615,不触发 routing rule、不惊动 assistant)。语义 overload 提示::internal 本为 socialware 外部面设计,复用作「操作留痕不进聊天」可接受;要更干净可加 `kind` 字段(1 migration+读路不动),非必需。
+
+### 4.4 跨会话/跨 ws 下载:倒转对分享场景确实白做——两方案不等价,倒转 ⊊ 泛化分支
+
+- **2a 白做成立**:物化进当前 session,人本位分享后点击者不在原 session、更没在原 session 发过言 → `caller_sent_in_any_session?` 照样 false → 403。
+- **2b 也救不了**:板容器的「参与」判定仍是「向容器**发过**消息」;只读 sharee 拿的是 read cap(`forward_board` 只发 `[:get_tree, :export_markmap]`,board_provision.ex:256),从不产生"发言"——除非把**读**也物化成消息(荒谬)。
+- **等价性判定**:两方案**不本质等价**。板容器参与者=行使过写钥匙的人 ⊊ 钥匙持有者;泛化授权分支(person-bound token,点击时过板 read cap 门后现签)覆盖读+写持钥者全集,正是㊵「参与=持有对宿主的 cap」的完整实现。倒转方案是泛化分支的真子集:它真正修复的只有「上传者本人」(物化消息 sender=uploader → `uploads_controller.ex:144` uploader 分支原样命中,**这一段确实契约零改动**)+「同 session 发过言的人」。
+- **改动量对比**:倒转(2a 版)≈ plugin 层 20 行、零 core 改动,但覆盖不了分享;泛化分支动 core `DownloadToken` + web 一条分支(需过 Allen),覆盖全集。
+
+### 4.5 给 Allen 的最终建议(替代/补充 §三论证段)
+
+> Allen,㊲ 又推演了一轮「物化成消息」的倒转方案(kanban 操作=对板发言,attach_artifact 物化成带附件的 Message,让现有 Message-参与者下载授权原样成立)。验证结论:**倒转在机制上可行且便宜**(人以自己身份补发 `session.send`,`hops: 0` 只存不路由、`visibility: :internal` 不进聊天面,纯 plugin 层 ~20 行,P14/RF-6 都干净),它能零契约改动修好「上传者本人 403」,还白送操作留痕。**但它覆盖不了人本位分享**:跨 session 点击者/只读 sharee 在任何容器选择下都从未「发过言」,serve-time 参与复查照样 403——「发过言的人」永远只是「持钥人」的真子集。所以最终建议不变:**主修法仍是 §三的泛化授权分支**(DownloadToken 加 person-bound `grantee` + 点击现签,参与=消息参与者 ∪ 宿主钥匙持有者),这是唯一同时覆盖只读分享、且与你拍的 #154/mount 语义同向的方案;**倒转可作独立的补充项**(操作留痕+上传者即时修复),两者不冲突、可分开排期。若只批一个,批泛化分支。
+
+---
+
+## 五、一句话总结
 
 四条模型:①部分成立(物化成 agent 是拍板方向;「都是聊天」在 dispatch=广义说话意义下成立,chat/action 是一个 fabric 两个 register,RF-6 只挡 principal 身份不挡对话)/②部分成立(chat=成员制会话容器,过滤在 routing 层)/③成立(step 5.5 单点+双向 cap)/④**成立**——㊲ 是「参与」概念的 chat-register 旧窄实现,泛化为「消息参与者 ∪ 宿主钥匙持有者」即架构对齐修法,动 core 载体需过 Allen。
+
+倒转方案(§四):机制可行且便宜(`session.send` + `hops: 0` 只存不路由 + `visibility: :internal` 不进聊天面,plugin 层 ~20 行),零契约修好上传者本人 403;但「发过言的人」⊊「持钥人」,人本位分享(跨 session/只读 sharee)在任何容器选择下都覆盖不了——倒转是泛化分支的真子集,作补充不作替代,主修法仍是泛化授权分支。
