@@ -32,6 +32,7 @@ defmodule Ezagent.DomainGit.D0BackendContractTest do
   test "closed backend errors are stable" do
     assert D0.Types.authorization_errors() == [
              :authorization_backend_unavailable,
+             :correlation_conflict,
              :invalid_authorization_subject,
              :invalid_acquisition_method,
              :governed_host_mismatch,
@@ -51,6 +52,7 @@ defmodule Ezagent.DomainGit.D0BackendContractTest do
 
     assert D0.Types.credential_errors() == [
              :credential_backend_unavailable,
+             :correlation_conflict,
              :credential_not_found,
              :credential_scope_mismatch,
              :credential_host_mismatch,
@@ -72,6 +74,20 @@ defmodule Ezagent.DomainGit.D0BackendContractTest do
              :credential_replace_failed,
              :credential_revoke_failed
            ]
+  end
+
+  test "mutating callbacks reconcile exact retries and reject conflicting reuse" do
+    start_supervised!({D0.InProcessFake, name: D0.InProcessFake})
+
+    descriptor = %{
+      authorization: D0.InProcessFake,
+      credential: D0.InProcessFake,
+      reset: fn -> D0.InProcessFake.reset(D0.InProcessFake) end,
+      prepare_lease: &D0.InProcessFake.prepare_lease/1,
+      command_effect_count: fn -> D0.InProcessFake.command_effect_count(D0.InProcessFake) end
+    }
+
+    assert :ok = D0.Conformance.reconciliation_cases(descriptor)
   end
 
   test "credential lease types freeze operation binding and version fields" do
@@ -148,11 +164,14 @@ defmodule Ezagent.DomainGit.D0BackendContractTest do
       advance_time: &D0.RemoteShapedFake.advance_time/1,
       authorization_count: &D0.RemoteShapedFake.authorization_count/0,
       credential_store_count: &D0.RemoteShapedFake.credential_store_count/0,
-      provider_effect_count: &D0.RemoteShapedFake.provider_effect_count/0
+      provider_effect_count: &D0.RemoteShapedFake.provider_effect_count/0,
+      prepare_lease: &D0.RemoteShapedFake.prepare_lease/1,
+      command_effect_count: &D0.RemoteShapedFake.command_effect_count/0
     }
 
     assert :ok = D0.Conformance.authorization_cases(descriptor)
     assert :ok = D0.Conformance.credential_cases(descriptor)
+    assert :ok = D0.Conformance.reconciliation_cases(descriptor)
 
     payloads = D0.RemoteTransport.payloads()
     assert payloads != []

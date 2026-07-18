@@ -18,6 +18,7 @@ defmodule Ezagent.DomainGit.D0BackendReuseGate.RemoteShapedFake do
   def authorization_count, do: call(:authorization_count, %{})
   def credential_store_count, do: call(:credential_store_count, %{})
   def provider_effect_count, do: call(:provider_effect_count, %{})
+  def command_effect_count, do: call(:command_effect_count, %{})
   def prepare_lease(request), do: call(:prepare_lease, request)
   def record_provider_effect, do: call(:record_provider_effect, %{})
 
@@ -104,6 +105,9 @@ defmodule Ezagent.DomainGit.D0BackendReuseGate.RemoteShapedFake do
 
   defp dispatch(:provider_effect_count, _request),
     do: InProcessFake.provider_effect_count(InProcessFake)
+
+  defp dispatch(:command_effect_count, _request),
+    do: InProcessFake.command_effect_count(InProcessFake)
 
   defp dispatch(:record_provider_effect, _request), do: InProcessFake.record_provider_effect()
   defp dispatch(:prepare_lease, request), do: InProcessFake.prepare_lease(request)
