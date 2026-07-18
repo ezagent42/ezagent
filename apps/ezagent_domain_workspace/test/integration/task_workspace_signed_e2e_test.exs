@@ -195,7 +195,7 @@ defmodule Ezagent.Workspace.TaskWorkspace.SignedE2ETest do
     unauthorized = start_policy(:public)
     before_entries = tree_entries(fixture.root)
 
-    assert {:error, :unauthorized} =
+    assert {:error, :missing_cap} =
              dispatch(unauthorized, :provision_workspace, caps: MapSet.new())
 
     assert Repo.aggregate(Provision, :count) == 0
@@ -304,7 +304,7 @@ defmodule Ezagent.Workspace.TaskWorkspace.SignedE2ETest do
 
     {:ok, artifact} =
       Ezagent.Cap.issue(
-        {:held_by, Ezagent.URI.user(:system, :admin)},
+        {:admin, Ezagent.URI.user(:system, :admin)},
         context.grantee,
         capability
       )
@@ -315,7 +315,8 @@ defmodule Ezagent.Workspace.TaskWorkspace.SignedE2ETest do
       target: Ezagent.URI.with_action(context.task_access_uri, :git_task_access, action),
       mode: :call,
       args: %{task_uri: context.task_uri, generation: context.policy.generation},
-      ctx: %{caller: context.grantee, caps: caps, reply: {:caller_inbox, self()}}
+      ctx: %{caller: context.grantee, caps: caps, reply: {:caller_inbox, self()}},
+      origin: :trusted_internal
     })
   end
 

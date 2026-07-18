@@ -53,9 +53,7 @@ defmodule Ezagent.ActionSet.GitTaskAccessTest do
     start_supervised!({GitEffectProbe, self()})
     register_adapter("probe-git-adapter-a", ProbeGitAdapterA)
     register_adapter("probe-git-adapter-b", ProbeGitAdapterB)
-    fixture = GitCapFixture.exact_task_cap(:resolve_repository)
-    policy = policy(fixture)
-    assert {:ok, _pid} = TaskAccessSupervisor.ensure_started(policy)
+    {fixture, policy} = started_fixture(:resolve_repository)
     on_exit(fn -> TaskAccessSupervisor.teardown(fixture.task_access_uri) end)
     %{fixture: fixture, policy: policy}
   end
@@ -118,7 +116,7 @@ defmodule Ezagent.ActionSet.GitTaskAccessTest do
       | ctx: %{cleanup_invocation.ctx | caps: MapSet.new([provision_only])}
     }
 
-    assert {:error, :unauthorized} = Ezagent.Invocation.dispatch(invocation)
+    assert {:error, :missing_cap} = Ezagent.Invocation.dispatch(invocation)
     refute_receive {:workspace_effect, _, _}
   end
 
@@ -150,7 +148,7 @@ defmodule Ezagent.ActionSet.GitTaskAccessTest do
     valid = workspace_invocation(fixture, :provision_workspace, task_uri, policy.generation)
     unauthorized = %{valid | ctx: %{valid.ctx | caps: MapSet.new()}}
 
-    assert {:error, :unauthorized} = Ezagent.Invocation.dispatch(unauthorized)
+    assert {:error, :missing_cap} = Ezagent.Invocation.dispatch(unauthorized)
 
     assert {:error, :task_generation_mismatch} =
              fixture
@@ -163,15 +161,13 @@ defmodule Ezagent.ActionSet.GitTaskAccessTest do
   test "real dispatch denies missing exact capability before the handler", %{fixture: fixture} do
     invocation = %{fixture.invocation | ctx: %{fixture.invocation.ctx | caps: MapSet.new()}}
     ref = GitEffectProbe.ref()
-    assert {:error, :unauthorized} = Ezagent.Invocation.dispatch(invocation)
+    assert {:error, :missing_cap} = Ezagent.Invocation.dispatch(invocation)
     refute_received {:git_probe, ^ref, _, _, _}
   end
 
   test "both selected fake providers receive handler-built operation context" do
     Enum.each([:"probe-git-adapter-a", :"probe-git-adapter-b"], fn provider ->
-      fixture = GitCapFixture.exact_task_cap(:resolve_repository)
-      policy = policy(fixture, provider)
-      assert {:ok, _pid} = TaskAccessSupervisor.ensure_started(policy)
+      {fixture, policy} = started_fixture(:resolve_repository, provider)
 
       invocation = %{fixture.invocation | args: %{repository: policy.repository}}
       assert {:ok, %RepositoryRef{}} = Ezagent.Invocation.dispatch(invocation)
@@ -190,9 +186,7 @@ defmodule Ezagent.ActionSet.GitTaskAccessTest do
 
   test "all five closed operations dispatch and callback trips every effect sentinel" do
     Enum.each(@provider_actions, fn action ->
-      fixture = GitCapFixture.exact_task_cap(action)
-      policy = policy(fixture)
-      assert {:ok, _pid} = TaskAccessSupervisor.ensure_started(policy)
+      {fixture, policy} = started_fixture(action)
       invocation = %{fixture.invocation | args: operation_args(action, policy)}
       ref = GitEffectProbe.ref()
 
@@ -208,9 +202,7 @@ defmodule Ezagent.ActionSet.GitTaskAccessTest do
   end
 
   test "dynamic stale base enters provider but returns before provider mutation" do
-    fixture = GitCapFixture.exact_task_cap(:create_change_request)
-    policy = policy(fixture)
-    assert {:ok, _pid} = TaskAccessSupervisor.ensure_started(policy)
+    {fixture, policy} = started_fixture(:create_change_request)
     args = operation_args(:create_change_request, policy)
     stale = %{args.request | expected_base_sha: %CommitSha{value: String.duplicate("b", 40)}}
     invocation = %{fixture.invocation | args: %{args | request: stale}}
@@ -222,9 +214,7 @@ defmodule Ezagent.ActionSet.GitTaskAccessTest do
   end
 
   test "static policy and caller-coordinate mismatches stop before adapter lookup" do
-    fixture = GitCapFixture.exact_task_cap(:create_change_request)
-    policy = policy(fixture)
-    assert {:ok, _pid} = TaskAccessSupervisor.ensure_started(policy)
+    {fixture, policy} = started_fixture(:create_change_request)
     valid = operation_args(:create_change_request, policy)
     ref = GitEffectProbe.ref()
 
@@ -260,9 +250,7 @@ defmodule Ezagent.ActionSet.GitTaskAccessTest do
   end
 
   test "teardown waits for an in-flight callback and no callback starts afterwards" do
-    fixture = GitCapFixture.exact_task_cap(:resolve_repository)
-    policy = policy(fixture)
-    assert {:ok, _pid} = TaskAccessSupervisor.ensure_started(policy)
+    {fixture, policy} = started_fixture(:resolve_repository)
     invocation = %{fixture.invocation | args: operation_args(:resolve_repository, policy)}
     ref = GitEffectProbe.ref()
     :ok = GitEffectProbe.block_next()
@@ -282,9 +270,7 @@ defmodule Ezagent.ActionSet.GitTaskAccessTest do
   end
 
   test "wrong resource, workspace, provider, and unsupported action never enter an adapter" do
-    fixture = GitCapFixture.exact_task_cap(:resolve_repository)
-    policy = policy(fixture)
-    assert {:ok, _pid} = TaskAccessSupervisor.ensure_started(policy)
+    {fixture, policy} = started_fixture(:resolve_repository)
     ref = GitEffectProbe.ref()
 
     wrong_resource =
@@ -333,9 +319,7 @@ defmodule Ezagent.ActionSet.GitTaskAccessTest do
     ]
 
     Enum.each(@provider_actions, fn action ->
-      fixture = GitCapFixture.exact_task_cap(action)
-      policy = policy(fixture)
-      assert {:ok, _pid} = TaskAccessSupervisor.ensure_started(policy)
+      {fixture, policy} = started_fixture(action)
       valid = operation_args(action, policy)
       ref = GitEffectProbe.ref()
 
@@ -355,9 +339,7 @@ defmodule Ezagent.ActionSet.GitTaskAccessTest do
   end
 
   test "authorization and static mismatches preserve their errors while adapter registry is unavailable" do
-    fixture = GitCapFixture.exact_task_cap(:resolve_repository)
-    policy = policy(fixture)
-    assert {:ok, _pid} = TaskAccessSupervisor.ensure_started(policy)
+    {fixture, policy} = started_fixture(:resolve_repository)
     valid = operation_args(:resolve_repository, policy)
 
     assert :ok =
@@ -369,7 +351,7 @@ defmodule Ezagent.ActionSet.GitTaskAccessTest do
     on_exit(&restart_adapter_registry/0)
 
     unauthorized = %{fixture.invocation | ctx: %{fixture.invocation.ctx | caps: MapSet.new()}}
-    assert {:error, :unauthorized} = Ezagent.Invocation.dispatch(unauthorized)
+    assert {:error, :missing_cap} = Ezagent.Invocation.dispatch(unauthorized)
 
     wrong_repository = %{policy.repository | external_id: "other"}
     assert {:error, :repository_mismatch} = dispatch(fixture, %{repository: wrong_repository})
@@ -378,9 +360,7 @@ defmodule Ezagent.ActionSet.GitTaskAccessTest do
   end
 
   test "malformed create requests keep construction errors and never reach lookup effects" do
-    fixture = GitCapFixture.exact_task_cap(:create_change_request)
-    policy = policy(fixture)
-    assert {:ok, _pid} = TaskAccessSupervisor.ensure_started(policy)
+    {fixture, policy} = started_fixture(:create_change_request)
     valid = operation_args(:create_change_request, policy)
     ref = GitEffectProbe.ref()
 
@@ -398,7 +378,7 @@ defmodule Ezagent.ActionSet.GitTaskAccessTest do
     end)
   end
 
-  defp policy(fixture, provider_adapter \\ :"probe-git-adapter-a") do
+  defp policy(fixture, provider_adapter) do
     workspace = Ezagent.URI.workspace_name!(fixture.workspace_uri)
 
     {:ok, repository} =
@@ -428,6 +408,13 @@ defmodule Ezagent.ActionSet.GitTaskAccessTest do
       })
 
     policy
+  end
+
+  defp started_fixture(action, provider_adapter \\ :"probe-git-adapter-a") do
+    coordinates = GitCapFixture.coordinates()
+    policy = policy(coordinates, provider_adapter)
+    assert {:ok, _pid} = TaskAccessSupervisor.ensure_started(policy)
+    {GitCapFixture.exact_task_cap(coordinates, action), policy}
   end
 
   defp operation_args(:resolve_repository, policy), do: %{repository: policy.repository}
@@ -480,7 +467,7 @@ defmodule Ezagent.ActionSet.GitTaskAccessTest do
         fixture.workspace_uri
       )
 
-    {:ok, artifact} = Ezagent.Cap.issue({:held_by, fixture.governance_uri}, receiver, capability)
+    {:ok, artifact} = Ezagent.Cap.issue({:admin, fixture.governance_uri}, receiver, capability)
     artifact
   end
 

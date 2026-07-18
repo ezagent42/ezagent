@@ -80,7 +80,7 @@ defmodule Ezagent.ActionSet.CurlAgentMigrationParityTest do
   # conversation/error mutation + the session reply (the in-process HTTP
   # round-trip moved to the curl `:in_process_sync` adapter).
   describe ":sync_result parity" do
-    test "missing api_key emits operator-help reply dispatch + sets last_error" do
+    test "missing api_key emits a structured error reply + sets last_error" do
       agent_uri = Ezagent.URI.new!("entity://team-alpha/agent/curl_x")
       session_uri = Ezagent.URI.new!("session://team-alpha/default/main")
 
@@ -115,6 +115,7 @@ defmodule Ezagent.ActionSet.CurlAgentMigrationParityTest do
       assert %Ezagent.Message{body: body} = cmd.args.message
       assert body.error == %{"reason" => ["no_api_key", "openai"]}
       assert body.text == "[agent error] no_api_key"
+      assert body.attachments == []
     end
 
     test "success path appends user+assistant turns through apply_effects" do

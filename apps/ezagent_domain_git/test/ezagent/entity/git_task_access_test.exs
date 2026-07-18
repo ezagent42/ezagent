@@ -1,5 +1,5 @@
 defmodule Ezagent.Entity.GitTaskAccessTest do
-  use ExUnit.Case, async: true
+  use EzagentCore.DataCase, async: false
 
   alias Ezagent.DomainGit.RepositoryRef
   alias Ezagent.Entity.GitTaskAccess

@@ -29,7 +29,8 @@ defmodule EzagentDomainWorkspace.MixProject do
   def application do
     [
       mod: {EzagentDomainWorkspace.Application, []},
-      extra_applications: [:logger]
+      extra_applications: [:logger],
+      env: [ezagent_resource_provider: EzagentDomainWorkspace.Application]
     ]
   end
 

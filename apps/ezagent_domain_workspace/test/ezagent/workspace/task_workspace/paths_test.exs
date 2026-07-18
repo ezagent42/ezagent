@@ -48,6 +48,22 @@ defmodule Ezagent.Workspace.TaskWorkspace.PathsTest do
              Paths.derive(%{input() | repository_uri: wrong_type})
   end
 
+  test "resource type self-heals after an isolated FsResolver Registry restart" do
+    registry = Ezagent.Resource.FsResolver.Registry
+    old_pid = Process.whereis(registry)
+    ref = Process.monitor(old_pid)
+
+    Process.exit(old_pid, :kill)
+    assert_receive {:DOWN, ^ref, :process, ^old_pid, :killed}, 2_000
+
+    assert eventually(fn ->
+             case Process.whereis(registry) do
+               pid when is_pid(pid) and pid != old_pid -> match?({:ok, _}, Paths.derive(input()))
+               _ -> false
+             end
+           end)
+  end
+
   defp input do
     %{
       workspace_uri: Ezagent.URI.workspace("paths-team"),
@@ -60,6 +76,18 @@ defmodule Ezagent.Workspace.TaskWorkspace.PathsTest do
   end
 
   defp beneath?(path, root), do: String.starts_with?(Path.expand(path), root <> "/")
+
+  defp eventually(fun, attempts \\ 100)
+  defp eventually(_fun, 0), do: false
+
+  defp eventually(fun, attempts) do
+    if fun.() do
+      true
+    else
+      Process.sleep(10)
+      eventually(fun, attempts - 1)
+    end
+  end
 
   defp restore_env(name, nil), do: System.delete_env(name)
   defp restore_env(name, value), do: System.put_env(name, value)

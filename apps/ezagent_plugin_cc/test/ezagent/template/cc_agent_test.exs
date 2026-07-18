@@ -19,9 +19,8 @@ defmodule Ezagent.PluginCc.Template.CcAgentTest do
       variants = [
         {CcAgent, "cc.agent", %{}},
         {Ezagent.PluginCc.Template.CcHeadlessAgent, "cc_headless.agent", %{}},
-        {Ezagent.PluginCc.Template.CcDeepseekAgent, "cc_deepseek.agent",
-         %{"provider" => "deepseek"}},
-        {Ezagent.PluginCc.Template.CcHeadlessDeepseekAgent, "cc_headless_deepseek.agent",
+        {Ezagent.PluginCc.Template.CcCustomAgent, "cc_custom.agent", %{"provider" => "deepseek"}},
+        {Ezagent.PluginCc.Template.CcHeadlessCustomAgent, "cc_headless_custom.agent",
          %{"provider" => "deepseek"}}
       ]
 
@@ -63,24 +62,29 @@ defmodule Ezagent.PluginCc.Template.CcAgentTest do
 
     test "all cc variants retain instantiate/3 and reject non-sole options with valid data" do
       modules = [
-        {CcAgent, "cc.agent"},
-        {Ezagent.PluginCc.Template.CcHeadlessAgent, "cc_headless.agent"},
-        {Ezagent.PluginCc.Template.CcDeepseekAgent, "cc_deepseek.agent"},
-        {Ezagent.PluginCc.Template.CcHeadlessDeepseekAgent, "cc_headless_deepseek.agent"}
+        {CcAgent, "cc.agent", %{}},
+        {Ezagent.PluginCc.Template.CcHeadlessAgent, "cc_headless.agent", %{}},
+        {Ezagent.PluginCc.Template.CcCustomAgent, "cc_custom.agent", %{"provider" => "deepseek"}},
+        {Ezagent.PluginCc.Template.CcHeadlessCustomAgent, "cc_headless_custom.agent",
+         %{"provider" => "deepseek"}}
       ]
 
-      for {module, class} <- modules do
+      for {module, class, extra} <- modules do
         assert function_exported?(module, :instantiate, 3)
         assert function_exported?(module, :instantiate, 4)
 
         assert {:error, {:invalid_template, %{}}} =
                  module.instantiate("test", %{}, URI.new!("workspace://test"))
 
-        tmpl = %{
-          "class" => class,
-          "agent_uri" => "entity://test/agent/#{class}-invalid-options",
-          "cwd" => "/tmp"
-        }
+        tmpl =
+          Map.merge(
+            %{
+              "class" => class,
+              "agent_uri" => "entity://test/agent/#{class}-invalid-options",
+              "cwd" => "/tmp"
+            },
+            extra
+          )
 
         assert {:error, :invalid_launch_options} =
                  module.instantiate("test", tmpl, URI.new!("workspace://test"),

@@ -298,7 +298,7 @@ defmodule Ezagent.ActionSet.GitTaskAccess do
     with true <- authorized_receiver?(action, caller, policy),
          {:ok, cap} <- Authorization.authorizing_cap(Map.get(ctx, :caps), needed),
          true <- signed_for?(cap, caller),
-         true <- Cap.verify_for(cap, caller) do
+         true <- Cap.storable_for?(cap, caller) do
       :ok
     else
       _ -> {:error, :unauthorized}
