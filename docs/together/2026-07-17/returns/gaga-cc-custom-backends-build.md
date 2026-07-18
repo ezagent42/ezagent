@@ -51,25 +51,17 @@ attributions spot-checked 4/4 vs main).
 | 8 | Gates green per PR | met | every task's gate list + final-tree re-run (above) |
 | 9 | CI green on PR head + rebased | rebase ✅ (`d533a5d73`); CI runs on push — **verify #1449 checks** |
 
-## Open decisions for the lead
+## Lead decisions — RESOLVED 2026-07-18
 
-1. **接受两个 deferral?（语义 = 延后转 issue，不挡本次合并）**
-   (a) **cc-headless-custom 实况 spawn** — headless flavor 的单元/集成覆盖完整
-   （52 tests：env 穿线、冷重启、fail-closed)，缺的只是实况拉起，被 F2
-   `{:calling_self}` + F4 sidecar nil-config 两个 PRE-EXISTING 通用缺陷挡着
-   (plain cc-headless 同样复现，非本分支引入）。接受 = 先合，F2/F4(+F3
-   ad-hoc create lane）转跟进 issue。不接受 = headless 实况修完再合。
-   (b) **开放平台 kimi 泳道** — 已用 kimi-coding（订阅）泳道证明 Kimi 设施；
-   平台泳道只差一把开放平台 key，届时跑现成 probe 命令即可，零开发。
-2. **F1(CRITICAL, pre-existing)——泄露路径已知、受控、待修，不是"还在漏"**
-   PtyServer 崩溃 dump 打 `cmd_env` 含 `ANTHROPIC_AUTH_TOKEN`，仅在子进程异常
-   崩溃时发生、落本地日志；issue **#1455** 已立案（修复方向：logged state 不
-   留 raw child env)。local 实测期间两把 key 进过一次本地日志（原始日志已脱
-   敏）——**请轮换 `DEEPSEEK_API_KEY` + `KIMI_CODING_API_KEY`**，轮换即归零。
-3. **合并顺序（是谁先合）** — **#1454 尚未合并，CI 全绿，随时可合。**
-   建议先合 #1454（小且独立），本分支随后 rebase 解 trivial hunk（两边碰
-   `credential_adapter_completeness_test.exs` 的 `@adapters` 附近：它改 codex
-   namespace、本分支删 deepseek 条目，语义不冲突）。
+1. **两个 deferral —— 接受（延后转 issue）** ✅
+   (a) cc-headless-custom 实况 spawn（pre-existing F2 `{:calling_self}` + F4
+   sidecar nil-config + F3 ad-hoc create lane）→ **issue #1460**。
+   (b) 开放平台 kimi 泳道 → 待平台 key 到位跑现成 probe（spec §2.4），零开发。
+2. **F1（issue #1455）** — 代码修复走 issue；**key 轮换为 operator 动作，待执行**
+   （`DEEPSEEK_API_KEY` + `KIMI_CODING_API_KEY`）。
+3. **合并顺序** — **#1454 已合**（squash `b9b541b5d`）；本分支已 rebase 到其上，
+   `@adapters` hunk 已解（保留双方语义：codex namespace 修正 + custom 条目），
+   CI 重跑中。
 
 ## Method-deltas 落地路径（流程规定 + 提案）
 
