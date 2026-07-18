@@ -3,6 +3,7 @@ defmodule Ezagent.DomainGit.D0BackendReuseGate.Types do
 
   @authorization_errors [
     :authorization_backend_unavailable,
+    :correlation_conflict,
     :invalid_authorization_subject,
     :invalid_acquisition_method,
     :governed_host_mismatch,
@@ -22,6 +23,7 @@ defmodule Ezagent.DomainGit.D0BackendReuseGate.Types do
 
   @credential_errors [
     :credential_backend_unavailable,
+    :correlation_conflict,
     :credential_not_found,
     :credential_scope_mismatch,
     :credential_host_mismatch,

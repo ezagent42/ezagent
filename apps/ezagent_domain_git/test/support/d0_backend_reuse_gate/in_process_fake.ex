@@ -9,6 +9,17 @@ defmodule Ezagent.DomainGit.D0BackendReuseGate.InProcessFake do
   @behaviour Ezagent.DomainGit.D0BackendReuseGate.CredentialBackend
 
   @now ~U[2030-01-01 00:00:00Z]
+  @secret_keys MapSet.new(~w(
+    access_token
+    refresh_token
+    social_login_token
+    authorization
+    callback_code
+    pkce_verifier
+    credential_material
+    plaintext
+    raw_body
+  ))
 
   def start_link(opts), do: GenServer.start_link(__MODULE__, :ok, opts)
 
@@ -17,6 +28,7 @@ defmodule Ezagent.DomainGit.D0BackendReuseGate.InProcessFake do
   def authorization_count(server), do: GenServer.call(server, :authorization_count)
   def credential_store_count(server), do: GenServer.call(server, :credential_store_count)
   def provider_effect_count(server), do: GenServer.call(server, :provider_effect_count)
+  def command_effect_count(server), do: GenServer.call(server, :command_effect_count)
   def prepare_lease(request), do: GenServer.call(__MODULE__, {:prepare_lease, request})
   def record_provider_effect, do: GenServer.call(__MODULE__, :record_provider_effect)
 
@@ -76,11 +88,97 @@ defmodule Ezagent.DomainGit.D0BackendReuseGate.InProcessFake do
   def handle_call(:provider_effect_count, _from, state),
     do: {:reply, state.provider_effect_count, state}
 
+  def handle_call(:command_effect_count, _from, state),
+    do: {:reply, state.command_effect_count, state}
+
   def handle_call(:record_provider_effect, _from, state) do
     {:reply, :ok, %{state | provider_effect_count: state.provider_effect_count + 1}}
   end
 
   def handle_call({:store, request}, _from, state) do
+    reconcile_command(state, :credential, :store, request, fn state ->
+      store(request, state)
+    end)
+  end
+
+  def handle_call({:status, request}, _from, state) do
+    with {:ok, record} <- fetch_credential(state, request.credential_ref),
+         :ok <- validate_scope(record.scope, request.expected_scope) do
+      {:reply,
+       {:ok, %{status: record.status, version: record.version, expires_at: record.expires_at}},
+       state}
+    else
+      {:error, reason} -> {:reply, {:error, reason}, state}
+    end
+  end
+
+  def handle_call({:replace, request}, _from, state) do
+    reconcile_command(state, :credential, :replace, request, fn state ->
+      replace(request, state)
+    end)
+  end
+
+  def handle_call({:lease_for_operation, request}, _from, state) do
+    reconcile_command(state, :credential, :lease_for_operation, request, fn state ->
+      issue_lease(request, state, :sensitive)
+    end)
+  end
+
+  def handle_call({:lease_for_operation_sealed, request}, _from, state) do
+    reconcile_command(state, :credential, :lease_for_operation, request, fn state ->
+      issue_lease(request, state, :sealed)
+    end)
+  end
+
+  def handle_call({:prepare_lease, request}, _from, state) do
+    with {:ok, lease} <- fetch_lease(state, request.lease_id),
+         :ok <- validate_scope(lease.scope, request.expected_scope),
+         :ok <- validate_version(lease.version, request.expected_version),
+         :ok <- validate_lease_time(lease, state.now),
+         :ok <- validate_lease_available(lease.status) do
+      {:reply, :ok, put_in(state.leases[request.lease_id].status, :in_use)}
+    else
+      {:error, reason} -> {:reply, {:error, reason}, state}
+    end
+  end
+
+  def handle_call({:consume_lease, request}, _from, state) do
+    reconcile_command(state, :credential, :consume_lease, request, fn state ->
+      consume_lease(request, state)
+    end)
+  end
+
+  def handle_call({:revoke, request}, _from, state) do
+    reconcile_command(state, :credential, :revoke, request, fn state ->
+      revoke(request, state)
+    end)
+  end
+
+  def handle_call({:begin_authorization, request}, _from, state) do
+    reconcile_command(state, :authorization, :begin_authorization, request, fn state ->
+      begin_authorization(request, state)
+    end)
+  end
+
+  def handle_call({:consume_callback, request}, _from, state) do
+    reconcile_command(state, :authorization, :consume_callback, request, fn state ->
+      consume_callback_request(request, state)
+    end)
+  end
+
+  def handle_call({:reauthenticate, request}, _from, state) do
+    reconcile_command(state, :authorization, :reauthenticate, request, fn state ->
+      reauthenticate(request, state)
+    end)
+  end
+
+  def handle_call({:cancel_authorization, request}, _from, state) do
+    reconcile_command(state, :authorization, :cancel_authorization, request, fn state ->
+      cancel_authorization(request, state)
+    end)
+  end
+
+  defp store(request, state) do
     if request.expected_absent == true and state.credentials == %{} do
       record = %{
         scope: request.scope,
@@ -97,18 +195,7 @@ defmodule Ezagent.DomainGit.D0BackendReuseGate.InProcessFake do
     end
   end
 
-  def handle_call({:status, request}, _from, state) do
-    with {:ok, record} <- fetch_credential(state, request.credential_ref),
-         :ok <- validate_scope(record.scope, request.expected_scope) do
-      {:reply,
-       {:ok, %{status: record.status, version: record.version, expires_at: record.expires_at}},
-       state}
-    else
-      {:error, reason} -> {:reply, {:error, reason}, state}
-    end
-  end
-
-  def handle_call({:replace, request}, _from, state) do
+  defp replace(request, state) do
     with {:ok, record} <- fetch_credential(state, request.credential_ref),
          :ok <- validate_scope(record.scope, request.expected_scope),
          :ok <- validate_version(record.version, request.expected_version),
@@ -122,27 +209,7 @@ defmodule Ezagent.DomainGit.D0BackendReuseGate.InProcessFake do
     end
   end
 
-  def handle_call({:lease_for_operation, request}, _from, state) do
-    issue_lease(request, state, :sensitive)
-  end
-
-  def handle_call({:lease_for_operation_sealed, request}, _from, state) do
-    issue_lease(request, state, :sealed)
-  end
-
-  def handle_call({:prepare_lease, request}, _from, state) do
-    with {:ok, lease} <- fetch_lease(state, request.lease_id),
-         :ok <- validate_scope(lease.scope, request.expected_scope),
-         :ok <- validate_version(lease.version, request.expected_version),
-         :ok <- validate_lease_time(lease, state.now),
-         :ok <- validate_lease_available(lease.status) do
-      {:reply, :ok, put_in(state.leases[request.lease_id].status, :in_use)}
-    else
-      {:error, reason} -> {:reply, {:error, reason}, state}
-    end
-  end
-
-  def handle_call({:consume_lease, request}, _from, state) do
+  defp consume_lease(request, state) do
     with {:ok, lease} <- fetch_lease(state, request.lease_id),
          :ok <- validate_scope(lease.scope, request.expected_scope),
          :ok <- validate_version(lease.version, request.expected_version),
@@ -154,7 +221,7 @@ defmodule Ezagent.DomainGit.D0BackendReuseGate.InProcessFake do
     end
   end
 
-  def handle_call({:revoke, request}, _from, state) do
+  defp revoke(request, state) do
     with {:ok, record} <- fetch_credential(state, request.credential_ref),
          :ok <- validate_scope(record.scope, request.expected_scope),
          :ok <- validate_version(record.version, request.expected_version) do
@@ -167,7 +234,7 @@ defmodule Ezagent.DomainGit.D0BackendReuseGate.InProcessFake do
     end
   end
 
-  def handle_call({:begin_authorization, request}, _from, state) do
+  defp begin_authorization(request, state) do
     with :ok <- validate_subject(request.subject),
          :ok <- validate_acquisition_method(request.acquisition_method) do
       authorization_ref = "auth_#{map_size(state.authorizations) + 1}"
@@ -199,17 +266,14 @@ defmodule Ezagent.DomainGit.D0BackendReuseGate.InProcessFake do
     end
   end
 
-  def handle_call({:consume_callback, request}, _from, state) do
+  defp consume_callback_request(request, state) do
     case Map.fetch(state.authorizations, request.authorization_ref) do
-      :error ->
-        {:reply, {:error, :callback_invalid}, state}
-
-      {:ok, record} ->
-        consume_callback(record, request, state)
+      :error -> {:reply, {:error, :callback_invalid}, state}
+      {:ok, record} -> consume_callback(record, request, state)
     end
   end
 
-  def handle_call({:reauthenticate, request}, _from, state) do
+  defp reauthenticate(request, state) do
     with :ok <- validate_subject(request.subject),
          %{aal: aal} when aal in [:aal2, :aal3] <- request.session_assurance_evidence do
       result = %{reauth_ref: "reauth-1", expires_at: DateTime.add(state.now, 120, :second)}
@@ -220,7 +284,7 @@ defmodule Ezagent.DomainGit.D0BackendReuseGate.InProcessFake do
     end
   end
 
-  def handle_call({:cancel_authorization, request}, _from, state) do
+  defp cancel_authorization(request, state) do
     case Map.fetch(state.authorizations, request.authorization_ref) do
       {:ok, %{subject: subject} = record} when subject == request.expected_subject ->
         updated = %{record | cancelled?: true}
@@ -307,7 +371,13 @@ defmodule Ezagent.DomainGit.D0BackendReuseGate.InProcessFake do
         }
 
         updated = %{record | consumed?: true, result: result}
-        {:reply, {:ok, result}, put_in(state.authorizations[request.authorization_ref], updated)}
+
+        state =
+          state
+          |> put_in([:authorizations, request.authorization_ref], updated)
+          |> Map.update!(:provider_effect_count, &(&1 + 1))
+
+        {:reply, {:ok, result}, state}
     end
   end
 
@@ -419,6 +489,65 @@ defmodule Ezagent.DomainGit.D0BackendReuseGate.InProcessFake do
   defp public_record(ref, record),
     do: %{credential_ref: ref, version: record.version, status: record.status}
 
+  defp reconcile_command(state, backend_id, operation, request, effect) do
+    key = {backend_id, operation, request.correlation_id}
+    bound_input = canonical_bound_input(request)
+    digest = :crypto.hash(:sha256, :erlang.term_to_binary(bound_input, [:deterministic]))
+
+    case Map.get(state.commands, key) do
+      %{digest: ^digest, result: result} ->
+        {:reply, result, state}
+
+      %{digest: _other} ->
+        {:reply, {:error, :correlation_conflict}, state}
+
+      nil ->
+        commit_once(state, key, digest, effect)
+    end
+  end
+
+  defp commit_once(state, key, digest, effect) do
+    {:reply, result, committed_state} = apply(effect, [state])
+
+    committed_state =
+      committed_state
+      |> put_in([:commands, key], %{digest: digest, result: result})
+      |> Map.update!(:command_effect_count, &(&1 + 1))
+
+    {:reply, result, committed_state}
+  end
+
+  defp canonical_bound_input(%_{} = struct), do: struct
+
+  defp canonical_bound_input(map) when is_map(map) do
+    Map.new(map, fn {key, value} ->
+      if secret_key?(key) do
+        {key, secret_digest(value)}
+      else
+        {key, canonical_bound_input(value)}
+      end
+    end)
+  end
+
+  defp canonical_bound_input(list) when is_list(list),
+    do: Enum.map(list, &canonical_bound_input/1)
+
+  defp canonical_bound_input(tuple) when is_tuple(tuple) do
+    tuple
+    |> Tuple.to_list()
+    |> Enum.map(&canonical_bound_input/1)
+    |> List.to_tuple()
+  end
+
+  defp canonical_bound_input(value), do: value
+
+  defp secret_digest(value),
+    do: {:sha256, :crypto.hash(:sha256, :erlang.term_to_binary(value, [:deterministic]))}
+
+  defp secret_key?(key) when is_atom(key), do: key |> Atom.to_string() |> secret_key?()
+  defp secret_key?(key) when is_binary(key), do: MapSet.member?(@secret_keys, key)
+  defp secret_key?(_key), do: false
+
   defp initial_state do
     %{
       authorizations: %{},
@@ -426,7 +555,9 @@ defmodule Ezagent.DomainGit.D0BackendReuseGate.InProcessFake do
       leases: %{},
       now: @now,
       credential_store_count: 0,
-      provider_effect_count: 0
+      provider_effect_count: 0,
+      commands: %{},
+      command_effect_count: 0
     }
   end
 end

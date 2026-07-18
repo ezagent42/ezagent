@@ -14,8 +14,104 @@ defmodule Ezagent.DomainGit.D0BackendReuseGate.Conformance do
     cancellation_case(descriptor)
     callback_expiry_case(descriptor)
     valid_and_single_consume_case(descriptor)
+    retry_and_conflict_case(descriptor)
     reauthentication_case(descriptor)
     :ok
+  end
+
+  @spec reconciliation_cases(map()) :: :ok
+  def reconciliation_cases(descriptor) do
+    authorization_command_cases(descriptor)
+    credential_command_cases(descriptor)
+    :ok
+  end
+
+  defp authorization_command_cases(descriptor) do
+    reset(descriptor)
+
+    assert_reconciled_command(
+      descriptor,
+      begin_request(),
+      fn request -> authorization(descriptor).begin_authorization(request) end,
+      conflict: &put_in(&1, [:subject, :connection_version], 2)
+    )
+
+    reset(descriptor)
+    {:ok, started} = authorization(descriptor).begin_authorization(begin_request())
+
+    assert_reconciled_command(
+      descriptor,
+      %{
+        authorization_ref: started.authorization_ref,
+        expected_subject: subject(),
+        correlation_id: "corr-cancel-1"
+      },
+      fn request -> authorization(descriptor).cancel_authorization(request) end,
+      conflict: &put_in(&1, [:expected_subject, :connection_version], 2)
+    )
+
+    reset(descriptor)
+
+    assert_reconciled_command(
+      descriptor,
+      %{
+        subject: subject(),
+        session_assurance_evidence: %{aal: :aal2},
+        correlation_id: "corr-reauth-1"
+      },
+      fn request -> authorization(descriptor).reauthenticate(request) end,
+      conflict: &put_in(&1, [:subject, :connection_version], 2)
+    )
+  end
+
+  defp credential_command_cases(descriptor) do
+    reset(descriptor)
+
+    assert_reconciled_command(
+      descriptor,
+      store_request(),
+      fn request -> credential(descriptor).store(request) end,
+      conflict: &put_in(&1, [:scope, :connection_id], "conn-other")
+    )
+
+    for {build_request, invoke} <- [
+          {&replace_request(&1, "gho-D0-ROTATED"),
+           fn request -> credential(descriptor).replace(request) end},
+          {&lease_request/1,
+           fn request -> credential(descriptor).lease_for_operation(request) end},
+          {&revoke_request/1, fn request -> credential(descriptor).revoke(request) end}
+        ] do
+      reset(descriptor)
+      {:ok, record} = credential(descriptor).store(store_request())
+
+      assert_reconciled_command(descriptor, build_request.(record), invoke,
+        conflict: &put_in(&1, [:expected_scope, :connection_id], "conn-other")
+      )
+    end
+
+    reset(descriptor)
+    {:ok, record} = credential(descriptor).store(store_request())
+    {:ok, lease} = credential(descriptor).lease_for_operation(lease_request(record))
+    :ok = Map.fetch!(descriptor, :prepare_lease).(consume_request(lease, record))
+
+    assert_reconciled_command(
+      descriptor,
+      consume_request(lease, record),
+      fn request -> credential(descriptor).consume_lease(request) end,
+      conflict: &put_in(&1, [:expected_scope, :connection_id], "conn-other")
+    )
+  end
+
+  defp assert_reconciled_command(descriptor, request, invoke, opts) do
+    effects_before = Map.fetch!(descriptor, :command_effect_count).()
+    assert first = invoke.(request)
+    assert second = invoke.(request)
+    assert first == second
+    assert Map.fetch!(descriptor, :command_effect_count).() == effects_before + 1
+
+    conflicting_request = Keyword.fetch!(opts, :conflict).(request)
+    assert {:error, :correlation_conflict} = invoke.(conflicting_request)
+    assert Map.fetch!(descriptor, :command_effect_count).() == effects_before + 1
   end
 
   @spec credential_cases(map()) :: :ok
@@ -49,7 +145,9 @@ defmodule Ezagent.DomainGit.D0BackendReuseGate.Conformance do
 
     results =
       1..2
-      |> Task.async_stream(fn _ -> credential(descriptor).replace(request) end,
+      |> Task.async_stream(fn index ->
+        credential(descriptor).replace(%{request | correlation_id: "corr-replace-#{index}"})
+      end,
         max_concurrency: 2,
         ordered: false
       )
@@ -274,10 +372,32 @@ defmodule Ezagent.DomainGit.D0BackendReuseGate.Conformance do
     assert match?({:write_only_handoff, _}, result.credential_material)
     assert Types.safe_envelope?(Map.delete(result, :credential_material))
 
-    assert {:error, :callback_already_consumed} =
-             authorization(descriptor).consume_callback(request)
+    assert {:ok, ^result} = authorization(descriptor).consume_callback(request)
 
-    assert_no_effects(descriptor)
+    assert Map.fetch!(descriptor, :credential_store_count).() == 0
+    assert Map.fetch!(descriptor, :provider_effect_count).() == 1
+  end
+
+  defp retry_and_conflict_case(descriptor) do
+    reset(descriptor)
+    {:ok, started} = authorization(descriptor).begin_authorization(begin_request())
+    request = callback_request(started, callback_envelope(started))
+
+    assert {:ok, first} = authorization(descriptor).consume_callback(request)
+    assert {:ok, second} = authorization(descriptor).consume_callback(request)
+    assert first == second
+    assert Map.fetch!(descriptor, :provider_effect_count).() == 1
+
+    assert {:error, :correlation_conflict} =
+             authorization(descriptor).consume_callback(
+               put_in(request, [:expected_subject, :connection_version], 2)
+             )
+
+    assert {:error, :callback_already_consumed} =
+             authorization(descriptor).consume_callback(%{
+               request
+               | correlation_id: "corr-callback-2"
+             })
   end
 
   defp reauthentication_case(descriptor) do
