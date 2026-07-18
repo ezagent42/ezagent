@@ -35,10 +35,9 @@ defmodule EzagentPluginKanban.E2E.BoardDeleteTest do
     {:ok, _ws_pid} = Workspace.create(ws_name, %{})
     workspace_uri = URI.new!("workspace://#{ws_name}")
 
-    admin_ctx = %{
-      caller: User.admin_uri(),
-      caps: MapSet.new([Ezagent.Capability.admin_genesis_cap()])
-    }
+    # #1457 per-Kind signing:ambient genesis wildcard 不再过验签,ctx 走
+    # signed_workspace_ctx!(canonical admin 经 workspace Kind 目标签名)。
+    admin_ctx = Ezagent.Test.CapHelper.signed_workspace_ctx!(workspace_uri, User.admin_uri())
 
     :ok =
       AgentFlavorRegistry.register(%{
@@ -148,7 +147,11 @@ defmodule EzagentPluginKanban.E2E.BoardDeleteTest do
   defp join_member(session_uri, member_uri, role_name, %{caller: caller, caps: caps}) do
     target = Ezagent.URI.new!("#{URI.to_string(session_uri)}?action=session.join")
 
+    caps =
+      MapSet.new([Ezagent.Test.CapHelper.signed_action_cap!(target, caller) | Enum.to_list(caps)])
+
     case Invocation.dispatch(%Invocation{
+           origin: :trusted_internal,
            target: target,
            mode: :call,
            args: %{member: member_uri, role_name: role_name},

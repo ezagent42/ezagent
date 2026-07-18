@@ -39,10 +39,9 @@ defmodule EzagentPluginKanban.E2E.ShareReceiveTest do
     {:ok, _ws_pid} = Workspace.create(ws_name, %{})
     workspace_uri = URI.new!("workspace://#{ws_name}")
 
-    admin_ctx = %{
-      caller: User.admin_uri(),
-      caps: MapSet.new([Ezagent.Capability.admin_genesis_cap()])
-    }
+    # #1457 per-Kind signing:ambient genesis wildcard 不再过验签,ctx 走
+    # signed_workspace_ctx!(canonical admin 经 workspace Kind 目标签名)。
+    admin_ctx = Ezagent.Test.CapHelper.signed_workspace_ctx!(workspace_uri, User.admin_uri())
 
     :ok =
       AgentFlavorRegistry.register(%{
@@ -92,7 +91,9 @@ defmodule EzagentPluginKanban.E2E.ShareReceiveTest do
       refute holds_board_cap?(assistant_uri, board_uri, :add_node)
       assert {:ok, %{tree: _}} = dispatch_as(assistant_uri, board_uri, :get_tree, %{})
 
-      assert {:error, :unauthorized} =
+      # #1457 target verifier:无候选钥匙的拒绝 reason 收敛为 :missing_cap(与
+      # :unauthorized 区分——后者是有钥匙但验签/域不过)。
+      assert {:error, :missing_cap} =
                dispatch_as(assistant_uri, board_uri, :add_node, %{parent_id: "", title: "x"})
 
       # (b) nil 落点:沿「首个带 kanban-assistant 的 session」现口径 —— clicker 是
@@ -198,7 +199,11 @@ defmodule EzagentPluginKanban.E2E.ShareReceiveTest do
   defp join_member(session_uri, member_uri, role_name, %{caller: caller, caps: caps}) do
     target = Ezagent.URI.new!("#{URI.to_string(session_uri)}?action=session.join")
 
+    caps =
+      MapSet.new([Ezagent.Test.CapHelper.signed_action_cap!(target, caller) | Enum.to_list(caps)])
+
     case Invocation.dispatch(%Invocation{
+           origin: :trusted_internal,
            target: target,
            mode: :call,
            args: %{member: member_uri, role_name: role_name},

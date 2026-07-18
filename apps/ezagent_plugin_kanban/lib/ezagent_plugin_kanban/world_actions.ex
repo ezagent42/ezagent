@@ -619,7 +619,8 @@ defmodule EzagentPluginKanban.WorldActions do
               caller: caller,
               caps: Map.get(socket.assigns, :current_caps, MapSet.new()),
               reply: :ignore
-            }
+            },
+            origin: :authenticated_external
           })
 
         :ok

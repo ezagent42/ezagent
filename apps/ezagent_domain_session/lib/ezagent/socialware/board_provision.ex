@@ -164,12 +164,15 @@ defmodule Ezagent.Socialware.BoardProvision do
     end
   end
 
-  # ⑥ 一次性 provision authority:经 `Cap.issue` 唯一 chokepoint,tag =
-  # `{:rule, :socialware_runtime_provision, creator}`(规则:「编辑 session 成员可在本
-  # workspace 造 passive data-host」,configurer = 建板人 = granted_by 真实实体 #154)。
-  # concrete instance + concrete action 过 `rule_cap_bounded?`。铸出的签名 artifact
-  # **只并进本次 dispatch ctx**(transient,不 absorb 不落库)——建板人不留任何 durable
-  # create_agent 权,下次建板重走本规则(含成员/flavor 守卫)。
+  # ⑥ 一次性 provision authority:经 `Cap.issue` 唯一 chokepoint。规则语义(「编辑
+  # session 成员可在本 workspace 造 passive data-host」)的守卫在上方 call-site
+  # (assert_creator_member + assert_passive_recipe)。#1457 per-Kind signing 后
+  # `{:rule, …}` 授权元组已删——产品规则 mint 迁到 `{:admin, admin_uri}` 具名系统
+  # granter(同 main anon_user.issue_born_with 的迁移姿势:没有人类 granter 的系统
+  # 规则,由 canonical admin 作为具名 extreme-case granter,经 workspace Kind 的
+  # grant verifier 目标签名)。concrete instance + concrete action,铸出的签名
+  # artifact **只并进本次 dispatch ctx**(transient,不 absorb 不落库)——建板人不留
+  # 任何 durable create_agent 权,下次建板重走本规则(含成员/passive 守卫)。
   defp runtime_provision_ctx(%URI{} = workspace_uri, owner_ctx, %URI{} = creator_uri) do
     bare =
       Ezagent.Capability.cap(
@@ -181,7 +184,7 @@ defmodule Ezagent.Socialware.BoardProvision do
       )
 
     case Ezagent.Cap.issue(
-           {:rule, :socialware_runtime_provision, creator_uri},
+           {:admin, Ezagent.Entity.User.admin_uri()},
            creator_uri,
            bare
          ) do
@@ -243,7 +246,8 @@ defmodule Ezagent.Socialware.BoardProvision do
              caller: caller,
              caps: Map.get(caller_ctx, :caps, MapSet.new()),
              reply: {:caller_inbox, self()}
-           }
+           },
+           origin: :trusted_internal
          }) do
       {:ok, _} = ok -> ok
       {:error, reason} -> {:error, {:board_delete_failed, reason}}
