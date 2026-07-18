@@ -31,14 +31,25 @@ defmodule Ezagent.ProviderConnectionCapTest do
   test "central User dispatch denies missing and wrong exact caps before the handler", ctx do
     valid = issue_cap!(ctx.owner, ctx.caller, ProviderConnection, :read_connection)
 
+    wrong_instance =
+      issue_cap!(User.admin_uri(), ctx.caller, ProviderConnection, :read_connection)
+
+    wrong_workspace_owner = Ezagent.URI.user(:other_workspace, "wrong-workspace-owner")
+
+    wrong_workspace =
+      issue_cap!(wrong_workspace_owner, ctx.caller, ProviderConnection, :read_connection)
+
+    tampered_signature = %{valid | signature: <<0::512>>}
+
     wrong_caps = [
       MapSet.new(),
       MapSet.new([issue_cap!(ctx.owner, ctx.caller, ProviderConnection, :refresh)]),
       MapSet.new([
         issue_cap!(ctx.owner, ctx.caller, Ezagent.ActionSet.Identity, :read_connection)
       ]),
-      MapSet.new([%{valid | instance: Ezagent.URI.instance(User.admin_uri())}]),
-      MapSet.new([%{valid | workspace_uri: Ezagent.URI.workspace(:other_workspace)}])
+      MapSet.new([wrong_instance]),
+      MapSet.new([wrong_workspace]),
+      MapSet.new([tampered_signature])
     ]
 
     for caps <- wrong_caps do
