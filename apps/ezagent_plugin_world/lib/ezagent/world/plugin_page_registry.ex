@@ -26,7 +26,8 @@ defmodule Ezagent.World.PluginPageRegistry do
   # 与 `EzagentPluginKanban.WorldActions.handle_dispatch/3` 的字面子句逐一等价
   # （等价锁在 plugin_page_registry_test.exs）。
   # ⑲（显式决策 2026-07-16）：`kanban.delete_board` 加入 dispatch 准入白名单（板主人删板）。
-  @kanban_actions ~w(kanban.add_node kanban.rename_node kanban.move_node kanban.remove_node kanban.set_stage kanban.claim_node kanban.unclaim_node kanban.set_status kanban.attach_artifact kanban.detach_artifact kanban.set_metric kanban.create kanban.sync_miro kanban.save_miro_creds kanban.select_board kanban.drop_subtree kanban.set_board_config kanban.attach_upload kanban.register_pr kanban.attach_code_file kanban.share_board kanban.delete_board)
+  # ㊲（显式决策 2026-07-18）：`kanban.download_artifact` 加入白名单（附件点击现签下载 token）。
+  @kanban_actions ~w(kanban.add_node kanban.rename_node kanban.move_node kanban.remove_node kanban.set_stage kanban.claim_node kanban.unclaim_node kanban.set_status kanban.attach_artifact kanban.detach_artifact kanban.set_metric kanban.create kanban.sync_miro kanban.save_miro_creds kanban.select_board kanban.drop_subtree kanban.set_board_config kanban.attach_upload kanban.register_pr kanban.attach_code_file kanban.share_board kanban.delete_board kanban.download_artifact)
 
   @pages [
     # kanban 操作面（kanban-as-role K4）——注册表第一个条目，原 world 写死特例。

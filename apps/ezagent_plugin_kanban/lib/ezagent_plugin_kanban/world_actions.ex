@@ -144,6 +144,16 @@ defmodule EzagentPluginKanban.WorldActions do
       when is_binary(sha) and is_binary(path),
       do: act(socket, u, :attach_code_file, %{id: id, sha: sha, path: path})
 
+  # ㊲ 附件点击现签：渲染预签（TTL 300s）打开即过期——改为点击时 dispatch 现场签发
+  # fresh 下载 token 回推前端触发下载。
+  def handle_dispatch(socket, "kanban.download_artifact", %{
+        "kanban_uri" => u,
+        "id" => id,
+        "ref" => ref
+      })
+      when is_binary(ref),
+      do: download_artifact(socket, u, id, ref)
+
   def handle_dispatch(socket, "kanban.share_board", %{"kanban_uri" => u}) when is_binary(u),
     do: share_board(socket, u)
 
@@ -327,6 +337,65 @@ defmodule EzagentPluginKanban.WorldActions do
     token = Phoenix.Token.sign(socket, @share_board_salt, payload)
     @share_board_receive_path <> "?" <> URI.encode_query(token: token)
   end
+
+  # --- ㊲ 附件点击现签 -------------------------------------------------------
+  #
+  # 经 `WorldData.board_snapshot`（dispatch `get_tree` 带登录者身份/caps，CBAC 在
+  # Behavior 内如实判——读不到树就找不到附件，天然拒）找到节点上 kind=="file" 的
+  # 附件 → **现场**签发 fresh `DownloadToken`（默认短 TTL）→ 回推 href，前端隐藏
+  # `<a download>` 触发下载。`ts` 每次都变，重复点同一附件也触发前端 effect。
+  # grantee 绑定（person-bound token）等 infra-C（uploads-person-token）合并后在
+  # mint 处补 grantee 传参一行。
+  defp download_artifact(socket, uri_str, node_id, ref) do
+    case parse(uri_str) do
+      %URI{} = uri ->
+        :ok = WorldData.ensure_spawned(uri)
+
+        url =
+          WorldData.board_snapshot(uri, read_ctx(socket))
+          |> get_in(["tree", "nodes", node_id, "artifacts"])
+          |> List.wrap()
+          |> Enum.find_value(fn a ->
+            if is_map(a) and a["ref"] == ref and a["kind"] == "file", do: a["url"]
+          end)
+
+        case mint_fresh_download(url) do
+          {:ok, href} ->
+            {:noreply,
+             socket
+             |> assign(:last_dispatch_status, "ok")
+             |> push_event("world:state", %{
+               "download" => %{
+                 "href" => href,
+                 "ref" => ref,
+                 "ts" => System.system_time(:millisecond)
+               },
+               "last_dispatch_status" => "ok"
+             })}
+
+          :error ->
+            {:noreply, assign(socket, :last_dispatch_status, "error:artifact_not_found")}
+        end
+
+      :error ->
+        {:noreply, assign(socket, :last_dispatch_status, "error:bad_kanban_uri")}
+    end
+  end
+
+  # 仅 uploads resource URI 可签（scheme 判定走 `Ezagent.URI.scheme?/2`，同
+  # WorldData 原渲染预签的口径）；其余 :error → 前端报 artifact_not_found。
+  defp mint_fresh_download(url) when is_binary(url) do
+    with {:ok, %URI{} = uri} <- Ezagent.URI.parse(url),
+         true <- Ezagent.URI.scheme?(uri, :resource) do
+      {:ok, "/uploads/download?token=" <> Ezagent.Uploads.DownloadToken.mint!(uri)}
+    else
+      _ -> :error
+    end
+  rescue
+    _ -> :error
+  end
+
+  defp mint_fresh_download(_), do: :error
 
   # --- 上传文件挂到节点（v1.5）：验 upload grant 取 uploads URI → attach_artifact ----
 

@@ -31,6 +31,7 @@
     "kanban.create",
     "kanban.delete_board",
     "kanban.detach_artifact",
+    "kanban.download_artifact",
     "kanban.drop_subtree",
     "kanban.move_node",
     "kanban.register_pr",
