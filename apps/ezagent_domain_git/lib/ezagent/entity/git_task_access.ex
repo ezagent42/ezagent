@@ -1,6 +1,6 @@
 defmodule Ezagent.Entity.GitTaskAccess do
   @moduledoc """
-  Ephemeral, exact-resource policy for one Git task access grant.
+  Ephemeral, exact-operation policy for one Git task access grant.
 
   The struct is the closed authoritative policy. Provider, repository,
   credential ownership, grantee, branch, and idempotency coordinates are accepted
