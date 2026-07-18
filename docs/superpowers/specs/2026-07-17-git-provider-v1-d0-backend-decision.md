@@ -38,6 +38,20 @@ The evidence ledger is
 - No generic plaintext retrieval (`decrypt`, `get_plaintext`, `fetch_secret`,
   export, or caller-selected retrieval) is permitted.
 
+### D0.1 correlation reconciliation clarification (2026-07-18)
+
+The callback names and arities above remain frozen. Their mutating commands use
+`correlation_id` as a durable idempotency key bound to the operation class and
+all authority-bearing input. After a committed effect whose response is lost,
+an exact retry returns the same logical result without repeating the effect.
+Reusing the key with different input fails closed. A callback replay with a new
+correlation id returns `callback_already_consumed`.
+
+This clarification resolves a contradiction between the original prose and
+the already-required remote-shaped after-commit reconciliation tests. It does
+not add a callback, weaken single consumption, permit plaintext retrieval, or
+change the authorization/credential replacement boundary.
+
 ## Remote authorization approval rule
 
 A future OneAuth backend may be selected only when every OA item passes at one
