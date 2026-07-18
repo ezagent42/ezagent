@@ -72,8 +72,8 @@ defmodule EzagentPluginKanban.E2E.BoardProvisionGrantTest do
        %{ws_name: ws_name, workspace_uri: workspace_uri, admin_ctx: admin_ctx} do
     skip_if_no_entity_spawn(fn ->
       # --- owner = 常规用户(会话 owner / 建板触发者)。⑥ 后**不再预授 create_agent**:
-      # 建板授权由 create_board 内的 {:rule, :socialware_runtime_provision, creator}
-      # 一次性 rule-authority 提供(成员守卫 + passive flavor 白名单),本测试即证明
+      # 建板授权由 create_board 内的一次性 provision authority(#1457 后经
+      # `{:admin, admin_uri}` 具名签发;成员守卫 + passive flavor 白名单),本测试即证明
       # 「普通成员零 create_agent cap 也能建板」这条产品路。
       owner_uri =
         URI.new!("entity://#{ws_name}/user/board-owner-#{System.unique_integer([:positive])}")

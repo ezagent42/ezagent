@@ -454,7 +454,7 @@ defmodule EzagentPluginKanban.WorldActions do
   # kanban-as-role：看板 = 一个 passive native agent（role `kanban-manager`）。此前这里
   # 直调 `Workspace.create_agent`——普通成员无 create_agent cap 必拒（分层债 ⑥）。现改走
   # `Ezagent.Socialware.BoardProvision.create_board/5`（runtime 建板 glue）：成员守卫 +
-  # 一次性 rule-authority（{:rule, :socialware_runtime_provision, creator}，只造 passive
+  # 一次性 provision authority（#1457 后经 `{:admin, admin_uri}` 具名签发，只造 passive
   # native）+ 建完当场发两把钥匙（assistant + 建板人自己，落挂载表）。建板因此是
   # **session-scoped**（collab 模型：板挂在会话、assistant 收钥匙）——无当前会话则拒。
   # behavior 以字符串反解（token payload 字符串契约，照 @share_board_behavior 约定）。

@@ -7,8 +7,9 @@ defmodule Ezagent.Socialware.InstallerViewCapsTest do
   `Installation.grant_installer_view_caps/2` 是通用修复(零业务字面):对 session 已安装
   的**每个** definition(不分 public/private —— installer 自己装的都能看)的 declared
   views,把 `cap(:session, view, action, <session>, <ws>)` 经 **Grant chokepoint**
-  (`{:rule, :socialware_install_views, installer}`,concrete instance + concrete action
-  → `rule_cap_bounded?` 通过)授给 installer。幂等:重跑不重复发。
+  (#1457 后 rule 元组已删:granter=installer,admin 走 `{:admin,…}` 其余
+  `{:held_by,…}`,先 `TargetAuthority.ensure/2` 落 per-Kind 授权)授给 installer。
+  幂等:重跑不重复发。
   """
   use EzagentCore.DataCase, async: false
 

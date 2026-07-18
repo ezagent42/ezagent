@@ -893,7 +893,8 @@ defmodule EzagentDomainInstanceMessage.SessionCreator do
            # 分层债 ⑤ — 装了带 declared views 的 socialware(如 kanban)后,installer/owner
            # 也要拿到 view render cap(否则看不到对应 tab;此前只有匿名访客经
            # `anon_view_caps` 拿到 PUBLIC views 的)。通用:任何 definition 的 views 同样
-           # 受益。走 Grant chokepoint(`{:rule, :socialware_install_views, owner}`)。
+           # 受益。走 Grant chokepoint(#1457 后 rule 元组已删:granter=installer,
+           # admin 走 `{:admin,…}` 其余 `{:held_by,…}`,详见 grant_installer_view_caps)。
            :ok <-
              Installation.grant_installer_view_caps(session_uri, effective_owner),
            # rev6 step 4 — CONFIG ONLY (prompts / legends / routing rules).

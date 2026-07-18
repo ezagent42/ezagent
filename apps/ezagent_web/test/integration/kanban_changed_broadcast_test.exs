@@ -39,10 +39,9 @@ defmodule EzagentWeb.Integration.KanbanChangedBroadcastTest do
     {:ok, _ws_pid} = Workspace.create(ws_name, %{})
     workspace_uri = URI.new!("workspace://#{ws_name}")
 
-    admin_ctx = %{
-      caller: User.admin_uri(),
-      caps: MapSet.new([Ezagent.Capability.admin_genesis_cap()])
-    }
+    # #1457 strict-verify:未签名 ambient wildcard 不再过验签——workspace 动作走
+    # target-signed workspace ctx(canonical admin 经 workspace Kind 目标签名)。
+    admin_ctx = Ezagent.Test.CapHelper.signed_workspace_ctx!(workspace_uri, User.admin_uri())
 
     :ok =
       AgentFlavorRegistry.register(%{
@@ -85,7 +84,25 @@ defmodule EzagentWeb.Integration.KanbanChangedBroadcastTest do
           Ezagent.ActionSet.Session.session_events_topic(session_uri)
         )
 
-      socket = socket_for(workspace_uri, admin_ctx, session_uri)
+      # 板上两个动作各要一把 target-signed cap(strict-verify 下 dispatch 逐 cap 验签,
+      # 照 board_provision_grant_test 同款夹具)。
+      board_ctx = %{
+        admin_ctx
+        | caps:
+            MapSet.union(
+              admin_ctx.caps,
+              MapSet.new(
+                for action <- [:add_node, :rename_node] do
+                  Ezagent.Test.CapHelper.signed_action_cap!(
+                    Ezagent.URI.with_action(board_uri, :kanban, action),
+                    admin_ctx.caller
+                  )
+                end
+              )
+            )
+      }
+
+      socket = socket_for(workspace_uri, board_ctx, session_uri)
 
       # (a) 写动作成功 → 收到轻事件(payload = board URI,订阅者按自己 read_ctx 重拉)。
       {:noreply, _socket} =
@@ -108,7 +125,7 @@ defmodule EzagentWeb.Integration.KanbanChangedBroadcastTest do
       refute_receive {:kanban_changed, _}, 300
 
       # (c) 无当前会话(/plugins/kanban 独立页)→ 成功也不广播、不炸。
-      no_session_socket = socket_for(workspace_uri, admin_ctx, nil)
+      no_session_socket = socket_for(workspace_uri, board_ctx, nil)
 
       {:noreply, _socket} =
         WorldActions.handle_dispatch(no_session_socket, "kanban.add_node", %{
