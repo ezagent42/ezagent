@@ -236,8 +236,13 @@ Contract rules:
    accept an agent URI as the authorization subject.
 2. State/PKCE/callback correlation is bound to subject, connection, host,
    acquisition method, version, expiry, and one correlation id.
-3. `consume_callback` is exactly-once from the lifecycle perspective: the first
-   valid consumption commits; repeats return `callback_already_consumed`.
+3. `consume_callback` is exactly-once from the lifecycle perspective and
+   retry-safe across an ambiguous response. The first valid command commits.
+   A retry with the same correlation id, authorization ref, expected subject,
+   and callback digest returns the same logical result without repeating the
+   provider effect. A second command with a different correlation id returns
+   `callback_already_consumed`. Reusing a correlation id with different bound
+   input fails closed as `callback_invalid`.
 4. `credential_material` is a write-only handoff to `CredentialBackend`; it is
    never stored in `ProviderConnection` or returned to UI/domain consumers.
 5. A OneAuth product-login/social-login token is not valid
@@ -246,6 +251,11 @@ Contract rules:
    neither grants Git task authority nor substitutes for provider consent.
 7. Provider endpoint, scope, callback payload, and refresh semantics remain in
    the provider plugin/driver.
+8. For every mutating callback in both backend contracts, `correlation_id` is a
+   durable idempotency-command key, not audit decoration. A backend atomically
+   binds it to the operation class and a digest of all authority-bearing input.
+   Exact retries return the committed logical result; mismatched reuse fails
+   closed and never repeats an external effect.
 
 ### 6.1 Closed authorization errors
 
@@ -356,6 +366,15 @@ Contract rules:
 7. The credential and refresh material never enters an agent process, agent
    snapshot, `config_dir`, task workspace/worktree, prompt, transcript, task
    card, Kanban projection, or general audit event.
+8. `store`, `replace`, `lease_for_operation`, `consume_lease`, and `revoke`
+   reconcile ambiguous outcomes by the durable correlation-id command key.
+   An exact retry returns the original logical result without a second mutation
+   or lease. Reusing the key with a different scope, version, operation class,
+   grant digest, or credential-handoff digest fails closed. This is required
+   even for a local backend so that it remains replaceable by a remote backend.
+9. Reconciliation may replay only the same opaque write-only credential
+   handoff. It must not expose or reconstruct plaintext credential material for
+   a domain, UI, log, event, or transport response.
 
 ### 7.1 Closed credential errors
 
