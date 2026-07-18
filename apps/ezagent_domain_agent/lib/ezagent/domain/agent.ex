@@ -325,7 +325,10 @@ defmodule Ezagent.Domain.Agent do
   for the credential home (file flavors) or the durable credential slice (curl),
   both non-activating. A cold agent is NEVER force-activated; it reads its durable
   slices or `:unknown`. `opts` (e.g. `:now_ms`/`:skew_ms`) is forwarded to the
-  flavor probe.
+  flavor probe; the cc-custom seam ADDS `opts[:backend_profile]` from the
+  persisted `:sandbox` slice's `respawn_template_data["provider"]` (same
+  non-activating read as the credential home) when the caller did not supply one,
+  so a profile-driven env credential classifies per-profile.
   """
   @spec read_credential_status(URI.t(), read_ctx(), keyword()) ::
           {:ok, Ezagent.Agent.CredentialStatus.result()} | {:error, term()}
@@ -341,6 +344,7 @@ defmodule Ezagent.Domain.Agent do
     if authorized?(needed, ctx) do
       config_dir = trusted_config_dir(agent_uri)
       flavor = safe_flavor(agent_uri)
+      opts = maybe_put_backend_profile(opts, agent_uri)
       {:ok, Ezagent.Agent.CredentialStatus.classify(agent_uri, flavor, config_dir, opts)}
     else
       {:error, :unauthorized}
@@ -370,6 +374,47 @@ defmodule Ezagent.Domain.Agent do
   # reuses the canonical `resolve_flavor!/1` (UriQuery `:flavor`, non-activating).
   defp safe_flavor(%URI{} = agent_uri) do
     resolve_flavor!(agent_uri)
+  rescue
+    _ -> nil
+  end
+
+  # cc-custom seam: the SELECTED backend profile is persisted in the durable
+  # `:sandbox` slice's `respawn_template_data["provider"]` at spawn. Thread it
+  # to the flavor probe as `:backend_profile` so a profile-driven, env-backed
+  # credential (kimi → MOONSHOT_API_KEY) classifies per-profile. A caller-
+  # supplied `:backend_profile` wins (`put_new`); plain-cc/legacy agents have
+  # no persisted profile → opts pass through unchanged.
+  defp maybe_put_backend_profile(opts, %URI{} = agent_uri) do
+    case trusted_backend_profile(agent_uri) do
+      profile when is_binary(profile) and profile != "" ->
+        Keyword.put_new(opts, :backend_profile, profile)
+
+      _ ->
+        opts
+    end
+  end
+
+  # Trusted internal read of the persisted `:sandbox` slice's
+  # `respawn_template_data["provider"]` — same non-activating mechanism and
+  # authority posture as `trusted_config_dir/1` (reached ONLY after
+  # authorization). `nil` when absent/empty (plain-cc, legacy, slice-less).
+  defp trusted_backend_profile(%URI{} = agent_uri) do
+    case Ezagent.ActionSet.Sandbox.read_persisted_state(agent_uri) do
+      state when is_map(state) ->
+        case Map.get(state, :respawn_template_data) || Map.get(state, "respawn_template_data") do
+          respawn_data when is_map(respawn_data) ->
+            case Map.get(respawn_data, "provider") || Map.get(respawn_data, :provider) do
+              profile when is_binary(profile) and profile != "" -> profile
+              _ -> nil
+            end
+
+          _ ->
+            nil
+        end
+
+      _ ->
+        nil
+    end
   rescue
     _ -> nil
   end

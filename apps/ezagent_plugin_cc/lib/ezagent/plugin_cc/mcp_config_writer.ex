@@ -104,7 +104,7 @@ defmodule EzagentPluginCc.McpConfigWriter do
   (`"esr-orchestrator"`, running `orchestrator_bridge.py`) is written so a live
   orchestrator's `claude` launches the bridge that joins `orch:bridge:<uri>` —
   the join that flips orchestrator transport-readiness. The caller gates this on
-  the agent's `role == "orchestrator"` (flavor-agnostic: cc AND cc-deepseek).
+  the agent's `role == "orchestrator"` (flavor-agnostic: cc AND cc-custom).
   Orchestrator opts:
 
   - `:orchestrator` — `true` to write the second server (default `false`).
@@ -175,7 +175,7 @@ defmodule EzagentPluginCc.McpConfigWriter do
     # `--mcp-config` appended LAST, which shadowed/raced the primary file and
     # did not reliably fire on a deployed node (live E2E). Only orchestrator
     # agents (gated by the caller on `role == "orchestrator"`, flavor-agnostic —
-    # cc AND cc-deepseek) get this entry; normal cc agents never do.
+    # cc AND cc-custom) get this entry; normal cc agents never do.
     #
     # The script resolves at RUNTIME from installed `priv/` (reuse the
     # esr-bridge #1325 pattern), NOT a copied sandbox file. AGENT_URI + the

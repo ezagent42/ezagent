@@ -296,6 +296,37 @@ defmodule EzagentPluginWorld.WorldLive do
     end)
   end
 
+  # G5 Layer 2 notification: user clicks "send reminder" on an error card.
+  def handle_event(
+        "world:dispatch",
+        %{
+          "action" => "notification.send",
+          "args" => %{"type" => "error_fix_request", "body" => body}
+        },
+        socket
+      )
+      when is_map(body) do
+    caller = socket.assigns.current_entity_uri
+
+    case resolve_founder_for_notify(socket) do
+      %URI{} = founder_uri ->
+        Ezagent.Notifications.notify(founder_uri, %{
+          type: :error_fix_request,
+          body:
+            Map.merge(body, %{
+              caller_name: entity_display_name(caller),
+              workspace: entity_display_name(socket.assigns.current_workspace_uri)
+            }),
+          source: __MODULE__
+        })
+
+        {:noreply, assign(socket, :last_dispatch_status, "ok")}
+
+      nil ->
+        {:noreply, assign(socket, :last_dispatch_status, "error:no_founder")}
+    end
+  end
+
   # 插件页面动作（`Ezagent.World.PluginPageRegistry`）：fail-closed 准入——
   # action 命中某页面的前缀 **且** 在其细白名单内才路由到该页面的
   # actions_module（kanban 曾是写死的 `@kanban_actions` 串子句）；未注册动作
@@ -344,6 +375,34 @@ defmodule EzagentPluginWorld.WorldLive do
       _other -> fun.()
     end
   end
+
+  defp resolve_founder_for_notify(socket) do
+    case Map.get(socket.assigns, :current_workspace_uri) do
+      %URI{} = ws_uri ->
+        case Ezagent.URI.name(ws_uri) do
+          {:ok, name} when is_binary(name) and name != "" ->
+            case Ezagent.Workspace.Store.get_by_name(name) do
+              %{members: [%URI{} = founder | _]} -> founder
+              _ -> nil
+            end
+
+          _ ->
+            nil
+        end
+
+      _ ->
+        nil
+    end
+  end
+
+  defp entity_display_name(%URI{} = uri) do
+    case Ezagent.URI.name(uri) do
+      {:ok, name} -> name
+      _ -> Ezagent.URI.stable_key(uri)
+    end
+  end
+
+  defp entity_display_name(_), do: "unknown"
 
   defp pty_agent_uri_str(%{"component" => "pty_terminal", "agent_uri" => agent_uri_str}),
     do: agent_uri_str

@@ -162,4 +162,131 @@ defmodule Ezagent.Domain.AgentCredentialStatusTest do
     assert {:error, :unauthorized} = DomainAgent.read_credential_status(agent, ctx)
     refute kind_live?(agent)
   end
+
+  # ── cc-custom: the persisted backend profile drives the status read ──
+  #
+  # A cc-custom agent's credential is the SELECTED backend profile's env var
+  # (kimi → MOONSHOT_API_KEY), never an on-disk login. The profile name rides
+  # in the durable `:sandbox` slice's `respawn_template_data["provider"]`; the
+  # status read must thread it to the flavor probe as `:backend_profile` —
+  # non-activating, like `trusted_config_dir/1`. `FakeCcCustomTemplate` (test
+  # support) mirrors the real `CcCustomAgent` contract (plugin_cc is not a
+  # domain_agent dep).
+  describe "cc-custom persisted backend profile" do
+    setup do
+      # UNIQUE per test (never the real "cc-custom"): at umbrella root plugin_cc
+      # boots first and owns "cc-custom" → CcCustomAgent, and
+      # `AgentFlavorRegistry.register/1` raises on a divergent re-registration.
+      # Shadows the outer context's `:flavor` — within this describe "flavor"
+      # IS the fake cc-custom flavor.
+      flavor = "cc-custom-fake-#{System.unique_integer([:positive])}"
+
+      :ok =
+        AgentFlavorRegistry.register(%{
+          flavor: flavor,
+          kind: Ezagent.Agent.FakeCcCustomTemplate,
+          template_class: Ezagent.Agent.FakeCcCustomTemplate
+        })
+
+      # The `:flavor` UriQuery resolver is owned by ezagent_domain_session,
+      # which is NOT started in this app's test env — prime a resolver for the
+      # cc-custom flavor reads (mirroring `AgentTest`'s save/restore pattern).
+      Ezagent.UriQuery.init()
+      previous = :ets.lookup(Ezagent.UriQuery.table(), :flavor)
+      :ets.delete(Ezagent.UriQuery.table(), :flavor)
+
+      :ets.insert(Ezagent.UriQuery.table(), {:flavor, &resolve_cc_custom_flavor/1})
+
+      on_exit(fn ->
+        :ets.delete(Ezagent.UriQuery.table(), :flavor)
+
+        for entry <- previous do
+          :ets.insert(Ezagent.UriQuery.table(), entry)
+        end
+      end)
+
+      key_previous = System.get_env("MOONSHOT_API_KEY")
+      System.delete_env("MOONSHOT_API_KEY")
+
+      on_exit(fn ->
+        if key_previous,
+          do: System.put_env("MOONSHOT_API_KEY", key_previous),
+          else: System.delete_env("MOONSHOT_API_KEY")
+      end)
+
+      %{flavor: flavor}
+    end
+
+    # The production chain's non-activating rungs: launch attribute → durable
+    # snapshot (the live-Kind rung is unnecessary here — the agent stays cold).
+    defp resolve_cc_custom_flavor(%URI{} = uri) do
+      case Ezagent.AgentFlavorAttributes.get(uri) do
+        {:ok, _flavor} = ok -> ok
+        :none -> Ezagent.AgentFlavorResolver.flavor_from_durable_snapshot(uri)
+      end
+    end
+
+    defp resolve_cc_custom_flavor(_), do: :none
+
+    defp seed_cc_custom(agent, flavor, provider) do
+      :ok = Ezagent.AgentFlavorAttributes.put(agent, flavor)
+
+      respawn_data =
+        case provider do
+          p when is_binary(p) and p != "" ->
+            %{"flavor" => flavor, "provider" => p}
+
+          _ ->
+            %{"flavor" => flavor}
+        end
+
+      {:ok, _} =
+        SnapshotStore.write(
+          agent,
+          %{
+            sandbox: %{
+              config_dir_path: nil,
+              template_class: nil,
+              respawn_template_data: respawn_data,
+              pty_phase: nil
+            },
+            identity: %{caps: MapSet.new()}
+          },
+          kind_type: :agent
+        )
+
+      :ok
+    end
+
+    test "persisted provider kimi, key unset → :missing; key set → :authenticated (non-activating)",
+         %{agent: agent, workspace: workspace, flavor: flavor} do
+      :ok = seed_cc_custom(agent, flavor, "kimi")
+      owner = user("owner")
+      ctx = %{caller: owner, caps: MapSet.new([manage_cap(agent, workspace, owner)])}
+
+      refute kind_live?(agent)
+
+      assert {:ok, %{status: :missing, flavor: ^flavor}} =
+               DomainAgent.read_credential_status(agent, ctx)
+
+      System.put_env("MOONSHOT_API_KEY", "test-only-key")
+
+      assert {:ok, %{status: :authenticated, flavor: ^flavor}} =
+               DomainAgent.read_credential_status(agent, ctx)
+
+      refute kind_live?(agent), "read_credential_status must NOT activate the cold agent"
+    end
+
+    test "persisted cc-custom agent with NO provider → :unknown (never an alarm)",
+         %{agent: agent, workspace: workspace, flavor: flavor} do
+      :ok = seed_cc_custom(agent, flavor, nil)
+      owner = user("owner")
+      ctx = %{caller: owner, caps: MapSet.new([manage_cap(agent, workspace, owner)])}
+
+      assert {:ok, %{status: :unknown, flavor: ^flavor}} =
+               DomainAgent.read_credential_status(agent, ctx)
+
+      refute kind_live?(agent)
+    end
+  end
 end

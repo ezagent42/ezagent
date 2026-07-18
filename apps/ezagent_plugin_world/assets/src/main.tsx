@@ -269,6 +269,7 @@ function WorldApp({layout, state: initialState, pluginNav, caller, pushEvent, on
               renderLayoutComponent(component, {
                 layout: currentLayout,
                 state,
+                pushEvent,
                 onJoin: (sessionUri) => {
                   pushEvent?.("world:dispatch", {
                     action: "sessions.join",
@@ -866,6 +867,7 @@ function entityCapsPath(entityUri?: string | null): string | null {
 type RenderContext = {
   layout: WorldLayout
   state: WorldState
+  pushEvent?: (event: string, payload: unknown) => void
   onJoin: (sessionUri: string) => void
   onCreateSession: (
     shortName: string,
@@ -958,6 +960,7 @@ function renderLayoutComponent(component: NonNullable<WorldLayout["components"]>
         <Conversation
           key={component.id}
           state={context.state}
+          pushEvent={context.pushEvent}
           onAddRoutingRule={context.onAddRoutingRule}
           onCreate={context.onCreateSession}
           onOpenPty={context.onOpenSessionPty}

@@ -52,9 +52,11 @@ defmodule Ezagent.Socialware.InstallationTest do
     assert {:ok, definition, _object} =
              DefinitionRegistry.lookup(Ezagent.URI.workspace(:system), "orchestrator")
 
-    # `uses` names the PLUGIN (cc); the orchestrator runs on the `cc-deepseek`
-    # provider FLAVOR of that plugin (#1332/#1324) — the built-in role flavor was
-    # brought into agreement with the cc-orchestrator AgentTemplate seed.
+    # `uses` names the PLUGIN (cc); the orchestrator runs on the `cc-custom`
+    # provider-configurable FLAVOR of that plugin with the "deepseek" backend
+    # profile (cc-custom-backends PR-5; #1332/#1324's cc-deepseek flavor is
+    # retired) — the built-in role flavor was brought into agreement with the
+    # cc-orchestrator AgentTemplate seed.
     assert definition.uses == ["cc"]
     assert definition.views == []
     assert definition.routing_rules == []
@@ -65,7 +67,8 @@ defmodule Ezagent.Socialware.InstallationTest do
                role_name: "orchestrator",
                fill: :agent,
                recipe: "orchestrator",
-               flavor: "cc-deepseek"
+               flavor: "cc-custom",
+               provider: "deepseek"
              }
            ] = definition.roles
   end

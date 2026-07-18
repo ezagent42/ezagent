@@ -18,7 +18,8 @@ defmodule Ezagent.Agent.RecipeMaterializer do
           required(:role_name) => String.t(),
           required(:flavor) => String.t(),
           required(:agent_uri) => URI.t(),
-          optional(:description) => String.t()
+          optional(:description) => String.t(),
+          optional(:provider) => String.t()
         }
 
   @type spawn_opts :: %{
@@ -32,6 +33,7 @@ defmodule Ezagent.Agent.RecipeMaterializer do
           required(:caller) => URI.t(),
           required(:caps) => Enumerable.t(),
           optional(:description) => String.t(),
+          optional(:provider) => String.t(),
           optional(:source_template_uri) => URI.t(),
           optional(:template_content) => map()
         }
@@ -73,7 +75,8 @@ defmodule Ezagent.Agent.RecipeMaterializer do
        |> maybe_put(:desired_skills, recipe_field(recipe, :skills), &non_empty_list?/1)
        |> maybe_put(:plugins, recipe_field(recipe, :plugins), &non_empty_list?/1)
        |> maybe_put(:prompt, recipe_field(recipe, :prompt), &is_binary/1)
-       |> maybe_put(:script, recipe_field(recipe, :script), &is_binary/1)}
+       |> maybe_put(:script, recipe_field(recipe, :script), &is_binary/1)
+       |> maybe_put(:provider, Map.get(opts, :provider), &is_binary/1)}
     end
   end
 
@@ -171,7 +174,8 @@ defmodule Ezagent.Agent.RecipeMaterializer do
       role_name: Map.fetch!(opts, :role_name),
       flavor: Map.fetch!(opts, :flavor),
       agent_uri: Map.fetch!(opts, :agent_uri),
-      description: Map.get(opts, :description, "agent materialized from recipe")
+      description: Map.get(opts, :description, "agent materialized from recipe"),
+      provider: Map.get(opts, :provider)
     })
   end
 

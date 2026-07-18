@@ -52,7 +52,13 @@ defmodule EzagentCore.Invariants.UriCanonicalizationInvariantTest do
   ]
 
   @uri_parse_allowlist [
-    "apps/ezagent_core/lib/ezagent/uri.ex"
+    "apps/ezagent_core/lib/ezagent/uri.ex",
+    # cc_orchestrator_seed.ex `swap_ws_path/2` parses a ws(s):// NETWORK URL
+    # (orchestrator MCP mount), not an Ezagent-scheme URI. The inline
+    # `# uri-canonical-allow` marker is NOT format-stable across Elixir patch
+    # versions (some formatters hoist end-of-line comments above the code
+    # line), so the suppression lives here instead of inline.
+    "apps/ezagent_plugin_cc/lib/ezagent/orchestrator/cc_orchestrator_seed.ex"
   ]
 
   @lib_glob "apps/*/lib/**/*.ex"

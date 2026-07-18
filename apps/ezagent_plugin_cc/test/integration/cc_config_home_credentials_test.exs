@@ -127,11 +127,12 @@ defmodule Ezagent.PluginCc.Integration.CcConfigHomeCredentialsTest do
 
       installer = Ezagent.URI.user(:system, "deepseek#{uniq()}")
 
-      assert {:skip, {:credential_unavailable, "cc-deepseek"}} =
+      assert {:skip, {:credential_unavailable, "cc-custom"}} =
                CredentialPrecondition.check_source(
                  installer,
                  Ezagent.URI.workspace(:system),
-                 "cc-deepseek"
+                 "cc-custom",
+                 backend_profile: "deepseek"
                )
     end
 
@@ -151,7 +152,50 @@ defmodule Ezagent.PluginCc.Integration.CcConfigHomeCredentialsTest do
                CredentialPrecondition.check_source(
                  installer,
                  Ezagent.URI.workspace(:system),
-                 "cc-deepseek"
+                 "cc-custom",
+                 backend_profile: "deepseek"
+               )
+    end
+
+    test "cc-custom skips when the SELECTED profile's key is missing, proceeds when present" do
+      previous = System.get_env("MOONSHOT_API_KEY")
+      System.delete_env("MOONSHOT_API_KEY")
+
+      on_exit(fn ->
+        if previous,
+          do: System.put_env("MOONSHOT_API_KEY", previous),
+          else: System.delete_env("MOONSHOT_API_KEY")
+      end)
+
+      installer = Ezagent.URI.user(:system, "kimi#{uniq()}")
+
+      assert {:skip, {:credential_unavailable, "cc-custom"}} =
+               CredentialPrecondition.check_source(
+                 installer,
+                 Ezagent.URI.workspace(:system),
+                 "cc-custom",
+                 backend_profile: "kimi"
+               )
+
+      System.put_env("MOONSHOT_API_KEY", "test-only-key")
+
+      assert :ok =
+               CredentialPrecondition.check_source(
+                 installer,
+                 Ezagent.URI.workspace(:system),
+                 "cc-custom",
+                 backend_profile: "kimi"
+               )
+    end
+
+    test "cc-custom with NO profile context fails closed (skip, never a silent pass)" do
+      installer = Ezagent.URI.user(:system, "nop#{uniq()}")
+
+      assert {:skip, {:credential_unavailable, "cc-custom"}} =
+               CredentialPrecondition.check_source(
+                 installer,
+                 Ezagent.URI.workspace(:system),
+                 "cc-custom"
                )
     end
   end
@@ -291,15 +335,20 @@ defmodule Ezagent.PluginCc.Integration.CcConfigHomeCredentialsTest do
         # non-admin installer's un-fillable slot is skipped loudly). That rule is
         # a `cc`-flavor (OAuth / `.credentials.json`) property. #1332 switched the
         # stock "orchestrator" socialware definition's DEFAULT flavor to
-        # `cc-deepseek` (a shared-platform DEEPSEEK_API_KEY credential — a
-        # DIFFERENT isolation model with no host login and no per-installer
-        # skip), which would otherwise silently retarget these tests off the
-        # behaviour they guard. The role-slot flavor choice re-pins to `cc` so
-        # the #161 coverage is preserved. (cc-deepseek's own shared-key
-        # isolation properties are a separate coverage gap — see PR body / #1324.)
+        # `cc-deepseek`, and cc-custom-backends PR-5 then generalized it to
+        # `cc-custom` + the "deepseek" provider profile (a shared-platform
+        # DEEPSEEK_API_KEY credential — a DIFFERENT isolation model with no host
+        # login and no per-installer skip), which would otherwise silently
+        # retarget these tests off the behaviour they guard. The role-slot
+        # flavor choice re-pins to `cc` so the #161 coverage is preserved.
+        # (cc-custom's own shared-key isolation properties are a separate
+        # coverage gap — see PR body / #1324.)
         installs: [
           "chat",
-          %{ref: "orchestrator", config: %{role_slots: [%{role_name: "orchestrator", flavor: "cc"}]}}
+          %{
+            ref: "orchestrator",
+            config: %{role_slots: [%{role_name: "orchestrator", flavor: "cc"}]}
+          }
         ],
         legends: %{},
         routing_rules: [],

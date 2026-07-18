@@ -69,14 +69,14 @@ defmodule Mix.Tasks.Ezagent.Socialware.ReseedBuiltinsTest do
     assert object.id == old.id
   end
 
-  test "--force applies the code version (cc-deepseek)" do
+  test "--force applies the code version (cc-custom)" do
     seed_prior_cc!()
 
     capture_io(fn ->
       Mix.Task.rerun("ezagent.socialware.reseed_builtins", [@orchestrator, "--force"])
     end)
 
-    assert stored_flavor() == "cc-deepseek"
+    assert stored_flavor() == "cc-custom"
   end
 
   test "--force on an unknown name fails loud" do
