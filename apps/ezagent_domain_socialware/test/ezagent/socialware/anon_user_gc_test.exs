@@ -267,7 +267,7 @@ defmodule Ezagent.Socialware.AnonUserGCTest do
 
   # ----- helpers -------------------------------------------------------------
 
-  @owner Ezagent.URI.entity(:team_alpha, :user, "gc-owner")
+  @owner Ezagent.URI.user(:system, :admin)
 
   defp spawn_session do
     uri =
@@ -307,28 +307,18 @@ defmodule Ezagent.Socialware.AnonUserGCTest do
     :ok
   end
 
-  defp admin_caps do
-    MapSet.new([
-      %Ezagent.Capability{
-        kind: :any,
-        behavior: :any,
-        action: :any,
-        instance: :any,
-        workspace_uri: :any,
-        granted_by: Ezagent.URI.user(:system, :admin),
-        granted_at: ~U[2026-01-01 00:00:00Z]
-      }
-    ])
-  end
-
   # Join via the PRODUCTION dispatch path, :call so it is synchronous.
   defp join(session_uri, member_uri) do
+    target = Ezagent.URI.new!("#{URI.to_string(session_uri)}?action=session.join")
+    caller = User.admin_uri()
+    cap = Ezagent.Test.CapHelper.signed_action_cap!(target, caller)
+
     {:ok, _} =
       Ezagent.Invocation.dispatch(%Ezagent.Invocation{origin: :trusted_internal,
-        target: Ezagent.URI.new!("#{URI.to_string(session_uri)}?action=session.join"),
+        target: target,
         mode: :call,
         args: %{member: member_uri},
-        ctx: %{caller: User.admin_uri(), caps: admin_caps(), reply: :ignore}
+        ctx: %{caller: caller, caps: MapSet.new([cap]), reply: :ignore}
       })
   end
 

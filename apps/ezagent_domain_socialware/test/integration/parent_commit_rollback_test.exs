@@ -45,14 +45,19 @@ defmodule EzagentDomainSocialware.Integration.ParentCommitRollbackTest do
     Ezagent.URI.new!("#{URI.to_string(session_uri)}?action=#{behavior}.#{action}")
   end
 
-  defp dispatch(session_uri, behavior, action, args) do
-    Invocation.dispatch(%Invocation{origin: :trusted_internal,
-      target: target(session_uri, behavior, action),
+  defp dispatch(session_uri, behavior, action, args, caps \\ nil) do
+    target = target(session_uri, behavior, action)
+    caller = User.admin_uri()
+    caps = caps || Ezagent.Socialware.TestCapHelper.lifecycle_caps(session_uri, caller, target)
+
+    Invocation.dispatch(%Invocation{
+      origin: :trusted_internal,
+      target: target,
       mode: :call,
       args: args,
       ctx: %{
-        caller: User.admin_uri(),
-        caps: MapSet.new([Ezagent.Capability.admin_genesis_cap()]),
+        caller: caller,
+        caps: caps,
         reply: {:caller_inbox, self()}
       }
     })
@@ -119,6 +124,15 @@ defmodule EzagentDomainSocialware.Integration.ParentCommitRollbackTest do
     # Arm the force-fail seam for THIS session, then settle. The parent
     # `:turns` slice commit will fail; the deferred approve/commit_settlement
     # must be SKIPPED.
+    settle_target = target(ctx.session, :turn, :settle)
+
+    settle_caps =
+      Ezagent.Socialware.TestCapHelper.lifecycle_caps(
+        ctx.session,
+        User.admin_uri(),
+        settle_target
+      )
+
     Application.put_env(
       :ezagent_core,
       :p2_5c_force_commit_failure_uris,
@@ -126,7 +140,7 @@ defmodule EzagentDomainSocialware.Integration.ParentCommitRollbackTest do
     )
 
     assert {:error, {:persistence_failed, {:p2_5c_forced_commit_failure, _}}} =
-             dispatch(ctx.session, :turn, :settle, %{turn_id: turn_id})
+             dispatch(ctx.session, :turn, :settle, %{turn_id: turn_id}, settle_caps)
 
     # The orphan delivery must NOT appear. Give the (incorrectly-running)
     # deferred dispatch a window to leak if the gate were broken.

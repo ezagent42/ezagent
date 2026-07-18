@@ -102,6 +102,28 @@ defmodule Ezagent.Identity.Grant do
   end
 
   @doc """
+  Issue one target-signed artifact, hand it to the grantee's self-store, and
+  wait until that exact artifact is observable in the grantee's cap slice.
+
+  Framework producers that need synchronous ISSUE -> SELF-STORE semantics use
+  this facade so adapters such as the CLI never construct an absorb envelope.
+  """
+  @spec issue_and_absorb_cap(URI.t(), Capability.t(), authorization(), timeout()) ::
+          :ok | {:error, term()}
+  def issue_and_absorb_cap(
+        %URI{} = grantee,
+        %Capability{} = cap,
+        authorization,
+        timeout_ms \\ 5_000
+      ) do
+    with {:ok, artifact} <- issue_cap(grantee, cap, authorization),
+         :ok <- Ezagent.Identity.absorb_cap(grantee, artifact),
+         :ok <- Ezagent.Identity.CapAbsorbAwait.await_exact(grantee, [artifact], timeout_ms) do
+      :ok
+    end
+  end
+
+  @doc """
   Revoke `cap` from `target` via `Ezagent.Invocation.dispatch/1`
   (`:call` mode). Symmetric to `grant_cap/3`. Returns `:ok` or
   `{:error, reason}`.

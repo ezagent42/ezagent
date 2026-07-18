@@ -520,7 +520,7 @@ defmodule EzagentWeb.WorldHostRoutingTest do
         "args" => %{"session_uri" => URI.to_string(session_uri)}
       })
 
-    assert html =~ ~s(data-last-dispatch="error:unauthorized")
+    assert html =~ ~s(data-last-dispatch="error:missing_cap")
     assert_patch(view, "/sessions?session=#{encoded}")
   end
 
@@ -610,7 +610,7 @@ defmodule EzagentWeb.WorldHostRoutingTest do
         "args" => %{"layout" => layout}
       })
 
-    assert html =~ ~s(data-last-dispatch="error:unauthorized")
+    assert html =~ ~s(data-last-dispatch="error:missing_cap")
   end
 
   defp create_read_only_user(uri, caps) do
@@ -627,37 +627,58 @@ defmodule EzagentWeb.WorldHostRoutingTest do
 
   defp world_session_uri do
     workspace_uri = Ezagent.URI.workspace(:system)
+    admin = Ezagent.Entity.User.admin_uri()
+    target = Ezagent.URI.with_action(workspace_uri, :workspace, :create_session)
+    {:ok, create_cap} = Ezagent.Cap.issue_for_action({:admin, admin}, admin, target)
+    short_name = "world-host-#{System.unique_integer([:positive, :monotonic])}"
 
-    workspace_uri
-    |> EzagentDomainInstanceMessage.list_sessions()
-    |> List.first()
-    |> case do
-      %URI{} = uri -> uri
-      _ -> Ezagent.URI.new!("session://system/default/main")
-    end
+    {:ok, %{session_uri: %URI{} = session_uri}} =
+      Ezagent.Workspace.create_session(
+        workspace_uri,
+        %{short_name: short_name, template_name: "default"},
+        %{caller: admin, caps: MapSet.new([create_cap])}
+      )
+
+    on_exit(fn ->
+      try do
+        _ = Ezagent.Kind.terminate(session_uri)
+      catch
+        _, _ -> :ok
+      end
+    end)
+
+    session_uri
   end
 
   defp session_join_cap(caller_uri, session_uri) do
-    %Ezagent.Capability{
-      kind: :session,
-      behavior: Ezagent.ActionSet.Session,
-      action: :join,
-      instance: session_uri,
-      workspace_uri: Ezagent.URI.workspace(:system),
-      granted_by: caller_uri,
-      granted_at: DateTime.utc_now()
-    }
+    requested =
+      Ezagent.Capability.cap(
+        :session,
+        Ezagent.ActionSet.Session,
+        :join,
+        session_uri,
+        Ezagent.URI.workspace(:system)
+      )
+
+    {:ok, artifact} =
+      Ezagent.Cap.issue({:admin, Ezagent.Entity.User.admin_uri()}, caller_uri, requested)
+
+    artifact
   end
 
   defp join_member_as_admin(session_uri, member_uri) do
+    admin = Ezagent.Entity.User.admin_uri()
+    target = Ezagent.URI.with_action(session_uri, :session, :join)
+    {:ok, join_cap} = Ezagent.Cap.issue_for_action({:admin, admin}, admin, target)
+
     Ezagent.Invocation.dispatch(%Ezagent.Invocation{
       origin: :trusted_internal,
-      target: Ezagent.URI.with_action(session_uri, :session, :join),
+      target: target,
       mode: :call,
       args: %{member: member_uri},
       ctx: %{
-        caller: Ezagent.Entity.User.admin_uri(),
-        caps: MapSet.new([Ezagent.Capability.admin_genesis_cap()]),
+        caller: admin,
+        caps: MapSet.new([join_cap]),
         reply: :ignore
       }
     })
@@ -687,15 +708,19 @@ defmodule EzagentWeb.WorldHostRoutingTest do
   end
 
   defp layout_manage_cap(caller_uri, workspace_uri) do
-    %Ezagent.Capability{
-      kind: :workspace,
-      behavior: Ezagent.World.Behavior.Layout,
-      action: :manage,
-      instance: Ezagent.URI.instance(workspace_uri),
-      workspace_uri: Ezagent.Capability.workspace_of(workspace_uri),
-      granted_by: caller_uri,
-      granted_at: DateTime.utc_now()
-    }
+    requested =
+      Ezagent.Capability.cap(
+        :workspace,
+        Ezagent.World.Behavior.Layout,
+        :manage,
+        Ezagent.URI.instance(workspace_uri),
+        Ezagent.Capability.workspace_of(workspace_uri)
+      )
+
+    {:ok, artifact} =
+      Ezagent.Cap.issue({:admin, Ezagent.Entity.User.admin_uri()}, caller_uri, requested)
+
+    artifact
   end
 
   defp world_caller(html) do

@@ -84,7 +84,7 @@ defmodule Ezagent.PluginPy.SecurityTest do
       # `:create_agent` action cap rejects the capless caller BEFORE the
       # handler body runs — `{:error, :unauthorized}`. (This is the real gate
       # for py's TEMPLATE route; there is no role-cap mint on this path.)
-      assert result == {:error, :unauthorized},
+      assert result == {:error, :missing_cap},
              "non-operator create must fail-closed at the create-cap chokepoint, " <>
                "got: #{inspect(result)}"
 
@@ -107,10 +107,8 @@ defmodule Ezagent.PluginPy.SecurityTest do
           :ok
 
         _ ->
-          admin_ctx = %{
-            caller: User.admin_uri(),
-            caps: MapSet.new([Ezagent.Capability.admin_genesis_cap()])
-          }
+          admin_ctx =
+            Ezagent.Test.CapHelper.signed_workspace_ctx!(workspace_uri, User.admin_uri())
 
           name = "good#{System.unique_integer([:positive])}"
 

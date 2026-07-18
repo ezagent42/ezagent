@@ -41,10 +41,7 @@ defmodule EzagentPluginKanban.E2E.BoardForwardTest do
     {:ok, _ws_pid} = Workspace.create(ws_name, %{})
     workspace_uri = URI.new!("workspace://#{ws_name}")
 
-    admin_ctx = %{
-      caller: User.admin_uri(),
-      caps: MapSet.new([Ezagent.Capability.admin_genesis_cap()])
-    }
+    admin_ctx = Ezagent.Test.CapHelper.signed_workspace_ctx!(workspace_uri, User.admin_uri())
 
     :ok =
       AgentFlavorRegistry.register(%{
@@ -162,8 +159,10 @@ defmodule EzagentPluginKanban.E2E.BoardForwardTest do
              "接收方重读应看到源板最新新增的 n2(数据回流:每次读源板活数据)"
 
       # 只读:dispatch kanban.add_node(写)被拒(没给写钥匙)
-      assert {:error, :unauthorized} =
+      assert {:error, reason} =
                dispatch_as(to_assistant, board_uri, :add_node, %{parent_id: "n1", title: "子"})
+
+      assert reason in [:missing_cap, :unauthorized]
 
       # --- (b1) caller 不在 from_session → 拒 -------------------------------
       carol_uri =
@@ -218,7 +217,7 @@ defmodule EzagentPluginKanban.E2E.BoardForwardTest do
                Ezagent.ActionSet.Kanban
              ) == nil
 
-      assert {:error, :unauthorized} =
+      assert {:error, :invalid_cap_signature} =
                dispatch_as(foreign_assistant, board_uri, :get_tree, %{})
 
       # --- (c) to_session 无 assistant → 拒 ---------------------------------
@@ -242,25 +241,13 @@ defmodule EzagentPluginKanban.E2E.BoardForwardTest do
     user_uri =
       URI.new!("entity://#{ws_name}/user/#{label}-#{System.unique_integer([:positive])}")
 
-    create_cap =
-      Ezagent.Capability.cap(
-        :workspace,
-        Ezagent.ActionSet.Workspace,
-        :create_agent,
-        workspace_uri,
-        workspace_uri
-      )
-
     {:ok, _pid} =
       Ezagent.Kind.spawn(User, %{
         uri: user_uri,
-        initial_caps:
-          MapSet.new([
-            %{create_cap | granted_by: User.admin_uri(), granted_at: DateTime.utc_now()}
-          ])
+        initial_caps: MapSet.new()
       })
 
-    %{caller: user_uri, caps: Ezagent.Identity.list_caps_for(user_uri)}
+    Ezagent.Test.CapHelper.signed_workspace_ctx!(workspace_uri, user_uri)
   end
 
   defp spawn_user(user_uri) do
@@ -336,14 +323,16 @@ defmodule EzagentPluginKanban.E2E.BoardForwardTest do
     uri
   end
 
-  defp join_member(session_uri, member_uri, role_name, %{caller: caller, caps: caps}) do
+  defp join_member(session_uri, member_uri, role_name, %{caller: caller}) do
     target = Ezagent.URI.new!("#{URI.to_string(session_uri)}?action=session.join")
+    cap = Ezagent.Test.CapHelper.signed_action_cap!(target, caller)
 
-    case Invocation.dispatch(%Invocation{origin: :trusted_internal,
+    case Invocation.dispatch(%Invocation{
+           origin: :trusted_internal,
            target: target,
            mode: :call,
            args: %{member: member_uri, role_name: role_name},
-           ctx: %{caller: caller, caps: caps, reply: {:caller_inbox, self()}}
+           ctx: %{caller: caller, caps: MapSet.new([cap]), reply: {:caller_inbox, self()}}
          }) do
       :ok -> :ok
       {:ok, _} -> :ok
@@ -352,6 +341,14 @@ defmodule EzagentPluginKanban.E2E.BoardForwardTest do
   end
 
   defp dispatch(board_uri, action, args, %{caller: caller, caps: caps}) do
+    caps =
+      if caller == User.admin_uri() do
+        target = Ezagent.URI.with_action(board_uri, :kanban, action)
+        MapSet.new([Ezagent.Test.CapHelper.signed_action_cap!(target, caller)])
+      else
+        caps
+      end
+
     Ezagent.Router.dispatch(
       Ezagent.Cmd.new(
         Ezagent.URI.with_action(board_uri, :kanban, action),

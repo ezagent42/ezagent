@@ -251,6 +251,9 @@ defmodule Mix.Tasks.Ezagent.Demo.SeedCcSandbox do
 
     admin_uri = Ezagent.Entity.User.admin_uri()
 
+    {:ok, signed_cap} =
+      Ezagent.Cap.issue_for_action({:admin, admin_uri}, admin_uri, target)
+
     Ezagent.Invocation.dispatch(%Ezagent.Invocation{
       target: target,
       mode: :call,
@@ -267,24 +270,7 @@ defmodule Mix.Tasks.Ezagent.Demo.SeedCcSandbox do
       # only on an inline authorizer never routed through `Ezagent.Identity.Grant`).
       ctx: %{
         caller: admin_uri,
-        caps: [
-          %Ezagent.Capability{
-            Ezagent.Capability.cap(
-              :any,
-              Ezagent.ActionSet.Template,
-              :write,
-              Ezagent.URI.instance(uri),
-              :any
-            )
-            | # `workspace_uri: :any` mirrors the catalog's former
-              # `template-materialize` Template cap — `template://` is
-              # cross-cutting (Template.workspace_scoped? = false), so the
-              # workspace axis is not the scoping dimension; the concrete
-              # template `instance` is.
-              granted_by: admin_uri,
-              granted_at: DateTime.utc_now(),
-          }
-        ],
+        caps: [signed_cap],
         reply: {:caller_inbox, self()}
       },
       origin: :trusted_internal

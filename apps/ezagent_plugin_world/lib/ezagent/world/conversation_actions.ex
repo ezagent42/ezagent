@@ -348,12 +348,23 @@ defmodule Ezagent.World.ConversationActions do
   end
 
   defp do_create_session(socket, workspace_uri, caller, short_name, template_name) do
+    caller_caps = Map.get(socket.assigns, :current_caps, MapSet.new())
+    create_session = &Ezagent.Workspace.create_session/3
+
+    create_with_caller_caps = fn target_workspace, args, ctx ->
+      create_session.(
+        target_workspace,
+        args,
+        Map.put(ctx, :caps, caller_caps)
+      )
+    end
+
     case create_session_result(
            workspace_uri,
            caller,
            short_name,
            template_name,
-           &Ezagent.Workspace.create_session/3
+           create_with_caller_caps
          ) do
       {:ok, %URI{} = session_uri} ->
         # rev6 / #912 — the session returned here is OWNER-ONLY. Its declared team
@@ -1093,6 +1104,15 @@ defmodule Ezagent.World.ConversationActions do
         _ = Ezagent.LocalRuntime.ensure_live(session_uri)
         _ = EzagentDomainInstanceMessage.SessionCreator.demand_spawn_member(caller_uri)
         _ = Membership.provision_join_authority(session_uri, caller_uri)
+
+        # `caps` is the mount-time snapshot. The owner-rooted JIT grant above
+        # must be carried in this authenticated envelope explicitly, so reload
+        # the verified principal slice after the synchronous grant.
+        caps =
+          MapSet.union(
+            MapSet.new(caps || MapSet.new()),
+            MapSet.new(Ezagent.EntityCaps.load(caller_uri))
+          )
 
         result =
           Invocation.dispatch(%Invocation{

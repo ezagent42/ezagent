@@ -357,6 +357,7 @@ defmodule Ezagent.PluginCc.Integration.CcAgentSandboxCredentialsTest do
 
       :ok = chat_join(session_uri, admin_uri)
       :ok = chat_join(session_uri, agent_uri)
+      :ok = grant_session_send(session_uri, agent_uri)
 
       session_topic = "esr:session:#{URI.to_string(session_uri)}:events"
       :ok = Phoenix.PubSub.subscribe(EzagentCore.PubSub, session_topic)
@@ -367,14 +368,17 @@ defmodule Ezagent.PluginCc.Integration.CcAgentSandboxCredentialsTest do
       inbound_msg =
         Message.new(admin_uri, %{text: inbound_text, attachments: []}, mentions: [agent_uri])
 
+      send_target = Ezagent.URI.with_action(session_uri, :session, :send)
+
       :ok =
-        Invocation.dispatch(%Invocation{origin: :trusted_internal,
-          target: URI.new!("#{URI.to_string(session_uri)}?action=session.send"),
+        Invocation.dispatch(%Invocation{
+          origin: :trusted_internal,
+          target: send_target,
           mode: :cast,
           args: %{message: inbound_msg},
           ctx: %{
             caller: admin_uri,
-            caps: MapSet.new([Ezagent.Capability.admin_genesis_cap()]),
+            caps: MapSet.new([Ezagent.Test.CapHelper.signed_action_cap!(send_target, admin_uri)]),
             reply: :ignore
           }
         })
@@ -443,13 +447,17 @@ defmodule Ezagent.PluginCc.Integration.CcAgentSandboxCredentialsTest do
   # --- chat helpers --------------------------------------------------------
 
   defp chat_join(session_uri, member_uri) do
-    Invocation.dispatch(%Invocation{origin: :trusted_internal,
-      target: URI.new!("#{URI.to_string(session_uri)}?action=session.join"),
+    target = URI.new!("#{URI.to_string(session_uri)}?action=session.join")
+    cap = Ezagent.Test.CapHelper.signed_action_cap!(target, member_uri)
+
+    Invocation.dispatch(%Invocation{
+      origin: :trusted_internal,
+      target: target,
       mode: :call,
       args: %{member: member_uri},
       ctx: %{
         caller: member_uri,
-        caps: MapSet.new([Ezagent.Capability.admin_genesis_cap()]),
+        caps: MapSet.new([cap]),
         reply: {:caller_inbox, self()}
       }
     })
@@ -460,6 +468,15 @@ defmodule Ezagent.PluginCc.Integration.CcAgentSandboxCredentialsTest do
 
       other ->
         flunk("chat.join failed for member=#{URI.to_string(member_uri)}: #{inspect(other)}")
+    end
+  end
+
+  defp grant_session_send(session_uri, member_uri) do
+    target = Ezagent.URI.with_action(session_uri, :session, :send)
+    artifact = Ezagent.Test.CapHelper.signed_action_cap!(target, member_uri)
+
+    with :ok <- Ezagent.Identity.absorb_cap(member_uri, artifact) do
+      Ezagent.Identity.CapAbsorbAwait.await_exact(member_uri, [artifact], 5_000)
     end
   end
 

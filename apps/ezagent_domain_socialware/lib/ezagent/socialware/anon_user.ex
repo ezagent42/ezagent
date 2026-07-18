@@ -99,10 +99,9 @@ defmodule Ezagent.Socialware.AnonUser do
     * `{:ok, anon_uri}` — `session_uri` is a live `public_view` session; a fresh
       read-only anon-User is created holding EXACTLY one cap:
       `cap(:session, Behavior.Session, :join, instance: <session>, ws: <session ws>)`,
-      `granted_by:` the session owner (the configurer of the public_view rule —
-      accountability only, never the caller), falling back to
-      `entity://system/user/admin` for a not-yet-claimed ownerless session
-      (Decision #154's named extreme-case granter; never a `system://` principal).
+      `granted_by:` the canonical admin entity that actually exercises the
+      target Kind's sealed authority (never an impersonated owner and never a
+      `system://` principal).
     * `{:error, :not_public_view}` — `session_uri` is private (or its public-view
       flag cannot be resolved). The rule branch checks the flag is ACTUALLY true;
       a private session NEVER mints an anon-access identity.
@@ -146,9 +145,9 @@ defmodule Ezagent.Socialware.AnonUser do
   # The single narrow participation grant the anon is born with. Concrete-URI
   # instance (NOT a `{:within_session, _}` tuple — see the @doc) so it matches
   # ONLY this session's `session.join` need + serializes into caps_json.
-  # `granted_by` = the session owner (the configurer of the public_view rule);
-  # for a not-yet-owner-claimed session it falls back to the admin entity —
-  # Decision #154's named extreme-case granter — never a `system://` principal.
+  # `granted_by` = the canonical admin entity that actually authorizes this
+  # rule-driven issuance through the target Kind's sealed authority. Recording
+  # an arbitrary session owner here would be issuer impersonation.
   # Decision #162 (ISSUE → STORE → VERIFY): `Users.create_read_only/2` writes
   # straight into `users.caps_json`, and `Behavior.Identity.post_init/2`
   # reconciles the user Kind's cap slice FROM that column — so anything put
@@ -192,16 +191,9 @@ defmodule Ezagent.Socialware.AnonUser do
       action: :join,
       instance: Ezagent.URI.instance(session_uri),
       workspace_uri: Ezagent.Capability.workspace_of(session_uri),
-      granted_by: public_view_granter(session_uri),
+      granted_by: Ezagent.Entity.User.admin_uri(),
       granted_at: DateTime.utc_now()
     }
-  end
-
-  defp public_view_granter(%URI{} = session_uri) do
-    case Ezagent.Entity.Session.owner(session_uri) do
-      {:ok, %URI{} = owner} -> owner
-      _ -> Ezagent.Entity.User.admin_uri()
-    end
   end
 
   defp workspace_name(%URI{} = session_uri) do

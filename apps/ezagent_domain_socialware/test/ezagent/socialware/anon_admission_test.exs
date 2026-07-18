@@ -16,7 +16,7 @@ defmodule Ezagent.Socialware.AnonAdmissionTest do
   alias Ezagent.{Capability, KindRegistry}
 
   @workspace "team-alpha"
-  @owner Ezagent.URI.new!("entity://team-alpha/user/anon-admission-owner")
+  @owner Ezagent.URI.user(:system, :admin)
 
   defp public_session(flag \\ true) do
     u = System.unique_integer([:positive])
@@ -108,7 +108,12 @@ defmodule Ezagent.Socialware.AnonAdmissionTest do
       session = public_session()
 
       assert {:ok, %{anon_uri: anon}} = AnonAdmission.admit_anonymous_participant(session)
-      %{caps: [cap]} = Ezagent.Users.get_by_uri(anon)
+      %{caps: caps} = Ezagent.Users.get_by_uri(anon)
+
+      cap =
+        Enum.find(caps, fn cap ->
+          cap.behavior == Ezagent.ActionSet.Session and cap.action == :join
+        end)
 
       assert cap.action == :join
       assert cap.instance == Ezagent.URI.instance(session)

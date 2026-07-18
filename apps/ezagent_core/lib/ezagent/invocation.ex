@@ -46,6 +46,7 @@ defmodule Ezagent.Invocation do
   # Overridable via `config :ezagent_core, :activate_budget_ms` (tests set it low
   # to exercise the timeout path without blocking 20s) — see `activate_budget_ms/0`.
   @default_activate_budget_ms 20_000
+  @admin_operator_scope_key {__MODULE__, :admin_operator_presenter}
 
   @doc """
   Cold-activation budget (ms) for a synchronous dispatch awaiting a target's
@@ -92,6 +93,30 @@ defmodule Ezagent.Invocation do
   # --- dispatch ----------------------------------------------------------
 
   @doc """
+  Run reviewed framework operator code with permission to obtain exact
+  target-signed action caps through `K.grant`.
+
+  The scope is process-local, presenter-bound, and always restored. Ordinary
+  `dispatch/1` callers do not enter it; an empty capability envelope therefore
+  remains a fail-loud denial outside the explicit CLI/World/Session-Config
+  adapters. Malicious code already executing in the BEAM is outside Path A.
+  """
+  @spec with_admin_operator(URI.t(), (-> result)) :: result when result: term()
+  def with_admin_operator(%URI{} = presenter, fun) when is_function(fun, 0) do
+    previous = Process.get(@admin_operator_scope_key, :unset)
+    Process.put(@admin_operator_scope_key, Ezagent.URI.stable_key(presenter))
+
+    try do
+      fun.()
+    after
+      case previous do
+        :unset -> Process.delete(@admin_operator_scope_key)
+        value -> Process.put(@admin_operator_scope_key, value)
+      end
+    end
+  end
+
+  @doc """
   Dispatch this invocation. See Appendix A for the 12-step flow.
 
   Phase 1 simplifications:
@@ -119,10 +144,12 @@ defmodule Ezagent.Invocation do
     {:error, :unsupported_mode}
   end
 
-  def dispatch(%__MODULE__{target: target, mode: mode, ctx: ctx, origin: origin} = inv) do
+  def dispatch(%__MODULE__{target: target, origin: origin} = inv) do
     instance_uri = Ezagent.URI.instance(target)
 
-    with :ok <- Ezagent.DispatchOrigin.validate(origin, ctx),
+    with :ok <- Ezagent.DispatchOrigin.validate(origin, inv.ctx),
+         {:ok, %__MODULE__{mode: mode, ctx: ctx} = inv} <-
+           materialize_admin_action_cap(inv),
          :ok <-
            Ezagent.WorkspaceOwnerGate.assert_local_owner_for_uri(
              instance_uri,
@@ -141,6 +168,51 @@ defmodule Ezagent.Invocation do
           end
       end
     end
+  end
+
+  # Canonical-admin operator traffic is still least-authority on the wire: after
+  # the positive origin stamp has authenticated the presenter, ask the concrete
+  # target's K.grant path for the exact action artifact and replace no caller
+  # identity. This is the reviewed-code Path A convenience seam for UI/CLI and
+  # framework operator paths; the target verifier still sees and verifies an
+  # ordinary target-signed, receiver-bound capability. K.grant itself is the
+  # recursion bottom and already carries the target authority anchor.
+  defp materialize_admin_action_cap(
+         %__MODULE__{
+           target: %URI{} = target,
+           ctx: %{caller: %URI{} = caller} = ctx,
+           origin: origin
+         } = inv
+       )
+       when origin in [:trusted_internal, :authenticated_external] do
+    with true <- canonical_admin?(caller),
+         true <- admin_operator_scope?(caller),
+         true <- is_nil(target.authority),
+         {:ok, _pid} <- Ezagent.KindRegistry.lookup(Ezagent.URI.instance(target)),
+         {:ok, {_behavior, action}} <- Ezagent.URI.behavior_action(target),
+         false <- action == :grant do
+      case Ezagent.Cap.issue_for_action({:admin, caller}, caller, target) do
+        {:ok, cap} ->
+          caps = Map.get(ctx, :caps, MapSet.new()) || MapSet.new()
+          {:ok, %{inv | ctx: Map.put(ctx, :caps, MapSet.put(MapSet.new(caps), cap))}}
+
+        {:error, reason} ->
+          {:error, reason}
+      end
+    else
+      _ -> {:ok, inv}
+    end
+  end
+
+  defp materialize_admin_action_cap(%__MODULE__{} = inv), do: {:ok, inv}
+
+  defp admin_operator_scope?(%URI{} = caller) do
+    Process.get(@admin_operator_scope_key) == Ezagent.URI.stable_key(caller)
+  end
+
+  defp canonical_admin?(%URI{} = caller) do
+    Ezagent.URI.stable_key(caller) ==
+      Ezagent.URI.stable_key(Ezagent.URI.user(:system, :admin))
   end
 
   # codex E2E fix v2 Bug B (2026-05-29) — cold-spawn-from-snapshot on the

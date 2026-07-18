@@ -1,7 +1,7 @@
 defmodule EzagentPluginHello.HelloBuilderDispatchTest do
   use EzagentCore.DataCase, async: false
 
-  alias Ezagent.{Capability, Invocation, Message}
+  alias Ezagent.{Invocation, Message}
   alias Ezagent.ActionSet.HelloBuilder
   alias Ezagent.Entity.{Agent, Session}
 
@@ -48,12 +48,8 @@ defmodule EzagentPluginHello.HelloBuilderDispatchTest do
     {:ok, _denied_pid} =
       Ezagent.Kind.spawn(Agent, %{uri: denied_uri, initial_caps: MapSet.new()})
 
-    rebuild_cap =
-      %Capability{
-        Capability.cap(:agent, HelloBuilder, :rebuild, builder_uri, workspace_uri)
-        | granted_by: URI.new!("entity://system/user/admin"),
-          granted_at: DateTime.utc_now()
-      }
+    target = Ezagent.URI.with_action(builder_uri, :hello_builder, :rebuild)
+    rebuild_cap = Ezagent.Test.CapHelper.signed_action_cap!(target, allowed_uri)
 
     {:ok, _allowed_pid} =
       Ezagent.Kind.spawn(Agent, %{
@@ -75,11 +71,11 @@ defmodule EzagentPluginHello.HelloBuilderDispatchTest do
     join_builder(session_uri, builder_uri)
     :sys.get_state(builder_pid)
 
-    target = Ezagent.URI.with_action(builder_uri, :hello_builder, :rebuild)
     args = %{session_uri: URI.to_string(session_uri), instruction: "refresh the hello page"}
 
     assert :ok =
-             Invocation.dispatch(%Invocation{origin: :trusted_internal,
+             Invocation.dispatch(%Invocation{
+               origin: :trusted_internal,
                target: target,
                mode: :cast,
                args: args,
@@ -89,11 +85,12 @@ defmodule EzagentPluginHello.HelloBuilderDispatchTest do
     refute_receive {:hello_rebuild_started, _, _}, 100
 
     assert :ok =
-             Invocation.dispatch(%Invocation{origin: :trusted_internal,
+             Invocation.dispatch(%Invocation{
+               origin: :trusted_internal,
                target: target,
                mode: :cast,
                args: args,
-               ctx: %{caller: allowed_uri, caps: MapSet.new(), reply: :ignore}
+               ctx: %{caller: allowed_uri, caps: MapSet.new([rebuild_cap]), reply: :ignore}
              })
 
     assert_receive {:hello_rebuild_started, ^session_uri, "refresh the hello page"}, 500
@@ -118,14 +115,19 @@ defmodule EzagentPluginHello.HelloBuilderDispatchTest do
   end
 
   defp join_builder(session_uri, builder_uri) do
+    admin = URI.new!("entity://system/user/admin")
+    target = Ezagent.URI.with_action(session_uri, :session, :join)
+    cap = Ezagent.Test.CapHelper.signed_action_cap!(target, admin)
+
     :ok =
-      Invocation.dispatch(%Invocation{origin: :trusted_internal,
-        target: Ezagent.URI.with_action(session_uri, :session, :join),
+      Invocation.dispatch(%Invocation{
+        origin: :trusted_internal,
+        target: target,
         mode: :cast,
         args: %{member: builder_uri, role_name: "builder"},
         ctx: %{
-          caller: URI.new!("entity://system/user/admin"),
-          caps: MapSet.new([Capability.admin_genesis_cap()]),
+          caller: admin,
+          caps: MapSet.new([cap]),
           reply: :ignore
         }
       })

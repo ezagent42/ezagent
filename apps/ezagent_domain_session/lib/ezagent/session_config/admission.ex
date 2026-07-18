@@ -97,19 +97,37 @@ defmodule Ezagent.Session.Config.Admission do
   defp workspace_action_authorized?(caps, workspace_uri, caller, action) do
     target = Ezagent.URI.with_action(workspace_uri, :workspace, action)
 
-    case Ezagent.Invocation.dispatch(%Ezagent.Invocation{
-           target: target,
-           mode: :call,
-           args: %{},
-           ctx: %{caller: caller, caps: MapSet.new(caps), reply: {:caller_inbox, self()}},
-           origin: :trusted_internal
-         }) do
+    result =
+      Ezagent.Invocation.with_admin_operator(caller, fn ->
+        Ezagent.Invocation.dispatch(%Ezagent.Invocation{
+          target: target,
+          mode: :call,
+          args: %{},
+          ctx: %{
+            caller: caller,
+            caps: operator_dispatch_caps(caller, caps),
+            reply: {:caller_inbox, self()}
+          },
+          origin: :trusted_internal
+        })
+      end)
+
+    case result do
       {:ok, _result} -> true
       :ok -> true
       _ -> false
     end
   rescue
     _ -> false
+  end
+
+  defp operator_dispatch_caps(%URI{} = caller, caps) do
+    if Ezagent.URI.stable_key(caller) ==
+         Ezagent.URI.stable_key(Ezagent.URI.user(:system, :admin)) do
+      MapSet.new()
+    else
+      MapSet.new(caps)
+    end
   end
 
   defp session_slice(%URI{} = session_uri) do

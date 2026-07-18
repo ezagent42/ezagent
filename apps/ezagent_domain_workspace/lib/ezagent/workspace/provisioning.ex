@@ -259,6 +259,7 @@ defmodule Ezagent.Workspace.Provisioning do
     caps = Map.fetch!(ctx, :caps)
 
     Router.dispatch(%Cmd{
+      origin: :trusted_internal,
       target: target,
       action: :disable_user,
       args: args,

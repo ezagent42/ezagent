@@ -92,11 +92,10 @@ defmodule Ezagent.PluginPy.NpRoleTest do
           {:ok, _ws_pid} = Workspace.create(ws_name, %{})
           workspace_uri = URI.new!("workspace://#{ws_name}")
 
-          admin_ctx = %{
-            caller: User.admin_uri(),
-            caps: MapSet.new([Ezagent.Capability.admin_genesis_cap()]),
-            deadline_ms: 120_000
-          }
+          admin_ctx =
+            workspace_uri
+            |> Ezagent.Test.CapHelper.signed_workspace_ctx!(User.admin_uri())
+            |> Map.put(:deadline_ms, 120_000)
 
           {:ok, workspace_uri: workspace_uri, admin_ctx: admin_ctx}
       end
@@ -225,7 +224,7 @@ defmodule Ezagent.PluginPy.NpRoleTest do
           non_operator_ctx
         )
 
-      assert result == {:error, :unauthorized},
+      assert result == {:error, :missing_cap},
              "a non-operator must not inject a role-carried script; got #{inspect(result)}"
 
       agent_uri = URI.new!("entity://#{ws_name}/agent/#{name}")
@@ -234,10 +233,8 @@ defmodule Ezagent.PluginPy.NpRoleTest do
 
     test "a role script + an operator script in the same create is a CONFLICT (fail loud)",
          %{workspace_uri: workspace_uri} do
-      admin_ctx = %{
-        caller: User.admin_uri(),
-        caps: MapSet.new([Ezagent.Capability.admin_genesis_cap()])
-      }
+      admin_ctx =
+        Ezagent.Test.CapHelper.signed_workspace_ctx!(workspace_uri, User.admin_uri())
 
       name = "conflict#{System.unique_integer([:positive])}"
 

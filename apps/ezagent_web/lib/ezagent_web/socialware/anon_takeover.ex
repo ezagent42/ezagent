@@ -147,36 +147,26 @@ defmodule EzagentWeb.Socialware.AnonTakeover do
 
   defp dispatch_merge_member(%URI{} = session_uri, %URI{} = anon_uri, %URI{} = confirmed_uri) do
     target = Ezagent.URI.with_action(session_uri, :session, :merge_member)
+    admin = Ezagent.Entity.User.admin_uri()
 
-    case Ezagent.Invocation.dispatch(%Ezagent.Invocation{
-           target: target,
-           mode: :call,
-           args: %{from: anon_uri, to: confirmed_uri},
-           ctx: %{
-             caller: confirmed_uri,
-             caps: MapSet.new([inline_merge_member_cap(session_uri, confirmed_uri)]),
-             reply: :ignore
-           },
-           origin: :authenticated_external
-         }) do
-      {:ok, result} -> {:ok, result}
-      :ok -> {:ok, %{}}
-      {:error, _} = err -> err
+    with {:ok, signed_cap} <-
+           Ezagent.Cap.issue_for_action({:admin, admin}, confirmed_uri, target) do
+      case Ezagent.Invocation.dispatch(%Ezagent.Invocation{
+             target: target,
+             mode: :call,
+             args: %{from: anon_uri, to: confirmed_uri},
+             ctx: %{
+               caller: confirmed_uri,
+               caps: MapSet.new([signed_cap]),
+               reply: :ignore
+             },
+             origin: :authenticated_external
+           }) do
+        {:ok, result} -> {:ok, result}
+        :ok -> {:ok, %{}}
+        {:error, _} = err -> err
+      end
     end
-  end
-
-  defp inline_merge_member_cap(%URI{} = session_uri, %URI{} = confirmed_uri) do
-    %Ezagent.Capability{
-      Ezagent.Capability.cap(
-        :session,
-        Ezagent.ActionSet.Session,
-        :merge_member,
-        Ezagent.URI.instance(session_uri),
-        Ezagent.Capability.workspace_of(session_uri)
-      )
-      | granted_by: confirmed_uri,
-        granted_at: DateTime.utc_now()
-    }
   end
 
   defp mount_confirmed_caps(%URI{} = session_uri, %URI{} = confirmed_uri) do

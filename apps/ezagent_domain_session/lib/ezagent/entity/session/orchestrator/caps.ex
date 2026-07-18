@@ -144,7 +144,7 @@ defmodule Ezagent.Entity.Session.Orchestrator.Caps do
 
   defp grant_tag_for(%Ezagent.Capability{instance: %URI{} = target}, owner_uri, session_uri) do
     if same_uri?(target, session_uri) do
-      if same_uri?(owner_uri, Ezagent.Entity.User.admin_uri()),
+      if Ezagent.Identity.admin?(owner_uri),
         do: {:admin, owner_uri},
         else: {:held_by, owner_uri}
     else

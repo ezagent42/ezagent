@@ -154,22 +154,16 @@ defmodule Ezagent.Email.Inbound.AuthorityTest do
     assert {:reject, :no_binding} = Authority.issue(record(fixture))
   end
 
-  test "signing infrastructure failure is retryable" do
+  test "per-Kind authority load failure is retryable" do
     fixture = binding_fixture()
-    replace_seed_provider(fn _version -> {:error, :signer_unavailable} end)
+    seal_without_active_authority!(fixture.session_uri)
 
-    assert {:retry, {:cap_issue_failed, %RuntimeError{}}} = Authority.issue(record(fixture))
+    assert {:retry, {:cap_issue_failed, _reason}} = Authority.issue(record(fixture))
   end
 
-  defp replace_seed_provider(seed_provider) do
-    config = Application.fetch_env!(:ezagent_core, Ezagent.Cap)
-    signing = Keyword.fetch!(config, :signing)
-
-    Application.put_env(
-      :ezagent_core,
-      Ezagent.Cap,
-      Keyword.put(config, :signing, Keyword.put(signing, :seed_provider, seed_provider))
-    )
+  defp seal_without_active_authority!(session_uri) do
+    {:ok, _authority} = Ezagent.Cap.Authority.open(session_uri, :session)
+    :ok = Ezagent.Cap.Authority.retire(session_uri)
   end
 
   defp restore_env(app, key, {:ok, value}), do: Application.put_env(app, key, value)

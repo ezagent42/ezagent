@@ -280,6 +280,7 @@ defmodule Ezagent.World.WorkspacePluginActions do
       target: target,
       mode: :call,
       args: args,
+      origin: :authenticated_external,
       ctx: %{
         caller: socket.assigns.current_entity_uri,
         caps: Map.get(socket.assigns, :current_caps, MapSet.new()),
@@ -389,13 +390,13 @@ defmodule Ezagent.World.WorkspacePluginActions do
          selected_socialware_refs <- socialware_refs(prepared_socialware_ref, params),
          {:ok, content} <-
            session_template_content(params, workspace_uri, prepared_socialware_ref),
-         :ok <- authorize_template_save(workspace_uri, caller, name, content),
+         :ok <- authorize_template_save(workspace_uri, caller, caps, name, content),
          {:ok, _saved_socialware_ref} <-
            save_prepared_socialware(socialware_definition, workspace_uri, caller, caps),
          {:ok, template_uri} <-
            Ezagent.Entity.SessionTemplate.create(name, content,
              caller: caller,
-             caps: [session_template_write_cap(workspace_uri, caller)],
+             caps: caps,
              workspace: workspace_name
            ),
          :ok <- publish_current_template(workspace_uri, name, template_uri, caller) do
@@ -612,14 +613,20 @@ defmodule Ezagent.World.WorkspacePluginActions do
     |> List.last()
   end
 
-  defp authorize_template_save(%URI{} = workspace_uri, %URI{} = caller, name, content) do
+  defp authorize_template_save(
+         %URI{} = workspace_uri,
+         %URI{} = caller,
+         caps,
+         name,
+         content
+       ) do
     target = Ezagent.URI.with_action(workspace_uri, :workspace, :add_template)
 
     case Ezagent.Invocation.dispatch(%Ezagent.Invocation{
            target: target,
            mode: :call,
            args: %{name: name, template: content},
-           ctx: %{caller: caller, caps: MapSet.new(), reply: :ignore},
+           ctx: %{caller: caller, caps: MapSet.new(caps), reply: :ignore},
            origin: :authenticated_external
          }) do
       :ok -> :ok
@@ -627,18 +634,6 @@ defmodule Ezagent.World.WorkspacePluginActions do
       {:error, _} = error -> error
       other -> {:error, other}
     end
-  end
-
-  defp session_template_write_cap(%URI{} = workspace_uri, %URI{} = caller) do
-    %Ezagent.Capability{
-      kind: :session_template,
-      behavior: Ezagent.ActionSet.Template,
-      action: :any,
-      instance: {:within_workspace, workspace_uri},
-      workspace_uri: workspace_uri,
-      granted_by: caller,
-      granted_at: DateTime.utc_now()
-    }
   end
 
   defp integer_arg(args, key, default) do

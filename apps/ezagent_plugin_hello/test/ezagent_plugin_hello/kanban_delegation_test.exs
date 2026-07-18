@@ -72,10 +72,7 @@ defmodule EzagentPluginHello.KanbanDelegationTest do
   end
 
   test "fails loudly when multiple boards exist without the canonical default", ctx do
-    caller_ctx = %{
-      caller: ctx.admin,
-      caps: MapSet.new(Ezagent.Identity.read_entity_caps(ctx.admin))
-    }
+    caller_ctx = Ezagent.Test.CapHelper.signed_workspace_ctx!(ctx.workspace, ctx.admin)
 
     for name <- ["product-a", "product-b"] do
       assert {:ok, _} =
@@ -97,13 +94,17 @@ defmodule EzagentPluginHello.KanbanDelegationTest do
   end
 
   defp dispatch(board_uri, action, args, caller) do
-    Ezagent.Invocation.dispatch(%Ezagent.Invocation{origin: :trusted_internal,
-      target: Ezagent.URI.with_action(board_uri, :kanban, action),
+    target = Ezagent.URI.with_action(board_uri, :kanban, action)
+    cap = Ezagent.Test.CapHelper.signed_action_cap!(target, caller)
+
+    Ezagent.Invocation.dispatch(%Ezagent.Invocation{
+      origin: :trusted_internal,
+      target: target,
       mode: :call,
       args: args,
       ctx: %{
         caller: caller,
-        caps: MapSet.new(Ezagent.Identity.read_entity_caps(caller)),
+        caps: MapSet.new([cap]),
         reply: {:caller_inbox, self()}
       }
     })

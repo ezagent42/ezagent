@@ -267,13 +267,14 @@ defmodule Ezagent.Email.InboundTest do
       assert deleted(agent) == []
     end
 
-    test "a capability signing failure retains the inbox item" do
-      {_su, _row_id} = verified_binding!()
-      replace_seed_provider(fn _version -> {:error, :signer_unavailable} end)
+    test "a capability authority failure retains the inbox item" do
+      {su, _row_id} = verified_binding!()
+      {:ok, _authority} = Ezagent.Cap.Authority.open(su, :session)
+      :ok = Ezagent.Cap.Authority.retire(su)
       {agent, opts} = harness()
       r = rec(@alias)
 
-      assert {:error, {:cap_issue_failed, %RuntimeError{}}} =
+      assert {:error, {:cap_issue_failed, _reason}} =
                Inbound.process_record(r, opts)
 
       assert dispatched(agent) == []
@@ -322,16 +323,5 @@ defmodule Ezagent.Email.InboundTest do
       assert dispatched(agent) == []
       assert deleted(agent) != []
     end
-  end
-
-  defp replace_seed_provider(seed_provider) do
-    config = Application.fetch_env!(:ezagent_core, Ezagent.Cap)
-    signing = Keyword.fetch!(config, :signing)
-
-    Application.put_env(
-      :ezagent_core,
-      Ezagent.Cap,
-      Keyword.put(config, :signing, Keyword.put(signing, :seed_provider, seed_provider))
-    )
   end
 end

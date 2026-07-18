@@ -8,8 +8,6 @@ defmodule Ezagent.ActionSet.KanbanTest do
   alias Ezagent.ActionSet.Kanban
   alias EzagentPluginKanban.Application, as: KanbanApp
 
-  @admin_cap Ezagent.Capability.admin_genesis_cap()
-
   # 棒链来自 recipe config 数据（layer-2）——测试经此数据路径注入 ctx，不再依赖
   # Behavior 内硬编码的 @stages（taxonomy §4.1 de-bake）。@stages / @ci_stage /
   # @import_default_stage 直接读 kanban_manager_recipe() 的 config，单一真相源。
@@ -20,7 +18,14 @@ defmodule Ezagent.ActionSet.KanbanTest do
   @third_stage Enum.at(@stages, 2)
 
   defp rd(tree), do: fn k, d -> Map.get(%{tree: tree}, k, d) end
-  defp admin_ctx(tree), do: Map.merge(@recipe_config, %{read: rd(tree), caps: MapSet.new([@admin_cap]), caller: nil})
+
+  defp admin_ctx(tree),
+    do:
+      Map.merge(@recipe_config, %{
+        read: rd(tree),
+        caps: MapSet.new(),
+        caller: Ezagent.Entity.User.admin_uri()
+      })
 
   defp user_ctx(tree, user),
     do:
@@ -224,6 +229,7 @@ defmodule Ezagent.ActionSet.KanbanTest do
       # c 父=root(链首)，只能链首或第二棒(父+1)
       assert {:ok, %{}, e} =
                Kanban.handle_set_stage(%{id: c, stage: to_string(@second_stage)}, admin_ctx(t))
+
       assert committed(e).nodes[c].stage == @second_stage
 
       assert {:error, {:invalid_stage, "nope"}} =
@@ -240,6 +246,7 @@ defmodule Ezagent.ActionSet.KanbanTest do
       # 子 c（父=链首=0）：设第二棒(1=父+1) → OK
       assert {:ok, %{}, e1} =
                Kanban.handle_set_stage(%{id: c, stage: to_string(@second_stage)}, admin_ctx(t))
+
       assert committed(e1).nodes[c].stage == @second_stage
 
       # G4 开口：子到位（第二棒）后，根可推进到第二棒（不再钉死链首）
@@ -257,18 +264,30 @@ defmodule Ezagent.ActionSet.KanbanTest do
 
       # 子 c：设末棒 → 拒（跳棒）
       assert {:error, {:stage_order_violation, _}} =
-               Kanban.handle_set_stage(%{id: c, stage: to_string(List.last(@stages))}, admin_ctx(t))
+               Kanban.handle_set_stage(
+                 %{id: c, stage: to_string(List.last(@stages))},
+                 admin_ctx(t)
+               )
     end
 
     test "drop_subtree：砍子树 + 记进图级别 drop 历史(:drops, 不挂某节点)", %{} do
       {t, _r, c} = seed()
-      {:ok, _, e1} = Kanban.handle_set_stage(%{id: c, stage: to_string(@second_stage)}, admin_ctx(t))
+
+      {:ok, _, e1} =
+        Kanban.handle_set_stage(%{id: c, stage: to_string(@second_stage)}, admin_ctx(t))
+
       t1 = committed(e1)
       {:ok, %{id: gc}, e2} = Kanban.handle_add_node(%{parent_id: c, title: "痛点X"}, admin_ctx(t1))
       t2 = committed(e2)
-      {:ok, _, e3} = Kanban.handle_set_stage(%{id: gc, stage: to_string(@third_stage)}, admin_ctx(t2))
+
+      {:ok, _, e3} =
+        Kanban.handle_set_stage(%{id: gc, stage: to_string(@third_stage)}, admin_ctx(t2))
+
       t3 = committed(e3)
-      {:ok, %{id: ggc}, e4} = Kanban.handle_add_node(%{parent_id: gc, title: "方案A"}, admin_ctx(t3))
+
+      {:ok, %{id: ggc}, e4} =
+        Kanban.handle_add_node(%{parent_id: gc, title: "方案A"}, admin_ctx(t3))
+
       t4 = committed(e4)
 
       # drop 方案A 子树
@@ -277,6 +296,7 @@ defmodule Ezagent.ActionSet.KanbanTest do
 
       t5 = committed(e5)
       refute Map.has_key?(t5.nodes, ggc), "子树应被砍掉"
+
       # drop 历史进**图级别** tree.drops（经唯一 commit/1，不挂某个节点、不另开 set-effect 站点）
       assert [%{title: "方案A", reason: "7天阅读<500", count: 1}] = t5.drops
       # 痛点节点上**不再**挂 drop_record（历史是全图属性）
@@ -284,7 +304,10 @@ defmodule Ezagent.ActionSet.KanbanTest do
 
       # 非 owner 非 admin → forbidden
       assert {:error, :forbidden} =
-               Kanban.handle_drop_subtree(%{id: gc, reason: "x"}, user_ctx(t4, "entity://system/user/bob"))
+               Kanban.handle_drop_subtree(
+                 %{id: gc, reason: "x"},
+                 user_ctx(t4, "entity://system/user/bob")
+               )
     end
 
     test "import_markmap 仅 admin", %{} do

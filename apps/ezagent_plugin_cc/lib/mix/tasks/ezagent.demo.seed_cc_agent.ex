@@ -140,25 +140,16 @@ defmodule Mix.Tasks.Ezagent.Demo.SeedCcAgent do
     # the step-5.5 authorizer. `granted_by` = `admin_uri` (a real entity per
     # #154, provenance only on an inline authorizer never routed through
     # `Ezagent.Identity.Grant`).
+    {:ok, signed_cap} =
+      Ezagent.Cap.issue_for_action({:admin, admin_uri}, admin_uri, target)
+
     Ezagent.Invocation.dispatch(%Ezagent.Invocation{
       target: target,
       mode: :cast,
       args: %{member: agent_uri},
       ctx: %{
         caller: admin_uri,
-        caps: [
-          %Ezagent.Capability{
-            Ezagent.Capability.cap(
-              :session,
-              Ezagent.ActionSet.Session,
-              :join,
-              Ezagent.URI.instance(session_uri),
-              Ezagent.Capability.workspace_of(session_uri)
-            )
-            | granted_by: admin_uri,
-              granted_at: DateTime.utc_now()
-          }
-        ],
+        caps: [signed_cap],
         reply: :ignore
       },
       origin: :trusted_internal

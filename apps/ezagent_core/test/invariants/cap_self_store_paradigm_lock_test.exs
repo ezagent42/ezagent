@@ -21,6 +21,7 @@ defmodule Ezagent.Invariants.CapSelfStoreParadigmLockTest do
   @cap_verifier "apps/ezagent_core/lib/ezagent/cap/verifier.ex"
   @config_evolve "apps/ezagent_domain_identity/lib/ezagent/behavior/config_evolve.ex"
   @target_authority "apps/ezagent_domain_identity/lib/ezagent/identity/target_authority.ex"
+  @host_login_adopt "apps/ezagent_domain_agent/lib/ezagent/agent/host_login_adopt.ex"
 
   @legacy_grant_drivers %{
     "apps/ezagent_domain_session/lib/ezagent/behavior/session/member_cap.ex" => %{
@@ -30,7 +31,7 @@ defmodule Ezagent.Invariants.CapSelfStoreParadigmLockTest do
       {:grant_cap_via_router, 4} => 2
     },
     "apps/ezagent_domain_session/lib/ezagent/behavior/template.ex" => %{
-      {:grant_cap_via_router, 4} => 1
+      {:grant_cap, 3} => 1
     },
     "apps/ezagent_domain_session/lib/ezagent/entity/session_template.ex" => %{
       {:grant_cap, 3} => 1
@@ -46,7 +47,6 @@ defmodule Ezagent.Invariants.CapSelfStoreParadigmLockTest do
     "apps/ezagent_domain_workspace/lib/ezagent/behavior/workspace.ex" => %{
       {:grant_cap_effect, 3} => 1
     },
-    @workspace_facade => %{{:grant_cap_via_router, 4} => 1},
     "apps/ezagent_domain_workspace/lib/ezagent/workspace/responsibility_assignments.ex" => %{
       {:grant_cap, 3} => 1
     },
@@ -55,12 +55,10 @@ defmodule Ezagent.Invariants.CapSelfStoreParadigmLockTest do
       {:grant_cap_via_router, 4} => 1
     }
   }
-  @legacy_driver_files 12
-  @legacy_driver_sites 16
+  @legacy_driver_files 11
+  @legacy_driver_sites 15
 
-  @legacy_local_grant_drivers %{
-    "apps/ezagent_domain_session/lib/ezagent/behavior/template.ex" => %{{:grant_cap, 2} => 2}
-  }
+  @legacy_local_grant_drivers %{}
 
   @recipe_cutover_files [
     @recipe_grant_task,
@@ -68,15 +66,18 @@ defmodule Ezagent.Invariants.CapSelfStoreParadigmLockTest do
   ]
 
   @absorb_producers %{
+    @grant_chokepoint => %{{:absorb_cap, 2} => 1},
     @config_evolve => %{{:absorb_cap, 2} => 2},
     @recipe_grant_task => %{{:absorb_cap, 2} => 1},
     @orchestrator_caps => %{{:absorb_cap, 2} => 1},
     @composition_caps => %{{:absorb_cap, 2} => 1},
     @workspace_facade => %{{:absorb_cap, 2} => 1},
-    @target_authority => %{{:absorb_cap, 2} => 1}
+    @target_authority => %{{:absorb_cap, 2} => 1},
+    @host_login_adopt => %{{:absorb_cap, 2} => 1}
   }
 
   @absorb_action_literals %{
+    @grant_chokepoint => 1,
     @cap_delivery_schema => 2,
     @cap_delivery_envelope => 6,
     @cap_verifier => 1,
@@ -87,7 +88,8 @@ defmodule Ezagent.Invariants.CapSelfStoreParadigmLockTest do
     @identity_behavior => 3,
     @identity_facade => 2,
     @workspace_facade => 1,
-    @target_authority => 1
+    @target_authority => 1,
+    @host_login_adopt => 1
   }
 
   test "remaining issuer-driven grant sites are shrink-only migration debt" do

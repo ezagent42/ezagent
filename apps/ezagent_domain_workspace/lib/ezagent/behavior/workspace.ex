@@ -631,26 +631,6 @@ defmodule Ezagent.ActionSet.Workspace do
   defdelegate handle_create_agent(args, ctx), to: Ezagent.ActionSet.Workspace.AgentCreate
 
   # --- create_session (unified CLI/LV session provisioning) -----------
-  #
-  # SPEC `docs/superpowers/specs/2026-05-26-session-create-orchestrator-unified.md`
-  # Gap C. Wraps `EzagentDomainInstanceMessage.SessionCreator.create_session/3` so the CLI and LV
-  # share one entry. Translates the facade's 3-tuple meta map into a
-  # handler return shape with the orchestrator URI/status surfaced for
-  # the caller (CLI human-readable formatter; LV flash).
-  #
-  # The facade call is a SYNCHRONOUS function call (not a dispatch
-  # effect) because the handler needs the returned session URI to
-  # build the action's return value. A `{:dispatch, %Cmd{}}` effect
-  # cannot return a value to the handler — effects run AFTER the
-  # handler returns. The cross-domain dispatch under test is the chat
-  # plugin's own `create_session/3` machinery, which itself fires
-  # downstream `:dispatch` calls to set up session participants;
-  # `workspace_migration_parity_test.exs` covers that round-trip.
-  #
-  # Workspace authority: the action runs in the Workspace Kind, so
-  # `ctx.self_uri` is the workspace URI — passed as `:workspace_uri` to
-  # the facade. The caller URI is the session creator (becomes the
-  # session owner_uri + receives the OrchestratorAdmin :restart cap).
   @doc "Create a session in this workspace (unified CLI/LV path): validate name/template, call the runtime-resolved session facade's `create_session/3` (synchronously, to return the session URI), and grant the caller the creator manage-cap. The caller becomes the session owner."
   def handle_create_session(args, ctx) when is_map(args) do
     workspace_uri = Map.get(ctx, :self_uri)
@@ -669,28 +649,9 @@ defmodule Ezagent.ActionSet.Workspace do
     end
   end
 
-  # A `template_name` that resolves to a registered SESSION Template Class
-  # (e.g. `session.hello`, `session.generic`) is instantiated via the class's
-  # `instantiate/3` — the same System-A path `add_template` uses — NOT the
-  # generic SessionTemplate resolver. This lets the world "New session" form
-  # create a vertical's session type (e.g. a hello app) just by typing its
-  # name, in ANY workspace, with no per-workspace SessionTemplate seeding.
-  #
-  # Invariants preserved:
-  #   * CapBAC — this handler runs AFTER the `:create_session` cap gate, so the
-  #     caller is already authorized for session creation in this workspace;
-  #     no new cap is introduced. (The class's own `instantiate/3` performs the
-  #     privileged Kind setup under system authority, exactly as the existing
-  #     `add_template` / demo-seed paths do.)
-  #   * Plugin boundary — the class module is resolved at RUNTIME via
-  #     `TemplateRegistry`; this domain module keeps NO static dep on any plugin.
-  #
-  # A bare name gets a `session.` prefix so an operator can type `hello` rather
-  # than `session.hello`. Only `session.*` classes are eligible (agent classes
-  # like `cc.agent` are not session-producing and are left to fail closed).
-  #
-  # DECISION (2026-06-23) — pending a GLOSSARY Decision Log entry + Allen review:
-  # `:create_session` now also instantiates registered `session.*` classes.
+  # Registered `session.*` Template Classes instantiate directly; bare names
+  # also try the `session.` prefix. Resolution stays runtime-only to avoid a
+  # workspace -> session/plugin compile dependency.
   defp resolve_session_class(template_name) do
     [template_name, "session." <> template_name]
     |> Enum.uniq()
@@ -709,13 +670,6 @@ defmodule Ezagent.ActionSet.Workspace do
   defp create_session_via_class(class_name, class_module, short_name, workspace_uri, caller) do
     tmpl = %{"class" => class_name, "session_name" => short_name}
 
-    # `Ezagent.Kind.Template.instantiate/3` declares BOTH a 2-element
-    # `{:ok, [URI.t()]}` and a 3-element `{:ok, [URI.t()], meta}` success
-    # (template.ex `@callback instantiate`). `GenericSession.instantiate/3`
-    # returns the 2-element form — matching ONLY the 3-element head here crashed
-    # every `generic` create with `{:case_clause, {:ok, [%URI{}]}}` (the list is
-    # the multi-URI instantiate return; we take the session head). Accept both
-    # arities, and mirror the "instantiated no session" guard for each.
     case class_module.instantiate(class_name, tmpl, workspace_uri) do
       {:ok, [%URI{} = session_uri | _]} ->
         finish_class_session(session_uri, workspace_uri, caller)
@@ -743,16 +697,6 @@ defmodule Ezagent.ActionSet.Workspace do
              workspace_uri,
              caller
            ) do
-      # rev6 / #912 — SAME decoupling as the facade path. A Template Class's
-      # `instantiate/3` creates the session + its config; its declared team is an
-      # AGENT transaction fired here, after the session is durable. Before this,
-      # `session.hello` spawned four role agents (plus the `requires`-pulled cc
-      # orchestrator) inside this dispatch, so `hello` kept timing out while
-      # `default` was already fixed.
-      #
-      # NEVER gate the create's success on this: `instantiate/3` has ALREADY
-      # durably created the session, and "the install lane is unavailable" is
-      # exactly the failure rev6 says must not fail a create.
       trigger_socialware_install(session_uri, caller)
 
       # Meta shape matches `create_session_via_facade/4`. The retired
@@ -807,11 +751,8 @@ defmodule Ezagent.ActionSet.Workspace do
     end
   end
 
-  # Fire the post-create AGENT transaction. ALWAYS returns `:ok` — the session is
-  # already durable, and a create must never fail because the install lane is
-  # unavailable (rev6 / #912). But it must never fail SILENTLY either (Invariant
-  # #9): an unresolvable facade or a test double without the entry point means
-  # the session's declared team will never materialize, and somebody has to know.
+  # The session is already durable, so install failure is observable but cannot
+  # roll back a successful create.
   defp trigger_socialware_install(%URI{} = session_uri, %URI{} = actor_uri) do
     with {:ok, facade} <- resolve_session_facade(),
          true <- function_exported?(facade, :install_session_socialware_async, 1) do
@@ -837,15 +778,7 @@ defmodule Ezagent.ActionSet.Workspace do
     end
   end
 
-  # SPEC `2026-05-26-session-create-orchestrator-unified` Gap C — DI
-  # provider lookup for the session-creation facade. `ezagent_domain_session`
-  # depends on `ezagent_domain_workspace` (workspace boots first), so a
-  # compile-time alias would invert the dep graph and create a cycle.
-  # Instead the facade module is looked up at runtime via the
-  # application env key (default: `EzagentDomainInstanceMessage.SessionCreator`). Tests can
-  # override via `Application.put_env(:ezagent_domain_workspace,
-  # :session_facade, FakeFacade)` to drive `:create_session` without
-  # the full chat domain.
+  # Runtime DI avoids reversing the workspace <- session dependency.
   defp resolve_session_facade do
     facade =
       Application.get_env(

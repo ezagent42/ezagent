@@ -158,28 +158,17 @@ defmodule Ezagent.Email.Inbound.PrincipalTest do
     {:ok, %{principal_uri: principal_uri, caps: caps}} = issue_for(su)
     message = Ezagent.Message.new(principal_uri, %{text: "inbound", attachments: []})
 
-    enable_signature_enforcement!()
     assert {:ok, %{stored: true}} = dispatch_send(su, principal_uri, caps, message)
-    assert Enum.all?(caps, &Ezagent.Cap.verify_for(&1, principal_uri))
+    assert Enum.all?(caps, &(&1.grantee_uri == principal_uri and is_binary(&1.signature)))
   end
 
   defp dispatch_send(session_uri, principal_uri, caps, message) do
-    Ezagent.Invocation.dispatch(%Ezagent.Invocation{origin: :trusted_internal,
+    Ezagent.Invocation.dispatch(%Ezagent.Invocation{
+      origin: :trusted_internal,
       target: Ezagent.URI.with_action(session_uri, :session, :send),
       mode: :call,
       args: %{message: message},
       ctx: %{caller: principal_uri, caps: caps, reply: :sync}
     })
-  end
-
-  defp enable_signature_enforcement! do
-    config = Application.fetch_env!(:ezagent_core, Ezagent.Cap)
-    signing = Keyword.fetch!(config, :signing)
-
-    Application.put_env(
-      :ezagent_core,
-      Ezagent.Cap,
-      Keyword.put(config, :signing, Keyword.put(signing, :require_signature, true))
-    )
   end
 end

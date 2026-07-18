@@ -31,7 +31,7 @@ defmodule EzagentPluginKb.E2E.PluginPackageCodexGateTest do
 
   import Phoenix.ConnTest
 
-  alias Ezagent.{Capability, Invocation, PluginPackage, Workspace}
+  alias Ezagent.{Invocation, PluginPackage, Workspace}
   alias Ezagent.Agent.RecipeRegistry
   alias Ezagent.Entity.Agent
 
@@ -136,13 +136,26 @@ defmodule EzagentPluginKb.E2E.PluginPackageCodexGateTest do
   # --- helpers --------------------------------------------------------------
 
   defp dispatch_echo(agent_uri, text) do
-    Invocation.dispatch(%Invocation{origin: :trusted_internal,
-      target: Ezagent.URI.with_action(agent_uri, :echo, :echo_pkg),
+    target = Ezagent.URI.with_action(agent_uri, :echo, :echo_pkg)
+    admin = Ezagent.URI.user(:system, :admin)
+
+    caps =
+      case Ezagent.BehaviorRegistry.lookup(Agent, :echo_pkg) do
+        {:ok, _behavior} ->
+          MapSet.new([Ezagent.Test.CapHelper.signed_action_cap!(target, admin)])
+
+        :error ->
+          MapSet.new()
+      end
+
+    Invocation.dispatch(%Invocation{
+      origin: :trusted_internal,
+      target: target,
       mode: :call,
       args: %{text: text},
       ctx: %{
-        caller: Ezagent.URI.user(:system, :admin),
-        caps: MapSet.new([Capability.admin_genesis_cap()]),
+        caller: admin,
+        caps: caps,
         reply: {:caller_inbox, self()}
       }
     })

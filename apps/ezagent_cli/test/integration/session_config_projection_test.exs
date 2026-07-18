@@ -87,6 +87,11 @@ defmodule EzagentCli.Integration.SessionConfigProjectionTest do
       Ezagent.Kind.terminate(agent_uri)
     end)
 
+    join_target = Ezagent.URI.with_action(session_uri, :session, :join)
+    {:ok, join_cap} = Ezagent.Cap.issue_for_action({:admin, principal}, principal, join_target)
+    :ok = Ezagent.Identity.absorb_cap(principal, join_cap)
+    :ok = Ezagent.Identity.CapAbsorbAwait.await_exact(principal, [join_cap], 5_000)
+
     result =
       EzagentCli.Exec.exec(
         [
@@ -101,7 +106,7 @@ defmodule EzagentCli.Integration.SessionConfigProjectionTest do
         token: token
       )
 
-    assert result.exit_code == 0
+    assert result.exit_code == 0, inspect(result)
     assert {:ok, slice} = Ezagent.Kind.get_slice(session_uri, :session)
     assert slice.members[agent_uri].in_session_template == false
   end

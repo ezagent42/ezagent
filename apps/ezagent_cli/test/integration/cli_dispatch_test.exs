@@ -21,7 +21,12 @@ defmodule EzagentCli.Integration.CLIDispatchTest do
   describe "Dispatch.run_action — end-to-end via auto-derive" do
     test "workspace list_members on an existing workspace returns the member list" do
       name = "cli-test-#{System.unique_integer([:positive])}"
-      members = [Ezagent.URI.new!("entity://system/user/admin"), Ezagent.URI.new!("entity://team-alpha/agent/test_test-cli")]
+
+      members = [
+        Ezagent.URI.new!("entity://system/user/admin"),
+        Ezagent.URI.new!("entity://team-alpha/agent/test_test-cli")
+      ]
+
       {:ok, _pid} = Ezagent.Workspace.create(name, %{members: members})
 
       parsed = %{
@@ -70,15 +75,18 @@ defmodule EzagentCli.Integration.CLIDispatchTest do
 
       # Verify via list_members
       target = Ezagent.URI.new!("workspace://#{name}?action=workspace.list_members")
+      admin = Ezagent.Entity.User.admin_uri()
+      {:ok, list_cap} = Ezagent.Cap.issue_for_action({:admin, admin}, admin, target)
 
       assert {:ok, %{members: members}} =
-               Ezagent.Invocation.dispatch(%Ezagent.Invocation{origin: :trusted_internal,
+               Ezagent.Invocation.dispatch(%Ezagent.Invocation{
+                 origin: :trusted_internal,
                  target: target,
                  mode: :call,
                  args: %{},
                  ctx: %{
-                   caller: Ezagent.Entity.User.admin_uri(),
-                   caps: MapSet.new([Ezagent.Capability.admin_genesis_cap()]),
+                   caller: admin,
+                   caps: MapSet.new([list_cap]),
                    reply: {:caller_inbox, self()}
                  }
                })
@@ -136,7 +144,9 @@ defmodule EzagentCli.Integration.CLIDispatchTest do
       assert ws_sub
 
       action_names = ws_sub.subcommands |> Enum.map(& &1.name) |> MapSet.new()
-      assert MapSet.member?(action_names, "create"), "create facade op missing from workspace subcommands"
+
+      assert MapSet.member?(action_names, "create"),
+             "create facade op missing from workspace subcommands"
     end
   end
 end

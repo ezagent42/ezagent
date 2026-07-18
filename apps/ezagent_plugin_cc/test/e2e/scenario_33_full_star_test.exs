@@ -31,7 +31,7 @@ defmodule EzagentDomainInstanceMessage.E2E.Scenario33_FullStarTest do
 
   use EzagentCore.DataCase, async: false
 
-  alias Ezagent.{AgentFlavorRegistry, AgentLineage, ActionSet, Capability, KindRegistry}
+  alias Ezagent.{AgentFlavorRegistry, AgentLineage, ActionSet, KindRegistry}
   alias Ezagent.Entity.{Agent, Session, User}
   alias Ezagent.Session.SessionManager
   alias Ezagent.AgentBridge.TokenStore
@@ -44,6 +44,7 @@ defmodule EzagentDomainInstanceMessage.E2E.Scenario33_FullStarTest do
   # Transport #53 Decision C — the tool ops run in the per-orchestrator
   # `SessionManager` GenServer. Isolate TokenStore in a sandboxed EZAGENT_HOME.
   setup do
+    reset_workspace!()
     home = Path.join(System.tmp_dir!(), "s33-home-#{System.unique_integer([:positive])}")
     File.mkdir_p!(home)
     prev_home = System.get_env("EZAGENT_HOME")
@@ -112,14 +113,17 @@ defmodule EzagentDomainInstanceMessage.E2E.Scenario33_FullStarTest do
 
   defp dispatch(uri, action, args) do
     target = Ezagent.URI.new!("#{URI.to_string(uri)}?action=#{action}")
+    admin = User.admin_uri()
+    cap = Ezagent.Test.CapHelper.signed_action_cap!(target, admin)
 
-    Ezagent.Invocation.dispatch(%Ezagent.Invocation{origin: :trusted_internal,
+    Ezagent.Invocation.dispatch(%Ezagent.Invocation{
+      origin: :trusted_internal,
       target: target,
       mode: :call,
       args: args,
       ctx: %{
-        caller: User.admin_uri(),
-        caps: MapSet.new([Ezagent.Capability.admin_genesis_cap()]),
+        caller: admin,
+        caps: MapSet.new([cap]),
         reply: {:caller_inbox, self()}
       }
     })
@@ -145,48 +149,8 @@ defmodule EzagentDomainInstanceMessage.E2E.Scenario33_FullStarTest do
     :ok
   end
 
-  defp template_cap(kind, workspace_uri) do
-    %Capability{
-      kind: kind,
-      behavior: ActionSet.Template,
-      instance: {:within_workspace, workspace_uri},
-      workspace_uri: workspace_uri,
-      granted_by: User.admin_uri(),
-      granted_at: DateTime.utc_now()
-    }
-  end
-
-  # The four delegated caps the Generator grants an orchestrator.
-  defp orchestrator_caps(session_uri, orchestrator_uri, workspace_uri) do
-    base = [
-      %Capability{
-        kind: :session,
-        behavior: :any,
-        instance: {:within_session, session_uri},
-        workspace_uri: workspace_uri,
-        granted_by: User.admin_uri(),
-        granted_at: DateTime.utc_now()
-      },
-      %Capability{
-        kind: :agent,
-        behavior: :any,
-        instance: {:spawned_by, orchestrator_uri},
-        workspace_uri: workspace_uri,
-        granted_by: User.admin_uri(),
-        granted_at: DateTime.utc_now()
-      }
-    ]
-
-    MapSet.new(
-      base ++
-        [
-          template_cap(:agent_template, workspace_uri),
-          template_cap(:session_template, workspace_uri)
-        ]
-    )
-  end
-
   defp spawn_session do
+    ensure_workspace()
     session_uri = Ezagent.URI.session("team-alpha", "generic", "s33-#{uniq()}")
 
     {:ok, _pid} =
@@ -198,6 +162,22 @@ defmodule EzagentDomainInstanceMessage.E2E.Scenario33_FullStarTest do
 
     :ok = Ezagent.WorkspaceRegistry.bind(session_uri, @workspace_uri)
     session_uri
+  end
+
+  defp ensure_workspace do
+    case Ezagent.Workspace.create("team-alpha", %{}) do
+      {:ok, _} -> :ok
+      {:error, :workspace_exists} -> :ok
+      {:error, {:already_started, _}} -> :ok
+    end
+  end
+
+  defp reset_workspace! do
+    _ = Ezagent.Kind.terminate(@workspace_uri)
+    :ok = Ezagent.SnapshotStore.delete(@workspace_uri)
+    _ = Ezagent.Workspace.Store.delete("team-alpha")
+    {:ok, _} = Ezagent.Workspace.create("team-alpha", %{})
+    :ok
   end
 
   # Transport #53 Decision C — spawn the orchestrator WITH its delegated caps in
@@ -213,9 +193,18 @@ defmodule EzagentDomainInstanceMessage.E2E.Scenario33_FullStarTest do
       Ezagent.AgentFlavorAttributes.delete(orchestrator_uri)
     end)
 
-    caps = orchestrator_caps(session_uri, orchestrator_uri, @workspace_uri)
-    {:ok, _pid} = Ezagent.Kind.spawn(Agent, %{uri: orchestrator_uri, initial_caps: caps})
+    {:ok, _pid} = Ezagent.Kind.spawn(Agent, %{uri: orchestrator_uri, initial_caps: MapSet.new()})
     :ok = Ezagent.WorkspaceRegistry.bind(orchestrator_uri, @workspace_uri)
+
+    :ok =
+      Ezagent.Entity.Session.Orchestrator.Caps.grant_orchestrator_scoped_caps(
+        orchestrator_uri,
+        session_uri,
+        User.admin_uri()
+      )
+
+    join_target = Ezagent.URI.with_action(session_uri, :session, :join)
+    join_cap = Ezagent.Test.CapHelper.signed_action_cap!(join_target, User.admin_uri())
 
     :ok =
       Ezagent.Orchestrator.Tools.join_member(
@@ -223,7 +212,7 @@ defmodule EzagentDomainInstanceMessage.E2E.Scenario33_FullStarTest do
         orchestrator_uri,
         %{role_name: "orchestrator", in_session_template: true},
         User.admin_uri(),
-        MapSet.new([Capability.admin_genesis_cap()])
+        MapSet.new([join_cap])
       )
 
     epoch = Ecto.UUID.generate()

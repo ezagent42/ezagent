@@ -213,16 +213,24 @@ defmodule Ezagent.PluginCurlAgent.CurlCascadeActivationTest do
         uri: source_uri,
         behaviors: Ezagent.Entity.Agent.curl_behaviors()
       })
+
     wait_for(fn -> Ezagent.ReadyGate.status(source_uri) == :ready end)
 
     target = Ezagent.URI.with_action(source_uri, :api_keys, :put_api_key)
+    presenter = Ezagent.Entity.User.admin_uri()
+    cap = Ezagent.Test.CapHelper.signed_action_cap!(target, presenter)
 
     assert {:ok, %{ok: true, provider: ^provider}} =
-             Invocation.dispatch(%Invocation{origin: :trusted_internal,
+             Invocation.dispatch(%Invocation{
+               origin: :trusted_internal,
                target: target,
                mode: :call,
                args: %{provider: provider, key: key},
-               ctx: %{caller: :vm_internal, caps: :system, reply: {:caller_inbox, self()}}
+               ctx: %{
+                 caller: presenter,
+                 caps: MapSet.new([cap]),
+                 reply: {:caller_inbox, self()}
+               }
              })
 
     source_uri

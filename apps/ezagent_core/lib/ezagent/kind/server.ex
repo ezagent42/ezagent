@@ -849,7 +849,15 @@ defmodule Ezagent.Kind.Server do
   end
 
   def handle_info({:ezagent_run_deferred, cmds}, state) when is_list(cmds) do
-    Ezagent.Kind.DeferredDispatch.run(cmds)
+    # A deferred self-dispatch runs on a later mailbox turn, outside the
+    # handle_call/handle_cast authority scope above. Re-enter the same sealed
+    # custody compartment so an exact K.grant issuance for canonical-admin
+    # framework traffic can use this Kind's live signer. The key remains
+    # process-local and the deferred command still traverses Router + verifier.
+    Ezagent.Cap.Authority.with_current(state.authority, fn ->
+      Ezagent.Kind.DeferredDispatch.run(cmds)
+    end)
+
     {:noreply, state}
   end
 

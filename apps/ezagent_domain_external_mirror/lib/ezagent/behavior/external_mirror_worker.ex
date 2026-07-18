@@ -885,31 +885,8 @@ defmodule Ezagent.ActionSet.ExternalMirrorWorker do
   # — identical wire-shape to what `Session.subscribe_from/4`
   # constructs (SPEC §8.1).
 
-  # Task #49 codex r3 NEW CHECK C — catchup-on-resubscribe.
-  #
-  # `cursor` is either:
-  #   - `:latest` (no replay; the fresh-spawn first-subscribe case)
-  #   - non-negative integer (Publisher replays events with cursor > given)
-  #
-  # The Publisher's `prepare_replay/2` returns the events; `subscribe_from`
-  # `send/2`s each one to `subscriber_pid` BEFORE returning. By the time
-  # this call returns `{:ok, current_cursor}` the replay messages are
-  # already in our mailbox (or will be — same process can't out-pace its
-  # own GenServer reply). They land in `handle_signal/2` as
-  # `{:publisher_event, %Event{}}` and emit a `:publish` dispatch effect
-  # through the regular path — same dedupe, same telemetry.
-  #
-  # This helper is invoked from `activate/2` + `handle_signal/2` (Lifecycle
-  # hooks), NOT from an action handler — so we use `Ezagent.Router.dispatch/1`
-  # directly (the sanctioned modern entry-point for sub-dispatch from a
-  # lifecycle hook that needs the subscribe's RETURN cursor synchronously;
-  # a `:dispatch` effect is fire-and-forget and could not return the
-  # cursor). The `{:publisher_event, …}` → `:publish` path IS a
-  # declarative `:dispatch` effect (see `dispatch_publish_effect/2`).
-  # `subscriber_pid` is the WORKER's pid — the process that must receive the
-  # `{:publisher_event, _}` fan-out + replay. Passed EXPLICITLY because the
-  # initial subscribe runs in a detached Task. The re-subscribe paths
-  # (`attempt_resubscribe`) run on the Worker process and default to `self()`.
+  # Cursor replay is synchronous so the lifecycle hook can persist the returned
+  # cursor. The detached initial task passes the Worker pid explicitly.
   defp subscribe_to_session_publisher_from(
          session_uri,
          self_uri,
@@ -932,26 +909,11 @@ defmodule Ezagent.ActionSet.ExternalMirrorWorker do
         session_uri,
         :subscribe_from,
         %{subscriber_pid: subscriber_pid, cursor: cursor},
-        # System-principal elimination (#154): the `system://worker-publish`
-        # principal is GONE — this subscribe carries the Worker's OWN inline
-        # subscribe cap (`worker_subscribe_caps/0`); see the internals
-        # comment block above for the self-authority rationale.
         %{
           caller: self_uri,
           caps: [subscribe_cap],
           reply: {:caller_inbox, self()},
-          # 2026-05-26 (Allen e2e blocker): Session.handle_call queues
-          # subscribe_from behind concurrent list_bindings polls, chat
-          # mutations, and snapshot.commit cycles (each writing ~30KB
-          # state binary to SQLite). Under steady-state polling the
-          # default 5s `deadline_ms` is too tight — the call times out
-          # and the worker exits, supervisor restarts it, and the cycle
-          # accumulates dead subscriber pids in the Publisher slice
-          # (each fresh worker subscribes with a NEW pid that gets
-          # monitored; DOWN fires only after replacement). Bumping
-          # subscribe_from's deadline to 30s lets the call complete
-          # under realistic load. Bind/publish flows have their own
-          # deadlines; this only widens the SETUP path.
+          # Setup can queue behind Session persistence work.
           deadline_ms: 30_000
         }
       )
@@ -963,15 +925,8 @@ defmodule Ezagent.ActionSet.ExternalMirrorWorker do
     end
   end
 
-  # T1 (Phase B): build the `{:dispatch, %Cmd{}}` EFFECT for the
-  # `:publish` self-dispatch. Pre-migration this called
-  # `Ezagent.Router.dispatch/1` imperatively from `handle_kind_message/3`;
-  # under Lifecycle the signal handler returns this effect and the engine's
-  # `apply_signal_effects/3` re-enters the Router for us (same CapBAC +
-  # idempotency + audit, now flowing through the declarative pipeline — the
-  # "no imperative dispatch in developer code" Phase C gate). Routing the
-  # publish through the Router (not invoking the binding inline) keeps step
-  # 5.5 CapBAC + telemetry + idempotency on the publish path (P14 hygiene).
+  # The signal handler returns a declarative self-dispatch so CapBAC,
+  # idempotency, audit, and telemetry all stay on the normal Router path.
   defp dispatch_publish_effect(
          %URI{} = self_uri,
          %Event{} = event,
@@ -987,13 +942,6 @@ defmodule Ezagent.ActionSet.ExternalMirrorWorker do
        self_uri,
        :publish,
        %{event: event},
-       # System-principal elimination (#154): the `system://worker-publish`
-       # principal is GONE — this self-dispatch carries the Worker's OWN
-       # inline publish cap (`worker_publish_caps/1`, genuine self-authority).
-       # `ctx.caps`-first authz (step 5.5) AVOIDS the `granted_via_holds_cap?`
-       # self-deadlock (a self-dispatch reading its own `:identity` slice via
-       # GenServer.call blocks on itself — runtime.ex step-5.5 comment). See
-       # the internals comment block above.
        %{
          caller: self_uri,
          caps: [publish_cap],
@@ -1004,19 +952,8 @@ defmodule Ezagent.ActionSet.ExternalMirrorWorker do
      )}
   end
 
-  # ----- self-authority caps (system-principal elimination, #154) -----------
-  #
-  # Replace the deleted `system://worker-publish` principal: the Worker's two
-  # internal dispatches carry these caps in `ctx.caps` as the step-5.5
-  # authorizer (`granted_via_ctx_caps?`). AUTHORIZERS only — never
-  # granted/persisted (no `Ezagent.Identity.Grant` route applies), so the
-  # `granted_by` axis is provenance (`identity_key/1` / `matches?/2` ignore it)
-  # — no #154 grant regression. Each helper mints ONLY the cap its site needs
-  # (least privilege). Public `@doc false` — pure constructors exposed for
-  # `Ezagent.ActionSet.ExternalMirrorWorkerSelfCapsTest`.
-
-  # `:publish` self-dispatch cap — GENUINE self-authority, so `granted_by` =
-  # `self_uri` (real entity per #154). Shape = `required_caps/0[:publish]`.
+  # Publish authority is issued once during activation and retained only in the
+  # Worker's transient state.
   defp issue_publish_cap!(self_uri) do
     requested =
       Ezagent.Capability.cap(

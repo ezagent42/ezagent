@@ -117,6 +117,11 @@ defmodule Ezagent.Template.GenericSession do
     target =
       Ezagent.URI.new!("#{URI.to_string(session_uri)}?action=session.join")
 
+    admin = Ezagent.Entity.User.admin_uri()
+
+    {:ok, signed_cap} =
+      Ezagent.Cap.issue_for_action({:admin, admin}, admin, target)
+
     Enum.each(members, fn member_uri_str ->
       # SPEC 2026-05-27-uri-canonicalization §3.3 — canonical chokepoint
       # with try/rescue so the per-member error path stays intact (skip
@@ -128,27 +133,10 @@ defmodule Ezagent.Template.GenericSession do
               target: target,
               mode: :cast,
               args: %{member: member_uri},
-              # #154 — `system://template-materialize` ELIMINATED. GenericSession
-              # member join is system-mediated template instantiation → runs
-              # under the genesis admin entity with an INLINE narrow
-              # `session.join` cap (granted_by admin; #533 refines). behavior: :any.
               ctx: %{
-                caller: Ezagent.Entity.User.admin_uri(),
-                caps:
-                  MapSet.new([
-                    %Ezagent.Capability{
-                      Ezagent.Capability.cap(
-                        :session,
-                        :any,
-                        :join,
-                        Ezagent.URI.instance(session_uri),
-                        Ezagent.Capability.workspace_of(session_uri)
-                      )
-                      | granted_by: Ezagent.Entity.User.admin_uri(),
-                        granted_at: DateTime.utc_now()
-                    }
-                  ]),
-                reply: :ignore,
+                caller: admin,
+                caps: MapSet.new([signed_cap]),
+                reply: :ignore
               },
               origin: :trusted_internal
             })

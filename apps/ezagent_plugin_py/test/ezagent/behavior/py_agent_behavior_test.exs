@@ -18,7 +18,7 @@ defmodule Ezagent.ActionSet.PyAgentTest do
   use ExUnit.Case, async: false
 
   alias Ezagent.ActionSet.PyAgent
-  alias Ezagent.Cmd
+  alias Ezagent.{Capability, Cmd}
 
   # ctx mock matching the Lifecycle test harness (lifecycle.md §Testing).
   defp ctx(self_uri, caller, state) do
@@ -100,7 +100,8 @@ defmodule Ezagent.ActionSet.PyAgentTest do
         result: {:ok, %{text: "pong"}},
         source_session: session,
         user_text: "ping",
-        in_msg_id: "msg-1"
+        in_msg_id: "msg-1",
+        reply_cap: reply_cap(session, self_uri)
       }
 
       {:ok, %{ok: true}, effects} = PyAgent.handle_py_sync_result(args, ctx(self_uri, session, %{}))
@@ -144,5 +145,22 @@ defmodule Ezagent.ActionSet.PyAgentTest do
       assert {:set, :last_error, :not_alive} in effects
       refute Enum.any?(effects, &match?({:dispatch, _}, &1))
     end
+  end
+
+  defp reply_cap(session, grantee) do
+    %Capability{
+      Capability.cap(
+        :session,
+        Ezagent.ActionSet.Session,
+        :send,
+        session,
+        Ezagent.Capability.workspace_of(session)
+      )
+      | granted_by: Ezagent.Entity.User.admin_uri(),
+        granted_at: DateTime.utc_now(),
+        grantee_uri: grantee,
+        key_id: "unit-fixture",
+        signature: <<1>>
+    }
   end
 end

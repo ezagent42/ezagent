@@ -26,13 +26,16 @@ defmodule Ezagent.Socialware.ExternalDeliveryCursorTest do
   defp target(s, b, a), do: Ezagent.URI.new!("#{URI.to_string(s)}?action=#{b}.#{a}")
 
   defp dispatch(s, b, a, args) do
+    target = target(s, b, a)
+    caller = User.admin_uri()
+
     Invocation.dispatch(%Invocation{origin: :trusted_internal,
-      target: target(s, b, a),
+      target: target,
       mode: :call,
       args: args,
       ctx: %{
-        caller: User.admin_uri(),
-        caps: MapSet.new([Ezagent.Capability.admin_genesis_cap()]),
+        caller: caller,
+        caps: Ezagent.Socialware.TestCapHelper.lifecycle_caps(s, caller, target),
         reply: {:caller_inbox, self()}
       }
     })

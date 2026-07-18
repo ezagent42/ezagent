@@ -29,6 +29,12 @@ defmodule EzagentCli.Integration.CliRuntimeSameServerInvariantTest do
 
   setup do
     # Sandbox provided by EzagentCore.DataCase (#92).
+    {:ok, _apps} = Application.ensure_all_started(:ezagent_domain_workspace)
+    workspace_name = "cli-isomorphism-#{System.unique_integer([:positive, :monotonic])}"
+    workspace_uri = Ezagent.URI.workspace(workspace_name)
+
+    {:ok, _pid} = Ezagent.Workspace.create(workspace_name, %{})
+    on_exit(fn -> Ezagent.Kind.terminate(workspace_uri) end)
 
     # The CLI tree is derived from BehaviorRegistry at invocation time.
     # Keep this invariant independent from umbrella test ordering: earlier
@@ -36,50 +42,46 @@ defmodule EzagentCli.Integration.CliRuntimeSameServerInvariantTest do
     # session.join action to exist.
     :ok = Ezagent.CapabilityRegistry.register(Session, :join, SessionBehavior)
 
-    # CLI/GUI audit HIGH-1 — Dispatch no longer silent-fallbacks to
-    # admin. Tests set the per-process override that
-    # `EzagentCli.Exec.exec/2` would set in production after token auth.
-    #
-    # 2026-05-26 (Allen): caller is a `team-alpha` workspace user so the
-    # CLI's `promote_to_3seg/4` fills the workspace slot with
-    # `team-alpha` — matching the session spawned below at
-    # `session://team-alpha/default/...`. Previously the override
-    # carried `admin_uri()` (workspace `system`), which made the CLI
-    # promote `--session <bare>` to `session://system/default/<bare>`
-    # while the test had spawned in `team-alpha` → "no such actor"
-    # mismatch surfaced once PR #362 tightened structural workspace
-    # derivation. Holding `*` caps so caps step 5.5 isn't the gate
-    # under test here (this test pins the BEAM-isomorphism invariant).
     test_user_uri =
       Ezagent.URI.new!(
-        "entity://team-alpha/user/cli-lv-isomorphism-tester-#{System.unique_integer([:positive])}"
+        "entity://#{workspace_name}/user/cli-lv-isomorphism-tester-#{System.unique_integer([:positive])}"
       )
 
-    Process.put(
-      :ezagent_cli_caller_override,
-      {test_user_uri, MapSet.new([Ezagent.Capability.admin_genesis_cap()])}
-    )
-
-    {:ok, caller_uri: test_user_uri}
+    {:ok, caller_uri: test_user_uri, workspace_name: workspace_name, workspace_uri: workspace_uri}
   end
 
   test "CLI server-side exec changes Identity caps IN THIS BEAM", ctx do
     subject_uri =
       Ezagent.URI.new!(
-        "entity://team-alpha/user/cli-runtime-isomorphism-subject-#{System.unique_integer([:positive])}"
+        "entity://#{ctx.workspace_name}/user/cli-runtime-isomorphism-subject-#{System.unique_integer([:positive])}"
       )
 
     {:ok, _decoded} = Ezagent.Users.create(subject_uri, nil, [])
     {:ok, subject_pid} = Ezagent.SpawnRegistry.spawn(subject_uri)
     Process.sleep(50)
 
+    workspace_uri = ctx.workspace_uri
+    admin = Ezagent.Entity.User.admin_uri()
+
+    requested_grant_authority =
+      Ezagent.Capability.cap(
+        :workspace,
+        Ezagent.Cap.Grant,
+        :grant,
+        workspace_uri,
+        workspace_uri
+      )
+
+    {:ok, workspace_grant_cap} =
+      Ezagent.Cap.issue({:admin, admin}, ctx.caller_uri, requested_grant_authority)
+
     cap =
       Ezagent.Capability.cap(
         :workspace,
         Ezagent.World.Behavior.Layout,
         :manage,
-        Ezagent.URI.new!("workspace://team-alpha"),
-        Ezagent.URI.new!("workspace://team-alpha")
+        workspace_uri,
+        workspace_uri
       )
       |> Map.put(:granted_by, ctx.caller_uri)
       |> Map.put(:granted_at, DateTime.utc_now())
@@ -95,17 +97,16 @@ defmodule EzagentCli.Integration.CliRuntimeSameServerInvariantTest do
     # /api/cli/exec route works after operator authenticates).
     #
     # 2026-05-26 (Allen): the caller's workspace must MATCH the session's
-    # workspace because CLI's `promote_to_3seg/4` fills the workspace
-    # slot of the bare `--session <name>` from the caller URI. The
-    # session was spawned in `team-alpha` above, so the caller is in
-    # `team-alpha` too. Caps include `*` so step 5.5 isn't the test gate.
+    # workspace because CLI target promotion and grant authorization both use
+    # that structural workspace. The receiver-bound caps below were issued by
+    # the subject and workspace Kinds respectively.
     caller_uri = ctx.caller_uri
 
     {:ok, _decoded} =
       Ezagent.Users.create(
         caller_uri,
         nil,
-        MapSet.to_list(MapSet.new([Ezagent.Capability.admin_genesis_cap()]))
+        [workspace_grant_cap]
       )
 
     {plain_token, _row} = Ezagent.Entity.Token.mint(caller_uri, label: "test-cli-token")

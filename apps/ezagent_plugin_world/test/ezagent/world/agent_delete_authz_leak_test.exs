@@ -50,23 +50,20 @@ defmodule Ezagent.World.AgentDeleteAuthzLeakTest do
     {:ok, _} = Workspace.create(ws_a, %{})
     {:ok, _} = Workspace.create(ws_b, %{})
 
-    admin_ctx = %{
-      caller: User.admin_uri(),
-      caps: MapSet.new([Ezagent.Capability.admin_genesis_cap()])
-    }
-
-    {:ok, ws_a: ws_a, ws_b: ws_b, admin_ctx: admin_ctx}
+    {:ok, ws_a: ws_a, ws_b: ws_b}
   end
 
   # Create a real agent in the given workspace and bind it into a live session
   # in that same workspace. Returns {agent_uri, session_name} so the test can
   # assert on the leaked/allowed session NAME.
-  defp bound_agent_in(ws_name, admin_ctx) do
+  defp bound_agent_in(ws_name) do
     agent_name = "leak-probe-#{System.unique_integer([:positive])}"
+    workspace_uri = URI.new!("workspace://#{ws_name}")
+    admin_ctx = Ezagent.Test.CapHelper.signed_workspace_ctx!(workspace_uri, User.admin_uri())
 
     {:ok, %{agent_uri: agent_uri}} =
       Workspace.create_agent(
-        URI.new!("workspace://#{ws_name}"),
+        workspace_uri,
         %{flavor: "curl", name: agent_name, cwd: "", with_pty: false},
         admin_ctx
       )
@@ -98,13 +95,15 @@ defmodule Ezagent.World.AgentDeleteAuthzLeakTest do
     end)
 
     join_target = URI.new!("#{URI.to_string(session_uri)}?action=session.join")
+    join_cap = Ezagent.Test.CapHelper.signed_action_cap!(join_target, User.admin_uri())
 
     :ok =
-      Ezagent.Invocation.dispatch(%Ezagent.Invocation{origin: :trusted_internal,
+      Ezagent.Invocation.dispatch(%Ezagent.Invocation{
+        origin: :trusted_internal,
         target: join_target,
         mode: :cast,
         args: %{member: agent_uri},
-        ctx: %{caller: User.admin_uri(), caps: admin_ctx.caps, reply: :ignore}
+        ctx: %{caller: User.admin_uri(), caps: MapSet.new([join_cap]), reply: :ignore}
       })
 
     Process.sleep(50)
@@ -128,8 +127,8 @@ defmodule Ezagent.World.AgentDeleteAuthzLeakTest do
   end
 
   test "forged cross-workspace agent URI does NOT leak the victim tenant's session name/count",
-       %{ws_a: ws_a, ws_b: ws_b, admin_ctx: admin_ctx} do
-    {victim_agent_uri, victim_session_name} = bound_agent_in(ws_b, admin_ctx)
+       %{ws_a: ws_a, ws_b: ws_b} do
+    {victim_agent_uri, victim_session_name} = bound_agent_in(ws_b)
 
     # Attacker operates in workspace A, holds NO caps, forges the workspace-B
     # agent URI. current_workspace_uri (A) is server-derived from the signed
@@ -162,14 +161,16 @@ defmodule Ezagent.World.AgentDeleteAuthzLeakTest do
   end
 
   test "same-workspace caller holding a Manage cap for a DIFFERENT agent is still denied (no leak)",
-       %{ws_b: ws_b, admin_ctx: admin_ctx} do
-    {victim_agent_uri, victim_session_name} = bound_agent_in(ws_b, admin_ctx)
+       %{ws_b: ws_b} do
+    {victim_agent_uri, victim_session_name} = bound_agent_in(ws_b)
+    workspace_uri = URI.new!("workspace://#{ws_b}")
+    admin_ctx = Ezagent.Test.CapHelper.signed_workspace_ctx!(workspace_uri, User.admin_uri())
 
     # A second, unrelated agent in the SAME workspace. The caller holds only
     # THIS agent's concrete instance-scoped Manage cap — not the victim's.
     {:ok, %{agent_uri: other_agent_uri}} =
       Workspace.create_agent(
-        URI.new!("workspace://#{ws_b}"),
+        workspace_uri,
         %{
           flavor: "curl",
           name: "other-#{System.unique_integer([:positive])}",
@@ -181,13 +182,8 @@ defmodule Ezagent.World.AgentDeleteAuthzLeakTest do
 
     caller = URI.new!("entity://#{ws_b}/user/member")
 
-    wrong_cap =
-      Ezagent.CreatorGrant.manage_cap(
-        :agent,
-        other_agent_uri,
-        URI.new!("workspace://#{ws_b}"),
-        caller
-      )
+    wrong_target = Ezagent.URI.with_action(other_agent_uri, :manage, :delete)
+    wrong_cap = Ezagent.Test.CapHelper.signed_action_cap!(wrong_target, caller)
 
     socket = socket_for(ws_b, caller, MapSet.new([wrong_cap]))
 
@@ -209,12 +205,14 @@ defmodule Ezagent.World.AgentDeleteAuthzLeakTest do
   end
 
   test "authorized same-workspace caller still sees the bound-session banner (no over-block)",
-       %{ws_b: ws_b, admin_ctx: admin_ctx} do
-    {agent_uri, session_name} = bound_agent_in(ws_b, admin_ctx)
+       %{ws_b: ws_b} do
+    {agent_uri, session_name} = bound_agent_in(ws_b)
 
     # Legitimate operator: same workspace as the agent, holds the agent's
     # manage-cap (admin genesis authorizes it).
-    socket = socket_for(ws_b, User.admin_uri(), admin_ctx.caps)
+    delete_target = Ezagent.URI.with_action(agent_uri, :manage, :delete)
+    delete_cap = Ezagent.Test.CapHelper.signed_action_cap!(delete_target, User.admin_uri())
+    socket = socket_for(ws_b, User.admin_uri(), MapSet.new([delete_cap]))
 
     {:noreply, out} =
       AgentActions.handle_dispatch(socket, "agents.delete", %{

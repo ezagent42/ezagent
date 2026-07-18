@@ -26,6 +26,8 @@ defmodule Ezagent.Workspace do
   alias Ezagent.Entity.Workspace, as: WK
   alias Ezagent.{Cmd, KindRegistry, Router, Workspace.Loader, Workspace.Store}
 
+  require Logger
+
   # --- spawn ---------------------------------------------------------
 
   @doc """
@@ -833,6 +835,48 @@ defmodule Ezagent.Workspace do
         %URI{} = creator_uri
       )
       when is_atom(kind) do
+    case Ezagent.ReadyGate.status(instance_uri) do
+      :not_ready ->
+        defer_creator_manage_cap(kind, instance_uri, workspace_uri, creator_uri)
+
+      _status ->
+        do_grant_creator_manage_cap(kind, instance_uri, workspace_uri, creator_uri)
+    end
+  end
+
+  defp defer_creator_manage_cap(kind, instance_uri, workspace_uri, creator_uri) do
+    case Task.Supervisor.start_child(Ezagent.Workspace.CapGrantSupervisor, fn ->
+           case Ezagent.ReadyGate.await(instance_uri, 30_000) do
+             :ok ->
+               case do_grant_creator_manage_cap(
+                      kind,
+                      instance_uri,
+                      workspace_uri,
+                      creator_uri
+                    ) do
+                 :ok ->
+                   :ok
+
+                 {:error, reason} ->
+                   Logger.error(
+                     "deferred creator-manage K.grant failed target=#{URI.to_string(instance_uri)} " <>
+                       "creator=#{URI.to_string(creator_uri)} reason=#{inspect(reason)}"
+                   )
+               end
+
+             {:error, :timeout} ->
+               Logger.error(
+                 "deferred creator-manage K.grant timed out target=#{URI.to_string(instance_uri)} " <>
+                   "creator=#{URI.to_string(creator_uri)}"
+               )
+           end
+         end) do
+      {:ok, _pid} -> :ok
+      {:error, reason} -> {:error, {:creator_manage_cap_enqueue_failed, reason}}
+    end
+  end
+
+  defp do_grant_creator_manage_cap(kind, instance_uri, workspace_uri, creator_uri) do
     cap = Ezagent.CreatorGrant.manage_cap(kind, instance_uri, workspace_uri, creator_uri)
 
     with :ok <- Ezagent.Identity.TargetAuthority.ensure(creator_uri, instance_uri) do
@@ -847,19 +891,17 @@ defmodule Ezagent.Workspace do
              do: {:admin, creator_uri},
              else: {:held_by, creator_uri}
 
-        # `:sync` (NOT the default `:async`): the base site dispatched with
-        # `mode: :call`, and the create operation gates its success on this
-        # grant (`with :ok <- grant_creator_manage_cap/4`). `:cast` would
-        # silently swallow a grant failure — reporting a successful create
-        # while the creator does NOT hold the Manage cap. Force synchronous,
-        # error-propagating `:call` mode.
-        case Ezagent.Identity.Grant.grant_cap_via_router(
-               creator_uri,
-               cap,
-               authorization,
-               :sync
-             ) do
-          :ok -> :ok
+        with {:ok, artifact} <-
+               Ezagent.Identity.Grant.issue_cap(creator_uri, cap, authorization),
+             :ok <- absorb_initial_caps(creator_uri, [{cap, artifact}]),
+             :ok <-
+               Ezagent.Identity.CapAbsorbAwait.await_exact(
+                 creator_uri,
+                 [artifact],
+                 5_000
+               ) do
+          :ok
+        else
           {:error, reason} -> {:error, {:creator_manage_cap_grant_failed, reason}}
         end
       end

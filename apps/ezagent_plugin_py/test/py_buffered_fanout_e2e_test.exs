@@ -75,10 +75,7 @@ defmodule Ezagent.PluginPy.BufferedFanoutE2ETest do
 
         admin_uri = User.admin_uri()
 
-        admin_ctx = %{
-          caller: admin_uri,
-          caps: MapSet.new([Ezagent.Capability.admin_genesis_cap()])
-        }
+        admin_ctx = Ezagent.Test.CapHelper.signed_workspace_ctx!(workspace_uri, admin_uri)
 
         {:ok,
          ws_name: ws_name,
@@ -148,12 +145,18 @@ defmodule Ezagent.PluginPy.BufferedFanoutE2ETest do
     inbound_msg =
       Message.new(admin_uri, %{text: inbound_text, attachments: []}, mentions: [agent_uri])
 
+    send_target = Ezagent.URI.with_action(session_uri, :session, :send)
+
     :ok =
       Invocation.dispatch(%Invocation{origin: :trusted_internal,
-        target: URI.new!("#{URI.to_string(session_uri)}?action=session.send"),
+        target: send_target,
         mode: :cast,
         args: %{message: inbound_msg},
-        ctx: %{caller: admin_uri, caps: admin_ctx.caps, reply: :ignore}
+        ctx: %{
+          caller: admin_uri,
+          caps: MapSet.new([Ezagent.Test.CapHelper.signed_action_cap!(send_target, admin_uri)]),
+          reply: :ignore
+        }
       })
 
     # ---- 4. The member becomes ready AFTERWARDS and the reply arrives ----
@@ -171,14 +174,16 @@ defmodule Ezagent.PluginPy.BufferedFanoutE2ETest do
   # --- helpers ---------------------------------------------------------------
 
   defp join(session, member) do
+    target = Ezagent.URI.with_action(session, :session, :join)
+
     :ok =
       Invocation.dispatch(%Invocation{origin: :trusted_internal,
-        target: URI.new!("#{URI.to_string(session)}?action=session.join"),
+        target: target,
         mode: :cast,
         args: %{member: member},
         ctx: %{
           caller: member,
-          caps: MapSet.new([Ezagent.Capability.admin_genesis_cap()]),
+          caps: MapSet.new([Ezagent.Test.CapHelper.signed_action_cap!(target, member)]),
           reply: :ignore
         }
       })

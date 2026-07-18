@@ -160,6 +160,8 @@ defmodule Ezagent.Cap.Verifier do
   end
 
   defp emit(outcome, kind, behavior, action, target, ctx, reason \\ nil) do
+    presenter = Map.get(ctx, :caller)
+
     :telemetry.execute(
       [:ezagent, :cap, :verify, outcome],
       %{count: 1},
@@ -168,9 +170,19 @@ defmodule Ezagent.Cap.Verifier do
         behavior_module: behavior,
         action: action,
         target: target,
-        presenter: Map.get(ctx, :caller),
+        presenter: presenter,
         reason: reason
       }
     )
+
+    if outcome in [:accepted, :rejected] do
+      decision = if outcome == :accepted, do: :granted, else: :denied
+
+      :telemetry.execute(
+        [:ezagent, :authz, decision],
+        %{count: 1},
+        %{caller: presenter, target: target, action: action, reason: reason}
+      )
+    end
   end
 end

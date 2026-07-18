@@ -146,43 +146,34 @@ defmodule EzagentPluginHello.Migrate do
   end
 
   # Free the "orchestrator" role_name via the ALREADY-sanctioned
-  # `session.remove_participant` dispatch, authorized by an INLINE
-  # system-mediated capability (mirrors `DefinitionAgents`'s own `join_cap`/
-  # `destroy_cap` pattern) — no persisted owner grant required, no domain file
-  # touched. `repair_orchestrator` (called right after by `migrate_one`) then
+  # `session.remove_participant` dispatch, authorized by a target-issued narrow
+  # artifact. `repair_orchestrator` (called right after by `migrate_one`) then
   # finds the role empty and materializes the correct `hello.orchestrator` agent.
   defp remove_stale_orchestrator(%URI{} = session_uri, %URI{} = orch_uri) do
     admin = Ezagent.Entity.User.admin_uri()
 
-    case Ezagent.Session.Participants.remove_participant(session_uri, orch_uri, %{
-           caller: admin,
-           caps: MapSet.new([remove_participant_cap(session_uri, admin)])
-         }) do
-      {:ok, _} ->
-        Logger.warning(
-          "hello migrate: removed stale (non-#{@orchestrator_recipe}) orchestrator " <>
-            "#{URI.to_string(orch_uri)} from #{URI.to_string(session_uri)} before repair"
-        )
+    target = Ezagent.URI.with_action(session_uri, :session, :remove_participant)
 
-        :ok
+    with {:ok, signed_cap} <-
+           Ezagent.Cap.issue_for_action({:admin, admin}, admin, target),
+         result <-
+           Ezagent.Session.Participants.remove_participant(session_uri, orch_uri, %{
+             caller: admin,
+             caps: MapSet.new([signed_cap])
+           }) do
+      case result do
+        {:ok, _} ->
+          Logger.warning(
+            "hello migrate: removed stale (non-#{@orchestrator_recipe}) orchestrator " <>
+              "#{URI.to_string(orch_uri)} from #{URI.to_string(session_uri)} before repair"
+          )
 
-      {:error, reason} ->
-        {:error, {:stale_orchestrator_removal_failed, reason}}
+          :ok
+
+        {:error, reason} ->
+          {:error, {:stale_orchestrator_removal_failed, reason}}
+      end
     end
-  end
-
-  defp remove_participant_cap(%URI{} = session_uri, %URI{} = admin) do
-    %Ezagent.Capability{
-      Ezagent.Capability.cap(
-        :session,
-        :any,
-        :remove_participant,
-        Ezagent.URI.instance(session_uri),
-        Ezagent.Capability.workspace_of(session_uri)
-      )
-      | granted_by: admin,
-        granted_at: DateTime.utc_now()
-    }
   end
 
   # Every persisted `session://<ws>/hello/<name>` snapshot (across all workspaces).

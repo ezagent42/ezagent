@@ -231,7 +231,7 @@ defmodule EzagentPluginWorld.WorldLive do
       ) do
     case parse_session_uri(session_uri_str) do
       {:ok, session_uri} ->
-        dispatch_session_join(socket, session_uri)
+        with_admin_operator(socket, fn -> dispatch_session_join(socket, session_uri) end)
 
       :error ->
         {:noreply, assign(socket, :last_dispatch_status, "error:bad_session_uri")}
@@ -243,19 +243,19 @@ defmodule EzagentPluginWorld.WorldLive do
         %{"action" => "layout.manage", "args" => %{"layout" => layout}},
         socket
       ) do
-    dispatch_layout_manage(socket, layout)
+    with_admin_operator(socket, fn -> dispatch_layout_manage(socket, layout) end)
   end
 
   @agent_actions Ezagent.World.DispatchContract.actions(:agent)
   def handle_event("world:dispatch", %{"action" => action, "args" => args}, socket)
       when action in @agent_actions and is_map(args) do
-    AgentActions.handle_dispatch(socket, action, args)
+    with_admin_operator(socket, fn -> AgentActions.handle_dispatch(socket, action, args) end)
   end
 
   @user_actions Ezagent.World.DispatchContract.actions(:user)
   def handle_event("world:dispatch", %{"action" => action, "args" => args}, socket)
       when action in @user_actions and is_map(args) do
-    UserActions.handle_dispatch(socket, action, args)
+    with_admin_operator(socket, fn -> UserActions.handle_dispatch(socket, action, args) end)
   end
 
   def handle_event(
@@ -263,31 +263,37 @@ defmodule EzagentPluginWorld.WorldLive do
         %{"action" => "agent.api_key.put", "args" => %{"agent_uri" => agent_uri_str} = args},
         socket
       ) do
-    dispatch_api_key_put(socket, agent_uri_str, args)
+    with_admin_operator(socket, fn -> dispatch_api_key_put(socket, agent_uri_str, args) end)
   end
 
   @cmdk_actions Ezagent.World.DispatchContract.actions(:cmdk)
   def handle_event("world:dispatch", %{"action" => action, "args" => args}, socket)
       when action in @cmdk_actions and is_map(args) do
-    CommandPaletteActions.handle_dispatch(socket, action, args)
+    with_admin_operator(socket, fn ->
+      CommandPaletteActions.handle_dispatch(socket, action, args)
+    end)
   end
 
   @admin_actions Ezagent.World.DispatchContract.actions(:admin)
   def handle_event("world:dispatch", %{"action" => action, "args" => args}, socket)
       when action in @admin_actions and is_map(args) do
-    AdminActions.handle_dispatch(socket, action, args)
+    with_admin_operator(socket, fn -> AdminActions.handle_dispatch(socket, action, args) end)
   end
 
   @workspace_plugin_actions Ezagent.World.DispatchContract.actions(:workspace_plugin)
   def handle_event("world:dispatch", %{"action" => action, "args" => args}, socket)
       when action in @workspace_plugin_actions and is_map(args) do
-    WorkspacePluginActions.handle_dispatch(socket, action, args)
+    with_admin_operator(socket, fn ->
+      WorkspacePluginActions.handle_dispatch(socket, action, args)
+    end)
   end
 
   @conversation_actions Ezagent.World.DispatchContract.actions(:conversation)
   def handle_event("world:dispatch", %{"action" => action, "args" => args}, socket)
       when action in @conversation_actions and is_map(args) do
-    ConversationActions.handle_dispatch(socket, action, args)
+    with_admin_operator(socket, fn ->
+      ConversationActions.handle_dispatch(socket, action, args)
+    end)
   end
 
   # 插件页面动作（`Ezagent.World.PluginPageRegistry`）：fail-closed 准入——
@@ -298,7 +304,9 @@ defmodule EzagentPluginWorld.WorldLive do
       when is_binary(action) and is_map(args) do
     case Ezagent.World.PluginPageRegistry.by_action(action) do
       %{actions_module: actions_module} ->
-        actions_module.handle_dispatch(socket, action, args)
+        with_admin_operator(socket, fn ->
+          actions_module.handle_dispatch(socket, action, args)
+        end)
 
       nil ->
         {:noreply, assign(socket, :last_dispatch_status, "error:unsupported_action")}
@@ -328,6 +336,13 @@ defmodule EzagentPluginWorld.WorldLive do
 
   def handle_event("world:dispatch", _params, socket) do
     {:noreply, assign(socket, :last_dispatch_status, "error:unsupported_action")}
+  end
+
+  defp with_admin_operator(socket, fun) when is_function(fun, 0) do
+    case Map.get(socket.assigns, :current_entity_uri) do
+      %URI{} = caller -> Invocation.with_admin_operator(caller, fun)
+      _other -> fun.()
+    end
   end
 
   defp pty_agent_uri_str(%{"component" => "pty_terminal", "agent_uri" => agent_uri_str}),
@@ -371,11 +386,16 @@ defmodule EzagentPluginWorld.WorldLive do
 
   defp dispatch_session_join(socket, %URI{} = session_uri) do
     caller = socket.assigns.current_entity_uri
-    caps = Map.get(socket.assigns, :current_caps, MapSet.new())
 
     _ = Ezagent.LocalRuntime.ensure_live(session_uri)
     _ = EzagentDomainInstanceMessage.SessionCreator.demand_spawn_member(caller)
-    provision_session_join_authority(session_uri, caller)
+    _ = provision_session_join_authority(session_uri, caller)
+
+    # The JIT grant above is synchronous, but the socket's mount-time cap set is
+    # an immutable snapshot. Every external envelope must carry the newly
+    # issued artifact explicitly, so reload the presenter's verified Identity
+    # caps before dispatch instead of relying on hidden verifier fallback.
+    caps = refreshed_presenter_caps(socket, caller)
 
     target = Ezagent.URI.with_action(session_uri, :session, :join)
 
@@ -395,8 +415,8 @@ defmodule EzagentPluginWorld.WorldLive do
       {:ok, _payload} ->
         dispatch_session_join_ok(socket, session_uri)
 
-      {:error, :unauthorized} ->
-        dispatch_session_join_observe(socket, session_uri, :unauthorized)
+      {:error, reason} when reason in [:missing_cap, :unauthorized] ->
+        dispatch_session_join_observe(socket, session_uri, reason)
 
       {:error, reason} ->
         {:noreply, assign(socket, :last_dispatch_status, "error:#{reason_to_string(reason)}")}
@@ -432,6 +452,11 @@ defmodule EzagentPluginWorld.WorldLive do
     do: Membership.mount_participation_caps(session_uri, caller_uri)
 
   defp mount_session_participation_caps(_session_uri, _caller_uri), do: {:error, :no_authority}
+
+  defp refreshed_presenter_caps(socket, %URI{} = caller_uri) do
+    mounted = Map.get(socket.assigns, :current_caps, MapSet.new()) || MapSet.new()
+    MapSet.union(MapSet.new(mounted), MapSet.new(Ezagent.EntityCaps.load(caller_uri)))
+  end
 
   defp dispatch_layout_manage(socket, layout) when is_map(layout) do
     workspace_uri = socket.assigns.current_workspace_uri

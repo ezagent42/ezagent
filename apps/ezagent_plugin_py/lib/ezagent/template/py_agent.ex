@@ -189,7 +189,6 @@ defmodule Ezagent.Template.PyAgent do
     end
   end
 
-
   def instantiate(_tmpl_name, tmpl, _workspace_uri), do: {:error, {:invalid_template, tmpl}}
 
   # Adopt-path zombie guard (PR #1259 item 1b). `Domain.Python.alive?/1` is a
@@ -199,46 +198,36 @@ defmodule Ezagent.Template.PyAgent do
   # the agent is still `:not_ready` (first provision still running) buffers via
   # PendingDelivery and drains after — a harmless idempotent re-check.
   #
-  # Self-authority (#154): `caller: agent_uri` dispatching to its OWN
-  # `py_ensure_alive` with the inline self-scoped cap (the step-5.5
-  # `granted_via_ctx_caps?` authorizer) — same idiom as
-  # `TemplateSpawn.sandbox_update_config_self_cap/1`; never persisted through
-  # `Ezagent.Identity.Grant`.
+  # The retry is presented by the agent, but the artifact is born signed by
+  # the concrete Agent Kind through K.grant. Reviewed framework code may ask
+  # the target authority for this one-shot cap; it must never construct an
+  # inline unsigned/self-stamped artifact.
   defp async_reensure_if_dead(%URI{} = agent_uri) do
     if Ezagent.Domain.Python.alive?(agent_uri) do
       :ok
     else
       target = Ezagent.URI.new!("#{URI.to_string(agent_uri)}?action=py_agent.py_ensure_alive")
 
-      _ =
-        Ezagent.Invocation.dispatch(%Ezagent.Invocation{
-          target: target,
-          mode: :cast,
-          args: %{},
-          ctx: %{
-            caller: agent_uri,
-            caps: [py_ensure_alive_self_cap(agent_uri)],
-            reply: :ignore
-          },
-          origin: :trusted_internal
-        })
+      admin = apply(Module.concat([Ezagent, Entity, User]), :admin_uri, [])
+
+      with {:ok, signed_cap} <-
+             Ezagent.Cap.issue_for_action({:admin, admin}, agent_uri, target) do
+        _ =
+          Ezagent.Invocation.dispatch(%Ezagent.Invocation{
+            target: target,
+            mode: :cast,
+            args: %{},
+            ctx: %{
+              caller: agent_uri,
+              caps: MapSet.new([signed_cap]),
+              reply: :ignore
+            },
+            origin: :trusted_internal
+          })
+      end
 
       :ok
     end
-  end
-
-  defp py_ensure_alive_self_cap(%URI{} = agent_uri) do
-    %Ezagent.Capability{
-      Ezagent.Capability.cap(
-        :agent,
-        Ezagent.ActionSet.PyAgent,
-        :py_ensure_alive,
-        Ezagent.URI.instance(agent_uri),
-        Ezagent.Capability.workspace_of(agent_uri)
-      )
-      | granted_by: agent_uri,
-        granted_at: DateTime.utc_now()
-    }
   end
 
   # The domain MUST have allocated the config_dir (the template carries a

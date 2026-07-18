@@ -90,19 +90,43 @@ defmodule EzagentPluginHello.TurnDriver do
     target = Ezagent.URI.new!("#{URI.to_string(session_uri)}?action=#{behavior}.#{action}")
     admin = Ezagent.Entity.User.admin_uri()
 
-    with {:ok, signed_cap} <- Ezagent.Cap.issue_for_action({:admin, admin}, caller, target) do
+    targets = [target | downstream_targets(session_uri, behavior, action)]
+
+    with {:ok, signed_caps} <- issue_caps(targets, admin, caller) do
       Invocation.dispatch(%Invocation{
         target: target,
         mode: :call,
         args: args,
         ctx: %{
           caller: caller,
-          caps: MapSet.new([signed_cap]),
+          caps: MapSet.new(signed_caps),
           reply: {:caller_inbox, self()}
         },
         origin: :trusted_internal
       })
     end
+  end
+
+  defp downstream_targets(session_uri, :turn, :compose) do
+    [Ezagent.URI.with_action(session_uri, :surface, :put_version)]
+  end
+
+  defp downstream_targets(session_uri, :turn, :settle) do
+    [
+      Ezagent.URI.with_action(session_uri, :surface, :approve),
+      Ezagent.URI.with_action(session_uri, :surface, :commit_settlement)
+    ]
+  end
+
+  defp downstream_targets(_session_uri, _behavior, _action), do: []
+
+  defp issue_caps(targets, admin, caller) do
+    Enum.reduce_while(targets, {:ok, []}, fn target, {:ok, caps} ->
+      case Ezagent.Cap.issue_for_action({:admin, admin}, caller, target) do
+        {:ok, cap} -> {:cont, {:ok, [cap | caps]}}
+        {:error, reason} -> {:halt, {:error, reason}}
+      end
+    end)
   end
 
   @doc """

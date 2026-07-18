@@ -292,6 +292,25 @@ defmodule Ezagent.Kind.DispatchAfterCommitTest do
     end)
   end
 
+  test "canonical-admin deferred self-dispatch can use the live target authority", %{
+    uri: uri
+  } do
+    {:ok, pid} = Ezagent.Kind.Server.start_link({DacKind, %{uri: uri}})
+    :ok = wait_until_ready(uri, 1000)
+
+    cmd =
+      Ezagent.Cmd.new(uri, :probe, %{}, %{
+        caller: Ezagent.Entity.User.admin_uri(),
+        caps: MapSet.new(),
+        reply: :ignore
+      })
+
+    send(pid, {:ezagent_run_deferred, [cmd]})
+
+    assert_receive {:probe_ran, observed_caller, :initial}, 1000
+    assert observed_caller == Ezagent.Entity.User.admin_uri()
+  end
+
   test "deferred dispatch is SKIPPED when the parent commit fails", %{uri: uri} do
     {:ok, pid} = Ezagent.Kind.Server.start_link({DacKind, %{uri: uri}})
     :ok = wait_until_ready(uri, 1000)

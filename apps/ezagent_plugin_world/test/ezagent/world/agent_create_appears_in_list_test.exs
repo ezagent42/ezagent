@@ -38,10 +38,7 @@ defmodule Ezagent.World.AgentCreateAppearsInListTest do
 
     workspace_uri = URI.new!("workspace://#{ws_name}")
 
-    admin_ctx = %{
-      caller: User.admin_uri(),
-      caps: MapSet.new([Ezagent.Capability.admin_genesis_cap()])
-    }
+    admin_ctx = Ezagent.Test.CapHelper.signed_workspace_ctx!(workspace_uri, User.admin_uri())
 
     {:ok, ws_name: ws_name, workspace_uri: workspace_uri, admin_ctx: admin_ctx}
   end

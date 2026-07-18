@@ -39,9 +39,10 @@ defmodule EzagentDomainSocialware.Integration.TurnConfigEvolveRewireTest do
   # authority that drives turns); the test must mirror that instead of leaning
   # on the wildcard baseline. These are the concrete `cap(:session, Turn, <a>)`
   # caps the open→compose→claim→settle drive needs, scoped to THIS session.
-  defp turn_drive_caps(session, workspace) do
+  defp turn_drive_caps(session, grantee) do
     for action <- [:open, :compose, :claim, :settle, :deliver, :dispatch, :cancel] do
-      Ezagent.Capability.cap(:session, Ezagent.ActionSet.Turn, action, session, workspace)
+      target = Ezagent.URI.with_action(session, :turn, action)
+      Ezagent.Test.CapHelper.signed_action_cap!(target, grantee)
     end
   end
 
@@ -94,12 +95,15 @@ defmodule EzagentDomainSocialware.Integration.TurnConfigEvolveRewireTest do
        %{session: session, workspace: workspace, agent: agent} do
     # A manager principal that holds ordinary session-scoped caps but NOT the
     # agent's manage-cap.
+    settler_uri =
+      Ezagent.URI.entity(:team_alpha, :user, "nomgr-#{System.unique_integer([:positive])}")
+
     settler = %{
-      uri: Ezagent.URI.entity(:team_alpha, :user, "nomgr-#{System.unique_integer([:positive])}"),
+      uri: settler_uri,
       # Holds the session turn-drive caps (so it CAN run the turn) but NOT the
       # agent's manage-cap — the point of this test (the agent-side apply is
       # denied for lack of the manage-cap, not for lack of turn authority).
-      caps: MapSet.new(turn_drive_caps(session, workspace))
+      caps: MapSet.new(turn_drive_caps(session, settler_uri))
     }
 
     _turn_id = run_turn_to_settle(session, settler, workspace, agent)
@@ -193,27 +197,41 @@ defmodule EzagentDomainSocialware.Integration.TurnConfigEvolveRewireTest do
   # (recovery) see it.
   defp spawn_manager_with_manage_cap(session, agent, workspace) do
     manager = Ezagent.URI.entity(:team_alpha, :user, "mgr-#{System.unique_integer([:positive])}")
-    manage_cap = CreatorGrant.manage_cap(:agent, agent, workspace, manager)
+    manage_cap =
+      :agent
+      |> CreatorGrant.manage_cap(agent, workspace, manager)
+      |> then(&Ezagent.Test.CapHelper.signed_cap!(agent, manager, &1))
     # The settler drives the session turn (open/compose/claim/settle), so it
     # holds the concrete session-scoped Turn caps — plus the agent's manage-cap
     # that authorizes the agent-side apply. (PR-甲-2: no broad default baseline.)
-    caps = MapSet.new([manage_cap | turn_drive_caps(session, workspace)])
+    caps = MapSet.new([manage_cap | turn_drive_caps(session, manager)])
     {:ok, _pid} = Ezagent.Kind.spawn(User, %{uri: manager, initial_caps: caps})
     %{uri: manager, caps: caps}
   end
 
   defp revoke_manage_cap(manager_uri, agent, workspace) do
-    cap = CreatorGrant.manage_cap(:agent, agent, workspace, manager_uri)
+    {:ok, caps} = Ezagent.Domain.Agent.read_caps(manager_uri, %{caller: manager_uri})
+
+    cap =
+      Enum.find(caps, fn cap ->
+        cap.behavior == Ezagent.ActionSet.Manage and cap.instance == agent and
+          cap.workspace_uri == workspace
+      end)
+
+    target =
+      Ezagent.URI.new!("#{URI.to_string(manager_uri)}?action=identity_admin.revoke_cap")
+
+    caller = User.admin_uri()
+    authority = Ezagent.Test.CapHelper.signed_action_cap!(target, caller)
 
     {:ok, _} =
       Invocation.dispatch(%Invocation{origin: :trusted_internal,
-        target:
-          Ezagent.URI.new!("#{URI.to_string(manager_uri)}?action=identity_admin.revoke_cap"),
+        target: target,
         mode: :call,
         args: %{cap: cap},
         ctx: %{
-          caller: User.admin_uri(),
-          caps: MapSet.new([Ezagent.Capability.admin_genesis_cap()]),
+          caller: caller,
+          caps: MapSet.new([authority]),
           reply: {:caller_inbox, self()}
         }
       })
@@ -305,8 +323,19 @@ defmodule EzagentDomainSocialware.Integration.TurnConfigEvolveRewireTest do
   end
 
   defp bootstrap_caps?(caps) do
-    bootstrap = MapSet.new([Ezagent.Capability.admin_genesis_cap()])
-    MapSet.equal?(MapSet.new(caps), MapSet.new(bootstrap))
+    Enum.any?(caps, fn
+      %Ezagent.Capability{
+        kind: :any,
+        behavior: :any,
+        action: :any,
+        instance: :any,
+        workspace_uri: :any
+      } ->
+        true
+
+      _ ->
+        false
+    end)
   end
 
   defp wait_until(fun, attempts \\ 100)

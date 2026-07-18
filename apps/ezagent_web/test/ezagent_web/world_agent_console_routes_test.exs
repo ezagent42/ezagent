@@ -158,15 +158,37 @@ defmodule EzagentWeb.WorldAgentConsoleRoutesTest do
 
   defp create_curl_agent!(%URI{} = workspace_uri) do
     name = "route-curl-#{System.unique_integer([:positive])}"
+    admin = User.admin_uri()
+    target = Ezagent.URI.with_action(workspace_uri, :workspace, :create_agent)
+    {:ok, create_cap} = Ezagent.Cap.issue_for_action({:admin, admin}, admin, target)
 
     assert {:ok, %{agent_uri: agent_uri}} =
              Workspace.create_agent(
                workspace_uri,
                %{flavor: "curl", name: name, cwd: "", with_pty: false},
-               admin_ctx()
+               %{caller: admin, caps: MapSet.new([create_cap])}
              )
 
+    grant_admin_agent_read_caps!(agent_uri)
     agent_uri
+  end
+
+  defp grant_admin_agent_read_caps!(agent_uri) do
+    admin = User.admin_uri()
+
+    issued =
+      [
+        Ezagent.URI.with_action(agent_uri, :identity, :list_caps),
+        Ezagent.URI.with_action(agent_uri, :sandbox, :read),
+        Ezagent.URI.with_action(agent_uri, :manage, :read_cascade)
+      ]
+      |> Enum.map(fn target ->
+        {:ok, artifact} = Ezagent.Cap.issue_for_action({:admin, admin}, admin, target)
+        :ok = Ezagent.Identity.absorb_cap(admin, artifact)
+        artifact
+      end)
+
+    :ok = Ezagent.Identity.CapAbsorbAwait.await_exact(admin, issued, 5_000)
   end
 
   defp spawn_session_for_workspace!(%URI{} = workspace_uri) do
@@ -200,15 +222,19 @@ defmodule EzagentWeb.WorldAgentConsoleRoutesTest do
   end
 
   defp join_member!(%URI{} = session_uri, %URI{} = agent_uri) do
+    admin = User.admin_uri()
+    target = Ezagent.URI.with_action(session_uri, :session, :join)
+    {:ok, join_cap} = Ezagent.Cap.issue_for_action({:admin, admin}, admin, target)
+
     result =
       Ezagent.Invocation.dispatch(%Ezagent.Invocation{
         origin: :trusted_internal,
-        target: Ezagent.URI.with_action(session_uri, :session, :join),
+        target: target,
         mode: :call,
         args: %{member: agent_uri},
         ctx: %{
-          caller: User.admin_uri(),
-          caps: MapSet.new([Ezagent.Capability.admin_genesis_cap()]),
+          caller: admin,
+          caps: MapSet.new([join_cap]),
           reply: :ignore
         }
       })
@@ -224,13 +250,6 @@ defmodule EzagentWeb.WorldAgentConsoleRoutesTest do
       "current_entity_uri" => URI.to_string(User.admin_uri()),
       "current_workspace_uri" => URI.to_string(workspace_uri)
     })
-  end
-
-  defp admin_ctx do
-    %{
-      caller: User.admin_uri(),
-      caps: MapSet.new([Ezagent.Capability.admin_genesis_cap()])
-    }
   end
 
   defp world_state(html) do
