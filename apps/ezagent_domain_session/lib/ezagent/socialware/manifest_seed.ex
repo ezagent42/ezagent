@@ -120,22 +120,56 @@ defmodule Ezagent.Socialware.ManifestSeed do
 
   defp import_manifest_path(path) do
     with :ok <- seed_sibling_recipes(path),
-         {:ok, yaml} <- File.read(path),
-         {:ok, attrs} <- ManifestYaml.parse(yaml) do
-      case Map.get(attrs, "name") do
-        name when is_binary(name) and name != "" ->
-          ctx = ManifestYaml.operator_admin_ctx(name, Ezagent.URI.workspace(:system))
-
-          case ManifestYaml.import(yaml, ctx) do
-            {:ok, result} -> {:ok, %{path: path, name: name, result: result}}
-            {:error, reason} -> {:error, {name, reason}}
-          end
-
-        other ->
-          {:error, {nil, {:invalid_manifest_seed, other}}}
+         {:ok, yaml} <- File.read(path) do
+      case import_package(yaml) do
+        {:ok, result} -> {:ok, Map.put(result, :path, path)}
+        {:error, _} = error -> error
       end
     else
       {:error, reason} -> {:error, {nil, reason}}
+    end
+  end
+
+  @doc """
+  Content-based governed import of one socialware package — the same
+  parse → resolve → conformance → `publish_or_upgrade` chain the boot scan
+  runs, but fed YAML **bytes** instead of filesystem paths.
+
+  This is the in-node entry point for the operator RPC lane
+  (`mix ezagent.socialware.import_remote`, D5 2026-07-18): dev keeps
+  boot-scan prod-only, and instead pushes manifest bytes into the RUNNING
+  node over distributed Erlang — zero governance bypass, identical
+  idempotency semantics (`:published` / `:upgraded` / `:exists`).
+
+  `recipes_yaml` (optional) carries a sibling `recipes.yaml`'s bytes; its
+  data-role recipes are seeded BEFORE the manifest publishes, mirroring
+  `seed_sibling_recipes` on the boot path. Malformed recipes raise
+  (fail-loud, same policy as boot); manifest-chain failures return
+  `{:error, {name, reason}}`.
+  """
+  @spec import_package(binary(), binary() | nil) ::
+          {:ok, %{name: String.t(), result: :published | :upgraded | :exists}}
+          | {:error, {String.t() | nil, term()}}
+  def import_package(manifest_yaml, recipes_yaml \\ nil) when is_binary(manifest_yaml) do
+    if is_binary(recipes_yaml), do: seed_recipes_content!(recipes_yaml, "recipes.yaml (rpc)")
+
+    case ManifestYaml.parse(manifest_yaml) do
+      {:ok, attrs} ->
+        case Map.get(attrs, "name") do
+          name when is_binary(name) and name != "" ->
+            ctx = ManifestYaml.operator_admin_ctx(name, Ezagent.URI.workspace(:system))
+
+            case ManifestYaml.import(manifest_yaml, ctx) do
+              {:ok, result} -> {:ok, %{name: name, result: result}}
+              {:error, reason} -> {:error, {name, reason}}
+            end
+
+          other ->
+            {:error, {nil, {:invalid_manifest_seed, other}}}
+        end
+
+      {:error, reason} ->
+        {:error, {nil, reason}}
     end
   end
 
@@ -153,20 +187,34 @@ defmodule Ezagent.Socialware.ManifestSeed do
   defp seed_sibling_recipes(manifest_path) do
     rp = Path.join(Path.dirname(manifest_path), "recipes.yaml")
 
-    with true <- File.exists?(rp),
-         {:ok, yaml} <- File.read(rp),
-         {:ok, %{"recipes" => list}} when is_list(list) <- ManifestYaml.parse(yaml) do
-      Enum.each(list, &seed_one_recipe(&1, rp))
-      :ok
+    if File.exists?(rp) do
+      case File.read(rp) do
+        {:ok, yaml} -> seed_recipes_content!(yaml, rp)
+        {:error, reason} -> raise "recipes.yaml seed failed at #{rp}: #{inspect(reason)}"
+      end
     else
-      false ->
+      :ok
+    end
+  end
+
+  @doc """
+  Seed data-role recipes from `recipes.yaml` **bytes** (fail-loud). Shared by
+  the boot path (`seed_sibling_recipes`, origin = the file path) and the RPC
+  import lane (`import_package/2`); raises on malformed content or a failed
+  seed — same policy as a broken manifest.
+  """
+  @spec seed_recipes_content!(binary(), String.t()) :: :ok
+  def seed_recipes_content!(yaml, origin) when is_binary(yaml) do
+    case ManifestYaml.parse(yaml) do
+      {:ok, %{"recipes" => list}} when is_list(list) ->
+        Enum.each(list, &seed_one_recipe(&1, origin))
         :ok
 
       {:ok, other} ->
-        raise "recipes.yaml at #{rp} must have a top-level `recipes:` list, got: #{inspect(other)}"
+        raise "recipes.yaml at #{origin} must have a top-level `recipes:` list, got: #{inspect(other)}"
 
       {:error, reason} ->
-        raise "recipes.yaml seed failed at #{rp}: #{inspect(reason)}"
+        raise "recipes.yaml seed failed at #{origin}: #{inspect(reason)}"
     end
   end
 
@@ -180,8 +228,11 @@ defmodule Ezagent.Socialware.ManifestSeed do
     }
 
     case Ezagent.Agent.RecipeRegistry.seed_role_if_absent(recipe) do
-      {:ok, _} -> :ok
-      {:error, reason} -> raise "recipes.yaml recipe #{inspect(name)} at #{rp} failed to seed: #{inspect(reason)}"
+      {:ok, _} ->
+        :ok
+
+      {:error, reason} ->
+        raise "recipes.yaml recipe #{inspect(name)} at #{rp} failed to seed: #{inspect(reason)}"
     end
   end
 
