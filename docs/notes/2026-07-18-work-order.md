@@ -91,3 +91,6 @@
 - C/D 不变(uploads person-token 过 Allen / dev import RPC)。
 - ㊷ X 泛化(provisioning 全线默认 deadline)不开 PR,记 Allen 线。
 最终:A(kanban 全包)+B(join)+C(uploads)+D(dev import)=1+3。
+
+## 补充(2026-07-18):「操作物化消息」升格为 PR-A 一等任务(完整版)
+不止 attach——**所有 kanban 写操作**成功后以操作者身份物化 `visibility: :internal, hops: 0` 消息进当前会话(不显示于 chat,只留痕/立「一切操作皆对话」心智模型)。实现点=act/act_board 成功路径(与 kanban_changed 广播同点,+一条 session.send);attach 的消息带附件引用(同会话成员经消息参与可下载)。
