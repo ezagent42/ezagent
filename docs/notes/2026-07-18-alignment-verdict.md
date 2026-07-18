@@ -3,6 +3,9 @@
 > 背景:批次收口 rebase 前,逐个 main 新 landmark(#1457/#1451/#1452/#1453/#1449/#1440)
 > 对照我方五个 PR 线,判「重叠(main 已做→收束改用 main 机制/删重复)/冲突(方向相抵→
 > 改向适配)/独立(保留)」。有重叠/冲突的先改再 rebase。
+>
+> **复核(以 main=f5910962c,含新进 #1456)**:五条判定维持;③ 增量见其小节;
+> ① 逐签发点复核通过 + 补两处漏网(strict-verify 测试夹具、stale rule 注释),见其小节。
 
 ## ① #1457 per-Kind signing authority × 我方全部 cap 签发点 —— **冲突→已改向适配**
 
@@ -26,6 +29,27 @@
 「要不要登记 authority」结论:**要**。granter 首次对某 target Kind 签发前需
 `Ezagent.Identity.TargetAuthority.ensure(granter, target_uri)`(main 的 Membership /
 mint_cap 均如此);authority genesis 本身由 canonical-admin anchor 完成,业务层只管 ensure。
+
+**f5910962c 复核(strict-verify 生效后逐点确认)**:
+
+- `{:admin, Ezagent.Entity.User.admin_uri()}` 路径合法性:`Cap.issue` 的
+  `authority_caps({:admin,…})` 只认 canonical `user://system/admin`(否则
+  `:canonical_admin_required`),授权 caps 取 `Cap.Authority.anchor(target)`——
+  BoardProvision / Installation 的 admin 分支均走此路,签出的 cap 经 target Kind
+  grant verifier 真签,strict-verify 可验。
+- `{:held_by, granter}` 路径(Installation 非 admin 分支 / Mount / revoke):
+  `TargetAuthority.ensure(granter, session)` 先落 per-Kind 授权再 issue,与 main
+  Membership 同款,复核通过。
+- **漏网①(已修)**:`apps/ezagent_web/test/integration/kanban_changed_broadcast_test.exs`
+  仍用未签名 `admin_genesis_cap()` ambient wildcard → strict-verify 下
+  `{:error, :invalid_cap_signature}`。迁 `signed_workspace_ctx!`(workspace 动作)+
+  per-target `signed_action_cap!`(板上 add_node/rename_node dispatch),绿。
+- **漏网②(已修)**:5 处 stale `{:rule,…}` 注释改述(session_creator / board_provision /
+  installer_view_caps_test / world_actions / board_provision_grant_test)——代码早已迁,
+  注释还讲旧授权元组,统一改为 #1457 后口径。
+- 顺带观察:测试夹具里 `materialize_op`(操作物化消息)的 `session.send` :cast 在
+  fixture caps 不含 session cap 时验签失败(best-effort,不影响断言);生产路径成员
+  caps 来自真实 join 链(main Membership 已迁),不受影响。
 
 ## ② #1453 reinstall_socialware(补物化) × #1462 MemberBackfill —— **正交,保留两者**
 
@@ -53,6 +77,16 @@ mint_cap 均如此);authority genesis 本身由 canonical-admin anchor 完成,�
   硬套 Layer1/2/3 卡是过度设计;G5 当前也不覆盖 LiveView dispatch-status 通道。
 - TODO(不阻塞本批):若后续 kanban 出现「用户修不了需要找人」类错误(如凭证/配置类),
   应注册进 ErrorCode 表走 ErrorRenderer,不再扩 DISPATCH_ERR 字典。
+
+**#1456 增量复核(G5 source 2)**:main 又进一步——异步 agent 回复错误不再散文,经
+`Ezagent.Agent.ErrorSignal` 结构化进消息 `error_card`,`Conversation.tsx` per-viewer
+渲卡且**只附加、绝不吞持久化文本**(adversarial review #2)。判定③结论不变
+(PR-K 同步 dispatch-status 通道仍在 G5 覆盖外),两点增量:
+- 我方 ㉝ unfurl 与 error_card 在 `Conversation.tsx` 同一渲染点交汇,rebase 合并语义:
+  unfurl 命中时裸链接不显示,`error_card` 始终附加渲染,互不吞。
+- TODO 升级:我方「操作物化消息」若日后要物化**失败**操作/异步 kanban agent 错误进会话,
+  必须走 `ErrorSignal` 结构化通道(main 已有 curl/py/cc-headless 三 behavior 样板),
+  不许发散文错误消息。
 
 ## ④ #1440 自助开通 × ㉟(误选)⑭(邀请码面) —— **⑭ 销账;㉟ 不覆盖、维持原归属**
 

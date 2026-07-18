@@ -73,9 +73,10 @@ defmodule Ezagent.Socialware.BoardProvision do
          {:ok, flavor} <- fetch(spec, :flavor),
          {:ok, assistant_role} <- fetch(spec, :assistant_role),
          {:ok, %URI{} = creator_uri} <- fetch_creator(owner_ctx),
-         # ⑥ 建板授权(过渡,skill-1 会诊 2026-07-16;rule 名进 Decision Log 待 Allen):
+         # ⑥ 建板授权(过渡,skill-1 会诊 2026-07-16;#1457 后 rule 元组已删,改
+         # `{:admin, admin_uri}` 具名系统 granter,规则语义守卫不变):
          # collab 模型要「任何编辑 session 成员」能建板(建板人=版主);普通成员全链无
-         # create_agent 授点。走产品规则 rule-tag(照 :socialware_install_views 同款家族)
+         # create_agent 授点。由 canonical admin 作具名 extreme-case granter
          # 铸一把**一次性** scoped create_agent cap,只并进本次 provision 的 dispatch ctx
          # (不 absorb 不落库)——`Workspace.create_agent` 仍是唯一创建门。规则边界:
          # ① caller 必须是本 session 成员(下方守卫);② 只造 recipe 声明 `passive: true`
