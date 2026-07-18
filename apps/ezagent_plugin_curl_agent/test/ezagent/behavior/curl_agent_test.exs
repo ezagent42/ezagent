@@ -161,9 +161,14 @@ defmodule Ezagent.ActionSet.CurlAgentTest do
 
       ctx = %{
         read: fn
-          :max_history, _ -> 20
-          :conversation, _ -> [%{role: "user", content: "earlier"}, %{role: "assistant", content: "ok"}]
-          _, d -> d
+          :max_history, _ ->
+            20
+
+          :conversation, _ ->
+            [%{role: "user", content: "earlier"}, %{role: "assistant", content: "ok"}]
+
+          _, d ->
+            d
         end,
         self_uri: agent_uri,
         caller: session_uri
@@ -178,7 +183,9 @@ defmodule Ezagent.ActionSet.CurlAgentTest do
       assert {:ok, %{ok: true, tokens: 8}, effects} =
                CurlAgent.handle_sync_result(args, ctx)
 
-      assert {:set, :last_tokens, ^usage} = Enum.find(effects, &match?({:set, :last_tokens, _}, &1))
+      assert {:set, :last_tokens, ^usage} =
+               Enum.find(effects, &match?({:set, :last_tokens, _}, &1))
+
       assert {:set, :last_error, nil} in effects
 
       {:set, :conversation, conv} = Enum.find(effects, &match?({:set, :conversation, _}, &1))
@@ -194,7 +201,7 @@ defmodule Ezagent.ActionSet.CurlAgentTest do
   end
 
   describe "handle_sync_result/2 — no API key" do
-    test "appends only the user turn, sets last_error + dispatches operator help reply" do
+    test "appends only the user turn, sets last_error + dispatches a STRUCTURED error reply" do
       agent_uri = Ezagent.URI.new!("entity://team-alpha/agent/curl_x")
       session_uri = Ezagent.URI.new!("session://team-alpha/default/main")
 
@@ -222,12 +229,51 @@ defmodule Ezagent.ActionSet.CurlAgentTest do
       {:set, :conversation, conv} = Enum.find(effects, &match?({:set, :conversation, _}, &1))
       assert conv == [%{role: "user", content: "hi"}]
 
-      # Reply dispatch present
+      # G5 source 2 — the reply carries the STRUCTURED error payload (pure
+      # reason data; the world side matches + renders per viewer), plus the
+      # uniform minimal fallback text for degraded surfaces. No hand-written
+      # prose.
       dispatches = Enum.filter(effects, &match?({:dispatch, _}, &1))
       assert [{:dispatch, %Ezagent.Cmd{} = cmd}] = dispatches
       assert cmd.action == :send
-      assert %Ezagent.Message{body: %{text: text}} = cmd.args.message
-      assert text =~ "no API key for provider `deepseek`"
+      assert %Ezagent.Message{body: body} = cmd.args.message
+      assert body.error == %{"reason" => ["no_api_key", "deepseek"]}
+      assert body.text == "[agent error] no_api_key"
+      assert body.attachments == []
+    end
+  end
+
+  describe "handle_sync_result/2 — upstream error" do
+    test "sets last_error + dispatches a structured error reply (no prose)" do
+      agent_uri = Ezagent.URI.new!("entity://team-alpha/agent/curl_x")
+      session_uri = Ezagent.URI.new!("session://team-alpha/default/main")
+
+      ctx = %{
+        read: fn
+          :max_history, _ -> 20
+          :conversation, _ -> []
+          _, d -> d
+        end,
+        self_uri: agent_uri,
+        caller: session_uri
+      }
+
+      args = %{
+        result: {:error, {:http, 502, "bad gateway"}},
+        source_session: session_uri,
+        user_text: "hi"
+      }
+
+      assert {:ok, %{ok: false, error: :http_error}, effects} =
+               CurlAgent.handle_sync_result(args, ctx)
+
+      assert {:set, :last_error, {:http, 502, "bad gateway"}} in effects
+
+      dispatches = Enum.filter(effects, &match?({:dispatch, _}, &1))
+      assert [{:dispatch, %Ezagent.Cmd{} = cmd}] = dispatches
+      assert %Ezagent.Message{body: body} = cmd.args.message
+      assert body.error == %{"reason" => ["http", 502, "bad gateway"]}
+      assert body.text == "[agent error] http"
     end
   end
 

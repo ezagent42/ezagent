@@ -57,8 +57,8 @@ defmodule Ezagent.ActionSet.CurlAgent do
        `max_history`, `{:set, :conversation, …}` + `{:set, :last_tokens,
        usage}` + `{:set, :last_error, nil}`;
     2. on `{:error, reason}` set `last_error` (and, for `{:no_api_key, _}`,
-       append only the user turn) and dispatch the SAME chat-visible reply
-       the pre-fold curl agent produced;
+       append only the user turn) and dispatch a STRUCTURED error reply
+       (`Ezagent.Agent.ErrorSignal` — G5 source 2, no hand-written prose);
     3. dispatch the reply back into the originating session via
        `session.send`.
 
@@ -86,6 +86,7 @@ defmodule Ezagent.ActionSet.CurlAgent do
   require Logger
 
   alias Ezagent.{Cmd, Message}
+  alias Ezagent.Agent.ErrorSignal
 
   action(:reset_conversation,
     args: %{},
@@ -212,9 +213,9 @@ defmodule Ezagent.ActionSet.CurlAgent do
       turns, trim to `max_history`, set tokens, clear error, reply with the
       assistant content;
     * `{:error, {:no_api_key, provider}}` — append the user turn only, set
-      `last_error`, reply with the operator-help text;
+      `last_error`, reply with the STRUCTURED error body (G5 source 2);
     * `{:error, reason}` — append the user turn only, set `last_error`,
-      reply with the upstream-error text.
+      reply with the STRUCTURED error body.
 
   `args.source_session` is the session URI the reply is dispatched back to.
   This handler owns EVERY durable `{:set, …}` mutation — the adapter
@@ -248,16 +249,19 @@ defmodule Ezagent.ActionSet.CurlAgent do
         {:ok, %{ok: true, tokens: usage.total}, effects}
 
       {:error, {:no_api_key, provider}} ->
-        reply_text =
-          "no API key for provider `#{provider}` — please add one at " <>
-            "/identities/agents/#{maybe_encode_uri(self_uri)}/api-keys"
-
         effects =
           [
             {:set, :conversation,
              current_conv |> append_turn("user", user_text) |> trim(max_history)},
             {:set, :last_error, {:no_api_key, provider}}
-          ] ++ maybe_reply_effect(source_session_uri, self_uri, reply_text, in_msg_id, reply_cap)
+          ] ++
+            maybe_reply_error(
+              source_session_uri,
+              self_uri,
+              {:no_api_key, provider},
+              in_msg_id,
+              reply_cap
+            )
 
         {:ok, %{ok: false, error: :no_api_key}, effects}
 
@@ -268,14 +272,12 @@ defmodule Ezagent.ActionSet.CurlAgent do
           )
         end
 
-        reply_text = "upstream API error: #{format_error(reason)}"
-
         effects =
           [
             {:set, :conversation,
              current_conv |> append_turn("user", user_text) |> trim(max_history)},
             {:set, :last_error, reason}
-          ] ++ maybe_reply_effect(source_session_uri, self_uri, reply_text, in_msg_id, reply_cap)
+          ] ++ maybe_reply_error(source_session_uri, self_uri, reason, in_msg_id, reply_cap)
 
         {:ok, %{ok: false, error: error_kind(reason)}, effects}
     end
@@ -289,18 +291,19 @@ defmodule Ezagent.ActionSet.CurlAgent do
   defp trim(conv, max_history), do: Enum.take(conv, -max_history)
 
   # Build a single `{:dispatch, %Cmd{}}` effect when source session +
-  # self URI are both well-formed; otherwise emit nothing.
+  # self URI are both well-formed; otherwise emit nothing. `text_or_body`
+  # is the success reply text (binary) or an already-built body map.
   defp maybe_reply_effect(nil, _self_uri, _text, _in_msg_id, _reply_cap), do: []
   defp maybe_reply_effect("", _self_uri, _text, _in_msg_id, _reply_cap), do: []
   defp maybe_reply_effect(_, nil, _text, _in_msg_id, _reply_cap), do: []
 
-  defp maybe_reply_effect(session_uri, %URI{} = self_uri, text, in_msg_id, reply_cap) do
+  defp maybe_reply_effect(session_uri, %URI{} = self_uri, text_or_body, in_msg_id, reply_cap) do
     case parse_session_uri(session_uri) do
       nil ->
         []
 
       %URI{} = session ->
-        reply_msg = Message.new(self_uri, %{text: text, attachments: []}, ref_id: in_msg_id)
+        reply_msg = Message.new(self_uri, reply_body(text_or_body), ref_id: in_msg_id)
         target = Ezagent.URI.with_action(session, :session, :send)
 
         cmd =
@@ -313,6 +316,24 @@ defmodule Ezagent.ActionSet.CurlAgent do
         [{:dispatch, cmd}]
     end
   end
+
+  # G5 source 2 (async agent-reply errors) — error branches reply with the
+  # STRUCTURED error body: pure reason data under `error` + the uniform
+  # minimal fallback `text` for degraded surfaces. The world render side
+  # decodes it into the SAME ErrorMatcher/ErrorRenderer pipeline the sync
+  # dispatch path uses (per-viewer Layer 1/2/3). No hand-written prose here.
+  defp maybe_reply_error(session_uri, self_uri, reason, in_msg_id, reply_cap) do
+    maybe_reply_effect(
+      session_uri,
+      self_uri,
+      ErrorSignal.reply_body(reason),
+      in_msg_id,
+      reply_cap
+    )
+  end
+
+  defp reply_body(text) when is_binary(text), do: %{text: text, attachments: []}
+  defp reply_body(%{} = body), do: body
 
   defp parse_session_uri(%URI{scheme: "session"} = u), do: u
 
@@ -329,18 +350,10 @@ defmodule Ezagent.ActionSet.CurlAgent do
 
   defp parse_session_uri(_), do: nil
 
-  defp maybe_encode_uri(%URI{} = u), do: URI.encode_www_form(URI.to_string(u))
-  defp maybe_encode_uri(_), do: "unknown"
-
   defp error_kind({:http, _, _}), do: :http_error
   defp error_kind({:transport, _}), do: :transport_error
   defp error_kind({:decode, _}), do: :decode_error
   defp error_kind(_), do: :other
-
-  defp format_error({:http, status, _body}), do: "HTTP #{status}"
-  defp format_error({:transport, reason}), do: "transport: #{inspect(reason)}"
-  defp format_error({:decode, _}), do: "could not decode response"
-  defp format_error(other), do: inspect(other)
 
   # Allen 2026-05-26 — the data owner is the entity URI recorded in the
   # `:api_keys` slice's `:creator_uri`.

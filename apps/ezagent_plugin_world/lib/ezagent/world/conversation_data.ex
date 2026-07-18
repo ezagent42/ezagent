@@ -11,6 +11,8 @@ defmodule Ezagent.World.ConversationData do
   the LV app can be deleted wholesale at parity-migration PR-7.
   """
 
+  alias Ezagent.World.ErrorCards
+
   @message_limit 50
 
   # world-native React renderers keyed by SessionView id → the render mode the
@@ -39,7 +41,9 @@ defmodule Ezagent.World.ConversationData do
     workspace_uri = Map.fetch!(opts, :workspace_uri)
     sessions = Map.fetch!(opts, :sessions)
     caller_caps = Map.get(opts, :caller_caps, MapSet.new())
-    messages = load_messages(session_uri, caller_caps)
+
+    viewer_ctx = fn -> ErrorCards.viewer_ctx(caller_uri, caller_caps, workspace_uri) end
+    messages = load_messages(session_uri, caller_caps, viewer_ctx)
     members = member_options(session_uri)
 
     %{
@@ -360,16 +364,21 @@ defmodule Ezagent.World.ConversationData do
 
   Returns `{rows, next_oldest_cursor}` for the island to prepend; an invalid
   cursor yields `{[], nil}` (no paging).
+
+  `viewer_ctx` is the per-viewer error-card context (`ErrorCards.viewer_ctx/3`
+  result or a lazy 0-arity producer of it) — paged history renders the same
+  G5 error cards as the initial load.
   """
-  @spec load_older(URI.t(), String.t(), Enumerable.t()) :: {[map()], String.t() | nil}
-  def load_older(%URI{} = session_uri, before, caller_caps \\ MapSet.new())
+  @spec load_older(URI.t(), String.t(), Enumerable.t(), map() | (-> map())) ::
+          {[map()], String.t() | nil}
+  def load_older(%URI{} = session_uri, before, caller_caps, viewer_ctx)
       when is_binary(before) do
     case DateTime.from_iso8601(before) do
       {:ok, cursor, _offset} ->
         rows =
           older_messages(session_uri, cursor, caller_caps)
           |> Enum.reverse()
-          |> messages_to_rows()
+          |> messages_to_rows(viewer_ctx)
 
         {rows, oldest_cursor_iso(rows)}
 
@@ -406,11 +415,11 @@ defmodule Ezagent.World.ConversationData do
   def oldest_cursor_iso([%{"at" => at} | _]) when is_binary(at), do: at
   def oldest_cursor_iso(_), do: nil
 
-  defp load_messages(%URI{} = session_uri, caller_caps) do
+  defp load_messages(%URI{} = session_uri, caller_caps, viewer_ctx) do
     session_uri
     |> recent_messages(caller_caps)
     |> Enum.reverse()
-    |> messages_to_rows()
+    |> messages_to_rows(viewer_ctx)
   end
 
   defp recent_messages(%URI{} = session_uri, caller_caps) do
@@ -481,10 +490,21 @@ defmodule Ezagent.World.ConversationData do
   defp same_uri?(%URI{} = left, %URI{} = right), do: URI.to_string(left) == URI.to_string(right)
   defp same_uri?(_, _), do: false
 
-  defp messages_to_rows(messages) when is_list(messages) do
+  defp messages_to_rows(messages, viewer_ctx) when is_list(messages) do
     sender_uris = Enum.map(messages, fn %Ezagent.Message{sender: s} -> URI.to_string(s) end)
     display_map = Ezagent.EntityPresenter.display_many(sender_uris)
-    Enum.map(messages, &message_row(&1, display_map))
+
+    # Resolve the (possibly lazy) viewer ctx AT MOST ONCE per render pass, and
+    # only when some message actually carries an error payload.
+    ctx =
+      if Enum.any?(messages, &(ErrorCards.payload(&1.body) != nil)),
+        do: ErrorCards.resolve_ctx(viewer_ctx),
+        else: nil
+
+    Enum.map(messages, fn msg ->
+      row = message_row(msg, display_map)
+      if ctx, do: ErrorCards.enrich(row, msg.body, ctx), else: row
+    end)
   end
 
   defp message_row(%Ezagent.Message{} = msg, display_map) do

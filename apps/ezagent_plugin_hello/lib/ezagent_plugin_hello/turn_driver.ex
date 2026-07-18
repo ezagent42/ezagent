@@ -151,6 +151,27 @@ defmodule EzagentPluginHello.TurnDriver do
       when is_binary(text) and text != "" do
     body = %{text: text, attachments: []}
     body = if is_map(nav), do: Map.put(body, "nav", nav), else: body
+    send_body(session_uri, actor, body)
+  end
+
+  def say_nav(_session_uri, _actor, _text, _nav), do: :ok
+
+  @doc """
+  Post a STRUCTURED error reply (G5 source 2). The body carries the raw
+  `reason` term encoded by `Ezagent.Agent.ErrorSignal` under `error`, plus the
+  uniform minimal fallback `text` for degraded surfaces (external mirrors).
+  The world render side matches the reason against the shared error-code
+  registry and renders the per-viewer Layer 1/2/3 card — no hand-written
+  error prose here. Same `:cast` + authority profile as `say/3`.
+  """
+  @spec say_error(URI.t(), URI.t(), term()) :: :ok | {:ok, term()} | {:error, term()}
+  def say_error(%URI{} = session_uri, %URI{} = actor, reason) do
+    send_body(session_uri, actor, Ezagent.Agent.ErrorSignal.reply_body(reason))
+  end
+
+  def say_error(_session_uri, _actor, _reason), do: :ok
+
+  defp send_body(%URI{} = session_uri, %URI{} = actor, body) do
     msg = Ezagent.Message.new(actor, body)
 
     target = Ezagent.URI.with_action(session_uri, :session, :send)
@@ -170,8 +191,6 @@ defmodule EzagentPluginHello.TurnDriver do
       })
     end
   end
-
-  def say_nav(_session_uri, _actor, _text, _nav), do: :ok
 
   @doc """
   Store the (already-sanitised) HTML site-frame for the customer page, via the

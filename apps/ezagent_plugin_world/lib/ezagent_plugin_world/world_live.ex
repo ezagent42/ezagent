@@ -172,7 +172,17 @@ defmodule EzagentPluginWorld.WorldLive do
 
   def handle_info({:chat_message, %URI{} = source_uri, %Ezagent.Message{} = msg}, socket) do
     if same_uri?(source_uri, socket.assigns[:current_session_uri]) do
-      row = Ezagent.World.ConversationData.message_row(msg)
+      # G5 source 2 — attach the per-viewer error card when the reply body
+      # carries a structured agent-error payload (lazy ctx: no admin/founder
+      # lookup on ordinary messages).
+      row =
+        msg
+        |> Ezagent.World.ConversationData.message_row()
+        |> Ezagent.World.ErrorCards.enrich(
+          msg.body,
+          Ezagent.World.ErrorCards.live_viewer_ctx(socket)
+        )
+
       {:noreply, push_event(socket, "chat:message", %{"message" => row})}
     else
       {:noreply, socket}
@@ -324,6 +334,22 @@ defmodule EzagentPluginWorld.WorldLive do
 
       nil ->
         {:noreply, assign(socket, :last_dispatch_status, "error:no_founder")}
+    end
+  end
+
+  # G5 Layer 2 notification: user clicks "send reminder" on an error card.
+  def handle_event(
+        "world:dispatch",
+        %{
+          "action" => "notification.send",
+          "args" => %{"type" => "error_fix_request", "body" => body}
+        },
+        socket
+      )
+      when is_map(body) do
+    case Ezagent.World.ErrorCards.send_fix_request(socket, body) do
+      :ok -> {:noreply, assign(socket, :last_dispatch_status, "ok")}
+      :no_founder -> {:noreply, assign(socket, :last_dispatch_status, "error:no_founder")}
     end
   end
 

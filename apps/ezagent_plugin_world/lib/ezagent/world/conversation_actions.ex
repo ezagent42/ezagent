@@ -240,7 +240,10 @@ defmodule Ezagent.World.ConversationActions do
       ConversationData.load_older(
         session_uri,
         before,
-        Map.get(socket.assigns, :current_caps, MapSet.new())
+        Map.get(socket.assigns, :current_caps, MapSet.new()),
+        # Lazy per-viewer error-card ctx (G5 source 2) — only resolved when a
+        # paged message actually carries a structured agent-error payload.
+        Ezagent.World.ErrorCards.live_viewer_ctx(socket)
       )
 
     {:noreply,
@@ -729,25 +732,7 @@ defmodule Ezagent.World.ConversationActions do
   end
 
   defp resolve_founder_name(socket) do
-    case Map.get(socket.assigns, :current_workspace_uri) do
-      %URI{} = ws_uri ->
-        case Ezagent.URI.name(ws_uri) do
-          {:ok, name} when is_binary(name) and name != "" ->
-            case Ezagent.Workspace.Store.get_by_name(name) do
-              %{members: [%URI{} = founder | _]} ->
-                case Ezagent.URI.name(founder) do
-                  {:ok, display} -> display
-                  _ -> "workspace founder"
-                end
-
-              _ -> "workspace founder"
-            end
-
-          _ -> "workspace founder"
-        end
-
-      _ -> "workspace founder"
-    end
+    Ezagent.World.ErrorCards.founder_display_name(Map.get(socket.assigns, :current_workspace_uri))
   end
 
   defp parse_positive_integer(value) when is_integer(value) and value > 0, do: {:ok, value}

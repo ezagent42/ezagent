@@ -46,14 +46,24 @@ defmodule Ezagent.ActionSet.HelloPublisher do
                    caller: caller_uri,
                    caps: caps
                  ) do
-            "Template \"#{template_display_name(tmpl_uri)}\" published."
-          else
-            {:error, reason} -> "Template save failed: #{inspect(reason)}"
+            {:ok, "Template \"#{template_display_name(tmpl_uri)}\" published."}
           end
 
         case EzagentPluginHello.Members.role_uri(session_uri, "publisher") do
           {:ok, publisher_uri} ->
-            _ = EzagentPluginHello.TurnDriver.say(session_uri, publisher_uri, result)
+            case result do
+              {:ok, text} ->
+                _ = EzagentPluginHello.TurnDriver.say(session_uri, publisher_uri, text)
+
+              {:error, reason} ->
+                # G5 source 2 — structured error, no hand-written prose.
+                _ =
+                  EzagentPluginHello.TurnDriver.say_error(
+                    session_uri,
+                    publisher_uri,
+                    {:template_save_failed, reason}
+                  )
+            end
 
           :error ->
             :ok

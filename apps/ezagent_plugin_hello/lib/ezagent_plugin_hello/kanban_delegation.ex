@@ -250,20 +250,12 @@ defmodule EzagentPluginHello.KanbanDelegation do
       {:error, reason} ->
         Logger.warning("hello Kanban delegation failed: #{inspect(reason)}")
 
-        TurnDriver.say(
-          session_uri,
-          actor,
-          gettext("Could not delegate to Kanban: %{reason}", reason: format_reason(reason))
-        )
+        # G5 source 2 — structured error (context tag + raw reason); the
+        # shared error surface renders the per-viewer card (Layer 3 until a
+        # code is registered for this tag).
+        TurnDriver.say_error(session_uri, actor, {:kanban_delegation_failed, reason})
     end
   end
-
-  defp format_reason(:ambiguous_default_kanban),
-    do: gettext("The workspace has multiple boards and no canonical default")
-
-  defp format_reason(:forbidden), do: gettext("This account cannot create Kanban tasks")
-  defp format_reason(:unauthorized), do: gettext("Sign in and try again")
-  defp format_reason(_reason), do: gettext("The service is temporarily unavailable")
 
   defp entity_name(%URI{} = entity_uri) do
     case Ezagent.URI.name(entity_uri) do
