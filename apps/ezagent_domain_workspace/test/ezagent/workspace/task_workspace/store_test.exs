@@ -239,7 +239,9 @@ defmodule Ezagent.Workspace.TaskWorkspace.StoreTest do
              Store.mark_started(
                starting.id,
                starting.start_claim_token,
-               retirement_handle(starting), now: at(31))
+               retirement_handle(starting),
+               now: at(31)
+             )
 
     current = Repo.get!(Provision, ready.id)
     assert current.status == :starting
@@ -485,7 +487,7 @@ defmodule Ezagent.Workspace.TaskWorkspace.StoreTest do
       workspace_uri: "workspace://task-workspace-store",
       task_uri: "resource://task-workspace-store/kanban-task/task-#{suffix}",
       generation: 1,
-      task_access_uri: "resource://task-workspace-store/git-task-access/task-access-#{suffix}",
+      task_access_uri: task_access_uri(suffix),
       repository_uri: repository_uri(suffix),
       checkout_fingerprint: "checkout-#{suffix}",
       base_ref: "main",
@@ -496,6 +498,11 @@ defmodule Ezagent.Workspace.TaskWorkspace.StoreTest do
 
   defp repository_uri(suffix),
     do: "resource://task-workspace-store/git-repository/repository-#{suffix}"
+
+  defp task_access_uri(suffix) do
+    digest = :sha256 |> :crypto.hash(suffix) |> Base.encode16(case: :lower)
+    "entity://task-workspace-store/worker/gta_#{digest}"
+  end
 
   defp ready_attrs(expected_version) do
     %{

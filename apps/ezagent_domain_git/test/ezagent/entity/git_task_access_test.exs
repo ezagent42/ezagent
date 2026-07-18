@@ -45,9 +45,14 @@ defmodule Ezagent.Entity.GitTaskAccessTest do
     )
   end
 
-  test "declares a cold ephemeral Resource Kind" do
-    assert GitTaskAccess.__pattern__() == :resource
+  test "live task access has a deterministic entity worker URI" do
+    assert {:ok, policy} = GitTaskAccess.new(policy_attrs())
+    uri = GitTaskAccess.uri_from_args(policy)
+
+    assert GitTaskAccess.__pattern__() == :entity
     assert GitTaskAccess.type_name() == :git_task_access
+    assert URI.to_string(uri) =~ ~r"^entity://[^/]+/worker/gta_[a-f0-9]{64}$"
+    assert uri == GitTaskAccess.uri_from_args(policy)
     assert GitTaskAccess.persistence() == :ephemeral
     assert GitTaskAccess.behaviors() == [Ezagent.ActionSet.GitTaskAccess]
   end
@@ -56,14 +61,14 @@ defmodule Ezagent.Entity.GitTaskAccessTest do
     assert {:ok, policy} =
              policy_attrs(%{allowed_actions: [:resolve_repository]}) |> GitTaskAccess.new()
 
-    assert GitTaskAccess.uri_from_args(policy) ==
-             Ezagent.URI.resource("acme", "git-task-access", "access-17")
+    task_access_uri = GitTaskAccess.uri_from_args(policy)
+    assert task_access_uri == GitTaskAccess.uri_from_args(policy)
 
     assert {:ok, target} = GitTaskAccess.action_uri(policy, :resolve_repository)
 
     assert target ==
              Ezagent.URI.with_action(
-               Ezagent.URI.resource("acme", "git-task-access", "access-17"),
+               task_access_uri,
                :git_task_access,
                :resolve_repository
              )
@@ -152,8 +157,10 @@ defmodule Ezagent.Entity.GitTaskAccessTest do
 
     assert {:ok, %{policy: ^policy}} = Ezagent.Kind.get_slice(uri, :git_task_access)
 
-    assert {:error, {:already_registered, "resource://acme/git-task-access/access-17"}} =
+    assert {:error, {:already_registered, registered_uri}} =
              Ezagent.Kind.spawn(GitTaskAccess, %{uri: uri, policy: policy})
+
+    assert registered_uri == URI.to_string(uri)
 
     assert :ok = GitTaskAccess.initialization_result(uri, policy)
 
@@ -166,7 +173,7 @@ defmodule Ezagent.Entity.GitTaskAccessTest do
 
   test "Lifecycle creation rejects a spawn URI that does not match the policy" do
     assert {:ok, policy} = GitTaskAccess.new(policy_attrs())
-    wrong_uri = Ezagent.URI.resource("acme", "git-task-access", "other")
+    wrong_uri = Ezagent.URI.worker("acme", "gta_#{String.duplicate("0", 64)}")
 
     assert {:error, _reason} =
              Ezagent.Kind.spawn(GitTaskAccess, %{uri: wrong_uri, policy: policy})

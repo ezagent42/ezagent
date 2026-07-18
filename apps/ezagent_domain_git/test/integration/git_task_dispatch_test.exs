@@ -298,6 +298,7 @@ defmodule Ezagent.DomainGit.Integration.GitTaskDispatchTest do
   defp started_fixture(action, provider) do
     coordinates = fixture_coordinates()
     policy = policy(coordinates, provider)
+    coordinates = GitCapFixture.bind_policy(coordinates, policy)
     assert {:ok, _pid} = TaskAccessSupervisor.ensure_started(policy)
     on_exit(fn -> TaskAccessSupervisor.teardown(coordinates.task_access_uri) end)
     {GitCapFixture.exact_task_cap(coordinates, action), policy}
@@ -337,7 +338,7 @@ defmodule Ezagent.DomainGit.Integration.GitTaskDispatchTest do
        ) do
     capability =
       Ezagent.Capability.cap(
-        :resource,
+        :git_task_access,
         Ezagent.ActionSet.GitTaskAccess,
         action,
         Ezagent.URI.instance(task_access_uri || fixture.task_access_uri),

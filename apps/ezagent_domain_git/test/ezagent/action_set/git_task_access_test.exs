@@ -413,6 +413,7 @@ defmodule Ezagent.ActionSet.GitTaskAccessTest do
   defp started_fixture(action, provider_adapter \\ :"probe-git-adapter-a") do
     coordinates = GitCapFixture.coordinates()
     policy = policy(coordinates, provider_adapter)
+    coordinates = GitCapFixture.bind_policy(coordinates, policy)
     assert {:ok, _pid} = TaskAccessSupervisor.ensure_started(policy)
     {GitCapFixture.exact_task_cap(coordinates, action), policy}
   end
@@ -460,7 +461,7 @@ defmodule Ezagent.ActionSet.GitTaskAccessTest do
   defp workspace_artifact(fixture, action, receiver) do
     capability =
       Ezagent.Capability.cap(
-        :resource,
+        :git_task_access,
         Ezagent.ActionSet.GitTaskAccess,
         action,
         Ezagent.URI.instance(fixture.task_access_uri),

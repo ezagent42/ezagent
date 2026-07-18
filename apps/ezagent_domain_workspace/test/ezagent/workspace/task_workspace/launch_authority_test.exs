@@ -191,7 +191,7 @@ defmodule Ezagent.Workspace.TaskWorkspace.LaunchAuthorityTest do
       workspace_uri: URI.to_string(workspace_uri()),
       task_uri: "resource://launch-authority/kanban-task/task-#{suffix}",
       generation: 1,
-      task_access_uri: "resource://launch-authority/git-task-access/access-#{suffix}",
+      task_access_uri: task_access_uri(suffix),
       repository_uri: "resource://launch-authority/git-repository/repo-#{suffix}",
       checkout_fingerprint: "checkout-#{suffix}",
       base_ref: "main",
@@ -203,4 +203,9 @@ defmodule Ezagent.Workspace.TaskWorkspace.LaunchAuthorityTest do
   defp agent_uri, do: Ezagent.URI.agent("launch-authority", "worker")
   defp root_uri, do: Ezagent.URI.user("launch-authority", "owner")
   defp workspace_uri, do: Ezagent.URI.workspace("launch-authority")
+
+  defp task_access_uri(suffix) do
+    digest = :sha256 |> :crypto.hash(suffix) |> Base.encode16(case: :lower)
+    "entity://launch-authority/worker/gta_#{digest}"
+  end
 end

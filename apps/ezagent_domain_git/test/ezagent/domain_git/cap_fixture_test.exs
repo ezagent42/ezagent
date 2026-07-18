@@ -12,7 +12,7 @@ defmodule Ezagent.DomainGit.CapFixtureTest do
     fixture = started_fixture(@action)
 
     assert Cap.storable_for?(fixture.artifact, fixture.grantee_uri)
-    assert fixture.artifact.kind == :resource
+    assert fixture.artifact.kind == :git_task_access
     assert fixture.artifact.behavior == Ezagent.ActionSet.GitTaskAccess
     assert fixture.artifact.action == @action
     assert fixture.artifact.instance == Ezagent.URI.instance(fixture.task_access_uri)
@@ -75,7 +75,7 @@ defmodule Ezagent.DomainGit.CapFixtureTest do
     refute fixture.artifact.workspace_uri == :any
   end
 
-  test "safely configures unique workspace, task resource, grantee, and action coordinates" do
+  test "safely configures unique workspace, task entity, grantee, and action coordinates" do
     suffix = System.unique_integer([:positive])
     workspace_name = "git-fixture-#{suffix}"
     task_access_id = "task-#{suffix}"
@@ -89,10 +89,11 @@ defmodule Ezagent.DomainGit.CapFixtureTest do
         grantee_uri: grantee_uri
       )
 
-    expected_task_uri =
-      Ezagent.URI.resource(workspace_name, "git-task-access", task_access_id)
+    expected_task_uri = fixture.task_access_uri
 
-    assert fixture.task_access_uri == expected_task_uri
+    assert URI.to_string(expected_task_uri) =~
+             ~r"^entity://#{workspace_name}/worker/gta_[a-f0-9]{64}$"
+
     assert fixture.workspace_uri == Ezagent.URI.workspace(workspace_name)
     assert fixture.grantee_uri == grantee_uri
     assert fixture.artifact.action == action
@@ -123,7 +124,7 @@ defmodule Ezagent.DomainGit.CapFixtureTest do
 
   defp required(fixture, action, overrides \\ []) do
     %{
-      kind: :resource,
+      kind: :git_task_access,
       behavior: Ezagent.ActionSet.GitTaskAccess,
       action: action,
       instance: Keyword.get(overrides, :instance, Ezagent.URI.instance(fixture.task_access_uri)),
@@ -161,6 +162,7 @@ defmodule Ezagent.DomainGit.CapFixtureTest do
         idempotency_inputs: %{task_id: "fixture-task", generation: 1}
       })
 
+    coordinates = GitCapFixture.bind_policy(coordinates, policy)
     assert {:ok, _pid} = TaskAccessSupervisor.ensure_started(policy)
     on_exit(fn -> TaskAccessSupervisor.teardown(coordinates.task_access_uri) end)
     GitCapFixture.exact_task_cap(coordinates, action)

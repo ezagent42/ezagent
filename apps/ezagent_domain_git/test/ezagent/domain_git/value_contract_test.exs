@@ -53,7 +53,7 @@ defmodule Ezagent.DomainGit.ValueContractTest do
              RepositoryRef.new(%{attrs | repository_uri: uri("resource://ws/uploads/repo")})
 
     context = %{
-      task_access_uri: uri("resource://ws/git-task-access/task"),
+      task_access_uri: uri("entity://ws/worker/gta_#{String.duplicate("a", 64)}"),
       caller_uri: uri("entity://ws/user/alice"),
       grantee_uri: uri("entity://ws/agent/codex"),
       idempotency_key: "attempt-1"

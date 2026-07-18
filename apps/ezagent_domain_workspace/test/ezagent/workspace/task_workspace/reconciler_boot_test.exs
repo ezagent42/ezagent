@@ -215,7 +215,7 @@ defmodule Ezagent.Workspace.TaskWorkspace.ReconcilerBootTest do
       workspace_uri: "workspace://boot-recovery-team",
       task_uri: "resource://boot-recovery-team/kanban-task/task-one",
       generation: 1,
-      task_access_uri: "resource://boot-recovery-team/git-task-access/access-one",
+      task_access_uri: "entity://boot-recovery-team/worker/gta_#{String.duplicate("a", 64)}",
       repository_uri: "resource://boot-recovery-team/git-repository/repository-one",
       checkout_fingerprint: "fingerprint-one",
       base_ref: "main",

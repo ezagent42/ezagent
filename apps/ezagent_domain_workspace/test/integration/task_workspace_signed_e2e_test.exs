@@ -295,7 +295,7 @@ defmodule Ezagent.Workspace.TaskWorkspace.SignedE2ETest do
   defp dispatch(context, action, opts \\ []) do
     capability =
       Ezagent.Capability.cap(
-        :resource,
+        :git_task_access,
         Ezagent.ActionSet.GitTaskAccess,
         action,
         Ezagent.URI.instance(context.task_access_uri),

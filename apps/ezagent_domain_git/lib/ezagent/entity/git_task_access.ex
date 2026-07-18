@@ -9,7 +9,7 @@ defmodule Ezagent.Entity.GitTaskAccess do
   """
 
   use Ezagent.Kind,
-    pattern: :resource,
+    pattern: :entity,
     type_name: :git_task_access
 
   @behaviour Ezagent.Kind
@@ -18,7 +18,6 @@ defmodule Ezagent.Entity.GitTaskAccess do
 
   attach(Ezagent.ActionSet.GitTaskAccess)
 
-  @resource_type "git-task-access"
   @actions [
     :resolve_repository,
     :create_change_request,
@@ -274,7 +273,14 @@ defmodule Ezagent.Entity.GitTaskAccess do
 
   defp build_uri(%__MODULE__{} = policy) do
     workspace = Ezagent.URI.workspace_name!(policy.workspace_uri)
-    Ezagent.URI.resource(workspace, @resource_type, policy.id)
+
+    digest =
+      policy
+      |> :erlang.term_to_binary([:deterministic])
+      |> then(&:crypto.hash(:sha256, &1))
+      |> Base.encode16(case: :lower)
+
+    Ezagent.URI.worker(workspace, "gta_#{digest}")
   end
 
   defp action_allowed(%__MODULE__{allowed_actions: actions}, action) do

@@ -100,7 +100,7 @@ defmodule Ezagent.ActionSet.GitTaskAccess do
 
   @impl Ezagent.ActionSet
   def required_caps do
-    Map.new(@actions, &{&1, Ezagent.Capability.cap(:resource, __MODULE__, &1)})
+    Map.new(@actions, &{&1, Ezagent.Capability.cap(:git_task_access, __MODULE__, &1)})
   end
 
   @impl Ezagent.ActionSet
@@ -288,7 +288,7 @@ defmodule Ezagent.ActionSet.GitTaskAccess do
     caller = Map.get(ctx, :caller)
 
     needed = %{
-      kind: :resource,
+      kind: :git_task_access,
       behavior: __MODULE__,
       action: action,
       instance: Map.get(ctx, :self_uri),

@@ -1,6 +1,6 @@
 defmodule Ezagent.DomainGit.TaskAccessSupervisor do
   @moduledoc """
-  Owns the live, ephemeral `GitTaskAccess` Resource processes.
+  Owns the live, ephemeral `GitTaskAccess` entity processes.
 
   Policies are revalidated before spawning. A duplicate URI is reconciled
   against the one authoritative live Lifecycle slice: equal policy is
@@ -19,7 +19,7 @@ defmodule Ezagent.DomainGit.TaskAccessSupervisor do
   @impl DynamicSupervisor
   def init(_opts), do: DynamicSupervisor.init(strategy: :one_for_one)
 
-  @doc "Starts or reconciles the Resource instance for an authoritative policy."
+  @doc "Starts or reconciles the entity instance for an authoritative policy."
   @spec ensure_started(term()) :: {:ok, pid()} | {:error, term()}
   def ensure_started(policy) do
     with {:ok, validated} <- GitTaskAccess.revalidate(policy) do
@@ -28,7 +28,7 @@ defmodule Ezagent.DomainGit.TaskAccessSupervisor do
     end
   end
 
-  @doc "Synchronously removes a live Resource; absent teardown is idempotent."
+  @doc "Synchronously removes a live entity; absent teardown is idempotent."
   @spec teardown(URI.t()) :: :ok | {:error, :teardown_incomplete}
   def teardown(%URI{} = uri) do
     with_lifecycle(uri, fn ->
@@ -37,7 +37,7 @@ defmodule Ezagent.DomainGit.TaskAccessSupervisor do
     end)
   end
 
-  @doc "Serializes a lifecycle or operation-entry decision for one Resource URI."
+  @doc "Serializes a lifecycle or operation-entry decision for one entity URI."
   @spec with_lifecycle(URI.t(), (-> result)) :: result when result: var
   def with_lifecycle(%URI{} = uri, fun) when is_function(fun, 0) do
     lock_id = {{__MODULE__, URI.to_string(uri)}, self()}

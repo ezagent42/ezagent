@@ -40,7 +40,7 @@ defmodule Ezagent.DomainGit.WorkspaceProvisionPortTest do
   test "request rejects caller-selected repository and path coordinates" do
     assert {:error, :unknown_fields} =
              WorkspaceProvisionPort.Request.new(%{
-               task_access_uri: URI.parse("resource://ws/git-task-access/a"),
+               task_access_uri: URI.parse("entity://ws/worker/gta_#{String.duplicate("a", 64)}"),
                task_uri: URI.parse("resource://ws/kanban-task/t"),
                generation: 1,
                operation: :prepare,
@@ -50,7 +50,7 @@ defmodule Ezagent.DomainGit.WorkspaceProvisionPortTest do
 
   test "authorized constructor carries a validated policy outside caller attributes" do
     attrs = %{
-      task_access_uri: URI.parse("resource://ws/git-task-access/a"),
+      task_access_uri: URI.parse("entity://ws/worker/gta_#{String.duplicate("a", 64)}"),
       task_uri: URI.parse("resource://ws/kanban-task/t"),
       generation: 1,
       operation: :prepare,
