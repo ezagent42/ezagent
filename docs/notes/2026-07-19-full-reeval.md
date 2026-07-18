@@ -75,3 +75,46 @@
 3. **㊷ 一行小修**独立落(provision-deadline)。
 4. **sw 手检轮**(#1452 已合 = 最低闸门达成):五功能面 × 每步截图;fresh 环境凭证前置可走 #1453 `reinstall_socialware` 正路;顺核 `kanban-cli.sh` cookie 路径硬编码。
 5. **方向变化备忘**:①任何新 mint 点二分口径固定——无人 granter 走 `{:admin, admin_uri}`(board_provision.ex:171,:188 范本),有人 granter `{:held_by,…}`+首签前 `TargetAuthority.ensure`;②#1458/#1462 折入永久机制的唯一触发 = Allen 放宽 CompositionBinding(session 可空+runtime provenance),届时表/触发点平移、mint 路不动;③kanban 未来"用户修不了"类错误注册进 G5 ErrorCode 表,不再扩 DISPATCH_ERR。
+
+---
+
+## 四、四 infra PR 合并后的状态刷新(2026-07-19,main=70ffafa85)
+
+四个 side PR **全部合并进 main**:#1462(MemberBackfill 入会补发)/#1458(mount 表 person-scope)/#1461(import_remote RPC)/#1459(read-plane 定性 handoff)。round2 分支已 rebase 到 70ffafa85(冲突两处:docs 采 main 版;`mount.ex` main 版已含 #1457 适配的 `revoke_row_actions` 抽取,采 main 零功能丢失),compile+kanban 套件(119/0)+world 套件(228/0)全绿。四个 kb-* 分支+worktree 已按「合并即删」清理。
+
+### 逐项销账(对照 §二/§三 与 work-order 尾段)
+
+| 项 | 刷新后状态 |
+|---|---|
+| ⑤ 看板 tab 可见(成员 join 半) | **✅ 销账**——#1462 合并,join 补发已是 main 机制(member_backfill.ex:58,七处加人入口全接) |
+| ⑪ dev 发布车道 | **✅ 销账**——#1461 合并,`mix ezagent.socialware.import_remote` 正路可用 |
+| ㊵ 人本位 receive | **就绪**——唯一前置 #1458 已合(person-scope MountRow + `mount_for_person/5`),PR-K 尾段可开工 |
+| ㉜/D3 `applies_to?` 翻转 | **就绪**——cap 半件随 #1462 已合(`grant_member_view_caps` membership.ex:1307),顺序红线满足,PR-K 可翻转 `board_view.ex` 恒 true |
+| ㊲ 通用半(person-bound token,PR-C) | 定性文档 #1459 已落档 main;**修法排期等 Allen**,PR-C 以此为前提不变 |
+| §三-1「推合四 side PR」 | **完成,整条划掉** |
+
+**对账数字刷新**:41 计入项 = ✅21 / 🔶12 / ❌7(⑤⑪ 从🔶转✅;❌ 侧 ㊵ 转「就绪待做」仍计在 #1446 内)。
+
+### 剩余任务终表
+
+**我们的(6)**——#1446 收尾为主,严格顺序:
+
+1. ㊵ 人本位 receive(前置已合,即刻开工:share_receive.ex 删 assistant 解析/grantee=点击者/D4 ws 单守卫 + world_data 枚举改 cap 派生 + 深链 redirect)
+2. D3 `applies_to?` 翻转(board_view.ex:51-61 恒 true,可与 ㊵ 同车)
+3. 分享二期(㉙ dispatch `share_to_session` + 规则8 `request_edit` read→operate 重挂升级;依赖 ㊵)
+4. ㊷ provision-deadline 一行小 infra PR(conversation_actions.ex:349 补 `deadline_ms: 30_000`)
+5. #1446 收官全功能 e2e 轮(先 `mix ecto.reset`〔#1457 存量 cap 全废〕;换+删旧证据,PR 收口收敛规矩)
+6. sw 手检轮(五功能面×每步截图;凭证走 #1453 `reinstall_socialware` 正路;顺核 kanban-cli.sh cookie 硬编码)
+
+**等 Allen 的(5)**:
+
+1. read-plane 修法排期(#1459 已落档;定后解锁 PR-C person-bound token = ㊲ 通用半)
+2. Decision Log 两条备案:D2 create_board 追认 + 入会补发授权口径(granter=session owner,caller-side;非旧 rule tag 口径)
+3. CompositionBinding 放宽(session 可空 + runtime provenance)——#1458/#1462 折入永久机制的唯一触发,届时表/触发点平移、mint 路不动
+4. provisioning 默认 deadline 泛化提案(㊷ 只做 caller 一行,全线泛化记 Allen)
+5. ㉟ builtin 命名(深层随 ㉜ 合龙自然消失,表层命名归 Allen)
+
+**等 zyli 的(10 = 5 全 + 5 半)**——#1443 handoff 已 MERGED 实施 0 进展,催:
+
+- 全项 5:⑫ 向导按钮折叠 / ⑬ 骨架屏 / ⑰ 成员推送 / ㉛ 装 sw 面 / ㊱ 删 session UI
+- 半项 5:⑩㉑ 凭证 skip UI 投影(#1453 上游已备)/ ⑱ Conversation 深色 / ㉒ tab 深链 / ㉘ 推送基建半(X1 `:notify`,未落则分享二期通知面降级,不阻塞)
