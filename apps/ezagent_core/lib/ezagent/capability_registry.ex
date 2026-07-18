@@ -120,7 +120,12 @@ defmodule Ezagent.CapabilityRegistry do
 
     with :ok <- compatible_subject(subject_before, kind, action, behavior),
          :ok <- compatible_behavior(behavior_before, kind, action, behavior, dispatchable?) do
-      receipt = if match?({:ok, _}, subject_before), do: :existing_identical, else: :acquired
+      receipt =
+        if match?({:ok, _}, subject_before) or match?({:ok, _}, behavior_before) do
+          :existing_identical
+        else
+          :acquired
+        end
 
       try do
         :ets.insert(
