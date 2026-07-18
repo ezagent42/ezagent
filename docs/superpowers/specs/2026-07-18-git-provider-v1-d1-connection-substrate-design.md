@@ -111,7 +111,7 @@ handler reloads them under the receiver's exact owner/workspace and rejects any
 mismatch before a driver/backend effect.
 
 All D1 tables are tenant-scoped with `workspace_uri NOT NULL` and indexed
-workspace access. The minimum durable model uses four tables.
+workspace access. The minimum durable model uses five tables.
 
 ### 5.1 `provider_connections`
 
@@ -145,15 +145,21 @@ binding tuple:
 
 Stores the opaque authorization ref, connection id/version, bound subject
 digest, state and PKCE backend refs/digests, expiry, correlation id, monotonic
-attempt version, status, and single-consumption timestamps. It never stores a
-raw callback body, authorization code, state value, PKCE verifier, or token.
+attempt version, status, single-consumption timestamps, and the callback
+capability artifact encoded with `Ezagent.Capability.to_map/1`. Recovery decodes
+it with `Ezagent.Capability.from_map/1`; it is never copied to `users.caps_json`.
+The table uniquely constrains `authorization_ref`. It never stores a raw
+callback body, authorization code, state value, PKCE verifier, or token.
 
 ### 5.3 `provider_connection_operations`
 
 A durable idempotency and recovery ledger for credential store/replace,
 refresh, revoke, and disconnect. It stores operation class, correlation id,
 expected versions, opaque result refs, status, lease token/deadline, safe error,
-and timestamps.
+canonical bound-input digest, backend-pair id, and timestamps. A unique index on
+`{backend_pair_id, operation_class, correlation_id}` makes the D0.1 command key
+executable; an existing key with a different digest is a closed correlation
+conflict and cannot mutate the prior record.
 
 ### 5.4 `provider_connection_events`
 
@@ -161,6 +167,15 @@ An append-only secret-safe audit projection. It records actor roles, connection
 coordinates, transition, versions, correlation id, result class, and safe
 provider request id. It contains no sensitive backend ref that can be resolved
 outside the connection domain.
+
+### 5.5 `provider_authorization_backend_records`
+
+Backend-private durable correlation records keyed by authorization ref. They
+store the authorization key id, nonce, authenticated ciphertext, bound-input
+digest, consume correlation/result state, expiry, and timestamps. Application
+schemas expose only opaque refs/status; no general context, read model, event,
+or Inspect path may load these fields. A database constraint permits only one
+committed consume command per authorization ref.
 
 ## 6. Driver and backend ownership
 
@@ -185,12 +200,53 @@ the credential transaction protocol against the D0 in-process and
 remote-shaped fakes. Production encrypted credential storage, key rotation,
 and operation-lease implementation remain D2.
 
+Authorization and credential implementations register as a
+conformance-tested backend pair with a stable pair id. The pair owns the opaque
+credential-handoff wire contract; D1 does not promise that arbitrary modules
+from two independent registries interoperate.
+
+Callback exchange follows one direction:
+
+```text
+User-Kind handler
+  -> ProviderAuthorizationBackend.consume_callback(command)
+  -> backend validates and claims state/expiry/PKCE correlation
+  -> backend invokes the registered Driver.consume_callback(exchange_context)
+  -> Driver privately performs the provider exchange and returns a write-only handoff
+  -> backend durably records the correlation result and returns that handoff
+```
+
+The driver remains the only owner of provider endpoints, HTTP, callback/token
+payload interpretation, and response normalization. The exchange context is
+single-purpose and non-serializable; there is no PKCE verifier getter. The
+verifier, authorization code, and credential material never return to the
+User-Kind handler as ordinary domain data.
+
+### 6.1 Local authorization correlation storage
+
+The local authorization backend persists state and PKCE recovery material only
+as authenticated ciphertext in `provider_authorization_backend_records`, bound
+by AEAD associated data to the authorization ref, subject digest, connection
+version, provider, host, acquisition method, redirect id, correlation id, and
+expiry. The public attempt row retains only digests and opaque refs.
+
+A deployment-configured key ring has one active encryption key id and may retain
+older decrypt-only keys until their bounded attempts expire. Boot fails closed
+when the active key is missing, malformed, or duplicated; there is no generated
+fallback key. Rotation writes only with the active key, decrypts existing
+unexpired attempts by their recorded key id, and permits removal of an old key
+only after no unexpired attempt references it. Logs, errors, Inspect, telemetry,
+events, and migrations never expose ciphertext, nonce, state, verifier, callback
+code, or key material. This authorization-correlation key ring is separate from
+the D2 credential encryption hierarchy.
+
 ## 7. User-Kind Lifecycle command boundary
 
 `Ezagent.ActionSet.ProviderConnection` uses `Ezagent.Lifecycle` and is registered
-as a behavior on `Ezagent.Entity.User`. It adds no connection state to the User
-snapshot. Every command reloads and locks the Ecto aggregate before deciding a
-transition.
+as a registry-only behavior on `Ezagent.Entity.User`, following the existing
+UserDefaultCredentialSource pattern. It is stateless and adds no connection
+state or effects to the User snapshot. Every command reloads and locks the Ecto
+aggregate before deciding a transition.
 
 Initial actions are:
 
@@ -203,15 +259,26 @@ Initial actions are:
 - `:read_connection`.
 
 Every human/operator command is cap-gated to the exact owner User entity,
-workspace, `:provider_connection` capability kind, ActionSet, and action.
+workspace, `:user` capability kind, ProviderConnection ActionSet, and action.
 Reauthorize, revoke, and disconnect additionally require valid, recent
 assurance evidence from `ProviderAuthorizationBackend`.
 
-The callback transport does not gain ambient authority. At begin, the owner
-pre-signs an exact, expiring `:consume_callback` capability artifact and stores
-it only on the authorization attempt. Callback ingress resolves the attempt,
-verifies the artifact for the owner URI, and dispatches as that owner to the
-owner User Kind. It may consume only that server-created attempt.
+The callback transport does not gain ambient authority. The initiating command
+must carry an exact `:consume_callback` artifact already signed through the
+existing admin/operator grant authority for the owner User target. The begin
+handler checks its signature-bound grantee, target, workspace, ActionSet, and
+action through a narrow framework-owned artifact-validation helper, then stores
+it only on the authorization attempt. D1 adds that helper to `Ezagent.Cap`; it
+validates a signed artifact against the current target authority but does not
+authorize or invoke an action. The handler does not mint or delegate authority.
+Callback ingress resolves the attempt and dispatches as the owner to the owner
+User Kind with the stored artifact in `ctx.caps`; the Kind runtime's central
+verifier remains the only action-authorization decision.
+
+Capabilities have no TTL field. The artifact's usability is bounded by the
+attempt row: expiry, cancellation, subject/version mismatch, or prior
+consumption rejects before any backend or driver effect. Thus the continuation
+is attempt-bound and single-use, not a falsely claimed expiring capability.
 Provider callback parameters cannot select owner, workspace, connection,
 provider, host, acquisition method, execution identity, or credential ref.
 
@@ -232,9 +299,11 @@ active | degraded | expired
 ```
 
 Legal transitions form a closed table. `revoked` and `disconnected` are
-terminal. `revoking` and `disconnecting` immediately prohibit new credential
-leases. Provider/backend failures remain in a retryable obligation state or
-move to `degraded`; they never silently return to `active` or select a fallback
+terminal. In D1, `revoking` and `disconnecting` immediately prohibit new
+connection selection and record a credential-generation fence. D2 makes
+`lease_for_operation` enforce that fence for an already-selected connection.
+Provider/backend failures remain in a retryable obligation state or move to
+`degraded`; they never silently return to `active` or select a fallback
 credential.
 
 ## 9. Authorization correlation and callback consumption
@@ -339,10 +408,13 @@ entity://<workspace>/worker/gta_<sha256-of-canonical-policy>
 
 Its Kind pattern becomes `:entity`, while `type_name` and capability kind remain
 `:git_task_access`. It remains an ephemeral non-Agent primitive created only by
-`TaskAccessSupervisor.ensure_started/1`. It cannot be a caller, grantor, session
-member, login principal, or token principal. The URI is derived only from the
-fully validated canonical task policy, and duplicate reconciliation compares
-the full policy. Git repository resources remain pure `resource://` data.
+`TaskAccessSupervisor.ensure_started/1`. It may be the receiver and
+`grantee_uri` of its own exact Git-operation artifacts, which is required by the
+existing dispatch path. It cannot be `Invocation.ctx.caller`, `granted_by`, a
+login/token principal, a session member, a SystemPrincipal entry, or a holder in
+general entity-cap persistence. The URI is derived only from the fully validated
+canonical task policy, and duplicate reconciliation compares the full policy.
+Git repository resources remain pure `resource://` data.
 
 After `GitTaskAccess` authorization, a D2 provider adapter derives credential
 owner, workspace, provider, host, and execution identity from the authoritative
@@ -421,27 +493,35 @@ D1 is complete only when all of these are proven:
 3. State/PKCE attempts expire and consume once under concurrent callbacks;
    exact correlation retries reconcile the committed result without another
    provider effect, while different-correlation replay is rejected.
-4. Credential store/replace is caller-atomic and recovery covers every
+4. The local authorization backend survives restart using authenticated
+   ciphertext and a fail-closed configured key ring; key removal is rejected
+   while an unexpired attempt references it.
+5. Credential store/replace is caller-atomic and recovery covers every
    backend/DB commit window without replacing a winner.
-5. Refresh leases fence stale results and compensate credentials created by a
+6. Refresh leases fence stale results and compensate credentials created by a
    losing worker.
-6. Revoke/disconnect is idempotent, blocks new selection before external
+7. Revoke/disconnect is idempotent, blocks new selection before external
    effects, records the D2 lease fence, and reaches a terminal state only after
    provider and backend confirmation.
-7. Every command has exact owner-User CapBAC; wrong grantee/workspace/action,
+8. Every command has exact owner-User CapBAC; wrong grantee/workspace/action,
    unsigned artifact, or stale assurance creates zero driver, backend, and DB
    mutation.
-8. Secret-safe structural and runtime tests cover structs, Inspect, logs,
+9. The callback artifact is validated through the framework helper before it is
+   stored, but only central dispatch verification may authorize callback handler
+   entry; attempt expiry supplies the time bound.
+10. Secret-safe structural and runtime tests cover structs, Inspect, logs,
    telemetry, audit, snapshots, errors, Agent, Plan B, Plan C, and Kanban
    surfaces.
-9. Two fake drivers prove provider neutrality; local and remote-shaped D0 fakes
-   prove backend replaceability and ambiguous-outcome recovery.
-10. Restart tests rebuild obligations and reject stale callback, refresh,
+11. Two fake drivers prove provider neutrality; conformance-tested backend pairs
+    prove opaque-handoff compatibility and ambiguous-outcome recovery.
+12. Restart tests rebuild obligations and reject stale callback, refresh,
     replace, revoke, and disconnect results using deterministic barriers.
-11. Architecture gates prevent live Resource Kinds, GitTaskAccess use as a
-    principal, a second Git authorization path, provider catalog drift, and
-    generic plaintext retrieval.
-12. Focused suites, affected app suites, `arch.scan`, `doc.scan`,
+13. Architecture gates permit GitTaskAccess only as its exact operation receiver
+    and grantee, and prevent it from becoming a caller, grantor, login/token
+    principal, member, SystemPrincipal, or general persisted cap holder.
+14. Architecture gates prevent live Resource Kinds, a second Git authorization
+    path, provider catalog drift, and generic plaintext retrieval.
+15. Focused suites, affected app suites, `arch.scan`, `doc.scan`,
     `uri_query.scan`, `check_invariants`, lifecycle invariants, `mix precommit`,
     and PR-head CI are green, or every unrelated baseline is reproduced and
     explicitly adjudicated before completion is claimed.

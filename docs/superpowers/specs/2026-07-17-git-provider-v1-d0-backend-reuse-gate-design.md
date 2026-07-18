@@ -256,6 +256,10 @@ Contract rules:
    binds it to the operation class and a digest of all authority-bearing input.
    Exact retries return the committed logical result; mismatched reuse fails
    closed and never repeats an external effect.
+9. A durable implementation enforces one command record for
+   `{backend_id, operation_class, correlation_id}` and stores a canonical digest
+   of every authority-bearing input. `consume_callback` additionally enforces a
+   single committed consume command per `authorization_ref`.
 
 ### 6.1 Closed authorization errors
 
@@ -375,6 +379,11 @@ Contract rules:
 9. Reconciliation may replay only the same opaque write-only credential
    handoff. It must not expose or reconstruct plaintext credential material for
    a domain, UI, log, event, or transport response.
+10. Authorization and credential backends are selected as a conformance-tested
+    compatibility pair. The handoff is opaque outside that pair; independent
+    module replaceability does not imply that every authorization backend can be
+    combined with every credential backend. A compatible pair still preserves
+    both behavior boundaries and may not add a generic export or unwrap API.
 
 ### 7.1 Closed credential errors
 

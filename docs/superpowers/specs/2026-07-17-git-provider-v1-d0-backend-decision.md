@@ -52,6 +52,13 @@ the already-required remote-shaped after-commit reconciliation tests. It does
 not add a callback, weaken single consumption, permit plaintext retrieval, or
 change the authorization/credential replacement boundary.
 
+Durable implementations enforce uniqueness of
+`{backend_id, operation_class, correlation_id}`, compare a canonical bound-input
+digest on retry, and enforce one committed consume command per authorization
+ref. Authorization and credential implementations are selected only as a
+conformance-tested handoff-compatible pair; the opaque handoff does not promise
+an arbitrary cross-product of independently selected modules.
+
 ## Remote authorization approval rule
 
 A future OneAuth backend may be selected only when every OA item passes at one
