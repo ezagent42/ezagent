@@ -187,7 +187,9 @@ defmodule EzagentCore.Invariants.PerTenantTablesHaveWorkspaceColumnTest do
     # `feishu_session_bindings` was retired in favor of the generic
     # `external_mirror_bindings` projection table (workspace_uri NOT
     # NULL — see PR-EM-3 migration).
-    "schema_migrations" => "Ecto-internal migration tracking — not tenant data."
+    "schema_migrations" => "Ecto-internal migration tracking — not tenant data.",
+    "registration_requests" =>
+      "Pre-tenant registration intake — a row is created before any workspace exists (the requester has no workspace yet); triaged from system scope."
   }
 
   describe "schema-side invariant" do

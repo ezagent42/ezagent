@@ -40,6 +40,13 @@ defmodule Ezagent.PluginCodex.Template.CodexRemoteAgent do
     Ezagent.PluginCodex.Template.CodexAgent.refresh_test_credentials(source, home, opts)
   end
 
+  # Same CODEX_HOME host login as codex — without this delegate the #1201
+  # host-login-adopt seam silently no-ops for codex-remote (the #1311 class:
+  # `host_login_dir/0` is @optional_callbacks, so its omission compiles clean
+  # while `host_login_source_dir/1` resolves to `:none`).
+  @impl Ezagent.Agent.CredentialAdapter
+  def host_login_dir, do: Ezagent.PluginCodex.Template.CodexAgent.host_login_dir()
+
   # #160 — credential-status view. Same CODEX_HOME/auth.json as codex.
   @impl Ezagent.Agent.CredentialAdapter
   def credential_status(home, opts \\ []),

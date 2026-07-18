@@ -52,7 +52,8 @@ defmodule Ezagent.World.WorkspacePluginActions do
   def handle_dispatch(socket, "kb.ingest", %{
         "agent_uri" => agent_uri,
         "documents" => documents
-      }) when is_binary(agent_uri) and is_list(documents) do
+      })
+      when is_binary(agent_uri) and is_list(documents) do
     ingest_kb_documents(socket, agent_uri, documents)
   end
 
@@ -397,9 +398,16 @@ defmodule Ezagent.World.WorkspacePluginActions do
     do: Atom.to_string(error)
 
   defp kb_import_error(error)
-       when error in [:documents_required, :too_many_documents, :invalid_document, :unauthorized,
-                      :identity_read_unavailable, :invalid_kb_agent, :workspace_unavailable,
-                      :kb_source_type_unavailable],
+       when error in [
+              :documents_required,
+              :too_many_documents,
+              :invalid_document,
+              :unauthorized,
+              :identity_read_unavailable,
+              :invalid_kb_agent,
+              :workspace_unavailable,
+              :kb_source_type_unavailable
+            ],
        do: Atom.to_string(error)
 
   defp kb_import_error(_error), do: "indexing_failed"

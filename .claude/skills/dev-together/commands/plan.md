@@ -55,8 +55,9 @@ section order is fixed so the format stops drifting and `plan.html` mirrors it
 8. Write `docs/together/<date>/board.yaml`: the **lead-confirmed** day, as
    structured card data (copy `scripts/render/board.example.yaml`, fill it). It is
    the single source of truth for the day. Set the `date`, `north_star`,
-   `progress`, `efficiency` (from the latest `pr_session_hours` / audit read),
-   `deploy`, `risks`, the `people` swimlanes, and one **card per task** —
+   `progress`, `efficiency` (see 8a — **auto-computed with an up/down delta**, not
+   hand-typed), `deploy`, `risks`, the `people` swimlanes, and one **card per
+   task** —
    `owner` / `title` / `goal` / `status: planned|wip` / `pr` / `deps` / an
    `acceptance:` list (each `{text, done: false}`) / and the dev's `prompt`. The
    `acceptance` texts are the exact checklist that day's `review` ticks against, so
@@ -67,6 +68,19 @@ section order is fixed so the format stops drifting and `plan.html` mirrors it
    yesterday's `board.yaml` `done` cards (owner/title/date/pr) — it renders under
    the 完成 column so each person's recent delivery stays visible (the daily
    columns only show today).
+8a. **Auto efficiency + up/down delta (do this before rendering — don't hand-type
+   the numbers).** The board's `完成` column shows *yesterday's* output, so the
+   `efficiency` stats measure **`prev_date` (the board's yesterday)** and each
+   carries a delta vs the day before. Run:
+   `uv run python scripts/board_efficiency.py ezagent42/ezagent <prev_date>`
+   (`<prev_date>` = the board's yesterday in `YYYY-MM-DD`, ~1min, needs `gh`).
+   It prints an `efficiency:` + `efficiency_source:` YAML fragment where every
+   stat has a `delta:` key (`↓30` red = down, `↑7` green = up, computed vs the day
+   before `prev_date`). **Splice that fragment into board.yaml verbatim**,
+   replacing the placeholder `efficiency`/`efficiency_source`. `board2html.py`
+   renders each `delta` as a colored chip immediately next to the number. (For a
+   longer-horizon audit read — 8-week aggregate — keep using `pr_session_hours.py`
+   / `audit` directly; the daily board uses the delta fragment.)
 9. **Render (deterministic — never hand-write HTML):**
    `uv run --with pyyaml python scripts/render/board2html.py docs/together/<date>/board.yaml`.
    Presentation lives only in `board2html.py`; a missing/hand-authored
