@@ -44,9 +44,7 @@ defmodule EzagentDomainWorkspace.Application do
 
     if test_env?() and Code.ensure_loaded?(EzagentCore.DataCase) and
          function_exported?(EzagentCore.DataCase, :register_async_drain_supervisor, 1) do
-      EzagentCore.DataCase.register_async_drain_supervisor(
-        Ezagent.Workspace.CapGrantSupervisor
-      )
+      EzagentCore.DataCase.register_async_drain_supervisor(Ezagent.Workspace.CapGrantSupervisor)
     end
 
     :ok = register_task_workspace_infrastructure()
@@ -75,15 +73,19 @@ defmodule EzagentDomainWorkspace.Application do
       Ezagent.Kind.Template.PreStart.register(Ezagent.Workspace.TaskWorkspace.PreStart)
 
     :ok =
-      Ezagent.Resource.FsResolver.Registry.register_all([
-        Ezagent.Workspace.TaskWorkspace.Paths.resource_type()
-      ])
+      Ezagent.Resource.FsResolver.Registry.register_all(resource_types())
 
     :ok =
       Ezagent.DomainGit.WorkspaceProvisionRegistry.register(
         Ezagent.Workspace.TaskWorkspace.Provisioner
       )
+
     :ok
+  end
+
+  @doc false
+  def resource_types do
+    [Ezagent.Workspace.TaskWorkspace.Paths.resource_type()]
   end
 
   defp register_workspace_behavior do

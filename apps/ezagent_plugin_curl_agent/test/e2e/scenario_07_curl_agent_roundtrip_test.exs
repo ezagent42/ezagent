@@ -227,8 +227,8 @@ defmodule EzagentPluginCurlAgent.E2E.Scenario07CurlAgentRoundtripTest do
       # Slice records the no_api_key error.
       assert {:set, :last_error, {:no_api_key, "deepseek"}} in effects
 
-      # Dispatch effect carries an operator-help message back to the
-      # session — this is the user-visible "configure your key" hint.
+      # Dispatch effect carries structured reason data back to the session;
+      # viewer surfaces own the user-facing rendering.
       dispatches = Enum.filter(effects, &match?({:dispatch, _}, &1))
       assert [{:dispatch, %Ezagent.Cmd{} = cmd}] = dispatches
       assert cmd.action == :send
@@ -242,6 +242,7 @@ defmodule EzagentPluginCurlAgent.E2E.Scenario07CurlAgentRoundtripTest do
       body = cmd.args.message.body
       assert body.error == %{"reason" => ["no_api_key", "deepseek"]}
       assert body.text == "[agent error] no_api_key"
+      assert body.attachments == []
 
       # Reply presents the agent's OWN inline narrow `session.send` cap
       # on the concrete reply session (#154, 甲-3 — the `system://chat-reply`

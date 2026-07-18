@@ -13,7 +13,7 @@ defmodule Ezagent.DomainGit.TestSupport.GitCapFixture do
     :list_reviews
   ]
 
-  def exact_task_cap(action, options \\ []) when action in @actions and is_list(options) do
+  def coordinates(options \\ []) when is_list(options) do
     options =
       Keyword.validate!(options,
         workspace_name: @workspace_name,
@@ -34,8 +34,23 @@ defmodule Ezagent.DomainGit.TestSupport.GitCapFixture do
       raise ArgumentError, "grantee_uri must belong to the fixture workspace"
     end
 
-    admin_uri = Ezagent.URI.user(:system, :admin)
-    authorization = {:held_by, admin_uri}
+    %{
+      governance_uri: Ezagent.URI.user(:system, :admin),
+      grantee_uri: grantee_uri,
+      task_access_uri: task_access_uri,
+      workspace_uri: workspace_uri
+    }
+  end
+
+  def exact_task_cap(coordinates, action) when action in @actions and is_map(coordinates) do
+    %{
+      governance_uri: admin_uri,
+      grantee_uri: grantee_uri,
+      task_access_uri: task_access_uri,
+      workspace_uri: workspace_uri
+    } = coordinates
+
+    authorization = {:admin, admin_uri}
 
     capability =
       Capability.cap(
@@ -47,12 +62,13 @@ defmodule Ezagent.DomainGit.TestSupport.GitCapFixture do
       )
 
     {:ok, artifact} = Cap.issue(authorization, grantee_uri, capability)
-    true = Cap.verify_for(artifact, grantee_uri)
+    true = Cap.storable_for?(artifact, grantee_uri)
 
     invocation = %Invocation{
       target: Ezagent.URI.with_action(task_access_uri, :git_task_access, action),
       mode: :call,
       args: %{},
+      origin: :trusted_internal,
       ctx: %{
         caller: grantee_uri,
         caps: MapSet.new([artifact]),
@@ -60,13 +76,9 @@ defmodule Ezagent.DomainGit.TestSupport.GitCapFixture do
       }
     }
 
-    %{
+    Map.merge(coordinates, %{
       artifact: artifact,
-      governance_uri: admin_uri,
-      grantee_uri: grantee_uri,
-      invocation: invocation,
-      task_access_uri: task_access_uri,
-      workspace_uri: workspace_uri
-    }
+      invocation: invocation
+    })
   end
 end

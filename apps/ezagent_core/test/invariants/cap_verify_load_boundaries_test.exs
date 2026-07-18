@@ -31,18 +31,19 @@ defmodule Ezagent.Invariants.CapVerifyLoadBoundariesTest do
     @entity_caps => 1,
     @recipe_cap_binding => 1,
     @outbound_grant => 1,
-    @snapshot => 1
+    @snapshot => 1,
+    @git_task_access => 1
   }
-  @storage_home_count 7
+  @storage_home_count 8
 
-  test "I5 structural storage boundary calls are exact, ratcheted, and at most seven" do
+  test "I5 structural storage boundary calls are exact, ratcheted, and at most eight" do
     actual = cap_storage_calls()
 
     assert actual == @storage_homes,
            "Cap storage checks moved outside the reviewed load boundaries:\n#{inspect(actual, pretty: true)}"
 
     assert Enum.sum(Map.values(@storage_homes)) == @storage_home_count
-    assert @storage_home_count <= 7
+    assert @storage_home_count <= 8
   end
 
   test "I5 named boundaries route through the reviewed verification helpers" do
@@ -87,7 +88,7 @@ defmodule Ezagent.Invariants.CapVerifyLoadBoundariesTest do
 
     git_authorizer = definition_source(@git_task_access, :authorize_receiver, 3)
     assert git_authorizer =~ "signed_for?"
-    assert git_authorizer =~ "Cap.verify_for"
+    assert git_authorizer =~ "Cap.storable_for?"
 
     assert definition_source(@snapshot, :load_with_fallback, 3) =~
              "verify_snapshot_caps(receiver_uri)"

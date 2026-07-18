@@ -172,9 +172,10 @@ defmodule Ezagent.Resource.FsResolver.Registry do
     end
   end
 
-  # Discover every loaded plugin (the `:ezagent_plugin` app-env contract module —
-  # the SAME discovery `Mix.Tasks.Compile.EzagentPluginCheck` uses) and replay its
-  # `resource_types/0` through the write-once `batch_register`. RUNTIME discovery
+  # Discover every loaded resource provider. Plugins publish their provider via
+  # `:ezagent_plugin`; non-plugin domain apps use `:ezagent_resource_provider`.
+  # Replay each provider's `resource_types/0` through the write-once
+  # `batch_register`. RUNTIME discovery
   # (Application env + `apply/3`), NOT a compile dependency — core does not depend
   # on any plugin. Per-plugin isolation: a plugin that raises/throws/exits, or
   # whose decls conflict with an already-claimed (core or earlier-plugin)
@@ -186,7 +187,9 @@ defmodule Ezagent.Resource.FsResolver.Registry do
   # first start; here, during a restart-replay, best-effort restoration is correct.
   defp replay_plugin_resource_types do
     for {app, _desc, _vsn} <- Application.loaded_applications(),
-        mod = Application.get_env(app, :ezagent_plugin),
+        mod =
+          Application.get_env(app, :ezagent_resource_provider) ||
+            Application.get_env(app, :ezagent_plugin),
         is_atom(mod) and not is_nil(mod),
         Code.ensure_loaded?(mod),
         function_exported?(mod, :resource_types, 0) do
