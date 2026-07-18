@@ -43,6 +43,9 @@ export type KanbanState = {
   last_dispatch_status?: string | null
   // 分享看板生成的只读接收链接（kanban.share_board 成功后经 world:state 回推）。
   share_link?: string | null
+  // ㊲ 附件点击现签：kanban.download_artifact 成功后回推的 fresh 下载 href
+  // （ts=服务端毫秒时间戳，同一附件重复点击也触发 effect）。
+  download?: {href?: string; ref?: string; ts?: number} | null
   // 登录者身份 URI（session tab 的 conversation state 自带；插件配置面没有也无妨——
   // 配置面不出节点操作 UI）。协作模型规则 3/4 的「自己认领的节点」判定用它。
   caller_uri?: string | null
@@ -54,6 +57,14 @@ const inputCls =
   "rounded-md border border-border bg-background px-2.5 py-1.5 text-sm text-foreground placeholder:text-muted-foreground focus:outline-none focus:ring-1 focus:ring-ring"
 
 type UploadFn = (file: File) => Promise<{grant: string; name: string} | null>
+
+// ㊳ 渲染兜底：绝对 URL（任意 scheme）与站内路径（"/" 开头，如 uploads 下载 href）
+// 原样返回；无 scheme 的裸域名补 https://——绝不拼站点 base（存量旧数据在存储侧
+// 归一之前挂的也能直开）。
+export function artifactOpenHref(url: string): string {
+  if (/^[a-z][a-z0-9+.-]*:\/\//i.test(url) || url.startsWith("/")) return url
+  return "https://" + url
+}
 
 export function Kanban({
   state,
@@ -170,6 +181,20 @@ function KanbanDetail({state, onAction, onShare, onShareArtifact, onUploadFile}:
     if (selectedId && !tree.nodes[selectedId]) setSelectedId(tree.root_id)
   }, [tree, selectedId])
 
+  // ㊲ 点击现签：kanban.download_artifact 回推 fresh href（短 TTL，点开即用，
+  // 根治渲染预签 5 分钟过期）→ 隐藏 <a download> 触发下载（不 window.open，
+  // 异步回推场景会被弹窗拦截器拦）。ts 每次现签都变，重复点同一附件也触发。
+  const dl = state.download
+  useEffect(() => {
+    if (!dl?.href) return
+    const a = document.createElement("a")
+    a.href = dl.href
+    a.download = dl.ref || ""
+    document.body.appendChild(a)
+    a.click()
+    a.remove()
+  }, [dl?.href, dl?.ref, dl?.ts])
+
   const sel = selectedId ? tree.nodes[selectedId] : null
   const nodeArgs = selectedId ? {kanban_uri: uri, id: selectedId} : {}
   // R1.1 前端校验：stage 只能选"父棒或父棒+1"（根固定 positioning），跟后端一致——
@@ -185,7 +210,7 @@ function KanbanDetail({state, onAction, onShare, onShareArtifact, onUploadFile}:
         })()
 
   return (
-    <div className="flex h-full flex-col gap-3 p-5">
+    <div className="flex h-full min-h-[420px] flex-col gap-3 p-5">
       <div className="flex items-start justify-between gap-3">
         <div className="min-w-0">
           <h2 className="truncate text-base font-semibold text-foreground">看板 · {uri.split("/").pop()}</h2>
@@ -228,10 +253,11 @@ function KanbanDetail({state, onAction, onShare, onShareArtifact, onUploadFile}:
         </div>
       )}
 
-      {/* 画布区固定高度（不动 session 布局即可根治"左栏一长把画布滚出视野"）：
-          KanbanDetail 高度=header+这块固定高，不随左栏内容增长→外层 board 不滚→画布常驻。
-          左栏在这固定高内 overflow-y-auto 自己滚。 */}
-      <div className="flex h-[560px] gap-3 overflow-hidden">
+      {/* ㊶ 画布区屏幕自适配（对齐 Conversation 骨架的 min-w-0/flex-1/overflow）：
+          在有界高容器里（session tab / 插件详情页）flex-1 填满剩余高度、随窗口伸缩；
+          根上 min-h-[420px] 兜底无界容器（高度塌成 0 会让 react-flow 空白）。
+          左栏仍在本区内 overflow-y-auto 自己滚，不带动画布（"左栏一长把画布滚出视野"不回归）。 */}
+      <div className="flex min-h-0 flex-1 gap-3 overflow-hidden">
         {/* 侧边栏：导图列表 + 本图配置 + drop历史 + 节点属性（整栏在固定高内滚动，宽松；不带动画布） */}
         <aside className="flex w-72 flex-shrink-0 flex-col gap-3 overflow-y-auto pr-1">
           <div className="flex-shrink-0 rounded-md border border-border p-2">
@@ -304,7 +330,7 @@ function KanbanDetail({state, onAction, onShare, onShareArtifact, onUploadFile}:
         </aside>
 
         {/* 画布 */}
-        <div className="flex-1 overflow-hidden rounded-md border border-border">
+        <div className="min-w-0 flex-1 overflow-hidden rounded-md border border-border">
           {!tree.root_id ? (
             <div className="flex gap-2 p-4">
               {/* 协作模型 H1：任何成员可建根，建完自动认领给自己（单根先行，已有根后端拒 root_exists）。 */}
@@ -356,6 +382,8 @@ function NodePanel({node, args, stages, statuses, callerUri, dropEntries = [], o
   const [excal, setExcal] = useState<{initial: string | null; readOnly: boolean} | null>(null)
   // ㉗④ 添加产物下拉框当前选项
   const [addKind, setAddKind] = useState("link")
+  // ㊴ 链接产物单表单窗（名称+URL 一窗，替代两连 window.prompt）；ref 非空 = 编辑态（回填原值）
+  const [linkModal, setLinkModal] = useState<{ref?: string; name: string; url: string} | null>(null)
   const [uploadErr, setUploadErr] = useState<string | null>(null)
   const fileRef = useRef<HTMLInputElement | null>(null)
   // ㉖ 名称就地编辑：本地草稿随选中节点/服务端标题同步
@@ -374,13 +402,10 @@ function NodePanel({node, args, stages, statuses, callerUri, dropEntries = [], o
     if (!t || t === node.title) return setTitle(node.title)
     onAction("kanban.rename_node", {...args, title: t})
   }
-  // ㉗④ 按下拉框选项走各自的添加流
+  // ㉗④ 按下拉框选项走各自的添加流（㊴ 链接改单表单窗，不再 prompt 链）
   const addArtifact = () => {
     if (addKind === "link") {
-      const name = window.prompt("链接产物名（如 github PR #1）")
-      if (!name || !name.trim()) return
-      const url = window.prompt("URL（可分享链接，别填本地路径）") || ""
-      onAction("kanban.attach_artifact", {...args, artifact: {tool: "ref", kind: "link", ref: name.trim(), url}})
+      setLinkModal({name: "", url: ""})
     } else if (addKind === "content") {
       setContentOpen(true)
     } else if (addKind === "excalidraw") {
@@ -537,8 +562,33 @@ function NodePanel({node, args, stages, statuses, callerUri, dropEntries = [], o
                 ) : (
                   a.content && <span title={a.content}>📄</span>
                 )}
-                {a.url && (
-                  <a href={a.url} target="_blank" rel="noreferrer" className="text-primary hover:underline">打开</a>
+                {/* ㊲ 附件（kind=file）：点「打开」现签下载 token（dispatch 回推 fresh
+                    href → 上方 effect 触发下载）——渲染预签 5 分钟就过期，现签根治。 */}
+                {a.kind === "file" && a.ref ? (
+                  <button
+                    type="button"
+                    className="text-primary hover:underline"
+                    data-world-kanban-artifact-download
+                    onClick={() => onAction("kanban.download_artifact", {...args, ref: a.ref})}
+                  >
+                    打开
+                  </button>
+                ) : (
+                  // ㊳ 链接等其余产物：绝对 http(s) URL 原样新窗打开，裸域名补 https://，不拼站点 base。
+                  a.url && (
+                    <a href={artifactOpenHref(a.url)} target="_blank" rel="noreferrer" className="text-primary hover:underline">打开</a>
+                  )
+                )}
+                {/* ㊴ 链接产物就地编辑：回填原值到单表单窗，保存=detach 旧 + attach 新 */}
+                {canEdit && a.kind === "link" && a.ref && (
+                  <button
+                    type="button"
+                    className="text-primary hover:underline"
+                    data-world-kanban-artifact-edit
+                    onClick={() => setLinkModal({ref: a.ref, name: a.ref || "", url: a.url || ""})}
+                  >
+                    编辑
+                  </button>
                 )}
                 {onShareArtifact && (
                   <button type="button" className="text-primary hover:underline" onClick={() => onShareArtifact(name, a.url || "")}>
@@ -604,6 +654,20 @@ function NodePanel({node, args, stages, statuses, callerUri, dropEntries = [], o
         <MarkdownModal
           onSave={(name, body) => onAction("kanban.attach_artifact", {...args, artifact: {tool: "inline", kind: "spec", ref: name, content: body}})}
           onClose={() => setContentOpen(false)}
+        />
+      )}
+      {/* ㊴ 链接产物单表单窗：新建=空表单；编辑=回填原值。保存时编辑态先 detach
+          旧 ref 再 attach 新值（后端 attach 是 append，无 update 动作；两个 dispatch
+          按序过同一 LiveView 进程，不乱序）。 */}
+      {linkModal && (
+        <LinkArtifactModal
+          initial={linkModal}
+          onSave={(name, url) => {
+            if (linkModal.ref) onAction("kanban.detach_artifact", {...args, ref: linkModal.ref})
+            onAction("kanban.attach_artifact", {...args, artifact: {tool: "ref", kind: "link", ref: name, url}})
+            setLinkModal(null)
+          }}
+          onClose={() => setLinkModal(null)}
         />
       )}
       {/* 规则 4/5：操作行只对认领人自己出（版主后端兜底）；删除=删整棵子树。
@@ -677,6 +741,57 @@ function dropHistoryFor(tree: Tree, id: string | null): DropEntry[] {
     cur = tree.nodes[cur]?.parent_id ?? null
   }
   return (tree.drops || []).filter((d) => !!d.id && chain.has(d.id))
+}
+
+// ㊴ 链接产物表单窗：名称+URL 一个小窗（替代两连 window.prompt）。编辑态由调用方
+// 回填 initial；保存交回 (name, url)，detach/attach 组合由调用方编排。
+export function LinkArtifactModal({initial, onSave, onClose}: {
+  initial: {ref?: string; name: string; url: string}
+  onSave: (name: string, url: string) => void
+  onClose: () => void
+}) {
+  const [name, setName] = useState(initial.name)
+  const [url, setUrl] = useState(initial.url)
+  const save = () => {
+    if (!name.trim()) return
+    onSave(name.trim(), url.trim())
+  }
+  return (
+    <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/50 p-4">
+      <div className="flex w-full max-w-md flex-col gap-3 rounded-md border border-border bg-card p-4 shadow-lg" data-world-kanban-link-modal>
+        <div className="text-sm font-semibold text-foreground">{initial.ref ? "编辑链接产物" : "添加链接产物"}</div>
+        <label className="flex flex-col gap-1 text-xs text-muted-foreground">
+          名称
+          <input
+            className={`${inputCls} w-full`}
+            placeholder="如 github PR #1"
+            value={name}
+            onChange={(e) => setName(e.target.value)}
+            onKeyDown={(e) => e.key === "Enter" && save()}
+            autoFocus
+          />
+        </label>
+        <label className="flex flex-col gap-1 text-xs text-muted-foreground">
+          URL
+          <input
+            className={`${inputCls} w-full`}
+            placeholder="https://…（可分享链接，别填本地路径）"
+            value={url}
+            onChange={(e) => setUrl(e.target.value)}
+            onKeyDown={(e) => e.key === "Enter" && save()}
+          />
+        </label>
+        <div className="flex justify-end gap-2">
+          <Button type="button" size="sm" variant="secondary" onClick={onClose}>
+            取消
+          </Button>
+          <Button type="button" size="sm" disabled={!name.trim()} onClick={save}>
+            保存
+          </Button>
+        </div>
+      </div>
+    </div>
+  )
 }
 
 // ㉗④「内容」产物编辑器：照 ExcalidrawModal 的模态形态（弹大框），最简 md
@@ -824,6 +939,8 @@ const DISPATCH_ERR: Record<string, string> = {
   not_board_owner: "只有板主人（版主）能删除这块板",
   no_session_context: "请先进入一个会话再操作看板",
   has_content_cannot_unclaim: "先清空附件/指标才能取消认领（或直接删除整棵子树）",
+  // ㊲ 点击现签：附件已被删/树读不到（无权限也读不到）时报这个
+  artifact_not_found: "附件不存在或已被移除（或你没有这块板的读取权限）",
   forbidden_mixed_ownership: "子树里有他人认领的节点，不能删",
   identity_read_unavailable: "系统繁忙，请重试",
 }

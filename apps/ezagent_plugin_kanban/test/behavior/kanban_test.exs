@@ -296,6 +296,62 @@ defmodule Ezagent.ActionSet.KanbanTest do
       assert [%{target: 3, current: 1}] = committed(e2).nodes[c].metrics
     end
 
+    test "㊳ link 产物无 scheme 的 url 存储时补 https://（带 scheme / 站内路径 / 非 link 不动）",
+         %{tree: t, c: c} do
+      link = fn url ->
+        %{
+          "tool" => "ref",
+          "kind" => "link",
+          "ref" => "l-#{System.unique_integer()}",
+          "url" => url
+        }
+      end
+
+      # 裸域名 → 补 https://
+      {:ok, %{}, e} =
+        Kanban.handle_attach_artifact(
+          %{id: c, artifact: link.("example.com/pr/1")},
+          user_ctx(t, @alice)
+        )
+
+      assert %{url: "https://example.com/pr/1"} = List.last(committed(e).nodes[c].artifacts)
+
+      # 已带 scheme 原样
+      {:ok, %{}, e2} =
+        Kanban.handle_attach_artifact(
+          %{id: c, artifact: link.("http://a.b/c")},
+          user_ctx(committed(e), @alice)
+        )
+
+      assert %{url: "http://a.b/c"} = List.last(committed(e2).nodes[c].artifacts)
+
+      # 站内绝对路径原样
+      {:ok, %{}, e3} =
+        Kanban.handle_attach_artifact(
+          %{id: c, artifact: link.("/uploads/x")},
+          user_ctx(committed(e2), @alice)
+        )
+
+      assert %{url: "/uploads/x"} = List.last(committed(e3).nodes[c].artifacts)
+
+      # 非 link（file 的 uploads resource URI）不动
+      {:ok, %{}, e4} =
+        Kanban.handle_attach_artifact(
+          %{
+            id: c,
+            artifact: %{
+              "tool" => "upload",
+              "kind" => "file",
+              "ref" => "f",
+              "url" => "resource://ws/uploads/a"
+            }
+          },
+          user_ctx(committed(e3), @alice)
+        )
+
+      assert %{url: "resource://ws/uploads/a"} = List.last(committed(e4).nodes[c].artifacts)
+    end
+
     test "非 owner 不能挂载", %{tree: t, c: c} do
       assert {:error, :forbidden} =
                Kanban.handle_attach_artifact(

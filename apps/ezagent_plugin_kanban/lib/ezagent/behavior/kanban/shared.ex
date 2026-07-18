@@ -211,16 +211,31 @@ defmodule Ezagent.ActionSet.Kanban.Shared do
     end
   end
 
-  @doc "归一一个 artifact（atom/string 键兼容；content 限长）。"
+  @doc "归一一个 artifact（atom/string 键兼容；content 限长；link 的 url 补 scheme）。"
   def normalize_artifact(a) do
+    kind = sget(a, :kind)
+
     %{
       tool: sget(a, :tool),
-      kind: sget(a, :kind),
+      kind: kind,
       ref: sget(a, :ref),
-      url: sget(a, :url),
+      url: normalize_url(sget(a, :url), kind),
       content: cap_content(sget(a, :content))
     }
   end
+
+  # ㊳ 链接产物 URL 归一（存储侧）：用户常填 "example.com/x"（无 scheme）——前端
+  # `<a href>` 会被浏览器当相对路径拼上站点 base（变成 localhost 死链）。kind=="link"
+  # 时补 "https://"；已带 scheme（"xx://" 任意 scheme，含 resource://）或站内绝对路径
+  # （"/" 开头）不动。只动 link——file 的 url 是 uploads resource URI，别的 kind 由
+  # 各自动作拼（register_pr / attach_code_file 拼的都是完整 https 链接）。
+  defp normalize_url(url, "link") when is_binary(url) and url != "" do
+    if String.contains?(url, "://") or String.starts_with?(url, "/"),
+      do: url,
+      else: "https://" <> url
+  end
+
+  defp normalize_url(url, _kind), do: url
 
   defp cap_content(c) when is_binary(c), do: String.slice(c, 0, @artifact_content_limit)
   defp cap_content(_), do: nil

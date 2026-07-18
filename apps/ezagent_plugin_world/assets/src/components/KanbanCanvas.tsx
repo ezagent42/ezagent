@@ -188,7 +188,8 @@ function Flow({uri, tree, selectedId, onSelectNode, onAction}: CanvasProps) {
     if (nodesInitialized) fitView({padding: 0.2, maxZoom: 1, duration: 0})
   }, [nodesInitialized, laid, fitView])
 
-  // react-flow 必须有显式尺寸——父级(画布区)现在是固定高 h-[560px]，故 100% 是确定值（非 0）。
+  // react-flow 必须有显式尺寸——父级(画布区)是 flex-1 min-h-0 自适配（㊶），且
+  // KanbanDetail 根上有 min-h 兜底，故 100% 是确定值（非 0）。
   return (
     <div style={{height: "100%", width: "100%"}}>
       <ReactFlow
