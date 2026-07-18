@@ -1,6 +1,6 @@
 # Read-Plane Authorization: Unified-Mechanism Chokepoint + Anti-Bypass Gate — DESIGN
 
-> **Status:** DESIGN v3 — brainstormed live with Allen (2026-07-18), approved shape; codex adversarial R1 = NEEDS-REVISION (7 holes) → folded v2; codex R2 = 5/7 resolved + deeper layering/gateway/feed-shape holes → folded v3. Next = codex R3 confirm → writing-plans → implement.
+> **Status:** DESIGN v3 — **codex R3 verdict = SOUND-WITH-FIXES (architecturally sound; remaining items are plan constraints, see §9).** Brainstormed live with Allen (2026-07-18); codex adversarial R1 = NEEDS-REVISION (7 holes)→v2; R2 = 5/7 resolved + layering/gateway/feed-shape→v3; R3 = SOUND-WITH-FIXES. Next = writing-plans (fold §9 constraints) → codex plan review → implement.
 > **Author:** Claude (coordinator), with Allen. Two codex adversarial rounds grounded the coverage / live-state / layering-placement / gateway-boundary / feed-shape fixes.
 > **Base:** `origin/main` @ `70ffafa85`. Branch: `feat/read-plane-authz-chokepoint`.
 > **Relates:** jjkysy PR #1459 handoff `docs/together/2026-07-18/handoffs/read-plane-authz.md` · uploads-person-token companion · cap-signing #1457 (the write plane whose landing exposed this).
@@ -59,7 +59,7 @@ Chokepoint modules, **placed at the layer where their access policy is expressib
 - `AgentReads` (in `ezagent_domain_workspace`) — `list(caller, workspace)`.
 - `MountReads` — attachment/mount reads (placed with the mount policy).
 - `OperatorReads` (in `ezagent_domain_identity` or above) — global/operator list-all (registry, external-mirror), authorizing an operator cap.
-- A **composition layer** (world / `domain_ui`) may compose these (e.g. a workspace overview calling `SessionReads` + `AgentReads`) but is **forbidden from touching raw stores** (enforced by the gate §3.3).
+- A **composition layer** (`world` — above socialware; NOT `domain_ui`, which socialware already depends on, `socialware/mix.exs:46`) may compose these (e.g. a workspace overview calling `SessionReads` + `AgentReads`) but is **forbidden from touching raw stores** (enforced by the gate §3.3).
 
 Each chokepoint does, in order:
 1. **Access-policy check** for its scope (member-cap `Membership.authorize/3` ∪ container open-policy `PublicView.web_anon_access?/1` ∪ operator-cap) → fail-loud on deny. (Live-first — §3.2.)
@@ -141,3 +141,15 @@ Concrete placements:
 - **CQRS**: commands-via-aggregate / queries-via-projection is canonical; **query-side authorization** is a documented principle and forgetting it is the classic pitfall we hit; the remedy (authorize at the query handler / read gateway) is standard.
 - **Phoenix/Elixir**: "don't call `Repo` from web/LiveView — go through a context API" is documented practice; the chokepoint IS that context function, refined to authorize + own row-policy. Bypassing the `GenServer` for scale reads is correct OTP. The module boundary is enforceable via `Boundary` or the existing arch-gate.
 - **Domain specialization (ours)**: the authz unit is **query scope + named access policy** anchored on the container Kind where one exists, reusing the cap model (`Membership.authorize/3`) — the ezagent form of generic query-side authz.
+
+---
+
+## 9. Implementation constraints (deferred to the plan — NOT spec-directional)
+
+The two directional pillars are **§7 (acceptance criteria)** and **the drift-prevention gate (§1 + §3.3)**. Everything below is codex-R3-surfaced *implementation* detail the plan must honor; it does not change the design:
+- Chokepoint module placement per §5 (`SessionReads`∈socialware, `AgentReads`∈workspace, `OperatorReads`∈identity+); composition only from `world` (not `domain_ui`).
+- `InternalReads` inbound-allowlisted modules must be framework-internal-**only**; split any module that mixes principal + internal reads before allowlisting it.
+- Encode feed variants as a **fixed `view` enum** (`:conversation` / `:chat_feed` / `:external_feed`) + typed pagination/`committed_external_visible_by_ids` — never an arbitrary caller predicate.
+- `OperatorReads` over external-mirror data lives at the layer above identity/external-mirror.
+
+> **Drift-prevention, in one line:** a future developer who writes `Repo.all(...)`/`MessageStore.recent_in_session(...)` in any presenter/composition module gets a **red CI build** (module-boundary gate) → is forced through a chokepoint → **automatically inherits the current authz + row-policy**. New bypasses cannot merge, so a mechanism upgrade never leaves a legacy tail. This is the whole X (§0).
