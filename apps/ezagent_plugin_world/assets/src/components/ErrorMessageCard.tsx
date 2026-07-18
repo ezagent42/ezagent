@@ -13,12 +13,14 @@ type ErrorMessageCardProps = {
 export function ErrorMessageCard({error, onDismiss, onAction, onNavigate}: ErrorMessageCardProps) {
   const tone = categoryTone(error.category)
 
+  // 浮动 toast 必须不透明:背景用实心 bg-card,tone 只体现在边框和图标上
+  // （半透明色调浮在页面上方时,底下的内容会透过来）。
   const borderClass =
     tone === "danger"
-      ? "border-destructive/30 bg-destructive/5"
+      ? "border-destructive/40 bg-card"
       : tone === "warning"
-        ? "border-amber-500/30 bg-amber-500/5"
-        : "border-[var(--ez-blueink)]/30 bg-[var(--ez-blueink)]/5"
+        ? "border-amber-500/40 bg-card"
+        : "border-[var(--ez-blueink)]/40 bg-card"
 
   const iconClass =
     tone === "danger"

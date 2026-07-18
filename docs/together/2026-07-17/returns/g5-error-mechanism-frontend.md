@@ -140,6 +140,7 @@ dataset 有 error,DOM 无 `[data-error-code]` 卡片
 | 验证项 | 结果 |
 |---|---|
 | toast 浮动渲染(fixed,DOM 不被顶动) | PASS,证据 `../evidence/g5-live-error-toast.png` |
+| toast 背景不透明(实心 `bg-card`,tone 只体现在边框/图标;原 5% 透明色调会透出底下内容) | PASS(2026-07-18 复测) |
 | 5s 后自动消失 | PASS |
 | 相同错误再次触发 → toast 再次弹出 | PASS |
 | tsc / eslint / vitest(22) | PASS |
