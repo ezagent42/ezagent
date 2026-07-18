@@ -198,9 +198,19 @@ defmodule EzagentPluginKanban.WorldActions do
           })
 
         status = status_of(result)
-        if status == "ok", do: broadcast_kanban_changed(socket, uri)
+        snapshot = WorldData.board_snapshot(uri, read_ctx(socket))
 
-        {:noreply, push_tree(socket, uri, status)}
+        if status == "ok" do
+          broadcast_kanban_changed(socket, uri)
+
+          materialize_op(
+            socket,
+            op_text(action, args, uri, snapshot),
+            op_attachments(action, args)
+          )
+        end
+
+        {:noreply, push_snapshot(socket, snapshot, status)}
 
       :error ->
         {:noreply, assign(socket, :last_dispatch_status, "error:bad_kanban_uri")}
@@ -224,7 +234,11 @@ defmodule EzagentPluginKanban.WorldActions do
           })
 
         status = status_of(result)
-        if status == "ok", do: broadcast_kanban_changed(socket, uri)
+
+        if status == "ok" do
+          broadcast_kanban_changed(socket, uri)
+          materialize_op(socket, op_text(action, args, uri, nil))
+        end
 
         {:noreply,
          socket
@@ -259,6 +273,8 @@ defmodule EzagentPluginKanban.WorldActions do
 
         case result do
           {:ok, %{board_id: board}} ->
+            materialize_op(socket, "【看板·#{uri_label(uri)}】同步了看板到 Miro")
+
             {:noreply,
              socket
              |> assign(:last_dispatch_status, "ok")
@@ -477,6 +493,7 @@ defmodule EzagentPluginKanban.WorldActions do
             # 建板也广播 {:kanban_changed}（e2e r08 残留：专用路径漏接任务6的广播，
             # 本人列表与同会话其他成员都靠它刷新）。
             broadcast_kanban_changed(socket, board_uri)
+            materialize_op(socket, "新建了看板「#{uri_label(board_uri)}」")
 
             {:noreply,
              socket
@@ -506,6 +523,7 @@ defmodule EzagentPluginKanban.WorldActions do
           {:ok, _report} ->
             # 板没了:清掉选中板,推刷新后的列表(前端回列表态);同会话其他成员靠广播刷新。
             broadcast_kanban_changed(socket, uri)
+            materialize_op(socket, "删除了看板「#{uri_label(uri)}」（含全部挂载）")
 
             {:noreply,
              socket
@@ -569,6 +587,106 @@ defmodule EzagentPluginKanban.WorldActions do
     end
   end
 
+  # --- 操作物化消息（2026-07-18 一等任务）-----------------------------------
+  #
+  # 所有 kanban 写操作成功后，以**操作者身份**往当前会话物化一条
+  # `visibility: :internal, hops: 0` 消息（动作 + 节点摘要；attach 消息带附件引用）：
+  #   * `:internal` —— 普通 chat 读面（`recent_visible_in_session`）过滤掉，不刷屏；
+  #     留痕在 MessageStore，立「一切操作皆对话」心智模型；
+  #   * `hops: 0` —— `session.send` 存完即 `:hop_exhausted`，零路由 fan-out
+  #     （不惊动 assistant / relay / 外部 channel）；
+  #   * attach 的附件引用 = uploads resource URI 进 `body.attachments`
+  #     （㊲ 救济半件：同会话成员日后经消息参与面可下载——serve 侧归 infra-C）。
+  # 无当前会话（/plugins/kanban 独立页）无处可记，静默跳过（与 kanban_changed 广播
+  # 同口径）；发送 best-effort（:cast），失败不回滚动作（留痕缺一条 vs 动作报错，取前者）。
+  defp materialize_op(socket, text, attachments \\ []) do
+    case socket.assigns[:current_session_uri] do
+      %URI{} = session_uri ->
+        caller = socket.assigns.current_entity_uri
+
+        msg =
+          Ezagent.Message.new(caller, %{text: text, attachments: attachments},
+            visibility: :internal,
+            hops: 0
+          )
+
+        _ =
+          Invocation.dispatch(%Invocation{
+            target: Ezagent.URI.with_action(session_uri, :session, :send),
+            mode: :cast,
+            args: %{message: msg},
+            ctx: %{
+              caller: caller,
+              caps: Map.get(socket.assigns, :current_caps, MapSet.new()),
+              reply: :ignore
+            }
+          })
+
+        :ok
+
+      _ ->
+        :ok
+    end
+  end
+
+  # 动作 → 中文摘要（节点名从 post-action snapshot 取——rename 后是新名；remove 后
+  # 节点已不在，退成通用句）。snapshot=nil（act_board 图级动作）只出图级句。
+  defp op_text(action, args, board_uri, snapshot) do
+    board = uri_label(board_uri)
+
+    title = fn ->
+      case snapshot && get_in(snapshot, ["tree", "nodes", args[:id], "title"]) do
+        t when is_binary(t) and t != "" -> t
+        _ -> to_string(args[:id] || "?")
+      end
+    end
+
+    body =
+      case action do
+        :add_node -> "新增节点「#{args[:title]}」"
+        :rename_node -> "把节点改名为「#{args[:title]}」"
+        :move_node -> "移动了节点「#{title.()}」"
+        :remove_node -> "删除了一个节点及其整棵子树"
+        :set_stage -> "把节点「#{title.()}」的阶段设为 #{args[:stage]}"
+        :claim_node -> "认领了节点「#{title.()}」"
+        :unclaim_node -> "取消认领了节点「#{title.()}」"
+        :set_status -> "把节点「#{title.()}」的状态设为 #{args[:status]}"
+        :attach_artifact -> "在节点「#{title.()}」挂了产物「#{artifact_ref(args)}」"
+        :detach_artifact -> "移除了节点「#{title.()}」的产物「#{args[:ref]}」"
+        :set_metric -> "更新了节点「#{title.()}」的指标"
+        :drop_subtree -> "drop 标记了节点「#{title.()}」（不达标跟踪，未删除）"
+        :register_pr -> "在节点「#{title.()}」登记了 PR ##{args[:pr]}"
+        :attach_code_file -> "在节点「#{title.()}」钉了代码文件 #{args[:path]}"
+        :save_miro_creds -> "更新了 Miro 凭证"
+        :set_board_config -> "更新了看板配置"
+        other -> "执行了 #{other}"
+      end
+
+    "【看板·#{board}】" <> body
+  end
+
+  # attach 的附件引用：file 产物（attach_upload 路挂进来的）url 是 uploads resource
+  # URI → 作为消息 attachments（%URI{} 列表，chat attachments 同形）。其余动作无附件。
+  defp op_attachments(:attach_artifact, %{artifact: artifact}) when is_map(artifact) do
+    with "file" <- artifact[:kind] || artifact["kind"],
+         url when is_binary(url) <- artifact[:url] || artifact["url"],
+         {:ok, %URI{} = uri} <- Ezagent.URI.parse(url),
+         true <- Ezagent.URI.scheme?(uri, :resource) do
+      [uri]
+    else
+      _ -> []
+    end
+  end
+
+  defp op_attachments(_action, _args), do: []
+
+  defp artifact_ref(%{artifact: artifact}) when is_map(artifact),
+    do: artifact[:ref] || artifact["ref"] || artifact[:kind] || artifact["kind"] || "artifact"
+
+  defp artifact_ref(_), do: "artifact"
+
+  defp uri_label(%URI{} = uri), do: uri |> URI.to_string() |> String.split("/") |> List.last()
+
   # --- helpers --------------------------------------------------------
 
   defp ctx(socket) do
@@ -600,9 +718,7 @@ defmodule EzagentPluginKanban.WorldActions do
   defp kanban_uri(_socket, %{"kanban_uri" => u}) when is_binary(u) and u != "", do: u
   defp kanban_uri(_socket, _a), do: nil
 
-  defp push_tree(socket, uri, status) do
-    snapshot = WorldData.board_snapshot(uri, read_ctx(socket))
-
+  defp push_snapshot(socket, snapshot, status) do
     socket
     |> assign(:last_dispatch_status, status)
     |> push_event(
