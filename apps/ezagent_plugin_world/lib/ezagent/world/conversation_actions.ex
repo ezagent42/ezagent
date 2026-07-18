@@ -230,8 +230,12 @@ defmodule Ezagent.World.ConversationActions do
   end
 
   @doc """
-  Page history backwards and push the older rows to the island for prepend
-  (parity: `load_older_messages` over `Ezagent.MessageStore.older_than/3`).
+  Page history backwards and push the older rows to the island for prepend.
+
+  The `caller` (the viewing entity) is threaded so the pagination read is
+  authorized at the `SessionReads` chokepoint — previously this paged the store
+  with NO authorization, so a non-member could deep-link and scroll back through
+  a conversation they were never in. A non-member now gets an empty page.
   """
   @spec load_older(Phoenix.LiveView.Socket.t(), URI.t(), String.t()) ::
           {:noreply, Phoenix.LiveView.Socket.t()}
@@ -239,8 +243,8 @@ defmodule Ezagent.World.ConversationActions do
     {older, next_cursor} =
       ConversationData.load_older(
         session_uri,
+        Map.get(socket.assigns, :current_entity_uri),
         before,
-        Map.get(socket.assigns, :current_caps, MapSet.new()),
         # Lazy per-viewer error-card ctx (G5 source 2) — only resolved when a
         # paged message actually carries a structured agent-error payload.
         Ezagent.World.ErrorCards.live_viewer_ctx(socket)
