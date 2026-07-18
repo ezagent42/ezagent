@@ -81,23 +81,59 @@ defmodule Ezagent.CapabilityRegistry do
   @spec register(kind :: module(), action :: atom(), behavior :: module()) :: :ok
   def register(kind, action, behavior)
       when is_atom(kind) and is_atom(action) and is_atom(behavior) do
+    case register_owned(kind, action, behavior) do
+      receipt when receipt in [:acquired, :existing_identical] ->
+        :ok
+
+      {:error, {:capability_subject_conflict, ^kind, ^action, existing, ^behavior}} ->
+        raise RuntimeError,
+              "Capability subject conflict: #{inspect(kind)} :#{action} is already " <>
+                "registered to #{inspect(existing)}; cannot re-register to #{inspect(behavior)}"
+
+      {:error, reason} ->
+        raise RuntimeError, inspect(reason)
+    end
+  end
+
+  @doc """
+  Atomically register a subject and report whether this call acquired it.
+
+  The receipt lets application boot rollback only declarations inserted by that
+  boot attempt. Mutation of the two registry tables is serialized under one
+  registry lock; this does not claim atomicity with any other registry.
+  """
+  @spec register_owned(module(), atom(), module()) ::
+          :acquired | :existing_identical | {:error, term()}
+  def register_owned(kind, action, behavior)
+      when is_atom(kind) and is_atom(action) and is_atom(behavior) do
+    :global.trans({__MODULE__, :mutation}, fn ->
+      register_owned_locked(kind, action, behavior)
+    end)
+  end
+
+  defp register_owned_locked(kind, action, behavior) do
     description = lookup_description!(behavior, action)
     dispatchable? = behavior_dispatchable?(behavior)
 
-    check_conflict!(kind, action, behavior)
+    case lookup_subject(kind, action) do
+      {:ok, %{behavior: ^behavior}} ->
+        :existing_identical
 
-    :ets.insert(
-      Subjects.table(),
-      {{kind, behavior, action}, %{description: description, dispatchable?: dispatchable?}}
-    )
+      {:ok, %{behavior: existing}} ->
+        {:error, {:capability_subject_conflict, kind, action, existing, behavior}}
 
-    if dispatchable? do
-      # Single legitimate use of the raw BehaviorRegistry.register/3 —
-      # all other production code must route through here.
-      :ok = BehaviorRegistry.register(kind, action, behavior)
+      :error ->
+        :ets.insert(
+          Subjects.table(),
+          {{kind, behavior, action}, %{description: description, dispatchable?: dispatchable?}}
+        )
+
+        if dispatchable? do
+          :ok = BehaviorRegistry.register(kind, action, behavior)
+        end
+
+        :acquired
     end
-
-    :ok
   end
 
   @doc """
@@ -312,24 +348,6 @@ defmodule Ezagent.CapabilityRegistry do
       behavior.dispatchable?()
     else
       true
-    end
-  end
-
-  defp check_conflict!(kind, action, new_behavior) do
-    case :ets.match_object(Subjects.table(), {{kind, :_, action}, :_}) do
-      [] ->
-        :ok
-
-      [{{^kind, ^new_behavior, ^action}, _}] ->
-        :ok
-
-      [{{^kind, other_behavior, ^action}, _}] ->
-        raise RuntimeError,
-              "Capability subject conflict: #{inspect(kind)} :#{action} " <>
-                "is already registered to #{inspect(other_behavior)}; " <>
-                "cannot re-register to #{inspect(new_behavior)}. " <>
-                "Same {kind, action} mapped to two different behaviors " <>
-                "is a caller bug — find the dup and decide which is correct."
     end
   end
 
