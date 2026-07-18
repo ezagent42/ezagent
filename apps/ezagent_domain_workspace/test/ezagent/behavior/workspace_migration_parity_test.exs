@@ -85,6 +85,8 @@ defmodule Ezagent.ActionSet.WorkspaceMigrationParityTest do
       session_uri =
         Ezagent.URI.new!("session://#{workspace_uri.host}/default/#{short_name}")
 
+      _authority = Ezagent.Test.CapHelper.install_test_authority!(session_uri, :session)
+
       {:ok, session_uri, %{}}
     end
   end
@@ -210,6 +212,7 @@ defmodule Ezagent.ActionSet.WorkspaceMigrationParityTest do
       # the existing `workspace_test.exs` add_member tests).
       {:ok, _} = Ezagent.Users.create(user_uri, nil, [])
       slice = slice(%{})
+      _authority = install_test_authority!(workspace_uri, :workspace)
       ctx = %{self_uri: workspace_uri}
 
       assert {:ok, %{buckets: buckets}} =
@@ -222,8 +225,8 @@ defmodule Ezagent.ActionSet.WorkspaceMigrationParityTest do
       # across all chokepoint wrappers). Router's `annotate_target_with_action`
       # is a no-op when already present, so the dispatch outcome is
       # IDENTICAL to the legacy plain-target form (behavior-preserving).
-      assert cmd.target == Ezagent.URI.with_action(user_uri, :identity, :grant_cap)
-      assert cmd.action == :grant_cap
+      assert cmd.target == Ezagent.URI.with_action(user_uri, :identity, :store_cap)
+      assert cmd.action == :store_cap
 
       # The cap carried by the dispatch is the workspace.create_session
       # cap on the workspace URI. This is the "actual side-effect" the
@@ -562,7 +565,7 @@ defmodule Ezagent.ActionSet.WorkspaceMigrationParityTest do
       assert Ezagent.ActionSet.new_style?(WB)
     end
 
-    test "actions/0 lists the 14 declared actions" do
+    test "actions/0 lists the declared actions" do
       assert WB.actions() |> Enum.sort() ==
                [
                  :add_member,
@@ -571,14 +574,17 @@ defmodule Ezagent.ActionSet.WorkspaceMigrationParityTest do
                  :create_agent,
                  :create_session,
                  :instantiate,
+                 :list_agent_templates,
                  :list_members,
                  :list_routing_rules,
+                 :list_session_templates,
                  :list_templates,
                  :remove_cross_prefix_members,
                  :remove_member,
                  :remove_template,
                  :set_routing_rules,
-                 :unassign_role
+                 :unassign_role,
+                 :write_session_templates
                ]
     end
 

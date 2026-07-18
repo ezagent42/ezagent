@@ -78,9 +78,9 @@ defmodule Ezagent.PluginCc.Template.CcHeadlessAgent do
   def validate(_), do: {:error, :not_a_map}
 
   # Every cc_headless.agent validation check AFTER the class-string check, shared
-  # with the deepseek provider shim (`CcHeadlessDeepseekAgent`) so its
+  # with the custom-backend provider shim (`CcHeadlessCustomAgent`) so its
   # `validate/1` reuses the exact rules while accepting its own
-  # `"cc_headless_deepseek.agent"` class.
+  # `"cc_headless_custom.agent"` class.
   @doc false
   @spec validate_after_class(map()) :: :ok | {:error, term()}
   def validate_after_class(tmpl) when is_map(tmpl) do
@@ -99,10 +99,10 @@ defmodule Ezagent.PluginCc.Template.CcHeadlessAgent do
 
   def instantiate(_tmpl_name, tmpl, _workspace_uri), do: {:error, {:invalid_template, tmpl}}
 
-  # Flavor-parameterized instantiate body, shared with the deepseek provider
-  # shim (`CcHeadlessDeepseekAgent`) so the STORED launch flavor is the caller's
-  # flavor (`cc-headless` vs `cc-headless-deepseek`) while the SDK-sidecar spawn
-  # path stays this single module. The provider dimension rides in `tmpl` as a
+  # Flavor-parameterized instantiate body, shared with the custom-backend
+  # provider shim (`CcHeadlessCustomAgent`) so the STORED launch flavor is the
+  # caller's flavor (`cc-headless` vs `cc-headless-custom`) while the SDK-sidecar
+  # spawn path stays this single module. The provider dimension rides in `tmpl` as a
   # `"provider"` data field (read by `sdk_sidecar_params/2` → the sidecar's
   # `EZAGENT_CC_SDK_ENV` passthrough → the Python worker's SDK `env=`).
   @doc false
@@ -248,7 +248,7 @@ defmodule Ezagent.PluginCc.Template.CcHeadlessAgent do
     end
   end
 
-  # Public (`@doc false`) so the deepseek-backend test can assert the provider
+  # Public (`@doc false`) so the cc-custom-backend test can assert the provider
   # env (`cmd_env`) threaded into the sidecar without starting a real sidecar.
   @doc false
   def sdk_sidecar_params(agent_uri, tmpl) do
@@ -263,7 +263,22 @@ defmodule Ezagent.PluginCc.Template.CcHeadlessAgent do
       cwd: Map.fetch!(tmpl, "cwd"),
       config_dir: config_dir,
       session_id: Map.get(tmpl, "claude_session_id") || new_session_id(),
-      permission_mode: Map.get(tmpl, "permission_mode", "default"),
+      # PTY parity (live e2e 2026-07-17): the PTY flavor launches `claude` with
+      # `--dangerously-skip-permissions` (SpawnPlan argv); headless ran
+      # `permission_mode=default`, and since a headless sidecar has NOBODY to
+      # answer a prompt, every skill-reference Read / outside-cwd Bash / Write
+      # hung on approval — the kanban-assistant could not execute its own
+      # skill's CLI. `bypassPermissions` is the SDK equivalent of the PTY flag.
+      #
+      # Scope of the argument (codex review of PR #1452): this is a BEHAVIOR
+      # PARITY claim with the PTY flavor, not a full-boundary claim. CapBAC
+      # bounds what the agent can DISPATCH through the ezagent CLI (token +
+      # caps on every action); it does NOT bound Bash/Read/Write/network on
+      # the shared host — neither does the PTY flavor today. Tightening both
+      # flavors behind per-agent OS isolation (or a role-gated bypass) is a
+      # platform decision tracked in the task-A return's open decisions.
+      # An explicit template value still overrides.
+      permission_mode: Map.get(tmpl, "permission_mode", "bypassPermissions"),
       model: Map.get(tmpl, "model"),
       effort: Map.get(tmpl, "effort") || Map.get(tmpl, "claude_effort"),
       cli_path: Map.get(tmpl, "claude_cli_path"),
@@ -271,13 +286,21 @@ defmodule Ezagent.PluginCc.Template.CcHeadlessAgent do
       allowed_tools: ensure_skill_tool(Map.get(tmpl, "allowed_tools"), plugins != []),
       disallowed_tools: Map.get(tmpl, "disallowed_tools"),
       mcp_servers: Map.get(tmpl, "mcp_servers"),
-      # Provider/backend env (anthropic|deepseek), ORTHOGONAL to the headless
-      # transport. anthropic → %{} (unchanged). deepseek → the 8-var DeepSeek
-      # block; the sidecar exports it as `EZAGENT_CC_SDK_ENV` and the Python
-      # worker applies it as the Claude Code SDK subprocess `env=`, so headless
-      # deepseek talks to the DeepSeek endpoint exactly like the pty path. The
-      # deepseek instantiate already fail-fasts on a missing DEEPSEEK_API_KEY.
-      cmd_env: provider_cmd_env(tmpl),
+      # Provider/backend env (anthropic | custom-backend profile), ORTHOGONAL
+      # to the headless transport. anthropic → %{} (unchanged). A catalog
+      # profile → its env block; the sidecar exports it as `EZAGENT_CC_SDK_ENV`
+      # and the Python worker applies it as the Claude Code SDK subprocess
+      # `env=`, so a headless custom-backend agent talks to the vendor endpoint
+      # exactly like the pty path. The custom-backend instantiate already
+      # fail-fasts on a missing profile API key.
+      #
+      # ALSO carries the CLI-identity credential for ROLE-agents (#1323 落 main /
+      # Phase 3 ③ T7d parity): the SAME `SpawnPlan.maybe_put_cli_identity_env/3`
+      # seam the PTY flavor uses, so a headless role-agent (e.g. the
+      # kanban-assistant) can drive the ezagent CLI as itself from its Bash
+      # tool (`EZAGENT_USER_TOKEN` → `EzagentCli.Exec`). Role-less agents get
+      # provider env only — no behavior change.
+      cmd_env: cmd_env(agent_uri, tmpl),
       uv_path: Map.get(tmpl, "uv_path"),
       python_path: Map.get(tmpl, "python_path"),
       sdk_worker_path: Map.get(tmpl, "sdk_worker_path"),
@@ -285,12 +308,32 @@ defmodule Ezagent.PluginCc.Template.CcHeadlessAgent do
     }
   end
 
+  defp cmd_env(agent_uri, tmpl) do
+    tmpl
+    |> provider_cmd_env()
+    |> Ezagent.PluginCc.Template.SpawnPlan.maybe_put_cli_identity_env(agent_uri, tmpl)
+  end
+
   defp provider_cmd_env(tmpl) do
     case Ezagent.PluginCc.Provider.provider_env(tmpl) do
-      {:ok, env} -> env
-      # Unreachable for deepseek (instantiate gates the key first); a bare {} is
-      # a safe no-op for the sidecar's `maybe_json_env` (skips empty maps).
-      {:error, _} -> %{}
+      {:ok, env} ->
+        env
+
+      # Unreachable when the flavor's instantiate/3 gates correctly
+      # (`CcHeadlessCustomAgent`'s `Provider.ensure_api_key/2` fail-fast runs
+      # before this) — this raise is the defense line for a template that
+      # bypassed those gates. Fail loud so the misconfiguration is visible; no
+      # silent fallback to the default anthropic path (precedent:
+      # CcAgent.reject_stale_config_dir_data_key!/1).
+      {:error, reason} ->
+        raise ArgumentError,
+              "cc-headless: provider " <>
+                inspect(Ezagent.PluginCc.Provider.provider_of(tmpl)) <>
+                " failed closed — " <>
+                inspect(reason) <>
+                ". Refusing to silently fall back to the default anthropic path; " <>
+                "the flavor's instantiate/3 should have gated this before spawn " <>
+                "(fail loud so the misconfiguration is visible, no silent fallback)."
     end
   end
 

@@ -13,7 +13,7 @@ defmodule EzagentCore.Architecture.CapSigningFailLoudTest do
 
   test "scanner recognizes rescue-to-false inside a verification function" do
     source = """
-    def verify(cap) do
+    def valid_for?(cap, needed, presenter) do
       try do
         verify_signature(cap)
       rescue
@@ -27,7 +27,7 @@ defmodule EzagentCore.Architecture.CapSigningFailLoudTest do
 
   test "scanner recognizes an if branch in rescue that denies verification" do
     source = """
-    def verify(cap) do
+    def valid_for?(cap, needed, presenter) do
       try do
         verify_signature(cap)
       rescue
@@ -41,7 +41,7 @@ defmodule EzagentCore.Architecture.CapSigningFailLoudTest do
 
   test "scanner recognizes a case branch in rescue that denies verification" do
     source = """
-    def verify(cap) do
+    def valid_for?(cap, needed, presenter) do
       try do
         verify_signature(cap)
       rescue
@@ -59,7 +59,7 @@ defmodule EzagentCore.Architecture.CapSigningFailLoudTest do
 
   test "scanner does not confuse a genuine deny with a rescued infrastructure failure" do
     source = """
-    def verify(cap) do
+    def valid_for?(cap, needed, presenter) do
       with true <- valid?(cap) do
         true
       else

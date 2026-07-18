@@ -110,14 +110,18 @@ defmodule EzagentDomainInstanceMessage.Integration.PublisherSessionTest do
     # Each call adds a NEW unique member → slice ALWAYS differs from
     # prior → SliceChange fires every time.
     member_uri = spawn_member_user()
+    target = URI.new!("#{URI.to_string(session_uri)}?action=session.join")
+    admin = User.admin_uri()
+    cap = Ezagent.Test.CapHelper.signed_action_cap!(target, admin)
 
     Invocation.dispatch(%Invocation{
-      target: URI.new!("#{URI.to_string(session_uri)}?action=session.join"),
+      origin: :trusted_internal,
+      target: target,
       mode: :call,
       args: %{member: member_uri},
       ctx: %{
-        caller: User.admin_uri(),
-        caps: MapSet.new([Ezagent.Capability.admin_genesis_cap()]),
+        caller: admin,
+        caps: MapSet.new([cap]),
         reply: {:caller_inbox, self()}
       }
     })
@@ -126,8 +130,13 @@ defmodule EzagentDomainInstanceMessage.Integration.PublisherSessionTest do
   # Codex round-1 CRITICAL fix (2026-05-25) — Session.subscribe_from/3
   # etc. now RAISE; production callers must use the 4-ary form with
   # an explicit ctx. Tests supply admin caps explicitly.
-  defp admin_ctx do
-    %{caller: User.admin_uri(), caps: MapSet.new([Ezagent.Capability.admin_genesis_cap()])}
+  defp admin_ctx(session_uri) do
+    raw_ctx = %{
+      caller: User.admin_uri(),
+      caps: MapSet.new([Ezagent.Capability.admin_genesis_cap()])
+    }
+
+    Ezagent.Test.CapHelper.signed_ctx!(session_uri, raw_ctx, :session)
   end
 
   describe "Session.subscribe_from/4 with :latest (production path)" do
@@ -135,7 +144,8 @@ defmodule EzagentDomainInstanceMessage.Integration.PublisherSessionTest do
       session_uri = spawn_session()
 
       # Subscribe BEFORE mutating; cursor=0 at this point.
-      assert {:ok, 0} = Session.subscribe_from(session_uri, self(), :latest, admin_ctx())
+      assert {:ok, 0} =
+               Session.subscribe_from(session_uri, self(), :latest, admin_ctx(session_uri))
 
       # Mutate (chat.join adds a new member to the :chat slice).
       assert {:ok, %{members: _}} = mutate_chat_slice(session_uri)
@@ -166,7 +176,8 @@ defmodule EzagentDomainInstanceMessage.Integration.PublisherSessionTest do
           send(parent, {:replayed, msgs})
         end)
 
-      assert {:ok, 3} = Session.subscribe_from(session_uri, pid, :earliest, admin_ctx())
+      assert {:ok, 3} =
+               Session.subscribe_from(session_uri, pid, :earliest, admin_ctx(session_uri))
 
       assert_receive {:replayed, events}, 500
       assert Enum.map(events, & &1.cursor) == [1, 2, 3]
@@ -180,7 +191,7 @@ defmodule EzagentDomainInstanceMessage.Integration.PublisherSessionTest do
       Enum.each(1..5, fn _ -> {:ok, _} = mutate_chat_slice(session_uri) end)
       wait_until_cursor(session_uri, 5)
 
-      assert {:ok, events} = Session.history(session_uri, 1, 3, admin_ctx())
+      assert {:ok, events} = Session.history(session_uri, 1, 3, admin_ctx(session_uri))
       assert Enum.map(events, & &1.cursor) == [2, 3]
     end
   end
@@ -192,7 +203,9 @@ defmodule EzagentDomainInstanceMessage.Integration.PublisherSessionTest do
       {:ok, _} = mutate_chat_slice(session_uri)
       wait_until_cursor(session_uri, 1)
 
-      assert {:ok, %{cursor: 1, state: state}} = Session.snapshot(session_uri, admin_ctx())
+      assert {:ok, %{cursor: 1, state: state}} =
+               Session.snapshot(session_uri, admin_ctx(session_uri))
+
       # `state` is the most recent event's payload — under the PR-EM-0
       # shape, that's a map with `:new_slice`. Just assert the shape;
       # exact content is the Chat Behavior's concern.
@@ -235,7 +248,7 @@ defmodule EzagentDomainInstanceMessage.Integration.PublisherSessionTest do
         caps: MapSet.new()
       }
 
-      assert {:error, :unauthorized} =
+      assert {:error, :missing_cap} =
                Session.subscribe_from(session_uri, self(), :latest, empty_ctx)
     end
   end

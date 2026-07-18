@@ -288,9 +288,25 @@ defmodule Ezagent.Registration do
     # add_member result (or :skipped when the workspace app isn't loaded).
     if workspace_loaded?(:add_member, 3) do
       issuer = Ezagent.URI.new!(issuer_str)
-      ctx = %{caller: issuer, caps: Ezagent.Identity.list_caps_for(issuer)}
+      workspace_uri = Ezagent.URI.workspace(ws_name)
+      target = Ezagent.URI.with_action(workspace_uri, :workspace, :add_member)
 
-      case apply(Ezagent.Workspace, :add_member, [ws_name, user_uri, ctx]) do
+      authorization =
+        if Ezagent.URI.stable_key(issuer) ==
+             Ezagent.URI.stable_key(Ezagent.Entity.User.admin_uri()),
+           do: {:admin, issuer},
+           else: {:held_by, issuer}
+
+      result =
+        with {:ok, cap} <- Ezagent.Cap.issue_for_action(authorization, issuer, target) do
+          apply(Ezagent.Workspace, :add_member, [
+            ws_name,
+            user_uri,
+            %{caller: issuer, caps: [cap]}
+          ])
+        end
+
+      case result do
         :ok ->
           :ok
 
@@ -367,7 +383,6 @@ defmodule Ezagent.Registration do
   defp founder_caps(workspace_uri) do
     workspace_actions = [:create_agent, :add_member, :remove_member]
     invite_actions = [:mint_invite, :list_invites, :revoke_invite]
-    api_key_actions = [:list_api_keys, :put_api_key, :delete_api_key]
 
     workspace_caps =
       Enum.map(workspace_actions, fn action ->
@@ -391,18 +406,12 @@ defmodule Ezagent.Registration do
         )
       end)
 
-    api_key_caps =
-      Enum.map(api_key_actions, fn action ->
-        Ezagent.Capability.cap(
-          :any,
-          Ezagent.ActionSet.ApiKeys,
-          action,
-          {:within_workspace, workspace_uri},
-          workspace_uri
-        )
-      end)
-
-    workspace_caps ++ invite_caps ++ api_key_caps
+    # API-key actions live on each concrete Agent Kind. Under per-Kind
+    # signing there is no authority that can sign a wildcard for future
+    # agents; the create-agent path delegates authority on the new concrete
+    # Agent instead. Founder bootstrap therefore contains only capabilities
+    # signed by the already-live Workspace Kind.
+    workspace_caps ++ invite_caps
   end
 
   defp workspace_loaded?(fun, arity) do

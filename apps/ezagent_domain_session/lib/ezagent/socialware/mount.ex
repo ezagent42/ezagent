@@ -249,7 +249,7 @@ defmodule Ezagent.Socialware.Mount do
           case Ezagent.Identity.Grant.revoke_cap(
                  grantee_uri,
                  cap,
-                 {:rule, :socialware_mount_unmount, granter}
+                 {:held_by, granter}
                ) do
             :ok -> {:cont, :ok}
             {:error, reason} -> {:halt, {:error, {:mount_revoke_failed, action, reason}}}

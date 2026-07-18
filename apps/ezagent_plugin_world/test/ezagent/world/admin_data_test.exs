@@ -1,6 +1,7 @@
 defmodule Ezagent.World.AdminDataTest do
-  # async: false — these read global KindRegistry / ETS state.
-  use ExUnit.Case, async: false
+  # async: false — these read global KindRegistry state. Settings state also
+  # reads `app_settings`, so the test must own a SQL Sandbox connection.
+  use EzagentCore.DataCase, async: false
 
   test "overview state includes kpis, available_sessions, and session_template_names" do
     ws = Ezagent.URI.workspace("acme")

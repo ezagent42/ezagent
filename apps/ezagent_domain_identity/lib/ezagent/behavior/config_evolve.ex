@@ -211,20 +211,58 @@ defmodule Ezagent.ActionSet.ConfigEvolve do
   @impl Ezagent.Lifecycle
   def handle_signal(@ce_reconcile_signal, ctx) do
     self_uri = Map.get(ctx, :self_uri)
-    caps = own_caps(ctx)
 
-    cmd =
-      Ezagent.Cmd.new(
-        self_uri,
-        :reconcile_cascade,
-        %{},
-        %{caller: self_uri, caps: caps, reply: :ignore}
-      )
-
-    {:ok, [{:dispatch, cmd}]}
+    # `Cap.issue/3` recognizes the current target authority and runs K.grant
+    # in-process, avoiding a synchronous self-call. Keep the bootstrap in this
+    # Kind turn so authority DB access cannot outlive its sandbox owner; the two
+    # absorb casts and the reconcile cast retain mailbox order.
+    :ok = issue_self_caps_and_reconcile(self_uri)
+    {:ok, []}
   end
 
   def handle_signal(_other, _ctx), do: :ignore
+
+  defp issue_self_caps_and_reconcile(%URI{} = self_uri) do
+    admin = Ezagent.URI.user(:system, :admin)
+
+    reconcile_requested =
+      Ezagent.Capability.cap(
+        :agent,
+        __MODULE__,
+        :reconcile_cascade,
+        Ezagent.URI.instance(self_uri),
+        Ezagent.Capability.workspace_of(self_uri)
+      )
+
+    update_requested =
+      Ezagent.Capability.cap(
+        :agent,
+        Ezagent.ActionSet.Sandbox,
+        :update_config,
+        Ezagent.URI.instance(self_uri),
+        Ezagent.Capability.workspace_of(self_uri)
+      )
+
+    with {:ok, reconcile_cap} <-
+           Ezagent.Cap.issue({:admin, admin}, self_uri, reconcile_requested),
+         {:ok, update_cap} <-
+           Ezagent.Cap.issue({:admin, admin}, self_uri, update_requested) do
+      :ok = Ezagent.Identity.absorb_cap(self_uri, reconcile_cap)
+      :ok = Ezagent.Identity.absorb_cap(self_uri, update_cap)
+
+      self_uri
+      |> Ezagent.Cmd.new(
+        :reconcile_cascade,
+        %{},
+        %{
+          caller: self_uri,
+          caps: MapSet.new([reconcile_cap, update_cap]),
+          reply: :ignore
+        }
+      )
+      |> Ezagent.Router.dispatch()
+    end
+  end
 
   # ---- STEP 1 — durable apply (manager-authorized) -------------------------
   #
@@ -633,7 +671,11 @@ defmodule Ezagent.ActionSet.ConfigEvolve do
       # own caps from its `:identity` sibling slice. If the self-cap is
       # absent the write is denied (logged, non-fatal — boot reconcile
       # heals).
-      %{caller: ctx.self_uri, caps: agent_own_caps(ctx), reply: :ignore}
+      %{
+        caller: ctx.self_uri,
+        caps: MapSet.union(agent_own_caps(ctx), inline_caps(ctx)),
+        reply: :ignore
+      }
     )
   end
 
@@ -709,12 +751,12 @@ defmodule Ezagent.ActionSet.ConfigEvolve do
     |> caps_of_identity()
   end
 
-  defp own_caps(ctx) do
-    ctx
-    |> Map.get(:slice_state, %{})
-    |> Map.get(:identity, %{})
-    |> normalize_slice()
-    |> caps_of_identity()
+  defp inline_caps(ctx) do
+    case Map.get(ctx, :caps) do
+      %MapSet{} = caps -> caps
+      caps when is_list(caps) -> MapSet.new(caps)
+      _ -> MapSet.new()
+    end
   end
 
   defp caps_of_identity(identity) when is_map(identity) do
@@ -726,10 +768,6 @@ defmodule Ezagent.ActionSet.ConfigEvolve do
   end
 
   defp caps_of_identity(_), do: MapSet.new()
-
-  defp normalize_slice(%{state: st, transients: _}) when is_map(st), do: st
-  defp normalize_slice(other) when is_map(other), do: other
-  defp normalize_slice(_), do: %{}
 
   # ---- delta validation/normalization --------------------------------------
   #

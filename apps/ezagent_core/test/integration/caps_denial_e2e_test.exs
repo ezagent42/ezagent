@@ -24,7 +24,7 @@ defmodule Ezagent.Integration.CapsDenialE2ETest do
 
   | # | Caller | Caps | Action | Expected |
   |---|---|---|---|---|
-  | 1 | non-admin | EMPTY | `chat.send` | `{:error, :unauthorized}` |
+  | 1 | non-admin | EMPTY | `chat.send` | `{:error, :missing_cap}` |
   | 4 | admin | full | `chat.send` | `:ok` |
   """
 
@@ -78,6 +78,7 @@ defmodule Ezagent.Integration.CapsDenialE2ETest do
       )
 
     Invocation.dispatch(%Invocation{
+      origin: :trusted_internal,
       target: chat_send_target(session_uri),
       mode: :call,
       args: %{message: msg},
@@ -86,11 +87,11 @@ defmodule Ezagent.Integration.CapsDenialE2ETest do
   end
 
   describe "Scenario 1 — non-admin with EMPTY caps cannot chat.send" do
-    test "dispatch returns {:error, :unauthorized}" do
+    test "dispatch returns {:error, :missing_cap}" do
       {bob_uri, bob_caps} = setup_non_admin_user("bob_empty")
       session_uri = default_session()
 
-      assert {:error, :unauthorized} =
+      assert {:error, :missing_cap} =
                dispatch_send(bob_uri, bob_caps, session_uri, "hi")
     end
   end
@@ -98,14 +99,13 @@ defmodule Ezagent.Integration.CapsDenialE2ETest do
   describe "Scenario 4 — admin's superset cap matches everything" do
     test "admin can chat.send (control case: positive path proves the test setup is valid)" do
       admin_uri = Ezagent.Entity.User.admin_uri()
-      admin_caps = MapSet.new([Ezagent.Capability.admin_genesis_cap()])
       session_uri = default_session()
+      target = chat_send_target(session_uri)
+      admin_caps = MapSet.new([signed_action_cap!(target, admin_uri)])
 
       result = dispatch_send(admin_uri, admin_caps, session_uri, "hi from admin")
 
-      # Chat.send returns {:ok, ...} OR :ok depending on inner-result
-      # shape; we just assert it's NOT :unauthorized
-      refute match?({:error, :unauthorized}, result)
+      assert match?({:ok, _}, result) or result == :ok
     end
   end
 
@@ -116,7 +116,7 @@ defmodule Ezagent.Integration.CapsDenialE2ETest do
       ┌────────────────────────────────────────────────────────────────────┐
       │ CapBAC denial e2e — dispatch chokepoint (step 5.5)                  │
       ├────────────────────────────────────────────────────────────────────┤
-      │ #1 empty-caps → chat.send                  → :unauthorized   ✓     │
+      │ #1 empty-caps → chat.send                  → :missing_cap    ✓     │
       │ #4 admin → chat.send (control)              → :ok             ✓     │
       └────────────────────────────────────────────────────────────────────┘
       """

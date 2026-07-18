@@ -28,7 +28,7 @@ defmodule EzagentCore.Invariants.PluginWorkspaceLocalityContractTest do
   @allowlist [
     %{
       path: "apps/ezagent_plugin_cc/lib/ezagent/orchestrator/cc_orchestrator_seed.ex",
-      line: 169,
+      line: 172,
       key: :kind_registry_lookup,
       line_substring: "case Ezagent.KindRegistry.lookup(uri) do",
       reason:

@@ -9,15 +9,27 @@ defmodule Ezagent.Workspace.ResponsibilityAssignmentTest do
     "p9-resp-#{System.unique_integer([:positive])}"
   end
 
-  defp admin_ctx do
-    %{caller: User.admin_uri(), caps: MapSet.new([Capability.admin_genesis_cap()])}
-  end
+  defp admin_ctx(workspace_uri), do: signed_workspace_ctx!(workspace_uri)
 
   defp spawn_user(uri) do
     case Ezagent.Kind.spawn(User, %{uri: uri}) do
       {:ok, _pid} -> :ok
       {:error, {:already_started, _pid}} -> :ok
     end
+  end
+
+  defp spawn_session(name, short_name) do
+    session_uri = Ezagent.URI.session(name, :default, short_name)
+
+    {:ok, _pid} =
+      Ezagent.Kind.spawn(Ezagent.Entity.Session, %{
+        uri: session_uri,
+        owner_uri: User.admin_uri(),
+        behaviors: Ezagent.Entity.Session.behaviors()
+      })
+
+    :ok = Ezagent.WorkspaceRegistry.bind(session_uri, Ezagent.URI.workspace(name))
+    session_uri
   end
 
   defp has_cap?(caps, needed) do
@@ -30,6 +42,7 @@ defmodule Ezagent.Workspace.ResponsibilityAssignmentTest do
     workspace_uri = Ezagent.URI.workspace(name)
     holder = Ezagent.URI.user(name, "supervisor")
     :ok = spawn_user(holder)
+    session_uri = spawn_session(name, "case")
 
     assert {:ok, assignment} =
              Workspace.assign_role(
@@ -37,14 +50,12 @@ defmodule Ezagent.Workspace.ResponsibilityAssignmentTest do
                "supervisor",
                holder,
                %{quorum_policy: "any_one"},
-               admin_ctx()
+               admin_ctx(workspace_uri)
              )
 
     assert assignment.responsibility == "supervisor"
     assert ResponsibilityAssignment.holders(workspace_uri, "supervisor") == [holder]
     assert ResponsibilityAssignment.assigned?(workspace_uri, "supervisor", holder)
-
-    session_uri = Ezagent.URI.session(name, :default, "case")
 
     needed_read =
       Capability.cap(
@@ -100,6 +111,7 @@ defmodule Ezagent.Workspace.ResponsibilityAssignmentTest do
     holder = Ezagent.URI.user(name, "delegated-supervisor")
     :ok = spawn_user(assigner)
     :ok = spawn_user(holder)
+    session_uri = spawn_session(name, "delegated")
 
     assign_cap =
       Capability.cap(
@@ -110,7 +122,7 @@ defmodule Ezagent.Workspace.ResponsibilityAssignmentTest do
         workspace_uri
       )
 
-    :ok = Ezagent.Identity.Grant.grant_cap(assigner, assign_cap, {:genesis, User.admin_uri()})
+    :ok = Ezagent.Identity.Grant.grant_cap(assigner, assign_cap, {:admin, User.admin_uri()})
 
     assert {:ok, _assignment} =
              Workspace.assign_role(
@@ -121,7 +133,6 @@ defmodule Ezagent.Workspace.ResponsibilityAssignmentTest do
                %{caller: assigner, caps: Ezagent.Identity.list_caps_for(assigner)}
              )
 
-    session_uri = Ezagent.URI.session(name, :default, "delegated")
     needed = Capability.cap(:session, Ezagent.ActionSet.Turn, :claim, session_uri, workspace_uri)
 
     assert has_cap?(Ezagent.Identity.list_caps_for(holder), needed)
@@ -133,13 +144,26 @@ defmodule Ezagent.Workspace.ResponsibilityAssignmentTest do
     workspace_uri = Ezagent.URI.workspace(name)
     holder = Ezagent.URI.user(name, "supervisor-remove")
     :ok = spawn_user(holder)
+    session_uri = spawn_session(name, "case")
 
-    assert {:ok, _} = Workspace.assign_role(workspace_uri, "supervisor", holder, %{}, admin_ctx())
-    assert :ok = Workspace.unassign_role(workspace_uri, "supervisor", holder, admin_ctx())
+    assert {:ok, _} =
+             Workspace.assign_role(
+               workspace_uri,
+               "supervisor",
+               holder,
+               %{},
+               admin_ctx(workspace_uri)
+             )
+
+    assert :ok =
+             Workspace.unassign_role(
+               workspace_uri,
+               "supervisor",
+               holder,
+               admin_ctx(workspace_uri)
+             )
 
     refute ResponsibilityAssignment.assigned?(workspace_uri, "supervisor", holder)
-    session_uri = Ezagent.URI.session(name, :default, "case")
-
     needed =
       Capability.cap(
         :session,
@@ -159,6 +183,12 @@ defmodule Ezagent.Workspace.ResponsibilityAssignmentTest do
     foreign_holder = Ezagent.URI.user("other-#{name}", "supervisor")
 
     assert {:error, {:cross_workspace_member_not_permitted, ^foreign_holder, ^workspace_uri}} =
-             Workspace.assign_role(workspace_uri, "supervisor", foreign_holder, %{}, admin_ctx())
+             Workspace.assign_role(
+               workspace_uri,
+               "supervisor",
+               foreign_holder,
+               %{},
+               admin_ctx(workspace_uri)
+             )
   end
 end

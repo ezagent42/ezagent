@@ -74,7 +74,17 @@
   #   chokepoint control flow (mutually bound to the authz telemetry + return
   #   shape), NOT a cleanly-extractable leaf. Burn-down (split authz_check out of
   #   runtime.ex) is a tracked follow-up in docs/futures/todo.md.
-  oversized_modules_gt_1000: 4,
+  # arch-cap-bump: 4→5 #1451 G5 error mechanism — `ezagent_plugin_world/world_live.ex`
+  #   crossed 1000 (→1019) with the `notification.send`/`error_fix_request` handler
+  #   (Layer-2 "notify founder" button) + its founder-resolution helpers. Inline
+  #   LiveView event handler, mutually bound to socket assigns / dispatch flow, not
+  #   a cleanly-extractable leaf; G5 renderer owns the burn-down follow-up.
+  # arch-cap-bump: cap-signing re-architecture — the born-signed + strict-verify +
+  #   `sync_live` changes touch already-oversized modules without cleanly
+  #   extracting them, and latest main measured modules above 1000 the manifest had
+  #   not yet recorded. Record the live baseline rather than attributing unrelated
+  #   module growth to this feature; the exact count is gate-measured.
+  oversized_modules_gt_1000: 5,
   # arch-cap-bump: +1 #160 — cc_agent Template Class adds the `credential_status/2`
   #   enum adapter (the CredentialAdapter optional callback that maps the cc probe's
   #   File.exists?/expiresAt result into the normalized status enum for the

@@ -323,34 +323,26 @@ defmodule Ezagent.PluginCurlAgent.Template do
   end
 
   defp put_target_api_key(%URI{} = agent_uri, provider, key) do
-    caps = [target_put_api_key_cap(agent_uri)]
+    target = Ezagent.URI.with_action(agent_uri, :api_keys, :put_api_key)
 
-    Invocation.dispatch(%Invocation{
-      target: Ezagent.URI.with_action(agent_uri, :api_keys, :put_api_key),
-      mode: :call,
-      args: %{provider: provider, key: key},
-      ctx: %{
-        # System-principal elimination (north star): put_api_key materializes the
-        # agent's OWN credential into its OWN `:api_keys` slice — self-authority.
-        # Caller is the agent ENTITY (a real accountable entity), not the deleted
-        # `system://credential-materializer` audit label. Authorization is the
-        # narrow inline `caps` (put_api_key on this agent); `caller == data_owner`
-        # (the agent owns its api_keys slice) so the self-check also passes.
-        caller: agent_uri,
-        caps: caps,
-        reply: {:caller_inbox, self()}
-      }
-    })
-  end
-
-  defp target_put_api_key_cap(%URI{} = agent_uri) do
-    Ezagent.Capability.cap(
-      :any,
-      Ezagent.ActionSet.ApiKeys,
-      :put_api_key,
-      Ezagent.URI.instance(agent_uri),
-      Ezagent.Capability.workspace_of(agent_uri)
-    )
+    with {:ok, cap} <-
+           Ezagent.Cap.issue_for_action(
+             {:admin, Ezagent.Entity.User.admin_uri()},
+             agent_uri,
+             target
+           ) do
+      Invocation.dispatch(%Invocation{
+        target: target,
+        mode: :call,
+        args: %{provider: provider, key: key},
+        ctx: %{
+          caller: agent_uri,
+          caps: [cap],
+          reply: {:caller_inbox, self()}
+        },
+        origin: :trusted_internal
+      })
+    end
   end
 
   defp nil_if_empty(nil), do: nil

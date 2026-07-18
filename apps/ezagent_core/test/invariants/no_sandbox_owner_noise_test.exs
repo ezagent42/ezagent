@@ -40,6 +40,15 @@ defmodule Ezagent.Invariants.NoSandboxOwnerNoiseTest do
   test "demand-spawning + dispatching to the routing sentinel emits no sandbox-owner noise" do
     uri = Ezagent.Entity.System.routing_default_uri()
 
+    if match?({:ok, _pid}, Ezagent.KindRegistry.lookup(uri)) do
+      :ok = Ezagent.Kind.terminate(uri)
+      wait_until_gone(uri)
+    end
+
+    on_exit(fn ->
+      _ = Ezagent.Kind.terminate(uri)
+    end)
+
     log =
       capture_log(fn ->
         # Demand-spawn the Mode-B singleton inside the owned sandbox.
@@ -56,10 +65,22 @@ defmodule Ezagent.Invariants.NoSandboxOwnerNoiseTest do
 
         # Representative DB-touching dispatch (snapshot write + rule insert).
         matcher = Matcher.text_contains("g1-noise-#{System.unique_integer([:positive])}")
+        target = Ezagent.URI.with_action(uri, :routing, :add_rule)
+        presenter = Ezagent.Entity.User.admin_uri()
+
+        cap =
+          signed_fixture_cap!(
+            uri,
+            Ezagent.Entity.System.type_name(),
+            Ezagent.ActionSet.Routing,
+            :add_rule,
+            presenter
+          )
 
         {:ok, %{id: id}} =
           Invocation.dispatch(%Invocation{
-            target: URI.parse("#{URI.to_string(uri)}?action=routing.add_rule"),
+            origin: :trusted_internal,
+            target: target,
             mode: :call,
             args: %{
               table: MentionRouting,
@@ -67,8 +88,8 @@ defmodule Ezagent.Invariants.NoSandboxOwnerNoiseTest do
               receivers: ["session://team-alpha/default/g1-rcv"]
             },
             ctx: %{
-              caller: Ezagent.Entity.User.admin_uri(),
-              caps: MapSet.new([Ezagent.Capability.admin_genesis_cap()]),
+              caller: presenter,
+              caps: MapSet.new([cap]),
               reply: {:caller_inbox, self()}
             }
           })
@@ -92,6 +113,16 @@ defmodule Ezagent.Invariants.NoSandboxOwnerNoiseTest do
              Captured log:
              #{log}
              """
+    end
+  end
+
+  defp wait_until_gone(uri, attempts \\ 100)
+  defp wait_until_gone(_uri, 0), do: flunk("routing sentinel did not terminate")
+
+  defp wait_until_gone(uri, attempts) do
+    case Ezagent.KindRegistry.lookup(uri) do
+      :error -> :ok
+      {:ok, _pid} -> Process.sleep(5) && wait_until_gone(uri, attempts - 1)
     end
   end
 end

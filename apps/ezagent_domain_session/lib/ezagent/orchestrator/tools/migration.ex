@@ -15,8 +15,8 @@ defmodule Ezagent.Orchestrator.Tools.Migration do
          {:ok, workspace_uri} <- Tools.require_opt(opts, :workspace_uri),
          {:ok, caller_uri} <- Tools.require_opt(opts, :caller),
          {:ok, caps} <- Tools.require_opt(opts, :caps),
-         :ok <- Tools.preflight_within_session_cap(caps, session_uri, :any),
-         :ok <- preflight_session_template_cap(caps, workspace_uri),
+         :ok <- Tools.preflight_within_session_cap(caps, session_uri, :set_working_copy),
+         :ok <- preflight_session_template_cap(caps, workspace_uri, caller_uri),
          {:ok, target_content} <- read_target_template(target_session_template_uri),
          {:ok, target_config} <-
            DefinitionEditor.config_for_template(target_content, workspace_uri),
@@ -332,17 +332,16 @@ defmodule Ezagent.Orchestrator.Tools.Migration do
   end
 
   defp current_chat_field(%URI{} = session_uri, field) do
-    case Ezagent.KindRegistry.lookup(session_uri) do
-      {:ok, pid} ->
-        pid
-        |> :sys.get_state()
-        |> get_in([:state, Session.state_slice(), :state, field])
+    case Ezagent.Kind.get_raw_slice(session_uri, :session) do
+      {:ok, slice} ->
+        slice
+        |> get_in([:state, field])
         |> case do
           value when is_map(value) -> value
           _ -> %{}
         end
 
-      :error ->
+      {:error, _} ->
         %{}
     end
   end
@@ -377,11 +376,12 @@ defmodule Ezagent.Orchestrator.Tools.Migration do
     end
   end
 
-  defp preflight_session_template_cap(caps, %URI{} = workspace_uri) do
+  defp preflight_session_template_cap(caps, %URI{} = workspace_uri, %URI{} = caller) do
     if Ezagent.Session.Config.Admission.template_cap?(
          Tools.to_cap_set(caps),
          :session_template,
-         workspace_uri
+         workspace_uri,
+         caller
        ) do
       :ok
     else

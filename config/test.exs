@@ -4,18 +4,6 @@ config :ezagent_domain_identity, Ezagent.Entity.Token,
   current_version: 1,
   peppers: %{1 => "test-only-pat-pepper-v1-32-bytes-minimum"}
 
-# Phase-4 capability signing uses a deterministic test-only seed. Production
-# continues to require `EZAGENT_SIGNING_SEED_V<N>` through the runtime provider.
-config :ezagent_core, Ezagent.Cap,
-  signing: [
-    seed_provider: fn
-      1 -> {:ok, "0123456789abcdef0123456789abcdef"}
-      _version -> {:error, :missing_test_seed}
-    end,
-    active_key_version: 1,
-    require_signature: false
-  ]
-
 # Keep TEST host routing aligned with local development: world routes are still
 # scoped to world.localhost/world.* unless a test deliberately overrides it.
 config :ezagent_web, :world_host_scope, "world."
@@ -83,9 +71,11 @@ config :ezagent_web, EzagentWeb.Endpoint,
 config :ezagent_core, Ezagent.Uploads.DownloadToken,
   secret_key_base: "3v32NqyJT1oDLVf9Qcg2pz9caQu68+W737xqtaGSUPsaw6dDqwqXIC8VCQCSGLpy"
 
-# cc-deepseek credential (#1324): the orchestrator flavor's ONLY credential is
-# the DEEPSEEK_API_KEY env var (no OAuth, no `.credentials.json`). Its
-# credential pre-check (`Provider.ensure_api_key/1` at `instantiate/3`) runs in
+# cc-custom orchestrator credentials (#1324; cc-custom-backends PR-5): the
+# orchestrator flavor's ONLY credential is the API-key env var the selected
+# cc-custom catalog profile names — DEEPSEEK_API_KEY for the stock "deepseek"
+# profile (no OAuth, no `.credentials.json`). Its
+# credential pre-check (`Provider.ensure_api_key/2` at `instantiate/3`) runs in
 # EVERY env — it is NOT test-stubbed — so keyless CI cannot materialize the
 # orchestrator and the socialware-install lane skips it. A clearly-fake DUMMY
 # key satisfies that pre-flight check WITHOUT ever reaching the network: in
@@ -97,6 +87,13 @@ config :ezagent_core, Ezagent.Uploads.DownloadToken,
 System.put_env(
   "DEEPSEEK_API_KEY",
   System.get_env("DEEPSEEK_API_KEY") || "sk-test-dummy-deepseek-not-a-real-key"
+)
+
+# Same dummy for the catalog's "kimi" profile (MOONSHOT_API_KEY), so cc-custom
+# lanes that select it pass the same pre-flight check under test.
+System.put_env(
+  "MOONSHOT_API_KEY",
+  System.get_env("MOONSHOT_API_KEY") || "sk-test-dummy-moonshot-not-a-real-key"
 )
 
 # Print only warnings and errors during test

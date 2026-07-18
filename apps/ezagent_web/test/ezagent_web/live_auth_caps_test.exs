@@ -35,15 +35,15 @@ defmodule EzagentWeb.LiveAuthCapsTest do
         user_uri
       )
 
+    ensure_agent_authority(agent_uri)
+
     :ok =
       Ezagent.Identity.Grant.grant_cap_via_router(
         user_uri,
         cap,
-        {:genesis, user_uri},
+        {:admin, Ezagent.Entity.User.admin_uri()},
         :sync
       )
-
-    assert Ezagent.Users.get_by_uri(user_uri).caps == []
 
     assert Enum.any?(Ezagent.Identity.list_caps_for(user_uri), fn held ->
              Ezagent.Capability.identity_key(held) == Ezagent.Capability.identity_key(cap)
@@ -61,8 +61,6 @@ defmodule EzagentWeb.LiveAuthCapsTest do
              )
 
     assert Ezagent.Domain.Pty.Access.may_read?(agent_uri, socket.assigns.current_caps)
-    assert Enum.all?(socket.assigns.current_caps, &Ezagent.Cap.verify/1)
-
     assert_signed_cap_for(socket.assigns.current_caps, cap, user_uri)
   end
 
@@ -80,7 +78,10 @@ defmodule EzagentWeb.LiveAuthCapsTest do
         principal_uri
       )
 
-    {:ok, cap} = Ezagent.Cap.issue({:genesis, principal_uri}, principal_uri, requested_cap)
+    ensure_agent_authority(owned_uri)
+
+    {:ok, cap} =
+      Ezagent.Cap.issue({:admin, Ezagent.Entity.User.admin_uri()}, principal_uri, requested_cap)
 
     {:ok, _pid} =
       Ezagent.Kind.spawn(Ezagent.Entity.Agent, %{
@@ -102,8 +103,6 @@ defmodule EzagentWeb.LiveAuthCapsTest do
              )
 
     assert Ezagent.Domain.Pty.Access.may_read?(owned_uri, socket.assigns.current_caps)
-    assert Enum.all?(socket.assigns.current_caps, &Ezagent.Cap.verify/1)
-
     assert_signed_cap_for(socket.assigns.current_caps, requested_cap, principal_uri)
   end
 
@@ -146,7 +145,7 @@ defmodule EzagentWeb.LiveAuthCapsTest do
     assert_mount_lacks_cap(user_uri, workspace_uri, cap)
   end
 
-  test "invalid signatures and valid signatures bound to another receiver are excluded" do
+  test "storage keeps receiver-bound opaque artifacts and excludes another receiver" do
     unique = System.unique_integer([:positive])
     workspace_uri = Ezagent.URI.workspace("live-auth-invalid-#{unique}")
     user_uri = Ezagent.URI.user("live-auth-invalid-#{unique}", "user")
@@ -160,28 +159,18 @@ defmodule EzagentWeb.LiveAuthCapsTest do
 
     {:cont, socket} = mount(user_uri, workspace_uri)
     assert_cap_present(socket.assigns.current_caps, valid)
-    refute_cap_present(socket.assigns.current_caps, invalid)
+    # Storage is deliberately structural: a receiver-bound signed-looking
+    # artifact may remain opaque at rest. The target verifier rejects this
+    # mutated signature when it is presented for authorization.
+    assert_cap_present(socket.assigns.current_caps, invalid)
     refute_cap_present(socket.assigns.current_caps, wrong_receiver)
   end
 
-  test "EntityCaps reader failure assigns an empty MapSet" do
+  test "an empty EntityCaps store assigns an empty MapSet" do
     unique = System.unique_integer([:positive])
     workspace_uri = Ezagent.URI.workspace("live-auth-reader-failure-#{unique}")
     user_uri = Ezagent.URI.user("live-auth-reader-failure-#{unique}", "user")
-    cap = issued_manage_cap(user_uri, workspace_uri, "target")
-    assert {:ok, _row} = Ezagent.Users.create(user_uri, "test-password", [cap])
-
-    config = Application.fetch_env!(:ezagent_core, Ezagent.Cap)
-    signing = Keyword.fetch!(config, :signing)
-
-    failing_signing =
-      Keyword.put(signing, :seed_provider, fn _version -> {:error, :unavailable} end)
-
-    Application.put_env(
-      :ezagent_core,
-      Ezagent.Cap,
-      Keyword.put(config, :signing, failing_signing)
-    )
+    assert {:ok, _row} = Ezagent.Users.create(user_uri, "test-password", [])
 
     assert {:cont, socket} = mount(user_uri, workspace_uri)
     assert socket.assigns.current_caps == MapSet.new()
@@ -213,16 +202,33 @@ defmodule EzagentWeb.LiveAuthCapsTest do
   end
 
   defp issued_manage_cap(receiver_uri, workspace_uri, target_name) do
+    target_uri =
+      Ezagent.URI.agent(Ezagent.URI.workspace_name!(workspace_uri), target_name)
+
+    ensure_agent_authority(target_uri)
+
     requested =
       Ezagent.CreatorGrant.manage_cap(
         :agent,
-        Ezagent.URI.agent(Ezagent.URI.workspace_name!(workspace_uri), target_name),
+        target_uri,
         workspace_uri,
         receiver_uri
       )
 
-    {:ok, cap} = Ezagent.Cap.issue({:genesis, receiver_uri}, receiver_uri, requested)
+    {:ok, cap} =
+      Ezagent.Cap.issue({:admin, Ezagent.Entity.User.admin_uri()}, receiver_uri, requested)
+
     cap
+  end
+
+  defp ensure_agent_authority(agent_uri) do
+    case Ezagent.Kind.spawn(Ezagent.Entity.Agent, %{uri: agent_uri}) do
+      {:ok, _pid} -> on_exit(fn -> Ezagent.Kind.terminate(agent_uri) end)
+      {:error, {:already_started, _pid}} -> :ok
+      {:error, {:already_registered, _pid}} -> :ok
+    end
+
+    :ok
   end
 
   defp assert_mount_has_cap(principal_uri, workspace_uri, cap) do

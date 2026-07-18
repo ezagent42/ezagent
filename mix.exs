@@ -132,7 +132,10 @@ defmodule EzagentCore.Umbrella.MixProject do
         "compile --warnings-as-errors --force",
         "deps.unlock --unused",
         "format",
-        "test"
+        "test",
+        # cc-headless SDK worker pure-helper suite (stdlib-only, no SDK needed) —
+        # codex review of PR #1452 flagged it was not wired into any gate.
+        "cmd uv run --no-project python -m unittest apps/ezagent_plugin_cc/priv/python/test_ezagent_cc_sdk_worker.py"
       ],
       # #108 — `mix ci.local` mirrors the CI `precommit + check_invariants` job
       # (`.github/workflows/ci.yml`) END-TO-END against a PRIVATE partitioned

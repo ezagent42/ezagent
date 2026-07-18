@@ -77,9 +77,8 @@ defmodule Ezagent.ActionSet.CurlAgent do
 
   ## Caller cap
 
-  The reply dispatch presents the agent's OWN inline narrow `session.send`
-  cap on the concrete reply session (#154 — the `system://chat-reply`
-  wildcard principal is eliminated; least privilege).
+  The reply dispatch presents the target-issued narrow `session.send` artifact
+  supplied by the `agent.receive` framework path.
   """
 
   use Ezagent.Lifecycle
@@ -230,6 +229,7 @@ defmodule Ezagent.ActionSet.CurlAgent do
 
     user_text = Map.get(args, :user_text, "")
     in_msg_id = Map.get(args, :in_msg_id)
+    reply_cap = Map.get(args, :reply_cap)
 
     case result do
       {:ok, %{content: reply, usage: usage}} ->
@@ -244,7 +244,7 @@ defmodule Ezagent.ActionSet.CurlAgent do
             {:set, :conversation, final_conv},
             {:set, :last_error, nil},
             {:set, :last_tokens, usage}
-          ] ++ maybe_reply_effect(source_session_uri, self_uri, reply, in_msg_id)
+          ] ++ maybe_reply_effect(source_session_uri, self_uri, reply, in_msg_id, reply_cap)
 
         {:ok, %{ok: true, tokens: usage.total}, effects}
 
@@ -255,7 +255,13 @@ defmodule Ezagent.ActionSet.CurlAgent do
              current_conv |> append_turn("user", user_text) |> trim(max_history)},
             {:set, :last_error, {:no_api_key, provider}}
           ] ++
-            maybe_reply_error(source_session_uri, self_uri, {:no_api_key, provider}, in_msg_id)
+            maybe_reply_error(
+              source_session_uri,
+              self_uri,
+              {:no_api_key, provider},
+              in_msg_id,
+              reply_cap
+            )
 
         {:ok, %{ok: false, error: :no_api_key}, effects}
 
@@ -271,7 +277,7 @@ defmodule Ezagent.ActionSet.CurlAgent do
             {:set, :conversation,
              current_conv |> append_turn("user", user_text) |> trim(max_history)},
             {:set, :last_error, reason}
-          ] ++ maybe_reply_error(source_session_uri, self_uri, reason, in_msg_id)
+          ] ++ maybe_reply_error(source_session_uri, self_uri, reason, in_msg_id, reply_cap)
 
         {:ok, %{ok: false, error: error_kind(reason)}, effects}
     end
@@ -287,11 +293,11 @@ defmodule Ezagent.ActionSet.CurlAgent do
   # Build a single `{:dispatch, %Cmd{}}` effect when source session +
   # self URI are both well-formed; otherwise emit nothing. `text_or_body`
   # is the success reply text (binary) or an already-built body map.
-  defp maybe_reply_effect(nil, _self_uri, _text, _in_msg_id), do: []
-  defp maybe_reply_effect("", _self_uri, _text, _in_msg_id), do: []
-  defp maybe_reply_effect(_, nil, _text, _in_msg_id), do: []
+  defp maybe_reply_effect(nil, _self_uri, _text, _in_msg_id, _reply_cap), do: []
+  defp maybe_reply_effect("", _self_uri, _text, _in_msg_id, _reply_cap), do: []
+  defp maybe_reply_effect(_, nil, _text, _in_msg_id, _reply_cap), do: []
 
-  defp maybe_reply_effect(session_uri, %URI{} = self_uri, text_or_body, in_msg_id) do
+  defp maybe_reply_effect(session_uri, %URI{} = self_uri, text_or_body, in_msg_id, reply_cap) do
     case parse_session_uri(session_uri) do
       nil ->
         []
@@ -303,35 +309,7 @@ defmodule Ezagent.ActionSet.CurlAgent do
         cmd =
           Cmd.new(target, :send, %{message: reply_msg}, %{
             caller: self_uri,
-            # System-principal elimination (#154): the ambient
-            # `system://chat-reply` WILDCARD principal is DELETED. The agent
-            # presents its OWN narrow `session.send` cap on the concrete
-            # session being replied to (least privilege). `granted_by:
-            # self_uri` is a real entity (#154-ok); inline = provenance-only,
-            # the step-5.5 authorizer (`granted_via_ctx_caps?`), never routed
-            # through `Ezagent.Identity.Grant`.
-            #
-            # `behavior: :any` (NOT a literal `Ezagent.ActionSet.Session`): this
-            # module lives in the AGENT domain, and a literal session-Behavior
-            # reference would violate the im → session → agent acyclic gate
-            # (`im_session_agent_acyclic_test`). The needed `:send` behavior is
-            # the concrete `Behavior.Session`; `:any` field-matches it while
-            # `kind` (`:session`), `action` (`:send`) and `instance` (THIS
-            # session) keep the cap least-privilege.
-            caps:
-              MapSet.new([
-                %Ezagent.Capability{
-                  Ezagent.Capability.cap(
-                    :session,
-                    :any,
-                    :send,
-                    Ezagent.URI.instance(session),
-                    Ezagent.Capability.workspace_of(session)
-                  )
-                  | granted_by: self_uri,
-                    granted_at: DateTime.utc_now()
-                }
-              ]),
+            caps: MapSet.new(List.wrap(reply_cap)),
             reply: :ignore
           })
 
@@ -344,8 +322,14 @@ defmodule Ezagent.ActionSet.CurlAgent do
   # minimal fallback `text` for degraded surfaces. The world render side
   # decodes it into the SAME ErrorMatcher/ErrorRenderer pipeline the sync
   # dispatch path uses (per-viewer Layer 1/2/3). No hand-written prose here.
-  defp maybe_reply_error(session_uri, self_uri, reason, in_msg_id) do
-    maybe_reply_effect(session_uri, self_uri, ErrorSignal.reply_body(reason), in_msg_id)
+  defp maybe_reply_error(session_uri, self_uri, reason, in_msg_id, reply_cap) do
+    maybe_reply_effect(
+      session_uri,
+      self_uri,
+      ErrorSignal.reply_body(reason),
+      in_msg_id,
+      reply_cap
+    )
   end
 
   defp reply_body(text) when is_binary(text), do: %{text: text, attachments: []}

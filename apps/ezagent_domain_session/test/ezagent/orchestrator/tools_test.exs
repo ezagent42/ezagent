@@ -16,9 +16,36 @@ defmodule Ezagent.Orchestrator.ToolsTest do
   _}}`, never `:not_implemented_yet`).
   """
 
-  use ExUnit.Case, async: true
+  use EzagentCore.DataCase, async: false
 
   alias Ezagent.Orchestrator.Tools
+  import Ezagent.Test.CapHelper, only: [signed_required_cap!: 5]
+
+  setup do
+    workspace_uri = URI.new!("workspace://pr48-test")
+    terminate_workspace(workspace_uri)
+
+    {:ok, _pid} =
+      Ezagent.Kind.spawn(Ezagent.Entity.Workspace, %{
+        uri: workspace_uri,
+        behaviors: Ezagent.Entity.Workspace.behaviors()
+      })
+
+    on_exit(fn -> terminate_workspace(workspace_uri) end)
+    :ok
+  end
+
+  defp terminate_workspace(workspace_uri) do
+    case Ezagent.KindRegistry.lookup(workspace_uri) do
+      {:ok, pid} ->
+        if Process.alive?(pid) do
+          DynamicSupervisor.terminate_child(Ezagent.Workspace.Supervisor, pid)
+        end
+
+      :error ->
+        :ok
+    end
+  end
 
   @expected [
     :add_managed_member,
@@ -295,23 +322,24 @@ defmodule Ezagent.Orchestrator.ToolsTest do
       parent_uri = URI.new!("template://pr48-test/session/never-registered@deadbeefdeadbeef")
       ws = URI.new!("workspace://pr48-test")
 
+      caller = URI.new!("entity://pr48-test/agent/test_pr48-orchestrator")
+
       caps =
         MapSet.new([
-          %Ezagent.Capability{
-            kind: :session_template,
-            behavior: Ezagent.ActionSet.Template,
-            instance: {:within_workspace, ws},
-            workspace_uri: ws,
-            granted_by: URI.new!("entity://system/user/admin"),
-            granted_at: DateTime.utc_now()
-          }
+          signed_required_cap!(
+            ws,
+            :workspace,
+            Ezagent.ActionSet.Workspace,
+            :write_session_templates,
+            caller
+          )
         ])
 
       assert {:error, :parent_template_deleted} =
                Tools.update_template(
                  session_uri: URI.new!("session://pr48-test/default/pr48-test"),
                  workspace_uri: ws,
-                 caller: URI.new!("entity://pr48-test/agent/test_pr48-orchestrator"),
+                 caller: caller,
                  caps: caps,
                  parent_template_uri: parent_uri
                )

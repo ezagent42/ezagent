@@ -69,7 +69,8 @@ defmodule Ezagent.Workspace.Provisioning do
       target: target,
       action: :create_agent,
       args: args,
-      ctx: dispatch_ctx
+      ctx: dispatch_ctx,
+      origin: :trusted_internal
     })
   end
 
@@ -116,7 +117,8 @@ defmodule Ezagent.Workspace.Provisioning do
         target: target,
         action: :create_session,
         args: args,
-        ctx: %{mode: :call, caller: caller, caps: caps, reply: {:caller_inbox, self()}}
+        ctx: %{mode: :call, caller: caller, caps: caps, reply: {:caller_inbox, self()}},
+        origin: :trusted_internal
       })
     end
   end
@@ -214,7 +216,8 @@ defmodule Ezagent.Workspace.Provisioning do
            target: target,
            action: :create_user,
            args: args,
-           ctx: %{mode: :call, caller: caller, caps: caps, reply: {:caller_inbox, self()}}
+           ctx: %{mode: :call, caller: caller, caps: caps, reply: {:caller_inbox, self()}},
+           origin: :trusted_internal
          }) do
       {:ok, %{user_uri: uri_str} = result} when is_binary(uri_str) ->
         case Workspace.add_member(
@@ -256,6 +259,7 @@ defmodule Ezagent.Workspace.Provisioning do
     caps = Map.fetch!(ctx, :caps)
 
     Router.dispatch(%Cmd{
+      origin: :trusted_internal,
       target: target,
       action: :disable_user,
       args: args,

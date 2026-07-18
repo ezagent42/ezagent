@@ -18,6 +18,8 @@ defmodule Ezagent.ActionSet.ConfigEvolveTest do
 
   use EzagentCore.DataCase, async: false
 
+  import Ezagent.Test.CapHelper, only: [signed_ctx!: 3, signed_invocation!: 2]
+
   alias Ezagent.{Invocation, CreatorGrant}
   alias Ezagent.Entity.{Agent, User}
   alias Ezagent.Socialware.{ConfigObject, ConfigProjection, ConfigStore}
@@ -41,8 +43,9 @@ defmodule Ezagent.ActionSet.ConfigEvolveTest do
   test "apply_config_delta is DENIED without the agent's manage-cap", %{agent: agent} do
     target = action_uri(agent, :apply_config_delta)
 
-    assert {:error, :unauthorized} =
+    assert {:error, :missing_cap} =
              Invocation.dispatch(%Invocation{
+               origin: :trusted_internal,
                target: target,
                mode: :call,
                args: %{turn_id: "t1", patch: %{"tone" => "decisive"}},
@@ -113,8 +116,9 @@ defmodule Ezagent.ActionSet.ConfigEvolveTest do
     # The manager holds ONLY the manage-cap — NOT Sandbox.update_config.
     manager = grant_manage_cap(agent, workspace)
 
-    assert {:error, :unauthorized} =
+    assert {:error, :missing_cap} =
              Invocation.dispatch(%Invocation{
+               origin: :trusted_internal,
                target: Ezagent.URI.new!("#{URI.to_string(agent)}?action=sandbox.update_config"),
                mode: :call,
                args: %{
@@ -451,12 +455,15 @@ defmodule Ezagent.ActionSet.ConfigEvolveTest do
   # apply_config_delta carrying explicit delta fields (subject_uri etc.) in
   # args — used by the CE-1 confused-deputy + positive self tests.
   defp apply_delta_with(agent, manager, turn_id, fields) do
-    Invocation.dispatch(%Invocation{
+    %Invocation{
+      origin: :trusted_internal,
       target: action_uri(agent, :apply_config_delta),
       mode: :call,
       args: Map.put(fields, :turn_id, turn_id),
       ctx: %{caller: manager.uri, caps: manager.caps, reply: {:caller_inbox, self()}}
-    })
+    }
+    |> signed_invocation!(:agent)
+    |> Invocation.dispatch()
   end
 
   defp action_uri(agent, action) do
@@ -468,7 +475,9 @@ defmodule Ezagent.ActionSet.ConfigEvolveTest do
   defp grant_manage_cap(agent, workspace) do
     manager = Ezagent.URI.entity(:team_alpha, :user, "mgr-#{System.unique_integer([:positive])}")
     cap = CreatorGrant.manage_cap(:agent, agent, workspace, manager)
-    %{uri: manager, caps: MapSet.new([cap])}
+
+    ctx = signed_ctx!(agent, %{caller: manager, caps: MapSet.new([cap])}, :agent)
+    %{uri: manager, caps: ctx.caps}
   end
 
   # Dispatch step-1 apply carrying the delta in args (the agent has no turn
@@ -476,12 +485,15 @@ defmodule Ezagent.ActionSet.ConfigEvolveTest do
   # way). `subject_uri`/`workspace_uri`/`key`/`layer` default to the agent's
   # own user layer.
   defp apply_delta(agent, manager, turn_id, patch) do
-    Invocation.dispatch(%Invocation{
+    %Invocation{
+      origin: :trusted_internal,
       target: action_uri(agent, :apply_config_delta),
       mode: :call,
       args: %{turn_id: turn_id, patch: patch},
       ctx: %{caller: manager.uri, caps: manager.caps, reply: {:caller_inbox, self()}}
-    })
+    }
+    |> signed_invocation!(:agent)
+    |> Invocation.dispatch()
   end
 
   # Seed the agent's sandbox with a cascade_resolution (the shape #17 stores
@@ -510,7 +522,8 @@ defmodule Ezagent.ActionSet.ConfigEvolveTest do
 
   defp write_sandbox(agent, respawn_template_data) do
     {:ok, _} =
-      Invocation.dispatch(%Invocation{
+      %Invocation{
+        origin: :trusted_internal,
         target: Ezagent.URI.new!("#{URI.to_string(agent)}?action=sandbox.update_config"),
         mode: :call,
         args: %{
@@ -523,14 +536,17 @@ defmodule Ezagent.ActionSet.ConfigEvolveTest do
           caps: MapSet.new([Ezagent.Capability.admin_genesis_cap()]),
           reply: {:caller_inbox, self()}
         }
-      })
+      }
+      |> signed_invocation!(:agent)
+      |> Invocation.dispatch()
 
     :ok
   end
 
   defp sandbox_user_layer_uri(agent) do
     {:ok, sandbox} =
-      Invocation.dispatch(%Invocation{
+      %Invocation{
+        origin: :trusted_internal,
         target: Ezagent.URI.new!("#{URI.to_string(agent)}?action=sandbox.read"),
         mode: :call,
         args: %{},
@@ -539,7 +555,9 @@ defmodule Ezagent.ActionSet.ConfigEvolveTest do
           caps: MapSet.new([Ezagent.Capability.admin_genesis_cap()]),
           reply: {:caller_inbox, self()}
         }
-      })
+      }
+      |> signed_invocation!(:agent)
+      |> Invocation.dispatch()
 
     resolution =
       case Map.get(sandbox, :respawn_template_data) do

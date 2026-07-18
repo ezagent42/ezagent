@@ -48,14 +48,20 @@ defmodule EzagentPluginFeishu.WebhookPlug do
     case payload do
       {:ok, %{"type" => "url_verification", "challenge" => challenge}} ->
         Logger.info("EzagentPluginFeishu webhook: URL verification challenge")
-        conn |> put_resp_content_type("application/json") |> send_resp(200, Jason.encode!(%{challenge: challenge}))
+
+        conn
+        |> put_resp_content_type("application/json")
+        |> send_resp(200, Jason.encode!(%{challenge: challenge}))
 
       {:ok, %{"schema" => "2.0", "header" => header, "event" => event}} ->
         handle_event(header, event)
         conn |> put_resp_content_type("application/json") |> send_resp(200, "{}")
 
       {:ok, other} ->
-        Logger.warning("EzagentPluginFeishu webhook: unrecognized payload keys: #{inspect(Map.keys(other))}")
+        Logger.warning(
+          "EzagentPluginFeishu webhook: unrecognized payload keys: #{inspect(Map.keys(other))}"
+        )
+
         send_resp(conn, 200, "{}")
 
       {:error, reason} ->
@@ -85,7 +91,8 @@ defmodule EzagentPluginFeishu.WebhookPlug do
           chat_id: chat_id,
           message_id: message_id,
           sender: sender,
-          body: body
+          body: body,
+          origin: nil
         )
     end
   end

@@ -85,7 +85,16 @@ defmodule Ezagent.E2E.Category05.Scenario15RevokeCapDenialTest do
            Ezagent.Workspace.create_session(
              workspace_uri,
              %{short_name: short_name, template_name: template_name},
-             %{caller: creator_uri, caps: MapSet.new([Ezagent.Capability.admin_genesis_cap()])}
+             %{
+               caller: creator_uri,
+               caps:
+                 MapSet.new([
+                   signed_action_cap!(
+                     Ezagent.URI.with_action(workspace_uri, :workspace, :create_session),
+                     creator_uri
+                   )
+                 ])
+             }
            ) do
       {:ok, result.session_uri, %{}}
     end
@@ -95,6 +104,7 @@ defmodule Ezagent.E2E.Category05.Scenario15RevokeCapDenialTest do
     msg = Message.new(caller_uri, %{text: text, attachments: []}, mentions: [], ref_id: nil)
 
     Invocation.dispatch(%Invocation{
+      origin: :trusted_internal,
       target: URI.new!("#{URI.to_string(session_uri)}?action=session.send"),
       mode: :call,
       args: %{message: msg},
@@ -124,7 +134,8 @@ defmodule Ezagent.E2E.Category05.Scenario15RevokeCapDenialTest do
   # workspaces and the caller lacks a cross-workspace cap. Both indicate
   # CapBAC is doing its job.
   defp assert_denied!(result, msg) do
-    assert match?({:error, :unauthorized}, result) or
+    assert match?({:error, :missing_cap}, result) or
+             match?({:error, :invalid_cap_signature}, result) or
              match?({:error, :cross_workspace_denied}, result),
            "#{msg} — got #{inspect(result)}"
   end
@@ -193,19 +204,10 @@ defmodule Ezagent.E2E.Category05.Scenario15RevokeCapDenialTest do
       #   and step 5.6 (workspace isolation). After revoke, no ctx.cap
       #   remains and her slice default_caps still don't reach
       #   workspace://system → dispatch is denied.
-      send_cap =
-        cap(
-          kind: :session,
-          behavior: Ezagent.ActionSet.Session,
-          action: :send,
-          instance: :any,
-          workspace_uri: :any
-        )
-
-      {alice_uri, _empty} = spawn_alice([send_cap])
-      held = MapSet.new([send_cap])
-
+      {alice_uri, _empty} = spawn_alice()
       session = default_session()
+      send_cap = signed_send_cap!(session, alice_uri, :any)
+      held = MapSet.new([send_cap])
 
       # Step 2: dispatch with the narrow cap succeeds (NOT a denial).
       result = dispatch_send(alice_uri, held, session, "hello with cap")
@@ -275,14 +277,28 @@ defmodule Ezagent.E2E.Category05.Scenario15RevokeCapDenialTest do
   describe "admin can chat.send — control case (proves test infra is valid)" do
     test "admin's superset cap matches every action" do
       admin_uri = Ezagent.Entity.User.admin_uri()
-      admin_caps = MapSet.new([Ezagent.Capability.admin_genesis_cap()])
       session = default_session()
+      admin_caps = MapSet.new([signed_send_cap!(session, admin_uri, :any)])
 
       result = dispatch_send(admin_uri, admin_caps, session, "hi from admin")
 
       refute match?({:error, :unauthorized}, result),
              "admin MUST authorize chat.send — positive control; failure here means test setup is broken"
     end
+  end
+
+  defp signed_send_cap!(session, grantee, workspace_scope) do
+    requested =
+      Capability.cap(
+        :session,
+        Ezagent.ActionSet.Session,
+        :send,
+        Ezagent.URI.instance(session),
+        workspace_scope
+      )
+
+    {:ok, cap} = Ezagent.Cap.issue({:admin, Ezagent.Entity.User.admin_uri()}, grantee, requested)
+    cap
   end
 
   describe "cross-workspace narrow cap is not enough" do

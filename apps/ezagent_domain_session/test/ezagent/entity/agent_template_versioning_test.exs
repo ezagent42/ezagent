@@ -1,18 +1,24 @@
 defmodule Ezagent.Entity.AgentTemplateVersioningTest do
   use EzagentCore.DataCase, async: false
 
+  import Ezagent.Test.CapHelper, only: [signed_action_cap!: 2]
+
   alias Ezagent.Entity.{AgentTemplate, User}
 
   defp uniq, do: System.unique_integer([:positive])
 
   defp read(uri) do
+    target = Ezagent.URI.with_action(uri, :template, :read)
+    admin = User.admin_uri()
+
     Ezagent.Invocation.dispatch(%Ezagent.Invocation{
-      target: Ezagent.URI.with_action(uri, :template, :read),
+      origin: :trusted_internal,
+      target: target,
       mode: :call,
       args: %{},
       ctx: %{
-        caller: User.admin_uri(),
-        caps: MapSet.new([Ezagent.Capability.admin_genesis_cap()]),
+        caller: admin,
+        caps: MapSet.new([signed_action_cap!(target, admin)]),
         reply: {:caller_inbox, self()}
       }
     })

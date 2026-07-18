@@ -237,21 +237,12 @@ defmodule Ezagent.ExternalMirror.AuthModelInvariantTest do
       # mismatch BEFORE the action body sees the nonce.
       foreign_caller = H.unique_user_uri("s4-foreign", "other_workspace")
 
-      ctx = %{
-        caller: foreign_caller,
-        caps:
-          MapSet.new([
-            %Capability{
-              kind: :session,
-              behavior: Ezagent.ActionSet.ExternalMirror,
-              instance: session_uri,
-              workspace_uri: @workspace_uri,
-              granted_by: User.admin_uri(),
-              granted_at: DateTime.utc_now()
-            }
-          ]),
-        reply: :ignore
-      }
+      ctx =
+        H.setup_caller(:session_bind_only,
+          caller_uri: foreign_caller,
+          session_uri: session_uri,
+          workspace_uri: @workspace_uri
+        )
 
       result =
         H.bypass_facade_dispatch(
@@ -777,7 +768,7 @@ defmodule Ezagent.ExternalMirror.AuthModelInvariantTest do
       assert {:ok, _pid} = KindRegistry.lookup(worker_uri)
 
       # 1 slice binding via the dispatch-gated facade read
-      assert {:ok, slice_bindings} = Facade.list_bindings(session_uri, build_admin_ctx(owner_uri))
+      assert {:ok, slice_bindings} = Facade.list_bindings(session_uri, ctx)
       assert length(slice_bindings) == 1
     end
   end
@@ -885,7 +876,7 @@ defmodule Ezagent.ExternalMirror.AuthModelInvariantTest do
 
       result = Facade.list_bindings(session_uri, ctx)
 
-      assert match?({:error, :unauthorized}, result),
+      assert match?({:error, :missing_cap}, result),
              "scenario 17 invariant: list_bindings/2 MUST reject callers " <>
                "without the :list_bindings cap (dispatch §5.5 gate); got #{inspect(result)}"
     end

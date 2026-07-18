@@ -72,6 +72,7 @@ defmodule Ezagent.ActionSet.OwnerRootedJoinTest do
     _ = Membership.provision_join_authority(session_uri, joiner)
 
     Ezagent.Invocation.dispatch(%Ezagent.Invocation{
+      origin: :trusted_internal,
       target: URI.new!("#{URI.to_string(session_uri)}?action=session.join"),
       mode: :call,
       args: %{member: joiner},
@@ -95,7 +96,7 @@ defmodule Ezagent.ActionSet.OwnerRootedJoinTest do
              end),
              "the stranger must not start with any session :join cap (baseline removed)"
 
-      assert {:error, :unauthorized} = self_join(session_uri, stranger),
+      assert {:error, :missing_cap} = self_join(session_uri, stranger),
              "a no-baseline non-owner/non-member must be REJECTED self-joining a private session"
     end
   end
@@ -115,6 +116,7 @@ defmodule Ezagent.ActionSet.OwnerRootedJoinTest do
 
       {:ok, _} =
         Ezagent.Invocation.dispatch(%Ezagent.Invocation{
+          origin: :trusted_internal,
           target: URI.new!("#{URI.to_string(session_uri)}?action=session.join"),
           mode: :call,
           args: %{member: member},
@@ -222,9 +224,13 @@ defmodule Ezagent.ActionSet.OwnerRootedJoinTest do
       assert %Capability{} = join_cap,
              "the public_view session must admit a join via the rule (anon minted a join cap)"
 
-      assert join_cap.granted_by == owner,
-             "the public_view admit is owner-rooted: granted_by must be the owner (g3), got " <>
+      assert join_cap.granted_by == User.admin_uri(),
+             "the public_view admit must record the framework K.grant issuer, got " <>
                inspect(join_cap.granted_by)
+
+      assert join_cap.grantee_uri == anon_uri
+      assert is_binary(join_cap.signature)
+      assert is_binary(join_cap.key_id)
 
       refute match?(%URI{scheme: "system"}, join_cap.granted_by),
              "the public_view admit must NOT be granted by a system:// principal"

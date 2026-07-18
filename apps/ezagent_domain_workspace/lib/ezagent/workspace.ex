@@ -26,6 +26,8 @@ defmodule Ezagent.Workspace do
   alias Ezagent.Entity.Workspace, as: WK
   alias Ezagent.{Cmd, KindRegistry, Router, Workspace.Loader, Workspace.Store}
 
+  require Logger
+
   # --- spawn ---------------------------------------------------------
 
   @doc """
@@ -344,7 +346,8 @@ defmodule Ezagent.Workspace do
                  Map.merge(
                    workspace_self_ctx(name, :remove_cross_prefix_members),
                    %{mode: :call, reply: {:caller_inbox, self()}}
-                 )
+                 ),
+               origin: :trusted_internal
              }) do
           {:ok, %{removed: removed, kept_count: kept_count}} when is_list(removed) ->
             # Mutation already committed in slice. Persist the kept
@@ -393,7 +396,8 @@ defmodule Ezagent.Workspace do
              Map.merge(
                workspace_self_ctx(name, :list_members),
                %{mode: :call, reply: {:caller_inbox, self()}}
-             )
+             ),
+           origin: :trusted_internal
          }) do
       {:ok, %{members: members}} when is_list(members) -> {:ok, members}
       {:error, _} = err -> err
@@ -592,7 +596,8 @@ defmodule Ezagent.Workspace do
            target: target,
            action: action,
            args: args,
-           ctx: Map.merge(auth_ctx, %{mode: mode, reply: reply})
+           ctx: Map.merge(auth_ctx, %{mode: mode, reply: reply}),
+           origin: :trusted_internal
          }) do
       :ok -> :ok
       {:ok, _} -> :ok
@@ -629,36 +634,13 @@ defmodule Ezagent.Workspace do
   # `system://worker-publish` / `system://agent-internal`).
   defp workspace_self_ctx(name, action) when is_binary(name) and is_atom(action) do
     workspace_uri = Ezagent.URI.workspace(name)
+    admin = Ezagent.Entity.User.admin_uri()
+    target = Ezagent.URI.with_action(workspace_uri, :workspace, action)
 
-    %{
-      caller: workspace_uri,
-      caps: [workspace_self_cap(workspace_uri, action)]
-    }
-  end
-
-  # The workspace's OWN self-authority cap for the dispatched Workspace
-  # Behavior `action`, the step-5.5 authorizer for `workspace_self_ctx/2`.
-  # Shape mirrors `Ezagent.ActionSet.Workspace.required_caps/0[action]` =
-  # `cap(:workspace, Workspace, action)` but SCOPED to the concrete workspace
-  # (`instance`/`workspace_uri` derived from `workspace_uri`) for tightest
-  # least-privilege — the runtime substitutes the same concrete instance from
-  # the dispatch target, so concrete==concrete matches. `granted_by` =
-  # `workspace_uri` (genuine self-authority: a real entity per #154); it is
-  # provenance only (`matches?/2`/`identity_key/1` ignore it) on an INLINE
-  # authorizer cap that is never granted/persisted through
-  # `Ezagent.Identity.Grant`, so no grant-chokepoint route applies.
-  defp workspace_self_cap(%URI{} = workspace_uri, action) when is_atom(action) do
-    %Ezagent.Capability{
-      Ezagent.Capability.cap(
-        :workspace,
-        Ezagent.ActionSet.Workspace,
-        action,
-        Ezagent.URI.instance(workspace_uri),
-        Ezagent.Capability.workspace_of(workspace_uri)
-      )
-      | granted_by: workspace_uri,
-        granted_at: DateTime.utc_now()
-    }
+    case Ezagent.Cap.issue_for_action({:admin, admin}, admin, target) do
+      {:ok, cap} -> %{caller: admin, caps: [cap]}
+      {:error, reason} -> raise "workspace self-cap issuance failed: #{inspect(reason)}"
+    end
   end
 
   # --- listing -------------------------------------------------------
@@ -795,7 +777,13 @@ defmodule Ezagent.Workspace do
 
     caps
     |> Enum.reduce_while({:ok, []}, fn cap, {:ok, issued} ->
-      case Ezagent.Cap.issue({:held_by, caller}, target, cap) do
+      authorization =
+        if Ezagent.URI.stable_key(caller) ==
+             Ezagent.URI.stable_key(Ezagent.Entity.User.admin_uri()),
+           do: {:admin, caller},
+           else: {:held_by, caller}
+
+      case Ezagent.Cap.issue(authorization, target, cap) do
         {:ok, artifact} -> {:cont, {:ok, [{cap, artifact} | issued]}}
         {:error, reason} -> {:halt, {:error, {:grant_failed, cap, reason}}}
       end
@@ -832,14 +820,12 @@ defmodule Ezagent.Workspace do
   Grant the creator the abstract `Behavior.Manage :any` cap for a newly
   created Kind instance.
 
-  The creation path injects the concrete `kind` axis (`:session`, `:agent`,
-  ...). The cap itself is built by `Ezagent.CreatorGrant`; this facade only
-  performs the Identity dispatch under the closed bootstrap system principal
-  because `Manage :any` is a wildcard-action cap whose target Behavior has
-  no data owner; Identity's grant boundary correctly requires admin authority
-  for that shape. The issued cap still records `granted_by: creator_uri`
-  because the business authority comes from the successful create operation,
-  not from the system principal.
+  The creation path first installs the target-signed canonical-admin to creator
+  delegation. That explicit delegation is the reviewed creation/custody step
+  which lets the creator invoke this Kind's `K.grant`; the creator then issues
+  and stores its own concrete Manage cap. The cap therefore records the real
+  business authority (`granted_by: creator_uri`) rather than laundering the
+  successful create through ambient admin authority.
   """
   @spec grant_creator_manage_cap(atom(), URI.t(), URI.t(), URI.t()) :: :ok | {:error, term()}
   def grant_creator_manage_cap(
@@ -849,35 +835,75 @@ defmodule Ezagent.Workspace do
         %URI{} = creator_uri
       )
       when is_atom(kind) do
-    cap = Ezagent.CreatorGrant.manage_cap(kind, instance_uri, workspace_uri, creator_uri)
-    current = Ezagent.Identity.list_caps_for(creator_uri)
+    case Ezagent.ReadyGate.status(instance_uri) do
+      :not_ready ->
+        defer_creator_manage_cap(kind, instance_uri, workspace_uri, creator_uri)
 
-    if Enum.any?(current, &Ezagent.CreatorGrant.same_authority?(&1, cap)) do
-      :ok
-    else
-      # Grant chokepoint (SPEC 2026-06-17 §3.5 site #3). `Manage :any` is
-      # a wildcard-action cap whose target Behavior has no data owner, so
-      # the grant boundary requires GENESIS authority — supplied by the
-      # `{:genesis, …}` tag (loads the canonical admin-granted genesis
-      # wildcard as `ctx.caps`). The entity `granted_by` is the CREATOR: the
-      # business authority comes from the successful create operation; the
-      # genesis cap only satisfies dispatch step 5.5. (#154 genesis collapse,
-      # 2026-06-20 — replaces the eliminated `{:system, bootstrap, …}` tag.)
-      #
-      # `:sync` (NOT the default `:async`): the base site dispatched with
-      # `mode: :call`, and the create operation gates its success on this
-      # grant (`with :ok <- grant_creator_manage_cap/4`). `:cast` would
-      # silently swallow a grant failure — reporting a successful create
-      # while the creator does NOT hold the Manage cap. Force synchronous,
-      # error-propagating `:call` mode.
-      case Ezagent.Identity.Grant.grant_cap_via_router(
-             creator_uri,
-             cap,
-             {:genesis, creator_uri},
-             :sync
-           ) do
-        :ok -> :ok
-        {:error, reason} -> {:error, {:creator_manage_cap_grant_failed, reason}}
+      _status ->
+        do_grant_creator_manage_cap(kind, instance_uri, workspace_uri, creator_uri)
+    end
+  end
+
+  defp defer_creator_manage_cap(kind, instance_uri, workspace_uri, creator_uri) do
+    case Task.Supervisor.start_child(Ezagent.Workspace.CapGrantSupervisor, fn ->
+           case Ezagent.ReadyGate.await(instance_uri, 30_000) do
+             :ok ->
+               case do_grant_creator_manage_cap(
+                      kind,
+                      instance_uri,
+                      workspace_uri,
+                      creator_uri
+                    ) do
+                 :ok ->
+                   :ok
+
+                 {:error, reason} ->
+                   Logger.error(
+                     "deferred creator-manage K.grant failed target=#{URI.to_string(instance_uri)} " <>
+                       "creator=#{URI.to_string(creator_uri)} reason=#{inspect(reason)}"
+                   )
+               end
+
+             {:error, :timeout} ->
+               Logger.error(
+                 "deferred creator-manage K.grant timed out target=#{URI.to_string(instance_uri)} " <>
+                   "creator=#{URI.to_string(creator_uri)}"
+               )
+           end
+         end) do
+      {:ok, _pid} -> :ok
+      {:error, reason} -> {:error, {:creator_manage_cap_enqueue_failed, reason}}
+    end
+  end
+
+  defp do_grant_creator_manage_cap(kind, instance_uri, workspace_uri, creator_uri) do
+    cap = Ezagent.CreatorGrant.manage_cap(kind, instance_uri, workspace_uri, creator_uri)
+
+    with :ok <- Ezagent.Identity.TargetAuthority.ensure(creator_uri, instance_uri) do
+      current = Ezagent.Identity.list_caps_for(creator_uri)
+
+      if Enum.any?(current, &Ezagent.CreatorGrant.same_authority?(&1, cap)) do
+        :ok
+      else
+        authorization =
+          if Ezagent.URI.stable_key(creator_uri) ==
+               Ezagent.URI.stable_key(Ezagent.Entity.User.admin_uri()),
+             do: {:admin, creator_uri},
+             else: {:held_by, creator_uri}
+
+        with {:ok, artifact} <-
+               Ezagent.Identity.Grant.issue_cap(creator_uri, cap, authorization),
+             :ok <- absorb_initial_caps(creator_uri, [{cap, artifact}]),
+             :ok <-
+               Ezagent.Identity.CapAbsorbAwait.await_exact(
+                 creator_uri,
+                 [artifact],
+                 5_000
+               ) do
+          :ok
+        else
+          {:error, reason} -> {:error, {:creator_manage_cap_grant_failed, reason}}
+        end
       end
     end
   end

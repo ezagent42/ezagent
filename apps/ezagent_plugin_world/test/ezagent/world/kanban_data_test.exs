@@ -53,8 +53,8 @@ defmodule Ezagent.World.KanbanDataTest do
     {:ok, _} = RecipeRegistry.seed_role_if_absent(KanbanApp.kanban_manager_recipe())
 
     caller = Ezagent.Entity.User.admin_uri()
-    caps = MapSet.new([Ezagent.Capability.admin_genesis_cap()])
-    admin_ctx = %{caller: caller, caps: caps}
+    admin_ctx = Ezagent.Test.CapHelper.signed_workspace_ctx!(workspace_uri, caller)
+    caps = admin_ctx.caps
 
     # read-side ctx (mirrors KanbanActions.read_ctx): caller + workspace scope.
     ctx = %{caller_uri: caller, caller_caps: caps, workspace_uri: workspace_uri}
@@ -86,13 +86,23 @@ defmodule Ezagent.World.KanbanDataTest do
     agent_uri
   end
 
-  defp dispatch(uri, action, args, %{caller: caller, caps: caps}) do
+  defp dispatch(uri, action, args, %{caller: caller}) do
+    target = Ezagent.URI.with_action(uri, :kanban, action)
+    cap = Ezagent.Test.CapHelper.signed_action_cap!(target, caller)
+
     Ezagent.Invocation.dispatch(%Ezagent.Invocation{
-      target: Ezagent.URI.with_action(uri, :kanban, action),
+      origin: :trusted_internal,
+      target: target,
       mode: :call,
       args: args,
-      ctx: %{caller: caller, caps: caps, reply: {:caller_inbox, self()}}
+      ctx: %{caller: caller, caps: MapSet.new([cap]), reply: {:caller_inbox, self()}}
     })
+  end
+
+  defp board_read_ctx(uri, %{caller_uri: caller} = ctx) do
+    target = Ezagent.URI.with_action(uri, :kanban, :get_tree)
+    cap = Ezagent.Test.CapHelper.signed_action_cap!(target, caller)
+    %{ctx | caller_caps: MapSet.new([cap])}
   end
 
   defp skip_if_no_entity_spawn(body) do
@@ -116,7 +126,7 @@ defmodule Ezagent.World.KanbanDataTest do
       {:ok, %{}} = dispatch(uri, :claim_node, %{id: "n2"}, admin_ctx)
       {:ok, %{}} = dispatch(uri, :set_status, %{id: "n2", status: "doing"}, admin_ctx)
 
-      tree = KanbanData.read_tree(uri, ctx)
+      tree = KanbanData.read_tree(uri, board_read_ctx(uri, ctx))
       assert tree["root_id"] == "n1"
 
       n2 = tree["nodes"]["n2"]
@@ -171,6 +181,7 @@ defmodule Ezagent.World.KanbanDataTest do
       # snapshot persists on :on_change; ensure it's flushed before the kill.
       {:ok, %{tree: %{nodes: nodes}}} = dispatch(uri, :get_tree, %{}, admin_ctx)
       assert map_size(nodes) == 1
+      cold_read_ctx = board_read_ctx(uri, ctx)
 
       # kill the LIVE Kind — the passive manager goes dormant (no chat to warm it).
       {:ok, pid} = Ezagent.KindRegistry.lookup(uri)
@@ -184,7 +195,7 @@ defmodule Ezagent.World.KanbanDataTest do
       assert URI.to_string(uri) in uris, "dormant passive manager must still list (HIGH-3)"
 
       # reading the board rehydrates it from snapshot (ensure_spawned) → tree renders.
-      tree = KanbanData.read_tree(uri, ctx)
+      tree = KanbanData.read_tree(uri, cold_read_ctx)
       assert tree["root_id"] == "n1"
       assert tree["nodes"]["n1"]["title"] == "持久根"
     end)

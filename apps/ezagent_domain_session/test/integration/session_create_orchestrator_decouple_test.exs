@@ -90,7 +90,7 @@ defmodule EzagentDomainInstanceMessage.Integration.SessionCreateOrchestratorDeco
   test "workspace create_session returns within dispatch budget only after durable finalized snapshot" do
     workspace_uri = Ezagent.URI.workspace(:system)
     owner_uri = User.admin_uri()
-    admin_ctx = %{caller: owner_uri, caps: MapSet.new([Ezagent.Capability.admin_genesis_cap()])}
+    admin_ctx = Ezagent.Test.CapHelper.signed_workspace_ctx!(workspace_uri, owner_uri)
 
     results =
       1..3
@@ -141,7 +141,7 @@ defmodule EzagentDomainInstanceMessage.Integration.SessionCreateOrchestratorDeco
              Workspace.create_session(
                workspace_uri,
                %{short_name: short, template_name: "default"},
-               %{caller: owner_uri, caps: MapSet.new([Ezagent.Capability.admin_genesis_cap()])}
+               Ezagent.Test.CapHelper.signed_workspace_ctx!(workspace_uri, owner_uri)
              )
 
     # The create itself is owner-only…
@@ -200,14 +200,18 @@ defmodule EzagentDomainInstanceMessage.Integration.SessionCreateOrchestratorDeco
 
     msg = Message.new(User.admin_uri(), %{text: "wake orchestrator", attachments: []})
 
+    send_target = URI.new!("#{URI.to_string(session_uri)}?action=session.send")
+    send_cap = Ezagent.Test.CapHelper.signed_action_cap!(send_target, User.admin_uri())
+
     :ok =
       Invocation.dispatch(%Invocation{
-        target: URI.new!("#{URI.to_string(session_uri)}?action=session.send"),
+        origin: :trusted_internal,
+        target: send_target,
         mode: :cast,
         args: %{message: msg},
         ctx: %{
           caller: User.admin_uri(),
-          caps: MapSet.new([Ezagent.Capability.admin_genesis_cap()]),
+          caps: MapSet.new([send_cap]),
           reply: :ignore
         }
       })
@@ -293,9 +297,13 @@ defmodule EzagentDomainInstanceMessage.Integration.SessionCreateOrchestratorDeco
     uri = Ezagent.URI.new!("template://system/agent/lazy-role-#{n}")
     {:ok, _} = Ezagent.SpawnRegistry.spawn(uri)
 
+    write_target = URI.new!("#{URI.to_string(uri)}?action=template.write")
+    write_cap = Ezagent.Test.CapHelper.signed_action_cap!(write_target, User.admin_uri())
+
     {:ok, _} =
       Invocation.dispatch(%Invocation{
-        target: URI.new!("#{URI.to_string(uri)}?action=template.write"),
+        origin: :trusted_internal,
+        target: write_target,
         mode: :call,
         args: %{
           content: %{
@@ -308,7 +316,7 @@ defmodule EzagentDomainInstanceMessage.Integration.SessionCreateOrchestratorDeco
         },
         ctx: %{
           caller: User.admin_uri(),
-          caps: MapSet.new([Ezagent.Capability.admin_genesis_cap()]),
+          caps: MapSet.new([write_cap]),
           reply: {:caller_inbox, self()}
         }
       })

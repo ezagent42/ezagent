@@ -11,7 +11,7 @@ defmodule Ezagent.Integration.DisableUserDispatchTest do
   - Happy path (admin): disable cuts login (reversible), attribution is the
     authenticated caller.
   - AuthZ: a workspace-scoped holder of the `disable_user` cap may disable; an
-    empty-caps caller is denied `:unauthorized`.
+    empty-caps caller is denied `:missing_cap`.
   - Cross-workspace refusal and unknown-user handling.
 
   The HARD `delete_user` counterpart is a separate task (branch
@@ -23,17 +23,14 @@ defmodule Ezagent.Integration.DisableUserDispatchTest do
   alias Ezagent.Workspace
   alias Ezagent.Entity.User
   alias Ezagent.Users
-  alias Ezagent.ActionSet.WorkspaceUserAdmin
 
   setup do
     ws_name = "disable-test-#{System.unique_integer([:positive])}"
     {:ok, _ws_pid} = Workspace.create(ws_name, %{})
     workspace_uri = URI.new!("workspace://#{ws_name}")
 
-    admin_ctx = %{
-      caller: User.admin_uri(),
-      caps: MapSet.new([Ezagent.Capability.admin_genesis_cap()])
-    }
+    admin_ctx =
+      Ezagent.Test.CapHelper.signed_workspace_ctx!(workspace_uri, User.admin_uri())
 
     user_uri_str = "entity://#{ws_name}/user/target"
     {:ok, _} = Users.create(user_uri_str, "user-password", [])
@@ -74,10 +71,11 @@ defmodule Ezagent.Integration.DisableUserDispatchTest do
       user_uri_str: user_uri_str
     } do
       operator = URI.new!("entity://#{ws_name}/user/operator")
+      target = Ezagent.URI.with_action(workspace_uri, :workspace_user_admin, :disable_user)
 
       operator_ctx = %{
         caller: operator,
-        caps: MapSet.new([Ezagent.Capability.cap(:workspace, WorkspaceUserAdmin, :disable_user)])
+        caps: MapSet.new([Ezagent.Test.CapHelper.signed_action_cap!(target, operator)])
       }
 
       assert {:ok, %{user_uri: ^user_uri_str}} =
@@ -100,7 +98,7 @@ defmodule Ezagent.Integration.DisableUserDispatchTest do
         caps: MapSet.new()
       }
 
-      assert {:error, :unauthorized} =
+      assert {:error, :missing_cap} =
                Workspace.disable_user(
                  workspace_uri,
                  %{user_uri: user_uri_str, reason: nil},

@@ -44,10 +44,11 @@ defmodule EzagentPluginHello.KanbanDelegation do
       when is_binary(instruction) do
     instruction = instruction |> String.trim() |> String.slice(0, @max_instruction)
     workspace_uri = Capability.workspace_of(session_uri)
-    ctx = caller_ctx(sender_uri)
 
     with true <- instruction != "" || {:error, :instruction_required},
-         {:ok, kanban_uri} <- resolve_default(workspace_uri, ctx),
+         {:ok, workspace_ctx} <- workspace_ctx(sender_uri, workspace_uri),
+         {:ok, kanban_uri} <- resolve_default(workspace_uri, workspace_ctx),
+         {:ok, ctx} <- board_ctx(sender_uri, kanban_uri),
          {:ok, parent_id} <- root_id(kanban_uri, ctx),
          {:ok, %{id: node_id}} <-
            dispatch(kanban_uri, :add_node, %{parent_id: parent_id || "", title: instruction}, ctx),
@@ -174,12 +175,39 @@ defmodule EzagentPluginHello.KanbanDelegation do
     end
   end
 
-  defp caller_ctx(sender_uri) do
-    %{
-      caller: sender_uri,
-      caps: sender_uri |> Ezagent.EntityCaps.load() |> MapSet.new(),
-      reply: {:caller_inbox, self()}
-    }
+  defp workspace_ctx(sender_uri, workspace_uri) do
+    requested =
+      Capability.cap(:workspace, :any, :any, Ezagent.URI.instance(workspace_uri), workspace_uri)
+
+    issue_ctx(sender_uri, requested)
+  end
+
+  defp board_ctx(sender_uri, board_uri) do
+    requested =
+      Capability.cap(
+        :agent,
+        Ezagent.ActionSet.Kanban,
+        :any,
+        Ezagent.URI.instance(board_uri),
+        Capability.workspace_of(board_uri)
+      )
+
+    issue_ctx(sender_uri, requested)
+  end
+
+  defp issue_ctx(sender_uri, requested) do
+    authorization =
+      if Ezagent.Identity.admin?(sender_uri),
+        do: {:admin, sender_uri},
+        else: {:held_by, sender_uri}
+
+    case Ezagent.Cap.issue(authorization, sender_uri, requested) do
+      {:ok, cap} ->
+        {:ok, %{caller: sender_uri, caps: MapSet.new([cap]), reply: {:caller_inbox, self()}}}
+
+      {:error, reason} ->
+        {:error, reason}
+    end
   end
 
   defp dispatch(kanban_uri, action, args, ctx) do
@@ -187,7 +215,8 @@ defmodule EzagentPluginHello.KanbanDelegation do
       target: Ezagent.URI.with_action(kanban_uri, :kanban, action),
       mode: :call,
       args: args,
-      ctx: ctx
+      ctx: ctx,
+      origin: :trusted_internal
     })
   end
 

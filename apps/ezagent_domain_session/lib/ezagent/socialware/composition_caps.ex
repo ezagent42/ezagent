@@ -143,7 +143,8 @@ defmodule Ezagent.Socialware.CompositionCaps do
     target_instance = Ezagent.URI.instance(target_uri)
     workspace_uri = Ezagent.Capability.workspace_of(target_uri)
 
-    with {:ok, owner} <- assert_target_owner(behavior, target_uri) do
+    with {:ok, owner} <- assert_target_owner(behavior, target_uri),
+         :ok <- ensure_target_owner_authority(owner, target_uri) do
       actions
       |> Enum.reduce_while({:ok, []}, fn action, {:ok, artifacts} ->
         cap =
@@ -293,27 +294,56 @@ defmodule Ezagent.Socialware.CompositionCaps do
   end
 
   defp issue_item(item, configurer) do
-    case Ezagent.Cap.issue({:held_by, configurer}, item.source_uri, item.cap) do
-      {:ok, artifact} ->
-        {:ok, artifact, false}
+    with :ok <- ensure_target_owner_authority(item.target_owner, item.cap.instance) do
+      do_issue_item(item, configurer)
+    end
+  end
 
-      {:error, :grant_not_owner} ->
-        if CompositionConsent.approved?(item.consent, :target, item.target_owner) do
-          case Ezagent.Cap.issue(
-                 {:held_by, item.target_owner},
-                 item.source_uri,
-                 item.cap
-               ) do
-            {:ok, artifact} -> {:ok, artifact, true}
-            {:error, reason} -> {:error, {:target_owner_issue_failed, reason}}
-          end
-        else
-          {:error, :target_consent_required}
-        end
+  defp do_issue_item(item, configurer) do
+    if same_uri?(configurer, item.target_owner) do
+      issue_as_target_owner(item, false)
+    else
+      issue_foreign_target(item)
+    end
+  end
+
+  defp issue_foreign_target(item) do
+    if CompositionConsent.approved?(item.consent, :target, item.target_owner) do
+      issue_as_target_owner(item, true)
+    else
+      {:error, :target_consent_required}
+    end
+  end
+
+  defp issue_as_target_owner(item, target_required?) do
+    case Ezagent.Cap.issue(
+           grant_authorization(item.target_owner),
+           item.source_uri,
+           item.cap
+         ) do
+      {:ok, artifact} ->
+        {:ok, artifact, target_required?}
 
       {:error, reason} ->
-        {:error, reason}
+        {:error, {:target_owner_issue_failed, reason}}
     end
+  end
+
+  # Data ownership is established by reviewed framework creation paths.  Make
+  # that relationship an explicit admin -> owner delegation on the target Kind
+  # before the owner issues composition artifacts.  The returned authority cap
+  # is minted by target K.grant and stored on the owner; no data-owner rule or
+  # unsigned bypass participates in issuance.
+  defp ensure_target_owner_authority(%URI{} = owner, %URI{} = target) do
+    Ezagent.Identity.TargetAuthority.ensure(owner, target)
+  end
+
+  defp grant_authorization(%URI{} = issuer) do
+    admin = Ezagent.Entity.User.admin_uri()
+
+    if Ezagent.URI.stable_key(issuer) == Ezagent.URI.stable_key(admin),
+      do: {:admin, issuer},
+      else: {:held_by, issuer}
   end
 
   defp classify_source_authority(items, configurer) do
@@ -400,7 +430,7 @@ defmodule Ezagent.Socialware.CompositionCaps do
         case Ezagent.Identity.Grant.revoke_cap(
                source_uri,
                cap,
-               {:rule, :socialware_composition_reconcile, Ezagent.URI.new!(row.issuer_uri)}
+               {:held_by, Ezagent.URI.new!(row.issuer_uri)}
              ) do
           :ok -> {:cont, :ok}
           {:error, reason} -> {:halt, {:error, {:composition_cap_revoke_failed, reason}}}
@@ -476,7 +506,7 @@ defmodule Ezagent.Socialware.CompositionCaps do
 
   defp assert_target_conformance(target_uri, behavior, action) do
     with {:ok, pid} <- Ezagent.KindRegistry.lookup(target_uri),
-         %{state: state} when is_map(state) <- :sys.get_state(pid),
+         {:ok, %{state: state}} when is_map(state) <- Ezagent.Kind.runtime_view(pid),
          {:ok, resolved} <-
            Ezagent.Kind.BehaviorSet.resolve_action(Ezagent.Entity.Agent, action, state),
          true <- resolved == behavior,

@@ -155,6 +155,8 @@ defmodule EzagentCore.Invariants.PerTenantTablesHaveWorkspaceColumnTest do
   # in `apps/ezagent_core/priv/repo/migrations/20260601000000_phase9_pr6_workspace_uri_columns.exs`
   # under "Exempt tables".
   @exempt_tables_with_reason %{
+    "kind_cap_authorities" =>
+      "Framework authority rows are globally keyed by canonical Kind URI; the URI itself carries tenant identity and the admin anchor is system-scoped.",
     "workspaces" => "Workspace IS the tenant; trivially scoped by row id.",
     "routing_rules" =>
       "Already has workspace_uri (Phase 6 PR 8 / PR #146-149) — pre-dated this migration.",

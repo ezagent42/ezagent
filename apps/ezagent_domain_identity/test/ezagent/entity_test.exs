@@ -21,8 +21,7 @@ defmodule Ezagent.EntityTest do
 
       assert {:ok, %{caps: caps}} = Entity.authenticate_password(uri, "correct-password")
       assert %MapSet{} = caps
-      # default_caps + whatever the test added (just default here)
-      assert MapSet.size(caps) >= 1
+      assert caps == MapSet.new()
     end
 
     test "wrong password → {:error, :invalid_credentials}" do

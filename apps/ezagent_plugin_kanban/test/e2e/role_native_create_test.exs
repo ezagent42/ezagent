@@ -45,10 +45,7 @@ defmodule EzagentPluginKanban.E2E.RoleNativeCreateTest do
     {:ok, _ws_pid} = Workspace.create(ws_name, %{})
     workspace_uri = URI.new!("workspace://#{ws_name}")
 
-    admin_ctx = %{
-      caller: User.admin_uri(),
-      caps: MapSet.new([Ezagent.Capability.admin_genesis_cap()])
-    }
+    admin_ctx = Ezagent.Test.CapHelper.signed_workspace_ctx!(workspace_uri, User.admin_uri())
 
     :ok =
       AgentFlavorRegistry.register(%{
@@ -226,15 +223,28 @@ defmodule EzagentPluginKanban.E2E.RoleNativeCreateTest do
   end
 
   defp dispatch(agent_uri, action, args, %{caller: caller, caps: caps}) do
+    target = Ezagent.URI.with_action(agent_uri, :kanban, action)
+    caps = signed_dispatch_caps(target, caller, caps)
+
     cmd =
       Ezagent.Cmd.new(
-        Ezagent.URI.with_action(agent_uri, :kanban, action),
+        target,
         action,
         args,
         %{mode: :call, caller: caller, caps: caps, reply: {:caller_inbox, self()}}
       )
 
     Ezagent.Router.dispatch(cmd)
+  end
+
+  defp signed_dispatch_caps(target, caller, caps) do
+    if Ezagent.Identity.admin?(caller) do
+      MapSet.new([Ezagent.Test.CapHelper.signed_action_cap!(target, caller)])
+    else
+      caps
+      |> Enum.map(&Ezagent.Test.CapHelper.signed_cap!(target, caller, &1))
+      |> MapSet.new()
+    end
   end
 
   defp restore_routing_tables(nil), do: Application.delete_env(:ezagent_core, :routing_tables)

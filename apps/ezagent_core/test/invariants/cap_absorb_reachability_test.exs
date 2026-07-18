@@ -1,7 +1,9 @@
 defmodule Ezagent.Invariants.CapAbsorbReachabilityTest do
   @moduledoc """
   S3 I2/I8 reachability gate: absorb is a VM-internal, same-node store action.
-  It verifies an already-issued artifact and never issues authority itself.
+  It accepts only a structurally born-signed artifact for the receiver and
+  never issues authority itself. Cryptographic authorization remains solely at
+  the target Kind verifier.
   """
   use ExUnit.Case, async: true
 
@@ -22,13 +24,13 @@ defmodule Ezagent.Invariants.CapAbsorbReachabilityTest do
 
   @cross_node_markers [":rpc.", ":erpc.", "Node."]
 
-  test "absorb is provenance-gated, verifies, and never self-issues" do
+  test "absorb is provenance-gated, structurally stores, and never self-issues" do
     source = identity_source()
     [_, absorb_section] = String.split(source, "def handle_absorb_cap", parts: 2)
     [absorb_section | _] = String.split(absorb_section, "def handle_revoke_cap", parts: 2)
 
     assert absorb_section =~ "%{caller: :vm_internal}"
-    assert absorb_section =~ "Ezagent.Cap.verify_for(cap_struct"
+    assert absorb_section =~ "Ezagent.Cap.storable_for?(cap_struct"
     assert absorb_section =~ "def handle_absorb_cap(_args, _ctx), do: {:error, :unauthorized}"
     refute absorb_section =~ "Cap.issue"
   end

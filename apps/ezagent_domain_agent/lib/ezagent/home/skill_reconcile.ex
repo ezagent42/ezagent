@@ -138,8 +138,12 @@ defmodule Ezagent.Home.SkillReconcile do
 
   defp agent_row?(%{kind_type: "agent"}), do: true
 
-  defp agent_row?(%{kind_type: nil, uri: uri}) when is_binary(uri),
-    do: String.starts_with?(uri, "entity://") and String.contains?(uri, "/agent/")
+  defp agent_row?(%{kind_type: nil, uri: uri}) when is_binary(uri) do
+    case parse_uri(uri) do
+      {:ok, %URI{} = agent_uri} -> Ezagent.URI.type?(agent_uri, :agent)
+      _ -> false
+    end
+  end
 
   defp agent_row?(_), do: false
 

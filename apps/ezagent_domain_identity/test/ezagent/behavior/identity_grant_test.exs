@@ -11,28 +11,24 @@ defmodule Ezagent.ActionSet.IdentityGrantTest do
   """
   use EzagentCore.DataCase, async: false
 
+  import Ezagent.Test.CapHelper, only: [signed_fixture_cap!: 5]
+
   alias Ezagent.ActionSet.IdentityAdmin
   alias Ezagent.Capability
 
-  @workspace_uri URI.new!("workspace://team-alpha")
   @granter Ezagent.URI.new!("entity://system/user/admin")
+  @receiver Ezagent.URI.new!("entity://team-alpha/user/target")
+  @cap_target Ezagent.URI.new!("session://team-alpha/default/identity-grant")
 
-  defp echo_cap do
-    %Capability{
-      kind: :echo,
-      behavior: :any,
-      instance: :any,
-      workspace_uri: @workspace_uri,
-      granted_by: @granter,
-      granted_at: DateTime.utc_now()
-    }
+  defp echo_cap(receiver \\ @receiver) do
+    signed_fixture_cap!(@cap_target, :session, :any, :any, receiver)
   end
 
   defp ctx_with(caller_caps, slice_caps) do
     %{
       caller: @granter,
       caps: caller_caps,
-      self_uri: Ezagent.URI.new!("entity://team-alpha/user/target"),
+      self_uri: @receiver,
       reply: :sync,
       read: fn key, default ->
         case key do
@@ -103,7 +99,7 @@ defmodule Ezagent.ActionSet.IdentityGrantTest do
         end
       }
 
-      cap = echo_cap()
+      cap = echo_cap(user_uri)
 
       assert {:ok, _result, _effects} = IdentityAdmin.handle_grant_cap(%{cap: cap}, ctx)
 
@@ -123,7 +119,7 @@ defmodule Ezagent.ActionSet.IdentityGrantTest do
       user_uri = Ezagent.URI.new!("entity://team-alpha/user/notify_shape_revoke")
       :ok = Ezagent.Notifications.subscribe(user_uri)
 
-      cap = echo_cap()
+      cap = echo_cap(user_uri)
 
       ctx = %{
         caller: @granter,
@@ -162,7 +158,7 @@ defmodule Ezagent.ActionSet.IdentityGrantTest do
     end
 
     test "dispatch handler verifies provenance without re-authorizing the grantor" do
-      forged = %{echo_cap() | granted_by: Ezagent.URI.new!("system://forged")}
+      forged = %{echo_cap() | signature: nil, key_id: nil}
       ctx = ctx_with(MapSet.new(), MapSet.new())
 
       assert {:error, :invalid_cap_artifact} =

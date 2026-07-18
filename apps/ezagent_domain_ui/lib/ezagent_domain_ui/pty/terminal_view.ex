@@ -46,7 +46,7 @@ defmodule EzagentDomainUi.Pty.TerminalView do
     # Read the chat slice through the T3-normalized accessor
     # (`Kind.get_slice/2`). Post-lifecycle the on-process slice is
     # two-container (`%{state: …, transients: …}`); the old
-    # `%{state: %{session: slice}}` raw `:sys.get_state` match returned the
+    # the old raw Kind state match returned the
     # two-container wrapper, so `slice.members` raised → caught → false,
     # and the Terminal tab never became applicable even with a live
     # PTY-backed member. (post-lifecycle remediation.)

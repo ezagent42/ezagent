@@ -11,6 +11,8 @@ defmodule Ezagent.Identity.AuthorityTest do
 
   use EzagentCore.DataCase, async: false
 
+  import Ezagent.Test.CapHelper, only: [authority_signed_cap_as!: 4]
+
   alias Ezagent.Capability
   alias Ezagent.Identity.Authority
 
@@ -118,20 +120,25 @@ defmodule Ezagent.Identity.AuthorityTest do
       caller: caller
     } do
       target = URI.new!("entity://team-alpha/agent/managed-#{System.unique_integer([:positive])}")
-      cap = Ezagent.CreatorGrant.manage_cap(:agent, target, Capability.workspace_of(target), caller)
+
+      cap =
+        Ezagent.CreatorGrant.manage_cap(:agent, target, Capability.workspace_of(target), caller)
+
       grant_to_identity(caller, cap)
 
       assert Authority.manages?(caller, target)
     end
 
-    test "true when the caller is a workspace admin over the target's workspace", %{caller: caller} do
+    test "true when the caller is a workspace admin over the target's workspace", %{
+      caller: caller
+    } do
       target = URI.new!("entity://team-alpha/agent/managed-#{System.unique_integer([:positive])}")
 
       ws_cap = %Capability{
         kind: :workspace,
         behavior: Ezagent.ActionSet.Workspace,
         action: :any,
-        instance: :any,
+        instance: Capability.workspace_of(target),
         workspace_uri: Capability.workspace_of(target),
         granted_by: caller,
         granted_at: DateTime.utc_now()
@@ -142,8 +149,12 @@ defmodule Ezagent.Identity.AuthorityTest do
       assert Authority.manages?(caller, target)
     end
 
-    test "false when the caller holds no manage/admin authority over the target", %{caller: caller} do
-      target = URI.new!("entity://team-beta/agent/unmanaged-#{System.unique_integer([:positive])}")
+    test "false when the caller holds no manage/admin authority over the target", %{
+      caller: caller
+    } do
+      target =
+        URI.new!("entity://team-beta/agent/unmanaged-#{System.unique_integer([:positive])}")
+
       refute Authority.manages?(caller, target)
     end
 
@@ -156,19 +167,10 @@ defmodule Ezagent.Identity.AuthorityTest do
   # Grant `cap` into `entity`'s durable identity slice via the real grant
   # chokepoint (admin caller), then wait for it to land.
   defp grant_to_identity(entity, cap) do
-    _ =
-      Ezagent.Invocation.dispatch(%Ezagent.Invocation{
-        target: URI.new!("#{URI.to_string(entity)}?action=identity.grant_cap"),
-        mode: :call,
-        args: %{cap: cap},
-        ctx: %{
-          caller: Ezagent.Entity.User.admin_uri(),
-          caps: MapSet.new([Capability.admin_genesis_cap()]),
-          reply: :ignore
-        }
-      })
-
-    wait_cap(entity, cap)
+    {:ok, authority} = Ezagent.Cap.Authority.open(cap.instance, cap.kind)
+    signed = authority_signed_cap_as!(authority, cap.granted_by, entity, cap)
+    assert :ok = Ezagent.EntityCaps.grant(entity, signed)
+    wait_cap(entity, signed)
   end
 
   defp wait_cap(entity, cap, retries \\ 200) do
@@ -178,9 +180,15 @@ defmodule Ezagent.Identity.AuthorityTest do
       |> Enum.any?(&(Capability.identity_key(&1) == Capability.identity_key(cap)))
 
     cond do
-      held? -> :ok
-      retries > 0 -> Process.sleep(10); wait_cap(entity, cap, retries - 1)
-      true -> flunk("cap never landed in #{URI.to_string(entity)}'s identity")
+      held? ->
+        :ok
+
+      retries > 0 ->
+        Process.sleep(10)
+        wait_cap(entity, cap, retries - 1)
+
+      true ->
+        flunk("cap never landed in #{URI.to_string(entity)}'s identity")
     end
   end
 end

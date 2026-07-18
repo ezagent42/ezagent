@@ -311,11 +311,25 @@ defmodule Ezagent.Kind.InstanceSetDenialTest do
 
     target = Ezagent.URI.new!("#{URI.to_string(uri)}?action=probe.poke")
 
+    cap =
+      signed_fixture_cap!(
+        uri,
+        SupersetSessionKind.type_name(),
+        ProbeBehavior,
+        :poke,
+        Ezagent.Entity.User.admin_uri()
+      )
+
     Ezagent.Invocation.dispatch(%Ezagent.Invocation{
+      origin: :trusted_internal,
       target: target,
       mode: :call,
       args: %{},
-      ctx: %{caller: Ezagent.Entity.User.admin_uri(), caps: admin_caps(), reply: :ignore}
+      ctx: %{
+        caller: Ezagent.Entity.User.admin_uri(),
+        caps: MapSet.new([cap]),
+        reply: :ignore
+      }
     })
 
     assert_received {:probe, :handle_poke}
@@ -335,10 +349,15 @@ defmodule Ezagent.Kind.InstanceSetDenialTest do
 
     result =
       Ezagent.Invocation.dispatch(%Ezagent.Invocation{
+        origin: :trusted_internal,
         target: target,
         mode: :call,
         args: %{},
-        ctx: %{caller: Ezagent.Entity.User.admin_uri(), caps: admin_caps(), reply: :ignore}
+        ctx: %{
+          caller: Ezagent.Entity.User.admin_uri(),
+          caps: signed_caps(uri, ProbeBehavior, :poke),
+          reply: :ignore
+        }
       })
 
     assert {:error, :behavior_not_in_instance_set} = result
@@ -355,10 +374,15 @@ defmodule Ezagent.Kind.InstanceSetDenialTest do
 
     result =
       Ezagent.Invocation.dispatch(%Ezagent.Invocation{
+        origin: :trusted_internal,
         target: target,
         mode: :call,
         args: %{},
-        ctx: %{caller: Ezagent.Entity.User.admin_uri(), caps: admin_caps(), reply: :ignore}
+        ctx: %{
+          caller: Ezagent.Entity.User.admin_uri(),
+          caps: signed_caps(uri, Ezagent.ActionSet.Manage, :delete),
+          reply: :ignore
+        }
       })
 
     # The exact success/error shape is owned by Manage + authz; the ONLY thing
@@ -366,7 +390,18 @@ defmodule Ezagent.Kind.InstanceSetDenialTest do
     refute match?({:error, :behavior_not_in_instance_set}, result)
   end
 
-  defp admin_caps, do: MapSet.new([Ezagent.Capability.admin_genesis_cap()])
+  defp signed_caps(uri, behavior, action) do
+    cap =
+      signed_fixture_cap!(
+        uri,
+        SupersetSessionKind.type_name(),
+        behavior,
+        action,
+        Ezagent.Entity.User.admin_uri()
+      )
+
+    MapSet.new([cap])
+  end
 
   # === Task 11 (E4): mailbox handle_signal path through the instance set ===
 

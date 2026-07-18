@@ -36,12 +36,7 @@ defmodule Ezagent.World.AgentConfigStateTest do
 
     workspace_uri = URI.new!("workspace://#{ws_name}")
 
-    admin_caps = MapSet.new([Ezagent.Capability.admin_genesis_cap()])
-
-    admin_ctx = %{
-      caller: User.admin_uri(),
-      caps: admin_caps
-    }
+    admin_ctx = Ezagent.Test.CapHelper.signed_workspace_ctx!(workspace_uri, User.admin_uri())
 
     {:ok, ws_name: ws_name, workspace_uri: workspace_uri, admin_ctx: admin_ctx}
   end
@@ -82,9 +77,13 @@ defmodule Ezagent.World.AgentConfigStateTest do
     test "state has 'cascade' with 'keys' including 'agent.soul'",
          %{workspace_uri: workspace_uri, admin_ctx: admin_ctx} do
       agent_uri = create_curl_agent(workspace_uri, admin_ctx)
+      read_target = Ezagent.URI.with_action(agent_uri, :config_evolve, :read_cascade)
+
+      read_caps =
+        MapSet.new([Ezagent.Test.CapHelper.signed_action_cap!(read_target, admin_ctx.caller)])
 
       state =
-        build_config_state(agent_uri, admin_ctx.caller, admin_ctx.caps, workspace_uri)
+        build_config_state(agent_uri, admin_ctx.caller, read_caps, workspace_uri)
 
       # Must have a cascade map, not a config_error.
       refute Map.has_key?(state, "config_error"),
@@ -112,10 +111,18 @@ defmodule Ezagent.World.AgentConfigStateTest do
     test "state cascade reflects a patched value (proves real read, not a stub)",
          %{workspace_uri: workspace_uri, admin_ctx: admin_ctx} do
       agent_uri = create_curl_agent(workspace_uri, admin_ctx)
+      apply_target = Ezagent.URI.with_action(agent_uri, :config_evolve, :apply_config_delta)
+      read_target = Ezagent.URI.with_action(agent_uri, :config_evolve, :read_cascade)
+
+      apply_caps =
+        MapSet.new([Ezagent.Test.CapHelper.signed_action_cap!(apply_target, admin_ctx.caller)])
+
+      read_caps =
+        MapSet.new([Ezagent.Test.CapHelper.signed_action_cap!(read_target, admin_ctx.caller)])
 
       # Apply a delta first — this writes to the user layer.
       assert {:ok, _} =
-               Config.apply_delta(agent_uri, admin_ctx.caller, admin_ctx.caps, %{
+               Config.apply_delta(agent_uri, admin_ctx.caller, apply_caps, %{
                  layer: "user",
                  key: "agent.soul",
                  patch: %{"tone" => "decisive"}
@@ -123,7 +130,7 @@ defmodule Ezagent.World.AgentConfigStateTest do
 
       # Now build the component state and assert the patched value is reflected.
       state =
-        build_config_state(agent_uri, admin_ctx.caller, admin_ctx.caps, workspace_uri)
+        build_config_state(agent_uri, admin_ctx.caller, read_caps, workspace_uri)
 
       refute Map.has_key?(state, "config_error"),
              "expected no config_error after patching; got: #{inspect(state["config_error"])}"

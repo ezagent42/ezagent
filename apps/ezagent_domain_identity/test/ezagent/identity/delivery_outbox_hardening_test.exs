@@ -2,11 +2,12 @@ defmodule Ezagent.Identity.DeliveryOutboxHardeningTest do
   use EzagentCore.DataCase, async: false
 
   import Ecto.Query
+  import Ezagent.Test.CapHelper, only: [signed_fixture_cap!: 5]
 
   alias Ezagent.Cap.Delivery
   alias Ezagent.Cap.DeliveryOutbox
   alias Ezagent.Cap.DeliveryOutbox.Sweeper
-  alias Ezagent.{Capability, Invocation}
+  alias Ezagent.Invocation
   alias EzagentCore.Repo
 
   test "producer idempotency retries reuse one durable row and re-attempt it" do
@@ -34,6 +35,7 @@ defmodule Ezagent.Identity.DeliveryOutboxHardeningTest do
     cap = capability(target)
 
     invocation = %Invocation{
+      origin: :trusted_internal,
       target: Ezagent.URI.with_action(target, :identity, :revoke_cap),
       mode: :cast,
       args: %{cap: cap},
@@ -70,23 +72,16 @@ defmodule Ezagent.Identity.DeliveryOutboxHardeningTest do
     terminate(target, pid)
   end
 
-  test "same cap and idempotency key with different authorization context is rejected" do
+  test "same cap and idempotency key with a different authenticated presenter is rejected" do
     {target, pid} = spawn_target("idem-authorization-conflict")
     :ok = Ezagent.ReadyGate.put(target, :not_ready)
     key = "cap-delivery-authorization-conflict-#{System.unique_integer([:positive])}"
     cap = capability(target)
+    first_presenter = Ezagent.URI.user("team-alpha", unique("first-presenter"))
+    second_presenter = Ezagent.URI.user("team-alpha", unique("second-presenter"))
 
-    first =
-      absorb_invocation(target, cap,
-        idempotency_key: key,
-        authorization_rule: :original_rule
-      )
-
-    conflicting =
-      absorb_invocation(target, cap,
-        idempotency_key: key,
-        authorization_rule: :different_rule
-      )
+    first = revoke_invocation(target, cap, first_presenter, key)
+    conflicting = revoke_invocation(target, cap, second_presenter, key)
 
     assert :ok = Invocation.dispatch(first)
     assert {:error, :idempotency_conflict} = Invocation.dispatch(conflicting)
@@ -145,17 +140,17 @@ defmodule Ezagent.Identity.DeliveryOutboxHardeningTest do
 
     assert Map.keys(envelope) |> Enum.sort() ==
              [
-               :authorization_rule,
                :caller,
                :cap,
                :caps,
                :op,
+               :presenter,
                :producer,
                :target_uri,
                :version
              ]
 
-    assert envelope.version == 1
+    assert envelope.version == Ezagent.Cap.DeliveryOutbox.Envelope.version()
     assert envelope.producer == :identity_absorb
     assert envelope.target_uri == URI.to_string(target)
     assert envelope.caller == :vm_internal
@@ -288,14 +283,14 @@ defmodule Ezagent.Identity.DeliveryOutboxHardeningTest do
       insert_raw_delivery!(
         poison_target,
         %{
-          version: 1,
+          version: Ezagent.Cap.DeliveryOutbox.Envelope.version(),
           producer: :identity_absorb,
           target_uri: URI.to_string(poison_target),
           op: :absorb_cap,
           cap: capability(poison_target),
           caller: :vm_internal,
+          presenter: :vm_internal,
           caps: [],
-          authorization_rule: nil,
           extra: :must_be_rejected
         },
         now
@@ -324,6 +319,7 @@ defmodule Ezagent.Identity.DeliveryOutboxHardeningTest do
     caller = Ezagent.URI.user("team-alpha", unique("unauthorized"))
 
     invocation = %Invocation{
+      origin: :trusted_internal,
       target: Ezagent.URI.with_action(target, :identity, :revoke_cap),
       mode: :cast,
       args: %{cap: cap},
@@ -340,7 +336,7 @@ defmodule Ezagent.Identity.DeliveryOutboxHardeningTest do
 
     assert eventually(fn ->
              raw_status(delivery.id) == "dead" and
-               String.contains?(last_error(delivery.id), "unauthorized")
+               String.contains?(last_error(delivery.id), "missing_cap")
            end)
 
     terminate(target, pid)
@@ -378,7 +374,7 @@ defmodule Ezagent.Identity.DeliveryOutboxHardeningTest do
     }
 
     ctx =
-      Enum.reduce([:idempotency_key, :authorization_rule], ctx, fn key, acc ->
+      Enum.reduce([:idempotency_key], ctx, fn key, acc ->
         case Keyword.fetch(opts, key) do
           {:ok, value} -> Map.put(acc, key, value)
           :error -> acc
@@ -386,10 +382,27 @@ defmodule Ezagent.Identity.DeliveryOutboxHardeningTest do
       end)
 
     %Invocation{
+      origin: :trusted_internal,
       target: Ezagent.URI.with_action(target, :identity, :absorb_cap),
       mode: :cast,
       args: %{artifact: cap},
       ctx: ctx
+    }
+  end
+
+  defp revoke_invocation(target, cap, presenter, idempotency_key) do
+    %Invocation{
+      origin: :trusted_internal,
+      target: Ezagent.URI.with_action(target, :identity, :revoke_cap),
+      mode: :cast,
+      args: %{cap: cap},
+      ctx: %{
+        caller: presenter,
+        caps: MapSet.new(),
+        reply: :ignore,
+        idempotency_key: idempotency_key,
+        cap_delivery_producer: :identity_revoke
+      }
     }
   end
 
@@ -414,15 +427,13 @@ defmodule Ezagent.Identity.DeliveryOutboxHardeningTest do
   end
 
   defp capability(target) do
-    %Capability{
-      kind: :user,
-      behavior: Ezagent.ActionSet.Identity,
-      action: :list_caps,
-      instance: Ezagent.URI.instance(target),
-      workspace_uri: Ezagent.Capability.workspace_of(target),
-      granted_by: Ezagent.Entity.User.admin_uri(),
-      granted_at: DateTime.utc_now()
-    }
+    signed_fixture_cap!(
+      target,
+      :user,
+      Ezagent.ActionSet.Identity,
+      :list_caps,
+      target
+    )
   end
 
   defp one_delivery!(target) do

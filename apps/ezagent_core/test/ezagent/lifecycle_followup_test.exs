@@ -31,7 +31,7 @@ defmodule Ezagent.LifecycleFollowupTest do
   @moduletag :umbrella_only
 
   alias Ezagent.ActionSet
-  alias Ezagent.Kind.{Runtime, Snapshot}
+  alias Ezagent.Kind.Snapshot
   alias Ezagent.Ecto.KindSnapshot
   alias Ezagent.{Invocation, SnapshotStore}
 
@@ -86,6 +86,17 @@ defmodule Ezagent.LifecycleFollowupTest do
   defp uri(type),
     do: URI.new!("system://#{type}/inst-#{System.unique_integer([:positive])}")
 
+  defp signed_ctx(uri, kind, behavior, action) do
+    presenter = Ezagent.Entity.User.admin_uri()
+    cap = signed_fixture_cap!(uri, kind.type_name(), behavior, action, presenter)
+
+    %{
+      caller: presenter,
+      caps: MapSet.new([cap]),
+      reply: {:caller_inbox, self()}
+    }
+  end
+
   # ===================================================================
   # F1 — transients never reach durable storage (two indirect paths)
   # ===================================================================
@@ -123,10 +134,11 @@ defmodule Ezagent.LifecycleFollowupTest do
 
       {:ok, _} =
         Invocation.dispatch(%Invocation{
+          origin: :trusted_internal,
           target: target,
           mode: :call,
           args: %{},
-          ctx: %{caller: :vm_internal, reply: {:caller_inbox, self()}}
+          ctx: signed_ctx(u, TransientOnlyKind, TransientOnlyFixture, :tick)
         })
 
       # The transient hits counter advanced (slice key pinned to :transient_only)...
@@ -167,10 +179,11 @@ defmodule Ezagent.LifecycleFollowupTest do
 
       {:ok, result} =
         Invocation.dispatch(%Invocation{
+          origin: :trusted_internal,
           target: target,
           mode: :call,
           args: %{},
-          ctx: %{caller: :vm_internal, reply: {:caller_inbox, self()}}
+          ctx: signed_ctx(u, SiblingMixKind, SiblingReader, :read)
         })
 
       # The legacy-flat sibling AND the Lifecycle two-container sibling
@@ -323,10 +336,11 @@ defmodule Ezagent.LifecycleFollowupTest do
 
       {:ok, result} =
         Invocation.dispatch(%Invocation{
+          origin: :trusted_internal,
           target: target,
           mode: :call,
           args: %{n: 3},
-          ctx: %{caller: :vm_internal, reply: {:caller_inbox, self()}}
+          ctx: signed_ctx(u, LifecycleInterceptKind, LifecycleInterceptFixture, :run)
         })
 
       # pre_handle doubled n (3 → 6) before the handler ran.
@@ -350,10 +364,11 @@ defmodule Ezagent.LifecycleFollowupTest do
 
       {:ok, result} =
         Invocation.dispatch(%Invocation{
+          origin: :trusted_internal,
           target: target,
           mode: :call,
           args: %{},
-          ctx: %{caller: :vm_internal, reply: {:caller_inbox, self()}}
+          ctx: signed_ctx(u, LifecycleInterceptKind, LifecycleInterceptFixture, :guarded)
         })
 
       assert result == %{denied: true}
@@ -431,10 +446,11 @@ defmodule Ezagent.LifecycleFollowupTest do
       # the 5s timeout); it returns promptly with the rejection.
       {:ok, result} =
         Invocation.dispatch(%Invocation{
+          origin: :trusted_internal,
           target: target,
           mode: :call,
           args: %{},
-          ctx: %{caller: :vm_internal, reply: {:caller_inbox, self()}}
+          ctx: signed_ctx(u, SelfDestroyKind, SelfDestroyFixture, :boom)
         })
 
       # The handler observed the structural rejection.

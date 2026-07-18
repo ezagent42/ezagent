@@ -172,14 +172,23 @@ defmodule EzagentPluginKanban.MiroSync do
     # sanctioned 构造（过 uri_query.scan）：with_action 而非裸 `?action=` 串。
     target = Ezagent.URI.with_action(uri, :kanban, action)
 
-    Ezagent.Invocation.dispatch(%Ezagent.Invocation{
-      target: target,
-      mode: :call,
-      args: args,
-      ctx: %{caller: sys_caller(), caps: sys_caps(), reply: {:caller_inbox, self()}}
-    })
+    caller = sys_caller()
+
+    with {:ok, signed_cap} <-
+           Ezagent.Cap.issue_for_action({:admin, caller}, caller, target) do
+      Ezagent.Invocation.dispatch(%Ezagent.Invocation{
+        target: target,
+        mode: :call,
+        args: args,
+        ctx: %{
+          caller: caller,
+          caps: MapSet.new([signed_cap]),
+          reply: {:caller_inbox, self()}
+        },
+        origin: :trusted_internal
+      })
+    end
   end
 
   defp sys_caller, do: Ezagent.URI.user(:system, :admin)
-  defp sys_caps, do: MapSet.new([Ezagent.Capability.admin_genesis_cap()])
 end

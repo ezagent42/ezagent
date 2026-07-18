@@ -92,19 +92,21 @@ defmodule Ezagent.PluginCc.Template.SpawnPlan do
           {:ok, {[String.t()], map()}}
           | {:error,
              :claude_not_found
-             | :deepseek_api_key_missing
+             | {:unknown_backend_profile, String.t()}
+             | {:backend_api_key_missing, String.t()}
              | {:unsupported_claude_dev_channels, String.t()}}
   def build_claude_cmd(%URI{} = agent_uri, agent_cwd, tmpl)
       when is_binary(agent_cwd) and is_map(tmpl) do
     with {:ok, claude_path} <- resolve_claude_executable(agent_uri),
          :ok <- ensure_dev_channels_supported(claude_path),
-         # Provider/backend dimension (anthropic|deepseek), ORTHOGONAL to
-         # transport. anthropic → %{} (the normal cc env is UNCHANGED — no
-         # DeepSeek vars leak in). deepseek → the 8-var block from
-         # DEEPSEEK_API_KEY, or a fail-fast :deepseek_api_key_missing (the
-         # deepseek instantiate already gates this before spawn; kept here as
-         # defense so the raw builder never emits a half-configured deepseek
-         # launch).
+         # Provider/backend dimension (anthropic | custom-backend profile),
+         # ORTHOGONAL to transport. anthropic → %{} (the normal cc env is
+         # UNCHANGED — no vendor vars leak in). A catalog profile → its env
+         # block (key from the profile's own allowlisted env var), or a
+         # fail-fast {:backend_api_key_missing, name} (the custom-backend
+         # instantiate already gates this before spawn; kept here as defense
+         # so the raw builder never emits a half-configured custom-backend
+         # launch). Unknown profile names fail CLOSED.
          {:ok, provider_env} <- Ezagent.PluginCc.Provider.provider_env(tmpl) do
       config_home = CcAgent.resolve_config_home(agent_uri, tmpl)
 
@@ -143,12 +145,12 @@ defmodule Ezagent.PluginCc.Template.SpawnPlan do
         |> put_claude_config_dir(config_home, tmpl)
         |> maybe_put_orchestrator_recipe_env(tmpl)
         |> maybe_put_cli_identity_env(agent_uri, tmpl)
-        # Provider env LAST so the DeepSeek block (ANTHROPIC_BASE_URL/
-        # ANTHROPIC_AUTH_TOKEN/…) authoritatively points claude at the DeepSeek
-        # endpoint. Empty for anthropic — the default cc path is unchanged.
+        # Provider env LAST so the catalog profile's block (ANTHROPIC_BASE_URL/
+        # ANTHROPIC_AUTH_TOKEN/…) authoritatively points claude at the selected
+        # backend endpoint. Empty for anthropic — the default cc path is unchanged.
         |> Map.merge(provider_env)
-        # Bridge-topic override so a deepseek sidecar joins
-        # `agent_bridge:cc-deepseek:<uri>` (matching its resolved flavor) instead
+        # Bridge-topic override so a custom-backend sidecar joins
+        # `agent_bridge:cc-custom:<uri>` (matching its resolved flavor) instead
         # of the sidecar's `agent_bridge:cc:` default. Empty for anthropic.
         |> Map.merge(Ezagent.PluginCc.Provider.bridge_topic_env(tmpl, agent_uri))
 
@@ -347,7 +349,7 @@ defmodule Ezagent.PluginCc.Template.SpawnPlan do
 
   # Orchestrator-only `.mcp.json` opts (transport #53 / Phase 7 PR-5). For an
   # orchestrator agent — gated on `role == "orchestrator"` via
-  # `CcAgent.orchestrator_recipe?/1`, FLAVOR-AGNOSTIC so a cc-deepseek
+  # `CcAgent.orchestrator_recipe?/1`, FLAVOR-AGNOSTIC so a cc-custom
   # orchestrator gets it too and a normal cc agent never does — thread the
   # orchestrator-socket WS URL + the seed-exported tool-schema path so
   # `McpConfigWriter` writes the second `esr-orchestrator` server (the bridge

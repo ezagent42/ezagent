@@ -521,8 +521,9 @@ defmodule Ezagent.TestSupport.LifecycleSignalFixture do
      ]}
   end
 
-  def handle_signal({:lifecycle_signal_dispatch, %URI{} = target_uri}, _ctx) do
+  def handle_signal({:lifecycle_signal_dispatch, %URI{} = target_uri}, ctx) do
     bump_target = URI.new!("#{URI.to_string(target_uri)}?action=lifecycle_fixture.bump")
+    cap = :persistent_term.get({__MODULE__, :bump_cap})
 
     {:ok,
      [
@@ -532,7 +533,8 @@ defmodule Ezagent.TestSupport.LifecycleSignalFixture do
           target: bump_target,
           action: :bump,
           args: %{by: 7},
-          ctx: %{reply: :none}
+          ctx: %{caller: ctx.self_uri, caps: MapSet.new([cap]), reply: :none},
+          origin: :trusted_internal
         }}
      ]}
   end

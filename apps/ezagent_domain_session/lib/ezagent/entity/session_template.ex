@@ -331,7 +331,8 @@ defmodule Ezagent.Entity.SessionTemplate do
   @spec persist_version(map(), URI.t() | String.t(), keyword()) ::
           {:ok, URI.t()} | {:error, term()}
   def persist_version(content, workspace, opts) when is_map(content) and is_list(opts) do
-    with {:ok, ctx} <- build_caller_ctx(opts) do
+    with {:ok, ctx} <- build_caller_ctx(opts),
+         :ok <- require_session_template_cap(ctx.caps, workspace, ctx.caller) do
       do_persist_version(content, workspace, ctx)
     end
   end
@@ -436,30 +437,24 @@ defmodule Ezagent.Entity.SessionTemplate do
   defp normalize_caps_set(_), do: MapSet.new()
 
   defp system_ctx do
-    # #154 — `system://template-materialize` ELIMINATED. The opts-less
-    # SessionTemplate system context (template.write/read materialization) now
-    # runs under the genesis admin entity with INLINE narrow `template.write` +
-    # `template.read` caps (granted_by admin; #533 refines to per-creator).
-    # This builder is target-agnostic (the dispatch sets the target), so the
-    # caps are `instance: :any`; behavior: :any avoids a cross-app Behavior.Template
-    # literal. Caller paths supplying their own ctx (`persist_version/3` with
-    # caller_opts) still preserve operator provenance per HIGH-9.
-    admin_uri = Ezagent.Entity.User.admin_uri()
-
-    %{
-      caller: admin_uri,
-      caps:
-        MapSet.new([
-          template_admin_cap(:write, admin_uri),
-          template_admin_cap(:read, admin_uri)
-        ]),
-      reply: {:caller_inbox, self()}
-    }
+    # The concrete target does not exist until `do_persist_version/3` computes
+    # its content-addressed URI. Keep only the canonical bootstrap identity
+    # here; `dispatch_write/3` obtains the target-signed capability from that
+    # target's sealed admin anchor after `ensure_kind_alive/1` has opened its
+    # authority compartment.
+    {:system_admin, Ezagent.Entity.User.admin_uri()}
   end
 
-  defp template_admin_cap(action, %URI{} = admin_uri) when is_atom(action) do
+  defp template_admin_cap(action, %URI{} = target, %URI{} = admin_uri)
+       when is_atom(action) do
     %Ezagent.Capability{
-      Ezagent.Capability.cap(:any, :any, action, :any, :any)
+      Ezagent.Capability.cap(
+        :session_template,
+        Ezagent.ActionSet.Template,
+        action,
+        Ezagent.URI.instance(target),
+        Ezagent.Capability.workspace_of(target)
+      )
       | granted_by: admin_uri,
         granted_at: DateTime.utc_now()
     }
@@ -538,7 +533,8 @@ defmodule Ezagent.Entity.SessionTemplate do
              target: target,
              mode: :call,
              args: args,
-             ctx: ctx
+             ctx: ctx,
+             origin: :trusted_internal
            }) do
         {:ok, %{template_uri: %URI{} = uri}} -> {:ok, uri}
         {:error, _} = err -> err
@@ -622,7 +618,7 @@ defmodule Ezagent.Entity.SessionTemplate do
 
     with {:ok, caps} <- fetch_opt(opts, :caps),
          {:ok, caller_uri} <- fetch_opt(opts, :caller),
-         :ok <- require_session_template_cap(caps, workspace) do
+         :ok <- require_session_template_cap(caps, workspace, caller_uri) do
       content =
         config
         |> normalize_config_keys()
@@ -636,9 +632,7 @@ defmodule Ezagent.Entity.SessionTemplate do
       persist_and_grant(
         content,
         workspace,
-        Keyword.get(opts, :owner, caller_uri),
-        caller: caller_uri,
-        caps: caps
+        Keyword.get(opts, :owner, caller_uri)
       )
     end
   end
@@ -657,9 +651,9 @@ defmodule Ezagent.Entity.SessionTemplate do
   # context (`persist_version/3`), not `admin_caps`. The caller already
   # passed `require_session_template_cap/2`, so its caps authorize the
   # write.
-  defp persist_and_grant(content, workspace, owner_uri, caller_opts) do
-    with {:ok, new_uri} <- persist_version(content, workspace, caller_opts),
-         :ok <- grant_owner_template_cap(owner_uri, workspace) do
+  defp persist_and_grant(content, workspace, owner_uri) do
+    with {:ok, new_uri} <- persist_version_as_system(content, workspace),
+         :ok <- grant_owner_template_cap(owner_uri, new_uri) do
       {:ok, new_uri}
     end
   end
@@ -672,27 +666,10 @@ defmodule Ezagent.Entity.SessionTemplate do
   # aligned with dispatch CapBAC. `:any` admin caps,
   # `{:within_workspace, ws}` template caps, and broader template caps
   # all pass; a caller with no template authority is denied.
-  defp require_session_template_cap(caps, workspace) do
+  defp require_session_template_cap(caps, workspace, %URI{} = caller) do
     case workspace_uri(workspace) do
       {:ok, %URI{} = workspace_uri} ->
-        workspace_name = Ezagent.URI.workspace_name!(workspace_uri)
-
-        needed = %{
-          kind: :session_template,
-          behavior: Ezagent.ActionSet.Template,
-          # SPEC 2026-05-27 capability-action-axis — `create/3`'s
-          # preflight predates the action-axis. It checks "does the
-          # caller hold ANY Template authority in the workspace?".
-          # Action `:any` preserves the pre-SPEC predicate semantics;
-          # a granular per-action gate is a future PR.
-          action: :any,
-          instance: Ezagent.URI.template(workspace_name, :session, "_preflight@_"),
-          workspace_uri: workspace_uri
-        }
-
-        caps
-        |> normalize_caps()
-        |> Enum.any?(&Ezagent.Capability.matches?(&1, needed))
+        Ezagent.Session.Config.Admission.template_write_cap?(caps, workspace_uri, caller)
         |> case do
           true -> :ok
           false -> {:error, :unauthorized}
@@ -712,35 +689,36 @@ defmodule Ezagent.Entity.SessionTemplate do
   # under a system context — the WHO-may-create authority was already
   # enforced by `require_session_template_cap/2`. The ordering is
   # template-first, cap-second (§1.7 (e)).
-  defp grant_owner_template_cap(%URI{} = owner_uri, workspace) do
-    with {:ok, %URI{} = workspace_uri} <- workspace_uri(workspace) do
-      cap = %Ezagent.Capability{
-        kind: :session_template,
-        behavior: Ezagent.ActionSet.Template,
-        # SPEC 2026-05-27 capability-action-axis — owner needs full
-        # lifecycle authority on templates they create (read, write/
-        # update, instantiate, fork). The `:within_workspace` instance
-        # scope is the structural narrowing; action axis stays `:any`.
-        action: :any,
-        instance: {:within_workspace, workspace_uri},
-        workspace_uri: workspace_uri,
-        granted_by: owner_uri,
-        granted_at: DateTime.utc_now()
-      }
+  defp grant_owner_template_cap(%URI{} = owner_uri, %URI{} = template_uri) do
+    with :ok <- Ezagent.Identity.TargetAuthority.ensure(owner_uri, template_uri) do
+      Ezagent.CapabilityRegistry.subjects_for_kind(__MODULE__)
+      |> Enum.reduce_while(:ok, fn subject, :ok ->
+        requested =
+          Ezagent.Capability.cap(
+            :session_template,
+            subject.behavior,
+            subject.action,
+            template_uri,
+            Ezagent.Capability.workspace_of(template_uri)
+          )
 
-      # Grant chokepoint (SPEC 2026-06-17 §4 PR-2, site #8). The cap is
-      # `session_template/Template/:any/{:within_workspace}` — kind +
-      # behavior concrete, instance scope-bounded `{:within_workspace}` —
-      # so `IdentityAdmin.rule_cap_bounded?/1` is true → the `{:rule, …}`
-      # branch authorizes it (Decision #154). The configurer of the
-      # template-materialization rule is the template OWNER (also the
-      # entity `granted_by`); `template-materialize` is no longer the
-      # authorizer.
-      Ezagent.Identity.Grant.grant_cap(
-        owner_uri,
-        cap,
-        {:rule, :template_materialize, owner_uri}
-      )
+        authorization =
+          if Ezagent.URI.stable_key(owner_uri) ==
+               Ezagent.URI.stable_key(Ezagent.Entity.User.admin_uri()),
+             do: {:admin, owner_uri},
+             else: {:held_by, owner_uri}
+
+        with :ok <-
+               Ezagent.Identity.Grant.grant_cap(
+                 owner_uri,
+                 requested,
+                 authorization
+               ) do
+          {:cont, :ok}
+        else
+          {:error, reason} -> {:halt, {:error, reason}}
+        end
+      end)
     end
   end
 
@@ -777,11 +755,6 @@ defmodule Ezagent.Entity.SessionTemplate do
         end
     end)
   end
-
-  # Coerce a caps opt (MapSet | list | nil) to a list for `Enum.any?`.
-  defp normalize_caps(%MapSet{} = caps), do: MapSet.to_list(caps)
-  defp normalize_caps(caps) when is_list(caps), do: caps
-  defp normalize_caps(_), do: []
 
   # Resolve a workspace opt (URI | bare-name string) to a
   # `workspace://<name>` URI.
@@ -820,15 +793,33 @@ defmodule Ezagent.Entity.SessionTemplate do
   # HIGH-9 — `ctx` is THREADED from the caller; the `:write` action is
   # CapBAC-checked against the caller's real authority. Only
   # `persist_version_as_system/2` passes a system (`admin`) ctx.
-  defp dispatch_write(uri, content, ctx) do
+  defp dispatch_write(uri, content, {:system_admin, %URI{} = admin_uri}) do
+    cap = template_admin_cap(:write, uri, admin_uri)
+
+    with {:ok, signed_cap} <- Ezagent.Cap.issue({:admin, admin_uri}, admin_uri, cap) do
+      dispatch_write(uri, content, %{
+        caller: admin_uri,
+        caps: MapSet.new([signed_cap]),
+        reply: {:caller_inbox, self()}
+      })
+    end
+  end
+
+  defp dispatch_write(uri, content, %{caller: %URI{} = caller} = ctx) do
     target = Ezagent.URI.with_action(uri, :template, :write)
 
-    Ezagent.Invocation.dispatch(%Ezagent.Invocation{
-      target: target,
-      mode: :call,
-      args: %{content: content},
-      ctx: ctx
-    })
+    requested = template_admin_cap(:write, uri, Ezagent.Entity.User.admin_uri())
+
+    with {:ok, signed_cap} <-
+           Ezagent.Cap.issue({:admin, Ezagent.Entity.User.admin_uri()}, caller, requested) do
+      Ezagent.Invocation.dispatch(%Ezagent.Invocation{
+        target: target,
+        mode: :call,
+        args: %{content: content},
+        ctx: %{ctx | caps: MapSet.new([signed_cap])},
+        origin: :trusted_internal
+      })
+    end
   end
 
   # The workspace path segment (no scheme prefix) for `build_uri/3`.

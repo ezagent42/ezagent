@@ -21,7 +21,7 @@ defmodule Ezagent.Session.SurfaceSeed do
 
   require Logger
 
-  alias Ezagent.{Capability, Invocation}
+  alias Ezagent.Invocation
   alias Ezagent.Entity.User
 
   @doc """
@@ -99,16 +99,22 @@ defmodule Ezagent.Session.SurfaceSeed do
   end
 
   defp dispatch(session_uri, behavior, action, args, caller) do
-    Invocation.dispatch(%Invocation{
-      target: Ezagent.URI.new!("#{URI.to_string(session_uri)}?action=#{behavior}.#{action}"),
-      mode: :call,
-      args: args,
-      ctx: %{
-        caller: caller,
-        caps: MapSet.new([Capability.admin_genesis_cap()]),
-        reply: {:caller_inbox, self()}
-      }
-    })
+    target = Ezagent.URI.new!("#{URI.to_string(session_uri)}?action=#{behavior}.#{action}")
+    admin = Ezagent.Entity.User.admin_uri()
+
+    with {:ok, signed_cap} <- Ezagent.Cap.issue_for_action({:admin, admin}, caller, target) do
+      Invocation.dispatch(%Invocation{
+        target: target,
+        mode: :call,
+        args: args,
+        ctx: %{
+          caller: caller,
+          caps: MapSet.new([signed_cap]),
+          reply: {:caller_inbox, self()}
+        },
+        origin: :trusted_internal
+      })
+    end
   end
 
   # seed_surface may round-trip with atom OR string keys depending on storage;

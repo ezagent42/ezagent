@@ -159,6 +159,12 @@ defmodule Ezagent.Orchestrator.Tools do
              workspace_uri,
              caller,
              caps
+           ),
+         :ok <-
+           Ezagent.Orchestrator.Tools.SpawnAuthority.grant(
+             member_uri,
+             caller,
+             workspace_uri
            ) do
       facets =
         %{
@@ -311,10 +317,15 @@ defmodule Ezagent.Orchestrator.Tools do
   end
 
   defp safe_get_template_content(pid) do
-    case :sys.get_state(pid, 500) do
-      %{state: %{template: %{state: %{content: content}}}} when is_map(content) -> content
-      %{state: %{template: %{content: content}}} when is_map(content) -> content
-      _ -> %{}
+    case Ezagent.Kind.runtime_view(pid) do
+      {:ok, %{state: %{template: %{state: %{content: content}}}}} when is_map(content) ->
+        content
+
+      {:ok, %{state: %{template: %{content: content}}}} when is_map(content) ->
+        content
+
+      _ ->
+        %{}
     end
   catch
     :exit, _ -> %{}
@@ -339,7 +350,8 @@ defmodule Ezagent.Orchestrator.Tools do
            target: target,
            mode: :call,
            args: Map.put(facets, :member, member_uri),
-           ctx: ctx(caller, caps)
+           ctx: ctx(caller, caps),
+           origin: :trusted_internal
          }) do
       :ok -> :ok
       {:ok, _} -> :ok
@@ -478,7 +490,8 @@ defmodule Ezagent.Orchestrator.Tools do
       target: target,
       mode: :cast,
       args: %{member: member_uri},
-      ctx: ctx(caller, caps)
+      ctx: ctx(caller, caps),
+      origin: :trusted_internal
     })
 
     :ok
@@ -500,7 +513,8 @@ defmodule Ezagent.Orchestrator.Tools do
            target: target,
            mode: :call,
            args: %{},
-           ctx: ctx(caller, caps)
+           ctx: ctx(caller, caps),
+           origin: :trusted_internal
          }) do
       {:ok, %{destroyed: true, cleanup: :ok}} ->
         :ok
@@ -590,7 +604,8 @@ defmodule Ezagent.Orchestrator.Tools do
                receivers: [Ezagent.URI.stable_key(receiver_uri)],
                opts: add_opts
              },
-             ctx: ctx(caller, caps)
+             ctx: ctx(caller, caps),
+             origin: :trusted_internal
            }) do
         {:ok, %{id: id}} ->
           with :ok <-
@@ -698,7 +713,8 @@ defmodule Ezagent.Orchestrator.Tools do
              target: target,
              mode: :call,
              args: %{prompt_templates: merged},
-             ctx: ctx(caller, caps)
+             ctx: ctx(caller, caps),
+             origin: :trusted_internal
            }) do
         {:ok, %{prompt_templates: _} = ok} ->
           with :ok <-
@@ -752,7 +768,8 @@ defmodule Ezagent.Orchestrator.Tools do
              target: target,
              mode: :call,
              args: %{legends: merged},
-             ctx: ctx(caller, caps)
+             ctx: ctx(caller, caps),
+             origin: :trusted_internal
            }) do
         {:ok, %{legends: _} = ok} ->
           with :ok <-
@@ -894,17 +911,11 @@ defmodule Ezagent.Orchestrator.Tools do
   # Read the live Session Kind's :chat slice (two-container — unwrap to its
   # persistent :state). Empty map when the session is not alive.
   defp read_chat_slice(%URI{} = session_uri) do
-    case Ezagent.KindRegistry.lookup(session_uri) do
-      {:ok, pid} ->
-        chat_slice =
-          pid
-          |> :sys.get_state()
-          |> Map.get(:state, %{})
-          |> Map.get(Session.state_slice(), %{})
-
+    case Ezagent.Kind.get_raw_slice(session_uri, :session) do
+      {:ok, chat_slice} ->
         Map.get(chat_slice, :state, chat_slice)
 
-      :error ->
+      {:error, _} ->
         %{}
     end
   end

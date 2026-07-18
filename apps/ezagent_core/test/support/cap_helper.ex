@@ -123,6 +123,198 @@ defmodule Ezagent.Test.CapHelper do
     Map.merge(defaults, Enum.into(opts, %{}))
   end
 
+  @doc "Issue the capability required by an action-bearing target to `grantee`."
+  @spec signed_action_cap!(URI.t(), URI.t()) :: Capability.t()
+  def signed_action_cap!(%URI{} = target, %URI{} = grantee) do
+    case Ezagent.Cap.issue_for_action({:admin, admin_uri()}, grantee, target) do
+      {:ok, cap} -> cap
+      {:error, reason} -> raise "test capability issuance failed: #{inspect(reason)}"
+    end
+  end
+
+  @doc "Ask a live target Kind to sign an explicit test capability."
+  @spec signed_cap!(URI.t(), URI.t(), Capability.t()) :: Capability.t()
+  def signed_cap!(%URI{} = target, %URI{} = grantee, %Capability{} = cap) do
+    requested = %{cap | instance: Ezagent.URI.instance(target)}
+
+    case Ezagent.Cap.issue({:admin, admin_uri()}, grantee, requested) do
+      {:ok, issued} -> issued
+      {:error, reason} -> raise "test capability issuance failed: #{inspect(reason)}"
+    end
+  end
+
+  @doc "Run a direct Runtime unit-test call inside a fresh target authority compartment."
+  @spec with_test_authority(URI.t(), atom(), (Ezagent.Cap.Authority.t() -> result)) :: result
+        when result: term()
+  def with_test_authority(%URI{} = target, kind_type, fun)
+      when is_atom(kind_type) and is_function(fun, 1) do
+    case Ezagent.Cap.Authority.open(Ezagent.URI.instance(target), kind_type) do
+      {:ok, authority} ->
+        Ezagent.Cap.Authority.with_current(authority, fn -> fun.(authority) end)
+
+      {:error, reason} ->
+        raise "test authority open failed: #{inspect(reason)}"
+    end
+  end
+
+  @doc "Install a fresh target authority in the current ExUnit process."
+  @spec install_test_authority!(URI.t(), atom()) :: Ezagent.Cap.Authority.t()
+  def install_test_authority!(%URI{} = target, kind_type) when is_atom(kind_type) do
+    case Ezagent.Cap.Authority.open(Ezagent.URI.instance(target), kind_type) do
+      {:ok, authority} ->
+        Process.put({Ezagent.Cap.Authority, :current}, authority)
+        authority
+
+      {:error, reason} ->
+        raise "test authority open failed: #{inspect(reason)}"
+    end
+  end
+
+  @doc "Sign an explicit artifact with a test authority already opened for its target."
+  @spec authority_signed_cap!(Ezagent.Cap.Authority.t(), URI.t(), Capability.t()) ::
+          Capability.t()
+  def authority_signed_cap!(authority, %URI{} = grantee, %Capability{} = cap) do
+    {:ok, artifact} = Ezagent.Cap.prepare_provenance({:admin, admin_uri()}, grantee, cap)
+    Ezagent.Cap.Authority.sign(authority, artifact)
+  end
+
+  @doc "Sign an explicit artifact while preserving a concrete fixture issuer."
+  @spec authority_signed_cap_as!(
+          Ezagent.Cap.Authority.t(),
+          URI.t(),
+          URI.t(),
+          Capability.t()
+        ) :: Capability.t()
+  def authority_signed_cap_as!(authority, %URI{} = issuer, %URI{} = grantee, %Capability{} = cap) do
+    {:ok, artifact} = Ezagent.Cap.prepare_provenance({:held_by, issuer}, grantee, cap)
+    Ezagent.Cap.Authority.sign(authority, artifact)
+  end
+
+  @doc "Sign every unsigned capability in a test context for one concrete target Kind."
+  @spec signed_ctx!(URI.t(), map(), atom()) :: map()
+  def signed_ctx!(%URI{} = target, ctx, kind_type \\ :test_fixture) when is_map(ctx) do
+    target = target |> Ezagent.URI.instance() |> URI.to_string() |> Ezagent.URI.new!()
+    presenter = Map.fetch!(ctx, :caller)
+
+    unless match?(%URI{}, presenter) do
+      raise ArgumentError,
+            "signed_ctx!/3 requires a concrete URI presenter, got: #{inspect(presenter)}"
+    end
+
+    authority = install_test_authority!(target, kind_type)
+
+    caps =
+      ctx
+      |> Map.get(:caps, MapSet.new())
+      |> Enum.map(fn
+        %Capability{signature: signature, key_id: key_id} = cap
+        when is_binary(signature) and is_binary(key_id) ->
+          cap
+
+        %Capability{} = cap ->
+          authority_signed_cap!(authority, presenter, cap)
+      end)
+      |> MapSet.new()
+
+    caps =
+      if MapSet.size(caps) == 0 and presenter == admin_uri() do
+        {:ok, anchor} = Ezagent.Cap.Authority.anchor(target)
+        MapSet.put(caps, anchor)
+      else
+        caps
+      end
+
+    Map.put(ctx, :caps, caps)
+  end
+
+  @doc "Apply `signed_ctx!/3` to a test invocation's target and context."
+  @spec signed_invocation!(Ezagent.Invocation.t(), atom()) :: Ezagent.Invocation.t()
+  def signed_invocation!(%Ezagent.Invocation{} = invocation, kind_type \\ :test_fixture) do
+    %{invocation | ctx: signed_ctx!(invocation.target, invocation.ctx, kind_type)}
+  end
+
+  @doc "Create a target-signed cap for a fixture Kind, including cold-target tests."
+  @spec signed_fixture_cap!(URI.t(), atom(), module(), atom(), URI.t()) :: Capability.t()
+  def signed_fixture_cap!(%URI{} = target, kind_type, behavior, action, %URI{} = grantee)
+      when is_atom(kind_type) and is_atom(behavior) and is_atom(action) do
+    {:ok, authority} = Ezagent.Cap.Authority.open(Ezagent.URI.instance(target), kind_type)
+
+    requested =
+      Capability.cap(
+        kind_type,
+        behavior,
+        action,
+        Ezagent.URI.instance(target),
+        Capability.workspace_of(target)
+      )
+
+    authority_signed_cap!(authority, grantee, requested)
+  end
+
+  @doc "Create the exact target-signed capability declared by a Behavior action."
+  @spec signed_required_cap!(URI.t(), atom(), module(), atom(), URI.t()) :: Capability.t()
+  def signed_required_cap!(%URI{} = target, kind_type, behavior, action, %URI{} = grantee)
+      when is_atom(kind_type) and is_atom(behavior) and is_atom(action) do
+    instance = Ezagent.URI.instance(target)
+    declared = behavior.required_caps() |> Map.fetch!(action)
+    {:ok, authority} = Ezagent.Cap.Authority.open(instance, kind_type)
+
+    requested = %{
+      declared
+      | kind: if(declared.kind == :any, do: kind_type, else: declared.kind),
+        action: action,
+        instance: if(declared.instance == :any, do: instance, else: declared.instance),
+        workspace_uri:
+          if(declared.workspace_uri == :any,
+            do: Capability.workspace_of(target),
+            else: declared.workspace_uri
+          )
+    }
+
+    authority_signed_cap!(authority, grantee, requested)
+  end
+
+  @doc "Build a target-signed workspace action-wildcard context for a test principal."
+  @spec signed_workspace_ctx!(URI.t(), URI.t()) :: map()
+  def signed_workspace_ctx!(
+        %URI{} = workspace_uri,
+        %URI{} = presenter \\ Ezagent.URI.user(:system, :admin)
+      ) do
+    ensure_workspace_kind!(workspace_uri)
+
+    requested =
+      Capability.cap(
+        :workspace,
+        :any,
+        :any,
+        Ezagent.URI.instance(workspace_uri),
+        workspace_uri
+      )
+
+    %{
+      caller: presenter,
+      caps: MapSet.new([signed_cap!(workspace_uri, presenter, requested)])
+    }
+  end
+
+  @doc "Ensure a concrete Workspace target exists before a real dispatch fixture uses it."
+  @spec ensure_workspace_kind!(URI.t()) :: pid()
+  def ensure_workspace_kind!(%URI{scheme: "workspace"} = workspace_uri) do
+    case Ezagent.KindRegistry.lookup(workspace_uri) do
+      {:ok, pid} ->
+        pid
+
+      :error ->
+        case Ezagent.Kind.spawn(Ezagent.Entity.Workspace, %{
+               uri: workspace_uri,
+               behaviors: [Ezagent.ActionSet.Workspace]
+             }) do
+          {:ok, pid} -> pid
+          {:error, {:already_started, pid}} -> pid
+        end
+    end
+  end
+
   @doc "Default test workspace URI: `workspace://system` (admin/system)."
   @spec system_workspace_uri() :: URI.t()
   def system_workspace_uri, do: Ezagent.URI.workspace(:system)
@@ -131,5 +323,6 @@ defmodule Ezagent.Test.CapHelper do
   @spec tenant_workspace_uri() :: URI.t()
   def tenant_workspace_uri, do: Ezagent.URI.workspace("team-alpha")
 
+  defp admin_uri, do: Ezagent.URI.user(:system, :admin)
   defp default_granter_uri, do: Ezagent.URI.user(:system, :admin)
 end

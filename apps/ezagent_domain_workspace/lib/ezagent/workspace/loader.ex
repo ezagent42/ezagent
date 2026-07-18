@@ -486,64 +486,59 @@ defmodule Ezagent.Workspace.Loader do
   defp instantiate_via_dispatch(workspace_uri) do
     target = Ezagent.URI.new!("#{URI.to_string(workspace_uri)}?action=workspace.instantiate")
 
-    case Router.dispatch(%Cmd{
-           target: target,
-           action: :instantiate,
-           args: %{},
-           # System-principal elimination (#154 north star, 2026-06-19) — the
-           # boot-time re-spawn dispatches `:instantiate` on the WORKSPACE's own
-           # Kind to bring its OWN children (members / templates) to life. That
-           # is GENUINE self-authority (capbac.md §7 "actor-self"), NOT an
-           # ambient `system://workspace-loader` borrow. So the dispatch runs
-           # under the workspace's OWN entity URI as `caller`, carrying its OWN
-           # `cap(:workspace, Workspace, :instantiate)` INLINE in `ctx.caps` —
-           # the step-5.5 authorizer (`granted_via_ctx_caps?`, deadlock-free).
-           # Replaces the deleted `system://workspace-loader` Catalog principal.
-           ctx:
-             Map.merge(
-               workspace_instantiate_self_ctx(workspace_uri),
-               %{mode: :call, reply: {:caller_inbox, self()}}
-             )
-         }) do
-      {:ok, %{children: children}} ->
-        children
+    with {:ok, ctx} <- workspace_instantiate_self_ctx(workspace_uri) do
+      case Router.dispatch(%Cmd{
+             target: target,
+             action: :instantiate,
+             args: %{},
+             ctx: Map.merge(ctx, %{mode: :call, reply: {:caller_inbox, self()}}),
+             origin: :trusted_internal
+           }) do
+        {:ok, %{children: children}} ->
+          children
 
-      other ->
+        other ->
+          Logger.warning(
+            "Workspace.Loader: instantiate dispatch returned unexpected: #{inspect(other)}"
+          )
+
+          []
+      end
+    else
+      {:error, reason} ->
         Logger.warning(
-          "Workspace.Loader: instantiate dispatch returned unexpected: #{inspect(other)}"
+          "Workspace.Loader: instantiate capability issuance failed: #{inspect(reason)}"
         )
 
         []
     end
   end
 
-  # System-principal elimination (#154, 2026-06-19) — the workspace's OWN
-  # `:instantiate` self-authority cap, the step-5.5 authorizer for the boot
-  # re-spawn dispatch (replaces the deleted `system://workspace-loader`
-  # principal). Shape mirrors
+  # The boot loader still presents the workspace as itself, but the capability
+  # is no longer an unsigned self-assertion. The canonical admin uses the
+  # workspace Kind's sealed anchor to ask that Kind to sign the concrete
+  # `:instantiate` cap for the workspace presenter. Shape mirrors
   # `Ezagent.ActionSet.Workspace.required_caps/0[:instantiate]` =
   # `cap(:workspace, Workspace, :instantiate)` but SCOPED to the concrete
   # workspace (`instance`/`workspace_uri` from `workspace_uri`) for tightest
   # least-privilege — the runtime substitutes the same concrete instance from
-  # the dispatch target, so concrete==concrete matches. `granted_by` =
-  # `workspace_uri` (genuine self-authority: a real entity per #154);
-  # provenance only on an INLINE authorizer never routed through
-  # `Ezagent.Identity.Grant`.
+  # the dispatch target, so concrete==concrete matches.
   defp workspace_instantiate_self_ctx(%URI{} = workspace_uri) do
-    cap =
-      %Ezagent.Capability{
-        Ezagent.Capability.cap(
-          :workspace,
-          Ezagent.ActionSet.Workspace,
-          :instantiate,
-          Ezagent.URI.instance(workspace_uri),
-          Ezagent.Capability.workspace_of(workspace_uri)
-        )
-        | granted_by: workspace_uri,
-          granted_at: DateTime.utc_now()
-      }
+    admin_uri = Ezagent.URI.user(:system, :admin)
 
-    %{caller: workspace_uri, caps: [cap]}
+    requested =
+      Ezagent.Capability.cap(
+        :workspace,
+        Ezagent.ActionSet.Workspace,
+        :instantiate,
+        Ezagent.URI.instance(workspace_uri),
+        Ezagent.Capability.workspace_of(workspace_uri)
+      )
+
+    with {:ok, signed_cap} <-
+           Ezagent.Cap.issue({:admin, admin_uri}, workspace_uri, requested) do
+      {:ok, %{caller: workspace_uri, caps: MapSet.new([signed_cap])}}
+    end
   end
 
   defp spawn_child({:member, %URI{} = uri}, _workspace_uri) do

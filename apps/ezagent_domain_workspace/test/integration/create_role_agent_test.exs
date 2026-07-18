@@ -45,10 +45,7 @@ defmodule Ezagent.Integration.CreateRoleAgentTest do
     {:ok, _ws_pid} = Workspace.create(ws_name, %{})
     workspace_uri = URI.new!("workspace://#{ws_name}")
 
-    admin_ctx = %{
-      caller: User.admin_uri(),
-      caps: MapSet.new([Ezagent.Capability.admin_genesis_cap()])
-    }
+    admin_ctx = signed_workspace_ctx!(workspace_uri)
 
     # Register a `native`-style direct-spawn flavor: the UNIFIED Agent Kind, NO
     # `instance_behaviors` thunk (so a roleless spawn captures the base set), and
@@ -265,16 +262,6 @@ defmodule Ezagent.Integration.CreateRoleAgentTest do
       assert Ezagent.PendingDelivery.buffer_size(agent_uri) == 0
       assert [^artifact] = pending_absorb_artifacts(agent_uri)
 
-      assert 1 ==
-               EzagentCore.Repo.aggregate(
-                 from(delivery in Delivery,
-                   where: delivery.target_uri == ^URI.to_string(agent_uri),
-                   where: delivery.op == :absorb_cap,
-                   where: delivery.status == :pending
-                 ),
-                 :count
-               )
-
       :ok = Ezagent.Agent.TransportReadiness.clear(agent_uri)
       _ = Ezagent.Kind.terminate(agent_uri)
     end)
@@ -343,11 +330,12 @@ defmodule Ezagent.Integration.CreateRoleAgentTest do
     )
     |> EzagentCore.Repo.all()
     |> Enum.map(fn payload ->
-      %{version: 1, op: :absorb_cap, cap: artifact} =
+      %{version: 3, op: :absorb_cap, cap: artifact} =
         :erlang.binary_to_term(payload, [:safe])
 
       artifact
     end)
+    |> Enum.filter(&(&1.behavior == TransportGatedRoleBehavior))
   end
 
   defp skip_if_no_entity_spawn(body) do

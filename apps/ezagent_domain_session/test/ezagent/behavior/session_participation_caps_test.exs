@@ -81,10 +81,15 @@ defmodule Ezagent.ActionSet.SessionParticipationCapsTest do
 
     result =
       Ezagent.Invocation.dispatch(%Ezagent.Invocation{
+        origin: :trusted_internal,
         target: URI.new!("#{URI.to_string(session_uri)}?action=session.join"),
         mode: :call,
         args: %{member: member_uri},
-        ctx: %{caller: member_uri, caps: Ezagent.Identity.list_caps_for(member_uri), reply: :ignore}
+        ctx: %{
+          caller: member_uri,
+          caps: Ezagent.Identity.list_caps_for(member_uri),
+          reply: :ignore
+        }
       })
 
     case result do
@@ -127,7 +132,12 @@ defmodule Ezagent.ActionSet.SessionParticipationCapsTest do
 
       :ok = access_point_join(session_uri, anon)
 
-      assert wait_cap(anon, Ezagent.ActionSet.Publisher.SessionImpl, :subscribe_from, session_uri),
+      assert wait_cap(
+               anon,
+               Ezagent.ActionSet.Publisher.SessionImpl,
+               :subscribe_from,
+               session_uri
+             ),
              "an unconfirmed member must hold the read-only :subscribe_from tier"
 
       refute has_cap?(anon, Ezagent.ActionSet.Session, :send, session_uri),
@@ -150,7 +160,12 @@ defmodule Ezagent.ActionSet.SessionParticipationCapsTest do
       assert has_cap?(member, Ezagent.ActionSet.Session, :leave, session_uri),
              "a confirmed member must hold :leave"
 
-      assert has_cap?(member, Ezagent.ActionSet.Publisher.SessionImpl, :subscribe_from, session_uri),
+      assert has_cap?(
+               member,
+               Ezagent.ActionSet.Publisher.SessionImpl,
+               :subscribe_from,
+               session_uri
+             ),
              "a confirmed member must hold :subscribe_from"
     end
 
@@ -204,7 +219,12 @@ defmodule Ezagent.ActionSet.SessionParticipationCapsTest do
       refute has_cap?(agent_uri, Ezagent.ActionSet.Session, :send, session_uri),
              "agents carry their own caps — the per-session USER mount must not fire"
 
-      refute has_cap?(agent_uri, Ezagent.ActionSet.Publisher.SessionImpl, :subscribe_from, session_uri),
+      refute has_cap?(
+               agent_uri,
+               Ezagent.ActionSet.Publisher.SessionImpl,
+               :subscribe_from,
+               session_uri
+             ),
              "agents receive no user participation tier"
     end
   end

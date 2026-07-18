@@ -18,58 +18,26 @@ defmodule Ezagent.ActionSet.ExternalMirrorWorkerSelfCapsTest do
 
   use ExUnit.Case, async: true
 
-  alias Ezagent.Capability
-  alias Ezagent.ActionSet.ExternalMirrorWorker
-
-  test "the inline publish cap matches the `required_caps/0[:publish]` gate (self-authority)" do
-    self_uri = Ezagent.URI.worker("team-alpha", "em_test")
-
-    [publish_cap] = ExternalMirrorWorker.worker_publish_caps(self_uri)
-
-    needed = ExternalMirrorWorker.required_caps()[:publish]
-
-    assert Capability.matches?(publish_cap, %{
-             kind: needed.kind,
-             behavior: needed.behavior,
-             action: Capability.action_of(needed),
-             instance: needed.instance,
-             workspace_uri: needed.workspace_uri
-           }),
-           """
-           The worker's inline `:publish` authorizer cap no longer matches the
-           `required_caps/0[:publish]` shape step 5.5 derives — the publish
-           self-dispatch would be denied `:unauthorized`. Got:
-             #{inspect(publish_cap)}
-           Needed: #{inspect(needed)}
-           """
-
-    # Decision #154: granted_by is the worker entity ITSELF (genuine
-    # self-authority), a real accountable entity — never a system:// principal.
-    assert publish_cap.granted_by == self_uri
-  end
-
-  test "the inline subscribe cap carries the (:session, PublisherSI, :subscribe_from) shape" do
-    [subscribe_cap] = ExternalMirrorWorker.worker_subscribe_caps()
-
-    expected =
-      Capability.cap(
-        :session,
-        Ezagent.ActionSet.Publisher.SessionImpl,
-        :subscribe_from
+  test "worker inline authorizers are issued through K.grant, never raw constructors" do
+    behavior_source =
+      File.read!(
+        Path.expand(
+          "../../../lib/ezagent/behavior/external_mirror_worker.ex",
+          __DIR__
+        )
       )
 
-    assert Capability.identity_key(subscribe_cap) == Capability.identity_key(expected),
-           """
-           The worker's inline subscribe authorizer cap drifted from the
-           `(:session, PublisherSI, :subscribe_from)` shape CapBAC step 5.5
-           checks when the Worker dispatches
-           `session://...?action=publisher.subscribe_from` (SPEC §8.1).
-           Got: #{inspect(subscribe_cap)}
-           """
+    spawn_source =
+      File.read!(
+        Path.expand(
+          "../../../lib/ezagent/external_mirror/worker_spawn.ex",
+          __DIR__
+        )
+      )
 
-    # Decision #154: granted_by is a real accountable entity (the genesis
-    # admin), not a system:// principal. (The formal {:within_session}
-    # session-owner delegation is PR-EM-3 future work.)
-    assert match?(%URI{scheme: "entity"}, subscribe_cap.granted_by)
+    assert behavior_source =~ "Ezagent.Identity.Grant.issue_cap("
+    assert spawn_source =~ "Ezagent.Identity.Grant.issue_cap("
+    refute behavior_source =~ "def worker_publish_caps"
+    refute behavior_source =~ "def worker_subscribe_caps"
   end
 end

@@ -34,7 +34,7 @@
 # 认领,decode 失败的 agent 不会把自己的 home 误报成 orphan。
 
 defmodule Ezagent.Scripts.AuditAgentSkillHomes do
-  @headless_flavors ["cc-headless", "cc-headless-deepseek"]
+  @headless_flavors ["cc-headless", "cc-headless-custom"]
 
   @attention [
     :missing,

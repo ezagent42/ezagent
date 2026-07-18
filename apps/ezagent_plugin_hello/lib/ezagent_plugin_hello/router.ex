@@ -90,22 +90,26 @@ defmodule EzagentPluginHello.Router do
       Ezagent.URI.with_action(member_uri, :agent, action_atom)
 
     session_uri_str = URI.to_string(session_uri)
+    admin = Ezagent.Entity.User.admin_uri()
 
-    Ezagent.Invocation.dispatch(%Ezagent.Invocation{
-      target: target,
-      mode: :cast,
-      args: %{
-        session_uri: session_uri_str,
-        instruction: user_text,
-        text: user_text,
-        sender_uri: URI.to_string(sender)
-      },
-      ctx: %{
-        caller: Ezagent.Entity.User.admin_uri(),
-        caps: MapSet.new([Ezagent.Capability.admin_genesis_cap()]),
-        reply: :ignore
-      }
-    })
+    with {:ok, signed_cap} <- Ezagent.Cap.issue_for_action({:admin, admin}, admin, target) do
+      Ezagent.Invocation.dispatch(%Ezagent.Invocation{
+        target: target,
+        mode: :cast,
+        args: %{
+          session_uri: session_uri_str,
+          instruction: user_text,
+          text: user_text,
+          sender_uri: URI.to_string(sender)
+        },
+        ctx: %{
+          caller: admin,
+          caps: MapSet.new([signed_cap]),
+          reply: :ignore
+        },
+        origin: :trusted_internal
+      })
+    end
   end
 
   @doc """

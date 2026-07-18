@@ -13,6 +13,8 @@ defmodule Ezagent.ActionSet.ConfigGovernanceTest do
 
   use EzagentCore.DataCase, async: false
 
+  import Ezagent.Test.CapHelper, only: [signed_ctx!: 3, signed_invocation!: 2]
+
   alias Ezagent.{CreatorGrant, Invocation}
   alias Ezagent.Entity.{Agent, User}
   alias Ezagent.Socialware.{ConfigObject, ConfigProjection, ConfigStore}
@@ -33,7 +35,7 @@ defmodule Ezagent.ActionSet.ConfigGovernanceTest do
   # ---- §9.11 one active CR per subject + §9.9 manage-cap gate (open) --------
 
   test "open_cr requires the agent's manage-cap (stranger denied)", %{agent: agent} do
-    assert {:error, :unauthorized} =
+    assert {:error, :missing_cap} =
              dispatch(agent, :open_cr, %{}, stranger())
   end
 
@@ -101,6 +103,7 @@ defmodule Ezagent.ActionSet.ConfigGovernanceTest do
     for bad <- ["cr-stage:abc:def", "cr-publish:abc"] do
       assert {:error, {:reserved_turn_id_prefix, ^bad}} =
                Invocation.dispatch(%Invocation{
+                 origin: :trusted_internal,
                  target: ce_action_uri(agent, :apply_config_delta),
                  mode: :call,
                  args: %{turn_id: bad, patch: %{"tone" => "spoof"}},
@@ -424,7 +427,7 @@ defmodule Ezagent.ActionSet.ConfigGovernanceTest do
     {:ok, _} =
       dispatch(agent, :stage_item, %{change_request_id: cr_id, patch: %{"a" => 1}}, manager)
 
-    assert {:error, :unauthorized} =
+    assert {:error, :missing_cap} =
              dispatch(agent, :publish_cr, %{change_request_id: cr_id}, stranger())
   end
 
@@ -611,12 +614,15 @@ defmodule Ezagent.ActionSet.ConfigGovernanceTest do
   # ========================================================================
 
   defp dispatch(agent, action, args, principal) do
-    Invocation.dispatch(%Invocation{
+    %Invocation{
+      origin: :trusted_internal,
       target: cg_action_uri(agent, action),
       mode: :call,
       args: args,
       ctx: %{caller: principal.uri, caps: principal.caps, reply: {:caller_inbox, self()}}
-    })
+    }
+    |> signed_invocation!(:agent)
+    |> Invocation.dispatch()
   end
 
   defp cg_action_uri(agent, action) do
@@ -630,7 +636,9 @@ defmodule Ezagent.ActionSet.ConfigGovernanceTest do
   defp grant_manage_cap(agent, workspace) do
     manager = Ezagent.URI.entity(:team_alpha, :user, "mgr-#{System.unique_integer([:positive])}")
     cap = CreatorGrant.manage_cap(:agent, agent, workspace, manager)
-    %{uri: manager, caps: MapSet.new([cap])}
+
+    ctx = signed_ctx!(agent, %{caller: manager, caps: MapSet.new([cap])}, :agent)
+    %{uri: manager, caps: ctx.caps}
   end
 
   defp stranger do
@@ -639,7 +647,8 @@ defmodule Ezagent.ActionSet.ConfigGovernanceTest do
 
   defp seed_sandbox_cascade(agent, workspace) do
     {:ok, _} =
-      Invocation.dispatch(%Invocation{
+      %Invocation{
+        origin: :trusted_internal,
         target: Ezagent.URI.new!("#{URI.to_string(agent)}?action=sandbox.update_config"),
         mode: :call,
         args: %{
@@ -659,14 +668,17 @@ defmodule Ezagent.ActionSet.ConfigGovernanceTest do
           caps: MapSet.new([Ezagent.Capability.admin_genesis_cap()]),
           reply: {:caller_inbox, self()}
         }
-      })
+      }
+      |> signed_invocation!(:agent)
+      |> Invocation.dispatch()
 
     :ok
   end
 
   defp sandbox_user_layer_uri(agent) do
     {:ok, sandbox} =
-      Invocation.dispatch(%Invocation{
+      %Invocation{
+        origin: :trusted_internal,
         target: Ezagent.URI.new!("#{URI.to_string(agent)}?action=sandbox.read"),
         mode: :call,
         args: %{},
@@ -675,7 +687,9 @@ defmodule Ezagent.ActionSet.ConfigGovernanceTest do
           caps: MapSet.new([Ezagent.Capability.admin_genesis_cap()]),
           reply: {:caller_inbox, self()}
         }
-      })
+      }
+      |> signed_invocation!(:agent)
+      |> Invocation.dispatch()
 
     case Map.get(sandbox, :respawn_template_data) do
       %{} = rtd ->

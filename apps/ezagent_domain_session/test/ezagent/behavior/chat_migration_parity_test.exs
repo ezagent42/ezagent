@@ -434,15 +434,15 @@ defmodule Ezagent.ActionSet.ChatMigrationParityTest do
     end
   end
 
-  describe "handle_set_working_copy/2 — authorization gate" do
-    test "denies caller without orchestrator cap or system_internal flag" do
+  describe "handle_set_working_copy/2 — post-verifier handler" do
+    test "does not duplicate the central capability check" do
       session_uri =
         URI.new!("session://team-alpha/default/setwc-#{System.unique_integer([:positive])}")
 
       slice = empty_chat_slice()
       ctx = ctx_for(slice, %{self_uri: session_uri})
 
-      assert {:error, :unauthorized} =
+      assert {:ok, %{template_working_copy: %{description: "new"}}, _effects} =
                SessionBehavior.handle_set_working_copy(
                  %{template_working_copy: %{description: "new"}},
                  ctx

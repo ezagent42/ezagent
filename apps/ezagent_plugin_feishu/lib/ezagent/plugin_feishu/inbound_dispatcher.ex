@@ -51,7 +51,8 @@ defmodule EzagentPluginFeishu.InboundDispatcher do
           chat_id: String.t(),
           message_id: String.t() | nil,
           sender: map(),
-          body: %{required(:text) => String.t(), required(:attachments) => [map()]}
+          body: %{required(:text) => String.t(), required(:attachments) => [map()]},
+          origin: Ezagent.DispatchOrigin.t() | nil
         ]
 
   @spec dispatch(opts()) :: :ok | {:error, term()}
@@ -60,6 +61,7 @@ defmodule EzagentPluginFeishu.InboundDispatcher do
     message_id = Keyword.get(opts, :message_id)
     sender = Keyword.fetch!(opts, :sender)
     body = Keyword.fetch!(opts, :body)
+    origin = Keyword.get(opts, :origin)
 
     case SenderResolver.resolve(sender) do
       {:pending, open_id} ->
@@ -98,7 +100,7 @@ defmodule EzagentPluginFeishu.InboundDispatcher do
         # one).
         case InboundChatLookup.resolve(chat_id, mentions, text) do
           {:ok, session_uri} ->
-            case do_dispatch(session_uri, caller_uri, caps, body, mentions) do
+            case do_dispatch(session_uri, caller_uri, caps, body, mentions, origin) do
               :ok ->
                 react_safe(message_id, "OK")
                 :ok
@@ -206,7 +208,7 @@ defmodule EzagentPluginFeishu.InboundDispatcher do
     end
   end
 
-  defp do_dispatch(session_uri, caller_uri, caps, body, mentions) do
+  defp do_dispatch(session_uri, caller_uri, caps, body, mentions, origin) do
     # team-routing-unification §3.8 (rehydrate-or-spawn): the chat resolved
     # to a DURABLY-created session, but after a cold node restart that
     # session may not be a live actor yet (nothing rehydrates bound sessions
@@ -217,7 +219,7 @@ defmodule EzagentPluginFeishu.InboundDispatcher do
     # use) — NOT a raw spawn — gated on durable existence so we never create
     # an unowned fresh session.
     with :ok <- ensure_session_live(session_uri) do
-      dispatch_to_session(session_uri, caller_uri, caps, body, mentions)
+      dispatch_to_session(session_uri, caller_uri, caps, body, mentions, origin)
     end
   end
 
@@ -245,7 +247,7 @@ defmodule EzagentPluginFeishu.InboundDispatcher do
     end
   end
 
-  defp dispatch_to_session(session_uri, caller_uri, caps, body, mentions) do
+  defp dispatch_to_session(session_uri, caller_uri, caps, body, mentions, origin) do
     # Phase 6 PR 15: download attachments to local paths so recipients
     # (CC bridge, LV chat thread, future viewers) can show content
     # rather than just metadata. Best-effort — download failure keeps
@@ -293,7 +295,8 @@ defmodule EzagentPluginFeishu.InboundDispatcher do
       target: target,
       mode: :call,
       args: %{message: msg},
-      ctx: %{caller: caller_uri, caps: caps, reply: :sync}
+      ctx: %{caller: caller_uri, caps: caps, reply: :sync},
+      origin: origin
     }
 
     case Ezagent.Invocation.dispatch(inv) do

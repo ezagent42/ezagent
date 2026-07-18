@@ -97,27 +97,46 @@ defmodule Ezagent.Agent.RetirementSweeper do
   defp execute_termination(agent_uri, %{
          "sandbox_destroy" => %{"caller_uri" => caller_uri}
        }) do
-    result =
-      Invocation.dispatch(%Invocation{
-        target: Ezagent.URI.with_action(Ezagent.URI.new!(agent_uri), :sandbox, :destroy),
-        mode: :call,
-        args: %{},
-        ctx: %{
-          caller: Ezagent.URI.new!(caller_uri),
-          caps: MapSet.new(),
-          reply: {:caller_inbox, self()}
-        }
-      })
+    target = Ezagent.URI.new!(agent_uri)
+    caller = Ezagent.URI.new!(caller_uri)
 
-    case result do
-      {:ok, %{destroyed: true}} -> :ok
-      {:error, :no_such_actor} -> :ok
-      {:error, reason} -> {:error, {:termination_retry_failed, reason}}
-      other -> {:error, {:unexpected_termination_retry_result, other}}
+    case Ezagent.KindRegistry.lookup(target) do
+      {:ok, _pid} ->
+        action_target = Ezagent.URI.with_action(target, :sandbox, :destroy)
+        admin = Ezagent.Entity.User.admin_uri()
+
+        with {:ok, cap} <- Ezagent.Cap.issue_for_action({:admin, admin}, caller, action_target) do
+          Invocation.dispatch(%Invocation{
+            target: action_target,
+            mode: :call,
+            args: %{},
+            ctx: %{
+              caller: caller,
+              caps: MapSet.new([cap]),
+              reply: {:caller_inbox, self()}
+            },
+            origin: :trusted_internal
+          })
+          |> normalize_termination_result()
+        else
+          {:error, reason} -> {:error, {:termination_retry_failed, reason}}
+        end
+
+      :error ->
+        :ok
     end
   end
 
   defp execute_termination(_agent_uri, _pending_steps), do: :ok
+
+  defp normalize_termination_result({:ok, %{destroyed: true}}), do: :ok
+  defp normalize_termination_result({:error, :no_such_actor}), do: :ok
+
+  defp normalize_termination_result({:error, reason}),
+    do: {:error, {:termination_retry_failed, reason}}
+
+  defp normalize_termination_result(other),
+    do: {:error, {:unexpected_termination_retry_result, other}}
 
   defp execute_cleanup(agent_uri, pending_steps) do
     case pending_steps do

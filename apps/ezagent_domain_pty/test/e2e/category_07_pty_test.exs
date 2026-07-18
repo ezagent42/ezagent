@@ -133,7 +133,8 @@ defmodule Ezagent.Domain.Pty.E2E.Category07PtyTest do
 
       for i <- 1..100 do
         assert {:ok, %{bytes_written: 1}} =
-                 Invocation.dispatch(%Invocation{
+                 dispatch(%Invocation{
+                   origin: :trusted_internal,
                    target: target,
                    mode: :call,
                    args: %{bytes: <<i>>},
@@ -162,7 +163,8 @@ defmodule Ezagent.Domain.Pty.E2E.Category07PtyTest do
       target = URI.parse(URI.to_string(bare) <> "?action=pty.write")
 
       assert {:error, :no_pty_server} =
-               Invocation.dispatch(%Invocation{
+               dispatch(%Invocation{
+                 origin: :trusted_internal,
                  target: target,
                  mode: :call,
                  args: %{bytes: "x"},
@@ -363,6 +365,12 @@ defmodule Ezagent.Domain.Pty.E2E.Category07PtyTest do
 
   defp pty_slice_state(%{state: state}) when is_map(state), do: state
   defp pty_slice_state(slice), do: slice
+
+  defp dispatch(%Invocation{} = invocation) do
+    invocation
+    |> Ezagent.Test.CapHelper.signed_invocation!(:pty_e2e)
+    |> Invocation.dispatch()
+  end
 
   defp eventually(fun, timeout_ms) when timeout_ms > 0 do
     case fun.() do

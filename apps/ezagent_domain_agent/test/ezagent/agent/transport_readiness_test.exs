@@ -444,7 +444,7 @@ defmodule Ezagent.Agent.TransportReadinessTest do
       granted_at: DateTime.utc_now()
     }
 
-    %Ezagent.Invocation{
+    %Ezagent.Invocation{origin: :trusted_internal,
       target: Ezagent.URI.with_action(uri, :identity, :absorb_cap),
       mode: :cast,
       args: %{artifact: artifact},

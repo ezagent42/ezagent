@@ -125,16 +125,7 @@ defmodule Ezagent.ActionSet.Turn do
   # Per-turn recovery effects, each side effect independently gated on its own
   # durable not-yet-done marker so replay is idempotent + minimal.
   defp recovery_effects(turn_id, turn, ctx) do
-    # The recovery signal ctx carries NO caller caps (unlike the action path,
-    # where the settling caller's caps ride on the dispatch). These replays are
-    # the session legitimately re-performing its OWN settlement side effects, so
-    # authorize them with the system bootstrap caps (same authority a system
-    # principal driving the session would hold). Without this the self-dispatch
-    # is denied at authz and the settlement stays pending.
-    bootstrap_caps =
-      MapSet.new([Ezagent.Capability.admin_genesis_cap()])
-
-    bootstrap_ctx = Map.put(ctx, :caps, bootstrap_caps)
+    bootstrap_ctx = Map.put(ctx, :caps, recovery_caps(ctx))
 
     # The approve/commit settlement replays KEEP their bootstrap caps (the
     # session legitimately re-performing its OWN settlement side effects; out of
@@ -164,6 +155,26 @@ defmodule Ezagent.ActionSet.Turn do
 
     settlement_effects ++ config_effects
   end
+
+  defp recovery_caps(%{self_uri: %URI{} = session_uri}) do
+    admin = Ezagent.URI.user(:system, :admin)
+
+    [:approve, :commit_settlement]
+    |> Enum.reduce_while({:ok, MapSet.new()}, fn action, {:ok, caps} ->
+      target = Ezagent.URI.with_action(session_uri, :turn, action)
+
+      case Ezagent.Cap.issue_for_action({:admin, admin}, session_uri, target) do
+        {:ok, cap} -> {:cont, {:ok, MapSet.put(caps, cap)}}
+        {:error, reason} -> {:halt, {:error, reason}}
+      end
+    end)
+    |> case do
+      {:ok, caps} -> caps
+      {:error, _reason} -> MapSet.new()
+    end
+  end
+
+  defp recovery_caps(_ctx), do: MapSet.new()
 
   # H3 — build the config-apply replay under the recorded manager's current
   # authority, or skip (fail-safe) when no manager was recorded.

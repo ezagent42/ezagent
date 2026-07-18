@@ -20,6 +20,7 @@ defmodule EzagentDomainInstanceMessage.PresenceFanoutTest do
   alias Ezagent.ActionSet.Session, as: SessionBehavior
   alias Ezagent.Presence
   alias EzagentDomainInstanceMessage.PresenceFanout
+  import Ezagent.Test.CapHelper, only: [signed_action_cap!: 2]
 
   # Canonical (`authority: nil`) construction — PresenceFanout rebroadcasts
   # `:member_presence` with the canonical member_uri (`Ezagent.URI.new!`
@@ -166,18 +167,24 @@ defmodule EzagentDomainInstanceMessage.PresenceFanoutTest do
       {:ok, _} = Ezagent.SpawnRegistry.spawn(admin_uri)
 
       short = "bootstrap_test_#{System.unique_integer([:positive])}"
+
       {:ok, session_uri, _meta} =
-        EzagentDomainInstanceMessage.SessionCreator.create_session(short, admin_uri, template_name: "default")
+        EzagentDomainInstanceMessage.SessionCreator.create_session(short, admin_uri,
+          template_name: "default"
+        )
 
       # chat.join member
+      join_target = URI.new!("#{URI.to_string(session_uri)}?action=session.join")
+
       :ok =
         case Ezagent.Invocation.dispatch(%Ezagent.Invocation{
-               target: URI.new!("#{URI.to_string(session_uri)}?action=session.join"),
+               origin: :trusted_internal,
+               target: join_target,
                mode: :call,
                args: %{member: member_uri},
                ctx: %{
                  caller: admin_uri,
-                 caps: MapSet.new([Ezagent.Capability.admin_genesis_cap()]),
+                 caps: MapSet.new([signed_action_cap!(join_target, admin_uri)]),
                  reply: :inline
                }
              }) do
@@ -220,7 +227,10 @@ defmodule EzagentDomainInstanceMessage.PresenceFanoutTest do
       member_uri = unique_user_uri("fanout_on")
 
       # Subscribe to the session's events topic FIRST — assertion target
-      Phoenix.PubSub.subscribe(EzagentCore.PubSub, SessionBehavior.session_events_topic(session_uri))
+      Phoenix.PubSub.subscribe(
+        EzagentCore.PubSub,
+        SessionBehavior.session_events_topic(session_uri)
+      )
 
       # Register interest
       broadcast_change(session_uri, {:member_joined, member_uri})
@@ -251,7 +261,10 @@ defmodule EzagentDomainInstanceMessage.PresenceFanoutTest do
       session_uri = unique_session_uri("fanout_off")
       member_uri = unique_user_uri("fanout_off")
 
-      Phoenix.PubSub.subscribe(EzagentCore.PubSub, SessionBehavior.session_events_topic(session_uri))
+      Phoenix.PubSub.subscribe(
+        EzagentCore.PubSub,
+        SessionBehavior.session_events_topic(session_uri)
+      )
 
       broadcast_change(session_uri, {:member_joined, member_uri})
       wait_for(fn -> Map.has_key?(PresenceFanout.__index__(), member_uri) end)

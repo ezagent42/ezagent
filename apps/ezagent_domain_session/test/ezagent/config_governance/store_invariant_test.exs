@@ -5,6 +5,7 @@ defmodule Ezagent.ConfigGovernance.StoreInvariantTest do
   alias Ezagent.ConfigGovernance.Store
   alias Ezagent.Entity.Agent
   alias Ezagent.ConfigGovernance.Socialware, as: SocialwareGovernance
+  import Ezagent.Test.CapHelper, only: [signed_cap!: 3]
 
   @agent_key "agent.soul"
   @owner Ezagent.URI.new!("entity://team-alpha/user/owner")
@@ -59,6 +60,7 @@ defmodule Ezagent.ConfigGovernance.StoreInvariantTest do
 
   defp dispatch(agent, action, args, principal) do
     Invocation.dispatch(%Invocation{
+      origin: :trusted_internal,
       target: Ezagent.URI.new!("#{URI.to_string(agent)}?action=config_governance.#{action}"),
       mode: :call,
       args: args,
@@ -68,7 +70,11 @@ defmodule Ezagent.ConfigGovernance.StoreInvariantTest do
 
   defp grant_manage_cap(agent, workspace) do
     manager = Ezagent.URI.entity(:team_alpha, :user, "mgr-#{uniq()}")
-    cap = CreatorGrant.manage_cap(:agent, agent, workspace, manager)
+
+    cap =
+      CreatorGrant.manage_cap(:agent, agent, workspace, manager)
+      |> then(&signed_cap!(agent, manager, &1))
+
     %{uri: manager, caps: MapSet.new([cap])}
   end
 

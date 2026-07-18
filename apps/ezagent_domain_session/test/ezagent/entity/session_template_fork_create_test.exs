@@ -20,11 +20,9 @@ defmodule Ezagent.Entity.SessionTemplateForkCreateTest do
 
   use EzagentCore.DataCase, async: false
 
-  alias Ezagent.{ActionSet, Capability, Invocation, Identity, KindRegistry}
+  alias Ezagent.{ActionSet, Invocation, Identity, KindRegistry}
   alias Ezagent.Ecto.KindSnapshot
   alias Ezagent.Entity.{SessionTemplate, User}
-
-  @workspace_uri URI.new!("workspace://team-alpha")
 
   defp uniq, do: System.unique_integer([:positive])
 
@@ -69,7 +67,12 @@ defmodule Ezagent.Entity.SessionTemplateForkCreateTest do
   defp persist_parent(name, opts \\ []) do
     content = session_content(name, opts)
     hash = SessionTemplate.compute_version_hash(content)
-    :ok = KindSnapshot.delete(URI.to_string(SessionTemplate.build_uri(name, hash, workspace: "team-alpha")))
+
+    :ok =
+      KindSnapshot.delete(
+        URI.to_string(SessionTemplate.build_uri(name, hash, workspace: "team-alpha"))
+      )
+
     {:ok, uri} = SessionTemplate.persist_version(content, "team-alpha")
     track_session_template(uri)
     uri
@@ -78,15 +81,18 @@ defmodule Ezagent.Entity.SessionTemplateForkCreateTest do
   # Read a SessionTemplate's `:template` content via the dispatch :read.
   defp read_content(uri) do
     target = Ezagent.URI.new!("#{URI.to_string(uri)}?action=template.read")
+    admin = User.admin_uri()
+    cap = Ezagent.Test.CapHelper.signed_action_cap!(target, admin)
 
     {:ok, %{content: content}} =
       Invocation.dispatch(%Invocation{
+        origin: :trusted_internal,
         target: target,
         mode: :call,
         args: %{},
         ctx: %{
-          caller: User.admin_uri(),
-          caps: MapSet.new([Ezagent.Capability.admin_genesis_cap()]),
+          caller: admin,
+          caps: MapSet.new([cap]),
           reply: {:caller_inbox, self()}
         }
       })
@@ -94,21 +100,30 @@ defmodule Ezagent.Entity.SessionTemplateForkCreateTest do
     content
   end
 
-  # A `ActionSet.Template` `:session_template` cap, workspace-bounded.
-  defp session_template_cap do
-    %Capability{
-      kind: :session_template,
-      behavior: ActionSet.Template,
-      instance: {:within_workspace, @workspace_uri},
-      workspace_uri: @workspace_uri,
-      granted_by: User.admin_uri(),
-      granted_at: DateTime.utc_now()
-    }
+  defp fork_cap(parent_uri, caller) do
+    parent_uri
+    |> Ezagent.URI.with_action(:template, :fork)
+    |> Ezagent.Test.CapHelper.signed_action_cap!(caller)
+  end
+
+  defp create_owner_and_cap do
+    workspace = "fc-create-ws-#{uniq()}"
+    workspace_uri = Ezagent.URI.workspace(workspace)
+    {:ok, _pid} = Ezagent.Workspace.spawn_workspace(workspace, %{})
+    :ok = Ezagent.ReadyGate.await(workspace_uri, 2_000)
+    owner = spawn_owner([], workspace)
+
+    cap =
+      workspace_uri
+      |> Ezagent.URI.with_action(:workspace, :write_session_templates)
+      |> Ezagent.Test.CapHelper.signed_action_cap!(owner)
+
+    {owner, workspace, cap}
   end
 
   # Spawn a User Kind at a unique URI carrying exactly `caps`.
-  defp spawn_owner(caps) do
-    owner_uri = Ezagent.URI.new!("entity://team-alpha/user/fc-owner-#{uniq()}")
+  defp spawn_owner(caps, workspace \\ "team-alpha") do
+    owner_uri = Ezagent.URI.new!("entity://#{workspace}/user/fc-owner-#{uniq()}")
     {:ok, _pid} = Ezagent.Kind.spawn(User, %{uri: owner_uri, initial_caps: MapSet.new(caps)})
     on_exit(fn -> KindRegistry.lookup(owner_uri) end)
     owner_uri
@@ -117,11 +132,12 @@ defmodule Ezagent.Entity.SessionTemplateForkCreateTest do
   describe "fork/3 — lineage + parent immutability (SPEC §2 PR-6)" do
     test "the fork records parent_template_uri = the parent's hash URI" do
       parent_uri = persist_parent("fc-parent-#{uniq()}")
-      owner_uri = spawn_owner([session_template_cap()])
+      owner_uri = spawn_owner([])
+      cap = fork_cap(parent_uri, owner_uri)
 
       assert {:ok, fork_uri} =
                SessionTemplate.fork(parent_uri, "fc-fork-#{uniq()}",
-                 caps: [session_template_cap()],
+                 caps: [cap],
                  caller: owner_uri
                )
 
@@ -141,11 +157,12 @@ defmodule Ezagent.Entity.SessionTemplateForkCreateTest do
           agent_slots: [{"backend", Ezagent.URI.new!("template://team-alpha/agent/be")}]
         )
 
-      owner_uri = spawn_owner([session_template_cap()])
+      owner_uri = spawn_owner([])
+      cap = fork_cap(parent_uri, owner_uri)
 
       assert {:ok, fork_uri} =
                SessionTemplate.fork(parent_uri, "fc-cfg-fork-#{uniq()}",
-                 caps: [session_template_cap()],
+                 caps: [cap],
                  caller: owner_uri
                )
 
@@ -167,11 +184,12 @@ defmodule Ezagent.Entity.SessionTemplateForkCreateTest do
       parent_before = read_content(parent_uri)
       parent_snapshot_before = KindSnapshot.get(URI.to_string(parent_uri))
 
-      owner_uri = spawn_owner([session_template_cap()])
+      owner_uri = spawn_owner([])
+      cap = fork_cap(parent_uri, owner_uri)
 
       assert {:ok, fork_uri} =
                SessionTemplate.fork(parent_uri, "fc-immut-fork-#{uniq()}",
-                 caps: [session_template_cap()],
+                 caps: [cap],
                  caller: owner_uri
                )
 
@@ -187,11 +205,12 @@ defmodule Ezagent.Entity.SessionTemplateForkCreateTest do
 
     test "fork stamps a fresh created_by (the caller)" do
       parent_uri = persist_parent("fc-by-parent-#{uniq()}")
-      owner_uri = spawn_owner([session_template_cap()])
+      owner_uri = spawn_owner([])
+      cap = fork_cap(parent_uri, owner_uri)
 
       assert {:ok, fork_uri} =
                SessionTemplate.fork(parent_uri, "fc-by-fork-#{uniq()}",
-                 caps: [session_template_cap()],
+                 caps: [cap],
                  caller: owner_uri
                )
 
@@ -202,13 +221,13 @@ defmodule Ezagent.Entity.SessionTemplateForkCreateTest do
 
   describe "create/3 — produces a ROOT template (SPEC §2 PR-6)" do
     test "create makes a template with parent_template_uri: nil" do
-      owner_uri = spawn_owner([session_template_cap()])
+      {owner_uri, workspace, cap} = create_owner_and_cap()
 
       assert {:ok, root_uri} =
                SessionTemplate.create("fc-root-#{uniq()}", %{description: "a fresh root"},
-                 caps: [session_template_cap()],
+                 caps: [cap],
                  caller: owner_uri,
-                 workspace: "team-alpha"
+                 workspace: workspace
                )
 
       track_session_template(root_uri)
@@ -219,17 +238,20 @@ defmodule Ezagent.Entity.SessionTemplateForkCreateTest do
     end
 
     test "create forces parent_template_uri to nil even if config supplies one" do
-      owner_uri = spawn_owner([session_template_cap()])
+      {owner_uri, workspace, cap} = create_owner_and_cap()
 
       # A root never has a parent — a `parent_template_uri` in the
       # config is overridden to nil.
       assert {:ok, root_uri} =
                SessionTemplate.create(
                  "fc-root-noparent-#{uniq()}",
-                 %{parent_template_uri: Ezagent.URI.new!("template://team-alpha/session/sneaky@abc")},
-                 caps: [session_template_cap()],
+                 %{
+                   parent_template_uri:
+                     Ezagent.URI.new!("template://team-alpha/session/sneaky@abc")
+                 },
+                 caps: [cap],
                  caller: owner_uri,
-                 workspace: "team-alpha"
+                 workspace: workspace
                )
 
       track_session_template(root_uri)
@@ -237,15 +259,15 @@ defmodule Ezagent.Entity.SessionTemplateForkCreateTest do
     end
 
     test "create accepts string-keyed config (JSON-boundary shape)" do
-      owner_uri = spawn_owner([session_template_cap()])
+      {owner_uri, workspace, cap} = create_owner_and_cap()
 
       assert {:ok, root_uri} =
                SessionTemplate.create(
                  "fc-root-strkeys-#{uniq()}",
                  %{"description" => "string-keyed config"},
-                 caps: [session_template_cap()],
+                 caps: [cap],
                  caller: owner_uri,
-                 workspace: "team-alpha"
+                 workspace: workspace
                )
 
       track_session_template(root_uri)
@@ -259,7 +281,7 @@ defmodule Ezagent.Entity.SessionTemplateForkCreateTest do
       # An owner whose User Kind holds NO template cap.
       owner_uri = spawn_owner([])
 
-      assert {:error, :unauthorized} =
+      assert {:error, :missing_cap} =
                SessionTemplate.fork(parent_uri, "fc-deny-fork-#{uniq()}",
                  caps: [],
                  caller: owner_uri
@@ -282,7 +304,7 @@ defmodule Ezagent.Entity.SessionTemplateForkCreateTest do
       parent_before = read_content(parent_uri)
       owner_uri = spawn_owner([])
 
-      assert {:error, :unauthorized} =
+      assert {:error, :missing_cap} =
                SessionTemplate.fork(parent_uri, "fc-deny-immut-fork-#{uniq()}",
                  caps: [],
                  caller: owner_uri
@@ -295,11 +317,12 @@ defmodule Ezagent.Entity.SessionTemplateForkCreateTest do
 
     test "a MapSet of caps is accepted (not only a list)" do
       parent_uri = persist_parent("fc-mapset-parent-#{uniq()}")
-      owner_uri = spawn_owner([session_template_cap()])
+      owner_uri = spawn_owner([])
+      cap = fork_cap(parent_uri, owner_uri)
 
       assert {:ok, fork_uri} =
                SessionTemplate.fork(parent_uri, "fc-mapset-fork-#{uniq()}",
-                 caps: MapSet.new([session_template_cap()]),
+                 caps: MapSet.new([cap]),
                  caller: owner_uri
                )
 
@@ -310,11 +333,12 @@ defmodule Ezagent.Entity.SessionTemplateForkCreateTest do
   describe "owner-cap grant (SPEC §1.7 (e))" do
     test "fork grants the owner a ActionSet.Template SessionTemplate cap" do
       parent_uri = persist_parent("fc-grant-parent-#{uniq()}")
-      owner_uri = spawn_owner([session_template_cap()])
+      owner_uri = spawn_owner([])
+      cap = fork_cap(parent_uri, owner_uri)
 
       assert {:ok, fork_uri} =
                SessionTemplate.fork(parent_uri, "fc-grant-fork-#{uniq()}",
-                 caps: [session_template_cap()],
+                 caps: [cap],
                  caller: owner_uri
                )
 
@@ -325,19 +349,20 @@ defmodule Ezagent.Entity.SessionTemplateForkCreateTest do
       owner_caps = Identity.list_caps_for(owner_uri)
 
       assert Enum.any?(owner_caps, fn cap ->
-               cap.kind == :session_template and cap.behavior == ActionSet.Template
+               cap.kind == :session_template and cap.behavior == ActionSet.Template and
+                 cap.instance == fork_uri and valid_for?(cap, fork_uri, owner_uri)
              end),
              "fork must grant the owner a ActionSet.Template :session_template cap (§1.7 (e))"
     end
 
     test "create grants the owner a ActionSet.Template SessionTemplate cap" do
-      owner_uri = spawn_owner([session_template_cap()])
+      {owner_uri, workspace, cap} = create_owner_and_cap()
 
       assert {:ok, root_uri} =
                SessionTemplate.create("fc-grant-root-#{uniq()}", %{},
-                 caps: [session_template_cap()],
+                 caps: [cap],
                  caller: owner_uri,
-                 workspace: "team-alpha"
+                 workspace: workspace
                )
 
       track_session_template(root_uri)
@@ -345,9 +370,15 @@ defmodule Ezagent.Entity.SessionTemplateForkCreateTest do
       owner_caps = Identity.list_caps_for(owner_uri)
 
       assert Enum.any?(owner_caps, fn cap ->
-               cap.kind == :session_template and cap.behavior == ActionSet.Template
+               cap.kind == :session_template and cap.behavior == ActionSet.Template and
+                 cap.instance == root_uri and valid_for?(cap, root_uri, owner_uri)
              end),
              "create must grant the owner a ActionSet.Template :session_template cap (§1.7 (e))"
     end
+  end
+
+  defp valid_for?(cap, target, presenter) do
+    {:ok, authority} = Ezagent.Cap.Authority.open(target, :session_template)
+    Ezagent.Cap.Authority.verify(authority, cap, presenter)
   end
 end

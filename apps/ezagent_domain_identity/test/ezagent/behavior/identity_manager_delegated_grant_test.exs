@@ -26,6 +26,8 @@ defmodule Ezagent.ActionSet.IdentityManagerDelegatedGrantTest do
 
   use EzagentCore.DataCase, async: false
 
+  import Ezagent.Test.CapHelper, only: [authority_signed_cap_as!: 4]
+
   alias Ezagent.ActionSet.IdentityAdmin
   alias Ezagent.{Capability, CapabilityRegistry}
 
@@ -71,7 +73,7 @@ defmodule Ezagent.ActionSet.IdentityManagerDelegatedGrantTest do
 
   # The cap-to-grant: concrete behavior + concrete action over the target.
   defp cap_to_grant(behavior, action) do
-    %Capability{
+    cap = %Capability{
       kind: :agent,
       behavior: behavior,
       action: action,
@@ -80,6 +82,15 @@ defmodule Ezagent.ActionSet.IdentityManagerDelegatedGrantTest do
       granted_by: manager_uri(),
       granted_at: DateTime.utc_now()
     }
+
+    {:ok, authority} = Ezagent.Cap.Authority.open(target_instance(), :agent)
+
+    authority_signed_cap_as!(
+      authority,
+      manager_uri(),
+      target_instance(),
+      cap
+    )
   end
 
   defp ctx_for(caller_caps) do

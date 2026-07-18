@@ -45,13 +45,7 @@ defmodule Ezagent.World.AgentDeleteDispatchTest do
 
     workspace_uri = URI.new!("workspace://#{ws_name}")
 
-    # admin_genesis_cap satisfies ALL cap checks in the runtime (including
-    # the Manage :any cap required for manage.delete). We use this both for
-    # create_agent (same as existing tests) and for the happy-path delete.
-    admin_ctx = %{
-      caller: User.admin_uri(),
-      caps: MapSet.new([Ezagent.Capability.admin_genesis_cap()])
-    }
+    admin_ctx = Ezagent.Test.CapHelper.signed_workspace_ctx!(workspace_uri, User.admin_uri())
 
     {:ok, ws_name: ws_name, workspace_uri: workspace_uri, admin_ctx: admin_ctx}
   end
@@ -76,7 +70,15 @@ defmodule Ezagent.World.AgentDeleteDispatchTest do
   defp dispatch_delete(agent_uri, caps, caller \\ User.admin_uri()) do
     target = Ezagent.URI.with_action(agent_uri, :manage, :delete)
 
+    caps =
+      if Enum.empty?(caps) do
+        caps
+      else
+        MapSet.new([Ezagent.Test.CapHelper.signed_action_cap!(target, caller)])
+      end
+
     Invocation.dispatch(%Invocation{
+      origin: :trusted_internal,
       target: target,
       mode: :call,
       args: %{},
@@ -158,15 +160,18 @@ defmodule Ezagent.World.AgentDeleteDispatchTest do
   # Join an agent URI into a live session via sanctioned dispatch (P14).
   defp join_member(session_uri, agent_uri) do
     target = URI.new!("#{URI.to_string(session_uri)}?action=session.join")
+    admin = User.admin_uri()
+    cap = Ezagent.Test.CapHelper.signed_action_cap!(target, admin)
 
     :ok =
       Invocation.dispatch(%Invocation{
+        origin: :trusted_internal,
         target: target,
         mode: :cast,
         args: %{member: agent_uri},
         ctx: %{
-          caller: User.admin_uri(),
-          caps: MapSet.new([Ezagent.Capability.admin_genesis_cap()]),
+          caller: admin,
+          caps: MapSet.new([cap]),
           reply: :ignore
         }
       })
@@ -239,8 +244,8 @@ defmodule Ezagent.World.AgentDeleteDispatchTest do
       # Record the exact runtime error atom for the action_error_message/1 mapping.
       {:error, actual_reason} = result
 
-      assert actual_reason in [:unauthorized, :cross_workspace_denied],
-             "cap-denial must be :unauthorized or :cross_workspace_denied, got: #{inspect(actual_reason)}"
+      assert actual_reason in [:missing_cap, :cross_workspace_denied],
+             "cap-denial must be :missing_cap or :cross_workspace_denied, got: #{inspect(actual_reason)}"
 
       # Agent must still be alive — no destroy should have happened.
       assert {:ok, _pid} = KindRegistry.lookup(agent_uri_str),

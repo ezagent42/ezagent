@@ -146,55 +146,43 @@ defmodule Ezagent.ActionSet.Session.Membership do
   #   * MANAGES the member (K2 `Authority.manages?/2` — a `Manage`-over-member cap,
   #     admin union, or workspace-admin; covers owner-adds-own-agent + the
   #     materializer's admin_uri caller via the genesis wildcard), OR
-  #   * holds a delegated `{:spawned_by, caller}`-scoped cap covering the member —
-  #     the ORCHESTRATOR / team-template spawn exemption (spec §C.1 (c)): the
-  #     orchestrator dispatches the member-join under its OWN agent URI holding
-  #     `cap(:agent, :any, {:spawned_by, orchestrator})` over the worker it just
-  #     spawned (`orchestrator/tools.ex` `join_member`, `session_manager.ex:375`).
-  #     That is genuine control (the same `{:spawned_by}` authority that gates
-  #     `remove_member`/terminate on the worker), scoped to workers the CALLER
-  #     ITSELF spawned — NOT a cross-owner pull.
+  #   * holds a target-signed concrete cap over a member in the caller's durable
+  #     spawn lineage — the Path-A replacement for the legacy
+  #     `{:spawned_by, caller}` scope. The conjunction is load-bearing: the cap
+  #     proves target authority delegated to this presenter, while lineage proves
+  #     the caller actually spawned the member.
   #
   # ⚠️ SECURITY (spec §C.1 / threat X): the second branch is restricted to the
-  # `{:spawned_by, caller}` instance scope ONLY. It MUST NOT be a general "holds
-  # any cap covering the member" check — a co-tenant B (in the SAME workspace as
-  # A's agent, the threat setup) could hold a broad `{:within_workspace, ws}` /
-  # `:any`-instance agent cap that covers A's agent, which would re-exempt the
-  # cross-owner pull and REOPEN threat X. The `{:spawned_by, caller}` gate admits
-  # only the orchestrator's own-spawned workers. (Guarded by the teeth test
-  # `within_workspace cap does NOT exempt` in `admission_gate_test.exs`.)
+  # concrete target AND durable caller lineage. It MUST NOT be a general "holds
+  # any cap covering the member" check: a co-tenant with an exact cap but no
+  # lineage remains a cross-owner pull and must pend.
   #
   # `manages?/2` is checked FIRST so the common mounts (owner-adds-own, admin) never
   # take the second durable-caps read (short-circuit): the spawned-by read runs only
   # when `manages?` is false (the cross-owner-looking minority).
   defp caller_controls_member?(%URI{} = caller, %URI{} = member_uri) do
     Ezagent.Identity.Authority.manages?(caller, member_uri) or
-      holds_spawned_by_authority?(caller, member_uri)
+      holds_spawned_member_authority?(caller, member_uri)
   end
 
   defp caller_controls_member?(_, _), do: false
 
-  defp holds_spawned_by_authority?(%URI{} = caller, %URI{} = member_uri) do
-    caller
-    |> Ezagent.EntityCaps.load()
-    |> Enum.any?(&spawned_by_caller_cap_covers?(&1, caller, member_uri))
+  defp holds_spawned_member_authority?(%URI{} = caller, %URI{} = member_uri) do
+    Ezagent.AgentLineage.spawned_in_lineage?(member_uri, caller) and
+      caller
+      |> Ezagent.EntityCaps.load()
+      |> Enum.any?(&concrete_caller_cap_covers?(&1, caller, member_uri))
   end
 
-  # True ONLY for a `{:spawned_by, caller}`-scoped cap that covers `member_uri`.
-  # The instance-scope guard (`{:spawned_by, %URI{} = sb}` with `sb == caller`) is
-  # load-bearing — see the security note above. `cap_covers_instance?/2` then lets
-  # `Capability.matches?/2` resolve member-spawned-in-caller's-lineage
-  # (`AgentLineage.spawned_in_lineage?/2`) for ANY behavior (the orchestrator's cap
-  # is `behavior: :any`, not `Manage`).
-  defp spawned_by_caller_cap_covers?(
-         %Ezagent.Capability{instance: {:spawned_by, %URI{} = sb}} = held,
+  defp concrete_caller_cap_covers?(
+         %Ezagent.Capability{instance: %URI{}, grantee_uri: %URI{} = grantee} = held,
          %URI{} = caller,
          %URI{} = member_uri
        ) do
-    same_entity?(sb, caller) and cap_covers_instance?(held, member_uri)
+    same_entity?(grantee, caller) and cap_covers_instance?(held, member_uri)
   end
 
-  defp spawned_by_caller_cap_covers?(_held, _caller, _member_uri), do: false
+  defp concrete_caller_cap_covers?(_held, _caller, _member_uri), do: false
 
   # Echoes the held cap's own kind/behavior/action/workspace axes into `needed` so
   # those four match trivially (sidestepping the asymmetric-`:any` rule), leaving
@@ -1196,12 +1184,14 @@ defmodule Ezagent.ActionSet.Session.Membership do
         workspace_uri
       )
 
-    case Ezagent.Identity.Grant.grant_cap_via_router(
-           joiner_uri,
-           cap,
-           {:rule, :session_participation, granter},
-           :sync
-         ) do
+    authorization = grant_authorization(granter)
+
+    result =
+      with :ok <- Ezagent.Identity.TargetAuthority.ensure(granter, session_uri) do
+        Ezagent.Identity.Grant.grant_cap_via_router(joiner_uri, cap, authorization, :sync)
+      end
+
+    case result do
       :ok ->
         :ok
 
@@ -1269,12 +1259,10 @@ defmodule Ezagent.ActionSet.Session.Membership do
   # access-point callers don't each have to look it up.
   defp do_mount_participation_caps(%URI{} = session_uri, %URI{} = member_uri) do
     workspace_uri = Ezagent.Capability.workspace_of(session_uri)
+    granter = session_owner(session_uri) |> owner_or_admin()
+    authorization = grant_authorization(granter)
 
-    granter =
-      case Ezagent.Entity.Session.owner(session_uri) do
-        {:ok, %URI{} = owner} -> owner
-        _ -> Ezagent.Entity.User.admin_uri()
-      end
+    _ = Ezagent.Identity.TargetAuthority.ensure(granter, session_uri)
 
     confirmed? = Ezagent.Users.confirmed?(member_uri)
 
@@ -1303,7 +1291,7 @@ defmodule Ezagent.ActionSet.Session.Membership do
         case Ezagent.Identity.Grant.grant_cap_via_router(
                member_uri,
                cap,
-               {:rule, :session_participation, granter},
+               authorization,
                :sync
              ) do
           :ok ->
@@ -1327,6 +1315,14 @@ defmodule Ezagent.ActionSet.Session.Membership do
         end
       end
     end)
+  end
+
+  defp grant_authorization(%URI{} = granter) do
+    admin = Ezagent.Entity.User.admin_uri()
+
+    if Ezagent.URI.stable_key(granter) == Ezagent.URI.stable_key(admin),
+      do: {:admin, granter},
+      else: {:held_by, granter}
   end
 
   # True iff `held` (the member's current caps) already contains a cap that

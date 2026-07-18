@@ -20,7 +20,7 @@ defmodule EzagentPluginHello.Integration.HelloPageE2ETest do
 
   alias Ezagent.Workspace
   alias Ezagent.ActionSet.KindBase
-  alias Ezagent.Socialware.{AnonBinding, AnonUser, ExternalFeed}
+  alias Ezagent.Socialware.{AnonAdmission, ExternalFeed}
   alias EzagentPluginHello.{App, KanbanDelegation, Spec, TurnDriver}
 
   setup do
@@ -58,23 +58,7 @@ defmodule EzagentPluginHello.Integration.HelloPageE2ETest do
   # and mount the read-only participation tier — so the LIVE membership read
   # authorizes it.
   defp mint_and_join_anon(session_uri) do
-    {:ok, anon_uri} = AnonUser.mint_for_public_session(session_uri)
-    :ok = Ezagent.Entity.spawn_principal(anon_uri)
-    {:ok, _row} = AnonBinding.touch(anon_uri, session_uri, DateTime.utc_now())
-
-    :ok =
-      Ezagent.Invocation.dispatch(%Ezagent.Invocation{
-        target: Ezagent.URI.with_action(session_uri, :session, :join),
-        mode: :call,
-        args: %{member: anon_uri},
-        ctx: %{caller: anon_uri, reply: :ignore}
-      })
-      |> case do
-        :ok -> :ok
-        {:ok, _} -> :ok
-      end
-
-    _ = Ezagent.ActionSet.Session.Membership.mount_participation_caps(session_uri, anon_uri)
+    {:ok, %{anon_uri: anon_uri}} = AnonAdmission.admit_anonymous_participant(session_uri)
     anon_uri
   end
 
@@ -194,14 +178,19 @@ defmodule EzagentPluginHello.Integration.HelloPageE2ETest do
     assert {:ok, surface_after} = Ezagent.Kind.get_slice(ctx.session, :surface)
     assert surface_after == surface_before
 
+    target = Ezagent.URI.with_action(result.kanban_uri, :kanban, :get_tree)
+    admin = Ezagent.Entity.User.admin_uri()
+    cap = Ezagent.Test.CapHelper.signed_action_cap!(target, admin)
+
     assert {:ok, %{tree: tree}} =
              Ezagent.Invocation.dispatch(%Ezagent.Invocation{
-               target: Ezagent.URI.with_action(result.kanban_uri, :kanban, :get_tree),
+               origin: :trusted_internal,
+               target: target,
                mode: :call,
                args: %{},
                ctx: %{
-                 caller: Ezagent.Entity.User.admin_uri(),
-                 caps: MapSet.new([Ezagent.Capability.admin_genesis_cap()]),
+                 caller: admin,
+                 caps: MapSet.new([cap]),
                  reply: {:caller_inbox, self()}
                }
              })

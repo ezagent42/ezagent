@@ -60,6 +60,28 @@ defmodule EzagentPluginCurlAgent.Integration.CurlFlavorOnAgentTest do
     end
   end
 
+  defp live_session do
+    uri =
+      Ezagent.URI.new!(
+        "session://team-alpha/default/curl-reply-#{System.unique_integer([:positive])}"
+      )
+
+    {:ok, _pid} =
+      Kind.spawn(Ezagent.Entity.Session, %{
+        uri: uri,
+        behaviors: Ezagent.Entity.Session.behaviors()
+      })
+
+    wait_until(fn -> Ezagent.ReadyGate.status(uri) == :ready end)
+
+    on_exit(fn ->
+      Kind.terminate(uri)
+      wait_until(fn -> KindRegistry.lookup(URI.to_string(uri)) == :error end)
+    end)
+
+    uri
+  end
+
   describe "fresh curl agent on Entity.Agent" do
     test "spawns on Entity.Agent with the curl :curl_agent slice materialized" do
       uri =
@@ -126,7 +148,7 @@ defmodule EzagentPluginCurlAgent.Integration.CurlFlavorOnAgentTest do
           "entity://team-alpha/agent/curl_recv-#{System.unique_integer([:positive])}"
         )
 
-      session_uri = Ezagent.URI.new!("session://team-alpha/default/main")
+      session_uri = live_session()
       sender = Ezagent.URI.new!("entity://team-alpha/user/alice")
 
       # Spawn the curl agent on Entity.Agent + register the stored curl
@@ -144,6 +166,7 @@ defmodule EzagentPluginCurlAgent.Integration.CurlFlavorOnAgentTest do
       on_exit(fn -> Ezagent.AgentFlavorAttributes.delete(uri) end)
 
       msg = Message.new(sender, %{text: "hello curl", attachments: []})
+
       ctx =
         with_member_cap(%{self_uri: uri, kind_module: Ezagent.Entity.Agent, caller: session_uri})
 
@@ -173,7 +196,7 @@ defmodule EzagentPluginCurlAgent.Integration.CurlFlavorOnAgentTest do
           "entity://team-alpha/agent/curl_selfloop-#{System.unique_integer([:positive])}"
         )
 
-      session_uri = Ezagent.URI.new!("session://team-alpha/default/main")
+      session_uri = live_session()
 
       {:ok, _pid} =
         Kind.spawn(Ezagent.Entity.Agent, %{
@@ -222,7 +245,7 @@ defmodule EzagentPluginCurlAgent.Integration.CurlFlavorOnAgentTest do
           "entity://team-alpha/agent/curl_rehydrate-#{System.unique_integer([:positive])}"
         )
 
-      session_uri = Ezagent.URI.new!("session://team-alpha/default/main")
+      session_uri = live_session()
       sender = Ezagent.URI.new!("entity://team-alpha/user/alice")
 
       # 1. Fresh spawn on Entity.Agent with the curl per-instance set. The

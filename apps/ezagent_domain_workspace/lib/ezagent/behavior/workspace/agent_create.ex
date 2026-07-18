@@ -384,9 +384,13 @@ defmodule Ezagent.ActionSet.Workspace.AgentCreate do
         {:ok, _pid} ->
           record_creator_lineage(agent_uri, params)
 
-          with :ok <- RoleStep.grant_passive_marker(agent_uri, materialized),
+          # Creator authority must exist before recipe caps are issued: every
+          # proposal below invokes this concrete agent's cap-gated `K.grant`.
+          with :ok <- ensure_agent_creator_authority(agent_uri, params),
+               :ok <- RoleStep.grant_passive_marker(agent_uri, materialized),
                :ok <- RoleStep.grant_recipe_marker(agent_uri, materialized),
-               :ok <- RoleStep.mint_and_grant_caps(agent_uri, other_flavor, materialized, params),
+               :ok <-
+                 RoleStep.mint_and_grant_caps(agent_uri, other_flavor, materialized, params),
                :ok <-
                  grant_agent_creator_manage_cap(
                    agent_uri,
@@ -720,6 +724,12 @@ defmodule Ezagent.ActionSet.Workspace.AgentCreate do
   end
 
   defp grant_agent_creator_manage_cap(_agent_uri, _workspace_uri, _params), do: :ok
+
+  defp ensure_agent_creator_authority(%URI{} = agent_uri, %{caller: %URI{} = creator_uri}) do
+    Ezagent.Identity.TargetAuthority.ensure(creator_uri, agent_uri)
+  end
+
+  defp ensure_agent_creator_authority(_agent_uri, _params), do: :ok
 
   # Codex PR #330 r1 HIGH-1 — call the instantiate; on failure, roll back
   # the Store.update_templates write so the DB matches the (uncommitted)

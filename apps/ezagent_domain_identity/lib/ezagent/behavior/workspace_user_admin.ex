@@ -440,7 +440,7 @@ defmodule Ezagent.ActionSet.WorkspaceUserAdmin do
   defp issue_each(requested, %URI{} = user_uri, %URI{} = caller) when is_list(requested) do
     requested
     |> Enum.reduce_while({:ok, []}, fn cap, {:ok, acc} ->
-      case Ezagent.Cap.issue({:held_by, caller}, user_uri, cap) do
+      case Ezagent.Cap.issue(grant_authorization(caller), user_uri, cap) do
         {:ok, artifact} -> {:cont, {:ok, [artifact | acc]}}
         {:error, reason} -> {:halt, {:error, {:cap_grant_refused, describe_cap(cap), reason}}}
       end
@@ -449,6 +449,14 @@ defmodule Ezagent.ActionSet.WorkspaceUserAdmin do
       {:ok, issued} -> {:ok, Enum.reverse(issued)}
       {:error, _} = error -> error
     end
+  end
+
+  defp grant_authorization(%URI{} = caller) do
+    admin = Ezagent.Entity.User.admin_uri()
+
+    if Ezagent.URI.stable_key(caller) == Ezagent.URI.stable_key(admin),
+      do: {:admin, caller},
+      else: {:held_by, caller}
   end
 
   defp require_entity_caller(%URI{scheme: "entity"} = caller), do: {:ok, caller}

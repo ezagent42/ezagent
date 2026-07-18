@@ -37,6 +37,11 @@ defmodule Ezagent.Integration.RoutingCapTest do
   setup do
     uri = Ezagent.Entity.System.routing_default_uri()
 
+    if match?({:ok, _pid}, Ezagent.KindRegistry.lookup(uri)) do
+      :ok = Ezagent.Kind.terminate(uri)
+      wait_until_gone(uri)
+    end
+
     case Ezagent.SpawnRegistry.spawn(uri) do
       {:ok, _pid} -> :ok
       {:error, {:already_started, _pid}} -> :ok
@@ -46,13 +51,40 @@ defmodule Ezagent.Integration.RoutingCapTest do
     # freshly-spawned routing Kind too so its in-test DB work is owned.
     {:ok, pid} = Ezagent.KindRegistry.lookup(uri)
     _ = Ecto.Adapters.SQL.Sandbox.allow(EzagentCore.Repo, self(), pid)
+
+    on_exit(fn ->
+      _ = Ezagent.Kind.terminate(uri)
+    end)
+
     :ok
   end
 
-  defp admin_ctx do
+  defp wait_until_gone(uri, attempts \\ 100)
+  defp wait_until_gone(_uri, 0), do: flunk("routing sentinel did not terminate")
+
+  defp wait_until_gone(uri, attempts) do
+    case Ezagent.KindRegistry.lookup(uri) do
+      :error -> :ok
+      {:ok, _pid} -> Process.sleep(5) && wait_until_gone(uri, attempts - 1)
+    end
+  end
+
+  defp admin_ctx(target) do
+    presenter = Ezagent.Entity.User.admin_uri()
+    instance = Ezagent.URI.instance(target)
+
+    cap =
+      signed_fixture_cap!(
+        instance,
+        Ezagent.Entity.System.type_name(),
+        Ezagent.ActionSet.Routing,
+        :add_rule,
+        presenter
+      )
+
     %{
-      caller: Ezagent.Entity.User.admin_uri(),
-      caps: MapSet.new([Ezagent.Capability.admin_genesis_cap()]),
+      caller: presenter,
+      caps: MapSet.new([cap]),
       reply: {:caller_inbox, self()}
     }
   end
@@ -66,7 +98,7 @@ defmodule Ezagent.Integration.RoutingCapTest do
   end
 
   defp global_routing_target(action) do
-    URI.parse(
+    Ezagent.URI.new!(
       "#{URI.to_string(Ezagent.Entity.System.routing_default_uri())}?action=routing.#{action}"
     )
   end
@@ -75,24 +107,28 @@ defmodule Ezagent.Integration.RoutingCapTest do
     matcher =
       Matcher.text_contains("admin-test-#{System.unique_integer([:positive])}")
 
+    target = global_routing_target("add_rule")
+
     assert {:ok, %{id: id}} =
              Invocation.dispatch(%Invocation{
-               target: global_routing_target("add_rule"),
+               origin: :trusted_internal,
+               target: target,
                mode: :call,
                args: %{
                  table: MentionRouting,
                  matcher_json: Matcher.to_json(matcher),
                  receivers: ["session://team-alpha/default/cap-test"]
                },
-               ctx: admin_ctx()
+               ctx: admin_ctx(target)
              })
 
     assert is_integer(id)
   end
 
   test "non-admin gets :unauthorized when adding rule" do
-    assert {:error, :unauthorized} =
+    assert {:error, :missing_cap} =
              Invocation.dispatch(%Invocation{
+               origin: :trusted_internal,
                target: global_routing_target("add_rule"),
                mode: :call,
                args: %{
@@ -105,8 +141,9 @@ defmodule Ezagent.Integration.RoutingCapTest do
   end
 
   test "non-admin gets :unauthorized for delete_rule" do
-    assert {:error, :unauthorized} =
+    assert {:error, :missing_cap} =
              Invocation.dispatch(%Invocation{
+               origin: :trusted_internal,
                target: global_routing_target("delete_rule"),
                mode: :call,
                args: %{table: MentionRouting, id: 999_999},

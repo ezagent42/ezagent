@@ -45,6 +45,21 @@ defmodule Ezagent.LifecycleTest do
     URI.new!("system://lifecycle_fixture/inst-#{System.unique_integer([:positive])}")
   end
 
+  defp signed_bump_ctx(uri) do
+    presenter = Ezagent.Entity.User.admin_uri()
+
+    cap =
+      signed_fixture_cap!(
+        uri,
+        LifecycleFixtureKind.type_name(),
+        LifecycleFixture,
+        :bump,
+        presenter
+      )
+
+    %{caller: presenter, caps: MapSet.new([cap]), reply: {:caller_inbox, self()}}
+  end
+
   describe "macro emission (compile-down to @behaviour Ezagent.ActionSet)" do
     test "emits a new-style ActionSet the engine recognises" do
       assert ActionSet.new_style?(LifecycleFixture)
@@ -211,10 +226,11 @@ defmodule Ezagent.LifecycleTest do
 
       assert {:ok, %{counter: 2}} =
                Invocation.dispatch(%Invocation{
+                 origin: :trusted_internal,
                  target: target,
                  mode: :call,
                  args: %{by: 2},
-                 ctx: %{caller: :vm_internal, reply: {:caller_inbox, self()}}
+                 ctx: signed_bump_ctx(uri)
                })
 
       {:ok, %{state: state1, transients: tr1}} =
@@ -242,10 +258,11 @@ defmodule Ezagent.LifecycleTest do
 
             {:ok, _} =
               Invocation.dispatch(%Invocation{
+                origin: :trusted_internal,
                 target: target,
                 mode: :call,
                 args: %{by: 5},
-                ctx: %{caller: :vm_internal, reply: {:caller_inbox, self()}}
+                ctx: signed_bump_ctx(live_uri)
               })
           end
         )
@@ -330,6 +347,21 @@ defmodule Ezagent.LifecycleTest do
       uri = signal_uri()
       {:ok, pid} = Ezagent.Kind.spawn(Ezagent.TestSupport.LifecycleSignalKind, %{uri: uri})
       wait_until(fn -> Ezagent.ReadyGate.status(uri) == :ready end)
+
+      bump_cap =
+        signed_fixture_cap!(
+          target,
+          LifecycleFixtureKind.type_name(),
+          LifecycleFixture,
+          :bump,
+          uri
+        )
+
+      :persistent_term.put({Ezagent.TestSupport.LifecycleSignalFixture, :bump_cap}, bump_cap)
+
+      on_exit(fn ->
+        :persistent_term.erase({Ezagent.TestSupport.LifecycleSignalFixture, :bump_cap})
+      end)
 
       send(pid, {:lifecycle_signal_dispatch, target})
 

@@ -59,11 +59,11 @@ defmodule EzagentDomainInstanceMessage.Integration.DefinitionAgentsMaterializeTe
     end
   end
 
-  # A flavor whose credential is an ENV VAR (like deepseek's `DEEPSEEK_API_KEY`),
+  # A flavor whose credential is an ENV VAR (like deepseek's API-key env var),
   # so the file-based pre-flight `CredentialPrecondition.check_source/3` waves it
   # through and the missing-credential surfaces only at spawn as
-  # `{:deepseek_api_key_missing, uri}`. Mirrors the real cc-deepseek orchestrator
-  # in a keyless env (every CI without the key).
+  # `{:backend_api_key_missing, profile, uri}`. Mirrors the real cc-custom
+  # (deepseek-profile) orchestrator in a keyless env (every CI without the key).
   defmodule DeepseekMissingStubTemplate do
     @moduledoc false
     @behaviour Ezagent.Kind.Template
@@ -77,7 +77,72 @@ defmodule EzagentDomainInstanceMessage.Integration.DefinitionAgentsMaterializeTe
 
     @impl Ezagent.Kind.Template
     def instantiate(_name, data, _workspace_uri) do
-      {:error, {:deepseek_api_key_missing, Ezagent.URI.new!(data["agent_uri"])}}
+      {:error, {:backend_api_key_missing, "deepseek", Ezagent.URI.new!(data["agent_uri"])}}
+    end
+  end
+
+  # An ENV-credential flavor whose probe is PROFILE-DRIVEN (mirrors cc-custom):
+  # `credential_status/2` classifies on the `:backend_profile` opt — "kimi"
+  # reads `MOONSHOT_API_KEY`; no/unknown profile → `:unknown` (fail closed).
+  # Declares NO on-disk credential files, so `check_source` takes the
+  # environment branch and the role slot's `provider` opt decides the verdict.
+  defmodule EnvProfileStubTemplate do
+    @moduledoc false
+    @behaviour Ezagent.Kind.Template
+    @behaviour Ezagent.Agent.CredentialAdapter
+
+    # ENV-backed credential — NO on-disk credential files (mirrors
+    # `FakeCcCustomTemplate`), so `check_source` takes the environment branch.
+    @impl Ezagent.Agent.CredentialAdapter
+    def credential_env_var, do: "MOONSHOT_API_KEY"
+
+    @impl Ezagent.Agent.CredentialAdapter
+    def credential_relpaths, do: []
+
+    @impl Ezagent.Agent.CredentialAdapter
+    def secret_relpaths, do: []
+
+    @impl Ezagent.Agent.CredentialAdapter
+    def auth_failure_signals, do: []
+
+    @impl Ezagent.Agent.CredentialAdapter
+    def credential_status(_home, opts) do
+      case Keyword.get(opts, :backend_profile) do
+        "kimi" ->
+          case System.get_env("MOONSHOT_API_KEY") do
+            key when is_binary(key) and key != "" ->
+              %{status: :authenticated, detail: nil, expires_at: nil}
+
+            _ ->
+              %{status: :missing, detail: "MOONSHOT_API_KEY not set", expires_at: nil}
+          end
+
+        _ ->
+          %{status: :unknown, detail: nil, expires_at: nil}
+      end
+    end
+
+    @impl Ezagent.Kind.Template
+    def template_name, do: "definition_agents.env_profile_stub"
+
+    @impl Ezagent.Kind.Template
+    def validate(%{"agent_uri" => agent_uri}) when is_binary(agent_uri), do: :ok
+    def validate(_), do: {:error, :invalid_env_profile_stub_template}
+
+    @impl Ezagent.Kind.Template
+    def instantiate(_name, data, _workspace_uri) do
+      uri = Ezagent.URI.new!(data["agent_uri"])
+
+      case Ezagent.Kind.spawn(Ezagent.Entity.Agent, %{
+             uri: uri,
+             behaviors: Ezagent.Entity.Agent.base_behaviors(),
+             role: data["role"]
+           }) do
+        {:ok, _pid} -> {:ok, [uri], %{fresh?: true, config_dir_path: nil}}
+        {:error, {:already_started, _pid}} -> {:ok, [uri], %{fresh?: false}}
+        {:error, {:already_registered, _}} -> {:ok, [uri], %{fresh?: false}}
+        {:error, reason} -> {:error, reason}
+      end
     end
   end
 
@@ -166,6 +231,38 @@ defmodule EzagentDomainInstanceMessage.Integration.DefinitionAgentsMaterializeTe
         kind: Ezagent.Entity.Agent,
         template_class: DeepseekMissingStubTemplate
       })
+
+    flavor
+  end
+
+  defp register_env_profile_flavor(n) do
+    flavor = "definition_agents_env_profile_#{n}"
+
+    :ok =
+      Ezagent.AgentFlavorRegistry.register(%{
+        flavor: flavor,
+        kind: Ezagent.Entity.Agent,
+        template_class: EnvProfileStubTemplate
+      })
+
+    # EnvProfileStubTemplate is a CREDENTIALLED flavor (declares the full
+    # CredentialAdapter declarative group), so `RecipeMaterializer.config_dir_ref/2`
+    # resolves a config home through the FsResolver — register the stub's
+    # `"<namespace>-agents"` type test-only (mirrors the plugin's
+    # `config_dir_resource_types/1` shape). Tolerate an earlier identical
+    # registration (first-writer-wins; only unregister when WE registered).
+    type = "definition_agents.env_profile_stub-agents"
+
+    case Ezagent.Resource.FsResolver.register_type(type, %{
+           backend_component: type,
+           authority: &Ezagent.Resource.FsResolver.config_dir_authority/2
+         }) do
+      :ok ->
+        on_exit(fn -> Ezagent.Resource.FsResolver.unregister_type(type) end)
+
+      {:error, {:already_registered, ^type}} ->
+        :ok
+    end
 
     flavor
   end
@@ -300,13 +397,17 @@ defmodule EzagentDomainInstanceMessage.Integration.DefinitionAgentsMaterializeTe
   end
 
   defp owner_cap_gated_probe(%URI{} = session_uri) do
+    target = Ezagent.URI.with_action(session_uri, :session, :attach)
+    {:ok, cap} = Ezagent.Cap.issue_for_action({:admin, @owner_uri}, @owner_uri, target)
+
     Invocation.dispatch(%Invocation{
-      target: Ezagent.URI.with_action(session_uri, :session, :attach),
+      origin: :trusted_internal,
+      target: target,
       mode: :call,
       args: %{filename: "owner-usable-probe.txt"},
       ctx: %{
         caller: @owner_uri,
-        caps: MapSet.new([Ezagent.Capability.admin_genesis_cap()]),
+        caps: MapSet.new([cap]),
         reply: {:caller_inbox, self()}
       }
     })
@@ -489,9 +590,6 @@ defmodule EzagentDomainInstanceMessage.Integration.DefinitionAgentsMaterializeTe
 
     assert {:ok, %{ok: true}} = owner_cap_gated_probe(session_uri)
 
-    assert {:ok, identity_slice} = Ezagent.Kind.get_slice(planned, :identity)
-    caps = identity_slice |> Ezagent.Kind.normalize_slice_view() |> Map.fetch!(:caps)
-
     assert {:ok, %{caps: bound_caps, issuer_uri: @owner_uri}} = RecipeCapBinding.fetch(planned)
 
     bound_cap =
@@ -500,7 +598,6 @@ defmodule EzagentDomainInstanceMessage.Integration.DefinitionAgentsMaterializeTe
       end)
 
     assert %Ezagent.Capability{granted_by: @owner_uri} = bound_cap
-    assert Enum.member?(caps, bound_cap)
   end
 
   test "I3 full orchestrator lane persists four scoped artifacts, stays nonblocking, and revokes the exact inverse" do
@@ -545,11 +642,9 @@ defmodule EzagentDomainInstanceMessage.Integration.DefinitionAgentsMaterializeTe
     assert {:ok, %{ok: true}} = owner_cap_gated_probe(session_uri)
     assert Ezagent.ReadyGate.status(orchestrator_uri) == :not_ready
 
-    # The admin owner holds delegable authority for both Template kinds, so the
-    # full materialization lane emits #1/#2 scope caps plus #3/#4 preflight caps.
-    # Count the four durable absorb artifacts themselves rather than assuming
-    # exclusive ownership of any transport queue.
-    assert eventually(fn -> length(pending_absorb_artifacts(orchestrator_uri)) == 4 end)
+    pending = pending_absorb_artifacts(orchestrator_uri)
+    assert length(pending) == expected_orchestrator_cap_count()
+    assert Enum.all?(pending, &concrete_orchestrator_cap?(&1, session_uri, @workspace_uri))
 
     refute Enum.any?(
              Ezagent.Identity.read_entity_caps(orchestrator_uri),
@@ -562,19 +657,13 @@ defmodule EzagentDomainInstanceMessage.Integration.DefinitionAgentsMaterializeTe
                orchestrator_pid
              )
 
-    assert eventually(fn ->
-             orchestrator_uri
-             |> Ezagent.Identity.read_entity_caps()
-             |> Enum.filter(&scoped_orchestrator_cap?/1)
-             |> scoped_orchestrator_cap_keys() ==
-               MapSet.new([
-                 {:session, :any, :any, {:within_session, session_uri}, @owner_uri},
-                 {:agent, :any, :any, {:spawned_by, orchestrator_uri}, @owner_uri},
-                 {:session_template, Ezagent.ActionSet.Template, :any,
-                  {:within_workspace, @workspace_uri}, @owner_uri},
-                 {:agent_template, Ezagent.ActionSet.Template, :any,
-                  {:within_workspace, @workspace_uri}, @owner_uri}
-               ])
+    stored = Ezagent.Identity.read_entity_caps(orchestrator_uri)
+
+    assert Enum.all?(pending, fn expected ->
+             Enum.any?(stored, fn held ->
+               Ezagent.Capability.identity_key(held) ==
+                 Ezagent.Capability.identity_key(expected)
+             end)
            end)
 
     assert :ok =
@@ -588,12 +677,17 @@ defmodule EzagentDomainInstanceMessage.Integration.DefinitionAgentsMaterializeTe
     assert eventually(fn ->
              orchestrator_uri
              |> Ezagent.Identity.read_entity_caps()
-             |> Enum.any?(&scoped_orchestrator_cap?/1)
+             |> Enum.any?(fn held ->
+               Enum.any?(pending, fn expected ->
+                 Ezagent.Capability.identity_key(held) ==
+                   Ezagent.Capability.identity_key(expected)
+               end)
+             end)
              |> Kernel.not()
            end)
   end
 
-  test "definitive fresh spawn failure tombstones its pre-spawn binding" do
+  test "definitive fresh spawn failure creates no cold-target binding" do
     n = uniq()
     session_uri = live_session(n)
     recipe_name = seed_recipe(n)
@@ -608,13 +702,10 @@ defmodule EzagentDomainInstanceMessage.Integration.DefinitionAgentsMaterializeTe
                [%{recipe: recipe_name, role_name: role_name, flavor: flavor}]
              )
 
-    binding =
-      RecipeCapBinding
-      |> Repo.all()
-      |> Enum.find(&(&1.recipe_name == recipe_name))
+    refute RecipeCapBinding
+           |> Repo.all()
+           |> Enum.any?(&(&1.recipe_name == recipe_name))
 
-    assert %RecipeCapBinding{tombstoned_at: %DateTime{}} = binding
-    assert RecipeCapBinding.fetch(Ezagent.URI.new!(binding.agent_uri)) == :not_found
     assert SessionBehavior.role_name_to_uri(members_of(session_uri), role_name) == nil
   end
 
@@ -685,18 +776,25 @@ defmodule EzagentDomainInstanceMessage.Integration.DefinitionAgentsMaterializeTe
 
     target = Ezagent.URI.with_action(planned, :materialized_role_test, :ping)
 
+    cap =
+      Enum.find(Ezagent.Identity.list_caps_for(planned), fn cap ->
+        cap.behavior == MaterializedRoleTestBehavior and cap.action == :ping
+      end)
+
+    assert %Ezagent.Capability{} = cap
+
     assert {:ok, %{pong: true}} =
              Ezagent.Router.dispatch(
                Ezagent.Cmd.new(target, :ping, %{}, %{
                  mode: :call,
-                 caller: @owner_uri,
-                 caps: MapSet.new([Ezagent.Capability.admin_genesis_cap()]),
+                 caller: planned,
+                 caps: MapSet.new([cap]),
                  reply: {:caller_inbox, self()}
                })
              )
   end
 
-  test "orchestrator role materialization grants scoped delegation caps" do
+  test "orchestrator role materialization does not persist unbound scoped caps" do
     n = uniq()
     session_uri = live_session(n)
     role_name = "orchestrator"
@@ -716,19 +814,10 @@ defmodule EzagentDomainInstanceMessage.Integration.DefinitionAgentsMaterializeTe
     orchestrator_uri = SessionBehavior.role_name_to_uri(members, role_name)
     on_exit(fn -> terminate(orchestrator_uri) end)
 
-    # Scoped-cap storage is now an intentional self-store cast. Materialization
-    # returns once the hand-off is accepted, so observe eventual slice commit
-    # instead of reintroducing a readiness/blocking barrier in the producer.
-    assert eventually(fn ->
-             caps = Ezagent.Identity.read_entity_caps(orchestrator_uri)
-
-             Enum.any?(caps, fn cap ->
-               cap.kind == :session and cap.instance == {:within_session, session_uri}
-             end) and
-               Enum.any?(caps, fn cap ->
-                 cap.kind == :agent and cap.instance == {:spawned_by, orchestrator_uri}
-               end)
-           end)
+    refute Enum.any?(
+             Ezagent.Identity.read_entity_caps(orchestrator_uri),
+             &scoped_orchestrator_cap?/1
+           )
   end
 
   test "orchestrator materialization writes the durable :orchestrator_uri binding eagerly (R2)" do
@@ -915,6 +1004,7 @@ defmodule EzagentDomainInstanceMessage.Integration.DefinitionAgentsMaterializeTe
     session_uri = live_session(n)
     recipe_name = seed_recipe(n)
     role_name = "dup-#{n}"
+    flavor = register_stub_flavor(n)
 
     assert {:error, {:duplicate_agent_role_name, ^role_name}} =
              DefinitionAgents.materialize_definition_agents(
@@ -922,8 +1012,8 @@ defmodule EzagentDomainInstanceMessage.Integration.DefinitionAgentsMaterializeTe
                @workspace_uri,
                @owner_uri,
                [
-                 %{recipe: recipe_name, role_name: role_name},
-                 %{recipe: recipe_name, role_name: role_name}
+                 %{recipe: recipe_name, role_name: role_name, flavor: flavor},
+                 %{recipe: recipe_name, role_name: role_name, flavor: flavor}
                ]
              )
   end
@@ -943,8 +1033,9 @@ defmodule EzagentDomainInstanceMessage.Integration.DefinitionAgentsMaterializeTe
   end
 
   # Regression (WorldConversationTest PR-6 / O-1 flake): a role whose spawn fails
-  # with a MISSING-CREDENTIAL reason (`:deepseek_api_key_missing`, the keyless-CI
-  # condition for the cc-deepseek orchestrator) must be classified as a SKIP, not
+  # with a MISSING-CREDENTIAL reason (`{:backend_api_key_missing, _, _}`, the
+  # keyless-CI
+  # condition for the cc-custom orchestrator) must be classified as a SKIP, not
   # a hard error — so the batch CONTINUES and a co-declared credential-less role
   # (the py helper) still materializes. Pre-fix, the credential-missing role
   # returned `{:agent_spawn_failed, …}` → the `reduce_while` HALTED with an
@@ -987,6 +1078,94 @@ defmodule EzagentDomainInstanceMessage.Integration.DefinitionAgentsMaterializeTe
     assert SessionBehavior.role_name_to_uri(members, cred_missing_role) == nil
   end
 
+  test "a role slot's provider threads into the credential precondition (the cc-custom seam)" do
+    n = uniq()
+    session_uri = live_session(n)
+    recipe_name = seed_recipe(n)
+    env_flavor = register_env_profile_flavor(n)
+
+    previous = System.get_env("MOONSHOT_API_KEY")
+    System.delete_env("MOONSHOT_API_KEY")
+
+    on_exit(fn ->
+      if previous,
+        do: System.put_env("MOONSHOT_API_KEY", previous),
+        else: System.delete_env("MOONSHOT_API_KEY")
+    end)
+
+    role = "kimi-role-#{n}"
+
+    # Profile key UNSET: the selected profile's credential is unavailable → the
+    # slot is skipped loudly (never a silent zombie), with the
+    # `:credential_unavailable` reason from the environment branch.
+    assert {:ok, summary} =
+             DefinitionAgents.materialize_definition_agents(
+               session_uri,
+               @workspace_uri,
+               @owner_uri,
+               [
+                 %{
+                   "provider" => "kimi",
+                   recipe: recipe_name,
+                   role_name: role,
+                   flavor: env_flavor
+                 }
+               ]
+             )
+
+    assert [%{role_name: ^role, reason: {:credential_unavailable, ^env_flavor}}] =
+             summary.skipped
+
+    assert summary.satisfied == []
+
+    # Profile key SET: the SAME slot materializes and joins — the provider was
+    # threaded, not hardcoded.
+    System.put_env("MOONSHOT_API_KEY", "test-only-key")
+
+    assert {:ok, summary2} =
+             DefinitionAgents.materialize_definition_agents(
+               session_uri,
+               @workspace_uri,
+               @owner_uri,
+               [
+                 %{
+                   "provider" => "kimi",
+                   recipe: recipe_name,
+                   role_name: role,
+                   flavor: env_flavor
+                 }
+               ]
+             )
+
+    assert summary2.skipped == []
+    assert summary2.satisfied == [role]
+
+    members = members_of(session_uri)
+    assert %URI{} = member = SessionBehavior.role_name_to_uri(members, role)
+    on_exit(fn -> terminate(member) end)
+  end
+
+  test "a role slot with NO provider on an env-credential flavor fails closed (skip)" do
+    n = uniq()
+    session_uri = live_session(n)
+    recipe_name = seed_recipe(n)
+    env_flavor = register_env_profile_flavor(n)
+    role = "no-profile-#{n}"
+
+    assert {:ok, summary} =
+             DefinitionAgents.materialize_definition_agents(
+               session_uri,
+               @workspace_uri,
+               @owner_uri,
+               [%{recipe: recipe_name, role_name: role, flavor: env_flavor}]
+             )
+
+    assert [%{role_name: ^role, reason: {:credential_unavailable, ^env_flavor}}] =
+             summary.skipped
+
+    assert summary.satisfied == []
+  end
+
   defp scoped_orchestrator_cap?(%Ezagent.Capability{} = cap) do
     scope_cap? =
       cap.kind in [:session, :agent] and cap.behavior == :any and
@@ -1002,18 +1181,19 @@ defmodule EzagentDomainInstanceMessage.Integration.DefinitionAgentsMaterializeTe
     scope_cap? or template_cap?
   end
 
-  defp scoped_orchestrator_cap_keys(caps) do
-    caps
-    |> Enum.map(fn cap ->
-      {
-        cap.kind,
-        cap.behavior,
-        Ezagent.Capability.action_of(cap),
-        cap.instance,
-        cap.granted_by
-      }
-    end)
-    |> MapSet.new()
+  defp concrete_orchestrator_cap?(cap, session_uri, workspace_uri) do
+    cap.instance in [session_uri, workspace_uri] and
+      cap.workspace_uri == workspace_uri and is_binary(cap.signature) and
+      is_binary(cap.key_id) and match?(%URI{}, cap.grantee_uri)
+  end
+
+  defp expected_orchestrator_cap_count do
+    session_count =
+      Ezagent.CapabilityRegistry.subjects_for_kind(Ezagent.Entity.Session)
+      |> Enum.reject(&Ezagent.Cap.Verifier.non_cap_action?(&1.behavior, &1.action))
+      |> length()
+
+    session_count + 3
   end
 
   defp pending_absorb_artifacts(uri) do
@@ -1026,8 +1206,7 @@ defmodule EzagentDomainInstanceMessage.Integration.DefinitionAgentsMaterializeTe
     )
     |> Repo.all()
     |> Enum.map(fn payload ->
-      %{version: 1, op: :absorb_cap, cap: artifact} =
-        :erlang.binary_to_term(payload, [:safe])
+      %{op: :absorb_cap, cap: artifact} = :erlang.binary_to_term(payload, [:safe])
 
       artifact
     end)

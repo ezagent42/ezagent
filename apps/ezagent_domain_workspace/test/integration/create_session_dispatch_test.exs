@@ -41,6 +41,8 @@ defmodule Ezagent.Integration.CreateSessionDispatchTest do
       session_uri =
         Ezagent.URI.session(ws_uri.host, template, short_name)
 
+      _authority = Ezagent.Test.CapHelper.install_test_authority!(session_uri, :session)
+
       {:ok, session_uri, %{}}
     end
   end
@@ -51,10 +53,7 @@ defmodule Ezagent.Integration.CreateSessionDispatchTest do
 
     workspace_uri = Ezagent.URI.workspace(ws_name)
 
-    admin_ctx = %{
-      caller: User.admin_uri(),
-      caps: MapSet.new([Ezagent.Capability.admin_genesis_cap()])
-    }
+    admin_ctx = signed_workspace_ctx!(workspace_uri)
 
     Application.put_env(:ezagent_domain_workspace, :session_facade, FakeSessionFacade)
 
@@ -102,12 +101,14 @@ defmodule Ezagent.Integration.CreateSessionDispatchTest do
           workspace_uri
         )
 
+      create_cap = signed_cap!(workspace_uri, creator_uri, create_cap)
+
       {:ok, _pid} =
         Ezagent.Kind.spawn(User, %{
           uri: creator_uri,
           initial_caps:
             MapSet.new([
-              %{create_cap | granted_by: User.admin_uri(), granted_at: DateTime.utc_now()}
+              create_cap
             ])
         })
 
@@ -222,7 +223,7 @@ defmodule Ezagent.Integration.CreateSessionDispatchTest do
 
       bare_ctx = %{caller: bare_uri, caps: MapSet.new()}
 
-      assert {:error, :unauthorized} =
+      assert {:error, :missing_cap} =
                Workspace.create_session(
                  workspace_uri,
                  %{short_name: "denied-c3", template_name: "default"},
@@ -270,7 +271,7 @@ defmodule Ezagent.Integration.CreateSessionDispatchTest do
       # Pre-add: dispatch denies (no :create_session cap)
       pre_ctx = %{caller: member_uri, caps: MapSet.new()}
 
-      assert {:error, :unauthorized} =
+      assert {:error, :missing_cap} =
                Workspace.create_session(
                  workspace_uri,
                  %{
@@ -324,25 +325,13 @@ defmodule Ezagent.Integration.CreateSessionDispatchTest do
         URI.new!("#{URI.to_string(workspace_uri)}?action=workspace.add_member")
 
       result =
-        Ezagent.Invocation.dispatch(%Ezagent.Invocation{
+        Ezagent.Invocation.dispatch(%Ezagent.Invocation{origin: :trusted_internal,
           target: target,
           mode: :call,
           args: %{member: member_uri},
           ctx: %{
             caller: workspace_uri,
-            caps: [
-              %Ezagent.Capability{
-                Ezagent.Capability.cap(
-                  :workspace,
-                  Ezagent.ActionSet.Workspace,
-                  :add_member,
-                  Ezagent.URI.instance(workspace_uri),
-                  Ezagent.Capability.workspace_of(workspace_uri)
-                )
-                | granted_by: workspace_uri,
-                  granted_at: DateTime.utc_now()
-              }
-            ],
+            caps: [signed_action_cap!(target, workspace_uri)],
             reply: {:caller_inbox, self()}
           }
         })
@@ -400,7 +389,9 @@ defmodule Ezagent.Integration.CreateSessionDispatchTest do
           cap.action == :any and
           URI.to_string(cap.instance) == URI.to_string(instance_uri) and
           URI.to_string(cap.workspace_uri) == URI.to_string(workspace_uri) and
-          URI.to_string(cap.granted_by) == URI.to_string(creator_uri)
+          URI.to_string(cap.granted_by) == URI.to_string(creator_uri) and
+          URI.to_string(cap.grantee_uri) == URI.to_string(creator_uri) and
+          is_binary(cap.signature) and byte_size(cap.signature) > 0
 
       _ ->
         false

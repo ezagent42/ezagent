@@ -25,6 +25,7 @@ defmodule EzagentDomainInstanceMessage.Integration.WorkspaceIsolationTest do
   alias Ezagent.{Invocation, Message, RoutingRegistry}
   alias Ezagent.Routing.{Matcher, RuleStore}
   alias Ezagent.Entity.User
+  import Ezagent.Test.CapHelper, only: [signed_action_cap!: 2]
 
   setup do
     # This suite observes `chat.receive` fan-out via the `invocations`
@@ -71,11 +72,14 @@ defmodule EzagentDomainInstanceMessage.Integration.WorkspaceIsolationTest do
     :ok = Ezagent.WorkspaceRegistry.bind(session_a, workspace_a)
     :ok = Ezagent.WorkspaceRegistry.bind(session_b, workspace_b)
 
-    sender = URI.new!("entity://team-alpha/user/#{unique("sender")}")
-    eavesdropper = URI.new!("entity://team-alpha/user/#{unique("eavesdropper")}")
+    sender_a = URI.new!("entity://#{suffix}-A/user/#{unique("sender-a")}")
+    sender_b = URI.new!("entity://#{suffix}-B/user/#{unique("sender-b")}")
+    eavesdropper_a = URI.new!("entity://#{suffix}-A/user/#{unique("eavesdropper-a")}")
+    eavesdropper_b = URI.new!("entity://#{suffix}-B/user/#{unique("eavesdropper-b")}")
 
-    {:ok, _} = Ezagent.SpawnRegistry.spawn(sender)
-    {:ok, _} = Ezagent.SpawnRegistry.spawn(eavesdropper)
+    for uri <- [sender_a, sender_b, eavesdropper_a, eavesdropper_b] do
+      {:ok, _} = Ezagent.SpawnRegistry.spawn(uri)
+    end
 
     %{
       table: table_name,
@@ -83,21 +87,25 @@ defmodule EzagentDomainInstanceMessage.Integration.WorkspaceIsolationTest do
       workspace_b: workspace_b,
       session_a: session_a,
       session_b: session_b,
-      sender: sender,
-      eavesdropper: eavesdropper
+      sender_a: sender_a,
+      sender_b: sender_b,
+      eavesdropper_a: eavesdropper_a,
+      eavesdropper_b: eavesdropper_b
     }
   end
 
   defp dispatch_send(session_uri, sender, text) do
     msg = Message.new(sender, %{text: text, attachments: []})
+    target = URI.new!("#{URI.to_string(session_uri)}?action=session.send")
 
     inv = %Invocation{
-      target: URI.new!("#{URI.to_string(session_uri)}?action=session.send"),
+      origin: :trusted_internal,
+      target: target,
       mode: :cast,
       args: %{message: msg},
       ctx: %{
         caller: sender,
-        caps: MapSet.new([Ezagent.Capability.admin_genesis_cap()]),
+        caps: MapSet.new([signed_action_cap!(target, sender)]),
         reply: :ignore
       }
     }
@@ -148,18 +156,18 @@ defmodule EzagentDomainInstanceMessage.Integration.WorkspaceIsolationTest do
       RuleStore.add(
         ctx.table,
         Matcher.always(),
-        [URI.to_string(ctx.eavesdropper)],
+        [URI.to_string(ctx.eavesdropper_a)],
         URI.to_string(User.admin_uri()),
         workspace_uri: URI.to_string(ctx.workspace_a)
       )
 
     :ok = RuleStore.load_into_registry(ctx.table)
 
-    eavesdropper_before = length(receive_dispatches_to(ctx.eavesdropper))
+    eavesdropper_before = length(receive_dispatches_to(ctx.eavesdropper_a))
 
-    _msg_b = dispatch_send(ctx.session_b, ctx.sender, "in workspace B")
+    _msg_b = dispatch_send(ctx.session_b, ctx.sender_b, "in workspace B")
 
-    eavesdropper_after = length(receive_dispatches_to(ctx.eavesdropper))
+    eavesdropper_after = length(receive_dispatches_to(ctx.eavesdropper_a))
 
     assert eavesdropper_after == eavesdropper_before,
            "workspace-A-scoped rule fired for workspace-B message " <>
@@ -174,18 +182,18 @@ defmodule EzagentDomainInstanceMessage.Integration.WorkspaceIsolationTest do
       RuleStore.add(
         ctx.table,
         Matcher.always(),
-        [URI.to_string(ctx.eavesdropper)],
+        [URI.to_string(ctx.eavesdropper_a)],
         URI.to_string(User.admin_uri()),
         workspace_uri: URI.to_string(ctx.workspace_a)
       )
 
     :ok = RuleStore.load_into_registry(ctx.table)
 
-    eavesdropper_before = length(receive_dispatches_to(ctx.eavesdropper))
+    eavesdropper_before = length(receive_dispatches_to(ctx.eavesdropper_a))
 
-    _msg_a = dispatch_send(ctx.session_a, ctx.sender, "in workspace A")
+    _msg_a = dispatch_send(ctx.session_a, ctx.sender_a, "in workspace A")
 
-    eavesdropper_after = length(receive_dispatches_to(ctx.eavesdropper))
+    eavesdropper_after = length(receive_dispatches_to(ctx.eavesdropper_a))
 
     assert eavesdropper_after > eavesdropper_before,
            "workspace-A-scoped rule did NOT fire for workspace-A message — " <>
@@ -199,19 +207,23 @@ defmodule EzagentDomainInstanceMessage.Integration.WorkspaceIsolationTest do
       RuleStore.add(
         ctx.table,
         Matcher.always(),
-        [URI.to_string(ctx.eavesdropper)],
+        [URI.to_string(ctx.eavesdropper_a), URI.to_string(ctx.eavesdropper_b)],
         URI.to_string(User.admin_uri()),
         workspace_uri: nil
       )
 
     :ok = RuleStore.load_into_registry(ctx.table)
 
-    eavesdropper_before = length(receive_dispatches_to(ctx.eavesdropper))
+    eavesdropper_before =
+      length(receive_dispatches_to(ctx.eavesdropper_a)) +
+        length(receive_dispatches_to(ctx.eavesdropper_b))
 
-    _ = dispatch_send(ctx.session_a, ctx.sender, "from A — global rule should fire")
-    _ = dispatch_send(ctx.session_b, ctx.sender, "from B — global rule should fire")
+    _ = dispatch_send(ctx.session_a, ctx.sender_a, "from A — global rule should fire")
+    _ = dispatch_send(ctx.session_b, ctx.sender_b, "from B — global rule should fire")
 
-    eavesdropper_after = length(receive_dispatches_to(ctx.eavesdropper))
+    eavesdropper_after =
+      length(receive_dispatches_to(ctx.eavesdropper_a)) +
+        length(receive_dispatches_to(ctx.eavesdropper_b))
 
     assert eavesdropper_after - eavesdropper_before >= 2,
            "nil-scoped (global) rule did not fire for both workspaces — " <>
@@ -238,7 +250,7 @@ defmodule EzagentDomainInstanceMessage.Integration.WorkspaceIsolationTest do
       Ezagent.URI.new!(legacy)
     end
 
-    eavesdropper_before = length(receive_dispatches_to(ctx.eavesdropper))
+    eavesdropper_before = length(receive_dispatches_to(ctx.eavesdropper_a))
     eavesdropper_after = eavesdropper_before
 
     assert eavesdropper_after == eavesdropper_before,

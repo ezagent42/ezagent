@@ -1,5 +1,5 @@
 defmodule Ezagent.Kind.ServerTest do
-  use ExUnit.Case
+  use EzagentCore.DataCase, async: false
   alias Ezagent.Test.{TestKind, TestBehavior}
 
   setup do
@@ -41,14 +41,17 @@ defmodule Ezagent.Kind.ServerTest do
   } do
     {:ok, pid} = Ezagent.Kind.Server.start_link({TestKind, %{uri: uri}})
     :ok = wait_until_ready(uri, 500)
+    presenter = Ezagent.URI.user(:system, :admin)
+    cap = signed_fixture_cap!(uri, :test, TestBehavior, :noop, presenter)
 
     inv = %Ezagent.Invocation{
+      origin: :trusted_internal,
       target: Ezagent.URI.new!("#{URI.to_string(uri)}?action=test.noop"),
       mode: :call,
       args: %{msg: "hello"},
       ctx: %{
-        caller: Ezagent.URI.new!("entity://system/user/admin"),
-        caps: MapSet.new([Ezagent.Capability.admin_genesis_cap()]),
+        caller: presenter,
+        caps: MapSet.new([cap]),
         reply: :ignore
       }
     }
@@ -59,14 +62,17 @@ defmodule Ezagent.Kind.ServerTest do
   test "handle_cast :ezagent_dispatch invokes behavior + replies to caller_inbox", %{uri: uri} do
     {:ok, pid} = Ezagent.Kind.Server.start_link({TestKind, %{uri: uri}})
     :ok = wait_until_ready(uri, 500)
+    presenter = Ezagent.URI.user(:system, :admin)
+    cap = signed_fixture_cap!(uri, :test, TestBehavior, :noop, presenter)
 
     inv = %Ezagent.Invocation{
+      origin: :trusted_internal,
       target: Ezagent.URI.new!("#{URI.to_string(uri)}?action=test.noop"),
       mode: :cast,
       args: %{msg: "via-cast"},
       ctx: %{
-        caller: Ezagent.URI.new!("entity://system/user/admin"),
-        caps: MapSet.new([Ezagent.Capability.admin_genesis_cap()]),
+        caller: presenter,
+        caps: MapSet.new([cap]),
         reply: {:caller_inbox, self()}
       }
     }
@@ -79,13 +85,17 @@ defmodule Ezagent.Kind.ServerTest do
   test "PendingDelivery flush on announce_ready", %{uri: uri} do
     # Buffer a message *before* the server exists, then start the server —
     # the message should be drained during announce_ready.
+    presenter = Ezagent.URI.user(:system, :admin)
+    cap = signed_fixture_cap!(uri, :test, TestBehavior, :noop, presenter)
+
     pre_inv = %Ezagent.Invocation{
+      origin: :trusted_internal,
       target: Ezagent.URI.new!("#{URI.to_string(uri)}?action=test.noop"),
       mode: :cast,
       args: %{msg: "pre-ready"},
       ctx: %{
-        caller: Ezagent.URI.new!("entity://system/user/admin"),
-        caps: MapSet.new([Ezagent.Capability.admin_genesis_cap()]),
+        caller: presenter,
+        caps: MapSet.new([cap]),
         reply: {:caller_inbox, self()}
       }
     }

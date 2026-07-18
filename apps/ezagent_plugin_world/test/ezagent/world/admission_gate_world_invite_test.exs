@@ -77,7 +77,7 @@ defmodule Ezagent.World.AdmissionGateWorldInviteTest do
       Ezagent.Identity.Grant.grant_cap_via_router(
         granter,
         cap,
-        {:genesis, User.admin_uri()},
+        {:admin, User.admin_uri()},
         :sync
       )
   end
@@ -111,11 +111,14 @@ defmodule Ezagent.World.AdmissionGateWorldInviteTest do
   # the INVITER's DURABLE identity caps (`manages?/2`), NOT `current_caps`, so
   # this never suppresses the gate (a STRONGER proof: even a genesis socket cap
   # does not let B's cross-owner invite mount).
-  defp invite_socket(inviter) do
+  defp invite_socket(inviter, session_uri) do
+    target = Ezagent.URI.with_action(session_uri, :session, :join)
+    cap = Ezagent.Test.CapHelper.signed_action_cap!(target, inviter)
+
     %Phoenix.LiveView.Socket{}
     |> assign(:current_entity_uri, inviter)
     |> assign(:current_workspace_uri, Capability.workspace_of(inviter))
-    |> assign(:current_caps, MapSet.new([Capability.admin_genesis_cap()]))
+    |> assign(:current_caps, MapSet.new([cap]))
     |> assign(:last_dispatch_status, "idle")
     |> assign(:world_state, %{"layout" => %{}})
     |> assign(:world_state_json, "{}")
@@ -134,7 +137,11 @@ defmodule Ezagent.World.AdmissionGateWorldInviteTest do
 
     # Drive the REAL world-UI invite-button entry point.
     {:noreply, _socket} =
-      ConversationActions.invite_member(invite_socket(b), b_session, URI.to_string(a_agent))
+      ConversationActions.invite_member(
+        invite_socket(b, b_session),
+        b_session,
+        URI.to_string(a_agent)
+      )
 
     assert Map.has_key?(read_pending(b_session), a_agent),
            "world invite of a cross-owner agent must go PENDING at the handle_join chokepoint"

@@ -19,6 +19,7 @@ defmodule EzagentDomainInstanceMessage.Integration.RoleSlotTwoSessionAcceptanceT
   alias Ezagent.Entity.{Agent, Session, User}
   alias Ezagent.ActionSet.Session, as: SessionBehavior
   alias Ezagent.KindRegistry
+  import Ezagent.Test.CapHelper, only: [signed_action_cap!: 2]
 
   @workspace_uri URI.new!("workspace://system")
 
@@ -52,14 +53,18 @@ defmodule EzagentDomainInstanceMessage.Integration.RoleSlotTwoSessionAcceptanceT
   end
 
   defp join_member(session_uri, member_uri, role_name) do
+    caller = User.admin_uri()
+    target = URI.new!("#{URI.to_string(session_uri)}?action=session.join")
+
     result =
       Ezagent.Invocation.dispatch(%Ezagent.Invocation{
-        target: URI.new!("#{URI.to_string(session_uri)}?action=session.join"),
+        origin: :trusted_internal,
+        target: target,
         mode: :call,
         args: %{member: member_uri, role_name: role_name},
         ctx: %{
-          caller: User.admin_uri(),
-          caps: MapSet.new([Ezagent.Capability.admin_genesis_cap()]),
+          caller: caller,
+          caps: MapSet.new([signed_action_cap!(target, caller)]),
           reply: {:caller_inbox, self()}
         }
       })

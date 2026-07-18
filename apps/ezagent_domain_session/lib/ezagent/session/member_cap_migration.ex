@@ -136,12 +136,12 @@ defmodule Ezagent.Session.MemberCapMigration do
   defp do_grant(session_uri, member_uri, owner, acc) do
     ws = Ezagent.Capability.workspace_of(session_uri)
     cap = member_cap(session_uri, ws)
-    {granter, ownerless?} = granter_for(owner)
+    {_granter, ownerless?} = granter_for(owner)
 
     case Ezagent.Identity.Grant.grant_cap_via_router(
            member_uri,
            cap,
-           {:rule, :session_participation, granter},
+           {:admin, Ezagent.URI.user(:system, :admin)},
            :sync
          ) do
       :ok ->

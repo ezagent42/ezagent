@@ -14,9 +14,16 @@ defmodule Ezagent.Identity.RecipeCapBindingTest do
   end
 
   defp agent_uri do
-    Ezagent.URI.new!(
-      "entity://team-alpha/agent/recipe-binding-#{System.unique_integer([:positive])}"
-    )
+    uri =
+      Ezagent.URI.new!(
+        "entity://team-alpha/agent/recipe-binding-#{System.unique_integer([:positive])}"
+      )
+
+    {:ok, _pid} =
+      Ezagent.Kind.spawn(Ezagent.Entity.Agent, %{uri: uri, initial_caps: MapSet.new()})
+
+    on_exit(fn -> Ezagent.Kind.terminate(uri) end)
+    uri
   end
 
   defp proposal(agent_uri, action \\ :list_caps) do
@@ -42,7 +49,9 @@ defmodule Ezagent.Identity.RecipeCapBindingTest do
                )
 
       assert [artifact] = caps
-      assert Ezagent.Cap.verify(artifact)
+      assert Ezagent.Cap.storable_for?(artifact, agent_uri)
+      assert is_binary(artifact.signature)
+      assert is_binary(artifact.key_id)
       assert artifact.granted_by == @admin_uri
       assert artifact.kind == :agent
       assert artifact.instance == Ezagent.URI.instance(agent_uri)

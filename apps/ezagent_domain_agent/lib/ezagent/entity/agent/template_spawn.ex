@@ -698,27 +698,36 @@ defmodule Ezagent.Entity.Agent.TemplateSpawn do
         # step-5.5 `granted_via_ctx_caps?` authorizer), scoped to this
         # specific agent; `granted_by` = the agent itself, never persisted
         # through `Ezagent.Identity.Grant`.
-        _ =
-          Ezagent.Invocation.dispatch(%Ezagent.Invocation{
-            target: target,
-            mode: :cast,
-            args: %{
-              config_dir_path: config_dir,
-              template_class: template_class,
-              respawn_template_data: respawn_data
-            },
-            ctx: %{
-              caller: worker_uri,
-              caps: [sandbox_update_config_self_cap(worker_uri)],
-              # `:ignore` — nobody awaits this write. `Kind.Server.handle_cast`
-              # unconditionally calls `Invocation.reply(inv.ctx, ...)`, which
-              # requires a `:reply` key (an absent key raises FunctionClause);
-              # `:ignore` is the no-op reply target for fire-and-forget.
-              reply: :ignore
-            }
-          })
+        admin = Ezagent.Entity.User.admin_uri()
 
-        {:cont, :ok}
+        case Ezagent.Cap.issue_for_action({:admin, admin}, worker_uri, target) do
+          {:ok, cap} ->
+            _ =
+              Ezagent.Invocation.dispatch(%Ezagent.Invocation{
+                target: target,
+                mode: :cast,
+                args: %{
+                  config_dir_path: config_dir,
+                  template_class: template_class,
+                  respawn_template_data: respawn_data
+                },
+                ctx: %{
+                  caller: worker_uri,
+                  caps: [cap],
+                  # `:ignore` — nobody awaits this write. `Kind.Server.handle_cast`
+                  # unconditionally calls `Invocation.reply(inv.ctx, ...)`, which
+                  # requires a `:reply` key (an absent key raises FunctionClause);
+                  # `:ignore` is the no-op reply target for fire-and-forget.
+                  reply: :ignore
+                },
+                origin: :trusted_internal
+              })
+
+            {:cont, :ok}
+
+          {:error, reason} ->
+            {:halt, {:error, {:sandbox_update_config_cap_issue_failed, worker_uri, reason}}}
+        end
       end
     end)
   end
@@ -735,33 +744,6 @@ defmodule Ezagent.Entity.Agent.TemplateSpawn do
       _ ->
         false
     end
-  end
-
-  # System-principal elimination (#154, 2026-06-19) — the agent's OWN
-  # `sandbox.update_config` self-authority cap, the step-5.5 authorizer for
-  # `do_record_sandbox_state/4`'s self-dispatch (replaces the deleted
-  # `system://agent-internal` principal). Shape mirrors
-  # `Ezagent.ActionSet.Sandbox.required_caps/0[:update_config]` =
-  # `cap(:agent, Sandbox, :update_config)` but SCOPED to the specific agent
-  # (`instance`/`workspace_uri` derived from `agent_uri`) for tightest
-  # least-privilege — the runtime substitutes the same concrete instance from
-  # the target, so concrete==concrete matches at dispatch. `granted_by` =
-  # `agent_uri` (genuine self-authority: a real entity per #154); it is
-  # provenance only (`matches?/2`/`identity_key/1` ignore it) on an INLINE
-  # authorizer cap that is never granted/persisted through
-  # `Ezagent.Identity.Grant`, so no grant-chokepoint route applies.
-  defp sandbox_update_config_self_cap(%URI{} = agent_uri) do
-    %Ezagent.Capability{
-      Ezagent.Capability.cap(
-        :agent,
-        Ezagent.ActionSet.Sandbox,
-        :update_config,
-        Ezagent.URI.instance(agent_uri),
-        Ezagent.Capability.workspace_of(agent_uri)
-      )
-      | granted_by: agent_uri,
-        granted_at: DateTime.utc_now()
-    }
   end
 
   # PR3 2026-05-24 — additional rollback (beyond `undo_fresh_workers/1`)

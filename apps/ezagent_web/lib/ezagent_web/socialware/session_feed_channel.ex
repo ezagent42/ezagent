@@ -341,7 +341,8 @@ defmodule EzagentWeb.Socialware.SessionFeedChannel do
            target: Ezagent.URI.with_action(session_uri, :session, :join),
            mode: :call,
            args: %{member: principal},
-           ctx: %{caller: principal, reply: :ignore}
+           ctx: %{caller: principal, reply: :ignore},
+           origin: :authenticated_external
          }) do
       :ok -> :ok
       {:ok, _} -> :ok
@@ -369,7 +370,8 @@ defmodule EzagentWeb.Socialware.SessionFeedChannel do
       target: Ezagent.URI.with_action(session_uri, :session, :send),
       mode: :cast,
       args: %{message: msg},
-      ctx: %{caller: principal, reply: :ignore}
+      ctx: %{caller: principal, reply: :ignore},
+      origin: :authenticated_external
     })
   end
 
