@@ -15,8 +15,6 @@ defmodule Ezagent.World.ErrorRenderer do
     Card includes generic `what`/`impact` + auto-registered issue notice.
   """
 
-  alias Ezagent.World.ErrorCode
-
   @typedoc "Rendered message card for frontend display"
   @type card :: %{
     layer: 1 | 2 | 3,
@@ -37,9 +35,9 @@ defmodule Ezagent.World.ErrorRenderer do
   (e.g., the workspace founder's display name).
   """
   @spec render(map() | nil, keyword()) :: card()
-  def render(nil, _opts) do
+  def render(nil, opts) do
     # Layer 3 — unregistered error: auto-register issue
-    issue_id = register_issue(nil, _opts)
+    issue_id = register_issue(nil, opts)
 
     %{
       layer: 3,
