@@ -28,6 +28,20 @@ defmodule Ezagent.Socialware.MountRow do
   it is JSON-encoded into the `actions_json` `:text` column (the Ecto `:map`
   type rejects a bare list). `upsert/1` accepts either an `:actions` list
   (encoded here) or a pre-encoded `:actions_json` string.
+
+  ## scope: session vs person(㊵ 人本位前置)
+
+  `scope` 区分两类挂载行:
+
+    * `"session"`(默认)—— 会话挂载:自然键 `(session_uri, target_uri,
+      grantee_uri, behavior)`,行为与历史完全一致;
+    * `"person"` —— 人持钥匙(跨会话):`session_uri` 为 NULL,自然键
+      `(target_uri, grantee_uri, behavior)`,id 由 `person_mount_id/3` 派生,
+      DB 侧幂等由 partial unique index(`scope = 'person'`)兜底。
+
+  person 行不出现在 `list_for_session/1`(session 轴为 NULL 天然不命中,查询里
+  再显式按 scope 过滤兜底),消费方走 `list_person_mounts_for_grantee/1`。scope
+  是挂载概念自身的维度,将来 mount 折 CompositionBinding 时列对列机械平移。
   """
 
   use Ecto.Schema
@@ -39,6 +53,7 @@ defmodule Ezagent.Socialware.MountRow do
   @primary_key {:id, :string, autogenerate: false}
   @timestamps_opts [type: :utc_datetime_usec]
   schema "socialware_mounts" do
+    field(:scope, :string, default: "session")
     field(:session_uri, :string)
     field(:target_uri, :string)
     field(:grantee_uri, :string)
@@ -55,12 +70,14 @@ defmodule Ezagent.Socialware.MountRow do
   @type t :: %__MODULE__{}
 
   @cast_fields ~w(
-    id session_uri target_uri grantee_uri behavior actions_json
+    id scope session_uri target_uri grantee_uri behavior actions_json
     access granted_by workspace_uri mounted_at
   )a
 
+  # `session_uri` 不在通用 required 里 —— person 行没有 session 轴;
+  # session 行由 `validate_scope/1` 补验 session_uri 必填。
   @required_fields ~w(
-    id session_uri target_uri grantee_uri behavior actions_json
+    id scope target_uri grantee_uri behavior actions_json
     access granted_by workspace_uri mounted_at
   )a
 
@@ -84,6 +101,8 @@ defmodule Ezagent.Socialware.MountRow do
     %__MODULE__{}
     |> Ecto.Changeset.cast(normalized, @cast_fields)
     |> Ecto.Changeset.validate_required(@required_fields)
+    |> Ecto.Changeset.validate_inclusion(:scope, ["session", "person"])
+    |> validate_scope()
     |> Repo.insert(
       on_conflict: {:replace, @conflict_replace},
       conflict_target: [:id],
@@ -98,7 +117,20 @@ defmodule Ezagent.Socialware.MountRow do
 
     Repo.all(
       from(m in __MODULE__,
-        where: m.session_uri == ^session,
+        where: m.session_uri == ^session and m.scope == "session",
+        order_by: [asc: m.mounted_at, asc: m.id]
+      )
+    )
+  end
+
+  @doc "List every person-scope mount row held by `grantee_uri`, oldest first."
+  @spec list_person_mounts_for_grantee(URI.t() | String.t()) :: [t()]
+  def list_person_mounts_for_grantee(grantee_uri) do
+    grantee = uri_string(grantee_uri)
+
+    Repo.all(
+      from(m in __MODULE__,
+        where: m.grantee_uri == ^grantee and m.scope == "person",
         order_by: [asc: m.mounted_at, asc: m.id]
       )
     )
@@ -109,6 +141,12 @@ defmodule Ezagent.Socialware.MountRow do
           t() | nil
   def get(session_uri, target_uri, grantee_uri, behavior) do
     Repo.get(__MODULE__, mount_id(session_uri, target_uri, grantee_uri, behavior))
+  end
+
+  @doc "Load one exact person-scope mount row by its natural key, or `nil`."
+  @spec get_person(URI.t() | String.t(), URI.t() | String.t(), String.t() | atom()) :: t() | nil
+  def get_person(target_uri, grantee_uri, behavior) do
+    Repo.get(__MODULE__, person_mount_id(target_uri, grantee_uri, behavior))
   end
 
   @doc """
@@ -123,6 +161,24 @@ defmodule Ezagent.Socialware.MountRow do
         ) :: {:ok, :deleted | :not_found}
   def delete_by_natural_key(session_uri, target_uri, grantee_uri, behavior) do
     id = mount_id(session_uri, target_uri, grantee_uri, behavior)
+
+    case Repo.delete_all(from(m in __MODULE__, where: m.id == ^id)) do
+      {0, _} -> {:ok, :not_found}
+      {n, _} when n >= 1 -> {:ok, :deleted}
+    end
+  end
+
+  @doc """
+  Delete a person-scope mount row by its natural key. Returns `{:ok, :deleted}`
+  when a row matched and `{:ok, :not_found}` when none did.
+  """
+  @spec delete_person_by_natural_key(
+          URI.t() | String.t(),
+          URI.t() | String.t(),
+          String.t() | atom()
+        ) :: {:ok, :deleted | :not_found}
+  def delete_person_by_natural_key(target_uri, grantee_uri, behavior) do
+    id = person_mount_id(target_uri, grantee_uri, behavior)
 
     case Repo.delete_all(from(m in __MODULE__, where: m.id == ^id)) do
       {0, _} -> {:ok, :not_found}
@@ -162,14 +218,51 @@ defmodule Ezagent.Socialware.MountRow do
     |> String.slice(0, 24)
   end
 
+  @doc """
+  Deterministic identity for a person-scope mount's natural key
+  `(target_uri, grantee_uri, behavior)` —— 无 session 轴。
+
+  哈希前缀固定串 `"person"` 与 session 行的 id 域天然分离(session 行首段是
+  `session://…` 完整 URI,不可能等于裸串 `"person"`)。Returns a 24-hex prefix.
+  """
+  @spec person_mount_id(URI.t() | String.t(), URI.t() | String.t(), String.t() | atom()) ::
+          String.t()
+  def person_mount_id(target_uri, grantee_uri, behavior) do
+    :crypto.hash(
+      :sha256,
+      Enum.join(
+        [
+          "person",
+          uri_string(target_uri),
+          uri_string(grantee_uri),
+          behavior_string(behavior)
+        ],
+        "/"
+      )
+    )
+    |> Base.encode16(case: :lower)
+    |> String.slice(0, 24)
+  end
+
   defp normalize(attrs) do
-    session = uri_string(Map.fetch!(attrs, :session_uri))
+    scope = scope_string(attrs)
     target = uri_string(Map.fetch!(attrs, :target_uri))
     grantee = uri_string(Map.fetch!(attrs, :grantee_uri))
     behavior = behavior_string(Map.fetch!(attrs, :behavior))
 
+    {id, session} =
+      case scope do
+        "person" ->
+          {person_mount_id(target, grantee, behavior), nil}
+
+        _session ->
+          session = uri_string(Map.fetch!(attrs, :session_uri))
+          {mount_id(session, target, grantee, behavior), session}
+      end
+
     %{
-      id: mount_id(session, target, grantee, behavior),
+      id: id,
+      scope: scope,
       session_uri: session,
       target_uri: target,
       grantee_uri: grantee,
@@ -180,6 +273,23 @@ defmodule Ezagent.Socialware.MountRow do
       workspace_uri: uri_string(Map.get(attrs, :workspace_uri)),
       mounted_at: Map.get(attrs, :mounted_at) || DateTime.utc_now()
     }
+  end
+
+  # session 行必须带 session_uri(person 行不带)—— changeset 级兜底,
+  # 让「scope=session 却漏 session_uri」是显式错误而非静默 NULL 行。
+  defp validate_scope(changeset) do
+    case Ecto.Changeset.get_field(changeset, :scope) do
+      "session" -> Ecto.Changeset.validate_required(changeset, [:session_uri])
+      _ -> changeset
+    end
+  end
+
+  defp scope_string(attrs) do
+    case Map.get(attrs, :scope, "session") do
+      value when is_atom(value) and not is_nil(value) -> Atom.to_string(value)
+      value when is_binary(value) -> value
+      _ -> "session"
+    end
   end
 
   defp actions_json(attrs) do

@@ -145,6 +145,86 @@ defmodule Ezagent.Socialware.MountTest do
     end
   end
 
+  describe "mount_for_person/5 + unmount_for_person/3 — 人本位挂载(无 session 轴)" do
+    # grantee 轴零改动:mint_cap 本就收任意 URI(人/agent 同款),这里沿用 live_agent
+    # 作 grantee 走通 cap 全链;person-scope 的差异全在挂载行的 session 轴上。
+    test "落 person 行(scope=person、无 session)+ grantee 持钥可 dispatch" do
+      owner = user_uri("pm-owner")
+      grantee = live_agent("pm-holder", owner)
+      target = live_agent("pm-board", owner, [Target])
+
+      assert {:ok, %{caps: [%Ezagent.Capability{} = cap], mount: %MountRow{} = row}} =
+               Mount.mount_for_person(target, grantee, Target, [:get_tree], access: :read)
+
+      assert row.scope == "person"
+      assert row.session_uri == nil
+      assert row.access == "read"
+      assert row.granted_by == URI.to_string(owner)
+      assert URI.to_string(cap.granted_by) == URI.to_string(owner)
+
+      assert MountRow.get_person(target, grantee, Target) != nil
+      assert [_] = MountRow.list_person_mounts_for_grantee(grantee)
+
+      assert eventually(fn -> holds_cap?(grantee, target, :get_tree) end)
+      assert {:ok, %{ok: true}} = dispatch(grantee, target, :get_tree)
+      assert {:error, :unauthorized} = dispatch(grantee, target, :add_node)
+    end
+
+    test "同 person 自然键再 mount → 仍 1 行(覆盖)" do
+      owner = user_uri("pmdup-owner")
+      grantee = live_agent("pmdup-holder", owner)
+      target = live_agent("pmdup-board", owner, [Target])
+
+      assert {:ok, _} =
+               Mount.mount_for_person(target, grantee, Target, [:get_tree], access: :read)
+
+      assert {:ok, _} =
+               Mount.mount_for_person(target, grantee, Target, [:add_node, :get_tree],
+                 access: :operate
+               )
+
+      rows = MountRow.list_person_mounts_for_grantee(grantee)
+      assert length(rows) == 1
+      assert hd(rows).access == "operate"
+    end
+
+    test "unmount_for_person 撤钥匙 + 删行;未挂载幂等" do
+      owner = user_uri("pmum-owner")
+      grantee = live_agent("pmum-holder", owner)
+      target = live_agent("pmum-board", owner, [Target])
+
+      assert {:ok, _} =
+               Mount.mount_for_person(target, grantee, Target, [:add_node, :get_tree],
+                 access: :operate
+               )
+
+      assert eventually(fn -> holds_cap?(grantee, target, :add_node) end)
+      assert {:ok, %{ok: true}} = dispatch(grantee, target, :add_node)
+
+      assert {:ok, :unmounted} = Mount.unmount_for_person(target, grantee, Target)
+
+      assert MountRow.get_person(target, grantee, Target) == nil
+
+      assert eventually(fn ->
+               match?({:error, :unauthorized}, dispatch(grantee, target, :add_node))
+             end)
+
+      # 幂等:再 unmount 一次仍 {:ok, :unmounted}
+      assert {:ok, :unmounted} = Mount.unmount_for_person(target, grantee, Target)
+    end
+
+    test "mint 失败(无属主宿主)→ 不落 person 行" do
+      owner = user_uri("pmfc-owner")
+      grantee = live_agent("pmfc-holder", owner)
+      target = orphan_agent("pmfc-board", [Target])
+
+      assert {:error, {:operate_target_ownerless, _uri, Target}} =
+               Mount.mount_for_person(target, grantee, Target, [:get_tree], access: :read)
+
+      assert MountRow.get_person(target, grantee, Target) == nil
+    end
+  end
+
   describe "provision/6 — 建宿主(data_owner=owner)+ 当场挂操作钥匙" do
     setup do
       ws_name = "mount-prov-#{uniq()}"

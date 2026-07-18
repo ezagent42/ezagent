@@ -79,6 +79,58 @@ defmodule Ezagent.Socialware.MountReconcileTest do
     end
   end
 
+  describe "reconcile_person_mounts/1 — person 行的 reconcile 路(不挂 session activate)" do
+    test "撤钥匙(不删行)→ session 路扫不到、person 路重发钥匙重现" do
+      owner = user_uri("prec-owner")
+      grantee = live_agent("prec-holder", owner)
+      target = live_agent("prec-board", owner, [Target])
+      session = session_uri()
+
+      assert {:ok, %{mount: %MountRow{scope: "person"} = row}} =
+               Mount.mount_for_person(target, grantee, Target, [:get_tree], access: :read)
+
+      assert eventually(fn -> holds_cap?(grantee, target, :get_tree) end)
+
+      revoke_all(grantee, target, [:get_tree], row.granted_by)
+
+      assert eventually(fn ->
+               match?({:error, :unauthorized}, dispatch(grantee, target, :get_tree))
+             end)
+
+      # person 行不属于任何 session —— session 路 reconciled: 0,钥匙不回来
+      assert {:ok, %{reconciled: 0}} = Mount.reconcile_session_mounts(session)
+      assert {:error, :unauthorized} = dispatch(grantee, target, :get_tree)
+
+      # person 路(按 grantee)重发 → 钥匙重现
+      assert {:ok, %{reconciled: 1}} = Mount.reconcile_person_mounts(grantee)
+      assert eventually(fn -> holds_cap?(grantee, target, :get_tree) end)
+      assert {:ok, %{ok: true}} = dispatch(grantee, target, :get_tree)
+    end
+
+    test "幂等,且与同 grantee 的 session 行互不干扰(各扫各的行)" do
+      owner = user_uri("pmix-owner")
+      grantee = live_agent("pmix-holder", owner)
+      target = live_agent("pmix-board", owner, [Target])
+      session = session_uri()
+
+      assert {:ok, _} = Mount.mount(session, target, grantee, Target, [:get_tree], access: :read)
+
+      assert {:ok, _} =
+               Mount.mount_for_person(target, grantee, Target, [:get_tree], access: :read)
+
+      assert {:ok, %{reconciled: 1}} = Mount.reconcile_session_mounts(session)
+      assert {:ok, %{reconciled: 1}} = Mount.reconcile_person_mounts(grantee)
+      assert {:ok, %{reconciled: 1}} = Mount.reconcile_person_mounts(grantee)
+
+      assert length(MountRow.list_for_session(session)) == 1
+      assert length(MountRow.list_person_mounts_for_grantee(grantee)) == 1
+    end
+
+    test "无 person 行的 grantee → reconciled: 0" do
+      assert {:ok, %{reconciled: 0}} = Mount.reconcile_person_mounts(user_uri("nobody"))
+    end
+  end
+
   # --- helpers -------------------------------------------------------------
 
   # 撤销 grantee 指向 target 的每把 action 钥匙,granter = 挂载行 granted_by(宿主主人)。

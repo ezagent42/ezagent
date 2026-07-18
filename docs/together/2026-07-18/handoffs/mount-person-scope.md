@@ -2,7 +2,7 @@
 
 > **Date:** 2026-07-18 · **From:** kanban-collab-round2 线 · **To:** an independent developer
 > **Tracking:** 开工单 v2 终版 infra 清单 #3 · **Base:** `origin/main` @ `d533a5d73`
-> **Status:** brainstormed —— **过 Allen 后开工**(新 infra 决策,非 D1-D6 已拍范围)
+> **Status:** **已实施(同 PR)** —— 用户裁定(2026-07-18):mount 表是我们自有的过渡 infra(将来折 CompositionBinding),不走 Allen gate,直接做。本文降为**随行记录**(保留现象/原因/设计论证);实施取 §4 案 b(显式 scope 列),见同 PR 的 migration + `mount_row.ex` + `mount.ex` + 测试。
 
 ## 0. Mission
 分享接收要从「发给目标会话的 assistant」改成「发给点击者本人」(人本位,㊵),但挂载表 `MountRow` 自然键含 session——**没有 person-scoped 挂载行的位置**。给 Mount infra 定一个 person-scope 约定(零 kanban 字面),让「个人持有的板钥匙」也有 SoT 行,删板撤钥匙链路不悬空。
@@ -39,7 +39,7 @@
 - [ ] CI green + rebased on `main`
 
 ## 6. Discuss-first vs Deferred
-**Discuss-first(开工闸):** 案 a vs 案 b——Allen 择一;person 行的 `granted_by`/workspace 语义确认(仍=target data_owner,#154 不变?)。
+**Discuss-first(开工闸):** ~~案 a vs 案 b~~ 已按用户裁定取案 b(scope 列);person 行 `granted_by`/workspace 语义保持不变(仍=target data_owner,#154)。
 **Deferred:** person 挂载的到期/清理策略(无属主会话消亡时)——挂 #1394 线;mount 折 CompositionBinding 本体(D6 永久线,届时 person-scope 平移,见 §4)。
 **Never deferred:** SoT 约束(决策 2)。
 

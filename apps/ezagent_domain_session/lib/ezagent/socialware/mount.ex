@@ -16,6 +16,16 @@ defmodule Ezagent.Socialware.Mount do
   `ezagent_domain_workspace` 的 `Ezagent.Workspace.create_agent`)和「发钥匙」(自有
   `CompositionCaps`)的层,故 `provision/6`(建 + 当场挂)落在这里。本模块不静态依赖任何
   plugin —— `behavior` 是参数。
+
+  ## person-scope(㊵ 人本位前置,自有过渡 infra)
+
+  除会话挂载外,支持「人持钥匙」行:`mount_for_person/5` 不带 session 参数,落
+  `scope=person` 的挂载行(自然键 `(target, grantee, behavior)`,session 轴为 NULL),
+  钥匙机制与会话挂载完全同款(mint_cap 唯一 chokepoint,grantee 本就支持任意 URI ——
+  零 cap 机制改动)。**reconcile 归属**:`reconcile_session_mounts/1` 只扫 session 行
+  (person 行不挂在任何 session 的 activate 上);person 行由 `reconcile_person_mounts/1`
+  按 grantee 重发,供人侧 identity slice 重建/修复路调用。将来 mount 折
+  CompositionBinding 时 scope 维度随行平移。
   """
 
   alias Ezagent.Socialware.{CompositionCaps, MountRow}
@@ -71,6 +81,59 @@ defmodule Ezagent.Socialware.Mount do
         {:ok, %MountRow{} = row} -> {:ok, %{caps: caps, mount: row}}
         {:error, reason} -> {:error, {:mount_row_upsert_failed, reason}}
       end
+    end
+  end
+
+  @doc """
+  人本位挂载:同 `mount/6` 的 mint+落表,但**无 session 轴** —— 给 `grantee_uri`
+  (通常是人)铸指向 `target_uri` 的钥匙,落 `scope=person` 的挂载行。
+
+  钥匙由 `actions` 决定、`opts[:access]` 只记表(同 `mount/6`);`granted_by` 恒 =
+  target 的 data_owner(#154)。mint 失败 → 不落表。同 person 自然键再 mount →
+  覆盖,仍 1 行。
+  """
+  @spec mount_for_person(URI.t(), URI.t(), module(), [atom()], keyword()) ::
+          {:ok, mount_result()} | {:error, term()}
+  def mount_for_person(%URI{} = target_uri, %URI{} = grantee_uri, behavior, actions, opts \\ [])
+      when is_atom(behavior) and is_list(actions) and is_list(opts) do
+    access = Keyword.get(opts, :access, :operate)
+
+    with {:ok, caps} <- CompositionCaps.mint_cap(grantee_uri, target_uri, behavior, actions) do
+      attrs = %{
+        scope: :person,
+        target_uri: target_uri,
+        grantee_uri: grantee_uri,
+        behavior: behavior,
+        actions: actions,
+        access: access,
+        granted_by: granted_by(caps, behavior, target_uri),
+        workspace_uri: Ezagent.Capability.workspace_of(target_uri)
+      }
+
+      case MountRow.upsert(attrs) do
+        {:ok, %MountRow{} = row} -> {:ok, %{caps: caps, mount: row}}
+        {:error, reason} -> {:error, {:mount_row_upsert_failed, reason}}
+      end
+    end
+  end
+
+  @doc """
+  人本位卸载:撤销 person 行记录的每把 action 钥匙(granter 权 = 行的 `granted_by`),
+  再删行。行不存在 → `{:ok, :unmounted}`(幂等)。删宿主(如删板)撤钥匙路必须连
+  person 行一起扫 —— person cap 不许悬空(⑲ SoT 约束)。
+  """
+  @spec unmount_for_person(URI.t(), URI.t(), module()) :: {:ok, :unmounted} | {:error, term()}
+  def unmount_for_person(%URI{} = target_uri, %URI{} = grantee_uri, behavior)
+      when is_atom(behavior) do
+    case MountRow.get_person(target_uri, grantee_uri, behavior) do
+      nil ->
+        {:ok, :unmounted}
+
+      %MountRow{} = row ->
+        with :ok <- revoke_row_actions(row, target_uri, grantee_uri, behavior) do
+          {:ok, _} = MountRow.delete_person_by_natural_key(target_uri, grantee_uri, behavior)
+          {:ok, :unmounted}
+        end
     end
   end
 
@@ -179,6 +242,44 @@ defmodule Ezagent.Socialware.Mount do
       {:ok, %{reconciled: 0, failed: 0}}
   end
 
+  @doc """
+  重发 `grantee_uri`(人)名下所有 person-scope 挂载的钥匙 —— person 行的 reconcile 路。
+
+  person 行不属于任何 session,不挂在 session activate 上;本函数按 grantee 扫
+  `MountRow.list_person_mounts_for_grantee/1` 逐行重跑 `mount_for_person/5`(幂等,
+  同 `reconcile_session_mounts/1` 的 best-effort per row 姿态,永不 raise)。
+  """
+  @spec reconcile_person_mounts(URI.t()) ::
+          {:ok, %{reconciled: non_neg_integer(), failed: non_neg_integer()}}
+  def reconcile_person_mounts(%URI{} = grantee_uri) do
+    grantee_uri
+    |> MountRow.list_person_mounts_for_grantee()
+    |> Enum.reduce(%{reconciled: 0, failed: 0}, fn %MountRow{} = row, acc ->
+      case remint_person_row(grantee_uri, row) do
+        {:ok, _} ->
+          %{acc | reconciled: acc.reconciled + 1}
+
+        {:error, reason} ->
+          Logger.warning(
+            "Mount.reconcile_person_mounts/1: re-mint FAILED for target=" <>
+              "#{row.target_uri} grantee=#{row.grantee_uri} behavior=#{row.behavior}: " <>
+              "#{inspect(reason)} — skipping (other mounts unaffected)."
+          )
+
+          %{acc | failed: acc.failed + 1}
+      end
+    end)
+    |> then(&{:ok, &1})
+  rescue
+    error ->
+      Logger.warning(
+        "Mount.reconcile_person_mounts/1: mount scan failed for " <>
+          "#{URI.to_string(grantee_uri)}: #{inspect(error.__struct__)} — treated as no-op."
+      )
+
+      {:ok, %{reconciled: 0, failed: 0}}
+  end
+
   # 从挂载行还原参数并重跑 mount/6。行里存的是字符串(URI/behavior/actions_json/access),
   # 逐一反序列化回 mount/6 需要的类型。
   defp remint_row(session_uri, %MountRow{} = row) do
@@ -189,6 +290,16 @@ defmodule Ezagent.Socialware.Mount do
     access = decode_access(row.access)
 
     mount(session_uri, target, grantee, behavior, actions, access: access)
+  end
+
+  # person 行版 remint:无 session 轴,重跑 mount_for_person/5。
+  defp remint_person_row(grantee_uri, %MountRow{} = row) do
+    target = Ezagent.URI.new!(row.target_uri)
+    behavior = decode_behavior(row.behavior)
+    actions = recorded_actions(row)
+    access = decode_access(row.access)
+
+    mount_for_person(target, grantee_uri, behavior, actions, access: access)
   end
 
   # behavior 存的是 `inspect(module)` —— 无 `Elixir.` 前缀(如
@@ -229,33 +340,35 @@ defmodule Ezagent.Socialware.Mount do
   # 行不存在 → 无钥匙可撤,:ok(幂等)。
   defp revoke_recorded_actions(session_uri, target_uri, grantee_uri, behavior) do
     case MountRow.get(session_uri, target_uri, grantee_uri, behavior) do
-      nil ->
-        :ok
-
-      %MountRow{} = row ->
-        granter = Ezagent.URI.new!(row.granted_by)
-        workspace_uri = Ezagent.Capability.workspace_of(target_uri)
-        target_instance = Ezagent.URI.instance(target_uri)
-
-        row
-        |> recorded_actions()
-        |> Enum.reduce_while(:ok, fn action, :ok ->
-          cap =
-            Ezagent.Capability.cap(:agent, behavior, action, target_instance, workspace_uri)
-
-          # 撤销走 `{:rule, …}` 授权(与 composition reconcile 同款):revoke 在
-          # `Kind.Runtime` step-5.5 由 rule bypass 授权(identity.ex §3.3),granter
-          # (行的 granted_by = 宿主主人)是问责 issuer,不需 granter 自持撤销权。
-          case Ezagent.Identity.Grant.revoke_cap(
-                 grantee_uri,
-                 cap,
-                 {:held_by, granter}
-               ) do
-            :ok -> {:cont, :ok}
-            {:error, reason} -> {:halt, {:error, {:mount_revoke_failed, action, reason}}}
-          end
-        end)
+      nil -> :ok
+      %MountRow{} = row -> revoke_row_actions(row, target_uri, grantee_uri, behavior)
     end
+  end
+
+  # 撤销一条挂载行(session / person 同款)记录的每把 action 钥匙。
+  defp revoke_row_actions(%MountRow{} = row, target_uri, grantee_uri, behavior) do
+    granter = Ezagent.URI.new!(row.granted_by)
+    workspace_uri = Ezagent.Capability.workspace_of(target_uri)
+    target_instance = Ezagent.URI.instance(target_uri)
+
+    row
+    |> recorded_actions()
+    |> Enum.reduce_while(:ok, fn action, :ok ->
+      cap =
+        Ezagent.Capability.cap(:agent, behavior, action, target_instance, workspace_uri)
+
+      # 撤销走 `{:held_by, granter}` 授权(#1457 后 rule 元组已删;与 composition
+      # reconcile 同款):granter(行的 granted_by = 宿主主人)是问责 issuer,
+      # revoke 不重跑 grant 授权、保留已签 artifact 原样撤储。
+      case Ezagent.Identity.Grant.revoke_cap(
+             grantee_uri,
+             cap,
+             {:held_by, granter}
+           ) do
+        :ok -> {:cont, :ok}
+        {:error, reason} -> {:halt, {:error, {:mount_revoke_failed, action, reason}}}
+      end
+    end)
   end
 
   defp recorded_actions(%MountRow{actions_json: json}) when is_binary(json) do
