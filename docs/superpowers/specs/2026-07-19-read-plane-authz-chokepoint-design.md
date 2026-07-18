@@ -1,7 +1,7 @@
 # Read-Plane Authorization: Unified-Mechanism Chokepoint + Anti-Bypass Gate — DESIGN
 
-> **Status:** DESIGN v2 — brainstormed live with Allen (2026-07-18), approved shape; codex adversarial round 1 = NEEDS-REVISION (7 holes), all folded in v2. Next = codex confirm pass → writing-plans → implement.
-> **Author:** Claude (coordinator), with Allen. Codex adversarial review round 1 grounded the coverage/consistency/layering fixes.
+> **Status:** DESIGN v3 — brainstormed live with Allen (2026-07-18), approved shape; codex adversarial R1 = NEEDS-REVISION (7 holes) → folded v2; codex R2 = 5/7 resolved + deeper layering/gateway/feed-shape holes → folded v3. Next = codex R3 confirm → writing-plans → implement.
+> **Author:** Claude (coordinator), with Allen. Two codex adversarial rounds grounded the coverage / live-state / layering-placement / gateway-boundary / feed-shape fixes.
 > **Base:** `origin/main` @ `70ffafa85`. Branch: `feat/read-plane-authz-chokepoint`.
 > **Relates:** jjkysy PR #1459 handoff `docs/together/2026-07-18/handoffs/read-plane-authz.md` · uploads-person-token companion · cap-signing #1457 (the write plane whose landing exposed this).
 
@@ -54,17 +54,17 @@ So the anchor is **"query scope + named access policy"**, not universally "direc
 ## 3. The read-plane design
 
 ### 3.1 Cap-gated read chokepoints (per scope; own BOTH authz and row-policy)
-Chokepoint modules, **placed in the resource-owning domain** (codex hole #5, layering — see §5):
-- `SessionReads` (in `ezagent_domain_session`) — `messages(caller, session, opts)`, `members(caller, session)`.
-- `AgentReads` (in `ezagent_domain_agent`) — `list(caller, workspace)`.
-- `MountReads` — attachment/mount reads.
-- `OperatorReads` — global/operator list-all (registry, external-mirror), authorizing an operator cap.
-- A **composition layer** (world / `domain_ui`) may compose these (e.g. a workspace overview calling `SessionReads` + `AgentReads`) but is **forbidden from touching raw stores** (enforced by the gate).
+Chokepoint modules, **placed at the layer where their access policy is expressible** (§5 placement principle):
+- `SessionReads` (in `ezagent_domain_socialware`) — `messages(caller, session, view, opts)`, `members(caller, session)`.
+- `AgentReads` (in `ezagent_domain_workspace`) — `list(caller, workspace)`.
+- `MountReads` — attachment/mount reads (placed with the mount policy).
+- `OperatorReads` (in `ezagent_domain_identity` or above) — global/operator list-all (registry, external-mirror), authorizing an operator cap.
+- A **composition layer** (world / `domain_ui`) may compose these (e.g. a workspace overview calling `SessionReads` + `AgentReads`) but is **forbidden from touching raw stores** (enforced by the gate §3.3).
 
 Each chokepoint does, in order:
-1. **Access-policy check** for its scope (member-cap `Membership.authorize/3` ∪ open-policy ∪ operator-cap) → fail-loud on deny.
-2. **Row-policy ownership** (codex hole #7) — the chokepoint itself sources/verifies the caller's `:read_unfiltered` authority and chooses `recent_visible_in_session` (external-visible) vs `recent_in_session` (unfiltered admin view). It does NOT accept a caller-supplied "which rows" flag (that would re-open a caller-selectable bypass). Today `conversation_data.ex:425-446` picks this from `caller_caps`; that logic moves *into* the chokepoint.
-3. **Query** the raw store.
+1. **Access-policy check** for its scope (member-cap `Membership.authorize/3` ∪ container open-policy `PublicView.web_anon_access?/1` ∪ operator-cap) → fail-loud on deny. (Live-first — §3.2.)
+2. **Row-policy ownership** (codex R1 #7) — the chokepoint sources/verifies the caller's `:read_unfiltered` authority and decides visible-vs-unfiltered internally. It does NOT accept a caller-supplied "which rows" flag (that re-opens a caller-selectable bypass). Today `conversation_data.ex:425-446` derives this from `caller_caps`; that logic moves *into* the chokepoint.
+3. **View/shape routing** (codex R2 new-hole-A) — row VISIBILITY (authz, owned in step 2) is orthogonal to query SHAPE (ordering/settlement, a legitimate presentation variant). The `view` selects the shape and the chokepoint delegates to the matching raw-store query so results are **byte-identical** to today: `:conversation` → `recent_visible_in_session`/`recent_in_session`; `:chat_feed` → `chat_visible_recent` (chat ordering, `chat_feed.ex:119-123`); `:external_feed` → `committed_external_visible` (settlement filtering, `external_feed.ex:46-96`, `message_store.ex:225-250,284-327`). `view` is a fixed enum, not a caller-supplied predicate — it selects a *shape*, never widens *visibility* (which step 2 owns). The store retains these query functions; the chokepoint is their sole authorized caller.
 
 ### 3.2 Consistency contract (codex hole #3 — CORRECTED)
 The earlier draft's "persisted-only, no-actor" claim was **wrong and is withdrawn.** The existing predicate `Membership.authorize/3` is **live-first**: it obtains the session slice via `Kind.get_slice/2` and caps via `EntityCaps.load/1` (live-first, `entity_caps.ex:42-66`), either of which **may synchronously call the Kind actor** (`slice_access.ex:18-29`). This is correct and is what we reuse **unchanged** — critically, it means an **async at-join member-cap grant that isn't yet persisted is still seen** (member_cap.ex:42-59,254-268), so fresh joins are NOT falsely denied. Contract, stated explicitly + tested:
@@ -74,10 +74,14 @@ The earlier draft's "persisted-only, no-actor" claim was **wrong and is withdraw
 ### 3.3 The anti-bypass gate (codex hole #6 — ban raw `Repo`/Ecto, not just store functions)
 - The **only** modules permitted to call `EzagentCore.Repo` / Ecto for these planes are the designated **raw-store-owner modules** (`MessageStore`, the mount/agent/registry stores) + a **narrow internal-read gateway** (§3.4).
 - Every other module — presenter tiers (LiveView loaders, controllers), the read chokepoints' *callers*, the composition layer — is **CI-red on any direct `Repo`/Ecto read**. This closes the `AdminData` direct-`Repo.all` recreation of the bypass (`admin_data.ex:297-310`), which a store-function-only ban would miss.
-- Enforced module-keyed via `mix ezagent.check_invariants` (or `Boundary` lib). Allowlist = {store-owner modules, internal gateway, chokepoints} — a small stable module set, NOT paths.
+- Enforced module-keyed via `mix ezagent.check_invariants` (or `Boundary` lib), as **two allowlists**: (a) raw-store read functions callable only from {chokepoints, `InternalReads`}; (b) `InternalReads` callable only from {framework-internal tier} (§3.4 inbound). Both are small stable **module** sets, NOT paths.
 
-### 3.4 Internal-read gateway (codex hole #4 — narrow, not a whole-module exemption)
-Framework-internal reads with no principal (reconcile / GC / boot / snapshot-rehydrate / the `Delivery` at-most-once **replay** read `delivery.ex:381-395`) go through a **dedicated narrow gateway module** (e.g. `InternalReads`), NOT a blanket "this whole module is exempt." Rationale: `Delivery` contains a legit raw replay read; a module-level exemption could not distinguish it from a future principal-facing read added to the same module. The gateway is an explicit, enumerable set of internal read functions; the gate allows only it (+ store-owners + chokepoints).
+### 3.4 Internal-read gateway (codex R1 #4 + R2: narrow AND with an inbound boundary)
+Framework-internal reads with no principal (reconcile / GC / boot / snapshot-rehydrate / the `Delivery` at-most-once **replay** read `delivery.ex:381-395`) go through a **dedicated narrow gateway module** (e.g. `InternalReads`), NOT a blanket "this whole module is exempt" (a module-level exemption could not distinguish `Delivery`'s legit replay from a future principal read added to the same module).
+
+The gateway is a two-sided boundary (both enforced by the gate §3.3), because allowing `InternalReads` to reach raw stores does NOT by itself stop a principal path from calling it:
+- **Outbound:** `InternalReads` MAY call raw stores.
+- **Inbound:** `InternalReads` may be **called ONLY from an enumerated set of framework-internal caller modules** (the reconcile/GC/boot/delivery-replay tier). A principal-facing module (LiveView loader, controller, chokepoint caller) calling `InternalReads` → CI red. This is a second module allowlist (callers-of-`InternalReads` ⊆ framework tier), keeping the gateway from becoming a laundering path around `SessionReads`.
 
 ### 3.5 Migration order (consolidate → migrate → gate)
 1. **Build** the chokepoints + the internal gateway.
@@ -94,12 +98,19 @@ Framework-internal reads with no principal (reconcile / GC / boot / snapshot-reh
 
 ---
 
-## 5. Layering (codex hole #5 — real dependency cycle; drives module placement)
+## 5. Layering — placement principle (codex round 1 #5 + round 2: the resource-owning-domain rule was WRONG)
 
-Verified against `mix.exs` deps: `ezagent_domain_session` depends on core/identity/workspace/agent; `ezagent_domain_workspace` depends on agent; `ezagent_domain_agent` on core. Therefore:
-- `SessionReads` lives in **`ezagent_domain_session`** (already deps `Membership` + `MessageStore` — no cycle). ✓
-- A **monolithic `WorkspaceReads.sessions/agents` cannot live in `ezagent_domain_workspace`** — it would need session, but workspace→session cycles (workspace is below session). ✗
-- Therefore **split workspace-scoped reads by resource-owning domain**: session-list logic in `ezagent_domain_session`, agent-list logic in `ezagent_domain_agent`. Any higher-level "workspace overview" composition lives in the world/UI layer and is **forbidden from touching raw stores** (composes chokepoints only).
+Dep layers (bottom→top, `mix.exs`-verified): `core` (MessageStore, KindRegistry) → `identity` (EntityCaps, admin-cap) / `agent` → `workspace` (workspace-membership) → `session` (Membership.authorize) → `socialware` (PublicView, the feeds) → `world`/`domain_ui`.
+
+A read chokepoint needs BOTH its **raw store** (low) and its **access policy** (often higher). Placing it in the resource-owning domain cycles when the policy lives above it (round 2: `SessionReads`∈session → `PublicView`∈socialware cycles; `AgentReads`∈agent → workspace-membership∈workspace cycles).
+
+> **Placement principle: put each chokepoint at the layer where its FULL access policy is expressible, and let it reach DOWN to the raw store.** The chokepoint layer = `max(store layer, policy layer)`; all deps are then downward, no cycle. The raw store stays where it is (e.g. `MessageStore`∈core); the chokepoint is its authorized reader from above.
+
+Concrete placements:
+- **`SessionReads`** (session messages/members) needs `MessageStore`(core, down) + `Membership.authorize`(session, down) + `PublicView`(socialware, same) → lives in **`ezagent_domain_socialware`**. Natural: the feeds (`chat_feed`/`external_feed`) already live there and already call `MessageStore` downward — `SessionReads` *is* the consolidation of those + the world loader's read.
+- **`AgentReads`** (workspace's agents) needs the agent store(agent, down) + workspace-membership(workspace, same) → lives in **`ezagent_domain_workspace`**.
+- **`OperatorReads`** (global registry/mirror list-all) needs `KindRegistry`(core, down) + admin-cap(identity, `behavior/identity.ex:877-905`) → lives in **`ezagent_domain_identity`** or a layer above both.
+- **Callers** (world/LiveView loaders, controllers — top) call the chokepoints downward; forbidden from raw stores (gate §3.3). No monolithic `WorkspaceReads`.
 
 ---
 
@@ -120,7 +131,9 @@ Verified against `mix.exs` deps: `ezagent_domain_session` depends on core/identi
 7. **Anti-bypass gate live** — adding a direct `MessageStore.recent_in_session` **OR a direct `EzagentCore.Repo.all`** in a presenter/chokepoint-caller module → CI red.
 8. **Perf** — read path adds no per-row actor round-trip; one live-first predicate call per read (same cost class as existing feeds).
 9. **Attachment** — legit member downloads kanban attachment (403 gone); leaked token by non-grantee rejected.
-10. **No feed regression** — feed reads produce byte-identical results after routing through the chokepoint.
+10. **No feed regression** — feed reads produce byte-identical results after routing through the chokepoint (via `view`-selected store queries — chat ordering + external settlement preserved, §3.1 step 3).
+11. **No dependency cycle** — the arch acyclic gate stays green with the chokepoints at their §5 placements (`SessionReads`∈socialware, `AgentReads`∈workspace, `OperatorReads`∈identity+).
+12. **Gateway not launderable** — a principal-facing module calling `InternalReads` → CI red (inbound boundary, §3.4).
 
 ---
 
