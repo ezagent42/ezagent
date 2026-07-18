@@ -7,6 +7,11 @@ defmodule Ezagent.Workspace.TaskWorkspace.ReconcilerBootTest do
   alias EzagentCore.Repo
 
   setup do
+    # ReconcilerBoot scans the global durable queue. Umbrella tests in earlier
+    # apps may legitimately leave committed recovery fixtures behind, so make
+    # this test's sandbox view explicit instead of assuming an empty database.
+    Repo.delete_all(Provision)
+
     Application.put_env(:ezagent_domain_workspace, :provisioner_test_owner, self())
 
     Application.put_env(
