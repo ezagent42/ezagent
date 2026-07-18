@@ -15,7 +15,7 @@
 - mount 模型(2026-07-12 结论,#1425/#1435 已落 main):数据宿主 agent 像 U 盘挂进会话(`apps/ezagent_domain_session/lib/ezagent/socialware/mount.ex:7-8`)。
 
 **「都是聊天」只在广义(C1)意义下成立**。架构里 chat 和 action dispatch 是**一个 fabric、两个 register**:
-- **一个 fabric**:跨 Kind 唯一路径是 dispatch(P14);cap 检查「严格只在 dispatch step 5.5 发生一次」(`ARCHITECTURE.md:1428`)。chat 本身就是 dispatch 上搭出来的:Chat 是 Behavior——Session 消费 `send/join/leave`,User+Agent 消费 `receive`(Decision #88,`GLOSSARY.md:117`);一条聊天消息 = `send` dispatch 进 session,fan-out 成给每个成员的 `receive` dispatch,**且 per recipient 铸 `:receive` cap**(`apps/ezagent_core/lib/ezagent/routing/resolver.ex:239-240`)。所以「dispatch 是广义的说话」不是比喻,是实现事实。
+- **一个 fabric**:跨 Kind 唯一路径是 dispatch(P14);cap 检查「严格只在 dispatch step 5.5 发生一次」(`ARCHITECTURE.md:1428`)。chat 本身就是 dispatch 上搭出来的:Chat 是 Behavior——Session 消费 `send/join/leave`,User+Agent 消费 `receive`(Decision #88,`GLOSSARY.md:117`);一条聊天消息 = `send` dispatch 进 session,fan-out 成给每个成员的 `receive` dispatch,**且 per recipient 铸 `:receive` cap**(`apps/ezagent_core/lib/ezagent/routing/resolver.ex:239-240`)。〔**勘误 2026-07-18,见 §5.2**:该注释是 A2.2 前 stale 说法——现行 delivery 呈交零 cap(delivery.ex:296-306),真机制是 join 时一次性 member-cap + 收方 in-handler 自查;「对话双向都有 cap 判定」的结论不变,形态变了。〕所以「dispatch 是广义的说话」不是比喻,是实现事实。
 - **两个 register**:principal 的 **chat register**(Message 落 MessageStore + routing rules + 会话成员制)vs passive data actor 的 **action register**(直接 action dispatch,不产生 Message)。board 被 RF-6 三闸刻意挡在 chat register 外:「NOT @-mentionable, NOT joinable as a session member, does NOT receive chat. It acts **ONLY on direct kanban.\* dispatch**」(`kanban-as-role-spec.md:23-24`;闸的实现 = mention-resolver / `:join` gate / resolver 末端 universal 过滤 `resolver.ex:234-242`)。
 
 **RF-6 与「人和 plugin 聊天」不矛盾**:RF-6 挡的不是「对板说话」,是「把 passive actor 当 principal 会话参与者」——resolver 注释写明理由:passive actor 若活到 fan-out 会被铸 `:receive` cap,等于泄漏 principal 身份(`resolver.ex:238-241`)。对板的 kanban.* dispatch 一直畅通,而且同样过 step 5.5 cap 门。**即:对话没有被禁,只是走 action register。**
@@ -35,7 +35,7 @@ builtin `chat` definition 的全部内容:`name: "chat", bases: Session.chat_beh
 ### 3.「权限 = CapBAC =『谁和谁能说话、哪些话有效』」——**成立**
 
 - 单点:cap 检查只在 dispatch step 5.5,LV/controller/Behavior body 内的检查被 invariant test 禁止(`ARCHITECTURE.md:1428`)。
-- 「谁和谁」:cap 绑 target URI + grantee(#1386 sign-the-grantee);「哪些话」:cap 绑 action subject。收方向也对称:`:receive` cap per recipient(`resolver.ex:239`)。
+- 「谁和谁」:cap 绑 target URI + grantee(#1386 sign-the-grantee);「哪些话」:cap 绑 action subject。收方向也对称:收方自持 member-cap in-handler 判定(§5.2 勘误;`member_receive.ex:78-85`,非 per-message 铸)。
 - 钥匙有主:每个 cap 的 `granted_by` 必须是 real entity(Decision #154,`GLOSSARY.md:165`);mount 发钥匙 granter 恒 = 数据宿主 data_owner(`mount.ex:7-8,:39`)。
 
 ### 4.「㊲ 根因是模型层的:下载授权查『chat 消息参与者』是『对话参与』的旧窄实现」——**成立**
@@ -63,9 +63,9 @@ builtin `chat` definition 的全部内容:`name: "chat", bases: Session.chat_beh
 2. **web**:`UploadsController.download/2` 加一条分支——person-bound token 校验 `caller == grantee` 即放行。合法性:mint 侧本就要求「授权后才签」(`download_token.ex:89`),kanban 渲染签发前已过板的 read cap 门(`world_data.ex:406` 在 cap-gated read_ctx 之内)——所以「caller==grantee 的 person-bound token」= 「该 caller 被宿主授权过」的可验证凭据,正是「宿主钥匙持有者」分支。防泄漏**更强**而非更弱:泄漏 token 换人无效(现行 bearer token 同 ws 内任何参与者可重放)。
 3. **kanban 侧**:点击现签(`world:dispatch` 返 fresh href)替代渲染时预签,解 TTL 300s(`download_token.ex:61`)必过期问题;顺手把 grantee 绑点击者。
 
-## 三、给 Allen 的论证段(需过 Allen——P2 授权契约本身就是 Allen-gated,`uploads_controller.ex:5-9`)
+## 三、给 Allen 的论证段(需过 Allen——P2 授权契约本身就是 Allen-gated,`uploads_controller.ex:5-9`;2026-07-18 按 §五 全链查验改写)
 
-> Allen,㊲(kanban 附件下载 forbidden)想动 core 的 `DownloadToken`,过你一眼。根因不是 kanban 签错了什么:serve-time 的参与复查(admin/上传者/session 参与者)全查 Message 表,而 kanban 附件是 attach_artifact dispatch 直接写板 slice、不产生 Message——非 admin 连上传者本人都 403。这道复查是 codex 防 token 泄漏要求「冻结 pre-P2 契约」加的,当时附件只存在于聊天;现在附件也长在 action-dispatch 面(板节点),「参与」的判定需要泛化成「消息参与者 ∪ 宿主钥匙持有者」——这跟你拍的 #154(granter=data_owner)和 mount 发 person keys 是同一个语义:参与一段对话 = 持有对宿主的 cap。修法:DownloadToken 加可选 `grantee` 字段(person-bound,签进 payload),controller 对 person-bound token 只验 caller==grantee(mint 侧本就 cap-gated 后才签);旧 token 无字段走旧复查,零破坏。防泄漏比现状强:bearer 变 person-bound,泄漏换人无效。codex 的「不 auth-widening」约束保住了——不是删复查,是用更强的载体替代。kanban 侧配合点击现签解 TTL。要动 core 授权载体 + web 授权分支,所以先过你。
+> Allen,㊲(kanban 附件下载 forbidden)想动 core 的 `DownloadToken`,过你一眼。先交代查验结论(§五全链 file:line):消息的**写路和投递**确实 cap 闭合——`session.send` 声明 `caps: [:send]` 过 step 5.5(`behavior/session.ex:147-153` + `kind/runtime.ex:319`),上传走 `:session :attach` dispatch 同一 chokepoint(`world_uploads_controller.ex:125-141`),接收方授权是 join 时一次性铸的 member-cap `cap(:session, Session, :receive, S)` 由收方 in-handler 自查(`member_cap.ex:259-267` + `member_receive.ex:78-85`)。**但读路不是**:world 内部会话页读历史是纯查表(`ConversationData.state_for` → `MessageStore.recent_in_session`,`conversation_data.ex:37-42,:416-422`),没有任何 cap/membership 判定——self_join 被拒也「degrade to observe,viewer still sees the conversation」(`conversation_actions.ex:1066-1067,:1109-1116`),普通消息默认 `:external_visible`(`message.ex:121-123`)对任何进得了页面的登录者可见。持 held-cap 判定的读路反而在**外部面**:`Membership.authorize/3`(roster ∧ held member-cap,`membership_predicate.ex:55-83`)用在 chat_feed/external_feed/publisher_read(`chat_feed.ex:137`/`external_feed.ex:402`/`socialware_publisher_read.ex:202`)。所以下载 serve-time 那道「参与=发过言」查表复查(`uploads_controller.ex:110-157,:199-210`)不是孤立的偷懒——它是**给渲染面无 cap 门打的补偿**(moduledoc 自己说破:token 链接 renders for everyone who can VIEW,含 observe-only,minting alone would WIDEN access,`uploads_controller.ex:42-54`)。这意味着修法的对齐对象要说准:不是「对齐消息读路现状」(它本身就是查表),而是**对齐系统里已有的 held-cap 判定语义**——外部读的 `Membership.authorize/3` ∪ mount/composition 的宿主钥匙(#154 granter=data_owner)。修法三件:① core `DownloadToken` payload 加可选 `grantee`(person-bound);② `uploads_controller.download/2` 对 person-bound token 验 `caller == grantee` 放行,无字段走旧复查零破坏;③ **签发面必须过真 cap 门才有资格签 person-bound**——kanban 侧点击现签天然在 `get_tree` cap-gated dispatch 之内(`world_data.ex:239-249,:403-412`),chat 侧现签前补跑 `Membership.authorize/3`(正好把 chat 附件的「参与」从『发过言』修正到『持 member-cap』,与外部面同一谓词、无 drift)。防泄漏比现状强:bearer 变 person-bound,泄漏换人无效;codex「不 auth-widening」保住。另附带发现两条(不阻塞 ㊲,单独立项):内部会话页读史零判定 observer 全可读,与 #1217 列表 fail-closed / 外部面 held-cap 不对齐;`resolver.ex:238-241` 「fan-out mints a :receive cap PER recipient」注释是 A2.2 前的 stale 说法(delivery 现呈交零 cap,`delivery.ex:296-306`)。要动 core 授权载体 + web 授权分支,所以先过你。
 
 ---
 
@@ -103,7 +103,57 @@ builtin `chat` definition 的全部内容:`name: "chat", bases: Session.chat_beh
 
 ---
 
-## 五、一句话总结
+## 五、消息物化全链查验(2026-07-18 续:发/投递/读/附件/判定 逐环 file:line)
+
+> 从头验「消息是怎么物化的、是否已符合 CapBAC」,回答:用户断言「消息本身已符合 CapBAC、下载检查是偷懒查表」成立吗?worktree HEAD 37138e784(本分支 notes-only,代码同 skill-1 基线 d533a5d73)。
+
+### 5.1 发 —— cap 判定 ✅
+
+- **授权**:`session.send` 声明 `caps: [:send]`(`apps/ezagent_domain_session/lib/ezagent/behavior/session.ex:147-153`)。dispatch step 5.5 = `Kind.Runtime.authz_check/5`(`apps/ezagent_core/lib/ezagent/kind/runtime.ex:319`):非 cap-exempt 动作解析 `required_caps`,先查 `ctx.caps` 呈交 caps、miss 再查 caller 自己 `:identity` slice 持有 caps(`runtime.ex:382-415`),deny → `:unauthorized`。
+- **handler → 落库**:`handle_send`(`session.ex:563`)第一步 `MessageStore.write(msg, session_uri)`(`session.ex:578`),写失败=发失败(let-it-crash);之后 Resolver 路由 + DeliveryQueue 异步 fan-out(`session.ex:624-694`)。
+- **Message 行结构**(`apps/ezagent_core/lib/ezagent/message.ex:84-137`):`id`(UUID PK)/ `session_uri` / `workspace_uri` / `sender`(单 URI)/ `mentions` / `body`(map,含 `text` + `attachments`)/ `ref_id` / `inserted_at` / `visibility`(enum,**默认 `:external_visible`**,:121-123)/ `hops` / `routed_at`。**没有 recipients/participants 列**——接收方从不物化在 Message 行上(`message_routings` 连接表 2026-06-21 已删,`message_store.ex:80-87`),「谁参与过」只能靠 sender 列 + 「在该 session 有 sender 行」间接推断——这正是 serve-time 查表复查形状的由来。
+
+### 5.2 投递 —— cap 判定 ✅,但「每条消息铸 receive cap」的说法要修正
+
+- **旧引用 stale**:`resolver.ex:238-241` 注释「The Session delivery fan-out mints a `:receive` cap PER recipient」是 **A2.2 之前的旧机制描述**(RF-6 gate 本身仍 load-bearing,但理由句过时)。现行 delivery 呈交**零 cap**:`dispatch_receive_call/3` 显式 `caps: MapSet.new()` + 注释「delivery presents NO receive cap……the ephemeral `member_receive_caps/1` bearer token is DELETED」(`apps/ezagent_domain_session/lib/ezagent/behavior/session/delivery.ex:296-306`)。
+- **真机制 = join 时一次性 + 收方自查**:成员 join 时 `MemberCap.grant_at_join/2` 铸普适 member-cap `cap(:session, Ezagent.ActionSet.Session, :receive, session_uri, ws)` 进成员自己 `:identity` slice(`apps/ezagent_domain_session/lib/ezagent/behavior/session/member_cap.ex:31,:259-267`;granter=session owner,#154);leave/remove 同步 revoke(`member_cap.ex:139-151`)。`:receive` 动作在 step 5.5 是 **cap-exempt**(`behavior/user/receive.ex:187` + `behavior/agent/receive.ex:283`),授权在 handler 内:`MemberReceive.authorize/1`(`apps/ezagent_domain_identity/lib/ezagent/session/member_receive.ex:78-85`)查收方 pre-loaded `:identity` sibling slice 里是否持对 `ctx.caller`(源 session)的 member-cap,K4 provenance 过滤(须 real-entity granted),fail-closed。
+- **cap 的 instance 轴 = session URI**(`member_receive.ex:102-109` 按 `cap.instance == session` 匹配),**不是 message**。即:不是每条消息/每次投递铸 cap,是每成员每 session 一把、revoke 即时生效(零 bearer 窗口)。判定:✅ cap 判定(形态=一次性 member-cap + in-handler 自查)。
+
+### 5.3 读 —— 内部面 ❌ 无判定;held-cap 判定只在外部面
+
+- **world 会话页读史全链**:`WorldLive.handle_params` → `maybe_set_current_session`(`world_live.ex:78-111`)→ `ConversationSessionState.state_for`(`conversation_session_state.ex:59-69`)→ `ConversationData.state_for` → `load_messages`(`apps/ezagent_plugin_world/lib/ezagent/world/conversation_data.ex:37-42,:409-422`)→ `MessageStore.recent_in_session` / `recent_visible_in_session`(`apps/ezagent_core/lib/ezagent/message_store.ex:142-174`)——**纯 Repo 查表,无 get_slice、无 dispatch、无 cap/membership 判定**。
+- `caller_caps` 唯一用途是 `read_unfiltered?`(`conversation_data.ex:416-422,:432-458`):持 `:read_unfiltered` cap 才能看 `:internal` 消息;普通消息默认 `:external_visible`(§5.1),**任何进得了页面的登录者都能读**。
+- **「进得了页」的门**只有:`RequireEntity`(登录)+ workspace 选择;session 列表虽按 member_uris fail-closed 过滤(#1217),但 `?session=` 深链直接给 URI 就读——且 `self_join` 被拒**明文 degrade to observe**:「A denial degrades to "observe" — the viewer still sees the conversation」(`apps/ezagent_plugin_world/lib/ezagent/world/conversation_actions.ex:1066-1067,:1109-1116`)。读不依赖成员身份,连 roster 都不查。
+- **有 held-cap 判定的读路在外部面**:`Ezagent.Session.Membership.authorize/3`(owner ∨ roster∧held member-cap,与 receive 共用 `holds_member_cap_over?` 同一谓词,`apps/ezagent_domain_session/lib/ezagent/session/membership_predicate.ex:55-83`)用在 `chat_feed.ex:137`、`external_feed.ex:402`、`socialware_publisher_read.ex:202`、`session_config/admission.ex:13`。**倒挂**:匿名/外部读比登录内部读判得严。判定:❌ 查表无判定(内部面)。
+
+### 5.4 附件 —— 上传 ✅ / 预签在无判定读路内 / serve-time ⚠️ 查表
+
+- **上传**:`POST /world/uploads` → `authorize_attach` dispatch `:session :attach`(`apps/ezagent_web/lib/ezagent_web/controllers/world_uploads_controller.ex:125-141`),与 `:send` 同 chokepoint 同参与 tier 共授(:10-20)——✅ cap 判定。成功后存 ws 分区 uploads + 返 anti-laundering grant(uri↔caller↔session Phoenix.Token,:150-156)。
+- **挂进消息**:composer 下次 `chat.send` 带 grant,`build_message` 验 grant 后把 `resource://…/uploads/…` 放进 `body.attachments`(`conversation_data.ex:381-398`)。
+- **渲染预签**:chat 侧 `attachment_row → DownloadToken.mint!(uri)`(`conversation_data.ex:549-566`)——**mint 无 caller 参数,payload 只有 `{uri, issued_at, ttl}`**(`apps/ezagent_core/lib/ezagent/uploads/download_token.ex:66-67,:92`,TTL 默认 300s :61),bearer token;且这一步发生在 §5.3 的**无判定读路**里——observer 也拿到 token。kanban 侧 `world_data.ex:403-412` 同一 mint,但发生在 cap-gated `:get_tree` dispatch 的响应整形内(`world_data.ex:239-249` `dispatch_ctx` 带登录者身份/caps)——kanban 预签反而有 cap 门在前。
+- **serve-time 复查**:`uploads_controller.download/2`(`uploads_controller.ex:89-100`)verify token 后跑 `authorized?/2`(:110-157)= admin ∪ 上传消息 sender ∪ 「向附件所路由 session 发过消息」(`caller_sent_in_any_session?` :199-210)——全 Message 表 SQL(body LIKE 找候选 :159-174 + sender/session_uri exists 查询)。⚠️ 查表捷径。**但注意它的自我定位**(:42-54):正因为渲染面「renders a token link for everyone who can VIEW the session……includes observe-only callers」,minting alone would WIDEN access,才必须有这道复查——**查表复查是给读路无 cap 门打的补偿,不是孤立的偷懒**。
+
+### 5.5 判定表 + 断言裁定 + 修法重述
+
+| 环 | 判定 | 锚 |
+|---|---|---|
+| 发(send) | **cap 判定 ✅** | session.ex:147-153 + runtime.ex:319 |
+| 投递(receive) | **cap 判定 ✅**(join 一次性 member-cap + in-handler;非 per-message 铸) | member_cap.ex:259-267 + member_receive.ex:78-85 |
+| 读(内部会话页) | **无判定 ❌**(查表 + visibility 过滤;observe 也可读) | conversation_data.ex:37-42 + conversation_actions.ex:1109-1116 |
+| 附件上传 | **cap 判定 ✅**(:attach dispatch 同 send chokepoint) | world_uploads_controller.ex:125-141 |
+| 下载 serve-time | **查表捷径 ⚠️**(Message 表推断「参与」) | uploads_controller.ex:110-157 |
+
+**断言裁定:半成立**。「消息本身已符合 CapBAC」对**写路和投递**成立(send/attach/receive 三处都是真 cap 判定),对**读路不成立**——内部读史本身就是查表零判定,和下载复查是同一窪地(且后者是前者的补偿)。「下载检查是偷懒查表」成立,但它不是相对「消息已 CapBAC」的孤立退化,而是**读面从来没有 cap 门**的诚实后果。
+
+**修法重述**(替代「回归读路的 cap 判定」这一表述——读路现状没有可回归的 cap 判定):下载对齐的对象是**系统里已存在的 held-cap 读判定语义** = 外部读的 `Membership.authorize/3`(消息宿主=session 的钥匙)∪ mount/composition 的宿主钥匙(板的 read cap,#154)。落到 file:line:
+1. **core** `download_token.ex`:payload 加可选 `grantee`(`mint!/2` opts 扩展,`verify` 返回携带);
+2. **web** `uploads_controller.ex:89-100`:token 带 grantee → 验 `caller == grantee` 放行;无 grantee → 走 :110-157 旧复查,零破坏;
+3. **签发面过真门才有资格签 person-bound**:kanban 点击现签在 `get_tree` cap-gated dispatch 内(`world_data.ex:239-249`)已满足;chat 侧现签 action 签发前补 `Membership.authorize/3`(`membership_predicate.ex:55`)——chat 附件的「参与」判定从『发过言』(⊊ 成员)修正为『持 member-cap』,与外部面/receive 同一谓词,消 drift;
+4. **另立项不阻塞 ㊲**:内部会话页读史零判定(observer 全可读)与 #1217 列表 fail-closed、外部面 held-cap 的倒挂;`resolver.ex:238-241` stale 注释顺手修。
+
+---
+
+## 六、一句话总结
 
 四条模型:①部分成立(物化成 agent 是拍板方向;「都是聊天」在 dispatch=广义说话意义下成立,chat/action 是一个 fabric 两个 register,RF-6 只挡 principal 身份不挡对话)/②部分成立(chat=成员制会话容器,过滤在 routing 层)/③成立(step 5.5 单点+双向 cap)/④**成立**——㊲ 是「参与」概念的 chat-register 旧窄实现,泛化为「消息参与者 ∪ 宿主钥匙持有者」即架构对齐修法,动 core 载体需过 Allen。
 
