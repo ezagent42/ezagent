@@ -251,13 +251,24 @@ events, and migrations never expose ciphertext, nonce, state, verifier, callback
 code, or key material. This authorization-correlation key ring is separate from
 the D2 credential encryption hierarchy.
 
+Test configuration uses an explicit fixed non-production key. Development and
+production load the active key id and key ring from runtime environment-backed
+configuration; there is no hard-coded, generated, or silent fallback key.
+Secret-bearing configuration errors report only missing/invalid key ids.
+
+BEAM immutable binaries cannot be cryptographically zeroized. D1 guarantees
+that plaintext is scoped to the private exchange call and is never copied into
+process state, ETS, Ecto, messages, logs, telemetry, errors, events, or public
+structs; it does not claim memory-zeroization after garbage collection.
+
 ## 7. User-Kind Lifecycle command boundary
 
 `Ezagent.ActionSet.ProviderConnection` uses `Ezagent.Lifecycle` and is registered
 as a registry-only behavior on `Ezagent.Entity.User`, following the existing
 UserDefaultCredentialSource pattern. It is stateless and adds no connection
-state or effects to the User snapshot. Every command reloads and locks the Ecto
-aggregate before deciding a transition.
+facts or state effects to the User snapshot. An incidental empty registry-only
+slice is not a connection truth source. Every command reloads and locks the
+Ecto aggregate before deciding a transition.
 
 Initial actions are:
 
@@ -292,6 +303,16 @@ consumption rejects before any backend or driver effect. Thus the continuation
 is attempt-bound and single-use, not a falsely claimed expiring capability.
 Provider callback parameters cannot select owner, workspace, connection,
 provider, host, acquisition method, execution identity, or credential ref.
+
+External callback transport does not receive an internal authorization ref.
+The local backend emits state as `<key-id>.<opaque-random-value>` and stores a
+unique keyed digest under `{backend_pair_id, state_digest}`. Callback ingress
+uses the server-owned registered redirect id to resolve the backend pair, parses
+only the non-secret key id, computes the digest with that key, resolves the
+attempt, and loads every authority coordinate from durable state. The raw state
+then enters backend validation but never a log, error, event, telemetry payload,
+or read model. A callback parameter cannot directly name an attempt or choose a
+backend pair.
 
 ## 8. Connection state machine
 
