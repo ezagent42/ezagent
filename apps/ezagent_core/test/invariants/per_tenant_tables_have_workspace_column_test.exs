@@ -144,7 +144,13 @@ defmodule EzagentCore.Invariants.PerTenantTablesHaveWorkspaceColumnTest do
     {Ezagent.Cap.Delivery, "cap_delivery_outbox"},
     # Git task workspace lifecycle rows contain canonical checkout and Agent
     # retirement coordinates for exactly one workspace generation.
-    {Ezagent.Workspace.TaskWorkspace.Provision, "git_task_workspace_provisions"}
+    {Ezagent.Workspace.TaskWorkspace.Provision, "git_task_workspace_provisions"},
+    {Ezagent.ProviderConnection.Connection, "provider_connections"},
+    {Ezagent.ProviderConnection.AuthorizationAttempt, "provider_authorization_attempts"},
+    {Ezagent.ProviderConnection.Operation, "provider_connection_operations"},
+    {Ezagent.ProviderConnection.Event, "provider_connection_events"},
+    {Ezagent.ProviderConnection.AuthorizationBackendRecord,
+     "provider_authorization_backend_records"}
   ]
 
   # Per-tenant tables that have NO schema module (raw `Repo.insert_all`
