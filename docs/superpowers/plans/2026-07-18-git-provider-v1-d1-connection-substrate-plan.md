@@ -32,6 +32,9 @@
 apps/ezagent_core/lib/ezagent/cap.ex                         # current-target artifact validation helper
 apps/ezagent_core/priv/repo_pg/migrations/
   20260718000000_create_provider_connections.exs             # five D1 tables and constraints
+config/test.exs                                               # fixed non-production authorization key
+config/dev.exs                                                # explicit development key source
+config/runtime.exs                                            # production key-ring parsing
 
 apps/ezagent_domain_git/lib/ezagent/entity/git_task_access.ex # live entity URI migration
 apps/ezagent_domain_git/test/support/d0_backend_reuse_gate/    # D0.1 executable contracts
@@ -65,6 +68,32 @@ apps/ezagent_domain_provider_connection/
 └── lib/ezagent/behavior/provider_connection.ex # stateless User-Kind Lifecycle
 ```
 
+### Task 0: Capture the pre-implementation baseline
+
+**Files:**
+- Modify: none.
+
+**Interfaces:**
+- Produces: command/exit-code/failure evidence for the current docs-only HEAD; later tasks compare against this evidence without checking out an older commit.
+
+- [ ] **Step 1: Record identity and status**
+
+Run: `git rev-parse HEAD && git status --short`
+
+Expected: HEAD is the approved plan commit or its direct documentation successor; status contains only the two preserved untracked handoff paths.
+
+- [ ] **Step 2: Run the affected baseline suites**
+
+```bash
+SHELL=/bin/bash mix test apps/ezagent_domain_git/test
+SHELL=/bin/bash mix test apps/ezagent_domain_identity/test
+SHELL=/bin/bash mix test apps/ezagent_core/test/ezagent/cap_test.exs
+mix ezagent.arch.scan
+mix ezagent.check_invariants.lifecycle
+```
+
+Expected: record every exit code and failing test name in the execution log. Do not edit code, checkout another revision, reset, or create a baseline worktree. Any later failure is pre-existing only when it exactly matches this captured command and failure.
+
 ### Task 1: Make D0.1 reconciliation executable
 
 **Files:**
@@ -82,31 +111,38 @@ apps/ezagent_domain_provider_connection/
 
 Add table-driven cases that call every mutating callback twice with identical input and assert the same logical result plus one effect. Then change one authority-bearing field while retaining the correlation id and assert `:correlation_conflict`. For callback consumption, use a new correlation id against the consumed authorization ref and assert `:callback_already_consumed`.
 
-```elixir
-test "callback reconciles exact retry and rejects correlation reuse" do
-  {:ok, started} = D0.InProcessFake.begin_authorization(begin_request("begin-1"))
-  request = callback_request(started, "consume-1")
+Add `retry_and_conflict_case/1` to `D0.Conformance.authorization_cases/1`, where
+the existing private request helpers are available:
 
-  assert {:ok, first} = D0.InProcessFake.consume_callback(request)
-  assert {:ok, second} = D0.InProcessFake.consume_callback(request)
+```elixir
+defp retry_and_conflict_case(descriptor) do
+  reset(descriptor)
+  {:ok, started} = authorization(descriptor).begin_authorization(begin_request())
+  request = callback_request(started, callback_envelope(started))
+
+  assert {:ok, first} = authorization(descriptor).consume_callback(request)
+  assert {:ok, second} = authorization(descriptor).consume_callback(request)
   assert first == second
-  assert D0.InProcessFake.provider_effect_count() == 1
+  assert Map.fetch!(descriptor, :provider_effect_count).() == 1
 
   assert {:error, :correlation_conflict} =
-           D0.InProcessFake.consume_callback(
+           authorization(descriptor).consume_callback(
              put_in(request, [:expected_subject, :connection_version], 2)
            )
 
   assert {:error, :callback_already_consumed} =
-           D0.InProcessFake.consume_callback(%{request | correlation_id: "consume-2"})
+           authorization(descriptor).consume_callback(%{
+             request
+             | correlation_id: "corr-callback-2"
+           })
 end
 ```
 
 - [ ] **Step 2: Run RED**
 
-Run: `SHELL=/bin/bash mix test apps/ezagent_domain_git/test/ezagent/domain_git/d0_backend_contract_test.exs --only d0_remote_shaped`
+Run: `SHELL=/bin/bash mix test apps/ezagent_domain_git/test/ezagent/domain_git/d0_backend_contract_test.exs`
 
-Expected: FAIL because conflicting reuse is not a closed error and exact retry behavior is not shared across all commands.
+Expected: FAIL because conflicting reuse is not a closed error and exact retry behavior is not shared across all commands. Confirm the output includes the new test name; a run that excludes it is not a valid RED.
 
 - [ ] **Step 3: Implement one command-key reconciler in the fake**
 
@@ -222,7 +258,7 @@ git commit -m "fix(git): move task access to entity URI"
 
 - [ ] **Step 1: Write RED dependency, migration, constraint, and transition tests**
 
-Assert dependencies are exactly core + identity; schema source is `EzagentCore.Repo`; all tables carry indexed `workspace_uri`; operations uniquely index `[:backend_pair_id, :operation_class, :correlation_id]`; attempts uniquely index authorization ref; backend records enforce one committed consume per authorization ref; active binding uniqueness covers workspace/owner/provider/host/account/execution identity.
+Assert dependencies are exactly core + identity; schema source is `EzagentCore.Repo`; all tables carry indexed `workspace_uri`; operations uniquely index `[:backend_pair_id, :operation_class, :correlation_id]`; attempts uniquely index authorization ref and `[:backend_pair_id, :state_digest]`; backend records enforce one committed consume per authorization ref; active binding uniqueness covers workspace/owner/provider/host/account/execution identity.
 
 ```elixir
 test "terminal states cannot reactivate" do
@@ -279,16 +315,28 @@ git commit -m "feat(provider-connection): add durable aggregate"
 - [ ] **Step 1: Write RED helper and dispatch tests**
 
 ```elixir
-test "validation checks signature and receiver without authorizing an action" do
-  {:ok, artifact} = Cap.issue_for_action({:admin, admin}, owner, consume_target)
+test "validation checks signature and receiver without authorizing an action", context do
+  {:ok, artifact} =
+    Cap.issue({:admin, context.admin}, context.grantee, action_cap(context.uri))
 
-  assert :ok = dispatch_probe(owner, fn -> Cap.validate_for_current_target(artifact, owner) end)
+  assert :ok =
+           Authority.with_current(context.authority, fn ->
+             Cap.validate_for_current_target(artifact, context.grantee)
+           end)
+
+  tampered = %{artifact | action: :raise}
+
   assert {:error, :invalid_cap_signature} =
-           dispatch_probe(owner, fn -> Cap.validate_for_current_target(tamper(artifact), owner) end)
+           Authority.with_current(context.authority, fn ->
+             Cap.validate_for_current_target(tampered, context.grantee)
+           end)
 end
 ```
 
-Assert all seven actions resolve on `Ezagent.Entity.User`; wrong owner/workspace/action/grantee/tampered artifact produces zero aggregate/backend/driver mutation. Assert the behavior is registry-only and never added to `User.behaviors/0` or snapshots.
+Add this test inside the existing `Ezagent.CapTest`, reusing its `context` and
+private `action_cap/1`. Alias `Ezagent.Cap.Authority` is already present.
+
+Assert all seven actions resolve on `Ezagent.Entity.User`; wrong owner/workspace/action/grantee/tampered artifact produces zero aggregate/backend/driver mutation. Reauthorize, revoke, and disconnect with missing, stale, wrong-owner, or wrong-workspace assurance also produce zero mutation. Assert the behavior is registry-only and never added to `User.behaviors/0`. Snapshot tests assert its slice contains no connection id, status, version, backend ref, attempt ref, or credential fact; an incidental empty registry-only slice is not a failure and is never treated as truth.
 
 - [ ] **Step 2: Run RED**
 
@@ -323,7 +371,7 @@ git commit -m "feat(provider-connection): add owner command boundary"
 - Create: `apps/ezagent_domain_provider_connection/test/support/fake_backend_pairs.ex`
 
 **Interfaces:**
-- Produces: `Driver.begin/1`, `consume_callback/1`, `refresh/1`, `revoke/1`; unchanged D0 backend callbacks; pair lookup by stable pair id.
+- Produces: `Driver.begin_authorization/1`, `consume_callback/1`, `refresh/1`, `revoke/1`; unchanged D0 backend callbacks; pair lookup by stable pair id.
 
 - [ ] **Step 1: Write RED behavior/registry/parity tests**
 
@@ -354,6 +402,9 @@ git commit -m "feat(provider-connection): register drivers and backend pairs"
 
 **Files:**
 - Create: `authorization_key_ring.ex`, `local_authorization_backend.ex`
+- Modify: `config/test.exs`
+- Modify: `config/dev.exs`
+- Modify: `config/runtime.exs`
 - Create: `apps/ezagent_domain_provider_connection/test/ezagent/provider_connection/authorization_key_ring_test.exs`
 - Create: `apps/ezagent_domain_provider_connection/test/ezagent/provider_connection/local_authorization_backend_test.exs`
 
@@ -362,7 +413,7 @@ git commit -m "feat(provider-connection): register drivers and backend pairs"
 
 - [ ] **Step 1: Write RED crypto, restart, rotation, and leak tests**
 
-Cover missing/malformed/duplicate active key boot failure; ciphertext differs across nonces; associated-data tampering fails; restart resumes an unexpired attempt; exact consume retry returns the same opaque handoff ref with one driver effect; conflicting correlation fails; finalized handoff ciphertext is shredded while its tombstone remains; old decrypt-only key removal fails while referenced; no sentinel appears in Inspect/log/error/event output.
+Cover missing/malformed/duplicate active key boot failure; the explicit test key is accepted only in `MIX_ENV=test`; ciphertext differs across nonces; associated-data tampering fails; restart resumes an unexpired attempt; exact consume retry returns the same opaque handoff ref with one driver effect; conflicting correlation fails; finalized handoff ciphertext is shredded while its tombstone remains; old decrypt-only key removal fails while referenced; no sentinel appears in Inspect/log/error/event output. Configuration errors may name a missing/invalid key id but never echo key material or the environment variable value.
 
 - [ ] **Step 2: Run RED**
 
@@ -372,7 +423,21 @@ Expected: FAIL because key ring/backend modules are missing.
 
 - [ ] **Step 3: Implement AEAD and the one-direction exchange**
 
-Use `:crypto.crypto_one_time_aead/7` with AES-256-GCM, a fresh 12-byte nonce, 16-byte tag, a configured 32-byte key, and deterministic associated data from the approved bound coordinates. Store ciphertext/tag/nonce/key id only in the private record. On consume, claim the command, decrypt inside the backend, call the registered driver with a single-purpose exchange context, immediately seal returned credential material, persist only its opaque pair-private handoff ref as the logical result, and zero/drop local plaintext references. Never expose a verifier or handoff unwrap getter.
+Use AES-256-GCM with a fresh 12-byte nonce, a configured 32-byte key, and deterministic associated data from the approved bound coordinates. Encrypt with `:crypto.crypto_one_time_aead/6` and decrypt with `/7`:
+
+```elixir
+{ciphertext, tag} =
+  :crypto.crypto_one_time_aead(:aes_256_gcm, key, nonce, plaintext, aad, true)
+
+plaintext =
+  :crypto.crypto_one_time_aead(:aes_256_gcm, key, nonce, ciphertext, aad, tag, false)
+
+assert byte_size(tag) == 16
+```
+
+Store ciphertext/tag/nonce/key id only in the private record. On consume, claim the command, decrypt inside the backend, call the registered driver with a single-purpose exchange context, immediately seal returned credential material, persist only its opaque pair-private handoff ref as the logical result, and retain no plaintext reference in process state, ETS, Ecto, messages, logs, telemetry, errors, events, or public structs. BEAM immutable binaries cannot be cryptographically zeroized, so the implementation must not claim memory zeroization. Never expose a verifier or handoff unwrap getter.
+
+`config/test.exs` sets id `"test-v1"` and a fixed 32-byte non-production key. `config/dev.exs` marks the source as `:runtime_env`. For both development and production, `config/runtime.exs` uses `System.fetch_env!/1` to read `EZAGENT_PROVIDER_AUTH_ACTIVE_KEY_ID` and `EZAGENT_PROVIDER_AUTH_KEYS_JSON`; the latter is a JSON object from key id to base64-encoded 32-byte key. Reject key ids outside `~r/\A[a-zA-Z0-9._-]{1,64}\z/`, invalid JSON/base64, wrong key length, duplicate normalized ids, or an active id absent from the map. Production/development have no hard-coded, generated, or silent fallback. Unit tests may start the key ring with explicit fixture options instead of mutating global application env.
 
 - [ ] **Step 4: Run GREEN and commit**
 
@@ -394,11 +459,11 @@ git commit -m "feat(provider-connection): persist authorization correlation"
 - Create: `apps/ezagent_domain_provider_connection/test/integration/callback_recovery_test.exs`
 
 **Interfaces:**
-- Produces: attempt resolution by opaque ref; owner dispatch with stored cap; `pending -> consuming -> consumed` claim protocol.
+- Produces: attempt resolution by keyed state digest; owner dispatch with stored cap; `pending -> consuming -> consumed` claim protocol.
 
 - [ ] **Step 1: Write RED end-to-end callback tests**
 
-Test wrong/tampered artifact before attempt insert; callback parameters cannot select owner/workspace/connection/provider/host; concurrent claim has one winner; crash after backend commit resumes the same correlation/ref and has one provider effect; credential store consumes the ref only through the registered pair; pointer finalization shreds handoff ciphertext and retains a tombstone; different-correlation replay is rejected; expired/cancelled/stale-version attempts make zero backend/driver mutations.
+Test wrong/tampered artifact before attempt insert; callback transport has only registered redirect id, raw state, and provider envelope—not authorization ref; state uses `<key-id>.<opaque-random-value>`; wrong/unknown key id and state digest make zero mutation; callback parameters cannot select owner/workspace/connection/provider/host; concurrent claim has one winner; crash after backend commit resumes the same correlation/ref and has one provider effect; credential store consumes the ref only through the registered pair; pointer finalization shreds handoff ciphertext and retains a tombstone; different-correlation replay is rejected; expired/cancelled/stale-version attempts make zero backend/driver mutations.
 
 - [ ] **Step 2: Run RED**
 
@@ -408,7 +473,7 @@ Expected: FAIL on missing ingress/claim/store functions.
 
 - [ ] **Step 3: Implement exact attempt dispatch and bounded claims**
 
-Ingress accepts only the opaque authorization ref plus raw provider callback envelope, loads all authority coordinates from the attempt, decodes the cap via `Capability.from_map/1`, and dispatches to the stored owner URI as that owner. Claim uses row lock, random token, attempt version, deterministic correlation, and deadline; recovery may steal only at `now >= claim_until` and must reuse the stored command.
+Ingress accepts only the registered redirect id, raw state, and provider callback envelope. The server-owned redirect registry resolves the backend pair; callback parameters cannot choose it. Ingress parses the non-secret key id prefix, loads that key from the configured ring, computes the keyed state digest, and resolves the attempt through the unique `{backend_pair_id, state_digest}` index. It never logs or returns raw state. It loads authorization ref and every authority coordinate from the attempt, decodes the cap via `Capability.from_map/1`, and dispatches to the stored owner URI as that owner. Claim uses row lock, random token, attempt version, deterministic correlation, and deadline; recovery may steal only at `now >= claim_until` and must reuse the stored command.
 
 - [ ] **Step 4: Run GREEN and commit**
 
@@ -449,7 +514,7 @@ Use `Repo.transaction` plus `lock: "FOR UPDATE"` for claims/CAS. Never hold a DB
 
 - [ ] **Step 4: Run GREEN and commit**
 
-Run the four files from Step 2.
+Run: `SHELL=/bin/bash mix test apps/ezagent_domain_provider_connection/test/integration/credential_replacement_test.exs apps/ezagent_domain_provider_connection/test/integration/refresh_fence_test.exs apps/ezagent_domain_provider_connection/test/integration/termination_test.exs apps/ezagent_domain_provider_connection/test/ezagent/provider_connection/selector_test.exs`
 
 Expected: pass with zero failures and one effect per correlation.
 
@@ -473,7 +538,7 @@ git commit -m "feat(provider-connection): fence credential transitions"
 
 - [ ] **Step 1: Write RED recovery and invariant tests**
 
-Recovery processes batches of 50 ordered by `{inserted_at, id}`, stops after 10 batches per boot pass, and reschedules remaining work without sleep. Priority is callback/credential pointer completion, then termination cleanup, then expired refresh claims. Gates reject live `pattern: :resource`, provider names in the common app, generic secret getters, backend-owned Req/provider HTTP, GitTaskAccess principal misuse, non-User management targets, and sensitive sentinel output.
+Recovery processes batches of 50 ordered by `{inserted_at, id}` and at most 10 batches per pass. After 500 rows it yields the mailbox with `Process.send_after(self(), :start_recovery_pass, 0)`, resets the pass counter, and continues only unfinished obligations; it never sleeps or recurses without yielding. Priority is callback/credential pointer completion, then termination cleanup, then expired refresh claims. Gates reject live `pattern: :resource`, provider names in the common app, generic secret getters, backend-owned Req/provider HTTP, GitTaskAccess principal misuse, non-User management targets, and sensitive sentinel output.
 
 - [ ] **Step 2: Run RED**
 
@@ -483,7 +548,7 @@ Expected: FAIL on missing recovery worker and gates.
 
 - [ ] **Step 3: Implement supervised bounded recovery**
 
-Use a named GenServer under the app supervisor. `handle_continue/2` schedules an internal `:recover_batch`; each message processes at most 50 rows and queues another message only when work remains. Recovery invokes the same public orchestration functions and stored correlations as normal commands; it creates no bypass writer or new authority.
+Use a named GenServer under the app supervisor. `handle_continue/2` sends `:start_recovery_pass`; each `:recover_batch` message processes at most 50 rows using the stable `{inserted_at, id}` cursor and increments a pass counter. Below 10 batches it queues the next batch only when work remains. At 10 it uses `Process.send_after/3` with zero delay to start a fresh pass after yielding the mailbox. Recovery invokes the same public orchestration functions and stored correlations as normal commands; it creates no bypass writer or new authority.
 
 - [ ] **Step 4: Run GREEN and commit**
 
@@ -505,7 +570,7 @@ git commit -m "test(provider-connection): gate recovery boundaries"
 **Interfaces:**
 - Produces: reproducible verification evidence and reviewed D1 implementation; no push/merge/deploy.
 
-- [ ] **Step 1: Capture baseline and run focused suites**
+- [ ] **Step 1: Compare focused suites with Task 0 baseline**
 
 ```bash
 git status --short
@@ -515,7 +580,7 @@ SHELL=/bin/bash mix test apps/ezagent_domain_identity/test
 SHELL=/bin/bash mix test apps/ezagent_core/test/ezagent/cap_test.exs
 ```
 
-Expected: zero failures attributable to D1; any pre-existing failure must be reproduced on baseline commit `8f3a53f4d` before adjudication.
+Expected: zero failures attributable to D1; a failure is pre-existing only when it exactly matches Task 0's captured command and failure. Do not checkout/reset to `8f3a53f4d` or create another worktree.
 
 - [ ] **Step 2: Run migrations, compile, and architecture gates**
 
