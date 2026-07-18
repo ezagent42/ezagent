@@ -52,16 +52,22 @@ defmodule Ezagent.ActionSet.ChatLegendsTest do
       assert {:ok, %{legends: ^legends}, effects} =
                SessionBehavior.handle_set_legends(%{legends: legends}, ctx)
 
-      assert Enum.any?(effects, fn {:set, :legends, l} -> l == legends; _ -> false end)
+      assert Enum.any?(effects, fn
+               {:set, :legends, l} -> l == legends
+               _ -> false
+             end)
     end
 
-    test "a system principal caller (e.g. the eliminated session-internal) is NOT authorized" do
-      # #154 — no system principal is trusted for legends anymore; authority is
-      # session-self (caller==self_uri) or the orchestrator's within_session cap.
-      # A `system://...` caller is neither → rejected like any untrusted caller.
+    test "handler execution assumes the central verifier already authorized the call" do
       legends = Legend.put(%{}, "team", member_set: [], bound_rule_set: "rs")
-      ctx = %{self_uri: uri("session://team/default/s1"), caller: uri("system://session-internal")}
-      assert {:error, :unauthorized} = SessionBehavior.handle_set_legends(%{legends: legends}, ctx)
+
+      ctx = %{
+        self_uri: uri("session://team/default/s1"),
+        caller: uri("system://session-internal")
+      }
+
+      assert {:ok, %{legends: ^legends}, _effects} =
+               SessionBehavior.handle_set_legends(%{legends: legends}, ctx)
     end
 
     test "the session's orchestrator (within_session cap) is authorized" do
@@ -81,19 +87,25 @@ defmodule Ezagent.ActionSet.ChatLegendsTest do
       ctx = %{self_uri: sess, caps: MapSet.new([orch_cap])}
 
       assert {:ok, _, effects} = SessionBehavior.handle_set_legends(%{legends: legends}, ctx)
-      assert Enum.any?(effects, fn {:set, :legends, l} -> l == legends; _ -> false end)
+
+      assert Enum.any?(effects, fn
+               {:set, :legends, l} -> l == legends
+               _ -> false
+             end)
     end
 
-    test "a plain session-cap holder (no orchestrator authority) is denied" do
+    test "handler does not repeat capability authorization" do
       ctx = %{self_uri: uri("session://team/default/s1"), caps: MapSet.new()}
-      assert {:error, :unauthorized} = SessionBehavior.handle_set_legends(%{legends: %{}}, ctx)
+
+      assert {:ok, %{legends: %{}}, _effects} =
+               SessionBehavior.handle_set_legends(%{legends: %{}}, ctx)
     end
 
     # The codex HIGH #2 regression: a plain session MEMBER (broad workspace
     # session caps but NOT the orchestrator cap / trusted principal) who simply
     # sets `system_internal: true` in their ctx MUST be denied — the old gate
     # trusted that boolean, installing legends for any caller.
-    test "a session member who SPOOFS system_internal: true in ctx is DENIED" do
+    test "handler ignores legacy system_internal and relies on the central verifier" do
       sess = uri("session://team-alpha/default/s1")
 
       # A broad-but-not-orchestrator session cap: {:session, :any} structurally
@@ -116,7 +128,8 @@ defmodule Ezagent.ActionSet.ChatLegendsTest do
         system_internal: true
       }
 
-      assert {:error, :unauthorized} = SessionBehavior.handle_set_legends(%{legends: %{}}, ctx)
+      assert {:ok, %{legends: %{}}, _effects} =
+               SessionBehavior.handle_set_legends(%{legends: %{}}, ctx)
     end
   end
 

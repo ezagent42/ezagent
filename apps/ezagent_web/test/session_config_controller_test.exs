@@ -161,7 +161,7 @@ defmodule EzagentWeb.SessionConfigControllerTest do
     Ezagent.Identity.Grant.grant_cap_via_router(
       principal,
       cap,
-      {:genesis, Ezagent.Entity.User.admin_uri()},
+      {:admin, Ezagent.Entity.User.admin_uri()},
       :sync
     )
   end

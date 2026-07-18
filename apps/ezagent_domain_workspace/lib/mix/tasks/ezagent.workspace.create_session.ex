@@ -59,22 +59,14 @@ defmodule Mix.Tasks.Ezagent.Workspace.CreateSession do
     # least-privilege for this single non-grant dispatch; `granted_by` =
     # `admin_uri()` (a real entity per #154, provenance only on an inline
     # authorizer never routed through `Ezagent.Identity.Grant`).
-    ctx = %{
-      caller: Ezagent.Entity.User.admin_uri(),
-      caps: [
-        %Ezagent.Capability{
-          Ezagent.Capability.cap(
-            :workspace,
-            Ezagent.ActionSet.Workspace,
-            :create_session,
-            Ezagent.URI.instance(workspace_uri),
-            Ezagent.Capability.workspace_of(workspace_uri)
-          )
-          | granted_by: Ezagent.Entity.User.admin_uri(),
-            granted_at: DateTime.utc_now()
-        }
-      ]
-    }
+    admin = Ezagent.Entity.User.admin_uri()
+    target = Ezagent.URI.with_action(workspace_uri, :workspace, :create_session)
+
+    ctx =
+      case Ezagent.Cap.issue_for_action({:admin, admin}, admin, target) do
+        {:ok, cap} -> %{caller: admin, caps: [cap]}
+        {:error, reason} -> Mix.raise("create-session cap issuance failed: #{inspect(reason)}")
+      end
 
     case Ezagent.Workspace.create_session(
            workspace_uri,

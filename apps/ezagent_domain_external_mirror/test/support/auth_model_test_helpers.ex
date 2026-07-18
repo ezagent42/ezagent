@@ -59,8 +59,13 @@ defmodule Ezagent.ExternalMirror.AuthModelTestHelpers do
     adapter_allow_module = Keyword.get(opts, :adapter_allow, MockPublishAdapter.Allow)
 
     caps = caps_for_profile(profile, session_uri, workspace_uri, adapter_allow_module)
+    ctx = %{caller: caller_uri, caps: caps, reply: :ignore}
 
-    %{caller: caller_uri, caps: caps, reply: :ignore}
+    if match?(%URI{}, session_uri) and MapSet.size(caps) > 0 do
+      Ezagent.Test.CapHelper.signed_ctx!(session_uri, ctx, :session)
+    else
+      ctx
+    end
   end
 
   defp caps_for_profile(:admin, _session, _ws, _allow) do
@@ -227,7 +232,8 @@ defmodule Ezagent.ExternalMirror.AuthModelTestHelpers do
       target: target,
       mode: :call,
       args: Map.merge(base_args, args_overrides),
-      ctx: ctx
+      ctx: ctx,
+      origin: :trusted_internal
     }
 
     Ezagent.Invocation.dispatch(inv)

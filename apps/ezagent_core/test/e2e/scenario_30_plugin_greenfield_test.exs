@@ -24,7 +24,7 @@ defmodule Ezagent.E2E.Scenario30PluginGreenfieldTest do
   / `Ezagent.SagaRunner` modules. It returns effects only.
   """
 
-  use ExUnit.Case, async: false
+  use EzagentCore.DataCase, async: false
 
   # #52 Mode-A: cross-tier suite — references sibling-app modules; resolves
   # only in the umbrella. Excluded standalone (`cd apps/ezagent_core && mix test`).
@@ -184,6 +184,23 @@ defmodule Ezagent.E2E.Scenario30PluginGreenfieldTest do
     {:ok, target: uri}
   end
 
+  defp signed_cmd(target, action, args, ctx_overrides \\ %{}) do
+    presenter = Ezagent.Entity.User.admin_uri()
+    cap = signed_fixture_cap!(target, WidgetKind.type_name(), WidgetBehavior, action, presenter)
+
+    ctx =
+      Map.merge(
+        %{
+          caller: presenter,
+          reply: {:caller_inbox, self()},
+          caps: MapSet.new([cap])
+        },
+        ctx_overrides
+      )
+
+    Cmd.new(target, action, args, ctx)
+  end
+
   # ---------------------------------------------------------------
   # 1. Macro-derived metadata is correct (greenfield introspection)
   # ---------------------------------------------------------------
@@ -221,12 +238,7 @@ defmodule Ezagent.E2E.Scenario30PluginGreenfieldTest do
 
   describe ":set effect updates the slice via the Router pipeline" do
     test "process action persists `last_input` + `count` after dispatch", %{target: target} do
-      cmd =
-        Cmd.new(target, :process, %{input: "hello-greenfield"}, %{
-          caller: :vm_internal,
-          reply: {:caller_inbox, self()},
-          caps: MapSet.new()
-        })
+      cmd = signed_cmd(target, :process, %{input: "hello-greenfield"})
 
       assert {:ok, %{processed: "processed:hello-greenfield"}} = Router.dispatch(cmd)
 
@@ -239,22 +251,10 @@ defmodule Ezagent.E2E.Scenario30PluginGreenfieldTest do
 
     test "process action increments count across two dispatches", %{target: target} do
       _ =
-        Router.dispatch(
-          Cmd.new(target, :process, %{input: "a"}, %{
-            caller: :vm_internal,
-            reply: {:caller_inbox, self()},
-            caps: MapSet.new()
-          })
-        )
+        Router.dispatch(signed_cmd(target, :process, %{input: "a"}))
 
       _ =
-        Router.dispatch(
-          Cmd.new(target, :process, %{input: "b"}, %{
-            caller: :vm_internal,
-            reply: {:caller_inbox, self()},
-            caps: MapSet.new()
-          })
-        )
+        Router.dispatch(signed_cmd(target, :process, %{input: "b"}))
 
       assert {:ok, %{count: 2, last_input: "b"}} = Ezagent.Kind.get_slice(target, :widget)
     end
@@ -271,11 +271,9 @@ defmodule Ezagent.E2E.Scenario30PluginGreenfieldTest do
       message = "ping-#{System.unique_integer([:positive])}"
 
       cmd =
-        Cmd.new(target, :broadcast, %{message: message}, %{
-          caller: :vm_internal,
+        signed_cmd(target, :broadcast, %{message: message}, %{
           mode: :cast,
-          reply: {:caller_inbox, self()},
-          caps: MapSet.new()
+          reply: :ignore
         })
 
       assert :ok = Router.dispatch(cmd)
@@ -357,23 +355,13 @@ defmodule Ezagent.E2E.Scenario30PluginGreenfieldTest do
       # `caps_denial_e2e_test.exs` already). For this E2E we assert
       # the Router accepts an empty cap set against a non-cap-gated
       # action.
-      cmd =
-        Cmd.new(target, :greet, %{name: "tester"}, %{
-          caller: :vm_internal,
-          reply: {:caller_inbox, self()},
-          caps: MapSet.new()
-        })
+      cmd = signed_cmd(target, :greet, %{name: "tester"})
 
       assert {:ok, %{greeted: true, name: "tester"}} = Router.dispatch(cmd)
     end
 
     test "cap-check propagates {:invalid_args, _} for malformed args", %{target: target} do
-      cmd =
-        Cmd.new(target, :process, %{input: 42}, %{
-          caller: :vm_internal,
-          reply: {:caller_inbox, self()},
-          caps: MapSet.new()
-        })
+      cmd = signed_cmd(target, :process, %{input: 42})
 
       # The arg validator catches type mismatch BEFORE the handler
       # runs — exact validator coupling exists in the legacy
@@ -492,26 +480,6 @@ defmodule Ezagent.E2E.Scenario30PluginGreenfieldTest do
         else
           Process.sleep(10)
           do_wait_ready(uri, deadline)
-        end
-    end
-  end
-
-  defp wait_until(fun, timeout_ms) do
-    deadline = System.monotonic_time(:millisecond) + timeout_ms
-    do_wait(fun, deadline)
-  end
-
-  defp do_wait(fun, deadline) do
-    case fun.() do
-      true ->
-        :ok
-
-      _ ->
-        if System.monotonic_time(:millisecond) > deadline do
-          :timeout
-        else
-          Process.sleep(20)
-          do_wait(fun, deadline)
         end
     end
   end

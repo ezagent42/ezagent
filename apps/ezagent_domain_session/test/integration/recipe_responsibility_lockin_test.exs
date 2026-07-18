@@ -43,6 +43,7 @@ defmodule EzagentDomainInstanceMessage.Integration.RecipeResponsibilityLockinTes
   alias Ezagent.Entity.{Agent, Session, User}
   alias Ezagent.Orchestrator.Tools
   alias EzagentDomainInstanceMessage.SessionCreator.TemplateTeam
+  import Ezagent.Test.CapHelper, only: [ensure_workspace_kind!: 1]
 
   @workspace_uri URI.new!("workspace://system")
 
@@ -136,13 +137,18 @@ defmodule EzagentDomainInstanceMessage.Integration.RecipeResponsibilityLockinTes
   end
 
   defp join_call(session_uri, member_uri, facets) do
+    target = URI.new!("#{URI.to_string(session_uri)}?action=session.join")
+    admin = User.admin_uri()
+    cap = Ezagent.Test.CapHelper.signed_action_cap!(target, admin)
+
     Invocation.dispatch(%Invocation{
-      target: URI.new!("#{URI.to_string(session_uri)}?action=session.join"),
+      origin: :trusted_internal,
+      target: target,
       mode: :call,
       args: Map.put(facets, :member, member_uri),
       ctx: %{
-        caller: User.admin_uri(),
-        caps: MapSet.new([Capability.admin_genesis_cap()]),
+        caller: admin,
+        caps: MapSet.new([cap]),
         reply: {:caller_inbox, self()}
       }
     })
@@ -158,10 +164,13 @@ defmodule EzagentDomainInstanceMessage.Integration.RecipeResponsibilityLockinTes
   defp seed_agent_template(n) do
     uri = Ezagent.URI.new!("template://system/agent/cc-coder-#{n}")
     {:ok, _} = Ezagent.SpawnRegistry.spawn(uri)
+    target = URI.new!("#{URI.to_string(uri)}?action=template.write")
+    cap = Ezagent.Test.CapHelper.signed_action_cap!(target, User.admin_uri())
 
     {:ok, _} =
       Invocation.dispatch(%Invocation{
-        target: URI.new!("#{URI.to_string(uri)}?action=template.write"),
+        origin: :trusted_internal,
+        target: target,
         mode: :call,
         args: %{
           content: %{
@@ -174,7 +183,7 @@ defmodule EzagentDomainInstanceMessage.Integration.RecipeResponsibilityLockinTes
         },
         ctx: %{
           caller: User.admin_uri(),
-          caps: MapSet.new([Capability.admin_genesis_cap()]),
+          caps: MapSet.new([cap]),
           reply: {:caller_inbox, self()}
         }
       })
@@ -193,27 +202,16 @@ defmodule EzagentDomainInstanceMessage.Integration.RecipeResponsibilityLockinTes
     {:ok, _pid} = Ezagent.Kind.spawn(Agent, %{uri: orchestrator_uri})
     :ok = Ezagent.WorkspaceRegistry.bind(orchestrator_uri, @workspace_uri)
 
-    caps =
-      MapSet.new([
-        %Capability{
-          kind: :session,
-          behavior: :any,
-          action: :any,
-          instance: {:within_session, session_uri},
-          workspace_uri: @workspace_uri,
-          granted_by: User.admin_uri(),
-          granted_at: DateTime.utc_now()
-        },
-        %Capability{
-          kind: :agent,
-          behavior: :any,
-          action: :any,
-          instance: {:spawned_by, orchestrator_uri},
-          workspace_uri: @workspace_uri,
-          granted_by: User.admin_uri(),
-          granted_at: DateTime.utc_now()
-        }
-      ])
+    ensure_workspace_kind!(@workspace_uri)
+
+    :ok =
+      Ezagent.Entity.Session.Orchestrator.Caps.grant_orchestrator_scoped_caps(
+        orchestrator_uri,
+        session_uri,
+        User.admin_uri()
+      )
+
+    caps = orchestrator_uri |> Ezagent.EntityCaps.load() |> MapSet.new()
 
     mcp = [
       caller: orchestrator_uri,

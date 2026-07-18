@@ -146,7 +146,7 @@ defmodule EzagentDomainInstanceMessage.Integration.ChatSessionMembershipReadTest
       owner = member_uri()
       session_uri = spawn_owned_session(owner)
 
-      assert {:error, :unauthorized} =
+      assert {:error, :missing_cap} =
                Session.subscribe_from(session_uri, self(), :latest, member_ctx(owner))
     end
   end

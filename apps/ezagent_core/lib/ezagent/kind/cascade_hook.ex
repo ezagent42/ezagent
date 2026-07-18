@@ -55,7 +55,8 @@ defmodule Ezagent.Kind.CascadeHook do
         # (whose `ctx.caller` is the authenticated entity `%URI{}`, transport-set)
         # can never forge it. Also cleanly bypasses `workspace_isolation_check`
         # (a `:vm_internal` caller has no workspace to mismatch).
-        ctx: %{caller: :vm_internal, reply: :ignore}
+        ctx: %{caller: :vm_internal, reply: :ignore},
+        origin: :trusted_internal
       }
 
       Ezagent.Kind.DeferredDispatch.enqueue([cmd])

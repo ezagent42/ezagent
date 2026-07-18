@@ -19,6 +19,7 @@ defmodule Ezagent.ActionSet.Session.AdmissionApproveTest do
 
   alias Ezagent.Capability
   alias Ezagent.Identity.Authority
+  import Ezagent.Test.CapHelper, only: [signed_action_cap!: 2]
 
   defp uniq, do: System.unique_integer([:positive])
   defp new_ws, do: "admws-#{uniq()}"
@@ -43,31 +44,38 @@ defmodule Ezagent.ActionSet.Session.AdmissionApproveTest do
 
   defp agent_member(ws, prefix) do
     uri = URI.new!("entity://#{ws}/agent/#{prefix}-#{uniq()}")
-    {:ok, _pid} = Ezagent.Kind.spawn(Ezagent.Entity.Agent, %{uri: uri, initial_caps: MapSet.new()})
+
+    {:ok, _pid} =
+      Ezagent.Kind.spawn(Ezagent.Entity.Agent, %{uri: uri, initial_caps: MapSet.new()})
+
     :ok = Ezagent.WorkspaceRegistry.bind(uri, Ezagent.Capability.workspace_of(uri))
     uri
   end
 
   defp grant_manage(granter, target) do
-    cap = Ezagent.CreatorGrant.manage_cap(:agent, target, Capability.workspace_of(target), granter)
+    cap =
+      Ezagent.CreatorGrant.manage_cap(:agent, target, Capability.workspace_of(target), granter)
 
     :ok =
       Ezagent.Identity.Grant.grant_cap_via_router(
         granter,
         cap,
-        {:genesis, Ezagent.Entity.User.admin_uri()},
+        {:admin, Ezagent.Entity.User.admin_uri()},
         :sync
       )
   end
 
   defp dispatch_join(session_uri, member_uri, caller) do
+    target = URI.new!("#{URI.to_string(session_uri)}?action=session.join")
+
     Ezagent.Invocation.dispatch(%Ezagent.Invocation{
-      target: URI.new!("#{URI.to_string(session_uri)}?action=session.join"),
+      origin: :trusted_internal,
+      target: target,
       mode: :call,
       args: %{member: member_uri},
       ctx: %{
         caller: caller,
-        caps: MapSet.new([Capability.admin_genesis_cap()]),
+        caps: MapSet.new([signed_action_cap!(target, caller)]),
         reply: :ignore
       }
     })
@@ -77,6 +85,7 @@ defmodule Ezagent.ActionSet.Session.AdmissionApproveTest do
   # EMPTY caps — the actions are cap-exempt, authorized in-handler).
   defp dispatch_admission(session_uri, action, member_uri, caller, caps \\ MapSet.new([])) do
     Ezagent.Invocation.dispatch(%Ezagent.Invocation{
+      origin: :trusted_internal,
       target: URI.new!("#{URI.to_string(session_uri)}?action=session.#{action}"),
       mode: :call,
       args: %{member: member_uri},
@@ -110,9 +119,15 @@ defmodule Ezagent.ActionSet.Session.AdmissionApproveTest do
 
   defp wait_member_cap(entity_uri, session_uri, retries \\ 100) do
     cond do
-      member_cap(entity_uri, session_uri) -> member_cap(entity_uri, session_uri)
-      retries > 0 -> Process.sleep(10); wait_member_cap(entity_uri, session_uri, retries - 1)
-      true -> nil
+      member_cap(entity_uri, session_uri) ->
+        member_cap(entity_uri, session_uri)
+
+      retries > 0 ->
+        Process.sleep(10)
+        wait_member_cap(entity_uri, session_uri, retries - 1)
+
+      true ->
+        nil
     end
   end
 
@@ -188,6 +203,8 @@ defmodule Ezagent.ActionSet.Session.AdmissionApproveTest do
 
     # A manages the agent but is NOT the requester (B is) → withdraw denied.
     assert {:error, _} = dispatch_admission(b_session, :withdraw_admission, a_agent, a)
-    assert Map.has_key?(read_pending(b_session), a_agent), "a non-requester withdraw leaves the entry"
+
+    assert Map.has_key?(read_pending(b_session), a_agent),
+           "a non-requester withdraw leaves the entry"
   end
 end

@@ -65,7 +65,8 @@ defmodule Ezagent.World.CredentialCascade do
       target: Ezagent.URI.with_action(agent_uri, :credential_grant, :revoke_credential_grant),
       mode: :call,
       args: %{},
-      ctx: %{caller: caller_uri, caps: caller_caps, reply: :sync}
+      ctx: %{caller: caller_uri, caps: caller_caps, reply: :sync},
+      origin: :authenticated_external
     })
   end
 

@@ -36,10 +36,16 @@ defmodule Mix.Tasks.Ezagent.Arch.Scan do
   # cannot mask or inflate the security invariant.
   @cap_verify_fail_loud_targets %{
     "apps/ezagent_core/lib/ezagent/cap.ex" => [
-      verify: 1,
-      verify_for: 2,
-      verified_set: 1,
       verified_set: 2
+    ],
+    "apps/ezagent_core/lib/ezagent/cap/authority.ex" => [
+      verify: 3,
+      verify_current: 2
+    ],
+    "apps/ezagent_core/lib/ezagent/cap/verifier.ex" => [
+      authorize: 5,
+      verify_cap: 5,
+      valid_for?: 3
     ],
     "apps/ezagent_domain_identity/lib/ezagent/identity.ex" => [
       verified_cap_list: 2,
@@ -164,11 +170,11 @@ defmodule Mix.Tasks.Ezagent.Arch.Scan do
     # `Ezagent.Kind.BehaviorSet.resolve_action/3` call in `handle_dispatch`'s
     # `with` chain (per-instance action→behavior resolution, role-foundation).
     # Reputation-receipt (facts layer) — shifted 169→157: net -12 in
-    # `handle_dispatch` — the `{:ok, matched_cap} <- authz_check` bind + step-10.5
-    # receipt call were MORE than offset by condensing the ctx-enrichment /
+    # `handle_dispatch` — the central-verifier bind + step-10.5
+    # central-verifier bind + receipt call were MORE than offset by condensing the ctx-enrichment /
     # slice-change / sibling-slice comment blocks (runtime.ex held ≤1000 LOC gate;
     # receipt logic itself lives in `Ezagent.Kind.Runtime.Receipt`).
-    {"apps/ezagent_core/lib/ezagent/kind/runtime.ex", 157},
+    {"apps/ezagent_core/lib/ezagent/kind/runtime.ex", 179},
     # py-agent P2 (echo→py teaching-example re-home) — shifted 454→453: the
     # the echo worked-example moduledoc line was condensed to a
     # `Ezagent.ActionSet.PyAgent` reference (net -1 line ABOVE this comment).
@@ -1607,15 +1613,16 @@ defmodule Mix.Tasks.Ezagent.Arch.Scan do
       "apps/ezagent_core/test/ezagent/behavior_required_caps_action_invariant_test.exs"
 
     runtime = read!(@runtime_file)
+    verifier = read!("apps/ezagent_core/lib/ezagent/cap/verifier.ex")
 
     cond do
       not File.exists?(absolute(invariant_test)) ->
         1
 
-      not String.contains?(runtime, "behavior_module.required_caps()") ->
+      not String.contains?(runtime, "Ezagent.Cap.Verifier.authorize") ->
         1
 
-      not String.contains?(runtime, "Capability.matches?") ->
+      not String.contains?(verifier, "Capability.matches?") ->
         1
 
       true ->
@@ -1626,7 +1633,7 @@ defmodule Mix.Tasks.Ezagent.Arch.Scan do
   defp kind_runtime_ordering_violations do
     runtime = read!(@runtime_file)
 
-    authz = index_of(runtime, "authz_check(")
+    authz = index_of(runtime, "Ezagent.Cap.Verifier.authorize")
     workspace = index_of(runtime, "workspace_isolation_check(")
     invoke = index_of(runtime, "invoke_behavior(")
 

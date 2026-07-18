@@ -151,7 +151,7 @@ defmodule Ezagent.Agent.ConfigCrudTest do
   test "repoint is denied without the agent manage-cap", %{agent: agent} do
     stranger = Ezagent.URI.entity(:team_alpha, :user, "stranger")
 
-    assert {:error, :unauthorized} =
+    assert {:error, :missing_cap} =
              Config.repoint(agent, stranger, MapSet.new(), %{config_id: "whatever"})
   end
 
@@ -183,7 +183,7 @@ defmodule Ezagent.Agent.ConfigCrudTest do
   test "mutation is denied without the agent manage-cap", %{agent: agent} do
     stranger = Ezagent.URI.entity(:team_alpha, :user, "stranger")
 
-    assert {:error, :unauthorized} =
+    assert {:error, :missing_cap} =
              Config.apply_delta(agent, stranger, MapSet.new(), %{
                patch: %{"tone" => "denied"},
                turn_id: turn_id("denied")
@@ -199,7 +199,7 @@ defmodule Ezagent.Agent.ConfigCrudTest do
     :ok = Ezagent.WorkspaceRegistry.bind(other, workspace)
     other_manager = grant_manage_cap(other, workspace)
 
-    assert {:error, :unauthorized} =
+    assert {:error, :invalid_cap_signature} =
              Config.apply_delta(agent, other_manager.uri, other_manager.caps, %{
                patch: %{"tone" => "denied"},
                turn_id: turn_id("wrong-cap")
@@ -288,7 +288,8 @@ defmodule Ezagent.Agent.ConfigCrudTest do
 
   defp grant_manage_cap(agent, workspace) do
     manager = Ezagent.URI.entity(:team_alpha, :user, "mgr-#{System.unique_integer([:positive])}")
-    cap = CreatorGrant.manage_cap(:agent, agent, workspace, manager)
+    requested = CreatorGrant.manage_cap(:agent, agent, workspace, manager)
+    cap = signed_cap!(agent, manager, requested)
     %{uri: manager, caps: MapSet.new([cap])}
   end
 

@@ -5,8 +5,15 @@ defmodule Ezagent.Session.Config.ExecuteTest do
   alias Ezagent.Entity.{Session, User}
   alias Ezagent.Session.Config, as: SessionConfig
   alias Ezagent.Session.Config.ExtensionRegistry
+  import Ezagent.Test.CapHelper, only: [signed_action_cap!: 2]
 
   setup do
+    system_workspace = Ezagent.URI.workspace("system")
+    tenant_workspace = Ezagent.URI.workspace("team-alpha")
+    restart_workspace!(system_workspace)
+    restart_workspace!(tenant_workspace)
+
+    grant_workspace_cap(User.admin_uri(), system_workspace, :list_agent_templates)
     ExtensionRegistry.reset_for_test!()
 
     on_exit(fn ->
@@ -263,12 +270,19 @@ defmodule Ezagent.Session.Config.ExecuteTest do
 
   defp join_session(session_uri, member, owner) do
     Invocation.dispatch(%Invocation{
+      origin: :trusted_internal,
       target: Ezagent.URI.new!("#{URI.to_string(session_uri)}?action=session.join"),
       mode: :call,
       args: %{member: member, role_name: "member"},
       ctx: %{
         caller: owner,
-        caps: MapSet.new([Capability.admin_genesis_cap()]),
+        caps:
+          MapSet.new([
+            signed_action_cap!(
+              Ezagent.URI.with_action(session_uri, :session, :join),
+              owner
+            )
+          ]),
         reply: {:caller_inbox, self()}
       }
     })
@@ -286,16 +300,56 @@ defmodule Ezagent.Session.Config.ExecuteTest do
   end
 
   defp grant_template_cap(principal, kind, workspace_uri) do
-    cap =
+    action =
+      case kind do
+        :agent_template -> :list_agent_templates
+        :session_template -> :write_session_templates
+      end
+
+    grant_workspace_cap(principal, workspace_uri, action)
+  end
+
+  defp grant_workspace_cap(principal, workspace_uri, action) do
+    requested =
       Capability.cap(
-        kind,
-        Ezagent.ActionSet.Template,
-        :any,
-        {:within_workspace, workspace_uri},
+        :workspace,
+        Ezagent.ActionSet.Workspace,
+        action,
+        Ezagent.URI.instance(workspace_uri),
         workspace_uri
       )
 
-    :ok = Ezagent.Identity.grant_cap(principal, cap, User.admin_uri())
+    :ok =
+      Ezagent.Identity.Grant.grant_cap(
+        principal,
+        requested,
+        {:admin, User.admin_uri()}
+      )
+  end
+
+  defp restart_workspace!(workspace_uri) do
+    terminate_workspace(workspace_uri)
+
+    {:ok, pid} =
+      Ezagent.Kind.spawn(Ezagent.Entity.Workspace, %{
+        uri: workspace_uri,
+        behaviors: Ezagent.Entity.Workspace.behaviors()
+      })
+
+    on_exit(fn -> terminate_workspace(workspace_uri) end)
+    pid
+  end
+
+  defp terminate_workspace(workspace_uri) do
+    case Ezagent.KindRegistry.lookup(workspace_uri) do
+      {:ok, pid} ->
+        if Process.alive?(pid) do
+          DynamicSupervisor.terminate_child(Ezagent.Workspace.Supervisor, pid)
+        end
+
+      :error ->
+        :ok
+    end
   end
 
   defp eventually(fun, attempts \\ 50)

@@ -26,7 +26,6 @@ defmodule Ezagent.Integration.UserCreateMembershipTest do
 
   alias Ezagent.Workspace
   alias Ezagent.Workspace.Store
-  alias Ezagent.Entity.User
   alias Ezagent.Users
 
   setup do
@@ -35,10 +34,7 @@ defmodule Ezagent.Integration.UserCreateMembershipTest do
 
     workspace_uri = URI.new!("workspace://#{ws_name}")
 
-    admin_ctx = %{
-      caller: User.admin_uri(),
-      caps: MapSet.new([Ezagent.Capability.admin_genesis_cap()])
-    }
+    admin_ctx = signed_workspace_ctx!(workspace_uri)
 
     {:ok, ws_name: ws_name, workspace_uri: workspace_uri, admin_ctx: admin_ctx}
   end

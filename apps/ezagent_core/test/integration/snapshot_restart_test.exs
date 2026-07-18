@@ -21,7 +21,6 @@ defmodule Ezagent.Integration.SnapshotRestartTest do
 
   alias Ezagent.{Invocation, KindRegistry}
   alias Ezagent.Ecto.KindSnapshot
-  alias Ezagent.Kind.Snapshot
 
   describe "{:snapshot, :on_change} restart roundtrip — THE GATE" do
     test "User caps granted before restart are present after restart" do
@@ -30,22 +29,36 @@ defmodule Ezagent.Integration.SnapshotRestartTest do
           "entity://team-alpha/user/snap-restart-#{System.unique_integer([:positive])}"
         )
 
-      caps = MapSet.new([Ezagent.Capability.admin_genesis_cap()])
+      {:ok, _user} = Ezagent.Users.create(uri, nil, [])
 
-      # 1. Spawn fresh User Kind with initial admin_caps
+      # 1. Spawn a fresh User Kind. Born-signed storage starts empty.
       {:ok, pid1} =
         DynamicSupervisor.start_child(
           Ezagent.Workspace.Supervisor,
-          {Ezagent.Kind.Server, {Ezagent.Entity.User, %{uri: uri, initial_caps: caps}}}
+          {Ezagent.Kind.Server, {Ezagent.Entity.User, %{uri: uri, initial_caps: MapSet.new()}}}
         )
 
-      # 2. Trigger an :on_change save by dispatching list_caps (no-op
-      #    change) — actually we need an actual change. Use a manual
-      #    save via the explicit save_now to force the write, simulating
-      #    "after a cap-grant dispatch" since Identity doesn't yet have
-      #    a grant action.
-      slice_with_caps = %{identity: %{caps: caps}}
-      :ok = Snapshot.save_now(uri, Ezagent.Entity.User, slice_with_caps)
+      wait_until(fn -> Ezagent.ReadyGate.status(uri) == :ready end)
+
+      # 2. Grant through K.grant so the target authority signs the stored
+      #    artifact and the real on-change path persists it.
+      requested =
+        Ezagent.Capability.cap(
+          :user,
+          Ezagent.ActionSet.Identity,
+          :list_caps,
+          uri,
+          Ezagent.Capability.workspace_of(uri)
+        )
+
+      assert {:ok, _anchor} = Ezagent.Cap.Authority.anchor(uri)
+
+      assert :ok =
+               Ezagent.Identity.Grant.grant_cap(
+                 uri,
+                 requested,
+                 {:admin, Ezagent.Entity.User.admin_uri()}
+               )
 
       # 3. Verify DB row exists
       uri_str = URI.to_string(uri)
@@ -82,20 +95,23 @@ defmodule Ezagent.Integration.SnapshotRestartTest do
       # 6. Dispatch list_caps — should return the SAVED caps (admin_caps),
       #    not the fresh init's empty MapSet
       target = URI.new!("#{uri_str}?action=identity.list_caps")
+      presenter = Ezagent.Entity.User.admin_uri()
+      parent_cap = signed_action_cap!(target, presenter)
 
       assert {:ok, %{caps: cap_list}} =
                Invocation.dispatch(%Invocation{
+                 origin: :trusted_internal,
                  target: target,
                  mode: :call,
                  args: %{},
                  ctx: %{
-                   caller: Ezagent.Entity.User.admin_uri(),
-                   caps: MapSet.new([Ezagent.Capability.admin_genesis_cap()]),
+                   caller: presenter,
+                   caps: MapSet.new([parent_cap]),
                    reply: {:caller_inbox, self()}
                  }
                })
 
-      assert length(cap_list) == MapSet.size(caps)
+      assert length(cap_list) == 1
     end
   end
 

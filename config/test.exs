@@ -4,18 +4,6 @@ config :ezagent_domain_identity, Ezagent.Entity.Token,
   current_version: 1,
   peppers: %{1 => "test-only-pat-pepper-v1-32-bytes-minimum"}
 
-# Phase-4 capability signing uses a deterministic test-only seed. Production
-# continues to require `EZAGENT_SIGNING_SEED_V<N>` through the runtime provider.
-config :ezagent_core, Ezagent.Cap,
-  signing: [
-    seed_provider: fn
-      1 -> {:ok, "0123456789abcdef0123456789abcdef"}
-      _version -> {:error, :missing_test_seed}
-    end,
-    active_key_version: 1,
-    require_signature: false
-  ]
-
 # Keep TEST host routing aligned with local development: world routes are still
 # scoped to world.localhost/world.* unless a test deliberately overrides it.
 config :ezagent_web, :world_host_scope, "world."

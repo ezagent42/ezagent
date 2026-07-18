@@ -49,10 +49,25 @@ defmodule Ezagent.PluginCc.Integration.CcConfigHomeCredentialsTest do
 
   defp uniq, do: System.unique_integer([:positive])
 
+  defp terminate(uri) do
+    case Ezagent.KindRegistry.lookup(uri) do
+      {:ok, pid} -> if Process.alive?(pid), do: Ezagent.Kind.terminate(uri)
+      :error -> :ok
+    end
+  end
+
   setup do
     recipe = Module.concat([Ezagent, Orchestrator, OrchestratorRecipe]) |> apply(:recipe, [])
     Ezagent.Agent.RecipeRegistry.seed_role_if_absent(recipe)
     _ = Ezagent.SpawnRegistry.spawn(User.admin_uri())
+
+    host_source =
+      Ezagent.Agent.HostLoginAdopt.host_login_source_uri(
+        Ezagent.URI.workspace_name!(Ezagent.URI.workspace(:system)),
+        "cc"
+      )
+
+    on_exit(fn -> terminate(host_source) end)
     :ok
   end
 

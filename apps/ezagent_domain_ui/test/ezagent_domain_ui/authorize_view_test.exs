@@ -55,29 +55,26 @@ defmodule Ezagent.UI.AuthorizeViewTest do
 
   defp uniq, do: System.unique_integer([:positive])
 
-  defp render_cap do
-    %Ezagent.Capability{
-      Ezagent.Capability.cap(
-        :session,
-        TestRender,
-        :test_render,
-        Ezagent.URI.instance(@session_uri),
-        Ezagent.Capability.workspace_of(@session_uri)
-      )
-      | granted_by: Ezagent.Entity.User.admin_uri(),
-        granted_at: DateTime.utc_now()
-    }
+  defp render_cap(grantee) do
+    Ezagent.Test.CapHelper.signed_fixture_cap!(
+      @session_uri,
+      :session,
+      TestRender,
+      :test_render,
+      grantee
+    )
   end
 
-  defp live_user(caps) do
+  defp live_user(caps_or_builder) do
     uri = Ezagent.URI.new!("entity://system/user/authz-#{uniq()}")
+    caps = if is_function(caps_or_builder, 1), do: caps_or_builder.(uri), else: caps_or_builder
     {:ok, _} = Ezagent.Users.create_read_only(uri, caps)
     {:ok, _pid} = Ezagent.SpawnRegistry.spawn(uri)
     uri
   end
 
   test "grants a gated view to a caller holding the render cap" do
-    caller = live_user([render_cap()])
+    caller = live_user(fn grantee -> [render_cap(grantee)] end)
     assert SessionView.authorize_view(GatedView, caller, @session_uri)
   end
 

@@ -50,10 +50,7 @@ defmodule EzagentPluginKb.E2E.KbRoleNativeTest do
     {:ok, _ws_pid} = Workspace.create(ws_name, %{})
     workspace_uri = URI.new!("workspace://#{ws_name}")
 
-    admin_ctx = %{
-      caller: User.admin_uri(),
-      caps: MapSet.new([Ezagent.Capability.admin_genesis_cap()])
-    }
+    admin_ctx = Ezagent.Test.CapHelper.signed_workspace_ctx!(workspace_uri, User.admin_uri())
 
     :ok =
       AgentFlavorRegistry.register(%{
@@ -152,7 +149,7 @@ defmodule EzagentPluginKb.E2E.KbRoleNativeTest do
                dispatch(agent_uri, :query, %{query: "alpha beta", k: 5}, query_only)
 
       # The same caller is REFUSED ingest — fail-closed cap separation.
-      assert {:error, :unauthorized} =
+      assert {:error, :missing_cap} =
                dispatch(
                  agent_uri,
                  :ingest,
@@ -164,10 +161,10 @@ defmodule EzagentPluginKb.E2E.KbRoleNativeTest do
       # A caller with NEITHER cap is refused BOTH.
       none = %{caller: URI.new!("entity://#{ws_name}/user/nobody"), caps: MapSet.new([])}
 
-      assert {:error, :unauthorized} =
+      assert {:error, :missing_cap} =
                dispatch(agent_uri, :query, %{query: "alpha", k: 5}, none)
 
-      assert {:error, :unauthorized} =
+      assert {:error, :missing_cap} =
                dispatch(agent_uri, :ingest, %{source_uri: source_uri}, none)
     end)
   end
@@ -234,7 +231,7 @@ defmodule EzagentPluginKb.E2E.KbRoleNativeTest do
        %{ws_name: ws_name, workspace_uri: workspace_uri, admin_ctx: admin_ctx} do
     skip_if_no_entity_spawn(fn ->
       name = "kb-#{System.unique_integer([:positive])}"
-      {:ok, _agent_uri} = create_kb_agent(workspace_uri, ws_name, name, admin_ctx)
+      {:ok, agent_uri} = create_kb_agent(workspace_uri, ws_name, name, admin_ctx)
 
       source_name = "doc-#{System.unique_integer([:positive])}"
       _src = write_source(ws_name, source_name, "mcp retrieval over indexed documents works")
@@ -246,8 +243,8 @@ defmodule EzagentPluginKb.E2E.KbRoleNativeTest do
 
       caps =
         MapSet.new([
-          kb_cap(:query, workspace_uri),
-          kb_cap(:ingest, workspace_uri)
+          Ezagent.Test.CapHelper.signed_cap!(agent_uri, orch, kb_cap(:query, workspace_uri)),
+          Ezagent.Test.CapHelper.signed_cap!(agent_uri, orch, kb_cap(:ingest, workspace_uri))
         ])
 
       :ok = Ezagent.AgentFlavorAttributes.put(orch, "cc")
@@ -287,10 +284,17 @@ defmodule EzagentPluginKb.E2E.KbRoleNativeTest do
       read_only = URI.new!("entity://#{ws_name}/agent/read-only-orchestrator")
       :ok = Ezagent.AgentFlavorAttributes.put(read_only, "cc")
 
+      read_only_cap =
+        Ezagent.Test.CapHelper.signed_cap!(
+          agent_uri,
+          read_only,
+          kb_cap(:query, workspace_uri)
+        )
+
       {:ok, _pid} =
         Ezagent.Kind.spawn(Ezagent.Entity.Agent, %{
           uri: read_only,
-          initial_caps: MapSet.new([kb_cap(:query, workspace_uri)])
+          initial_caps: MapSet.new([read_only_cap])
         })
 
       :ok = Ezagent.WorkspaceRegistry.bind(read_only, workspace_uri)
@@ -366,15 +370,33 @@ defmodule EzagentPluginKb.E2E.KbRoleNativeTest do
   end
 
   defp dispatch(agent_uri, action, args, %{caller: caller, caps: caps}) do
+    target = Ezagent.URI.with_action(agent_uri, :kb, action)
+    caps = signed_dispatch_caps(target, caller, caps)
+
     cmd =
       Ezagent.Cmd.new(
-        Ezagent.URI.with_action(agent_uri, :kb, action),
+        target,
         action,
         args,
         %{mode: :call, caller: caller, caps: caps, reply: {:caller_inbox, self()}}
       )
 
     Ezagent.Router.dispatch(cmd)
+  end
+
+  defp signed_dispatch_caps(target, caller, caps) do
+    cond do
+      Ezagent.Identity.admin?(caller) ->
+        MapSet.new([Ezagent.Test.CapHelper.signed_action_cap!(target, caller)])
+
+      Enum.empty?(caps) ->
+        MapSet.new()
+
+      true ->
+        caps
+        |> Enum.map(&Ezagent.Test.CapHelper.signed_cap!(target, caller, &1))
+        |> MapSet.new()
+    end
   end
 
   defp skip_if_no_entity_spawn(body) do

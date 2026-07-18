@@ -28,7 +28,8 @@ defmodule Ezagent.AgentManifest.Tools do
         caller: agent_uri,
         caps: MapSet.new(),
         reply: {:caller_inbox, self()}
-      }
+      },
+      origin: :trusted_internal
     })
   end
 

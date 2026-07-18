@@ -24,13 +24,7 @@ defmodule Ezagent.ActionSet.Session.Members do
   end
 
   defp self_monitors?(pid) when is_pid(pid) do
-    case Process.info(pid, :monitored_by) do
-      {:monitored_by, monitors_list} when is_list(monitors_list) ->
-        self() in monitors_list
-
-      _ ->
-        false
-    end
+    Ezagent.Kind.monitored_by?(pid)
   end
 
   @doc "Merge the recognized member facets (`:role_name`, `:in_session_template`, `:source_template_uri`) from `facets` into a member's `meta` map, skipping any whose value is `nil` (so absent facets don't overwrite)."

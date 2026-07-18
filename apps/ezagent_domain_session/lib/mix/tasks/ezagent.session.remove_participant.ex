@@ -79,28 +79,16 @@ defmodule Mix.Tasks.Ezagent.Session.RemoveParticipant do
     end
   end
 
-  # Operator ctx (in-VM operator trust §10.5; same pattern as
-  # `mix ezagent.agent.create`'s `operator_admin_ctx`): an INLINE
-  # `cap(:session, Session, :remove_participant, <session>)` granted_by the
-  # caller, so the dispatch clears the chokepoint. The real authorization is the
-  # handler's identity gate (owner / self-leave / admin) keyed on `caller` — a
-  # `--as <stranger>` clears the chokepoint via this inline cap but is then
-  # DENIED `:unauthorized` by the handler. Resolving the caller's persisted caps
-  # here (a list-caps read) would trip cap_check_only_at_chokepoint p6.
+  # Operator ctx uses a target-issued narrow artifact. The handler's identity
+  # gate still enforces owner / self-leave / admin semantics for `--as`.
   defp operator_ctx(%URI{} = caller_uri, %URI{} = session_uri) do
-    cap = %Ezagent.Capability{
-      Ezagent.Capability.cap(
-        :session,
-        Ezagent.ActionSet.Session,
-        :remove_participant,
-        Ezagent.URI.instance(session_uri),
-        Ezagent.Capability.workspace_of(session_uri)
-      )
-      | granted_by: caller_uri,
-        granted_at: DateTime.utc_now()
-    }
+    admin = Ezagent.Entity.User.admin_uri()
+    target = Ezagent.URI.with_action(session_uri, :session, :remove_participant)
 
-    %{caller: caller_uri, caps: [cap]}
+    case Ezagent.Cap.issue_for_action({:admin, admin}, caller_uri, target) do
+      {:ok, cap} -> %{caller: caller_uri, caps: [cap]}
+      {:error, reason} -> Mix.raise("remove-participant cap issuance failed: #{inspect(reason)}")
+    end
   end
 
   defp parse_uri!(s, label) do

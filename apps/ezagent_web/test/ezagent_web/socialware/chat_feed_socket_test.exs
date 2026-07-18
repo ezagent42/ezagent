@@ -29,10 +29,11 @@ defmodule EzagentWeb.Socialware.ChatFeedSocketTest do
 
   @endpoint EzagentWeb.Endpoint
 
-  @owner Ezagent.URI.entity(:team_alpha, :user, "cfs-owner")
   @sender Ezagent.URI.entity(:team_alpha, :agent, "cfs-bot")
 
   setup do
+    owner = spawn_user("cfs-owner")
+
     session =
       Ezagent.URI.session(:team_alpha, :default, "cfs-#{System.unique_integer([:positive])}")
 
@@ -42,24 +43,30 @@ defmodule EzagentWeb.Socialware.ChatFeedSocketTest do
     {:ok, _pid} =
       Ezagent.Kind.spawn(Session, %{
         uri: session,
-        owner_uri: @owner,
+        owner_uri: owner,
         behaviors: Session.behaviors()
       })
 
     :ok = Ezagent.WorkspaceRegistry.bind(session, workspace)
 
-    member = spawn_member()
+    member = spawn_user("cfs-member")
     {:ok, %{members: members}} = chat_join(session, member)
     assert member in members
+    wait_until(fn -> Ezagent.Socialware.ExternalFeed.member?(session, member) end)
+    wait_until(fn -> Ezagent.Socialware.ExternalFeed.member?(session, owner) end)
 
-    %{session: session, workspace: workspace, member: member}
+    %{session: session, workspace: workspace, member: member, owner: owner}
   end
 
   # A live User Kind to act as the runtime-added member — chat.join requires the
   # member's Kind alive in KindRegistry so Process.monitor has a live pid.
-  defp spawn_member do
+  defp spawn_user(label) do
     member =
-      Ezagent.URI.entity(:team_alpha, :user, "cfs-member-#{System.unique_integer([:positive])}")
+      Ezagent.URI.entity(
+        :team_alpha,
+        :user,
+        "#{label}-#{System.unique_integer([:positive])}"
+      )
 
     {:ok, pid} = Ezagent.Kind.spawn(User, %{uri: member, initial_caps: MapSet.new()})
 
@@ -75,16 +82,31 @@ defmodule EzagentWeb.Socialware.ChatFeedSocketTest do
     member
   end
 
+  defp wait_until(fun, attempts \\ 100)
+  defp wait_until(_fun, 0), do: flunk("membership authority was not committed")
+
+  defp wait_until(fun, attempts) do
+    if fun.() do
+      :ok
+    else
+      Process.sleep(10)
+      wait_until(fun, attempts - 1)
+    end
+  end
+
   defp chat_dispatch(session, action, member) do
     target = URI.new!("#{URI.to_string(session)}?action=session.#{action}")
+    admin = User.admin_uri()
+    {:ok, action_cap} = Ezagent.Cap.issue_for_action({:admin, admin}, admin, target)
 
     Invocation.dispatch(%Invocation{
+      origin: :trusted_internal,
       target: target,
       mode: :call,
       args: %{member: member},
       ctx: %{
-        caller: User.admin_uri(),
-        caps: MapSet.new([Ezagent.Capability.admin_genesis_cap()]),
+        caller: admin,
+        caps: MapSet.new([action_cap]),
         reply: {:caller_inbox, self()}
       }
     })
@@ -108,14 +130,18 @@ defmodule EzagentWeb.Socialware.ChatFeedSocketTest do
     msg = Message.new(@sender, %{text: text, attachments: []}, visibility: :external_visible)
     target = URI.new!("#{URI.to_string(session)}?action=session.send")
 
+    {:ok, send_cap} =
+      Ezagent.Cap.issue_for_action({:admin, User.admin_uri()}, @sender, target)
+
     {:ok, %{stored: true}} =
       Invocation.dispatch(%Invocation{
+        origin: :trusted_internal,
         target: target,
         mode: :call,
         args: %{message: msg},
         ctx: %{
           caller: @sender,
-          caps: MapSet.new([Ezagent.Capability.admin_genesis_cap()]),
+          caps: MapSet.new([send_cap]),
           reply: {:caller_inbox, self()}
         }
       })
@@ -144,7 +170,7 @@ defmodule EzagentWeb.Socialware.ChatFeedSocketTest do
           "cfs-other-#{System.unique_integer([:positive])}"
         )
 
-      token = ChatFeedAuth.issue_token(@owner, other)
+      token = ChatFeedAuth.issue_token(ctx.owner, other)
 
       assert :error =
                ChatFeedSocket.connect(
@@ -164,7 +190,7 @@ defmodule EzagentWeb.Socialware.ChatFeedSocketTest do
     end
 
     test "recovers the trusted caller from a valid token", ctx do
-      token = ChatFeedAuth.issue_token(@owner, ctx.session)
+      token = ChatFeedAuth.issue_token(ctx.owner, ctx.session)
 
       assert {:ok, socket} =
                ChatFeedSocket.connect(
@@ -173,14 +199,14 @@ defmodule EzagentWeb.Socialware.ChatFeedSocketTest do
                  %{}
                )
 
-      assert socket.assigns.caller == @owner
+      assert socket.assigns.caller == ctx.owner
     end
   end
 
   describe "join — live chat-membership authz boundary (P4-3, load-bearing)" do
     test "OWNER can view the external SPA — snapshot reflects chat messages", ctx do
       _m = post_msg(ctx.session, "hello owner")
-      assert {:ok, reply, _socket} = join_as(ctx.session, @owner)
+      assert {:ok, reply, _socket} = join_as(ctx.session, ctx.owner)
       texts = reply.snapshot.page.children |> Enum.map(& &1.props.text)
       assert "hello owner" in texts
     end
@@ -195,7 +221,7 @@ defmodule EzagentWeb.Socialware.ChatFeedSocketTest do
       _m = post_msg(ctx.session, "hello generic chat")
       topic = "socialware:feed:chat_feed:#{URI.to_string(ctx.session)}"
 
-      assert {:ok, reply, _socket} = join_as(ctx.session, @owner, topic)
+      assert {:ok, reply, _socket} = join_as(ctx.session, ctx.owner, topic)
       assert "hello generic chat" in (reply.snapshot.page.children |> Enum.map(& &1.props.text))
     end
 
@@ -234,7 +260,7 @@ defmodule EzagentWeb.Socialware.ChatFeedSocketTest do
          ctx do
       # Join the chat_feed channel (subscribes to the canonical session events
       # topic). NO send(self(), ...) — drive the REAL production write path.
-      assert {:ok, _reply, _socket} = join_as(ctx.session, @owner)
+      assert {:ok, _reply, _socket} = join_as(ctx.session, ctx.owner)
 
       late = chat_send(ctx.session, "live update")
 

@@ -253,7 +253,14 @@ defmodule Ezagent.Orchestrator.Tools.MemberTemplate do
            source_template_uri: source_template_uri
          ) do
       {:ok, %{fresh?: true}} ->
-        {:ok, member_uri}
+        with :ok <-
+               Ezagent.Orchestrator.Tools.SpawnAuthority.grant(
+                 member_uri,
+                 caller,
+                 workspace_uri
+               ) do
+          {:ok, member_uri}
+        end
 
       {:ok, %{fresh?: false}} ->
         {:error, {:replacement_uri_already_live, member_uri}}

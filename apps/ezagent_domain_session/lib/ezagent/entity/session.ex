@@ -260,7 +260,8 @@ defmodule Ezagent.Entity.Session do
       target: target,
       mode: :call,
       args: args,
-      ctx: normalised_ctx
+      ctx: normalised_ctx,
+      origin: :trusted_internal
     })
   end
 

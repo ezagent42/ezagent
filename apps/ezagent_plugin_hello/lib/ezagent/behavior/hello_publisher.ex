@@ -29,12 +29,12 @@ defmodule Ezagent.ActionSet.HelloPublisher do
   (e.g. user says \"name it zzz\"), uses that name + timestamp. Always unique.
   Posts the result from the publisher agent itself.
   """
-  def handle_publish(%{session_uri: session_str} = args, _ctx)
+  def handle_publish(%{session_uri: session_str} = args, ctx)
       when is_binary(session_str) and session_str != "" do
     case parse_session_uri(session_str) do
       {:ok, session_uri} ->
         caller_uri = Ezagent.Entity.User.admin_uri()
-        caps = MapSet.new([Ezagent.Capability.admin_genesis_cap()])
+        caps = Map.get(ctx, :caps, MapSet.new())
         instruction = Map.get(args, :instruction, "")
 
         result =
@@ -161,4 +161,3 @@ defmodule Ezagent.ActionSet.HelloPublisher do
     ArgumentError -> :error
   end
 end
-

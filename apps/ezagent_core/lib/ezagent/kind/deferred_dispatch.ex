@@ -69,7 +69,7 @@ defmodule Ezagent.Kind.DeferredDispatch do
       cmd = force_fire_and_forget(cmd)
 
       try do
-        case Ezagent.Router.dispatch(cmd) do
+        case dispatch_as_reviewed_operator(cmd) do
           :ok ->
             :ok
 
@@ -98,4 +98,15 @@ defmodule Ezagent.Kind.DeferredDispatch do
   defp force_fire_and_forget(%Ezagent.Cmd{ctx: ctx} = cmd) do
     %{cmd | ctx: ctx |> Map.put(:mode, :cast) |> Map.put(:reply, :ignore)}
   end
+
+  # Deferred commands are emitted only by reviewed Behavior code after the
+  # parent mutation commits. Preserve that framework provenance explicitly so
+  # canonical-admin commands can obtain an exact, receiver-bound artifact from
+  # the target Kind's K.grant path. Non-admin presenters are unchanged because
+  # Invocation's scope check is presenter-bound and canonical-admin-only.
+  defp dispatch_as_reviewed_operator(%Ezagent.Cmd{ctx: %{caller: %URI{} = caller}} = cmd) do
+    Ezagent.Invocation.with_admin_operator(caller, fn -> Ezagent.Router.dispatch(cmd) end)
+  end
+
+  defp dispatch_as_reviewed_operator(%Ezagent.Cmd{} = cmd), do: Ezagent.Router.dispatch(cmd)
 end

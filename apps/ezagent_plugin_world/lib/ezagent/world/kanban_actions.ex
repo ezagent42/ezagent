@@ -175,7 +175,8 @@ defmodule Ezagent.World.KanbanActions do
             target: target,
             mode: :call,
             args: args,
-            ctx: ctx(socket)
+            ctx: ctx(socket),
+            origin: :authenticated_external
           })
 
         {:noreply, push_tree(socket, uri, status_of(result))}
@@ -197,7 +198,8 @@ defmodule Ezagent.World.KanbanActions do
             target: Ezagent.URI.with_action(uri, :kanban, action),
             mode: :call,
             args: args,
-            ctx: ctx(socket)
+            ctx: ctx(socket),
+            origin: :authenticated_external
           })
 
         status = status_of(result)
@@ -227,7 +229,8 @@ defmodule Ezagent.World.KanbanActions do
             target: Ezagent.URI.with_action(uri, :kanban, :sync_miro),
             mode: :call,
             args: %{},
-            ctx: ctx(socket)
+            ctx: ctx(socket),
+            origin: :authenticated_external
           })
 
         case result do

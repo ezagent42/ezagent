@@ -82,7 +82,6 @@ defmodule EzagentDomainInstanceMessage.Integration.OrchestratorMcpBridgeTest do
 
   import Phoenix.ChannelTest
 
-  alias Ezagent.{ActionSet, Capability}
   alias Ezagent.Entity.{Agent, Session, User}
   alias Ezagent.Orchestrator.{CcOrchestratorSeed, McpChannel, McpRegistry, McpServer}
   alias Ezagent.AgentBridge.TokenStore
@@ -128,26 +127,39 @@ defmodule EzagentDomainInstanceMessage.Integration.OrchestratorMcpBridgeTest do
     :ok
   end
 
+  setup do
+    reset_workspace!()
+    :ok
+  end
+
   defp uniq, do: System.unique_integer([:positive])
 
   # --- the four delegated caps (mirrors orchestrator_mcp_e2e_test) -------
 
-  defp template_cap(kind, workspace_uri) do
-    %Capability{
-      kind: kind,
-      behavior: ActionSet.Template,
-      instance: {:within_workspace, workspace_uri},
-      workspace_uri: workspace_uri,
-      granted_by: User.admin_uri(),
-      granted_at: DateTime.utc_now()
-    }
+  defp template_cap(:agent_template, workspace_uri, grantee) do
+    target = Ezagent.URI.with_action(workspace_uri, :workspace, :list_agent_templates)
+    Ezagent.Test.CapHelper.signed_action_cap!(target, grantee)
+  end
+
+  defp reset_workspace! do
+    _ = Ezagent.Kind.terminate(@workspace_uri)
+    :ok = Ezagent.SnapshotStore.delete(@workspace_uri)
+    _ = Ezagent.Workspace.Store.delete("team-alpha")
+    {:ok, _} = Ezagent.Workspace.create("team-alpha", %{})
+    :ok
   end
 
   # Spawn an orchestrator Agent Kind whose `:identity` slice carries
   # `caps` — `McpServer.from_orchestrator_uri/1` loads caps from there
   # (the agent's own slice), never from the wire.
-  defp spawn_orchestrator_with_caps(caps) do
+  defp spawn_orchestrator_with_caps(caps_or_builder) do
     orchestrator_uri = Ezagent.URI.new!("entity://team-alpha/agent/cc_orch-bridge-#{uniq()}")
+
+    caps =
+      if is_function(caps_or_builder, 1),
+        do: caps_or_builder.(orchestrator_uri),
+        else: caps_or_builder
+
     {:ok, _pid} = Ezagent.Kind.spawn(Agent, %{uri: orchestrator_uri, initial_caps: caps})
     :ok = Ezagent.WorkspaceRegistry.bind(orchestrator_uri, @workspace_uri)
     orchestrator_uri
@@ -318,8 +330,11 @@ defmodule EzagentDomainInstanceMessage.Integration.OrchestratorMcpBridgeTest do
       # :agent_template cap — `list_templates` (the tool exercised
       # below) needs only that. The cap is workspace-scoped, so it does
       # not need the orchestrator URI to be known at spawn time.
-      caps = MapSet.new([template_cap(:agent_template, @workspace_uri)])
-      orchestrator_uri = spawn_orchestrator_with_caps(caps)
+      orchestrator_uri =
+        spawn_orchestrator_with_caps(fn uri ->
+          MapSet.new([template_cap(:agent_template, @workspace_uri, uri)])
+        end)
+
       binding_epoch = Ecto.UUID.generate()
 
       # The Generator's registration step — bind the server-derived
@@ -489,8 +504,12 @@ defmodule EzagentDomainInstanceMessage.Integration.OrchestratorMcpBridgeTest do
 
       # --- 3. a registered orchestrator with a minted connect token ----
       session_uri = spawn_session()
-      caps = MapSet.new([template_cap(:agent_template, @workspace_uri)])
-      orchestrator_uri = spawn_orchestrator_with_caps(caps)
+
+      orchestrator_uri =
+        spawn_orchestrator_with_caps(fn uri ->
+          MapSet.new([template_cap(:agent_template, @workspace_uri, uri)])
+        end)
+
       binding_epoch = Ecto.UUID.generate()
 
       :ok =

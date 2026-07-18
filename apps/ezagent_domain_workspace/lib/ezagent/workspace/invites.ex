@@ -37,6 +37,7 @@ defmodule Ezagent.Workspace.Invites do
       target: target,
       action: action,
       args: args,
+      origin: :authenticated_external,
       ctx: %{
         mode: :call,
         caller: Map.fetch!(ctx, :caller),

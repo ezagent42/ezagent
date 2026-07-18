@@ -517,7 +517,8 @@ defmodule Ezagent.World.IdentityData do
            target: target,
            mode: :call,
            args: %{},
-           ctx: %{caller: caller_uri, caps: caller_caps, reply: :sync}
+           ctx: %{caller: caller_uri, caps: caller_caps, reply: :sync},
+           origin: :authenticated_external
          }) do
       {:ok, %{api_keys: list}} when is_list(list) -> Enum.map(list, &jsonable/1)
       # Graceful-degrade off the REAL dispatch result (no parallel flavor→behavior

@@ -14,7 +14,9 @@ defmodule Ezagent.ActionSet.ApiKeysMigrationParityTest do
   declares `behaviors/0 == [ApiKeys]`).
   """
 
-  use ExUnit.Case, async: false
+  use EzagentCore.DataCase, async: false
+
+  import Ezagent.Test.CapHelper, only: [signed_invocation!: 2, signed_required_cap!: 5]
 
   alias Ezagent.{BehaviorRegistry, Invocation}
   alias Ezagent.ActionSet.ApiKeys
@@ -37,25 +39,28 @@ defmodule Ezagent.ActionSet.ApiKeysMigrationParityTest do
     :ok = BehaviorRegistry.register(StubAgentKind, :delete_api_key, ApiKeys)
     :ok = BehaviorRegistry.register(StubAgentKind, :get_api_key, ApiKeys)
 
-    agent_uri = Ezagent.URI.new!("entity://parity/agent/curl_agent-#{System.unique_integer([:positive])}")
+    agent_uri =
+      Ezagent.URI.new!("entity://parity/agent/curl_agent-#{System.unique_integer([:positive])}")
+
     state = %{api_keys: ApiKeys.init_slice(%{})}
 
     {:ok, agent_uri: agent_uri, state: state}
   end
 
   defp build_invocation(agent_uri, action, args) do
-    target =
-      agent_uri
-      |> URI.to_string()
-      |> Kernel.<>("?action=api_keys.#{action}")
-      |> URI.parse()
+    target = Ezagent.URI.new!("#{URI.to_string(agent_uri)}?action=api_keys.#{action}")
+
+    admin = Ezagent.URI.user(:system, :admin)
+    cap = signed_required_cap!(target, :api_keys_parity_stub, ApiKeys, action, admin)
 
     %Invocation{
+      origin: :trusted_internal,
       target: target,
       mode: :call,
       args: args,
-      ctx: %{caller: :vm_internal, caps: MapSet.new(), reply: :sync}
+      ctx: %{caller: admin, caps: MapSet.new([cap]), reply: :sync}
     }
+    |> signed_invocation!(:api_keys_parity_stub)
   end
 
   describe "Level 1 — dispatch parity through Kind.Runtime" do
@@ -82,7 +87,8 @@ defmodule Ezagent.ActionSet.ApiKeysMigrationParityTest do
 
       inv = build_invocation(agent_uri, :list_api_keys, %{})
 
-      assert {:ok, new_state, %{api_keys: [%{provider: "openai", masked: masked}]}, nil, _deferred} =
+      assert {:ok, new_state, %{api_keys: [%{provider: "openai", masked: masked}]}, nil,
+              _deferred} =
                Ezagent.Kind.Runtime.handle_dispatch(inv, state, StubAgentKind, agent_uri)
 
       assert new_state == state

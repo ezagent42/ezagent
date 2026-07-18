@@ -55,8 +55,8 @@ defmodule Ezagent.World.ViewCapGateRegressionTest do
     %{session: session}
   end
 
-  defp render_cap(session) do
-    %Ezagent.Capability{
+  defp render_cap(session, grantee) do
+    requested =
       Ezagent.Capability.cap(
         :session,
         LockedRender,
@@ -64,9 +64,10 @@ defmodule Ezagent.World.ViewCapGateRegressionTest do
         Ezagent.URI.instance(session),
         Ezagent.Capability.workspace_of(session)
       )
-      | granted_by: Ezagent.Entity.User.admin_uri(),
-        granted_at: DateTime.utc_now()
-    }
+
+    Ezagent.Test.CapHelper.with_test_authority(session, :session, fn authority ->
+      Ezagent.Test.CapHelper.authority_signed_cap!(authority, grantee, requested)
+    end)
   end
 
   # A REAL user whose caps `Ezagent.Identity.list_caps_for/1` (the gate's read
@@ -76,6 +77,16 @@ defmodule Ezagent.World.ViewCapGateRegressionTest do
       Ezagent.URI.new!("entity://system/user/capgate-#{System.unique_integer([:positive])}")
 
     {:ok, _} = Ezagent.Users.create_read_only(uri, caps)
+    {:ok, _pid} = Ezagent.SpawnRegistry.spawn(uri)
+    uri
+  end
+
+  defp live_user_with_render_cap(session) do
+    uri =
+      Ezagent.URI.new!("entity://system/user/capgate-#{System.unique_integer([:positive])}")
+
+    cap = render_cap(session, uri)
+    {:ok, _} = Ezagent.Users.create_read_only(uri, [cap])
     {:ok, _pid} = Ezagent.SpawnRegistry.spawn(uri)
     uri
   end
@@ -147,7 +158,7 @@ defmodule Ezagent.World.ViewCapGateRegressionTest do
   test "(d) a caller HOLDING the render cap sees the gated tab and can switch to it", %{
     session: session
   } do
-    capped = live_user([render_cap(session)])
+    capped = live_user_with_render_cap(session)
 
     ids = view_ids_in_state(session, capped)
     assert "test_locked" in ids

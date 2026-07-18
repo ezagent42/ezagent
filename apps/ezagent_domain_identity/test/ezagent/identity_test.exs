@@ -1,6 +1,8 @@
 defmodule Ezagent.IdentityTest do
   use EzagentCore.DataCase, async: false
 
+  import Ezagent.Test.CapHelper, only: [signed_fixture_cap!: 5]
+
   describe "list_caps_for/1" do
     test "returns empty MapSet for not-yet-spawned user" do
       uri =
@@ -13,7 +15,7 @@ defmodule Ezagent.IdentityTest do
       assert MapSet.size(caps) == 0
     end
 
-    test "returns admin's all-cap MapSet for live admin Kind" do
+    test "returns only born-signed caps for the live admin Kind" do
       # PR-M (2026-05-20): admin User Kind is no longer a static
       # supervisor child — it spawns lazily on first reference. The
       # production password-login path (`Ezagent.Entity.authenticate_password/2`) calls
@@ -28,8 +30,9 @@ defmodule Ezagent.IdentityTest do
 
       assert MapSet.size(caps) >= 1
 
-      assert Enum.any?(caps, fn cap ->
-               cap.kind == :any and cap.behavior == :any and cap.instance == :any
+      assert Enum.all?(caps, fn cap ->
+               is_binary(cap.signature) and is_binary(cap.key_id) and
+                 cap.grantee_uri == Ezagent.Entity.User.admin_uri()
              end)
     end
   end
@@ -41,8 +44,16 @@ defmodule Ezagent.IdentityTest do
           "entity://team-alpha/user/verify-loader-#{System.unique_integer([:positive])}"
         )
 
-      valid = Ezagent.Capability.admin_genesis_cap()
-      invalid = %{valid | granted_by: Ezagent.URI.new!("system://forged")}
+      valid =
+        signed_fixture_cap!(
+          Ezagent.URI.new!("session://team-alpha/default/verify-loader"),
+          :session,
+          Ezagent.ActionSet.Session,
+          :send,
+          uri
+        )
+
+      invalid = %{valid | grantee_uri: Ezagent.URI.new!("entity://team-alpha/user/other")}
 
       assert {:ok, _user} = Ezagent.Users.create(uri, nil, [valid, invalid])
 

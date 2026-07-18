@@ -36,7 +36,9 @@ const read = (p) => readFileSync(p, "utf8")
 const mainSrc = read(join(srcDir, "main.tsx"))
 const manifest = JSON.parse(read(join(srcDir, "slots.manifest.json")))
 
-const componentFiles = readdirSync(componentsDir).filter((f) => f.endsWith(".tsx"))
+const componentFiles = readdirSync(componentsDir).filter(
+  (f) => f.endsWith(".tsx") && !f.endsWith(".test.tsx"),
+)
 
 // Check 1 — single mount point: createRoot only in main.tsx.
 for (const file of componentFiles) {

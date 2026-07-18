@@ -79,23 +79,81 @@ defmodule EzagentCli.Dispatch do
 
             deadline_ms = Map.get(options, :deadline_ms) || @default_deadline_ms
 
-            inv = %Invocation{
-              target: target_uri,
-              mode: mode,
-              args: action_args,
-              ctx: %{
-                caller: caller_uri,
-                caps: caps,
-                reply: {:caller_inbox, self()},
-                deadline_ms: deadline_ms
-              }
-            }
+            case run_framework_producer(
+                   behavior_module,
+                   action,
+                   target_uri,
+                   action_args,
+                   caller_uri
+                 ) do
+              :dispatch ->
+                inv = %Invocation{
+                  target: target_uri,
+                  mode: mode,
+                  args: action_args,
+                  ctx: %{
+                    caller: caller_uri,
+                    caps: operator_dispatch_caps(caller_uri, caps),
+                    reply: {:caller_inbox, self()},
+                    deadline_ms: deadline_ms
+                  },
+                  origin: :trusted_internal
+                }
 
-            do_dispatch(inv, mode, deadline_ms)
+                Invocation.with_admin_operator(caller_uri, fn ->
+                  do_dispatch(inv, mode, deadline_ms)
+                end)
+
+              result ->
+                result
+            end
 
           {:error, _} = err ->
             err
         end
+    end
+  end
+
+  # `identity.grant_cap`'s handler is now storage-only: it accepts an artifact
+  # that has already passed the concrete capability target's K.grant path. The
+  # generic CLI projection therefore cannot dispatch the caller-supplied intent
+  # straight into that handler. Route this one producer through the domain's
+  # sole ISSUE -> STORE facade; signing remains inside K.grant and the CLI never
+  # receives authority key material.
+  defp run_framework_producer(
+         Ezagent.ActionSet.IdentityAdmin,
+         :grant_cap,
+         %URI{} = target,
+         %{cap: cap},
+         %URI{} = caller
+       ) do
+    grantee = Ezagent.URI.instance(target)
+
+    with {:ok, requested} <- normalize_requested_cap(cap, caller),
+         :ok <-
+           Ezagent.Identity.Grant.issue_and_absorb_cap(
+             grantee,
+             requested,
+             {:held_by, caller}
+           ) do
+      {:ok, :ok}
+    end
+  end
+
+  defp run_framework_producer(_behavior, _action, _target, _args, _caller), do: :dispatch
+
+  defp normalize_requested_cap(cap, caller) do
+    {:ok, Ezagent.Capability.normalize!(cap, caller)}
+  rescue
+    _ -> {:error, :invalid_cap}
+  end
+
+  defp operator_dispatch_caps(%URI{} = caller, caps) do
+    if Ezagent.URI.stable_key(caller) ==
+         Ezagent.URI.stable_key(Ezagent.URI.user(:system, :admin)) do
+      MapSet.new()
+    else
+      caps
     end
   end
 

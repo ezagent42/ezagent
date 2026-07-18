@@ -38,7 +38,19 @@ defmodule Ezagent.Kind.InstanceSetUndeclaredTest do
     :ok
   end
 
-  defp admin_caps, do: MapSet.new([Ezagent.Capability.admin_genesis_cap()])
+  defp admin_caps(uri, behavior, action) do
+    cap =
+      signed_fixture_cap!(
+        uri,
+        SupersetSessionKind.type_name(),
+        behavior,
+        action,
+        Ezagent.Entity.User.admin_uri()
+      )
+
+    MapSet.new([cap])
+  end
+
   defp with_probe, do: [Ezagent.ActionSet.Session, UndeclaredProbe, Ezagent.ActionSet.KindBase]
 
   test "(A) BLOCKER-1: an UNDECLARED recipe-loaded behavior materializes its slice (init_set/effective_set keep it)" do
@@ -62,10 +74,15 @@ defmodule Ezagent.Kind.InstanceSetUndeclaredTest do
     target = Ezagent.URI.new!("#{URI.to_string(uri)}?action=undeclared_probe.undeclared_poke")
 
     Invocation.dispatch(%Invocation{
+      origin: :trusted_internal,
       target: target,
       mode: :call,
       args: %{},
-      ctx: %{caller: Ezagent.Entity.User.admin_uri(), caps: admin_caps(), reply: :ignore}
+      ctx: %{
+        caller: Ezagent.Entity.User.admin_uri(),
+        caps: admin_caps(uri, UndeclaredProbe, :undeclared_poke),
+        reply: :ignore
+      }
     })
 
     assert_received {:undeclared_probe, :handled}
@@ -80,10 +97,15 @@ defmodule Ezagent.Kind.InstanceSetUndeclaredTest do
 
     result =
       Invocation.dispatch(%Invocation{
+        origin: :trusted_internal,
         target: target,
         mode: :call,
         args: %{},
-        ctx: %{caller: Ezagent.Entity.User.admin_uri(), caps: admin_caps(), reply: :ignore}
+        ctx: %{
+          caller: Ezagent.Entity.User.admin_uri(),
+          caps: admin_caps(uri, UndeclaredProbe, :undeclared_poke),
+          reply: :ignore
+        }
       })
 
     assert {:error, {:unknown_action, :undeclared_poke}} = result
@@ -100,6 +122,7 @@ defmodule Ezagent.Kind.InstanceSetUndeclaredTest do
 
     result =
       Invocation.dispatch(%Invocation{
+        origin: :trusted_internal,
         target: target,
         mode: :call,
         args: %{},
@@ -111,7 +134,7 @@ defmodule Ezagent.Kind.InstanceSetUndeclaredTest do
         }
       })
 
-    assert {:error, :unauthorized} = result
+    assert {:error, :missing_cap} = result
     refute_received {:undeclared_probe, :handled}
   end
 end

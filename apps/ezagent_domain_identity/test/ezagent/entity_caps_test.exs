@@ -1,6 +1,8 @@
 defmodule Ezagent.EntityCapsTest do
   use EzagentCore.DataCase, async: false
 
+  import Ezagent.Test.CapHelper, only: [authority_signed_cap_as!: 4]
+
   alias Ezagent.{Cap, Capability, EntityCaps, SnapshotStore}
 
   @workspace URI.new!("workspace://entity-caps")
@@ -205,7 +207,7 @@ defmodule Ezagent.EntityCapsTest do
       :ok = Ezagent.Kind.terminate(user)
     end
 
-    test "grant rejects an unsigned legacy cap even when signature enforcement is disabled" do
+    test "storage rejects unsigned legacy caps and keeps signed-looking tamper opaque" do
       user = user_uri("unsigned")
 
       unsigned = %Capability{
@@ -237,9 +239,9 @@ defmodule Ezagent.EntityCapsTest do
 
       assert {:error, :invalid_cap_artifact} = EntityCaps.grant(user, unsigned)
       assert {:error, :invalid_cap_artifact} = EntityCaps.persist(user, [unsigned])
-      assert {:error, :invalid_cap_artifact} = EntityCaps.grant(user, forged)
-      assert {:error, :invalid_cap_artifact} = EntityCaps.persist(user, [forged])
-      assert EntityCaps.load_persisted(user) == []
+      assert :ok = EntityCaps.grant(user, forged)
+      assert :ok = EntityCaps.persist(user, [forged])
+      assert EntityCaps.load_persisted(user) == [forged]
     end
 
     test "cold user persist replaces caps_json; grant and revoke round-trip durably" do
@@ -538,8 +540,8 @@ defmodule Ezagent.EntityCapsTest do
       granted_at: DateTime.utc_now()
     }
 
-    {:ok, artifact} = Cap.issue({:genesis, @issuer}, receiver, unsigned)
-    artifact
+    {:ok, authority} = Ezagent.Cap.Authority.open(unsigned.instance, :session)
+    authority_signed_cap_as!(authority, @issuer, receiver, unsigned)
   end
 
   defp user_uri(suffix),

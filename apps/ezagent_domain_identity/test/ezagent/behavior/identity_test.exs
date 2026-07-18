@@ -5,7 +5,9 @@ defmodule Ezagent.ActionSet.IdentityTest do
   parity through Kind.Runtime lives in
   `identity_migration_parity_test.exs`.
   """
-  use ExUnit.Case, async: true
+  use EzagentCore.DataCase, async: false
+
+  import Ezagent.Test.CapHelper, only: [signed_fixture_cap!: 5]
   alias Ezagent.ActionSet.Identity
   alias Ezagent.Capability
 
@@ -26,14 +28,10 @@ defmodule Ezagent.ActionSet.IdentityTest do
 
   # Phase B: `init_slice/1` → `create/1` (PERSISTENT state, `{:ok, state}`).
   describe "create/1" do
-    test "default initial_caps contains owner-derived self-Identity cap (PR-OWN-3)" do
+    test "default initial_caps is empty until genesis installs signed grants" do
       uri = URI.new!("entity://team-alpha/user/x")
       assert {:ok, %{caps: caps}} = Identity.create(%{uri: uri})
-      assert MapSet.size(caps) == 1
-
-      [self_cap] = MapSet.to_list(caps)
-      assert self_cap.behavior == Identity
-      assert self_cap.instance == uri
+      assert caps == MapSet.new()
     end
 
     test "create without :uri arg yields empty MapSet" do
@@ -41,23 +39,36 @@ defmodule Ezagent.ActionSet.IdentityTest do
       assert MapSet.size(caps) == 0
     end
 
-    test "accepts initial_caps as MapSet (admin path)" do
+    test "drops unsigned initial_caps supplied as a MapSet" do
       admin_caps = MapSet.new([Ezagent.Capability.admin_genesis_cap()])
       assert {:ok, %{caps: caps}} = Identity.create(%{initial_caps: admin_caps})
-      assert caps == admin_caps
+      assert caps == MapSet.new()
     end
 
-    test "accepts initial_caps as list" do
+    test "drops unsigned initial_caps supplied as a list" do
       [cap] = MapSet.to_list(MapSet.new([Ezagent.Capability.admin_genesis_cap()]))
       assert {:ok, %{caps: caps}} = Identity.create(%{initial_caps: [cap]})
-      assert MapSet.size(caps) == 1
+      assert caps == MapSet.new()
     end
 
-    test "I5 drops an unverified initial cap before it enters the slice" do
-      valid = Ezagent.Capability.admin_genesis_cap()
-      invalid = %{valid | granted_by: Ezagent.URI.new!("system://forged")}
+    test "I5 keeps a born-signed receiver-bound cap and drops a tampered artifact" do
+      receiver = Ezagent.URI.new!("entity://team-alpha/user/initial-cap")
+      target = Ezagent.URI.new!("session://team-alpha/default/main")
 
-      assert {:ok, %{caps: caps}} = Identity.create(%{initial_caps: [valid, invalid]})
+      valid =
+        signed_fixture_cap!(
+          target,
+          :session,
+          Ezagent.ActionSet.Session,
+          :send,
+          receiver
+        )
+
+      invalid = %{valid | grantee_uri: Ezagent.URI.new!("entity://team-alpha/user/other")}
+
+      assert {:ok, %{caps: caps}} =
+               Identity.create(%{uri: receiver, initial_caps: [valid, invalid]})
+
       assert MapSet.equal?(caps, MapSet.new([valid]))
     end
   end
@@ -120,7 +131,8 @@ defmodule Ezagent.ActionSet.IdentityTest do
                :absorb_cap,
                :persist_caps,
                :store_cap,
-               :remove_cap
+               :remove_cap,
+               :sync_recipe_binding
              ]
     end
 
@@ -144,10 +156,7 @@ defmodule Ezagent.ActionSet.IdentityTest do
 
   describe "Capability.matches? integration sanity" do
     test "admin all-cap matches arbitrary needed cap (the gate Phase 3d uses)" do
-      {:ok, slice} =
-        Identity.create(%{initial_caps: MapSet.new([Ezagent.Capability.admin_genesis_cap()])})
-
-      [admin_cap] = MapSet.to_list(slice.caps)
+      admin_cap = Ezagent.Capability.admin_genesis_cap()
 
       assert Capability.matches?(admin_cap, %{
                kind: :anything,

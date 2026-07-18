@@ -24,6 +24,7 @@ defmodule EzagentCore.DataCase do
       import Ecto.Changeset
       import Ecto.Query
       import EzagentCore.DataCase
+      import Ezagent.Test.CapHelper
     end
   end
 

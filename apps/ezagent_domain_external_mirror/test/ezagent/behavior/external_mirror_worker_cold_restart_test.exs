@@ -204,7 +204,9 @@ defmodule Ezagent.ActionSet.ExternalMirrorWorkerColdRestartTest do
   # :chat slice (chat.join writes members → SliceChange → publisher event).
   defp send_chat_to_session(%URI{} = session_uri) do
     member_uri =
-      Ezagent.URI.new!("entity://team-alpha/user/em-cold-restart-#{System.unique_integer([:positive])}")
+      Ezagent.URI.new!(
+        "entity://team-alpha/user/em-cold-restart-#{System.unique_integer([:positive])}"
+      )
 
     user_module = Module.concat([Ezagent, Entity, User])
 
@@ -217,23 +219,14 @@ defmodule Ezagent.ActionSet.ExternalMirrorWorkerColdRestartTest do
     target = Ezagent.URI.new!("#{URI.to_string(session_uri)}?action=session.join")
 
     Ezagent.Invocation.dispatch(%Ezagent.Invocation{
+      origin: :trusted_internal,
       target: target,
       mode: :call,
       args: %{member: member_uri},
-      ctx: %{caller: admin_uri, caps: admin_caps(), reply: :ignore}
+      ctx: %{caller: admin_uri, caps: admin_caps(target, admin_uri), reply: :ignore}
     })
   end
 
-  defp admin_caps do
-    MapSet.new([
-      %Ezagent.Capability{
-        kind: :any,
-        behavior: :any,
-        instance: :any,
-        workspace_uri: :any,
-        granted_by: Ezagent.URI.user(:system, :admin),
-        granted_at: ~U[2026-01-01 00:00:00Z]
-      }
-    ])
-  end
+  defp admin_caps(target, admin_uri),
+    do: MapSet.new([Ezagent.Test.CapHelper.signed_action_cap!(target, admin_uri)])
 end

@@ -526,8 +526,8 @@ defmodule Ezagent.ActionSet.Template do
         |> Map.put(:created_by, caller_uri)
         |> Map.put(:created_at, DateTime.utc_now())
 
-      with {:ok, new_uri} <- persist_session_template_version(content, workspace_uri, ctx),
-           :ok <- grant_session_template_owner_cap(owner_uri, workspace_uri) do
+      with {:ok, new_uri} <- persist_session_template_version(content, workspace_uri),
+           :ok <- grant_template_owner_caps(owner_uri, new_uri, SessionTemplate) do
         {:ok, %{template_uri: new_uri}, []}
       end
     end
@@ -554,8 +554,8 @@ defmodule Ezagent.ActionSet.Template do
         |> Map.put(:created_at, DateTime.utc_now())
 
       with {:ok, _pid} <- ensure_kind_alive(new_uri),
-           {:ok, _result} <- dispatch_template_write(new_uri, content, ctx),
-           :ok <- grant_agent_template_owner_cap(owner_uri, workspace_uri) do
+           {:ok, _result} <- dispatch_template_write_as_system(new_uri, content),
+           :ok <- grant_template_owner_caps(owner_uri, new_uri, AgentTemplate) do
         notify_fork_owner(owner_uri, parent_uri, new_uri)
         {:ok, %{template_uri: new_uri}, []}
       end
@@ -661,8 +661,22 @@ defmodule Ezagent.ActionSet.Template do
       target: uri,
       action: :write,
       args: %{content: content},
-      ctx: ctx
+      ctx: ctx,
+      origin: :trusted_internal
     })
+  end
+
+  defp dispatch_template_write_as_system(%URI{} = uri, content) do
+    admin = Ezagent.Entity.User.admin_uri()
+    target = Ezagent.URI.with_action(uri, :template, :write)
+
+    with {:ok, cap} <- Ezagent.Cap.issue_for_action({:admin, admin}, admin, target) do
+      dispatch_template_write(uri, content, %{
+        caller: admin,
+        caps: MapSet.new([cap]),
+        reply: {:caller_inbox, self()}
+      })
+    end
   end
 
   # SessionTemplate-specific helpers --------------------------------------
@@ -670,73 +684,39 @@ defmodule Ezagent.ActionSet.Template do
   # Persist a new SessionTemplate version using the existing module helper
   # — that path already handles the content-hash URI construction +
   # write-once semantics correctly (HIGH-9 caller-threaded variant).
-  defp persist_session_template_version(content, %URI{} = workspace_uri, ctx) do
-    SessionTemplate.persist_version(content, workspace_uri,
-      caller: Map.get(ctx, :caller),
-      caps: Map.get(ctx, :caps)
-    )
+  defp persist_session_template_version(content, %URI{} = workspace_uri) do
+    SessionTemplate.persist_version_as_system(content, workspace_uri)
   end
 
-  # Mirror of `SessionTemplate.grant_owner_template_cap/2` — we cannot
-  # call the private function so the logic lives here. The grant is
-  # idempotent across forks (CapBAC dedupes), so a fork by an existing
-  # template-owner is a harmless no-op grant.
-  defp grant_session_template_owner_cap(%URI{} = owner_uri, %URI{} = workspace_uri) do
-    cap = %Ezagent.Capability{
-      kind: :session_template,
-      behavior: __MODULE__,
-      # SPEC 2026-05-27 capability-action-axis — fork owner gets full
-      # lifecycle authority (read/write/instantiate/fork). The
-      # `:within_workspace` instance scope is the structural narrow.
-      action: :any,
-      instance: {:within_workspace, workspace_uri},
-      workspace_uri: workspace_uri,
-      granted_by: owner_uri,
-      granted_at: DateTime.utc_now()
-    }
+  # Parent authorization is verified by the parent Kind before this handler
+  # runs. The fork itself has a distinct authority, so its owner receives a
+  # fresh set of concrete, fork-signed artifacts; the parent's cap is never
+  # retargeted or reused for the child.
+  defp grant_template_owner_caps(%URI{} = owner_uri, %URI{} = template_uri, kind_module) do
+    with :ok <- Ezagent.Identity.TargetAuthority.ensure(owner_uri, template_uri) do
+      Ezagent.CapabilityRegistry.subjects_for_kind(kind_module)
+      |> Enum.reduce_while(:ok, fn subject, :ok ->
+        requested =
+          Ezagent.Capability.cap(
+            kind_module.type_name(),
+            subject.behavior,
+            subject.action,
+            template_uri,
+            Ezagent.Capability.workspace_of(template_uri)
+          )
 
-    grant_cap(owner_uri, cap)
-  end
+        authorization =
+          if Ezagent.URI.stable_key(owner_uri) ==
+               Ezagent.URI.stable_key(Ezagent.Entity.User.admin_uri()),
+             do: {:admin, owner_uri},
+             else: {:held_by, owner_uri}
 
-  defp grant_session_template_owner_cap(_, _), do: :ok
-
-  # AgentTemplate-specific helpers ----------------------------------------
-
-  defp grant_agent_template_owner_cap(%URI{} = owner_uri, %URI{} = workspace_uri) do
-    cap = %Ezagent.Capability{
-      kind: :agent_template,
-      behavior: __MODULE__,
-      # SPEC 2026-05-27 capability-action-axis — AgentTemplate fork
-      # owner gets full lifecycle authority within the workspace.
-      action: :any,
-      instance: {:within_workspace, workspace_uri},
-      workspace_uri: workspace_uri,
-      granted_by: owner_uri,
-      granted_at: DateTime.utc_now()
-    }
-
-    grant_cap(owner_uri, cap)
-  end
-
-  defp grant_agent_template_owner_cap(_, _), do: :ok
-
-  # Generic owner-cap grant — routes through the grant chokepoint
-  # (SPEC 2026-06-17 §4 PR-2, site #9). The WHO-may-fork authority was
-  # already enforced by dispatch CapBAC against the parent URI's `:fork`
-  # action; this is purely the followup grant so the owner can later
-  # operate on the fork. The cap is `<*_template>/Template/:any/
-  # {:within_workspace}` — concrete kind + behavior, scope-bounded
-  # instance — so `IdentityAdmin.rule_cap_bounded?/1` is true → the
-  # `{:rule, …}` branch authorizes it (Decision #154). The configurer of
-  # the fork-materialization rule is the OWNER (also the entity
-  # `granted_by`); `template-materialize` is no longer the authorizer.
-  defp grant_cap(%URI{} = owner_uri, %Ezagent.Capability{} = cap) do
-    Ezagent.Identity.Grant.grant_cap_via_router(
-      owner_uri,
-      cap,
-      {:rule, :template_materialize, owner_uri},
-      :sync
-    )
+        case Ezagent.Identity.Grant.grant_cap(owner_uri, requested, authorization) do
+          :ok -> {:cont, :ok}
+          {:error, reason} -> {:halt, {:error, reason}}
+        end
+      end)
+    end
   end
 
   # PR-OWN-4 (caps-data-ownership SPEC #306 §6): workspace-scoped

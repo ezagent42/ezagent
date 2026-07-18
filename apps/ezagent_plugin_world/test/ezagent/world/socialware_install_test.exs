@@ -11,20 +11,28 @@ defmodule Ezagent.World.SocialwareInstallTest do
   alias Ezagent.World.SocialwareInstall
   alias EzagentDomainInstanceMessage.SessionCreator.TemplateResolver
 
-  @caller Ezagent.URI.new!("entity://cidw-consumer/user/operator")
-  @author Ezagent.URI.new!("entity://cidw-pub/user/author")
-  @ws_consumer Ezagent.URI.new!("workspace://cidw-consumer")
-  @ws_pub Ezagent.URI.new!("workspace://cidw-pub")
-  @ws_priv Ezagent.URI.new!("workspace://cidw-priv")
-
   defp uniq, do: System.unique_integer([:positive])
+
+  setup do
+    suffix = uniq()
+    consumer = Ezagent.URI.workspace("cidw-consumer-#{suffix}")
+
+    {:ok,
+     caller: Ezagent.URI.user("cidw-consumer-#{suffix}", "operator"),
+     consumer: consumer,
+     public: Ezagent.URI.workspace("cidw-pub-#{suffix}"),
+     private: Ezagent.URI.workspace("cidw-priv-#{suffix}")}
+  end
 
   # `SessionTemplate.create` grants an owner cap to the caller's User Kind, so the
   # caller must be a live actor (else `:no_such_actor`). Spawn it once per test.
-  defp spawn_caller! do
+  defp spawn_caller!(workspace_uri, caller) do
+    Ezagent.Test.CapHelper.ensure_workspace_kind!(workspace_uri)
+    ctx = Ezagent.Test.CapHelper.signed_workspace_ctx!(workspace_uri, caller)
+
     case Ezagent.Kind.spawn(Ezagent.Entity.User, %{
-           uri: @caller,
-           initial_caps: MapSet.new([Ezagent.Capability.admin_genesis_cap()])
+           uri: caller,
+           initial_caps: ctx.caps
          }) do
       {:ok, _pid} -> :ok
       {:error, {:already_started, _}} -> :ok
@@ -46,7 +54,7 @@ defmodule Ezagent.World.SocialwareInstallTest do
       DefinitionRegistry.write_definition(definition,
         workspace_uri: workspace_uri,
         caller_workspace_uri: workspace_uri,
-        actor_uri: @author,
+        actor_uri: Ezagent.Entity.User.admin_uri(),
         # #165: seeding a public catalog def now requires admin authority.
         caps: MapSet.new([Ezagent.Capability.admin_genesis_cap()])
       )
@@ -62,32 +70,34 @@ defmodule Ezagent.World.SocialwareInstallTest do
     install
   end
 
-  test "install-by-config_id bakes the EXACT foreign-public revision pin (not a same-named local)" do
-    spawn_caller!()
+  test "install-by-config_id bakes the EXACT foreign-public revision pin (not a same-named local)",
+       %{caller: caller, consumer: consumer, public: public} do
+    spawn_caller!(consumer, caller)
     name = "cidw-#{uniq()}"
-    r_pub = write!(name, [Ezagent.ActionSet.Session], @ws_pub, :public)
-    r_local = write!(name, [Ezagent.ActionSet.Publisher.SessionImpl], @ws_consumer, :private)
+    r_pub = write!(name, [Ezagent.ActionSet.Session], public, :public)
+    r_local = write!(name, [Ezagent.ActionSet.Publisher.SessionImpl], consumer, :private)
     refute r_pub.id == r_local.id
 
     assert {:ok, template_name} =
-             SocialwareInstall.prepare_create_template(@ws_consumer, @caller, "default", name, %{
+             SocialwareInstall.prepare_create_template(consumer, caller, "default", name, %{
                config_id: r_pub.id,
                content_hash: r_pub.content_hash
              })
 
-    install = install_of(template_name, @ws_consumer)
+    install = install_of(template_name, consumer)
     assert install.ref == name
     # pinned to the foreign public revision, NOT the same-named local one.
     assert install.config_id == r_pub.id
     assert install.content_hash == r_pub.content_hash
   end
 
-  test "SECURITY: install-by-config_id of a PRIVATE foreign def is rejected + writes NO install template" do
+  test "SECURITY: install-by-config_id of a PRIVATE foreign def is rejected + writes NO install template",
+       %{caller: caller, consumer: consumer, private: private} do
     name = "cidw-priv-#{uniq()}"
-    r_priv = write!(name, [Ezagent.ActionSet.Session], @ws_priv, :private)
+    r_priv = write!(name, [Ezagent.ActionSet.Session], private, :private)
 
     assert {:error, {:socialware_revision_not_installable, ^name}} =
-             SocialwareInstall.prepare_create_template(@ws_consumer, @caller, "default", name, %{
+             SocialwareInstall.prepare_create_template(consumer, caller, "default", name, %{
                config_id: r_priv.id
              })
 
@@ -96,33 +106,35 @@ defmodule Ezagent.World.SocialwareInstallTest do
     assert {:error, _} =
              TemplateResolver.resolve_session_template!(
                "socialware-install-#{name}",
-               @ws_consumer
+               consumer
              )
   end
 
-  test "backward-compat: name-only install writes a bare-name (unpinned) install template" do
-    spawn_caller!()
+  test "backward-compat: name-only install writes a bare-name (unpinned) install template",
+       %{caller: caller, consumer: consumer, public: public} do
+    spawn_caller!(consumer, caller)
     name = "cidw-name-#{uniq()}"
-    write!(name, [Ezagent.ActionSet.Session], @ws_pub, :public)
+    write!(name, [Ezagent.ActionSet.Session], public, :public)
 
     assert {:ok, template_name} =
              SocialwareInstall.prepare_create_template(
-               @ws_consumer,
-               @caller,
+               consumer,
+               caller,
                "default",
                name,
                nil
              )
 
-    install = install_of(template_name, @ws_consumer)
+    install = install_of(template_name, consumer)
     assert install.ref == name
     assert install.config_id == nil
   end
 
-  test "operator role-slot choices are carried only as install config" do
-    spawn_caller!()
+  test "operator role-slot choices are carried only as install config",
+       %{caller: caller, consumer: consumer, public: public} do
+    spawn_caller!(consumer, caller)
     name = "cidw-role-slots-#{uniq()}"
-    write!(name, [Ezagent.ActionSet.Session], @ws_pub, :public)
+    write!(name, [Ezagent.ActionSet.Session], public, :public)
 
     role_slots = [
       %{"role_name" => "researcher", "mode" => "fresh", "flavor" => "codex"},
@@ -135,15 +147,15 @@ defmodule Ezagent.World.SocialwareInstallTest do
 
     assert {:ok, template_name} =
              SocialwareInstall.prepare_create_template(
-               @ws_consumer,
-               @caller,
+               consumer,
+               caller,
                "default",
                name,
                nil,
                %{"role_slots" => role_slots}
              )
 
-    install = install_of(template_name, @ws_consumer)
+    install = install_of(template_name, consumer)
     assert install.ref == name
     assert install.config == %{"role_slots" => role_slots}
   end

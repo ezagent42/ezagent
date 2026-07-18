@@ -627,7 +627,8 @@ defmodule Ezagent.Entity.AgentTemplate do
              target: target,
              mode: :call,
              args: args,
-             ctx: ctx
+             ctx: ctx,
+             origin: :trusted_internal
            }) do
         {:ok, %{template_uri: %URI{} = uri}} -> {:ok, uri}
         {:error, _} = err -> err
@@ -655,17 +656,21 @@ defmodule Ezagent.Entity.AgentTemplate do
 
   defp dispatch_write_as_system(%URI{} = uri, content) do
     target = Ezagent.URI.with_action(uri, :template, :write)
+    admin = Ezagent.URI.user(:system, :admin)
 
-    Ezagent.Invocation.dispatch(%Ezagent.Invocation{
-      target: target,
-      mode: :call,
-      args: %{content: content},
-      ctx: %{
-        caller: Ezagent.URI.user(:system, :admin),
-        caps: MapSet.new([Ezagent.Capability.admin_genesis_cap()]),
-        reply: {:caller_inbox, self()}
-      }
-    })
+    with {:ok, signed_cap} <- Ezagent.Cap.issue_for_action({:admin, admin}, admin, target) do
+      Ezagent.Invocation.dispatch(%Ezagent.Invocation{
+        target: target,
+        mode: :call,
+        args: %{content: content},
+        ctx: %{
+          caller: admin,
+          caps: MapSet.new([signed_cap]),
+          reply: {:caller_inbox, self()}
+        },
+        origin: :trusted_internal
+      })
+    end
   end
 
   defp workspace_segment(%URI{scheme: "workspace"} = uri), do: Ezagent.URI.name!(uri)

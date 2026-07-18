@@ -213,9 +213,10 @@ defmodule Ezagent.ActionSet.Session.Delivery do
         args: %{message: msg},
         ctx: %{
           caller: msg.sender,
-          caps: cross_session_send_caps(target_session_uri, source_session_uri),
+          caps: cross_session_send_caps(target_session_uri, msg.sender),
           reply: :ignore
-        }
+        },
+        origin: :trusted_internal
       })
     else
       Logger.warning(
@@ -303,7 +304,8 @@ defmodule Ezagent.ActionSet.Session.Delivery do
           # presented it — the R1.1 bug) is DELETED.
           caps: MapSet.new(),
           reply: :ignore
-        }
+        },
+        origin: :trusted_internal
       })
 
     case result do
@@ -421,20 +423,14 @@ defmodule Ezagent.ActionSet.Session.Delivery do
   # pattern) so the cap is least-privilege on every axis: only `session.send`
   # into this exact target session.
   @spec cross_session_send_caps(URI.t(), URI.t()) :: MapSet.t()
-  defp cross_session_send_caps(%URI{} = target_session_uri, %URI{} = source_session_uri) do
-    MapSet.new([
-      %Ezagent.Capability{
-        Ezagent.Capability.cap(
-          :session,
-          Ezagent.ActionSet.Session,
-          :send,
-          Ezagent.URI.instance(target_session_uri),
-          Ezagent.Capability.workspace_of(target_session_uri)
-        )
-        | granted_by: source_session_uri,
-          granted_at: DateTime.utc_now()
-      }
-    ])
+  defp cross_session_send_caps(%URI{} = target_session_uri, %URI{} = presenter) do
+    target = Ezagent.URI.with_action(target_session_uri, :session, :send)
+    admin = Ezagent.Entity.User.admin_uri()
+
+    case Ezagent.Cap.issue_for_action({:admin, admin}, presenter, target) do
+      {:ok, cap} -> MapSet.new([cap])
+      {:error, reason} -> raise "cross-session send cap issuance failed: #{inspect(reason)}"
+    end
   end
 
   # The cross-session-forward containment guard: a forward is permitted only

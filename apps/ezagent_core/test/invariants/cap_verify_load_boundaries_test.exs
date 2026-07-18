@@ -1,14 +1,14 @@
 defmodule Ezagent.Invariants.CapVerifyLoadBoundariesTest do
   @moduledoc """
-  S4 I5 gate: capability verification belongs at the bounded load/store homes,
-  never beside a `matches?/2` consumption check.
+  S4 I5 gate: storage admission is structural and bounded to the load/store
+  homes, while cryptographic verification belongs only to the live target's
+  central verifier.
 
   Boundary #3 is deliberately the durable identity-slice to dispatch-context
-  loader. Signed artifacts use the recipient-aware `verify_for/2` or
-  `verified_set/2` form before entering an entity slice; it is not a blanket
-  filter over every inline `ctx.caps` value. The closed structural
-  self-authority set includes session/workspace principals that never enter an
-  identity `:caps` slice.
+  loader. Born-signed artifacts use recipient-aware `storable_for?/2` or
+  `verified_set/2` before entering an entity slice. These checks do not claim
+  cryptographic authority; the target Kind verifies its own signature at
+  dispatch.
   """
   use ExUnit.Case, async: true
 
@@ -21,28 +21,33 @@ defmodule Ezagent.Invariants.CapVerifyLoadBoundariesTest do
   @cap "apps/ezagent_core/lib/ezagent/cap.ex"
   @cli_dispatch "apps/ezagent_cli/lib/ezagent_cli/dispatch.ex"
 
-  @verify_homes %{
+  @storage_homes %{
     @identity_behavior => 3,
     @entity_caps => 1,
     @recipe_cap_binding => 1,
     @outbound_grant => 1,
     @snapshot => 1
   }
-  @verify_home_count 7
+  @storage_home_count 7
 
-  test "I5 Cap verification boundary calls are exact, ratcheted, and at most seven" do
-    actual = cap_verify_calls()
+  test "I5 structural storage boundary calls are exact, ratcheted, and at most seven" do
+    actual = cap_storage_calls()
 
-    assert actual == @verify_homes,
-           "Cap verification moved outside the reviewed load boundaries:\n#{inspect(actual, pretty: true)}"
+    assert actual == @storage_homes,
+           "Cap storage checks moved outside the reviewed load boundaries:\n#{inspect(actual, pretty: true)}"
 
-    assert Enum.sum(Map.values(@verify_homes)) == @verify_home_count
-    assert @verify_home_count <= 7
+    assert Enum.sum(Map.values(@storage_homes)) == @storage_home_count
+    assert @storage_home_count <= 7
   end
 
   test "I5 named boundaries route through the reviewed verification helpers" do
     assert definition_source(@identity_behavior, :create, 1) =~ "Ezagent.Cap.verified_set"
-    assert definition_source(@identity_behavior, :activate, 2) =~ "Ezagent.Cap.verified_set"
+
+    assert definition_source(@identity_behavior, :activate, 2) =~
+             "reconcile_recipe_binding_state"
+
+    assert definition_source(@identity_behavior, :reconcile_recipe_binding_state, 2) =~
+             "Ezagent.Cap.verified_set"
 
     assert definition_source(@identity_behavior, :handle_grant_cap, 2) =~
              "store_verified_cap"
@@ -51,7 +56,7 @@ defmodule Ezagent.Invariants.CapVerifyLoadBoundariesTest do
              "store_verified_cap"
 
     store = definition_source(@identity_behavior, :store_verified_cap, 3)
-    assert store =~ "Ezagent.Cap.verify_for"
+    assert store =~ "Ezagent.Cap.storable_for?"
     assert store =~ "set_caps_effect(new_caps)"
 
     assert definition_source(@identity_behavior, :set_caps_effect, 1) =~
@@ -70,10 +75,10 @@ defmodule Ezagent.Invariants.CapVerifyLoadBoundariesTest do
     assert entity_caps_verifier =~ "Ezagent.Cap.verified_set"
 
     assert definition_source(@recipe_cap_binding, :validate_artifact, 4) =~
-             "Ezagent.Cap.verify_for"
+             "Ezagent.Cap.storable_for?"
 
     assert definition_source(@outbound_grant, :normalize_attrs, 1) =~
-             "Ezagent.Cap.verify_for"
+             "Ezagent.Cap.storable_for?"
 
     assert definition_source(@snapshot, :load_with_fallback, 3) =~
              "verify_snapshot_caps(receiver_uri)"
@@ -84,8 +89,19 @@ defmodule Ezagent.Invariants.CapVerifyLoadBoundariesTest do
     assert definition_source(@snapshot, :put_verified_snapshot_caps, 4) =~
              "Ezagent.Cap.verified_set"
 
-    assert definition_source(@cap, :verified_set, 1) =~ "verify(cap)"
-    assert definition_source(@cap, :verified_set, 2) =~ "verify_for(cap, receiver_uri)"
+    assert definition_source(@cap, :verified_set, 2) =~ "storable_for?(cap, receiver_uri)"
+
+    verifier = source("apps/ezagent_core/lib/ezagent/cap/verifier.ex")
+    assert verifier =~ "Authority.verify_current(cap, presenter)"
+
+    strict_verify_callers =
+      source_files()
+      |> Enum.filter(fn {_relative, absolute} ->
+        File.read!(absolute) =~ "Authority.verify_current("
+      end)
+      |> Enum.map(&elem(&1, 0))
+
+    assert strict_verify_callers == ["apps/ezagent_core/lib/ezagent/cap/verifier.ex"]
   end
 
   test "slice-to-ctx callers use the verified identity loader without filtering inline caps" do
@@ -94,40 +110,40 @@ defmodule Ezagent.Invariants.CapVerifyLoadBoundariesTest do
     refute cli_loader =~ "Ezagent.Kind.get_slice"
 
     runtime = source("apps/ezagent_core/lib/ezagent/kind/runtime.ex")
-    refute runtime =~ "Ezagent.Cap.verify"
     refute runtime =~ "Ezagent.Cap.verified_set"
+    assert runtime =~ "Ezagent.Cap.Verifier.authorize"
   end
 
   test "no matches consumption function also performs verification" do
     violations =
       for {relative, absolute} <- source_files(),
           definition <- definitions(absolute),
-          definition =~ "Cap.verify" or definition =~ "Cap.verified_set",
+          definition =~ "Cap.storable_for?" or definition =~ "Cap.verified_set",
           definition =~ ".matches?",
           do: relative
 
     assert violations == []
   end
 
-  defp cap_verify_calls do
+  defp cap_storage_calls do
     source_files()
     |> Enum.reduce(%{}, fn {relative, absolute}, acc ->
       count =
         absolute
         |> quoted!()
-        |> count_calls(&cap_verification_call?/1)
+        |> count_calls(&cap_storage_call?/1)
 
       if count == 0, do: acc, else: Map.put(acc, relative, count)
     end)
   end
 
-  defp cap_verification_call?({{:., _, [module, function]}, _, args})
-       when function in [:verify, :verified_set, :verify_for] and is_list(args) and
+  defp cap_storage_call?({{:., _, [module, function]}, _, args})
+       when function in [:verified_set, :storable_for?] and is_list(args) and
               length(args) in [1, 2] do
     Macro.to_string(module) in ["Cap", "Ezagent.Cap"]
   end
 
-  defp cap_verification_call?(_node), do: false
+  defp cap_storage_call?(_node), do: false
 
   defp count_calls(ast, predicate) do
     {_ast, count} =

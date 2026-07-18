@@ -39,7 +39,11 @@ defmodule EzagentDomainInstanceMessage.Integration.SessionConfigForkTest do
     end)
 
     admin = User.admin_uri()
-    admin_caps = MapSet.new([Ezagent.Capability.admin_genesis_cap()])
+
+    admin_caps =
+      Ezagent.URI.workspace(:system)
+      |> Ezagent.Test.CapHelper.signed_workspace_ctx!(admin)
+      |> Map.fetch!(:caps)
 
     {:ok, admin: admin, admin_caps: admin_caps}
   end
@@ -141,7 +145,7 @@ defmodule EzagentDomainInstanceMessage.Integration.SessionConfigForkTest do
       bare = URI.new!("entity://system/user/cfgfork-bare-#{System.unique_integer([:positive])}")
       {:ok, _pid} = Ezagent.Kind.spawn(User, %{uri: bare, initial_caps: MapSet.new()})
 
-      assert {:error, :unauthorized} =
+      assert {:error, :missing_cap} =
                ConfigFork.fork_config(source_session_uri, %{caller: bare, caps: MapSet.new()})
 
       # No new session owned by the bare caller was created.

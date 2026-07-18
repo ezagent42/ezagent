@@ -32,7 +32,13 @@ defmodule Ezagent.Session.MemberCapMigrationTest do
       Ezagent.Test.SnapshotFixtures.save_kind_snapshot(
         session,
         Ezagent.Entity.Session,
-        %{session: %{members: members, owner_uri: owner}}
+        %{
+          kind_base: %{
+            state: %{behaviors: Ezagent.Entity.Session.behaviors()},
+            transients: %{}
+          },
+          session: %{state: %{members: members, owner_uri: owner}, transients: %{}}
+        }
       )
 
     session
@@ -95,14 +101,20 @@ defmodule Ezagent.Session.MemberCapMigrationTest do
     # Give the member a BROAD :any session cap (authorizes :receive via matches?,
     # but is NOT the concrete member-cap).
     broad =
-      Capability.cap(:session, Ezagent.ActionSet.Session, :any, :any, Capability.workspace_of(session))
+      Capability.cap(
+        :session,
+        Ezagent.ActionSet.Session,
+        :any,
+        session,
+        Capability.workspace_of(session)
+      )
 
     # A wildcard-action grant requires admin authority (genesis).
     :ok =
       Ezagent.Identity.Grant.grant_cap_via_router(
         member,
         broad,
-        {:genesis, Ezagent.Entity.User.admin_uri()},
+        {:admin, Ezagent.Entity.User.admin_uri()},
         :sync
       )
 

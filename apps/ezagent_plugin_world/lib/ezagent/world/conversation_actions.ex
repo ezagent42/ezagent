@@ -212,7 +212,8 @@ defmodule Ezagent.World.ConversationActions do
           target: target,
           mode: :cast,
           args: %{message: msg},
-          ctx: %{caller: caller, caps: caps, reply: :ignore}
+          ctx: %{caller: caller, caps: caps, reply: :ignore},
+          origin: :authenticated_external
         })
 
       case result do
@@ -347,12 +348,23 @@ defmodule Ezagent.World.ConversationActions do
   end
 
   defp do_create_session(socket, workspace_uri, caller, short_name, template_name) do
+    caller_caps = Map.get(socket.assigns, :current_caps, MapSet.new())
+    create_session = &Ezagent.Workspace.create_session/3
+
+    create_with_caller_caps = fn target_workspace, args, ctx ->
+      create_session.(
+        target_workspace,
+        args,
+        Map.put(ctx, :caps, caller_caps)
+      )
+    end
+
     case create_session_result(
            workspace_uri,
            caller,
            short_name,
            template_name,
-           &Ezagent.Workspace.create_session/3
+           create_with_caller_caps
          ) do
       {:ok, %URI{} = session_uri} ->
         # rev6 / #912 — the session returned here is OWNER-ONLY. Its declared team
@@ -690,7 +702,8 @@ defmodule Ezagent.World.ConversationActions do
         target: Ezagent.URI.with_action(session_uri, behavior_prefix, action),
         mode: :call,
         args: args,
-        ctx: %{caller: caller, caps: caps, reply: {:caller_inbox, self()}}
+        ctx: %{caller: caller, caps: caps, reply: {:caller_inbox, self()}},
+        origin: :authenticated_external
       })
 
     case result do
@@ -835,7 +848,8 @@ defmodule Ezagent.World.ConversationActions do
             target: Ezagent.URI.with_action(session_uri, :session, :join),
             mode: :call,
             args: %{member: member_uri},
-            ctx: %{caller: caller, caps: caps, reply: :ignore}
+            ctx: %{caller: caller, caps: caps, reply: :ignore},
+            origin: :authenticated_external
           })
 
         case result do
@@ -1123,12 +1137,22 @@ defmodule Ezagent.World.ConversationActions do
         _ = EzagentDomainInstanceMessage.SessionCreator.demand_spawn_member(caller_uri)
         _ = Membership.provision_join_authority(session_uri, caller_uri)
 
+        # `caps` is the mount-time snapshot. The owner-rooted JIT grant above
+        # must be carried in this authenticated envelope explicitly, so reload
+        # the verified principal slice after the synchronous grant.
+        caps =
+          MapSet.union(
+            MapSet.new(caps || MapSet.new()),
+            MapSet.new(Ezagent.EntityCaps.load(caller_uri))
+          )
+
         result =
           Invocation.dispatch(%Invocation{
             target: Ezagent.URI.with_action(session_uri, :session, :join),
             mode: :call,
             args: %{member: caller_uri},
-            ctx: %{caller: caller_uri, caps: caps, reply: :ignore}
+            ctx: %{caller: caller_uri, caps: caps, reply: :ignore},
+            origin: :authenticated_external
           })
 
         case result do
@@ -1248,7 +1272,8 @@ defmodule Ezagent.World.ConversationActions do
         caller: socket.assigns.current_entity_uri,
         caps: MapSet.new(),
         reply: {:caller_inbox, self()}
-      }
+      },
+      origin: :authenticated_external
     })
   end
 

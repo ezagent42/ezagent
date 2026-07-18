@@ -73,7 +73,7 @@ defmodule Ezagent.InvocationLazySpawnTest do
     end)
 
     uri =
-      URI.parse("#{@scheme}://thing/team-alpha/lazy-#{System.unique_integer([:positive])}")
+      Ezagent.URI.new!("#{@scheme}://thing/team-alpha/lazy-#{System.unique_integer([:positive])}")
 
     {:ok, uri: uri, spawn_count_pid: spawn_count_pid}
   end
@@ -104,14 +104,11 @@ defmodule Ezagent.InvocationLazySpawnTest do
       target = Ezagent.URI.new!("#{URI.to_string(uri)}?action=test.noop")
 
       inv = %Invocation{
+        origin: :trusted_internal,
         target: target,
         mode: :call,
         args: %{msg: "lazy-spawn-test"},
-        ctx: %{
-          caller: Ezagent.URI.new!("entity://system/user/admin"),
-          caps: MapSet.new([Ezagent.Capability.admin_genesis_cap()]),
-          reply: {:caller_inbox, self()}
-        }
+        ctx: signed_ctx(uri)
       }
 
       assert {:ok, %{echoed: "lazy-spawn-test"}} = Invocation.dispatch(inv)
@@ -146,15 +143,12 @@ defmodule Ezagent.InvocationLazySpawnTest do
 
       target = Ezagent.URI.new!("#{URI.to_string(uri)}?action=test.noop")
 
-      ctx = %{
-        caller: Ezagent.URI.new!("entity://system/user/admin"),
-        caps: MapSet.new([Ezagent.Capability.admin_genesis_cap()]),
-        reply: {:caller_inbox, self()}
-      }
+      ctx = signed_ctx(uri)
 
       # First dispatch lazy-spawns.
       assert {:ok, _} =
                Invocation.dispatch(%Invocation{
+                 origin: :trusted_internal,
                  target: target,
                  mode: :call,
                  args: %{msg: "a"},
@@ -166,6 +160,7 @@ defmodule Ezagent.InvocationLazySpawnTest do
       # Second dispatch hits :ready directly — no second spawn.
       assert {:ok, _} =
                Invocation.dispatch(%Invocation{
+                 origin: :trusted_internal,
                  target: target,
                  mode: :call,
                  args: %{msg: "b"},
@@ -188,14 +183,11 @@ defmodule Ezagent.InvocationLazySpawnTest do
       target = Ezagent.URI.new!("#{URI.to_string(uri)}?action=test.noop")
 
       inv = %Invocation{
+        origin: :trusted_internal,
         target: target,
         mode: :cast,
         args: %{msg: "cast-lazy"},
-        ctx: %{
-          caller: Ezagent.URI.new!("entity://system/user/admin"),
-          caps: MapSet.new([Ezagent.Capability.admin_genesis_cap()]),
-          reply: {:caller_inbox, self()}
-        }
+        ctx: signed_ctx(uri)
       }
 
       assert :ok = Invocation.dispatch(inv)
@@ -217,14 +209,11 @@ defmodule Ezagent.InvocationLazySpawnTest do
       target = Ezagent.URI.new!("#{URI.to_string(uri)}?action=test.noop")
 
       inv = %Invocation{
+        origin: :trusted_internal,
         target: target,
         mode: :call,
         args: %{msg: "x"},
-        ctx: %{
-          caller: Ezagent.URI.new!("entity://system/user/admin"),
-          caps: MapSet.new([Ezagent.Capability.admin_genesis_cap()]),
-          reply: {:caller_inbox, self()}
-        }
+        ctx: signed_ctx(uri)
       }
 
       assert {:error, :no_such_actor} = Invocation.dispatch(inv)
@@ -235,5 +224,11 @@ defmodule Ezagent.InvocationLazySpawnTest do
       # slot per bogus dispatch).
       assert KindRegistry.lookup(uri) == :error
     end
+  end
+
+  defp signed_ctx(uri) do
+    presenter = Ezagent.URI.user(:system, :admin)
+    cap = signed_fixture_cap!(uri, :test, TestBehavior, :noop, presenter)
+    %{caller: presenter, caps: MapSet.new([cap]), reply: {:caller_inbox, self()}}
   end
 end

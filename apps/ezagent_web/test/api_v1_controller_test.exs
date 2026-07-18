@@ -67,6 +67,10 @@ defmodule EzagentWeb.ApiV1ControllerTest do
 
   test "POST resolves a valid bearer token without an entity URI header", %{conn: conn} do
     principal = Ezagent.Entity.User.admin_uri()
+    target = Ezagent.URI.with_action(principal, :identity, :list_caps)
+    {:ok, list_cap} = Ezagent.Cap.issue_for_action({:admin, principal}, principal, target)
+    :ok = Ezagent.Identity.absorb_cap(principal, list_cap)
+    :ok = Ezagent.Identity.CapAbsorbAwait.await_exact(principal, [list_cap], 5_000)
     {token, _row} = Ezagent.Entity.Token.mint(principal, label: "api-token-only")
 
     conn =

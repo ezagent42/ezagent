@@ -115,6 +115,10 @@ defmodule EzagentWeb.UploadsControllerTest do
   end
 
   defp sign_in(conn, ws, %URI{} = entity_uri) do
+    if is_nil(Ezagent.Users.get_by_uri(entity_uri)) do
+      {:ok, _row} = Ezagent.Users.create_read_only(entity_uri, [])
+    end
+
     Plug.Test.init_test_session(conn, %{
       "current_entity_uri" => URI.to_string(entity_uri),
       "current_workspace_uri" => "workspace://" <> ws

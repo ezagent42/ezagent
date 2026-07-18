@@ -19,17 +19,13 @@ defmodule EzagentPluginHello.TurnDriver do
 
   ## Authority (Phase 0)
 
-  Dispatches under `User.admin_uri()` + `Capability.admin_genesis_cap()` — the
-  same system authority the substrate's own settlement-recovery path
-  (`Behavior.Turn.recovery_effects/3`) and the socialware Turn integration test
-  use to drive a session's Turn. A tighter **within-session orchestrator
-  delegation** (the builder agent presenting a real `{:within_session, S}`
-  delegated cap) is a Phase-0 follow-up — see the hello migration handoff.
+  Dispatches under the chosen actor with a target-signed capability minted via
+  the target Kind's `K.grant` path. No ambient admin wildcard is accepted.
   """
 
   require Logger
 
-  alias Ezagent.{Capability, Invocation}
+  alias Ezagent.Invocation
   alias Ezagent.Entity.User
 
   @doc """
@@ -91,16 +87,46 @@ defmodule EzagentPluginHello.TurnDriver do
   end
 
   defp dispatch(session_uri, behavior, action, args, caller) do
-    Invocation.dispatch(%Invocation{
-      target: Ezagent.URI.new!("#{URI.to_string(session_uri)}?action=#{behavior}.#{action}"),
-      mode: :call,
-      args: args,
-      ctx: %{
-        caller: caller,
-        caps: MapSet.new([Capability.admin_genesis_cap()]),
-        reply: {:caller_inbox, self()}
-      }
-    })
+    target = Ezagent.URI.new!("#{URI.to_string(session_uri)}?action=#{behavior}.#{action}")
+    admin = Ezagent.Entity.User.admin_uri()
+
+    targets = [target | downstream_targets(session_uri, behavior, action)]
+
+    with {:ok, signed_caps} <- issue_caps(targets, admin, caller) do
+      Invocation.dispatch(%Invocation{
+        target: target,
+        mode: :call,
+        args: args,
+        ctx: %{
+          caller: caller,
+          caps: MapSet.new(signed_caps),
+          reply: {:caller_inbox, self()}
+        },
+        origin: :trusted_internal
+      })
+    end
+  end
+
+  defp downstream_targets(session_uri, :turn, :compose) do
+    [Ezagent.URI.with_action(session_uri, :surface, :put_version)]
+  end
+
+  defp downstream_targets(session_uri, :turn, :settle) do
+    [
+      Ezagent.URI.with_action(session_uri, :surface, :approve),
+      Ezagent.URI.with_action(session_uri, :surface, :commit_settlement)
+    ]
+  end
+
+  defp downstream_targets(_session_uri, _behavior, _action), do: []
+
+  defp issue_caps(targets, admin, caller) do
+    Enum.reduce_while(targets, {:ok, []}, fn target, {:ok, caps} ->
+      case Ezagent.Cap.issue_for_action({:admin, admin}, caller, target) do
+        {:ok, cap} -> {:cont, {:ok, [cap | caps]}}
+        {:error, reason} -> {:halt, {:error, reason}}
+      end
+    end)
   end
 
   @doc """
@@ -127,16 +153,22 @@ defmodule EzagentPluginHello.TurnDriver do
     body = if is_map(nav), do: Map.put(body, "nav", nav), else: body
     msg = Ezagent.Message.new(actor, body)
 
-    Invocation.dispatch(%Invocation{
-      target: Ezagent.URI.with_action(session_uri, :session, :send),
-      mode: :cast,
-      args: %{message: msg},
-      ctx: %{
-        caller: actor,
-        caps: MapSet.new([Capability.admin_genesis_cap()]),
-        reply: :ignore
-      }
-    })
+    target = Ezagent.URI.with_action(session_uri, :session, :send)
+    admin = Ezagent.Entity.User.admin_uri()
+
+    with {:ok, signed_cap} <- Ezagent.Cap.issue_for_action({:admin, admin}, actor, target) do
+      Invocation.dispatch(%Invocation{
+        target: target,
+        mode: :cast,
+        args: %{message: msg},
+        ctx: %{
+          caller: actor,
+          caps: MapSet.new([signed_cap]),
+          reply: :ignore
+        },
+        origin: :trusted_internal
+      })
+    end
   end
 
   def say_nav(_session_uri, _actor, _text, _nav), do: :ok

@@ -36,10 +36,12 @@ defmodule EzagentDomainInstanceMessage.Integration.OrchestratorToolsOpsTest do
   use EzagentCore.DataCase, async: false
 
   alias Ezagent.{AgentFlavorRegistry, AgentLineage, ActionSet, Capability, KindRegistry}
-  alias Ezagent.Entity.{Agent, Session, SessionTemplate, User}
+  alias Ezagent.Entity.{Agent, Session, SessionTemplate, User, Workspace}
   alias Ezagent.TemplateTags
   alias Ezagent.Session.SessionManager
   alias Ezagent.AgentBridge.TokenStore
+
+  @workspace_uri URI.new!("workspace://team-alpha")
 
   defmodule TestFlavorClass do
     @moduledoc false
@@ -76,7 +78,12 @@ defmodule EzagentDomainInstanceMessage.Integration.OrchestratorToolsOpsTest do
     prev_home = System.get_env("EZAGENT_HOME")
     System.put_env("EZAGENT_HOME", home)
 
+    stop_workspace_kind()
+    {:ok, _pid} = Ezagent.Kind.spawn(Workspace, %{uri: @workspace_uri})
+
     on_exit(fn ->
+      stop_workspace_kind()
+
       if prev_home,
         do: System.put_env("EZAGENT_HOME", prev_home),
         else: System.delete_env("EZAGENT_HOME")
@@ -87,9 +94,14 @@ defmodule EzagentDomainInstanceMessage.Integration.OrchestratorToolsOpsTest do
     :ok
   end
 
-  defp uniq, do: System.unique_integer([:positive])
+  defp stop_workspace_kind do
+    case KindRegistry.lookup(@workspace_uri) do
+      {:ok, pid} -> DynamicSupervisor.terminate_child(Ezagent.Workspace.Supervisor, pid)
+      :error -> :ok
+    end
+  end
 
-  @workspace_uri URI.new!("workspace://team-alpha")
+  defp uniq, do: System.unique_integer([:positive])
 
   defp register_test_flavor do
     flavor = "mcpe2e#{uniq()}"
@@ -106,14 +118,17 @@ defmodule EzagentDomainInstanceMessage.Integration.OrchestratorToolsOpsTest do
 
   defp dispatch(uri, action, args) do
     target = Ezagent.URI.new!("#{URI.to_string(uri)}?action=#{action}")
+    admin = User.admin_uri()
+    {:ok, signed_cap} = Ezagent.Cap.issue_for_action({:admin, admin}, admin, target)
 
     Ezagent.Invocation.dispatch(%Ezagent.Invocation{
+      origin: :trusted_internal,
       target: target,
       mode: :call,
       args: args,
       ctx: %{
-        caller: User.admin_uri(),
-        caps: MapSet.new([Ezagent.Capability.admin_genesis_cap()]),
+        caller: admin,
+        caps: MapSet.new([signed_cap]),
         reply: {:caller_inbox, self()}
       }
     })
@@ -146,41 +161,37 @@ defmodule EzagentDomainInstanceMessage.Integration.OrchestratorToolsOpsTest do
     |> List.last()
   end
 
-  defp template_cap(kind, workspace_uri) do
-    %Capability{
-      kind: kind,
-      behavior: ActionSet.Template,
-      instance: {:within_workspace, workspace_uri},
-      workspace_uri: workspace_uri,
-      granted_by: User.admin_uri(),
-      granted_at: DateTime.utc_now()
-    }
-  end
-
-  # The four delegated caps the Generator grants an orchestrator (§1.4):
-  # #1 within_session, #2 spawned_by, #3 session_template, #4 agent_template.
-  # `template_kinds` selects which template caps are present.
+  # Exact, target-signed authority the Generator grants an orchestrator.
+  # `template_kinds` selects which workspace template actions are present.
   defp orchestrator_caps(session_uri, orchestrator_uri, workspace_uri, template_kinds) do
-    base = [
-      %Capability{
-        kind: :session,
-        behavior: :any,
-        instance: {:within_session, session_uri},
-        workspace_uri: workspace_uri,
-        granted_by: User.admin_uri(),
-        granted_at: DateTime.utc_now()
-      },
-      %Capability{
-        kind: :agent,
-        behavior: :any,
-        instance: {:spawned_by, orchestrator_uri},
-        workspace_uri: workspace_uri,
-        granted_by: User.admin_uri(),
-        granted_at: DateTime.utc_now()
-      }
-    ]
+    session_caps =
+      Ezagent.CapabilityRegistry.subjects_for_kind(Session)
+      |> Enum.reject(&Ezagent.Cap.Verifier.non_cap_action?(&1.behavior, &1.action))
+      |> Enum.map(fn subject ->
+        Capability.cap(:session, subject.behavior, subject.action, session_uri, workspace_uri)
+      end)
 
-    MapSet.new(base ++ Enum.map(template_kinds, &template_cap(&1, workspace_uri)))
+    workspace_actions =
+      template_kinds
+      |> Enum.flat_map(fn
+        :agent_template -> [:list_agent_templates]
+        :session_template -> [:list_session_templates, :write_session_templates]
+      end)
+      |> Enum.uniq()
+
+    workspace_caps =
+      Enum.map(workspace_actions, fn action ->
+        Capability.cap(:workspace, ActionSet.Workspace, action, workspace_uri, workspace_uri)
+      end)
+
+    admin = User.admin_uri()
+
+    (session_caps ++ workspace_caps)
+    |> Enum.map(fn requested ->
+      {:ok, signed} = Ezagent.Cap.issue({:admin, admin}, orchestrator_uri, requested)
+      signed
+    end)
+    |> MapSet.new()
   end
 
   defp spawn_session do
@@ -201,9 +212,7 @@ defmodule EzagentDomainInstanceMessage.Integration.OrchestratorToolsOpsTest do
   # (reconstructed session-side per-call), set the session's DURABLE
   # working-copy `orchestrator_uri` (the structural gate), mint its bridge
   # token, and start the SessionManager. Returns `{orchestrator_uri, token}`.
-  defp setup_orchestrator(session_uri, caps) do
-    orchestrator_uri = Ezagent.URI.new!("entity://team-alpha/agent/cc_orch-#{uniq()}")
-
+  defp setup_orchestrator(session_uri, caps, orchestrator_uri) do
     :ok = Ezagent.AgentFlavorAttributes.put(orchestrator_uri, "cc")
     on_exit(fn -> Ezagent.AgentFlavorAttributes.delete(orchestrator_uri) end)
 
@@ -229,21 +238,7 @@ defmodule EzagentDomainInstanceMessage.Integration.OrchestratorToolsOpsTest do
 
   # Provision a full orchestrator with the given template-cap kinds.
   defp provision(template_kinds) do
-    session_uri = spawn_session()
-
-    orchestrator_uri_placeholder =
-      Ezagent.URI.new!("entity://team-alpha/agent/cc_orch-pre-#{uniq()}")
-
-    caps =
-      orchestrator_caps(session_uri, orchestrator_uri_placeholder, @workspace_uri, template_kinds)
-
-    # The cap-#2 `{:spawned_by, orchestrator}` cap must reference the REAL
-    # orchestrator URI; recompute once we have it. Spawn the orchestrator with
-    # the within_session + template caps first, then re-seed is unnecessary —
-    # cap #2 is only needed by remove_member tests, which build it explicitly.
-    {orchestrator_uri, token} = setup_orchestrator(session_uri, caps)
-
-    %{session_uri: session_uri, orchestrator_uri: orchestrator_uri, token: token}
+    provision_with_self_caps(template_kinds)
   end
 
   # Re-spawn-free helper: provision an orchestrator whose slice carries the
@@ -285,13 +280,17 @@ defmodule EzagentDomainInstanceMessage.Integration.OrchestratorToolsOpsTest do
   end
 
   defp set_active_binding(session_uri, orchestrator_uri, extra \\ %{}) do
+    admin = User.admin_uri()
+    join_target = Ezagent.URI.with_action(session_uri, :session, :join)
+    {:ok, join_cap} = Ezagent.Cap.issue_for_action({:admin, admin}, admin, join_target)
+
     :ok =
       Ezagent.Orchestrator.Tools.join_member(
         session_uri,
         orchestrator_uri,
         %{role_name: "orchestrator", in_session_template: true},
-        User.admin_uri(),
-        MapSet.new([Capability.admin_genesis_cap()])
+        admin,
+        MapSet.new([join_cap])
       )
 
     epoch = Ecto.UUID.generate()
@@ -521,15 +520,17 @@ defmodule EzagentDomainInstanceMessage.Integration.OrchestratorToolsOpsTest do
       session_uri = spawn_session()
 
       # The session's stored orchestrator is A …
+      orch_a = Ezagent.URI.new!("entity://team-alpha/agent/cc_orch-a-#{uniq()}")
+
       caps =
         orchestrator_caps(
           session_uri,
-          Ezagent.URI.new!("entity://team-alpha/agent/a"),
+          orch_a,
           @workspace_uri,
           [:agent_template]
         )
 
-      {orch_a, token_a} = setup_orchestrator(session_uri, caps)
+      {^orch_a, token_a} = setup_orchestrator(session_uri, caps, orch_a)
 
       # … but a SECOND SessionManager is started bound to a foreign orchestrator
       # B for the SAME session (a stale/foreign binding). B mints its OWN token,

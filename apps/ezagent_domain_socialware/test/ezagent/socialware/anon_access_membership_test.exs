@@ -19,7 +19,7 @@ defmodule Ezagent.Socialware.AnonAccessMembershipTest do
   alias Ezagent.{KindRegistry, Message, MessageStore}
   alias Ezagent.Socialware.{AnonUser, ChatFeed, ChatFeedAuth}
 
-  @owner Ezagent.URI.entity(:team_alpha, :user, "anon-access-owner")
+  @owner Ezagent.URI.user(:system, :admin)
 
   # ----- fixtures --------------------------------------------------------
 
@@ -76,29 +76,17 @@ defmodule Ezagent.Socialware.AnonAccessMembershipTest do
     :ok
   end
 
-  defp admin_caps do
-    MapSet.new([
-      %Ezagent.Capability{
-        kind: :any,
-        behavior: :any,
-        action: :any,
-        instance: :any,
-        workspace_uri: :any,
-        granted_by: Ezagent.URI.user(:system, :admin),
-        granted_at: ~U[2026-01-01 00:00:00Z]
-      }
-    ])
-  end
-
   # Join `member_uri` into `session_uri` via the PRODUCTION dispatch path.
   defp join(session_uri, member_uri) do
     target = Ezagent.URI.new!("#{URI.to_string(session_uri)}?action=session.join")
+    caller = User.admin_uri()
+    cap = Ezagent.Test.CapHelper.signed_action_cap!(target, caller)
 
-    Ezagent.Invocation.dispatch(%Ezagent.Invocation{
+    Ezagent.Invocation.dispatch(%Ezagent.Invocation{origin: :trusted_internal,
       target: target,
       mode: :call,
       args: %{member: member_uri},
-      ctx: %{caller: User.admin_uri(), caps: admin_caps(), reply: :ignore}
+      ctx: %{caller: caller, caps: MapSet.new([cap]), reply: :ignore}
     })
   end
 

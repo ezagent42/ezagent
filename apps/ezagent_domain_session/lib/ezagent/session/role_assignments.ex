@@ -35,7 +35,8 @@ defmodule Ezagent.Session.RoleAssignments do
             caller: caller,
             caps: ctx |> Map.get(:caps, []) |> to_cap_set(),
             reply: {:caller_inbox, self()}
-          }
+          },
+          origin: :trusted_internal
         })
 
       case result do

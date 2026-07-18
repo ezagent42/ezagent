@@ -1,7 +1,9 @@
 defmodule Ezagent.ActionSet.IdentityAbsorbCapTest do
   use EzagentCore.DataCase, async: false
 
-  alias Ezagent.{Cap, Capability}
+  import Ezagent.Test.CapHelper, only: [authority_signed_cap_as!: 4]
+
+  alias Ezagent.Capability
   alias Ezagent.ActionSet.{Identity, IdentityAdmin}
 
   @workspace URI.new!("workspace://team-alpha")
@@ -19,6 +21,12 @@ defmodule Ezagent.ActionSet.IdentityAbsorbCapTest do
       granted_by: @issuer,
       granted_at: DateTime.utc_now()
     }
+  end
+
+  defp signed_artifact(receiver) do
+    cap = artifact()
+    {:ok, authority} = Ezagent.Cap.Authority.open(cap.instance, :session)
+    authority_signed_cap_as!(authority, @issuer, receiver, cap)
   end
 
   defp ctx(self_uri, caps \\ MapSet.new()) do
@@ -45,7 +53,7 @@ defmodule Ezagent.ActionSet.IdentityAbsorbCapTest do
 
   test "I10 stores, emits cap_granted via_absorb, and notifies a user" do
     :ok = Ezagent.Notifications.subscribe(@user)
-    cap = artifact()
+    cap = signed_artifact(@user)
 
     assert {:ok, %{caps: [^cap]}, effects} =
              IdentityAdmin.handle_absorb_cap(%{artifact: cap}, ctx(@user))
@@ -61,14 +69,14 @@ defmodule Ezagent.ActionSet.IdentityAbsorbCapTest do
 
   test "agent absorb emits audit and the user-only notifier remains a no-op" do
     assert {:ok, _result, effects} =
-             IdentityAdmin.handle_absorb_cap(%{artifact: artifact()}, ctx(@agent))
+             IdentityAdmin.handle_absorb_cap(%{artifact: signed_artifact(@agent)}, ctx(@agent))
 
     assert {:emit, :cap_granted, %{via_absorb: true}} =
              Enum.find(effects, &match?({:emit, :cap_granted, _}, &1))
   end
 
   test "a signed artifact enters only the named entity slice" do
-    assert {:ok, artifact} = Cap.issue({:genesis, @issuer}, @user, artifact())
+    artifact = signed_artifact(@user)
 
     assert {:ok, %{caps: [^artifact]}, _effects} =
              IdentityAdmin.handle_absorb_cap(%{artifact: artifact}, ctx(@user))
@@ -78,15 +86,15 @@ defmodule Ezagent.ActionSet.IdentityAbsorbCapTest do
   end
 
   test "identity create rejects a signed artifact issued to another entity" do
-    assert {:ok, artifact} = Cap.issue({:genesis, @issuer}, @agent, artifact())
+    artifact = signed_artifact(@agent)
 
     assert {:ok, state} = Identity.create(%{uri: @user, initial_caps: [artifact]})
     refute MapSet.member?(state.caps, artifact)
   end
 
   test "identity activate keeps the receiver's signed artifact and drops another receiver's" do
-    assert {:ok, alice_artifact} = Cap.issue({:genesis, @issuer}, @user, artifact())
-    assert {:ok, agent_artifact} = Cap.issue({:genesis, @issuer}, @agent, artifact())
+    alice_artifact = signed_artifact(@user)
+    agent_artifact = signed_artifact(@agent)
 
     assert {:ok, %{}, reconciled} =
              Identity.activate(
@@ -99,8 +107,8 @@ defmodule Ezagent.ActionSet.IdentityAbsorbCapTest do
   end
 
   test "absorbing the same identity twice replaces metadata without growing the set" do
-    first = artifact()
-    second = %{first | granted_at: DateTime.add(first.granted_at, 1, :second)}
+    first = signed_artifact(@user)
+    second = signed_artifact(@user)
 
     assert {:ok, _result, effects} =
              IdentityAdmin.handle_absorb_cap(%{artifact: second}, ctx(@user, MapSet.new([first])))

@@ -254,7 +254,7 @@ defmodule Ezagent.Kind.BehaviorSet do
   CANONICAL module first (so a recipe-loaded behavior can NEVER shadow
   `IdentityAdmin`/`Manage`/etc.); only a genuinely-unregistered action falls
   back to this instance's loaded set (a recipe-loaded UNDECLARED behavior whose
-  `actions/0` includes `action`). `authz_check` still independently gates every
+  `actions/0` includes `action`). The central verifier independently gates every
   action, so presence in the set grants NO privilege.
   """
   @spec resolve_action(module(), atom(), %{atom() => map()}) ::

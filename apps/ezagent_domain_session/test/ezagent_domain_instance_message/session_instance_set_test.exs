@@ -7,6 +7,7 @@ defmodule Ezagent.SessionInstanceSetTest do
   alias Ezagent.{Invocation, KindRegistry, Message, MessageStore}
   alias Ezagent.ActionSet.Session, as: SessionBehavior
   alias Ezagent.Entity.{Session, User}
+  import Ezagent.Test.CapHelper, only: [signed_action_cap!: 2]
 
   setup do
     # session://system/default/main is a DynamicSupervisor child spawned once
@@ -50,21 +51,26 @@ defmodule Ezagent.SessionInstanceSetTest do
   test "REAL chat join + send round-trips through dispatch on the default Session (unchanged)" do
     session_uri = Session.default_uri()
     sender = User.admin_uri()
-    bootstrap_caps = MapSet.new([Ezagent.Capability.admin_genesis_cap()])
-
     # --- chat.join: add a transient member through dispatch ---
     member_uri =
-      URI.new!("entity://team-alpha/user/parity-#{System.unique_integer([:positive])}")
+      URI.new!("entity://system/user/parity-#{System.unique_integer([:positive])}")
 
     {:ok, member_pid} = GenServer.start(__MODULE__.NoopMember, member_uri)
     on_exit(fn -> if Process.alive?(member_pid), do: GenServer.stop(member_pid) end)
 
+    join_target = URI.new!("#{URI.to_string(session_uri)}?action=session.join")
+
     :ok =
       Invocation.dispatch(%Invocation{
-        target: URI.new!("#{URI.to_string(session_uri)}?action=session.join"),
+        origin: :trusted_internal,
+        target: join_target,
         mode: :cast,
         args: %{member: member_uri},
-        ctx: %{caller: member_uri, caps: bootstrap_caps, reply: :ignore}
+        ctx: %{
+          caller: member_uri,
+          caps: MapSet.new([signed_action_cap!(join_target, member_uri)]),
+          reply: :ignore
+        }
       })
 
     {:ok, session_pid} = KindRegistry.lookup(session_uri)
@@ -78,12 +84,19 @@ defmodule Ezagent.SessionInstanceSetTest do
     msg =
       Message.new(sender, %{text: "parity-send #{System.unique_integer()}", attachments: []})
 
+    send_target = URI.new!("#{URI.to_string(session_uri)}?action=session.send")
+
     :ok =
       Invocation.dispatch(%Invocation{
-        target: URI.new!("#{URI.to_string(session_uri)}?action=session.send"),
+        origin: :trusted_internal,
+        target: send_target,
         mode: :cast,
         args: %{message: msg},
-        ctx: %{caller: sender, caps: bootstrap_caps, reply: :ignore}
+        ctx: %{
+          caller: sender,
+          caps: MapSet.new([signed_action_cap!(send_target, sender)]),
+          reply: :ignore
+        }
       })
 
     # Session-level broadcast fired (LV chat stream path).
@@ -99,12 +112,19 @@ defmodule Ezagent.SessionInstanceSetTest do
     assert post_send_slice.last_message_id == msg.id
 
     # Cleanup — leave the transient member.
+    leave_target = URI.new!("#{URI.to_string(session_uri)}?action=session.leave")
+
     :ok =
       Invocation.dispatch(%Invocation{
-        target: URI.new!("#{URI.to_string(session_uri)}?action=session.leave"),
+        origin: :trusted_internal,
+        target: leave_target,
         mode: :cast,
         args: %{member: member_uri},
-        ctx: %{caller: member_uri, caps: bootstrap_caps, reply: :ignore}
+        ctx: %{
+          caller: member_uri,
+          caps: MapSet.new([signed_action_cap!(leave_target, member_uri)]),
+          reply: :ignore
+        }
       })
   end
 

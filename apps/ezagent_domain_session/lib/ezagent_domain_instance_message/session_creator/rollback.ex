@@ -181,7 +181,7 @@ defmodule EzagentDomainInstanceMessage.SessionCreator.Rollback do
       Ezagent.Identity.Grant.revoke_cap(
         owner_uri,
         cap,
-        {:rule, :template_materialize, owner_uri}
+        {:held_by, owner_uri}
       )
 
     :ok

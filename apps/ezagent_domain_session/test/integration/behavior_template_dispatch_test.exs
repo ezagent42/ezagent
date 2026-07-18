@@ -69,14 +69,17 @@ defmodule EzagentDomainInstanceMessage.Integration.BehaviorTemplateDispatchTest 
 
   defp dispatch(uri, action, args) do
     target = URI.new!("#{URI.to_string(uri)}?action=#{action}")
+    admin = User.admin_uri()
+    cap = Ezagent.Test.CapHelper.signed_action_cap!(target, admin)
 
     Invocation.dispatch(%Invocation{
+      origin: :trusted_internal,
       target: target,
       mode: :call,
       args: args,
       ctx: %{
-        caller: User.admin_uri(),
-        caps: MapSet.new([Ezagent.Capability.admin_genesis_cap()]),
+        caller: admin,
+        caps: MapSet.new([cap]),
         reply: {:caller_inbox, self()}
       }
     })

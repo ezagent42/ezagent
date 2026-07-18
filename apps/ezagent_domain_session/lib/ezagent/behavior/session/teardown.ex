@@ -6,18 +6,10 @@ defmodule Ezagent.ActionSet.Session.Teardown do
   #
   # ## The cap-model lever (SPEC §2.2)
   #
-  # A managed worker is spawned by the orchestrator and the orchestrator is
-  # spawned by the session OWNER, so the durable lineage chain is
-  # `worker → orchestrator → owner`. `AgentLineage.spawned_in_lineage?`
-  # walks that chain transitively, so the OWNER's
-  # `cap(:agent, Sandbox, :destroy, {:spawned_by, owner_uri})` teardown cap
-  # (granted at create — `Materializer.grant_owner_participant_teardown_cap/2`)
-  # ALREADY authorizes `sandbox.destroy` on every worker spawned into any of
-  # the owner's sessions — WITHOUT the orchestrator's cap #2 and WITHOUT
-  # re-parenting the lineage graph. Because the lineage walk reads the durable
-  # SQLite-backed table (not live processes), the reap works even when the
-  # orchestrator Kind has crashed (the F7 headline bug). #154-clean: the cap is
-  # `granted_by: owner_uri` (the owner IS the lineage root).
+  # Each managed worker receives a target-signed concrete Sandbox destroy cap
+  # for the session owner at materialization time. Durable lineage remains an
+  # independent retirement-provenance gate, so a stolen concrete cap cannot be
+  # used to retire a worker outside the owner's creation chain.
   #
   # ## Two callers, two failure modes
   #
@@ -69,7 +61,7 @@ defmodule Ezagent.ActionSet.Session.Teardown do
 
   @doc """
   Reap a single spawned worker: dispatch `?action=sandbox.destroy` on the
-  worker under the OWNER's `{:spawned_by, owner_uri}` teardown cap (SPEC §2.2),
+  worker under the OWNER's target-signed concrete teardown cap,
   which GCs the worker's `config_dir` (`Sandbox.handle_destroy`) + schedules
   Kind termination, THEN `AgentLineage.forget/1` (lineage parity with rollback).
 
@@ -182,7 +174,7 @@ defmodule Ezagent.ActionSet.Session.Teardown do
   defp retirement_context(%URI{} = worker_uri, %URI{} = owner_uri, mode) do
     %{
       caller: owner_uri,
-      caps: MapSet.new(),
+      caps: owner_caps(owner_uri),
       workspace_uri: Ezagent.URI.workspace_of(worker_uri),
       provenance_root: owner_uri,
       creation_attempt_id: creation_attempt_id(worker_uri),
@@ -199,6 +191,13 @@ defmodule Ezagent.ActionSet.Session.Teardown do
       creation_attempt_id: creation_attempt_id(worker_uri),
       reason: {:session_teardown, mode}
     }
+  end
+
+  defp owner_caps(owner_uri) do
+    case Ezagent.Domain.Agent.read_caps(owner_uri, %{caller: owner_uri}) do
+      {:ok, caps} -> MapSet.new(caps)
+      {:error, _reason} -> MapSet.new()
+    end
   end
 
   defp creation_attempt_id(worker_uri) do

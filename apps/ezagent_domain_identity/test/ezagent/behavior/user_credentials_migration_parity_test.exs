@@ -22,6 +22,8 @@ defmodule Ezagent.ActionSet.UserCredentialsMigrationParityTest do
 
   use EzagentCore.DataCase, async: false
 
+  import Ezagent.Test.CapHelper, only: [signed_invocation!: 2, signed_required_cap!: 5]
+
   alias Ezagent.ActionSet.UserCredentials
   alias Ezagent.Entity.User
   alias Ezagent.Invocation
@@ -30,16 +32,21 @@ defmodule Ezagent.ActionSet.UserCredentialsMigrationParityTest do
   defp build_invocation(user_uri, action, args) do
     target = Ezagent.URI.with_action(user_uri, :user_credentials, action)
 
+    admin = Ezagent.URI.user(:system, :admin)
+    cap = signed_required_cap!(target, :user, UserCredentials, action, admin)
+
     %Invocation{
+      origin: :trusted_internal,
       target: target,
       mode: :call,
       args: args,
       ctx: %{
-        caller: :vm_internal,
-        caps: MapSet.new(),
+        caller: admin,
+        caps: MapSet.new([cap]),
         reply: :sync
       }
     }
+    |> signed_invocation!(:user)
   end
 
   setup do

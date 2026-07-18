@@ -27,15 +27,19 @@ defmodule Ezagent.World.IdentityCapsNoActivationTest do
     # entity so `granted_by_entity?/1` holds when rendered.
     granter = Ezagent.URI.entity(:team_alpha, :user, "granter")
 
-    cap = %Ezagent.Capability{
-      kind: :agent,
-      behavior: Ezagent.ActionSet.Chat,
-      action: :send,
-      instance: agent,
-      workspace_uri: workspace,
-      granted_by: granter,
-      granted_at: DateTime.utc_now()
-    }
+    requested =
+      Ezagent.Capability.cap(
+        :agent,
+        Ezagent.ActionSet.Chat,
+        :send,
+        agent,
+        workspace
+      )
+
+    cap =
+      Ezagent.Test.CapHelper.with_test_authority(agent, :agent, fn authority ->
+        Ezagent.Test.CapHelper.authority_signed_cap!(authority, agent, requested)
+      end)
 
     # Persist a snapshot whose `:identity` slice carries the cap — the COLD-path
     # state the read must resolve. NO Ezagent.Kind.spawn → the agent is cold.

@@ -11,6 +11,9 @@ defmodule Ezagent.Identity.CascadeHookTest do
 
   use EzagentCore.DataCase, async: false
 
+  import Ezagent.Test.CapHelper,
+    only: [authority_signed_cap_as!: 4, signed_fixture_cap!: 5]
+
   alias Ezagent.Capability
   alias Ezagent.Identity.Cascade
 
@@ -21,41 +24,36 @@ defmodule Ezagent.Identity.CascadeHookTest do
   # user list, and `managers_of/1` must exclude it (deadlock + semantics).
   defp user_with_caps(ws_name, caps) do
     uri = URI.new!("entity://#{ws_name}/user/u-#{uniq()}")
+    caps = if is_function(caps, 1), do: caps.(uri), else: caps
     {:ok, _row} = Ezagent.Users.create(uri, "pw-not-secret-#{uniq()}", caps)
     {:ok, _pid} = Ezagent.SpawnRegistry.spawn(uri)
     uri
   end
 
-  defp manage_cap_over(x, granter) do
-    Ezagent.CreatorGrant.manage_cap(:user, x, Capability.workspace_of(x), granter)
+  defp manage_cap_over(x, granter, grantee) do
+    cap = Ezagent.CreatorGrant.manage_cap(:user, x, Capability.workspace_of(x), granter)
+    {:ok, authority} = Ezagent.Cap.Authority.open(x, :user)
+    authority_signed_cap_as!(authority, granter, grantee, cap)
   end
 
   # Grant an arbitrary (member-cap-shaped) cap to X as admin — mutates X's
   # `:identity` slice, which is the allowlisted `{entity, :identity}` change.
   defp grant_arbitrary_cap_to(x) do
-    ws = Capability.workspace_of(x)
+    target =
+      Ezagent.URI.new!("session://#{x.host}/default/cascade-#{uniq()}")
 
-    cap = %Capability{
-      Capability.cap(:session, Ezagent.ActionSet.Session, :receive, x, ws)
-      | granted_by: Ezagent.Entity.User.admin_uri(),
-        granted_at: DateTime.utc_now()
-    }
-
-    Ezagent.Invocation.dispatch(%Ezagent.Invocation{
-      target: URI.new!("#{URI.to_string(x)}?action=identity.grant_cap"),
-      mode: :call,
-      args: %{cap: cap},
-      ctx: %{
-        caller: Ezagent.Entity.User.admin_uri(),
-        caps: MapSet.new([Capability.admin_genesis_cap()]),
-        reply: :ignore
-      }
-    })
+    cap = signed_fixture_cap!(target, :session, Ezagent.ActionSet.Session, :receive, x)
+    Ezagent.EntityCaps.grant(x, cap)
   end
 
   test "grant to X notifies X's manager Y content-free; payload is exactly {uri, slice_key, cursor, event_at} (18)" do
     x = user_with_caps("team-alpha", [])
-    manager = user_with_caps("team-alpha", [manage_cap_over(x, URI.new!("entity://team-alpha/user/root"))])
+
+    manager =
+      user_with_caps("team-alpha", fn manager ->
+        [manage_cap_over(x, URI.new!("entity://team-alpha/user/root"), manager)]
+      end)
+
     unrelated = user_with_caps("team-alpha", [])
 
     :ok = Ezagent.Notifications.subscribe(manager)
@@ -84,7 +82,11 @@ defmodule Ezagent.Identity.CascadeHookTest do
 
   test "cascade is off the mutating dispatch's critical path — the grant commits regardless (19)" do
     x = user_with_caps("team-alpha", [])
-    _manager = user_with_caps("team-alpha", [manage_cap_over(x, URI.new!("entity://team-alpha/user/root"))])
+
+    _manager =
+      user_with_caps("team-alpha", fn manager ->
+        [manage_cap_over(x, URI.new!("entity://team-alpha/user/root"), manager)]
+      end)
 
     grant_arbitrary_cap_to(x)
 
@@ -94,7 +96,7 @@ defmodule Ezagent.Identity.CascadeHookTest do
       x
       |> Ezagent.Identity.read_entity_caps()
       |> Enum.any?(fn
-        %Capability{kind: :session} = c -> Capability.action_of(c) == :receive and c.instance == x
+        %Capability{kind: :session} = c -> Capability.action_of(c) == :receive
         _ -> false
       end)
 
@@ -115,7 +117,12 @@ defmodule Ezagent.Identity.CascadeHookTest do
     # X and the attacker share ONE workspace, so `workspace_isolation_check`
     # cannot be what rejects — the provenance gate is the only thing that can.
     x = user_with_caps("team-secure", [])
-    manager = user_with_caps("team-secure", [manage_cap_over(x, URI.new!("entity://team-secure/user/root"))])
+
+    manager =
+      user_with_caps("team-secure", fn manager ->
+        [manage_cap_over(x, URI.new!("entity://team-secure/user/root"), manager)]
+      end)
+
     attacker = user_with_caps("team-secure", [])
 
     :ok = Ezagent.Notifications.subscribe(manager)
@@ -127,6 +134,7 @@ defmodule Ezagent.Identity.CascadeHookTest do
     # genuinely exercises the reachable action, not a validation short-circuit.
     result =
       Ezagent.Invocation.dispatch(%Ezagent.Invocation{
+        origin: :trusted_internal,
         target: URI.new!("#{URI.to_string(x)}?action=identity.cascade_notify_managers"),
         mode: :call,
         args: %{slice_key: :identity, cursor: 1, event_at: DateTime.utc_now()},
@@ -146,6 +154,11 @@ defmodule Ezagent.Identity.CascadeHookTest do
     assert Cascade.notify_managers(nil, %{slice_key: :identity}) == :ok
     # a well-formed call whose subject has no managers → :ok, no crash
     x = URI.new!("entity://team-alpha/agent/lonely-#{uniq()}")
-    assert Cascade.notify_managers(x, %{slice_key: :identity, cursor: 1, event_at: DateTime.utc_now()}) == :ok
+
+    assert Cascade.notify_managers(x, %{
+             slice_key: :identity,
+             cursor: 1,
+             event_at: DateTime.utc_now()
+           }) == :ok
   end
 end

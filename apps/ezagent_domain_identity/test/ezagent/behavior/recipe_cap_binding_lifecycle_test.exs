@@ -13,9 +13,16 @@ defmodule Ezagent.ActionSet.RecipeCapBindingLifecycleTest do
   end
 
   defp agent_uri do
-    Ezagent.URI.new!(
-      "entity://team-alpha/agent/binding-lifecycle-#{System.unique_integer([:positive])}"
-    )
+    uri =
+      Ezagent.URI.new!(
+        "entity://team-alpha/agent/binding-lifecycle-#{System.unique_integer([:positive])}"
+      )
+
+    {:ok, _pid} =
+      Ezagent.Kind.spawn(Ezagent.Entity.Agent, %{uri: uri, initial_caps: MapSet.new()})
+
+    on_exit(fn -> Ezagent.Kind.terminate(uri) end)
+    uri
   end
 
   defp proposal(agent_uri, action) do
@@ -64,7 +71,9 @@ defmodule Ezagent.ActionSet.RecipeCapBindingLifecycleTest do
 
     assert [stored] = recipe_caps(state)
     assert stored.granted_by == @admin
-    assert Ezagent.Cap.verify(stored)
+    assert Ezagent.Cap.storable_for?(stored, agent_uri)
+    assert is_binary(stored.signature)
+    assert is_binary(stored.key_id)
   end
 
   test "activate self-heals a raced binding once without duplicates" do
@@ -86,6 +95,36 @@ defmodule Ezagent.ActionSet.RecipeCapBindingLifecycleTest do
     assert healed.recipe_binding_version == version
     assert length(recipe_caps(healed)) == 1
     assert {:ok, %{}} = Identity.activate(healed, %{self_uri: agent_uri})
+  end
+
+  test "sync_live installs a binding created after the target Kind is live" do
+    agent_uri = agent_uri()
+    refute Enum.any?(
+             Ezagent.Identity.list_caps_for(agent_uri),
+             &(&1.behavior == Ezagent.ActionSet.Sandbox and &1.action == :read)
+           )
+
+    assert {:ok, %{version: version}} =
+             RecipeCapBinding.issue_and_upsert(
+               agent_uri,
+               "reader",
+               @admin,
+               [proposal(agent_uri, :read)]
+             )
+
+    assert :ok = RecipeCapBinding.sync_live(agent_uri)
+
+    assert [stored] =
+             Enum.filter(
+               Ezagent.Identity.list_caps_for(agent_uri),
+               &(&1.behavior == Ezagent.ActionSet.Sandbox and &1.action == :read)
+             )
+
+    assert stored.grantee_uri == agent_uri
+
+    assert {:ok, identity_slice} = Ezagent.Kind.get_slice(agent_uri, :identity)
+    identity = Ezagent.Kind.normalize_slice_view(identity_slice)
+    assert identity.recipe_binding_version == version
   end
 
   test "same binding version does not resurrect a deliberately revoked cap" do
@@ -164,7 +203,7 @@ defmodule Ezagent.ActionSet.RecipeCapBindingLifecycleTest do
     refute Map.has_key?(cleared, :recipe_binding_keys)
   end
 
-  test "clearing an overlapping binding restores the closed structural self cap" do
+  test "clearing an overlapping binding does not resurrect an unsigned structural default" do
     agent_uri = agent_uri()
 
     assert {:ok, %{version: version}} =
@@ -183,7 +222,6 @@ defmodule Ezagent.ActionSet.RecipeCapBindingLifecycleTest do
     assert {:ok, %{}, cleared} = Identity.activate(state, %{self_uri: agent_uri})
 
     assert_unique_identity_keys(cleared)
-    assert Enum.count(cleared.caps, &(&1.behavior == Identity and &1.action == :list_caps)) == 1
-    assert Enum.any?(cleared.caps, &(&1.behavior == Identity and &1.granted_by == @admin))
+    assert Enum.count(cleared.caps, &(&1.behavior == Identity and &1.action == :list_caps)) == 0
   end
 end

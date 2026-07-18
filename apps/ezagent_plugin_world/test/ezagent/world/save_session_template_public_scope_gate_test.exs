@@ -40,7 +40,7 @@ defmodule Ezagent.World.SaveSessionTemplatePublicScopeGateTest do
         workspace_uri
       )
 
-    Ezagent.Identity.Grant.grant_cap(holder, cap, {:genesis, User.admin_uri()})
+    Ezagent.Identity.Grant.grant_cap(holder, cap, {:admin, User.admin_uri()})
   end
 
   defp public_socialware_form(name) do
@@ -147,16 +147,7 @@ defmodule Ezagent.World.SaveSessionTemplatePublicScopeGateTest do
     :ok = spawn_user(operator)
     :ok = grant_add_template(operator, workspace_uri)
 
-    operator_caps =
-      MapSet.new([
-        Capability.cap(
-          :workspace,
-          Ezagent.ActionSet.Workspace,
-          :add_template,
-          workspace_uri,
-          workspace_uri
-        )
-      ])
+    operator_caps = Ezagent.Test.CapHelper.signed_workspace_ctx!(workspace_uri, operator).caps
 
     denied_app = "world165-public-#{uniq()}"
 
@@ -171,12 +162,13 @@ defmodule Ezagent.World.SaveSessionTemplatePublicScopeGateTest do
     # Nothing was persisted for the rejected public def.
     assert :error = DefinitionRegistry.lookup(workspace_uri, denied_app)
 
-    # CONTROL: the SAME operator with admin authority in current_caps succeeds.
-    admin_caps = MapSet.new([Capability.admin_genesis_cap()])
+    # CONTROL: the authenticated canonical admin with workspace authority succeeds.
+    admin = User.admin_uri()
+    admin_caps = Ezagent.Test.CapHelper.signed_workspace_ctx!(workspace_uri, admin).caps
     allowed_app = "world165-public-ok-#{uniq()}"
 
     {:noreply, allowed} =
-      save(workspace_uri, operator, admin_caps, "world165-tmpl-ok-#{uniq()}", allowed_app)
+      save(workspace_uri, admin, admin_caps, "world165-tmpl-ok-#{uniq()}", allowed_app)
 
     assert allowed.assigns.last_dispatch_status == "ok",
            "admin publish failed with #{inspect(allowed.assigns.world_state)}"
@@ -194,6 +186,7 @@ defmodule Ezagent.World.SaveSessionTemplatePublicScopeGateTest do
     {:ok, _} = Ezagent.Workspace.create(ws, %{})
     :ok = spawn_user(operator)
     :ok = grant_add_template(operator, workspace_uri)
+    caps = Ezagent.Test.CapHelper.signed_workspace_ctx!(workspace_uri, operator).caps
 
     {:ok, definition} =
       Definition.new(%{
@@ -216,7 +209,7 @@ defmodule Ezagent.World.SaveSessionTemplatePublicScopeGateTest do
         workspace_uri: workspace_uri,
         caller_workspace_uri: workspace_uri,
         actor_uri: operator,
-        caps: MapSet.new([Capability.admin_genesis_cap()])
+        caps: caps
       )
 
     role_slots = [
@@ -230,7 +223,7 @@ defmodule Ezagent.World.SaveSessionTemplatePublicScopeGateTest do
             __changed__: %{},
             current_entity_uri: operator,
             current_workspace_uri: workspace_uri,
-            current_caps: MapSet.new([Capability.admin_genesis_cap()]),
+            current_caps: caps,
             world_state: %{}
           }
         },
@@ -256,7 +249,6 @@ defmodule Ezagent.World.SaveSessionTemplatePublicScopeGateTest do
     ws = "world-template-multi-install-#{uniq()}"
     workspace_uri = Ezagent.URI.workspace(ws)
     operator = Ezagent.URI.user(ws, "operator")
-    caps = MapSet.new([Capability.admin_genesis_cap()])
     first = "world-template-multi-a-#{uniq()}"
     second = "world-template-multi-b-#{uniq()}"
     template_name = "world-template-multi-tmpl-#{uniq()}"
@@ -264,6 +256,7 @@ defmodule Ezagent.World.SaveSessionTemplatePublicScopeGateTest do
     {:ok, _} = Ezagent.Workspace.create(ws, %{})
     :ok = spawn_user(operator)
     :ok = grant_add_template(operator, workspace_uri)
+    caps = Ezagent.Test.CapHelper.signed_workspace_ctx!(workspace_uri, operator).caps
     {:ok, _} = write_selectable_definition(workspace_uri, operator, caps, first, "front-desk")
     {:ok, _} = write_selectable_definition(workspace_uri, operator, caps, second, "builder")
 
@@ -304,11 +297,11 @@ defmodule Ezagent.World.SaveSessionTemplatePublicScopeGateTest do
     ws = "world-template-default-install-#{uniq()}"
     workspace_uri = Ezagent.URI.workspace(ws)
     operator = Ezagent.URI.user(ws, "operator")
-    caps = MapSet.new([Capability.admin_genesis_cap()])
 
     {:ok, _} = Ezagent.Workspace.create(ws, %{})
     :ok = spawn_user(operator)
     :ok = grant_add_template(operator, workspace_uri)
+    caps = Ezagent.Test.CapHelper.signed_workspace_ctx!(workspace_uri, operator).caps
 
     {:noreply, socket} =
       save_template_params(workspace_uri, operator, caps, %{
@@ -327,11 +320,11 @@ defmodule Ezagent.World.SaveSessionTemplatePublicScopeGateTest do
     ws = "world-template-return-#{uniq()}"
     workspace_uri = Ezagent.URI.workspace(ws)
     operator = Ezagent.URI.user(ws, "operator")
-    caps = MapSet.new([Capability.admin_genesis_cap()])
 
     {:ok, _} = Ezagent.Workspace.create(ws, %{})
     :ok = spawn_user(operator)
     :ok = grant_add_template(operator, workspace_uri)
+    caps = Ezagent.Test.CapHelper.signed_workspace_ctx!(workspace_uri, operator).caps
 
     {:noreply, socket} =
       save_template_params(workspace_uri, operator, caps, %{

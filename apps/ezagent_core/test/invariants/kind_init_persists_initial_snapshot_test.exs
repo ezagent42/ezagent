@@ -131,33 +131,26 @@ defmodule Ezagent.Invariants.KindInitPersistsInitialSnapshotTest do
       # Dispatch `identity.grant_cap` — the exact action that
       # `Ezagent.Workspace.grant_initial_caps/3` loops over from the
       # CLI `mix ezagent.agent.create --caps …` path.
-      target = URI.new!("#{uri_str}?action=identity.grant_cap")
-
       # Use a workspace-scoped cap (workspace_uri == agent's
       # workspace) so dispatch's `:grant_workspace_any_requires_admin`
       # guard isn't relevant to what we're testing here — we just
       # need a slice mutation to exercise the dispatch →
       # `commit_and_notify/3` → `Snapshot.commit/4` path.
-      cap = %Ezagent.Capability{
-        kind: :agent,
-        behavior: Ezagent.ActionSet.Session,
-        instance: :any,
-        workspace_uri: URI.new!("workspace://team-alpha"),
-        granted_by: Ezagent.Entity.User.admin_uri(),
-        granted_at: DateTime.utc_now()
-      }
+      cap =
+        Ezagent.Capability.cap(
+          :agent,
+          Ezagent.ActionSet.Session,
+          :send,
+          uri,
+          Ezagent.URI.new!("workspace://team-alpha")
+        )
 
-      assert {:ok, _} =
-               Ezagent.Invocation.dispatch(%Ezagent.Invocation{
-                 target: target,
-                 mode: :call,
-                 args: %{cap: cap},
-                 ctx: %{
-                   caller: Ezagent.Entity.User.admin_uri(),
-                   caps: MapSet.new([Ezagent.Capability.admin_genesis_cap()]),
-                   reply: {:caller_inbox, self()}
-                 }
-               })
+      assert :ok =
+               Ezagent.Identity.Grant.grant_cap(
+                 uri,
+                 cap,
+                 {:admin, Ezagent.Entity.User.admin_uri()}
+               )
 
       # The invariant: WITHOUT terminate, WITHOUT waiting, the row
       # is updated to reflect the mutation. Pre-fix (Agent =

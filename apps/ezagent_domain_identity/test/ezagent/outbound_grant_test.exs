@@ -1,7 +1,9 @@
 defmodule Ezagent.OutboundGrantTest do
   use EzagentCore.DataCase, async: false
 
-  alias Ezagent.{Cap, Capability, OutboundGrant}
+  import Ezagent.Test.CapHelper, only: [authority_signed_cap_as!: 4]
+
+  alias Ezagent.{Capability, OutboundGrant}
 
   defp entity_uri(workspace, name) do
     Ezagent.URI.new!("entity://#{workspace}/user/#{name}")
@@ -33,7 +35,8 @@ defmodule Ezagent.OutboundGrantTest do
         cap_workspace
       )
 
-    {:ok, cap} = Cap.issue({:genesis, issuer}, grantee, proposal)
+    {:ok, authority} = Ezagent.Cap.Authority.open(grantee, :user)
+    cap = authority_signed_cap_as!(authority, issuer, grantee, proposal)
 
     %{
       issuer: issuer,

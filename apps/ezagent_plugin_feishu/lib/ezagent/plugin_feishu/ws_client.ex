@@ -301,7 +301,8 @@ defmodule EzagentPluginFeishu.WsClient do
         chat_id: chat_id,
         message_id: message_id,
         sender: sender,
-        body: body
+        body: body,
+        origin: :authenticated_external
       )
     end
 

@@ -31,6 +31,8 @@ defmodule Ezagent.ActionSet.IdentityLifecycleColdLoadTest do
 
   use Ezagent.LifecycleCase, async: false
 
+  import Ezagent.Test.CapHelper, only: [signed_invocation!: 2, signed_required_cap!: 5]
+
   alias Ezagent.Ecto.KindSnapshot
   alias Ezagent.Invocation
 
@@ -98,14 +100,31 @@ defmodule Ezagent.ActionSet.IdentityLifecycleColdLoadTest do
 
       # Drive a NON-TRIVIAL persistent state via dispatch (a {:set, :keys, _}).
       put_target = URI.new!("#{uri_str}?action=api_keys.put_api_key")
+      admin = Ezagent.URI.user(:system, :admin)
+
+      cap =
+        signed_required_cap!(
+          put_target,
+          :identity_lifecycle_apikeys_host,
+          Ezagent.ActionSet.ApiKeys,
+          :put_api_key,
+          admin
+        )
 
       assert {:ok, %{ok: true, provider: "deepseek"}} =
-               Invocation.dispatch(%Invocation{
+               %Invocation{
+                 origin: :trusted_internal,
                  target: put_target,
                  mode: :call,
                  args: %{provider: "deepseek", key: "sk-aaaabbbbccccdddd"},
-                 ctx: %{caller: :vm_internal, caps: MapSet.new(), reply: {:caller_inbox, self()}}
-               })
+                 ctx: %{
+                   caller: admin,
+                   caps: MapSet.new([cap]),
+                   reply: {:caller_inbox, self()}
+                 }
+               }
+               |> signed_invocation!(:identity_lifecycle_apikeys_host)
+               |> Invocation.dispatch()
 
       {:ok, %{state: state1}} = Ezagent.Kind.get_raw_slice(uri, :api_keys)
       assert state1.keys == %{"deepseek" => "sk-aaaabbbbccccdddd"}
@@ -151,18 +170,17 @@ defmodule Ezagent.ActionSet.IdentityLifecycleColdLoadTest do
       handle = "cold-reconcile-#{System.unique_integer([:positive])}"
       user_uri = URI.new!("entity://cold-load/user/#{handle}")
 
-      # A concrete granter URI is required so the cap encodes into
-      # users.caps_json (the default `:plugin_declared` granter is not a URI).
+      session_target =
+        Ezagent.URI.new!("session://cold-load/default/main?action=session.send")
+
       extra_cap =
-        Ezagent.Capability.cap(
+        signed_required_cap!(
+          session_target,
           :session,
           Ezagent.ActionSet.Session,
           :send,
-          :any,
-          Ezagent.Capability.workspace_of(user_uri)
+          user_uri
         )
-        |> Map.put(:granted_by, URI.new!("entity://system/user/admin"))
-        |> Map.put(:granted_at, DateTime.utc_now())
 
       {:ok, _decoded} = Ezagent.Users.create(user_uri, nil, [extra_cap])
 

@@ -14,6 +14,8 @@ defmodule Ezagent.Credential.SetDefaultSourceBehaviorTest do
 
   use EzagentCore.DataCase, async: false
 
+  import Ezagent.Test.CapHelper, only: [authority_signed_cap_as!: 4]
+
   alias Ezagent.Capability
   alias Ezagent.Credential.UserDefaultSource, as: UDS
   alias Ezagent.Users
@@ -30,7 +32,7 @@ defmodule Ezagent.Credential.SetDefaultSourceBehaviorTest do
 
   # The cap an owner holds on their own User Kind to set their default source.
   defp set_cap(owner_uri) do
-    %Capability{
+    cap = %Capability{
       kind: :user,
       behavior: Ezagent.ActionSet.UserDefaultCredentialSource,
       action: :set_default_credential_source,
@@ -39,6 +41,15 @@ defmodule Ezagent.Credential.SetDefaultSourceBehaviorTest do
       granted_by: Ezagent.URI.new!("entity://system/user/admin"),
       granted_at: ~U[2026-06-06 00:00:00Z]
     }
+
+    {:ok, authority} = Ezagent.Cap.Authority.open(owner_uri, :user)
+
+    authority_signed_cap_as!(
+      authority,
+      Ezagent.Entity.User.admin_uri(),
+      owner_uri,
+      cap
+    )
   end
 
   setup do
@@ -68,11 +79,11 @@ defmodule Ezagent.Credential.SetDefaultSourceBehaviorTest do
     assert UDS.resolve(ctx.owner_str, @ws, "cc") == ctx.source
   end
 
-  test "a stranger with unrelated caps is denied :unauthorized (no bypass)", ctx do
+  test "a stranger with unrelated caps is denied :missing_cap (no bypass)", ctx do
     stranger = Ezagent.URI.new!("entity://#{@ws}/user/eve")
     stranger_caps = MapSet.new()
 
-    assert {:error, :unauthorized} =
+    assert {:error, :missing_cap} =
              UDS.set_via_dispatch(
                ctx.owner_uri,
                %{flavor: "cc", source_uri: ctx.source, workspace: @ws},
@@ -142,8 +153,12 @@ defmodule Ezagent.Credential.SetDefaultSourceBehaviorTest do
   test "rejects a source owned by another user in the same workspace (codex H4)", ctx do
     owner_caps = Ezagent.Identity.list_caps_for(ctx.owner_uri)
     # A source in the same workspace but owned by someone else.
-    bob_source = seed_agent("entity://#{@ws}/agent/bob-other-#{System.unique_integer([:positive])}",
-      "entity://#{@ws}/user/bob-other", "cc")
+    bob_source =
+      seed_agent(
+        "entity://#{@ws}/agent/bob-other-#{System.unique_integer([:positive])}",
+        "entity://#{@ws}/user/bob-other",
+        "cc"
+      )
 
     assert {:error, :source_owner_mismatch} =
              UDS.set_via_dispatch(

@@ -21,7 +21,7 @@ defmodule Ezagent.ExternalMirror.WorkerSpawnTest do
     a given triple.
   """
 
-  use ExUnit.Case, async: false
+  use EzagentCore.DataCase, async: false
 
   alias Ezagent.ExternalMirror.{
     RootSupervisor,

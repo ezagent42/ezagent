@@ -120,32 +120,28 @@ defmodule EzagentPluginCodex.BridgeAdapter do
         args: %{message: msg},
         ctx: %{
           caller: agent_uri,
-          # System-principal elimination (#154): the ambient
-          # `system://chat-reply` WILDCARD principal is DELETED. The agent
-          # presents its OWN narrow `session.send` cap on the concrete session
-          # being replied to (least privilege). `granted_by: agent_uri` is a
-          # real entity (#154-ok); inline = provenance-only, the step-5.5
-          # authorizer (`granted_via_ctx_caps?`), never routed through Grant.
-          caps:
-            MapSet.new([
-              %Ezagent.Capability{
-                Ezagent.Capability.cap(
-                  :session,
-                  Ezagent.ActionSet.Session,
-                  :send,
-                  Ezagent.URI.instance(session_uri),
-                  Ezagent.Capability.workspace_of(session_uri)
-                )
-                | granted_by: agent_uri,
-                  granted_at: DateTime.utc_now()
-              }
-            ]),
+          # The authenticated agent presents only authority already issued by
+          # the target Kind and held in its durable EntityCaps store. Bridge
+          # code is not a signing site and must never synthesize an envelope
+          # capability from the requested destination.
+          caps: held_caps(agent_uri),
           reply: :ignore
-        }
+        },
+        origin: :authenticated_external
       })
     end
 
     :ok
+  end
+
+  defp held_caps(%URI{} = agent_uri) do
+    if Ezagent.LocalRuntime.kind_alive?(agent_uri) do
+      Module.concat([Ezagent, EntityCaps])
+      |> apply(:load, [agent_uri])
+      |> MapSet.new()
+    else
+      MapSet.new()
+    end
   end
 
   defp call_session_manager(%URI{} = orchestrator_uri, tool, arguments, token)

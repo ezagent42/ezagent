@@ -290,13 +290,14 @@ defmodule EzagentDomainInstanceMessage.Application do
       # assert against.
       result =
         with :ok <- ensure_system_workspace_seeded_for_tests(),
-             :ok <- maybe_seed_stock_orchestrator_recipe_for_tests() do
+             :ok <- maybe_seed_stock_orchestrator_recipe_for_tests(),
+             {:ok, create_session_cap} <- system_create_session_cap() do
           Ezagent.Workspace.create_session(
             Ezagent.URI.workspace(:system),
             %{short_name: "main", template_name: "default"},
             %{
               caller: User.admin_uri(),
-              caps: MapSet.new([Ezagent.Capability.admin_genesis_cap()])
+              caps: MapSet.new([create_session_cap])
             }
           )
         end
@@ -332,6 +333,22 @@ defmodule EzagentDomainInstanceMessage.Application do
     Code.ensure_loaded?(Mix) and Mix.env() == :test
   rescue
     _ -> false
+  end
+
+  defp system_create_session_cap do
+    workspace_uri = Ezagent.URI.workspace(:system)
+    admin_uri = User.admin_uri()
+
+    requested =
+      Ezagent.Capability.cap(
+        :workspace,
+        Ezagent.ActionSet.Workspace,
+        :create_session,
+        Ezagent.URI.instance(workspace_uri),
+        Ezagent.Capability.workspace_of(workspace_uri)
+      )
+
+    Ezagent.Cap.issue({:admin, admin_uri}, admin_uri, requested)
   end
 
   # Register the delivery Task.Supervisors this app hosts (see the call
@@ -380,17 +397,26 @@ defmodule EzagentDomainInstanceMessage.Application do
   end
 
   defp ensure_system_workspace_seeded_for_tests do
-    case Ezagent.Workspace.Store.get_by_name("system") do
-      nil ->
-        case Ezagent.Workspace.create("system", %{created_by: User.admin_uri()}) do
-          {:ok, _pid} -> :ok
-          {:error, :workspace_exists} -> :ok
-          {:error, {:already_started, _pid}} -> :ok
-          {:error, reason} -> {:error, {:system_workspace_seed_failed, reason}}
-        end
+    persisted =
+      case Ezagent.Workspace.Store.get_by_name("system") do
+        nil ->
+          case Ezagent.Workspace.create("system", %{created_by: User.admin_uri()}) do
+            {:ok, _pid} -> :ok
+            {:error, :workspace_exists} -> :ok
+            {:error, {:already_started, _pid}} -> :ok
+            {:error, reason} -> {:error, {:system_workspace_seed_failed, reason}}
+          end
 
-      _ ->
-        :ok
+        _ ->
+          :ok
+      end
+
+    with :ok <- persisted do
+      case Ezagent.Workspace.spawn_workspace("system", %{created_by: User.admin_uri()}) do
+        {:ok, _pid} -> :ok
+        {:error, {:already_started, _pid}} -> :ok
+        {:error, reason} -> {:error, {:system_workspace_runtime_failed, reason}}
+      end
     end
   end
 
@@ -834,7 +860,7 @@ defmodule EzagentDomainInstanceMessage.Application do
             Ezagent.Kind.spawn(User, %{uri: uri, initial_caps: initial_caps})
 
           {:ok, "agent"} ->
-            spawn_agent(uri)
+            AgentModuleResolver.spawn_agent(uri)
 
           other ->
             {:error, {:unknown_entity_host, other}}
@@ -956,44 +982,4 @@ defmodule EzagentDomainInstanceMessage.Application do
   # wizard's call to `Ezagent.Workspace.create_session/3` does the
   # bind + admin join in one place — same code path for every session,
   # including the default.
-
-  # PR #149 (SPEC v2 §5.14) + unify-uri-query PR-B — agent flavor
-  # resolution without `Ezagent.AgentTypeRegistry` or URI-name parsing.
-  # Three-step lookup:
-  #
-  # 1. Snapshot — restart case. KindSnapshot stores `kind_type` for
-  #    every persisted Kind; the chat plugin maps it back to the Kind
-  #    module. Fast, single DB row by URI.
-  # 2. Workspace template — first-spawn-after-template-creation case.
-  #    Walks `Ezagent.Workspace.Store.list_all/0` looking for a
-  #    session_template whose `agent_uri` matches; the template's
-  #    `class` string ("cc.agent" / "curl.agent" / ...) maps to a Kind
-  #    module.
-  # 3. Stored flavor — boot-time auto-spawn / CLI-driven spawn case.
-  #    The owning domain resolves `:flavor` through `Ezagent.UriQuery`,
-  #    then maps the stored flavor through `Ezagent.AgentFlavorRegistry`
-  #    (plugin authoring contract SPEC §6.3 / codex MEDIUM-5 — each
-  #    agent-flavor plugin declares `agent_flavors/0`,
-  #    `Ezagent.Plugin.boot/1` registers it).
-  defp spawn_agent(%URI{} = uri) do
-    case AgentModuleResolver.lookup_kind_module_for_agent(uri) do
-      {:ok, kind_module} ->
-        # V1 prevention (Allen 2026-05-21): route via Ezagent.Kind.spawn/2.
-        # Each agent Kind (Agent / CurlAgent / PyAgent) declares its own
-        # supervisor/0 callback; chat plugin no longer hardcodes
-        # `EzagentDomainInstanceMessage.AgentSupervisor` (CurlAgent in particular
-        # has its own InstanceSupervisor under the curl_agent plugin).
-        Ezagent.Kind.spawn(kind_module, %{uri: uri})
-
-      {:error, reason} ->
-        {:error, reason}
-
-      :error ->
-        {:error, {:no_kind_module_for_agent, URI.to_string(uri)}}
-    end
-  end
-
-  # Agent-URI → Kind-module resolution lives in
-  # `EzagentDomainInstanceMessage.AgentModuleResolver` (#25 Phase-3
-  # PR-3P); `spawn_agent/1` above delegates to it then spawns.
 end

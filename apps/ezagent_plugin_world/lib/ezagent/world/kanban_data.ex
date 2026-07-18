@@ -238,7 +238,8 @@ defmodule Ezagent.World.KanbanData do
         target: target,
         mode: :call,
         args: %{},
-        ctx: dispatch_ctx(ctx)
+        ctx: dispatch_ctx(ctx),
+        origin: :authenticated_external
       })
 
     case result do

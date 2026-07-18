@@ -148,7 +148,7 @@ defmodule Ezagent.Router do
   # Build the `?action=behavior.action` URI shape the legacy
   # registry uses. Phase 1 keeps this translation in one place so
   # Phase 2's direct-handler path can bypass it cleanly.
-  defp to_invocation(%Cmd{target: target, action: action, args: args, ctx: ctx}) do
+  defp to_invocation(%Cmd{target: target, action: action, args: args, ctx: ctx, origin: origin}) do
     # The legacy dispatch path expects `target` to embed action as
     # the query-string. We append `?action=...` here when not
     # already present (caller may have pre-baked it).
@@ -166,7 +166,8 @@ defmodule Ezagent.Router do
       target: annotated_target,
       mode: mode,
       args: args,
-      ctx: legacy_ctx
+      ctx: legacy_ctx,
+      origin: origin
     }
   end
 

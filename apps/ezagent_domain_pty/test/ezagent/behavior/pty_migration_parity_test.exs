@@ -68,11 +68,13 @@ defmodule Ezagent.ActionSet.PtyMigrationParityTest do
     target = Ezagent.URI.new!("#{URI.to_string(agent_uri)}?action=pty.write")
 
     %Invocation{
+      origin: :trusted_internal,
       target: target,
       mode: :call,
       args: %{bytes: bytes},
       ctx: %{caller: Ezagent.URI.new!("entity://system/user/admin"), caps: caps, reply: :sync}
     }
+    |> signed_invocation!(:pty_parity_stub)
   end
 
   describe "new-contract markers (SPEC §2.2)" do

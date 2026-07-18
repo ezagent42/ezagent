@@ -216,22 +216,12 @@ defmodule Mix.Tasks.Ezagent.Agent.Create do
   # (the step-5.5 authorizer), `granted_by` = `admin_uri` (provenance only on
   # an inline authorizer never used as ISSUE authority).
   defp operator_admin_ctx(%URI{} = admin_uri, %URI{scheme: "workspace"} = workspace_uri) do
-    %{
-      caller: admin_uri,
-      caps: [
-        %Ezagent.Capability{
-          Ezagent.Capability.cap(
-            :workspace,
-            Ezagent.ActionSet.Workspace,
-            :create_agent,
-            Ezagent.URI.instance(workspace_uri),
-            Ezagent.Capability.workspace_of(workspace_uri)
-          )
-          | granted_by: admin_uri,
-            granted_at: DateTime.utc_now()
-        }
-      ]
-    }
+    target = Ezagent.URI.with_action(workspace_uri, :workspace, :create_agent)
+
+    case Ezagent.Cap.issue_for_action({:admin, admin_uri}, admin_uri, target) do
+      {:ok, cap} -> %{caller: admin_uri, caps: [cap]}
+      {:error, reason} -> Mix.raise("create-agent cap issuance failed: #{inspect(reason)}")
+    end
   end
 
   # `--from` is optional. When omitted → no `:from` key in args.

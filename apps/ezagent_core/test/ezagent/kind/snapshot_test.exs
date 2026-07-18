@@ -40,19 +40,16 @@ defmodule Ezagent.Kind.SnapshotTest do
     # 2026-05-26 flip moved it to Agent Kind. User now has Identity +
     # UserCredentials + UserTokens slices ONLY.
     #
-    # PR-OWN-3 (caps-data-ownership-v2 SPEC #306) added self-Identity
-    # cap provisioning at init — the entity gets a `Behavior.Identity`
-    # cap on its own URI so dispatch-path list_caps/has_cap? authorize.
+    # cap-signing Stage 6: unsigned init-time self grants are forbidden.
+    # Identity starts empty and receives only target-signed grants through
+    # the framework-owned issuance path.
     # remediation C-D — the slice is now two-container (state/transients).
     assert %{identity: %{state: %{caps: caps}}} = state
 
     refute Map.has_key?(state, :api_keys),
            "User Kind no longer holds :api_keys post Allen 2026-05-26 flip"
 
-    assert MapSet.size(caps) == 1
-    [self_cap] = MapSet.to_list(caps)
-    assert self_cap.behavior == Ezagent.ActionSet.Identity
-    assert self_cap.instance == uri
+    assert caps == MapSet.new()
   end
 
   test "maybe_save no-op for :ephemeral" do
@@ -158,9 +155,11 @@ defmodule Ezagent.Kind.SnapshotTest do
     uri =
       Ezagent.URI.new!("entity://team-alpha/user/snap-rt-#{System.unique_integer([:positive])}")
 
-    caps = MapSet.new([Ezagent.Capability.admin_genesis_cap()])
+    # Legacy unsigned artifacts may still be present in a pre-cutover snapshot,
+    # but born-signed rehydration must discard them.
+    stored_caps = MapSet.new([Ezagent.Capability.admin_genesis_cap()])
 
-    :ok = Snapshot.save_now(uri, Ezagent.Entity.User, %{identity: %{caps: caps}})
+    :ok = Snapshot.save_now(uri, Ezagent.Entity.User, %{identity: %{caps: stored_caps}})
 
     loaded = Snapshot.load_or_init(uri, Ezagent.Entity.User, %{uri: uri})
     # PR #126: load_or_init merges any fresh-init slices from new Behaviors
@@ -180,7 +179,7 @@ defmodule Ezagent.Kind.SnapshotTest do
     # universal `Manage` base behavior stays a set member but materializes no
     # slice.
     assert loaded == %{
-             identity: %{state: %{caps: caps}, transients: %{}},
+             identity: %{state: %{caps: %MapSet{}}, transients: %{}},
              user_credentials: %{state: %{set_password_count: 0}, transients: %{}},
              user_tokens: %{state: %{mint_count: 0, revoke_count: 0}, transients: %{}},
              kind_base: %{state: %{behaviors: nil}, transients: %{}}
@@ -193,7 +192,16 @@ defmodule Ezagent.Kind.SnapshotTest do
         "entity://team-alpha/user/snap-mapset-#{System.unique_integer([:positive])}"
       )
 
-    caps = MapSet.new([Ezagent.Capability.admin_genesis_cap()])
+    cap =
+      signed_fixture_cap!(
+        uri,
+        :user,
+        Ezagent.ActionSet.Identity,
+        :list_caps,
+        uri
+      )
+
+    caps = MapSet.new([cap])
 
     :ok = Snapshot.save_now(uri, Ezagent.Entity.User, %{identity: %{caps: caps}})
 
@@ -205,18 +213,26 @@ defmodule Ezagent.Kind.SnapshotTest do
     assert MapSet.equal?(loaded_caps, caps)
   end
 
-  test "I5 snapshot rehydration drops unverified caps before the identity slice loads" do
+  test "snapshot rehydration drops unsigned caps before the identity slice loads" do
     uri =
       Ezagent.URI.new!(
         "entity://team-alpha/user/snap-verify-#{System.unique_integer([:positive])}"
       )
 
-    valid = Ezagent.Capability.admin_genesis_cap()
-    invalid = %{valid | granted_by: Ezagent.URI.new!("system://forged")}
+    valid =
+      signed_fixture_cap!(
+        uri,
+        :user,
+        Ezagent.ActionSet.Identity,
+        :list_caps,
+        uri
+      )
+
+    unsigned = Ezagent.Capability.admin_genesis_cap()
 
     :ok =
       Snapshot.save_now(uri, Ezagent.Entity.User, %{
-        identity: %{caps: MapSet.new([valid, invalid])}
+        identity: %{caps: MapSet.new([valid, unsigned])}
       })
 
     %{identity: %{state: %{caps: loaded_caps}}} =

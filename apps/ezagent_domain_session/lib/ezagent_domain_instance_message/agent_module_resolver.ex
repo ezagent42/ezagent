@@ -13,8 +13,8 @@ defmodule EzagentDomainInstanceMessage.AgentModuleResolver do
     2. workspace session-template `class`
     3. stored flavor → `Ezagent.AgentFlavorRegistry`
 
-  Read-only: no spawning, no mutation. `spawn_agent/1` stays in the
-  Application and calls `Ezagent.Kind.spawn/2` on the resolved module.
+  `spawn_agent/1` keeps the resolution and Kind spawn operation in this
+  cohesive boundary so the OTP Application only registers the callback.
   """
 
   @doc """
@@ -33,6 +33,21 @@ defmodule EzagentDomainInstanceMessage.AgentModuleResolver do
     else
       {:ok, _mod} = ok -> ok
       {:error, _reason} = err -> err
+    end
+  end
+
+  @doc "Resolve the Kind for `uri` and spawn it through the Kind lifecycle."
+  @spec spawn_agent(URI.t()) :: {:ok, pid()} | {:error, term()}
+  def spawn_agent(%URI{} = uri) do
+    case lookup_kind_module_for_agent(uri) do
+      {:ok, kind_module} ->
+        Ezagent.Kind.spawn(kind_module, %{uri: uri})
+
+      {:error, reason} ->
+        {:error, reason}
+
+      :error ->
+        {:error, {:no_kind_module_for_agent, URI.to_string(uri)}}
     end
   end
 

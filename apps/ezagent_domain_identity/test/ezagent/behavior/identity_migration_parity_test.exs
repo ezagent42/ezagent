@@ -16,9 +16,11 @@ defmodule Ezagent.ActionSet.IdentityMigrationParityTest do
 
   use EzagentCore.DataCase, async: false
 
+  import Ezagent.Test.CapHelper,
+    only: [signed_fixture_cap!: 5, signed_invocation!: 2, signed_required_cap!: 5]
+
   alias Ezagent.{BehaviorRegistry, Invocation}
   alias Ezagent.ActionSet.{Identity, IdentityAdmin}
-  alias Ezagent.Capability
 
   defmodule StubUserKind do
     @moduledoc false
@@ -50,25 +52,31 @@ defmodule Ezagent.ActionSet.IdentityMigrationParityTest do
     {:ok, user_uri: user_uri, state: state, admin_caps: admin_caps}
   end
 
-  defp build_invocation(user_uri, action, args, caller_caps \\ MapSet.new()) do
-    target =
-      user_uri
-      |> URI.to_string()
-      |> Kernel.<>("?action=identity.#{action}")
-      |> URI.parse()
+  defp build_invocation(user_uri, action, args) do
+    target = Ezagent.URI.new!("#{URI.to_string(user_uri)}?action=identity.#{action}")
+
+    behavior =
+      if action in [:list_caps, :has_cap?],
+        do: Identity,
+        else: IdentityAdmin
+
+    auth_cap =
+      signed_required_cap!(target, :identity_parity_stub, behavior, action, @granter)
 
     %Invocation{
+      origin: :trusted_internal,
       target: target,
       mode: :call,
       args: args,
-      ctx: %{caller: @granter, caps: caller_caps, reply: :sync}
+      ctx: %{caller: @granter, caps: MapSet.new([auth_cap]), reply: :sync}
     }
+    |> signed_invocation!(:identity_parity_stub)
   end
 
   describe "Identity — Level 1 dispatch parity" do
     test "list_caps dispatch returns the slice cap list (no slice mutation)",
          %{user_uri: user_uri, state: state, admin_caps: admin_caps} do
-      inv = build_invocation(user_uri, :list_caps, %{}, admin_caps)
+      inv = build_invocation(user_uri, :list_caps, %{})
 
       assert {:ok, new_state, %{caps: caps_list}, nil, _deferred} =
                Ezagent.Kind.Runtime.handle_dispatch(inv, state, StubUserKind, user_uri)
@@ -79,7 +87,7 @@ defmodule Ezagent.ActionSet.IdentityMigrationParityTest do
     end
 
     test "has_cap? dispatch returns true for admin all-cap match",
-         %{user_uri: user_uri, state: state, admin_caps: admin_caps} do
+         %{user_uri: user_uri, state: state} do
       needed = %{
         kind: :session,
         behavior: Ezagent.ActionSet.Session,
@@ -87,14 +95,13 @@ defmodule Ezagent.ActionSet.IdentityMigrationParityTest do
         workspace_uri: @workspace_uri
       }
 
-      inv = build_invocation(user_uri, :has_cap?, %{cap: needed}, admin_caps)
+      inv = build_invocation(user_uri, :has_cap?, %{cap: needed})
 
       assert {:ok, _new_state, %{has: true}, _evt, _deferred} =
                Ezagent.Kind.Runtime.handle_dispatch(inv, state, StubUserKind, user_uri)
     end
 
-    test "has_cap? dispatch returns false when no caps match",
-         %{user_uri: user_uri, admin_caps: admin_caps} do
+    test "has_cap? dispatch returns false when no caps match", %{user_uri: user_uri} do
       empty_state = %{identity: %{caps: MapSet.new()}}
 
       needed = %{
@@ -104,7 +111,7 @@ defmodule Ezagent.ActionSet.IdentityMigrationParityTest do
         workspace_uri: @workspace_uri
       }
 
-      inv = build_invocation(user_uri, :has_cap?, %{cap: needed}, admin_caps)
+      inv = build_invocation(user_uri, :has_cap?, %{cap: needed})
 
       assert {:ok, _new_state, %{has: false}, _evt, _deferred} =
                Ezagent.Kind.Runtime.handle_dispatch(inv, empty_state, StubUserKind, user_uri)
@@ -117,16 +124,16 @@ defmodule Ezagent.ActionSet.IdentityMigrationParityTest do
       # Start with a slice that only has admin's cross-cutting caps.
       state = %{identity: %{caps: admin_caps}}
 
-      new_cap = %Capability{
-        kind: :echo,
-        behavior: :any,
-        instance: :any,
-        workspace_uri: @workspace_uri,
-        granted_by: @granter,
-        granted_at: DateTime.utc_now()
-      }
+      new_cap =
+        signed_fixture_cap!(
+          Ezagent.URI.new!("session://identity-parity/default/grant-target"),
+          :session,
+          Ezagent.ActionSet.Session,
+          :send,
+          user_uri
+        )
 
-      inv = build_invocation(user_uri, :grant_cap, %{cap: new_cap}, admin_caps)
+      inv = build_invocation(user_uri, :grant_cap, %{cap: new_cap})
 
       assert {:ok, new_state, %{caps: cap_list}, _evt, _deferred} =
                Ezagent.Kind.Runtime.handle_dispatch(inv, state, StubUserKind, user_uri)
@@ -138,18 +145,18 @@ defmodule Ezagent.ActionSet.IdentityMigrationParityTest do
 
     test "revoke_cap dispatch removes a cap from the shared :identity slice",
          %{user_uri: user_uri, admin_caps: admin_caps} do
-      cap = %Capability{
-        kind: :echo,
-        behavior: :any,
-        instance: :any,
-        workspace_uri: @workspace_uri,
-        granted_by: @granter,
-        granted_at: DateTime.utc_now()
-      }
+      cap =
+        signed_fixture_cap!(
+          Ezagent.URI.new!("session://identity-parity/default/revoke-target"),
+          :session,
+          Ezagent.ActionSet.Session,
+          :send,
+          user_uri
+        )
 
       state = %{identity: %{caps: MapSet.put(admin_caps, cap)}}
 
-      inv = build_invocation(user_uri, :revoke_cap, %{cap: cap}, admin_caps)
+      inv = build_invocation(user_uri, :revoke_cap, %{cap: cap})
 
       assert {:ok, new_state, %{caps: _cap_list}, _evt, _deferred} =
                Ezagent.Kind.Runtime.handle_dispatch(inv, state, StubUserKind, user_uri)

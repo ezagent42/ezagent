@@ -149,7 +149,8 @@ defmodule Ezagent.EntityCaps do
         caps: MapSet.new(),
         mode: :call,
         reply: {:caller_inbox, self()}
-      }
+      },
+      origin: :trusted_internal
     })
     |> normalize_dispatch_result()
   end

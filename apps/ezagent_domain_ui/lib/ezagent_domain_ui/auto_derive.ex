@@ -11,7 +11,7 @@ defmodule EzagentDomainUi.AutoDerive do
       slices_summary}]`.
 
     * `instance_detail(uri)` — looks up a live Kind, captures its
-      `:sys.get_state` slice map, and zips it with the registered
+      framework runtime-view slice map, and zips it with the registered
       Behaviors so the UI can render slice → behavior pairs.
 
   Neither function knows anything about Sessions / Agents / etc —
@@ -92,11 +92,7 @@ defmodule EzagentDomainUi.AutoDerive do
   end
 
   defp safe_state(pid) do
-    try do
-      {:ok, :sys.get_state(pid, 200)}
-    catch
-      :exit, _ -> {:error, :timeout}
-    end
+    Ezagent.Kind.runtime_view(pid)
   end
 
   defp build_detail(uri, pid, state) do

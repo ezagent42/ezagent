@@ -162,6 +162,7 @@ defmodule Ezagent.ActionSet.PyAgent do
     source_session = Map.get(args, :source_session)
     user_text = Map.get(args, :user_text, "")
     in_msg_id = Map.get(args, :in_msg_id)
+    reply_cap = Map.get(args, :reply_cap)
 
     case result do
       {:ok, :silent} ->
@@ -170,7 +171,7 @@ defmodule Ezagent.ActionSet.PyAgent do
       {:ok, %{text: reply}} when is_binary(reply) ->
         effects =
           set_last(user_text, reply, nil) ++
-            maybe_reply_effect(source_session, self_uri, reply, in_msg_id)
+            maybe_reply_effect(source_session, self_uri, reply, in_msg_id, reply_cap)
 
         {:ok, %{ok: true}, effects}
 
@@ -257,11 +258,17 @@ defmodule Ezagent.ActionSet.PyAgent do
   # Build a single `{:dispatch, %Cmd{}}` chat.send reply effect. Mirrors
   # the per-subprocess agent: the agent presents its OWN inline narrow `session.send` cap on
   # the concrete reply session (#154 — no `system://chat-reply` wildcard).
-  defp maybe_reply_effect(nil, _self_uri, _text, _in_msg_id), do: []
-  defp maybe_reply_effect("", _self_uri, _text, _in_msg_id), do: []
-  defp maybe_reply_effect(_, nil, _text, _in_msg_id), do: []
+  defp maybe_reply_effect(nil, _self_uri, _text, _in_msg_id, _reply_cap), do: []
+  defp maybe_reply_effect("", _self_uri, _text, _in_msg_id, _reply_cap), do: []
+  defp maybe_reply_effect(_, nil, _text, _in_msg_id, _reply_cap), do: []
 
-  defp maybe_reply_effect(session_uri, %URI{} = self_uri, text, in_msg_id) do
+  defp maybe_reply_effect(
+         session_uri,
+         %URI{} = self_uri,
+         text,
+         in_msg_id,
+         %Ezagent.Capability{} = reply_cap
+       ) do
     case parse_session_uri(session_uri) do
       nil ->
         []
@@ -275,26 +282,15 @@ defmodule Ezagent.ActionSet.PyAgent do
         cmd =
           Cmd.new(target, :send, %{message: reply_msg}, %{
             caller: self_uri,
-            caps:
-              MapSet.new([
-                %Ezagent.Capability{
-                  Ezagent.Capability.cap(
-                    :session,
-                    Ezagent.ActionSet.Session,
-                    :send,
-                    Ezagent.URI.instance(session),
-                    Ezagent.Capability.workspace_of(session)
-                  )
-                  | granted_by: self_uri,
-                    granted_at: DateTime.utc_now()
-                }
-              ]),
+            caps: MapSet.new([reply_cap]),
             reply: :ignore
           })
 
         [{:dispatch, cmd}]
     end
   end
+
+  defp maybe_reply_effect(_session_uri, _self_uri, _text, _in_msg_id, _reply_cap), do: []
 
   defp parse_session_uri(%URI{scheme: "session"} = u), do: u
 

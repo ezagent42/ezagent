@@ -103,7 +103,13 @@ defmodule Ezagent.ActionSet.ExternalMirrorWorkerMigrationParityTest do
         session_uri: Ezagent.URI.new!("session://team-alpha/default/p2d-worker-parity"),
         adapter_id: "test-adapter",
         target_id: "t-1",
-        opts: %{}
+        opts: %{},
+        subscribe_cap:
+          Ezagent.Capability.cap(
+            :session,
+            Ezagent.ActionSet.Publisher.SessionImpl,
+            :subscribe_from
+          )
       }
 
       {:ok, state} = ExternalMirrorWorker.create(args)

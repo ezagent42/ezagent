@@ -33,16 +33,18 @@ defmodule EzagentDomainInstanceMessage.E2E.Category10.Scenario22RoutingCRUDTest 
 
   @table MentionRouting
 
-  defp admin_ctx do
+  defp admin_ctx(target) do
+    admin = Ezagent.Entity.User.admin_uri()
+
     %{
-      caller: Ezagent.Entity.User.admin_uri(),
-      caps: MapSet.new([Ezagent.Capability.admin_genesis_cap()]),
+      caller: admin,
+      caps: MapSet.new([Ezagent.Test.CapHelper.signed_action_cap!(target, admin)]),
       reply: {:caller_inbox, self()}
     }
   end
 
   defp global_routing_target(action) do
-    URI.parse(
+    Ezagent.URI.new!(
       "#{URI.to_string(Ezagent.Entity.System.routing_default_uri())}?action=routing.#{action}"
     )
   end
@@ -57,12 +59,15 @@ defmodule EzagentDomainInstanceMessage.E2E.Category10.Scenario22RoutingCRUDTest 
   setup do
     uri = Ezagent.Entity.System.routing_default_uri()
 
-    case Ezagent.SpawnRegistry.spawn(uri) do
-      {:ok, _pid} -> :ok
-      {:error, {:already_started, _pid}} -> :ok
+    case Ezagent.KindRegistry.lookup(uri) do
+      {:ok, pid} ->
+        :ok = DynamicSupervisor.terminate_child(Ezagent.Core.SingletonSupervisor, pid)
+
+      :error ->
+        :ok
     end
 
-    {:ok, pid} = Ezagent.KindRegistry.lookup(uri)
+    {:ok, pid} = Ezagent.SpawnRegistry.spawn(uri)
     _ = Ecto.Adapters.SQL.Sandbox.allow(EzagentCore.Repo, self(), pid)
     :ok
   end
@@ -74,6 +79,7 @@ defmodule EzagentDomainInstanceMessage.E2E.Category10.Scenario22RoutingCRUDTest 
 
       assert {:ok, %{id: rule_id}} =
                Invocation.dispatch(%Invocation{
+                 origin: :trusted_internal,
                  target: global_routing_target("add_rule"),
                  mode: :call,
                  args: %{
@@ -81,7 +87,7 @@ defmodule EzagentDomainInstanceMessage.E2E.Category10.Scenario22RoutingCRUDTest 
                    matcher_json: Matcher.to_json(matcher),
                    receivers: [receiver]
                  },
-                 ctx: admin_ctx()
+                 ctx: admin_ctx(global_routing_target("add_rule"))
                })
 
       assert is_integer(rule_id), "add_rule MUST return the inserted row id"
@@ -97,6 +103,7 @@ defmodule EzagentDomainInstanceMessage.E2E.Category10.Scenario22RoutingCRUDTest 
 
       {:ok, %{id: rule_id}} =
         Invocation.dispatch(%Invocation{
+          origin: :trusted_internal,
           target: global_routing_target("add_rule"),
           mode: :call,
           args: %{
@@ -104,7 +111,7 @@ defmodule EzagentDomainInstanceMessage.E2E.Category10.Scenario22RoutingCRUDTest 
             matcher_json: Matcher.to_json(matcher),
             receivers: [receiver]
           },
-          ctx: admin_ctx()
+          ctx: admin_ctx(global_routing_target("add_rule"))
         })
 
       [stored] = Enum.filter(RuleStore.list(@table), &(&1.id == rule_id))
@@ -148,6 +155,7 @@ defmodule EzagentDomainInstanceMessage.E2E.Category10.Scenario22RoutingCRUDTest 
 
       for m <- [and_matcher, or_matcher, not_matcher] do
         json = Matcher.to_json(m)
+
         assert {:ok, ^m} = Matcher.from_json(json),
                "combinator #{inspect(m)} MUST round-trip JSON encoding"
       end
@@ -161,6 +169,7 @@ defmodule EzagentDomainInstanceMessage.E2E.Category10.Scenario22RoutingCRUDTest 
 
       {:ok, %{id: rule_id}} =
         Invocation.dispatch(%Invocation{
+          origin: :trusted_internal,
           target: global_routing_target("add_rule"),
           mode: :call,
           args: %{
@@ -168,20 +177,22 @@ defmodule EzagentDomainInstanceMessage.E2E.Category10.Scenario22RoutingCRUDTest 
             matcher_json: Matcher.to_json(matcher),
             receivers: [receiver]
           },
-          ctx: admin_ctx()
+          ctx: admin_ctx(global_routing_target("add_rule"))
         })
 
       # After add, the rule is in the live ETS table.
       ets_before_disable = RoutingRegistry.list_all(@table)
+
       assert Enum.any?(ets_before_disable, &matcher_match?(&1, matcher)),
              "after add, rule MUST be live in RoutingRegistry"
 
       assert {:ok, %{disabled: ^rule_id}} =
                Invocation.dispatch(%Invocation{
+                 origin: :trusted_internal,
                  target: global_routing_target("disable_rule"),
                  mode: :call,
                  args: %{table: @table, id: rule_id},
-                 ctx: admin_ctx()
+                 ctx: admin_ctx(global_routing_target("disable_rule"))
                })
 
       # `load_into_registry/1` filters `enabled: true` only — the disabled
@@ -194,13 +205,15 @@ defmodule EzagentDomainInstanceMessage.E2E.Category10.Scenario22RoutingCRUDTest 
       # Re-enable.
       assert {:ok, %{enabled: ^rule_id}} =
                Invocation.dispatch(%Invocation{
+                 origin: :trusted_internal,
                  target: global_routing_target("enable_rule"),
                  mode: :call,
                  args: %{table: @table, id: rule_id},
-                 ctx: admin_ctx()
+                 ctx: admin_ctx(global_routing_target("enable_rule"))
                })
 
       ets_after_enable = RoutingRegistry.list_all(@table)
+
       assert Enum.any?(ets_after_enable, &matcher_match?(&1, matcher)),
              "re-enabled rule MUST be live again"
     end
@@ -213,6 +226,7 @@ defmodule EzagentDomainInstanceMessage.E2E.Category10.Scenario22RoutingCRUDTest 
 
       {:ok, %{id: rule_id}} =
         Invocation.dispatch(%Invocation{
+          origin: :trusted_internal,
           target: global_routing_target("add_rule"),
           mode: :call,
           args: %{
@@ -220,15 +234,16 @@ defmodule EzagentDomainInstanceMessage.E2E.Category10.Scenario22RoutingCRUDTest 
             matcher_json: Matcher.to_json(matcher),
             receivers: [receiver]
           },
-          ctx: admin_ctx()
+          ctx: admin_ctx(global_routing_target("add_rule"))
         })
 
       assert {:ok, %{deleted: ^rule_id}} =
                Invocation.dispatch(%Invocation{
+                 origin: :trusted_internal,
                  target: global_routing_target("delete_rule"),
                  mode: :call,
                  args: %{table: @table, id: rule_id},
-                 ctx: admin_ctx()
+                 ctx: admin_ctx(global_routing_target("delete_rule"))
                })
 
       # Row gone from DB.
@@ -237,6 +252,7 @@ defmodule EzagentDomainInstanceMessage.E2E.Category10.Scenario22RoutingCRUDTest 
 
       # ETS entry gone.
       ets_after_delete = RoutingRegistry.list_all(@table)
+
       refute Enum.any?(ets_after_delete, &matcher_match?(&1, matcher)),
              "rule MUST be gone from live ETS after delete"
     end
@@ -269,7 +285,8 @@ defmodule EzagentDomainInstanceMessage.E2E.Category10.Scenario22RoutingCRUDTest 
         RuleStore.list(@table)
         |> Enum.filter(&(&1.source == RuleStore.system_default_source()))
 
-      refute refetched.enabled, "system_default rule's enabled flag MUST flip to false after disable"
+      refute refetched.enabled,
+             "system_default rule's enabled flag MUST flip to false after disable"
 
       # Restore for downstream tests.
       :ok = RuleStore.enable(default.id)

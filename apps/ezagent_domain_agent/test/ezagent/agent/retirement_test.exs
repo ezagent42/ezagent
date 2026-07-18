@@ -88,7 +88,7 @@ defmodule Ezagent.Agent.RetirementTest do
     :ok = Ezagent.AgentLineage.record(agent_uri, owner_uri)
     {:ok, _pid} = Ezagent.Kind.spawn(Ezagent.Entity.Agent, %{uri: agent_uri})
 
-    assert {:error, %{termination: :not_destroyed, reason: :unauthorized}} =
+    assert {:error, %{termination: :not_destroyed, reason: :missing_cap}} =
              Agent.retire_spawned(agent_uri, ctx)
 
     assert {:ok, _pid} = Ezagent.KindRegistry.lookup(agent_uri)
@@ -100,7 +100,7 @@ defmodule Ezagent.Agent.RetirementTest do
     ctx: ctx
   } do
     :ok = AgentLineage.record(agent_uri, owner_uri)
-    authorized_ctx = %{ctx | caps: MapSet.new([Ezagent.Capability.admin_genesis_cap()])}
+    authorized_ctx = ctx
 
     assert {:ok, %{termination: :destroyed, cleanup: :complete}} =
              Agent.retire_spawned(agent_uri, authorized_ctx)
@@ -119,19 +119,24 @@ defmodule Ezagent.Agent.RetirementTest do
     :ok = Ezagent.WorkspaceRegistry.bind(agent_uri, ctx.workspace_uri)
     :ok = AgentLineage.record(agent_uri, owner_uri)
 
+    update_target = Ezagent.URI.with_action(agent_uri, :sandbox, :update_config)
+    update_cap = signed_action_cap!(update_target, owner_uri)
+
     assert {:ok, _} =
              Invocation.dispatch(%Invocation{
-               target: Ezagent.URI.with_action(agent_uri, :sandbox, :update_config),
+               origin: :trusted_internal,
+               target: update_target,
                mode: :call,
                args: %{config_dir_path: config_dir, template_class: __MODULE__.RaisingCleanup},
                ctx: %{
                  caller: owner_uri,
-                 caps: MapSet.new([Ezagent.Capability.admin_genesis_cap()]),
+                 caps: MapSet.new([update_cap]),
                  reply: {:caller_inbox, self()}
                }
              })
 
-    authorized_ctx = %{ctx | caps: MapSet.new([Ezagent.Capability.admin_genesis_cap()])}
+    destroy_target = Ezagent.URI.with_action(agent_uri, :sandbox, :destroy)
+    authorized_ctx = %{ctx | caps: MapSet.new([signed_action_cap!(destroy_target, owner_uri)])}
 
     assert {:partial,
             %{

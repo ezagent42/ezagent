@@ -33,10 +33,24 @@ defmodule EzagentDomainWorkspace.Application do
     :ok = register_workspace_behavior()
 
     children = [
-      {DynamicSupervisor, name: Ezagent.Workspace.Supervisor, strategy: :one_for_one}
+      {DynamicSupervisor, name: Ezagent.Workspace.Supervisor, strategy: :one_for_one},
+      {Task.Supervisor, name: Ezagent.Workspace.CapGrantSupervisor}
     ]
 
+    if test_env?() and Code.ensure_loaded?(EzagentCore.DataCase) and
+         function_exported?(EzagentCore.DataCase, :register_async_drain_supervisor, 1) do
+      EzagentCore.DataCase.register_async_drain_supervisor(
+        Ezagent.Workspace.CapGrantSupervisor
+      )
+    end
+
     Supervisor.start_link(children, strategy: :one_for_one, name: __MODULE__)
+  end
+
+  defp test_env? do
+    Code.ensure_loaded?(Mix) and Mix.env() == :test
+  rescue
+    _ -> false
   end
 
   defp register_workspace_behavior do

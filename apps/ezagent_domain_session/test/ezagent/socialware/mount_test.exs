@@ -46,7 +46,7 @@ defmodule Ezagent.Socialware.MountTest do
       # (c) grantee 自身份 dispatch:只读动作成、写动作越权拒
       assert eventually(fn -> holds_cap?(grantee, target, :get_tree) end)
       assert {:ok, %{ok: true}} = dispatch(grantee, target, :get_tree)
-      assert {:error, :unauthorized} = dispatch(grantee, target, :add_node)
+      assert {:error, :missing_cap} = dispatch(grantee, target, :add_node)
     end
 
     test "写动作 → grantee 持操作 cap、行 access=operate、两动作都成" do
@@ -131,7 +131,7 @@ defmodule Ezagent.Socialware.MountTest do
       assert MountRow.get(session, target, grantee, Target) == nil
       # cap 撤 → dispatch 变 unauthorized
       assert eventually(fn ->
-               match?({:error, :unauthorized}, dispatch(grantee, target, :add_node))
+               match?({:error, _reason}, dispatch(grantee, target, :add_node))
              end)
     end
 
@@ -150,6 +150,7 @@ defmodule Ezagent.Socialware.MountTest do
       ws_name = "mount-prov-#{uniq()}"
       {:ok, _ws_pid} = Workspace.create(ws_name, %{})
       workspace_uri = Ezagent.URI.workspace(ws_name)
+      {:ok, _admin_pid} = Ezagent.SpawnRegistry.spawn(User.admin_uri())
 
       flavor = "mount-native-#{uniq()}"
 
@@ -174,10 +175,7 @@ defmodule Ezagent.Socialware.MountTest do
           ]
         })
 
-      admin_ctx = %{
-        caller: User.admin_uri(),
-        caps: MapSet.new([Ezagent.Capability.admin_genesis_cap()])
-      }
+      admin_ctx = Ezagent.Test.CapHelper.signed_workspace_ctx!(workspace_uri, User.admin_uri())
 
       {:ok,
        ws_name: ws_name,
@@ -270,10 +268,15 @@ defmodule Ezagent.Socialware.MountTest do
 
   defp dispatch(caller, target, action) do
     Ezagent.Invocation.dispatch(%Ezagent.Invocation{
+      origin: :trusted_internal,
       target: Ezagent.URI.with_action(target, :composition_grant_target, action),
       mode: :call,
       args: %{},
-      ctx: %{caller: caller, caps: MapSet.new(), reply: {:caller_inbox, self()}}
+      ctx: %{
+        caller: caller,
+        caps: MapSet.new(Ezagent.Identity.list_caps_for(caller)),
+        reply: {:caller_inbox, self()}
+      }
     })
   end
 
@@ -302,8 +305,13 @@ defmodule Ezagent.Socialware.MountTest do
   defp session_uri,
     do: Ezagent.URI.new!("session://composition/default/mount-#{uniq()}")
 
-  defp user_uri(name),
-    do: Ezagent.URI.new!("entity://composition/user/#{name}-#{uniq()}")
+  defp user_uri(name) do
+    uri = Ezagent.URI.new!("entity://composition/user/#{name}-#{uniq()}")
+    {:ok, _} = Ezagent.Users.create(uri, "test-password-#{uniq()}", [])
+    {:ok, _} = Ezagent.SpawnRegistry.spawn(uri)
+    on_exit(fn -> Ezagent.Kind.terminate(uri) end)
+    uri
+  end
 
   defp agent_uri(name, ws_name),
     do: Ezagent.URI.new!("entity://#{ws_name}/agent/#{name}-#{uniq()}")
