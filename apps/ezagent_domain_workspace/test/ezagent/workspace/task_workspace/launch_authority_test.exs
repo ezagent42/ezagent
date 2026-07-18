@@ -205,7 +205,7 @@ defmodule Ezagent.Workspace.TaskWorkspace.LaunchAuthorityTest do
   defp workspace_uri, do: Ezagent.URI.workspace("launch-authority")
 
   defp task_access_uri(suffix) do
-    digest = :sha256 |> :crypto.hash(suffix) |> Base.encode16(case: :lower)
+    digest = :sha256 |> :crypto.hash(Integer.to_string(suffix)) |> Base.encode16(case: :lower)
     "entity://launch-authority/worker/gta_#{digest}"
   end
 end
