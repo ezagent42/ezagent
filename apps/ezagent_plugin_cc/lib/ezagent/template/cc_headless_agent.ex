@@ -263,7 +263,22 @@ defmodule Ezagent.PluginCc.Template.CcHeadlessAgent do
       cwd: Map.fetch!(tmpl, "cwd"),
       config_dir: config_dir,
       session_id: Map.get(tmpl, "claude_session_id") || new_session_id(),
-      permission_mode: Map.get(tmpl, "permission_mode", "default"),
+      # PTY parity (live e2e 2026-07-17): the PTY flavor launches `claude` with
+      # `--dangerously-skip-permissions` (SpawnPlan argv); headless ran
+      # `permission_mode=default`, and since a headless sidecar has NOBODY to
+      # answer a prompt, every skill-reference Read / outside-cwd Bash / Write
+      # hung on approval — the kanban-assistant could not execute its own
+      # skill's CLI. `bypassPermissions` is the SDK equivalent of the PTY flag.
+      #
+      # Scope of the argument (codex review of PR #1452): this is a BEHAVIOR
+      # PARITY claim with the PTY flavor, not a full-boundary claim. CapBAC
+      # bounds what the agent can DISPATCH through the ezagent CLI (token +
+      # caps on every action); it does NOT bound Bash/Read/Write/network on
+      # the shared host — neither does the PTY flavor today. Tightening both
+      # flavors behind per-agent OS isolation (or a role-gated bypass) is a
+      # platform decision tracked in the task-A return's open decisions.
+      # An explicit template value still overrides.
+      permission_mode: Map.get(tmpl, "permission_mode", "bypassPermissions"),
       model: Map.get(tmpl, "model"),
       effort: Map.get(tmpl, "effort") || Map.get(tmpl, "claude_effort"),
       cli_path: Map.get(tmpl, "claude_cli_path"),
@@ -278,12 +293,25 @@ defmodule Ezagent.PluginCc.Template.CcHeadlessAgent do
       # `env=`, so a headless custom-backend agent talks to the vendor endpoint
       # exactly like the pty path. The custom-backend instantiate already
       # fail-fasts on a missing profile API key.
-      cmd_env: provider_cmd_env(tmpl),
+      #
+      # ALSO carries the CLI-identity credential for ROLE-agents (#1323 落 main /
+      # Phase 3 ③ T7d parity): the SAME `SpawnPlan.maybe_put_cli_identity_env/3`
+      # seam the PTY flavor uses, so a headless role-agent (e.g. the
+      # kanban-assistant) can drive the ezagent CLI as itself from its Bash
+      # tool (`EZAGENT_USER_TOKEN` → `EzagentCli.Exec`). Role-less agents get
+      # provider env only — no behavior change.
+      cmd_env: cmd_env(agent_uri, tmpl),
       uv_path: Map.get(tmpl, "uv_path"),
       python_path: Map.get(tmpl, "python_path"),
       sdk_worker_path: Map.get(tmpl, "sdk_worker_path"),
       plugins: plugins
     }
+  end
+
+  defp cmd_env(agent_uri, tmpl) do
+    tmpl
+    |> provider_cmd_env()
+    |> Ezagent.PluginCc.Template.SpawnPlan.maybe_put_cli_identity_env(agent_uri, tmpl)
   end
 
   defp provider_cmd_env(tmpl) do

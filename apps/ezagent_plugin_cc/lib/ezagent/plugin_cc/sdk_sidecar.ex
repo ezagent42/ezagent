@@ -243,30 +243,44 @@ defmodule EzagentPluginCc.SdkSidecar do
   # Private helpers
   # ---------------------------------------------------------------------------
 
+  # Public (`@doc false`) so tests can pin the sidecar→worker env contract
+  # without spawning a real OS process. Notably `EZAGENT_CC_SDK_CONFIG_DIR` —
+  # the dir whose `.mcp.json` the worker resolves as the agent's MCP surface
+  # (route B, #1323) — and `EZAGENT_CC_SDK_ENV` — the process env (provider +
+  # CLI-identity credential) applied to the SDK subprocess.
+  @doc false
+  @spec worker_env(map()) :: [{charlist(), charlist()}]
+  def worker_env(args) when is_map(args) do
+    [
+      {~c"EZAGENT_CC_SDK_CWD", args |> Map.fetch!(:cwd) |> String.to_charlist()},
+      {~c"EZAGENT_CC_SDK_CONFIG_DIR", args |> Map.fetch!(:config_dir) |> String.to_charlist()},
+      {~c"EZAGENT_CC_SDK_SESSION_ID",
+       Map.get(args, :session_id, new_session_id()) |> String.to_charlist()},
+      {~c"EZAGENT_CC_SDK_PERMISSION_MODE",
+       Map.get(args, :permission_mode, "default") |> String.to_charlist()}
+    ]
+    |> maybe_env(~c"EZAGENT_CC_SDK_MODEL", Map.get(args, :model))
+    |> maybe_env(~c"EZAGENT_CC_SDK_EFFORT", Map.get(args, :effort))
+    |> maybe_env(~c"EZAGENT_CC_SDK_CLI_PATH", Map.get(args, :cli_path))
+    |> maybe_env(~c"EZAGENT_CC_SDK_SYSTEM_PROMPT", Map.get(args, :system_prompt))
+    |> maybe_json_env(~c"EZAGENT_CC_SDK_ALLOWED_TOOLS", Map.get(args, :allowed_tools))
+    |> maybe_json_env(~c"EZAGENT_CC_SDK_DISALLOWED_TOOLS", Map.get(args, :disallowed_tools))
+    |> maybe_json_env(~c"EZAGENT_CC_SDK_MCP_SERVERS", Map.get(args, :mcp_servers))
+    |> maybe_json_env(~c"EZAGENT_CC_SDK_ENV", Map.get(args, :cmd_env))
+    |> maybe_json_env(~c"EZAGENT_CC_SDK_PLUGINS", Map.get(args, :plugins))
+  end
+
   defp start_process(args) do
     with {:ok, {runner, runner_args}} <- sdk_runner(args),
-         {:ok, script} <- sdk_worker_path(args) do
-      cwd = Map.fetch!(args, :cwd)
-
-      env =
-        [
-          {~c"EZAGENT_CC_SDK_CWD", cwd |> String.to_charlist()},
-          {~c"EZAGENT_CC_SDK_CONFIG_DIR",
-           args |> Map.fetch!(:config_dir) |> String.to_charlist()},
-          {~c"EZAGENT_CC_SDK_SESSION_ID",
-           Map.get(args, :session_id, new_session_id()) |> String.to_charlist()},
-          {~c"EZAGENT_CC_SDK_PERMISSION_MODE",
-           Map.get(args, :permission_mode, "default") |> String.to_charlist()}
-        ]
-        |> maybe_env(~c"EZAGENT_CC_SDK_MODEL", Map.get(args, :model))
-        |> maybe_env(~c"EZAGENT_CC_SDK_EFFORT", Map.get(args, :effort))
-        |> maybe_env(~c"EZAGENT_CC_SDK_CLI_PATH", Map.get(args, :cli_path))
-        |> maybe_env(~c"EZAGENT_CC_SDK_SYSTEM_PROMPT", Map.get(args, :system_prompt))
-        |> maybe_json_env(~c"EZAGENT_CC_SDK_ALLOWED_TOOLS", Map.get(args, :allowed_tools))
-        |> maybe_json_env(~c"EZAGENT_CC_SDK_DISALLOWED_TOOLS", Map.get(args, :disallowed_tools))
-        |> maybe_json_env(~c"EZAGENT_CC_SDK_MCP_SERVERS", Map.get(args, :mcp_servers))
-        |> maybe_json_env(~c"EZAGENT_CC_SDK_ENV", Map.get(args, :cmd_env))
-        |> maybe_json_env(~c"EZAGENT_CC_SDK_PLUGINS", Map.get(args, :plugins))
+         {:ok, script} <- sdk_worker_path(args),
+         cwd = Map.fetch!(args, :cwd),
+         # The PTY flavor's cwd exists only as a SIDE EFFECT of
+         # `McpConfigWriter.write_with_token!` (cwd-level .mcp.json write); the
+         # headless path never calls the writer, so on a fresh host erlexec
+         # crash-looped with "Cannot chdir to <cwd>". Own the cwd explicitly —
+         # fail tagged (not silent) when it cannot be created.
+         :ok <- ensure_cwd(cwd) do
+      env = worker_env(args)
 
       cmd = [runner | runner_args ++ [script]]
 
@@ -362,6 +376,13 @@ defmodule EzagentPluginCc.SdkSidecar do
     end
   rescue
     ArgumentError -> default
+  end
+
+  defp ensure_cwd(cwd) when is_binary(cwd) do
+    case File.mkdir_p(cwd) do
+      :ok -> :ok
+      {:error, reason} -> {:error, {:sdk_cwd_unavailable, cwd, reason}}
+    end
   end
 
   defp maybe_env(env, _key, value) when value in [nil, ""], do: env
