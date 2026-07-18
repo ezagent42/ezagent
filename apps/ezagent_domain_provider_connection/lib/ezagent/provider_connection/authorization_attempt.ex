@@ -24,6 +24,7 @@ defmodule Ezagent.ProviderConnection.AuthorizationAttempt do
   end
 
   @trusted ~w(attempt_ref workspace_uri backend_pair_id authorization_ref connection_id connection_version bound_subject_digest state_digest pkce_digest correlation_id callback_artifact expires_at)a
+  @doc "Builds the initial, secret-safe authorization-attempt changeset from trusted attributes."
   def create_changeset(attrs),
     do:
       %__MODULE__{}

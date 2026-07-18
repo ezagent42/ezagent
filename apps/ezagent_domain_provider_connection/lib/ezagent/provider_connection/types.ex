@@ -51,12 +51,16 @@ defmodule Ezagent.ProviderConnection.Types do
           | :cleanup_pending
           | :connection_terminal
 
+  @doc "Returns every valid durable connection status."
   @spec statuses() :: [status()]
   def statuses, do: @statuses
+  @doc "Returns every valid authorization-attempt status."
   @spec attempt_statuses() :: [attempt_status()]
   def attempt_statuses, do: @attempt_statuses
+  @doc "Returns every valid idempotent-operation status."
   @spec operation_statuses() :: [operation_status()]
   def operation_statuses, do: @operation_statuses
+  @doc "Returns the closed set of safe provider-connection error codes."
   @spec errors() :: [error()]
   def errors, do: @errors
 end

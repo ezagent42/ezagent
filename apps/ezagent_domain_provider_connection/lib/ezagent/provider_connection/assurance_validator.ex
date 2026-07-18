@@ -7,6 +7,7 @@ defmodule Ezagent.ProviderConnection.AssuranceValidator do
 
   @callback validate(action(), assurance(), context()) :: :ok | {:error, term()}
 
+  @doc "Validates assurance through a configured implementation that satisfies this behaviour."
   @spec validate(module(), action(), assurance(), context()) :: :ok | {:error, term()}
   def validate(module, action, assurance, context) when is_atom(module) do
     with {:module, ^module} <- Code.ensure_loaded(module),

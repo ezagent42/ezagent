@@ -25,6 +25,7 @@ defmodule Ezagent.Invariants.CapVerifyLoadBoundariesTest do
   @cap "apps/ezagent_core/lib/ezagent/cap.ex"
   @cli_dispatch "apps/ezagent_cli/lib/ezagent_cli/dispatch.ex"
   @git_task_access "apps/ezagent_domain_git/lib/ezagent/behavior/git_task_access.ex"
+  @provider_connection "apps/ezagent_domain_provider_connection/lib/ezagent/behavior/provider_connection.ex"
 
   @storage_homes %{
     @identity_behavior => 3,
@@ -111,7 +112,18 @@ defmodule Ezagent.Invariants.CapVerifyLoadBoundariesTest do
       end)
       |> Enum.map(&elem(&1, 0))
 
-    assert strict_verify_callers == ["apps/ezagent_core/lib/ezagent/cap/verifier.ex"]
+    assert strict_verify_callers == [
+             "apps/ezagent_core/lib/ezagent/cap.ex",
+             "apps/ezagent_core/lib/ezagent/cap/verifier.ex"
+           ]
+
+    provider_callback =
+      definition_source(@provider_connection, :validate_callback_artifact, 2)
+
+    assert provider_callback =~ "Cap.validate_for_current_target"
+
+    narrow_helper = definition_source(@cap, :validate_for_current_target, 2)
+    assert narrow_helper =~ "Authority.verify_current(artifact, receiver)"
   end
 
   test "slice-to-ctx callers use the verified identity loader without filtering inline caps" do

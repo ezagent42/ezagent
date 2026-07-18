@@ -31,6 +31,7 @@ defmodule Ezagent.ProviderConnection.AuthorizationBackendRecord do
   end
 
   @trusted ~w(id workspace_uri backend_pair_id authorization_ref key_id nonce ciphertext bound_input_digest expires_at)a
+  @doc false
   def create_changeset(attrs),
     do:
       %__MODULE__{}

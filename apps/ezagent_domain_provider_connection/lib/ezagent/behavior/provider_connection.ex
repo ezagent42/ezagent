@@ -87,12 +87,16 @@ defmodule Ezagent.ActionSet.ProviderConnection do
   )
 
   @spec required_caps() :: %{atom() => Ezagent.Capability.t()}
+  @doc "Returns the exact capability required by each provider-connection action."
+  @impl Ezagent.ActionSet
   def required_caps,
     do: Map.new(@actions, &{&1, Ezagent.Capability.cap(:user, __MODULE__, &1)})
 
+  @doc false
   @impl Ezagent.Lifecycle
   def create(_args), do: {:ok, %{}}
 
+  @doc false
   def handle_begin_authorization(args, ctx) do
     with %Ezagent.Capability{} = artifact <- Map.get(args, :callback_artifact),
          :ok <- validate_callback_artifact(artifact, ctx) do
@@ -103,15 +107,35 @@ defmodule Ezagent.ActionSet.ProviderConnection do
     end
   end
 
+  @doc false
   def handle_consume_callback(args, ctx), do: invoke_boundary(:consume_callback, args, ctx)
+  @doc false
   def handle_refresh(args, ctx), do: invoke_boundary(:refresh, args, ctx)
+  @doc false
   def handle_read_connection(args, ctx), do: invoke_boundary(:read_connection, args, ctx)
 
-  for action <- [:reauthorize, :revoke, :disconnect] do
-    def unquote(String.to_atom("handle_#{action}"))(args, ctx) do
-      with :ok <- validate_assurance(unquote(action), args, ctx) do
-        invoke_boundary(unquote(action), args, ctx)
-      end
+  @doc false
+  def handle_reauthorize(args, ctx), do: handle_destructive(:reauthorize, args, ctx)
+
+  @doc false
+  def handle_revoke(args, ctx), do: handle_destructive(:revoke, args, ctx)
+
+  @doc false
+  def handle_disconnect(args, ctx), do: handle_destructive(:disconnect, args, ctx)
+
+  @doc "Returns the owner User URI for a concrete User target; all other shapes fail closed."
+  @impl Ezagent.ActionSet
+  def data_owner(%URI{} = owner) do
+    if Ezagent.URI.scheme?(owner, :entity) and Ezagent.URI.type?(owner, :user),
+      do: owner,
+      else: :no_owner
+  end
+
+  def data_owner(_), do: :no_owner
+
+  defp handle_destructive(action, args, ctx) do
+    with :ok <- validate_assurance(action, args, ctx) do
+      invoke_boundary(action, args, ctx)
     end
   end
 
