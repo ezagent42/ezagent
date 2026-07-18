@@ -168,7 +168,11 @@ defmodule EzagentDomainGit.AdapterContractTest do
 
     {:ok, context} =
       OperationContext.new(%{
-        task_access_uri: Ezagent.URI.resource(workspace, "git-task-access", provider),
+        task_access_uri:
+          Ezagent.URI.worker(
+            workspace,
+            "gta_#{Base.encode16(:crypto.hash(:sha256, provider), case: :lower)}"
+          ),
         caller_uri: Ezagent.URI.entity(workspace, "agent", "caller"),
         grantee_uri: Ezagent.URI.entity(workspace, "agent", "grantee"),
         idempotency_key: "success"

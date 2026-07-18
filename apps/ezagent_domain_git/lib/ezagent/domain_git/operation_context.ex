@@ -23,7 +23,7 @@ defmodule Ezagent.DomainGit.OperationContext do
 
   defp validate_values(attrs) do
     roles = [
-      task_access_uri: {"resource", "git-task-access"},
+      task_access_uri: {"entity", "worker"},
       caller_uri: {"entity", nil},
       grantee_uri: {"entity", nil}
     ]

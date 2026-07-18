@@ -24,7 +24,7 @@ defmodule Ezagent.DomainGit.TestSupport.GitCapFixture do
     workspace_name = Keyword.fetch!(options, :workspace_name)
     task_access_id = Keyword.fetch!(options, :task_access_id)
     workspace_uri = Ezagent.URI.workspace(workspace_name)
-    task_access_uri = Ezagent.URI.resource(workspace_name, "git-task-access", task_access_id)
+    task_access_uri = Ezagent.URI.worker(workspace_name, "gta_#{digest(task_access_id)}")
 
     grantee_uri =
       Keyword.get(options, :grantee_uri) ||
@@ -42,6 +42,10 @@ defmodule Ezagent.DomainGit.TestSupport.GitCapFixture do
     }
   end
 
+  def bind_policy(coordinates, %Ezagent.Entity.GitTaskAccess{} = policy) do
+    %{coordinates | task_access_uri: Ezagent.Entity.GitTaskAccess.uri_from_args(policy)}
+  end
+
   def exact_task_cap(coordinates, action) when action in @actions and is_map(coordinates) do
     %{
       governance_uri: admin_uri,
@@ -54,7 +58,7 @@ defmodule Ezagent.DomainGit.TestSupport.GitCapFixture do
 
     capability =
       Capability.cap(
-        :resource,
+        :git_task_access,
         Ezagent.ActionSet.GitTaskAccess,
         action,
         Ezagent.URI.instance(task_access_uri),
@@ -80,5 +84,9 @@ defmodule Ezagent.DomainGit.TestSupport.GitCapFixture do
       artifact: artifact,
       invocation: invocation
     })
+  end
+
+  defp digest(value) do
+    :sha256 |> :crypto.hash(value) |> Base.encode16(case: :lower)
   end
 end

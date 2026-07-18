@@ -39,15 +39,21 @@ defmodule Ezagent.DomainGit.TaskAccessLifecycleTest do
     assert {:ok, ^pid} = TaskAccessSupervisor.ensure_started(policy)
   end
 
-  test "rejects a conflicting policy for the same resource deterministically", %{policy: policy} do
-    assert {:ok, pid} = TaskAccessSupervisor.ensure_started(policy)
+  test "rejects a conflicting full policy already live at the deterministic URI", %{
+    policy: policy
+  } do
     conflicting = %{policy | allowed_head_ref: "other"}
+    conflicting_uri = GitTaskAccess.uri_from_args(conflicting)
+    on_exit(fn -> Ezagent.Kind.terminate(conflicting_uri) end)
+
+    assert {:ok, pid} =
+             Ezagent.Kind.spawn(GitTaskAccess, %{uri: conflicting_uri, policy: conflicting})
 
     assert {:error, :conflicting_initialization} =
-             TaskAccessSupervisor.ensure_started(conflicting)
+             GitTaskAccess.initialization_result(conflicting_uri, policy)
 
-    assert {:ok, %{policy: ^policy}} =
-             Ezagent.Kind.get_slice(GitTaskAccess.uri_from_args(policy), :git_task_access)
+    assert {:ok, %{policy: ^conflicting}} =
+             Ezagent.Kind.get_slice(conflicting_uri, :git_task_access)
 
     assert Process.alive?(pid)
   end
