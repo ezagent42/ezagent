@@ -2,7 +2,7 @@
 
 **Date:** 2026-07-18
 
-**Status:** approved design; implementation plan not yet written
+**Status:** revised after review; awaiting written-spec approval
 
 **Upstream:** Plans A, B, C, and D0 on `feat/git-domain-spine`
 
@@ -22,8 +22,10 @@ The approved implementation shape is a split model:
 
 - Ecto aggregates are the durable source of truth for connection identity,
   authorization attempts, versions, leases, and recovery obligations.
-- An addressable Resource/Lifecycle facade is the only command entry and owns
-  exact receiver-bound CapBAC, transition validation, and backend/driver calls.
+- ProviderConnection is an Ecto aggregate, not a live Kind. Management commands
+  attach as a registered Lifecycle behavior to the existing owner User Kind,
+  which owns exact receiver-bound CapBAC and reloads the aggregate for every
+  transition.
 
 ## 2. Frozen upstream contracts and red lines
 
@@ -57,16 +59,19 @@ awkward truth source for uniqueness, callback races, refresh leases, queries,
 and recovery across an external credential backend. Rebuilding those concerns
 beside snapshots would create a second durable model.
 
-### 3.2 Pure Ecto aggregate and domain service
+### 3.2 Ecto aggregate with commands on the owner User Kind
 
-Rejected. It handles transactions and constraints cleanly but permits UI, CLI,
-or plugin callers to bypass an addressable Resource, CapBAC, and dispatch audit.
+Selected. Ecto owns durable truth and concurrency. The existing canonical User
+Kind is the authorized receiver for human-owned connection management. A
+registered Lifecycle behavior handles commands and reloads the connection by
+`connection_id` plus owner/workspace on every invocation. There is no second
+live connection identity, snapshot, supervisor, or rehydration path.
 
-### 3.3 Ecto aggregate plus Resource/Lifecycle facade
+### 3.3 Ecto aggregate plus a new live facade
 
-Selected. Ecto owns durable truth and concurrency; Resource/Lifecycle owns the
-authorized command boundary. The Lifecycle state contains only non-secret
-identity/read-through data and never becomes a second connection record.
+Rejected. Live Kinds must use `entity://`; `resource://` is reserved for pure
+data/filesystem resources. A new facade would add supervision and snapshot
+reconciliation without adding authority beyond the existing owner User Kind.
 
 ## 4. Application and dependency boundary
 
@@ -74,15 +79,15 @@ Add an independent domain app:
 
 ```text
 ezagent_domain_provider_connection -> ezagent_core
+ezagent_domain_provider_connection -> ezagent_domain_identity
 
 provider plugin -> ezagent_domain_provider_connection
 provider plugin -> ezagent_domain_git
 ```
 
 The connection domain does not depend on `ezagent_domain_git`, Workspace,
-Identity, World, or any provider plugin. Canonical owner/workspace validation
-uses Ezagent URI contracts and database constraints; it does not require an
-Identity-domain dependency.
+World, or any provider plugin. It depends on Identity only to register the
+connection-management Lifecycle behavior on the existing User Kind.
 
 The two domains are siblings:
 
@@ -94,11 +99,16 @@ The two domains are siblings:
 
 ## 5. Addressable identity and durable model
 
-The canonical connection URI is:
+ProviderConnection has no live URI. Its immutable `connection_id` is an Ecto
+aggregate identifier. Commands dispatch to the canonical owner URI:
 
 ```text
-resource://<workspace>/provider-connection/<immutable-id>
+entity://<workspace>/user/<owner-id>
 ```
+
+`connection_id` and `attempt_ref` are handler inputs, not capability axes. The
+handler reloads them under the receiver's exact owner/workspace and rejects any
+mismatch before a driver/backend effect.
 
 All D1 tables are tenant-scoped with `workspace_uri NOT NULL` and indexed
 workspace access. The minimum durable model uses four tables.
@@ -107,7 +117,7 @@ workspace access. The minimum durable model uses four tables.
 
 Fields include:
 
-- immutable `connection_id` and canonical `connection_uri`;
+- immutable `connection_id`;
 - canonical `owner_uri` and `workspace_uri`;
 - closed provider-neutral `provider_id` and normalized governed host;
 - immutable external account id and display-only login;
@@ -123,8 +133,8 @@ coordinate. After first successful binding, owner, workspace, provider, host,
 external account, execution identity, and acquisition method are immutable. A
 different identity creates a new connection.
 
-Database constraints enforce uniqueness of `connection_id`, `connection_uri`,
-and the active binding tuple:
+Database constraints enforce uniqueness of `connection_id` and the active
+binding tuple:
 
 ```text
 (workspace_uri, owner_uri, provider_id, governed_host,
@@ -156,9 +166,14 @@ outside the connection domain.
 
 `Ezagent.ProviderConnection.Driver` is a connection-flow contract, not another
 Git adapter and not an independent provider catalog. A provider plugin declares
-drivers keyed by `{provider_id, acquisition_method}`. One atomic plugin boot
-declaration supplies its connection drivers and, independently, its existing
-Git adapter; provider identity must agree across both declarations.
+drivers keyed by `{provider_id, acquisition_method}`. D1 registers connection
+drivers in its own registry and validates closed ids, uniqueness, and immutable
+declaration fingerprints. It does not claim atomicity across that registry and
+the existing Domain Git adapter registry. When a plugin declares both, a parity
+gate requires the provider id and declaration fingerprint to agree; a partial
+boot is unavailable and surfaced explicitly. A future production provider
+plugin may add a small boot coordinator, but D1 does not create a third provider
+catalog or change the Domain Git registry.
 
 The driver owns provider-specific authorization descriptors, callback envelope
 validation, external-account normalization, refresh/revoke semantics, and
@@ -170,11 +185,12 @@ the credential transaction protocol against the D0 in-process and
 remote-shaped fakes. Production encrypted credential storage, key rotation,
 and operation-lease implementation remain D2.
 
-## 7. Resource/Lifecycle command boundary
+## 7. User-Kind Lifecycle command boundary
 
-`Ezagent.ActionSet.ProviderConnection` uses `Ezagent.Lifecycle`. Its persistent
-Lifecycle state is only a non-secret connection identity/version cache; every
-command reloads and locks the Ecto aggregate before deciding a transition.
+`Ezagent.ActionSet.ProviderConnection` uses `Ezagent.Lifecycle` and is registered
+as a behavior on `Ezagent.Entity.User`. It adds no connection state to the User
+snapshot. Every command reloads and locks the Ecto aggregate before deciding a
+transition.
 
 Initial actions are:
 
@@ -186,12 +202,16 @@ Initial actions are:
 - `:disconnect`;
 - `:read_connection`.
 
-Every human/operator command is cap-gated to the exact connection Resource and
-workspace. Reauthorize, revoke, and disconnect additionally require valid,
-recent assurance evidence from `ProviderAuthorizationBackend`.
+Every human/operator command is cap-gated to the exact owner User entity,
+workspace, `:provider_connection` capability kind, ActionSet, and action.
+Reauthorize, revoke, and disconnect additionally require valid, recent
+assurance evidence from `ProviderAuthorizationBackend`.
 
-The callback transport does not gain ambient authority. It may consume only a
-server-created, exact-connection, expiring, single-use authorization attempt.
+The callback transport does not gain ambient authority. At begin, the owner
+pre-signs an exact, expiring `:consume_callback` capability artifact and stores
+it only on the authorization attempt. Callback ingress resolves the attempt,
+verifies the artifact for the owner URI, and dispatches as that owner to the
+owner User Kind. It may consume only that server-created attempt.
 Provider callback parameters cannot select owner, workspace, connection,
 provider, host, acquisition method, execution identity, or credential ref.
 
@@ -232,8 +252,12 @@ pending -> cancelled
 pending -> expired
 ```
 
-Only the first valid caller may claim `pending -> consuming`. A concurrent
-caller observes `callback_in_progress`; a replay after commit receives
+Only the first worker may hold the durable attempt claim. The claim records a
+token, deadline, attempt version, and deterministic callback correlation id. A
+live competing claimant observes `callback_in_progress`. After a crash or
+ambiguous backend response, recovery reuses the same correlation id and exact
+bound input. D0.1 returns the original logical result without repeating the
+provider effect. A new correlation id after consumption receives
 `callback_already_consumed`. Expired, cancelled, subject-mismatched, or stale
 connection versions fail before any credential backend call.
 
@@ -248,14 +272,14 @@ Every store/replace uses a durable operation with deterministic correlation:
 
 ```text
 prepared -> backend_committed -> connection_committed -> finalized
-                         \-> compensation_pending -> compensated
 ```
 
 Protocol:
 
 1. Lock the connection/version and insert or reload the deterministic
    operation.
-2. Call backend store/replace with exact scope and correlation id.
+2. Call backend store/replace with exact scope and the operation's stable
+   correlation id.
 3. Persist the returned opaque ref/version as `backend_committed`.
 4. CAS the connection pointer/version and record `connection_committed`.
 5. Finalize; enqueue the previous credential version for revoke.
@@ -263,11 +287,11 @@ Protocol:
 Recovery rules:
 
 - failure before backend commit leaves the current connection unchanged;
-- an ambiguous backend result reconciles by correlation id, never by retrying
-  with new identity;
+- an ambiguous backend result retries the identical D0.1 command and reconciles
+  by correlation id, never by creating a new command or identity;
 - backend commit without connection commit resumes the same CAS;
-- if that CAS has become stale, the new credential enters compensation rather
-  than replacing the winner;
+- if that CAS has become stale, the operation is fenced and its exact backend
+  result becomes a durable cleanup obligation rather than replacing the winner;
 - connection commit without old-version revoke leaves the new connection
   active and retries a durable revoke obligation;
 - no path falls back to a credential belonging to another version, owner,
@@ -290,9 +314,12 @@ connection CAS, and compensation boundaries. Timing sleeps are forbidden.
 
 ## 12. Revoke and disconnect
 
-Revoke/disconnect first CAS the connection to `revoking`/`disconnecting`, which
-blocks new operation leases. The flow then performs provider-driver revoke and
+Revoke/disconnect first CAS the connection to `revoking`/`disconnecting`. In D1
+this immediately removes the connection from selection and records a credential
+generation fence. The flow then performs provider-driver revoke and
 credential-backend revoke as independently recorded idempotent obligations.
+Production refusal of an already-selected operation lease belongs to the D2
+credential backend and adapter integration.
 
 The connection reaches `revoked`/`disconnected` only when both obligations are
 confirmed. Ambiguous results reconcile by operation correlation and backend
@@ -300,9 +327,24 @@ version. A failure is visible as a closed safe state/error and remains
 retryable; the product never reports disconnected while a new credential lease
 can still be issued.
 
-## 13. Selection from an authorized D2 adapter
+## 13. GitTaskAccess prerequisite correction and D2 selection
 
-After `GitTaskAccess` authorization, a provider adapter derives credential
+The existing live `GitTaskAccess` receiver uses a `resource://` URI, which
+violates the invariant that live Kinds are entities and resources are pure data.
+D1 includes a prerequisite migration to:
+
+```text
+entity://<workspace>/worker/gta_<sha256-of-canonical-policy>
+```
+
+Its Kind pattern becomes `:entity`, while `type_name` and capability kind remain
+`:git_task_access`. It remains an ephemeral non-Agent primitive created only by
+`TaskAccessSupervisor.ensure_started/1`. It cannot be a caller, grantor, session
+member, login principal, or token principal. The URI is derived only from the
+fully validated canonical task policy, and duplicate reconciliation compares
+the full policy. Git repository resources remain pure `resource://` data.
+
+After `GitTaskAccess` authorization, a D2 provider adapter derives credential
 owner, workspace, provider, host, and execution identity from the authoritative
 task policy and requests the unique active connection matching those exact
 coordinates. Callers cannot submit a connection id or credential ref to select
@@ -323,16 +365,16 @@ returns a token.
 
 ## 14. Secret-safe events, errors, and read model
 
-The future Plan E read model exposes only connection id/URI, provider, governed
+The future Plan E read model exposes only connection id, provider, governed
 host, display account identity, acquisition method, execution identity, status,
 versions, permission digest, safe expiry/timestamps, correlation id, and a
 closed last-error code.
 
 Closed errors distinguish invalid subject/method/host, state or PKCE mismatch,
-expired/replayed/in-progress callback, account conflict, stale version,
-reauthentication failure, backend unavailable, credential conflict/revocation,
-refresh lease loss, provider denial/protocol failure, compensation pending,
-and connection terminal state.
+expired/replayed/in-progress callback, correlation conflict, account conflict,
+stale version, reauthentication failure, backend unavailable, credential
+conflict/revocation, refresh lease loss, provider denial/protocol failure,
+cleanup pending, and connection terminal state.
 
 Raw callback values, authorization codes, tokens, refresh material, credential
 wrappers, Authorization headers, provider bodies, crypto errors, environment,
@@ -348,22 +390,24 @@ account shape. Neither fake may introduce a GitHub name, scope, endpoint, token
 type, response object, installation concept, or REST path into the common app.
 
 The D0 in-process and JSON remote-shaped authorization/credential fakes remain
-conformant without changes to Domain Git, GitTaskAccess, Plan C, Kanban, or
-connection state semantics. Remote ambiguity cases cover failure before send,
-after backend commit, and after response loss.
+conformant after the D0.1 semantic clarification, without changes to the five
+Domain Git adapter callbacks, Plan C, Kanban, or connection state semantics.
+Remote ambiguity cases cover failure before send, after backend commit, and
+after response loss.
 
 ## 16. Implementation slices
 
 After separate plan approval, implementation should proceed through strict TDD:
 
-1. app boundary, closed values, migrations, and database constraints;
-2. driver/backend behaviours and atomic boot registration;
-3. connection aggregate, legal transitions, and Lifecycle/CapBAC facade;
-4. authorization attempt single consumption and local authorization backend;
-5. credential prepare/commit/abort recovery protocol;
-6. refresh lease/CAS and revoke/disconnect obligations;
-7. two-driver/two-backend conformance and secret-leak architecture gates;
-8. restart/concurrency suites, full static gates, precommit, and review.
+1. D0.1 conformance correction and GitTaskAccess live-entity prerequisite;
+2. app boundary, closed values, migrations, and database constraints;
+3. driver/backend behaviors and provider-declaration parity validation;
+4. connection aggregate, legal transitions, and User-Kind Lifecycle/CapBAC path;
+5. authorization claim/reconciliation and local authorization backend;
+6. credential command reconciliation and pointer CAS protocol;
+7. refresh fencing and revoke/disconnect obligations;
+8. two-driver/two-backend conformance and secret-leak architecture gates;
+9. restart/concurrency suites, full static gates, precommit, and review.
 
 ## 17. Definition of Done
 
@@ -374,15 +418,17 @@ D1 is complete only when all of these are proven:
 2. Database constraints and application validation both enforce tenant, owner,
    provider, host, external-account, execution-identity, and immutable-field
    rules.
-3. State/PKCE attempts expire and consume once under replay and concurrent
-   callbacks.
+3. State/PKCE attempts expire and consume once under concurrent callbacks;
+   exact correlation retries reconcile the committed result without another
+   provider effect, while different-correlation replay is rejected.
 4. Credential store/replace is caller-atomic and recovery covers every
    backend/DB commit window without replacing a winner.
 5. Refresh leases fence stale results and compensate credentials created by a
    losing worker.
-6. Revoke/disconnect is idempotent, blocks new leases before external effects,
-   and reaches a terminal state only after provider and backend confirmation.
-7. Every command has exact CapBAC; wrong grantee/workspace/instance/action,
+6. Revoke/disconnect is idempotent, blocks new selection before external
+   effects, records the D2 lease fence, and reaches a terminal state only after
+   provider and backend confirmation.
+7. Every command has exact owner-User CapBAC; wrong grantee/workspace/action,
    unsigned artifact, or stale assurance creates zero driver, backend, and DB
    mutation.
 8. Secret-safe structural and runtime tests cover structs, Inspect, logs,
@@ -392,9 +438,9 @@ D1 is complete only when all of these are proven:
    prove backend replaceability and ambiguous-outcome recovery.
 10. Restart tests rebuild obligations and reject stale callback, refresh,
     replace, revoke, and disconnect results using deterministic barriers.
-11. Architecture gates prevent a second Git authorization path, driver/adapter
-    contract duplication, provider catalog drift, and generic plaintext
-    retrieval.
+11. Architecture gates prevent live Resource Kinds, GitTaskAccess use as a
+    principal, a second Git authorization path, provider catalog drift, and
+    generic plaintext retrieval.
 12. Focused suites, affected app suites, `arch.scan`, `doc.scan`,
     `uri_query.scan`, `check_invariants`, lifecycle invariants, `mix precommit`,
     and PR-head CI are green, or every unrelated baseline is reproduced and
