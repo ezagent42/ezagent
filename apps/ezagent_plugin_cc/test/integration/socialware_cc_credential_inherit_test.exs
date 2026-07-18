@@ -239,7 +239,10 @@ defmodule Ezagent.PluginCc.Integration.SocialwareCcCredentialInheritTest do
              uri: admin_uri,
              initial_caps: MapSet.new([Ezagent.Capability.admin_genesis_cap()])
            }) do
-        {:ok, _pid} -> on_exit(fn -> terminate(admin_uri) end)
+        # The genesis admin is application-global test state, not fixture-owned
+        # state. Leave it live when this setup has to repair a missing process;
+        # terminating it here makes every later authenticated web test fail.
+        {:ok, _pid} -> :ok
         {:error, {:already_started, _}} -> :ok
         {:error, {:already_registered, _}} -> :ok
       end
