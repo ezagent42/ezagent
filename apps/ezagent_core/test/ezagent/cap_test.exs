@@ -67,6 +67,30 @@ defmodule Ezagent.CapTest do
   end
 
   describe "receiver storage boundary" do
+    test "validation checks signature and receiver without authorizing an action", context do
+      {:ok, artifact} =
+        Cap.issue({:admin, context.admin}, context.grantee, action_cap(context.uri))
+
+      assert :ok =
+               Authority.with_current(context.authority, fn ->
+                 Cap.validate_for_current_target(artifact, context.grantee)
+               end)
+
+      other = Ezagent.URI.new!("entity://team-alpha/user/cap-unit-other")
+
+      assert {:error, :wrong_grantee} =
+               Authority.with_current(context.authority, fn ->
+                 Cap.validate_for_current_target(artifact, other)
+               end)
+
+      tampered = %{artifact | action: :raise}
+
+      assert {:error, :invalid_cap_signature} =
+               Authority.with_current(context.authority, fn ->
+                 Cap.validate_for_current_target(tampered, context.grantee)
+               end)
+    end
+
     test "retains only structurally born-signed artifacts for the named receiver", context do
       assert {:ok, signed} =
                Cap.issue({:admin, context.admin}, context.grantee, action_cap(context.uri))
