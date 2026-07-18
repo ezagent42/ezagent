@@ -53,16 +53,38 @@ attributions spot-checked 4/4 vs main).
 
 ## Open decisions for the lead
 
-1. **Accept the two deferrals?** (a) cc-headless-custom live spawn → follow-up
-   issue for pre-existing F2/F4 (+F3 ad-hoc create lane); (b) platform-`kimi`
-   lane → needs an open-platform key. The final review judged both acceptable
-   against the handoff's DoD wording.
-2. **F1 (CRITICAL, pre-existing)** — PtyServer crash dumps log `cmd_env` incl.
-   `ANTHROPIC_AUTH_TOKEN`. Filed as **issue #1455**. Action on you: **rotate
-   `DEEPSEEK_API_KEY` + `KIMI_CODING_API_KEY`** (the proof hosts' keys).
-3. **Merge adjacency**: PR #1454 (codex roster, opened per your instruction)
-   touches the same `@adapters` hunk this branch edits — whichever lands
-   second gets a trivial conflict.
+1. **接受两个 deferral?（语义 = 延后转 issue，不挡本次合并）**
+   (a) **cc-headless-custom 实况 spawn** — headless flavor 的单元/集成覆盖完整
+   （52 tests：env 穿线、冷重启、fail-closed)，缺的只是实况拉起，被 F2
+   `{:calling_self}` + F4 sidecar nil-config 两个 PRE-EXISTING 通用缺陷挡着
+   (plain cc-headless 同样复现，非本分支引入）。接受 = 先合，F2/F4(+F3
+   ad-hoc create lane）转跟进 issue。不接受 = headless 实况修完再合。
+   (b) **开放平台 kimi 泳道** — 已用 kimi-coding（订阅）泳道证明 Kimi 设施；
+   平台泳道只差一把开放平台 key，届时跑现成 probe 命令即可，零开发。
+2. **F1(CRITICAL, pre-existing)——泄露路径已知、受控、待修，不是"还在漏"**
+   PtyServer 崩溃 dump 打 `cmd_env` 含 `ANTHROPIC_AUTH_TOKEN`，仅在子进程异常
+   崩溃时发生、落本地日志；issue **#1455** 已立案（修复方向：logged state 不
+   留 raw child env)。local 实测期间两把 key 进过一次本地日志（原始日志已脱
+   敏）——**请轮换 `DEEPSEEK_API_KEY` + `KIMI_CODING_API_KEY`**，轮换即归零。
+3. **合并顺序（是谁先合）** — **#1454 尚未合并，CI 全绿，随时可合。**
+   建议先合 #1454（小且独立），本分支随后 rebase 解 trivial hunk（两边碰
+   `credential_adapter_completeness_test.exs` 的 `@adapters` 附近：它改 codex
+   namespace、本分支删 deepseek 条目，语义不冲突）。
+
+## Method-deltas 落地路径（流程规定 + 提案）
+
+流程规定（dev-together):dev 在 return 里 capture method-friction（见下节）;
+**lead 在 `review` 里 promote** —— 写进 review 的 method-deltas 节，再变成
+dev-together skill PR 或 tracked process-debt。**dev 不改 skill(single
+writer)，合稿权在 lead。**
+
+三条 delta 的建议落点（lead 勾选后可成一页 skill diff):
+
+| delta | 落点 |
+|---|---|
+| ① 每个 slice 的门禁集钉入 `mix test apps/ezagent_core/test/invariants/`（本地门禁集与 CI deterministic gate 对齐——本轮 4 个红全是这类） | `.claude/skills/dev-together/references/handoff-standard.md` 门禁节 |
+| ② inline 行尾注释 marker 对 formatter 版本不稳定（1.19.2 抬注释）→ 涉及同行注释 marker 的 gate 优先用测试自己的 path allowlist | 同上（或 ezagent-developer skill 约定节，lead 定） |
+| ③ 厂商文档快速漂移 → profile 值带取证日期、实测时复核（本轮抓到 kimi-k3→k3[1m] 漂移 + 订阅/平台分裂） | handoff-standard 的 research-handoff(reproduce-first）节 |
 
 ## Method friction (for review's method-deltas)
 
