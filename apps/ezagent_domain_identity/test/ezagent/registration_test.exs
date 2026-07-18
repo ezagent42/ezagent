@@ -166,7 +166,7 @@ defmodule Ezagent.RegistrationTest do
                Registration.register_with_password(email, "pw1234", "X", invite_code: mint_code())
     end
 
-    test "open self-serve creates one owned workspace and formal founder caps" do
+    test "open self-serve creates one owned workspace and concrete signed founder caps" do
       n = System.unique_integer([:positive])
       email = "founder#{n}@good.com"
 
@@ -186,14 +186,11 @@ defmodule Ezagent.RegistrationTest do
 
       assert Enum.any?(held, fn cap ->
                cap.behavior == Ezagent.ActionSet.WorkspaceUserAdmin and
-                 cap.action == :mint_invite and cap.instance == workspace_uri
+                 cap.action == :mint_invite and cap.instance == workspace_uri and
+                 is_binary(cap.signature)
              end)
 
-      assert Enum.any?(held, fn cap ->
-               cap.behavior == Ezagent.ActionSet.ApiKeys and
-                 cap.action == :put_api_key and
-                 cap.instance == {:within_workspace, workspace_uri}
-             end)
+      refute Enum.any?(held, &match?({:within_workspace, _}, &1.instance))
     end
 
     test "no target → :no_registration_target" do

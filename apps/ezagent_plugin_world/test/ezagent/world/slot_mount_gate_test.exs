@@ -25,7 +25,9 @@ defmodule Ezagent.World.SlotMountGateTest do
   @subcomponent_allowlist %{"Conversation.tsx" => ["PtyTerminalSurface"]}
 
   defp component_files do
-    @components |> File.ls!() |> Enum.filter(&String.ends_with?(&1, ".tsx"))
+    @components
+    |> File.ls!()
+    |> Enum.filter(&(String.ends_with?(&1, ".tsx") and not String.ends_with?(&1, ".test.tsx")))
   end
 
   # Lockstep guard. The developer-facing JS mirror (`check-mounts.mjs`) is NOT run
