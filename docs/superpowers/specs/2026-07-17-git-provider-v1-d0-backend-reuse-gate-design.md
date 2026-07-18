@@ -384,6 +384,13 @@ Contract rules:
     module replaceability does not imply that every authorization backend can be
     combined with every credential backend. A compatible pair still preserves
     both behavior boundaries and may not add a generic export or unwrap API.
+11. A retryable `credential_material` handoff is a stable opaque reference
+    understood only by the selected backend pair. The authorization side may
+    retain its payload only as authenticated ciphertext until credential store
+    and connection-pointer finalization are durable. It then cryptographically
+    shreds the payload while retaining a non-secret correlation tombstone.
+    Reconciliation replays the reference, never plaintext or a serializable
+    sensitive wrapper.
 
 ### 7.1 Closed credential errors
 
