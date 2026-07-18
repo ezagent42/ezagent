@@ -1,65 +1,70 @@
-# Read-Plane Authz Chokepoint — Implementation Plan v2 (PR-split, directional)
+# Read-Plane Authz Chokepoint — Implementation Plan v4 (PR-split, directional)
 
-> **For the implementer (codex):** implement PR-by-PR; each PR is independently mergeable + has ONE acceptance gate. **Directional** (per Allen: don't over-detail) — this fixes PR boundaries, the **reader→PR map (zero orphans)**, the **incremental gate**, and the acceptance; code shape is yours within the spec constraints (§5/§9). **Spec:** `docs/superpowers/specs/2026-07-19-read-plane-authz-chokepoint-design.md` (SOUND-WITH-FIXES).
+> **For the implementer (codex):** implement PR-by-PR; each PR is independently mergeable + has ONE acceptance gate. **Directional** (per Allen: don't over-detail) — this fixes PR boundaries, the **drift-prevention MECHANISM**, and the **acceptance**; code shape is yours within the spec constraints (§5/§9). **Spec:** `docs/superpowers/specs/2026-07-19-read-plane-authz-chokepoint-design.md` (SOUND-WITH-FIXES).
 > **Base:** `origin/main` @ `70ffafa85`. Branch: `feat/read-plane-authz-chokepoint`.
 
-**Two pillars:** (A) acceptance criteria (spec §7); (B) drift-prevention = the module-boundary gate (spec §1/§3.3/§9). **Completeness rule (codex plan-review): EVERY principal-facing reader maps to a PR — an orphan = a gate hole** (gate either compiles-red early, or leaves a reader naked).
-
-## The gate is INCREMENTAL, not "full every PR" (codex plan-review round-1 fix)
-Each PR gates **exactly the readers it migrates** — a growing module/function allowlist. Call-sites owned by a *later* PR are **explicitly left legal** until their PR. Only **PR-5** installs the complete cross-plane two-sided gate + acyclic. So PR-1's gate must NOT forbid the feeds' or `UploadsController`'s existing direct store reads (those land in PR-2/PR-3).
-
-## The gate primitive spans EVERY store-access verb, not just `Repo` (codex plan-review round-2 fix #1/#2)
-"Direct store read" is the **union of every read primitive by plane** — a gate that only bans `Repo`/`MessageStore` leaves the members and delivery planes able to drift back:
-- **message** plane → `MessageStore.recent_*/older_*/chat_*/committed_*`
-- **members/session-slice** plane → `Kind.get_slice(_, :session|:members)` (+ session-slice helpers)
-- **delivery** plane → direct `DeliveryOutbox` queries (`committed_deliveries_since`, `committed_surface_version`, …)
-- **registry/global** plane → `KindRegistry.list_all`
-- raw `Repo`/`Ecto` in any presenter/web/plugin-tier module
-
-PR-5's complete gate = **every** one of these, called from **outside** {its chokepoint, the store-owner module, `InternalReads`} → CI red. Only this makes "full gate compiles ⇒ zero-orphan" actually hold **across all planes** (a `Repo`-only gate would silently exempt the session-slice + delivery readers).
-
-## Reader → PR inventory (zero orphans — codex plan-review fix #2)
-| plane | principal-facing reader (code) | PR |
-|---|---|---|
-| messages | `ConversationData` initial recent load (`conversation_data.ex:427`) | **PR-1** |
-| messages | `ConversationData.load_older` + `ConversationActions chat.load_older` dispatcher (`conversation_data.ex:362-388,433-438`; `conversation_actions.ex:41-43,163-166,238-247` — **currently no authz**) | **PR-1** |
-| members | `ConversationData` member/options reads; `KanbanShareController.session_assistant` direct session-slice read | **PR-1** |
-| messages | `ChatFeed` / `ExternalFeed` message views (incl. replay-by-IDs, approved-attachment scan) | **PR-2** |
-| delivery | `ExternalFeed` direct `DeliveryOutbox` reads: `committed_deliveries_since/2` (`external_feed.ex:116,164,205`) + `committed_surface_version/1` (`external_feed.ex:462,478`) — principal join/replay/snapshot | **PR-2** |
-| attachments | authenticated `UploadsController` message-participation queries (`uploads_controller.ex:129-209`); conversation/kanban token mint; **public `ExternalFeedController` attachment serving** | **PR-3** |
-| sessions (list) | workspace session-lists: `ConversationSessionState`/`WorldLive`, `HomeLive` (`home_live.ex:76` caller-less `list_sessions/1`, `listing.ex:20`), `KanbanShareController`; `UI.UriOptions.sessions`/`entities_and_sessions` (global `KindRegistry.list_all`) | **PR-4** |
-| agents (list) | `AdminData` global registry/KPI; `ConversationData.snapshot_agent_options`; `IdentityData.list_entities/2` (`identity_data.ex:323`, caller-less); `UI.UriOptions.entities` | **PR-4** |
-| templates (list) | `WorkspacePluginData.live_session_template_rows/1` → `KindRegistry.list_all` `template://` rows (`workspace_plugin_data.ex:220,417`) — principal workspace template list | **PR-4** |
-| internal | `Delivery.replay_messages_since/3` (`delivery.ex:381-395`); reconcile/GC/boot | **PR-5** (`InternalReads`) |
-| members (internal-convergence) | `ConversationActions.uninstall_socialware` session-slice read (`conversation_actions.ex:944`) + `AnonTakeover.member?/verify_convergence` (`anon_takeover.ex:179,192`) — `Kind.get_slice(_, :session)` for reconcile, **presenter/web-tier** | **PR-5** (`InternalReads`, split-then-relocate) |
+**Two pillars (Allen's steer):** (A) **acceptance criteria** per chokepoint; (B) **drift-prevention** = the module-boundary gate. v4 stops hand-enumerating readers (that spiralled — 3 review rounds each found one more: UserData, PageView, `:surface`, `KindSnapshot`). The completeness guarantee moves to the gate; the plan carries the *mechanism*, not a reader census.
 
 ---
 
-## PR-1 — `SessionReads` (whole conversation read surface) + narrow message gate  → closes the info-disclosure
-**Scope:** `SessionReads`∈socialware: `messages(caller, session, view \\ :conversation, page_opts)` covering **initial AND older/pagination**, `members(caller, session)`. Live-first `Membership.authorize/3`; chokepoint owns `:read_unfiltered` row-policy; `:conversation` view routes to existing `recent_visible/recent/older_visible/older` store fns. Migrate: `ConversationData` (all message + member reads), the `chat.load_older` **dispatcher (add authz — currently none)**, `KanbanShareController.session_assistant`. **Narrow gate:** ban direct `MessageStore.recent_*/older_*` + message `Repo` reads **from `ezagent_plugin_world`/presenter**, EXCEPT explicitly-deferred feed/uploads modules (PR-2/PR-3).
-**Acceptance (§7):** #1 deep-link non-member denied (initial AND load_older); #2 observe-degrade; #3 fresh-join; #6 row-policy; #7(partial) direct message read in migrated world modules → CI red; #8 no per-row actor round-trip.
-**Lands ALONE** (info-disclosure closed) — feeds/uploads keep their reads until their PRs.
+## Pillar B — drift-prevention: the gate is the enumerator, anchored on 3 ROOTS
 
-## PR-2 — Route feeds through `SessionReads` (fold public-view + view shapes + DeliveryOutbox plane)
-**Scope:** `ChatFeed`/`ExternalFeed` → `SessionReads.messages(view: :chat_feed|:external_feed)`; fold `PublicView.web_anon_access?/1` open-policy INTO `SessionReads`; view routes to `chat_visible_recent` / `committed_external_visible[_by_ids]`. **Also cover the delivery plane:** `ExternalFeed`'s direct `DeliveryOutbox` reads (`committed_deliveries_since/2`, `committed_surface_version/1`) reached from principal `join`/`replay`/snapshot — route them through the chokepoint OR declare the `DeliveryOutbox` store-owner functions as the allowlisted delivery chokepoint (these reads already sit behind `snapshot(session,caller)`'s auth gate; the gate just must have an owner so PR-5's full sweep isn't forced to exempt `ExternalFeed`). Extend the gate to forbid feed-module direct `MessageStore` **and** `DeliveryOutbox` reads.
-**Acceptance (§7):** #4 public-session anon read via chokepoint policy; #10 feed byte-identical (message + delivery/settlement rows).
+Do **not** hand-list every reader — that census is un-gettable-right (proven: it kept growing) and it's exactly the impl-detail Allen said to drop. Instead anchor the gate on the **root access primitives** — the bounded set below which nothing reads persisted state. Grep-verified complete (2026-07-19):
+
+| root | what it is | store-owners that wrap it (illustrative) |
+|---|---|---|
+| raw `Ecto`/`Repo` | every durable table bottoms out here | `MessageStore`, `KindSnapshot` (`ecto/kind_snapshot.ex` → `Repo.all`), `DeliveryOutbox`, `Users` (`Repo.get_by`), workspace store |
+| `Kind.get_slice/*` — **ALL slices** | live actor-state read (`:session`, `:members`, `:surface`, …) — ban regardless of slice atom | (the actor itself) |
+| `KindRegistry` live reads (`list_all`/`list_in_workspace`/`lookup`) | the live-registry root | `AdminData`, `UriOptions`, `WorkspacePluginData.live_session_template_rows` |
+
+*Out of scope as read-plane roots:* direct `:ets`/`:persistent_term` reads are all framework/liveness-tier (respawn, rate-limit, transport-readiness, nonce tables) — runtime state, not principal container-content. (Grep-confirmed: no principal-facing `:ets` content read.)
+
+**The gate = tier-scoped, two-sided module boundary** (NOT a global root ban — 248 modules touch `Repo`, 213 `KindRegistry`; most are legit store-owners/writers/framework):
+- **Layer 1 (root containment):** a root may be touched only *inside* a content-store-owner module (a module whose job is wrapping that root).
+- **Layer 2 (chokepoint containment):** a content-store-owner may be *called* only by {its chokepoint, `InternalReads`}. The **principal-facing read tier** — `ezagent_plugin_world` presenters, `ezagent_web` LV/controllers, socialware read surfaces — may reach container content ONLY through a chokepoint.
+
+**Completeness = gate-as-enumerator, NOT a table.** The implementer turns a plane's gate on with an empty allowlist; **the red build IS the exhaustive reader worklist** for that plane. No hand-maintained census can drift stale, and a reader I never listed still gets caught. (The seed examples in the PR sections below are *illustrative, non-exhaustive* — the gate is the source of truth.)
+
+**Rollout = incremental, per-plane** (avoids a 248-module big-bang and lets PR-1 land alone): each plane's gate tightens only when its chokepoint exists; call-sites owned by a later PR stay legal until then. PR-5 completes the two-sided gate across all content planes.
+
+## Pillar A — acceptance: structural gate ⊕ per-chokepoint authz-REJECTION test
+
+Two *different* guarantees; neither substitutes for the other:
+1. **Structural (the gate):** a direct root/store-owner read from the principal tier → CI red. Proves *completeness* (every reader routes through a chokepoint).
+2. **Behavioral (authz correctness):** "routed through a chokepoint" ≠ "the chokepoint authorized." **Every chokepoint MUST take a `caller`, authorize it, then delegate — and ship a test that a NON-authorized caller is REJECTED.** Byte-parity / structural-gate / "goes through the wrapper" tests do **NOT** substitute.
+
+**Chokepoint contract (global, binding on every PR):** a chokepoint = `fn(caller, scope, …)` that authorizes `caller` for `scope` *before* reading. A caller-less store-owner function is **Layer-1-allowed** (may touch a root) but **never itself a chokepoint** (Layer-2-banned: only a real chokepoint may call it). Allowlisting a caller-less store fn AS the chokepoint is the round-3 finding-#4 hole — forbidden.
+
+---
+
+## PR-1 — `SessionReads` (conversation read surface) + narrow message gate → closes the info-disclosure
+**Scope:** `SessionReads`∈socialware: `messages(caller, session, view \\ :conversation, page_opts)` covering **initial AND older/pagination**, `members(caller, session)`. Live-first `Membership.authorize/3`; chokepoint owns `:read_unfiltered` row-policy; `:conversation` view routes to existing `recent_visible/recent/older_visible/older` store fns. Migrate the known message readers: `ConversationData` (initial + `load_older` + member/options reads), the `chat.load_older` **dispatcher (add authz — currently NONE)**, `KanbanShareController.session_assistant`. **Narrow gate (message plane, presenter tier):** direct `MessageStore.*`/message-`Repo` read from `ezagent_plugin_world`/presenter → CI red, EXCEPT the not-yet-migrated feed/uploads modules (explicitly legal until PR-2/PR-3). Run the gate empty-allowlist once — the red build is the full message-reader list; migrate all it names, not just the seeds above.
+**Acceptance:** #1 deep-link non-member REJECTED (initial AND load_older); #2 observe-degrade denied read; #3 fresh-join sees history; #6 row-policy (`:read_unfiltered` only for authorized internal view); **authz-rejection: `SessionReads.messages`/`members` with a non-member caller → `{:error, :unauthorized}`** (behavioral, not just "routed"); #8 no per-row actor round-trip; structural: migrated-module direct message read → CI red.
+**Lands ALONE** — the actual security fix.
+
+## PR-2 — Route feeds through `SessionReads` (public-view + view shapes + delivery/surface planes)
+**Scope:** `ChatFeed`/`ExternalFeed` message views → `SessionReads.messages(view: :chat_feed|:external_feed)`; fold `PublicView.web_anon_access?/1` open-policy INTO the chokepoint. **Delivery + surface planes:** `ExternalFeed`'s direct `DeliveryOutbox` reads (`committed_deliveries_since/2`, `committed_surface_version/1`) and `Kind.get_slice(_, :surface)` page reads (`ExternalFeed.snapshot/2`, `PageView`) must route through a **caller-authorizing chokepoint** — NOT an allowlisted caller-less store fn (finding-#4: today these sit behind `snapshot(session,caller)`, but the store fn itself takes no caller; the chokepoint must). Extend the gate (feed tier) to forbid direct `MessageStore`/`DeliveryOutbox`/`get_slice(:surface)` reads.
+**Acceptance:** #4 public-session anon read allowed via chokepoint policy; **authz-rejection: non-member delivery/surface read → rejected** (the caller-authorizing chokepoint, proven by a non-member test — closes finding #4); #10 feed byte-identical for authorized caller (message + delivery + surface).
 
 ## PR-3 — Attachment plane: person-bound `DownloadToken` (auth'd + public serve) + kanban-403
-**Scope:** `DownloadToken` optional `grantee` (serve-time `caller==grantee`; absent→legacy recheck); mint inside the cap-gated read; `UploadsController` AND public `ExternalFeedController` attachment serving both verify grantee; remove the legacy message-participation recheck. Extend gate to uploads modules.
-**Acceptance (§7):** #9 legit member downloads kanban attachment (403 gone); leaked token by non-grantee rejected (both serve paths).
+**Scope:** `DownloadToken` optional `grantee` (serve-time `caller==grantee`; absent→legacy recheck for zero-breakage); mint inside the cap-gated read; **both** `UploadsController` (authenticated) AND public `ExternalFeedController` attachment serving verify grantee; remove the legacy message-participation recheck. Extend gate to uploads/attachment modules.
+**Acceptance:** #9 legit member downloads kanban attachment (403 gone); **authz-rejection: leaked token replayed by a non-grantee → rejected on BOTH serve paths.**
 
 ## PR-4 — Workspace + global LIST reads: `WorkspaceReads` / `AgentReads` / `OperatorReads`
-**Scope:** `WorkspaceReads.{sessions,templates}`∈workspace (migrate `HomeLive`/`WorldLive`/`KanbanShareController` session-lists + `UriOptions.sessions` + `WorkspacePluginData.live_session_template_rows` template list); `AgentReads`∈workspace (migrate `snapshot_agent_options`/`IdentityData.list_entities`/`UriOptions.entities`); `OperatorReads`∈identity+ (migrate `AdminData` global `KindRegistry`/KPI/external-mirror — authorize an operator cap). All off direct `Repo`/`KindRegistry.list_all`. **Thread `caller` into every list read** (`list_sessions/1`, `list_entities/2`, `live_session_template_rows/1` are currently caller-less → they filter by workspace only and cannot enforce per-row visibility). Chokepoint applies **workspace-membership authz + per-row container-visibility filter** (multi-container query-scope, spec §3 taxonomy). Extend gate to these modules.
-**Acceptance (§7):** #5 non-operator denied on registry list-all; **#6-list (per-row visibility): a caller who IS a workspace member but is NOT visible on session/agent X gets X ABSENT from `list_sessions`/`list_entities` — wrapping the read without per-row filter must FAIL this test** (closes the "same-workspace over-return" hole); #7 direct `Repo.all`/`KindRegistry.list_all` in `AdminData`/list readers → CI red.
+**Scope:** three list chokepoints, each `fn(caller, scope)`: `WorkspaceReads.{sessions,templates}`∈workspace, `AgentReads`∈workspace, `OperatorReads`∈identity+ (operator-cap). **Thread `caller` into every currently caller-less list read** (`list_sessions/1`, `IdentityData.list_entities/2`, `WorkspacePluginData.live_session_template_rows/1`, `Users.list_in_workspace/list_all` behind `UserData`, `snapshot_agent_options`, `UriOptions.*`) — caller-less means workspace-filter-only, which over-returns. Each chokepoint applies **workspace-membership authz + per-row container-visibility filter** (multi-container scope, spec §3). Turn the list-plane gate on empty-allowlist to enumerate every list reader (this is where round-3's `UserData`/`snapshot_agent_options`/`live_session_template_rows` surface — the gate names them, you don't pre-list them).
+**Acceptance:** #5 non-operator denied on registry list-all; **#6-list per-row visibility: a workspace-member caller NOT visible on session/agent/user X gets X ABSENT — a wrapper that authorizes workspace but skips per-row filter must FAIL this test** (closes the same-workspace over-return hole, incl. `UserData` email/disablement leak); structural: direct `Repo`/`KindRegistry.list_all` in a list reader → CI red.
 
 ## PR-5 — `InternalReads` gateway + complete two-sided gate + acyclic
-**Scope:** `InternalReads` for `Delivery.replay_messages_since/3` + reconcile/GC/boot + the **internal-convergence session-slice reads** (`uninstall_socialware`, `AnonTakeover.member?/verify_convergence`) — these are `Kind.get_slice(_,:session)` reconcile reads currently in **presenter/web-tier** modules, so **split-then-relocate**: move the internal read behind `InternalReads` in a framework-tier module (else criterion #12 fails — a presenter module calling `InternalReads` is CI-red). Install the **complete** gate as two module allowlists over the **full primitive set** (§ gate-primitive: `MessageStore.*`, `Kind.get_slice(_,:session|:members)`, `DeliveryOutbox.*`, `KindRegistry.list_all`, raw `Repo`): (a) direct-store reads ⊆ {chokepoints, store-owner, `InternalReads`}; (b) `InternalReads` callers ⊆ {framework tier}.
-**Acceptance (§7):** #7 full gate **across all planes** (a direct `Kind.get_slice(_,:session)` or `DeliveryOutbox` read added to any presenter module → CI red, proving members+delivery planes can't drift back); #11 arch acyclic green at §5 placements; #12 principal-facing module calling `InternalReads` → CI red. **Zero-orphan is proven here:** full gate compiles green ⇒ no un-chokepointed principal read of any plane remains.
+**Scope:** `InternalReads` for framework-internal reads (`Delivery.replay_messages_since/3`, reconcile/GC/boot) **plus** the internal-convergence session-slice reads currently in presenter/web tier (`uninstall_socialware`, `AnonTakeover.member?/verify_convergence` — `Kind.get_slice(_,:session)` reconcile): **split-then-relocate** the internal read into a framework-tier module behind `InternalReads` (a presenter module calling `InternalReads` is itself CI-red, criterion #12). Install the **complete** two-sided gate over the **3 roots + content-store-owners**: (a) roots + store-owners reachable only from {chokepoints, store-owner, `InternalReads`}; (b) `InternalReads` callers ⊆ framework tier.
+**Acceptance:** #7 full gate green across ALL planes — a direct `get_slice(_,:session|:surface)` / `DeliveryOutbox` / `Repo` / `KindRegistry` read added to any presenter module → CI red (proves members+delivery+surface+list planes can't drift back); #11 arch acyclic green at §5 placements; #12 presenter module calling `InternalReads` → CI red. **Zero-orphan is PROVEN here structurally:** the full gate compiling green ⇒ no un-chokepointed principal read of any plane remains — no census required.
 
 ---
 
-## Sequencing & review
-- **PR-1 first** — user-visible security fix, lands standalone. PR-2→5 extend coverage; the gate tightens each PR; **PR-5 proves zero-orphan** (full gate compiles ⇒ no un-chokepointed principal read remains).
-- Each PR: affected-app `mix test` + `mix ezagent.check_invariants` + arch acyclic before merge; watch push-to-main full-suite (a `DBConnection.OwnershipError`-class red = known #184 flake — re-run, don't assume). Each PR gets a codex adversarial review before merge; merge only clean.
+## Exit criterion (when is the plan/review done?)
+**Done = mechanism closed, NOT "codex names no more readers."** Against an adversarial reviewer a directional plan is never reader-empty — one can always name another caller. The mechanism is closed when: (1) the gate is anchored on the 3 grep-verified roots + content-store-owners and is self-completing (empty-allowlist red build = worklist); and (2) every chokepoint has a non-authorized-caller-REJECTED test. **Once closed, "here's another reader" CONFIRMS the mechanism** (the gate will catch it at that plane's PR) rather than being a defect. A real defect is only: a **root the gate misses**, or a **chokepoint that passes without authorizing**.
 
-## Out of scope (spec §6): in-VM defense; at-rest field-crypto (Path-B); write-plane side-table consolidation (STRETCH).
+## Sequencing & review
+- **PR-1 first** — user-visible security fix, lands standalone. PR-2→5 extend per-plane; the gate tightens each PR; PR-5 completes it (structural zero-orphan proof).
+- Each PR: affected-app `mix test` + `mix ezagent.check_invariants` + arch acyclic before merge; watch push-to-main full-suite (a `DBConnection.OwnershipError`-class red = known #184 flake — re-run, don't assume). Each PR gets a codex adversarial review before merge (review the **mechanism**: is a root missed / a chokepoint un-authorizing? — not "name another reader"); merge only clean.
+
+## Out of scope (spec §6): in-VM defense; at-rest field-crypto (Path-B); write-plane side-table consolidation (STRETCH); runtime `:ets`/liveness state (not container content).
