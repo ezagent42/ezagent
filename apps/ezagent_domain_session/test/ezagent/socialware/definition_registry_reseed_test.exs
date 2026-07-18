@@ -48,7 +48,10 @@ defmodule Ezagent.Socialware.DefinitionRegistryReseedTest do
     :ok
   end
 
-  defp orchestrator_body(flavor) do
+  defp orchestrator_body(flavor, provider \\ nil) do
+    role = %{role_name: @orchestrator, fill: :agent, recipe: @orchestrator, flavor: flavor}
+    role = if provider, do: Map.put(role, :provider, provider), else: role
+
     {:ok, definition} =
       Definition.new(%{
         name: @orchestrator,
@@ -56,9 +59,7 @@ defmodule Ezagent.Socialware.DefinitionRegistryReseedTest do
         title: "Orchestrator",
         description: "Stock cc orchestrator team front desk.",
         uses: ["cc"],
-        roles: [
-          %{role_name: @orchestrator, fill: :agent, recipe: @orchestrator, flavor: flavor}
-        ],
+        roles: [role],
         views: [],
         routing_rules: [],
         visibility_policy: %{publish_policy: :auto, web_anon_access: false}
@@ -67,17 +68,18 @@ defmodule Ezagent.Socialware.DefinitionRegistryReseedTest do
     Definition.body(definition)
   end
 
-  # Seed a PRIOR system-ws orchestrator definition at an arbitrary `flavor`, as if
-  # an older build had seeded it. Uses the content-safe append-and-repoint write
-  # directly so the test controls the starting state.
-  defp seed_prior_system_orchestrator!(flavor) do
+  # Seed a PRIOR system-ws orchestrator definition at an arbitrary `flavor`
+  # (+ optional cc-custom `provider`), as if an older build had seeded it.
+  # Uses the content-safe append-and-repoint write directly so the test
+  # controls the starting state.
+  defp seed_prior_system_orchestrator!(flavor, provider \\ nil) do
     {:ok, %{object: object}} =
       ConfigStore.write_and_point(%{
         layer: "workspace",
         workspace_uri: system_ws(),
         subject_uri: subject(),
         key: DefinitionRegistry.definition_key(),
-        body: orchestrator_body(flavor),
+        body: orchestrator_body(flavor, provider),
         actor_uri: "entity://system/user/admin",
         source_turn_id: "legacy-orchestrator-seed:#{System.unique_integer([:positive])}"
       })
@@ -97,6 +99,7 @@ defmodule Ezagent.Socialware.DefinitionRegistryReseedTest do
   end
 
   defp flavor_of(%Definition{roles: [role | _]}), do: role.flavor
+  defp provider_of(%Definition{roles: [role | _]}), do: Map.get(role, :provider)
 
   defp orchestrator_divergence do
     DefinitionRegistry.builtin_definition_divergences()
@@ -155,12 +158,13 @@ defmodule Ezagent.Socialware.DefinitionRegistryReseedTest do
     assert :ok = DefinitionRegistry.seed_builtin_definitions()
 
     {:ok, definition, _} = DefinitionRegistry.lookup(system_ws(), @orchestrator)
-    assert flavor_of(definition) == "cc-deepseek"
+    assert flavor_of(definition) == "cc-custom"
+    assert provider_of(definition) == "deepseek"
     assert is_nil(orchestrator_divergence())
   end
 
   test "boot seed — a stored definition already matching code is a no-op (no new object)" do
-    seed_prior_system_orchestrator!("cc-deepseek")
+    seed_prior_system_orchestrator!("cc-custom", "deepseek")
     assert 1 == system_object_count()
 
     assert :ok = DefinitionRegistry.seed_builtin_definitions()
@@ -179,7 +183,8 @@ defmodule Ezagent.Socialware.DefinitionRegistryReseedTest do
     {:ok, definition, object} = DefinitionRegistry.lookup(system_ws(), @orchestrator)
 
     # migrated to the code flavor
-    assert flavor_of(definition) == "cc-deepseek"
+    assert flavor_of(definition) == "cc-custom"
+    assert provider_of(definition) == "deepseek"
     # content-safe: a NEW immutable object at a NEW hash, old one retained
     assert object.id != old.id
     assert object.content_hash != old.content_hash
@@ -213,7 +218,7 @@ defmodule Ezagent.Socialware.DefinitionRegistryReseedTest do
     assert {:ok, :seeded} = DefinitionRegistry.reseed_builtin_definition(@orchestrator)
 
     {:ok, system_definition, _} = DefinitionRegistry.lookup(system_ws(), @orchestrator)
-    assert flavor_of(system_definition) == "cc-deepseek"
+    assert flavor_of(system_definition) == "cc-custom"
 
     {:ok, tenant_definition, tenant_object_after} =
       DefinitionRegistry.lookup(@team_a, @orchestrator)
@@ -239,11 +244,12 @@ defmodule Ezagent.Socialware.DefinitionRegistryReseedTest do
 
   # ---- source-of-truth parity ------------------------------------------------
 
-  test "the orchestrator built-in seed body declares the cc-deepseek flavor" do
+  test "the orchestrator built-in seed body declares the cc-custom flavor + deepseek provider" do
     orchestrator =
       DefinitionRegistry.builtin_definitions()
       |> Enum.find(&(&1.name == @orchestrator))
 
-    assert flavor_of(orchestrator) == "cc-deepseek"
+    assert flavor_of(orchestrator) == "cc-custom"
+    assert provider_of(orchestrator) == "deepseek"
   end
 end

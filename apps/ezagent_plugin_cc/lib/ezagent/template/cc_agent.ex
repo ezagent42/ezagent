@@ -330,8 +330,8 @@ defmodule Ezagent.PluginCc.Template.CcAgent do
   def validate(_), do: {:error, :not_a_map}
 
   # Every cc.agent validation check AFTER the class-string check, shared with the
-  # deepseek provider shim so its `validate/1` reuses the exact rules while
-  # accepting its own class. The `"provider"` key is unknown here (ignored).
+  # custom-backend provider shim so its `validate/1` reuses the exact rules
+  # while accepting its own class. The `"provider"` key is unknown here (ignored).
   @doc false
   @spec validate_after_class(map()) :: :ok | {:error, term()}
   def validate_after_class(tmpl) when is_map(tmpl) do
@@ -434,9 +434,9 @@ defmodule Ezagent.PluginCc.Template.CcAgent do
 
   def instantiate(_tmpl_name, tmpl, _workspace_uri), do: {:error, {:invalid_template, tmpl}}
 
-  # Flavor-parameterized instantiate body, shared with the deepseek provider shim
-  # (`CcDeepseekAgent`) so the STORED launch flavor is the caller's (`cc` vs
-  # `cc-deepseek`) while spawn/PTY/credential-cascade stays the single
+  # Flavor-parameterized instantiate body, shared with the custom-backend shim
+  # (`CcCustomAgent`) so the STORED launch flavor is the caller's (`cc` vs
+  # `cc-custom`) while spawn/PTY/credential-cascade stays the single
   # `CcAgent.Spawn` chokepoint; the provider dimension rides in `tmpl`, not a fork.
   @doc false
   @spec instantiate_for_flavor(module(), String.t(), map(), URI.t()) ::

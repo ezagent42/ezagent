@@ -31,12 +31,13 @@ defmodule Ezagent.Agent.Architecture.CredentialAdapterCompletenessTest do
   @adapters [
     Ezagent.PluginCc.Template.CcAgent,
     Ezagent.PluginCc.Template.CcHeadlessAgent,
-    # cc-deepseek (#1324): API-key auth (DEEPSEEK_API_KEY), NO `.credentials.json`
-    # — `credential_relpaths/0 == []`, so `credential_bearing?/1` filters them out
-    # of the host_login_dir/0 requirement below. Listed here only so the
-    # "not silently stale" cross-check stays exhaustive.
-    Ezagent.PluginCc.Template.CcDeepseekAgent,
-    Ezagent.PluginCc.Template.CcHeadlessDeepseekAgent,
+    # cc-custom / cc-headless-custom (PR-2/3): env-var auth per selected backend
+    # profile, NO on-disk credential — `credential_relpaths/0 == []`, so
+    # `credential_bearing?/1` filters them out of the host_login_dir/0
+    # requirement below. Listed here only so the "not silently stale"
+    # cross-check stays exhaustive.
+    Ezagent.PluginCc.Template.CcCustomAgent,
+    Ezagent.PluginCc.Template.CcHeadlessCustomAgent,
     Ezagent.PluginCodex.Template.CodexAgent,
     Ezagent.PluginCodex.Template.CodexRemoteAgent
   ]
