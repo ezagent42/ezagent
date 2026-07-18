@@ -40,7 +40,6 @@ defmodule Ezagent.Agent.Architecture.CredentialAdapterCompletenessTest do
     Ezagent.PluginCc.Template.CcHeadlessCustomAgent,
     Ezagent.PluginCodex.Template.CodexAgent,
     Ezagent.PluginCodex.Template.CodexRemoteAgent
->>>>>>> 8ad4ae1ac (test(cc-custom): unique test flavors + adapter roster + stub callbacks (PR-4 review))
   ]
 
   test "every credential-bearing CredentialAdapter exports host_login_dir/0" do
