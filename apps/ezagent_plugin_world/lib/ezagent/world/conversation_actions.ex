@@ -701,7 +701,39 @@ defmodule Ezagent.World.ConversationActions do
         {:noreply, assign(socket, :last_dispatch_status, "ok")}
 
       {:error, reason} ->
-        {:noreply, assign(socket, :last_dispatch_status, "error:#{reason(reason)}")}
+        user_can_fix = Ezagent.Identity.AdminAuthority.admin?(caller, caps)
+        fix_owner_name = resolve_founder_name(socket)
+
+        socket
+        |> assign(:last_dispatch_status, "error:#{reason(reason)}")
+        |> Ezagent.World.ErrorRenderer.push_dispatch_error_card(
+          reason,
+          user_can_fix: user_can_fix,
+          fix_owner_display_name: fix_owner_name
+        )
+        |> then(&{:noreply, &1})
+    end
+  end
+
+  defp resolve_founder_name(socket) do
+    case Map.get(socket.assigns, :current_workspace_uri) do
+      %URI{} = ws_uri ->
+        case Ezagent.URI.name(ws_uri) do
+          {:ok, name} when is_binary(name) and name != "" ->
+            case Ezagent.Workspace.Store.get_by_name(name) do
+              %{members: [%URI{} = founder | _]} ->
+                case Ezagent.URI.name(founder) do
+                  {:ok, display} -> display
+                  _ -> "workspace founder"
+                end
+
+              _ -> "workspace founder"
+            end
+
+          _ -> "workspace founder"
+        end
+
+      _ -> "workspace founder"
     end
   end
 
