@@ -209,7 +209,8 @@ defmodule EzagentWeb.Socialware.SessionFeedChannel do
                  Ezagent.Entity.User.admin_uri()
                ),
              :ok <- dispatch_join(session_uri, principal) do
-          _ = Membership.mount_participation_caps(session_uri, principal)
+          # D1 join 补发:participation tier + view caps + mount operate keys。
+          _ = Ezagent.Socialware.MemberBackfill.backfill(session_uri, principal)
           push_viewer_snapshot(socket)
           {:reply, :ok, socket}
         else

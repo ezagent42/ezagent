@@ -533,8 +533,10 @@ defmodule EzagentPluginWorld.WorldLive do
 
   defp provision_session_join_authority(_session_uri, _caller_uri), do: {:error, :no_authority}
 
+  # D1 join 补发:每次成功 join(含重导航的幂等 join)走完整补发 —— 也是
+  # approve_admission 这类 in-Kind 补员路径的自愈点(成员下次导航进会话补齐)。
   defp mount_session_participation_caps(%URI{} = session_uri, %URI{} = caller_uri),
-    do: Membership.mount_participation_caps(session_uri, caller_uri)
+    do: Ezagent.Socialware.MemberBackfill.backfill(session_uri, caller_uri)
 
   defp mount_session_participation_caps(_session_uri, _caller_uri), do: {:error, :no_authority}
 

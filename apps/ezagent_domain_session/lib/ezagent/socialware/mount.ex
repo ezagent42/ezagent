@@ -280,6 +280,89 @@ defmodule Ezagent.Socialware.Mount do
       {:ok, %{reconciled: 0, failed: 0}}
   end
 
+  @doc """
+  D1 join 补发(mount 半边):把 `session_uri` 挂载表里已有的 **`:operate`** 行
+  的钥匙,补发给新成员 `member_uri`(为其新建同 target×behavior 的 operate
+  挂载行 + person keys)。
+
+  数据源 = `MountRow.list_for_session/1`;铸钥仍走 `mount/6`(= `mint_cap`
+  唯一 mint chokepoint + `upsert` 落表)—— 本函数只是驱动点,不是新铸造口。
+
+    * **`:read` 行不扩散**:只读挂载(如链接分享的只读钥匙)不因入会升格,
+      过滤后根本不进补发集。
+    * **幂等**:member 已持有某 target×behavior 的 operate 行 → skip(重复调用
+      不重复发);member 既有 read 行会被升格为 operate(协作模型:编辑权来自
+      会话成员身份)。
+    * **best-effort per row**:单行失败(如宿主已删/无属主 → mint fail-closed
+      不落表,天然无需补偿)只记 warning 计入 `failed`,不牵连其余行。
+
+  返回 `{:ok, %{backfilled: n, skipped: k, failed: m}}`,永不 raise。
+  """
+  @spec backfill_member_mounts(URI.t(), URI.t()) ::
+          {:ok,
+           %{backfilled: non_neg_integer(), skipped: non_neg_integer(), failed: non_neg_integer()}}
+  def backfill_member_mounts(%URI{} = session_uri, %URI{} = member_uri) do
+    member_key = grantee_key(member_uri)
+    rows = MountRow.list_for_session(session_uri)
+
+    held_operate =
+      rows
+      |> Enum.filter(fn %MountRow{} = row ->
+        row_grantee_key(row) == member_key and decode_access(row.access) == :operate
+      end)
+      |> MapSet.new(fn row -> {row.target_uri, row.behavior} end)
+
+    rows
+    |> Enum.filter(fn %MountRow{} = row ->
+      decode_access(row.access) == :operate and row_grantee_key(row) != member_key
+    end)
+    |> Enum.group_by(fn row -> {row.target_uri, row.behavior} end)
+    |> Enum.reduce(%{backfilled: 0, skipped: 0, failed: 0}, fn {{target_s, behavior_s}, group},
+                                                               acc ->
+      if MapSet.member?(held_operate, {target_s, behavior_s}) do
+        %{acc | skipped: acc.skipped + 1}
+      else
+        actions = group |> Enum.flat_map(&recorded_actions/1) |> Enum.uniq()
+
+        case mount(
+               session_uri,
+               Ezagent.URI.new!(target_s),
+               member_uri,
+               decode_behavior(behavior_s),
+               actions,
+               access: :operate
+             ) do
+          {:ok, _} ->
+            %{acc | backfilled: acc.backfilled + 1}
+
+          {:error, reason} ->
+            Logger.warning(
+              "Mount.backfill_member_mounts/2: backfill FAILED for target=" <>
+                "#{target_s} member=#{URI.to_string(member_uri)} behavior=" <>
+                "#{behavior_s}: #{inspect(reason)} — skipping (other mounts unaffected)."
+            )
+
+            %{acc | failed: acc.failed + 1}
+        end
+      end
+    end)
+    |> then(&{:ok, &1})
+  rescue
+    error ->
+      Logger.warning(
+        "Mount.backfill_member_mounts/2: mount scan failed for " <>
+          "#{URI.to_string(session_uri)}: #{inspect(error.__struct__)} — treated as no-op."
+      )
+
+      {:ok, %{backfilled: 0, skipped: 0, failed: 0}}
+  end
+
+  # 挂载行 grantee 的稳定比较键(行存字符串 URI,统一转 instance stable_key)。
+  defp row_grantee_key(%MountRow{grantee_uri: grantee}) when is_binary(grantee),
+    do: grantee_key(Ezagent.URI.new!(grantee))
+
+  defp grantee_key(%URI{} = uri), do: Ezagent.URI.stable_key(Ezagent.URI.instance(uri))
+
   # 从挂载行还原参数并重跑 mount/6。行里存的是字符串(URI/behavior/actions_json/access),
   # 逐一反序列化回 mount/6 需要的类型。
   defp remint_row(session_uri, %MountRow{} = row) do

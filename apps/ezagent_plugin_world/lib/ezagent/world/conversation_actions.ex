@@ -839,7 +839,9 @@ defmodule Ezagent.World.ConversationActions do
 
         case result do
           r when r == :ok or (is_tuple(r) and elem(r, 0) == :ok) ->
-            _ = Membership.mount_participation_caps(session_uri, member_uri)
+            # D1 join 补发(caller-side):participation tier + view caps +
+            # mount operate keys —— 被拉进来的成员零刷新可见 tab + 板钥匙。
+            _ = Ezagent.Socialware.MemberBackfill.backfill(session_uri, member_uri)
             {:noreply, push_members(assign(socket, :last_dispatch_status, "ok"))}
 
           {:error, reason} ->
@@ -1142,9 +1144,10 @@ defmodule Ezagent.World.ConversationActions do
 
         case result do
           r when r == :ok or (is_tuple(r) and elem(r, 0) == :ok) ->
-            # Mount the per-class participation tier (parity with Invite.ex /
-            # maybe_self_join). Best-effort, no-op for agents.
-            _ = Membership.mount_participation_caps(session_uri, caller_uri)
+            # D1 join 补发(caller-side,parity with Invite.ex / maybe_self_join):
+            # participation tier + view caps + mount operate keys。Best-effort,
+            # no-op for agents.
+            _ = Ezagent.Socialware.MemberBackfill.backfill(session_uri, caller_uri)
             assign(socket, :last_join_status, "ok")
 
           {:error, reason} ->

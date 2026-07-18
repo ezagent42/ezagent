@@ -1233,9 +1233,9 @@ defmodule Ezagent.ActionSet.Session.Membership do
     * confirmed user   → the above + `Session.:send` + `Session.:leave`
     * agent            → no-op (agents get `:send` provisioned at spawn, 甲-3)
 
-  Authority `{:rule, :session_participation, owner}` (concrete instance +
-  action ⇒ `rule_cap_bounded?` ⇒ the rule branch authorizes; `granted_by` =
-  owner entity). Owner = the session owner; for an ownerless session it falls
+  Authority (#1457): granter = the session owner (admin/held_by split via
+  `session_grant_authorization/1`, target-signed by the session Kind's grant
+  verifier; `granted_by` = owner entity). Owner = the session owner; for an ownerless session it falls
   back to `entity://system/user/admin` (the #154 named extreme-case granter,
   same as `anon_user.public_view_granter/1`). Best-effort: a failed grant is
   logged + telemetry'd, never raised — a missing participation cap degrades to
@@ -1258,11 +1258,9 @@ defmodule Ezagent.ActionSet.Session.Membership do
   # process, cross-process `Session.owner` call — no self-deadlock) so the
   # access-point callers don't each have to look it up.
   defp do_mount_participation_caps(%URI{} = session_uri, %URI{} = member_uri) do
-    workspace_uri = Ezagent.Capability.workspace_of(session_uri)
-    granter = session_owner(session_uri) |> owner_or_admin()
-    authorization = grant_authorization(granter)
-
-    _ = Ezagent.Identity.TargetAuthority.ensure(granter, session_uri)
+    # #1457:granter = session owner(ownerless 退 admin),authorization 走
+    # admin/held_by 二分 + per-Kind TargetAuthority(main 姿势);rule 元组已删。
+    authorization = session_grant_authorization(session_uri)
 
     confirmed? = Ezagent.Users.confirmed?(member_uri)
 
@@ -1274,9 +1272,64 @@ defmodule Ezagent.ActionSet.Session.Membership do
         Enum.map(@member_publisher_actions, &{Ezagent.ActionSet.Publisher.SessionImpl, &1})
       end
 
+    grant_session_caps(
+      session_uri,
+      member_uri,
+      actions,
+      authorization,
+      :participation_cap
+    )
+  end
+
+  @doc """
+  D1 join 补发(view-cap 半边):把 session 已装 socialware declared views 的
+  render cap 补授给 `member_uri`(登录成员)。
+
+  `Installation.anon_view_caps/1` 只在匿名访客出生时铸 PUBLIC definition 的
+  view 读 cap;登录后加入的普通成员此前没有任何 view-cap 发放点,装了带 view 的
+  socialware(如 kanban)也看不到对应 tab(`SessionView.authorize_view/3` 拒,
+  layering-debt ⑤)。本函数按 `Installation.declared_view_actions/1` 枚举
+  (不分 public/private —— 成员身份即可见 tab,tab 内容仍被数据钥匙门控),
+  走与 participation tier 同一条 caller-side grant funnel。
+
+  授权(#1457 后 rule 元组已删):granter = session owner(ownerless 退 admin,
+  #154 具名 granter),同 participation tier 的 admin/held_by 二分 + per-Kind
+  `TargetAuthority.ensure/2`,经 session Kind 的 grant verifier 目标签名。cap 是
+  concrete instance + concrete action。幂等:`already_authorized?/5` 按已持
+  cap 去重,重复调用不重复发。
+
+  **红线**:与 `mount_participation_caps/2` 同款 caller-side confirmed grant
+  (`:sync`),绝不许从 `handle_join` 内调(join 内 sync grant 自死锁,5s
+  timeout 实证 —— docs/futures/todo.md「#161 A2 deferrals」)。
+  Agent / 非 user URI → no-op(agents 的 caps 在 spawn 时 provision,甲-3)。
+  """
+  @spec grant_member_view_caps(URI.t(), URI.t()) :: :ok
+  def grant_member_view_caps(%URI{} = session_uri, %URI{} = member_uri) do
+    if user_uri?(member_uri) do
+      pairs = Ezagent.Socialware.Installation.declared_view_actions(session_uri)
+
+      grant_session_caps(
+        session_uri,
+        member_uri,
+        pairs,
+        session_grant_authorization(session_uri),
+        :member_view_cap
+      )
+    else
+      :ok
+    end
+  end
+
+  def grant_member_view_caps(_, _), do: :ok
+
+  # 共享 caller-side grant funnel —— participation tier 与 member view caps
+  # 两路共用同一个 `grant_cap_via_router` 调用点(I12 paradigm-lock ratchet:
+  # membership.ex 保持恰好 2 个 grant 调用点,收编而非新增 grant 真相源)。
+  defp grant_session_caps(session_uri, member_uri, pairs, authorization, telemetry_key) do
+    workspace_uri = Ezagent.Capability.workspace_of(session_uri)
     held = Ezagent.Identity.list_caps_for(member_uri)
 
-    Enum.each(actions, fn {behavior, action} ->
+    Enum.each(pairs, fn {behavior, action} ->
       cap =
         Ezagent.Capability.cap(:session, behavior, action, session_uri, workspace_uri)
 
@@ -1299,14 +1352,14 @@ defmodule Ezagent.ActionSet.Session.Membership do
 
           {:error, reason} ->
             Logger.warning(
-              "Session.Membership.mount_participation_caps: grant failed for " <>
-                "member=#{URI.to_string(member_uri)} on session=" <>
+              "Session.Membership.grant_session_caps(#{inspect(telemetry_key)}): " <>
+                "grant failed for member=#{URI.to_string(member_uri)} on session=" <>
                 "#{URI.to_string(session_uri)} action=#{inspect(action)}: " <>
                 "#{inspect(reason)} (best-effort; member degrades to observe)."
             )
 
             :telemetry.execute(
-              [:ezagent, :session, :participation_cap, :failed],
+              [:ezagent, :session, telemetry_key, :failed],
               %{count: 1},
               %{session_uri: session_uri, member_uri: member_uri, reason: reason}
             )
@@ -1323,6 +1376,14 @@ defmodule Ezagent.ActionSet.Session.Membership do
     if Ezagent.URI.stable_key(granter) == Ezagent.URI.stable_key(admin),
       do: {:admin, granter},
       else: {:held_by, granter}
+  end
+
+  # #1457:session 上的成员补发统一授权来源 —— granter = session owner(ownerless
+  # 退 admin),先落 per-Kind TargetAuthority 再 admin/held_by 二分。
+  defp session_grant_authorization(%URI{} = session_uri) do
+    granter = session_owner(session_uri) |> owner_or_admin()
+    _ = Ezagent.Identity.TargetAuthority.ensure(granter, session_uri)
+    grant_authorization(granter)
   end
 
   # True iff `held` (the member's current caps) already contains a cap that
