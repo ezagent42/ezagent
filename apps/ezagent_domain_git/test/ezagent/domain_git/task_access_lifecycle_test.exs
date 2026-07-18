@@ -21,7 +21,7 @@ defmodule Ezagent.DomainGit.TaskAccessLifecycleTest do
     %{policy: policy, uri: uri}
   end
 
-  test "an absent ephemeral resource stays absent instead of lazy-restoring", %{uri: uri} do
+  test "an absent ephemeral entity stays absent instead of lazy-restoring", %{uri: uri} do
     assert {:error, :not_found} = Ezagent.Kind.get_slice(uri, :git_task_access)
     assert {:error, :not_found} = Ezagent.SnapshotStore.latest(uri)
     assert :ok = TaskAccessSupervisor.teardown(uri)

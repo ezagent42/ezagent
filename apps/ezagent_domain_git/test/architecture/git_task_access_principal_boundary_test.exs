@@ -12,10 +12,7 @@ defmodule Ezagent.DomainGit.GitTaskAccessPrincipalBoundaryTest do
       grantor_uri: :capability_grantor,
       member: :member_identity,
       member_uri: :member_identity,
-      login_identity: :member_identity,
-      token_identity: :token_identity,
-      token_holder: :token_identity,
-      holder_uri: :token_identity
+      login_identity: :member_identity
     }
 
     def scan_source(source, path) do
@@ -61,10 +58,7 @@ defmodule Ezagent.DomainGit.GitTaskAccessPrincipalBoundaryTest do
             {node, own ++ authority_entries(entries, meta, tainted, path) ++ acc}
 
           {{:., _, [module, _function]}, meta, args} = node, acc when is_list(args) ->
-            own =
-              if system_principal?(module) and Enum.any?(args, &tainted?(&1, tainted)),
-                do: [site(:system_principal, meta, path)],
-                else: []
+            own = call_violations(module, node, args, meta, tainted, path)
 
             {node, own ++ acc}
 
@@ -107,6 +101,47 @@ defmodule Ezagent.DomainGit.GitTaskAccessPrincipalBoundaryTest do
     defp system_principal?({:__aliases__, _, parts}), do: List.last(parts) == :SystemPrincipal
     defp system_principal?(_module), do: false
 
+    defp call_violations(
+           module,
+           {{:., _, [_module, function]}, _, _args},
+           args,
+           meta,
+           tainted,
+           path
+         ) do
+      category =
+        cond do
+          system_principal?(module) ->
+            :system_principal
+
+          exact_module?(module, [:Ezagent, :Entity, :Token]) and function == :mint ->
+            :token_identity
+
+          exact_module?(module, [:Ezagent, :EntityCaps]) and function in [:persist, :grant] ->
+            :capability_holder
+
+          exact_module?(module, [:Ezagent, :Entity, :Profile]) and function == :upsert ->
+            :member_identity
+
+          true ->
+            nil
+        end
+
+      case {category, args} do
+        {nil, _args} ->
+          []
+
+        {category, [principal | _rest]} ->
+          if tainted?(principal, tainted), do: [site(category, meta, path)], else: []
+
+        {_category, []} ->
+          []
+      end
+    end
+
+    defp exact_module?({:__aliases__, _, parts}, parts), do: true
+    defp exact_module?(_module, _parts), do: false
+
     defp child_blocks({:defmodule, _, [_name, [do: body]]}), do: [body]
     defp child_blocks({kind, _, [_head, [do: body]]}) when kind in [:def, :defp], do: [body]
     defp child_blocks(_expression), do: []
@@ -130,7 +165,7 @@ defmodule Ezagent.DomainGit.GitTaskAccessPrincipalBoundaryTest do
         invocation_caller: "%Ezagent.Invocation{caller:\n  task_access_uri\n}",
         capability_grantor: "%Ezagent.Capability{granted_by:\n  receiver\n}",
         member_identity: "%{member_uri:\n  receiver\n}",
-        token_identity: "%{token_holder:\n  receiver\n}",
+        token_identity: "Ezagent.Entity.Token.mint(\n  receiver,\n  label: \"fixture\"\n)",
         system_principal: "Ezagent.SystemPrincipal.new(\n  receiver\n)"
       ] do
     test "detects #{category} independently across multiline local bindings" do
@@ -143,5 +178,45 @@ defmodule Ezagent.DomainGit.GitTaskAccessPrincipalBoundaryTest do
       assert [{unquote(category), "fixture.ex", _line}] =
                Detector.scan_source(source, "fixture.ex")
     end
+  end
+
+  for {category, fixture} <- [
+        member_identity:
+          "Ezagent.Entity.Profile.upsert(%{entity_uri: receiver, display_name: \"Fixture\"})",
+        capability_holder: "Ezagent.EntityCaps.persist(receiver, caps)",
+        capability_holder: "Ezagent.EntityCaps.grant(receiver, cap)"
+      ] do
+    test "detects real #{category} production call shape: #{fixture}" do
+      source =
+        """
+        task_access_uri = GitTaskAccess.uri_from_args(policy)
+        receiver = task_access_uri
+        """ <> unquote(fixture)
+
+      assert [{unquote(category), "fixture.ex", _line}] =
+               Detector.scan_source(source, "fixture.ex")
+    end
+  end
+
+  test "allows task access only as operation receiver and exact grantee_uri" do
+    source = """
+    task_access_uri = GitTaskAccess.uri_from_args(policy)
+    operation = %Ezagent.Invocation{target: task_access_uri}
+    capability = %Ezagent.Capability{grantee_uri: task_access_uri}
+    """
+
+    assert Detector.scan_source(source, "fixture.ex") == []
+  end
+
+  test "does not flag real principal APIs without a GitTaskAccess value" do
+    source = """
+    user_uri = Ezagent.URI.user("acme", "owner")
+    Ezagent.Entity.Token.mint(user_uri, label: "fixture")
+    Ezagent.Entity.Profile.upsert(%{entity_uri: user_uri, display_name: "Owner"})
+    Ezagent.EntityCaps.persist(user_uri, caps)
+    Ezagent.EntityCaps.grant(user_uri, cap)
+    """
+
+    assert Detector.scan_source(source, "fixture.ex") == []
   end
 end
