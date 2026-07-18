@@ -122,6 +122,46 @@ defmodule Ezagent.PluginCc.Template.CcHeadlessAgentTest do
       {:ok, agent_uri: agent_uri, tmp_dir: tmp_dir}
     end
 
+    # #1323 threading lock: the launch glue must hand the sidecar the agent's
+    # cwd / config_dir / explicit MCP surface unchanged — config_dir is the
+    # anchor the worker resolves `.mcp.json` from (route B).
+    test "threads cwd / config_dir / explicit mcp_servers from the template", ctx do
+      tmpl = %{
+        "class" => "cc_headless.agent",
+        "cwd" => "/tmp/agent-cwd",
+        # resolve_config_home returns agent_config_dir verbatim when present
+        # (post-materialization key) — the dir the worker points mcp_servers at.
+        "agent_config_dir" => "/tmp/agent-cfg",
+        "allowed_tools" => ["Bash"],
+        "mcp_servers" => %{"custom" => %{"type" => "stdio", "command" => "x"}}
+      }
+
+      params = CcHeadlessAgent.sdk_sidecar_params(ctx.agent_uri, tmpl)
+
+      assert params.cwd == "/tmp/agent-cwd"
+      assert params.config_dir == "/tmp/agent-cfg"
+      assert params.allowed_tools == ["Bash"]
+      assert params.mcp_servers == %{"custom" => %{"type" => "stdio", "command" => "x"}}
+    end
+
+    # PTY parity (live e2e 2026-07-17): PTY `claude` runs with
+    # `--dangerously-skip-permissions` (spawn_plan.ex argv); headless ran
+    # `permission_mode=default`, so with NOBODY able to answer a prompt, every
+    # Read of skill references / Bash outside cwd / Write hung on approval and
+    # the kanban-assistant could not execute its own skill. The real boundary
+    # for a role-agent is CapBAC on every CLI dispatch — not the local prompt.
+    test "permission_mode defaults to bypassPermissions (PTY parity), template overrides", ctx do
+      base = %{"cwd" => "/tmp/agent-cwd", "agent_config_dir" => "/tmp/agent-cfg"}
+
+      assert CcHeadlessAgent.sdk_sidecar_params(ctx.agent_uri, base).permission_mode ==
+               "bypassPermissions"
+
+      explicit = Map.put(base, "permission_mode", "default")
+
+      assert CcHeadlessAgent.sdk_sidecar_params(ctx.agent_uri, explicit).permission_mode ==
+               "default"
+    end
+
     test "includes plugins when config_dir has .claude-plugin/plugin.json", ctx do
       config_dir = Path.join(ctx.tmp_dir, "g1-plugin-#{System.unique_integer([:positive])}")
       File.mkdir_p!(Path.join(config_dir, ".claude-plugin"))

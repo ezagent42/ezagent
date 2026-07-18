@@ -1,5 +1,5 @@
 import React from "react"
-import {BadgeCheck, Bot, Boxes, Cable, Check, ChevronRight, Layers, Pencil, Plug, Plus, Save, Trash2, UserRound, X} from "lucide-react"
+import {BadgeCheck, Bot, Boxes, Cable, Check, ChevronRight, Copy, Layers, Pencil, Plug, Plus, Save, TicketCheck, Trash2, UserRound, X} from "lucide-react"
 
 import {Button, EmptyState, Input, Stat} from "./ui/primitives"
 
@@ -10,6 +10,10 @@ export type WorkspacePluginState = {
   auto_derive_notice?: string | null
   caps_count?: number
   caps_path?: string | null
+  can_manage_invites?: boolean
+  invite_error?: string | null
+  invite_notice?: string | null
+  invites?: DataRow[]
   component?: string
   detail?: DataRow
   detail_error?: string
@@ -18,6 +22,10 @@ export type WorkspacePluginState = {
   entity_options?: unknown[]
   entity_uri?: string | null
   error?: string
+  kb_agents?: DataRow[]
+  kb_error?: string | null
+  kb_hits?: DataRow[]
+  kb_notice?: string | null
   focus_slug?: string | null
   instances?: DataRow[]
   kind?: string | null
@@ -79,6 +87,9 @@ export function WorkspacePluginSurface({
       break
     case "auto_derive":
       content = <AutoDerive state={state} onAction={onAction} />
+      break
+    case "kb":
+      content = <KnowledgeBase state={state} onAction={onAction} />
       break
     case "feishu_bindings":
       content = <FeishuBindings state={state} onAction={onAction} />
@@ -146,7 +157,7 @@ export function ManageFrame({
 }
 
 function manageActiveFor(component?: string) {
-  if (component === "plugins" || component === "auto_derive") return "plugins"
+  if (component === "plugins" || component === "auto_derive" || component === "kb") return "plugins"
   if (component === "feishu_bindings") return "integrations"
   return "workspace"
 }
@@ -259,10 +270,108 @@ function WorkspaceDetail({
           {(state.members || []).length === 0 && <EmptyState label="No entries." />}
         </div>
       </section>
+      {state.can_manage_invites && <WorkspaceInvites state={state} onAction={onAction} />}
       <SessionTemplateList state={state} />
       <DataTable component="workspace-routing" title="Routing rules" rows={state.routing_rules || []} nested />
     </section>
   )
+}
+
+function WorkspaceInvites({
+  state,
+  onAction,
+}: {
+  state: WorkspacePluginState
+  onAction: (action: string, args: Record<string, unknown>) => void
+}) {
+  const [maxUses, setMaxUses] = React.useState(1)
+  const [expiresInHours, setExpiresInHours] = React.useState(72)
+  const invites = state.invites || []
+
+  return (
+    <section className={subsectionClass} data-world-component="workspace-invites">
+      <Header eyebrow="Access" title="Registration invites" icon={<TicketCheck className="h-4 w-4" />} compact />
+      <p className="text-sm text-muted-foreground">
+        Create a scoped link for a teammate. The invite only joins this workspace and can be revoked at any time.
+      </p>
+      {state.invite_notice && <p className="text-sm text-emerald-600 dark:text-emerald-400">{humanInviteMessage(state.invite_notice)}</p>}
+      {state.invite_error && <p className="text-sm text-destructive">{humanInviteMessage(state.invite_error)}</p>}
+      <form
+        id="world-workspace-invite-form"
+        className="grid gap-3 rounded-md border border-border bg-background p-3 sm:grid-cols-[1fr_1fr_auto] sm:items-end"
+        onSubmit={(event) => {
+          event.preventDefault()
+          onAction("workspace.invite.mint", {max_uses: maxUses, expires_in_hours: expiresInHours})
+        }}
+      >
+        <label className={fieldLabelClass} htmlFor="world-invite-max-uses">
+          Maximum uses
+          <Input
+            id="world-invite-max-uses"
+            type="number"
+            min={1}
+            max={10000}
+            value={maxUses}
+            onChange={(event) => setMaxUses(Number(event.target.value))}
+          />
+        </label>
+        <label className={fieldLabelClass} htmlFor="world-invite-expiry-hours">
+          Expires after (hours)
+          <Input
+            id="world-invite-expiry-hours"
+            type="number"
+            min={1}
+            max={8760}
+            value={expiresInHours}
+            onChange={(event) => setExpiresInHours(Number(event.target.value))}
+          />
+        </label>
+        <Button type="submit">
+          <Plus size={16} />
+          Create invite
+        </Button>
+      </form>
+      <div className="space-y-2" id="world-workspace-invites">
+        {invites.map((invite) => {
+          const code = String(invite.code || "")
+          const link = `${window.location.origin}/register?invite=${encodeURIComponent(code)}`
+          const active = invite.status === "active"
+
+          return (
+            <div className="grid gap-2 rounded-md border border-border bg-background p-3 sm:grid-cols-[minmax(0,1fr)_auto]" key={String(invite.id || code)}>
+              <div className="min-w-0 space-y-1">
+                <div className="flex flex-wrap items-center gap-2">
+                  <strong className="text-sm text-foreground">{String(invite.status || "unknown")}</strong>
+                  <span className="text-xs text-muted-foreground">{String(invite.used_count || 0)} / {String(invite.max_uses || 1)} uses</span>
+                </div>
+                <code className="block truncate font-mono text-xs text-muted-foreground">{link}</code>
+              </div>
+              <div className="flex items-center gap-2">
+                <button className={iconButtonClass} type="button" title="Copy registration link" onClick={() => navigator.clipboard.writeText(link)}>
+                  <Copy size={16} />
+                </button>
+                {active && (
+                  <button className={iconButtonClass} type="button" title="Revoke invite" onClick={() => onAction("workspace.invite.revoke", {code})}>
+                    <Trash2 size={16} />
+                  </button>
+                )}
+              </div>
+            </div>
+          )
+        })}
+        {invites.length === 0 && <EmptyState label="No registration invites yet." />}
+      </div>
+    </section>
+  )
+}
+
+function humanInviteMessage(message: string) {
+  const messages: Record<string, string> = {
+    invite_created: "Invite created. Copy the link below and send it to your teammate.",
+    invite_revoked: "Invite revoked. It can no longer be used.",
+    unauthorized: "You do not have permission to manage invites for this workspace.",
+  }
+  return messages[message] || message
 }
 
 function SessionTemplateList({
@@ -278,6 +387,114 @@ function SessionTemplateList({
       <DataTable component="workspace-templates" title="Saved templates" rows={state.session_templates || []} nested />
     </section>
   )
+}
+
+function KnowledgeBase({
+  state,
+  onAction,
+}: {
+  state: WorkspacePluginState
+  onAction: (action: string, args: Record<string, unknown>) => void
+}) {
+  const agents = state.kb_agents || []
+  const [agentUri, setAgentUri] = React.useState(String(agents[0]?.uri || ""))
+  const [query, setQuery] = React.useState("")
+  const [sourceUri, setSourceUri] = React.useState("")
+
+  React.useEffect(() => {
+    if (!agentUri && agents[0]?.uri) setAgentUri(String(agents[0].uri))
+  }, [agents, agentUri])
+
+  return (
+    <section className={surfaceClass} data-world-component="kb">
+      <Header eyebrow="Plugin" title="Knowledge Base" icon={<Layers className="h-4 w-4" />} />
+      <p className="text-sm text-muted-foreground">
+        Ingest registered workspace sources and search them with provenance through a passive KB Agent.
+      </p>
+      {agents.length === 0 ? (
+        <EmptyState label="No KB Agent is available in this workspace. Create a role-based Agent with the kb recipe first." />
+      ) : (
+        <>
+          <label className={fieldLabelClass} htmlFor="world-kb-agent">
+            KB Agent
+            <select
+              id="world-kb-agent"
+              className={selectClass}
+              value={agentUri}
+              onChange={(event) => setAgentUri(event.target.value)}
+            >
+              {agents.map((agent) => (
+                <option key={String(agent.uri)} value={String(agent.uri)}>
+                  {String(agent.display_name || agent.uri)}
+                </option>
+              ))}
+            </select>
+          </label>
+          {state.kb_notice && <p className="text-sm text-emerald-600 dark:text-emerald-400">{humanKbMessage(state.kb_notice)}</p>}
+          {state.kb_error && <p className="text-sm text-destructive">{humanKbMessage(state.kb_error)}</p>}
+          <form
+            id="world-kb-ingest-form"
+            className="grid gap-3 rounded-md border border-border bg-background p-3 sm:grid-cols-[1fr_auto] sm:items-end"
+            onSubmit={(event) => {
+              event.preventDefault()
+              onAction("kb.ingest", {agent_uri: agentUri, source_uri: sourceUri})
+            }}
+          >
+            <label className={fieldLabelClass} htmlFor="world-kb-source-uri">
+              Source URI
+              <Input
+                id="world-kb-source-uri"
+                value={sourceUri}
+                onChange={(event) => setSourceUri(event.target.value)}
+                placeholder="resource://my-workspace/kb-source/handbook"
+              />
+            </label>
+            <Button type="submit">Ingest source</Button>
+          </form>
+          <form
+            id="world-kb-query-form"
+            className="grid gap-3 rounded-md border border-border bg-background p-3 sm:grid-cols-[1fr_auto] sm:items-end"
+            onSubmit={(event) => {
+              event.preventDefault()
+              onAction("kb.query", {agent_uri: agentUri, query, k: 5})
+            }}
+          >
+            <label className={fieldLabelClass} htmlFor="world-kb-query">
+              Search
+              <Input
+                id="world-kb-query"
+                value={query}
+                onChange={(event) => setQuery(event.target.value)}
+                placeholder="What is our incident response policy?"
+              />
+            </label>
+            <Button variant="primary" type="submit">Search KB</Button>
+          </form>
+          <div className="space-y-2" id="world-kb-hits">
+            {(state.kb_hits || []).map((hit, index) => (
+              <article className="space-y-2 rounded-md border border-border bg-background p-3" key={String(hit.chunk_id || index)}>
+                <div className="flex flex-wrap items-center justify-between gap-2 text-xs text-muted-foreground">
+                  <code>{String(hit.source_uri || "unknown source")}</code>
+                  <span>score {String(hit.score ?? "-")}</span>
+                </div>
+                <p className="whitespace-pre-wrap text-sm text-foreground">{String(hit.text || "")}</p>
+              </article>
+            ))}
+            {(state.kb_hits || []).length === 0 && <EmptyState label="Search results will appear here." />}
+          </div>
+        </>
+      )}
+    </section>
+  )
+}
+
+function humanKbMessage(message: string) {
+  if (message === "query_complete") return "Search complete."
+  if (message.startsWith("ingested:")) return `Ingested ${message.split(":")[1]} chunks.`
+  if (message === "unauthorized") return "You do not have permission to perform this KB operation."
+  if (message === "query_required") return "Enter a search query."
+  if (message === "source_uri_required") return "Enter a registered kb-source URI."
+  return message
 }
 
 type SocialwareRole = {

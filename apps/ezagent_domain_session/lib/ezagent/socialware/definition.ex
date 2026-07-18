@@ -30,7 +30,9 @@ defmodule Ezagent.Socialware.Definition do
 
   @typedoc """
   A socialware-declared participant role slot. Agent slots name a recipe and
-  default flavor; human slots are open runtime assignment slots.
+  default flavor; human slots are open runtime assignment slots. The optional
+  `provider` names a cc-custom backend profile (spec 2026-07-17 Q2 — additive,
+  shape-only here; the plugin catalog validates the NAME at materialization).
   """
   @type operate_edge :: %{role: String.t(), behavior: module(), action: atom()}
   @type role_slot ::
@@ -39,6 +41,7 @@ defmodule Ezagent.Socialware.Definition do
             required(:fill) => :agent,
             required(:recipe) => String.t(),
             required(:flavor) => String.t(),
+            optional(:provider) => String.t(),
             optional(:operates) => [operate_edge()]
           }
           | %{role_name: String.t(), fill: :human}
@@ -299,7 +302,11 @@ defmodule Ezagent.Socialware.Definition do
                  non_empty_string?(flavor),
              {:ok, operates} <- operates_list(item, role_name) do
           slot = %{role_name: role_name, fill: :agent, recipe: recipe, flavor: flavor}
-          {:ok, maybe_put_operates(slot, operates)}
+
+          {:ok,
+           slot
+           |> maybe_put_provider(item)
+           |> maybe_put_operates(operates)}
         else
           false -> {:error, {:invalid_socialware_role_slot, item}}
           {:error, _} = error -> error
@@ -378,6 +385,19 @@ defmodule Ezagent.Socialware.Definition do
 
   defp maybe_put_operates(slot, []), do: slot
   defp maybe_put_operates(slot, operates), do: Map.put(slot, :operates, operates)
+
+  # Optional cc-custom backend profile NAME (spec 2026-07-17 Q2): additive and
+  # shape-only — absent/empty leaves the key out (legacy slots byte-unchanged);
+  # the plugin catalog fail-closed-validates the name at materialization.
+  defp maybe_put_provider(slot, item) do
+    case get(item, :provider) do
+      provider when is_binary(provider) and provider != "" ->
+        Map.put(slot, :provider, provider)
+
+      _ ->
+        slot
+    end
+  end
 
   defp validate_operates_roles(roles) do
     roles_by_name = Map.new(roles, &{&1.role_name, &1})

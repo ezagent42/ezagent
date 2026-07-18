@@ -111,7 +111,7 @@ defmodule Ezagent.World.AdminData do
   def settings_state(caller_uri) do
     smtp_config = Ezagent.AppSettings.get("smtp_config") || %{}
 
-    %{
+    settings = %{
       "smtp_configured" => Ezagent.AppSettings.smtp_configured?(),
       "smtp" => %{
         "host" => Map.get(smtp_config, "host", ""),
@@ -125,8 +125,26 @@ defmodule Ezagent.World.AdminData do
       "smtp_test_result" => nil,
       "smtp_flash" => nil
     }
+
+    if Ezagent.Identity.admin?(caller_uri) do
+      Map.merge(settings, %{
+        "can_manage_registration" => true,
+        "registration_open" => Ezagent.AppSettings.registration_open?(),
+        "registration_require_invite" => Ezagent.AppSettings.registration_require_invite?(),
+        "registration_requests" => registration_requests(),
+        "registration_flash" => nil
+      })
+    else
+      Map.put(settings, "can_manage_registration", false)
+    end
   rescue
     err -> %{"error" => inspect(err)}
+  end
+
+  defp registration_requests do
+    Enum.map(Ezagent.Entity.RegistrationRequest.list_pending(), fn request ->
+      %{"email" => request.email, "requested_at" => request.updated_at}
+    end)
   end
 
   defp default_test_recipient(%URI{} = caller_uri) do

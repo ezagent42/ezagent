@@ -176,13 +176,16 @@ jobs:
       # Postgres may be listening on 55432 — CI runs its OWN ephemeral Postgres
       # on 55440 so the two never fight over the port or share data.
       POSTGRES_PORT: "55440"
-      # cc-deepseek orchestrator credential (#1324): a clearly-FAKE dummy so the
-      # `Provider.ensure_api_key/1` pre-check at `instantiate/3` passes and the
-      # orchestrator materializes in tests. In `:test` the real `claude`
-      # subprocess is short-circuited (SpawnPlan `test_mode` — no `build_claude_cmd`,
-      # no `:exec.run`), so this key NEVER reaches the network. Belt for the runner
-      # env; `config/test.exs` sets the same fallback for a local `mix ci.local`.
+      # cc-custom orchestrator credential (#1324; cc-custom-backends PR-5): a
+      # clearly-FAKE dummy so the `Provider.ensure_api_key/2` pre-check at
+      # `instantiate/3` passes and the orchestrator materializes in tests. In
+      # `:test` the real `claude` subprocess is short-circuited (SpawnPlan
+      # `test_mode` — no `build_claude_cmd`, no `:exec.run`), so this key NEVER
+      # reaches the network. Belt for the runner env; `config/test.exs` sets
+      # the same fallbacks for a local `mix ci.local`. MOONSHOT_API_KEY is the
+      # catalog's "kimi" profile twin.
       DEEPSEEK_API_KEY: sk-test-dummy-deepseek-not-a-real-key
+      MOONSHOT_API_KEY: sk-test-dummy-moonshot-not-a-real-key
     steps:
       - uses: actions/checkout@v4
 

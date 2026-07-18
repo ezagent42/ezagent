@@ -60,12 +60,18 @@ defmodule Ezagent.Agent.CredentialPrecondition do
   Call this AFTER `HostLoginAdopt.ensure_installer_source/3` — for the host
   operator that call registers the pointer this reads, so the admin path
   resolves and is never skipped.
+
+  `opts[:backend_profile]` (cc-custom) names the SELECTED backend profile
+  whose API-key env var is probed — the caller threads it from the role slot's
+  `provider`. Absent, an environment-backed flavor probes its DEFAULT
+  credential (legacy flavors unchanged); a profile-driven flavor with no
+  profile context fails CLOSED (`:unknown` → skip, never a silent pass).
   """
-  @spec check_source(URI.t(), URI.t(), String.t()) :: :ok | {:skip, term()}
-  def check_source(%URI{} = installer, %URI{} = workspace_uri, flavor)
-      when is_binary(flavor) do
+  @spec check_source(URI.t(), URI.t(), String.t(), keyword()) :: :ok | {:skip, term()}
+  def check_source(%URI{} = installer, %URI{} = workspace_uri, flavor, opts \\ [])
+      when is_binary(flavor) and is_list(opts) do
     case template_class(flavor) do
-      {:ok, module} -> check_source(module, installer, workspace_uri, flavor)
+      {:ok, module} -> check_source(module, installer, workspace_uri, flavor, opts)
       _ -> :ok
     end
   end
@@ -75,7 +81,7 @@ defmodule Ezagent.Agent.CredentialPrecondition do
   of the flavor's `credential_relpaths/0`, else
   `{:skip, {:config_home_without_credentials, flavor}}`.
 
-  The safety net for the class `check_source/3` cannot see: a source that
+  The safety net for the class `check_source/4` cannot see: a source that
   resolves but whose copy silently produces nothing (#1311's missing
   `host_login_dir/0` delegate was exactly this).
   """
@@ -106,7 +112,7 @@ defmodule Ezagent.Agent.CredentialPrecondition do
       not is_nil(WorkspaceSharedSource.resolve(workspace_uri, flavor))
   end
 
-  defp check_source(module, installer, workspace_uri, flavor) do
+  defp check_source(module, installer, workspace_uri, flavor, opts) do
     cond do
       credential_relpaths(module) != [] ->
         if source_available?(installer, workspace_uri, flavor),
@@ -114,7 +120,7 @@ defmodule Ezagent.Agent.CredentialPrecondition do
           else: {:skip, {:no_credential_source, flavor}}
 
       environment_credential?(module) ->
-        case module.credential_status(nil, []) do
+        case module.credential_status(nil, backend_profile: opts[:backend_profile]) do
           %{status: :authenticated} -> :ok
           _ -> {:skip, {:credential_unavailable, flavor}}
         end

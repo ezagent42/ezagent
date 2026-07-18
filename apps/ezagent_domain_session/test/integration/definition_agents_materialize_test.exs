@@ -59,11 +59,11 @@ defmodule EzagentDomainInstanceMessage.Integration.DefinitionAgentsMaterializeTe
     end
   end
 
-  # A flavor whose credential is an ENV VAR (like deepseek's `DEEPSEEK_API_KEY`),
+  # A flavor whose credential is an ENV VAR (like deepseek's API-key env var),
   # so the file-based pre-flight `CredentialPrecondition.check_source/3` waves it
   # through and the missing-credential surfaces only at spawn as
-  # `{:deepseek_api_key_missing, uri}`. Mirrors the real cc-deepseek orchestrator
-  # in a keyless env (every CI without the key).
+  # `{:backend_api_key_missing, profile, uri}`. Mirrors the real cc-custom
+  # (deepseek-profile) orchestrator in a keyless env (every CI without the key).
   defmodule DeepseekMissingStubTemplate do
     @moduledoc false
     @behaviour Ezagent.Kind.Template
@@ -77,7 +77,72 @@ defmodule EzagentDomainInstanceMessage.Integration.DefinitionAgentsMaterializeTe
 
     @impl Ezagent.Kind.Template
     def instantiate(_name, data, _workspace_uri) do
-      {:error, {:deepseek_api_key_missing, Ezagent.URI.new!(data["agent_uri"])}}
+      {:error, {:backend_api_key_missing, "deepseek", Ezagent.URI.new!(data["agent_uri"])}}
+    end
+  end
+
+  # An ENV-credential flavor whose probe is PROFILE-DRIVEN (mirrors cc-custom):
+  # `credential_status/2` classifies on the `:backend_profile` opt — "kimi"
+  # reads `MOONSHOT_API_KEY`; no/unknown profile → `:unknown` (fail closed).
+  # Declares NO on-disk credential files, so `check_source` takes the
+  # environment branch and the role slot's `provider` opt decides the verdict.
+  defmodule EnvProfileStubTemplate do
+    @moduledoc false
+    @behaviour Ezagent.Kind.Template
+    @behaviour Ezagent.Agent.CredentialAdapter
+
+    # ENV-backed credential — NO on-disk credential files (mirrors
+    # `FakeCcCustomTemplate`), so `check_source` takes the environment branch.
+    @impl Ezagent.Agent.CredentialAdapter
+    def credential_env_var, do: "MOONSHOT_API_KEY"
+
+    @impl Ezagent.Agent.CredentialAdapter
+    def credential_relpaths, do: []
+
+    @impl Ezagent.Agent.CredentialAdapter
+    def secret_relpaths, do: []
+
+    @impl Ezagent.Agent.CredentialAdapter
+    def auth_failure_signals, do: []
+
+    @impl Ezagent.Agent.CredentialAdapter
+    def credential_status(_home, opts) do
+      case Keyword.get(opts, :backend_profile) do
+        "kimi" ->
+          case System.get_env("MOONSHOT_API_KEY") do
+            key when is_binary(key) and key != "" ->
+              %{status: :authenticated, detail: nil, expires_at: nil}
+
+            _ ->
+              %{status: :missing, detail: "MOONSHOT_API_KEY not set", expires_at: nil}
+          end
+
+        _ ->
+          %{status: :unknown, detail: nil, expires_at: nil}
+      end
+    end
+
+    @impl Ezagent.Kind.Template
+    def template_name, do: "definition_agents.env_profile_stub"
+
+    @impl Ezagent.Kind.Template
+    def validate(%{"agent_uri" => agent_uri}) when is_binary(agent_uri), do: :ok
+    def validate(_), do: {:error, :invalid_env_profile_stub_template}
+
+    @impl Ezagent.Kind.Template
+    def instantiate(_name, data, _workspace_uri) do
+      uri = Ezagent.URI.new!(data["agent_uri"])
+
+      case Ezagent.Kind.spawn(Ezagent.Entity.Agent, %{
+             uri: uri,
+             behaviors: Ezagent.Entity.Agent.base_behaviors(),
+             role: data["role"]
+           }) do
+        {:ok, _pid} -> {:ok, [uri], %{fresh?: true, config_dir_path: nil}}
+        {:error, {:already_started, _pid}} -> {:ok, [uri], %{fresh?: false}}
+        {:error, {:already_registered, _}} -> {:ok, [uri], %{fresh?: false}}
+        {:error, reason} -> {:error, reason}
+      end
     end
   end
 
@@ -166,6 +231,38 @@ defmodule EzagentDomainInstanceMessage.Integration.DefinitionAgentsMaterializeTe
         kind: Ezagent.Entity.Agent,
         template_class: DeepseekMissingStubTemplate
       })
+
+    flavor
+  end
+
+  defp register_env_profile_flavor(n) do
+    flavor = "definition_agents_env_profile_#{n}"
+
+    :ok =
+      Ezagent.AgentFlavorRegistry.register(%{
+        flavor: flavor,
+        kind: Ezagent.Entity.Agent,
+        template_class: EnvProfileStubTemplate
+      })
+
+    # EnvProfileStubTemplate is a CREDENTIALLED flavor (declares the full
+    # CredentialAdapter declarative group), so `RecipeMaterializer.config_dir_ref/2`
+    # resolves a config home through the FsResolver — register the stub's
+    # `"<namespace>-agents"` type test-only (mirrors the plugin's
+    # `config_dir_resource_types/1` shape). Tolerate an earlier identical
+    # registration (first-writer-wins; only unregister when WE registered).
+    type = "definition_agents.env_profile_stub-agents"
+
+    case Ezagent.Resource.FsResolver.register_type(type, %{
+           backend_component: type,
+           authority: &Ezagent.Resource.FsResolver.config_dir_authority/2
+         }) do
+      :ok ->
+        on_exit(fn -> Ezagent.Resource.FsResolver.unregister_type(type) end)
+
+      {:error, {:already_registered, ^type}} ->
+        :ok
+    end
 
     flavor
   end
@@ -943,8 +1040,9 @@ defmodule EzagentDomainInstanceMessage.Integration.DefinitionAgentsMaterializeTe
   end
 
   # Regression (WorldConversationTest PR-6 / O-1 flake): a role whose spawn fails
-  # with a MISSING-CREDENTIAL reason (`:deepseek_api_key_missing`, the keyless-CI
-  # condition for the cc-deepseek orchestrator) must be classified as a SKIP, not
+  # with a MISSING-CREDENTIAL reason (`{:backend_api_key_missing, _, _}`, the
+  # keyless-CI
+  # condition for the cc-custom orchestrator) must be classified as a SKIP, not
   # a hard error — so the batch CONTINUES and a co-declared credential-less role
   # (the py helper) still materializes. Pre-fix, the credential-missing role
   # returned `{:agent_spawn_failed, …}` → the `reduce_while` HALTED with an
@@ -985,6 +1083,94 @@ defmodule EzagentDomainInstanceMessage.Integration.DefinitionAgentsMaterializeTe
     members = members_of(session_uri)
     assert %URI{} = SessionBehavior.role_name_to_uri(members, ok_role)
     assert SessionBehavior.role_name_to_uri(members, cred_missing_role) == nil
+  end
+
+  test "a role slot's provider threads into the credential precondition (the cc-custom seam)" do
+    n = uniq()
+    session_uri = live_session(n)
+    recipe_name = seed_recipe(n)
+    env_flavor = register_env_profile_flavor(n)
+
+    previous = System.get_env("MOONSHOT_API_KEY")
+    System.delete_env("MOONSHOT_API_KEY")
+
+    on_exit(fn ->
+      if previous,
+        do: System.put_env("MOONSHOT_API_KEY", previous),
+        else: System.delete_env("MOONSHOT_API_KEY")
+    end)
+
+    role = "kimi-role-#{n}"
+
+    # Profile key UNSET: the selected profile's credential is unavailable → the
+    # slot is skipped loudly (never a silent zombie), with the
+    # `:credential_unavailable` reason from the environment branch.
+    assert {:ok, summary} =
+             DefinitionAgents.materialize_definition_agents(
+               session_uri,
+               @workspace_uri,
+               @owner_uri,
+               [
+                 %{
+                   "provider" => "kimi",
+                   recipe: recipe_name,
+                   role_name: role,
+                   flavor: env_flavor
+                 }
+               ]
+             )
+
+    assert [%{role_name: ^role, reason: {:credential_unavailable, ^env_flavor}}] =
+             summary.skipped
+
+    assert summary.satisfied == []
+
+    # Profile key SET: the SAME slot materializes and joins — the provider was
+    # threaded, not hardcoded.
+    System.put_env("MOONSHOT_API_KEY", "test-only-key")
+
+    assert {:ok, summary2} =
+             DefinitionAgents.materialize_definition_agents(
+               session_uri,
+               @workspace_uri,
+               @owner_uri,
+               [
+                 %{
+                   "provider" => "kimi",
+                   recipe: recipe_name,
+                   role_name: role,
+                   flavor: env_flavor
+                 }
+               ]
+             )
+
+    assert summary2.skipped == []
+    assert summary2.satisfied == [role]
+
+    members = members_of(session_uri)
+    assert %URI{} = member = SessionBehavior.role_name_to_uri(members, role)
+    on_exit(fn -> terminate(member) end)
+  end
+
+  test "a role slot with NO provider on an env-credential flavor fails closed (skip)" do
+    n = uniq()
+    session_uri = live_session(n)
+    recipe_name = seed_recipe(n)
+    env_flavor = register_env_profile_flavor(n)
+    role = "no-profile-#{n}"
+
+    assert {:ok, summary} =
+             DefinitionAgents.materialize_definition_agents(
+               session_uri,
+               @workspace_uri,
+               @owner_uri,
+               [%{recipe: recipe_name, role_name: role, flavor: env_flavor}]
+             )
+
+    assert [%{role_name: ^role, reason: {:credential_unavailable, ^env_flavor}}] =
+             summary.skipped
+
+    assert summary.satisfied == []
   end
 
   defp scoped_orchestrator_cap?(%Ezagent.Capability{} = cap) do
