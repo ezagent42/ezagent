@@ -31,6 +31,16 @@ defmodule Ezagent.CapabilityRegistryTest do
   alias Ezagent.{BehaviorRegistry, Capability, CapabilityRegistry}
   alias Ezagent.Entity.{Session, User}
 
+  setup do
+    for kind <- [Session, User],
+        action <- [:mock_test_action_d, :mock_test_action_d2, :declared_action] do
+      :ets.match_delete(Ezagent.CapabilityRegistry.Subjects.table(), {{kind, :_, action}, :_})
+      :ets.delete(BehaviorRegistry.table(), {kind, action})
+    end
+
+    :ok
+  end
+
   # Test fixture — a synthetic Behavior; cap-only by default for the
   # cap-only tests, override `dispatchable?/0` from the test cases that
   # need it dispatchable.
@@ -113,6 +123,73 @@ defmodule Ezagent.CapabilityRegistryTest do
   end
 
   describe "register/3 — idempotency + conflict" do
+    test "identical subject repairs its missing dispatch counterpart" do
+      action = :mock_test_action_d
+      :ok = CapabilityRegistry.unregister(Session, action, MockDispatchableBehavior)
+
+      :ets.insert(
+        Ezagent.CapabilityRegistry.Subjects.table(),
+        {{Session, MockDispatchableBehavior, action},
+         %{description: "mock dispatchable test action 1", dispatchable?: true}}
+      )
+
+      assert :existing_identical =
+               CapabilityRegistry.register_owned(Session, action, MockDispatchableBehavior)
+
+      assert {:ok, MockDispatchableBehavior} = BehaviorRegistry.lookup(Session, action)
+    end
+
+    test "conflicting dispatch counterpart rejects without changing either row" do
+      action = :mock_test_action_d
+      :ok = CapabilityRegistry.unregister(Session, action, MockDispatchableBehavior)
+
+      :ets.insert(
+        Ezagent.CapabilityRegistry.Subjects.table(),
+        {{Session, MockDispatchableBehavior, action},
+         %{description: "mock dispatchable test action 1", dispatchable?: true}}
+      )
+
+      :ok = BehaviorRegistry.register(Session, action, MockBehaviorWithoutAction)
+
+      assert {:error,
+              {:behavior_registry_conflict, Session, ^action, MockBehaviorWithoutAction,
+               MockDispatchableBehavior}} =
+               CapabilityRegistry.register_owned(Session, action, MockDispatchableBehavior)
+
+      assert {:ok, %{behavior: MockDispatchableBehavior}} =
+               CapabilityRegistry.lookup_subject(Session, action)
+
+      assert {:ok, MockBehaviorWithoutAction} = BehaviorRegistry.lookup(Session, action)
+    end
+
+    test "behavior-only split state is repaired into a paired registration" do
+      action = :mock_test_action_d
+      :ok = CapabilityRegistry.unregister(Session, action, MockDispatchableBehavior)
+      :ok = BehaviorRegistry.register(Session, action, MockDispatchableBehavior)
+
+      assert :acquired =
+               CapabilityRegistry.register_owned(Session, action, MockDispatchableBehavior)
+
+      assert {:ok, %{behavior: MockDispatchableBehavior}} =
+               CapabilityRegistry.lookup_subject(Session, action)
+
+      assert {:ok, MockDispatchableBehavior} = BehaviorRegistry.lookup(Session, action)
+    end
+
+    test "unregister removes only an exact paired declaration" do
+      action = :mock_test_action_d
+      :ok = CapabilityRegistry.unregister(Session, action, MockDispatchableBehavior)
+      :ok = CapabilityRegistry.register(Session, action, MockDispatchableBehavior)
+      :ok = BehaviorRegistry.register(Session, action, MockBehaviorWithoutAction)
+
+      assert :ok = CapabilityRegistry.unregister(Session, action, MockDispatchableBehavior)
+
+      assert {:ok, %{behavior: MockDispatchableBehavior}} =
+               CapabilityRegistry.lookup_subject(Session, action)
+
+      assert {:ok, MockBehaviorWithoutAction} = BehaviorRegistry.lookup(Session, action)
+    end
+
     test "register_owned atomically distinguishes acquired from identical ownership" do
       action = :mock_test_action_d2
       :ok = CapabilityRegistry.unregister(Session, action, MockDispatchableBehavior)

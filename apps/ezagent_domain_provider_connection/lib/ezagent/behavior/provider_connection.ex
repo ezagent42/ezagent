@@ -164,16 +164,14 @@ defmodule Ezagent.ActionSet.ProviderConnection do
   end
 
   defp invoke_assurance_validator(action, assurance, ctx) do
-    case Application.get_env(:ezagent_domain_provider_connection, :assurance_validator) do
-      fun when is_function(fun, 3) ->
-        fun.(action, assurance, ctx)
+    validator =
+      Application.get_env(
+        :ezagent_domain_provider_connection,
+        :assurance_validator,
+        Ezagent.ProviderConnection.UnavailableAssuranceValidator
+      )
 
-      module when is_atom(module) and not is_nil(module) ->
-        module.validate(action, assurance, ctx)
-
-      nil ->
-        {:error, :assurance_validation_unavailable}
-    end
+    Ezagent.ProviderConnection.AssuranceValidator.validate(validator, action, assurance, ctx)
   end
 
   defp invoke_boundary(action, args, ctx) do
