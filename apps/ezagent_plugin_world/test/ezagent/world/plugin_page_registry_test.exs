@@ -8,8 +8,9 @@ defmodule Ezagent.World.PluginPageRegistryTest do
   # 的 dispatch 准入面，必须是显式决策，不是注册表重构的副作用。
   # T6.4（显式决策）：`kanban.share_board` 加入 dispatch 准入白名单（分享看板动作）。
   # ⑲（显式决策 2026-07-16）：`kanban.delete_board` 加入白名单（板主人删板）。
+  # ㊲（显式决策 2026-07-18）：`kanban.download_artifact` 加入白名单（附件点击现签下载 token）。
   # 这份 verbatim 锁存在正是为了强制「改白名单 = 显式决策」，故随白名单一并更新。
-  @legacy_kanban_actions ~w(kanban.add_node kanban.rename_node kanban.move_node kanban.remove_node kanban.set_stage kanban.claim_node kanban.unclaim_node kanban.set_status kanban.attach_artifact kanban.detach_artifact kanban.set_metric kanban.create kanban.sync_miro kanban.save_miro_creds kanban.select_board kanban.drop_subtree kanban.set_board_config kanban.attach_upload kanban.register_pr kanban.attach_code_file kanban.share_board kanban.delete_board)
+  @legacy_kanban_actions ~w(kanban.add_node kanban.rename_node kanban.move_node kanban.remove_node kanban.set_stage kanban.claim_node kanban.unclaim_node kanban.set_status kanban.attach_artifact kanban.detach_artifact kanban.set_metric kanban.create kanban.sync_miro kanban.save_miro_creds kanban.select_board kanban.drop_subtree kanban.set_board_config kanban.attach_upload kanban.register_pr kanban.attach_code_file kanban.share_board kanban.delete_board kanban.download_artifact)
 
   describe "pages/0 shape" do
     test "every page carries the full registration shape" do

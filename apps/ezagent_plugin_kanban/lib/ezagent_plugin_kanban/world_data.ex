@@ -382,35 +382,10 @@ defmodule EzagentPluginKanban.WorldData do
 
   defp jsonable_map(m) when is_map(m), do: Map.new(m, fn {k, v} -> {to_string(k), v} end)
 
-  # file 类 artifact：url 是 uploads URI(resource://<ws>/uploads/…)，签发一个下载 href
-  # (DownloadToken，同 chat 附件)，让"打开"可下载；其余 artifact 原样。
-  defp jsonable_artifact(a) do
-    base = jsonable_map(a)
-    url = base["url"]
-
-    if base["kind"] == "file" and is_binary(url) do
-      case mint_download(url) do
-        {:ok, href} -> Map.put(base, "url", href)
-        _ -> base
-      end
-    else
-      base
-    end
-  end
-
-  # 仅当 url 解析为 resource:// URI（uploads 附件）时签发下载 href；
-  # 其余（非 URI / 别的 scheme）返回 :error，原样保留。scheme 判断走
-  # `Ezagent.URI.scheme?/2`，不裸比 `"resource://"` 字面。
-  defp mint_download(url) do
-    with {:ok, %URI{} = uri} <- Ezagent.URI.parse(url),
-         true <- Ezagent.URI.scheme?(uri, :resource) do
-      {:ok, "/uploads/download?token=" <> Ezagent.Uploads.DownloadToken.mint!(uri)}
-    else
-      _ -> :error
-    end
-  rescue
-    _ -> :error
-  end
+  # ㊲ file 类 artifact：url（uploads resource URI）**原样**下发，不再渲染期预签下载
+  # href——预签 TTL 300s，打开即过期（r3 ㊲ forbidden 根因之一）。下载改「点击现签」：
+  # 前端点「打开」dispatch `kanban.download_artifact`（WorldActions）现场签 fresh token。
+  defp jsonable_artifact(a), do: jsonable_map(a)
 
   defp to_str(nil), do: nil
   defp to_str(a) when is_atom(a), do: Atom.to_string(a)
