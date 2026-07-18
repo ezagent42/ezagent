@@ -6,6 +6,19 @@ defmodule EzagentDomainWorkspace.ApplicationBootTest do
   alias Ezagent.Workspace.TaskWorkspace.{Paths, Provisioner}
   alias EzagentDomainWorkspace.TestSupport.FailingBootChild
 
+  setup do
+    Application.delete_env(:ezagent_domain_workspace, :later_boot_children)
+    Application.stop(:ezagent_domain_workspace)
+    assert {:ok, _apps} = Application.ensure_all_started(:ezagent_domain_workspace)
+
+    on_exit(fn ->
+      Application.delete_env(:ezagent_domain_workspace, :later_boot_children)
+      Application.ensure_all_started(:ezagent_domain_workspace)
+    end)
+
+    :ok
+  end
+
   test "production boot registers the task path authority and provision port" do
     assert {:ok, Provisioner} = WorkspaceProvisionRegistry.implementation()
 
@@ -37,11 +50,6 @@ defmodule EzagentDomainWorkspace.ApplicationBootTest do
 
   test "a later child boot failure rolls back the Workspace supervisor and restart succeeds" do
     assert :ok = Application.stop(:ezagent_domain_workspace)
-
-    on_exit(fn ->
-      Application.delete_env(:ezagent_domain_workspace, :later_boot_children)
-      Application.ensure_all_started(:ezagent_domain_workspace)
-    end)
 
     Application.put_env(:ezagent_domain_workspace, :later_boot_children, [FailingBootChild])
 
