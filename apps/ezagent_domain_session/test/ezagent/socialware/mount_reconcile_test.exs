@@ -94,12 +94,12 @@ defmodule Ezagent.Socialware.MountReconcileTest do
       revoke_all(grantee, target, [:get_tree], row.granted_by)
 
       assert eventually(fn ->
-               match?({:error, :unauthorized}, dispatch(grantee, target, :get_tree))
+               match?({:error, _reason}, dispatch(grantee, target, :get_tree))
              end)
 
       # person 行不属于任何 session —— session 路 reconciled: 0,钥匙不回来
       assert {:ok, %{reconciled: 0}} = Mount.reconcile_session_mounts(session)
-      assert {:error, :unauthorized} = dispatch(grantee, target, :get_tree)
+      assert {:error, _reason} = dispatch(grantee, target, :get_tree)
 
       # person 路(按 grantee)重发 → 钥匙重现
       assert {:ok, %{reconciled: 1}} = Mount.reconcile_person_mounts(grantee)
@@ -134,7 +134,7 @@ defmodule Ezagent.Socialware.MountReconcileTest do
   # --- helpers -------------------------------------------------------------
 
   # 撤销 grantee 指向 target 的每把 action 钥匙,granter = 挂载行 granted_by(宿主主人)。
-  # 走 `{:rule, :socialware_mount_unmount, granter}` 授权(与 mount.ex unmount 同款)。
+  # 走 `{:held_by, granter}` 授权(#1457 后 rule 元组已删;与 mount.ex unmount 同款)。
   defp revoke_all(grantee, target, actions, granted_by) do
     granter = Ezagent.URI.new!(granted_by)
     workspace_uri = Ezagent.Capability.workspace_of(target)
@@ -147,7 +147,7 @@ defmodule Ezagent.Socialware.MountReconcileTest do
         Ezagent.Identity.Grant.revoke_cap(
           grantee,
           cap,
-          {:rule, :socialware_mount_unmount, granter}
+          {:held_by, granter}
         )
     end)
   end

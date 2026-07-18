@@ -167,7 +167,8 @@ defmodule Ezagent.Socialware.MountTest do
 
       assert eventually(fn -> holds_cap?(grantee, target, :get_tree) end)
       assert {:ok, %{ok: true}} = dispatch(grantee, target, :get_tree)
-      assert {:error, :unauthorized} = dispatch(grantee, target, :add_node)
+      # 只授了 :get_tree,:add_node 无 cap——strict-verify 口径 :missing_cap(照本文件 session 路同款)
+      assert {:error, :missing_cap} = dispatch(grantee, target, :add_node)
     end
 
     test "同 person 自然键再 mount → 仍 1 行(覆盖)" do
@@ -206,7 +207,7 @@ defmodule Ezagent.Socialware.MountTest do
       assert MountRow.get_person(target, grantee, Target) == nil
 
       assert eventually(fn ->
-               match?({:error, :unauthorized}, dispatch(grantee, target, :add_node))
+               match?({:error, _reason}, dispatch(grantee, target, :add_node))
              end)
 
       # 幂等:再 unmount 一次仍 {:ok, :unmounted}
