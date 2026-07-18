@@ -94,3 +94,59 @@
 
 ## 补充(2026-07-18):「操作物化消息」升格为 PR-A 一等任务(完整版)
 不止 attach——**所有 kanban 写操作**成功后以操作者身份物化 `visibility: :internal, hops: 0` 消息进当前会话(不显示于 chat,只留痕/立「一切操作皆对话」心智模型)。实现点=act/act_board 成功路径(与 kanban_changed 广播同点,+一条 session.send);attach 的消息带附件引用(同会话成员经消息参与可下载)。
+
+---
+
+## v2 终版(2026-07-18 按实际代码落点 file 级重切;取代上方 PR 总表的切分口径)
+
+> 铁律:① kanban PR(下称 **PR-K**)=纯应用层,代码只落 `apps/ezagent_plugin_kanban/` 或 `apps/ezagent_web/priv/socialware_seed/kanban/`,加下述「kanban 专属文件例外清单」;② 每个 infra 问题一个 handoff PR 给 Allen(D1-D6 已拍的也补记录型 handoff);③ 确定性 infra 先行,PR-K 同步动。
+> handoff 全集:`docs/together/2026-07-18/handoffs/`(9 份,见下表)。
+
+### 边界判定:Kanban.tsx 归属(现读定论)
+
+**结论:`Kanban.tsx` / `KanbanCanvas.tsx` 改动算 kanban 应用层,进 PR-K。** 判定标准是**文件专属性**,不是物理目录:
+
+- D6 已拍「缓」——plugin-UI 注册机制(债②)本轮不动,**D6 落地前这些文件是 kanban view 的唯一物理落点**。铁律说「kanban 自己的 view 属 kanban PR」,view 的实体就是这几个文件,判给 infra 等于 PR-K 交不出任何前端修复,自相矛盾。
+- **例外清单(约定俗成,PR-K 描述里显式列出=债②的活账,#1394 收编时整体搬走)**——内容 100% kanban 专属、只是物理住错楼的文件:
+  1. `apps/ezagent_plugin_world/assets/src/components/Kanban.tsx` / `KanbanCanvas.tsx`(kanban 前端组件)
+  2. `apps/ezagent_plugin_world/assets/src/components/unfurl.tsx` 的 **kanban 气泡条目**(:33-40;非 kanban 条目不动)
+  3. `apps/ezagent_web/lib/ezagent_web/controllers/socialware/kanban_share_controller.ex`(kanban 专属 web 薄壳,P13 合规:verify→调 plugin→redirect)
+  4. `apps/ezagent_plugin_world/lib/ezagent/world/plugin_page_registry.ex` 的 **`@kanban_actions` 字面行**(:29,加动作名=kanban 注册数据;注册**机制**本身不动)
+- **反面(碰了就是 infra,PR-K 拒收)**:`WorldLive` / `conversation_actions.ex` / `world_data`(world 侧) / `PluginPageRegistry` 机制 / 任何 domain/core/web 共享文件。
+
+### PR-K 任务清单(file 级)
+
+| 任务 | 文件(现读锚点) | 依赖 |
+|---|---|---|
+| ㊳ 链接归一化 | 保存侧补 scheme:`apps/ezagent_plugin_kanban/lib/ezagent/behavior/kanban.ex`(attach_artifact 存储路);渲染兜底:`Kanban.tsx:541` | 无 |
+| ㊴ 双 prompt 改小表单 | `Kanban.tsx:380-382` | 无 |
+| ㊶ tab 自适配 | `Kanban.tsx:234`(`h-[560px]` 固定高)+ KanbanCanvas 容器 | 无 |
+| 操作物化消息(一等任务) | `world_actions.ex` act/act_board 成功路径(:190,:215,:405-436 与 kanban_changed 广播同点)+session.send `:internal/hops:0`;attach 消息带附件引用(顺带给同会话成员打通 chat 复查面下载,㊲ 的救济半件) | 无 |
+| ㊲ kanban 半:点击现签 | `world_actions.ex` +`kanban.download_artifact`(fresh href);`world_data.ex:406` 渲染预签改现签;`plugin_page_registry.ex:29` +1 字面 | grantee 传参等 infra-C 合后补一行 |
+| ㊵ plugin 半:人本位 receive | `share_receive.ex`:grantee=点击者本人、删 assistant 解析整段(:95-154+`@assistant_role`)、ws policy 单守卫函数(D4:read 放开);`world_data.ex:111-128` 枚举改 ws∪cap 派生;`world_actions.ex` +`kanban.receive_shared`+caps assign 刷新;`unfurl.tsx:33-40` 气泡改 world:dispatch;`kanban_share_controller.ex` redirect 改 `/plugins/kanban` 深链;`plugin_page_registry.ex:29` +1 字面 | **infra mount-person-scope 合并**(person-scoped MountRow) |
+| D3 kanban 半:tab 恒显 | `board_view.ex:51-61` `applies_to?` 恒 true | **infra D3-cap 半件先合**(顺序红线,见下) |
+| 分享二期(㉙+规则8) | `world_actions.ex` +`kanban.share_to_session`(㉙ dispatch+消息发送)+`kanban.request_edit`(调 `Mount.mount` read→operate 重挂升级,plugin→domain 允许箭头);批准流 UI(Kanban.tsx/unfurl.tsx);manifest `routing_rules`;`plugin_page_registry.ex:29` +2 字面 | ㊵ 合并;X1 推送 membership `:notify` 半(zyli 外部线)未落则通知面降级 |
+| D2 追认 | PR-K 侧零代码(BoardProvision doc 行在 domain 文件,归 D2 handoff 捎带) | 无 |
+
+### infra 问题清单(9 份 handoff,一问题一 PR)
+
+| handoff | 型 | 问题(现象→落点) | 对应原 PR |
+|---|---|---|---|
+| `D1-join-replay-helper.md` | 记录型(已拍)+plan | 新成员 join 后无 tab/无板钥匙;shared caller-side confirmed grant helper(todo.md #161 A2)+~8 add-site+join 按 MountRow `:operate` 补 person keys+member view caps;落 domain_session(+world LV/identity add-site) | B |
+| `D3-render-cap-baseline.md` | 记录型(已拍)+plan | render-cap 发放半件:`kanban_render` 按 plugin 基线给全体登录成员,走 D1 同一 helper 供给点;落 domain_session installation/join 路 | B(同车) |
+| `mount-person-scope.md` | **过 Allen** | MountRow 自然键含 session(mount_row.ex:42-46)无 person-scoped 行位置;定 scope 约定(哨值或 scope 列),零 kanban 字面;禁绕表裸 mint(⑲ unmount_all_for_target SoT) | ㊵ 前置 |
+| `uploads-person-token.md` | **过 Allen** | 附件 forbidden:serve-time 授权 chat-message 参与本位(uploads_controller.ex:110-157)+TTL300s 预签;DownloadToken 加可选 grantee/host_uri(core)+person-bound 分支(web)+chat 侧现签 `Membership.authorize/3`+resolver.ex:238-241 stale 注释 | C |
+| `provision-deadline.md` | 小 infra | ㊷ create_session 5s 超时:world `conversation_actions.ex:349` `do_create_session` ctx 补 `deadline_ms: 30_000`(caller 一行,world 共享框架文件=infra);provisioning 全线默认 deadline 泛化=提案记 Allen 线,不开工 | A 移出 |
+| `D5-socialware-import-rpc.md` | 记录型(已拍)+plan | dev 改 manifest 无正路;`socialware.import` 分布式 RPC 在运行节点执行;不动 config.exs:33 | D |
+| `D2-create-board-rule-authority.md` | 记录型(已拍) | 零代码追认:create_board 一次性 rule-authority 保持;BoardProvision doc 引用行捎带;请 Allen 补 Decision Log | — |
+| `D4-cross-ws-read-policy.md` | 记录型(已拍) | 只读跨 ws 放开+operate 永不跨 ws 不变量;守卫点实现在 PR-K ShareReceive 单函数,infra 侧 forward_board `same_workspace` 不动 | — |
+| `D6-plugin-ui-registry-deferred.md` | 记录型(已拍) | 缓;例外文件清单=债②活账,挂 #1394 | — |
+
+### 顺序表
+
+1. **即刻(确定性,handoff 发出即开工)**:D1-join + D3-cap(同车,infra PR-B)∥ D5 import RPC(infra PR-D)。
+2. **过 Allen 后开工**:mount-person-scope(小,㊵ 唯一前置)→ uploads-person-token(PR-C)。
+3. **PR-K 同步开工**,内部顺序:㊳㊴㊶+物化消息+㊲现签(零依赖,即刻)→ ㊵ plugin 半(等 mount-person-scope)→ `applies_to?` 翻转(等 D3-cap 合)→ 分享二期(最后)。
+4. **记 Allen 不开工**:deadline 泛化提案、D2 Decision Log 条目、D6 备案。
+
+**D3 顺序红线重解释**:原红线「恒 true 与发 cap 必须同 PR」防的是"恒 true 先落而 cap gate 拒"的空窗;切分后改为**顺序约束**——cap 发放(infra)先合(先发无害,tab 未恒显=现状),`applies_to?` 翻转(PR-K)后合,空窗方向安全,红线语义保持。
