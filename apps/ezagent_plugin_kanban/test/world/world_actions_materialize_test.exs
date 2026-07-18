@@ -46,10 +46,9 @@ defmodule EzagentPluginKanban.WorldActionsMaterializeTest do
 
     {:ok, _} = RecipeRegistry.seed_role_if_absent(KanbanApp.kanban_manager_recipe())
 
-    admin_ctx = %{
-      caller: User.admin_uri(),
-      caps: MapSet.new([Ezagent.Capability.admin_genesis_cap()])
-    }
+    # #1457 per-Kind signing:ambient genesis wildcard 不再过验签,ctx 走
+    # signed_workspace_ctx!(canonical admin 经 workspace Kind 目标签名)。
+    admin_ctx = Ezagent.Test.CapHelper.signed_workspace_ctx!(workspace_uri, User.admin_uri())
 
     {:ok, ws_name: ws_name, workspace_uri: workspace_uri, admin_ctx: admin_ctx}
   end
@@ -62,7 +61,10 @@ defmodule EzagentPluginKanban.WorldActionsMaterializeTest do
         create_board(workspace_uri, "mat-board-#{System.unique_integer([:positive])}", admin_ctx)
 
       session_uri = spawn_session(ws_name, workspace_uri)
-      socket = socket_for(workspace_uri, admin_ctx, session_uri)
+
+      socket =
+        socket_for(workspace_uri, with_op_caps(admin_ctx, board_uri, session_uri), session_uri)
+
       board_str = URI.to_string(board_uri)
 
       # (a) add_node 成功 → 物化一条 internal / hops=0 / sender=操作者。
@@ -119,7 +121,8 @@ defmodule EzagentPluginKanban.WorldActionsMaterializeTest do
       assert length(MessageStore.recent_in_session(session_uri, 50)) == before_count
 
       # (d2) 无当前会话（/plugins/kanban 独立页）→ 不炸（无处可记，静默跳过）。
-      no_session = socket_for(workspace_uri, admin_ctx, nil)
+      no_session =
+        socket_for(workspace_uri, with_op_caps(admin_ctx, board_uri, session_uri), nil)
 
       {:noreply, pushed} =
         WorldActions.handle_dispatch(no_session, "kanban.add_node", %{
@@ -163,6 +166,25 @@ defmodule EzagentPluginKanban.WorldActionsMaterializeTest do
     |> assign(:current_caps, caps)
     |> assign(:current_session_uri, session_uri)
     |> assign(:last_dispatch_status, "idle")
+  end
+
+  # #1457 per-Kind signing:workspace ctx 的 :any/:any cap 不再覆盖 agent-kind 的
+  # kanban 动作 / session.send——按目标逐动作现签(经目标 Kind 的 grant verifier),
+  # 并进 socket caps(kanban 全动作 + 物化用的 session.send)。
+  defp with_op_caps(%{caller: caller, caps: caps} = ctx, board_uri, session_uri) do
+    board_caps =
+      for action <- Ezagent.ActionSet.action_names(Ezagent.ActionSet.Kanban) do
+        target = Ezagent.URI.with_action(board_uri, :kanban, action)
+        Ezagent.Test.CapHelper.signed_action_cap!(target, caller)
+      end
+
+    send_cap =
+      Ezagent.Test.CapHelper.signed_action_cap!(
+        Ezagent.URI.with_action(session_uri, :session, :send),
+        caller
+      )
+
+    %{ctx | caps: MapSet.union(MapSet.new(caps), MapSet.new([send_cap | board_caps]))}
   end
 
   defp spawn_session(ws_name, workspace_uri) do

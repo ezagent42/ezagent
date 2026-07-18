@@ -331,12 +331,14 @@ defmodule Ezagent.Socialware.Installation do
   能看)的 declared views,把 `cap(:session, view, action, <session>, <ws>)` 授给
   `installer_uri`。
 
-  授权路:一切经 `Ezagent.Identity.Grant` chokepoint,tag =
-  `{:rule, :socialware_install_views, installer_uri}` —— 规则是「装了 socialware 的
-  session,其 installer 可看该 socialware 的 views」,configurer(= `granted_by`,#154
-  真实实体)= installer 自己。cap 是 concrete instance + concrete action →
-  `rule_cap_bounded?/1` 通过。**不**直接构造带 `granted_by` 的 `%Capability{}`(I7
-  mint 构造点 ratchet),bare cap 由 chokepoint 盖 provenance。
+  授权路:一切经 `Ezagent.Identity.Grant` chokepoint。#1457 per-Kind signing 后
+  `{:rule, …}` 授权元组已删,规则语义(「装了 socialware 的 session,其 installer 可看
+  该 socialware 的 views」)保持,签发姿势迁到 session Membership 同款:granter =
+  installer(= session owner/configurer,#154 真实实体,canonical admin 走 `{:admin,…}`
+  其余 `{:held_by,…}`),先 `Identity.TargetAuthority.ensure/2` 落 per-Kind 授权,
+  再经 target Kind 的 grant verifier 目标签名。cap 是 concrete instance + concrete
+  action。**不**直接构造带 `granted_by` 的 `%Capability{}`(I7 mint 构造点 ratchet),
+  bare cap 由 chokepoint 盖 provenance。
 
   幂等:按 `Capability.identity_key/1` 对 installer 已持 cap 去重,重跑不重复发。
   view 不存在 / session 无安装 / 非 session URI → `:ok` 无副作用(与 `anon_view_caps`
@@ -349,6 +351,13 @@ defmodule Ezagent.Socialware.Installation do
   def grant_installer_view_caps(%URI{scheme: "session"} = session_uri, %URI{} = installer_uri) do
     instance = Ezagent.URI.instance(session_uri)
     workspace = Ezagent.Capability.workspace_of(session_uri)
+
+    # #1457:granter(= installer/owner)对 session Kind 的签发权先落 per-Kind 授权。
+    # 目标 session 可能 dormant(装完即静):先 ensure_started 再落 authority(ensure
+    # 内部按 KindRegistry 解析 kind_type,不自起进程)。
+    _ = Ezagent.LocalRuntime.ensure_started(instance)
+    _ = Ezagent.Identity.TargetAuthority.ensure(installer_uri, session_uri)
+    authorization = installer_grant_authorization(installer_uri)
 
     held_keys =
       installer_uri
@@ -367,11 +376,7 @@ defmodule Ezagent.Socialware.Installation do
       if MapSet.member?(held_keys, Ezagent.Capability.identity_key(cap)) do
         {:cont, :ok}
       else
-        case Ezagent.Identity.Grant.grant_cap(
-               installer_uri,
-               cap,
-               {:rule, :socialware_install_views, installer_uri}
-             ) do
+        case Ezagent.Identity.Grant.grant_cap(installer_uri, cap, authorization) do
           :ok ->
             {:cont, :ok}
 
@@ -383,6 +388,16 @@ defmodule Ezagent.Socialware.Installation do
   end
 
   def grant_installer_view_caps(_session_uri, _installer_uri), do: :ok
+
+  # #1457 迁移:同 Session.Membership.grant_authorization/1 —— canonical admin 走
+  # `{:admin, …}`,其余真实实体 granter 走 `{:held_by, …}`。
+  defp installer_grant_authorization(%URI{} = granter) do
+    admin = Ezagent.Entity.User.admin_uri()
+
+    if Ezagent.URI.stable_key(granter) == Ezagent.URI.stable_key(admin),
+      do: {:admin, granter},
+      else: {:held_by, granter}
+  end
 
   defp view_render_caps(view_module, instance, workspace, granter) when is_atom(view_module) do
     for action <- view_actions(view_module) do

@@ -43,10 +43,9 @@ defmodule EzagentPluginKanban.WorldActionsDownloadTest do
 
     {:ok, _} = RecipeRegistry.seed_role_if_absent(KanbanApp.kanban_manager_recipe())
 
-    admin_ctx = %{
-      caller: User.admin_uri(),
-      caps: MapSet.new([Ezagent.Capability.admin_genesis_cap()])
-    }
+    # #1457 per-Kind signing:ambient genesis wildcard 不再过验签,ctx 走
+    # signed_workspace_ctx!(canonical admin 经 workspace Kind 目标签名)。
+    admin_ctx = Ezagent.Test.CapHelper.signed_workspace_ctx!(workspace_uri, User.admin_uri())
 
     {:ok, ws_name: ws_name, workspace_uri: workspace_uri, admin_ctx: admin_ctx}
   end
@@ -58,7 +57,7 @@ defmodule EzagentPluginKanban.WorldActionsDownloadTest do
       board_uri =
         create_board(workspace_uri, "b-#{System.unique_integer([:positive])}", admin_ctx)
 
-      socket = socket_for(workspace_uri, admin_ctx)
+      socket = socket_for(workspace_uri, with_board_caps(admin_ctx, board_uri))
       upload_uri = "resource://#{ws_name}/uploads/#{Ecto.UUID.generate()}-report.pdf"
 
       {:noreply, _} =
@@ -81,7 +80,11 @@ defmodule EzagentPluginKanban.WorldActionsDownloadTest do
         })
 
       # (a) 读模型不预签：file 附件 url 原样是 uploads resource URI。
-      snapshot = WorldData.board_snapshot(board_uri, read_ctx(workspace_uri, admin_ctx))
+      snapshot =
+        WorldData.board_snapshot(
+          board_uri,
+          read_ctx(workspace_uri, with_board_caps(admin_ctx, board_uri))
+        )
       [art] = get_in(snapshot, ["tree", "nodes", "n1", "artifacts"])
       assert art["url"] == upload_uri
 
@@ -129,6 +132,18 @@ defmodule EzagentPluginKanban.WorldActionsDownloadTest do
     |> assign(:current_caps, caps)
     |> assign(:current_session_uri, nil)
     |> assign(:last_dispatch_status, "idle")
+  end
+
+  # #1457 per-Kind signing:workspace ctx 的 :any/:any cap 不再覆盖 agent-kind 的
+  # kanban 动作——按板逐动作现签(经板 Kind 的 grant verifier),并进 socket caps。
+  defp with_board_caps(%{caller: caller, caps: caps} = ctx, board_uri) do
+    board_caps =
+      for action <- Ezagent.ActionSet.action_names(Ezagent.ActionSet.Kanban) do
+        target = Ezagent.URI.with_action(board_uri, :kanban, action)
+        Ezagent.Test.CapHelper.signed_action_cap!(target, caller)
+      end
+
+    %{ctx | caps: MapSet.union(MapSet.new(caps), MapSet.new(board_caps))}
   end
 
   defp read_ctx(workspace_uri, %{caller: caller, caps: caps}),
