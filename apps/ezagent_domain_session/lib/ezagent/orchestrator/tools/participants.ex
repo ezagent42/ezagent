@@ -108,8 +108,8 @@ defmodule Ezagent.Orchestrator.Tools.Participants do
            ) do
       case Tools.join_member(session_uri, member_uri, facets, caller, caps) do
         :ok ->
-          :ok =
-            Ezagent.ActionSet.Session.Membership.mount_participation_caps(session_uri, member_uri)
+          # D1 join 补发:participation tier + view caps + mount operate keys。
+          :ok = Ezagent.Socialware.MemberBackfill.backfill(session_uri, member_uri)
 
           {:ok, member_uri}
 

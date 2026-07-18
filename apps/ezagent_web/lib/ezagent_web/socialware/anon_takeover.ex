@@ -170,7 +170,9 @@ defmodule EzagentWeb.Socialware.AnonTakeover do
   end
 
   defp mount_confirmed_caps(%URI{} = session_uri, %URI{} = confirmed_uri) do
-    _ = Membership.mount_participation_caps(session_uri, confirmed_uri)
+    # D1 join 补发:接管后的 confirmed 身份走完整补发(participation tier +
+    # view caps + mount operate keys)。
+    _ = Ezagent.Socialware.MemberBackfill.backfill(session_uri, confirmed_uri)
     :ok
   end
 

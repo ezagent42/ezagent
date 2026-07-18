@@ -348,6 +348,27 @@ defmodule Ezagent.Socialware.Installation do
     end
   end
 
+  @doc """
+  Session 已装 socialware 的 declared views 全集,展开为 `{view_module, action}`
+  对(去重;不分 public/private)。
+
+  纯枚举、零副作用 —— D1 join 补发的 view-cap 半边由
+  `Ezagent.ActionSet.Session.Membership.grant_member_view_caps/2` 消费本函数
+  (发 cap 走 membership 的共享 caller-side grant funnel,本模块不新增 grant 点)。
+  view module 不存在 / 无 actions → 贡献空集(与 `anon_view_caps/1` 的
+  fail-safe 姿态一致)。
+  """
+  @spec declared_view_actions(URI.t()) :: [{module(), atom()}]
+  def declared_view_actions(%URI{scheme: "session"} = session_uri) do
+    session_uri
+    |> installed_definitions()
+    |> Enum.flat_map(fn %Definition{views: views} -> views end)
+    |> Enum.uniq()
+    |> Enum.flat_map(fn view -> for action <- view_actions(view), do: {view, action} end)
+  end
+
+  def declared_view_actions(_), do: []
+
   @doc "Return the effective publish policy for a session's installed socialwares."
   @spec publish_policy(URI.t()) :: :auto | :supervised
   def publish_policy(%URI{scheme: "session"} = session_uri) do

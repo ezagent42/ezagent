@@ -128,7 +128,9 @@ defmodule Ezagent.Socialware.AnonAdmission do
   defp mount_participation(session_uri, anon_uri, opts) do
     fun =
       Keyword.get(opts, :mount_participation, fn session, anon ->
-        Ezagent.ActionSet.Session.Membership.mount_participation_caps(session, anon)
+        # D1 join 补发:统一走 MemberBackfill(participation tier + view caps +
+        # mount operate keys;anon 未 confirmed → 只发 participation tier)。
+        Ezagent.Socialware.MemberBackfill.backfill(session, anon)
       end)
 
     try do
