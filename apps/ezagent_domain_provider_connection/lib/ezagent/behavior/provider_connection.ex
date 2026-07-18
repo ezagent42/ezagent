@@ -42,7 +42,11 @@ defmodule Ezagent.ActionSet.ProviderConnection do
   )
 
   action(:reauthorize,
-    args: %{connection_id: :string, expected_version: :integer, assurance: :map},
+    args: %{
+      connection_id: :string,
+      expected_version: :integer,
+      assurance: {:struct, Ezagent.ProviderConnection.Assurance}
+    },
     returns: %{attempt_ref: :string, authorization_url: :string, expires_at: :string},
     caps: [{:reauthorize, kind: :user}],
     data_owner: :self,
@@ -60,7 +64,11 @@ defmodule Ezagent.ActionSet.ProviderConnection do
   )
 
   action(:revoke,
-    args: %{connection_id: :string, expected_version: :integer, assurance: :map},
+    args: %{
+      connection_id: :string,
+      expected_version: :integer,
+      assurance: {:struct, Ezagent.ProviderConnection.Assurance}
+    },
     returns: %{connection_id: :string, status: :string, version: :integer},
     caps: [{:revoke, kind: :user}],
     data_owner: :self,
@@ -69,7 +77,11 @@ defmodule Ezagent.ActionSet.ProviderConnection do
   )
 
   action(:disconnect,
-    args: %{connection_id: :string, expected_version: :integer, assurance: :map},
+    args: %{
+      connection_id: :string,
+      expected_version: :integer,
+      assurance: {:struct, Ezagent.ProviderConnection.Assurance}
+    },
     returns: %{connection_id: :string, status: :string, version: :integer},
     caps: [{:disconnect, kind: :user}],
     data_owner: :self,
@@ -163,19 +175,14 @@ defmodule Ezagent.ActionSet.ProviderConnection do
     assurance = Map.get(args, :assurance)
     workspace = Ezagent.Capability.workspace_of(owner)
 
-    with %{} <- assurance,
-         true <- Map.get(assurance, :owner_uri) == owner,
-         true <- Map.get(assurance, :workspace_uri) == workspace,
-         true <- Map.get(assurance, :grantee_uri) == Map.get(ctx, :caller),
-         true <- Map.get(assurance, :connection_id) == Map.get(args, :connection_id),
-         true <- Map.get(assurance, :connection_version) == Map.get(args, :expected_version),
-         attempt_ref when is_binary(attempt_ref) <- Map.get(assurance, :attempt_ref),
-         attempt_version when is_integer(attempt_version) and attempt_version >= 0 <-
-           Map.get(assurance, :attempt_version),
-         :valid <- Map.get(assurance, :status),
-         signature when is_binary(signature) and byte_size(signature) > 0 <-
-           Map.get(assurance, :signature),
-         %DateTime{} = expires_at <- Map.get(assurance, :expires_at),
+    with %Ezagent.ProviderConnection.Assurance{} <- assurance,
+         :ok <- Ezagent.ProviderConnection.Assurance.validate(assurance),
+         true <- assurance.owner_uri == owner,
+         true <- assurance.workspace_uri == workspace,
+         true <- assurance.grantee_uri == Map.get(ctx, :caller),
+         true <- assurance.connection_id == Map.get(args, :connection_id),
+         true <- assurance.connection_version == Map.get(args, :expected_version),
+         %DateTime{} = expires_at <- assurance.expires_at,
          :gt <- DateTime.compare(expires_at, DateTime.utc_now()),
          :ok <- invoke_assurance_validator(action, assurance, ctx) do
       :ok
