@@ -29,6 +29,14 @@ export function ErrorMessageCard({error, onDismiss, onAction, onNavigate}: Error
         ? "text-amber-500"
         : "text-[var(--ez-blueink)]"
 
+  // 标题同步着色,红/黄/蓝三色一眼可辨。
+  const titleClass =
+    tone === "danger"
+      ? "text-destructive"
+      : tone === "warning"
+        ? "text-amber-600 dark:text-amber-400"
+        : "text-[var(--ez-blueink)]"
+
   return (
     <div
       role="alert"
@@ -45,7 +53,7 @@ export function ErrorMessageCard({error, onDismiss, onAction, onNavigate}: Error
           <AlertCircle aria-hidden="true" className="h-4 w-4" />
         </span>
         <div className="min-w-0 flex-1">
-          <p className="font-medium text-foreground">{error.what}</p>
+          <p className={cn("font-medium", titleClass)}>{error.what}</p>
           <p className="mt-1 text-muted-foreground">{error.impact}</p>
           {error.detail && (
             <p className="mt-1.5 break-all font-mono text-xs text-muted-foreground/80" data-error-detail>

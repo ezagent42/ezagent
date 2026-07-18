@@ -105,16 +105,20 @@ export function errorDetail(reason: string): string {
   return detail.replaceAll('"', "").trim()
 }
 
+// 三色语义(2026-07-18 产品决定):
+//   红 danger — 执行失败类:凭据/权限/未识别错误(如 agent 创建失败)
+//   黄 warning — 状态/资源类:agent 未就绪、额度不足
+//   蓝 info   — 输入校验类:参数不合法等可修正输入
 export function categoryTone(category: ErrorCategory): "danger" | "warning" | "info" {
   switch (category) {
     case "credential":
     case "permission":
+    case "unknown":
       return "danger"
     case "lifecycle":
     case "resource":
       return "warning"
     case "validation":
-    case "unknown":
     default:
       return "info"
   }

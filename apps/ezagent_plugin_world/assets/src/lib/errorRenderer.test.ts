@@ -73,18 +73,18 @@ describe("errorDetail", () => {
 })
 
 describe("categoryTone", () => {
-  it("maps credential and permission to danger", () => {
+  it("maps credential, permission and unknown to danger (red)", () => {
     expect(categoryTone("credential")).toBe("danger")
     expect(categoryTone("permission")).toBe("danger")
+    expect(categoryTone("unknown")).toBe("danger")
   })
 
-  it("maps lifecycle and resource to warning", () => {
+  it("maps lifecycle and resource to warning (yellow)", () => {
     expect(categoryTone("lifecycle")).toBe("warning")
     expect(categoryTone("resource")).toBe("warning")
   })
 
-  it("maps validation and unknown to info", () => {
+  it("maps validation to info (blue)", () => {
     expect(categoryTone("validation")).toBe("info")
-    expect(categoryTone("unknown")).toBe("info")
   })
 })
