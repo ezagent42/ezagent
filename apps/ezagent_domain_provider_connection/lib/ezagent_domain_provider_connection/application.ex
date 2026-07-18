@@ -8,22 +8,19 @@ defmodule EzagentDomainProviderConnection.Application do
 
   @impl true
   def start(_type, _args) do
-    case register_actions() do
-      {:ok, owned} ->
-        children = Application.get_env(:ezagent_domain_provider_connection, :children, [])
+    children = Application.get_env(:ezagent_domain_provider_connection, :children, [])
 
-        case Supervisor.start_link(children, strategy: :one_for_one, name: __MODULE__) do
-          {:ok, supervisor} ->
-            {:ok, supervisor}
+    with {:ok, supervisor} <-
+           Supervisor.start_link(children, strategy: :one_for_one, name: __MODULE__) do
+      case register_actions() do
+        {:ok, _owned} ->
+          {:ok, supervisor}
 
-          {:error, reason} ->
-            rollback(owned)
-            {:error, reason}
-        end
-
-      {:error, reason, owned} ->
-        rollback(owned)
-        {:error, reason}
+        {:error, reason, owned} ->
+          rollback(owned)
+          Supervisor.stop(supervisor)
+          {:error, reason}
+      end
     end
   end
 
