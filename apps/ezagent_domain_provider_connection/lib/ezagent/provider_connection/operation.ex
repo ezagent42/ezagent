@@ -22,6 +22,7 @@ defmodule Ezagent.ProviderConnection.Operation do
 
   @trusted_required ~w(workspace_uri connection_id backend_pair_id operation_class correlation_id bound_input_digest)a
   @trusted @trusted_required ++ [:safe_error_code]
+  @doc "Builds the initial idempotent operation changeset from trusted command coordinates."
   def create_changeset(attrs),
     do:
       %__MODULE__{}

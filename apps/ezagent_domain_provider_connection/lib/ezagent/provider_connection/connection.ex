@@ -26,6 +26,7 @@ defmodule Ezagent.ProviderConnection.Connection do
 
   @trusted ~w(connection_id workspace_uri owner_uri authorization_backend_ref credential_backend_ref)a
   @user ~w(provider_id governed_host external_account_id display_login execution_identity acquisition_method status permission_digest expires_at last_error_code)a
+  @doc "Builds a new durable provider connection while separating trusted ownership fields."
   def create_changeset(attrs) do
     trusted = Map.take(attrs, @trusted)
 

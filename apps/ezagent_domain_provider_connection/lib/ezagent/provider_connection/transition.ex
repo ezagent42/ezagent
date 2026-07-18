@@ -21,6 +21,7 @@ defmodule Ezagent.ProviderConnection.Transition do
            {:expired, :disconnecting},
            {:disconnecting, :disconnected}
          ])
+  @doc "Returns whether a provider connection may move directly between two statuses."
   @spec allowed?(atom(), atom()) :: boolean()
   def allowed?(from, to), do: MapSet.member?(@edges, {from, to})
 end

@@ -1,4 +1,4 @@
-defmodule Ezagent.Behavior.ProviderConnectionTest do
+defmodule Ezagent.ActionSet.ProviderConnectionTest do
   use EzagentCore.DataCase, async: false
 
   import Ezagent.Test.CapHelper, only: [authority_signed_cap!: 3, with_test_authority: 3]
@@ -32,6 +32,18 @@ defmodule Ezagent.Behavior.ProviderConnectionTest do
     :disconnect,
     :read_connection
   ]
+
+  test "data owner is exactly the target User and malformed inputs fail closed" do
+    owner = Ezagent.URI.user(:team_alpha, :owner)
+
+    assert ProviderConnection.data_owner(owner) == owner
+
+    assert ProviderConnection.data_owner(Ezagent.URI.agent(:team_alpha, :worker)) ==
+             :no_owner
+
+    assert ProviderConnection.data_owner(:any) == :no_owner
+    assert ProviderConnection.data_owner(nil) == :no_owner
+  end
 
   test "declares seven exact user-cap actions and remains registry-only" do
     assert ProviderConnection.actions() == @actions

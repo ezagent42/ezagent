@@ -180,12 +180,20 @@ defmodule Ezagent.Architecture.CapSigningArchitectureTest do
              Enum.join(introspection_offenders, "\n")
   end
 
-  test "post-verifier issuance and target verification have singular call sites" do
+  test "post-verifier issuance and target verification have exact reviewed call sites" do
     issue_callers = source_callers("Authority.issue_current(")
     assert issue_callers == ["apps/ezagent_core/lib/ezagent/cap/grant.ex"]
 
     verify_callers = source_callers("Authority.verify_current(")
-    assert verify_callers == ["apps/ezagent_core/lib/ezagent/cap/verifier.ex"]
+
+    assert verify_callers == [
+             "apps/ezagent_core/lib/ezagent/cap.ex",
+             "apps/ezagent_core/lib/ezagent/cap/verifier.ex"
+           ]
+
+    cap_source = File.read!(absolute("apps/ezagent_core/lib/ezagent/cap.ex"))
+    assert cap_source =~ "def validate_for_current_target("
+    assert cap_source =~ "Authority.verify_current(artifact, receiver)"
 
     signing_sites =
       product_sources()
@@ -200,6 +208,8 @@ defmodule Ezagent.Architecture.CapSigningArchitectureTest do
     |> Enum.filter(&(File.read!(&1) =~ needle))
     |> Enum.map(&relative/1)
   end
+
+  defp absolute(relative), do: Path.join(@root, relative)
 
   defp privileged_introspection?(file) do
     with {:ok, ast} <- file |> File.read!() |> Code.string_to_quoted() do
