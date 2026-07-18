@@ -1,6 +1,15 @@
 defmodule Ezagent.ProviderConnection.AuthorizationBackendRecord do
   @moduledoc false
-  @derive {Inspect, except: [:ciphertext, :nonce]}
+  @derive {Inspect,
+           only: [
+             :id,
+             :workspace_uri,
+             :backend_pair_id,
+             :authorization_ref,
+             :consume_status,
+             :shredded_at,
+             :expires_at
+           ]}
   use Ecto.Schema
   import Ecto.Changeset
   @primary_key {:id, Ecto.UUID, autogenerate: false}
@@ -30,5 +39,8 @@ defmodule Ezagent.ProviderConnection.AuthorizationBackendRecord do
       |> validate_required(@trusted ++ [:consume_status])
       |> unique_constraint(:authorization_ref,
         name: :provider_authorization_backend_records_committed_consume_index
+      )
+      |> check_constraint(:consume_status,
+        name: :provider_authorization_backend_records_consume_status_check
       )
 end

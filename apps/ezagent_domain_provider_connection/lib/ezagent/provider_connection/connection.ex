@@ -38,5 +38,7 @@ defmodule Ezagent.ProviderConnection.Connection do
     )
     |> unique_constraint(:connection_id, name: :provider_connections_pkey)
     |> unique_constraint(:external_account_id, name: :provider_connections_active_binding_index)
+    |> check_constraint(:status, name: :provider_connections_status_check)
+    |> check_constraint(:last_error_code, name: :provider_connections_last_error_code_check)
   end
 end

@@ -11,6 +11,7 @@ defmodule Ezagent.ProviderConnection.Transition do
            {:active, :expired},
            {:refresh_required, :expired},
            {:refreshing, :expired},
+           {:degraded, :expired},
            {:active, :revoking},
            {:degraded, :revoking},
            {:expired, :revoking},
