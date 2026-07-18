@@ -58,6 +58,9 @@ digest on retry, and enforce one committed consume command per authorization
 ref. Authorization and credential implementations are selected only as a
 conformance-tested handoff-compatible pair; the opaque handoff does not promise
 an arbitrary cross-product of independently selected modules.
+The handoff is a stable pair-private opaque reference. Any retained payload is
+authenticated ciphertext, is destroyed after credential store and pointer
+finalization, and leaves only a non-secret idempotency tombstone.
 
 ## Remote authorization approval rule
 

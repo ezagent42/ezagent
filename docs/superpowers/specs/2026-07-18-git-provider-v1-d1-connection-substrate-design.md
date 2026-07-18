@@ -2,7 +2,7 @@
 
 **Date:** 2026-07-18
 
-**Status:** revised after review; awaiting written-spec approval
+**Status:** approved design; implementation plan awaiting approval
 
 **Upstream:** Plans A, B, C, and D0 on `feat/git-domain-spine`
 
@@ -172,7 +172,8 @@ outside the connection domain.
 
 Backend-private durable correlation records keyed by authorization ref. They
 store the authorization key id, nonce, authenticated ciphertext, bound-input
-digest, consume correlation/result state, expiry, and timestamps. Application
+digest, sealed handoff ciphertext/ref, consume correlation/result state,
+shredded-at tombstone, expiry, and timestamps. Application
 schemas expose only opaque refs/status; no general context, read model, event,
 or Inspect path may load these fields. A database constraint permits only one
 committed consume command per authorization ref.
@@ -204,6 +205,16 @@ Authorization and credential implementations register as a
 conformance-tested backend pair with a stable pair id. The pair owns the opaque
 credential-handoff wire contract; D1 does not promise that arbitrary modules
 from two independent registries interoperate.
+
+The driver returns credential material only into the authorization backend's
+private exchange frame. The backend immediately seals it in the backend record
+and returns a stable pair-private opaque handoff ref. Exact callback retries
+return that ref. The compatible CredentialBackend consumes the ref without a
+domain-visible unwrap. After credential store and connection-pointer
+finalization are durable, recovery asks the authorization backend to shred the
+handoff ciphertext and retain only its digest/correlation tombstone. Before
+finalization, response-loss recovery reuses the same ref; it never persists or
+replays plaintext.
 
 Callback exchange follows one direction:
 
@@ -498,30 +509,32 @@ D1 is complete only when all of these are proven:
    while an unexpired attempt references it.
 5. Credential store/replace is caller-atomic and recovery covers every
    backend/DB commit window without replacing a winner.
-6. Refresh leases fence stale results and compensate credentials created by a
+6. Callback retries replay only an opaque pair-private handoff ref; finalization
+   shreds its authenticated ciphertext and retains only a non-secret tombstone.
+7. Refresh leases fence stale results and compensate credentials created by a
    losing worker.
-7. Revoke/disconnect is idempotent, blocks new selection before external
+8. Revoke/disconnect is idempotent, blocks new selection before external
    effects, records the D2 lease fence, and reaches a terminal state only after
    provider and backend confirmation.
-8. Every command has exact owner-User CapBAC; wrong grantee/workspace/action,
+9. Every command has exact owner-User CapBAC; wrong grantee/workspace/action,
    unsigned artifact, or stale assurance creates zero driver, backend, and DB
    mutation.
-9. The callback artifact is validated through the framework helper before it is
+10. The callback artifact is validated through the framework helper before it is
    stored, but only central dispatch verification may authorize callback handler
    entry; attempt expiry supplies the time bound.
-10. Secret-safe structural and runtime tests cover structs, Inspect, logs,
+11. Secret-safe structural and runtime tests cover structs, Inspect, logs,
    telemetry, audit, snapshots, errors, Agent, Plan B, Plan C, and Kanban
    surfaces.
-11. Two fake drivers prove provider neutrality; conformance-tested backend pairs
+12. Two fake drivers prove provider neutrality; conformance-tested backend pairs
     prove opaque-handoff compatibility and ambiguous-outcome recovery.
-12. Restart tests rebuild obligations and reject stale callback, refresh,
+13. Restart tests rebuild obligations and reject stale callback, refresh,
     replace, revoke, and disconnect results using deterministic barriers.
-13. Architecture gates permit GitTaskAccess only as its exact operation receiver
+14. Architecture gates permit GitTaskAccess only as its exact operation receiver
     and grantee, and prevent it from becoming a caller, grantor, login/token
     principal, member, SystemPrincipal, or general persisted cap holder.
-14. Architecture gates prevent live Resource Kinds, a second Git authorization
+15. Architecture gates prevent live Resource Kinds, a second Git authorization
     path, provider catalog drift, and generic plaintext retrieval.
-15. Focused suites, affected app suites, `arch.scan`, `doc.scan`,
+16. Focused suites, affected app suites, `arch.scan`, `doc.scan`,
     `uri_query.scan`, `check_invariants`, lifecycle invariants, `mix precommit`,
     and PR-head CI are green, or every unrelated baseline is reproduced and
     explicitly adjudicated before completion is claimed.
