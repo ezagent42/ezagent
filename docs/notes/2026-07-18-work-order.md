@@ -84,3 +84,10 @@
 - **删除未提交 `.iex.exs`**（自标 "TEMP do not commit" 的 e2e workaround：静态 bundle 指向 + kanban 临时目录 seed/scan 一次性发布）；其正路 = PR-D 的 import RPC。
 - **保留（权威）**：`2026-07-15-kanban-collab-model.md` / `2026-07-15-kanban-degithub-decision.md` / `2026-07-15-kanban-layering-debt.md`（活清单）/ `2026-07-16-kanban-fix-plan.md`（归属原则+§四深扫清单仍被 handoff 三份引用，未整体被 xy-review 取代，只回填变更）/ `2026-07-17-r3-findings.md` / `2026-07-17-xy-review.md` / `2026-07-18-attachment-x-model.md` / `2026-07-18-q4-verdict.md` / 本开工单 / `docs/together/2026-07-17/returns/kanban-collab-round2.md`。
 - **无需处理**：`docs/together/2026-07-16/handoffs/` 三份与 origin/main 同路径同内容（是 main 文件非分支副本）。
+
+## 修正(2026-07-18 用户纠偏):切分原则=kanban 全包一个,infra 一个问题一个
+- D3(tab 恒显)与分享二期(㉙+规则8)均为 kanban 侧 → **并入本体 PR-A**(D3 先做,join 补发范围随之缩小)。
+- B 缩为**纯 join 补发 helper 单问题 PR**(domain_session,8 add-site,死锁红线)。
+- C/D 不变(uploads person-token 过 Allen / dev import RPC)。
+- ㊷ X 泛化(provisioning 全线默认 deadline)不开 PR,记 Allen 线。
+最终:A(kanban 全包)+B(join)+C(uploads)+D(dev import)=1+3。
