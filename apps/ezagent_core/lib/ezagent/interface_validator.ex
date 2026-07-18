@@ -11,6 +11,7 @@ defmodule Ezagent.InterfaceValidator do
     precise spec is preferred wherever the shape is known.
   - `:uri` — `%URI{}` struct (Phase 2: Message envelope identity fields
     are typed URIs, not bare strings — see DECISIONS §interface-validator-uri)
+  - `{:struct, Module}` — an exact struct type for closed domain evidence
   - `{:list, ty}` — homogeneous list
   - `{:tuple, [ty1, ty2, ...]}` — fixed-arity tuple
   - `{:option, ty}` — `nil` or `ty`
@@ -31,6 +32,7 @@ defmodule Ezagent.InterfaceValidator do
           | :map
           | :term
           | :uri
+          | {:struct, module()}
           | {:list, type_spec()}
           | {:tuple, [type_spec()]}
           | {:option, type_spec()}
@@ -78,6 +80,7 @@ defmodule Ezagent.InterfaceValidator do
   # `{:option, :term}`), so `:term` relaxes the VALUE check, not presence.
   defp check(_value, :term, _path), do: :ok
   defp check(%URI{} = _value, :uri, _path), do: :ok
+  defp check(value, {:struct, module}, _path) when is_struct(value, module), do: :ok
 
   defp check(nil, {:option, _ty}, _path), do: :ok
   defp check(value, {:option, ty}, path), do: check(value, ty, path)

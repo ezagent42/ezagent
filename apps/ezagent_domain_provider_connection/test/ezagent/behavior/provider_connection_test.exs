@@ -5,6 +5,7 @@ defmodule Ezagent.ActionSet.ProviderConnectionTest do
 
   alias Ezagent.ActionSet.ProviderConnection
   alias Ezagent.Entity.User
+  alias Ezagent.ProviderConnection.Assurance
 
   defmodule AcceptingAssuranceValidator do
     @behaviour Ezagent.ProviderConnection.AssuranceValidator
@@ -74,17 +75,26 @@ defmodule Ezagent.ActionSet.ProviderConnectionTest do
         {%{attempt_ref: :string, callback: :map, correlation_id: :string},
          %{connection_id: :string, status: :string, version: :integer}},
       reauthorize:
-        {%{connection_id: :string, expected_version: :integer, assurance: :map},
-         %{attempt_ref: :string, authorization_url: :string, expires_at: :string}},
+        {%{
+           connection_id: :string,
+           expected_version: :integer,
+           assurance: {:struct, Assurance}
+         }, %{attempt_ref: :string, authorization_url: :string, expires_at: :string}},
       refresh:
         {%{connection_id: :string, expected_version: :integer, correlation_id: :string},
          %{connection_id: :string, status: :string, version: :integer}},
       revoke:
-        {%{connection_id: :string, expected_version: :integer, assurance: :map},
-         %{connection_id: :string, status: :string, version: :integer}},
+        {%{
+           connection_id: :string,
+           expected_version: :integer,
+           assurance: {:struct, Assurance}
+         }, %{connection_id: :string, status: :string, version: :integer}},
       disconnect:
-        {%{connection_id: :string, expected_version: :integer, assurance: :map},
-         %{connection_id: :string, status: :string, version: :integer}},
+        {%{
+           connection_id: :string,
+           expected_version: :integer,
+           assurance: {:struct, Assurance}
+         }, %{connection_id: :string, status: :string, version: :integer}},
       read_connection: {%{connection_id: :string}, %{connection: :map}}
     }
 
@@ -224,6 +234,38 @@ defmodule Ezagent.ActionSet.ProviderConnectionTest do
     refute_received {:boundary, _}
   end
 
+  test "assurance evidence has a closed validated struct contract" do
+    owner = Ezagent.URI.user(:team_alpha, :assurance_owner)
+    grantee = Ezagent.URI.user(:team_alpha, :assurance_operator)
+
+    attrs = %{
+      owner_uri: owner,
+      workspace_uri: Ezagent.Capability.workspace_of(owner),
+      grantee_uri: grantee,
+      connection_id: "connection-1",
+      connection_version: 1,
+      attempt_ref: "attempt-1",
+      attempt_version: 1,
+      status: :valid,
+      issued_at: DateTime.utc_now(),
+      expires_at: DateTime.add(DateTime.utc_now(), 60, :second),
+      key_id: "backend-key-1",
+      signature: "signed-assurance"
+    }
+
+    assert {:ok, %Assurance{} = assurance} = Assurance.new(attrs)
+    assert {:error, :invalid_assurance_shape} = Assurance.new(Map.put(attrs, :trusted, true))
+    assert {:error, :invalid_assurance} = Assurance.new(Map.put(attrs, :status, :unknown))
+
+    assert {:error, :invalid_assurance} =
+             ProviderConnection.handle_revoke(
+               %{connection_id: "connection-1", expected_version: 1, assurance: attrs},
+               %{self_uri: owner, caller: grantee}
+             )
+
+    assert assurance.__struct__ == Assurance
+  end
+
   test "destructive owner commands fail closed unless assurance is explicitly accepted" do
     parent = self()
 
@@ -242,18 +284,21 @@ defmodule Ezagent.ActionSet.ProviderConnectionTest do
     owner = Ezagent.URI.user(:team_alpha, :owner)
     ctx = %{self_uri: owner, caller: owner}
 
-    assurance = %{
-      owner_uri: owner,
-      workspace_uri: Ezagent.Capability.workspace_of(owner),
-      grantee_uri: owner,
-      connection_id: "connection-1",
-      connection_version: 1,
-      attempt_ref: "attempt-1",
-      attempt_version: 1,
-      status: :valid,
-      signature: "signed-assurance",
-      expires_at: DateTime.add(DateTime.utc_now(), 60, :second)
-    }
+    {:ok, assurance} =
+      Assurance.new(%{
+        owner_uri: owner,
+        workspace_uri: Ezagent.Capability.workspace_of(owner),
+        grantee_uri: owner,
+        connection_id: "connection-1",
+        connection_version: 1,
+        attempt_ref: "attempt-1",
+        attempt_version: 1,
+        status: :valid,
+        issued_at: DateTime.utc_now(),
+        key_id: "backend-key-1",
+        signature: "signed-assurance",
+        expires_at: DateTime.add(DateTime.utc_now(), 60, :second)
+      })
 
     for action <- [:reauthorize, :revoke, :disconnect] do
       handler = String.to_existing_atom("handle_#{action}")
@@ -300,17 +345,22 @@ defmodule Ezagent.ActionSet.ProviderConnectionTest do
   end
 
   defp assurance(owner, caller) do
-    %{
-      owner_uri: owner,
-      workspace_uri: Ezagent.Capability.workspace_of(owner),
-      grantee_uri: caller,
-      connection_id: "connection-1",
-      connection_version: 1,
-      attempt_ref: "attempt-1",
-      attempt_version: 1,
-      status: :valid,
-      signature: "signed-assurance",
-      expires_at: DateTime.add(DateTime.utc_now(), 60, :second)
-    }
+    {:ok, assurance} =
+      Assurance.new(%{
+        owner_uri: owner,
+        workspace_uri: Ezagent.Capability.workspace_of(owner),
+        grantee_uri: caller,
+        connection_id: "connection-1",
+        connection_version: 1,
+        attempt_ref: "attempt-1",
+        attempt_version: 1,
+        status: :valid,
+        issued_at: DateTime.utc_now(),
+        key_id: "backend-key-1",
+        signature: "signed-assurance",
+        expires_at: DateTime.add(DateTime.utc_now(), 60, :second)
+      })
+
+    assurance
   end
 end

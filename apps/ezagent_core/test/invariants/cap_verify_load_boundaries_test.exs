@@ -124,6 +124,31 @@ defmodule Ezagent.Invariants.CapVerifyLoadBoundariesTest do
 
     narrow_helper = definition_source(@cap, :validate_for_current_target, 2)
     assert narrow_helper =~ "Authority.verify_current(artifact, receiver)"
+
+    assert narrow_helper_calls() == [
+             {Ezagent.Cap.Authority, :verify_current, 2},
+             {Ezagent.URI, :stable_key, 1}
+           ]
+  end
+
+  test "current-target validator scanner rejects every forbidden call category" do
+    forbidden = [
+      quote(do: Ezagent.Cap.issue(:admin, receiver, artifact)),
+      quote(do: Ezagent.Cap.store(artifact, receiver)),
+      quote(do: Ezagent.Cap.verified_set([], receiver)),
+      quote(do: Ezagent.Cap.absorb(artifact, receiver)),
+      quote(do: Ezagent.Router.dispatch(cmd)),
+      quote(do: Ezagent.Invocation.dispatch(invocation)),
+      quote(do: Ezagent.Cmd.new(target, :read, %{}, %{})),
+      quote(do: Ezagent.Capability.matches?(artifact, needed)),
+      quote(do: Ezagent.CapabilityRegistry.register(K, :read, B)),
+      quote(do: module.invoke(action, args, ctx)),
+      quote(do: apply(module, function, args))
+    ]
+
+    for ast <- forbidden do
+      assert {:error, _call} = validate_current_target_ast(ast)
+    end
   end
 
   test "slice-to-ctx callers use the verified identity loader without filtering inline caps" do
@@ -174,6 +199,65 @@ defmodule Ezagent.Invariants.CapVerifyLoadBoundariesTest do
       end)
 
     count
+  end
+
+  defp narrow_helper_calls do
+    @cap
+    |> absolute()
+    |> quoted!()
+    |> find_definition_body(:validate_for_current_target, 2)
+    |> validate_current_target_ast()
+    |> then(fn {:ok, calls} -> calls end)
+  end
+
+  defp validate_current_target_ast(ast) do
+    allowed =
+      MapSet.new([{Ezagent.Cap.Authority, :verify_current, 2}, {Ezagent.URI, :stable_key, 1}])
+
+    calls =
+      ast
+      |> collect_remote_calls()
+      |> Enum.uniq()
+      |> Enum.sort()
+
+    case Enum.find(calls, &(not MapSet.member?(allowed, &1))) do
+      nil -> {:ok, calls}
+      forbidden -> {:error, forbidden}
+    end
+  end
+
+  defp collect_remote_calls(ast) do
+    {_ast, calls} =
+      Macro.prewalk(ast, [], fn
+        {{:., _, [module_ast, function]}, _, args} = node, calls
+        when is_atom(function) and is_list(args) ->
+          module = Macro.expand(module_ast, __ENV__)
+          {node, [{module, function, length(args)} | calls]}
+
+        {function, _, args} = node, calls
+        when function in [:apply] and is_list(args) ->
+          {node, [{Kernel, function, length(args)} | calls]}
+
+        node, calls ->
+          {node, calls}
+      end)
+
+    calls
+  end
+
+  defp find_definition_body(ast, name, arity) do
+    {_ast, bodies} =
+      Macro.prewalk(ast, [], fn
+        {:def, _, [head, [do: body]]} = node, bodies ->
+          if head_signature(head) == {name, arity},
+            do: {node, [body | bodies]},
+            else: {node, bodies}
+
+        node, bodies ->
+          {node, bodies}
+      end)
+
+    bodies |> Enum.reverse() |> then(&{:__block__, [], &1})
   end
 
   defp definition_source(relative, name, arity) do
