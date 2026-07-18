@@ -38,4 +38,5 @@ defmodule Ezagent.ProviderConnection.AuthorizationAttempt do
       |> unique_constraint(:state_digest,
         name: :provider_authorization_attempts_backend_state_index
       )
+      |> check_constraint(:status, name: :provider_authorization_attempts_status_check)
 end

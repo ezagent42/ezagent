@@ -1,7 +1,7 @@
 defmodule EzagentCore.Repo.Migrations.CreateProviderConnections do
   use Ecto.Migration
 
-  def change do
+  def up do
     create table(:provider_connections, primary_key: false) do
       add :connection_id, :uuid, primary_key: true
       add :workspace_uri, :text, null: false
@@ -43,6 +43,11 @@ defmodule EzagentCore.Repo.Migrations.CreateProviderConnections do
     create constraint(:provider_connections, :provider_connections_status_check,
              check:
                "status IN ('pending_authorization','active','refresh_required','refreshing','degraded','expired','revoking','revoked','disconnecting','disconnected')"
+           )
+
+    create constraint(:provider_connections, :provider_connections_last_error_code_check,
+             check:
+               "last_error_code IS NULL OR last_error_code IN ('invalid_subject','invalid_method','invalid_host','state_mismatch','pkce_mismatch','callback_expired','callback_replayed','callback_in_progress','correlation_conflict','account_conflict','stale_version','reauthentication_failed','backend_unavailable','credential_conflict','credential_revocation_failed','refresh_lease_lost','provider_denied','provider_protocol_failed','cleanup_pending','connection_terminal')"
            )
 
     create table(:provider_authorization_attempts, primary_key: false) do
@@ -105,6 +110,26 @@ defmodule EzagentCore.Repo.Migrations.CreateProviderConnections do
              name: :provider_connection_operations_command_index
            )
 
+    create constraint(
+             :provider_connection_operations,
+             :provider_connection_operations_operation_class_check,
+             check: "operation_class IN ('store','replace','refresh','revoke','disconnect')"
+           )
+
+    create constraint(
+             :provider_connection_operations,
+             :provider_connection_operations_status_check,
+             check:
+               "status IN ('prepared','backend_committed','connection_committed','finalized','fenced','cleanup_pending')"
+           )
+
+    create constraint(
+             :provider_connection_operations,
+             :provider_connection_operations_safe_error_code_check,
+             check:
+               "safe_error_code IS NULL OR safe_error_code IN ('invalid_subject','invalid_method','invalid_host','state_mismatch','pkce_mismatch','callback_expired','callback_replayed','callback_in_progress','correlation_conflict','account_conflict','stale_version','reauthentication_failed','backend_unavailable','credential_conflict','credential_revocation_failed','refresh_lease_lost','provider_denied','provider_protocol_failed','cleanup_pending','connection_terminal')"
+           )
+
     create table(:provider_connection_events, primary_key: false) do
       add :id, :uuid, primary_key: true
       add :workspace_uri, :text, null: false
@@ -120,6 +145,20 @@ defmodule EzagentCore.Repo.Migrations.CreateProviderConnections do
     end
 
     create index(:provider_connection_events, [:workspace_uri])
+
+    create constraint(
+             :provider_connection_events,
+             :provider_connection_events_transition_from_check,
+             check:
+               "transition_from IS NULL OR transition_from IN ('pending_authorization','active','refresh_required','refreshing','degraded','expired','revoking','revoked','disconnecting','disconnected')"
+           )
+
+    create constraint(
+             :provider_connection_events,
+             :provider_connection_events_transition_to_check,
+             check:
+               "transition_to IS NULL OR transition_to IN ('pending_authorization','active','refresh_required','refreshing','degraded','expired','revoking','revoked','disconnecting','disconnected')"
+           )
 
     create table(:provider_authorization_backend_records, primary_key: false) do
       add :id, :uuid, primary_key: true
@@ -145,5 +184,19 @@ defmodule EzagentCore.Repo.Migrations.CreateProviderConnections do
              where: "consume_status = 'committed'",
              name: :provider_authorization_backend_records_committed_consume_index
            )
+
+    create constraint(
+             :provider_authorization_backend_records,
+             :provider_authorization_backend_records_consume_status_check,
+             check: "consume_status IN ('pending','committed')"
+           )
+  end
+
+  def down do
+    drop table(:provider_authorization_backend_records)
+    drop table(:provider_connection_events)
+    drop table(:provider_connection_operations)
+    drop table(:provider_authorization_attempts)
+    drop table(:provider_connections)
   end
 end

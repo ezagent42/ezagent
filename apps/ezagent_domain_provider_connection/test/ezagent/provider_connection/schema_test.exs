@@ -15,7 +15,7 @@ defmodule Ezagent.ProviderConnection.SchemaTest do
     :ok
   end
 
-  test "all five schemas use the shared repository and tenant column" do
+  test "all five schemas are persisted through the shared core Repo boundary" do
     for schema <- [
           Connection,
           AuthorizationAttempt,
@@ -27,6 +27,13 @@ defmodule Ezagent.ProviderConnection.SchemaTest do
 
       assert schema.__schema__(:source) in ~w(provider_connections provider_authorization_attempts provider_connection_operations provider_connection_events provider_authorization_backend_records)
     end
+
+    assert Repo.__adapter__() == Ecto.Adapters.Postgres
+
+    assert Enum.all?(
+             [Connection, AuthorizationAttempt, Operation],
+             &function_exported?(&1, :create_changeset, 1)
+           )
   end
 
   test "active binding uniqueness is a named PostgreSQL constraint" do
@@ -60,6 +67,88 @@ defmodule Ezagent.ProviderConnection.SchemaTest do
 
     assert {:error, cs} = Repo.insert(AuthorizationAttempt.create_changeset(duplicate_state))
     assert cs.errors[:state_digest]
+  end
+
+  test "authorization ref uniqueness is enforced independently of state uniqueness" do
+    attempt = attempt_attrs()
+    assert {:ok, _} = Repo.insert(AuthorizationAttempt.create_changeset(attempt))
+
+    duplicate_authorization_ref = %{
+      attempt
+      | attempt_ref: Ecto.UUID.generate(),
+        state_digest: "independent-state"
+    }
+
+    assert {:error, changeset} =
+             Repo.insert(AuthorizationAttempt.create_changeset(duplicate_authorization_ref))
+
+    assert {"has already been taken",
+            [
+              constraint: :unique,
+              constraint_name: "provider_authorization_attempts_authorization_ref_index"
+            ]} = changeset.errors[:authorization_ref]
+  end
+
+  test "every durable closed value is rejected by its named PostgreSQL CHECK" do
+    violations = [
+      {Connection.create_changeset(%{connection_attrs() | status: "invalid"}), :status,
+       "provider_connections_status_check"},
+      {Connection.create_changeset(Map.put(connection_attrs(), :last_error_code, "invalid")),
+       :last_error_code, "provider_connections_last_error_code_check"},
+      {AuthorizationAttempt.create_changeset(%{attempt_attrs() | status: "invalid"}), :status,
+       "provider_authorization_attempts_status_check"},
+      {Operation.create_changeset(%{operation_attrs() | operation_class: "invalid"}),
+       :operation_class, "provider_connection_operations_operation_class_check"},
+      {Operation.create_changeset(%{operation_attrs() | status: "invalid"}), :status,
+       "provider_connection_operations_status_check"},
+      {Operation.create_changeset(Map.put(operation_attrs(), :safe_error_code, "invalid")),
+       :safe_error_code, "provider_connection_operations_safe_error_code_check"},
+      {AuthorizationBackendRecord.create_changeset(%{
+         backend_record_attrs()
+         | consume_status: "invalid"
+       }), :consume_status, "provider_authorization_backend_records_consume_status_check"}
+    ]
+
+    for {changeset, field, constraint_name} <- violations do
+      assert {:error, changeset} = Repo.insert(changeset)
+
+      assert {"is invalid", [constraint: :check, constraint_name: ^constraint_name]} =
+               changeset.errors[field]
+    end
+  end
+
+  test "private authorization backend Inspect excludes every secret-bearing field" do
+    sentinels = %{
+      nonce: "UNIQUE_NONCE_SECRET",
+      ciphertext: "UNIQUE_CIPHERTEXT_SECRET",
+      handoff_ciphertext: "UNIQUE_HANDOFF_SECRET"
+    }
+
+    inspected = inspect(struct!(AuthorizationBackendRecord, sentinels))
+
+    for sentinel <- Map.values(sentinels), do: refute(inspected =~ sentinel)
+  end
+
+  test "event closed columns are enforced by named PostgreSQL CHECK constraints" do
+    for {field, constraint} <- [
+          transition_from: "provider_connection_events_transition_from_check",
+          transition_to: "provider_connection_events_transition_to_check"
+        ] do
+      event =
+        Ezagent.ProviderConnection.Event
+        |> struct!(%{
+          workspace_uri: base().workspace_uri,
+          connection_id: Ecto.UUID.generate()
+        })
+        |> Map.put(field, "invalid")
+
+      error =
+        assert_raise Ecto.ConstraintError, fn ->
+          Repo.insert!(event)
+        end
+
+      assert error.constraint == constraint
+    end
   end
 
   test "backend records allow one committed consume per authorization ref" do
