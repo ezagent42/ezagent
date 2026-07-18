@@ -147,7 +147,7 @@ defmodule Ezagent.Entity.GitTaskAccessTest do
              GitTaskAccess.new(policy_attrs(%{provider_adapter: :redirected_provider}))
   end
 
-  test "the live Resource slice retains policy and makes repeated spawn policy observable" do
+  test "the live entity slice retains policy and makes repeated spawn policy observable" do
     assert {:ok, policy} = GitTaskAccess.new(policy_attrs())
     uri = GitTaskAccess.uri_from_args(policy)
     on_exit(fn -> Ezagent.Kind.terminate(uri) end)

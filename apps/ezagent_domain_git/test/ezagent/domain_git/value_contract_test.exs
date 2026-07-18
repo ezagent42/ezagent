@@ -61,6 +61,16 @@ defmodule Ezagent.DomainGit.ValueContractTest do
 
     assert {:ok, %OperationContext{}} = OperationContext.new(context)
 
+    for invalid_task_access_uri <- [
+          uri("entity://ws/worker/alice"),
+          uri("entity://ws/worker/gta_abc123"),
+          uri("entity://ws/worker/gta_#{String.duplicate("A", 64)}"),
+          Ezagent.URI.with_action(context.task_access_uri, :git_task_access, :read_change_request)
+        ] do
+      assert {:error, {:invalid_field, :task_access_uri}} =
+               OperationContext.new(%{context | task_access_uri: invalid_task_access_uri})
+    end
+
     assert {:error, {:invalid_field, :grantee_uri}} =
              OperationContext.new(%{context | grantee_uri: uri("entity://other/agent/codex")})
 

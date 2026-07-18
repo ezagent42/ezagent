@@ -88,6 +88,19 @@ defmodule Ezagent.Entity.GitTaskAccess do
     end
   end
 
+  @doc "Returns whether a URI is the exact action-free Git task-access receiver shape."
+  @spec task_access_uri?(term()) :: boolean()
+  def task_access_uri?(%URI{} = uri) do
+    RepositoryRef.ezagent_uri?(uri, "entity", "worker") and
+      match?({:ok, "gta_" <> <<_digest::binary-size(64)>>}, Ezagent.URI.name(uri)) and
+      uri
+      |> Ezagent.URI.name()
+      |> elem(1)
+      |> String.match?(~r/\Agta_[a-f0-9]{64}\z/)
+  end
+
+  def task_access_uri?(_uri), do: false
+
   @doc "Builds an action URI only when the action is part of the validated task policy."
   @spec action_uri(t(), atom()) :: {:ok, URI.t()} | {:error, term()}
   def action_uri(%__MODULE__{} = policy, action) do

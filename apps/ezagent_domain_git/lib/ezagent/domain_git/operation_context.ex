@@ -2,6 +2,7 @@ defmodule Ezagent.DomainGit.OperationContext do
   @moduledoc "Authorized identity coordinates built inside Git dispatch."
 
   alias Ezagent.DomainGit.{RepositoryRef, ValidationError}
+  alias Ezagent.Entity.GitTaskAccess
   @fields [:task_access_uri, :caller_uri, :grantee_uri, :idempotency_key]
   @enforce_keys @fields
   defstruct @fields
@@ -23,14 +24,14 @@ defmodule Ezagent.DomainGit.OperationContext do
 
   defp validate_values(attrs) do
     roles = [
-      task_access_uri: {"entity", "worker"},
-      caller_uri: {"entity", nil},
-      grantee_uri: {"entity", nil}
+      task_access_uri: &GitTaskAccess.task_access_uri?/1,
+      caller_uri: &RepositoryRef.ezagent_uri?(&1, "entity", nil),
+      grantee_uri: &RepositoryRef.ezagent_uri?(&1, "entity", nil)
     ]
 
     invalid =
-      Enum.find(roles, fn {field, {scheme, type}} ->
-        not RepositoryRef.ezagent_uri?(attrs[field], scheme, type)
+      Enum.find(roles, fn {field, valid?} ->
+        not valid?.(attrs[field])
       end)
 
     case invalid do
