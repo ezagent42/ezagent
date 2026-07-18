@@ -84,9 +84,6 @@ export function ErrorMessageCard({error, onDismiss, onAction, onNavigate}: Error
               )}
             </div>
           )}
-          {error.layer === 3 && (
-            <p className="mt-2 text-xs text-muted-foreground">此问题已自动登记，系统管理员会处理。</p>
-          )}
         </div>
         {onDismiss && (
           <button

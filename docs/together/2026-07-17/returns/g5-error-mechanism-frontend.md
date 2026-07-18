@@ -142,6 +142,8 @@ dataset 有 error,DOM 无 `[data-error-code]` 卡片
 | toast 浮动渲染(fixed,DOM 不被顶动) | PASS,证据 `../evidence/g5-live-error-toast.png` |
 | toast 背景不透明(实心 `bg-card`,tone 只体现在边框/图标;原 5% 透明色调会透出底下内容) | PASS(2026-07-18 复测) |
 | toast 显示具体错误内容(`errorDetail` 清理 raw reason 后作为 mono 详情行,如 `script_immutable` / `already_exists, entity://…`) | PASS(2026-07-18) |
+| toast 详情与界面横幅一致(payload 带后端人性化文本 `create_error` 时优先采用,如「同名 agent 已存在:entity://…」与表单横幅逐字相同) | PASS(2026-07-18,证据 `../evidence/g5-live-error-toast.png`) |
+| 移除 Layer 3「此问题已自动登记…」描述(产品决定) | PASS(2026-07-18) |
 | 出现/消失横向滑动动画(`world-toast-in/out`,translateX 100%↔0;进入 200ms、退出 180ms;`prefers-reduced-motion` 降级;`key=toastSeq` 保证重复错误重播) | PASS(2026-07-18 实测:0.3s 滑入、5s 后滑出移除;× dismiss 走退出动画) |
 | 连续相同错误可重复提交(`AgentNewForm` 的 `creating` 重置依赖从 `state.create_error` 改为整个 `state`——相同错误文案时旧逻辑卡死后续提交) | PASS(2026-07-18) |
 | 5s 后自动消失 | PASS |

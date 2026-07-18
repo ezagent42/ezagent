@@ -257,8 +257,13 @@ function WorldApp({layout, state: initialState, pluginNav, caller, pushEvent, on
       if (pendingDispatch.current) {
         // 本次 world:state 跟随岛内发起的 dispatch:以 dataset 里的最新
         // last_dispatch_status 为准(payload 不带这个 key)。
+        // payload 若带后端已人性化的错误文本(如 agent 创建的 create_error
+        // 「同名 agent 已存在:…」),优先用它做详情,与界面横幅保持一致。
         pendingDispatch.current = false
-        applyErrorCard(errorCardForStatus(getDispatchStatus?.() ?? null, caller || {}))
+        const card = errorCardForStatus(getDispatchStatus?.() ?? null, caller || {})
+        const humanDetail =
+          typeof next.create_error === "string" && next.create_error.trim() ? next.create_error : undefined
+        applyErrorCard(card && humanDetail ? {...card, detail: humanDetail} : card)
       } else if ("last_dispatch_status" in next) {
         applyErrorCard(errorCardForStatus(next.last_dispatch_status, caller || {}))
       }
