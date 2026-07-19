@@ -789,26 +789,66 @@ defmodule EzagentPluginWorld.WorldLive do
 
   # Overview 操作员落地页（FP5 S2-a）：KPI 概览 + 快捷入口,数据复用 AdminData
   # （overview 不属 :admin group,故单独子句;nav 高亮仍走 path="/" → Overview）。
+  # F3 (read-plane PR-4 rework): operator-plane read — admin-gated like the
+  # `:require_admin` live_session (defense-in-depth behind the route gate).
   defp state_for_route(%{component: "overview"} = route, socket, layout) do
-    route
-    |> Ezagent.World.AdminData.state_for(%{
-      workspace_uri: socket.assigns.current_workspace_uri,
-      caller_uri: socket.assigns.current_entity_uri,
-      caller_caps: Map.get(socket.assigns, :current_caps, MapSet.new())
-    })
-    |> Map.put("layout", layout)
-    |> put_can_manage_layout(route.component, socket)
-    |> put_command_palette(socket)
+    if admin_socket?(socket) do
+      route
+      |> Ezagent.World.AdminData.state_for(%{
+        workspace_uri: socket.assigns.current_workspace_uri,
+        caller_uri: socket.assigns.current_entity_uri,
+        caller_caps: Map.get(socket.assigns, :current_caps, MapSet.new())
+      })
+      |> Map.put("layout", layout)
+      |> put_can_manage_layout(route.component, socket)
+      |> put_command_palette(socket)
+    else
+      unauthorized_route_state(route, socket, layout)
+    end
   end
 
+  # F3 (read-plane PR-4 rework): the whole `:admin` route group is
+  # admin-gated HERE as well as by the `:require_admin` live_session — a
+  # non-admin caller gets an explicit unauthorized state, never
+  # cross-tenant counts/registries/templates.
   defp state_for_route(%{group: :admin} = route, socket, layout) do
-    route
-    |> Ezagent.World.AdminData.state_for(%{
-      workspace_uri: socket.assigns.current_workspace_uri,
-      caller_uri: socket.assigns.current_entity_uri,
-      caller_caps: Map.get(socket.assigns, :current_caps, MapSet.new())
-    })
-    |> Map.put("layout", layout)
+    if admin_socket?(socket) do
+      route
+      |> Ezagent.World.AdminData.state_for(%{
+        workspace_uri: socket.assigns.current_workspace_uri,
+        caller_uri: socket.assigns.current_entity_uri,
+        caller_caps: Map.get(socket.assigns, :current_caps, MapSet.new())
+      })
+      |> Map.put("layout", layout)
+      |> put_can_manage_layout(route.component, socket)
+      |> put_command_palette(socket)
+    else
+      unauthorized_route_state(route, socket, layout)
+    end
+  end
+
+  # The same operator predicate the `:require_admin` on_mount enforces
+  # (bootstrap admin OR a member of the system workspace) — kept as one
+  # small check so the route gate and this data-layer gate cannot drift
+  # on WHAT counts as an operator.
+  defp admin_socket?(socket) do
+    Map.get(socket.assigns, :is_admin?, false) == true or
+      Map.get(socket.assigns, :is_system_member?, false) == true
+  end
+
+  # Explicit unauthorized state (Invariant #9 — surfaced, not silently
+  # dropped): the route's component shell plus a denial marker, and NO
+  # data keys.
+  defp unauthorized_route_state(route, socket, layout) do
+    %{
+      "component" => route.component,
+      "title" => route.title,
+      "path" => route.path,
+      "workspace_uri" => encode_uri(socket.assigns.current_workspace_uri),
+      "unauthorized" => true,
+      "error" => "unauthorized",
+      "layout" => layout
+    }
     |> put_can_manage_layout(route.component, socket)
     |> put_command_palette(socket)
   end
