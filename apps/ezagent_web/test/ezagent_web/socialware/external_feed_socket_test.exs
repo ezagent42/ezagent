@@ -226,7 +226,12 @@ defmodule EzagentWeb.Socialware.ExternalFeedSocketTest do
 
     test "a member with valid identity + file tokens downloads an approved file", ctx do
       {upload_uri, _} = store_approved_attachment(ctx, "feed-bytes")
-      file_token = Ezagent.Uploads.DownloadToken.mint!(upload_uri, ttl_seconds: 60)
+
+      file_token =
+        Ezagent.Uploads.DownloadToken.mint!(upload_uri,
+          ttl_seconds: 60,
+          __test_allow_unbound__: true
+        )
 
       conn = get(build_conn(), dl_path(ctx.session, ctx.token, file_token))
 
@@ -236,7 +241,12 @@ defmodule EzagentWeb.Socialware.ExternalFeedSocketTest do
 
     test "403 when the caller identity token is forged", ctx do
       {upload_uri, _} = store_approved_attachment(ctx, "feed-bytes")
-      file_token = Ezagent.Uploads.DownloadToken.mint!(upload_uri, ttl_seconds: 60)
+
+      file_token =
+        Ezagent.Uploads.DownloadToken.mint!(upload_uri,
+          ttl_seconds: 60,
+          __test_allow_unbound__: true
+        )
 
       conn = get(build_conn(), dl_path(ctx.session, "forged", file_token))
       assert conn.status == 403
@@ -244,7 +254,12 @@ defmodule EzagentWeb.Socialware.ExternalFeedSocketTest do
 
     test "403 after approval is revoked (serve-time re-validation)", ctx do
       {upload_uri, written} = store_approved_attachment(ctx, "feed-bytes")
-      file_token = Ezagent.Uploads.DownloadToken.mint!(upload_uri, ttl_seconds: 60)
+
+      file_token =
+        Ezagent.Uploads.DownloadToken.mint!(upload_uri,
+          ttl_seconds: 60,
+          __test_allow_unbound__: true
+        )
 
       # Works first.
       assert get(build_conn(), dl_path(ctx.session, ctx.token, file_token)).status == 200
@@ -256,7 +271,9 @@ defmodule EzagentWeb.Socialware.ExternalFeedSocketTest do
 
     test "403 when the file token names a non-approved attachment", ctx do
       bogus = Ezagent.URI.resource(ctx.ws_name, "uploads", "#{Ecto.UUID.generate()}-x.pdf")
-      file_token = Ezagent.Uploads.DownloadToken.mint!(bogus, ttl_seconds: 60)
+
+      file_token =
+        Ezagent.Uploads.DownloadToken.mint!(bogus, ttl_seconds: 60, __test_allow_unbound__: true)
 
       conn = get(build_conn(), dl_path(ctx.session, ctx.token, file_token))
       assert conn.status == 403
@@ -349,7 +366,12 @@ defmodule EzagentWeb.Socialware.ExternalFeedSocketTest do
 
     test "PR-3 ZERO-BREAKAGE: an absent-grantee (legacy) file token still serves a member", ctx do
       {upload_uri, _} = store_approved_attachment(ctx, "feed-bytes")
-      legacy_file_token = Ezagent.Uploads.DownloadToken.mint!(upload_uri, ttl_seconds: 60)
+
+      legacy_file_token =
+        Ezagent.Uploads.DownloadToken.mint!(upload_uri,
+          ttl_seconds: 60,
+          __test_allow_unbound__: true
+        )
 
       conn = get(build_conn(), dl_path(ctx.session, ctx.token, legacy_file_token))
 

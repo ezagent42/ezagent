@@ -107,6 +107,29 @@ defmodule Ezagent.Socialware.ExternalFeedApprovedAttachmentTest do
            )
   end
 
+  test "a PRIVATE-session NON-MEMBER is REJECTED at mint (approved_attachment? denies)", ctx do
+    # Codex's missing negative case: even when the attachment IS approved
+    # (committed, external-visible), a caller with NO read authority over the
+    # session must not mint — the gate routes the message scan through the
+    # SessionReads chokepoint, which fails closed for a non-member.
+    ws_name = Ezagent.URI.workspace_name!(ctx.workspace)
+    approved = upload_uri(ws_name, "uuid-private.pdf")
+
+    _ = commit_message_with_attachment(ctx, approved, :external_visible)
+
+    non_member = EzURI.entity(:team_alpha, :user, "non-member-#{System.unique_integer([:positive])}")
+
+    refute ExternalFeed.approved_attachment?(non_member, ctx.session, approved)
+
+    assert {:error, :not_approved} =
+             ExternalFeed.mint_approved_token(
+               non_member,
+               ctx.session,
+               approved,
+               &Ezagent.Uploads.DownloadToken.mint!/2
+             )
+  end
+
   test "mint_approved_token mints ONLY for an approved attachment (mint-after-authz)", ctx do
     ws_name = Ezagent.URI.workspace_name!(ctx.workspace)
     approved = upload_uri(ws_name, "uuid-ok.pdf")

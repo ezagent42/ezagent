@@ -394,9 +394,10 @@ defmodule Ezagent.World.KanbanData do
 
   # 仅当 url 解析为 resource:// URI（uploads 附件）时签发下载 href；
   # 其余（非 URI / 别的 scheme）返回 :error，原样保留。scheme 判断走
-  # `Ezagent.URI.scheme?/2`，不裸比 `"resource://"` 字面。caller 为 nil（无登录者
-  # ctx）时签未绑定 legacy token——行为与 PR-3 前完全一致（不退化、不放宽）。
-  defp mint_download(url, caller) do
+  # `Ezagent.URI.scheme?/2`，不裸比 `"resource://"` 字面。PR-3 起 mint 必须有
+  # grantee（signer 结构性强制）：caller 非 %URI{}（无登录者 ctx）时不再签发——
+  # fail-closed 无 href，绝不回落为未绑定 legacy token。
+  defp mint_download(url, %URI{} = caller) do
     with {:ok, %URI{} = uri} <- Ezagent.URI.parse(url),
          true <- Ezagent.URI.scheme?(uri, :resource) do
       {:ok,
@@ -408,6 +409,8 @@ defmodule Ezagent.World.KanbanData do
   rescue
     _ -> :error
   end
+
+  defp mint_download(_url, _caller), do: :error
 
   defp to_str(nil), do: nil
   defp to_str(a) when is_atom(a), do: Atom.to_string(a)

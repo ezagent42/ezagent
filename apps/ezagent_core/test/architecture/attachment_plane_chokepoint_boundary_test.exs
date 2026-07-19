@@ -44,9 +44,8 @@ defmodule EzagentCore.AttachmentPlaneChokepointBoundaryTest do
   #                                  binds grantee = caller)
   #   * kanban_data.ex             — the kanban cap-gated artifact mint (inside
   #                                  the `get_tree`-authorized board render; #9)
-  #   * conversation_data.ex       — the world conversation render mint (legacy
-  #                                  unbound mint; serve-side participant recheck
-  #                                  keeps it no-widening)
+  #   * conversation_data.ex       — the world conversation render mint (bound
+  #                                  to the authorized viewer as grantee)
   #   * uploads_controller.ex      — the authenticated SERVE path (grantee check,
   #                                  legacy recheck for unbound tokens)
   #   * external_feed_controller.ex — the public SERVE path (grantee check +
@@ -92,6 +91,30 @@ defmodule EzagentCore.AttachmentPlaneChokepointBoundaryTest do
     end
   end
 
+  test "EVERY DownloadToken.mint! call site binds a :grantee (no NEW unbound token)" do
+    # Read-plane PR-3 structural invariant (codex blocking): the person binding
+    # is defeated if ANY mint path issues an absent-grantee token — such a token
+    # enters the replayable legacy serve path. The signer raises without a
+    # `:grantee`, and this scan proves statically that no call site even tries:
+    # every `mint!` call in every tier passes `grantee: <authorized caller>`.
+    unbound =
+      @repo_root
+      |> Path.join(@scan_glob)
+      |> Path.wildcard()
+      |> Enum.reject(&String.contains?(&1, "/test/"))
+      |> Enum.flat_map(&unbound_mints_in_file/1)
+
+    assert unbound == [],
+           """
+           Read-plane PR-3 invariant: a `DownloadToken.mint!` call WITHOUT a
+           `:grantee` option — a NEW unbound token is forbidden (it would enter
+           the replayable legacy serve path and defeat the person binding).
+           Pass `grantee: <the authorized caller %URI{}>`:
+
+           #{Enum.map_join(unbound, "\n", &("  " <> &1))}
+           """
+  end
+
   test "the gate is alias- and line-split-resistant (AST, not substring)" do
     aliased = """
     defmodule Sneaky do
@@ -135,6 +158,47 @@ defmodule EzagentCore.AttachmentPlaneChokepointBoundaryTest do
 
     assert offenses_in_source(benign, "fixture") == []
   end
+
+  # ----- the PR-3 grantee-binding invariant --------------------------------------
+
+  defp unbound_mints_in_file(path) do
+    case Code.string_to_quoted(File.read!(path)) do
+      {:ok, ast} ->
+        aliases = collect_aliases(ast)
+        rel = Path.relative_to(path, @repo_root)
+
+        {_, found} =
+          Macro.prewalk(ast, [], fn node, acc ->
+            {node, unbound_mint(node, aliases, rel) ++ acc}
+          end)
+
+        Enum.reverse(found)
+
+      {:error, _} ->
+        []
+    end
+  end
+
+  # `<Mod>.mint!(uri, opts)` where <Mod> resolves to DownloadToken: `opts` must
+  # be a keyword literal carrying `:grantee`. Any other shape (no opts, an
+  # opts variable, a keyword without :grantee) is an unbound-mint suspect —
+  # fail and let a human route the mint through the binding.
+  defp unbound_mint({{:., _, [modast, :mint!]}, meta, args}, aliases, rel)
+       when is_list(args) do
+    if resolves_to?(modast, [:Ezagent, :Uploads, :DownloadToken], aliases) and
+         not grantee_opt?(args) do
+      [
+        "#{rel}:#{line_of(meta)}: DownloadToken.mint! without `grantee: <caller>`"
+      ]
+    else
+      []
+    end
+  end
+
+  defp unbound_mint(_node, _aliases, _rel), do: []
+
+  defp grantee_opt?([_uri, opts]) when is_list(opts), do: Keyword.has_key?(opts, :grantee)
+  defp grantee_opt?(_args), do: false
 
   # ----- AST scan --------------------------------------------------------------
 

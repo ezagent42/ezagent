@@ -56,8 +56,25 @@ defmodule EzagentWeb.Socialware.ExternalFeedController do
   plus the PR-3 person-binding check: a grantee-bound `file_token` serves ONLY
   its grantee (`caller == grantee`), so a leaked/copied token replayed by a
   non-grantee is rejected even when that principal is itself an authorized
-  viewer of the session. An absent-grantee (legacy) `file_token` carries no
-  person binding; the approved-only re-validation below remains its check.
+  viewer of the session. An absent-grantee (legacy, pre-PR-3 already-issued)
+  `file_token` carries no person binding; the approved-only re-validation
+  below remains its check. NEW tokens are ALWAYS grantee-bound — the signer
+  (`DownloadToken.mint!/2`) structurally refuses an unbound mint.
+
+  ## Caller-derivation strength (codex Finding 1 — ACCEPTED RESIDUAL)
+
+  The serving caller is derived from `token` via `ChatFeedAuth.verify/2` — a
+  SERVER-SIGNED `Phoenix.Token` (HMAC over the application `secret_key_base`,
+  bound to this session, TTL'd), NOT a raw/trustable URL param. This is the
+  SAME strength class as the authenticated path's session cookie: a bearer
+  credential. Consequently, if a viewer leaks BOTH a full download URL AND
+  their own identity bearer (`token`), a holder of both can present the
+  leaker's identity and pass `caller == grantee`. That is the inherent
+  "leaking your session token = compromised" property of bearer auth — NOT a
+  weaker check than the authenticated path — and is the accepted residual:
+  the grantee binding exists to stop replay by anyone who does NOT also hold
+  the grantee's identity bearer (the common copy/paste/log-scrape leak).
+  Short TTLs on both tokens bound the window.
 
   And `ExternalFeed.authorized_attachment_path/4` re-validates that the attachment
   is STILL an approved (committed, external-visible) item before resolving — so a

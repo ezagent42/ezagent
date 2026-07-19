@@ -319,16 +319,18 @@ defmodule Ezagent.Socialware.ExternalFeed do
   **Person-bound (read-plane PR-3):** the mint passes `grantee: caller` to the
   signer, so the minted token is bound to the ONE principal this cap-gated read
   authorized — a leaked/copied token replayed by a non-grantee is rejected at
-  serve time. The `mint_fun` is injected so the authorization gate stays
-  decoupled from the signer — pass `&Ezagent.Uploads.DownloadToken.mint!/2`.
+  serve time. `caller` is STRUCTURALLY required to be a `%URI{}` principal (a
+  non-URI caller fails the function head — there is no unbound mint). The
+  `mint_fun` is injected so the authorization gate stays decoupled from the
+  signer — pass `&Ezagent.Uploads.DownloadToken.mint!/2`.
   """
   @spec mint_approved_token(
-          URI.t() | term(),
+          URI.t(),
           URI.t(),
           URI.t(),
           (URI.t(), keyword() -> String.t())
         ) :: {:ok, String.t()} | {:error, :not_approved}
-  def mint_approved_token(caller, %URI{} = session_uri, %URI{} = upload_uri, mint_fun)
+  def mint_approved_token(%URI{} = caller, %URI{} = session_uri, %URI{} = upload_uri, mint_fun)
       when is_function(mint_fun, 2) do
     if approved_attachment?(caller, session_uri, upload_uri) do
       {:ok, mint_fun.(upload_uri, grantee: caller)}

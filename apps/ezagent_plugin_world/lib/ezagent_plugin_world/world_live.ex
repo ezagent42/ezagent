@@ -197,7 +197,7 @@ defmodule EzagentPluginWorld.WorldLive do
       # lookup on ordinary messages).
       row =
         msg
-        |> Ezagent.World.ConversationData.message_row()
+        |> Ezagent.World.ConversationData.message_row(socket.assigns[:current_entity_uri])
         |> Ezagent.World.ErrorCards.enrich(
           msg.body,
           Ezagent.World.ErrorCards.live_viewer_ctx(socket)

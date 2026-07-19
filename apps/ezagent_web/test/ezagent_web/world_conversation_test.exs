@@ -1076,25 +1076,31 @@ defmodule EzagentWeb.WorldConversationTest do
     assert Enum.map(embedded, &to_string/1) == [URI.to_string(att)]
   end
 
-  test "ConversationData.message_row mints a download link for uploads, plain label otherwise (PR-2b)",
+  test "ConversationData.message_row mints a GRANTEE-BOUND download link for uploads, plain label otherwise (PR-2b/PR-3)",
        %{conn: _conn} do
+    viewer = Ezagent.Entity.User.admin_uri()
     att = Ezagent.URI.new!("resource://system/uploads/#{Ecto.UUID.generate()}-report.pdf")
 
     upload_msg =
-      Ezagent.Message.new(Ezagent.Entity.User.admin_uri(), %{text: "x", attachments: [att]})
+      Ezagent.Message.new(viewer, %{text: "x", attachments: [att]})
 
-    [attachment] = Ezagent.World.ConversationData.message_row(upload_msg)["attachments"]
+    [attachment] = Ezagent.World.ConversationData.message_row(upload_msg, viewer)["attachments"]
     assert attachment["name"] == "report.pdf"
-    assert attachment["href"] =~ "/uploads/download?token="
+    assert "/uploads/download?token=" <> token = attachment["href"]
+
+    # PR-3 structural binding: the render-path mint binds the token to the
+    # authorized viewer — a leaked link is useless to anyone else.
+    assert {:ok, %{grantee: grantee}} = Ezagent.Uploads.DownloadToken.verify_payload(token)
+    assert grantee == viewer
 
     plain_msg =
-      Ezagent.Message.new(Ezagent.Entity.User.admin_uri(), %{
+      Ezagent.Message.new(viewer, %{
         text: "x",
         attachments: ["just-a-string"]
       })
 
     assert [%{"name" => "just-a-string", "href" => nil}] =
-             Ezagent.World.ConversationData.message_row(plain_msg)["attachments"]
+             Ezagent.World.ConversationData.message_row(plain_msg, viewer)["attachments"]
   end
 
   test "render-card mechanism: a message body carrying a render tree surfaces it on the wire (producer-free)" do
@@ -1122,13 +1128,13 @@ defmodule EzagentWeb.WorldConversationTest do
         render_css: "table{font-size:12px}"
       })
 
-    row = Ezagent.World.ConversationData.message_row(msg)
+    row = Ezagent.World.ConversationData.message_row(msg, Ezagent.Entity.User.admin_uri())
     assert row["render"] == render_tree
     assert row["render_css"] == "table{font-size:12px}"
 
     # A message with NO render body surfaces nil (plain text path) — the default.
     plain = Ezagent.Message.new(Ezagent.Entity.User.admin_uri(), %{text: "plain"})
-    plain_row = Ezagent.World.ConversationData.message_row(plain)
+    plain_row = Ezagent.World.ConversationData.message_row(plain, Ezagent.Entity.User.admin_uri())
     assert plain_row["render"] == nil
     assert plain_row["render_css"] == nil
   end

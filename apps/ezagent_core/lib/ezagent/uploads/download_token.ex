@@ -35,14 +35,17 @@ defmodule Ezagent.Uploads.DownloadToken do
       every caller (the internal controller mint endpoint, the LiveView render
       after its in-workspace mount cap-check, the external-feed approved-only
       gate) MUST authorize before calling `mint!/2`. This module is a pure signer.
-    * **OPTIONAL person binding (`:grantee`, read-plane PR-3)** — a token minted
-      with `grantee: <principal URI>` is bound to the ONE principal the issuing
-      chokepoint authorized. The serve paths (authenticated `UploadsController`,
-      public `ExternalFeedController`) read the binding back via `verify_payload/1`
-      and REJECT any serving caller `!= grantee` — a leaked/copied token cannot
-      be replayed by someone else. A token minted WITHOUT `:grantee` stays
-      person-unbound (legacy); the serve path's legacy authorization then
-      applies unchanged (zero-breakage for already-issued tokens).
+    * **REQUIRED person binding (`:grantee`, read-plane PR-3)** — every NEW token
+      is bound to the ONE principal the issuing chokepoint authorized:
+      `mint!/2` RAISES without a `grantee: <principal URI>` (structural — there
+      is NO code path that mints an unbound token; codex PR-3 blocking). The
+      serve paths (authenticated `UploadsController`, public
+      `ExternalFeedController`) read the binding back via `verify_payload/1` and
+      REJECT any serving caller `!= grantee` — a leaked/copied token cannot be
+      replayed by someone else. Only OLD already-issued (pre-PR-3) tokens carry
+      no grantee; for those the serve path's legacy authorization applies
+      unchanged (zero-breakage — the absent-grantee recheck exists ONLY on the
+      read/serve side, never reachable from a new mint).
     * **verify NEVER uses `:infinity`** — `verify/1` enforces the per-token TTL
       against the embedded `issued_at`, under a finite 24h outer `Phoenix.Token`
       `max_age` ceiling. A token is rejected the moment `now > issued_at + ttl`.
@@ -98,15 +101,20 @@ defmodule Ezagent.Uploads.DownloadToken do
     * `:ttl_seconds` — token lifetime; defaults to `default_ttl/0`. Must be in
       `1..#{86_400}` (the 24h ceiling) — a non-positive or over-ceiling value
       raises `ArgumentError` (no accidental infinite token).
-    * `:grantee` — OPTIONAL person binding (read-plane PR-3): the `%URI{}`
-      principal the authorizing mint issued this token to. When present the
-      serve paths reject any caller `!= grantee`. `nil` (the default) mints an
-      unbound (legacy) token. A non-`%URI{}` value raises `ArgumentError` — a
+    * `:grantee` — REQUIRED person binding (read-plane PR-3): the `%URI{}`
+      principal the authorizing mint issued this token to (the authorized
+      caller). The serve paths reject any caller `!= grantee`. A missing or
+      `nil` value raises `ArgumentError` — there is NO production code path
+      that mints an unbound token. A non-`%URI{}` value also raises — a
       confused minting caller must fail LOUD at mint, not silently issue an
       unbound token.
     * `:__test_allow_nonpositive__` — TEST-ONLY escape hatch to mint an
       already-expired token (for the expiry regression test). Never use in
       production code.
+    * `:__test_allow_unbound__` — TEST-ONLY escape hatch to mint a legacy
+      (absent-grantee) token, standing in for an OLD already-issued pre-PR-3
+      token so the serve-side zero-breakage recheck can be exercised. Never
+      use in production code — a NEW token is ALWAYS person-bound.
 
   **The caller MUST authorize before minting** — this function is a pure signer.
   """
@@ -124,12 +132,28 @@ defmodule Ezagent.Uploads.DownloadToken do
 
     ttl = Keyword.get(opts, :ttl_seconds, @default_ttl)
     allow_nonpositive = Keyword.get(opts, :__test_allow_nonpositive__, false)
+    allow_unbound = Keyword.get(opts, :__test_allow_unbound__, false)
     grantee = Keyword.get(opts, :grantee)
 
-    unless is_nil(grantee) or match?(%URI{}, grantee) do
-      raise ArgumentError,
-            "upload token :grantee must be a %URI{} principal (or nil for an " <>
-              "unbound legacy token); got #{inspect(grantee)}"
+    # Structural person binding (codex PR-3 blocking): a NEW token ALWAYS
+    # carries a grantee. The only exempt mint is the test-only legacy hatch
+    # below, which stands in for an OLD already-issued pre-PR-3 token.
+    cond do
+      match?(%URI{}, grantee) ->
+        :ok
+
+      is_nil(grantee) and allow_unbound ->
+        :ok
+
+      is_nil(grantee) ->
+        raise ArgumentError,
+              "upload token mint REQUIRES a :grantee %URI{} principal (read-plane " <>
+                "PR-3: every NEW token is person-bound to the authorized caller; " <>
+                "unbound tokens exist only as legacy already-issued tokens)"
+
+      true ->
+        raise ArgumentError,
+              "upload token :grantee must be a %URI{} principal; got #{inspect(grantee)}"
     end
 
     cond do

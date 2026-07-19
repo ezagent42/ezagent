@@ -131,7 +131,7 @@ defmodule EzagentWeb.UploadsControllerTest do
       filename = uploaded_filename()
       uploader = user_uri(@workspace_name, "alice-#{uniq()}")
       {uri, content, _session} = upload_and_attach(@workspace_name, uploader, filename)
-      token = DownloadToken.mint!(uri, ttl_seconds: 60)
+      token = DownloadToken.mint!(uri, ttl_seconds: 60, __test_allow_unbound__: true)
 
       conn =
         conn
@@ -149,7 +149,7 @@ defmodule EzagentWeb.UploadsControllerTest do
       {uri, content, session} = upload_and_attach(@workspace_name, uploader, filename)
       # bob becomes a participant by sending into the same session.
       :ok = sent_text_message(participant, session)
-      token = DownloadToken.mint!(uri, ttl_seconds: 60)
+      token = DownloadToken.mint!(uri, ttl_seconds: 60, __test_allow_unbound__: true)
 
       conn =
         conn
@@ -170,7 +170,7 @@ defmodule EzagentWeb.UploadsControllerTest do
       uploader = user_uri(@workspace_name, "alice-#{uniq()}")
       observer = user_uri(@workspace_name, "eve-#{uniq()}")
       {uri, _content, _session} = upload_and_attach(@workspace_name, uploader, filename)
-      token = DownloadToken.mint!(uri, ttl_seconds: 60)
+      token = DownloadToken.mint!(uri, ttl_seconds: 60, __test_allow_unbound__: true)
 
       conn =
         conn
@@ -184,7 +184,7 @@ defmodule EzagentWeb.UploadsControllerTest do
       filename = uploaded_filename()
       uploader = user_uri(@workspace_name, "alice-#{uniq()}")
       {uri, content, _session} = upload_and_attach(@workspace_name, uploader, filename)
-      token = DownloadToken.mint!(uri, ttl_seconds: 60)
+      token = DownloadToken.mint!(uri, ttl_seconds: 60, __test_allow_unbound__: true)
 
       conn =
         conn
@@ -204,7 +204,7 @@ defmodule EzagentWeb.UploadsControllerTest do
       filename = uploaded_filename()
       uploader = user_uri(@other_workspace, "carol-#{uniq()}")
       {uri, content, _session} = upload_and_attach(@other_workspace, uploader, filename)
-      token = DownloadToken.mint!(uri, ttl_seconds: 60)
+      token = DownloadToken.mint!(uri, ttl_seconds: 60, __test_allow_unbound__: true)
 
       conn =
         conn
@@ -222,7 +222,7 @@ defmodule EzagentWeb.UploadsControllerTest do
       filename = uploaded_filename()
       uploader = user_uri(@other_workspace, "carol-#{uniq()}")
       {uri, _content, _session} = upload_and_attach(@other_workspace, uploader, filename)
-      token = DownloadToken.mint!(uri, ttl_seconds: 60)
+      token = DownloadToken.mint!(uri, ttl_seconds: 60, __test_allow_unbound__: true)
 
       conn =
         conn
@@ -236,7 +236,13 @@ defmodule EzagentWeb.UploadsControllerTest do
       filename = uploaded_filename()
       uploader = user_uri(@workspace_name, "alice-#{uniq()}")
       {uri, _content, _session} = upload_and_attach(@workspace_name, uploader, filename)
-      token = DownloadToken.mint!(uri, ttl_seconds: -1, __test_allow_nonpositive__: true)
+
+      token =
+        DownloadToken.mint!(uri,
+          ttl_seconds: -1,
+          __test_allow_nonpositive__: true,
+          __test_allow_unbound__: true
+        )
 
       conn =
         conn
@@ -264,7 +270,7 @@ defmodule EzagentWeb.UploadsControllerTest do
       session = session_uri(@workspace_name, "s-#{uniq()}")
       :ok = attach_in_message(uploader, @workspace_name, session, filename)
       uri = EzURI.resource(@workspace_name, "uploads", filename)
-      token = DownloadToken.mint!(uri, ttl_seconds: 60)
+      token = DownloadToken.mint!(uri, ttl_seconds: 60, __test_allow_unbound__: true)
 
       conn =
         conn
@@ -279,7 +285,7 @@ defmodule EzagentWeb.UploadsControllerTest do
       filename = uploaded_filename()
       uploader = user_uri(@workspace_name, "alice-#{uniq()}")
       {uri, _content, _session} = upload_and_attach(@workspace_name, uploader, filename)
-      token = DownloadToken.mint!(uri, ttl_seconds: 60)
+      token = DownloadToken.mint!(uri, ttl_seconds: 60, __test_allow_unbound__: true)
 
       conn = get(conn, ~p"/uploads/download?token=#{token}")
       assert redirected_to(conn) == "/login"
@@ -302,8 +308,8 @@ defmodule EzagentWeb.UploadsControllerTest do
 
       refute content_a == content_b
 
-      token_a = DownloadToken.mint!(uri_a, ttl_seconds: 60)
-      token_b = DownloadToken.mint!(uri_b, ttl_seconds: 60)
+      token_a = DownloadToken.mint!(uri_a, ttl_seconds: 60, __test_allow_unbound__: true)
+      token_b = DownloadToken.mint!(uri_b, ttl_seconds: 60, __test_allow_unbound__: true)
 
       admin = Ezagent.Entity.User.admin_uri()
 
@@ -398,7 +404,7 @@ defmodule EzagentWeb.UploadsControllerTest do
 
       # Minted WITHOUT :grantee — the pre-PR-3 shape. The uploader passes the
       # legacy participant recheck exactly as before.
-      legacy_token = DownloadToken.mint!(uri, ttl_seconds: 60)
+      legacy_token = DownloadToken.mint!(uri, ttl_seconds: 60, __test_allow_unbound__: true)
 
       conn =
         conn
@@ -416,7 +422,7 @@ defmodule EzagentWeb.UploadsControllerTest do
       observer = user_uri(@workspace_name, "eve-#{uniq()}")
       {uri, _content, _session} = upload_and_attach(@workspace_name, uploader, filename)
 
-      legacy_token = DownloadToken.mint!(uri, ttl_seconds: 60)
+      legacy_token = DownloadToken.mint!(uri, ttl_seconds: 60, __test_allow_unbound__: true)
 
       conn =
         conn
