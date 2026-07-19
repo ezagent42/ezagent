@@ -22,7 +22,8 @@
 - `apps/ezagent_domain_provider_connection/lib/ezagent/provider_connection/store.ex`: stable operation lookup, launch-fence capture/verification, connection linearization, safe/public receipt separation.
 - `apps/ezagent_domain_provider_connection/lib/ezagent/provider_connection/local_authorization_backend.ex`: stable credential command and begin-time execution-identity binding.
 - `apps/ezagent_domain_provider_connection/lib/ezagent/provider_connection/operation.ex`: stable digest and receipt changeset contract.
-- `apps/ezagent_domain_provider_connection/lib/ezagent_domain_provider_connection/connection.ex` and related migration only if the shared connection fence requires a durable field.
+- `apps/ezagent_domain_provider_connection/lib/ezagent/provider_connection/connection.ex` and related migration only if the shared connection fence requires a durable field.
+- `apps/ezagent_core/priv/repo_pg/migrations/20260719001000_close_provider_callback_operations.exs` (or the next ordered migration): conditional fail-closed fences for prepared/backend_committed/cleanup_pending rows.
 - `apps/ezagent_domain_provider_connection/test/integration/callback_recovery_test.exs`: real lease-steal, strict digest, stale-result, terminal barrier tests.
 - `apps/ezagent_domain_provider_connection/test/ezagent/provider_connection/local_authorization_backend_test.exs`: command digest and execution-identity tests.
 - `apps/ezagent_domain_provider_connection/test/ezagent/provider_connection/schema_test.exs`: full operation key and conditional constraint tests.
@@ -61,11 +62,30 @@
 - [ ] Preserve exact result ref/version/correlation for cleanup; allow only exact already-committed result reconciliation.
 - [ ] Run the Task 1 focused tests until GREEN.
 
+### Task 2A: Restore bounded prepared recovery before external effects
+
+**Files:**
+- Modify: `apps/ezagent_domain_provider_connection/lib/ezagent/provider_connection/store.ex`
+- Modify: `apps/ezagent_domain_provider_connection/lib/ezagent/provider_connection/authorization_attempt.ex`
+- Test: `apps/ezagent_domain_provider_connection/test/integration/callback_recovery_test.exs`
+
+**Interfaces:**
+- `recover_prepared/5` returns `{:error, :callback_in_progress}` while
+  `now < claim_until`.
+- At `now >= claim_until`, one transaction locks connection -> attempt ->
+  operation and renews both attempt and operation fences while preserving the
+  stable correlation, handoff ref, and digest.
+
+- [ ] Add deterministic live-lease and exact-expiry RED tests.
+- [ ] Implement the lock-ordered atomic renewal.
+- [ ] Run the recovery focused test with the guarded 1 GB command and verify
+  only one claimant proceeds.
+
 ### Task 3: Bind execution identity at begin and harden stable scope
 
 **Files:**
 - Modify: `apps/ezagent_domain_provider_connection/lib/ezagent/provider_connection/local_authorization_backend.ex`
-- Modify: `apps/ezagent_domain_provider_connection/lib/ezagent_domain_provider_connection/connection.ex` only if a schema field is required by existing patterns.
+- Inspect: `apps/ezagent_domain_provider_connection/lib/ezagent/provider_connection/connection.ex` and use its existing `connection_version`; this amendment adds no new connection field.
 - Modify: `apps/ezagent_domain_provider_connection/test/ezagent/provider_connection/local_authorization_backend_test.exs`
 
 **Interfaces:**
@@ -92,6 +112,23 @@
 - [ ] Recheck the captured connection generation immediately before provider effect.
 - [ ] Remove credential ref/version from the public ingress result while retaining them in the internal operation receipt.
 
+### Task 4A: Add durable conditional constraints
+
+**Files:**
+- Modify: `apps/ezagent_core/priv/repo_pg/migrations/20260719001000_close_provider_callback_operations.exs` (the ordered conditional migration already present in this worktree)
+- Modify: `apps/ezagent_domain_provider_connection/test/ezagent/provider_connection/schema_test.exs`
+
+**Interfaces:**
+- Existing invalid rows fail migration; no default or backfill is permitted.
+- Store operations in `prepared`, `backend_committed`, or `cleanup_pending`
+  require connection version, attempt version, and claim token.
+- `backend_committed` and `cleanup_pending` additionally require handoff ref,
+  result ref, and credential version.
+
+- [ ] Add migration replay/constraint tests for each missing field.
+- [ ] Apply the migration under the guarded test scope and verify all schema
+  tests pass.
+
 ### Task 5: Harden operation lookup and schema constraints
 
 **Files:**
@@ -100,7 +137,7 @@
 
 **Interfaces:**
 - All store operation reads use `{backend_pair_id, operation_class: "store", correlation_id}`.
-- Existing conditional migration remains fail-closed with no defaults/backfill.
+- The ordered conditional migration is fail-closed with no defaults/backfill.
 
 - [ ] Update prepare, reconcile, recovery, and committed fast-path queries to include operation class.
 - [ ] Add a schema test with another operation class reusing a correlation id and prove store recovery selects only the store operation.
@@ -109,7 +146,7 @@
 ### Task 6: Verification, Sol review, and handoff
 
 **Files:**
-- Modify: `.superpowers/sdd/task-7-report.md` only after implementation and review; keep it unstaged unless explicitly authorized.
+- Create: `.superpowers/sdd/task-7-amendment-report.md` as an unstaged implementation/review note; do not modify or stage protected `task-7-report.md`.
 
 - [ ] Run guarded focused callback/schema/local-backend tests.
 - [ ] Run guarded provider app suite and core artifact/signing/Cap suite serially.
