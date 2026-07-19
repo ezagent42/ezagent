@@ -61,8 +61,8 @@ defmodule Ezagent.World.AdminData do
     |> Map.put("snapshots", snapshots(12, workspace_uri))
   end
 
-  defp component_state(%{component: "entity_registry"}, base, _workspace_uri, _caller_uri) do
-    Map.put(base, "entities", registry_rows())
+  defp component_state(%{component: "entity_registry"}, base, _workspace_uri, caller_uri) do
+    Map.put(base, "entities", registry_rows(caller_uri))
   end
 
   defp component_state(%{component: "snapshots"}, base, workspace_uri, _caller_uri) do
@@ -198,17 +198,27 @@ defmodule Ezagent.World.AdminData do
     end)
   end
 
-  defp registry_rows do
-    Ezagent.KindRegistry.list_all()
-    |> Enum.map(fn {uri_str, pid} ->
-      %{
-        "uri" => uri_str,
-        "scheme" => uri_scheme(uri_str),
-        "alive" => is_pid(pid) and Process.alive?(pid),
-        "pid" => if(is_pid(pid), do: inspect(pid), else: nil)
-      }
-    end)
-    |> Enum.sort_by(& &1["uri"])
+  # GLOBAL registry list-all (every Kind instance across the whole system)
+  # is an OPERATOR query-scope — routed through the
+  # Ezagent.Identity.OperatorReads chokepoint: authorize FIRST, fail-closed
+  # to [] for a non-operator (never a degraded/partial list).
+  defp registry_rows(caller_uri) do
+    case Ezagent.Identity.OperatorReads.registry_all(caller_uri) do
+      {:ok, kinds} ->
+        kinds
+        |> Enum.map(fn {uri_str, pid} ->
+          %{
+            "uri" => uri_str,
+            "scheme" => uri_scheme(uri_str),
+            "alive" => is_pid(pid) and Process.alive?(pid),
+            "pid" => if(is_pid(pid), do: inspect(pid), else: nil)
+          }
+        end)
+        |> Enum.sort_by(& &1["uri"])
+
+      {:error, :unauthorized} ->
+        []
+    end
   end
 
   defp template_rows do
