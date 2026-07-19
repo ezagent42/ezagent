@@ -42,20 +42,21 @@ defmodule Ezagent.Socialware.ChatFeed do
 
   ## What is DIFFERENT (the only P4-specific code)
 
-    * the snapshot is the chat recency window (`MessageStore.chat_visible_recent/2`,
+    * the snapshot is the chat recency window (`MessageStore.chat_visible_recent/2`
+      — routed through the `SessionReads` chokepoint's `:chat_feed` view,
       ordered by `routed_at` so a cross-session-relayed message windows at its
       route-into-session position) — there is NO delta cursor;
     * the read authority is **chat membership** (a chat session has no
       "customer" / settlement token): the SAME live, fail-closed owner/member
-      predicate P3-3 specified, via the shared `Ezagent.Session.Membership`
+      predicate P3-3 specified — now enforced INSIDE the `SessionReads`
+      chokepoint (which delegates to the shared `Ezagent.Session.Membership`),
       so the chat_feed authz and `SocialwarePublisherRead` stay byte-equivalent
       on the security boundary;
     * per-message visibility — only `:external_visible` messages are projected
       (an `:internal` chat message is dropped from the external read).
   """
 
-  alias Ezagent.MessageStore
-  alias Ezagent.Session.Membership
+  alias Ezagent.Socialware.SessionReads
 
   @history_limit 200
 
@@ -117,30 +118,13 @@ defmodule Ezagent.Socialware.ChatFeed do
   @spec snapshot(URI.t(), URI.t() | term()) ::
           {:ok, %{messages: [Ezagent.Message.t()], page: map()}} | {:error, :unauthorized}
   def snapshot(%URI{} = session_uri, caller) do
-    with :ok <- authorize(session_uri, caller) do
-      messages = MessageStore.chat_visible_recent(session_uri, @history_limit)
+    # The read routes through the SessionReads chokepoint (:chat_feed view):
+    # authorized FIRST (the SAME live, fail-closed owner/member predicate —
+    # A2.3/R1.1, an ex-member is denied even with a stale roster entry), only
+    # then the store read. Byte-identical output for an authorized caller.
+    with {:ok, messages} <-
+           SessionReads.messages(caller, session_uri, :chat_feed, %{limit: @history_limit}) do
       {:ok, %{messages: messages, page: chat_tree(messages)}}
-    end
-  end
-
-  # ----- P4-3: the LIVE, fail-closed chat membership authorization -----------
-  #
-  # Read the session's LIVE `:chat` slice and delegate to the SHARED
-  # ChatMembership predicate (the SAME one SocialwarePublisherRead uses — P4
-  # extracted it so the two read paths stay byte-equivalent on the security
-  # boundary). A non-member / nil / malformed / crafted caller is denied; an
-  # ex-member (post-LEAVE) is denied because the slice is re-read live on every
-  # call; a missing/unreadable slice fails closed.
-  defp authorize(session_uri, caller) do
-    # A2.3 (R1.1) — require the caller to HOLD the member-cap over the session
-    # (revoked ex-member denied even with a stale roster entry).
-    Membership.authorize(chat_slice(session_uri), caller, session_uri)
-  end
-
-  defp chat_slice(session_uri) do
-    case Ezagent.Kind.get_slice(session_uri, :session) do
-      {:ok, slice} -> slice
-      _ -> nil
     end
   end
 end

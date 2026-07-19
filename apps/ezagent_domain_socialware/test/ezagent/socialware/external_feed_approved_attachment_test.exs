@@ -5,8 +5,8 @@ defmodule Ezagent.Socialware.ExternalFeedApprovedAttachmentTest do
 
   A feed viewer reads as a read-only member, so the authority for serving an
   attachment is "is this attachment part of an APPROVED (committed,
-  external_visible) message in this session?". `ExternalFeed.approved_attachment?/2`
-  is that gate; `mint_approved_token/3` mints a signed token ONLY when it passes;
+  external_visible) message in this session?". `ExternalFeed.approved_attachment?/3`
+  is that gate; `mint_approved_token/4` mints a signed token ONLY when it passes;
   and because the gate is re-checked at serve time, flipping the message back to
   `internal` revokes an already-minted token (a lever beyond TTL).
   """
@@ -75,7 +75,7 @@ defmodule Ezagent.Socialware.ExternalFeedApprovedAttachmentTest do
 
     _ = commit_message_with_attachment(ctx, upload, :external_visible)
 
-    assert ExternalFeed.approved_attachment?(ctx.session, upload)
+    assert ExternalFeed.approved_attachment?(ctx.caller, ctx.session, upload)
   end
 
   test "approved_attachment? is FALSE for an internal (not-approved) attachment", ctx do
@@ -84,18 +84,24 @@ defmodule Ezagent.Socialware.ExternalFeedApprovedAttachmentTest do
 
     _ = commit_message_with_attachment(ctx, upload, :internal)
 
-    refute ExternalFeed.approved_attachment?(ctx.session, upload)
+    refute ExternalFeed.approved_attachment?(ctx.caller, ctx.session, upload)
   end
 
   test "approved_attachment? is FALSE for an attachment not in this session", ctx do
     ws_name = Ezagent.URI.workspace_name!(ctx.workspace)
-    refute ExternalFeed.approved_attachment?(ctx.session, upload_uri(ws_name, "never.pdf"))
+
+    refute ExternalFeed.approved_attachment?(
+             ctx.caller,
+             ctx.session,
+             upload_uri(ws_name, "never.pdf")
+           )
   end
 
   test "approved_attachment? is FALSE for a non-uploads resource URI", ctx do
     ws_name = Ezagent.URI.workspace_name!(ctx.workspace)
 
     refute ExternalFeed.approved_attachment?(
+             ctx.caller,
              ctx.session,
              EzURI.resource(ws_name, :avatar, "x.png")
            )
@@ -110,10 +116,11 @@ defmodule Ezagent.Socialware.ExternalFeedApprovedAttachmentTest do
 
     mint = fn uri -> "tok:" <> EzURI.stable_key(uri) end
 
-    assert {:ok, "tok:" <> _} = ExternalFeed.mint_approved_token(ctx.session, approved, mint)
+    assert {:ok, "tok:" <> _} =
+             ExternalFeed.mint_approved_token(ctx.caller, ctx.session, approved, mint)
 
     assert {:error, :not_approved} =
-             ExternalFeed.mint_approved_token(ctx.session, not_approved, mint)
+             ExternalFeed.mint_approved_token(ctx.caller, ctx.session, not_approved, mint)
   end
 
   test "serve-time re-validation: flipping to internal revokes approval", ctx do
@@ -121,12 +128,12 @@ defmodule Ezagent.Socialware.ExternalFeedApprovedAttachmentTest do
     upload = upload_uri(ws_name, "uuid-revoke.pdf")
 
     written = commit_message_with_attachment(ctx, upload, :external_visible)
-    assert ExternalFeed.approved_attachment?(ctx.session, upload)
+    assert ExternalFeed.approved_attachment?(ctx.caller, ctx.session, upload)
 
     # Operator flips visibility back — an already-minted token must stop working
     # because the serve-time check now returns false.
     {:ok, _} = MessageStore.mark_visibility([written.id], :internal)
-    refute ExternalFeed.approved_attachment?(ctx.session, upload)
+    refute ExternalFeed.approved_attachment?(ctx.caller, ctx.session, upload)
   end
 
   describe "authorized_attachment_path/4 (external bearer path, codex HIGH)" do
