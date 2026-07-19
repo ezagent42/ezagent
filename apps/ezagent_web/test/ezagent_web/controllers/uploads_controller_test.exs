@@ -131,7 +131,7 @@ defmodule EzagentWeb.UploadsControllerTest do
       filename = uploaded_filename()
       uploader = user_uri(@workspace_name, "alice-#{uniq()}")
       {uri, content, _session} = upload_and_attach(@workspace_name, uploader, filename)
-      token = DownloadToken.mint!(uri, ttl_seconds: 60)
+      token = DownloadToken.mint!(uri, ttl_seconds: 60, __test_allow_unbound__: true)
 
       conn =
         conn
@@ -149,7 +149,7 @@ defmodule EzagentWeb.UploadsControllerTest do
       {uri, content, session} = upload_and_attach(@workspace_name, uploader, filename)
       # bob becomes a participant by sending into the same session.
       :ok = sent_text_message(participant, session)
-      token = DownloadToken.mint!(uri, ttl_seconds: 60)
+      token = DownloadToken.mint!(uri, ttl_seconds: 60, __test_allow_unbound__: true)
 
       conn =
         conn
@@ -170,7 +170,7 @@ defmodule EzagentWeb.UploadsControllerTest do
       uploader = user_uri(@workspace_name, "alice-#{uniq()}")
       observer = user_uri(@workspace_name, "eve-#{uniq()}")
       {uri, _content, _session} = upload_and_attach(@workspace_name, uploader, filename)
-      token = DownloadToken.mint!(uri, ttl_seconds: 60)
+      token = DownloadToken.mint!(uri, ttl_seconds: 60, __test_allow_unbound__: true)
 
       conn =
         conn
@@ -184,7 +184,7 @@ defmodule EzagentWeb.UploadsControllerTest do
       filename = uploaded_filename()
       uploader = user_uri(@workspace_name, "alice-#{uniq()}")
       {uri, content, _session} = upload_and_attach(@workspace_name, uploader, filename)
-      token = DownloadToken.mint!(uri, ttl_seconds: 60)
+      token = DownloadToken.mint!(uri, ttl_seconds: 60, __test_allow_unbound__: true)
 
       conn =
         conn
@@ -204,7 +204,7 @@ defmodule EzagentWeb.UploadsControllerTest do
       filename = uploaded_filename()
       uploader = user_uri(@other_workspace, "carol-#{uniq()}")
       {uri, content, _session} = upload_and_attach(@other_workspace, uploader, filename)
-      token = DownloadToken.mint!(uri, ttl_seconds: 60)
+      token = DownloadToken.mint!(uri, ttl_seconds: 60, __test_allow_unbound__: true)
 
       conn =
         conn
@@ -222,7 +222,7 @@ defmodule EzagentWeb.UploadsControllerTest do
       filename = uploaded_filename()
       uploader = user_uri(@other_workspace, "carol-#{uniq()}")
       {uri, _content, _session} = upload_and_attach(@other_workspace, uploader, filename)
-      token = DownloadToken.mint!(uri, ttl_seconds: 60)
+      token = DownloadToken.mint!(uri, ttl_seconds: 60, __test_allow_unbound__: true)
 
       conn =
         conn
@@ -236,7 +236,13 @@ defmodule EzagentWeb.UploadsControllerTest do
       filename = uploaded_filename()
       uploader = user_uri(@workspace_name, "alice-#{uniq()}")
       {uri, _content, _session} = upload_and_attach(@workspace_name, uploader, filename)
-      token = DownloadToken.mint!(uri, ttl_seconds: -1, __test_allow_nonpositive__: true)
+
+      token =
+        DownloadToken.mint!(uri,
+          ttl_seconds: -1,
+          __test_allow_nonpositive__: true,
+          __test_allow_unbound__: true
+        )
 
       conn =
         conn
@@ -264,7 +270,7 @@ defmodule EzagentWeb.UploadsControllerTest do
       session = session_uri(@workspace_name, "s-#{uniq()}")
       :ok = attach_in_message(uploader, @workspace_name, session, filename)
       uri = EzURI.resource(@workspace_name, "uploads", filename)
-      token = DownloadToken.mint!(uri, ttl_seconds: 60)
+      token = DownloadToken.mint!(uri, ttl_seconds: 60, __test_allow_unbound__: true)
 
       conn =
         conn
@@ -279,7 +285,7 @@ defmodule EzagentWeb.UploadsControllerTest do
       filename = uploaded_filename()
       uploader = user_uri(@workspace_name, "alice-#{uniq()}")
       {uri, _content, _session} = upload_and_attach(@workspace_name, uploader, filename)
-      token = DownloadToken.mint!(uri, ttl_seconds: 60)
+      token = DownloadToken.mint!(uri, ttl_seconds: 60, __test_allow_unbound__: true)
 
       conn = get(conn, ~p"/uploads/download?token=#{token}")
       assert redirected_to(conn) == "/login"
@@ -302,8 +308,8 @@ defmodule EzagentWeb.UploadsControllerTest do
 
       refute content_a == content_b
 
-      token_a = DownloadToken.mint!(uri_a, ttl_seconds: 60)
-      token_b = DownloadToken.mint!(uri_b, ttl_seconds: 60)
+      token_a = DownloadToken.mint!(uri_a, ttl_seconds: 60, __test_allow_unbound__: true)
+      token_b = DownloadToken.mint!(uri_b, ttl_seconds: 60, __test_allow_unbound__: true)
 
       admin = Ezagent.Entity.User.admin_uri()
 
@@ -323,6 +329,107 @@ defmodule EzagentWeb.UploadsControllerTest do
         |> get(~p"/uploads/download?token=#{token_b}")
 
       assert conn_cross.status == 403
+    end
+  end
+
+  describe "GET /uploads/download?token= — PR-3 person-bound grantee" do
+    test "#9 kanban-403 GONE: a legit member (non-uploader, non-participant) downloads with a token bound to THEM",
+         %{conn: conn} do
+      # The kanban-403 bug: a legit workspace member reading a cap-gated kanban
+      # board got a download link for a board artifact, but the serve-time
+      # legacy participation recheck 403'd them (they never uploaded nor
+      # messaged in the attaching session). The board's authorized mint now
+      # binds the token to the member (grantee), and caller==grantee supersedes
+      # the legacy recheck → 200.
+      filename = uploaded_filename()
+      uploader = user_uri(@workspace_name, "alice-#{uniq()}")
+      member = user_uri(@workspace_name, "kanban-member-#{uniq()}")
+      {uri, content, _session} = upload_and_attach(@workspace_name, uploader, filename)
+
+      token = DownloadToken.mint!(uri, ttl_seconds: 60, grantee: member)
+
+      conn =
+        conn
+        |> sign_in(@workspace_name, member)
+        |> get(~p"/uploads/download?token=#{token}")
+
+      assert conn.status == 200
+      assert conn.resp_body == content
+    end
+
+    test "AUTHZ-REJECTION: a leaked grantee-bound token replayed by a NON-grantee is rejected " <>
+           "(even one who would pass the legacy participant recheck)",
+         %{conn: conn} do
+      # The headline PR-3 property: the person binding, not the legacy recheck,
+      # rejects the replay — bob IS a session participant (the legacy recheck
+      # would SERVE him), but the token was bound to alice, so bob's replay is
+      # a 403.
+      filename = uploaded_filename()
+      uploader = user_uri(@workspace_name, "alice-#{uniq()}")
+      participant = user_uri(@workspace_name, "bob-#{uniq()}")
+      {uri, _content, session} = upload_and_attach(@workspace_name, uploader, filename)
+      :ok = sent_text_message(participant, session)
+
+      leaked_token = DownloadToken.mint!(uri, ttl_seconds: 60, grantee: uploader)
+
+      conn =
+        conn
+        |> sign_in(@workspace_name, participant)
+        |> get(~p"/uploads/download?token=#{leaked_token}")
+
+      assert conn.status == 403
+    end
+
+    test "AUTHZ-REJECTION: even the workspace admin cannot replay a member's bound token",
+         %{conn: conn} do
+      filename = uploaded_filename()
+      member = user_uri(@workspace_name, "alice-#{uniq()}")
+      {uri, _content, _session} = upload_and_attach(@workspace_name, member, filename)
+
+      leaked_token = DownloadToken.mint!(uri, ttl_seconds: 60, grantee: member)
+
+      conn =
+        conn
+        |> sign_in(@workspace_name, Ezagent.Entity.User.admin_uri())
+        |> get(~p"/uploads/download?token=#{leaked_token}")
+
+      assert conn.status == 403
+    end
+
+    test "ZERO-BREAKAGE: an absent-grantee (legacy) token still serves via the legacy recheck",
+         %{conn: conn} do
+      filename = uploaded_filename()
+      uploader = user_uri(@workspace_name, "alice-#{uniq()}")
+      {uri, content, _session} = upload_and_attach(@workspace_name, uploader, filename)
+
+      # Minted WITHOUT :grantee — the pre-PR-3 shape. The uploader passes the
+      # legacy participant recheck exactly as before.
+      legacy_token = DownloadToken.mint!(uri, ttl_seconds: 60, __test_allow_unbound__: true)
+
+      conn =
+        conn
+        |> sign_in(@workspace_name, uploader)
+        |> get(~p"/uploads/download?token=#{legacy_token}")
+
+      assert conn.status == 200
+      assert conn.resp_body == content
+    end
+
+    test "ZERO-BREAKAGE: an absent-grantee token is still DENIED to a non-participant observer",
+         %{conn: conn} do
+      filename = uploaded_filename()
+      uploader = user_uri(@workspace_name, "alice-#{uniq()}")
+      observer = user_uri(@workspace_name, "eve-#{uniq()}")
+      {uri, _content, _session} = upload_and_attach(@workspace_name, uploader, filename)
+
+      legacy_token = DownloadToken.mint!(uri, ttl_seconds: 60, __test_allow_unbound__: true)
+
+      conn =
+        conn
+        |> sign_in(@workspace_name, observer)
+        |> get(~p"/uploads/download?token=#{legacy_token}")
+
+      assert conn.status == 403
     end
   end
 

@@ -79,18 +79,24 @@ defmodule Ezagent.World.UserData do
   """
   @spec detail_state(map(), URI.t(), URI.t() | nil, MapSet.t()) :: map()
   def detail_state(base, user_uri, caller, caps) do
+    # Same canonical string form the happy path (`detail_state_for`) sends, so
+    # the surface receives an identical `user_uri` on every branch. Hoisted to a
+    # variable (not an inline `Map.put(_, URI.to_string(_))`) to match that
+    # convention and the uri_query serialization-boundary gate.
+    user_uri_str = URI.to_string(user_uri)
+
     case UserReads.user(caller, user_uri) do
       {:ok, user} ->
         detail_state_for(base, user_uri, user, caller, caps)
 
       {:error, :not_found} ->
         base
-        |> Map.put("user_uri", URI.to_string(user_uri))
+        |> Map.put("user_uri", user_uri_str)
         |> Map.put("user_not_found", true)
 
       {:error, _unauthorized} ->
         base
-        |> Map.put("user_uri", URI.to_string(user_uri))
+        |> Map.put("user_uri", user_uri_str)
         |> Map.put("user_unauthorized", true)
     end
   end

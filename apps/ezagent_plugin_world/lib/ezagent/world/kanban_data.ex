@@ -248,7 +248,7 @@ defmodule Ezagent.World.KanbanData do
 
         %{
           "tree" => %{
-            "nodes" => jsonable_nodes(nodes, t, ci),
+            "nodes" => jsonable_nodes(nodes, t, ci, ctx),
             "root_id" => root,
             "drops" => Enum.map(Map.get(res, :drops, []), &jsonable_map/1)
           },
@@ -336,11 +336,11 @@ defmodule Ezagent.World.KanbanData do
   defp maybe_put(m, _k, nil), do: m
   defp maybe_put(m, k, v), do: Map.put(m, k, v)
 
-  defp jsonable_nodes(nodes, tree, ci) when is_map(nodes) do
-    Map.new(nodes, fn {id, n} -> {id, jsonable_node(n, id, tree, ci)} end)
+  defp jsonable_nodes(nodes, tree, ci, ctx) when is_map(nodes) do
+    Map.new(nodes, fn {id, n} -> {id, jsonable_node(n, id, tree, ci, ctx)} end)
   end
 
-  defp jsonable_node(n, id, _tree, ci) do
+  defp jsonable_node(n, id, _tree, ci, ctx) do
     base = %{
       "parent_id" => Map.get(n, :parent_id),
       "title" => Map.get(n, :title),
@@ -348,7 +348,7 @@ defmodule Ezagent.World.KanbanData do
       "stage" => to_str(Map.get(n, :stage)),
       "owner" => Map.get(n, :owner),
       "status" => to_str(Map.get(n, :status)),
-      "artifacts" => Enum.map(Map.get(n, :artifacts, []), &jsonable_artifact/1),
+      "artifacts" => Enum.map(Map.get(n, :artifacts, []), &jsonable_artifact(&1, ctx)),
       "metrics" => Enum.map(Map.get(n, :metrics, []), &jsonable_map/1)
     }
 
@@ -374,12 +374,16 @@ defmodule Ezagent.World.KanbanData do
 
   # file 类 artifact：url 是 uploads URI(resource://<ws>/uploads/…)，签发一个下载 href
   # (DownloadToken，同 chat 附件)，让"打开"可下载；其余 artifact 原样。
-  defp jsonable_artifact(a) do
+  # PR-3 / #9 kanban-403 修复：签发的 token 绑定 grantee = 读板 caller——板读本身是
+  # cap-gated（上方 get_tree dispatch 已按 caller 身份/caps 授权），故这就是 authorized
+  # mint；serve 端按 caller==grantee 判权（取代旧的 message-participation 复查——看板
+  # 成员不是会话消息参与者，旧复查必 403），且泄出的 token 被他人重放也会被拒。
+  defp jsonable_artifact(a, ctx) do
     base = jsonable_map(a)
     url = base["url"]
 
     if base["kind"] == "file" and is_binary(url) do
-      case mint_download(url) do
+      case mint_download(url, Map.get(ctx, :caller_uri)) do
         {:ok, href} -> Map.put(base, "url", href)
         _ -> base
       end
@@ -390,17 +394,23 @@ defmodule Ezagent.World.KanbanData do
 
   # 仅当 url 解析为 resource:// URI（uploads 附件）时签发下载 href；
   # 其余（非 URI / 别的 scheme）返回 :error，原样保留。scheme 判断走
-  # `Ezagent.URI.scheme?/2`，不裸比 `"resource://"` 字面。
-  defp mint_download(url) do
+  # `Ezagent.URI.scheme?/2`，不裸比 `"resource://"` 字面。PR-3 起 mint 必须有
+  # grantee（signer 结构性强制）：caller 非 %URI{}（无登录者 ctx）时不再签发——
+  # fail-closed 无 href，绝不回落为未绑定 legacy token。
+  defp mint_download(url, %URI{} = caller) do
     with {:ok, %URI{} = uri} <- Ezagent.URI.parse(url),
          true <- Ezagent.URI.scheme?(uri, :resource) do
-      {:ok, "/uploads/download?token=" <> Ezagent.Uploads.DownloadToken.mint!(uri)}
+      {:ok,
+       "/uploads/download?token=" <>
+         Ezagent.Uploads.DownloadToken.mint!(uri, grantee: caller)}
     else
       _ -> :error
     end
   rescue
     _ -> :error
   end
+
+  defp mint_download(_url, _caller), do: :error
 
   defp to_str(nil), do: nil
   defp to_str(a) when is_atom(a), do: Atom.to_string(a)

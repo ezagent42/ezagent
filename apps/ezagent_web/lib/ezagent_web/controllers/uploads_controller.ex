@@ -39,19 +39,35 @@ defmodule EzagentWeb.UploadsController do
   `DownloadToken`) and re-validates approved-only visibility at serve time via
   `Ezagent.Socialware.ExternalFeed.authorized_attachment_path/4`.
 
+  ## Person-bound tokens (read-plane PR-3 — the grantee binding)
+
+  A token minted with `grantee: <principal>` (read-plane PR-3 — e.g. the
+  external-feed approved-only mint, or the kanban board's cap-gated artifact
+  mint) is bound to the ONE principal the authorizing read issued it to. At
+  serve time `caller == grantee` is the WHOLE authorization for a bound token —
+  it REPLACES the legacy message-participation recheck below (the binding
+  supersedes it: the mint itself was the authorization, and a leaked/copied
+  token replayed by a non-grantee is rejected even when that principal would
+  pass the legacy recheck). An **absent-grantee** (pre-PR-3) token carries no
+  person binding and keeps the legacy recheck below unchanged — already-issued
+  tokens neither break nor widen (zero-breakage).
+
   ## No auth-widening — serve-time participant re-check (codex P2-revision HIGH)
 
-  The signed token is a CONVENIENCE carrier (it names the file + bounds the
-  leak window), NOT the sole authorization. Because the in-session LiveView
-  renders a token link for everyone who can VIEW the session (workspace-level
-  view authority, which includes observe-only callers without `chat.join`),
-  minting alone would WIDEN access vs. the retired `/files` route — and a leaked
-  token could be replayed by any same-workspace caller within its TTL. To keep
-  the access decision identical to the pre-P2 contract, `download/2` ALSO runs
-  the independent participant authorization at serve time: the authenticated
-  caller must be an **admin**, the **uploader** of an attaching message, or a
-  **session participant** (has sent a message into a session the attachment was
-  routed to). A leaked/observer token is therefore useless to a non-participant.
+  For an UNBOUND (absent-grantee) token, the signed token is a CONVENIENCE
+  carrier (it names the file + bounds the leak window), NOT the sole
+  authorization. Because the in-session LiveView renders a token link for
+  everyone who can VIEW the session (workspace-level view authority, which
+  includes observe-only callers without `chat.join`), minting alone would WIDEN
+  access vs. the retired `/files` route — and a leaked token could be replayed
+  by any same-workspace caller within its TTL. To keep the access decision
+  identical to the pre-P2 contract, `download/2` ALSO runs the independent
+  participant authorization at serve time for an unbound token: the
+  authenticated caller must be an **admin**, the **uploader** of an attaching
+  message, or a **session participant** (has sent a message into a session the
+  attachment was routed to). A leaked/observer token is therefore useless to a
+  non-participant. A grantee-BOUND token gets the same no-widening guarantee
+  from the person binding itself (only the authorized principal can use it).
 
   ## Why the controller is thin
 
@@ -81,18 +97,21 @@ defmodule EzagentWeb.UploadsController do
   @doc """
   Primary download route — `GET /uploads/download?token=<token>`.
 
-  Verifies the signed capability token, runs the participant authorization (admin
-  / uploader / session-participant — the pre-P2 contract, so the token does NOT
-  widen access), then authorizes by ws-segment against the caller's authenticated
-  mount workspace via the resolver's `authority/2`.
+  Verifies the signed capability token, then authorizes the serve: a
+  grantee-BOUND token serves only its grantee (the PR-3 person binding, which
+  supersedes the legacy recheck); an unbound (legacy) token runs the
+  participant authorization (admin / uploader / session-participant — the
+  pre-P2 contract, so an unbound token does NOT widen access). Finally the
+  ws-segment authority check runs against the caller's authenticated mount
+  workspace via the resolver's `authority/2`.
   """
   def download(conn, %{"token" => token}) when is_binary(token) do
-    with {:ok, uri} <- DownloadToken.verify(token),
+    with {:ok, payload} <- DownloadToken.verify_payload(token),
          caller_uri = conn.assigns[:current_entity_uri],
-         {:ok, filename} <- EzURI.name(uri),
-         true <- authorized?(caller_uri, filename),
+         {:ok, filename} <- EzURI.name(payload.uri),
+         true <- serve_authorized?(payload.grantee, caller_uri, filename),
          {:ok, mount_ws} <- mount_workspace(conn),
-         {:ok, full} <- wrap_resolve(Uploads.resolve(uri, %{workspace: mount_ws})) do
+         {:ok, full} <- wrap_resolve(Uploads.resolve(payload.uri, %{workspace: mount_ws})) do
       serve(conn, full, {:ok, filename})
     else
       _ -> forbidden(conn)
@@ -101,7 +120,23 @@ defmodule EzagentWeb.UploadsController do
 
   def download(conn, _params), do: forbidden(conn)
 
-  # --- Authorization (pre-P2 contract — admin / uploader / participant) ------
+  # --- Serve authorization (PR-3 grantee binding / legacy recheck) ------------
+
+  # Grantee-BOUND token (read-plane PR-3): the cap-gated mint authorized
+  # `grantee` and bound the token to them, so `caller == grantee` is the whole
+  # serve-time check — it SUPERSEDES the legacy participation recheck (this is
+  # also what un-breaks the #9 kanban-403: a legit member holding a token the
+  # board minted FOR them downloads without needing message participation).
+  defp serve_authorized?(%URI{} = grantee, caller_uri, _filename),
+    do: DownloadToken.grantee_match?(grantee, caller_uri)
+
+  # Absent-grantee (pre-PR-3) token: the legacy participant recheck still
+  # applies (admin / uploader / session-participant — zero breakage, no
+  # widening for already-issued tokens).
+  defp serve_authorized?(nil, caller_uri, filename),
+    do: authorized?(caller_uri, filename)
+
+  # --- Legacy authorization (pre-P2 contract — admin / uploader / participant) --
 
   # RequireEntity should have bounced an anon caller; defensive nil clause stays
   # false rather than crashing.

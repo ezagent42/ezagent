@@ -388,4 +388,35 @@ defmodule Ezagent.World.ConversationDataStateForTest do
     assert Enum.any?(state["views"], &(&1["id"] == "conversation"))
     refute Map.has_key?(state, "is_hello")
   end
+
+  describe "attachment render mint (read-plane PR-3 person binding)" do
+    # The invariant codex flagged: the conversation RENDER path was the mint
+    # site that still issued absent-grantee tokens, which enter the replayable
+    # legacy serve path — defeating the whole person binding. These pin the
+    # render path to a grantee-BOUND mint (fail-before: pre-fix this path
+    # minted unbound).
+    @viewer Ezagent.URI.new!("entity://system/user/viewer")
+
+    defp upload_msg do
+      att = Ezagent.URI.new!("resource://system/uploads/#{Ecto.UUID.generate()}-doc.pdf")
+      Ezagent.Message.new(Ezagent.Entity.User.admin_uri(), %{text: "x", attachments: [att]})
+    end
+
+    test "message_row/2 mints every attachment token BOUND to the authorized viewer (grantee)" do
+      [attachment] = ConversationData.message_row(upload_msg(), @viewer)["attachments"]
+
+      assert "/uploads/download?token=" <> token = attachment["href"]
+
+      assert {:ok, %{grantee: grantee}} =
+               Ezagent.Uploads.DownloadToken.verify_payload(token)
+
+      assert grantee == @viewer
+    end
+
+    test "message_row/2 with a nil caller mints NOTHING (fail-closed, never unbound)" do
+      [attachment] = ConversationData.message_row(upload_msg(), nil)["attachments"]
+
+      assert attachment["href"] == nil
+    end
+  end
 end

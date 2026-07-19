@@ -140,7 +140,7 @@ defmodule Ezagent.World.ConversationData do
   defp authorized_messages(%URI{} = session_uri, caller_uri, viewer_ctx) do
     case SessionReads.messages(caller_uri, session_uri, :conversation, %{limit: @message_limit}) do
       {:ok, messages} ->
-        {:ok, messages |> Enum.reverse() |> messages_to_rows(viewer_ctx)}
+        {:ok, messages |> Enum.reverse() |> messages_to_rows(viewer_ctx, caller_uri)}
 
       {:error, :unauthorized} = err ->
         err
@@ -476,7 +476,7 @@ defmodule Ezagent.World.ConversationData do
              limit: @message_limit,
              older_than: cursor
            }) do
-      rows = messages |> Enum.reverse() |> messages_to_rows(viewer_ctx)
+      rows = messages |> Enum.reverse() |> messages_to_rows(viewer_ctx, caller)
       {rows, oldest_cursor_iso(rows)}
     else
       # An invalid cursor OR an unauthorized caller yields no page — the
@@ -506,16 +506,22 @@ defmodule Ezagent.World.ConversationData do
     Ezagent.Message.new(sender, %{text: text, attachments: attachments}, mentions: mentions)
   end
 
-  @doc "Render-ready row for a single message (resolves the sender display)."
-  @spec message_row(Ezagent.Message.t()) :: map()
-  def message_row(%Ezagent.Message{} = msg), do: message_row(msg, %{})
+  @doc """
+  Render-ready row for a single message (resolves the sender display).
+
+  `caller_uri` is the AUTHORIZED viewer this render is FOR: any uploads
+  attachment download link is minted person-bound to them (`grantee`,
+  read-plane PR-3), so the link serves ONLY that principal.
+  """
+  @spec message_row(Ezagent.Message.t(), URI.t() | nil) :: map()
+  def message_row(%Ezagent.Message{} = msg, caller_uri), do: message_row(msg, %{}, caller_uri)
 
   @doc "Oldest-visible-cursor (ISO-8601) for backwards paging; `nil` when empty."
   @spec oldest_cursor_iso([map()]) :: String.t() | nil
   def oldest_cursor_iso([%{"at" => at} | _]) when is_binary(at), do: at
   def oldest_cursor_iso(_), do: nil
 
-  defp messages_to_rows(messages, viewer_ctx) when is_list(messages) do
+  defp messages_to_rows(messages, viewer_ctx, caller_uri) when is_list(messages) do
     sender_uris = Enum.map(messages, fn %Ezagent.Message{sender: s} -> URI.to_string(s) end)
     display_map = Ezagent.EntityPresenter.display_many(sender_uris)
 
@@ -527,12 +533,12 @@ defmodule Ezagent.World.ConversationData do
         else: nil
 
     Enum.map(messages, fn msg ->
-      row = message_row(msg, display_map)
+      row = message_row(msg, display_map, caller_uri)
       if ctx, do: ErrorCards.enrich(row, msg.body, ctx), else: row
     end)
   end
 
-  defp message_row(%Ezagent.Message{} = msg, display_map) do
+  defp message_row(%Ezagent.Message{} = msg, display_map, caller_uri) do
     sender_str = URI.to_string(msg.sender)
 
     %{
@@ -547,7 +553,7 @@ defmodule Ezagent.World.ConversationData do
       # is an optional per-card CSS theme (a user's explicit style ask).
       "render" => body_render(msg.body),
       "render_css" => body_render_css(msg.body),
-      "attachments" => body_attachments(msg.body),
+      "attachments" => body_attachments(msg.body, caller_uri),
       "at" => datetime_iso(msg.inserted_at)
     }
   end
@@ -579,36 +585,39 @@ defmodule Ezagent.World.ConversationData do
   defp body_text(_), do: ""
 
   # Each attachment renders as `%{"name", "href"}`: an uploads `resource://…`
-  # URI gets a signed `DownloadToken` link (the existing authed `/uploads/download`
-  # route re-checks the participant at serve time, so minting does not widen
-  # access — same contract as LV `att_to_link/1`); any other value renders as a
-  # plain label with no href (PR-2b).
-  defp body_attachments(%{attachments: list}) when is_list(list),
-    do: Enum.map(list, &attachment_row/1)
+  # URI gets a signed `DownloadToken` link PERSON-BOUND to `caller_uri` (the
+  # authorized viewer — grantee, read-plane PR-3; the serve path rejects any
+  # caller != grantee, so a leaked link is useless to anyone else); any other
+  # value renders as a plain label with no href (PR-2b).
+  defp body_attachments(%{attachments: list}, caller_uri) when is_list(list),
+    do: Enum.map(list, &attachment_row(&1, caller_uri))
 
-  defp body_attachments(%{"attachments" => list}) when is_list(list),
-    do: Enum.map(list, &attachment_row/1)
+  defp body_attachments(%{"attachments" => list}, caller_uri) when is_list(list),
+    do: Enum.map(list, &attachment_row(&1, caller_uri))
 
-  defp body_attachments(_), do: []
+  defp body_attachments(_, _caller_uri), do: []
 
-  defp attachment_row(att) do
+  defp attachment_row(att, caller_uri) do
     case attachment_uri(att) do
-      %URI{scheme: "resource"} = uri -> uploads_attachment_row(uri)
+      %URI{scheme: "resource"} = uri -> uploads_attachment_row(uri, caller_uri)
       _ -> %{"name" => attachment_label(att), "href" => nil}
     end
   end
 
-  defp uploads_attachment_row(%URI{} = uri) do
+  defp uploads_attachment_row(%URI{} = uri, caller_uri) do
     name = uri |> URI.to_string() |> Path.basename() |> strip_uuid_prefix()
 
-    case safe_mint_download(uri) do
+    case safe_mint_download(uri, caller_uri) do
       {:ok, token} -> %{"name" => name, "href" => "/uploads/download?token=#{token}"}
       :error -> %{"name" => name, "href" => nil}
     end
   end
 
-  defp safe_mint_download(%URI{} = uri) do
-    {:ok, Ezagent.Uploads.DownloadToken.mint!(uri)}
+  # Fail-closed: a nil/garbage caller mints NOTHING (the signer raises without
+  # a %URI{} grantee — rescued here), so the attachment renders with no href
+  # rather than with an unbound token.
+  defp safe_mint_download(%URI{} = uri, caller_uri) do
+    {:ok, Ezagent.Uploads.DownloadToken.mint!(uri, grantee: caller_uri)}
   rescue
     _ -> :error
   end

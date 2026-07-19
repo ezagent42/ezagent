@@ -29,8 +29,11 @@ defmodule EzagentCore.MessageReadChokepointBoundaryTest do
   here. The residual `Kind.get_slice(_, :session)` reads (role-slot /
   convergence / session-state facets) are the SESSION-STATE plane and tighten
   in PR-4/PR-5 as their chokepoints land; gating them here would flag those
-  deferred reads. The still-unmigrated uploads message reader is explicitly
-  allowlisted until PR-3; `session_reads.ex` is the door.
+  deferred reads. `session_reads.ex` is the door. The uploads controller stays
+  allowlisted for the ATTACHMENT plane: PR-3 kept its absent-grantee LEGACY
+  message-participation recheck (the zero-breakage path for pre-PR-3 tokens),
+  which reads Message rows directly; the attachment plane's own gate lives in
+  `attachment_plane_chokepoint_boundary_test`.
 
   Completeness (Pillar B): the allowlist is the ONLY legal set for the gated
   planes — the red build is the exhaustive worklist, not a hand-maintained
@@ -58,7 +61,8 @@ defmodule EzagentCore.MessageReadChokepointBoundaryTest do
 
   # Modules permitted to touch the gated roots directly:
   #   * session_reads.ex     — THE chokepoint (authorized reader / store-owner caller)
-  #   * uploads_controller.ex — deferred to PR-3 (attachment plane)
+  #   * uploads_controller.ex — the ATTACHMENT plane's legacy recheck (PR-3:
+  #     absent-grantee tokens only; grantee-bound tokens never touch Message)
   @allowlisted_basenames ~w(
     session_reads.ex uploads_controller.ex
   )
