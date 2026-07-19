@@ -156,6 +156,11 @@ defmodule Ezagent.World.IdentityData do
     |> Map.put("script_required_flavors", ["py"])
   end
 
+  # Read-plane PR-4 re-review: the deep-link read (existence check
+  # included) routes through `UserData.detail_state/4`, which authorizes
+  # the caller via `UserReads.user/2` BEFORE touching the row — a denied
+  # caller gets `user_unauthorized` (no cross-tenant existence oracle),
+  # a missing user gets `user_not_found`.
   defp component_state(
          %{component: "user_detail", entity_uri: user_uri},
          base,
@@ -164,13 +169,7 @@ defmodule Ezagent.World.IdentityData do
          caps
        )
        when not is_nil(user_uri) do
-    if UserData.exists?(user_uri) do
-      UserData.detail_state(base, user_uri, caller, caps)
-    else
-      base
-      |> Map.put("user_uri", encode_uri(user_uri))
-      |> Map.put("user_not_found", true)
-    end
+    UserData.detail_state(base, user_uri, caller, caps)
   end
 
   defp component_state(%{component: "user_detail", entity_uri: nil}, base, _ws, _caller, _caps) do
