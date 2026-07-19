@@ -5,9 +5,14 @@ defmodule EzagentDomainProviderConnection.Application do
   @impl true
   def start(_type, _args) do
     children =
-      [{Ezagent.ProviderConnection.RegistryOwner, []}] ++
+      [
+        {Ezagent.ProviderConnection.RegistryReadiness, []},
+        {Ezagent.ProviderConnection.DriverRegistry, []},
+        {Ezagent.ProviderConnection.BackendPairRegistry, []},
+        {Ezagent.ProviderConnection.RegistryOwner, []}
+      ] ++
         Application.get_env(:ezagent_domain_provider_connection, :children, [])
 
-    Supervisor.start_link(children, strategy: :one_for_one, name: __MODULE__)
+    Supervisor.start_link(children, strategy: :rest_for_one, name: __MODULE__)
   end
 end
