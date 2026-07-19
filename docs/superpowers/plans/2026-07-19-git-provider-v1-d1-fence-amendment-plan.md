@@ -102,16 +102,24 @@
 **Files:**
 - Modify: `apps/ezagent_domain_provider_connection/lib/ezagent/provider_connection/store.ex`
 - Modify: `apps/ezagent_domain_provider_connection/lib/ezagent/provider_connection/callback_ingress.ex`
-- Modify: `apps/ezagent_domain_provider_connection/lib/ezagent/provider_connection/transition.ex` only for the shared connection lock/generation-fence contract.
 - Modify: `apps/ezagent_domain_provider_connection/test/integration/callback_recovery_test.exs`
 
 **Interfaces:**
 - Connection transition and callback claim use the connection row lock and generation fence.
 - Public callback success contains only connection id, status, and connection version.
 
-- [ ] Add a deterministic claim-versus-terminal barrier proving the first durable linearization point wins and the loser records a safe obligation/error.
+- [ ] Add a deterministic callback-claim connection-lock/version-fence barrier. The
+  terminal-transition winner/loser barrier is deferred to Task 8 because the
+  current `Transition` module is only a pure legal-edge graph and Task 7 must
+  not introduce pointer/state mutation APIs.
 - [ ] Recheck the captured connection generation immediately before provider effect.
 - [ ] Remove credential ref/version from the public ingress result while retaining them in the internal operation receipt.
+
+Task 8 prerequisite: add the shared transition mutation API in
+`apps/ezagent_domain_provider_connection/lib/ezagent/provider_connection/transition.ex`
+and its connection row-lock/version-fence tests before implementing terminal
+transition versus callback-claim linearization. Task 7 must not claim that
+terminal barrier as complete.
 
 ### Task 4A: Add durable conditional constraints
 
