@@ -161,6 +161,12 @@ defmodule Ezagent.Cap.DeliveryOutbox.State do
   defp classify({:unknown_action, _}), do: :permanent
   defp classify({:delivery_decode, _}), do: :permanent
   defp classify({:invalid_delivery_envelope, _}), do: :permanent
+
+  # task #180 (codex F2) — the Kind.Server commit-time fence refusal for a
+  # delivery replay whose target was tombstoned mid-flight. Retrying can
+  # never succeed (delete is terminal), so the delivery dead-letters.
+  defp classify({:principal_tombstoned, _}), do: :permanent
+
   defp classify(_), do: :transient
 
   defp claim_miss(delivery_id) do

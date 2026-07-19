@@ -661,31 +661,42 @@ defmodule Ezagent.Kind.Server do
 
     case dispatch_result do
       {:ok, new_slice_state, result, slice_change_event, deferred} ->
-        case commit_and_notify(state, new_slice_state, slice_change_event) do
-          commit_ok when commit_ok in [:ok, :not_durable] ->
-            mark_cap_delivery_applied(inv)
+        # task #180 (codex F2) — re-check the tombstone fence at SLICE-COMMIT
+        # time for a durable cap-delivery replay (not only at handler entry):
+        # a delivery claimed pre-tombstone must not commit its slice
+        # post-tombstone.
+        case refute_tombstoned_delivery_target(inv, state.uri) do
+          :ok ->
+            case commit_and_notify(state, new_slice_state, slice_change_event) do
+              commit_ok when commit_ok in [:ok, :not_durable] ->
+                mark_cap_delivery_applied(inv)
 
-            # P2.5c — the parent slice durably committed (or by-design has no
-            # durability promise). NOW run the deferred post-commit
-            # dispatches. They are already ref-substituted + enriched
-            # (caller=self_uri) by Runtime.Effects.execute_buckets.
-            Ezagent.Kind.DeferredDispatch.enqueue(deferred)
-            reply = if is_nil(result), do: :ok, else: {:ok, result}
-            {:reply, reply, %{state | state: new_slice_state}}
+                # P2.5c — the parent slice durably committed (or by-design has no
+                # durability promise). NOW run the deferred post-commit
+                # dispatches. They are already ref-substituted + enriched
+                # (caller=self_uri) by Runtime.Effects.execute_buckets.
+                Ezagent.Kind.DeferredDispatch.enqueue(deferred)
+                reply = if is_nil(result), do: :ok, else: {:ok, result}
+                {:reply, reply, %{state | state: new_slice_state}}
+
+              {:error, reason} ->
+                # Issue #342 (Allen 2026-05-25 — let-it-crash). The action
+                # body produced a new slice but the durable write failed
+                # (`commit_and_notify/3` already suppressed the
+                # `SliceChange` emit + logged + emitted `:failed`
+                # telemetry). Returning `{:ok, result}` here would lie to
+                # the dispatch caller (LV / mix task / cross-Kind dispatcher)
+                # — they would broadcast a "succeeded" state that won't
+                # survive restart. Keep the in-memory slice un-advanced
+                # and propagate the persistence error.
+                delivery_reason = {:persistence_failed, reason}
+                record_cap_delivery_failure(inv, delivery_reason)
+                {:reply, {:error, delivery_reason}, state}
+            end
 
           {:error, reason} ->
-            # Issue #342 (Allen 2026-05-25 — let-it-crash). The action
-            # body produced a new slice but the durable write failed
-            # (`commit_and_notify/3` already suppressed the
-            # `SliceChange` emit + logged + emitted `:failed`
-            # telemetry). Returning `{:ok, result}` here would lie to
-            # the dispatch caller (LV / mix task / cross-Kind dispatcher)
-            # — they would broadcast a "succeeded" state that won't
-            # survive restart. Keep the in-memory slice un-advanced
-            # and propagate the persistence error.
-            delivery_reason = {:persistence_failed, reason}
-            record_cap_delivery_failure(inv, delivery_reason)
-            {:reply, {:error, delivery_reason}, state}
+            record_cap_delivery_failure(inv, reason)
+            {:reply, {:error, reason}, state}
         end
 
       {:error, reason} = err ->
@@ -703,26 +714,35 @@ defmodule Ezagent.Kind.Server do
 
     case dispatch_result do
       {:ok, new_slice_state, result, slice_change_event, deferred} ->
-        case commit_and_notify(state, new_slice_state, slice_change_event) do
-          commit_ok when commit_ok in [:ok, :not_durable] ->
-            mark_cap_delivery_applied(inv)
+        case refute_tombstoned_delivery_target(inv, state.uri) do
+          :ok ->
+            case commit_and_notify(state, new_slice_state, slice_change_event) do
+              commit_ok when commit_ok in [:ok, :not_durable] ->
+                mark_cap_delivery_applied(inv)
 
-            # P2.5c — run the deferred post-commit dispatches AFTER the
-            # parent slice durably committed (before replying to the caller,
-            # mirroring the handle_call ordering).
-            Ezagent.Kind.DeferredDispatch.enqueue(deferred)
-            # cast still replies via ctx.reply if set (e.g. caller_inbox).
-            Ezagent.Invocation.reply(inv.ctx, {:ok, result})
-            {:noreply, %{state | state: new_slice_state}}
+                # P2.5c — run the deferred post-commit dispatches AFTER the
+                # parent slice durably committed (before replying to the caller,
+                # mirroring the handle_call ordering).
+                Ezagent.Kind.DeferredDispatch.enqueue(deferred)
+                # cast still replies via ctx.reply if set (e.g. caller_inbox).
+                Ezagent.Invocation.reply(inv.ctx, {:ok, result})
+                {:noreply, %{state | state: new_slice_state}}
+
+              {:error, reason} ->
+                # Issue #342 — durable write failed. Mirror the handle_call
+                # branch: propagate the error to the caller, leave the
+                # in-memory slice un-advanced.
+                log_unobservable_cast_error(inv, {:persistence_failed, reason})
+                delivery_reason = {:persistence_failed, reason}
+                record_cap_delivery_failure(inv, delivery_reason)
+                Ezagent.Invocation.reply(inv.ctx, {:error, delivery_reason})
+                {:noreply, state}
+            end
 
           {:error, reason} ->
-            # Issue #342 — durable write failed. Mirror the handle_call
-            # branch: propagate the error to the caller, leave the
-            # in-memory slice un-advanced.
-            log_unobservable_cast_error(inv, {:persistence_failed, reason})
-            delivery_reason = {:persistence_failed, reason}
-            record_cap_delivery_failure(inv, delivery_reason)
-            Ezagent.Invocation.reply(inv.ctx, {:error, delivery_reason})
+            log_unobservable_cast_error(inv, reason)
+            record_cap_delivery_failure(inv, reason)
+            Ezagent.Invocation.reply(inv.ctx, {:error, reason})
             {:noreply, state}
         end
 
@@ -758,6 +778,22 @@ defmodule Ezagent.Kind.Server do
 
     :ok
   end
+
+  # task #180 (codex F2 — the absorb race). A durable cap-delivery replay
+  # (an invocation carrying `:cap_delivery_id`) re-checks the tombstone fence
+  # at SLICE-COMMIT time, not only at handler entry: a delivery claimed while
+  # the target was alive whose guard passed pre-tombstone must NOT commit its
+  # slice if the target was tombstoned mid-flight (the commit would re-store a
+  # revoked cap AND — for a not-yet-destroyed Kind — rewrite the snapshot the
+  # teardown just cleared). The fence is the same `Ezagent.SpawnFence`
+  # principal-tombstone check the spawn path runs, so the window between
+  # handler-entry guard and commit is closed for BOTH user and agent targets.
+  defp refute_tombstoned_delivery_target(%Ezagent.Invocation{ctx: %{cap_delivery_id: id}}, uri)
+       when is_integer(id) do
+    Ezagent.SpawnFence.check(uri)
+  end
+
+  defp refute_tombstoned_delivery_target(%Ezagent.Invocation{}, _uri), do: :ok
 
   defp mark_cap_delivery_applied(%Ezagent.Invocation{ctx: %{cap_delivery_id: id}} = inv)
        when is_integer(id) do
