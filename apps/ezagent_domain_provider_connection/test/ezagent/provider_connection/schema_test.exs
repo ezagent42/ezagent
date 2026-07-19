@@ -5,7 +5,8 @@ defmodule Ezagent.ProviderConnection.SchemaTest do
     AuthorizationAttempt,
     AuthorizationBackendRecord,
     Connection,
-    Operation
+    Operation,
+    ProviderAuthorizationCommand
   }
 
   alias EzagentCore.Repo
@@ -15,17 +16,18 @@ defmodule Ezagent.ProviderConnection.SchemaTest do
     :ok
   end
 
-  test "all five schemas are persisted through the shared core Repo boundary" do
+  test "all provider connection schemas are persisted through the shared core Repo boundary" do
     for schema <- [
           Connection,
           AuthorizationAttempt,
           Operation,
           Ezagent.ProviderConnection.Event,
-          AuthorizationBackendRecord
+          AuthorizationBackendRecord,
+          ProviderAuthorizationCommand
         ] do
       assert schema.__schema__(:fields) |> Enum.member?(:workspace_uri)
 
-      assert schema.__schema__(:source) in ~w(provider_connections provider_authorization_attempts provider_connection_operations provider_connection_events provider_authorization_backend_records)
+      assert schema.__schema__(:source) in ~w(provider_connections provider_authorization_attempts provider_connection_operations provider_connection_events provider_authorization_backend_records provider_authorization_commands)
     end
 
     assert Repo.__adapter__() == Ecto.Adapters.Postgres
@@ -105,8 +107,8 @@ defmodule Ezagent.ProviderConnection.SchemaTest do
        :safe_error_code, "provider_connection_operations_safe_error_code_check"},
       {AuthorizationBackendRecord.create_changeset(%{
          backend_record_attrs()
-         | consume_status: "invalid"
-       }), :consume_status, "provider_authorization_backend_records_consume_status_check"}
+         | lifecycle_status: "invalid"
+       }), :lifecycle_status, "provider_authorization_backend_records_lifecycle_status_check"}
     ]
 
     for {changeset, field, constraint_name} <- violations do
@@ -151,7 +153,7 @@ defmodule Ezagent.ProviderConnection.SchemaTest do
     end
   end
 
-  test "backend records allow one committed consume per authorization ref" do
+  test "backend records allow exactly one lifecycle row per authorization ref" do
     attrs = backend_record_attrs()
     assert {:ok, _} = Repo.insert(AuthorizationBackendRecord.create_changeset(attrs))
 
@@ -210,10 +212,20 @@ defmodule Ezagent.ProviderConnection.SchemaTest do
         id: Ecto.UUID.generate(),
         authorization_ref: "auth-ref-committed",
         key_id: "k1",
+        key_fingerprint: :crypto.hash(:sha256, "test-key"),
         nonce: <<1>>,
         ciphertext: <<2>>,
         bound_input_digest: "digest",
-        consume_status: "committed",
+        begin_correlation_id: "begin-1",
+        owner_uri: "entity://acme/user/u1",
+        connection_id: "conn-1",
+        connection_version: 1,
+        provider_id: "fake",
+        governed_host: "example.test",
+        acquisition_method: "oauth_user",
+        requested_permissions_digest: "permissions",
+        redirect_uri_id: "callback-v1",
+        lifecycle_status: "consumed",
         expires_at: DateTime.utc_now()
       })
 end

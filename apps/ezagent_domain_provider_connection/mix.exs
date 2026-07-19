@@ -17,5 +17,9 @@ defmodule EzagentDomainProviderConnection.MixProject do
     do: [mod: {EzagentDomainProviderConnection.Application, []}, extra_applications: [:logger]]
 
   defp deps,
-    do: [{:ezagent_core, in_umbrella: true}, {:ezagent_domain_identity, in_umbrella: true}]
+    do: [
+      {:ezagent_core, in_umbrella: true},
+      {:ezagent_domain_identity, in_umbrella: true},
+      {:jason, "~> 1.2"}
+    ]
 end
