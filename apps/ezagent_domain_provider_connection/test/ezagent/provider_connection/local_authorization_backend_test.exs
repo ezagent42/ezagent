@@ -486,7 +486,8 @@ defmodule Ezagent.ProviderConnection.LocalAuthorizationBackendTest do
       end)
 
     refute log =~ @sentinel
-    refute function_exported?(LocalAuthorizationBackend, :finalize_handoff, 1)
+    assert function_exported?(LocalAuthorizationBackend, :prepare_handoff_finalization, 1)
+    assert function_exported?(LocalAuthorizationBackend, :finalize_handoff, 1)
   end
 
   defp begin_request(overrides \\ %{}) do

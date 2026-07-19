@@ -20,6 +20,7 @@ defmodule Ezagent.ProviderConnection.LocalAuthorizationBackend do
   alias Ezagent.ProviderConnection.Connection
   alias Ezagent.ProviderConnection.Driver
   alias Ezagent.ProviderConnection.DriverRegistry
+  alias Ezagent.ProviderConnection.HandoffFinalizer
   alias Ezagent.ProviderConnection.ProviderAuthorizationCommand
   alias Ezagent.ProviderConnection.Operation
   alias EzagentCore.Repo
@@ -92,6 +93,27 @@ defmodule Ezagent.ProviderConnection.LocalAuthorizationBackend do
   end
 
   def consume_callback(_request), do: {:error, :callback_invalid}
+
+  @doc false
+  def reconcile_callback(operation_id, attempt_ref)
+      when is_binary(operation_id) and is_binary(attempt_ref) do
+    with {:ok, recovery} <- reconciliation_context(operation_id, attempt_ref) do
+      case recovery do
+        %{replay: result} ->
+          result
+
+        recovery ->
+          case invoke_reconciliation_driver(recovery) do
+            {:ok, :not_completed} -> terminalize_reconciled_absence(recovery)
+            {:ok, driver_result} -> commit_reconciled_callback(recovery, driver_result)
+            {:error, _reason} -> {:error, :authorization_backend_unavailable}
+          end
+      end
+    end
+  end
+
+  def reconcile_callback(_operation_id, _attempt_ref),
+    do: {:error, :authorization_backend_unavailable}
 
   @doc "Computes the callback-state digest without exposing key material."
   @spec state_digest(String.t()) :: {:ok, String.t()} | {:error, :callback_invalid}
@@ -194,6 +216,53 @@ defmodule Ezagent.ProviderConnection.LocalAuthorizationBackend do
 
   def handoff_to_registered_credential(_operation_id, _attempt_ref),
     do: {:error, :credential_conflict}
+
+  @doc false
+  def handoff_reconciled_to_registered_credential(operation_id, attempt_ref)
+      when is_binary(operation_id) and is_binary(attempt_ref) do
+    with %Operation{status: "prepared"} = operation <- Repo.get(Operation, operation_id),
+         %AuthorizationAttempt{} = attempt <- Repo.get(AuthorizationAttempt, attempt_ref),
+         %Connection{} = connection <- Repo.get(Connection, attempt.connection_id),
+         true <- connection.status in ["revoking", "disconnecting"],
+         true <- connection.connection_version == operation.expected_connection_version + 1,
+         base_connection <-
+           %{connection | connection_version: operation.expected_connection_version},
+         :ok <- validate_operation_fence(operation, attempt, base_connection),
+         %AuthorizationBackendRecord{} = row <-
+           Repo.get_by(AuthorizationBackendRecord, authorization_ref: attempt.authorization_ref),
+         :ok <- validate_handoff(row, operation, attempt, base_connection),
+         {:ok, credential_backend} <- registered_credential_backend(attempt.backend_pair_id),
+         {:ok, snapshot} <- crypto_state(),
+         {:ok, envelope} <- decode_handoff_envelope(row.handoff_ciphertext),
+         {:ok, credential_material} <-
+           unseal_with(
+             snapshot,
+             :credential_handoff,
+             envelope,
+             handoff_aad(row, attempt.correlation_id, operation.handoff_ref)
+           ),
+         {:ok, result} <-
+           credential_backend.store(
+             operation
+             |> credential_command(attempt, base_connection)
+             |> Map.put(:credential_material, credential_material)
+           ) do
+      {:ok, result}
+    else
+      {:error, _reason} = error -> error
+      _reason -> {:error, :credential_conflict}
+    end
+  end
+
+  def handoff_reconciled_to_registered_credential(_operation_id, _attempt_ref),
+    do: {:error, :credential_conflict}
+
+  @doc false
+  def prepare_handoff_finalization(authorization_ref),
+    do: HandoffFinalizer.prepare(authorization_ref)
+
+  @doc false
+  def finalize_handoff(authorization_ref), do: HandoffFinalizer.finalize(authorization_ref)
 
   @impl true
   def cancel_authorization(request) when is_map(request) do
@@ -715,12 +784,16 @@ defmodule Ezagent.ProviderConnection.LocalAuthorizationBackend do
         {:error, :provider_protocol_error}
     end
 
-    context = %{
-      authorization_ref: row.authorization_ref,
-      correlation_id: command.correlation_id,
-      callback_envelope_digest: secret_digest(callback_envelope),
-      exchange: exchange
-    }
+    context =
+      Map.merge(
+        %{
+          authorization_ref: row.authorization_ref,
+          correlation_id: command.correlation_id,
+          callback_envelope_digest: secret_digest(callback_envelope),
+          exchange: exchange
+        },
+        reconciliation_driver_identity(operation, row, command)
+      )
 
     try do
       apply(driver.implementation, operation, [context])
@@ -730,6 +803,343 @@ defmodule Ezagent.ProviderConnection.LocalAuthorizationBackend do
       _kind, _reason -> {:error, :provider_protocol_error}
     end
     |> normalize_driver_reply()
+  end
+
+  defp reconciliation_driver_identity(:consume_callback, row, command) do
+    attempt =
+      Repo.get_by(AuthorizationAttempt,
+        authorization_ref: row.authorization_ref,
+        correlation_id: command.correlation_id
+      )
+
+    operation =
+      Repo.get_by(Operation,
+        backend_pair_id: command.backend_pair_id,
+        operation_class: "store",
+        correlation_id: "store:#{command.correlation_id}"
+      )
+
+    case {attempt, operation} do
+      {%AuthorizationAttempt{} = attempt, %Operation{} = operation} ->
+        %{
+          backend_pair_id: command.backend_pair_id,
+          operation_class: command.operation_class,
+          attempt_ref: attempt.attempt_ref,
+          connection_generation: operation.expected_connection_version,
+          credential_generation: operation.expected_credential_version,
+          command_digest: command.bound_input_digest
+        }
+
+      _other ->
+        %{}
+    end
+  end
+
+  defp reconciliation_driver_identity(_operation, _row, _command), do: %{}
+
+  defp reconciliation_context(operation_id, attempt_ref) do
+    operation = Repo.get(Operation, operation_id)
+    attempt = Repo.get(AuthorizationAttempt, attempt_ref)
+
+    with %Operation{status: "prepared"} <- operation,
+         %AuthorizationAttempt{} <- attempt,
+         true <- operation.attempt_ref == attempt.attempt_ref,
+         %Connection{} = connection <- Repo.get(Connection, operation.connection_id),
+         true <- connection.status in ["revoking", "disconnecting"],
+         true <- connection.connection_version == operation.expected_connection_version + 1,
+         base_connection <-
+           %{connection | connection_version: operation.expected_connection_version},
+         %AuthorizationBackendRecord{} = row <-
+           Repo.get_by(AuthorizationBackendRecord, authorization_ref: attempt.authorization_ref),
+         %ProviderAuthorizationCommand{} = command <-
+           maybe_command(operation.backend_pair_id, "consume", attempt.correlation_id),
+         :ok <- validate_reconciliation_scope(operation, attempt, row, command, base_connection) do
+      build_reconciliation_context(
+        operation,
+        attempt,
+        row,
+        command,
+        base_connection
+      )
+    else
+      _reason -> {:error, :authorization_backend_unavailable}
+    end
+  end
+
+  defp validate_reconciliation_scope(operation, attempt, row, command, connection) do
+    if operation.backend_pair_id == attempt.backend_pair_id and
+         operation.backend_pair_id == row.backend_pair_id and
+         operation.backend_pair_id == command.backend_pair_id and
+         operation.operation_class == "store" and
+         operation.correlation_id == "store:#{attempt.correlation_id}" and
+         operation.bound_input_digest == Operation.callback_digest(row, attempt, connection) and
+         operation.attempt_claim_token == attempt.claim_token and
+         operation.attempt_version == attempt.attempt_version and
+         operation.expected_connection_version == attempt.connection_version and
+         operation.expected_credential_version == connection.credential_version and
+         command.operation_class == "consume" and
+         command.correlation_id == attempt.correlation_id and
+         command.bound_input_digest == row.consume_input_digest and
+         command.authorization_ref == attempt.authorization_ref and
+         command.status in ["prepared", "committed", "terminal_failed"] and
+         row.consume_correlation_id == attempt.correlation_id do
+      :ok
+    else
+      {:error, :correlation_conflict}
+    end
+  end
+
+  defp build_reconciliation_context(operation, attempt, row, command, base_connection) do
+    common = %{
+      operation: operation,
+      attempt: attempt,
+      row: row,
+      command: command,
+      base_connection: base_connection
+    }
+
+    case command do
+      %ProviderAuthorizationCommand{status: "committed", safe_result: safe_result}
+      when is_map(safe_result) ->
+        result = decode_consume_result(safe_result)
+        {:write_only_handoff, handoff_ref} = result.credential_material
+
+        if operation.handoff_ref == handoff_ref and row.handoff_ref == handoff_ref and
+             is_binary(row.handoff_ciphertext) do
+          {:ok, Map.put(common, :replay, {:ok, result})}
+        else
+          {:error, :correlation_conflict}
+        end
+
+      %ProviderAuthorizationCommand{
+        status: "terminal_failed",
+        safe_error_code: "not_completed"
+      } ->
+        {:ok, Map.put(common, :replay, {:ok, :not_completed})}
+
+      %ProviderAuthorizationCommand{status: "prepared"} ->
+        with true <- is_binary(row.callback_ciphertext),
+             {:ok, snapshot} <- crypto_state(),
+             {:ok, payload} <-
+               unseal_with(snapshot, :authorization_attempt, envelope(row), row_aad(row)),
+             {:ok, callback_envelope} <-
+               unseal_with(
+                 snapshot,
+                 :authorization_callback,
+                 callback_envelope(row),
+                 callback_aad(row, command.correlation_id, command.bound_input_digest)
+               ),
+             :ok <- validate_callback(payload, callback_envelope, row),
+             {:ok, driver} <- frozen_driver(row) do
+          {:ok,
+           Map.merge(common, %{
+             payload: payload,
+             callback_envelope: callback_envelope,
+             driver: driver,
+             snapshot: snapshot
+           })}
+        else
+          _reason -> {:error, :authorization_backend_unavailable}
+        end
+
+      _other ->
+        {:error, :correlation_conflict}
+    end
+  end
+
+  defp invoke_reconciliation_driver(recovery) do
+    context = private_driver_context(recovery)
+
+    reply =
+      try do
+        apply(recovery.driver.implementation, :reconcile_callback, [context])
+      rescue
+        _error -> {:error, :provider_protocol_error}
+      catch
+        _kind, _reason -> {:error, :provider_protocol_error}
+      end
+
+    case reply do
+      {:ok, :not_completed} -> {:ok, :not_completed}
+      {:ok, result} when is_map(result) -> {:ok, result}
+      {:error, _reason} -> {:error, :provider_outcome_ambiguous}
+      _reply -> {:error, :provider_outcome_ambiguous}
+    end
+  end
+
+  defp private_driver_context(recovery) do
+    private_frame = %{
+      state: recovery.payload.state,
+      pkce_verifier: recovery.payload.pkce_verifier,
+      callback_envelope: recovery.callback_envelope,
+      provider_id: recovery.row.provider_id,
+      acquisition_method: recovery.row.acquisition_method,
+      governed_host: recovery.row.governed_host
+    }
+
+    exchange = fn
+      provider_exchange when is_function(provider_exchange, 1) ->
+        provider_exchange.(private_frame)
+
+      _other ->
+        {:error, :provider_protocol_error}
+    end
+
+    %{
+      authorization_ref: recovery.row.authorization_ref,
+      backend_pair_id: recovery.command.backend_pair_id,
+      operation_class: recovery.command.operation_class,
+      correlation_id: recovery.command.correlation_id,
+      attempt_ref: recovery.attempt.attempt_ref,
+      connection_generation: recovery.operation.expected_connection_version,
+      credential_generation: recovery.operation.expected_credential_version,
+      command_digest: recovery.command.bound_input_digest,
+      callback_envelope_digest: secret_digest(recovery.callback_envelope),
+      exchange: exchange
+    }
+  end
+
+  defp terminalize_reconciled_absence(%{command: %{status: "terminal_failed"}}),
+    do: {:ok, :not_completed}
+
+  defp terminalize_reconciled_absence(recovery) do
+    Repo.transaction(fn ->
+      connection =
+        Connection
+        |> where([item], item.connection_id == ^recovery.operation.connection_id)
+        |> lock("FOR UPDATE")
+        |> Repo.one!()
+
+      operation =
+        Operation
+        |> where([item], item.id == ^recovery.operation.id)
+        |> lock("FOR UPDATE")
+        |> Repo.one!()
+
+      attempt =
+        AuthorizationAttempt
+        |> where([item], item.attempt_ref == ^recovery.attempt.attempt_ref)
+        |> lock("FOR UPDATE")
+        |> Repo.one!()
+
+      command =
+        locked_command(
+          recovery.command.backend_pair_id,
+          recovery.command.operation_class,
+          recovery.command.correlation_id
+        )
+
+      row = locked_record(recovery.row.authorization_ref)
+      base_connection = %{connection | connection_version: operation.expected_connection_version}
+
+      if connection.status in ["revoking", "disconnecting"] and
+           connection.connection_version == operation.expected_connection_version + 1 and
+           operation.status == "prepared" and is_nil(operation.handoff_ref) and
+           command.status == "prepared" and
+           :ok == validate_reconciliation_scope(operation, attempt, row, command, base_connection) do
+        command
+        |> Ecto.Changeset.change(
+          status: "terminal_failed",
+          safe_result: nil,
+          safe_error_code: "not_completed"
+        )
+        |> Repo.update!()
+
+        {:ok, :not_completed}
+      else
+        Repo.rollback(:correlation_conflict)
+      end
+    end)
+    |> unwrap_transaction()
+  end
+
+  defp commit_reconciled_callback(recovery, driver_result) do
+    handoff_ref =
+      stable_ref("handoff", recovery.row.authorization_ref, recovery.command.correlation_id)
+
+    with {:ok, normalized} <-
+           normalize_consume_result(
+             driver_result,
+             recovery.callback_envelope,
+             recovery.driver
+           ),
+         handoff <-
+           seal_with(
+             recovery.snapshot,
+             :active,
+             :credential_handoff,
+             normalized.credential_material,
+             handoff_aad(recovery.row, recovery.command.correlation_id, handoff_ref)
+           ) do
+      Repo.transaction(fn ->
+        connection =
+          Connection
+          |> where([item], item.connection_id == ^recovery.operation.connection_id)
+          |> lock("FOR UPDATE")
+          |> Repo.one!()
+
+        operation =
+          Operation
+          |> where([item], item.id == ^recovery.operation.id)
+          |> lock("FOR UPDATE")
+          |> Repo.one!()
+
+        attempt =
+          AuthorizationAttempt
+          |> where([item], item.attempt_ref == ^recovery.attempt.attempt_ref)
+          |> lock("FOR UPDATE")
+          |> Repo.one!()
+
+        command =
+          locked_command(
+            recovery.command.backend_pair_id,
+            "consume",
+            recovery.command.correlation_id
+          )
+
+        row = locked_record(recovery.row.authorization_ref)
+
+        base_connection = %{
+          connection
+          | connection_version: operation.expected_connection_version
+        }
+
+        if connection.status in ["revoking", "disconnecting"] and
+             connection.connection_version == operation.expected_connection_version + 1 and
+             command.status == "prepared" and operation.status == "prepared" and
+             is_nil(operation.handoff_ref) and
+             :ok ==
+               validate_reconciliation_scope(operation, attempt, row, command, base_connection) do
+          safe_result =
+            Map.put(normalized, :credential_material, {:write_only_handoff, handoff_ref})
+
+          row
+          |> Ecto.Changeset.change(
+            lifecycle_status: "consumed",
+            nonce: nil,
+            ciphertext: nil,
+            callback_nonce: nil,
+            callback_ciphertext: nil,
+            handoff_ref: handoff_ref,
+            handoff_ciphertext: :erlang.term_to_binary(handoff, [:deterministic])
+          )
+          |> Repo.update!()
+
+          commit_command(command, encode_consume_result(safe_result))
+
+          operation
+          |> Ecto.Changeset.change(handoff_ref: handoff_ref)
+          |> Repo.update!()
+
+          {:ok, safe_result}
+        else
+          {:error, :correlation_conflict}
+        end
+      end)
+      |> unwrap_transaction()
+    else
+      _reason -> {:error, :authorization_backend_unavailable}
+    end
   end
 
   defp normalize_driver_reply({:ok, result}) when is_map(result), do: {:ok, result}
