@@ -102,6 +102,8 @@ defmodule Ezagent.ProviderConnectionCapTest do
     wrong_grantee = Ezagent.URI.user(:team_alpha, :wrong_callback_grantee)
     wrong_workspace_owner = Ezagent.URI.user(:other_workspace, :wrong_callback_owner)
 
+    secret = "callback-artifact-secret-sentinel"
+
     invalid_artifacts = [
       %{},
       %{grantee_uri: ctx.caller},
@@ -112,13 +114,16 @@ defmodule Ezagent.ProviderConnectionCapTest do
       issue_cap!(ctx.owner, ctx.caller, ProviderConnection, :refresh),
       issue_cap!(ctx.owner, ctx.caller, Ezagent.ActionSet.Identity, :consume_callback),
       issue_cap!(User.admin_uri(), ctx.caller, ProviderConnection, :consume_callback),
-      issue_cap!(wrong_workspace_owner, ctx.caller, ProviderConnection, :consume_callback)
+      issue_cap!(wrong_workspace_owner, ctx.caller, ProviderConnection, :consume_callback),
+      Map.put(callback, :unsigned_extra, secret),
+      Map.delete(callback, :signature)
     ]
 
     for artifact <- invalid_artifacts do
       malformed_args = Map.put(args(:begin_authorization, ctx), :callback_artifact, artifact)
 
       assert {:error, _reason} =
+               result =
                dispatch(
                  ctx.owner,
                  ctx.caller,
@@ -127,6 +132,7 @@ defmodule Ezagent.ProviderConnectionCapTest do
                  MapSet.new([cap])
                )
 
+      refute inspect(result) =~ secret
       refute_received {:boundary, _, _}
     end
 
@@ -141,6 +147,53 @@ defmodule Ezagent.ProviderConnectionCapTest do
 
     assert_received {:boundary, :begin_authorization, _}
     refute_received {:boundary, _, _}
+  end
+
+  test "all seven live actions reject extra authority and secret keys before boundaries", ctx do
+    secret = "live-command-secret-sentinel"
+
+    extras = [
+      {:owner_uri, ctx.owner},
+      {:workspace_uri, Capability.workspace_of(ctx.owner)},
+      {:grantee, ctx.caller},
+      {:action, :read_connection},
+      {:unsigned_extra, secret}
+    ]
+
+    for action <- @actions do
+      cap = issue_cap!(ctx.owner, ctx.caller, ProviderConnection, action)
+
+      for {key, value} <- extras do
+        assert {:error, {:invalid_args, _}} =
+                 result =
+                 dispatch(
+                   ctx.owner,
+                   ctx.caller,
+                   action,
+                   Map.put(args(action, ctx), key, value),
+                   MapSet.new([cap])
+                 )
+
+        refute inspect(result) =~ secret
+        refute_received {:assurance, _}
+        refute_received {:boundary, _, _}
+      end
+
+      assert {:error, :provider_connection_orchestration_not_implemented} =
+               dispatch(
+                 ctx.owner,
+                 ctx.caller,
+                 action,
+                 args(action, ctx),
+                 MapSet.new([cap])
+               )
+
+      if action in [:reauthorize, :revoke, :disconnect],
+        do: assert_received({:assurance, ^action})
+
+      assert_received {:boundary, ^action, _}
+      refute_received {:boundary, _, _}
+    end
   end
 
   defp dispatch(owner, caller, action, args, caps) do

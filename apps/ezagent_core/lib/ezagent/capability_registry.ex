@@ -115,8 +115,8 @@ defmodule Ezagent.CapabilityRegistry do
     description = lookup_description!(behavior, action)
     dispatchable? = behavior_dispatchable?(behavior)
 
-    subject_before = lookup_subject(kind, action)
-    behavior_before = BehaviorRegistry.lookup(kind, action)
+    subject_before = lookup_subject_raw(kind, action)
+    behavior_before = lookup_behavior_raw(kind, action)
 
     with :ok <- compatible_subject(subject_before, kind, action, behavior),
          :ok <- compatible_behavior(behavior_before, kind, action, behavior, dispatchable?) do
@@ -201,7 +201,7 @@ defmodule Ezagent.CapabilityRegistry do
   def unregister(kind, action, behavior)
       when is_atom(kind) and is_atom(action) and is_atom(behavior) do
     :global.trans({__MODULE__, :mutation}, fn ->
-      case {lookup_subject(kind, action), BehaviorRegistry.lookup(kind, action)} do
+      case {lookup_subject_raw(kind, action), lookup_behavior_raw(kind, action)} do
         {{:ok, %{behavior: ^behavior, dispatchable?: true}}, {:ok, ^behavior}} ->
           :ets.delete(Subjects.table(), {kind, behavior, action})
           :ok = BehaviorRegistry.unregister(kind, action)
@@ -271,18 +271,11 @@ defmodule Ezagent.CapabilityRegistry do
   """
   @spec lookup_subject(module(), atom()) :: {:ok, subject()} | :error
   def lookup_subject(kind, action) when is_atom(kind) and is_atom(action) do
-    case :ets.match_object(Subjects.table(), {{kind, :_, action}, :_}) do
-      [{{^kind, behavior, ^action}, %{description: d, dispatchable?: disp?}}] ->
-        {:ok,
-         %{
-           kind: kind,
-           behavior: behavior,
-           action: action,
-           description: d,
-           dispatchable?: disp?
-         }}
+    case lookup_subject_raw(kind, action) do
+      {:ok, subject} ->
+        {:ok, subject}
 
-      [] ->
+      :error ->
         # #533 §3.4 — universal behaviors (e.g. Ezagent.ActionSet.Manage)
         # are grantable on EVERY Kind by construction. On a per-Kind miss,
         # synthesize the subject for the universal behavior handling this
@@ -301,6 +294,30 @@ defmodule Ezagent.CapabilityRegistry do
                dispatchable?: behavior_dispatchable?(behavior)
              }}
         end
+    end
+  end
+
+  defp lookup_subject_raw(kind, action) do
+    case :ets.match_object(Subjects.table(), {{kind, :_, action}, :_}) do
+      [{{^kind, behavior, ^action}, %{description: d, dispatchable?: disp?}}] ->
+        {:ok,
+         %{
+           kind: kind,
+           behavior: behavior,
+           action: action,
+           description: d,
+           dispatchable?: disp?
+         }}
+
+      [] ->
+        :error
+    end
+  end
+
+  defp lookup_behavior_raw(kind, action) do
+    case :ets.lookup(BehaviorRegistry.table(), {kind, action}) do
+      [{{^kind, ^action}, behavior}] -> {:ok, behavior}
+      [] -> :error
     end
   end
 

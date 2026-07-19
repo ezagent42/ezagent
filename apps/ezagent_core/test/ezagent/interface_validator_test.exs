@@ -2,6 +2,10 @@ defmodule Ezagent.InterfaceValidatorTest do
   use ExUnit.Case, async: true
   alias Ezagent.InterfaceValidator
 
+  defmodule ClosedEvidence do
+    defstruct [:id, :status]
+  end
+
   describe "primitives" do
     test ":string matches binary, fails on int" do
       assert :ok = InterfaceValidator.validate(%{x: "hi"}, %{x: :string})
@@ -49,6 +53,39 @@ defmodule Ezagent.InterfaceValidatorTest do
   end
 
   describe "composites" do
+    test "{:struct, Module} accepts only the exact declared struct keyset" do
+      evidence = %ClosedEvidence{id: "evidence-1", status: :valid}
+      secret = "interface-struct-secret-sentinel"
+
+      assert :ok =
+               InterfaceValidator.validate(%{evidence: evidence}, %{
+                 evidence: {:struct, ClosedEvidence}
+               })
+
+      for forged <- [Map.put(evidence, :unsigned_extra, secret), Map.delete(evidence, :status)] do
+        assert {:error, {:invalid_args, _violations}} =
+                 result =
+                 InterfaceValidator.validate(%{evidence: forged}, %{
+                   evidence: {:struct, ClosedEvidence}
+                 })
+
+        refute inspect(result) =~ secret
+      end
+    end
+
+    test "{:closed_map, schema} rejects extra keys without changing open-map compatibility" do
+      value = %{name: "alice", extension: "kept-compatible"}
+
+      assert :ok = InterfaceValidator.validate(value, %{name: :string})
+
+      assert {:error, {:invalid_args, violations}} =
+               InterfaceValidator.validate(value, {:closed_map, %{name: :string}})
+
+      assert [{[], :unexpected_fields}] = violations
+      refute inspect(violations) =~ "kept-compatible"
+      assert :ok = InterfaceValidator.validate(%{name: "alice"}, {:closed_map, %{name: :string}})
+    end
+
     test "{:list, ty} validates each element" do
       assert :ok =
                InterfaceValidator.validate(%{xs: [1, 2, 3]}, %{xs: {:list, :integer}})

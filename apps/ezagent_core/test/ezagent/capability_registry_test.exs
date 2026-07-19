@@ -86,6 +86,21 @@ defmodule Ezagent.CapabilityRegistryTest do
     def interface, do: %{}
   end
 
+  defmodule MockUniversalKind do
+    def type_name, do: :mock_universal_kind
+  end
+
+  defmodule MockManageOverride do
+    @behaviour Ezagent.ActionSet
+
+    def actions, do: [:delete]
+    def cap_subjects, do: [{:delete, "mock per-Kind Manage override"}]
+    def state_slice, do: :mock_manage_override
+    def init_slice(_), do: %{}
+    def invoke(_, slice, _, _), do: {:ok, slice}
+    def interface, do: %{}
+  end
+
   describe "register/3 — dispatchable subject" do
     test "writes to BOTH subjects table AND BehaviorRegistry" do
       :ok = CapabilityRegistry.register(Session, :mock_test_action_d, MockDispatchableBehavior)
@@ -123,6 +138,42 @@ defmodule Ezagent.CapabilityRegistryTest do
   end
 
   describe "register/3 — idempotency + conflict" do
+    test "raw misses acquire a per-Kind override despite universal lookup fallback" do
+      kind = MockUniversalKind
+      action = :delete
+
+      :ets.match_delete(
+        Ezagent.CapabilityRegistry.Subjects.table(),
+        {{kind, :_, action}, :_}
+      )
+
+      :ets.delete(BehaviorRegistry.table(), {kind, action})
+
+      assert {:ok, %{behavior: Ezagent.ActionSet.Manage}} =
+               CapabilityRegistry.lookup_subject(kind, action)
+
+      assert {:ok, Ezagent.ActionSet.Manage} = BehaviorRegistry.lookup(kind, action)
+
+      assert :acquired =
+               CapabilityRegistry.register_owned(kind, action, MockManageOverride)
+
+      assert [{{^kind, MockManageOverride, ^action}, %{dispatchable?: true}}] =
+               :ets.match_object(
+                 Ezagent.CapabilityRegistry.Subjects.table(),
+                 {{kind, :_, action}, :_}
+               )
+
+      assert [{{^kind, ^action}, MockManageOverride}] =
+               :ets.lookup(BehaviorRegistry.table(), {kind, action})
+
+      assert :ok = CapabilityRegistry.unregister(kind, action, MockManageOverride)
+
+      assert {:ok, %{behavior: Ezagent.ActionSet.Manage}} =
+               CapabilityRegistry.lookup_subject(kind, action)
+
+      assert {:ok, Ezagent.ActionSet.Manage} = BehaviorRegistry.lookup(kind, action)
+    end
+
     test "subject-only repair is retained when later registration fails" do
       action = :mock_test_action_d
       :ok = CapabilityRegistry.unregister(Session, action, MockDispatchableBehavior)
