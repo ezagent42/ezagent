@@ -42,6 +42,7 @@ defmodule EzagentPluginKanban.ShareReceive do
 
   alias Ezagent.ActionSet.Session.Members
   alias Ezagent.Socialware.Mount
+  alias Ezagent.Socialware.SessionReads
 
   # kanban 业务字面(从 share controller 搬入,归位 plugin):收只读钥匙的「手」的
   # role 名 + 只读动作集(能看不能改,同 BoardProvision 转发只读集)。
@@ -94,9 +95,10 @@ defmodule EzagentPluginKanban.ShareReceive do
 
   # --- 落点 session 解析 ----------------------------------------------------
 
-  # 显式落点:解析该 session 的 kanban-assistant(无 → :no_assistant_in_session)。
-  defp resolve_target(_clicker, %URI{} = target_session) do
-    case session_assistant(target_session) do
+  # 显式落点:解析该 session 的 kanban-assistant(无 → :no_assistant_in_session;
+  # clicker 非该 session 成员 → SessionReads fail-closed,同样归入该错误)。
+  defp resolve_target(%URI{} = clicker, %URI{} = target_session) do
+    case session_assistant(target_session, clicker) do
       {:ok, assistant_uri} -> {:ok, target_session, assistant_uri}
       {:error, _} = err -> err
     end
@@ -113,7 +115,7 @@ defmodule EzagentPluginKanban.ShareReceive do
     with %URI{scheme: "workspace"} = workspace_uri <- Ezagent.URI.workspace_of(clicker),
          [_ | _] = sessions <-
            EzagentDomainInstanceMessage.list_sessions(workspace_uri, clicker),
-         {:ok, session_uri, assistant_uri} <- first_session_with_assistant(sessions) do
+         {:ok, session_uri, assistant_uri} <- first_session_with_assistant(sessions, clicker) do
       {:ok, session_uri, assistant_uri}
     else
       %URI{} -> {:error, :no_workspace}
@@ -125,10 +127,10 @@ defmodule EzagentPluginKanban.ShareReceive do
   end
 
   # 逐个 session 读成员,返回首个持 kanban-assistant 成员的 {session, assistant}。
-  defp first_session_with_assistant(sessions) do
+  defp first_session_with_assistant(sessions, %URI{} = clicker) do
     sessions
     |> Enum.find_value(fn %URI{} = session_uri ->
-      case session_assistant(session_uri) do
+      case session_assistant(session_uri, clicker) do
         {:ok, assistant_uri} -> {:ok, session_uri, assistant_uri}
         _ -> nil
       end
@@ -140,15 +142,15 @@ defmodule EzagentPluginKanban.ShareReceive do
   end
 
   # 读一次 session 成员 → 解析该 session 的 kanban-assistant(收只读钥匙的「手」)。
-  defp session_assistant(%URI{} = session_uri) do
-    members =
-      case Ezagent.Kind.get_slice(session_uri, :session) do
-        {:ok, slice} when is_map(slice) -> Map.get(slice, :members, %{})
-        _ -> %{}
-      end
-
-    case Members.role_name_to_uri(members, @assistant_role) do
-      %URI{} = uri -> {:ok, uri}
+  # read-plane PR-1(main dbac4c666,Allen 在 controller 旧址做了同款迁移;债③搬家后
+  # 落点在此):成员读走 `SessionReads.members` 授权闸(clicker 是这些 session 的成员
+  # ——nil 落点路 `list_sessions/2` 已按成员过滤,授权必过;显式落点路非成员
+  # fail-closed),不再直读 `:session` slice。
+  defp session_assistant(%URI{} = session_uri, %URI{} = clicker) do
+    with {:ok, members} <- SessionReads.members(clicker, session_uri),
+         %URI{} = uri <- Members.role_name_to_uri(members, @assistant_role) do
+      {:ok, uri}
+    else
       _ -> {:error, :no_assistant_in_session}
     end
   end

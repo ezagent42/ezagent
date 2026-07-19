@@ -73,6 +73,12 @@ defmodule EzagentPluginKanban.MixProject do
       # deploy-seed lane, not this plugin's boot). Undeclared it is a latent
       # "module not available" hazard (#57 arch gate).
       {:ezagent_domain_session, in_umbrella: true},
+      # read-plane PR-1(main dbac4c666):session 成员读走
+      # `Ezagent.Socialware.SessionReads.members/2` 授权闸(fail-closed),不再直读
+      # `:session` slice——`ShareReceive.session_assistant/2` 是唯一调用点。
+      # plugin → domain 是允许的依赖箭头(同上 Mount/domain_session 先例),无环:
+      # domain_socialware 不反向依赖任何 plugin。
+      {:ezagent_domain_socialware, in_umbrella: true},
       # kanban board view (S4): domain_ui owns the `Ezagent.UI.SessionView`
       # contract + `SessionViewRegistry` that `BoardView` implements/registers
       # into (and brings Phoenix.Component for the internal render). PROD dep so
