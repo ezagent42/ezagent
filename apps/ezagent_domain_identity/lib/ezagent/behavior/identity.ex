@@ -141,6 +141,12 @@ defmodule Ezagent.ActionSet.Identity do
 
   @impl Ezagent.Lifecycle
   def create(args) do
+    # task #180 (delete = atomic revocation) — spawn FENCE, fail-closed.
+    # Runs inside `Kind.Server.init/1` (via `Snapshot.safe_load_or_init`)
+    # BEFORE registry/authority/ready, so a refusal here is a clean,
+    # synchronous spawn failure (`{:stop, {:snapshot_load_failed, _}}`).
+    :ok = refute_tombstoned_entity!(Map.get(args, :uri))
+
     caps =
       case Map.get(args, :initial_caps) do
         nil -> MapSet.new()
@@ -204,6 +210,13 @@ defmodule Ezagent.ActionSet.Identity do
   # or the union is a no-op).
   @impl Ezagent.Lifecycle
   def activate(%{caps: _existing_caps} = state, %{self_uri: %URI{scheme: "entity"} = uri}) do
+    # task #180 — activate FENCE (the rehydrate half of the spawn fence):
+    # on a cold-load `create/1` is skipped (ever-created marker), so THIS
+    # is the guard that fires when a snapshot row survived the tombstone's
+    # best-effort destroy. Raising crashes the Kind BEFORE the ReadyGate
+    # flips (post-init runs pre-`:ready`), so the fence holds even there.
+    :ok = refute_tombstoned_entity!(uri)
+
     original_state = state
 
     user_caps =
@@ -221,6 +234,61 @@ defmodule Ezagent.ActionSet.Identity do
   end
 
   def activate(_state, _ctx), do: {:ok, %{}}
+
+  # ===================================================================
+  # task #180 (delete = atomic revocation) — the spawn/activate FENCE.
+  #
+  # Codex review found the earlier demand-spawn guard (an `entity://`
+  # spawn fn registered by the identity app) was DEAD: `SpawnRegistry.register/2`
+  # is last-wins and the session app boots AFTER identity, overwriting the
+  # guarded fn with an unguarded one (commit 788743d68 dropped it). The
+  # guard therefore lives HERE instead — inside the Identity Behavior's
+  # own Lifecycle callbacks, which EVERY User/Agent Kind start must pass
+  # through no matter which spawn fn is registered, which entry point
+  # triggered the spawn (demand-spawn / boot Loader / ensure_live /
+  # token-auth / login), or which app won registration. It cannot be
+  # overwritten because it is not a registry entry.
+  #
+  # Fail-closed and fail-open in the right places: a KNOWN tombstoned
+  # user (or an agent whose recorded owner is tombstoned) can never run
+  # a Kind again; an UNKNOWN user row is NOT refused (absence ≠ deletion
+  # — `Users.deleted?/1` returns false, unlike `disabled?/1`), so
+  # pre-provisioning spawns and agent Kinds are unaffected.
+  # ===================================================================
+  defp refute_tombstoned_entity!(%URI{scheme: "entity"} = uri) do
+    cond do
+      Ezagent.URI.type?(uri, :user) and Ezagent.Users.deleted?(uri) ->
+        raise "refusing to spawn/activate tombstoned user #{URI.to_string(uri)} — " <>
+                "delete is terminal (task #180): the Kind, its snapshot and its " <>
+                "caps were revoked at tombstone and must never be resurrected"
+
+      Ezagent.URI.type?(uri, :agent) and agent_owner_tombstoned?(uri) ->
+        raise "refusing to spawn/activate agent #{URI.to_string(uri)} — " <>
+                "its owner is tombstoned (task #180): delete is terminal and the " <>
+                "owner's agents must not be resurrected either"
+
+      true ->
+        :ok
+    end
+  end
+
+  # Non-entity URIs (and nil) never carry a users-row tombstone.
+  defp refute_tombstoned_entity!(_uri), do: :ok
+
+  # Best-effort owner check ("if reachable"): `AgentLineage.lookup/1`
+  # reads the lineage cache; a miss means the owner is unknown, NOT
+  # known-alive — but lineage is recorded at agent spawn, so a miss
+  # here cannot mask a tombstoned owner for any agent spawned through
+  # the sanctioned path.
+  defp agent_owner_tombstoned?(%URI{} = agent_uri) do
+    case Ezagent.AgentLineage.lookup(agent_uri) do
+      {:ok, owner} ->
+        Ezagent.URI.type?(owner, :user) and Ezagent.Users.deleted?(owner)
+
+      :error ->
+        false
+    end
+  end
 
   @doc false
   @spec reconcile_recipe_binding_state(map(), URI.t()) :: {:ok, map()} | {:error, term()}
