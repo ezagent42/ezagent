@@ -200,13 +200,15 @@ defmodule Ezagent.Uploads.DownloadToken do
     end
   end
 
-  # The grantee rides in the signed payload as its canonical string form; only a
-  # present (%URI{}) grantee adds the key, so legacy (unbound) tokens keep their
-  # exact pre-PR-3 payload shape.
+  # The grantee rides in the signed payload as its canonical `stable_key` form —
+  # the SAME opaque-id serialization the sibling `uri:` field uses (mint above),
+  # and the inverse of `decode_grantee/1`'s `EzURI.new!/1`. Only a present
+  # (%URI{}) grantee adds the key, so legacy (unbound) tokens keep their exact
+  # pre-PR-3 payload shape.
   defp maybe_put_grantee(payload, nil), do: payload
 
   defp maybe_put_grantee(payload, %URI{} = grantee),
-    do: Map.put(payload, :grantee, URI.to_string(grantee))
+    do: Map.put(payload, :grantee, EzURI.stable_key(grantee))
 
   @doc """
   Verify a token at the current time and return the bound URI.
