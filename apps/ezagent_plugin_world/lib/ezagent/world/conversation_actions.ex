@@ -18,6 +18,7 @@ defmodule Ezagent.World.ConversationActions do
 
   alias Ezagent.ActionSet.Session.Membership
   alias Ezagent.Invocation
+  alias Ezagent.Socialware.SessionReads
   alias Ezagent.World.ConversationData
   alias Ezagent.World.ConversationRoutingForm
   alias EzagentDomainInstanceMessage.Routing.MentionRouting
@@ -230,8 +231,12 @@ defmodule Ezagent.World.ConversationActions do
   end
 
   @doc """
-  Page history backwards and push the older rows to the island for prepend
-  (parity: `load_older_messages` over `Ezagent.MessageStore.older_than/3`).
+  Page history backwards and push the older rows to the island for prepend.
+
+  The `caller` (the viewing entity) is threaded so the pagination read is
+  authorized at the `SessionReads` chokepoint — previously this paged the store
+  with NO authorization, so a non-member could deep-link and scroll back through
+  a conversation they were never in. A non-member now gets an empty page.
   """
   @spec load_older(Phoenix.LiveView.Socket.t(), URI.t(), String.t()) ::
           {:noreply, Phoenix.LiveView.Socket.t()}
@@ -239,8 +244,8 @@ defmodule Ezagent.World.ConversationActions do
     {older, next_cursor} =
       ConversationData.load_older(
         session_uri,
+        Map.get(socket.assigns, :current_entity_uri),
         before,
-        Map.get(socket.assigns, :current_caps, MapSet.new()),
         # Lazy per-viewer error-card ctx (G5 source 2) — only resolved when a
         # paged message actually carries a structured agent-error payload.
         Ezagent.World.ErrorCards.live_viewer_ctx(socket)
@@ -975,8 +980,8 @@ defmodule Ezagent.World.ConversationActions do
   defp member_role_name(_), do: nil
 
   defp push_session_management_state(socket, %URI{} = session_uri) do
-    members = ConversationData.member_options(session_uri)
     caller = socket.assigns.current_entity_uri
+    members = ConversationData.member_options(caller, session_uri)
     workspace = socket.assigns.current_workspace_uri
 
     payload = %{
@@ -1050,25 +1055,34 @@ defmodule Ezagent.World.ConversationActions do
     if connected?(socket) do
       case socket.assigns[:current_session_uri] do
         %URI{} = session_uri ->
-          members = ConversationData.member_options(session_uri)
+          caller = Map.get(socket.assigns, :current_entity_uri)
 
-          push_event(socket, "members:update", %{
-            "members" => members,
-            "human_role_slots" => ConversationData.human_role_slots(session_uri),
-            "invite_candidates" =>
-              ConversationData.invite_candidates(
-                session_uri,
-                socket.assigns.current_entity_uri,
-                socket.assigns.current_workspace_uri,
-                members
-              ),
-            "routing_entity_candidates" =>
-              ConversationData.routing_entity_candidates(
-                socket.assigns.current_entity_uri,
-                socket.assigns.current_workspace_uri,
-                members
-              )
-          })
+          if SessionReads.authorized?(caller, session_uri) do
+            members = ConversationData.member_options(caller, session_uri)
+
+            push_event(socket, "members:update", %{
+              "members" => members,
+              "human_role_slots" => ConversationData.human_role_slots(session_uri),
+              "invite_candidates" =>
+                ConversationData.invite_candidates(
+                  session_uri,
+                  caller,
+                  socket.assigns.current_workspace_uri,
+                  members
+                ),
+              "routing_entity_candidates" =>
+                ConversationData.routing_entity_candidates(
+                  caller,
+                  socket.assigns.current_workspace_uri,
+                  members
+                )
+            })
+          else
+            # Unauthorized viewer (e.g. denied `?session=` deep-link): push NO
+            # roster — the whole `members:update` payload (members, role slots,
+            # invite/routing candidates) is session content. (read-plane-authz F2.)
+            socket
+          end
 
         _ ->
           socket

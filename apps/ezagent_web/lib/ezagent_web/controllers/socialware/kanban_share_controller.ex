@@ -34,6 +34,7 @@ defmodule EzagentWeb.Socialware.KanbanShareController do
 
   alias Ezagent.ActionSet.Session.Members
   alias Ezagent.Socialware.Mount
+  alias Ezagent.Socialware.SessionReads
 
   # salt/max_age 必须与分享侧 `Ezagent.World.KanbanActions` 常量逐一对齐。
   @share_board_salt "world_kanban_share"
@@ -98,7 +99,7 @@ defmodule EzagentWeb.Socialware.KanbanShareController do
     with %URI{scheme: "workspace"} = workspace_uri <- Ezagent.URI.workspace_of(clicker),
          [_ | _] = sessions <-
            EzagentDomainInstanceMessage.list_sessions(workspace_uri, clicker),
-         {:ok, session_uri, assistant_uri} <- first_session_with_assistant(sessions) do
+         {:ok, session_uri, assistant_uri} <- first_session_with_assistant(sessions, clicker) do
       {:ok, session_uri, assistant_uri}
     else
       %URI{} -> {:error, :no_workspace}
@@ -110,10 +111,10 @@ defmodule EzagentWeb.Socialware.KanbanShareController do
   end
 
   # 逐个 session 读成员，返回首个持 kanban-assistant 成员的 {session, assistant}。
-  defp first_session_with_assistant(sessions) do
+  defp first_session_with_assistant(sessions, %URI{} = clicker) do
     sessions
     |> Enum.find_value(fn %URI{} = session_uri ->
-      case session_assistant(session_uri) do
+      case session_assistant(session_uri, clicker) do
         {:ok, assistant_uri} -> {:ok, session_uri, assistant_uri}
         _ -> nil
       end
@@ -125,18 +126,13 @@ defmodule EzagentWeb.Socialware.KanbanShareController do
   end
 
   # 读一次 session 成员 → 解析该 session 的 kanban-assistant（收只读钥匙的「手」）。成员读取
-  # 内联于此、不抽成独立 `members_of` 函数——那会与 `CompositionCaps` 私有 `read_role_members`
-  # 撞 cross-file 重复 gate（那是 #1376 的，Allen 处理，不在本 PR 碰）；此处是本控制器专用的
-  # 一次性组合读。
-  defp session_assistant(%URI{} = session_uri) do
-    members =
-      case Ezagent.Kind.get_slice(session_uri, :session) do
-        {:ok, slice} when is_map(slice) -> Map.get(slice, :members, %{})
-        _ -> %{}
-      end
-
-    case Members.role_name_to_uri(members, @assistant_role) do
-      %URI{} = uri -> {:ok, uri}
+  # 走 `SessionReads.members` 授权闸（clicker 是这些 session 的成员——`list_sessions/2`
+  # 已按成员过滤，故授权必过；非成员会 fail-closed），不再直读 `:session` slice。
+  defp session_assistant(%URI{} = session_uri, %URI{} = clicker) do
+    with {:ok, members} <- SessionReads.members(clicker, session_uri),
+         %URI{} = uri <- Members.role_name_to_uri(members, @assistant_role) do
+      {:ok, uri}
+    else
       _ -> {:error, :no_assistant_in_session}
     end
   end

@@ -11,6 +11,7 @@ defmodule Ezagent.World.ConversationData do
   the LV app can be deleted wholesale at parity-migration PR-7.
   """
 
+  alias Ezagent.Socialware.SessionReads
   alias Ezagent.World.ErrorCards
 
   @message_limit 50
@@ -42,10 +43,33 @@ defmodule Ezagent.World.ConversationData do
     sessions = Map.fetch!(opts, :sessions)
     caller_caps = Map.get(opts, :caller_caps, MapSet.new())
 
+    # caller_caps is threaded ONLY into the per-viewer error-card context; the
+    # message/member reads authorize + row-policy through the `SessionReads`
+    # chokepoint, which sources the caller's caps LIVE (never trusting the
+    # passed set for authority).
     viewer_ctx = fn -> ErrorCards.viewer_ctx(caller_uri, caller_caps, workspace_uri) end
-    messages = load_messages(session_uri, caller_caps, viewer_ctx)
-    members = member_options(session_uri)
 
+    # The conversation read plane is authorized at the chokepoint FIRST: both the
+    # message read AND the member read route through `SessionReads`, which shares
+    # ONE live-first predicate. A non-member (e.g. a `?session=<uri>` deep-link)
+    # is denied here — no message content and no roster leak — instead of the
+    # pre-consolidation direct-store read that disclosed the conversation.
+    with {:ok, message_rows} <- authorized_messages(session_uri, caller_uri, viewer_ctx),
+         {:ok, members_map} <- SessionReads.members(caller_uri, session_uri) do
+      authorized_state(
+        session_uri,
+        caller_uri,
+        workspace_uri,
+        sessions,
+        message_rows,
+        member_options_from_meta(meta_from_members(members_map))
+      )
+    else
+      {:error, :unauthorized} -> denied_state(session_uri, workspace_uri, caller_uri, sessions)
+    end
+  end
+
+  defp authorized_state(session_uri, caller_uri, workspace_uri, sessions, messages, members) do
     %{
       "component" => "conversation",
       "session_uri" => encode_uri(session_uri),
@@ -53,6 +77,7 @@ defmodule Ezagent.World.ConversationData do
       "workspace_uri" => encode_uri(workspace_uri),
       "caller_uri" => encode_uri(caller_uri),
       "create_error" => nil,
+      "access_denied" => false,
       "templates" => Ezagent.World.WorkspacePluginData.session_template_names(workspace_uri),
       "messages" => messages,
       "oldest_cursor" => oldest_cursor_iso(messages),
@@ -73,6 +98,51 @@ defmodule Ezagent.World.ConversationData do
       # cap-gated view a caller can't see emits no tab.
       "views" => session_views(session_uri, caller_uri)
     }
+  end
+
+  # Fail-loud denial state (Invariant #9 — surfaced, not silently dropped): a
+  # non-member caller gets the conversation SHELL with the workspace-level rail
+  # (`sessions`/`templates` are the caller's OWN, not session content) but ZERO
+  # session content — no messages, no roster, no role/socialware/invite/routing
+  # data — plus an `access_denied` flag the React island renders as a friendly
+  # notice. The `views` tab set is computed as usual: it is independently
+  # cap-gated per view (`SessionViewRegistry.applicable_views/2` →
+  # `authorize_view/3`), discloses no session content, and is out of this PR's
+  # message-plane scope — a non-member sees only ungated tabs, and the content
+  # inside stays denied.
+  defp denied_state(session_uri, workspace_uri, caller_uri, sessions) do
+    %{
+      "component" => "conversation",
+      "session_uri" => encode_uri(session_uri),
+      "current_session_uri" => encode_uri(session_uri),
+      "workspace_uri" => encode_uri(workspace_uri),
+      "caller_uri" => encode_uri(caller_uri),
+      "create_error" => nil,
+      "access_denied" => true,
+      "templates" => Ezagent.World.WorkspacePluginData.session_template_names(workspace_uri),
+      "messages" => [],
+      "oldest_cursor" => nil,
+      "members" => [],
+      "human_role_slots" => [],
+      "installed_socialwares" => [],
+      "unfilled_agent_role_slots" => [],
+      "degraded_operates_edges" => [],
+      "invite_candidates" => [],
+      "routing_entity_candidates" => [],
+      "routing_rules" => [],
+      "sessions" => sessions,
+      "views" => session_views(session_uri, caller_uri)
+    }
+  end
+
+  defp authorized_messages(%URI{} = session_uri, caller_uri, viewer_ctx) do
+    case SessionReads.messages(caller_uri, session_uri, :conversation, %{limit: @message_limit}) do
+      {:ok, messages} ->
+        {:ok, messages |> Enum.reverse() |> messages_to_rows(viewer_ctx)}
+
+      {:error, :unauthorized} = err ->
+        err
+    end
   end
 
   @doc """
@@ -179,9 +249,22 @@ defmodule Ezagent.World.ConversationData do
   parse uses, so the @mention dropdown, the members panel, and routing can't
   drift. The panel (PR-3a) shows presence; the autocomplete ignores it.
   """
-  @spec member_options(URI.t()) :: [map()]
-  def member_options(%URI{} = session_uri) do
-    member_meta = member_meta(session_uri)
+  @spec member_options(URI.t() | term(), URI.t()) :: [map()]
+  def member_options(caller, %URI{} = session_uri) do
+    # Route the roster read through the chokepoint: a non-authorized caller gets
+    # an empty roster (never the raw slice). (read-plane-authz F2.)
+    case SessionReads.members(caller, session_uri) do
+      {:ok, members} -> members |> meta_from_members() |> member_options_from_meta()
+      {:error, :unauthorized} -> []
+    end
+  end
+
+  # Shape a `%{uri_string => meta}` map (the `member_meta/1` form OR the
+  # chokepoint-authorized `SessionReads.members` map converted via
+  # `meta_from_members/1`) into the member-option rows. Kept as a seam so the
+  # authorized `state_for` path can reuse the roster it already fetched through
+  # `SessionReads` instead of re-reading the slice.
+  defp member_options_from_meta(member_meta) when is_map(member_meta) do
     uris = Map.keys(member_meta)
     display_map = Ezagent.EntityPresenter.display_many(uris)
 
@@ -200,6 +283,13 @@ defmodule Ezagent.World.ConversationData do
         "pty_alive" => kind == "agent" and pty_alive?(uri)
       }
     end)
+  end
+
+  # Convert the raw `SessionReads.members` map (`%{URI => meta}`) into the
+  # `%{uri_string => meta}` shape `member_options_from_meta/1` consumes — the
+  # same transform `member_meta/1` applies after its own slice read.
+  defp meta_from_members(members) when is_map(members) do
+    Map.new(members, fn {uri, meta} -> {encode_uri(uri), meta} end)
   end
 
   defp pty_alive?(uri) when is_binary(uri) do
@@ -294,7 +384,12 @@ defmodule Ezagent.World.ConversationData do
   """
   @spec invite_candidates(URI.t(), URI.t() | nil, URI.t() | nil) :: [map()]
   def invite_candidates(%URI{} = session_uri, caller_uri, workspace_uri) do
-    invite_candidates(session_uri, caller_uri, workspace_uri, member_options(session_uri))
+    invite_candidates(
+      session_uri,
+      caller_uri,
+      workspace_uri,
+      member_options(caller_uri, session_uri)
+    )
   end
 
   @doc false
@@ -369,21 +464,22 @@ defmodule Ezagent.World.ConversationData do
   result or a lazy 0-arity producer of it) — paged history renders the same
   G5 error cards as the initial load.
   """
-  @spec load_older(URI.t(), String.t(), Enumerable.t(), map() | (-> map())) ::
+  @spec load_older(URI.t(), URI.t() | term(), String.t(), map() | (-> map())) ::
           {[map()], String.t() | nil}
-  def load_older(%URI{} = session_uri, before, caller_caps, viewer_ctx)
+  def load_older(%URI{} = session_uri, caller, before, viewer_ctx)
       when is_binary(before) do
-    case DateTime.from_iso8601(before) do
-      {:ok, cursor, _offset} ->
-        rows =
-          older_messages(session_uri, cursor, caller_caps)
-          |> Enum.reverse()
-          |> messages_to_rows(viewer_ctx)
-
-        {rows, oldest_cursor_iso(rows)}
-
-      _ ->
-        {[], nil}
+    with {:ok, cursor, _offset} <- DateTime.from_iso8601(before),
+         {:ok, messages} <-
+           SessionReads.messages(caller, session_uri, :conversation, %{
+             limit: @message_limit,
+             older_than: cursor
+           }) do
+      rows = messages |> Enum.reverse() |> messages_to_rows(viewer_ctx)
+      {rows, oldest_cursor_iso(rows)}
+    else
+      # An invalid cursor OR an unauthorized caller yields no page — the
+      # pagination read is denied fail-closed exactly like the initial read.
+      _ -> {[], nil}
     end
   end
 
@@ -402,7 +498,9 @@ defmodule Ezagent.World.ConversationData do
 
   def build_message(%URI{} = sender, text, %URI{} = session_uri, attachments)
       when is_binary(text) and is_list(attachments) do
-    mentions = parse_mentions(text, member_options(session_uri), human_role_slots(session_uri))
+    mentions =
+      parse_mentions(text, member_options(sender, session_uri), human_role_slots(session_uri))
+
     Ezagent.Message.new(sender, %{text: text, attachments: attachments}, mentions: mentions)
   end
 
@@ -414,81 +512,6 @@ defmodule Ezagent.World.ConversationData do
   @spec oldest_cursor_iso([map()]) :: String.t() | nil
   def oldest_cursor_iso([%{"at" => at} | _]) when is_binary(at), do: at
   def oldest_cursor_iso(_), do: nil
-
-  defp load_messages(%URI{} = session_uri, caller_caps, viewer_ctx) do
-    session_uri
-    |> recent_messages(caller_caps)
-    |> Enum.reverse()
-    |> messages_to_rows(viewer_ctx)
-  end
-
-  defp recent_messages(%URI{} = session_uri, caller_caps) do
-    if read_unfiltered?(session_uri, caller_caps) do
-      Ezagent.MessageStore.recent_in_session(session_uri, @message_limit)
-    else
-      Ezagent.MessageStore.recent_visible_in_session(session_uri, @message_limit)
-    end
-  end
-
-  defp older_messages(%URI{} = session_uri, %DateTime{} = cursor, caller_caps) do
-    if read_unfiltered?(session_uri, caller_caps) do
-      Ezagent.MessageStore.older_than(session_uri, cursor, @message_limit)
-    else
-      Ezagent.MessageStore.older_visible_than(session_uri, cursor, @message_limit)
-    end
-  end
-
-  defp read_unfiltered?(%URI{} = session_uri, caller_caps) do
-    workspace_uri = Ezagent.Capability.workspace_of(session_uri)
-
-    caller_caps
-    |> cap_list()
-    |> Enum.any?(&read_unfiltered_cap?(&1, session_uri, workspace_uri))
-  rescue
-    _ -> false
-  end
-
-  defp cap_list(%MapSet{} = caps), do: MapSet.to_list(caps)
-  defp cap_list(caps) when is_list(caps), do: caps
-  defp cap_list(_), do: []
-
-  defp read_unfiltered_cap?(
-         %Ezagent.Capability{} = cap,
-         %URI{} = session_uri,
-         %URI{} = workspace_uri
-       ) do
-    cap_field?(cap.kind, :session) and
-      cap_field?(cap.behavior, Ezagent.ActionSet.Session) and
-      cap_field?(Map.get(cap, :action, :any), :read_unfiltered) and
-      cap_instance?(cap.instance, session_uri, workspace_uri) and
-      cap_workspace?(cap.workspace_uri, workspace_uri)
-  end
-
-  defp read_unfiltered_cap?(_, _, _), do: false
-
-  defp cap_field?(:any, _needed), do: true
-  defp cap_field?(same, same), do: true
-  defp cap_field?(_, _), do: false
-
-  defp cap_instance?(:any, _session_uri, _workspace_uri), do: true
-
-  defp cap_instance?({:within_session, %URI{} = held}, %URI{} = session_uri, _workspace_uri),
-    do: same_uri?(held, session_uri)
-
-  defp cap_instance?({:within_workspace, %URI{} = held}, _session_uri, %URI{} = workspace_uri),
-    do: same_uri?(held, workspace_uri)
-
-  defp cap_instance?(%URI{} = held, %URI{} = session_uri, _workspace_uri),
-    do: same_uri?(held, session_uri)
-
-  defp cap_instance?(_, _, _), do: false
-
-  defp cap_workspace?(:any, _workspace_uri), do: true
-  defp cap_workspace?(%URI{} = held, %URI{} = workspace_uri), do: same_uri?(held, workspace_uri)
-  defp cap_workspace?(_, _), do: false
-
-  defp same_uri?(%URI{} = left, %URI{} = right), do: URI.to_string(left) == URI.to_string(right)
-  defp same_uri?(_, _), do: false
 
   defp messages_to_rows(messages, viewer_ctx) when is_list(messages) do
     sender_uris = Enum.map(messages, fn %Ezagent.Message{sender: s} -> URI.to_string(s) end)
