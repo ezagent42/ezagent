@@ -12,6 +12,7 @@ defmodule Ezagent.ProviderConnection.AssuranceValidator do
           :assurance_rejected
           | :assurance_validation_unavailable
           | :invalid_assurance_validator_config
+          | :assurance_validator_misconfigured
 
   @callback validate(action(), assurance(), context()) :: :ok | {:error, error_reason()}
 
@@ -20,9 +21,27 @@ defmodule Ezagent.ProviderConnection.AssuranceValidator do
   def validate(module, action, assurance, context) when is_atom(module) do
     with {:module, ^module} <- Code.ensure_loaded(module),
          true <- function_exported?(module, :validate, 3) do
-      module.validate(action, assurance, context)
+      closed_validate(module, action, assurance, context)
     else
       _ -> {:error, :invalid_assurance_validator_config}
+    end
+  end
+
+  defp closed_validate(module, action, assurance, context) do
+    try do
+      case module.validate(action, assurance, context) do
+        :ok ->
+          :ok
+
+        {:error, reason}
+        when reason in [:assurance_rejected, :assurance_validation_unavailable] ->
+          {:error, reason}
+
+        _other ->
+          {:error, :assurance_validator_misconfigured}
+      end
+    catch
+      _kind, _reason -> {:error, :assurance_validator_misconfigured}
     end
   end
 end

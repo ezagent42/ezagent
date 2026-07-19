@@ -96,6 +96,53 @@ defmodule Ezagent.ProviderConnectionCapTest do
     assert slice in [nil, %{state: %{}, transients: %{}}]
   end
 
+  test "live begin dispatch rejects malformed artifacts before the command boundary", ctx do
+    cap = issue_cap!(ctx.owner, ctx.caller, ProviderConnection, :begin_authorization)
+    callback = issue_cap!(ctx.owner, ctx.caller, ProviderConnection, :consume_callback)
+    wrong_grantee = Ezagent.URI.user(:team_alpha, :wrong_callback_grantee)
+    wrong_workspace_owner = Ezagent.URI.user(:other_workspace, :wrong_callback_owner)
+
+    invalid_artifacts = [
+      %{},
+      %{grantee_uri: ctx.caller},
+      "not-an-artifact",
+      nil,
+      %{callback | action: :refresh},
+      issue_cap!(ctx.owner, wrong_grantee, ProviderConnection, :consume_callback),
+      issue_cap!(ctx.owner, ctx.caller, ProviderConnection, :refresh),
+      issue_cap!(ctx.owner, ctx.caller, Ezagent.ActionSet.Identity, :consume_callback),
+      issue_cap!(User.admin_uri(), ctx.caller, ProviderConnection, :consume_callback),
+      issue_cap!(wrong_workspace_owner, ctx.caller, ProviderConnection, :consume_callback)
+    ]
+
+    for artifact <- invalid_artifacts do
+      malformed_args = Map.put(args(:begin_authorization, ctx), :callback_artifact, artifact)
+
+      assert {:error, _reason} =
+               dispatch(
+                 ctx.owner,
+                 ctx.caller,
+                 :begin_authorization,
+                 malformed_args,
+                 MapSet.new([cap])
+               )
+
+      refute_received {:boundary, _, _}
+    end
+
+    assert {:error, :provider_connection_orchestration_not_implemented} =
+             dispatch(
+               ctx.owner,
+               ctx.caller,
+               :begin_authorization,
+               Map.put(args(:begin_authorization, ctx), :callback_artifact, callback),
+               MapSet.new([cap])
+             )
+
+    assert_received {:boundary, :begin_authorization, _}
+    refute_received {:boundary, _, _}
+  end
+
   defp dispatch(owner, caller, action, args, caps) do
     target = Ezagent.URI.with_action(owner, :provider_connection, action)
 
