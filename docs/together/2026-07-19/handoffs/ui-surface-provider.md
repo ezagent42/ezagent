@@ -48,13 +48,13 @@ Application 自注册,✓);其余四面(pages / dispatch 白名单 / 数据 read
 - **dispatch 面**:action 白名单 + actions_module 随 pages 声明走(fail-closed 语义原样:
   未声明动作一律拒,P22 姿态不变;白名单真相源从 world 字面移到 plugin 声明);
 - **数据 reader 面**:data_builder 即声明的一部分(现状已是 module 引用,只是行住错了地方);
-- **前端 renderer 面(唯一有真取舍的面)**:两档——
-  a. **iframe/json-render 降级**(hello 模式规范化):plugin 声明 render-mode
-     `:external` + surface URL,world 通用渲染 iframe,溶解 `@native_react_ids` 与
-     `[:page, :hello_page]` 硬点名、`isHelloSession` 特判;**低成本,先做**;
-  b. **原生组件分发**:plugin 自带 JS bundle + 运行时注册(module federation / 独立
-     entry + window 注册表),Kanban.tsx 搬回 kanban plugin;**成本高,可后置**——
-     a 档落地后 kanban 可先留 world(照 D6 例外清单),但其**注册数据**已自声明。
+- **前端 renderer 面(唯一有真取舍的面)**:**一步到位做原生组件分发**——plugin 自带
+  JS bundle + 运行时注册(module federation / 独立 entry + window 注册表),
+  Kanban.tsx 搬回 kanban plugin;iframe/json-render 保留为协议里的 `:external`
+  render-mode 兜底档,但**不做「iframe 先行、bundle 后置」的过渡期**。理由:
+  hello 原作者已离开开发序列,iframe 过渡态落地后没有 owner 维护,只会变成
+  第三套残端;两段式意味着 kanban/hello 各迁一次、共迁两轮。一步到位后
+  **kanban/hello 一轮统一迁移**,过渡成本归零。
 
 conversation 三处特判(`world_live.ex:105/346/773`)是同根不同枝:ConversationView 已注册,
 差的是「session 生命周期钩子 + 原生 dispatch 面」的声明位——建议纳入协议 grill 范围但允许
@@ -65,7 +65,7 @@ conversation 三处特判(`world_live.ex:105/346/773`)是同根不同枝:Convers
 - **kanban 残端消失**:D6 备案的例外清单(@kanban_actions 字面、@pages 条目、PLUGIN_PAGE_RENDERERS
   条目)全部变成 plugin 侧声明;加动作/加页面不再改 world;
 - **hello 归一**:3 处 world/web 硬编码(render-mode 点名、HelloPagePreview 特判、app.js
-  跨 app hook import)溶进 a 档声明;
+  跨 app hook import)随统一迁移一轮清掉(原作者已离开,残端没有别的清理时机);
 - **第三个 plugin 零边际**:mindmap/dealscout 等后来者按协议声明即得全部 UI 面——这是
   socialware「装了就能用」承诺在 UI 面的补齐;
 - 与 mount 线对齐:数据面(mount)已通用化,UI 面是 D6 债②最后一块。
@@ -74,9 +74,9 @@ conversation 三处特判(`world_live.ex:105/346/773`)是同根不同枝:Convers
 
 | 事 | 谁 | 说明 |
 |---|---|---|
-| 协议设计(四面声明 shape + fail-closed 校验口径 + a/b 档边界 + conversation 钩子是否入协议) | **Allen** | grill 后进 GLOSSARY Decision Log;是否并入 #1394 Entity 双向-caps 一起排,Allen 定 |
-| world 读端实施(PluginPageRegistry 数据源反转 + render-mode 通用化 + 特判溶解) | **zyli** | world/前端归属线(#1450 G5 前端同域);a 档先行 |
-| kanban/hello 迁移到新声明 + e2e 证据 | 我们(kanban 线) | 迁移即回归验证,顺带销 D6 例外清单 |
+| 协议设计(四面声明 shape + fail-closed 校验口径 + bundle 分发机制选型 + conversation 钩子是否入协议) | **Allen** | grill 后进 GLOSSARY Decision Log;是否并入 #1394 Entity 双向-caps 一起排,Allen 定 |
+| world 读端实施(PluginPageRegistry 数据源反转 + bundle 运行时装载 + 特判溶解) | **zyli** | world/前端归属线(#1450 G5 前端同域);一步到位,不做 iframe 过渡期 |
+| kanban/hello 统一迁移到新声明 + e2e 证据 | 我们(kanban 线) | 一轮迁完两个样板 plugin,迁移即回归验证,顺带销 D6 例外清单 + hello 遗留残端 |
 
 ## 6. Required reading
 
