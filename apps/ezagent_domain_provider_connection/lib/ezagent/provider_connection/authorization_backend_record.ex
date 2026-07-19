@@ -6,7 +6,7 @@ defmodule Ezagent.ProviderConnection.AuthorizationBackendRecord do
              :workspace_uri,
              :backend_pair_id,
              :authorization_ref,
-             :consume_status,
+             :lifecycle_status,
              :shredded_at,
              :expires_at
            ]}
@@ -18,30 +18,45 @@ defmodule Ezagent.ProviderConnection.AuthorizationBackendRecord do
     field(:backend_pair_id, :string)
     field(:authorization_ref, :string)
     field(:key_id, :string)
+    field(:key_fingerprint, :binary)
     field(:nonce, :binary)
     field(:ciphertext, :binary)
     field(:bound_input_digest, :string)
+    field(:begin_correlation_id, :string)
+    field(:owner_uri, :string)
+    field(:connection_id, :string)
+    field(:connection_version, :integer)
+    field(:provider_id, :string)
+    field(:governed_host, :string)
+    field(:acquisition_method, :string)
+    field(:requested_permissions_digest, :string)
+    field(:redirect_uri_id, :string)
     field(:handoff_ciphertext, :binary)
     field(:handoff_ref, :string)
     field(:consume_correlation_id, :string)
-    field(:consume_status, :string)
+    field(:consume_input_digest, :string)
+    field(:callback_key_id, :string)
+    field(:callback_key_fingerprint, :binary)
+    field(:callback_nonce, :binary)
+    field(:callback_ciphertext, :binary)
+    field(:lifecycle_status, :string)
     field(:shredded_at, :utc_datetime_usec)
     field(:expires_at, :utc_datetime_usec)
     timestamps(type: :utc_datetime_usec)
   end
 
-  @trusted ~w(id workspace_uri backend_pair_id authorization_ref key_id nonce ciphertext bound_input_digest expires_at)a
+  @trusted ~w(id workspace_uri backend_pair_id authorization_ref key_id key_fingerprint nonce ciphertext bound_input_digest begin_correlation_id owner_uri connection_id connection_version provider_id governed_host acquisition_method requested_permissions_digest redirect_uri_id expires_at)a
   @doc false
   def create_changeset(attrs),
     do:
       %__MODULE__{}
-      |> cast(attrs, [:consume_status])
+      |> cast(attrs, [:lifecycle_status])
       |> change(Map.take(attrs, @trusted))
-      |> validate_required(@trusted ++ [:consume_status])
+      |> validate_required(@trusted ++ [:lifecycle_status])
       |> unique_constraint(:authorization_ref,
-        name: :provider_authorization_backend_records_committed_consume_index
+        name: :provider_authorization_backend_records_authorization_ref_index
       )
-      |> check_constraint(:consume_status,
-        name: :provider_authorization_backend_records_consume_status_check
+      |> check_constraint(:lifecycle_status,
+        name: :provider_authorization_backend_records_lifecycle_status_check
       )
 end

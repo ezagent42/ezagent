@@ -166,13 +166,28 @@ defmodule EzagentCore.Repo.Migrations.CreateProviderConnections do
       add :backend_pair_id, :text, null: false
       add :authorization_ref, :text, null: false
       add :key_id, :text, null: false
-      add :nonce, :binary, null: false
-      add :ciphertext, :binary, null: false
+      add :key_fingerprint, :binary, null: false
+      add :nonce, :binary
+      add :ciphertext, :binary
       add :bound_input_digest, :text, null: false
+      add :begin_correlation_id, :text, null: false
+      add :owner_uri, :text, null: false
+      add :connection_id, :text, null: false
+      add :connection_version, :bigint, null: false
+      add :provider_id, :text, null: false
+      add :governed_host, :text, null: false
+      add :acquisition_method, :text, null: false
+      add :requested_permissions_digest, :text, null: false
+      add :redirect_uri_id, :text, null: false
       add :handoff_ciphertext, :binary
       add :handoff_ref, :text
       add :consume_correlation_id, :text
-      add :consume_status, :text, null: false
+      add :consume_input_digest, :text
+      add :callback_key_id, :text
+      add :callback_key_fingerprint, :binary
+      add :callback_nonce, :binary
+      add :callback_ciphertext, :binary
+      add :lifecycle_status, :text, null: false
       add :shredded_at, :utc_datetime_usec
       add :expires_at, :utc_datetime_usec, null: false
       timestamps(type: :utc_datetime_usec)
@@ -181,18 +196,52 @@ defmodule EzagentCore.Repo.Migrations.CreateProviderConnections do
     create index(:provider_authorization_backend_records, [:workspace_uri])
 
     create unique_index(:provider_authorization_backend_records, [:authorization_ref],
-             where: "consume_status = 'committed'",
-             name: :provider_authorization_backend_records_committed_consume_index
+             name: :provider_authorization_backend_records_authorization_ref_index
            )
 
     create constraint(
              :provider_authorization_backend_records,
-             :provider_authorization_backend_records_consume_status_check,
-             check: "consume_status IN ('pending','committed')"
+             :provider_authorization_backend_records_lifecycle_status_check,
+             check: "lifecycle_status IN ('pending','consumed','cancelled','expired')"
+           )
+
+    create table(:provider_authorization_commands, primary_key: false) do
+      add :id, :uuid, primary_key: true
+      add :workspace_uri, :text, null: false
+      add :backend_pair_id, :text, null: false
+      add :operation_class, :text, null: false
+      add :correlation_id, :text, null: false
+      add :bound_input_digest, :text, null: false
+      add :authorization_ref, :text
+      add :status, :text, null: false
+      add :safe_result, :map
+      add :safe_error_code, :text
+      timestamps(type: :utc_datetime_usec)
+    end
+
+    create index(:provider_authorization_commands, [:workspace_uri])
+
+    create unique_index(
+             :provider_authorization_commands,
+             [:backend_pair_id, :operation_class, :correlation_id],
+             name: :provider_authorization_commands_command_index
+           )
+
+    create constraint(
+             :provider_authorization_commands,
+             :provider_authorization_commands_operation_class_check,
+             check: "operation_class IN ('begin','consume','reauthenticate','cancel')"
+           )
+
+    create constraint(
+             :provider_authorization_commands,
+             :provider_authorization_commands_status_check,
+             check: "status IN ('prepared','committed','terminal_failed')"
            )
   end
 
   def down do
+    drop_if_exists table(:provider_authorization_commands)
     drop table(:provider_authorization_backend_records)
     drop table(:provider_connection_events)
     drop table(:provider_connection_operations)

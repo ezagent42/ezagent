@@ -5,6 +5,13 @@ defmodule Ezagent.ProviderConnection.Driver do
   Drivers own provider protocol semantics. Their declarations contain only
   stable, non-secret data and are indexed by the exact
   `{provider_id, acquisition_method}` pair.
+
+  Begin and consume callbacks receive a stable correlation id and private
+  exchange frame so a driver can reconcile retries with provider-side state.
+  A committed effect whose response was lost must return the same result on an
+  exact retry. If the provider outcome is ambiguous before the local journal
+  commits, the driver must fail closed and restart authorization unless the
+  provider exposes an authoritative reconciliation mechanism.
   """
 
   @enforce_keys [
@@ -56,8 +63,26 @@ defmodule Ezagent.ProviderConnection.Driver do
 
     validate_implementation!(declaration.implementation)
     validate_safe_metadata!(declaration.metadata)
+    validate_normalization_schemas!(declaration.metadata)
     struct!(__MODULE__, Map.put(declaration, :fingerprint, derive_fingerprint(declaration)))
   end
+
+  @doc false
+  def matches_schema?(value, %{type: :string}), do: is_binary(value)
+  def matches_schema?(value, %{type: :integer}), do: is_integer(value)
+  def matches_schema?(value, %{type: :boolean}), do: is_boolean(value)
+
+  def matches_schema?(value, %{type: :map, fields: fields})
+      when is_map(value) and is_map(fields) do
+    with {:ok, normalized} <- canonical_map(value),
+         true <- MapSet.new(Map.keys(normalized)) == MapSet.new(Map.keys(fields)) do
+      Enum.all?(fields, fn {key, schema} -> matches_schema?(normalized[key], schema) end)
+    else
+      _error -> false
+    end
+  end
+
+  def matches_schema?(_value, _schema), do: false
 
   @doc false
   @spec verify_fingerprint(t()) :: :ok | {:error, {:declaration_drift, String.t(), String.t()}}
@@ -121,6 +146,47 @@ defmodule Ezagent.ProviderConnection.Driver do
 
   defp validate_safe_metadata!(_metadata),
     do: raise(ArgumentError, "driver metadata must be a map")
+
+  defp validate_normalization_schemas!(metadata) do
+    with %{authorization_redirect_schema: redirect, provider_metadata_schema: provider} <-
+           metadata,
+         true <- valid_schema?(redirect),
+         true <- valid_schema?(provider) do
+      :ok
+    else
+      _other ->
+        raise ArgumentError,
+              "driver metadata must declare closed authorization redirect and provider metadata schemas"
+    end
+  end
+
+  defp valid_schema?(%{type: type} = schema) when type in [:string, :integer, :boolean],
+    do: map_size(schema) == 1
+
+  defp valid_schema?(%{type: :map, fields: fields} = schema) when is_map(fields) do
+    map_size(schema) == 2 and
+      Enum.all?(fields, fn {key, child} ->
+        is_binary(key) and key != "" and valid_schema?(child)
+      end)
+  end
+
+  defp valid_schema?(_schema), do: false
+
+  defp canonical_map(value) do
+    Enum.reduce_while(value, {:ok, %{}}, fn
+      {key, item}, {:ok, normalized} when is_binary(key) or is_atom(key) ->
+        canonical_key = to_string(key)
+
+        if Map.has_key?(normalized, canonical_key) do
+          {:halt, {:error, :canonical_key_collision}}
+        else
+          {:cont, {:ok, Map.put(normalized, canonical_key, item)}}
+        end
+
+      _entry, _acc ->
+        {:halt, {:error, :invalid_map_key}}
+    end)
+  end
 
   defp safe_term?(value)
        when is_binary(value) or is_number(value) or is_boolean(value) or is_nil(value),

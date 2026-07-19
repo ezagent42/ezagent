@@ -150,7 +150,8 @@ defmodule EzagentCore.Invariants.PerTenantTablesHaveWorkspaceColumnTest do
     {Ezagent.ProviderConnection.Operation, "provider_connection_operations"},
     {Ezagent.ProviderConnection.Event, "provider_connection_events"},
     {Ezagent.ProviderConnection.AuthorizationBackendRecord,
-     "provider_authorization_backend_records"}
+     "provider_authorization_backend_records"},
+    {Ezagent.ProviderConnection.ProviderAuthorizationCommand, "provider_authorization_commands"}
   ]
 
   # Per-tenant tables that have NO schema module (raw `Repo.insert_all`

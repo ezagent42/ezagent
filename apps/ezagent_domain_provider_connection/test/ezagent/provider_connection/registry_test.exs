@@ -95,6 +95,49 @@ defmodule Ezagent.ProviderConnection.RegistryTest do
     assert is_binary(alpha.acquisition_method)
   end
 
+  test "driver declarations reject atom-valued persistence schemas" do
+    metadata =
+      FakeDriverAlpha.declaration_metadata()
+      |> Map.put(:provider_metadata_schema, %{
+        type: :map,
+        fields: %{"mode" => %{type: :atom}}
+      })
+
+    assert_raise ArgumentError,
+                 "driver metadata must declare closed authorization redirect and provider metadata schemas",
+                 fn ->
+                   Driver.new!(%{
+                     provider_id: "forge-atom-schema",
+                     acquisition_method: "browser-exchange",
+                     provider_fingerprint: "forge-atom-schema-v1",
+                     implementation: FakeDriverAlpha,
+                     backend_pair_ids: ["pair-alpha-v1"],
+                     metadata: metadata
+                   })
+                 end
+  end
+
+  test "schema matching rejects canonical key collisions at every map depth" do
+    top_level_schema = %{type: :map, fields: %{"tier" => %{type: :string}}}
+
+    nested_schema = %{
+      type: :map,
+      fields: %{
+        "details" => %{
+          type: :map,
+          fields: %{"tier" => %{type: :string}}
+        }
+      }
+    }
+
+    refute Driver.matches_schema?(%{"tier" => "B", tier: "A"}, top_level_schema)
+
+    refute Driver.matches_schema?(
+             %{details: %{"tier" => "B", tier: "A"}},
+             nested_schema
+           )
+  end
+
   test "identical fingerprints are idempotent while declaration drift fails loudly", %{
     owner: owner
   } do
@@ -102,7 +145,7 @@ defmodule Ezagent.ProviderConnection.RegistryTest do
     assert :acquired = DriverRegistry.register(owner, alpha)
     assert :existing_identical = DriverRegistry.register(owner, alpha)
 
-    drift = Driver.new!(%{alpha | metadata: %{account_shape: "changed"}})
+    drift = Driver.new!(%{alpha | metadata: Map.put(alpha.metadata, :account_shape, "changed")})
 
     assert {:error, {:declaration_drift, fingerprint, drift_fingerprint}} =
              DriverRegistry.register(owner, drift)
@@ -314,7 +357,7 @@ defmodule Ezagent.ProviderConnection.RegistryTest do
     incumbent = {:incumbent, make_ref()}
     alpha = alpha_driver()
     beta = beta_driver()
-    drift = Driver.new!(%{beta | metadata: %{account_shape: "drift"}})
+    drift = Driver.new!(%{beta | metadata: Map.put(beta.metadata, :account_shape, "drift")})
 
     assert :acquired = DriverRegistry.register(incumbent, beta)
 
@@ -428,7 +471,12 @@ defmodule Ezagent.ProviderConnection.RegistryTest do
       provider_fingerprint: "forge-alpha-contract-v1",
       implementation: FakeDriverAlpha,
       backend_pair_ids: ["pair-alpha-v1"],
-      metadata: %{account_shape: "single-subject", refresh: "rotating", revoke: "provider-first"}
+      metadata:
+        FakeDriverAlpha.declaration_metadata(%{
+          account_shape: "single-subject",
+          refresh: "rotating",
+          revoke: "provider-first"
+        })
     })
   end
 
@@ -439,11 +487,12 @@ defmodule Ezagent.ProviderConnection.RegistryTest do
       provider_fingerprint: "forge-beta-contract-v1",
       implementation: FakeDriverBeta,
       backend_pair_ids: ["pair-beta-v1"],
-      metadata: %{
-        account_shape: "tenant-member",
-        refresh: "conditional",
-        revoke: "credential-first"
-      }
+      metadata:
+        FakeDriverBeta.declaration_metadata(%{
+          account_shape: "tenant-member",
+          refresh: "conditional",
+          revoke: "credential-first"
+        })
     })
   end
 

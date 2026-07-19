@@ -1,5 +1,8 @@
 import Config
 
+config :ezagent_domain_provider_connection, Ezagent.ProviderConnection.AuthorizationKeyRing,
+  source: :runtime_env
+
 # Show debug info in the branded 500 error page when it renders (in dev,
 # Plug.Debugger usually catches first; this controls the fallback case).
 config :ezagent_web, :show_error_debug, true
