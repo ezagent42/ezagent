@@ -15,7 +15,10 @@ defmodule EzagentCore.ListReadChokepointBoundaryTest do
     * `Ezagent.KindRegistry.list_all/0` — live global registry
     * `Ezagent.Ecto.KindSnapshot.list_all/0` — durable global scan
     * `Ezagent.Ecto.KindSnapshot.list_in_workspace/1` — durable workspace scan
-    * `EzagentDomainInstanceMessage.list_sessions/{1,2}` — session enumeration
+    * `EzagentDomainInstanceMessage.list_sessions/{0,1,2}` — session enumeration
+      (the /0 arity is GLOBAL — it scans the whole KindRegistry)
+    * `EzagentDomainInstanceMessage.list_persisted_sessions/1` — durable session scan
+    * `Ezagent.Entity.Agent.list_in_workspace/1` — workspace agent scan
     * `Ezagent.Users.list_all/0` / `list_in_workspace/1` — user enumeration
 
   A direct call added to the presenter tier → this test RED, with the
@@ -65,8 +68,11 @@ defmodule EzagentCore.ListReadChokepointBoundaryTest do
     {[:Ezagent, :KindRegistry], :list_all, 0},
     {[:Ezagent, :Ecto, :KindSnapshot], :list_all, 0},
     {[:Ezagent, :Ecto, :KindSnapshot], :list_in_workspace, 1},
+    {[:EzagentDomainInstanceMessage], :list_sessions, 0},
     {[:EzagentDomainInstanceMessage], :list_sessions, 1},
     {[:EzagentDomainInstanceMessage], :list_sessions, 2},
+    {[:EzagentDomainInstanceMessage], :list_persisted_sessions, 1},
+    {[:Ezagent, :Entity, :Agent], :list_in_workspace, 1},
     {[:Ezagent, :Users], :list_all, 0},
     {[:Ezagent, :Users], :list_in_workspace, 1}
   ]
@@ -155,6 +161,7 @@ defmodule EzagentCore.ListReadChokepointBoundaryTest do
       def sessions(caller, ws), do: WorkspaceReads.sessions(caller, ws)
       def agents(caller, ws), do: WorkspaceReads.agents(caller, ws)
       def users(caller, ws), do: UserReads.users(caller, ws)
+      def one_user(caller, uri), do: UserReads.user(caller, uri)
       def templates(caller, name), do: TemplateReads.session_templates(caller, name)
       def registry(caller), do: OperatorReads.registry_all(caller)
       def members(caller, s), do: SessionReads.members(caller, s)
@@ -371,6 +378,10 @@ defmodule EzagentCore.ListReadChokepointBoundaryTest do
   defp normalize([:KindRegistry]), do: [:Ezagent, :KindRegistry]
   defp normalize([:KindSnapshot]), do: [:Ezagent, :Ecto, :KindSnapshot]
   defp normalize([:Users]), do: [:Ezagent, :Users]
+  # `Agent` here means Ezagent.Entity.Agent — the stdlib `Agent` has no
+  # `list_in_workspace/1`, and an explicit `alias …, as: Agent` wins via
+  # the alias map BEFORE this hook runs, so no false positive is possible.
+  defp normalize([:Agent]), do: [:Ezagent, :Entity, :Agent]
   defp normalize(parts), do: parts
 
   defp format_mod(nil), do: "<unknown>"
