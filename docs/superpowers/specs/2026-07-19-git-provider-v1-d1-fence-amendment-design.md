@@ -24,6 +24,16 @@ protocol defect, not merely a missing conditional test.
 
 ## Invariants
 
+### Prepared-operation claim recovery
+
+Prepared recovery is bounded by the attempt claim, not by the operation row
+alone. A live claim (`now < claim_until`) returns `callback_in_progress`. At
+`now >= claim_until`, recovery locks connection, then attempt, then operation
+and atomically renews the attempt token/version and the operation fence. The
+renewed operation reuses the same correlation, handoff reference, and stable
+digest. No recovery path creates a second logical operation or calls the
+credential backend with changed D0.1 input.
+
 ### Stable logical command
 
 The credential backend command contains only immutable logical scope:
@@ -73,6 +83,14 @@ This defines “zero mutation” relative to the durable linearization point and
 prevents a terminal transition from racing an already-authorized callback as
 if both had won.
 
+The concrete shared interface is the existing `connection_version`: callback
+claim records the expected version on the attempt/operation while holding
+`FOR UPDATE`; `Transition` acquires the same connection lock first, rejects a
+stale expected version, and either observes the active claim or increments the
+version and creates its own durable obligation. The lock order is
+connection -> attempt -> operation for callback recovery and connection ->
+operation for connection transitions.
+
 ### Authority binding
 
 Execution identity is bound at authorization begin and persisted in the
@@ -90,6 +108,12 @@ full D0 key: `backend_pair_id`, `operation_class`, and `correlation_id`.
 The `backend_committed` fast path performs the same full stable-scope and
 digest verification as the prepared path.
 
+The canonical stable digest includes authorization ref, backend pair, owner,
+workspace, connection id/version, provider, governed host, acquisition method,
+requested-permission digest, redirect id, execution identity, attempt ref, and
+callback correlation. Handoff AAD authenticates the same scope plus the stable
+handoff reference; mutable claim token/version are excluded.
+
 ## Task 7 / Task 8 boundary
 
 Task 7 ends at `backend_committed` or `cleanup_pending`. It does not perform
@@ -104,9 +128,13 @@ The focused suite must use a credential backend test double that stores the
 canonical input digest and rejects same-correlation/different-input retries.
 It must cover:
 
+- live-lease rejection and expiry-boundary recovery with a deterministic clock;
+- atomic renewal of both attempt and operation fences under the required lock
+  order;
 - lease renewal with byte-equivalent stable command input;
-- a real steal updating both attempt and operation, followed by an old worker
-  returning and producing `cleanup_pending`;
+- a real response-loss barrier that blocks the credential response, terminates
+  the worker, advances past claim expiry, and proves one logical external
+  effect plus stale-result `cleanup_pending`;
 - exact-result reconciliation versus conflicting-result rejection;
 - committed-result scope drift and execution-identity drift;
 - terminal transition versus callback claim using a deterministic barrier;
