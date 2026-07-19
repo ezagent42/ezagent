@@ -60,7 +60,7 @@ defmodule Ezagent.World.AgentDetailLiveStatusTest do
       agent_uri_str = URI.to_string(agent_uri)
 
       # --- LIST: alive must be true for a just-spawned agent ---
-      agent_rows = IdentityData.list_entities(workspace_uri, "agents")
+      agent_rows = IdentityData.list_entities(admin_ctx.caller, workspace_uri, "agents")
       row = Enum.find(agent_rows, &(&1["uri"] == agent_uri_str))
 
       assert row != nil, "created agent must appear in list_entities"

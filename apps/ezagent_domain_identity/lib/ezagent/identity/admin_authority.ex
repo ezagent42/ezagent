@@ -76,6 +76,29 @@ defmodule Ezagent.Identity.AdminAuthority do
   alias Ezagent.Capability
 
   @doc """
+  Is the caller an operator in the operator-listing sense, with caps
+  loaded LIVE?
+
+  The one-call convenience over `admin?/2`: loads the caller's caps via
+  `Ezagent.EntityCaps.load/1` (live-first, so a fresh promotion/demotion
+  is seen immediately) and delegates to the 4-predicate union. This is
+  the SAME predicate the read-plane chokepoints (`OperatorReads`,
+  `UserReads`, `TemplateReads`) gate on — the load-and-check pair is
+  never re-implemented per caller (a security boundary must not be
+  copy-pasted). Any load failure → `false` (fail-closed).
+  """
+  @spec admin?(URI.t() | term()) :: boolean()
+  def admin?(%URI{} = caller_uri) do
+    caller_uri
+    |> Ezagent.EntityCaps.load()
+    |> then(&admin?(caller_uri, &1))
+  rescue
+    _ -> false
+  end
+
+  def admin?(_caller), do: false
+
+  @doc """
   Is the caller an admin in the operator-listing sense?
 
   Returns `true` iff the 4-predicate UNION holds:

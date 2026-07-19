@@ -56,6 +56,12 @@ defmodule EzagentDomainUi.MixProject do
       {:ezagent_core, in_umbrella: true},
       {:ezagent_domain_pty, in_umbrella: true},
       {:ezagent_domain_identity, in_umbrella: true},
+      # Read-plane PR-4 rework — `Ezagent.UI.UriOptions` enumerates
+      # sessions/agents/users through the caller-authorizing chokepoints
+      # (`Ezagent.Workspace.WorkspaceReads` / `UserReads`) instead of the
+      # global registry. workspace is a sibling Domain app (deps: core,
+      # agent, identity — never ui), so no dependency cycle.
+      {:ezagent_domain_workspace, in_umbrella: true},
       # 2026-05-25 — ExternalMirror Bindings SessionView (under
       # `EzagentDomainUi.ExternalMirror.View`) consumes
       # `Ezagent.ExternalMirror.list_bindings/2` to render the per-

@@ -425,7 +425,7 @@ defmodule Ezagent.World.ConversationActions do
            |> push_world_state(%{
              "publish_notice" => "已发布为模板",
              "templates" =>
-               Ezagent.World.WorkspacePluginData.session_template_names(workspace_uri)
+               Ezagent.World.WorkspacePluginData.session_template_names(caller, workspace_uri)
            })}
 
         {:error, reason} ->

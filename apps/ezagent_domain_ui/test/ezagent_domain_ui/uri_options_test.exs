@@ -2,25 +2,31 @@ defmodule Ezagent.UI.UriOptionsTest do
   @moduledoc """
   V1 UI PR-1 (SPEC §1.3, §1.6) — `Ezagent.UI.UriOptions` tests.
 
-  Includes the tenant-isolation invariants (SPEC §4 items 13-14): a
-  non-system caller may only see its OWN workspace's URIs; a system
-  member sees any workspace. These are the gate for the option-build
-  read path, which sits OUTSIDE dispatch step 5.6.
+  Read-plane PR-4 rework: the option-build path now enumerates through
+  the caller-authorizing chokepoints (`WorkspaceReads` / `UserReads`),
+  so these tests seed REAL fixtures (workspace + declared membership +
+  agent snapshots/lineage + live sessions) instead of merely registering
+  URIs in the global `KindRegistry`. The discriminating invariant (F1):
+  an ordinary workspace member does NOT receive labels/URIs for private
+  sessions/agents they have no relationship to (the command-palette
+  leak). `valid_for?/4` (SPEC §1.6) behavior is unchanged and its tests
+  are preserved.
 
-  `KindRegistry` is a globally-named stdlib `Registry`. Each test
-  registers its URIs via short-lived holder processes (registration is
-  per-process; the process must stay alive for the URI to appear in
-  `list_all/0`). Helper-registered URIs are namespaced with a unique
-  integer so concurrent/other tests can't collide — `async: false`
-  because `KindRegistry` is shared global state.
+  `async: false` — the fixtures touch shared global state (KindRegistry,
+  the workspace store, AgentLineage).
   """
   use EzagentCore.DataCase, async: false
 
   alias Ezagent.UI.UriOptions
 
-  # --- registration helpers --------------------------------------------------
-
   setup do
+    {:ok, _apps} = Application.ensure_all_started(:ezagent_domain_session)
+
+    case EzagentDomainInstanceMessage.UriQueryResolvers.register() do
+      :ok -> :ok
+      {:error, {:already_registered, _}} -> :ok
+    end
+
     Ezagent.UriQuery.init()
     previous = :ets.lookup(Ezagent.UriQuery.table(), :flavor)
 
@@ -32,8 +38,184 @@ defmodule Ezagent.UI.UriOptionsTest do
       end
     end)
 
-    {:ok, uniq: System.unique_integer([:positive])}
+    :ok
   end
+
+  # --- fixtures ---------------------------------------------------------------
+
+  # A workspace + a declared-member caller (provisioned user + member row).
+  defp seed_workspace(prefix) do
+    ws_name = "#{prefix}-#{System.unique_integer([:positive])}"
+    {:ok, _pid} = Ezagent.Workspace.create(ws_name, %{})
+    ws = Ezagent.URI.workspace(ws_name)
+    caller = Ezagent.URI.user(ws_name, "member")
+    {:ok, _row} = Ezagent.Users.create(caller, nil, [])
+    {:ok, _} = Ezagent.Workspace.Store.update_members(ws_name, [caller])
+    {ws_name, ws, caller}
+  end
+
+  # An agent that `owner_uri` OWNS (lineage-backed data-owner rule) with a
+  # durable snapshot row (the chokepoint's base listing is snapshot-sourced).
+  defp seed_agent(ws_name, name, owner_uri) do
+    agent = Ezagent.URI.agent(ws_name, name)
+    :ok = Ezagent.AgentLineage.record(agent, owner_uri)
+    {:ok, _snap} = Ezagent.SnapshotStore.write(agent, %{}, kind_type: :agent)
+
+    on_exit(fn -> Ezagent.AgentLineage.forget(agent) end)
+
+    agent
+  end
+
+  # A LIVE session owned by `owner_uri`, bound to the workspace.
+  defp seed_session(ws_name, name, owner_uri) do
+    session = Ezagent.URI.session(ws_name, "default", name)
+    kind = Module.concat([Ezagent.Entity, Session])
+
+    {:ok, _pid} =
+      Ezagent.Kind.spawn(kind, %{
+        uri: session,
+        behaviors: apply(kind, :behaviors, []),
+        owner_uri: owner_uri
+      })
+
+    :ok = Ezagent.WorkspaceRegistry.bind(session, Ezagent.URI.workspace(ws_name))
+    wait_until(fn -> Ezagent.ReadyGate.status(session) == :ready end)
+
+    session
+  end
+
+  # --- entities/2 (chokepoint-backed) ------------------------------------------
+
+  describe "entities/2 — workspace member" do
+    test "lists the caller's own agents, the shared roster, and the user roster" do
+      {ws_name, ws, caller} = seed_workspace("opts-ents")
+      other = Ezagent.URI.user(ws_name, "other")
+      {:ok, _row} = Ezagent.Users.create(other, nil, [])
+
+      my_agent = seed_agent(ws_name, "mine", caller)
+      shared_agent = seed_agent(ws_name, "shared", other)
+      {:ok, _} = Ezagent.Workspace.Store.update_members(ws_name, [caller, shared_agent])
+
+      opts = UriOptions.entities(caller, ws)
+      uris = Enum.map(opts, & &1.uri)
+
+      assert URI.to_string(my_agent) in uris
+      assert URI.to_string(shared_agent) in uris
+      assert URI.to_string(caller) in uris
+      assert URI.to_string(other) in uris
+      assert Enum.all?(opts, &(&1.kind == :entity))
+    end
+
+    test "reads agent flavor from UriQuery" do
+      {ws_name, ws, caller} = seed_workspace("opts-flavor")
+      agent = seed_agent(ws_name, "flavored", caller)
+      put_flavors(%{URI.to_string(agent) => "cc"})
+
+      found = Enum.find(UriOptions.entities(caller, ws), &(&1.uri == URI.to_string(agent)))
+      assert found.flavor == "cc"
+    end
+  end
+
+  # --- tenant isolation ---------------------------------------------------------
+
+  describe "tenant isolation — entities/2 and sessions/2" do
+    test "a non-member caller asking for ANOTHER workspace gets []" do
+      {_ws1_name, _ws1, caller} = seed_workspace("opts-iso-self")
+      {ws2_name, ws2, _other} = seed_workspace("opts-iso-other")
+      _agent_in_ws2 = seed_agent(ws2_name, "theirs", Ezagent.URI.user(ws2_name, "member"))
+
+      assert UriOptions.entities(caller, ws2) == []
+      assert UriOptions.sessions(caller, ws2) == []
+    end
+
+    test "a promoted system operator sees a workspace's USER roster (but not its shared agent roster)" do
+      {ws_name, ws, _member} = seed_workspace("opts-iso-sys")
+
+      operator =
+        Ezagent.URI.new!("entity://system/user/op-#{System.unique_integer([:positive])}")
+
+      agent = seed_agent(ws_name, "rostered", Ezagent.URI.user(ws_name, "member"))
+      {:ok, _} = Ezagent.Workspace.Store.update_members(ws_name, [agent])
+
+      uris = UriOptions.entities(operator, ws) |> Enum.map(& &1.uri)
+
+      # Operator authority admits the workspace + the user roster…
+      assert uris != []
+      # …but the shared AGENT roster is members-only (F2-consistent): the
+      # operator is not a declared member and owns/manages nothing here.
+      refute URI.to_string(agent) in uris
+    end
+
+    test "a malformed caller URI yields [] (never leaks, never crashes)" do
+      assert UriOptions.entities("not-a-uri", "workspace://team-alpha") == []
+      assert UriOptions.entities(nil, "workspace://team-alpha") == []
+    end
+  end
+
+  # --- sessions/2 ---------------------------------------------------------------
+
+  describe "sessions/2" do
+    test "lists the caller's own/member sessions, not another member's private session" do
+      {ws_name, ws, caller} = seed_workspace("opts-sess")
+      other = Ezagent.URI.user(ws_name, "other")
+      {:ok, _row} = Ezagent.Users.create(other, nil, [])
+
+      my_session = seed_session(ws_name, "mine", caller)
+      private_session = seed_session(ws_name, "private", other)
+
+      uris = UriOptions.sessions(caller, ws) |> Enum.map(& &1.uri)
+
+      assert URI.to_string(my_session) in uris
+      refute URI.to_string(private_session) in uris
+    end
+  end
+
+  # --- entities_and_sessions/2 ---------------------------------------------------
+
+  describe "entities_and_sessions/2" do
+    test "unions caller-visible entities + sessions" do
+      {ws_name, ws, caller} = seed_workspace("opts-both")
+      agent = seed_agent(ws_name, "agent", caller)
+      session = seed_session(ws_name, "session", caller)
+
+      uris = caller |> UriOptions.entities_and_sessions(ws) |> Enum.map(& &1.uri)
+      assert URI.to_string(agent) in uris
+      assert URI.to_string(session) in uris
+    end
+  end
+
+  # --- F1 (read-plane PR-4 rework acceptance) ------------------------------------
+
+  describe "F1 — the command-palette private-data leak stays closed" do
+    test "an ordinary member does NOT receive labels/URIs for private sessions/agents they have no relationship to" do
+      {ws_name, ws, caller} = seed_workspace("opts-f1")
+      other = Ezagent.URI.user(ws_name, "other")
+      {:ok, _row} = Ezagent.Users.create(other, nil, [])
+
+      # The other member's PRIVATE assets: owned by them, NOT declared to the
+      # workspace, NOT public — pre-rework the global-registry enumeration
+      # handed these to ANY caller who could name the workspace.
+      private_agent = seed_agent(ws_name, "private-agent", other)
+      private_session = seed_session(ws_name, "private-session", other)
+
+      # The caller's own + the shared roster stay visible.
+      my_agent = seed_agent(ws_name, "my-agent", caller)
+      shared_agent = seed_agent(ws_name, "shared-agent", other)
+      {:ok, _} = Ezagent.Workspace.Store.update_members(ws_name, [caller, shared_agent])
+      my_session = seed_session(ws_name, "my-session", caller)
+
+      opts = UriOptions.entities_and_sessions(caller, ws)
+      uris = Enum.map(opts, & &1.uri)
+
+      refute URI.to_string(private_agent) in uris
+      refute URI.to_string(private_session) in uris
+      assert URI.to_string(my_agent) in uris
+      assert URI.to_string(shared_agent) in uris
+      assert URI.to_string(my_session) in uris
+    end
+  end
+
+  # --- valid_for?/4 (SPEC §1.6) — UNCHANGED behavior -----------------------------
 
   # Register `uri` in KindRegistry from a holder process that stays
   # alive for the test's duration (registration is per-process).
@@ -69,147 +251,9 @@ defmodule Ezagent.UI.UriOptionsTest do
     :ok
   end
 
-  # --- entities/2 ------------------------------------------------------------
-
-  describe "entities/2 — same-workspace caller" do
-    test "lists entity URIs in the caller's own workspace", %{uniq: u} do
-      ws = "ws_a_#{u}"
-      caller = "entity://#{ws}/user/admin_#{u}"
-      agent = "entity://#{ws}/agent/cc_demo_#{u}"
-      user = "entity://#{ws}/user/alice_#{u}"
-      :ok = register(caller)
-      :ok = register(agent)
-      :ok = register(user)
-
-      opts = UriOptions.entities(caller, "workspace://#{ws}")
-      uris = Enum.map(opts, & &1.uri)
-
-      assert agent in uris
-      assert user in uris
-      assert Enum.all?(opts, &(&1.kind == :entity))
-    end
-
-    test "does not include session URIs", %{uniq: u} do
-      ws = "ws_b_#{u}"
-      caller = "entity://#{ws}/user/admin_#{u}"
-      session = "session://#{ws}/default/main_#{u}"
-      :ok = register(caller)
-      :ok = register(session)
-
-      opts = UriOptions.entities(caller, "workspace://#{ws}")
-      refute session in Enum.map(opts, & &1.uri)
-    end
-
-    test "reads agent flavor from UriQuery", %{uniq: u} do
-      ws = "ws_c_#{u}"
-      caller = "entity://#{ws}/user/admin_#{u}"
-      agent = "entity://#{ws}/agent/xyz_#{u}"
-      :ok = register(caller)
-      :ok = register(agent)
-      put_flavors(%{agent => "cc"})
-
-      opts = UriOptions.entities(caller, "workspace://#{ws}")
-      found = Enum.find(opts, &(&1.uri == agent))
-      assert found.flavor == "cc"
-    end
-  end
-
-  # --- tenant isolation (SPEC §4 item 13) ------------------------------------
-
-  describe "tenant isolation — entities/2" do
-    test "a non-system caller asking for ANOTHER workspace gets []", %{uniq: u} do
-      caller_ws = "tenant_self_#{u}"
-      other_ws = "tenant_other_#{u}"
-      caller = "entity://#{caller_ws}/user/admin_#{u}"
-      other_agent = "entity://#{other_ws}/agent/cc_demo_#{u}"
-      :ok = register(caller)
-      :ok = register(other_agent)
-
-      # The caller is NOT a system member and other_ws is not its own.
-      assert UriOptions.entities(caller, "workspace://#{other_ws}") == []
-    end
-
-    test "a system member sees ANY workspace's entities", %{uniq: u} do
-      other_ws = "tenant_sys_other_#{u}"
-      # A caller whose workspace segment is `system` → system member.
-      sys_caller = "entity://system/user/admin_#{u}"
-      other_agent = "entity://#{other_ws}/agent/cc_demo_#{u}"
-      :ok = register(sys_caller)
-      :ok = register(other_agent)
-
-      opts = UriOptions.entities(sys_caller, "workspace://#{other_ws}")
-      assert other_agent in Enum.map(opts, & &1.uri)
-    end
-
-    test "a non-system caller asking for its OWN workspace still works", %{uniq: u} do
-      ws = "tenant_own_#{u}"
-      caller = "entity://#{ws}/user/admin_#{u}"
-      agent = "entity://#{ws}/agent/cc_demo_#{u}"
-      :ok = register(caller)
-      :ok = register(agent)
-
-      opts = UriOptions.entities(caller, "workspace://#{ws}")
-      assert agent in Enum.map(opts, & &1.uri)
-    end
-
-    test "a malformed caller URI yields [] (never leaks, never crashes)" do
-      assert UriOptions.entities("not-a-uri", "workspace://team-alpha") == []
-      assert UriOptions.entities(nil, "workspace://team-alpha") == []
-    end
-  end
-
-  # --- sessions/2 ------------------------------------------------------------
-
-  describe "sessions/2" do
-    test "lists only session URIs in the caller's workspace", %{uniq: u} do
-      ws = "ws_sess_#{u}"
-      caller = "entity://#{ws}/user/admin_#{u}"
-      session = "session://#{ws}/default/main_#{u}"
-      agent = "entity://#{ws}/agent/cc_demo_#{u}"
-      :ok = register(caller)
-      :ok = register(session)
-      :ok = register(agent)
-
-      opts = UriOptions.sessions(caller, "workspace://#{ws}")
-      uris = Enum.map(opts, & &1.uri)
-      assert session in uris
-      refute agent in uris
-    end
-
-    test "non-system caller cannot see another workspace's sessions", %{uniq: u} do
-      caller_ws = "ws_sess_self_#{u}"
-      other_ws = "ws_sess_other_#{u}"
-      caller = "entity://#{caller_ws}/user/admin_#{u}"
-      session = "session://#{other_ws}/default/main_#{u}"
-      :ok = register(caller)
-      :ok = register(session)
-
-      assert UriOptions.sessions(caller, "workspace://#{other_ws}") == []
-    end
-  end
-
-  # --- entities_and_sessions/2 ----------------------------------------------
-
-  describe "entities_and_sessions/2" do
-    test "unions entities + sessions in the caller's workspace", %{uniq: u} do
-      ws = "ws_both_#{u}"
-      caller = "entity://#{ws}/user/admin_#{u}"
-      agent = "entity://#{ws}/agent/cc_demo_#{u}"
-      session = "session://#{ws}/default/main_#{u}"
-      :ok = register(caller)
-      :ok = register(agent)
-      :ok = register(session)
-
-      uris = caller |> UriOptions.entities_and_sessions("workspace://#{ws}") |> Enum.map(& &1.uri)
-      assert agent in uris
-      assert session in uris
-    end
-  end
-
-  # --- valid_for?/4 (SPEC §1.6) ---------------------------------------------
-
   describe "valid_for?/4 — the shared validator" do
-    test "true for a well-formed in-workspace entity URI", %{uniq: u} do
+    test "true for a well-formed in-workspace entity URI" do
+      u = System.unique_integer([:positive])
       ws = "ws_vf_#{u}"
       caller = "entity://#{ws}/user/admin_#{u}"
       agent = "entity://#{ws}/agent/cc_demo_#{u}"
@@ -219,7 +263,8 @@ defmodule Ezagent.UI.UriOptionsTest do
       assert UriOptions.valid_for?(caller, "workspace://#{ws}", agent, [:entity])
     end
 
-    test "false for an out-of-workspace URI (tampered hidden input)", %{uniq: u} do
+    test "false for an out-of-workspace URI (tampered hidden input)" do
+      u = System.unique_integer([:positive])
       caller_ws = "ws_vf_self_#{u}"
       other_ws = "ws_vf_other_#{u}"
       caller = "entity://#{caller_ws}/user/admin_#{u}"
@@ -229,7 +274,8 @@ defmodule Ezagent.UI.UriOptionsTest do
       refute UriOptions.valid_for?(caller, "workspace://#{caller_ws}", tampered, [:entity])
     end
 
-    test "false when the scheme is not in kinds", %{uniq: u} do
+    test "false when the scheme is not in kinds" do
+      u = System.unique_integer([:positive])
       ws = "ws_vf_scheme_#{u}"
       caller = "entity://#{ws}/user/admin_#{u}"
       session = "session://#{ws}/default/main_#{u}"
@@ -242,7 +288,8 @@ defmodule Ezagent.UI.UriOptionsTest do
       assert UriOptions.valid_for?(caller, "workspace://#{ws}", session, [:entity, :session])
     end
 
-    test "false for a malformed / non-URI submission", %{uniq: u} do
+    test "false for a malformed / non-URI submission" do
+      u = System.unique_integer([:positive])
       ws = "ws_vf_bad_#{u}"
       caller = "entity://#{ws}/user/admin_#{u}"
       :ok = register(caller)
@@ -252,7 +299,8 @@ defmodule Ezagent.UI.UriOptionsTest do
       refute UriOptions.valid_for?(caller, "workspace://#{ws}", nil, [:entity])
     end
 
-    test "a system member may validate URIs in any workspace", %{uniq: u} do
+    test "a system member may validate URIs in any workspace" do
+      u = System.unique_integer([:positive])
       other_ws = "ws_vf_sys_#{u}"
       sys_caller = "entity://system/user/admin_#{u}"
       agent = "entity://#{other_ws}/agent/cc_demo_#{u}"
@@ -262,7 +310,8 @@ defmodule Ezagent.UI.UriOptionsTest do
       assert UriOptions.valid_for?(sys_caller, "workspace://#{other_ws}", agent, [:entity])
     end
 
-    test "a non-system caller cannot validate a URI in a workspace not their own", %{uniq: u} do
+    test "a non-system caller cannot validate a URI in a workspace not their own" do
+      u = System.unique_integer([:positive])
       caller_ws = "ws_vf_deny_#{u}"
       other_ws = "ws_vf_deny_other_#{u}"
       caller = "entity://#{caller_ws}/user/admin_#{u}"
@@ -288,4 +337,19 @@ defmodule Ezagent.UI.UriOptionsTest do
       :error -> :none
     end
   end
+
+  defp wait_until(fun, retries \\ 100)
+
+  defp wait_until(fun, retries) when retries > 0 do
+    case fun.() do
+      true ->
+        true
+
+      _ ->
+        Process.sleep(10)
+        wait_until(fun, retries - 1)
+    end
+  end
+
+  defp wait_until(fun, _retries), do: fun.() == true
 end

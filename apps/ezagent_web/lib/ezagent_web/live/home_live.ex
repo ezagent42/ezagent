@@ -21,8 +21,10 @@ defmodule EzagentWeb.HomeLive do
   operator whose OWN workspace had zero sessions was bounced to `/sessions`
   (and treated as a returning user) merely because SOME OTHER tenant had a
   session — a wrong landing AND a cross-tenant existence leak. We now scope
-  to the operator's workspace via the existing `list_sessions/1` overload
-  (Task #55), matching exactly what `/sessions` renders.
+  to the operator's workspace via the caller-authorizing
+  `Ezagent.Workspace.WorkspaceReads.sessions/2` chokepoint (Task #55's
+  workspace scoping PLUS per-row caller visibility), matching what
+  `/sessions` renders.
 
   Landing workspace = the session's SELECTED `current_workspace_uri` when
   present (so a system member who context-switched — §6.5/§13.2 — lands on
@@ -74,14 +76,17 @@ defmodule EzagentWeb.HomeLive do
   end
 
   defp mount_authenticated(entity_uri, session, socket) do
-    # W0 — workspace-scoped landing判据 (see moduledoc). `list_sessions/1`
-    # filters the global registry down to the caller's workspace; a
-    # non-workspace scope (`:any` / malformed) fails closed to `[]` so the
-    # operator sees the wizard, never a cross-tenant redirect or a crash.
+    # W0 — workspace-scoped landing判据 (see moduledoc), now routed through
+    # the caller-authorizing chokepoint: `WorkspaceReads.sessions/2`
+    # authorizes the caller for the workspace BEFORE reading and keeps only
+    # the rows the caller may see (session owner/member OR public). A
+    # non-workspace scope (`:any` / malformed) or an unauthorized caller
+    # fails closed to `[]` so the operator sees the wizard — never a
+    # cross-tenant redirect, a private-session existence leak, or a crash.
     sessions =
       case landing_workspace_uri(session, entity_uri) do
         %URI{scheme: "workspace"} = workspace_uri ->
-          EzagentDomainInstanceMessage.list_sessions(workspace_uri)
+          Ezagent.Workspace.WorkspaceReads.sessions(entity_uri, workspace_uri)
 
         _ ->
           []
