@@ -384,7 +384,12 @@ defmodule Ezagent.World.ConversationData do
   """
   @spec invite_candidates(URI.t(), URI.t() | nil, URI.t() | nil) :: [map()]
   def invite_candidates(%URI{} = session_uri, caller_uri, workspace_uri) do
-    invite_candidates(session_uri, caller_uri, workspace_uri, member_options(caller_uri, session_uri))
+    invite_candidates(
+      session_uri,
+      caller_uri,
+      workspace_uri,
+      member_options(caller_uri, session_uri)
+    )
   end
 
   @doc false
@@ -493,7 +498,9 @@ defmodule Ezagent.World.ConversationData do
 
   def build_message(%URI{} = sender, text, %URI{} = session_uri, attachments)
       when is_binary(text) and is_list(attachments) do
-    mentions = parse_mentions(text, member_options(sender, session_uri), human_role_slots(session_uri))
+    mentions =
+      parse_mentions(text, member_options(sender, session_uri), human_role_slots(session_uri))
+
     Ezagent.Message.new(sender, %{text: text, attachments: attachments}, mentions: mentions)
   end
 

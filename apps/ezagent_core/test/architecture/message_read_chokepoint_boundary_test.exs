@@ -236,7 +236,10 @@ defmodule EzagentCore.MessageReadChokepointBoundaryTest do
   # wrapper, so bare/imported/qualified `from` AND joins are all caught. (round-3.)
   defp offense_for({:in, meta, [_lhs, modast]}, aliases) do
     if resolves_to?(modast, [:Ezagent, :Message], aliases) do
-      [{line_of(meta), "Ecto query sources Ezagent.Message (`_ in Message`) — only MessageStore may"}]
+      [
+        {line_of(meta),
+         "Ecto query sources Ezagent.Message (`_ in Message`) — only MessageStore may"}
+      ]
     else
       []
     end
@@ -259,7 +262,9 @@ defmodule EzagentCore.MessageReadChokepointBoundaryTest do
 
   # A module reference resolving to any `*.Repo` (Ezagent.Repo, EzagentCore.Repo,
   # or an aliased `Repo`) — the Ecto entrypoint.
-  defp repo_module?({:__aliases__, _, parts}, aliases), do: List.last(resolve(parts, aliases)) == :Repo
+  defp repo_module?({:__aliases__, _, parts}, aliases),
+    do: List.last(resolve(parts, aliases)) == :Repo
+
   defp repo_module?(_other, _aliases), do: false
 
   # Does the Message schema alias appear anywhere in this AST subtree?

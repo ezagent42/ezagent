@@ -139,7 +139,8 @@ defmodule Ezagent.World.ConversationInviteCandidatesTest do
     admin = User.admin_uri()
     cap = Ezagent.Test.CapHelper.signed_action_cap!(target, admin)
 
-    Ezagent.Invocation.dispatch(%Ezagent.Invocation{origin: :trusted_internal,
+    Ezagent.Invocation.dispatch(%Ezagent.Invocation{
+      origin: :trusted_internal,
       target: target,
       mode: :call,
       args: Map.put(facets, :member, member_uri),

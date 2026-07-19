@@ -193,7 +193,9 @@ defmodule Ezagent.Socialware.SessionReadsTest do
       session = spawn_session()
       write(session, "history")
 
-      member = Ezagent.URI.entity(:team_alpha, :user, "sr-fresh-#{System.unique_integer([:positive])}")
+      member =
+        Ezagent.URI.entity(:team_alpha, :user, "sr-fresh-#{System.unique_integer([:positive])}")
+
       :ok = spawn_user(member, User.initial_caps_for_spawn(member))
 
       # Not yet a member → denied.
@@ -225,12 +227,19 @@ defmodule Ezagent.Socialware.SessionReadsTest do
 
     test "a caller holding the signed :read_unfiltered cap sees :internal rows too" do
       internal_reader =
-        Ezagent.URI.entity(:team_alpha, :user, "sr-internal-#{System.unique_integer([:positive])}")
+        Ezagent.URI.entity(
+          :team_alpha,
+          :user,
+          "sr-internal-#{System.unique_integer([:positive])}"
+        )
 
       # Session OWNED by the internal reader (owner → authorized), who ALSO holds
       # the session's signed :read_unfiltered cap in its LIVE identity slice.
       session = spawn_session(internal_reader)
-      unfiltered_cap = CapHelper.signed_cap!(session, internal_reader, read_unfiltered_cap(session))
+
+      unfiltered_cap =
+        CapHelper.signed_cap!(session, internal_reader, read_unfiltered_cap(session))
+
       :ok = spawn_user(internal_reader, [unfiltered_cap])
 
       write(session, "public", visibility: :external_visible)

@@ -137,7 +137,9 @@ defmodule EzagentPluginWorld.WorldLive do
   def handle_info({:cc_connected, bridge_id, entry}, socket) do
     if authorized_for_current_session?(socket) do
       socket = ConversationActions.push_members(socket)
-      {:noreply, push_inbound_event(socket, "cc_connected", %{bridge_id: bridge_id, entry: entry})}
+
+      {:noreply,
+       push_inbound_event(socket, "cc_connected", %{bridge_id: bridge_id, entry: entry})}
     else
       {:noreply, socket}
     end

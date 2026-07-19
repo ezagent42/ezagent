@@ -83,7 +83,10 @@ defmodule Ezagent.World.ConversationDataVisibilityTest do
   end
 
   defp state_texts(session_uri, caller) do
-    session_uri |> state_for(caller) |> Map.fetch!("messages") |> Enum.map(&Map.fetch!(&1, "text"))
+    session_uri
+    |> state_for(caller)
+    |> Map.fetch!("messages")
+    |> Enum.map(&Map.fetch!(&1, "text"))
   end
 
   defp read_unfiltered_cap(session_uri) do
@@ -158,7 +161,9 @@ defmodule Ezagent.World.ConversationDataVisibilityTest do
 
     test "conversation state shows internal messages WITH the signed cap" do
       internal_reader =
-        URI.new!("entity://team-alpha/user/owner-unfiltered-#{System.unique_integer([:positive])}")
+        URI.new!(
+          "entity://team-alpha/user/owner-unfiltered-#{System.unique_integer([:positive])}"
+        )
 
       session_uri = spawn_owned_session(internal_reader)
       cap = CapHelper.signed_cap!(session_uri, internal_reader, read_unfiltered_cap(session_uri))
