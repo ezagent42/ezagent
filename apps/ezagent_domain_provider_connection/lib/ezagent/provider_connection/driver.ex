@@ -39,12 +39,14 @@ defmodule Ezagent.ProviderConnection.Driver do
 
   @callback begin_authorization(context()) :: result()
   @callback consume_callback(context()) :: result()
+  @callback reconcile_callback(context()) :: result() | {:ok, :not_completed}
   @callback refresh(context()) :: result()
   @callback revoke(context()) :: result()
 
   @callbacks [
     begin_authorization: 1,
     consume_callback: 1,
+    reconcile_callback: 1,
     refresh: 1,
     revoke: 1
   ]

@@ -8,6 +8,7 @@ defmodule Ezagent.ProviderConnection.Operation do
   schema "provider_connection_operations" do
     field(:workspace_uri, :string)
     field(:connection_id, Ecto.UUID)
+    field(:attempt_ref, Ecto.UUID)
     field(:backend_pair_id, :string)
     field(:operation_class, :string)
     field(:correlation_id, :string)
@@ -17,7 +18,12 @@ defmodule Ezagent.ProviderConnection.Operation do
     field(:attempt_claim_token, :string)
     field(:handoff_ref, :string)
     field(:expected_credential_version, :integer)
+    field(:result_credential_version, :integer)
     field(:result_ref, :string)
+    field(:prior_credential_ref, :string)
+    field(:prior_credential_version, :integer)
+    field(:result_permission_digest, :string)
+    field(:result_expires_at, :utc_datetime_usec)
     field(:status, :string)
     field(:lease_token, :string)
     field(:lease_until, :utc_datetime_usec)
@@ -79,8 +85,17 @@ defmodule Ezagent.ProviderConnection.Operation do
     |> Base.encode16(case: :lower)
   end
 
-  @trusted_required ~w(workspace_uri connection_id backend_pair_id operation_class correlation_id bound_input_digest expected_connection_version attempt_version attempt_claim_token)a
-  @trusted @trusted_required ++ [:safe_error_code]
+  @trusted_required ~w(workspace_uri connection_id backend_pair_id operation_class correlation_id bound_input_digest expected_connection_version)a
+  @trusted @trusted_required ++
+             [
+               :attempt_ref,
+               :attempt_version,
+               :attempt_claim_token,
+               :expected_credential_version,
+               :prior_credential_ref,
+               :prior_credential_version,
+               :safe_error_code
+             ]
   @doc "Builds the initial idempotent operation changeset from trusted command coordinates."
   def create_changeset(attrs),
     do:
@@ -93,11 +108,11 @@ defmodule Ezagent.ProviderConnection.Operation do
         name: :provider_connection_operations_operation_class_check
       )
       |> check_constraint(:status, name: :provider_connection_operations_status_check)
+      |> check_constraint(:status,
+        name: :provider_connection_operations_callback_prepare_check
+      )
       |> check_constraint(:safe_error_code,
         name: :provider_connection_operations_safe_error_code_check
-      )
-      |> check_constraint(:attempt_claim_token,
-        name: :provider_connection_operations_callback_fence_check
       )
 
   @doc false
@@ -116,11 +131,17 @@ defmodule Ezagent.ProviderConnection.Operation do
       Map.take(attrs, [
         :result_ref,
         :safe_error_code,
-        :expected_credential_version
+        :result_credential_version
       ])
     )
     |> change(status: status)
-    |> validate_required([:handoff_ref, :result_ref, :expected_credential_version])
+    |> validate_required([
+      :handoff_ref,
+      :result_ref,
+      :result_credential_version,
+      :prior_credential_ref,
+      :prior_credential_version
+    ])
     |> check_constraint(:status, name: :provider_connection_operations_status_check)
     |> check_constraint(:result_ref,
       name: :provider_connection_operations_callback_result_check

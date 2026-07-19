@@ -16,9 +16,17 @@ defmodule Ezagent.ProviderConnection.RegistryTest do
   alias Ezagent.ProviderConnection.Test.FakeDriverAlpha
   alias Ezagent.ProviderConnection.Test.FakeDriverBeta
 
+  defmodule DriverWithoutReconciliation do
+    def begin_authorization(context), do: {:ok, context}
+    def consume_callback(context), do: {:ok, context}
+    def refresh(context), do: {:ok, context}
+    def revoke(context), do: {:ok, context}
+  end
+
   @driver_callbacks [
     begin_authorization: 1,
     consume_callback: 1,
+    reconcile_callback: 1,
     refresh: 1,
     revoke: 1
   ]
@@ -58,6 +66,21 @@ defmodule Ezagent.ProviderConnection.RegistryTest do
              Enum.sort(@credential_callbacks)
   end
 
+  test "driver declaration rejects an implementation without reconciliation" do
+    assert_raise ArgumentError,
+                 "driver implementation does not implement the exact contract",
+                 fn ->
+                   Driver.new!(%{
+                     provider_id: "legacy-driver",
+                     acquisition_method: "legacy-method",
+                     provider_fingerprint: "legacy-v1",
+                     implementation: DriverWithoutReconciliation,
+                     backend_pair_ids: ["pair-alpha-v1"],
+                     metadata: FakeDriverAlpha.declaration_metadata()
+                   })
+                 end
+  end
+
   test "fake drivers materially differ without common provider vendor names" do
     alpha_callback = FakeDriverAlpha.consume_callback(%{})
     beta_callback = FakeDriverBeta.consume_callback(%{})
@@ -81,6 +104,30 @@ defmodule Ezagent.ProviderConnection.RegistryTest do
       |> Enum.map_join("\n", &File.read!/1)
 
     refute common_source =~ ~r/github|gitlab|bitbucket/i
+  end
+
+  test "fake drivers reconcile exact callback correlations and reject changed private input" do
+    for driver <- [FakeDriverAlpha, FakeDriverBeta] do
+      if function_exported?(driver, :reset, 0), do: driver.reset()
+
+      correlation = "reconcile-#{inspect(driver)}"
+      frame = %{state: "stable", callback_envelope: %{code: "one"}}
+      context = reconciliation_context(correlation, frame)
+
+      assert {:ok, consumed} = driver.consume_callback(context)
+      assert {:ok, ^consumed} = driver.reconcile_callback(context)
+
+      assert {:error, :provider_protocol_error} =
+               driver.reconcile_callback(
+                 reconciliation_context(correlation, %{frame | state: "changed"})
+               )
+
+      assert {:error, :provider_protocol_error} =
+               driver.reconcile_callback(%{context | command_digest: "changed-durable-digest"})
+
+      assert {:ok, :not_completed} =
+               driver.reconcile_callback(reconciliation_context(correlation <> "-absent", frame))
+    end
   end
 
   test "driver lookup uses exact extensible string provider and acquisition ids", %{owner: owner} do
@@ -498,5 +545,19 @@ defmodule Ezagent.ProviderConnection.RegistryTest do
 
   defp git_declaration(driver) do
     %{provider_id: driver.provider_id, provider_fingerprint: driver.provider_fingerprint}
+  end
+
+  defp reconciliation_context(correlation, private_frame) do
+    %{
+      backend_pair_id: "pair-alpha-v1",
+      operation_class: "consume",
+      correlation_id: correlation,
+      attempt_ref: "attempt-reconciliation-1",
+      connection_generation: 11,
+      credential_generation: 3,
+      command_digest: "durable-command-digest",
+      callback_envelope_digest: "server-owned",
+      exchange: fn provider_exchange -> provider_exchange.(private_frame) end
+    }
   end
 end

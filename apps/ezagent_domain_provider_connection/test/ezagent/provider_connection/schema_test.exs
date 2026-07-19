@@ -52,6 +52,22 @@ defmodule Ezagent.ProviderConnection.SchemaTest do
              changeset.errors[:external_account_id]
   end
 
+  test "connection backend binding is all-or-none" do
+    attrs = connection_attrs() |> Map.delete(:credential_backend_id)
+
+    assert {:error, changeset} =
+             %Connection{}
+             |> Ecto.Changeset.change(attrs)
+             |> Ecto.Changeset.check_constraint(:backend_pair_id,
+               name: :provider_connections_backend_binding_check
+             )
+             |> Repo.insert()
+
+    assert {"is invalid",
+            [constraint: :check, constraint_name: "provider_connections_backend_binding_check"]} =
+             changeset.errors[:backend_pair_id]
+  end
+
   test "operation command key and attempt correlation are unique" do
     op = Operation.create_changeset(operation_attrs())
     assert {:ok, _} = Repo.insert(op)
@@ -132,7 +148,15 @@ defmodule Ezagent.ProviderConnection.SchemaTest do
       {base
        |> Map.put(:status, "cleanup_pending")
        |> Map.put(:result_ref, "credential-ref")
-       |> Map.put(:expected_credential_version, 1),
+       |> Map.put(:result_credential_version, 2)
+       |> Map.put(:handoff_ref, "handoff-ref")
+       |> Map.delete(:expected_credential_version),
+       "provider_connection_operations_callback_result_check"},
+      {base
+       |> Map.put(:status, "cleanup_pending")
+       |> Map.put(:result_ref, "credential-ref")
+       |> Map.put(:expected_credential_version, 1)
+       |> Map.put(:handoff_ref, "handoff-ref"),
        "provider_connection_operations_callback_result_check"}
     ]
 
@@ -155,6 +179,9 @@ defmodule Ezagent.ProviderConnection.SchemaTest do
         handoff_ref: "handoff-ref",
         result_ref: "credential-ref",
         expected_credential_version: 1,
+        result_credential_version: 2,
+        prior_credential_ref: "prior-credential-ref",
+        prior_credential_version: 0,
         safe_error_code: "cleanup_pending"
       })
 
@@ -162,6 +189,24 @@ defmodule Ezagent.ProviderConnection.SchemaTest do
              %Operation{}
              |> Ecto.Changeset.change(valid)
              |> Repo.insert!()
+  end
+
+  test "prepared callback operation atomically contains the prior credential coordinates" do
+    attrs = Map.drop(operation_attrs(), [:prior_credential_ref, :prior_credential_version])
+
+    assert {:error, changeset} =
+             %Operation{}
+             |> Ecto.Changeset.change(attrs)
+             |> Ecto.Changeset.check_constraint(:status,
+               name: :provider_connection_operations_callback_prepare_check
+             )
+             |> Repo.insert()
+
+    assert {"is invalid",
+            [
+              constraint: :check,
+              constraint_name: "provider_connection_operations_callback_prepare_check"
+            ]} = changeset.errors[:status]
   end
 
   test "private authorization backend Inspect excludes every secret-bearing field" do
@@ -225,6 +270,8 @@ defmodule Ezagent.ProviderConnection.SchemaTest do
         acquisition_method: "oauth",
         authorization_backend_ref: "auth:a",
         credential_backend_ref: "cred:a",
+        authorization_backend_id: "auth-backend-a",
+        credential_backend_id: "credential-backend-a",
         status: "active"
       })
 
@@ -236,6 +283,9 @@ defmodule Ezagent.ProviderConnection.SchemaTest do
         correlation_id: "corr-1",
         bound_input_digest: "digest",
         expected_connection_version: 1,
+        expected_credential_version: 0,
+        prior_credential_ref: "credential-ref-old",
+        prior_credential_version: 0,
         attempt_version: 1,
         attempt_claim_token: "claim-token",
         status: "prepared"
