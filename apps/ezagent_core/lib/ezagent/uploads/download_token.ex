@@ -74,6 +74,15 @@ defmodule Ezagent.Uploads.DownloadToken do
   # 24h hard ceiling — no token (whatever its requested TTL) outlives this.
   @max_ttl 86_400
 
+  # COMPILE-TIME test-hatch gate (codex PR-3 blocking): the `__test_allow_*`
+  # escape hatches below must be UNREACHABLE in any non-test build. `Mix.env/0`
+  # is evaluated here at COMPILE time, so a prod/dev release bakes this to
+  # `false` and the hatch branches become dead code — a production caller that
+  # passes `__test_allow_unbound__: true` is ignored and still hits the
+  # grantee-REQUIRED raise. (Runtime `Mix.env()` is unavailable in a release, so
+  # the gate MUST be compile-time, not a runtime check.)
+  @test_hatches_enabled Mix.env() == :test
+
   @typedoc "Decoded token payload (`:grantee` present only on person-bound tokens)."
   @type payload :: %{
           optional(:grantee) => String.t(),
@@ -109,12 +118,15 @@ defmodule Ezagent.Uploads.DownloadToken do
       confused minting caller must fail LOUD at mint, not silently issue an
       unbound token.
     * `:__test_allow_nonpositive__` — TEST-ONLY escape hatch to mint an
-      already-expired token (for the expiry regression test). Never use in
-      production code.
+      already-expired token (for the expiry regression test). Honored ONLY in a
+      test build (compile-time `@test_hatches_enabled`); ignored (dead code) in
+      prod/dev releases.
     * `:__test_allow_unbound__` — TEST-ONLY escape hatch to mint a legacy
       (absent-grantee) token, standing in for an OLD already-issued pre-PR-3
-      token so the serve-side zero-breakage recheck can be exercised. Never
-      use in production code — a NEW token is ALWAYS person-bound.
+      token so the serve-side zero-breakage recheck can be exercised. Honored
+      ONLY in a test build (compile-time `@test_hatches_enabled`); ignored in
+      prod/dev releases, where a NEW token is ALWAYS person-bound (the
+      grantee-REQUIRED raise fires regardless of this opt).
 
   **The caller MUST authorize before minting** — this function is a pure signer.
   """
@@ -131,8 +143,16 @@ defmodule Ezagent.Uploads.DownloadToken do
     end
 
     ttl = Keyword.get(opts, :ttl_seconds, @default_ttl)
-    allow_nonpositive = Keyword.get(opts, :__test_allow_nonpositive__, false)
-    allow_unbound = Keyword.get(opts, :__test_allow_unbound__, false)
+    # The `__test_allow_*` hatches are honored ONLY in a test build
+    # (`@test_hatches_enabled`, evaluated at compile time). In prod/dev these
+    # AND to `false` regardless of the opt, so no production caller can mint a
+    # nonpositive-TTL or unbound token through them.
+    allow_nonpositive =
+      @test_hatches_enabled and Keyword.get(opts, :__test_allow_nonpositive__, false)
+
+    allow_unbound =
+      @test_hatches_enabled and Keyword.get(opts, :__test_allow_unbound__, false)
+
     grantee = Keyword.get(opts, :grantee)
 
     # Structural person binding (codex PR-3 blocking): a NEW token ALWAYS
