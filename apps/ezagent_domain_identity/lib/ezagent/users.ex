@@ -372,16 +372,36 @@ defmodule Ezagent.Users do
      UNIONS the snapshot's `state.caps` with the (now-empty) `caps_json` on every
      spawn — so the snapshot must be cleared or a later spawn resurrects the old
      caps. `destroy/2` clears the `kind_snapshots` row + ever-created marker +
-     terminates the Kind. Best-effort (caught) so a teardown crash does not strand
-     the already-revoked row. Because this runs in the ACTION body (universal across
+     terminates the Kind. Because this runs in the ACTION body (universal across
      CLI/API/facade dispatch), authority revocation + Kind teardown apply to EVERY
      `delete_user` path, not just the facade.
+
+  3. **Cascade to OWNED/LINEAGE agents** (task #180 / #1469 — delete = atomic
+     revocation of ALL derived authority): every agent whose `creator_uri` is
+     this user, or that was spawned anywhere in the user's lineage
+     (grandchildren included), is per-agent tombstoned by
+     `Ezagent.Identity.Offboarding` — durable `agent_tombstones` marker,
+     pending cap-deliveries dead-lettered, recipe-cap binding tombstoned,
+     per-Kind signing authority retired, every PAT revoked, and the live
+     Kind + snapshot destroyed (the same shape as steps 1-2 here). The
+     sweep is IDEMPOTENT and convergent: each per-agent tombstone is
+     idempotent, a partial failure halts and propagates, and the
+     idempotent retry branch below re-runs the sweep to completion.
 
   The same transaction also DEAD-LETTERS any PENDING `cap_delivery_outbox`
   rows targeting this user (task #180 criterion 3), so a pre-delete
   `absorb_cap` can never replay post-delete; `IdentityAdmin.handle_absorb_cap`'s
-  deleted-recipient guard is the in-handler backstop for the commit→destroy
+  deleted-recipient guard + the Kind.Server commit-time fence re-check are
+  the in-handler / commit-time backstops for the commit→destroy window
+  (codex F2), and the teardown reaps any slice that committed inside that
   window.
+
+  **Atomicity (codex F4).** The marker + cap-clear + outbox-cancel commit
+  atomically (step 1's transaction). The post-commit teardown + cascade
+  PROPAGATE failures: a failed cap-clear/outbox/destroy/agent-tombstone
+  returns a retryable `{:error, _}` — NEVER `{:ok, _}` with a residual
+  capability still standing. The durable marker is already committed, so
+  the idempotent retry branch re-asserts every step to convergence.
 
   NOTE (scope): this revokes DURABLE authority + tears down the Kind. Active-session
   eviction of already-authenticated HTTP/LiveView cookies is handled at the web
@@ -389,29 +409,35 @@ defmodule Ezagent.Users do
   `deleted_at` as disabled), benefiting plain `disable/3` too.
 
   Idempotent: tombstoning an already-tombstoned user preserves the original
-  timestamps/reason and returns the current decoded row. `{:error, :not_found}`
-  for an absent row. The disable-before-delete precondition returns
-  `{:error, :must_disable_first}` for a not-yet-disabled target.
+  timestamps/reason, re-asserts the full revocation (incl. the agent
+  cascade), and returns the current decoded row on success.
+  `{:error, :not_found}` for an absent row. The disable-before-delete
+  precondition returns `{:error, :must_disable_first}` for a
+  not-yet-disabled target.
   """
   @spec tombstone(URI.t() | String.t(), URI.t() | String.t(), String.t() | nil) ::
-          {:ok, decoded()}
-          | {:error, :not_found | :must_disable_first | {atom(), term()}}
+          {:ok, decoded()} | {:error, :not_found | :must_disable_first | term()}
   def tombstone(uri, deleted_by, reason \\ nil) do
     case Repo.get_by(__MODULE__, uri: uri_to_str(uri)) do
       nil ->
         {:error, :not_found}
 
       %__MODULE__{deleted_at: %DateTime{}} = row ->
-        # Already tombstoned — idempotent. Re-ASSERT the full revocation so a
-        # retry after a partial first pass (e.g. the `UserStore.persist` below
-        # failed, leaving stale caps_json → a caps_json-based resurrection) still
-        # converges: re-empty the caps + re-tear-down the Kind/snapshot +
-        # re-dead-letter any pending cap-delivery outbox rows.
+        # Already tombstoned — idempotent RETRY (codex F4). Re-ASSERT the
+        # full revocation so a retry after a partial first pass (a failed
+        # cap-clear/outbox/dead-letter, a crashed teardown, a half-run
+        # agent cascade) still converges — and PROPAGATE any failure as a
+        # non-success (never return `:ok` with a residual revocation
+        # standing). Only an all-green re-assert returns `{:ok, _}`.
         row_uri = Ezagent.URI.new!(row.uri)
-        _ = Ezagent.EntityCaps.UserStore.persist(row_uri, [])
-        _ = Ezagent.Cap.DeliveryOutbox.dead_letter_pending_for_target(row_uri, :user_deleted)
-        _ = destroy_kind_best_effort(uri)
-        {:ok, decode(Repo.get_by(__MODULE__, uri: row.uri))}
+        by = row.deleted_by || uri_to_str(deleted_by)
+        retry_reason = row.deleted_reason || normalize_reason(reason)
+
+        with :ok <- reassert_durable_revocation(row_uri),
+             :ok <- Ezagent.Identity.Offboarding.teardown_and_reap(row_uri),
+             :ok <- cascade_owned_agents(row_uri, by, retry_reason) do
+          {:ok, decode(Repo.get_by(__MODULE__, uri: row.uri))}
+        end
 
       %__MODULE__{disabled_at: nil} ->
         # Disable-before-delete safety gate (task #180 Change 2): a HARD delete
@@ -478,11 +504,17 @@ defmodule Ezagent.Users do
         case txn do
           {:ok, :ok} ->
             # Clear the Kind + snapshot so `activate/2`'s caps-union has nothing
-            # to resurrect (see @doc step 2). Best-effort — a teardown crash does
-            # NOT undo the already-committed durable revocation; the idempotent
-            # retry branch re-asserts it.
-            _ = destroy_kind_best_effort(uri)
-            {:ok, decode(Repo.get_by(__MODULE__, uri: row.uri))}
+            # to resurrect (see @doc step 2), then run the OWNED-AGENT cascade
+            # (delete revokes ALL authority derived from this user). BOTH
+            # propagate failures (codex F4): a failed teardown or a failed
+            # per-agent tombstone returns a retryable `{:error, _}` — the
+            # durable marker committed above keeps every principal fenced
+            # while the idempotent retry branch converges. Never `:ok` with
+            # a residual.
+            with :ok <- Ezagent.Identity.Offboarding.teardown_and_reap(row_uri),
+                 :ok <- cascade_owned_agents(row_uri, by, normalized_reason) do
+              {:ok, decode(Repo.get_by(__MODULE__, uri: row.uri))}
+            end
 
           {:error, reason} ->
             {:error, reason}
@@ -490,10 +522,38 @@ defmodule Ezagent.Users do
     end
   end
 
-  defp destroy_kind_best_effort(uri) do
-    Ezagent.Lifecycle.destroy(uri)
-  rescue
-    _ -> :ok
+  # Codex F4 — the idempotent retry's durable re-assert, atomically:
+  # re-empty `caps_json` (via the sanctioned `UserStore` chokepoint) AND
+  # re-dead-letter any pending cap-delivery outbox rows. Any failure
+  # rolls back and propagates (never silently ignored).
+  defp reassert_durable_revocation(row_uri) do
+    Repo.transaction(fn ->
+      case Ezagent.EntityCaps.UserStore.persist(row_uri, []) do
+        :ok -> :ok
+        {:error, reason} -> Repo.rollback({:caps_clear_failed, reason})
+      end
+
+      case Ezagent.Cap.DeliveryOutbox.dead_letter_pending_for_target(row_uri, :user_deleted) do
+        {:ok, _dead_lettered} -> :ok
+        other -> Repo.rollback({:outbox_cancel_failed, other})
+      end
+
+      :ok
+    end)
+    |> case do
+      {:ok, :ok} -> :ok
+      {:error, reason} -> {:error, reason}
+    end
+  end
+
+  # task #180 / #1469 — the owned-agent authority cascade (the plan's
+  # Part 2): tombstone every agent whose authority DERIVES from this
+  # user (owned via creator_uri, or spawned in the user's lineage —
+  # grandchildren included). Runs in `Users.tombstone/3` itself so EVERY
+  # `delete_user` path (dispatch action, facade, CLI, direct call) gets
+  # it, and converges via the idempotent retry above.
+  defp cascade_owned_agents(row_uri, by, reason) do
+    Ezagent.Identity.Offboarding.cascade_derived_agents(row_uri, by, reason)
   end
 
   @doc """
