@@ -35,8 +35,23 @@ defmodule EzagentCore.ListReadChokepointBoundaryTest do
       leading `Elixir` segment is normalized away),
     * `import`ed bare calls (`import Ezagent.KindRegistry; list_all()`),
     * function captures (`&KindRegistry.list_all/0`),
-    * dynamic dispatch (`apply(KindRegistry, :list_all, [])`),
+    * dynamic dispatch (`apply(KindRegistry, :list_all, [])`), including the
+      qualified forms `Kernel.apply(KindRegistry, :list_all, [])` and
+      `:erlang.apply(KindRegistry, :list_all, [])`, and the 2-arity
+      `apply(KindRegistry, :list_all)` form for 0-arity primitives,
     * splitting a call across lines.
+
+  ## Known matcher limitations (NOT caught — documented, not claimed)
+
+    * MODULE-VARIABLE indirection — `m = Ezagent.KindRegistry; m.list_all()`
+      dispatches through a runtime binding; resolving it soundly needs flow
+      analysis, which this gate does not attempt. A self-test below pins the
+      current (uncaught) behavior so a future matcher upgrade must update
+      this documentation explicitly. The mitigating control is review
+      discipline plus the fact that the chokepoints are the only modules
+      with legitimate reason to name these primitives at all.
+    * `apply(mod_var, :fun, args)` with a non-literal module — the same
+      limitation from the dynamic side.
 
   ## Deliberately NOT banned
 
@@ -134,6 +149,22 @@ defmodule EzagentCore.ListReadChokepointBoundaryTest do
         "apply/3" => "defmodule E7 do\n  def go, do: apply(#{mod}, :#{fun}, #{apply_args})\nend",
         "apply/3 (aliased)" =>
           "defmodule E8 do\n  alias #{mod}, as: Sneaky\n  def go, do: apply(Sneaky, :#{fun}, #{apply_args})\nend",
+        "Kernel.apply/3 (qualified)" =>
+          "defmodule E10 do\n  def go, do: Kernel.apply(#{mod}, :#{fun}, #{apply_args})\nend",
+        ":erlang.apply/3 (qualified)" =>
+          "defmodule E11 do\n  def go, do: :erlang.apply(#{mod}, :#{fun}, #{apply_args})\nend",
+        "apply/2 (0-arity only)" =>
+          if arity == 0 do
+            "defmodule E12 do\n  def go, do: apply(#{mod}, :#{fun})\nend"
+          else
+            nil
+          end,
+        "Kernel.apply/2 (0-arity only)" =>
+          if arity == 0 do
+            "defmodule E13 do\n  def go, do: Kernel.apply(#{mod}, :#{fun})\nend"
+          else
+            nil
+          end,
         "piped (for arity-1)" =>
           if arity == 1 do
             "defmodule E9 do\n  def go(x), do: x |> #{mod}.#{fun}()\nend"
@@ -147,6 +178,28 @@ defmodule EzagentCore.ListReadChokepointBoundaryTest do
                "AST gate must flag the #{label} form of #{mod}.#{fun}/#{arity}:\n#{src}"
       end
     end
+  end
+
+  test "KNOWN LIMITATION: module-variable indirection is NOT caught (documented, not claimed)" do
+    # `m = Ezagent.KindRegistry; m.list_all()` dispatches through a runtime
+    # binding — resolving it soundly requires flow analysis this gate does
+    # not attempt (see the moduledoc "Known matcher limitations" section).
+    # This test pins the CURRENT behavior: if the matcher is ever upgraded
+    # to resolve module-variable indirection, it must start flagging this
+    # fixture — flip the assertion and update the moduledoc in the same
+    # change. Until then the gate does NOT claim evasion-proof coverage
+    # against this form.
+    src = """
+    defmodule Evasion do
+      def go do
+        m = Ezagent.KindRegistry
+        m.list_all()
+      end
+    end
+    """
+
+    assert offenses_in_source(src, "fixture") == [],
+           "matcher now catches module-variable indirection? Update the moduledoc and flip this test."
   end
 
   test "no false positives on chokepoint calls and non-enumeration reads" do
@@ -243,6 +296,25 @@ defmodule EzagentCore.ListReadChokepointBoundaryTest do
   defp head_fun_arity({fun, _, _}) when is_atom(fun), do: {fun, 0}
   defp head_fun_arity(_), do: {nil, -1}
 
+  # Rule 0 — QUALIFIED dynamic dispatch: `Kernel.apply(Mod, :fun, …)` or
+  # `:erlang.apply(Mod, :fun, …)` with a literal banned target. This clause
+  # MUST precede Rule 1: the qualified-apply call is itself a remote call
+  # whose `{mod, fun}` (`Kernel.apply` / `:erlang.apply`) is NOT banned —
+  # Rule 1 would match the node first and return [] without ever inspecting
+  # the dispatch TARGET. Arity handling mirrors Rule 4: literal args list →
+  # length; non-literal → `:any`; the 2-arity form dispatches with NO args,
+  # so only 0-arity banned primitives can match it.
+  defp offense_for({{:., _, [via, :apply]}, meta, [modast, fun]}, aliases, _imports, _local_defs)
+       when is_atom(fun) do
+    qualified_apply_offense(via, modast, fun, 0, meta, aliases)
+  end
+
+  defp offense_for({{:., _, [via, :apply]}, meta, [modast, fun, args]}, aliases, _imports, _local_defs)
+       when is_atom(fun) do
+    arity = if is_list(args), do: length(args), else: :any
+    qualified_apply_offense(via, modast, fun, arity, meta, aliases)
+  end
+
   # Rule 1 — remote call `<Mod>.<banned>(args…)`: `Mod` resolves (via aliases +
   # `Elixir.` normalization) to a banned module and `{mod, fun, arity}` is
   # banned. `args` nil (a no-parens remote reference) is flagged too.
@@ -322,6 +394,22 @@ defmodule EzagentCore.ListReadChokepointBoundaryTest do
     end
   end
 
+  # Rule 4b — `apply(Mod, :fun)` with NO args list: dispatches with zero
+  # arguments, so only 0-arity banned primitives can match.
+  defp offense_for({:apply, meta, [modast, fun]}, aliases, _imports, _local_defs)
+       when is_atom(fun) do
+    case banned_match(modast, fun, 0, aliases) do
+      {mod, fun, _arity} ->
+        [
+          {AstScan.line_of(meta),
+           "apply(#{format_mod(mod)}, :#{fun}) — route through the caller-authorizing list chokepoint"}
+        ]
+
+      nil ->
+        []
+    end
+  end
+
   # Rule 2 — imported bare call: the file `import`s a banned module and calls
   # the banned fun unqualified. A bare call matching a LOCAL def is the local
   # function (local defs shadow imports) — skipped.
@@ -347,6 +435,32 @@ defmodule EzagentCore.ListReadChokepointBoundaryTest do
   end
 
   defp offense_for(_node, _aliases, _imports, _local_defs), do: []
+
+  # Rule 0 helper — flag `Kernel.apply` / `:erlang.apply` dispatching to a
+  # literal banned target; anything else is not this rule's concern.
+  defp qualified_apply_offense(via, modast, fun, arity, meta, aliases) do
+    with true <- apply_via?(via, aliases),
+         {mod, fun, _arity} <- banned_match(modast, fun, arity, aliases) do
+      [
+        {AstScan.line_of(meta),
+         "#{format_via(via)}.apply(#{format_mod(mod)}, :#{fun}, …) — route through the caller-authorizing list chokepoint"}
+      ]
+    else
+      _ -> []
+    end
+  end
+
+  # The two modules bare `apply/2,3` can be qualified through: `Kernel`
+  # (also `Elixir.`-prefixed or `alias`ed) and `:erlang`.
+  defp apply_via?(:erlang, _aliases), do: true
+
+  defp apply_via?({:__aliases__, _, _} = modast, aliases),
+    do: resolve_mod(modast, aliases) == [:Kernel]
+
+  defp apply_via?(_other, _aliases), do: false
+
+  defp format_via(:erlang), do: ":erlang"
+  defp format_via({:__aliases__, _, parts}), do: Enum.map_join(parts, ".", &Atom.to_string/1)
 
   # `{mod, fun, arity}` when modast resolves to a banned module and fun/arity
   # match a banned primitive (`:any` arity matches any banned arity of fun).
