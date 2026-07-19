@@ -34,10 +34,14 @@ defmodule Ezagent.Session.TemplateReads do
     3. Fail-closed — a nil/malformed/unauthorized caller or an
        unavailable REQUIRED enumeration facade returns `[]`.
 
-  Rows are JSON-safe maps in the exact shape the world workspace
-  surfaces render (`source`/`uri`/`alive`/`name`/`description`/
-  `members_count`/`web_anon_access`/`status`/`body`), live rows first
-  then durable-only rows, sorted by `{name, uri}`.
+  Rows are maps in the shape the world workspace surfaces render
+  (`source`/`uri`/`alive`/`name`/`description`/`members_count`/
+  `web_anon_access`/`status`/`body`), live rows first then durable-only
+  rows, sorted by `{name, uri}`. `body` carries the RAW template
+  content map; the presenter (`WorkspacePluginData`) owns the JSON-safe
+  normalization of that field (the world row contract) — this domain
+  module does not duplicate the presenter's `jsonable/1` (the arch
+  cross-file duplicate-fn gate).
 
   ## Dependency direction (runtime DI)
 
@@ -81,22 +85,12 @@ defmodule Ezagent.Session.TemplateReads do
 
   defp authorize_roster(%URI{} = caller, %URI{} = workspace_uri) do
     if WorkspaceReads.authorized_workspace?(caller, workspace_uri) and
-         (WorkspaceReads.declared_member?(caller, workspace_uri) or operator?(caller)) do
+         (WorkspaceReads.declared_member?(caller, workspace_uri) or
+            AdminAuthority.admin?(caller)) do
       :ok
     else
       {:error, :unauthorized}
     end
-  end
-
-  # The operator predicate, REUSED from the operator plane — promoted
-  # operators included, caps loaded live. Any failure → false
-  # (fail-closed), leaving declared membership as the only way in.
-  defp operator?(%URI{} = caller) do
-    caller
-    |> Ezagent.EntityCaps.load()
-    |> then(&AdminAuthority.admin?(caller, &1))
-  rescue
-    _ -> false
   end
 
   # ----- live template rows (global registry, workspace-filtered) -----
@@ -125,7 +119,7 @@ defmodule Ezagent.Session.TemplateReads do
                "members_count" => template_member_count(content),
                "web_anon_access" => web_anon_access?(content),
                "status" => "session_template",
-               "body" => jsonable(content)
+               "body" => content
              }
            ]
          else
@@ -290,20 +284,4 @@ defmodule Ezagent.Session.TemplateReads do
       Ezagent.Socialware.DefinitionRegistry
     )
   end
-
-  # ----- JSON-safe normalization (world row contract) -------------------
-
-  defp jsonable(%URI{} = uri), do: URI.to_string(uri)
-  defp jsonable(%DateTime{} = value), do: DateTime.to_iso8601(value)
-  defp jsonable(%NaiveDateTime{} = value), do: NaiveDateTime.to_iso8601(value)
-  defp jsonable(%_struct{} = struct), do: struct |> Map.from_struct() |> jsonable()
-
-  defp jsonable(map) when is_map(map) do
-    Map.new(map, fn {key, value} -> {to_string(key), jsonable(value)} end)
-  end
-
-  defp jsonable(list) when is_list(list), do: Enum.map(list, &jsonable/1)
-  defp jsonable(tuple) when is_tuple(tuple), do: tuple |> Tuple.to_list() |> jsonable()
-  defp jsonable(atom) when is_atom(atom), do: Atom.to_string(atom)
-  defp jsonable(other), do: other
 end

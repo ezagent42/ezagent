@@ -138,7 +138,7 @@ defmodule Ezagent.World.AdminDataTest do
   describe "F5 — operator callers get the data" do
     test "entity_registry lists the registry for the bootstrap admin" do
       uri_str =
-        "session://team-alpha/admin-data-#{System.unique_integer([:positive])}"
+        "session://team-alpha/default/admin-data-#{System.unique_integer([:positive])}"
 
       :ok = Ezagent.KindRegistry.put_new(uri_str, self())
 

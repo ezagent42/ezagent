@@ -27,9 +27,9 @@ defmodule Ezagent.Identity.OperatorReads do
 
   ## Authorization predicate
 
-  Delegates to `Ezagent.Identity.AdminAuthority.admin?/2` — the SAME
-  4-predicate operator authority the workspace-listing plane
-  (`Ezagent.Workspace.Listing.list_workspaces_for/2`) uses — so a
+  Delegates to `Ezagent.Identity.AdminAuthority.admin?/1` — the
+  live-caps convenience over the SAME 4-predicate `admin?/2` operator
+  authority the workspace-listing plane uses — so a
   PROMOTED operator (cross-workspace admin cap holder, or a declared
   `workspace://system` member) is accepted, not just the bootstrap admin
   URI (F5, read-plane PR-4 rework: the old `Identity.admin?/1`
@@ -58,20 +58,16 @@ defmodule Ezagent.Identity.OperatorReads do
 
   # ----- authorization (operator cap, fail-closed) ---------------------------
 
-  # F5 (read-plane PR-4 rework): `AdminAuthority.admin?/2` — the same
-  # operator-listing predicate the workspace plane uses — over the
+  # F5 (read-plane PR-4 rework): `AdminAuthority.admin?/1` — the same
+  # operator-listing predicate the workspace plane uses, over the
   # caller's LIVE-loaded caps. A malformed caller or a caps-load failure
   # fails closed to `{:error, :unauthorized}`.
   defp authorize(%URI{} = caller) do
-    caps = Ezagent.EntityCaps.load(caller)
-
-    if AdminAuthority.admin?(caller, caps) do
+    if AdminAuthority.admin?(caller) do
       :ok
     else
       {:error, :unauthorized}
     end
-  rescue
-    _ -> {:error, :unauthorized}
   end
 
   defp authorize(caller) when is_binary(caller) do

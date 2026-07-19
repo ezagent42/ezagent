@@ -88,7 +88,7 @@ defmodule Ezagent.Workspace.UserReads do
   """
   @spec reveal_metadata?(URI.t() | term(), URI.t() | term()) :: boolean()
   def reveal_metadata?(%URI{} = caller, %URI{} = user_uri) do
-    URI.to_string(caller) == URI.to_string(user_uri) or operator?(caller)
+    URI.to_string(caller) == URI.to_string(user_uri) or AdminAuthority.admin?(caller)
   end
 
   def reveal_metadata?(_caller, _user_uri), do: false
@@ -97,22 +97,12 @@ defmodule Ezagent.Workspace.UserReads do
 
   defp authorize_roster(%URI{} = caller, %URI{} = workspace_uri) do
     if WorkspaceReads.authorized_workspace?(caller, workspace_uri) and
-         (WorkspaceReads.declared_member?(caller, workspace_uri) or operator?(caller)) do
+         (WorkspaceReads.declared_member?(caller, workspace_uri) or
+            AdminAuthority.admin?(caller)) do
       :ok
     else
       {:error, :unauthorized}
     end
-  end
-
-  # The operator predicate, REUSED from the operator plane — promoted
-  # operators included, caps loaded live. Any failure → false
-  # (fail-closed), leaving declared membership as the only way in.
-  defp operator?(%URI{} = caller) do
-    caller
-    |> Ezagent.EntityCaps.load()
-    |> then(&AdminAuthority.admin?(caller, &1))
-  rescue
-    _ -> false
   end
 
   # ----- workspace-scoped base listing (runtime DI — see moduledoc) ---

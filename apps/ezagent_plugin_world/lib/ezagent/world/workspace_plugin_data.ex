@@ -360,7 +360,12 @@ defmodule Ezagent.World.WorkspacePluginData do
       templates
       |> legacy_template_rows()
 
-    session_rows = session_template_rows(caller, workspace_name)
+    # `body` normalization is the presenter's job (the world row
+    # contract) — the chokepoint returns raw template content.
+    session_rows =
+      caller
+      |> session_template_rows(workspace_name)
+      |> Enum.map(fn row -> Map.update(row, "body", %{}, &jsonable/1) end)
 
     (session_rows ++ legacy_rows)
     |> Enum.uniq_by(&{&1["source"], &1["name"], &1["uri"]})

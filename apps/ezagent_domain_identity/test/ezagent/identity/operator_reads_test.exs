@@ -16,7 +16,7 @@ defmodule Ezagent.Identity.OperatorReadsTest do
 
     test "an operator gets the global registry list" do
       uri_str =
-        "session://team-alpha/operator-reads-#{System.unique_integer([:positive])}"
+        "session://team-alpha/default/operator-reads-#{System.unique_integer([:positive])}"
 
       :ok = Ezagent.KindRegistry.put_new(uri_str, self())
 
@@ -40,7 +40,7 @@ defmodule Ezagent.Identity.OperatorReadsTest do
       refute Ezagent.Identity.admin?(promoted)
 
       uri_str =
-        "session://team-alpha/promoted-op-#{System.unique_integer([:positive])}"
+        "session://team-alpha/default/promoted-op-#{System.unique_integer([:positive])}"
 
       :ok = Ezagent.KindRegistry.put_new(uri_str, self())
 
@@ -53,7 +53,7 @@ defmodule Ezagent.Identity.OperatorReadsTest do
     # coerced empty list that would be indistinguishable from "no rows".
     test "F5: an ordinary authenticated non-admin is rejected, not coerced to an empty list" do
       uri_str =
-        "session://team-alpha/non-admin-reject-#{System.unique_integer([:positive])}"
+        "session://team-alpha/default/non-admin-reject-#{System.unique_integer([:positive])}"
 
       :ok = Ezagent.KindRegistry.put_new(uri_str, self())
 
