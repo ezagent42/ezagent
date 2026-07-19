@@ -94,3 +94,25 @@ Notes:
 6. **User-metadata test (F4):** a same-workspace principal does not receive other users' email/password-presence/confirmation/disablement metadata absent an authorizing relationship.
 7. **AST-evasion self-tests:** `Elixir.`-prefixed, imported, captured, and `apply/3` forms of every banned primitive are all caught by the gate.
 8. Full verify from umbrella root: `mix compile --warnings-as-errors`, `mix ezagent.check_invariants`, the new gate, and the migrated readers' domain suites.
+
+---
+
+## Re-review addendum (2026-07-19, codex re-review of the rework — 3 items, all landed)
+
+The core authz fixes (F2/F5/F6/F3) and the 12-reader migration were confirmed landed by codex's re-review. Three residual items remained; this addendum records their resolution.
+
+### R1 (REAL LEAK) — per-URI user deep-link gated
+
+`/identities/users/:uri` served any authenticated caller another user's full account/security metadata (email, password-presence, confirmation, disablement) — including cross-tenant. Fixed by:
+
+- **`Ezagent.Workspace.UserReads.user/2`** (new per-URI chokepoint, twin of `users/2`): authorizes BEFORE existence is checked (`{:error,:unauthorized}` is existence-neutral — no cross-tenant existence oracle). Allowed: self, operator (`AdminAuthority.admin?/2`), or a DECLARED member of the TARGET user's home workspace passing the workspace gate (the roster rule applied per-URI). Everyone else (incl. cross-tenant non-members) is denied the row.
+- **`UserData.detail_state/4`** routes through it: denied → `user_unauthorized` shell (no account data); missing → `user_not_found`; allowed rows STILL per-field gate every sensitive field via `reveal_metadata?/2`, and carry `can_view_metadata` so the React surface renders a directory-level view (never a negated value) to non-operator viewers. The ungated `UserData.exists?/1` oracle is gone.
+- Acceptance: `user_data_detail_test.exs` — member→other (metadata all `nil`), cross-tenant denied, ghost≡real indistinguishable, self/operator full, missing→`user_not_found`.
+
+### R2 — gate inventory completed
+
+Added the three still-existing global/workspace enumerators to the gate's banned set: `EzagentDomainInstanceMessage.list_sessions/0` (global KindRegistry scan), `EzagentDomainInstanceMessage.list_persisted_sessions/1`, `Ezagent.Entity.Agent.list_in_workspace/1`. The re-run empty-allowlist gate flagged **zero** current callers in the four presenter trees (allowlist stays EMPTY; the legal callers — the chokepoints — live outside the scanned tiers by construction).
+
+### R3 — matcher hardened + limitation documented
+
+The AST matcher now also catches qualified dynamic dispatch — `Kernel.apply(Mod, :fun, args)`, `:erlang.apply(Mod, :fun, args)` — and the 2-arity `apply(Mod, :fun)` form (0-arity primitives), with self-tests proving each. **Known limitation (pinned by a self-test, not claimed as covered):** module-variable indirection (`m = Mod; m.fun()`) and `apply` through a runtime module variable are not statically resolvable without flow analysis — the self-test trips if a future matcher upgrade closes the gap.
