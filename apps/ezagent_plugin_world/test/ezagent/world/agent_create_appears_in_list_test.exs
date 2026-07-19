@@ -64,7 +64,7 @@ defmodule Ezagent.World.AgentCreateAppearsInListTest do
       # list_entities reads from KindRegistry (live processes), not the DB,
       # so an actually-spawned agent is present; a stub that returns {:ok, _}
       # without spawning would NOT appear here, failing this assertion.
-      agent_rows = IdentityData.list_entities(workspace_uri, "agents")
+      agent_rows = IdentityData.list_entities(admin_ctx.caller, workspace_uri, "agents")
       listed_uris = Enum.map(agent_rows, & &1["uri"])
 
       assert expected_uri_str in listed_uris,
@@ -83,7 +83,7 @@ defmodule Ezagent.World.AgentCreateAppearsInListTest do
       # Sanity: the workspace filter works — the agent appears under
       # "agents" but NOT under "users".
       listed_user_uris =
-        IdentityData.list_entities(workspace_uri, "users")
+        IdentityData.list_entities(admin_ctx.caller, workspace_uri, "users")
         |> Enum.map(& &1["uri"])
 
       refute expected_uri_str in listed_user_uris,
@@ -94,7 +94,7 @@ defmodule Ezagent.World.AgentCreateAppearsInListTest do
       other_ws_uri = URI.new!("workspace://other-ws-#{System.unique_integer([:positive])}")
 
       other_listed =
-        IdentityData.list_entities(other_ws_uri, "agents")
+        IdentityData.list_entities(admin_ctx.caller, other_ws_uri, "agents")
         |> Enum.map(& &1["uri"])
 
       refute expected_uri_str in other_listed,

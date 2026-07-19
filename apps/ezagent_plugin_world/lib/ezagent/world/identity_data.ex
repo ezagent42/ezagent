@@ -62,7 +62,7 @@ defmodule Ezagent.World.IdentityData do
          caller,
          caps
        ) do
-    rows = workspace_uri |> list_entities(filter) |> put_credential_statuses(caller, caps)
+    rows = list_entities(caller, workspace_uri, filter) |> put_credential_statuses(caller, caps)
 
     base
     |> Map.put("filter", filter)
@@ -79,7 +79,8 @@ defmodule Ezagent.World.IdentityData do
   end
 
   defp component_state(%{component: "agents_table"}, base, workspace_uri, caller, caps) do
-    agents = workspace_uri |> list_entities("agents") |> put_credential_statuses(caller, caps)
+    agents =
+      list_entities(caller, workspace_uri, "agents") |> put_credential_statuses(caller, caps)
 
     base
     |> Map.put("agents", agents)
@@ -320,10 +321,24 @@ defmodule Ezagent.World.IdentityData do
     |> Map.put("action_error", nil)
   end
 
-  @doc "List entity rows for the identities and agents components."
-  @spec list_entities(URI.t() | nil, String.t()) :: [map()]
-  def list_entities(workspace_uri, filter) do
+  @doc """
+  List entity rows for the identities and agents components.
+
+  AGENT rows are gated PER ROW through
+  `Ezagent.Workspace.WorkspaceReads.agents/2` — the caller-authorizing
+  workspace agent-LIST chokepoint (caller owns/manages the agent OR the
+  agent is a declared workspace member; fail-closed `[]`) — so a caller
+  who may not see agent X gets X ABSENT even though X matches the
+  workspace filter. The chokepoint ALSO covers dormant agents, but this
+  listing stays live-registry-sourced, so the effective agent set is the
+  intersection (today's live-only shape, minus the over-return leak).
+  USER rows remain workspace-filtered pending the users-plane chokepoint
+  (a later read-plane PR).
+  """
+  @spec list_entities(URI.t() | nil, URI.t() | nil, String.t()) :: [map()]
+  def list_entities(caller, workspace_uri, filter) do
     workspace_filter = workspace_name_filter(workspace_uri)
+    visible_agents = visible_agent_uri_strs(caller, workspace_uri)
 
     rows =
       Ezagent.KindRegistry.list_all()
@@ -333,7 +348,8 @@ defmodule Ezagent.World.IdentityData do
              true <- entity_type in ["user", "agent"],
              {:ok, entity_name} <- Ezagent.URI.name(uri),
              {:ok, workspace_name} <- Ezagent.URI.workspace_name(uri),
-             true <- entity_matches_workspace?(workspace_name, workspace_filter) do
+             true <- entity_matches_workspace?(workspace_name, workspace_filter),
+             true <- entity_row_visible?(entity_type, uri_str, visible_agents) do
           [
             %{
               "uri" => uri_str,
@@ -889,6 +905,24 @@ defmodule Ezagent.World.IdentityData do
 
   defp workspace_name(other),
     do: raise(ArgumentError, "expected workspace URI, got: #{inspect(other)}")
+
+  # Per-row agent visibility comes from the caller-authorizing chokepoint
+  # ONLY — never re-derived here (a security boundary must not be
+  # copy-pasted). Fail-closed: an unauthorized/nil caller or any chokepoint
+  # error yields an empty set, so every agent row drops out.
+  defp visible_agent_uri_strs(caller, workspace_uri) do
+    caller
+    |> Ezagent.Workspace.WorkspaceReads.agents(workspace_uri)
+    |> Enum.map(&URI.to_string/1)
+    |> MapSet.new()
+  rescue
+    _ -> MapSet.new()
+  end
+
+  defp entity_row_visible?("agent", uri_str, visible_agents),
+    do: MapSet.member?(visible_agents, uri_str)
+
+  defp entity_row_visible?(_kind, _uri_str, _visible_agents), do: true
 
   defp entity_matches_workspace?(_workspace_name, :all), do: true
   defp entity_matches_workspace?(workspace_name, workspace_name), do: true
