@@ -151,6 +151,37 @@ defmodule Ezagent.Invariants.CapVerifyLoadBoundariesTest do
     end
   end
 
+  test "current-target validator scanner rejects local wrapper and anonymous evasions" do
+    evasions = %{
+      direct: "Ezagent.Cap.issue(:admin, receiver, artifact)",
+      one_hop: "one(artifact)",
+      multi_hop: "two(artifact)",
+      anonymous: "(fn value -> Ezagent.Cap.store(value, receiver) end).(artifact)",
+      capture: "(&Ezagent.Cap.absorb/2).(artifact, receiver)",
+      dynamic: "fun = :hidden; apply(__MODULE__, fun, [artifact])"
+    }
+
+    for {name, body} <- evasions do
+      source = """
+      defmodule Controlled#{Macro.camelize(to_string(name))} do
+        def validate_for_current_target(artifact, receiver) do
+          #{body}
+        end
+
+        def one(artifact), do: Ezagent.Router.dispatch(artifact)
+        def two(artifact), do: three(artifact)
+        def three(artifact), do: Ezagent.Capability.matches?(artifact, %{})
+        def hidden(artifact), do: Ezagent.CapabilityRegistry.register(K, :read, artifact)
+      end
+      """
+
+      assert {:error, _call} =
+               source
+               |> Code.string_to_quoted!()
+               |> scan_current_target()
+    end
+  end
+
   test "slice-to-ctx callers use the verified identity loader without filtering inline caps" do
     cli_loader = definition_source(@cli_dispatch, :lookup_identity_caps, 1)
     assert cli_loader =~ "Ezagent.Identity.read_held_caps"
@@ -205,59 +236,157 @@ defmodule Ezagent.Invariants.CapVerifyLoadBoundariesTest do
     @cap
     |> absolute()
     |> quoted!()
-    |> find_definition_body(:validate_for_current_target, 2)
-    |> validate_current_target_ast()
+    |> scan_current_target()
     |> then(fn {:ok, calls} -> calls end)
   end
 
-  defp validate_current_target_ast(ast) do
-    allowed =
-      MapSet.new([{Ezagent.Cap.Authority, :verify_current, 2}, {Ezagent.URI, :stable_key, 1}])
+  defp scan_current_target(ast) do
+    definitions = definition_bodies(ast)
 
-    calls =
-      ast
-      |> collect_remote_calls()
-      |> Enum.uniq()
-      |> Enum.sort()
-
-    case Enum.find(calls, &(not MapSet.member?(allowed, &1))) do
-      nil -> {:ok, calls}
-      forbidden -> {:error, forbidden}
+    scan_function(
+      {:validate_for_current_target, 2},
+      definitions,
+      MapSet.new(),
+      MapSet.new()
+    )
+    |> case do
+      {:ok, calls, _visited} -> {:ok, calls |> MapSet.to_list() |> Enum.sort()}
+      {:error, call} -> {:error, call}
     end
   end
 
-  defp collect_remote_calls(ast) do
-    {_ast, calls} =
-      Macro.prewalk(ast, [], fn
-        {{:., _, [module_ast, function]}, _, args} = node, calls
-        when is_atom(function) and is_list(args) ->
-          module = Macro.expand(module_ast, __ENV__)
-          {node, [{module, function, length(args)} | calls]}
+  defp scan_function(signature, definitions, visited, calls) do
+    if MapSet.member?(visited, signature) do
+      {:ok, calls, visited}
+    else
+      case Map.fetch(definitions, signature) do
+        {:ok, bodies} ->
+          scan_nodes(bodies, definitions, MapSet.put(visited, signature), calls)
 
-        {function, _, args} = node, calls
-        when function in [:apply] and is_list(args) ->
-          {node, [{Kernel, function, length(args)} | calls]}
-
-        node, calls ->
-          {node, calls}
-      end)
-
-    calls
+        :error ->
+          {:error, {:unresolved_local, signature}}
+      end
+    end
   end
 
-  defp find_definition_body(ast, name, arity) do
-    {_ast, bodies} =
-      Macro.prewalk(ast, [], fn
-        {:def, _, [head, [do: body]]} = node, bodies ->
-          if head_signature(head) == {name, arity},
-            do: {node, [body | bodies]},
-            else: {node, bodies}
+  defp scan_nodes(ast, definitions, visited, calls) do
+    allowed =
+      MapSet.new([{Ezagent.Cap.Authority, :verify_current, 2}, {Ezagent.URI, :stable_key, 1}])
 
-        node, bodies ->
-          {node, bodies}
+    {_ast, result} =
+      Macro.prewalk(ast, {:ok, calls, visited}, fn
+        node, {:error, _call} = error ->
+          {node, error}
+
+        {{:., _, [module_ast, function]}, _, args} = node, {:ok, calls, visited}
+        when is_atom(function) and is_list(args) ->
+          expanded = Macro.expand(module_ast, __ENV__)
+          call = {expanded, function, length(args)}
+
+          cond do
+            match?({:fn, _, _}, module_ast) ->
+              {node, {:ok, calls, visited}}
+
+            MapSet.member?(allowed, call) ->
+              {node, {:ok, MapSet.put(calls, call), visited}}
+
+            is_atom(expanded) ->
+              {node, {:error, call}}
+
+            true ->
+              {node, {:error, {:dynamic_dispatch, Macro.to_string(node)}}}
+          end
+
+        {:&, _, [{:/, _, [{name, _, context}, arity]}]} = node, {:ok, calls, visited}
+        when is_atom(name) and is_atom(context) and is_integer(arity) ->
+          case scan_function({name, arity}, definitions, visited, calls) do
+            {:ok, next_calls, next_visited} -> {node, {:ok, next_calls, next_visited}}
+            {:error, call} -> {node, {:error, call}}
+          end
+
+        {:apply, _, args} = node, {:ok, _calls, _visited} when is_list(args) ->
+          {node, {:error, {Kernel, :apply, length(args)}}}
+
+        {name, _, args} = node, {:ok, calls, visited}
+        when is_atom(name) and is_list(args) and name not in [:__block__, :fn, :when, :if] ->
+          signature = {name, length(args)}
+
+          if Map.has_key?(definitions, signature) do
+            case scan_function(signature, definitions, visited, calls) do
+              {:ok, next_calls, next_visited} -> {node, {:ok, next_calls, next_visited}}
+              {:error, call} -> {node, {:error, call}}
+            end
+          else
+            if safe_local_form?(signature) do
+              {node, {:ok, calls, visited}}
+            else
+              {node, {:error, {:unresolved_local, signature}}}
+            end
+          end
+
+        node, state ->
+          {node, state}
       end)
 
-    bodies |> Enum.reverse() |> then(&{:__block__, [], &1})
+    result
+  end
+
+  defp safe_local_form?({name, _arity}) do
+    name in [
+      :if,
+      :case,
+      :cond,
+      :with,
+      :and,
+      :or,
+      :not,
+      :==,
+      :!=,
+      :===,
+      :!==,
+      :<,
+      :>,
+      :<=,
+      :>=,
+      :in,
+      :is_atom,
+      :is_binary,
+      :is_list,
+      :is_map,
+      :is_nil,
+      :is_struct,
+      :.,
+      :__aliases__,
+      :%,
+      :{}
+    ]
+  end
+
+  defp definition_bodies(ast) do
+    {_ast, definitions} =
+      Macro.prewalk(ast, %{}, fn
+        {kind, _, [head, [do: body]]} = node, definitions when kind in [:def, :defp] ->
+          signature = head_signature(head)
+          {node, Map.update(definitions, signature, [body], &[body | &1])}
+
+        node, definitions ->
+          {node, definitions}
+      end)
+
+    definitions
+  end
+
+  defp validate_current_target_ast(ast) do
+    quote do
+      defmodule ControlledDirect do
+        def validate_for_current_target(artifact, receiver) do
+          _ = artifact
+          _ = receiver
+          unquote(ast)
+        end
+      end
+    end
+    |> scan_current_target()
   end
 
   defp definition_source(relative, name, arity) do

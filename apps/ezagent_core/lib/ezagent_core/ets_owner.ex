@@ -173,12 +173,15 @@ defmodule EzagentCore.EtsOwner do
           name
       end)
 
-    {:ok, %{tables: table_names, lifecycle_subscribers: %{}}}
+    :ok = EzagentCore.EtsReadiness.ready(self())
+    {:ok, %{tables: table_names}}
   end
 
   @doc false
   def subscribe_lifecycle(pid \\ self()) when is_pid(pid) do
-    GenServer.call(__MODULE__, {:subscribe_lifecycle, pid})
+    case EzagentCore.EtsReadiness.subscribe(pid) do
+      {:ok, _owner, _generation} -> :ok
+    end
   end
 
   @doc false
@@ -187,17 +190,12 @@ defmodule EzagentCore.EtsOwner do
   end
 
   @impl true
-  def handle_call({:subscribe_lifecycle, pid}, _from, state) do
-    ref = Process.monitor(pid)
-    {:reply, :ok, put_in(state.lifecycle_subscribers[ref], pid)}
-  end
-
   def handle_call(:recreate_capability_tables_for_test, _from, state) do
     if Mix.env() == :test do
       recreate_table(Ezagent.BehaviorRegistry.table())
       recreate_table(Ezagent.CapabilityRegistry.Subjects.table())
 
-      Enum.each(state.lifecycle_subscribers, fn {_ref, pid} -> send(pid, :ets_owner_recreated) end)
+      :ok = EzagentCore.EtsReadiness.ready(self())
 
       {:reply, :ok, state}
     else
@@ -205,13 +203,8 @@ defmodule EzagentCore.EtsOwner do
     end
   end
 
-  @impl true
-  def handle_info({:DOWN, ref, :process, _pid, _reason}, state) do
-    {:noreply, update_in(state.lifecycle_subscribers, &Map.delete(&1, ref))}
-  end
-
   defp recreate_table(table) do
-    :ets.delete(table)
+    if :ets.whereis(table) != :undefined, do: :ets.delete(table)
     :ets.new(table, [:set, :public, :named_table, read_concurrency: true])
   end
 end

@@ -23,7 +23,7 @@ defmodule Ezagent.ActionSet.ProviderConnection do
       requested_permissions_digest: :string,
       redirect_uri_id: :string,
       correlation_id: :string,
-      callback_artifact: :map
+      callback_artifact: {:struct, Ezagent.Capability}
     },
     returns: %{attempt_ref: :string, authorization_url: :string, expires_at: :string},
     caps: [{:begin_authorization, kind: :user}],
@@ -110,12 +110,17 @@ defmodule Ezagent.ActionSet.ProviderConnection do
 
   @doc false
   def handle_begin_authorization(args, ctx) do
-    with %Ezagent.Capability{} = artifact <- Map.get(args, :callback_artifact),
-         :ok <- validate_callback_artifact(artifact, ctx) do
-      invoke_boundary(:begin_authorization, args, ctx)
-    else
-      nil -> {:error, :callback_artifact_required}
-      {:error, _} = error -> error
+    case Map.get(args, :callback_artifact) do
+      %Ezagent.Capability{} = artifact ->
+        with :ok <- validate_callback_artifact(artifact, ctx) do
+          invoke_boundary(:begin_authorization, args, ctx)
+        end
+
+      nil ->
+        {:error, :callback_artifact_required}
+
+      _malformed ->
+        {:error, :invalid_callback_artifact}
     end
   end
 

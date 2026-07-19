@@ -9,6 +9,10 @@ defmodule EzagentCore.Application do
   def start(_type, _args) do
     children =
       [
+        # Survives EtsOwner restarts and publishes table readiness to supervised
+        # downstream registry owners without polling registered names.
+        EzagentCore.EtsReadiness,
+
         # ① ETS tables — must be ready before any process that reads/writes them
         # (KindRegistry, Idempotency.Sweeper, plugin Kind instances).
         # See DECISIONS impl-time §ETS+Application children.

@@ -24,6 +24,37 @@ defmodule Ezagent.ActionSet.ProviderConnectionTest do
     def validate(_action, _assurance, _context), do: {:error, :assurance_rejected}
   end
 
+  defmodule ArbitraryErrorAssuranceValidator do
+    @behaviour Ezagent.ProviderConnection.AssuranceValidator
+
+    @impl true
+    def validate(_action, _assurance, _context),
+      do: {:error, {:backend_secret, "validator-secret-sentinel"}}
+  end
+
+  defmodule RaisingAssuranceValidator do
+    @behaviour Ezagent.ProviderConnection.AssuranceValidator
+
+    @impl true
+    def validate(_action, _assurance, _context),
+      do: raise("validator-secret-sentinel")
+  end
+
+  defmodule ThrowingAssuranceValidator do
+    @behaviour Ezagent.ProviderConnection.AssuranceValidator
+
+    @impl true
+    def validate(_action, _assurance, _context),
+      do: throw({:validator_secret, "validator-secret-sentinel"})
+  end
+
+  defmodule WrongShapeAssuranceValidator do
+    @behaviour Ezagent.ProviderConnection.AssuranceValidator
+
+    @impl true
+    def validate(_action, _assurance, _context), do: {:ok, "validator-secret-sentinel"}
+  end
+
   @actions [
     :begin_authorization,
     :consume_callback,
@@ -69,7 +100,7 @@ defmodule Ezagent.ActionSet.ProviderConnectionTest do
            requested_permissions_digest: :string,
            redirect_uri_id: :string,
            correlation_id: :string,
-           callback_artifact: :map
+           callback_artifact: {:struct, Ezagent.Capability}
          }, %{attempt_ref: :string, authorization_url: :string, expires_at: :string}},
       consume_callback:
         {%{attempt_ref: :string, callback: :map, correlation_id: :string},
@@ -164,6 +195,62 @@ defmodule Ezagent.ActionSet.ProviderConnectionTest do
 
       assert_received {:boundary, :begin_authorization}
     end)
+  end
+
+  test "begin handler closes malformed callback artifacts without raising" do
+    owner = Ezagent.URI.user(:team_alpha, :malformed_callback_owner)
+    ctx = %{self_uri: owner, caller: owner}
+
+    for args <- [
+          %{},
+          %{callback_artifact: nil},
+          %{callback_artifact: %{}},
+          %{callback_artifact: %{grantee_uri: owner}},
+          %{callback_artifact: "not-an-artifact"}
+        ] do
+      assert {:error, reason} = ProviderConnection.handle_begin_authorization(args, ctx)
+      assert reason in [:callback_artifact_required, :invalid_callback_artifact]
+    end
+  end
+
+  test "assurance validator runtime accepts only its closed result contract" do
+    owner = Ezagent.URI.user(:team_alpha, :validator_owner)
+    assurance = assurance(owner, owner)
+    ctx = %{self_uri: owner, caller: owner}
+
+    assert :ok =
+             Ezagent.ProviderConnection.AssuranceValidator.validate(
+               AcceptingAssuranceValidator,
+               :revoke,
+               assurance,
+               Map.put(ctx, :test_pid, self())
+             )
+
+    assert {:error, :assurance_rejected} =
+             Ezagent.ProviderConnection.AssuranceValidator.validate(
+               RejectingAssuranceValidator,
+               :revoke,
+               assurance,
+               ctx
+             )
+
+    for validator <- [
+          ArbitraryErrorAssuranceValidator,
+          RaisingAssuranceValidator,
+          ThrowingAssuranceValidator,
+          WrongShapeAssuranceValidator
+        ] do
+      result =
+        Ezagent.ProviderConnection.AssuranceValidator.validate(
+          validator,
+          :revoke,
+          assurance,
+          ctx
+        )
+
+      assert result == {:error, :assurance_validator_misconfigured}
+      refute inspect(result) =~ "validator-secret-sentinel"
+    end
   end
 
   test "destructive assurances exhaustively reject bad coordinates before validator and boundary" do
