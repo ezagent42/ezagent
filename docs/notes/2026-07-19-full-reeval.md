@@ -118,3 +118,31 @@
 
 - 全项 5:⑫ 向导按钮折叠 / ⑬ 骨架屏 / ⑰ 成员推送 / ㉛ 装 sw 面 / ㊱ 删 session UI
 - 半项 5:⑩㉑ 凭证 skip UI 投影(#1453 上游已备)/ ⑱ Conversation 深色 / ㉒ tab 深链 / ㉘ 推送基建半(X1 `:notify`,未落则分享二期通知面降级,不阻塞)
+
+## 五、Allen 明确接手读面 + read-plane PR-1 落 main(2026-07-19 追加,main=c66971977)
+
+**用户通报:Allen 明确接手读面问题**。原话:「这个我接手了,跟写一样的问题要收口到一个地方,现在散在代码里面」——即读判定收敛到单一 chokepoint,同写面 `Cap.issue` 模式。且**不是口头排期,代码已动**:main 新增 2 commit 里 `dbac4c666`(#1464)= Allen 的 **read-plane PR-1** 已合并:
+
+- **SessionReads chokepoint**(domain_socialware `session_reads.ex`,230 行):`messages/4`(初始+翻页)/`members/2`/`authorized?/2`,先 live-first `Membership.authorize` 授权 caller 再读,fail-closed;live 面(chat_message 广播/roster 推送)同样过闸——正是 handoff #1459 定性的「读史零判定/observe-degrade 仍可读」两洞的正面修法。
+- **AST drift gate**(core `test/architecture/message_read_chokepoint_boundary_test.exs`):presenter 直读 MessageStore → CI 红,allowlist 即读者清单,散点无法回流。
+- **配套 5-PR 计划落档**(`docs/superpowers/plans/2026-07-19-read-plane-authz-chokepoint-plan.md` + specs 同名 design):PR-2 feeds/delivery/surface → **PR-3 附件面 person-bound `DownloadToken`(grantee 绑定,双 serve 路验人)+ 明列「kanban-403 修复」= 我们的 ㊲ 通用半/PR-C 整个被收编** → PR-4 workspace/global list(含 #187 operator 泄漏)→ PR-5 InternalReads+全平面双侧 gate。
+
+### 影响判定(对照 §四)
+
+1. **等 Allen 清单第 1 项**:「read-plane 修法排期(待排期)」→ **已接手进行中**——PR-1 已合,5-PR 计划即排期本身,实施者 codex,逐 PR codex adversarial review。
+2. **PR-C(person-bound token / ㊲ 通用半)**:从「gated on Allen 定性后我们做」升级为 **整个被 Allen 计划的 PR-3 收编,我们不做、不抢跑**——PR-3 范围(`DownloadToken` 可选 grantee + serve-time `caller==grantee` + 移除 legacy 参与复查 + kanban-403 验收)超集覆盖 PR-C 设想。我们侧只剩:PR-3 落地后收官 e2e 轮里验一次「成员下载看板附件 403 消失」。
+3. **对我们 kanban 附件现签(download_artifact)的影响**:PR-1 **未动附件面**(那是 PR-3),我们的「点击现签」半件(045c9fed3)与 PR-3 方向同构(计划原文 "mint inside the cap-gated read"),不冲突不返工;PR-3 合入时 token 面会加 grantee 字段,届时属被动跟合非我方工序。**PR-1 实际碰到我们的一处**:`KanbanShareController.session_assistant` 成员读迁 `SessionReads.members`——与我方债③(该业务搬进 `ShareReceive`)在 rebase 撞车,已解决:controller 采我方瘦身版,Allen 的授权闸移植进搬家后落点 `share_receive.ex`(`session_assistant/2` 带 clicker 走 `SessionReads.members`,kanban 加 domain_socialware dep;918eed074),两侧语义都保全。**㊵ 开工注意**:改 `share_receive.ex` 时若仍需成员读,必须保持走 `SessionReads`,不得退回 `get_slice(:session)` 直读(PR-5 全平面 gate 收紧后会 CI 红)。
+
+### 剩余任务终表(刷新)
+
+**我们的(6)——不变**,§四终表照旧(㊵ → D3 → 分享二期 → ㊷ → 收官 e2e → sw 手检);仅两处口径更新:㊵ 实施带上面 SessionReads 红线;收官 e2e 轮加验「若 PR-3 已合,验附件 403 消失」。
+
+**等 Allen 的(5 → 4 + 1 进行中)**:
+
+1. ~~read-plane 修法排期~~ → **已接手进行中**(PR-1 合并,PR-2..5 在途;PR-C 收编进 PR-3,我们不做)
+2. Decision Log 两条备案:D2 create_board 追认 + 入会补发授权口径(不变)
+3. CompositionBinding 放宽(不变)
+4. provisioning 默认 deadline 泛化提案(不变)
+5. ㉟ builtin 命名(不变)
+
+**等 zyli 的(10)**:不变;另注 #1450(G5 前端切片)已合,zyli 线在动,但 #1443 handoff 的 world 前端整包仍 0 进展,催单口径不变。
