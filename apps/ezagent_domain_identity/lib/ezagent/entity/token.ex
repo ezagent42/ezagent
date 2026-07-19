@@ -170,6 +170,22 @@ defmodule Ezagent.Entity.Token do
     :ok
   end
 
+  @doc """
+  Revoke EVERY token minted for `entity_uri` — the owner-offboarding
+  cascade's per-agent PAT sweep (task #180 / #1469). Returns
+  `{:ok, count}`; idempotent (zero tokens → `{:ok, 0}`).
+  """
+  @spec revoke_all_for_entity(URI.t() | String.t()) :: {:ok, non_neg_integer()}
+  def revoke_all_for_entity(uri) do
+    uri_str = uri_to_str(uri)
+
+    {count, _} =
+      from(t in __MODULE__, where: t.entity_uri == ^uri_str)
+      |> Repo.delete_all()
+
+    {:ok, count}
+  end
+
   # --- internals -----------------------------------------------------
 
   defp row_for_digest(token_digest) do
@@ -192,18 +208,34 @@ defmodule Ezagent.Entity.Token do
   defp enabled_principal(entity_uri) do
     principal = Ezagent.URI.new!(entity_uri)
 
-    if Ezagent.URI.type?(principal, :user) do
-      # A tombstoned (deleted) user sets `disabled_at` too, but a concurrent
-      # `enable/1` could clear it while `deleted_at` stays set — so reject on
-      # EITHER (mirrors `Ezagent.Users.disabled?/1`). PAT auth must not admit a
-      # deleted principal.
-      case Ezagent.Users.get_by_uri(entity_uri) do
-        %{deleted_at: %DateTime{}} -> {:error, :disabled}
-        %{disabled_at: %DateTime{}} -> {:error, :disabled}
-        _ -> {:ok, principal}
-      end
-    else
-      {:ok, principal}
+    cond do
+      Ezagent.URI.type?(principal, :user) ->
+        # A tombstoned (deleted) user sets `disabled_at` too, but a concurrent
+        # `enable/1` could clear it while `deleted_at` stays set — so reject on
+        # EITHER (mirrors `Ezagent.Users.disabled?/1`). PAT auth must not admit a
+        # deleted principal.
+        case Ezagent.Users.get_by_uri(entity_uri) do
+          %{deleted_at: %DateTime{}} -> {:error, :disabled}
+          %{disabled_at: %DateTime{}} -> {:error, :disabled}
+          _ -> {:ok, principal}
+        end
+
+      Ezagent.URI.type?(principal, :agent) ->
+        # task #180 owned-agent cascade (#1469): reject a token whose
+        # principal is a tombstoned agent OR an agent owned by / in the
+        # lineage of a tombstoned user. Revoking a principal revokes what
+        # they delegated — an agent whose authority derives from a deleted
+        # user must not authenticate even for a token row that survived
+        # the cascade's revocation sweep (defense in depth behind
+        # `Token.revoke_all_for_entity/1`).
+        if Ezagent.Identity.Offboarding.tombstoned_principal?(principal) do
+          {:error, :disabled}
+        else
+          {:ok, principal}
+        end
+
+      true ->
+        {:ok, principal}
     end
   rescue
     ArgumentError -> {:error, :invalid_credentials}

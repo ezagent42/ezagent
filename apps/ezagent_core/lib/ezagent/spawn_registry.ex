@@ -129,7 +129,13 @@ defmodule Ezagent.SpawnRegistry do
   def ensure_live(%URI{} = uri) do
     case Ezagent.KindRegistry.lookup(uri) do
       {:ok, _pid} ->
-        {:ok, :live}
+        # task #180 (codex F1-b): the already-running return must not hand
+        # back a tombstoned principal's still-live process — fence it (and
+        # tear the stale process down) exactly like the spawn path.
+        case Ezagent.SpawnFence.check(uri) do
+          :ok -> {:ok, :live}
+          {:error, reason} -> refuse_fenced_live(uri, reason)
+        end
 
       :error ->
         if is_nil(Ezagent.Ecto.KindSnapshot.get(URI.to_string(uri))) do
@@ -179,6 +185,17 @@ defmodule Ezagent.SpawnRegistry do
   end
 
   defp do_spawn_detailed(%URI{} = uri, scheme) do
+    # task #180 (codex F1-a/b) — the spawn fence runs at the REGISTRY
+    # chokepoint, before BOTH the already-running return and the spawn-fn
+    # invocation, so a tombstoned principal is refused no matter which
+    # spawn fn is registered or which behavior set the Kind declares.
+    case Ezagent.SpawnFence.check(uri) do
+      :ok -> do_spawn_detailed_fenced(uri, scheme)
+      {:error, reason} -> refuse_fenced_spawn(uri, reason)
+    end
+  end
+
+  defp do_spawn_detailed_fenced(%URI{} = uri, scheme) do
     case Ezagent.KindRegistry.lookup(uri) do
       {:ok, pid} ->
         {:ok, :already_started, pid}
@@ -197,6 +214,26 @@ defmodule Ezagent.SpawnRegistry do
             {:error, {:no_spawn_fn, scheme}}
         end
     end
+  end
+
+  # A fenced (tombstoned) URI that has NO live process: refuse the spawn.
+  defp refuse_fenced_spawn(%URI{} = uri, reason) do
+    # Defense in depth: a process may have slipped in between the fence
+    # check and this return (or the tombstone raced a concurrent spawn) —
+    # tear down anything registered at the fenced URI before refusing.
+    case Ezagent.KindRegistry.lookup(uri) do
+      {:ok, _pid} -> refuse_fenced_live(uri, reason)
+      :error -> {:error, reason}
+    end
+  end
+
+  # A fenced (tombstoned) URI WITH a live process: tear the stale process
+  # down (best-effort — `Kind.terminate/1` is idempotent + swallows
+  # teardown errors) and refuse the caller. The tombstoned principal is
+  # never handed back as `{:ok, pid}` (codex F1-b).
+  defp refuse_fenced_live(%URI{} = uri, reason) do
+    _ = Ezagent.Kind.terminate(uri)
+    {:error, reason}
   end
 
   @doc "List registered URI schemes (for debugging / mix tasks)."

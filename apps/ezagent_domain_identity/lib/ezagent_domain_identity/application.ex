@@ -62,6 +62,20 @@ defmodule EzagentDomainIdentity.Application do
   def start(_type, _args) do
     :ok = register_identity_behaviors()
 
+    # task #180 / #1469 (delete = atomic revocation, codex F1) — register the
+    # tombstone predicate into the CORE `Ezagent.SpawnFence` so the fence
+    # fires at EVERY Kind start (`Kind.Server.init`) and every SpawnRegistry
+    # return (already-running path), independent of behavior set — closing
+    # the no-Identity-behavior and already-running holes the C2
+    # Lifecycle-callback fence cannot see. Registered BEFORE any Kind spawn
+    # in this app's boot (admin spawn below) and before later-booting apps
+    # (session Loader) rehydrate principals.
+    :ok =
+      Ezagent.SpawnFence.register(
+        :identity_tombstone,
+        &Ezagent.Identity.Offboarding.refute_tombstoned/1
+      )
+
     # Agent-owned config-evolve (spec 2026-06-11 §6): the durable-config
     # ConfigStore/ConfigObject/ConfigProjection moved here from socialware.
     # `register/0` is a pure `Ezagent.UriQuery` ETS resolver registration (the

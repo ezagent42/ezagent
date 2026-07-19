@@ -200,8 +200,9 @@ defmodule Ezagent.ActionSet.WorkspaceUserAdmin do
     caps: [{:delete_user, kind: :workspace}],
     description:
       "Operator offboarding (task #180) — HARD, DESTRUCTIVE, GENESIS-ADMIN-ONLY " <>
-        "delete of a GLOBAL user identity. Gated to `entity://system/user/admin` " <>
-        "at the invocation (a workspace-admin holding the cap is still rejected — " <>
+        "delete of a GLOBAL user identity. Gated to the genesis admin identity " <>
+        "(the system-workspace admin user) at the invocation (a workspace-admin " <>
+        "holding the cap is still rejected — " <>
         "global identity destruction ≠ workspace member removal). REQUIRES the " <>
         "target be soft-disabled first (`must_disable_first` otherwise). " <>
         "TOMBSTONES the provisioning row (`Ezagent.Users.tombstone/3`): revokes " <>

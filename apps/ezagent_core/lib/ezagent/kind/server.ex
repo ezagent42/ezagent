@@ -106,6 +106,23 @@ defmodule Ezagent.Kind.Server do
     Process.flag(:trap_exit, true)
 
     uri = Map.fetch!(args, :uri)
+
+    # task #180 (delete = atomic revocation, codex F1-a) — the spawn fence
+    # runs HERE, at the one Kind-start chokepoint every behavior set must
+    # pass. The C2 fence in `Ezagent.ActionSet.Identity`'s Lifecycle
+    # callbacks only fires when Identity is in the instance's behavior set;
+    # a Kind spawned with an explicit set excluding Identity (or
+    # `behaviors: []`) would start unfenced. `Ezagent.SpawnFence` is
+    # behavior-set-independent and runs BEFORE the snapshot load AND before
+    # `Cap.Authority.open/2`, so a refused (tombstoned) principal neither
+    # materializes state nor mints a fresh per-Kind signing authority.
+    case Ezagent.SpawnFence.check(uri) do
+      :ok -> init_slices_and_register(kind_module, args, uri)
+      {:error, reason} -> {:stop, {:spawn_refused, reason}}
+    end
+  end
+
+  defp init_slices_and_register(kind_module, args, uri) do
     uri_str = URI.to_string(uri)
 
     # #108 — the snapshot READ is a DB access too; `Snapshot.safe_load_or_init/3`

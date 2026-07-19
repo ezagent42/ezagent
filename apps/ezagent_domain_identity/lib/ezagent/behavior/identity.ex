@@ -262,10 +262,11 @@ defmodule Ezagent.ActionSet.Identity do
                 "delete is terminal (task #180): the Kind, its snapshot and its " <>
                 "caps were revoked at tombstone and must never be resurrected"
 
-      Ezagent.URI.type?(uri, :agent) and agent_owner_tombstoned?(uri) ->
+      Ezagent.URI.type?(uri, :agent) and agent_tombstoned_or_derived?(uri) ->
         raise "refusing to spawn/activate agent #{URI.to_string(uri)} — " <>
-                "its owner is tombstoned (task #180): delete is terminal and the " <>
-                "owner's agents must not be resurrected either"
+                "it is tombstoned or its owner is tombstoned (task #180 / #1469 " <>
+                "owned-agent cascade): delete is terminal and authority derived " <>
+                "from a deleted principal must never be resurrected"
 
       true ->
         :ok
@@ -275,19 +276,15 @@ defmodule Ezagent.ActionSet.Identity do
   # Non-entity URIs (and nil) never carry a users-row tombstone.
   defp refute_tombstoned_entity!(_uri), do: :ok
 
-  # Best-effort owner check ("if reachable"): `AgentLineage.lookup/1`
-  # reads the lineage cache; a miss means the owner is unknown, NOT
-  # known-alive — but lineage is recorded at agent spawn, so a miss
-  # here cannot mask a tombstoned owner for any agent spawned through
-  # the sanctioned path.
-  defp agent_owner_tombstoned?(%URI{} = agent_uri) do
-    case Ezagent.AgentLineage.lookup(agent_uri) do
-      {:ok, owner} ->
-        Ezagent.URI.type?(owner, :user) and Ezagent.Users.deleted?(owner)
-
-      :error ->
-        false
-    end
+  # task #180 / #1469 — the FULL tombstone predicate for agents (codex F1-c):
+  # the agent's own `AgentTombstone` marker, OR its recorded creator
+  # tombstoned, OR ANY ancestor in its lineage chain tombstoned (the
+  # direct-parent-only walk missed grandchild agents). Delegated to the
+  # single `Ezagent.Identity.Offboarding` predicate so the Lifecycle fence,
+  # the core `Ezagent.SpawnFence`, and `Token.authenticate/1` can never
+  # drift apart.
+  defp agent_tombstoned_or_derived?(%URI{} = agent_uri) do
+    Ezagent.Identity.Offboarding.tombstoned_principal?(agent_uri)
   end
 
   @doc false

@@ -40,6 +40,12 @@ defmodule EzagentCore.EtsOwner do
     {Ezagent.BehaviorRegistry, :set},
     {Ezagent.RoutingRegistry, :set},
     {Ezagent.SpawnRegistry, :set},
+    # task #180 (delete = atomic revocation, codex F1) — the behavior-set-
+    # independent spawn fence. Downstream apps (ezagent_domain_identity)
+    # register principal-tombstone predicates at boot; `Kind.Server.init/1`
+    # and `SpawnRegistry` run them at every Kind start / registry return
+    # WITHOUT core referencing any domain module (no-core→domain invariant).
+    {Ezagent.SpawnFence, :set},
     {Ezagent.TemplateRegistry, :set},
     # role-as-data (SPEC §3): `Ezagent.Agent.RecipeRegistry`'s ETS cache moved to
     # `EzagentDomainAgent.EtsOwner`. The registry now resolves read-through over

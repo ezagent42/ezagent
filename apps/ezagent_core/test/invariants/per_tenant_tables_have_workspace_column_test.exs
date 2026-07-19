@@ -105,6 +105,9 @@ defmodule EzagentCore.Invariants.PerTenantTablesHaveWorkspaceColumnTest do
     # Phase 3 S5 — pre-issued recipe artifacts are keyed to one concrete agent;
     # the binding must stay inside that agent's workspace boundary.
     {Ezagent.Identity.RecipeCapBinding, "recipe_cap_bindings"},
+    # task #180 / #1469 — the owned-agent cascade's durable tombstone marker;
+    # an agent's tombstone is scoped to the agent's workspace.
+    {Ezagent.Identity.AgentTombstone, "agent_tombstones"},
     # Entity-caps scoped Task B — the outbound audit/revoke ledger is tenant-owned
     # by the grantee workspace, even when the accountable issuer is cross-workspace.
     {Ezagent.OutboundGrant, "outbound_grants"},

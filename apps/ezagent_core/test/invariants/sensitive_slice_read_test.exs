@@ -124,7 +124,14 @@ defmodule Ezagent.Invariants.SensitiveSliceReadTest do
         "(curl → :api_keys, key non-literal from tc.credential_slice/0) for #160 status. " <>
         "Cap-gated: Ezagent.Domain.Agent.read_credential_status/2 authorizes cap(:agent, " <>
         "Manage, :read_cascade) (owner + ws-admin only) BEFORE the read; only the key COUNT " <>
-        "is used, never a plaintext key; non-activating snapshot read"
+        "is used, never a plaintext key; non-activating snapshot read",
+    # --- identity domain: the delete_user owned-agent cascade reads ONLY the
+    #     :api_keys slice's `creator_uri` ownership pointer (the agent→creator
+    #     edge the cascade is scoped by) — never the `:keys` credential secrets.
+    #     Same narrow-read class as the ApiKeys.data_owner/1 self-read. ---
+    {"apps/ezagent_domain_identity/lib/ezagent/identity/offboarding.ex", :api_keys} =>
+      "Offboarding cascade reads ONLY creator_uri (the agent→owner pointer, not the " <>
+        ":keys secrets) from :api_keys to enumerate + fence agents owned by a deleted user"
   }
 
   describe "scan_source/2 (AST scanner, fixture-pinned)" do

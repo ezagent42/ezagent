@@ -87,7 +87,9 @@ defmodule Ezagent.Identity.RecipeCapBinding do
   @doc "Reconcile an active binding into an already-live agent Identity slice."
   @spec sync_live(URI.t()) :: :ok | {:error, term()}
   def sync_live(%URI{} = agent_uri) do
-    target = Ezagent.URI.with_action(Ezagent.URI.instance(agent_uri), :identity, :sync_recipe_binding)
+    target =
+      Ezagent.URI.with_action(Ezagent.URI.instance(agent_uri), :identity, :sync_recipe_binding)
+
     reply =
       if Ezagent.ReadyGate.status(Ezagent.URI.instance(agent_uri)) == :ready,
         do: {:caller_inbox, self()},
@@ -135,6 +137,30 @@ defmodule Ezagent.Identity.RecipeCapBinding do
       {1, _} -> :ok
       {0, _} -> {:error, :version_mismatch}
     end
+  end
+
+  @doc """
+  Tombstone the active binding regardless of its version — the owner-
+  offboarding cascade (task #180 / #1469).
+
+  Unlike `tombstone_if_version/2` (the materialization compensation, which
+  must not delete a NEWER concurrent rematerialization), the cascade
+  revokes unconditionally: the agent's owner is gone, so no version of
+  the recipe binding may ever re-grant. Idempotent — no active row is a
+  no-op. The keyed ledger row is retained (same ABA rationale as
+  `prune_tombstoned/1`).
+  """
+  @spec tombstone_active(URI.t()) :: :ok
+  def tombstone_active(%URI{} = agent_uri) do
+    canonical = agent_uri |> Ezagent.URI.instance() |> URI.to_string()
+    now = DateTime.utc_now()
+
+    from(binding in __MODULE__,
+      where: binding.agent_uri == ^canonical and is_nil(binding.tombstoned_at)
+    )
+    |> Repo.update_all(set: [tombstoned_at: now, updated_at: now])
+
+    :ok
   end
 
   @doc """
