@@ -166,6 +166,17 @@ defmodule EzagentWeb.HomeLiveTest do
       :ok
     end
 
+    # #189 full-suite session-creation-under-load flake (family:
+    # #902/#58/AutoserviceTier1Seed). The shared `setup` above registers an
+    # `on_exit` that re-seeds torn-down sessions via
+    # `Ezagent.Workspace.create_session/3` — a heavy SYNCHRONOUS op (Session
+    # Kind spawn + template freeze/finalize + a `:global` per-URI lock), NOT a
+    # self-deadlock (green in isolation; the create path never re-enters the
+    # busy Workspace Kind). Under the full concurrent mac-runner load this
+    # teardown can exceed ExUnit's default 60s on_exit budget. Raise the budget
+    # (a timeout quarantine, not a logic change). Both tests in this describe
+    # share the same slow on_exit, so both carry the tag.
+    @tag timeout: 180_000
     test "renders the wizard when no sessions exist", %{conn: conn} do
       conn =
         conn
@@ -180,6 +191,9 @@ defmodule EzagentWeb.HomeLiveTest do
       assert html =~ "main"
     end
 
+    # #189 flake (see above) — the shared on_exit re-seed can also blow the
+    # default 60s on_exit budget here under full concurrent mac-runner load.
+    @tag timeout: 180_000
     test "submitting the wizard creates the session and navigates to /sessions", %{conn: conn} do
       conn =
         conn
