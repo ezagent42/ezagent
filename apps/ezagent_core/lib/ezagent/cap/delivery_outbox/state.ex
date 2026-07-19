@@ -149,7 +149,11 @@ defmodule Ezagent.Cap.DeliveryOutbox.State do
               :presenter_required,
               :cross_workspace_denied,
               :invalid_cap_artifact,
-              :cannot_revoke_admin
+              :cannot_revoke_admin,
+              # task #180 — the absorb handler's tombstoned-recipient refusal.
+              # Retrying can never succeed (delete is terminal), so the
+              # delivery dead-letters instead of looping forever.
+              :user_deleted
             ],
        do: :permanent
 

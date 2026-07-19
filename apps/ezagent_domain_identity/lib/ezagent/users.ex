@@ -377,6 +377,12 @@ defmodule Ezagent.Users do
      CLI/API/facade dispatch), authority revocation + Kind teardown apply to EVERY
      `delete_user` path, not just the facade.
 
+  The same transaction also DEAD-LETTERS any PENDING `cap_delivery_outbox`
+  rows targeting this user (task #180 criterion 3), so a pre-delete
+  `absorb_cap` can never replay post-delete; `IdentityAdmin.handle_absorb_cap`'s
+  deleted-recipient guard is the in-handler backstop for the commit→destroy
+  window.
+
   NOTE (scope): this revokes DURABLE authority + tears down the Kind. Active-session
   eviction of already-authenticated HTTP/LiveView cookies is handled at the web
   auth chokepoint (`disabled?/1` recheck, task #180 Change 3 — `disabled?/1` treats
@@ -399,8 +405,11 @@ defmodule Ezagent.Users do
         # Already tombstoned — idempotent. Re-ASSERT the full revocation so a
         # retry after a partial first pass (e.g. the `UserStore.persist` below
         # failed, leaving stale caps_json → a caps_json-based resurrection) still
-        # converges: re-empty the caps + re-tear-down the Kind/snapshot.
-        _ = Ezagent.EntityCaps.UserStore.persist(Ezagent.URI.new!(row.uri), [])
+        # converges: re-empty the caps + re-tear-down the Kind/snapshot +
+        # re-dead-letter any pending cap-delivery outbox rows.
+        row_uri = Ezagent.URI.new!(row.uri)
+        _ = Ezagent.EntityCaps.UserStore.persist(row_uri, [])
+        _ = Ezagent.Cap.DeliveryOutbox.dead_letter_pending_for_target(row_uri, :user_deleted)
         _ = destroy_kind_best_effort(uri)
         {:ok, decode(Repo.get_by(__MODULE__, uri: row.uri))}
 
@@ -448,6 +457,22 @@ defmodule Ezagent.Users do
               :ok -> :ok
               {:error, reason} -> Repo.rollback({:caps_clear_failed, reason})
             end
+
+            # CANCEL any PENDING cap-delivery outbox rows targeting this user
+            # (task #180 criterion 3): an absorb_cap enqueued pre-delete must
+            # never replay post-delete (it would re-store a revoked cap — a
+            # resurrection). Dead-lettering rides the SAME transaction so the
+            # marker + cap-clear + outbox-cancel commit atomically (a DB
+            # failure raises here, rolling the whole transaction back); the
+            # handler-side `handle_absorb_cap` deleted-guard is the backstop
+            # for anything claimed in the commit→destroy window.
+            {:ok, _dead_lettered} =
+              Ezagent.Cap.DeliveryOutbox.dead_letter_pending_for_target(
+                row_uri,
+                :user_deleted
+              )
+
+            :ok
           end)
 
         case txn do

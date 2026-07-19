@@ -598,14 +598,39 @@ defmodule Ezagent.ActionSet.IdentityAdmin do
 
   @doc "Store a verified pre-issued artifact; only the VM-internal hand-off may call it."
   def handle_absorb_cap(%{artifact: artifact}, %{caller: :vm_internal} = ctx) do
-    with {:ok, cap_struct} <- normalize_artifact(artifact) do
+    with :ok <- refute_tombstoned_recipient(ctx),
+         {:ok, cap_struct} <- normalize_artifact(artifact) do
       store_verified_cap(cap_struct, ctx, %{via_manage: false, via_absorb: true})
     else
+      {:error, :user_deleted} = err -> err
       _ -> {:error, :invalid_cap_artifact}
     end
   end
 
   def handle_absorb_cap(_args, _ctx), do: {:error, :unauthorized}
+
+  # task #180 (delete = atomic revocation) — fail-closed deleted-recipient
+  # guard. A `:absorb_cap` delivery is DURABLE (`cap_delivery_outbox`): an
+  # envelope enqueued while a user was alive can be REPLAYED after the user
+  # was tombstoned (e.g. the sweeper claimed it in the commit→destroy
+  # window, or a row predates the dead-letter sweep). Without this guard the
+  # replay would re-store the cap — a resurrection of revoked authority.
+  # `:user_deleted` is classified PERMANENT by
+  # `Ezagent.Cap.DeliveryOutbox.State.classify/1`, so the replayed delivery
+  # dead-letters instead of retrying forever.
+  defp refute_tombstoned_recipient(ctx) do
+    case Map.get(ctx, :self_uri) do
+      %URI{scheme: "entity"} = uri ->
+        if Ezagent.URI.type?(uri, :user) and Ezagent.Users.deleted?(uri) do
+          {:error, :user_deleted}
+        else
+          :ok
+        end
+
+      _ ->
+        :ok
+    end
+  end
 
   @doc "VM-internal storage action used by `Ezagent.EntityCaps.persist/2` for a live entity."
   def handle_persist_caps(%{caps: caps}, %{caller: :vm_internal} = ctx) when is_list(caps) do

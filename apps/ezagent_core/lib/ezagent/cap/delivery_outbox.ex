@@ -137,6 +137,42 @@ defmodule Ezagent.Cap.DeliveryOutbox do
     do_attempt(delivery, nil)
   end
 
+  @doc """
+  Dead-letter every PENDING delivery targeting `target_uri` — the operator
+  offboarding (task #180) cancel step.
+
+  Called at user tombstone time so a pending `:absorb_cap` (or `:revoke_cap`)
+  envelope can never be replayed AFTER the user was deleted — the replay
+  would re-store a revoked cap (resurrection). Rows are marked `:dead` with
+  `last_error` recording `reason`; already-`:applied` rows are untouched.
+  Returns `{:ok, count}` of dead-lettered rows.
+  """
+  @spec dead_letter_pending_for_target(URI.t() | String.t(), term()) ::
+          {:ok, non_neg_integer()}
+  def dead_letter_pending_for_target(target_uri, reason \\ :user_deleted) do
+    target = target_uri |> to_uri() |> Ezagent.URI.instance() |> URI.to_string()
+    workspace_uri = Persistence.workspace_uri_for!(target)
+    now = DateTime.utc_now()
+
+    {count, _} =
+      Delivery
+      |> Persistence.scope_by_workspace(workspace_uri)
+      |> where([delivery], delivery.target_uri == ^target and delivery.status == :pending)
+      |> Repo.update_all(
+        set: [
+          status: :dead,
+          dead_at: now,
+          last_error: inspect(reason),
+          claim_token: nil,
+          lease_until: nil,
+          updated_at: now
+        ]
+      )
+
+    if count > 0, do: maybe_forget_target(target)
+    {:ok, count}
+  end
+
   @doc "Mark the current claim applied after handler and slice commit success."
   @spec mark_applied(pos_integer(), Invocation.t()) :: :ok | {:error, term()}
   def mark_applied(id, %Invocation{} = invocation) when is_integer(id) do
