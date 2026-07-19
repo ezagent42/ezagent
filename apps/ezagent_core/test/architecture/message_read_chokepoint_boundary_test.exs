@@ -125,16 +125,33 @@ defmodule EzagentCore.MessageReadChokepointBoundaryTest do
     end
     """
 
-    for src <- [aliased, fully_qualified_split, raw_query, qualified_from] do
+    # round-3 evasions: raw Repo reads that build NO `from`/`in` source at all.
+    repo_get = """
+    defmodule Sneaky5 do
+      def peek(id), do: Ezagent.Repo.get(Ezagent.Message, id)
+    end
+    """
+
+    repo_pipe = """
+    defmodule Sneaky6 do
+      import Ecto.Query
+      def peek(s), do: Ezagent.Message |> where([m], m.session_uri == ^s) |> Ezagent.Repo.all()
+    end
+    """
+
+    for src <- [aliased, fully_qualified_split, raw_query, qualified_from, repo_get, repo_pipe] do
       assert offenses_in_source(src, "fixture") != [],
              "AST gate must flag a disguised message-store read:\n#{src}"
     end
 
-    # A legitimately-aliased NON-store call must NOT be flagged (no false positive).
+    # No false positives: a chokepoint call, a Message STRUCT (not a read), and a
+    # Repo read of a DIFFERENT schema must all pass clean.
     benign = """
     defmodule Fine do
       alias Ezagent.Socialware.SessionReads, as: Reads
-      def peek(caller, s), do: Reads.messages(caller, s, :conversation, %{limit: 50})
+      def read(caller, s), do: Reads.messages(caller, s, :conversation, %{limit: 50})
+      def build(sender), do: %Ezagent.Message{sender: sender}
+      def other, do: Ezagent.Repo.all(Ezagent.OtherSchema)
     end
     """
 
@@ -149,7 +166,12 @@ defmodule EzagentCore.MessageReadChokepointBoundaryTest do
 
   defp offenses_in_source(source, rel) do
     case Code.string_to_quoted(source) do
-      {:ok, ast} ->
+      {:ok, ast0} ->
+        # `Code.string_to_quoted` does NOT expand pipes, so `Message |> where(…)
+        # |> Repo.all()` keeps `Repo.all()` with EMPTY args (Message lives in the
+        # `|>` chain, not the call args). Expand pipes first so Rule B sees the
+        # real queryable. (round-3 repo_pipe evasion.)
+        ast = expand_pipes(ast0)
         aliases = collect_aliases(ast)
 
         ast
@@ -159,6 +181,16 @@ defmodule EzagentCore.MessageReadChokepointBoundaryTest do
       {:error, _} ->
         []
     end
+  end
+
+  # Rewrite `left |> call(args…)` into `call(left, args…)` throughout the AST, so
+  # the offense matchers see the fully-applied call. prewalk re-descends into the
+  # rewritten node, so nested pipes expand too.
+  defp expand_pipes(ast) do
+    Macro.prewalk(ast, fn
+      {:|>, _, [left, {call, meta, args}]} when is_list(args) -> {call, meta, [left | args]}
+      other -> other
+    end)
   end
 
   # `alias Foo.Bar` → %{Bar: [:Foo, :Bar]}; `alias Foo.Bar, as: B` → %{B: [:Foo, :Bar]}.
@@ -198,28 +230,51 @@ defmodule EzagentCore.MessageReadChokepointBoundaryTest do
     end
   end
 
-  # `from(x in <Mod>, ...)` — the bare/imported form (`import Ecto.Query`).
-  defp offense_for({:from, meta, [{:in, _, [_, modast]} | _]}, aliases) do
+  # Rule A — the Ecto SOURCE operator. A raw Message query, in ANY builder form,
+  # sources the schema with `_ in Ezagent.Message` (`from m in Message`,
+  # `join: x in Message`, subqueries). Match the `in`-node itself, not the `from`
+  # wrapper, so bare/imported/qualified `from` AND joins are all caught. (round-3.)
+  defp offense_for({:in, meta, [_lhs, modast]}, aliases) do
     if resolves_to?(modast, [:Ezagent, :Message], aliases) do
-      [{line_of(meta), "raw Ecto query over Message — only MessageStore may build one"}]
+      [{line_of(meta), "Ecto query sources Ezagent.Message (`_ in Message`) — only MessageStore may"}]
     else
       []
     end
   end
 
-  # `<mod>.from(x in <Mod>, ...)` — the QUALIFIED form (`Ecto.Query.from(...)`),
-  # a remote-call AST the bare-`from` clause above does not see. Without this a
-  # presenter could bypass the gate with `Ecto.Query.from(m in Ezagent.Message,
-  # …) |> Repo.all()`. (round-2 F3/#1.)
-  defp offense_for({{:., _, [_mod, :from]}, meta, [{:in, _, [_, modast]} | _]}, aliases) do
-    if resolves_to?(modast, [:Ezagent, :Message], aliases) do
-      [{line_of(meta), "raw Ecto query over Message (qualified from) — only MessageStore may build one"}]
+  # Rule B — the Repo ENTRYPOINT. A raw read that never builds an `in`-source —
+  # `Repo.all(Message)`, `Repo.get(Message, id)`, `Message |> where(...) |> Repo.all()`
+  # (which is `Repo.all(where(Message, …))`, Message nested in the args). Flag any
+  # `Repo.<fn>` whose args reference the Message schema. (round-3 #1.)
+  defp offense_for({{:., _, [modast, fun]}, meta, args}, aliases)
+       when is_atom(fun) and is_list(args) do
+    if repo_module?(modast, aliases) and contains_message_alias?(args, aliases) do
+      [{line_of(meta), "raw Repo.#{fun} referencing Ezagent.Message — only MessageStore may"}]
     else
       []
     end
   end
 
   defp offense_for(_node, _aliases), do: []
+
+  # A module reference resolving to any `*.Repo` (Ezagent.Repo, EzagentCore.Repo,
+  # or an aliased `Repo`) — the Ecto entrypoint.
+  defp repo_module?({:__aliases__, _, parts}, aliases), do: List.last(resolve(parts, aliases)) == :Repo
+  defp repo_module?(_other, _aliases), do: false
+
+  # Does the Message schema alias appear anywhere in this AST subtree?
+  defp contains_message_alias?(ast, aliases) do
+    {_, found?} =
+      Macro.prewalk(ast, false, fn
+        {:__aliases__, _, parts} = node, acc ->
+          {node, acc or resolve(parts, aliases) == [:Ezagent, :Message]}
+
+        node, acc ->
+          {node, acc}
+      end)
+
+    found?
+  end
 
   # Does a module-reference AST resolve (via the file's aliases) to `target`?
   defp resolves_to?({:__aliases__, _, parts}, target, aliases) do

@@ -970,6 +970,13 @@ defmodule EzagentPluginWorld.WorldLive do
   defp workspace_name(_), do: nil
 
   defp subscribe_global_inbound(caller_uri) do
+    # NOTE (read-plane-authz scope boundary): these are GLOBAL, system-wide streams
+    # (audit / legacy-bridge / cc) — the OPERATOR-OBSERVABILITY plane, whose authz
+    # is operator/admin, NOT session membership. Subscribing every WorldLive here
+    # delivers all-tenant audit/cc events to any logged-in user — a PRE-EXISTING
+    # multi-tenant leak (task #187), separate from PR-1's conversation-read plane
+    # and deferred to the operator plane (PR-4 OperatorReads). PR-1's "gate every
+    # delivery" invariant is scoped to SESSION-CONVERSATION content only.
     Phoenix.PubSub.subscribe(EzagentCore.PubSub, Ezagent.Audit.stream_topic())
     Phoenix.PubSub.subscribe(EzagentCore.PubSub, Ezagent.AgentBridge.Registry.legacy_topic())
     Phoenix.PubSub.subscribe(EzagentCore.PubSub, Ezagent.CCEvents.topic())
