@@ -47,7 +47,8 @@ defmodule EzagentPluginWorld.WorldLive do
         current_session_uri,
         workspace,
         layout,
-        caps
+        caps,
+        caller
       )
       |> put_command_palette(socket)
 
@@ -780,7 +781,8 @@ defmodule EzagentPluginWorld.WorldLive do
       current_session_uri,
       socket.assigns.current_workspace_uri,
       layout,
-      Map.get(socket.assigns, :current_caps, MapSet.new())
+      Map.get(socket.assigns, :current_caps, MapSet.new()),
+      socket.assigns.current_entity_uri
     )
     |> put_command_palette(socket)
   end
@@ -861,7 +863,7 @@ defmodule EzagentPluginWorld.WorldLive do
 
   defp create_error_for_route(_route, _socket), do: nil
 
-  defp sessions_state(sessions, current_session_uri, workspace_uri, layout, caps) do
+  defp sessions_state(sessions, current_session_uri, workspace_uri, layout, caps, caller) do
     workspace = encode_uri(workspace_uri)
     current_session = encode_uri(current_session_uri)
 
@@ -871,7 +873,7 @@ defmodule EzagentPluginWorld.WorldLive do
       "workspace_uri" => workspace,
       "layout" => layout,
       "can_manage_layout" => can_manage_layout?("sessions_table", workspace_uri, caps),
-      "templates" => session_template_names(workspace_uri),
+      "templates" => session_template_names(caller, workspace_uri),
       "socialwares" => Ezagent.World.WorkspacePluginData.socialware_rows(workspace_uri),
       "sessions" => Enum.map(sessions, &ConversationSessionState.session_row/1),
       # F3: explicitly clear any stale create_error — the React island merges
@@ -883,60 +885,16 @@ defmodule EzagentPluginWorld.WorldLive do
     }
   end
 
-  # Resolvable SessionTemplate names for the "New session" picker — the live
-  # SessionTemplate Kinds in this workspace (the names `create_session/3` can
-  # resolve, including any the operator just authored via the template form)
-  # plus the always-available `"default"` bootstrap class (auto-seeded on use).
-  defp session_template_names(%URI{scheme: "workspace"} = workspace_uri) do
-    # Registered session Template Classes (e.g. "session.hello") shown by their
-    # friendly name ("hello") — `create_session` resolves the bare name back to
-    # the `session.<name>` class (workspace `resolve_session_class/1`). Without
-    # this the dropdown only listed per-session template INSTANCES ("hello-77")
-    # and the `hello` class itself was missing.
-    # F3: offer only Classes that are DIRECTLY creatable from this generic
-    # picker (the picker supplies only the universal `session_name` arg). A
-    # Class whose `instantiate/3` requires extra args — e.g. a vertical session
-    # class needing an `operator_uri` — declares `directly_creatable?/0 => false` and is
-    # filtered out here, so it can't become the dropdown default and fail closed
-    # with `{:invalid_template, …}` on create.
-    classes =
-      Ezagent.TemplateRegistry.registered_template_names()
-      |> Enum.filter(&String.starts_with?(&1, "session."))
-      |> Enum.filter(&class_directly_creatable?/1)
-      |> Enum.map(&String.replace_prefix(&1, "session.", ""))
-
-    instances =
-      workspace_uri
-      |> Ezagent.URI.name!()
-      |> Ezagent.World.WorkspacePluginData.session_template_rows()
-      |> Enum.map(&Map.get(&1, "name"))
-
-    # "default" is ALWAYS the first (selected) option — the React picker takes
-    # `templates[0]` as its default, so the always-creatable bootstrap class
-    # must lead regardless of how the other names sort.
-    other =
-      (classes ++ instances)
-      |> Enum.reject(&(&1 in [nil, "", "default"]))
-      |> Enum.uniq()
-      |> Enum.sort()
-
-    ["default" | other]
-  rescue
-    _ -> ["default"]
+  # Resolvable SessionTemplate names for the "New session" picker —
+  # delegated to the SINGLE source
+  # `Ezagent.World.WorkspacePluginData.session_template_names/2` (which
+  # routes the instance enumeration through the caller-authorizing
+  # `Ezagent.Session.TemplateReads` chokepoint, read-plane PR-4 rework).
+  defp session_template_names(caller, %URI{scheme: "workspace"} = workspace_uri) do
+    Ezagent.World.WorkspacePluginData.session_template_names(caller, workspace_uri)
   end
 
-  defp session_template_names(_), do: ["default"]
-
-  # F3: a registered `session.<name>` Class is offered by the generic picker
-  # only when its Template Class declares itself directly creatable (default
-  # true; advisor overrides false). An unregistered name conservatively passes
-  # (it's a non-class instance name handled elsewhere).
-  defp class_directly_creatable?(class_name) do
-    case Ezagent.TemplateRegistry.lookup(class_name) do
-      {:ok, module} -> Ezagent.Kind.Template.directly_creatable?(module)
-      :error -> true
-    end
-  end
+  defp session_template_names(_caller, _), do: ["default"]
 
   defp put_command_palette(state, socket) do
     Map.put(state, "cmdk", CommandPaletteData.state(socket.assigns, "", false))

@@ -4,21 +4,29 @@ defmodule Ezagent.World.UserData do
   """
 
   alias Ezagent.World.CapData
+  alias Ezagent.Workspace.UserReads
 
-  @doc "List provisioned user rows for the users table component."
-  @spec list_users(URI.t() | nil) :: [map()]
-  def list_users(workspace_uri) do
+  @doc """
+  List provisioned user rows for the users table component.
+
+  Read-plane PR-4 rework: the user roster is enumerated through the
+  caller-authorizing `Ezagent.Workspace.UserReads` chokepoint (workspace
+  member/operator only; fail-closed `[]`), and another user's
+  ACCOUNT/SECURITY metadata (email, password presence, confirmation,
+  disablement) is emitted ONLY when `UserReads.reveal_metadata?/2`
+  holds for that row (the caller IS that user, or is an operator) — F4.
+  A redacted field renders `nil` (undisclosed), never `false` (which
+  would assert the negation — itself a leak).
+  """
+  @spec list_users(URI.t() | nil, URI.t() | nil) :: [map()]
+  def list_users(caller, workspace_uri) do
     system_members =
       case Ezagent.Workspace.Store.get_by_name("system") do
         %{members: members} -> MapSet.new(members, &Ezagent.URI.stable_key/1)
         _ -> MapSet.new()
       end
 
-    users =
-      case workspace_uri do
-        %URI{scheme: "workspace"} -> Ezagent.Users.list_in_workspace(workspace_uri)
-        _ -> Ezagent.Users.list_all()
-      end
+    users = UserReads.users(caller, workspace_uri)
 
     display_map = Ezagent.EntityPresenter.display_many(Enum.map(users, &URI.to_string(&1.uri)))
 
@@ -26,20 +34,21 @@ defmodule Ezagent.World.UserData do
     |> Enum.map(fn user ->
       uri_str = URI.to_string(user.uri)
       online? = Ezagent.Presence.present?(user.uri)
-      profile = Ezagent.Entity.Profile.get(user.uri)
+      reveal? = UserReads.reveal_metadata?(caller, user.uri)
+      profile = if reveal?, do: Ezagent.Entity.Profile.get(user.uri), else: nil
       cap_count = verified_cap_count(user.uri)
 
       %{
         "uri" => uri_str,
         "display_name" => Map.get(display_map, uri_str, uri_str),
-        "email" => profile_email(profile),
-        "has_password" => not is_nil(user.password_hash),
-        "confirmed" => user.confirmed == true,
-        "email_verified" => user.email_verified == true,
-        "disabled" => not is_nil(user.disabled_at),
-        "disabled_at" => encode_datetime(user.disabled_at),
-        "disabled_by" => user.disabled_by,
-        "disabled_reason" => user.disabled_reason,
+        "email" => if(reveal?, do: profile_email(profile)),
+        "has_password" => if(reveal?, do: not is_nil(user.password_hash)),
+        "confirmed" => if(reveal?, do: user.confirmed == true),
+        "email_verified" => if(reveal?, do: user.email_verified == true),
+        "disabled" => if(reveal?, do: not is_nil(user.disabled_at)),
+        "disabled_at" => if(reveal?, do: encode_datetime(user.disabled_at)),
+        "disabled_by" => if(reveal?, do: user.disabled_by),
+        "disabled_reason" => if(reveal?, do: user.disabled_reason),
         "cap_count" => cap_count,
         "online" => online?,
         "transports" => transports_summary(Ezagent.Presence.list(user.uri)),

@@ -95,7 +95,7 @@ defmodule EzagentPluginFeishu.InboundChatLookup do
   bound to multiple sessions.
 
   `mentions` is the list of resolved agent URIs (`[URI.t()]`) the
-  message `@`-mentions — exactly what `MentionParser.extract_agent_mentions/1`
+  message `@`-mentions — exactly what `MentionParser.extract_agent_mentions/2`
   returns. Pass `[]` when the message has no mentions.
 
   Returns:

@@ -258,6 +258,12 @@ defmodule EzagentWeb.Socialware.KanbanShareControllerTest do
     user_uri = URI.new!("entity://#{ws_name}/user/#{label}-#{u()}")
     {:ok, _row} = Ezagent.Users.create_read_only(user_uri, [])
     {:ok, _pid} = Ezagent.Kind.spawn(User, %{uri: user_uri, initial_caps: MapSet.new()})
+    # Read-plane PR-4 rework: the receive flow resolves the clicker's
+    # sessions through `WorkspaceReads.sessions/2`, which requires the
+    # caller to be a DECLARED workspace member (the workspace gate).
+    # Direct store write — the full add_member dispatch chain needs the
+    # admin Kind, which is not part of this fixture.
+    {:ok, _} = Ezagent.Workspace.Store.update_members(ws_name, [user_uri])
     on_exit(fn -> Ezagent.Kind.terminate(user_uri) end)
     user_uri
   end

@@ -5,43 +5,26 @@ defmodule Ezagent.UI.UriOptions do
 
   `Ezagent.KindRegistry.list_all/0` is a GLOBAL `URI → pid` index — it
   has no notion of who is asking. Returning every live URI to every
-  user leaks cross-workspace entity names. This module is the
-  enrichment **and authorization** layer between that global registry
-  and the picker: it resolves the caller's workspace authority itself,
-  filters by scheme + workspace, and turns each `{uri, pid}` into a
-  display-ready `option()`.
+  user leaks cross-workspace entity names; pre-rework this module
+  enumerated it directly under a URI-segment authority rule (system
+  member OR own workspace), which still leaked a workspace's WHOLE
+  roster to any caller who could name it — including private
+  sessions/agents the caller had no relationship to (F1, read-plane
+  PR-4 rework). This module is now ONLY the enrichment layer: the
+  enumeration itself routes through the caller-authorizing
+  chokepoints —
 
-  ## Caller-authorized — no escape hatch (SPEC §1.3, rev 4)
+    * sessions → `Ezagent.Workspace.WorkspaceReads.sessions/2`
+      (owner/member OR public, per row),
+    * agents   → `Ezagent.Workspace.WorkspaceReads.agents/2`
+      (caller owns/manages, or the shared roster for workspace
+      MEMBERS),
+    * users    → `Ezagent.Workspace.UserReads.users/2`
+      (workspace member/operator roster),
 
-  Every public function takes the **caller's entity URI** and resolves
-  authority ITSELF. There is no `cross_workspace: true` boolean for a
-  caller to "remember to authorize" — a single call site forgetting it
-  would silently leak labels across tenants, and this read path sits
-  OUTSIDE dispatch step 5.6 where workspace isolation is normally
-  enforced.
-
-  Authority rule (identical for every function):
-
-  - The caller is a **system member** (its entity URI's workspace
-    segment is `workspace://system`) → any `workspace_uri` is allowed.
-  - Otherwise the caller may only see its OWN workspace —
-    `workspace_uri` MUST equal the caller's workspace, else the
-    function returns `[]` (never leaks, never raises a stack trace at
-    the user).
-
-  The system-member predicate reuses `Ezagent.Capability.workspace_of/1`
-  — the SAME workspace-derivation function dispatch step 5.6 and
-  `Ezagent.Capability.cross_workspace?/2` use — compared against
-  `workspace://system`. It does NOT invent a new check.
-
-  ## Tier-2
-
-  This module lives in `ezagent_domain_ui` and depends only on
-  `ezagent_core` (`Ezagent.KindRegistry`, `Ezagent.Capability`,
-  `Ezagent.URI`) + the sibling Domain app `ezagent_domain_identity`
-  (`Ezagent.EntityPresenter`). Both are at-or-below Tier-2, so hosting
-  it here introduces no dependency-cycle violation. It has NO
-  LiveView / `EzagentWeb` dependency.
+  which authorize the caller FIRST and fail closed to `[]`. The option
+  maps (`%{uri, label, kind, flavor}`) are built from the chokepoint
+  results exactly as before.
 
   ## The shared validator
 
@@ -51,10 +34,14 @@ defmodule Ezagent.UI.UriOptions do
   converted picker form (SPEC §1.6). The picker's hidden inputs are
   user-controlled DOM — a stale or hand-tampered URI must be rejected
   server-side. Factoring the check here means the two sides cannot
-  drift.
+  drift. Its authority rule is unchanged: a system member may validate
+  any workspace; any other caller only its OWN workspace (the
+  `Ezagent.Capability.workspace_of/1` derivation dispatch step 5.6
+  uses).
   """
 
-  alias Ezagent.{Capability, EntityPresenter, KindRegistry}
+  alias Ezagent.{Capability, EntityPresenter}
+  alias Ezagent.Workspace.{UserReads, WorkspaceReads}
 
   @type option :: %{
           uri: String.t(),
@@ -158,31 +145,55 @@ defmodule Ezagent.UI.UriOptions do
 
   # --- internals -------------------------------------------------------------
 
-  # Resolve authority → if denied, []; else enumerate the global
-  # registry, filter by scheme + workspace, enrich each survivor.
+  # Read-plane PR-4 rework: the enumeration routes through the
+  # caller-authorizing chokepoints (they authorize FIRST and fail closed
+  # to `[]`), then each surviving URI is enriched into an option map.
+  # There is no local authority gate here on purpose — duplicating the
+  # chokepoint's authorization would drift from it.
   defp build_options(caller_uri, workspace_uri, kinds) do
     with {:ok, ws} <- safe_parse(workspace_uri),
-         true <- authorized?(caller_uri, ws) do
-      ws_str = URI.to_string(ws)
+         {:ok, caller} <- safe_parse(caller_uri) do
       wanted = scheme_strings(kinds)
 
-      KindRegistry.list_all()
-      |> Enum.flat_map(fn {uri_str, _pid} -> enrich(uri_str, wanted, ws_str) end)
+      (session_uris(caller, ws, wanted) ++ entity_uris(caller, ws, wanted))
+      |> Enum.uniq_by(&URI.to_string/1)
+      |> Enum.flat_map(&enrich(&1, wanted))
       |> Enum.sort_by(& &1.uri)
     else
       _ -> []
     end
   end
 
-  # Parse, scheme-filter, workspace-filter, then build the option map.
-  # Any URI that fails to parse (registry holding a non-canonical key,
-  # which `parse!/1` rejects) is silently dropped from options — it
+  # Session options — the caller-visible session list per
+  # `WorkspaceReads.sessions/2` (owner/member OR public, per row).
+  defp session_uris(%URI{} = caller, %URI{} = ws, wanted) do
+    if "session" in wanted do
+      WorkspaceReads.sessions(caller, ws)
+    else
+      []
+    end
+  end
+
+  # Entity options — agents via `WorkspaceReads.agents/2` (owns/manages,
+  # or the shared roster for workspace members), users via
+  # `UserReads.users/2` (member/operator roster).
+  defp entity_uris(%URI{} = caller, %URI{} = ws, wanted) do
+    if "entity" in wanted do
+      WorkspaceReads.agents(caller, ws) ++
+        Enum.map(UserReads.users(caller, ws), & &1.uri)
+    else
+      []
+    end
+  end
+
+  # Parse, scheme-filter, then build the option map. Any URI that fails
+  # to parse (a chokepoint holding a non-canonical row, which
+  # `parse!/1` rejects) is silently dropped from options — it
   # could never be a valid pick anyway.
-  defp enrich(uri_str, wanted_schemes, ws_str) do
-    with {:ok, uri} <- safe_parse(uri_str),
-         true <- uri.scheme in wanted_schemes,
-         {:ok, uri_ws} <- workspace_of_uri(uri),
-         true <- URI.to_string(uri_ws) == ws_str do
+  defp enrich(%URI{} = uri, wanted_schemes) do
+    uri_str = URI.to_string(uri)
+
+    if uri.scheme in wanted_schemes do
       [
         %{
           uri: uri_str,
@@ -192,7 +203,7 @@ defmodule Ezagent.UI.UriOptions do
         }
       ]
     else
-      _ -> []
+      []
     end
   end
 

@@ -78,7 +78,8 @@ defmodule Ezagent.World.ConversationData do
       "caller_uri" => encode_uri(caller_uri),
       "create_error" => nil,
       "access_denied" => false,
-      "templates" => Ezagent.World.WorkspacePluginData.session_template_names(workspace_uri),
+      "templates" =>
+        Ezagent.World.WorkspacePluginData.session_template_names(caller_uri, workspace_uri),
       "messages" => messages,
       "oldest_cursor" => oldest_cursor_iso(messages),
       "members" => members,
@@ -119,7 +120,8 @@ defmodule Ezagent.World.ConversationData do
       "caller_uri" => encode_uri(caller_uri),
       "create_error" => nil,
       "access_denied" => true,
-      "templates" => Ezagent.World.WorkspacePluginData.session_template_names(workspace_uri),
+      "templates" =>
+        Ezagent.World.WorkspacePluginData.session_template_names(caller_uri, workspace_uri),
       "messages" => [],
       "oldest_cursor" => nil,
       "members" => [],
@@ -692,58 +694,52 @@ defmodule Ezagent.World.ConversationData do
   defp entity_candidate_options(caller_uri, workspace_uri) do
     if caller_authorized_for_workspace?(caller_uri, workspace_uri) do
       (entity_options(caller_uri, workspace_uri) ++
-         provisioned_user_options(workspace_uri) ++
-         snapshot_agent_options(workspace_uri))
+         provisioned_user_options(caller_uri, workspace_uri) ++
+         snapshot_agent_options(caller_uri, workspace_uri))
       |> Enum.uniq_by(&option_field(&1, :uri))
     else
       []
     end
   end
 
-  defp provisioned_user_options(workspace_uri) do
-    if Code.ensure_loaded?(Ezagent.Users) and
-         function_exported?(Ezagent.Users, :list_in_workspace, 1) do
-      users = apply(Ezagent.Users, :list_in_workspace, [workspace_uri])
-      display_map = Ezagent.EntityPresenter.display_many(Enum.map(users, &encode_uri(&1.uri)))
+  # Provisioned (possibly dormant) users — read-plane PR-4 rework: routed
+  # through the caller-authorizing `Ezagent.Workspace.UserReads`
+  # chokepoint (workspace member/operator only; fail-closed `[]`) instead
+  # of the raw `Ezagent.Users` workspace scan.
+  defp provisioned_user_options(caller_uri, workspace_uri) do
+    users = Ezagent.Workspace.UserReads.users(caller_uri, workspace_uri)
+    display_map = Ezagent.EntityPresenter.display_many(Enum.map(users, &encode_uri(&1.uri)))
 
-      Enum.map(users, fn user ->
-        uri_str = encode_uri(user.uri)
+    Enum.map(users, fn user ->
+      uri_str = encode_uri(user.uri)
 
-        %{
-          uri: uri_str,
-          label: Map.get(display_map, uri_str, uri_name(user.uri) || uri_str),
-          flavor: nil
-        }
-      end)
-    else
-      []
-    end
+      %{
+        uri: uri_str,
+        label: Map.get(display_map, uri_str, uri_name(user.uri) || uri_str),
+        flavor: nil
+      }
+    end)
   rescue
     _ -> []
   end
 
-  defp snapshot_agent_options(workspace_uri) do
-    if Code.ensure_loaded?(Ezagent.Ecto.KindSnapshot) and
-         function_exported?(Ezagent.Ecto.KindSnapshot, :list_in_workspace, 1) do
-      Ezagent.Ecto.KindSnapshot.list_in_workspace(workspace_uri)
-      |> Enum.flat_map(fn row ->
-        with uri_str when is_binary(uri_str) and uri_str != "" <- Map.get(row, :uri),
-             {:ok, %URI{scheme: "entity"} = uri} <- Ezagent.URI.parse(uri_str),
-             {:ok, "agent"} <- Ezagent.URI.type(uri) do
-          [
-            %{
-              uri: uri_str,
-              label: Ezagent.EntityPresenter.display(uri_str),
-              flavor: flavor_for_agent(uri)
-            }
-          ]
-        else
-          _ -> []
-        end
-      end)
-    else
-      []
-    end
+  # Dormant + live agents — read-plane PR-4 rework: routed through the
+  # caller-authorizing `Ezagent.Workspace.WorkspaceReads.agents/2`
+  # chokepoint (owns/manages/member-roster per row; snapshot-sourced, so
+  # dormant agents stay invite-able) instead of the raw `KindSnapshot`
+  # workspace scan.
+  defp snapshot_agent_options(caller_uri, workspace_uri) do
+    caller_uri
+    |> Ezagent.Workspace.WorkspaceReads.agents(workspace_uri)
+    |> Enum.map(fn %URI{} = uri ->
+      uri_str = URI.to_string(uri)
+
+      %{
+        uri: uri_str,
+        label: Ezagent.EntityPresenter.display(uri_str),
+        flavor: flavor_for_agent(uri)
+      }
+    end)
   rescue
     _ -> []
   end
