@@ -6,9 +6,11 @@
 
 **Goal:** Reverse world's plugin-page + action-allowlist data source from world-hardcoded compile-time constants to **runtime enumeration of each plugin's `UiSurfaceProvider` declarations**, add a build-time codegen mix task that generates the frontend renderer wiring, dissolve the `isHelloSession` session-page special-case into the generic session-tab mechanism, and add a drift-prevention gate whose empty-allowlist red build names every remaining hardcoded plugin touch-point in world.
 
-**Architecture:** Extend the existing #1117 substrate (`Ezagent.World.UiSurfaceProvider` / `PluginPageRegistry` / `SlotRegistry`) — which already self-declares **nav** and **session-tabs** by enumerating `Ezagent.PluginRegistry.list_all/0` — to also cover the **`page`** surface and its **renderer face**. `world` is itself a registered plugin (`slug: "world"`, `use Ezagent.Plugin`), so it enumerates through the *same* path a real plugin uses: the reader becomes **pure enumeration**, and world declares its own (transitional, allowlisted) kanban page via its own `page/0` until jjkysy's track moves that declaration onto `ezagent_plugin_kanban`. The strangler here (Allen decision 1) is **demote world in place**, not a new shell app.
+**Architecture:** Extend the existing #1117 substrate (`Ezagent.World.UiSurfaceProvider` / `PluginPageRegistry` / `SlotRegistry`) — which already self-declares **nav** and **session-tabs** by enumerating `Ezagent.PluginRegistry.list_all/0` — to also cover the **`page`** surface and its **renderer face**. `world` is itself a registered plugin, so it enumerates through the *same* path a real plugin uses: the reader becomes **pure enumeration**, and world declares its own (transitional, allowlisted) kanban page via its own `page/0` until jjkysy's track moves that declaration onto `ezagent_plugin_kanban`. The strangler here (Allen decision 1) is **demote world in place**, not a new shell app.
 
-**Tech Stack:** Elixir umbrella (`apps/ezagent_plugin_world`, `apps/ezagent_core`), ExUnit, `mix` tasks for build-time codegen, React/TSX + esbuild frontend (`assets/src`), `pnpm` dev-facing mirror scripts.
+**VERIFIED SPINE (do not re-derive — this is why the "pure enumeration" shape is safe):** world's OTP app `EzagentPluginWorld.Application.start/2` (`apps/ezagent_plugin_world/lib/ezagent_plugin_world/application.ex:14-19`) calls `Ezagent.Plugin.boot(__MODULE__)`, and `Ezagent.Plugin.boot/1` (`apps/ezagent_core/lib/ezagent/plugin.ex:503`) calls `Ezagent.PluginRegistry.register(plugin_module)`. So `EzagentPluginWorld.Application` (`slug: "world"`) **is present in `PluginRegistry.list_all/0` at runtime** — a `page/0` declared on it is enumerated identically to any plugin's. NOTE the current baseline has **zero live producers** of the #1117 enumeration path (no `nav_surfaces/0`/`session_tabs/0` exists anywhere yet; kanban renders today from the hardcoded `@pages` constant). Task 2 therefore makes `pages/0` the **first** surface ever rendered through `list_all/0` — so the Task-2 checkpoint (`mix test apps/ezagent_plugin_world` green, kanban still renders) is the load-bearing proof that boot actually populated the registry. If for any reason it does not, fall back to `⚠️ DECISION FOR CODEX D3` below.
+
+**Tech Stack:** Elixir umbrella (`apps/ezagent_plugin_world`, `apps/ezagent_core`), ExUnit, `mix` tasks for build-time codegen, React/TSX + **Vite** frontend (`assets/src`; `"build": "vite build"`, `"test": "vitest run src"`), `pnpm` dev-facing mirror scripts.
 
 ## Global Constraints
 
@@ -74,7 +76,9 @@
 **D1 — `page/0` row shape: embed `actions` in the page row (v1 default) vs a separate `actions/0` callback (research §5.1 ideal).**
 Research §5.1 lists `page/0` and `actions/0` as distinct surfaces. This plan's default **embeds `actions` + `action_prefixes` in the page row** (identical to today's `@pages` row shape, merely relocated to the plugin) — the *minimal delta* from #1117 and the smallest thing that keeps the `by_action/1` admission + the equivalence lock unchanged. Splitting `actions/0` out is a clean follow-up but adds a second callback + a second shape gate for no v1 behavior gain. **Recommendation: embed in v1.** Codex to confirm or split.
 
-**D2 — Task 6 (session-page) boundary.** Zyli replaces the `isHelloSession` *branch structure* in `Conversation.tsx` with a generic loop over the already-serialized `plugin_session_tabs/1` output (proved against a **fixture** session-tab), so "add a session page tab" = "a plugin declares a `session_tab`," never "edit Conversation.tsx." The **final deletion of the `isHelloSession` literal + `WorldHello` move** is jjkysy (hello's components move with it). If codex judges the two are inseparable, Task 6 collapses entirely into jjkysy's track and zyli's scope is Tasks 1–5 + 7. **Recommendation: keep the generic mechanism in zyli (Task 6), literal-deletion in jjkysy.**
+**D2 — Task 6 (session-page) boundary.** Zyli replaces the `isHelloSession` *branch structure* in `Conversation.tsx` with a generic loop over the already-serialized `plugin_session_tabs/1` output (proved against a **fixture** session-tab), so "add a session page tab" = "a plugin declares a `session_tab`," never "edit Conversation.tsx." The **final deletion of the `isHelloSession` literal + `WorldHello` move** is jjkysy (hello's components move with it). If codex judges the two are inseparable, Task 6 collapses entirely into jjkysy's track and zyli's scope is Tasks 1–5 + 7. **Recommendation: keep the generic mechanism in zyli (Task 6), literal-deletion in jjkysy.** — Related, already-verified mechanism zyli should evaluate first: world's app registers `Ezagent.World.ConversationView` into `Ezagent.UI.SessionViewRegistry` (`application.ex:25-28`), which enumerates session views "pty / hello-page / … via `SessionViewRegistry.applicable_views/2` — no hard-coded chat tab." **The session-page dissolution may be better hung off `applicable_views/2` than off `plugin_session_tabs/1`; zyli must read `Ezagent.UI.SessionViewRegistry` before choosing.** Codex to adjudicate which is the right seam.
+
+**D3 — reader-shape fallback (only if the Task-2 checkpoint shows world absent from `list_all/0` at runtime).** The VERIFIED SPINE above says world self-registers, so the default is **pure enumeration**. If empirically that proves false at the Task-2 checkpoint (kanban goes dark), the reader becomes `pages/0 = union(enumerated plugin page/0, a world-owned transitional constant)` — keep the constant as an explicit, allowlisted fallback rather than break kanban. This is a contingency, not the plan of record; do not build it unless the checkpoint forces it.
 
 ---
 
@@ -627,7 +631,7 @@ Then in `main.tsx`: delete the literal `import {Kanban}` (`:11`) and the `PLUGIN
 - [ ] **Step 4: Run test + regenerate + build**
 
 Run: `mix test apps/ezagent_plugin_world/test/mix/tasks/world_ui_codegen_test.exs && mix world.ui.codegen && mix world.ui.codegen --check`
-Expected: tests PASS; barrel written; `--check` reports "in sync". Then `cd apps/ezagent_plugin_world/assets && pnpm build` (or the repo's esbuild command) succeeds — kanban still renders.
+Expected: tests PASS; barrel written; `--check` reports "in sync". Then `cd apps/ezagent_plugin_world/assets && pnpm build` (= `vite build`) succeeds — kanban still renders.
 
 - [ ] **Step 5: Wire `--check` into the existing drift lane** — find where `mix world.slots.manifest --check` runs in CI (grep `world.slots.manifest` under `.github/` / `mix.exs` aliases) and add `world.ui.codegen --check` beside it.
 
@@ -655,10 +659,13 @@ git commit -m "feat(world/ui): build-time codegen of plugin-page renderer barrel
 - Consumes: the already-serialized `WorkspacePluginData.plugin_session_tabs/1` output (`workspace_plugin_data.ex:498` — `[%{"id","label"}]`, condition-filtered per session), delivered in `state`. **No server change needed** — the mechanism exists; Task 6 makes the *frontend* consume it generically instead of sniffing.
 - Produces: a generic "render the enumerated session tabs" path — `state.plugin_session_tabs` drives the tab bar + page pane, keyed to the codegen renderer map from Task 5.
 
-- [ ] **Step 1: Write the failing test** — a Conversation render with a fixture `plugin_session_tabs` entry shows the tab generically; with none, no page tab:
+**Frontend test runner (confirmed):** `apps/ezagent_plugin_world/assets/package.json` defines `"test": "vitest run src"` (vitest 4.1.10). Existing TSX render tests to copy the harness from: `assets/src/components/Conversation.source2.test.tsx` and `assets/src/components/Admin.test.tsx`. Run one file with `cd apps/ezagent_plugin_world/assets && pnpm exec vitest run src/components/Conversation` (or `pnpm test` for all). Do **not** assume `@testing-library` is present — check `Admin.test.tsx`'s imports and mirror exactly what it uses.
+
+- [ ] **Step 1: Write the failing test** — a Conversation render with a fixture `plugin_session_tabs` entry shows the tab generically; with none, no page tab. Copy the render/setup harness from `Conversation.source2.test.tsx`:
 
 ```tsx
-// Conversation.test.tsx (follow the repo's existing TSX render-test pattern)
+// apps/ezagent_plugin_world/assets/src/components/Conversation.sessiontabs.test.tsx
+// harness (render fn, mock props, imports) copied verbatim from Conversation.source2.test.tsx
 it("renders a plugin-declared session tab generically (no isHelloSession sniff)", () => {
   const state = { plugin_session_tabs: [{ id: "page", label: "Page" }], /* ...minimal conv state... */ }
   render(<Conversation state={state} sessionUri="entity://acme/session/x" /* ... */ />)
@@ -674,14 +681,14 @@ it("shows no page tab when no plugin declares a session tab for this session", (
 
 - [ ] **Step 2: Run test to verify it fails**
 
-Run: `cd apps/ezagent_plugin_world/assets && pnpm test Conversation`
+Run: `cd apps/ezagent_plugin_world/assets && pnpm exec vitest run src/components/Conversation.sessiontabs`
 Expected: FAIL — the tab is currently gated by `isHelloSession`, not by `plugin_session_tabs`.
 
 - [ ] **Step 3: Write minimal implementation** — replace the `isHelloSession` sniff (`:306`) and its two gates (`:896`, `:1119`) with rendering driven by `state.plugin_session_tabs` (an array from the server). The tab's page pane resolves its renderer via the Task-5 codegen map. Keep the `WorldHello` embed reachable **only** through a declared session tab (world/hello declares it; the transitional literal stays allowlisted until jjkysy moves it).
 
 - [ ] **Step 4: Run test to verify it passes**
 
-Run: `cd apps/ezagent_plugin_world/assets && pnpm test Conversation`
+Run: `cd apps/ezagent_plugin_world/assets && pnpm exec vitest run src/components/Conversation.sessiontabs`
 Expected: PASS — the tab is driven by the enumerated declaration.
 
 - [ ] **Step 5: Commit**
