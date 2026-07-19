@@ -25,8 +25,7 @@ defmodule Ezagent.World.ConversationInviteCandidatesTest do
       )
 
     assert wait_until(fn ->
-             session_uri
-             |> ConversationData.member_options()
+             ConversationData.member_options(admin, session_uri)
              |> Enum.any?(&(&1["uri"] == URI.to_string(admin)))
            end)
 
@@ -71,8 +70,7 @@ defmodule Ezagent.World.ConversationInviteCandidatesTest do
       )
 
     assert wait_until(fn ->
-             session_uri
-             |> ConversationData.member_options()
+             ConversationData.member_options(admin, session_uri)
              |> Enum.any?(&(&1["uri"] == URI.to_string(admin)))
            end)
 
@@ -115,8 +113,8 @@ defmodule Ezagent.World.ConversationInviteCandidatesTest do
              })
 
     row =
-      session_uri
-      |> ConversationData.member_options()
+      admin
+      |> ConversationData.member_options(session_uri)
       |> Enum.find(&(&1["uri"] == URI.to_string(member_uri)))
 
     assert row["kind"] == "agent"

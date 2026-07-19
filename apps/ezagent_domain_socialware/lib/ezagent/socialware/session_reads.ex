@@ -109,6 +109,19 @@ defmodule Ezagent.Socialware.SessionReads do
     end
   end
 
+  @doc """
+  Whether `caller` is authorized to read `session_uri`'s conversation plane —
+  the boolean form of the same live-first predicate `messages/4`/`members/2`
+  gate on.
+
+  This is the door the LIVE plane consults: the `world_live` broadcast handler
+  drops a `:chat_message` for an unauthorized caller, and roster pushes are
+  suppressed for one. Gating a persisted read is not enough — the ungated live
+  broadcast + roster push were the read-plane-authz round-2 findings (F1/F2).
+  """
+  @spec authorized?(URI.t() | term(), URI.t()) :: boolean()
+  def authorized?(caller, %URI{} = session_uri), do: authorize(caller, session_uri) == :ok
+
   # ----- authorization (live-first, shared predicate) ------------------------
 
   # The SAME live, fail-closed owner/member predicate the feeds use. Reads the
@@ -159,11 +172,15 @@ defmodule Ezagent.Socialware.SessionReads do
 
   # ----- :read_unfiltered row-policy (sourced from the caller's live caps) ---
   #
-  # Moved verbatim from `Ezagent.World.ConversationData` so the row-policy is
-  # owned by the chokepoint, not a presenter. Caps are loaded LIVE from the
-  # caller (never caller-supplied), so a non-holder cannot obtain `:internal`
-  # rows by any flag.
-  defp read_unfiltered?(caller, %URI{} = session_uri) do
+  @doc """
+  Whether `caller` holds the session's `:read_unfiltered` cap — i.e. may read
+  `:internal` messages. Sourced LIVE from the caller's caps, never caller-
+  supplied. Public so the LIVE plane can apply the SAME row-policy: the
+  `world_live` broadcast handler drops a live `:internal` message for a caller
+  without this cap (the row-policy the historical read already enforces).
+  """
+  @spec read_unfiltered?(URI.t() | term(), URI.t()) :: boolean()
+  def read_unfiltered?(caller, %URI{} = session_uri) do
     workspace_uri = Ezagent.Capability.workspace_of(session_uri)
 
     caller

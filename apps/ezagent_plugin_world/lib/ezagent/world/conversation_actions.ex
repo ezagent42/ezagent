@@ -18,6 +18,7 @@ defmodule Ezagent.World.ConversationActions do
 
   alias Ezagent.ActionSet.Session.Membership
   alias Ezagent.Invocation
+  alias Ezagent.Socialware.SessionReads
   alias Ezagent.World.ConversationData
   alias Ezagent.World.ConversationRoutingForm
   alias EzagentDomainInstanceMessage.Routing.MentionRouting
@@ -979,8 +980,8 @@ defmodule Ezagent.World.ConversationActions do
   defp member_role_name(_), do: nil
 
   defp push_session_management_state(socket, %URI{} = session_uri) do
-    members = ConversationData.member_options(session_uri)
     caller = socket.assigns.current_entity_uri
+    members = ConversationData.member_options(caller, session_uri)
     workspace = socket.assigns.current_workspace_uri
 
     payload = %{
@@ -1054,25 +1055,34 @@ defmodule Ezagent.World.ConversationActions do
     if connected?(socket) do
       case socket.assigns[:current_session_uri] do
         %URI{} = session_uri ->
-          members = ConversationData.member_options(session_uri)
+          caller = Map.get(socket.assigns, :current_entity_uri)
 
-          push_event(socket, "members:update", %{
-            "members" => members,
-            "human_role_slots" => ConversationData.human_role_slots(session_uri),
-            "invite_candidates" =>
-              ConversationData.invite_candidates(
-                session_uri,
-                socket.assigns.current_entity_uri,
-                socket.assigns.current_workspace_uri,
-                members
-              ),
-            "routing_entity_candidates" =>
-              ConversationData.routing_entity_candidates(
-                socket.assigns.current_entity_uri,
-                socket.assigns.current_workspace_uri,
-                members
-              )
-          })
+          if SessionReads.authorized?(caller, session_uri) do
+            members = ConversationData.member_options(caller, session_uri)
+
+            push_event(socket, "members:update", %{
+              "members" => members,
+              "human_role_slots" => ConversationData.human_role_slots(session_uri),
+              "invite_candidates" =>
+                ConversationData.invite_candidates(
+                  session_uri,
+                  caller,
+                  socket.assigns.current_workspace_uri,
+                  members
+                ),
+              "routing_entity_candidates" =>
+                ConversationData.routing_entity_candidates(
+                  caller,
+                  socket.assigns.current_workspace_uri,
+                  members
+                )
+            })
+          else
+            # Unauthorized viewer (e.g. denied `?session=` deep-link): push NO
+            # roster — the whole `members:update` payload (members, role slots,
+            # invite/routing candidates) is session content. (read-plane-authz F2.)
+            socket
+          end
 
         _ ->
           socket

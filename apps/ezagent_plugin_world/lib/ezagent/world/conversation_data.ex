@@ -249,9 +249,14 @@ defmodule Ezagent.World.ConversationData do
   parse uses, so the @mention dropdown, the members panel, and routing can't
   drift. The panel (PR-3a) shows presence; the autocomplete ignores it.
   """
-  @spec member_options(URI.t()) :: [map()]
-  def member_options(%URI{} = session_uri) do
-    session_uri |> member_meta() |> member_options_from_meta()
+  @spec member_options(URI.t() | term(), URI.t()) :: [map()]
+  def member_options(caller, %URI{} = session_uri) do
+    # Route the roster read through the chokepoint: a non-authorized caller gets
+    # an empty roster (never the raw slice). (read-plane-authz F2.)
+    case SessionReads.members(caller, session_uri) do
+      {:ok, members} -> members |> meta_from_members() |> member_options_from_meta()
+      {:error, :unauthorized} -> []
+    end
   end
 
   # Shape a `%{uri_string => meta}` map (the `member_meta/1` form OR the
@@ -379,7 +384,7 @@ defmodule Ezagent.World.ConversationData do
   """
   @spec invite_candidates(URI.t(), URI.t() | nil, URI.t() | nil) :: [map()]
   def invite_candidates(%URI{} = session_uri, caller_uri, workspace_uri) do
-    invite_candidates(session_uri, caller_uri, workspace_uri, member_options(session_uri))
+    invite_candidates(session_uri, caller_uri, workspace_uri, member_options(caller_uri, session_uri))
   end
 
   @doc false
@@ -488,7 +493,7 @@ defmodule Ezagent.World.ConversationData do
 
   def build_message(%URI{} = sender, text, %URI{} = session_uri, attachments)
       when is_binary(text) and is_list(attachments) do
-    mentions = parse_mentions(text, member_options(session_uri), human_role_slots(session_uri))
+    mentions = parse_mentions(text, member_options(sender, session_uri), human_role_slots(session_uri))
     Ezagent.Message.new(sender, %{text: text, attachments: attachments}, mentions: mentions)
   end
 

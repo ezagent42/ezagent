@@ -261,6 +261,60 @@ defmodule Ezagent.Socialware.SessionReadsTest do
     end
   end
 
+  # ----- (5) live-plane gate predicates (round-2 F1/F2) ------------------
+  #
+  # The `world_live` broadcast handler and `push_members` gate the LIVE plane on
+  # THESE predicates (not just the historical read). A non-member `false` here ⇒
+  # the broadcast handler drops the message and `push_members` pushes no roster —
+  # closing the ungated live-stream / roster-leak that PR-1's history-only gate
+  # left open.
+  describe "authorized?/2 + read_unfiltered?/2 — the LIVE-plane gate predicates" do
+    test "a non-member is NOT authorized (⇒ broadcast dropped, roster suppressed)" do
+      session = spawn_session()
+      :ok = spawn_user(@stranger, User.initial_caps_for_spawn(@stranger))
+      refute SessionReads.authorized?(@stranger, session)
+    end
+
+    test "nil / malformed caller is NOT authorized (fail-closed)" do
+      session = spawn_session()
+      refute SessionReads.authorized?(nil, session)
+      refute SessionReads.authorized?(:garbage, session)
+    end
+
+    test "the owner IS authorized" do
+      session = spawn_session()
+      assert SessionReads.authorized?(@owner, session)
+    end
+
+    test "a member joined via the at-join grant IS authorized (live-first)" do
+      session = spawn_session()
+
+      member =
+        Ezagent.URI.entity(:team_alpha, :user, "sr-live-#{System.unique_integer([:positive])}")
+
+      :ok = spawn_user(member, User.initial_caps_for_spawn(member))
+
+      refute SessionReads.authorized?(member, session)
+      assert {:ok, _} = join(session, member)
+      assert SessionReads.authorized?(member, session)
+    end
+
+    test "read_unfiltered?/2 gates live :internal delivery — false without the cap, true with it" do
+      # A member without the cap → a live :internal message is dropped for them.
+      plain = spawn_session()
+      refute SessionReads.read_unfiltered?(@owner, plain)
+
+      # A caller holding the signed :read_unfiltered cap → :internal delivered.
+      reader =
+        Ezagent.URI.entity(:team_alpha, :user, "sr-unf-#{System.unique_integer([:positive])}")
+
+      session = spawn_session(reader)
+      cap = CapHelper.signed_cap!(session, reader, read_unfiltered_cap(session))
+      :ok = spawn_user(reader, [cap])
+      assert SessionReads.read_unfiltered?(reader, session)
+    end
+  end
+
   defp read_unfiltered_cap(session_uri) do
     Capability.cap(
       :session,

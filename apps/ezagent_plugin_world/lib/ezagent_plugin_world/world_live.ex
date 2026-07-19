@@ -11,6 +11,7 @@ defmodule EzagentPluginWorld.WorldLive do
   alias Ezagent.World.AgentActions
   alias Ezagent.World.CommandPaletteActions
   alias Ezagent.World.CommandPaletteData
+  alias Ezagent.Socialware.SessionReads
   alias Ezagent.World.ConversationActions
   alias Ezagent.World.ConversationSessionState
   alias Ezagent.World.UserActions
@@ -102,12 +103,26 @@ defmodule EzagentPluginWorld.WorldLive do
   end
 
   defp maybe_set_current_session(socket, %{component: "conversation", session_uri: %URI{} = uri}) do
-    socket
-    |> ConversationSessionState.ensure_session_subscribed(uri)
-    |> assign(:current_session_uri, uri)
-    |> assign(:current_session_uri_str, encode_uri(uri))
-    |> ConversationActions.self_join(uri)
-    |> ConversationActions.push_members()
+    # self_join FIRST (admission — a legitimately-admitted new joiner becomes a
+    # member here), THEN gate the live plane on the post-join authorization.
+    socket =
+      socket
+      |> assign(:current_session_uri, uri)
+      |> assign(:current_session_uri_str, encode_uri(uri))
+      |> ConversationActions.self_join(uri)
+
+    caller = Map.get(socket.assigns, :current_entity_uri)
+
+    if SessionReads.authorized?(caller, uri) do
+      socket
+      |> ConversationSessionState.ensure_session_subscribed(uri)
+      |> ConversationActions.push_members()
+    else
+      # Denied deep-link: do NOT subscribe (no live message stream) and do NOT
+      # push the roster. `state_for_route` renders `denied_state`. The broadcast
+      # handler re-checks authorization per message as the robust backstop.
+      socket
+    end
   end
 
   defp maybe_set_current_session(socket, _route), do: socket
@@ -171,7 +186,9 @@ defmodule EzagentPluginWorld.WorldLive do
   end
 
   def handle_info({:chat_message, %URI{} = source_uri, %Ezagent.Message{} = msg}, socket) do
-    if same_uri?(source_uri, socket.assigns[:current_session_uri]) do
+    session_uri = socket.assigns[:current_session_uri]
+
+    if same_uri?(source_uri, session_uri) and live_message_deliverable?(socket, session_uri, msg) do
       # G5 source 2 — attach the per-viewer error card when the reply body
       # carries a structured agent-error payload (lazy ctx: no admin/founder
       # lookup on ordinary messages).
@@ -992,6 +1009,21 @@ defmodule EzagentPluginWorld.WorldLive do
       can_manage_layout?(component, socket.assigns.current_workspace_uri, caps)
     )
   end
+
+  # A live broadcast reaches the browser only if the viewer is authorized for the
+  # session AND the message is visible to them (row-policy: `:internal` only for a
+  # `:read_unfiltered` holder). This is the DELIVERY-time counterpart to the
+  # `SessionReads` historical read gate and the ROBUST guarantee: even a socket
+  # that subscribed without authorization, or a member revoked mid-session, is
+  # dropped here — independent of subscribe ordering. (read-plane-authz F1.)
+  defp live_message_deliverable?(socket, %URI{} = session_uri, %Ezagent.Message{} = msg) do
+    caller = Map.get(socket.assigns, :current_entity_uri)
+
+    SessionReads.authorized?(caller, session_uri) and
+      (msg.visibility != :internal or SessionReads.read_unfiltered?(caller, session_uri))
+  end
+
+  defp live_message_deliverable?(_socket, _session_uri, _msg), do: false
 
   defp same_uri?(%URI{} = left, %URI{} = right), do: URI.to_string(left) == URI.to_string(right)
   defp same_uri?(_, _), do: false

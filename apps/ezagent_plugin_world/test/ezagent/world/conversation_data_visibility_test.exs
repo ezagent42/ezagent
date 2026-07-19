@@ -126,6 +126,20 @@ defmodule Ezagent.World.ConversationDataVisibilityTest do
 
       assert {[], nil} = ConversationData.load_older(session_uri, @stranger, cursor, viewer_ctx)
     end
+
+    # F2 (round-2): the ROSTER read is routed through the chokepoint too, so a
+    # non-member `member_options` (what `push_members` pushes to the browser) is
+    # DENIED — not merely empty. Before the fix it read the raw `:session` slice
+    # and leaked the full roster past `denied_state`.
+    test "member_options for a non-member is routed through the DENIED chokepoint" do
+      owner = URI.new!("entity://team-alpha/user/owner-mo")
+      session_uri = spawn_owned_session(owner)
+
+      assert {:error, :unauthorized} =
+               Ezagent.Socialware.SessionReads.members(@stranger, session_uri)
+
+      assert ConversationData.member_options(@stranger, session_uri) == []
+    end
   end
 
   # ----- row-policy: preserved for an AUTHORIZED caller ------------------
