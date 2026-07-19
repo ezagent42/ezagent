@@ -112,12 +112,18 @@ defmodule Ezagent.Workspace.Provisioning do
     caller = Map.fetch!(ctx, :caller)
     caps = Map.fetch!(ctx, :caps)
 
+    # 与 create_agent/3 同款:caller ctx 里的 :deadline_ms 透传进 dispatch ctx,
+    # 冷建会话(模板物化 + socialware 安装)可 >5s,caller 需能给足 deadline。
+    dispatch_ctx =
+      %{mode: :call, caller: caller, caps: caps, reply: {:caller_inbox, self()}}
+      |> maybe_put_deadline_ms(ctx)
+
     with :ok <- ensure_workspace_live(workspace_uri) do
       Router.dispatch(%Cmd{
         target: target,
         action: :create_session,
         args: args,
-        ctx: %{mode: :call, caller: caller, caps: caps, reply: {:caller_inbox, self()}},
+        ctx: dispatch_ctx,
         origin: :trusted_internal
       })
     end

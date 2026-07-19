@@ -363,7 +363,12 @@ defmodule Ezagent.World.ConversationActions do
       create_session.(
         target_workspace,
         args,
-        Map.put(ctx, :caps, caller_caps)
+        ctx
+        |> Map.put(:caps, caller_caps)
+        # 冷建会话(模板物化 + socialware 安装)可 >5s;默认 GenServer call 5s 会把
+        # 建到一半的会话崩成「报错但底层已建成」的幽灵成功。显式给足 deadline
+        # (Provisioning.create_session 透传进 dispatch ctx)。
+        |> Map.put(:deadline_ms, 30_000)
       )
     end
 

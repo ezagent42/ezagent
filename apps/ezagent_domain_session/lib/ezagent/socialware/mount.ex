@@ -242,7 +242,11 @@ defmodule Ezagent.Socialware.Mount do
            Ezagent.Workspace.create_agent(
              workspace_uri,
              create_args(spec, name, flavor),
-             owner_ctx
+             # 冷建 agent(spawn + recipe 物化 + CapMint + snapshot)实测可 >5s;默认
+             # GenServer call 5s 会在建到一半时超时崩掉整条 with 链 → 孤儿宿主(agent
+             # 建成、零钥匙零挂载行)。显式给足 deadline(Provisioning.create_agent
+             # 透传进 dispatch ctx)。
+             Map.put(owner_ctx, :deadline_ms, 30_000)
            ),
          actions = Map.get(spec, :actions) || Ezagent.ActionSet.action_names(behavior),
          {:ok, %{caps: caps, mount: mount}} <-
