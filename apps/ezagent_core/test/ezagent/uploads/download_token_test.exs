@@ -73,6 +73,55 @@ defmodule Ezagent.Uploads.DownloadTokenTest do
     end
   end
 
+  describe ":grantee person binding (read-plane PR-3)" do
+    @alice EzURI.new!("entity://acme/user/alice")
+    @bob EzURI.new!("entity://acme/user/bob")
+
+    test "mint with :grantee → verify_payload returns the SAME principal bound to the token" do
+      token = DownloadToken.mint!(@uri, ttl_seconds: 60, grantee: @alice)
+
+      assert {:ok, %{uri: uri, grantee: grantee}} = DownloadToken.verify_payload(token)
+      assert EzURI.stable_key(uri) == EzURI.stable_key(@uri)
+      assert grantee == @alice
+    end
+
+    test "mint WITHOUT :grantee → verify_payload grantee is nil (legacy unbound token)" do
+      token = DownloadToken.mint!(@uri, ttl_seconds: 60)
+      assert {:ok, %{grantee: nil}} = DownloadToken.verify_payload(token)
+    end
+
+    test "verify/1 is unchanged by the binding (still returns just the URI)" do
+      token = DownloadToken.mint!(@uri, ttl_seconds: 60, grantee: @alice)
+      assert {:ok, uri} = DownloadToken.verify(token)
+      assert EzURI.stable_key(uri) == EzURI.stable_key(@uri)
+    end
+
+    test "grantee_match?/2 — true only for the exact bound principal" do
+      assert DownloadToken.grantee_match?(@alice, @alice)
+      refute DownloadToken.grantee_match?(@alice, @bob)
+      refute DownloadToken.grantee_match?(@alice, nil)
+      refute DownloadToken.grantee_match?(nil, @alice)
+      refute DownloadToken.grantee_match?(@alice, "entity://acme/user/alice")
+    end
+
+    test "a non-%URI{} :grantee raises at mint (fail LOUD, never silently unbound)" do
+      assert_raise ArgumentError, ~r/:grantee/, fn ->
+        DownloadToken.mint!(@uri, ttl_seconds: 60, grantee: "alice")
+      end
+    end
+
+    test "the binding survives the TTL/expiry machinery (expired bound token still rejected)" do
+      token =
+        DownloadToken.mint!(@uri,
+          ttl_seconds: -1,
+          __test_allow_nonpositive__: true,
+          grantee: @alice
+        )
+
+      assert {:error, :expired} = DownloadToken.verify_payload(token)
+    end
+  end
+
   describe "expiry (verify NEVER uses :infinity)" do
     test "expired token is rejected (explicit test override + verify)" do
       token = DownloadToken.mint!(@uri, ttl_seconds: -1, __test_allow_nonpositive__: true)
