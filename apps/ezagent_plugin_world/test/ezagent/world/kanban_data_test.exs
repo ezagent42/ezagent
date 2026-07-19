@@ -172,6 +172,46 @@ defmodule Ezagent.World.KanbanDataTest do
     end)
   end
 
+  test "PR-3 / #9: a file artifact's download href is a grantee-BOUND token for the board reader",
+       %{ws_name: ws_name, workspace_uri: ws, admin_ctx: admin_ctx, ctx: ctx} do
+    skip_if_no_entity_spawn(fn ->
+      uri = spawn_board(ws, admin_ctx)
+
+      {:ok, %{id: "n1"}} = dispatch(uri, :add_node, %{parent_id: "", title: "根"}, admin_ctx)
+
+      upload =
+        Ezagent.URI.resource(ws_name, "uploads", "#{Ecto.UUID.generate()}-spec.pdf")
+
+      {:ok, %{}} =
+        dispatch(
+          uri,
+          :attach_artifact,
+          %{
+            id: "n1",
+            artifact: %{tool: "uploader", kind: "file", ref: "spec.pdf", url: URI.to_string(upload)}
+          },
+          admin_ctx
+        )
+
+      tree = KanbanData.read_tree(uri, board_read_ctx(uri, ctx))
+      [artifact] = tree["nodes"]["n1"]["artifacts"]
+
+      # The href is a /uploads/download token link...
+      assert "/uploads/download?token=" <> token = artifact["url"]
+
+      # ...whose token is person-bound to the board reader (ctx.caller_uri) —
+      # the authorized mint INSIDE the cap-gated board read. This is what makes
+      # the member's download 200 (caller == grantee supersedes the legacy
+      # participation recheck) and a leaked copy useless to anyone else.
+      assert {:ok, %{uri: bound_uri, grantee: grantee}} =
+               Ezagent.Uploads.DownloadToken.verify_payload(token)
+
+      assert Ezagent.URI.stable_key(bound_uri) == Ezagent.URI.stable_key(upload)
+      assert grantee == ctx.caller_uri
+      assert Ezagent.Uploads.DownloadToken.grantee_match?(grantee, ctx.caller_uri)
+    end)
+  end
+
   test "cold-restart (HIGH-3): kill live Kind → list-by-role still returns it → board renders",
        %{workspace_uri: ws, admin_ctx: admin_ctx, ctx: ctx} do
     skip_if_no_entity_spawn(fn ->
