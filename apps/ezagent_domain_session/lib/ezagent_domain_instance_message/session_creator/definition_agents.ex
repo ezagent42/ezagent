@@ -302,10 +302,13 @@ defmodule EzagentDomainInstanceMessage.SessionCreator.DefinitionAgents do
          # logged in": skip the slot rather than join a silent zombie. The role
          # slot's `provider` (cc-custom) names the backend profile whose env key
          # gates this check; plain-cc/legacy slots carry none (opt NOT passed).
+         # #185 — the recipe's declared `credential_optional` (hello.llm) rides
+         # down too, so a SLICE-backed (curl) role that intends keyless is NOT
+         # pre-skipped while a required-credential curl role is.
          # NOTE (cap-signing): the durable Cap.issue binding is NOT committed here.
          # This branch spawns FIRST, then binds + `sync_live`s the born-signed caps
          # into the live agent (see `spawn_bound_agent/8` below).
-         :ok <- check_credential_source(granted_by, workspace_uri, flavor, provider),
+         :ok <- check_credential_source(granted_by, workspace_uri, flavor, provider, recipe),
          :ok <-
            spawn_bound_agent(
              session_uri,
@@ -322,17 +325,44 @@ defmodule EzagentDomainInstanceMessage.SessionCreator.DefinitionAgents do
   end
 
   # The cc-custom seam: only a non-empty role-slot `provider` passes the
-  # `backend_profile` opt down — plain-cc/legacy slots call the unchanged
-  # `check_source/3` path (byte-unchanged legacy behavior).
-  defp check_credential_source(installer, workspace_uri, flavor, provider)
-       when is_binary(provider) and provider != "",
-       do:
-         CredentialPrecondition.check_source(installer, workspace_uri, flavor,
-           backend_profile: provider
-         )
+  # `backend_profile` opt down — plain-cc/legacy slots carry no provider, so
+  # `opts` stays `[]` and the legacy `check_source/3` behavior is unchanged.
+  # #185 — the recipe's `credential_optional` config (the hello.llm shape,
+  # the SAME flag that lands in the AgentTemplate content for the cascade)
+  # rides down as the slice-backed flavor's opt-out of the precondition.
+  defp check_credential_source(installer, workspace_uri, flavor, provider, recipe) do
+    opts =
+      case provider do
+        p when is_binary(p) and p != "" -> [backend_profile: p]
+        _ -> []
+      end
 
-  defp check_credential_source(installer, workspace_uri, flavor, _no_provider),
-    do: CredentialPrecondition.check_source(installer, workspace_uri, flavor)
+    opts =
+      if recipe_credential_optional?(recipe),
+        do: [{:credential_optional, true} | opts],
+        else: opts
+
+    CredentialPrecondition.check_source(installer, workspace_uri, flavor, opts)
+  end
+
+  # `credential_optional` is authored under recipe.config (see the hello.llm
+  # recipe) and lands in the AgentTemplate content. Read tolerantly across the
+  # `%Recipe{}` struct / plain-map shapes and atom / string keys.
+  defp recipe_credential_optional?(recipe) when is_map(recipe) do
+    case map_field(recipe, :config) do
+      config when is_map(config) -> map_field(config, :credential_optional) in [true, "true"]
+      _ -> false
+    end
+  end
+
+  defp recipe_credential_optional?(_recipe), do: false
+
+  defp map_field(map, key) when is_atom(key) do
+    case Map.fetch(map, key) do
+      {:ok, value} -> value
+      :error -> Map.get(map, Atom.to_string(key))
+    end
+  end
 
   defp spawn_bound_agent(
          session_uri,

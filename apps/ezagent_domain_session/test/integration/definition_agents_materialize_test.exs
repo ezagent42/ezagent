@@ -146,6 +146,49 @@ defmodule EzagentDomainInstanceMessage.Integration.DefinitionAgentsMaterializeTe
     end
   end
 
+  # A SLICE-credentialled flavor (like curl: the key lives in the agent's
+  # `:api_keys` slice — no config-home files, no env probe). Before #185 the
+  # credential precondition waved every slice-backed flavor through, so a role
+  # whose recipe marks the credential REQUIRED spawned keyless and the cascade's
+  # `:no_credential_source` surfaced one layer later as a hard
+  # `{:agent_spawn_failed, …}` that halted the whole batch. Now the precondition
+  # pre-skips the slot loud (the same lane as a file-credential-missing role),
+  # while a `credential_optional` recipe still spawns keyless.
+  defmodule SliceStubTemplate do
+    @moduledoc false
+    @behaviour Ezagent.Kind.Template
+    @behaviour Ezagent.Agent.CredentialSliceAdapter
+
+    @impl Ezagent.Agent.CredentialSliceAdapter
+    def credential_slice, do: :api_keys
+
+    @impl Ezagent.Agent.CredentialSliceAdapter
+    def materialize_credential_slice(_uri, _data), do: :ok
+
+    @impl Ezagent.Kind.Template
+    def template_name, do: "definition_agents.slice_stub"
+
+    @impl Ezagent.Kind.Template
+    def validate(%{"agent_uri" => agent_uri}) when is_binary(agent_uri), do: :ok
+    def validate(_), do: {:error, :invalid_slice_stub_template}
+
+    @impl Ezagent.Kind.Template
+    def instantiate(_name, data, _workspace_uri) do
+      uri = Ezagent.URI.new!(data["agent_uri"])
+
+      case Ezagent.Kind.spawn(Ezagent.Entity.Agent, %{
+             uri: uri,
+             behaviors: Ezagent.Entity.Agent.base_behaviors(),
+             role: data["role"]
+           }) do
+        {:ok, _pid} -> {:ok, [uri], %{fresh?: true, config_dir_path: nil}}
+        {:error, {:already_started, _pid}} -> {:ok, [uri], %{fresh?: false}}
+        {:error, {:already_registered, _}} -> {:ok, [uri], %{fresh?: false}}
+        {:error, reason} -> {:error, reason}
+      end
+    end
+  end
+
   defmodule NeverReadyTemplate do
     @moduledoc false
     @behaviour Ezagent.Kind.Template
@@ -267,6 +310,19 @@ defmodule EzagentDomainInstanceMessage.Integration.DefinitionAgentsMaterializeTe
     flavor
   end
 
+  defp register_slice_stub_flavor(n) do
+    flavor = "definition_agents_slice_stub_#{n}"
+
+    :ok =
+      Ezagent.AgentFlavorRegistry.register(%{
+        flavor: flavor,
+        kind: Ezagent.Entity.Agent,
+        template_class: SliceStubTemplate
+      })
+
+    flavor
+  end
+
   defp register_failing_flavor(n) do
     flavor = "definition_agents_failing_#{n}"
 
@@ -327,6 +383,25 @@ defmodule EzagentDomainInstanceMessage.Integration.DefinitionAgentsMaterializeTe
         requested_caps: [
           %{behavior: Ezagent.ActionSet.Identity, action: :list_caps}
         ]
+      })
+
+    name
+  end
+
+  # #185 — a recipe carrying a `config` (e.g. the hello.llm shape's
+  # `credential_optional` declaration), so the credential precondition reads
+  # the SAME flag the cascade's `credential_required?/2` does.
+  defp seed_recipe_with_config(n, config) when is_map(config) do
+    name = "t2-cfg-#{n}"
+    RecipeRegistry.invalidate(RecipeRegistry.system_workspace_uri(), name)
+
+    {:ok, _} =
+      RecipeRegistry.seed_role_if_absent(%{
+        name: name,
+        requested_caps: [
+          %{behavior: Ezagent.ActionSet.Identity, action: :list_caps}
+        ],
+        config: config
       })
 
     name
@@ -1164,6 +1239,73 @@ defmodule EzagentDomainInstanceMessage.Integration.DefinitionAgentsMaterializeTe
              summary.skipped
 
     assert summary.satisfied == []
+  end
+
+  # #185 — a SLICE-backed (curl-style) flavor whose recipe marks the credential
+  # REQUIRED must fail LOUD at provisioning: the slot is skipped with the
+  # `:no_credential_source` reason (the durable `unfilled_agent_role_slots`
+  # record renders it), the batch CONTINUES, and no keyless agent ever joins.
+  # Pre-#185 the precondition waved slice flavors through, the cascade's
+  # `:no_credential_source` surfaced at spawn as a hard `{:agent_spawn_failed,
+  # …}`, and the whole batch halted — a co-declared credential-less role was
+  # never materialized.
+  test "a required slice-credential role with no source is skipped loud and the batch continues" do
+    n = uniq()
+    session_uri = live_session(n)
+    recipe_name = seed_recipe(n)
+    slice_flavor = register_slice_stub_flavor(n)
+    ok_flavor = register_stub_flavor(n)
+
+    cred_role = "slice-cred-#{n}"
+    ok_role = "ok-role-#{n}"
+
+    assert {:ok, summary} =
+             DefinitionAgents.materialize_definition_agents(
+               session_uri,
+               @workspace_uri,
+               @owner_uri,
+               [
+                 %{recipe: recipe_name, role_name: cred_role, flavor: slice_flavor},
+                 %{recipe: recipe_name, role_name: ok_role, flavor: ok_flavor}
+               ]
+             )
+
+    assert [%{role_name: ^cred_role, reason: {:no_credential_source, ^slice_flavor}}] =
+             summary.skipped
+
+    # The batch CONTINUED: the role declared AFTER the skipped one materialized
+    # and joined as a live member.
+    assert summary.satisfied == [ok_role]
+
+    members = members_of(session_uri)
+    assert %URI{} = SessionBehavior.role_name_to_uri(members, ok_role)
+    assert SessionBehavior.role_name_to_uri(members, cred_role) == nil
+  end
+
+  # #185 — the SAME slice-backed flavor with the recipe's `credential_optional`
+  # declaration (the hello.llm shape) is NOT pre-skipped: it spawns keyless and
+  # joins — the credential may still arrive via the cascade at cold spawn.
+  test "a credential_optional slice-credential role is not pre-skipped (keyless join)" do
+    n = uniq()
+    session_uri = live_session(n)
+    recipe_name = seed_recipe_with_config(n, %{credential_optional: true})
+    slice_flavor = register_slice_stub_flavor(n)
+    role_name = "slice-optional-#{n}"
+
+    assert {:ok, summary} =
+             DefinitionAgents.materialize_definition_agents(
+               session_uri,
+               @workspace_uri,
+               @owner_uri,
+               [%{recipe: recipe_name, role_name: role_name, flavor: slice_flavor}]
+             )
+
+    assert summary.skipped == []
+    assert summary.satisfied == [role_name]
+
+    members = members_of(session_uri)
+    assert %URI{} = member = SessionBehavior.role_name_to_uri(members, role_name)
+    on_exit(fn -> terminate(member) end)
   end
 
   defp scoped_orchestrator_cap?(%Ezagent.Capability{} = cap) do

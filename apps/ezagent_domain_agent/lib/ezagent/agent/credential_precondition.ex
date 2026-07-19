@@ -29,6 +29,12 @@ defmodule Ezagent.Agent.CredentialPrecondition do
   authenticate is worthless. Such an agent is NOT created: the role slot is
   skipped, loudly, and the rest of the batch continues.
 
+  #185 extends the same rule to SLICE-backed flavors (curl): a role whose
+  recipe declares a REQUIRED credential but resolves no source is skipped at
+  provisioning instead of spawning keyless and dying at first use. Recipes
+  that intend keyless (`credential_optional`, e.g. hello.llm) opt out and are
+  untouched.
+
   **Explicit agent creation** by a user is untouched: a user may deliberately
   create a credential-less cc agent and run `claude /login` inside its PTY
   (Allen, 2026-07-10). That is why this check lives in the automatic lane and
@@ -54,7 +60,10 @@ defmodule Ezagent.Agent.CredentialPrecondition do
   or when an environment-backed credential reports `:authenticated`.
 
   Returns `{:skip, {:no_credential_source, flavor}}` when a file-backed flavor
-  has no source, or `{:skip, {:credential_unavailable, flavor}}` when an
+  has no source, `{:skip, {:no_credential_source, flavor}}` when a SLICE-backed
+  flavor (curl — the key lives in the agent's `:api_keys` slice) declares a
+  REQUIRED credential and has no source, or
+  `{:skip, {:credential_unavailable, flavor}}` when an
   environment-backed flavor reports a non-authenticated status.
 
   Call this AFTER `HostLoginAdopt.ensure_installer_source/3` — for the host
@@ -66,6 +75,14 @@ defmodule Ezagent.Agent.CredentialPrecondition do
   `provider`. Absent, an environment-backed flavor probes its DEFAULT
   credential (legacy flavors unchanged); a profile-driven flavor with no
   profile context fails CLOSED (`:unknown` → skip, never a silent pass).
+
+  `opts[:credential_optional]` (#185) is the recipe's declared opt-OUT of the
+  slice-backed precondition (recipe config → AgentTemplate content, the SAME
+  flag the cascade's `credential_required?/2` reads — e.g. hello.llm keyless
+  spawns by design). Absent/false, a slice-backed flavor's credential is
+  REQUIRED (the slice default, mirroring the cascade), so a role resolving no
+  source fails LOUD here at provisioning instead of silently at the visitor's
+  first reply (`{:no_api_key, provider}`).
   """
   @spec check_source(URI.t(), URI.t(), String.t(), keyword()) :: :ok | {:skip, term()}
   def check_source(%URI{} = installer, %URI{} = workspace_uri, flavor, opts \\ [])
@@ -119,6 +136,18 @@ defmodule Ezagent.Agent.CredentialPrecondition do
           do: :ok,
           else: {:skip, {:no_credential_source, flavor}}
 
+      slice_credentialled?(module) ->
+        # #185 — a SLICE-backed flavor (curl: the key lives in the agent's
+        # `:api_keys` slice, not in config-home files, and there is no env
+        # probe) used to fall through to `:ok` here, so a curl role that
+        # DECLARES a required credential spawned keyless and only failed at
+        # the visitor's first reply. Now the precondition fires at
+        # provisioning — unless the recipe marks the credential optional
+        # (hello.llm), which keeps its intentional keyless spawn.
+        if credential_optional?(opts) or source_available?(installer, workspace_uri, flavor),
+          do: :ok,
+          else: {:skip, {:no_credential_source, flavor}}
+
       environment_credential?(module) ->
         case module.credential_status(nil, backend_profile: opts[:backend_profile]) do
           %{status: :authenticated} -> :ok
@@ -129,6 +158,14 @@ defmodule Ezagent.Agent.CredentialPrecondition do
         :ok
     end
   end
+
+  # `credential_optional` rides from the recipe's `config` through the role
+  # slot (see `DefinitionAgents.check_credential_source/5`). Tolerate the same
+  # `[true, "true"]` shapes the cascade's content-level override accepts.
+  defp credential_optional?(opts), do: opts[:credential_optional] in [true, "true"]
+
+  defp slice_credentialled?(module),
+    do: Ezagent.Agent.CredentialSliceAdapter.credentialled?(module)
 
   defp template_class(flavor), do: Ezagent.AgentFlavorRegistry.template_class_for(flavor)
 
