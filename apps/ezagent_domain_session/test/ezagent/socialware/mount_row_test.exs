@@ -69,6 +69,49 @@ defmodule Ezagent.Socialware.MountRowTest do
     assert id_a1 != id_b
   end
 
+  describe "list_for_target/1 — target 反向索引(宿主退场清理用)" do
+    test "跨 session、跨 grantee、含 person 行全命中;别的 target 不命中;oldest first" do
+      target = agent_uri("host")
+      other_target = agent_uri("other-host")
+
+      t0 = DateTime.utc_now()
+
+      assert {:ok, row_a} =
+               MountRow.upsert(
+                 mount_attrs(session_uri("lft-a"), target, agent_uri("grantee-a"))
+                 |> Map.put(:mounted_at, t0)
+               )
+
+      assert {:ok, row_b} =
+               MountRow.upsert(
+                 mount_attrs(session_uri("lft-b"), target, agent_uri("grantee-b"))
+                 |> Map.put(:mounted_at, DateTime.add(t0, 1, :second))
+               )
+
+      assert {:ok, row_p} =
+               MountRow.upsert(
+                 person_attrs(target, person_uri("holder"))
+                 |> Map.put(:mounted_at, DateTime.add(t0, 2, :second))
+               )
+
+      assert {:ok, _} =
+               MountRow.upsert(
+                 mount_attrs(session_uri("lft-a"), other_target, agent_uri("grantee-a"))
+               )
+
+      assert [read_a, read_b, read_p] = MountRow.list_for_target(target)
+      assert read_a.id == row_a.id
+      assert read_b.id == row_b.id
+      assert read_p.id == row_p.id
+      assert read_p.scope == "person"
+      assert Enum.all?([read_a, read_b, read_p], &(&1.target_uri == URI.to_string(target)))
+    end
+
+    test "无行 → []" do
+      assert MountRow.list_for_target(agent_uri("nobody-mounted")) == []
+    end
+  end
+
   describe "person-scope 行(㊵ 人本位)" do
     test "person upsert 落行:scope=person、session 为空,list_person_mounts_for_grantee 读回" do
       target = agent_uri("p-board")

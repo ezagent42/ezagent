@@ -145,6 +145,63 @@ defmodule Ezagent.Socialware.MountTest do
     end
   end
 
+  describe "unmount_all_for_target/1 — 宿主退场清光名下全部挂载(撤钥匙 + 删行)" do
+    test "跨 session、跨 grantee、含 person 行逐行卸载;钥匙撤、行删、别的 target 不动" do
+      owner = user_uri("uat-owner")
+      grantee_a = live_agent("uat-grantee-a", owner)
+      grantee_b = live_agent("uat-grantee-b", owner)
+      target = live_agent("uat-host", owner, [Target])
+      other_target = live_agent("uat-other-host", owner, [Target])
+      session_a = session_uri()
+      session_b = session_uri()
+
+      assert {:ok, _} =
+               Mount.mount(session_a, target, grantee_a, Target, [:add_node, :get_tree],
+                 access: :operate
+               )
+
+      assert {:ok, _} =
+               Mount.mount(session_b, target, grantee_b, Target, [:get_tree], access: :read)
+
+      assert {:ok, _} =
+               Mount.mount_for_person(target, grantee_b, Target, [:get_tree], access: :read)
+
+      assert {:ok, _} =
+               Mount.mount(session_a, other_target, grantee_a, Target, [:get_tree], access: :read)
+
+      assert eventually(fn -> holds_cap?(grantee_a, target, :add_node) end)
+      assert eventually(fn -> holds_cap?(grantee_b, target, :get_tree) end)
+
+      assert {:ok, %{unmounted: 3, failed: 0}} = Mount.unmount_all_for_target(target)
+
+      # 行全删(session 两行 + person 一行)
+      assert MountRow.list_for_target(target) == []
+      assert MountRow.get(session_a, target, grantee_a, Target) == nil
+      assert MountRow.get(session_b, target, grantee_b, Target) == nil
+      assert MountRow.get_person(target, grantee_b, Target) == nil
+
+      # 钥匙撤 → dispatch 变 unauthorized
+      assert eventually(fn ->
+               match?({:error, _}, dispatch(grantee_a, target, :add_node))
+             end)
+
+      assert eventually(fn ->
+               match?({:error, _}, dispatch(grantee_b, target, :get_tree))
+             end)
+
+      # 别的 target 的挂载不牵连
+      assert MountRow.get(session_a, other_target, grantee_a, Target) != nil
+      assert eventually(fn -> holds_cap?(grantee_a, other_target, :get_tree) end)
+    end
+
+    test "无挂载行的 target → {:ok, %{unmounted: 0, failed: 0}}(no-op,不 raise)" do
+      owner = user_uri("uat0-owner")
+      target = live_agent("uat0-host", owner, [Target])
+
+      assert {:ok, %{unmounted: 0, failed: 0}} = Mount.unmount_all_for_target(target)
+    end
+  end
+
   describe "mount_for_person/5 + unmount_for_person/3 — 人本位挂载(无 session 轴)" do
     # grantee 轴零改动:mint_cap 本就收任意 URI(人/agent 同款),这里沿用 live_agent
     # 作 grantee 走通 cap 全链;person-scope 的差异全在挂载行的 session 轴上。
@@ -167,6 +224,7 @@ defmodule Ezagent.Socialware.MountTest do
 
       assert eventually(fn -> holds_cap?(grantee, target, :get_tree) end)
       assert {:ok, %{ok: true}} = dispatch(grantee, target, :get_tree)
+
       # 只授了 :get_tree,:add_node 无 cap——strict-verify 口径 :missing_cap(照本文件 session 路同款)
       assert {:error, :missing_cap} = dispatch(grantee, target, :add_node)
     end
