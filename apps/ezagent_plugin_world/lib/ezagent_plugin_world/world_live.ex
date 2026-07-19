@@ -103,26 +103,18 @@ defmodule EzagentPluginWorld.WorldLive do
   end
 
   defp maybe_set_current_session(socket, %{component: "conversation", session_uri: %URI{} = uri}) do
-    # self_join FIRST (admission — a legitimately-admitted new joiner becomes a
-    # member here), THEN gate the live plane on the post-join authorization.
-    socket =
-      socket
-      |> assign(:current_session_uri, uri)
-      |> assign(:current_session_uri_str, encode_uri(uri))
-      |> ConversationActions.self_join(uri)
-
-    caller = Map.get(socket.assigns, :current_entity_uri)
-
-    if SessionReads.authorized?(caller, uri) do
-      socket
-      |> ConversationSessionState.ensure_session_subscribed(uri)
-      |> ConversationActions.push_members()
-    else
-      # Denied deep-link: do NOT subscribe (no live message stream) and do NOT
-      # push the roster. `state_for_route` renders `denied_state`. The broadcast
-      # handler re-checks authorization per message as the robust backstop.
-      socket
-    end
+    # Subscribe UNCONDITIONALLY — subscription is NOT the security boundary,
+    # DELIVERY is: every session-content handler (chat_message, read_marker,
+    # cc_*, push_members) authorizes the caller LIVE before pushing, so a
+    # non-member subscribed here receives nothing, while a first-time member
+    # whose async at-join cap has not yet committed starts receiving the moment
+    # it does — no gate-on-subscribe race, no lock-out until reload. (F3.)
+    socket
+    |> assign(:current_session_uri, uri)
+    |> assign(:current_session_uri_str, encode_uri(uri))
+    |> ConversationSessionState.ensure_session_subscribed(uri)
+    |> ConversationActions.self_join(uri)
+    |> ConversationActions.push_members()
   end
 
   defp maybe_set_current_session(socket, _route), do: socket
@@ -143,13 +135,21 @@ defmodule EzagentPluginWorld.WorldLive do
     do: {:noreply, push_inbound_event(socket, "cc_event", event)}
 
   def handle_info({:cc_connected, bridge_id, entry}, socket) do
-    socket = ConversationActions.push_members(socket)
-    {:noreply, push_inbound_event(socket, "cc_connected", %{bridge_id: bridge_id, entry: entry})}
+    if authorized_for_current_session?(socket) do
+      socket = ConversationActions.push_members(socket)
+      {:noreply, push_inbound_event(socket, "cc_connected", %{bridge_id: bridge_id, entry: entry})}
+    else
+      {:noreply, socket}
+    end
   end
 
   def handle_info({:cc_disconnected, bridge_id}, socket) do
-    socket = ConversationActions.push_members(socket)
-    {:noreply, push_inbound_event(socket, "cc_disconnected", %{bridge_id: bridge_id})}
+    if authorized_for_current_session?(socket) do
+      socket = ConversationActions.push_members(socket)
+      {:noreply, push_inbound_event(socket, "cc_disconnected", %{bridge_id: bridge_id})}
+    else
+      {:noreply, socket}
+    end
   end
 
   def handle_info(:refresh, %{assigns: %{world_state: %{"component" => "pty_terminal"}}} = socket) do
@@ -219,12 +219,21 @@ defmodule EzagentPluginWorld.WorldLive do
     do: {:noreply, ConversationActions.push_members(socket)}
 
   def handle_info({:read_marker_updated, session_uri, user_uri, meta}, socket) do
-    {:noreply,
-     push_inbound_event(socket, "read_marker_updated", %{
-       session_uri: session_uri,
-       user_uri: user_uri,
-       meta: meta
-     })}
+    # A read-marker discloses a member's identity + which message they last read
+    # + when — session content. Only deliver it for the current session AND to an
+    # authorized viewer (a non-member subscribed via a forged `session.switch`
+    # otherwise leaks other members' reading activity). (read-plane-authz F2/#2.)
+    if same_uri?(session_uri, socket.assigns[:current_session_uri]) and
+         authorized_for_current_session?(socket) do
+      {:noreply,
+       push_inbound_event(socket, "read_marker_updated", %{
+         session_uri: session_uri,
+         user_uri: user_uri,
+         meta: meta
+       })}
+    else
+      {:noreply, socket}
+    end
   end
 
   def handle_info({:notification, user_uri, payload}, socket) do
@@ -1024,6 +1033,19 @@ defmodule EzagentPluginWorld.WorldLive do
   end
 
   defp live_message_deliverable?(_socket, _session_uri, _msg), do: false
+
+  # Live authorization for the socket's CURRENT session — the shared delivery-time
+  # gate for session-scoped broadcasts that are not messages (roster/read-marker/
+  # cc-bridge). Fail-closed when there is no current session or the caller is not
+  # authorized. (read-plane-authz F2/#2.)
+  defp authorized_for_current_session?(socket) do
+    caller = Map.get(socket.assigns, :current_entity_uri)
+
+    case socket.assigns[:current_session_uri] do
+      %URI{} = session_uri -> SessionReads.authorized?(caller, session_uri)
+      _ -> false
+    end
+  end
 
   defp same_uri?(%URI{} = left, %URI{} = right), do: URI.to_string(left) == URI.to_string(right)
   defp same_uri?(_, _), do: false

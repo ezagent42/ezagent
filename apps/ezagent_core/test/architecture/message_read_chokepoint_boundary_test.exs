@@ -116,7 +116,16 @@ defmodule EzagentCore.MessageReadChokepointBoundaryTest do
     end
     """
 
-    for src <- [aliased, fully_qualified_split, raw_query] do
+    # The round-2 F3 evasion: a MODULE-QUALIFIED from, not a bare/imported one.
+    qualified_from = """
+    defmodule Sneaky4 do
+      def peek(s) do
+        Ecto.Query.from(m in Ezagent.Message, where: m.session_uri == ^s) |> Ezagent.Repo.all()
+      end
+    end
+    """
+
+    for src <- [aliased, fully_qualified_split, raw_query, qualified_from] do
       assert offenses_in_source(src, "fixture") != [],
              "AST gate must flag a disguised message-store read:\n#{src}"
     end
@@ -189,10 +198,22 @@ defmodule EzagentCore.MessageReadChokepointBoundaryTest do
     end
   end
 
-  # `from(x in <Mod>, ...)` where <Mod> resolves to Ezagent.Message (raw schema query).
+  # `from(x in <Mod>, ...)` — the bare/imported form (`import Ecto.Query`).
   defp offense_for({:from, meta, [{:in, _, [_, modast]} | _]}, aliases) do
     if resolves_to?(modast, [:Ezagent, :Message], aliases) do
       [{line_of(meta), "raw Ecto query over Message — only MessageStore may build one"}]
+    else
+      []
+    end
+  end
+
+  # `<mod>.from(x in <Mod>, ...)` — the QUALIFIED form (`Ecto.Query.from(...)`),
+  # a remote-call AST the bare-`from` clause above does not see. Without this a
+  # presenter could bypass the gate with `Ecto.Query.from(m in Ezagent.Message,
+  # …) |> Repo.all()`. (round-2 F3/#1.)
+  defp offense_for({{:., _, [_mod, :from]}, meta, [{:in, _, [_, modast]} | _]}, aliases) do
+    if resolves_to?(modast, [:Ezagent, :Message], aliases) do
+      [{line_of(meta), "raw Ecto query over Message (qualified from) — only MessageStore may build one"}]
     else
       []
     end
