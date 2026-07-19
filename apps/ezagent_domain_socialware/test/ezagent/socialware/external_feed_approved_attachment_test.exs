@@ -114,13 +114,57 @@ defmodule Ezagent.Socialware.ExternalFeedApprovedAttachmentTest do
 
     _ = commit_message_with_attachment(ctx, approved, :external_visible)
 
-    mint = fn uri -> "tok:" <> EzURI.stable_key(uri) end
+    mint = fn uri, opts -> "tok:" <> EzURI.stable_key(uri) <> ":" <> inspect(opts) end
 
     assert {:ok, "tok:" <> _} =
              ExternalFeed.mint_approved_token(ctx.caller, ctx.session, approved, mint)
 
     assert {:error, :not_approved} =
              ExternalFeed.mint_approved_token(ctx.caller, ctx.session, not_approved, mint)
+  end
+
+  test "mint_approved_token binds the token to the CALLER as grantee (PR-3 person binding)", ctx do
+    ws_name = Ezagent.URI.workspace_name!(ctx.workspace)
+    approved = upload_uri(ws_name, "uuid-bound.pdf")
+
+    _ = commit_message_with_attachment(ctx, approved, :external_visible)
+
+    # The injected signer receives `grantee: caller` — the token is bound to the
+    # ONE principal the approved-only gate authorized.
+    mint = fn _uri, opts -> {:bound, Keyword.get(opts, :grantee)} end
+
+    assert {:ok, {:bound, grantee}} =
+             ExternalFeed.mint_approved_token(ctx.caller, ctx.session, approved, mint)
+
+    assert grantee == ctx.caller
+  end
+
+  test "a minted grantee-bound token verifies to grantee == caller (round-trip via DownloadToken)",
+       ctx do
+    ws_name = Ezagent.URI.workspace_name!(ctx.workspace)
+    approved = upload_uri(ws_name, "uuid-roundtrip.pdf")
+
+    _ = commit_message_with_attachment(ctx, approved, :external_visible)
+
+    assert {:ok, token} =
+             ExternalFeed.mint_approved_token(
+               ctx.caller,
+               ctx.session,
+               approved,
+               &Ezagent.Uploads.DownloadToken.mint!/2
+             )
+
+    assert {:ok, %{uri: uri, grantee: grantee}} =
+             Ezagent.Uploads.DownloadToken.verify_payload(token)
+
+    assert EzURI.stable_key(uri) == EzURI.stable_key(approved)
+    assert grantee == ctx.caller
+    assert Ezagent.Uploads.DownloadToken.grantee_match?(grantee, ctx.caller)
+
+    refute Ezagent.Uploads.DownloadToken.grantee_match?(
+             grantee,
+             EzURI.entity(:team_alpha, :user, "someone-else")
+           )
   end
 
   test "serve-time re-validation: flipping to internal revokes approval", ctx do
