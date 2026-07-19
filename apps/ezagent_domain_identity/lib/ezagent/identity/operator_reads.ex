@@ -20,16 +20,25 @@ defmodule Ezagent.Identity.OperatorReads do
 
   `registry_all/1` takes `caller` FIRST and authorizes BEFORE any read. A
   non-operator / nil / malformed caller gets `{:error, :unauthorized}`
-  (fail-closed) — never a degraded or partial list.
+  (fail-closed) — never a degraded or partial list. The error is
+  PROPAGATED to the caller: the presenter must surface an explicit
+  unauthorized state, never coerce it to an empty table (F5, read-plane
+  PR-4 rework).
 
   ## Authorization predicate
 
-  Delegates to `Ezagent.Identity.admin?/1` — the SAME operator predicate
-  the admin surfaces (`Ezagent.World.AdminData.settings_state/1`) already
-  gate on — so the read-plane and the UI agree on who is an operator.
+  Delegates to `Ezagent.Identity.AdminAuthority.admin?/2` — the SAME
+  4-predicate operator authority the workspace-listing plane
+  (`Ezagent.Workspace.Listing.list_workspaces_for/2`) uses — so a
+  PROMOTED operator (cross-workspace admin cap holder, or a declared
+  `workspace://system` member) is accepted, not just the bootstrap admin
+  URI (F5, read-plane PR-4 rework: the old `Identity.admin?/1`
+  exact-URI-equality gate locked promoted operators out). The caller's
+  caps are loaded LIVE (`Ezagent.EntityCaps.load/1`) so a fresh promotion
+  is seen immediately and a revoked one stops authorizing at once.
   """
 
-  alias Ezagent.Identity
+  alias Ezagent.Identity.AdminAuthority
 
   @doc """
   Authorized GLOBAL registry list-all for `caller`.
@@ -49,7 +58,28 @@ defmodule Ezagent.Identity.OperatorReads do
 
   # ----- authorization (operator cap, fail-closed) ---------------------------
 
-  defp authorize(caller) do
-    if Identity.admin?(caller), do: :ok, else: {:error, :unauthorized}
+  # F5 (read-plane PR-4 rework): `AdminAuthority.admin?/2` — the same
+  # operator-listing predicate the workspace plane uses — over the
+  # caller's LIVE-loaded caps. A malformed caller or a caps-load failure
+  # fails closed to `{:error, :unauthorized}`.
+  defp authorize(%URI{} = caller) do
+    caps = Ezagent.EntityCaps.load(caller)
+
+    if AdminAuthority.admin?(caller, caps) do
+      :ok
+    else
+      {:error, :unauthorized}
+    end
+  rescue
+    _ -> {:error, :unauthorized}
   end
+
+  defp authorize(caller) when is_binary(caller) do
+    case Ezagent.URI.parse(caller) do
+      {:ok, %URI{} = uri} -> authorize(uri)
+      _ -> {:error, :unauthorized}
+    end
+  end
+
+  defp authorize(_caller), do: {:error, :unauthorized}
 end

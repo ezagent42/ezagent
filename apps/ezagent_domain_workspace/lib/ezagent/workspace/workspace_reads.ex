@@ -35,8 +35,17 @@ defmodule Ezagent.Workspace.WorkspaceReads do
        `SessionReads.authorized?/2` predicate — REUSED, never copied; a
        security boundary must not be copy-pasted), OR the session is
        public (`PublicView.web_anon_access?/1`). For an agent: the caller
-       OWNS or MANAGES the agent, OR the agent is visible to workspace
-       members per the existing rule — see `agents/2`.
+       OWNS or MANAGES the agent, OR — ONLY when the CALLER is itself a
+       declared workspace member — the agent is on the workspace's shared
+       roster (a declared member agent). The shared-roster disjunct keys
+       on the CALLER's membership, never the agent's (F2, read-plane
+       PR-4 rework): a cap-scoped non-member gets NO roster.
+    3. REQUIRED facades pre-resolve (F6, read-plane PR-4 rework) —
+       `sessions/2` validates the REQUIRED membership predicate facade
+       (`SessionReads.authorized?/2`) BEFORE fetching/filtering; when it
+       is unavailable the whole read fails closed to `[]` and does NOT
+       fall through to the independent public-session predicate. A down
+       `PublicView` merely means no public rows are added.
 
   ## Dependency direction (runtime DI)
 
@@ -70,6 +79,7 @@ defmodule Ezagent.Workspace.WorkspaceReads do
 
   def sessions(%URI{} = caller, %URI{scheme: "workspace"} = workspace_uri) do
     with :ok <- authorize_workspace(caller, workspace_uri),
+         :ok <- session_reads_available?(),
          {:ok, scoped} <- workspace_scoped_sessions(workspace_uri) do
       Enum.filter(scoped, &visible_to?(caller, &1))
     else
@@ -105,9 +115,15 @@ defmodule Ezagent.Workspace.WorkspaceReads do
        member of the workspace (the existing rule: workspace membership,
        the same membership disjunct SPEC
        2026-05-27-workspace-cap-based-visibility §3.3(a) grants
-       principals, applied to the agent row). A declared member agent is
-       part of the workspace's shared roster; an undeclared agent is
-       private to its owner/managers.
+       principals, applied to the agent row) AND — F2, read-plane PR-4
+       rework — the CALLER is itself a declared workspace member. A
+       declared member agent is part of the workspace's shared roster,
+       visible to the workspace's members only; an undeclared agent is
+       private to its owner/managers. Keying the disjunct on the
+       CALLER's membership closes the bypass where a principal holding
+       any one narrow workspace-scoped cap (which admits the workspace
+       into their `list_workspaces_for/2` visible set) could read the
+       WHOLE shared roster without any relationship to it.
 
   Fail-closed: a nil/malformed/unauthorized caller, a non-workspace
   scope, or an unavailable agent-listing facade all return `[]`.
@@ -119,13 +135,45 @@ defmodule Ezagent.Workspace.WorkspaceReads do
     with :ok <- authorize_workspace(caller, workspace_uri),
          {:ok, scoped} <- workspace_scoped_agents(workspace_uri) do
       members = workspace_member_uris(workspace_uri)
-      Enum.filter(scoped, &agent_visible_to?(caller, &1, members))
+      caller_is_member = caller_declared_member?(caller, members)
+      Enum.filter(scoped, &agent_visible_to?(caller, &1, members, caller_is_member))
     else
       _ -> []
     end
   end
 
   def agents(_caller, _workspace_uri), do: []
+
+  @doc """
+  Is `caller` authorized for workspace-scoped LIST reads in
+  `workspace_uri`?
+
+  This is the SAME workspace-level gate `sessions/2` and `agents/2`
+  apply BEFORE any read (well-formed identity principal AND the
+  workspace inside the caller's cap-derived visible set). Exposed so the
+  sibling caller-authorizing list chokepoints
+  (`Ezagent.Workspace.UserReads`, `Ezagent.Session.TemplateReads`) reuse
+  the one predicate instead of copy-pasting a security boundary.
+  """
+  @spec authorized_workspace?(URI.t() | term(), URI.t() | term()) :: boolean()
+  def authorized_workspace?(caller, workspace_uri) do
+    authorize_workspace(caller, workspace_uri) == :ok
+  end
+
+  @doc """
+  Is `caller` a DECLARED member of `workspace_uri` (present in the
+  workspace store's member list)?
+
+  A point check (NOT an enumeration) — the caller's own membership, the
+  same fact `agents/2` computes once per call to gate the shared-roster
+  disjunct (F2). Read live from the workspace store on every call.
+  """
+  @spec declared_member?(URI.t() | term(), URI.t() | term()) :: boolean()
+  def declared_member?(%URI{} = caller, %URI{scheme: "workspace"} = workspace_uri) do
+    caller_declared_member?(caller, workspace_member_uris(workspace_uri))
+  end
+
+  def declared_member?(_caller, _workspace_uri), do: false
 
   # ----- workspace authorization (BEFORE any read) ----------------------
 
@@ -178,6 +226,23 @@ defmodule Ezagent.Workspace.WorkspaceReads do
 
   defp visible_to?(%URI{} = caller, %URI{} = session_uri) do
     member_or_owner?(caller, session_uri) or public_session?(session_uri)
+  end
+
+  # F6 (read-plane PR-4 rework) — the membership predicate facade is a
+  # REQUIRED dependency of `sessions/2`: resolve and validate it BEFORE
+  # the base listing is fetched/filtered. Unavailable → the whole read
+  # fails closed to `[]` at the `with` — we do NOT fall through to the
+  # independent public-session predicate (a public row is not a
+  # substitute for the membership check). A down `PublicView` facade is
+  # NOT required: it only means no public rows are added.
+  defp session_reads_available? do
+    facade = session_reads_facade()
+
+    if Code.ensure_loaded?(facade) and function_exported?(facade, :authorized?, 2) do
+      :ok
+    else
+      {:error, {:session_reads_unavailable, facade}}
+    end
   end
 
   # The SHARED live-first owner/member predicate from the conversation
@@ -239,15 +304,29 @@ defmodule Ezagent.Workspace.WorkspaceReads do
     )
   end
 
-  # ----- per-row agent visibility (owns OR manages OR declared member) --
+  # ----- per-row agent visibility (owns OR manages OR shared roster) --
 
-  defp agent_visible_to?(%URI{} = caller, %URI{} = agent_uri, members) do
+  # F2 (read-plane PR-4 rework): the shared-roster disjunct is gated on
+  # the CALLER's declared workspace membership (`caller_is_member`,
+  # computed ONCE per `agents/2` call) — never on the agent's own
+  # membership alone. Owns/manages disjuncts are unchanged: an owner or
+  # manager sees their agent WITHOUT needing workspace membership.
+  defp agent_visible_to?(%URI{} = caller, %URI{} = agent_uri, members, caller_is_member) do
     owns_agent?(caller, agent_uri) or manages_agent?(caller, agent_uri) or
-      declared_workspace_member?(agent_uri, members)
+      (caller_is_member and declared_workspace_member?(agent_uri, members))
   end
 
   # A malformed row is never visible (fail closed).
-  defp agent_visible_to?(_caller, _row, _members), do: false
+  defp agent_visible_to?(_caller, _row, _members, _caller_is_member), do: false
+
+  # The CALLER's own declared membership (F2). Same membership fact as
+  # `declared_workspace_member?/2`, named for the caller side so the
+  # per-row predicate reads as the caller→workspace relationship it is.
+  defp caller_declared_member?(%URI{} = caller, members) when is_list(members) do
+    declared_workspace_member?(caller, members)
+  end
+
+  defp caller_declared_member?(_caller, _members), do: false
 
   # OWNS — the caller is the agent's creator per the existing data-owner
   # rule. `data_owner/1` never raises on a cold/unknown agent (the

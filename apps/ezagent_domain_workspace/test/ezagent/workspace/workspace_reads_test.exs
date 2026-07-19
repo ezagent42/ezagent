@@ -44,7 +44,15 @@ defmodule Ezagent.Workspace.WorkspaceReadsTest do
 
   defmodule FakePublicView do
     @moduledoc false
-    def web_anon_access?(%URI{}), do: false
+    def web_anon_access?(%URI{} = session_uri) do
+      session_uri in Process.get({:fake_public_view, :public}, [])
+    end
+  end
+
+  # A facade that does NOT export the required `authorized?/2` — the F6
+  # DI-loss case: the membership predicate is unavailable.
+  defmodule DefunctSessionReads do
+    @moduledoc false
   end
 
   defmodule FakeAgentListing do
@@ -102,6 +110,7 @@ defmodule Ezagent.Workspace.WorkspaceReadsTest do
     end)
 
     {:ok,
+     ws_name: ws_name,
      workspace_uri: workspace_uri,
      session_x: session_x,
      agent_x: agent_x,
@@ -151,5 +160,98 @@ defmodule Ezagent.Workspace.WorkspaceReadsTest do
     # though the workspace-scoped listing is non-empty.
     assert WorkspaceReads.agents(outsider_uri, workspace_uri) == []
     assert WorkspaceReads.agents(nil, workspace_uri) == []
+  end
+
+  test "agents/2: F2 — a cap-scoped NON-member gets [] for the shared roster (was: full roster); a declared-member caller sees the roster",
+       %{
+         ws_name: ws_name,
+         workspace_uri: workspace_uri,
+         session_x: session_x,
+         agent_x: agent_x,
+         member_uri: member_uri,
+         nonmember_uri: nonmember_uri
+       } do
+    # Agent X is a DECLARED workspace member → it is on the shared roster.
+    {:ok, _} =
+      Ezagent.Workspace.Store.update_members(ws_name, [member_uri, nonmember_uri, agent_x])
+
+    # A declared workspace member who neither OWNS nor MANAGES X sees it via
+    # the shared-roster disjunct (the CALLER's membership admits the row).
+    assert WorkspaceReads.agents(nonmember_uri, workspace_uri) == [agent_x]
+
+    # The F2 bypass principal: OUTSIDE the workspace's declared members but
+    # holding ONE narrow workspace-scoped cap (which admits the workspace
+    # into their `list_workspaces_for/2` visible set, passing the coarse
+    # workspace gate). Pre-fix this caller got the WHOLE shared roster
+    # ([agent_x]); the shared-roster disjunct must key on the CALLER's
+    # membership, so now they get [].
+    cap_outsider = URI.new!("entity://#{ws_name}/user/cap-outsider")
+    {:ok, _row} = Ezagent.Users.create_read_only(cap_outsider, [])
+    {:ok, _pid} = Ezagent.Kind.spawn(User, %{uri: cap_outsider, initial_caps: MapSet.new()})
+
+    :ok =
+      Ezagent.EntityCaps.grant(
+        cap_outsider,
+        signed_session_send_cap(session_x, workspace_uri, cap_outsider)
+      )
+
+    assert WorkspaceReads.agents(cap_outsider, workspace_uri) == []
+
+    # Sanity: the cap IS what lets the outsider through the workspace gate
+    # (without it the test would pass vacuously) — the caller IS
+    # workspace-authorized, just not a declared member.
+    assert WorkspaceReads.authorized_workspace?(cap_outsider, workspace_uri)
+    refute WorkspaceReads.declared_member?(cap_outsider, workspace_uri)
+  end
+
+  test "sessions/2: F6 — an unavailable membership facade fails closed to [] (NO public-predicate fallthrough)",
+       %{
+         workspace_uri: workspace_uri,
+         session_x: session_x,
+         member_uri: member_uri
+       } do
+    # The membership predicate facade is DOWN; the public predicate WOULD
+    # admit the row. Strict fail-closed: the whole read returns [] BEFORE
+    # filtering — a public row is not a substitute for the membership check.
+    Application.put_env(:ezagent_domain_workspace, :session_reads_facade, DefunctSessionReads)
+    Process.put({:fake_public_view, :public}, [session_x])
+
+    on_exit(fn ->
+      Application.put_env(:ezagent_domain_workspace, :session_reads_facade, FakeSessionReads)
+    end)
+
+    assert WorkspaceReads.sessions(member_uri, workspace_uri) == []
+  end
+
+  test "sessions/2: a PUBLIC session stays visible to a workspace non-member when the membership facade is healthy",
+       %{
+         workspace_uri: workspace_uri,
+         session_x: session_x,
+         nonmember_uri: nonmember_uri
+       } do
+    Process.put({:fake_public_view, :public}, [session_x])
+
+    # `nonmember_uri` is a workspace member but NOT a member of X; X is
+    # public, so the public disjunct admits it (the membership facade is
+    # healthy — F6 only closes the read when it is DOWN).
+    assert WorkspaceReads.sessions(nonmember_uri, workspace_uri) == [session_x]
+  end
+
+  # A narrow workspace-scoped session-send cap for `grantee` — admits the
+  # workspace into the grantee's `list_workspaces_for/2` visible set
+  # WITHOUT granting any agent owns/manages relationship.
+  defp signed_session_send_cap(session_uri, workspace_uri, grantee) do
+    requested =
+      Ezagent.Capability.cap(
+        :session,
+        Ezagent.ActionSet.Session,
+        :send,
+        session_uri,
+        workspace_uri
+      )
+
+    Ezagent.Test.CapHelper.with_test_authority(session_uri, :session, fn authority ->
+      Ezagent.Test.CapHelper.authority_signed_cap!(authority, grantee, requested)
+    end)
   end
 end
