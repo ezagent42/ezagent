@@ -333,4 +333,38 @@ defmodule Ezagent.Socialware.SessionReadsTest do
       Ezagent.Capability.workspace_of(session_uri)
     )
   end
+
+  # ----- (4) :chat_feed view (ChatFeed's snapshot read via the chokepoint) ---
+
+  describe "the :chat_feed view (ChatFeed's snapshot read)" do
+    test "a non-member ChatFeed read is REJECTED" do
+      session = spawn_session()
+      write(session, "secret")
+
+      assert {:error, :unauthorized} =
+               SessionReads.messages(@stranger, session, :chat_feed, %{limit: 50})
+    end
+
+    test "a member gets the byte-identical chat recency window (post-migration parity)" do
+      session = spawn_session()
+      write(session, "one")
+      write(session, "two")
+
+      member =
+        Ezagent.URI.entity(:team_alpha, :user, "sr-cf-#{System.unique_integer([:positive])}")
+
+      :ok = spawn_user(member, User.initial_caps_for_spawn(member))
+
+      # Not yet a member → the ChatFeed read is denied.
+      assert {:error, :unauthorized} =
+               SessionReads.messages(member, session, :chat_feed, %{limit: 50})
+
+      assert {:ok, _} = join(session, member)
+
+      # The chokepoint read is byte-identical to the direct store read ChatFeed
+      # made before the migration.
+      assert {:ok, messages} = SessionReads.messages(member, session, :chat_feed, %{limit: 50})
+      assert messages == MessageStore.chat_visible_recent(session, 50)
+    end
+  end
 end

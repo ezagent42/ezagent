@@ -58,7 +58,7 @@ defmodule Ezagent.Socialware.SessionReads do
   alias Ezagent.Session.Membership
 
   @typedoc "Fixed view enum — selects a query SHAPE, never widens VISIBILITY."
-  @type view :: :conversation
+  @type view :: :conversation | :chat_feed
 
   @typedoc """
   Pagination options. `:limit` bounds the batch; an `:older_than` cursor
@@ -83,6 +83,9 @@ defmodule Ezagent.Socialware.SessionReads do
   row-policy is decided internally from the caller's caps (§ moduledoc), so the
   `:conversation` view routes to `recent_visible_in_session`/`recent_in_session`
   (initial) or `older_visible_than`/`older_than` (pagination) accordingly.
+  The `:chat_feed` view (ChatFeed's snapshot read) routes to
+  `chat_visible_recent/2` — the external-visible chat recency window,
+  byte-identical to ChatFeed's pre-consolidation direct store read.
   """
   @spec messages(URI.t() | term(), URI.t(), view(), page_opts()) ::
           {:ok, [Ezagent.Message.t()]} | {:error, :unauthorized}
@@ -91,6 +94,12 @@ defmodule Ezagent.Socialware.SessionReads do
   def messages(caller, %URI{} = session_uri, :conversation, page_opts) when is_map(page_opts) do
     with :ok <- authorize(caller, session_uri) do
       {:ok, conversation_read(session_uri, read_unfiltered?(caller, session_uri), page_opts)}
+    end
+  end
+
+  def messages(caller, %URI{} = session_uri, :chat_feed, page_opts) when is_map(page_opts) do
+    with :ok <- authorize(caller, session_uri) do
+      {:ok, chat_feed_read(session_uri, page_opts)}
     end
   end
 
@@ -168,6 +177,16 @@ defmodule Ezagent.Socialware.SessionReads do
     else
       MessageStore.older_visible_than(session_uri, cursor, limit)
     end
+  end
+
+  # ----- :chat_feed view routing (ChatFeed's snapshot read) ------------------
+
+  # The chat feed projects ONLY :external_visible messages: its read is the chat
+  # recency window `chat_visible_recent/2` — byte-identical to the direct store
+  # call ChatFeed made before consolidating onto this chokepoint.
+  defp chat_feed_read(%URI{} = session_uri, %{limit: limit})
+       when is_integer(limit) and limit > 0 do
+    MessageStore.chat_visible_recent(session_uri, limit)
   end
 
   # ----- :read_unfiltered row-policy (sourced from the caller's live caps) ---
