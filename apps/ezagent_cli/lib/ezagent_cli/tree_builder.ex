@@ -103,7 +103,13 @@ defmodule EzagentCli.TreeBuilder do
 
   defp action_subcommand(_kind_module, type_name, behavior_module, action) do
     interface = behavior_module.interface()[action] || %{}
-    args_spec = Map.get(interface, :args, %{})
+
+    args_spec =
+      case Map.get(interface, :args, %{}) do
+        {:closed_map, schema} -> schema
+        schema -> schema
+      end
+
     modes = Map.get(interface, :modes, [:call])
 
     # Instance arg: --<type_name> required

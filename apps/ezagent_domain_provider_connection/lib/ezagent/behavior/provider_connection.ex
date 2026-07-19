@@ -14,17 +14,19 @@ defmodule Ezagent.ActionSet.ProviderConnection do
   ]
 
   action(:begin_authorization,
-    args: %{
-      connection_id: :string,
-      provider_id: :string,
-      governed_host: :string,
-      acquisition_method: :string,
-      execution_identity: :string,
-      requested_permissions_digest: :string,
-      redirect_uri_id: :string,
-      correlation_id: :string,
-      callback_artifact: {:struct, Ezagent.Capability}
-    },
+    args:
+      {:closed_map,
+       %{
+         connection_id: :string,
+         provider_id: :string,
+         governed_host: :string,
+         acquisition_method: :string,
+         execution_identity: :string,
+         requested_permissions_digest: :string,
+         redirect_uri_id: :string,
+         correlation_id: :string,
+         callback_artifact: {:struct, Ezagent.Capability}
+       }},
     returns: %{attempt_ref: :string, authorization_url: :string, expires_at: :string},
     caps: [{:begin_authorization, kind: :user}],
     data_owner: :self,
@@ -33,7 +35,7 @@ defmodule Ezagent.ActionSet.ProviderConnection do
   )
 
   action(:consume_callback,
-    args: %{attempt_ref: :string, callback: :map, correlation_id: :string},
+    args: {:closed_map, %{attempt_ref: :string, callback: :map, correlation_id: :string}},
     returns: %{connection_id: :string, status: :string, version: :integer},
     caps: [{:consume_callback, kind: :user}],
     data_owner: :self,
@@ -42,11 +44,13 @@ defmodule Ezagent.ActionSet.ProviderConnection do
   )
 
   action(:reauthorize,
-    args: %{
-      connection_id: :string,
-      expected_version: :integer,
-      assurance: {:struct, Ezagent.ProviderConnection.Assurance}
-    },
+    args:
+      {:closed_map,
+       %{
+         connection_id: :string,
+         expected_version: :integer,
+         assurance: {:struct, Ezagent.ProviderConnection.Assurance}
+       }},
     returns: %{attempt_ref: :string, authorization_url: :string, expires_at: :string},
     caps: [{:reauthorize, kind: :user}],
     data_owner: :self,
@@ -55,7 +59,9 @@ defmodule Ezagent.ActionSet.ProviderConnection do
   )
 
   action(:refresh,
-    args: %{connection_id: :string, expected_version: :integer, correlation_id: :string},
+    args:
+      {:closed_map,
+       %{connection_id: :string, expected_version: :integer, correlation_id: :string}},
     returns: %{connection_id: :string, status: :string, version: :integer},
     caps: [{:refresh, kind: :user}],
     data_owner: :self,
@@ -64,11 +70,13 @@ defmodule Ezagent.ActionSet.ProviderConnection do
   )
 
   action(:revoke,
-    args: %{
-      connection_id: :string,
-      expected_version: :integer,
-      assurance: {:struct, Ezagent.ProviderConnection.Assurance}
-    },
+    args:
+      {:closed_map,
+       %{
+         connection_id: :string,
+         expected_version: :integer,
+         assurance: {:struct, Ezagent.ProviderConnection.Assurance}
+       }},
     returns: %{connection_id: :string, status: :string, version: :integer},
     caps: [{:revoke, kind: :user}],
     data_owner: :self,
@@ -77,11 +85,13 @@ defmodule Ezagent.ActionSet.ProviderConnection do
   )
 
   action(:disconnect,
-    args: %{
-      connection_id: :string,
-      expected_version: :integer,
-      assurance: {:struct, Ezagent.ProviderConnection.Assurance}
-    },
+    args:
+      {:closed_map,
+       %{
+         connection_id: :string,
+         expected_version: :integer,
+         assurance: {:struct, Ezagent.ProviderConnection.Assurance}
+       }},
     returns: %{connection_id: :string, status: :string, version: :integer},
     caps: [{:disconnect, kind: :user}],
     data_owner: :self,
@@ -90,7 +100,7 @@ defmodule Ezagent.ActionSet.ProviderConnection do
   )
 
   action(:read_connection,
-    args: %{connection_id: :string},
+    args: {:closed_map, %{connection_id: :string}},
     returns: %{connection: :map},
     caps: [{:read_connection, kind: :user}],
     data_owner: :self,
@@ -110,26 +120,28 @@ defmodule Ezagent.ActionSet.ProviderConnection do
 
   @doc false
   def handle_begin_authorization(args, ctx) do
-    case Map.get(args, :callback_artifact) do
-      %Ezagent.Capability{} = artifact ->
-        with :ok <- validate_callback_artifact(artifact, ctx) do
-          invoke_boundary(:begin_authorization, args, ctx)
-        end
+    with {:ok, command} <- sanitize_command(:begin_authorization, args) do
+      case Map.get(command, :callback_artifact) do
+        %Ezagent.Capability{} = artifact ->
+          with :ok <- validate_callback_artifact(artifact, ctx) do
+            invoke_boundary(:begin_authorization, command, ctx)
+          end
 
-      nil ->
-        {:error, :callback_artifact_required}
+        nil ->
+          {:error, :callback_artifact_required}
 
-      _malformed ->
-        {:error, :invalid_callback_artifact}
+        _malformed ->
+          {:error, :invalid_callback_artifact}
+      end
     end
   end
 
   @doc false
-  def handle_consume_callback(args, ctx), do: invoke_boundary(:consume_callback, args, ctx)
+  def handle_consume_callback(args, ctx), do: handle_command(:consume_callback, args, ctx)
   @doc false
-  def handle_refresh(args, ctx), do: invoke_boundary(:refresh, args, ctx)
+  def handle_refresh(args, ctx), do: handle_command(:refresh, args, ctx)
   @doc false
-  def handle_read_connection(args, ctx), do: invoke_boundary(:read_connection, args, ctx)
+  def handle_read_connection(args, ctx), do: handle_command(:read_connection, args, ctx)
 
   @doc false
   def handle_reauthorize(args, ctx), do: handle_destructive(:reauthorize, args, ctx)
@@ -151,10 +163,29 @@ defmodule Ezagent.ActionSet.ProviderConnection do
   def data_owner(_), do: :no_owner
 
   defp handle_destructive(action, args, ctx) do
-    with :ok <- validate_assurance(action, args, ctx) do
-      invoke_boundary(action, args, ctx)
+    with {:ok, command} <- sanitize_command(action, args),
+         :ok <- validate_assurance(action, command, ctx) do
+      invoke_boundary(action, command, ctx)
     end
   end
+
+  defp handle_command(action, args, ctx) do
+    with {:ok, command} <- sanitize_command(action, args) do
+      invoke_boundary(action, command, ctx)
+    end
+  end
+
+  defp sanitize_command(action, args) when is_map(args) do
+    {:closed_map, schema} = __action_spec__(action).args
+
+    case Ezagent.InterfaceValidator.validate(args, {:closed_map, schema}) do
+      :ok -> {:ok, Map.take(args, Map.keys(schema))}
+      {:error, _} = error -> error
+    end
+  end
+
+  defp sanitize_command(_action, _args),
+    do: {:error, {:invalid_args, [{[], :expected_map}]}}
 
   defp validate_callback_artifact(artifact, %{self_uri: owner} = ctx) do
     workspace = Ezagent.Capability.workspace_of(owner)

@@ -131,7 +131,7 @@ defmodule Ezagent.ActionSet.ProviderConnectionTest do
 
     for {action, {args, returns}} <- expected do
       spec = ProviderConnection.__action_spec__(action)
-      assert spec.args == args
+      assert spec.args == {:closed_map, args}
       assert spec.returns == returns
       assert spec.data_owner == :self
     end
@@ -183,15 +183,36 @@ defmodule Ezagent.ActionSet.ProviderConnectionTest do
       for artifact <- [tampered, wrong_grantee | signed_wrong] do
         assert {:error, _} =
                  ProviderConnection.handle_begin_authorization(
-                   %{callback_artifact: artifact},
+                   Map.put(
+                     direct_args(:begin_authorization, owner),
+                     :callback_artifact,
+                     artifact
+                   ),
                    ctx
                  )
 
         refute_received {:boundary, _}
       end
 
+      secret = "direct-callback-artifact-secret-sentinel"
+
+      for forged <- [Map.put(valid, :unsigned_extra, secret), Map.delete(valid, :signature)] do
+        assert {:error, {:invalid_args, _}} =
+                 result =
+                 ProviderConnection.handle_begin_authorization(
+                   Map.put(direct_args(:begin_authorization, owner), :callback_artifact, forged),
+                   ctx
+                 )
+
+        refute inspect(result) =~ secret
+        refute_received {:boundary, _}
+      end
+
       assert {:ok, :accepted} =
-               ProviderConnection.handle_begin_authorization(%{callback_artifact: valid}, ctx)
+               ProviderConnection.handle_begin_authorization(
+                 Map.put(direct_args(:begin_authorization, owner), :callback_artifact, valid),
+                 ctx
+               )
 
       assert_received {:boundary, :begin_authorization}
     end)
@@ -203,13 +224,49 @@ defmodule Ezagent.ActionSet.ProviderConnectionTest do
 
     for args <- [
           %{},
-          %{callback_artifact: nil},
-          %{callback_artifact: %{}},
-          %{callback_artifact: %{grantee_uri: owner}},
-          %{callback_artifact: "not-an-artifact"}
+          Map.put(direct_args(:begin_authorization, owner), :callback_artifact, nil),
+          Map.put(direct_args(:begin_authorization, owner), :callback_artifact, %{}),
+          Map.put(direct_args(:begin_authorization, owner), :callback_artifact, %{
+            grantee_uri: owner
+          }),
+          Map.put(
+            direct_args(:begin_authorization, owner),
+            :callback_artifact,
+            "not-an-artifact"
+          )
         ] do
       assert {:error, reason} = ProviderConnection.handle_begin_authorization(args, ctx)
-      assert reason in [:callback_artifact_required, :invalid_callback_artifact]
+      assert match?({:invalid_args, _}, reason)
+    end
+  end
+
+  test "all direct handlers reject extra top-level command keys before boundaries" do
+    parent = self()
+    owner = Ezagent.URI.user(:team_alpha, :direct_closed_owner)
+    ctx = %{self_uri: owner, caller: owner}
+    secret = "direct-command-secret-sentinel"
+
+    Application.put_env(:ezagent_domain_provider_connection, :command_boundary, fn action, _, _ ->
+      send(parent, {:boundary, action})
+      {:ok, :accepted}
+    end)
+
+    on_exit(fn ->
+      Application.delete_env(:ezagent_domain_provider_connection, :command_boundary)
+    end)
+
+    for action <- @actions do
+      handler = String.to_existing_atom("handle_#{action}")
+
+      assert {:error, {:invalid_args, _}} =
+               result =
+               apply(ProviderConnection, handler, [
+                 Map.put(direct_args(action, owner), :unsigned_extra, secret),
+                 ctx
+               ])
+
+      refute inspect(result) =~ secret
+      refute_received {:boundary, _}
     end
   end
 
@@ -344,13 +401,23 @@ defmodule Ezagent.ActionSet.ProviderConnectionTest do
     assert {:error, :invalid_assurance_shape} = Assurance.new(Map.put(attrs, :trusted, true))
     assert {:error, :invalid_assurance} = Assurance.new(Map.put(attrs, :status, :unknown))
 
-    assert {:error, :invalid_assurance} =
+    assert {:error, {:invalid_args, _}} =
              ProviderConnection.handle_revoke(
                %{connection_id: "connection-1", expected_version: 1, assurance: attrs},
                %{self_uri: owner, caller: grantee}
              )
 
     assert assurance.__struct__ == Assurance
+
+    secret = "assurance-struct-secret-sentinel"
+
+    for forged <- [
+          Map.put(assurance, :unsigned_extra, secret),
+          Map.delete(assurance, :signature)
+        ] do
+      assert {:error, :invalid_assurance} = result = Assurance.validate(forged)
+      refute inspect(result) =~ secret
+    end
   end
 
   test "destructive owner commands fail closed unless assurance is explicitly accepted" do
@@ -424,10 +491,10 @@ defmodule Ezagent.ActionSet.ProviderConnectionTest do
       handler = String.to_existing_atom("handle_#{action}")
 
       assert {:error, :provider_connection_orchestration_not_implemented} =
-               apply(ProviderConnection, handler, [%{}, ctx])
+               apply(ProviderConnection, handler, [direct_args(action, ctx.self_uri), ctx])
     end
 
-    assert {:error, :callback_artifact_required} =
+    assert {:error, {:invalid_args, _}} =
              ProviderConnection.handle_begin_authorization(%{}, ctx)
   end
 
@@ -450,4 +517,28 @@ defmodule Ezagent.ActionSet.ProviderConnectionTest do
 
     assurance
   end
+
+  defp direct_args(:begin_authorization, _owner),
+    do: %{
+      connection_id: "connection-1",
+      provider_id: "github",
+      governed_host: "github.com",
+      acquisition_method: "oauth",
+      execution_identity: "owner",
+      requested_permissions_digest: "digest",
+      redirect_uri_id: "callback",
+      correlation_id: "correlation-1",
+      callback_artifact: %{}
+    }
+
+  defp direct_args(:consume_callback, _owner),
+    do: %{attempt_ref: "attempt-1", callback: %{}, correlation_id: "correlation-1"}
+
+  defp direct_args(action, owner) when action in [:reauthorize, :revoke, :disconnect],
+    do: %{connection_id: "connection-1", expected_version: 1, assurance: assurance(owner, owner)}
+
+  defp direct_args(:refresh, _owner),
+    do: %{connection_id: "connection-1", expected_version: 1, correlation_id: "correlation-1"}
+
+  defp direct_args(:read_connection, _owner), do: %{connection_id: "connection-1"}
 end

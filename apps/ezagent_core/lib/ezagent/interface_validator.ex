@@ -12,6 +12,8 @@ defmodule Ezagent.InterfaceValidator do
   - `:uri` — `%URI{}` struct (Phase 2: Message envelope identity fields
     are typed URIs, not bare strings — see DECISIONS §interface-validator-uri)
   - `{:struct, Module}` — an exact struct type for closed domain evidence
+  - `{:closed_map, %{field => ty, ...}}` — a record shape that also rejects
+    undeclared keys; plain map schemas retain their existing open-map semantics
   - `{:list, ty}` — homogeneous list
   - `{:tuple, [ty1, ty2, ...]}` — fixed-arity tuple
   - `{:option, ty}` — `nil` or `ty`
@@ -33,6 +35,7 @@ defmodule Ezagent.InterfaceValidator do
           | :term
           | :uri
           | {:struct, module()}
+          | {:closed_map, %{optional(atom()) => type_spec()}}
           | {:list, type_spec()}
           | {:tuple, [type_spec()]}
           | {:option, type_spec()}
@@ -47,21 +50,36 @@ defmodule Ezagent.InterfaceValidator do
   in `args`; otherwise `{:error, {:invalid_args, violations}}` listing
   every problem found (so callers see all failures, not just the first).
   """
-  @spec validate(map(), map()) :: :ok | {:error, {:invalid_args, [violation()]}}
+  @spec validate(map(), map() | {:closed_map, map()}) ::
+          :ok | {:error, {:invalid_args, [violation()]}}
+  def validate(args, {:closed_map, schema}) when is_map(args) and is_map(schema) do
+    validate_schema(args, schema, [], true)
+  end
+
   def validate(args, schema) when is_map(args) and is_map(schema) do
+    validate_schema(args, schema, [], false)
+  end
+
+  defp validate_schema(value, schema, path, closed?) do
     violations =
-      schema
-      |> Enum.flat_map(fn {field, ty} ->
-        case check(Map.get(args, field, :__missing__), ty, [field]) do
-          :ok -> []
-          {:error, vs} -> vs
-        end
-      end)
+      closed_map_violations(value, schema, path, closed?) ++
+        Enum.flat_map(schema, fn {field, ty} ->
+          case check(Map.get(value, field, :__missing__), ty, path ++ [field]) do
+            :ok -> []
+            {:error, vs} -> vs
+          end
+        end)
 
     case violations do
       [] -> :ok
       _ -> {:error, {:invalid_args, violations}}
     end
+  end
+
+  defp closed_map_violations(_value, _schema, _path, false), do: []
+
+  defp closed_map_violations(value, schema, path, true) do
+    if Map.keys(value) -- Map.keys(schema) == [], do: [], else: [{path, :unexpected_fields}]
   end
 
   # --- Recursive type check ----------------------------------------------
@@ -80,7 +98,14 @@ defmodule Ezagent.InterfaceValidator do
   # `{:option, :term}`), so `:term` relaxes the VALUE check, not presence.
   defp check(_value, :term, _path), do: :ok
   defp check(%URI{} = _value, :uri, _path), do: :ok
-  defp check(value, {:struct, module}, _path) when is_struct(value, module), do: :ok
+
+  defp check(value, {:struct, module}, path) when is_atom(module) and is_map(value) do
+    if exact_struct?(value, module) do
+      :ok
+    else
+      {:error, [{path, {:invalid_struct, module}}]}
+    end
+  end
 
   defp check(nil, {:option, _ty}, _path), do: :ok
   defp check(value, {:option, ty}, path), do: check(value, ty, path)
@@ -117,6 +142,13 @@ defmodule Ezagent.InterfaceValidator do
     end
   end
 
+  defp check(value, {:closed_map, schema}, path) when is_map(value) and is_map(schema) do
+    case validate_schema(value, schema, path, true) do
+      :ok -> :ok
+      {:error, {:invalid_args, violations}} -> {:error, violations}
+    end
+  end
+
   defp check(value, ty, path) when is_map(ty) and is_map(value) do
     violations =
       ty
@@ -132,6 +164,19 @@ defmodule Ezagent.InterfaceValidator do
 
   defp check(value, ty, path),
     do: {:error, [{path, {:type_mismatch, expected: ty, got: value}}]}
+
+  defp exact_struct?(value, module) do
+    Map.get(value, :__struct__) == module and function_exported?(module, :__struct__, 0) and
+      exact_struct_keys?(value, module)
+  end
+
+  defp exact_struct_keys?(value, module) do
+    MapSet.new(Map.keys(value)) == MapSet.new(Map.keys(module.__struct__()))
+  rescue
+    _ -> false
+  catch
+    _, _ -> false
+  end
 
   # --- @interface action-map shape check ---------------------------------
 

@@ -34,6 +34,7 @@ defmodule Ezagent.ProviderConnection.Assurance do
         }
 
   @keys MapSet.new(@enforce_keys)
+  @struct_keys MapSet.put(@keys, :__struct__)
 
   @doc "Constructs assurance evidence only when its closed shape and values are valid."
   @spec new(map()) :: {:ok, t()} | {:error, :invalid_assurance_shape | :invalid_assurance}
@@ -49,14 +50,22 @@ defmodule Ezagent.ProviderConnection.Assurance do
 
   @doc "Revalidates a struct at the trust boundary so struct updates cannot bypass construction."
   @spec validate(t()) :: :ok | {:error, :invalid_assurance}
-  def validate(%__MODULE__{} = assurance) do
+  def validate(%{__struct__: __MODULE__} = assurance) do
+    if MapSet.new(Map.keys(assurance)) != @struct_keys do
+      {:error, :invalid_assurance}
+    else
+      validate_exact(assurance)
+    end
+  end
+
+  def validate(_assurance), do: {:error, :invalid_assurance}
+
+  defp validate_exact(assurance) do
     case assurance |> Map.from_struct() |> build() do
       {:ok, ^assurance} -> :ok
       _ -> {:error, :invalid_assurance}
     end
   end
-
-  def validate(_assurance), do: {:error, :invalid_assurance}
 
   defp build(
          %{
