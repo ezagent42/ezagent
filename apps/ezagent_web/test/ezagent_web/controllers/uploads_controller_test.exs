@@ -326,6 +326,107 @@ defmodule EzagentWeb.UploadsControllerTest do
     end
   end
 
+  describe "GET /uploads/download?token= — PR-3 person-bound grantee" do
+    test "#9 kanban-403 GONE: a legit member (non-uploader, non-participant) downloads with a token bound to THEM",
+         %{conn: conn} do
+      # The kanban-403 bug: a legit workspace member reading a cap-gated kanban
+      # board got a download link for a board artifact, but the serve-time
+      # legacy participation recheck 403'd them (they never uploaded nor
+      # messaged in the attaching session). The board's authorized mint now
+      # binds the token to the member (grantee), and caller==grantee supersedes
+      # the legacy recheck → 200.
+      filename = uploaded_filename()
+      uploader = user_uri(@workspace_name, "alice-#{uniq()}")
+      member = user_uri(@workspace_name, "kanban-member-#{uniq()}")
+      {uri, content, _session} = upload_and_attach(@workspace_name, uploader, filename)
+
+      token = DownloadToken.mint!(uri, ttl_seconds: 60, grantee: member)
+
+      conn =
+        conn
+        |> sign_in(@workspace_name, member)
+        |> get(~p"/uploads/download?token=#{token}")
+
+      assert conn.status == 200
+      assert conn.resp_body == content
+    end
+
+    test "AUTHZ-REJECTION: a leaked grantee-bound token replayed by a NON-grantee is rejected " <>
+           "(even one who would pass the legacy participant recheck)",
+         %{conn: conn} do
+      # The headline PR-3 property: the person binding, not the legacy recheck,
+      # rejects the replay — bob IS a session participant (the legacy recheck
+      # would SERVE him), but the token was bound to alice, so bob's replay is
+      # a 403.
+      filename = uploaded_filename()
+      uploader = user_uri(@workspace_name, "alice-#{uniq()}")
+      participant = user_uri(@workspace_name, "bob-#{uniq()}")
+      {uri, _content, session} = upload_and_attach(@workspace_name, uploader, filename)
+      :ok = sent_text_message(participant, session)
+
+      leaked_token = DownloadToken.mint!(uri, ttl_seconds: 60, grantee: uploader)
+
+      conn =
+        conn
+        |> sign_in(@workspace_name, participant)
+        |> get(~p"/uploads/download?token=#{leaked_token}")
+
+      assert conn.status == 403
+    end
+
+    test "AUTHZ-REJECTION: even the workspace admin cannot replay a member's bound token",
+         %{conn: conn} do
+      filename = uploaded_filename()
+      member = user_uri(@workspace_name, "alice-#{uniq()}")
+      {uri, _content, _session} = upload_and_attach(@workspace_name, member, filename)
+
+      leaked_token = DownloadToken.mint!(uri, ttl_seconds: 60, grantee: member)
+
+      conn =
+        conn
+        |> sign_in(@workspace_name, Ezagent.Entity.User.admin_uri())
+        |> get(~p"/uploads/download?token=#{leaked_token}")
+
+      assert conn.status == 403
+    end
+
+    test "ZERO-BREAKAGE: an absent-grantee (legacy) token still serves via the legacy recheck",
+         %{conn: conn} do
+      filename = uploaded_filename()
+      uploader = user_uri(@workspace_name, "alice-#{uniq()}")
+      {uri, content, _session} = upload_and_attach(@workspace_name, uploader, filename)
+
+      # Minted WITHOUT :grantee — the pre-PR-3 shape. The uploader passes the
+      # legacy participant recheck exactly as before.
+      legacy_token = DownloadToken.mint!(uri, ttl_seconds: 60)
+
+      conn =
+        conn
+        |> sign_in(@workspace_name, uploader)
+        |> get(~p"/uploads/download?token=#{legacy_token}")
+
+      assert conn.status == 200
+      assert conn.resp_body == content
+    end
+
+    test "ZERO-BREAKAGE: an absent-grantee token is still DENIED to a non-participant observer",
+         %{conn: conn} do
+      filename = uploaded_filename()
+      uploader = user_uri(@workspace_name, "alice-#{uniq()}")
+      observer = user_uri(@workspace_name, "eve-#{uniq()}")
+      {uri, _content, _session} = upload_and_attach(@workspace_name, uploader, filename)
+
+      legacy_token = DownloadToken.mint!(uri, ttl_seconds: 60)
+
+      conn =
+        conn
+        |> sign_in(@workspace_name, observer)
+        |> get(~p"/uploads/download?token=#{legacy_token}")
+
+      assert conn.status == 403
+    end
+  end
+
   describe "GET /files/:filename — RETIRED (no back-compat shim, Allen-approved 2026-06-08)" do
     test "the legacy filename route is GONE — a stored file is NOT served via /files", %{
       conn: conn

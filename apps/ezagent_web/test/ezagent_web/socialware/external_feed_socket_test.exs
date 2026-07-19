@@ -261,6 +261,117 @@ defmodule EzagentWeb.Socialware.ExternalFeedSocketTest do
       conn = get(build_conn(), dl_path(ctx.session, ctx.token, file_token))
       assert conn.status == 403
     end
+
+    test "PR-3: a member downloads with a grantee-bound token minted via the approved gate", ctx do
+      {upload_uri, _} = store_approved_attachment(ctx, "feed-bytes")
+
+      # Mint INSIDE the cap-gated read — the token is person-bound to @owner.
+      assert {:ok, file_token} =
+               Ezagent.Socialware.ExternalFeed.mint_approved_token(
+                 @owner,
+                 ctx.session,
+                 upload_uri,
+                 &Ezagent.Uploads.DownloadToken.mint!/2
+               )
+
+      conn = get(build_conn(), dl_path(ctx.session, ctx.token, file_token))
+
+      assert conn.status == 200
+      assert conn.resp_body == "feed-bytes"
+    end
+
+    test "PR-3 AUTHZ-REJECTION: a leaked grantee-bound token replayed by a NON-grantee member is rejected",
+         ctx do
+      {upload_uri, _} = store_approved_attachment(ctx, "feed-bytes")
+
+      assert {:ok, leaked_file_token} =
+               Ezagent.Socialware.ExternalFeed.mint_approved_token(
+                 @owner,
+                 ctx.session,
+                 upload_uri,
+                 &Ezagent.Uploads.DownloadToken.mint!/2
+               )
+
+      # The attacker is a LEGITIMATE viewer: roster-joined via the production
+      # session.join dispatch AND holding the session member-cap (injected
+      # signed at spawn — the at-join grant is best-effort async, A1, and does
+      # not deterministically land in-test). Session authz + the approved
+      # re-validation therefore PASS for the attacker — only the grantee
+      # binding can reject their replay.
+      attacker =
+        Ezagent.URI.entity(:team_alpha, :user, "ext-replay-#{System.unique_integer([:positive])}")
+
+      member_cap =
+        Ezagent.Test.CapHelper.signed_cap!(
+          ctx.session,
+          attacker,
+          Ezagent.Capability.cap(
+            :session,
+            Ezagent.ActionSet.Session,
+            :receive,
+            ctx.session,
+            ctx.workspace
+          )
+        )
+
+      {:ok, _pid} =
+        Ezagent.Kind.spawn(Ezagent.Entity.User, %{
+          uri: attacker,
+          initial_caps:
+            attacker |> Ezagent.Entity.User.initial_caps_for_spawn() |> MapSet.put(member_cap)
+        })
+
+      assert {:ok, _} = join_session(ctx.session, attacker)
+      assert Ezagent.Socialware.SessionReads.authorized?(attacker, ctx.session)
+
+      attacker_token = ChatFeedAuth.issue_token(attacker, ctx.session)
+
+      # POSITIVE CONTROL: the attacker IS an authorized viewer — a token bound
+      # to THEM mints + serves fine (session authz + approved re-validation all
+      # pass), so the replay rejection below is the GRANTEE binding, not any
+      # earlier gate.
+      assert {:ok, attacker_file_token} =
+               Ezagent.Socialware.ExternalFeed.mint_approved_token(
+                 attacker,
+                 ctx.session,
+                 upload_uri,
+                 &Ezagent.Uploads.DownloadToken.mint!/2
+               )
+
+      assert get(build_conn(), dl_path(ctx.session, attacker_token, attacker_file_token)).status ==
+               200
+
+      # The leaked token (bound to @owner) replayed BY the attacker → 403.
+      conn = get(build_conn(), dl_path(ctx.session, attacker_token, leaked_file_token))
+      assert conn.status == 403
+    end
+
+    test "PR-3 ZERO-BREAKAGE: an absent-grantee (legacy) file token still serves a member", ctx do
+      {upload_uri, _} = store_approved_attachment(ctx, "feed-bytes")
+      legacy_file_token = Ezagent.Uploads.DownloadToken.mint!(upload_uri, ttl_seconds: 60)
+
+      conn = get(build_conn(), dl_path(ctx.session, ctx.token, legacy_file_token))
+
+      assert conn.status == 200
+      assert conn.resp_body == "feed-bytes"
+    end
+
+    # Join `member_uri` to the session via the PRODUCTION `session.join`
+    # dispatch (the at-join grant lands the member-cap LIVE, which the
+    # serve-time `SessionReads.authorized?/2` predicate requires).
+    defp join_session(session_uri, member_uri) do
+      target = Ezagent.URI.new!("#{URI.to_string(session_uri)}?action=session.join")
+      caller = Ezagent.Entity.User.admin_uri()
+      cap = Ezagent.Test.CapHelper.signed_action_cap!(target, caller)
+
+      Ezagent.Invocation.dispatch(%Ezagent.Invocation{
+        origin: :trusted_internal,
+        target: target,
+        mode: :call,
+        args: %{member: member_uri},
+        ctx: %{caller: caller, caps: MapSet.new([cap]), reply: :ignore}
+      })
+    end
   end
 
   describe "GET /socialware/external — the SPA shell" do

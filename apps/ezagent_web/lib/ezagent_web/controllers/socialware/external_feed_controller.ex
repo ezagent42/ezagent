@@ -50,9 +50,16 @@ defmodule EzagentWeb.Socialware.ExternalFeedController do
     * `token` — the caller's `ChatFeedAuth` session token (the minted anon or the
       signed-in member), verified to a principal then live-membership checked;
     * `file_token` — the signed `DownloadToken`, binding the exact ws-scoped
-      `resource://<ws>/uploads/<name>` URI;
+      `resource://<ws>/uploads/<name>` URI, and — when minted person-bound
+      (read-plane PR-3) — the ONE `grantee` principal it was issued to;
 
-  and `ExternalFeed.authorized_attachment_path/4` re-validates that the attachment
+  plus the PR-3 person-binding check: a grantee-bound `file_token` serves ONLY
+  its grantee (`caller == grantee`), so a leaked/copied token replayed by a
+  non-grantee is rejected even when that principal is itself an authorized
+  viewer of the session. An absent-grantee (legacy) `file_token` carries no
+  person binding; the approved-only re-validation below remains its check.
+
+  And `ExternalFeed.authorized_attachment_path/4` re-validates that the attachment
   is STILL an approved (committed, external-visible) item before resolving — so a
   captured token stops working once an internal reviewer flips the message back
   to internal-only (serve-time revocation, codex HIGH). Fails closed on any
@@ -66,16 +73,17 @@ defmodule EzagentWeb.Socialware.ExternalFeedController do
       when is_binary(token) and is_binary(file_token) do
     with {:ok, session_uri} <- parse_session(session_str),
          {:ok, caller} <- ChatFeedAuth.verify(token, session_uri),
-         {:ok, upload_uri} <- DownloadToken.verify(file_token),
+         {:ok, payload} <- DownloadToken.verify_payload(file_token),
+         :ok <- check_grantee(payload.grantee, caller),
          {:ok, path} <-
            ExternalFeed.authorized_attachment_path(
              session_uri,
              caller,
-             upload_uri,
+             payload.uri,
              &Ezagent.Uploads.resolve/2
            ),
          true <- File.regular?(path) do
-      send_download(conn, {:file, path}, filename: download_name(upload_uri))
+      send_download(conn, {:file, path}, filename: download_name(payload.uri))
     else
       _ ->
         conn
@@ -88,6 +96,19 @@ defmodule EzagentWeb.Socialware.ExternalFeedController do
     conn
     |> put_resp_content_type("text/plain")
     |> send_resp(400, "missing session_uri, token or file_token")
+  end
+
+  # --- the PR-3 person binding -------------------------------------------------
+
+  # A grantee-bound file_token serves ONLY its grantee; an absent-grantee
+  # (legacy) token is unbound — the approved-only re-validation in
+  # `ExternalFeed.authorized_attachment_path/4` is its whole check.
+  defp check_grantee(nil, _caller), do: :ok
+
+  defp check_grantee(%URI{} = grantee, caller) do
+    if DownloadToken.grantee_match?(grantee, caller),
+      do: :ok,
+      else: {:error, :grantee_mismatch}
   end
 
   @doc """
