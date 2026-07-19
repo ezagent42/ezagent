@@ -528,7 +528,8 @@ defmodule Ezagent.ProviderConnection.LocalAuthorizationBackendTest do
       provider_id: "task6-provider",
       governed_host: "example.test",
       connection_id: "00000000-0000-4000-8000-000000000001",
-      connection_version: 1
+      connection_version: 1,
+      execution_identity: "connected_user"
     }
   end
 

@@ -6,6 +6,7 @@ defmodule Ezagent.ProviderConnection.AuthorizationBackendRecord do
              :workspace_uri,
              :backend_pair_id,
              :authorization_ref,
+             :execution_identity,
              :lifecycle_status,
              :shredded_at,
              :expires_at
@@ -17,6 +18,7 @@ defmodule Ezagent.ProviderConnection.AuthorizationBackendRecord do
     field(:workspace_uri, :string)
     field(:backend_pair_id, :string)
     field(:authorization_ref, :string)
+    field(:execution_identity, :string)
     field(:key_id, :string)
     field(:key_fingerprint, :binary)
     field(:nonce, :binary)
@@ -45,7 +47,7 @@ defmodule Ezagent.ProviderConnection.AuthorizationBackendRecord do
     timestamps(type: :utc_datetime_usec)
   end
 
-  @trusted ~w(id workspace_uri backend_pair_id authorization_ref key_id key_fingerprint nonce ciphertext bound_input_digest begin_correlation_id owner_uri connection_id connection_version provider_id governed_host acquisition_method requested_permissions_digest redirect_uri_id expires_at)a
+  @trusted ~w(id workspace_uri backend_pair_id authorization_ref execution_identity key_id key_fingerprint nonce ciphertext bound_input_digest begin_correlation_id owner_uri connection_id connection_version provider_id governed_host acquisition_method requested_permissions_digest redirect_uri_id expires_at)a
   @doc false
   def create_changeset(attrs),
     do:

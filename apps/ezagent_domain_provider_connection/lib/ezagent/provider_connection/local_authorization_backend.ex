@@ -176,7 +176,7 @@ defmodule Ezagent.ProviderConnection.LocalAuthorizationBackend do
              snapshot,
              :credential_handoff,
              envelope,
-             handoff_aad(row, connection, attempt.correlation_id, operation.handoff_ref)
+             handoff_aad(row, attempt.correlation_id, operation.handoff_ref)
            ),
          {:ok, result} <-
            credential_backend.store(
@@ -470,7 +470,7 @@ defmodule Ezagent.ProviderConnection.LocalAuthorizationBackend do
              callback_aad(row, command.correlation_id, command.bound_input_digest)
            ),
          :ok <- validate_callback(payload, callback_envelope, row),
-         {:ok, connection} <- connection_for_backend(row),
+         {:ok, _connection} <- connection_for_backend(row),
          {:ok, driver} <- frozen_driver(row),
          {:ok, driver_result} <-
            invoke_driver(driver, :consume_callback, row, command, payload, callback_envelope),
@@ -482,7 +482,7 @@ defmodule Ezagent.ProviderConnection.LocalAuthorizationBackend do
              :active,
              :credential_handoff,
              normalized.credential_material,
-             handoff_aad(row, connection, command.correlation_id, handoff_ref)
+             handoff_aad(row, command.correlation_id, handoff_ref)
            ) do
       safe_result = Map.put(normalized, :credential_material, {:write_only_handoff, handoff_ref})
       encoded = encode_consume_result(safe_result)
@@ -936,6 +936,7 @@ defmodule Ezagent.ProviderConnection.LocalAuthorizationBackend do
       bound_input_digest: digest,
       begin_correlation_id: request.correlation_id,
       owner_uri: URI.to_string(subject.owner_uri),
+      execution_identity: subject.execution_identity,
       connection_id: subject.connection_id,
       connection_version: subject.connection_version,
       provider_id: subject.provider_id,
@@ -1059,7 +1060,8 @@ defmodule Ezagent.ProviderConnection.LocalAuthorizationBackend do
          true <- subject.connection_id == row.connection_id,
          true <- subject.connection_version == row.connection_version,
          true <- subject.provider_id == row.provider_id,
-         true <- subject.governed_host == row.governed_host do
+         true <- subject.governed_host == row.governed_host,
+         true <- subject.execution_identity == row.execution_identity do
       :ok
     else
       _other -> {:error, :invalid_authorization_subject}
@@ -1073,12 +1075,14 @@ defmodule Ezagent.ProviderConnection.LocalAuthorizationBackend do
            provider_id: provider,
            governed_host: host,
            connection_id: connection,
-           connection_version: version
+           connection_version: version,
+           execution_identity: execution_identity
          } = subject
        )
-       when map_size(subject) == 6 and is_binary(provider) and provider != "" and
+       when map_size(subject) == 7 and is_binary(provider) and provider != "" and
               is_binary(host) and host != "" and is_binary(connection) and connection != "" and
-              is_integer(version) and version >= 0 do
+              is_integer(version) and version >= 0 and is_binary(execution_identity) and
+              execution_identity != "" do
     with true <- Ezagent.URI.scheme?(owner, :entity),
          true <- Ezagent.URI.type?(owner, :user),
          true <- Ezagent.URI.scheme?(workspace, :workspace),
@@ -1109,6 +1113,7 @@ defmodule Ezagent.ProviderConnection.LocalAuthorizationBackend do
       workspace_uri: URI.to_string(subject.workspace_uri),
       connection_id: subject.connection_id,
       connection_version: subject.connection_version,
+      execution_identity: subject.execution_identity,
       provider_id: subject.provider_id,
       governed_host: subject.governed_host,
       acquisition_method: request.acquisition_method,
@@ -1128,6 +1133,7 @@ defmodule Ezagent.ProviderConnection.LocalAuthorizationBackend do
       workspace_uri: row.workspace_uri,
       connection_id: row.connection_id,
       connection_version: row.connection_version,
+      execution_identity: row.execution_identity,
       provider_id: row.provider_id,
       governed_host: row.governed_host,
       acquisition_method: row.acquisition_method,
@@ -1138,7 +1144,7 @@ defmodule Ezagent.ProviderConnection.LocalAuthorizationBackend do
     }
   end
 
-  defp handoff_aad(row, connection, correlation, handoff_ref),
+  defp handoff_aad(row, correlation, handoff_ref),
     do: %{
       authorization_ref: row.authorization_ref,
       bound_input_digest: row.bound_input_digest,
@@ -1151,7 +1157,7 @@ defmodule Ezagent.ProviderConnection.LocalAuthorizationBackend do
       provider_id: row.provider_id,
       governed_host: row.governed_host,
       acquisition_method: row.acquisition_method,
-      execution_identity: connection.execution_identity,
+      execution_identity: row.execution_identity,
       requested_permissions_digest: row.requested_permissions_digest,
       redirect_uri_id: row.redirect_uri_id,
       correlation_id: correlation,
@@ -1177,6 +1183,7 @@ defmodule Ezagent.ProviderConnection.LocalAuthorizationBackend do
          row.provider_id == connection.provider_id and
          row.governed_host == connection.governed_host and
          row.acquisition_method == connection.acquisition_method and
+         row.execution_identity == connection.execution_identity and
          operation.bound_input_digest == Operation.callback_digest(row, attempt, connection) and
          row.handoff_ref == operation.handoff_ref and
          row.consume_correlation_id == attempt.correlation_id and
@@ -1193,7 +1200,8 @@ defmodule Ezagent.ProviderConnection.LocalAuthorizationBackend do
          row.connection_version == connection.connection_version and
          row.provider_id == connection.provider_id and
          row.governed_host == connection.governed_host and
-         row.acquisition_method == connection.acquisition_method,
+         row.acquisition_method == connection.acquisition_method and
+         row.execution_identity == connection.execution_identity,
        do: :ok,
        else: {:error, :credential_conflict}
   end

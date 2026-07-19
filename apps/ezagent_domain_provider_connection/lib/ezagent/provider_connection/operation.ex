@@ -70,6 +70,7 @@ defmodule Ezagent.ProviderConnection.Operation do
         connection.provider_id,
         connection.governed_host,
         connection.acquisition_method,
+        backend_record.execution_identity,
         connection.execution_identity
       }
     }
