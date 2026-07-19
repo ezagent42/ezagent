@@ -241,9 +241,19 @@ defmodule Ezagent.Cap do
         %URI{} = receiver
       ) do
     if Ezagent.URI.stable_key(grantee) == Ezagent.URI.stable_key(receiver) do
-      if Ezagent.Cap.Authority.verify_current(artifact, receiver),
-        do: :ok,
-        else: {:error, :invalid_cap_signature}
+      case Ezagent.Cap.Authority.target_uri(artifact) do
+        {:ok, target} ->
+          if Ezagent.Cap.Authority.current_target?(target) do
+            if Ezagent.Cap.Authority.verify_current(artifact, receiver),
+              do: :ok,
+              else: {:error, :invalid_cap_signature}
+          else
+            Ezagent.Cap.TargetArtifactValidator.validate(artifact, receiver)
+          end
+
+        _error ->
+          {:error, :invalid_cap_signature}
+      end
     else
       {:error, :wrong_grantee}
     end

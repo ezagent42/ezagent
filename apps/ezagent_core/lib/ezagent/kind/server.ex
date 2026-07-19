@@ -510,6 +510,19 @@ defmodule Ezagent.Kind.Server do
     {:reply, {:ok, kind_module}, state}
   end
 
+  def handle_call(
+        {:ezagent_validate_cap_artifact, artifact, receiver},
+        _from,
+        state
+      ) do
+    result =
+      Ezagent.Cap.Authority.with_current(state.authority, fn ->
+        Ezagent.Cap.validate_for_current_target(artifact, receiver)
+      end)
+
+    {:reply, result, state}
+  end
+
   def handle_call(:ezagent_runtime_view, _from, state) do
     view = Map.take(state, [:kind, :uri, :state])
     {:reply, {:ok, view}, state}

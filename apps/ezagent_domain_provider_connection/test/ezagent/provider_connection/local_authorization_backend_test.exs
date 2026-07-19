@@ -9,6 +9,7 @@ defmodule Ezagent.ProviderConnection.LocalAuthorizationBackendTest do
   alias Ezagent.ProviderConnection.AuthorizationKeyRing
   alias Ezagent.ProviderConnection.BackendPair
   alias Ezagent.ProviderConnection.BackendPairRegistry
+  alias Ezagent.ProviderConnection.Connection
   alias Ezagent.ProviderConnection.Driver
   alias Ezagent.ProviderConnection.DriverRegistry
   alias Ezagent.ProviderConnection.LocalAuthorizationBackend
@@ -32,6 +33,25 @@ defmodule Ezagent.ProviderConnection.LocalAuthorizationBackendTest do
     )
 
     FakeDriverAlpha.reset()
+
+    subject = subject()
+
+    %{
+      connection_id: subject.connection_id,
+      workspace_uri: URI.to_string(subject.workspace_uri),
+      owner_uri: URI.to_string(subject.owner_uri),
+      provider_id: subject.provider_id,
+      governed_host: subject.governed_host,
+      external_account_id: "acct-1",
+      execution_identity: "connected_user",
+      acquisition_method: "oauth_user",
+      authorization_backend_ref: "pending",
+      credential_backend_ref: "pending",
+      status: "pending_authorization"
+    }
+    |> Connection.create_changeset()
+    |> Ecto.Changeset.change(connection_version: subject.connection_version)
+    |> Repo.insert!()
 
     for pair_id <- ["pair-a-local-v1", "pair-z-local-v1"] do
       pair =
@@ -507,7 +527,7 @@ defmodule Ezagent.ProviderConnection.LocalAuthorizationBackendTest do
       workspace_uri: Ezagent.URI.workspace("acme"),
       provider_id: "task6-provider",
       governed_host: "example.test",
-      connection_id: "conn-1",
+      connection_id: "00000000-0000-4000-8000-000000000001",
       connection_version: 1
     }
   end

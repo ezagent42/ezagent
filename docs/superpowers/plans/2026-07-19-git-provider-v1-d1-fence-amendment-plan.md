@@ -25,6 +25,7 @@
 - `apps/ezagent_domain_provider_connection/lib/ezagent/provider_connection/connection.ex` and related migration only if the shared connection fence requires a durable field.
 - `apps/ezagent_core/priv/repo_pg/migrations/20260719000000_fence_provider_callback_operations.exs`: first add nullable `attempt_version`, `attempt_claim_token`, and `handoff_ref` to the existing operations table.
 - `apps/ezagent_core/priv/repo_pg/migrations/20260719001000_close_provider_callback_operations.exs`: then add fail-closed conditional constraints. The original schema already supplies `result_ref` and `expected_credential_version`; the 00000 migration supplies the remaining fence columns.
+- `apps/ezagent_core/priv/repo_pg/migrations/20260719002000_bind_provider_execution_identity.exs`: add the non-null execution-identity binding constraint after the backend-record schema is populated by begin.
 - `apps/ezagent_domain_provider_connection/test/integration/callback_recovery_test.exs`: real lease-steal, strict digest, stale-result, terminal barrier tests.
 - `apps/ezagent_domain_provider_connection/test/ezagent/provider_connection/local_authorization_backend_test.exs`: command digest and execution-identity tests.
 - `apps/ezagent_domain_provider_connection/test/ezagent/provider_connection/schema_test.exs`: full operation key and conditional constraint tests.
@@ -126,6 +127,7 @@ terminal barrier as complete.
 **Files:**
 - Modify: `apps/ezagent_core/priv/repo_pg/migrations/20260719000000_fence_provider_callback_operations.exs` (first migration; add the three nullable fence columns)
 - Modify: `apps/ezagent_core/priv/repo_pg/migrations/20260719001000_close_provider_callback_operations.exs` (second migration; add conditional constraints)
+- Create: `apps/ezagent_core/priv/repo_pg/migrations/20260719002000_bind_provider_execution_identity.exs` (third migration; enforce durable execution identity)
 - Modify: `apps/ezagent_domain_provider_connection/test/ezagent/provider_connection/schema_test.exs`
 
 **Interfaces:**
@@ -136,8 +138,9 @@ terminal barrier as complete.
   result ref, and credential version.
 
 - [ ] Add migration replay/constraint tests for each missing field.
-- [ ] Apply 00000 before 01000 under the guarded test scope, verify rollback
-  order is 01000 before 00000, and verify all schema tests pass.
+- [ ] Apply 00000 before 01000 before 02000 under the guarded test scope,
+  verify rollback order 02000 -> 01000 -> 00000, and verify all schema tests
+  pass.
 
 ### Task 5: Harden operation lookup and schema constraints
 

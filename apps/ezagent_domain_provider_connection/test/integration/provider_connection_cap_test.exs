@@ -226,7 +226,7 @@ defmodule Ezagent.ProviderConnectionCapTest do
   end
 
   defp args(:consume_callback, _ctx),
-    do: %{attempt_ref: "attempt-1", callback: %{}, correlation_id: "correlation-1"}
+    do: %{attempt_ref: "attempt-1", correlation_id: "correlation-1"}
 
   defp args(action, ctx) when action in [:reauthorize, :revoke, :disconnect] do
     {:ok, assurance} =

@@ -119,6 +119,51 @@ defmodule Ezagent.ProviderConnection.SchemaTest do
     end
   end
 
+  test "callback operation phases are closed over their required fence and result coordinates" do
+    base = operation_attrs()
+
+    violations = [
+      {Map.drop(base, [:attempt_claim_token]),
+       "provider_connection_operations_callback_fence_check"},
+      {base
+       |> Map.put(:status, "backend_committed")
+       |> Map.put(:handoff_ref, "handoff-ref"),
+       "provider_connection_operations_callback_result_check"},
+      {base
+       |> Map.put(:status, "cleanup_pending")
+       |> Map.put(:result_ref, "credential-ref")
+       |> Map.put(:expected_credential_version, 1),
+       "provider_connection_operations_callback_result_check"}
+    ]
+
+    for {attrs, constraint_name} <- violations do
+      assert {:error, changeset} =
+               %Operation{}
+               |> Ecto.Changeset.change(attrs)
+               |> Ecto.Changeset.check_constraint(:status, name: constraint_name)
+               |> Repo.insert()
+
+      assert {"is invalid", [constraint: :check, constraint_name: ^constraint_name]} =
+               changeset.errors[:status]
+    end
+
+    valid =
+      base
+      |> Map.merge(%{
+        correlation_id: "cleanup-valid",
+        status: "cleanup_pending",
+        handoff_ref: "handoff-ref",
+        result_ref: "credential-ref",
+        expected_credential_version: 1,
+        safe_error_code: "cleanup_pending"
+      })
+
+    assert %Operation{status: "cleanup_pending"} =
+             %Operation{}
+             |> Ecto.Changeset.change(valid)
+             |> Repo.insert!()
+  end
+
   test "private authorization backend Inspect excludes every secret-bearing field" do
     sentinels = %{
       nonce: "UNIQUE_NONCE_SECRET",
@@ -190,6 +235,9 @@ defmodule Ezagent.ProviderConnection.SchemaTest do
         operation_class: "store",
         correlation_id: "corr-1",
         bound_input_digest: "digest",
+        expected_connection_version: 1,
+        attempt_version: 1,
+        attempt_claim_token: "claim-token",
         status: "prepared"
       })
 

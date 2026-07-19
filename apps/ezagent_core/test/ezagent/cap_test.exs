@@ -12,10 +12,12 @@ defmodule Ezagent.CapTest do
       Ezagent.URI.new!("entity://team-alpha/agent/cap-unit-#{System.unique_integer([:positive])}")
 
     assert {:ok, pid} = Ezagent.Kind.Server.start_link({TestKind, %{uri: uri}})
-    assert :ok = await_ready(uri)
+    state = :sys.get_state(pid)
+    assert Ezagent.ReadyGate.status(uri) == :ready
 
     {:ok,
-     authority: :sys.get_state(pid).authority,
+     authority: state.authority,
+     pid: pid,
      uri: uri,
      admin: Ezagent.URI.user(:system, :admin),
      grantee: Ezagent.URI.new!("entity://team-alpha/user/cap-unit-grantee")}
@@ -91,6 +93,29 @@ defmodule Ezagent.CapTest do
                end)
     end
 
+    test "fails closed while the target is absent and accepts the artifact after restart",
+         context do
+      assert {:ok, artifact} =
+               Cap.issue({:admin, context.admin}, context.grantee, action_cap(context.uri))
+
+      pid = context.pid
+      monitor = Process.monitor(pid)
+      :ok = GenServer.stop(context.pid)
+      assert_receive {:DOWN, ^monitor, :process, ^pid, :normal}
+      registry_barrier()
+      assert :error = Ezagent.KindRegistry.lookup(context.uri)
+
+      assert {:error, :invalid_cap_signature} =
+               Cap.validate_for_current_target(artifact, context.grantee)
+
+      assert {:ok, restarted_pid} =
+               Ezagent.Kind.Server.start_link({TestKind, %{uri: context.uri}})
+
+      _state = :sys.get_state(restarted_pid)
+      assert Ezagent.ReadyGate.status(context.uri) == :ready
+      assert :ok = Cap.validate_for_current_target(artifact, context.grantee)
+    end
+
     test "retains only structurally born-signed artifacts for the named receiver", context do
       assert {:ok, signed} =
                Cap.issue({:admin, context.admin}, context.grantee, action_cap(context.uri))
@@ -142,20 +167,12 @@ defmodule Ezagent.CapTest do
     )
   end
 
-  defp await_ready(uri), do: await_ready(uri, System.monotonic_time(:millisecond) + 1_000)
-
-  defp await_ready(uri, deadline) do
-    case Ezagent.ReadyGate.status(uri) do
-      :ready ->
-        :ok
-
-      _ ->
-        if System.monotonic_time(:millisecond) >= deadline do
-          {:error, :timeout}
-        else
-          Process.sleep(5)
-          await_ready(uri, deadline)
-        end
+  defp registry_barrier do
+    for {_id, partition, :worker, [Registry.Partition]} <-
+          Supervisor.which_children(Ezagent.KindRegistry) do
+      _state = :sys.get_state(partition)
     end
+
+    :ok
   end
 end
