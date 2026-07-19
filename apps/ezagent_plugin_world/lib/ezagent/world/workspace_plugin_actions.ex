@@ -403,7 +403,8 @@ defmodule Ezagent.World.WorkspacePluginActions do
       put_world_state(
         socket,
         %{
-          "session_templates" => WorkspacePluginData.session_template_rows(caller, workspace_name),
+          "session_templates" =>
+            WorkspacePluginData.session_template_rows(caller, workspace_name),
           "template_notice" => "template_saved",
           "template_error" => nil,
           "last_template_uri" => uri_string(template_uri),

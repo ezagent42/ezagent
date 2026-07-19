@@ -309,7 +309,12 @@ defmodule EzagentCore.ListReadChokepointBoundaryTest do
     qualified_apply_offense(via, modast, fun, 0, meta, aliases)
   end
 
-  defp offense_for({{:., _, [via, :apply]}, meta, [modast, fun, args]}, aliases, _imports, _local_defs)
+  defp offense_for(
+         {{:., _, [via, :apply]}, meta, [modast, fun, args]},
+         aliases,
+         _imports,
+         _local_defs
+       )
        when is_atom(fun) do
     arity = if is_list(args), do: length(args), else: :any
     qualified_apply_offense(via, modast, fun, arity, meta, aliases)
