@@ -26,17 +26,17 @@ defmodule Ezagent.Integration.DisableDeleteUserDispatchTest do
   alias Ezagent.Workspace
   alias Ezagent.Entity.User
   alias Ezagent.Users
-  alias Ezagent.ActionSet.WorkspaceUserAdmin
 
   setup do
     ws_name = "offboard-test-#{System.unique_integer([:positive])}"
     {:ok, _ws_pid} = Workspace.create(ws_name, %{})
     workspace_uri = URI.new!("workspace://#{ws_name}")
 
-    admin_ctx = %{
-      caller: User.admin_uri(),
-      caps: MapSet.new([Ezagent.Capability.admin_genesis_cap()])
-    }
+    # #1457 (per-Kind signing authority): dispatch step 5.5 only accepts
+    # target-SIGNED caps now — build the genesis-admin ctx through the test
+    # chokepoint (a wildcard workspace cap signed by the workspace Kind).
+    admin_ctx =
+      Ezagent.Test.CapHelper.signed_workspace_ctx!(workspace_uri, User.admin_uri())
 
     # Seed a real user to offboard.
     user_uri_str = "entity://#{ws_name}/user/target"
@@ -138,13 +138,17 @@ defmodule Ezagent.Integration.DisableDeleteUserDispatchTest do
       # Change 1: give the operator BOTH cap subjects (so step 5.5 passes for
       # delete too) — proving the genesis-admin gate, NOT a missing cap, is
       # what rejects delete. This operator is a workspace-scoped admin, NOT
-      # the genesis admin `entity://system/user/admin`.
+      # the genesis admin `entity://system/user/admin`. #1457: the caps must
+      # be target-SIGNED artifacts.
+      disable_target = Ezagent.URI.with_action(workspace_uri, :workspace_user_admin, :disable_user)
+      delete_target = Ezagent.URI.with_action(workspace_uri, :workspace_user_admin, :delete_user)
+
       operator_ctx = %{
         caller: operator,
         caps:
           MapSet.new([
-            Ezagent.Capability.cap(:workspace, WorkspaceUserAdmin, :disable_user),
-            Ezagent.Capability.cap(:workspace, WorkspaceUserAdmin, :delete_user)
+            Ezagent.Test.CapHelper.signed_action_cap!(disable_target, operator),
+            Ezagent.Test.CapHelper.signed_action_cap!(delete_target, operator)
           ])
       }
 
@@ -181,14 +185,14 @@ defmodule Ezagent.Integration.DisableDeleteUserDispatchTest do
         caps: MapSet.new()
       }
 
-      assert {:error, :unauthorized} =
+      assert {:error, :missing_cap} =
                Workspace.disable_user(
                  workspace_uri,
                  %{user_uri: user_uri_str, reason: nil},
                  nobody_ctx
                )
 
-      assert {:error, :unauthorized} =
+      assert {:error, :missing_cap} =
                Workspace.delete_user(
                  workspace_uri,
                  %{user_uri: user_uri_str, reason: nil},
@@ -234,9 +238,7 @@ defmodule Ezagent.Integration.DisableDeleteUserDispatchTest do
   end
 
   describe "delete_user cascades workspace-membership removal (Change 4)" do
-    test "a user listed as a member of TWO workspaces is detached from BOTH on delete", %{
-      admin_ctx: admin_ctx
-    } do
+    test "a user listed as a member of TWO workspaces is detached from BOTH on delete" do
       suffix = System.unique_integer([:positive])
       ws_a = "cascade-a-#{suffix}"
       ws_b = "cascade-b-#{suffix}"
@@ -254,6 +256,11 @@ defmodule Ezagent.Integration.DisableDeleteUserDispatchTest do
       assert member?(ws_b, user)
 
       ws_a_uri = URI.new!("workspace://#{ws_a}")
+
+      # #1457: the admin ctx must be signed by the TARGET workspace's
+      # authority — the setup ctx is signed for the setup workspace and
+      # would fail signature verification against ws_a.
+      admin_ctx = Ezagent.Test.CapHelper.signed_workspace_ctx!(ws_a_uri, User.admin_uri())
 
       {:ok, _} =
         Workspace.disable_user(ws_a_uri, %{user_uri: user, reason: "off"}, admin_ctx)
