@@ -14,11 +14,14 @@ defmodule Ezagent.ProviderConnection.LocalAuthorizationBackend do
   import Ecto.Query
 
   alias Ezagent.ProviderConnection.AuthorizationBackendRecord
+  alias Ezagent.ProviderConnection.AuthorizationAttempt
   alias Ezagent.ProviderConnection.AuthorizationKeyRing
   alias Ezagent.ProviderConnection.BackendPairRegistry
+  alias Ezagent.ProviderConnection.Connection
   alias Ezagent.ProviderConnection.Driver
   alias Ezagent.ProviderConnection.DriverRegistry
   alias Ezagent.ProviderConnection.ProviderAuthorizationCommand
+  alias Ezagent.ProviderConnection.Operation
   alias EzagentCore.Repo
 
   @backend_id "local-authorization-v1"
@@ -90,6 +93,108 @@ defmodule Ezagent.ProviderConnection.LocalAuthorizationBackend do
 
   def consume_callback(_request), do: {:error, :callback_invalid}
 
+  @doc "Computes the callback-state digest without exposing key material."
+  @spec state_digest(String.t()) :: {:ok, String.t()} | {:error, :callback_invalid}
+  def state_digest(raw_state) when is_binary(raw_state) do
+    with {:ok, snapshot} <- crypto_state(),
+         {:ok, key_id} <- state_key_id(raw_state),
+         {:ok, key} <- Map.fetch(snapshot.keys, key_id) do
+      {:ok, :crypto.mac(:hmac, :sha256, key, raw_state) |> Base.encode16(case: :lower)}
+    else
+      _reason -> {:error, :callback_invalid}
+    end
+  end
+
+  def state_digest(_raw_state), do: {:error, :callback_invalid}
+
+  @doc false
+  def stage_callback(pair_id, authorization_ref, correlation_id, raw_state, provider_envelope)
+      when is_binary(pair_id) and is_binary(authorization_ref) and is_binary(correlation_id) and
+             is_binary(raw_state) and is_map(provider_envelope) do
+    Repo.transaction(fn ->
+      with %AuthorizationBackendRecord{} = row <- locked_record(authorization_ref),
+           true <- row.backend_pair_id == pair_id,
+           true <- row.lifecycle_status in ["pending", "consuming"],
+           :lt <- DateTime.compare(DateTime.utc_now(), row.expires_at),
+           {:ok, snapshot} <- crypto_state() do
+        callback = Map.put(provider_envelope, :state, raw_state)
+        digest = digest(callback)
+
+        cond do
+          is_binary(row.callback_ciphertext) and row.consume_correlation_id == correlation_id and
+              row.consume_input_digest == digest ->
+            :ok
+
+          is_binary(row.callback_ciphertext) ->
+            {:error, :correlation_conflict}
+
+          true ->
+            sealed =
+              seal_with(
+                snapshot,
+                :active,
+                :authorization_callback,
+                callback,
+                callback_aad(row, correlation_id, digest)
+              )
+
+            row
+            |> Ecto.Changeset.change(
+              consume_correlation_id: correlation_id,
+              consume_input_digest: digest,
+              callback_key_id: sealed.key_id,
+              callback_key_fingerprint: sealed.key_fingerprint,
+              callback_nonce: sealed.nonce,
+              callback_ciphertext: sealed.ciphertext
+            )
+            |> Repo.update!()
+
+            :ok
+        end
+      else
+        _reason -> {:error, :callback_invalid}
+      end
+    end)
+    |> unwrap_transaction()
+  end
+
+  @doc false
+  def handoff_to_registered_credential(operation_id, attempt_ref)
+      when is_binary(operation_id) and is_binary(attempt_ref) do
+    with %Operation{status: "prepared"} = operation <- Repo.get(Operation, operation_id),
+         %AuthorizationAttempt{} = attempt <- Repo.get(AuthorizationAttempt, attempt_ref),
+         %Connection{} = connection <- Repo.get(Connection, attempt.connection_id),
+         :ok <- validate_operation_fence(operation, attempt, connection),
+         %AuthorizationBackendRecord{} = row <-
+           Repo.get_by(AuthorizationBackendRecord, authorization_ref: attempt.authorization_ref),
+         :ok <- validate_handoff(row, operation, attempt, connection),
+         {:ok, credential_backend} <- registered_credential_backend(attempt.backend_pair_id),
+         {:ok, snapshot} <- crypto_state(),
+         {:ok, envelope} <- decode_handoff_envelope(row.handoff_ciphertext),
+         {:ok, credential_material} <-
+           unseal_with(
+             snapshot,
+             :credential_handoff,
+             envelope,
+             handoff_aad(row, connection, attempt.correlation_id, operation.handoff_ref)
+           ),
+         {:ok, result} <-
+           credential_backend.store(
+             operation
+             |> credential_command(attempt, connection)
+             |> Map.put(:credential_material, credential_material)
+           ) do
+      {:ok, result}
+    else
+      nil -> {:error, :credential_conflict}
+      {:error, _reason} = error -> error
+      _reason -> {:error, :credential_conflict}
+    end
+  end
+
+  def handoff_to_registered_credential(_operation_id, _attempt_ref),
+    do: {:error, :credential_conflict}
+
   @impl true
   def cancel_authorization(request) when is_map(request) do
     with :ok <- closed_keys(request, @cancel_keys),
@@ -150,7 +255,7 @@ defmodule Ezagent.ProviderConnection.LocalAuthorizationBackend do
         redirect: nil
       }
 
-      envelope = seal_with(snapshot, snapshot.active_key_id, :authorization_attempt, payload, aad)
+      envelope = seal_with(snapshot, :active, :authorization_attempt, payload, aad)
 
       Repo.transaction(fn ->
         attrs =
@@ -267,18 +372,8 @@ defmodule Ezagent.ProviderConnection.LocalAuthorizationBackend do
 
         case insert_command(attrs) do
           :inserted ->
-            with {:ok, snapshot} <- crypto_state() do
-              aad = callback_aad(row, correlation_id, digest)
-
-              sealed =
-                seal_with(
-                  snapshot,
-                  snapshot.active_key_id,
-                  :authorization_callback,
-                  request.callback_envelope,
-                  aad
-                )
-
+            with {:ok, sealed} <-
+                   seal_callback_for_command(row, request, correlation_id, digest) do
               row
               |> Ecto.Changeset.change(
                 consume_correlation_id: correlation_id,
@@ -302,6 +397,37 @@ defmodule Ezagent.ProviderConnection.LocalAuthorizationBackend do
       end
     end)
     |> unwrap_transaction()
+  end
+
+  defp seal_callback_for_command(row, request, correlation_id, digest) do
+    with {:ok, snapshot} <- crypto_state(),
+         {:ok, callback} <- callback_for_command(snapshot, row, request, correlation_id) do
+      {:ok,
+       seal_with(
+         snapshot,
+         :active,
+         :authorization_callback,
+         callback,
+         callback_aad(row, correlation_id, digest)
+       )}
+    end
+  end
+
+  defp callback_for_command(_snapshot, _row, %{callback_envelope: callback}, _correlation_id)
+       when is_map(callback),
+       do: {:ok, callback}
+
+  defp callback_for_command(snapshot, row, _request, correlation_id) do
+    if row.consume_correlation_id == correlation_id and is_binary(row.consume_input_digest) do
+      unseal_with(
+        snapshot,
+        :authorization_callback,
+        callback_envelope(row),
+        callback_aad(row, correlation_id, row.consume_input_digest)
+      )
+    else
+      {:error, :callback_invalid}
+    end
   end
 
   defp finish_consume(pair_id, correlation_id, digest, request) do
@@ -344,6 +470,7 @@ defmodule Ezagent.ProviderConnection.LocalAuthorizationBackend do
              callback_aad(row, command.correlation_id, command.bound_input_digest)
            ),
          :ok <- validate_callback(payload, callback_envelope, row),
+         {:ok, connection} <- connection_for_backend(row),
          {:ok, driver} <- frozen_driver(row),
          {:ok, driver_result} <-
            invoke_driver(driver, :consume_callback, row, command, payload, callback_envelope),
@@ -352,10 +479,10 @@ defmodule Ezagent.ProviderConnection.LocalAuthorizationBackend do
          handoff <-
            seal_with(
              snapshot,
-             snapshot.active_key_id,
+             :active,
              :credential_handoff,
              normalized.credential_material,
-             handoff_aad(row.authorization_ref, command.correlation_id, handoff_ref)
+             handoff_aad(row, connection, command.correlation_id, handoff_ref)
            ) do
       safe_result = Map.put(normalized, :credential_material, {:write_only_handoff, handoff_ref})
       encoded = encode_consume_result(safe_result)
@@ -547,6 +674,23 @@ defmodule Ezagent.ProviderConnection.LocalAuthorizationBackend do
       :ok
     else
       _other -> {:error, :authorization_backend_unavailable}
+    end
+  end
+
+  defp registered_credential_backend(pair_id) do
+    implementations =
+      Application.get_env(
+        :ezagent_domain_provider_connection,
+        :credential_backend_implementations,
+        %{}
+      )
+
+    with {:ok, pair} <- BackendPairRegistry.lookup(pair_id),
+         {:ok, module} <- Map.fetch(implementations, pair.credential_backend.id),
+         true <- is_atom(module) do
+      {:ok, module}
+    else
+      _reason -> {:error, :credential_conflict}
     end
   end
 
@@ -994,8 +1138,118 @@ defmodule Ezagent.ProviderConnection.LocalAuthorizationBackend do
     }
   end
 
-  defp handoff_aad(ref, correlation, handoff_ref),
-    do: %{authorization_ref: ref, correlation_id: correlation, handoff_ref: handoff_ref}
+  defp handoff_aad(row, connection, correlation, handoff_ref),
+    do: %{
+      authorization_ref: row.authorization_ref,
+      bound_input_digest: row.bound_input_digest,
+      begin_correlation_id: row.begin_correlation_id,
+      owner_uri: row.owner_uri,
+      workspace_uri: row.workspace_uri,
+      connection_id: row.connection_id,
+      connection_version: row.connection_version,
+      backend_pair_id: row.backend_pair_id,
+      provider_id: row.provider_id,
+      governed_host: row.governed_host,
+      acquisition_method: row.acquisition_method,
+      execution_identity: connection.execution_identity,
+      requested_permissions_digest: row.requested_permissions_digest,
+      redirect_uri_id: row.redirect_uri_id,
+      correlation_id: correlation,
+      credential_correlation_id: "store:#{correlation}",
+      handoff_ref: handoff_ref
+    }
+
+  defp validate_handoff(row, operation, attempt, connection) do
+    if row.backend_pair_id == operation.backend_pair_id and
+         row.backend_pair_id == attempt.backend_pair_id and
+         row.authorization_ref == attempt.authorization_ref and
+         row.bound_input_digest == attempt.bound_subject_digest and
+         row.owner_uri == connection.owner_uri and
+         row.workspace_uri == operation.workspace_uri and
+         row.workspace_uri == attempt.workspace_uri and
+         row.workspace_uri == connection.workspace_uri and
+         row.connection_id == operation.connection_id and
+         row.connection_id == attempt.connection_id and
+         row.connection_id == connection.connection_id and
+         row.connection_version == operation.expected_connection_version and
+         row.connection_version == attempt.connection_version and
+         row.connection_version == connection.connection_version and
+         row.provider_id == connection.provider_id and
+         row.governed_host == connection.governed_host and
+         row.acquisition_method == connection.acquisition_method and
+         operation.bound_input_digest == Operation.callback_digest(row, attempt, connection) and
+         row.handoff_ref == operation.handoff_ref and
+         row.consume_correlation_id == attempt.correlation_id and
+         row.lifecycle_status == "consumed" and is_binary(row.handoff_ciphertext) and
+         is_nil(row.shredded_at),
+       do: :ok,
+       else: {:error, :credential_conflict}
+  end
+
+  defp validate_backend_connection_scope(row, connection) do
+    if row.owner_uri == connection.owner_uri and
+         row.workspace_uri == connection.workspace_uri and
+         row.connection_id == connection.connection_id and
+         row.connection_version == connection.connection_version and
+         row.provider_id == connection.provider_id and
+         row.governed_host == connection.governed_host and
+         row.acquisition_method == connection.acquisition_method,
+       do: :ok,
+       else: {:error, :credential_conflict}
+  end
+
+  defp connection_for_backend(row) do
+    case Repo.get(Connection, row.connection_id) do
+      %Connection{} = connection ->
+        case validate_backend_connection_scope(row, connection) do
+          :ok -> {:ok, connection}
+          {:error, _reason} = error -> error
+        end
+
+      nil ->
+        {:error, :credential_conflict}
+    end
+  end
+
+  defp validate_operation_fence(operation, attempt, connection) do
+    if operation.workspace_uri == attempt.workspace_uri and
+         operation.workspace_uri == connection.workspace_uri and
+         operation.connection_id == attempt.connection_id and
+         operation.connection_id == connection.connection_id and
+         operation.backend_pair_id == attempt.backend_pair_id and
+         operation.correlation_id == "store:#{attempt.correlation_id}" and
+         operation.attempt_claim_token == attempt.claim_token and
+         operation.attempt_version == attempt.attempt_version and
+         operation.expected_connection_version == attempt.connection_version and
+         operation.expected_connection_version == connection.connection_version and
+         attempt.status == "consuming" do
+      :ok
+    else
+      {:error, :credential_conflict}
+    end
+  end
+
+  defp credential_command(operation, attempt, connection),
+    do: %{
+      correlation_id: operation.correlation_id,
+      workspace_uri: operation.workspace_uri,
+      owner_uri: connection.owner_uri,
+      connection_id: operation.connection_id,
+      connection_version: operation.expected_connection_version,
+      backend_pair_id: operation.backend_pair_id,
+      provider_id: connection.provider_id,
+      governed_host: connection.governed_host,
+      execution_identity: connection.execution_identity,
+      attempt_ref: attempt.attempt_ref
+    }
+
+  defp decode_handoff_envelope(ciphertext) when is_binary(ciphertext) do
+    {:ok, :erlang.binary_to_term(ciphertext, [:safe])}
+  rescue
+    _error -> {:error, :credential_conflict}
+  end
+
+  defp decode_handoff_envelope(_ciphertext), do: {:error, :credential_conflict}
 
   defp envelope(row),
     do: %{
@@ -1145,6 +1399,9 @@ defmodule Ezagent.ProviderConnection.LocalAuthorizationBackend do
   defp safe_error("stale_connection_version"), do: :stale_connection_version
   defp safe_error(_unknown), do: :authorization_backend_unavailable
 
+  defp seal_with(snapshot, :active, purpose, value, aad),
+    do: seal_with(snapshot, snapshot.active_key_id, purpose, value, aad)
+
   defp seal_with(snapshot, key_id, purpose, value, aad) do
     key = Map.fetch!(snapshot.keys, key_id)
     nonce = :crypto.strong_rand_bytes(12)
@@ -1222,8 +1479,7 @@ defmodule Ezagent.ProviderConnection.LocalAuthorizationBackend do
   end
 
   defp parse_crypto_config do
-    config =
-      Application.get_env(:ezagent_domain_provider_connection, AuthorizationKeyRing, [])
+    config = Application.get_env(:ezagent_domain_provider_connection, AuthorizationKeyRing, [])
 
     with {:ok, pairs} <- crypto_pairs(Keyword.get(config, :source), config),
          {:ok, keys} <- crypto_keys(pairs),
@@ -1278,6 +1534,22 @@ defmodule Ezagent.ProviderConnection.LocalAuthorizationBackend do
     sha256(:erlang.term_to_binary({active, key_digests}, [:deterministic]))
   end
 
+  defp state_key_id(raw_state) do
+    case :binary.matches(raw_state, ".") do
+      [] ->
+        {:error, :callback_invalid}
+
+      matches ->
+        {separator, 1} = List.last(matches)
+        key_id = binary_part(raw_state, 0, separator)
+        opaque_size = byte_size(raw_state) - separator - 1
+
+        if opaque_size > 0 and Regex.match?(@key_id_pattern, key_id),
+          do: {:ok, key_id},
+          else: {:error, :callback_invalid}
+    end
+  end
+
   defp portable_secret?(value)
        when is_function(value) or is_pid(value) or is_port(value) or is_reference(value),
        do: false
@@ -1311,6 +1583,13 @@ defmodule Ezagent.ProviderConnection.LocalAuthorizationBackend do
   end
 
   defp sha256(value), do: :crypto.hash(:sha256, value)
+
+  defp digest(value),
+    do:
+      value
+      |> :erlang.term_to_binary([:deterministic])
+      |> sha256()
+      |> Base.encode16(case: :lower)
 
   defp required_binary(map, key, error) do
     case Map.fetch(map, key) do

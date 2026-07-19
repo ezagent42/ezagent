@@ -103,7 +103,7 @@ defmodule Ezagent.ActionSet.ProviderConnectionTest do
            callback_artifact: {:struct, Ezagent.Capability}
          }, %{attempt_ref: :string, authorization_url: :string, expires_at: :string}},
       consume_callback:
-        {%{attempt_ref: :string, callback: :map, correlation_id: :string},
+        {%{attempt_ref: :string, correlation_id: :string},
          %{connection_id: :string, status: :string, version: :integer}},
       reauthorize:
         {%{
@@ -532,7 +532,7 @@ defmodule Ezagent.ActionSet.ProviderConnectionTest do
     }
 
   defp direct_args(:consume_callback, _owner),
-    do: %{attempt_ref: "attempt-1", callback: %{}, correlation_id: "correlation-1"}
+    do: %{attempt_ref: "attempt-1", correlation_id: "correlation-1"}
 
   defp direct_args(action, owner) when action in [:reauthorize, :revoke, :disconnect],
     do: %{connection_id: "connection-1", expected_version: 1, assurance: assurance(owner, owner)}

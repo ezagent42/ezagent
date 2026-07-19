@@ -125,10 +125,14 @@ defmodule Ezagent.Invariants.CapVerifyLoadBoundariesTest do
     narrow_helper = definition_source(@cap, :validate_for_current_target, 2)
     assert narrow_helper =~ "Authority.verify_current(artifact, receiver)"
 
-    assert narrow_helper_calls() == [
-             {Ezagent.Cap.Authority, :verify_current, 2},
-             {Ezagent.URI, :stable_key, 1}
-           ]
+    assert MapSet.new(narrow_helper_calls()) ==
+             MapSet.new([
+               {Ezagent.Cap.Authority, :current_target?, 1},
+               {Ezagent.Cap.Authority, :target_uri, 1},
+               {Ezagent.Cap.Authority, :verify_current, 2},
+               {Ezagent.Cap.TargetArtifactValidator, :validate, 2},
+               {Ezagent.URI, :stable_key, 1}
+             ])
   end
 
   test "current-target validator scanner rejects every forbidden call category" do
@@ -271,7 +275,13 @@ defmodule Ezagent.Invariants.CapVerifyLoadBoundariesTest do
 
   defp scan_nodes(ast, definitions, visited, calls) do
     allowed =
-      MapSet.new([{Ezagent.Cap.Authority, :verify_current, 2}, {Ezagent.URI, :stable_key, 1}])
+      MapSet.new([
+        {Ezagent.Cap.Authority, :current_target?, 1},
+        {Ezagent.Cap.Authority, :target_uri, 1},
+        {Ezagent.Cap.Authority, :verify_current, 2},
+        {Ezagent.Cap.TargetArtifactValidator, :validate, 2},
+        {Ezagent.URI, :stable_key, 1}
+      ])
 
     {_ast, result} =
       Macro.prewalk(ast, {:ok, calls, visited}, fn
@@ -337,6 +347,7 @@ defmodule Ezagent.Invariants.CapVerifyLoadBoundariesTest do
       :case,
       :cond,
       :with,
+      :->,
       :and,
       :or,
       :not,

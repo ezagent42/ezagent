@@ -35,7 +35,7 @@ defmodule Ezagent.ActionSet.ProviderConnection do
   )
 
   action(:consume_callback,
-    args: {:closed_map, %{attempt_ref: :string, callback: :map, correlation_id: :string}},
+    args: {:closed_map, %{attempt_ref: :string, correlation_id: :string}},
     returns: %{connection_id: :string, status: :string, version: :integer},
     caps: [{:consume_callback, kind: :user}],
     data_owner: :self,
@@ -245,7 +245,7 @@ defmodule Ezagent.ActionSet.ProviderConnection do
     case Application.get_env(:ezagent_domain_provider_connection, :command_boundary) do
       fun when is_function(fun, 3) -> fun.(action, args, ctx)
       module when is_atom(module) and not is_nil(module) -> module.execute(action, args, ctx)
-      nil -> {:error, :provider_connection_orchestration_not_implemented}
+      nil -> Ezagent.ProviderConnection.Store.execute(action, args, ctx)
     end
   end
 end
