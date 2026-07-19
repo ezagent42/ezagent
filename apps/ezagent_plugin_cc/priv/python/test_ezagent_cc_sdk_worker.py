@@ -2,10 +2,12 @@
 """Unit tests for the cc-headless SDK worker's MCP resolution (route B).
 
 Runs without the Claude Agent SDK installed — the worker guards its
-`claude_agent_sdk` import so these pure helpers stay importable. Run with:
+`claude_agent_sdk` import so these pure helpers stay importable. `unittest`
+resolves a DOTTED module name from the cwd (a path arg degrades to a bogus
+module name), so run it from this directory:
 
-    uv run --no-project python -m unittest \
-        apps/ezagent_plugin_cc/priv/python/test_ezagent_cc_sdk_worker.py
+    cd apps/ezagent_plugin_cc/priv/python
+    uv run --no-project python -m unittest test_ezagent_cc_sdk_worker
 """
 
 from __future__ import annotations

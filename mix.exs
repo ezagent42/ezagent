@@ -134,8 +134,16 @@ defmodule EzagentCore.Umbrella.MixProject do
         "format",
         "test",
         # cc-headless SDK worker pure-helper suite (stdlib-only, no SDK needed) —
-        # codex review of PR #1452 flagged it was not wired into any gate.
-        "cmd uv run --no-project python -m unittest apps/ezagent_plugin_cc/priv/python/test_ezagent_cc_sdk_worker.py"
+        # codex review of PR #1452 flagged it was not wired into any gate. Run as
+        # an alias FUNCTION step (NOT `cmd`): `mix cmd` is `@recursive true`, so a
+        # `cmd`-based invocation runs once per child app with cwd=that child, and a
+        # root-relative path (`apps/ezagent_plugin_cc/priv/python/...`) fails to
+        # resolve there — `python -m unittest` then degrades the unresolved path
+        # into a bogus dotted module name and dies with `ModuleNotFoundError: No
+        # module named 'apps/ezagent_plugin_cc/priv/python/test_ezagent_cc_sdk_worker'`.
+        # Same recursion trap documented for `mix cmd --cd` above. See
+        # `run_cc_sdk_worker_tests/1`.
+        &run_cc_sdk_worker_tests/1
       ],
       # #108 — `mix ci.local` mirrors the CI `precommit + check_invariants` job
       # (`.github/workflows/ci.yml`) END-TO-END against a PRIVATE partitioned
@@ -216,6 +224,32 @@ defmodule EzagentCore.Umbrella.MixProject do
         Mix.raise("pnpm install failed in #{dir} (exit status #{status})")
       end
     end)
+  end
+
+  # The cc-headless SDK worker's pure-helper unittest suite, run ONCE from the
+  # umbrella root (an alias function step does not recurse into child projects
+  # the way `mix cmd` does — see the `precommit` note). `python -m unittest` wants
+  # a DOTTED module name resolved from cwd, NOT a path, so we `cd:` into the
+  # script dir (anchored to this mix.exs via `__DIR__`, not the caller's cwd) and
+  # pass the bare module `test_ezagent_cc_sdk_worker`. `uv run --no-project` gives
+  # a stdlib-only interpreter (the worker guards its `claude_agent_sdk` import, so
+  # no SDK is needed). Fails LOUD on a non-zero exit so a broken suite cannot
+  # masquerade as a green run.
+  defp run_cc_sdk_worker_tests(_args) do
+    py_dir = Path.expand("apps/ezagent_plugin_cc/priv/python", __DIR__)
+
+    {_out, status} =
+      System.cmd(
+        "uv",
+        ["run", "--no-project", "python", "-m", "unittest", "test_ezagent_cc_sdk_worker"],
+        cd: py_dir,
+        into: IO.stream(:stdio, :line),
+        stderr_to_stdout: true
+      )
+
+    if status != 0 do
+      Mix.raise("cc-headless SDK worker unittest suite failed (exit status #{status})")
+    end
   end
 
   # `mix ezagent.socialware.check` in a FRESH `mix` process. It must not run in
