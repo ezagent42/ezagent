@@ -298,6 +298,7 @@ defmodule Ezagent.ProviderConnection.CallbackIngressTest do
       bound_input_digest: "subject-digest",
       begin_correlation_id: "begin-correlation",
       owner_uri: URI.to_string(owner),
+      execution_identity: "connected_user",
       connection_id: connection_id,
       connection_version: 0,
       provider_id: "task7-provider",

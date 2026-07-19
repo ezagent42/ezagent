@@ -494,7 +494,8 @@ defmodule Ezagent.ProviderConnection.Store do
          backend_record.connection_version == connection.connection_version and
          backend_record.provider_id == connection.provider_id and
          backend_record.governed_host == connection.governed_host and
-         backend_record.acquisition_method == connection.acquisition_method,
+         backend_record.acquisition_method == connection.acquisition_method and
+         backend_record.execution_identity == connection.execution_identity,
        do: :ok,
        else: {:error, :credential_conflict}
   end
@@ -527,7 +528,8 @@ defmodule Ezagent.ProviderConnection.Store do
       provider_id: connection.provider_id,
       governed_host: connection.governed_host,
       connection_id: connection.connection_id,
-      connection_version: connection.connection_version
+      connection_version: connection.connection_version,
+      execution_identity: connection.execution_identity
     }
   end
 

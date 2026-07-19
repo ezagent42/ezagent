@@ -415,6 +415,13 @@ defmodule Ezagent.ProviderConnection.CallbackRecoveryTest do
                attempt.attempt_ref
              )
 
+    assert {:error, :credential_conflict} =
+             Store.execute(
+               :consume_callback,
+               %{attempt_ref: attempt.attempt_ref, correlation_id: callback.correlation_id},
+               %{self_uri: subject().owner_uri}
+             )
+
     refute_receive {:credential_store, _, _}
   end
 
@@ -534,7 +541,8 @@ defmodule Ezagent.ProviderConnection.CallbackRecoveryTest do
       provider_id: connection.provider_id,
       governed_host: connection.governed_host,
       connection_id: connection.connection_id,
-      connection_version: connection.connection_version
+      connection_version: connection.connection_version,
+      execution_identity: connection.execution_identity
     }
 
     assert {:ok, started} =
@@ -790,7 +798,8 @@ defmodule Ezagent.ProviderConnection.CallbackRecoveryTest do
         provider_id: connection.provider_id,
         governed_host: connection.governed_host,
         connection_id: connection.connection_id,
-        connection_version: connection.connection_version
+        connection_version: connection.connection_version,
+        execution_identity: connection.execution_identity
       },
       acquisition_method: connection.acquisition_method,
       requested_permissions_digest: "requested-digest-lost-fence",
@@ -815,7 +824,8 @@ defmodule Ezagent.ProviderConnection.CallbackRecoveryTest do
         provider_id: connection.provider_id,
         governed_host: connection.governed_host,
         connection_id: connection.connection_id,
-        connection_version: connection.connection_version
+        connection_version: connection.connection_version,
+        execution_identity: connection.execution_identity
       },
       correlation_id: correlation_id
     }
@@ -936,7 +946,8 @@ defmodule Ezagent.ProviderConnection.CallbackRecoveryTest do
       provider_id: "task6-provider",
       governed_host: "example.test",
       connection_id: "00000000-0000-4000-8000-000000000001",
-      connection_version: 1
+      connection_version: 1,
+      execution_identity: "connected_user"
     }
   end
 

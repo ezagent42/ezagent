@@ -266,6 +266,7 @@ defmodule Ezagent.ProviderConnection.SchemaTest do
         bound_input_digest: "digest",
         begin_correlation_id: "begin-1",
         owner_uri: "entity://acme/user/u1",
+        execution_identity: "connected_user",
         connection_id: "conn-1",
         connection_version: 1,
         provider_id: "fake",
