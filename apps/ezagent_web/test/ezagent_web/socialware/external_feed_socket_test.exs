@@ -262,7 +262,8 @@ defmodule EzagentWeb.Socialware.ExternalFeedSocketTest do
       assert conn.status == 403
     end
 
-    test "PR-3: a member downloads with a grantee-bound token minted via the approved gate", ctx do
+    test "PR-3: a member downloads with a grantee-bound token minted via the approved gate",
+         ctx do
       {upload_uri, _} = store_approved_attachment(ctx, "feed-bytes")
 
       # Mint INSIDE the cap-gated read — the token is person-bound to @owner.

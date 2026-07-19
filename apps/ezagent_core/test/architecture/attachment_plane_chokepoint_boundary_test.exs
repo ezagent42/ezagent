@@ -199,8 +199,7 @@ defmodule EzagentCore.AttachmentPlaneChokepointBoundaryTest do
        when fun in @banned_calls do
     if resolves_to?(modast, [:Ezagent, :Uploads, :DownloadToken], aliases) do
       [
-        {line_of(meta),
-         "DownloadToken.#{fun} — mint/serve only via the attachment chokepoints"}
+        {line_of(meta), "DownloadToken.#{fun} — mint/serve only via the attachment chokepoints"}
       ]
     else
       []
