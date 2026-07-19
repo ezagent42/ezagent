@@ -1082,7 +1082,9 @@ function renderLayoutComponent(component: NonNullable<WorldLayout["components"]>
       return (
         <Conversation
           key={component.id}
-          state={context.state}
+          // Source 1 is owned by the floating toast in WorldApp. main's
+          // inline sync card is hidden; source-2 messages[].error_card stays.
+          state={{...context.state, dispatch_error: null}}
           pushEvent={context.pushEvent}
           onAddRoutingRule={context.onAddRoutingRule}
           onCreate={context.onCreateSession}
