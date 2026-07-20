@@ -1,6 +1,7 @@
 defmodule Ezagent.Cap.TargetArtifactValidator do
   @moduledoc false
 
+  @doc false
   @spec validate(Ezagent.Capability.t(), URI.t()) ::
           :ok | {:error, :invalid_cap_signature}
   def validate(%Ezagent.Capability{} = artifact, %URI{} = receiver) do
