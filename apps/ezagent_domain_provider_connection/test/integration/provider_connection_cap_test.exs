@@ -33,7 +33,7 @@ defmodule Ezagent.ProviderConnectionCapTest do
 
     boundary = fn action, args, _ctx ->
       send(parent, {:boundary, action, args})
-      {:error, :provider_connection_orchestration_not_implemented}
+      {:error, :authorization_backend_unavailable}
     end
 
     Application.put_env(:ezagent_domain_provider_connection, :command_boundary, boundary)
@@ -76,19 +76,24 @@ defmodule Ezagent.ProviderConnectionCapTest do
         refute_received {:boundary, _, _}
       end
 
-      assert {:error, :provider_connection_orchestration_not_implemented} =
-               dispatch(
-                 ctx.owner,
-                 ctx.caller,
-                 action,
-                 args(action, ctx),
-                 MapSet.new([valid])
-               )
+      result =
+        dispatch(
+          ctx.owner,
+          ctx.caller,
+          action,
+          args(action, ctx),
+          MapSet.new([valid])
+        )
 
-      if action in [:reauthorize, :revoke, :disconnect],
-        do: assert_received({:assurance, ^action})
+      if action in [:reauthorize, :revoke, :disconnect] do
+        assert result == {:error, :assurance_validation_unavailable}
+        refute_received {:assurance, ^action}
+        refute_received {:boundary, ^action, _}
+      else
+        assert result == {:error, :authorization_backend_unavailable}
+        assert_received {:boundary, ^action, _}
+      end
 
-      assert_received {:boundary, ^action, _}
       refute_received {:boundary, _, _}
     end
 
@@ -136,7 +141,7 @@ defmodule Ezagent.ProviderConnectionCapTest do
       refute_received {:boundary, _, _}
     end
 
-    assert {:error, :provider_connection_orchestration_not_implemented} =
+    assert {:error, :authorization_backend_unavailable} =
              dispatch(
                ctx.owner,
                ctx.caller,
@@ -179,19 +184,24 @@ defmodule Ezagent.ProviderConnectionCapTest do
         refute_received {:boundary, _, _}
       end
 
-      assert {:error, :provider_connection_orchestration_not_implemented} =
-               dispatch(
-                 ctx.owner,
-                 ctx.caller,
-                 action,
-                 args(action, ctx),
-                 MapSet.new([cap])
-               )
+      result =
+        dispatch(
+          ctx.owner,
+          ctx.caller,
+          action,
+          args(action, ctx),
+          MapSet.new([cap])
+        )
 
-      if action in [:reauthorize, :revoke, :disconnect],
-        do: assert_received({:assurance, ^action})
+      if action in [:reauthorize, :revoke, :disconnect] do
+        assert result == {:error, :assurance_validation_unavailable}
+        refute_received {:assurance, ^action}
+        refute_received {:boundary, ^action, _}
+      else
+        assert result == {:error, :authorization_backend_unavailable}
+        assert_received {:boundary, ^action, _}
+      end
 
-      assert_received {:boundary, ^action, _}
       refute_received {:boundary, _, _}
     end
   end
@@ -217,7 +227,7 @@ defmodule Ezagent.ProviderConnectionCapTest do
       provider_id: "github",
       governed_host: "github.com",
       acquisition_method: "oauth",
-      execution_identity: "owner",
+      requested_execution_identity_class: "connected_user",
       requested_permissions_digest: "digest",
       redirect_uri_id: "callback",
       correlation_id: "correlation-1",
@@ -245,7 +255,20 @@ defmodule Ezagent.ProviderConnectionCapTest do
         signature: "signed-assurance"
       })
 
-    %{connection_id: "connection-1", expected_version: 1, assurance: assurance}
+    base = %{connection_id: "connection-1", expected_version: 1, assurance: assurance}
+
+    if action == :reauthorize do
+      Map.merge(base, %{
+        requested_execution_identity_class: "connected_user",
+        requested_permissions_digest: "reauthorize-digest",
+        redirect_uri_id: "callback",
+        correlation_id: "reauthorize-correlation-1",
+        callback_artifact:
+          issue_cap!(ctx.owner, ctx.caller, ProviderConnection, :consume_callback)
+      })
+    else
+      base
+    end
   end
 
   defp args(:refresh, _ctx),
