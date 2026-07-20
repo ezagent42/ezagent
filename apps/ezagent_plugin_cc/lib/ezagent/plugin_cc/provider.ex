@@ -31,6 +31,26 @@ defmodule Ezagent.PluginCc.Provider do
   def provider_key, do: @provider_key
 
   @doc """
+  The shared `config_schema/0` field for the custom-backend flavors
+  (F3/#1460): an enum over the closed catalog, REQUIRED. Both custom
+  Template Classes append it to cc's base config-schema fields so the ad-hoc
+  `workspace create_agent` lane — whose `FlavorConfig` key whitelist is
+  sourced from `config_schema/0` — accepts `provider`. The VALUE stays
+  validated fail-closed at `check_backend_profile/1` during template
+  validate; this field only opens the key.
+  """
+  @spec provider_config_field() :: map()
+  def provider_config_field do
+    %{
+      key: @provider_key,
+      type: :enum,
+      label: "Backend profile",
+      options: ProviderCatalog.names(),
+      required: true
+    }
+  end
+
+  @doc """
   The raw `"provider"` template-data value: `nil` when absent, else the
   string (atom input `"anthropic"`/profile names normalized to strings).
   No validation here — validation is `profile_env/1`'s job (fail closed).

@@ -137,6 +137,18 @@ defmodule Ezagent.PluginCc.Template.CcHeadlessCustomAgent do
 
   # --- instantiate (fail-closed profile gate + fail-fast API-key gate) -------
 
+  # F3/#1460 — same config schema as the pty twin (cc's base fields + the
+  # REQUIRED provider enum). The plain cc-headless Class exports no
+  # `config_schema/0`; the custom flavor needs one so the ad-hoc
+  # `workspace create_agent` lane's FlavorConfig whitelist accepts a backend
+  # profile. The value stays gated fail-closed at
+  # `Provider.check_backend_profile/1` in `validate/1`.
+  @impl Ezagent.Kind.Template
+  def config_schema,
+    do:
+      Ezagent.PluginCc.Template.CcAgent.ConfigSchema.fields() ++
+        [Provider.provider_config_field()]
+
   @impl Ezagent.Kind.Template
   def instantiate(_tmpl_name, %{"agent_uri" => uri_str} = tmpl, workspace_uri) do
     with {:ok, agent_uri} <- parse_uri(uri_str),

@@ -34,7 +34,10 @@ defmodule Ezagent.ActionSet.Workspace.AgentCreate.RoleStep do
 
   # File-flavors whose create route is the template/cascade path (NOT
   # direct-spawn); a role on these is RF-5b (deferred) → rejected fail-loud.
-  @file_flavors ~w(cc cc-headless echo codex codex-remote)
+  # cc-custom / cc-headless-custom joined this lane in F3/#1460 — omitting them
+  # here let a role pass validation and then be SILENTLY dropped by the
+  # template lane (codex review of PR #1485).
+  @file_flavors ~w(cc cc-headless echo codex codex-remote cc-custom cc-headless-custom)
 
   @doc "Is the `role` create arg shape-valid (nil or a string)?"
   @spec valid_role_arg?(term()) :: boolean()

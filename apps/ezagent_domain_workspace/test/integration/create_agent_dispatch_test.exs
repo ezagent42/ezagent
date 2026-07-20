@@ -359,8 +359,7 @@ defmodule Ezagent.Integration.CreateAgentDispatchTest do
       buffer_size_before = Ezagent.PendingDelivery.buffer_size(agent_uri)
 
       assert {:error,
-              {:grant_failed, ^later_denied,
-               {:no_kind_module_for_agent, missing_target_string}}} =
+              {:grant_failed, ^later_denied, {:no_kind_module_for_agent, missing_target_string}}} =
                Workspace.grant_initial_caps(
                  agent_uri,
                  [owner_permitted, later_denied],
@@ -652,6 +651,120 @@ defmodule Ezagent.Integration.CreateAgentDispatchTest do
                  },
                  admin_ctx
                )
+    end
+
+    @tag :integration
+    test "F3/#1460 — cc-custom ad-hoc create passes provider through FlavorConfig and fails CLOSED at the catalog gate",
+         %{workspace_uri: workspace_uri, admin_ctx: admin_ctx} do
+      # Pre-F3 this was {:unknown_flavor_config_keys, "cc-custom", ["provider"]}
+      # — the key never reached the template. Post-F3 the key flows and the
+      # closed-catalog gate (Template.validate via the cascade lane) rejects
+      # the bogus VALUE.
+      assert {:error,
+              {:cascade_spawn_failed,
+               {:invalid_template_data, {:unknown_backend_profile, "bogus"}}}} =
+               Workspace.create_agent(
+                 workspace_uri,
+                 %{
+                   flavor: "cc-custom",
+                   name: "cc-custom-bogus-#{System.unique_integer([:positive])}",
+                   cwd: "",
+                   with_pty: false,
+                   flavor_config: %{"provider" => "bogus"}
+                 },
+                 admin_ctx
+               )
+    end
+
+    @tag :integration
+    test "F3/#1460 — cc-headless-custom ad-hoc create fails closed on a bogus provider value",
+         %{workspace_uri: workspace_uri, admin_ctx: admin_ctx} do
+      assert {:error,
+              {:cascade_spawn_failed,
+               {:invalid_template_data, {:unknown_backend_profile, "bogus"}}}} =
+               Workspace.create_agent(
+                 workspace_uri,
+                 %{
+                   flavor: "cc-headless-custom",
+                   name: "cc-hc-bogus-#{System.unique_integer([:positive])}",
+                   cwd: "",
+                   with_pty: false,
+                   flavor_config: %{"provider" => "bogus"}
+                 },
+                 admin_ctx
+               )
+    end
+
+    @tag :integration
+    test "F3/#1460 — cc-custom ad-hoc create without provider still fails :missing_backend_profile",
+         %{workspace_uri: workspace_uri, admin_ctx: admin_ctx} do
+      # Pre-F3 the custom flavors fell through to the direct-spawn fallback,
+      # which SKIPS validation for an empty flavor_config — this create
+      # returned {:ok, agent} as a bare Kind with no PTY/sidecar. On the
+      # file-flavor cascade lane the profile gate fails closed.
+      assert {:error, {:cascade_spawn_failed, {:invalid_template_data, :missing_backend_profile}}} =
+               Workspace.create_agent(
+                 workspace_uri,
+                 %{
+                   flavor: "cc-custom",
+                   name: "cc-custom-noprovider-#{System.unique_integer([:positive])}",
+                   cwd: "",
+                   with_pty: false
+                 },
+                 admin_ctx
+               )
+    end
+
+    @tag :integration
+    test "F3/#1460 — a VALID provider reaches the launchability gate (profile env consulted)",
+         %{workspace_uri: workspace_uri, admin_ctx: admin_ctx} do
+      # The provider key flows through the whitelist + template validate and
+      # reaches instantiate's ensure_api_key gate. With the profile's env var
+      # unset the create fails fast there (never a zombie), which only happens
+      # if the whole ad-hoc lane threads the profile correctly.
+      prev = System.get_env("DEEPSEEK_API_KEY")
+      System.delete_env("DEEPSEEK_API_KEY")
+
+      try do
+        assert {:error, {:cascade_spawn_failed, {:backend_api_key_missing, "deepseek", _uri}}} =
+                 Workspace.create_agent(
+                   workspace_uri,
+                   %{
+                     flavor: "cc-custom",
+                     name: "cc-custom-keyless-#{System.unique_integer([:positive])}",
+                     cwd: "",
+                     with_pty: false,
+                     flavor_config: %{"provider" => "deepseek"}
+                   },
+                   admin_ctx
+                 )
+      after
+        if prev, do: System.put_env("DEEPSEEK_API_KEY", prev)
+      end
+    end
+
+    @tag :integration
+    test "F3/#1460 + codex review — role on a custom flavor fails LOUD (never silently dropped)",
+         %{workspace_uri: workspace_uri, admin_ctx: admin_ctx} do
+      # codex review of PR #1485: the custom flavors joined the file-flavor
+      # lane but @file_flavors lagged, so a role passed validation and was
+      # silently discarded. Now identical to the plain twins: RF-5b territory
+      # → reject.
+      for flavor <- ["cc-custom", "cc-headless-custom"] do
+        assert {:error, {:role_unsupported_for_flavor, ^flavor}} =
+                 Workspace.create_agent(
+                   workspace_uri,
+                   %{
+                     flavor: flavor,
+                     name: "role-#{flavor}-#{System.unique_integer([:positive])}",
+                     cwd: "",
+                     with_pty: false,
+                     role: "kanban-assistant",
+                     flavor_config: %{"provider" => "deepseek"}
+                   },
+                   admin_ctx
+                 )
+      end
     end
 
     @tag :integration

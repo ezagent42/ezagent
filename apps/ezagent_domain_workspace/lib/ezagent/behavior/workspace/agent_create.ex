@@ -279,7 +279,6 @@ defmodule Ezagent.ActionSet.Workspace.AgentCreate do
       params,
       "cc",
       "cc.agent",
-      "cc.agent.",
       Map.get(params, :from_uri)
     )
   end
@@ -291,7 +290,25 @@ defmodule Ezagent.ActionSet.Workspace.AgentCreate do
       params,
       "cc-headless",
       "cc_headless.agent",
-      "cc_headless.agent.",
+      nil
+    )
+  end
+
+  # F3/#1460 — the custom-backend flavors ride the SAME file-flavor cascade lane
+  # as their plain twins (previously: direct-spawn fallback → zombie Kind, no
+  # sidecar; empty flavor_config even skipped validation). from_uri: N/A (API-key).
+  @custom_backend_classes %{
+    "cc-custom" => "cc_custom.agent",
+    "cc-headless-custom" => "cc_headless_custom.agent"
+  }
+  defp do_create_agent(flavor, agent_uri, session_templates, params)
+       when is_map_key(@custom_backend_classes, flavor) do
+    register_file_flavor_agent(
+      session_templates,
+      agent_uri,
+      params,
+      flavor,
+      Map.fetch!(@custom_backend_classes, flavor),
       nil
     )
   end
@@ -303,7 +320,6 @@ defmodule Ezagent.ActionSet.Workspace.AgentCreate do
       params,
       "codex",
       "codex.agent",
-      "codex.agent.",
       Map.get(params, :from_uri)
     )
   end
@@ -315,7 +331,6 @@ defmodule Ezagent.ActionSet.Workspace.AgentCreate do
       params,
       "codex-remote",
       "codex_remote.agent",
-      "codex_remote.agent.",
       nil
     )
   end
@@ -411,13 +426,13 @@ defmodule Ezagent.ActionSet.Workspace.AgentCreate do
     end
   end
 
+  # tmpl_prefix is always `class_name <> "."`, so the helper derives it.
   defp register_file_flavor_agent(
          session_templates,
          agent_uri,
          params,
          flavor,
          class_name,
-         tmpl_prefix,
          from_uri
        ) do
     %{
@@ -438,7 +453,7 @@ defmodule Ezagent.ActionSet.Workspace.AgentCreate do
         session_templates,
         workspace_name,
         workspace_uri,
-        tmpl_prefix <> agent_name(agent_uri),
+        class_name <> "." <> agent_name(agent_uri),
         tmpl,
         agent_uri,
         Map.get(params, :caller),
