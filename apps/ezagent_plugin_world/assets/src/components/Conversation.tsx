@@ -3,7 +3,7 @@ import {Bug, Cable, CheckCircle2, ChevronUp, Copy, ExternalLink, LayoutGrid, Lin
 
 import {Button, Input, Modal, Select} from "./ui/primitives"
 import {JsonRenderBubble} from "./JsonRenderBubble"
-import {Kanban, type KanbanState} from "./Kanban"
+import {Kanban, type KanbanState} from "../../../../ezagent_plugin_kanban/assets/src/Kanban"
 import {PtyTerminalSurface} from "./PtyTerminal"
 
 /** G5 structured error card pushed by ErrorRenderer */

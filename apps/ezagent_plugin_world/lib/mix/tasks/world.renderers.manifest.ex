@@ -94,7 +94,11 @@ defmodule Mix.Tasks.World.Renderers.Manifest do
       raise "cannot resolve umbrella path for plugin application #{inspect(app)}"
     end
 
-    source = Path.expand(page.renderer.source, app_path)
+    source =
+      page.renderer.source
+      |> Path.rootname()
+      |> Path.expand(app_path)
+
     relative = Path.relative_to(source, Path.dirname(manifest_path()), force: true)
 
     if String.starts_with?(relative, "."), do: relative, else: "./" <> relative
