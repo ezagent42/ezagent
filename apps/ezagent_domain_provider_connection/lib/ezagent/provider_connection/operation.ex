@@ -181,9 +181,39 @@ defmodule Ezagent.ProviderConnection.Operation do
       |> check_constraint(:status,
         name: :provider_connection_operations_durable_ownership_check
       )
+      |> check_constraint(:attempt_ref,
+        name: :provider_connection_operations_attempt_purpose_check
+      )
       |> foreign_key_constraint(:connection_id,
         name: :provider_connection_operations_connection_workspace_fkey
       )
+
+  @doc "Builds a callback-store operation from a locked attempt and connection."
+  @spec store_create_changeset(AuthorizationAttempt.t(), Connection.t(), map()) ::
+          Ecto.Changeset.t()
+  def store_create_changeset(
+        %AuthorizationAttempt{} = attempt,
+        %Connection{} = connection,
+        attrs
+      )
+      when is_map(attrs) do
+    trusted_scope = %{
+      workspace_uri: connection.workspace_uri,
+      connection_id: connection.connection_id,
+      attempt_ref: attempt.attempt_ref,
+      backend_pair_id: attempt.backend_pair_id,
+      expected_connection_version: connection.connection_version,
+      expected_credential_version: connection.credential_version,
+      attempt_version: attempt.attempt_version,
+      attempt_claim_token: attempt.claim_token
+    }
+
+    attrs
+    |> Map.merge(trusted_scope)
+    |> put_prior_credential(attempt, connection)
+    |> create_changeset()
+    |> validate_store_scope(attempt, connection)
+  end
 
   @doc false
   def backend_commit_changeset(%__MODULE__{status: "prepared"} = operation, attrs) do
@@ -257,5 +287,34 @@ defmodule Ezagent.ProviderConnection.Operation do
           "must be present with prior credential version"
         )
     end
+  end
+
+  defp put_prior_credential(attrs, %AuthorizationAttempt{purpose: "initial_bind"}, _connection) do
+    Map.merge(attrs, %{prior_credential_ref: nil, prior_credential_version: nil})
+  end
+
+  defp put_prior_credential(attrs, %AuthorizationAttempt{purpose: "reauthorize"}, connection) do
+    Map.merge(attrs, %{
+      prior_credential_ref: connection.credential_backend_ref,
+      prior_credential_version: connection.credential_version
+    })
+  end
+
+  defp put_prior_credential(attrs, _attempt, _connection), do: attrs
+
+  defp validate_store_scope(changeset, attempt, connection) do
+    consistent? =
+      attempt.purpose in ["initial_bind", "reauthorize"] and
+        attempt.connection_id == connection.connection_id and
+        attempt.workspace_uri == connection.workspace_uri and
+        attempt.connection_version == connection.connection_version and
+        (attempt.purpose != "reauthorize" or
+           (is_binary(connection.credential_backend_ref) and
+              is_integer(connection.credential_version)))
+
+    if consistent?,
+      do: changeset,
+      else:
+        add_error(changeset, :attempt_ref, "does not match locked attempt purpose and connection")
   end
 end

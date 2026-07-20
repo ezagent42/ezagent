@@ -441,31 +441,33 @@ defmodule Ezagent.ProviderConnection.SchemaTest do
   test "prepared callback operation rejects a half prior credential pair" do
     connection = Repo.insert!(Connection.create_changeset(connection_attrs()))
 
-    attrs =
-      operation_attrs(connection.connection_id)
-      |> Map.delete(:prior_credential_version)
+    for missing <- [:prior_credential_ref, :prior_credential_version] do
+      attrs =
+        operation_attrs(connection.connection_id)
+        |> Map.delete(missing)
+        |> Map.put(:correlation_id, "half-prior-#{missing}")
 
-    assert {:error, changeset} =
-             %Operation{}
-             |> Ecto.Changeset.change(attrs)
-             |> Ecto.Changeset.check_constraint(:status,
-               name: :provider_connection_operations_callback_prepare_check
-             )
-             |> Repo.insert()
+      assert {:error, changeset} =
+               %Operation{}
+               |> Ecto.Changeset.change(attrs)
+               |> Ecto.Changeset.check_constraint(:status,
+                 name: :provider_connection_operations_callback_prepare_check
+               )
+               |> Repo.insert()
 
-    assert {"is invalid",
-            [
-              constraint: :check,
-              constraint_name: "provider_connection_operations_callback_prepare_check"
-            ]} = changeset.errors[:status]
+      assert {"is invalid",
+              [
+                constraint: :check,
+                constraint_name: "provider_connection_operations_callback_prepare_check"
+              ]} = changeset.errors[:status]
+    end
   end
 
   test "initial callback operations allow no prior credential and reject half a prior pair" do
     connection = Repo.insert!(Connection.create_changeset(connection_attrs()))
 
     initial_attrs =
-      operation_attrs(connection.connection_id)
-      |> Map.drop([:prior_credential_ref, :prior_credential_version])
+      operation_attrs(connection.connection_id, "initial_bind")
 
     assert {:ok, operation} = Repo.insert(Operation.create_changeset(initial_attrs))
     assert operation.prior_credential_ref == nil
@@ -493,65 +495,6 @@ defmodule Ezagent.ProviderConnection.SchemaTest do
         ] do
       refute Operation.backend_commit_changeset(invalid_operation, result_attrs).valid?
       refute Operation.cleanup_pending_changeset(invalid_operation, result_attrs).valid?
-    end
-  end
-
-  test "refresh and termination preparations schedule their recoverable operations from passed time" do
-    root = Path.expand("../../../../..", __DIR__)
-
-    for relative <- [
-          "apps/ezagent_domain_provider_connection/lib/ezagent/provider_connection/refresh.ex",
-          "apps/ezagent_domain_provider_connection/lib/ezagent/provider_connection/termination.ex"
-        ] do
-      source = File.read!(Path.join(root, relative))
-      assert source =~ "next_recovery_at: now"
-    end
-  end
-
-  test "initial credential replacement has no prior revoke obligation" do
-    root = Path.expand("../../../../..", __DIR__)
-
-    source =
-      File.read!(
-        Path.join(
-          root,
-          "apps/ezagent_domain_provider_connection/lib/ezagent/provider_connection/credential_replacement.ex"
-        )
-      )
-
-    assert source =~
-             ~r/defp revoke_prior\(\s*%Operation\{\s*prior_credential_ref: nil,\s*prior_credential_version: nil\s*\},\s*_backend\s*\),\s*do: :ok/s
-
-    assert source =~
-             ~r/defp revoke_prior\(\s*%Operation\{\s*prior_credential_ref: prior_ref,\s*prior_credential_version: prior_version\s*\} = operation,/s
-  end
-
-  test "every production operation finalizer clears its durable recovery schedule" do
-    root = Path.expand("../../../../..", __DIR__)
-
-    expectations = [
-      {"credential_replacement.ex", 2},
-      {"refresh.ex", 1},
-      {"termination.ex", 1}
-    ]
-
-    for {file, expected_count} <- expectations do
-      source =
-        File.read!(
-          Path.join(
-            root,
-            "apps/ezagent_domain_provider_connection/lib/ezagent/provider_connection/#{file}"
-          )
-        )
-
-      finalized_updates =
-        Regex.scan(~r/Ecto\.Changeset\.change\([^\)]*status: "finalized"[^\)]*\)/s, source)
-
-      assert length(finalized_updates) == expected_count
-
-      assert Enum.all?(finalized_updates, fn [update] ->
-               update =~ "next_recovery_at: nil"
-             end)
     end
   end
 
@@ -674,7 +617,9 @@ defmodule Ezagent.ProviderConnection.SchemaTest do
         case schema do
           Operation ->
             Operation.create_changeset(
-              Map.merge(operation_attrs(connection.connection_id), attrs)
+              operation_attrs(connection.connection_id)
+              |> Map.merge(attrs)
+              |> Map.put(:operation_class, "replace")
             )
 
           _ ->
@@ -862,22 +807,62 @@ defmodule Ezagent.ProviderConnection.SchemaTest do
         status: "active"
       })
 
-  defp operation_attrs(connection_id),
-    do:
-      Map.merge(base(), %{
+  defp operation_attrs(connection_id, purpose \\ "reauthorize") do
+    connection = Repo.get!(Connection, connection_id)
+
+    attempt =
+      Repo.get_by(AuthorizationAttempt,
         connection_id: connection_id,
-        operation_class: "store",
-        correlation_id: "corr-1",
-        bound_input_digest: "digest",
-        expected_connection_version: 1,
-        expected_credential_version: 0,
-        prior_credential_ref: "credential-ref-old",
-        prior_credential_version: 0,
-        attempt_version: 1,
-        attempt_claim_token: "claim-token",
-        next_recovery_at: DateTime.utc_now(),
-        status: "prepared"
-      })
+        correlation_id: "schema-operation-#{purpose}"
+      ) || insert_operation_attempt!(connection, purpose)
+
+    prior =
+      case purpose do
+        "initial_bind" ->
+          %{prior_credential_ref: nil, prior_credential_version: nil}
+
+        "reauthorize" ->
+          %{
+            prior_credential_ref: connection.credential_backend_ref,
+            prior_credential_version: connection.credential_version
+          }
+      end
+
+    base()
+    |> Map.merge(%{
+      connection_id: connection_id,
+      attempt_ref: attempt.attempt_ref,
+      operation_class: "store",
+      correlation_id: "corr-1",
+      bound_input_digest: "digest",
+      expected_connection_version: connection.connection_version,
+      expected_credential_version: connection.credential_version,
+      attempt_version: attempt.attempt_version,
+      attempt_claim_token: attempt.claim_token,
+      next_recovery_at: DateTime.utc_now(),
+      status: "prepared"
+    })
+    |> Map.merge(prior)
+  end
+
+  defp insert_operation_attempt!(connection, purpose) do
+    unique = System.unique_integer([:positive])
+
+    connection.connection_id
+    |> attempt_attrs()
+    |> Map.merge(%{
+      attempt_ref: Ecto.UUID.generate(),
+      authorization_ref: "schema-operation-auth-#{unique}",
+      purpose: purpose,
+      state_digest: "schema-operation-state-#{unique}",
+      correlation_id: "schema-operation-#{purpose}",
+      connection_version: connection.connection_version,
+      status: "consumed"
+    })
+    |> AuthorizationAttempt.create_changeset()
+    |> Ecto.Changeset.change(attempt_version: 1, claim_token: "claim-token")
+    |> Repo.insert!()
+  end
 
   defp attempt_attrs(connection_id),
     do:

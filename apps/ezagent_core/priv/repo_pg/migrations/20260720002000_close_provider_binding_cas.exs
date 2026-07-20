@@ -126,9 +126,100 @@ defmodule EzagentCore.Repo.Migrations.CloseProviderBindingCas do
     FOR EACH ROW
     EXECUTE FUNCTION provider_connections_enforce_immutable_binding()
     """)
+
+    execute("""
+    CREATE FUNCTION provider_authorization_attempts_enforce_immutable_coordinates()
+    RETURNS trigger
+    LANGUAGE plpgsql
+    AS $$
+    BEGIN
+      IF OLD.attempt_ref IS DISTINCT FROM NEW.attempt_ref
+         OR OLD.connection_id IS DISTINCT FROM NEW.connection_id
+         OR OLD.workspace_uri IS DISTINCT FROM NEW.workspace_uri
+         OR OLD.connection_version IS DISTINCT FROM NEW.connection_version
+         OR OLD.purpose IS DISTINCT FROM NEW.purpose
+      THEN
+        RAISE EXCEPTION 'provider authorization attempt immutable coordinate drift'
+          USING ERRCODE = 'check_violation',
+                CONSTRAINT = 'provider_authorization_attempts_immutable_coordinates_check';
+      END IF;
+
+      RETURN NEW;
+    END;
+    $$
+    """)
+
+    execute("""
+    CREATE TRIGGER provider_authorization_attempts_immutable_coordinates_trigger
+    BEFORE UPDATE OF attempt_ref, connection_id, workspace_uri, connection_version, purpose
+    ON provider_authorization_attempts
+    FOR EACH ROW
+    EXECUTE FUNCTION provider_authorization_attempts_enforce_immutable_coordinates()
+    """)
+
+    execute("""
+    CREATE FUNCTION provider_connection_operations_enforce_attempt_purpose()
+    RETURNS trigger
+    LANGUAGE plpgsql
+    AS $$
+    DECLARE
+      attempt provider_authorization_attempts%ROWTYPE;
+    BEGIN
+      IF NEW.operation_class <> 'store' THEN
+        RETURN NEW;
+      END IF;
+
+      SELECT *
+        INTO attempt
+        FROM provider_authorization_attempts
+       WHERE attempt_ref = NEW.attempt_ref;
+
+      IF NOT FOUND
+         OR attempt.connection_id IS DISTINCT FROM NEW.connection_id
+         OR attempt.workspace_uri IS DISTINCT FROM NEW.workspace_uri
+         OR (attempt.purpose = 'initial_bind'
+             AND NEW.prior_credential_ref IS NOT NULL
+             AND NEW.prior_credential_version IS NOT NULL)
+         OR (attempt.purpose = 'reauthorize'
+             AND NEW.prior_credential_ref IS NULL
+             AND NEW.prior_credential_version IS NULL)
+         OR attempt.purpose NOT IN ('initial_bind', 'reauthorize')
+      THEN
+        RAISE EXCEPTION 'provider operation attempt purpose mismatch'
+          USING ERRCODE = 'check_violation',
+                CONSTRAINT = 'provider_connection_operations_attempt_purpose_check';
+      END IF;
+
+      RETURN NEW;
+    END;
+    $$
+    """)
+
+    execute("""
+    CREATE TRIGGER provider_connection_operations_attempt_purpose_trigger
+    BEFORE INSERT OR UPDATE OF attempt_ref, prior_credential_ref,
+      prior_credential_version, connection_id, workspace_uri, operation_class
+    ON provider_connection_operations
+    FOR EACH ROW
+    EXECUTE FUNCTION provider_connection_operations_enforce_attempt_purpose()
+    """)
   end
 
   def down do
+    execute("""
+    DROP TRIGGER provider_connection_operations_attempt_purpose_trigger
+    ON provider_connection_operations
+    """)
+
+    execute("DROP FUNCTION provider_connection_operations_enforce_attempt_purpose()")
+
+    execute("""
+    DROP TRIGGER provider_authorization_attempts_immutable_coordinates_trigger
+    ON provider_authorization_attempts
+    """)
+
+    execute("DROP FUNCTION provider_authorization_attempts_enforce_immutable_coordinates()")
+
     execute("""
     DROP TRIGGER provider_connections_immutable_binding_trigger
     ON provider_connections

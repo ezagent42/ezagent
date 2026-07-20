@@ -193,53 +193,51 @@ defmodule Ezagent.ProviderConnection.Store do
   defp prepare_operation(attempt, connection) do
     correlation_id = "store:#{attempt.correlation_id}"
     now = DateTime.utc_now()
-    {prior_credential_ref, prior_credential_version} = prior_credential(connection)
 
-    backend_record =
-      Repo.get_by(AuthorizationBackendRecord, authorization_ref: attempt.authorization_ref)
+    Repo.transaction(fn ->
+      locked_connection = lock_connection(connection.connection_id)
+      locked_attempt = lock_attempt(attempt.attempt_ref)
 
-    with %AuthorizationBackendRecord{} <- backend_record,
-         :ok <- stable_scope(backend_record, attempt, connection) do
-      digest = Operation.callback_digest(backend_record, attempt, connection)
+      backend_record =
+        Repo.get_by(AuthorizationBackendRecord, authorization_ref: attempt.authorization_ref)
 
-      attrs = %{
-        workspace_uri: connection.workspace_uri,
-        connection_id: connection.connection_id,
-        attempt_ref: attempt.attempt_ref,
-        backend_pair_id: attempt.backend_pair_id,
-        operation_class: "store",
-        correlation_id: correlation_id,
-        bound_input_digest: digest,
-        expected_connection_version: connection.connection_version,
-        expected_credential_version: connection.credential_version,
-        prior_credential_ref: prior_credential_ref,
-        prior_credential_version: prior_credential_version,
-        attempt_version: attempt.attempt_version,
-        attempt_claim_token: attempt.claim_token,
-        next_recovery_at: now,
-        status: "prepared"
-      }
+      with %Connection{} <- locked_connection,
+           %AuthorizationAttempt{} <- locked_attempt,
+           %AuthorizationBackendRecord{} <- backend_record,
+           true <- locked_attempt.claim_token == attempt.claim_token,
+           true <- locked_attempt.attempt_version == attempt.attempt_version,
+           :ok <- stable_scope(backend_record, locked_attempt, locked_connection) do
+        digest = Operation.callback_digest(backend_record, locked_attempt, locked_connection)
 
-      case Repo.insert(Operation.create_changeset(attrs)) do
-        {:ok, operation} ->
-          {:ok, operation}
+        attrs = %{
+          operation_class: "store",
+          correlation_id: correlation_id,
+          bound_input_digest: digest,
+          next_recovery_at: now,
+          status: "prepared"
+        }
 
-        {:error, _changeset} ->
-          reconcile_operation(attempt.backend_pair_id, correlation_id, digest)
+        case Repo.insert(
+               Operation.store_create_changeset(locked_attempt, locked_connection, attrs)
+             ) do
+          {:ok, operation} -> operation
+          {:error, changeset} -> Repo.rollback({:insert_failed, changeset, digest})
+        end
+      else
+        _reason -> Repo.rollback(:credential_conflict)
       end
-    else
-      _reason -> {:error, :credential_conflict}
+    end)
+    |> case do
+      {:ok, operation} ->
+        {:ok, operation}
+
+      {:error, {:insert_failed, _changeset, digest}} ->
+        reconcile_operation(attempt.backend_pair_id, correlation_id, digest)
+
+      {:error, _reason} ->
+        {:error, :credential_conflict}
     end
   end
-
-  defp prior_credential(%Connection{
-         status: "pending_authorization",
-         credential_backend_ref: nil
-       }),
-       do: {nil, nil}
-
-  defp prior_credential(connection),
-    do: {connection.credential_backend_ref, connection.credential_version}
 
   defp reconcile_operation(pair_id, correlation_id, digest) do
     case Repo.get_by(Operation,
