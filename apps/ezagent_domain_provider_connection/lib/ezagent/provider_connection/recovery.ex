@@ -9,6 +9,7 @@ defmodule Ezagent.ProviderConnection.Recovery do
     Connection,
     CredentialReplacement,
     Operation,
+    Refresh,
     Store,
     Types
   }
@@ -172,19 +173,7 @@ defmodule Ezagent.ProviderConnection.Recovery do
   end
 
   def recover(%Operation{operation_class: "refresh"} = operation, now, _observer) do
-    with %Connection{} = connection <- Repo.get(Connection, operation.connection_id) do
-      Store.execute(
-        :refresh,
-        %{
-          connection_id: connection.connection_id,
-          expected_version: operation.expected_connection_version,
-          correlation_id: operation.correlation_id
-        },
-        %{self_uri: Ezagent.URI.new!(connection.owner_uri), now: now}
-      )
-    else
-      _missing -> {:error, :stale_version}
-    end
+    Refresh.recover(operation, now)
   end
 
   defp continue(_rows, %{batches: batches} = state)
@@ -268,7 +257,7 @@ defmodule Ezagent.ProviderConnection.Recovery do
     from(operation in Operation,
       where:
         operation.operation_class == "refresh" and
-          (operation.status in ["backend_committed", "connection_committed"] or
+          (operation.status in ["backend_committed", "connection_committed", "cleanup_pending"] or
              (operation.status == "prepared" and operation.lease_until <= ^now)),
       select: operation
     )
@@ -449,7 +438,12 @@ defmodule Ezagent.ProviderConnection.Recovery do
     from(operation in Operation,
       where:
         operation.operation_class == "refresh" and
-          operation.status in ["prepared", "backend_committed", "connection_committed"],
+          operation.status in [
+            "prepared",
+            "backend_committed",
+            "connection_committed",
+            "cleanup_pending"
+          ],
       select:
         min(
           type(

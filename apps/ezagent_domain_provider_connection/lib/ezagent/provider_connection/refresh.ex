@@ -2,16 +2,59 @@ defmodule Ezagent.ProviderConnection.Refresh do
   @moduledoc "Durable, fenced refresh orchestration."
   import Ecto.Query
 
-  alias Ezagent.ProviderConnection.{Connection, Operation, RuntimeBindings, Transition}
+  alias Ezagent.ProviderConnection.{
+    Connection,
+    CredentialRefreshExchange,
+    Operation,
+    RuntimeBindings,
+    Transition
+  }
+
   alias EzagentCore.Repo
 
   @lease_seconds 30
+  @test_build Mix.env() == :test
 
   @doc false
   def execute(%Connection{} = connection, args, now \\ DateTime.utc_now()) do
     with {:ok, pair, driver, backend} <- RuntimeBindings.resolve(connection),
          {:ok, operation} <- prepare_or_resume(connection, pair, args, now) do
       resume(operation, driver.implementation, backend, now)
+    end
+  end
+
+  @doc false
+  def recover(%Operation{} = operation, now \\ DateTime.utc_now()) do
+    operation = Repo.get!(Operation, operation.id)
+    connection = Repo.get!(Connection, operation.connection_id)
+
+    cond do
+      operation.status == "prepared" and not provider_owned?(operation) ->
+        execute(
+          connection,
+          %{
+            correlation_id: operation.correlation_id,
+            expected_version: operation.expected_connection_version
+          },
+          now
+        )
+
+      operation.status == "prepared" and
+          operation.provider_cleanup_status in ["pending", "confirmed"] ->
+        operation |> cleanup_operation() |> normalize_recovery_cleanup(operation.id)
+
+      operation.status == "cleanup_pending" ->
+        operation |> cleanup_operation() |> normalize_recovery_cleanup(operation.id)
+
+      true ->
+        execute(
+          connection,
+          %{
+            correlation_id: operation.correlation_id,
+            expected_version: operation.expected_connection_version
+          },
+          now
+        )
     end
   end
 
@@ -149,35 +192,67 @@ defmodule Ezagent.ProviderConnection.Refresh do
 
   defp refresh_source_available(_connection, _now), do: {:error, :connection_terminal}
 
+  defp resume(
+         %Operation{
+           status: "finalized",
+           provider_cleanup_status: "confirmed",
+           credential_cleanup_status: "confirmed"
+         },
+         _driver,
+         _backend,
+         _now
+       ),
+       do: {:error, :refresh_lease_lost}
+
   defp resume(%Operation{status: "finalized"} = operation, _driver, _backend, _now),
     do: result(operation)
 
-  defp resume(%Operation{status: "prepared"} = operation, driver, backend, now) do
-    context = %{
-      connection_id: operation.connection_id,
-      correlation_id: operation.correlation_id,
-      expected_connection_version: operation.expected_connection_version,
-      expected_credential_version: operation.expected_credential_version
-    }
+  defp resume(%Operation{status: "prepared"} = operation, _driver, backend, now) do
+    cond do
+      operation.provider_cleanup_status in ["pending", "confirmed"] ->
+        cleanup_operation(operation)
 
-    with :ok <- pre_effect_fence(operation, now),
-         {:ok, provider_result} <- driver.refresh(context),
-         {:ok, material} <- Map.fetch(provider_result, :credential_material),
-         :ok <- pre_effect_fence(operation, now),
-         {:ok, credential_result} <-
-           backend.replace(%{
-             credential_material: material,
-             backend_pair_id: operation.backend_pair_id,
-             operation_class: operation.operation_class,
-             correlation_id: operation.correlation_id,
-             bound_input_digest: operation.bound_input_digest,
-             expected_credential_version: operation.expected_credential_version
-           }),
-         :ok <- validate_credential_result(credential_result) do
-      journal_and_commit(operation, provider_result, credential_result, backend, now)
-    else
-      {:error, :refresh_lease_lost} = error -> error
-      _ -> {:error, :authorization_backend_unavailable}
+      provider_owned?(operation) ->
+        replace_and_journal(operation, backend, now)
+
+      true ->
+        connection = Repo.get!(Connection, operation.connection_id)
+
+        with :ok <- pre_effect_fence(operation, now),
+             {:ok, provider_result} <- reconcile_then_refresh(connection, operation),
+             :ok <-
+               test_crash_barrier(:sealed_provider_result, %{
+                 operation_id: operation.id,
+                 provider_result_ref: provider_result.provider_result_ref
+               }),
+             {:ok, {provider_owned, claim_current?}} <-
+               journal_provider_ownership(operation, provider_result, now) do
+          cond do
+            provider_owned.provider_cleanup_status == "pending" ->
+              cleanup_operation(provider_owned)
+
+            claim_current? ->
+              replace_and_journal(provider_owned, backend, now)
+
+            true ->
+              {:error, :refresh_in_progress}
+          end
+        else
+          {:error, :refresh_lease_lost} = error ->
+            error
+
+          {:error, reason}
+          when reason in [
+                 :backend_unavailable,
+                 :provider_denied,
+                 :provider_protocol_failed,
+                 :correlation_conflict
+               ] ->
+            normalize_exchange_error(operation, reason, now)
+
+          _error ->
+            {:error, :authorization_backend_unavailable}
+        end
     end
   end
 
@@ -187,53 +262,127 @@ defmodule Ezagent.ProviderConnection.Refresh do
   defp resume(%Operation{status: "connection_committed"} = operation, _driver, backend, _now),
     do: revoke_prior_and_finalize(operation, backend)
 
-  defp resume(%Operation{status: "cleanup_pending"}, _driver, _backend, _now),
-    do: {:error, :refresh_lease_lost}
+  defp resume(%Operation{status: "cleanup_pending"} = operation, _driver, _backend, _now),
+    do: cleanup_operation(operation)
 
-  defp journal_and_commit(operation, provider_result, credential_result, backend, now) do
+  defp journal_provider_ownership(%Operation{} = invocation_operation, provider_result, _now) do
     Repo.transaction(fn ->
-      connection = lock_connection(operation.connection_id)
-      operation = lock_operation(operation.id)
+      operation = Repo.get!(Operation, invocation_operation.id)
+      _connection = lock_connection(operation.connection_id)
+      operation = lock_operation(invocation_operation.id)
 
-      attrs = %{
-        result_ref: credential_result.credential_ref,
-        result_credential_version: credential_result.credential_version,
-        result_permission_digest: Map.get(provider_result, :permission_digest),
-        result_expires_at: Map.get(provider_result, :expires_at)
-      }
+      if operation.status == "prepared" and not provider_owned?(operation) do
+        claim_current? =
+          operation.lease_token == invocation_operation.lease_token and
+            operation.attempt_version == invocation_operation.attempt_version
 
-      if operation.status == "prepared" and valid_lease?(connection, operation, now) do
-        operation
-        |> Ecto.Changeset.change(Map.put(attrs, :status, "backend_committed"))
-        |> Repo.update!()
+        updated =
+          operation
+          |> Operation.provider_ownership_changeset(%{
+            handoff_ref: handoff_ref(provider_result.credential_material),
+            provider_result_ref: provider_result.provider_result_ref,
+            result_permission_digest: provider_result.granted_permissions_digest,
+            result_expires_at: provider_result.expires_at
+          })
+          |> Repo.update!()
+
+        {updated, claim_current?}
       else
-        operation
-        |> Ecto.Changeset.change(
-          Map.merge(attrs, %{status: "cleanup_pending", safe_error_code: "cleanup_pending"})
-        )
-        |> Repo.update!()
+        Repo.rollback(:refresh_lease_lost)
       end
     end)
-    |> case do
-      {:ok, %Operation{status: "backend_committed"} = committed} ->
-        commit_pointer(committed, durable_metadata(committed), backend, now)
+  end
 
-      {:ok, %Operation{status: "cleanup_pending"} = stale} ->
-        idempotency_key = stale.correlation_id <> ":stale"
+  defp replace_and_journal(operation, backend, now) do
+    with :ok <- pre_effect_fence(operation, now),
+         {:ok, credential_result} <-
+           backend.replace(%{
+             credential_material: {:write_only_handoff, operation.handoff_ref},
+             backend_pair_id: operation.backend_pair_id,
+             operation_class: operation.operation_class,
+             correlation_id: operation.correlation_id,
+             bound_input_digest: operation.bound_input_digest,
+             expected_credential_version: operation.expected_credential_version
+           }),
+         :ok <- validate_credential_result(credential_result),
+         {:ok, committed} <- journal_credential_ownership(operation.id, credential_result, now),
+         :ok <-
+           test_crash_barrier(:credential_ownership_journaled, %{
+             operation_id: committed.id,
+             credential_ref: committed.result_ref,
+             credential_version: committed.result_credential_version
+           }) do
+      case committed.status do
+        "backend_committed" ->
+          commit_pointer(committed, durable_metadata(committed), backend, now)
 
-        _ =
-          backend.revoke(%{
-            credential_ref: stale.result_ref,
-            correlation_id: idempotency_key,
-            idempotency_key: idempotency_key
-          })
-
-        {:error, :refresh_lease_lost}
-
-      {:error, _} ->
-        {:error, :credential_conflict}
+        "cleanup_pending" ->
+          cleanup_operation(committed)
+      end
     end
   end
+
+  defp journal_credential_ownership(operation_id, credential_result, now) do
+    Repo.transaction(fn ->
+      operation = Repo.get!(Operation, operation_id)
+      connection = lock_connection(operation.connection_id)
+      operation = lock_operation(operation_id)
+
+      cond do
+        operation.status == "prepared" and provider_owned?(operation) and
+            valid_lease?(connection, operation, now) ->
+          operation
+          |> Operation.credential_ownership_changeset("backend_committed", %{
+            result_ref: credential_result.credential_ref,
+            result_credential_version: credential_result.credential_version
+          })
+          |> Repo.update!()
+
+        operation.status == "prepared" and provider_owned?(operation) ->
+          operation
+          |> Operation.credential_ownership_changeset("cleanup_pending", %{
+            result_ref: credential_result.credential_ref,
+            result_credential_version: credential_result.credential_version
+          })
+          |> Ecto.Changeset.change(
+            safe_error_code: "cleanup_pending",
+            provider_cleanup_status: "pending",
+            credential_cleanup_status: "pending"
+          )
+          |> Repo.update!()
+
+        true ->
+          Repo.rollback(:refresh_lease_lost)
+      end
+    end)
+  end
+
+  defp reconcile_then_refresh(connection, operation) do
+    case CredentialRefreshExchange.invoke(:reconcile_refresh, connection, operation) do
+      {:ok, :not_completed} -> CredentialRefreshExchange.invoke(:refresh, connection, operation)
+      result -> result
+    end
+  end
+
+  defp normalize_recovery_cleanup({:error, :refresh_lease_lost}, operation_id) do
+    operation = Repo.get!(Operation, operation_id)
+
+    if operation.next_recovery_at == nil and
+         operation.provider_cleanup_status in ["confirmed", "not_required"] and
+         operation.credential_cleanup_status in ["confirmed", "not_required"],
+       do: :ok,
+       else: {:error, :refresh_lease_lost}
+  end
+
+  defp normalize_recovery_cleanup(result, _operation_id), do: result
+
+  defp provider_owned?(operation) do
+    is_binary(operation.handoff_ref) and is_binary(operation.provider_result_ref) and
+      is_binary(operation.result_permission_digest)
+  end
+
+  defp handoff_ref({:write_only_handoff, handoff_ref}) when is_binary(handoff_ref),
+    do: handoff_ref
 
   defp commit_pointer(operation, metadata, backend, now) do
     Transition.mutate(
@@ -263,7 +412,7 @@ defmodule Ezagent.ProviderConnection.Refresh do
     )
     |> case do
       {:ok, _} -> revoke_prior_and_finalize(Repo.get!(Operation, operation.id), backend)
-      {:error, _} -> compensate(operation, backend)
+      {:error, _} -> classify_pointer_failure(operation, backend)
     end
   end
 
@@ -294,22 +443,187 @@ defmodule Ezagent.ProviderConnection.Refresh do
     result(operation)
   end
 
-  defp compensate(operation, backend) do
-    idempotency_key = operation.correlation_id <> ":stale"
+  defp classify_pointer_failure(operation, backend) do
+    Repo.transaction(fn ->
+      connection = lock_connection(operation.connection_id)
+      locked = lock_operation(operation.id)
 
-    _ =
-      backend.revoke(%{
-        credential_ref: operation.result_ref,
-        correlation_id: idempotency_key,
-        idempotency_key: idempotency_key
-      })
+      cond do
+        locked.status in ["backend_committed", "connection_committed", "finalized"] and
+          connection.credential_backend_ref == locked.result_ref and
+            connection.credential_version == locked.result_credential_version ->
+          {:winner, locked}
 
-    operation
-    |> Ecto.Changeset.change(status: "cleanup_pending", safe_error_code: "cleanup_pending")
-    |> Repo.update!()
+        locked.status == "backend_committed" and
+          connection.connection_version >= locked.expected_connection_version + 2 and
+            (connection.credential_backend_ref != locked.result_ref or
+               connection.credential_version != locked.result_credential_version) ->
+          cleanup =
+            locked
+            |> Ecto.Changeset.change(
+              status: "cleanup_pending",
+              safe_error_code: "cleanup_pending",
+              provider_cleanup_status: "pending",
+              credential_cleanup_status: "pending"
+            )
+            |> Repo.update!()
+
+          {:loser, cleanup}
+
+        true ->
+          {:retry, locked}
+      end
+    end)
+    |> case do
+      {:ok, {:winner, %Operation{status: "finalized"} = winner}} -> result(winner)
+      {:ok, {:winner, winner}} -> revoke_prior_and_finalize(winner, backend)
+      {:ok, {:loser, loser}} -> cleanup_operation(loser)
+      {:ok, {:retry, _operation}} -> {:error, :refresh_in_progress}
+      {:error, _reason} -> {:error, :refresh_in_progress}
+    end
+  end
+
+  defp cleanup_operation(operation) do
+    connection = Repo.get!(Connection, operation.connection_id)
+    operation = cleanup_provider_independently(operation, connection)
+    operation = cleanup_credential_independently(operation, connection)
+    finish_cleanup(operation)
+  end
+
+  defp cleanup_provider_independently(operation, connection) do
+    case RuntimeBindings.resolve_provider_cleanup(connection, operation) do
+      {:ok, _pair, driver} ->
+        cleanup_provider(operation, driver.implementation, connection)
+
+      {:error, reason} ->
+        persist_cleanup(operation.id, :provider, {"pending", normalize_cleanup_error(reason)})
+    end
+  end
+
+  defp cleanup_credential_independently(operation, connection) do
+    case RuntimeBindings.resolve_credential_cleanup(connection, operation) do
+      {:ok, _pair, backend} ->
+        cleanup_credential(operation, backend)
+
+      {:error, reason} ->
+        persist_cleanup(operation.id, :credential, {"pending", normalize_cleanup_error(reason)})
+    end
+  end
+
+  defp cleanup_provider(
+         %Operation{provider_cleanup_status: status} = operation,
+         _driver,
+         _connection
+       )
+       when status in ["confirmed", "not_required"],
+       do: operation
+
+  defp cleanup_provider(operation, driver, connection) do
+    context = %{
+      owner_uri: connection.owner_uri,
+      workspace_uri: operation.workspace_uri,
+      provider_id: connection.provider_id,
+      acquisition_method: connection.acquisition_method,
+      governed_host: connection.governed_host,
+      backend_pair_id: operation.backend_pair_id,
+      operation_id: operation.id,
+      connection_id: operation.connection_id,
+      expected_connection_version: operation.expected_connection_version,
+      authorization_ref: operation.expected_authorization_ref,
+      expected_authorization_version: operation.expected_authorization_version,
+      correlation_id: operation.correlation_id,
+      command_digest: operation.bound_input_digest,
+      expected_credential_version: operation.expected_credential_version,
+      provider_result_ref: operation.provider_result_ref,
+      discard_idempotency_key: operation.correlation_id <> ":provider-discard"
+    }
+
+    status =
+      case driver.discard_refresh_result(context) do
+        :ok -> {"confirmed", nil}
+        {:error, reason} -> {"pending", normalize_cleanup_error(reason)}
+      end
+
+    persist_cleanup(operation.id, :provider, status)
+  end
+
+  defp cleanup_credential(%Operation{credential_cleanup_status: status} = operation, _backend)
+       when status in ["confirmed", "not_required"],
+       do: operation
+
+  defp cleanup_credential(operation, backend) do
+    key = operation.correlation_id <> ":credential-revoke"
+
+    status =
+      case backend.revoke(%{
+             credential_ref: operation.result_ref,
+             expected_credential_version: operation.result_credential_version,
+             correlation_id: key,
+             idempotency_key: key
+           }) do
+        :ok -> {"confirmed", nil}
+        {:ok, _receipt} -> {"confirmed", nil}
+        {:error, reason} -> {"pending", normalize_cleanup_error(reason)}
+      end
+
+    persist_cleanup(operation.id, :credential, status)
+  end
+
+  defp persist_cleanup(operation_id, kind, {status, error}) do
+    Repo.transaction(fn ->
+      operation = Repo.get!(Operation, operation_id)
+      _connection = lock_connection(operation.connection_id)
+      operation = lock_operation(operation_id)
+
+      current =
+        case kind do
+          :provider -> operation.provider_cleanup_status
+          :credential -> operation.credential_cleanup_status
+        end
+
+      if current in ["confirmed", "not_required"] do
+        operation
+      else
+        attrs =
+          case kind do
+            :provider ->
+              %{provider_cleanup_status: status, provider_cleanup_error_code: error}
+
+            :credential ->
+              %{credential_cleanup_status: status, credential_cleanup_error_code: error}
+          end
+
+        operation |> Ecto.Changeset.change(attrs) |> Repo.update!()
+      end
+    end)
+    |> case do
+      {:ok, operation} -> operation
+      {:error, _reason} -> Repo.get!(Operation, operation_id)
+    end
+  end
+
+  defp finish_cleanup(operation) do
+    complete? = fn status -> status in ["confirmed", "not_required"] end
+
+    Repo.transaction(fn ->
+      _connection = lock_connection(operation.connection_id)
+      locked = lock_operation(operation.id)
+
+      if complete?.(locked.provider_cleanup_status) and
+           complete?.(locked.credential_cleanup_status) do
+        locked
+        |> Ecto.Changeset.change(status: "finalized", safe_error_code: nil, next_recovery_at: nil)
+        |> Repo.update!()
+      else
+        locked
+      end
+    end)
 
     {:error, :refresh_lease_lost}
   end
+
+  defp normalize_cleanup_error(reason) when is_atom(reason), do: Atom.to_string(reason)
+  defp normalize_cleanup_error(_reason), do: "backend_unavailable"
 
   defp pre_effect_fence(operation, now) do
     Repo.transaction(fn ->
@@ -325,6 +639,15 @@ defmodule Ezagent.ProviderConnection.Refresh do
       {:error, reason} -> {:error, reason}
     end
   end
+
+  defp normalize_exchange_error(operation, :correlation_conflict, now) do
+    case pre_effect_fence(operation, now) do
+      :ok -> {:error, :correlation_conflict}
+      {:error, :refresh_lease_lost} -> {:error, :refresh_lease_lost}
+    end
+  end
+
+  defp normalize_exchange_error(_operation, reason, _now), do: {:error, reason}
 
   defp valid_lease?(connection, operation, now) do
     connection.connection_version == operation.expected_connection_version + 1 and
@@ -375,4 +698,15 @@ defmodule Ezagent.ProviderConnection.Refresh do
 
   defp lock_operation(id),
     do: Operation |> where([row], row.id == ^id) |> lock("FOR UPDATE") |> Repo.one()
+
+  if @test_build do
+    defp test_crash_barrier(stage, context) do
+      case Application.get_env(:ezagent_domain_provider_connection, :refresh_crash_barrier) do
+        barrier when is_function(barrier, 2) -> barrier.(stage, context)
+        _closed -> :ok
+      end
+    end
+  else
+    defp test_crash_barrier(_stage, _context), do: :ok
+  end
 end

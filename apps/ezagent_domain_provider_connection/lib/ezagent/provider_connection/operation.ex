@@ -157,6 +157,7 @@ defmodule Ezagent.ProviderConnection.Operation do
     %__MODULE__{}
     |> cast(attrs, [:status])
     |> change(Map.take(attrs, @trusted))
+    |> reject_invocation_private_terms(attrs)
     |> validate_required(@trusted_required ++ [:status])
     |> validate_prior_credential_pair()
     |> validate_expected_authorization_coordinates()
@@ -205,6 +206,36 @@ defmodule Ezagent.ProviderConnection.Operation do
       name: :provider_connection_operations_connection_workspace_fkey
     )
   end
+
+  defp reject_invocation_private_terms(changeset, attrs) do
+    if invocation_private_term?(Map.take(attrs, @trusted)),
+      do: add_error(changeset, :base, "contains invocation-private refresh authority"),
+      else: changeset
+  end
+
+  defp invocation_private_term?(%Ezagent.ProviderConnection.CredentialBackend.RefreshUse{}),
+    do: true
+
+  defp invocation_private_term?(value)
+       when is_pid(value) or is_reference(value) or is_function(value) or is_port(value),
+       do: true
+
+  defp invocation_private_term?(%_struct{} = value),
+    do: value |> Map.from_struct() |> invocation_private_term?()
+
+  defp invocation_private_term?(value) when is_map(value),
+    do:
+      Enum.any?(value, fn {key, item} ->
+        invocation_private_term?(key) or invocation_private_term?(item)
+      end)
+
+  defp invocation_private_term?(value) when is_list(value),
+    do: Enum.any?(value, &invocation_private_term?/1)
+
+  defp invocation_private_term?(value) when is_tuple(value),
+    do: value |> Tuple.to_list() |> Enum.any?(&invocation_private_term?/1)
+
+  defp invocation_private_term?(_value), do: false
 
   @doc "Builds a callback-store operation from a locked attempt and connection."
   @spec store_create_changeset(AuthorizationAttempt.t(), Connection.t(), map()) ::

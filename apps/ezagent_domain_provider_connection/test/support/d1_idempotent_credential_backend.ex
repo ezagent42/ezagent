@@ -1,3 +1,5 @@
+Code.require_file(Path.expand("refresh_exchange_backend_support.ex", __DIR__))
+
 defmodule Ezagent.ProviderConnection.Test.D1IdempotentCredentialBackend do
   @moduledoc false
   @behaviour Ezagent.ProviderConnection.CredentialBackend
@@ -36,6 +38,14 @@ defmodule Ezagent.ProviderConnection.Test.D1IdempotentCredentialBackend do
 
   @impl true
   def consume_lease(_command), do: :ok
+
+  @impl true
+  def begin_refresh_exchange(command),
+    do: Ezagent.ProviderConnection.Test.RefreshExchangeBackendSupport.begin(__MODULE__, command)
+
+  @impl true
+  def consume_refresh_exchange(command),
+    do: Ezagent.ProviderConnection.Test.RefreshExchangeBackendSupport.consume(__MODULE__, command)
 
   @impl true
   def revoke(command) do

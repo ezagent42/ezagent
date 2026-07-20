@@ -40,7 +40,9 @@ defmodule Ezagent.ProviderConnection.RegistryTest do
     reauthenticate: 1
   ]
   @credential_callbacks [
+    begin_refresh_exchange: 1,
     consume_lease: 1,
+    consume_refresh_exchange: 1,
     lease_for_operation: 1,
     replace: 1,
     revoke: 1,
@@ -87,13 +89,11 @@ defmodule Ezagent.ProviderConnection.RegistryTest do
   test "fake drivers materially differ without common provider vendor names" do
     alpha_callback = FakeDriverAlpha.consume_callback(%{})
     beta_callback = FakeDriverBeta.consume_callback(%{})
-    alpha_refresh = FakeDriverAlpha.refresh(%{})
-    beta_refresh = FakeDriverBeta.refresh(%{})
     alpha_revoke = FakeDriverAlpha.revoke(%{})
     beta_revoke = FakeDriverBeta.revoke(%{})
 
     refute alpha_callback == beta_callback
-    refute alpha_refresh == beta_refresh
+    refute FakeDriverAlpha.declaration_metadata() == FakeDriverBeta.declaration_metadata()
     refute alpha_revoke == beta_revoke
 
     common_source =

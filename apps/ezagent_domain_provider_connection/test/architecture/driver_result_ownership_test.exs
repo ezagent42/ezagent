@@ -1,16 +1,30 @@
 Code.require_file(Path.expand("../support/fake_driver_alpha.ex", __DIR__))
 Code.require_file(Path.expand("../support/fake_driver_beta.ex", __DIR__))
 Code.require_file(Path.expand("../support/task8_backends.ex", __DIR__))
+Code.require_file(Path.expand("../support/fake_backend_pairs.ex", __DIR__))
 
 defmodule Ezagent.ProviderConnection.DriverResultOwnershipTest do
-  use ExUnit.Case, async: false
+  use EzagentCore.DataCase, async: false
 
-  alias Ezagent.ProviderConnection.Driver
+  alias Ezagent.ProviderConnection.{
+    BackendPair,
+    BackendPairRegistry,
+    Connection,
+    CredentialRefreshExchange,
+    Driver,
+    DriverRegistry,
+    Operation,
+    RuntimeBindings
+  }
+  alias EzagentCore.Repo
 
   alias Ezagent.ProviderConnection.Test.{
     FakeDriverAlpha,
     FakeDriverBeta,
+    FakeCredentialAlpha,
+    FakeCredentialBeta,
     Task8Driver,
+    Task8CredentialBackend,
     Task8Fixtures
   }
 
@@ -151,6 +165,122 @@ defmodule Ezagent.ProviderConnection.DriverResultOwnershipTest do
                })
 
       assert provider_discard_effect_count(implementation, task8_state) == 1
+      assert whole_connection_revoke_count(implementation, task8_state) == 0
+    end)
+  end
+
+  test "registered Drivers return and discard exact refresh results without whole-connection revoke" do
+    task8_state = start_supervised!({Agent, fn -> Task8Fixtures.effect_state() end})
+    Application.put_env(:ezagent_domain_provider_connection, :task8_effect_state, task8_state)
+
+    on_exit(fn ->
+      Application.delete_env(:ezagent_domain_provider_connection, :task8_effect_state)
+    end)
+
+    owner = {__MODULE__, self()}
+
+    previous =
+      Application.get_env(
+        :ezagent_domain_provider_connection,
+        :credential_backend_implementations
+      )
+
+    on_exit(fn ->
+      DriverRegistry.unregister_owner(owner)
+      BackendPairRegistry.unregister_owner(owner)
+
+      if previous,
+        do:
+          Application.put_env(
+            :ezagent_domain_provider_connection,
+            :credential_backend_implementations,
+            previous
+          ),
+        else:
+          Application.delete_env(
+            :ezagent_domain_provider_connection,
+            :credential_backend_implementations
+          )
+    end)
+
+    Enum.each([FakeDriverAlpha, FakeDriverBeta, Task8Driver], fn implementation ->
+      if function_exported?(implementation, :reset, 0), do: implementation.reset()
+
+      suffix = implementation |> Module.split() |> List.last() |> Macro.underscore()
+      provider_id = "refresh-provider-#{suffix}"
+      pair_id = "refresh-pair-#{suffix}"
+      credential_id = "refresh-credential-#{suffix}"
+
+      backend =
+        case implementation do
+          Task8Driver -> Task8CredentialBackend
+          FakeDriverBeta -> FakeCredentialBeta
+          _other -> FakeCredentialAlpha
+        end
+
+      pair =
+        BackendPair.new!(%{
+          pair_id: pair_id,
+          authorization_backend: %{id: "refresh-authorization-#{suffix}", fingerprint: "auth-v1"},
+          credential_backend: %{id: credential_id, fingerprint: "credential-v1"}
+        })
+
+      driver =
+        Driver.new!(%{
+          provider_id: provider_id,
+          acquisition_method: "oauth_user",
+          provider_fingerprint: "provider-v1",
+          implementation: implementation,
+          backend_pair_ids: [pair_id],
+          metadata: declaration_metadata(implementation)
+        })
+
+      :acquired = BackendPairRegistry.register(owner, pair)
+      :acquired = DriverRegistry.register(owner, driver)
+
+      Application.put_env(
+        :ezagent_domain_provider_connection,
+        :credential_backend_implementations,
+        %{credential_id => backend}
+      )
+
+      connection = refresh_connection(provider_id, pair)
+      operation = refresh_operation(connection)
+
+      assert {:ok, ^pair, ^driver, ^backend} = RuntimeBindings.resolve(connection, operation)
+
+      assert {:ok, first} = CredentialRefreshExchange.invoke(:refresh, connection, operation)
+      assert {:ok, ^first} = CredentialRefreshExchange.invoke(:refresh, connection, operation)
+
+      assert MapSet.new(Map.keys(first)) ==
+               MapSet.new([
+                 :provider_result_ref,
+                 :credential_material,
+                 :granted_permissions_digest,
+                 :expires_at
+               ])
+
+      assert match?(
+               {:write_only_handoff, ref} when is_binary(ref) and ref != "",
+               first.credential_material
+             )
+
+      discard =
+        refresh_discard_context(connection, operation)
+        |> Map.merge(%{
+          provider_result_ref: first.provider_result_ref,
+          discard_idempotency_key: operation.correlation_id <> ":provider-discard"
+        })
+
+      assert :ok = implementation.discard_refresh_result(discard)
+      assert :ok = implementation.discard_refresh_result(discard)
+
+      assert {:error, :correlation_conflict} =
+               implementation.discard_refresh_result(%{
+                 discard
+                 | provider_result_ref: "cross-result"
+               })
+
       assert whole_connection_revoke_count(implementation, task8_state) == 0
     end)
   end
@@ -349,6 +479,82 @@ defmodule Ezagent.ProviderConnection.DriverResultOwnershipTest do
       expected_credential_version: 3,
       provider_result_ref: "provider-result",
       discard_idempotency_key: "store:callback:provider-discard"
+    }
+  end
+
+  defp refresh_connection(provider_id, pair) do
+    now = DateTime.utc_now()
+
+    %Connection{}
+    |> Ecto.Changeset.change(%{
+      connection_id: Ecto.UUID.generate(),
+      owner_uri: "entity://acme/user/alice",
+      workspace_uri: "workspace://acme",
+      provider_id: provider_id,
+      acquisition_method: "oauth_user",
+      governed_host: "git.example",
+      backend_pair_id: pair.pair_id,
+      authorization_backend_id: pair.authorization_backend.id,
+      credential_backend_id: pair.credential_backend.id,
+      authorization_backend_ref: "authorization-ref",
+      authorization_version: 2,
+      credential_backend_ref: "credential-ref",
+      credential_version: 3,
+      connection_version: 2,
+      external_account_id: "account-#{System.unique_integer([:positive])}",
+      display_login: "alice",
+      execution_identity: "connected_user",
+      requested_execution_identity_class: "connected_user",
+      permission_digest: "permissions-v1",
+      status: "refreshing",
+      refresh_lease_token: "lease-token",
+      refresh_lease_version: 1,
+      refresh_lease_until: DateTime.add(now, 60, :second)
+    })
+    |> Repo.insert!()
+  end
+
+  defp refresh_operation(connection) do
+    %Operation{}
+    |> Ecto.Changeset.change(%{
+      id: Ecto.UUID.generate(),
+      workspace_uri: connection.workspace_uri,
+      connection_id: connection.connection_id,
+      backend_pair_id: connection.backend_pair_id,
+      operation_class: "refresh",
+      correlation_id: "refresh:" <> connection.provider_id,
+      bound_input_digest: "command-digest",
+      expected_connection_version: 1,
+      expected_authorization_ref: connection.authorization_backend_ref,
+      expected_authorization_version: connection.authorization_version,
+      expected_credential_version: connection.credential_version,
+      prior_credential_ref: connection.credential_backend_ref,
+      prior_credential_version: connection.credential_version,
+      attempt_version: connection.refresh_lease_version,
+      lease_token: connection.refresh_lease_token,
+      lease_until: connection.refresh_lease_until,
+      next_recovery_at: DateTime.utc_now(),
+      status: "prepared"
+    })
+    |> Repo.insert!()
+  end
+
+  defp refresh_discard_context(connection, operation) do
+    %{
+      owner_uri: connection.owner_uri,
+      workspace_uri: connection.workspace_uri,
+      provider_id: connection.provider_id,
+      acquisition_method: connection.acquisition_method,
+      governed_host: connection.governed_host,
+      backend_pair_id: operation.backend_pair_id,
+      operation_id: operation.id,
+      connection_id: operation.connection_id,
+      expected_connection_version: operation.expected_connection_version,
+      authorization_ref: operation.expected_authorization_ref,
+      expected_authorization_version: operation.expected_authorization_version,
+      correlation_id: operation.correlation_id,
+      command_digest: operation.bound_input_digest,
+      expected_credential_version: operation.expected_credential_version
     }
   end
 end

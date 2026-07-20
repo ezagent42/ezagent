@@ -320,12 +320,15 @@ registry or application-environment validation.
   independently.
 - Modify
   `apps/ezagent_domain_provider_connection/lib/ezagent/provider_connection/credential_backend.ex`
-  to define `CredentialBackend.RefreshUse` there and add exactly
+  to add exactly
   `begin_refresh_exchange/1` and `consume_refresh_exchange/1`, alongside the
   existing exact-result revoke contract. The consume `/1` input is one closed
   private exchange request containing the opaque use and Driver-owned provider
   operation; mark both primitives facade-private in contract and docs; do not
-  add retrieval or plaintext APIs.
+  add retrieval or plaintext APIs. Define the owned
+  `CredentialBackend.RefreshUse` module in the project-rule-compliant separate
+  `credential_backend/refresh_use.ex` file; the namespace and contract owner are
+  `CredentialBackend`, but modules are never nested in one physical file.
 - Reuse, and only if necessary extend,
   `apps/ezagent_domain_provider_connection/lib/ezagent/provider_connection/runtime_bindings.ex`
   so its `resolve` remains the one place that validates the backend pair, exact
@@ -462,6 +465,15 @@ revoke independently in recovery; preserve each confirmed status across failure
 of the other. `Driver.revoke/1` remains whole-connection-only and is not called
 by this result cleanup path.
 
+Lease loss after the provider effect does not by itself make that result a
+loser. Journal the complete provider ownership tuple even when the old lease is
+no longer current, keep the operation as provider-owned `prepared`, and let
+Recovery wait for and claim the next legal lease before idempotently continuing
+`CredentialBackend.replace/1`. Only after the credential ownership journal may
+a losing pointer CAS enter two-result `cleanup_pending`. This is why the strict
+`05000` rule that every cleanup row owns both results remains unchanged; do not
+invent a provider-only cleanup state or synthetic credential result.
+
 Gate: source scans and executable conformance reject generic result APIs, a
 `ProviderResultBackend`, coordinator-synthesized refs, arbitrary Driver result
 terms/errors, durable refresh metadata, reuse of `GitTaskAccess`, a callable
@@ -508,8 +520,10 @@ recorded next-free timestamp) in the exact file/count gate. Its DB gate covers
 every callback/refresh `prepared` XOR variant, every credential-owned stage,
 legacy conflict-before-backfill behavior, immutable expected authorization
 coordinates, and their relational checks. Architecture gates also prove
-`RefreshUse` is defined in `credential_backend.ex`, cannot be persisted or
-inspected, and both in-process and remote-shaped implementations conform.
+`CredentialBackend.RefreshUse` is defined as the exact owned module in the
+separate `credential_backend/refresh_use.ex` file, cannot be persisted or
+inspected, and both in-process and remote-shaped implementations conform. The
+gate asserts the module/namespace contract, not same-file nesting.
 
 Commit: `test(provider-connection): close structural boundary gaps`
 

@@ -148,11 +148,37 @@ defmodule Ezagent.ProviderConnection.Test.FakeDriverAlpha do
   def reconcile_callback(_context), do: {:error, :provider_protocol_error}
 
   @impl true
-  def refresh(context),
-    do: {:ok, %{refresh: %{rotation: "always"}, context: context}}
+  def refresh(%{refresh_use: refresh_use} = context) do
+    Ezagent.ProviderConnection.CredentialRefreshExchange.consume_refresh_exchange(%{
+      refresh_use: refresh_use,
+      provider_exchange: fn private_frame ->
+        reconcile_effect(:refresh, context, private_frame, fn ->
+          {:ok,
+           %{
+             provider_result_ref: provider_result_ref(context, private_frame, "refresh-acct-1"),
+             replacement_credential: "ALPHA_REFRESH_REPLACEMENT",
+             granted_permissions_digest: "driver-refresh-digest",
+             expires_at: nil,
+             provider_metadata: provider_metadata()
+           }}
+        end)
+      end
+    })
+  end
+
+  def refresh(_context), do: {:error, :provider_protocol_failed}
 
   @impl true
-  def reconcile_refresh(_context), do: {:ok, :not_completed}
+  def reconcile_refresh(%{refresh_use: refresh_use} = context) do
+    Ezagent.ProviderConnection.CredentialRefreshExchange.consume_refresh_exchange(%{
+      refresh_use: refresh_use,
+      provider_exchange: fn private_frame ->
+        reconcile_existing(:refresh, context, private_frame)
+      end
+    })
+  end
+
+  def reconcile_refresh(_context), do: {:error, :provider_protocol_failed}
 
   @impl true
   def discard_callback_result(context), do: discard_result(:callback, context)
@@ -236,6 +262,11 @@ defmodule Ezagent.ProviderConnection.Test.FakeDriverAlpha do
     :ets.insert(@control_table, {{:provider_result, result.provider_result_ref}, binding})
   end
 
+  defp remember_provider_result(:refresh, context, {:ok, result}) do
+    binding = Map.take(context, discard_binding_keys(:refresh))
+    :ets.insert(@control_table, {{:provider_result, result.provider_result_ref}, binding})
+  end
+
   defp remember_provider_result(_operation, _context, _result), do: :ok
 
   defp discard_result(kind, context) do
@@ -291,12 +322,18 @@ defmodule Ezagent.ProviderConnection.Test.FakeDriverAlpha do
   end
 
   defp reconciliation_identity(context) do
-    identity = Map.drop(context, [:exchange])
+    identity = Map.drop(context, [:exchange, :refresh_use])
 
     expected =
-      MapSet.new(
-        ~w(owner_uri workspace_uri provider_id acquisition_method governed_host backend_pair_id operation_id connection_id attempt_ref authorization_ref expected_connection_version expected_authorization_version expected_credential_version correlation_id command_digest callback_envelope_digest)a
-      )
+      if Map.has_key?(context, :refresh_use) do
+        MapSet.new(
+          ~w(owner_uri workspace_uri provider_id acquisition_method governed_host backend_pair_id operation_id connection_id authorization_ref expected_connection_version expected_authorization_version expected_credential_version correlation_id command_digest)a
+        )
+      else
+        MapSet.new(
+          ~w(owner_uri workspace_uri provider_id acquisition_method governed_host backend_pair_id operation_id connection_id attempt_ref authorization_ref expected_connection_version expected_authorization_version expected_credential_version correlation_id command_digest callback_envelope_digest)a
+        )
+      end
 
     if MapSet.new(Map.keys(identity)) == expected do
       {:ok, identity}
@@ -314,7 +351,7 @@ defmodule Ezagent.ProviderConnection.Test.FakeDriverAlpha do
 
   defp provider_result_ref(context, private_frame, native_result_id) do
     binding =
-      {Map.drop(context, [:exchange]), Map.drop(private_frame, [:pkce_verifier]),
+      {Map.drop(context, [:exchange, :refresh_use]), Map.drop(private_frame, [:pkce_verifier]),
        native_result_id}
 
     digest =
