@@ -5,9 +5,11 @@ defmodule Ezagent.ProviderConnection.CallbackIngressTest do
     AuthorizationAttempt,
     AuthorizationBackendRecord,
     AuthorizationKeyRing,
+    CallbackBinding,
     CallbackIngress,
     Connection,
-    LocalAuthorizationBackend
+    LocalAuthorizationBackend,
+    Operation
   }
 
   alias EzagentCore.Repo
@@ -317,6 +319,7 @@ defmodule Ezagent.ProviderConnection.CallbackIngressTest do
     assert {:ok, _pid} = Ezagent.SpawnRegistry.spawn(owner)
     insert_connection!(connection_id, owner, workspace, "refresh_required")
     {:ok, state_digest} = LocalAuthorizationBackend.state_digest(raw_state)
+    artifact = callback_artifact(owner)
 
     insert_attempt!(%{
       attempt_ref: attempt_ref,
@@ -326,15 +329,38 @@ defmodule Ezagent.ProviderConnection.CallbackIngressTest do
       authorization_ref: "authorization-ref-#{attempt_ref}",
       state_digest: state_digest,
       purpose: "reauthorize",
-      callback_artifact: Ezagent.Capability.to_map(callback_artifact(owner))
+      callback_artifact: Ezagent.Capability.to_map(artifact)
     })
 
     backend = insert_backend_record!(attempt_ref, connection_id, owner)
+
+    connection = Repo.get!(Connection, connection_id)
+    attempt = Repo.get!(AuthorizationAttempt, attempt_ref)
+
+    assert CallbackBinding.reservation_valid?(
+             connection,
+             attempt,
+             "begin-correlation",
+             artifact
+           )
 
     assert {:error, :callback_invalid} =
              CallbackIngress.consume("callback-v1", raw_state, %{code: "secret-code"})
 
     refute is_binary(Repo.get!(AuthorizationBackendRecord, backend.id).callback_ciphertext)
+  end
+
+  test "artifact and reservation replay matrix rejects before staging or operation creation" do
+    for replay <- [:artifact, :attempt, :purpose, :connection_generation] do
+      %{backend: backend, raw_state: raw_state} = seed_replay_fixture!(replay)
+      operation_count = Repo.aggregate(Operation, :count, :id)
+
+      assert {:error, :callback_invalid} =
+               CallbackIngress.consume("callback-v1", raw_state, %{code: "secret-code"})
+
+      assert Repo.aggregate(Operation, :count, :id) == operation_count
+      refute is_binary(Repo.get!(AuthorizationBackendRecord, backend.id).callback_ciphertext)
+    end
   end
 
   defp insert_connection!(connection_id, owner, workspace, status \\ "pending_authorization") do
@@ -393,7 +419,7 @@ defmodule Ezagent.ProviderConnection.CallbackIngressTest do
       |> Map.put_new(
         :reservation_digest,
         digest({
-          "initial_bind",
+          attrs.purpose,
           connection.connection_id,
           connection.connection_version,
           connection.owner_uri,
@@ -424,6 +450,8 @@ defmodule Ezagent.ProviderConnection.CallbackIngressTest do
          connection_id,
          owner \\ Ezagent.URI.user("acme", "alice")
        ) do
+    connection = Repo.get!(Connection, connection_id)
+
     attrs = %{
       id: Ecto.UUID.generate(),
       workspace_uri: URI.to_string(Ezagent.URI.workspace("acme")),
@@ -438,10 +466,10 @@ defmodule Ezagent.ProviderConnection.CallbackIngressTest do
       owner_uri: URI.to_string(owner),
       execution_identity: "connected_user",
       connection_id: connection_id,
-      connection_version: 0,
-      provider_id: "task7-provider",
-      governed_host: "example.test",
-      acquisition_method: "oauth_user",
+      connection_version: connection.connection_version,
+      provider_id: connection.provider_id,
+      governed_host: connection.governed_host,
+      acquisition_method: connection.acquisition_method,
       requested_permissions_digest: "permissions",
       redirect_uri_id: "callback-v1",
       lifecycle_status: "pending",
@@ -449,6 +477,98 @@ defmodule Ezagent.ProviderConnection.CallbackIngressTest do
     }
 
     Repo.insert!(AuthorizationBackendRecord.create_changeset(attrs))
+  end
+
+  defp seed_replay_fixture!(replay) do
+    suffix = "#{replay}-#{System.unique_integer([:positive])}"
+    owner = Ezagent.URI.user("acme", "replay-#{suffix}")
+    workspace = Ezagent.URI.workspace("acme")
+    connection_id = Ecto.UUID.generate()
+    attempt_ref = Ecto.UUID.generate()
+    raw_state = "test-v1.replay-#{suffix}"
+
+    status =
+      if replay in [:purpose, :connection_generation], do: "active", else: "pending_authorization"
+
+    assert {:ok, _user} = Ezagent.Users.create(owner, nil, [])
+    assert {:ok, _pid} = Ezagent.SpawnRegistry.spawn(owner)
+
+    connection = insert_connection!(connection_id, owner, workspace, status)
+
+    connection =
+      if replay == :connection_generation do
+        connection
+        |> Ecto.Changeset.change(connection_version: 1)
+        |> Repo.update!()
+      else
+        connection
+      end
+
+    {:ok, state_digest} = LocalAuthorizationBackend.state_digest(raw_state)
+    artifact = callback_artifact(owner)
+    stored_artifact = if replay == :artifact, do: callback_artifact(owner), else: artifact
+    purpose = if status == "pending_authorization", do: "initial_bind", else: "reauthorize"
+    coordinates = replay_coordinates()
+    artifact_digest = CallbackBinding.artifact_digest(artifact)
+
+    reservation_connection =
+      if replay == :connection_generation,
+        do: %{connection | connection_version: 0},
+        else: connection
+
+    reservation_purpose = if replay == :purpose, do: "initial_bind", else: purpose
+
+    reservation_digest =
+      CallbackBinding.reservation_digest(
+        reservation_purpose,
+        reservation_connection,
+        coordinates,
+        "begin-correlation",
+        artifact_digest
+      )
+
+    reservation_digest =
+      if replay == :attempt do
+        donor = %{connection | connection_id: Ecto.UUID.generate()}
+
+        CallbackBinding.reservation_digest(
+          purpose,
+          donor,
+          coordinates,
+          "begin-correlation",
+          artifact_digest
+        )
+      else
+        reservation_digest
+      end
+
+    insert_attempt!(%{
+      attempt_ref: attempt_ref,
+      connection_id: connection_id,
+      connection_version: connection.connection_version,
+      workspace_uri: URI.to_string(workspace),
+      backend_pair_id: "pair-alpha-v1",
+      authorization_ref: "authorization-ref-#{attempt_ref}",
+      state_digest: state_digest,
+      purpose: purpose,
+      requested_permission_digest: coordinates.requested_permissions_digest,
+      requested_execution_identity_class: coordinates.requested_execution_identity_class,
+      redirect_uri_id: coordinates.redirect_uri_id,
+      callback_artifact: Ezagent.Capability.to_map(stored_artifact),
+      callback_artifact_digest: artifact_digest,
+      reservation_digest: reservation_digest
+    })
+
+    backend = insert_backend_record!(attempt_ref, connection_id, owner)
+    %{backend: backend, raw_state: raw_state}
+  end
+
+  defp replay_coordinates do
+    %{
+      requested_execution_identity_class: "connected_user",
+      requested_permissions_digest: "permissions",
+      redirect_uri_id: "callback-v1"
+    }
   end
 
   defp callback_artifact(owner) do
