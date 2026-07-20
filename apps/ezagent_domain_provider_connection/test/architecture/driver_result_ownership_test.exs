@@ -16,6 +16,7 @@ defmodule Ezagent.ProviderConnection.DriverResultOwnershipTest do
     Operation,
     RuntimeBindings
   }
+
   alias EzagentCore.Repo
 
   alias Ezagent.ProviderConnection.Test.{
@@ -65,6 +66,81 @@ defmodule Ezagent.ProviderConnection.DriverResultOwnershipTest do
                call <- result_level_driver_revoke_calls(File.read!(path)),
                do: {path, call}
              )
+  end
+
+  test "terminal callback fencing accepts absence only and operation prepare rechecks the locked source" do
+    root = Path.expand("../..", __DIR__)
+
+    replacement =
+      File.read!(Path.join(root, "lib/ezagent/provider_connection/credential_replacement.ex"))
+
+    store = File.read!(Path.join(root, "lib/ezagent/provider_connection/store.ex"))
+
+    assert replacement =~
+             ~r/defp lock_fence_candidate.*:confirmed_absence\s*<-\s*CallbackTerminalProof\.classify/s
+
+    refute replacement =~ ~r/classify_fence_backend.*\{:handoff,/s
+    refute replacement =~ "backend_obligation: :handoff"
+
+    assert store =~
+             ~r/defp prepare_operation.*lock_connection.*callback_source_status\(locked_connection\.status\).*Repo\.insert/s
+  end
+
+  test "terminal recovery proves one exact operation set and every frozen coordinate" do
+    root = Path.expand("../..", __DIR__)
+
+    termination =
+      File.read!(Path.join(root, "lib/ezagent/provider_connection/termination.ex"))
+
+    assert termination =~ "o.correlation_id in ^correlations"
+    assert termination =~ "length(operations) == 2"
+    assert termination =~ "MapSet.new(Map.keys(by_correlation)) == MapSet.new(expected)"
+    assert termination =~ "operation.workspace_uri == connection.workspace_uri"
+    assert termination =~ "operation.backend_pair_id == pair_id"
+    assert termination =~ "operation.expected_connection_version == expected_version"
+
+    assert termination =~
+             "operation.expected_credential_version == connection.credential_version"
+
+    refute termination =~ "String.starts_with?"
+    refute termination =~ ~r/like\(.*termination/s
+  end
+
+  test "every Driver context builder takes authorization coordinates from its frozen operation" do
+    root = Path.expand("../..", __DIR__)
+
+    cases = [
+      {"lib/ezagent/provider_connection/local_authorization_backend/exchange.ex",
+       :driver_identity, "operation.expected_authorization_ref",
+       "operation.expected_authorization_version"},
+      {"lib/ezagent/provider_connection/local_authorization_backend/reconciliation.ex",
+       :recovery_driver_context, "recovery.operation.expected_authorization_ref",
+       "recovery.operation.expected_authorization_version"},
+      {"lib/ezagent/provider_connection/credential_replacement.ex", :cleanup_snapshot,
+       "operation.expected_authorization_ref", "operation.expected_authorization_version"},
+      {"lib/ezagent/provider_connection/refresh.ex", :cleanup_provider,
+       "operation.expected_authorization_ref", "operation.expected_authorization_version"},
+      {"lib/ezagent/provider_connection/credential_refresh_exchange.ex", :begin_command,
+       "operation.expected_authorization_ref", "operation.expected_authorization_version"}
+    ]
+
+    Enum.each(cases, fn {relative, function, expected_ref, expected_version} ->
+      source = File.read!(Path.join(root, relative))
+      refs = map_values_in_function(source, function, :authorization_ref)
+      versions = map_values_in_function(source, function, :expected_authorization_version)
+
+      assert expected_ref in refs,
+             "#{relative}:#{function} does not use the frozen authorization ref: #{inspect(refs)}"
+
+      assert expected_version in versions,
+             "#{relative}:#{function} does not use the frozen authorization version: #{inspect(versions)}"
+
+      refute Enum.any?(refs, &(&1 =~ "connection.authorization" or &1 =~ "result_authorization"))
+
+      refute Enum.any?(versions, fn value ->
+               value =~ "connection.authorization" or value =~ "result_authorization"
+             end)
+    end)
   end
 
   test "callback credential effects are purpose-fixed and cleanup uses a claimed snapshot" do
@@ -512,6 +588,35 @@ defmodule Ezagent.ProviderConnection.DriverResultOwnershipTest do
       refresh_lease_until: DateTime.add(now, 60, :second)
     })
     |> Repo.insert!()
+  end
+
+  defp map_values_in_function(source, function, key) do
+    ast = Code.string_to_quoted!(source)
+
+    {_ast, values} =
+      Macro.prewalk(ast, [], fn
+        {kind, _, [{^function, _, _arguments}, body]} = node, values
+        when kind in [:def, :defp] ->
+          {_body, found} =
+            Macro.prewalk(body, [], fn
+              {:%{}, _, pairs} = map, found ->
+                values =
+                  for {^key, value} <- pairs,
+                      do: Macro.to_string(value)
+
+                {map, values ++ found}
+
+              child, found ->
+                {child, found}
+            end)
+
+          {node, found ++ values}
+
+        node, values ->
+          {node, values}
+      end)
+
+    Enum.uniq(values)
   end
 
   defp refresh_operation(connection) do

@@ -226,6 +226,18 @@ defmodule Ezagent.ProviderConnection.AuthorityBoundaryTest do
              Detector.scan_source(source, "fixture.ex")
   end
 
+  test "detector catches a grouped-alias remote non-User management binding" do
+    source = """
+    defmodule ForbiddenGroupedBinding do
+      alias Ezagent.{CapabilityRegistry, ActionSet.ProviderConnection, Entity.Agent}
+      def bind, do: CapabilityRegistry.register_owned(Agent, :refresh, ProviderConnection)
+    end
+    """
+
+    assert [{:non_user_management_target, "fixture.ex", _line}] =
+             Detector.scan_source(source, "fixture.ex")
+  end
+
   test "detector catches a ProviderConnection action declared on a non-User kind" do
     source = """
     defmodule Ezagent.ActionSet.ProviderConnection do

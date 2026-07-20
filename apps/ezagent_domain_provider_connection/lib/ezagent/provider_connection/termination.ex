@@ -4,9 +4,12 @@ defmodule Ezagent.ProviderConnection.Termination do
 
   alias Ezagent.ProviderConnection.{
     AuthorizationAttempt,
+    AuthorizationBackendRecord,
+    CallbackTerminalProof,
     Connection,
     CredentialReplacement,
     Operation,
+    ProviderAuthorizationCommand,
     RuntimeBindings,
     Transition
   }
@@ -59,10 +62,14 @@ defmodule Ezagent.ProviderConnection.Termination do
           status: "prepared"
         }
 
-        attrs
-        |> Operation.create_changeset()
-        |> Ecto.Changeset.change(handoff_ref: locked.credential_backend_ref)
-        |> Repo.insert!()
+        changeset = Operation.create_changeset(attrs)
+
+        changeset =
+          if obligation == "credential",
+            do: Ecto.Changeset.change(changeset, handoff_ref: locked.credential_backend_ref),
+            else: changeset
+
+        Repo.insert!(changeset)
       end)
 
       {:ok, %{status: Atom.to_string(target)}}
@@ -74,12 +81,14 @@ defmodule Ezagent.ProviderConnection.Termination do
   end
 
   defp validate_retry(operations, connection, pair, expected_version) do
-    if Enum.all?(operations, fn operation ->
-         operation.connection_id == connection.connection_id and
-           operation.workspace_uri == connection.workspace_uri and
-           operation.backend_pair_id == pair.pair_id and
-           operation.expected_connection_version == expected_version
-       end) do
+    if exact_terminal_operation_set?(
+         operations,
+         connection,
+         pair.pair_id,
+         operation_action(operations),
+         expected_version,
+         ["prepared", "backend_committed", "finalized"]
+       ) do
       {:ok, operations}
     else
       {:error, :correlation_conflict}
@@ -151,22 +160,30 @@ defmodule Ezagent.ProviderConnection.Termination do
            version: current.connection_version
          }}
 
-      Enum.all?(operations, &(&1.status == "backend_committed")) and
-          callback_obligations_complete?(connection.connection_id) ->
+      Enum.all?(operations, &(&1.status == "backend_committed")) ->
         terminal = if action == :revoke, do: :revoked, else: :disconnected
 
-        Transition.mutate(connection.connection_id, expected_version + 1, terminal, fn _locked ->
-          Enum.each(operations, fn operation ->
-            operation
-            |> Ecto.Changeset.change(
-              status: "finalized",
-              safe_error_code: nil,
-              next_recovery_at: nil
-            )
-            |> Repo.update!()
-          end)
+        Transition.mutate(connection.connection_id, expected_version + 1, terminal, fn locked ->
+          with {:ok, locked_operations} <- callback_obligations_complete_locked(locked),
+               {:ok, terminal_operations} <-
+                 terminal_operations_locked(
+                   locked_operations,
+                   locked,
+                   action,
+                   expected_version
+                 ) do
+            Enum.each(terminal_operations, fn operation ->
+              operation
+              |> Ecto.Changeset.change(
+                status: "finalized",
+                safe_error_code: nil,
+                next_recovery_at: nil
+              )
+              |> Repo.update!()
+            end)
 
-          {:ok, %{status: Atom.to_string(terminal)}}
+            {:ok, %{status: Atom.to_string(terminal)}}
+          end
         end)
         |> case do
           {:ok, updated} ->
@@ -217,42 +234,304 @@ defmodule Ezagent.ProviderConnection.Termination do
 
   defp claim_expired?(_attempt), do: false
 
-  defp callback_obligations_complete?(connection_id) do
-    incomplete_operation? =
-      Repo.exists?(
-        from(row in Operation,
-          where:
-            row.connection_id == ^connection_id and row.operation_class in ["store", "replace"] and
-              row.status not in ["finalized", "fenced"]
-        )
-      )
+  defp callback_obligations_complete_locked(%Connection{} = connection) do
+    attempts =
+      AuthorizationAttempt
+      |> where([row], row.connection_id == ^connection.connection_id)
+      |> order_by([row], asc: row.attempt_ref)
+      |> lock("FOR UPDATE")
+      |> Repo.all()
 
-    consuming_attempt? =
-      Repo.exists?(
-        from(row in AuthorizationAttempt,
-          where: row.connection_id == ^connection_id and row.status == "consuming"
-        )
-      )
+    operations =
+      Operation
+      |> where([row], row.connection_id == ^connection.connection_id)
+      |> order_by([row], asc: row.id)
+      |> lock("FOR UPDATE")
+      |> Repo.all()
 
-    not incomplete_operation? and not consuming_attempt?
+    callback_operations =
+      Enum.filter(operations, &(&1.operation_class in ["store", "replace"]))
+
+    attempts_by_ref = Map.new(attempts, &{&1.attempt_ref, &1})
+
+    commands =
+      Map.new(callback_operations, fn operation ->
+        attempt = Map.get(attempts_by_ref, operation.attempt_ref)
+        {operation.id, lock_callback_command(operation, attempt)}
+      end)
+
+    records =
+      Map.new(callback_operations, fn operation ->
+        {operation.id, lock_backend_record(operation.expected_authorization_ref)}
+      end)
+
+    complete? =
+      Enum.all?(attempts, &(&1.status != "consuming")) and
+        Enum.all?(callback_operations, fn operation ->
+          callback_operation_proven?(
+            connection,
+            operation,
+            Map.get(attempts_by_ref, operation.attempt_ref),
+            Map.get(commands, operation.id),
+            Map.get(records, operation.id)
+          )
+        end)
+
+    if complete?,
+      do: {:ok, operations},
+      else: {:error, :authorization_backend_unavailable}
+  end
+
+  defp callback_operation_proven?(
+         connection,
+         %Operation{status: "fenced"} = operation,
+         %AuthorizationAttempt{status: "cancelled"} = attempt,
+         %ProviderAuthorizationCommand{} = command,
+         %AuthorizationBackendRecord{} = record
+       ) do
+    exact_closing_lineage?(connection, operation) and provider_unowned?(operation) and
+      cleanup_not_required?(operation) and is_nil(attempt.claim_token) and
+      is_nil(attempt.claim_until) and
+      CallbackTerminalProof.classify(connection, operation, attempt, command, record) ==
+        :confirmed_absence
+  end
+
+  defp callback_operation_proven?(
+         connection,
+         %Operation{status: "finalized"} = operation,
+         %AuthorizationAttempt{status: "cancelled"} = attempt,
+         %ProviderAuthorizationCommand{} = command,
+         %AuthorizationBackendRecord{} = record
+       ) do
+    exact_closing_lineage?(connection, operation) and
+      operation.provider_cleanup_status == "confirmed" and
+      operation.credential_cleanup_status == "confirmed" and
+      is_nil(operation.provider_cleanup_error_code) and
+      is_nil(operation.credential_cleanup_error_code) and
+      is_nil(attempt.claim_token) and is_nil(attempt.claim_until) and
+      CallbackTerminalProof.classify(connection, operation, attempt, command, record) ==
+        {:handoff, :shredded}
+  end
+
+  defp callback_operation_proven?(
+         connection,
+         %Operation{status: "finalized"} = operation,
+         %AuthorizationAttempt{status: "consumed", consumed_at: %DateTime{}} = attempt,
+         %ProviderAuthorizationCommand{} = command,
+         %AuthorizationBackendRecord{} = record
+       ) do
+    monotonic_success_lineage?(connection, operation) and
+      is_nil(attempt.claim_token) and is_nil(attempt.claim_until) and
+      CallbackTerminalProof.classify(connection, operation, attempt, command, record) ==
+        {:handoff, :shredded}
+  end
+
+  defp callback_operation_proven?(_connection, _operation, _attempt, _command, _record),
+    do: false
+
+  defp terminal_operations_locked(operations, connection, action, expected_version) do
+    action_operations =
+      Enum.filter(operations, fn operation ->
+        operation.connection_id == connection.connection_id and
+          operation.operation_class == Atom.to_string(action)
+      end)
+
+    if exact_terminal_operation_set?(
+         action_operations,
+         connection,
+         connection.backend_pair_id,
+         action,
+         expected_version,
+         ["backend_committed"]
+       ),
+       do: {:ok, action_operations},
+       else: {:error, :authorization_backend_unavailable}
+  end
+
+  defp exact_closing_lineage?(connection, operation) do
+    connection.connection_version == operation.expected_connection_version + 1 and
+      connection.authorization_version == operation.expected_authorization_version and
+      connection.credential_version == operation.expected_credential_version
+  end
+
+  defp monotonic_success_lineage?(connection, operation) do
+    is_integer(operation.result_authorization_version) and
+      is_integer(operation.result_credential_version) and
+      connection.connection_version >= operation.expected_connection_version + 2 and
+      connection.authorization_version >= operation.result_authorization_version and
+      connection.credential_version >= operation.result_credential_version and
+      connection.external_account_id == operation.result_external_account_id and
+      connection.execution_identity == operation.result_execution_identity
+  end
+
+  defp exact_terminal_operation_set?(
+         operations,
+         connection,
+         pair_id,
+         action,
+         expected_version,
+         allowed_statuses
+       )
+       when action in [:revoke, :disconnect] do
+    by_correlation = Map.new(operations, &{&1.correlation_id, &1})
+    expected = correlations(action, connection.connection_id, expected_version)
+
+    length(operations) == 2 and MapSet.new(Map.keys(by_correlation)) == MapSet.new(expected) and
+      Enum.all?(["provider", "credential"], fn obligation ->
+        operation =
+          Map.fetch!(
+            by_correlation,
+            correlation(action, connection.connection_id, expected_version, obligation)
+          )
+
+        terminal_operation_coordinates?(
+          operation,
+          connection,
+          pair_id,
+          action,
+          expected_version,
+          obligation,
+          allowed_statuses
+        )
+      end)
+  end
+
+  defp exact_terminal_operation_set?(
+         _operations,
+         _connection,
+         _pair_id,
+         _action,
+         _expected_version,
+         _allowed_statuses
+       ),
+       do: false
+
+  defp terminal_operation_coordinates?(
+         operation,
+         connection,
+         pair_id,
+         action,
+         expected_version,
+         obligation,
+         allowed_statuses
+       ) do
+    operation.workspace_uri == connection.workspace_uri and
+      operation.connection_id == connection.connection_id and
+      operation.backend_pair_id == pair_id and
+      operation.operation_class == Atom.to_string(action) and
+      operation.correlation_id ==
+        correlation(action, connection.connection_id, expected_version, obligation) and
+      operation.bound_input_digest == digest(connection, pair_id, action, expected_version) and
+      operation.expected_connection_version == expected_version and
+      operation.expected_credential_version == connection.credential_version and
+      operation.status in allowed_statuses and
+      terminal_handoff_matches?(operation, connection, obligation)
+  end
+
+  defp terminal_handoff_matches?(operation, _connection, "provider"),
+    do: is_nil(operation.handoff_ref)
+
+  defp terminal_handoff_matches?(operation, connection, "credential"),
+    do: operation.handoff_ref == connection.credential_backend_ref
+
+  defp operation_action([%Operation{operation_class: "revoke"} | _operations]), do: :revoke
+
+  defp operation_action([%Operation{operation_class: "disconnect"} | _operations]),
+    do: :disconnect
+
+  defp operation_action(_operations), do: :invalid
+
+  defp lock_callback_command(_operation, nil), do: nil
+
+  defp lock_callback_command(operation, attempt) do
+    ProviderAuthorizationCommand
+    |> where(
+      [row],
+      row.backend_pair_id == ^operation.backend_pair_id and row.operation_class == "consume" and
+        row.correlation_id == ^attempt.correlation_id
+    )
+    |> lock("FOR UPDATE")
+    |> Repo.one()
+  end
+
+  defp lock_backend_record(authorization_ref) do
+    AuthorizationBackendRecord
+    |> where([row], row.authorization_ref == ^authorization_ref)
+    |> lock("FOR UPDATE")
+    |> Repo.one()
+  end
+
+  defp cleanup_not_required?(operation) do
+    operation.provider_cleanup_status == "not_required" and
+      operation.credential_cleanup_status == "not_required" and
+      is_nil(operation.provider_cleanup_error_code) and
+      is_nil(operation.credential_cleanup_error_code)
+  end
+
+  defp provider_unowned?(operation) do
+    Enum.all?(
+      [
+        operation.provider_result_ref,
+        operation.handoff_ref,
+        operation.result_permission_digest,
+        operation.result_expires_at,
+        operation.result_external_account_id,
+        operation.result_display_login,
+        operation.result_execution_identity,
+        operation.result_authorization_ref,
+        operation.result_authorization_version,
+        operation.result_ref,
+        operation.result_credential_version
+      ],
+      &is_nil/1
+    )
   end
 
   defp operations(connection_id, action, expected_version) do
-    prefix = "termination:#{action}:#{connection_id}:#{expected_version}:"
+    correlations = correlations(action, connection_id, expected_version)
 
     Operation
     |> where(
       [o],
       o.connection_id == ^connection_id and o.operation_class == ^Atom.to_string(action) and
-        like(o.correlation_id, ^"#{prefix}%")
+        o.correlation_id in ^correlations
     )
     |> order_by([o], asc: o.correlation_id)
     |> Repo.all()
   end
 
   defp obligation(operation) do
-    if String.ends_with?(operation.correlation_id, ":provider"), do: :provider, else: :credential
+    action = operation_action([operation])
+
+    cond do
+      operation.correlation_id ==
+          correlation(
+            action,
+            operation.connection_id,
+            operation.expected_connection_version,
+            "provider"
+          ) ->
+        :provider
+
+      operation.correlation_id ==
+          correlation(
+            action,
+            operation.connection_id,
+            operation.expected_connection_version,
+            "credential"
+          ) ->
+        :credential
+
+      true ->
+        :invalid
+    end
   end
+
+  defp correlations(action, connection_id, version),
+    do:
+      Enum.map(["provider", "credential"], fn obligation ->
+        correlation(action, connection_id, version, obligation)
+      end)
 
   defp correlation(action, connection_id, version, obligation),
     do: "termination:#{action}:#{connection_id}:#{version}:#{obligation}"

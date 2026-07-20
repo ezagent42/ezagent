@@ -437,6 +437,79 @@ defmodule Ezagent.ProviderConnection.CallbackRecoveryTest do
     assert FakeDriverAlpha.whole_connection_revoke_count() == 0
   end
 
+  test "historical successful initial bind remains a terminal proof for revoke and disconnect" do
+    for action <- [:revoke, :disconnect] do
+      %{connection: connection, attempt: attempt, operation: operation, record: record} =
+        establish_successful_callback!(action)
+
+      assert attempt.status == "consumed"
+      assert %DateTime{} = attempt.consumed_at
+      assert operation.status == "finalized"
+      assert record.lifecycle_status == "shredded"
+
+      current = Repo.get!(Connection, connection.connection_id)
+
+      result =
+        Store.execute(
+          action,
+          %{connection_id: current.connection_id, expected_version: current.connection_version},
+          %{self_uri: Ezagent.URI.new!(current.owner_uri)}
+        )
+
+      assert {:ok, %{status: terminal}} = result
+
+      assert terminal == if(action == :revoke, do: "revoked", else: "disconnected")
+    end
+  end
+
+  test "historical callback proof accepts a monotonic descendant and rejects immutable drift" do
+    %{connection: connection, operation: operation} =
+      establish_successful_callback!(:descendant)
+
+    descendant =
+      Connection
+      |> Repo.get!(connection.connection_id)
+      |> Ecto.Changeset.change(
+        connection_version: operation.expected_connection_version + 5,
+        authorization_version: operation.result_authorization_version + 2,
+        credential_version: operation.result_credential_version + 2,
+        authorization_backend_ref: "authorization-ref-descendant",
+        credential_backend_ref: "credential-ref-descendant"
+      )
+      |> Repo.update!()
+
+    assert {:ok, %{status: "disconnected"}} =
+             Store.execute(
+               :disconnect,
+               %{
+                 connection_id: descendant.connection_id,
+                 expected_version: descendant.connection_version
+               },
+               %{self_uri: Ezagent.URI.new!(descendant.owner_uri)}
+             )
+
+    %{connection: drift_connection, operation: drift_operation} =
+      establish_successful_callback!(:drift)
+
+    drift_operation
+    |> Ecto.Changeset.change(bound_input_digest: "historical-digest-drift")
+    |> Repo.update!()
+
+    current = Repo.get!(Connection, drift_connection.connection_id)
+
+    assert {:error, :authorization_backend_unavailable} =
+             Store.execute(
+               :revoke,
+               %{
+                 connection_id: current.connection_id,
+                 expected_version: current.connection_version
+               },
+               %{self_uri: Ezagent.URI.new!(current.owner_uri)}
+             )
+
+    assert Repo.get!(Connection, current.connection_id).status == "revoking"
+  end
+
   test "credential handoff rejects execution-identity drift before the credential effect" do
     {:ok, started} = LocalAuthorizationBackend.begin_authorization(begin_request())
     _connection = ensure_finalize_connection!(started.authorization_ref)
@@ -1047,6 +1120,21 @@ defmodule Ezagent.ProviderConnection.CallbackRecoveryTest do
                LocalAuthorizationBackend.reconcile_callback(operation.id, attempt.attempt_ref)
              end)
 
+    sealed =
+      Repo.get_by!(AuthorizationBackendRecord, authorization_ref: attempt.authorization_ref)
+
+    assert sealed.lifecycle_status == "consumed"
+    assert is_binary(sealed.handoff_ciphertext)
+
+    assert {:error, :credential_conflict} =
+             run_unboxed(fn ->
+               Ezagent.ProviderConnection.CredentialReplacement.fence(operation.id)
+             end)
+
+    still_sealed = Repo.get!(AuthorizationBackendRecord, sealed.id)
+    assert still_sealed.lifecycle_status == "consumed"
+    assert still_sealed.handoff_ciphertext == sealed.handoff_ciphertext
+
     assert :ok =
              run_unboxed(fn ->
                Ezagent.ProviderConnection.CredentialReplacement.reconcile(operation.id)
@@ -1095,6 +1183,14 @@ defmodule Ezagent.ProviderConnection.CallbackRecoveryTest do
 
     assert command.status == "terminal_failed"
     assert command.safe_error_code == "not_completed"
+
+    backend_record =
+      Repo.get_by!(AuthorizationBackendRecord, authorization_ref: attempt.authorization_ref)
+
+    assert backend_record.lifecycle_status == "cancelled"
+    assert backend_record.handoff_ref == nil
+    assert backend_record.handoff_ciphertext == nil
+    assert backend_record.shredded_at == nil
   end
 
   test "ambiguous callback reconciliation leaves the connection closing and recoverable" do
@@ -1117,6 +1213,127 @@ defmodule Ezagent.ProviderConnection.CallbackRecoveryTest do
 
     assert Repo.get!(Connection, connection.connection_id).status == "revoking"
     assert Repo.get!(Operation, operation.id).status == "prepared"
+  end
+
+  test "terminal retry rechecks callback set after acquiring the connection lock" do
+    now = DateTime.utc_now()
+    owner = Ezagent.URI.user("acme", "terminal-insert-race-owner")
+
+    %{connection: connection, attempt: attempt} =
+      run_unboxed(fn ->
+        fixture = persist_reconciliation_fixture(now, owner, "terminal-insert-race", 70)
+
+        closing =
+          fixture.connection
+          |> Ecto.Changeset.change(status: "revoking", connection_version: 71)
+          |> Repo.update!()
+
+        Enum.each(["provider", "credential"], fn obligation ->
+          attrs = %{
+            workspace_uri: closing.workspace_uri,
+            connection_id: closing.connection_id,
+            backend_pair_id: closing.backend_pair_id,
+            operation_class: "revoke",
+            correlation_id: "termination:revoke:#{closing.connection_id}:70:#{obligation}",
+            bound_input_digest: termination_digest(closing, closing.backend_pair_id, :revoke, 70),
+            expected_connection_version: 70,
+            expected_credential_version: closing.credential_version,
+            next_recovery_at: now,
+            status: "backend_committed"
+          }
+
+          changeset = Operation.create_changeset(attrs)
+
+          changeset =
+            if obligation == "credential",
+              do: Ecto.Changeset.change(changeset, handoff_ref: closing.credential_backend_ref),
+              else: changeset
+
+          Repo.insert!(changeset)
+        end)
+
+        fixture
+      end)
+
+    on_exit(fn ->
+      cleanup_reconciliation_fixture(connection.connection_id, attempt.authorization_ref)
+    end)
+
+    parent = self()
+
+    holder =
+      spawn(fn ->
+        result =
+          Ecto.Adapters.SQL.Sandbox.unboxed_run(Repo, fn ->
+            Repo.transaction(fn ->
+              locked =
+                Connection
+                |> where([row], row.connection_id == ^connection.connection_id)
+                |> lock("FOR UPDATE")
+                |> Repo.one!()
+
+              send(parent, {:terminal_race_lock_held, self()})
+
+              receive do
+                :insert_callback_obligation ->
+                  locked_attempt = Repo.get!(AuthorizationAttempt, attempt.attempt_ref)
+
+                  record =
+                    Repo.get_by!(AuthorizationBackendRecord,
+                      authorization_ref: locked_attempt.authorization_ref
+                    )
+
+                  base = %{locked | connection_version: 70, status: "active"}
+
+                  Repo.insert!(
+                    Operation.store_create_changeset(locked_attempt, base, %{
+                      operation_class: "replace",
+                      correlation_id: "replace:#{locked_attempt.correlation_id}",
+                      bound_input_digest: Operation.callback_digest(record, locked_attempt, base),
+                      next_recovery_at: now,
+                      status: "prepared"
+                    })
+                  )
+              end
+            end)
+          end)
+
+        send(parent, {:terminal_race_holder_done, self(), result})
+      end)
+
+    assert_receive {:terminal_race_lock_held, ^holder}, 5_000
+
+    worker =
+      spawn(fn ->
+        result =
+          Ecto.Adapters.SQL.Sandbox.unboxed_run(Repo, fn ->
+            %{rows: [[backend_pid]]} = Ecto.Adapters.SQL.query!(Repo, "SELECT pg_backend_pid()")
+            send(parent, {:terminal_race_worker_backend, self(), backend_pid})
+
+            Store.execute(
+              :revoke,
+              %{connection_id: connection.connection_id, expected_version: 70},
+              %{self_uri: owner}
+            )
+          end)
+
+        send(parent, {:terminal_race_worker_done, self(), result})
+      end)
+
+    assert_receive {:terminal_race_worker_backend, ^worker, backend_pid}, 5_000
+    assert_backend_waiting_on_lock!(backend_pid, 1_000)
+
+    send(holder, :insert_callback_obligation)
+    assert_receive {:terminal_race_holder_done, ^holder, {:ok, %Operation{}}}, 5_000
+
+    assert_receive {:terminal_race_worker_done, ^worker,
+                    {:error, :authorization_backend_unavailable}},
+                   5_000
+
+    assert Repo.get!(Connection, connection.connection_id).status == "revoking"
+
+    assert Repo.get_by!(Operation, correlation_id: "replace:#{attempt.correlation_id}").status ==
+             "prepared"
   end
 
   defp insert_attempt!(now, overrides \\ []) do
@@ -1298,6 +1515,30 @@ defmodule Ezagent.ProviderConnection.CallbackRecoveryTest do
     result
   end
 
+  defp assert_backend_waiting_on_lock!(backend_pid, attempts) when attempts > 0 do
+    waiting? =
+      run_unboxed(fn ->
+        case Ecto.Adapters.SQL.query!(
+               Repo,
+               "SELECT wait_event_type FROM pg_stat_activity WHERE pid = $1",
+               [backend_pid]
+             ).rows do
+          [["Lock"]] -> true
+          _other -> false
+        end
+      end)
+
+    if waiting? do
+      :ok
+    else
+      Process.sleep(5)
+      assert_backend_waiting_on_lock!(backend_pid, attempts - 1)
+    end
+  end
+
+  defp assert_backend_waiting_on_lock!(_backend_pid, 0),
+    do: flunk("terminal worker did not block on the connection linearization lock")
+
   defp persist_reconciliation_fixture(now, owner, correlation_id, version) do
     connection =
       insert_connection!(owner, "active", version)
@@ -1340,6 +1581,58 @@ defmodule Ezagent.ProviderConnection.CallbackRecoveryTest do
       )
 
     %{connection: connection, attempt: attempt}
+  end
+
+  defp establish_successful_callback!(tag) do
+    now = DateTime.utc_now()
+    suffix = "#{tag}-#{System.unique_integer([:positive])}"
+    owner = Ezagent.URI.user("acme", "historical-winner-#{suffix}")
+    connection = insert_connection!(owner, "pending_authorization", 0)
+
+    {:ok, started} =
+      LocalAuthorizationBackend.begin_authorization(
+        reconciliation_begin_request(connection, owner, "historical-winner-#{suffix}")
+      )
+
+    callback = callback_request(started, connection, owner, "historical-callback-#{suffix}")
+
+    :ok =
+      LocalAuthorizationBackend.stage_callback(
+        "pair-z-local-v1",
+        started.authorization_ref,
+        callback.correlation_id,
+        callback.callback_envelope.state,
+        Map.delete(callback.callback_envelope, :state)
+      )
+
+    backend_record =
+      Repo.get_by!(AuthorizationBackendRecord, authorization_ref: started.authorization_ref)
+
+    attempt =
+      insert_attempt!(now,
+        connection_id: connection.connection_id,
+        connection_version: connection.connection_version,
+        correlation_id: callback.correlation_id,
+        authorization_ref: started.authorization_ref,
+        backend_pair_id: "pair-z-local-v1",
+        bound_subject_digest: backend_record.bound_input_digest
+      )
+
+    assert {:ok, %{status: "active"}} =
+             Store.execute(
+               :consume_callback,
+               %{attempt_ref: attempt.attempt_ref, correlation_id: attempt.correlation_id},
+               %{self_uri: owner, now: now}
+             )
+
+    operation = Repo.get_by!(Operation, correlation_id: "store:#{attempt.correlation_id}")
+
+    %{
+      connection: Repo.get!(Connection, connection.connection_id),
+      attempt: Repo.get!(AuthorizationAttempt, attempt.attempt_ref),
+      operation: operation,
+      record: Repo.get!(AuthorizationBackendRecord, backend_record.id)
+    }
   end
 
   defp expire_claim!(attempt) do
@@ -1596,6 +1889,22 @@ defmodule Ezagent.ProviderConnection.CallbackRecoveryTest do
     |> :erlang.term_to_binary([:deterministic])
     |> then(&:crypto.hash(:sha256, &1))
     |> Base.encode16(case: :lower)
+  end
+
+  defp termination_digest(connection, pair_id, action, expected_version) do
+    digest({
+      :termination_v1,
+      action,
+      connection.connection_id,
+      connection.workspace_uri,
+      connection.owner_uri,
+      connection.provider_id,
+      connection.governed_host,
+      connection.execution_identity,
+      expected_version,
+      connection.credential_version,
+      pair_id
+    })
   end
 
   defp subject do

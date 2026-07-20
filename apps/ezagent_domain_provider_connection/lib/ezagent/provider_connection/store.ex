@@ -209,6 +209,7 @@ defmodule Ezagent.ProviderConnection.Store do
       with %Connection{} <- locked_connection,
            %AuthorizationAttempt{} <- locked_attempt,
            %AuthorizationBackendRecord{} <- backend_record,
+           :ok <- callback_source_status(locked_connection.status),
            true <- locked_attempt.claim_token == attempt.claim_token,
            true <- locked_attempt.attempt_version == attempt.attempt_version,
            :ok <- stable_scope(backend_record, locked_attempt, locked_connection) do
@@ -640,7 +641,7 @@ defmodule Ezagent.ProviderConnection.Store do
   end
 
   defp fence_if_terminal(operation) do
-    case CredentialReplacement.fence(operation.id) do
+    case CredentialReplacement.reconcile(operation.id) do
       :ok -> {:error, :connection_terminal}
       {:error, :stale_version} -> {:error, :stale_attempt_claim}
       {:error, _reason} -> {:error, :authorization_backend_unavailable}

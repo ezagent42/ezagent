@@ -59,4 +59,52 @@ defmodule Ezagent.ProviderConnection.AuthorizationBackendRecord do
       |> check_constraint(:lifecycle_status,
         name: :provider_authorization_backend_records_lifecycle_status_check
       )
+      |> check_constraint(:lifecycle_status,
+        name: :provider_authorization_backend_records_handoff_coherence_check
+      )
+
+  @doc false
+  def prepare_handoff_finalization_changeset(
+        %__MODULE__{
+          lifecycle_status: "consumed",
+          handoff_ref: handoff_ref,
+          handoff_ciphertext: handoff_ciphertext,
+          shredded_at: nil
+        } = record
+      )
+      when is_binary(handoff_ref) and byte_size(handoff_ref) > 0 and
+             is_binary(handoff_ciphertext) and byte_size(handoff_ciphertext) > 0 do
+    change(record, lifecycle_status: "handoff_finalization_pending")
+  end
+
+  def prepare_handoff_finalization_changeset(%__MODULE__{} = record) do
+    record
+    |> change()
+    |> add_error(:lifecycle_status, "is not a coherent consumed handoff")
+  end
+
+  @doc false
+  def finalize_handoff_changeset(
+        %__MODULE__{
+          lifecycle_status: "handoff_finalization_pending",
+          handoff_ref: handoff_ref,
+          handoff_ciphertext: handoff_ciphertext,
+          shredded_at: nil
+        } = record,
+        %DateTime{} = now
+      )
+      when is_binary(handoff_ref) and byte_size(handoff_ref) > 0 and
+             is_binary(handoff_ciphertext) and byte_size(handoff_ciphertext) > 0 do
+    change(record,
+      handoff_ciphertext: nil,
+      shredded_at: now,
+      lifecycle_status: "shredded"
+    )
+  end
+
+  def finalize_handoff_changeset(%__MODULE__{} = record, %DateTime{}) do
+    record
+    |> change()
+    |> add_error(:lifecycle_status, "is not a coherent pending handoff")
+  end
 end

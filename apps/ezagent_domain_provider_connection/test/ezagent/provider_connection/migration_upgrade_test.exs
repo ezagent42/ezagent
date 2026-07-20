@@ -34,6 +34,11 @@ defmodule Ezagent.ProviderConnection.MigrationUpgradeTest do
      EzagentCore.Repo.Migrations.CloseProviderResultOwnershipStages}
   ]
 
+  @closure [
+    {20_260_720_006_000, "20260720006000_close_provider_handoff_cleanup_coherence.exs",
+     EzagentCore.Repo.Migrations.CloseProviderHandoffCleanupCoherence}
+  ]
+
   test "non-empty D1 rows upgrade through the explicit expand backfill validate sequence" do
     database = "provider_migration_#{System.unique_integer([:positive])}"
     admin_opts = connection_options("postgres")
@@ -69,6 +74,7 @@ defmodule Ezagent.ProviderConnection.MigrationUpgradeTest do
     migrate(@amendment)
     seed_pre_supplement_rows!()
     migrate(@supplement)
+    migrate(@closure)
 
     assert scalar!("""
            WITH expected(connection_id, status) AS (
@@ -162,6 +168,43 @@ defmodule Ezagent.ProviderConnection.MigrationUpgradeTest do
               AND column_name IN ('expected_authorization_ref', 'expected_authorization_version')
            """) == 2
 
+    handoff_error =
+      assert_raise Postgrex.Error, fn ->
+        query!(
+          """
+          UPDATE provider_authorization_backend_records
+             SET lifecycle_status = 'consumed'
+           WHERE authorization_ref = 'attempt-auth-pending'
+          """,
+          []
+        )
+      end
+
+    assert handoff_error.postgres.code == :check_violation
+
+    cleanup_error =
+      assert_raise Postgrex.Error, fn ->
+        query!(
+          """
+          UPDATE provider_connection_operations
+             SET provider_cleanup_error_code = 'backend_unavailable'
+           WHERE correlation_id = 'op-provider-owned-callback'
+          """,
+          []
+        )
+      end
+
+    assert cleanup_error.postgres.code == :check_violation
+
+    assert scalar!("""
+           SELECT count(*)
+             FROM pg_constraint
+            WHERE conname IN (
+              'provider_authorization_backend_records_handoff_coherence_check',
+              'provider_connection_operations_cleanup_coherence_check'
+            ) AND convalidated
+           """) == 2
+
     assert scalar!("""
            SELECT count(*)
              FROM pg_constraint
@@ -235,6 +278,32 @@ defmodule Ezagent.ProviderConnection.MigrationUpgradeTest do
               AND result_ref IS NOT NULL
               AND result_credential_version IS NOT NULL
            """) == 1
+
+    assert :ok =
+             Ecto.Migrator.down(
+               MigrationTestRepo,
+               20_260_720_006_000,
+               EzagentCore.Repo.Migrations.CloseProviderHandoffCleanupCoherence,
+               log: false
+             )
+
+    assert scalar!("""
+           SELECT count(*)
+             FROM pg_constraint
+            WHERE conname IN (
+              'provider_authorization_backend_records_handoff_coherence_check',
+              'provider_connection_operations_cleanup_coherence_check'
+            )
+           """) == 0
+
+    assert scalar!("""
+           SELECT count(*)
+             FROM pg_constraint
+            WHERE conname IN (
+              'provider_connection_operations_expected_authorization_check',
+              'provider_connection_operations_ownership_stage_check'
+            ) AND convalidated
+           """) == 2
   end
 
   test "supplement fails loud when a terminal-advanced refresh cannot prove its reservation authorization" do
@@ -409,6 +478,120 @@ defmodule Ezagent.ProviderConnection.MigrationUpgradeTest do
     error = assert_raise Postgrex.Error, fn -> migrate(@supplement) end
     assert error.postgres.code == :check_violation
     assert Exception.message(error) =~ "ambiguous operation authorization reservation"
+  end
+
+  test "closure preflight rejects handoff and cleanup conflicts before DDL or data mutation" do
+    database = "provider_migration_closure_conflict_#{System.unique_integer([:positive])}"
+    admin_opts = connection_options("postgres")
+    {:ok, admin} = Postgrex.start_link(admin_opts)
+    Postgrex.query!(admin, ~s(CREATE DATABASE "#{database}"), [])
+
+    repo_config =
+      connection_options(database) ++
+        [pool_size: 2, migration_lock: nil, priv: "priv/repo_pg"]
+
+    previous = Application.get_env(:ezagent_domain_provider_connection, MigrationTestRepo)
+    Application.put_env(:ezagent_domain_provider_connection, MigrationTestRepo, repo_config)
+    {:ok, _repo_pid} = MigrationTestRepo.start_link()
+
+    on_exit(fn ->
+      {:ok, cleanup_admin} = Postgrex.start_link(admin_opts)
+
+      Postgrex.query!(
+        cleanup_admin,
+        "SELECT pg_terminate_backend(pid) FROM pg_stat_activity WHERE datname = $1",
+        [database]
+      )
+
+      Postgrex.query!(cleanup_admin, ~s(DROP DATABASE "#{database}"), [])
+
+      if previous,
+        do: Application.put_env(:ezagent_domain_provider_connection, MigrationTestRepo, previous),
+        else: Application.delete_env(:ezagent_domain_provider_connection, MigrationTestRepo)
+    end)
+
+    migrate(@historical)
+    migrate(@amendment)
+    migrate(@supplement)
+
+    query!(
+      """
+      INSERT INTO provider_authorization_backend_records
+        (id, workspace_uri, backend_pair_id, authorization_ref, execution_identity,
+         key_id, key_fingerprint, nonce, ciphertext, bound_input_digest,
+         begin_correlation_id, owner_uri, connection_id, connection_version,
+         provider_id, governed_host, acquisition_method, requested_permissions_digest,
+         redirect_uri_id, handoff_ref, handoff_ciphertext, lifecycle_status,
+         expires_at, inserted_at, updated_at)
+      VALUES ($1, 'workspace://acme', 'pair-a', 'closure-conflict-auth', 'connected_user',
+              'key-a', $2, $3, $4, 'digest', 'begin', 'entity://acme/user/u1',
+              $5, 0, 'fake', 'example.test', 'oauth', 'permissions', 'callback-v1',
+              'forbidden-handoff', $6, 'pending', now() + interval '1 hour', now(), now())
+      """,
+      [
+        Ecto.UUID.dump!("10000000-0000-0000-0000-000000000099"),
+        <<1>>,
+        <<2>>,
+        <<3>>,
+        "00000000-0000-0000-0000-000000000099",
+        <<4>>
+      ]
+    )
+
+    handoff_error = assert_raise Postgrex.Error, fn -> migrate(@closure) end
+    assert handoff_error.postgres.code == :check_violation
+    assert Exception.message(handoff_error) =~ "incoherent provider authorization handoff"
+    assert closure_constraint_count() == 0
+    assert scalar!("SELECT count(*) FROM provider_authorization_backend_records") == 1
+
+    query!("DELETE FROM provider_authorization_backend_records", [])
+
+    insert_connection!(
+      "00000000-0000-0000-0000-000000000099",
+      "active",
+      "closure-conflict"
+    )
+
+    insert_pre_supplement_operation!(%{
+      id: "30000000-0000-0000-0000-000000000099",
+      connection_id: "00000000-0000-0000-0000-000000000099",
+      operation_class: "revoke",
+      correlation_id: "closure-cleanup-conflict",
+      expected_connection_version: String.length("closure-conflict"),
+      status: "prepared"
+    })
+
+    query!(
+      """
+      UPDATE provider_connection_operations
+         SET provider_cleanup_error_code = 'backend_unavailable'
+       WHERE correlation_id = 'closure-cleanup-conflict'
+      """,
+      []
+    )
+
+    cleanup_error = assert_raise Postgrex.Error, fn -> migrate(@closure) end
+    assert cleanup_error.postgres.code == :check_violation
+    assert Exception.message(cleanup_error) =~ "incoherent provider operation cleanup"
+    assert closure_constraint_count() == 0
+
+    assert scalar!("""
+           SELECT count(*) FROM provider_connection_operations
+            WHERE correlation_id = 'closure-cleanup-conflict'
+              AND provider_cleanup_error_code = 'backend_unavailable'
+           """) == 1
+
+    query!(
+      """
+      UPDATE provider_connection_operations
+         SET provider_cleanup_error_code = NULL
+       WHERE correlation_id = 'closure-cleanup-conflict'
+      """,
+      []
+    )
+
+    migrate(@closure)
+    assert closure_constraint_count() == 2
   end
 
   defp migrate(migrations) do
@@ -949,6 +1132,18 @@ defmodule Ezagent.ProviderConnection.MigrationUpgradeTest do
   end
 
   defp scalar!(sql), do: query!(sql, []).rows |> hd() |> hd()
+
+  defp closure_constraint_count do
+    scalar!("""
+    SELECT count(*)
+      FROM pg_constraint
+     WHERE conname IN (
+       'provider_authorization_backend_records_handoff_coherence_check',
+       'provider_connection_operations_cleanup_coherence_check'
+     )
+    """)
+  end
+
   defp query!(sql, params), do: Ecto.Adapters.SQL.query!(MigrationTestRepo, sql, params)
 
   defp connection_options(database) do

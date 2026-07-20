@@ -4,10 +4,13 @@ defmodule Ezagent.ProviderConnection.CredentialReplacement do
 
   alias Ezagent.ProviderConnection.{
     AuthorizationAttempt,
+    AuthorizationBackendRecord,
+    CallbackTerminalProof,
     Connection,
     Driver,
     LocalAuthorizationBackend,
     Operation,
+    ProviderAuthorizationCommand,
     RuntimeBindings
   }
 
@@ -78,19 +81,65 @@ defmodule Ezagent.ProviderConnection.CredentialReplacement do
 
   @doc false
   def fence(operation_id) when is_binary(operation_id) do
-    with %Operation{status: "prepared"} = operation <- Repo.get(Operation, operation_id),
-         true <- provider_unowned?(operation),
-         %AuthorizationAttempt{} = attempt <-
-           Repo.get(AuthorizationAttempt, operation.attempt_ref),
-         connection <- Repo.get!(Ezagent.ProviderConnection.Connection, operation.connection_id),
-         true <- connection.status in ["revoking", "disconnecting"],
-         :ok <- mark_fenced(operation.id, attempt.attempt_ref, operation.connection_id),
-         :ok <- LocalAuthorizationBackend.prepare_handoff_finalization(attempt.authorization_ref),
-         :ok <- LocalAuthorizationBackend.finalize_handoff(attempt.authorization_ref) do
-      :ok
-    else
-      {:error, _reason} = error -> error
-      _ -> {:error, :stale_version}
+    lock_fence_candidate(operation_id)
+  end
+
+  defp lock_fence_candidate(operation_id) do
+    case Repo.get(Operation, operation_id) do
+      %Operation{} = snapshot ->
+        Repo.transaction(fn ->
+          connection = lock_connection(snapshot.connection_id)
+          attempt = lock_attempt(snapshot.attempt_ref)
+          operation = lock_operation(snapshot.id)
+
+          {command, record} =
+            case {operation, attempt} do
+              {%Operation{} = operation, %AuthorizationAttempt{} = attempt} ->
+                {
+                  lock_consume_command(operation.backend_pair_id, attempt.correlation_id),
+                  lock_backend_record(attempt.authorization_ref)
+                }
+
+              _other ->
+                {nil, nil}
+            end
+
+          with %Connection{} <- connection,
+               %AuthorizationAttempt{} <- attempt,
+               %Operation{status: "prepared"} <- operation,
+               true <- operation.attempt_ref == attempt.attempt_ref,
+               true <- attempt.status == "cancelled",
+               true <- is_nil(attempt.claim_token) and is_nil(attempt.claim_until),
+               true <- provider_unowned?(operation),
+               true <- connection.status in ["revoking", "disconnecting"],
+               true <-
+                 connection.connection_version == operation.expected_connection_version + 1,
+               true <-
+                 connection.authorization_version == operation.expected_authorization_version,
+               true <- connection.credential_version == operation.expected_credential_version,
+               :confirmed_absence <-
+                 CallbackTerminalProof.classify(connection, operation, attempt, command, record) do
+            attempt
+            |> Ecto.Changeset.change(status: "cancelled", claim_token: nil, claim_until: nil)
+            |> Repo.update!()
+
+            operation
+            |> Ecto.Changeset.change(status: "fenced", safe_error_code: "connection_terminal")
+            |> Repo.update!()
+
+            :ok
+          else
+            {:error, :credential_conflict} -> Repo.rollback(:credential_conflict)
+            _other -> Repo.rollback(:credential_conflict)
+          end
+        end)
+        |> case do
+          {:ok, :ok} -> :ok
+          {:error, reason} -> {:error, reason}
+        end
+
+      nil ->
+        {:error, :stale_version}
     end
   end
 
@@ -715,34 +764,6 @@ defmodule Ezagent.ProviderConnection.CredentialReplacement do
     end)
   end
 
-  defp mark_fenced(operation_id, attempt_ref, connection_id) do
-    Repo.transaction(fn ->
-      connection = lock_connection(connection_id)
-      attempt = lock_attempt(attempt_ref)
-      operation = lock_operation(operation_id)
-
-      with %Operation{status: "prepared"} <- operation,
-           %AuthorizationAttempt{} <- attempt,
-           true <- connection.status in ["revoking", "disconnecting"] do
-        attempt
-        |> Ecto.Changeset.change(status: "cancelled", claim_token: nil, claim_until: nil)
-        |> Repo.update!()
-
-        operation
-        |> Ecto.Changeset.change(status: "fenced", safe_error_code: "connection_terminal")
-        |> Repo.update!()
-
-        :ok
-      else
-        _ -> Repo.rollback(:stale_version)
-      end
-    end)
-    |> case do
-      {:ok, :ok} -> :ok
-      {:error, reason} -> {:error, reason}
-    end
-  end
-
   defp finalize_claimed(operation_id, now) do
     case claim_finalization(operation_id, now) do
       {:ok, {:finalized, operation}} ->
@@ -930,6 +951,24 @@ defmodule Ezagent.ProviderConnection.CredentialReplacement do
     do:
       AuthorizationAttempt
       |> where([row], row.attempt_ref == ^id)
+      |> lock("FOR UPDATE")
+      |> Repo.one()
+
+  defp lock_consume_command(backend_pair_id, correlation_id),
+    do:
+      ProviderAuthorizationCommand
+      |> where(
+        [row],
+        row.backend_pair_id == ^backend_pair_id and row.operation_class == "consume" and
+          row.correlation_id == ^correlation_id
+      )
+      |> lock("FOR UPDATE")
+      |> Repo.one()
+
+  defp lock_backend_record(authorization_ref),
+    do:
+      AuthorizationBackendRecord
+      |> where([row], row.authorization_ref == ^authorization_ref)
       |> lock("FOR UPDATE")
       |> Repo.one()
 end

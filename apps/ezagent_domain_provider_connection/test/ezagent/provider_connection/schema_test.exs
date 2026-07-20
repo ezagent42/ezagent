@@ -69,6 +69,20 @@ defmodule Ezagent.ProviderConnection.SchemaTest do
       refute sources[historical] =~ "expected_authorization_ref"
       refute sources[historical] =~ "ownership_stage_check"
     end
+
+    closure =
+      File.read!(
+        Path.join(
+          migration_dir,
+          "20260720006000_close_provider_handoff_cleanup_coherence.exs"
+        )
+      )
+
+    refute closure =~ "IF NOT EXISTS"
+    refute closure =~ "if_not_exists"
+    assert closure =~ "provider_authorization_backend_records_handoff_coherence_check"
+    assert closure =~ "provider_connection_operations_cleanup_coherence_check"
+    assert closure =~ "RAISE EXCEPTION"
   end
 
   test "active binding uniqueness is a named PostgreSQL constraint" do
@@ -357,19 +371,28 @@ defmodule Ezagent.ProviderConnection.SchemaTest do
          |> Map.put(:safe_error_code, "invalid")
        ), :safe_error_code, "provider_connection_operations_safe_error_code_check"},
       {Operation.create_changeset(
-         Map.put(
-           Map.put(operation_attrs(connection.connection_id), :operation_class, "revoke"),
-           :provider_cleanup_error_code,
-           "invalid"
-         )
+         operation_attrs(connection.connection_id)
+         |> Map.put(:operation_class, "revoke")
+         |> Map.merge(%{
+           status: "cleanup_pending",
+           provider_result_ref: "provider-result",
+           provider_cleanup_status: "pending",
+           provider_cleanup_error_code: "invalid",
+           safe_error_code: "cleanup_pending"
+         })
        ), :provider_cleanup_error_code,
        "provider_connection_operations_provider_cleanup_error_check"},
       {Operation.create_changeset(
-         Map.put(
-           Map.put(operation_attrs(connection.connection_id), :operation_class, "revoke"),
-           :credential_cleanup_error_code,
-           "invalid"
-         )
+         operation_attrs(connection.connection_id)
+         |> Map.put(:operation_class, "revoke")
+         |> Map.merge(%{
+           status: "cleanup_pending",
+           result_ref: "credential-result",
+           result_credential_version: 1,
+           credential_cleanup_status: "pending",
+           credential_cleanup_error_code: "invalid",
+           safe_error_code: "cleanup_pending"
+         })
        ), :credential_cleanup_error_code,
        "provider_connection_operations_credential_cleanup_error_check"},
       {AuthorizationBackendRecord.create_changeset(%{
@@ -381,8 +404,17 @@ defmodule Ezagent.ProviderConnection.SchemaTest do
     for {changeset, field, constraint_name} <- violations do
       assert {:error, changeset} = Repo.insert(changeset)
 
-      assert {"is invalid", [constraint: :check, constraint_name: ^constraint_name]} =
+      assert {"is invalid", [constraint: :check, constraint_name: actual_constraint]} =
                changeset.errors[field]
+
+      if field == :lifecycle_status do
+        assert actual_constraint in [
+                 constraint_name,
+                 "provider_authorization_backend_records_handoff_coherence_check"
+               ]
+      else
+        assert actual_constraint == constraint_name
+      end
     end
   end
 
@@ -952,10 +984,33 @@ defmodule Ezagent.ProviderConnection.SchemaTest do
         |> Ecto.Changeset.check_constraint(:status,
           name: :provider_connection_operations_durable_ownership_check
         )
+        |> Ecto.Changeset.check_constraint(:status,
+          name: :provider_connection_operations_cleanup_coherence_check
+        )
 
       assert {:error, changeset} = Repo.insert(changeset)
       assert changeset.errors[:status]
     end
+  end
+
+  test "production operation changeset normalizes the cleanup coherence constraint" do
+    connection = Repo.insert!(Connection.create_changeset(connection_attrs()))
+
+    changeset =
+      connection.connection_id
+      |> operation_attrs()
+      |> Map.merge(%{
+        operation_class: "revoke",
+        correlation_id: "cleanup-coherence-production",
+        status: "cleanup_pending",
+        provider_cleanup_status: "not_required",
+        credential_cleanup_status: "not_required"
+      })
+      |> Operation.create_changeset()
+
+    assert {:error, changeset} = Repo.insert(changeset)
+    assert {_, options} = changeset.errors[:status]
+    assert options[:constraint_name] == "provider_connection_operations_cleanup_coherence_check"
   end
 
   test "refresh effect states own provider and credential results together" do
@@ -1190,7 +1245,7 @@ defmodule Ezagent.ProviderConnection.SchemaTest do
         acquisition_method: "oauth_user",
         requested_permissions_digest: "permissions",
         redirect_uri_id: "callback-v1",
-        lifecycle_status: "consumed",
+        lifecycle_status: "pending",
         expires_at: DateTime.utc_now()
       })
 end
