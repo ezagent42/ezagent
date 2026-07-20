@@ -38,6 +38,31 @@ defmodule Ezagent.ProviderConnection.SchemaTest do
            )
   end
 
+  test "system-closure migrations are forward-only, fail-loud, and carry explicit backfills" do
+    migration_dir = Application.app_dir(:ezagent_core, "priv/repo_pg/migrations")
+
+    migrations = [
+      "20260720001000_reserve_pending_provider_connections.exs",
+      "20260720002000_close_provider_binding_cas.exs",
+      "20260720003000_add_provider_recovery_schedule.exs",
+      "20260720004000_add_refresh_compensation_obligations.exs"
+    ]
+
+    sources =
+      Map.new(migrations, fn name ->
+        source = File.read!(Path.join(migration_dir, name))
+        refute source =~ "IF NOT EXISTS"
+        refute source =~ "if_not_exists"
+        {name, source}
+      end)
+
+    assert sources[Enum.at(migrations, 0)] =~ "UPDATE provider_authorization_attempts"
+    assert sources[Enum.at(migrations, 0)] =~ "ALTER COLUMN purpose SET NOT NULL"
+    assert sources[Enum.at(migrations, 1)] =~ "VALIDATE CONSTRAINT"
+    assert sources[Enum.at(migrations, 2)] =~ "SET next_recovery_at = CURRENT_TIMESTAMP"
+    assert sources[Enum.at(migrations, 3)] =~ "credential_cleanup_status = CASE"
+  end
+
   test "active binding uniqueness is a named PostgreSQL constraint" do
     attrs = connection_attrs()
     assert {:ok, _} = Repo.insert(Connection.create_changeset(attrs))
@@ -68,13 +93,193 @@ defmodule Ezagent.ProviderConnection.SchemaTest do
              changeset.errors[:backend_pair_id]
   end
 
+  test "pending authorization is born without sentinel identity or backend references" do
+    attrs =
+      connection_attrs()
+      |> Map.merge(%{
+        status: "pending_authorization",
+        requested_execution_identity_class: "connected_user"
+      })
+      |> Map.drop([
+        :external_account_id,
+        :display_login,
+        :execution_identity,
+        :authorization_backend_ref,
+        :credential_backend_ref,
+        :backend_pair_id,
+        :authorization_backend_id,
+        :credential_backend_id,
+        :permission_digest,
+        :expires_at
+      ])
+
+    assert {:ok, connection} = Repo.insert(Connection.create_changeset(attrs))
+    assert connection.status == "pending_authorization"
+    assert connection.requested_execution_identity_class == "connected_user"
+
+    for field <- [
+          :external_account_id,
+          :display_login,
+          :execution_identity,
+          :authorization_backend_ref,
+          :credential_backend_ref,
+          :permission_digest,
+          :expires_at
+        ],
+        do: assert(is_nil(Map.fetch!(connection, field)))
+  end
+
+  test "failed connections are closed account conflicts without active pointers" do
+    pending =
+      connection_attrs()
+      |> Map.merge(%{
+        status: "pending_authorization",
+        requested_execution_identity_class: "connected_user"
+      })
+      |> Map.drop([
+        :external_account_id,
+        :display_login,
+        :execution_identity,
+        :authorization_backend_ref,
+        :credential_backend_ref,
+        :backend_pair_id,
+        :authorization_backend_id,
+        :credential_backend_id
+      ])
+      |> Connection.create_changeset()
+      |> Ecto.Changeset.apply_changes()
+
+    assert Connection.bind_changeset(pending, %{
+             status: "failed",
+             last_error_code: "account_conflict"
+           }).valid?
+
+    refute Connection.bind_changeset(pending, %{
+             status: "failed",
+             last_error_code: "account_conflict",
+             external_account_id: "acct-loser",
+             execution_identity: "human",
+             authorization_backend_ref: "auth-loser",
+             credential_backend_ref: "credential-loser"
+           }).valid?
+
+    for attrs <- [
+          Map.merge(connection_attrs(), %{status: "failed", last_error_code: "account_conflict"}),
+          connection_attrs()
+          |> Map.merge(%{status: "failed"})
+          |> Map.drop([
+            :external_account_id,
+            :execution_identity,
+            :authorization_backend_ref,
+            :credential_backend_ref
+          ])
+        ] do
+      assert {:error, changeset} = Repo.insert(Connection.create_changeset(attrs))
+      assert changeset.errors[:status]
+    end
+  end
+
+  test "connection constructor rejects non-canonical or cross-workspace ownership" do
+    for attrs <- [
+          %{connection_attrs() | owner_uri: "entity://other/user/u1"},
+          %{connection_attrs() | owner_uri: "entity://ACME/user/u1"},
+          %{connection_attrs() | workspace_uri: "workspace://acme/workspace/main"},
+          %{connection_attrs() | governed_host: "HTTPS://Example.Test/path"},
+          %{connection_attrs() | governed_host: "api..example.test"},
+          %{connection_attrs() | owner_uri: "entity://acme/agent/a1"},
+          %{connection_attrs() | provider_id: "Fake Provider"},
+          %{connection_attrs() | acquisition_method: "OAuth User"},
+          %{connection_attrs() | external_account_id: " acct-1 "},
+          %{connection_attrs() | execution_identity: "Connected User"}
+        ] do
+      refute Connection.create_changeset(attrs).valid?
+    end
+  end
+
+  test "named connection transitions preserve bound identity" do
+    connection = struct!(Connection, connection_attrs())
+
+    assert Connection.transition_changeset(connection, %{
+             status: "degraded",
+             last_error_code: "backend_unavailable"
+           }).valid?
+
+    for immutable <- [
+          :workspace_uri,
+          :owner_uri,
+          :provider_id,
+          :governed_host,
+          :external_account_id,
+          :execution_identity,
+          :acquisition_method
+        ] do
+      changeset =
+        Connection.transition_changeset(connection, %{
+          immutable => "changed",
+          :status => "degraded"
+        })
+
+      refute changeset.valid?
+      assert changeset.errors[immutable]
+    end
+
+    trusted = %{
+      authorization_backend_ref: "auth-next",
+      credential_backend_ref: "credential-next",
+      authorization_version: 2,
+      credential_version: 2,
+      connection_version: 2,
+      refresh_lease_token: "lease-next",
+      refresh_lease_until: DateTime.add(DateTime.utc_now(), 60),
+      refresh_lease_version: 2
+    }
+
+    trusted_changeset = Connection.transition_changeset(connection, trusted)
+
+    for {field, value} <- trusted,
+        do: assert(Ecto.Changeset.get_change(trusted_changeset, field) == value)
+
+    untrusted_changeset =
+      Connection.transition_changeset(
+        connection,
+        Map.new(trusted, fn {field, value} -> {Atom.to_string(field), value} end)
+      )
+
+    for field <- Map.keys(trusted),
+        do: refute(Ecto.Changeset.get_change(untrusted_changeset, field))
+
+    refute Connection.transition_changeset(connection, %{status: "invalid"}).valid?
+
+    refute Connection.transition_changeset(connection, %{
+             status: "degraded",
+             last_error_code: "invalid"
+           }).valid?
+  end
+
+  test "database rejects arbitrary drift after provider identity is bound" do
+    connection = Repo.insert!(Connection.create_changeset(connection_attrs()))
+
+    error =
+      assert_raise Ecto.ConstraintError, fn ->
+        connection
+        |> Ecto.Changeset.change(external_account_id: "different-account")
+        |> Repo.update!()
+      end
+
+    assert error.constraint == "provider_connections_immutable_binding_check"
+  end
+
   test "operation command key and attempt correlation are unique" do
-    op = Operation.create_changeset(operation_attrs())
+    connection = Repo.insert!(Connection.create_changeset(connection_attrs()))
+    op = Operation.create_changeset(operation_attrs(connection.connection_id))
     assert {:ok, _} = Repo.insert(op)
-    assert {:error, cs} = Repo.insert(Operation.create_changeset(operation_attrs()))
+
+    assert {:error, cs} =
+             Repo.insert(Operation.create_changeset(operation_attrs(connection.connection_id)))
+
     assert cs.errors[:correlation_id]
 
-    attempt = attempt_attrs()
+    attempt = attempt_attrs(connection.connection_id)
     assert {:ok, _} = Repo.insert(AuthorizationAttempt.create_changeset(attempt))
 
     duplicate_state = %{
@@ -88,7 +293,8 @@ defmodule Ezagent.ProviderConnection.SchemaTest do
   end
 
   test "authorization ref uniqueness is enforced independently of state uniqueness" do
-    attempt = attempt_attrs()
+    connection = Repo.insert!(Connection.create_changeset(connection_attrs()))
+    attempt = attempt_attrs(connection.connection_id)
     assert {:ok, _} = Repo.insert(AuthorizationAttempt.create_changeset(attempt))
 
     duplicate_authorization_ref = %{
@@ -108,19 +314,53 @@ defmodule Ezagent.ProviderConnection.SchemaTest do
   end
 
   test "every durable closed value is rejected by its named PostgreSQL CHECK" do
+    connection = Repo.insert!(Connection.create_changeset(connection_attrs()))
+
+    refute Connection.create_changeset(%{connection_attrs() | status: "invalid"}).valid?
+
+    refute Connection.create_changeset(Map.put(connection_attrs(), :last_error_code, "invalid")).valid?
+
     violations = [
-      {Connection.create_changeset(%{connection_attrs() | status: "invalid"}), :status,
-       "provider_connections_status_check"},
-      {Connection.create_changeset(Map.put(connection_attrs(), :last_error_code, "invalid")),
-       :last_error_code, "provider_connections_last_error_code_check"},
-      {AuthorizationAttempt.create_changeset(%{attempt_attrs() | status: "invalid"}), :status,
-       "provider_authorization_attempts_status_check"},
-      {Operation.create_changeset(%{operation_attrs() | operation_class: "invalid"}),
-       :operation_class, "provider_connection_operations_operation_class_check"},
-      {Operation.create_changeset(%{operation_attrs() | status: "invalid"}), :status,
-       "provider_connection_operations_status_check"},
-      {Operation.create_changeset(Map.put(operation_attrs(), :safe_error_code, "invalid")),
-       :safe_error_code, "provider_connection_operations_safe_error_code_check"},
+      {%Connection{}
+       |> Ecto.Changeset.change(%{connection_attrs() | status: "invalid"})
+       |> Ecto.Changeset.check_constraint(:status, name: :provider_connections_status_check),
+       :status, "provider_connections_status_check"},
+      {%Connection{}
+       |> Ecto.Changeset.change(Map.put(connection_attrs(), :last_error_code, "invalid"))
+       |> Ecto.Changeset.check_constraint(:last_error_code,
+         name: :provider_connections_last_error_code_check
+       ), :last_error_code, "provider_connections_last_error_code_check"},
+      {AuthorizationAttempt.create_changeset(%{
+         attempt_attrs(connection.connection_id)
+         | status: "invalid"
+       }), :status, "provider_authorization_attempts_status_check"},
+      {Operation.create_changeset(%{
+         operation_attrs(connection.connection_id)
+         | operation_class: "invalid"
+       }), :operation_class, "provider_connection_operations_operation_class_check"},
+      {Operation.create_changeset(%{
+         operation_attrs(connection.connection_id)
+         | status: "invalid"
+       }), :status, "provider_connection_operations_status_check"},
+      {Operation.create_changeset(
+         Map.put(operation_attrs(connection.connection_id), :safe_error_code, "invalid")
+       ), :safe_error_code, "provider_connection_operations_safe_error_code_check"},
+      {Operation.create_changeset(
+         Map.put(
+           operation_attrs(connection.connection_id),
+           :provider_cleanup_error_code,
+           "invalid"
+         )
+       ), :provider_cleanup_error_code,
+       "provider_connection_operations_provider_cleanup_error_check"},
+      {Operation.create_changeset(
+         Map.put(
+           operation_attrs(connection.connection_id),
+           :credential_cleanup_error_code,
+           "invalid"
+         )
+       ), :credential_cleanup_error_code,
+       "provider_connection_operations_credential_cleanup_error_check"},
       {AuthorizationBackendRecord.create_changeset(%{
          backend_record_attrs()
          | lifecycle_status: "invalid"
@@ -136,7 +376,8 @@ defmodule Ezagent.ProviderConnection.SchemaTest do
   end
 
   test "callback operation phases are closed over their required fence and result coordinates" do
-    base = operation_attrs()
+    connection = Repo.insert!(Connection.create_changeset(connection_attrs()))
+    base = operation_attrs(connection.connection_id)
 
     violations = [
       {Map.drop(base, [:attempt_claim_token]),
@@ -180,8 +421,14 @@ defmodule Ezagent.ProviderConnection.SchemaTest do
         result_ref: "credential-ref",
         expected_credential_version: 1,
         result_credential_version: 2,
+        result_external_account_id: "acct-1",
+        result_execution_identity: "human",
+        result_authorization_ref: "auth-result",
+        result_authorization_version: 2,
+        provider_result_ref: "provider-result",
         prior_credential_ref: "prior-credential-ref",
         prior_credential_version: 0,
+        credential_cleanup_status: "pending",
         safe_error_code: "cleanup_pending"
       })
 
@@ -192,7 +439,11 @@ defmodule Ezagent.ProviderConnection.SchemaTest do
   end
 
   test "prepared callback operation atomically contains the prior credential coordinates" do
-    attrs = Map.drop(operation_attrs(), [:prior_credential_ref, :prior_credential_version])
+    connection = Repo.insert!(Connection.create_changeset(connection_attrs()))
+
+    attrs =
+      operation_attrs(connection.connection_id)
+      |> Map.drop([:prior_credential_ref, :prior_credential_version])
 
     assert {:error, changeset} =
              %Operation{}
@@ -221,7 +472,238 @@ defmodule Ezagent.ProviderConnection.SchemaTest do
     for sentinel <- Map.values(sentinels), do: refute(inspected =~ sentinel)
   end
 
+  test "every durable provider struct redacts secret-bearing coordinates from Inspect" do
+    sentinels = %{
+      Connection => %{
+        authorization_backend_ref: "AUTH_BACKEND_REF_SECRET",
+        credential_backend_ref: "CREDENTIAL_BACKEND_REF_SECRET",
+        refresh_lease_token: "REFRESH_LEASE_SECRET"
+      },
+      AuthorizationAttempt => %{
+        backend_pair_id: "ATTEMPT_BACKEND_PAIR_SECRET",
+        authorization_ref: "ATTEMPT_AUTHORIZATION_REF_SECRET",
+        reservation_digest: "ATTEMPT_RESERVATION_SECRET",
+        callback_artifact_digest: "ATTEMPT_ARTIFACT_DIGEST_SECRET",
+        bound_subject_digest: "ATTEMPT_SUBJECT_SECRET",
+        state_digest: "ATTEMPT_STATE_SECRET",
+        pkce_digest: "ATTEMPT_PKCE_SECRET",
+        callback_artifact: %{"token" => "CALLBACK_ARTIFACT_SECRET"},
+        claim_token: "CLAIM_TOKEN_SECRET"
+      },
+      Operation => %{
+        backend_pair_id: "OPERATION_BACKEND_PAIR_SECRET",
+        attempt_claim_token: "ATTEMPT_CLAIM_SECRET",
+        handoff_ref: "HANDOFF_REF_SECRET",
+        result_ref: "RESULT_REF_SECRET",
+        result_authorization_ref: "RESULT_AUTHORIZATION_REF_SECRET",
+        prior_credential_ref: "PRIOR_CREDENTIAL_REF_SECRET",
+        provider_result_ref: "PROVIDER_RESULT_REF_SECRET",
+        lease_token: "OPERATION_LEASE_SECRET"
+      },
+      AuthorizationBackendRecord => %{
+        authorization_ref: "AUTHORIZATION_REF_SECRET",
+        backend_pair_id: "BACKEND_PAIR_SECRET",
+        nonce: "NONCE_SECRET",
+        ciphertext: "CIPHERTEXT_SECRET",
+        handoff_ref: "BACKEND_HANDOFF_REF_SECRET"
+      },
+      ProviderAuthorizationCommand => %{
+        backend_pair_id: "COMMAND_BACKEND_PAIR_SECRET",
+        bound_input_digest: "COMMAND_INPUT_DIGEST_SECRET",
+        authorization_ref: "COMMAND_AUTHORIZATION_REF_SECRET",
+        safe_result: %{"coordinate" => "COMMAND_RESULT_SECRET"}
+      },
+      Ezagent.ProviderConnection.Event => %{
+        correlation_id: "EVENT_CORRELATION_SECRET",
+        provider_request_id: "EVENT_PROVIDER_REQUEST_SECRET"
+      }
+    }
+
+    assert MapSet.new(Map.keys(sentinels)) == durable_provider_schemas()
+
+    for {schema, attrs} <- sentinels do
+      inspected = inspect(struct!(schema, attrs))
+      for sentinel <- secret_sentinels(attrs), do: refute(inspected =~ sentinel)
+    end
+  end
+
+  test "attempt, operation, and event reject absent or cross-workspace parents" do
+    connection = Repo.insert!(Connection.create_changeset(connection_attrs()))
+
+    valid_attempt =
+      attempt_attrs(connection.connection_id)
+      |> Map.merge(%{
+        connection_id: connection.connection_id,
+        workspace_uri: connection.workspace_uri,
+        purpose: "initial_bind",
+        reservation_digest: "reservation-digest",
+        requested_permission_digest: "permission-digest",
+        requested_execution_identity_class: "connected_user",
+        redirect_uri_id: "callback-v1",
+        callback_artifact_digest: "callback-artifact-digest"
+      })
+
+    assert {:ok, _attempt} = Repo.insert(AuthorizationAttempt.create_changeset(valid_attempt))
+
+    for attrs <- [
+          %{
+            valid_attempt
+            | attempt_ref: Ecto.UUID.generate(),
+              authorization_ref: "auth-missing",
+              state_digest: "state-missing",
+              connection_id: Ecto.UUID.generate(),
+              purpose: "legacy",
+              status: "cancelled"
+          },
+          %{
+            valid_attempt
+            | attempt_ref: Ecto.UUID.generate(),
+              authorization_ref: "auth-cross",
+              state_digest: "state-cross",
+              workspace_uri: "workspace://other",
+              purpose: "legacy",
+              status: "cancelled"
+          }
+        ] do
+      assert {:error, changeset} = Repo.insert(AuthorizationAttempt.create_changeset(attrs))
+      assert changeset.errors[:connection_id]
+    end
+
+    for schema <- [Operation, Ezagent.ProviderConnection.Event] do
+      attrs = %{
+        workspace_uri: "workspace://other",
+        connection_id: connection.connection_id
+      }
+
+      changeset =
+        case schema do
+          Operation ->
+            Operation.create_changeset(
+              Map.merge(operation_attrs(connection.connection_id), attrs)
+            )
+
+          _ ->
+            Ezagent.ProviderConnection.Event.create_changeset(attrs)
+        end
+
+      assert {:error, changeset} = Repo.insert(changeset)
+      assert changeset.errors[:connection_id]
+    end
+  end
+
+  test "attempt purpose, open status, and backend coordinates form one closed reservation" do
+    connection = Repo.insert!(Connection.create_changeset(connection_attrs()))
+    base = attempt_attrs(connection.connection_id)
+
+    violations = [
+      %{base | purpose: "legacy", status: "pending"},
+      Map.drop(base, [:backend_pair_id]),
+      Map.drop(base, [:authorization_ref]),
+      Map.drop(base, [:state_digest]),
+      Map.drop(base, [:bound_subject_digest]),
+      Map.drop(base, [:expires_at])
+    ]
+
+    for {attrs, index} <- Enum.with_index(violations) do
+      attrs =
+        Map.merge(attrs, %{
+          attempt_ref: Ecto.UUID.generate(),
+          correlation_id: "invalid-reservation-#{index}"
+        })
+
+      assert {:error, changeset} = Repo.insert(AuthorizationAttempt.create_changeset(attrs))
+      assert changeset.errors[:purpose]
+    end
+  end
+
+  test "operation states retain all external ownership and recovery coordinates" do
+    connection = Repo.insert!(Connection.create_changeset(connection_attrs()))
+    base = operation_attrs(connection.connection_id)
+
+    violations = [
+      base
+      |> Map.merge(%{
+        status: "backend_committed",
+        handoff_ref: "handoff",
+        result_ref: "credential-result",
+        result_credential_version: 2
+      }),
+      base
+      |> Map.merge(%{operation_class: "refresh", status: "backend_committed"}),
+      Map.put(base, :next_recovery_at, nil),
+      base
+      |> Map.merge(%{status: "finalized", next_recovery_at: DateTime.utc_now()}),
+      base
+      |> Map.merge(%{
+        status: "cleanup_pending",
+        handoff_ref: "cleanup-handoff",
+        result_ref: "cleanup-credential",
+        result_credential_version: 2,
+        result_external_account_id: "acct-1",
+        result_execution_identity: "human",
+        result_authorization_ref: "auth-result",
+        result_authorization_version: 2,
+        provider_result_ref: "provider-result",
+        provider_cleanup_status: "not_required",
+        credential_cleanup_status: "not_required"
+      })
+    ]
+
+    for {attrs, index} <- Enum.with_index(violations) do
+      changeset =
+        %Operation{}
+        |> Ecto.Changeset.change(
+          Map.merge(attrs, %{id: Ecto.UUID.generate(), correlation_id: "ownership-#{index}"})
+        )
+        |> Ecto.Changeset.check_constraint(:status,
+          name: :provider_connection_operations_durable_ownership_check
+        )
+
+      assert {:error, changeset} = Repo.insert(changeset)
+      assert changeset.errors[:status]
+    end
+  end
+
+  test "refresh effect states own provider and credential results together" do
+    connection = Repo.insert!(Connection.create_changeset(connection_attrs()))
+    base = operation_attrs(connection.connection_id)
+
+    for {status, index} <-
+          ["backend_committed", "connection_committed", "finalized"]
+          |> Enum.with_index() do
+      schedule = if status == "finalized", do: nil, else: DateTime.utc_now()
+
+      for missing <- [:result_ref, :result_credential_version] do
+        attrs =
+          base
+          |> Map.merge(%{
+            id: Ecto.UUID.generate(),
+            operation_class: "refresh",
+            correlation_id: "refresh-ownership-#{index}-#{missing}",
+            status: status,
+            provider_result_ref: "provider-result",
+            result_ref: "credential-result",
+            result_credential_version: 2,
+            next_recovery_at: schedule
+          })
+          |> Map.put(missing, nil)
+
+        changeset =
+          %Operation{}
+          |> Ecto.Changeset.change(attrs)
+          |> Ecto.Changeset.check_constraint(:status,
+            name: :provider_connection_operations_durable_ownership_check
+          )
+
+        assert {:error, changeset} = Repo.insert(changeset)
+        assert changeset.errors[:status]
+      end
+    end
+  end
+
   test "event closed columns are enforced by named PostgreSQL CHECK constraints" do
+    connection = Repo.insert!(Connection.create_changeset(connection_attrs()))
+
     for {field, constraint} <- [
           transition_from: "provider_connection_events_transition_from_check",
           transition_to: "provider_connection_events_transition_to_check"
@@ -230,7 +712,7 @@ defmodule Ezagent.ProviderConnection.SchemaTest do
         Ezagent.ProviderConnection.Event
         |> struct!(%{
           workspace_uri: base().workspace_uri,
-          connection_id: Ecto.UUID.generate()
+          connection_id: connection.connection_id
         })
         |> Map.put(field, "invalid")
 
@@ -241,6 +723,16 @@ defmodule Ezagent.ProviderConnection.SchemaTest do
 
       assert error.constraint == constraint
     end
+
+    assert %Ezagent.ProviderConnection.Event{transition_to: "failed"} =
+             Repo.insert!(
+               Ezagent.ProviderConnection.Event.create_changeset(%{
+                 workspace_uri: connection.workspace_uri,
+                 connection_id: connection.connection_id,
+                 transition_from: "pending_authorization",
+                 transition_to: "failed"
+               })
+             )
   end
 
   test "backend records allow exactly one lifecycle row per authorization ref" do
@@ -255,7 +747,7 @@ defmodule Ezagent.ProviderConnection.SchemaTest do
     assert cs.errors[:authorization_ref]
   end
 
-  defp base, do: %{workspace_uri: "workspace://acme/workspace/main", backend_pair_id: "pair-a"}
+  defp base, do: %{workspace_uri: "workspace://acme", backend_pair_id: "pair-a"}
 
   defp connection_attrs,
     do:
@@ -275,10 +767,10 @@ defmodule Ezagent.ProviderConnection.SchemaTest do
         status: "active"
       })
 
-  defp operation_attrs,
+  defp operation_attrs(connection_id),
     do:
       Map.merge(base(), %{
-        connection_id: Ecto.UUID.generate(),
+        connection_id: connection_id,
         operation_class: "store",
         correlation_id: "corr-1",
         bound_input_digest: "digest",
@@ -288,21 +780,46 @@ defmodule Ezagent.ProviderConnection.SchemaTest do
         prior_credential_version: 0,
         attempt_version: 1,
         attempt_claim_token: "claim-token",
+        next_recovery_at: DateTime.utc_now(),
         status: "prepared"
       })
 
-  defp attempt_attrs,
+  defp attempt_attrs(connection_id),
     do:
       Map.merge(base(), %{
         attempt_ref: Ecto.UUID.generate(),
         authorization_ref: "auth-ref",
-        connection_id: Ecto.UUID.generate(),
+        connection_id: connection_id,
+        purpose: "initial_bind",
+        reservation_digest: "reservation",
+        requested_permission_digest: "permission-digest",
+        requested_execution_identity_class: "connected_user",
+        redirect_uri_id: "callback-v1",
+        callback_artifact_digest: "callback-artifact-digest",
         bound_subject_digest: "subject",
         state_digest: "state",
         correlation_id: "corr",
         status: "pending",
         expires_at: DateTime.utc_now()
       })
+
+  defp secret_sentinels(attrs) do
+    Enum.flat_map(attrs, fn
+      {_key, value} when is_binary(value) -> [value]
+      {_key, value} when is_map(value) -> Map.values(value)
+      _other -> []
+    end)
+  end
+
+  defp durable_provider_schemas do
+    :ezagent_domain_provider_connection
+    |> Application.spec(:modules)
+    |> Enum.filter(fn module ->
+      Code.ensure_loaded?(module) and function_exported?(module, :__schema__, 1) and
+        String.starts_with?(module.__schema__(:source), "provider_")
+    end)
+    |> MapSet.new()
+  end
 
   defp backend_record_attrs,
     do:
