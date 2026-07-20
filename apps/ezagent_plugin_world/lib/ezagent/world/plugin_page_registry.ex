@@ -12,7 +12,7 @@ defmodule Ezagent.World.PluginPageRegistry do
     * `route` / `detail_route` — 列表页 + 详情页 pattern（`:param` 段捕获
       单个非空 path segment，语义同原 `[^/]+` 正则）
     * `nav` — 侧栏/patch 白名单派生用的 label + path
-    * `data_builder` — `state_for/2` 读模型模块（如 `Ezagent.World.KanbanData`）
+    * `data_builder` — 插件自有的 `state_for/2` 读模型模块
     * `renderer_families` — 注入 `SlotRegistry` 的 `[{type, title}]`
     * `action_prefixes` + `actions` — dispatch 准入：前缀是粗筛，`actions`
       是细白名单，**前缀命中后仍逐动作校验**（fail-closed，对齐 P22 精神）
@@ -22,26 +22,6 @@ defmodule Ezagent.World.PluginPageRegistry do
   编译期常量起步；插件自声明协议（`UiSurfaceProvider` 扩展）留给 follow-up。
   """
 
-  # kanban 动作细白名单——从 WorldLive `@kanban_actions` 逐字迁入（2026-07-09），
-  # 与 `Ezagent.World.KanbanActions.handle_dispatch/3` 的字面子句逐一等价
-  # （等价锁在 plugin_page_registry_test.exs）。
-  @kanban_actions ~w(kanban.add_node kanban.rename_node kanban.move_node kanban.remove_node kanban.set_stage kanban.claim_node kanban.unclaim_node kanban.set_status kanban.attach_artifact kanban.detach_artifact kanban.set_metric kanban.create kanban.sync_miro kanban.save_miro_creds kanban.select_board kanban.drop_subtree kanban.set_board_config kanban.attach_upload kanban.register_pr kanban.attach_code_file kanban.share_board)
-
-  @pages [
-    # kanban 操作面（kanban-as-role K4）——注册表第一个条目，原 world 写死特例。
-    %{
-      key: "kanban",
-      route: {"/plugins/kanban", :index},
-      detail_route: {"/plugins/kanban/:id", :detail},
-      nav: %{label: "看板", path: "/plugins/kanban"},
-      data_builder: Ezagent.World.KanbanData,
-      renderer_families: [{"kanban", "看板"}],
-      action_prefixes: ["kanban."],
-      actions: @kanban_actions,
-      actions_module: Ezagent.World.KanbanActions
-    }
-  ]
-
   @type page :: %{
           key: String.t(),
           route: {String.t(), :index},
@@ -49,18 +29,59 @@ defmodule Ezagent.World.PluginPageRegistry do
           nav: %{label: String.t(), path: String.t()},
           data_builder: module(),
           renderer_families: [{String.t(), String.t()}],
-          action_prefixes: [String.t()],
           actions: [String.t()],
-          actions_module: module()
+          actions_module: module(),
+          provider: module()
         }
 
   @doc "全部注册页面（声明顺序）。"
   @spec pages() :: [page()]
-  def pages, do: @pages
+  def pages, do: load().pages
+
+  @doc "Diagnostics for declarations rejected by the fail-closed registry."
+  @spec diagnostics() :: [term()]
+  def diagnostics, do: load().diagnostics
+
+  @doc false
+  @spec resolve([{module(), term()}]) :: %{pages: [page()], diagnostics: [term()]}
+  def resolve(provider_declarations) when is_list(provider_declarations) do
+    {valid, invalid_diagnostics} =
+      provider_declarations
+      |> Enum.flat_map(fn {provider, declarations} ->
+        if is_list(declarations) do
+          declarations
+          |> Enum.with_index()
+          |> Enum.map(fn {page, index} -> {provider, index, page} end)
+        else
+          [{provider, 0, :invalid_callback_result}]
+        end
+      end)
+      |> Enum.reduce({[], []}, fn {provider, index, page}, {valid, diagnostics} ->
+        case Ezagent.World.UiSurfaceProvider.validate_page(page) do
+          :ok -> {[%{provider: provider, index: index, page: page} | valid], diagnostics}
+          {:error, errors} -> {valid, [{:invalid_page, provider, index, errors} | diagnostics]}
+        end
+      end)
+
+    valid = Enum.reverse(valid)
+    duplicates = duplicate_diagnostics(valid)
+
+    rejected =
+      duplicates
+      |> Enum.flat_map(fn {:duplicate, _field, _value, owners} -> owners end)
+      |> MapSet.new()
+
+    pages =
+      for %{provider: provider, index: index, page: page} <- valid,
+          not MapSet.member?(rejected, {provider, index}),
+          do: Map.put(page, :provider, provider)
+
+    %{pages: pages, diagnostics: Enum.reverse(invalid_diagnostics) ++ duplicates}
+  end
 
   @doc "按 component key 查页面；未注册 → `nil`（fail-closed）。"
   @spec by_key(String.t() | any()) :: page() | nil
-  def by_key(key) when is_binary(key), do: Enum.find(@pages, &(&1.key == key))
+  def by_key(key) when is_binary(key), do: Enum.find(pages(), &(&1.key == key))
   def by_key(_), do: nil
 
   @doc """
@@ -71,7 +92,7 @@ defmodule Ezagent.World.PluginPageRegistry do
   """
   @spec by_route(String.t() | any()) :: {page(), %{String.t() => String.t()}} | nil
   def by_route(path) when is_binary(path) do
-    Enum.find_value(@pages, fn page ->
+    Enum.find_value(pages(), fn page ->
       case match_page(page, path) do
         nil -> nil
         params -> {page, params}
@@ -87,13 +108,53 @@ defmodule Ezagent.World.PluginPageRegistry do
   """
   @spec by_action(String.t() | any()) :: page() | nil
   def by_action(action) when is_binary(action) do
-    Enum.find(@pages, fn page ->
-      Enum.any?(page.action_prefixes, &String.starts_with?(action, &1)) and
-        action in page.actions
-    end)
+    Enum.find(pages(), fn page -> action in page.actions end)
   end
 
   def by_action(_), do: nil
+
+  defp load do
+    {declarations, callback_diagnostics} =
+      Ezagent.PluginRegistry.list_all()
+      |> Enum.sort_by(fn plugin -> plugin.plugin_info().slug end)
+      |> Enum.filter(&function_exported?(&1, :pages, 0))
+      |> Enum.reduce({[], []}, fn plugin, {declarations, diagnostics} ->
+        try do
+          case plugin.pages() do
+            pages when is_list(pages) -> {[{plugin, pages} | declarations], diagnostics}
+            _ -> {declarations, [{:invalid_pages_callback, plugin, :not_a_list} | diagnostics]}
+          end
+        rescue
+          error ->
+            {declarations,
+             [{:invalid_pages_callback, plugin, Exception.message(error)} | diagnostics]}
+        end
+      end)
+
+    resolved = declarations |> Enum.reverse() |> resolve()
+    %{resolved | diagnostics: Enum.reverse(callback_diagnostics) ++ resolved.diagnostics}
+  end
+
+  defp duplicate_diagnostics(records) do
+    [
+      {:key, fn page -> [page.key] end},
+      {:route, fn page -> [elem(page.route, 0), elem(page.detail_route, 0)] end},
+      {:renderer_family, fn page -> Enum.map(page.renderer_families, &elem(&1, 0)) end},
+      {:action, fn page -> page.actions end}
+    ]
+    |> Enum.flat_map(fn {field, values} ->
+      records
+      |> Enum.flat_map(fn record ->
+        Enum.map(values.(record.page), &{&1, {record.provider, record.index}})
+      end)
+      |> Enum.group_by(&elem(&1, 0), &elem(&1, 1))
+      |> Enum.flat_map(fn
+        {_value, [_owner]} -> []
+        {value, owners} -> [{:duplicate, field, value, Enum.uniq(owners)}]
+      end)
+    end)
+    |> Enum.sort_by(&inspect/1)
+  end
 
   defp match_page(page, path) do
     {index_pattern, :index} = page.route

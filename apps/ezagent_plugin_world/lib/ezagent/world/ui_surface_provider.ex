@@ -83,7 +83,9 @@ defmodule Ezagent.World.UiSurfaceProvider do
   """
   @callback session_tabs() :: [session_tab()]
 
-  @optional_callbacks nav_surfaces: 0, session_tabs: 0
+  @callback pages() :: [map()]
+
+  @optional_callbacks nav_surfaces: 0, session_tabs: 0, pages: 0
 
   @doc """
   Read-time shape predicate for one `nav_surfaces/0` entry.
@@ -122,4 +124,86 @@ defmodule Ezagent.World.UiSurfaceProvider do
   end
 
   def valid_session_tab?(_), do: false
+  @doc "Strict, fail-closed validation for a plugin-owned page declaration."
+  @spec validate_page(term()) :: :ok | {:error, [atom()]}
+  def validate_page(page) when is_map(page) do
+    errors =
+      []
+      |> invalid_unless(:key, valid_key?(Map.get(page, :key)))
+      |> invalid_unless(:route, valid_route?(Map.get(page, :route), :index))
+      |> invalid_unless(:detail_route, valid_route?(Map.get(page, :detail_route), :detail))
+      |> invalid_unless(:nav, valid_nav_surface?(Map.get(page, :nav)))
+      |> invalid_unless(:data_builder, exports?(Map.get(page, :data_builder), :state_for, 2))
+      |> invalid_unless(
+        :renderer_families,
+        valid_renderer_families?(Map.get(page, :renderer_families))
+      )
+      |> invalid_unless(:actions, valid_actions?(Map.get(page, :actions)))
+      |> invalid_unless(
+        :actions_module,
+        exports?(Map.get(page, :actions_module), :handle_dispatch, 3)
+      )
+      |> validate_renderer(Map.get(page, :renderer))
+      |> Enum.reverse()
+
+    if errors == [], do: :ok, else: {:error, errors}
+  end
+
+  def validate_page(_), do: {:error, [:declaration]}
+
+  @spec valid_page?(term()) :: boolean()
+  def valid_page?(page), do: validate_page(page) == :ok
+
+  defp invalid_unless(errors, _field, true), do: errors
+  defp invalid_unless(errors, field, false), do: [field | errors]
+
+  defp valid_key?(key),
+    do: is_binary(key) and Regex.match?(~r/^[a-z][a-z0-9_]*$/, key)
+
+  defp valid_route?({path, kind}, expected_kind),
+    do: kind == expected_kind and is_binary(path) and String.starts_with?(path, "/")
+
+  defp valid_route?(_, _), do: false
+
+  defp valid_renderer_families?(families) when is_list(families) and families != [] do
+    Enum.all?(families, fn
+      {family, title} when is_binary(family) and is_binary(title) ->
+        family != "" and title != ""
+
+      _ ->
+        false
+    end) and Enum.uniq_by(families, &elem(&1, 0)) == families
+  end
+
+  defp valid_renderer_families?(_), do: false
+
+  defp valid_actions?(actions) when is_list(actions) and actions != [] do
+    Enum.all?(actions, fn action ->
+      is_binary(action) and Regex.match?(~r/^[a-z][a-z0-9_]*\.[a-z][a-z0-9_]*$/, action)
+    end) and Enum.uniq(actions) == actions
+  end
+
+  defp valid_actions?(_), do: false
+
+  defp exports?(module, function, arity) when is_atom(module) do
+    Code.ensure_loaded?(module) and function_exported?(module, function, arity)
+  end
+
+  defp exports?(_, _, _), do: false
+
+  defp validate_renderer(errors, %{source: source, export: export, full_bleed: full_bleed}) do
+    errors
+    |> invalid_unless(
+      :renderer_import,
+      is_binary(source) and String.starts_with?(source, "assets/src/") and
+        not String.contains?(source, "..") and Path.extname(source) in [".ts", ".tsx"]
+    )
+    |> invalid_unless(
+      :renderer_export,
+      is_binary(export) and Regex.match?(~r/^[A-Z][A-Za-z0-9_]*$/, export)
+    )
+    |> invalid_unless(:renderer_full_bleed, is_boolean(full_bleed))
+  end
+
+  defp validate_renderer(errors, _), do: [:renderer | errors]
 end

@@ -1,4 +1,4 @@
-defmodule Ezagent.World.KanbanData do
+defmodule EzagentPluginKanban.WorldData do
   @moduledoc """
   Read model for the world **kanban operating surface**（df-prd）。
 
@@ -26,7 +26,7 @@ defmodule Ezagent.World.KanbanData do
   `github` 连接状态字段随之退役；`config.github_repo` 仍是纯数据（拼 git 链接用）。dormant 的 passive kanban-manager 经 `ensure_spawned/1`
   （`SpawnRegistry.spawn` 从快照 rehydrate）先起活，再 dispatch（HIGH-3 liveness）。
 
-  写动作在 `Ezagent.World.KanbanActions`；本模块只读。
+  写动作在 `EzagentPluginKanban.WorldActions`；本模块只读。
   """
 
   alias Ezagent.{Agent.RecipeRegistry, Invocation}
@@ -130,7 +130,7 @@ defmodule Ezagent.World.KanbanData do
   发起人对某块板是否有 access（可见即可分享）—— admin / 板主人（`data_owner`）/ 持指向该板
   的 cap。ctx 用 `KanbanActions.read_ctx` 形状（`:caller_uri` / `:caller_caps`）。
 
-  分享看板（T6.4，`Ezagent.World.KanbanActions.share_link/2`）的 access gate 复用这同一条
+  分享看板（T6.4，`EzagentPluginKanban.WorldActions.share_link/2`）的 access gate 复用这同一条
   发现可见性谓词（`visible?/2`），不新发明授权：能看见（own / 持 cap / admin）即可分享。
   """
   @spec can_share?(URI.t(), map()) :: boolean()

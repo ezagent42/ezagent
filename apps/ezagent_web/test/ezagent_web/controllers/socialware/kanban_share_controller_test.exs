@@ -21,7 +21,7 @@ defmodule EzagentWeb.Socialware.KanbanShareControllerTest do
   alias Ezagent.Entity.User
   alias Ezagent.{AgentFlavorRegistry, Agent.RecipeRegistry, Invocation}
   alias Ezagent.Socialware.MountRow
-  alias Ezagent.World.KanbanActions
+  alias EzagentPluginKanban.WorldActions, as: KanbanActions
   alias EzagentPluginHello.PublishedBoardRef
   alias EzagentWeb.Socialware.KanbanPublishedReadAdapter
   alias EzagentPluginKanban.Application, as: KanbanApp

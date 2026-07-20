@@ -73,7 +73,8 @@ defmodule EzagentPluginKanban.MixProject do
       # into (and brings Phoenix.Component for the internal render). PROD dep so
       # the registry ETS table is init'd before this plugin registers (mirrors
       # hello + the world-views ordering note in hello's `Application.start/2`).
-      {:ezagent_domain_ui, in_umbrella: true}
+      {:ezagent_domain_ui, in_umbrella: true},
+      {:phoenix_live_view, ">= 0.0.0"}
     ]
   end
 end

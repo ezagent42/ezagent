@@ -31,16 +31,10 @@ defmodule Ezagent.World.PluginPageRegistryTest do
                  &match?({type, title} when is_binary(type) and is_binary(title), &1)
                )
 
-        assert is_list(page.action_prefixes) and page.action_prefixes != []
         assert is_list(page.actions) and page.actions != []
         assert is_atom(page.actions_module)
-
-        # 细白名单里的每个动作必须被至少一个声明的前缀覆盖（前缀是准入粗筛，
-        # 名单才是细白名单——两层必须自洽）。
-        for action <- page.actions do
-          assert Enum.any?(page.action_prefixes, &String.starts_with?(action, &1)),
-                 "action #{action} not covered by any prefix of page #{page.key}"
-        end
+        assert %{source: source_path, export: export_name, full_bleed: full_bleed} = page.renderer
+        assert is_binary(source_path) and is_binary(export_name) and is_boolean(full_bleed)
       end
     end
 
@@ -49,10 +43,40 @@ defmodule Ezagent.World.PluginPageRegistryTest do
       assert page.route == {"/plugins/kanban", :index}
       assert page.detail_route == {"/plugins/kanban/:id", :detail}
       assert page.nav == %{label: "看板", path: "/plugins/kanban"}
-      assert page.data_builder == Ezagent.World.KanbanData
+      assert page.data_builder == EzagentPluginKanban.WorldData
       assert page.renderer_families == [{"kanban", "看板"}]
-      assert page.action_prefixes == ["kanban."]
-      assert page.actions_module == Ezagent.World.KanbanActions
+      assert page.actions_module == EzagentPluginKanban.WorldActions
+      assert page.renderer == %{
+               source: "assets/src/world_page.tsx",
+               export: "KanbanWorldPage",
+               full_bleed: true
+             }
+    end
+  end
+
+  describe "resolve/1 diagnostics" do
+    test "duplicate page keys, routes, renderer families, and actions are all rejected" do
+      first = declared_page("one", "/plugins/one", "shared.action")
+
+      second =
+        declared_page("one", "/plugins/two", "shared.action")
+        |> Map.put(:renderer_families, [{"one", "Other"}])
+
+      assert %{pages: [], diagnostics: diagnostics} =
+               PluginPageRegistry.resolve([{DemoProvider, [first, second]}])
+
+      assert Enum.any?(diagnostics, &match?({:duplicate, :key, "one", _}, &1))
+      assert Enum.any?(diagnostics, &match?({:duplicate, :action, "shared.action", _}, &1))
+      assert Enum.any?(diagnostics, &match?({:duplicate, :renderer_family, "one", _}, &1))
+    end
+
+    test "invalid declarations are diagnosed and excluded" do
+      invalid = Map.delete(declared_page("bad", "/plugins/bad", "bad.save"), :renderer)
+
+      assert %{pages: [], diagnostics: [{:invalid_page, DemoProvider, 0, errors}]} =
+               PluginPageRegistry.resolve([{DemoProvider, [invalid]}])
+
+      assert :renderer in errors
     end
   end
 
@@ -99,7 +123,7 @@ defmodule Ezagent.World.PluginPageRegistryTest do
       page = PluginPageRegistry.by_key("kanban")
 
       for action <- page.actions do
-        assert %{key: "kanban", actions_module: Ezagent.World.KanbanActions} =
+        assert %{key: "kanban", actions_module: EzagentPluginKanban.WorldActions} =
                  PluginPageRegistry.by_action(action)
       end
     end
@@ -127,7 +151,7 @@ defmodule Ezagent.World.PluginPageRegistryTest do
       # 从 KanbanActions 编译产物（abstract code）导出 handle_dispatch/3 的字面
       # action 子句集合——白名单必须与实际声明逐一等价，不多（放行无处理器的
       # 动作）也不少（注册表悄悄砍掉可用动作）。
-      declared = declared_actions(Ezagent.World.KanbanActions)
+      declared = declared_actions(EzagentPluginKanban.WorldActions)
       registry = MapSet.new(PluginPageRegistry.by_key("kanban").actions)
 
       assert MapSet.equal?(registry, declared),
@@ -154,4 +178,18 @@ defmodule Ezagent.World.PluginPageRegistryTest do
     do: List.to_string(chars)
 
   defp literal_binary(_), do: nil
+
+  defp declared_page(key, route, action) do
+    %{
+      key: key,
+      route: {route, :index},
+      detail_route: {route <> "/:id", :detail},
+      nav: %{label: key, path: route},
+      data_builder: EzagentPluginKanban.WorldData,
+      renderer_families: [{key, key}],
+      actions: [action],
+      actions_module: EzagentPluginKanban.WorldActions,
+      renderer: %{source: "assets/src/#{key}.tsx", export: "Renderer", full_bleed: false}
+    }
+  end
 end

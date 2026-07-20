@@ -28,6 +28,11 @@ defmodule Ezagent.World.SlotRegistryTest do
     assert MapSet.size(families) > 0
   end
 
+  test "plugin page slots are resolved at runtime after the plugin registry starts" do
+    assert %{renderer_family: :kanban, data_source: EzagentPluginKanban.WorldData} =
+             SlotRegistry.slot("kanban")
+  end
+
   test "Layer-1 gate: every route slot in world_live.ex is registered" do
     registered = SlotRegistry.layout_slot_types()
 

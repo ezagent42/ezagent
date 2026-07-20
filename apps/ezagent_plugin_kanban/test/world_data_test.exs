@@ -1,4 +1,4 @@
-defmodule Ezagent.World.KanbanDataTest do
+defmodule EzagentPluginKanban.WorldDataTest do
   @moduledoc """
   kanban-as-role K4 — world kanban read-model on the AS-ROLE path.
 
@@ -17,7 +17,7 @@ defmodule Ezagent.World.KanbanDataTest do
   """
   use EzagentCore.DataCase, async: false
 
-  alias Ezagent.World.KanbanData
+  alias EzagentPluginKanban.WorldData, as: KanbanData
   alias Ezagent.Workspace
   alias Ezagent.{AgentFlavorRegistry, Agent.RecipeRegistry}
   alias EzagentPluginKanban.Application, as: KanbanApp

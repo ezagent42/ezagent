@@ -170,4 +170,25 @@ defmodule EzagentPluginKanban.Application do
   # 把它渲染成 Plugins 页可点入口。
   @impl Ezagent.Plugin
   def config_surface, do: %{kind: :route, path: "/plugins/kanban", label: "看板"}
+
+  def pages do
+    [
+      %{
+        key: "kanban",
+        route: {"/plugins/kanban", :index},
+        detail_route: {"/plugins/kanban/:id", :detail},
+        nav: %{label: "看板", path: "/plugins/kanban"},
+        data_builder: EzagentPluginKanban.WorldData,
+        renderer_families: [{"kanban", "看板"}],
+        actions:
+          ~w(kanban.add_node kanban.rename_node kanban.move_node kanban.remove_node kanban.set_stage kanban.claim_node kanban.unclaim_node kanban.set_status kanban.attach_artifact kanban.detach_artifact kanban.set_metric kanban.create kanban.sync_miro kanban.save_miro_creds kanban.select_board kanban.drop_subtree kanban.set_board_config kanban.attach_upload kanban.register_pr kanban.attach_code_file kanban.share_board),
+        actions_module: EzagentPluginKanban.WorldActions,
+        renderer: %{
+          source: "assets/src/world_page.tsx",
+          export: "KanbanWorldPage",
+          full_bleed: true
+        }
+      }
+    ]
+  end
 end

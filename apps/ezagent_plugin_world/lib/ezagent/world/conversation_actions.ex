@@ -560,14 +560,14 @@ defmodule Ezagent.World.ConversationActions do
   # (frontend renders its own empty/config state). fail-safe: any error falls back
   # to a plain active_view switch so the tab never wedges.
   defp view_switch_updates(socket, %URI{} = session_uri, "kanban_board") do
-    ctx = Ezagent.World.KanbanActions.read_ctx(socket)
-    boards = Ezagent.World.KanbanData.session_boards(session_uri, ctx)
+    ctx = EzagentPluginKanban.WorldActions.read_ctx(socket)
+    boards = EzagentPluginKanban.WorldData.session_boards(session_uri, ctx)
     base = %{"active_view" => "kanban_board", "instances" => boards}
 
     with [%{"uri" => uri} | _] when is_binary(uri) <- boards,
          {:ok, %URI{} = board_uri} <- Ezagent.URI.parse(uri) do
       base
-      |> Map.merge(Ezagent.World.KanbanData.board_state(board_uri, ctx))
+      |> Map.merge(EzagentPluginKanban.WorldData.board_state(board_uri, ctx))
       |> Map.merge(%{"active_view" => "kanban_board", "instances" => boards})
     else
       _ -> base
