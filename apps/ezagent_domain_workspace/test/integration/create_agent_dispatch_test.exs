@@ -716,6 +716,58 @@ defmodule Ezagent.Integration.CreateAgentDispatchTest do
     end
 
     @tag :integration
+    test "F3/#1460 — a VALID provider reaches the launchability gate (profile env consulted)",
+         %{workspace_uri: workspace_uri, admin_ctx: admin_ctx} do
+      # The provider key flows through the whitelist + template validate and
+      # reaches instantiate's ensure_api_key gate. With the profile's env var
+      # unset the create fails fast there (never a zombie), which only happens
+      # if the whole ad-hoc lane threads the profile correctly.
+      prev = System.get_env("DEEPSEEK_API_KEY")
+      System.delete_env("DEEPSEEK_API_KEY")
+
+      try do
+        assert {:error, {:cascade_spawn_failed, {:backend_api_key_missing, "deepseek", _uri}}} =
+                 Workspace.create_agent(
+                   workspace_uri,
+                   %{
+                     flavor: "cc-custom",
+                     name: "cc-custom-keyless-#{System.unique_integer([:positive])}",
+                     cwd: "",
+                     with_pty: false,
+                     flavor_config: %{"provider" => "deepseek"}
+                   },
+                   admin_ctx
+                 )
+      after
+        if prev, do: System.put_env("DEEPSEEK_API_KEY", prev)
+      end
+    end
+
+    @tag :integration
+    test "F3/#1460 + codex review — role on a custom flavor fails LOUD (never silently dropped)",
+         %{workspace_uri: workspace_uri, admin_ctx: admin_ctx} do
+      # codex review of PR #1485: the custom flavors joined the file-flavor
+      # lane but @file_flavors lagged, so a role passed validation and was
+      # silently discarded. Now identical to the plain twins: RF-5b territory
+      # → reject.
+      for flavor <- ["cc-custom", "cc-headless-custom"] do
+        assert {:error, {:role_unsupported_for_flavor, ^flavor}} =
+                 Workspace.create_agent(
+                   workspace_uri,
+                   %{
+                     flavor: flavor,
+                     name: "role-#{flavor}-#{System.unique_integer([:positive])}",
+                     cwd: "",
+                     with_pty: false,
+                     role: "kanban-assistant",
+                     flavor_config: %{"provider" => "deepseek"}
+                   },
+                   admin_ctx
+                 )
+      end
+    end
+
+    @tag :integration
     test "native flavor (NO :instance_behaviors) still direct-spawns unchanged",
          %{ws_name: ws_name, workspace_uri: workspace_uri, admin_ctx: admin_ctx} do
       # PR-6+7 — a flavor that declares no :instance_behaviors thunk direct-spawns

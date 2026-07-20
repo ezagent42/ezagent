@@ -1,21 +1,22 @@
 # Return: cc-headless-custom live spawn — F2/F4 fixed, F3 decided+implemented, dual-backend live proof
 
 > **Task:** 看板 gaga 卡验收 ②（cc-deepseek 泛化为可配置 cc-custom + deepseek/kimi 双后端实测）的收尾缺口 — issue **#1460**（#1449 接受的两项 deferral 之一）
-> **Branch:** `fix/1460-cc-headless-custom-live`（off main `fe2906431`，4 commits）
+> **Branch:** `fix/1460-cc-headless-custom-live`（off main `5f5c811d7`，rebase 后 6 commits；PR #1485）
 > **Dev:** gaga Claude session
 > **returned_at:** 2026-07-20
 > **deadline:** 2026-07-20 EOD
 > **deadline_status:** on_time
-> **Rebase-base SHA:** `fe2906431`
+> **Rebase-base SHA:** `5f5c811d7`（batch #1483 后 rebased；首版基于 `fe2906431`，codex 评审 Minor 已修文档 SHA）
 
 ## What's done
 
 | Commit | 内容 |
 |---|---|
-| `9f59745d8` | **F2 修复** — cascade 自调 `{:calling_self}`：`template.instantiate` 在模板 Kind 自己进程内运行，cascade 层解析却经 `UriQuery → Kind.get_slice` 自调。现在自引用层（layer_dir_for/source_dir_for）直接从手上 content 的 config_dir 供给（活数据，非快照），非自身源走原默认；guard 对自源短路。回归测试：测试进程注册为源模板 URI，修前复现生产同款 error tuple，修后通过。 |
-| `a882bff1c` | **F4 修复** — `CcHeadlessAgent.ensure_config_home/2`：content 无 config_dir 时按 create 道同款补 per-agent 目标并分配（materialize 全程照跑：derived config / sandbox skills / plugin manifest / completion marker）。畸形 config_dir 不动，`{:invalid_config_dir}` 依旧 fail-loud。 |
-| `336a2b0f2` | **F3 决策落地**（issue 授权二选一：接纳 provider，catalog fail-closed 校验）— ①两个 custom 类 `config_schema` 加共享必填 `provider` 枚举（`Provider.provider_config_field/0`，options=ProviderCatalog.names()）；②`do_create_agent` 补 cc-custom/cc-headless-custom 子句走 file-flavor cascade 道（原来落到 direct-spawn fallback：不 instantiate → 僵尸 Kind 无 sidecar，空 flavor_config 甚至跳过校验）。 |
-| （本 return 前的第 4 个） | 证据 + LOC：`agent_create.ex` 被 F3 子句推过 gt_1000 门（1018）→ `register_file_flavor_agent` 统一从 class_name 派生 tmpl_prefix（每调用点原本就是 class<>"."），落回恰好 1000；live proof 证据目录。 |
+| `a06264157` | **F2 修复** — cascade 自调 `{:calling_self}`：`template.instantiate` 在模板 Kind 自己进程内运行，cascade 层解析却经 `UriQuery → Kind.get_slice` 自调。现在自引用层（layer_dir_for/source_dir_for）直接从手上 content 的 config_dir 供给（活数据，非快照），非自身源走原默认；guard 对自源短路。回归测试：测试进程注册为源模板 URI，修前复现生产同款 error tuple，修后通过。 |
+| `969a02ff4` | **F4 修复** — `CcHeadlessAgent.ensure_config_home/2`：content 无 config_dir 时按 create 道同款补 per-agent 目标并分配（materialize 全程照跑：derived config / sandbox skills / plugin manifest / completion marker）。畸形 config_dir 不动，`{:invalid_config_dir}` 依旧 fail-loud。 |
+| `440b38066` | **F3 决策落地**（issue 授权二选一：接纳 provider，catalog fail-closed 校验）— ①两个 custom 类 `config_schema` 加共享必填 `provider` 枚举（`Provider.provider_config_field/0`，options=ProviderCatalog.names()）；②`do_create_agent` 补 cc-custom/cc-headless-custom 子句走 file-flavor cascade 道（原来落到 direct-spawn fallback：不 instantiate → 僵尸 Kind 无 sidecar，空 flavor_config 甚至跳过校验）。 |
+| `857d0a374` | 证据 + LOC：`agent_create.ex` 被 F3 子句推过 gt_1000 门（1018）→ `register_file_flavor_agent` 统一从 class_name 派生 tmpl_prefix（每调用点原本就是 class<>"."），落回恰好 1000；live proof 证据目录。 |
+| （codex 评审修复） | **codex Major**:custom flavor 入 file-flavor 道后 `role_step.ex @file_flavors` 未跟上 → role 参数会过校验再被静默丢弃 → 两个 custom flavor 补进 `@file_flavors`（role 现在与 plain twins 同款 fail-loud `:role_unsupported_for_flavor`）+ 双 flavor 回归测试 + valid-provider 到达 `{:backend_api_key_missing}` 门的集成测试。**codex Minor**:本 return 的 SHA/base 更新为 rebase 后值（本行）。 |
 
 ## DoD reconciliation（issue #1460 §Acceptance）
 
