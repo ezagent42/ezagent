@@ -1,5 +1,18 @@
 defmodule Ezagent.ProviderConnection.AuthorizationAttempt do
   @moduledoc "Public, secret-safe authorization correlation row."
+  @derive {Inspect,
+           only: [
+             :attempt_ref,
+             :workspace_uri,
+             :connection_id,
+             :connection_version,
+             :purpose,
+             :correlation_id,
+             :attempt_version,
+             :status,
+             :consumed_at,
+             :expires_at
+           ]}
   use Ecto.Schema
   import Ecto.Changeset
   import Ecto.Query
@@ -13,6 +26,12 @@ defmodule Ezagent.ProviderConnection.AuthorizationAttempt do
     field(:authorization_ref, :string)
     field(:connection_id, Ecto.UUID)
     field(:connection_version, :integer, default: 0)
+    field(:purpose, :string)
+    field(:reservation_digest, :string)
+    field(:requested_permission_digest, :string)
+    field(:requested_execution_identity_class, :string)
+    field(:redirect_uri_id, :string)
+    field(:callback_artifact_digest, :string)
     field(:bound_subject_digest, :string)
     field(:state_digest, :string)
     field(:pkce_digest, :string)
@@ -29,7 +48,7 @@ defmodule Ezagent.ProviderConnection.AuthorizationAttempt do
 
   @type t :: %__MODULE__{}
 
-  @trusted ~w(attempt_ref workspace_uri backend_pair_id authorization_ref connection_id connection_version bound_subject_digest state_digest pkce_digest correlation_id callback_artifact expires_at)a
+  @trusted ~w(attempt_ref workspace_uri backend_pair_id authorization_ref connection_id connection_version purpose reservation_digest requested_permission_digest requested_execution_identity_class redirect_uri_id callback_artifact_digest bound_subject_digest state_digest pkce_digest correlation_id callback_artifact expires_at)a
   @doc "Builds the initial, secret-safe authorization-attempt changeset from trusted attributes."
   def create_changeset(attrs),
     do:
@@ -37,15 +56,72 @@ defmodule Ezagent.ProviderConnection.AuthorizationAttempt do
       |> cast(attrs, [:status])
       |> change(Map.take(attrs, @trusted))
       |> validate_required(
-        ~w(attempt_ref workspace_uri backend_pair_id authorization_ref connection_id bound_subject_digest state_digest correlation_id status expires_at)a
+        ~w(attempt_ref workspace_uri connection_id purpose correlation_id status)a
       )
+      |> validate_reservation()
+      |> validate_lifecycle_coordinates()
       |> unique_constraint(:authorization_ref,
         name: :provider_authorization_attempts_authorization_ref_index
       )
       |> unique_constraint(:state_digest,
         name: :provider_authorization_attempts_backend_state_index
       )
+      |> unique_constraint(:connection_id,
+        name: :provider_authorization_attempts_one_open_index
+      )
       |> check_constraint(:status, name: :provider_authorization_attempts_status_check)
+      |> check_constraint(:purpose, name: :provider_authorization_attempts_purpose_check)
+      |> check_constraint(:purpose, name: :provider_authorization_attempts_reservation_check)
+      |> check_constraint(:purpose, name: :provider_authorization_attempts_lifecycle_check)
+      |> foreign_key_constraint(:connection_id,
+        name: :provider_authorization_attempts_connection_workspace_fkey
+      )
+
+  defp validate_reservation(changeset) do
+    if get_field(changeset, :purpose) == "legacy" do
+      changeset
+    else
+      validate_required(changeset, [
+        :reservation_digest,
+        :requested_permission_digest,
+        :requested_execution_identity_class,
+        :redirect_uri_id,
+        :callback_artifact_digest
+      ])
+    end
+  end
+
+  defp validate_lifecycle_coordinates(changeset) do
+    purpose = get_field(changeset, :purpose)
+    status = get_field(changeset, :status)
+
+    coordinates = [
+      :backend_pair_id,
+      :authorization_ref,
+      :bound_subject_digest,
+      :state_digest,
+      :expires_at
+    ]
+
+    valid? =
+      cond do
+        purpose == "legacy" ->
+          status in ["consumed", "cancelled", "expired"]
+
+        purpose in ["initial_bind", "reauthorize"] and status in ["pending", "consuming"] ->
+          Enum.all?(coordinates, &(not is_nil(get_field(changeset, &1))))
+
+        purpose in ["initial_bind", "reauthorize"] ->
+          true
+
+        true ->
+          false
+      end
+
+    if valid?,
+      do: changeset,
+      else: add_error(changeset, :purpose, "does not match status and backend coordinates")
+  end
 
   @doc "Claims a pending callback attempt or steals an expired claim with a new fence."
   @spec claim(Ecto.UUID.t(), DateTime.t(), pos_integer(), keyword()) ::

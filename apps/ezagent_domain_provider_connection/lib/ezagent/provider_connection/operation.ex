@@ -1,5 +1,30 @@
 defmodule Ezagent.ProviderConnection.Operation do
   @moduledoc "Durable idempotency and recovery operation."
+  @derive {Inspect,
+           only: [
+             :id,
+             :workspace_uri,
+             :connection_id,
+             :attempt_ref,
+             :operation_class,
+             :correlation_id,
+             :expected_connection_version,
+             :expected_credential_version,
+             :result_external_account_id,
+             :result_display_login,
+             :result_execution_identity,
+             :result_permission_digest,
+             :result_expires_at,
+             :result_authorization_version,
+             :result_credential_version,
+             :status,
+             :safe_error_code,
+             :recovery_attempts,
+             :next_recovery_at,
+             :last_recovery_error_code,
+             :provider_cleanup_status,
+             :credential_cleanup_status
+           ]}
   use Ecto.Schema
   import Ecto.Changeset
 
@@ -20,6 +45,12 @@ defmodule Ezagent.ProviderConnection.Operation do
     field(:expected_credential_version, :integer)
     field(:result_credential_version, :integer)
     field(:result_ref, :string)
+    field(:result_external_account_id, :string)
+    field(:result_display_login, :string)
+    field(:result_execution_identity, :string)
+    field(:result_authorization_ref, :string)
+    field(:result_authorization_version, :integer)
+    field(:provider_result_ref, :string)
     field(:prior_credential_ref, :string)
     field(:prior_credential_version, :integer)
     field(:result_permission_digest, :string)
@@ -28,6 +59,13 @@ defmodule Ezagent.ProviderConnection.Operation do
     field(:lease_token, :string)
     field(:lease_until, :utc_datetime_usec)
     field(:safe_error_code, :string)
+    field(:recovery_attempts, :integer, default: 0)
+    field(:next_recovery_at, :utc_datetime_usec)
+    field(:last_recovery_error_code, :string)
+    field(:provider_cleanup_status, :string, default: "not_required")
+    field(:credential_cleanup_status, :string, default: "not_required")
+    field(:provider_cleanup_error_code, :string)
+    field(:credential_cleanup_error_code, :string)
     timestamps(type: :utc_datetime_usec)
   end
 
@@ -94,7 +132,14 @@ defmodule Ezagent.ProviderConnection.Operation do
                :expected_credential_version,
                :prior_credential_ref,
                :prior_credential_version,
-               :safe_error_code
+               :safe_error_code,
+               :recovery_attempts,
+               :next_recovery_at,
+               :last_recovery_error_code,
+               :provider_cleanup_status,
+               :credential_cleanup_status,
+               :provider_cleanup_error_code,
+               :credential_cleanup_error_code
              ]
   @doc "Builds the initial idempotent operation changeset from trusted command coordinates."
   def create_changeset(attrs),
@@ -114,6 +159,30 @@ defmodule Ezagent.ProviderConnection.Operation do
       |> check_constraint(:safe_error_code,
         name: :provider_connection_operations_safe_error_code_check
       )
+      |> check_constraint(:recovery_attempts,
+        name: :provider_connection_operations_recovery_attempts_check
+      )
+      |> check_constraint(:last_recovery_error_code,
+        name: :provider_connection_operations_last_recovery_error_code_check
+      )
+      |> check_constraint(:provider_cleanup_status,
+        name: :provider_connection_operations_provider_cleanup_status_check
+      )
+      |> check_constraint(:credential_cleanup_status,
+        name: :provider_connection_operations_credential_cleanup_status_check
+      )
+      |> check_constraint(:provider_cleanup_error_code,
+        name: :provider_connection_operations_provider_cleanup_error_check
+      )
+      |> check_constraint(:credential_cleanup_error_code,
+        name: :provider_connection_operations_credential_cleanup_error_check
+      )
+      |> check_constraint(:status,
+        name: :provider_connection_operations_durable_ownership_check
+      )
+      |> foreign_key_constraint(:connection_id,
+        name: :provider_connection_operations_connection_workspace_fkey
+      )
 
   @doc false
   def backend_commit_changeset(%__MODULE__{status: "prepared"} = operation, attrs) do
@@ -130,8 +199,18 @@ defmodule Ezagent.ProviderConnection.Operation do
     |> change(
       Map.take(attrs, [
         :result_ref,
+        :result_external_account_id,
+        :result_display_login,
+        :result_execution_identity,
+        :result_authorization_ref,
+        :result_authorization_version,
+        :provider_result_ref,
         :safe_error_code,
-        :result_credential_version
+        :result_credential_version,
+        :result_permission_digest,
+        :result_expires_at,
+        :provider_cleanup_status,
+        :credential_cleanup_status
       ])
     )
     |> change(status: status)
@@ -145,6 +224,18 @@ defmodule Ezagent.ProviderConnection.Operation do
     |> check_constraint(:status, name: :provider_connection_operations_status_check)
     |> check_constraint(:result_ref,
       name: :provider_connection_operations_callback_result_check
+    )
+    |> check_constraint(:status,
+      name: :provider_connection_operations_normalized_callback_result_check
+    )
+    |> check_constraint(:provider_cleanup_status,
+      name: :provider_connection_operations_provider_cleanup_result_check
+    )
+    |> check_constraint(:credential_cleanup_status,
+      name: :provider_connection_operations_credential_cleanup_result_check
+    )
+    |> check_constraint(:status,
+      name: :provider_connection_operations_durable_ownership_check
     )
   end
 end

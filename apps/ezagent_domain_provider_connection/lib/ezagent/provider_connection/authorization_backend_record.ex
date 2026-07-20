@@ -4,8 +4,6 @@ defmodule Ezagent.ProviderConnection.AuthorizationBackendRecord do
            only: [
              :id,
              :workspace_uri,
-             :backend_pair_id,
-             :authorization_ref,
              :execution_identity,
              :lifecycle_status,
              :shredded_at,

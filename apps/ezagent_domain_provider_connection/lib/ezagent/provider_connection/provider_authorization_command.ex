@@ -1,5 +1,16 @@
 defmodule Ezagent.ProviderConnection.ProviderAuthorizationCommand do
   @moduledoc false
+  @derive {Inspect,
+           only: [
+             :id,
+             :workspace_uri,
+             :operation_class,
+             :correlation_id,
+             :status,
+             :safe_error_code,
+             :inserted_at,
+             :updated_at
+           ]}
 
   use Ecto.Schema
   import Ecto.Changeset
