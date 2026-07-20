@@ -172,7 +172,8 @@ defmodule Ezagent.World.WorkspacePluginData do
           "members" => Enum.map(ws.members || [], &encode_uri/1),
           "session_templates" => template_rows(ws.session_templates || %{}, ws.name, caller),
           "routing_rules" => Enum.map(ws.routing_rules || [], &jsonable/1),
-          "socialwares" => socialware_rows(ws.uri)
+          "socialwares" => socialware_rows(ws.uri),
+          "agent_flavors" => agent_flavors()
         }
         |> Map.merge(invite_state(ws.uri, caller, caps))
     end
@@ -181,6 +182,12 @@ defmodule Ezagent.World.WorkspacePluginData do
   end
 
   defp workspace_detail(_, _caller, _caps), do: %{"not_found" => true}
+
+  defp agent_flavors do
+    Ezagent.AgentFlavorRegistry.list_all()
+    |> Enum.map(fn {flavor, _declaration} -> flavor end)
+    |> Enum.sort()
+  end
 
   defp invite_state(%URI{} = workspace_uri, %URI{} = caller, caps) do
     case Ezagent.Workspace.Invites.list(workspace_uri, %{caller: caller, caps: caps}) do
