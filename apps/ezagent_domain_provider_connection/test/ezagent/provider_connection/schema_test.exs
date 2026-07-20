@@ -396,7 +396,6 @@ defmodule Ezagent.ProviderConnection.SchemaTest do
       {base
        |> Map.put(:status, "cleanup_pending")
        |> Map.put(:result_ref, "credential-ref")
-       |> Map.put(:expected_credential_version, 1)
        |> Map.put(:handoff_ref, "handoff-ref"),
        "provider_connection_operations_callback_result_check"}
     ]
@@ -419,15 +418,15 @@ defmodule Ezagent.ProviderConnection.SchemaTest do
         status: "cleanup_pending",
         handoff_ref: "handoff-ref",
         result_ref: "credential-ref",
-        expected_credential_version: 1,
+        expected_credential_version: connection.credential_version,
         result_credential_version: 2,
         result_external_account_id: "acct-1",
         result_execution_identity: "human",
         result_authorization_ref: "auth-result",
         result_authorization_version: 2,
         provider_result_ref: "provider-result",
-        prior_credential_ref: "prior-credential-ref",
-        prior_credential_version: 0,
+        prior_credential_ref: connection.credential_backend_ref,
+        prior_credential_version: connection.credential_version,
         credential_cleanup_status: "pending",
         safe_error_code: "cleanup_pending"
       })
@@ -854,6 +853,7 @@ defmodule Ezagent.ProviderConnection.SchemaTest do
       attempt_ref: Ecto.UUID.generate(),
       authorization_ref: "schema-operation-auth-#{unique}",
       purpose: purpose,
+      backend_pair_id: connection.backend_pair_id,
       state_digest: "schema-operation-state-#{unique}",
       correlation_id: "schema-operation-#{purpose}",
       connection_version: connection.connection_version,

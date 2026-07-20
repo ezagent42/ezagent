@@ -12,12 +12,19 @@ defmodule Ezagent.ProviderConnection.CredentialReplacement do
 
   alias EzagentCore.Repo
 
+  @finalization_lease_seconds 30
+
   @doc "CAS the credential pointer for a backend-committed operation."
   def commit(operation_id) when is_binary(operation_id) do
+    commit(operation_id, DateTime.utc_now())
+  end
+
+  @doc false
+  def commit(operation_id, %DateTime{} = now) when is_binary(operation_id) do
     case Repo.get(Operation, operation_id) do
       %Operation{status: "finalized"} = operation -> {:ok, operation}
-      %Operation{status: "connection_committed"} = operation -> finalize(operation)
-      %Operation{status: "backend_committed"} = operation -> cas(operation)
+      %Operation{status: "connection_committed"} -> finalize_claimed(operation_id, now)
+      %Operation{status: "backend_committed"} = operation -> cas(operation, now)
       %Operation{} -> {:error, :stale_version}
       nil -> {:error, :stale_version}
     end
@@ -89,7 +96,7 @@ defmodule Ezagent.ProviderConnection.CredentialReplacement do
     end
   end
 
-  defp cas(operation) do
+  defp cas(operation, now) do
     Transition.mutate(
       operation.connection_id,
       operation.expected_connection_version,
@@ -125,7 +132,7 @@ defmodule Ezagent.ProviderConnection.CredentialReplacement do
     )
     |> case do
       {:ok, _connection} ->
-        finalize(Repo.get!(Operation, operation.id))
+        finalize_claimed(operation.id, now)
 
       {:error, reason} ->
         case cleanup(operation.id) do
@@ -299,22 +306,88 @@ defmodule Ezagent.ProviderConnection.CredentialReplacement do
     end
   end
 
-  defp finalize(%Operation{} = operation) do
-    attempt = Repo.get(AuthorizationAttempt, operation.attempt_ref)
-    connection = Repo.get!(Ezagent.ProviderConnection.Connection, operation.connection_id)
+  defp finalize_claimed(operation_id, now) do
+    case claim_finalization(operation_id, now) do
+      {:ok, {:finalized, operation}} ->
+        {:ok, operation}
 
-    with %AuthorizationAttempt{} <- attempt,
-         {:ok, _pair, _driver, backend} <- RuntimeBindings.resolve(connection, operation),
-         :ok <- revoke_prior(operation, attempt, backend),
-         :ok <- LocalAuthorizationBackend.prepare_handoff_finalization(attempt.authorization_ref),
-         :ok <- LocalAuthorizationBackend.finalize_handoff(attempt.authorization_ref),
-         {:ok, finalized} <- mark_finalized(operation.id, attempt.attempt_ref) do
-      {:ok, finalized}
-    else
-      {:error, _reason} = error -> error
-      _ -> {:error, :credential_conflict}
+      {:ok, {:claimed, operation, attempt, connection, token}} ->
+        result =
+          with {:ok, _pair, _driver, backend} <-
+                 RuntimeBindings.resolve(connection, operation),
+               :ok <- revoke_prior(operation, attempt, backend),
+               :ok <-
+                 LocalAuthorizationBackend.prepare_handoff_finalization(attempt.authorization_ref),
+               :ok <- LocalAuthorizationBackend.finalize_handoff(attempt.authorization_ref),
+               {:ok, finalized} <-
+                 complete_finalization(operation.id, attempt.attempt_ref, token, now) do
+            {:ok, finalized}
+          else
+            {:error, _reason} = error -> error
+            _ -> {:error, :credential_conflict}
+          end
+
+        case result do
+          {:ok, _finalized} = ok ->
+            ok
+
+          {:error, _reason} = error ->
+            _ = release_finalization_claim(operation.id, attempt.attempt_ref, token)
+            error
+        end
+
+      {:error, reason} ->
+        {:error, reason}
     end
   end
+
+  defp claim_finalization(operation_id, now) do
+    operation = Repo.get(Operation, operation_id)
+
+    if match?(%Operation{}, operation) do
+      Repo.transaction(fn ->
+        connection = lock_connection(operation.connection_id)
+        attempt = lock_attempt(operation.attempt_ref)
+        current = lock_operation(operation.id)
+
+        cond do
+          is_nil(connection) or is_nil(attempt) or is_nil(current) ->
+            Repo.rollback(:stale_version)
+
+          current.status == "finalized" ->
+            {:finalized, current}
+
+          current.status == "connection_committed" and claim_available?(current, now) ->
+            token = Ecto.UUID.generate()
+
+            claimed =
+              current
+              |> Ecto.Changeset.change(
+                lease_token: token,
+                lease_until: DateTime.add(now, @finalization_lease_seconds, :second)
+              )
+              |> Repo.update!()
+
+            {:claimed, claimed, attempt, connection, token}
+
+          current.status == "connection_committed" ->
+            Repo.rollback(:callback_in_progress)
+
+          true ->
+            Repo.rollback(:stale_version)
+        end
+      end)
+    else
+      {:error, :stale_version}
+    end
+  end
+
+  defp claim_available?(%Operation{lease_token: nil}, _now), do: true
+
+  defp claim_available?(%Operation{lease_until: %DateTime{} = lease_until}, now),
+    do: DateTime.compare(lease_until, now) in [:lt, :eq]
+
+  defp claim_available?(_operation, _now), do: false
 
   defp revoke_prior(
          %Operation{prior_credential_ref: nil, prior_credential_version: nil},
@@ -360,33 +433,61 @@ defmodule Ezagent.ProviderConnection.CredentialReplacement do
     end
   end
 
-  defp mark_finalized(operation_id, attempt_ref) do
+  defp complete_finalization(operation_id, attempt_ref, token, now) do
     Repo.transaction(fn ->
+      operation_snapshot = Repo.get!(Operation, operation_id)
+      _connection = lock_connection(operation_snapshot.connection_id)
       attempt = lock_attempt(attempt_ref)
       operation = lock_operation(operation_id)
 
       case operation do
-        %Operation{status: "finalized"} ->
-          operation
-
-        %Operation{status: "connection_committed"} ->
+        %Operation{status: "connection_committed", lease_token: ^token} ->
           attempt
           |> Ecto.Changeset.change(
             status: "consumed",
             claim_token: nil,
             claim_until: nil,
-            consumed_at: attempt.consumed_at || DateTime.utc_now()
+            consumed_at: attempt.consumed_at || now
           )
           |> Repo.update!()
 
           operation
-          |> Ecto.Changeset.change(status: "finalized", next_recovery_at: nil)
+          |> Ecto.Changeset.change(
+            status: "finalized",
+            lease_token: nil,
+            lease_until: nil,
+            next_recovery_at: nil
+          )
           |> Repo.update!()
 
         _ ->
-          Repo.rollback(:credential_conflict)
+          Repo.rollback(:stale_version)
       end
     end)
+  end
+
+  defp release_finalization_claim(operation_id, attempt_ref, token) do
+    operation_snapshot = Repo.get(Operation, operation_id)
+
+    if match?(%Operation{}, operation_snapshot) do
+      Repo.transaction(fn ->
+        _connection = lock_connection(operation_snapshot.connection_id)
+        _attempt = lock_attempt(attempt_ref)
+        operation = lock_operation(operation_id)
+
+        if match?(%Operation{status: "connection_committed", lease_token: ^token}, operation) do
+          operation
+          |> Ecto.Changeset.change(lease_token: nil, lease_until: nil)
+          |> Repo.update!()
+
+          :ok
+        else
+          Repo.rollback(:stale_version)
+        end
+      end)
+    else
+      {:error, :stale_version}
+    end
   end
 
   defp lock_operation(id),

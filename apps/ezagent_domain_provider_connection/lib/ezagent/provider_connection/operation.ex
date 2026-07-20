@@ -304,17 +304,42 @@ defmodule Ezagent.ProviderConnection.Operation do
 
   defp validate_store_scope(changeset, attempt, connection) do
     consistent? =
-      attempt.purpose in ["initial_bind", "reauthorize"] and
+      get_field(changeset, :operation_class) == "store" and
+        attempt.purpose in ["initial_bind", "reauthorize"] and
         attempt.connection_id == connection.connection_id and
         attempt.workspace_uri == connection.workspace_uri and
         attempt.connection_version == connection.connection_version and
-        (attempt.purpose != "reauthorize" or
-           (is_binary(connection.credential_backend_ref) and
-              is_integer(connection.credential_version)))
+        connection.backend_pair_id in [nil, attempt.backend_pair_id] and
+        attempt.backend_pair_id == get_field(changeset, :backend_pair_id) and
+        get_field(changeset, :expected_connection_version) == attempt.connection_version and
+        get_field(changeset, :expected_credential_version) == connection.credential_version and
+        valid_prior_coordinates?(changeset, attempt, connection)
 
     if consistent?,
       do: changeset,
       else:
         add_error(changeset, :attempt_ref, "does not match locked attempt purpose and connection")
   end
+
+  defp valid_prior_coordinates?(
+         changeset,
+         %AuthorizationAttempt{purpose: "initial_bind"},
+         _connection
+       ) do
+    is_nil(get_field(changeset, :prior_credential_ref)) and
+      is_nil(get_field(changeset, :prior_credential_version))
+  end
+
+  defp valid_prior_coordinates?(
+         changeset,
+         %AuthorizationAttempt{purpose: "reauthorize"},
+         connection
+       ) do
+    is_binary(connection.credential_backend_ref) and
+      is_integer(connection.credential_version) and
+      get_field(changeset, :prior_credential_ref) == connection.credential_backend_ref and
+      get_field(changeset, :prior_credential_version) == connection.credential_version
+  end
+
+  defp valid_prior_coordinates?(_changeset, _attempt, _connection), do: false
 end
