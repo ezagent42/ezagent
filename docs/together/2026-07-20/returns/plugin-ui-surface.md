@@ -41,7 +41,7 @@
 
 ## Branch and gate status
 
-- Implementation head: `d6b61849b` (Bindings navigation fix included)
+- Implementation head: `4758f040b` (local Bindings session view included)
 - Rebase base: `fe290643133cf3f8e9de932236c5d64623748122` (`origin/main`)
 - GitHub CI: frontend regression gate, return advisory, skill ownership gate, and
   gitleaks are green; deterministic gate is pending at update time:
