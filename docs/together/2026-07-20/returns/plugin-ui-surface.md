@@ -2,7 +2,7 @@
 > **Branch:** `codex/plugin-ui-self-declaration-1472`
 > **PR:** https://github.com/ezagent42/ezagent/pull/1476
 > **Dev:** codex / zyli line
-> **returned_at:** 2026-07-20 14:58 +0800
+> **returned_at:** 2026-07-20 15:38 +0800
 > **deadline:** 2026-07-20 23:59 +0800
 > **deadline_status:** deferred
 
@@ -14,6 +14,12 @@
 - Moved the board data/actions and React implementation into its plugin.
 - Added build-time static renderer-manifest generation and wired the World entrypoint to it.
 - Added focused declaration, registry, and manifest tests (26 tests, 0 failures locally).
+- Fixed the Template builder to enumerate registered agent flavors as required
+  selects instead of accepting free-form flavor text.
+- Added visible and semantic required-field markers for template name, fresh-agent
+  flavor, and reused-agent selection.
+- Changed successful template creation to return to `/workspaces` and browser-proved
+  the Kanban selection, default `cc-headless` flavors, save, and redirect flow.
 
 ## DoD reconciliation
 
@@ -25,16 +31,26 @@
 | 4 | Board and Hello implementation/special cases live in their plugins | deferred | Board files moved; `Conversation.tsx` and `ConversationActions` still contain session-specific branches, and Hello migration remains open. |
 | 5 | Mix generates static renderer imports/manifest and React contains no plugin-specific renderer map | met | `Mix.Tasks.World.Renderers.Manifest`, checked-in generated manifest, and manifest tests. |
 | 6 | Drift gate fails on an injected plugin name and finishes with an empty allowlist | not-met | Gate has not yet been implemented; lead decision: continue on this Draft PR before review. |
-| 7 | Formatting, focused tests, frontend checks, and `mix precommit` are green | deferred | Focused backend tests: 26/26. Frontend build blocked locally by Node 20 vs pnpm requirement >=22.13. Full precommit not run because known compile warnings and remaining migration work make this checkpoint non-mergeable. |
+| 7 | Formatting, focused tests, frontend checks, and `mix precommit` are green | deferred | Focused backend tests: 26/26 architecture tests plus 8/8 template-form tests. Frontend lint, typecheck, build, and 29/29 unit tests pass using the repository-compatible pnpm 10.20.0. Browser canary passes. `mix precommit` was run and fails at warnings-as-errors on the already-deferred World session-specific Kanban references and `state_for_route/3` clause grouping. |
 
 **Method friction:** The handoff split World read-side and concrete plugin migration across two developer lines, but the implementation arrived as one branch. Session-tab data loading and rendering cross both ownership areas, so its declaration shape needed to be designed before either half could independently reach the machine return gate.
 
 ## Branch and gate status
 
-- PR head: `da46e3f10742b3c939e403d0370f19e320f817a0`
+- PR head: `2dac8dfa6af322461aae6dbff517126f09c1df5d`
 - Rebase base: `fe290643133cf3f8e9de932236c5d64623748122` (`origin/main`)
-- GitHub CI: no checks reported on the Draft PR head at return time.
-- Local focused test: 26 tests, 0 failures.
+- GitHub CI: frontend regression gate, return advisory, skill ownership gate, and
+  gitleaks are green; deterministic gate is pending at update time:
+  https://github.com/ezagent42/ezagent/actions/runs/29725114841
+- Local focused tests: 26/26 architecture tests, 8/8 template-form backend tests,
+  and 29/29 frontend tests.
+- Local frontend gates: lint, typecheck, and Vite production build pass.
+- Browser canary: Kanban exposes two required flavor selects populated from the
+  runtime registry, defaults both to `cc-headless`, and a successful save navigates
+  to `/workspaces` with no browser errors.
+- Local `mix precommit`: failed at compile warnings-as-errors on the deferred
+  session-specific World/Kanban references and existing `state_for_route/3`
+  grouping warning.
 - This return is a deferred checkpoint and is **not READY TO MERGE**.
 
 ## Open decisions / deferred follow-ups
