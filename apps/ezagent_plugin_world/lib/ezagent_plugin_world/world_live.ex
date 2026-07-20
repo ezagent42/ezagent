@@ -39,7 +39,7 @@ defmodule EzagentPluginWorld.WorldLive do
       )
 
     layout = layout_for(workspace, caller)
-    if connected?(socket), do: subscribe_global_inbound(caller)
+    if connected?(socket), do: subscribe_global_inbound(socket)
 
     state =
       sessions_state(
@@ -125,15 +125,33 @@ defmodule EzagentPluginWorld.WorldLive do
     {:noreply, push_event(socket, "world:state", socket.assigns.world_state)}
   end
 
-  def handle_info({:audit_event, event}, socket),
-    do: {:noreply, push_inbound_event(socket, "audit_event", event)}
-
-  def handle_info({:authz_event, result, meta, ts}, socket) do
-    {:noreply, push_inbound_event(socket, "authz_event", %{result: result, meta: meta, at: ts})}
+  # Task #187 — audit/authz/cc_event are the OPERATOR-OBSERVABILITY plane:
+  # delivery is gated LIVE on the operator predicate (subscribe-time alone
+  # would leave a socket that subscribed pre-gate, or an operator demoted
+  # mid-session, receiving the stream). Fail-closed on unknown/missing caller.
+  def handle_info({:audit_event, event}, socket) do
+    if operator_streams?(socket) do
+      {:noreply, push_inbound_event(socket, "audit_event", event)}
+    else
+      {:noreply, socket}
+    end
   end
 
-  def handle_info({:cc_event, event}, socket),
-    do: {:noreply, push_inbound_event(socket, "cc_event", event)}
+  def handle_info({:authz_event, result, meta, ts}, socket) do
+    if operator_streams?(socket) do
+      {:noreply, push_inbound_event(socket, "authz_event", %{result: result, meta: meta, at: ts})}
+    else
+      {:noreply, socket}
+    end
+  end
+
+  def handle_info({:cc_event, event}, socket) do
+    if operator_streams?(socket) do
+      {:noreply, push_inbound_event(socket, "cc_event", event)}
+    else
+      {:noreply, socket}
+    end
+  end
 
   def handle_info({:cc_connected, bridge_id, entry}, socket) do
     if authorized_for_current_session?(socket) do
@@ -969,22 +987,42 @@ defmodule EzagentPluginWorld.WorldLive do
 
   defp workspace_name(_), do: nil
 
-  defp subscribe_global_inbound(caller_uri) do
-    # NOTE (read-plane-authz scope boundary): these are GLOBAL, system-wide streams
-    # (audit / legacy-bridge / cc) — the OPERATOR-OBSERVABILITY plane, whose authz
-    # is operator/admin, NOT session membership. Subscribing every WorldLive here
-    # delivers all-tenant audit/cc events to any logged-in user — a PRE-EXISTING
-    # multi-tenant leak (task #187), separate from PR-1's conversation-read plane
-    # and deferred to the operator plane (PR-4 OperatorReads). PR-1's "gate every
-    # delivery" invariant is scoped to SESSION-CONVERSATION content only.
-    Phoenix.PubSub.subscribe(EzagentCore.PubSub, Ezagent.Audit.stream_topic())
+  defp subscribe_global_inbound(socket) do
+    caller_uri = Map.get(socket.assigns, :current_entity_uri)
+
+    # Task #187: the audit and cc_event streams are GLOBAL, all-tenant — the
+    # OPERATOR-OBSERVABILITY plane, gated on the operator predicate
+    # (`operator_streams?/1`), NOT session membership. Only an operator's LV
+    # subscribes; delivery is ALSO gated per-event in `handle_info`, so a
+    # pre-gate subscription or a mid-session demotion still cannot leak.
+    if operator_streams?(socket) do
+      Phoenix.PubSub.subscribe(EzagentCore.PubSub, Ezagent.Audit.stream_topic())
+      Phoenix.PubSub.subscribe(EzagentCore.PubSub, Ezagent.CCEvents.topic())
+    end
+
+    # The legacy-bridge topic carries cc_connected/cc_disconnected, delivered
+    # only to a viewer authorized for their CURRENT session
+    # (`authorized_for_current_session?/1`, read-plane-authz F2/#2) — a session
+    # member needs it for their own session's bridge status, so it is NOT
+    # operator-only.
     Phoenix.PubSub.subscribe(EzagentCore.PubSub, Ezagent.AgentBridge.Registry.legacy_topic())
-    Phoenix.PubSub.subscribe(EzagentCore.PubSub, Ezagent.CCEvents.topic())
 
     if caller_uri do
       Phoenix.PubSub.subscribe(EzagentCore.PubSub, Ezagent.Notifications.topic(caller_uri))
       :ok = Ezagent.Notifications.subscribe_slice_change(caller_uri)
     end
+  end
+
+  # Task #187 — the ONE operator predicate for the audit/authz/cc_event plane:
+  # REUSES `Ezagent.Identity.AdminAuthority.admin?/1` (the same gate the
+  # `:require_admin` live_session and `Ezagent.Identity.OperatorReads` use —
+  # no new check invented). Caps are loaded LIVE so a runtime demotion closes
+  # the stream without a reload; any load failure and any unknown/missing
+  # caller fails closed.
+  defp operator_streams?(socket) do
+    socket.assigns
+    |> Map.get(:current_entity_uri)
+    |> Ezagent.Identity.AdminAuthority.admin?()
   end
 
   defp encode_param(%URI{} = uri), do: uri |> URI.to_string() |> URI.encode_www_form()
