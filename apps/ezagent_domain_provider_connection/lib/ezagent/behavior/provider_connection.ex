@@ -210,16 +210,15 @@ defmodule Ezagent.ActionSet.ProviderConnection do
 
   defp validate_callback_artifact(artifact, %{self_uri: owner} = ctx) do
     workspace = Ezagent.Capability.workspace_of(owner)
-    grantee = Map.get(ctx, :caller)
 
-    with %URI{} <- grantee,
-         :ok <- Ezagent.Cap.validate_for_current_target(artifact, grantee),
+    with %URI{} <- Map.get(ctx, :caller),
+         :ok <- Ezagent.Cap.validate_for_current_target(artifact, owner),
          true <- artifact.kind == :user,
          true <- artifact.behavior == __MODULE__,
          true <- artifact.action == :consume_callback,
          true <- artifact.instance == Ezagent.URI.instance(owner),
          true <- artifact.workspace_uri == workspace,
-         true <- artifact.grantee_uri == grantee do
+         true <- artifact.grantee_uri == owner do
       :ok
     else
       {:error, _} = error -> error
