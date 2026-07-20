@@ -17,7 +17,10 @@ defmodule Ezagent.DomainGit.GitTaskAccessPrincipalBoundaryTest do
 
     def scan_source(source, path) do
       {:ok, ast} = Code.string_to_quoted(source, file: path, columns: true)
-      {violations, _state} = scan(ast, %{tainted: MapSet.new(), aliases: %{}}, path)
+
+      {violations, _state} =
+        scan(ast, %{tainted: MapSet.new(), aliases: %{}, imports: MapSet.new()}, path)
+
       violations
     end
 
@@ -28,6 +31,11 @@ defmodule Ezagent.DomainGit.GitTaskAccessPrincipalBoundaryTest do
 
     defp scan({:alias, _, arguments}, state, _path) do
       {[], %{state | aliases: add_aliases(state.aliases, arguments)}}
+    end
+
+    defp scan({:import, _, [module | _options]}, state, _path) do
+      imported = expand_module(module, state.aliases)
+      {[], %{state | imports: MapSet.put(state.imports, imported)}}
     end
 
     defp scan({:=, _, [{name, _, context}, rhs]} = expression, state, path)
@@ -80,6 +88,19 @@ defmodule Ezagent.DomainGit.GitTaskAccessPrincipalBoundaryTest do
 
             {node, own ++ acc}
 
+          {:|>, meta, [principal, {function, _, args}]} = node, acc
+          when is_atom(function) and is_list(args) ->
+            own =
+              imported_call_violations(
+                function,
+                [principal | args],
+                meta,
+                state,
+                path
+              )
+
+            {node, own ++ acc}
+
           {{:., _, [module, _function]}, meta, args} = node, acc when is_list(args) ->
             {{:., _, [_module, function]}, _, _args} = node
 
@@ -93,6 +114,10 @@ defmodule Ezagent.DomainGit.GitTaskAccessPrincipalBoundaryTest do
                 path
               )
 
+            {node, own ++ acc}
+
+          {function, meta, args} = node, acc when is_atom(function) and is_list(args) ->
+            own = imported_call_violations(function, args, meta, state, path)
             {node, own ++ acc}
 
           node, acc ->
@@ -135,23 +160,7 @@ defmodule Ezagent.DomainGit.GitTaskAccessPrincipalBoundaryTest do
     defp system_principal?(_module), do: false
 
     defp call_violations(module, function, args, meta, tainted, path) do
-      category =
-        cond do
-          system_principal?(module) ->
-            :system_principal
-
-          exact_module?(module, [:Ezagent, :Entity, :Token]) and function == :mint ->
-            :token_identity
-
-          exact_module?(module, [:Ezagent, :EntityCaps]) and function in [:persist, :grant] ->
-            :capability_holder
-
-          exact_module?(module, [:Ezagent, :Entity, :Profile]) and function == :upsert ->
-            :member_identity
-
-          true ->
-            nil
-        end
+      category = prohibited_category(module, function)
 
       case {category, args} do
         {nil, _args} ->
@@ -162,6 +171,58 @@ defmodule Ezagent.DomainGit.GitTaskAccessPrincipalBoundaryTest do
 
         {_category, []} ->
           []
+      end
+    end
+
+    defp imported_call_violations(function, args, meta, state, path) do
+      imported_module =
+        Enum.find(state.imports, fn module -> prohibited_category(module, function) != nil end)
+
+      if imported_module do
+        call_violations(
+          imported_module,
+          function,
+          args,
+          meta,
+          state.tainted,
+          path
+        )
+      else
+        []
+      end
+    end
+
+    defp prohibited_category(module, function) do
+      cond do
+        system_principal?(module) and function in [:ensure, :uri, :caps] ->
+          :system_principal
+
+        exact_module?(module, [:Ezagent, :Entity, :Token]) and function == :mint ->
+          :token_identity
+
+        exact_module?(module, [:Ezagent, :EntityCaps]) and function in [:persist, :grant] ->
+          :capability_holder
+
+        exact_module?(module, [:Ezagent, :EntityCaps, :UserStore]) and function == :persist ->
+          :capability_holder
+
+        exact_module?(module, [:Ezagent, :Identity]) and function == :grant_cap ->
+          :capability_holder
+
+        exact_module?(module, [:Ezagent, :Identity, :Grant]) and
+            function in [
+              :grant_cap,
+              :grant_cap_via_router,
+              :grant_cap_effect,
+              :grant_cap_returning_effect
+            ] ->
+          :capability_holder
+
+        exact_module?(module, [:Ezagent, :Entity, :Profile]) and function == :upsert ->
+          :member_identity
+
+        true ->
+          nil
       end
     end
 
@@ -220,7 +281,7 @@ defmodule Ezagent.DomainGit.GitTaskAccessPrincipalBoundaryTest do
         capability_grantor: "%Ezagent.Capability{granted_by:\n  receiver\n}",
         member_identity: "%{member_uri:\n  receiver\n}",
         token_identity: "Ezagent.Entity.Token.mint(\n  receiver,\n  label: \"fixture\"\n)",
-        system_principal: "Ezagent.SystemPrincipal.new(\n  receiver\n)"
+        system_principal: "Ezagent.SystemPrincipal.ensure(\n  receiver\n)"
       ] do
     test "detects #{category} independently across multiline local bindings" do
       source =
@@ -240,7 +301,12 @@ defmodule Ezagent.DomainGit.GitTaskAccessPrincipalBoundaryTest do
           "alias Ezagent.Entity.Profile, as: IdentityProfile\nIdentityProfile.upsert(%{entity_uri: receiver, display_name: \"Fixture\"})",
         capability_holder:
           "alias Ezagent.{EntityCaps, Entity.Token}\nEntityCaps.persist(receiver, caps)",
-        capability_holder: "alias Ezagent.EntityCaps\nEntityCaps.grant(receiver, cap)"
+        capability_holder: "alias Ezagent.EntityCaps\nEntityCaps.grant(receiver, cap)",
+        capability_holder:
+          "alias Ezagent.EntityCaps.UserStore\nUserStore.persist(receiver, caps)",
+        capability_holder: "alias Ezagent.Identity\nIdentity.grant_cap(receiver, cap, grantor)",
+        capability_holder:
+          "alias Ezagent.Identity.Grant\nGrant.grant_cap_via_router(receiver, cap, authorization, :sync)"
       ] do
     test "detects aliased real #{category} chokepoint: #{fixture}" do
       source =
@@ -259,7 +325,12 @@ defmodule Ezagent.DomainGit.GitTaskAccessPrincipalBoundaryTest do
         member_identity:
           "alias Ezagent.Entity.Profile\n%{entity_uri: receiver, display_name: \"Fixture\"} |> Profile.upsert()",
         capability_holder: "alias Ezagent.EntityCaps\nreceiver |> EntityCaps.persist(caps)",
-        capability_holder: "alias Ezagent.EntityCaps\nreceiver |> EntityCaps.grant(cap)"
+        capability_holder: "alias Ezagent.EntityCaps\nreceiver |> EntityCaps.grant(cap)",
+        capability_holder:
+          "alias Ezagent.EntityCaps.UserStore\nreceiver |> UserStore.persist(caps)",
+        capability_holder: "alias Ezagent.Identity\nreceiver |> Identity.grant_cap(cap, grantor)",
+        capability_holder:
+          "alias Ezagent.Identity.Grant\nreceiver |> Grant.grant_cap_effect(cap, authorization)"
       ] do
     test "detects piped real #{category} chokepoint: #{fixture}" do
       source =
@@ -277,7 +348,11 @@ defmodule Ezagent.DomainGit.GitTaskAccessPrincipalBoundaryTest do
         member_identity:
           "Ezagent.Entity.Profile.upsert(%{entity_uri: receiver, display_name: \"Fixture\"})",
         capability_holder: "Ezagent.EntityCaps.persist(receiver, caps)",
-        capability_holder: "Ezagent.EntityCaps.grant(receiver, cap)"
+        capability_holder: "Ezagent.EntityCaps.grant(receiver, cap)",
+        capability_holder: "Ezagent.EntityCaps.UserStore.persist(receiver, caps)",
+        capability_holder: "Ezagent.Identity.grant_cap(receiver, cap, grantor)",
+        capability_holder:
+          "Ezagent.Identity.Grant.grant_cap_returning_effect(receiver, cap, authorization, :fixture)"
       ] do
     test "detects real #{category} production call shape: #{fixture}" do
       source =
@@ -311,5 +386,47 @@ defmodule Ezagent.DomainGit.GitTaskAccessPrincipalBoundaryTest do
     """
 
     assert Detector.scan_source(source, "fixture.ex") == []
+  end
+
+  test "detects imported Token mint with GitTaskAccess as the principal" do
+    source = """
+    alias Ezagent.Entity.Token
+    import Token, only: [mint: 2]
+    task_access_uri = GitTaskAccess.uri_from_args(policy)
+    mint(task_access_uri, label: "fixture")
+    """
+
+    assert [{:token_identity, "fixture.ex", _line}] =
+             Detector.scan_source(source, "fixture.ex")
+  end
+
+  for {category, import_module, call} <- [
+        {:token_identity, "Ezagent.Entity.Token", "mint(receiver, label: \"fixture\")"},
+        {:capability_holder, "Ezagent.EntityCaps", "persist(receiver, caps)"},
+        {:capability_holder, "Ezagent.EntityCaps", "grant(receiver, cap)"},
+        {:capability_holder, "Ezagent.EntityCaps.UserStore", "persist(receiver, caps)"},
+        {:capability_holder, "Ezagent.Identity", "grant_cap(receiver, cap, grantor)"},
+        {:capability_holder, "Ezagent.Identity.Grant", "grant_cap(receiver, cap, auth)"},
+        {:capability_holder, "Ezagent.Identity.Grant",
+         "grant_cap_via_router(receiver, cap, auth, :sync)"},
+        {:capability_holder, "Ezagent.Identity.Grant", "grant_cap_effect(receiver, cap, auth)"},
+        {:capability_holder, "Ezagent.Identity.Grant",
+         "grant_cap_returning_effect(receiver, cap, auth, :sync)"},
+        {:member_identity, "Ezagent.Entity.Profile",
+         "upsert(%{entity_uri: receiver, display_name: \"x\"})"},
+        {:system_principal, "Ezagent.SystemPrincipal", "ensure(receiver)"}
+      ] do
+    test "detects imported #{category} chokepoint #{import_module}: #{call}" do
+      source =
+        """
+        import #{unquote(import_module)}
+        task_access_uri = GitTaskAccess.uri_from_args(policy)
+        receiver = task_access_uri
+        #{unquote(call)}
+        """
+
+      assert [{unquote(category), "fixture.ex", _line}] =
+               Detector.scan_source(source, "fixture.ex")
+    end
   end
 end

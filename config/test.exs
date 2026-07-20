@@ -11,7 +11,8 @@ config :ezagent_domain_provider_connection,
   local_authorization_backend_pairs: %{
     {"task6-provider", "oauth_user"} => "pair-z-local-v1"
   },
-  children: [{Ezagent.ProviderConnection.AuthorizationKeyRing, []}]
+  children: [{Ezagent.ProviderConnection.AuthorizationKeyRing, []}],
+  recovery_options: [autostart: false]
 
 config :ezagent_domain_agent,
   launch_post_commit_publisher: Ezagent.Agent.TestLaunchPostCommitPublisher
