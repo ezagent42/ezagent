@@ -96,9 +96,12 @@ Add
 `expected_authorization_ref` and `expected_authorization_version`. Before
 backfill, the migration runs read-only conflict queries and fails loudly on
 unclassifiable partial rows. It safely classifies legacy rows, then enforces the
-operation-class-specific `prepared` all-NULL XOR complete provider-owned shape
-and the complete provider-owned plus complete credential-owned shape for
-`backend_committed` and later stages. Backfill expected authorization
+operation-class-specific `prepared` all-NULL XOR complete provider-owned shape.
+`fenced` is allowed only as an all-NULL pre-effect terminal variant after
+ reconciliation confirms no provider result; provider-owned or credential-owned
+ `fenced` rows fail loudly. `backend_committed`, `connection_committed`,
+ `finalized`, and `cleanup_pending` require complete provider and credential
+ ownership. Backfill expected authorization
 coordinates only from one provable bound record/reservation; ambiguous history
 fails. Add expressible DB relationship checks and retain any temporal relation
 as a locked application invariant plus concurrency test. Callback checks require

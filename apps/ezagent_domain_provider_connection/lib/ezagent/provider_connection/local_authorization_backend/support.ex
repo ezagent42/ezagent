@@ -216,7 +216,8 @@ defmodule Ezagent.ProviderConnection.LocalAuthorizationBackend.Support do
          operation.connection_id == attempt.connection_id and
          operation.connection_id == connection.connection_id and
          operation.backend_pair_id == attempt.backend_pair_id and
-         operation.correlation_id == "store:#{attempt.correlation_id}" and
+         operation.correlation_id == "#{operation.operation_class}:#{attempt.correlation_id}" and
+         operation.operation_class == callback_operation_class(attempt.purpose) and
          operation.attempt_claim_token == attempt.claim_token and
          operation.attempt_version == attempt.attempt_version and
          operation.expected_connection_version == attempt.connection_version and
@@ -231,17 +232,31 @@ defmodule Ezagent.ProviderConnection.LocalAuthorizationBackend.Support do
   @doc false
   def credential_command(operation, attempt, connection),
     do: %{
+      operation_id: operation.id,
+      operation_class: operation.operation_class,
       correlation_id: operation.correlation_id,
+      command_digest: operation.bound_input_digest,
       workspace_uri: operation.workspace_uri,
       owner_uri: connection.owner_uri,
       connection_id: operation.connection_id,
       connection_version: operation.expected_connection_version,
+      expected_authorization_ref: operation.expected_authorization_ref,
+      expected_authorization_version: operation.expected_authorization_version,
+      expected_credential_version: operation.expected_credential_version,
+      prior_credential_ref: operation.prior_credential_ref,
+      prior_credential_version: operation.prior_credential_version,
       backend_pair_id: operation.backend_pair_id,
       provider_id: connection.provider_id,
       governed_host: connection.governed_host,
-      execution_identity: connection.execution_identity,
+      execution_identity:
+        operation.result_execution_identity || connection.execution_identity ||
+          connection.requested_execution_identity_class,
       attempt_ref: attempt.attempt_ref
     }
+
+  defp callback_operation_class("initial_bind"), do: "store"
+  defp callback_operation_class("reauthorize"), do: "replace"
+  defp callback_operation_class(_purpose), do: nil
 
   @doc false
   def decode_handoff_envelope(ciphertext) when is_binary(ciphertext) do
@@ -361,31 +376,49 @@ defmodule Ezagent.ProviderConnection.LocalAuthorizationBackend.Support do
   @doc false
   def encode_consume_result(result) do
     %{
+      "provider_result_ref" => result.provider_result_ref,
       "external_account_id" => result.external_account_id,
       "display_login" => result.display_login,
       "execution_identity" => %{
         "kind" => Atom.to_string(result.execution_identity.kind),
         "external_account_id" => result.execution_identity.external_account_id
       },
+      "authorization_ref" => result.authorization_ref,
+      "authorization_version" => result.authorization_version,
       "handoff_ref" => elem(result.credential_material, 1),
       "granted_permissions_digest" => result.granted_permissions_digest,
-      "provider_metadata" => result.provider_metadata
+      "expires_at" => encode_optional_datetime(result.expires_at)
     }
   end
 
   @doc false
   def decode_consume_result(result) do
     %{
+      provider_result_ref: result["provider_result_ref"],
       external_account_id: result["external_account_id"],
       display_login: result["display_login"],
       execution_identity: %{
         kind: execution_kind(result["execution_identity"]["kind"]),
         external_account_id: result["execution_identity"]["external_account_id"]
       },
+      authorization_ref: result["authorization_ref"],
+      authorization_version: result["authorization_version"],
       credential_material: {:write_only_handoff, result["handoff_ref"]},
       granted_permissions_digest: result["granted_permissions_digest"],
-      provider_metadata: result["provider_metadata"] || %{}
+      expires_at: decode_optional_datetime(result["expires_at"])
     }
+  end
+
+  defp encode_optional_datetime(%DateTime{} = value), do: DateTime.to_iso8601(value)
+  defp encode_optional_datetime(nil), do: nil
+
+  defp decode_optional_datetime(nil), do: nil
+
+  defp decode_optional_datetime(value) when is_binary(value) do
+    case DateTime.from_iso8601(value) do
+      {:ok, datetime, 0} -> datetime
+      _other -> nil
+    end
   end
 
   @doc false
@@ -526,27 +559,43 @@ defmodule Ezagent.ProviderConnection.LocalAuthorizationBackend.Support do
     do: {:error, :provider_protocol_error}
 
   @doc false
-  def validate_consume_result(result, callback, driver) do
+  def validate_consume_result(
+        result,
+        callback,
+        driver,
+        expected_authorization_ref,
+        expected_authorization_version
+      ) do
     expected_keys =
       MapSet.new(
-        ~w(external_account_id display_login execution_identity credential_material granted_permissions_digest provider_metadata)a
+        ~w(provider_result_ref external_account_id display_login execution_identity authorization_ref authorization_version credential_material granted_permissions_digest expires_at provider_metadata)a
       )
 
     with true <- MapSet.new(Map.keys(result)) == expected_keys,
+         provider_result_ref when is_binary(provider_result_ref) and provider_result_ref != "" <-
+           result.provider_result_ref,
          external_account_id when is_binary(external_account_id) and external_account_id != "" <-
            result.external_account_id,
          display_login when is_binary(display_login) and display_login != "" <-
            result.display_login,
          :ok <- execution_identity(result.execution_identity, external_account_id),
+         authorization_ref when is_binary(authorization_ref) and authorization_ref != "" <-
+           result.authorization_ref,
+         authorization_version
+         when is_integer(authorization_version) and authorization_version >= 0 <-
+           result.authorization_version,
+         true <- authorization_ref == expected_authorization_ref,
+         true <- authorization_version == expected_authorization_version + 1,
          true <- portable_secret?(result.credential_material),
          digest when is_binary(digest) and digest != "" <- result.granted_permissions_digest,
+         true <- is_nil(result.expires_at) or match?(%DateTime{}, result.expires_at),
          true <-
            Driver.matches_schema?(
              result.provider_metadata,
              driver.metadata.provider_metadata_schema
            ),
          :ok <- external_account_binding(callback, external_account_id) do
-      {:ok, stringify_keys(result.provider_metadata)}
+      {:ok, Map.delete(result, :provider_metadata)}
     else
       {:error, reason} -> {:error, reason}
       _other -> {:error, :provider_protocol_error}

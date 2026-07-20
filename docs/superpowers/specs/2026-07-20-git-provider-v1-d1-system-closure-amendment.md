@@ -711,9 +711,12 @@ Previously committed migrations remain immutable. Add:
 5. `20260720005000_close_provider_result_ownership_stages.exs` — closes the
    staged ownership shapes after first checking for conflicting rows: a
    callback/refresh operation at `prepared` is exactly all ownership fields
-   NULL XOR a complete provider-owned tuple; `backend_committed` and every
-   later credential-owned stage require the complete provider-owned tuple plus
-   a complete credential ref/version tuple. It also adds immutable
+   NULL XOR a complete provider-owned tuple. `fenced` is legal only as the
+   all-NULL pre-effect terminal variant produced after reconciliation confirms
+   that no provider result exists; it may never carry provider or credential
+   ownership. `backend_committed`, `connection_committed`, `finalized`, and
+   `cleanup_pending` require the complete provider-owned tuple plus a complete
+   credential ref/version tuple. It also adds immutable
    `expected_authorization_ref` and `expected_authorization_version` operation
    coordinates: Driver/discard/recovery contexts load these frozen reservation
    values and never reconstruct them from a subsequently changed connection.

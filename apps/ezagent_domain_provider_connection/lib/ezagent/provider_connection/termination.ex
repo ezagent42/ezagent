@@ -191,7 +191,7 @@ defmodule Ezagent.ProviderConnection.Termination do
       Operation
       |> where(
         [row],
-        row.connection_id == ^connection_id and row.operation_class == "store" and
+        row.connection_id == ^connection_id and row.operation_class in ["store", "replace"] and
           row.status in ["prepared", "backend_committed", "cleanup_pending"]
       )
       |> Repo.all()
@@ -222,7 +222,7 @@ defmodule Ezagent.ProviderConnection.Termination do
       Repo.exists?(
         from(row in Operation,
           where:
-            row.connection_id == ^connection_id and row.operation_class == "store" and
+            row.connection_id == ^connection_id and row.operation_class in ["store", "replace"] and
               row.status not in ["finalized", "fenced"]
         )
       )
@@ -292,7 +292,7 @@ defmodule Ezagent.ProviderConnection.Termination do
         Operation
         |> where(
           [row],
-          row.attempt_ref == ^attempt.attempt_ref and row.operation_class == "store"
+          row.attempt_ref == ^attempt.attempt_ref and row.operation_class in ["store", "replace"]
         )
         |> lock("FOR UPDATE")
         |> Repo.one()

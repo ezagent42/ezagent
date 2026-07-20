@@ -86,6 +86,13 @@ defmodule Ezagent.ProviderConnection.OperationPurposeInvariantTest do
       })
 
     assert initial_changeset.valid?
+
+    assert Ecto.Changeset.get_field(initial_changeset, :expected_authorization_ref) ==
+             initial_attempt.authorization_ref
+
+    assert Ecto.Changeset.get_field(initial_changeset, :expected_authorization_version) ==
+             initial_connection.authorization_version
+
     assert is_nil(Ecto.Changeset.get_field(initial_changeset, :prior_credential_ref))
     assert is_nil(Ecto.Changeset.get_field(initial_changeset, :prior_credential_version))
 
@@ -105,16 +112,24 @@ defmodule Ezagent.ProviderConnection.OperationPurposeInvariantTest do
 
     assert reauthorize_changeset.valid?
 
+    assert Ecto.Changeset.get_field(reauthorize_changeset, :operation_class) == "replace"
+
     assert Ecto.Changeset.get_field(reauthorize_changeset, :prior_credential_ref) ==
              reauthorize_connection.credential_backend_ref
 
     assert Ecto.Changeset.get_field(reauthorize_changeset, :prior_credential_version) == 7
 
+    assert Ecto.Changeset.get_field(reauthorize_changeset, :expected_authorization_ref) ==
+             reauthorize_attempt.authorization_ref
+
+    assert Ecto.Changeset.get_field(reauthorize_changeset, :expected_authorization_version) ==
+             reauthorize_connection.authorization_version
+
     refute Operation.store_create_changeset(
              reauthorize_attempt,
              initial_connection,
              %{
-               operation_class: "store",
+               operation_class: "replace",
                correlation_id: "canonical-mismatch",
                bound_input_digest: "digest",
                next_recovery_at: DateTime.utc_now(),
@@ -126,7 +141,7 @@ defmodule Ezagent.ProviderConnection.OperationPurposeInvariantTest do
              %{reauthorize_attempt | backend_pair_id: "different-pair"},
              reauthorize_connection,
              %{
-               operation_class: "store",
+               operation_class: "replace",
                correlation_id: "canonical-pair-mismatch",
                bound_input_digest: "digest",
                next_recovery_at: DateTime.utc_now(),
@@ -472,7 +487,11 @@ defmodule Ezagent.ProviderConnection.OperationPurposeInvariantTest do
     stale_generation_attempt = attempt!(stale_generation_connection, "reauthorize")
 
     stale_generation_connection
-    |> Ecto.Changeset.change(connection_version: 5)
+    |> Ecto.Changeset.change(
+      connection_version: 5,
+      authorization_backend_ref: "advanced-authorization-ref",
+      authorization_version: stale_generation_connection.authorization_version + 1
+    )
     |> Repo.update!()
 
     assert_attempt_purpose_constraint(
@@ -573,6 +592,8 @@ defmodule Ezagent.ProviderConnection.OperationPurposeInvariantTest do
       correlation_id: "store:#{attempt.correlation_id}",
       bound_input_digest: "digest",
       expected_connection_version: connection.connection_version,
+      expected_authorization_ref: attempt.authorization_ref,
+      expected_authorization_version: connection.authorization_version,
       expected_credential_version: connection.credential_version,
       attempt_version: attempt.attempt_version,
       attempt_claim_token: attempt.claim_token,
@@ -583,7 +604,7 @@ defmodule Ezagent.ProviderConnection.OperationPurposeInvariantTest do
       result_display_login: connection.display_login,
       result_execution_identity: connection.execution_identity,
       result_authorization_ref: attempt.authorization_ref,
-      result_authorization_version: 1,
+      result_authorization_version: connection.authorization_version + 1,
       provider_result_ref: "provider-result-ref",
       result_permission_digest: "permissions-v2",
       result_expires_at: DateTime.add(now, 3_600, :second),

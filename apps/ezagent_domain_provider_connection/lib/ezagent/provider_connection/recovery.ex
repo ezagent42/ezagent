@@ -114,23 +114,30 @@ defmodule Ezagent.ProviderConnection.Recovery do
   end
 
   @doc false
-  def recover(%Operation{operation_class: "store", status: status} = operation, _now, _observer)
-      when status in ["backend_committed", "connection_committed"] do
+  def recover(
+        %Operation{operation_class: operation_class, status: status} = operation,
+        _now,
+        _observer
+      )
+      when operation_class in ["store", "replace"] and
+             status in ["backend_committed", "connection_committed"] do
     CredentialReplacement.commit(operation.id)
   end
 
   def recover(
-        %Operation{operation_class: "store", status: "cleanup_pending"} = operation,
+        %Operation{operation_class: operation_class, status: "cleanup_pending"} = operation,
         _now,
         _observer
-      ),
+      )
+      when operation_class in ["store", "replace"],
       do: CredentialReplacement.cleanup(operation.id)
 
   def recover(
-        %Operation{operation_class: "store", status: "prepared"} = operation,
+        %Operation{operation_class: operation_class, status: "prepared"} = operation,
         now,
         _observer
-      ) do
+      )
+      when operation_class in ["store", "replace"] do
     with %Connection{} = connection <- Repo.get(Connection, operation.connection_id),
          %AuthorizationAttempt{} = attempt <-
            Repo.get(AuthorizationAttempt, operation.attempt_ref) do
@@ -230,7 +237,7 @@ defmodule Ezagent.ProviderConnection.Recovery do
       left_join: attempt in AuthorizationAttempt,
       on: attempt.attempt_ref == operation.attempt_ref,
       where:
-        operation.operation_class == "store" and
+        operation.operation_class in ["store", "replace"] and
           (operation.status in ["backend_committed", "connection_committed", "cleanup_pending"] or
              (operation.status == "prepared" and
                 ((connection.status in ["revoking", "disconnecting"] and
@@ -397,7 +404,7 @@ defmodule Ezagent.ProviderConnection.Recovery do
       left_join: attempt in AuthorizationAttempt,
       on: attempt.attempt_ref == operation.attempt_ref,
       where:
-        operation.operation_class == "store" and
+        operation.operation_class in ["store", "replace"] and
           (operation.status in ["backend_committed", "connection_committed", "cleanup_pending"] or
              (operation.status == "prepared" and
                 ((connection.status in ["revoking", "disconnecting"] and

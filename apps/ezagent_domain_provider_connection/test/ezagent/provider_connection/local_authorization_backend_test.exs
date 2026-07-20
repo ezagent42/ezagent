@@ -6,6 +6,7 @@ defmodule Ezagent.ProviderConnection.LocalAuthorizationBackendTest do
   import ExUnit.CaptureLog
 
   alias Ezagent.ProviderConnection.AuthorizationBackendRecord
+  alias Ezagent.ProviderConnection.AuthorizationAttempt
   alias Ezagent.ProviderConnection.AuthorizationKeyRing
   alias Ezagent.ProviderConnection.BackendPair
   alias Ezagent.ProviderConnection.BackendPairRegistry
@@ -13,6 +14,7 @@ defmodule Ezagent.ProviderConnection.LocalAuthorizationBackendTest do
   alias Ezagent.ProviderConnection.Driver
   alias Ezagent.ProviderConnection.DriverRegistry
   alias Ezagent.ProviderConnection.LocalAuthorizationBackend
+  alias Ezagent.ProviderConnection.Operation
   alias Ezagent.ProviderConnection.ProviderAuthorizationCommand
   alias Ezagent.ProviderConnection.Test.FakeDriverAlpha
   alias EzagentCore.Repo
@@ -42,11 +44,8 @@ defmodule Ezagent.ProviderConnection.LocalAuthorizationBackendTest do
       owner_uri: URI.to_string(subject.owner_uri),
       provider_id: subject.provider_id,
       governed_host: subject.governed_host,
-      external_account_id: "acct-1",
-      execution_identity: "connected_user",
+      requested_execution_identity_class: "connected_user",
       acquisition_method: "oauth_user",
-      authorization_backend_ref: "pending",
-      credential_backend_ref: "pending",
       status: "pending_authorization"
     }
     |> Connection.create_changeset()
@@ -231,7 +230,10 @@ defmodule Ezagent.ProviderConnection.LocalAuthorizationBackendTest do
     assert result.external_account_id == "acct-1"
     assert result.display_login == "alice-alpha"
     assert result.granted_permissions_digest == "driver-granted-digest"
-    assert result.provider_metadata == %{"tier" => "alpha"}
+    refute Map.has_key?(result, :provider_metadata)
+    assert is_binary(result.provider_result_ref)
+    assert result.authorization_ref == started.authorization_ref
+    assert result.authorization_version == 1
 
     committed_row =
       Repo.get_by!(AuthorizationBackendRecord, authorization_ref: started.authorization_ref)
@@ -247,8 +249,7 @@ defmodule Ezagent.ProviderConnection.LocalAuthorizationBackendTest do
     request = callback_request(started, %{}, "consume-committed-response-loss")
     assert {:ok, first} = LocalAuthorizationBackend.consume_callback(request)
 
-    assert first.provider_metadata ==
-             first.provider_metadata |> Jason.encode!() |> Jason.decode!()
+    refute Map.has_key?(first, :provider_metadata)
 
     retry = Task.async(fn -> LocalAuthorizationBackend.consume_callback(request) end)
     Ecto.Adapters.SQL.Sandbox.allow(Repo, self(), retry.pid)
@@ -504,6 +505,8 @@ defmodule Ezagent.ProviderConnection.LocalAuthorizationBackendTest do
   end
 
   defp callback_request(started, extra \\ %{}, correlation_id \\ "consume-1") do
+    ensure_callback_operation!(started.authorization_ref, correlation_id)
+
     %{
       authorization_ref: started.authorization_ref,
       callback_envelope:
@@ -520,6 +523,103 @@ defmodule Ezagent.ProviderConnection.LocalAuthorizationBackendTest do
       expected_subject: subject(),
       correlation_id: correlation_id
     }
+  end
+
+  defp ensure_callback_operation!(authorization_ref, correlation_id) do
+    row = Repo.get_by!(AuthorizationBackendRecord, authorization_ref: authorization_ref)
+
+    existing =
+      Repo.get_by(AuthorizationAttempt, authorization_ref: authorization_ref) ||
+        Repo.get_by(AuthorizationAttempt, connection_id: row.connection_id, status: "consuming") ||
+        Repo.get_by(AuthorizationAttempt, connection_id: row.connection_id, status: "pending")
+
+    case existing do
+      %AuthorizationAttempt{
+        authorization_ref: existing_ref,
+        correlation_id: existing_correlation
+      }
+      when existing_ref != authorization_ref or existing_correlation != correlation_id ->
+        :ok
+
+      _same_or_missing ->
+        do_ensure_callback_operation!(authorization_ref, correlation_id)
+    end
+  end
+
+  defp do_ensure_callback_operation!(authorization_ref, correlation_id) do
+    row = Repo.get_by!(AuthorizationBackendRecord, authorization_ref: authorization_ref)
+    connection = Repo.get!(Connection, row.connection_id)
+
+    attempt =
+      case Repo.get_by(AuthorizationAttempt,
+             authorization_ref: authorization_ref,
+             correlation_id: correlation_id
+           ) do
+        %AuthorizationAttempt{} = attempt ->
+          attempt
+
+        nil ->
+          %{
+            attempt_ref: Ecto.UUID.generate(),
+            workspace_uri: row.workspace_uri,
+            backend_pair_id: row.backend_pair_id,
+            authorization_ref: authorization_ref,
+            connection_id: row.connection_id,
+            connection_version: row.connection_version,
+            purpose: "initial_bind",
+            reservation_digest: "local-auth-reservation-#{correlation_id}",
+            requested_permission_digest: row.requested_permissions_digest,
+            requested_execution_identity_class: row.execution_identity,
+            redirect_uri_id: row.redirect_uri_id,
+            callback_artifact_digest: "local-auth-artifact-#{correlation_id}",
+            bound_subject_digest: row.bound_input_digest,
+            state_digest: "local-auth-state-#{correlation_id}",
+            correlation_id: correlation_id,
+            callback_artifact: %{"fixture" => "local-auth"},
+            status: "pending",
+            expires_at: DateTime.add(DateTime.utc_now(), 60, :second)
+          }
+          |> AuthorizationAttempt.create_changeset()
+          |> Repo.insert!()
+      end
+
+    attempt =
+      case attempt do
+        %AuthorizationAttempt{status: "pending"} ->
+          {:ok, claimed} =
+            AuthorizationAttempt.claim(
+              attempt.attempt_ref,
+              DateTime.utc_now(),
+              60,
+              current_connection_version: connection.connection_version
+            )
+
+          claimed
+
+        %AuthorizationAttempt{status: "consuming"} = claimed ->
+          claimed
+      end
+
+    case Repo.get_by(Operation,
+           backend_pair_id: row.backend_pair_id,
+           operation_class: "store",
+           correlation_id: "store:#{correlation_id}"
+         ) do
+      %Operation{} ->
+        :ok
+
+      nil ->
+        Operation.store_create_changeset(attempt, connection, %{
+          operation_class: "store",
+          correlation_id: "store:#{correlation_id}",
+          bound_input_digest: Operation.callback_digest(row, attempt, connection),
+          next_recovery_at: DateTime.utc_now(),
+          status: "prepared"
+        })
+        |> Repo.insert!()
+
+        :ok
+    end
   end
 
   defp subject do

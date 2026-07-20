@@ -97,19 +97,13 @@ defmodule Ezagent.ProviderConnection.Refresh do
       with :ok <- refresh_source_available(locked, now) do
         operation =
           %{
-            workspace_uri: locked.workspace_uri,
-            connection_id: locked.connection_id,
-            backend_pair_id: pair.pair_id,
-            operation_class: "refresh",
             correlation_id: args.correlation_id,
             bound_input_digest: command_digest,
-            expected_connection_version: args.expected_version,
-            expected_credential_version: locked.credential_version,
             attempt_version: lease_version,
             next_recovery_at: now,
             status: "prepared"
           }
-          |> Operation.create_changeset()
+          |> then(&Operation.refresh_create_changeset(locked, &1))
           |> Ecto.Changeset.change(
             prior_credential_ref: locked.credential_backend_ref,
             prior_credential_version: locked.credential_version,

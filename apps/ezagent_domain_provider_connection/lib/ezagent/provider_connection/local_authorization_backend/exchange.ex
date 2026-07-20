@@ -165,10 +165,12 @@ defmodule Ezagent.ProviderConnection.LocalAuthorizationBackend.Exchange do
              Support.handoff_aad(row, attempt.correlation_id, operation.handoff_ref)
            ),
          {:ok, result} <-
-           credential_backend.store(
-             operation
-             |> Support.credential_command(attempt, connection)
-             |> Map.put(:credential_material, credential_material)
+           apply_credential_effect(
+             credential_backend,
+             operation,
+             attempt,
+             connection,
+             credential_material
            ) do
       {:ok, result}
     else
@@ -209,10 +211,12 @@ defmodule Ezagent.ProviderConnection.LocalAuthorizationBackend.Exchange do
              Support.handoff_aad(row, attempt.correlation_id, operation.handoff_ref)
            ),
          {:ok, result} <-
-           credential_backend.store(
-             operation
-             |> Support.credential_command(attempt, base_connection)
-             |> Map.put(:credential_material, credential_material)
+           apply_credential_effect(
+             credential_backend,
+             operation,
+             attempt,
+             base_connection,
+             credential_material
            ) do
       {:ok, result}
     else
@@ -464,11 +468,17 @@ defmodule Ezagent.ProviderConnection.LocalAuthorizationBackend.Exchange do
          :ok <- Support.validate_callback(payload, callback_envelope, row),
          {:ok, _connection} <- connection_for_backend(row),
          {:ok, driver} <- frozen_driver(row),
+         {:ok, operation} <- callback_operation(row, command),
          {:ok, driver_result} <-
            invoke_driver(driver, :consume_callback, row, command, payload, callback_envelope),
-         {:ok, provider_metadata} <-
-           Support.validate_consume_result(driver_result, callback_envelope, driver),
-         normalized <- %{driver_result | provider_metadata: provider_metadata},
+         {:ok, normalized} <-
+           Support.validate_consume_result(
+             driver_result,
+             callback_envelope,
+             driver,
+             operation.expected_authorization_ref,
+             operation.expected_authorization_version
+           ),
          handoff <-
            seal_with(
              snapshot,
@@ -560,22 +570,25 @@ defmodule Ezagent.ProviderConnection.LocalAuthorizationBackend.Exchange do
         correlation_id: command.correlation_id
       )
 
-    operation =
-      Repo.get_by(Operation,
-        backend_pair_id: command.backend_pair_id,
-        operation_class: "store",
-        correlation_id: "store:#{command.correlation_id}"
-      )
+    operation = lookup_callback_operation(command, attempt)
 
     case {attempt, operation} do
       {%AuthorizationAttempt{} = attempt, %Operation{} = operation} ->
         %{
+          owner_uri: row.owner_uri,
+          workspace_uri: row.workspace_uri,
+          provider_id: row.provider_id,
+          acquisition_method: row.acquisition_method,
+          governed_host: row.governed_host,
           backend_pair_id: command.backend_pair_id,
-          operation_class: command.operation_class,
+          operation_id: operation.id,
+          connection_id: operation.connection_id,
+          correlation_id: operation.correlation_id,
           attempt_ref: attempt.attempt_ref,
-          connection_generation: operation.expected_connection_version,
-          credential_generation: operation.expected_credential_version,
-          command_digest: command.bound_input_digest
+          expected_connection_version: operation.expected_connection_version,
+          expected_authorization_version: operation.expected_authorization_version,
+          expected_credential_version: operation.expected_credential_version,
+          command_digest: operation.bound_input_digest
         }
 
       _other ->
@@ -584,6 +597,55 @@ defmodule Ezagent.ProviderConnection.LocalAuthorizationBackend.Exchange do
   end
 
   defp driver_identity(_operation, _row, _command), do: %{}
+
+  defp callback_operation(row, command) do
+    attempt =
+      Repo.get_by(AuthorizationAttempt,
+        authorization_ref: row.authorization_ref,
+        correlation_id: command.correlation_id
+      )
+
+    case lookup_callback_operation(command, attempt) do
+      %Operation{
+        expected_authorization_ref: expected_ref,
+        expected_authorization_version: expected_version
+      } = operation
+      when expected_ref == row.authorization_ref and is_integer(expected_version) ->
+        {:ok, operation}
+
+      _other ->
+        {:error, :correlation_conflict}
+    end
+  end
+
+  defp lookup_callback_operation(command, %AuthorizationAttempt{} = attempt) do
+    operation_class = callback_operation_class(attempt.purpose)
+
+    Repo.get_by(Operation,
+      backend_pair_id: command.backend_pair_id,
+      operation_class: operation_class,
+      correlation_id: "#{operation_class}:#{command.correlation_id}"
+    )
+  end
+
+  defp lookup_callback_operation(_command, _attempt), do: nil
+
+  defp callback_operation_class("initial_bind"), do: "store"
+  defp callback_operation_class("reauthorize"), do: "replace"
+  defp callback_operation_class(_purpose), do: nil
+
+  defp apply_credential_effect(backend, operation, attempt, connection, credential_material) do
+    command =
+      operation
+      |> Support.credential_command(attempt, connection)
+      |> Map.put(:credential_material, credential_material)
+
+    case operation.operation_class do
+      "store" -> backend.store(command)
+      "replace" -> backend.replace(command)
+      _other -> {:error, :credential_conflict}
+    end
+  end
 
   defp prepare_consume_lifecycle(
          %{lifecycle_status: "pending", expires_at: expires_at} = row,

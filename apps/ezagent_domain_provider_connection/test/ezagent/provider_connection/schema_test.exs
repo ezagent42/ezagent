@@ -45,7 +45,8 @@ defmodule Ezagent.ProviderConnection.SchemaTest do
       "20260720001000_reserve_pending_provider_connections.exs",
       "20260720002000_close_provider_binding_cas.exs",
       "20260720003000_add_provider_recovery_schedule.exs",
-      "20260720004000_add_refresh_compensation_obligations.exs"
+      "20260720004000_add_refresh_compensation_obligations.exs",
+      "20260720005000_close_provider_result_ownership_stages.exs"
     ]
 
     sources =
@@ -61,6 +62,13 @@ defmodule Ezagent.ProviderConnection.SchemaTest do
     assert sources[Enum.at(migrations, 1)] =~ "VALIDATE CONSTRAINT"
     assert sources[Enum.at(migrations, 2)] =~ "SET next_recovery_at = CURRENT_TIMESTAMP"
     assert sources[Enum.at(migrations, 3)] =~ "credential_cleanup_status = CASE"
+    assert sources[Enum.at(migrations, 4)] =~ "expected_authorization_ref"
+    assert sources[Enum.at(migrations, 4)] =~ "ownership_stage_check"
+
+    for historical <- Enum.slice(migrations, 0, 4) do
+      refute sources[historical] =~ "expected_authorization_ref"
+      refute sources[historical] =~ "ownership_stage_check"
+    end
   end
 
   test "active binding uniqueness is a named PostgreSQL constraint" do
@@ -271,11 +279,11 @@ defmodule Ezagent.ProviderConnection.SchemaTest do
 
   test "operation command key and attempt correlation are unique" do
     connection = Repo.insert!(Connection.create_changeset(connection_attrs()))
-    op = Operation.create_changeset(operation_attrs(connection.connection_id))
+    op = scoped_operation_changeset(connection.connection_id)
     assert {:ok, _} = Repo.insert(op)
 
     assert {:error, cs} =
-             Repo.insert(Operation.create_changeset(operation_attrs(connection.connection_id)))
+             Repo.insert(scoped_operation_changeset(connection.connection_id))
 
     assert cs.errors[:correlation_id]
 
@@ -340,14 +348,17 @@ defmodule Ezagent.ProviderConnection.SchemaTest do
        }), :operation_class, "provider_connection_operations_operation_class_check"},
       {Operation.create_changeset(%{
          operation_attrs(connection.connection_id)
-         | status: "invalid"
+         | operation_class: "revoke",
+           status: "invalid"
        }), :status, "provider_connection_operations_status_check"},
       {Operation.create_changeset(
-         Map.put(operation_attrs(connection.connection_id), :safe_error_code, "invalid")
+         operation_attrs(connection.connection_id)
+         |> Map.put(:operation_class, "revoke")
+         |> Map.put(:safe_error_code, "invalid")
        ), :safe_error_code, "provider_connection_operations_safe_error_code_check"},
       {Operation.create_changeset(
          Map.put(
-           operation_attrs(connection.connection_id),
+           Map.put(operation_attrs(connection.connection_id), :operation_class, "revoke"),
            :provider_cleanup_error_code,
            "invalid"
          )
@@ -355,7 +366,7 @@ defmodule Ezagent.ProviderConnection.SchemaTest do
        "provider_connection_operations_provider_cleanup_error_check"},
       {Operation.create_changeset(
          Map.put(
-           operation_attrs(connection.connection_id),
+           Map.put(operation_attrs(connection.connection_id), :operation_class, "revoke"),
            :credential_cleanup_error_code,
            "invalid"
          )
@@ -421,10 +432,12 @@ defmodule Ezagent.ProviderConnection.SchemaTest do
         expected_credential_version: connection.credential_version,
         result_credential_version: 2,
         result_external_account_id: "acct-1",
+        result_display_login: "alice",
         result_execution_identity: "human",
-        result_authorization_ref: "auth-result",
-        result_authorization_version: 2,
+        result_authorization_ref: base.expected_authorization_ref,
+        result_authorization_version: base.expected_authorization_version + 1,
         provider_result_ref: "provider-result",
+        result_permission_digest: "permission-digest",
         prior_credential_ref: connection.credential_backend_ref,
         prior_credential_version: connection.credential_version,
         credential_cleanup_status: "pending",
@@ -468,7 +481,9 @@ defmodule Ezagent.ProviderConnection.SchemaTest do
     initial_attrs =
       operation_attrs(connection.connection_id, "initial_bind")
 
-    assert {:ok, operation} = Repo.insert(Operation.create_changeset(initial_attrs))
+    assert {:ok, operation} =
+             Repo.insert(scoped_operation_changeset(connection.connection_id, "initial_bind"))
+
     assert operation.prior_credential_ref == nil
     assert operation.prior_credential_version == nil
 
@@ -476,25 +491,251 @@ defmodule Ezagent.ProviderConnection.SchemaTest do
           Map.put(initial_attrs, :prior_credential_ref, "orphan-ref"),
           Map.put(initial_attrs, :prior_credential_version, 1)
         ] do
-      refute Operation.create_changeset(attrs).valid?
+      attempt = Repo.get!(AuthorizationAttempt, attrs.attempt_ref)
+      changeset = Operation.store_create_changeset(attempt, connection, attrs)
+      assert changeset.valid?
+      assert is_nil(Ecto.Changeset.get_field(changeset, :prior_credential_ref))
+      assert is_nil(Ecto.Changeset.get_field(changeset, :prior_credential_version))
     end
   end
 
-  test "callback result changesets accept absent prior coordinates but reject half a prior pair" do
-    operation = %Operation{status: "prepared", handoff_ref: "handoff-ref"}
+  test "operation ownership changesets stage provider ownership before credential ownership" do
+    prepared = %Operation{
+      status: "prepared",
+      operation_class: "store",
+      expected_authorization_ref: "authorization-ref",
+      expected_authorization_version: 4
+    }
 
-    result_attrs = %{result_ref: "credential-ref", result_credential_version: 1}
+    provider_attrs = %{
+      handoff_ref: "handoff-ref",
+      provider_result_ref: "provider-result-ref",
+      result_external_account_id: "account-1",
+      result_display_login: "octocat",
+      result_execution_identity: "connected_user",
+      result_authorization_ref: "authorization-ref",
+      result_authorization_version: 5,
+      result_permission_digest: "permission-digest"
+    }
 
-    assert Operation.backend_commit_changeset(operation, result_attrs).valid?
-    assert Operation.cleanup_pending_changeset(operation, result_attrs).valid?
+    provider_changeset = Operation.provider_ownership_changeset(prepared, provider_attrs)
+    assert provider_changeset.valid?
+    assert Ecto.Changeset.get_field(provider_changeset, :status) == "prepared"
+    refute Ecto.Changeset.get_field(provider_changeset, :result_ref)
 
-    for invalid_operation <- [
-          %{operation | prior_credential_ref: "orphan-ref"},
-          %{operation | prior_credential_version: 1}
-        ] do
-      refute Operation.backend_commit_changeset(invalid_operation, result_attrs).valid?
-      refute Operation.cleanup_pending_changeset(invalid_operation, result_attrs).valid?
+    refute Operation.provider_ownership_changeset(
+             %{prepared | operation_class: "revoke"},
+             %{}
+           ).valid?
+
+    provider_owned = Ecto.Changeset.apply_changes(provider_changeset)
+
+    for invalid <-
+          [
+            Map.put(provider_attrs, :unexpected, "coordinate"),
+            Map.put(provider_attrs, :result_authorization_ref, "wrong-ref"),
+            Map.put(provider_attrs, :result_authorization_version, 4)
+          ] ++ Enum.map(Map.keys(provider_attrs), &Map.delete(provider_attrs, &1)) do
+      refute Operation.provider_ownership_changeset(prepared, invalid).valid?
     end
+
+    refute Operation.provider_ownership_changeset(provider_owned, provider_attrs).valid?
+
+    refute Operation.provider_ownership_changeset(
+             %{prepared | handoff_ref: "partial"},
+             provider_attrs
+           ).valid?
+
+    refute Operation.provider_ownership_changeset(
+             %{prepared | result_ref: "credential-before-provider"},
+             provider_attrs
+           ).valid?
+
+    credential_changeset =
+      Operation.credential_ownership_changeset(provider_owned, "backend_committed", %{
+        result_ref: "credential-ref",
+        result_credential_version: 8
+      })
+
+    assert credential_changeset.valid?
+    assert Ecto.Changeset.get_field(credential_changeset, :status) == "backend_committed"
+
+    for invalid <- [
+          %{result_ref: "credential-ref", result_credential_version: 8, extra: "nope"},
+          %{result_ref: "credential-ref"},
+          %{result_credential_version: 8}
+        ] do
+      refute Operation.credential_ownership_changeset(
+               provider_owned,
+               "backend_committed",
+               invalid
+             ).valid?
+    end
+
+    credential_owned = Ecto.Changeset.apply_changes(credential_changeset)
+
+    refute Operation.credential_ownership_changeset(
+             credential_owned,
+             "backend_committed",
+             %{result_ref: "credential-ref", result_credential_version: 8}
+           ).valid?
+
+    refute Operation.credential_ownership_changeset(
+             %{provider_owned | result_ref: "partial"},
+             "backend_committed",
+             %{result_ref: "credential-ref", result_credential_version: 8}
+           ).valid?
+
+    refute Operation.credential_ownership_changeset(
+             prepared,
+             "backend_committed",
+             %{result_ref: "credential-ref", result_credential_version: 8}
+           ).valid?
+
+    refute Operation.credential_ownership_changeset(
+             %{provider_owned | operation_class: "revoke"},
+             "backend_committed",
+             %{result_ref: "credential-ref", result_credential_version: 8}
+           ).valid?
+  end
+
+  test "refresh provider ownership rejects callback-only fields and every partial tuple" do
+    prepared = %Operation{
+      status: "prepared",
+      operation_class: "refresh",
+      expected_authorization_ref: "authorization-ref",
+      expected_authorization_version: 4
+    }
+
+    provider_attrs = %{
+      handoff_ref: "handoff-ref",
+      provider_result_ref: "provider-result-ref",
+      result_permission_digest: "permission-digest"
+    }
+
+    assert Operation.provider_ownership_changeset(prepared, provider_attrs).valid?
+
+    for field <- [
+          :result_external_account_id,
+          :result_display_login,
+          :result_execution_identity,
+          :result_authorization_ref,
+          :result_authorization_version
+        ] do
+      refute Operation.provider_ownership_changeset(
+               Map.put(prepared, field, "forbidden"),
+               provider_attrs
+             ).valid?
+
+      refute Operation.provider_ownership_changeset(
+               prepared,
+               Map.put(provider_attrs, field, "forbidden")
+             ).valid?
+    end
+
+    for field <- Map.keys(provider_attrs) do
+      refute Operation.provider_ownership_changeset(prepared, Map.delete(provider_attrs, field)).valid?
+    end
+  end
+
+  test "effect operations require scoped constructors while termination remains generic" do
+    connection = Repo.insert!(Connection.create_changeset(connection_attrs()))
+    attrs = operation_attrs(connection.connection_id)
+
+    for operation_class <- ["store", "replace", "refresh"] do
+      refute attrs
+             |> Map.put(:operation_class, operation_class)
+             |> Operation.create_changeset()
+             |> then(& &1.valid?)
+    end
+
+    assert attrs
+           |> Map.merge(%{
+             operation_class: "revoke",
+             attempt_ref: nil,
+             attempt_version: nil,
+             attempt_claim_token: nil,
+             expected_authorization_ref: nil,
+             expected_authorization_version: nil,
+             prior_credential_ref: nil,
+             prior_credential_version: nil
+           })
+           |> Operation.create_changeset()
+           |> then(& &1.valid?)
+  end
+
+  test "refresh operation freezes authorization coordinates from the locked connection" do
+    connection = Repo.insert!(Connection.create_changeset(connection_attrs()))
+
+    changeset =
+      Operation.refresh_create_changeset(connection, %{
+        correlation_id: "refresh-frozen-authorization",
+        bound_input_digest: "refresh-digest",
+        expected_connection_version: 999,
+        expected_authorization_ref: "caller-supplied-ref",
+        expected_authorization_version: 999,
+        next_recovery_at: DateTime.utc_now(),
+        status: "prepared"
+      })
+
+    assert changeset.valid?
+
+    assert Ecto.Changeset.get_field(changeset, :expected_connection_version) ==
+             connection.connection_version
+
+    assert Ecto.Changeset.get_field(changeset, :expected_authorization_ref) ==
+             connection.authorization_backend_ref
+
+    assert Ecto.Changeset.get_field(changeset, :expected_authorization_version) ==
+             connection.authorization_version
+  end
+
+  test "database binds new callback expected authorization to the exact attempt" do
+    connection = Repo.insert!(Connection.create_changeset(connection_attrs()))
+
+    changeset =
+      connection.connection_id
+      |> scoped_operation_changeset()
+      |> Ecto.Changeset.change(expected_authorization_ref: "result-cannot-self-attest")
+      |> Ecto.Changeset.check_constraint(:expected_authorization_ref,
+        name: :provider_connection_operations_expected_authorization_binding_check
+      )
+
+    assert {:error, changeset} = Repo.insert(changeset)
+
+    assert {"is invalid",
+            [
+              constraint: :check,
+              constraint_name:
+                "provider_connection_operations_expected_authorization_binding_check"
+            ]} = changeset.errors[:expected_authorization_ref]
+  end
+
+  test "no-effect callback fence preserves the all-null ownership variant" do
+    connection = Repo.insert!(Connection.create_changeset(connection_attrs()))
+
+    operation =
+      connection.connection_id
+      |> scoped_operation_changeset()
+      |> Repo.insert!()
+
+    assert {:ok, %Operation{status: "fenced"}} =
+             operation
+             |> Ecto.Changeset.change(status: "fenced", safe_error_code: "connection_terminal")
+             |> Repo.update()
+
+    error =
+      assert_raise Ecto.ConstraintError, fn ->
+        operation
+        |> Ecto.Changeset.change(
+          status: "fenced",
+          handoff_ref: "must-not-survive",
+          provider_result_ref: "must-not-survive"
+        )
+        |> Repo.update!()
+      end
+
+    assert error.constraint == "provider_connection_operations_ownership_stage_check"
   end
 
   test "private authorization backend Inspect excludes every secret-bearing field" do
@@ -533,6 +774,7 @@ defmodule Ezagent.ProviderConnection.SchemaTest do
         handoff_ref: "HANDOFF_REF_SECRET",
         result_ref: "RESULT_REF_SECRET",
         result_authorization_ref: "RESULT_AUTHORIZATION_REF_SECRET",
+        expected_authorization_ref: "EXPECTED_AUTHORIZATION_REF_SECRET",
         prior_credential_ref: "PRIOR_CREDENTIAL_REF_SECRET",
         provider_result_ref: "PROVIDER_RESULT_REF_SECRET",
         lease_token: "OPERATION_LEASE_SECRET"
@@ -618,7 +860,12 @@ defmodule Ezagent.ProviderConnection.SchemaTest do
             Operation.create_changeset(
               operation_attrs(connection.connection_id)
               |> Map.merge(attrs)
-              |> Map.put(:operation_class, "replace")
+              |> Map.merge(%{
+                operation_class: "revoke",
+                attempt_ref: nil,
+                expected_authorization_ref: nil,
+                expected_authorization_version: nil
+              })
             )
 
           _ ->
@@ -668,7 +915,15 @@ defmodule Ezagent.ProviderConnection.SchemaTest do
         result_credential_version: 2
       }),
       base
-      |> Map.merge(%{operation_class: "refresh", status: "backend_committed"}),
+      |> Map.merge(%{
+        operation_class: "refresh",
+        status: "backend_committed",
+        attempt_ref: nil,
+        attempt_version: nil,
+        attempt_claim_token: nil,
+        expected_authorization_ref: connection.authorization_backend_ref,
+        expected_authorization_version: connection.authorization_version
+      }),
       Map.put(base, :next_recovery_at, nil),
       base
       |> Map.merge(%{status: "finalized", next_recovery_at: DateTime.utc_now()}),
@@ -718,6 +973,11 @@ defmodule Ezagent.ProviderConnection.SchemaTest do
           |> Map.merge(%{
             id: Ecto.UUID.generate(),
             operation_class: "refresh",
+            attempt_ref: nil,
+            attempt_version: nil,
+            attempt_claim_token: nil,
+            expected_authorization_ref: connection.authorization_backend_ref,
+            expected_authorization_version: connection.authorization_version,
             correlation_id: "refresh-ownership-#{index}-#{missing}",
             status: status,
             provider_result_ref: "provider-result",
@@ -835,6 +1095,8 @@ defmodule Ezagent.ProviderConnection.SchemaTest do
       correlation_id: "corr-1",
       bound_input_digest: "digest",
       expected_connection_version: connection.connection_version,
+      expected_authorization_ref: attempt.authorization_ref,
+      expected_authorization_version: connection.authorization_version,
       expected_credential_version: connection.credential_version,
       attempt_version: attempt.attempt_version,
       attempt_claim_token: attempt.claim_token,
@@ -842,6 +1104,13 @@ defmodule Ezagent.ProviderConnection.SchemaTest do
       status: "prepared"
     })
     |> Map.merge(prior)
+  end
+
+  defp scoped_operation_changeset(connection_id, purpose \\ "reauthorize") do
+    attrs = operation_attrs(connection_id, purpose)
+    connection = Repo.get!(Connection, connection_id)
+    attempt = Repo.get!(AuthorizationAttempt, attrs.attempt_ref)
+    Operation.store_create_changeset(attempt, connection, attrs)
   end
 
   defp insert_operation_attempt!(connection, purpose) do
