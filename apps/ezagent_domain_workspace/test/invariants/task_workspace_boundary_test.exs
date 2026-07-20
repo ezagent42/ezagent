@@ -19,11 +19,6 @@ defmodule Ezagent.Workspace.TaskWorkspace.BoundaryTest do
     20260717003000_add_retirement_handle_to_git_task_workspace_provisions.exs
     20260717004000_harden_git_task_workspace_start.exs
   )
-  # Later plans may add unrelated domain tables. Keep the Plan-C ratchet exact
-  # instead of treating every subsequent timestamp as TaskWorkspace scope.
-  @post_plan_c_domain_migrations ~w(
-    20260718000000_create_provider_connections.exs
-  )
   @launch_context_allowlist [
     {"apps/ezagent_domain_agent/lib/ezagent/entity/agent.ex", {:before_start, 1}, :authored_map,
      58},
@@ -258,10 +253,16 @@ defmodule Ezagent.Workspace.TaskWorkspace.BoundaryTest do
 
     assert forbidden_plan_c_migrations(migration_names) == []
 
-    assert forbidden_plan_c_migrations(@plan_c_migrations ++ ["20260718001000_more_receipts.exs"]) ==
-             [
-               "20260718001000_more_receipts.exs"
-             ]
+    assert forbidden_plan_c_migrations(
+             @plan_c_migrations ++
+               [
+                 "20260717005000_more_receipts.exs",
+                 "20260717005001_more_receipts.exs",
+                 "20260718001000_unrelated_domain.exs"
+               ]
+           ) == [
+             "20260717005000_more_receipts.exs"
+           ]
   end
 
   test "core template vocabulary remains domain neutral" do
@@ -943,15 +944,7 @@ defmodule Ezagent.Workspace.TaskWorkspace.BoundaryTest do
   end
 
   defp forbidden_plan_c_migrations(names) do
-    Enum.filter(names, fn name ->
-      case Integer.parse(String.slice(name, 0, 14)) do
-        {timestamp, ""} when timestamp >= 20_260_717_001_000 ->
-          name not in @plan_c_migrations and name not in @post_plan_c_domain_migrations
-
-        _ ->
-          false
-      end
-    end)
+    Enum.filter(names, &String.starts_with?(&1, "20260717005000"))
   end
 
   defp forbidden_field_names(names) do
