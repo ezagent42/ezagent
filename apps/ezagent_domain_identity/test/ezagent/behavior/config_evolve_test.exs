@@ -142,10 +142,14 @@ defmodule Ezagent.ActionSet.ConfigEvolveTest do
     # sandbox to simulate "step 1 committed, step 2 (the deferred dispatch)
     # never ran / was lost" — the crash window.
     {:ok, %{config_id: cid}} = apply_delta(agent, manager, turn_id, %{"tone" => "decisive"})
+    want = URI.to_string(ConfigProjection.object_uri(workspace, cid))
+    assert wait_until(fn -> sandbox_user_layer_uri(agent) == want end)
+
+    # Establish the stale cache only after the ordinary deferred projection has
+    # settled; otherwise that already-enqueued projection races this fixture and
+    # repairs the deliberately stale value before the assertion below.
     force_sandbox_user_layer(agent, workspace, "stale://layer")
     assert sandbox_user_layer_uri(agent) == "stale://layer"
-
-    want = URI.to_string(ConfigProjection.object_uri(workspace, cid))
 
     # Restart the agent → activate/2 self-defers reconcile_cascade → it
     # re-projects the durable pointer into the Sandbox cache.
