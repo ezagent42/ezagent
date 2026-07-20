@@ -26,7 +26,10 @@ permissions:
 jobs:
   owner-only:
     name: Only repo owner may edit dev-together skill
-    runs-on: ubuntu-latest
+    # Moved off ubuntu-latest to the self-hosted macOS runner (Actions billing
+    # exhausted 2026-07-20). Uses only gh + git + POSIX grep/tr/sed, all present
+    # on the runner (BSD grep supports -qE and the {40} interval used above).
+    runs-on: [self-hosted, macOS, ARM64]
     steps:
       - name: Check out
         uses: actions/checkout@v4

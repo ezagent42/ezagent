@@ -19,7 +19,10 @@ permissions:
 jobs:
   return-file-advisory:
     name: Return file advisory
-    runs-on: ubuntu-latest
+    # Moved off ubuntu-latest to the self-hosted macOS runner (Actions billing
+    # exhausted 2026-07-20). Uses only gh + bash, both present on the runner; the
+    # advisory script always exits 0 (non-blocking by design).
+    runs-on: [self-hosted, macOS, ARM64]
     steps:
       - name: Check out scripts
         uses: actions/checkout@v4
