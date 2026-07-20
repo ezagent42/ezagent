@@ -302,4 +302,39 @@ defmodule Ezagent.PluginCc.Template.CcHeadlessAgentTest do
              "allowed_tools must stay nil when not explicitly set (let SDK defaults apply)"
     end
   end
+
+  # ── F4 / #1460: ensure_config_home — template-lane config-home guarantee ──
+
+  describe "ensure_config_home/2 (F4)" do
+    setup do
+      agent_uri =
+        Ezagent.URI.new!(
+          "entity://test-ws/agent/f4-home-#{System.unique_integer([:positive])}"
+        )
+
+      {:ok, agent_uri: agent_uri}
+    end
+
+    test "absent config_dir → defaults to the allocated canonical per-agent path", ctx do
+      assert {:ok, normalized} = CcHeadlessAgent.ensure_config_home(ctx.agent_uri, %{})
+
+      expected = Ezagent.Sandbox.ConfigDir.path(ctx.agent_uri, "cc-headless")
+      assert normalized["config_dir"] == expected
+      assert normalized["allocated_config_dir"] == expected
+
+      # Allocated (create-lane parity): the dir exists with the config-home mode.
+      assert File.dir?(expected)
+      assert Bitwise.band(File.stat!(expected).mode, 0o777) == 0o700
+    end
+
+    test "present config_dir → template unchanged (no re-allocation)", ctx do
+      tmpl = %{"config_dir" => "/tmp/curated-home", "cwd" => "/tmp"}
+      assert {:ok, ^tmpl} = CcHeadlessAgent.ensure_config_home(ctx.agent_uri, tmpl)
+    end
+
+    test "malformed config_dir → untouched so create_agent_config_dir fails loud", ctx do
+      tmpl = %{"config_dir" => ""}
+      assert {:ok, ^tmpl} = CcHeadlessAgent.ensure_config_home(ctx.agent_uri, tmpl)
+    end
+  end
 end

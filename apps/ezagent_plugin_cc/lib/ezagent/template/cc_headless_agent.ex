@@ -118,8 +118,44 @@ defmodule Ezagent.PluginCc.Template.CcHeadlessAgent do
           {:ok, [agent_uri], %{fresh?: false}}
 
         true ->
-          spawn_for_headless(agent_uri, tmpl, workspace_uri)
+          with {:ok, tmpl} <- ensure_config_home(agent_uri, tmpl) do
+            spawn_for_headless(agent_uri, tmpl, workspace_uri)
+          end
       end
+    end
+  end
+
+  # F4 / #1460 — the headless SDK sidecar requires a config home
+  # (`EZAGENT_CC_SDK_CONFIG_DIR`); a template content WITHOUT `config_dir`
+  # used to flow through `create_agent_config_dir/2` as `{:ok, nil}` and crash
+  # the sidecar on `String.to_charlist(nil)` (a FunctionClauseError, not a
+  # validation error). The workspace create lane never hits this because
+  # `file_flavor_template` always injects the per-agent target. Give the
+  # template.instantiate lane the same guarantee: default a MISSING
+  # `config_dir` to the canonical per-agent path and allocate it, so the
+  # shared materialize path runs (derived config, sandbox skills, plugin
+  # manifest, completion marker) exactly as in the create lane. A present but
+  # malformed `config_dir` is left untouched so
+  # `create_agent_config_dir/2`'s `{:error, {:invalid_config_dir, _}}` still
+  # fails loud.
+  @doc false
+  @spec ensure_config_home(URI.t(), map()) :: {:ok, map()} | {:error, term()}
+  def ensure_config_home(agent_uri, tmpl) do
+    case Map.get(tmpl, "config_dir") do
+      nil ->
+        with {:ok, target} <-
+               Ezagent.Sandbox.ConfigDir.allocate(
+                 agent_uri,
+                 Ezagent.Kind.Template.namespace_of(__MODULE__)
+               ) do
+          {:ok,
+           tmpl
+           |> Map.put("config_dir", target)
+           |> Map.put("allocated_config_dir", target)}
+        end
+
+      _ ->
+        {:ok, tmpl}
     end
   end
 
