@@ -438,12 +438,12 @@ defmodule Ezagent.ProviderConnection.SchemaTest do
              |> Repo.insert!()
   end
 
-  test "prepared callback operation atomically contains the prior credential coordinates" do
+  test "prepared callback operation rejects a half prior credential pair" do
     connection = Repo.insert!(Connection.create_changeset(connection_attrs()))
 
     attrs =
       operation_attrs(connection.connection_id)
-      |> Map.drop([:prior_credential_ref, :prior_credential_version])
+      |> Map.delete(:prior_credential_version)
 
     assert {:error, changeset} =
              %Operation{}
@@ -458,6 +458,101 @@ defmodule Ezagent.ProviderConnection.SchemaTest do
               constraint: :check,
               constraint_name: "provider_connection_operations_callback_prepare_check"
             ]} = changeset.errors[:status]
+  end
+
+  test "initial callback operations allow no prior credential and reject half a prior pair" do
+    connection = Repo.insert!(Connection.create_changeset(connection_attrs()))
+
+    initial_attrs =
+      operation_attrs(connection.connection_id)
+      |> Map.drop([:prior_credential_ref, :prior_credential_version])
+
+    assert {:ok, operation} = Repo.insert(Operation.create_changeset(initial_attrs))
+    assert operation.prior_credential_ref == nil
+    assert operation.prior_credential_version == nil
+
+    for attrs <- [
+          Map.put(initial_attrs, :prior_credential_ref, "orphan-ref"),
+          Map.put(initial_attrs, :prior_credential_version, 1)
+        ] do
+      refute Operation.create_changeset(attrs).valid?
+    end
+  end
+
+  test "callback result changesets accept absent prior coordinates but reject half a prior pair" do
+    operation = %Operation{status: "prepared", handoff_ref: "handoff-ref"}
+
+    result_attrs = %{result_ref: "credential-ref", result_credential_version: 1}
+
+    assert Operation.backend_commit_changeset(operation, result_attrs).valid?
+    assert Operation.cleanup_pending_changeset(operation, result_attrs).valid?
+
+    for invalid_operation <- [
+          %{operation | prior_credential_ref: "orphan-ref"},
+          %{operation | prior_credential_version: 1}
+        ] do
+      refute Operation.backend_commit_changeset(invalid_operation, result_attrs).valid?
+      refute Operation.cleanup_pending_changeset(invalid_operation, result_attrs).valid?
+    end
+  end
+
+  test "refresh and termination preparations schedule their recoverable operations from passed time" do
+    root = Path.expand("../../../../..", __DIR__)
+
+    for relative <- [
+          "apps/ezagent_domain_provider_connection/lib/ezagent/provider_connection/refresh.ex",
+          "apps/ezagent_domain_provider_connection/lib/ezagent/provider_connection/termination.ex"
+        ] do
+      source = File.read!(Path.join(root, relative))
+      assert source =~ "next_recovery_at: now"
+    end
+  end
+
+  test "initial credential replacement has no prior revoke obligation" do
+    root = Path.expand("../../../../..", __DIR__)
+
+    source =
+      File.read!(
+        Path.join(
+          root,
+          "apps/ezagent_domain_provider_connection/lib/ezagent/provider_connection/credential_replacement.ex"
+        )
+      )
+
+    assert source =~
+             ~r/defp revoke_prior\(\s*%Operation\{\s*prior_credential_ref: nil,\s*prior_credential_version: nil\s*\},\s*_backend\s*\),\s*do: :ok/s
+
+    assert source =~
+             ~r/defp revoke_prior\(\s*%Operation\{\s*prior_credential_ref: prior_ref,\s*prior_credential_version: prior_version\s*\} = operation,/s
+  end
+
+  test "every production operation finalizer clears its durable recovery schedule" do
+    root = Path.expand("../../../../..", __DIR__)
+
+    expectations = [
+      {"credential_replacement.ex", 2},
+      {"refresh.ex", 1},
+      {"termination.ex", 1}
+    ]
+
+    for {file, expected_count} <- expectations do
+      source =
+        File.read!(
+          Path.join(
+            root,
+            "apps/ezagent_domain_provider_connection/lib/ezagent/provider_connection/#{file}"
+          )
+        )
+
+      finalized_updates =
+        Regex.scan(~r/Ecto\.Changeset\.change\([^\)]*status: "finalized"[^\)]*\)/s, source)
+
+      assert length(finalized_updates) == expected_count
+
+      assert Enum.all?(finalized_updates, fn [update] ->
+               update =~ "next_recovery_at: nil"
+             end)
+    end
   end
 
   test "private authorization backend Inspect excludes every secret-bearing field" do

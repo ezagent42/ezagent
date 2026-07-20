@@ -14,22 +14,22 @@ defmodule Ezagent.ProviderConnection.Termination do
   alias EzagentCore.Repo
 
   @doc false
-  def execute(%Connection{} = connection, action, expected_version)
+  def execute(%Connection{} = connection, action, expected_version, now \\ DateTime.utc_now())
       when action in [:revoke, :disconnect] do
     with {:ok, pair, driver, backend} <- RuntimeBindings.resolve(connection),
-         {:ok, operations} <- prepare_or_resume(connection, pair, action, expected_version),
+         {:ok, operations} <- prepare_or_resume(connection, pair, action, expected_version, now),
          operations <- run_obligations(operations, connection, driver.implementation, backend),
          result <- finish_or_report(operations, connection, action, expected_version) do
       result
     end
   end
 
-  defp prepare_or_resume(connection, pair, action, expected_version) do
+  defp prepare_or_resume(connection, pair, action, expected_version, now) do
     operations = operations(connection.connection_id, action, expected_version)
 
     case operations do
       [] ->
-        prepare(connection, pair, action, expected_version)
+        prepare(connection, pair, action, expected_version, now)
 
       [_provider, _credential] ->
         validate_retry(operations, connection, pair, expected_version)
@@ -39,7 +39,7 @@ defmodule Ezagent.ProviderConnection.Termination do
     end
   end
 
-  defp prepare(connection, pair, action, expected_version) do
+  defp prepare(connection, pair, action, expected_version, now) do
     target = if action == :revoke, do: :revoking, else: :disconnecting
 
     Transition.mutate(connection.connection_id, expected_version, target, fn locked ->
@@ -55,6 +55,7 @@ defmodule Ezagent.ProviderConnection.Termination do
           bound_input_digest: digest(locked, pair.pair_id, action, expected_version),
           expected_connection_version: expected_version,
           expected_credential_version: locked.credential_version,
+          next_recovery_at: now,
           status: "prepared"
         }
 
@@ -156,7 +157,11 @@ defmodule Ezagent.ProviderConnection.Termination do
         Transition.mutate(connection.connection_id, expected_version + 1, terminal, fn _locked ->
           Enum.each(operations, fn operation ->
             operation
-            |> Ecto.Changeset.change(status: "finalized", safe_error_code: nil)
+            |> Ecto.Changeset.change(
+              status: "finalized",
+              safe_error_code: nil,
+              next_recovery_at: nil
+            )
             |> Repo.update!()
           end)
 
