@@ -195,6 +195,7 @@ type Props = {
   onToggleRoutingRule: (sessionUri: string, rule: {id: string; table: string; enabled: string}) => void
   onLoadOlder: (sessionUri: string, before: string) => void
   onMarkDisplayed: (sessionUri: string, msgId: string) => void
+  onNavigate: (href: string) => void
   onInvite: (sessionUri: string, member: string) => void
   onRemoveParticipant: (sessionUri: string, participant: string) => void
   onUninstallSocialware: (sessionUri: string, ref: string) => void
@@ -210,6 +211,15 @@ type Props = {
   // current page + agent (not the chat history). Operator-only; the button lives
   // in the page-preview overlay, so it never shows on the public share page.
   onPublishTemplate: (sessionUri: string, name: string) => void
+}
+
+export function handleConversationNavigate(
+  event: {preventDefault: () => void},
+  href: string,
+  onNavigate: (href: string) => void,
+) {
+  event.preventDefault()
+  onNavigate(href)
 }
 
 // The conversation island stays mounted across rail session switches. Server
@@ -275,6 +285,7 @@ export function Conversation({
   onToggleRoutingRule,
   onLoadOlder,
   onMarkDisplayed,
+  onNavigate,
   onInvite,
   onPtyInput,
   onPtyResize,
@@ -806,13 +817,16 @@ export function Conversation({
                 const selected = v.id === "routing" ? membersOpen && routingOpen : activeId === v.id
 
                 if (v.id === "external_mirror") {
+                  const href = `/admin/sessions/${encodeURIComponent(sessionUri)}/external_mirror`
+
                   return (
                     <a
                       key={v.id}
-                      href={`/admin/sessions/${encodeURIComponent(sessionUri)}/external_mirror`}
+                      href={href}
                       className={segmentClass(false)}
                       aria-label={"显示" + label}
                       data-world-bindings-tab
+                      onClick={(event) => handleConversationNavigate(event, href, onNavigate)}
                     >
                       <Icon aria-hidden={true} className="h-[15px] w-[15px]" />
                       {label}
@@ -873,7 +887,10 @@ export function Conversation({
                       data-world-external-mirror-link
                       href={`/admin/sessions/${encodeURIComponent(sessionUri)}/external_mirror`}
                       className="flex items-center gap-2 rounded-md px-2.5 py-2 text-left text-foreground hover:bg-muted"
-                      onClick={() => setToolsOpen(false)}
+                      onClick={(event) => {
+                        handleConversationNavigate(event, event.currentTarget.pathname, onNavigate)
+                        setToolsOpen(false)
+                      }}
                     >
                       <Cable aria-hidden="true" className="h-4 w-4 text-muted-foreground" />
                       外部镜像

@@ -29,17 +29,23 @@ defmodule Ezagent.World.Navigation do
   @doc """
   Return a safe LiveView patch target for an in-app world path.
   """
-  @spec patch_to(String.t()) :: {:ok, String.t()} | :error
-  def patch_to(to) when is_binary(to) do
+  @spec target(String.t()) :: {:patch | :navigate, String.t()} | :error
+  def target(to) when is_binary(to) do
     with {:ok, path, query} <- split_patch_to(to),
          true <- patch_path?(path) do
-      {:ok, path <> query_suffix(query)}
+      {navigation_kind(path), path <> query_suffix(query)}
     else
       _ -> :error
     end
   end
 
-  def patch_to(_), do: :error
+  def target(_), do: :error
+
+  defp navigation_kind(path) do
+    if Regex.match?(~r{\A/admin/sessions/[^/]+/external_mirror\z}, path),
+      do: :navigate,
+      else: :patch
+  end
 
   defp split_patch_to(to) do
     cond do
