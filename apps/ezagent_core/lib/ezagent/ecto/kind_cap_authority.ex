@@ -40,6 +40,20 @@ defmodule Ezagent.Ecto.KindCapAuthority do
   end
 
   @doc false
+  @spec with_key_id(String.t()) :: %__MODULE__{} | nil
+  def with_key_id(key_id) when is_binary(key_id) do
+    from(row in __MODULE__, where: row.key_id == ^key_id)
+    |> Repo.one()
+  end
+
+  @doc false
+  @spec list_key_material() :: [{String.t(), binary()}]
+  def list_key_material do
+    from(row in __MODULE__, select: {row.key_id, row.public_key})
+    |> Repo.all()
+  end
+
+  @doc false
   @spec insert(map()) :: {:ok, %__MODULE__{}} | {:error, Ecto.Changeset.t()}
   def insert(attrs) when is_map(attrs) do
     %__MODULE__{}

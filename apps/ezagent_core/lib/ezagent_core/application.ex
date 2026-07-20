@@ -167,6 +167,13 @@ defmodule EzagentCore.Application do
     # ④); EtsOwner (child ①) already created the (empty) cache table.
     :ok = Ezagent.AgentLineage.rehydrate()
 
+    # Unified-revocation Phase F-1 — warm the immutable `key_id -> public_key`
+    # authority memo from the durable `kind_cap_authorities` rows (the
+    # `Ezagent.AgentLineage.rehydrate/0` analogue). Optimization only: a miss
+    # reads through to the DB row, and the CURRENT key_id is always read
+    # fresh from the DB active row, so a skipped warm is never a stale answer.
+    :ok = Ezagent.Cap.AuthorityCache.rehydrate()
+
     # Post-Phase-5 (Allen 2026-05-17): start distributed Erlang as the
     # named runtime node so `mix ezagent` (CLI) can reach us via :rpc.call.
     # Cookie + node name from Ezagent.Runtime. Skip in test env to avoid
