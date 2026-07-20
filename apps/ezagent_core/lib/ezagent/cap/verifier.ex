@@ -76,7 +76,7 @@ defmodule Ezagent.Cap.Verifier do
 
     candidates = candidate_caps(ctx)
 
-    verified = Enum.filter(candidates, &verified_artifact?(&1, presenter))
+    verified = Enum.filter(candidates, &valid_artifact?(&1, presenter))
 
     case Enum.find(verified, &Capability.matches?(&1, needed)) do
       %Capability{} = cap ->
@@ -103,13 +103,15 @@ defmodule Ezagent.Cap.Verifier do
 
   defp candidate_caps(ctx), do: Map.get(ctx, :caps, MapSet.new()) || MapSet.new()
 
-  defp verified_artifact?(%Capability{} = cap, presenter) do
+  @doc false
+  @spec valid_artifact?(term(), term()) :: boolean()
+  def valid_artifact?(%Capability{} = cap, %URI{} = presenter) do
     Authority.verify_current(cap, presenter)
   rescue
     _ -> false
   end
 
-  defp verified_artifact?(_cap, _presenter), do: false
+  def valid_artifact?(_cap, _presenter), do: false
 
   @doc false
   @spec required_cap(module() | atom(), module(), atom(), URI.t()) :: map()

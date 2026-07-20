@@ -636,6 +636,19 @@ defmodule Ezagent.Kind.Server do
     reply_after_set_change(result, state)
   end
 
+  def handle_call(
+        {:ezagent_verify_cap_artifact, %Ezagent.Capability{} = artifact, %URI{} = presenter},
+        _from,
+        state
+      ) do
+    valid? =
+      Ezagent.Cap.Authority.with_current(state.authority, fn ->
+        Ezagent.Cap.Verifier.valid_artifact?(artifact, presenter)
+      end)
+
+    {:reply, valid?, state}
+  end
+
   def handle_call({:ezagent_dispatch, %Ezagent.Invocation{} = inv}, _from, state) do
     dispatch_result =
       Ezagent.Cap.Authority.with_current(state.authority, fn ->

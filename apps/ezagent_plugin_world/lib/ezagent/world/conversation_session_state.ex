@@ -57,7 +57,7 @@ defmodule Ezagent.World.ConversationSessionState do
 
     ConversationData.state_for(session_uri, %{
       caller_uri: caller_uri,
-      caller_caps: Map.get(socket.assigns, :current_caps, MapSet.new()),
+      caller_caps: Ezagent.World.PresenterCaps.load(socket),
       workspace_uri: workspace_uri,
       sessions: rows_for_workspace(workspace_uri, caller_uri)
     })

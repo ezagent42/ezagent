@@ -289,7 +289,7 @@ defmodule Ezagent.World.AdminActions do
   defp caller_ctx(socket) do
     %{
       caller: socket.assigns.current_entity_uri,
-      caps: Map.get(socket.assigns, :current_caps, MapSet.new())
+      caps: Ezagent.World.PresenterCaps.load(socket)
     }
   end
 

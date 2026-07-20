@@ -364,7 +364,7 @@ defmodule Ezagent.World.KanbanActions do
   defp create_kanban(socket, name) do
     workspace_uri = socket.assigns.current_workspace_uri
     caller = socket.assigns.current_entity_uri
-    caller_ctx = %{caller: caller, caps: Map.get(socket.assigns, :current_caps, MapSet.new())}
+    caller_ctx = %{caller: caller, caps: Ezagent.World.PresenterCaps.load(socket)}
     clean = sanitize(name)
 
     cond do
@@ -419,7 +419,7 @@ defmodule Ezagent.World.KanbanActions do
   defp ctx(socket) do
     %{
       caller: socket.assigns.current_entity_uri,
-      caps: Map.get(socket.assigns, :current_caps, MapSet.new()),
+      caps: Ezagent.World.PresenterCaps.load(socket),
       reply: {:caller_inbox, self()}
     }
   end
@@ -433,7 +433,7 @@ defmodule Ezagent.World.KanbanActions do
   def read_ctx(socket) do
     %{
       caller_uri: socket.assigns.current_entity_uri,
-      caller_caps: Map.get(socket.assigns, :current_caps, MapSet.new()),
+      caller_caps: Ezagent.World.PresenterCaps.load(socket),
       workspace_uri: socket.assigns.current_workspace_uri
     }
   end

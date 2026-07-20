@@ -29,7 +29,7 @@ defmodule Ezagent.World.SessionForkAction do
           {:noreply, Phoenix.LiveView.Socket.t()}
   def fork_config(socket, %URI{} = session_uri, args) when is_map(args) do
     caller = socket.assigns.current_entity_uri
-    caps = Map.get(socket.assigns, :current_caps, MapSet.new())
+    caps = Ezagent.World.PresenterCaps.load(socket)
 
     # Thread only non-empty string overrides; the backend generates unique
     # defaults otherwise.

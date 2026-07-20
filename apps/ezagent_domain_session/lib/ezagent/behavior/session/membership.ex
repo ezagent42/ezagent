@@ -851,11 +851,12 @@ defmodule Ezagent.ActionSet.Session.Membership do
   defp grant_join_cap(%URI{} = session_uri, %URI{} = joiner_uri, %URI{} = granter) do
     workspace_uri = Ezagent.Capability.workspace_of(session_uri)
 
-    # Idempotency: if the joiner already holds a cap authorizing `:join` on this
-    # session (admin's wildcard, the anon's own minted join cap, or a prior
-    # provision), skip — avoids re-grant slice churn on every navigation.
+    # Skip only when the joiner already holds the exact, currently valid
+    # target-signed `:join` artifact. Broad or stale caps do not suppress the
+    # concrete provision.
     if already_authorized?(
          Ezagent.Identity.list_caps_for(joiner_uri),
+         joiner_uri,
          Ezagent.ActionSet.Session,
          :join,
          session_uri,
@@ -1333,12 +1334,12 @@ defmodule Ezagent.ActionSet.Session.Membership do
       cap =
         Ezagent.Capability.cap(:session, behavior, action, session_uri, workspace_uri)
 
-      # Idempotency: skip the grant when the member ALREADY holds a cap that
-      # authorizes this action (e.g. admin's bootstrap wildcard, or a prior
-      # mount). Without this, every re-navigation re-grants (caps carry a fresh
-      # `granted_at`, so the slice MapSet never dedupes) → spurious `:identity`
-      # slice-change churn + flash noise on every session select.
-      if already_authorized?(held, behavior, action, session_uri, workspace_uri) do
+      # Idempotency is exact-identity AND target-authority-valid. A structural
+      # match alone cannot prove that an artifact was signed by this Session's
+      # current key; stale/tampered artifacts must be replaced. Without the
+      # valid exact-identity check, every navigation would re-grant and create
+      # spurious `:identity` slice-change churn.
+      if already_authorized?(held, member_uri, behavior, action, session_uri, workspace_uri) do
         :ok
       else
         case Ezagent.Identity.Grant.grant_cap_via_router(
@@ -1386,25 +1387,31 @@ defmodule Ezagent.ActionSet.Session.Membership do
     grant_authorization(granter)
   end
 
-  # True iff `held` (the member's current caps) already contains a cap that
-  # authorizes `behavior`.`action` on this session instance — same `matches?/2`
-  # semantics the runtime step-5.5 check uses. Lets the mount/provision grants
-  # be idempotent (no re-grant churn for admin's wildcard or an already-mounted
-  # member).
-  defp already_authorized?(held, behavior, action, session_uri, workspace_uri) do
-    needed = %{
-      kind: :session,
-      behavior: behavior,
-      action: action,
-      instance: Ezagent.URI.instance(session_uri),
-      workspace_uri: workspace_uri
-    }
+  # True only when the member holds the exact artifact identity and the target
+  # Kind confirms its current signature. Storage/load boundaries deliberately
+  # cannot perform this cryptographic check because target authority is confined
+  # to the target Kind process.
+  defp already_authorized?(held, member_uri, behavior, action, session_uri, workspace_uri) do
+    needed =
+      Ezagent.Capability.cap(
+        :session,
+        behavior,
+        action,
+        Ezagent.URI.instance(session_uri),
+        workspace_uri
+      )
+
+    needed_key = Ezagent.Capability.identity_key(needed)
 
     held
     |> MemberCap.caps_to_list()
     |> Enum.any?(fn
-      %Ezagent.Capability{} = cap -> Ezagent.Capability.matches?(cap, needed)
-      _ -> false
+      %Ezagent.Capability{} = cap ->
+        Ezagent.Capability.identity_key(cap) == needed_key and
+          Ezagent.Cap.valid_for_target?(cap, member_uri)
+
+      _ ->
+        false
     end)
   end
 end
