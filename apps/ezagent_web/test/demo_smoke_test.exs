@@ -161,19 +161,35 @@ defmodule EzagentCore.Invariants.DemoSmokeTest do
       # global registry, so the seed is not guaranteed live here. Ensure
       # it via the idempotent create_session facade (returns the existing
       # Session via the `:adopted` path if already alive) before asserting.
-      _ =
-        create_session_via_workspace("main", Ezagent.Entity.User.admin_uri(),
-          template_name: "default"
-        )
-
-      instances = EzagentDomainUi.AutoDerive.list_instances(:session)
-      uris = Enum.map(instances, &URI.to_string(&1.uri))
       # Seed name was renamed from "main" → "default" (#408/#410 era).
-      # Accept either to stay robust across the rename, but require at
-      # least one of the two well-known seeded sessions to be live.
-      assert "session://system/default/default" in uris or
-               "session://system/default/main" in uris,
-             "expected a seeded system session; got: #{inspect(uris)}"
+      # Accept either to stay robust across the rename.
+      seeded = ["session://system/default/default", "session://system/default/main"]
+
+      # #184-class isolation flake (confirmed: passes in isolation, races only
+      # under the full concurrent umbrella): the seed is an ephemeral DynSup
+      # child a sibling test can terminate — OR mutate the shared system-tenant
+      # session — between the idempotent ensure and the global-registry read. A
+      # single ensure+read is not enough. Retry ensure+read a bounded number of
+      # times so a concurrent termination cannot flake this; each pass re-adopts
+      # (or re-spawns) the seed via the idempotent create facade.
+      uris =
+        Enum.reduce_while(1..40, [], fn _i, _acc ->
+          _ =
+            create_session_via_workspace("main", Ezagent.Entity.User.admin_uri(),
+              template_name: "default"
+            )
+
+          uris =
+            EzagentDomainUi.AutoDerive.list_instances(:session)
+            |> Enum.map(&URI.to_string(&1.uri))
+
+          if Enum.any?(seeded, &(&1 in uris)),
+            do: {:halt, uris},
+            else: (Process.sleep(25) && {:cont, uris})
+        end)
+
+      assert Enum.any?(seeded, &(&1 in uris)),
+             "expected a seeded system session after bounded ensure-retry; got: #{inspect(uris)}"
     end
 
     test "instance_detail/1 returns a populated map for entity://system/user/admin" do
