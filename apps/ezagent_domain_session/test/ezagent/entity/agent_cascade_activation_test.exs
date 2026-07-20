@@ -12,6 +12,12 @@ defmodule Ezagent.Entity.AgentCascadeActivationTest do
     @impl Ezagent.Kind.Template
     def template_name, do: "cascade.capture"
 
+    # Same convention as the other spawn tests (support/fake_cc_custom_template):
+    # the registered "cc-agents" fs type lets a config_dir-carrying content
+    # allocate its per-agent target in the F2 self-resolution test.
+    @impl Ezagent.Kind.Template
+    def config_dir_namespace, do: "cc"
+
     @impl Ezagent.Kind.Template
     def validate(%{"class" => "cascade.capture", "agent_uri" => agent_uri, "cwd" => cwd})
         when is_binary(agent_uri) and is_binary(cwd),
@@ -437,5 +443,55 @@ defmodule Ezagent.Entity.AgentCascadeActivationTest do
 
     assert [%{dir: "/tmp/workspace-v2"}] = rehydrated["cascade"].layer_dirs
     assert {:ok, "/tmp/source-v2"} = rehydrated["cascade"].source_dir_for.(@source_uri)
+  end
+
+  test "F2/#1460 — a source template resolved from INSIDE its own dispatch is served from in-hand content, never a self-call" do
+    flavor = "cascade_self_#{uniq()}"
+    template_uri = URI.new!("template://team-alpha/agent/self-capture-#{uniq()}")
+
+    :ok =
+      AgentFlavorRegistry.register(%{
+        flavor: flavor,
+        kind: Ezagent.Entity.Agent,
+        template_class: CaptureTemplate
+      })
+
+    # `template.instantiate` runs IN-PROCESS in the template Kind's own
+    # dispatch (Behavior.Template.handle_instantiate — it never dispatches
+    # :read back to itself). Simulate that: the source template URI is owned
+    # by THIS process, so the default UriQuery → Kind.get_slice resolution of
+    # the workspace layer would self-GenServer.call and exit
+    # {:calling_self} — the F2 crash (`{:cascade_layer_dir_failed, ...,
+    # {:get_slice_exit, {:calling_self, ...}}}`). The fix serves a
+    # self-referencing layer from the in-hand content's own config_dir.
+    :ok = Ezagent.KindRegistry.put_new(template_uri)
+
+    # A credential source keeps the resolved cascade IN the content (a
+    # source-less spawn legitimately drops it after layer resolution — the
+    # config home then materializes via the single-reference path), letting
+    # us assert the self layer was served from in-hand content.
+    assert {:ok, _} =
+             Ezagent.SnapshotStore.write(
+               @source_uri,
+               %{sandbox: %{state: %{config_dir_path: "/tmp/source-default"}}},
+               kind_type: :agent
+             )
+
+    content = %{flavor: flavor, project_cwd: "/tmp/project", config_dir: "/tmp/self-home"}
+    agent_uri = Ezagent.URI.agent("team-alpha", "cascade-self-#{uniq()}")
+    caps = [GrantCap.read_cap_for(@source_uri)]
+
+    assert {:ok, %{workers: [^agent_uri], fresh?: false}} =
+             Agent.spawn_from_template_content(content, agent_uri, @owner_uri, @workspace_uri,
+               caller: @owner_uri,
+               caps: caps,
+               source_template_uri: template_uri,
+               explicit_source: @source_uri
+             )
+
+    assert %{} = data = Process.get({CaptureTemplate, :received_template_data})
+    assert [%{dir: "/tmp/self-home"}] = data["cascade"].layer_dirs
+    # Non-self sources still flow through the default UriQuery/snapshot path.
+    assert {:ok, "/tmp/source-default"} = data["cascade"].source_dir_for.(@source_uri)
   end
 end

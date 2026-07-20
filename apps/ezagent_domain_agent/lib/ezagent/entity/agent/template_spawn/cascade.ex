@@ -22,7 +22,7 @@ defmodule Ezagent.Entity.Agent.TemplateSpawn.Cascade do
       is_map(content_field(content, :cascade_resolution)) ->
         with {:ok, cascade, resolved} <-
                build_cascade(
-                 content_field(content, :cascade_resolution),
+                 with_self_aware_dir_fns(content_field(content, :cascade_resolution), content),
                  agent_uri,
                  spawned_by_uri,
                  workspace_uri,
@@ -79,14 +79,16 @@ defmodule Ezagent.Entity.Agent.TemplateSpawn.Cascade do
       # `config_dir` (no shared workspace base template exists), so it passes
       # NO source_template_uri; the workspace config layer is then simply absent
       # (`default_layer_dir_for(nil) → :skip`) rather than a dead persisted URI.
-      resolution = %{
-        owner_uri: spawned_by_uri,
-        workspace_uri: workspace_uri,
-        workspace_layer_uri: source_template_uri,
-        flavor: flavor,
-        credential_required?: credential_required?(credential_adapter, content),
-        explicit_source: Keyword.get(opts, :explicit_source)
-      }
+      resolution =
+        %{
+          owner_uri: spawned_by_uri,
+          workspace_uri: workspace_uri,
+          workspace_layer_uri: source_template_uri,
+          flavor: flavor,
+          credential_required?: credential_required?(credential_adapter, content),
+          explicit_source: Keyword.get(opts, :explicit_source)
+        }
+        |> with_self_aware_dir_fns(content)
 
       with {:ok, cascade, resolved} <-
              build_cascade(resolution, agent_uri, spawned_by_uri, workspace_uri, flavor),
@@ -174,9 +176,16 @@ defmodule Ezagent.Entity.Agent.TemplateSpawn.Cascade do
       _ ->
         case source_template_uri do
           %URI{} = uri ->
-            case Ezagent.UriQuery.resolve(:config_dir, uri) do
-              {:ok, dir} when is_binary(dir) and dir != "" -> true
-              _ -> false
+            # A SELF source's config_dir IS this content's — already checked
+            # absent above, so the layer is absent. Never self-call to find
+            # out (F2/#1460 — see with_self_aware_dir_fns/2).
+            if self_kind?(uri) do
+              false
+            else
+              case Ezagent.UriQuery.resolve(:config_dir, uri) do
+                {:ok, dir} when is_binary(dir) and dir != "" -> true
+                _ -> false
+              end
             end
 
           _ ->
@@ -219,6 +228,89 @@ defmodule Ezagent.Entity.Agent.TemplateSpawn.Cascade do
       nil -> {:ok, default}
       fun when is_function(fun, 1) -> {:ok, fun}
       _ -> {:error, {:missing_cascade_resolution_function, key}}
+    end
+  end
+
+  # F2 / #1460 — `template.instantiate` runs IN-PROCESS inside the template
+  # Kind's own dispatch (Behavior.Template.handle_instantiate NEVER dispatches
+  # `:read` back to its own Kind — codex rev-5 HIGH-2 deadlock avoidance). When
+  # a cascade layer's source names that SAME Kind (the unified-create path
+  # threads `source_template_uri: self_uri`), the default UriQuery →
+  # `Kind.get_slice` dir resolution below self-`GenServer.call`s and exits
+  # `{:calling_self}` — the spawn aborts with `:cascade_layer_dir_failed`
+  # before the Template Class ever runs.
+  #
+  # The data being resolved (the template's config home) is already IN HAND:
+  # it lives in the very content this dispatch is resolving. Serve
+  # self-referencing layers from that content; delegate everything else to the
+  # defaults unchanged. Caller-injected functions always win (`put_new`), so
+  # lanes that hand-author their resolution (orchestrator, tests) are
+  # untouched; the wrappers are also a no-op for cross-Kind sources (a live
+  # parent template resolves via the normal UriQuery path).
+  defp with_self_aware_dir_fns(resolution, content) when is_map(resolution) do
+    resolution
+    |> Map.put_new(:layer_dir_for, self_aware_layer_dir_for(content))
+    |> Map.put_new(:source_dir_for, self_aware_source_dir_for(content))
+  end
+
+  defp self_aware_layer_dir_for(content) do
+    fn
+      %{source: %URI{} = uri} = layer ->
+        if self_kind?(uri) do
+          case content_field(content, :config_dir) do
+            dir when is_binary(dir) and dir != "" ->
+              {:ok, %{dir: dir, protected: [], mandatory: []}}
+
+            _ ->
+              :skip
+          end
+        else
+          default_layer_dir_for(layer)
+        end
+
+      other ->
+        default_layer_dir_for(other)
+    end
+  end
+
+  defp self_aware_source_dir_for(content) do
+    fn
+      %URI{} = source ->
+        if self_kind?(source) do
+          self_source_dir(content, source)
+        else
+          default_source_dir_for(source)
+        end
+
+      source when is_binary(source) ->
+        case Ezagent.URI.new!(source) do
+          %URI{} = uri ->
+            if self_kind?(uri) do
+              self_source_dir(content, uri)
+            else
+              default_source_dir_for(source)
+            end
+        end
+
+      other ->
+        default_source_dir_for(other)
+    end
+  end
+
+  defp self_source_dir(content, %URI{} = source) do
+    case content_field(content, :config_dir) do
+      dir when is_binary(dir) and dir != "" -> {:ok, dir}
+      _ -> {:error, {:source_config_dir_absent, source}}
+    end
+  end
+
+  # True iff `uri` is registered to the CURRENTLY EXECUTING process — i.e. the
+  # Kind inside whose dispatch this cascade resolution is running. A
+  # cross-process slice read of such a URI would be a self-`GenServer.call`.
+  defp self_kind?(%URI{} = uri) do
+    case Ezagent.KindRegistry.lookup(URI.to_string(uri)) do
+      {:ok, pid} when is_pid(pid) -> pid == self()
+      _ -> false
     end
   end
 
