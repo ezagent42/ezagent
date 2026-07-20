@@ -29,8 +29,12 @@ happens **only through the grantee itself**.
      → Pattern: `entity/session/orchestrator/caps.ex do_grant_orchestrator_scoped_caps`,
        `workspace.ex issue_and_absorb_initial_caps` — `issue_*` then `absorb_*`, with
        NO `Identity.Grant`, NO `mode: :call`, NO `await_ready`.
-4. **VERIFY:** `Ezagent.Cap.verify/1` at the load/store boundary. Fail-closed. Phase-3
-   checks provenance *format* (entity-scheme `granted_by`) as a Phase-4-signature stand-in.
+4. **VERIFY (Path A, PR #1457, 2026-07-18):** caps are **born-signed** and **strictly
+   crypto-verified** — `Ezagent.Cap.verify/1` is **retired**. Storage admits only born-signed
+   receiver-bound artifacts (`Cap.storable_for?`/`verified_set`); dispatch verifies the ed25519
+   signature via `Ezagent.Cap.Verifier` → `Authority.verify_current` (fail-closed:
+   `:invalid_cap_signature`/`:missing_cap`). No permissive/provenance-format stand-in remains.
+   See `capbac.md` §4.6. (Path B = deferred isolated signer for in-VM-malicious defense.)
 5. `granted_by` is **always the issuer**, validated `%URI{scheme: "entity"}`. If the
    owner can't resolve, **fail closed** — never fall back to admin as `granted_by`.
 6. Don't add a NEW `grant_cap` / `grant_cap_via_router` site — the ~16 legacy sites are
