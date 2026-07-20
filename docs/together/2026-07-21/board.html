@@ -1,0 +1,141 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>dev-together 看板 · 2026-07-21</title>
+<style>
+  :root{--ink:#1a1a1a;--line:#e2e8f0;--soft:#f8fafc;--blue:#2563eb;--blue-d:#1e40af;--green:#059669;--amber:#d97706;--red:#dc2626}
+  *{box-sizing:border-box}
+  body{font:14px/1.55 -apple-system,"Segoe UI",Roboto,"PingFang SC","Microsoft YaHei",sans-serif;color:var(--ink);margin:0;background:#eef2f7}
+  .wrap{max-width:1460px;margin:0 auto;padding:18px}
+  .hero{background:linear-gradient(135deg,#1e293b,#334155);color:#fff;border-radius:12px;padding:16px 20px;margin-bottom:14px}
+  .hero .row{display:flex;flex-wrap:wrap;gap:20px;align-items:center}
+  .hero h1{font-size:19px;margin:0 0 3px}
+  .hero .north{font-size:12.5px;color:#cbd5e1;max-width:640px}
+  .hero .north b{color:#fbbf24}
+  .prog{flex:1;min-width:220px}
+  .prog .lab{font-size:11px;color:#94a3b8;display:flex;justify-content:space-between;margin-bottom:4px}
+  .bar{height:9px;background:#0f172a;border-radius:6px;overflow:hidden}
+  .bar i{display:block;height:100%;background:linear-gradient(90deg,#22c55e,#16a34a)}
+  .bar.b i{background:linear-gradient(90deg,#38bdf8,#2563eb)}
+  .eff{display:flex;gap:0;background:#0f172a;border-radius:9px;overflow:hidden;flex-wrap:wrap}
+  .eff div{padding:8px 13px;border-right:1px solid #1e293b;text-align:center}
+  .eff div:last-child{border-right:0}
+  .eff b{display:block;font-size:17px;color:#7dd3fc;line-height:1.1}
+  .eff span{font-size:10px;color:#94a3b8}
+  .hero .src{font-size:10.5px;color:#64748b;margin-top:8px}
+  .deploy{display:inline-flex;border:1px solid var(--line);border-radius:8px;overflow:hidden;background:#fff;margin:0 10px 8px 0;vertical-align:top}
+  .deploy div{padding:6px 12px;font-size:12px;border-right:1px solid #eef2f7}
+  .deploy div:last-child{border-right:0}
+  .deploy .s{display:block;font-size:10px;color:#94a3b8}
+  .risk{background:#fef2f2;border:1px solid #fecaca;border-radius:8px;padding:9px 14px;margin:2px 0 12px;font-size:12.5px}
+  .board{display:grid;grid-template-columns:repeat(4,minmax(220px,1fr));gap:10px;overflow-x:auto}
+  .colwrap{display:flex;flex-direction:column;min-width:0}
+  .colhead{font-weight:700;font-size:12px;text-align:center;padding:7px 4px;border-radius:6px 6px 0 0;color:#fff}
+  .colhead .cnt{background:rgba(255,255,255,.28);border-radius:8px;padding:0 6px;font-size:11px;margin-left:2px}
+  .c-plan{background:#94a3b8}.c-wip{background:var(--blue)}.c-rev{background:var(--amber)}.c-done{background:var(--green)}
+  .cell{display:flex;flex-direction:column;gap:7px;min-height:40px;padding:6px 2px}
+  .owner{font-size:10px;color:#64748b;font-weight:600;margin-bottom:4px}
+  .odot{display:inline-block;width:8px;height:8px;border-radius:2px;margin-right:4px;vertical-align:middle}
+  .legend{margin:2px 0 12px;font-size:11.5px;color:#64748b}
+  .legend .lg{margin-right:14px;white-space:nowrap}
+  .recent{margin-top:8px;padding-top:8px;border-top:1px dashed #cbd5e1}
+  .rday{font-size:10.5px;font-weight:700;color:#94a3b8;margin:4px 0 4px}
+  .rchip{font-size:11px;color:#334155;background:#f6fefa;border:1px solid #d1fae5;border-left:3px solid var(--pc);border-radius:6px;padding:4px 8px;margin-bottom:4px}
+  .rchip .odot{margin-right:5px}
+  .card{background:#fff;border:1px solid var(--line);border-left:3px solid var(--pc);border-radius:7px;padding:8px 9px;cursor:pointer;transition:box-shadow .12s,transform .12s}
+  .card:hover{box-shadow:0 3px 10px rgba(0,0,0,.10);transform:translateY(-1px)}
+  .card.done{background:#f6fefa;border-left-color:var(--green)}
+  .card.done .t{color:#065f46}
+  .done-rib{display:inline-block;font-size:10px;font-weight:700;color:#fff;background:var(--green);border-radius:4px;padding:1px 6px;float:right}
+  .card .t{font-weight:600;font-size:12.5px;margin-bottom:3px}
+  .card .g{font-size:10.5px;color:#64748b;margin-bottom:6px}
+  .accm{font-size:11px;color:#475569;margin-bottom:6px}
+  .accm .d{color:var(--green)}.accm .o{color:#94a3b8}
+  .meta{display:flex;flex-wrap:wrap;gap:4px;align-items:center}
+  .pill{display:inline-block;padding:1px 7px;border-radius:10px;font-size:10.5px;font-weight:600}
+  .pr-merged{background:#dcfce7;color:#166534}.pr-open{background:#fef9c3;color:#854d0e}.pr-draft{background:#e0e7ff;color:#3730a3}
+  .dep{background:#fef3c7;color:#92400e}.carry{background:#f1f5f9;color:#475569}.more{background:#eff6ff;color:#1d4ed8}.blocked{background:#fee2e2;color:#991b1b}
+  .detail{display:none}
+  .review{margin-top:20px}
+  .review h2{font-size:17px;color:var(--blue-d);border-left:4px solid var(--blue);padding-left:10px;margin:18px 0 10px}
+  .grid2{display:grid;grid-template-columns:1fr 1fr;gap:12px}
+  .inc{background:#fef2f2;border:1px solid #fecaca;border-radius:8px;padding:10px 13px;font-size:12.5px}
+  .good{background:#f0fdf4;border:1px solid #bbf7d0;border-radius:8px;padding:10px 13px;font-size:12.5px}
+  .review table{border-collapse:collapse;width:100%;font-size:12.5px;margin-top:6px}
+  .review th,.review td{border:1px solid #d1d5db;padding:6px 9px;text-align:left}
+  .review th{background:#eff6ff}
+  .review tr:nth-child(even){background:#f9fafb}
+  .modal{display:none;position:fixed;inset:0;background:rgba(15,23,42,.55);z-index:50;align-items:center;justify-content:center;padding:20px}
+  .modal.on{display:flex}
+  .sheet{background:#fff;border-radius:12px;max-width:560px;width:100%;max-height:86vh;overflow:auto;padding:20px 22px;box-shadow:0 20px 60px rgba(0,0,0,.3)}
+  .sheet h3{margin:0 0 4px;font-size:16px}.sheet .who{font-size:12px;color:#64748b;margin-bottom:12px}
+  .sheet .sec{font-size:11px;font-weight:700;color:var(--blue-d);text-transform:uppercase;letter-spacing:.04em;margin:14px 0 5px}
+  .sheet ul.acc{list-style:none;margin:0;padding:0;font-size:13px}
+  .sheet ul.acc li{margin:4px 0;padding-left:20px;position:relative}
+  .sheet ul.acc li.done::before{content:"\2611";position:absolute;left:0;color:var(--green)}
+  .sheet ul.acc li.todo::before{content:"\2610";position:absolute;left:0;color:#94a3b8}
+  .sheet ul.acc li .ev{display:block;font-size:11px;color:var(--green)}
+  .sheet .rv{background:var(--soft);border-left:3px solid #94a3b8;padding:8px 12px;border-radius:0 6px 6px 0;font-size:12.5px;color:#475569}
+  .sheet .prompt{background:#0f172a;color:#e2e8f0;border-radius:8px;padding:10px 12px;font-size:11.5px;font-family:ui-monospace,Menlo,monospace;white-space:pre-wrap;margin-top:6px}
+  .btn{background:var(--green);color:#fff;border:0;border-radius:7px;padding:7px 14px;font-size:12.5px;font-weight:600;cursor:pointer;margin-top:8px}
+  .x{float:right;cursor:pointer;color:#94a3b8;font-size:20px;line-height:1;border:0;background:0}
+  .foot{margin-top:16px;padding-top:10px;border-top:1px solid var(--line);font-size:11.5px;color:#94a3b8}
+  @media(max-width:900px){.wrap{padding:10px}.grid2{grid-template-columns:1fr}.hero .row{gap:12px}.board{gap:6px}}
+</style>
+</head>
+<body>
+<div class="wrap">
+  <div class="hero">
+    <div class="row">
+      <div style="flex:2;min-width:280px">
+        <h1>dev-together · 2026-07-21</h1>
+        <div class="north"><b>北极星：</b>agent 开发自举 —— 平台能被用来开发 agent、企业能自助开 workspace 跑 dev-loop。</div>
+      </div>
+      <div class="prog"><div class="lab"><span>CI 健康 + 部署闸</span><span>GitHub Actions 账单耗尽 → 全搬 self-hosted mac runner(#1480)；查出并修掉 ci.local `halt(0)` 假绿 → honest gate(#1479)；main full-suite 真绿 → canary 部署闸打通。CI-health 系统性红 #189 收口。</span></div><div class="bar"><i style="width:100%"></i></div><div class="lab" style="margin-top:6px"><span>读平面授权收口</span><span>PR-1/2/3/4 全入 main + 已上 canary；原子 snapshot 加固(#1486)、operator 流泄漏收口(#1487)入 main；canary E2E 四图矩阵证明(owner读/非成员拒/非owner成员修复后读)；member-cap 遗留锁定已 backfill 修复。剩 PR-5(#188) + durable seed-time grant。</span></div><div class="bar b"><i style="width:95%"></i></div><div class="lab" style="margin-top:6px"><span>统一 generation 撤销(#195)</span><span>26→30 PR 设计收敛 epoch+delete_user+#166；v2 对抗评审 NEEDS-REVISION(10 must-fix)→修订→v2 复审再挖 4 洞(magic-link 撤销绕过等)→v3 修订(4 洞折叠,+0 PR)→v3 重审中。SOUND 后交 kimi 做 Phase F。</span></div><div class="bar b"><i style="width:40%"></i></div><div class="lab" style="margin-top:6px"><span>dockerize CI(#196,新)</span><span>OrbStack 验证可用 + 现有 harness 验证 + 5-PR 计划成型(prod 一致性 + 并行多 PR CI)。Task 1 镜像 base/thin 拆分实施中。</span></div><div class="bar b"><i style="width:15%"></i></div><div class="lab" style="margin-top:6px"><span>cc-headless-custom 泛化主体(#1460)</span><span>gaga F2 cascade 自调 + F4 nil config home + F3 provider lane(顺手堵掉无-sidecar 僵尸 agent + 跳校验)全修,双后端 live proof,入 main(#1485)。</span></div><div class="bar b"><i style="width:100%"></i></div><div class="lab" style="margin-top:6px"><span>插件 UI 分层(去 world 硬编)</span><span>设计定案(#1472)；zyli #1473 实施 + #1476 plugin-owned UI 在飞。</span></div><div class="bar b"><i style="width:25%"></i></div></div>
+    </div>
+    <div class="row" style="margin-top:12px"><div class="eff"><div><b>11 PR 入 main</b><span>CI 线: #1480 mac-runner / #1479 honest-gate / #1484 ci.local-parity / #1483 #1488 批量集成；#1478 #185 凭证；读平面: #1486 原子snapshot / #1487 operator流门；#1481 docs防幻觉；#1485 gaga cc-headless-custom</span></div><div><b>4 张 E2E 证明图</b><span>canary 读平面矩阵: owner读渲染 / 非成员深链被拒(零泄漏) / 非owner成员 backfill 前拒后读 —— 全 agent-browser 实拍</span></div><div><b>2 条设计线上门</b><span>统一 gen 撤销 v2→v3(两轮对抗评审、共挖 14 洞全折叠) / dockerize CI 5-PR 计划</span></div></div></div>
+    <div class="src">总效能来源：07-20→21 lead 协调线实测: CI 从『系统性假绿』翻到『真绿 + 部署闸通』全程—— 先挖出 halt(0) 假绿(所有 mix test 失败被静默吞)是比账单更深的根因, 批量集成一次 CI 合(省 runner)、honest gate 一开就逼出真实 flake 并根因修(非跳过)。读平面每一步都被对抗评审门/E2E 逮到完整性缺口: operator 流泄漏(非operator 收全租户 audit)、原子读撕裂、以及最关键的 —— member-cap 遗留锁定(cutover 后老成员读不了自己会话), 全部结构性修复 + 实拍验证。kimi 双线并行(独立 worktree + 独立 test 分区)出两个 draft PR 均对抗评审 MERGEABLE。</div>
+  </div>
+  <div><div class="deploy"><div><span class="s">canary</span>✅ 读平面 + CI-health + #185 已上(main ef9d87fdf 重部署中)；member-cap 遗留已 backfill 修复并验证(非owner成员能读)。</div><div><span class="s">beta</span>⏳ 待 cutover —— cutover 时必须跑 member-cap `:receive` backfill(否则老成员被锁);其余闸(honest CI/读平面)已清。</div><div><span class="s">stable</span>⏳ 待 cutover —— 同 beta。</div></div></div>
+  <div class="risk"><b>风险：</b>🟡 #1482(gaga 顺手挖到): populated DB 上任何重启 → world 插件 after_boot 撞 `{:already_registered, workspace://system}`(2/2 确定性 @ fe2906431), 毒掉 boot-all-app 的 mix 任务。疑 Loader 重跑竞速。canary release 道无事(不同 boot 路径), 但影响 dev 重启 + 可能影响 full-suite/dockerize CI。已单独开 issue, 建议优先 triage。<br>🟡 member-cap durable 修复未落: 本轮是数据级 re-grant 现有 roster(canary 15 grant 验证)。永久解是 seed/迁移时就发 `session:receive` cap, 让 reseed/golive 成员一出生带读门钥匙。beta/stable cutover 清单里已列此步。#195 Phase M / #166 落地后自然收口。<br>🟡 #195 是 30-PR 多天大程序(F→G→D→M+S→Z): v3 SOUND 后 kimi 从 Phase F 起做, 一晚只能推进 Phase F, 后续 phase 排队。DECISION 已按 Allen 授权用 lead 推荐(签名 self-license/单代计数器/per-session supervisor 成员/全 edge 级联)。<br>🟢 full-suite 对 PR 是关的(只在 push-to-main + nightly 跑): 各 PR 的回归测试在实现环境 + 本地验证过(operator-gate 本地实跑 6/0), 合到 main 后 full-suite 才独立跑。低风险但记录在案。</div>
+  <div class="legend">人：<span class="lg"><span class="odot" style="background:#7c3aed"></span>gaga</span> <span class="lg"><span class="odot" style="background:#0891b2"></span>zyli</span> <span class="lg"><span class="odot" style="background:#db2777"></span>ruihua</span> <span class="lg"><span class="odot" style="background:#65a30d"></span>jjkysy</span> <span class="lg"><span class="odot" style="background:#2563eb"></span>Allen 轨道</span>　·　卡片 = 一任务；☐/☑ = 验收（plan 写 · review 勾）；停在非「完成」列 = 明日结转</div>
+  <div class="board">
+    <div class="colwrap"><div class="colhead c-plan">计划 <span class="cnt">1</span></div><div class="cell"><div class="card" style="--pc:#db2777"><div class="owner"><span class="odot" style="background:#db2777"></span>ruihua</div><div class="t">自助开通产品化 + demo socialware</div><div class="g">企业自助开 workspace 旅程 + Profile/DealScout demo</div><div class="accm"><span class="o">☐</span> 0/2 验收</div><div class="meta"><span class="pill more">详情</span></div><div class="detail" data-title="自助开通产品化 + demo socialware" data-who="ruihua 轨道 · #1436 / #1419 / #1388 / #1301" data-acc='[[&quot;todo&quot;, &quot;#1436 企业自助开通 workspace 产品化(用户旅程+验收)&quot;, &quot;&quot;], [&quot;todo&quot;, &quot;#1419 Profile / #1388 DealScout demo socialware&quot;, &quot;&quot;]]' data-review="" data-prompt=""></div></div></div></div>
+    <div class="colwrap"><div class="colhead c-wip">进行中 <span class="cnt">4</span></div><div class="cell"><div class="card" style="--pc:#0891b2"><div class="owner"><span class="odot" style="background:#0891b2"></span>zyli</div><div class="t">presenter caps 刷新 + 插件 UI 自声明</div><div class="g">缓存 caps 新鲜度 + world 读侧去硬编</div><div class="accm"><span class="o">☐</span> 0/2 验收</div><div class="meta"><span class="pill more">详情</span></div><div class="detail" data-title="presenter caps 刷新 + 插件 UI 自声明" data-who="zyli 轨道 · #1477 presenter caps / #1473 #1476 UiSurfaceProvider" data-acc='[[&quot;todo&quot;, &quot;#1477 reconcile stale presenter capabilities —— 缓存新鲜度轴(与 gen 代有效性正交), 待合&quot;, &quot;&quot;], [&quot;todo&quot;, &quot;#1473/#1476 plugin-owned UI surfaces(去 world 硬编), 在飞&quot;, &quot;&quot;]]' data-review="" data-prompt=""></div></div><div class="card" style="--pc:#65a30d"><div class="owner"><span class="odot" style="background:#65a30d"></span>jjkysy</div><div class="t">挂载-撤销 infra + 协作白板二轮</div><div class="g">挂载宿主退场清理 + 冷建 deadline + kanban 协作</div><div class="accm"><span class="o">☐</span> 0/2 验收</div><div class="meta"><span class="pill more">详情</span></div><div class="detail" data-title="挂载-撤销 infra + 协作白板二轮" data-who="jjkysy 轨道 · #1470 / #1474 / #1376" data-acc='[[&quot;todo&quot;, &quot;#1470 unmount_all_for_target + 冷建 provisioning deadline&quot;, &quot;&quot;], [&quot;todo&quot;, &quot;#1474 kanban 协作二轮(人本位分享/tab恒显), 权宜溶解对齐读面正路&quot;, &quot;&quot;]]' data-review="" data-prompt=""></div></div><div class="card" style="--pc:#2563eb"><div class="owner"><span class="odot" style="background:#2563eb"></span>Allen 轨道</div><div class="t">统一 generation 撤销程序(#195)</div><div class="g">收敛 epoch+delete_user+#166 成一个 30-PR 程序, 交 kimi 实施</div><div class="accm"><span class="d">☑</span> 2/3 验收</div><div class="meta"><span class="pill more">详情</span></div><div class="detail" data-title="统一 generation 撤销程序(#195)" data-who="Allen 轨道 · 撤销线 · 设计 + 对抗评审门" data-acc='[[&quot;done&quot;, &quot;v2 设计对抗评审 NEEDS-REVISION(10 must-fix) → 修订 v2&quot;, &quot;&quot;], [&quot;done&quot;, &quot;v2 复审再挖 4 洞(最关键: magic-link 登录路径是撤销绕过 —— 用 entity_tokens 之外的持久 token 认证、无代/围栏检查) → v3 修订(4 洞折叠, +0 PR: 唯一约束改 (child,edge_kind) / self-license 门强制 / EJECT durable-bar 强制 / fence 移到 spawn_principal 唯一 chokepoint)&quot;, &quot;&quot;], [&quot;todo&quot;, &quot;v3 重审 SOUND → 交 kimi 做 Phase F(authorize/3 地基, 关 3 条裸 matches? 旁路)&quot;, &quot;重审进行中; DECISION 按 Allen 授权用 lead 推荐&quot;]]' data-review="" data-prompt=""></div></div><div class="card" style="--pc:#2563eb"><div class="owner"><span class="odot" style="background:#2563eb"></span>Allen 轨道</div><div class="t">dockerize CI(#196, 新)</div><div class="g">CI 跑 docker(OrbStack) → prod 一致性 + 并行多 PR CI</div><div class="accm"><span class="d">☑</span> 2/3 验收</div><div class="meta"><span class="pill more">详情</span></div><div class="detail" data-title="dockerize CI(#196, 新)" data-who="Allen 轨道 · CI infra · Allen 07-20 提出" data-acc='[[&quot;done&quot;, &quot;OrbStack 验证可用(docker 29.4/runc); 现有 docker/Dockerfile.ci harness 验证(honest ci.local 在容器跑起、pin 全对)&quot;, &quot;&quot;], [&quot;done&quot;, &quot;5-PR 计划成型: 镜像 base/thin 拆分(每PR&lt;60s) / gate-vs-full-suite 入口 / 项目名并行 / ci.yml 改造 / 2-3 runner。关键洞: docker 让并行 runner 从危险变安全(各 job 独立 postgres 容器)&quot;, &quot;&quot;], [&quot;todo&quot;, &quot;Task 1 镜像 base/thin 拆分实施 + 验 &lt;60s 增量重建 → draft PR&quot;, &quot;kimi 实施中&quot;]]' data-review="" data-prompt=""></div></div></div></div>
+    <div class="colwrap"><div class="colhead c-rev">待评审 / 验收 <span class="cnt">3</span></div><div class="cell"><div class="card" style="--pc:#7c3aed"><div class="owner"><span class="odot" style="background:#7c3aed"></span>gaga</div><div class="t">cc-headless-custom 泛化主体 live spawn(#1460)</div><div class="g">F2/F3/F4 三缺口全修, 双后端 live 证明</div><div class="accm"><span class="d">☑</span> 已验收 · 4/4</div><div class="meta"><span class="pill more">详情</span></div><div class="detail" data-title="cc-headless-custom 泛化主体 live spawn(#1460)" data-who="gaga 轨道 · #1485 入 main(高质量, 已过 codex 对抗评审)" data-acc='[[&quot;done&quot;, &quot;F2 cascade 自调 {:calling_self}: 自引用层从手上 content.config_dir 供给(活数据)、非自身源不变、caller 注入仍优先&quot;, &quot;&quot;], [&quot;done&quot;, &quot;F3 provider lane: custom flavor 走 file-flavor cascade 道 + 加进 @file_flavors(防静默丢弃) + catalog 门 fail-closed —— 顺手堵掉『无 sidecar 僵尸 agent + 空 flavor_config 跳校验』&quot;, &quot;&quot;], [&quot;done&quot;, &quot;F4 nil config home: ensure_config_home 分配 per-agent 规范路径 + materialize, 修 String.to_charlist(nil) sidecar 崩&quot;, &quot;&quot;], [&quot;done&quot;, &quot;双后端 live proof(deepseek + kimi-coding + world 表单 + 杀 sidecar 重生), grep 零密钥; 顺手开 #1482(冷启动崩溃)&quot;, &quot;&quot;]]' data-review="" data-prompt=""></div></div><div class="card" style="--pc:#2563eb"><div class="owner"><span class="odot" style="background:#2563eb"></span>Allen 轨道</div><div class="t">CI 健康收口 + 部署闸打通</div><div class="g">从系统性假绿翻到真绿 + canary 部署闸通</div><div class="accm"><span class="d">☑</span> 已验收 · 4/4</div><div class="meta"><span class="pill more">详情</span></div><div class="detail" data-title="CI 健康收口 + 部署闸打通" data-who="Allen 轨道 · CI-health #189 · 07-20 落地" data-acc='[[&quot;done&quot;, &quot;查出根因: GitHub Actions 账单耗尽 → 全搬 self-hosted mac runner(#1480, 自身 checks 在 mac 跑绿验证)&quot;, &quot;&quot;], [&quot;done&quot;, &quot;★ 挖出比账单更深的根因: ci.local `finalize_ci_local` 无条件 halt(0) 绕过 ExUnit 上报 → 所有 mix test 失败被静默吞、一直假绿。修法: ExUnit after_suite sentinel + halt(1) on failure, 注入失败证明过(#1479)&quot;, &quot;&quot;], [&quot;done&quot;, &quot;批量集成一次 CI 合(#1483: honest-gate + flake修 + #185 + docs; #1488: ci.local-parity + 原子snapshot + operator门) —— 省 runner&quot;, &quot;&quot;], [&quot;done&quot;, &quot;main honest full-suite 真绿 → dispatch-canary 通 → canary 自动重部署&quot;, &quot;full-suite(self-hosted macOS) conclusion=success; canary Deploy success&quot;]]' data-review="" data-prompt=""></div></div><div class="card" style="--pc:#2563eb"><div class="owner"><span class="odot" style="background:#2563eb"></span>Allen 轨道</div><div class="t">读平面上 canary + E2E + member-cap 修复</div><div class="g">读平面在 canary 端到端证明 + 修掉遗留锁定</div><div class="accm"><span class="d">☑</span> 4/5 验收</div><div class="meta"><span class="pill more">详情</span></div><div class="detail" data-title="读平面上 canary + E2E + member-cap 修复" data-who="Allen 轨道 · 读平面 · jjkysy #1459 起" data-acc='[[&quot;done&quot;, &quot;原子 external-feed snapshot(撕裂安全, version-first chokepoint 读)入 main —— 对抗评审 MERGEABLE + Settlement 原子性核实(#1486)&quot;, &quot;socialware 266/0 含新撕裂+parity+fail-closed 测试&quot;], [&quot;done&quot;, &quot;operator 流泄漏收口: WorldLive 把全租户 audit/authz/cc_event 推给每个登录用户 → 复用 AdminAuthority.admin? 双层门(订阅+投递 live 复查) —— 对抗评审 MERGEABLE + 本地实跑 6/0(#1487)&quot;, &quot;&quot;], [&quot;done&quot;, &quot;canary E2E 四图矩阵: owner读渲染 / 非成员深链被拒(零泄漏,code-verified) / 非owner成员 —— agent-browser 实拍&quot;, &quot;&quot;], [&quot;done&quot;, &quot;★ E2E 挖出 member-cap 遗留锁定: cutover 后非owner成员读不了自己会话(golive wildcard cap 未签名+un-scoped → 0 verified cap)。根因非读平面逻辑, 是上游 provisioning。canary backfill 修复(15 grant, fail-before/pass-after 验证, 实拍非owner成员能读)&quot;, &quot;&quot;], [&quot;todo&quot;, &quot;读平面 PR-5(#188 InternalReads + 两侧门 + acyclic 收口)&quot;, &quot;&quot;]]' data-review="" data-prompt=""></div></div></div></div>
+    <div class="colwrap"><div class="colhead c-done">完成 · 昨日 07-20 <span class="cnt">0</span></div><div class="cell"></div></div>
+  </div>
+  <div class="foot">一块 <b>plan+review 合一</b> 的活看板：顶部全局大局（目标·进度·总效能）常驻；卡片可点开看完整验收/复盘/prompt；底部复盘汇总。<b>确定性渲染</b>：board.yaml → board2html.py，样式只住模板。</div>
+</div>
+<div class="modal" id="modal">
+  <div class="sheet">
+    <button class="x" onclick="closeM()">×</button>
+    <h3 id="m-title"></h3><div class="who" id="m-who"></div>
+    <div class="sec">验收标准 / 结果</div><ul class="acc" id="m-acc"></ul>
+    <div class="sec">复盘 / 状态</div><div class="rv" id="m-rv"></div>
+    <div id="m-pw"></div>
+  </div>
+</div>
+<script>
+  var M=document.getElementById('modal');
+  function openM(d){
+    document.getElementById('m-title').textContent=d.dataset.title;
+    document.getElementById('m-who').textContent=d.dataset.who;
+    var acc=JSON.parse(d.dataset.acc||'[]'), ul=document.getElementById('m-acc'); ul.innerHTML='';
+    acc.forEach(function(a){var li=document.createElement('li');li.className=a[0];li.textContent=a[1];if(a[2]){var ev=document.createElement('span');ev.className='ev';ev.textContent=a[2];li.appendChild(ev);}ul.appendChild(li);});
+    document.getElementById('m-rv').textContent=d.dataset.review||'\u2014';
+    var pw=document.getElementById('m-pw');
+    if(d.dataset.prompt){pw.innerHTML='<div class="sec">\u5f00\u5de5 prompt</div><div class="prompt" id="m-prompt"></div><button class="btn" onclick="cp()">\u590d\u5236 prompt</button>';document.getElementById('m-prompt').textContent=d.dataset.prompt;}
+    else pw.innerHTML='';
+    M.classList.add('on');
+  }
+  function closeM(){M.classList.remove('on');}
+  function cp(){navigator.clipboard.writeText(document.getElementById('m-prompt').textContent);event.target.textContent='\u5df2\u590d\u5236 \u2713';}
+  document.querySelectorAll('.card').forEach(function(c){c.onclick=function(){var d=c.querySelector('.detail');if(d)openM(d);};});
+  M.onclick=function(ev){if(ev.target===M)closeM();};
+  document.addEventListener('keydown',function(ev){if(ev.key==='Escape')closeM();});
+</script>
+</body>
+</html>
