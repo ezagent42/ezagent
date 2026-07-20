@@ -655,6 +655,69 @@ defmodule Ezagent.Integration.CreateAgentDispatchTest do
     end
 
     @tag :integration
+    test "F3/#1460 — cc-custom ad-hoc create passes provider through FlavorConfig and fails CLOSED at the catalog gate",
+         %{workspace_uri: workspace_uri, admin_ctx: admin_ctx} do
+      # Pre-F3 this was {:unknown_flavor_config_keys, "cc-custom", ["provider"]}
+      # — the key never reached the template. Post-F3 the key flows and the
+      # closed-catalog gate (Template.validate via the cascade lane) rejects
+      # the bogus VALUE.
+      assert {:error,
+              {:cascade_spawn_failed,
+               {:invalid_template_data, {:unknown_backend_profile, "bogus"}}}} =
+               Workspace.create_agent(
+                 workspace_uri,
+                 %{
+                   flavor: "cc-custom",
+                   name: "cc-custom-bogus-#{System.unique_integer([:positive])}",
+                   cwd: "",
+                   with_pty: false,
+                   flavor_config: %{"provider" => "bogus"}
+                 },
+                 admin_ctx
+               )
+    end
+
+    @tag :integration
+    test "F3/#1460 — cc-headless-custom ad-hoc create fails closed on a bogus provider value",
+         %{workspace_uri: workspace_uri, admin_ctx: admin_ctx} do
+      assert {:error,
+              {:cascade_spawn_failed,
+               {:invalid_template_data, {:unknown_backend_profile, "bogus"}}}} =
+               Workspace.create_agent(
+                 workspace_uri,
+                 %{
+                   flavor: "cc-headless-custom",
+                   name: "cc-hc-bogus-#{System.unique_integer([:positive])}",
+                   cwd: "",
+                   with_pty: false,
+                   flavor_config: %{"provider" => "bogus"}
+                 },
+                 admin_ctx
+               )
+    end
+
+    @tag :integration
+    test "F3/#1460 — cc-custom ad-hoc create without provider still fails :missing_backend_profile",
+         %{workspace_uri: workspace_uri, admin_ctx: admin_ctx} do
+      # Pre-F3 the custom flavors fell through to the direct-spawn fallback,
+      # which SKIPS validation for an empty flavor_config — this create
+      # returned {:ok, agent} as a bare Kind with no PTY/sidecar. On the
+      # file-flavor cascade lane the profile gate fails closed.
+      assert {:error,
+              {:cascade_spawn_failed, {:invalid_template_data, :missing_backend_profile}}} =
+               Workspace.create_agent(
+                 workspace_uri,
+                 %{
+                   flavor: "cc-custom",
+                   name: "cc-custom-noprovider-#{System.unique_integer([:positive])}",
+                   cwd: "",
+                   with_pty: false
+                 },
+                 admin_ctx
+               )
+    end
+
+    @tag :integration
     test "native flavor (NO :instance_behaviors) still direct-spawns unchanged",
          %{ws_name: ws_name, workspace_uri: workspace_uri, admin_ctx: admin_ctx} do
       # PR-6+7 — a flavor that declares no :instance_behaviors thunk direct-spawns

@@ -209,6 +209,35 @@ defmodule Ezagent.PluginCc.Template.CcCustomBackendTest do
     end
   end
 
+  # ── F3/#1460: config_schema opens the ad-hoc create lane to `provider` ────
+
+  describe "config_schema/0 (F3)" do
+    test "cc-custom: cc base fields + a required provider enum over the closed catalog" do
+      schema = CcCustomAgent.config_schema()
+      keys = Enum.map(schema, & &1.key)
+
+      # cc base fields preserved (the schema is no longer a bare defdelegate).
+      assert "model" in keys
+      assert "effort" in keys
+      assert "permission_mode" in keys
+      assert "tools" in keys
+
+      provider = Enum.find(schema, &(&1.key == "provider"))
+      assert provider.type == :enum
+      assert provider.required == true
+      assert provider.options == Ezagent.PluginCc.ProviderCatalog.names()
+    end
+
+    test "cc-headless-custom: identical schema to the pty twin (F3 ad-hoc lane parity)" do
+      assert CcHeadlessCustomAgent.config_schema() == CcCustomAgent.config_schema()
+    end
+
+    test "plain cc / cc-headless schemas carry NO provider key (closed-catalog boundary)" do
+      refute "provider" in Enum.map(CcAgent.ConfigSchema.fields(), & &1.key)
+      refute function_exported?(CcHeadlessAgent, :config_schema, 0)
+    end
+  end
+
   # ── Credential contract: profile-driven, no OAuth / no host-login ────────
 
   describe "credential adapter" do

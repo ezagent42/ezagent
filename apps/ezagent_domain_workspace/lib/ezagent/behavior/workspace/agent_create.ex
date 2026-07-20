@@ -296,6 +296,39 @@ defmodule Ezagent.ActionSet.Workspace.AgentCreate do
     )
   end
 
+  # F3/#1460 — the custom-backend flavors ride the SAME file-flavor cascade
+  # lane as their plain twins. Before this clause they fell through to the
+  # direct-spawn fallback, which skips template instantiate entirely — an
+  # ad-hoc-created cc-custom agent came up as a bare Kind with NO
+  # PTY/sidecar (and, with an empty flavor_config, no validation either).
+  # The backend profile rides `params.flavor_config["provider"]` (whitelisted
+  # via the classes' `config_schema/0`) and is gated fail-closed by
+  # `Provider.check_backend_profile/1` downstream. `from_uri` (OAuth
+  # clone-source) is meaningless for API-key flavors → nil.
+  defp do_create_agent("cc-custom", agent_uri, session_templates, params) do
+    register_file_flavor_agent(
+      session_templates,
+      agent_uri,
+      params,
+      "cc-custom",
+      "cc_custom.agent",
+      "cc_custom.agent.",
+      nil
+    )
+  end
+
+  defp do_create_agent("cc-headless-custom", agent_uri, session_templates, params) do
+    register_file_flavor_agent(
+      session_templates,
+      agent_uri,
+      params,
+      "cc-headless-custom",
+      "cc_headless_custom.agent",
+      "cc_headless_custom.agent.",
+      nil
+    )
+  end
+
   defp do_create_agent("codex", agent_uri, session_templates, params) do
     register_file_flavor_agent(
       session_templates,

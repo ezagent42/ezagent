@@ -123,8 +123,15 @@ defmodule Ezagent.PluginCc.Template.CcCustomAgent do
 
   def template_data_extra(_), do: %{}
 
+  # F3/#1460 — cc's base fields + the REQUIRED provider enum, so the ad-hoc
+  # `workspace create_agent` lane's FlavorConfig whitelist (sourced from
+  # `config_schema/0`) accepts a backend profile. The value stays gated
+  # fail-closed at `Provider.check_backend_profile/1` in `validate/1`.
   @impl Ezagent.Kind.Template
-  defdelegate config_schema, to: Ezagent.PluginCc.Template.CcAgent.ConfigSchema, as: :fields
+  def config_schema,
+    do:
+      Ezagent.PluginCc.Template.CcAgent.ConfigSchema.fields() ++
+        [Provider.provider_config_field()]
 
   @impl Ezagent.Kind.Template
   def compile(resolved, params),
