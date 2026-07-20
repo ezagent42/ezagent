@@ -62,7 +62,7 @@ defmodule Ezagent.World.IdentityData do
          caller,
          caps
        ) do
-    rows = workspace_uri |> list_entities(filter) |> put_credential_statuses(caller, caps)
+    rows = list_entities(caller, workspace_uri, filter) |> put_credential_statuses(caller, caps)
 
     base
     |> Map.put("filter", filter)
@@ -70,8 +70,8 @@ defmodule Ezagent.World.IdentityData do
     |> Map.put("agent_flavors", agent_flavors(rows))
   end
 
-  defp component_state(%{component: "users_table"}, base, workspace_uri, _caller, _caps) do
-    Map.put(base, "users", UserData.list_users(workspace_uri))
+  defp component_state(%{component: "users_table"}, base, workspace_uri, caller, _caps) do
+    Map.put(base, "users", UserData.list_users(caller, workspace_uri))
   end
 
   defp component_state(%{component: "user_new_form"}, base, workspace_uri, _caller, _caps) do
@@ -79,7 +79,8 @@ defmodule Ezagent.World.IdentityData do
   end
 
   defp component_state(%{component: "agents_table"}, base, workspace_uri, caller, caps) do
-    agents = workspace_uri |> list_entities("agents") |> put_credential_statuses(caller, caps)
+    agents =
+      list_entities(caller, workspace_uri, "agents") |> put_credential_statuses(caller, caps)
 
     base
     |> Map.put("agents", agents)
@@ -155,6 +156,11 @@ defmodule Ezagent.World.IdentityData do
     |> Map.put("script_required_flavors", ["py"])
   end
 
+  # Read-plane PR-4 re-review: the deep-link read (existence check
+  # included) routes through `UserData.detail_state/4`, which authorizes
+  # the caller via `UserReads.user/2` BEFORE touching the row — a denied
+  # caller gets `user_unauthorized` (no cross-tenant existence oracle),
+  # a missing user gets `user_not_found`.
   defp component_state(
          %{component: "user_detail", entity_uri: user_uri},
          base,
@@ -163,13 +169,7 @@ defmodule Ezagent.World.IdentityData do
          caps
        )
        when not is_nil(user_uri) do
-    if UserData.exists?(user_uri) do
-      UserData.detail_state(base, user_uri, caller, caps)
-    else
-      base
-      |> Map.put("user_uri", encode_uri(user_uri))
-      |> Map.put("user_not_found", true)
-    end
+    UserData.detail_state(base, user_uri, caller, caps)
   end
 
   defp component_state(%{component: "user_detail", entity_uri: nil}, base, _ws, _caller, _caps) do
@@ -189,7 +189,7 @@ defmodule Ezagent.World.IdentityData do
     |> Map.put("agent_uri", encode_uri(agent_uri))
     |> Map.put("api_keys", list_api_keys(agent_uri, caller, caps))
     |> Map.put("creator_uri", encode_uri(lookup_creator_uri(agent_uri)))
-    |> Map.put("can_edit", can_edit_api_keys?(agent_uri, caller))
+    |> Map.put("can_edit", can_edit_api_keys?(agent_uri, caller, caps))
   end
 
   defp component_state(
@@ -320,39 +320,22 @@ defmodule Ezagent.World.IdentityData do
     |> Map.put("action_error", nil)
   end
 
-  @doc "List entity rows for the identities and agents components."
-  @spec list_entities(URI.t() | nil, String.t()) :: [map()]
-  def list_entities(workspace_uri, filter) do
-    workspace_filter = workspace_name_filter(workspace_uri)
+  @doc """
+  List entity rows for the identities and agents components.
 
+  Read-plane PR-4 rework: the enumeration routes through the
+  caller-authorizing chokepoints — agent rows come from
+  `Ezagent.Workspace.WorkspaceReads.agents/2` (caller owns/manages, or
+  the shared roster for workspace MEMBERS; live AND dormant) and user
+  rows from `Ezagent.Workspace.UserReads.users/2` (member/operator
+  roster) — never the global `KindRegistry`. A caller who may not see
+  entity X gets X ABSENT. `alive` per row comes from the owner-gated
+  `Ezagent.LocalRuntime.kind_alive?/1`.
+  """
+  @spec list_entities(URI.t() | nil, URI.t() | nil, String.t()) :: [map()]
+  def list_entities(caller, workspace_uri, filter) do
     rows =
-      Ezagent.KindRegistry.list_all()
-      |> Enum.flat_map(fn {uri_str, pid} ->
-        with {:ok, %URI{scheme: "entity"} = uri} <- safe_parse_entity(uri_str),
-             {:ok, entity_type} <- Ezagent.URI.type(uri),
-             true <- entity_type in ["user", "agent"],
-             {:ok, entity_name} <- Ezagent.URI.name(uri),
-             {:ok, workspace_name} <- Ezagent.URI.workspace_name(uri),
-             true <- entity_matches_workspace?(workspace_name, workspace_filter) do
-          [
-            %{
-              "uri" => uri_str,
-              "kind" => entity_type,
-              "name" => entity_name,
-              "display_name" => entity_name,
-              "flavor" => flavor_for(entity_type, uri),
-              "alive" => is_pid(pid) and Process.alive?(pid),
-              "caps_path" => caps_path(entity_type, uri_str),
-              "detail_path" => detail_path(entity_type, uri_str),
-              "api_keys_path" => api_keys_path(entity_type, uri_str),
-              "extensions_path" => extensions_path(entity_type, uri_str),
-              "config_path" => config_path(entity_type, uri_str)
-            }
-          ]
-        else
-          _ -> []
-        end
-      end)
+      (agent_rows(caller, workspace_uri) ++ user_rows(caller, workspace_uri))
       |> Enum.filter(&matches_filter?(&1, filter))
       |> Enum.sort_by(& &1["uri"])
 
@@ -363,6 +346,55 @@ defmodule Ezagent.World.IdentityData do
     end)
   rescue
     _ -> []
+  end
+
+  # Agent rows via the caller-authorizing workspace agent-LIST
+  # chokepoint (owns/manages/member-roster per row, fail-closed `[]`).
+  defp agent_rows(caller, workspace_uri) do
+    caller
+    |> Ezagent.Workspace.WorkspaceReads.agents(workspace_uri)
+    |> Enum.map(&entity_row(&1, "agent"))
+  end
+
+  # User rows via the caller-authorizing workspace user-roster
+  # chokepoint (member/operator only, fail-closed `[]`).
+  defp user_rows(caller, workspace_uri) do
+    caller
+    |> Ezagent.Workspace.UserReads.users(workspace_uri)
+    |> Enum.map(fn user -> entity_row(user.uri, "user") end)
+  end
+
+  defp entity_row(%URI{} = uri, kind) do
+    uri_str = URI.to_string(uri)
+
+    entity_name =
+      case Ezagent.URI.name(uri) do
+        {:ok, name} -> name
+        :error -> uri_str
+      end
+
+    %{
+      "uri" => uri_str,
+      "kind" => kind,
+      "name" => entity_name,
+      "display_name" => entity_name,
+      "flavor" => flavor_for(kind, uri),
+      "alive" => alive?(uri),
+      "caps_path" => caps_path(kind, uri_str),
+      "detail_path" => detail_path(kind, uri_str),
+      "api_keys_path" => api_keys_path(kind, uri_str),
+      "extensions_path" => extensions_path(kind, uri_str),
+      "config_path" => config_path(kind, uri_str)
+    }
+  end
+
+  # Per-row liveness through the owner-gated runtime predicate (NOT a
+  # direct `KindRegistry.lookup` — the plugin-workspace-locality
+  # contract forbids plugins consulting the local registry directly).
+  defp alive?(%URI{} = uri) do
+    Ezagent.LocalRuntime.kind_alive?(uri)
+  rescue
+    _ -> false
   end
 
   @doc "Registered agent flavors for the new-agent component."
@@ -517,7 +549,8 @@ defmodule Ezagent.World.IdentityData do
            target: target,
            mode: :call,
            args: %{},
-           ctx: %{caller: caller_uri, caps: caller_caps, reply: :sync}
+           ctx: %{caller: caller_uri, caps: caller_caps, reply: :sync},
+           origin: :authenticated_external
          }) do
       {:ok, %{api_keys: list}} when is_list(list) -> Enum.map(list, &jsonable/1)
       # Graceful-degrade off the REAL dispatch result (no parallel flavor→behavior
@@ -550,14 +583,24 @@ defmodule Ezagent.World.IdentityData do
   # `agent_api_keys_live.ex`). Never hand-roll an inline caller/admin-principal
   # equality here — that reconstructs the predicate, drifts from the gate, and
   # the p13 probe rejects it (#154).
-  defp can_edit_api_keys?(agent_uri, %URI{} = caller_uri) do
+  defp can_edit_api_keys?(%URI{} = agent_uri, %URI{} = caller_uri, caps) do
     creator_uri = lookup_creator_uri(agent_uri)
+    workspace_uri = Ezagent.URI.entity_workspace_uri(agent_uri)
+
+    needed = %{
+      kind: :any,
+      behavior: Ezagent.ActionSet.ApiKeys,
+      action: :put_api_key,
+      instance: agent_uri,
+      workspace_uri: workspace_uri
+    }
 
     Ezagent.Identity.admin?(caller_uri) or
-      (not is_nil(creator_uri) and same_uri?(caller_uri, creator_uri))
+      (not is_nil(creator_uri) and same_uri?(caller_uri, creator_uri)) or
+      Ezagent.Identity.caps_authorize?(caps, needed)
   end
 
-  defp can_edit_api_keys?(_agent_uri, _caller), do: false
+  defp can_edit_api_keys?(_agent_uri, _caller, _caps), do: false
 
   defp list_extensions(%URI{} = agent_uri, caller_uri, caller_caps) do
     with {:ok, template_class} <-
@@ -866,9 +909,6 @@ defmodule Ezagent.World.IdentityData do
 
   defp flavor_for(_, _), do: ""
 
-  defp workspace_name_filter(%URI{scheme: "workspace"} = uri), do: workspace_name(uri)
-  defp workspace_name_filter(_), do: :all
-
   defp workspace_name(%URI{scheme: "workspace"} = uri) do
     case Ezagent.URI.name(uri) do
       {:ok, name} -> name
@@ -878,10 +918,6 @@ defmodule Ezagent.World.IdentityData do
 
   defp workspace_name(other),
     do: raise(ArgumentError, "expected workspace URI, got: #{inspect(other)}")
-
-  defp entity_matches_workspace?(_workspace_name, :all), do: true
-  defp entity_matches_workspace?(workspace_name, workspace_name), do: true
-  defp entity_matches_workspace?(_, _), do: false
 
   defp matches_filter?(_row, "all"), do: true
   defp matches_filter?(%{"kind" => "user"}, "users"), do: true
@@ -922,13 +958,6 @@ defmodule Ezagent.World.IdentityData do
     do: "/identities/agents/#{URI.encode_www_form(uri_str)}/config"
 
   defp config_path(_kind, _uri_str), do: nil
-
-  defp safe_parse_entity(s) when is_binary(s) do
-    case Ezagent.URI.parse(s) do
-      {:ok, %URI{scheme: "entity"} = uri} -> {:ok, uri}
-      _ -> :error
-    end
-  end
 
   defp same_uri?(%URI{} = left, %URI{} = right), do: URI.to_string(left) == URI.to_string(right)
   defp same_uri?(_, _), do: false

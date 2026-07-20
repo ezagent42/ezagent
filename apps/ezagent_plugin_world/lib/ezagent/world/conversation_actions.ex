@@ -18,6 +18,7 @@ defmodule Ezagent.World.ConversationActions do
 
   alias Ezagent.ActionSet.Session.Membership
   alias Ezagent.Invocation
+  alias Ezagent.Socialware.SessionReads
   alias Ezagent.World.ConversationData
   alias Ezagent.World.ConversationRoutingForm
   alias EzagentDomainInstanceMessage.Routing.MentionRouting
@@ -212,7 +213,8 @@ defmodule Ezagent.World.ConversationActions do
           target: target,
           mode: :cast,
           args: %{message: msg},
-          ctx: %{caller: caller, caps: caps, reply: :ignore}
+          ctx: %{caller: caller, caps: caps, reply: :ignore},
+          origin: :authenticated_external
         })
 
       case result do
@@ -229,8 +231,12 @@ defmodule Ezagent.World.ConversationActions do
   end
 
   @doc """
-  Page history backwards and push the older rows to the island for prepend
-  (parity: `load_older_messages` over `Ezagent.MessageStore.older_than/3`).
+  Page history backwards and push the older rows to the island for prepend.
+
+  The `caller` (the viewing entity) is threaded so the pagination read is
+  authorized at the `SessionReads` chokepoint — previously this paged the store
+  with NO authorization, so a non-member could deep-link and scroll back through
+  a conversation they were never in. A non-member now gets an empty page.
   """
   @spec load_older(Phoenix.LiveView.Socket.t(), URI.t(), String.t()) ::
           {:noreply, Phoenix.LiveView.Socket.t()}
@@ -238,8 +244,11 @@ defmodule Ezagent.World.ConversationActions do
     {older, next_cursor} =
       ConversationData.load_older(
         session_uri,
+        Map.get(socket.assigns, :current_entity_uri),
         before,
-        Map.get(socket.assigns, :current_caps, MapSet.new())
+        # Lazy per-viewer error-card ctx (G5 source 2) — only resolved when a
+        # paged message actually carries a structured agent-error payload.
+        Ezagent.World.ErrorCards.live_viewer_ctx(socket)
       )
 
     {:noreply,
@@ -347,12 +356,23 @@ defmodule Ezagent.World.ConversationActions do
   end
 
   defp do_create_session(socket, workspace_uri, caller, short_name, template_name) do
+    caller_caps = Map.get(socket.assigns, :current_caps, MapSet.new())
+    create_session = &Ezagent.Workspace.create_session/3
+
+    create_with_caller_caps = fn target_workspace, args, ctx ->
+      create_session.(
+        target_workspace,
+        args,
+        Map.put(ctx, :caps, caller_caps)
+      )
+    end
+
     case create_session_result(
            workspace_uri,
            caller,
            short_name,
            template_name,
-           &Ezagent.Workspace.create_session/3
+           create_with_caller_caps
          ) do
       {:ok, %URI{} = session_uri} ->
         # rev6 / #912 — the session returned here is OWNER-ONLY. Its declared team
@@ -405,7 +425,7 @@ defmodule Ezagent.World.ConversationActions do
            |> push_world_state(%{
              "publish_notice" => "已发布为模板",
              "templates" =>
-               Ezagent.World.WorkspacePluginData.session_template_names(workspace_uri)
+               Ezagent.World.WorkspacePluginData.session_template_names(caller, workspace_uri)
            })}
 
         {:error, reason} ->
@@ -690,7 +710,8 @@ defmodule Ezagent.World.ConversationActions do
         target: Ezagent.URI.with_action(session_uri, behavior_prefix, action),
         mode: :call,
         args: args,
-        ctx: %{caller: caller, caps: caps, reply: {:caller_inbox, self()}}
+        ctx: %{caller: caller, caps: caps, reply: {:caller_inbox, self()}},
+        origin: :authenticated_external
       })
 
     case result do
@@ -716,25 +737,7 @@ defmodule Ezagent.World.ConversationActions do
   end
 
   defp resolve_founder_name(socket) do
-    case Map.get(socket.assigns, :current_workspace_uri) do
-      %URI{} = ws_uri ->
-        case Ezagent.URI.name(ws_uri) do
-          {:ok, name} when is_binary(name) and name != "" ->
-            case Ezagent.Workspace.Store.get_by_name(name) do
-              %{members: [%URI{} = founder | _]} ->
-                case Ezagent.URI.name(founder) do
-                  {:ok, display} -> display
-                  _ -> "workspace founder"
-                end
-
-              _ -> "workspace founder"
-            end
-
-          _ -> "workspace founder"
-        end
-
-      _ -> "workspace founder"
-    end
+    Ezagent.World.ErrorCards.founder_display_name(Map.get(socket.assigns, :current_workspace_uri))
   end
 
   defp parse_positive_integer(value) when is_integer(value) and value > 0, do: {:ok, value}
@@ -835,12 +838,15 @@ defmodule Ezagent.World.ConversationActions do
             target: Ezagent.URI.with_action(session_uri, :session, :join),
             mode: :call,
             args: %{member: member_uri},
-            ctx: %{caller: caller, caps: caps, reply: :ignore}
+            ctx: %{caller: caller, caps: caps, reply: :ignore},
+            origin: :authenticated_external
           })
 
         case result do
           r when r == :ok or (is_tuple(r) and elem(r, 0) == :ok) ->
-            _ = Membership.mount_participation_caps(session_uri, member_uri)
+            # D1 join 补发(caller-side):participation tier + view caps +
+            # mount operate keys —— 被拉进来的成员零刷新可见 tab + 板钥匙。
+            _ = Ezagent.Socialware.MemberBackfill.backfill(session_uri, member_uri)
             {:noreply, push_members(assign(socket, :last_dispatch_status, "ok"))}
 
           {:error, reason} ->
@@ -974,8 +980,8 @@ defmodule Ezagent.World.ConversationActions do
   defp member_role_name(_), do: nil
 
   defp push_session_management_state(socket, %URI{} = session_uri) do
-    members = ConversationData.member_options(session_uri)
     caller = socket.assigns.current_entity_uri
+    members = ConversationData.member_options(caller, session_uri)
     workspace = socket.assigns.current_workspace_uri
 
     payload = %{
@@ -1049,25 +1055,34 @@ defmodule Ezagent.World.ConversationActions do
     if connected?(socket) do
       case socket.assigns[:current_session_uri] do
         %URI{} = session_uri ->
-          members = ConversationData.member_options(session_uri)
+          caller = Map.get(socket.assigns, :current_entity_uri)
 
-          push_event(socket, "members:update", %{
-            "members" => members,
-            "human_role_slots" => ConversationData.human_role_slots(session_uri),
-            "invite_candidates" =>
-              ConversationData.invite_candidates(
-                session_uri,
-                socket.assigns.current_entity_uri,
-                socket.assigns.current_workspace_uri,
-                members
-              ),
-            "routing_entity_candidates" =>
-              ConversationData.routing_entity_candidates(
-                socket.assigns.current_entity_uri,
-                socket.assigns.current_workspace_uri,
-                members
-              )
-          })
+          if SessionReads.authorized?(caller, session_uri) do
+            members = ConversationData.member_options(caller, session_uri)
+
+            push_event(socket, "members:update", %{
+              "members" => members,
+              "human_role_slots" => ConversationData.human_role_slots(session_uri),
+              "invite_candidates" =>
+                ConversationData.invite_candidates(
+                  session_uri,
+                  caller,
+                  socket.assigns.current_workspace_uri,
+                  members
+                ),
+              "routing_entity_candidates" =>
+                ConversationData.routing_entity_candidates(
+                  caller,
+                  socket.assigns.current_workspace_uri,
+                  members
+                )
+            })
+          else
+            # Unauthorized viewer (e.g. denied `?session=` deep-link): push NO
+            # roster — the whole `members:update` payload (members, role slots,
+            # invite/routing candidates) is session content. (read-plane-authz F2.)
+            socket
+          end
 
         _ ->
           socket
@@ -1123,19 +1138,30 @@ defmodule Ezagent.World.ConversationActions do
         _ = EzagentDomainInstanceMessage.SessionCreator.demand_spawn_member(caller_uri)
         _ = Membership.provision_join_authority(session_uri, caller_uri)
 
+        # `caps` is the mount-time snapshot. The owner-rooted JIT grant above
+        # must be carried in this authenticated envelope explicitly, so reload
+        # the verified principal slice after the synchronous grant.
+        caps =
+          MapSet.union(
+            MapSet.new(caps || MapSet.new()),
+            MapSet.new(Ezagent.EntityCaps.load(caller_uri))
+          )
+
         result =
           Invocation.dispatch(%Invocation{
             target: Ezagent.URI.with_action(session_uri, :session, :join),
             mode: :call,
             args: %{member: caller_uri},
-            ctx: %{caller: caller_uri, caps: caps, reply: :ignore}
+            ctx: %{caller: caller_uri, caps: caps, reply: :ignore},
+            origin: :authenticated_external
           })
 
         case result do
           r when r == :ok or (is_tuple(r) and elem(r, 0) == :ok) ->
-            # Mount the per-class participation tier (parity with Invite.ex /
-            # maybe_self_join). Best-effort, no-op for agents.
-            _ = Membership.mount_participation_caps(session_uri, caller_uri)
+            # D1 join 补发(caller-side,parity with Invite.ex / maybe_self_join):
+            # participation tier + view caps + mount operate keys。Best-effort,
+            # no-op for agents.
+            _ = Ezagent.Socialware.MemberBackfill.backfill(session_uri, caller_uri)
             assign(socket, :last_join_status, "ok")
 
           {:error, reason} ->
@@ -1248,7 +1274,8 @@ defmodule Ezagent.World.ConversationActions do
         caller: socket.assigns.current_entity_uri,
         caps: MapSet.new(),
         reply: {:caller_inbox, self()}
-      }
+      },
+      origin: :authenticated_external
     })
   end
 

@@ -37,6 +37,7 @@ defmodule EzagentDomainInstanceMessage.Integration.ChatReceiveUserSliceChangeTes
   alias Ezagent.{Invocation, Message, RoutingRegistry}
   alias Ezagent.Entity.User
   alias Ezagent.Routing.Resolver
+  import Ezagent.Test.CapHelper, only: [signed_action_cap!: 2]
 
   setup do
     # Mirror the routing-table fixture pattern from
@@ -83,12 +84,19 @@ defmodule EzagentDomainInstanceMessage.Integration.ChatReceiveUserSliceChangeTes
   end
 
   defp join(session, member) do
+    target = URI.new!("#{URI.to_string(session)}?action=session.join")
+
     :ok =
       Invocation.dispatch(%Invocation{
-        target: URI.new!("#{URI.to_string(session)}?action=session.join"),
+        origin: :trusted_internal,
+        target: target,
         mode: :cast,
         args: %{member: member},
-        ctx: %{caller: member, caps: MapSet.new([Ezagent.Capability.admin_genesis_cap()]), reply: :ignore}
+        ctx: %{
+          caller: member,
+          caps: MapSet.new([signed_action_cap!(target, member)]),
+          reply: :ignore
+        }
       })
 
     Process.sleep(50)
@@ -96,13 +104,19 @@ defmodule EzagentDomainInstanceMessage.Integration.ChatReceiveUserSliceChangeTes
 
   defp dispatch_send(session, sender, text) do
     msg = Message.new(sender, %{text: text, attachments: []})
+    target = URI.new!("#{URI.to_string(session)}?action=session.send")
 
     :ok =
       Invocation.dispatch(%Invocation{
-        target: URI.new!("#{URI.to_string(session)}?action=session.send"),
+        origin: :trusted_internal,
+        target: target,
         mode: :cast,
         args: %{message: msg},
-        ctx: %{caller: sender, caps: MapSet.new([Ezagent.Capability.admin_genesis_cap()]), reply: :ignore}
+        ctx: %{
+          caller: sender,
+          caps: MapSet.new([signed_action_cap!(target, sender)]),
+          reply: :ignore
+        }
       })
 
     msg

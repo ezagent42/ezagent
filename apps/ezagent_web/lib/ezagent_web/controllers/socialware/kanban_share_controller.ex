@@ -11,10 +11,12 @@ defmodule EzagentWeb.Socialware.KanbanShareController do
     2. **服务端解析接收者自己的目标 session**：发链接方不知道收方哪个 session，故
        `session_uri` 不该塞在 URL 里。这里从 `conn.assigns.current_entity_uri` 反推
        接收者的 workspace（`Ezagent.URI.workspace_of/1`），用世界首页/sessions 列表同一
-       条 `EzagentDomainInstanceMessage.list_sessions/2`（返回「该用户是成员」的 session）
-       挑出**第一个带 `kanban-assistant` 成员的 session** 作为落点（同 `WorldLive` 用
-       `List.first/1` 取「当前/默认」session 的口径；列表按 URI 串排序、无 recency 信号，
-       故取确定性首个）。接收者没有可挂的 session → 友好错误（非 500）。
+       条 caller 授权闸 `Ezagent.Workspace.WorkspaceReads.sessions/2`（read-plane PR-4
+       rework —— 与世界首页完全同一条枚举闸：caller 是成员的 session + 公共 session，
+       workspace 闸先行，fail-closed）挑出**第一个带 `kanban-assistant` 成员的
+       session** 作为落点（同 `WorldLive` 用 `List.first/1` 取「当前/默认」session
+       的口径；列表按 URI 串排序、无 recency 信号，故取确定性首个）。接收者没有可挂
+       的 session → 友好错误（非 500）。
     3. 解析该 session 的 `kanban-assistant` 成员（收只读钥匙的「手」）。
     4. `Ezagent.Socialware.Mount.mount/6` 直接挂 `access: :read` 的只读钥匙
        （`[:get_tree, :export_markmap]`）。
@@ -34,6 +36,7 @@ defmodule EzagentWeb.Socialware.KanbanShareController do
 
   alias Ezagent.ActionSet.Session.Members
   alias Ezagent.Socialware.Mount
+  alias Ezagent.Socialware.SessionReads
 
   # salt/max_age 必须与分享侧 `Ezagent.World.KanbanActions` 常量逐一对齐。
   @share_board_salt "world_kanban_share"
@@ -90,15 +93,16 @@ defmodule EzagentWeb.Socialware.KanbanShareController do
   # 服务端解析接收者的落点 session：发链接方不知道收方哪个 session，故 session 不由 URL 传，
   # 而是从接收者身份反推。步骤：
   #   1. `workspace_of(clicker)` 拿接收者 workspace（entity URI 首段即 workspace）。
-  #   2. `list_sessions(ws, clicker)`（同 `WorldLive` 首页取「当前/默认」session 的口径）
-  #      → 接收者作为成员的 session 列表（按 URI 串排序，无 recency 信号）。
+  #   2. `WorkspaceReads.sessions(clicker, ws)`（同 `WorldLive` 首页取「当前/默认」session 的
+  #      口径——read-plane PR-4 rework 后，世界首页与此处共享同一条 caller 授权闸）
+  #      → 接收者可见的 session 列表（按 URI 串排序，无 recency 信号）。
   #   3. 逐个挑出**带 kanban-assistant 成员**的 session（收只读钥匙需要这只「手」）；取首个。
   # 任何一步空 → 友好错误（`reject/2` 映射为 404，非 500）。
   defp resolve_target_session(%URI{} = clicker) do
     with %URI{scheme: "workspace"} = workspace_uri <- Ezagent.URI.workspace_of(clicker),
          [_ | _] = sessions <-
-           EzagentDomainInstanceMessage.list_sessions(workspace_uri, clicker),
-         {:ok, session_uri, assistant_uri} <- first_session_with_assistant(sessions) do
+           Ezagent.Workspace.WorkspaceReads.sessions(clicker, workspace_uri),
+         {:ok, session_uri, assistant_uri} <- first_session_with_assistant(sessions, clicker) do
       {:ok, session_uri, assistant_uri}
     else
       %URI{} -> {:error, :no_workspace}
@@ -110,10 +114,10 @@ defmodule EzagentWeb.Socialware.KanbanShareController do
   end
 
   # 逐个 session 读成员，返回首个持 kanban-assistant 成员的 {session, assistant}。
-  defp first_session_with_assistant(sessions) do
+  defp first_session_with_assistant(sessions, %URI{} = clicker) do
     sessions
     |> Enum.find_value(fn %URI{} = session_uri ->
-      case session_assistant(session_uri) do
+      case session_assistant(session_uri, clicker) do
         {:ok, assistant_uri} -> {:ok, session_uri, assistant_uri}
         _ -> nil
       end
@@ -125,18 +129,13 @@ defmodule EzagentWeb.Socialware.KanbanShareController do
   end
 
   # 读一次 session 成员 → 解析该 session 的 kanban-assistant（收只读钥匙的「手」）。成员读取
-  # 内联于此、不抽成独立 `members_of` 函数——那会与 `CompositionCaps` 私有 `read_role_members`
-  # 撞 cross-file 重复 gate（那是 #1376 的，Allen 处理，不在本 PR 碰）；此处是本控制器专用的
-  # 一次性组合读。
-  defp session_assistant(%URI{} = session_uri) do
-    members =
-      case Ezagent.Kind.get_slice(session_uri, :session) do
-        {:ok, slice} when is_map(slice) -> Map.get(slice, :members, %{})
-        _ -> %{}
-      end
-
-    case Members.role_name_to_uri(members, @assistant_role) do
-      %URI{} = uri -> {:ok, uri}
+  # 走 `SessionReads.members` 授权闸（clicker 是这些 session 的成员——`list_sessions/2`
+  # 已按成员过滤，故授权必过；非成员会 fail-closed），不再直读 `:session` slice。
+  defp session_assistant(%URI{} = session_uri, %URI{} = clicker) do
+    with {:ok, members} <- SessionReads.members(clicker, session_uri),
+         %URI{} = uri <- Members.role_name_to_uri(members, @assistant_role) do
+      {:ok, uri}
+    else
       _ -> {:error, :no_assistant_in_session}
     end
   end

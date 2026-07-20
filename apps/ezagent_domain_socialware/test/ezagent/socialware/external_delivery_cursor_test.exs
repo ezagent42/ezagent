@@ -26,13 +26,16 @@ defmodule Ezagent.Socialware.ExternalDeliveryCursorTest do
   defp target(s, b, a), do: Ezagent.URI.new!("#{URI.to_string(s)}?action=#{b}.#{a}")
 
   defp dispatch(s, b, a, args) do
-    Invocation.dispatch(%Invocation{
-      target: target(s, b, a),
+    target = target(s, b, a)
+    caller = User.admin_uri()
+
+    Invocation.dispatch(%Invocation{origin: :trusted_internal,
+      target: target,
       mode: :call,
       args: args,
       ctx: %{
-        caller: User.admin_uri(),
-        caps: MapSet.new([Ezagent.Capability.admin_genesis_cap()]),
+        caller: caller,
+        caps: Ezagent.Socialware.TestCapHelper.lifecycle_caps(s, caller, target),
         reply: {:caller_inbox, self()}
       }
     })
@@ -122,26 +125,26 @@ defmodule Ezagent.Socialware.ExternalDeliveryCursorTest do
     end
   end
 
-  describe "committed_deliveries_since/2" do
+  describe "committed_deliveries_since/3" do
     test "returns committed deliveries with committed_seq > cursor, ascending" do
       uri = spawn_session()
       t1 = run_turn(uri, %{type: "text", props: %{text: "p1"}})
       t2 = run_turn(uri, %{type: "text", props: %{text: "p2"}})
 
-      all = ExternalFeed.committed_deliveries_since(uri, 0)
+      {:ok, all} = ExternalFeed.committed_deliveries_since(@owner, uri, 0)
       assert Enum.map(all, & &1.turn_id) == [t1, t2]
       assert Enum.map(all, & &1.cursor) == [1, 2]
       assert List.last(all).surface_version == 2
 
-      assert Enum.map(ExternalFeed.committed_deliveries_since(uri, 1), & &1.turn_id) == [t2]
-      assert ExternalFeed.committed_deliveries_since(uri, 2) == []
+      assert {:ok, [%{turn_id: ^t2}]} = ExternalFeed.committed_deliveries_since(@owner, uri, 1)
+      assert {:ok, []} = ExternalFeed.committed_deliveries_since(@owner, uri, 2)
     end
 
-    test "latest_cursor/1 is the max committed_seq (0 when none)" do
+    test "latest_cursor/2 is the max committed_seq (0 when none)" do
       uri = spawn_session()
-      assert ExternalFeed.latest_cursor(uri) == 0
+      assert ExternalFeed.latest_cursor(@owner, uri) == {:ok, 0}
       _ = run_turn(uri, %{type: "text", props: %{text: "p1"}})
-      assert ExternalFeed.latest_cursor(uri) == 1
+      assert ExternalFeed.latest_cursor(@owner, uri) == {:ok, 1}
     end
   end
 
@@ -176,7 +179,8 @@ defmodule Ezagent.Socialware.ExternalDeliveryCursorTest do
         })
 
       assert Repo.get_by(DeliveryOutbox, turn_id: pending_turn).committed_seq == nil
-      assert Enum.map(ExternalFeed.committed_deliveries_since(uri, 0), & &1.turn_id) == [t1]
+
+      assert {:ok, [%{turn_id: ^t1}]} = ExternalFeed.committed_deliveries_since(@owner, uri, 0)
 
       t3 = run_turn(uri, %{type: "text", props: %{text: "p3"}})
       assert Repo.get_by(DeliveryOutbox, turn_id: t3).committed_seq == 2
@@ -186,9 +190,8 @@ defmodule Ezagent.Socialware.ExternalDeliveryCursorTest do
 
       assert Repo.get_by(DeliveryOutbox, turn_id: pending_turn).committed_seq == 3
 
-      assert Enum.map(ExternalFeed.committed_deliveries_since(uri, 2), & &1.turn_id) == [
-               pending_turn
-             ]
+      assert {:ok, [%{turn_id: ^pending_turn}]} =
+               ExternalFeed.committed_deliveries_since(@owner, uri, 2)
     end
   end
 
@@ -224,7 +227,7 @@ defmodule Ezagent.Socialware.ExternalDeliveryCursorTest do
       assert row.committed_seq == 1
       assert row.surface_version == 7
 
-      [d] = ExternalFeed.committed_deliveries_since(uri, 0)
+      {:ok, [d]} = ExternalFeed.committed_deliveries_since(@owner, uri, 0)
       assert d.surface_version == 7
     end
   end
@@ -245,7 +248,9 @@ defmodule Ezagent.Socialware.ExternalDeliveryCursorTest do
       assert s1_after.committed_at == s1_before.committed_at
       assert Repo.get_by(DeliveryOutbox, turn_id: t1).committed_seq == 1
 
-      assert Enum.map(ExternalFeed.committed_deliveries_since(uri, 0), & &1.turn_id) == [t1, t2]
+      assert {:ok, [%{turn_id: ^t1}, %{turn_id: ^t2}]} =
+               ExternalFeed.committed_deliveries_since(@owner, uri, 0)
+
       {:ok, snapshot} = ExternalFeed.snapshot(uri, caller)
       assert snapshot.page == %{type: "text", props: %{text: "p2"}}
     end
@@ -271,7 +276,8 @@ defmodule Ezagent.Socialware.ExternalDeliveryCursorTest do
       {:ok, snapshot} = ExternalFeed.snapshot(uri, caller)
       assert snapshot.page == %{type: "text", props: %{text: "p10"}}
 
-      assert List.last(ExternalFeed.committed_deliveries_since(uri, 0)).turn_id == t10
+      assert {:ok, deliveries} = ExternalFeed.committed_deliveries_since(@owner, uri, 0)
+      assert List.last(deliveries).turn_id == t10
     end
   end
 

@@ -42,13 +42,13 @@ defmodule Ezagent.WorkspaceTest do
       target = Ezagent.URI.new!("#{URI.to_string(uri)}?action=workspace.list_members")
 
       assert {:ok, %{members: listed}} =
-               Invocation.dispatch(%Invocation{
+               Invocation.dispatch(%Invocation{origin: :trusted_internal,
                  target: target,
                  mode: :call,
                  args: %{},
                  ctx: %{
                    caller: Ezagent.Entity.User.admin_uri(),
-                   caps: MapSet.new([Ezagent.Capability.admin_genesis_cap()]),
+                  caps: MapSet.new([signed_action_cap!(target, Ezagent.Entity.User.admin_uri())]),
                    reply: {:caller_inbox, self()}
                  }
                })
@@ -72,13 +72,13 @@ defmodule Ezagent.WorkspaceTest do
       target = Ezagent.URI.new!("#{URI.to_string(uri)}?action=workspace.instantiate")
 
       assert {:ok, %{children: children}} =
-               Invocation.dispatch(%Invocation{
+               Invocation.dispatch(%Invocation{origin: :trusted_internal,
                  target: target,
                  mode: :call,
                  args: %{},
                  ctx: %{
                    caller: Ezagent.Entity.User.admin_uri(),
-                   caps: MapSet.new([Ezagent.Capability.admin_genesis_cap()]),
+                  caps: MapSet.new([signed_action_cap!(target, Ezagent.Entity.User.admin_uri())]),
                    reply: {:caller_inbox, self()}
                  }
                })

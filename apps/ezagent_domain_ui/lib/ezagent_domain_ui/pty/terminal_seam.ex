@@ -147,7 +147,8 @@ defmodule EzagentDomainUi.Pty.TerminalSeam do
       target: target,
       mode: :cast,
       args: %{bytes: bytes},
-      ctx: ctx
+      ctx: ctx,
+      origin: :authenticated_external
     }
 
     case Ezagent.Invocation.dispatch(inv) do

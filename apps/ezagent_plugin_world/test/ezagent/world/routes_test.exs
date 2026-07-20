@@ -108,13 +108,12 @@ defmodule Ezagent.World.RoutesTest do
     assert route.entity_uri == nil
   end
 
-  test "knowledge base declared plugin route resolves to the plugins surface with focus" do
+  test "knowledge base declared plugin route resolves to the dedicated kb surface" do
     route = Routes.route_for(%{}, "https://example.com/plugins/kb")
 
-    assert route.component == "plugins"
+    assert route.component == "kb"
     assert route.group == :workspace_plugins
     assert route.title == "Knowledge Base"
-    assert route.focus_slug == "kb"
   end
 
   test "kanban detail route resolves to the kanban component with the kanban-manager agent URI" do

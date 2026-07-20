@@ -155,7 +155,8 @@ defmodule Ezagent.World.AgentActions do
              target: target,
              mode: :call,
              args: %{},
-             ctx: %{caller: caller, caps: caps, reply: {:caller_inbox, self()}}
+             ctx: %{caller: caller, caps: caps, reply: {:caller_inbox, self()}},
+             origin: :authenticated_external
            }) do
       {:noreply,
        socket

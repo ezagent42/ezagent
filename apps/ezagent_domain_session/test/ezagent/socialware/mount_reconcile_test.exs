@@ -38,7 +38,7 @@ defmodule Ezagent.Socialware.MountReconcileTest do
       revoke_all(grantee, target, [:add_node, :get_tree], row.granted_by)
 
       assert eventually(fn ->
-               match?({:error, :unauthorized}, dispatch(grantee, target, :add_node))
+               match?({:error, _reason}, dispatch(grantee, target, :add_node))
              end)
 
       # 挂载表行仍在(durable SoT 不受重启影响)
@@ -79,10 +79,62 @@ defmodule Ezagent.Socialware.MountReconcileTest do
     end
   end
 
+  describe "reconcile_person_mounts/1 — person 行的 reconcile 路(不挂 session activate)" do
+    test "撤钥匙(不删行)→ session 路扫不到、person 路重发钥匙重现" do
+      owner = user_uri("prec-owner")
+      grantee = live_agent("prec-holder", owner)
+      target = live_agent("prec-board", owner, [Target])
+      session = session_uri()
+
+      assert {:ok, %{mount: %MountRow{scope: "person"} = row}} =
+               Mount.mount_for_person(target, grantee, Target, [:get_tree], access: :read)
+
+      assert eventually(fn -> holds_cap?(grantee, target, :get_tree) end)
+
+      revoke_all(grantee, target, [:get_tree], row.granted_by)
+
+      assert eventually(fn ->
+               match?({:error, _reason}, dispatch(grantee, target, :get_tree))
+             end)
+
+      # person 行不属于任何 session —— session 路 reconciled: 0,钥匙不回来
+      assert {:ok, %{reconciled: 0}} = Mount.reconcile_session_mounts(session)
+      assert {:error, _reason} = dispatch(grantee, target, :get_tree)
+
+      # person 路(按 grantee)重发 → 钥匙重现
+      assert {:ok, %{reconciled: 1}} = Mount.reconcile_person_mounts(grantee)
+      assert eventually(fn -> holds_cap?(grantee, target, :get_tree) end)
+      assert {:ok, %{ok: true}} = dispatch(grantee, target, :get_tree)
+    end
+
+    test "幂等,且与同 grantee 的 session 行互不干扰(各扫各的行)" do
+      owner = user_uri("pmix-owner")
+      grantee = live_agent("pmix-holder", owner)
+      target = live_agent("pmix-board", owner, [Target])
+      session = session_uri()
+
+      assert {:ok, _} = Mount.mount(session, target, grantee, Target, [:get_tree], access: :read)
+
+      assert {:ok, _} =
+               Mount.mount_for_person(target, grantee, Target, [:get_tree], access: :read)
+
+      assert {:ok, %{reconciled: 1}} = Mount.reconcile_session_mounts(session)
+      assert {:ok, %{reconciled: 1}} = Mount.reconcile_person_mounts(grantee)
+      assert {:ok, %{reconciled: 1}} = Mount.reconcile_person_mounts(grantee)
+
+      assert length(MountRow.list_for_session(session)) == 1
+      assert length(MountRow.list_person_mounts_for_grantee(grantee)) == 1
+    end
+
+    test "无 person 行的 grantee → reconciled: 0" do
+      assert {:ok, %{reconciled: 0}} = Mount.reconcile_person_mounts(user_uri("nobody"))
+    end
+  end
+
   # --- helpers -------------------------------------------------------------
 
   # 撤销 grantee 指向 target 的每把 action 钥匙,granter = 挂载行 granted_by(宿主主人)。
-  # 走 `{:rule, :socialware_mount_unmount, granter}` 授权(与 mount.ex unmount 同款)。
+  # 走 `{:held_by, granter}` 授权(#1457 后 rule 元组已删;与 mount.ex unmount 同款)。
   defp revoke_all(grantee, target, actions, granted_by) do
     granter = Ezagent.URI.new!(granted_by)
     workspace_uri = Ezagent.Capability.workspace_of(target)
@@ -95,7 +147,7 @@ defmodule Ezagent.Socialware.MountReconcileTest do
         Ezagent.Identity.Grant.revoke_cap(
           grantee,
           cap,
-          {:rule, :socialware_mount_unmount, granter}
+          {:held_by, granter}
         )
     end)
   end
@@ -119,11 +171,15 @@ defmodule Ezagent.Socialware.MountReconcileTest do
   end
 
   defp dispatch(caller, target, action) do
-    Ezagent.Invocation.dispatch(%Ezagent.Invocation{
+    Ezagent.Invocation.dispatch(%Ezagent.Invocation{origin: :trusted_internal,
       target: Ezagent.URI.with_action(target, :composition_grant_target, action),
       mode: :call,
       args: %{},
-      ctx: %{caller: caller, caps: MapSet.new(), reply: {:caller_inbox, self()}}
+      ctx: %{
+        caller: caller,
+        caps: MapSet.new(Ezagent.Identity.list_caps_for(caller)),
+        reply: {:caller_inbox, self()}
+      }
     })
   end
 
@@ -152,8 +208,13 @@ defmodule Ezagent.Socialware.MountReconcileTest do
   defp session_uri,
     do: Ezagent.URI.new!("session://composition/default/mountrec-#{uniq()}")
 
-  defp user_uri(name),
-    do: Ezagent.URI.new!("entity://composition/user/#{name}-#{uniq()}")
+  defp user_uri(name) do
+    uri = Ezagent.URI.new!("entity://composition/user/#{name}-#{uniq()}")
+    {:ok, _} = Ezagent.Users.create(uri, "test-password-#{uniq()}", [])
+    {:ok, _} = Ezagent.SpawnRegistry.spawn(uri)
+    on_exit(fn -> Ezagent.Kind.terminate(uri) end)
+    uri
+  end
 
   defp agent_uri(name, ws_name),
     do: Ezagent.URI.new!("entity://#{ws_name}/agent/#{name}-#{uniq()}")

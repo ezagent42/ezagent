@@ -249,18 +249,22 @@ defmodule Ezagent.Socialware.BoardProvision do
   # from_session 的 assistant 对这块板是否有 access —— **不直读 cap 列表**(那会绕过 dispatch
   # chokepoint、把 cap 校验挪出许可路)。改让 assistant 以自身份对这块板 dispatch 一个只读动作
   # (`:get_tree`, mode `:call`),cap 校验落在 dispatch 许可路上:`{:ok, _}` = 有钥匙(有权),
-  # 任何 `{:error, _}`(如 `:unauthorized`) = 没钥匙(无权)。ctx 只带空 caps —— runtime 授权
-  # 在 ctx.caps 未命中时回落读 assistant 自持的 cap slice(self-store),故无需在此提前展开。
+  # 任何 `{:error, _}`(如 `:unauthorized`) = 没钥匙(无权)。严格 presenter 绑定要求把
+  # assistant 自持的 born-signed artifacts 明确装入 envelope；无 stamp 的 ambient fallback
+  # 已被删除。
   # 目标动作 URI 的 slice 由 behavior 自身派生(`behavior.state_slice/0`,如 Kanban → `:kanban`),
   # 不硬编码。
   defp session_holds_board_cap?(assistant_uri, behavior, board_uri) do
     target = Ezagent.URI.with_action(board_uri, behavior.state_slice(), :get_tree)
 
+    caps = assistant_uri |> Ezagent.EntityCaps.load() |> MapSet.new()
+
     case Ezagent.Invocation.dispatch(%Ezagent.Invocation{
            target: target,
            mode: :call,
            args: %{},
-           ctx: %{caller: assistant_uri, caps: MapSet.new(), reply: {:caller_inbox, self()}}
+           ctx: %{caller: assistant_uri, caps: caps, reply: {:caller_inbox, self()}},
+           origin: :trusted_internal
          }) do
       {:ok, _} -> true
       {:error, _} -> false

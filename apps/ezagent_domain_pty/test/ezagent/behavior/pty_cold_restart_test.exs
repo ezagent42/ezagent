@@ -70,7 +70,8 @@ defmodule Ezagent.ActionSet.PtyColdRestartTest do
   defp write(target_uri, bytes) do
     target = URI.new!("#{URI.to_string(target_uri)}?action=pty.write")
 
-    Ezagent.Invocation.dispatch(%Ezagent.Invocation{
+    %Ezagent.Invocation{
+      origin: :trusted_internal,
       target: target,
       mode: :call,
       args: %{bytes: bytes},
@@ -79,7 +80,9 @@ defmodule Ezagent.ActionSet.PtyColdRestartTest do
         caps: MapSet.new([Ezagent.Capability.admin_genesis_cap()]),
         reply: {:caller_inbox, self()}
       }
-    })
+    }
+    |> Ezagent.Test.CapHelper.signed_invocation!(:pty_cold_restart)
+    |> Ezagent.Invocation.dispatch()
   end
 
   test "no-transients: counters survive cold restart in state; create/1 NOT re-run" do

@@ -204,7 +204,7 @@ defmodule Ezagent.OutboundGrant do
          :ok <- validate_cap_issuer(cap, issuer.uri),
          :ok <- validate_cap_grantee(cap, grantee.uri),
          :ok <- validate_cap_workspace(cap, grantee.workspace_uri),
-         true <- Ezagent.Cap.verify_for(cap, grantee.uri) do
+         true <- Ezagent.Cap.storable_for?(cap, grantee.uri) do
       cap_map = encode_cap(cap)
 
       normalized = %{

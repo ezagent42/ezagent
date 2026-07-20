@@ -98,8 +98,21 @@ defmodule Ezagent.PluginCc.Integration.SocialwareCcCredentialInheritTest do
     {:ok, _} =
       Ezagent.SnapshotStore.write(
         URI.to_string(source_uri),
-        %{sandbox: %{state: %{config_dir_path: source_dir}}},
-        kind_type: :agent
+        %{
+          sandbox: %{
+            state: %{
+              config_dir_path: source_dir,
+              flavor: "cc",
+              template_class: nil,
+              respawn_template_data: nil,
+              pty_phase: nil,
+              passive: false,
+              recipe: nil
+            }
+          }
+        },
+        kind_type: :agent,
+        version: 0
       )
 
     # --- the INSTALLER: live User Kind holding sandbox.read on the source ---
@@ -107,7 +120,7 @@ defmodule Ezagent.PluginCc.Integration.SocialwareCcCredentialInheritTest do
 
     {:ok, source_read_artifact} =
       Ezagent.Cap.issue(
-        {:genesis, User.admin_uri()},
+        {:admin, User.admin_uri()},
         installer_uri,
         GrantCap.read_cap_for(source_uri)
       )
@@ -219,6 +232,8 @@ defmodule Ezagent.PluginCc.Integration.SocialwareCcCredentialInheritTest do
       # The host operator = the genesis admin, live with its bootstrap caps
       # (in production the admin User Kind is live whenever anyone installs).
       admin_uri = User.admin_uri()
+      host_source = Ezagent.Agent.HostLoginAdopt.host_login_source_uri("system", "cc")
+      on_exit(fn -> terminate(host_source) end)
 
       case Ezagent.Kind.spawn(User, %{
              uri: admin_uri,

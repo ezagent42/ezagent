@@ -144,6 +144,9 @@ defmodule Ezagent.Cap.DeliveryOutbox.State do
   defp classify(reason)
        when reason in [
               :unauthorized,
+              :missing_cap,
+              :invalid_cap_signature,
+              :presenter_required,
               :cross_workspace_denied,
               :invalid_cap_artifact,
               :cannot_revoke_admin

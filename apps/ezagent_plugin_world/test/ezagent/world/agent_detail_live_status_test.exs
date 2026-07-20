@@ -38,10 +38,7 @@ defmodule Ezagent.World.AgentDetailLiveStatusTest do
     {:ok, _ws_pid} = Workspace.create(ws_name, %{})
     workspace_uri = URI.new!("workspace://#{ws_name}")
 
-    admin_ctx = %{
-      caller: User.admin_uri(),
-      caps: MapSet.new([Ezagent.Capability.admin_genesis_cap()])
-    }
+    admin_ctx = Ezagent.Test.CapHelper.signed_workspace_ctx!(workspace_uri, User.admin_uri())
 
     {:ok, ws_name: ws_name, workspace_uri: workspace_uri, admin_ctx: admin_ctx}
   end
@@ -63,7 +60,7 @@ defmodule Ezagent.World.AgentDetailLiveStatusTest do
       agent_uri_str = URI.to_string(agent_uri)
 
       # --- LIST: alive must be true for a just-spawned agent ---
-      agent_rows = IdentityData.list_entities(workspace_uri, "agents")
+      agent_rows = IdentityData.list_entities(admin_ctx.caller, workspace_uri, "agents")
       row = Enum.find(agent_rows, &(&1["uri"] == agent_uri_str))
 
       assert row != nil, "created agent must appear in list_entities"

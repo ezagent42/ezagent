@@ -15,18 +15,16 @@ defmodule Ezagent.World.ErrorRenderer do
     Card includes generic `what`/`impact` + auto-registered issue notice.
   """
 
-  alias Ezagent.World.ErrorCode
-
   @typedoc "Rendered message card for frontend display"
   @type card :: %{
-    layer: 1 | 2 | 3,
-    what: String.t(),
-    impact: String.t(),
-    fix_link: String.t() | nil,
-    fix_owner_name: String.t() | nil,
-    notify_action: map() | nil,
-    issue_id: String.t() | nil
-  }
+          layer: 1 | 2 | 3,
+          what: String.t(),
+          impact: String.t(),
+          fix_link: String.t() | nil,
+          fix_owner_name: String.t() | nil,
+          notify_action: map() | nil,
+          issue_id: String.t() | nil
+        }
 
   @doc """
   Renders an error card for the given error code and user context.
@@ -37,9 +35,9 @@ defmodule Ezagent.World.ErrorRenderer do
   (e.g., the workspace founder's display name).
   """
   @spec render(map() | nil, keyword()) :: card()
-  def render(nil, _opts) do
+  def render(nil, opts) do
     # Layer 3 — unregistered error: auto-register issue
-    issue_id = register_issue(nil, _opts)
+    issue_id = register_issue(nil, opts)
 
     %{
       layer: 3,
@@ -64,7 +62,7 @@ defmodule Ezagent.World.ErrorRenderer do
         layer2_card(code, fix_owner_name)
 
       true ->
-        layer3_fallback(code)
+        layer3_fallback(code, opts)
     end
   end
 
@@ -101,8 +99,8 @@ defmodule Ezagent.World.ErrorRenderer do
     }
   end
 
-  defp layer3_fallback(code) do
-    issue_id = register_issue(code, [])
+  defp layer3_fallback(code, opts) do
+    issue_id = register_issue(code, opts)
 
     %{
       layer: 3,
@@ -115,15 +113,26 @@ defmodule Ezagent.World.ErrorRenderer do
     }
   end
 
-  defp register_issue(code_or_nil, _opts) do
+  defp register_issue(code_or_nil, opts) do
     code_str = if code_or_nil, do: code_or_nil.code, else: "unregistered"
-    ts = System.os_time(:second)
-    issue_id = "G5-#{code_str}-#{ts}"
 
-    require Logger
-    Logger.warning("[G5 Layer3] Auto-registered issue #{issue_id}: error_code=#{code_str}")
+    case Keyword.get(opts, :issue_ref) do
+      ref when is_binary(ref) and ref != "" ->
+        # Message-anchored render (G5 source 2, async agent errors): the id is
+        # derived from the DURABLE message so re-rendering history neither
+        # mints a fresh issue per pass nor re-logs — the persisted message is
+        # the registration record.
+        "G5-#{code_str}-#{ref}"
 
-    issue_id
+      _ ->
+        ts = System.os_time(:second)
+        issue_id = "G5-#{code_str}-#{ts}"
+
+        require Logger
+        Logger.warning("[G5 Layer3] Auto-registered issue #{issue_id}: error_code=#{code_str}")
+
+        issue_id
+    end
   end
 
   @doc false

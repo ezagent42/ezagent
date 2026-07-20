@@ -63,6 +63,7 @@ defmodule Ezagent.ActionSet.PyAgent do
   require Logger
 
   alias Ezagent.{Cmd, Message}
+  alias Ezagent.Agent.ErrorSignal
   alias Ezagent.Domain.Python.AgentLifecycle
 
   @default_timeout_ms 10_000
@@ -162,6 +163,7 @@ defmodule Ezagent.ActionSet.PyAgent do
     source_session = Map.get(args, :source_session)
     user_text = Map.get(args, :user_text, "")
     in_msg_id = Map.get(args, :in_msg_id)
+    reply_cap = Map.get(args, :reply_cap)
 
     case result do
       {:ok, :silent} ->
@@ -170,7 +172,7 @@ defmodule Ezagent.ActionSet.PyAgent do
       {:ok, %{text: reply}} when is_binary(reply) ->
         effects =
           set_last(user_text, reply, nil) ++
-            maybe_reply_effect(source_session, self_uri, reply, in_msg_id)
+            maybe_reply_effect(source_session, self_uri, reply, in_msg_id, reply_cap)
 
         {:ok, %{ok: true}, effects}
 
@@ -182,7 +184,14 @@ defmodule Ezagent.ActionSet.PyAgent do
           )
         end
 
-        {:ok, %{ok: false, error: error_kind(reason)}, set_last(user_text, nil, reason)}
+        # G5 source 2 — a py failure was previously SILENT to the user (only
+        # `last_error` + this log line). Reply with the STRUCTURED error body
+        # so the shared error surface renders a per-viewer card.
+        effects =
+          set_last(user_text, nil, reason) ++
+            maybe_reply_error(source_session, self_uri, reason, in_msg_id, reply_cap)
+
+        {:ok, %{ok: false, error: error_kind(reason)}, effects}
     end
   end
 
@@ -257,44 +266,56 @@ defmodule Ezagent.ActionSet.PyAgent do
   # Build a single `{:dispatch, %Cmd{}}` chat.send reply effect. Mirrors
   # the per-subprocess agent: the agent presents its OWN inline narrow `session.send` cap on
   # the concrete reply session (#154 — no `system://chat-reply` wildcard).
-  defp maybe_reply_effect(nil, _self_uri, _text, _in_msg_id), do: []
-  defp maybe_reply_effect("", _self_uri, _text, _in_msg_id), do: []
-  defp maybe_reply_effect(_, nil, _text, _in_msg_id), do: []
+  defp maybe_reply_effect(nil, _self_uri, _text, _in_msg_id, _reply_cap), do: []
+  defp maybe_reply_effect("", _self_uri, _text, _in_msg_id, _reply_cap), do: []
+  defp maybe_reply_effect(_, nil, _text, _in_msg_id, _reply_cap), do: []
 
-  defp maybe_reply_effect(session_uri, %URI{} = self_uri, text, in_msg_id) do
+  defp maybe_reply_effect(
+         session_uri,
+         %URI{} = self_uri,
+         text_or_body,
+         in_msg_id,
+         %Ezagent.Capability{} = reply_cap
+       ) do
     case parse_session_uri(session_uri) do
       nil ->
         []
 
       %URI{} = session ->
         reply_msg =
-          Message.new(self_uri, %{text: text, attachments: []}, ref_id: in_msg_id)
+          Message.new(self_uri, reply_body(text_or_body), ref_id: in_msg_id)
 
         target = Ezagent.URI.with_action(session, :session, :send)
 
         cmd =
           Cmd.new(target, :send, %{message: reply_msg}, %{
             caller: self_uri,
-            caps:
-              MapSet.new([
-                %Ezagent.Capability{
-                  Ezagent.Capability.cap(
-                    :session,
-                    Ezagent.ActionSet.Session,
-                    :send,
-                    Ezagent.URI.instance(session),
-                    Ezagent.Capability.workspace_of(session)
-                  )
-                  | granted_by: self_uri,
-                    granted_at: DateTime.utc_now()
-                }
-              ]),
+            caps: MapSet.new([reply_cap]),
             reply: :ignore
           })
 
         [{:dispatch, cmd}]
     end
   end
+
+  # Cap-signing: reply only with a REAL signed capability struct; any other
+  # `reply_cap` shape (nil/unsigned) drops the reply rather than dispatching
+  # unauthenticated.
+  defp maybe_reply_effect(_session_uri, _self_uri, _text, _in_msg_id, _reply_cap), do: []
+
+  # G5 source 2 — structured error reply (see `Ezagent.ActionSet.CurlAgent`).
+  defp maybe_reply_error(session_uri, self_uri, reason, in_msg_id, reply_cap) do
+    maybe_reply_effect(
+      session_uri,
+      self_uri,
+      ErrorSignal.reply_body(reason),
+      in_msg_id,
+      reply_cap
+    )
+  end
+
+  defp reply_body(text) when is_binary(text), do: %{text: text, attachments: []}
+  defp reply_body(%{} = body), do: body
 
   defp parse_session_uri(%URI{scheme: "session"} = u), do: u
 

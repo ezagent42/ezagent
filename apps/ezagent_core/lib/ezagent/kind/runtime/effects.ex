@@ -328,6 +328,19 @@ defmodule Ezagent.Kind.Runtime.Effects do
     %{cmd | ctx: new_ctx}
   end
 
+  # Cap delivery is a fixed framework hand-off: `Identity.Grant` has already
+  # authorized + signed the artifact, and the receiving Identity handler must
+  # see the VM-internal storage principal. The producer marker distinguishes
+  # that explicit hand-off from an ordinary handler-authored Cmd whose default
+  # caller must be replaced with the emitting Kind URI.
+  defp maybe_put_default(
+         %{caller: :vm_internal, cap_delivery_producer: producer} = map,
+         :caller,
+         _default
+       )
+       when producer in [:identity_grant, :identity_revoke],
+       do: map
+
   defp maybe_put_default(map, _key, nil), do: map
 
   defp maybe_put_default(map, key, default) do

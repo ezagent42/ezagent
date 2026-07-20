@@ -141,6 +141,43 @@ defmodule EzagentPluginCc.McpConfigWriterTest do
     assert Path.basename(path) == "ezagent_mcp_bridge.py"
   end
 
+  # Task A DoD (handoff 2026-07-16 gaga-agent-runtime §3): the historical field
+  # failure was an assistant's `.mcp.json` pointing at a DELETED worktree's
+  # checkout copy of `ezagent_mcp_bridge.py` — the bridge never started, zero
+  # tools. Pin that every script path the writer EMITS derives from the
+  # deployed `priv/` location (`Application.app_dir/2` — valid in dev _build
+  # AND releases), never from a repo source-tree / worktree checkout whose
+  # lifetime is unrelated to the running node.
+  test "written .mcp.json script paths derive from deployed priv, never a repo/worktree source tree",
+       %{out_dir: out_dir} do
+    {:ok, path} =
+      McpConfigWriter.write!(
+        agent_uri: "entity://test-ws/agent/no-worktree-paths",
+        dir: out_dir,
+        orchestrator: true,
+        orchestrator_ws_url: "ws://127.0.0.1:10042/orchestrator_socket/websocket"
+      )
+
+    %{"mcpServers" => servers} = path |> File.read!() |> Jason.decode!()
+    priv_dir = Application.app_dir(:ezagent_plugin_cc, "priv")
+
+    assert map_size(servers) == 2
+
+    for {name, %{"args" => args}} <- servers do
+      script = List.last(args)
+
+      assert String.starts_with?(script, priv_dir),
+             "#{name}: script must derive from the deployed priv dir " <>
+               "(#{priv_dir}), got #{script}"
+
+      refute script =~ ~r{/apps/ezagent_plugin_cc/},
+             "#{name}: script points at the repo SOURCE tree (#{script}) — " <>
+               "that path is absent from releases and dies with its checkout/worktree"
+
+      assert File.exists?(script), "#{name}: packaged script missing at #{script}"
+    end
+  end
+
   # Allen 2026-05-21: claude's --dangerously-load-development-channels
   # looks up the server name in the cwd-level .mcp.json BEFORE
   # --mcp-config <abs>. Agents whose cwd ≠ ezagent repo root saw

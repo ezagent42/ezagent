@@ -94,9 +94,9 @@ defmodule EzagentPluginCc.Application do
     do: [
       Ezagent.PluginCc.Template.CcAgent,
       Ezagent.PluginCc.Template.CcHeadlessAgent,
-      # DeepSeek provider variants (backend dimension, orthogonal to transport).
-      Ezagent.PluginCc.Template.CcDeepseekAgent,
-      Ezagent.PluginCc.Template.CcHeadlessDeepseekAgent
+      # Custom-backend flavor (closed-catalog "provider" selects the backend).
+      Ezagent.PluginCc.Template.CcCustomAgent,
+      Ezagent.PluginCc.Template.CcHeadlessCustomAgent
     ]
 
   @impl Ezagent.Plugin
@@ -118,24 +118,26 @@ defmodule EzagentPluginCc.Application do
         bridge_adapter: EzagentPluginCc.CcHeadlessBridgeAdapter,
         instance_behaviors: &Ezagent.Entity.Agent.cc_headless_behaviors/0
       },
-      # --- DeepSeek provider variants (backend dimension) --------------------
-      # Same transport/bridge/behaviors as cc / cc-headless; the ONLY difference
-      # is the LLM backend (DeepSeek's Anthropic-compatible endpoint via the
-      # DeepSeek env block, API-key auth from DEEPSEEK_API_KEY — no OAuth login).
-      # Distinct flavors because AgentFlavorRegistry enforces 1:1
-      # flavor↔template_class; all DeepSeek behaviour lives in
-      # `Ezagent.PluginCc.Provider`.
+      # --- Custom-backend flavor (backend dimension) ---------------------------
+      # ONE flavor for every custom backend: the REQUIRED "provider" template-
+      # data key names a closed ProviderCatalog profile (fail-closed validation
+      # — absent/unknown rejects; "anthropic" is NOT a profile). Same transport/
+      # bridge/behaviors as cc; all vendor behaviour lives in
+      # `Ezagent.PluginCc.Provider` + `Ezagent.PluginCc.ProviderCatalog`.
       %{
-        flavor: "cc-deepseek",
+        flavor: "cc-custom",
         kind: Ezagent.Entity.Agent,
-        template_class: Ezagent.PluginCc.Template.CcDeepseekAgent,
-        bridge_adapter: EzagentPluginCc.DeepseekBridgeAdapter
+        template_class: Ezagent.PluginCc.Template.CcCustomAgent,
+        bridge_adapter: EzagentPluginCc.CcCustomBridgeAdapter
       },
+      # The headless twin of "cc-custom": same closed-catalog "provider"
+      # contract, same fail-closed validation — over the headless SDK-sidecar
+      # transport (cc_headless_behaviors + :in_process_sync bridge).
       %{
-        flavor: "cc-headless-deepseek",
+        flavor: "cc-headless-custom",
         kind: Ezagent.Entity.Agent,
-        template_class: Ezagent.PluginCc.Template.CcHeadlessDeepseekAgent,
-        bridge_adapter: EzagentPluginCc.CcHeadlessDeepseekBridgeAdapter,
+        template_class: Ezagent.PluginCc.Template.CcHeadlessCustomAgent,
+        bridge_adapter: EzagentPluginCc.CcHeadlessCustomBridgeAdapter,
         instance_behaviors: &Ezagent.Entity.Agent.cc_headless_behaviors/0
       }
     ]

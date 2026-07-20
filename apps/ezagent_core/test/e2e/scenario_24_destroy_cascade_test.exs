@@ -52,7 +52,7 @@ defmodule Ezagent.E2E.Scenario24DestroyCascadeTest do
 
   @moduletag scenario: "24-destroy-cascade"
 
-  alias Ezagent.{Invocation, KindRegistry, SagaRunner, SystemPrincipal}
+  alias Ezagent.{Invocation, KindRegistry, SagaRunner}
   alias Ezagent.Ecto.KindSnapshot
   alias Ezagent.Entity.Agent, as: AgentKind
   alias Ezagent.Entity.{Session, User}
@@ -61,10 +61,12 @@ defmodule Ezagent.E2E.Scenario24DestroyCascadeTest do
 
   defp uniq, do: System.unique_integer([:positive])
 
-  defp admin_ctx do
+  defp admin_ctx(target) do
+    cap = signed_action_cap!(target, User.admin_uri())
+
     %{
       caller: User.admin_uri(),
-      caps: MapSet.new([Ezagent.Capability.admin_genesis_cap()]),
+      caps: MapSet.new([cap]),
       reply: {:caller_inbox, self()}
     }
   end
@@ -96,10 +98,11 @@ defmodule Ezagent.E2E.Scenario24DestroyCascadeTest do
     target = Ezagent.URI.new!("#{URI.to_string(uri)}?action=#{action}")
 
     Invocation.dispatch(%Invocation{
+      origin: :trusted_internal,
       target: target,
       mode: :call,
       args: args,
-      ctx: admin_ctx()
+      ctx: admin_ctx(target)
     })
   end
 

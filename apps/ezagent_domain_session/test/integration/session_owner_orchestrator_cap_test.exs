@@ -124,15 +124,18 @@ defmodule EzagentDomainInstanceMessage.Integration.SessionOwnerOrchestratorCapTe
       _ = Ezagent.SpawnRegistry.spawn(user_uri)
 
       target = URI.new!("#{URI.to_string(session_uri)}?action=session.join")
+      admin = Ezagent.Entity.User.admin_uri()
+      cap = Ezagent.Test.CapHelper.signed_action_cap!(target, admin)
 
       {:ok, _} =
         Ezagent.Invocation.dispatch(%Ezagent.Invocation{
+          origin: :trusted_internal,
           target: target,
           mode: :call,
           args: %{member: user_uri},
           ctx: %{
-            caller: Ezagent.Entity.User.admin_uri(),
-            caps: MapSet.new([Ezagent.Capability.admin_genesis_cap()]),
+            caller: admin,
+            caps: MapSet.new([cap]),
             reply: {:caller_inbox, self()}
           }
         })
@@ -140,7 +143,10 @@ defmodule EzagentDomainInstanceMessage.Integration.SessionOwnerOrchestratorCapTe
       # owner_uri now points at the user.
       assert {:ok, ^user_uri} = Session.owner(session_uri)
 
-      refute Enum.any?(Ezagent.Identity.list_caps_for(user_uri), &orchestrator_admin_cap?(&1, session_uri))
+      refute Enum.any?(
+               Ezagent.Identity.list_caps_for(user_uri),
+               &orchestrator_admin_cap?(&1, session_uri)
+             )
     end
 
     test "second user joining does NOT get owner cap (owner already claimed)" do
@@ -162,15 +168,18 @@ defmodule EzagentDomainInstanceMessage.Integration.SessionOwnerOrchestratorCapTe
       _ = Ezagent.SpawnRegistry.spawn(first_user)
 
       join_target = URI.new!("#{URI.to_string(session_uri)}?action=session.join")
+      admin = Ezagent.Entity.User.admin_uri()
+      cap = Ezagent.Test.CapHelper.signed_action_cap!(join_target, admin)
 
       ctx = %{
-        caller: Ezagent.Entity.User.admin_uri(),
-        caps: MapSet.new([Ezagent.Capability.admin_genesis_cap()]),
+        caller: admin,
+        caps: MapSet.new([cap]),
         reply: {:caller_inbox, self()}
       }
 
       {:ok, _} =
         Ezagent.Invocation.dispatch(%Ezagent.Invocation{
+          origin: :trusted_internal,
           target: join_target,
           mode: :call,
           args: %{member: first_user},
@@ -185,6 +194,7 @@ defmodule EzagentDomainInstanceMessage.Integration.SessionOwnerOrchestratorCapTe
 
       {:ok, _} =
         Ezagent.Invocation.dispatch(%Ezagent.Invocation{
+          origin: :trusted_internal,
           target: join_target,
           mode: :call,
           args: %{member: second_user},
@@ -223,15 +233,18 @@ defmodule EzagentDomainInstanceMessage.Integration.SessionOwnerOrchestratorCapTe
       _ = Ezagent.SpawnRegistry.spawn(agent_uri)
 
       target = URI.new!("#{URI.to_string(session_uri)}?action=session.join")
+      admin = Ezagent.Entity.User.admin_uri()
+      cap = Ezagent.Test.CapHelper.signed_action_cap!(target, admin)
 
       _ =
         Ezagent.Invocation.dispatch(%Ezagent.Invocation{
+          origin: :trusted_internal,
           target: target,
           mode: :call,
           args: %{member: agent_uri},
           ctx: %{
-            caller: Ezagent.Entity.User.admin_uri(),
-            caps: MapSet.new([Ezagent.Capability.admin_genesis_cap()]),
+            caller: admin,
+            caps: MapSet.new([cap]),
             reply: {:caller_inbox, self()}
           }
         })

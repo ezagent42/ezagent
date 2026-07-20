@@ -29,12 +29,12 @@ defmodule Ezagent.ActionSet.HelloPublisher do
   (e.g. user says \"name it zzz\"), uses that name + timestamp. Always unique.
   Posts the result from the publisher agent itself.
   """
-  def handle_publish(%{session_uri: session_str} = args, _ctx)
+  def handle_publish(%{session_uri: session_str} = args, ctx)
       when is_binary(session_str) and session_str != "" do
     case parse_session_uri(session_str) do
       {:ok, session_uri} ->
         caller_uri = Ezagent.Entity.User.admin_uri()
-        caps = MapSet.new([Ezagent.Capability.admin_genesis_cap()])
+        caps = Map.get(ctx, :caps, MapSet.new())
         instruction = Map.get(args, :instruction, "")
 
         result =
@@ -46,14 +46,24 @@ defmodule Ezagent.ActionSet.HelloPublisher do
                    caller: caller_uri,
                    caps: caps
                  ) do
-            "Template \"#{template_display_name(tmpl_uri)}\" published."
-          else
-            {:error, reason} -> "Template save failed: #{inspect(reason)}"
+            {:ok, "Template \"#{template_display_name(tmpl_uri)}\" published."}
           end
 
         case EzagentPluginHello.Members.role_uri(session_uri, "publisher") do
           {:ok, publisher_uri} ->
-            _ = EzagentPluginHello.TurnDriver.say(session_uri, publisher_uri, result)
+            case result do
+              {:ok, text} ->
+                _ = EzagentPluginHello.TurnDriver.say(session_uri, publisher_uri, text)
+
+              {:error, reason} ->
+                # G5 source 2 — structured error, no hand-written prose.
+                _ =
+                  EzagentPluginHello.TurnDriver.say_error(
+                    session_uri,
+                    publisher_uri,
+                    {:template_save_failed, reason}
+                  )
+            end
 
           :error ->
             :ok
@@ -161,4 +171,3 @@ defmodule Ezagent.ActionSet.HelloPublisher do
     ArgumentError -> :error
   end
 end
-

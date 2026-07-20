@@ -33,10 +33,7 @@ defmodule Ezagent.Integration.CreateAgentDispatchTest do
 
     workspace_uri = URI.new!("workspace://#{ws_name}")
 
-    admin_ctx = %{
-      caller: User.admin_uri(),
-      caps: MapSet.new([Ezagent.Capability.admin_genesis_cap()])
-    }
+    admin_ctx = signed_workspace_ctx!(workspace_uri)
 
     {:ok, ws_name: ws_name, workspace_uri: workspace_uri, admin_ctx: admin_ctx}
   end
@@ -329,20 +326,12 @@ defmodule Ezagent.Integration.CreateAgentDispatchTest do
         Keyword.put(cap_config, :authority_loader, loader)
       )
 
-      Application.put_env(:ezagent_core, loader, MapSet.new())
-
       caller = User.admin_uri()
 
-      owner_permitted =
-        Ezagent.Capability.cap(
-          :user,
-          Ezagent.ActionSet.Identity,
-          :list_caps,
-          caller,
-          Ezagent.Capability.workspace_of(caller)
-        )
+      {:ok, authority_anchor} = Ezagent.Cap.Authority.anchor(agent_uri)
+      Application.put_env(:ezagent_core, loader, MapSet.new([authority_anchor]))
 
-      later_denied =
+      owner_permitted =
         Ezagent.Capability.cap(
           :agent,
           Ezagent.ActionSet.Identity,
@@ -351,13 +340,27 @@ defmodule Ezagent.Integration.CreateAgentDispatchTest do
           workspace_uri
         )
 
-      assert {:ok, %Ezagent.Capability{instance: ^caller}} =
+      missing_target =
+        Ezagent.URI.agent(workspace_uri.host, "missing-#{System.unique_integer([:positive])}")
+
+      later_denied =
+        Ezagent.Capability.cap(
+          :agent,
+          Ezagent.ActionSet.Identity,
+          :list_caps,
+          missing_target,
+          workspace_uri
+        )
+
+      assert {:ok, %Ezagent.Capability{instance: ^agent_uri}} =
                Ezagent.Cap.issue({:held_by, caller}, agent_uri, owner_permitted)
 
       caps_before = Ezagent.Identity.read_entity_caps(agent_uri)
       buffer_size_before = Ezagent.PendingDelivery.buffer_size(agent_uri)
 
-      assert {:error, {:grant_failed, ^later_denied, :grant_not_owner}} =
+      assert {:error,
+              {:grant_failed, ^later_denied,
+               {:no_kind_module_for_agent, missing_target_string}}} =
                Workspace.grant_initial_caps(
                  agent_uri,
                  [owner_permitted, later_denied],
@@ -369,6 +372,8 @@ defmodule Ezagent.Integration.CreateAgentDispatchTest do
                    caps: MapSet.new([Ezagent.Capability.admin_genesis_cap()])
                  }
                )
+
+      assert missing_target_string == URI.to_string(missing_target)
 
       assert Ezagent.Identity.read_entity_caps(agent_uri) == caps_before
       assert Ezagent.PendingDelivery.buffer_size(agent_uri) == buffer_size_before
@@ -708,13 +713,12 @@ defmodule Ezagent.Integration.CreateAgentDispatchTest do
             workspace_uri
           )
 
+        create_cap = signed_cap!(workspace_uri, creator_uri, create_cap)
+
         {:ok, _pid} =
           Ezagent.Kind.spawn(User, %{
             uri: creator_uri,
-            initial_caps:
-              MapSet.new([
-                %{create_cap | granted_by: User.admin_uri(), granted_at: DateTime.utc_now()}
-              ])
+            initial_caps: MapSet.new([create_cap])
           })
 
         name = "managed-#{System.unique_integer([:positive])}"
@@ -741,7 +745,9 @@ defmodule Ezagent.Integration.CreateAgentDispatchTest do
           cap.action == :any and
           URI.to_string(cap.instance) == URI.to_string(instance_uri) and
           URI.to_string(cap.workspace_uri) == URI.to_string(workspace_uri) and
-          URI.to_string(cap.granted_by) == URI.to_string(creator_uri)
+          URI.to_string(cap.granted_by) == URI.to_string(creator_uri) and
+          URI.to_string(cap.grantee_uri) == URI.to_string(creator_uri) and
+          is_binary(cap.signature) and byte_size(cap.signature) > 0
 
       _ ->
         false

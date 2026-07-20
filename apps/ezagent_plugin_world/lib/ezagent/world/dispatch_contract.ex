@@ -13,9 +13,9 @@ defmodule Ezagent.World.DispatchContract do
     user: ~w(users.create users.profile.save users.password.set users.disable users.enable),
     cmdk: ~w(cmdk.open cmdk.close cmdk.query cmdk.select),
     admin:
-      ~w(admin.smtp.save admin.smtp.test admin.smtp.update_recipient external_mirror.bind external_mirror.unbind),
+      ~w(admin.registration.save admin.smtp.save admin.smtp.test admin.smtp.update_recipient external_mirror.bind external_mirror.unbind),
     workspace_plugin:
-      ~w(profile.display_name.edit profile.display_name.save profile.display_name.cancel feishu.bind feishu.unbind workspace.member.remove workspace.template.save auto_derive.default_source.set auto_derive.credential_grant.revoke),
+      ~w(profile.display_name.edit profile.display_name.save profile.display_name.cancel feishu.bind feishu.unbind workspace.member.remove workspace.invite.mint workspace.invite.revoke workspace.template.save kb.query kb.ingest auto_derive.default_source.set auto_derive.credential_grant.revoke),
     conversation:
       ~w(chat.send chat.load_older chat.mark_displayed session.switch session.invite session.remove_participant session.socialware.uninstall session.create session.view.switch session.pty.open session.orchestrator.restart session.routing.add session.routing.toggle)
   }

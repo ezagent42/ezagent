@@ -37,7 +37,7 @@ defmodule Ezagent.ActionSet.Session.MemberCap do
       false
     else
       cap = member_cap(session_uri, workspace_uri)
-      granter = member_cap_granter(ctx)
+      granter = grant_granter(ctx)
 
       # `:async` is REQUIRED here — EMPIRICALLY VERIFIED (codex MED, A1). This
       # runs inside the Session Kind's `handle_join`, and granting a
@@ -57,32 +57,44 @@ defmodule Ezagent.ActionSet.Session.MemberCap do
       # compensating-revoke fully verifiable needs the grant taken OFF the
       # `handle_join` path (an A2 grant-path rework; §16 risk-4 fail-closed
       # shift). A1 keeps the additive best-effort cast.
-      case Ezagent.Identity.Grant.grant_cap_via_router(
-             member_uri,
-             cap,
-             {:rule, :session_participation, granter},
-             :async
-           ) do
+      result =
+        with :ok <- Ezagent.Identity.TargetAuthority.ensure(granter, session_uri) do
+          Ezagent.Identity.Grant.grant_cap_via_router(
+            member_uri,
+            cap,
+            grant_authorization(granter),
+            :async
+          )
+        end
+
+      case result do
         :ok ->
           true
 
+        :error ->
+          log_grant_failure(member_uri, session_uri, :target_authority_unavailable)
+          false
+
         {:error, reason} ->
-          Logger.warning(
-            "Session.MemberCap.grant_at_join: member-cap grant failed for " <>
-              "member=#{URI.to_string(member_uri)} on session=" <>
-              "#{URI.to_string(session_uri)}: #{inspect(reason)} " <>
-              "(best-effort in A1; reconcile_after_load/2 + the migration are the backstops)."
-          )
-
-          :telemetry.execute(
-            [:ezagent, :session, :member_cap, :failed],
-            %{count: 1},
-            %{session_uri: session_uri, member_uri: member_uri, reason: reason}
-          )
-
+          log_grant_failure(member_uri, session_uri, reason)
           false
       end
     end
+  end
+
+  defp log_grant_failure(member_uri, session_uri, reason) do
+    Logger.warning(
+      "Session.MemberCap.grant_at_join: member-cap grant failed for " <>
+        "member=#{URI.to_string(member_uri)} on session=" <>
+        "#{URI.to_string(session_uri)}: #{inspect(reason)} " <>
+        "(best-effort in A1; reconcile_after_load/2 + the migration are the backstops)."
+    )
+
+    :telemetry.execute(
+      [:ezagent, :session, :member_cap, :failed],
+      %{count: 1},
+      %{session_uri: session_uri, member_uri: member_uri, reason: reason}
+    )
   end
 
   @doc """
@@ -95,7 +107,6 @@ defmodule Ezagent.ActionSet.Session.MemberCap do
     session_uri = ctx[:self_uri]
     workspace_uri = Ezagent.Capability.workspace_of(session_uri)
     cap = member_cap(session_uri, workspace_uri)
-    granter = member_cap_granter(ctx)
 
     # `:async` for the same self-deadlock reason as the grant (the revoke of a
     # session-instance cap re-enters the Session Kind). Enqueued FIFO after the
@@ -103,7 +114,7 @@ defmodule Ezagent.ActionSet.Session.MemberCap do
     case Ezagent.Identity.Grant.revoke_cap_via_router(
            member_uri,
            cap,
-           {:rule, :session_participation, granter},
+           grant_authorization(ctx),
            :async
          ) do
       :ok ->
@@ -140,14 +151,31 @@ defmodule Ezagent.ActionSet.Session.MemberCap do
     session_uri = ctx[:self_uri]
     workspace_uri = Ezagent.Capability.workspace_of(session_uri)
     cap = member_cap(session_uri, workspace_uri)
-    granter = member_cap_granter(ctx)
 
     Ezagent.Identity.Grant.revoke_cap_via_router(
       member_uri,
       cap,
-      {:rule, :session_participation, granter},
+      grant_authorization(ctx),
       :sync
     )
+  end
+
+  defp grant_authorization(%URI{} = owner) do
+    admin = Ezagent.Entity.User.admin_uri()
+
+    if Ezagent.URI.stable_key(owner) == Ezagent.URI.stable_key(admin),
+      do: {:admin, owner},
+      else: {:held_by, owner}
+  end
+
+  defp grant_authorization(ctx) when is_map(ctx) do
+    ctx
+    |> grant_granter()
+    |> grant_authorization()
+  end
+
+  defp grant_granter(ctx) when is_map(ctx) do
+    ctx[:read].(:owner_uri, nil) || Ezagent.Entity.User.admin_uri()
   end
 
   @doc """
@@ -235,21 +263,12 @@ defmodule Ezagent.ActionSet.Session.MemberCap do
   # duplicates). A member with no snapshot yet (brand-new) reads `[]` → grants.
   @spec member_snapshot_caps(URI.t()) :: [Ezagent.Capability.t()]
   defp member_snapshot_caps(%URI{} = member_uri) do
-    Ezagent.EntityCaps.load_persisted(member_uri)
+    case Ezagent.EntityCaps.load_persisted(member_uri) do
+      caps when is_list(caps) -> caps
+      _missing_or_unavailable -> []
+    end
   rescue
     _ -> []
-  end
-
-  # The member-cap granter = the session OWNER (owner-rooted, #154), read from
-  # `ctx` so it is NEVER a self-call to the Session Kind. An ownerless session
-  # (or the first-join owner-claim moment, when `prior_owner` is still nil) falls
-  # back to the #154 admin granter — same as `public_view_granter/1`.
-  @spec member_cap_granter(map()) :: URI.t()
-  defp member_cap_granter(ctx) do
-    case ctx[:read].(:owner_uri, nil) do
-      %URI{} = owner -> owner
-      _ -> Ezagent.Entity.User.admin_uri()
-    end
   end
 
   # The universal member-cap constructor (A1.1): `cap(:session, Session,

@@ -217,11 +217,8 @@ defmodule EzagentPluginHello.Generator do
       {:error, reason} = err ->
         Logger.warning("hello.Generator: generation failed: #{inspect(reason)}")
 
-        TurnDriver.say(
-          session_uri,
-          builder,
-          gettext("Generation failed after %{s}s: %{reason}", s: secs, reason: inspect(reason))
-        )
+        # G5 source 2 — structured error, no hand-written prose.
+        TurnDriver.say_error(session_uri, builder, {:generation_failed, reason})
 
         err
     end
@@ -568,11 +565,8 @@ defmodule EzagentPluginHello.Generator do
         ok
 
       {:error, reason} = err ->
-        TurnDriver.say(
-          session_uri,
-          builder,
-          gettext("Render failed: %{reason}", reason: inspect(reason))
-        )
+        # G5 source 2 — structured error, no hand-written prose.
+        TurnDriver.say_error(session_uri, builder, {:render_failed, reason})
 
         err
     end

@@ -286,7 +286,11 @@ defmodule EzagentCore.Invariants.CapCheckOnlyAtChokepointTest do
         "apps/ezagent_domain_identity/lib/ezagent/identity.ex",
         #   `Ezagent.Entity.User` owns `admin_uri/0` + the #154 genesis self-grant
         #   (`initial_caps_for_spawn`), which legitimately tests `uri == admin_uri()`.
-        "apps/ezagent_domain_identity/lib/ezagent/entity/user.ex"
+        "apps/ezagent_domain_identity/lib/ezagent/entity/user.ex",
+        # Per-Kind authority genesis and explicit re-genesis are the one
+        # canonical-admin root transition; this comparison is not a dispatch
+        # authorization shortcut.
+        "apps/ezagent_core/lib/ezagent/cap/authority.ex"
       ]
     }
   ]

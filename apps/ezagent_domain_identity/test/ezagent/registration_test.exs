@@ -59,29 +59,35 @@ defmodule Ezagent.RegistrationTest do
   end
 
   test "create_principal/4 creates user + profile + spawns the Kind" do
+    workspace = "registration-#{System.unique_integer([:positive])}"
+    {:ok, _workspace} = Ezagent.Workspace.create(workspace, %{})
+
     assert {:ok, uri} =
              Registration.create_principal(
                "newbie",
                "New Bie",
                "newbie@good.com",
-               @test_workspace
+               workspace
              )
 
-    assert URI.to_string(uri) == "entity://#{@test_workspace}/user/newbie"
+    assert URI.to_string(uri) == "entity://#{workspace}/user/newbie"
     assert Ezagent.Users.get_by_uri(uri) != nil
 
     assert Profile.by_email("newbie@good.com").entity_uri ==
-             "entity://#{@test_workspace}/user/newbie"
+             "entity://#{workspace}/user/newbie"
 
     assert {:ok, _pid} = Ezagent.KindRegistry.lookup(uri)
   end
 
   test "create_principal/4 rejects a taken slug" do
+    workspace = "registration-#{System.unique_integer([:positive])}"
+    {:ok, _workspace} = Ezagent.Workspace.create(workspace, %{})
+
     {:ok, _} =
-      Registration.create_principal("dup", "Dup", "dup1@good.com", @test_workspace)
+      Registration.create_principal("dup", "Dup", "dup1@good.com", workspace)
 
     assert {:error, :slug_taken} =
-             Registration.create_principal("dup", "Dup2", "dup2@good.com", @test_workspace)
+             Registration.create_principal("dup", "Dup2", "dup2@good.com", workspace)
   end
 
   describe "register_with_password/4 (task #87)" do
@@ -89,14 +95,31 @@ defmodule Ezagent.RegistrationTest do
     alias Ezagent.Users
 
     defp mint_code(attrs \\ %{}) do
-      base = %{workspace_uri: "workspace://team-alpha", created_by: "entity://system/user/admin"}
-      {:ok, {raw, _row}} = InviteCode.mint(Map.merge(base, attrs))
+      suffix = System.unique_integer([:positive])
+
+      base = %{
+        workspace_uri: "workspace://team-alpha-#{suffix}",
+        created_by: "entity://system/user/admin"
+      }
+
+      invite_attrs = Map.merge(base, attrs)
+      workspace_uri = Ezagent.URI.new!(invite_attrs.workspace_uri)
+      workspace_name = Ezagent.URI.name!(workspace_uri)
+
+      if is_nil(Ezagent.Workspace.Store.get_by_name(workspace_name)) do
+        {:ok, _workspace} =
+          Ezagent.Workspace.create(workspace_name, %{
+            created_by: Ezagent.Entity.User.admin_uri()
+          })
+      end
+
+      {:ok, {raw, _row}} = InviteCode.mint(invite_attrs)
       raw
     end
 
     test "invite path: creates an unverified, password-set user in the code's workspace + consumes the code" do
       n = System.unique_integer([:positive])
-      code = mint_code(%{workspace_uri: "workspace://team-alpha"})
+      code = mint_code()
       email = "reg#{n}@good.com"
 
       assert {:ok, uri} =
@@ -104,7 +127,7 @@ defmodule Ezagent.RegistrationTest do
                  invite_code: code
                )
 
-      assert uri.host == "team-alpha"
+      assert String.starts_with?(uri.host, "team-alpha-")
       decoded = Users.get_by_uri(uri)
       assert decoded.email_verified == false
       assert Users.verify_password(uri, "secret123")
@@ -141,6 +164,33 @@ defmodule Ezagent.RegistrationTest do
 
       assert {:error, :email_taken} =
                Registration.register_with_password(email, "pw1234", "X", invite_code: mint_code())
+    end
+
+    test "open self-serve creates one owned workspace and concrete signed founder caps" do
+      n = System.unique_integer([:positive])
+      email = "founder#{n}@good.com"
+
+      assert {:ok, uri} =
+               Registration.register_with_password(email, "pw1234", "Founder",
+                 mode: :open_self_serve
+               )
+
+      workspace_uri = Ezagent.URI.entity_workspace_uri(uri)
+      workspace_name = Ezagent.URI.name!(workspace_uri)
+      workspace = Ezagent.Workspace.Store.get_by_name(workspace_name)
+
+      assert workspace.created_by == uri
+      assert Enum.any?(workspace.members, &(URI.to_string(&1) == URI.to_string(uri)))
+
+      held = Ezagent.Identity.list_caps_for(uri)
+
+      assert Enum.any?(held, fn cap ->
+               cap.behavior == Ezagent.ActionSet.WorkspaceUserAdmin and
+                 cap.action == :mint_invite and cap.instance == workspace_uri and
+                 is_binary(cap.signature)
+             end)
+
+      refute Enum.any?(held, &match?({:within_workspace, _}, &1.instance))
     end
 
     test "no target → :no_registration_target" do

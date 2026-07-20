@@ -21,6 +21,14 @@ defmodule EzagentDomainInstanceMessage.Integration.OrchestratorScopedCapSelfStor
 
     {:ok, _user} = Ezagent.Users.create(owner_uri, nil, [])
     {:ok, owner_pid} = Ezagent.SpawnRegistry.spawn(owner_uri)
+    {:ok, workspace_pid} = Ezagent.Workspace.spawn_workspace(workspace_name, %{})
+
+    {:ok, session_pid} =
+      Ezagent.Kind.spawn(Ezagent.Entity.Session, %{
+        uri: session_uri,
+        behaviors: Ezagent.Entity.Session.behaviors(),
+        owner_uri: owner_uri
+      })
 
     {:ok, orchestrator_pid} =
       Ezagent.Kind.spawn(Ezagent.Entity.Agent, %{
@@ -30,12 +38,16 @@ defmodule EzagentDomainInstanceMessage.Integration.OrchestratorScopedCapSelfStor
 
     :ok = Ezagent.WorkspaceRegistry.bind(session_uri, workspace_uri)
     wait_ready(owner_uri)
+    wait_ready(workspace_uri)
+    wait_ready(session_uri)
     wait_ready(orchestrator_uri)
 
     on_exit(fn ->
       _ = Ezagent.PendingDelivery.flush(orchestrator_uri)
       :ok = Ezagent.WorkspaceRegistry.unbind(session_uri)
       terminate_if_alive(orchestrator_uri, orchestrator_pid)
+      terminate_if_alive(session_uri, session_pid)
+      terminate_if_alive(workspace_uri, workspace_pid)
       terminate_if_alive(owner_uri, owner_pid)
     end)
 
@@ -56,25 +68,26 @@ defmodule EzagentDomainInstanceMessage.Integration.OrchestratorScopedCapSelfStor
     assert {:ok, :ok} = Task.yield(task, 5_000) || Task.shutdown(task, :brutal_kill)
     assert Ezagent.ReadyGate.status(orchestrator_uri) == :not_ready
 
-    # This owner holds no delegable Template cap, so the standing preflight
-    # admits only the two unconditional, scope-bounded delegation artifacts.
+    # A never-ready transport does not block cap handoff: each exact Session
+    # or Workspace action is already signed by its concrete target authority
+    # and durably queued for the orchestrator's own absorb path.
     assert Ezagent.PendingDelivery.buffer_size(orchestrator_uri) == buffer_size_before
+    pending = pending_artifacts(orchestrator_uri)
 
-    assert 2 ==
-             EzagentCore.Repo.aggregate(
-               from(delivery in Delivery,
-                 where: delivery.target_uri == ^URI.to_string(orchestrator_uri),
-                 where: delivery.op == :absorb_cap,
-                 where: delivery.status == :pending
-               ),
-               :count
-             )
+    assert length(pending) == expected_cap_count()
+
+    assert Enum.all?(pending, fn cap ->
+             cap.instance in [session_uri, workspace_uri] and
+               cap.grantee_uri == orchestrator_uri and is_binary(cap.signature) and
+               is_binary(cap.key_id)
+           end)
 
     refute Enum.any?(Ezagent.Identity.read_entity_caps(orchestrator_uri), fn cap ->
-             cap.instance in [
-               {:within_session, session_uri},
-               {:spawned_by, orchestrator_uri}
-             ]
+             Enum.any?(
+               pending,
+               &(Ezagent.Capability.identity_key(&1) ==
+                   Ezagent.Capability.identity_key(cap))
+             )
            end)
 
     assert :ready =
@@ -86,35 +99,46 @@ defmodule EzagentDomainInstanceMessage.Integration.OrchestratorScopedCapSelfStor
     assert eventually(fn ->
              caps = Ezagent.Identity.read_entity_caps(orchestrator_uri)
 
-             Enum.any?(
-               caps,
-               &scoped_cap?(&1, :session, {:within_session, session_uri}, owner_uri)
-             ) and
+             Enum.all?(pending, fn expected ->
                Enum.any?(
                  caps,
-                 &scoped_cap?(&1, :agent, {:spawned_by, orchestrator_uri}, owner_uri)
-               ) and
-               Enum.all?(caps, fn cap ->
-                 cap.behavior != Ezagent.ActionSet.Template or
-                   cap.instance != {:within_workspace, workspace_uri}
-               end) and
+                 &(Ezagent.Capability.identity_key(&1) ==
+                     Ezagent.Capability.identity_key(expected))
+               )
+             end) and
                EzagentCore.Repo.aggregate(
                  from(delivery in Delivery,
                    where: delivery.target_uri == ^URI.to_string(orchestrator_uri),
                    where: delivery.op == :absorb_cap,
-                   where: delivery.status == :applied
+                   where: delivery.status == :pending
                  ),
                  :count
-               ) == 2
+               ) == 0
            end)
   end
 
-  defp scoped_cap?(cap, kind, instance, owner_uri) do
-    cap.kind == kind and
-      cap.behavior == :any and
-      cap.action == :any and
-      cap.instance == instance and
-      cap.granted_by == owner_uri
+  defp pending_artifacts(uri) do
+    from(delivery in Delivery,
+      where: delivery.target_uri == ^URI.to_string(uri),
+      where: delivery.op == :absorb_cap,
+      where: delivery.status == :pending,
+      order_by: [asc: delivery.id],
+      select: delivery.payload
+    )
+    |> EzagentCore.Repo.all()
+    |> Enum.map(fn payload ->
+      %{op: :absorb_cap, cap: cap} = :erlang.binary_to_term(payload, [:safe])
+      cap
+    end)
+  end
+
+  defp expected_cap_count do
+    session_count =
+      Ezagent.CapabilityRegistry.subjects_for_kind(Ezagent.Entity.Session)
+      |> Enum.reject(&Ezagent.Cap.Verifier.non_cap_action?(&1.behavior, &1.action))
+      |> length()
+
+    session_count + 3
   end
 
   defp wait_ready(uri, attempts \\ 200)
@@ -129,7 +153,7 @@ defmodule EzagentDomainInstanceMessage.Integration.OrchestratorScopedCapSelfStor
     end
   end
 
-  defp eventually(fun, attempts \\ 100)
+  defp eventually(fun, attempts \\ 500)
   defp eventually(_fun, 0), do: false
 
   defp eventually(fun, attempts) do

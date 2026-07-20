@@ -52,8 +52,7 @@ defmodule EzagentCore.E2E.Scenario17MultiWorkspaceUserTest do
   # the umbrella. Excluded from `cd apps/ezagent_core && mix test`.
   @moduletag :umbrella_only
 
-  alias Ezagent.{Capability, Invocation, Message, SpawnRegistry, WorkspaceRegistry, Workspace}
-  alias Ezagent.Entity.User
+  alias Ezagent.{Invocation, Message, SpawnRegistry, WorkspaceRegistry, Workspace}
 
   defp uniq(prefix), do: "#{prefix}-#{System.unique_integer([:positive])}"
 
@@ -71,21 +70,15 @@ defmodule EzagentCore.E2E.Scenario17MultiWorkspaceUserTest do
   # A `session.send` cap scoped to a concrete workspace (NOT `:any`),
   # mirroring `User.default_caps/1`'s shape. Passes step 5.5 only for a
   # target in `workspace_uri`.
-  defp session_cap_for(%URI{} = workspace_uri) do
-    %Capability{
-      kind: :session,
-      behavior: :any,
-      instance: :any,
-      workspace_uri: workspace_uri,
-      granted_by: User.admin_uri(),
-      granted_at: ~U[2026-06-14 00:00:00Z]
-    }
+  defp session_cap_for(%URI{} = session_uri, %URI{} = grantee) do
+    signed_action_cap!(Ezagent.URI.with_action(session_uri, :session, :send), grantee)
   end
 
   defp send_invocation(%URI{} = session_uri, %URI{} = caller_uri, caps) do
     msg = Message.new(caller_uri, %{text: "hello", attachments: []})
 
     %Invocation{
+      origin: :trusted_internal,
       target: URI.new!("#{URI.to_string(session_uri)}?action=session.send"),
       mode: :call,
       args: %{message: msg},
@@ -201,8 +194,8 @@ defmodule EzagentCore.E2E.Scenario17MultiWorkspaceUserTest do
       # cross-workspace (beta) dispatch.
       caps =
         MapSet.new([
-          session_cap_for(ctx.alpha_ws),
-          session_cap_for(ctx.beta_ws)
+          session_cap_for(ctx.alpha_session, u),
+          session_cap_for(ctx.beta_session, u)
         ])
 
       # alpha is U's home workspace — intra-workspace (5.6 trivially OK).
@@ -227,7 +220,7 @@ defmodule EzagentCore.E2E.Scenario17MultiWorkspaceUserTest do
       # beta target), but is NOT a system member and the cap is not
       # `:any`, so step 5.6 must deny.
       u = URI.new!("entity://#{ctx.alpha_name}/user/#{uniq("tenant")}")
-      caps = MapSet.new([session_cap_for(ctx.beta_ws)])
+      caps = MapSet.new([session_cap_for(ctx.beta_session, u)])
 
       assert {:error, :cross_workspace_denied} =
                Invocation.dispatch(send_invocation(ctx.beta_session, u, caps)),
@@ -242,7 +235,7 @@ defmodule EzagentCore.E2E.Scenario17MultiWorkspaceUserTest do
 
       u = URI.new!("entity://#{ctx.alpha_name}/user/#{uniq("revoke")}")
       {:ok, _} = SpawnRegistry.spawn(u)
-      caps = MapSet.new([session_cap_for(ctx.beta_ws)])
+      caps = MapSet.new([session_cap_for(ctx.beta_session, u)])
 
       # Granted: system member → cross-workspace dispatch passes the gate.
       :ok = add_to_system(u)

@@ -66,41 +66,6 @@ defmodule Ezagent.ActionSet.Session.ConfigActions do
     Map.get(chat_slice, :template_working_copy, default_template_working_copy())
   end
 
-  # The HIGH-2 orchestrator-only gate. `ctx.self_uri` is the Session
-  # Kind's own URI (injected by `Kind.Runtime` step 5).
-  @doc false
-  @spec working_copy_write_authorized?(map()) :: boolean()
-  def working_copy_write_authorized?(ctx) do
-    Map.get(ctx, :system_internal) == true or
-      orchestrator_cap_present?(ctx)
-  end
-
-  # True iff `ctx.caps` carries a `{:within_session, self_uri}` cap on
-  # the `:session` kind — i.e. the caller IS this session's orchestrator
-  # (cap #1, granted only by the Generator to the orchestrator agent).
-  @doc false
-  @spec orchestrator_cap_present?(map()) :: boolean()
-  def orchestrator_cap_present?(ctx) do
-    self_uri = Map.get(ctx, :self_uri)
-    caps = Map.get(ctx, :caps, MapSet.new())
-
-    case self_uri do
-      %URI{} = sess_uri ->
-        self_str = URI.to_string(sess_uri)
-
-        Enum.any?(caps, fn
-          %Ezagent.Capability{kind: :session, instance: {:within_session, %URI{} = s}} ->
-            URI.to_string(s) == self_str
-
-          _ ->
-            false
-        end)
-
-      _ ->
-        false
-    end
-  end
-
   @doc """
   System-internal path to write the durable `template_working_copy`
   field (HIGH-2 hardening).
@@ -121,27 +86,23 @@ defmodule Ezagent.ActionSet.Session.ConfigActions do
   """
   @spec system_set_working_copy(URI.t(), map()) :: {:ok, map()} | {:error, term()}
   def system_set_working_copy(%URI{} = session_uri, working_copy) when is_map(working_copy) do
-    case Ezagent.Router.dispatch(%Cmd{
-           target: session_uri,
-           action: :set_working_copy,
-           args: %{template_working_copy: working_copy},
-           # #154 — `system://session-internal` ELIMINATED. Writing the session's
-           # OWN durable working_copy slice is SESSION SELF-authority (the session
-           # acting on its own slice, like workspace-loader #832). caller = the
-           # session itself; inline `set_working_copy` cap granted_by the session
-           # (a real entity). `system_internal: true` STAYS — it is the handler's
-           # forge-resistant gate (`working_copy_write_authorized?`), independent
-           # of the principal; only this trusted internal path sets it.
-           ctx: %{
-             caller: session_uri,
-             caps: session_self_cap(session_uri, :set_working_copy),
-             system_internal: true,
-             reply: {:caller_inbox, self()}
-           }
-         }) do
-      {:ok, %{template_working_copy: _} = ok} -> {:ok, ok}
-      {:error, _} = err -> err
-      other -> {:error, {:unexpected_set_working_copy_result, other}}
+    with {:ok, caps} <- session_self_cap(session_uri, :set_working_copy) do
+      case Ezagent.Router.dispatch(%Cmd{
+             target: session_uri,
+             action: :set_working_copy,
+             args: %{template_working_copy: working_copy},
+             ctx: %{
+               caller: session_uri,
+               caps: caps,
+               system_internal: true,
+               reply: {:caller_inbox, self()}
+             },
+             origin: :trusted_internal
+           }) do
+        {:ok, %{template_working_copy: _} = ok} -> {:ok, ok}
+        {:error, _} = err -> err
+        other -> {:error, {:unexpected_set_working_copy_result, other}}
+      end
     end
   end
 
@@ -160,23 +121,22 @@ defmodule Ezagent.ActionSet.Session.ConfigActions do
   @spec system_set_prompt_templates(URI.t(), map()) :: {:ok, map()} | {:error, term()}
   def system_set_prompt_templates(%URI{} = session_uri, prompt_templates)
       when is_map(prompt_templates) do
-    case Ezagent.Router.dispatch(%Cmd{
-           target: session_uri,
-           action: :set_prompt_templates,
-           args: %{prompt_templates: prompt_templates},
-           # #154 — `system://session-internal` ELIMINATED. Session SELF-authority
-           # (writes the session's own prompt-template slice); caller = the session,
-           # inline cap granted_by the session. `legends_write_authorized?` now
-           # recognizes `caller == self_uri`.
-           ctx: %{
-             caller: session_uri,
-             caps: session_self_cap(session_uri, :set_prompt_templates),
-             reply: {:caller_inbox, self()}
-           }
-         }) do
-      {:ok, %{prompt_templates: _} = ok} -> {:ok, ok}
-      {:error, _} = err -> err
-      other -> {:error, {:unexpected_set_prompt_templates_result, other}}
+    with {:ok, caps} <- session_self_cap(session_uri, :set_prompt_templates) do
+      case Ezagent.Router.dispatch(%Cmd{
+             target: session_uri,
+             action: :set_prompt_templates,
+             args: %{prompt_templates: prompt_templates},
+             ctx: %{
+               caller: session_uri,
+               caps: caps,
+               reply: {:caller_inbox, self()}
+             },
+             origin: :trusted_internal
+           }) do
+        {:ok, %{prompt_templates: _} = ok} -> {:ok, ok}
+        {:error, _} = err -> err
+        other -> {:error, {:unexpected_set_prompt_templates_result, other}}
+      end
     end
   end
 
@@ -190,20 +150,14 @@ defmodule Ezagent.ActionSet.Session.ConfigActions do
   pinning the Session behavior module; `kind`/`action`/`instance` keep it
   least-privilege. Shared by `Legends.system_set_legends/2`.
   """
-  @spec session_self_cap(URI.t(), atom()) :: MapSet.t()
+  @spec session_self_cap(URI.t(), atom()) :: {:ok, MapSet.t()} | {:error, term()}
   def session_self_cap(%URI{} = session_uri, action) when is_atom(action) do
-    MapSet.new([
-      %Ezagent.Capability{
-        Ezagent.Capability.cap(
-          :session,
-          :any,
-          action,
-          Ezagent.URI.instance(session_uri),
-          Ezagent.Capability.workspace_of(session_uri)
-        )
-        | granted_by: session_uri,
-          granted_at: DateTime.utc_now()
-      }
-    ])
+    target = Ezagent.URI.with_action(session_uri, :session, action)
+    admin = Ezagent.URI.user(:system, :admin)
+
+    case Ezagent.Cap.issue_for_action({:admin, admin}, session_uri, target) do
+      {:ok, cap} -> {:ok, MapSet.new([cap])}
+      {:error, _reason} = error -> error
+    end
   end
 end

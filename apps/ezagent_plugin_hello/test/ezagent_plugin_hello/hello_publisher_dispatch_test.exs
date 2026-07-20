@@ -1,7 +1,7 @@
 defmodule EzagentPluginHello.HelloPublisherDispatchTest do
   use EzagentCore.DataCase, async: false
 
-  alias Ezagent.{Capability, Invocation}
+  alias Ezagent.Invocation
   alias Ezagent.ActionSet.HelloPublisher
   alias Ezagent.Entity.Agent
 
@@ -53,25 +53,23 @@ defmodule EzagentPluginHello.HelloPublisherDispatchTest do
     # F1: a caller WITHOUT the :publish cap is rejected.
     result_denied =
       Invocation.dispatch(%Invocation{
+        origin: :trusted_internal,
         target: target,
         mode: :call,
         args: args,
         ctx: %{caller: denied_uri, caps: MapSet.new(), reply: {:caller_inbox, self()}}
       })
 
-    assert {:error, :unauthorized} = result_denied
+    assert {:error, :missing_cap} = result_denied
 
     # A caller WITH the :publish cap is authorized. The handler then runs and
     # fail-fasts on the missing session (expected) — the cap-gate is what we test.
     publish_cap =
-      %Capability{
-        Capability.cap(:agent, HelloPublisher, :publish, publisher_uri, ws_uri)
-        | granted_by: Ezagent.URI.new!("entity://system/user/admin"),
-          granted_at: DateTime.utc_now()
-      }
+      Ezagent.Test.CapHelper.signed_action_cap!(target, Ezagent.Entity.User.admin_uri())
 
     result_allowed =
       Invocation.dispatch(%Invocation{
+        origin: :trusted_internal,
         target: target,
         mode: :call,
         args: args,
@@ -89,4 +87,3 @@ defmodule EzagentPluginHello.HelloPublisherDispatchTest do
     assert {:ok, %{}} = result_allowed
   end
 end
-

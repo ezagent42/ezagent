@@ -44,13 +44,23 @@ defmodule Ezagent.World.WorkspacePluginData do
          %{component: component, name: name},
          base,
          _workspace,
-         _caller,
-         _caps
+         caller,
+         caps
        )
        when component in ["workspace_detail", "workspace_template_new"] do
     base
-    |> Map.merge(workspace_detail(name))
+    |> Map.merge(workspace_detail(name, caller, caps))
     |> maybe_put_template_mode(component)
+  end
+
+  defp component_state(
+         %{component: "kb"},
+         base,
+         workspace_uri,
+         _caller,
+         _caps
+       ) do
+    Map.put(base, "kb_agents", kb_agent_rows(workspace_uri))
   end
 
   defp component_state(%{component: "plugins"} = route, base, _workspace_uri, _caller, _caps) do
@@ -148,7 +158,7 @@ defmodule Ezagent.World.WorkspacePluginData do
     err -> [%{"error" => inspect(err)}]
   end
 
-  defp workspace_detail(name) when is_binary(name) do
+  defp workspace_detail(name, caller, caps) when is_binary(name) do
     case Ezagent.Workspace.Store.get_by_name(name) do
       nil ->
         %{"name" => name, "not_found" => true}
@@ -160,65 +170,65 @@ defmodule Ezagent.World.WorkspacePluginData do
           "not_found" => false,
           "live" => workspace_live?(ws.uri),
           "members" => Enum.map(ws.members || [], &encode_uri/1),
-          "session_templates" => template_rows(ws.session_templates || %{}, ws.name),
+          "session_templates" => template_rows(ws.session_templates || %{}, ws.name, caller),
           "routing_rules" => Enum.map(ws.routing_rules || [], &jsonable/1),
           "socialwares" => socialware_rows(ws.uri)
         }
+        |> Map.merge(invite_state(ws.uri, caller, caps))
     end
   rescue
     err -> %{"name" => name, "not_found" => true, "error" => inspect(err)}
   end
 
-  defp workspace_detail(_), do: %{"not_found" => true}
+  defp workspace_detail(_, _caller, _caps), do: %{"not_found" => true}
+
+  defp invite_state(%URI{} = workspace_uri, %URI{} = caller, caps) do
+    case Ezagent.Workspace.Invites.list(workspace_uri, %{caller: caller, caps: caps}) do
+      {:ok, %{invites: invites}} ->
+        %{"can_manage_invites" => true, "invites" => Enum.map(invites, &jsonable/1)}
+
+      {:error, _reason} ->
+        %{"can_manage_invites" => false, "invites" => []}
+    end
+  end
+
+  defp invite_state(_workspace_uri, _caller, _caps) do
+    %{"can_manage_invites" => false, "invites" => []}
+  end
+
+  defp kb_agent_rows(%URI{scheme: "workspace"} = workspace_uri) do
+    "kb"
+    |> Ezagent.Agent.RecipeResolver.list_by_recipe(workspace_uri)
+    |> Enum.map(fn uri ->
+      uri_string = encode_uri(uri)
+
+      %{
+        "uri" => uri_string,
+        "display_name" => display_name(uri_string) || Ezagent.URI.name!(uri)
+      }
+    end)
+  rescue
+    _ -> []
+  end
+
+  defp kb_agent_rows(_workspace_uri), do: []
 
   defp workspace_live?(%URI{} = uri) do
     Ezagent.LocalRuntime.kind_alive?(uri)
   end
 
-  @doc "List SessionTemplate rows for a workspace detail surface."
-  @spec session_template_rows(String.t()) :: [map()]
-  def session_template_rows(workspace_name) when is_binary(workspace_name) do
-    live = live_session_template_rows(workspace_name)
-    live_uris = MapSet.new(live, & &1["uri"])
+  @doc """
+  List SessionTemplate rows for a workspace detail surface.
 
-    (live ++ persisted_session_template_rows(workspace_name, live_uris))
-    |> Enum.sort_by(&{&1["name"], &1["uri"] || ""})
-  end
-
-  # Durable session templates from snapshots (not currently live in the registry)
-  # — the substrate does NOT respawn every template Kind on boot, so the live
-  # registry alone drops published templates after a cold restart. Name is parsed
-  # from the URI (`template://session/<ws>/<name>@<hash>`); content isn't read
-  # (that needs a live Kind), which is fine — the dropdown only needs the name,
-  # and creating from it revives the template via the DB-scanning resolver.
-  defp persisted_session_template_rows(workspace_name, exclude_uris) do
-    Ezagent.Ecto.KindSnapshot.list_all()
-    |> Enum.flat_map(fn snap ->
-      uri_str = Map.get(snap, :uri)
-
-      with "session_template" <- Map.get(snap, :kind_type),
-           true <- is_binary(uri_str) and not MapSet.member?(exclude_uris, uri_str),
-           {:ok, %URI{} = uri} <- Ezagent.URI.parse(uri_str),
-           true <- session_template_for_workspace?(uri, workspace_name) do
-        [
-          %{
-            "name" => template_family_name(uri, %{}),
-            "source" => "session_template",
-            "uri" => uri_str,
-            "alive" => false,
-            "description" => "",
-            "members_count" => 0,
-            "web_anon_access" => false,
-            "status" => "session_template",
-            "body" => %{}
-          }
-        ]
-      else
-        _ -> []
-      end
-    end)
-  rescue
-    _ -> []
+  Read-plane PR-4 rework: the enumeration routes through the
+  caller-authorizing `Ezagent.Session.TemplateReads` chokepoint
+  (workspace member/operator only; fail-closed `[]`) — the live
+  `KindRegistry` + durable `KindSnapshot` global scans are no longer
+  touched from this presenter tier.
+  """
+  @spec session_template_rows(URI.t() | term(), String.t()) :: [map()]
+  def session_template_rows(caller, workspace_name) when is_binary(workspace_name) do
+    Ezagent.Session.TemplateReads.session_templates(caller, workspace_name)
   end
 
   @doc """
@@ -231,8 +241,8 @@ defmodule Ezagent.World.WorkspacePluginData do
   (Overview landing) both call this — never re-copy the body (arch cross-file
   duplicate-fn gate).
   """
-  @spec session_template_names(URI.t() | term()) :: [String.t()]
-  def session_template_names(%URI{scheme: "workspace"} = workspace_uri) do
+  @spec session_template_names(URI.t() | term(), URI.t() | term()) :: [String.t()]
+  def session_template_names(caller, %URI{scheme: "workspace"} = workspace_uri) do
     # F3: offer only Classes that are DIRECTLY creatable from this generic picker
     # (it supplies only the universal `session_name` arg). A Class whose
     # `instantiate/3` requires extra args declares `directly_creatable?/0 =>
@@ -247,7 +257,7 @@ defmodule Ezagent.World.WorkspacePluginData do
     instances =
       workspace_uri
       |> Ezagent.URI.name!()
-      |> session_template_rows()
+      |> then(&session_template_rows(caller, &1))
       |> Enum.map(&Map.get(&1, "name"))
 
     # "default" is ALWAYS the first (selected) option — the React picker takes
@@ -264,7 +274,7 @@ defmodule Ezagent.World.WorkspacePluginData do
     _ -> ["default"]
   end
 
-  def session_template_names(_), do: ["default"]
+  def session_template_names(_caller, _), do: ["default"]
 
   @doc "Installable socialware definitions visible to a workspace."
   @spec socialware_rows(URI.t() | term()) :: [map()]
@@ -345,12 +355,17 @@ defmodule Ezagent.World.WorkspacePluginData do
     end
   end
 
-  defp template_rows(templates, workspace_name) when is_map(templates) do
+  defp template_rows(templates, workspace_name, caller) when is_map(templates) do
     legacy_rows =
       templates
       |> legacy_template_rows()
 
-    session_rows = session_template_rows(workspace_name)
+    # `body` normalization is the presenter's job (the world row
+    # contract) — the chokepoint returns raw template content.
+    session_rows =
+      caller
+      |> session_template_rows(workspace_name)
+      |> Enum.map(fn row -> Map.update(row, "body", %{}, &jsonable/1) end)
 
     (session_rows ++ legacy_rows)
     |> Enum.uniq_by(&{&1["source"], &1["name"], &1["uri"]})
@@ -371,63 +386,6 @@ defmodule Ezagent.World.WorkspacePluginData do
       }
     end)
   end
-
-  defp live_session_template_rows(workspace_name) do
-    Ezagent.KindRegistry.list_all()
-    |> Enum.flat_map(fn {uri_str, pid} ->
-      with {:ok, uri} <- Ezagent.URI.parse(uri_str),
-           true <- session_template_for_workspace?(uri, workspace_name),
-           {:ok, _pid} <- Ezagent.Entity.Session.ensure_template_alive(uri),
-           {:ok, content} <- Ezagent.Entity.Session.read_template_content(uri) do
-        [
-          %{
-            "name" => template_family_name(uri, content),
-            "source" => "session_template",
-            "uri" => uri_str,
-            "alive" => is_pid(pid) and Process.alive?(pid),
-            "description" => template_description(content),
-            "members_count" => template_member_count(content),
-            "web_anon_access" => web_anon_access?(content),
-            "status" => "session_template",
-            "body" => jsonable(content)
-          }
-        ]
-      else
-        _ -> []
-      end
-    end)
-  end
-
-  defp session_template_for_workspace?(%URI{scheme: "template"} = uri, workspace_name) do
-    Ezagent.URI.type?(uri, :session) and
-      case Ezagent.URI.workspace_of(uri) do
-        %URI{} = ws_uri -> Ezagent.URI.name!(ws_uri) == workspace_name
-        _ -> false
-      end
-  end
-
-  defp session_template_for_workspace?(_, _), do: false
-
-  defp template_family_name(_uri, %{name: name}) when is_binary(name), do: name
-  defp template_family_name(_uri, %{"name" => name}) when is_binary(name), do: name
-
-  defp template_family_name(%URI{} = uri, _content) do
-    uri
-    |> URI.to_string()
-    |> String.split("/")
-    |> List.last()
-    |> to_string()
-    |> String.split("@")
-    |> List.first()
-  end
-
-  defp template_description(%{description: description}) when is_binary(description),
-    do: description
-
-  defp template_description(%{"description" => description}) when is_binary(description),
-    do: description
-
-  defp template_description(_), do: nil
 
   defp template_class(%{"class" => class}) when is_binary(class), do: class
   defp template_class(_), do: nil

@@ -17,12 +17,18 @@ defmodule Ezagent.InvocationTest do
     {:ok, _pid} = Ezagent.Kind.Server.start_link({TestKind, %{uri: uri}})
     :ok = wait_until_ready(uri)
 
-    {:ok, instance_uri: uri, target: Ezagent.URI.new!("#{URI.to_string(uri)}?action=test.noop")}
+    target = Ezagent.URI.with_action(uri, :test, :noop)
+    presenter = Ezagent.URI.user(:system, :admin)
+    cap = signed_fixture_cap!(target, :test, TestBehavior, :noop, presenter)
+    Process.put({__MODULE__, :presented_cap}, cap)
+
+    {:ok, instance_uri: uri, target: target}
   end
 
   describe "dispatch/1 — happy path" do
     test ":call returns the invoke result", %{target: target} do
       inv = %Invocation{
+        origin: :trusted_internal,
         target: target,
         mode: :call,
         args: %{msg: "hi"},
@@ -34,6 +40,7 @@ defmodule Ezagent.InvocationTest do
 
     test ":cast returns :ok and delivers via caller_inbox reply", %{target: target} do
       inv = %Invocation{
+        origin: :trusted_internal,
         target: target,
         mode: :cast,
         args: %{msg: "cast-msg"},
@@ -48,6 +55,7 @@ defmodule Ezagent.InvocationTest do
   describe "dispatch/1 — error paths" do
     test ":no_such_actor for unknown URI" do
       inv = %Invocation{
+        origin: :trusted_internal,
         target:
           Ezagent.URI.new!("entity://team-alpha/agent/echo_does-not-exist?action=test.noop"),
         mode: :call,
@@ -63,6 +71,7 @@ defmodule Ezagent.InvocationTest do
         Ezagent.URI.new!("session://system/default/missing-cast-log?action=session.send")
 
       inv = %Invocation{
+        origin: :trusted_internal,
         target: target,
         mode: :cast,
         args: %{message: %{text: "x"}},
@@ -119,6 +128,7 @@ defmodule Ezagent.InvocationTest do
       end)
 
       inv = %Invocation{
+        origin: :trusted_internal,
         target: Ezagent.URI.new!("#{URI.to_string(uri)}?action=test.noop"),
         mode: :call,
         args: %{msg: "x"},
@@ -137,6 +147,7 @@ defmodule Ezagent.InvocationTest do
       target = Ezagent.URI.new!("#{URI.to_string(uri)}?action=test.noop")
 
       inv = %Invocation{
+        origin: :trusted_internal,
         target: target,
         mode: :cast,
         args: %{msg: "buffered"},
@@ -171,6 +182,7 @@ defmodule Ezagent.InvocationTest do
       assert lock_pid == lock_holder.pid
 
       inv = %Invocation{
+        origin: :trusted_internal,
         target: Ezagent.URI.new!("#{URI.to_string(uri)}?action=test.noop"),
         mode: :cast,
         args: %{msg: "old-incarnation-authority"},
@@ -302,6 +314,7 @@ defmodule Ezagent.InvocationTest do
       assert Ezagent.ReadyGate.status(uri) == :ready
 
       inv = %Invocation{
+        origin: :trusted_internal,
         target: Ezagent.URI.new!("#{URI.to_string(uri)}?action=test.noop"),
         mode: :cast,
         args: %{msg: "must-enter-pending-before-persistence"},
@@ -358,6 +371,7 @@ defmodule Ezagent.InvocationTest do
       )
 
       inv = %Invocation{
+        origin: :trusted_internal,
         target: Ezagent.URI.new!("#{URI.to_string(uri)}?action=test.noop"),
         mode: :cast,
         args: %{msg: "dropped"},
@@ -389,6 +403,7 @@ defmodule Ezagent.InvocationTest do
 
     test ":subscribe / :introspect return :unsupported_mode in Phase 1", %{target: target} do
       inv = %Invocation{
+        origin: :trusted_internal,
         target: target,
         mode: :subscribe,
         args: %{},
@@ -429,7 +444,13 @@ defmodule Ezagent.InvocationTest do
 
       ctx = ctx_for(self()) |> Map.put(:idempotency_key, key)
 
-      inv = %Invocation{target: target, mode: :call, args: %{msg: "once"}, ctx: ctx}
+      inv = %Invocation{
+        origin: :trusted_internal,
+        target: target,
+        mode: :call,
+        args: %{msg: "once"},
+        ctx: ctx
+      }
 
       # First call records and dispatches.
       assert {:ok, %{echoed: "once"}} = Invocation.dispatch(inv)
@@ -467,8 +488,8 @@ defmodule Ezagent.InvocationTest do
 
   defp ctx_for(pid) do
     %{
-      caller: Ezagent.URI.new!("entity://system/user/admin"),
-      caps: MapSet.new([Ezagent.Capability.admin_genesis_cap()]),
+      caller: Ezagent.URI.user(:system, :admin),
+      caps: MapSet.new([Process.get({__MODULE__, :presented_cap})]),
       reply: {:caller_inbox, pid}
     }
   end

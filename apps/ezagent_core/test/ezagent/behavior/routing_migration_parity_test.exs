@@ -34,7 +34,7 @@ defmodule Ezagent.ActionSet.RoutingMigrationParityTest do
 
   use EzagentCore.DataCase, async: false
 
-  alias Ezagent.{BehaviorRegistry, Invocation}
+  alias Ezagent.{BehaviorRegistry, Capability, Invocation}
   alias Ezagent.ActionSet.Routing
   alias Ezagent.Routing.RuleStore
   alias EzagentDomainInstanceMessage.Routing.MentionRouting
@@ -101,7 +101,8 @@ defmodule Ezagent.ActionSet.RoutingMigrationParityTest do
     :ok = BehaviorRegistry.register(StubRoutingKind, :enable_rule, Routing)
 
     self_uri = Ezagent.URI.new!("system://routing/default")
-    admin_caps = MapSet.new([Ezagent.Capability.admin_genesis_cap()])
+    _authority = install_test_authority!(self_uri, StubRoutingKind.type_name())
+    admin_caps = :target_signed
     state = %{routing: %{calls: 0}}
 
     {:ok, self_uri: self_uri, admin_caps: admin_caps, state: state}
@@ -110,11 +111,27 @@ defmodule Ezagent.ActionSet.RoutingMigrationParityTest do
   defp build_invocation(self_uri, action, args, caps) do
     target = Ezagent.URI.new!("#{URI.to_string(self_uri)}?action=routing.#{action}")
 
+    presenter = Ezagent.URI.user(:system, :admin)
+    authority = Process.get({Ezagent.Cap.Authority, :current})
+
+    requested =
+      Capability.cap(
+        StubRoutingKind.type_name(),
+        Routing,
+        action,
+        self_uri,
+        Capability.workspace_of(self_uri)
+      )
+
+    signed = authority_signed_cap!(authority, presenter, requested)
+    assert caps == :target_signed
+
     %Invocation{
+      origin: :trusted_internal,
       target: target,
       mode: :call,
       args: args,
-      ctx: %{caller: Ezagent.URI.new!("entity://system/user/admin"), caps: caps, reply: :sync}
+      ctx: %{caller: presenter, caps: MapSet.new([signed]), reply: :sync}
     }
   end
 

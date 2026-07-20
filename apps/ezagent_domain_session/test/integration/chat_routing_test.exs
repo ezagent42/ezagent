@@ -33,7 +33,25 @@ defmodule EzagentDomainInstanceMessage.Integration.ChatRoutingTest do
     # see a dead/absent Session). Ensure it via the idempotent
     # create_session facade (adopts the existing Session if alive).
     _ =
-      EzagentDomainInstanceMessage.SessionCreator.create_session("main", User.admin_uri(), template_name: "default")
+      EzagentDomainInstanceMessage.SessionCreator.create_session("main", User.admin_uri(),
+        template_name: "default"
+      )
+
+    session_uri = Session.default_uri()
+    target = URI.new!("#{URI.to_string(session_uri)}?action=session.join")
+
+    {:ok, _} =
+      Invocation.dispatch(%Invocation{
+        origin: :trusted_internal,
+        target: target,
+        mode: :call,
+        args: %{member: User.admin_uri()},
+        ctx: %{
+          caller: User.admin_uri(),
+          caps: MapSet.new([Ezagent.Test.CapHelper.signed_action_cap!(target, User.admin_uri())]),
+          reply: :ignore
+        }
+      })
 
     :ok
   end
@@ -52,7 +70,9 @@ defmodule EzagentDomainInstanceMessage.Integration.ChatRoutingTest do
   test "full send → broadcast → receive path through dispatch" do
     sender = User.admin_uri()
     session_uri = Session.default_uri()
-    msg = Message.new(sender, %{text: "integration-send #{System.unique_integer()}", attachments: []})
+
+    msg =
+      Message.new(sender, %{text: "integration-send #{System.unique_integer()}", attachments: []})
 
     # Subscribe to user:events for admin (the :receive path broadcasts here)
     user_topic = SessionBehavior.user_events_topic(sender)
@@ -67,13 +87,15 @@ defmodule EzagentDomainInstanceMessage.Integration.ChatRoutingTest do
     # (admin is the only joined member at boot). So no :receive fires.
     # The chat_message broadcast still fires for session:events.
     target = URI.new!("#{URI.to_string(session_uri)}?action=session.send")
+    cap = Ezagent.Test.CapHelper.signed_action_cap!(target, sender)
 
     :ok =
       Invocation.dispatch(%Invocation{
+        origin: :trusted_internal,
         target: target,
         mode: :cast,
         args: %{message: msg},
-        ctx: %{caller: sender, caps: MapSet.new([Ezagent.Capability.admin_genesis_cap()]), reply: :ignore}
+        ctx: %{caller: sender, caps: MapSet.new([cap]), reply: :ignore}
       })
 
     # Session-level broadcast (for LV chat stream)
@@ -103,21 +125,40 @@ defmodule EzagentDomainInstanceMessage.Integration.ChatRoutingTest do
     session_uri = Session.default_uri()
     {:ok, session_pid} = KindRegistry.lookup(session_uri)
 
-    transient_uri = URI.new!("entity://team-alpha/user/transient-down-#{System.unique_integer([:positive])}")
-    {:ok, transient_pid} = GenServer.start(__MODULE__.NoopServer, transient_uri)
+    transient_uri =
+      URI.new!("entity://system/user/transient-down-#{System.unique_integer([:positive])}")
+
+    {:ok, _row} =
+      Ezagent.Users.create(
+        transient_uri,
+        "pw-not-secret-#{System.unique_integer([:positive])}",
+        []
+      )
+
+    {:ok, transient_pid} = Ezagent.SpawnRegistry.spawn(transient_uri)
 
     # Join transient member to session
+    join_target = URI.new!("#{URI.to_string(session_uri)}?action=session.join")
+    join_cap = Ezagent.Test.CapHelper.signed_action_cap!(join_target, transient_uri)
+
     :ok =
       Invocation.dispatch(%Invocation{
-        target: URI.new!("#{URI.to_string(session_uri)}?action=session.join"),
+        origin: :trusted_internal,
+        target: join_target,
         mode: :cast,
         args: %{member: transient_uri},
-        ctx: %{caller: transient_uri, caps: MapSet.new([Ezagent.Capability.admin_genesis_cap()]), reply: :ignore}
+        ctx: %{caller: transient_uri, caps: MapSet.new([join_cap]), reply: :ignore}
       })
 
     # Allow cast to process
     %{state: %{session: %{state: pre_kill_slice}}} = :sys.get_state(session_pid)
     assert pre_kill_slice.members[transient_uri].online == true
+
+    # Issue cleanup authority while the transient user's sandbox-owned Kind is
+    # still alive. Killing it intentionally invalidates that process's DB
+    # checkout, but the already-signed artifact remains valid for Session.leave.
+    leave_target = URI.new!("#{URI.to_string(session_uri)}?action=session.leave")
+    leave_cap = Ezagent.Test.CapHelper.signed_action_cap!(leave_target, transient_uri)
 
     # Kill the transient process; Session.Process.monitor fires :DOWN.
     # The :DOWN is delivered to session_pid's mailbox by BEAM directly,
@@ -137,10 +178,11 @@ defmodule EzagentDomainInstanceMessage.Integration.ChatRoutingTest do
     # Cleanup — leave transient member
     :ok =
       Invocation.dispatch(%Invocation{
-        target: URI.new!("#{URI.to_string(session_uri)}?action=session.leave"),
+        origin: :trusted_internal,
+        target: leave_target,
         mode: :cast,
         args: %{member: transient_uri},
-        ctx: %{caller: transient_uri, caps: MapSet.new([Ezagent.Capability.admin_genesis_cap()]), reply: :ignore}
+        ctx: %{caller: transient_uri, caps: MapSet.new([leave_cap]), reply: :ignore}
       })
   end
 

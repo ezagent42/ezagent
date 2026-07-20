@@ -93,7 +93,7 @@ defmodule EzagentDomainInstanceMessage.E2E.Scenario32_MentionOrchestratorDispatc
            Ezagent.Workspace.create_session(
              workspace_uri,
              %{short_name: short_name, template_name: template_name},
-             %{caller: creator_uri, caps: MapSet.new([Ezagent.Capability.admin_genesis_cap()])}
+             Ezagent.Test.CapHelper.signed_workspace_ctx!(workspace_uri, creator_uri)
            ) do
       {:ok, result.session_uri, %{}}
     end
@@ -212,14 +212,17 @@ defmodule EzagentDomainInstanceMessage.E2E.Scenario32_MentionOrchestratorDispatc
 
   defp dispatch_send(caller_uri, session_uri, text) do
     msg = Message.new(caller_uri, %{text: text, attachments: []})
+    target = URI.new!("#{URI.to_string(session_uri)}?action=session.send")
+    cap = Ezagent.Test.CapHelper.signed_action_cap!(target, caller_uri)
 
     Invocation.dispatch(%Invocation{
-      target: URI.new!("#{URI.to_string(session_uri)}?action=session.send"),
+      origin: :trusted_internal,
+      target: target,
       mode: :cast,
       args: %{message: msg},
       ctx: %{
         caller: caller_uri,
-        caps: MapSet.new([Ezagent.Capability.admin_genesis_cap()]),
+        caps: MapSet.new([cap]),
         reply: :ignore
       }
     })
@@ -228,10 +231,13 @@ defmodule EzagentDomainInstanceMessage.E2E.Scenario32_MentionOrchestratorDispatc
   defp seed_echo_agent_template(n) do
     uri = Ezagent.URI.new!("template://system/agent/s32-lazy-role-#{n}")
     {:ok, _} = Ezagent.SpawnRegistry.spawn(uri)
+    target = URI.new!("#{URI.to_string(uri)}?action=template.write")
+    cap = Ezagent.Test.CapHelper.signed_action_cap!(target, User.admin_uri())
 
     {:ok, _} =
       Invocation.dispatch(%Invocation{
-        target: URI.new!("#{URI.to_string(uri)}?action=template.write"),
+        origin: :trusted_internal,
+        target: target,
         mode: :call,
         args: %{
           content: %{
@@ -244,12 +250,14 @@ defmodule EzagentDomainInstanceMessage.E2E.Scenario32_MentionOrchestratorDispatc
         },
         ctx: %{
           caller: User.admin_uri(),
-          caps: MapSet.new([Ezagent.Capability.admin_genesis_cap()]),
+          caps: MapSet.new([cap]),
           reply: {:caller_inbox, self()}
         }
       })
 
-    on_exit(fn -> terminate_if_alive(EzagentDomainInstanceMessage.AgentTemplateSupervisor, uri) end)
+    on_exit(fn ->
+      terminate_if_alive(EzagentDomainInstanceMessage.AgentTemplateSupervisor, uri)
+    end)
 
     uri
   end

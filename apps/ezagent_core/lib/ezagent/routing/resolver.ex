@@ -61,7 +61,7 @@ defmodule Ezagent.Routing.Resolver do
   human-readable "(dynamic: ...)" entries so operators see the full
   effective routing.
 
-  ## Why `members` is passed as arg (not computed via :sys.get_state)
+  ## Why `members` is passed as arg (not computed via runtime introspection)
 
   `Chat.invoke(:send)` has the slice in hand — passing members avoids
   a synchronous call into the Session's mailbox. Resolver stays a

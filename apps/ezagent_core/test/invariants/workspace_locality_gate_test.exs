@@ -33,6 +33,7 @@ defmodule EzagentCore.Invariants.WorkspaceLocalityGateTest do
     target = Ezagent.URI.new!("session://team-alpha/default/main?action=session.send")
 
     inv = %Invocation{
+      origin: :trusted_internal,
       target: target,
       mode: :call,
       args: %{},

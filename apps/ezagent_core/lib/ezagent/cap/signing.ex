@@ -9,11 +9,8 @@ defmodule Ezagent.Cap.Signing do
 
   alias Ezagent.{Cap, Capability}
 
-  @hash_size 32
   @key_id_max_size 512
   @key_id_pattern ~r/\Av([0-9]+)\|([A-Za-z0-9_-]+)\z/
-
-  @type keypair :: {public_key :: binary(), private_key :: binary()}
 
   @doc "Return the domain-separated signing trust domain for a workspace scope."
   @spec trust_domain(URI.t() | :any) :: String.t()
@@ -23,13 +20,6 @@ defmodule Ezagent.Cap.Signing do
   def trust_domain(workspace_uri) do
     raise ArgumentError,
           "cap signing trust domain requires a concrete workspace URI or :any, got: #{inspect(workspace_uri)}"
-  end
-
-  @doc "Return the configured active signing key version."
-  @spec active_key_version() :: non_neg_integer()
-  def active_key_version do
-    signing_config()
-    |> Keyword.fetch!(:active_key_version)
   end
 
   @doc "Build the bounded version-and-trust-domain key identifier."
@@ -81,20 +71,6 @@ defmodule Ezagent.Cap.Signing do
 
   def parse_key_id(_key_id), do: :error
 
-  @doc """
-  Deterministically derive one ed25519 keypair for an entity, trust domain, and
-  configured master-seed version.
-  """
-  @spec derive_keypair(URI.t(), String.t(), non_neg_integer()) :: keypair()
-  def derive_keypair(%URI{} = entity_uri, trust_domain, version)
-      when is_binary(trust_domain) and is_integer(version) and version >= 0 do
-    entity_key = Ezagent.URI.stable_key(entity_uri)
-    info = derivation_info(trust_domain, entity_key)
-    seed = hkdf_sha256(fetch_seed!(version), info, @hash_size)
-
-    :crypto.generate_key(:eddsa, :ed25519, seed)
-  end
-
   @doc "Return RFC 8785 JCS bytes for the signed capability payload."
   @spec signing_payload(Capability.t()) :: binary()
   def signing_payload(%Capability{grantee_uri: grantee_uri} = cap),
@@ -118,80 +94,17 @@ defmodule Ezagent.Cap.Signing do
     |> jcs_encode()
   end
 
-  @doc "Sign a capability's JCS payload with a derived ed25519 private key."
-  @spec sign(Capability.t(), binary()) :: binary()
-  def sign(%Capability{} = cap, private_key) when is_binary(private_key) do
-    :crypto.sign(:eddsa, :none, signing_payload(cap), [private_key, :ed25519])
-  end
-
-  @doc "Verify a capability's JCS payload with an ed25519 public key."
-  @spec verify(Capability.t(), binary(), binary()) :: boolean()
-  def verify(%Capability{} = cap, signature, public_key)
-      when is_binary(signature) and is_binary(public_key) do
-    :crypto.verify(:eddsa, :none, signing_payload(cap), signature, [public_key, :ed25519])
-  end
-
-  @doc """
-  Resolve a versioned signing seed from the runtime environment.
-
-  The environment variable name mirrors the versioned PAT-pepper convention:
-  `EZAGENT_SIGNING_SEED_V<N>`. This narrow function is configured as the
-  injectable seed-provider seam.
-  """
-  @spec runtime_seed(non_neg_integer()) :: {:ok, binary()} | {:error, :missing_seed}
-  def runtime_seed(version) when is_integer(version) and version >= 0 do
-    case System.get_env("EZAGENT_SIGNING_SEED_V#{version}") do
-      seed when is_binary(seed) and byte_size(seed) >= @hash_size -> {:ok, seed}
-      _ -> {:error, :missing_seed}
-    end
+  defp configured_key_version?(version) do
+    signing_config()
+    |> Keyword.get(:trusted_key_versions, [])
+    |> Enum.member?(version)
   end
 
   defp signing_config do
     :ezagent_core
     |> Application.get_env(Cap, [])
-    |> Keyword.fetch!(:signing)
+    |> Keyword.get(:signing, [])
   end
-
-  defp fetch_seed!(version) do
-    provider = signing_config() |> Keyword.fetch!(:seed_provider)
-
-    case provider.(version) do
-      {:ok, seed} when is_binary(seed) and byte_size(seed) >= @hash_size ->
-        seed
-
-      seed when is_binary(seed) and byte_size(seed) >= @hash_size ->
-        seed
-
-      {:error, reason} ->
-        raise RuntimeError, "signing seed unavailable for version #{version}: #{inspect(reason)}"
-
-      _ ->
-        raise RuntimeError, "signing seed unavailable for version #{version}"
-    end
-  end
-
-  defp configured_key_version?(version) do
-    signing_config()
-    |> Keyword.get(:trusted_key_versions, [active_key_version()])
-    |> Enum.member?(version)
-  end
-
-  defp derivation_info(trust_domain, entity_key) do
-    "ed25519\0" <>
-      u32(byte_size(trust_domain)) <>
-      trust_domain <>
-      u32(byte_size(entity_key)) <>
-      entity_key
-  end
-
-  defp hkdf_sha256(ikm, info, length) do
-    prk = :crypto.mac(:hmac, :sha256, <<0::size(@hash_size)-unit(8)>>, ikm)
-    output = :crypto.mac(:hmac, :sha256, prk, info <> <<1>>)
-    binary_part(output, 0, length)
-  end
-
-  defp u32(value) when is_integer(value) and value >= 0,
-    do: <<value::unsigned-big-integer-size(32)>>
 
   defp canon_atom(value) when is_atom(value), do: value |> Atom.to_string() |> canon_string()
 

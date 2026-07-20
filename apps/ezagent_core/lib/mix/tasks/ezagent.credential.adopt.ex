@@ -79,19 +79,18 @@ defmodule Mix.Tasks.Ezagent.Credential.Adopt do
     admin_uri = apply(Module.concat([:Ezagent, :Entity, :User]), :admin_uri, [])
     owner_uri = Ezagent.URI.new!(owner)
 
-    caps = [
-      %Ezagent.Capability{
-        Ezagent.Capability.cap(
-          :user,
-          Ezagent.ActionSet.UserDefaultCredentialSource,
-          :set_default_credential_source,
-          Ezagent.URI.instance(owner_uri),
-          Ezagent.Capability.workspace_of(owner_uri)
-        )
-        | granted_by: admin_uri,
-          granted_at: DateTime.utc_now()
-      }
-    ]
+    target =
+      Ezagent.URI.with_action(
+        owner_uri,
+        :user_default_credential_source,
+        :set_default_credential_source
+      )
+
+    caps =
+      case Ezagent.Cap.issue_for_action({:admin, admin_uri}, admin_uri, target) do
+        {:ok, cap} -> [cap]
+        {:error, reason} -> Mix.raise("credential-adopt cap issuance failed: #{inspect(reason)}")
+      end
 
     case Ezagent.Credential.Adopt.adopt(owner, ws, flavor, candidates,
            caller: admin_uri,

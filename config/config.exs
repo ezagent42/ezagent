@@ -150,13 +150,7 @@ config :swoosh, :api_client, false
 
 # Phase 3 capability issue inversion: core owns authorization, while the
 # identity domain supplies its existing live + durable held-cap loader.
-config :ezagent_core, Ezagent.Cap,
-  authority_loader: Ezagent.Identity,
-  signing: [
-    seed_provider: &Ezagent.Cap.Signing.runtime_seed/1,
-    active_key_version: 1,
-    require_signature: false
-  ]
+config :ezagent_core, Ezagent.Cap, authority_loader: Ezagent.Identity
 
 # Durable capability delivery retries. `require_sync_ack` is a policy seam for
 # a future external/adversarial deployment; the current implementation never

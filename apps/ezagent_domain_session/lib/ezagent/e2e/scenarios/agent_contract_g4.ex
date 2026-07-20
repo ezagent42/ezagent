@@ -40,7 +40,7 @@ defmodule Ezagent.E2E.Scenarios.AgentContractG4 do
   alias Ezagent.Entity.{Agent, Session, SessionTemplate, User}
   alias Ezagent.Routing.{Matcher, Resolver, RuleStore}
   alias Ezagent.Session.SessionManager
-  alias Ezagent.{AgentFlavorRegistry, Capability, KindRegistry, TemplateTags}
+  alias Ezagent.{AgentFlavorRegistry, Capability, TemplateTags}
   alias EzagentDomainInstanceMessage.SessionCreator
 
   @workspace_str "workspace://team-alpha"
@@ -462,17 +462,21 @@ defmodule Ezagent.E2E.Scenarios.AgentContractG4 do
 
   defp dispatch(uri, action, args) do
     target = Ezagent.URI.new!("#{URI.to_string(uri)}?action=#{action}")
+    admin = User.admin_uri()
 
-    Ezagent.Invocation.dispatch(%Ezagent.Invocation{
-      target: target,
-      mode: :call,
-      args: args,
-      ctx: %{
-        caller: User.admin_uri(),
-        caps: MapSet.new([Ezagent.Capability.admin_genesis_cap()]),
-        reply: {:caller_inbox, self()}
-      }
-    })
+    with {:ok, signed_cap} <- Ezagent.Cap.issue_for_action({:admin, admin}, admin, target) do
+      Ezagent.Invocation.dispatch(%Ezagent.Invocation{
+        target: target,
+        mode: :call,
+        args: args,
+        ctx: %{
+          caller: admin,
+          caps: MapSet.new([signed_cap]),
+          reply: {:caller_inbox, self()}
+        },
+        origin: :trusted_internal
+      })
+    end
   end
 
   defp spawn_session do
@@ -527,8 +531,9 @@ defmodule Ezagent.E2E.Scenarios.AgentContractG4 do
   end
 
   defp chat_slice(session_uri) do
-    {:ok, pid} = KindRegistry.lookup(session_uri)
-    %{state: %{session: %{state: slice}}} = :sys.get_state(pid)
+    {:ok, %{state: slice}} =
+      Ezagent.Kind.get_raw_slice(session_uri, :session)
+
     slice
   end
 

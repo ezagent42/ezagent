@@ -46,7 +46,7 @@ defmodule Ezagent.Socialware.MountTest do
       # (c) grantee 自身份 dispatch:只读动作成、写动作越权拒
       assert eventually(fn -> holds_cap?(grantee, target, :get_tree) end)
       assert {:ok, %{ok: true}} = dispatch(grantee, target, :get_tree)
-      assert {:error, :unauthorized} = dispatch(grantee, target, :add_node)
+      assert {:error, :missing_cap} = dispatch(grantee, target, :add_node)
     end
 
     test "写动作 → grantee 持操作 cap、行 access=operate、两动作都成" do
@@ -131,7 +131,7 @@ defmodule Ezagent.Socialware.MountTest do
       assert MountRow.get(session, target, grantee, Target) == nil
       # cap 撤 → dispatch 变 unauthorized
       assert eventually(fn ->
-               match?({:error, :unauthorized}, dispatch(grantee, target, :add_node))
+               match?({:error, _reason}, dispatch(grantee, target, :add_node))
              end)
     end
 
@@ -145,11 +145,93 @@ defmodule Ezagent.Socialware.MountTest do
     end
   end
 
+  describe "mount_for_person/5 + unmount_for_person/3 — 人本位挂载(无 session 轴)" do
+    # grantee 轴零改动:mint_cap 本就收任意 URI(人/agent 同款),这里沿用 live_agent
+    # 作 grantee 走通 cap 全链;person-scope 的差异全在挂载行的 session 轴上。
+    test "落 person 行(scope=person、无 session)+ grantee 持钥可 dispatch" do
+      owner = user_uri("pm-owner")
+      grantee = live_agent("pm-holder", owner)
+      target = live_agent("pm-board", owner, [Target])
+
+      assert {:ok, %{caps: [%Ezagent.Capability{} = cap], mount: %MountRow{} = row}} =
+               Mount.mount_for_person(target, grantee, Target, [:get_tree], access: :read)
+
+      assert row.scope == "person"
+      assert row.session_uri == nil
+      assert row.access == "read"
+      assert row.granted_by == URI.to_string(owner)
+      assert URI.to_string(cap.granted_by) == URI.to_string(owner)
+
+      assert MountRow.get_person(target, grantee, Target) != nil
+      assert [_] = MountRow.list_person_mounts_for_grantee(grantee)
+
+      assert eventually(fn -> holds_cap?(grantee, target, :get_tree) end)
+      assert {:ok, %{ok: true}} = dispatch(grantee, target, :get_tree)
+      # 只授了 :get_tree,:add_node 无 cap——strict-verify 口径 :missing_cap(照本文件 session 路同款)
+      assert {:error, :missing_cap} = dispatch(grantee, target, :add_node)
+    end
+
+    test "同 person 自然键再 mount → 仍 1 行(覆盖)" do
+      owner = user_uri("pmdup-owner")
+      grantee = live_agent("pmdup-holder", owner)
+      target = live_agent("pmdup-board", owner, [Target])
+
+      assert {:ok, _} =
+               Mount.mount_for_person(target, grantee, Target, [:get_tree], access: :read)
+
+      assert {:ok, _} =
+               Mount.mount_for_person(target, grantee, Target, [:add_node, :get_tree],
+                 access: :operate
+               )
+
+      rows = MountRow.list_person_mounts_for_grantee(grantee)
+      assert length(rows) == 1
+      assert hd(rows).access == "operate"
+    end
+
+    test "unmount_for_person 撤钥匙 + 删行;未挂载幂等" do
+      owner = user_uri("pmum-owner")
+      grantee = live_agent("pmum-holder", owner)
+      target = live_agent("pmum-board", owner, [Target])
+
+      assert {:ok, _} =
+               Mount.mount_for_person(target, grantee, Target, [:add_node, :get_tree],
+                 access: :operate
+               )
+
+      assert eventually(fn -> holds_cap?(grantee, target, :add_node) end)
+      assert {:ok, %{ok: true}} = dispatch(grantee, target, :add_node)
+
+      assert {:ok, :unmounted} = Mount.unmount_for_person(target, grantee, Target)
+
+      assert MountRow.get_person(target, grantee, Target) == nil
+
+      assert eventually(fn ->
+               match?({:error, _reason}, dispatch(grantee, target, :add_node))
+             end)
+
+      # 幂等:再 unmount 一次仍 {:ok, :unmounted}
+      assert {:ok, :unmounted} = Mount.unmount_for_person(target, grantee, Target)
+    end
+
+    test "mint 失败(无属主宿主)→ 不落 person 行" do
+      owner = user_uri("pmfc-owner")
+      grantee = live_agent("pmfc-holder", owner)
+      target = orphan_agent("pmfc-board", [Target])
+
+      assert {:error, {:operate_target_ownerless, _uri, Target}} =
+               Mount.mount_for_person(target, grantee, Target, [:get_tree], access: :read)
+
+      assert MountRow.get_person(target, grantee, Target) == nil
+    end
+  end
+
   describe "provision/6 — 建宿主(data_owner=owner)+ 当场挂操作钥匙" do
     setup do
       ws_name = "mount-prov-#{uniq()}"
       {:ok, _ws_pid} = Workspace.create(ws_name, %{})
       workspace_uri = Ezagent.URI.workspace(ws_name)
+      {:ok, _admin_pid} = Ezagent.SpawnRegistry.spawn(User.admin_uri())
 
       flavor = "mount-native-#{uniq()}"
 
@@ -174,10 +256,7 @@ defmodule Ezagent.Socialware.MountTest do
           ]
         })
 
-      admin_ctx = %{
-        caller: User.admin_uri(),
-        caps: MapSet.new([Ezagent.Capability.admin_genesis_cap()])
-      }
+      admin_ctx = Ezagent.Test.CapHelper.signed_workspace_ctx!(workspace_uri, User.admin_uri())
 
       {:ok,
        ws_name: ws_name,
@@ -270,10 +349,15 @@ defmodule Ezagent.Socialware.MountTest do
 
   defp dispatch(caller, target, action) do
     Ezagent.Invocation.dispatch(%Ezagent.Invocation{
+      origin: :trusted_internal,
       target: Ezagent.URI.with_action(target, :composition_grant_target, action),
       mode: :call,
       args: %{},
-      ctx: %{caller: caller, caps: MapSet.new(), reply: {:caller_inbox, self()}}
+      ctx: %{
+        caller: caller,
+        caps: MapSet.new(Ezagent.Identity.list_caps_for(caller)),
+        reply: {:caller_inbox, self()}
+      }
     })
   end
 
@@ -302,8 +386,13 @@ defmodule Ezagent.Socialware.MountTest do
   defp session_uri,
     do: Ezagent.URI.new!("session://composition/default/mount-#{uniq()}")
 
-  defp user_uri(name),
-    do: Ezagent.URI.new!("entity://composition/user/#{name}-#{uniq()}")
+  defp user_uri(name) do
+    uri = Ezagent.URI.new!("entity://composition/user/#{name}-#{uniq()}")
+    {:ok, _} = Ezagent.Users.create(uri, "test-password-#{uniq()}", [])
+    {:ok, _} = Ezagent.SpawnRegistry.spawn(uri)
+    on_exit(fn -> Ezagent.Kind.terminate(uri) end)
+    uri
+  end
 
   defp agent_uri(name, ws_name),
     do: Ezagent.URI.new!("entity://#{ws_name}/agent/#{name}-#{uniq()}")

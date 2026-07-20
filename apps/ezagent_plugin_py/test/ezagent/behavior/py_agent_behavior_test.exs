@@ -18,7 +18,7 @@ defmodule Ezagent.ActionSet.PyAgentTest do
   use ExUnit.Case, async: false
 
   alias Ezagent.ActionSet.PyAgent
-  alias Ezagent.Cmd
+  alias Ezagent.{Capability, Cmd}
 
   # ctx mock matching the Lifecycle test harness (lifecycle.md §Testing).
   defp ctx(self_uri, caller, state) do
@@ -100,10 +100,12 @@ defmodule Ezagent.ActionSet.PyAgentTest do
         result: {:ok, %{text: "pong"}},
         source_session: session,
         user_text: "ping",
-        in_msg_id: "msg-1"
+        in_msg_id: "msg-1",
+        reply_cap: reply_cap(session, self_uri)
       }
 
-      {:ok, %{ok: true}, effects} = PyAgent.handle_py_sync_result(args, ctx(self_uri, session, %{}))
+      {:ok, %{ok: true}, effects} =
+        PyAgent.handle_py_sync_result(args, ctx(self_uri, session, %{}))
 
       assert {:set, :last_input, "ping"} in effects
       assert {:set, :last_result, "pong"} in effects
@@ -119,14 +121,18 @@ defmodule Ezagent.ActionSet.PyAgentTest do
 
       args = %{result: {:ok, :silent}, source_session: session, user_text: "hush", in_msg_id: "m"}
 
-      {:ok, %{ok: true}, effects} = PyAgent.handle_py_sync_result(args, ctx(self_uri, session, %{}))
+      {:ok, %{ok: true}, effects} =
+        PyAgent.handle_py_sync_result(args, ctx(self_uri, session, %{}))
 
       assert {:set, :last_input, "hush"} in effects
       assert {:set, :last_result, nil} in effects
       refute Enum.any?(effects, &match?({:dispatch, _}, &1))
     end
 
-    test "an :error result captures last_error, no reply dispatch, no crash" do
+    # G5 source 2 — a py failure was previously SILENT to the user (only
+    # `last_error` + a log line). It now replies with the structured error
+    # payload so the shared error surface can render a per-viewer card.
+    test "an :error result captures last_error + replies with a STRUCTURED error" do
       self_uri = Ezagent.URI.new!("entity://team-alpha/agent/py_err")
       session = Ezagent.URI.new!("session://team-alpha/default/s1")
 
@@ -134,7 +140,8 @@ defmodule Ezagent.ActionSet.PyAgentTest do
         result: {:error, :not_alive},
         source_session: session,
         user_text: "anything",
-        in_msg_id: "m"
+        in_msg_id: "m",
+        reply_cap: reply_cap(session, self_uri)
       }
 
       {:ok, %{ok: false, error: :not_alive}, effects} =
@@ -142,7 +149,28 @@ defmodule Ezagent.ActionSet.PyAgentTest do
 
       assert {:set, :last_input, "anything"} in effects
       assert {:set, :last_error, :not_alive} in effects
-      refute Enum.any?(effects, &match?({:dispatch, _}, &1))
+
+      dispatches = Enum.filter(effects, &match?({:dispatch, _}, &1))
+      assert [{:dispatch, %Cmd{action: :send} = cmd}] = dispatches
+      assert cmd.args.message.body.error == %{"reason" => ["not_alive"]}
+      assert cmd.args.message.body.text == "[agent error] not_alive"
     end
+  end
+
+  defp reply_cap(session, grantee) do
+    %Capability{
+      Capability.cap(
+        :session,
+        Ezagent.ActionSet.Session,
+        :send,
+        session,
+        Ezagent.Capability.workspace_of(session)
+      )
+      | granted_by: Ezagent.Entity.User.admin_uri(),
+        granted_at: DateTime.utc_now(),
+        grantee_uri: grantee,
+        key_id: "unit-fixture",
+        signature: <<1>>
+    }
   end
 end

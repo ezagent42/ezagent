@@ -15,6 +15,8 @@ defmodule Ezagent.ActionSet.WorkspaceUserAdminMigrationParityTest do
 
   use EzagentCore.DataCase, async: false
 
+  import Ezagent.Test.CapHelper, only: [signed_invocation!: 2, signed_required_cap!: 5]
+
   alias Ezagent.{BehaviorRegistry, Invocation}
   alias Ezagent.ActionSet.WorkspaceUserAdmin
 
@@ -42,17 +44,19 @@ defmodule Ezagent.ActionSet.WorkspaceUserAdminMigrationParityTest do
 
   defp build_invocation(workspace_uri, action, args) do
     target =
-      workspace_uri
-      |> URI.to_string()
-      |> Kernel.<>("?action=workspace_user_admin.#{action}")
-      |> URI.parse()
+      Ezagent.URI.new!("#{URI.to_string(workspace_uri)}?action=workspace_user_admin.#{action}")
+
+    admin = Ezagent.URI.user(:system, :admin)
+    cap = signed_required_cap!(target, :wua_parity_stub, WorkspaceUserAdmin, action, admin)
 
     %Invocation{
+      origin: :trusted_internal,
       target: target,
       mode: :call,
       args: args,
-      ctx: %{caller: :vm_internal, caps: MapSet.new(), reply: :sync}
+      ctx: %{caller: admin, caps: MapSet.new([cap]), reply: :sync}
     }
+    |> signed_invocation!(:wua_parity_stub)
   end
 
   describe "Level 1 — dispatch parity through Kind.Runtime" do

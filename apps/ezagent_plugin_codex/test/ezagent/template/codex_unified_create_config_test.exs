@@ -56,17 +56,11 @@ defmodule Ezagent.PluginCodex.Template.CodexUnifiedCreateConfigTest do
 
     ws_name = "codex-create-config-#{System.unique_integer([:positive])}"
     {:ok, _ws_pid} = Workspace.create(ws_name, %{})
+    workspace_uri = URI.new!("workspace://#{ws_name}")
 
-    admin_ctx = %{
-      caller: User.admin_uri(),
-      caps: MapSet.new([Ezagent.Capability.admin_genesis_cap()])
-    }
+    admin_ctx = Ezagent.Test.CapHelper.signed_workspace_ctx!(workspace_uri, User.admin_uri())
 
-    {:ok,
-     ws_name: ws_name,
-     workspace_uri: URI.new!("workspace://#{ws_name}"),
-     admin_ctx: admin_ctx,
-     cwd: cwd}
+    {:ok, ws_name: ws_name, workspace_uri: workspace_uri, admin_ctx: admin_ctx, cwd: cwd}
   end
 
   test "Workspace.create_agent carries codex config into content and respawn data", %{

@@ -188,7 +188,8 @@ defmodule EzagentPluginProtocolApi.OpenAI.ChatCompletionsPlug do
       target: target,
       action: :join,
       args: %{member: agent},
-      ctx: %{caller: entity_uri, caps: MapSet.new(), reply: :ignore}
+      ctx: %{caller: entity_uri, caps: MapSet.new(), reply: :ignore},
+      origin: :authenticated_external
     }
 
     Logger.info("ProtocolApi: joining agent to session...")
@@ -257,7 +258,8 @@ defmodule EzagentPluginProtocolApi.OpenAI.ChatCompletionsPlug do
       target: target,
       mode: :call,
       args: %{message: msg},
-      ctx: %{caller: entity_uri, caps: MapSet.new(), reply: :sync}
+      ctx: %{caller: entity_uri, caps: MapSet.new(), reply: :sync},
+      origin: :authenticated_external
     }
 
     case Invocation.dispatch(inv) do

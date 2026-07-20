@@ -130,7 +130,8 @@ defmodule EzagentWeb.WorldUploadsController do
         target: target,
         mode: :call,
         args: %{filename: "upload"},
-        ctx: %{caller: caller_uri, caps: MapSet.new(), reply: :ignore}
+        ctx: %{caller: caller_uri, caps: MapSet.new(), reply: :ignore},
+        origin: :authenticated_external
       })
 
     case result do

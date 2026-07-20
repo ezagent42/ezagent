@@ -11,7 +11,7 @@ defmodule EzagentCore.Invariants.Phase5NoRegressionTest do
   Scope deliberately covers core surfaces only — full e2e (Feishu /
   CC channel) lives in agent-browser tests + manual demo.
   """
-  use ExUnit.Case, async: false
+  use EzagentCore.DataCase, async: false
 
   # #52 Mode-A: cross-tier suite — references sibling-app modules; resolves
   # only in the umbrella. Excluded standalone (`cd apps/ezagent_core && mix test`).
@@ -46,7 +46,6 @@ defmodule EzagentCore.Invariants.Phase5NoRegressionTest do
     # DEMAND-spawns + resolves". We check out a sandbox connection so the
     # spawn's DB work is owned, spawn the sentinel, and assert it's alive.
     test "system://routing/default singleton demand-spawns + is alive" do
-      :ok = Ecto.Adapters.SQL.Sandbox.checkout(EzagentCore.Repo)
       uri = Ezagent.Entity.System.routing_default_uri()
 
       case Ezagent.SpawnRegistry.spawn(uri) do

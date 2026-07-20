@@ -10,12 +10,15 @@ defmodule EzagentWeb.HomeLiveTest do
       Keyword.get(opts, :workspace_uri, Ezagent.Capability.workspace_of(creator_uri))
 
     ensure_workspace_seeded!(workspace_uri)
+    target = Ezagent.URI.with_action(workspace_uri, :workspace, :create_session)
+    admin = Ezagent.Entity.User.admin_uri()
+    {:ok, create_cap} = Ezagent.Cap.issue_for_action({:admin, admin}, creator_uri, target)
 
     with {:ok, result} <-
            Ezagent.Workspace.create_session(
              workspace_uri,
              %{short_name: short_name, template_name: template_name},
-             %{caller: creator_uri, caps: MapSet.new([Ezagent.Capability.admin_genesis_cap()])}
+             %{caller: creator_uri, caps: MapSet.new([create_cap])}
            ) do
       {:ok, result.session_uri, %{}}
     end

@@ -22,6 +22,7 @@ defmodule Ezagent.ActionSet.Session.AdmissionGateTest do
 
   alias Ezagent.Capability
   alias Ezagent.Identity.Authority
+  import Ezagent.Test.CapHelper, only: [signed_action_cap!: 2]
 
   defp uniq, do: System.unique_integer([:positive])
 
@@ -56,7 +57,10 @@ defmodule Ezagent.ActionSet.Session.AdmissionGateTest do
 
   defp agent_member(ws, prefix) do
     uri = URI.new!("entity://#{ws}/agent/#{prefix}-#{uniq()}")
-    {:ok, _pid} = Ezagent.Kind.spawn(Ezagent.Entity.Agent, %{uri: uri, initial_caps: MapSet.new()})
+
+    {:ok, _pid} =
+      Ezagent.Kind.spawn(Ezagent.Entity.Agent, %{uri: uri, initial_caps: MapSet.new()})
+
     :ok = Ezagent.WorkspaceRegistry.bind(uri, Ezagent.Capability.workspace_of(uri))
     uri
   end
@@ -64,13 +68,14 @@ defmodule Ezagent.ActionSet.Session.AdmissionGateTest do
   # Grant `granter` durable manage-authority over `target` (the `CreatorGrant`
   # shape), so `Authority.manages?(granter, target)` becomes true.
   defp grant_manage(granter, target) do
-    cap = Ezagent.CreatorGrant.manage_cap(:agent, target, Capability.workspace_of(target), granter)
+    cap =
+      Ezagent.CreatorGrant.manage_cap(:agent, target, Capability.workspace_of(target), granter)
 
     :ok =
       Ezagent.Identity.Grant.grant_cap_via_router(
         granter,
         cap,
-        {:genesis, Ezagent.Entity.User.admin_uri()},
+        {:admin, Ezagent.Entity.User.admin_uri()},
         :sync
       )
   end
@@ -78,13 +83,16 @@ defmodule Ezagent.ActionSet.Session.AdmissionGateTest do
   # Drive the REAL `session.join` dispatch as `caller` (genesis ctx.caps only to
   # clear the join-cap gate — the admission decision ignores ctx.caps).
   defp dispatch_join(session_uri, member_uri, caller) do
+    target = URI.new!("#{URI.to_string(session_uri)}?action=session.join")
+
     Ezagent.Invocation.dispatch(%Ezagent.Invocation{
-      target: URI.new!("#{URI.to_string(session_uri)}?action=session.join"),
+      origin: :trusted_internal,
+      target: target,
       mode: :call,
       args: %{member: member_uri},
       ctx: %{
         caller: caller,
-        caps: MapSet.new([Capability.admin_genesis_cap()]),
+        caps: MapSet.new([signed_action_cap!(target, caller)]),
         reply: :ignore
       }
     })
@@ -116,9 +124,15 @@ defmodule Ezagent.ActionSet.Session.AdmissionGateTest do
 
   defp wait_member_cap(entity_uri, session_uri, retries \\ 100) do
     cond do
-      member_cap(entity_uri, session_uri) -> member_cap(entity_uri, session_uri)
-      retries > 0 -> Process.sleep(10); wait_member_cap(entity_uri, session_uri, retries - 1)
-      true -> nil
+      member_cap(entity_uri, session_uri) ->
+        member_cap(entity_uri, session_uri)
+
+      retries > 0 ->
+        Process.sleep(10)
+        wait_member_cap(entity_uri, session_uri, retries - 1)
+
+      true ->
+        nil
     end
   end
 
@@ -164,7 +178,9 @@ defmodule Ezagent.ActionSet.Session.AdmissionGateTest do
 
     _ = dispatch_join(session, agent, owner)
 
-    assert wait_member_cap(agent, session), "an owner-managed add must mount (hold the member-cap)"
+    assert wait_member_cap(agent, session),
+           "an owner-managed add must mount (hold the member-cap)"
+
     refute Map.has_key?(read_pending(session), agent), "a manage-authorized add must NOT pend"
   end
 
@@ -212,21 +228,20 @@ defmodule Ezagent.ActionSet.Session.AdmissionGateTest do
     # Manage cap), so the mount is via the `{:spawned_by, caller}` exemption ONLY.
     :ok = Ezagent.AgentLineage.record(member, controller)
 
-    spawned_by_cap = %Capability{
-      kind: :agent,
-      behavior: :any,
-      action: :any,
-      instance: {:spawned_by, controller},
-      workspace_uri: Capability.workspace_of(member),
-      granted_by: Ezagent.Entity.User.admin_uri(),
-      granted_at: DateTime.utc_now()
-    }
+    spawned_by_cap =
+      Capability.cap(
+        :agent,
+        Ezagent.ActionSet.Sandbox,
+        :destroy,
+        member,
+        Capability.workspace_of(member)
+      )
 
     :ok =
       Ezagent.Identity.Grant.grant_cap_via_router(
         controller,
         spawned_by_cap,
-        {:genesis, Ezagent.Entity.User.admin_uri()},
+        {:admin, Ezagent.Entity.User.admin_uri()},
         :sync
       )
 
@@ -246,37 +261,36 @@ defmodule Ezagent.ActionSet.Session.AdmissionGateTest do
   # as A's agent, holding a broad `{:within_workspace, ws}` agent cap (which COVERS
   # A's agent), is STILL a cross-owner puller — it must PEND. If the exemption were a
   # general covering-cap check, this would mount and reopen threat X.
-  test "co-tenant with a {:within_workspace} agent cap does NOT exempt → still PENDS (teeth)" do
+  test "co-tenant with an exact target cap but no spawn lineage does NOT exempt → still PENDS (teeth)" do
     ws = new_ws()
     b = confirmed_user(ws, "cotenant-b")
     b_session = new_session(ws, "adm-teeth", b)
     a_agent = agent_member(ws, "a-agent")
 
-    within_ws_cap = %Capability{
-      kind: :agent,
-      behavior: :any,
-      action: :any,
-      instance: {:within_workspace, Capability.workspace_of(a_agent)},
-      workspace_uri: Capability.workspace_of(a_agent),
-      granted_by: Ezagent.Entity.User.admin_uri(),
-      granted_at: DateTime.utc_now()
-    }
+    exact_cap =
+      Capability.cap(
+        :agent,
+        Ezagent.ActionSet.Sandbox,
+        :destroy,
+        a_agent,
+        Capability.workspace_of(a_agent)
+      )
 
     :ok =
       Ezagent.Identity.Grant.grant_cap_via_router(
         b,
-        within_ws_cap,
-        {:genesis, Ezagent.Entity.User.admin_uri()},
+        exact_cap,
+        {:admin, Ezagent.Entity.User.admin_uri()},
         :sync
       )
 
     refute Authority.manages?(b, a_agent),
-           "precondition: a {:within_workspace} :any agent cap is not a Manage/admin cap → manages? false"
+           "precondition: an exact non-Manage cap is not Manage/admin authority"
 
     _ = dispatch_join(b_session, a_agent, b)
 
     assert Map.has_key?(read_pending(b_session), a_agent),
-           "a co-tenant with only a broad within-workspace cap must still PEND (threat X closed)"
+           "an exact cap without caller lineage must still PEND (threat X closed)"
 
     refute member_cap(a_agent, b_session), "no member-cap granted to a pended co-tenant add"
     refute Map.has_key?(read_members(b_session), a_agent), "not mounted"

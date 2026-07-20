@@ -87,14 +87,17 @@ defmodule EzagentDomainInstanceMessage.Integration.SessionSurvivesRestartTest do
 
   defp join(session_uri, member_uri) do
     target = URI.new!("#{URI.to_string(session_uri)}?action=session.join")
+    admin = User.admin_uri()
+    cap = Ezagent.Test.CapHelper.signed_action_cap!(target, admin)
 
     Invocation.dispatch(%Invocation{
+      origin: :trusted_internal,
       target: target,
       mode: :call,
       args: %{member: member_uri},
       ctx: %{
-        caller: User.admin_uri(),
-        caps: MapSet.new([Ezagent.Capability.admin_genesis_cap()]),
+        caller: admin,
+        caps: MapSet.new([cap]),
         reply: {:caller_inbox, self()}
       }
     })
@@ -335,7 +338,9 @@ defmodule EzagentDomainInstanceMessage.Integration.SessionSurvivesRestartTest do
       # `SessionBehavior.template_working_copy/1` accessor reads the flat `:chat` slice,
       # so pass the normalized `.state` view (same as the production
       # consumers — `McpServer.load_chat_slice`, `Session.read_*`).
-      assert SessionBehavior.template_working_copy(Ezagent.Kind.normalize_slice_view(loaded.session)) ==
+      assert SessionBehavior.template_working_copy(
+               Ezagent.Kind.normalize_slice_view(loaded.session)
+             ) ==
                working_copy,
              "the durable template_working_copy field must survive a Session " <>
                "snapshot/restore — Session is {:snapshot, :on_change}"
@@ -377,7 +382,8 @@ defmodule EzagentDomainInstanceMessage.Integration.SessionSurvivesRestartTest do
 
       # Reading the field via the accessor yields the empty default —
       # no crash, the field gracefully defaults.
-      assert SessionBehavior.template_working_copy(loaded_chat) == SessionBehavior.default_template_working_copy()
+      assert SessionBehavior.template_working_copy(loaded_chat) ==
+               SessionBehavior.default_template_working_copy()
     end
   end
 end

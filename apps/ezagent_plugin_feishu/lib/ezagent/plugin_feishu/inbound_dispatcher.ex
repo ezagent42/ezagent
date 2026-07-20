@@ -51,7 +51,8 @@ defmodule EzagentPluginFeishu.InboundDispatcher do
           chat_id: String.t(),
           message_id: String.t() | nil,
           sender: map(),
-          body: %{required(:text) => String.t(), required(:attachments) => [map()]}
+          body: %{required(:text) => String.t(), required(:attachments) => [map()]},
+          origin: Ezagent.DispatchOrigin.t() | nil
         ]
 
   @spec dispatch(opts()) :: :ok | {:error, term()}
@@ -60,6 +61,7 @@ defmodule EzagentPluginFeishu.InboundDispatcher do
     message_id = Keyword.get(opts, :message_id)
     sender = Keyword.fetch!(opts, :sender)
     body = Keyword.fetch!(opts, :body)
+    origin = Keyword.get(opts, :origin)
 
     case SenderResolver.resolve(sender) do
       {:pending, open_id} ->
@@ -86,7 +88,7 @@ defmodule EzagentPluginFeishu.InboundDispatcher do
         # Feishu group hosts multiple orchestrator sessions, and
         # (b) flow into the dispatched Message for MentionRouting.
         text = body[:text] || ""
-        mentions = EzagentPluginFeishu.MentionParser.extract_agent_mentions(text)
+        mentions = EzagentPluginFeishu.MentionParser.extract_agent_mentions(text, caller_uri)
 
         # team-routing-unification §3.6 (PR-6, codex 2026-06-01 MED #3): legends
         # are SESSION-scoped, so a chat bound to multiple sessions that contains
@@ -98,7 +100,7 @@ defmodule EzagentPluginFeishu.InboundDispatcher do
         # one).
         case InboundChatLookup.resolve(chat_id, mentions, text) do
           {:ok, session_uri} ->
-            case do_dispatch(session_uri, caller_uri, caps, body, mentions) do
+            case do_dispatch(session_uri, caller_uri, caps, body, mentions, origin) do
               :ok ->
                 react_safe(message_id, "OK")
                 :ok
@@ -206,7 +208,7 @@ defmodule EzagentPluginFeishu.InboundDispatcher do
     end
   end
 
-  defp do_dispatch(session_uri, caller_uri, caps, body, mentions) do
+  defp do_dispatch(session_uri, caller_uri, caps, body, mentions, origin) do
     # team-routing-unification §3.8 (rehydrate-or-spawn): the chat resolved
     # to a DURABLY-created session, but after a cold node restart that
     # session may not be a live actor yet (nothing rehydrates bound sessions
@@ -217,7 +219,7 @@ defmodule EzagentPluginFeishu.InboundDispatcher do
     # use) — NOT a raw spawn — gated on durable existence so we never create
     # an unowned fresh session.
     with :ok <- ensure_session_live(session_uri) do
-      dispatch_to_session(session_uri, caller_uri, caps, body, mentions)
+      dispatch_to_session(session_uri, caller_uri, caps, body, mentions, origin)
     end
   end
 
@@ -245,7 +247,7 @@ defmodule EzagentPluginFeishu.InboundDispatcher do
     end
   end
 
-  defp dispatch_to_session(session_uri, caller_uri, caps, body, mentions) do
+  defp dispatch_to_session(session_uri, caller_uri, caps, body, mentions, origin) do
     # Phase 6 PR 15: download attachments to local paths so recipients
     # (CC bridge, LV chat thread, future viewers) can show content
     # rather than just metadata. Best-effort — download failure keeps
@@ -275,7 +277,7 @@ defmodule EzagentPluginFeishu.InboundDispatcher do
     # `:legend_triggers`, matched by the rule-set entry's `mention(<name>)`)
     # instead of silent-dropping through the URI-mention matcher. Empty legends
     # → identical to the up-front mentions, with no legend triggers.
-    {mentions, legend_triggers} = legend_aware_mentions(session_uri, body, mentions)
+    {mentions, legend_triggers} = legend_aware_mentions(session_uri, body, mentions, caller_uri)
 
     msg =
       Ezagent.Message.new(caller_uri, body,
@@ -293,7 +295,8 @@ defmodule EzagentPluginFeishu.InboundDispatcher do
       target: target,
       mode: :call,
       args: %{message: msg},
-      ctx: %{caller: caller_uri, caps: caps, reply: :sync}
+      ctx: %{caller: caller_uri, caps: caps, reply: :sync},
+      origin: origin
     }
 
     case Ezagent.Invocation.dispatch(inv) do
@@ -313,8 +316,8 @@ defmodule EzagentPluginFeishu.InboundDispatcher do
   # seam (overridable per-env) so unit tests need not spin up the full Session
   # Kind tree.
   @default_legends_reader {Ezagent.Entity.Session, :session_legends}
-  @spec legend_aware_mentions(URI.t(), map(), [URI.t()]) :: {[URI.t()], [String.t()]}
-  defp legend_aware_mentions(%URI{} = session_uri, body, fallback_mentions) do
+  @spec legend_aware_mentions(URI.t(), map(), [URI.t()], URI.t()) :: {[URI.t()], [String.t()]}
+  defp legend_aware_mentions(%URI{} = session_uri, body, fallback_mentions, caller_uri) do
     text = Map.get(body, :text) || Map.get(body, "text")
 
     with true <- is_binary(text),
@@ -326,7 +329,7 @@ defmodule EzagentPluginFeishu.InboundDispatcher do
            ),
          legends when is_map(legends) and map_size(legends) > 0 <-
            apply(mod, fun, [session_uri]) do
-      EzagentPluginFeishu.MentionParser.extract_mentions(text, legends)
+      EzagentPluginFeishu.MentionParser.extract_mentions(text, legends, caller_uri)
     else
       _ -> {fallback_mentions, []}
     end

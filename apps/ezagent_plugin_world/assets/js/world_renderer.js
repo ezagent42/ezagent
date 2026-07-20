@@ -2,7 +2,8 @@ import {worldNavigationTarget} from "./world_navigation.js"
 
 export const WorldRenderer = {
   async mounted() {
-    this._worldUnmount = null
+    this._world = null
+    this._lastDispatchStatus = null
     this._worldNavigate = (event) => {
       const to = worldNavigationTarget(event, this.el)
       if (!to) return
@@ -23,7 +24,7 @@ export const WorldRenderer = {
       ensureStylesheet(this.el.dataset.worldCssUrl)
       await ensureViteReactPreamble(moduleUrl)
       const mod = await import(/* @vite-ignore */ moduleUrl)
-      this._worldUnmount = mod.mountWorld(this.el, {
+      this._world = mod.mountWorld(this.el, {
         layout: parseJson(this.el.dataset.layout, {}),
         state: parseJson(this.el.dataset.worldState, {}),
         pluginNav: parseJson(this.el.dataset.pluginNav, []),
@@ -33,15 +34,27 @@ export const WorldRenderer = {
         },
         onServerEvent: (event, callback) => this.handleEvent(event, callback),
       })
+      this._lastDispatchStatus = this.el.dataset.lastDispatch || null
     } catch (error) {
       console.error("WorldRenderer failed to mount", error)
       this.el.dataset.worldMountError = "true"
     }
   },
 
+  updated() {
+    // data 属性会穿过 phx-update="ignore" 被 patch（同 uri_picker.js 的先例），
+    // 但 React 岛不会自动重读。把最新的 data-last-dispatch 推进岛里，
+    // G5 错误卡片才能随后端 assign 实时出现/消失。
+    const status = this.el.dataset.lastDispatch || null
+    if (status === this._lastDispatchStatus) return
+
+    this._lastDispatchStatus = status
+    this._world?.setDispatchStatus(status)
+  },
+
   destroyed() {
     if (this._worldNavigate) this.el.removeEventListener("click", this._worldNavigate)
-    if (this._worldUnmount) this._worldUnmount()
+    if (this._world) this._world.unmount()
   },
 }
 

@@ -17,27 +17,32 @@ defmodule EzagentPluginFeishu.MentionParser do
   live and someone types `@architect 看看`, the message routes only
   to that agent via MentionRouting (the existing matcher).
 
-  ## Resolution (PR #149 SPEC v2 §5.14)
+  ## Resolution (PR #149 SPEC v2 §5.14 + read-plane PR-4 rework)
 
   `Ezagent.AgentTypeRegistry` was deleted; there's no per-flavor
-  enumeration anymore. Resolution now walks `Ezagent.KindRegistry`
-  and matches any live `entity://agent/<flavor>_<name>` whose tail
-  (everything after the first `_`) equals the typed `@<name>`.
+  enumeration anymore. Pre-rework, resolution walked the GLOBAL
+  `Ezagent.KindRegistry` — a live cross-tenant agent enumeration
+  reachable per inbound message. Rework: resolution walks the
+  CALLER-VISIBLE agent roster of the caller's own workspace via the
+  `Ezagent.Workspace.WorkspaceReads.agents/2` chokepoint (mention-scoped:
+  caller owns/manages, or the shared roster for workspace members),
+  filtered to LIVE agents, and matches any `entity://agent/<flavor>_<name>`
+  whose tail (everything after the first `_`) equals the typed `@<name>`.
   Multiple live agents sharing a name (cc_alice + curl_alice) both
   match — same UX as before.
 
   ## UX: name-only mention with flavor auto-discovery
 
   Users type `@<name>`, not `@<flavor>_<name>` — the parser scans
-  every live agent in the registry and pulls those whose name suffix
+  the caller-visible live agents and pulls those whose name suffix
   matches. Flavor stays an operator-side convention; the typed
-  `@<name>` is the natural-language handle.
+  `@<name>` is the natural-language handle. A caller who may not see
+  any agents (not a workspace member, no owns/manages relationship)
+  resolves no mentions — fail-closed, never a cross-tenant leak.
 
   Allen 2026-05-17: "B2 路线可以,暂时只考虑文字" — text only,
   no attachment-level mentions.
   """
-
-  alias Ezagent.KindRegistry
 
   # Unicode-aware (`u` flag + \p{L}\p{N}) so CJK legend names like `@传话游戏`
   # are captured (team-routing-unification §3.6, PR-6) alongside the original
@@ -52,15 +57,18 @@ defmodule EzagentPluginFeishu.MentionParser do
   @mention_re ~r/(?<![\p{L}\p{N}_])@([\p{L}\p{N}_.\-]+)/u
 
   @doc """
-  Extract live agent URIs from free text. Returns `[URI.t()]`.
+  Extract live agent URIs from free text, scoped to what `caller` may
+  see. Returns `[URI.t()]`.
 
-      iex> EzagentPluginFeishu.MentionParser.extract_agent_mentions("@architect look")
-      [%URI{scheme: "entity", ...}]  # if live
+      iex> EzagentPluginFeishu.MentionParser.extract_agent_mentions("@architect look", caller)
+      [%URI{scheme: "entity", ...}]  # if live and caller-visible
 
-  Returns `[]` if no `@name` tokens or none of them resolve to a live agent.
+  Returns `[]` if no `@name` tokens, none of them resolve to a live
+  caller-visible agent, or the caller is not authorized for any agent
+  roster (fail-closed).
   """
-  @spec extract_agent_mentions(String.t()) :: [URI.t()]
-  def extract_agent_mentions(text) when is_binary(text) do
+  @spec extract_agent_mentions(String.t(), URI.t() | String.t() | term()) :: [URI.t()]
+  def extract_agent_mentions(text, caller) when is_binary(text) do
     typed_names =
       @mention_re
       |> Regex.scan(text, capture: :all_but_first)
@@ -72,13 +80,13 @@ defmodule EzagentPluginFeishu.MentionParser do
         []
 
       _ ->
-        live_agent_uris()
+        live_agent_uris(caller)
         |> Enum.filter(&matches_any_typed_name?(&1, typed_names))
         |> Enum.uniq_by(&URI.to_string/1)
     end
   end
 
-  def extract_agent_mentions(_), do: []
+  def extract_agent_mentions(_, _), do: []
 
   @doc """
   Like `extract_agent_mentions/1`, but consults the session's legend registry
@@ -102,10 +110,11 @@ defmodule EzagentPluginFeishu.MentionParser do
 
   `legends` is the session-scoped legend registry (`name => entry`), read off
   the Chat slice via `Ezagent.ActionSet.Session.legends_of/1` by the caller.
-  Passing `%{}` yields `{extract_agent_mentions(text), []}`.
+  Passing `%{}` yields `{extract_agent_mentions(text, caller), []}`.
   """
-  @spec extract_mentions(String.t(), map()) :: {[URI.t()], [String.t()]}
-  def extract_mentions(text, legends) when is_binary(text) and is_map(legends) do
+  @spec extract_mentions(String.t(), map(), URI.t() | String.t() | term()) ::
+          {[URI.t()], [String.t()]}
+  def extract_mentions(text, legends, caller) when is_binary(text) and is_map(legends) do
     typed_names =
       @mention_re
       |> Regex.scan(text, capture: :all_but_first)
@@ -122,30 +131,57 @@ defmodule EzagentPluginFeishu.MentionParser do
     uri_mentions =
       case non_legend_names do
         [] -> []
-        names -> live_agent_uris() |> Enum.filter(&matches_any_typed_name?(&1, names))
+        names -> live_agent_uris(caller) |> Enum.filter(&matches_any_typed_name?(&1, names))
       end
       |> Enum.uniq_by(&URI.to_string/1)
 
     {uri_mentions, legend_names}
   end
 
-  def extract_mentions(_, _), do: {[], []}
+  def extract_mentions(_, _, _), do: {[], []}
 
-  # All currently-live `entity://agent/<workspace>/<name>` URIs.
-  defp live_agent_uris do
-    KindRegistry.list_all()
-    |> Enum.flat_map(fn {uri_str, _pid} ->
-      # SPEC 2026-05-27-uri-canonicalization §3.3 — canonical chokepoint
-      # with try/rescue (silent-drop fallback for corrupted registry rows).
-      try do
-        case Ezagent.URI.new!(uri_str) do
-          %URI{scheme: "entity"} = uri -> if Ezagent.URI.type?(uri, :agent), do: [uri], else: []
-          _ -> []
-        end
-      rescue
-        ArgumentError -> []
-      end
-    end)
+  # The caller-visible LIVE `entity://agent/<workspace>/<name>` URIs,
+  # mention-scoped (read-plane PR-4 rework): the roster comes from the
+  # `Ezagent.Workspace.WorkspaceReads.agents/2` chokepoint over the
+  # caller's own workspace (caller owns/manages, or the shared roster
+  # for workspace members — fail-closed `[]`), then filtered to live
+  # Kinds so a dormant roster entry doesn't receive a mention it can't
+  # act on.
+  defp live_agent_uris(caller) do
+    with %URI{} = caller_uri <- as_uri(caller),
+         %URI{scheme: "workspace"} = workspace_uri <- safe_workspace_of(caller_uri) do
+      caller_uri
+      |> Ezagent.Workspace.WorkspaceReads.agents(workspace_uri)
+      |> Enum.filter(&live_agent?/1)
+    else
+      _ -> []
+    end
+  end
+
+  defp live_agent?(%URI{} = uri) do
+    Ezagent.LocalRuntime.kind_alive?(uri)
+  rescue
+    _ -> false
+  end
+
+  defp as_uri(%URI{} = uri), do: uri
+
+  defp as_uri(value) when is_binary(value) do
+    case Ezagent.URI.parse(value) do
+      {:ok, %URI{} = uri} -> uri
+      _ -> nil
+    end
+  end
+
+  defp as_uri(_), do: nil
+
+  defp safe_workspace_of(%URI{} = uri) do
+    case Ezagent.Capability.workspace_of(uri) do
+      %URI{} = workspace_uri -> workspace_uri
+      _ -> nil
+    end
+  rescue
+    _ -> nil
   end
 
   # True if the URI's opaque display name matches one of the typed

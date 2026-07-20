@@ -2,6 +2,7 @@ defmodule Ezagent.Identity.AbsorbCapFacadeTest do
   use EzagentCore.DataCase, async: false
 
   import Ecto.Query
+  import Ezagent.Test.CapHelper, only: [authority_signed_cap_as!: 4, signed_fixture_cap!: 5]
 
   alias Ezagent.Cap.Delivery
   alias Ezagent.Cap.DeliveryOutbox
@@ -22,7 +23,7 @@ defmodule Ezagent.Identity.AbsorbCapFacadeTest do
       if Process.alive?(pid), do: Ezagent.Kind.terminate(user_uri)
     end)
 
-    artifact = %Capability{
+    proposal = %Capability{
       kind: :user,
       behavior: Ezagent.ActionSet.Identity,
       action: :list_caps,
@@ -31,6 +32,9 @@ defmodule Ezagent.Identity.AbsorbCapFacadeTest do
       granted_by: issuer,
       granted_at: DateTime.utc_now()
     }
+
+    {:ok, authority} = Ezagent.Cap.Authority.open(user_uri, :user)
+    artifact = authority_signed_cap_as!(authority, issuer, user_uri, proposal)
 
     :ok = Ezagent.ReadyGate.put(user_uri, :not_ready)
     buffer_size_before = Ezagent.PendingDelivery.buffer_size(user_uri)
@@ -99,15 +103,14 @@ defmodule Ezagent.Identity.AbsorbCapFacadeTest do
     unique = System.unique_integer([:positive])
     missing_uri = Ezagent.URI.user("team-alpha", "missing-cap-target-#{unique}")
 
-    artifact = %Capability{
-      kind: :user,
-      behavior: Ezagent.ActionSet.Identity,
-      action: :list_caps,
-      instance: Ezagent.URI.instance(missing_uri),
-      workspace_uri: Ezagent.Capability.workspace_of(missing_uri),
-      granted_by: Ezagent.URI.user("team-alpha", "issuer-#{unique}"),
-      granted_at: DateTime.utc_now()
-    }
+    artifact =
+      signed_fixture_cap!(
+        missing_uri,
+        :user,
+        Ezagent.ActionSet.Identity,
+        :list_caps,
+        missing_uri
+      )
 
     assert :ok = Ezagent.Identity.absorb_cap(missing_uri, artifact)
 

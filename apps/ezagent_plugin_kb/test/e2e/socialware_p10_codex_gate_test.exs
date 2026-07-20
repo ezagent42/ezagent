@@ -90,7 +90,7 @@ defmodule EzagentPluginKb.E2E.SocialwareP10CodexGateTest do
       Workspace.create_session(
         workspace_uri,
         %{short_name: "customer-#{uniq()}", template_name: supervised_template},
-        admin_ctx()
+        admin_ctx(workspace_uri)
       )
 
     on_exit(fn -> cleanup_session(session_uri) end)
@@ -128,7 +128,7 @@ defmodule EzagentPluginKb.E2E.SocialwareP10CodexGateTest do
         workspace_uri,
         session_uri,
         supervised_template_uri,
-        kb_seed.orchestrator_caps
+        kb_seed.kb_agent_uri
       )
 
     held_caps = Ezagent.Identity.read_entity_caps(orchestrator.uri)
@@ -168,7 +168,7 @@ defmodule EzagentPluginKb.E2E.SocialwareP10CodexGateTest do
         "supervisor",
         supervisor_a,
         %{quorum_policy: "majority"},
-        admin_ctx()
+        admin_ctx(workspace_uri)
       )
 
     {:ok, _} =
@@ -177,14 +177,19 @@ defmodule EzagentPluginKb.E2E.SocialwareP10CodexGateTest do
         "supervisor",
         supervisor_b,
         %{quorum_policy: "majority"},
-        admin_ctx()
+        admin_ctx(workspace_uri)
       )
 
     read_cap = read_unfiltered_cap(session_uri, workspace_uri)
     supervisor_caps = Ezagent.Identity.list_caps_for(supervisor_a)
     assert Enum.any?(supervisor_caps, &Capability.matches?(&1, read_cap))
 
-    turn = compose_supervised_turn(session_uri, User.admin_uri(), admin_ctx().caps)
+    turn =
+      compose_supervised_turn(
+        session_uri,
+        User.admin_uri(),
+        lifecycle_caps(session_uri, User.admin_uri(), [turn: :open, turn: :compose])
+      )
     assert internal_message?(turn.message_id)
 
     refute "supervised draft" in visible_texts(session_uri, MapSet.new())
@@ -235,7 +240,11 @@ defmodule EzagentPluginKb.E2E.SocialwareP10CodexGateTest do
                  arbiter: nil
                },
                stale_supervisor,
-               MapSet.new([Capability.admin_genesis_cap()])
+               lifecycle_caps(
+                 session_uri,
+                 stale_supervisor,
+                 supervisor_approval: :submit_verdict
+               )
              )
 
     assert {:ok, %{status: :awaiting_human}} =
@@ -282,7 +291,7 @@ defmodule EzagentPluginKb.E2E.SocialwareP10CodexGateTest do
       Workspace.create_session(
         workspace_uri,
         %{short_name: "auto-#{uniq()}", template_name: auto_template},
-        admin_ctx()
+        admin_ctx(workspace_uri)
       )
 
     on_exit(fn -> cleanup_session(auto_session) end)
@@ -300,6 +309,8 @@ defmodule EzagentPluginKb.E2E.SocialwareP10CodexGateTest do
          bot_recipe,
          opts
        ) do
+    author_ctx = Ezagent.Test.CapHelper.signed_workspace_ctx!(workspace_uri, author)
+
     {:noreply, socket} =
       WorkspacePluginActions.save_session_template(
         %Phoenix.LiveView.Socket{
@@ -307,7 +318,7 @@ defmodule EzagentPluginKb.E2E.SocialwareP10CodexGateTest do
             __changed__: %{},
             current_entity_uri: author,
             current_workspace_uri: workspace_uri,
-            current_caps: MapSet.new([Capability.admin_genesis_cap()]),
+            current_caps: author_ctx.caps,
             world_state: %{}
           }
         },
@@ -377,19 +388,18 @@ defmodule EzagentPluginKb.E2E.SocialwareP10CodexGateTest do
     }
   end
 
-  defp start_codex_orchestrator(workspace_uri, session_uri, template_uri, caps) do
+  defp start_codex_orchestrator(workspace_uri, session_uri, template_uri, kb_agent_uri) do
     orchestrator_uri = Ezagent.URI.agent(workspace_uri.host, "codex-orchestrator-p10-#{uniq()}")
     binding_epoch = Ezagent.Session.OrchestratorBinding.new_epoch()
     :ok = Ezagent.AgentFlavorAttributes.put(orchestrator_uri, "codex")
     on_exit(fn -> Ezagent.AgentFlavorAttributes.delete(orchestrator_uri) end)
 
-    issued_caps =
-      Enum.map(caps, fn proposal ->
-        {:ok, artifact} =
-          Ezagent.Cap.issue({:genesis, User.admin_uri()}, orchestrator_uri, proposal)
+    kb_query_target = Ezagent.URI.with_action(kb_agent_uri, :kb, :query)
+    session_send_target = Ezagent.URI.with_action(session_uri, :session, :send)
 
-        artifact
-      end)
+    issued_caps =
+      [kb_query_target, session_send_target]
+      |> Enum.map(&Ezagent.Test.CapHelper.signed_action_cap!(&1, orchestrator_uri))
 
     {:ok, _pid} =
       Ezagent.Kind.spawn(Ezagent.Entity.Agent, %{
@@ -468,7 +478,7 @@ defmodule EzagentPluginKb.E2E.SocialwareP10CodexGateTest do
   end
 
   defp compose_auto_turn(session_uri, caller) do
-    caps = MapSet.new([Capability.admin_genesis_cap()])
+    caps = lifecycle_caps(session_uri, caller, [turn: :open, turn: :compose])
 
     assert {:ok, %{turn_id: turn_id}} =
              dispatch_call(
@@ -498,6 +508,7 @@ defmodule EzagentPluginKb.E2E.SocialwareP10CodexGateTest do
 
   defp dispatch_call(session_uri, behavior, action, args, caller, caps) do
     Invocation.dispatch(%Invocation{
+      origin: :trusted_internal,
       target: Ezagent.URI.with_action(session_uri, behavior, action),
       mode: :call,
       args: args,
@@ -507,15 +518,17 @@ defmodule EzagentPluginKb.E2E.SocialwareP10CodexGateTest do
 
   defp dispatch_send(caller_uri, session_uri, text) do
     msg = Message.new(caller_uri, %{text: text, attachments: []})
+    target = Ezagent.URI.with_action(session_uri, :session, :send)
 
     :ok =
       Invocation.dispatch(%Invocation{
-        target: Ezagent.URI.with_action(session_uri, :session, :send),
+        origin: :trusted_internal,
+        target: target,
         mode: :cast,
         args: %{message: msg},
         ctx: %{
           caller: caller_uri,
-          caps: MapSet.new([Capability.admin_genesis_cap()]),
+          caps: MapSet.new([Ezagent.Test.CapHelper.signed_action_cap!(target, caller_uri)]),
           reply: :ignore
         }
       })
@@ -624,7 +637,7 @@ defmodule EzagentPluginKb.E2E.SocialwareP10CodexGateTest do
         workspace_uri
       )
 
-    Ezagent.Identity.Grant.grant_cap(holder, cap, {:genesis, User.admin_uri()})
+    Ezagent.Identity.Grant.grant_cap(holder, cap, {:admin, User.admin_uri()})
   end
 
   defp cleanup_session(session_uri) do
@@ -643,8 +656,17 @@ defmodule EzagentPluginKb.E2E.SocialwareP10CodexGateTest do
     _ -> :ok
   end
 
-  defp admin_ctx do
-    %{caller: User.admin_uri(), caps: MapSet.new([Capability.admin_genesis_cap()])}
+  defp admin_ctx(workspace_uri) do
+    Ezagent.Test.CapHelper.signed_workspace_ctx!(workspace_uri, User.admin_uri())
+  end
+
+  defp lifecycle_caps(session_uri, caller, actions) when is_list(actions) do
+    actions
+    |> Enum.flat_map(fn {behavior, action} ->
+      target = Ezagent.URI.with_action(session_uri, behavior, action)
+      Ezagent.Socialware.TestCapHelper.lifecycle_caps(session_uri, caller, target)
+    end)
+    |> MapSet.new()
   end
 
   defp autoservice_seed(fun), do: apply(Ezagent.AutoService.Tier1Seed, fun, [])

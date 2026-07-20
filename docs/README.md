@@ -15,5 +15,6 @@ Where things live:
 | `futures/` | V2 feedback log + durable TODO |
 | `runbook/` | Operator runbook (common failures, etc.) |
 | `onboarding/` | New-developer guides |
+| `user-guides/` | Product guides for workspace owners and enterprise users |
 
 Browsable API docs (183 modules + 22 mix tasks): run `mix docs` → opens `doc/index.html`.

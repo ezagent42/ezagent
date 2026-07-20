@@ -71,7 +71,7 @@ defmodule Ezagent.ActionSet.Session.ReconcileAfterLoadTest do
       Ezagent.Identity.Grant.grant_cap_via_router(
         member,
         cap,
-        {:rule, :session_participation, granter},
+        {:admin, Ezagent.Entity.User.admin_uri()},
         :sync
       )
   end
@@ -85,7 +85,7 @@ defmodule Ezagent.ActionSet.Session.ReconcileAfterLoadTest do
       Ezagent.Identity.Grant.grant_cap_via_router(
         member,
         cap,
-        {:genesis, Ezagent.Entity.User.admin_uri()},
+        {:admin, Ezagent.Entity.User.admin_uri()},
         :sync
       )
   end

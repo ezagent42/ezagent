@@ -67,14 +67,19 @@ defmodule Ezagent.ActionSet.Session.MemberCapJoinTest do
   # wildcard so the test never has to replay the per-surface provision dance —
   # the member-cap granter is the session OWNER (read off the session slice),
   # independent of the dispatch caller.
-  defp dispatch_join(session_uri, member_uri) do
+  defp dispatch_join(session_uri, member_uri, extra_args \\ %{}) do
+    target = URI.new!("#{URI.to_string(session_uri)}?action=session.join")
+    admin = Ezagent.Entity.User.admin_uri()
+    {:ok, cap} = Ezagent.Cap.issue_for_action({:admin, admin}, admin, target)
+
     Ezagent.Invocation.dispatch(%Ezagent.Invocation{
-      target: URI.new!("#{URI.to_string(session_uri)}?action=session.join"),
+      origin: :trusted_internal,
+      target: target,
       mode: :call,
-      args: %{member: member_uri},
+      args: Map.put(extra_args, :member, member_uri),
       ctx: %{
-        caller: Ezagent.Entity.User.admin_uri(),
-        caps: MapSet.new([Capability.admin_genesis_cap()]),
+        caller: admin,
+        caps: MapSet.new([cap]),
         reply: :ignore
       }
     })
@@ -138,7 +143,7 @@ defmodule Ezagent.ActionSet.Session.MemberCapJoinTest do
       Ezagent.Identity.Grant.grant_cap_via_router(
         member_uri,
         cap,
-        {:genesis, Ezagent.Entity.User.admin_uri()},
+        {:admin, Ezagent.Entity.User.admin_uri()},
         :sync
       )
   end
@@ -199,7 +204,9 @@ defmodule Ezagent.ActionSet.Session.MemberCapJoinTest do
 
     cap = wait_member_cap(member, session)
     assert cap, "a joined user must hold the member-cap over the session"
-    assert cap.granted_by == owner, "member-cap granted_by must be the session owner"
+
+    assert cap.granted_by == owner,
+           "member-cap must be issued by the session owner through target K.grant"
   end
 
   test "join grants the member-cap to an AGENT member (agents carry :identity caps) [test 2]" do
@@ -292,33 +299,13 @@ defmodule Ezagent.ActionSet.Session.MemberCapJoinTest do
     second = confirmed_user("second")
 
     # First member claims the role_name.
-    _ =
-      Ezagent.Invocation.dispatch(%Ezagent.Invocation{
-        target: URI.new!("#{URI.to_string(session)}?action=session.join"),
-        mode: :call,
-        args: %{member: first, role_name: role},
-        ctx: %{
-          caller: Ezagent.Entity.User.admin_uri(),
-          caps: MapSet.new([Capability.admin_genesis_cap()]),
-          reply: :ignore
-        }
-      })
+    _ = dispatch_join(session, first, %{role_name: role})
 
     assert wait_member_cap(first, session)
 
     # Second member's join CONFLICTS on the same role_name → rejected BEFORE the
     # grant (the preflight is a zero-side-effect check placed before the grant).
-    result =
-      Ezagent.Invocation.dispatch(%Ezagent.Invocation{
-        target: URI.new!("#{URI.to_string(session)}?action=session.join"),
-        mode: :call,
-        args: %{member: second, role_name: role},
-        ctx: %{
-          caller: Ezagent.Entity.User.admin_uri(),
-          caps: MapSet.new([Capability.admin_genesis_cap()]),
-          reply: :ignore
-        }
-      })
+    result = dispatch_join(session, second, %{role_name: role})
 
     assert match?({:error, _}, result), "a role_name-conflicting join must be rejected"
 
@@ -328,7 +315,7 @@ defmodule Ezagent.ActionSet.Session.MemberCapJoinTest do
            "a role-conflict rejection must NOT orphan a member-cap (grant is AFTER the preflight)"
   end
 
-  defp issued_member_cap(owner, receiver, session) do
+  defp issued_member_cap(_owner, receiver, session) do
     requested =
       Capability.cap(
         :session,
@@ -338,7 +325,9 @@ defmodule Ezagent.ActionSet.Session.MemberCapJoinTest do
         Capability.workspace_of(session)
       )
 
-    {:ok, cap} = Ezagent.Cap.issue({:genesis, owner}, receiver, requested)
+    {:ok, cap} =
+      Ezagent.Cap.issue({:admin, Ezagent.Entity.User.admin_uri()}, receiver, requested)
+
     cap
   end
 

@@ -13,19 +13,14 @@ defmodule Ezagent.World.ConversationSessionState do
   alias Ezagent.World.ConversationData
 
   @doc false
-  @spec list_sessions(URI.t() | term()) :: [URI.t()]
-  def list_sessions(%URI{scheme: "workspace"} = workspace_uri) do
-    EzagentDomainInstanceMessage.list_sessions(workspace_uri)
-  rescue
-    _ -> []
-  end
-
-  def list_sessions(_), do: []
-
-  @doc false
+  # Read-plane PR-4 rework: the world session list routes through the
+  # caller-authorizing `Ezagent.Workspace.WorkspaceReads.sessions/2`
+  # chokepoint (owner/member OR public per row; workspace gate FIRST;
+  # fail-closed `[]`). The caller-less arity is gone — a session
+  # enumeration without a caller cannot be authorized.
   @spec list_sessions(URI.t() | term(), URI.t() | term()) :: [URI.t()]
   def list_sessions(%URI{scheme: "workspace"} = workspace_uri, %URI{} = caller_uri) do
-    EzagentDomainInstanceMessage.list_sessions(workspace_uri, caller_uri)
+    Ezagent.Workspace.WorkspaceReads.sessions(caller_uri, workspace_uri)
   rescue
     _ -> []
   end

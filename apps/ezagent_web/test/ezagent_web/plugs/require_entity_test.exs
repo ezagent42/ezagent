@@ -31,17 +31,19 @@ defmodule EzagentWeb.Plugs.RequireEntityTest do
 
     test "passes through + assigns current_entity_uri for an ACTIVE entity://user/*" do
       # Seeded, not disabled → the Change 3 recheck lets it through.
-      {:ok, _} = Users.create("entity://system/user/admin", "pw", [])
+      name = "active-#{System.unique_integer([:positive])}"
+      uri = "entity://system/user/#{name}"
+      {:ok, _} = Users.create(uri, "pw", [])
 
       conn =
         conn(:get, "/admin")
-        |> init_test_session(%{"current_entity_uri" => "entity://system/user/admin"})
+        |> init_test_session(%{"current_entity_uri" => uri})
         |> RequireEntity.call([])
 
       refute conn.halted
 
       # Phase 9 PR-8: admin URI is in workspace://system.
-      assert %URI{scheme: "entity", host: "system", path: "/user/admin"} =
+      assert %URI{scheme: "entity", host: "system", path: "/user/" <> ^name} =
                conn.assigns.current_entity_uri
     end
 

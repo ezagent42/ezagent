@@ -362,24 +362,18 @@ defmodule Ezagent.CapabilityRegistry do
   @doc """
   Authorize issuance of `cap` against authority loaded for the issuer.
 
-  `context` contains the accountable `:caller` and optional
-  `:authorization_rule`. All inputs are structural; domain code contributes
-  only Behavior `data_owner/1` callback data through `data_owner_of/2`.
+  `context` contains the accountable `:caller`. All inputs are structural;
+  domain code contributes only Behavior `data_owner/1` callback data through
+  `data_owner_of/2`.
   """
   @spec authorize_grant(MapSet.t(Capability.t()) | [Capability.t()], Capability.t(), map()) ::
           :ok | {:error, term()}
   def authorize_grant(caps, %Capability{} = cap, context) when is_map(context) do
     held = normalize_authority_caps(caps)
 
-    if Map.has_key?(context, :authorization_rule) do
-      if rule_cap_bounded?(cap),
-        do: :ok,
-        else: {:error, :rule_grant_must_be_concrete_scoped}
-    else
-      with :ok <- authorize_action_axis(held, cap),
-           :ok <- authorize_cap_shape(held, cap, Map.get(context, :caller)) do
-        :ok
-      end
+    with :ok <- authorize_action_axis(held, cap),
+         :ok <- authorize_cap_shape(held, cap, Map.get(context, :caller)) do
+      :ok
     end
   end
 

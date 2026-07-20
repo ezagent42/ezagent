@@ -68,10 +68,7 @@ defmodule Ezagent.PluginCc.Template.CcUnifiedCreateCascadeTest do
     {:ok, _ws_pid} = Workspace.create(ws_name, %{})
     workspace_uri = URI.new!("workspace://#{ws_name}")
 
-    admin_ctx = %{
-      caller: User.admin_uri(),
-      caps: MapSet.new([Ezagent.Capability.admin_genesis_cap()])
-    }
+    admin_ctx = Ezagent.Test.CapHelper.signed_workspace_ctx!(workspace_uri, User.admin_uri())
 
     on_exit(fn -> restore_system_env("EZAGENT_ALLOWED_CWD_ROOTS", previous_allowed_roots) end)
 

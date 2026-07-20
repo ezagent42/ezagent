@@ -1,8 +1,8 @@
 defmodule Ezagent.Invariants.CapSingleAuthorizationHomeTest do
   @moduledoc """
-  I7/C1: `Cap.issue/3` is the single grantor-authorization home, and authority
-  is loaded through the configured durable loader rather than supplied by a
-  caller. The downstream Identity handler is store-only.
+  I7/C1: `Cap.issue/3` routes every mint through target `K.grant`; that action's
+  central verifier is the single grantor-authorization home. The downstream
+  Identity handler is store-only.
   """
   use ExUnit.Case, async: true
 
@@ -13,8 +13,15 @@ defmodule Ezagent.Invariants.CapSingleAuthorizationHomeTest do
     identity =
       File.read!(Path.join(root, "apps/ezagent_domain_identity/lib/ezagent/behavior/identity.ex"))
 
-    assert cap =~ "CapabilityRegistry.authorize_grant(caps, cap, context)"
-    assert cap =~ "loader.read_held_caps(actor)"
+    assert cap =~ "Ezagent.Cap.Grant.authorize_and_issue_current"
+    assert cap =~ "dispatch_grant(target, %Ezagent.Invocation{"
+    assert cap =~ "origin: :trusted_internal"
+
+    grant =
+      File.read!(Path.join(root, "apps/ezagent_core/lib/ezagent/cap/grant.ex"))
+
+    assert grant =~ "Ezagent.Cap.Verifier.authorize"
+    assert grant =~ "Authority.issue_current(intent)"
     refute identity =~ "check_grant_authorized"
     refute identity =~ "check_action_wildcard_grant_authorized"
   end

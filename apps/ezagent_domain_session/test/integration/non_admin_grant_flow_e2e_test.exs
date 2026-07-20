@@ -31,7 +31,7 @@ defmodule EzagentDomainInstanceMessage.Integration.NonAdminGrantFlowE2ETest do
   # Sandbox provided by EzagentCore.DataCase (#92).
 
   defp setup_non_admin(handle, caps \\ []) do
-    uri_str = "entity://team-alpha/user/" <> handle <> "_#{System.unique_integer([:positive])}"
+    uri_str = "entity://system/user/" <> handle <> "_#{System.unique_integer([:positive])}"
     {:ok, _} = Users.create(uri_str, nil, caps)
 
     uri = Ezagent.URI.new!(uri_str)
@@ -49,10 +49,12 @@ defmodule EzagentDomainInstanceMessage.Integration.NonAdminGrantFlowE2ETest do
 
   defp default_session do
     short = "non_admin_e2e_#{System.unique_integer([:positive])}"
+
     {:ok, uri, _meta} =
-      EzagentDomainInstanceMessage.SessionCreator.create_session(short, Ezagent.Entity.User.admin_uri(),
-        template_name: "default"
-      )
+      EzagentDomainInstanceMessage.SessionCreator.create_session(
+        short,
+        Ezagent.Entity.User.admin_uri(), template_name: "default")
+
     uri
   end
 
@@ -60,6 +62,7 @@ defmodule EzagentDomainInstanceMessage.Integration.NonAdminGrantFlowE2ETest do
     msg = Message.new(caller_uri, %{text: text, attachments: []}, mentions: [])
 
     Invocation.dispatch(%Invocation{
+      origin: :trusted_internal,
       target: URI.new!("#{URI.to_string(session_uri)}?action=session.send"),
       mode: :call,
       args: %{message: msg},
@@ -68,22 +71,11 @@ defmodule EzagentDomainInstanceMessage.Integration.NonAdminGrantFlowE2ETest do
   end
 
   defp admin_grants_cap(operator_uri, cap) do
-    # The admin-grants-cap mechanism dispatches Identity.grant_cap on
-    # the operator's User Kind. Admin is the caller; operator is the
-    # target. After grant, operator's :identity slice holds the new
-    # cap and Invocation.dispatch's step 5.5 will match it.
-    target = URI.new!("#{URI.to_string(operator_uri)}?action=identity.grant_cap")
-
-    Invocation.dispatch(%Invocation{
-      target: target,
-      mode: :call,
-      args: %{cap: cap},
-      ctx: %{
-        caller: Ezagent.Entity.User.admin_uri(),
-        caps: MapSet.new([Ezagent.Capability.admin_genesis_cap()]),
-        reply: :inline
-      }
-    })
+    Ezagent.Identity.Grant.grant_cap(
+      operator_uri,
+      cap,
+      {:admin, Ezagent.Entity.User.admin_uri()}
+    )
   end
 
   describe "admin grants cap to operator, operator can now act" do
@@ -93,7 +85,7 @@ defmodule EzagentDomainInstanceMessage.Integration.NonAdminGrantFlowE2ETest do
       {operator_uri, operator_caps_empty} = setup_non_admin("operator")
 
       # ---------- Step 1: operator with EMPTY caps → denied ----------
-      assert {:error, :unauthorized} =
+      assert {:error, :missing_cap} =
                chat_send(operator_uri, operator_caps_empty, session_uri, "first try")
 
       # ---------- Step 2: admin grants operator a workspace session cap ----------
@@ -103,14 +95,14 @@ defmodule EzagentDomainInstanceMessage.Integration.NonAdminGrantFlowE2ETest do
       # workspace_uri is substituted from the session URI).
       workspace_uri = @session_workspace_uri
 
-      session_cap = %Capability{
-        kind: :session,
-        behavior: :any,
-        instance: :any,
-        workspace_uri: workspace_uri,
-        granted_by: Ezagent.Entity.User.admin_uri(),
-        granted_at: DateTime.utc_now()
-      }
+      session_cap =
+        Capability.cap(
+          :session,
+          Ezagent.ActionSet.Session,
+          :send,
+          session_uri,
+          workspace_uri
+        )
 
       grant_result = admin_grants_cap(operator_uri, session_cap)
 
@@ -124,7 +116,7 @@ defmodule EzagentDomainInstanceMessage.Integration.NonAdminGrantFlowE2ETest do
       # production this is loaded from the principal's snapshot; for the
       # test we pass the cap explicitly to prove the grant + the
       # dispatch-time gate align.
-      operator_caps_after_grant = MapSet.new([session_cap])
+      operator_caps_after_grant = Ezagent.Identity.list_caps_for(operator_uri)
 
       result =
         chat_send(operator_uri, operator_caps_after_grant, session_uri, "second try")

@@ -20,13 +20,17 @@ defmodule EzagentDomainSocialware.Integration.SurfaceDispatchIntegrationTest do
   end
 
   defp dispatch(session_uri, behavior, action, args) do
-    Invocation.dispatch(%Invocation{
-      target: target(session_uri, behavior, action),
+    target = target(session_uri, behavior, action)
+    caller = User.admin_uri()
+
+    Invocation.dispatch(%Invocation{origin: :trusted_internal,
+      target: target,
       mode: :call,
       args: args,
       ctx: %{
-        caller: User.admin_uri(),
-        caps: MapSet.new([Ezagent.Capability.admin_genesis_cap()]),
+        caller: caller,
+        caps:
+          Ezagent.Socialware.TestCapHelper.lifecycle_caps(session_uri, caller, target),
         reply: {:caller_inbox, self()}
       }
     })

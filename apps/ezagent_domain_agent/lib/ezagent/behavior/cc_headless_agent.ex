@@ -12,6 +12,7 @@ defmodule Ezagent.ActionSet.CcHeadlessAgent do
   require Logger
 
   alias Ezagent.{Cmd, Message}
+  alias Ezagent.Agent.ErrorSignal
 
   action(:cc_headless_sync_result,
     args: %{result: :term, source_session: {:option, :uri}, user_text: :string},
@@ -51,6 +52,7 @@ defmodule Ezagent.ActionSet.CcHeadlessAgent do
     current_conv = ctx.read.(:conversation, [])
     user_text = Map.get(args, :user_text, "")
     in_msg_id = Map.get(args, :in_msg_id)
+    reply_cap = Map.get(args, :reply_cap)
 
     case result do
       {:ok, %{content: reply, usage: usage}} ->
@@ -65,7 +67,7 @@ defmodule Ezagent.ActionSet.CcHeadlessAgent do
             {:set, :conversation, final_conv},
             {:set, :last_error, nil},
             {:set, :last_tokens, usage}
-          ] ++ maybe_reply_effect(source_session_uri, self_uri, reply, in_msg_id)
+          ] ++ maybe_reply_effect(source_session_uri, self_uri, reply, in_msg_id, reply_cap)
 
         {:ok, %{ok: true, tokens: usage_total(usage)}, effects}
 
@@ -76,14 +78,12 @@ defmodule Ezagent.ActionSet.CcHeadlessAgent do
           )
         end
 
-        reply_text = "Claude Code SDK error: #{format_error(reason)}"
-
         effects =
           [
             {:set, :conversation,
              current_conv |> append_turn("user", user_text) |> trim(max_history)},
             {:set, :last_error, reason}
-          ] ++ maybe_reply_effect(source_session_uri, self_uri, reply_text, in_msg_id)
+          ] ++ maybe_reply_error(source_session_uri, self_uri, reason, in_msg_id, reply_cap)
 
         {:ok, %{ok: false, error: error_kind(reason)}, effects}
     end
@@ -94,42 +94,43 @@ defmodule Ezagent.ActionSet.CcHeadlessAgent do
   defp trim(conv, max_history) when length(conv) <= max_history, do: conv
   defp trim(conv, max_history), do: Enum.take(conv, -max_history)
 
-  defp maybe_reply_effect(nil, _self_uri, _text, _in_msg_id), do: []
-  defp maybe_reply_effect("", _self_uri, _text, _in_msg_id), do: []
-  defp maybe_reply_effect(_, nil, _text, _in_msg_id), do: []
+  defp maybe_reply_effect(nil, _self_uri, _text, _in_msg_id, _reply_cap), do: []
+  defp maybe_reply_effect("", _self_uri, _text, _in_msg_id, _reply_cap), do: []
+  defp maybe_reply_effect(_, nil, _text, _in_msg_id, _reply_cap), do: []
 
-  defp maybe_reply_effect(session_uri, %URI{} = self_uri, text, in_msg_id) do
+  defp maybe_reply_effect(session_uri, %URI{} = self_uri, text_or_body, in_msg_id, reply_cap) do
     case parse_session_uri(session_uri) do
       nil ->
         []
 
       %URI{} = session ->
-        reply_msg = Message.new(self_uri, %{text: text, attachments: []}, ref_id: in_msg_id)
+        reply_msg = Message.new(self_uri, reply_body(text_or_body), ref_id: in_msg_id)
         target = Ezagent.URI.with_action(session, :session, :send)
 
         cmd =
           Cmd.new(target, :send, %{message: reply_msg}, %{
             caller: self_uri,
-            caps:
-              MapSet.new([
-                %Ezagent.Capability{
-                  Ezagent.Capability.cap(
-                    :session,
-                    :any,
-                    :send,
-                    Ezagent.URI.instance(session),
-                    Ezagent.Capability.workspace_of(session)
-                  )
-                  | granted_by: self_uri,
-                    granted_at: DateTime.utc_now()
-                }
-              ]),
+            caps: MapSet.new(List.wrap(reply_cap)),
             reply: :ignore
           })
 
         [{:dispatch, cmd}]
     end
   end
+
+  # G5 source 2 — structured error reply (see `Ezagent.ActionSet.CurlAgent`).
+  defp maybe_reply_error(session_uri, self_uri, reason, in_msg_id, reply_cap) do
+    maybe_reply_effect(
+      session_uri,
+      self_uri,
+      ErrorSignal.reply_body(reason),
+      in_msg_id,
+      reply_cap
+    )
+  end
+
+  defp reply_body(text) when is_binary(text), do: %{text: text, attachments: []}
+  defp reply_body(%{} = body), do: body
 
   defp parse_session_uri(%URI{scheme: "session"} = u), do: u
 
@@ -156,10 +157,6 @@ defmodule Ezagent.ActionSet.CcHeadlessAgent do
   defp error_kind(:sdk_sidecar_timeout), do: :sdk_sidecar_timeout
   defp error_kind({:sdk_sidecar_exit, _}), do: :sdk_sidecar_exit
   defp error_kind(_), do: :other
-
-  defp format_error({:sdk_worker_error, error}), do: to_string(error)
-  defp format_error({:sdk_sidecar_exit, status}), do: "sidecar exited with status #{status}"
-  defp format_error(reason), do: inspect(reason)
 
   @doc false
   def data_owner(instance), do: Ezagent.ActionSet.ApiKeys.data_owner(instance)

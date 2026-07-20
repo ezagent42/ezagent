@@ -37,7 +37,6 @@ defmodule EzagentWeb.Router do
 
       live_session :world_root_require_entity, on_mount: {EzagentWeb.LiveAuth, :require_entity} do
         live "/", WorldLive
-        live "/overview", WorldLive
         live "/sessions", WorldLive
         live "/identities", WorldLive
         live "/identities/users", WorldLive
@@ -62,6 +61,16 @@ defmodule EzagentWeb.Router do
         live "/plugins/kanban", WorldLive
         live "/plugins/kanban/:uri", WorldLive
         live "/profile", WorldLive
+      end
+
+      # Read-plane PR-4 rework (F3): the operator plane (`/overview` +
+      # `/admin/*`) moved OUT of `:require_entity` into the centralized
+      # `:require_admin` gate — an authenticated NON-admin deep-link is
+      # rejected (redirect + flash), never shown cross-tenant
+      # counts/registries/templates. (Overlaps #187, which keeps the
+      # audit/authz/cc_event stream work.)
+      live_session :world_root_require_admin, on_mount: {EzagentWeb.LiveAuth, :require_admin} do
+        live "/overview", WorldLive
         live "/admin", WorldLive
         live "/admin/logs", WorldLive
         live "/admin/registry", WorldLive
@@ -81,7 +90,6 @@ defmodule EzagentWeb.Router do
 
     live_session :world_require_entity, on_mount: {EzagentWeb.LiveAuth, :require_entity} do
       live "/sessions", WorldLive
-      live "/overview", WorldLive
       live "/identities", WorldLive
       live "/identities/users", WorldLive
       live "/identities/users/new", WorldLive
@@ -105,6 +113,12 @@ defmodule EzagentWeb.Router do
       live "/plugins/kanban", WorldLive
       live "/plugins/kanban/:uri", WorldLive
       live "/profile", WorldLive
+    end
+
+    # Read-plane PR-4 rework (F3): see the host-scoped note above — the
+    # operator plane requires admin, not merely a logged-in entity.
+    live_session :world_require_admin, on_mount: {EzagentWeb.LiveAuth, :require_admin} do
+      live "/overview", WorldLive
       live "/admin", WorldLive
       live "/admin/logs", WorldLive
       live "/admin/registry", WorldLive
@@ -143,6 +157,7 @@ defmodule EzagentWeb.Router do
     # (retired). `/auth/confirm/:token` verifies email ownership.
     get "/register", RegistrationController, :new
     post "/register", RegistrationController, :create
+    post "/register/request", RegistrationController, :request_access
     get "/auth/confirm/:token", RegistrationController, :confirm
     # #88 PR-2 — email external-mirror binding verification. The human clicks
     # the link in the verification email (a LINK, not a reply token) to flip

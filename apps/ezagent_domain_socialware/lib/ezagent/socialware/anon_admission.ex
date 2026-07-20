@@ -100,18 +100,37 @@ defmodule Ezagent.Socialware.AnonAdmission do
   defp dispatch_join(session_uri, anon_uri) do
     target = Ezagent.URI.with_action(session_uri, :session, :join)
 
-    Ezagent.Invocation.dispatch(%Ezagent.Invocation{
-      target: target,
-      mode: :call,
-      args: %{member: anon_uri},
-      ctx: %{caller: anon_uri, reply: :ignore}
-    })
+    join_caps =
+      anon_uri
+      |> Ezagent.EntityCaps.load()
+      |> Enum.filter(&join_cap_for?(&1, session_uri))
+
+    if Enum.empty?(join_caps) do
+      {:error, :missing_join_cap}
+    else
+      Ezagent.Invocation.dispatch(%Ezagent.Invocation{
+        target: target,
+        mode: :call,
+        args: %{member: anon_uri},
+        ctx: %{caller: anon_uri, caps: MapSet.new(join_caps), reply: :ignore},
+        origin: :authenticated_external
+      })
+    end
   end
+
+  defp join_cap_for?(%Ezagent.Capability{instance: %URI{}} = cap, session_uri) do
+    cap.behavior == Ezagent.ActionSet.Session and cap.action == :join and
+      Ezagent.URI.stable_key(cap.instance) == Ezagent.URI.stable_key(session_uri)
+  end
+
+  defp join_cap_for?(_cap, _session_uri), do: false
 
   defp mount_participation(session_uri, anon_uri, opts) do
     fun =
       Keyword.get(opts, :mount_participation, fn session, anon ->
-        Ezagent.ActionSet.Session.Membership.mount_participation_caps(session, anon)
+        # D1 join 补发:统一走 MemberBackfill(participation tier + view caps +
+        # mount operate keys;anon 未 confirmed → 只发 participation tier)。
+        Ezagent.Socialware.MemberBackfill.backfill(session, anon)
       end)
 
     try do

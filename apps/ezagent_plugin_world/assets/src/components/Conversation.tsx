@@ -34,6 +34,10 @@ type MessageRow = {
   render?: unknown
   // Optional per-card CSS theme (a user's explicit style ask), scoped to the card.
   render_css?: string | null
+  // G5 source 2 — per-viewer error card attached by `ErrorCards.enrich/3` when
+  // an AGENT-sent message body carries a structured error. Rendered in
+  // addition to `text` (a card never suppresses persisted message content).
+  error_card?: DispatchErrorCard | null
   attachments?: Attachment[]
   at?: string | null
 }
@@ -212,6 +216,50 @@ type Props = {
 // `world:state` payloads reset the local transcript for the newly selected
 // session; inbound `chat:message` appends and `chat:older` prepends history
 // within that active session.
+// Shared G5 error-card body: rendered by the top-of-rail sync `dispatch_error`
+// block AND inline in a message bubble (async agent-reply errors). Wrappers
+// (border/margins/data attrs) stay at the call sites.
+function ErrorCardContent({
+  card,
+  pushEvent,
+}: {
+  card: DispatchErrorCard
+  pushEvent?: (event: string, payload: unknown) => void
+}) {
+  return (
+    <>
+      <p className="font-semibold text-destructive">{card.what}</p>
+      <p className="mt-1 text-muted-foreground">{card.impact}</p>
+      {card.layer === 1 && card.fix_link && (
+        <a href={card.fix_link} className="mt-2 inline-block text-primary underline">
+          前往修复 →
+        </a>
+      )}
+      {card.layer === 2 && card.fix_owner_name && (
+        <div className="mt-2">
+          <p className="text-sm">
+            请联系 <span className="font-medium">{card.fix_owner_name}</span> 修复此问题
+          </p>
+          <button
+            className="mt-1.5 rounded bg-destructive px-3 py-1 text-xs font-medium text-destructive-foreground hover:bg-destructive/90"
+            onClick={() => {
+              if (card.notify_action && pushEvent) {
+                pushEvent("world:dispatch", card.notify_action)
+              }
+            }}
+            data-world-dispatch-error-notify
+          >
+            发送提醒给 {card.fix_owner_name}
+          </button>
+        </div>
+      )}
+      {card.layer === 3 && (
+        <p className="mt-1 text-xs text-muted-foreground">此问题已自动登记，团队会跟进处理</p>
+      )}
+    </>
+  )
+}
+
 export function Conversation({
   state,
   onAddRoutingRule,
@@ -644,34 +692,7 @@ export function Conversation({
             role="alert"
             data-world-dispatch-error
           >
-            <p className="font-semibold text-destructive">{state.dispatch_error.what}</p>
-            <p className="mt-1 text-muted-foreground">{state.dispatch_error.impact}</p>
-            {state.dispatch_error.layer === 1 && state.dispatch_error.fix_link && (
-              <a href={state.dispatch_error.fix_link} className="mt-2 inline-block text-primary underline">
-                前往修复 →
-              </a>
-            )}
-            {state.dispatch_error.layer === 2 && state.dispatch_error.fix_owner_name && (
-              <div className="mt-2">
-                <p className="text-sm">
-                  请联系 <span className="font-medium">{state.dispatch_error.fix_owner_name}</span> 修复此问题
-                </p>
-                <button
-                  className="mt-1.5 rounded bg-destructive px-3 py-1 text-xs font-medium text-destructive-foreground hover:bg-destructive/90"
-                  onClick={() => {
-                    if (state.dispatch_error?.notify_action && pushEvent) {
-                      pushEvent("world:dispatch", state.dispatch_error.notify_action)
-                    }
-                  }}
-                  data-world-dispatch-error-notify
-                >
-                  发送提醒给 {state.dispatch_error.fix_owner_name}
-                </button>
-              </div>
-            )}
-            {state.dispatch_error.layer === 3 && (
-              <p className="mt-1 text-xs text-muted-foreground">此问题已自动登记，团队会跟进处理</p>
-            )}
+            <ErrorCardContent card={state.dispatch_error} pushEvent={pushEvent} />
           </div>
         )}
         {creating && (
@@ -951,6 +972,19 @@ export function Conversation({
                         )}
                       </div>
                       {message.text && <p className={bubbleTextClass(mine, kind)}>{message.text}</p>}
+                      {message.error_card && (
+                        // Async agent-reply error (G5 source 2): the per-viewer
+                        // card renders IN ADDITION to the text (adversarial
+                        // review #2 — a card must never suppress persisted
+                        // message content).
+                        <div
+                          className="mt-1 rounded-md border border-destructive/40 bg-destructive/10 px-3 py-2 text-sm"
+                          role="alert"
+                          data-world-message-error-card
+                        >
+                          <ErrorCardContent card={message.error_card} pushEvent={pushEvent} />
+                        </div>
+                      )}
                       {message.render != null && typeof message.render === "object" && (
                         <JsonRenderBubble
                           spec={message.render}

@@ -9,12 +9,17 @@ defmodule Ezagent.Invariants.EntityCapsMutationBoundaryTest do
   @identity_facade "apps/ezagent_domain_identity/lib/ezagent/identity.ex"
   @cascade_hook "apps/ezagent_core/lib/ezagent/kind/cascade_hook.ex"
   @identity_behavior "apps/ezagent_domain_identity/lib/ezagent/behavior/identity.ex"
+  @cap_verifier "apps/ezagent_core/lib/ezagent/cap/verifier.ex"
+  @identity_grant "apps/ezagent_domain_identity/lib/ezagent/identity/grant.ex"
+  @recipe_binding "apps/ezagent_domain_identity/lib/ezagent/identity/recipe_cap_binding.ex"
   @actions [:persist_caps, :store_cap, :remove_cap]
 
   test "storage action literals and producers are exact" do
     assert action_literals() == %{
+             @cap_verifier => %{persist_caps: 1, store_cap: 1, remove_cap: 1},
              @facade => %{persist_caps: 1, store_cap: 1, remove_cap: 1},
-             @identity_behavior => %{persist_caps: 3, store_cap: 3, remove_cap: 3}
+             @identity_behavior => %{persist_caps: 3, store_cap: 3, remove_cap: 3},
+             @identity_grant => %{store_cap: 2, remove_cap: 2}
            }
 
     assert mutation_dispatch_calls() == %{
@@ -25,7 +30,8 @@ defmodule Ezagent.Invariants.EntityCapsMutationBoundaryTest do
              MapSet.new([
                {@cascade_hook, :maybe_enqueue, 1},
                {@facade, :dispatch_mutation, 3},
-               {@identity_facade, :absorb_cap, 2}
+               {@identity_facade, :absorb_cap, 2},
+               {@recipe_binding, :sync_live, 1}
              ])
 
     assert direct_handler_calls() == MapSet.new()

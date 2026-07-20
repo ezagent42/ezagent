@@ -105,7 +105,7 @@ defmodule Ezagent.AutoService.Tier1Seed do
     # registered flavor.
     kb_flavor = Keyword.get(opts, :kb_flavor, "native")
     session_short = Keyword.get(opts, :session, "tier1")
-    admin_ctx = Keyword.get(opts, :admin_ctx, admin_ctx())
+    requested_ctx = Keyword.get(opts, :admin_ctx, admin_ctx())
 
     workspace_uri = EzUri.new!("workspace://#{ws}")
     # The AutoService agent URI is DETERMINISTIC — computed up front so the
@@ -124,6 +124,7 @@ defmodule Ezagent.AutoService.Tier1Seed do
     # and does not block the rest of the chain.
     with :ok <- maybe_register_recipes(opts, autosvc_flavor, kb_flavor, autosvc_role),
          :ok <- ensure_workspace(ws),
+         {:ok, admin_ctx} <- workspace_ctx(workspace_uri, requested_ctx.caller),
          {:ok, kb_uri} <- ensure_kb_agent(workspace_uri, ws, kb_agent, kb_flavor, admin_ctx),
          {:ok, _chunks} <- ingest_corpus(kb_uri, ws, admin_ctx),
          {:ok, session_uri} <- ensure_public_view_session(ws, session_short),
@@ -224,8 +225,21 @@ defmodule Ezagent.AutoService.Tier1Seed do
   def admin_ctx do
     %{
       caller: Ezagent.Entity.User.admin_uri(),
-      caps: MapSet.new([Capability.admin_genesis_cap()])
+      caps: MapSet.new()
     }
+  end
+
+  defp workspace_ctx(workspace_uri, caller) do
+    requested =
+      Capability.cap(:workspace, :any, :any, EzUri.instance(workspace_uri), workspace_uri)
+
+    authorization =
+      if Ezagent.Identity.admin?(caller), do: {:admin, caller}, else: {:held_by, caller}
+
+    case Ezagent.Cap.issue(authorization, caller, requested) do
+      {:ok, cap} -> {:ok, %{caller: caller, caps: MapSet.new([cap])}}
+      {:error, reason} -> {:error, {:workspace_cap_issue_failed, reason}}
+    end
   end
 
   @doc """
@@ -372,29 +386,34 @@ defmodule Ezagent.AutoService.Tier1Seed do
     File.write!(Path.join(dir, source_name), kb_corpus())
     source_uri = "resource://#{ws}/kb-source/#{source_name}"
 
-    cmd =
-      Ezagent.Cmd.new(
-        EzUri.with_action(kb_uri, :kb, :ingest),
-        :ingest,
-        %{source_uri: source_uri},
-        %{
-          mode: :call,
-          caller: admin_ctx.caller,
-          caps: admin_ctx.caps,
-          reply: {:caller_inbox, self()}
-        }
-      )
+    target = EzUri.with_action(kb_uri, :kb, :ingest)
+    admin = Ezagent.Entity.User.admin_uri()
 
-    case Ezagent.Router.dispatch(cmd) do
-      {:ok, %{chunks: n}} ->
-        Logger.info("autosvc-seed: ingested #{n} chunk(s) into #{URI.to_string(kb_uri)}")
-        {:ok, n}
+    with {:ok, cap} <- Ezagent.Cap.issue_for_action({:admin, admin}, admin_ctx.caller, target) do
+      cmd =
+        Ezagent.Cmd.new(
+          target,
+          :ingest,
+          %{source_uri: source_uri},
+          %{
+            mode: :call,
+            caller: admin_ctx.caller,
+            caps: MapSet.new([cap]),
+            reply: {:caller_inbox, self()}
+          }
+        )
 
-      {:error, reason} ->
-        {:error, {:kb_ingest_failed, reason}}
+      case Ezagent.Router.dispatch(cmd) do
+        {:ok, %{chunks: n}} ->
+          Logger.info("autosvc-seed: ingested #{n} chunk(s) into #{URI.to_string(kb_uri)}")
+          {:ok, n}
 
-      other ->
-        {:error, {:kb_ingest_unexpected, other}}
+        {:error, reason} ->
+          {:error, {:kb_ingest_failed, reason}}
+
+        other ->
+          {:error, {:kb_ingest_unexpected, other}}
+      end
     end
   end
 
@@ -730,43 +749,24 @@ defmodule Ezagent.AutoService.Tier1Seed do
   # grants, spawn the principal, self-join, mount participation caps.
   @doc false
   def join_member(session_uri, member_uri, class) do
-    ws = Capability.workspace_of(session_uri)
+    admin = Ezagent.Entity.User.admin_uri()
+    join_target = EzUri.with_action(session_uri, :session, :join)
+    send_target = EzUri.with_action(session_uri, :session, :send)
 
-    cap = fn action ->
-      %Capability{
-        kind: :session,
-        behavior: Ezagent.ActionSet.Session,
-        action: action,
-        instance: session_uri,
-        workspace_uri: ws,
-        granted_by: member_uri,
-        granted_at: DateTime.utc_now()
-      }
-    end
-
-    join_cap = cap.(:join)
-    send_cap = cap.(:send)
-
-    # Decision #162 — caps reaching `users.caps_json` must pass `Cap.issue/3`.
-    # A seed runs with shell access (admin-equivalent), so it takes that
-    # authority through the chokepoint rather than forging provenance past it.
-    issued =
-      Enum.map([join_cap, send_cap], fn c ->
-        {:ok, artifact} =
-          Ezagent.Cap.issue({:genesis, Ezagent.Entity.User.admin_uri()}, member_uri, c)
-
-        artifact
-      end)
+    {:ok, join_cap} = Ezagent.Cap.issue_for_action({:admin, admin}, member_uri, join_target)
+    {:ok, send_cap} = Ezagent.Cap.issue_for_action({:admin, admin}, member_uri, send_target)
+    issued = [join_cap, send_cap]
 
     _ = Ezagent.Users.create_read_only(member_uri, issued)
     _ = Ezagent.Entity.spawn_principal(member_uri)
 
     _ =
       Invocation.dispatch(%Invocation{
-        target: EzUri.with_action(session_uri, :session, :join),
+        target: join_target,
         mode: :call,
         args: %{member: member_uri},
-        ctx: %{caller: member_uri, caps: MapSet.new([join_cap]), reply: :ignore}
+        ctx: %{caller: member_uri, caps: MapSet.new([join_cap]), reply: :ignore},
+        origin: :trusted_internal
       })
 
     _ = Ezagent.ActionSet.Session.Membership.mount_participation_caps(session_uri, member_uri)

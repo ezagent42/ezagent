@@ -11,6 +11,7 @@ defmodule EzagentPluginWorld.WorldLive do
   alias Ezagent.World.AgentActions
   alias Ezagent.World.CommandPaletteActions
   alias Ezagent.World.CommandPaletteData
+  alias Ezagent.Socialware.SessionReads
   alias Ezagent.World.ConversationActions
   alias Ezagent.World.ConversationSessionState
   alias Ezagent.World.UserActions
@@ -46,7 +47,8 @@ defmodule EzagentPluginWorld.WorldLive do
         current_session_uri,
         workspace,
         layout,
-        caps
+        caps,
+        caller
       )
       |> put_command_palette(socket)
 
@@ -102,10 +104,16 @@ defmodule EzagentPluginWorld.WorldLive do
   end
 
   defp maybe_set_current_session(socket, %{component: "conversation", session_uri: %URI{} = uri}) do
+    # Subscribe UNCONDITIONALLY — subscription is NOT the security boundary,
+    # DELIVERY is: every session-content handler (chat_message, read_marker,
+    # cc_*, push_members) authorizes the caller LIVE before pushing, so a
+    # non-member subscribed here receives nothing, while a first-time member
+    # whose async at-join cap has not yet committed starts receiving the moment
+    # it does — no gate-on-subscribe race, no lock-out until reload. (F3.)
     socket
-    |> ConversationSessionState.ensure_session_subscribed(uri)
     |> assign(:current_session_uri, uri)
     |> assign(:current_session_uri_str, encode_uri(uri))
+    |> ConversationSessionState.ensure_session_subscribed(uri)
     |> ConversationActions.self_join(uri)
     |> ConversationActions.push_members()
   end
@@ -128,13 +136,23 @@ defmodule EzagentPluginWorld.WorldLive do
     do: {:noreply, push_inbound_event(socket, "cc_event", event)}
 
   def handle_info({:cc_connected, bridge_id, entry}, socket) do
-    socket = ConversationActions.push_members(socket)
-    {:noreply, push_inbound_event(socket, "cc_connected", %{bridge_id: bridge_id, entry: entry})}
+    if authorized_for_current_session?(socket) do
+      socket = ConversationActions.push_members(socket)
+
+      {:noreply,
+       push_inbound_event(socket, "cc_connected", %{bridge_id: bridge_id, entry: entry})}
+    else
+      {:noreply, socket}
+    end
   end
 
   def handle_info({:cc_disconnected, bridge_id}, socket) do
-    socket = ConversationActions.push_members(socket)
-    {:noreply, push_inbound_event(socket, "cc_disconnected", %{bridge_id: bridge_id})}
+    if authorized_for_current_session?(socket) do
+      socket = ConversationActions.push_members(socket)
+      {:noreply, push_inbound_event(socket, "cc_disconnected", %{bridge_id: bridge_id})}
+    else
+      {:noreply, socket}
+    end
   end
 
   def handle_info(:refresh, %{assigns: %{world_state: %{"component" => "pty_terminal"}}} = socket) do
@@ -171,8 +189,20 @@ defmodule EzagentPluginWorld.WorldLive do
   end
 
   def handle_info({:chat_message, %URI{} = source_uri, %Ezagent.Message{} = msg}, socket) do
-    if same_uri?(source_uri, socket.assigns[:current_session_uri]) do
-      row = Ezagent.World.ConversationData.message_row(msg)
+    session_uri = socket.assigns[:current_session_uri]
+
+    if same_uri?(source_uri, session_uri) and live_message_deliverable?(socket, session_uri, msg) do
+      # G5 source 2 — attach the per-viewer error card when the reply body
+      # carries a structured agent-error payload (lazy ctx: no admin/founder
+      # lookup on ordinary messages).
+      row =
+        msg
+        |> Ezagent.World.ConversationData.message_row(socket.assigns[:current_entity_uri])
+        |> Ezagent.World.ErrorCards.enrich(
+          msg.body,
+          Ezagent.World.ErrorCards.live_viewer_ctx(socket)
+        )
+
       {:noreply, push_event(socket, "chat:message", %{"message" => row})}
     else
       {:noreply, socket}
@@ -192,12 +222,21 @@ defmodule EzagentPluginWorld.WorldLive do
     do: {:noreply, ConversationActions.push_members(socket)}
 
   def handle_info({:read_marker_updated, session_uri, user_uri, meta}, socket) do
-    {:noreply,
-     push_inbound_event(socket, "read_marker_updated", %{
-       session_uri: session_uri,
-       user_uri: user_uri,
-       meta: meta
-     })}
+    # A read-marker discloses a member's identity + which message they last read
+    # + when — session content. Only deliver it for the current session AND to an
+    # authorized viewer (a non-member subscribed via a forged `session.switch`
+    # otherwise leaks other members' reading activity). (read-plane-authz F2/#2.)
+    if same_uri?(session_uri, socket.assigns[:current_session_uri]) and
+         authorized_for_current_session?(socket) do
+      {:noreply,
+       push_inbound_event(socket, "read_marker_updated", %{
+         session_uri: session_uri,
+         user_uri: user_uri,
+         meta: meta
+       })}
+    else
+      {:noreply, socket}
+    end
   end
 
   def handle_info({:notification, user_uri, payload}, socket) do
@@ -231,7 +270,7 @@ defmodule EzagentPluginWorld.WorldLive do
       ) do
     case parse_session_uri(session_uri_str) do
       {:ok, session_uri} ->
-        dispatch_session_join(socket, session_uri)
+        with_admin_operator(socket, fn -> dispatch_session_join(socket, session_uri) end)
 
       :error ->
         {:noreply, assign(socket, :last_dispatch_status, "error:bad_session_uri")}
@@ -243,19 +282,19 @@ defmodule EzagentPluginWorld.WorldLive do
         %{"action" => "layout.manage", "args" => %{"layout" => layout}},
         socket
       ) do
-    dispatch_layout_manage(socket, layout)
+    with_admin_operator(socket, fn -> dispatch_layout_manage(socket, layout) end)
   end
 
   @agent_actions Ezagent.World.DispatchContract.actions(:agent)
   def handle_event("world:dispatch", %{"action" => action, "args" => args}, socket)
       when action in @agent_actions and is_map(args) do
-    AgentActions.handle_dispatch(socket, action, args)
+    with_admin_operator(socket, fn -> AgentActions.handle_dispatch(socket, action, args) end)
   end
 
   @user_actions Ezagent.World.DispatchContract.actions(:user)
   def handle_event("world:dispatch", %{"action" => action, "args" => args}, socket)
       when action in @user_actions and is_map(args) do
-    UserActions.handle_dispatch(socket, action, args)
+    with_admin_operator(socket, fn -> UserActions.handle_dispatch(socket, action, args) end)
   end
 
   def handle_event(
@@ -263,31 +302,84 @@ defmodule EzagentPluginWorld.WorldLive do
         %{"action" => "agent.api_key.put", "args" => %{"agent_uri" => agent_uri_str} = args},
         socket
       ) do
-    dispatch_api_key_put(socket, agent_uri_str, args)
+    with_admin_operator(socket, fn -> dispatch_api_key_put(socket, agent_uri_str, args) end)
   end
 
   @cmdk_actions Ezagent.World.DispatchContract.actions(:cmdk)
   def handle_event("world:dispatch", %{"action" => action, "args" => args}, socket)
       when action in @cmdk_actions and is_map(args) do
-    CommandPaletteActions.handle_dispatch(socket, action, args)
+    with_admin_operator(socket, fn ->
+      CommandPaletteActions.handle_dispatch(socket, action, args)
+    end)
   end
 
   @admin_actions Ezagent.World.DispatchContract.actions(:admin)
   def handle_event("world:dispatch", %{"action" => action, "args" => args}, socket)
       when action in @admin_actions and is_map(args) do
-    AdminActions.handle_dispatch(socket, action, args)
+    with_admin_operator(socket, fn -> AdminActions.handle_dispatch(socket, action, args) end)
   end
 
   @workspace_plugin_actions Ezagent.World.DispatchContract.actions(:workspace_plugin)
   def handle_event("world:dispatch", %{"action" => action, "args" => args}, socket)
       when action in @workspace_plugin_actions and is_map(args) do
-    WorkspacePluginActions.handle_dispatch(socket, action, args)
+    with_admin_operator(socket, fn ->
+      WorkspacePluginActions.handle_dispatch(socket, action, args)
+    end)
   end
 
   @conversation_actions Ezagent.World.DispatchContract.actions(:conversation)
   def handle_event("world:dispatch", %{"action" => action, "args" => args}, socket)
       when action in @conversation_actions and is_map(args) do
-    ConversationActions.handle_dispatch(socket, action, args)
+    with_admin_operator(socket, fn ->
+      ConversationActions.handle_dispatch(socket, action, args)
+    end)
+  end
+
+  # G5 Layer 2 notification: user clicks "send reminder" on an error card.
+  def handle_event(
+        "world:dispatch",
+        %{
+          "action" => "notification.send",
+          "args" => %{"type" => "error_fix_request", "body" => body}
+        },
+        socket
+      )
+      when is_map(body) do
+    caller = socket.assigns.current_entity_uri
+
+    case resolve_founder_for_notify(socket) do
+      %URI{} = founder_uri ->
+        Ezagent.Notifications.notify(founder_uri, %{
+          type: :error_fix_request,
+          body:
+            Map.merge(body, %{
+              caller_name: entity_display_name(caller),
+              workspace: entity_display_name(socket.assigns.current_workspace_uri)
+            }),
+          source: __MODULE__
+        })
+
+        {:noreply, assign(socket, :last_dispatch_status, "ok")}
+
+      nil ->
+        {:noreply, assign(socket, :last_dispatch_status, "error:no_founder")}
+    end
+  end
+
+  # G5 Layer 2 notification: user clicks "send reminder" on an error card.
+  def handle_event(
+        "world:dispatch",
+        %{
+          "action" => "notification.send",
+          "args" => %{"type" => "error_fix_request", "body" => body}
+        },
+        socket
+      )
+      when is_map(body) do
+    case Ezagent.World.ErrorCards.send_fix_request(socket, body) do
+      :ok -> {:noreply, assign(socket, :last_dispatch_status, "ok")}
+      :no_founder -> {:noreply, assign(socket, :last_dispatch_status, "error:no_founder")}
+    end
   end
 
   # G5 Layer 2 notification: user clicks "send reminder" on an error card.
@@ -345,7 +437,9 @@ defmodule EzagentPluginWorld.WorldLive do
       when is_binary(action) and is_map(args) do
     case Ezagent.World.PluginPageRegistry.by_action(action) do
       %{actions_module: actions_module} ->
-        actions_module.handle_dispatch(socket, action, args)
+        with_admin_operator(socket, fn ->
+          actions_module.handle_dispatch(socket, action, args)
+        end)
 
       nil ->
         {:noreply, assign(socket, :last_dispatch_status, "error:unsupported_action")}
@@ -376,6 +470,41 @@ defmodule EzagentPluginWorld.WorldLive do
   def handle_event("world:dispatch", _params, socket) do
     {:noreply, assign(socket, :last_dispatch_status, "error:unsupported_action")}
   end
+
+  defp with_admin_operator(socket, fun) when is_function(fun, 0) do
+    case Map.get(socket.assigns, :current_entity_uri) do
+      %URI{} = caller -> Invocation.with_admin_operator(caller, fun)
+      _other -> fun.()
+    end
+  end
+
+  defp resolve_founder_for_notify(socket) do
+    case Map.get(socket.assigns, :current_workspace_uri) do
+      %URI{} = ws_uri ->
+        case Ezagent.URI.name(ws_uri) do
+          {:ok, name} when is_binary(name) and name != "" ->
+            case Ezagent.Workspace.Store.get_by_name(name) do
+              %{members: [%URI{} = founder | _]} -> founder
+              _ -> nil
+            end
+
+          _ ->
+            nil
+        end
+
+      _ ->
+        nil
+    end
+  end
+
+  defp entity_display_name(%URI{} = uri) do
+    case Ezagent.URI.name(uri) do
+      {:ok, name} -> name
+      _ -> Ezagent.URI.stable_key(uri)
+    end
+  end
+
+  defp entity_display_name(_), do: "unknown"
 
   defp pty_agent_uri_str(%{"component" => "pty_terminal", "agent_uri" => agent_uri_str}),
     do: agent_uri_str
@@ -418,11 +547,16 @@ defmodule EzagentPluginWorld.WorldLive do
 
   defp dispatch_session_join(socket, %URI{} = session_uri) do
     caller = socket.assigns.current_entity_uri
-    caps = Map.get(socket.assigns, :current_caps, MapSet.new())
 
     _ = Ezagent.LocalRuntime.ensure_live(session_uri)
     _ = EzagentDomainInstanceMessage.SessionCreator.demand_spawn_member(caller)
-    provision_session_join_authority(session_uri, caller)
+    _ = provision_session_join_authority(session_uri, caller)
+
+    # The JIT grant above is synchronous, but the socket's mount-time cap set is
+    # an immutable snapshot. Every external envelope must carry the newly
+    # issued artifact explicitly, so reload the presenter's verified Identity
+    # caps before dispatch instead of relying on hidden verifier fallback.
+    caps = refreshed_presenter_caps(socket, caller)
 
     target = Ezagent.URI.with_action(session_uri, :session, :join)
 
@@ -431,7 +565,8 @@ defmodule EzagentPluginWorld.WorldLive do
         target: target,
         mode: :call,
         args: %{member: caller},
-        ctx: %{caller: caller, caps: caps, reply: :ignore}
+        ctx: %{caller: caller, caps: caps, reply: :ignore},
+        origin: :authenticated_external
       })
 
     case result do
@@ -441,8 +576,8 @@ defmodule EzagentPluginWorld.WorldLive do
       {:ok, _payload} ->
         dispatch_session_join_ok(socket, session_uri)
 
-      {:error, :unauthorized} ->
-        dispatch_session_join_observe(socket, session_uri, :unauthorized)
+      {:error, reason} when reason in [:missing_cap, :unauthorized] ->
+        dispatch_session_join_observe(socket, session_uri, reason)
 
       {:error, reason} ->
         {:noreply, assign(socket, :last_dispatch_status, "error:#{reason_to_string(reason)}")}
@@ -474,10 +609,17 @@ defmodule EzagentPluginWorld.WorldLive do
 
   defp provision_session_join_authority(_session_uri, _caller_uri), do: {:error, :no_authority}
 
+  # D1 join 补发:每次成功 join(含重导航的幂等 join)走完整补发 —— 也是
+  # approve_admission 这类 in-Kind 补员路径的自愈点(成员下次导航进会话补齐)。
   defp mount_session_participation_caps(%URI{} = session_uri, %URI{} = caller_uri),
-    do: Membership.mount_participation_caps(session_uri, caller_uri)
+    do: Ezagent.Socialware.MemberBackfill.backfill(session_uri, caller_uri)
 
   defp mount_session_participation_caps(_session_uri, _caller_uri), do: {:error, :no_authority}
+
+  defp refreshed_presenter_caps(socket, %URI{} = caller_uri) do
+    mounted = Map.get(socket.assigns, :current_caps, MapSet.new()) || MapSet.new()
+    MapSet.union(MapSet.new(mounted), MapSet.new(Ezagent.EntityCaps.load(caller_uri)))
+  end
 
   defp dispatch_layout_manage(socket, layout) when is_map(layout) do
     workspace_uri = socket.assigns.current_workspace_uri
@@ -491,7 +633,8 @@ defmodule EzagentPluginWorld.WorldLive do
         target: target,
         mode: :call,
         args: %{layout: layout},
-        ctx: %{caller: caller, caps: caps, reply: {:caller_inbox, self()}}
+        ctx: %{caller: caller, caps: caps, reply: {:caller_inbox, self()}},
+        origin: :authenticated_external
       })
 
     case result do
@@ -542,7 +685,8 @@ defmodule EzagentPluginWorld.WorldLive do
              target: Ezagent.URI.with_action(agent_uri, :identity, :put_api_key),
              mode: :call,
              args: %{provider: provider, key: key},
-             ctx: %{caller: caller, caps: caps, reply: :sync}
+             ctx: %{caller: caller, caps: caps, reply: :sync},
+             origin: :authenticated_external
            }) do
       refresh_api_keys_state(socket, agent_uri)
     else
@@ -585,7 +729,8 @@ defmodule EzagentPluginWorld.WorldLive do
              caller: socket.assigns.current_entity_uri,
              caps: Map.get(socket.assigns, :current_caps, MapSet.new()),
              reply: :ignore
-           }
+           },
+           origin: :authenticated_external
          }) do
       :ok -> :ok
       {:ok, _} -> :ok
@@ -683,33 +828,74 @@ defmodule EzagentPluginWorld.WorldLive do
       current_session_uri,
       socket.assigns.current_workspace_uri,
       layout,
-      Map.get(socket.assigns, :current_caps, MapSet.new())
+      Map.get(socket.assigns, :current_caps, MapSet.new()),
+      socket.assigns.current_entity_uri
     )
     |> put_command_palette(socket)
   end
 
   # Overview 操作员落地页（FP5 S2-a）：KPI 概览 + 快捷入口,数据复用 AdminData
   # （overview 不属 :admin group,故单独子句;nav 高亮仍走 path="/" → Overview）。
+  # F3 (read-plane PR-4 rework): operator-plane read — admin-gated like the
+  # `:require_admin` live_session (defense-in-depth behind the route gate).
   defp state_for_route(%{component: "overview"} = route, socket, layout) do
-    route
-    |> Ezagent.World.AdminData.state_for(%{
-      workspace_uri: socket.assigns.current_workspace_uri,
-      caller_uri: socket.assigns.current_entity_uri,
-      caller_caps: Map.get(socket.assigns, :current_caps, MapSet.new())
-    })
-    |> Map.put("layout", layout)
-    |> put_can_manage_layout(route.component, socket)
-    |> put_command_palette(socket)
+    if admin_socket?(socket) do
+      route
+      |> Ezagent.World.AdminData.state_for(%{
+        workspace_uri: socket.assigns.current_workspace_uri,
+        caller_uri: socket.assigns.current_entity_uri,
+        caller_caps: Map.get(socket.assigns, :current_caps, MapSet.new())
+      })
+      |> Map.put("layout", layout)
+      |> put_can_manage_layout(route.component, socket)
+      |> put_command_palette(socket)
+    else
+      unauthorized_route_state(route, socket, layout)
+    end
   end
 
+  # F3 (read-plane PR-4 rework): the whole `:admin` route group is
+  # admin-gated HERE as well as by the `:require_admin` live_session — a
+  # non-admin caller gets an explicit unauthorized state, never
+  # cross-tenant counts/registries/templates.
   defp state_for_route(%{group: :admin} = route, socket, layout) do
-    route
-    |> Ezagent.World.AdminData.state_for(%{
-      workspace_uri: socket.assigns.current_workspace_uri,
-      caller_uri: socket.assigns.current_entity_uri,
-      caller_caps: Map.get(socket.assigns, :current_caps, MapSet.new())
-    })
-    |> Map.put("layout", layout)
+    if admin_socket?(socket) do
+      route
+      |> Ezagent.World.AdminData.state_for(%{
+        workspace_uri: socket.assigns.current_workspace_uri,
+        caller_uri: socket.assigns.current_entity_uri,
+        caller_caps: Map.get(socket.assigns, :current_caps, MapSet.new())
+      })
+      |> Map.put("layout", layout)
+      |> put_can_manage_layout(route.component, socket)
+      |> put_command_palette(socket)
+    else
+      unauthorized_route_state(route, socket, layout)
+    end
+  end
+
+  # The same operator predicate the `:require_admin` on_mount enforces
+  # (bootstrap admin OR a member of the system workspace) — kept as one
+  # small check so the route gate and this data-layer gate cannot drift
+  # on WHAT counts as an operator.
+  defp admin_socket?(socket) do
+    Map.get(socket.assigns, :is_admin?, false) == true or
+      Map.get(socket.assigns, :is_system_member?, false) == true
+  end
+
+  # Explicit unauthorized state (Invariant #9 — surfaced, not silently
+  # dropped): the route's component shell plus a denial marker, and NO
+  # data keys.
+  defp unauthorized_route_state(route, socket, layout) do
+    %{
+      "component" => route.component,
+      "title" => route.title,
+      "path" => route.path,
+      "workspace_uri" => encode_uri(socket.assigns.current_workspace_uri),
+      "unauthorized" => true,
+      "error" => "unauthorized",
+      "layout" => layout
+    }
     |> put_can_manage_layout(route.component, socket)
     |> put_command_palette(socket)
   end
@@ -764,7 +950,7 @@ defmodule EzagentPluginWorld.WorldLive do
 
   defp create_error_for_route(_route, _socket), do: nil
 
-  defp sessions_state(sessions, current_session_uri, workspace_uri, layout, caps) do
+  defp sessions_state(sessions, current_session_uri, workspace_uri, layout, caps, caller) do
     workspace = encode_uri(workspace_uri)
     current_session = encode_uri(current_session_uri)
 
@@ -774,7 +960,7 @@ defmodule EzagentPluginWorld.WorldLive do
       "workspace_uri" => workspace,
       "layout" => layout,
       "can_manage_layout" => can_manage_layout?("sessions_table", workspace_uri, caps),
-      "templates" => session_template_names(workspace_uri),
+      "templates" => session_template_names(caller, workspace_uri),
       "socialwares" => Ezagent.World.WorkspacePluginData.socialware_rows(workspace_uri),
       "sessions" => Enum.map(sessions, &ConversationSessionState.session_row/1),
       # F3: explicitly clear any stale create_error — the React island merges
@@ -786,60 +972,16 @@ defmodule EzagentPluginWorld.WorldLive do
     }
   end
 
-  # Resolvable SessionTemplate names for the "New session" picker — the live
-  # SessionTemplate Kinds in this workspace (the names `create_session/3` can
-  # resolve, including any the operator just authored via the template form)
-  # plus the always-available `"default"` bootstrap class (auto-seeded on use).
-  defp session_template_names(%URI{scheme: "workspace"} = workspace_uri) do
-    # Registered session Template Classes (e.g. "session.hello") shown by their
-    # friendly name ("hello") — `create_session` resolves the bare name back to
-    # the `session.<name>` class (workspace `resolve_session_class/1`). Without
-    # this the dropdown only listed per-session template INSTANCES ("hello-77")
-    # and the `hello` class itself was missing.
-    # F3: offer only Classes that are DIRECTLY creatable from this generic
-    # picker (the picker supplies only the universal `session_name` arg). A
-    # Class whose `instantiate/3` requires extra args — e.g. a vertical session
-    # class needing an `operator_uri` — declares `directly_creatable?/0 => false` and is
-    # filtered out here, so it can't become the dropdown default and fail closed
-    # with `{:invalid_template, …}` on create.
-    classes =
-      Ezagent.TemplateRegistry.registered_template_names()
-      |> Enum.filter(&String.starts_with?(&1, "session."))
-      |> Enum.filter(&class_directly_creatable?/1)
-      |> Enum.map(&String.replace_prefix(&1, "session.", ""))
-
-    instances =
-      workspace_uri
-      |> Ezagent.URI.name!()
-      |> Ezagent.World.WorkspacePluginData.session_template_rows()
-      |> Enum.map(&Map.get(&1, "name"))
-
-    # "default" is ALWAYS the first (selected) option — the React picker takes
-    # `templates[0]` as its default, so the always-creatable bootstrap class
-    # must lead regardless of how the other names sort.
-    other =
-      (classes ++ instances)
-      |> Enum.reject(&(&1 in [nil, "", "default"]))
-      |> Enum.uniq()
-      |> Enum.sort()
-
-    ["default" | other]
-  rescue
-    _ -> ["default"]
+  # Resolvable SessionTemplate names for the "New session" picker —
+  # delegated to the SINGLE source
+  # `Ezagent.World.WorkspacePluginData.session_template_names/2` (which
+  # routes the instance enumeration through the caller-authorizing
+  # `Ezagent.Session.TemplateReads` chokepoint, read-plane PR-4 rework).
+  defp session_template_names(caller, %URI{scheme: "workspace"} = workspace_uri) do
+    Ezagent.World.WorkspacePluginData.session_template_names(caller, workspace_uri)
   end
 
-  defp session_template_names(_), do: ["default"]
-
-  # F3: a registered `session.<name>` Class is offered by the generic picker
-  # only when its Template Class declares itself directly creatable (default
-  # true; advisor overrides false). An unregistered name conservatively passes
-  # (it's a non-class instance name handled elsewhere).
-  defp class_directly_creatable?(class_name) do
-    case Ezagent.TemplateRegistry.lookup(class_name) do
-      {:ok, module} -> Ezagent.Kind.Template.directly_creatable?(module)
-      :error -> true
-    end
-  end
+  defp session_template_names(_caller, _), do: ["default"]
 
   defp put_command_palette(state, socket) do
     Map.put(state, "cmdk", CommandPaletteData.state(socket.assigns, "", false))
@@ -875,6 +1017,13 @@ defmodule EzagentPluginWorld.WorldLive do
   defp workspace_name(_), do: nil
 
   defp subscribe_global_inbound(caller_uri) do
+    # NOTE (read-plane-authz scope boundary): these are GLOBAL, system-wide streams
+    # (audit / legacy-bridge / cc) — the OPERATOR-OBSERVABILITY plane, whose authz
+    # is operator/admin, NOT session membership. Subscribing every WorldLive here
+    # delivers all-tenant audit/cc events to any logged-in user — a PRE-EXISTING
+    # multi-tenant leak (task #187), separate from PR-1's conversation-read plane
+    # and deferred to the operator plane (PR-4 OperatorReads). PR-1's "gate every
+    # delivery" invariant is scoped to SESSION-CONVERSATION content only.
     Phoenix.PubSub.subscribe(EzagentCore.PubSub, Ezagent.Audit.stream_topic())
     Phoenix.PubSub.subscribe(EzagentCore.PubSub, Ezagent.AgentBridge.Registry.legacy_topic())
     Phoenix.PubSub.subscribe(EzagentCore.PubSub, Ezagent.CCEvents.topic())
@@ -922,6 +1071,34 @@ defmodule EzagentPluginWorld.WorldLive do
       "can_manage_layout",
       can_manage_layout?(component, socket.assigns.current_workspace_uri, caps)
     )
+  end
+
+  # A live broadcast reaches the browser only if the viewer is authorized for the
+  # session AND the message is visible to them (row-policy: `:internal` only for a
+  # `:read_unfiltered` holder). This is the DELIVERY-time counterpart to the
+  # `SessionReads` historical read gate and the ROBUST guarantee: even a socket
+  # that subscribed without authorization, or a member revoked mid-session, is
+  # dropped here — independent of subscribe ordering. (read-plane-authz F1.)
+  defp live_message_deliverable?(socket, %URI{} = session_uri, %Ezagent.Message{} = msg) do
+    caller = Map.get(socket.assigns, :current_entity_uri)
+
+    SessionReads.authorized?(caller, session_uri) and
+      (msg.visibility != :internal or SessionReads.read_unfiltered?(caller, session_uri))
+  end
+
+  defp live_message_deliverable?(_socket, _session_uri, _msg), do: false
+
+  # Live authorization for the socket's CURRENT session — the shared delivery-time
+  # gate for session-scoped broadcasts that are not messages (roster/read-marker/
+  # cc-bridge). Fail-closed when there is no current session or the caller is not
+  # authorized. (read-plane-authz F2/#2.)
+  defp authorized_for_current_session?(socket) do
+    caller = Map.get(socket.assigns, :current_entity_uri)
+
+    case socket.assigns[:current_session_uri] do
+      %URI{} = session_uri -> SessionReads.authorized?(caller, session_uri)
+      _ -> false
+    end
   end
 
   defp same_uri?(%URI{} = left, %URI{} = right), do: URI.to_string(left) == URI.to_string(right)

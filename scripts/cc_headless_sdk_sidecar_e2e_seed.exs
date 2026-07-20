@@ -1,6 +1,6 @@
 require Logger
 
-alias Ezagent.{Capability, Invocation, Message}
+alias Ezagent.{Invocation, Message}
 alias Ezagent.URI, as: EzUri
 alias Ezagent.Entity.User
 
@@ -150,25 +150,16 @@ case EzagentPluginCc.SdkSidecar.start(agent_uri, sidecar_params) do
 end
 
 chat_join = fn member_uri ->
-  join_cap =
-    %Capability{
-      Capability.cap(
-        :session,
-        Ezagent.ActionSet.Session,
-        :join,
-        Ezagent.URI.instance(session_uri),
-        Capability.workspace_of(session_uri)
-      )
-      | granted_by: member_uri,
-        granted_at: DateTime.utc_now()
-    }
+  target = EzUri.with_action(session_uri, :session, :join)
+  {:ok, join_cap} = Ezagent.Cap.issue_for_action({:admin, admin_uri}, member_uri, target)
 
   ensure_ok.(
     Invocation.dispatch(%Invocation{
-      target: EzUri.with_action(session_uri, :session, :join),
+      target: target,
       mode: :call,
       args: %{member: member_uri},
-      ctx: %{caller: member_uri, caps: MapSet.new([join_cap]), reply: :ignore}
+      ctx: %{caller: member_uri, caps: MapSet.new([join_cap]), reply: :ignore},
+      origin: :trusted_internal
     })
   )
 
@@ -181,28 +172,19 @@ chat_join.(agent_uri)
 session_topic = "esr:session:#{URI.to_string(session_uri)}:events"
 :ok = Phoenix.PubSub.subscribe(EzagentCore.PubSub, session_topic)
 
-send_cap =
-  %Capability{
-    Capability.cap(
-      :session,
-      Ezagent.ActionSet.Session,
-      :send,
-      Ezagent.URI.instance(session_uri),
-      Capability.workspace_of(session_uri)
-    )
-    | granted_by: admin_uri,
-      granted_at: DateTime.utc_now()
-  }
+send_target = EzUri.with_action(session_uri, :session, :send)
+{:ok, send_cap} = Ezagent.Cap.issue_for_action({:admin, admin_uri}, admin_uri, send_target)
 
 inbound_msg =
   Message.new(admin_uri, %{text: inbound_text, attachments: []}, mentions: [agent_uri])
 
 ensure_ok.(
   Invocation.dispatch(%Invocation{
-    target: EzUri.with_action(session_uri, :session, :send),
+    target: send_target,
     mode: :cast,
     args: %{message: inbound_msg},
-    ctx: %{caller: admin_uri, caps: MapSet.new([send_cap]), reply: :ignore}
+    ctx: %{caller: admin_uri, caps: MapSet.new([send_cap]), reply: :ignore},
+    origin: :trusted_internal
   })
 )
 

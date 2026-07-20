@@ -14,6 +14,7 @@ defmodule Ezagent.ActionSet.ChatTest do
   alias Ezagent.ActionSet.Session, as: SessionBehavior
   alias Ezagent.InterfaceValidator
   alias Ezagent.Routing.{Matcher, Receiver, Trace}
+  import Ezagent.Test.CapHelper, only: [signed_fixture_cap!: 5, signed_invocation!: 2]
   # `Repo` is aliased by `use EzagentCore.DataCase`; no explicit alias needed (#92).
 
   setup do
@@ -456,7 +457,16 @@ defmodule Ezagent.ActionSet.ChatTest do
       {:ok, _pid} =
         Ezagent.Kind.spawn(Ezagent.Entity.Agent, %{
           uri: native_agent,
-          initial_caps: MapSet.new([member_cap(session_uri)])
+          initial_caps:
+            MapSet.new([
+              signed_fixture_cap!(
+                session_uri,
+                :session,
+                Ezagent.ActionSet.Session,
+                :receive,
+                native_agent
+              )
+            ])
         })
 
       :ok = Ezagent.AgentFlavorAttributes.put(native_agent, "native")
@@ -955,16 +965,21 @@ defmodule Ezagent.ActionSet.ChatTest do
       # would land in a Session GenServer's handle_call/cast.
       target = URI.new!("#{URI.to_string(session_uri)}?action=session.send")
 
-      inv = %Ezagent.Invocation{
-        target: target,
-        mode: :cast,
-        args: %{message: msg},
-        ctx: %{
-          caller: sender,
-          caps: MapSet.new([Ezagent.Capability.admin_genesis_cap()]),
-          reply: :ignore
-        }
-      }
+      inv =
+        signed_invocation!(
+          %Ezagent.Invocation{
+            origin: :trusted_internal,
+            target: target,
+            mode: :cast,
+            args: %{message: msg},
+            ctx: %{
+              caller: sender,
+              caps: MapSet.new([Ezagent.Capability.admin_genesis_cap()]),
+              reply: :ignore
+            }
+          },
+          :session
+        )
 
       # Initial state: just the :chat slice. Runtime defaults missing
       # slices to %{}, so we only need to seed this one.

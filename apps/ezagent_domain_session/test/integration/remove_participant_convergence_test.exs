@@ -18,6 +18,7 @@ defmodule EzagentDomainInstanceMessage.Integration.RemoveParticipantConvergenceT
   alias Ezagent.ActionSet.Session.Membership
   alias Ezagent.Entity.{Session, User}
   alias Ezagent.Session.Participants
+  import Ezagent.Test.CapHelper, only: [signed_action_cap!: 2, signed_required_cap!: 5]
 
   setup do
     _ =
@@ -51,30 +52,30 @@ defmodule EzagentDomainInstanceMessage.Integration.RemoveParticipantConvergenceT
   # `:remove_participant` cap so the dispatch clears the chokepoint. The handler's
   # identity gate (owner / self / admin) is the real authorization keyed on caller.
   defp op_ctx(%URI{} = caller, %URI{} = session_uri) do
-    cap = %Ezagent.Capability{
-      Ezagent.Capability.cap(
+    cap =
+      signed_required_cap!(
+        session_uri,
         :session,
         Ezagent.ActionSet.Session,
         :remove_participant,
-        Ezagent.URI.instance(session_uri),
-        Ezagent.Capability.workspace_of(session_uri)
+        caller
       )
-      | granted_by: caller,
-        granted_at: DateTime.utc_now()
-    }
 
     %{caller: caller, caps: [cap]}
   end
 
   defp join_member(session_uri, member_uri) do
+    target = URI.new!("#{URI.to_string(session_uri)}?action=session.join")
+
     :ok =
       Invocation.dispatch(%Invocation{
-        target: URI.new!("#{URI.to_string(session_uri)}?action=session.join"),
+        origin: :trusted_internal,
+        target: target,
         mode: :cast,
         args: %{member: member_uri},
         ctx: %{
           caller: member_uri,
-          caps: MapSet.new([Ezagent.Capability.admin_genesis_cap()]),
+          caps: MapSet.new([signed_action_cap!(target, member_uri)]),
           reply: :ignore
         }
       })
@@ -101,6 +102,7 @@ defmodule EzagentDomainInstanceMessage.Integration.RemoveParticipantConvergenceT
 
     :ok =
       Invocation.dispatch(%Invocation{
+        origin: :trusted_internal,
         target: URI.new!("#{URI.to_string(session_uri)}?action=session.join"),
         mode: :call,
         args: %{member: member_uri},
@@ -125,7 +127,7 @@ defmodule EzagentDomainInstanceMessage.Integration.RemoveParticipantConvergenceT
     {:ok, session_pid} = KindRegistry.lookup(session_uri)
 
     member_uri =
-      URI.new!("entity://team-alpha/user/conv-#{System.unique_integer([:positive])}")
+      URI.new!("entity://system/user/conv-#{System.unique_integer([:positive])}")
 
     {:ok, _member_pid} = GenServer.start(NoopServer, member_uri)
 

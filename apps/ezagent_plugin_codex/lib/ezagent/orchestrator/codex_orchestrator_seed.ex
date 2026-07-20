@@ -122,32 +122,31 @@ defmodule Ezagent.Orchestrator.CodexOrchestratorSeed do
 
     target = Ezagent.URI.with_action(uri, :template, :write)
 
-    case Ezagent.Invocation.dispatch(%Ezagent.Invocation{
-           target: target,
-           mode: :call,
-           args: %{content: content},
-           ctx: %{
-             caller: admin_uri,
-             caps:
-               MapSet.new([
-                 %Ezagent.Capability{
-                   Ezagent.Capability.cap(
-                     :any,
-                     :any,
-                     :write,
-                     Ezagent.URI.instance(target),
-                     Ezagent.Capability.workspace_of(target)
-                   )
-                   | granted_by: admin_uri,
-                     granted_at: DateTime.utc_now()
-                 }
-               ]),
-             reply: {:caller_inbox, self()}
-           }
-         }) do
-      {:ok, %{content: _}} -> :ok
-      {:error, _} = err -> err
-      other -> {:error, {:unexpected_template_write_result, other}}
+    requested =
+      Ezagent.Capability.cap(
+        :agent_template,
+        Ezagent.ActionSet.Template,
+        :write,
+        Ezagent.URI.instance(target),
+        Ezagent.Capability.workspace_of(target)
+      )
+
+    with {:ok, signed_cap} <- Ezagent.Cap.issue({:admin, admin_uri}, admin_uri, requested) do
+      case Ezagent.Invocation.dispatch(%Ezagent.Invocation{
+             target: target,
+             mode: :call,
+             args: %{content: content},
+             ctx: %{
+               caller: admin_uri,
+               caps: MapSet.new([signed_cap]),
+               reply: {:caller_inbox, self()}
+             },
+             origin: :trusted_internal
+           }) do
+        {:ok, %{content: _}} -> :ok
+        {:error, _} = err -> err
+        other -> {:error, {:unexpected_template_write_result, other}}
+      end
     end
   end
 

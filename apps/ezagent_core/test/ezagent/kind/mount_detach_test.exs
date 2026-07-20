@@ -42,7 +42,6 @@ defmodule Ezagent.Kind.MountDetachTest do
     :ok
   end
 
-  defp admin_caps, do: MapSet.new([Ezagent.Capability.admin_genesis_cap()])
   defp base_set, do: [Ezagent.ActionSet.Session, Ezagent.ActionSet.KindBase]
 
   defp uri(prefix),
@@ -53,14 +52,17 @@ defmodule Ezagent.Kind.MountDetachTest do
     :ok
   end
 
-  defp dispatch(uri, action, caps) do
-    target = Ezagent.URI.new!("#{URI.to_string(uri)}?action=#{action}")
+  defp dispatch(uri, action_path, behavior, action) do
+    target = Ezagent.URI.new!("#{URI.to_string(uri)}?action=#{action_path}")
+    presenter = Ezagent.Entity.User.admin_uri()
+    cap = signed_fixture_cap!(uri, SupersetSessionKind.type_name(), behavior, action, presenter)
 
     Invocation.dispatch(%Invocation{
+      origin: :trusted_internal,
       target: target,
       mode: :call,
       args: %{},
-      ctx: %{caller: Ezagent.Entity.User.admin_uri(), caps: caps, reply: :ignore}
+      ctx: %{caller: presenter, caps: MapSet.new([cap]), reply: :ignore}
     })
   end
 
@@ -72,7 +74,7 @@ defmodule Ezagent.Kind.MountDetachTest do
 
     # Before mount: not in the set → unknown_action.
     assert {:error, {:unknown_action, :undeclared_poke}} =
-             dispatch(uri, "undeclared_probe.undeclared_poke", admin_caps())
+             dispatch(uri, "undeclared_probe.undeclared_poke", UndeclaredProbe, :undeclared_poke)
 
     assert :ok = Kind.mount(uri, UndeclaredProbe)
 
@@ -82,7 +84,7 @@ defmodule Ezagent.Kind.MountDetachTest do
     assert is_map(slice) and map_size(slice) > 0
 
     # And its action now dispatches (RF-1 per-instance resolution).
-    dispatch(uri, "undeclared_probe.undeclared_poke", admin_caps())
+    dispatch(uri, "undeclared_probe.undeclared_poke", UndeclaredProbe, :undeclared_poke)
     assert_received {:undeclared_probe, :handled}
   end
 
@@ -143,7 +145,7 @@ defmodule Ezagent.Kind.MountDetachTest do
     # action STILL dispatches, proving the rehydrated set is live, not just
     # present in the derived set.
     {:ok, _pid} = Kind.spawn(SupersetSessionKind, %{uri: uri})
-    dispatch(uri, "undeclared_probe.undeclared_poke", admin_caps())
+    dispatch(uri, "undeclared_probe.undeclared_poke", UndeclaredProbe, :undeclared_poke)
     assert_received {:undeclared_probe, :handled}
   end
 
@@ -156,7 +158,7 @@ defmodule Ezagent.Kind.MountDetachTest do
     assert_received {:detach_probe, :create}
 
     # Sanity: dispatches while mounted.
-    dispatch(uri, "detach_probe.detach_poke", admin_caps())
+    dispatch(uri, "detach_probe.detach_poke", DetachProbe, :detach_poke)
     assert_received {:detach_probe, :handle_detach_poke}
 
     assert :ok = Kind.detach(uri, DetachProbe)
@@ -170,7 +172,7 @@ defmodule Ezagent.Kind.MountDetachTest do
 
     # Action no longer dispatches.
     assert {:error, {:unknown_action, :detach_poke}} =
-             dispatch(uri, "detach_probe.detach_poke", admin_caps())
+             dispatch(uri, "detach_probe.detach_poke", DetachProbe, :detach_poke)
 
     refute_received {:detach_probe, :handle_detach_poke}
   end

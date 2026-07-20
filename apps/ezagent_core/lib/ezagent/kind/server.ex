@@ -16,6 +16,7 @@ defmodule Ezagent.Kind.Server do
     kind: module(),                # the Kind module (e.g. Ezagent.Entity.Agent)
     uri:  URI.t(),                 # this instance's URI
     state: %{atom() => map()},     # per-Behavior slices, keyed by behavior.state_slice()
+    authority: Ezagent.Cap.Authority.t(), # framework-private; never snapshotted
     post_init_queue: [{module(), term()}] # PR-EM-CORE: pending post-init continuations
                                           # populated by init/1, drained by chained
                                           # handle_continue/2 after :announce_ready
@@ -116,62 +117,71 @@ defmodule Ezagent.Kind.Server do
         {:stop, {:snapshot_load_failed, reason}}
 
       {:ok, slice_state} ->
-        # PR-EM-CORE: collect post_init/2 continuations in behaviors/0
-        # declaration order. `post_init/2` is OPTIONAL — Behaviors that
-        # don't export it (or return `:ok`) contribute nothing to the
-        # queue. The handle_continue/3 calls run AFTER :announce_ready.
-        post_init_queue = collect_post_init_queue(kind_module, args, slice_state)
+        authority_result = Ezagent.Cap.Authority.open(uri, kind_module.type_name())
 
-        state = %{
-          kind: kind_module,
-          uri: uri,
-          state: slice_state,
-          post_init_queue: post_init_queue,
-          # #533 5a (§3.10.3) — the authenticated creator, threaded as a
-          # create-arg exactly like Session's `owner_uri`. `nil` on rehydrate
-          # or when no creator is supplied. PR-5c reads this to grant the
-          # manage-cap to the right principal.
-          created_by: Map.get(args, :created_by),
-          # Set in the put_new branch below from the Lifecycle create-vs-activate
-          # signal (read BEFORE persist sets the marker).
-          create_freshness: :unknown
-        }
+        with {:ok, authority} <- authority_result do
+          # PR-EM-CORE: collect post_init/2 continuations in behaviors/0
+          # declaration order. `post_init/2` is OPTIONAL — Behaviors that
+          # don't export it (or return `:ok`) contribute nothing to the
+          # queue. The handle_continue/3 calls run AFTER :announce_ready.
+          post_init_queue = collect_post_init_queue(kind_module, args, slice_state)
 
-        case Ezagent.Kind.ReadyTransition.register_not_ready(uri_str, self()) do
-          :ok ->
-            # #533 5a (§3.10.3) — capture freshness from the Lifecycle's own
-            # create-vs-activate decision BEFORE persist_initial_snapshot sets
-            # the `ever_created` marker. We go through `Lifecycle.fresh_create?/1`
-            # (the single Lifecycle-owned signal), NOT a snapshot/save return,
-            # so the create/activate concept has one definition and can't drift.
-            # Gate on `Lifecycle.hosts_lifecycle?/1` (Kind METADATA) — NOT the
-            # slice shape: on cold restart the rehydrated slice can lack
-            # `:transients`, which would mis-classify a rehydrated Lifecycle Kind
-            # as :unknown instead of :existed (codex review P2). Non-Lifecycle
-            # Kinds have no create/activate distinction → :unknown.
-            state =
-              if Ezagent.Lifecycle.hosts_lifecycle?(kind_module, slice_state) do
-                freshness = if Ezagent.Lifecycle.fresh_create?(uri), do: :created, else: :existed
-                %{state | create_freshness: freshness}
-              else
-                state
+          state = %{
+            kind: kind_module,
+            uri: uri,
+            state: slice_state,
+            authority: authority,
+            post_init_queue: post_init_queue,
+            # #533 5a (§3.10.3) — the authenticated creator, threaded as a
+            # create-arg exactly like Session's `owner_uri`. `nil` on rehydrate
+            # or when no creator is supplied. PR-5c reads this to grant the
+            # manage-cap to the right principal.
+            created_by: Map.get(args, :created_by),
+            # Set in the put_new branch below from the Lifecycle create-vs-activate
+            # signal (read BEFORE persist sets the marker).
+            create_freshness: :unknown
+          }
+
+          case Ezagent.Kind.ReadyTransition.register_not_ready(uri_str, self()) do
+            :ok ->
+              # #533 5a (§3.10.3) — capture freshness from the Lifecycle's own
+              # create-vs-activate decision BEFORE persist_initial_snapshot sets
+              # the `ever_created` marker. We go through `Lifecycle.fresh_create?/1`
+              # (the single Lifecycle-owned signal), NOT a snapshot/save return,
+              # so the create/activate concept has one definition and can't drift.
+              # Gate on `Lifecycle.hosts_lifecycle?/1` (Kind METADATA) — NOT the
+              # slice shape: on cold restart the rehydrated slice can lack
+              # `:transients`, which would mis-classify a rehydrated Lifecycle Kind
+              # as :unknown instead of :existed (codex review P2). Non-Lifecycle
+              # Kinds have no create/activate distinction → :unknown.
+              state =
+                if Ezagent.Lifecycle.hosts_lifecycle?(kind_module, slice_state) do
+                  freshness =
+                    if Ezagent.Lifecycle.fresh_create?(uri), do: :created, else: :existed
+
+                  %{state | create_freshness: freshness}
+                else
+                  state
+                end
+
+              case persist_initial_snapshot(uri, kind_module, slice_state) do
+                :ok ->
+                  schedule_periodic_snapshot(kind_module)
+                  {:ok, state, {:continue, :announce_ready}}
+
+                {:error, reason} ->
+                  # Persistence is a durability promise. Registration is already
+                  # visible, so fail and detach any pending delivery before exit.
+                  :ok = Ezagent.Kind.ReadyTransition.mark_failed(uri_str)
+                  {:stop, {:persistence_failed, reason}}
               end
 
-            case persist_initial_snapshot(uri, kind_module, slice_state) do
-              :ok ->
-                schedule_periodic_snapshot(kind_module)
-                {:ok, state, {:continue, :announce_ready}}
-
-              {:error, reason} ->
-                # Persistence is a durability promise. Registration is already
-                # visible, so fail and detach any pending delivery before exit.
-                :ok = Ezagent.Kind.ReadyTransition.mark_failed(uri_str)
-                {:stop, {:persistence_failed, reason}}
-            end
-
-          {:error, {:already_registered, _other_pid}} ->
-            # Let-it-crash — duplicate spawn is a bug at the caller layer.
-            {:stop, {:already_registered, uri_str}}
+            {:error, {:already_registered, _other_pid}} ->
+              # Let-it-crash — duplicate spawn is a bug at the caller layer.
+              {:stop, {:already_registered, uri_str}}
+          end
+        else
+          {:error, reason} -> {:stop, {:authority_load_failed, reason}}
         end
     end
   end
@@ -323,7 +333,9 @@ defmodule Ezagent.Kind.Server do
       [] ->
         if Ezagent.Kind.ReadyTransition.drain_then_mark_ready(uri_str, self()) == :ready do
           # Task #49 — invoke on_ready hooks AFTER ReadyGate flip.
-          run_on_ready_hooks(state.kind, uri, state.state)
+          Ezagent.Cap.Authority.with_current(state.authority, fn ->
+            run_on_ready_hooks(state.kind, uri, state.state)
+          end)
         end
 
         {:noreply, state}
@@ -351,10 +363,17 @@ defmodule Ezagent.Kind.Server do
   # down its host Kind on init; the Behavior author still sees the
   # warning in test runs.
   def handle_continue({:ezagent_post_init, [{behavior, term} | rest]}, state) do
-    %{kind: kind_module, uri: self_uri, state: slice_state} = state
+    %{kind: kind_module, uri: self_uri, state: slice_state, authority: authority} = state
 
     new_slice_state =
-      run_post_init_continuation(behavior, term, slice_state, kind_module, self_uri)
+      run_post_init_continuation(
+        behavior,
+        term,
+        slice_state,
+        kind_module,
+        self_uri,
+        authority
+      )
 
     commit_post_init(state, new_slice_state)
     new_state = %{state | state: new_slice_state}
@@ -373,7 +392,9 @@ defmodule Ezagent.Kind.Server do
              :ready do
           # Task #49 — invoke on_ready hooks AFTER ReadyGate flip.
           # Uses the post-init mutated slice state.
-          run_on_ready_hooks(new_state.kind, self_uri, new_state.state)
+          Ezagent.Cap.Authority.with_current(new_state.authority, fn ->
+            run_on_ready_hooks(new_state.kind, self_uri, new_state.state)
+          end)
         end
 
         {:noreply, new_state}
@@ -383,27 +404,36 @@ defmodule Ezagent.Kind.Server do
     end
   end
 
-  defp run_post_init_continuation(behavior, term, slice_state, kind_module, self_uri) do
-    if function_exported?(behavior, :handle_continue, 3) do
-      slice_key = behavior.state_slice()
-      slice = Map.get(slice_state, slice_key, %{})
-      ctx = %{kind_module: kind_module, self_uri: self_uri}
+  defp run_post_init_continuation(
+         behavior,
+         term,
+         slice_state,
+         kind_module,
+         self_uri,
+         authority
+       ) do
+    Ezagent.Cap.Authority.with_current(authority, fn ->
+      if function_exported?(behavior, :handle_continue, 3) do
+        slice_key = behavior.state_slice()
+        slice = Map.get(slice_state, slice_key, %{})
+        ctx = %{kind_module: kind_module, self_uri: self_uri}
 
-      case behavior.handle_continue(term, slice, ctx) do
-        {:ok, new_slice} -> Map.put(slice_state, slice_key, new_slice)
-        :ignore -> slice_state
+        case behavior.handle_continue(term, slice, ctx) do
+          {:ok, new_slice} -> Map.put(slice_state, slice_key, new_slice)
+          :ignore -> slice_state
+        end
+      else
+        require Logger
+
+        Logger.warning(
+          "Ezagent.Kind.Server: Behavior #{inspect(behavior)} returned " <>
+            "{:continue, #{inspect(term)}} from post_init/2 but does not " <>
+            "export handle_continue/3; dropping continuation. URI=#{URI.to_string(self_uri)}"
+        )
+
+        slice_state
       end
-    else
-      require Logger
-
-      Logger.warning(
-        "Ezagent.Kind.Server: Behavior #{inspect(behavior)} returned " <>
-          "{:continue, #{inspect(term)}} from post_init/2 but does not " <>
-          "export handle_continue/3; dropping continuation. URI=#{URI.to_string(self_uri)}"
-      )
-
-      slice_state
-    end
+    end)
   end
 
   # PR-EM-CORE codex round-1 MEDIUM-1 fix: route post-init slice
@@ -523,6 +553,11 @@ defmodule Ezagent.Kind.Server do
     {:reply, {:ok, kind_module}, state}
   end
 
+  def handle_call(:ezagent_runtime_view, _from, state) do
+    view = Map.take(state, [:kind, :uri, :state])
+    {:reply, {:ok, view}, state}
+  end
+
   # PR-OWN-2 (caps-data-ownership SPEC #306 §7) — read a single
   # Behavior slice. Used by `Ezagent.Kind.get_slice/2` for cross-
   # process lookups (e.g. `Session.owner/1` resolves session.owner_uri
@@ -576,6 +611,7 @@ defmodule Ezagent.Kind.Server do
       end
     end)
 
+    :ok = Ezagent.Cap.Authority.retire(self_uri)
     {:reply, :ok, state}
   end
 
@@ -601,7 +637,12 @@ defmodule Ezagent.Kind.Server do
   end
 
   def handle_call({:ezagent_dispatch, %Ezagent.Invocation{} = inv}, _from, state) do
-    case Ezagent.Kind.Runtime.handle_dispatch(inv, state.state, state.kind, state.uri) do
+    dispatch_result =
+      Ezagent.Cap.Authority.with_current(state.authority, fn ->
+        Ezagent.Kind.Runtime.handle_dispatch(inv, state.state, state.kind, state.uri)
+      end)
+
+    case dispatch_result do
       {:ok, new_slice_state, result, slice_change_event, deferred} ->
         case commit_and_notify(state, new_slice_state, slice_change_event) do
           commit_ok when commit_ok in [:ok, :not_durable] ->
@@ -638,7 +679,12 @@ defmodule Ezagent.Kind.Server do
 
   @impl true
   def handle_cast({:ezagent_dispatch, %Ezagent.Invocation{} = inv}, state) do
-    case Ezagent.Kind.Runtime.handle_dispatch(inv, state.state, state.kind, state.uri) do
+    dispatch_result =
+      Ezagent.Cap.Authority.with_current(state.authority, fn ->
+        Ezagent.Kind.Runtime.handle_dispatch(inv, state.state, state.kind, state.uri)
+      end)
+
+    case dispatch_result do
       {:ok, new_slice_state, result, slice_change_event, deferred} ->
         case commit_and_notify(state, new_slice_state, slice_change_event) do
           commit_ok when commit_ok in [:ok, :not_durable] ->
@@ -803,7 +849,15 @@ defmodule Ezagent.Kind.Server do
   end
 
   def handle_info({:ezagent_run_deferred, cmds}, state) when is_list(cmds) do
-    Ezagent.Kind.DeferredDispatch.run(cmds)
+    # A deferred self-dispatch runs on a later mailbox turn, outside the
+    # handle_call/handle_cast authority scope above. Re-enter the same sealed
+    # custody compartment so an exact K.grant issuance for canonical-admin
+    # framework traffic can use this Kind's live signer. The key remains
+    # process-local and the deferred command still traverses Router + verifier.
+    Ezagent.Cap.Authority.with_current(state.authority, fn ->
+      Ezagent.Kind.DeferredDispatch.run(cmds)
+    end)
+
     {:noreply, state}
   end
 
@@ -838,14 +892,19 @@ defmodule Ezagent.Kind.Server do
     end
   end
 
-  def handle_info(message, %{kind: kind_module, uri: self_uri, state: slice_state} = wrapper) do
+  def handle_info(
+        message,
+        %{kind: kind_module, uri: self_uri, state: slice_state, authority: authority} = wrapper
+      ) do
     # P1 (SPEC §3.1, E4) — only the INSTANCE effective set sees the mailbox
     # message, so an out-of-set behavior's handle_signal/handle_kind_message
     # never runs.
     new_slice_state =
-      Ezagent.Kind.BehaviorSet.materialized_set(kind_module, slice_state)
-      |> Enum.reduce(slice_state, fn behavior, acc_state ->
-        forward_to_behavior(behavior, message, acc_state, kind_module, self_uri)
+      Ezagent.Cap.Authority.with_current(authority, fn ->
+        Ezagent.Kind.BehaviorSet.materialized_set(kind_module, slice_state)
+        |> Enum.reduce(slice_state, fn behavior, acc_state ->
+          forward_to_behavior(behavior, message, acc_state, kind_module, self_uri)
+        end)
       end)
 
     # ExternalMirror PR-EM-0 codex round-1 HIGH fix (2026-05-25):

@@ -285,17 +285,9 @@ defmodule Ezagent.ActionSet.Agent.Receive do
   # Build the `{:dispatch, %Cmd{}}` that hands the `:in_process_sync`
   # delivery result to the agent's own `:sync_result` action.
   #
-  # System-principal elimination (#154 甲-4) — the ambient
-  # `system://chat-router` WILDCARD principal is DELETED. This is a pure
-  # SELF-dispatch (the agent persists its OWN sync_result on its OWN
-  # instance), so the agent presents its OWN narrow `:sync_result` self-cap
-  # (`granted_by: self_uri`, a real entity — genuine self-authority;
-  # provenance-only, the step-5.5 authorizer `granted_via_ctx_caps?`, never
-  # routed through Grant). `kind`/`behavior` are `:any` because each agent
-  # FLAVOR (cc/codex/echo/np/curl) declares its own `required_caps[:sync_result]`
-  # behavior module — `:any` field-matches them all while `action`
-  # (`:sync_result`) + `instance` (the agent's OWN URI) keep it
-  # least-privilege: it authorizes only this agent's own sync_result.
+  # This is a pure SELF-dispatch, but self-authority is still target-issued:
+  # the live Agent K.grant path signs the exact flavor-specific sync action.
+  # The effect presenter is the agent itself, matching the signed grantee.
   defp sync_result_effect(%Message{} = msg, ctx, flavor, sync_result) do
     self_uri = ctx[:self_uri]
     source_session = ctx[:caller]
@@ -303,6 +295,12 @@ defmodule Ezagent.ActionSet.Agent.Receive do
     action = sync_result_action(flavor)
 
     target = Ezagent.URI.with_action(self_uri, action, action)
+    admin = Ezagent.Entity.User.admin_uri()
+
+    {:ok, signed_cap} =
+      Ezagent.Cap.issue_for_action({:admin, admin}, self_uri, target)
+
+    reply_cap = issue_reply_cap(source_session, self_uri, admin)
 
     cmd =
       Cmd.new(
@@ -312,24 +310,12 @@ defmodule Ezagent.ActionSet.Agent.Receive do
           result: sync_result,
           source_session: source_session,
           user_text: user_text,
-          in_msg_id: msg.id
+          in_msg_id: msg.id,
+          reply_cap: reply_cap
         },
         %{
-          caller: source_session,
-          caps:
-            MapSet.new([
-              %Ezagent.Capability{
-                Ezagent.Capability.cap(
-                  :any,
-                  :any,
-                  action,
-                  Ezagent.URI.instance(self_uri),
-                  Ezagent.Capability.workspace_of(self_uri)
-                )
-                | granted_by: self_uri,
-                  granted_at: DateTime.utc_now()
-              }
-            ]),
+          caller: self_uri,
+          caps: MapSet.new([signed_cap]),
           reply: :ignore
         }
       )
@@ -337,12 +323,21 @@ defmodule Ezagent.ActionSet.Agent.Receive do
     {:dispatch, cmd}
   end
 
+  defp issue_reply_cap(%URI{scheme: "session"} = session_uri, %URI{} = self_uri, admin) do
+    target = Ezagent.URI.with_action(session_uri, :session, :send)
+
+    case Ezagent.Cap.issue_for_action({:admin, admin}, self_uri, target) do
+      {:ok, cap} -> cap
+      {:error, reason} -> raise "session.send K.grant failed: #{inspect(reason)}"
+    end
+  end
+
+  defp issue_reply_cap(_source_session, _self_uri, _admin), do: nil
+
   defp sync_result_action("cc-headless"), do: :cc_headless_sync_result
-  # DeepSeek provider variant of cc-headless — same headless SDK sidecar, same
-  # unique reply action (it carries the `Ezagent.ActionSet.CcHeadlessAgent`
-  # behavior); only the backend LLM differs. Without this clause the reply falls
-  # to the default `:sync_result` (which curl claims globally) and is dropped.
-  defp sync_result_action("cc-headless-deepseek"), do: :cc_headless_sync_result
+  # cc-custom (provider-profile) headless variant — same headless SDK sidecar,
+  # same unique reply action; ONE clause serves every catalog profile.
+  defp sync_result_action("cc-headless-custom"), do: :cc_headless_sync_result
   defp sync_result_action("py"), do: :py_sync_result
   # hello's in-process router flavor — a UNIQUE action so it is not shadowed by the
   # default `:sync_result` that `curl` claims globally on `Entity.Agent` (mirrors

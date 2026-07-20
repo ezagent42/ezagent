@@ -1,10 +1,11 @@
 defmodule Ezagent.Invariants.CapProvenanceChokepointTest do
   @moduledoc """
-  I11: grant and revoke share one provenance-preparation primitive.
+  I11: capability provenance has one mutation home.
 
-  The artifact metadata mutation belongs only to `Ezagent.Cap`; the legacy
-  dispatch adapter must route grant through `Cap.issue/3` and revoke through
-  the same lower-level provenance primitive without invoking grant authz.
+  The artifact metadata mutation belongs only to `Ezagent.Cap`; grant routes
+  through `Cap.issue/3`, while revoke transports the already-signed artifact
+  unchanged. Re-signing or re-stamping on revoke would violate artifact
+  immutability and make revocation a second issuance path.
   """
   use ExUnit.Case, async: true
 
@@ -21,11 +22,11 @@ defmodule Ezagent.Invariants.CapProvenanceChokepointTest do
            "expected exactly one shared provenance mutation, got:\n#{Enum.join(hits, "\n")}"
   end
 
-  test "grant issues while revoke uses the same provenance primitive" do
+  test "grant issues while revoke preserves the signed artifact" do
     source = File.read!(Path.join(repo_root(), @grant_path))
 
     assert source =~ "Cap.issue(authorization, target, cap)"
-    assert source =~ "Cap.prepare_provenance(authorization, cap)"
+    assert source =~ ":revoke_cap -> {:ok, cap}"
   end
 
   defp grep(pattern) do

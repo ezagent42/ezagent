@@ -253,6 +253,11 @@ defmodule EzagentDomainInstanceMessage.SessionCreator do
   # telemetry, where operators (not end users) look.
   defp reason_tag({:no_credential_source, _flavor}), do: :missing_credentials
   defp reason_tag({:config_home_without_credentials, _flavor}), do: :missing_credentials
+  # Env-backed flavors (deepseek today; #1449 cc-custom profiles) fail with a
+  # DIFFERENT fix path — a deploy-env provider key, not a Claude login/source —
+  # so the UI/operator must not read it as "adopt a credential source" (任务 B
+  # DoD-3: 区分"缺 Claude 凭证" vs "缺 provider key").
+  defp reason_tag({:credential_unavailable, _flavor}), do: :missing_provider_credential
   defp reason_tag(_other), do: :unavailable
 
   @doc """
@@ -847,6 +852,7 @@ defmodule EzagentDomainInstanceMessage.SessionCreator do
        ) do
     result =
       with :ok <- Ezagent.WorkspaceRegistry.bind(session_uri, workspace_uri),
+           :ok <- Ezagent.Identity.TargetAuthority.ensure(effective_owner, session_uri),
            :ok <-
              Materializer.materialize_template_declaration(
                session_uri,
@@ -871,16 +877,6 @@ defmodule EzagentDomainInstanceMessage.SessionCreator do
            :ok <-
              Materializer.grant_owner_assign_role_cap(
                session_uri,
-               effective_owner,
-               workspace_uri
-             ),
-           # F7 PR-B — grant the owner the participant-TEARDOWN authority (the
-           # `{:spawned_by, owner_uri}` cap-model change, SPEC §2.2) so the
-           # session can reap workers it spawned WITHOUT the orchestrator's cap
-           # #2 (durable lineage; dead-orchestrator-safe). `granted_by: owner`,
-           # #154-clean. Idempotent — the same owner-scoped cap across sessions.
-           :ok <-
-             Materializer.grant_owner_participant_teardown_cap(
                effective_owner,
                workspace_uri
              ),

@@ -32,10 +32,16 @@ defmodule Ezagent.World.AdminData do
     component_state(route, base, workspace_uri, caller_uri)
   end
 
-  defp component_state(%{component: "dashboard"}, base, _workspace_uri, _caller_uri) do
-    base
-    |> Map.put("kpis", kpis())
-    |> Map.put("cc_orchestrator_status", cc_orchestrator_status())
+  defp component_state(%{component: "dashboard"}, base, _workspace_uri, caller_uri) do
+    case kpis(caller_uri) do
+      {:ok, kpi_map} ->
+        base
+        |> Map.put("kpis", kpi_map)
+        |> Map.put("cc_orchestrator_status", cc_orchestrator_status())
+
+      {:error, :unauthorized} ->
+        unauthorized_state(base)
+    end
   end
 
   # Overview 操作员落地页（FP5 S2-a）：复用 dashboard 的 KPI 概览,前端再叠快捷入口 +
@@ -43,15 +49,19 @@ defmodule Ezagent.World.AdminData do
   # 只做轻量总览 + 导航。session_template_names 复用 WorkspacePluginData(单一 source,
   # 与 WorldLive 的 "New session" 选择器同源)。
   defp component_state(%{component: "overview"}, base, workspace_uri, caller_uri) do
-    session_rows = overview_session_rows(workspace_uri, caller_uri)
+    case overview_kpis(caller_uri, workspace_uri) do
+      {:ok, kpi_map, session_rows} ->
+        base
+        |> Map.put("kpis", kpi_map)
+        |> Map.put("available_sessions", Enum.take(session_rows, 3))
+        |> Map.put(
+          "session_template_names",
+          Ezagent.World.WorkspacePluginData.session_template_names(caller_uri, workspace_uri)
+        )
 
-    base
-    |> Map.put("kpis", overview_kpis(session_rows))
-    |> Map.put("available_sessions", Enum.take(session_rows, 3))
-    |> Map.put(
-      "session_template_names",
-      Ezagent.World.WorkspacePluginData.session_template_names(workspace_uri)
-    )
+      {:error, :unauthorized} ->
+        unauthorized_state(base)
+    end
   end
 
   defp component_state(%{component: "observability"}, base, workspace_uri, _caller_uri) do
@@ -61,16 +71,22 @@ defmodule Ezagent.World.AdminData do
     |> Map.put("snapshots", snapshots(12, workspace_uri))
   end
 
-  defp component_state(%{component: "entity_registry"}, base, _workspace_uri, _caller_uri) do
-    Map.put(base, "entities", registry_rows())
+  defp component_state(%{component: "entity_registry"}, base, _workspace_uri, caller_uri) do
+    case registry_rows(caller_uri) do
+      {:ok, rows} -> Map.put(base, "entities", rows)
+      {:error, :unauthorized} -> unauthorized_state(base)
+    end
   end
 
   defp component_state(%{component: "snapshots"}, base, workspace_uri, _caller_uri) do
     Map.put(base, "snapshots", snapshots(50, workspace_uri))
   end
 
-  defp component_state(%{component: "templates"}, base, _workspace_uri, _caller_uri) do
-    Map.put(base, "templates", template_rows())
+  defp component_state(%{component: "templates"}, base, _workspace_uri, caller_uri) do
+    case template_rows(caller_uri) do
+      {:ok, rows} -> Map.put(base, "templates", rows)
+      {:error, :unauthorized} -> unauthorized_state(base)
+    end
   end
 
   defp component_state(%{component: "caps_admin"}, base, workspace_uri, _caller_uri) do
@@ -111,7 +127,7 @@ defmodule Ezagent.World.AdminData do
   def settings_state(caller_uri) do
     smtp_config = Ezagent.AppSettings.get("smtp_config") || %{}
 
-    %{
+    settings = %{
       "smtp_configured" => Ezagent.AppSettings.smtp_configured?(),
       "smtp" => %{
         "host" => Map.get(smtp_config, "host", ""),
@@ -125,8 +141,26 @@ defmodule Ezagent.World.AdminData do
       "smtp_test_result" => nil,
       "smtp_flash" => nil
     }
+
+    if Ezagent.Identity.admin?(caller_uri) do
+      Map.merge(settings, %{
+        "can_manage_registration" => true,
+        "registration_open" => Ezagent.AppSettings.registration_open?(),
+        "registration_require_invite" => Ezagent.AppSettings.registration_require_invite?(),
+        "registration_requests" => registration_requests(),
+        "registration_flash" => nil
+      })
+    else
+      Map.put(settings, "can_manage_registration", false)
+    end
   rescue
     err -> %{"error" => inspect(err)}
+  end
+
+  defp registration_requests do
+    Enum.map(Ezagent.Entity.RegistrationRequest.list_pending(), fn request ->
+      %{"email" => request.email, "requested_at" => request.updated_at}
+    end)
   end
 
   defp default_test_recipient(%URI{} = caller_uri) do
@@ -138,21 +172,36 @@ defmodule Ezagent.World.AdminData do
 
   defp default_test_recipient(_), do: ""
 
-  defp overview_kpis(session_rows) when is_list(session_rows) do
-    Map.put(kpis(), "sessions", length(session_rows))
+  defp overview_kpis(caller_uri, workspace_uri) do
+    session_rows = overview_session_rows(workspace_uri, caller_uri)
+
+    case kpis(caller_uri) do
+      {:ok, kpi_map} -> {:ok, Map.put(kpi_map, "sessions", length(session_rows)), session_rows}
+      {:error, :unauthorized} = err -> err
+    end
   end
 
-  # KPI 概览,dashboard 与 overview 共用（FP5 S2-a）。
-  defp kpis do
-    kinds = Ezagent.KindRegistry.list_all()
+  # KPI 概览,dashboard 与 overview 共用（FP5 S2-a）。F5 (read-plane PR-4
+  # rework): the GLOBAL registry list-all behind these counts is an
+  # OPERATOR query-scope — routed through the
+  # `Ezagent.Identity.OperatorReads` chokepoint (promoted operators
+  # included); a non-operator gets `{:error, :unauthorized}`, surfaced
+  # as an explicit unauthorized state, NEVER an empty/zero table.
+  defp kpis(caller_uri) do
+    case Ezagent.Identity.OperatorReads.registry_all(caller_uri) do
+      {:ok, kinds} ->
+        {:ok,
+         %{
+           "kinds" => length(kinds),
+           "sessions" => count_scheme(kinds, "session"),
+           "workspaces" => count_scheme(kinds, "workspace"),
+           "entities" => count_scheme(kinds, "entity"),
+           "agents" => count_entity_type(kinds, "agent")
+         }}
 
-    %{
-      "kinds" => length(kinds),
-      "sessions" => count_scheme(kinds, "session"),
-      "workspaces" => count_scheme(kinds, "workspace"),
-      "entities" => count_scheme(kinds, "entity"),
-      "agents" => count_entity_type(kinds, "agent")
-    }
+      {:error, :unauthorized} = err ->
+        err
+    end
   end
 
   # Overview 落地页"可继续 session"列表:复用会话页的 filtered row builder,
@@ -180,31 +229,59 @@ defmodule Ezagent.World.AdminData do
     end)
   end
 
-  defp registry_rows do
-    Ezagent.KindRegistry.list_all()
-    |> Enum.map(fn {uri_str, pid} ->
-      %{
-        "uri" => uri_str,
-        "scheme" => uri_scheme(uri_str),
-        "alive" => is_pid(pid) and Process.alive?(pid),
-        "pid" => if(is_pid(pid), do: inspect(pid), else: nil)
-      }
-    end)
-    |> Enum.sort_by(& &1["uri"])
+  # GLOBAL registry list-all (every Kind instance across the whole system)
+  # is an OPERATOR query-scope — routed through the
+  # Ezagent.Identity.OperatorReads chokepoint: authorize FIRST, and
+  # PROPAGATE `{:error, :unauthorized}` to the route (F5, read-plane PR-4
+  # rework) — never coerce a denial to an empty table.
+  defp registry_rows(caller_uri) do
+    case Ezagent.Identity.OperatorReads.registry_all(caller_uri) do
+      {:ok, kinds} ->
+        {:ok,
+         kinds
+         |> Enum.map(fn {uri_str, pid} ->
+           %{
+             "uri" => uri_str,
+             "scheme" => uri_scheme(uri_str),
+             "alive" => is_pid(pid) and Process.alive?(pid),
+             "pid" => if(is_pid(pid), do: inspect(pid), else: nil)
+           }
+         end)
+         |> Enum.sort_by(& &1["uri"])}
+
+      {:error, :unauthorized} = err ->
+        err
+    end
   end
 
-  defp template_rows do
-    Ezagent.KindRegistry.list_all()
-    |> Enum.flat_map(fn {uri_str, pid} ->
-      case parse_uri(uri_str) do
-        %URI{scheme: "template"} ->
-          [%{"uri" => uri_str, "alive" => is_pid(pid) and Process.alive?(pid)}]
+  defp template_rows(caller_uri) do
+    case Ezagent.Identity.OperatorReads.registry_all(caller_uri) do
+      {:ok, kinds} ->
+        {:ok,
+         kinds
+         |> Enum.flat_map(fn {uri_str, pid} ->
+           case parse_uri(uri_str) do
+             %URI{scheme: "template"} ->
+               [%{"uri" => uri_str, "alive" => is_pid(pid) and Process.alive?(pid)}]
 
-        _ ->
-          []
-      end
-    end)
-    |> Enum.sort_by(& &1["uri"])
+             _ ->
+               []
+           end
+         end)
+         |> Enum.sort_by(& &1["uri"])}
+
+      {:error, :unauthorized} = err ->
+        err
+    end
+  end
+
+  # F5 (read-plane PR-4 rework): the explicit unauthorized state — the
+  # route surfaces a rejection marker and NO data keys, so a denied
+  # caller can never mistake a coerced empty table for "no rows".
+  defp unauthorized_state(base) do
+    base
+    |> Map.put("unauthorized", true)
+    |> Map.put("error", "unauthorized")
   end
 
   defp recent_invocations(limit, workspace_uri) do

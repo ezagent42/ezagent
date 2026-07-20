@@ -102,9 +102,10 @@ defmodule Ezagent.Session.ConfigFork do
          :ok <- assert_same_workspace(source_ws, caller_ws),
          new_template_name <- new_template_name(source_template_uri, opts),
          short_name <- short_name(opts),
-         # Copy authority — self-minted Template cap for the source (== caller)
-         # workspace. The REAL gate is `:create_session` below (Advisor #2).
-         fork_caps = MapSet.put(caps, template_write_cap(source_ws, caller)),
+         # Copy authority — a target-signed concrete fork artifact. The REAL
+         # user-facing gate remains `:create_session` below (Advisor #2).
+         {:ok, fork_cap} <- issue_fork_cap(source_template_uri, caller),
+         fork_caps = MapSet.put(caps, fork_cap),
          {:ok, %URI{} = new_template_uri} <-
            SessionTemplate.fork(source_template_uri, new_template_name,
              caller: caller,
@@ -178,22 +179,14 @@ defmodule Ezagent.Session.ConfigFork do
 
   # --- caps + naming -----------------------------------------------------
 
-  # Mirror of `Ezagent.World.WorkspacePluginActions.session_template_write_cap/2`
-  # — a caller-scoped, workspace-bounded `ActionSet.Template` cap authorizing the
-  # config copy (fork). `granted_by: caller` (self-authorized for own workspace);
-  # the Invariant-13 gate keeps it intra-workspace.
-  defp template_write_cap(%URI{} = workspace_uri, %URI{} = caller) do
-    %Ezagent.Capability{
-      Ezagent.Capability.cap(
-        :session_template,
-        Ezagent.ActionSet.Template,
-        :any,
-        {:within_workspace, workspace_uri},
-        workspace_uri
-      )
-      | granted_by: caller,
-        granted_at: DateTime.utc_now()
-    }
+  defp issue_fork_cap(%URI{} = source_template_uri, %URI{} = caller) do
+    target = Ezagent.URI.with_action(source_template_uri, :template, :fork)
+
+    Ezagent.Cap.issue_for_action(
+      {:admin, Ezagent.Entity.User.admin_uri()},
+      caller,
+      target
+    )
   end
 
   defp new_template_name(%URI{} = source_template_uri, opts) do

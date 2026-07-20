@@ -77,44 +77,53 @@ defmodule Ezagent.Kind.RuntimeReceiptTest do
     provider_uri = URI.new!("entity://receipt-prov-#{suffix}/agent/provider")
     caller_uri = URI.new!("entity://receipt-call-#{suffix}/user/caller")
     same_ws_caller_uri = URI.new!("entity://receipt-prov-#{suffix}/user/insider")
+    authority = install_test_authority!(provider_uri, ReceiptFixtureKind.type_name())
 
     {:ok,
-     provider_uri: provider_uri, caller_uri: caller_uri, same_ws_caller_uri: same_ws_caller_uri}
+     provider_uri: provider_uri,
+     caller_uri: caller_uri,
+     same_ws_caller_uri: same_ws_caller_uri,
+     authority: authority}
   end
 
   # A ctx.caps cross-workspace cap (`workspace_uri: :any`) that both authorizes
   # `:ping` at step 5.5 AND provides the step-5.6 cross-workspace bypass.
   # `granted_by` is a real entity URI so it clears #154 predicate A.
-  defp cross_workspace_cap(granted_by_uri) do
-    %Capability{
-      kind: :any,
-      behavior: :any,
-      action: :any,
-      instance: :any,
+  defp cross_workspace_cap(authority, provider_uri, grantee_uri) do
+    requested = %Capability{
+      kind: ReceiptFixtureKind.type_name(),
+      behavior: ReceiptFixtureBehavior,
+      action: :ping,
+      instance: Ezagent.URI.instance(provider_uri),
       workspace_uri: :any,
-      granted_by: granted_by_uri,
+      granted_by: grantee_uri,
       granted_at: ~U[2026-07-01 00:00:00Z]
     }
+
+    authority_signed_cap!(authority, grantee_uri, requested)
   end
 
   # A same-workspace cap — concrete `workspace_uri`, so it authorizes `:ping`
   # inside its own workspace but is NOT a cross-workspace marker.
-  defp intra_workspace_cap(workspace_uri, granted_by_uri) do
-    %Capability{
-      kind: :any,
-      behavior: :any,
-      action: :any,
-      instance: :any,
+  defp intra_workspace_cap(authority, provider_uri, workspace_uri, grantee_uri) do
+    requested = %Capability{
+      kind: ReceiptFixtureKind.type_name(),
+      behavior: ReceiptFixtureBehavior,
+      action: :ping,
+      instance: Ezagent.URI.instance(provider_uri),
       workspace_uri: workspace_uri,
-      granted_by: granted_by_uri,
+      granted_by: grantee_uri,
       granted_at: ~U[2026-07-01 00:00:00Z]
     }
+
+    authority_signed_cap!(authority, grantee_uri, requested)
   end
 
   defp ping_invocation(provider_uri, caller_uri, caps) do
-    target = URI.parse("#{URI.to_string(provider_uri)}?action=receipt_fixture.ping")
+    target = Ezagent.URI.with_action(provider_uri, :receipt_fixture, :ping)
 
     %Invocation{
+      origin: :trusted_internal,
       target: target,
       mode: :call,
       args: %{},
@@ -132,9 +141,10 @@ defmodule Ezagent.Kind.RuntimeReceiptTest do
 
   test "cross-workspace authorized dispatch emits exactly one :receipt fact", %{
     provider_uri: provider_uri,
-    caller_uri: caller_uri
+    caller_uri: caller_uri,
+    authority: authority
   } do
-    cap = cross_workspace_cap(caller_uri)
+    cap = cross_workspace_cap(authority, provider_uri, caller_uri)
     inv = ping_invocation(provider_uri, caller_uri, MapSet.new([cap]))
 
     state = %{receipt_fixture: %{}}
@@ -162,20 +172,21 @@ defmodule Ezagent.Kind.RuntimeReceiptTest do
 
     # capability = the matched cap's identity_key, flattened to a JSON-safe map.
     assert payload["capability"] == %{
-             "kind" => "any",
-             "behavior" => "any",
-             "action" => "any",
-             "instance" => "any",
+             "kind" => "receipt_fixture",
+             "behavior" => Atom.to_string(ReceiptFixtureBehavior),
+             "action" => "ping",
+             "instance" => inspect(URI.to_string(Ezagent.URI.instance(provider_uri))),
              "workspace_uri" => "any"
            }
   end
 
   test "intra-workspace authorized dispatch emits NO receipt", %{
     provider_uri: provider_uri,
-    same_ws_caller_uri: same_ws_caller_uri
+    same_ws_caller_uri: same_ws_caller_uri,
+    authority: authority
   } do
     provider_ws = Capability.workspace_of(provider_uri)
-    cap = intra_workspace_cap(provider_ws, same_ws_caller_uri)
+    cap = intra_workspace_cap(authority, provider_uri, provider_ws, same_ws_caller_uri)
     inv = ping_invocation(provider_uri, same_ws_caller_uri, MapSet.new([cap]))
 
     state = %{receipt_fixture: %{}}
@@ -198,7 +209,7 @@ defmodule Ezagent.Kind.RuntimeReceiptTest do
 
     state = %{receipt_fixture: %{}}
 
-    assert {:error, :unauthorized} =
+    assert {:error, :missing_cap} =
              Ezagent.Kind.Runtime.handle_dispatch(inv, state, ReceiptFixtureKind, provider_uri)
 
     assert receipt_rows(provider_uri) == [],

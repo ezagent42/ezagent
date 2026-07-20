@@ -77,19 +77,9 @@ defmodule EzagentWeb.SessionControllerTest do
         |> Plug.Test.init_test_session(%{})
         |> post("/login", %{"email" => email, "password" => "secret123"})
 
-      assert redirected_to(conn) == "/login/token"
+      assert redirected_to(conn) == "/sessions"
       assert Plug.Conn.get_session(conn, :current_entity_uri) == URI.to_string(uri)
-
-      delivery = get(recycle(conn), "/login/token")
-      body = html_response(delivery, 200)
-      assert body =~ ~s(id="one-time-personal-access-token")
-      assert body =~ "esr_pat_v1_"
-      assert get_resp_header(delivery, "cache-control") == ["no-store"]
-
-      assert redirected_to(get(recycle(delivery), "/login/token")) == "/sessions"
-
-      assert [%Ezagent.Entity.Token{label: "interactive-login"}] =
-               Ezagent.Entity.Token.list(uri)
+      assert Ezagent.Entity.Token.list(uri) == []
     end
 
     test "unverified email → generic 'confirm your email', no session (after correct password)" do

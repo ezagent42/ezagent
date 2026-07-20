@@ -107,14 +107,17 @@ defmodule EzagentDomainInstanceMessage.Integration.ChatMembersSurviveRestartTest
 
   defp join(session_uri, member_uri) do
     target = URI.new!("#{URI.to_string(session_uri)}?action=session.join")
+    admin = User.admin_uri()
+    cap = Ezagent.Test.CapHelper.signed_action_cap!(target, admin)
 
     Invocation.dispatch(%Invocation{
+      origin: :trusted_internal,
       target: target,
       mode: :call,
       args: %{member: member_uri},
       ctx: %{
-        caller: User.admin_uri(),
-        caps: MapSet.new([Ezagent.Capability.admin_genesis_cap()]),
+        caller: admin,
+        caps: MapSet.new([cap]),
         reply: {:caller_inbox, self()}
       }
     })
@@ -162,8 +165,10 @@ defmodule EzagentDomainInstanceMessage.Integration.ChatMembersSurviveRestartTest
 
       # --- 1. STATE survived the cold restart (members rehydrated) ---
       members_after = result.after.state.members
+
       assert Map.has_key?(members_after, member_uri),
              "member was LOST across cold restart — `members` must live in `state`"
+
       assert members_after[member_uri].online == true
 
       # --- 2. TRANSIENTS rebuilt LIVE (the stale-monitor bug is fixed) ---

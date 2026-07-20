@@ -193,7 +193,7 @@ defmodule EzagentDomainInstanceMessage.SessionCreator.Materializer do
         Ezagent.Identity.Grant.grant_cap(
           owner_uri,
           want,
-          {:rule, :session_participation, owner_uri}
+          grant_authorization(owner_uri)
         )
 
       case result do
@@ -232,7 +232,7 @@ defmodule EzagentDomainInstanceMessage.SessionCreator.Materializer do
         Ezagent.Identity.Grant.grant_cap(
           owner_uri,
           want,
-          {:rule, :session_participation, owner_uri}
+          grant_authorization(owner_uri)
         )
 
       case result do
@@ -271,8 +271,13 @@ defmodule EzagentDomainInstanceMessage.SessionCreator.Materializer do
   re-grant on the owner's second session is a logical-equality no-op (idempotent
   via `Session.cap_equal_ignoring_metadata?/2`).
   """
-  @spec grant_owner_participant_teardown_cap(URI.t(), URI.t()) :: :ok | {:error, term()}
-  def grant_owner_participant_teardown_cap(%URI{} = owner_uri, %URI{} = workspace_uri) do
+  @spec grant_owner_participant_teardown_cap(URI.t(), URI.t(), URI.t()) ::
+          :ok | {:error, term()}
+  def grant_owner_participant_teardown_cap(
+        %URI{} = participant_uri,
+        %URI{} = owner_uri,
+        %URI{} = workspace_uri
+      ) do
     wants =
       for {behavior, action} <- [
             {Ezagent.ActionSet.Sandbox, :destroy},
@@ -282,7 +287,7 @@ defmodule EzagentDomainInstanceMessage.SessionCreator.Materializer do
           kind: :agent,
           behavior: behavior,
           action: action,
-          instance: {:spawned_by, owner_uri},
+          instance: participant_uri,
           workspace_uri: workspace_uri,
           granted_by: owner_uri,
           granted_at: nil
@@ -296,13 +301,17 @@ defmodule EzagentDomainInstanceMessage.SessionCreator.Materializer do
       if Enum.any?(current, &Session.cap_equal_ignoring_metadata?(&1, want)) do
         {:cont, :ok}
       else
-        case Ezagent.Identity.Grant.grant_cap(
-               owner_uri,
-               want,
-               {:rule, :session_participation, owner_uri}
-             ) do
-          :ok -> {:cont, :ok}
-          {:error, reason} -> {:halt, {:error, {:participant_teardown_cap_grant_failed, reason}}}
+        with :ok <- Ezagent.Identity.TargetAuthority.ensure(owner_uri, want.instance),
+             :ok <-
+               Ezagent.Identity.Grant.grant_cap(
+                 owner_uri,
+                 want,
+                 grant_authorization(owner_uri)
+               ) do
+          {:cont, :ok}
+        else
+          {:error, reason} ->
+            {:halt, {:error, {:participant_teardown_cap_grant_failed, reason}}}
         end
       end
     end)
@@ -340,7 +349,7 @@ defmodule EzagentDomainInstanceMessage.SessionCreator.Materializer do
         Ezagent.Identity.Grant.grant_cap(
           owner_uri,
           want,
-          {:rule, :template_materialize, owner_uri}
+          grant_authorization(owner_uri)
         )
 
       case result do
@@ -348,6 +357,14 @@ defmodule EzagentDomainInstanceMessage.SessionCreator.Materializer do
         {:error, reason} -> {:error, {:orchestrator_admin_cap_grant_failed, reason}}
       end
     end
+  end
+
+  defp grant_authorization(%URI{} = owner_uri) do
+    admin = Ezagent.Entity.User.admin_uri()
+
+    if Ezagent.URI.stable_key(owner_uri) == Ezagent.URI.stable_key(admin),
+      do: {:admin, admin},
+      else: {:held_by, owner_uri}
   end
 
   @doc """
@@ -419,40 +436,34 @@ defmodule EzagentDomainInstanceMessage.SessionCreator.Materializer do
       admin_uri = Ezagent.Entity.User.admin_uri()
 
       result =
-        Invocation.dispatch(%Invocation{
-          target: target,
-          mode: :call,
-          args: %{member: member_uri},
-          # #154 — `system://session-internal` ELIMINATED. Joining a configured
-          # member during session MATERIALIZATION is system-mediated → runs under
-          # the genesis admin entity with an inline `session.join` cap (granted_by
-          # admin; #533 refines to per-creator/owner). Same play as
-          # template-materialize.
-          ctx: %{
-            caller: admin_uri,
-            caps:
-              MapSet.new([
-                %Ezagent.Capability{
-                  Ezagent.Capability.cap(
-                    :session,
-                    :any,
-                    :join,
-                    Ezagent.URI.instance(session_uri),
-                    Ezagent.Capability.workspace_of(session_uri)
-                  )
-                  | granted_by: admin_uri,
-                    granted_at: DateTime.utc_now()
-                }
-              ]),
-            reply: {:caller_inbox, self()}
-          }
-        })
+        with {:ok, signed_cap} <-
+               Ezagent.Cap.issue_for_action({:admin, admin_uri}, admin_uri, target) do
+          Invocation.dispatch(%Invocation{
+            target: target,
+            mode: :call,
+            args: %{member: member_uri},
+            ctx: %{
+              caller: admin_uri,
+              caps: MapSet.new([signed_cap]),
+              reply: {:caller_inbox, self()}
+            },
+            origin: :trusted_internal
+          })
+        end
 
       case result do
-        :ok -> {:cont, :ok}
-        {:ok, _} -> {:cont, :ok}
-        {:error, reason} -> {:halt, {:error, {:member_join_failed, member_uri, reason}}}
-        other -> {:halt, {:error, {:member_join_unexpected, member_uri, other}}}
+        r when r == :ok or (is_tuple(r) and tuple_size(r) == 2 and elem(r, 0) == :ok) ->
+          # D1 join 补发(caller-side —— 本函数运行在 SessionCreator/facade 进程,
+          # 非 Session Kind 内,:sync grant 无自死锁):创建期 join 的 user 成员
+          # (owner / workspace-facade caller)同样走唯一补发供给点。Agent → no-op。
+          _ = Ezagent.Socialware.MemberBackfill.backfill(session_uri, member_uri)
+          {:cont, :ok}
+
+        {:error, reason} ->
+          {:halt, {:error, {:member_join_failed, member_uri, reason}}}
+
+        other ->
+          {:halt, {:error, {:member_join_unexpected, member_uri, other}}}
       end
     end)
   end

@@ -4,12 +4,23 @@ defmodule EzagentDomainSocialware.PageView do
 
   Renders the latest retained page version. External rendering is a later
   React/json-render surface and follows `Ezagent.ActionSet.Surface.external_tree/1`.
+
+  ## Read-plane authz (PR-2)
+
+  Every `:surface`-slice read routes through the
+  `Ezagent.Socialware.SessionReads.external_surface/2` chokepoint, which
+  authorizes the caller FIRST (strict membership, or the session's
+  `public_view` open policy). The `SessionView` behaviour's caller-less
+  `/1` callbacks delegate to the caller-aware `/2` forms with a `nil` caller —
+  fail-closed: only a `public_view` session's surface is readable without a
+  principal.
   """
 
   @behaviour Ezagent.UI.SessionView
   use Phoenix.Component
 
   alias Ezagent.ActionSet.Surface
+  alias Ezagent.Socialware.SessionReads
 
   @impl true
   def id, do: :page
@@ -21,8 +32,18 @@ defmodule EzagentDomainSocialware.PageView do
   def icon, do: "panel-top"
 
   @impl true
-  def applies_to?(%URI{} = session_uri) do
-    case Ezagent.Kind.get_slice(session_uri, :surface) do
+  def applies_to?(%URI{} = session_uri), do: applies_to?(session_uri, nil)
+
+  def applies_to?(_), do: false
+
+  @doc """
+  Caller-aware `applies_to?`: true when `caller` may read `session_uri`'s
+  surface through the `SessionReads` chokepoint (strict membership, or the
+  public-view open policy). Fail-closed on any error.
+  """
+  @spec applies_to?(URI.t(), URI.t() | term()) :: boolean()
+  def applies_to?(%URI{} = session_uri, caller) do
+    case SessionReads.external_surface(caller, session_uri) do
       {:ok, surface} when is_map(surface) -> true
       _ -> false
     end
@@ -32,13 +53,15 @@ defmodule EzagentDomainSocialware.PageView do
     _, _ -> false
   end
 
-  def applies_to?(_), do: false
+  def applies_to?(_, _), do: false
 
   @impl true
   def render(assigns) do
     assigns =
       assigns
-      |> assign_new(:surface, fn -> load_surface(assigns[:session_uri]) end)
+      |> assign_new(:surface, fn ->
+        load_surface(assigns[:session_uri], assigns[:caller_uri] || assigns[:caller])
+      end)
 
     assigns = assign(assigns, :tree, Surface.internal_tree(assigns[:surface] || %{}))
 
@@ -63,13 +86,24 @@ defmodule EzagentDomainSocialware.PageView do
   def external_render?, do: true
 
   @impl true
-  def external_render(%URI{} = session_uri) do
-    session_uri
-    |> load_surface()
-    |> Surface.external_tree()
-  end
+  def external_render(%URI{} = session_uri), do: external_render(session_uri, nil)
 
   def external_render(_), do: nil
+
+  @doc """
+  Caller-aware external render: the json-render tree for `session_uri`'s
+  surface, read through the `SessionReads` chokepoint. Fail-closed: a caller
+  with no read authority gets `nil`.
+  """
+  @spec external_render(URI.t(), URI.t() | term()) :: map() | nil
+  def external_render(%URI{} = session_uri, caller) do
+    case SessionReads.external_surface(caller, session_uri) do
+      {:ok, surface} -> Surface.external_tree(surface)
+      {:error, _} -> nil
+    end
+  end
+
+  def external_render(_, _), do: nil
 
   defp render_node(assigns) do
     assigns = assign(assigns, :node_type, node_type(assigns.node))
@@ -117,8 +151,12 @@ defmodule EzagentDomainSocialware.PageView do
     """
   end
 
-  defp load_surface(%URI{} = session_uri) do
-    case Ezagent.Kind.get_slice(session_uri, :surface) do
+  # The surface read routes through the SessionReads chokepoint (PR-2):
+  # authorized FIRST (strict membership or the public-view open policy),
+  # fail-closed `%{}` (the "No page version yet" empty state) for a caller
+  # with no read authority.
+  defp load_surface(%URI{} = session_uri, caller) do
+    case SessionReads.external_surface(caller, session_uri) do
       {:ok, surface} -> surface
       _ -> %{}
     end
@@ -128,7 +166,7 @@ defmodule EzagentDomainSocialware.PageView do
     _, _ -> %{}
   end
 
-  defp load_surface(_), do: %{}
+  defp load_surface(_, _), do: %{}
 
   defp node_type(node), do: node_field(node, :type)
 

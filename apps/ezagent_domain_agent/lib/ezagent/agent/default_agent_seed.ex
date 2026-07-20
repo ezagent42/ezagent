@@ -167,39 +167,29 @@ defmodule Ezagent.Agent.DefaultAgentSeed do
     end
   end
 
-  # Dispatch `Ezagent.ActionSet.Template` `:write` under the genesis admin entity
-  # with an INLINE narrow `template.write` cap — the same system-mediated
-  # materialization play `CcOrchestratorSeed.write_template_slice/2` uses.
+  # Dispatch `Ezagent.ActionSet.Template` `:write` under the admin entity with a
+  # target-issued narrow `template.write` artifact.
   defp write_template_slice(%URI{} = uri, content) do
     target = Ezagent.URI.new!("#{URI.to_string(uri)}?action=template.write")
     admin = Ezagent.Entity.User.admin_uri()
 
-    case Ezagent.Invocation.dispatch(%Ezagent.Invocation{
-           target: target,
-           mode: :call,
-           args: %{content: content},
-           ctx: %{
-             caller: admin,
-             caps:
-               MapSet.new([
-                 %Ezagent.Capability{
-                   Ezagent.Capability.cap(
-                     :any,
-                     :any,
-                     :write,
-                     Ezagent.URI.instance(target),
-                     Ezagent.Capability.workspace_of(target)
-                   )
-                   | granted_by: admin,
-                     granted_at: DateTime.utc_now()
-                 }
-               ]),
-             reply: {:caller_inbox, self()}
-           }
-         }) do
-      {:ok, %{content: _}} -> :ok
-      {:error, _} = err -> err
-      other -> {:error, {:unexpected_template_write_result, other}}
+    with {:ok, signed_cap} <-
+           Ezagent.Cap.issue_for_action({:admin, admin}, admin, target) do
+      case Ezagent.Invocation.dispatch(%Ezagent.Invocation{
+             target: target,
+             mode: :call,
+             args: %{content: content},
+             ctx: %{
+               caller: admin,
+               caps: MapSet.new([signed_cap]),
+               reply: {:caller_inbox, self()}
+             },
+             origin: :trusted_internal
+           }) do
+        {:ok, %{content: _}} -> :ok
+        {:error, _} = err -> err
+        other -> {:error, {:unexpected_template_write_result, other}}
+      end
     end
   end
 end

@@ -38,10 +38,7 @@ defmodule EzagentPluginKanban.E2E.RoleNativeDispatchTest do
     {:ok, _ws_pid} = Workspace.create(ws_name, %{})
     workspace_uri = URI.new!("workspace://#{ws_name}")
 
-    admin_ctx = %{
-      caller: User.admin_uri(),
-      caps: MapSet.new([Ezagent.Capability.admin_genesis_cap()])
-    }
+    admin_ctx = Ezagent.Test.CapHelper.signed_workspace_ctx!(workspace_uri, User.admin_uri())
 
     # native-style direct-spawn flavor: the UNIFIED Agent Kind, NO
     # instance_behaviors thunk (a roleless spawn captures only the base set),
@@ -133,9 +130,21 @@ defmodule EzagentPluginKanban.E2E.RoleNativeDispatchTest do
   end
 
   defp dispatch(agent_uri, action, args, %{caller: caller, caps: caps}) do
+    target = Ezagent.URI.with_action(agent_uri, :kanban, action)
+
+    caps =
+      if Ezagent.Identity.admin?(caller) do
+        case Ezagent.Cap.issue_for_action({:admin, caller}, caller, target) do
+          {:ok, cap} -> MapSet.new([cap])
+          {:error, {:unknown_action, _action}} -> caps
+        end
+      else
+        caps
+      end
+
     cmd =
       Ezagent.Cmd.new(
-        Ezagent.URI.with_action(agent_uri, :kanban, action),
+        target,
         action,
         args,
         %{mode: :call, caller: caller, caps: caps, reply: {:caller_inbox, self()}}

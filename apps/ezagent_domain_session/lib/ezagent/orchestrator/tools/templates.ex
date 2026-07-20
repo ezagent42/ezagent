@@ -3,7 +3,6 @@ defmodule Ezagent.Orchestrator.Tools.Templates do
 
   require Logger
 
-  alias Ezagent.ActionSet.Session
   alias Ezagent.Entity.SessionTemplate
   alias Ezagent.Socialware.DefinitionEditor
   alias Ezagent.TemplateTags
@@ -15,7 +14,7 @@ defmodule Ezagent.Orchestrator.Tools.Templates do
          {:ok, caller_uri} <- require_opt(opts, :caller),
          {:ok, caps} <- require_opt(opts, :caps),
          {:ok, %URI{} = parent_uri} <- require_opt(opts, :parent_template_uri),
-         :ok <- check_template_write_cap(caps, workspace_uri),
+         :ok <- check_template_write_cap(caps, workspace_uri, caller_uri),
          :ok <- check_parent_alive(parent_uri),
          {:ok, parent_name} <- extract_template_name(parent_uri),
          {:ok, _definition, _object} <-
@@ -52,7 +51,7 @@ defmodule Ezagent.Orchestrator.Tools.Templates do
          {:ok, workspace_uri} <- require_opt(opts, :workspace_uri),
          {:ok, caller_uri} <- require_opt(opts, :caller),
          {:ok, caps} <- require_opt(opts, :caps),
-         :ok <- check_template_write_cap(caps, workspace_uri),
+         :ok <- check_template_write_cap(caps, workspace_uri, caller_uri),
          {:ok, _definition, _object} <-
            DefinitionEditor.snapshot_live_session(session_uri, workspace_uri, caller_uri,
              name: new_name,
@@ -88,12 +87,23 @@ defmodule Ezagent.Orchestrator.Tools.Templates do
           | {:error, term()}
   def list_templates(name_filter \\ nil, opts \\ []) do
     with {:ok, caps} <- require_opt(opts, :caps),
-         {:ok, workspace_uri} <- require_opt(opts, :workspace_uri) do
+         {:ok, workspace_uri} <- require_opt(opts, :workspace_uri),
+         {:ok, caller} <- require_opt(opts, :caller) do
       agent_allowed? =
-        Ezagent.Session.Config.Admission.template_cap?(caps, :agent_template, workspace_uri)
+        Ezagent.Session.Config.Admission.template_cap?(
+          caps,
+          :agent_template,
+          workspace_uri,
+          caller
+        )
 
       session_allowed? =
-        Ezagent.Session.Config.Admission.template_cap?(caps, :session_template, workspace_uri)
+        Ezagent.Session.Config.Admission.template_cap?(
+          caps,
+          :session_template,
+          workspace_uri,
+          caller
+        )
 
       if not agent_allowed? and not session_allowed? do
         {:error, :unauthorized}
@@ -186,33 +196,40 @@ defmodule Ezagent.Orchestrator.Tools.Templates do
 
   defp grant_owner_template_cap(
          %URI{} = owner_uri,
-         %URI{} = _new_template_uri,
-         %URI{} = workspace_uri
+         %URI{} = new_template_uri,
+         %URI{} = _workspace_uri
        ) do
-    cap = %Ezagent.Capability{
-      kind: :session_template,
-      behavior: Ezagent.ActionSet.Template,
-      action: :any,
-      instance: {:within_workspace, workspace_uri},
-      workspace_uri: workspace_uri,
-      granted_by: owner_uri,
-      granted_at: DateTime.utc_now()
-    }
+    with :ok <- Ezagent.Identity.TargetAuthority.ensure(owner_uri, new_template_uri) do
+      Ezagent.CapabilityRegistry.subjects_for_kind(Ezagent.Entity.SessionTemplate)
+      |> Enum.reduce_while(:ok, fn subject, :ok ->
+        requested =
+          Ezagent.Capability.cap(
+            :session_template,
+            subject.behavior,
+            subject.action,
+            new_template_uri,
+            Ezagent.Capability.workspace_of(new_template_uri)
+          )
 
-    # Grant chokepoint (SPEC 2026-06-17 §4 PR-2, site #11). The cap is
-    # `session_template/Template/:any/{:within_workspace}` (same shape as
-    # site #8) — concrete kind + behavior, scope-bounded instance →
-    # `IdentityAdmin.rule_cap_bounded?/1` true → the `{:rule, …}` branch
-    # authorizes it (Decision #154). `template-materialize` is no longer
-    # the authorizer; configurer + entity `granted_by` = template OWNER.
-    # (SPEC §3.5 provisionally tagged this `{:held_by, owner}`; that is
-    # dead — the owner does not hold the IdentityAdmin grant cap, so step
-    # 5.5 would deny it. The rule path is the reachable conversion. Code wins.)
-    case Ezagent.Identity.Grant.grant_cap(
-           owner_uri,
-           cap,
-           {:rule, :template_materialize, owner_uri}
-         ) do
+        authorization =
+          if Ezagent.URI.stable_key(owner_uri) ==
+               Ezagent.URI.stable_key(Ezagent.Entity.User.admin_uri()),
+            do: {:admin, owner_uri},
+            else: {:held_by, owner_uri}
+
+        with :ok <-
+               Ezagent.Identity.Grant.grant_cap(
+                 owner_uri,
+                 requested,
+                 authorization
+               ) do
+          {:cont, :ok}
+        else
+          {:error, reason} -> {:halt, {:error, reason}}
+        end
+      end)
+    end
+    |> case do
       :ok ->
         :ok
 
@@ -247,12 +264,8 @@ defmodule Ezagent.Orchestrator.Tools.Templates do
     end
   end
 
-  defp check_template_write_cap(caps, %URI{} = workspace_uri) do
-    if Ezagent.Session.Config.Admission.template_cap?(
-         caps,
-         :session_template,
-         workspace_uri
-       ) do
+  defp check_template_write_cap(caps, %URI{} = workspace_uri, %URI{} = caller) do
+    if Ezagent.Session.Config.Admission.template_write_cap?(caps, workspace_uri, caller) do
       :ok
     else
       {:error, :unauthorized}
@@ -298,17 +311,11 @@ defmodule Ezagent.Orchestrator.Tools.Templates do
   defp extract_template_name(other), do: {:error, {:not_a_session_template_uri, other}}
 
   defp read_chat_slice(%URI{} = session_uri) do
-    case Ezagent.KindRegistry.lookup(session_uri) do
-      {:ok, pid} ->
-        chat_slice =
-          pid
-          |> :sys.get_state()
-          |> Map.get(:state, %{})
-          |> Map.get(Session.state_slice(), %{})
-
+    case Ezagent.Kind.get_raw_slice(session_uri, :session) do
+      {:ok, chat_slice} ->
         Map.get(chat_slice, :state, chat_slice)
 
-      :error ->
+      {:error, _} ->
         %{}
     end
   end

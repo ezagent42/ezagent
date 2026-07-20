@@ -45,7 +45,7 @@ defmodule EzagentWeb.Socialware.KanbanShareControllerTest do
 
     admin_ctx = %{
       caller: User.admin_uri(),
-      caps: MapSet.new([Ezagent.Capability.admin_genesis_cap()])
+      caps: MapSet.new()
     }
 
     :ok =
@@ -170,7 +170,7 @@ defmodule EzagentWeb.Socialware.KanbanShareControllerTest do
       refute holds_board_cap?(clicker_assistant, board_uri, :add_node)
       assert {:ok, %{tree: _}} = dispatch_as(clicker_assistant, board_uri, :get_tree, %{})
 
-      assert {:error, :unauthorized} =
+      assert {:error, :missing_cap} =
                dispatch_as(clicker_assistant, board_uri, :add_node, %{parent_id: "n1", title: "子"})
 
       # 同一发布链接重复接收按 mount 自然键幂等，不产生第二份板数据/挂载。
@@ -232,7 +232,7 @@ defmodule EzagentWeb.Socialware.KanbanShareControllerTest do
   defp user_with_create_cap(ws_name, workspace_uri, label) do
     user_uri = URI.new!("entity://#{ws_name}/user/#{label}-#{u()}")
 
-    create_cap =
+    requested =
       Ezagent.Capability.cap(
         :workspace,
         Ezagent.ActionSet.Workspace,
@@ -241,13 +241,13 @@ defmodule EzagentWeb.Socialware.KanbanShareControllerTest do
         workspace_uri
       )
 
+    {:ok, create_cap} =
+      Ezagent.Cap.issue({:admin, User.admin_uri()}, user_uri, requested)
+
     {:ok, _pid} =
       Ezagent.Kind.spawn(User, %{
         uri: user_uri,
-        initial_caps:
-          MapSet.new([
-            %{create_cap | granted_by: User.admin_uri(), granted_at: DateTime.utc_now()}
-          ])
+        initial_caps: MapSet.new([create_cap])
       })
 
     on_exit(fn -> Ezagent.Kind.terminate(user_uri) end)
@@ -256,7 +256,14 @@ defmodule EzagentWeb.Socialware.KanbanShareControllerTest do
 
   defp spawn_user(ws_name, label) do
     user_uri = URI.new!("entity://#{ws_name}/user/#{label}-#{u()}")
+    {:ok, _row} = Ezagent.Users.create_read_only(user_uri, [])
     {:ok, _pid} = Ezagent.Kind.spawn(User, %{uri: user_uri, initial_caps: MapSet.new()})
+    # Read-plane PR-4 rework: the receive flow resolves the clicker's
+    # sessions through `WorkspaceReads.sessions/2`, which requires the
+    # caller to be a DECLARED workspace member (the workspace gate).
+    # Direct store write — the full add_member dispatch chain needs the
+    # admin Kind, which is not part of this fixture.
+    {:ok, _} = Ezagent.Workspace.Store.update_members(ws_name, [user_uri])
     on_exit(fn -> Ezagent.Kind.terminate(user_uri) end)
     user_uri
   end
@@ -313,8 +320,10 @@ defmodule EzagentWeb.Socialware.KanbanShareControllerTest do
 
   defp join_member(session_uri, member_uri, role_name, %{caller: caller, caps: caps}) do
     target = Ezagent.URI.new!("#{URI.to_string(session_uri)}?action=session.join")
+    caps = caps_for_target(caller, caps, target)
 
     case Invocation.dispatch(%Invocation{
+           origin: :trusted_internal,
            target: target,
            mode: :call,
            args: %{member: member_uri, role_name: role_name},
@@ -327,14 +336,26 @@ defmodule EzagentWeb.Socialware.KanbanShareControllerTest do
   end
 
   defp board_dispatch(board_uri, action, args, %{caller: caller, caps: caps}) do
+    target = Ezagent.URI.with_action(board_uri, :kanban, action)
+    caps = caps_for_target(caller, caps, target)
+
     Ezagent.Router.dispatch(
       Ezagent.Cmd.new(
-        Ezagent.URI.with_action(board_uri, :kanban, action),
+        target,
         action,
         args,
         %{mode: :call, caller: caller, caps: caps, reply: {:caller_inbox, self()}}
       )
     )
+  end
+
+  defp caps_for_target(caller, caps, target) do
+    if caller == User.admin_uri() do
+      {:ok, cap} = Ezagent.Cap.issue_for_action({:admin, caller}, caller, target)
+      MapSet.put(caps, cap)
+    else
+      caps
+    end
   end
 
   defp dispatch_as(caller_uri, board_uri, action, args) do

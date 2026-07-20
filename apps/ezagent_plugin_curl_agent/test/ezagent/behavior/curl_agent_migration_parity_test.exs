@@ -108,8 +108,13 @@ defmodule Ezagent.ActionSet.CurlAgentMigrationParityTest do
       dispatches = Enum.filter(effects, &match?({:dispatch, _}, &1))
       assert [{:dispatch, cmd}] = dispatches
       assert cmd.action == :send
-      assert %Ezagent.Message{body: %{text: text}} = cmd.args.message
-      assert text =~ "no API key for provider `openai`"
+      # G5 source 2 (#1456) — the no-key error reply is now a STRUCTURED
+      # ErrorSignal body (pure reason data under `error` + a uniform minimal
+      # fallback `text`), not hand-written prose. The world side renders the
+      # per-viewer operator-help card from this payload.
+      assert %Ezagent.Message{body: body} = cmd.args.message
+      assert body.error == %{"reason" => ["no_api_key", "openai"]}
+      assert body.text == "[agent error] no_api_key"
     end
 
     test "success path appends user+assistant turns through apply_effects" do

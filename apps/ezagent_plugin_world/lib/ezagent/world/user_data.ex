@@ -4,21 +4,29 @@ defmodule Ezagent.World.UserData do
   """
 
   alias Ezagent.World.CapData
+  alias Ezagent.Workspace.UserReads
 
-  @doc "List provisioned user rows for the users table component."
-  @spec list_users(URI.t() | nil) :: [map()]
-  def list_users(workspace_uri) do
+  @doc """
+  List provisioned user rows for the users table component.
+
+  Read-plane PR-4 rework: the user roster is enumerated through the
+  caller-authorizing `Ezagent.Workspace.UserReads` chokepoint (workspace
+  member/operator only; fail-closed `[]`), and another user's
+  ACCOUNT/SECURITY metadata (email, password presence, confirmation,
+  disablement) is emitted ONLY when `UserReads.reveal_metadata?/2`
+  holds for that row (the caller IS that user, or is an operator) — F4.
+  A redacted field renders `nil` (undisclosed), never `false` (which
+  would assert the negation — itself a leak).
+  """
+  @spec list_users(URI.t() | nil, URI.t() | nil) :: [map()]
+  def list_users(caller, workspace_uri) do
     system_members =
       case Ezagent.Workspace.Store.get_by_name("system") do
         %{members: members} -> MapSet.new(members, &Ezagent.URI.stable_key/1)
         _ -> MapSet.new()
       end
 
-    users =
-      case workspace_uri do
-        %URI{scheme: "workspace"} -> Ezagent.Users.list_in_workspace(workspace_uri)
-        _ -> Ezagent.Users.list_all()
-      end
+    users = UserReads.users(caller, workspace_uri)
 
     display_map = Ezagent.EntityPresenter.display_many(Enum.map(users, &URI.to_string(&1.uri)))
 
@@ -26,20 +34,21 @@ defmodule Ezagent.World.UserData do
     |> Enum.map(fn user ->
       uri_str = URI.to_string(user.uri)
       online? = Ezagent.Presence.present?(user.uri)
-      profile = Ezagent.Entity.Profile.get(user.uri)
+      reveal? = UserReads.reveal_metadata?(caller, user.uri)
+      profile = if reveal?, do: Ezagent.Entity.Profile.get(user.uri), else: nil
       cap_count = verified_cap_count(user.uri)
 
       %{
         "uri" => uri_str,
         "display_name" => Map.get(display_map, uri_str, uri_str),
-        "email" => profile_email(profile),
-        "has_password" => not is_nil(user.password_hash),
-        "confirmed" => user.confirmed == true,
-        "email_verified" => user.email_verified == true,
-        "disabled" => not is_nil(user.disabled_at),
-        "disabled_at" => encode_datetime(user.disabled_at),
-        "disabled_by" => user.disabled_by,
-        "disabled_reason" => user.disabled_reason,
+        "email" => if(reveal?, do: profile_email(profile)),
+        "has_password" => if(reveal?, do: not is_nil(user.password_hash)),
+        "confirmed" => if(reveal?, do: user.confirmed == true),
+        "email_verified" => if(reveal?, do: user.email_verified == true),
+        "disabled" => if(reveal?, do: not is_nil(user.disabled_at)),
+        "disabled_at" => if(reveal?, do: encode_datetime(user.disabled_at)),
+        "disabled_by" => if(reveal?, do: user.disabled_by),
+        "disabled_reason" => if(reveal?, do: user.disabled_reason),
         "cap_count" => cap_count,
         "online" => online?,
         "transports" => transports_summary(Ezagent.Presence.list(user.uri)),
@@ -53,38 +62,71 @@ defmodule Ezagent.World.UserData do
     _ -> []
   end
 
-  @doc "Build the user detail payload."
+  @doc """
+  Build the user detail payload — the per-URI deep-link reader.
+
+  Read-plane PR-4 re-review: the read routes through the caller-aware
+  `Ezagent.Workspace.UserReads.user/2` chokepoint (authorize BEFORE
+  existence is checked — no cross-tenant existence oracle). A denied
+  caller gets a `user_unauthorized` shell with NO account data; a
+  missing user gets `user_not_found`. On an authorized row the
+  ACCOUNT/SECURITY metadata (email, password presence, confirmation,
+  disablement) is emitted ONLY when `UserReads.reveal_metadata?/2`
+  holds (the caller IS that user, or an operator) — redacted fields
+  render `nil` (undisclosed), never `false`, and the payload carries
+  `can_view_metadata` so the surface hides the sensitive rows and the
+  management forms instead of asserting negations.
+  """
   @spec detail_state(map(), URI.t(), URI.t() | nil, MapSet.t()) :: map()
   def detail_state(base, user_uri, caller, caps) do
-    user = Ezagent.Users.get_by_uri(user_uri)
-    profile = Ezagent.Entity.Profile.get(user_uri)
+    # Same canonical string form the happy path (`detail_state_for`) sends, so
+    # the surface receives an identical `user_uri` on every branch. Hoisted to a
+    # variable (not an inline `Map.put(_, URI.to_string(_))`) to match that
+    # convention and the uri_query serialization-boundary gate.
+    user_uri_str = URI.to_string(user_uri)
+
+    case UserReads.user(caller, user_uri) do
+      {:ok, user} ->
+        detail_state_for(base, user_uri, user, caller, caps)
+
+      {:error, :not_found} ->
+        base
+        |> Map.put("user_uri", user_uri_str)
+        |> Map.put("user_not_found", true)
+
+      {:error, _unauthorized} ->
+        base
+        |> Map.put("user_uri", user_uri_str)
+        |> Map.put("user_unauthorized", true)
+    end
+  end
+
+  defp detail_state_for(base, user_uri, user, caller, caps) do
+    reveal? = UserReads.reveal_metadata?(caller, user_uri)
+    profile = if reveal?, do: Ezagent.Entity.Profile.get(user_uri), else: nil
     user_uri_str = URI.to_string(user_uri)
     cap_count = verified_cap_count(user_uri)
 
     base
     |> Map.put("user_uri", user_uri_str)
+    |> Map.put("can_view_metadata", reveal?)
     |> Map.put(
       "display_name",
       profile_display_name(profile) || user_name(user_uri) || user_uri_str
     )
-    |> Map.put("email", profile_email(profile))
-    |> Map.put("has_password", not is_nil(user.password_hash))
-    |> Map.put("confirmed", user.confirmed == true)
-    |> Map.put("email_verified", user.email_verified == true)
-    |> Map.put("disabled", not is_nil(user.disabled_at))
-    |> Map.put("disabled_at", encode_datetime(user.disabled_at))
-    |> Map.put("disabled_by", user.disabled_by)
-    |> Map.put("disabled_reason", user.disabled_reason)
+    |> Map.put("email", if(reveal?, do: profile_email(profile)))
+    |> Map.put("has_password", if(reveal?, do: not is_nil(user.password_hash)))
+    |> Map.put("confirmed", if(reveal?, do: user.confirmed == true))
+    |> Map.put("email_verified", if(reveal?, do: user.email_verified == true))
+    |> Map.put("disabled", if(reveal?, do: not is_nil(user.disabled_at)))
+    |> Map.put("disabled_at", if(reveal?, do: encode_datetime(user.disabled_at)))
+    |> Map.put("disabled_by", if(reveal?, do: user.disabled_by))
+    |> Map.put("disabled_reason", if(reveal?, do: user.disabled_reason))
     |> Map.put("cap_count", cap_count)
     |> Map.put("caps_path", caps_path(user_uri_str))
     |> Map.put("granted_caps", CapData.list_entity_caps(user_uri, caller, caps))
     |> Map.put("action_error", nil)
   end
-
-  @doc "Return true when the user row exists."
-  @spec exists?(URI.t() | term()) :: boolean()
-  def exists?(%URI{} = user_uri), do: not is_nil(Ezagent.Users.get_by_uri(user_uri))
-  def exists?(_), do: false
 
   @doc "Preview a user URI under the current workspace."
   @spec preview_uri(URI.t() | nil, String.t()) :: String.t()

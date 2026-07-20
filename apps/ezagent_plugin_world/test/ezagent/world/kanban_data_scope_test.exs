@@ -45,7 +45,7 @@ defmodule Ezagent.World.KanbanDataScopeTest do
     {:ok, _} = RecipeRegistry.seed_role_if_absent(KanbanApp.kanban_manager_recipe())
 
     admin = Ezagent.Entity.User.admin_uri()
-    genesis = MapSet.new([Ezagent.Capability.admin_genesis_cap()])
+    admin_caps = Ezagent.Test.CapHelper.signed_workspace_ctx!(workspace_uri, admin).caps
 
     # alice/bob 是 LIVE User Kind —— 建板时才是合法的 creator-manage-cap 授予对象
     # （否则 grant dispatch 撞 `:no_such_actor`）。初始 genesis caps 让 create_agent
@@ -53,14 +53,18 @@ defmodule Ezagent.World.KanbanDataScopeTest do
     # 里换成空 caps，让 alice/bob 在 `admin?/2` 下按普通用户判（其 URI host≠system）。
     alice = URI.new!("entity://#{ws_name}/user/alice")
     bob = URI.new!("entity://#{ws_name}/user/bob")
-    :ok = spawn_user(alice, genesis)
-    :ok = spawn_user(bob, genesis)
+    alice_caps = Ezagent.Test.CapHelper.signed_workspace_ctx!(workspace_uri, alice).caps
+    bob_caps = Ezagent.Test.CapHelper.signed_workspace_ctx!(workspace_uri, bob).caps
+    :ok = spawn_user(alice, alice_caps)
+    :ok = spawn_user(bob, bob_caps)
 
     {:ok,
      ws_name: ws_name,
      workspace_uri: workspace_uri,
      admin: admin,
-     genesis: genesis,
+     admin_caps: admin_caps,
+     alice_caps: alice_caps,
+     bob_caps: bob_caps,
      alice: alice,
      bob: bob}
   end
@@ -97,16 +101,17 @@ defmodule Ezagent.World.KanbanDataScopeTest do
   end
 
   # 指向某 board 的 kanban operate cap（instance = board URI）—— Task 3/4/5 发钥匙的形状。
-  defp board_cap(board_uri, workspace_uri, granter) do
-    %Capability{
-      kind: :agent,
-      behavior: Ezagent.ActionSet.Kanban,
-      action: :any,
-      instance: board_uri,
-      workspace_uri: workspace_uri,
-      granted_by: granter,
-      granted_at: DateTime.utc_now()
-    }
+  defp board_cap(board_uri, workspace_uri, grantee) do
+    requested =
+      Capability.cap(
+        :agent,
+        Ezagent.ActionSet.Kanban,
+        :any,
+        board_uri,
+        workspace_uri
+      )
+
+    Ezagent.Test.CapHelper.signed_cap!(board_uri, grantee, requested)
   end
 
   defp uris(instances), do: Enum.map(instances, & &1["uri"])
@@ -122,10 +127,10 @@ defmodule Ezagent.World.KanbanDataScopeTest do
   end
 
   test "非 admin 只看到自己 own 的板（own-branch）",
-       %{workspace_uri: ws, genesis: genesis, alice: alice, bob: bob} do
+       %{workspace_uri: ws, alice_caps: alice_caps, bob_caps: bob_caps, alice: alice, bob: bob} do
     skip_if_no_entity_spawn(fn ->
-      a = spawn_board_as(ws, alice, genesis, "board-a")
-      b = spawn_board_as(ws, bob, genesis, "board-b")
+      a = spawn_board_as(ws, alice, alice_caps, "board-a")
+      b = spawn_board_as(ws, bob, bob_caps, "board-b")
 
       ctx_a = %{caller_uri: alice, caller_caps: MapSet.new(), workspace_uri: ws}
       seen = uris(KanbanData.list_instances(ctx_a))
@@ -136,12 +141,20 @@ defmodule Ezagent.World.KanbanDataScopeTest do
   end
 
   test "admin 看到全 workspace 的板（admin-branch）",
-       %{workspace_uri: ws, genesis: genesis, admin: admin, alice: alice, bob: bob} do
+       %{
+         workspace_uri: ws,
+         alice_caps: alice_caps,
+         bob_caps: bob_caps,
+         admin_caps: admin_caps,
+         admin: admin,
+         alice: alice,
+         bob: bob
+       } do
     skip_if_no_entity_spawn(fn ->
-      a = spawn_board_as(ws, alice, genesis, "board-a")
-      b = spawn_board_as(ws, bob, genesis, "board-b")
+      a = spawn_board_as(ws, alice, alice_caps, "board-a")
+      b = spawn_board_as(ws, bob, bob_caps, "board-b")
 
-      ctx_admin = %{caller_uri: admin, caller_caps: genesis, workspace_uri: ws}
+      ctx_admin = %{caller_uri: admin, caller_caps: admin_caps, workspace_uri: ws}
       seen = uris(KanbanData.list_instances(ctx_admin))
 
       assert URI.to_string(a) in seen and URI.to_string(b) in seen,
@@ -150,16 +163,16 @@ defmodule Ezagent.World.KanbanDataScopeTest do
   end
 
   test "非 admin 持指向某板的 cap → 看到该板，无 cap 不看到（cap-branch）",
-       %{ws_name: ws_name, workspace_uri: ws, genesis: genesis, admin: admin, alice: alice} do
+       %{ws_name: ws_name, workspace_uri: ws, alice_caps: alice_caps, alice: alice} do
     skip_if_no_entity_spawn(fn ->
-      a = spawn_board_as(ws, alice, genesis, "board-a")
-      b = spawn_board_as(ws, alice, genesis, "board-b")
+      a = spawn_board_as(ws, alice, alice_caps, "board-a")
+      b = spawn_board_as(ws, alice, alice_caps, "board-b")
 
       carol = URI.new!("entity://#{ws_name}/user/carol")
       # carol 既非 admin，也不 own 任何板；只持一张指向 board-b 的 cap。
       ctx_c = %{
         caller_uri: carol,
-        caller_caps: MapSet.new([board_cap(b, ws, admin)]),
+        caller_caps: MapSet.new([board_cap(b, ws, carol)]),
         workspace_uri: ws
       }
 
@@ -175,10 +188,17 @@ defmodule Ezagent.World.KanbanDataScopeTest do
   # `list_by_recipe("kanban-manager", ws)` 枚举，再复用同一 `visible?` CBAC 收敛。
   # 与 `list_instances/1` 同形，只是 workspace 从 session URI 解析而非 ctx。
   test "session_boards/2：非 admin 只看到自己 own 的板（own-branch）",
-       %{ws_name: ws_name, workspace_uri: ws, genesis: genesis, alice: alice, bob: bob} do
+       %{
+         ws_name: ws_name,
+         workspace_uri: ws,
+         alice_caps: alice_caps,
+         bob_caps: bob_caps,
+         alice: alice,
+         bob: bob
+       } do
     skip_if_no_entity_spawn(fn ->
-      a = spawn_board_as(ws, alice, genesis, "board-a")
-      b = spawn_board_as(ws, bob, genesis, "board-b")
+      a = spawn_board_as(ws, alice, alice_caps, "board-a")
+      b = spawn_board_as(ws, bob, bob_caps, "board-b")
 
       session = Ezagent.URI.session(ws_name, "default", "s1")
       ctx_a = %{caller_uri: alice, caller_caps: MapSet.new()}
@@ -193,17 +213,19 @@ defmodule Ezagent.World.KanbanDataScopeTest do
        %{
          ws_name: ws_name,
          workspace_uri: ws,
-         genesis: genesis,
+         admin_caps: admin_caps,
+         alice_caps: alice_caps,
+         bob_caps: bob_caps,
          admin: admin,
          alice: alice,
          bob: bob
        } do
     skip_if_no_entity_spawn(fn ->
-      a = spawn_board_as(ws, alice, genesis, "board-a")
-      b = spawn_board_as(ws, bob, genesis, "board-b")
+      a = spawn_board_as(ws, alice, alice_caps, "board-a")
+      b = spawn_board_as(ws, bob, bob_caps, "board-b")
 
       session = Ezagent.URI.session(ws_name, "default", "s1")
-      ctx_admin = %{caller_uri: admin, caller_caps: genesis}
+      ctx_admin = %{caller_uri: admin, caller_caps: admin_caps}
       seen = uris(KanbanData.session_boards(session, ctx_admin))
 
       assert URI.to_string(a) in seen and URI.to_string(b) in seen,
@@ -212,9 +234,9 @@ defmodule Ezagent.World.KanbanDataScopeTest do
   end
 
   test "session_boards/2：无权 caller 看不到（no-perm-branch）",
-       %{ws_name: ws_name, workspace_uri: ws, genesis: genesis, alice: alice} do
+       %{ws_name: ws_name, workspace_uri: ws, alice_caps: alice_caps, alice: alice} do
     skip_if_no_entity_spawn(fn ->
-      a = spawn_board_as(ws, alice, genesis, "board-a")
+      a = spawn_board_as(ws, alice, alice_caps, "board-a")
 
       carol = URI.new!("entity://#{ws_name}/user/carol")
       session = Ezagent.URI.session(ws_name, "default", "s1")

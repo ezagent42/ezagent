@@ -117,6 +117,7 @@ defmodule Ezagent.InvocationDeathRaceTest do
       target = Ezagent.URI.new!("#{URI.to_string(uri)}?action=test.noop")
 
       inv = %Invocation{
+        origin: :trusted_internal,
         target: target,
         mode: :call,
         args: %{msg: "after-death"},
@@ -141,6 +142,7 @@ defmodule Ezagent.InvocationDeathRaceTest do
       target = Ezagent.URI.new!("#{URI.to_string(uri)}?action=test.noop")
 
       inv = %Invocation{
+        origin: :trusted_internal,
         target: target,
         mode: :cast,
         args: %{msg: "cast-after-death"},

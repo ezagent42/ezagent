@@ -10,11 +10,14 @@ defmodule Ezagent.Orchestrator.CcOrchestratorSeed do
   an orchestrator process but it had no flavor, no sandbox, no MCP
   config, no system prompt. PR-5 makes the seed populate a real slice:
 
-  - `flavor: "cc-deepseek"` — the orchestrator is a `claude` PTY agent on the
-    DeepSeek backend (flavor merged in #1324): it authenticates via
-    `DEEPSEEK_API_KEY`, so it needs no host `~/.claude` OAuth login (no #161
+  - `flavor: "cc-custom"` + `provider: "deepseek"` — the orchestrator is a
+    `claude` PTY agent on the provider-configurable cc-custom facility
+    (cc-custom-backends PR-5; #1324's vendor-specific deepseek flavor is
+    retired, PR-6): it authenticates via the
+    API-key env var the `"deepseek"` catalog profile names, so it needs no
+    host `~/.claude` OAuth login (no #161
     co-tenant issue) and boots authenticated (no exit-256 / bridge-join timeout
-    from a missing login). The deepseek flavor is a PROVIDER shim over cc that
+    from a missing login). The profile NAME rides template data; cc-custom
     reuses the cc config namespace, so `.mcp.json` generation is unchanged.
   - `config_dir` — an isolated `CLAUDE_CONFIG_DIR` sandbox so the
     orchestrator's `claude` does not share the operator's `~/.claude`
@@ -188,9 +191,8 @@ defmodule Ezagent.Orchestrator.CcOrchestratorSeed do
   defp template_uri_struct, do: Ezagent.URI.template(:system, :agent, "cc-orchestrator")
 
   # The `:template` slice content is the orchestrator's seeded config.
-  # `:sys.get_state` returns the Kind.Server state map; slice data lives
-  # under the `:state` key (per `Ezagent.Kind.Server` shape — confirmed
-  # via :sys.get_state on a live AgentTemplate pid).
+  # The framework runtime view returns the public Kind.Server state map;
+  # slice data lives under its `:state` key.
   #
   # Lifecycle migration (SPEC 2026-05-29): `Ezagent.ActionSet.Template`
   # now `use Ezagent.Lifecycle`, so the `:template` slice is the
@@ -199,12 +201,21 @@ defmodule Ezagent.Orchestrator.CcOrchestratorSeed do
   # Match the two-container form FIRST, then fall back to the legacy flat
   # `%{content: ...}` (a pre-migration snapshot / non-Lifecycle Behavior).
   defp read_template_slice(pid) do
-    case :sys.get_state(pid, 500) do
-      %{state: %{template: %{state: %{content: content}}}} when is_map(content) -> content
-      %{state: %{template: %{state: %{content: nil}}}} -> %{}
-      %{state: %{template: %{content: content}}} when is_map(content) -> content
-      %{state: %{template: %{content: nil}}} -> %{}
-      _ -> %{}
+    case Ezagent.Kind.runtime_view(pid) do
+      {:ok, %{state: %{template: %{state: %{content: content}}}}} when is_map(content) ->
+        content
+
+      {:ok, %{state: %{template: %{state: %{content: nil}}}}} ->
+        %{}
+
+      {:ok, %{state: %{template: %{content: content}}}} when is_map(content) ->
+        content
+
+      {:ok, %{state: %{template: %{content: nil}}}} ->
+        %{}
+
+      _ ->
+        %{}
     end
   catch
     :exit, _ -> %{}
@@ -428,16 +439,23 @@ defmodule Ezagent.Orchestrator.CcOrchestratorSeed do
       description:
         "The session orchestrator — an LLM-driven manager that composes " <>
           "and routes a team of worker agents via the 7 orchestration tools.",
-      # cc-deepseek (flavor merged in #1324): the orchestrator authenticates via
-      # DEEPSEEK_API_KEY, so it has no `.credentials.json`, no dependency on the
+      # cc-custom + the "deepseek" backend profile (cc-custom-backends PR-5;
+      # #1324's vendor-specific deepseek flavor is retired, PR-6): the
+      # orchestrator authenticates via the API-key env var the "deepseek"
+      # catalog profile names, so it has no
+      # `.credentials.json`, no dependency on the
       # host `~/.claude` OAuth login (#161), and boots authenticated — no
-      # exit-256 / bridge-join timeout from a missing host login. It reuses cc's
+      # exit-256 / bridge-join timeout from a missing host login. The profile
+      # NAME rides template data (`provider: "deepseek"` below →
+      # `CcCustomAgent.template_data_extra/1`); the credential itself is only
+      # ever the env var. cc-custom reuses cc's
       # config_dir namespace + the shared `CcAgent.Spawn` chokepoint, so
       # `.mcp.json` generation (esr-bridge + the orchestrator server) is
       # identical to the cc path; the chat bridge topic becomes
-      # `agent_bridge:cc-deepseek:<uri>` (Provider.bridge_topic_env), while the
+      # `agent_bridge:cc-custom:<uri>` (Provider.bridge_topic_env), while the
       # `orch:bridge:<uri>` topic is flavor-agnostic.
-      flavor: "cc-deepseek",
+      flavor: "cc-custom",
+      provider: "deepseek",
       project_cwd: sandbox.project_cwd,
       config_dir: sandbox.config_dir,
       settings_path: sandbox.settings_path,
@@ -465,39 +483,33 @@ defmodule Ezagent.Orchestrator.CcOrchestratorSeed do
     }
 
     target = Ezagent.URI.new!("#{URI.to_string(uri)}?action=template.write")
+    admin_uri = Ezagent.Entity.User.admin_uri()
 
-    case Ezagent.Invocation.dispatch(%Ezagent.Invocation{
-           target: target,
-           mode: :call,
-           args: %{content: content},
-           # #154 — `system://template-materialize` ELIMINATED. The CC
-           # orchestrator template seed is system-mediated materialization →
-           # runs under the genesis admin entity with an INLINE narrow
-           # `template.write` cap (granted_by admin; #533 will refine to
-           # per-creator authority). Same play as mix-task #833 / socialware-gc.
-           # behavior: :any avoids a cross-app `Behavior.Template` literal.
-           ctx: %{
-             caller: Ezagent.Entity.User.admin_uri(),
-             caps:
-               MapSet.new([
-                 %Ezagent.Capability{
-                   Ezagent.Capability.cap(
-                     :any,
-                     :any,
-                     :write,
-                     Ezagent.URI.instance(target),
-                     Ezagent.Capability.workspace_of(target)
-                   )
-                   | granted_by: Ezagent.Entity.User.admin_uri(),
-                     granted_at: DateTime.utc_now()
-                 }
-               ]),
-             reply: {:caller_inbox, self()}
-           }
-         }) do
-      {:ok, %{content: _}} -> :ok
-      {:error, _} = err -> err
-      other -> {:error, {:unexpected_template_write_result, other}}
+    requested =
+      Ezagent.Capability.cap(
+        :agent_template,
+        Ezagent.ActionSet.Template,
+        :write,
+        Ezagent.URI.instance(target),
+        Ezagent.Capability.workspace_of(target)
+      )
+
+    with {:ok, signed_cap} <- Ezagent.Cap.issue({:admin, admin_uri}, admin_uri, requested) do
+      case Ezagent.Invocation.dispatch(%Ezagent.Invocation{
+             target: target,
+             mode: :call,
+             args: %{content: content},
+             ctx: %{
+               caller: admin_uri,
+               caps: MapSet.new([signed_cap]),
+               reply: {:caller_inbox, self()}
+             },
+             origin: :trusted_internal
+           }) do
+        {:ok, %{content: _}} -> :ok
+        {:error, _} = err -> err
+        other -> {:error, {:unexpected_template_write_result, other}}
+      end
     end
   end
 
@@ -614,13 +626,13 @@ defmodule Ezagent.Orchestrator.CcOrchestratorSeed do
     # don't apply. Written with dot-access (not a `%URI{host:}` positional match)
     # + the rebuild split off the `URI.to_string` line so the source-scan
     # (positional_uri_read / uri_string_key) doesn't false-positive on it.
-    uri = URI.parse(ws_url) # uri-canonical-allow: ws(s):// network URL (orchestrator MCP mount), not an Ezagent-scheme URI — Ezagent.URI rejects non-Ezagent schemes
+    case Ezagent.URI.strict_external_new(ws_url) do
+      {:ok, uri} when is_binary(uri.scheme) and is_binary(uri.host) ->
+        rebased = %{uri | path: path, query: nil, fragment: nil}
+        URI.to_string(rebased)
 
-    if is_binary(uri.scheme) and is_binary(uri.host) do
-      rebased = %{uri | path: path, query: nil, fragment: nil}
-      URI.to_string(rebased)
-    else
-      @orchestrator_ws_default
+      _ ->
+        @orchestrator_ws_default
     end
   end
 

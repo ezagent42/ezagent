@@ -143,6 +143,12 @@ export type IdentitiesState = {
   title?: string
   users?: UserRow[]
   user_not_found?: boolean
+  user_unauthorized?: boolean
+  // Server-gated (read-plane PR-4 re-review): true only when the caller
+  // may see the user detail's account/security metadata (self or
+  // operator). Sensitive fields arrive null otherwise — render the
+  // directory-level view, never a negated value.
+  can_view_metadata?: boolean
   display_name?: string | null
   email?: string | null
   has_password?: boolean
@@ -435,6 +441,46 @@ function UserDetail({
         <SectionHeader eyebrow="User" title="User detail" />
         <code className={uriClass}>{state.user_uri}</code>
         <EmptyState label="该 user 不存在。" />
+        <div>
+          <a className="text-primary hover:underline" href="/identities/users">
+            ← 返回 user 列表
+          </a>
+        </div>
+      </section>
+    )
+  }
+
+  // Read-plane PR-4 re-review: the deep-link read is authorized
+  // server-side BEFORE existence is checked — a denied caller (e.g.
+  // cross-tenant) gets this shell with no account data at all.
+  if (state.user_unauthorized) {
+    return (
+      <section className={surfaceClass} data-world-component="user_detail" aria-labelledby="user-detail-title">
+        <SectionHeader eyebrow="User" title="User detail" />
+        <code className={uriClass}>{state.user_uri}</code>
+        <EmptyState label="没有权限查看该 user。" />
+        <div>
+          <a className="text-primary hover:underline" href="/identities/users">
+            ← 返回 user 列表
+          </a>
+        </div>
+      </section>
+    )
+  }
+
+  // An authorized NON-operator viewer (a workspace member opening
+  // another member's deep-link) gets the directory-level view only —
+  // the account/security rows and the management forms render ONLY
+  // when the server confirms the caller may see the metadata (self or
+  // operator). Sensitive fields arrive as null here; rendering
+  // "unset"/"active" for them would assert a negation — itself a leak.
+  if (state.can_view_metadata === false) {
+    return (
+      <section className={surfaceClass} data-world-component="user_detail" aria-labelledby="user-detail-title">
+        <SectionHeader eyebrow="User" title="User detail" />
+        <code className={uriClass}>{userUri}</code>
+        <p className="text-sm text-foreground">{state.display_name}</p>
+        <EmptyState label="账户信息仅本人或 operator 可见。" />
         <div>
           <a className="text-primary hover:underline" href="/identities/users">
             ← 返回 user 列表
@@ -878,9 +924,12 @@ function AgentNewForm({state, onCreateAgent}: {state: IdentitiesState; onCreateA
     customCwdMissing ||
     missingRequiredConfigKeys.length > 0
 
+  // 依赖整个 state(每次 world:state 推送都是新对象),不能只依赖
+  // state.create_error——连续两次相同的错误文案相等,effect 不重跑,
+  // creating 会卡死导致后续提交被 submitDisabled 拦截。
   React.useEffect(() => {
     setCreating(false)
-  }, [state.create_error])
+  }, [state])
 
   const handleSubmit = (event: React.FormEvent) => {
     event.preventDefault()

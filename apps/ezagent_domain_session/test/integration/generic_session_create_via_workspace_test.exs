@@ -30,10 +30,7 @@ defmodule EzagentDomainInstanceMessage.Integration.GenericSessionCreateViaWorksp
     {:ok, _ws_pid} = Workspace.create(ws_name, %{})
     workspace_uri = Ezagent.URI.workspace(ws_name)
 
-    admin_ctx = %{
-      caller: User.admin_uri(),
-      caps: MapSet.new([Ezagent.Capability.admin_genesis_cap()])
-    }
+    admin_ctx = Ezagent.Test.CapHelper.signed_workspace_ctx!(workspace_uri, User.admin_uri())
 
     {:ok, ws_name: ws_name, workspace_uri: workspace_uri, admin_ctx: admin_ctx}
   end
@@ -62,15 +59,12 @@ defmodule EzagentDomainInstanceMessage.Integration.GenericSessionCreateViaWorksp
     creator_uri =
       URI.new!("entity://#{ws_name}/user/generic-creator-#{System.unique_integer([:positive])}")
 
-    create_session_cap = %Ezagent.Capability{
-      kind: :workspace,
-      behavior: Ezagent.ActionSet.Workspace,
-      action: :create_session,
-      instance: workspace_uri,
-      workspace_uri: workspace_uri,
-      granted_by: User.admin_uri(),
-      granted_at: DateTime.utc_now()
-    }
+    {:ok, create_session_cap} =
+      Ezagent.Cap.issue_for_action(
+        {:admin, User.admin_uri()},
+        creator_uri,
+        Ezagent.URI.with_action(workspace_uri, :workspace, :create_session)
+      )
 
     {:ok, _pid} =
       Ezagent.Kind.spawn(User, %{uri: creator_uri, initial_caps: MapSet.new([create_session_cap])})

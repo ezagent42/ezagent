@@ -124,7 +124,8 @@ defmodule Ezagent.World.SocialwareInstall do
     end
   end
 
-  defp put_install_config(install_entry, config) when config in [%{}, nil], do: {:ok, install_entry}
+  defp put_install_config(install_entry, config) when config in [%{}, nil],
+    do: {:ok, install_entry}
 
   defp put_install_config(install_entry, config) when is_map(config) do
     normalized = normalize_install_config(config)
@@ -159,7 +160,7 @@ defmodule Ezagent.World.SocialwareInstall do
 
     Ezagent.Entity.SessionTemplate.create(name, content,
       caller: caller,
-      caps: [session_template_write_cap(workspace_uri, caller)],
+      caps: apply(Module.concat([Ezagent, EntityCaps]), :load, [caller]),
       workspace: workspace
     )
   end
@@ -179,19 +180,6 @@ defmodule Ezagent.World.SocialwareInstall do
     |> Ezagent.URI.name!()
     |> String.split("@", parts: 2)
     |> List.last()
-  end
-
-  defp session_template_write_cap(%URI{} = workspace_uri, %URI{} = caller) do
-    cap =
-      Ezagent.Capability.cap(
-        :session_template,
-        Ezagent.ActionSet.Template,
-        :any,
-        {:within_workspace, workspace_uri},
-        workspace_uri
-      )
-
-    %Ezagent.Capability{cap | granted_by: caller, granted_at: DateTime.utc_now()}
   end
 
   defp install_ref(ref) when is_binary(ref), do: ref

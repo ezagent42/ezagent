@@ -246,11 +246,9 @@ defmodule Ezagent.Kind do
   """
   @spec default_holds_cap?(URI.t() | String.t() | :vm_internal | nil, Ezagent.Capability.t()) ::
           boolean()
-  # `:vm_internal` is the trusted in-VM caller marker (#154 VM-internal-trust;
-  # renamed from the overloaded `:system`). A dispatch whose `ctx.caller` is
-  # `:vm_internal` originates from trusted in-VM code, not an authenticated
-  # external entity, so it bypasses the slice-held cap check.
-  def default_holds_cap?(:vm_internal, %Ezagent.Capability{}), do: true
+  # `:vm_internal` remains a provenance marker for the fixed non-cap action
+  # class only. It never supplies target capability authority.
+  def default_holds_cap?(:vm_internal, %Ezagent.Capability{}), do: false
 
   def default_holds_cap?(nil, %Ezagent.Capability{}), do: false
 
@@ -359,7 +357,7 @@ defmodule Ezagent.Kind do
 
       Ezagent.Kind.spawn(Ezagent.Entity.User, %{
         uri: Ezagent.Entity.User.admin_uri(),
-        initial_caps: MapSet.new([Ezagent.Capability.admin_genesis_cap()])
+        initial_caps: MapSet.new()
       })
 
       Ezagent.Kind.spawn(Ezagent.Entity.Session, %{uri: session_uri})
@@ -643,6 +641,25 @@ defmodule Ezagent.Kind do
   @doc "Normalize a two-container slice view to its state map (delegates to `Ezagent.Kind.SliceAccess`)."
   @spec normalize_slice_view(term()) :: term()
   defdelegate normalize_slice_view(slice), to: Ezagent.Kind.SliceAccess
+
+  @doc "Return the live Kind metadata and slice map without private framework authority state."
+  @spec runtime_view(pid() | URI.t() | String.t()) :: {:ok, map()} | {:error, term()}
+  def runtime_view(pid) when is_pid(pid), do: GenServer.call(pid, :ezagent_runtime_view, 5_000)
+
+  def runtime_view(uri) do
+    with {:ok, pid} <- Ezagent.KindRegistry.lookup(uri) do
+      runtime_view(pid)
+    end
+  end
+
+  @doc "Return whether `observer` monitors a live process without exposing process state."
+  @spec monitored_by?(pid(), pid()) :: boolean()
+  def monitored_by?(pid, observer \\ self()) when is_pid(pid) and is_pid(observer) do
+    case Process.info(pid, :monitored_by) do
+      {:monitored_by, monitors} when is_list(monitors) -> observer in monitors
+      _ -> false
+    end
+  end
 
   defp safe_kind_module(pid) when is_pid(pid) do
     {:ok, _} = GenServer.call(pid, :ezagent_kind_module, 5_000)

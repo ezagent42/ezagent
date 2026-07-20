@@ -19,9 +19,10 @@ defmodule EzagentDomainInstanceMessage.Integration.LifecycleTerminateTest do
 
   use EzagentCore.DataCase, async: false
 
-  alias Ezagent.{AgentLineage, BehaviorRegistry, Capability, KindRegistry}
+  alias Ezagent.{AgentLineage, BehaviorRegistry, KindRegistry}
   alias Ezagent.ActionSet.Terminable
   alias Ezagent.Entity.{Agent, User}
+  import Ezagent.Test.CapHelper, only: [signed_action_cap!: 2]
 
   defp uniq, do: System.unique_integer([:positive])
   @workspace_uri URI.new!("workspace://team-alpha")
@@ -35,22 +36,17 @@ defmodule EzagentDomainInstanceMessage.Integration.LifecycleTerminateTest do
     worker_uri
   end
 
-  # A cap #2 — `{:spawned_by, principal}` on `:agent`.
-  defp spawned_by_cap(principal_uri) do
-    %Capability{
-      kind: :agent,
-      behavior: :any,
-      instance: {:spawned_by, principal_uri},
-      workspace_uri: @workspace_uri,
-      granted_by: User.admin_uri(),
-      granted_at: DateTime.utc_now()
-    }
+  defp terminate_cap(worker_uri, principal_uri) do
+    worker_uri
+    |> Ezagent.URI.with_action(:lifecycle, :terminate)
+    |> signed_action_cap!(principal_uri)
   end
 
   defp terminate(worker_uri, caller_uri, caps) do
     target = Ezagent.URI.new!("#{URI.to_string(worker_uri)}?action=lifecycle.terminate")
 
     Ezagent.Invocation.dispatch(%Ezagent.Invocation{
+      origin: :trusted_internal,
       target: target,
       mode: :call,
       args: %{},
@@ -60,8 +56,12 @@ defmodule EzagentDomainInstanceMessage.Integration.LifecycleTerminateTest do
 
   defp wait_until_gone(uri, tries \\ 50) do
     cond do
-      tries == 0 -> :still_alive
-      KindRegistry.lookup(uri) == :error -> :gone
+      tries == 0 ->
+        :still_alive
+
+      KindRegistry.lookup(uri) == :error ->
+        :gone
+
       true ->
         Process.sleep(10)
         wait_until_gone(uri, tries - 1)
@@ -78,7 +78,7 @@ defmodule EzagentDomainInstanceMessage.Integration.LifecycleTerminateTest do
 
     assert {:ok, _pid} = KindRegistry.lookup(worker_uri)
 
-    caps = MapSet.new([spawned_by_cap(orchestrator)])
+    caps = MapSet.new([terminate_cap(worker_uri, orchestrator)])
 
     assert {:ok, {:ok, :terminated}} = terminate(worker_uri, orchestrator, caps)
 
@@ -86,18 +86,19 @@ defmodule EzagentDomainInstanceMessage.Integration.LifecycleTerminateTest do
            "the worker process must be brought down after lifecycle.terminate"
   end
 
-  test "cap-#2 control — terminating an agent NOT in your lineage is :unauthorized" do
+  test "a capability signed by a different agent authority cannot be retargeted" do
     orchestrator_a = Ezagent.URI.new!("entity://team-alpha/agent/cc_orch-a-#{uniq()}")
     orchestrator_b = Ezagent.URI.new!("entity://team-alpha/agent/cc_orch-b-#{uniq()}")
 
     # The worker is spawned by A.
     worker_uri = spawn_worker(orchestrator_a)
 
-    # B holds a cap #2 scoped to ITSELF — it does NOT cover A's worker.
-    caps_b = MapSet.new([spawned_by_cap(orchestrator_b)])
+    # B's artifact is legitimate for B's own worker, but not for A's worker.
+    worker_b = spawn_worker(orchestrator_b)
+    caps_b = MapSet.new([terminate_cap(worker_b, orchestrator_b)])
 
-    assert {:error, :unauthorized} = terminate(worker_uri, orchestrator_b, caps_b),
-           "orchestrator B must not terminate A's worker — cap #2 is {:spawned_by, B}"
+    assert {:error, :invalid_cap_signature} = terminate(worker_uri, orchestrator_b, caps_b),
+           "an artifact from worker B's authority must fail at worker A"
 
     # The worker is still alive — the denied dispatch had no effect.
     assert {:ok, _pid} = KindRegistry.lookup(worker_uri)
@@ -106,7 +107,7 @@ defmodule EzagentDomainInstanceMessage.Integration.LifecycleTerminateTest do
   test "termination is idempotent — a second terminate on a gone agent still succeeds" do
     orchestrator = Ezagent.URI.new!("entity://team-alpha/agent/cc_orch-idem-#{uniq()}")
     worker_uri = spawn_worker(orchestrator)
-    caps = MapSet.new([spawned_by_cap(orchestrator)])
+    caps = MapSet.new([terminate_cap(worker_uri, orchestrator)])
 
     assert {:ok, {:ok, :terminated}} = terminate(worker_uri, orchestrator, caps)
     assert :gone = wait_until_gone(worker_uri)
@@ -138,7 +139,7 @@ defmodule EzagentDomainInstanceMessage.Integration.LifecycleTerminateTest do
       # spawning principal, not the dispatch caller; the orch.cap
       # gate is bypassed by using bootstrap-admin caps for the test
       # dispatch (lineage notification is independent of cap surface).
-      admin_caps = MapSet.new([Ezagent.Capability.admin_genesis_cap()])
+      admin_caps = MapSet.new([terminate_cap(worker_uri, User.admin_uri())])
 
       assert {:ok, {:ok, :terminated}} = terminate(worker_uri, User.admin_uri(), admin_caps)
 
@@ -154,7 +155,7 @@ defmodule EzagentDomainInstanceMessage.Integration.LifecycleTerminateTest do
     test "does NOT notify when spawning principal is an agent URI" do
       orchestrator = Ezagent.URI.new!("entity://team-alpha/agent/cc_orch-noinbox-#{uniq()}")
       worker_uri = spawn_worker(orchestrator)
-      caps = MapSet.new([spawned_by_cap(orchestrator)])
+      caps = MapSet.new([terminate_cap(worker_uri, orchestrator)])
 
       # Subscribe to the agent URI's topic raw — Notifications.subscribe
       # would reject (agents not user-Kind); raw PubSub detects any

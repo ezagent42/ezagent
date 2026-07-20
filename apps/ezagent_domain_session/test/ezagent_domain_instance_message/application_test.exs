@@ -24,25 +24,53 @@ defmodule EzagentDomainInstanceMessage.ApplicationTest do
   alias Ezagent.Entity.User
 
   setup do
-    _ =
-      EzagentDomainInstanceMessage.SessionCreator.create_session(
-        "main",
-        User.admin_uri(),
-        template_name: "default"
-      )
+    session_uri = ensure_boot_session!()
 
-    :ok
+    # A prior test may deliberately leave the fixed boot URI in a failed or
+    # half-created state. create_session/3 repairs it, but Kind activation is
+    # asynchronous; wait for the replacement incarnation instead of observing
+    # the stale ReadyGate marker in the gap.
+    assert :ok = ReadyGate.await(session_uri, 5_000)
+
+    %{session_uri: session_uri}
   end
 
-  test "session://system/default/main is registered in KindRegistry" do
-    uri = Ezagent.Entity.Session.default_uri()
-    assert {:ok, pid} = KindRegistry.lookup(uri)
+  defp ensure_boot_session! do
+    admin = User.admin_uri()
+
+    case EzagentDomainInstanceMessage.SessionCreator.create_session(
+           "main",
+           admin,
+           template_name: "default"
+         ) do
+      {:ok, session_uri, _meta} ->
+        session_uri
+
+      {:error, {:recreate_after_incomplete_failed, {:authority_load_failed, :regenesis_required}}} ->
+        # Stage 3 / Option B: never implicitly reopen a destroyed fixed URI.
+        # A lifecycle test may intentionally seal `main`; use an isolated smoke
+        # session instead of re-genesis there and invalidating caps held by
+        # unrelated tests in the same VM.
+        short_name = "application-smoke-#{System.unique_integer([:positive, :monotonic])}"
+
+        assert {:ok, session_uri, _meta} =
+                 EzagentDomainInstanceMessage.SessionCreator.create_session(
+                   short_name,
+                   admin,
+                   template_name: "default"
+                 )
+
+        session_uri
+    end
+  end
+
+  test "the boot session is registered in KindRegistry", %{session_uri: session_uri} do
+    assert {:ok, pid} = KindRegistry.lookup(session_uri)
     assert Process.alive?(pid)
   end
 
-  test "session://system/default/main is marked :ready in ReadyGate" do
-    uri_str = URI.to_string(Ezagent.Entity.Session.default_uri())
-    assert :ready = ReadyGate.status(uri_str)
+  test "the boot session is marked :ready in ReadyGate", %{session_uri: session_uri} do
+    assert :ready = ReadyGate.status(URI.to_string(session_uri))
   end
 
   test "entity://system/user/admin is registered in KindRegistry (post-first-reference)" do

@@ -3,34 +3,30 @@ defmodule Ezagent.World.UserDataCapsTest do
 
   alias Ezagent.World.UserData
 
-  setup do
-    cap_config = Application.fetch_env!(:ezagent_core, Ezagent.Cap)
-    on_exit(fn -> Application.put_env(:ezagent_core, Ezagent.Cap, cap_config) end)
-    :ok
-  end
-
   test "list_users counts verified live capabilities instead of the stale row projection" do
     {workspace, user} = identities("runtime")
     runtime_cap = issued_cap(user, workspace, "runtime")
     assert {:ok, _row} = Ezagent.Users.create(user, "test-password", [])
+    assert :ok = declare_workspace_member(workspace, user)
 
     assert {:ok, _pid} =
              Ezagent.Kind.spawn(Ezagent.Entity.User, %{uri: user, initial_caps: [runtime_cap]})
 
     on_exit(fn -> Ezagent.Kind.terminate(user) end)
 
-    assert row_for(user)["cap_count"] ==
+    assert row_for(user, workspace)["cap_count"] ==
              MapSet.size(Ezagent.EntityCaps.verified_set(Ezagent.EntityCaps.load(user), user))
 
-    assert row_for(user)["cap_count"] > 0
+    assert row_for(user, workspace)["cap_count"] > 0
     assert Ezagent.Users.get_by_uri(user).caps == []
   end
 
-  test "revoked artifacts left in serialized data do not determine the count" do
+  test "unsigned artifacts left in serialized data do not determine the count" do
     {workspace, user} = identities("revoked")
-    stale_one = issued_cap(user, workspace, "stale-one")
-    stale_two = issued_cap(user, workspace, "stale-two")
+    stale_one = unsigned_cap(user, workspace, "stale-one")
+    stale_two = unsigned_cap(user, workspace, "stale-two")
     assert {:ok, _row} = Ezagent.Users.create(user, "test-password", [stale_one, stale_two])
+    assert :ok = declare_workspace_member(workspace, user)
 
     assert {:ok, _pid} =
              Ezagent.Kind.spawn(Ezagent.Entity.User, %{uri: user, initial_caps: []})
@@ -39,27 +35,16 @@ defmodule Ezagent.World.UserDataCapsTest do
 
     expected = length(Ezagent.EntityCaps.load(user))
     assert expected != length(Ezagent.Users.get_by_uri(user).caps)
-    assert row_for(user)["cap_count"] == expected
+    assert row_for(user, workspace)["cap_count"] == expected
   end
 
-  test "reader failure preserves the user row and reports zero capabilities" do
+  test "an unsigned serialized artifact preserves the user row and reports zero capabilities" do
     {workspace, user} = identities("failure")
-    cap = issued_cap(user, workspace, "target")
+    cap = unsigned_cap(user, workspace, "target")
     assert {:ok, _row} = Ezagent.Users.create(user, "test-password", [cap])
+    assert :ok = declare_workspace_member(workspace, user)
 
-    config = Application.fetch_env!(:ezagent_core, Ezagent.Cap)
-    signing = Keyword.fetch!(config, :signing)
-
-    failing_signing =
-      Keyword.put(signing, :seed_provider, fn _version -> {:error, :unavailable} end)
-
-    Application.put_env(
-      :ezagent_core,
-      Ezagent.Cap,
-      Keyword.put(config, :signing, failing_signing)
-    )
-
-    assert row_for(user)["cap_count"] == 0
+    assert row_for(user, workspace)["cap_count"] == 0
   end
 
   test "World capability counts have no raw-store fallback" do
@@ -69,9 +54,19 @@ defmodule Ezagent.World.UserDataCapsTest do
     assert source =~ "Ezagent.EntityCaps.load"
   end
 
-  defp row_for(user) do
-    UserData.list_users(nil)
+  # The users-table roster is caller-authorized (read-plane PR-4 rework):
+  # the caller must be a declared member of the workspace it lists. The
+  # rows these tests read are the caller's OWN (self-view always reveals
+  # its own metadata), so declare the user a member of its workspace.
+  defp row_for(user, workspace) do
+    UserData.list_users(user, workspace)
     |> Enum.find(&(&1["uri"] == URI.to_string(user)))
+  end
+
+  defp declare_workspace_member(%URI{host: ws_name}, %URI{} = user) do
+    {:ok, _pid} = Ezagent.Workspace.create(ws_name, %{})
+    {:ok, _} = Ezagent.Workspace.Store.update_members(ws_name, [user])
+    :ok
   end
 
   defp identities(suffix) do
@@ -89,7 +84,17 @@ defmodule Ezagent.World.UserDataCapsTest do
         receiver
       )
 
-    {:ok, cap} = Ezagent.Cap.issue({:genesis, receiver}, receiver, requested)
-    cap
+    Ezagent.Test.CapHelper.with_test_authority(requested.instance, :agent, fn authority ->
+      Ezagent.Test.CapHelper.authority_signed_cap!(authority, receiver, requested)
+    end)
+  end
+
+  defp unsigned_cap(receiver, workspace, target_name) do
+    Ezagent.CreatorGrant.manage_cap(
+      :agent,
+      Ezagent.URI.agent(Ezagent.URI.workspace_name!(workspace), target_name),
+      workspace,
+      receiver
+    )
   end
 end

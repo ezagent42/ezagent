@@ -17,24 +17,27 @@ defmodule Ezagent.ActionSet.UserTokensMigrationParityTest do
 
   use EzagentCore.DataCase, async: false
 
+  import Ezagent.Test.CapHelper, only: [signed_invocation!: 2, signed_required_cap!: 5]
+
   alias Ezagent.ActionSet.UserTokens
   alias Ezagent.Entity.{Token, User}
   alias Ezagent.Invocation
   alias Ezagent.Users
 
   defp build_invocation(user_uri, action, args) do
-    target =
-      user_uri
-      |> URI.to_string()
-      |> Kernel.<>("?action=user_tokens.#{action}")
-      |> URI.parse()
+    target = Ezagent.URI.new!("#{URI.to_string(user_uri)}?action=user_tokens.#{action}")
+
+    admin = Ezagent.URI.user(:system, :admin)
+    cap = signed_required_cap!(target, :user, UserTokens, action, admin)
 
     %Invocation{
+      origin: :trusted_internal,
       target: target,
       mode: :call,
       args: args,
-      ctx: %{caller: :vm_internal, caps: MapSet.new(), reply: :sync}
+      ctx: %{caller: admin, caps: MapSet.new([cap]), reply: :sync}
     }
+    |> signed_invocation!(:user)
   end
 
   setup do
@@ -52,7 +55,8 @@ defmodule Ezagent.ActionSet.UserTokensMigrationParityTest do
          %{user_uri: user_uri, state: state} do
       inv = build_invocation(user_uri, :mint_token, %{label: "parity-mint"})
 
-      assert {:ok, new_state, %{token_id: token_id, plain: plain, label: "parity-mint"}, _evt, _deferred} =
+      assert {:ok, new_state, %{token_id: token_id, plain: plain, label: "parity-mint"}, _evt,
+              _deferred} =
                Ezagent.Kind.Runtime.handle_dispatch(inv, state, User, user_uri)
 
       # Phase B: two-container slice — persistent counter lives under `.state`.

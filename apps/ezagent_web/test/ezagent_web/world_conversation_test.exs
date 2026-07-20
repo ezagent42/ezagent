@@ -18,7 +18,7 @@ defmodule EzagentWeb.WorldConversationTest do
   alias Ezagent.ActionSet.Session, as: SessionBehavior
   alias Ezagent.Routing.Matcher
   alias Ezagent.Routing.RuleStore
-  alias Ezagent.Socialware.{AnonBinding, AnonUser, ExternalFeed}
+  alias Ezagent.Socialware.{AnonAdmission, ExternalFeed}
   alias Ezagent.ConfigGovernance.Socialware, as: SocialwareGovernance
   alias EzagentDomainInstanceMessage.Routing.MentionRouting
 
@@ -184,6 +184,7 @@ defmodule EzagentWeb.WorldConversationTest do
     # Join so the member lands in the session slice members map.
     :ok =
       Ezagent.Invocation.dispatch(%Ezagent.Invocation{
+        origin: :trusted_internal,
         target: Ezagent.URI.with_action(session_uri, :session, :join),
         mode: :call,
         args: %{member: member_uri},
@@ -272,6 +273,7 @@ defmodule EzagentWeb.WorldConversationTest do
     # alice joins (she is NOT the viewer) → present in the session members.
     :ok =
       Ezagent.Invocation.dispatch(%Ezagent.Invocation{
+        origin: :trusted_internal,
         target: Ezagent.URI.with_action(session_uri, :session, :join),
         mode: :call,
         args: %{member: alice_uri},
@@ -318,6 +320,7 @@ defmodule EzagentWeb.WorldConversationTest do
     # a never-created session, so the session must exist before probing :attach.
     :ok =
       Ezagent.Invocation.dispatch(%Ezagent.Invocation{
+        origin: :trusted_internal,
         target: Ezagent.URI.with_action(session_uri, :session, :join),
         mode: :call,
         args: %{member: member_uri},
@@ -334,6 +337,7 @@ defmodule EzagentWeb.WorldConversationTest do
 
     attach = fn caller_uri, caps ->
       Ezagent.Invocation.dispatch(%Ezagent.Invocation{
+        origin: :trusted_internal,
         target: Ezagent.URI.with_action(session_uri, :session, :attach),
         mode: :call,
         args: %{filename: "x.txt"},
@@ -347,12 +351,10 @@ defmodule EzagentWeb.WorldConversationTest do
              attach.(member_uri, MapSet.new([session_cap(member_uri, session_uri, :attach)]))
            )
 
-    # EMPTY ctx caps still authorize via the member's STORED :attach cap (the
-    # runtime's live-slice/granted-via path). This is what lets the upload
-    # controller dispatch WITHOUT assembling caps itself (`Identity.list_caps_for`
-    # is a p13 anti-pattern) — it passes empty caps and the chokepoint derives
-    # authority from the caller's identity.
-    assert match?({:ok, _}, attach.(member_uri, MapSet.new()))
+    # Strict per-envelope verification never performs a hidden identity-store
+    # fallback. A stored cap authorizes only after authenticated ingress loads
+    # and presents it in this envelope.
+    assert {:error, :missing_cap} = attach.(member_uri, MapSet.new())
 
     # A DIFFERENT member who holds :join + :send but NOT :attach (anywhere — not
     # in ctx, not in stored caps, since the runtime consults the live slice) is
@@ -369,6 +371,7 @@ defmodule EzagentWeb.WorldConversationTest do
 
     :ok =
       Ezagent.Invocation.dispatch(%Ezagent.Invocation{
+        origin: :trusted_internal,
         target: Ezagent.URI.with_action(session_uri, :session, :join),
         mode: :call,
         args: %{member: no_attach_uri},
@@ -383,7 +386,7 @@ defmodule EzagentWeb.WorldConversationTest do
         {:ok, _} -> :ok
       end
 
-    assert {:error, :unauthorized} =
+    assert {:error, :missing_cap} =
              attach.(no_attach_uri, MapSet.new([session_cap(no_attach_uri, session_uri, :send)]))
   end
 
@@ -618,6 +621,7 @@ defmodule EzagentWeb.WorldConversationTest do
     })
 
     template_name = "socialware-install-socialware"
+    on_exit(fn -> stop_live_session_templates(template_name, "system") end)
     new_uri = Ezagent.URI.new!("session://system/#{template_name}/#{short_name}")
     encoded = new_uri |> URI.to_string() |> URI.encode_www_form()
 
@@ -647,6 +651,7 @@ defmodule EzagentWeb.WorldConversationTest do
     })
 
     template_name = "socialware-install-socialware"
+    on_exit(fn -> stop_live_session_templates(template_name, "system") end)
     new_uri = Ezagent.URI.new!("session://system/#{template_name}/#{short_name}")
     encoded = URI.encode_www_form(URI.to_string(new_uri))
 
@@ -804,12 +809,19 @@ defmodule EzagentWeb.WorldConversationTest do
         "entity://system/user/world-pr4-pty-viewer-#{System.unique_integer([:positive])}"
       )
 
-    manage_cap =
+    requested_manage_cap =
       Ezagent.CreatorGrant.manage_cap(
         :agent,
         agent_uri,
         Ezagent.Capability.workspace_of(agent_uri),
         viewer_uri
+      )
+
+    {:ok, manage_cap} =
+      Ezagent.Cap.issue(
+        {:admin, Ezagent.Entity.User.admin_uri()},
+        viewer_uri,
+        requested_manage_cap
       )
 
     :ok = create_read_only_user(viewer_uri, [manage_cap])
@@ -1064,25 +1076,31 @@ defmodule EzagentWeb.WorldConversationTest do
     assert Enum.map(embedded, &to_string/1) == [URI.to_string(att)]
   end
 
-  test "ConversationData.message_row mints a download link for uploads, plain label otherwise (PR-2b)",
+  test "ConversationData.message_row mints a GRANTEE-BOUND download link for uploads, plain label otherwise (PR-2b/PR-3)",
        %{conn: _conn} do
+    viewer = Ezagent.Entity.User.admin_uri()
     att = Ezagent.URI.new!("resource://system/uploads/#{Ecto.UUID.generate()}-report.pdf")
 
     upload_msg =
-      Ezagent.Message.new(Ezagent.Entity.User.admin_uri(), %{text: "x", attachments: [att]})
+      Ezagent.Message.new(viewer, %{text: "x", attachments: [att]})
 
-    [attachment] = Ezagent.World.ConversationData.message_row(upload_msg)["attachments"]
+    [attachment] = Ezagent.World.ConversationData.message_row(upload_msg, viewer)["attachments"]
     assert attachment["name"] == "report.pdf"
-    assert attachment["href"] =~ "/uploads/download?token="
+    assert "/uploads/download?token=" <> token = attachment["href"]
+
+    # PR-3 structural binding: the render-path mint binds the token to the
+    # authorized viewer — a leaked link is useless to anyone else.
+    assert {:ok, %{grantee: grantee}} = Ezagent.Uploads.DownloadToken.verify_payload(token)
+    assert grantee == viewer
 
     plain_msg =
-      Ezagent.Message.new(Ezagent.Entity.User.admin_uri(), %{
+      Ezagent.Message.new(viewer, %{
         text: "x",
         attachments: ["just-a-string"]
       })
 
     assert [%{"name" => "just-a-string", "href" => nil}] =
-             Ezagent.World.ConversationData.message_row(plain_msg)["attachments"]
+             Ezagent.World.ConversationData.message_row(plain_msg, viewer)["attachments"]
   end
 
   test "render-card mechanism: a message body carrying a render tree surfaces it on the wire (producer-free)" do
@@ -1110,13 +1128,13 @@ defmodule EzagentWeb.WorldConversationTest do
         render_css: "table{font-size:12px}"
       })
 
-    row = Ezagent.World.ConversationData.message_row(msg)
+    row = Ezagent.World.ConversationData.message_row(msg, Ezagent.Entity.User.admin_uri())
     assert row["render"] == render_tree
     assert row["render_css"] == "table{font-size:12px}"
 
     # A message with NO render body surfaces nil (plain text path) — the default.
     plain = Ezagent.Message.new(Ezagent.Entity.User.admin_uri(), %{text: "plain"})
-    plain_row = Ezagent.World.ConversationData.message_row(plain)
+    plain_row = Ezagent.World.ConversationData.message_row(plain, Ezagent.Entity.User.admin_uri())
     assert plain_row["render"] == nil
     assert plain_row["render_css"] == nil
   end
@@ -1442,15 +1460,18 @@ defmodule EzagentWeb.WorldConversationTest do
     installer_user = Ezagent.URI.entity(installer_ws_name, :user, "admin")
     admin = Ezagent.Entity.User.admin_uri()
 
-    installer_admin_cap = %Ezagent.Capability{
-      kind: :workspace,
-      behavior: Ezagent.ActionSet.Workspace,
-      action: :any,
-      instance: :any,
-      workspace_uri: installer_ws,
-      granted_by: admin,
-      granted_at: DateTime.utc_now()
-    }
+    {:ok, installer_admin_cap} =
+      Ezagent.Cap.issue(
+        {:admin, admin},
+        installer_user,
+        Ezagent.Capability.cap(
+          :workspace,
+          Ezagent.ActionSet.Workspace,
+          :any,
+          installer_ws,
+          installer_ws
+        )
+      )
 
     :ok = create_read_only_user(installer_user, [installer_admin_cap])
     :ok = Ezagent.Workspace.add_member(installer_ws_name, installer_user)
@@ -1698,23 +1719,9 @@ defmodule EzagentWeb.WorldConversationTest do
   end
 
   defp mint_and_join_anon(session_uri) do
-    {:ok, anon_uri} = AnonUser.mint_for_public_session(session_uri)
-    :ok = Ezagent.Entity.spawn_principal(anon_uri)
-    {:ok, _row} = AnonBinding.touch(anon_uri, session_uri, DateTime.utc_now())
+    {:ok, %{anon_uri: anon_uri}} =
+      AnonAdmission.admit_anonymous_participant(session_uri)
 
-    :ok =
-      Ezagent.Invocation.dispatch(%Ezagent.Invocation{
-        target: Ezagent.URI.with_action(session_uri, :session, :join),
-        mode: :call,
-        args: %{member: anon_uri},
-        ctx: %{caller: anon_uri, reply: :ignore}
-      })
-      |> case do
-        :ok -> :ok
-        {:ok, _} -> :ok
-      end
-
-    _ = Ezagent.ActionSet.Session.Membership.mount_participation_caps(session_uri, anon_uri)
     anon_uri
   end
 
@@ -1790,6 +1797,28 @@ defmodule EzagentWeb.WorldConversationTest do
       flunk("expected live SessionTemplate with prefix #{prefix}")
   end
 
+  defp stop_live_session_templates(template_name, workspace_name) do
+    prefix =
+      workspace_name
+      |> Ezagent.URI.template(:session, "#{template_name}@")
+      |> URI.to_string()
+
+    Ezagent.KindRegistry.list_all()
+    |> Enum.each(fn
+      {uri_str, pid} when is_binary(uri_str) and is_pid(pid) ->
+        if String.starts_with?(uri_str, prefix) do
+          _ =
+            DynamicSupervisor.terminate_child(
+              EzagentDomainInstanceMessage.SessionTemplateSupervisor,
+              pid
+            )
+        end
+
+      _ ->
+        :ok
+    end)
+  end
+
   defp template_hash(%URI{} = uri) do
     uri
     |> Ezagent.URI.name!()
@@ -1844,42 +1873,44 @@ defmodule EzagentWeb.WorldConversationTest do
   end
 
   defp world_session_uri do
-    Ezagent.URI.workspace(:system)
-    |> EzagentDomainInstanceMessage.list_sessions()
-    |> List.first()
-    |> case do
-      %URI{} = uri -> uri
-      _ -> ensure_default_world_session!()
-    end
-  end
-
-  defp ensure_default_world_session! do
     workspace_uri = Ezagent.URI.workspace(:system)
-    create = &Ezagent.Workspace.create_session/3
+    admin = Ezagent.Entity.User.admin_uri()
+    target = Ezagent.URI.with_action(workspace_uri, :workspace, :create_session)
+    {:ok, create_cap} = Ezagent.Cap.issue_for_action({:admin, admin}, admin, target)
+    short_name = "world-test-#{System.unique_integer([:positive, :monotonic])}"
 
-    case create.(
-           workspace_uri,
-           %{short_name: "main", template_name: "default"},
-           %{
-             caller: Ezagent.Entity.User.admin_uri(),
-             caps: MapSet.new([Ezagent.Capability.admin_genesis_cap()])
-           }
-         ) do
-      {:ok, %{session_uri: %URI{} = uri}} -> uri
-      _ -> Ezagent.URI.new!("session://system/default/main")
-    end
+    {:ok, %{session_uri: %URI{} = session_uri}} =
+      Ezagent.Workspace.create_session(
+        workspace_uri,
+        %{short_name: short_name, template_name: "default"},
+        %{caller: admin, caps: MapSet.new([create_cap])}
+      )
+
+    on_exit(fn ->
+      try do
+        _ = Ezagent.Kind.terminate(session_uri)
+      catch
+        _, _ -> :ok
+      end
+    end)
+
+    session_uri
   end
 
   defp session_cap(caller_uri, session_uri, action) do
-    %Ezagent.Capability{
-      kind: :session,
-      behavior: Ezagent.ActionSet.Session,
-      action: action,
-      instance: session_uri,
-      workspace_uri: Ezagent.URI.workspace(:system),
-      granted_by: caller_uri,
-      granted_at: DateTime.utc_now()
-    }
+    requested =
+      Ezagent.Capability.cap(
+        :session,
+        Ezagent.ActionSet.Session,
+        action,
+        session_uri,
+        Ezagent.Capability.workspace_of(session_uri)
+      )
+
+    {:ok, cap} =
+      Ezagent.Cap.issue({:admin, Ezagent.Entity.User.admin_uri()}, caller_uri, requested)
+
+    cap
   end
 
   defp matcher_targets_session?({:in_session, session_str}, session_str), do: true

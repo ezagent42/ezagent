@@ -21,8 +21,10 @@ defmodule EzagentWeb.HomeLive do
   operator whose OWN workspace had zero sessions was bounced to `/sessions`
   (and treated as a returning user) merely because SOME OTHER tenant had a
   session — a wrong landing AND a cross-tenant existence leak. We now scope
-  to the operator's workspace via the existing `list_sessions/1` overload
-  (Task #55), matching exactly what `/sessions` renders.
+  to the operator's workspace via the caller-authorizing
+  `Ezagent.Workspace.WorkspaceReads.sessions/2` chokepoint (Task #55's
+  workspace scoping PLUS per-row caller visibility), matching what
+  `/sessions` renders.
 
   Landing workspace = the session's SELECTED `current_workspace_uri` when
   present (so a system member who context-switched — §6.5/§13.2 — lands on
@@ -74,14 +76,17 @@ defmodule EzagentWeb.HomeLive do
   end
 
   defp mount_authenticated(entity_uri, session, socket) do
-    # W0 — workspace-scoped landing判据 (see moduledoc). `list_sessions/1`
-    # filters the global registry down to the caller's workspace; a
-    # non-workspace scope (`:any` / malformed) fails closed to `[]` so the
-    # operator sees the wizard, never a cross-tenant redirect or a crash.
+    # W0 — workspace-scoped landing判据 (see moduledoc), now routed through
+    # the caller-authorizing chokepoint: `WorkspaceReads.sessions/2`
+    # authorizes the caller for the workspace BEFORE reading and keeps only
+    # the rows the caller may see (session owner/member OR public). A
+    # non-workspace scope (`:any` / malformed) or an unauthorized caller
+    # fails closed to `[]` so the operator sees the wizard — never a
+    # cross-tenant redirect, a private-session existence leak, or a crash.
     sessions =
       case landing_workspace_uri(session, entity_uri) do
         %URI{scheme: "workspace"} = workspace_uri ->
-          EzagentDomainInstanceMessage.list_sessions(workspace_uri)
+          Ezagent.Workspace.WorkspaceReads.sessions(entity_uri, workspace_uri)
 
         _ ->
           []
@@ -132,11 +137,18 @@ defmodule EzagentWeb.HomeLive do
       workspace_uri = Ezagent.Capability.workspace_of(creator_uri)
 
       result =
-        with :ok <- ensure_bootstrap_workspace(workspace_uri, creator_uri) do
+        with :ok <- ensure_bootstrap_workspace(workspace_uri, creator_uri),
+             target <- Ezagent.URI.with_action(workspace_uri, :workspace, :create_session),
+             {:ok, create_cap} <-
+               Ezagent.Cap.issue_for_action(
+                 {:admin, Ezagent.Entity.User.admin_uri()},
+                 creator_uri,
+                 target
+               ) do
           Ezagent.Workspace.create_session(
             workspace_uri,
             %{short_name: short_name, template_name: "default"},
-            %{caller: creator_uri, caps: caller_caps_for(creator_uri)}
+            %{caller: creator_uri, caps: MapSet.new([create_cap])}
           )
         end
 
@@ -202,46 +214,26 @@ defmodule EzagentWeb.HomeLive do
     target = Ezagent.URI.with_action(session_uri, :session, :join)
 
     _ =
-      Ezagent.Invocation.dispatch(%Ezagent.Invocation{
-        target: target,
-        mode: :cast,
-        args: %{member: echo_uri},
-        # #154 — `system://session-internal` ELIMINATED. The wizard operator
-        # (`caller_uri`) just created this session, so it is the OWNER and can
-        # join a member: present an inline `session.join` cap granted_by the
-        # operator itself (a real entity; owner authority), instead of borrowing
-        # the deleted principal.
-        ctx: %{
-          caller: caller_uri,
-          caps:
-            MapSet.new([
-              %Ezagent.Capability{
-                Ezagent.Capability.cap(
-                  :session,
-                  :any,
-                  :join,
-                  Ezagent.URI.instance(session_uri),
-                  Ezagent.Capability.workspace_of(session_uri)
-                )
-                | granted_by: caller_uri,
-                  granted_at: DateTime.utc_now()
-              }
-            ]),
-          reply: :ignore
-        }
-      })
+      with {:ok, signed_cap} <-
+             Ezagent.Cap.issue_for_action(
+               {:admin, Ezagent.Entity.User.admin_uri()},
+               caller_uri,
+               target
+             ) do
+        Ezagent.Invocation.dispatch(%Ezagent.Invocation{
+          target: target,
+          mode: :cast,
+          args: %{member: echo_uri},
+          ctx: %{
+            caller: caller_uri,
+            caps: MapSet.new([signed_cap]),
+            reply: :ignore
+          },
+          origin: :authenticated_external
+        })
+      end
 
     :ok
-  end
-
-  defp caller_caps_for(%URI{} = caller_uri) do
-    caps = Ezagent.Identity.list_caps_for(caller_uri)
-
-    if MapSet.size(caps) > 0 do
-      caps
-    else
-      MapSet.new()
-    end
   end
 
   # HomeLive lives outside the `:require_entity` live_session, so its public

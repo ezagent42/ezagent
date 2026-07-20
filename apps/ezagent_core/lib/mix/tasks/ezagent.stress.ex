@@ -108,18 +108,16 @@ defmodule Mix.Tasks.Ezagent.Stress do
   # provenance only on inline authorizers never routed through
   # `Ezagent.Identity.Grant`). Returns a list — step 5.5 iterates either a list
   # or a MapSet and picks the matching action.
-  defp admin_caps do
+  defp admin_caps(session_uri) do
     admin = admin_uri()
-    # All stress sessions live in `workspace://system` (see scenario builders).
-    ws = Ezagent.URI.workspace("system")
-    session_behavior = Module.concat([:Ezagent, :ActionSet, :Session])
 
     Enum.map([:send, :join], fn action ->
-      %Ezagent.Capability{
-        Ezagent.Capability.cap(:session, session_behavior, action, :any, ws)
-        | granted_by: admin,
-          granted_at: DateTime.utc_now()
-      }
+      target = Ezagent.URI.with_action(session_uri, :session, action)
+
+      case Ezagent.Cap.issue_for_action({:admin, admin}, admin, target) do
+        {:ok, cap} -> cap
+        {:error, reason} -> Mix.raise("stress cap issuance failed: #{inspect(reason)}")
+      end
     end)
   end
 
@@ -408,7 +406,7 @@ defmodule Mix.Tasks.Ezagent.Stress do
   defp inject_messages(session_uri, budget, interval_ms, turn_cap) do
     admin = admin_uri()
     target = Ezagent.URI.with_action(session_uri, :session, :send)
-    caps = admin_caps()
+    caps = admin_caps(session_uri)
 
     Enum.reduce(1..budget, 0, fn i, count ->
       body = %{
@@ -423,7 +421,8 @@ defmodule Mix.Tasks.Ezagent.Stress do
         target: target,
         mode: :cast,
         args: %{message: msg},
-        ctx: %{caller: admin, caps: caps, reply: :ignore}
+        ctx: %{caller: admin, caps: caps, reply: :ignore},
+        origin: :trusted_internal
       })
 
       if i < budget and interval_ms > 0, do: Process.sleep(interval_ms)
@@ -528,9 +527,10 @@ defmodule Mix.Tasks.Ezagent.Stress do
         args: %{member: member_uri},
         ctx: %{
           caller: admin_uri(),
-          caps: admin_caps(),
+          caps: admin_caps(session_uri),
           reply: {:caller_inbox, self()}
-        }
+        },
+        origin: :trusted_internal
       })
 
     case result do

@@ -213,7 +213,8 @@ defmodule Ezagent.ExternalMirror do
       target: target,
       action: :unbind,
       args: %{adapter_id: adapter_id, target_id: target_id},
-      ctx: ensure_call_ctx(ctx)
+      ctx: ensure_call_ctx(ctx),
+      origin: :trusted_internal
     }
 
     Router.dispatch(cmd)
@@ -254,7 +255,8 @@ defmodule Ezagent.ExternalMirror do
       target: target,
       action: :list_bindings,
       args: %{},
-      ctx: ensure_call_ctx(ctx)
+      ctx: ensure_call_ctx(ctx),
+      origin: :trusted_internal
     }
 
     case Router.dispatch(cmd) do
@@ -559,7 +561,8 @@ defmodule Ezagent.ExternalMirror do
         opts: opts,
         _facade_nonce: nonce
       },
-      ctx: ensure_call_ctx(ctx)
+      ctx: ensure_call_ctx(ctx),
+      origin: :trusted_internal
     }
 
     Router.dispatch(cmd)

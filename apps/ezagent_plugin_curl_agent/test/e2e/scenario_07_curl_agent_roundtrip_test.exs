@@ -234,9 +234,14 @@ defmodule EzagentPluginCurlAgent.E2E.Scenario07CurlAgentRoundtripTest do
       assert cmd.action == :send
       assert cmd.target.scheme == "session"
 
-      reply_text = cmd.args.message.body[:text]
-      assert reply_text =~ "no API key for provider `deepseek`"
-      assert reply_text =~ "api-keys"
+      # G5 source 2 (#1456) — the operator-help reply is now a STRUCTURED
+      # ErrorSignal body: pure reason data under `error` + a uniform minimal
+      # fallback `text`. The user-visible "configure your key" hint (and the
+      # api-keys link) is rendered PER VIEWER on the world side from this
+      # payload — no hand-written prose in the agent's reply.
+      body = cmd.args.message.body
+      assert body.error == %{"reason" => ["no_api_key", "deepseek"]}
+      assert body.text == "[agent error] no_api_key"
 
       # Reply presents the agent's OWN inline narrow `session.send` cap
       # on the concrete reply session (#154, 甲-3 — the `system://chat-reply`

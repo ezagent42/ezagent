@@ -55,6 +55,8 @@ defmodule Ezagent.Agent.HostLoginAdopt do
 
   require Logger
 
+  @cap_store_timeout_ms 2_000
+
   @doc """
   Ensure the installer's host login is adopted as their #17 user-default source
   for `flavor` in `workspace_uri` (see the moduledoc for the no-op ladder).
@@ -91,7 +93,8 @@ defmodule Ezagent.Agent.HostLoginAdopt do
 
     case UserDefaultSource.resolve(owner, ws_name, flavor) do
       nil ->
-        with :ok <- register_source(source_uri, installer_uri, flavor, host_dir) do
+        with :ok <- register_source(source_uri, installer_uri, flavor, host_dir),
+             :ok <- ensure_source_read_cap(installer_uri, source_uri) do
           set_pointer(installer_uri, ws_name, flavor, source_uri)
         end
 
@@ -99,7 +102,9 @@ defmodule Ezagent.Agent.HostLoginAdopt do
         if existing == URI.to_string(source_uri) do
           # Our own registration — refresh the durable dir (env may have moved
           # the host home between installs). Never touches the pointer.
-          register_source(source_uri, installer_uri, flavor, host_dir)
+          with :ok <- register_source(source_uri, installer_uri, flavor, host_dir) do
+            ensure_source_read_cap(installer_uri, source_uri)
+          end
         else
           # An explicit operator-chosen source — never overridden.
           :ok
@@ -126,8 +131,21 @@ defmodule Ezagent.Agent.HostLoginAdopt do
   defp register_source(source_uri, installer_uri, flavor, host_dir) do
     case Ezagent.SnapshotStore.write(
            URI.to_string(source_uri),
-           %{sandbox: %{state: %{config_dir_path: host_dir, flavor: flavor}}},
-           kind_type: :agent
+           %{
+             sandbox: %{
+               state: %{
+                 config_dir_path: host_dir,
+                 flavor: flavor,
+                 template_class: nil,
+                 respawn_template_data: nil,
+                 pty_phase: nil,
+                 passive: true,
+                 recipe: nil
+               }
+             }
+           },
+           kind_type: :agent,
+           version: 0
          ) do
       {:ok, _} ->
         :ok = Ezagent.AgentLineage.record(source_uri, installer_uri)
@@ -135,6 +153,33 @@ defmodule Ezagent.Agent.HostLoginAdopt do
 
       {:error, reason} ->
         {:error, {:host_login_adopt_failed, {:source_registration, reason}}}
+    end
+  end
+
+  defp ensure_source_read_cap(installer_uri, source_uri) do
+    admin = Ezagent.Entity.User.admin_uri()
+    requested = Ezagent.Credential.GrantCap.read_cap_for(source_uri)
+
+    with :ok <- ensure_source_authority_live(source_uri),
+         {:ok, cap} <- Ezagent.Cap.issue({:admin, admin}, installer_uri, requested),
+         :ok <- Ezagent.Identity.absorb_cap(installer_uri, cap),
+         :ok <-
+           Ezagent.Identity.CapAbsorbAwait.await_exact(
+             installer_uri,
+             [cap],
+             @cap_store_timeout_ms
+           ) do
+      :ok
+    else
+      {:error, reason} -> {:error, {:host_login_adopt_failed, {:source_read_cap, reason}}}
+    end
+  end
+
+  defp ensure_source_authority_live(source_uri) do
+    case Ezagent.LocalRuntime.ensure_started_detailed(source_uri) do
+      {:ok, _status, _pid} -> :ok
+      {:error, {:already_started, _pid}} -> :ok
+      {:error, reason} -> {:error, reason}
     end
   end
 
@@ -149,15 +194,24 @@ defmodule Ezagent.Agent.HostLoginAdopt do
   defp set_pointer(installer_uri, ws_name, flavor, source_uri) do
     source = URI.to_string(source_uri)
 
-    result =
-      UserDefaultSource.set_via_dispatch(
+    target =
+      Ezagent.URI.with_action(
         installer_uri,
-        %{flavor: flavor, source_uri: source, workspace: ws_name},
-        %{
-          caller: installer_uri,
-          caps: MapSet.new([Ezagent.Capability.admin_genesis_cap()])
-        }
+        :user_default_credential_source,
+        :set_default_credential_source
       )
+
+    admin = Ezagent.Entity.User.admin_uri()
+
+    result =
+      with {:ok, signed_cap} <-
+             Ezagent.Cap.issue_for_action({:admin, admin}, installer_uri, target) do
+        UserDefaultSource.set_via_dispatch(
+          installer_uri,
+          %{flavor: flavor, source_uri: source, workspace: ws_name},
+          %{caller: installer_uri, caps: MapSet.new([signed_cap])}
+        )
+      end
 
     case result do
       {:ok, _} ->

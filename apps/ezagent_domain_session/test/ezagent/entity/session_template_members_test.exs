@@ -29,6 +29,7 @@ defmodule Ezagent.Entity.SessionTemplateMembersTest do
   alias Ezagent.{Invocation, KindRegistry}
   alias Ezagent.Ecto.KindSnapshot
   alias Ezagent.Entity.{SessionTemplate, User}
+  import Ezagent.Test.CapHelper, only: [signed_action_cap!: 2]
 
   defp uniq, do: System.unique_integer([:positive])
 
@@ -64,12 +65,13 @@ defmodule Ezagent.Entity.SessionTemplateMembersTest do
     target = Ezagent.URI.new!("#{URI.to_string(uri)}?action=template.read")
 
     Invocation.dispatch(%Invocation{
+      origin: :trusted_internal,
       target: target,
       mode: :call,
       args: %{},
       ctx: %{
         caller: User.admin_uri(),
-        caps: MapSet.new([Ezagent.Capability.admin_genesis_cap()]),
+        caps: MapSet.new([signed_action_cap!(target, User.admin_uri())]),
         reply: {:caller_inbox, self()}
       }
     })

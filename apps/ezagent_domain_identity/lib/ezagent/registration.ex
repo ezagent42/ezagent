@@ -193,30 +193,35 @@ defmodule Ezagent.Registration do
       slug = suggest_slug(derive_slug(email), plan.workspace_name)
       uri = Ezagent.URI.user(plan.workspace_name, slug)
 
-      txn =
-        EzagentCore.Repo.transaction(fn ->
-          with :ok <- plan.consume.(),
-               {:ok, _user} <- Users.create(uri, password, [], email_verified: false),
-               {:ok, _profile} <-
-                 Profile.upsert(%{
-                   entity_uri: Ezagent.URI.stable_key(uri),
-                   display_name: String.trim(display_name),
-                   email: email
-                 }) do
-            :created
-          else
-            {:error, reason} -> EzagentCore.Repo.rollback(reason)
-          end
-        end)
+      with :ok <- plan.prepare.(uri) do
+        txn =
+          EzagentCore.Repo.transaction(fn ->
+            with :ok <- plan.consume.(),
+                 {:ok, _user} <- Users.create(uri, password, [], email_verified: false),
+                 {:ok, _profile} <-
+                   Profile.upsert(%{
+                     entity_uri: Ezagent.URI.stable_key(uri),
+                     display_name: String.trim(display_name),
+                     email: email
+                   }) do
+              :created
+            else
+              {:error, reason} -> EzagentCore.Repo.rollback(reason)
+            end
+          end)
 
-      case txn do
-        {:ok, :created} ->
-          :ok = Ezagent.Entity.spawn_principal(uri)
-          plan.join.(uri)
-          {:ok, uri}
+        case txn do
+          {:ok, :created} ->
+            :ok = Ezagent.Entity.spawn_principal(uri)
 
-        {:error, reason} ->
-          {:error, reason}
+            with :ok <- plan.join.(uri),
+                 :ok <- plan.bootstrap.(uri) do
+              {:ok, uri}
+            end
+
+          {:error, reason} ->
+            {:error, reason}
+        end
       end
     end
   end
@@ -239,6 +244,7 @@ defmodule Ezagent.Registration do
             {:ok,
              %{
                workspace_name: ws_name,
+               prepare: fn _uri -> :ok end,
                consume: fn ->
                  case Ezagent.Entity.InviteCode.consume(code) do
                    {:ok, _} -> :ok
@@ -247,7 +253,8 @@ defmodule Ezagent.Registration do
                end,
                # Membership granted under the CODE ISSUER's authority (Codex #3,
                # Decision #154 no-unowned-permissions) — not workspace self-auth.
-               join: fn uri -> join_under_issuer(ws_name, uri, row.created_by) end
+               join: fn uri -> join_under_issuer(ws_name, uri, row.created_by) end,
+               bootstrap: fn _uri -> :ok end
              }}
 
           {:error, r} ->
@@ -257,20 +264,16 @@ defmodule Ezagent.Registration do
       opts[:mode] == :open_self_serve ->
         ws_name = "#{String.slice(derive_slug(email), 0, 20)}-#{random_suffix()}"
 
-        case create_self_serve_workspace(ws_name, email) do
-          :ok ->
-            {:ok,
-             %{
-               workspace_name: ws_name,
-               consume: fn -> :ok end,
-               # Founder of a brand-new workspace joins it under workspace
-               # self-authority (/2) — no privilege bypass since they own it.
-               join: fn uri -> founder_join(ws_name, uri) end
-             }}
-
-          {:error, r} ->
-            {:error, {:workspace, r}}
-        end
+        {:ok,
+         %{
+           workspace_name: ws_name,
+           prepare: fn founder_uri -> create_self_serve_workspace(ws_name, email, founder_uri) end,
+           consume: fn -> :ok end,
+           # Founder of a brand-new workspace joins it under workspace
+           # self-authority (/2) — no privilege bypass since they own it.
+           join: fn uri -> founder_join(ws_name, uri) end,
+           bootstrap: fn uri -> bootstrap_founder_caps(ws_name, uri) end
+         }}
 
       true ->
         {:error, :no_registration_target}
@@ -285,9 +288,25 @@ defmodule Ezagent.Registration do
     # add_member result (or :skipped when the workspace app isn't loaded).
     if workspace_loaded?(:add_member, 3) do
       issuer = Ezagent.URI.new!(issuer_str)
-      ctx = %{caller: issuer, caps: Ezagent.Identity.list_caps_for(issuer)}
+      workspace_uri = Ezagent.URI.workspace(ws_name)
+      target = Ezagent.URI.with_action(workspace_uri, :workspace, :add_member)
 
-      case apply(Ezagent.Workspace, :add_member, [ws_name, user_uri, ctx]) do
+      authorization =
+        if Ezagent.URI.stable_key(issuer) ==
+             Ezagent.URI.stable_key(Ezagent.Entity.User.admin_uri()),
+           do: {:admin, issuer},
+           else: {:held_by, issuer}
+
+      result =
+        with {:ok, cap} <- Ezagent.Cap.issue_for_action(authorization, issuer, target) do
+          apply(Ezagent.Workspace, :add_member, [
+            ws_name,
+            user_uri,
+            %{caller: issuer, caps: [cap]}
+          ])
+        end
+
+      case result do
         :ok ->
           :ok
 
@@ -315,13 +334,13 @@ defmodule Ezagent.Registration do
     :ok
   end
 
-  defp create_self_serve_workspace(ws_name, email) do
+  defp create_self_serve_workspace(ws_name, email, founder_uri) do
     cond do
       not workspace_loaded?(:create, 2) ->
         {:error, :workspace_unavailable}
 
       true ->
-        case apply(Ezagent.Workspace, :create, [ws_name, %{}]) do
+        case apply(Ezagent.Workspace, :create, [ws_name, %{created_by: founder_uri}]) do
           {:ok, _} ->
             # A user_list rule with just this email so the founder is accepted.
             if workspace_loaded?(:add_magic_link_rule, 3) do
@@ -335,6 +354,64 @@ defmodule Ezagent.Registration do
             {:error, reason}
         end
     end
+  end
+
+  defp bootstrap_founder_caps(ws_name, %URI{} = founder_uri) do
+    workspace_uri = Ezagent.URI.workspace(ws_name)
+    admin_uri = Ezagent.Entity.User.admin_uri()
+
+    if workspace_loaded?(:issue_and_absorb_initial_caps, 3) do
+      case apply(Ezagent.Workspace, :issue_and_absorb_initial_caps, [
+             founder_uri,
+             founder_caps(workspace_uri),
+             %{caller: admin_uri}
+           ]) do
+        {:ok, issued} ->
+          case Ezagent.Identity.CapAbsorbAwait.await_exact(founder_uri, issued, 2_000) do
+            :ok -> :ok
+            {:error, reason} -> {:error, {:founder_cap_bootstrap_failed, reason}}
+          end
+
+        {:error, reason} ->
+          {:error, {:founder_cap_bootstrap_failed, reason}}
+      end
+    else
+      {:error, {:founder_cap_bootstrap_failed, :workspace_unavailable}}
+    end
+  end
+
+  defp founder_caps(workspace_uri) do
+    workspace_actions = [:create_agent, :add_member, :remove_member]
+    invite_actions = [:mint_invite, :list_invites, :revoke_invite]
+
+    workspace_caps =
+      Enum.map(workspace_actions, fn action ->
+        Ezagent.Capability.cap(
+          :workspace,
+          Ezagent.ActionSet.Workspace,
+          action,
+          workspace_uri,
+          workspace_uri
+        )
+      end)
+
+    invite_caps =
+      Enum.map(invite_actions, fn action ->
+        Ezagent.Capability.cap(
+          :workspace,
+          Ezagent.ActionSet.WorkspaceUserAdmin,
+          action,
+          workspace_uri,
+          workspace_uri
+        )
+      end)
+
+    # API-key actions live on each concrete Agent Kind. Under per-Kind
+    # signing there is no authority that can sign a wildcard for future
+    # agents; the create-agent path delegates authority on the new concrete
+    # Agent instead. Founder bootstrap therefore contains only capabilities
+    # signed by the already-live Workspace Kind.
+    workspace_caps ++ invite_caps
   end
 
   defp workspace_loaded?(fun, arity) do

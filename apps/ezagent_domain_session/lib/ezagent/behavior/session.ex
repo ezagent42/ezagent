@@ -1044,13 +1044,9 @@ defmodule Ezagent.ActionSet.Session do
   # - be the system-internal Generator init path —
   #   `ctx[:system_internal] == true`, set ONLY by
   #   `system_set_working_copy/2`, never reachable from a user dispatch.
-  def handle_set_working_copy(%{template_working_copy: wc}, ctx)
+  def handle_set_working_copy(%{template_working_copy: wc}, _ctx)
       when is_map(wc) do
-    if ConfigActions.working_copy_write_authorized?(ctx) do
-      {:ok, %{template_working_copy: wc}, [{:set, :template_working_copy, wc}]}
-    else
-      {:error, :unauthorized}
-    end
+    {:ok, %{template_working_copy: wc}, [{:set, :template_working_copy, wc}]}
   end
 
   @doc """
@@ -1091,12 +1087,8 @@ defmodule Ezagent.ActionSet.Session do
   #     self_uri}` delegated cap (cap #1, granted only by the Generator).
   #
   # The `system_internal`-ctx-flag is NO LONGER consulted for legends.
-  def handle_set_legends(%{legends: legends}, ctx) when is_map(legends) do
-    if Legends.legends_write_authorized?(ctx) do
-      {:ok, %{legends: legends}, [{:set, :legends, legends}]}
-    else
-      {:error, :unauthorized}
-    end
+  def handle_set_legends(%{legends: legends}, _ctx) when is_map(legends) do
+    {:ok, %{legends: legends}, [{:set, :legends, legends}]}
   end
 
   @doc """
@@ -1139,12 +1131,8 @@ defmodule Ezagent.ActionSet.Session do
   # orchestrator (the `{:within_session, self_uri}` delegated cap). A
   # prompt-template fronts a team's delivery transform — the same
   # orchestrator/system-config authority class a legend has.
-  def handle_set_prompt_templates(%{prompt_templates: pts}, ctx) when is_map(pts) do
-    if Legends.legends_write_authorized?(ctx) do
-      {:ok, %{prompt_templates: pts}, [{:set, :prompt_templates, pts}]}
-    else
-      {:error, :unauthorized}
-    end
+  def handle_set_prompt_templates(%{prompt_templates: pts}, _ctx) when is_map(pts) do
+    {:ok, %{prompt_templates: pts}, [{:set, :prompt_templates, pts}]}
   end
 
   @doc """

@@ -136,7 +136,8 @@ defmodule Ezagent.Agent.Retirement do
           caller: context.caller,
           caps: context.caps,
           reply: {:caller_inbox, self()}
-        }
+        },
+        origin: :trusted_internal
       })
 
     interpret_destroy_result(result, obligation)
@@ -167,7 +168,7 @@ defmodule Ezagent.Agent.Retirement do
     do: resolve_complete(obligation)
 
   defp interpret_destroy_result({:error, reason}, obligation)
-       when reason in [:unauthorized, :identity_read_unavailable] do
+       when reason in [:unauthorized, :missing_cap, :identity_read_unavailable] do
     _ = RetirementObligations.resolve(obligation.id)
     {:error, %{termination: :not_destroyed, reason: reason}}
   end

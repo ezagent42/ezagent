@@ -40,16 +40,9 @@ defmodule Ezagent.Entity.User do
   `EzagentDomainInstanceMessage.Application`). Both fns delegate here so the
   policy stays in ONE place.
 
-  Three cases:
+  Two cases:
 
-  1. **Admin URI** (`entity://user/system/admin`) — bootstrap caps
-     from the closed catalog at `MapSet.new([Ezagent.Capability.admin_genesis_cap()])`
-     (the `[:any, :any, :any, :any]` wildcard structural invariant
-     plus catalog rows). Same value across boots; admin has no
-     `users.caps_json` row at the time of the very first boot before
-     `ensure_admin_user/0` provisions it.
-
-  2. **Non-admin user with a `users.caps_json` row** — caps_json
+  1. **User with a `users.caps_json` row** — caps_json
      contents (which include `User.default_caps(workspace)` ++ any
      caller-supplied caps from `mix ezagent.user.create --caps ...`
      or `Behavior.WorkspaceUserAdmin.create_user`). This is the fix
@@ -58,7 +51,7 @@ defmodule Ezagent.Entity.User do
      caps_json never reached the slice — snapshot then froze that
      empty state, denying dispatch step 5.5 forever.
 
-  3. **Non-admin user with NO caps_json row** — empty MapSet. This
+  2. **User with NO caps_json row** — empty MapSet. This
      covers test fixtures that demand-spawn a URI without a backing
      DB row, and the brief boot-order window before
      `Ezagent.Users.get_by_uri/1` is callable. The User Kind will
@@ -80,26 +73,16 @@ defmodule Ezagent.Entity.User do
   """
   @spec initial_caps_for_spawn(URI.t()) :: MapSet.t(Ezagent.Capability.t())
   def initial_caps_for_spawn(%URI{} = uri) do
-    if uri == admin_uri() do
-      # #154 genesis collapse (2026-06-20) — the admin entity is the SELF-GRANTED
-      # genesis trust root: its all-caps wildcard is granted_by itself (a real
-      # entity), NOT the eliminated `system://bootstrap` principal. The canonical
-      # genesis cap lives in core (`Ezagent.Capability.admin_genesis_cap/0`), so
-      # this minter + `admin_invariant?/1`'s recognizer never drift.
-      MapSet.new([Ezagent.Capability.admin_genesis_cap()])
-    else
-      uri |> Ezagent.EntityCaps.load_persisted() |> MapSet.new()
-    end
+    # The canonical admin root is represented by each target Kind's sealed
+    # authority-row anchor, never by an ambient wildcard in a User slice.
+    uri |> Ezagent.EntityCaps.load_persisted() |> MapSet.new()
   end
 
   # SPEC caps-cleanup-v1 §4 / §4.6 (PR-CC-1): `admin_caps/0` DELETED.
   # The ambient all-caps escape hatch is replaced by the closed
   # `Ezagent.SystemPrincipal.Catalog` allowlist of 14 system
-  # principals + their permitted caps. Admin's bootstrap caps now
-  # come from `MapSet.new([Ezagent.Capability.admin_genesis_cap()])`,
-  # which mints the same structural wildcard cap (granted by
-  # `system://bootstrap/default`) so the `Capability.revoke/2`
-  # admin-invariant + admin-bootstrap behavior are preserved.
+  # principals + their permitted caps. Per-Kind sealed anchors replace the
+  # former ambient admin wildcard.
   #
   # Per `feedback_let_it_crash_no_workarounds`: there is no shim
   # here — any remaining caller fails at compile time, and the

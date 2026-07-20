@@ -129,9 +129,13 @@ defmodule Ezagent.TestSupport.TemplateAgentSpawn do
     :ok = Ezagent.AgentFlavorAttributes.put(agent_uri, flavor)
 
     _ = Ezagent.ReadyGate.await(agent_uri, 5_000)
+    target = Ezagent.URI.with_action(agent_uri, :sandbox, :update_config)
+
+    {:ok, update_cap} =
+      Ezagent.Cap.issue_for_action({:admin, User.admin_uri()}, agent_uri, target)
 
     case Ezagent.Invocation.dispatch(%Ezagent.Invocation{
-           target: Ezagent.URI.with_action(agent_uri, :sandbox, :update_config),
+           target: target,
            mode: :call,
            args: %{
              config_dir_path: nil,
@@ -139,26 +143,11 @@ defmodule Ezagent.TestSupport.TemplateAgentSpawn do
              respawn_template_data: %{"class" => template_class_name(flavor), "flavor" => flavor}
            },
            ctx: %{
-             # #830 fallout fix — `system://agent-internal` was eliminated; mirror
-             # production `Agent.TemplateSpawn.sandbox_update_config_self_cap/1`: the
-             # agent records its OWN sandbox state under its OWN inline
-             # `sandbox.update_config` self-authority (a real entity granter).
-             caller: agent_uri,
-             caps: [
-               %Ezagent.Capability{
-                 Ezagent.Capability.cap(
-                   :agent,
-                   Ezagent.ActionSet.Sandbox,
-                   :update_config,
-                   Ezagent.URI.instance(agent_uri),
-                   Ezagent.Capability.workspace_of(agent_uri)
-                 )
-                 | granted_by: agent_uri,
-                   granted_at: DateTime.utc_now()
-               }
-             ],
-             reply: {:caller_inbox, self()}
-           }
+            caller: agent_uri,
+            caps: [update_cap],
+            reply: {:caller_inbox, self()}
+           },
+           origin: :trusted_internal
          }) do
       {:ok, _} -> :ok
       {:error, _} = err -> err

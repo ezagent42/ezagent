@@ -102,12 +102,12 @@ defmodule Ezagent.Email.Inbound.Authority do
     _ -> {:reject, :binding_actor_invalid}
   end
 
-  defp issue_decision(_meta, row, session_uri, binding_actor) do
+  defp issue_decision(_meta, row, session_uri, _binding_actor) do
     workspace_name = Ezagent.URI.workspace_name!(session_uri)
     principal_uri = Ezagent.URI.entity(workspace_name, :user, "email-" <> short_id())
 
     case Ezagent.Cap.issue(
-           {:rule, :verified_email_binding, binding_actor},
+           {:admin, Ezagent.URI.user(:system, :admin)},
            principal_uri,
            send_cap(session_uri)
          ) do
