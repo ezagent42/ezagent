@@ -165,6 +165,20 @@ defmodule Ezagent.Cap do
   end
 
   @doc """
+  The single authorization chokepoint (unified-revocation Phase F-1).
+
+  Takes an explicit authenticated `holder`, the presented `candidate_caps`,
+  and the `needed` cap shape. The principal gate is resolved from the
+  holder's independently-loaded caps (never from `candidate_caps`), then each
+  candidate is verified against its target's CURRENT active authority row
+  (`Ezagent.Cap.Authority.verify_against_current/3`). See
+  `Ezagent.Cap.Authorize` for the full contract.
+  """
+  @spec authorize(URI.t(), Enumerable.t(), map()) ::
+          {:ok, Capability.t()} | Ezagent.Cap.Authorize.denial()
+  defdelegate authorize(holder_uri, candidate_caps, needed), to: Ezagent.Cap.Authorize
+
+  @doc """
   Return born-signed, receiver-bound artifacts that may enter a cap store.
 
   This is deliberately a structural storage filter, not an authorization

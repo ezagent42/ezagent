@@ -135,6 +135,57 @@ defmodule Ezagent.Cap.Authority do
     end
   end
 
+  @doc """
+  Verify a cap against the TARGET's CURRENT active authority row, read fresh
+  from the DB on every call (unified-revocation Phase F-1, DECISION #2 / MF4).
+
+  This is the revocation-correct verify: `regenesis/3` flips the DB active
+  row atomically, so a gen-bumped target's old-gen caps fail immediately —
+  independent of whether the target's process is alive or busy. The current
+  `key_id` comes from the committed active row (never the process-dict
+  `verify_current/2` authority, which a live process caches stale-on-bump);
+  the public key for that immutable `key_id` is memoized in
+  `Ezagent.Cap.AuthorityCache` (read-through to the durable row on a miss).
+
+  Fail-closed: a target with no active row, an unreadable store, a `key_id`
+  mismatch, a presenter other than the grantee, or a bad signature all
+  return `false`.
+  """
+  @spec verify_against_current(Capability.t(), URI.t(), URI.t()) :: boolean()
+  def verify_against_current(
+        %Capability{signature: signature, grantee_uri: presenter} = cap,
+        %URI{} = presenter,
+        %URI{} = target
+      )
+      when is_binary(signature) do
+    with {:ok, current_key_id} <- current_key_id(target),
+         true <- cap.key_id == current_key_id,
+         {:ok, public_key} <- Ezagent.Cap.AuthorityCache.public_key(current_key_id) do
+      :crypto.verify(
+        :eddsa,
+        :none,
+        Signing.signing_payload(cap),
+        signature,
+        [public_key, :ed25519]
+      )
+    else
+      _ -> false
+    end
+  rescue
+    _ -> false
+  end
+
+  def verify_against_current(%Capability{}, %URI{}, %URI{}), do: false
+
+  defp current_key_id(%URI{} = target) do
+    target_string = target |> Ezagent.URI.instance() |> Ezagent.URI.stable_key()
+
+    case KindCapAuthority.active(target_string) do
+      %KindCapAuthority{key_id: key_id} -> {:ok, key_id}
+      nil -> :error
+    end
+  end
+
   @doc false
   @spec current_target?(URI.t()) :: boolean()
   def current_target?(%URI{} = target) do

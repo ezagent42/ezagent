@@ -36,6 +36,11 @@ defmodule EzagentCore.EtsOwner do
     # ordinary Kind ready transitions avoid a cross-workspace DB query. The
     # outbox rows remain authoritative and the Sweeper rehydrates this cache.
     {Ezagent.Cap.DeliveryOutbox, :set},
+    # Unified-revocation Phase F-1 (MF4): `Ezagent.Cap.AuthorityCache` memoizes
+    # ONLY the immutable `key_id -> public_key` mapping — never a mutable
+    # "current" pointer (the current key_id always comes fresh from the DB
+    # active row), so there is no stale-cache window to invalidate.
+    {Ezagent.Cap.AuthorityCache, :set},
     {Ezagent.Idempotency, :set},
     {Ezagent.BehaviorRegistry, :set},
     {Ezagent.RoutingRegistry, :set},
