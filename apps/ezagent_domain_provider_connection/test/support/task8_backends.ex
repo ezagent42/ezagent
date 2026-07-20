@@ -1,3 +1,5 @@
+Code.require_file(Path.expand("refresh_exchange_backend_support.ex", __DIR__))
+
 defmodule Ezagent.ProviderConnection.Test.Task8Driver do
   @moduledoc false
   @behaviour Ezagent.ProviderConnection.Driver
@@ -33,16 +35,54 @@ defmodule Ezagent.ProviderConnection.Test.Task8Driver do
   def reconcile_callback(_context), do: {:ok, :not_completed}
 
   @impl true
-  def refresh(context), do: effect(:refresh, context)
+  def refresh(%{refresh_use: refresh_use} = context) do
+    maybe_probe_foreign_replay(refresh_use)
+
+    Ezagent.ProviderConnection.CredentialRefreshExchange.consume_refresh_exchange(%{
+      refresh_use: refresh_use,
+      provider_exchange: fn private_frame -> refresh_effect(:refresh, context, private_frame) end
+    })
+  end
+
+  def refresh(_context), do: {:error, :provider_protocol_failed}
+
+  defp maybe_probe_foreign_replay(refresh_use) do
+    case Application.get_env(:ezagent_domain_provider_connection, :task8_refresh_replay_probe) do
+      owner when is_pid(owner) ->
+        task =
+          Task.async(fn ->
+            Ezagent.ProviderConnection.CredentialRefreshExchange.consume_refresh_exchange(%{
+              refresh_use: refresh_use,
+              provider_exchange: fn _private_frame ->
+                raise "foreign replay reached provider effect"
+              end
+            })
+          end)
+
+        send(owner, {:task8_refresh_replay_result, Task.await(task)})
+
+      _ ->
+        :ok
+    end
+  end
 
   @impl true
-  def reconcile_refresh(context), do: effect(:reconcile_refresh, context)
+  def reconcile_refresh(%{refresh_use: refresh_use} = context) do
+    Ezagent.ProviderConnection.CredentialRefreshExchange.consume_refresh_exchange(%{
+      refresh_use: refresh_use,
+      provider_exchange: fn private_frame ->
+        refresh_effect(:reconcile_refresh, context, private_frame)
+      end
+    })
+  end
+
+  def reconcile_refresh(_context), do: {:error, :provider_protocol_failed}
 
   @impl true
   def discard_callback_result(context), do: discard_callback_result_effect(context)
 
   @impl true
-  def discard_refresh_result(context), do: effect(:discard_refresh_result, context)
+  def discard_refresh_result(context), do: discard_refresh_result_effect(context)
 
   @impl true
   def revoke(context), do: effect(:provider_revoke, context)
@@ -118,6 +158,53 @@ defmodule Ezagent.ProviderConnection.Test.Task8Driver do
     ~w(owner_uri workspace_uri provider_id acquisition_method governed_host backend_pair_id operation_id connection_id expected_connection_version attempt_ref authorization_ref expected_authorization_version correlation_id command_digest expected_credential_version)a
   end
 
+  defp discard_refresh_result_effect(context) do
+    state = Application.fetch_env!(:ezagent_domain_provider_connection, :task8_effect_state)
+
+    with :ok <- Ezagent.ProviderConnection.Driver.validate_discard_context(:refresh, context) do
+      Agent.get_and_update(state, fn current ->
+        expected = Map.get(current.provider_results, context.provider_result_ref)
+        actual = Map.take(context, refresh_discard_binding_keys())
+        key = context.discard_idempotency_key
+        digest = canonical_digest(context)
+
+        cond do
+          expected != actual ->
+            {{:error, :correlation_conflict}, current}
+
+          Map.get(current.provider_discards, key) == digest ->
+            {:ok, current}
+
+          Map.has_key?(current.provider_discards, key) or
+              Map.has_key?(current.discarded_provider_results, context.provider_result_ref) ->
+            {{:error, :correlation_conflict}, current}
+
+          true ->
+            reply = Map.get(current.replies, :discard_refresh_result, :ok)
+            count = Map.get(current.counts, :discard_refresh_result, 0) + 1
+            calls = Map.update(current.calls, :discard_refresh_result, [context], &[context | &1])
+
+            next = %{
+              current
+              | counts: Map.put(current.counts, :discard_refresh_result, count),
+                calls: calls
+            }
+
+            next =
+              if reply == :ok or match?({:ok, _receipt}, reply) do
+                next
+                |> put_in([:provider_discards, key], digest)
+                |> put_in([:discarded_provider_results, context.provider_result_ref], key)
+              else
+                next
+              end
+
+            {reply, next}
+        end
+      end)
+    end
+  end
+
   defp provider_result_ref(context, private_frame) do
     {Map.drop(context, [:exchange]), Map.drop(private_frame, [:pkce_verifier])}
     |> :erlang.term_to_binary([:deterministic])
@@ -148,18 +235,7 @@ defmodule Ezagent.ProviderConnection.Test.Task8Driver do
     reply
   end
 
-  defp default_reply(:refresh, _context) do
-    {:ok,
-     %{
-       credential_material: "task8-rotated-material",
-       permission_digest: "permissions-v2",
-       expires_at: DateTime.add(DateTime.utc_now(), 3_600, :second)
-     }}
-  end
-
-  defp default_reply(:reconcile_refresh, _context), do: {:ok, :not_completed}
   defp default_reply(:discard_callback_result, _context), do: :ok
-  defp default_reply(:discard_refresh_result, _context), do: :ok
 
   defp default_reply(:provider_revoke, _context), do: {:ok, %{provider_request_id: "req-1"}}
 
@@ -172,6 +248,57 @@ defmodule Ezagent.ProviderConnection.Test.Task8Driver do
       {:release_task8, ^kind} -> :ok
     end
   end
+
+  defp refresh_effect(kind, context, private_frame) do
+    state = Application.fetch_env!(:ezagent_domain_provider_connection, :task8_effect_state)
+    correlation_id = context.correlation_id
+
+    {reply, barrier} =
+      Agent.get_and_update(state, fn current ->
+        existing = Map.get(current.provider_results, correlation_id)
+
+        default =
+          if kind == :reconcile_refresh and is_nil(existing) do
+            {:ok, :not_completed}
+          else
+            {:ok,
+             %{
+               provider_result_ref: "task8-refresh-result:" <> correlation_id,
+               replacement_credential: {private_frame, "task8-rotated-material"},
+               granted_permissions_digest: "permissions-v2",
+               expires_at: nil,
+               provider_metadata: %{}
+             }}
+          end
+
+        reply = Map.get(current.replies, kind, existing || default)
+        count = Map.get(current.counts, kind, 0) + 1
+        calls = Map.update(current.calls, kind, [context], &[context | &1])
+
+        next = %{current | counts: Map.put(current.counts, kind, count), calls: calls}
+
+        next =
+          case reply do
+            {:ok, %{provider_result_ref: ref}} = completed ->
+              binding = Map.take(context, refresh_discard_binding_keys())
+
+              next
+              |> put_in([:provider_results, correlation_id], completed)
+              |> put_in([:provider_results, ref], binding)
+
+            _other ->
+              next
+          end
+
+        {{reply, Map.get(current.barriers, kind)}, next}
+      end)
+
+    maybe_barrier(barrier, kind, context)
+    reply
+  end
+
+  defp refresh_discard_binding_keys,
+    do: List.delete(callback_discard_binding_keys(), :attempt_ref)
 end
 
 defmodule Ezagent.ProviderConnection.Test.Task8CredentialBackend do
@@ -192,6 +319,37 @@ defmodule Ezagent.ProviderConnection.Test.Task8CredentialBackend do
 
   @impl true
   def consume_lease(_command), do: :ok
+
+  @impl true
+  def begin_refresh_exchange(command) do
+    state = Application.fetch_env!(:ezagent_domain_provider_connection, :task8_effect_state)
+
+    case Agent.get(state, &Map.get(&1.replies, :begin_refresh_exchange)) do
+      {:capture_and_error, owner} when is_pid(owner) ->
+        send(owner, {:task8_refresh_scope, command.scope_authority})
+        {:error, :correlation_conflict}
+
+      _reply ->
+        if Application.get_env(
+             :ezagent_domain_provider_connection,
+             :task8_remote_refresh,
+             false
+           ) do
+          Ezagent.ProviderConnection.Test.RemoteRefreshExchangeEndpoint.begin(__MODULE__, command)
+        else
+          Ezagent.ProviderConnection.Test.RefreshExchangeBackendSupport.begin(__MODULE__, command)
+        end
+    end
+  end
+
+  @impl true
+  def consume_refresh_exchange(command) do
+    if Application.get_env(:ezagent_domain_provider_connection, :task8_remote_refresh, false) do
+      Ezagent.ProviderConnection.Test.RemoteRefreshExchangeEndpoint.consume(__MODULE__, command)
+    else
+      Ezagent.ProviderConnection.Test.RefreshExchangeBackendSupport.consume(__MODULE__, command)
+    end
+  end
 
   @impl true
   def revoke(command), do: effect(:credential_revoke, command)

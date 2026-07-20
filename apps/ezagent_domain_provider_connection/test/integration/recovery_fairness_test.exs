@@ -25,6 +25,9 @@ defmodule Ezagent.ProviderConnection.RecoveryFairnessTest do
       acquisition_method: "oauth_user",
       authorization_backend_ref: "authorization-recovery",
       credential_backend_ref: "credential-recovery",
+      backend_pair_id: "pair-recovery-v1",
+      authorization_backend_id: "authorization-recovery-v1",
+      credential_backend_id: "credential-recovery-v1",
       status: "active"
     }
     |> Connection.create_changeset()
@@ -42,8 +45,10 @@ defmodule Ezagent.ProviderConnection.RecoveryFairnessTest do
 
     refresh =
       operation_row(context.connection_id, "refresh", "later-phase-success", 2,
-        lease_until: DateTime.add(@now, -1, :second),
+        status: "backend_committed",
+        handoff_ref: "handoff-later-phase",
         provider_result_ref: "provider-result-later-phase",
+        result_permission_digest: "permissions-later-phase",
         result_ref: "credential-result-later-phase",
         result_credential_version: 2
       )
@@ -315,7 +320,7 @@ defmodule Ezagent.ProviderConnection.RecoveryFairnessTest do
   defp operation_row(connection_id, operation_class, correlation_id, offset, overrides \\ []) do
     inserted_at = DateTime.add(@now, offset, :microsecond)
 
-    %{
+    row = %{
       id: Ecto.UUID.generate(),
       workspace_uri: "workspace://recovery-fairness",
       connection_id: connection_id,
@@ -331,6 +336,17 @@ defmodule Ezagent.ProviderConnection.RecoveryFairnessTest do
       inserted_at: inserted_at,
       updated_at: inserted_at
     }
-    |> Map.merge(Map.new(overrides))
+
+    row =
+      if operation_class == "refresh" do
+        Map.merge(row, %{
+          expected_authorization_ref: "authorization-recovery",
+          expected_authorization_version: 0
+        })
+      else
+        row
+      end
+
+    Map.merge(row, Map.new(overrides))
   end
 end

@@ -1,6 +1,6 @@
 defmodule Ezagent.ProviderConnection.CredentialBackend do
   @moduledoc """
-  Frozen D0 credential-backend replacement boundary.
+  Credential-backend replacement and private refresh-use boundary.
 
   No callback provides generic plaintext retrieval. Credential use is released
   only through the operation-bound lease protocol.
@@ -14,6 +14,17 @@ defmodule Ezagent.ProviderConnection.CredentialBackend do
   @callback status(command()) :: result()
   @callback lease_for_operation(command()) :: result()
   @callback consume_lease(command()) :: :ok | result()
+  @doc false
+  @callback begin_refresh_exchange(command()) ::
+              {:ok, Ezagent.ProviderConnection.CredentialBackend.RefreshUse.t()}
+              | {:error, atom()}
+
+  @doc false
+  @callback consume_refresh_exchange(%{
+              required(:refresh_use) =>
+                Ezagent.ProviderConnection.CredentialBackend.RefreshUse.t(),
+              required(:provider_exchange) => (term() -> result())
+            }) :: result()
   @doc """
   Revokes a credential with an explicit stable idempotency key.
 

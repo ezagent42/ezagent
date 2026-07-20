@@ -238,6 +238,8 @@ defmodule Ezagent.ProviderConnection.Driver do
   defp safe_term?(value) when is_atom(value), do: true
   defp safe_term?(value) when is_list(value), do: Enum.all?(value, &safe_term?/1)
 
+  defp safe_term?(%_struct{}), do: false
+
   defp safe_term?(value) when is_map(value) do
     Enum.all?(value, fn {key, item} -> safe_term?(key) and safe_term?(item) end)
   end

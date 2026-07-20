@@ -279,6 +279,8 @@ defmodule Ezagent.ProviderConnection.SecretBoundaryTest do
     assert Enum.sort(Ezagent.ProviderConnection.CredentialBackend.behaviour_info(:callbacks)) ==
              Enum.sort(
                consume_lease: 1,
+               begin_refresh_exchange: 1,
+               consume_refresh_exchange: 1,
                lease_for_operation: 1,
                replace: 1,
                revoke: 1,

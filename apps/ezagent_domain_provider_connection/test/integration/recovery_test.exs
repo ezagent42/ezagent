@@ -221,11 +221,12 @@ defmodule Ezagent.ProviderConnection.RecoveryTest do
            )
   end
 
-  test "refresh and termination recovery re-enter owner-bound Store orchestration" do
+  test "refresh uses its reconcile recovery path while termination re-enters owner-bound Store" do
     source =
       File.read!(Path.expand("../../lib/ezagent/provider_connection/recovery.ex", __DIR__))
 
-    assert length(Regex.scan(~r/Store\.execute\(/, source)) == 3
+    assert length(Regex.scan(~r/Store\.execute\(/, source)) == 2
+    assert source =~ "Refresh.recover(operation, now)"
     refute source =~ "Refresh.execute("
     refute source =~ "Termination.execute("
     assert source =~ "self_uri: Ezagent.URI.new!(connection.owner_uri)"

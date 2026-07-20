@@ -150,6 +150,8 @@ defmodule Ezagent.ProviderConnection.CredentialFinalizationOverlapTest do
       correlation_id: "store:#{attempt.correlation_id}",
       bound_input_digest: "digest",
       expected_connection_version: connection.connection_version,
+      expected_authorization_ref: attempt.authorization_ref,
+      expected_authorization_version: connection.authorization_version,
       expected_credential_version: connection.credential_version,
       attempt_version: attempt.attempt_version,
       attempt_claim_token: attempt.claim_token,
