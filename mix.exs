@@ -178,6 +178,13 @@ defmodule EzagentCore.Umbrella.MixProject do
         "precommit",
         "ezagent.check_invariants",
         "ezagent.uri_query.scan",
+        # Gate-parity: the ci.yml `gate` job runs `mix world.e2e.fixtures --check`
+        # (asserts the committed world E2E fixtures still match the generator), but
+        # `ci.local` did NOT — so a local pre-push `ci.local` + the main full-suite
+        # both MISSED world-fixture drift that only the PR `gate` would catch. Add it
+        # here so `ci.local` is a true SUPERSET of the gate. Deterministic; the code
+        # is already compiled by `precommit` above. Raises (non-zero) on drift.
+        "world.e2e.fixtures --check",
         # T2-3 — socialware Definition conformance gate. It queries the
         # ConfigStore (DB), so it CANNOT run in this same BEAM right after `test`:
         # `mix test` leaves the Ecto SQL Sandbox in `:manual` mode, and this mix

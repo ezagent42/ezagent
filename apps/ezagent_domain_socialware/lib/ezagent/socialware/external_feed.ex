@@ -32,6 +32,10 @@ defmodule Ezagent.Socialware.ExternalFeed do
   alias Ezagent.Socialware.SessionReads
   alias Ezagent.URI, as: EzURI
 
+  # The snapshot recency window. MUST stay equal to
+  # `SessionReads.@external_snapshot_limit` (where the limit is now applied) —
+  # the snapshot parity test depends on the identical window. Kept here as
+  # documentation + for `history/2`/`chat_messages/2`.
   @history_limit 100
   @approved_scan_limit 500
 
@@ -45,10 +49,12 @@ defmodule Ezagent.Socialware.ExternalFeed do
 
   @spec snapshot(URI.t(), URI.t() | term()) :: {:ok, map()} | {:error, :unauthorized}
   def snapshot(%URI{} = session_uri, caller) do
-    with {:ok, messages} <-
-           SessionReads.messages(caller, session_uri, :external_feed, %{limit: @history_limit}),
-         {:ok, surface} <- SessionReads.external_surface(caller, session_uri),
-         {:ok, version} <- SessionReads.committed_external_surface_version(caller, session_uri) do
+    # The messages + committed-version pair comes from ONE authorized,
+    # straddle-safe chokepoint read (version-first): a settlement commit landing
+    # mid-read can no longer yield a rendered page without its messages.
+    with {:ok, %{messages: messages, version: version}} <-
+           SessionReads.external_snapshot_reads(caller, session_uri),
+         {:ok, surface} <- SessionReads.external_surface(caller, session_uri) do
       {:ok,
        %{
          messages: messages,

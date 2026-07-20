@@ -37,6 +37,10 @@ defmodule Ezagent.Socialware.SessionReads do
       `committed_external_surface_version/2` are the DELIVERY plane (the
       durable `DeliveryOutbox` commit-cursor reads the external feed replays
       and pages from).
+    * `external_snapshot_reads/3` is the ATOMIC snapshot plane: the committed
+      external-visible messages + the committed surface version authorized ONCE
+      and read in straddle-safe (version-first) order, so a mid-read settlement
+      commit can never yield a rendered page without its messages.
     * `external_surface/2` is the SURFACE plane (the `:surface`-slice page/shell
       read, cold-safe via the durable-snapshot fallback).
 
@@ -254,6 +258,43 @@ defmodule Ezagent.Socialware.SessionReads do
       {:ok, surface_slice(session_uri)}
     end
   end
+
+  @external_snapshot_limit 100
+
+  @doc """
+  Atomic external-feed snapshot reads for `caller` in `session_uri`: the committed
+  external-visible messages AND the committed surface version, authorized ONCE
+  (public-aware read gate) and read in a STRADDLE-SAFE order.
+
+  Reads the committed version FIRST, then the messages. Settlement commits are
+  atomic (`Settlement.commit_after_pointer/2` flips settlement status + assigns
+  `DeliveryOutbox.committed_seq`/`surface_version` in one transaction) and
+  monotonic, so version-first guarantees: if a committed `version` is reported,
+  that committed turn's messages are already visible to the later messages read
+  (no page-without-content straddle). The benign inverse (messages ahead of the
+  page for one poll) self-heals and is covered by the durable delivery replay.
+
+  `opts[:mid_read]` is a 0-arity TEST seam fired AFTER the version read and BEFORE
+  the messages read — the straddle-injection point. Defaults to a no-op; never set
+  in production.
+
+  `@external_snapshot_limit` MUST stay equal to `ExternalFeed.@history_limit` —
+  the snapshot parity test depends on the identical recency window.
+  """
+  @spec external_snapshot_reads(URI.t() | term(), URI.t(), keyword()) ::
+          {:ok, %{messages: [Ezagent.Message.t()], version: integer() | nil}}
+          | {:error, :unauthorized}
+  def external_snapshot_reads(caller, %URI{} = session_uri, opts \\ []) when is_list(opts) do
+    with :ok <- authorize_external_read(caller, session_uri) do
+      version = committed_surface_version(session_uri)
+      run_mid_read(opts[:mid_read])
+      messages = external_feed_read(session_uri, %{limit: @external_snapshot_limit})
+      {:ok, %{messages: messages, version: version}}
+    end
+  end
+
+  defp run_mid_read(nil), do: :ok
+  defp run_mid_read(fun) when is_function(fun, 0), do: fun.()
 
   # ----- authorization (live-first, shared predicate) ------------------------
 

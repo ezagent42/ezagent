@@ -184,6 +184,37 @@ defmodule Ezagent.Socialware.SessionReadsExternalFeedTest do
     turn_id
   end
 
+  # Prepare a settlement WITHOUT committing it (the pre-commit half of commit/3):
+  # settlement begun + outbox row with committed_seq NIL. Returns the turn_id so a
+  # test can fire the atomic commit (mark_committed_for_test/1) at a chosen instant.
+  defp prepare_uncommitted(session_uri, message_ids, surface_version) do
+    {:ok, workspace_uri} = Ezagent.WorkspaceRegistry.lookup(session_uri)
+    turn_id = "#{URI.to_string(session_uri)}#turn-#{System.unique_integer([:positive])}"
+
+    {:ok, _} =
+      Settlement.begin(%{
+        turn_id: turn_id,
+        session_uri: session_uri,
+        workspace_uri: workspace_uri,
+        target_message_ids: message_ids,
+        target_surface_version: surface_version,
+        expected_prior_approved: nil
+      })
+
+    {:ok, _} =
+      Repo.insert(%DeliveryOutbox{
+        turn_id: turn_id,
+        session_uri: URI.to_string(session_uri),
+        workspace_uri: URI.to_string(workspace_uri),
+        message_ids: message_ids,
+        surface_version: surface_version,
+        committed_seq: nil,
+        emitted_at: DateTime.utc_now()
+      })
+
+    turn_id
+  end
+
   # The pre-consolidation direct outbox read ExternalFeed used to make —
   # reproduced verbatim so the chokepoint read can be proven BYTE-IDENTICAL.
   defp direct_deliveries_since(session_uri, cursor) do
@@ -368,6 +399,35 @@ defmodule Ezagent.Socialware.SessionReadsExternalFeedTest do
       assert {:ok, snapshot} = ExternalFeed.snapshot(session, @owner)
       assert snapshot == expected
       assert expected.messages != []
+    end
+  end
+
+  # ----- snapshot straddle consistency (read-plane hardening §a) --------------
+
+  describe "snapshot straddle consistency — a mid-read commit never yields page-without-messages" do
+    test "external_snapshot_reads/3 is self-consistent when a settlement commits between its reads" do
+      session = spawn_socialware_session()
+      msg = write(session, "delivered", :external_visible)
+      turn_id = prepare_uncommitted(session, [msg.id], 1)
+
+      # Pre-commit sanity: nothing committed yet.
+      assert MessageStore.committed_external_visible(session, 100) == []
+      assert SessionReads.committed_external_surface_version(@owner, session) == {:ok, nil}
+
+      # The mid-read seam fires the atomic commit in the straddle window.
+      seam = fn -> {:ok, _} = Settlement.mark_committed_for_test(turn_id) end
+
+      assert {:ok, %{messages: messages, version: version}} =
+               SessionReads.external_snapshot_reads(@owner, session, mid_read: seam)
+
+      # SELF-CONSISTENCY INVARIANT: if the snapshot reports a committed page
+      # version, the committed turn's messages MUST be present (no page-without-
+      # content straddle). The benign direction (messages present, version still
+      # nil) is allowed — it self-heals on the next poll.
+      if version != nil do
+        assert Enum.any?(messages, &(&1.id == msg.id)),
+               "straddle: reported committed version #{inspect(version)} but its messages are missing"
+      end
     end
   end
 end
