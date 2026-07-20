@@ -5,6 +5,7 @@ import {Button, Input, Modal, Select} from "./ui/primitives"
 import {JsonRenderBubble} from "./JsonRenderBubble"
 import {Kanban, type KanbanState} from "../../../../ezagent_plugin_kanban/assets/src/Kanban"
 import {PtyTerminalSurface} from "./PtyTerminal"
+import {ExternalMirror} from "./Admin"
 
 /** G5 structured error card pushed by ErrorRenderer */
 type DispatchErrorCard = {
@@ -152,6 +153,7 @@ export type ConversationState = {
   create_error?: string | null
   last_dispatch_status?: string | null
   dispatch_error?: DispatchErrorCard | null
+  bindings?: Array<Record<string, unknown>>
   is_hello?: boolean | null
   messages?: MessageRow[]
   oldest_cursor?: string | null
@@ -195,7 +197,6 @@ type Props = {
   onToggleRoutingRule: (sessionUri: string, rule: {id: string; table: string; enabled: string}) => void
   onLoadOlder: (sessionUri: string, before: string) => void
   onMarkDisplayed: (sessionUri: string, msgId: string) => void
-  onNavigate: (href: string) => void
   onInvite: (sessionUri: string, member: string) => void
   onRemoveParticipant: (sessionUri: string, participant: string) => void
   onUninstallSocialware: (sessionUri: string, ref: string) => void
@@ -213,13 +214,13 @@ type Props = {
   onPublishTemplate: (sessionUri: string, name: string) => void
 }
 
-export function handleConversationNavigate(
+export function handleBindingsViewSwitch(
   event: {preventDefault: () => void},
-  href: string,
-  onNavigate: (href: string) => void,
+  sessionUri: string,
+  onSwitchView: (sessionUri: string, view: string) => void,
 ) {
   event.preventDefault()
-  onNavigate(href)
+  onSwitchView(sessionUri, "external_mirror")
 }
 
 // The conversation island stays mounted across rail session switches. Server
@@ -285,7 +286,6 @@ export function Conversation({
   onToggleRoutingRule,
   onLoadOlder,
   onMarkDisplayed,
-  onNavigate,
   onInvite,
   onPtyInput,
   onPtyResize,
@@ -817,20 +817,18 @@ export function Conversation({
                 const selected = v.id === "routing" ? membersOpen && routingOpen : activeId === v.id
 
                 if (v.id === "external_mirror") {
-                  const href = `/admin/sessions/${encodeURIComponent(sessionUri)}/external_mirror`
-
                   return (
-                    <a
+                    <button
                       key={v.id}
-                      href={href}
-                      className={segmentClass(false)}
+                      type="button"
+                      className={segmentClass(selected)}
                       aria-label={"显示" + label}
                       data-world-bindings-tab
-                      onClick={(event) => handleConversationNavigate(event, href, onNavigate)}
+                      onClick={(event) => handleBindingsViewSwitch(event, sessionUri, onSwitchView)}
                     >
                       <Icon aria-hidden={true} className="h-[15px] w-[15px]" />
                       {label}
-                    </a>
+                    </button>
                   )
                 }
 
@@ -883,18 +881,18 @@ export function Conversation({
                     重启 agent runner
                   </button>
                   {sessionUri && (
-                    <a
+                    <button
+                      type="button"
                       data-world-external-mirror-link
-                      href={`/admin/sessions/${encodeURIComponent(sessionUri)}/external_mirror`}
                       className="flex items-center gap-2 rounded-md px-2.5 py-2 text-left text-foreground hover:bg-muted"
                       onClick={(event) => {
-                        handleConversationNavigate(event, event.currentTarget.pathname, onNavigate)
+                        handleBindingsViewSwitch(event, sessionUri, onSwitchView)
                         setToolsOpen(false)
                       }}
                     >
                       <Cable aria-hidden="true" className="h-4 w-4 text-muted-foreground" />
                       外部镜像
-                    </a>
+                    </button>
                   )}
                   <button
                     type="button"
@@ -927,7 +925,14 @@ export function Conversation({
         </div>
 
         <div className="flex min-h-0 flex-1 overflow-hidden">
-          {activeMode === "kanban" ? (
+          {activeId === "external_mirror" ? (
+            <div className="min-w-0 flex-1 overflow-y-auto p-4" data-world-subcomponent="external-mirror">
+              <ExternalMirror
+                state={{component: "external_mirror", session_uri: sessionUri, bindings: state.bindings || []}}
+                onAction={onKanbanAction}
+              />
+            </div>
+          ) : activeMode === "kanban" ? (
             // 权限门控的 session tab 里渲染富 Kanban 操作面（复用插件页同一组件）。
             // board 数据来自 world:state 合并的看板字段（后端 session.view.switch 切到
             // kanban_board 时经 KanbanData.session_boards 载入 + 自动选中首块板）；

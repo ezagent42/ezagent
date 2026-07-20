@@ -1,18 +1,18 @@
 import {describe, expect, it, vi} from "vitest"
 
-import {handleConversationNavigate} from "./Conversation"
+import {handleBindingsViewSwitch} from "./Conversation"
 
 vi.mock("./PtyTerminal", () => ({PtyTerminalSurface: () => null}))
 
 describe("conversation navigation", () => {
-  it("routes Bindings through World navigation instead of native document navigation", () => {
+  it("switches Bindings inside the current session view", () => {
     const preventDefault = vi.fn()
-    const onNavigate = vi.fn()
-    const href = "/admin/sessions/session%3A%2F%2Fsystem%2Fdefault%2Fsupport/external_mirror"
+    const onSwitchView = vi.fn()
+    const sessionUri = "session://system/default/support"
 
-    handleConversationNavigate({preventDefault}, href, onNavigate)
+    handleBindingsViewSwitch({preventDefault}, sessionUri, onSwitchView)
 
     expect(preventDefault).toHaveBeenCalledOnce()
-    expect(onNavigate).toHaveBeenCalledWith(href)
+    expect(onSwitchView).toHaveBeenCalledWith(sessionUri, "external_mirror")
   })
 })

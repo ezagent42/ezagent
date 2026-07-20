@@ -51,7 +51,6 @@ describe("G5 source-2 async agent error cards", () => {
         onToggleRoutingRule={noop}
         onLoadOlder={noop}
         onMarkDisplayed={noop}
-        onNavigate={noop}
         onInvite={noop}
         onRemoveParticipant={noop}
         onUninstallSocialware={noop}

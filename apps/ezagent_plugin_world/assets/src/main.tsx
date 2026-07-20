@@ -392,7 +392,6 @@ function WorldApp({layout, state: initialState, pluginNav, caller, pushEvent, on
                 layout: currentLayout,
                 state,
                 pushEvent,
-                onNavigate: (href) => sendEvent("world:navigate", {to: href}),
                 onJoin: (sessionUri) => {
                   sendEvent("world:dispatch", {
                     action: "sessions.join",
@@ -1026,7 +1025,6 @@ type RenderContext = {
   onToggleRoutingRule: (sessionUri: string, rule: {id: string; table: string; enabled: string}) => void
   onLoadOlder: (sessionUri: string, before: string) => void
   onMarkDisplayed: (sessionUri: string, msgId: string) => void
-  onNavigate: (href: string) => void
   onInvite: (sessionUri: string, member: string) => void
   onAssignRole: (sessionUri: string, member: string, roleName: string) => void
   onRemoveParticipant: (sessionUri: string, participant: string) => void
@@ -1073,7 +1071,6 @@ function renderLayoutComponent(component: NonNullable<WorldLayout["components"]>
           onToggleRoutingRule={context.onToggleRoutingRule}
           onLoadOlder={context.onLoadOlder}
           onMarkDisplayed={context.onMarkDisplayed}
-          onNavigate={context.onNavigate}
           onInvite={context.onInvite}
           onForkConfig={context.onForkConfig}
           onRemoveParticipant={context.onRemoveParticipant}

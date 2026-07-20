@@ -578,6 +578,13 @@ defmodule Ezagent.World.ConversationActions do
     _, _ -> %{"active_view" => "kanban_board"}
   end
 
+  defp view_switch_updates(_socket, %URI{} = session_uri, "external_mirror") do
+    %{
+      "active_view" => "external_mirror",
+      "bindings" => Ezagent.World.AdminData.external_mirror_bindings_for(session_uri)
+    }
+  end
+
   defp view_switch_updates(_socket, _session_uri, view), do: %{"active_view" => view}
 
   @doc """

@@ -20,9 +20,10 @@
   flavor, and reused-agent selection.
 - Changed successful template creation to return to `/workspaces` and browser-proved
   the Kanban selection, default `cc-headless` flavors, save, and redirect flow.
-- Fixed the session Bindings navigation across the entity/admin LiveView session
-  boundary by selecting `push_navigate` for the External Mirror route; both the
-  view tab and session-tools link now use the governed World navigation event.
+- Made Bindings a true in-session view: the tab and session-tools entry dispatch
+  `session.view.switch`, the backend returns the current session's bindings, and
+  React renders the existing External Mirror form inside the Conversation island.
+  The `/sessions?session=...` URL and surrounding shell remain mounted.
 
 ## DoD reconciliation
 
@@ -51,9 +52,10 @@
 - Browser canary: Kanban exposes two required flavor selects populated from the
   runtime registry, defaults both to `cc-headless`, and a successful save navigates
   to `/workspaces` with no browser errors.
-- Browser canary: clicking a session's Bindings tab navigates to the encoded
-  `/admin/sessions/:id/external_mirror` route and renders the External Mirror form
-  without browser errors. Navigation tests pass 7/7 and frontend tests pass 30/30.
+- Browser canary: clicking a session's Bindings tab keeps the exact
+  `/sessions?session=...` URL, preserves the session rail/shell, and locally renders
+  the External Mirror form without browser errors. Conversation/navigation backend
+  tests pass 21/21 and frontend tests pass 30/30.
 - Local `mix precommit`: failed at compile warnings-as-errors on the deferred
   session-specific World/Kanban references and existing `state_for_route/3`
   grouping warning.
