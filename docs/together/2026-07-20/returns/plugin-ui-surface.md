@@ -2,7 +2,7 @@
 > **Branch:** `codex/plugin-ui-self-declaration-1472`
 > **PR:** https://github.com/ezagent42/ezagent/pull/1476
 > **Dev:** codex / zyli line
-> **returned_at:** 2026-07-20 16:00 +0800
+> **returned_at:** 2026-07-20 16:05 +0800
 > **deadline:** 2026-07-20 23:59 +0800
 > **deadline_status:** deferred
 
@@ -26,6 +26,9 @@
   The `/sessions?session=...` URL and surrounding shell remain mounted.
 - Removed the redundant Routing shortcut beside Bindings in the session header;
   routing management remains available from the members panel.
+- Made Bindings the only navigation entry for session external-mirror bindings by
+  removing the duplicate legacy shortcut from both the session tools menu and the
+  sessions detail actions. The underlying actions and compatibility route remain.
 
 ## DoD reconciliation
 
@@ -43,7 +46,7 @@
 
 ## Branch and gate status
 
-- Implementation head: `169730af4` (Routing header shortcut removed)
+- Implementation head: `5f5a968d1` (duplicate External Mirror links removed)
 - Rebase base: `fe290643133cf3f8e9de932236c5d64623748122` (`origin/main`)
 - GitHub CI: frontend regression gate, return advisory, skill ownership gate, and
   gitleaks are green; deterministic gate is pending at update time:
@@ -60,6 +63,9 @@
   Conversation and Bindings (no Routing shortcut); routing remains in the members
   panel. Conversation/navigation backend tests pass 21/21 and frontend tests pass
   31/31.
+- Browser canary: the sessions detail actions contain only Open, and the session
+  tools menu contains Restart agent runner and Debug info with no External Mirror
+  shortcut. Bindings still renders the form in place. Frontend tests pass 33/33.
 - Local `mix precommit`: failed at compile warnings-as-errors on the deferred
   session-specific World/Kanban references and existing `state_for_route/3`
   grouping warning.
