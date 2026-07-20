@@ -305,7 +305,7 @@ defmodule Ezagent.ProviderConnection.CredentialReplacement do
 
     with %AuthorizationAttempt{} <- attempt,
          {:ok, _pair, _driver, backend} <- RuntimeBindings.resolve(connection, operation),
-         :ok <- revoke_prior(operation, backend),
+         :ok <- revoke_prior(operation, attempt, backend),
          :ok <- LocalAuthorizationBackend.prepare_handoff_finalization(attempt.authorization_ref),
          :ok <- LocalAuthorizationBackend.finalize_handoff(attempt.authorization_ref),
          {:ok, finalized} <- mark_finalized(operation.id, attempt.attempt_ref) do
@@ -318,6 +318,7 @@ defmodule Ezagent.ProviderConnection.CredentialReplacement do
 
   defp revoke_prior(
          %Operation{prior_credential_ref: nil, prior_credential_version: nil},
+         %AuthorizationAttempt{purpose: "initial_bind"},
          _backend
        ),
        do: :ok
@@ -327,6 +328,7 @@ defmodule Ezagent.ProviderConnection.CredentialReplacement do
            prior_credential_ref: prior_ref,
            prior_credential_version: prior_version
          } = operation,
+         %AuthorizationAttempt{purpose: "reauthorize"},
          backend
        )
        when is_binary(prior_ref) and is_integer(prior_version) do
@@ -341,7 +343,8 @@ defmodule Ezagent.ProviderConnection.CredentialReplacement do
     end
   end
 
-  defp revoke_prior(%Operation{}, _backend), do: {:error, :credential_conflict}
+  defp revoke_prior(%Operation{}, %AuthorizationAttempt{}, _backend),
+    do: {:error, :credential_conflict}
 
   defp binding(operation, kind) do
     connection = Repo.get!(Ezagent.ProviderConnection.Connection, operation.connection_id)
