@@ -49,3 +49,43 @@
 ## Merge request
 
 PR #1451 保持 draft。D5/D6 裁定后调整实现。
+
+---
+
+## 2026-07-20 续：D5/D6 已解决 + E2E 再尝试
+
+### D5/D6 决议（jjkysy PR #1456）
+
+jjkysy 的 PR #1456（feat/g5-agent-structured-errors）已合 main，明确回答：
+
+- **D5**：agent 侧吐纯 reason 数据（`{:no_api_key, provider}` 形状不变），ErrorCode #1 的 trigger `{:error, {:no_api_key, :_}}` **不用改**。
+- **D6**：**双轨 hook 已实现**。dispatch 层（#1451 已有，ephemeral 顶部卡）+ agent-reply 层（#1456：ErrorSignal 编解码 → ErrorCards 按观看者附卡）。三件套 ErrorCode/ErrorMatcher/ErrorRenderer **零逻辑改动**。
+
+PR #1456 新增模块：`Ezagent.Agent.ErrorSignal`（domain_agent）、`Ezagent.World.ErrorCards`（world）、flavor 错误分支改吐结构化体（curl ×2 / cc-headless ×1 / hello ×4）+ Conversation.tsx 气泡内联渲染。
+
+### E2E 再尝试（2026-07-20）
+
+**已修问题（非 G5 核心，环境/权限 infra）：**
+
+| 修复 | 说明 |
+|------|------|
+| `kind_cap_authorities` 表缺失 | main 上新 migration 未跑 → `mix ecto.migrate` |
+| G5 用户无 `entity_profiles` | `create_read_only/2` 不建 profile 行 → seed 脚本补 `Profile.upsert` |
+| G5 用户 `email_verified: false` | 挡登录 → seed 脚本补 `Users.mark_email_verified` |
+| G5 用户非 workspace member | UI session 列表为空 → `Workspace.add_member` |
+| G5 用户无 `create_session` cap | 创建 session 卡权限 → `Cap.issue` workspace cap |
+| `LayoutBootstrap.ensure_system_workspace_runtime` TOCTOU race | `{:already_registered, _}` 未处理 → 补 pattern match |
+| G5 用户无 `send` cap（test1 session） | 消息发不出去 → `Cap.issue` send cap |
+
+**E2E 截图结果：**
+
+- ✅ session 内页面：agent `g5-e2e-agent-1784278421` 已加入 session（截图 `在session内.png`）
+- ❌ 发送消息：`@agent hello` 发送后消息不出现在聊天框（截图 `发消息前.png` / `发消息后.png`）
+
+**当前卡点：**
+
+1. **LiveView WebSocket 不稳定**：session 创建后端成功（DB 有记录），但 `push_patch` 跳转没到达浏览器，页面卡在"创建中"。
+2. **消息发送失败**：`send` cap 在独立 `mix run` BEAM 中 issue，`bin/dev` BEAM 不感知——需在同一 BEAM 内 issue cap。尝试在 IEx 中操作但消息仍不出现。
+3. **Vite watcher 报错** `:watcher_command_error`（端口 5173 被占用）——可能是 LiveView socket 通信不稳定的根因。
+
+**下一步建议：** 需要在一个干净环境（Vite 单实例 + 完整 session 权限在同一 BEAM 内）下重新跑 E2E 截图。或者用 Playwright E2E 脚本（`scripts/g5_e2e_seed.exs` + `e2e/` 目录下的测试）替代手动截图。
