@@ -3,12 +3,28 @@
 # ubuntu runner's owner-teardown churn). See docs/guide/ci-docker-local.md.
 #
 # Usage (or just `make ci.docker` / `make ci.repro` from the repo root):
+#   docker/build-ci-image.sh                                            # build base (on lock change) + thin image
 #   docker compose -f docker/docker-compose.ci.yml build
 #   docker compose -f docker/docker-compose.ci.yml run --rm ci gate     # mirror CI once
 #   docker compose -f docker/docker-compose.ci.yml run --rm ci repro    # hunt the flake
 #   docker compose -f docker/docker-compose.ci.yml down -v              # teardown
+#
+# Two-step image build (docs/superpowers/plans/2026-07-20-dockerize-ci.md Task 1):
+# the `base` service builds ezagent-ci-base:latest (deps + node_modules, keyed on
+# lockfiles) and the `ci` service builds the thin source-only layer on top of it.
+# Prefer docker/build-ci-image.sh — it skips the base build entirely when the
+# lockfile hash is already cached.
 
 services:
+  base:
+    build:
+      context: ..
+      dockerfile: docker/Dockerfile.ci-base
+      args:
+        HTTP_PROXY: "${DOCKER_BUILD_PROXY:-}"
+        HTTPS_PROXY: "${DOCKER_BUILD_PROXY:-}"
+    image: ezagent-ci-base:latest
+
   postgres:
     # EXACTLY CI's service image (.github/workflows/ci.yml services.postgres = postgres:16).
     image: postgres:16
@@ -31,6 +47,9 @@ services:
       context: ..
       dockerfile: docker/Dockerfile.ci
       args:
+        # thin image on top of the deps/node_modules base (build `base` first, or use
+        # docker/build-ci-image.sh which handles both + lock-hash caching)
+        CI_BASE: ezagent-ci-base:latest
         # proxy reaches the host's clash via host.docker.internal (override on the CLI:
         #   DOCKER_BUILD_PROXY=http://host.docker.internal:7897 docker compose ... build)
         HTTP_PROXY: "${DOCKER_BUILD_PROXY:-}"
