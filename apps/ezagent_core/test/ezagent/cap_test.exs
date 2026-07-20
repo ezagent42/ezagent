@@ -93,7 +93,7 @@ defmodule Ezagent.CapTest do
                end)
     end
 
-    test "fails closed while the target is absent and accepts the artifact after restart",
+    test "validates against durable active public authority while the target is cold",
          context do
       assert {:ok, artifact} =
                Cap.issue({:admin, context.admin}, context.grantee, action_cap(context.uri))
@@ -105,15 +105,53 @@ defmodule Ezagent.CapTest do
       registry_barrier()
       assert :error = Ezagent.KindRegistry.lookup(context.uri)
 
+      generations_before =
+        context.uri
+        |> Ezagent.URI.stable_key()
+        |> Ezagent.Ecto.KindCapAuthority.list()
+
+      assert :ok = Cap.validate_for_current_target(artifact, context.grantee)
+      assert :error = Ezagent.KindRegistry.lookup(context.uri)
+
+      assert Ezagent.Ecto.KindCapAuthority.list(Ezagent.URI.stable_key(context.uri)) ==
+               generations_before
+
+      wrong_target =
+        Ezagent.URI.new!(
+          "entity://team-alpha/agent/cap-unit-wrong-target-#{System.unique_integer([:positive])}"
+        )
+
+      assert {:ok, _authority} = Authority.open(wrong_target, :test)
+
+      assert {:error, :invalid_cap_signature} =
+               Cap.validate_for_current_target(
+                 %{artifact | instance: wrong_target},
+                 context.grantee
+               )
+
+      assert {:error, :invalid_cap_signature} =
+               Cap.validate_for_current_target(
+                 %{artifact | key_id: "kind-g1:wrong-key"},
+                 context.grantee
+               )
+
+      other = Ezagent.URI.new!("entity://team-alpha/user/cap-unit-other-cold")
+
+      assert {:error, :wrong_grantee} =
+               Cap.validate_for_current_target(artifact, other)
+
+      assert :ok = Authority.retire(context.uri)
+
       assert {:error, :invalid_cap_signature} =
                Cap.validate_for_current_target(artifact, context.grantee)
 
-      assert {:ok, restarted_pid} =
-               Ezagent.Kind.Server.start_link({TestKind, %{uri: context.uri}})
+      assert {:ok, regenerated_authority} =
+               Authority.regenesis(context.uri, :test, context.admin)
 
-      _state = :sys.get_state(restarted_pid)
-      assert Ezagent.ReadyGate.status(context.uri) == :ready
-      assert :ok = Cap.validate_for_current_target(artifact, context.grantee)
+      refute regenerated_authority.key_id == artifact.key_id
+
+      assert {:error, :invalid_cap_signature} =
+               Cap.validate_for_current_target(artifact, context.grantee)
     end
 
     test "retains only structurally born-signed artifacts for the named receiver", context do

@@ -61,6 +61,24 @@ defmodule Ezagent.Architecture.CapAuthorityConfinementTest do
              Enum.join(offenders, "\n")
   end
 
+  test "cold verification selects only active public authority material" do
+    source = File.read!(Path.join(@core_lib, "ezagent/ecto/kind_cap_authority.ex"))
+
+    active_public =
+      source
+      |> String.split("def active_public(uri)")
+      |> Enum.at(1)
+      |> String.split("\n  @doc false")
+      |> List.first()
+
+    assert source =~ "def active_public(uri)"
+    assert active_public =~ "generation: row.generation"
+    assert active_public =~ "public_key: row.public_key"
+    refute active_public =~ "key_id"
+    refute active_public =~ "private_key"
+    refute active_public =~ "active(uri)"
+  end
+
   defp source_files(root) do
     root
     |> Path.join("**/*.ex")

@@ -191,9 +191,31 @@ defmodule Ezagent.Architecture.CapSigningArchitectureTest do
              "apps/ezagent_core/lib/ezagent/cap/verifier.ex"
            ]
 
+    durable_verify_callers = source_callers("Authority.verify_durable_current(")
+
+    assert durable_verify_callers == [
+             "apps/ezagent_core/lib/ezagent/cap/target_artifact_validator.ex"
+           ]
+
+    public_authority_callers = source_callers("KindCapAuthority.active_public(")
+
+    assert public_authority_callers == [
+             "apps/ezagent_core/lib/ezagent/cap/authority.ex"
+           ]
+
     cap_source = File.read!(absolute("apps/ezagent_core/lib/ezagent/cap.ex"))
     assert cap_source =~ "def validate_for_current_target("
     assert cap_source =~ "Authority.verify_current(artifact, receiver)"
+
+    cold_validator =
+      File.read!(absolute("apps/ezagent_core/lib/ezagent/cap/target_artifact_validator.ex"))
+
+    assert cold_validator =~ "Authority.verify_durable_current(target, artifact, receiver)"
+    refute cold_validator =~ "LocalRuntime"
+    refute cold_validator =~ "SpawnRegistry"
+    refute cold_validator =~ "Kind.spawn"
+    refute cold_validator =~ "Invocation.dispatch"
+    refute cold_validator =~ "Cap.issue"
 
     signing_sites =
       product_sources()
