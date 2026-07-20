@@ -221,7 +221,13 @@ defmodule EzagentPluginHello.Integration.HelloPageE2ETest do
 
   defp wait_for_page(session, caller, attempts) do
     case ExternalFeed.snapshot(session, caller) do
-      {:ok, %{page: page} = snapshot} when not is_nil(page) ->
+      # Await a SETTLED (non-straddled) snapshot: `snapshot/2` reads messages,
+      # surface and committed-version non-atomically, so at the settling poll the
+      # page can be present while the message list is still []. Production replays
+      # the message on {:external_delivery}; here we simply wait one more poll for
+      # the message to appear, matching the fresh snapshot production ends up with.
+      {:ok, %{page: page, messages: messages} = snapshot}
+      when not is_nil(page) and messages != [] ->
         snapshot
 
       _ ->

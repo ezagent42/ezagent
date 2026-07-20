@@ -241,21 +241,43 @@ defmodule Ezagent.ExternalMirror.WorkerPublishTest do
       Enum.each(1..10, fn _ ->
         # Find the CURRENT inner pid for the victim binding (it may have
         # restarted between kills).
-        case WorkerRegistry.lookup(victim_binding_uri) do
-          {:ok, sup_pid} ->
-            case Supervisor.which_children(sup_pid) do
-              [{_id, inner_pid, _type, _modules}] when is_pid(inner_pid) ->
-                Process.exit(inner_pid, :kill)
-                Process.sleep(5)
+        #
+        # The victim's PerBindingSupervisor is under a deliberately induced
+        # restart storm. Mid-storm it can be transiently terminating, and —
+        # crucially under the SQL Sandbox — a supervised Worker RESTART runs
+        # `Kind.Server.init/1` (→ `Cap.Authority.open` → a Repo read) OUTSIDE
+        # this test's `$callers` chain, so it depends on shared-sandbox mode
+        # being live at that exact instant. Under the full concurrent umbrella
+        # the pool can momentarily read `:manual`, the restart's init raises
+        # `DBConnection.OwnershipError`, and the victim supervisor exits — which
+        # makes `which_children/1` (a `GenServer.call`) EXIT. That is a
+        # TEST-SANDBOX artifact of the churn THIS test induces (production
+        # restarts always have a live pool), not a sibling-isolation failure
+        # (task #184). Tolerate a transient victim-supervisor exit and keep
+        # hammering; the real claim — the OTHER two bindings survive — is
+        # asserted AFTER this loop and is deliberately left outside the catch.
+        try do
+          case WorkerRegistry.lookup(victim_binding_uri) do
+            {:ok, sup_pid} ->
+              case Supervisor.which_children(sup_pid) do
+                [{_id, inner_pid, _type, _modules}] when is_pid(inner_pid) ->
+                  Process.exit(inner_pid, :kill)
+                  Process.sleep(5)
 
-              _ ->
-                Process.sleep(5)
-            end
+                _ ->
+                  Process.sleep(5)
+              end
 
-          :error ->
-            # The PerBindingSupervisor budget tripped + RootSupervisor
-            # decided not to restart further; that's allowed — what
-            # we care about is the other 2 stay up.
+            :error ->
+              # The PerBindingSupervisor budget tripped + RootSupervisor
+              # decided not to restart further; that's allowed — what
+              # we care about is the other 2 stay up.
+              Process.sleep(5)
+          end
+        catch
+          :exit, _ ->
+            # Victim supervisor is transiently down/restarting mid-storm
+            # (see above) — skip this kill iteration.
             Process.sleep(5)
         end
       end)

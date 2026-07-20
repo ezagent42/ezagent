@@ -5,6 +5,18 @@ the authoritative reference: read it **before** touching anything that grants, r
 checks, or declares a capability. Every claim here is grounded in the code on `main`;
 verify against the cited modules before relying on a detail (the code wins).
 
+> **⚠ CAP-SIGNING STATUS (read first — do NOT re-hallucinate this).** Cap-signing
+> **Path A is DONE and merged to main** (PR #1457, 2026-07-18). **Caps are
+> born-signed and STRICTLY verified with per-Kind ed25519 keys.** Do NOT assume
+> cap verification is permissive, that a `dual-read` / `require_signature:false` /
+> "verify-fail soft" path still exists, or that "cap-signing strict is pending /
+> crypto is Phase-4". None of that is true on main. `Ezagent.Cap.verify/1` (the old
+> provenance-format stand-in) **is gone**. The current model — per-Kind signing
+> authority, born-signed storage filter, strict crypto verify at dispatch, Path B
+> (isolated external signer) deferred — is **§4.6 below**. The `§4.5` "Phase-3 /
+> Phase-4 stand-in" framing is HISTORY (ISSUE→STORE flow still holds; its VERIFY
+> mechanism was replaced by real crypto).
+
 > **The one-sentence model:** a dispatch is authorized by a matching cap from EITHER the **caps the
 > dispatch ctx carries** (`ctx.caps`) OR the **caller's held caps** (`holds_cap(ctx.caller)`, §3), a capability records **who is accountable for it**
 > (`granted_by`, which MUST be a real entity — Decision #154), and these are produced at
@@ -216,6 +228,14 @@ and `store_verified_cap` on both the grant and absorb write paths. In Phase-3, `
 verification — the seam is designed so Phase-4 swaps the one `verify/1` body without touching
 callers.
 
+> **⚠ SUPERSEDED by Path A (2026-07-18, PR #1457) — this paragraph is history.**
+> `Ezagent.Cap.verify/1` **no longer exists on main**. The stand-in did NOT get its
+> body swapped in place; the VERIFY responsibility was split into two real-crypto
+> homes: a **born-signed storage filter** (`Cap.storable_for?`/`verified_set`) and a
+> **strict crypto verifier at dispatch** (`Ezagent.Cap.Verifier` via
+> `Authority.verify_current`). See **§4.6**. Do not describe verify as a
+> "provenance-format / Phase-4-pending stand-in".
+
 ### How a stored grant is authorized at dispatch — the `cap_issued` runtime bypass
 Because the grant *dispatch* itself is machinery (the grantee holds nothing yet),
 `Kind.Runtime` step-5.5's first `cond` arm authorizes an `IdentityAdmin` `:grant_cap` dispatch
@@ -255,7 +275,7 @@ grantee.** The gate:
 Adding a new grant driver, a new caps-slice writer, or a second `cap_issued`/absorb producer
 fails CI.
 
-### Accepted scope (Phase-3)
+### Accepted scope (Phase-3 — historical framing; see §4.6 for what actually landed)
 Single-BEAM / trusted-node: the whole issue→store path (including `absorb_cap`) is same-node;
 there is no cross-node transport. Crypto is **Phase-4**: `verify/1` checks provenance *format*
 (entity-scheme `granted_by`), not a signature; a malicious in-VM actor is out of scope (the
@@ -263,7 +283,75 @@ there is no cross-node transport. Crypto is **Phase-4**: `verify/1` checks prove
 `verify/1` bodies with signing + signature verification behind the same seam, and only then is
 cross-node absorb transport unlocked.
 
+> **⚠ CORRECTED 2026-07-18 (PR #1457).** "Crypto is Phase-4 (pending)" is stale.
+> Per-Kind ed25519 signing + strict verification **landed as Path A** — caps are
+> born-signed and strictly verified today. The in-VM-malicious-actor and cross-node
+> concerns remain out of scope, but they are covered by the **deferred Path B**
+> (isolated external signer), NOT by an unshipped Phase-4. See §4.6.
+
 ---
+
+## 4.6 Cap authority & signing — Path A born-signed strict-verify (LANDED, PR #1457, 2026-07-18)
+
+**This is the current cap-signing truth. It supersedes §4.5's "Phase-3 / Phase-4 stand-in"
+VERIFY mechanism.** The ISSUE→STORE→VERIFY *flow* still holds; what changed is that VERIFY is
+now real cryptography and `Ezagent.Cap.verify/1` is retired.
+
+**Every target Kind is its own signing + verifying authority, using its OWN per-Kind ed25519
+key.** Key material lives in a framework-owned compartment and never enters a Behavior slice,
+snapshot, handler ctx, event, log, or generic admin listing; callers outside the framework
+receive capability artifacts, never key material.
+
+- **Authority compartment — `Ezagent.Cap.Authority`** (`apps/ezagent_core/lib/ezagent/cap/authority.ex`).
+  The live authority struct is `Kind.Server` private top-level state (`@opaque`, `private_key`
+  excluded from `Inspect`). Durable custody is a **dedicated top-level table**
+  `kind_cap_authorities` (`Ezagent.Ecto.KindCapAuthority`,
+  `apps/ezagent_core/lib/ezagent/ecto/kind_cap_authority.ex`) — append-only, `generation`-tracked,
+  one-active-per-URI, `private_key` `redact: true`, no delete API. **Keys are NOT in env vars**
+  (the old `EZAGENT_SIGNING_SEED_V1` master-seed approach was retired with #1457 — zero refs in
+  `apps/` prod code or `config/`) and **NOT in `kind_snapshots`**. **Genesis is a single
+  admin-pinned root**: `genesis/2` seeds `entity://user/system/admin`'s authority first;
+  `regenesis/3` requires `presenter == admin_uri()` else `:admin_required`.
+- **Born-signed at issue** — `Ezagent.Cap.issue/3` (`cap.ex`) authorizes the issuer, then asks
+  the **concrete target Kind's authority** `Authority.sign/2` to ed25519-sign the immutable grant
+  intent (`key_id` = the per-Kind public key's fingerprint). Caps are signed from birth.
+  `granted_by` is still the real-entity issuer (§4 provenance unchanged).
+- **Storage filter (structural, not an authz decision)** — `Cap.storable_for?/2` +
+  `verified_set/2` (`cap.ex`) admit only born-signed (non-empty `signature` + `key_id`) and
+  receiver-bound (`grantee_uri == receiver`) artifacts into a cap store; **unsigned / legacy
+  artifacts are discarded at storage**. The legacy-unsigned fallback was **removed**
+  (`capability.ex:282`, codex r4 SPEC option-B).
+- **Strict crypto verify at dispatch** — `Ezagent.Cap.Verifier`
+  (`apps/ezagent_core/lib/ezagent/cap/verifier.ex`) is the **single** framework verifier that
+  dominates every Kind handler invocation. For a **cap-gated** action, `verify_cap` accepts a cap
+  **only if** (a) `Authority.verify_current(cap, presenter)` cryptographically verifies (signature
+  valid under the current per-Kind authority + `key_id` match + bound to the authenticated
+  presenter) **and** (b) it matches the required shape; unsigned / malformed / tampered /
+  retargeted / wrong-key artifacts **fail loud** (`:invalid_cap_signature` / `:missing_cap` /
+  `:presenter_required`). **There is NO soft / permissive branch.**
+  - Alongside cap-gated dispatch there is a fixed **`@non_cap_actions` allowlist**
+    (`Agent`/`User.Receive` `:receive`; `IdentityAdmin` store ops `absorb_cap`/`persist_caps`/
+    `store_cap`/…; socialware `:snapshot`/`:history`; session admission actions) — each with its
+    own in-handler predicate. This is an **interim structural split, not a soft fallback**. So the
+    model is "**cap-gated actions get strict crypto verification + an explicit non-cap
+    allowlist**", NOT "every action needs a signed cap".
+
+**Threat model = Path A (reviewed-code).** Code already executing maliciously inside the BEAM is
+**explicitly out of scope** — all loaded code (including community plugins) is reviewed before
+load (see the `Cap.Verifier` / `Cap.Authority` moduledocs). Path A defends: accidental forgery,
+review-missed architecture violations, external-ingress caller-spoofing. **Signing ≠
+revocation** — cap-signing defends forgery / tamper / retarget / issuer-spoof; revocation is a
+separate line (epoch target-generation + `delete_user` cascade).
+
+**Path B — the isolated signer domain (external signer / sidecar / HSM) + `Cap.issue`
+issuer-URL authentication — is DEFERRED / roadmapped**, not pending-now/required-now. It defends
+against **in-VM malicious code** (extracting the seed / impersonating an issuer), for when
+unreviewed 3rd-party plugins run in-BEAM. The old v11 "isolated central signer / single CapStore
+/ one-shot re-sign" spec (2026-07-15) **IS Path B**, superseded by Path A for current needs. **Do
+not describe Path B as pending or required now.**
+
+Refs: `Ezagent.Cap.Authority` + `Ezagent.Cap.Verifier` moduledocs; ARCHITECTURE.md §7.8;
+GLOSSARY Decision #164 + §2 "Cap authority & signing (Path A)"; PR #1457 (commit `596bd3a1d`).
 
 ## 5. `rule_cap_bounded?` and the rule branch
 

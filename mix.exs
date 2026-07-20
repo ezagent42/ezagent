@@ -134,8 +134,16 @@ defmodule EzagentCore.Umbrella.MixProject do
         "format",
         "test",
         # cc-headless SDK worker pure-helper suite (stdlib-only, no SDK needed) —
-        # codex review of PR #1452 flagged it was not wired into any gate.
-        "cmd uv run --no-project python -m unittest apps/ezagent_plugin_cc/priv/python/test_ezagent_cc_sdk_worker.py"
+        # codex review of PR #1452 flagged it was not wired into any gate. Run as
+        # an alias FUNCTION step (NOT `cmd`): `mix cmd` is `@recursive true`, so a
+        # `cmd`-based invocation runs once per child app with cwd=that child, and a
+        # root-relative path (`apps/ezagent_plugin_cc/priv/python/...`) fails to
+        # resolve there — `python -m unittest` then degrades the unresolved path
+        # into a bogus dotted module name and dies with `ModuleNotFoundError: No
+        # module named 'apps/ezagent_plugin_cc/priv/python/test_ezagent_cc_sdk_worker'`.
+        # Same recursion trap documented for `mix cmd --cd` above. See
+        # `run_cc_sdk_worker_tests/1`.
+        &run_cc_sdk_worker_tests/1
       ],
       # #108 — `mix ci.local` mirrors the CI `precommit + check_invariants` job
       # (`.github/workflows/ci.yml`) END-TO-END against a PRIVATE partitioned
@@ -155,6 +163,7 @@ defmodule EzagentCore.Umbrella.MixProject do
       # react/zod — without it the run dies with `Could not resolve "react"`, a
       # NON-test failure that otherwise masquerades as a green-with-EXIT=1 run.
       "ci.local": [
+        &arm_ci_local_result_capture/1,
         "deps.get",
         # `mix cmd --cd <relative>` RECURSES into every umbrella child (Mix marks
         # `cmd` recursive), so the relative `--cd` is resolved against each
@@ -168,6 +177,7 @@ defmodule EzagentCore.Umbrella.MixProject do
         "ecto.migrate --quiet",
         "precommit",
         "ezagent.check_invariants",
+        "ezagent.uri_query.scan",
         # T2-3 — socialware Definition conformance gate. It queries the
         # ConfigStore (DB), so it CANNOT run in this same BEAM right after `test`:
         # `mix test` leaves the Ecto SQL Sandbox in `:manual` mode, and this mix
@@ -218,6 +228,32 @@ defmodule EzagentCore.Umbrella.MixProject do
     end)
   end
 
+  # The cc-headless SDK worker's pure-helper unittest suite, run ONCE from the
+  # umbrella root (an alias function step does not recurse into child projects
+  # the way `mix cmd` does — see the `precommit` note). `python -m unittest` wants
+  # a DOTTED module name resolved from cwd, NOT a path, so we `cd:` into the
+  # script dir (anchored to this mix.exs via `__DIR__`, not the caller's cwd) and
+  # pass the bare module `test_ezagent_cc_sdk_worker`. `uv run --no-project` gives
+  # a stdlib-only interpreter (the worker guards its `claude_agent_sdk` import, so
+  # no SDK is needed). Fails LOUD on a non-zero exit so a broken suite cannot
+  # masquerade as a green run.
+  defp run_cc_sdk_worker_tests(_args) do
+    py_dir = Path.expand("apps/ezagent_plugin_cc/priv/python", __DIR__)
+
+    {_out, status} =
+      System.cmd(
+        "uv",
+        ["run", "--no-project", "python", "-m", "unittest", "test_ezagent_cc_sdk_worker"],
+        cd: py_dir,
+        into: IO.stream(:stdio, :line),
+        stderr_to_stdout: true
+      )
+
+    if status != 0 do
+      Mix.raise("cc-headless SDK worker unittest suite failed (exit status #{status})")
+    end
+  end
+
   # `mix ezagent.socialware.check` in a FRESH `mix` process. It must not run in
   # the `ci.local` BEAM after `test`, because `mix test` leaves the Ecto SQL
   # Sandbox in `:manual` mode and the task's DB query (ConfigStore.resolve) then
@@ -237,6 +273,33 @@ defmodule EzagentCore.Umbrella.MixProject do
     end
   end
 
+  # ci.local honesty capture — see EzagentCore.CiLocalResult + finalize_ci_local/1.
+  # Runs BEFORE `precommit`'s recursive `test` so every umbrella child's
+  # ExUnit.start/1 (same BEAM) inherits the `:after_suite` hook. Empirically
+  # validated: a pre-set `:ex_unit`/`:after_suite` app env fires ONLY after
+  # `ensure_loaded/1`. The remote capture is load-safe before the app compiles.
+  defp arm_ci_local_result_capture(_args) do
+    path =
+      Path.join(
+        System.tmp_dir!(),
+        "ezagent_ci_local_result.#{System.get_env("MIX_TEST_PARTITION", "")}.sentinel"
+      )
+
+    System.put_env("EZAGENT_CI_LOCAL_SENTINEL", path)
+    File.rm_rf!(path)
+
+    Application.ensure_loaded(:ex_unit)
+    existing = Application.get_env(:ex_unit, :after_suite, [])
+
+    Application.put_env(
+      :ex_unit,
+      :after_suite,
+      [(&EzagentCore.CiLocalResult.record_result/1) | existing]
+    )
+
+    :ok
+  end
+
   # Deterministic exit for `mix ci.local` — see the `&finalize_ci_local/1` note
   # in the alias. Every gate above raises on failure, so reaching here == all
   # green. `halt(0)` exits IMMEDIATELY, skipping the graceful app shutdown that
@@ -248,7 +311,12 @@ defmodule EzagentCore.Umbrella.MixProject do
   # already prevents the racy teardown by never running it. CI tears down PG +
   # the container afterward, so leaked child PIDs are reaped by the runner.)
   defp finalize_ci_local(_args) do
-    IO.puts("✓ ci.local: all gates passed — deterministic exit 0")
-    System.halt(0)
+    if EzagentCore.CiLocalResult.failed?() do
+      IO.puts("✗ ci.local: mix test reported failures (scroll up for the ExUnit output) — exit 1")
+      System.halt(1)
+    else
+      IO.puts("✓ ci.local: all gates passed — deterministic exit 0")
+      System.halt(0)
+    end
   end
 end
