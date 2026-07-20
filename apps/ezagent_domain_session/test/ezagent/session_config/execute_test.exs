@@ -328,6 +328,24 @@ defmodule Ezagent.Session.Config.ExecuteTest do
   end
 
   defp restart_workspace!(workspace_uri) do
+    pid = spawn_fresh_workspace!(workspace_uri)
+
+    # Leave the workspace ALIVE at teardown, not terminated. `workspace://system`
+    # is a shared, boot-seeded singleton and there is NO SpawnRegistry "workspace"
+    # scheme spawn fn — once `terminate_child` removes it, nothing rehydrates it
+    # for the rest of the BEAM run. A test that leaves it dead then poisons every
+    # later orchestrator cap-signing dispatch (`Ezagent.Cap.issue/3` routes a
+    # workspace-scoped cap to `workspace://system?action=cap.grant`, whose cold
+    # lazy-spawn fails) with `{:no_spawn_fn, "workspace"}` — a seed-ordered,
+    # cross-suite/whole-umbrella isolation flake. Re-spawning a fresh live Kind
+    # at teardown keeps this test hermetic while restoring the boot invariant the
+    # rest of the umbrella relies on. (LIFO on_exit ordering runs this before the
+    # DataCase drain + `stop_owner`, so the re-spawn sees a live sandbox owner.)
+    on_exit(fn -> spawn_fresh_workspace!(workspace_uri) end)
+    pid
+  end
+
+  defp spawn_fresh_workspace!(workspace_uri) do
     terminate_workspace(workspace_uri)
 
     {:ok, pid} =
@@ -336,7 +354,6 @@ defmodule Ezagent.Session.Config.ExecuteTest do
         behaviors: Ezagent.Entity.Workspace.behaviors()
       })
 
-    on_exit(fn -> terminate_workspace(workspace_uri) end)
     pid
   end
 

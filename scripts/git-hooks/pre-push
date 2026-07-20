@@ -1,0 +1,40 @@
+#!/usr/bin/env bash
+# ezagent pre-push deterministic gate (ci-health, #189).
+#
+# Runs the FAST, DB-free deterministic subset that the CI `gate` job enforces —
+# NOT the full ~10-min concurrent suite (that runs post-merge as full-suite).
+# Bypass (loudly discouraged) with:  git push --no-verify
+set -uo pipefail
+cd "$(git rev-parse --show-toplevel)" || exit 1
+
+export MIX_ENV=test
+fail=0
+
+run() {
+  local label="$1"; shift
+  echo "── pre-push: ${label}"
+  if ! "$@"; then
+    echo "❌ pre-push check FAILED: ${label}"
+    fail=1
+  fi
+}
+
+run "compile (warnings-as-errors)" mix compile --warnings-as-errors --force
+run "format --check-formatted"     mix format --check-formatted
+run "ezagent.check_invariants"     mix ezagent.check_invariants
+run "ezagent.uri_query.scan"       mix ezagent.uri_query.scan
+run "cc-sdk-worker python unittest" \
+  bash -c 'cd apps/ezagent_plugin_cc/priv/python && uv run --no-project python -m unittest test_ezagent_cc_sdk_worker'
+
+if [ "${fail}" -ne 0 ]; then
+  echo ""
+  echo "======================================================================"
+  echo " PUSH BLOCKED — the deterministic pre-push gate failed (see ❌ above)."
+  echo " These are the SAME checks the CI 'gate' job enforces on your PR."
+  echo " Fix them, or bypass with:  git push --no-verify"
+  echo "======================================================================"
+  exit 1
+fi
+
+echo "✓ pre-push deterministic gate: PASS"
+exit 0
