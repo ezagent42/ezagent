@@ -46,16 +46,37 @@ founder_uri = EzUri.new!("entity://system/user/g5-founder")
 member_uri = EzUri.new!("entity://system/user/g5-member")
 session = EzUri.new!("session://system/default/g5-test")
 
-# Create session if needed
+# ── Session caps (join + send on the test session) ──
 join_founder = cap.(founder_uri, :join, session)
 send_founder = cap.(founder_uri, :send, session)
 join_member = cap.(member_uri, :join, session)
 send_member = cap.(member_uri, :send, session)
 
-# Create users with join+send caps
+# ── Workspace caps (needed to create sessions via world UI) ──
+ws_uri = EzUri.new!("workspace://system")
+create_session_founder = %Capability{
+  kind: :workspace,
+  behavior: Ezagent.ActionSet.Workspace,
+  action: :create_session,
+  instance: ws_uri,
+  workspace_uri: ws,
+  granted_by: founder_uri,
+  granted_at: DateTime.utc_now()
+}
+create_session_member = %Capability{
+  kind: :workspace,
+  behavior: Ezagent.ActionSet.Workspace,
+  action: :create_session,
+  instance: ws_uri,
+  workspace_uri: ws,
+  granted_by: member_uri,
+  granted_at: DateTime.utc_now()
+}
+
+# Create users with session + workspace caps
 for {uri, label, caps} <- [
-  {founder_uri, "founder", [join_founder, send_founder]},
-  {member_uri, "member", [join_member, send_member]}
+  {founder_uri, "founder", [join_founder, send_founder, create_session_founder]},
+  {member_uri, "member", [join_member, send_member, create_session_member]}
 ] do
   case Ezagent.Users.create_read_only(uri, issue.(uri, caps)) do
     {:ok, _} -> IO.puts("  #{label}: created #{URI.to_string(uri)}")
