@@ -53,7 +53,7 @@ defmodule Ezagent.ProviderConnection.CredentialRefreshExchangeTest do
     )
   end
 
-  test "repository inventory pins all five compiled implementations and both detector fixtures" do
+  test "repository inventory pins all five compiled implementations and three detector fixtures" do
     root = Path.expand("../../../..", __DIR__)
 
     matches =
@@ -74,7 +74,7 @@ defmodule Ezagent.ProviderConnection.CredentialRefreshExchangeTest do
         |> Enum.map(fn {_line, index} -> {path, index} end)
       end)
 
-    assert length(matches) == 7
+    assert length(matches) == 8
 
     assert Enum.count(matches, fn {path, _line} ->
              String.ends_with?(path, "/fake_backend_pairs.ex")
@@ -91,7 +91,7 @@ defmodule Ezagent.ProviderConnection.CredentialRefreshExchangeTest do
 
     assert Enum.count(matches, fn {path, _line} ->
              String.ends_with?(path, "/secret_boundary_test.exs")
-           end) == 2
+           end) == 3
   end
 
   test "RefreshUse is opaque in inspection and the scope claim is one-shot" do

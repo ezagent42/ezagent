@@ -191,6 +191,9 @@ defmodule Ezagent.ProviderConnection.Operation do
       name: :provider_connection_operations_credential_cleanup_error_check
     )
     |> check_constraint(:status,
+      name: :provider_connection_operations_cleanup_coherence_check
+    )
+    |> check_constraint(:status,
       name: :provider_connection_operations_durable_ownership_check
     )
     |> check_constraint(:expected_authorization_ref,

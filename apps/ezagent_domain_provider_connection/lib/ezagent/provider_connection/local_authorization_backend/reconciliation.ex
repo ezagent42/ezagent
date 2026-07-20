@@ -212,7 +212,7 @@ defmodule Ezagent.ProviderConnection.LocalAuthorizationBackend.Reconciliation do
       provider_id: recovery.row.provider_id,
       acquisition_method: recovery.row.acquisition_method,
       governed_host: recovery.row.governed_host,
-      authorization_ref: recovery.row.authorization_ref,
+      authorization_ref: recovery.operation.expected_authorization_ref,
       backend_pair_id: recovery.command.backend_pair_id,
       operation_id: recovery.operation.id,
       connection_id: recovery.operation.connection_id,
@@ -262,7 +262,9 @@ defmodule Ezagent.ProviderConnection.LocalAuthorizationBackend.Reconciliation do
       if connection.status in ["revoking", "disconnecting"] and
            connection.connection_version == operation.expected_connection_version + 1 and
            operation.status == "prepared" and is_nil(operation.handoff_ref) and
+           terminal_claim_expired?(attempt, operation) and
            command.status == "prepared" and
+           coherent_pending_without_handoff?(row) and
            :ok == validate_recovery_scope(operation, attempt, row, command, base_connection) do
         command
         |> Ecto.Changeset.change(
@@ -272,12 +274,36 @@ defmodule Ezagent.ProviderConnection.LocalAuthorizationBackend.Reconciliation do
         )
         |> Repo.update!()
 
+        row
+        |> Ecto.Changeset.change(lifecycle_status: "cancelled")
+        |> Repo.update!()
+
+        attempt
+        |> Ecto.Changeset.change(status: "cancelled", claim_token: nil, claim_until: nil)
+        |> Repo.update!()
+
+        operation
+        |> Ecto.Changeset.change(attempt_claim_token: nil)
+        |> Repo.update!()
+
         {:ok, :not_completed}
       else
         Repo.rollback(:correlation_conflict)
       end
     end)
     |> Support.unwrap_transaction()
+  end
+
+  defp coherent_pending_without_handoff?(row),
+    do:
+      row.lifecycle_status == "pending" and is_nil(row.handoff_ref) and
+        is_nil(row.handoff_ciphertext) and is_nil(row.shredded_at)
+
+  defp terminal_claim_expired?(attempt, operation) do
+    attempt.status == "consuming" and attempt.claim_token == operation.attempt_claim_token and
+      attempt.attempt_version == operation.attempt_version and
+      is_struct(attempt.claim_until, DateTime) and
+      DateTime.compare(attempt.claim_until, DateTime.utc_now()) != :gt
   end
 
   defp commit_callback(recovery, driver_result) do
@@ -562,14 +588,16 @@ defmodule Ezagent.ProviderConnection.LocalAuthorizationBackend.Reconciliation do
 
   defp load_recovery_keys(_source, _config), do: {:error, :invalid}
 
-  defp validate_recovery_keys(pairs) do
-    Enum.reduce_while(pairs, {:ok, %{}}, fn {id, key}, {:ok, keys} ->
-      case {valid_recovery_key_id?(id), is_binary(key) and byte_size(key) == 32,
-            Map.has_key?(keys, id)} do
-        {true, true, false} -> {:cont, {:ok, Map.put(keys, id, key)}}
-        _invalid -> {:halt, {:error, :invalid}}
-      end
-    end)
+  if @fixture_enabled do
+    defp validate_recovery_keys(pairs) do
+      Enum.reduce_while(pairs, {:ok, %{}}, fn {id, key}, {:ok, keys} ->
+        case {valid_recovery_key_id?(id), is_binary(key) and byte_size(key) == 32,
+              Map.has_key?(keys, id)} do
+          {true, true, false} -> {:cont, {:ok, Map.put(keys, id, key)}}
+          _invalid -> {:halt, {:error, :invalid}}
+        end
+      end)
+    end
   end
 
   defp valid_recovery_key_id?(id),

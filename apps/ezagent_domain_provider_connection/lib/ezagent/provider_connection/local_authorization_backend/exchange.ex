@@ -585,6 +585,7 @@ defmodule Ezagent.ProviderConnection.LocalAuthorizationBackend.Exchange do
           connection_id: operation.connection_id,
           correlation_id: operation.correlation_id,
           attempt_ref: attempt.attempt_ref,
+          authorization_ref: operation.expected_authorization_ref,
           expected_connection_version: operation.expected_connection_version,
           expected_authorization_version: operation.expected_authorization_version,
           expected_credential_version: operation.expected_credential_version,

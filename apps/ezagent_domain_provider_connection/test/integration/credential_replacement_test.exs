@@ -330,6 +330,48 @@ defmodule Ezagent.ProviderConnection.CredentialReplacementTest do
     assert is_nil(failed.credential_backend_ref)
   end
 
+  test "fence publishes terminal state only after the handoff is coherently shredded" do
+    connection =
+      Task8Fixtures.connection(%{status: "active", connection_version: 4})
+
+    attempt =
+      Task8Fixtures.attempt(connection, %{
+        status: "consuming",
+        attempt_version: 2,
+        claim_token: "terminal-claim"
+      })
+
+    operation =
+      operation!(connection, attempt, %{
+        status: "prepared",
+        provider_result_ref: nil,
+        handoff_ref: nil,
+        result_ref: nil,
+        result_credential_version: nil,
+        result_external_account_id: nil,
+        result_display_login: nil,
+        result_execution_identity: nil,
+        result_authorization_ref: nil,
+        result_authorization_version: nil,
+        result_permission_digest: nil,
+        result_expires_at: nil,
+        next_recovery_at: DateTime.utc_now()
+      })
+
+    connection
+    |> Ezagent.ProviderConnection.Connection.transition_changeset(%{
+      status: "revoking",
+      connection_version: 5
+    })
+    |> Repo.update!()
+
+    assert {:error, :credential_conflict} = CredentialReplacement.fence(operation.id)
+    assert Repo.get!(Operation, operation.id).status == "prepared"
+
+    assert Repo.get!(Ezagent.ProviderConnection.AuthorizationAttempt, attempt.attempt_ref).status ==
+             "consuming"
+  end
+
   defp operation!(connection, attempt, overrides) do
     now = DateTime.utc_now()
 
@@ -374,27 +416,29 @@ defmodule Ezagent.ProviderConnection.CredentialReplacementTest do
       |> Ecto.Changeset.change(attrs)
       |> Repo.insert!()
 
-    :ok =
-      Task8Driver.remember_callback_result(
-        %{
-          owner_uri: connection.owner_uri,
-          workspace_uri: connection.workspace_uri,
-          provider_id: connection.provider_id,
-          acquisition_method: connection.acquisition_method,
-          governed_host: connection.governed_host,
-          backend_pair_id: operation.backend_pair_id,
-          operation_id: operation.id,
-          connection_id: operation.connection_id,
-          expected_connection_version: operation.expected_connection_version,
-          attempt_ref: attempt.attempt_ref,
-          authorization_ref: operation.expected_authorization_ref,
-          expected_authorization_version: operation.expected_authorization_version,
-          correlation_id: operation.correlation_id,
-          command_digest: operation.bound_input_digest,
-          expected_credential_version: operation.expected_credential_version
-        },
-        operation.provider_result_ref
-      )
+    if is_binary(operation.provider_result_ref) do
+      :ok =
+        Task8Driver.remember_callback_result(
+          %{
+            owner_uri: connection.owner_uri,
+            workspace_uri: connection.workspace_uri,
+            provider_id: connection.provider_id,
+            acquisition_method: connection.acquisition_method,
+            governed_host: connection.governed_host,
+            backend_pair_id: operation.backend_pair_id,
+            operation_id: operation.id,
+            connection_id: operation.connection_id,
+            expected_connection_version: operation.expected_connection_version,
+            attempt_ref: attempt.attempt_ref,
+            authorization_ref: operation.expected_authorization_ref,
+            expected_authorization_version: operation.expected_authorization_version,
+            correlation_id: operation.correlation_id,
+            command_digest: operation.bound_input_digest,
+            expected_credential_version: operation.expected_credential_version
+          },
+          operation.provider_result_ref
+        )
+    end
 
     operation
   end
@@ -410,7 +454,7 @@ defmodule Ezagent.ProviderConnection.CredentialReplacementTest do
       authorization_ref: attempt.authorization_ref,
       key_id: "test-v1",
       key_fingerprint: :crypto.hash(:sha256, :binary.copy(<<90>>, 32)),
-      bound_input_digest: "digest",
+      bound_input_digest: attempt.bound_subject_digest,
       begin_correlation_id: "begin",
       owner_uri: URI.to_string(Task8Fixtures.owner()),
       connection_id: attempt.connection_id,
@@ -421,6 +465,8 @@ defmodule Ezagent.ProviderConnection.CredentialReplacementTest do
       requested_permissions_digest: "permissions",
       redirect_uri_id: "callback-v1",
       execution_identity: "connected_user_account_1",
+      consume_correlation_id: attempt.correlation_id,
+      consume_input_digest: "consume-digest",
       handoff_ref: "handoff-ref",
       handoff_ciphertext: "sealed-handoff",
       lifecycle_status: "consumed",

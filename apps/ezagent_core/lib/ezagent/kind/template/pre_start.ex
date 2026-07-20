@@ -171,8 +171,13 @@ defmodule Ezagent.Kind.Template.PreStart do
   defp normalize_complete({:error, _reason} = error), do: error
   defp normalize_complete(_other), do: {:error, :invalid_template_pre_start_complete_result}
 
-  defp reset_pending(state) do
-    Enum.each(state.monitors, fn {monitor, _token} -> Process.demonitor(monitor, [:flush]) end)
-    %{state | pending: %{}, monitors: %{}}
+  if @test_env do
+    defp reset_pending(state) do
+      Enum.each(state.monitors, fn {monitor, _token} ->
+        Process.demonitor(monitor, [:flush])
+      end)
+
+      %{state | pending: %{}, monitors: %{}}
+    end
   end
 end

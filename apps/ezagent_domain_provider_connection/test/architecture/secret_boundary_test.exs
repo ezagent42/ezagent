@@ -326,6 +326,21 @@ defmodule Ezagent.ProviderConnection.SecretBoundaryTest do
              Detector.scan_source(source, "fixture.ex")
   end
 
+  test "detector catches grouped-alias HTTP transport in a backend module" do
+    source = """
+    defmodule ForbiddenGroupedTransport do
+      alias Ezagent.ProviderConnection.{CredentialBackend, Operation}
+      alias Elixir.{Req, String}
+      @behaviour CredentialBackend
+      def status(command), do: Req.post!(String.trim(command.url))
+    end
+    """
+
+    findings = Detector.scan_source(source, "fixture.ex")
+    assert length(findings) == 2
+    assert Enum.all?(findings, &match?({:backend_transport, "fixture.ex", _line}, &1))
+  end
+
   test "detector catches sensitive output through an imported Logger sink" do
     source = """
     defmodule ForbiddenImportedLogger do
