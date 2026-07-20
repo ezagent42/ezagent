@@ -253,7 +253,11 @@ defmodule Ezagent.ProviderConnection.CredentialReplacement do
         |> Repo.update!()
 
         operation
-        |> Ecto.Changeset.change(status: "finalized", safe_error_code: nil)
+        |> Ecto.Changeset.change(
+          status: "finalized",
+          safe_error_code: nil,
+          next_recovery_at: nil
+        )
         |> Repo.update!()
 
         :ok
@@ -312,10 +316,23 @@ defmodule Ezagent.ProviderConnection.CredentialReplacement do
     end
   end
 
-  defp revoke_prior(operation, backend) do
+  defp revoke_prior(
+         %Operation{prior_credential_ref: nil, prior_credential_version: nil},
+         _backend
+       ),
+       do: :ok
+
+  defp revoke_prior(
+         %Operation{
+           prior_credential_ref: prior_ref,
+           prior_credential_version: prior_version
+         } = operation,
+         backend
+       )
+       when is_binary(prior_ref) and is_integer(prior_version) do
     case backend.revoke(%{
-           credential_ref: operation.prior_credential_ref,
-           expected_credential_version: operation.prior_credential_version,
+           credential_ref: prior_ref,
+           expected_credential_version: prior_version,
            correlation_id: operation.correlation_id <> ":old"
          }) do
       :ok -> :ok
@@ -323,6 +340,8 @@ defmodule Ezagent.ProviderConnection.CredentialReplacement do
       {:error, _reason} -> {:error, :authorization_backend_unavailable}
     end
   end
+
+  defp revoke_prior(%Operation{}, _backend), do: {:error, :credential_conflict}
 
   defp binding(operation, kind) do
     connection = Repo.get!(Ezagent.ProviderConnection.Connection, operation.connection_id)
@@ -358,7 +377,7 @@ defmodule Ezagent.ProviderConnection.CredentialReplacement do
           |> Repo.update!()
 
           operation
-          |> Ecto.Changeset.change(status: "finalized")
+          |> Ecto.Changeset.change(status: "finalized", next_recovery_at: nil)
           |> Repo.update!()
 
         _ ->

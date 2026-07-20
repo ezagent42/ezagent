@@ -2,6 +2,50 @@ defmodule EzagentCore.Repo.Migrations.ReservePendingProviderConnections do
   use Ecto.Migration
 
   def up do
+    drop(
+      constraint(
+        :provider_connection_operations,
+        :provider_connection_operations_callback_prepare_check
+      )
+    )
+
+    drop(
+      constraint(
+        :provider_connection_operations,
+        :provider_connection_operations_callback_result_check
+      )
+    )
+
+    create(
+      constraint(
+        :provider_connection_operations,
+        :provider_connection_operations_callback_prepare_check,
+        check: """
+        operation_class <> 'store'
+        OR status <> 'prepared'
+        OR (expected_credential_version IS NOT NULL AND
+            ((prior_credential_ref IS NULL AND prior_credential_version IS NULL) OR
+             (prior_credential_ref IS NOT NULL AND prior_credential_version IS NOT NULL)))
+        """
+      )
+    )
+
+    create(
+      constraint(
+        :provider_connection_operations,
+        :provider_connection_operations_callback_result_check,
+        check: """
+        operation_class <> 'store'
+        OR status NOT IN ('backend_committed','cleanup_pending')
+        OR (handoff_ref IS NOT NULL AND result_ref IS NOT NULL AND
+            expected_credential_version IS NOT NULL AND
+            result_credential_version IS NOT NULL AND
+            ((prior_credential_ref IS NULL AND prior_credential_version IS NULL) OR
+             (prior_credential_ref IS NOT NULL AND prior_credential_version IS NOT NULL)))
+        """
+      )
+    )
+
     drop(constraint(:provider_connections, :provider_connections_status_check))
     drop(constraint(:provider_connections, :provider_connections_backend_binding_check))
 
@@ -278,6 +322,20 @@ defmodule EzagentCore.Repo.Migrations.ReservePendingProviderConnections do
   def down do
     drop(
       constraint(
+        :provider_connection_operations,
+        :provider_connection_operations_callback_prepare_check
+      )
+    )
+
+    drop(
+      constraint(
+        :provider_connection_operations,
+        :provider_connection_operations_callback_result_check
+      )
+    )
+
+    drop(
+      constraint(
         :provider_connection_events,
         :provider_connection_events_transition_from_check
       )
@@ -431,6 +489,30 @@ defmodule EzagentCore.Repo.Migrations.ReservePendingProviderConnections do
     create(
       unique_index(:provider_authorization_attempts, [:backend_pair_id, :state_digest],
         name: :provider_authorization_attempts_backend_state_index
+      )
+    )
+
+    create(
+      constraint(
+        :provider_connection_operations,
+        :provider_connection_operations_callback_prepare_check,
+        check:
+          "operation_class <> 'store' OR status <> 'prepared' OR (expected_credential_version IS NOT NULL AND prior_credential_ref IS NOT NULL AND prior_credential_version IS NOT NULL)"
+      )
+    )
+
+    create(
+      constraint(
+        :provider_connection_operations,
+        :provider_connection_operations_callback_result_check,
+        check: """
+        operation_class <> 'store'
+        OR status NOT IN ('backend_committed','cleanup_pending')
+        OR (handoff_ref IS NOT NULL AND result_ref IS NOT NULL AND
+            expected_credential_version IS NOT NULL AND
+            result_credential_version IS NOT NULL AND
+            prior_credential_ref IS NOT NULL AND prior_credential_version IS NOT NULL)
+        """
       )
     )
   end

@@ -148,6 +148,7 @@ defmodule Ezagent.ProviderConnection.Operation do
       |> cast(attrs, [:status])
       |> change(Map.take(attrs, @trusted))
       |> validate_required(@trusted_required ++ [:status])
+      |> validate_prior_credential_pair()
       |> unique_constraint(:correlation_id, name: :provider_connection_operations_command_index)
       |> check_constraint(:operation_class,
         name: :provider_connection_operations_operation_class_check
@@ -214,12 +215,11 @@ defmodule Ezagent.ProviderConnection.Operation do
       ])
     )
     |> change(status: status)
+    |> validate_prior_credential_pair()
     |> validate_required([
       :handoff_ref,
       :result_ref,
-      :result_credential_version,
-      :prior_credential_ref,
-      :prior_credential_version
+      :result_credential_version
     ])
     |> check_constraint(:status, name: :provider_connection_operations_status_check)
     |> check_constraint(:result_ref,
@@ -237,5 +237,25 @@ defmodule Ezagent.ProviderConnection.Operation do
     |> check_constraint(:status,
       name: :provider_connection_operations_durable_ownership_check
     )
+  end
+
+  defp validate_prior_credential_pair(changeset) do
+    case {
+      get_field(changeset, :prior_credential_ref),
+      get_field(changeset, :prior_credential_version)
+    } do
+      {nil, nil} ->
+        changeset
+
+      {prior_ref, prior_version} when is_binary(prior_ref) and is_integer(prior_version) ->
+        changeset
+
+      _half_pair ->
+        add_error(
+          changeset,
+          :prior_credential_ref,
+          "must be present with prior credential version"
+        )
+    end
   end
 end

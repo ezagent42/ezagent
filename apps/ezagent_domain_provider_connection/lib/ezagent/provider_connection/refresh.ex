@@ -106,6 +106,7 @@ defmodule Ezagent.ProviderConnection.Refresh do
             expected_connection_version: args.expected_version,
             expected_credential_version: locked.credential_version,
             attempt_version: lease_version,
+            next_recovery_at: now,
             status: "prepared"
           }
           |> Operation.create_changeset()
@@ -283,7 +284,11 @@ defmodule Ezagent.ProviderConnection.Refresh do
 
   defp finalize(operation) do
     operation
-    |> Ecto.Changeset.change(status: "finalized", safe_error_code: nil)
+    |> Ecto.Changeset.change(
+      status: "finalized",
+      safe_error_code: nil,
+      next_recovery_at: nil
+    )
     |> Repo.update!()
 
     result(operation)
