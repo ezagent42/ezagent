@@ -292,6 +292,86 @@ defmodule Ezagent.ProviderConnection.OperationPurposeInvariantTest do
     end
   end
 
+  test "store operation keeps its authorization attempt alive" do
+    connection = D1OperationFixtures.connection(%{connection_version: 4, credential_version: 3})
+    attempt = attempt!(connection, "reauthorize")
+
+    operation!(
+      connection,
+      attempt,
+      connection.credential_backend_ref,
+      connection.credential_version
+    )
+
+    error =
+      assert_raise Ecto.ConstraintError, fn ->
+        Repo.delete!(attempt)
+      end
+
+    assert error.constraint == "provider_connection_operations_attempt_ref_fkey"
+  end
+
+  test "connection backend binding settles once and then remains immutable" do
+    unbound =
+      D1OperationFixtures.connection(%{
+        backend_pair_id: nil,
+        authorization_backend_id: nil,
+        credential_backend_id: nil
+      })
+
+    assert {:ok, settled} =
+             unbound
+             |> Ecto.Changeset.change(
+               backend_pair_id: "pair-task8-v1",
+               authorization_backend_id: "local-authorization-v1",
+               credential_backend_id: "credential-task8-v1"
+             )
+             |> Repo.update()
+
+    for changes <- [
+          %{backend_pair_id: "different-pair"},
+          %{authorization_backend_id: "different-authorization"},
+          %{credential_backend_id: "different-credential"},
+          %{
+            backend_pair_id: nil,
+            authorization_backend_id: nil,
+            credential_backend_id: nil
+          }
+        ] do
+      changeset =
+        settled
+        |> Ecto.Changeset.change(changes)
+        |> Ecto.Changeset.check_constraint(:backend_pair_id,
+          name: :provider_connections_immutable_binding_check
+        )
+
+      assert {:error, changeset} = Repo.update(changeset)
+      assert changeset.errors[:backend_pair_id]
+    end
+
+    still_unbound =
+      D1OperationFixtures.connection(%{
+        backend_pair_id: nil,
+        authorization_backend_id: nil,
+        credential_backend_id: nil
+      })
+
+    half_binding =
+      still_unbound
+      |> Ecto.Changeset.change(backend_pair_id: "pair-task8-v1")
+      |> Ecto.Changeset.check_constraint(:backend_pair_id,
+        name: :provider_connections_backend_binding_check
+      )
+
+    assert {:error, half_binding} = Repo.update(half_binding)
+
+    assert {"is invalid",
+            [
+              constraint: :check,
+              constraint_name: "provider_connections_backend_binding_check"
+            ]} = half_binding.errors[:backend_pair_id]
+  end
+
   test "database relates store-operation prior coordinates to the real attempt purpose", %{
     state: state
   } do

@@ -118,7 +118,8 @@ defmodule Ezagent.ProviderConnection.Termination do
         backend.revoke(%{
           credential_ref: operation.handoff_ref,
           expected_credential_version: operation.expected_credential_version,
-          correlation_id: operation.correlation_id
+          correlation_id: operation.correlation_id,
+          idempotency_key: operation.correlation_id
         })
       end
 

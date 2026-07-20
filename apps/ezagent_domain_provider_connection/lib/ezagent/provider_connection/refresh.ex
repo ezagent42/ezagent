@@ -225,10 +225,13 @@ defmodule Ezagent.ProviderConnection.Refresh do
         commit_pointer(committed, durable_metadata(committed), backend, now)
 
       {:ok, %Operation{status: "cleanup_pending"} = stale} ->
+        idempotency_key = stale.correlation_id <> ":stale"
+
         _ =
           backend.revoke(%{
             credential_ref: stale.result_ref,
-            correlation_id: stale.correlation_id <> ":stale"
+            correlation_id: idempotency_key,
+            idempotency_key: idempotency_key
           })
 
         {:error, :refresh_lease_lost}
@@ -271,10 +274,13 @@ defmodule Ezagent.ProviderConnection.Refresh do
   end
 
   defp revoke_prior_and_finalize(operation, backend) do
+    idempotency_key = operation.correlation_id <> ":old"
+
     case backend.revoke(%{
            credential_ref: operation.prior_credential_ref,
            expected_credential_version: operation.prior_credential_version,
-           correlation_id: operation.correlation_id <> ":old"
+           correlation_id: idempotency_key,
+           idempotency_key: idempotency_key
          }) do
       :ok -> finalize(operation)
       {:ok, _receipt} -> finalize(operation)
@@ -295,10 +301,13 @@ defmodule Ezagent.ProviderConnection.Refresh do
   end
 
   defp compensate(operation, backend) do
+    idempotency_key = operation.correlation_id <> ":stale"
+
     _ =
       backend.revoke(%{
         credential_ref: operation.result_ref,
-        correlation_id: operation.correlation_id <> ":stale"
+        correlation_id: idempotency_key,
+        idempotency_key: idempotency_key
       })
 
     operation
