@@ -8,15 +8,27 @@ defmodule Ezagent.Cap.TargetArtifactValidator do
     with {:ok, target} <- Ezagent.Cap.Authority.target_uri(artifact) do
       case Ezagent.KindRegistry.lookup(target) do
         {:ok, pid} ->
-          GenServer.call(pid, {:ezagent_validate_cap_artifact, artifact, receiver})
+          validate_live(pid, artifact, receiver)
 
         :error ->
-          {:error, :invalid_cap_signature}
+          validate_cold(target, artifact, receiver)
       end
     else
       _reason -> {:error, :invalid_cap_signature}
     end
+  end
+
+  defp validate_live(pid, artifact, receiver) do
+    GenServer.call(pid, {:ezagent_validate_cap_artifact, artifact, receiver})
   catch
     :exit, _reason -> {:error, :invalid_cap_signature}
+  end
+
+  defp validate_cold(target, artifact, receiver) do
+    if Ezagent.Cap.Authority.verify_durable_current(target, artifact, receiver) do
+      :ok
+    else
+      {:error, :invalid_cap_signature}
+    end
   end
 end

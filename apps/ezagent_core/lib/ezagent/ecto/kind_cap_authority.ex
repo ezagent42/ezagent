@@ -33,6 +33,20 @@ defmodule Ezagent.Ecto.KindCapAuthority do
   end
 
   @doc false
+  @spec active_public(String.t()) ::
+          %{generation: pos_integer(), public_key: binary()} | nil
+  def active_public(uri) when is_binary(uri) do
+    from(row in __MODULE__,
+      where: row.uri == ^uri and row.active == true,
+      select: %{
+        generation: row.generation,
+        public_key: row.public_key
+      }
+    )
+    |> Repo.one()
+  end
+
+  @doc false
   @spec list(String.t()) :: [%__MODULE__{}]
   def list(uri) when is_binary(uri) do
     from(row in __MODULE__, where: row.uri == ^uri, order_by: [asc: row.generation])
