@@ -2,26 +2,36 @@ defmodule EzagentPluginHello.Integration.HelloCredentialSourceTest do
   @moduledoc """
   #185 — the `DEEPSEEK_API_KEY` env → curl credential bridge, end to end on the
   real substrate (no live LLM: the proof point is the credential SLICE the cold
-  reply reads, not an HTTP round-trip):
+  reply reads, not an HTTP round-trip).
 
-      CredentialBridge.ensure_deepseek_source (boot lane, env-gated)
-        → workspace-shared curl credential source (cap-checked chokepoint)
-        → App.ensure_app → hello.llm curl member cold-spawns
-        → cascade resolves the source → key materialized into :api_keys
+  ## Two clearly separated planes (#185 codex review)
 
-  plus the HARD ISOLATION guarantee (the platform owner's explicit #185
-  constraint): a hello app in a DIFFERENT, un-bridged workspace resolves NO
-  source and stays keyless — our key never leaks across workspaces.
+    * The **production entry point** `CredentialBridge.ensure_deepseek_source/0`
+      is ZERO-ARITY: it reads `DEEPSEEK_API_KEY` and mints admin authority, so
+      its destination is the compile-time LITERAL `"system"` — un-redirectable.
+      The `"prod entry"` tests below drive it against the REAL cap-checked
+      chokepoint and assert it lands in `"system"` only.
 
-  Fail-before: without the bridge seed the `llm` member's `:api_keys` slice is
-  EMPTY (the pre-#185 bug — `{:no_api_key, "deepseek"}` at the visitor's first
-  cold reply). The isolation test pins that baseline; the provisioned test is
-  the same `ensure_app` with ONLY the bridge added.
+    * The **cascade + isolation behavior** for OTHER workspaces is proven with a
+      test-only fixture `seed_shared_source/2` that takes an EXPLICIT key +
+      workspace, NEVER reads the production env, and NEVER mints production admin
+      authority (it writes the durable source snapshot + the `WorkspaceSharedSource`
+      pointer directly — the sanctioned direct-setup pattern the sibling
+      `curl_cascade_activation_test` / `workspace_shared_credential_source_test`
+      use). The cascade resolves a directly-seeded source via
+      `Ezagent.SnapshotStore.latest/1` (the `curl.agent` Template's snapshot
+      fallback), so `App.ensure_app` materializes the key into the hello `llm`
+      member exactly as it would from the prod path.
+
+  HARD ISOLATION (the platform owner's explicit #185 constraint): a hello app in
+  a DIFFERENT, un-bridged workspace resolves NO source and stays keyless — our
+  key never leaks across workspaces.
   """
   use EzagentCore.DataCase, async: false
 
   alias Ezagent.Credential.{GrantRow, WorkspaceSharedSource}
   alias Ezagent.Workspace
+  alias EzagentCore.Repo
   alias EzagentPluginHello.{App, CredentialBridge, Members}
 
   @test_key "sk-test-hello-cred-bridge"
@@ -36,38 +46,115 @@ defmodule EzagentPluginHello.Integration.HelloCredentialSourceTest do
       {:ok, _} = Ezagent.Agent.RecipeRegistry.seed_role_if_absent(recipe)
     end)
 
-    # The bridge reads the env var at call time — pin a known test key and
-    # restore whatever was there (config/test.exs installs a dummy).
-    previous = System.get_env("DEEPSEEK_API_KEY")
-    System.put_env("DEEPSEEK_API_KEY", @test_key)
-
-    on_exit(fn ->
-      if previous,
-        do: System.put_env("DEEPSEEK_API_KEY", previous),
-        else: System.delete_env("DEEPSEEK_API_KEY")
-    end)
-
     :ok
   end
 
-  test "provisioned path: env key bridged → hello llm curl member cold-spawns WITH deepseek" do
+  # --- production entry point (zero-arity, env-gated, LITERAL "system") --------
+
+  describe "production entry ensure_deepseek_source/0" do
+    setup do
+      previous = System.get_env("DEEPSEEK_API_KEY")
+      System.put_env("DEEPSEEK_API_KEY", @test_key)
+
+      # This isolated test boundary registers no `"workspace"` SpawnRegistry fn
+      # (full boot does), so the bridge's cap-checked chokepoint dispatch —
+      # `issue_for_action` → `ensure_started(workspace://system)` — can only
+      # resolve a workspace Kind that is ALREADY in the KindRegistry. Pre-spawn
+      # the `"system"` workspace live (via the Kind's own supervisor, the way the
+      # boot `Workspace.Loader` arranges in prod). Idempotent.
+      case Ezagent.Workspace.spawn_workspace("system") do
+        {:ok, _pid} -> :ok
+        {:error, {:already_started, _pid}} -> :ok
+      end
+
+      on_exit(fn ->
+        if previous,
+          do: System.put_env("DEEPSEEK_API_KEY", previous),
+          else: System.delete_env("DEEPSEEK_API_KEY")
+
+        # The prod path spawns the singleton "system" source live; terminate it
+        # so its process cannot bleed into other tests (its DB rows are already
+        # rolled back by the sandbox).
+        terminate(Ezagent.URI.entity("system", :agent, CredentialBridge.source_agent_name()))
+      end)
+
+      :ok
+    end
+
+    test "is ZERO-ARITY — no workspace parameter to redirect the env key" do
+      # The env-reading + admin-minting path exposes NO way to point it at an
+      # arbitrary workspace (the #185 isolation hole codex flagged).
+      assert function_exported?(CredentialBridge, :ensure_deepseek_source, 0)
+      refute function_exported?(CredentialBridge, :ensure_deepseek_source, 1)
+    end
+
+    test "seeds the LITERAL system workspace through the real cap-checked chokepoint (idempotent)" do
+      # No workspace argument — the destination is baked.
+      assert {:ok, source_uri} = CredentialBridge.ensure_deepseek_source()
+      # …idempotent (reseed-safe): a re-run keeps the same source + pointer.
+      assert {:ok, ^source_uri} = CredentialBridge.ensure_deepseek_source()
+
+      # …lands in "system" ONLY…
+      assert source_uri ==
+               Ezagent.URI.entity("system", :agent, CredentialBridge.source_agent_name())
+
+      # …registered as "system"'s shared curl source through the REAL chokepoint…
+      assert WorkspaceSharedSource.resolve("workspace://system", "curl") ==
+               URI.to_string(source_uri)
+
+      # …and the live source agent (spawned by the prod path) carries the key.
+      assert {:ok, %{keys: %{"deepseek" => @test_key}}} =
+               Ezagent.Kind.get_slice(source_uri, :api_keys)
+    end
+  end
+
+  test "no DEEPSEEK_API_KEY in the env → deliberate no-op (keyless spawn stays the truth)" do
+    previous = System.get_env("DEEPSEEK_API_KEY")
+    System.delete_env("DEEPSEEK_API_KEY")
+    on_exit(fn -> if previous, do: System.put_env("DEEPSEEK_API_KEY", previous) end)
+
+    assert {:ok, :no_env_key} = CredentialBridge.ensure_deepseek_source()
+    assert WorkspaceSharedSource.resolve("workspace://system", "curl") == nil
+  end
+
+  test "boot_enabled?/0 gates on BOTH the app config AND the env key" do
+    previous_config = Application.get_env(:ezagent_plugin_hello, :credential_bridge_boot)
+    previous_key = System.get_env("DEEPSEEK_API_KEY")
+    System.put_env("DEEPSEEK_API_KEY", @test_key)
+
+    on_exit(fn ->
+      if is_nil(previous_config),
+        do: Application.delete_env(:ezagent_plugin_hello, :credential_bridge_boot),
+        else: Application.put_env(:ezagent_plugin_hello, :credential_bridge_boot, previous_config)
+
+      if previous_key,
+        do: System.put_env("DEEPSEEK_API_KEY", previous_key),
+        else: System.delete_env("DEEPSEEK_API_KEY")
+    end)
+
+    # config/test.exs keeps the boot lane OFF even though a dummy key is
+    # installed — test boots must never auto-wire a workspace.
+    refute CredentialBridge.boot_enabled?()
+
+    # With the lane enabled, the gate follows the env key alone.
+    Application.put_env(:ezagent_plugin_hello, :credential_bridge_boot, true)
+    assert CredentialBridge.boot_enabled?()
+
+    System.delete_env("DEEPSEEK_API_KEY")
+    refute CredentialBridge.boot_enabled?()
+  end
+
+  # --- cascade materialization in ARBITRARY workspaces (test-only fixture) -----
+
+  test "provisioned path: a seeded workspace's hello llm curl member cold-spawns WITH deepseek" do
     ws = "hello-cred-#{System.unique_integer([:positive])}"
     {:ok, _ws_pid} = Workspace.create(ws, %{})
 
-    # The boot lane (called directly here; at boot it runs from the plugin's
-    # `credential_bridge_children/0` Task).
-    assert {:ok, source_uri} = CredentialBridge.ensure_deepseek_source(ws)
+    source_uri = seed_shared_source(ws, @test_key)
 
     # …registered as THIS workspace's shared curl credential source…
     assert WorkspaceSharedSource.resolve("workspace://#{ws}", "curl") ==
              URI.to_string(source_uri)
-
-    # …and the source agent itself carries the key (the vault the cascade
-    # materializes from).
-    assert source_uri == Ezagent.URI.entity(ws, :agent, CredentialBridge.source_agent_name())
-
-    assert {:ok, %{keys: %{"deepseek" => @test_key}}} =
-             Ezagent.Kind.get_slice(source_uri, :api_keys)
 
     # A freshly seeded hello app cold-spawns its `llm` curl member…
     assert {:ok, session_uri, _front_desk} = App.ensure_app(ws, "main")
@@ -92,28 +179,14 @@ defmodule EzagentPluginHello.Integration.HelloCredentialSourceTest do
     assert get_in(api_keys, [:keys, "deepseek"]) == @test_key
   end
 
-  test "bridge is idempotent (reseed-safe): re-run keeps the same source + pointer" do
-    ws = "hello-cred-idem-#{System.unique_integer([:positive])}"
-    {:ok, _ws_pid} = Workspace.create(ws, %{})
-
-    assert {:ok, source_uri} = CredentialBridge.ensure_deepseek_source(ws)
-    assert {:ok, ^source_uri} = CredentialBridge.ensure_deepseek_source(ws)
-
-    assert WorkspaceSharedSource.resolve("workspace://#{ws}", "curl") ==
-             URI.to_string(source_uri)
-
-    assert {:ok, %{keys: %{"deepseek" => @test_key}}} =
-             Ezagent.Kind.get_slice(source_uri, :api_keys)
-  end
-
   test "ISOLATION: a hello app in a DIFFERENT workspace stays keyless (no cross-workspace leak)" do
     bridged_ws = "hello-cred-a-#{System.unique_integer([:positive])}"
     plain_ws = "hello-cred-b-#{System.unique_integer([:positive])}"
     {:ok, _pid1} = Workspace.create(bridged_ws, %{})
     {:ok, _pid2} = Workspace.create(plain_ws, %{})
 
-    # Bridge ONLY the first workspace.
-    assert {:ok, bridged_source} = CredentialBridge.ensure_deepseek_source(bridged_ws)
+    # Seed ONLY the first workspace (explicit key, no env, no admin).
+    bridged_source = seed_shared_source(bridged_ws, @test_key)
 
     # A hello agent cold-spawned in the OTHER workspace…
     assert {:ok, plain_session, _front_desk} = App.ensure_app(plain_ws, "main")
@@ -131,44 +204,60 @@ defmodule EzagentPluginHello.Integration.HelloCredentialSourceTest do
     assert Map.get(keys, "deepseek") in [nil, ""]
 
     # …while the bridged workspace's agent DID get it (same ensure_app; the
-    # ONLY difference is the workspace-scoped bridge).
+    # ONLY difference is the workspace-scoped seed).
     assert {:ok, bridged_session, _} = App.ensure_app(bridged_ws, "main")
     assert {:ok, bridged_llm} = Members.role_uri(bridged_session, "llm")
 
     assert {:ok, %{keys: %{"deepseek" => @test_key}}} =
              Ezagent.Kind.get_slice(bridged_llm, :api_keys)
 
-    # Sanity: the source agent itself lives in the BRIDGED workspace only.
+    # Sanity: the source lives in the BRIDGED workspace only.
     assert Ezagent.Capability.workspace_of(bridged_source) ==
              Ezagent.URI.workspace(bridged_ws)
   end
 
-  test "no DEEPSEEK_API_KEY in the env → deliberate no-op (keyless spawn stays the truth)" do
-    System.delete_env("DEEPSEEK_API_KEY")
-    ws = "hello-cred-noenv-#{System.unique_integer([:positive])}"
+  # --- test-only fixture -------------------------------------------------------
+  #
+  # Seed an ARBITRARY workspace's shared curl credential source WITHOUT the
+  # production bridge. Deliberately (#185 codex review):
+  #   * takes an EXPLICIT key — never reads `DEEPSEEK_API_KEY`;
+  #   * mints NO production admin authority — it writes the durable state
+  #     directly (the source snapshot + the `WorkspaceSharedSource` pointer),
+  #     the same direct-setup pattern the sibling credential tests use.
+  # The `curl.agent` cascade reads the source's `:api_keys` from
+  # `SnapshotStore.latest/1` (its documented snapshot fallback), so a
+  # directly-seeded source materializes into the hello `llm` member exactly as
+  # the prod path's live source would.
+  defp seed_shared_source(ws, key) do
+    source_uri = Ezagent.URI.entity(ws, :agent, CredentialBridge.source_agent_name())
+    source_str = URI.to_string(source_uri)
 
-    assert {:ok, :no_env_key} = CredentialBridge.ensure_deepseek_source(ws)
-    assert WorkspaceSharedSource.resolve("workspace://#{ws}", "curl") == nil
+    :ok = Ezagent.AgentFlavorAttributes.put(source_uri, "curl")
+
+    {:ok, _} =
+      Ezagent.SnapshotStore.write(
+        source_str,
+        %{api_keys: %{keys: %{"deepseek" => key}}},
+        kind_type: :agent
+      )
+
+    {:ok, _} =
+      %{
+        workspace_uri: "workspace://#{ws}",
+        flavor: "curl",
+        source_uri: source_str,
+        set_by: "entity://#{ws}/user/cred-seeder"
+      }
+      |> WorkspaceSharedSource.changeset()
+      |> Repo.insert()
+
+    source_uri
   end
 
-  test "boot_enabled?/0 gates on BOTH the app config AND the env key" do
-    previous_config = Application.get_env(:ezagent_plugin_hello, :credential_bridge_boot)
-
-    on_exit(fn ->
-      if is_nil(previous_config),
-        do: Application.delete_env(:ezagent_plugin_hello, :credential_bridge_boot),
-        else: Application.put_env(:ezagent_plugin_hello, :credential_bridge_boot, previous_config)
-    end)
-
-    # config/test.exs keeps the boot lane OFF even though a dummy key is
-    # installed — test boots must never auto-wire a workspace.
-    refute CredentialBridge.boot_enabled?()
-
-    # With the lane enabled, the gate follows the env key alone.
-    Application.put_env(:ezagent_plugin_hello, :credential_bridge_boot, true)
-    assert CredentialBridge.boot_enabled?()
-
-    System.delete_env("DEEPSEEK_API_KEY")
-    refute CredentialBridge.boot_enabled?()
+  defp terminate(%URI{} = uri) do
+    case Ezagent.KindRegistry.lookup(uri) do
+      {:ok, pid} -> if Process.alive?(pid), do: Ezagent.Kind.terminate(uri)
+      _ -> :ok
+    end
   end
 end

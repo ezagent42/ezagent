@@ -15,29 +15,43 @@ defmodule EzagentPluginHello.CredentialBridge do
 
   ## What this does (and deliberately does NOT do)
 
-  When the env var is present, `ensure_deepseek_source/1` idempotently:
+  The production entry point is `ensure_deepseek_source/0` — it takes NO
+  arguments. When `DEEPSEEK_API_KEY` is present it idempotently:
 
     1. spawns (or reuses) a small curl-flavor **credential-source agent** in the
-       hello workspace — `entity://<ws>/agent/hello-deepseek-credential-source`
-       — and stores the key in ITS `:api_keys` slice under `"deepseek"`;
-    2. registers that agent as the workspace's SHARED credential source for the
-       `"curl"` flavor, via the EXISTING cap-checked + audited chokepoint
-       `Ezagent.ActionSet.WorkspaceSharedCredentialSource`
+       LITERAL `"system"` workspace —
+       `entity://system/agent/hello-deepseek-credential-source` — and stores the
+       key in ITS `:api_keys` slice under `"deepseek"`;
+    2. registers that agent as the `"system"` workspace's SHARED credential
+       source for the `"curl"` flavor, via the EXISTING cap-checked + audited
+       chokepoint `Ezagent.ActionSet.WorkspaceSharedCredentialSource`
        (`:set_workspace_shared_credential_source` — the single-writer lane, never
        a raw Repo write).
 
-  Thereafter every hello `llm` member cold-spawned IN THAT WORKSPACE resolves
-  the source through the unchanged cascade and is born with `"deepseek"` in its
-  own `:api_keys` slice.
+  Thereafter every hello `llm` member cold-spawned IN THE `"system"` WORKSPACE
+  resolves the source through the unchanged cascade and is born with `"deepseek"`
+  in its own `:api_keys` slice.
 
   ## Hard isolation constraint (the whole point)
 
-  The source + the workspace-shared pointer are scoped to the internal hello
-  workspace ONLY (default `"system"` — the `session://system/hello/*` home).
-  The shared hello TEMPLATE stays credential-OPTIONAL and carries NO
-  `cascade_resolution.credential_source_uri`, so a hello agent spawned in ANY
+  The destination is a compile-time LITERAL (`"system"`) — there is deliberately
+  NO parameter and NO config override by which a caller could redirect the
+  env-key seeding at an arbitrary workspace. Because this path both reads the
+  real `DEEPSEEK_API_KEY` AND mints admin authority, a redirectable destination
+  would be an isolation hole (the env key could be copied into any workspace);
+  the zero-arity entry + literal destination closes it. #185 codex review.
+
+  The source + the workspace-shared pointer therefore live in the `"system"`
+  workspace ONLY. The shared hello TEMPLATE stays credential-OPTIONAL and carries
+  NO `cascade_resolution.credential_source_uri`, so a hello agent spawned in ANY
   OTHER workspace still resolves NO source and stays keyless until that
   workspace's owner provides their own. Our key never leaks across workspaces.
+
+  Tests that must seed OTHER workspaces do NOT call this module: they use a
+  test-only fixture that takes an EXPLICIT key + workspace (never reads the
+  production `DEEPSEEK_API_KEY` env) and sets the durable state up directly
+  (never mints the production admin authority) — see
+  `EzagentPluginHello.Integration.HelloCredentialSourceTest`.
 
   ## Activation
 
@@ -60,6 +74,11 @@ defmodule EzagentPluginHello.CredentialBridge do
   @flavor "curl"
   @source_agent_name "hello-deepseek-credential-source"
 
+  # The env-key bridge destination is a compile-time LITERAL. It is NOT a
+  # parameter and NOT config-overridable — the env key + admin authority may
+  # only ever flow to the internal `"system"` workspace (isolation, #185 review).
+  @system_workspace "system"
+
   @doc "The env var this bridge reads (`#{@env_var}`)."
   @spec env_var() :: String.t()
   def env_var, do: @env_var
@@ -68,22 +87,9 @@ defmodule EzagentPluginHello.CredentialBridge do
   @spec provider() :: String.t()
   def provider, do: @provider
 
-  @doc "The deterministic credential-source agent name in the hello workspace."
+  @doc "The deterministic credential-source agent name in the `\"system\"` workspace."
   @spec source_agent_name() :: String.t()
   def source_agent_name, do: @source_agent_name
-
-  @doc """
-  The internal hello workspace the bridge is scoped to.
-
-  Defaults to `"system"` — the canonical `session://system/hello/*` home
-  (deploy-seed + refresh scripts). Override via
-  `config :ezagent_plugin_hello, :credential_workspace` (tests use per-run
-  workspaces to prove isolation).
-  """
-  @spec default_workspace() :: String.t()
-  def default_workspace do
-    Application.get_env(:ezagent_plugin_hello, :credential_workspace, "system")
-  end
 
   @doc """
   Should the boot-time bridge Task start? Config-gated (dev/prod on via
@@ -97,28 +103,32 @@ defmodule EzagentPluginHello.CredentialBridge do
   end
 
   @doc """
-  Idempotently bridge `DEEPSEEK_API_KEY` into `workspace`'s shared curl
-  credential source.
+  Idempotently bridge `DEEPSEEK_API_KEY` into the `"system"` workspace's shared
+  curl credential source.
 
-  Returns `{:ok, source_uri}` when the workspace now has the shared source
+  Zero-arity BY DESIGN: the destination is the compile-time literal `"system"`,
+  never a caller-supplied workspace (see the isolation note in the moduledoc) —
+  this env-reading + admin-minting path must not be pointable at an arbitrary
+  workspace.
+
+  Returns `{:ok, source_uri}` when `"system"` now has the shared source
   registered (seeded by this call or already in place), `{:ok, :no_env_key}`
   when the env var is absent/empty (a deliberate no-op — keyless spawn stays
   the deployment's truth), or `{:error, reason}` on a real failure.
   """
-  @spec ensure_deepseek_source(String.t()) ::
+  @spec ensure_deepseek_source() ::
           {:ok, URI.t()} | {:ok, :no_env_key} | {:error, term()}
-  def ensure_deepseek_source(workspace \\ default_workspace())
-      when is_binary(workspace) and workspace != "" do
+  def ensure_deepseek_source do
     case env_key() do
       {:ok, :no_env_key} ->
         {:ok, :no_env_key}
 
       {:ok, key} ->
-        with :ok <- ensure_workspace(workspace),
-             {:ok, source_uri} <- ensure_source_agent(workspace),
+        with :ok <- ensure_workspace(@system_workspace),
+             {:ok, source_uri} <- ensure_source_agent(@system_workspace),
              :ok <- put_api_key(source_uri, key),
              :ok <- await_snapshot(source_uri),
-             :ok <- ensure_workspace_shared_source(workspace, source_uri) do
+             :ok <- ensure_workspace_shared_source(@system_workspace, source_uri) do
           {:ok, source_uri}
         end
     end
