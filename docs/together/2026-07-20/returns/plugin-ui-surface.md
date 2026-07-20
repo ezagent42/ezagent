@@ -2,7 +2,7 @@
 > **Branch:** `codex/plugin-ui-self-declaration-1472`
 > **PR:** https://github.com/ezagent42/ezagent/pull/1476
 > **Dev:** codex / zyli line
-> **returned_at:** 2026-07-20 15:38 +0800
+> **returned_at:** 2026-07-20 16:00 +0800
 > **deadline:** 2026-07-20 23:59 +0800
 > **deadline_status:** deferred
 
@@ -24,6 +24,8 @@
   `session.view.switch`, the backend returns the current session's bindings, and
   React renders the existing External Mirror form inside the Conversation island.
   The `/sessions?session=...` URL and surrounding shell remain mounted.
+- Removed the redundant Routing shortcut beside Bindings in the session header;
+  routing management remains available from the members panel.
 
 ## DoD reconciliation
 
@@ -41,21 +43,23 @@
 
 ## Branch and gate status
 
-- Implementation head: `4758f040b` (local Bindings session view included)
+- Implementation head: `169730af4` (Routing header shortcut removed)
 - Rebase base: `fe290643133cf3f8e9de932236c5d64623748122` (`origin/main`)
 - GitHub CI: frontend regression gate, return advisory, skill ownership gate, and
   gitleaks are green; deterministic gate is pending at update time:
   https://github.com/ezagent42/ezagent/actions/runs/29725114841
 - Local focused tests: 26/26 architecture tests, 8/8 template-form backend tests,
-  and 29/29 frontend tests.
+  and 31/31 frontend tests.
 - Local frontend gates: lint, typecheck, and Vite production build pass.
 - Browser canary: Kanban exposes two required flavor selects populated from the
   runtime registry, defaults both to `cc-headless`, and a successful save navigates
   to `/workspaces` with no browser errors.
 - Browser canary: clicking a session's Bindings tab keeps the exact
   `/sessions?session=...` URL, preserves the session rail/shell, and locally renders
-  the External Mirror form without browser errors. Conversation/navigation backend
-  tests pass 21/21 and frontend tests pass 30/30.
+  the External Mirror form without browser errors. The session header exposes only
+  Conversation and Bindings (no Routing shortcut); routing remains in the members
+  panel. Conversation/navigation backend tests pass 21/21 and frontend tests pass
+  31/31.
 - Local `mix precommit`: failed at compile warnings-as-errors on the deferred
   session-specific World/Kanban references and existing `state_for_route/3`
   grouping warning.
