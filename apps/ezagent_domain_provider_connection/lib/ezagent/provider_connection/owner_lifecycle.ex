@@ -357,10 +357,10 @@ defmodule Ezagent.ProviderConnection.OwnerLifecycle do
 
         locked_attempt.connection_id != locked_connection.connection_id or
           locked_attempt.connection_version != locked_connection.connection_version or
-            not CallbackBinding.reservation_valid?(
+            not CallbackBinding.settlement_valid?(
               locked_connection,
               locked_attempt,
-              backend_record.begin_correlation_id,
+              backend_record,
               artifact
             ) ->
           Repo.rollback(:correlation_conflict)
@@ -432,10 +432,10 @@ defmodule Ezagent.ProviderConnection.OwnerLifecycle do
 
         locked_attempt.connection_id != locked_connection.connection_id or
           locked_attempt.connection_version != locked_connection.connection_version or
-            not CallbackBinding.reservation_valid?(
+            not CallbackBinding.settlement_valid?(
               locked_connection,
               locked_attempt,
-              backend_record.begin_correlation_id,
+              backend_record,
               artifact
             ) ->
           Repo.rollback(:correlation_conflict)

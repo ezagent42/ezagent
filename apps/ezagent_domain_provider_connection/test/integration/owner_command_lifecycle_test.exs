@@ -10,6 +10,7 @@ defmodule Ezagent.ProviderConnection.OwnerCommandLifecycleTest do
     AuthorizationBackendRecord,
     BackendPair,
     BackendPairRegistry,
+    CallbackBinding,
     Connection,
     Driver,
     DriverRegistry,
@@ -255,6 +256,106 @@ defmodule Ezagent.ProviderConnection.OwnerCommandLifecycleTest do
              Store.execute(:begin_authorization, args, %{self_uri: owner})
 
     assert FakeDriverAlpha.provider_effect_count(:begin) == 1
+  end
+
+  test "begin settlement rejects backend binding drift before writing pending", %{owner: owner} do
+    args = begin_args()
+
+    barrier = fn _connection, _reservation ->
+      Repo.get_by!(AuthorizationBackendRecord, begin_correlation_id: args.correlation_id)
+      |> Ecto.Changeset.change(requested_permissions_digest: "tampered-permissions")
+      |> Repo.update!()
+    end
+
+    assert {:error, :correlation_conflict} =
+             Store.execute(:begin_authorization, args, %{
+               self_uri: owner,
+               before_begin_settle: barrier
+             })
+
+    attempt = Repo.get_by!(AuthorizationAttempt, connection_id: args.connection_id)
+    assert attempt.status == "beginning"
+    assert is_nil(attempt.backend_pair_id)
+    assert is_nil(attempt.authorization_ref)
+    assert Repo.aggregate(Operation, :count, :id) == 0
+    assert FakeDriverAlpha.provider_effect_count(:begin) == 1
+    assert FakeDriverAlpha.provider_effect_count(:consume) == 0
+  end
+
+  test "settlement binding covers every backend-owned authorization coordinate" do
+    args = begin_args()
+
+    connection = %Connection{
+      connection_id: args.connection_id,
+      connection_version: 3,
+      owner_uri: "entity://task2/user/owner",
+      workspace_uri: "workspace://task2",
+      provider_id: args.provider_id,
+      governed_host: args.governed_host,
+      acquisition_method: args.acquisition_method,
+      requested_execution_identity_class: args.requested_execution_identity_class
+    }
+
+    artifact_digest = CallbackBinding.artifact_digest(args.callback_artifact)
+
+    attempt = %AuthorizationAttempt{
+      attempt_ref: Ecto.UUID.generate(),
+      connection_id: connection.connection_id,
+      connection_version: connection.connection_version,
+      workspace_uri: connection.workspace_uri,
+      purpose: "initial_bind",
+      requested_permission_digest: args.requested_permissions_digest,
+      requested_execution_identity_class: args.requested_execution_identity_class,
+      redirect_uri_id: args.redirect_uri_id,
+      callback_artifact_digest: artifact_digest,
+      reservation_digest:
+        CallbackBinding.reservation_digest(
+          "initial_bind",
+          connection,
+          args,
+          args.correlation_id,
+          artifact_digest
+        )
+    }
+
+    backend = %AuthorizationBackendRecord{
+      begin_correlation_id: args.correlation_id,
+      owner_uri: connection.owner_uri,
+      workspace_uri: connection.workspace_uri,
+      connection_id: connection.connection_id,
+      connection_version: connection.connection_version,
+      provider_id: connection.provider_id,
+      governed_host: connection.governed_host,
+      acquisition_method: connection.acquisition_method,
+      requested_permissions_digest: attempt.requested_permission_digest,
+      redirect_uri_id: attempt.redirect_uri_id,
+      execution_identity: attempt.requested_execution_identity_class
+    }
+
+    assert CallbackBinding.settlement_valid?(connection, attempt, backend, args.callback_artifact)
+
+    drifts = %{
+      owner_uri: "entity://task2/user/other",
+      workspace_uri: "workspace://other",
+      connection_id: Ecto.UUID.generate(),
+      connection_version: connection.connection_version + 1,
+      provider_id: "other-provider",
+      governed_host: "other.example",
+      acquisition_method: "other-method",
+      requested_permissions_digest: "other-permissions",
+      redirect_uri_id: "other-callback",
+      execution_identity: "workspace_service"
+    }
+
+    for {field, drift} <- drifts do
+      refute CallbackBinding.settlement_valid?(
+               connection,
+               attempt,
+               Map.put(backend, field, drift),
+               args.callback_artifact
+             ),
+             "expected settlement to reject drifted #{field}"
+    end
   end
 
   test "terminal initial begin failure closes the reservation and replays without a new effect",

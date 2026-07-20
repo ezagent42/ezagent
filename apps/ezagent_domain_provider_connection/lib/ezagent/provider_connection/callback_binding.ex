@@ -32,23 +32,27 @@ defmodule Ezagent.ProviderConnection.CallbackBinding do
 
   @spec valid?(struct(), AuthorizationAttempt.t(), struct(), Ezagent.Capability.t()) :: boolean()
   def valid?(connection, attempt, backend_record, artifact) do
-    artifact_digest = artifact_digest(artifact)
-
-    attempt.callback_artifact_digest == artifact_digest and
-      attempt.reservation_digest ==
-        reservation_digest(
-          attempt.purpose,
-          connection,
-          attempt,
-          backend_record.begin_correlation_id,
-          artifact_digest
-        ) and
+    settlement_valid?(connection, attempt, backend_record, artifact) and
       attempt.workspace_uri == connection.workspace_uri and
       attempt.connection_id == connection.connection_id and
       attempt.connection_version == connection.connection_version and
       attempt.backend_pair_id == backend_record.backend_pair_id and
       attempt.authorization_ref == backend_record.authorization_ref and
-      attempt.bound_subject_digest == backend_record.bound_input_digest and
+      attempt.bound_subject_digest == backend_record.bound_input_digest
+  end
+
+  @spec settlement_valid?(struct(), AuthorizationAttempt.t(), struct(), Ezagent.Capability.t()) ::
+          boolean()
+  def settlement_valid?(connection, attempt, backend_record, artifact) do
+    reservation_valid?(
+      connection,
+      attempt,
+      backend_record.begin_correlation_id,
+      artifact
+    ) and
+      attempt.workspace_uri == connection.workspace_uri and
+      attempt.connection_id == connection.connection_id and
+      attempt.connection_version == connection.connection_version and
       backend_record.workspace_uri == connection.workspace_uri and
       backend_record.owner_uri == connection.owner_uri and
       backend_record.connection_id == connection.connection_id and
