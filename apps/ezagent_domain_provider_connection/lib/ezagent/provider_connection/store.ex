@@ -79,6 +79,7 @@ defmodule Ezagent.ProviderConnection.Store do
     with %AuthorizationAttempt{} = attempt <- Repo.get(AuthorizationAttempt, args.attempt_ref),
          true <- attempt.correlation_id == args.correlation_id,
          %Connection{} = connection <- owned_connection(attempt.connection_id, owner),
+         :ok <- callback_terminal_result(connection),
          :ok <- callback_source_status(connection.status),
          result <- dispatch_callback_phase(attempt, connection, owner, now) do
       result
@@ -92,6 +93,9 @@ defmodule Ezagent.ProviderConnection.Store do
 
   defp dispatch_callback_phase(attempt, connection, owner, now) do
     case operation_for(attempt) do
+      %Operation{status: "finalized", safe_error_code: "account_conflict"} ->
+        {:error, :account_conflict}
+
       %Operation{status: "backend_committed"} = operation ->
         if Repo.get_by(AuthorizationBackendRecord, authorization_ref: attempt.authorization_ref) do
           if final_operation_scope?(operation, attempt, connection),
@@ -130,8 +134,8 @@ defmodule Ezagent.ProviderConnection.Store do
          {:ok, operation} <- prepare_operation(claim, connection),
          :ok <- validate_fence_locked(operation, claim, connection),
          {:ok, callback_result} <- consume_authorization(claim, connection, owner),
-         {:write_only_handoff, handoff_ref} <- callback_result.credential_material,
-         {:ok, operation} <- bind_handoff(operation, claim, connection, handoff_ref),
+         {:ok, operation} <-
+           journal_provider_result(operation, claim, connection, callback_result),
          :ok <- validate_fence_locked(operation, claim, connection),
          {:ok, credential_result} <-
            LocalAuthorizationBackend.handoff_to_registered_credential(
@@ -191,7 +195,8 @@ defmodule Ezagent.ProviderConnection.Store do
   end
 
   defp prepare_operation(attempt, connection) do
-    correlation_id = "store:#{attempt.correlation_id}"
+    operation_class = callback_operation_class(attempt)
+    correlation_id = "#{operation_class}:#{attempt.correlation_id}"
     now = DateTime.utc_now()
 
     Repo.transaction(fn ->
@@ -210,7 +215,7 @@ defmodule Ezagent.ProviderConnection.Store do
         digest = Operation.callback_digest(backend_record, locked_attempt, locked_connection)
 
         attrs = %{
-          operation_class: "store",
+          operation_class: operation_class,
           correlation_id: correlation_id,
           bound_input_digest: digest,
           next_recovery_at: now,
@@ -232,17 +237,17 @@ defmodule Ezagent.ProviderConnection.Store do
         {:ok, operation}
 
       {:error, {:insert_failed, _changeset, digest}} ->
-        reconcile_operation(attempt.backend_pair_id, correlation_id, digest)
+        reconcile_operation(attempt.backend_pair_id, operation_class, correlation_id, digest)
 
       {:error, _reason} ->
         {:error, :credential_conflict}
     end
   end
 
-  defp reconcile_operation(pair_id, correlation_id, digest) do
+  defp reconcile_operation(pair_id, operation_class, correlation_id, digest) do
     case Repo.get_by(Operation,
            backend_pair_id: pair_id,
-           operation_class: "store",
+           operation_class: operation_class,
            correlation_id: correlation_id
          ) do
       %Operation{bound_input_digest: ^digest} = operation -> {:ok, operation}
@@ -251,34 +256,118 @@ defmodule Ezagent.ProviderConnection.Store do
     end
   end
 
-  defp bind_handoff(
-         %Operation{status: "prepared", handoff_ref: nil} = operation,
-         attempt,
-         connection,
-         handoff_ref
-       ) do
-    if operation_fence_matches?(operation, attempt, connection) do
-      operation
-      |> Ecto.Changeset.change(handoff_ref: handoff_ref)
-      |> Repo.update()
+  defp journal_provider_result(operation, attempt, connection, result) do
+    with {:write_only_handoff, handoff_ref} when is_binary(handoff_ref) <-
+           result.credential_material do
+      attrs = %{
+        handoff_ref: handoff_ref,
+        provider_result_ref: result.provider_result_ref,
+        result_external_account_id: result.external_account_id,
+        result_display_login: result.display_login,
+        result_execution_identity: Atom.to_string(result.execution_identity.kind),
+        result_authorization_ref: result.authorization_ref,
+        result_authorization_version: result.authorization_version,
+        result_permission_digest: result.granted_permissions_digest,
+        result_expires_at: result.expires_at
+      }
+
+      Repo.transaction(fn ->
+        locked_connection = lock_connection(connection.connection_id)
+        locked_attempt = lock_attempt(attempt.attempt_ref)
+        locked_operation = lock_operation(operation.id)
+
+        cond do
+          not current_operation_fence?(locked_operation, locked_attempt, locked_connection) ->
+            Repo.rollback(:stale_attempt_claim)
+
+          provider_result_matches?(locked_operation, attrs) ->
+            locked_operation
+
+          provider_unowned?(locked_operation) ->
+            locked_operation
+            |> Operation.provider_ownership_changeset(attrs)
+            |> Repo.update!()
+
+          true ->
+            Repo.rollback(:credential_conflict)
+        end
+      end)
+      |> case do
+        {:ok, journaled} ->
+          {:ok, journaled}
+
+        {:error, :stale_attempt_claim} ->
+          journal_terminal_provider_result(operation, attrs)
+
+        {:error, _reason} ->
+          {:error, :credential_conflict}
+      end
     else
-      fence_if_terminal(operation)
+      _other -> {:error, :credential_conflict}
     end
   end
 
-  defp bind_handoff(
-         %Operation{status: "prepared", handoff_ref: handoff_ref} = operation,
-         attempt,
-         connection,
-         handoff_ref
-       ) do
-    if operation_fence_matches?(operation, attempt, connection),
-      do: {:ok, operation},
-      else: fence_if_terminal(operation)
+  defp journal_terminal_provider_result(operation, attrs) do
+    Repo.transaction(fn ->
+      connection = lock_connection(operation.connection_id)
+      attempt = lock_attempt(operation.attempt_ref)
+      current = lock_operation(operation.id)
+
+      if connection.status in ["revoking", "disconnecting"] and
+           connection.connection_version == current.expected_connection_version + 1 and
+           current.status == "prepared" and current.attempt_ref == attempt.attempt_ref and
+           provider_unowned?(current) do
+        current
+        |> Operation.provider_ownership_changeset(attrs)
+        |> Repo.update!()
+      else
+        Repo.rollback(:stale_attempt_claim)
+      end
+    end)
+    |> case do
+      {:ok, journaled} ->
+        case CredentialReplacement.reconcile(journaled.id) do
+          :ok -> {:error, :connection_terminal}
+          {:error, reason} -> {:error, reason}
+        end
+
+      {:error, _reason} ->
+        {:error, :credential_conflict}
+    end
   end
 
-  defp bind_handoff(_operation, _attempt, _connection, _handoff_ref),
-    do: {:error, :credential_conflict}
+  defp provider_unowned?(operation) do
+    Enum.all?(
+      [
+        operation.handoff_ref,
+        operation.provider_result_ref,
+        operation.result_external_account_id,
+        operation.result_display_login,
+        operation.result_execution_identity,
+        operation.result_authorization_ref,
+        operation.result_authorization_version,
+        operation.result_permission_digest,
+        operation.result_expires_at,
+        operation.result_ref,
+        operation.result_credential_version
+      ],
+      &is_nil/1
+    )
+  end
+
+  defp provider_result_matches?(operation, attrs) do
+    operation.status == "prepared" and
+      operation.handoff_ref == attrs.handoff_ref and
+      operation.provider_result_ref == attrs.provider_result_ref and
+      operation.result_external_account_id == attrs.result_external_account_id and
+      operation.result_display_login == attrs.result_display_login and
+      operation.result_execution_identity == attrs.result_execution_identity and
+      operation.result_authorization_ref == attrs.result_authorization_ref and
+      operation.result_authorization_version == attrs.result_authorization_version and
+      operation.result_permission_digest == attrs.result_permission_digest and
+      operation.result_expires_at == attrs.result_expires_at and
+      is_nil(operation.result_ref) and is_nil(operation.result_credential_version)
+  end
 
   defp journal_credential_result(
          %Operation{status: "backend_committed"} = operation,
@@ -303,13 +392,16 @@ defmodule Ezagent.ProviderConnection.Store do
         %Operation{status: "prepared"} ->
           if current_operation_fence?(locked_operation, locked_attempt, locked_connection) do
             locked_operation
-            |> Operation.backend_commit_changeset(attrs)
+            |> Operation.credential_ownership_changeset("backend_committed", attrs)
             |> Repo.update!()
             |> then(&{:backend_committed, &1})
           else
             locked_operation
-            |> Operation.cleanup_pending_changeset(
-              Map.put(attrs, :safe_error_code, "cleanup_pending")
+            |> Operation.credential_ownership_changeset("cleanup_pending", attrs)
+            |> Ecto.Changeset.change(
+              safe_error_code: "cleanup_pending",
+              provider_cleanup_status: "pending",
+              credential_cleanup_status: "pending"
             )
             |> Repo.update!()
             |> then(&{:cleanup_pending, &1})
@@ -351,14 +443,17 @@ defmodule Ezagent.ProviderConnection.Store do
     do:
       Repo.get_by(Operation,
         backend_pair_id: attempt.backend_pair_id,
-        operation_class: "store",
-        correlation_id: "store:#{attempt.correlation_id}"
+        operation_class: callback_operation_class(attempt),
+        correlation_id: "#{callback_operation_class(attempt)}:#{attempt.correlation_id}"
       )
 
-  defp logical_result(connection, operation),
+  defp callback_operation_class(%AuthorizationAttempt{purpose: "initial_bind"}), do: "store"
+  defp callback_operation_class(%AuthorizationAttempt{purpose: "reauthorize"}), do: "replace"
+
+  defp logical_result(connection, _operation),
     do: %{
       connection_id: connection.connection_id,
-      status: operation.status,
+      status: connection.status,
       version: connection.connection_version
     }
 
@@ -368,14 +463,20 @@ defmodule Ezagent.ProviderConnection.Store do
 
   defp callback_source_status(_status), do: {:error, :connection_terminal}
 
+  defp callback_terminal_result(%Connection{
+         status: "failed",
+         last_error_code: "account_conflict"
+       }),
+       do: {:error, :account_conflict}
+
+  defp callback_terminal_result(_connection), do: :ok
+
   defp resume_prepared(operation, attempt, connection, owner, now) do
     with {:ok, {operation, attempt, connection}} <-
            claim_prepared(operation, attempt, connection, owner, now),
-         :ok <- validate_fence_locked(operation, attempt, connection),
-         {:ok, callback_result} <- consume_authorization(attempt, connection, owner),
-         {:write_only_handoff, handoff_ref} <- callback_result.credential_material,
-         {:ok, operation} <- bind_handoff(operation, attempt, connection, handoff_ref),
-         :ok <- validate_fence_locked(operation, attempt, connection),
+         {:ok, operation} <-
+           ensure_provider_owned(operation, attempt, connection, owner),
+         :ok <- validate_fence_or_reconcile(operation, attempt, connection),
          {:ok, credential_result} <-
            LocalAuthorizationBackend.handoff_to_registered_credential(
              operation.id,
@@ -389,6 +490,42 @@ defmodule Ezagent.ProviderConnection.Store do
       false -> {:error, :stale_attempt_claim}
       {:error, _reason} = error -> error
       _reason -> {:error, :credential_conflict}
+    end
+  end
+
+  defp validate_fence_or_reconcile(operation, attempt, connection) do
+    case validate_fence_locked(operation, attempt, connection) do
+      :ok ->
+        :ok
+
+      {:error, :stale_attempt_claim} ->
+        if is_binary(operation.provider_result_ref) do
+          case CredentialReplacement.reconcile(operation.id) do
+            :ok -> {:error, :connection_terminal}
+            {:error, reason} -> {:error, reason}
+          end
+        else
+          {:error, :stale_attempt_claim}
+        end
+
+      {:error, reason} ->
+        {:error, reason}
+    end
+  end
+
+  defp ensure_provider_owned(
+         %Operation{provider_result_ref: ref} = operation,
+         _attempt,
+         _connection,
+         _owner
+       )
+       when is_binary(ref),
+       do: {:ok, operation}
+
+  defp ensure_provider_owned(operation, attempt, connection, owner) do
+    with :ok <- validate_fence_locked(operation, attempt, connection),
+         {:ok, callback_result} <- consume_authorization(attempt, connection, owner) do
+      journal_provider_result(operation, attempt, connection, callback_result)
     end
   end
 
@@ -482,9 +619,23 @@ defmodule Ezagent.ProviderConnection.Store do
       end
     end)
     |> case do
-      {:ok, :ok} -> :ok
-      {:error, :connection_terminal} -> fence_if_terminal(operation)
-      {:error, _reason} -> {:error, :stale_attempt_claim}
+      {:ok, :ok} ->
+        :ok
+
+      {:error, :connection_terminal} ->
+        case Repo.get(Operation, operation.id) do
+          %Operation{provider_result_ref: ref} = owned when is_binary(ref) ->
+            case CredentialReplacement.reconcile(owned.id) do
+              :ok -> {:error, :connection_terminal}
+              {:error, reason} -> {:error, reason}
+            end
+
+          _unowned ->
+            fence_if_terminal(operation)
+        end
+
+      {:error, _reason} ->
+        {:error, :stale_attempt_claim}
     end
   end
 
@@ -506,7 +657,8 @@ defmodule Ezagent.ProviderConnection.Store do
       operation.connection_id == attempt.connection_id and
       operation.connection_id == connection.connection_id and
       operation.backend_pair_id == attempt.backend_pair_id and
-      operation.correlation_id == "store:#{attempt.correlation_id}" and
+      operation.operation_class == callback_operation_class(attempt) and
+      operation.correlation_id == "#{operation.operation_class}:#{attempt.correlation_id}" and
       operation.expected_connection_version == attempt.connection_version and
       operation.expected_connection_version == connection.connection_version and
       operation.attempt_claim_token == attempt.claim_token and
@@ -529,18 +681,20 @@ defmodule Ezagent.ProviderConnection.Store do
   end
 
   defp final_operation_scope?(operation, attempt, connection) do
-    base_connection = %{connection | connection_version: operation.expected_connection_version}
-
-    case Repo.get_by(AuthorizationBackendRecord, authorization_ref: attempt.authorization_ref) do
-      %AuthorizationBackendRecord{} = backend_record ->
-        operation.attempt_version == attempt.attempt_version and
-          stable_scope(backend_record, attempt, base_connection) == :ok and
-          operation.bound_input_digest ==
-            Operation.callback_digest(backend_record, attempt, base_connection)
-
-      nil ->
-        false
-    end
+    operation.workspace_uri == attempt.workspace_uri and
+      operation.workspace_uri == connection.workspace_uri and
+      operation.connection_id == attempt.connection_id and
+      operation.connection_id == connection.connection_id and
+      operation.attempt_ref == attempt.attempt_ref and
+      operation.backend_pair_id == attempt.backend_pair_id and
+      operation.operation_class == callback_operation_class(attempt) and
+      operation.correlation_id == "#{operation.operation_class}:#{attempt.correlation_id}" and
+      operation.expected_connection_version == attempt.connection_version and
+      operation.expected_authorization_ref == attempt.authorization_ref and
+      operation.result_authorization_ref == operation.expected_authorization_ref and
+      operation.result_authorization_version == operation.expected_authorization_version + 1 and
+      operation.attempt_version == attempt.attempt_version and
+      connection.connection_version == operation.expected_connection_version + 1
   end
 
   defp stable_scope(backend_record, attempt, connection) do

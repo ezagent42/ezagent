@@ -175,7 +175,8 @@ defmodule Ezagent.ProviderConnection.CallbackIngress do
          operation.connection_id == attempt.connection_id and
          operation.attempt_ref == attempt.attempt_ref and
          operation.backend_pair_id == attempt.backend_pair_id and
-         operation.correlation_id == "store:#{attempt.correlation_id}" and
+         operation.operation_class == callback_operation_class(attempt.purpose) and
+         operation.correlation_id == "#{operation.operation_class}:#{attempt.correlation_id}" and
          operation.expected_connection_version == attempt.connection_version and
          connection.workspace_uri == operation.workspace_uri and
          connection.connection_id == operation.connection_id and
@@ -209,15 +210,22 @@ defmodule Ezagent.ProviderConnection.CallbackIngress do
       |> Repo.one()
 
   defp lock_operation(attempt) do
+    operation_class = callback_operation_class(attempt.purpose)
+
     Operation
     |> where(
       [row],
-      row.backend_pair_id == ^attempt.backend_pair_id and row.operation_class == "store" and
-        row.correlation_id == ^"store:#{attempt.correlation_id}"
+      row.backend_pair_id == ^attempt.backend_pair_id and
+        row.operation_class == ^operation_class and
+        row.correlation_id == ^"#{operation_class}:#{attempt.correlation_id}"
     )
     |> lock("FOR UPDATE")
     |> Repo.one()
   end
+
+  defp callback_operation_class("initial_bind"), do: "store"
+  defp callback_operation_class("reauthorize"), do: "replace"
+  defp callback_operation_class(_purpose), do: nil
 
   defp lock_backend_record(attempt),
     do:

@@ -27,7 +27,10 @@ defmodule Ezagent.ProviderConnection.RegistryTest do
     begin_authorization: 1,
     consume_callback: 1,
     reconcile_callback: 1,
+    discard_callback_result: 1,
+    discard_refresh_result: 1,
     refresh: 1,
+    reconcile_refresh: 1,
     revoke: 1
   ]
   @authorization_callbacks [
@@ -549,12 +552,20 @@ defmodule Ezagent.ProviderConnection.RegistryTest do
 
   defp reconciliation_context(correlation, private_frame) do
     %{
+      owner_uri: "entity://acme/user/registry-test",
+      workspace_uri: "workspace://acme",
+      provider_id: "registry-provider",
+      acquisition_method: "oauth_user",
+      governed_host: "example.test",
       backend_pair_id: "pair-alpha-v1",
-      operation_class: "consume",
+      operation_id: "operation-reconciliation-1",
+      connection_id: "connection-reconciliation-1",
       correlation_id: correlation,
       attempt_ref: "attempt-reconciliation-1",
-      connection_generation: 11,
-      credential_generation: 3,
+      authorization_ref: "authorization-reconciliation-1",
+      expected_connection_version: 11,
+      expected_authorization_version: 4,
+      expected_credential_version: 3,
       command_digest: "durable-command-digest",
       callback_envelope_digest: "server-owned",
       exchange: fn provider_exchange -> provider_exchange.(private_frame) end

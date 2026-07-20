@@ -116,6 +116,9 @@ defmodule Ezagent.ProviderConnection.Connection do
     |> validate_failed_without_active_pointers()
     |> validate_inclusion(:status, ["active", "failed"])
     |> validate_closed_inputs()
+    |> unique_constraint(:external_account_id,
+      name: :provider_connections_active_binding_index
+    )
     |> check_constraint(:status, name: :provider_connections_status_check)
     |> check_constraint(:status, name: :provider_connections_failed_identity_check)
     |> check_constraint(:status, name: :provider_connections_bound_identity_check)

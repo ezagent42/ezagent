@@ -6,6 +6,27 @@ defmodule Ezagent.ProviderConnection.Test.Task8Driver do
   def begin_authorization(_context), do: {:error, :provider_protocol_failed}
 
   @impl true
+  def consume_callback(%{exchange: exchange} = context) when is_function(exchange, 1) do
+    exchange.(fn private_frame ->
+      provider_result_ref = provider_result_ref(context, private_frame)
+      :ok = remember_callback_result(context, provider_result_ref)
+
+      {:ok,
+       %{
+         provider_result_ref: provider_result_ref,
+         external_account_id: "task8-account",
+         display_login: "task8-user",
+         execution_identity: %{kind: :connected_user, external_account_id: "task8-account"},
+         authorization_ref: context.authorization_ref,
+         authorization_version: context.expected_authorization_version + 1,
+         credential_material: "task8-callback-material",
+         granted_permissions_digest: "task8-callback-permissions",
+         expires_at: nil,
+         provider_metadata: %{}
+       }}
+    end)
+  end
+
   def consume_callback(_context), do: {:error, :provider_protocol_failed}
 
   @impl true
@@ -15,7 +36,101 @@ defmodule Ezagent.ProviderConnection.Test.Task8Driver do
   def refresh(context), do: effect(:refresh, context)
 
   @impl true
+  def reconcile_refresh(context), do: effect(:reconcile_refresh, context)
+
+  @impl true
+  def discard_callback_result(context), do: discard_callback_result_effect(context)
+
+  @impl true
+  def discard_refresh_result(context), do: effect(:discard_refresh_result, context)
+
+  @impl true
   def revoke(context), do: effect(:provider_revoke, context)
+
+  def remember_callback_result(context, provider_result_ref)
+      when is_map(context) and is_binary(provider_result_ref) do
+    state = Application.fetch_env!(:ezagent_domain_provider_connection, :task8_effect_state)
+    binding = Map.take(context, callback_discard_binding_keys())
+
+    Agent.update(state, fn current ->
+      put_in(current, [:provider_results, provider_result_ref], binding)
+    end)
+  end
+
+  defp discard_callback_result_effect(context) do
+    state = Application.fetch_env!(:ezagent_domain_provider_connection, :task8_effect_state)
+
+    with :ok <-
+           Ezagent.ProviderConnection.Driver.validate_discard_context(:callback, context) do
+      {reply, barrier} =
+        Agent.get_and_update(state, fn current ->
+          expected = Map.get(current.provider_results, context.provider_result_ref)
+          actual = Map.take(context, callback_discard_binding_keys())
+          key = context.discard_idempotency_key
+          digest = canonical_digest(context)
+
+          cond do
+            expected != actual ->
+              {{{:error, :correlation_conflict}, nil}, current}
+
+            Map.get(current.provider_discards, key) == digest ->
+              {{:ok, nil}, current}
+
+            Map.has_key?(current.provider_discards, key) or
+                Map.has_key?(current.discarded_provider_results, context.provider_result_ref) ->
+              {{{:error, :correlation_conflict}, nil}, current}
+
+            true ->
+              reply = Map.get(current.replies, :discard_callback_result, :ok)
+              count = Map.get(current.counts, :discard_callback_result, 0) + 1
+
+              calls =
+                Map.update(current.calls, :discard_callback_result, [context], &[context | &1])
+
+              next = %{
+                current
+                | counts: Map.put(current.counts, :discard_callback_result, count),
+                  calls: calls
+              }
+
+              next =
+                if reply == :ok or match?({:ok, _receipt}, reply) do
+                  next
+                  |> put_in([:provider_discards, key], digest)
+                  |> put_in(
+                    [:discarded_provider_results, context.provider_result_ref],
+                    key
+                  )
+                else
+                  next
+                end
+
+              {{reply, Map.get(current.barriers, :discard_callback_result)}, next}
+          end
+        end)
+
+      maybe_barrier(barrier, :discard_callback_result, context)
+      reply
+    end
+  end
+
+  defp callback_discard_binding_keys do
+    ~w(owner_uri workspace_uri provider_id acquisition_method governed_host backend_pair_id operation_id connection_id expected_connection_version attempt_ref authorization_ref expected_authorization_version correlation_id command_digest expected_credential_version)a
+  end
+
+  defp provider_result_ref(context, private_frame) do
+    {Map.drop(context, [:exchange]), Map.drop(private_frame, [:pkce_verifier])}
+    |> :erlang.term_to_binary([:deterministic])
+    |> then(&:crypto.hash(:sha256, &1))
+    |> Base.url_encode64(padding: false)
+    |> then(&("task8-provider-result:" <> &1))
+  end
+
+  defp canonical_digest(value) do
+    value
+    |> :erlang.term_to_binary([:deterministic])
+    |> then(&:crypto.hash(:sha256, &1))
+  end
 
   defp effect(kind, context) do
     state = Application.fetch_env!(:ezagent_domain_provider_connection, :task8_effect_state)
@@ -41,6 +156,10 @@ defmodule Ezagent.ProviderConnection.Test.Task8Driver do
        expires_at: DateTime.add(DateTime.utc_now(), 3_600, :second)
      }}
   end
+
+  defp default_reply(:reconcile_refresh, _context), do: {:ok, :not_completed}
+  defp default_reply(:discard_callback_result, _context), do: :ok
+  defp default_reply(:discard_refresh_result, _context), do: :ok
 
   defp default_reply(:provider_revoke, _context), do: {:ok, %{provider_request_id: "req-1"}}
 
@@ -169,7 +288,10 @@ defmodule Ezagent.ProviderConnection.Test.Task8Fixtures do
       replies: %{},
       barriers: %{},
       results: %{},
-      canonical_digests: %{}
+      canonical_digests: %{},
+      provider_results: %{},
+      provider_discards: %{},
+      discarded_provider_results: %{}
     }
 
   def pair do
@@ -213,7 +335,8 @@ defmodule Ezagent.ProviderConnection.Test.Task8Fixtures do
           governed_host: "git.example",
           external_account_id: "account-#{System.unique_integer([:positive])}",
           display_login: "alice",
-          execution_identity: "connected_user:account-1",
+          execution_identity: "connected_user_account_1",
+          requested_execution_identity_class: "connected_user",
           acquisition_method: "oauth_user",
           authorization_backend_ref: "authorization-ref",
           credential_backend_ref: "credential-ref-old",
@@ -225,6 +348,24 @@ defmodule Ezagent.ProviderConnection.Test.Task8Fixtures do
         overrides
       )
 
+    attrs =
+      if attrs.status == "pending_authorization" do
+        Map.merge(attrs, %{
+          external_account_id: nil,
+          display_login: nil,
+          execution_identity: nil,
+          authorization_backend_ref: nil,
+          credential_backend_ref: nil,
+          backend_pair_id: nil,
+          authorization_backend_id: nil,
+          credential_backend_id: nil,
+          permission_digest: nil,
+          expires_at: nil
+        })
+      else
+        attrs
+      end
+
     attrs
     |> Connection.create_changeset()
     |> Ecto.Changeset.change(
@@ -235,6 +376,9 @@ defmodule Ezagent.ProviderConnection.Test.Task8Fixtures do
   end
 
   def attempt(connection, overrides \\ %{}) do
+    purpose =
+      if connection.status == "pending_authorization", do: "initial_bind", else: "reauthorize"
+
     attrs =
       Map.merge(
         %{
@@ -244,6 +388,12 @@ defmodule Ezagent.ProviderConnection.Test.Task8Fixtures do
           authorization_ref: "authorization-#{System.unique_integer([:positive])}",
           connection_id: connection.connection_id,
           connection_version: connection.connection_version,
+          purpose: purpose,
+          reservation_digest: "reservation-#{System.unique_integer([:positive])}",
+          requested_permission_digest: "permissions-v1",
+          requested_execution_identity_class: "connected_user",
+          redirect_uri_id: "task8-callback",
+          callback_artifact_digest: "callback-artifact-digest",
           bound_subject_digest: "subject-digest",
           state_digest: "state-#{System.unique_integer([:positive])}",
           correlation_id: "callback-#{System.unique_integer([:positive])}",

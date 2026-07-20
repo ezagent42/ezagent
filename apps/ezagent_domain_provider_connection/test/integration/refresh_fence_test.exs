@@ -301,6 +301,12 @@ defmodule Ezagent.ProviderConnection.RefreshFenceTest do
       status: "finalized"
     }
     |> Operation.create_changeset()
+    |> Ecto.Changeset.change(
+      expected_credential_version: connection.credential_version,
+      result_ref: "other-credential-ref",
+      result_credential_version: connection.credential_version + 1,
+      provider_result_ref: "other-provider-result-ref"
+    )
     |> Repo.insert!()
 
     assert {:ok, %{status: "active"}} =
@@ -384,8 +390,10 @@ defmodule Ezagent.ProviderConnection.RefreshFenceTest do
       prior_credential_version: 2,
       result_ref: "credential-ref-new",
       result_credential_version: 3,
+      provider_result_ref: "provider-result-new",
       result_permission_digest: "durable-permissions",
       result_expires_at: DateTime.add(now, 7_200, :second),
+      next_recovery_at: now,
       status: "backend_committed"
     })
     |> Repo.insert!()

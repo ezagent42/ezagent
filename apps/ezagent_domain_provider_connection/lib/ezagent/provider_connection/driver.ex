@@ -26,7 +26,12 @@ defmodule Ezagent.ProviderConnection.Driver do
   defstruct @enforce_keys
 
   @type context :: map()
-  @type result :: {:ok, map()} | {:error, atom()}
+  @type error ::
+          :backend_unavailable
+          | :provider_denied
+          | :provider_protocol_failed
+          | :correlation_conflict
+  @type result :: {:ok, map()} | {:error, error()}
   @type t :: %__MODULE__{
           provider_id: String.t(),
           acquisition_method: String.t(),
@@ -41,6 +46,9 @@ defmodule Ezagent.ProviderConnection.Driver do
   @callback consume_callback(context()) :: result()
   @callback reconcile_callback(context()) :: result() | {:ok, :not_completed}
   @callback refresh(context()) :: result()
+  @callback reconcile_refresh(context()) :: result() | {:ok, :not_completed}
+  @callback discard_callback_result(context()) :: :ok | {:error, error()}
+  @callback discard_refresh_result(context()) :: :ok | {:error, error()}
   @callback revoke(context()) :: result()
 
   @callbacks [
@@ -48,8 +56,31 @@ defmodule Ezagent.ProviderConnection.Driver do
     consume_callback: 1,
     reconcile_callback: 1,
     refresh: 1,
+    reconcile_refresh: 1,
+    discard_callback_result: 1,
+    discard_refresh_result: 1,
     revoke: 1
   ]
+
+  @callback_discard_keys MapSet.new(
+                           ~w(owner_uri workspace_uri provider_id acquisition_method governed_host backend_pair_id operation_id connection_id expected_connection_version attempt_ref authorization_ref expected_authorization_version correlation_id command_digest expected_credential_version provider_result_ref discard_idempotency_key)a
+                         )
+  @refresh_discard_keys MapSet.delete(@callback_discard_keys, :attempt_ref)
+
+  @doc false
+  def validate_discard_context(kind, context)
+      when kind in [:callback, :refresh] and is_map(context) do
+    expected = if kind == :callback, do: @callback_discard_keys, else: @refresh_discard_keys
+
+    with true <- MapSet.new(Map.keys(context)) == expected,
+         true <- Enum.all?(expected, &valid_discard_value?(&1, Map.get(context, &1))) do
+      :ok
+    else
+      _other -> {:error, :correlation_conflict}
+    end
+  end
+
+  def validate_discard_context(_kind, _context), do: {:error, :correlation_conflict}
 
   @doc "Builds a closed, immutable, non-secret driver declaration."
   @spec new!(map()) :: t()
@@ -108,6 +139,16 @@ defmodule Ezagent.ProviderConnection.Driver do
       _value -> raise ArgumentError, "#{key} must be a non-empty string"
     end
   end
+
+  defp valid_discard_value?(key, value)
+       when key in [
+              :expected_connection_version,
+              :expected_authorization_version,
+              :expected_credential_version
+            ],
+       do: is_integer(value) and value >= 0
+
+  defp valid_discard_value?(_key, value), do: is_binary(value) and value != ""
 
   defp normalize_pair_ids!(ids) when is_list(ids) and ids != [] do
     ids = Enum.map(ids, &non_empty_string!/1)

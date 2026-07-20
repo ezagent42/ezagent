@@ -6,7 +6,6 @@ defmodule Ezagent.ProviderConnection.LocalAuthorizationBackend.Reconciliation do
   alias Ezagent.ProviderConnection.AuthorizationAttempt
   alias Ezagent.ProviderConnection.AuthorizationKeyRing
   alias Ezagent.ProviderConnection.Connection
-  alias Ezagent.ProviderConnection.Driver
   alias Ezagent.ProviderConnection.DriverRegistry
   alias Ezagent.ProviderConnection.Operation
   alias Ezagent.ProviderConnection.ProviderAuthorizationCommand
@@ -16,7 +15,7 @@ defmodule Ezagent.ProviderConnection.LocalAuthorizationBackend.Reconciliation do
                      :ezagent_domain_provider_connection,
                      :authorization_key_ring_fixture_enabled,
                      false
-  )
+                   )
   @key_id_pattern ~r/\A[a-zA-Z0-9._-]{1,64}\z/
 
   @doc false
@@ -88,12 +87,14 @@ defmodule Ezagent.ProviderConnection.LocalAuthorizationBackend.Reconciliation do
     if operation.backend_pair_id == attempt.backend_pair_id and
          operation.backend_pair_id == row.backend_pair_id and
          operation.backend_pair_id == command.backend_pair_id and
-         operation.operation_class == "store" and
-         operation.correlation_id == "store:#{attempt.correlation_id}" and
+         operation.operation_class == callback_operation_class(attempt.purpose) and
+         operation.correlation_id == "#{operation.operation_class}:#{attempt.correlation_id}" and
          operation.bound_input_digest == Operation.callback_digest(row, attempt, connection) and
          operation.attempt_claim_token == attempt.claim_token and
          operation.attempt_version == attempt.attempt_version and
          operation.expected_connection_version == attempt.connection_version and
+         operation.expected_authorization_ref == attempt.authorization_ref and
+         operation.expected_authorization_version == connection.authorization_version and
          operation.expected_credential_version == connection.credential_version and
          command.operation_class == "consume" and
          command.correlation_id == attempt.correlation_id and
@@ -122,8 +123,7 @@ defmodule Ezagent.ProviderConnection.LocalAuthorizationBackend.Reconciliation do
         result = Support.decode_consume_result(safe_result)
         {:write_only_handoff, handoff_ref} = result.credential_material
 
-        if operation.handoff_ref == handoff_ref and row.handoff_ref == handoff_ref and
-             is_binary(row.handoff_ciphertext) do
+        if row.handoff_ref == handoff_ref and is_binary(row.handoff_ciphertext) do
           {:ok, Map.put(common, :replay, {:ok, result})}
         else
           {:error, :correlation_conflict}
@@ -207,14 +207,21 @@ defmodule Ezagent.ProviderConnection.LocalAuthorizationBackend.Reconciliation do
     end
 
     %{
+      owner_uri: recovery.row.owner_uri,
+      workspace_uri: recovery.row.workspace_uri,
+      provider_id: recovery.row.provider_id,
+      acquisition_method: recovery.row.acquisition_method,
+      governed_host: recovery.row.governed_host,
       authorization_ref: recovery.row.authorization_ref,
       backend_pair_id: recovery.command.backend_pair_id,
-      operation_class: recovery.command.operation_class,
-      correlation_id: recovery.command.correlation_id,
+      operation_id: recovery.operation.id,
+      connection_id: recovery.operation.connection_id,
+      correlation_id: recovery.operation.correlation_id,
       attempt_ref: recovery.attempt.attempt_ref,
-      connection_generation: recovery.operation.expected_connection_version,
-      credential_generation: recovery.operation.expected_credential_version,
-      command_digest: recovery.command.bound_input_digest,
+      expected_connection_version: recovery.operation.expected_connection_version,
+      expected_authorization_version: recovery.operation.expected_authorization_version,
+      expected_credential_version: recovery.operation.expected_credential_version,
+      command_digest: recovery.operation.bound_input_digest,
       callback_envelope_digest: Support.secret_digest(recovery.callback_envelope),
       exchange: exchange
     }
@@ -231,15 +238,15 @@ defmodule Ezagent.ProviderConnection.LocalAuthorizationBackend.Reconciliation do
         |> lock("FOR UPDATE")
         |> Repo.one!()
 
-      operation =
-        Operation
-        |> where([item], item.id == ^recovery.operation.id)
-        |> lock("FOR UPDATE")
-        |> Repo.one!()
-
       attempt =
         AuthorizationAttempt
         |> where([item], item.attempt_ref == ^recovery.attempt.attempt_ref)
+        |> lock("FOR UPDATE")
+        |> Repo.one!()
+
+      operation =
+        Operation
+        |> where([item], item.id == ^recovery.operation.id)
         |> lock("FOR UPDATE")
         |> Repo.one!()
 
@@ -285,7 +292,8 @@ defmodule Ezagent.ProviderConnection.LocalAuthorizationBackend.Reconciliation do
            normalize_recovered_result(
              driver_result,
              recovery.callback_envelope,
-             recovery.driver
+             recovery.driver,
+             recovery.operation
            ),
          handoff <-
            seal_recovered_handoff(
@@ -300,15 +308,15 @@ defmodule Ezagent.ProviderConnection.LocalAuthorizationBackend.Reconciliation do
           |> lock("FOR UPDATE")
           |> Repo.one!()
 
-        operation =
-          Operation
-          |> where([item], item.id == ^recovery.operation.id)
-          |> lock("FOR UPDATE")
-          |> Repo.one!()
-
         attempt =
           AuthorizationAttempt
           |> where([item], item.attempt_ref == ^recovery.attempt.attempt_ref)
+          |> lock("FOR UPDATE")
+          |> Repo.one!()
+
+        operation =
+          Operation
+          |> where([item], item.id == ^recovery.operation.id)
           |> lock("FOR UPDATE")
           |> Repo.one!()
 
@@ -348,10 +356,6 @@ defmodule Ezagent.ProviderConnection.LocalAuthorizationBackend.Reconciliation do
 
           commit_recovery_command(command, Support.encode_consume_result(safe_result))
 
-          operation
-          |> Ecto.Changeset.change(handoff_ref: handoff_ref)
-          |> Repo.update!()
-
           {:ok, safe_result}
         else
           {:error, :correlation_conflict}
@@ -363,50 +367,14 @@ defmodule Ezagent.ProviderConnection.LocalAuthorizationBackend.Reconciliation do
     end
   end
 
-  defp normalize_recovered_result(result, callback, driver) do
-    expected_keys =
-      MapSet.new(
-        ~w(external_account_id display_login execution_identity credential_material granted_permissions_digest provider_metadata)a
-      )
-
-    with true <- MapSet.new(Map.keys(result)) == expected_keys,
-         external_account_id when is_binary(external_account_id) and external_account_id != "" <-
-           result.external_account_id,
-         display_login when is_binary(display_login) and display_login != "" <-
-           result.display_login,
-         :ok <-
-           validate_execution_identity(result.execution_identity, external_account_id),
-         true <- Support.portable_secret?(result.credential_material),
-         digest when is_binary(digest) and digest != "" <- result.granted_permissions_digest,
-         true <-
-           Driver.matches_schema?(
-             result.provider_metadata,
-             driver.metadata.provider_metadata_schema
-           ),
-         :ok <- validate_external_binding(callback, external_account_id) do
-      {:ok, %{result | provider_metadata: Support.stringify_keys(result.provider_metadata)}}
-    else
-      {:error, reason} -> {:error, reason}
-      _other -> {:error, :provider_protocol_error}
-    end
-  end
-
-  defp validate_execution_identity(
-         %{kind: :connected_user, external_account_id: external_account_id} = identity,
-         external_account_id
-       )
-       when map_size(identity) == 2,
-       do: :ok
-
-  defp validate_execution_identity(_identity, _external_account_id),
-    do: {:error, :provider_protocol_error}
-
-  defp validate_external_binding(callback, external_account_id) do
-    case Support.field(callback, :external_account_id) do
-      nil -> :ok
-      ^external_account_id -> :ok
-      _other -> {:error, :external_account_mismatch}
-    end
+  defp normalize_recovered_result(result, callback, driver, operation) do
+    Support.validate_consume_result(
+      result,
+      callback,
+      driver,
+      operation.expected_authorization_ref,
+      operation.expected_authorization_version
+    )
   end
 
   defp validate_recovered_callback(payload, callback, row) when is_map(callback) do
@@ -624,4 +592,8 @@ defmodule Ezagent.ProviderConnection.LocalAuthorizationBackend.Reconciliation do
     |> :erlang.term_to_binary([:deterministic])
     |> Support.sha256()
   end
+
+  defp callback_operation_class("initial_bind"), do: "store"
+  defp callback_operation_class("reauthorize"), do: "replace"
+  defp callback_operation_class(_purpose), do: nil
 end

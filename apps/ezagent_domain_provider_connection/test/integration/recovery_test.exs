@@ -24,6 +24,9 @@ defmodule Ezagent.ProviderConnection.RecoveryTest do
       acquisition_method: "oauth_user",
       authorization_backend_ref: "authorization-recovery",
       credential_backend_ref: "credential-recovery",
+      backend_pair_id: "pair-recovery-v1",
+      authorization_backend_id: "authorization-recovery-v1",
+      credential_backend_id: "credential-recovery-v1",
       status: "active"
     }
     |> Connection.create_changeset()
@@ -64,7 +67,10 @@ defmodule Ezagent.ProviderConnection.RecoveryTest do
       operation_row("refresh", 0,
         inserted_at: DateTime.add(now, -30, :second),
         lease_until: DateTime.add(now, -1, :second),
+        status: "backend_committed",
         provider_result_ref: "provider-result-refresh",
+        handoff_ref: "handoff-refresh",
+        result_permission_digest: "permission-refresh",
         result_ref: "credential-result-refresh",
         result_credential_version: 2
       )
@@ -73,7 +79,7 @@ defmodule Ezagent.ProviderConnection.RecoveryTest do
       operation_row("disconnect", 1, inserted_at: DateTime.add(now, -20, :second))
 
     callback =
-      operation_row("store", 2,
+      operation_row("replace", 2,
         inserted_at: DateTime.add(now, -10, :second),
         status: "cleanup_pending",
         attempt_ref: attempt_ref,
@@ -83,10 +89,14 @@ defmodule Ezagent.ProviderConnection.RecoveryTest do
         result_ref: "result-ref",
         result_credential_version: 2,
         result_external_account_id: "recovery-account",
+        result_display_login: "recovery-owner",
         result_execution_identity: "connected_user",
-        result_authorization_ref: "authorization-recovery",
+        expected_authorization_ref: "authorization-#{attempt_ref}",
+        expected_authorization_version: 0,
+        result_authorization_ref: "authorization-#{attempt_ref}",
         result_authorization_version: 1,
         provider_result_ref: "provider-result-recovery",
+        result_permission_digest: "permission-recovery",
         prior_credential_ref: "credential-recovery",
         prior_credential_version: 1,
         provider_cleanup_status: "pending",
@@ -99,7 +109,7 @@ defmodule Ezagent.ProviderConnection.RecoveryTest do
     recovery = start_recovery!()
     :ok = Recovery.start_pass(recovery)
 
-    assert_receive {:recovered, "store", callback_id}
+    assert_receive {:recovered, "replace", callback_id}
     assert callback_id == callback.id
     assert_receive {:recovered, "disconnect", termination_id}
     assert termination_id == termination.id
@@ -114,7 +124,10 @@ defmodule Ezagent.ProviderConnection.RecoveryTest do
     refresh =
       operation_row("refresh", 1_000,
         lease_until: DateTime.add(DateTime.utc_now(), -1, :second),
+        status: "backend_committed",
         provider_result_ref: "provider-result-partial-batch",
+        handoff_ref: "handoff-partial-batch",
+        result_permission_digest: "permission-partial-batch",
         result_ref: "credential-result-partial-batch",
         result_credential_version: 2
       )
@@ -181,6 +194,8 @@ defmodule Ezagent.ProviderConnection.RecoveryTest do
         attempt_version: 1,
         attempt_claim_token: "expired-claim",
         expected_connection_version: 0,
+        expected_authorization_ref: "authorization-#{attempt_ref}",
+        expected_authorization_version: 0,
         expected_credential_version: 0,
         prior_credential_ref: nil,
         prior_credential_version: nil
@@ -253,6 +268,8 @@ defmodule Ezagent.ProviderConnection.RecoveryTest do
       correlation_id: "recovery-#{operation_class}-#{offset}",
       bound_input_digest: "digest-#{offset}",
       expected_connection_version: 1,
+      expected_authorization_ref: "authorization-recovery",
+      expected_authorization_version: 0,
       expected_credential_version: 1,
       status: "prepared",
       recovery_attempts: 0,

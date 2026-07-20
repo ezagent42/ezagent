@@ -27,6 +27,16 @@ defmodule Ezagent.ProviderConnection.Test.FakeDriverAlpha do
     :ets.select_count(@control_table, [{{{:effect, operation, :_, :_}, :_}, [], [true]}])
   end
 
+  def provider_discard_effect_count do
+    ensure_control_table()
+    :ets.select_count(@control_table, [{{{:discard_effect, :_}, :_}, [], [true]}])
+  end
+
+  def whole_connection_revoke_count do
+    ensure_control_table()
+    :ets.select_count(@control_table, [{{{:whole_connection_revoke, :_}, :_}, [], [true]}])
+  end
+
   def set_provider_metadata(metadata) when is_map(metadata) do
     ensure_control_table()
     :ets.insert(@control_table, {:provider_metadata, metadata})
@@ -43,7 +53,11 @@ defmodule Ezagent.ProviderConnection.Test.FakeDriverAlpha do
   def set_reconciliation(correlation_id, outcome)
       when is_binary(correlation_id) and outcome in [:not_completed, :ambiguous] do
     ensure_control_table()
-    :ets.insert(@control_table, {{:reconciliation, correlation_id}, outcome})
+
+    Enum.each([correlation_id, "store:#{correlation_id}", "replace:#{correlation_id}"], fn key ->
+      :ets.insert(@control_table, {{:reconciliation, key}, outcome})
+    end)
+
     :ok
   end
 
@@ -96,11 +110,15 @@ defmodule Ezagent.ProviderConnection.Test.FakeDriverAlpha do
           reconcile_effect(:consume, context, private_frame, fn ->
             {:ok,
              %{
+               provider_result_ref: provider_result_ref(context, private_frame, "acct-1"),
                external_account_id: "acct-1",
                display_login: "alice-alpha",
                execution_identity: %{kind: :connected_user, external_account_id: "acct-1"},
+               authorization_ref: context.authorization_ref,
+               authorization_version: Map.get(context, :expected_authorization_version, 0) + 1,
                credential_material: "TASK6_DRIVER_OWNED_CREDENTIAL",
                granted_permissions_digest: "driver-granted-digest",
+               expires_at: nil,
                provider_metadata: provider_metadata()
              }}
           end)
@@ -134,8 +152,20 @@ defmodule Ezagent.ProviderConnection.Test.FakeDriverAlpha do
     do: {:ok, %{refresh: %{rotation: "always"}, context: context}}
 
   @impl true
-  def revoke(context),
-    do: {:ok, %{revocation: %{mode: "provider-first"}, context: context}}
+  def reconcile_refresh(_context), do: {:ok, :not_completed}
+
+  @impl true
+  def discard_callback_result(context), do: discard_result(:callback, context)
+
+  @impl true
+  def discard_refresh_result(context), do: discard_result(:refresh, context)
+
+  @impl true
+  def revoke(context) do
+    ensure_control_table()
+    :ets.insert(@control_table, {{:whole_connection_revoke, make_ref()}, context})
+    {:ok, %{revocation: %{mode: "provider-first"}, context: context}}
+  end
 
   defp take_failure(operation) do
     ensure_control_table()
@@ -193,12 +223,59 @@ defmodule Ezagent.ProviderConnection.Test.FakeDriverAlpha do
       [] ->
         result = effect.()
         :ets.insert(@control_table, {{:effect, operation, correlation_id, digest}, result})
+        remember_provider_result(operation, context, result)
         result
 
       [_conflict] ->
         {:error, :provider_protocol_error}
     end
   end
+
+  defp remember_provider_result(:consume, context, {:ok, result}) do
+    binding = Map.take(context, discard_binding_keys(:callback))
+    :ets.insert(@control_table, {{:provider_result, result.provider_result_ref}, binding})
+  end
+
+  defp remember_provider_result(_operation, _context, _result), do: :ok
+
+  defp discard_result(kind, context) do
+    ensure_control_table()
+
+    with :ok <- Ezagent.ProviderConnection.Driver.validate_discard_context(kind, context),
+         [{{:provider_result, _ref}, expected}] <-
+           :ets.lookup(@control_table, {:provider_result, context.provider_result_ref}),
+         true <- Map.take(context, discard_binding_keys(kind)) == expected do
+      digest = :crypto.hash(:sha256, :erlang.term_to_binary(context, [:deterministic]))
+      key = context.discard_idempotency_key
+
+      case {:ets.lookup(@control_table, {:discard, key}),
+            :ets.lookup(@control_table, {:discarded_result, context.provider_result_ref})} do
+        {[{{:discard, ^key}, ^digest}], _result} ->
+          :ok
+
+        {[], []} ->
+          :ets.insert(@control_table, [
+            {{:discard, key}, digest},
+            {{:discarded_result, context.provider_result_ref}, key},
+            {{:discard_effect, key}, context.provider_result_ref}
+          ])
+
+          :ok
+
+        _conflict ->
+          {:error, :correlation_conflict}
+      end
+    else
+      _mismatch -> {:error, :correlation_conflict}
+    end
+  end
+
+  defp discard_binding_keys(:callback) do
+    ~w(owner_uri workspace_uri provider_id acquisition_method governed_host backend_pair_id operation_id connection_id expected_connection_version attempt_ref authorization_ref expected_authorization_version correlation_id command_digest expected_credential_version)a
+  end
+
+  defp discard_binding_keys(:refresh),
+    do: List.delete(discard_binding_keys(:callback), :attempt_ref)
 
   defp effect_digest(context, private_frame) do
     identity =
@@ -214,35 +291,14 @@ defmodule Ezagent.ProviderConnection.Test.FakeDriverAlpha do
   end
 
   defp reconciliation_identity(context) do
-    identity =
-      Map.take(context, [
-        :backend_pair_id,
-        :operation_class,
-        :correlation_id,
-        :attempt_ref,
-        :connection_generation,
-        :credential_generation,
-        :command_digest
-      ])
+    identity = Map.drop(context, [:exchange])
 
-    if map_size(identity) == 7 and
-         Enum.all?(
-           [
-             identity.backend_pair_id,
-             identity.operation_class,
-             identity.correlation_id,
-             identity.attempt_ref,
-             identity.command_digest
-           ],
-           &(is_binary(&1) and &1 != "")
-         ) and
-         Enum.all?(
-           [
-             identity.connection_generation,
-             identity.credential_generation
-           ],
-           &is_integer/1
-         ) do
+    expected =
+      MapSet.new(
+        ~w(owner_uri workspace_uri provider_id acquisition_method governed_host backend_pair_id operation_id connection_id attempt_ref authorization_ref expected_connection_version expected_authorization_version expected_credential_version correlation_id command_digest callback_envelope_digest)a
+      )
+
+    if MapSet.new(Map.keys(identity)) == expected do
       {:ok, identity}
     else
       {:error, :provider_protocol_error}
@@ -254,6 +310,20 @@ defmodule Ezagent.ProviderConnection.Test.FakeDriverAlpha do
       [{:provider_metadata, metadata}] -> metadata
       [] -> %{"tier" => "alpha"}
     end
+  end
+
+  defp provider_result_ref(context, private_frame, native_result_id) do
+    binding =
+      {Map.drop(context, [:exchange]), Map.drop(private_frame, [:pkce_verifier]),
+       native_result_id}
+
+    digest =
+      binding
+      |> :erlang.term_to_binary([:deterministic])
+      |> then(&:crypto.hash(:sha256, &1))
+      |> Base.url_encode64(padding: false)
+
+    "alpha-provider-result:#{digest}"
   end
 
   defp ensure_control_table do
