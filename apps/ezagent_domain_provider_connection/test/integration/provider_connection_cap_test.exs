@@ -103,7 +103,7 @@ defmodule Ezagent.ProviderConnectionCapTest do
 
   test "live begin dispatch rejects malformed artifacts before the command boundary", ctx do
     cap = issue_cap!(ctx.owner, ctx.caller, ProviderConnection, :begin_authorization)
-    callback = issue_cap!(ctx.owner, ctx.caller, ProviderConnection, :consume_callback)
+    callback = issue_cap!(ctx.owner, ctx.owner, ProviderConnection, :consume_callback)
     wrong_grantee = Ezagent.URI.user(:team_alpha, :wrong_callback_grantee)
     wrong_workspace_owner = Ezagent.URI.user(:other_workspace, :wrong_callback_owner)
 
@@ -116,11 +116,12 @@ defmodule Ezagent.ProviderConnectionCapTest do
       nil,
       %{callback | action: :refresh},
       issue_cap!(ctx.owner, wrong_grantee, ProviderConnection, :consume_callback),
+      issue_cap!(ctx.owner, ctx.caller, ProviderConnection, :consume_callback),
       issue_cap!(ctx.owner, ctx.caller, ProviderConnection, :refresh),
       issue_cap!(ctx.owner, ctx.caller, Ezagent.ActionSet.Identity, :consume_callback),
       issue_cap!(User.admin_uri(), ctx.caller, ProviderConnection, :consume_callback),
       issue_cap!(wrong_workspace_owner, ctx.caller, ProviderConnection, :consume_callback),
-      Map.put(callback, :unsigned_extra, secret),
+      callback |> Map.from_struct() |> Map.put(:unsigned_extra, secret),
       Map.delete(callback, :signature)
     ]
 
@@ -220,7 +221,7 @@ defmodule Ezagent.ProviderConnectionCapTest do
   end
 
   defp args(:begin_authorization, ctx) do
-    callback = issue_cap!(ctx.owner, ctx.caller, ProviderConnection, :consume_callback)
+    callback = issue_cap!(ctx.owner, ctx.owner, ProviderConnection, :consume_callback)
 
     %{
       connection_id: "connection-1",
@@ -263,8 +264,7 @@ defmodule Ezagent.ProviderConnectionCapTest do
         requested_permissions_digest: "reauthorize-digest",
         redirect_uri_id: "callback",
         correlation_id: "reauthorize-correlation-1",
-        callback_artifact:
-          issue_cap!(ctx.owner, ctx.caller, ProviderConnection, :consume_callback)
+        callback_artifact: issue_cap!(ctx.owner, ctx.owner, ProviderConnection, :consume_callback)
       })
     else
       base

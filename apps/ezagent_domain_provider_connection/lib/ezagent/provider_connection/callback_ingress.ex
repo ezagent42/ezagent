@@ -5,6 +5,8 @@ defmodule Ezagent.ProviderConnection.CallbackIngress do
 
   alias Ezagent.ProviderConnection.{
     AuthorizationAttempt,
+    AuthorizationBackendRecord,
+    CallbackBinding,
     Connection,
     LocalAuthorizationBackend,
     Operation
@@ -18,17 +20,12 @@ defmodule Ezagent.ProviderConnection.CallbackIngress do
       when is_binary(redirect_id) and is_binary(raw_state) and is_map(provider_envelope) do
     with {:ok, pair_id} <- registered_pair(redirect_id),
          {:ok, digest} <- LocalAuthorizationBackend.state_digest(raw_state),
-         %AuthorizationAttempt{} = attempt <- resolve_attempt(pair_id, digest),
-         %Connection{} = connection <- Repo.get(Connection, attempt.connection_id),
-         true <- connection.workspace_uri == attempt.workspace_uri,
-         :ok <- callback_source_status(connection.status),
-         {:ok, owner} <- parse_owner(connection.owner_uri),
-         %Ezagent.Capability{} = artifact <-
-           Ezagent.Capability.from_map(attempt.callback_artifact),
-         :ok <- validate_artifact(artifact, owner),
-         cmd <- callback_command(owner, artifact, attempt),
-         :ok <- stage_if_required(attempt, pair_id, raw_state, provider_envelope) do
-      Ezagent.Router.dispatch(cmd)
+         %AuthorizationAttempt{} = candidate <- resolve_attempt(pair_id, digest),
+         {:ok, {owner, artifact, attempt}} <-
+           lock_validate_and_stage(candidate, pair_id, digest, raw_state, provider_envelope) do
+      owner
+      |> callback_command(artifact, attempt)
+      |> Ezagent.Router.dispatch()
     else
       reason -> reject(redirect_id, reason)
     end
@@ -70,6 +67,38 @@ defmodule Ezagent.ProviderConnection.CallbackIngress do
     )
   end
 
+  defp lock_validate_and_stage(candidate, pair_id, digest, raw_state, provider_envelope) do
+    Repo.transaction(fn ->
+      connection = lock_connection(candidate.connection_id)
+      attempt = lock_attempt(candidate.attempt_ref)
+      operation = lock_operation(attempt)
+      backend_record = lock_backend_record(attempt)
+
+      with %Connection{} <- connection,
+           %AuthorizationAttempt{} <- attempt,
+           %AuthorizationBackendRecord{} <- backend_record,
+           true <- attempt.backend_pair_id == pair_id and attempt.state_digest == digest,
+           :ok <- callback_source_status(attempt.purpose, connection.status, operation),
+           :ok <- connection_generation(attempt, connection, operation),
+           {:ok, owner} <- parse_owner(connection.owner_uri),
+           %Ezagent.Capability{} = artifact <-
+             Ezagent.Capability.from_map(attempt.callback_artifact),
+           :ok <- validate_artifact(artifact, owner),
+           true <-
+             CallbackBinding.valid?(
+               binding_connection(connection, attempt),
+               attempt,
+               backend_record,
+               artifact
+             ),
+           :ok <- stage_if_required(attempt, operation, pair_id, raw_state, provider_envelope) do
+        {owner, artifact, attempt}
+      else
+        _reason -> Repo.rollback(:callback_invalid)
+      end
+    end)
+  end
+
   defp parse_owner(owner_uri) do
     owner = Ezagent.URI.new!(owner_uri)
 
@@ -95,20 +124,30 @@ defmodule Ezagent.ProviderConnection.CallbackIngress do
     end
   end
 
-  defp callback_source_status(status)
-       when status in ["pending_authorization", "active", "refresh_required", "degraded"],
+  defp callback_source_status("initial_bind", "pending_authorization", _operation), do: :ok
+
+  defp callback_source_status("initial_bind", status, %Operation{status: operation_status})
+       when status in ["active", "degraded", "expired"] and
+              operation_status in ["connection_committed", "finalized"],
        do: :ok
 
-  defp callback_source_status(_status), do: {:error, :connection_terminal}
+  defp callback_source_status("reauthorize", status, _operation)
+       when status in ["active", "degraded", "expired"],
+       do: :ok
 
-  defp stage_if_required(attempt, pair_id, raw_state, provider_envelope) do
-    case Repo.get_by(Operation,
-           backend_pair_id: attempt.backend_pair_id,
-           operation_class: "store",
-           correlation_id: "store:#{attempt.correlation_id}"
-         ) do
+  defp callback_source_status(_purpose, _status, _operation),
+    do: {:error, :connection_terminal}
+
+  defp stage_if_required(attempt, operation, pair_id, raw_state, provider_envelope) do
+    case operation do
       %Operation{status: status}
-      when status in ["prepared", "backend_committed", "cleanup_pending"] ->
+      when status in [
+             "prepared",
+             "backend_committed",
+             "connection_committed",
+             "finalized",
+             "cleanup_pending"
+           ] ->
         :ok
 
       nil ->
@@ -124,6 +163,68 @@ defmodule Ezagent.ProviderConnection.CallbackIngress do
         {:error, :callback_invalid}
     end
   end
+
+  defp connection_generation(attempt, connection, nil) do
+    if attempt.connection_version == connection.connection_version,
+      do: :ok,
+      else: {:error, :callback_invalid}
+  end
+
+  defp connection_generation(attempt, connection, operation) do
+    if operation.workspace_uri == attempt.workspace_uri and
+         operation.connection_id == attempt.connection_id and
+         operation.attempt_ref == attempt.attempt_ref and
+         operation.backend_pair_id == attempt.backend_pair_id and
+         operation.correlation_id == "store:#{attempt.correlation_id}" and
+         operation.expected_connection_version == attempt.connection_version and
+         connection.workspace_uri == operation.workspace_uri and
+         connection.connection_id == operation.connection_id and
+         completed_generation?(operation, connection),
+       do: :ok,
+       else: {:error, :callback_invalid}
+  end
+
+  defp completed_generation?(%Operation{status: status} = operation, connection)
+       when status in ["connection_committed", "finalized"],
+       do: connection.connection_version == operation.expected_connection_version + 1
+
+  defp completed_generation?(operation, connection),
+    do: connection.connection_version == operation.expected_connection_version
+
+  defp binding_connection(connection, attempt),
+    do: %{connection | connection_version: attempt.connection_version}
+
+  defp lock_connection(connection_id),
+    do:
+      Connection
+      |> where([row], row.connection_id == ^connection_id)
+      |> lock("FOR UPDATE")
+      |> Repo.one()
+
+  defp lock_attempt(attempt_ref),
+    do:
+      AuthorizationAttempt
+      |> where([row], row.attempt_ref == ^attempt_ref)
+      |> lock("FOR UPDATE")
+      |> Repo.one()
+
+  defp lock_operation(attempt) do
+    Operation
+    |> where(
+      [row],
+      row.backend_pair_id == ^attempt.backend_pair_id and row.operation_class == "store" and
+        row.correlation_id == ^"store:#{attempt.correlation_id}"
+    )
+    |> lock("FOR UPDATE")
+    |> Repo.one()
+  end
+
+  defp lock_backend_record(attempt),
+    do:
+      AuthorizationBackendRecord
+      |> where([row], row.authorization_ref == ^attempt.authorization_ref)
+      |> lock("FOR UPDATE")
+      |> Repo.one()
 
   defp reject(redirect_id, reason) do
     :telemetry.execute(

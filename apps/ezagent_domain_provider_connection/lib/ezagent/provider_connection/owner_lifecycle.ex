@@ -12,6 +12,7 @@ defmodule Ezagent.ProviderConnection.OwnerLifecycle do
   alias Ezagent.ProviderConnection.{
     AuthorizationAttempt,
     AuthorizationBackendRecord,
+    CallbackBinding,
     Connection,
     LocalAuthorizationBackend,
     ProviderAuthorizationCommand
@@ -117,7 +118,7 @@ defmodule Ezagent.ProviderConnection.OwnerLifecycle do
   defp reconcile_initial_reservation(connection, args, owner) do
     owner_uri = URI.to_string(owner)
     workspace_uri = URI.to_string(Ezagent.Capability.workspace_of(owner))
-    artifact_digest = callback_artifact_digest(args.callback_artifact)
+    artifact_digest = CallbackBinding.artifact_digest(args.callback_artifact)
     reservation_digest = reservation_digest("initial_bind", connection, args, artifact_digest)
 
     cond do
@@ -181,7 +182,7 @@ defmodule Ezagent.ProviderConnection.OwnerLifecycle do
 
   defp insert_initial_reservation(args, owner, connection_id) do
     workspace = Ezagent.Capability.workspace_of(owner)
-    artifact_digest = callback_artifact_digest(args.callback_artifact)
+    artifact_digest = CallbackBinding.artifact_digest(args.callback_artifact)
 
     connection_attrs = %{
       connection_id: connection_id,
@@ -244,7 +245,7 @@ defmodule Ezagent.ProviderConnection.OwnerLifecycle do
   end
 
   defp reconcile_or_insert_reauthorization(connection, args) do
-    artifact_digest = callback_artifact_digest(args.callback_artifact)
+    artifact_digest = CallbackBinding.artifact_digest(args.callback_artifact)
 
     reservation_digest =
       reservation_digest("reauthorize", connection, args, artifact_digest)
@@ -342,6 +343,7 @@ defmodule Ezagent.ProviderConnection.OwnerLifecycle do
     Repo.transaction(fn ->
       locked_connection = lock_connection(connection.connection_id)
       locked_attempt = lock_attempt(reservation.attempt_ref)
+      backend_record = lock_backend_record(backend_record.authorization_ref)
 
       cond do
         not match?(%Connection{status: "pending_authorization"}, locked_connection) ->
@@ -349,12 +351,18 @@ defmodule Ezagent.ProviderConnection.OwnerLifecycle do
           {:closed, :connection_terminal}
 
         not match?(%AuthorizationAttempt{}, locked_attempt) or
+          not match?(%AuthorizationBackendRecord{}, backend_record) or
             locked_attempt.status not in ["beginning", "pending", "consuming"] ->
           Repo.rollback(:correlation_conflict)
 
         locked_attempt.connection_id != locked_connection.connection_id or
           locked_attempt.connection_version != locked_connection.connection_version or
-            locked_attempt.callback_artifact_digest != callback_artifact_digest(artifact) ->
+            not CallbackBinding.reservation_valid?(
+              locked_connection,
+              locked_attempt,
+              backend_record.begin_correlation_id,
+              artifact
+            ) ->
           Repo.rollback(:correlation_conflict)
 
         locked_attempt.status in ["pending", "consuming"] and
@@ -405,6 +413,7 @@ defmodule Ezagent.ProviderConnection.OwnerLifecycle do
     Repo.transaction(fn ->
       locked_connection = lock_connection(connection.connection_id)
       locked_attempt = lock_attempt(reservation.attempt_ref)
+      backend_record = lock_backend_record(backend_record.authorization_ref)
 
       cond do
         not match?(%Connection{}, locked_connection) or
@@ -417,12 +426,18 @@ defmodule Ezagent.ProviderConnection.OwnerLifecycle do
           {:closed, :stale_version}
 
         not match?(%AuthorizationAttempt{}, locked_attempt) or
+          not match?(%AuthorizationBackendRecord{}, backend_record) or
             locked_attempt.status not in ["beginning", "pending", "consuming"] ->
           Repo.rollback(:correlation_conflict)
 
         locked_attempt.connection_id != locked_connection.connection_id or
           locked_attempt.connection_version != locked_connection.connection_version or
-            locked_attempt.callback_artifact_digest != callback_artifact_digest(artifact) ->
+            not CallbackBinding.reservation_valid?(
+              locked_connection,
+              locked_attempt,
+              backend_record.begin_correlation_id,
+              artifact
+            ) ->
           Repo.rollback(:correlation_conflict)
 
         locked_attempt.status in ["pending", "consuming"] and
@@ -453,14 +468,6 @@ defmodule Ezagent.ProviderConnection.OwnerLifecycle do
     end)
     |> unwrap_begin_settle()
   end
-
-  defp callback_artifact_digest(%Ezagent.Capability{} = artifact) do
-    artifact
-    |> Ezagent.Capability.to_map()
-    |> digest()
-  end
-
-  defp callback_artifact_digest(_artifact), do: digest(:invalid_callback_artifact)
 
   defp begin_authorization(purpose, connection, reservation, args, subject) do
     request = %{
@@ -538,28 +545,13 @@ defmodule Ezagent.ProviderConnection.OwnerLifecycle do
   end
 
   defp reservation_digest(purpose, connection, args, artifact_digest) do
-    digest({
+    CallbackBinding.reservation_digest(
       purpose,
-      connection.connection_id,
-      connection.connection_version,
-      connection.owner_uri,
-      connection.workspace_uri,
-      connection.provider_id,
-      connection.governed_host,
-      connection.acquisition_method,
-      args.requested_execution_identity_class,
-      args.requested_permissions_digest,
-      args.redirect_uri_id,
+      connection,
+      args,
       args.correlation_id,
       artifact_digest
-    })
-  end
-
-  defp digest(term) do
-    term
-    |> :erlang.term_to_binary([:deterministic])
-    |> then(&:crypto.hash(:sha256, &1))
-    |> Base.encode16(case: :lower)
+    )
   end
 
   if Mix.env() == :test do
@@ -619,6 +611,13 @@ defmodule Ezagent.ProviderConnection.OwnerLifecycle do
     do:
       AuthorizationAttempt
       |> where([row], row.attempt_ref == ^attempt_ref)
+      |> lock("FOR UPDATE")
+      |> Repo.one()
+
+  defp lock_backend_record(authorization_ref),
+    do:
+      AuthorizationBackendRecord
+      |> where([row], row.authorization_ref == ^authorization_ref)
       |> lock("FOR UPDATE")
       |> Repo.one()
 
