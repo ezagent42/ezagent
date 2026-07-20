@@ -1,3 +1,5 @@
+Code.require_file(Path.expand("../../support/session_assurance_verifier.ex", __DIR__))
+
 defmodule Ezagent.ActionSet.ProviderConnectionTest do
   use EzagentCore.DataCase, async: false
 
@@ -6,55 +8,7 @@ defmodule Ezagent.ActionSet.ProviderConnectionTest do
 
   alias Ezagent.ActionSet.ProviderConnection
   alias Ezagent.Entity.User
-  alias Ezagent.ProviderConnection.Assurance
-
-  defmodule AcceptingAssuranceValidator do
-    @behaviour Ezagent.ProviderConnection.AssuranceValidator
-
-    @impl true
-    def validate(action, assurance, context) do
-      send(context.test_pid, {:assurance, action, assurance})
-      :ok
-    end
-  end
-
-  defmodule RejectingAssuranceValidator do
-    @behaviour Ezagent.ProviderConnection.AssuranceValidator
-
-    @impl true
-    def validate(_action, _assurance, _context), do: {:error, :assurance_rejected}
-  end
-
-  defmodule ArbitraryErrorAssuranceValidator do
-    @behaviour Ezagent.ProviderConnection.AssuranceValidator
-
-    @impl true
-    def validate(_action, _assurance, _context),
-      do: {:error, {:backend_secret, "validator-secret-sentinel"}}
-  end
-
-  defmodule RaisingAssuranceValidator do
-    @behaviour Ezagent.ProviderConnection.AssuranceValidator
-
-    @impl true
-    def validate(_action, _assurance, _context),
-      do: raise("validator-secret-sentinel")
-  end
-
-  defmodule ThrowingAssuranceValidator do
-    @behaviour Ezagent.ProviderConnection.AssuranceValidator
-
-    @impl true
-    def validate(_action, _assurance, _context),
-      do: throw({:validator_secret, "validator-secret-sentinel"})
-  end
-
-  defmodule WrongShapeAssuranceValidator do
-    @behaviour Ezagent.ProviderConnection.AssuranceValidator
-
-    @impl true
-    def validate(_action, _assurance, _context), do: {:ok, "validator-secret-sentinel"}
-  end
+  alias Ezagent.ProviderConnection.{Assurance, TestSessionAssuranceVerifier}
 
   @actions [
     :begin_authorization,
@@ -150,12 +104,12 @@ defmodule Ezagent.ActionSet.ProviderConnectionTest do
     owner = Ezagent.URI.user(:team_alpha, :callback_owner)
     caller = Ezagent.URI.user(:team_alpha, :callback_operator)
     workspace = Ezagent.Capability.workspace_of(owner)
+    {:ok, verifier} = TestSessionAssuranceVerifier.start_link(observer: parent)
 
     ctx = %{
       self_uri: owner,
       caller: caller,
-      test_pid: parent,
-      test_assurance_verifier: AcceptingAssuranceValidator
+      test_session_assurance_verifier: {TestSessionAssuranceVerifier, verifier}
     }
 
     Application.put_env(:ezagent_domain_provider_connection, :command_boundary, fn action, _, _ ->
@@ -177,7 +131,7 @@ defmodule Ezagent.ActionSet.ProviderConnectionTest do
           workspace
         )
 
-      valid = authority_signed_cap!(authority, caller, base)
+      valid = authority_signed_cap!(authority, owner, base)
 
       signed_wrong =
         [
@@ -187,10 +141,9 @@ defmodule Ezagent.ActionSet.ProviderConnectionTest do
           %{base | instance: Ezagent.URI.instance(User.admin_uri())},
           %{base | workspace_uri: Ezagent.URI.workspace(:wrong)}
         ]
-        |> Enum.map(&authority_signed_cap!(authority, caller, &1))
+        |> Enum.map(&authority_signed_cap!(authority, owner, &1))
 
-      wrong_grantee =
-        authority_signed_cap!(authority, Ezagent.URI.user(:team_alpha, :other), base)
+      wrong_grantee = authority_signed_cap!(authority, caller, base)
 
       tampered = %{valid | action: :refresh}
 
@@ -211,7 +164,7 @@ defmodule Ezagent.ActionSet.ProviderConnectionTest do
                  ProviderConnection.handle_reauthorize(
                    direct_args(:reauthorize, owner)
                    |> Map.put(:callback_artifact, artifact)
-                   |> Map.put(:assurance, assurance(owner, caller)),
+                   |> Map.put(:assurance, assurance(:reauthorize, owner, caller)),
                    ctx
                  )
 
@@ -244,7 +197,7 @@ defmodule Ezagent.ActionSet.ProviderConnectionTest do
                ProviderConnection.handle_reauthorize(
                  direct_args(:reauthorize, owner)
                  |> Map.put(:callback_artifact, valid)
-                 |> Map.put(:assurance, assurance(owner, caller)),
+                 |> Map.put(:assurance, assurance(:reauthorize, owner, caller)),
                  ctx
                )
 
@@ -304,61 +257,19 @@ defmodule Ezagent.ActionSet.ProviderConnectionTest do
     end
   end
 
-  test "assurance validator runtime accepts only its closed result contract" do
-    owner = Ezagent.URI.user(:team_alpha, :validator_owner)
-    assurance = assurance(owner, owner)
-    ctx = %{self_uri: owner, caller: owner}
-
-    assert :ok =
-             Ezagent.ProviderConnection.AssuranceValidator.validate(
-               AcceptingAssuranceValidator,
-               :revoke,
-               assurance,
-               Map.put(ctx, :test_pid, self())
-             )
-
-    assert {:error, :assurance_rejected} =
-             Ezagent.ProviderConnection.AssuranceValidator.validate(
-               RejectingAssuranceValidator,
-               :revoke,
-               assurance,
-               ctx
-             )
-
-    for validator <- [
-          ArbitraryErrorAssuranceValidator,
-          RaisingAssuranceValidator,
-          ThrowingAssuranceValidator,
-          WrongShapeAssuranceValidator
-        ] do
-      result =
-        Ezagent.ProviderConnection.AssuranceValidator.validate(
-          validator,
-          :revoke,
-          assurance,
-          ctx
-        )
-
-      assert result == {:error, :assurance_validator_misconfigured}
-      refute inspect(result) =~ "validator-secret-sentinel"
-    end
-  end
-
   test "destructive assurances exhaustively reject bad coordinates before validator and boundary" do
     parent = self()
     owner = Ezagent.URI.user(:team_alpha, :assurance_owner)
     caller = Ezagent.URI.user(:team_alpha, :assurance_operator)
     authority = install_test_authority!(owner, :user)
-    callback = callback_artifact(authority, owner, caller)
+    callback = callback_artifact(authority, owner, owner)
+    {:ok, verifier} = TestSessionAssuranceVerifier.start_link(observer: parent)
 
     ctx = %{
       self_uri: owner,
       caller: caller,
-      test_pid: parent,
-      test_assurance_verifier: AcceptingAssuranceValidator
+      test_session_assurance_verifier: {TestSessionAssuranceVerifier, verifier}
     }
-
-    valid = assurance(owner, caller)
 
     Application.put_env(:ezagent_domain_provider_connection, :command_boundary, fn action, _, _ ->
       send(parent, {:boundary, action})
@@ -369,40 +280,46 @@ defmodule Ezagent.ActionSet.ProviderConnectionTest do
       Application.delete_env(:ezagent_domain_provider_connection, :command_boundary)
     end)
 
-    invalid = [
-      nil,
-      %{valid | expires_at: DateTime.add(DateTime.utc_now(), -1, :second)},
-      %{valid | owner_uri: User.admin_uri()},
-      %{valid | workspace_uri: Ezagent.URI.workspace(:wrong)},
-      %{valid | grantee_uri: User.admin_uri()},
-      %{valid | connection_id: "wrong"},
-      %{valid | connection_version: 2},
-      %{valid | attempt_ref: nil},
-      %{valid | attempt_version: -1},
-      %{valid | status: :revoked},
-      %{valid | signature: nil}
-    ]
-
-    for action <- [:reauthorize, :revoke, :disconnect], bad <- invalid do
-      handler = String.to_existing_atom("handle_#{action}")
-      args = destructive_args(action, bad, callback)
-      assert {:error, _} = apply(ProviderConnection, handler, [args, ctx])
-      refute_received {:assurance, _, _}
-      refute_received {:boundary, _}
-    end
-
     for action <- [:reauthorize, :revoke, :disconnect] do
       handler = String.to_existing_atom("handle_#{action}")
+      valid = assurance(action, owner, caller)
+
+      invalid = [
+        nil,
+        %{valid | action: wrong_assurance_action(action)},
+        %{valid | expires_at: DateTime.add(DateTime.utc_now(), -1, :second)},
+        %{valid | issued_at: DateTime.add(DateTime.utc_now(), 60, :second)},
+        %{valid | owner_uri: User.admin_uri()},
+        %{valid | workspace_uri: Ezagent.URI.workspace(:wrong)},
+        %{valid | grantee_uri: User.admin_uri()},
+        %{valid | connection_id: "wrong"},
+        %{valid | connection_version: 2},
+        %{valid | reauth_ref: nil},
+        %{valid | reauth_version: -1},
+        %{valid | status: :revoked},
+        %{valid | signature: nil}
+      ]
+
+      for bad <- invalid do
+        args = destructive_args(action, bad, callback)
+        assert {:error, _} = apply(ProviderConnection, handler, [args, ctx])
+        refute_received {:session_assurance, _, _, _}
+        refute_received {:boundary, _}
+      end
+
       args = destructive_args(action, valid, callback)
       assert {:ok, :accepted} = apply(ProviderConnection, handler, [args, ctx])
-      assert_received {:assurance, ^action, ^valid}
+      assert_received {:session_assurance, ^action, ^valid, :ok}
       assert_received {:boundary, ^action}
     end
 
+    TestSessionAssuranceVerifier.set_mode(verifier, :reject)
+    rejected = assurance(:revoke, owner, caller, "rejected-proof")
+
     assert {:error, :assurance_rejected} =
              ProviderConnection.handle_revoke(
-               %{connection_id: "connection-1", expected_version: 1, assurance: valid},
-               Map.put(ctx, :test_assurance_verifier, RejectingAssuranceValidator)
+               %{connection_id: "connection-1", expected_version: 1, assurance: rejected},
+               ctx
              )
 
     refute_received {:boundary, _}
@@ -413,13 +330,14 @@ defmodule Ezagent.ActionSet.ProviderConnectionTest do
     grantee = Ezagent.URI.user(:team_alpha, :assurance_operator)
 
     attrs = %{
+      action: :revoke,
       owner_uri: owner,
       workspace_uri: Ezagent.Capability.workspace_of(owner),
       grantee_uri: grantee,
       connection_id: "connection-1",
       connection_version: 1,
-      attempt_ref: "attempt-1",
-      attempt_version: 1,
+      reauth_ref: "trusted-session-proof-1",
+      reauth_version: 1,
       status: :valid,
       issued_at: DateTime.utc_now(),
       expires_at: DateTime.add(DateTime.utc_now(), 60, :second),
@@ -462,7 +380,7 @@ defmodule Ezagent.ActionSet.ProviderConnectionTest do
 
     on_exit(fn ->
       Application.delete_env(:ezagent_domain_provider_connection, :command_boundary)
-      Application.delete_env(:ezagent_domain_provider_connection, :assurance_validator)
+      Application.delete_env(:ezagent_domain_provider_connection, :session_assurance_verifier)
     end)
 
     owner = Ezagent.URI.user(:team_alpha, :owner)
@@ -470,24 +388,9 @@ defmodule Ezagent.ActionSet.ProviderConnectionTest do
     authority = install_test_authority!(owner, :user)
     callback = callback_artifact(authority, owner, owner)
 
-    {:ok, assurance} =
-      Assurance.new(%{
-        owner_uri: owner,
-        workspace_uri: Ezagent.Capability.workspace_of(owner),
-        grantee_uri: owner,
-        connection_id: "connection-1",
-        connection_version: 1,
-        attempt_ref: "attempt-1",
-        attempt_version: 1,
-        status: :valid,
-        issued_at: DateTime.utc_now(),
-        key_id: "backend-key-1",
-        signature: "signed-assurance",
-        expires_at: DateTime.add(DateTime.utc_now(), 60, :second)
-      })
-
     for action <- [:reauthorize, :revoke, :disconnect] do
       handler = String.to_existing_atom("handle_#{action}")
+      assurance = assurance(action, owner, owner, "production-closed-#{action}")
 
       assert {:error, :assurance_validation_unavailable} =
                apply(ProviderConnection, handler, [
@@ -500,28 +403,35 @@ defmodule Ezagent.ActionSet.ProviderConnectionTest do
 
     Application.put_env(
       :ezagent_domain_provider_connection,
-      :assurance_validator,
-      AcceptingAssuranceValidator
+      :session_assurance_verifier,
+      TestSessionAssuranceVerifier
     )
+
+    assurance = assurance(:revoke, owner, owner, "runtime-config-ignored")
 
     assert {:error, :assurance_validation_unavailable} =
              ProviderConnection.handle_revoke(
                %{connection_id: "connection-1", expected_version: 1, assurance: assurance},
-               Map.put(ctx, :test_pid, self())
+               ctx
              )
 
-    refute_received {:assurance, :revoke, _}
+    refute_received {:session_assurance, :revoke, _, _}
     refute_received {:boundary, :revoke, _}
+
+    {:ok, verifier} = TestSessionAssuranceVerifier.start_link(observer: self())
+    accepted = assurance(:revoke, owner, owner, "test-only-proof")
 
     assert {:ok, %{accepted: true}} =
              ProviderConnection.handle_revoke(
-               %{connection_id: "connection-1", expected_version: 1, assurance: assurance},
+               %{connection_id: "connection-1", expected_version: 1, assurance: accepted},
                ctx
-               |> Map.put(:test_pid, self())
-               |> Map.put(:test_assurance_verifier, AcceptingAssuranceValidator)
+               |> Map.put(
+                 :test_session_assurance_verifier,
+                 {TestSessionAssuranceVerifier, verifier}
+               )
              )
 
-    assert_received {:assurance, :revoke, ^assurance}
+    assert_received {:session_assurance, :revoke, ^accepted, :ok}
     assert_received {:boundary, :revoke, _}
   end
 
@@ -543,24 +453,23 @@ defmodule Ezagent.ActionSet.ProviderConnectionTest do
              ProviderConnection.handle_begin_authorization(%{}, ctx)
   end
 
-  defp assurance(owner, caller) do
-    {:ok, assurance} =
-      Assurance.new(%{
-        owner_uri: owner,
-        workspace_uri: Ezagent.Capability.workspace_of(owner),
-        grantee_uri: caller,
-        connection_id: "connection-1",
-        connection_version: 1,
-        attempt_ref: "attempt-1",
-        attempt_version: 1,
-        status: :valid,
-        issued_at: DateTime.utc_now(),
-        key_id: "backend-key-1",
-        signature: "signed-assurance",
-        expires_at: DateTime.add(DateTime.utc_now(), 60, :second)
-      })
+  defp assurance(action, owner, caller, reauth_ref \\ nil) do
+    now = DateTime.utc_now()
 
-    assurance
+    TestSessionAssuranceVerifier.issue!(%{
+      action: action,
+      owner_uri: owner,
+      workspace_uri: Ezagent.Capability.workspace_of(owner),
+      grantee_uri: caller,
+      connection_id: "connection-1",
+      connection_version: 1,
+      reauth_ref: reauth_ref || "trusted-session-#{action}",
+      reauth_version: 1,
+      status: :valid,
+      issued_at: DateTime.add(now, -1, :second),
+      key_id: "backend-key-1",
+      expires_at: DateTime.add(now, 60, :second)
+    })
   end
 
   defp direct_args(:begin_authorization, _owner),
@@ -588,12 +497,16 @@ defmodule Ezagent.ActionSet.ProviderConnectionTest do
       redirect_uri_id: "callback",
       correlation_id: "reauthorize-correlation-1",
       callback_artifact: %{},
-      assurance: assurance(owner, owner)
+      assurance: assurance(:reauthorize, owner, owner)
     }
   end
 
   defp direct_args(action, owner) when action in [:revoke, :disconnect],
-    do: %{connection_id: "connection-1", expected_version: 1, assurance: assurance(owner, owner)}
+    do: %{
+      connection_id: "connection-1",
+      expected_version: 1,
+      assurance: assurance(action, owner, owner)
+    }
 
   defp direct_args(:refresh, _owner),
     do: %{
@@ -634,4 +547,7 @@ defmodule Ezagent.ActionSet.ProviderConnectionTest do
 
     authority_signed_cap!(authority, grantee, requested)
   end
+
+  defp wrong_assurance_action(:reauthorize), do: :revoke
+  defp wrong_assurance_action(_action), do: :reauthorize
 end
