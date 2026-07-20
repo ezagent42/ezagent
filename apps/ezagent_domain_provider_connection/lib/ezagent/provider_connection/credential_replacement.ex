@@ -237,10 +237,13 @@ defmodule Ezagent.ProviderConnection.CredentialReplacement do
   end
 
   defp revoke_result(operation, backend) do
+    idempotency_key = operation.correlation_id <> ":terminal-cleanup"
+
     case backend.revoke(%{
            credential_ref: operation.result_ref,
            expected_credential_version: operation.result_credential_version,
-           correlation_id: operation.correlation_id <> ":terminal-cleanup"
+           correlation_id: idempotency_key,
+           idempotency_key: idempotency_key
          }) do
       :ok -> :ok
       {:ok, _receipt} -> :ok
@@ -405,10 +408,13 @@ defmodule Ezagent.ProviderConnection.CredentialReplacement do
          backend
        )
        when is_binary(prior_ref) and is_integer(prior_version) do
+    idempotency_key = operation.correlation_id <> ":old"
+
     case backend.revoke(%{
            credential_ref: prior_ref,
            expected_credential_version: prior_version,
-           correlation_id: operation.correlation_id <> ":old"
+           correlation_id: idempotency_key,
+           idempotency_key: idempotency_key
          }) do
       :ok -> :ok
       {:ok, _receipt} -> :ok

@@ -56,6 +56,14 @@ defmodule EzagentCore.Repo.Migrations.CloseProviderBindingCas do
     """)
 
     execute("""
+    ALTER TABLE provider_connection_operations
+      ADD CONSTRAINT provider_connection_operations_attempt_ref_fkey
+      FOREIGN KEY (attempt_ref)
+      REFERENCES provider_authorization_attempts(attempt_ref)
+      NOT VALID
+    """)
+
+    execute("""
     ALTER TABLE provider_authorization_attempts
       VALIDATE CONSTRAINT provider_authorization_attempts_connection_workspace_fkey
     """)
@@ -68,6 +76,11 @@ defmodule EzagentCore.Repo.Migrations.CloseProviderBindingCas do
     execute("""
     ALTER TABLE provider_connection_events
       VALIDATE CONSTRAINT provider_connection_events_connection_workspace_fkey
+    """)
+
+    execute("""
+    ALTER TABLE provider_connection_operations
+      VALIDATE CONSTRAINT provider_connection_operations_attempt_ref_fkey
     """)
 
     create(
@@ -98,6 +111,12 @@ defmodule EzagentCore.Repo.Migrations.CloseProviderBindingCas do
          OR OLD.provider_id IS DISTINCT FROM NEW.provider_id
          OR OLD.governed_host IS DISTINCT FROM NEW.governed_host
          OR OLD.acquisition_method IS DISTINCT FROM NEW.acquisition_method
+         OR ((OLD.backend_pair_id IS NOT NULL
+              OR OLD.authorization_backend_id IS NOT NULL
+              OR OLD.credential_backend_id IS NOT NULL)
+             AND (OLD.backend_pair_id IS DISTINCT FROM NEW.backend_pair_id
+                  OR OLD.authorization_backend_id IS DISTINCT FROM NEW.authorization_backend_id
+                  OR OLD.credential_backend_id IS DISTINCT FROM NEW.credential_backend_id))
          OR (OLD.external_account_id IS NOT NULL
              AND OLD.external_account_id IS DISTINCT FROM NEW.external_account_id)
          OR (OLD.execution_identity IS NOT NULL
@@ -276,6 +295,11 @@ defmodule EzagentCore.Repo.Migrations.CloseProviderBindingCas do
         :provider_connection_operations_normalized_callback_result_check
       )
     )
+
+    execute("""
+    ALTER TABLE provider_connection_operations
+      DROP CONSTRAINT provider_connection_operations_attempt_ref_fkey
+    """)
 
     execute("""
     ALTER TABLE provider_connection_events
