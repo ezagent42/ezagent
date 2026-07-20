@@ -73,6 +73,9 @@ const orderViews = (vs: ViewTab[]) => {
   return [...vs].sort((a, b) => rank(a.id) - rank(b.id) || a.id.localeCompare(b.id))
 }
 
+export const toolbarViews = (views: ViewTab[]) =>
+  orderViews(views).filter((view) => view.id !== "routing")
+
 type SessionRow = {
   uri: string
   name?: string | null
@@ -811,10 +814,10 @@ export function Conversation({
               </select>
             )}
             <div className="inline-flex items-center rounded-[10px] border border-border bg-muted p-[3px]" aria-label="会话视图">
-              {orderViews(views).map((v) => {
+              {toolbarViews(views).map((v) => {
                 const Icon = iconFor(v.icon)
                 const label = viewLabel(v)
-                const selected = v.id === "routing" ? membersOpen && routingOpen : activeId === v.id
+                const selected = activeId === v.id
 
                 if (v.id === "external_mirror") {
                   return (
@@ -839,12 +842,6 @@ export function Conversation({
                     className={segmentClass(selected)}
                     onClick={() => {
                       if (!sessionUri) return
-                      if (v.id === "routing") {
-                        setInviteOpen(false)
-                        setMembersOpen(true)
-                        setRoutingOpen(true)
-                        return
-                      }
                       if (v.id === "pty" || v.mode === "pty") {
                         const agent = activePtyAgentUri || ptyMembers[0]?.uri
                         if (agent) onOpenPty(sessionUri, agent)
@@ -854,7 +851,6 @@ export function Conversation({
                       }
                     }}
                     aria-label={"显示" + label}
-                    data-world-routing-tab={v.id === "routing" ? true : undefined}
                   >
                     <Icon aria-hidden={true} className="h-[15px] w-[15px]" />
                     {label}

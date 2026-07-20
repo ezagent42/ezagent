@@ -1,6 +1,6 @@
 import {describe, expect, it, vi} from "vitest"
 
-import {handleBindingsViewSwitch} from "./Conversation"
+import {handleBindingsViewSwitch, toolbarViews} from "./Conversation"
 
 vi.mock("./PtyTerminal", () => ({PtyTerminalSurface: () => null}))
 
@@ -14,5 +14,15 @@ describe("conversation navigation", () => {
 
     expect(preventDefault).toHaveBeenCalledOnce()
     expect(onSwitchView).toHaveBeenCalledWith(sessionUri, "external_mirror")
+  })
+
+  it("omits Routing from the session header view buttons", () => {
+    expect(
+      toolbarViews([
+        {id: "conversation", label: "Conversation", icon: "message-square", mode: "chat"},
+        {id: "external_mirror", label: "Bindings", icon: "link", mode: "external"},
+        {id: "routing", label: "Routing", icon: "route", mode: "external"},
+      ]).map((view) => view.id),
+    ).toEqual(["conversation", "external_mirror"])
   })
 })
