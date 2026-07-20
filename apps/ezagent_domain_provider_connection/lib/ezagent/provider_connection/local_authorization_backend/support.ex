@@ -180,7 +180,7 @@ defmodule Ezagent.ProviderConnection.LocalAuthorizationBackend.Support do
          row.provider_id == connection.provider_id and
          row.governed_host == connection.governed_host and
          row.acquisition_method == connection.acquisition_method and
-         row.execution_identity == connection.execution_identity and
+         row.execution_identity == connection_execution_identity(connection) and
          operation.bound_input_digest == Operation.callback_digest(row, attempt, connection) and
          row.handoff_ref == operation.handoff_ref and
          row.consume_correlation_id == attempt.correlation_id and
@@ -199,10 +199,15 @@ defmodule Ezagent.ProviderConnection.LocalAuthorizationBackend.Support do
          row.provider_id == connection.provider_id and
          row.governed_host == connection.governed_host and
          row.acquisition_method == connection.acquisition_method and
-         row.execution_identity == connection.execution_identity,
+         row.execution_identity == connection_execution_identity(connection),
        do: :ok,
        else: {:error, :credential_conflict}
   end
+
+  defp connection_execution_identity(%{status: "pending_authorization"} = connection),
+    do: connection.requested_execution_identity_class
+
+  defp connection_execution_identity(connection), do: connection.execution_identity
 
   @doc false
   def validate_operation_fence(operation, attempt, connection) do

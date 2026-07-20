@@ -1,7 +1,8 @@
 defmodule Ezagent.ActionSet.ProviderConnectionTest do
   use EzagentCore.DataCase, async: false
 
-  import Ezagent.Test.CapHelper, only: [authority_signed_cap!: 3, with_test_authority: 3]
+  import Ezagent.Test.CapHelper,
+    only: [authority_signed_cap!: 3, install_test_authority!: 2, with_test_authority: 3]
 
   alias Ezagent.ActionSet.ProviderConnection
   alias Ezagent.Entity.User
@@ -64,6 +65,8 @@ defmodule Ezagent.ActionSet.ProviderConnectionTest do
     :disconnect,
     :read_connection
   ]
+  @missing_connection_id "00000000-0000-0000-0000-000000000001"
+  @missing_attempt_ref "00000000-0000-0000-0000-000000000002"
 
   test "data owner is exactly the target User and malformed inputs fail closed" do
     owner = Ezagent.URI.user(:team_alpha, :owner)
@@ -96,7 +99,7 @@ defmodule Ezagent.ActionSet.ProviderConnectionTest do
            provider_id: :string,
            governed_host: :string,
            acquisition_method: :string,
-           execution_identity: :string,
+           requested_execution_identity_class: :string,
            requested_permissions_digest: :string,
            redirect_uri_id: :string,
            correlation_id: :string,
@@ -109,6 +112,11 @@ defmodule Ezagent.ActionSet.ProviderConnectionTest do
         {%{
            connection_id: :string,
            expected_version: :integer,
+           requested_execution_identity_class: :string,
+           requested_permissions_digest: :string,
+           redirect_uri_id: :string,
+           correlation_id: :string,
+           callback_artifact: {:struct, Ezagent.Capability},
            assurance: {:struct, Assurance}
          }, %{attempt_ref: :string, authorization_url: :string, expires_at: :string}},
       refresh:
@@ -142,7 +150,13 @@ defmodule Ezagent.ActionSet.ProviderConnectionTest do
     owner = Ezagent.URI.user(:team_alpha, :callback_owner)
     caller = Ezagent.URI.user(:team_alpha, :callback_operator)
     workspace = Ezagent.Capability.workspace_of(owner)
-    ctx = %{self_uri: owner, caller: caller}
+
+    ctx = %{
+      self_uri: owner,
+      caller: caller,
+      test_pid: parent,
+      test_assurance_verifier: AcceptingAssuranceValidator
+    }
 
     Application.put_env(:ezagent_domain_provider_connection, :command_boundary, fn action, _, _ ->
       send(parent, {:boundary, action})
@@ -192,6 +206,16 @@ defmodule Ezagent.ActionSet.ProviderConnectionTest do
                  )
 
         refute_received {:boundary, _}
+
+        assert {:error, _} =
+                 ProviderConnection.handle_reauthorize(
+                   direct_args(:reauthorize, owner)
+                   |> Map.put(:callback_artifact, artifact)
+                   |> Map.put(:assurance, assurance(owner, caller)),
+                   ctx
+                 )
+
+        refute_received {:boundary, _}
       end
 
       secret = "direct-callback-artifact-secret-sentinel"
@@ -215,6 +239,16 @@ defmodule Ezagent.ActionSet.ProviderConnectionTest do
                )
 
       assert_received {:boundary, :begin_authorization}
+
+      assert {:ok, :accepted} =
+               ProviderConnection.handle_reauthorize(
+                 direct_args(:reauthorize, owner)
+                 |> Map.put(:callback_artifact, valid)
+                 |> Map.put(:assurance, assurance(owner, caller)),
+                 ctx
+               )
+
+      assert_received {:boundary, :reauthorize}
     end)
   end
 
@@ -314,7 +348,16 @@ defmodule Ezagent.ActionSet.ProviderConnectionTest do
     parent = self()
     owner = Ezagent.URI.user(:team_alpha, :assurance_owner)
     caller = Ezagent.URI.user(:team_alpha, :assurance_operator)
-    ctx = %{self_uri: owner, caller: caller, test_pid: parent}
+    authority = install_test_authority!(owner, :user)
+    callback = callback_artifact(authority, owner, caller)
+
+    ctx = %{
+      self_uri: owner,
+      caller: caller,
+      test_pid: parent,
+      test_assurance_verifier: AcceptingAssuranceValidator
+    }
+
     valid = assurance(owner, caller)
 
     Application.put_env(:ezagent_domain_provider_connection, :command_boundary, fn action, _, _ ->
@@ -322,15 +365,8 @@ defmodule Ezagent.ActionSet.ProviderConnectionTest do
       {:ok, :accepted}
     end)
 
-    Application.put_env(
-      :ezagent_domain_provider_connection,
-      :assurance_validator,
-      AcceptingAssuranceValidator
-    )
-
     on_exit(fn ->
       Application.delete_env(:ezagent_domain_provider_connection, :command_boundary)
-      Application.delete_env(:ezagent_domain_provider_connection, :assurance_validator)
     end)
 
     invalid = [
@@ -349,7 +385,7 @@ defmodule Ezagent.ActionSet.ProviderConnectionTest do
 
     for action <- [:reauthorize, :revoke, :disconnect], bad <- invalid do
       handler = String.to_existing_atom("handle_#{action}")
-      args = %{connection_id: "connection-1", expected_version: 1, assurance: bad}
+      args = destructive_args(action, bad, callback)
       assert {:error, _} = apply(ProviderConnection, handler, [args, ctx])
       refute_received {:assurance, _, _}
       refute_received {:boundary, _}
@@ -357,22 +393,16 @@ defmodule Ezagent.ActionSet.ProviderConnectionTest do
 
     for action <- [:reauthorize, :revoke, :disconnect] do
       handler = String.to_existing_atom("handle_#{action}")
-      args = %{connection_id: "connection-1", expected_version: 1, assurance: valid}
+      args = destructive_args(action, valid, callback)
       assert {:ok, :accepted} = apply(ProviderConnection, handler, [args, ctx])
       assert_received {:assurance, ^action, ^valid}
       assert_received {:boundary, ^action}
     end
 
-    Application.put_env(
-      :ezagent_domain_provider_connection,
-      :assurance_validator,
-      RejectingAssuranceValidator
-    )
-
     assert {:error, :assurance_rejected} =
              ProviderConnection.handle_revoke(
                %{connection_id: "connection-1", expected_version: 1, assurance: valid},
-               ctx
+               Map.put(ctx, :test_assurance_verifier, RejectingAssuranceValidator)
              )
 
     refute_received {:boundary, _}
@@ -437,6 +467,8 @@ defmodule Ezagent.ActionSet.ProviderConnectionTest do
 
     owner = Ezagent.URI.user(:team_alpha, :owner)
     ctx = %{self_uri: owner, caller: owner}
+    authority = install_test_authority!(owner, :user)
+    callback = callback_artifact(authority, owner, owner)
 
     {:ok, assurance} =
       Assurance.new(%{
@@ -459,7 +491,7 @@ defmodule Ezagent.ActionSet.ProviderConnectionTest do
 
       assert {:error, :assurance_validation_unavailable} =
                apply(ProviderConnection, handler, [
-                 %{connection_id: "connection-1", expected_version: 1, assurance: assurance},
+                 destructive_args(action, assurance, callback),
                  ctx
                ])
 
@@ -472,10 +504,21 @@ defmodule Ezagent.ActionSet.ProviderConnectionTest do
       AcceptingAssuranceValidator
     )
 
-    assert {:ok, %{accepted: true}} =
+    assert {:error, :assurance_validation_unavailable} =
              ProviderConnection.handle_revoke(
                %{connection_id: "connection-1", expected_version: 1, assurance: assurance},
                Map.put(ctx, :test_pid, self())
+             )
+
+    refute_received {:assurance, :revoke, _}
+    refute_received {:boundary, :revoke, _}
+
+    assert {:ok, %{accepted: true}} =
+             ProviderConnection.handle_revoke(
+               %{connection_id: "connection-1", expected_version: 1, assurance: assurance},
+               ctx
+               |> Map.put(:test_pid, self())
+               |> Map.put(:test_assurance_verifier, AcceptingAssuranceValidator)
              )
 
     assert_received {:assurance, :revoke, ^assurance}
@@ -490,8 +533,10 @@ defmodule Ezagent.ActionSet.ProviderConnectionTest do
     for action <- [:consume_callback, :refresh, :read_connection] do
       handler = String.to_existing_atom("handle_#{action}")
 
-      assert {:error, :provider_connection_orchestration_not_implemented} =
+      assert {:error, reason} =
                apply(ProviderConnection, handler, [direct_args(action, ctx.self_uri), ctx])
+
+      refute reason == :provider_connection_orchestration_not_implemented
     end
 
     assert {:error, {:invalid_args, _}} =
@@ -524,7 +569,7 @@ defmodule Ezagent.ActionSet.ProviderConnectionTest do
       provider_id: "github",
       governed_host: "github.com",
       acquisition_method: "oauth",
-      execution_identity: "owner",
+      requested_execution_identity_class: "connected_user",
       requested_permissions_digest: "digest",
       redirect_uri_id: "callback",
       correlation_id: "correlation-1",
@@ -532,13 +577,61 @@ defmodule Ezagent.ActionSet.ProviderConnectionTest do
     }
 
   defp direct_args(:consume_callback, _owner),
-    do: %{attempt_ref: "attempt-1", correlation_id: "correlation-1"}
+    do: %{attempt_ref: @missing_attempt_ref, correlation_id: "correlation-1"}
 
-  defp direct_args(action, owner) when action in [:reauthorize, :revoke, :disconnect],
+  defp direct_args(:reauthorize, owner) do
+    %{
+      connection_id: "connection-1",
+      expected_version: 1,
+      requested_execution_identity_class: "connected_user",
+      requested_permissions_digest: "reauthorize-digest",
+      redirect_uri_id: "callback",
+      correlation_id: "reauthorize-correlation-1",
+      callback_artifact: %{},
+      assurance: assurance(owner, owner)
+    }
+  end
+
+  defp direct_args(action, owner) when action in [:revoke, :disconnect],
     do: %{connection_id: "connection-1", expected_version: 1, assurance: assurance(owner, owner)}
 
   defp direct_args(:refresh, _owner),
-    do: %{connection_id: "connection-1", expected_version: 1, correlation_id: "correlation-1"}
+    do: %{
+      connection_id: @missing_connection_id,
+      expected_version: 1,
+      correlation_id: "correlation-1"
+    }
 
-  defp direct_args(:read_connection, _owner), do: %{connection_id: "connection-1"}
+  defp direct_args(:read_connection, _owner), do: %{connection_id: @missing_connection_id}
+
+  defp destructive_args(:reauthorize, assurance, callback) do
+    %{
+      connection_id: "connection-1",
+      expected_version: 1,
+      requested_execution_identity_class: "connected_user",
+      requested_permissions_digest: "reauthorize-digest",
+      redirect_uri_id: "callback",
+      correlation_id: "reauthorize-correlation-1",
+      callback_artifact: callback,
+      assurance: assurance
+    }
+  end
+
+  defp destructive_args(action, assurance, _callback)
+       when action in [:revoke, :disconnect] do
+    %{connection_id: "connection-1", expected_version: 1, assurance: assurance}
+  end
+
+  defp callback_artifact(authority, owner, grantee) do
+    requested =
+      Ezagent.Capability.cap(
+        :user,
+        ProviderConnection,
+        :consume_callback,
+        Ezagent.URI.instance(owner),
+        Ezagent.Capability.workspace_of(owner)
+      )
+
+    authority_signed_cap!(authority, grantee, requested)
+  end
 end

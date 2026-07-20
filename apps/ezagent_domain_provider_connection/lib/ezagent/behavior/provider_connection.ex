@@ -21,7 +21,7 @@ defmodule Ezagent.ActionSet.ProviderConnection do
          provider_id: :string,
          governed_host: :string,
          acquisition_method: :string,
-         execution_identity: :string,
+         requested_execution_identity_class: :string,
          requested_permissions_digest: :string,
          redirect_uri_id: :string,
          correlation_id: :string,
@@ -49,6 +49,11 @@ defmodule Ezagent.ActionSet.ProviderConnection do
        %{
          connection_id: :string,
          expected_version: :integer,
+         requested_execution_identity_class: :string,
+         requested_permissions_digest: :string,
+         redirect_uri_id: :string,
+         correlation_id: :string,
+         callback_artifact: {:struct, Ezagent.Capability},
          assurance: {:struct, Ezagent.ProviderConnection.Assurance}
        }},
     returns: %{attempt_ref: :string, authorization_url: :string, expires_at: :string},
@@ -144,7 +149,23 @@ defmodule Ezagent.ActionSet.ProviderConnection do
   def handle_read_connection(args, ctx), do: handle_command(:read_connection, args, ctx)
 
   @doc false
-  def handle_reauthorize(args, ctx), do: handle_destructive(:reauthorize, args, ctx)
+  def handle_reauthorize(args, ctx) do
+    with {:ok, command} <- sanitize_command(:reauthorize, args) do
+      case Map.get(command, :callback_artifact) do
+        %Ezagent.Capability{} = artifact ->
+          with :ok <- validate_callback_artifact(artifact, ctx),
+               :ok <- validate_assurance(:reauthorize, command, ctx) do
+            invoke_boundary(:reauthorize, command, ctx)
+          end
+
+        nil ->
+          {:error, :callback_artifact_required}
+
+        _malformed ->
+          {:error, :invalid_callback_artifact}
+      end
+    end
+  end
 
   @doc false
   def handle_revoke(args, ctx), do: handle_destructive(:revoke, args, ctx)
@@ -230,15 +251,37 @@ defmodule Ezagent.ActionSet.ProviderConnection do
     end
   end
 
-  defp invoke_assurance_validator(action, assurance, ctx) do
-    validator =
-      Application.get_env(
-        :ezagent_domain_provider_connection,
-        :assurance_validator,
-        Ezagent.ProviderConnection.UnavailableAssuranceValidator
+  if Mix.env() == :test do
+    defp invoke_assurance_validator(
+           action,
+           assurance,
+           %{test_assurance_verifier: validator} = ctx
+         ) do
+      Ezagent.ProviderConnection.AssuranceValidator.validate(
+        validator,
+        action,
+        assurance,
+        ctx
       )
+    end
 
-    Ezagent.ProviderConnection.AssuranceValidator.validate(validator, action, assurance, ctx)
+    defp invoke_assurance_validator(action, assurance, ctx) do
+      Ezagent.ProviderConnection.AssuranceValidator.validate(
+        Ezagent.ProviderConnection.UnavailableAssuranceValidator,
+        action,
+        assurance,
+        ctx
+      )
+    end
+  else
+    defp invoke_assurance_validator(action, assurance, ctx) do
+      Ezagent.ProviderConnection.AssuranceValidator.validate(
+        Ezagent.ProviderConnection.UnavailableAssuranceValidator,
+        action,
+        assurance,
+        ctx
+      )
+    end
   end
 
   defp invoke_boundary(action, args, ctx) do
