@@ -28,6 +28,14 @@ config :ezagent_domain_session,
   default_orchestrator_template_uri: "template://system/agent/cc-orchestrator",
   socialware_manifest_boot_scan: config_env() in [:prod]
 
+# #185 — the hello plugin's boot-time `DEEPSEEK_API_KEY` env → curl credential
+# bridge (`EzagentPluginHello.CredentialBridge`). When the deploy env carries
+# the key, boot registers it as the INTERNAL hello workspace's shared curl
+# credential source so freshly seeded hello `llm` members are born credentialed.
+# Scoped to that one workspace; never baked into the shared hello template.
+config :ezagent_plugin_hello,
+  credential_bridge_boot: config_env() in [:dev, :prod]
+
 config :ezagent_domain_session,
   public_scheme: "https",
   public_host: "app.ezagent.chat",

@@ -217,11 +217,57 @@ defmodule EzagentPluginHello.Application do
   end
 
   # The supervisor for off-process page-generation Tasks (the LLM round-trip),
-  # plus an OPT-IN boot seed (off by default).
+  # the #185 env→curl credential bridge (env-gated; no-op without
+  # `DEEPSEEK_API_KEY`), plus an OPT-IN boot seed (off by default).
   @impl Ezagent.Plugin
   def children do
     [{Task.Supervisor, name: EzagentPluginHello.TaskSupervisor}] ++
-      demo_seed_children() ++ migrate_children()
+      credential_bridge_children() ++ demo_seed_children() ++ migrate_children()
+  end
+
+  # #185 — the env→curl credential bridge. At boot (the SAME plugin boot the
+  # hello demo/workspace publish lane rides), when `DEEPSEEK_API_KEY` is
+  # present, bridge it into the INTERNAL hello workspace's shared curl
+  # credential source (`EzagentPluginHello.CredentialBridge`) so every hello
+  # `llm` curl member born in that workspace resolves the key through the
+  # unchanged platform cascade. Scoped to the hello workspace ONLY — the
+  # shared hello template stays credential-optional and NO other workspace
+  # inherits our key. One-shot transient Task (never blocks the supervisor;
+  # a failure is logged, not fatal). Config-gated (`:credential_bridge_boot`,
+  # dev/prod on, test off) AND env-gated (`boot_enabled?/0`).
+  defp credential_bridge_children do
+    if EzagentPluginHello.CredentialBridge.boot_enabled?() do
+      [
+        Supervisor.child_spec({Task, &run_credential_bridge/0},
+          id: :hello_credential_bridge,
+          restart: :transient
+        )
+      ]
+    else
+      []
+    end
+  end
+
+  defp run_credential_bridge do
+    # Let the session / identity supervisors settle before spawning the source
+    # agent + dispatching the workspace-shared registration (the demo seed
+    # below waits longer, so the bridge always lands BEFORE a boot-seeded
+    # hello app materializes its `llm` member).
+    Process.sleep(1_000)
+
+    case EzagentPluginHello.CredentialBridge.ensure_deepseek_source() do
+      {:ok, %URI{} = source_uri} ->
+        Logger.info(
+          "hello credential bridge: deepseek workspace-shared curl source ready at " <>
+            URI.to_string(source_uri)
+        )
+
+      {:ok, :no_env_key} ->
+        :ok
+
+      {:error, reason} ->
+        Logger.warning("hello credential bridge failed: #{inspect(reason)}")
+    end
   end
 
   # `HELLO_MIGRATE_ORCHESTRATOR=1` → at boot (once the substrate settles), give every
