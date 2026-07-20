@@ -229,8 +229,17 @@ defmodule Ezagent.ProviderConnection.RefreshFenceTest do
       &update_in(&1.barriers, fn barriers -> Map.delete(barriers, :replace) end)
     )
 
-    assert {:ok, %{status: "active"}} =
+    assert {:error, :refresh_in_progress} =
              Store.execute(:refresh, args, %{self_uri: Task8Fixtures.owner()})
+
+    prepared =
+      Repo.get_by!(Operation, operation_class: "refresh", correlation_id: "response-loss")
+
+    assert {:ok, %{status: "active"}} =
+             Store.execute(:refresh, args, %{
+               self_uri: Task8Fixtures.owner(),
+               now: prepared.lease_until
+             })
 
     operation =
       Repo.get_by!(Operation, operation_class: "refresh", correlation_id: "response-loss")

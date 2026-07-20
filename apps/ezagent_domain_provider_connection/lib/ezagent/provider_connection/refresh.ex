@@ -28,14 +28,66 @@ defmodule Ezagent.ProviderConnection.Refresh do
              operation.workspace_uri == connection.workspace_uri and
              operation.backend_pair_id == pair.pair_id and
              operation.expected_connection_version == args.expected_version and
-             operation.bound_input_digest == command_digest,
-           do: {:ok, operation},
-           else: {:error, :correlation_conflict}
+             operation.bound_input_digest == command_digest do
+          reclaim_expired(operation, connection, now)
+        else
+          {:error, :correlation_conflict}
+        end
 
       nil ->
         prepare(connection, pair, args, command_digest, now)
     end
   end
+
+  defp reclaim_expired(%Operation{status: "prepared"} = operation, connection, now) do
+    if expired_lease?(operation.lease_until, now) and
+         expired_lease?(connection.refresh_lease_until, now) do
+      Repo.transaction(fn ->
+        locked_connection = lock_connection(connection.connection_id)
+        locked_operation = lock_operation(operation.id)
+
+        if locked_connection.status == "refreshing" and
+             locked_connection.connection_version == operation.expected_connection_version + 1 and
+             locked_operation.status == "prepared" and
+             expired_lease?(locked_operation.lease_until, now) and
+             expired_lease?(locked_connection.refresh_lease_until, now) do
+          token = Base.url_encode64(:crypto.strong_rand_bytes(24), padding: false)
+
+          lease_version =
+            max(locked_connection.refresh_lease_version, operation.attempt_version) + 1
+
+          lease_until = DateTime.add(now, @lease_seconds, :second)
+
+          locked_connection
+          |> Ecto.Changeset.change(
+            refresh_lease_token: token,
+            refresh_lease_until: lease_until,
+            refresh_lease_version: lease_version
+          )
+          |> Repo.update!()
+
+          locked_operation
+          |> Ecto.Changeset.change(
+            lease_token: token,
+            lease_until: lease_until,
+            attempt_version: lease_version
+          )
+          |> Repo.update!()
+        else
+          Repo.rollback(:refresh_lease_lost)
+        end
+      end)
+    else
+      {:error, :refresh_in_progress}
+    end
+  end
+
+  defp reclaim_expired(operation, _connection, _now), do: {:ok, operation}
+
+  defp expired_lease?(lease_until, now) when is_struct(lease_until, DateTime),
+    do: DateTime.compare(lease_until, now) in [:lt, :eq]
+
+  defp expired_lease?(_lease_until, _now), do: false
 
   defp prepare(connection, pair, args, command_digest, now) do
     token = Base.url_encode64(:crypto.strong_rand_bytes(24), padding: false)
