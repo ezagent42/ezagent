@@ -89,6 +89,27 @@ Ezagent.Users.set_password(founder_uri, "e2etest123")
 Ezagent.Users.set_password(member_uri, "e2etest123")
 IO.puts("  passwords set (both users: e2etest123)")
 
+# ── Post-#1440 fix: entity_profiles + email_verified ──
+# create_read_only/2 does NOT insert an entity_profiles row or set
+# email_verified=true. The login flow needs both:
+#   • entity_profiles.email → resolves magic-link to user URI
+#   • users.email_verified → gates form login (false = blocked)
+# Without these the seed users can't log in.
+
+for {uri, email, display_name} <- [
+  {founder_uri, "g5-founder@e2e.local", "G5 Founder"},
+  {member_uri, "g5-member@e2e.local", "G5 Member"}
+] do
+  Ezagent.Entity.Profile.upsert(%{
+    entity_uri: URI.to_string(uri),
+    email: email,
+    display_name: display_name
+  })
+
+  Ezagent.Users.mark_email_verified(uri)
+  IO.puts("  #{display_name}: profile + email_verified done")
+end
+
 # ── Step 2: Create curl agent WITHOUT credentials ──
 
 IO.puts("[2/4] Creating curl agent (no API key — will trigger {:no_api_key})...")
