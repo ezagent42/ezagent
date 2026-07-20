@@ -1,5 +1,5 @@
 import React from "react"
-import {Bug, Cable, CheckCircle2, ChevronUp, Copy, ExternalLink, LayoutGrid, Link2, Loader2, MessageSquare, MoreHorizontal, Paperclip, PanelTop, Plus, RotateCcw, Route, Send, Sparkles, SquareKanban, TerminalSquare, Upload, UserMinus, UserPlus, Users, X} from "lucide-react"
+import {Bug, CheckCircle2, ChevronUp, Copy, ExternalLink, LayoutGrid, Link2, Loader2, MessageSquare, MoreHorizontal, Paperclip, PanelTop, Plus, RotateCcw, Route, Send, Sparkles, SquareKanban, TerminalSquare, Upload, UserMinus, UserPlus, Users, X} from "lucide-react"
 
 import {Button, Input, Modal, Select} from "./ui/primitives"
 import {JsonRenderBubble} from "./JsonRenderBubble"
@@ -876,20 +876,6 @@ export function Conversation({
                     <RotateCcw aria-hidden="true" className="h-4 w-4 text-muted-foreground" />
                     重启 agent runner
                   </button>
-                  {sessionUri && (
-                    <button
-                      type="button"
-                      data-world-external-mirror-link
-                      className="flex items-center gap-2 rounded-md px-2.5 py-2 text-left text-foreground hover:bg-muted"
-                      onClick={(event) => {
-                        handleBindingsViewSwitch(event, sessionUri, onSwitchView)
-                        setToolsOpen(false)
-                      }}
-                    >
-                      <Cable aria-hidden="true" className="h-4 w-4 text-muted-foreground" />
-                      外部镜像
-                    </button>
-                  )}
                   <button
                     type="button"
                     className="flex items-center gap-2 rounded-md px-2.5 py-2 text-left text-foreground hover:bg-muted"
