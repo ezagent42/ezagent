@@ -359,8 +359,7 @@ defmodule Ezagent.Integration.CreateAgentDispatchTest do
       buffer_size_before = Ezagent.PendingDelivery.buffer_size(agent_uri)
 
       assert {:error,
-              {:grant_failed, ^later_denied,
-               {:no_kind_module_for_agent, missing_target_string}}} =
+              {:grant_failed, ^later_denied, {:no_kind_module_for_agent, missing_target_string}}} =
                Workspace.grant_initial_caps(
                  agent_uri,
                  [owner_permitted, later_denied],
@@ -703,8 +702,7 @@ defmodule Ezagent.Integration.CreateAgentDispatchTest do
       # which SKIPS validation for an empty flavor_config — this create
       # returned {:ok, agent} as a bare Kind with no PTY/sidecar. On the
       # file-flavor cascade lane the profile gate fails closed.
-      assert {:error,
-              {:cascade_spawn_failed, {:invalid_template_data, :missing_backend_profile}}} =
+      assert {:error, {:cascade_spawn_failed, {:invalid_template_data, :missing_backend_profile}}} =
                Workspace.create_agent(
                  workspace_uri,
                  %{

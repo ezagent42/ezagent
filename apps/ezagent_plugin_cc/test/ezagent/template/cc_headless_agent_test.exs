@@ -308,9 +308,7 @@ defmodule Ezagent.PluginCc.Template.CcHeadlessAgentTest do
   describe "ensure_config_home/2 (F4)" do
     setup do
       agent_uri =
-        Ezagent.URI.new!(
-          "entity://test-ws/agent/f4-home-#{System.unique_integer([:positive])}"
-        )
+        Ezagent.URI.new!("entity://test-ws/agent/f4-home-#{System.unique_integer([:positive])}")
 
       {:ok, agent_uri: agent_uri}
     end
