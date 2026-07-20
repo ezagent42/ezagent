@@ -1,5 +1,12 @@
 defmodule Ezagent.ActionSet.ProviderConnection do
-  @moduledoc "Stateless, registry-only owner command boundary for provider connections."
+  @moduledoc """
+  Stateless, registry-only owner command boundary for provider connections.
+
+  In D1, begin, callback consumption, refresh, and read are production-reachable.
+  Reauthorize, revoke, and disconnect remain registered closed protocols but are
+  intentionally production-unavailable until a trusted-session assurance
+  authority is approved and implemented.
+  """
 
   use Ezagent.Lifecycle
 
@@ -60,7 +67,7 @@ defmodule Ezagent.ActionSet.ProviderConnection do
     caps: [{:reauthorize, kind: :user}],
     data_owner: :self,
     modes: [:call],
-    description: "Reauthorize an owner-scoped provider connection."
+    description: "Deferred in D1: reauthorize after trusted-session assurance."
   )
 
   action(:refresh,
@@ -86,7 +93,7 @@ defmodule Ezagent.ActionSet.ProviderConnection do
     caps: [{:revoke, kind: :user}],
     data_owner: :self,
     modes: [:call],
-    description: "Revoke an owner-scoped provider connection."
+    description: "Deferred in D1: revoke after trusted-session assurance."
   )
 
   action(:disconnect,
@@ -101,7 +108,7 @@ defmodule Ezagent.ActionSet.ProviderConnection do
     caps: [{:disconnect, kind: :user}],
     data_owner: :self,
     modes: [:call],
-    description: "Disconnect an owner-scoped provider connection."
+    description: "Deferred in D1: disconnect after trusted-session assurance."
   )
 
   action(:read_connection,
@@ -233,14 +240,17 @@ defmodule Ezagent.ActionSet.ProviderConnection do
 
     with %Ezagent.ProviderConnection.Assurance{} <- assurance,
          :ok <- Ezagent.ProviderConnection.Assurance.validate(assurance),
+         true <- assurance.action == action,
          true <- assurance.owner_uri == owner,
          true <- assurance.workspace_uri == workspace,
          true <- assurance.grantee_uri == Map.get(ctx, :caller),
          true <- assurance.connection_id == Map.get(args, :connection_id),
          true <- assurance.connection_version == Map.get(args, :expected_version),
-         %DateTime{} = expires_at <- assurance.expires_at,
-         :gt <- DateTime.compare(expires_at, DateTime.utc_now()),
-         :ok <- invoke_assurance_validator(action, assurance, ctx) do
+         now = DateTime.utc_now(),
+         :ok <- Ezagent.ProviderConnection.Assurance.validate_time(assurance, now),
+         verification_context =
+           assurance_verification_context(owner, workspace, Map.fetch!(ctx, :caller), args, now),
+         :ok <- invoke_session_assurance_verifier(action, assurance, verification_context, ctx) do
       :ok
     else
       nil -> {:error, :assurance_required}
@@ -250,35 +260,46 @@ defmodule Ezagent.ActionSet.ProviderConnection do
     end
   end
 
+  defp assurance_verification_context(owner, workspace, grantee, args, now) do
+    %{
+      owner_uri: owner,
+      workspace_uri: workspace,
+      grantee_uri: grantee,
+      connection_id: Map.fetch!(args, :connection_id),
+      connection_version: Map.fetch!(args, :expected_version),
+      verified_at: now
+    }
+  end
+
   if Mix.env() == :test do
-    defp invoke_assurance_validator(
+    defp invoke_session_assurance_verifier(
            action,
            assurance,
-           %{test_assurance_verifier: validator} = ctx
+           verification_context,
+           %{test_session_assurance_verifier: {verifier, verifier_state}}
          ) do
-      Ezagent.ProviderConnection.AssuranceValidator.validate(
-        validator,
+      Ezagent.ProviderConnection.SessionAssuranceVerifier.verify_and_consume(
+        verifier,
+        verifier_state,
         action,
         assurance,
-        ctx
+        verification_context
       )
     end
 
-    defp invoke_assurance_validator(action, assurance, ctx) do
-      Ezagent.ProviderConnection.AssuranceValidator.validate(
-        Ezagent.ProviderConnection.UnavailableAssuranceValidator,
+    defp invoke_session_assurance_verifier(action, assurance, verification_context, _ctx) do
+      Ezagent.ProviderConnection.UnavailableSessionAssuranceVerifier.verify_and_consume(
         action,
         assurance,
-        ctx
+        verification_context
       )
     end
   else
-    defp invoke_assurance_validator(action, assurance, ctx) do
-      Ezagent.ProviderConnection.AssuranceValidator.validate(
-        Ezagent.ProviderConnection.UnavailableAssuranceValidator,
+    defp invoke_session_assurance_verifier(action, assurance, verification_context, _ctx) do
+      Ezagent.ProviderConnection.UnavailableSessionAssuranceVerifier.verify_and_consume(
         action,
         assurance,
-        ctx
+        verification_context
       )
     end
   end

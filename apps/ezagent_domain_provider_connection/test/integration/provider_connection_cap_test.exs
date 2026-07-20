@@ -6,20 +6,6 @@ defmodule Ezagent.ProviderConnectionCapTest do
   alias Ezagent.Entity.User
   alias Ezagent.ProviderConnection.Assurance
 
-  defmodule AcceptingValidator do
-    @behaviour Ezagent.ProviderConnection.AssuranceValidator
-
-    @impl true
-    def validate(action, _assurance, _context) do
-      send(
-        Application.fetch_env!(:ezagent_domain_provider_connection, :test_pid),
-        {:assurance, action}
-      )
-
-      :ok
-    end
-  end
-
   @actions ProviderConnection.actions()
 
   setup do
@@ -37,18 +23,9 @@ defmodule Ezagent.ProviderConnectionCapTest do
     end
 
     Application.put_env(:ezagent_domain_provider_connection, :command_boundary, boundary)
-    Application.put_env(:ezagent_domain_provider_connection, :test_pid, parent)
-
-    Application.put_env(
-      :ezagent_domain_provider_connection,
-      :assurance_validator,
-      AcceptingValidator
-    )
 
     on_exit(fn ->
       Application.delete_env(:ezagent_domain_provider_connection, :command_boundary)
-      Application.delete_env(:ezagent_domain_provider_connection, :test_pid)
-      Application.delete_env(:ezagent_domain_provider_connection, :assurance_validator)
     end)
 
     {:ok, owner: owner, caller: caller}
@@ -72,7 +49,7 @@ defmodule Ezagent.ProviderConnectionCapTest do
 
       for caps <- wrong_caps do
         assert {:error, _} = dispatch(ctx.owner, ctx.caller, action, args(action, ctx), caps)
-        refute_received {:assurance, _}
+        refute_received {:session_assurance, _, _, _}
         refute_received {:boundary, _, _}
       end
 
@@ -87,7 +64,7 @@ defmodule Ezagent.ProviderConnectionCapTest do
 
       if action in [:reauthorize, :revoke, :disconnect] do
         assert result == {:error, :assurance_validation_unavailable}
-        refute_received {:assurance, ^action}
+        refute_received {:session_assurance, ^action, _, _}
         refute_received {:boundary, ^action, _}
       else
         assert result == {:error, :authorization_backend_unavailable}
@@ -181,7 +158,7 @@ defmodule Ezagent.ProviderConnectionCapTest do
                  )
 
         refute inspect(result) =~ secret
-        refute_received {:assurance, _}
+        refute_received {:session_assurance, _, _, _}
         refute_received {:boundary, _, _}
       end
 
@@ -196,7 +173,7 @@ defmodule Ezagent.ProviderConnectionCapTest do
 
       if action in [:reauthorize, :revoke, :disconnect] do
         assert result == {:error, :assurance_validation_unavailable}
-        refute_received {:assurance, ^action}
+        refute_received {:session_assurance, ^action, _, _}
         refute_received {:boundary, ^action, _}
       else
         assert result == {:error, :authorization_backend_unavailable}
@@ -242,13 +219,14 @@ defmodule Ezagent.ProviderConnectionCapTest do
   defp args(action, ctx) when action in [:reauthorize, :revoke, :disconnect] do
     {:ok, assurance} =
       Assurance.new(%{
+        action: action,
         owner_uri: ctx.owner,
         workspace_uri: Capability.workspace_of(ctx.owner),
         grantee_uri: ctx.caller,
         connection_id: "connection-1",
         connection_version: 1,
-        attempt_ref: "attempt-1",
-        attempt_version: 1,
+        reauth_ref: "trusted-session-#{action}",
+        reauth_version: 1,
         status: :valid,
         issued_at: DateTime.utc_now(),
         expires_at: DateTime.add(DateTime.utc_now(), 60, :second),
