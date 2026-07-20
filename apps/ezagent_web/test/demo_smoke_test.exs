@@ -185,7 +185,7 @@ defmodule EzagentCore.Invariants.DemoSmokeTest do
 
           if Enum.any?(seeded, &(&1 in uris)),
             do: {:halt, uris},
-            else: (Process.sleep(25) && {:cont, uris})
+            else: Process.sleep(25) && {:cont, uris}
         end)
 
       assert Enum.any?(seeded, &(&1 in uris)),
