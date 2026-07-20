@@ -137,6 +137,8 @@ defmodule EzagentCore.Repo.Migrations.CloseProviderBindingCas do
          OR OLD.connection_id IS DISTINCT FROM NEW.connection_id
          OR OLD.workspace_uri IS DISTINCT FROM NEW.workspace_uri
          OR OLD.connection_version IS DISTINCT FROM NEW.connection_version
+         OR (OLD.backend_pair_id IS NOT NULL
+             AND OLD.backend_pair_id IS DISTINCT FROM NEW.backend_pair_id)
          OR OLD.purpose IS DISTINCT FROM NEW.purpose
       THEN
         RAISE EXCEPTION 'provider authorization attempt immutable coordinate drift'
@@ -151,7 +153,8 @@ defmodule EzagentCore.Repo.Migrations.CloseProviderBindingCas do
 
     execute("""
     CREATE TRIGGER provider_authorization_attempts_immutable_coordinates_trigger
-    BEFORE UPDATE OF attempt_ref, connection_id, workspace_uri, connection_version, purpose
+    BEFORE UPDATE OF attempt_ref, connection_id, workspace_uri, connection_version,
+      backend_pair_id, purpose
     ON provider_authorization_attempts
     FOR EACH ROW
     EXECUTE FUNCTION provider_authorization_attempts_enforce_immutable_coordinates()
@@ -164,7 +167,24 @@ defmodule EzagentCore.Repo.Migrations.CloseProviderBindingCas do
     AS $$
     DECLARE
       attempt provider_authorization_attempts%ROWTYPE;
+      connection provider_connections%ROWTYPE;
     BEGIN
+      IF TG_OP = 'UPDATE'
+         AND (OLD.attempt_ref IS DISTINCT FROM NEW.attempt_ref
+              OR OLD.connection_id IS DISTINCT FROM NEW.connection_id
+              OR OLD.workspace_uri IS DISTINCT FROM NEW.workspace_uri
+              OR OLD.expected_connection_version IS DISTINCT FROM NEW.expected_connection_version
+              OR OLD.expected_credential_version IS DISTINCT FROM NEW.expected_credential_version
+              OR OLD.backend_pair_id IS DISTINCT FROM NEW.backend_pair_id
+              OR OLD.prior_credential_ref IS DISTINCT FROM NEW.prior_credential_ref
+              OR OLD.prior_credential_version IS DISTINCT FROM NEW.prior_credential_version
+              OR OLD.operation_class IS DISTINCT FROM NEW.operation_class)
+      THEN
+        RAISE EXCEPTION 'provider operation attempt coordinates are immutable'
+          USING ERRCODE = 'check_violation',
+                CONSTRAINT = 'provider_connection_operations_attempt_purpose_check';
+      END IF;
+
       IF NEW.operation_class <> 'store' THEN
         RETURN NEW;
       END IF;
@@ -174,15 +194,37 @@ defmodule EzagentCore.Repo.Migrations.CloseProviderBindingCas do
         FROM provider_authorization_attempts
        WHERE attempt_ref = NEW.attempt_ref;
 
+      SELECT *
+        INTO connection
+        FROM provider_connections
+       WHERE connection_id = NEW.connection_id
+         AND workspace_uri = NEW.workspace_uri;
+
       IF NOT FOUND
          OR attempt.connection_id IS DISTINCT FROM NEW.connection_id
          OR attempt.workspace_uri IS DISTINCT FROM NEW.workspace_uri
+         OR attempt.connection_version IS DISTINCT FROM NEW.expected_connection_version
+         OR attempt.backend_pair_id IS DISTINCT FROM NEW.backend_pair_id
+         OR connection.connection_version IS DISTINCT FROM NEW.expected_connection_version
+         OR (NEW.expected_credential_version IS NOT NULL
+             AND connection.credential_version IS DISTINCT FROM NEW.expected_credential_version)
+         OR (NEW.expected_credential_version IS NULL
+             AND NEW.status NOT IN ('prepared', 'backend_committed', 'cleanup_pending'))
+         OR (connection.backend_pair_id IS NOT NULL
+             AND connection.backend_pair_id IS DISTINCT FROM NEW.backend_pair_id)
          OR (attempt.purpose = 'initial_bind'
              AND NEW.prior_credential_ref IS NOT NULL
              AND NEW.prior_credential_version IS NOT NULL)
          OR (attempt.purpose = 'reauthorize'
-             AND NEW.prior_credential_ref IS NULL
-             AND NEW.prior_credential_version IS NULL)
+             AND (
+               (NEW.prior_credential_ref IS NULL
+                AND NEW.prior_credential_version IS NULL)
+               OR
+               (NEW.prior_credential_ref IS NOT NULL
+                AND NEW.prior_credential_version IS NOT NULL
+                AND (NEW.prior_credential_ref IS DISTINCT FROM connection.credential_backend_ref
+                     OR NEW.prior_credential_version IS DISTINCT FROM connection.credential_version))
+             ))
          OR attempt.purpose NOT IN ('initial_bind', 'reauthorize')
       THEN
         RAISE EXCEPTION 'provider operation attempt purpose mismatch'
@@ -198,7 +240,8 @@ defmodule EzagentCore.Repo.Migrations.CloseProviderBindingCas do
     execute("""
     CREATE TRIGGER provider_connection_operations_attempt_purpose_trigger
     BEFORE INSERT OR UPDATE OF attempt_ref, prior_credential_ref,
-      prior_credential_version, connection_id, workspace_uri, operation_class
+      prior_credential_version, connection_id, workspace_uri, operation_class,
+      expected_connection_version, expected_credential_version, backend_pair_id
     ON provider_connection_operations
     FOR EACH ROW
     EXECUTE FUNCTION provider_connection_operations_enforce_attempt_purpose()
