@@ -72,6 +72,24 @@ defmodule Ezagent.Agent.RecipeAttributes do
     end
   end
 
+  @doc """
+  Resolve the effective recipe name for an agent URI: the ETS fast path first,
+  then the durable layered `:recipe` resolver (`Ezagent.UriQuery.resolve/2`).
+  Any storage-layer failure degrades to `:none` so callers never crash on a
+  provenance read. This is the single owner of the fetch-then-resolve recipe
+  lookup — callers must not re-implement the cascade (the
+  `cross_file_duplicate_fn_groups` ratchet counts copies).
+  """
+  @spec fetch_or_resolve(URI.t()) :: {:ok, String.t()} | :none
+  def fetch_or_resolve(%URI{} = agent_uri) do
+    case fetch(agent_uri) do
+      {:ok, recipe} -> {:ok, recipe}
+      :none -> Ezagent.UriQuery.resolve(:recipe, agent_uri)
+    end
+  rescue
+    _ -> :none
+  end
+
   @doc "Delete any stored recipe (build-provenance) attribute for an agent URI."
   @spec delete(URI.t()) :: :ok
   def delete(%URI{} = agent_uri) do
