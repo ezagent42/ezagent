@@ -179,6 +179,31 @@ config :ezagent_core, Ezagent.Cap.DeliveryOutbox,
   retry_max_ms: 60_000,
   lease_ms: 30_000
 
+# D2 — GitHub OAuth App credentials. The {:system, "ENV_VAR"} tuple is resolved
+# at runtime by EzagentPluginGithub.Config.fetch_env!/1, not at compile time.
+# In dev/test the env vars must be set (or the value overridden per-environment).
+config :ezagent_plugin_github,
+  oauth_client_id: {:system, "GITHUB_CLIENT_ID"},
+  oauth_client_secret: {:system, "GITHUB_CLIENT_SECRET"}
+
+# D2 — register the GitHub credential backend module so the provider-connection
+# domain resolves it at runtime (via RuntimeBindings / Exchange).
+config :ezagent_domain_provider_connection,
+  credential_backend_implementations:
+    Map.merge(
+      Application.get_env(
+        :ezagent_domain_provider_connection,
+        :credential_backend_implementations,
+        %{}
+      ),
+      %{"github-credential-v1" => EzagentPluginGithub.GitHubCredentialBackend}
+    ),
+  callback_redirect_pairs:
+    Map.merge(
+      Application.get_env(:ezagent_domain_provider_connection, :callback_redirect_pairs, %{}),
+      %{"github-oauth" => "pair-github-v1"}
+    )
+
 # Import environment specific config. This must remain at the bottom
 # of this file so it overrides the configuration defined above.
 import_config "#{config_env()}.exs"
