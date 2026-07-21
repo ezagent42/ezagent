@@ -202,7 +202,7 @@ defmodule EzagentPluginKanban.Application do
           state_builder: EzagentPluginKanban.WorldData
         },
         actions:
-          ~w(kanban.add_node kanban.rename_node kanban.move_node kanban.remove_node kanban.set_stage kanban.claim_node kanban.unclaim_node kanban.set_status kanban.attach_artifact kanban.detach_artifact kanban.set_metric kanban.create kanban.sync_miro kanban.save_miro_creds kanban.select_board kanban.drop_subtree kanban.set_board_config kanban.attach_upload kanban.register_pr kanban.attach_code_file kanban.share_board),
+          ~w(kanban.add_node kanban.rename_node kanban.move_node kanban.remove_node kanban.set_stage kanban.claim_node kanban.unclaim_node kanban.set_status kanban.attach_artifact kanban.detach_artifact kanban.set_metric kanban.create kanban.sync_miro kanban.save_miro_creds kanban.select_board kanban.drop_subtree kanban.set_board_config kanban.attach_upload kanban.register_pr kanban.attach_code_file kanban.share_board kanban.share_to_session kanban.request_edit kanban.approve_edit kanban.receive_shared kanban.delete_board),
         actions_module: EzagentPluginKanban.WorldActions,
         renderer: %{
           source: "assets/src/world_page.tsx",

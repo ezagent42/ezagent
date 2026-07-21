@@ -21,8 +21,8 @@ defmodule EzagentPluginKanban.WorldData do
       （R3：caller=人类用户，per-node owner 授权在 Behavior 内如实判）。
 
   连接器配置（github_repo/miro 板名）、Miro 凭证连接状态、pr 节点的 CI 评价，
-  全部由 `:get_tree` dispatch 一并返回（Behavior 内只读投影），world 不直引 kanban
-  plugin 任何模块。GitHub 主动连接器已退役（gh 连通是 agent 的 CLI 行为），
+  全部由 `:get_tree` dispatch 一并返回（Behavior 内只读投影），world 侧不再持有 kanban
+  数据代码（债②可搬半 2026-07-17 搬进本 plugin）。GitHub 主动连接器已退役（gh 连通是 agent 的 CLI 行为），
   `github` 连接状态字段随之退役；`config.github_repo` 仍是纯数据（拼 git 链接用）。dormant 的 passive kanban-manager 经 `ensure_spawned/1`
   （`SpawnRegistry.spawn` 从快照 rehydrate）先起活，再 dispatch（HIGH-3 liveness）。
 
@@ -78,16 +78,25 @@ defmodule EzagentPluginKanban.WorldData do
   def list_instances(ctx) do
     "kanban-manager"
     |> Ezagent.Agent.RecipeResolver.list_by_recipe(workspace_scope(ctx))
+    |> union_cap_boards(ctx)
     |> Enum.filter(&visible?(&1, ctx))
-    |> Enum.map(&board_row/1)
+    |> Enum.map(&board_row(&1, ctx))
   rescue
     _ -> []
   end
 
   # board URI → 前端行（列表项 + dispatch 目标 + 详情路径）。list_instances 与
-  # session_boards 同形复用。
-  defp board_row(%URI{} = uri),
-    do: %{"uri" => encode_uri(uri), "name" => uri_name(uri), "path" => detail_path(uri)}
+  # session_boards 同形复用。⑲ 删板 UI：`owned` = caller 是板主人（`data_owner`，
+  # 复用发现口径的 owns_board?/2）——前端只对自己是版主的板出删除入口
+  # （真授权仍在后端 `BoardProvision.delete_board` 的 caller==data_owner 校验）。
+  defp board_row(%URI{} = uri, ctx) do
+    %{
+      "uri" => encode_uri(uri),
+      "name" => uri_name(uri),
+      "path" => detail_path(uri),
+      "owned" => owns_board?(Map.get(ctx, :caller_uri), uri)
+    }
+  end
 
   @doc "Build session-tab state for the plugin-declared kanban view."
   @spec session_state_for(URI.t(), map()) :: map()
@@ -112,14 +121,16 @@ defmodule EzagentPluginKanban.WorldData do
   def session_state_for(_, _), do: %{}
 
   @doc """
-  某个 session 所属 workspace 的 kanban-manager boards，按 CBAC 权属对 caller 收敛。
+  某个 session 的 kanban tab 板集合(㊵ 人本位口径:**ws 枚举 ∪ cap 派生**)。
 
   与 `list_instances/1` 的区别只在 workspace 来源：这里从 **session URI** 解析
   （`Ezagent.URI.workspace_of/1`，board 是 workspace 级 actor、不经 session 成员表，
   参照 `EzagentPluginKanban.ActionSet.KanbanRender.boards_for/1` 的解析方式），
-  而非 ctx 的 `workspace_uri`。枚举经 `list_by_recipe`（快照来源，覆盖 dormant），
+  而非 ctx 的 `workspace_uri`。枚举 = `list_by_recipe`（快照来源，覆盖 dormant）
+  **∪ caller 持钥板**（从 `caller_caps` 里 behavior==Kanban 的 cap 直接派生板 URI
+  ——链接分享收到的**跨 ws** 持钥板零新查询即可见,「tab = 持钥板集合」），再
   复用同一 `visible?/2`（admin 全见 / own / 持 board-cap）。返回与 `list_instances/1`
-  同形的 board 行。session 无法解析出 workspace（`:any`）→ `[]`。
+  同形的 board 行。session 无法解析出 workspace（`:any`）→ 仅 cap 派生半边。
   """
   @spec session_boards(URI.t(), map()) :: [map()]
   def session_boards(%URI{} = session_uri, ctx) do
@@ -127,11 +138,15 @@ defmodule EzagentPluginKanban.WorldData do
       %URI{} = ws ->
         "kanban-manager"
         |> Ezagent.Agent.RecipeResolver.list_by_recipe(ws)
+        |> union_cap_boards(ctx)
         |> Enum.filter(&visible?(&1, ctx))
-        |> Enum.map(&board_row/1)
+        |> Enum.map(&board_row(&1, ctx))
 
       _ ->
         []
+        |> union_cap_boards(ctx)
+        |> Enum.filter(&visible?(&1, ctx))
+        |> Enum.map(&board_row(&1, ctx))
     end
   rescue
     _ -> []
@@ -141,16 +156,37 @@ defmodule EzagentPluginKanban.WorldData do
 
   def session_boards(_, _), do: []
 
+  # ㊵ cap 派生半边：caller 持有的 behavior==Kanban 的实例精确 cap → 板 URI
+  # (cap.instance 自带 ws，跨 workspace 板零新查询)。与 ws 枚举求并集、按 URI
+  # 串去重(instance 归一化后比对，枚举来源与 cap 来源同形)。fail-safe []。
+  defp union_cap_boards(enumerated, ctx) do
+    cap_boards =
+      (Map.get(ctx, :caller_caps) || MapSet.new())
+      |> Enum.flat_map(fn
+        %Ezagent.Capability{behavior: Ezagent.ActionSet.Kanban, instance: %URI{} = inst} ->
+          [Ezagent.URI.instance(inst)]
+
+        _ ->
+          []
+      end)
+
+    # 去重键 = canonical URI 串(仅比对用,非 cap/routing 载荷)——走已审计的
+    # encode_uri/1 helper,过 uri_query serialization-boundary gate。
+    Enum.uniq_by(enumerated ++ cap_boards, &encode_uri/1)
+  rescue
+    _ -> enumerated
+  end
+
   # --- 发现按 CBAC 权属收敛（Task 2） ------------------------------------
   # fail-open（谁都看到全 workspace 的板）→ 权属过滤：
   #   * workspace admin（`Ezagent.Identity.AdminAuthority.admin?/2`）看全部；
   #   * 普通用户只看到 own（板的 `data_owner` 是自己）或持有指向该板 cap 的板。
-  # ctx 的 caller 身份字段 = `:caller_uri` / `:caller_caps`（world `KanbanActions.read_ctx`
+  # ctx 的 caller 身份字段 = `:caller_uri` / `:caller_caps`（world `WorldActions.read_ctx`
   # 注入；`caller_caps` 是 mount 期注入的 caller 身份 cap 快照，即触发这次读的 caller 当时
   # 持有的全量 cap 集）。
   @doc """
   发起人对某块板是否有 access（可见即可分享）—— admin / 板主人（`data_owner`）/ 持指向该板
-  的 cap。ctx 用 `KanbanActions.read_ctx` 形状（`:caller_uri` / `:caller_caps`）。
+  的 cap。ctx 用 `WorldActions.read_ctx` 形状（`:caller_uri` / `:caller_caps`）。
 
   分享看板（T6.4，`EzagentPluginKanban.WorldActions.share_link/2`）的 access gate 复用这同一条
   发现可见性谓词（`visible?/2`），不新发明授权：能看见（own / 持 cap / admin）即可分享。
@@ -173,7 +209,7 @@ defmodule EzagentPluginKanban.WorldData do
 
   # own：板（kanban-manager agent）的 `data_owner`（经 creator / lineage）== caller。
   # 与核心 dispatch chokepoint（`CapabilityRegistry.authorize_cap_shape` 的
-  # `caller == owner`）同款结构比对。模块可能尚未加载（world 无 kanban plugin dep）→
+  # `caller == owner`）同款结构比对。ensure_loaded 保守保留（历史上本模块住 world、无 plugin dep）→
   # 先 ensure_loaded；解析不出 owner（`:no_owner`/`:any`）保守判不可见。
   defp owns_board?(%URI{} = caller, %URI{} = board_uri) do
     _ = Code.ensure_loaded(Ezagent.ActionSet.Kanban)
@@ -385,7 +421,9 @@ defmodule EzagentPluginKanban.WorldData do
       "owner" => Map.get(n, :owner),
       "status" => to_str(Map.get(n, :status)),
       "artifacts" => Enum.map(Map.get(n, :artifacts, []), &jsonable_artifact(&1, ctx)),
-      "metrics" => Enum.map(Map.get(n, :metrics, []), &jsonable_map/1)
+      "metrics" => Enum.map(Map.get(n, :metrics, []), &jsonable_map/1),
+      # ㉕ 非破坏 drop 标（前端红框渲染）；旧快照节点无该键 → false。
+      "dropped" => Map.get(n, :dropped, false)
     }
 
     # 片5：ci_stage 棒节点附 CI 评价摘要（Behavior 在 get_tree 里按 ci_stage 算好、
