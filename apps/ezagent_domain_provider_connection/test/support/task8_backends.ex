@@ -231,9 +231,13 @@ defmodule Ezagent.ProviderConnection.Test.Task8Driver do
         {{reply, barrier}, next}
       end)
 
+    maybe_raise(reply)
     maybe_barrier(barrier, kind, context)
     reply
   end
+
+  defp maybe_raise({:raise, payload}), do: raise(payload)
+  defp maybe_raise(_reply), do: :ok
 
   defp default_reply(:discard_callback_result, _context), do: :ok
 
@@ -293,6 +297,7 @@ defmodule Ezagent.ProviderConnection.Test.Task8Driver do
         {{reply, Map.get(current.barriers, kind)}, next}
       end)
 
+    maybe_raise(reply)
     maybe_barrier(barrier, kind, context)
     reply
   end
@@ -369,9 +374,13 @@ defmodule Ezagent.ProviderConnection.Test.Task8CredentialBackend do
         {{reply, Map.get(current.barriers, kind)}, next}
       end)
 
+    maybe_raise(reply)
     maybe_barrier(barrier, kind, command)
     reply
   end
+
+  defp maybe_raise({:raise, payload}), do: raise(payload)
+  defp maybe_raise(_reply), do: :ok
 
   defp default_reply(:replace, command, current) do
     case Map.fetch(current.results, command.correlation_id) do
@@ -481,6 +490,19 @@ defmodule Ezagent.ProviderConnection.Test.Task8Fixtures do
   end
 
   def credential_implementations, do: %{"credential-task8-v1" => Task8CredentialBackend}
+
+  @doc false
+  # Arms the named effect kind so its next invocation RAISES `payload` in the
+  # caller process, simulating a plugin whose exception embeds a provider
+  # response body or credential material. Clear with `clear_reply/2`.
+  def raise_next(state, kind, payload) when is_binary(payload) do
+    Agent.update(state, fn current -> put_in(current, [:replies, kind], {:raise, payload}) end)
+  end
+
+  @doc false
+  def clear_reply(state, kind) do
+    Agent.update(state, fn current -> update_in(current, [:replies], &Map.delete(&1, kind)) end)
+  end
 
   def connection(overrides \\ %{}) do
     attrs =

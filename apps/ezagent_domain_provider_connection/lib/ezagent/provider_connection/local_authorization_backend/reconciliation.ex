@@ -9,6 +9,7 @@ defmodule Ezagent.ProviderConnection.LocalAuthorizationBackend.Reconciliation do
   alias Ezagent.ProviderConnection.DriverRegistry
   alias Ezagent.ProviderConnection.Operation
   alias Ezagent.ProviderConnection.ProviderAuthorizationCommand
+  alias Ezagent.ProviderConnection.EffectBoundary
   alias EzagentCore.Repo
   @tag_bytes 16
   @fixture_enabled Application.compile_env(
@@ -172,13 +173,10 @@ defmodule Ezagent.ProviderConnection.LocalAuthorizationBackend.Reconciliation do
     context = recovery_driver_context(recovery)
 
     reply =
-      try do
-        apply(recovery.driver.implementation, :reconcile_callback, [context])
-      rescue
-        _error -> {:error, :provider_protocol_error}
-      catch
-        _kind, _reason -> {:error, :provider_protocol_error}
-      end
+      EffectBoundary.invoke(
+        fn -> apply(recovery.driver.implementation, :reconcile_callback, [context]) end,
+        :provider_protocol_error
+      )
 
     case reply do
       {:ok, :not_completed} -> {:ok, :not_completed}

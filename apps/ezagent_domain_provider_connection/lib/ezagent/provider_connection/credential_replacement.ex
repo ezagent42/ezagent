@@ -14,6 +14,8 @@ defmodule Ezagent.ProviderConnection.CredentialReplacement do
     RuntimeBindings
   }
 
+  alias Ezagent.ProviderConnection.EffectBoundary
+
   alias EzagentCore.Repo
 
   @finalization_lease_seconds 30
@@ -586,13 +588,12 @@ defmodule Ezagent.ProviderConnection.CredentialReplacement do
       "pending" ->
         result =
           with :ok <- Driver.validate_discard_context(:callback, snapshot.provider_context) do
-            try do
-              apply(snapshot.driver, :discard_callback_result, [snapshot.provider_context])
-            rescue
-              _error -> {:error, :backend_unavailable}
-            catch
-              _kind, _reason -> {:error, :backend_unavailable}
-            end
+            EffectBoundary.invoke(
+              fn ->
+                apply(snapshot.driver, :discard_callback_result, [snapshot.provider_context])
+              end,
+              :backend_unavailable
+            )
           end
 
         persist_cleanup_result(snapshot, :provider, result)
@@ -610,7 +611,10 @@ defmodule Ezagent.ProviderConnection.CredentialReplacement do
   end
 
   defp revoke_result(snapshot) do
-    case snapshot.backend.revoke(snapshot.credential_context) do
+    case EffectBoundary.invoke(
+           fn -> snapshot.backend.revoke(snapshot.credential_context) end,
+           :authorization_backend_unavailable
+         ) do
       :ok -> :ok
       {:ok, _receipt} -> :ok
       _ -> {:error, :authorization_backend_unavailable}
@@ -846,12 +850,17 @@ defmodule Ezagent.ProviderConnection.CredentialReplacement do
        when is_binary(prior_ref) and is_integer(prior_version) do
     idempotency_key = operation.correlation_id <> ":old"
 
-    case backend.revoke(%{
-           credential_ref: prior_ref,
-           expected_credential_version: prior_version,
-           correlation_id: idempotency_key,
-           idempotency_key: idempotency_key
-         }) do
+    case EffectBoundary.invoke(
+           fn ->
+             backend.revoke(%{
+               credential_ref: prior_ref,
+               expected_credential_version: prior_version,
+               correlation_id: idempotency_key,
+               idempotency_key: idempotency_key
+             })
+           end,
+           :authorization_backend_unavailable
+         ) do
       :ok -> :ok
       {:ok, _receipt} -> :ok
       {:error, _reason} -> {:error, :authorization_backend_unavailable}
