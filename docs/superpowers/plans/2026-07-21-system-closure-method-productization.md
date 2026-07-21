@@ -267,9 +267,10 @@ set -e
 Classify `0=success`, `75=lock_timeout`, `124=timeout`,
 `137=killed_or_possible_oom`, and all other child codes as `command_failure`.
 Never say `137` proves OOM. Print time evidence when present, classification,
-exit code, and matching Mix/BEAM processes via `pgrep -af` when available. Exit
-with `status` unchanged. File descriptor 9 holds the lock through reporting and
-closes automatically at process exit.
+exit code, and a host-wide matching-process snapshot via `pgrep -af` when
+available. Explicitly state that this snapshot is not invocation-owned proof.
+Exit with `status` unchanged. File descriptor 9 holds the lock through reporting
+and closes automatically at process exit.
 
 - [ ] **Step 4: Run contract tests to GREEN**
 

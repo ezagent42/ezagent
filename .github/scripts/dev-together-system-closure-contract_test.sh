@@ -17,6 +17,13 @@ require_text() {
   fi
 }
 
+assert_no_forbidden_terminology() {
+  if grep -nE 'Y engineering trigger|工程诱因' "$@"; then
+    echo 'forbidden X/Y terminology found' >&2
+    return 1
+  fi
+}
+
 validate_board_structure() {
   local board_path="$1"
 
@@ -33,16 +40,41 @@ required_closure = {
     "id", "x_problem", "plan_invariant", "related_cards", "durable_proof",
     "integration_evidence", "resource_envelope",
 }
+required_envelope = {"runner", "memory_high", "memory_max", "memory_swap_max", "lock"}
 closure_by_id = {}
 for closure in closures:
     assert isinstance(closure, dict), "each system closure must be a map"
     assert required_closure <= closure.keys(), "system closure is missing required keys"
+    for field in required_closure - {"related_cards", "resource_envelope"}:
+        assert isinstance(closure[field], str) and closure[field].strip(), \
+            f"system closure {field} must be a non-empty string"
+    assert isinstance(closure["related_cards"], list) and closure["related_cards"], \
+        "system closure related_cards must be a non-empty list"
+    assert all(isinstance(item, str) and item.strip() for item in closure["related_cards"]), \
+        "system closure related_cards must contain non-empty strings"
+    assert isinstance(closure["resource_envelope"], dict) and closure["resource_envelope"], \
+        "system closure resource_envelope must be a non-empty map"
+    assert required_envelope <= closure["resource_envelope"].keys(), \
+        "system closure resource_envelope is missing required keys"
+    assert all(isinstance(key, str) and key.strip() and isinstance(value, str) and value.strip()
+               for key, value in closure["resource_envelope"].items()), \
+        "system closure resource_envelope fields must be non-empty strings"
     assert closure["id"] not in closure_by_id, "system closure ids must be unique"
     closure_by_id[closure["id"]] = closure
 
 cards = board.get("cards")
 assert isinstance(cards, list), "cards must be a list"
-card_by_id = {card["id"]: card for card in cards if isinstance(card, dict) and card.get("id")}
+card_by_id = {}
+for card in cards:
+    if not isinstance(card, dict) or "id" not in card:
+        continue
+    assert isinstance(card["id"], str) and card["id"].strip(), "card id must be a non-empty string"
+    assert card["id"] not in card_by_id, "non-empty card ids must be unique"
+    closures_for_card = card.get("closures") or []
+    assert isinstance(closures_for_card, list), "card closures must be a list"
+    assert all(isinstance(item, str) and item.strip() for item in closures_for_card), \
+        "card closures must contain non-empty strings"
+    card_by_id[card["id"]] = card
 for closure_id, closure in closure_by_id.items():
     for card_id in closure["related_cards"]:
         assert card_id in card_by_id, f"related card does not exist: {card_id}"
@@ -62,6 +94,9 @@ structured = [item for item in board.get("review", {}).get("method_deltas", []) 
 assert structured, "at least one structured method delta is required"
 for delta in structured:
     assert required_delta <= delta.keys(), "structured method delta is missing required keys"
+    for field in required_delta:
+        assert isinstance(delta[field], str) and delta[field].strip(), \
+            f"structured method delta {field} must be a non-empty string"
 print("board structure OK")
 PY
 }
@@ -116,10 +151,13 @@ done
 
 validate_board_structure "$example"
 
-if grep -nE 'Y engineering trigger|工程诱因' "$skill" "$standard" "$handoff" "$plan" "$review"; then
-  echo 'forbidden X/Y terminology found' >&2
-  exit 1
-fi
+assert_no_forbidden_terminology \
+  "$skill" "$standard" "$handoff" "$plan" "$review" \
+  "$plan_command" "$review_command" "$example" \
+  docs/runbook/guarded-mix-execution.md \
+  docs/runbook/guarded-mix-execution.zh_cn.md \
+  docs/notes/2026-07-21-git-provider-system-closure-retrospective.md \
+  docs/notes/2026-07-21-git-provider-system-closure-retrospective.zh_cn.md
 
 rendered_board="$test_tmp/board.html"
 uv run --with pyyaml python "$renderer" "$example" "$rendered_board"
@@ -183,6 +221,56 @@ if validate_board_structure "$mutated_delta" >/dev/null 2>&1; then
   exit 1
 fi
 
+mutated_duplicate_card="$test_tmp/board-duplicate-card-id.yaml"
+uv run --with pyyaml python - "$example" "$mutated_duplicate_card" <<'PY'
+import copy, sys, yaml
+with open(sys.argv[1], encoding="utf-8") as stream:
+    board = yaml.safe_load(stream)
+board["cards"].append(copy.deepcopy(next(card for card in board["cards"] if card.get("id"))))
+with open(sys.argv[2], "w", encoding="utf-8") as stream:
+    yaml.safe_dump(board, stream, allow_unicode=True, sort_keys=False)
+PY
+if validate_board_structure "$mutated_duplicate_card" >/dev/null 2>&1; then
+  echo 'mutation survived: duplicate non-empty card id' >&2
+  exit 1
+fi
+
+mutated_empty_field="$test_tmp/board-empty-semantic-field.yaml"
+uv run --with pyyaml python - "$example" "$mutated_empty_field" <<'PY'
+import sys, yaml
+with open(sys.argv[1], encoding="utf-8") as stream:
+    board = yaml.safe_load(stream)
+board["system_closures"][0]["durable_proof"] = "  "
+with open(sys.argv[2], "w", encoding="utf-8") as stream:
+    yaml.safe_dump(board, stream, allow_unicode=True, sort_keys=False)
+PY
+if validate_board_structure "$mutated_empty_field" >/dev/null 2>&1; then
+  echo 'mutation survived: empty closure semantic field' >&2
+  exit 1
+fi
+
+mutated_empty_envelope="$test_tmp/board-empty-resource-envelope-field.yaml"
+uv run --with pyyaml python - "$example" "$mutated_empty_envelope" <<'PY'
+import sys, yaml
+with open(sys.argv[1], encoding="utf-8") as stream:
+    board = yaml.safe_load(stream)
+board["system_closures"][0]["resource_envelope"]["memory_max"] = ""
+with open(sys.argv[2], "w", encoding="utf-8") as stream:
+    yaml.safe_dump(board, stream, allow_unicode=True, sort_keys=False)
+PY
+if validate_board_structure "$mutated_empty_envelope" >/dev/null 2>&1; then
+  echo 'mutation survived: empty required resource-envelope field' >&2
+  exit 1
+fi
+
+mutated_terminology="$test_tmp/plan-command-forbidden-terminology.md"
+cp "$plan_command" "$mutated_terminology"
+printf '\nY engineering trigger\n' >>"$mutated_terminology"
+if assert_no_forbidden_terminology "$mutated_terminology" >/dev/null 2>&1; then
+  echo 'mutation survived: forbidden terminology in operative command' >&2
+  exit 1
+fi
+
 validator_repo="$test_tmp/validator-without-ignore-rule"
 mkdir -p "$validator_repo/.claude/skills"
 cp -a .claude/skills/dev-together "$validator_repo/.claude/skills/dev-together"
@@ -191,6 +279,6 @@ if (cd "$validator_repo" && bash .claude/skills/dev-together/scripts/validate_sk
   echo 'mutation survived: validator accepts a repository without the scratch ignore rule' >&2
   exit 1
 fi
-echo 'mutation checks OK: command removal, broken references, missing method key, missing ignore rule'
+echo 'mutation checks OK: command removal, references, semantic fields, ids, terminology, ignore rule'
 
 echo 'dev-together system-closure contract tests OK'

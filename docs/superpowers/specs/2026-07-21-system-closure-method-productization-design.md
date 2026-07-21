@@ -203,8 +203,9 @@ The runner:
 6. records elapsed time, Max RSS, swap, and the child exit code;
 7. returns the Mix exit code unchanged;
 8. fails loudly when a required Linux/user-systemd prerequisite is missing;
-9. reports matching Mix/BEAM processes after completion without killing
-   unrelated processes.
+9. reports a host-wide matching-process snapshot after completion without
+   killing unrelated processes, and does not present that snapshot as proof of
+   invocation ownership.
 
 The contract test stubs external commands so CI does not require user systemd.
 It covers exact cgroup arguments, argv preservation, error propagation,

@@ -91,11 +91,12 @@ esac
 echo "classification=$classification exit_code=$status" >&2
 
 if command -v pgrep >/dev/null 2>&1; then
-  echo "matching_mix_beam_processes_begin" >&2
+  echo "host_matching_process_snapshot_scope=host_wide_not_invocation_owned" >&2
+  echo "host_matching_process_snapshot_begin" >&2
   pgrep -af '(^|/)(mix|beam.smp)( |$)' >&2 || true
-  echo "matching_mix_beam_processes_end" >&2
+  echo "host_matching_process_snapshot_end" >&2
 else
-  echo "matching_mix_beam_processes=pgrep_unavailable" >&2
+  echo "host_matching_process_snapshot=pgrep_unavailable" >&2
 fi
 
 exit "$status"

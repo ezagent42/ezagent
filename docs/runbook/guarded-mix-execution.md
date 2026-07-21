@@ -89,13 +89,20 @@ process report. Retain the first failing output and stderr even if a later run
 passes. For a test, record the suite/file and counts; for compile, migration, or
 precommit, record the named gate and its exit result.
 
+The runner's machine classifications are `success`, `lock_timeout`
+(`exit_code=75`), `timeout` (exit `124`), `killed_or_possible_oom` (exit `137`),
+and `command_failure`. Exit `137` is deliberately an uncertain classification,
+not proof of OOM.
+
 ## 9. After-run orphan checks
 
-After every exit, report matching Mix/BEAM processes and compare them with the
+After every exit, the runner emits a **host-wide matching-process snapshot**.
+That snapshot **does not prove invocation ownership**; compare it with the
 before-run record. Do not use a broad kill command and do not kill unrelated
-processes. If the owned systemd scope remains, capture its status and process
-tree before stopping only that scope. A run is not complete until this check is
-recorded and the lock is released.
+processes. Only separately captured scope/cgroup evidence can attribute a
+process to this invocation. If an independently identified owned systemd scope
+remains, capture its status and process tree before stopping only that scope. A
+run is not complete until this check is recorded and the lock is released.
 
 ## 10. OOM and timeout forensics
 

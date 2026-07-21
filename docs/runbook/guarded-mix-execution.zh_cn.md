@@ -79,11 +79,18 @@ runner option 后传入 Mix 参数。runner 把它们保留为 argv，绝不求�
 也要保留第一次失败输出和 stderr。测试需记录 suite/file 和计数；compile、
 migration 或 precommit 需记录具名门禁及其退出结果。
 
+runner 的机器分类为 `success`、`lock_timeout`（`exit_code=75`）、`timeout`
+（exit `124`）、`killed_or_possible_oom`（exit `137`）和 `command_failure`。
+退出码 `137` 特意保持不确定分类，不能作为 OOM 证明。
+
 ## 9. 运行后孤儿检查
 
-每次退出后报告匹配的 Mix/BEAM 进程，并与运行前记录比较。不得使用宽泛 kill，
-不得杀死无关进程。如果自有 systemd scope 仍存在，先捕获其状态和进程树，
-再只停止该 scope。检查未记录或锁未释放时，运行不算完成。
+每次退出后，runner 都输出 **host-wide matching-process snapshot（宿主机全局匹配
+进程快照）**。该快照 **does not prove invocation ownership（不能证明属于本次
+调用）**，必须与运行前记录比较。不得使用宽泛 kill，不得杀死无关进程。只有
+另行捕获的 scope/cgroup 证据才能把进程归属于本次调用。如果另行识别的自有
+systemd scope 仍存在，先捕获其状态和进程树，再只停止该 scope。检查未记录或
+锁未释放时，运行不算完成。
 
 ## 10. OOM 和 timeout 取证
 

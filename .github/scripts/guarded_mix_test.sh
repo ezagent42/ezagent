@@ -18,6 +18,71 @@ assert_contains() { grep -F -- "$2" "$1" >/dev/null || fail "$1 does not contain
 assert_not_contains() { if grep -F -- "$2" "$1" >/dev/null; then fail "$1 unexpectedly contains: $2"; fi; }
 assert_line() { grep -Fx -- "$2" "$1" >/dev/null || fail "$1 has no exact line: $2"; }
 
+assert_arg_sequence() {
+  local file="$1"
+  shift
+  local -a actual expected
+  mapfile -t actual <"$file"
+  expected=("$@")
+  local start offset matched
+
+  for ((start = 0; start + ${#expected[@]} <= ${#actual[@]}; start++)); do
+    matched=1
+    for ((offset = 0; offset < ${#expected[@]}; offset++)); do
+      if [[ "${actual[start + offset]}" != "${expected[offset]}" ]]; then
+        matched=0
+        break
+      fi
+    done
+    ((matched)) && return 0
+  done
+  fail "$file does not contain the required ordered argv sequence: $*"
+}
+
+assert_execution_contract() {
+  local args_file="$1"
+  assert_arg_sequence "$args_file" \
+    --user --scope \
+    -p MemoryHigh=4G \
+    -p MemoryMax=5G \
+    -p MemorySwapMax=0 \
+    -p MemoryAccounting=yes \
+    -p OOMPolicy=kill
+  assert_arg_sequence "$args_file" timeout --signal=TERM --kill-after=15 41
+}
+
+assert_runbook_contract() {
+  local runbook="$1"
+  for required in \
+    '/tmp/ezagent-mix.lock' \
+    'MemoryHigh=4G' 'MemoryMax=5G' 'MemorySwapMax=0' \
+    'MemoryAccounting=yes' 'OOMPolicy=kill' \
+    "ERL_FLAGS='+S 4:4'" 'MIX_ENV=test' \
+    'lock_timeout' 'exit_code=75' 'timeout' 'exit `124`' \
+    'killed_or_possible_oom' '137'; do
+    assert_contains "$runbook" "$required"
+  done
+  assert_contains "$runbook" 'host-wide matching-process snapshot'
+  assert_contains "$runbook" 'does not prove invocation ownership'
+}
+
+assert_workflow_trigger_parity() {
+  local workflow="$1"
+  local pull_paths="$test_root/workflow-pull-paths"
+  local push_paths="$test_root/workflow-push-paths"
+  awk '/^  pull_request:/{inside=1; next} /^  push:/{inside=0} inside && /^      - /{print}' \
+    "$workflow" | sort >"$pull_paths"
+  awk '/^  push:/{inside=1; next} /^jobs:/{inside=0} inside && /^      - /{print}' \
+    "$workflow" | sort >"$push_paths"
+  cmp -s "$pull_paths" "$push_paths" || fail "workflow pull_request/push paths differ"
+  [[ "$(uniq -d "$pull_paths" | wc -l)" -eq 0 ]] || fail "workflow trigger paths contain duplicates"
+  for runbook in \
+    'docs/runbook/guarded-mix-execution.md' \
+    'docs/runbook/guarded-mix-execution.zh_cn.md'; do
+    assert_contains "$pull_paths" "- $runbook"
+  done
+}
+
 new_case() {
   case_dir="$test_root/$1"
   mkdir -p "$case_dir/bin"
@@ -52,12 +117,33 @@ original_path="$PATH"
 echo "case=passes_exact_resource_envelope"
 new_case passes_exact_resource_envelope
 "$runner" --timeout 41 --partition contract_alpha test >"$case_dir/out" 2>"$case_dir/err"
-for arg in --user --scope MemoryHigh=4G MemoryMax=5G MemorySwapMax=0 MemoryAccounting=yes OOMPolicy=kill; do
-  assert_line "$GUARDED_TEST_ARGS" "$arg"
-done
+assert_execution_contract "$GUARDED_TEST_ARGS"
 assert_line "$GUARDED_TEST_ARGS" "ERL_FLAGS=+S 4:4"
 assert_line "$GUARDED_TEST_ARGS" "MIX_ENV=test"
 assert_line "$GUARDED_TEST_ARGS" "MIX_TEST_PARTITION=contract_alpha"
+mutated_properties="$case_dir/systemd-without-property-flag.args"
+awk 'BEGIN {removed=0} !removed && $0 == "-p" {removed=1; next} {print}' \
+  "$GUARDED_TEST_ARGS" >"$mutated_properties"
+if (assert_execution_contract "$mutated_properties") >/dev/null 2>&1; then
+  fail "mutation survived: a cgroup property lost its -p pairing"
+fi
+mutated_timeout="$case_dir/systemd-without-timeout.args"
+awk '$0 != "timeout" {print}' "$GUARDED_TEST_ARGS" >"$mutated_timeout"
+if (assert_execution_contract "$mutated_timeout") >/dev/null 2>&1; then
+  fail "mutation survived: timeout executable was removed"
+fi
+
+echo "case=bilingual_runbooks_match_runner_contract"
+english_runbook="$repo_root/docs/runbook/guarded-mix-execution.md"
+chinese_runbook="$repo_root/docs/runbook/guarded-mix-execution.zh_cn.md"
+assert_runbook_contract "$english_runbook"
+assert_runbook_contract "$chinese_runbook"
+mutated_runbook="$case_dir/runbook-with-drift.md"
+sed 's/MemoryMax=5G/MemoryMax=6G/g' "$english_runbook" >"$mutated_runbook"
+if (assert_runbook_contract "$mutated_runbook") >/dev/null 2>&1; then
+  fail "mutation survived: documented memory envelope drifted"
+fi
+assert_workflow_trigger_parity "$repo_root/.github/workflows/guarded-mix-contract.yml"
 
 echo "case=preserves_mix_argv_without_eval"
 new_case preserves_mix_argv_without_eval
@@ -119,6 +205,12 @@ new_case preserves_stderr
 export GUARDED_TEST_STDERR="child stderr sentinel"
 "$runner" test >"$case_dir/out" 2>"$case_dir/err"
 assert_contains "$case_dir/err" "child stderr sentinel"
+
+echo "case=labels_process_report_as_host_snapshot"
+new_case labels_process_report_as_host_snapshot
+"$runner" test >"$case_dir/out" 2>"$case_dir/err"
+assert_contains "$case_dir/err" "host_matching_process_snapshot_begin"
+assert_contains "$case_dir/err" "host_matching_process_snapshot_scope=host_wide_not_invocation_owned"
 
 echo "case=serializes_two_invocations"
 new_case serializes_two_invocations
