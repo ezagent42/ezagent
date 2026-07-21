@@ -28,6 +28,8 @@ type Node = {
   status: string | null
   artifacts?: {kind?: string; content?: string; ref?: string}[]
   metrics?: unknown[]
+  // ㉕ 非破坏 drop 标：true = 北极星不达标被标红跟踪（节点仍在，后端整棵子树都带标）
+  dropped?: boolean
 }
 type Tree = {nodes: Record<string, Node>; root_id: string | null}
 type Act = (action: string, args: Record<string, unknown>) => void
@@ -74,21 +76,33 @@ export function gateVerdict(node: {stage?: string | null; status?: string | null
 function MmNode({data}: {data: {node: Node; id: string; selected: boolean; onSelect: (id: string) => void; onAddChild: (id: string) => void}}) {
   const {node, id, selected, onSelect, onAddChild} = data
   const owner = node.owner ? node.owner.split("/").pop() : null
+  // 协作模型规则 2：未认领节点不显示任何属性（stage 徽章 / gate 评价都藏）——
+  // 只留状态圈（○=可认领的信号）、标题和「加子」按钮。
+  const unclaimed = !node.owner
+  // ㉕ dropped（北极星不达标跟踪标）：红色边框——后端把整棵子树都打了标，
+  // 每个子孙节点自带 dropped=true，逐节点渲红即天然覆盖"含子树视觉"。
+  const dropped = node.dropped === true
+  const borderCls = dropped
+    ? `border-destructive ${selected ? "ring-1 ring-destructive" : ""}`
+    : selected
+      ? "border-primary ring-1 ring-primary"
+      : "border-border"
   return (
     <div
       onClick={() => onSelect(id)}
-      className={`flex items-center gap-1.5 rounded-md border bg-card px-2.5 py-2 text-sm shadow-sm transition ${selected ? "border-primary ring-1 ring-primary" : "border-border"}`}
+      title={dropped ? "已 drop：北极星指标不达标（跟踪标记，节点保留）" : undefined}
+      className={`flex items-center gap-1.5 rounded-md border px-2.5 py-2 text-sm shadow-sm transition ${dropped ? "bg-destructive/5" : "bg-card"} ${borderCls}`}
       style={{width: NODE_W, minHeight: NODE_H}}
     >
       <Handle type="target" position={Position.Left} className="!bg-border" />
       <span className="text-muted-foreground">{STATUS_ICON[node.status || "unassigned"]}</span>
-      {node.stage && <span className="rounded bg-muted px-1 text-[10px] text-primary">{STAGE_LABEL[node.stage] || node.stage}</span>}
+      {!unclaimed && node.stage && <span className="rounded bg-muted px-1 text-[10px] text-primary">{STAGE_LABEL[node.stage] || node.stage}</span>}
       <span className="flex-1 truncate font-medium text-foreground" title={node.title}>{node.title}</span>
       {owner && <span className="text-[10px] text-muted-foreground">@{owner}</span>}
-      {(() => {
+      {!unclaimed && (() => {
         const gv = gateVerdict(node)
-        if (gv.verdict === "warn") return <span title={gv.reason} className="text-amber-500">⚠</span>
-        if (gv.verdict === "pass") return <span title="本棒已过 gate" className="text-green-600">✓</span>
+        if (gv.verdict === "warn") return <span title={gv.reason} className="text-amber-500 dark:text-amber-400">⚠</span>
+        if (gv.verdict === "pass") return <span title="本棒已过 gate" className="text-green-600 dark:text-green-400">✓</span>
         return null
       })()}
       <button
@@ -153,7 +167,7 @@ export function KanbanCanvas(props: CanvasProps) {
 function Flow({uri, tree, selectedId, onSelectNode, onAction}: CanvasProps) {
   const {fitView} = useReactFlow()
   const onAddChild = useCallback((id: string) => {
-    const t = window.prompt("子节点标题")
+    const t = window.prompt("子节点标题（加完自动认领给你）")
     if (t && t.trim()) onAction("kanban.add_node", {kanban_uri: uri, parent_id: id, title: t.trim()})
   }, [onAction, uri])
 
@@ -175,7 +189,8 @@ function Flow({uri, tree, selectedId, onSelectNode, onAction}: CanvasProps) {
     if (nodesInitialized) fitView({padding: 0.2, maxZoom: 1, duration: 0})
   }, [nodesInitialized, laid, fitView])
 
-  // react-flow 必须有显式尺寸——父级(画布区)现在是固定高 h-[560px]，故 100% 是确定值（非 0）。
+  // react-flow 必须有显式尺寸——父级(画布区)是 flex-1 min-h-0 自适配（㊶），且
+  // KanbanDetail 根上有 min-h 兜底，故 100% 是确定值（非 0）。
   return (
     <div style={{height: "100%", width: "100%"}}>
       <ReactFlow
