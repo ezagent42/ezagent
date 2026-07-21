@@ -68,6 +68,19 @@ defmodule EzagentPluginGithub.Application do
         raise "Driver registry declaration drift detected for #{driver.provider_id}/#{driver.acquisition_method}"
     end
 
+    Code.ensure_loaded(EzagentPluginGithub.GitHubAdapter)
+
+    case Ezagent.DomainGit.AdapterRegistry.register("github", EzagentPluginGithub.GitHubAdapter) do
+      :ok ->
+        :ok
+
+      {:ok, :already_registered} ->
+        :ok
+
+      {:error, drift} ->
+        raise "Adapter registry registration drift detected for github: #{inspect(drift)}"
+    end
+
     :ok
   end
 

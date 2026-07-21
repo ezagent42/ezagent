@@ -28,15 +28,12 @@ defmodule EzagentPluginGithub.GitHubDriver do
 
   @behaviour Ezagent.ProviderConnection.Driver
 
-  alias EzagentPluginGithub.GitHubClient
-  alias EzagentPluginGithub.GitHubOAuth
-
-  @redirect_uri "https://ezagent.example/github/callback"
+  alias EzagentPluginGithub.{Config, GitHubClient, GitHubOAuth}
 
   @impl true
   def begin_authorization(%{exchange: exchange} = _context) when is_function(exchange, 1) do
     exchange.(fn private_frame ->
-      url = GitHubOAuth.authorize_url(@redirect_uri, private_frame.state)
+      url = GitHubOAuth.authorize_url(Config.redirect_uri(), private_frame.state)
 
       pkce_digest =
         :crypto.hash(:sha256, private_frame.pkce_verifier) |> Base.url_encode64(padding: false)
@@ -61,7 +58,7 @@ defmodule EzagentPluginGithub.GitHubDriver do
     exchange.(fn private_frame ->
       code = private_frame.callback_envelope[:code] || private_frame.callback_envelope["code"]
 
-      case GitHubOAuth.exchange_code(code, @redirect_uri) do
+      case GitHubOAuth.exchange_code(code, Config.redirect_uri()) do
         {:ok, %{access_token: token}} ->
           case GitHubClient.get("/user", token) do
             {:ok, user} ->
@@ -127,7 +124,16 @@ defmodule EzagentPluginGithub.GitHubDriver do
   def refresh(_context), do: {:error, :provider_protocol_failed}
 
   @impl true
-  def reconcile_refresh(_context), do: {:ok, :not_completed}
+  def reconcile_refresh(%{refresh_use: refresh_use}) do
+    Ezagent.ProviderConnection.CredentialRefreshExchange.consume_refresh_exchange(%{
+      refresh_use: refresh_use,
+      provider_exchange: fn _private_frame ->
+        {:ok, :not_completed}
+      end
+    })
+  end
+
+  def reconcile_refresh(_context), do: {:error, :provider_protocol_failed}
 
   @impl true
   def discard_callback_result(_context), do: :ok

@@ -127,8 +127,8 @@ defmodule EzagentPluginGithub.GitHubDriverTest do
       assert {:error, :provider_protocol_failed} = GitHubDriver.refresh(%{})
     end
 
-    test "reconcile_refresh returns not_completed" do
-      assert {:ok, :not_completed} = GitHubDriver.reconcile_refresh(%{})
+    test "reconcile_refresh without refresh_use returns error" do
+      assert {:error, :provider_protocol_failed} = GitHubDriver.reconcile_refresh(%{})
     end
 
     test "discard_callback_result returns ok" do

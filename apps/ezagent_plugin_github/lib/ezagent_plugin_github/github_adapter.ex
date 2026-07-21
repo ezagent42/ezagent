@@ -13,6 +13,7 @@ defmodule EzagentPluginGithub.GitHubAdapter do
     Check,
     CommitSha,
     CreateChangeRequest,
+    FileChange,
     RepositoryRef,
     Review
   }
@@ -21,15 +22,11 @@ defmodule EzagentPluginGithub.GitHubAdapter do
 
   @github_host "github.com"
 
-  # Token resolution is handled by the caller (integration layer). For now the
-  # adapter uses a placeholder that will be replaced once credential wiring lands.
-  @placeholder_token ""
-
   @impl true
   def resolve_repository(_ctx, %RepositoryRef{} = repo) do
     path = "/repos/#{repo.external_id}"
 
-    case GitHubClient.get(path, @placeholder_token, request_opts()) do
+    case GitHubClient.get(path, token(), request_opts()) do
       {:ok, data} ->
         build_repository_ref(repo, data)
 
@@ -42,9 +39,127 @@ defmodule EzagentPluginGithub.GitHubAdapter do
   def create_change_request(
         _ctx,
         %RepositoryRef{} = repo,
-        _file_changes,
+        file_changes,
         %CreateChangeRequest{} = create_req
       ) do
+    base_ref_path = "/repos/#{repo.external_id}/git/ref/heads/#{repo.base_ref}"
+
+    case GitHubClient.get(base_ref_path, token(), request_opts()) do
+      {:ok, ref_data} ->
+        case verify_base_sha(ref_data, create_req.expected_base_sha) do
+          :ok ->
+            if file_changes == [] do
+              create_pr(repo, create_req)
+            else
+              create_change_request_with_files(repo, file_changes, create_req, ref_data)
+            end
+
+          {:error, _reason} = error ->
+            error
+        end
+
+      {:error, :repository_not_found} ->
+        {:error, :base_ref_not_found}
+
+      {:error, reason} ->
+        {:error, map_read_error(reason)}
+    end
+  end
+
+  # ── Git data operations ──────────────────────────────────────────────
+
+  defp verify_base_sha(%{"object" => %{"sha" => sha}}, %CommitSha{value: expected}) do
+    if sha == expected, do: :ok, else: {:error, :base_sha_mismatch}
+  end
+
+  defp verify_base_sha(_ref_data, _expected_sha), do: {:error, :base_sha_mismatch}
+
+  defp create_change_request_with_files(repo, file_changes, create_req, ref_data) do
+    base_tree_sha = ref_data["object"]["sha"]
+
+    with {:ok, blob_shas} <- create_blobs(repo, file_changes),
+         {:ok, tree_sha} <- create_tree(repo, file_changes, blob_shas, base_tree_sha),
+         {:ok, commit_sha} <- create_commit(repo, tree_sha, create_req),
+         :ok <- update_head_ref(repo, commit_sha, create_req.head_ref) do
+      create_pr(repo, create_req)
+    else
+      {:error, reason} -> {:error, map_git_data_error(reason)}
+    end
+  end
+
+  defp create_blobs(repo, file_changes) do
+    Enum.reduce_while(file_changes, {:ok, []}, fn %FileChange{content: content}, {:ok, acc} ->
+      path = "/repos/#{repo.external_id}/git/blobs"
+
+      case GitHubClient.post(
+             path,
+             token(),
+             %{content: content, encoding: "utf-8"},
+             request_opts()
+           ) do
+        {:ok, %{"sha" => sha}} ->
+          {:cont, {:ok, acc ++ [sha]}}
+
+        {:error, reason} ->
+          {:halt, {:error, reason}}
+      end
+    end)
+  end
+
+  defp create_tree(repo, file_changes, blob_shas, base_tree_sha) do
+    tree_entries =
+      Enum.zip(file_changes, blob_shas)
+      |> Enum.map(fn {%FileChange{path: path}, sha} ->
+        %{path: path, mode: "100644", type: "blob", sha: sha}
+      end)
+
+    path = "/repos/#{repo.external_id}/git/trees"
+
+    case GitHubClient.post(
+           path,
+           token(),
+           %{base_tree: base_tree_sha, tree: tree_entries},
+           request_opts()
+         ) do
+      {:ok, %{"sha" => sha}} ->
+        {:ok, sha}
+
+      {:error, reason} ->
+        {:error, reason}
+    end
+  end
+
+  defp create_commit(repo, tree_sha, create_req) do
+    path = "/repos/#{repo.external_id}/git/commits"
+
+    body = %{
+      message: create_req.title,
+      tree: tree_sha,
+      parents: [create_req.expected_base_sha.value]
+    }
+
+    case GitHubClient.post(path, token(), body, request_opts()) do
+      {:ok, %{"sha" => sha}} ->
+        {:ok, sha}
+
+      {:error, reason} ->
+        {:error, reason}
+    end
+  end
+
+  defp update_head_ref(repo, commit_sha, head_ref) do
+    path = "/repos/#{repo.external_id}/git/refs/heads/#{head_ref}"
+
+    case GitHubClient.patch(path, token(), %{sha: commit_sha, force: false}, request_opts()) do
+      {:ok, _data} ->
+        :ok
+
+      {:error, reason} ->
+        {:error, reason}
+    end
+  end
+
+  defp create_pr(repo, create_req) do
     path = "/repos/#{repo.external_id}/pulls"
 
     body = %{
@@ -54,7 +169,7 @@ defmodule EzagentPluginGithub.GitHubAdapter do
       body: create_req.body
     }
 
-    case GitHubClient.post(path, @placeholder_token, body, request_opts()) do
+    case GitHubClient.post(path, token(), body, request_opts()) do
       {:ok, data} ->
         build_change_request(data)
 
@@ -67,7 +182,7 @@ defmodule EzagentPluginGithub.GitHubAdapter do
   def read_change_request(_ctx, %RepositoryRef{} = repo, %ChangeRequestId{} = cr_id) do
     path = "/repos/#{repo.external_id}/pulls/#{cr_id.external_id}"
 
-    case GitHubClient.get(path, @placeholder_token, request_opts()) do
+    case GitHubClient.get(path, token(), request_opts()) do
       {:ok, data} ->
         build_change_request(data)
 
@@ -80,9 +195,9 @@ defmodule EzagentPluginGithub.GitHubAdapter do
   def list_checks(_ctx, %RepositoryRef{} = repo, %CommitSha{} = sha) do
     path = "/repos/#{repo.external_id}/commits/#{sha.value}/check-runs"
 
-    case GitHubClient.get(path, @placeholder_token, request_opts()) do
+    case GitHubClient.get(path, token(), request_opts()) do
       {:ok, %{"check_runs" => check_runs}} ->
-        checks = Enum.map(check_runs, &build_check/1)
+        checks = check_runs |> Enum.map(&build_check/1) |> Enum.reject(&is_nil/1)
         {:ok, checks}
 
       {:error, reason} ->
@@ -94,9 +209,9 @@ defmodule EzagentPluginGithub.GitHubAdapter do
   def list_reviews(_ctx, %RepositoryRef{} = repo, %ChangeRequestId{} = cr_id) do
     path = "/repos/#{repo.external_id}/pulls/#{cr_id.external_id}/reviews"
 
-    case GitHubClient.get(path, @placeholder_token, request_opts()) do
+    case GitHubClient.get(path, token(), request_opts()) do
       {:ok, reviews} when is_list(reviews) ->
-        result = Enum.map(reviews, &build_review/1)
+        result = reviews |> Enum.map(&build_review/1) |> Enum.reject(&is_nil/1)
         {:ok, result}
 
       {:ok, _unexpected} ->
@@ -115,7 +230,7 @@ defmodule EzagentPluginGithub.GitHubAdapter do
 
     RepositoryRef.new(%{
       repository_uri: input.repository_uri,
-      provider_adapter: __MODULE__,
+      provider_adapter: :github,
       provider_host: @github_host,
       external_id: full_name,
       owner_path: owner,
@@ -140,28 +255,34 @@ defmodule EzagentPluginGithub.GitHubAdapter do
   end
 
   defp build_check(run) do
-    {:ok, check} =
-      Check.new(%{
-        external_id: to_string(run["id"]),
-        name: run["name"],
-        status: map_check_status(run["status"]),
-        conclusion: map_check_conclusion(run["conclusion"]),
-        url: map_uri(run["details_url"])
-      })
+    case Check.new(%{
+           external_id: to_string(run["id"]),
+           name: run["name"],
+           status: map_check_status(run["status"]),
+           conclusion: map_check_conclusion(run["conclusion"]),
+           url: map_uri(run["details_url"])
+         }) do
+      {:ok, check} ->
+        check
 
-    check
+      {:error, _validation_error} ->
+        nil
+    end
   end
 
   defp build_review(review_data) do
-    {:ok, review} =
-      Review.new(%{
-        external_id: to_string(review_data["id"]),
-        author_label: review_data["user"]["login"],
-        state: map_review_state(review_data["state"]),
-        submitted_at: map_datetime(review_data["submitted_at"])
-      })
+    case Review.new(%{
+           external_id: to_string(review_data["id"]),
+           author_label: review_data["user"]["login"],
+           state: map_review_state(review_data["state"]),
+           submitted_at: map_datetime(review_data["submitted_at"])
+         }) do
+      {:ok, review} ->
+        review
 
-    review
+      {:error, _validation_error} ->
+        nil
+    end
   end
 
   # ── Value mappers ───────────────────────────────────────────────────────
@@ -186,10 +307,16 @@ defmodule EzagentPluginGithub.GitHubAdapter do
   defp map_check_conclusion(nil), do: nil
   defp map_check_conclusion(_), do: :other
 
-  defp map_review_state("approved"), do: :approved
-  defp map_review_state("changes_requested"), do: :changes_requested
-  defp map_review_state("comment"), do: :commented
-  defp map_review_state("dismissed"), do: :dismissed
+  defp map_review_state(state) when is_binary(state) do
+    case String.upcase(state) do
+      "APPROVED" -> :approved
+      "CHANGES_REQUESTED" -> :changes_requested
+      "COMMENTED" -> :commented
+      "DISMISSED" -> :dismissed
+      _ -> :commented
+    end
+  end
+
   defp map_review_state(_), do: :commented
 
   defp map_uri(nil), do: nil
@@ -203,6 +330,17 @@ defmodule EzagentPluginGithub.GitHubAdapter do
       {:ok, dt, _offset} -> dt
       {:error, _reason} -> nil
     end
+  end
+
+  # ── Token resolution ───────────────────────────────────────────────────
+
+  @doc false
+  # Credential leasing via CredentialBackend.lease_for_operation will wire the
+  # real token when implemented. Until then, the adapter reads a placeholder
+  # from Application env (empty string in TDD / dev) — this is a deliberate
+  # stub that will be replaced when credential leasing lands.
+  defp token do
+    Application.get_env(:ezagent_plugin_github, :adapter_token, "")
   end
 
   # ── Request opts (test injection point) ─────────────────────────────────
@@ -221,4 +359,8 @@ defmodule EzagentPluginGithub.GitHubAdapter do
 
   defp map_checks_error(:provider_denied), do: :checks_unavailable
   defp map_checks_error(other), do: other
+
+  defp map_git_data_error(:provider_denied), do: :repository_write_denied
+  defp map_git_data_error(:change_request_conflict), do: :change_request_conflict
+  defp map_git_data_error(other), do: other
 end
