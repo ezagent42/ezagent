@@ -288,7 +288,10 @@ defmodule Ezagent.Kind do
         Enum.any?(caps, fn held ->
           try do
             Ezagent.Capability.granted_by_entity?(held) and
-              Ezagent.Capability.matches?(held, needed_map)
+              match?(
+                {:ok, %Ezagent.Capability{}},
+                Ezagent.Cap.authorize(entity_uri, [held], needed_map)
+              )
           rescue
             _ -> false
           catch

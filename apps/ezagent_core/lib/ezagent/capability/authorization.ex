@@ -8,10 +8,15 @@ defmodule Ezagent.Capability.Authorization do
           {:ok, Capability.t()} | :error
   def authorizing_cap(caps, needed) when is_struct(caps, MapSet) or is_list(caps) do
     Enum.find_value(caps, :error, fn
-      %Capability{} = cap ->
-        if Capability.granted_by_entity?(cap) and safe_matches?(cap, needed),
-          do: {:ok, cap},
-          else: false
+      %Capability{grantee_uri: %URI{} = holder} = cap ->
+        if Capability.granted_by_entity?(cap) do
+          case Ezagent.Cap.authorize(holder, [cap], needed) do
+            {:ok, %Capability{} = authorized} -> {:ok, authorized}
+            {:error, _reason} -> false
+          end
+        else
+          false
+        end
 
       _ ->
         false
@@ -24,12 +29,4 @@ defmodule Ezagent.Capability.Authorization do
   @spec authorizes?(MapSet.t(Capability.t()) | [Capability.t()] | term(), map()) :: boolean()
   def authorizes?(caps, needed),
     do: match?({:ok, %Capability{}}, authorizing_cap(caps, needed))
-
-  defp safe_matches?(cap, needed) do
-    Capability.matches?(cap, needed)
-  rescue
-    _ -> false
-  catch
-    _, _ -> false
-  end
 end

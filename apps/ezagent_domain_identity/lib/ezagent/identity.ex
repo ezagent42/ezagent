@@ -306,15 +306,13 @@ defmodule Ezagent.Identity do
     |> Enum.any?(&cap_authorizes?(&1, needed))
   end
 
-  defp cap_authorizes?(%Ezagent.Capability{} = cap, needed) do
+  defp cap_authorizes?(%Ezagent.Capability{grantee_uri: %URI{} = holder} = cap, needed) do
     Ezagent.Capability.granted_by_entity?(cap) and
-      try do
-        Ezagent.Capability.matches?(cap, needed)
-      rescue
-        _ -> false
-      catch
-        _, _ -> false
-      end
+      match?({:ok, %Ezagent.Capability{}}, Ezagent.Cap.authorize(holder, [cap], needed))
+  rescue
+    _ -> false
+  catch
+    _, _ -> false
   end
 
   defp cap_authorizes?(_, _), do: false

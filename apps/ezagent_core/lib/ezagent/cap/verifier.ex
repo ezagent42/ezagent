@@ -76,18 +76,16 @@ defmodule Ezagent.Cap.Verifier do
 
     candidates = candidate_caps(ctx)
 
-    verified = Enum.filter(candidates, &valid_artifact?(&1, presenter))
-
-    case Enum.find(verified, &Capability.matches?(&1, needed)) do
-      %Capability{} = cap ->
+    case Ezagent.Cap.authorize(presenter, candidates, needed) do
+      {:ok, %Capability{} = cap} ->
         emit(:accepted, kind_module, behavior_module, action, target, ctx)
         {:ok, cap}
 
-      nil ->
+      {:error, denial} ->
         reason =
           cond do
             Enum.empty?(candidates) -> :missing_cap
-            Enum.empty?(verified) -> :invalid_cap_signature
+            denial == :holder_revoked -> :holder_revoked
             true -> :missing_cap
           end
 

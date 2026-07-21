@@ -6,6 +6,22 @@ defmodule Ezagent.Architecture.CapVerifierDominanceTest do
   alias Ezagent.Test.{TestBehavior, TestKind}
 
   setup do
+    previous = Application.get_env(:ezagent_core, Ezagent.Cap, [])
+
+    Application.put_env(
+      :ezagent_core,
+      Ezagent.Cap,
+      Keyword.put(previous, :authority_loader, EzagentCore.Test.CapAuthorityLoaderStub)
+    )
+
+    Application.put_env(
+      :ezagent_core,
+      EzagentCore.Test.CapAuthorityLoaderStub,
+      MapSet.new([:independent_holder_license])
+    )
+
+    on_exit(fn -> Application.put_env(:ezagent_core, Ezagent.Cap, previous) end)
+
     uri =
       Ezagent.URI.new!(
         "entity://team-alpha/agent/test_verifier-#{System.unique_integer([:positive])}"
@@ -49,7 +65,7 @@ defmodule Ezagent.Architecture.CapVerifierDominanceTest do
   end
 
   test "unsigned and vm_internal attempts fail before the handler mutates state", context do
-    assert {:error, :invalid_cap_signature} =
+    assert {:error, :missing_cap} =
              GenServer.call(
                context.pid,
                {:ezagent_dispatch, invocation(context, MapSet.new([context.unsigned]))}
@@ -67,6 +83,27 @@ defmodule Ezagent.Architecture.CapVerifierDominanceTest do
              GenServer.call(context.pid, {:ezagent_dispatch, vm_invocation})
 
     assert {:ok, %{count: 0}} = Ezagent.Kind.get_slice(context.uri, :test)
+  end
+
+  test "verifier delegates to authorize/3 and denies a live target's old generation", context do
+    signed = Authority.sign(context.authority, context.unsigned)
+
+    assert {:ok, %{echoed: "hello"}} =
+             GenServer.call(
+               context.pid,
+               {:ezagent_dispatch, invocation(context, MapSet.new([signed]))}
+             )
+
+    assert {:ok, _bumped} =
+             Authority.regenesis(context.uri, :test, Ezagent.URI.user(:system, :admin))
+
+    assert {:error, :missing_cap} =
+             GenServer.call(
+               context.pid,
+               {:ezagent_dispatch, invocation(context, MapSet.new([signed]))}
+             )
+
+    assert {:ok, %{count: 1}} = Ezagent.Kind.get_slice(context.uri, :test)
   end
 
   test "non-cap routing is a closed framework allowlist" do

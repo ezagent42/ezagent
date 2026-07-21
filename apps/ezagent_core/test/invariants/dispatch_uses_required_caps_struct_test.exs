@@ -25,11 +25,12 @@ defmodule EzagentCore.Invariants.DispatchUsesRequiredCapsStructTest do
     refute source =~ "Ezagent.Kind.holds_cap?"
   end
 
-  test "central verifier binds action intent and verifies current target authority" do
+  test "central verifier binds action intent and delegates to authorize/3" do
     source = File.read!(verifier_path())
 
-    assert source =~ "Enum.find(verified, &Capability.matches?(&1, needed))"
-    assert source =~ "Authority.verify_current(cap, presenter)"
+    assert source =~ "needed = required_cap(kind_module, behavior_module, action, target)"
+    assert source =~ "Ezagent.Cap.authorize(presenter, candidates, needed)"
+    refute source =~ "Enum.find(verified, &Capability.matches?(&1, needed))"
   end
 
   test "Ezagent.Kind.Runtime references Behavior.workspace_scoped?/1" do
