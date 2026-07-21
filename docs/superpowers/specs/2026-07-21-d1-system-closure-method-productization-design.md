@@ -2,7 +2,7 @@
 
 > **Date:** 2026-07-21
 >
-> **Status:** Approved in discussion; written-spec review pending
+> **Status:** Approved in discussion and written-spec review on 2026-07-21
 >
 > **Source incident:** Git Provider V1 Plan D1, PR #1445 working session
 >
@@ -216,10 +216,14 @@ serialization. A separate workflow runs only this shell contract test.
 Modify:
 
 - `.claude/skills/dev-together/SKILL.md`
+- `.claude/skills/dev-together/commands/plan.md`
+- `.claude/skills/dev-together/commands/review.md`
 - `.claude/skills/dev-together/references/handoff-standard.md`
 - `.claude/skills/dev-together/references/handoff-template.md`
 - `.claude/skills/dev-together/references/plan-template.md`
 - `.claude/skills/dev-together/references/review-template.md`
+- `.claude/skills/dev-together/scripts/render/board.example.yaml`
+- `.claude/skills/dev-together/scripts/render/board2html.py`
 
 Create:
 
@@ -255,6 +259,14 @@ multiple durable stores, or external effects must include:
 Tasks state which matrix cells they implement. They do not independently claim
 that the Plan is closed.
 
+The current dev-together single source of truth is `board.yaml`, not the legacy
+`plan.md`/`review.md` pair. Its schema therefore carries a top-level
+`system_closures` list with stable closure ids, X problem, Plan invariant,
+related cards, durable proof, integration evidence, and resource envelope.
+Cards refer to closure ids. `board2html.py` renders the closure summary so the
+team-facing artifact exposes the same Plan-level contract instead of hiding it
+in a handoff.
+
 #### Execution resource envelope
 
 Every applicable handoff names the guarded runner, memory limits, timeout,
@@ -285,6 +297,10 @@ failure -> Plan invariant -> one root cause -> one integrated repair surface
 Review `method-deltas` records the X/Y pair, both correction levels,
 recurrence-prevention proof, owner, and destination: documentation, runner, CI,
 skill change, or tracked process debt.
+
+The `board.yaml` `review.method_deltas` schema uses structured maps for these
+fields. The renderer remains backward-compatible with historical string entries
+but the plan/review commands require new boards to write the structured form.
 
 The CI contract test asserts that the required concepts remain present in the
 skill and templates. It checks the contract, not prose formatting.
@@ -357,6 +373,9 @@ return captures friction
 
 - dev-together contract suite passes;
 - handoff, plan, and review templates contain the new mandatory sections;
+- the example `board.yaml` carries structured system closures and method deltas;
+- deterministic rendering shows both structures in `board.html`, while an old
+  string method-delta fixture still renders without error;
 - the Stop Rule and review topology are unambiguous;
 - protected skill workflow is green under an authorized lead review.
 
