@@ -4,11 +4,12 @@ defmodule Ezagent.Capability.Authorization do
   alias Ezagent.Capability
 
   @doc "Return the first provenance-valid held capability matching a full needed-cap shape."
-  @spec authorizing_cap(MapSet.t(Capability.t()) | [Capability.t()] | term(), map()) ::
+  @spec authorizing_cap(URI.t(), MapSet.t(Capability.t()) | [Capability.t()] | term(), map()) ::
           {:ok, Capability.t()} | :error
-  def authorizing_cap(caps, needed) when is_struct(caps, MapSet) or is_list(caps) do
+  def authorizing_cap(%URI{} = holder, caps, needed)
+      when is_struct(caps, MapSet) or is_list(caps) do
     Enum.find_value(caps, :error, fn
-      %Capability{grantee_uri: %URI{} = holder} = cap ->
+      %Capability{} = cap ->
         if Capability.granted_by_entity?(cap) do
           case Ezagent.Cap.authorize(holder, [cap], needed) do
             {:ok, %Capability{} = authorized} -> {:ok, authorized}
@@ -23,10 +24,13 @@ defmodule Ezagent.Capability.Authorization do
     end)
   end
 
-  def authorizing_cap(_caps, _needed), do: :error
+  def authorizing_cap(_holder, _caps, _needed), do: :error
 
   @doc "Whether a provenance-valid held capability matches a full needed-cap shape."
-  @spec authorizes?(MapSet.t(Capability.t()) | [Capability.t()] | term(), map()) :: boolean()
-  def authorizes?(caps, needed),
-    do: match?({:ok, %Capability{}}, authorizing_cap(caps, needed))
+  @spec authorizes?(URI.t(), MapSet.t(Capability.t()) | [Capability.t()] | term(), map()) ::
+          boolean()
+  def authorizes?(%URI{} = holder, caps, needed),
+    do: match?({:ok, %Capability{}}, authorizing_cap(holder, caps, needed))
+
+  def authorizes?(_holder, _caps, _needed), do: false
 end

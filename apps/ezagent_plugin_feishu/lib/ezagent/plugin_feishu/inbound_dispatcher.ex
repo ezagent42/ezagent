@@ -291,11 +291,20 @@ defmodule EzagentPluginFeishu.InboundDispatcher do
     # synchronously; the caller (dispatch/1) sends a text message to
     # the human explaining the failure. :cast would silently drop —
     # no audit feedback to the sender.
+    dispatch_ctx = %{caller: caller_uri, caps: caps, reply: :sync}
+
+    dispatch_ctx =
+      if origin == :authenticated_external do
+        Map.put(dispatch_ctx, :authenticated_principal, caller_uri)
+      else
+        dispatch_ctx
+      end
+
     inv = %Ezagent.Invocation{
       target: target,
       mode: :call,
       args: %{message: msg},
-      ctx: %{caller: caller_uri, caps: caps, reply: :sync},
+      ctx: dispatch_ctx,
       origin: origin
     }
 

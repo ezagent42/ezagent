@@ -426,6 +426,7 @@ defmodule Ezagent.Entity.SessionTemplate do
       {:ok,
        %{
          caller: caller,
+         authenticated_principal: caller,
          caps: normalize_caps_set(caps),
          reply: {:caller_inbox, self()}
        }}
@@ -551,6 +552,7 @@ defmodule Ezagent.Entity.SessionTemplate do
   defp build_fork_ctx(caller_uri, caps) do
     %{
       caller: caller_uri,
+      authenticated_principal: caller_uri,
       caps: normalize_caps_set(caps),
       reply: {:caller_inbox, self()}
     }
@@ -799,6 +801,7 @@ defmodule Ezagent.Entity.SessionTemplate do
     with {:ok, signed_cap} <- Ezagent.Cap.issue({:admin, admin_uri}, admin_uri, cap) do
       dispatch_write(uri, content, %{
         caller: admin_uri,
+        authenticated_principal: admin_uri,
         caps: MapSet.new([signed_cap]),
         reply: {:caller_inbox, self()}
       })

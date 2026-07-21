@@ -87,6 +87,7 @@ defmodule Ezagent.ActionSet.Session.Legends do
              args: %{legends: legends},
              ctx: %{
                caller: session_uri,
+               authenticated_principal: session_uri,
                caps: caps,
                reply: {:caller_inbox, self()}
              },

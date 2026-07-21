@@ -214,6 +214,7 @@ defmodule Ezagent.ActionSet.Session.Delivery do
         args: %{message: msg},
         ctx: %{
           caller: msg.sender,
+          authenticated_principal: msg.sender,
           caps: cross_session_send_caps(target_session_uri, msg.sender),
           reply: :ignore
         },

@@ -175,7 +175,7 @@ defmodule Ezagent.Email.Inbound do
       target: target,
       mode: :call,
       args: %{message: msg},
-      ctx: %{caller: principal_uri, caps: caps, reply: :sync},
+      ctx: %{caller: principal_uri, authenticated_principal: principal_uri, caps: caps, reply: :sync},
       origin: :authenticated_external
     }
 

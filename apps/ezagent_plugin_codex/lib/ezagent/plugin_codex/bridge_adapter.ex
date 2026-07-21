@@ -120,6 +120,7 @@ defmodule EzagentPluginCodex.BridgeAdapter do
         args: %{message: msg},
         ctx: %{
           caller: agent_uri,
+          authenticated_principal: agent_uri,
           # The authenticated agent presents only authority already issued by
           # the target Kind and held in its durable EntityCaps store. Bridge
           # code is not a signing site and must never synthesize an envelope

@@ -273,6 +273,7 @@ defmodule Ezagent.World.KanbanData do
   def dispatch_ctx(ctx) do
     %{
       caller: Map.get(ctx, :caller_uri),
+      authenticated_principal: Map.get(ctx, :caller_uri),
       caps: Map.get(ctx, :caller_caps, MapSet.new()),
       reply: {:caller_inbox, self()}
     }

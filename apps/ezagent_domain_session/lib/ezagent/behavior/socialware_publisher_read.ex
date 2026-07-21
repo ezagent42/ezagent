@@ -202,7 +202,8 @@ defmodule Ezagent.ActionSet.SocialwarePublisherRead do
     Ezagent.Session.Membership.authorize(
       get_chat_sibling(ctx),
       Map.get(ctx, :caller),
-      Map.get(ctx, :self_uri)
+      Map.get(ctx, :self_uri),
+      Map.get(ctx, :authenticated_principal)
     )
   end
 

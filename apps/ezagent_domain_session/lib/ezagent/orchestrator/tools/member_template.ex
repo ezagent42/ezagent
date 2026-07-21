@@ -119,7 +119,7 @@ defmodule Ezagent.Orchestrator.Tools.MemberTemplate do
          # to run and cannot strand the role between leave and replacement.
          # This is deliberately stricter than a roster-membership admission;
          # membership admits the operation, while these caps authorize gates.
-         :ok <- preflight_chat_join_leave_caps(caps, session_uri),
+         :ok <- preflight_chat_join_leave_caps(caller, caps, session_uri),
          {:ok, %URI{} = old_member_uri} <- resolve_existing_member(session_uri, role_name) do
       do_update_member_template(
         session_uri,
@@ -161,7 +161,7 @@ defmodule Ezagent.Orchestrator.Tools.MemberTemplate do
          # member) BEFORE spawning the replacement. An unauthorized caller must
          # not even create a worker (the rollback's cleanup would itself lack
          # authority — leaking the just-spawned worker). NON-DESTRUCTIVE.
-         :ok <- preflight_terminate_authority(old_member_uri, caps),
+         :ok <- preflight_terminate_authority(caller, old_member_uri, caps),
          # codex round-3 P1 #1 — REGENERATION ORDERING. A regenerate is
          # destructive (terminate the old worker). To NEVER leave a session
          # with a deleted member + no replacement on an ordinary failure
@@ -367,13 +367,13 @@ defmodule Ezagent.Orchestrator.Tools.MemberTemplate do
   # so a NARROWED `{:within_session, S}` cap (e.g. leave-only) is rejected —
   # the SAME authority the live `chat.join` / `chat.leave` dispatches enforce.
   # Fails closed; nothing destructive runs without both.
-  defp preflight_chat_join_leave_caps(caps, %URI{} = session_uri) do
-    with :ok <- Tools.preflight_within_session_cap(caps, session_uri, :join) do
-      Tools.preflight_within_session_cap(caps, session_uri, :leave)
+  defp preflight_chat_join_leave_caps(holder, caps, %URI{} = session_uri) do
+    with :ok <- Tools.preflight_within_session_cap(holder, caps, session_uri, :join) do
+      Tools.preflight_within_session_cap(holder, caps, session_uri, :leave)
     end
   end
 
-  defp preflight_terminate_authority(%URI{} = old_member_uri, caps) do
+  defp preflight_terminate_authority(%URI{} = holder, %URI{} = old_member_uri, caps) do
     needed = %{
       kind: :agent,
       behavior: Ezagent.ActionSet.Sandbox,
@@ -383,9 +383,7 @@ defmodule Ezagent.Orchestrator.Tools.MemberTemplate do
     }
 
     authorized? =
-      caps
-      |> Tools.to_cap_set()
-      |> Ezagent.Capability.Authorization.authorizes?(needed)
+      Ezagent.Capability.Authorization.authorizes?(holder, Tools.to_cap_set(caps), needed)
 
     if authorized?, do: :ok, else: {:error, :unauthorized}
   end

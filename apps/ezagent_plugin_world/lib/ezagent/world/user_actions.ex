@@ -107,7 +107,7 @@ defmodule Ezagent.World.UserActions do
              target: Ezagent.URI.with_action(user_uri, :user_credentials, :set_password),
              mode: :call,
              args: %{password: password},
-             ctx: %{caller: caller, caps: caps, reply: {:caller_inbox, self()}},
+             ctx: %{caller: caller, authenticated_principal: caller, caps: caps, reply: {:caller_inbox, self()}},
              origin: :authenticated_external
            }) do
       {:noreply, push_user_state(socket, user_uri)}

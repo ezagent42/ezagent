@@ -15,7 +15,13 @@ defmodule Ezagent.Orchestrator.Tools.Migration do
          {:ok, workspace_uri} <- Tools.require_opt(opts, :workspace_uri),
          {:ok, caller_uri} <- Tools.require_opt(opts, :caller),
          {:ok, caps} <- Tools.require_opt(opts, :caps),
-         :ok <- Tools.preflight_within_session_cap(caps, session_uri, :set_working_copy),
+         :ok <-
+           Tools.preflight_within_session_cap(
+             caller_uri,
+             caps,
+             session_uri,
+             :set_working_copy
+           ),
          :ok <- preflight_session_template_cap(caps, workspace_uri, caller_uri),
          {:ok, target_content} <- read_target_template(target_session_template_uri),
          {:ok, target_config} <-

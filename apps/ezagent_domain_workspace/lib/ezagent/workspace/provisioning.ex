@@ -62,7 +62,13 @@ defmodule Ezagent.Workspace.Provisioning do
     caps = Map.fetch!(ctx, :caps)
 
     dispatch_ctx =
-      %{mode: :call, caller: caller, caps: caps, reply: {:caller_inbox, self()}}
+      %{
+        mode: :call,
+        caller: caller,
+        authenticated_principal: Map.fetch!(ctx, :authenticated_principal),
+        caps: caps,
+        reply: {:caller_inbox, self()}
+      }
       |> maybe_put_deadline_ms(ctx)
 
     Router.dispatch(%Cmd{
@@ -117,7 +123,13 @@ defmodule Ezagent.Workspace.Provisioning do
         target: target,
         action: :create_session,
         args: args,
-        ctx: %{mode: :call, caller: caller, caps: caps, reply: {:caller_inbox, self()}},
+        ctx: %{
+          mode: :call,
+          caller: caller,
+          authenticated_principal: Map.fetch!(ctx, :authenticated_principal),
+          caps: caps,
+          reply: {:caller_inbox, self()}
+        },
         origin: :trusted_internal
       })
     end
@@ -216,7 +228,13 @@ defmodule Ezagent.Workspace.Provisioning do
            target: target,
            action: :create_user,
            args: args,
-           ctx: %{mode: :call, caller: caller, caps: caps, reply: {:caller_inbox, self()}},
+           ctx: %{
+             mode: :call,
+             caller: caller,
+             authenticated_principal: Map.fetch!(ctx, :authenticated_principal),
+             caps: caps,
+             reply: {:caller_inbox, self()}
+           },
            origin: :trusted_internal
          }) do
       {:ok, %{user_uri: uri_str} = result} when is_binary(uri_str) ->
@@ -263,7 +281,13 @@ defmodule Ezagent.Workspace.Provisioning do
       target: target,
       action: :disable_user,
       args: args,
-      ctx: %{mode: :call, caller: caller, caps: caps, reply: {:caller_inbox, self()}}
+      ctx: %{
+        mode: :call,
+        caller: caller,
+        authenticated_principal: Map.fetch!(ctx, :authenticated_principal),
+        caps: caps,
+        reply: {:caller_inbox, self()}
+      }
     })
   end
 end

@@ -536,8 +536,13 @@ defmodule Ezagent.Workspace.Loader do
       )
 
     with {:ok, signed_cap} <-
-           Ezagent.Cap.issue({:admin, admin_uri}, workspace_uri, requested) do
-      {:ok, %{caller: workspace_uri, caps: MapSet.new([signed_cap])}}
+           Ezagent.Cap.issue({:admin, admin_uri}, admin_uri, requested) do
+      {:ok,
+       %{
+         caller: admin_uri,
+         authenticated_principal: admin_uri,
+         caps: MapSet.new([signed_cap])
+       }}
     end
   end
 

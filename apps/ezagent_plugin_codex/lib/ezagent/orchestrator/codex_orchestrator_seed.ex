@@ -138,6 +138,7 @@ defmodule Ezagent.Orchestrator.CodexOrchestratorSeed do
              args: %{content: content},
              ctx: %{
                caller: admin_uri,
+               authenticated_principal: admin_uri,
                caps: MapSet.new([signed_cap]),
                reply: {:caller_inbox, self()}
              },

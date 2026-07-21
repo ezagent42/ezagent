@@ -150,7 +150,7 @@ defmodule Ezagent.Orchestrator.Tools do
          # (`terminate_worker`, gated by the SAME possibly-insufficient caps)
          # could leave an ORPHAN. Failing closed here means an unauthorized
          # caller never spawns.
-         :ok <- preflight_within_session_cap(caps, session_uri, :join),
+         :ok <- preflight_within_session_cap(caller, caps, session_uri, :join),
          {:ok, %URI{} = member_uri} <-
            spawn_member(
              source_agent_template_uri,
@@ -866,7 +866,7 @@ defmodule Ezagent.Orchestrator.Tools do
   #
   # PUBLIC (PR-3S): also called by `Tools.MemberTemplate.update_member_template/3`.
   @doc false
-  def preflight_within_session_cap(caps, %URI{} = session_uri, action)
+  def preflight_within_session_cap(%URI{} = holder, caps, %URI{} = session_uri, action)
       when is_atom(action) do
     needed = %{
       kind: :session,
@@ -876,7 +876,8 @@ defmodule Ezagent.Orchestrator.Tools do
       workspace_uri: Ezagent.Capability.workspace_of(session_uri)
     }
 
-    authorized? = Ezagent.Capability.Authorization.authorizes?(to_cap_set(caps), needed)
+    authorized? =
+      Ezagent.Capability.Authorization.authorizes?(holder, to_cap_set(caps), needed)
 
     if authorized?, do: :ok, else: {:error, :unauthorized}
   end

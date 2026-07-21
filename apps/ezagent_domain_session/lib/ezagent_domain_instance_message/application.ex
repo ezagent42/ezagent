@@ -297,6 +297,7 @@ defmodule EzagentDomainInstanceMessage.Application do
             %{short_name: "main", template_name: "default"},
             %{
               caller: User.admin_uri(),
+              authenticated_principal: User.admin_uri(),
               caps: MapSet.new([create_session_cap])
             }
           )

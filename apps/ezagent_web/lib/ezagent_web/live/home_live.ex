@@ -226,6 +226,7 @@ defmodule EzagentWeb.HomeLive do
           args: %{member: echo_uri},
           ctx: %{
             caller: caller_uri,
+            authenticated_principal: caller_uri,
             caps: MapSet.new([signed_cap]),
             reply: :ignore
           },

@@ -256,6 +256,7 @@ defmodule Ezagent.ActionSet.ConfigEvolve do
         %{},
         %{
           caller: self_uri,
+          authenticated_principal: self_uri,
           caps: MapSet.new([reconcile_cap, update_cap]),
           reply: :ignore
         }

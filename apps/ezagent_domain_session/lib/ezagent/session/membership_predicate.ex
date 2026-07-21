@@ -35,13 +35,6 @@ defmodule Ezagent.Session.Membership do
   @type chat_slice :: %{optional(:owner_uri) => URI.t() | nil, optional(:members) => map()}
 
   @doc """
-  Authorize `caller` to read `chat` (an owner or current member of the chat
-  session). Fail-closed: `{:error, :unauthorized}` on any unmet condition.
-  """
-  @spec authorize(chat_slice() | term(), URI.t() | term()) :: :ok | {:error, :unauthorized}
-  def authorize(chat, caller), do: authorize(chat, caller, nil)
-
-  @doc """
   Authorize `caller` to read `chat` — the HELD-CAP form (membership-cap
   unification A2.3 / spec R1.1). Identical to `authorize/2` PLUS: a non-owner
   caller must additionally HOLD the member-cap over `session_uri` (read LIVE via
@@ -50,13 +43,13 @@ defmodule Ezagent.Session.Membership do
   (no "in-projection ⇒ authorized" window). `session_uri == nil` skips the held-cap
   check (roster-only, backward-compatible with any caller lacking session context).
   """
-  @spec authorize(chat_slice() | term(), URI.t() | term(), URI.t() | nil) ::
+  @spec authorize(chat_slice() | term(), term(), URI.t() | nil, URI.t() | term()) ::
           :ok | {:error, :unauthorized}
-  def authorize(chat, caller, session_uri) do
-    with %URI{} = caller <- caller,
-         true <- valid_caller_uri?(caller),
+  def authorize(chat, _caller, session_uri, holder) do
+    with %URI{} = holder <- holder,
+         true <- valid_caller_uri?(holder),
          %{} = chat <- chat,
-         true <- owner?(chat, caller) or member_with_held_cap?(chat, caller, session_uri) do
+         true <- owner?(chat, holder) or member_with_held_cap?(chat, holder, session_uri) do
       :ok
     else
       _ -> {:error, :unauthorized}

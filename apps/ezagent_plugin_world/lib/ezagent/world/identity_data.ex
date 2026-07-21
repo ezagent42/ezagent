@@ -219,11 +219,11 @@ defmodule Ezagent.World.IdentityData do
          %{component: "pty_terminal", entity_uri: agent_uri},
          base,
          _workspace,
-         _caller,
+         caller,
          caps
        ) do
     agent_uri_str = encode_uri(agent_uri)
-    authorized? = Ezagent.Domain.Pty.Access.may_read?(agent_uri, caps)
+    authorized? = Ezagent.Domain.Pty.Access.may_read?(caller, agent_uri, caps)
 
     base
     |> Map.put("agent_uri", agent_uri_str)
@@ -549,7 +549,7 @@ defmodule Ezagent.World.IdentityData do
            target: target,
            mode: :call,
            args: %{},
-           ctx: %{caller: caller_uri, caps: caller_caps, reply: :sync},
+           ctx: %{caller: caller_uri, authenticated_principal: caller_uri, caps: caller_caps, reply: :sync},
            origin: :authenticated_external
          }) do
       {:ok, %{api_keys: list}} when is_list(list) -> Enum.map(list, &jsonable/1)
@@ -597,7 +597,7 @@ defmodule Ezagent.World.IdentityData do
 
     Ezagent.Identity.admin?(caller_uri) or
       (not is_nil(creator_uri) and same_uri?(caller_uri, creator_uri)) or
-      Ezagent.Identity.caps_authorize?(caps, needed)
+      Ezagent.Identity.caps_authorize?(caller_uri, caps, needed)
   end
 
   defp can_edit_api_keys?(_agent_uri, _caller, _caps), do: false

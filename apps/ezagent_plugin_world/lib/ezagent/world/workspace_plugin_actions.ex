@@ -283,6 +283,7 @@ defmodule Ezagent.World.WorkspacePluginActions do
       origin: :authenticated_external,
       ctx: %{
         caller: socket.assigns.current_entity_uri,
+        authenticated_principal: socket.assigns.current_entity_uri,
         caps: Ezagent.World.PresenterCaps.load(socket),
         reply: {:caller_inbox, self()}
       }
@@ -627,7 +628,7 @@ defmodule Ezagent.World.WorkspacePluginActions do
            target: target,
            mode: :call,
            args: %{name: name, template: content},
-           ctx: %{caller: caller, caps: MapSet.new(caps), reply: :ignore},
+           ctx: %{caller: caller, authenticated_principal: caller, caps: MapSet.new(caps), reply: :ignore},
            origin: :authenticated_external
          }) do
       :ok -> :ok

@@ -302,7 +302,7 @@ defmodule Ezagent.Socialware.SessionReads do
   # live `:session` slice + the caller's held member-cap (A2.3/R1.1) so an
   # ex-member is denied immediately and a fresh async-granted member is allowed.
   defp authorize(caller, %URI{} = session_uri) do
-    Membership.authorize(chat_slice(session_uri), caller, session_uri)
+    Membership.authorize(chat_slice(session_uri), caller, session_uri, caller)
   end
 
   # The external-feed-plane READ gate (PR-2 — the public-view open policy

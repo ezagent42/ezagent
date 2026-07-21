@@ -61,9 +61,9 @@ defmodule Ezagent.Agent.Config do
           {:ok, map()} | {:error, term()}
   def read_cascade(agent_uri, caller, caps, opts \\ []) do
     with {:ok, agent_uri} <- normalize_agent_uri(agent_uri),
-         {:ok, _caller} <- normalize_uri(caller),
+         {:ok, holder} <- normalize_uri(caller),
          %URI{} <- Ezagent.URI.workspace_of(agent_uri),
-         :ok <- authorize_read_cascade(agent_uri, caps) do
+         :ok <- authorize_read_cascade(holder, agent_uri, caps) do
       {:ok, ConfigEvolve.build_cascade(agent_uri, read_keys(opts))}
     else
       :any -> {:error, :invalid_agent_uri}
@@ -82,7 +82,7 @@ defmodule Ezagent.Agent.Config do
   # not hand-rolled here). Instance-scoped: a manage-cap
   # over a DIFFERENT agent does NOT match (its `instance` is that other agent),
   # so cross-agent reads fail closed — the exact discrimination dispatch gave.
-  defp authorize_read_cascade(agent_uri, caps) do
+  defp authorize_read_cascade(holder, agent_uri, caps) do
     needed = %{
       kind: :agent,
       behavior: Ezagent.ActionSet.Manage,
@@ -91,7 +91,7 @@ defmodule Ezagent.Agent.Config do
       workspace_uri: Ezagent.Capability.workspace_of(agent_uri)
     }
 
-    if Ezagent.Identity.caps_authorize?(caps, needed) do
+    if Ezagent.Identity.caps_authorize?(holder, caps, needed) do
       :ok
     else
       {:error, :unauthorized}

@@ -34,6 +34,7 @@ defmodule Ezagent.Cap do
 
       ctx = %{
         caller: Map.fetch!(context, :caller),
+        authenticated_principal: Map.fetch!(context, :authenticated_principal),
         caps: authority_caps,
         reply: {:caller_inbox, self()}
       }
@@ -280,7 +281,7 @@ defmodule Ezagent.Cap do
   @doc false
   @spec authorization_context(authorization()) :: {MapSet.t(Capability.t()), map()}
   def authorization_context({:held_by, %URI{} = actor}) do
-    {load_held_caps(actor), %{caller: actor}}
+    {load_held_caps(actor), %{caller: actor, authenticated_principal: actor}}
   end
 
   def authorization_context({:admin, %URI{} = admin}) do
@@ -296,7 +297,7 @@ defmodule Ezagent.Cap do
         MapSet.new()
       end
 
-    {caps, %{caller: admin}}
+    {caps, %{caller: admin, authenticated_principal: admin}}
   end
 
   defp load_held_caps(actor) do

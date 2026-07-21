@@ -188,7 +188,7 @@ defmodule EzagentPluginProtocolApi.OpenAI.ChatCompletionsPlug do
       target: target,
       action: :join,
       args: %{member: agent},
-      ctx: %{caller: entity_uri, caps: MapSet.new(), reply: :ignore},
+      ctx: %{caller: entity_uri, authenticated_principal: entity_uri, caps: MapSet.new(), reply: :ignore},
       origin: :authenticated_external
     }
 
@@ -258,7 +258,7 @@ defmodule EzagentPluginProtocolApi.OpenAI.ChatCompletionsPlug do
       target: target,
       mode: :call,
       args: %{message: msg},
-      ctx: %{caller: entity_uri, caps: MapSet.new(), reply: :sync},
+      ctx: %{caller: entity_uri, authenticated_principal: entity_uri, caps: MapSet.new(), reply: :sync},
       origin: :authenticated_external
     }
 

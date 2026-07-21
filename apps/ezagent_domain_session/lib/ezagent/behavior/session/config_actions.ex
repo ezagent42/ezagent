@@ -93,6 +93,7 @@ defmodule Ezagent.ActionSet.Session.ConfigActions do
              args: %{template_working_copy: working_copy},
              ctx: %{
                caller: session_uri,
+               authenticated_principal: session_uri,
                caps: caps,
                system_internal: true,
                reply: {:caller_inbox, self()}
@@ -128,6 +129,7 @@ defmodule Ezagent.ActionSet.Session.ConfigActions do
              args: %{prompt_templates: prompt_templates},
              ctx: %{
                caller: session_uri,
+               authenticated_principal: session_uri,
                caps: caps,
                reply: {:caller_inbox, self()}
              },

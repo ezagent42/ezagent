@@ -419,6 +419,7 @@ defmodule Ezagent.World.KanbanActions do
   defp ctx(socket) do
     %{
       caller: socket.assigns.current_entity_uri,
+      authenticated_principal: socket.assigns.current_entity_uri,
       caps: Ezagent.World.PresenterCaps.load(socket),
       reply: {:caller_inbox, self()}
     }

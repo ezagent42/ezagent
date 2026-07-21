@@ -427,10 +427,11 @@ defmodule Ezagent.Domain.Agent do
   # pins this; the global p3 probe allowlists the whole session dir so it cannot).
   defp authorized?(needed, ctx) do
     inline = Map.get(ctx, :caps, [])
+    holder = Map.get(ctx, :authenticated_principal)
 
     cond do
       # route 1 — inline self-authority (#154); the caller hands the cap inline.
-      Ezagent.Identity.caps_authorize?(inline, needed) ->
+      Ezagent.Identity.caps_authorize?(holder, inline, needed) ->
         true
 
       # route 2 — slice/snapshot caps of the caller, read non-activatingly. Only
@@ -438,6 +439,7 @@ defmodule Ezagent.Domain.Agent do
       # nil caller has no slice to read; it falls through to route 1 only).
       match?(%URI{}, Map.get(ctx, :caller)) and
           Ezagent.Identity.caps_authorize?(
+            holder,
             Ezagent.EntityCaps.load(ctx.caller),
             needed
           ) ->

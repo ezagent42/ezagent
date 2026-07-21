@@ -42,9 +42,9 @@ defmodule Ezagent.Identity.CapsAuthorizeSignedTest do
     license_holder(cap)
     needed = needed_for(target)
 
-    assert Ezagent.Identity.caps_authorize?([cap], needed)
+    assert Ezagent.Identity.caps_authorize?(holder, [cap], needed)
     assert {:ok, _bumped} = Authority.regenesis(target, :test, admin())
-    refute Ezagent.Identity.caps_authorize?([cap], needed)
+    refute Ezagent.Identity.caps_authorize?(holder, [cap], needed)
   end
 
   defp license_holder(cap) do

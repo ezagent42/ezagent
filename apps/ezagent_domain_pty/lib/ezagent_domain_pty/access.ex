@@ -53,9 +53,10 @@ defmodule Ezagent.Domain.Pty.Access do
   `caps` is the caller's dispatch/socket capability set. Anything that is not a
   capability set is refused rather than raising — a read exit must fail closed.
   """
-  @spec may_read?(URI.t(), MapSet.t(Capability.t()) | [Capability.t()] | term()) :: boolean()
-  def may_read?(%URI{} = agent_uri, caps) do
-    Capability.Authorization.authorizes?(caps, %{
+  @spec may_read?(URI.t(), URI.t(), MapSet.t(Capability.t()) | [Capability.t()] | term()) ::
+          boolean()
+  def may_read?(%URI{} = holder, %URI{} = agent_uri, caps) do
+    Capability.Authorization.authorizes?(holder, caps, %{
       kind: :agent,
       behavior: Ezagent.ActionSet.Manage,
       action: :read,
@@ -64,5 +65,5 @@ defmodule Ezagent.Domain.Pty.Access do
     })
   end
 
-  def may_read?(_agent_uri, _caps), do: false
+  def may_read?(_holder, _agent_uri, _caps), do: false
 end

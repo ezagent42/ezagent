@@ -74,6 +74,7 @@ defmodule Ezagent.Invocation do
           required(:caller) => URI.t(),
           required(:caps) => MapSet.t(Ezagent.Capability.t()),
           required(:reply) => reply_target(),
+          optional(:authenticated_principal) => URI.t(),
           optional(:trace_id) => String.t(),
           optional(:deadline_ms) => pos_integer(),
           optional(:idempotency_key) => String.t()

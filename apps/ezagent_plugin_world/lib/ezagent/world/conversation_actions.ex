@@ -213,7 +213,7 @@ defmodule Ezagent.World.ConversationActions do
           target: target,
           mode: :cast,
           args: %{message: msg},
-          ctx: %{caller: caller, caps: caps, reply: :ignore},
+          ctx: %{caller: caller, authenticated_principal: caller, caps: caps, reply: :ignore},
           origin: :authenticated_external
         })
 
@@ -601,10 +601,11 @@ defmodule Ezagent.World.ConversationActions do
     # open any agent's terminal in any workspace from inside a conversation.
     # Same authority as every other exit: the agent's Manage cap.
     caps = Ezagent.World.PresenterCaps.load(socket)
+    holder = socket.assigns.current_entity_uri
 
     case parse_agent_uri(agent_str) do
       {:ok, %URI{} = agent_uri} ->
-        if Ezagent.Domain.Pty.Access.may_read?(agent_uri, caps) do
+        if Ezagent.Domain.Pty.Access.may_read?(holder, agent_uri, caps) do
           subscribe_pty(agent_uri)
           push_pty_view(socket, agent_uri)
         else
@@ -710,7 +711,7 @@ defmodule Ezagent.World.ConversationActions do
         target: Ezagent.URI.with_action(session_uri, behavior_prefix, action),
         mode: :call,
         args: args,
-        ctx: %{caller: caller, caps: caps, reply: {:caller_inbox, self()}},
+        ctx: %{caller: caller, authenticated_principal: caller, caps: caps, reply: {:caller_inbox, self()}},
         origin: :authenticated_external
       })
 
@@ -838,7 +839,7 @@ defmodule Ezagent.World.ConversationActions do
             target: Ezagent.URI.with_action(session_uri, :session, :join),
             mode: :call,
             args: %{member: member_uri},
-            ctx: %{caller: caller, caps: caps, reply: :ignore},
+            ctx: %{caller: caller, authenticated_principal: caller, caps: caps, reply: :ignore},
             origin: :authenticated_external
           })
 
@@ -1146,7 +1147,7 @@ defmodule Ezagent.World.ConversationActions do
             target: Ezagent.URI.with_action(session_uri, :session, :join),
             mode: :call,
             args: %{member: caller_uri},
-            ctx: %{caller: caller_uri, caps: caps, reply: :ignore},
+            ctx: %{caller: caller_uri, authenticated_principal: caller_uri, caps: caps, reply: :ignore},
             origin: :authenticated_external
           })
 
@@ -1266,6 +1267,7 @@ defmodule Ezagent.World.ConversationActions do
       args: args,
       ctx: %{
         caller: socket.assigns.current_entity_uri,
+        authenticated_principal: socket.assigns.current_entity_uri,
         caps: MapSet.new(),
         reply: {:caller_inbox, self()}
       },

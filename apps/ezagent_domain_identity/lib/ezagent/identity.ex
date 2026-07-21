@@ -53,6 +53,7 @@ defmodule Ezagent.Identity do
                ctx: %{
                  mode: :call,
                  caller: user_uri,
+                 authenticated_principal: user_uri,
                  caps: signed_self_cap(user_uri, target),
                  reply: {:caller_inbox, self()}
                },
@@ -298,15 +299,21 @@ defmodule Ezagent.Identity do
   caller constructs it from the target (pure field assignment, no `matches?`),
   so the instance binding (and thus the wrong-target denial) is preserved.
   """
-  @spec caps_authorize?(MapSet.t(Ezagent.Capability.t()) | [Ezagent.Capability.t()], map()) ::
+  @spec caps_authorize?(
+          URI.t(),
+          MapSet.t(Ezagent.Capability.t()) | [Ezagent.Capability.t()],
+          map()
+        ) ::
           boolean()
-  def caps_authorize?(caps, needed) when is_map(needed) do
+  def caps_authorize?(%URI{} = holder, caps, needed) when is_map(needed) do
     caps
     |> normalize_caps()
-    |> Enum.any?(&cap_authorizes?(&1, needed))
+    |> Enum.any?(&cap_authorizes?(holder, &1, needed))
   end
 
-  defp cap_authorizes?(%Ezagent.Capability{grantee_uri: %URI{} = holder} = cap, needed) do
+  def caps_authorize?(_holder, _caps, _needed), do: false
+
+  defp cap_authorizes?(holder, %Ezagent.Capability{} = cap, needed) do
     Ezagent.Capability.granted_by_entity?(cap) and
       match?({:ok, %Ezagent.Capability{}}, Ezagent.Cap.authorize(holder, [cap], needed))
   rescue
@@ -315,7 +322,7 @@ defmodule Ezagent.Identity do
     _, _ -> false
   end
 
-  defp cap_authorizes?(_, _), do: false
+  defp cap_authorizes?(_holder, _cap, _needed), do: false
 
   defp normalize_caps(%MapSet{} = caps), do: caps
   defp normalize_caps(caps) when is_list(caps), do: MapSet.new(caps)

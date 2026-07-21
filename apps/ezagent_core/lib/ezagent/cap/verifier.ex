@@ -43,13 +43,13 @@ defmodule Ezagent.Cap.Verifier do
   @type result :: {:ok, Capability.t() | nil} | {:error, term()}
 
   @doc false
-  @spec authorize(module(), module(), atom(), URI.t(), map()) :: result()
-  def authorize(kind_module, behavior_module, action, %URI{} = target, ctx) do
+  @spec authorize(module(), module(), atom(), URI.t(), URI.t() | :vm_internal, map()) :: result()
+  def authorize(kind_module, behavior_module, action, %URI{} = target, holder, ctx) do
     if non_cap_action?(behavior_module, action) do
       emit(:non_cap, kind_module, behavior_module, action, target, ctx)
       {:ok, nil}
     else
-      verify_cap(kind_module, behavior_module, action, target, ctx)
+      verify_cap(kind_module, behavior_module, action, target, holder, ctx)
     end
   end
 
@@ -70,13 +70,14 @@ defmodule Ezagent.Cap.Verifier do
          behavior_module,
          action,
          target,
-         %{caller: %URI{} = presenter} = ctx
+         %URI{} = holder,
+         ctx
        ) do
     needed = required_cap(kind_module, behavior_module, action, target)
 
     candidates = candidate_caps(ctx)
 
-    case Ezagent.Cap.authorize(presenter, candidates, needed) do
+    case Ezagent.Cap.authorize(holder, candidates, needed) do
       {:ok, %Capability{} = cap} ->
         emit(:accepted, kind_module, behavior_module, action, target, ctx)
         {:ok, cap}
@@ -94,9 +95,18 @@ defmodule Ezagent.Cap.Verifier do
     end
   end
 
-  defp verify_cap(kind_module, behavior_module, action, target, ctx) do
-    emit(:rejected, kind_module, behavior_module, action, target, ctx, :presenter_required)
-    {:error, :presenter_required}
+  defp verify_cap(kind_module, behavior_module, action, target, _holder, ctx) do
+    emit(
+      :rejected,
+      kind_module,
+      behavior_module,
+      action,
+      target,
+      ctx,
+      :authenticated_principal_required
+    )
+
+    {:error, :authenticated_principal_required}
   end
 
   defp candidate_caps(ctx), do: Map.get(ctx, :caps, MapSet.new()) || MapSet.new()

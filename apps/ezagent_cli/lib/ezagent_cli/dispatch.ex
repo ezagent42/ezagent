@@ -93,6 +93,7 @@ defmodule EzagentCli.Dispatch do
                   args: action_args,
                   ctx: %{
                     caller: caller_uri,
+                    authenticated_principal: caller_uri,
                     caps: operator_dispatch_caps(caller_uri, caps),
                     reply: {:caller_inbox, self()},
                     deadline_ms: deadline_ms

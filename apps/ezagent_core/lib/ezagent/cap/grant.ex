@@ -59,8 +59,15 @@ defmodule Ezagent.Cap.Grant do
              Ezagent.URI.stable_key(Ezagent.URI.instance(cap.instance)) ==
                Ezagent.URI.stable_key(target_instance),
          {:ok, _authority_cap} <-
-           Ezagent.Cap.Verifier.authorize(kind, __MODULE__, :grant, target, ctx),
-         %URI{} = presenter <- Map.get(ctx, :caller),
+           Ezagent.Cap.Verifier.authorize(
+             kind,
+             __MODULE__,
+             :grant,
+             target,
+             Map.get(ctx, :authenticated_principal),
+             ctx
+           ),
+         %URI{} = presenter <- Map.get(ctx, :authenticated_principal),
          intent <- freeze(target_instance, presenter, grantee, cap),
          {:ok, issued} <- Authority.issue_current(intent) do
       {:ok, issued}
