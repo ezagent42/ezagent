@@ -21,20 +21,6 @@ defmodule Ezagent.UnifiedRevocationAcceptanceTest do
 
   @moduletag :umbrella_only
 
-  defmodule PrincipalTargetKind do
-    @moduledoc false
-    @behaviour Ezagent.Kind
-
-    @impl true
-    def type_name, do: :agent
-
-    @impl true
-    def behaviors, do: [Ezagent.ActionSet.Identity, Ezagent.Test.TestBehavior]
-
-    @impl true
-    def persistence, do: {:snapshot, :on_change}
-  end
-
   setup do
     previous = Application.get_env(:ezagent_core, Ezagent.Cap, [])
     admin = admin()
@@ -49,7 +35,12 @@ defmodule Ezagent.UnifiedRevocationAcceptanceTest do
       Ezagent.URI.stable_key(admin) => MapSet.new([:admin_self_license])
     })
 
-    :ok = Ezagent.BehaviorRegistry.register(PrincipalTargetKind, :noop, TestBehavior)
+    :ok =
+      Ezagent.BehaviorRegistry.register(
+        Ezagent.Test.UnifiedRevocationPrincipalTargetKind,
+        :noop,
+        TestBehavior
+      )
 
     on_exit(fn -> Application.put_env(:ezagent_core, Ezagent.Cap, previous) end)
 
@@ -89,7 +80,12 @@ defmodule Ezagent.UnifiedRevocationAcceptanceTest do
     assert KindSnapshot.get(Ezagent.URI.stable_key(target)) == nil
     assert KindCapAuthority.active(Ezagent.URI.stable_key(target)) == nil
 
-    assert {:ok, _pid} = Ezagent.Kind.spawn(PrincipalTargetKind, %{uri: target, initial_caps: []})
+    assert {:ok, _pid} =
+             Ezagent.Kind.spawn(Ezagent.Test.UnifiedRevocationPrincipalTargetKind, %{
+               uri: target,
+               initial_caps: []
+             })
+
     wait_until_ready(target)
 
     [new_license] = self_licenses(EntityCaps.load(target))
@@ -190,7 +186,12 @@ defmodule Ezagent.UnifiedRevocationAcceptanceTest do
         "#{suffix}-#{System.unique_integer([:positive])}"
       )
 
-    assert {:ok, _pid} = Ezagent.Kind.spawn(PrincipalTargetKind, %{uri: target, initial_caps: []})
+    assert {:ok, _pid} =
+             Ezagent.Kind.spawn(Ezagent.Test.UnifiedRevocationPrincipalTargetKind, %{
+               uri: target,
+               initial_caps: []
+             })
+
     wait_until_ready(target)
 
     on_exit(fn ->

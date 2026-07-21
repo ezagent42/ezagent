@@ -43,7 +43,8 @@ defmodule Ezagent.Cap do
       }
 
       if Ezagent.Cap.Authority.current_target?(target) do
-        with {:ok, kind_type} <- Ezagent.Cap.Authority.current_kind_type() do
+        with :ok <- current_target_generation(target),
+             {:ok, kind_type} <- Ezagent.Cap.Authority.current_kind_type() do
           Ezagent.Cap.Grant.authorize_and_issue_current(
             kind_type,
             grant_target,
@@ -101,6 +102,7 @@ defmodule Ezagent.Cap do
 
   defp action_context(pid, instance, action) when pid == self() do
     with true <- Ezagent.Cap.Authority.current_target?(instance),
+         :ok <- current_target_generation(instance),
          {:ok, kind_type} <- Ezagent.Cap.Authority.current_kind_type(),
          {:ok, {kind_module, behavior_module}} <- registered_subject(kind_type, action) do
       {:ok, {kind_module, behavior_module}}
@@ -117,6 +119,23 @@ defmodule Ezagent.Cap do
          {:ok, behavior_module} <-
            Ezagent.Kind.BehaviorSet.resolve_action(kind_module, action, slice_state) do
       {:ok, {kind_module, behavior_module}}
+    end
+  end
+
+  # G-6/MF5: the target process may retain generation N after an external
+  # regenesis atomically advances the durable active row to N+1. It must not
+  # use that stale private key to construct or sign any new self-target
+  # artifact. Both values are read explicitly: the process-local sealed signer
+  # and the current DB authority generation.
+  defp current_target_generation(target) do
+    with {:ok, process_generation} <-
+           Ezagent.Cap.Authority.current_process_generation(target),
+         {:ok, active_generation} <- Ezagent.Cap.Authority.current_generation(target),
+         true <- process_generation == active_generation do
+      :ok
+    else
+      false -> {:error, :stale_target_generation}
+      :error -> {:error, :authority_unavailable}
     end
   end
 
