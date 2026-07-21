@@ -1,0 +1,8 @@
+                          grantee_uri                           | access  |  scope  |                                     actions                                      
+----------------------------------------------------------------+---------+---------+----------------------------------------------------------------------------------
+ entity://kanban-e2e/user/owner                                 | operate | session | ["add_node","rename_node","move_node","remove_node","set_stage","claim_node","un
+ entity://kanban-e2e/agent/0f29025a-6c44-4b11-b3ee-fbf86b9b0772 | operate | session | ["add_node","rename_node","move_node","remove_node","set_stage","claim_node","un
+ entity://kanban-e2e/user/editor                                | operate | session | ["add_node","rename_node","move_node","remove_node","set_stage","claim_node","un
+ entity://kanban-e2e/user/editor                                | operate | person  | ["add_node","rename_node","move_node","remove_node","set_stage","claim_node","un
+(4 rows)
+
