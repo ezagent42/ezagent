@@ -81,6 +81,48 @@ def eff_delta_chip(delta):
     return (f'<span style="color:{color};font-size:11px;font-weight:700;'
             f'margin-left:5px;vertical-align:1px">{e(d)}</span>')
 
+def render_system_closures(closures):
+    items = []
+    for closure in closures or []:
+        envelope = closure.get("resource_envelope", {}) or {}
+        resource_text = " · ".join(
+            f"{key}={value}" for key, value in envelope.items()
+        )
+        related = ", ".join(closure.get("related_cards", []) or [])
+        items.append(
+            '<div class="closure">'
+            f'<b>{e(closure.get("id"))}</b>'
+            f'<div><strong>X problem:</strong> {e(closure.get("x_problem"))}</div>'
+            f'<div><strong>Invariant:</strong> {e(closure.get("plan_invariant"))}</div>'
+            f'<div><strong>Cards:</strong> {e(related)}</div>'
+            f'<div><strong>Durable proof:</strong> {e(closure.get("durable_proof"))}</div>'
+            f'<div><strong>Integration evidence:</strong> {e(closure.get("integration_evidence"))}</div>'
+            f'<div><strong>Resource envelope:</strong> {e(resource_text)}</div>'
+            '</div>'
+        )
+    if not items:
+        return ""
+    return ('<section class="closures"><h2>Plan-level system closure · '
+            '系统闭环</h2>' + "".join(items) + "</section>")
+
+def render_method_delta(delta):
+    if isinstance(delta, str):
+        return "• " + e(delta)
+    labels = [
+        ("Finding", "finding"),
+        ("X problem", "x_problem"),
+        ("Y problem", "y_problem"),
+        ("X-level correction", "x_level_correction"),
+        ("Y-level correction", "y_level_correction"),
+        ("Recurrence-prevention proof", "recurrence_prevention_proof"),
+        ("Owner", "owner"),
+        ("Destination", "destination"),
+    ]
+    return '<div class="method-delta">' + "".join(
+        f'<div><strong>{e(label)}:</strong> {e(delta.get(key))}</div>'
+        for label, key in labels
+    ) + "</div>"
+
 CSS = """
   :root{--ink:#1a1a1a;--line:#e2e8f0;--soft:#f8fafc;--blue:#2563eb;--blue-d:#1e40af;--green:#059669;--amber:#d97706;--red:#dc2626}
   *{box-sizing:border-box}
@@ -107,6 +149,10 @@ CSS = """
   .deploy div:last-child{border-right:0}
   .deploy .s{display:block;font-size:10px;color:#94a3b8}
   .risk{background:#fef2f2;border:1px solid #fecaca;border-radius:8px;padding:9px 14px;margin:2px 0 12px;font-size:12.5px}
+  .closures{background:#fff;border:1px solid var(--line);border-radius:9px;padding:10px 12px;margin:0 0 12px}
+  .closures h2{font-size:15px;color:var(--blue-d);margin:0 0 8px}
+  .closure{background:var(--soft);border-left:3px solid var(--blue);border-radius:0 6px 6px 0;padding:8px 10px;margin-top:7px;font-size:12px}
+  .method-delta{border-bottom:1px solid #dbeafe;padding:5px 0}.method-delta:last-child{border-bottom:0}
   .board{display:grid;grid-template-columns:repeat(4,minmax(220px,1fr));gap:10px;overflow-x:auto}
   .colwrap{display:flex;flex-direction:column;min-width:0}
   .colhead{font-weight:700;font-size:12px;text-align:center;padding:7px 4px;border-radius:6px 6px 0 0;color:#fff}
@@ -360,6 +406,7 @@ def main():
     eff_html = "".join(f'<div><b>{e(t.get("value"))}{eff_delta_chip(t.get("delta"))}</b><span>{e(t.get("label"))}</span></div>' for t in (b.get("efficiency", []) or []))
     deploy_html = "".join(f'<div><span class="s">{e(d.get("env"))}</span>{e(d.get("state"))}</div>' for d in (b.get("deploy", []) or []))
     risks_html = "<br>".join(e(r) for r in (b.get("risks", []) or []))
+    closures_html = render_system_closures(b.get("system_closures"))
 
     # This is a DISPLAY page published each morning: 计划/进行中/待评审 = TODAY's plan;
     # 完成 = YESTERDAY's done cards (the same full cards); review = YESTERDAY's review.
@@ -388,7 +435,7 @@ def main():
 
     # review / 复盘
     rv = b.get("review", {}) or {}
-    md = "<br>".join("• " + e(x) for x in (rv.get("method_deltas", []) or []))
+    md = "".join(render_method_delta(x) for x in (rv.get("method_deltas", []) or []))
     inc = "<br>".join("• " + e(x) for x in (rv.get("incidents", []) or []))
     rows = ""
     for d in (rv.get("delivery", []) or []):
@@ -432,6 +479,7 @@ def main():
     <div class="row" style="margin-top:12px"><div class="eff">{eff_html}</div></div>
     <div class="src">总效能来源：{e(b.get("efficiency_source",""))}</div>
   </div>
+  {closures_html}
   <div><div class="deploy">{deploy_html}</div></div>
   <div class="risk"><b>风险：</b>{risks_html or '—'}</div>
   <div class="legend">人：{legend}　·　卡片 = 一任务；☐/☑ = 验收（plan 写 · review 勾）；停在非「完成」列 = 明日结转</div>

@@ -66,6 +66,14 @@ the rest. If it carries a **red-line**, state it here (e.g. "canary 前不宣布
   串行化 `styles.css`、遵守 layout gate。
 - 互不重叠的 track 标注可并行。
 
+## §3a Plan-level system closure
+| Closure | X problem | Plan invariant | Related tracks | Durable proof | Integration evidence |
+|---|---|---|---|---|---|
+| | | | | | |
+
+**Closure checkpoints:** <frozen implementation commits and gates>
+**Stop Rule owner:** <lead>
+
 ## §4 依赖与 handoff 顺序 / 并行
 <The intended handoff order + what runs in parallel; which tasks need
 brainstorming/design confirmation before build (discuss-first). Note the

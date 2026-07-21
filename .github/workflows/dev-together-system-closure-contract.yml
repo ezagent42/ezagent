@@ -1,0 +1,20 @@
+name: Dev-together system-closure contract
+
+on:
+  pull_request:
+    paths:
+      - .claude/skills/dev-together/**
+      - .github/scripts/dev-together-system-closure-contract_test.sh
+      - .github/workflows/dev-together-system-closure-contract.yml
+  push:
+    branches: [main]
+    paths:
+      - .claude/skills/dev-together/**
+
+jobs:
+  contract:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: astral-sh/setup-uv@v5
+      - run: bash .github/scripts/dev-together-system-closure-contract_test.sh

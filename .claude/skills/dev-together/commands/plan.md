@@ -68,6 +68,30 @@ section order is fixed so the format stops drifting and `plan.html` mirrors it
    yesterday's `board.yaml` `done` cards (owner/title/date/pr) — it renders under
    the 完成 column so each person's recent delivery stays visible (the daily
    columns only show today).
+   For applicable work, also write `system_closures:` as the Plan-level source
+   of truth. Every closure has a stable `id`, `x_problem`, `plan_invariant`,
+   `related_cards`, `durable_proof`, `integration_evidence`, and
+   `resource_envelope`; each related card has its own stable `id` and references
+   it with `closures: ["<closure-id>"]`:
+
+   ```yaml
+   system_closures:
+     - id: "closure-a"
+       x_problem: "Task-local completion cannot prove the cross-task invariant."
+       plan_invariant: "One durable owner exists for every external result."
+       related_cards: ["provider-result-ownership"]
+       durable_proof: "operation journal + exact cleanup state"
+       integration_evidence: "focused + provider-full + frozen read-only review"
+       resource_envelope:
+         runner: "scripts/guarded_mix.sh"
+         memory_high: "4G"
+         memory_max: "5G"
+         memory_swap_max: "0"
+         lock: "/tmp/ezagent-mix.lock"
+   cards:
+     - id: "provider-result-ownership"
+       closures: ["closure-a"]
+   ```
 8a. **Auto efficiency + up/down delta (do this before rendering — don't hand-type
    the numbers).** The board's `完成` column shows *yesterday's* output, so the
    `efficiency` stats measure **`prev_date` (the board's yesterday)** and each
@@ -102,6 +126,8 @@ the scaffold. Author from
   surfaces/files, required reading, DoD artifact, deadline.
 - A conflict map: shared files/surfaces, serialization owner, and which tasks can
   run in parallel.
+- Applicable cross-Task work has a Plan-level closure matrix, closure
+  checkpoints, Stop Rule owner, and card-to-closure links in `board.yaml`.
 - The intended handoff order and which tasks require brainstorming/design
   confirmation before build.
 - **Every track maps to a weekly goal; the roster came from `team.md`, not

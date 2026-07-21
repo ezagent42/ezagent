@@ -60,9 +60,12 @@ that needed a human and stalled; any DoD that slipped to "tests pass" only.>
 > new) that would have caught it** — a finding with no mapped rule is a signal to
 > add one.
 
-| # | 发现（finding） | 会抓到它的规则（existing/new） | 去向：skill-change / process-debt |
-|---|---|---|---|
-| 1 | | | |
+| # | Finding | X problem | Y problem | X-level correction | Y-level correction | Recurrence-prevention proof | Owner / destination |
+|---|---|---|---|---|---|---|---|
+| 1 | | | | | | | |
+
+"Be careful", "add tests", or "review harder" is incomplete without an Owner
+and a docs/runner/CI/skill/process-debt destination.
 
 ## §5 次日规划建议（next-day planning suggestions）
 <What to sequence differently, which conflicts to pre-empt, which deferrals to
