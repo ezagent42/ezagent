@@ -2,9 +2,16 @@
 set -euo pipefail
 
 repo_root="$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)"
-runner="$repo_root/scripts/guarded_mix.sh"
+runner="${GUARDED_MIX_RUNNER:-$repo_root/scripts/guarded_mix.sh}"
 test_root="$(mktemp -d)"
-trap 'rm -rf "$test_root"' EXIT
+cleanup() {
+  local pid
+  while read -r pid; do
+    kill "$pid" 2>/dev/null || true
+  done < <(jobs -pr)
+  rm -rf "$test_root"
+}
+trap cleanup EXIT
 
 fail() { echo "FAIL: $*" >&2; exit 1; }
 assert_contains() { grep -F -- "$2" "$1" >/dev/null || fail "$1 does not contain: $2"; }
@@ -116,6 +123,19 @@ assert_contains "$case_dir/err" "child stderr sentinel"
 echo "case=serializes_two_invocations"
 new_case serializes_two_invocations
 mkfifo "$case_dir/release"
+mkfifo "$case_dir/second-lock-attempt"
+exec 7<>"$case_dir/second-lock-attempt"
+real_flock="$(readlink -f "$case_dir/bin/flock")"
+rm "$case_dir/bin/flock"
+cat >"$case_dir/bin/flock" <<STUB
+#!/usr/bin/env bash
+set -euo pipefail
+if [[ -n "\${GUARDED_TEST_LOCK_ATTEMPT:-}" ]]; then
+  printf 'attempted\n' >"\$GUARDED_TEST_LOCK_ATTEMPT"
+fi
+exec "$real_flock" "\$@"
+STUB
+chmod +x "$case_dir/bin/flock"
 export GUARDED_TEST_ENTERED="$case_dir/entered"
 export GUARDED_TEST_RELEASE="$case_dir/release"
 "$runner" --lock-wait 5 test >"$case_dir/first.out" 2>"$case_dir/first.err" &
@@ -123,18 +143,20 @@ first_pid=$!
 for _ in {1..100}; do [[ -e "$case_dir/entered" ]] && break; sleep 0.01; done
 [[ -e "$case_dir/entered" ]] || fail "first invocation did not enter"
 rm "$case_dir/entered"
-"$runner" --lock-wait 5 test >"$case_dir/second.out" 2>"$case_dir/second.err" &
+GUARDED_TEST_LOCK_ATTEMPT="$case_dir/second-lock-attempt" \
+  "$runner" --lock-wait 5 test >"$case_dir/second.out" 2>"$case_dir/second.err" &
 second_pid=$!
-for _ in {1..20}; do
-  [[ ! -e "$case_dir/entered" ]] || fail "second invocation entered before release"
-  sleep 0.01
-done
+read -r -t 2 lock_attempt <&7 ||
+  fail "second invocation did not attempt the contested lock"
+[[ "$lock_attempt" == attempted ]] || fail "unexpected lock-attempt handshake: $lock_attempt"
+[[ ! -e "$case_dir/entered" ]] || fail "second invocation entered before release"
 printf 'release\n' >"$case_dir/release"
 wait "$first_pid"
 for _ in {1..100}; do [[ -e "$case_dir/entered" ]] && break; sleep 0.01; done
 [[ -e "$case_dir/entered" ]] || fail "second invocation did not enter after release"
 printf 'release\n' >"$case_dir/release"
 wait "$second_pid"
+exec 7>&-
 unset GUARDED_TEST_ENTERED GUARDED_TEST_RELEASE
 
 echo "case=reports_lock_timeout_75"
