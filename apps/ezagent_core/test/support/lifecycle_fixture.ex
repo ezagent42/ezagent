@@ -533,7 +533,12 @@ defmodule Ezagent.TestSupport.LifecycleSignalFixture do
           target: bump_target,
           action: :bump,
           args: %{by: 7},
-          ctx: %{caller: ctx.self_uri, caps: MapSet.new([cap]), reply: :none},
+          ctx: %{
+            caller: ctx.self_uri,
+            authenticated_principal: ctx.self_uri,
+            caps: MapSet.new([cap]),
+            reply: :none
+          },
           origin: :trusted_internal
         }}
      ]}

@@ -11,6 +11,7 @@ defmodule Ezagent.Invariants.PredicateARootCheckTest do
   alias Ezagent.Test.{TestBehavior, TestKind}
 
   setup do
+    previous = Application.get_env(:ezagent_core, Ezagent.Cap, [])
     :ok = Ezagent.BehaviorRegistry.register(TestKind, :noop, TestBehavior)
 
     uri =
@@ -19,6 +20,20 @@ defmodule Ezagent.Invariants.PredicateARootCheckTest do
       )
 
     presenter = Ezagent.URI.new!("entity://team-alpha/user/predicate-presenter")
+
+    Application.put_env(
+      :ezagent_core,
+      Ezagent.Cap,
+      Keyword.put(previous, :authority_loader, EzagentCore.Test.CapAuthorityLoaderStub)
+    )
+
+    Application.put_env(:ezagent_core, EzagentCore.Test.CapAuthorityLoaderStub, %{
+      Ezagent.URI.stable_key(Ezagent.Entity.User.admin_uri()) =>
+        MapSet.new([:test_holder_license]),
+      Ezagent.URI.stable_key(presenter) => MapSet.new([:test_holder_license])
+    })
+
+    on_exit(fn -> Application.put_env(:ezagent_core, Ezagent.Cap, previous) end)
     assert {:ok, _pid} = Ezagent.Kind.Server.start_link({TestKind, %{uri: uri}})
     assert :ok = await_ready(uri)
     {:ok, uri: uri, presenter: presenter}
@@ -32,12 +47,12 @@ defmodule Ezagent.Invariants.PredicateARootCheckTest do
         Ezagent.URI.new!("system://bootstrap/default")
       )
 
-    assert {:error, :invalid_cap_signature} = dispatch(context, forged)
+    assert {:error, :missing_cap} = dispatch(context, forged)
   end
 
   test "unsigned wildcard claiming an entity granter is equally rejected", context do
     forged = unsigned_wildcard(context.uri, context.presenter, Ezagent.URI.user(:system, :admin))
-    assert {:error, :invalid_cap_signature} = dispatch(context, forged)
+    assert {:error, :missing_cap} = dispatch(context, forged)
   end
 
   test "target-minted artifact is the positive control", context do
@@ -74,7 +89,12 @@ defmodule Ezagent.Invariants.PredicateARootCheckTest do
       target: Ezagent.URI.with_action(context.uri, :test, :noop),
       mode: :call,
       args: %{msg: "proof"},
-      ctx: %{caller: context.presenter, caps: MapSet.new([cap]), reply: :ignore}
+      ctx: %{
+        caller: context.presenter,
+        authenticated_principal: context.presenter,
+        caps: MapSet.new([cap]),
+        reply: :ignore
+      }
     })
   end
 

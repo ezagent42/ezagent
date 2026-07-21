@@ -80,6 +80,7 @@ defmodule Ezagent.Kind.InstanceSetUndeclaredTest do
       args: %{},
       ctx: %{
         caller: Ezagent.Entity.User.admin_uri(),
+        authenticated_principal: Ezagent.Entity.User.admin_uri(),
         caps: admin_caps(uri, UndeclaredProbe, :undeclared_poke),
         reply: :ignore
       }
@@ -103,6 +104,7 @@ defmodule Ezagent.Kind.InstanceSetUndeclaredTest do
         args: %{},
         ctx: %{
           caller: Ezagent.Entity.User.admin_uri(),
+          authenticated_principal: Ezagent.Entity.User.admin_uri(),
           caps: admin_caps(uri, UndeclaredProbe, :undeclared_poke),
           reply: :ignore
         }
@@ -126,9 +128,10 @@ defmodule Ezagent.Kind.InstanceSetUndeclaredTest do
         target: target,
         mode: :call,
         args: %{},
-        # nobody, empty caps — holds neither :undeclared_poke nor genesis.
+        # A licensed principal with empty presented caps holds no :undeclared_poke.
         ctx: %{
-          caller: Ezagent.URI.new!("entity://team-alpha/user/nobody"),
+          caller: Ezagent.Entity.User.admin_uri(),
+          authenticated_principal: Ezagent.Entity.User.admin_uri(),
           caps: MapSet.new(),
           reply: :ignore
         }

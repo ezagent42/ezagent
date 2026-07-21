@@ -6,21 +6,36 @@ defmodule Ezagent.Architecture.CapGrantChainTest do
   alias Ezagent.Test.{TestBehavior, TestKind}
 
   setup do
+    previous = Application.get_env(:ezagent_core, Ezagent.Cap, [])
+
+    Application.put_env(
+      :ezagent_core,
+      Ezagent.Cap,
+      Keyword.put(previous, :authority_loader, EzagentCore.Test.CapAuthorityLoaderStub)
+    )
+
     uri =
       Ezagent.URI.new!(
         "entity://team-alpha/agent/test_grant-#{System.unique_integer([:positive])}"
       )
 
+    admin = Ezagent.URI.user(:system, :admin)
+    alice = Ezagent.URI.new!("entity://team-alpha/user/alice")
+    bob = Ezagent.URI.new!("entity://team-alpha/user/bob")
+
+    Application.put_env(:ezagent_core, EzagentCore.Test.CapAuthorityLoaderStub, %{
+      Ezagent.URI.stable_key(admin) => MapSet.new([:admin_self_license]),
+      Ezagent.URI.stable_key(alice) => MapSet.new([:alice_self_license]),
+      Ezagent.URI.stable_key(bob) => MapSet.new([:bob_self_license])
+    })
+
+    on_exit(fn -> Application.put_env(:ezagent_core, Ezagent.Cap, previous) end)
+
     :ok = Ezagent.BehaviorRegistry.register(TestKind, :noop, TestBehavior)
     assert {:ok, pid} = Ezagent.Kind.Server.start_link({TestKind, %{uri: uri}})
     assert :ok = await_ready(uri)
 
-    {:ok,
-     uri: uri,
-     pid: pid,
-     admin: Ezagent.URI.user(:system, :admin),
-     alice: Ezagent.URI.new!("entity://team-alpha/user/alice"),
-     bob: Ezagent.URI.new!("entity://team-alpha/user/bob")}
+    {:ok, uri: uri, pid: pid, admin: admin, alice: alice, bob: bob}
   end
 
   test "K.grant rejects a presenter with no authority-cap-on-K", context do
@@ -86,7 +101,12 @@ defmodule Ezagent.Architecture.CapGrantChainTest do
       target: Ezagent.URI.with_action(uri, :cap, :grant),
       mode: :call,
       args: %{grantee: grantee, cap: cap},
-      ctx: %{caller: presenter, caps: caps, reply: {:caller_inbox, self()}},
+      ctx: %{
+        caller: presenter,
+        authenticated_principal: presenter,
+        caps: caps,
+        reply: {:caller_inbox, self()}
+      },
       origin: :trusted_internal
     })
   end
@@ -96,7 +116,12 @@ defmodule Ezagent.Architecture.CapGrantChainTest do
       target: Ezagent.URI.with_action(uri, :test, :noop),
       mode: :call,
       args: %{msg: message},
-      ctx: %{caller: presenter, caps: caps, reply: {:caller_inbox, self()}},
+      ctx: %{
+        caller: presenter,
+        authenticated_principal: presenter,
+        caps: caps,
+        reply: {:caller_inbox, self()}
+      },
       origin: :authenticated_external
     })
   end

@@ -192,6 +192,7 @@ defmodule Ezagent.E2E.Scenario30PluginGreenfieldTest do
       Map.merge(
         %{
           caller: presenter,
+          authenticated_principal: presenter,
           reply: {:caller_inbox, self()},
           caps: MapSet.new([cap])
         },

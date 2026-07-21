@@ -79,7 +79,7 @@ defmodule Ezagent.Architecture.CapVerifierDominanceTest do
       origin: :trusted_internal
     }
 
-    assert {:error, :presenter_required} =
+    assert {:error, :authenticated_principal_required} =
              GenServer.call(context.pid, {:ezagent_dispatch, vm_invocation})
 
     assert {:ok, %{count: 0}} = Ezagent.Kind.get_slice(context.uri, :test)
@@ -137,7 +137,12 @@ defmodule Ezagent.Architecture.CapVerifierDominanceTest do
       target: context.target,
       mode: :call,
       args: %{msg: "hello"},
-      ctx: %{caller: context.presenter, caps: caps, reply: :ignore},
+      ctx: %{
+        caller: context.presenter,
+        authenticated_principal: context.presenter,
+        caps: caps,
+        reply: :ignore
+      },
       origin: :authenticated_external
     }
   end

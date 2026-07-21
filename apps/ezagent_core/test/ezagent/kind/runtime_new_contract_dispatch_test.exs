@@ -384,6 +384,22 @@ defmodule Ezagent.Kind.RuntimeNewContractDispatchTest do
   # ---------------------------------------------------------------
 
   setup do
+    previous = Application.get_env(:ezagent_core, Ezagent.Cap, [])
+
+    Application.put_env(
+      :ezagent_core,
+      Ezagent.Cap,
+      Keyword.put(previous, :authority_loader, EzagentCore.Test.CapAuthorityLoaderStub)
+    )
+
+    presenter = Ezagent.URI.new!("entity://team-alpha/user/runtime-contract-presenter")
+
+    Application.put_env(:ezagent_core, EzagentCore.Test.CapAuthorityLoaderStub, %{
+      Ezagent.URI.stable_key(presenter) => MapSet.new([:test_holder_license])
+    })
+
+    on_exit(fn -> Application.put_env(:ezagent_core, Ezagent.Cap, previous) end)
+
     :ok = BehaviorRegistry.register(MixedKind, :bump, NewContractBehavior)
     :ok = BehaviorRegistry.register(MixedKind, :record, NewContractBehavior)
     :ok = BehaviorRegistry.register(MixedKind, :emit_only, NewContractBehavior)
@@ -445,6 +461,7 @@ defmodule Ezagent.Kind.RuntimeNewContractDispatchTest do
       args: args,
       ctx: %{
         caller: presenter,
+        authenticated_principal: presenter,
         caps: MapSet.new([signed]),
         reply: :ignore
       }

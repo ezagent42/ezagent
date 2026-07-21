@@ -93,7 +93,12 @@ defmodule Ezagent.ActionSet.SandboxMigrationParityTest do
       target: target,
       mode: :call,
       args: args,
-      ctx: %{caller: presenter, caps: MapSet.new([signed]), reply: :sync}
+      ctx: %{
+        caller: presenter,
+        authenticated_principal: presenter,
+        caps: MapSet.new([signed]),
+        reply: :sync
+      }
     }
   end
 

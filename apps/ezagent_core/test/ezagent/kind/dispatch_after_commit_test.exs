@@ -105,7 +105,11 @@ defmodule Ezagent.Kind.DispatchAfterCommitTest do
           %{},
           # caller :vm_internal is the trusted-in-VM placeholder; enrichment
           # must rewrite it to the emitting Kind's self_uri.
-          %{caller: :vm_internal, reply: :ignore, caps: MapSet.new([cap])}
+          %{
+            caller: :vm_internal,
+            reply: :ignore,
+            caps: MapSet.new([cap])
+          }
         )
 
       {:ok, :ok,
@@ -204,14 +208,28 @@ defmodule Ezagent.Kind.DispatchAfterCommitTest do
   end
 
   defp install_deferred_caps!(uri) do
+    authenticated_principal = Ezagent.Entity.User.admin_uri()
+
     :persistent_term.put(
       {DacBehavior, :probe_cap},
-      signed_fixture_cap!(uri, DacKind.type_name(), DacBehavior, :probe, uri)
+      signed_fixture_cap!(
+        uri,
+        DacKind.type_name(),
+        DacBehavior,
+        :probe,
+        authenticated_principal
+      )
     )
 
     :persistent_term.put(
       {DacBehavior, :probe_fail_cap},
-      signed_fixture_cap!(uri, DacKind.type_name(), DacBehavior, :probe_fail, uri)
+      signed_fixture_cap!(
+        uri,
+        DacKind.type_name(),
+        DacBehavior,
+        :probe_fail,
+        authenticated_principal
+      )
     )
   end
 
@@ -226,6 +244,7 @@ defmodule Ezagent.Kind.DispatchAfterCommitTest do
       args: %{},
       ctx: %{
         caller: presenter,
+        authenticated_principal: presenter,
         caps: MapSet.new([cap]),
         reply: :ignore
       }
@@ -301,6 +320,7 @@ defmodule Ezagent.Kind.DispatchAfterCommitTest do
     cmd =
       Ezagent.Cmd.new(uri, :probe, %{}, %{
         caller: Ezagent.Entity.User.admin_uri(),
+        authenticated_principal: Ezagent.Entity.User.admin_uri(),
         caps: MapSet.new(),
         reply: :ignore
       })

@@ -92,6 +92,7 @@ defmodule Ezagent.LifecycleFollowupTest do
 
     %{
       caller: presenter,
+      authenticated_principal: presenter,
       caps: MapSet.new([cap]),
       reply: {:caller_inbox, self()}
     }

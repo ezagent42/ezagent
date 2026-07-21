@@ -444,6 +444,7 @@ defmodule EzagentDomainInstanceMessage.SessionCreator.Materializer do
             args: %{member: member_uri},
             ctx: %{
               caller: admin_uri,
+              authenticated_principal: admin_uri,
               caps: MapSet.new([signed_cap]),
               reply: {:caller_inbox, self()}
             },

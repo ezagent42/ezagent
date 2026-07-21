@@ -12,6 +12,23 @@ defmodule EzagentCore.Invariants.CrossWorkspaceIsolationTest do
   alias Ezagent.{Cap, Capability, Invocation, Message, SpawnRegistry, WorkspaceRegistry}
   alias Ezagent.Entity.User
 
+  setup do
+    previous = Application.get_env(:ezagent_core, Ezagent.Cap, [])
+
+    Application.put_env(
+      :ezagent_core,
+      Ezagent.Cap,
+      Keyword.put(previous, :authority_loader, EzagentCore.Test.CapAuthorityLoaderStub)
+    )
+
+    Application.put_env(:ezagent_core, EzagentCore.Test.CapAuthorityLoaderStub, %{
+      Ezagent.URI.stable_key(User.admin_uri()) => MapSet.new([:test_holder_license])
+    })
+
+    on_exit(fn -> Application.put_env(:ezagent_core, Ezagent.Cap, previous) end)
+    :ok
+  end
+
   test "intra-workspace target-signed dispatch clears both verifier and isolation gates" do
     context = setup_scenario()
     target = send_target(context.beta_session)
@@ -72,6 +89,15 @@ defmodule EzagentCore.Invariants.CrossWorkspaceIsolationTest do
   end
 
   defp dispatch(target, caller, caps) do
+    by_holder =
+      Application.get_env(:ezagent_core, EzagentCore.Test.CapAuthorityLoaderStub, %{})
+
+    Application.put_env(
+      :ezagent_core,
+      EzagentCore.Test.CapAuthorityLoaderStub,
+      Map.put(by_holder, Ezagent.URI.stable_key(caller), MapSet.new([:test_holder_license]))
+    )
+
     message = Message.new(caller, %{text: "workspace-proof", attachments: []})
 
     Invocation.dispatch(%Invocation{
@@ -79,7 +105,12 @@ defmodule EzagentCore.Invariants.CrossWorkspaceIsolationTest do
       target: target,
       mode: :call,
       args: %{message: message},
-      ctx: %{caller: caller, caps: MapSet.new(caps), reply: :ignore}
+      ctx: %{
+        caller: caller,
+        authenticated_principal: caller,
+        caps: MapSet.new(caps),
+        reply: :ignore
+      }
     })
   end
 

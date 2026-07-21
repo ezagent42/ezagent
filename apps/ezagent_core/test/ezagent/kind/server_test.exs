@@ -51,6 +51,7 @@ defmodule Ezagent.Kind.ServerTest do
       args: %{msg: "hello"},
       ctx: %{
         caller: presenter,
+        authenticated_principal: presenter,
         caps: MapSet.new([cap]),
         reply: :ignore
       }
@@ -72,6 +73,7 @@ defmodule Ezagent.Kind.ServerTest do
       args: %{msg: "via-cast"},
       ctx: %{
         caller: presenter,
+        authenticated_principal: presenter,
         caps: MapSet.new([cap]),
         reply: {:caller_inbox, self()}
       }
@@ -95,6 +97,7 @@ defmodule Ezagent.Kind.ServerTest do
       args: %{msg: "pre-ready"},
       ctx: %{
         caller: presenter,
+        authenticated_principal: presenter,
         caps: MapSet.new([cap]),
         reply: {:caller_inbox, self()}
       }

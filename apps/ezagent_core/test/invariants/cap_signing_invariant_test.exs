@@ -5,6 +5,7 @@ defmodule Ezagent.Invariants.CapSigningInvariantTest do
   alias Ezagent.Test.{TestBehavior, TestKind}
 
   setup do
+    previous = Application.get_env(:ezagent_core, Ezagent.Cap, [])
     :ok = Ezagent.BehaviorRegistry.register(TestKind, :noop, TestBehavior)
 
     uri =
@@ -13,6 +14,20 @@ defmodule Ezagent.Invariants.CapSigningInvariantTest do
       )
 
     presenter = Ezagent.URI.new!("entity://team-alpha/user/cap-invariant-presenter")
+
+    Application.put_env(
+      :ezagent_core,
+      Ezagent.Cap,
+      Keyword.put(previous, :authority_loader, EzagentCore.Test.CapAuthorityLoaderStub)
+    )
+
+    Application.put_env(:ezagent_core, EzagentCore.Test.CapAuthorityLoaderStub, %{
+      Ezagent.URI.stable_key(Ezagent.URI.user(:system, :admin)) =>
+        MapSet.new([:test_holder_license]),
+      Ezagent.URI.stable_key(presenter) => MapSet.new([:test_holder_license])
+    })
+
+    on_exit(fn -> Application.put_env(:ezagent_core, Ezagent.Cap, previous) end)
     assert {:ok, _pid} = Ezagent.Kind.Server.start_link({TestKind, %{uri: uri}})
     assert :ok = await_ready(uri)
 
@@ -30,7 +45,7 @@ defmodule Ezagent.Invariants.CapSigningInvariantTest do
     assert {:ok, %{echoed: "accepted"}} = invoke(context, issued, "accepted")
 
     tampered = %{issued | action: :raise}
-    assert {:error, :invalid_cap_signature} = invoke(context, tampered, "blocked")
+    assert {:error, :missing_cap} = invoke(context, tampered, "blocked")
     assert {:ok, %{count: 1, last_msg: "accepted"}} = Ezagent.Kind.get_slice(context.uri, :test)
   end
 
@@ -52,7 +67,12 @@ defmodule Ezagent.Invariants.CapSigningInvariantTest do
       target: Ezagent.URI.with_action(context.uri, :test, :noop),
       mode: :call,
       args: %{msg: message},
-      ctx: %{caller: context.presenter, caps: MapSet.new([cap]), reply: {:caller_inbox, self()}},
+      ctx: %{
+        caller: context.presenter,
+        authenticated_principal: context.presenter,
+        caps: MapSet.new([cap]),
+        reply: {:caller_inbox, self()}
+      },
       origin: :authenticated_external
     })
   end

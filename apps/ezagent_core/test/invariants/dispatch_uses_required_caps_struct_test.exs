@@ -29,7 +29,7 @@ defmodule EzagentCore.Invariants.DispatchUsesRequiredCapsStructTest do
     source = File.read!(verifier_path())
 
     assert source =~ "needed = required_cap(kind_module, behavior_module, action, target)"
-    assert source =~ "Ezagent.Cap.authorize(presenter, candidates, needed)"
+    assert source =~ "Ezagent.Cap.authorize(holder, candidates, needed)"
     refute source =~ "Enum.find(verified, &Capability.matches?(&1, needed))"
   end
 

@@ -106,6 +106,7 @@ defmodule Ezagent.Integration.SnapshotRestartTest do
                  args: %{},
                  ctx: %{
                    caller: presenter,
+                   authenticated_principal: presenter,
                    caps: MapSet.new([parent_cap]),
                    reply: {:caller_inbox, self()}
                  }

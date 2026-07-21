@@ -1614,6 +1614,7 @@ defmodule Mix.Tasks.Ezagent.Arch.Scan do
 
     runtime = read!(@runtime_file)
     verifier = read!("apps/ezagent_core/lib/ezagent/cap/verifier.ex")
+    authorizer = read!("apps/ezagent_core/lib/ezagent/cap/authorize.ex")
 
     cond do
       not File.exists?(absolute(invariant_test)) ->
@@ -1622,7 +1623,10 @@ defmodule Mix.Tasks.Ezagent.Arch.Scan do
       not String.contains?(runtime, "Ezagent.Cap.Verifier.authorize") ->
         1
 
-      not String.contains?(verifier, "Capability.matches?") ->
+      not String.contains?(verifier, "Ezagent.Cap.authorize(holder") ->
+        1
+
+      not String.contains?(authorizer, "Capability.matches?") ->
         1
 
       true ->

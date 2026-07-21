@@ -489,6 +489,7 @@ defmodule Ezagent.InvocationTest do
   defp ctx_for(pid) do
     %{
       caller: Ezagent.URI.user(:system, :admin),
+      authenticated_principal: Ezagent.URI.user(:system, :admin),
       caps: MapSet.new([Process.get({__MODULE__, :presented_cap})]),
       reply: {:caller_inbox, pid}
     }
