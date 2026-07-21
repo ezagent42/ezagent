@@ -34,8 +34,11 @@ ci.full:
 	$(COMPOSE) run --build --rm ci full-suite
 
 ## ci.repro — hunt the ubuntu-only flake (seed sweep, cpuset=0-3 ~ CI's ~4 vCPU).
+## NOTE: repro NEEDS core affinity (it IS the race engine), so it pins CPUSET explicitly —
+## the compose default is now empty/no-pin (the deterministic gate must not pin; see
+## docker/docker-compose.ci.yml). Keep this 0-3 to mirror CI's ~4 vCPU.
 ci.repro:
-	$(COMPOSE) run --rm ci repro
+	CPUSET=0-3 SCHEDULERS=4 $(COMPOSE) run --rm ci repro
 
 ## ci.repro.amplify — same hunt, MORE race pressure: 2 cores + oversubscribed cases.
 ci.repro.amplify:
