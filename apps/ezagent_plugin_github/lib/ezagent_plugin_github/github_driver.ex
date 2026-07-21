@@ -1,0 +1,123 @@
+defmodule EzagentPluginGithub.GitHubDriver do
+  @moduledoc """
+  Driver behaviour implementation for the GitHub OAuth App provider.
+
+  Implements all 8 `Ezagent.ProviderConnection.Driver` callbacks to support
+  the GitHub OAuth App authorization lifecycle — begin, consume, refresh,
+  revoke, and discard operations.
+
+  ## Callback summary
+
+    * `begin_authorization/1` — constructs a GitHub OAuth authorization URL
+      via the exchange function. The redirect contains `authorization_uri`,
+      `state`, and `pkce_digest` (URL-safe base64 SHA256 of the verifier).
+
+    * `consume_callback/1` — exchanges the authorization code for an access
+      token via `GitHubOAuth.exchange_code/2`.
+
+    * `refresh/1` — no-op (OAuth App tokens never expire). Calls
+      `CredentialRefreshExchange.consume_refresh_exchange/1`.
+
+    * `reconcile_callback/1`, `reconcile_refresh/1` — return
+      `{:ok, :not_completed}`.
+
+    * `discard_callback_result/1`, `discard_refresh_result/1` — return `:ok`.
+
+    * `revoke/1` — returns `{:ok, %{revoked: true}}`.
+  """
+
+  @behaviour Ezagent.ProviderConnection.Driver
+
+  alias EzagentPluginGithub.GitHubOAuth
+
+  @redirect_uri "https://ezagent.example/github/callback"
+
+  @impl true
+  def begin_authorization(%{exchange: exchange} = _context) when is_function(exchange, 1) do
+    exchange.(fn private_frame ->
+      url = GitHubOAuth.authorize_url(@redirect_uri, private_frame.state)
+
+      pkce_digest =
+        :crypto.hash(:sha256, private_frame.pkce_verifier) |> Base.url_encode64(padding: false)
+
+      {:ok,
+       %{
+         redirect: %{
+           "authorization_uri" => url,
+           "state" => private_frame.state,
+           "pkce_digest" => pkce_digest
+         }
+       }}
+    end)
+  end
+
+  def begin_authorization(_context), do: {:error, :provider_protocol_failed}
+
+  @impl true
+  def consume_callback(%{exchange: exchange} = context) when is_function(exchange, 1) do
+    exchange.(fn private_frame ->
+      code = private_frame.callback_envelope[:code] || private_frame.callback_envelope["code"]
+
+      case GitHubOAuth.exchange_code(code, @redirect_uri) do
+        {:ok, %{access_token: token}} ->
+          result_ref =
+            "gh-result-#{:crypto.strong_rand_bytes(8) |> Base.encode16(case: :lower)}"
+
+          {:ok,
+           %{
+             provider_result_ref: result_ref,
+             external_account_id: token,
+             display_login: "github-user",
+             execution_identity: %{kind: :connected_user, external_account_id: token},
+             authorization_ref: context.authorization_ref,
+             authorization_version:
+               (Map.get(context, :expected_authorization_version, 0) || 0) + 1,
+             credential_material: {:write_only_handoff, "github-token:#{token}"},
+             granted_permissions_digest: "repo",
+             expires_at: nil,
+             provider_metadata: %{}
+           }}
+
+        {:error, reason} ->
+          {:error, reason}
+      end
+    end)
+  end
+
+  def consume_callback(_context), do: {:error, :provider_protocol_failed}
+
+  @impl true
+  def reconcile_callback(_context), do: {:ok, :not_completed}
+
+  @impl true
+  def refresh(%{refresh_use: refresh_use} = context) do
+    Ezagent.ProviderConnection.CredentialRefreshExchange.consume_refresh_exchange(%{
+      refresh_use: refresh_use,
+      provider_exchange: fn _private_frame ->
+        {:ok,
+         %{
+           provider_result_ref: "gh-refresh-noop",
+           credential_material:
+             context[:current_credential_material] || {:write_only_handoff, "github-noop-token"},
+           granted_permissions_digest: "repo",
+           expires_at: nil,
+           provider_metadata: %{}
+         }}
+      end
+    })
+  end
+
+  def refresh(_context), do: {:error, :provider_protocol_failed}
+
+  @impl true
+  def reconcile_refresh(_context), do: {:ok, :not_completed}
+
+  @impl true
+  def discard_callback_result(_context), do: :ok
+
+  @impl true
+  def discard_refresh_result(_context), do: :ok
+
+  @impl true
+  def revoke(_context), do: {:ok, %{revoked: true}}
+end
