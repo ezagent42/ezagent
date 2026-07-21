@@ -26,7 +26,10 @@ defmodule Ezagent.ActionSet.Session.Reconcile do
   # ## Bounded, no global scan, delivery NEVER calls it (§4.4)
   #
   #   1. `ws = workspace_of(S)` (O(1)).
-  #   2. candidates = `Users.list_in_workspace(ws)` ∪ `Entity.Agent.list_in_workspace(ws)`.
+  #   2. candidates = `InternalReads.users_in_workspace(ws)` ∪
+  #      `InternalReads.agents_in_workspace(ws)` (the raw `Users`/
+  #      `Entity.Agent` enumeration primitives are reached only through the
+  #      InternalReads gateway — read-plane §3.4).
   #   3. per candidate: read LIVE caps (`read_entity_caps/1`), apply the K4
   #      `granted_by_entity?/1` provenance filter BEFORE the EXACT-identity test
   #      (`identity_key/1` equality, NOT `matches?/2` — see `member_cap_holder?/3`)
@@ -42,6 +45,8 @@ defmodule Ezagent.ActionSet.Session.Reconcile do
   # the persisted projection unchanged rather than crashing the Kind boot.
 
   require Logger
+
+  alias Ezagent.Session.InternalReads
 
   @doc """
   Reconcile `persisted_members` against the authoritative member-cap holder set
@@ -79,8 +84,8 @@ defmodule Ezagent.ActionSet.Session.Reconcile do
 
   # candidates = users ∪ agents in the workspace (both kinds carry member-caps).
   defp candidate_uris(%URI{} = ws) do
-    users = ws |> Ezagent.Users.list_in_workspace() |> Enum.map(& &1.uri)
-    agents = Ezagent.Entity.Agent.list_in_workspace(ws)
+    users = ws |> InternalReads.users_in_workspace() |> Enum.map(& &1.uri)
+    agents = InternalReads.agents_in_workspace(ws)
     Enum.uniq(users ++ agents)
   end
 

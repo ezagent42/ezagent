@@ -3,7 +3,8 @@ defmodule Ezagent.ActionSet.Session.Delivery do
 
   require Logger
 
-  alias Ezagent.{Cmd, Message, MessageStore}
+  alias Ezagent.{Cmd, Message}
+  alias Ezagent.Session.InternalReads
 
   @doc """
   Fan ONE recipient's delivery OFF the `handle_send` hot path
@@ -387,7 +388,10 @@ defmodule Ezagent.ActionSet.Session.Delivery do
         :ok
 
       last_seen_at ->
-        for msg <- MessageStore.in_session_since(session_uri, last_seen_at) do
+        # The replay READ routes through the InternalReads gateway (read-plane
+        # §3.4) — a framework-internal, no-principal read never touches the raw
+        # store directly.
+        for msg <- InternalReads.messages_since(session_uri, last_seen_at) do
           dispatch_receive_call(member_uri, msg, session_uri)
         end
 
