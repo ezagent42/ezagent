@@ -218,11 +218,13 @@ defmodule EzagentPluginHello.Application do
 
   # The supervisor for off-process page-generation Tasks (the LLM round-trip),
   # the #185 env→curl credential bridge (env-gated; no-op without
-  # `DEEPSEEK_API_KEY`), plus an OPT-IN boot seed (off by default).
+  # `DEEPSEEK_API_KEY`), the governed 官网 (`system/hello/web`) deploy-seed
+  # (config-gated, dev/prod), plus an OPT-IN demo boot seed (off by default).
   @impl Ezagent.Plugin
   def children do
     [{Task.Supervisor, name: EzagentPluginHello.TaskSupervisor}] ++
-      credential_bridge_children() ++ demo_seed_children() ++ migrate_children()
+      credential_bridge_children() ++
+      official_site_children() ++ demo_seed_children() ++ migrate_children()
   end
 
   # #185 — the env→curl credential bridge. At boot (the SAME plugin boot the
@@ -267,6 +269,51 @@ defmodule EzagentPluginHello.Application do
 
       {:error, reason} ->
         Logger.warning("hello credential bridge failed: #{inspect(reason)}")
+    end
+  end
+
+  # The governed 官网 deploy-seed. At boot (config-gated dev/prod on, test off —
+  # `:site_seed_boot`, matching `:credential_bridge_boot`), idempotently ensure
+  # `session://system/hello/web` is provisioned: the marketing ruihua page +
+  # the front-desk/builder/concierge/curl-`llm` greeter, with the DeepSeek
+  # credential wired first. Absence-gated (only (re)provisions when the site has
+  # no page) so a reseed self-heals while a plain reboot preserves a live
+  # `refresh_hello_site.exs` refresh. One-shot transient Task; fail-soft (a
+  # failure is logged, never crashes boot). See `EzagentPluginHello.OfficialSiteSeed`.
+  defp official_site_children do
+    if EzagentPluginHello.OfficialSiteSeed.boot_enabled?() do
+      [
+        Supervisor.child_spec({Task, &run_official_site_seed/0},
+          id: :hello_official_site_seed,
+          restart: :transient
+        )
+      ]
+    else
+      []
+    end
+  end
+
+  defp run_official_site_seed do
+    # Let the session / socialware / identity supervisors settle before driving a
+    # Turn (same rationale as the demo seed). Credential ordering is NOT carried
+    # by this delay — `OfficialSiteSeed.ensure/0` ensures the DeepSeek source
+    # itself as its first step, so the `llm` member is born credentialed
+    # regardless of how the standalone credential-bridge child is scheduled.
+    Process.sleep(3_000)
+
+    case EzagentPluginHello.OfficialSiteSeed.ensure() do
+      {:ok, {:already_provisioned, uri}} ->
+        Logger.info(
+          "hello official-site seed: #{URI.to_string(uri)} already provisioned — skipped"
+        )
+
+      {:ok, {:provisioned, uri, turn_id}} ->
+        Logger.info(
+          "hello official-site seed: provisioned #{URI.to_string(uri)} (turn #{turn_id}) — open /hello/web"
+        )
+
+      {:error, reason} ->
+        Logger.warning("hello official-site seed failed: #{inspect(reason)}")
     end
   end
 
