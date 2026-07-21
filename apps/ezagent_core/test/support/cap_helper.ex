@@ -224,7 +224,9 @@ defmodule Ezagent.Test.CapHelper do
         caps
       end
 
-    Map.put(ctx, :caps, caps)
+    ctx
+    |> Map.put(:authenticated_principal, presenter)
+    |> Map.put(:caps, caps)
   end
 
   @doc "Apply `signed_ctx!/3` to a test invocation's target and context."
@@ -293,6 +295,7 @@ defmodule Ezagent.Test.CapHelper do
 
     %{
       caller: presenter,
+      authenticated_principal: presenter,
       caps: MapSet.new([signed_cap!(workspace_uri, presenter, requested)])
     }
   end

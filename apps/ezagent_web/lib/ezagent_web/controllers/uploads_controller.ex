@@ -186,7 +186,7 @@ defmodule EzagentWeb.UploadsController do
             |> Enum.flat_map(fn m -> MessageStore.sessions_for_message(m.id) end)
             |> Enum.uniq()
 
-          caller_sent_in_any_session?(caller_str, attaching_session_uris)
+          caller_member_of_any_session?(caller_uri, attaching_session_uris)
         end
     end
   end
@@ -231,18 +231,26 @@ defmodule EzagentWeb.UploadsController do
 
   defp attachment_matches?(_, _), do: false
 
-  defp caller_sent_in_any_session?(_caller_str, []), do: false
+  defp caller_member_of_any_session?(_caller, []), do: false
 
-  defp caller_sent_in_any_session?(caller_str, session_uris) when is_list(session_uris) do
-    # Message session-scoping (2026-06-21): messages carry `session_uri` directly
-    # (the `message_routings` join table was removed).
-    from(m in Message,
-      where: m.sender == ^caller_str and m.session_uri in ^session_uris,
-      select: 1,
-      limit: 1
-    )
-    |> Repo.exists?()
+  defp caller_member_of_any_session?(%URI{} = caller, session_uris) when is_list(session_uris) do
+    Enum.any?(session_uris, fn
+      %URI{} = session_uri ->
+        Ezagent.Socialware.SessionReads.authorized?(caller, session_uri)
+
+      session_uri when is_binary(session_uri) ->
+        session_uri
+        |> EzURI.new!()
+        |> then(&Ezagent.Socialware.SessionReads.authorized?(caller, &1))
+
+      _ ->
+        false
+    end)
+  rescue
+    _ -> false
   end
+
+  defp caller_member_of_any_session?(_caller, _sessions), do: false
 
   # SQL LIKE pattern matching the filename anywhere in CAST(body AS TEXT). We
   # escape `%`, `_`, `\` with `\` as the escape char (paired with an explicit

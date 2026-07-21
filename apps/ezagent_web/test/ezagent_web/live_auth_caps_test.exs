@@ -60,7 +60,12 @@ defmodule EzagentWeb.LiveAuthCapsTest do
                build_socket()
              )
 
-    assert Ezagent.Domain.Pty.Access.may_read?(agent_uri, socket.assigns.current_caps)
+    assert Ezagent.Domain.Pty.Access.may_read?(
+             user_uri,
+             agent_uri,
+             socket.assigns.current_caps
+           )
+
     assert_signed_cap_for(socket.assigns.current_caps, cap, user_uri)
   end
 
@@ -102,7 +107,12 @@ defmodule EzagentWeb.LiveAuthCapsTest do
                build_socket()
              )
 
-    assert Ezagent.Domain.Pty.Access.may_read?(owned_uri, socket.assigns.current_caps)
+    assert Ezagent.Domain.Pty.Access.may_read?(
+             principal_uri,
+             owned_uri,
+             socket.assigns.current_caps
+           )
+
     assert_signed_cap_for(socket.assigns.current_caps, requested_cap, principal_uri)
   end
 

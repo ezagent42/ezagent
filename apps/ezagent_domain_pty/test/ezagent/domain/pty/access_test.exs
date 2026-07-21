@@ -1,65 +1,130 @@
 defmodule Ezagent.Domain.Pty.AccessTest do
   @moduledoc """
-  The terminal-read gate.
-
-  Before this gate, both world-plugin read exits (the `pty_terminal` component
-  state and `WorldLive`'s PubSub subscription) took the agent URI straight from
-  the URL and served the live output + scrollback with NO capability check and NO
-  workspace check — any authenticated entity could watch any agent's terminal in
-  any workspace, including the `claude /login` codes typed into it.
-
-  Allen, 2026-07-14: the terminal belongs to the creator. These pin that.
+  F-4 terminal-read gate: a target-signed Manage cap authorizes only while the
+  target generation and authenticated holder are both current.
   """
-  use ExUnit.Case, async: true
 
+  use EzagentCore.DataCase, async: false
+
+  alias Ezagent.Cap.Authority
+  alias Ezagent.Capability
   alias Ezagent.Domain.Pty.Access, as: PtyAccess
 
-  @agent Ezagent.URI.new!("entity://team-alpha/agent/cc_mine")
-  @other Ezagent.URI.new!("entity://team-alpha/agent/cc_someone-elses")
-  @creator Ezagent.URI.new!("entity://team-alpha/user/creator")
+  setup do
+    previous = Application.get_env(:ezagent_core, Ezagent.Cap, [])
 
-  # EXACTLY the cap agent creation mints for the creator today. Nothing added.
-  defp creator_cap(agent_uri) do
-    Ezagent.CreatorGrant.manage_cap(
-      :agent,
-      agent_uri,
-      Ezagent.URI.new!("workspace://team-alpha"),
-      @creator
+    Application.put_env(
+      :ezagent_core,
+      Ezagent.Cap,
+      Keyword.put(previous, :authority_loader, EzagentCore.Test.CapAuthorityLoaderStub)
+    )
+
+    on_exit(fn -> Application.put_env(:ezagent_core, Ezagent.Cap, previous) end)
+    :ok
+  end
+
+  test "the creator may watch their own agent with its current target-signed Manage cap" do
+    holder = unique_user("creator")
+    agent = unique_agent("mine")
+    cap = signed_manage_cap(agent, holder)
+    license(holder, [cap])
+
+    assert PtyAccess.may_read?(holder, agent, MapSet.new([cap]))
+  end
+
+  test "a bumped agent generation immediately closes PTY read access" do
+    holder = unique_user("creator")
+    agent = unique_agent("bumped")
+    cap = signed_manage_cap(agent, holder)
+    license(holder, [cap])
+
+    assert PtyAccess.may_read?(holder, agent, [cap])
+    assert {:ok, _} = Authority.regenesis(agent, :agent, admin())
+    refute PtyAccess.may_read?(holder, agent, [cap])
+  end
+
+  test "an authenticated holder with no caps may not watch" do
+    holder = unique_user("empty")
+    agent = unique_agent("closed")
+    license(holder, [:principal_is_live])
+
+    refute PtyAccess.may_read?(holder, agent, MapSet.new())
+  end
+
+  test "a Manage cap on another agent does not open this one" do
+    holder = unique_user("creator")
+    agent = unique_agent("mine")
+    other = unique_agent("other")
+    cap = signed_manage_cap(other, holder)
+    license(holder, [cap])
+
+    refute PtyAccess.may_read?(holder, agent, [cap])
+  end
+
+  test "a target-signed Pty-behavior cap does not substitute for Manage" do
+    holder = unique_user("creator")
+    agent = unique_agent("wrong-behavior")
+    {:ok, authority} = Authority.open(agent, :agent)
+
+    cap =
+      %Capability{
+        kind: :agent,
+        behavior: Ezagent.ActionSet.Pty,
+        action: :any,
+        instance: agent,
+        workspace_uri: Capability.workspace_of(agent),
+        granted_by: holder,
+        granted_at: DateTime.utc_now(),
+        grantee_uri: holder
+      }
+      |> then(&Authority.sign(authority, &1))
+
+    license(holder, [cap])
+    refute PtyAccess.may_read?(holder, agent, [cap])
+  end
+
+  test "garbage in the holder or caps position is refused, not crashed" do
+    agent = unique_agent("garbage")
+    holder = unique_user("creator")
+
+    refute PtyAccess.may_read?(nil, agent, [])
+    refute PtyAccess.may_read?(holder, agent, nil)
+    refute PtyAccess.may_read?(holder, agent, :not_caps)
+  end
+
+  defp signed_manage_cap(agent, holder) do
+    {:ok, authority} = Authority.open(agent, :agent)
+
+    cap =
+      Ezagent.CreatorGrant.manage_cap(
+        :agent,
+        agent,
+        Capability.workspace_of(agent),
+        holder
+      )
+
+    cap
+    |> Map.put(:grantee_uri, holder)
+    |> then(&Authority.sign(authority, &1))
+  end
+
+  defp license(holder, caps) do
+    Application.put_env(:ezagent_core, EzagentCore.Test.CapAuthorityLoaderStub, %{
+      Ezagent.URI.stable_key(holder) => MapSet.new(caps)
+    })
+  end
+
+  defp unique_agent(suffix) do
+    Ezagent.URI.new!(
+      "entity://team-alpha/agent/f4-#{suffix}-#{System.unique_integer([:positive])}"
     )
   end
 
-  test "the creator may watch their own agent's terminal — with the cap they already hold" do
-    assert PtyAccess.may_read?(@agent, MapSet.new([creator_cap(@agent)]))
+  defp unique_user(suffix) do
+    Ezagent.URI.new!(
+      "entity://team-alpha/user/f4-#{suffix}-#{System.unique_integer([:positive])}"
+    )
   end
 
-  test "admin's genesis cap may watch any terminal" do
-    assert PtyAccess.may_read?(@agent, MapSet.new([Ezagent.Capability.admin_genesis_cap()]))
-  end
-
-  test "an authenticated user holding NO caps may not watch — this was the hole" do
-    refute PtyAccess.may_read?(@agent, MapSet.new())
-  end
-
-  test "a manage cap on ANOTHER agent does not open this one" do
-    refute PtyAccess.may_read?(@agent, MapSet.new([creator_cap(@other)]))
-  end
-
-  test "a Pty-behavior cap does not open the terminal — the authority is Manage" do
-    pty_cap = %Ezagent.Capability{
-      kind: :agent,
-      behavior: Ezagent.ActionSet.Pty,
-      action: :any,
-      instance: @agent,
-      workspace_uri: Ezagent.URI.new!("workspace://team-alpha"),
-      granted_by: @creator,
-      granted_at: DateTime.utc_now()
-    }
-
-    refute PtyAccess.may_read?(@agent, MapSet.new([pty_cap]))
-  end
-
-  test "garbage in the caps position is refused, not crashed" do
-    refute PtyAccess.may_read?(@agent, nil)
-    refute PtyAccess.may_read?(@agent, :not_caps)
-  end
+  defp admin, do: Ezagent.URI.user(:system, :admin)
 end
