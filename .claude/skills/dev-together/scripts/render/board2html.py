@@ -107,7 +107,7 @@ def render_system_closures(closures):
 
 def render_method_delta(delta):
     if isinstance(delta, str):
-        return "• " + e(delta)
+        return '<div class="method-delta legacy">• ' + e(delta) + "</div>"
     labels = [
         ("Finding", "finding"),
         ("X problem", "x_problem"),
