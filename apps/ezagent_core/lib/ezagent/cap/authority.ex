@@ -50,6 +50,32 @@ defmodule Ezagent.Cap.Authority do
   end
 
   @doc false
+  @spec current_generation(URI.t()) :: {:ok, pos_integer()} | :error
+  def current_generation(%URI{} = uri) do
+    case KindCapAuthority.active(Ezagent.URI.stable_key(Ezagent.URI.instance(uri))) do
+      %KindCapAuthority{generation: generation} when is_integer(generation) and generation > 0 ->
+        {:ok, generation}
+
+      nil ->
+        :error
+    end
+  rescue
+    _ -> :error
+  end
+
+  @doc false
+  @spec current_process_generation(URI.t()) :: {:ok, pos_integer()} | :error
+  def current_process_generation(%URI{} = target) do
+    case Process.get({__MODULE__, :current}) do
+      %__MODULE__{uri: uri, generation: generation} ->
+        if same_uri?(uri, Ezagent.URI.instance(target)), do: {:ok, generation}, else: :error
+
+      nil ->
+        :error
+    end
+  end
+
+  @doc false
   @spec retire(URI.t()) :: :ok
   def retire(%URI{} = uri), do: KindCapAuthority.retire_active(Ezagent.URI.stable_key(uri))
 

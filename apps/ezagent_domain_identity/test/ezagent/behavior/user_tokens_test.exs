@@ -225,8 +225,9 @@ defmodule Ezagent.ActionSet.UserTokensTest do
          %{user_uri: user_uri, ctx: ctx} do
       n = System.unique_integer([:positive])
       other_workspace = "ut-other-" <> Integer.to_string(n)
-      other_uri = URI.parse("entity://" <> other_workspace <> "/user/bob")
+      other_uri = Ezagent.URI.new!("entity://" <> other_workspace <> "/user/bob")
       {:ok, _decoded} = Ezagent.Users.create(other_uri, nil, [])
+      {:ok, _authority} = Ezagent.Cap.Authority.open(other_uri, :user)
       {_plain, other_row} = Ezagent.Entity.Token.mint(other_uri, label: "bob-token")
 
       assert {:error, {:cross_entity_token, requested_owner: requested, actual_owner: actual}} =
@@ -251,6 +252,7 @@ defmodule Ezagent.ActionSet.UserTokensTest do
     user_uri = Ezagent.URI.new!("entity://#{ws_name}/user/alice")
 
     {:ok, _decoded} = Users.create(user_uri, nil, [])
+    {:ok, _authority} = Ezagent.Cap.Authority.open(user_uri, :user)
 
     ctx = %{
       caller: user_uri,

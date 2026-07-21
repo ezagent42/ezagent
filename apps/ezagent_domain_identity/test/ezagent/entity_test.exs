@@ -79,6 +79,7 @@ defmodule Ezagent.EntityTest do
       uri_str = "entity://team-alpha/user/pwonly-#{System.unique_integer([:positive])}"
       {:ok, _} = Users.create(uri_str, "correct-password", [])
       uri = Ezagent.URI.new!(uri_str)
+      assert {:ok, _authority} = Ezagent.Cap.Authority.open(uri, :user)
       {plain_token, _row} = Ezagent.Entity.Token.mint(uri, label: "cli")
 
       # token must NOT authenticate on the form path
@@ -94,6 +95,7 @@ defmodule Ezagent.EntityTest do
       uri_str = "entity://team-alpha/user/disabled-auth-#{System.unique_integer([:positive])}"
       {:ok, _} = Users.create(uri_str, "correct-password", [])
       uri = Ezagent.URI.new!(uri_str)
+      assert {:ok, _authority} = Ezagent.Cap.Authority.open(uri, :user)
       {plain_token, _row} = Ezagent.Entity.Token.mint(uri, label: "cli")
 
       assert {:ok, %{caps: _}} = Entity.authenticate_password(uri, "correct-password")

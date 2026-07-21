@@ -44,6 +44,7 @@ defmodule Ezagent.ActionSet.UserTokensMigrationParityTest do
     n = System.unique_integer([:positive])
     user_uri = Ezagent.URI.new!("entity://ut-parity-#{n}/user/alice")
     {:ok, _decoded} = Users.create(user_uri, nil, [])
+    {:ok, _authority} = Ezagent.Cap.Authority.open(user_uri, :user)
 
     state = %{user_tokens: UserTokens.init_slice(%{})}
 
@@ -103,8 +104,9 @@ defmodule Ezagent.ActionSet.UserTokensMigrationParityTest do
          %{user_uri: user_uri, state: state} do
       n = System.unique_integer([:positive])
       other_workspace = "ut-parity-other-" <> Integer.to_string(n)
-      other_uri = URI.parse("entity://" <> other_workspace <> "/user/bob")
+      other_uri = Ezagent.URI.new!("entity://" <> other_workspace <> "/user/bob")
       {:ok, _} = Users.create(other_uri, nil, [])
+      {:ok, _authority} = Ezagent.Cap.Authority.open(other_uri, :user)
       {_plain, other_row} = Token.mint(other_uri, label: "bob-token")
 
       inv = build_invocation(user_uri, :revoke_token, %{token_id: other_row.id})
