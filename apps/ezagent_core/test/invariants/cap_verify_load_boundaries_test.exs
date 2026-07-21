@@ -10,9 +10,13 @@ defmodule Ezagent.Invariants.CapVerifyLoadBoundariesTest do
   cryptographic authority; the target Kind verifies its own signature at
   dispatch.
 
-  Git task access is the one signed-only consumption boundary: core remains in
-  legacy dual-read mode, while provider effects require an exact receiver-bound
-  artifact immediately before adapter selection.
+  Git task access carries NO in-handler storage-boundary re-scan: every
+  `GitTaskAccess` action is cap-gated, so the runtime dispatch verifier
+  (`Cap.Verifier.authorize/5`, step 5.5) already strictly crypto-verifies the
+  presented receiver-bound artifact before the handler runs. The handler adds
+  only the policy-grantee binding (`caller == policy.grantee_uri`); a duplicate
+  in-handler `storable_for?`/`signed_for?` check was a forgeable presence-only
+  gate and is removed (see AuthorizeChokepointRatchetTest).
   """
   use ExUnit.Case, async: true
 
@@ -24,7 +28,6 @@ defmodule Ezagent.Invariants.CapVerifyLoadBoundariesTest do
   @snapshot "apps/ezagent_core/lib/ezagent/kind/snapshot.ex"
   @cap "apps/ezagent_core/lib/ezagent/cap.ex"
   @cli_dispatch "apps/ezagent_cli/lib/ezagent_cli/dispatch.ex"
-  @git_task_access "apps/ezagent_domain_git/lib/ezagent/behavior/git_task_access.ex"
   @provider_connection "apps/ezagent_domain_provider_connection/lib/ezagent/behavior/provider_connection.ex"
 
   @storage_homes %{
@@ -32,10 +35,9 @@ defmodule Ezagent.Invariants.CapVerifyLoadBoundariesTest do
     @entity_caps => 1,
     @recipe_cap_binding => 1,
     @outbound_grant => 1,
-    @snapshot => 1,
-    @git_task_access => 1
+    @snapshot => 1
   }
-  @storage_home_count 8
+  @storage_home_count 7
 
   test "I5 structural storage boundary calls are exact, ratcheted, and at most eight" do
     actual = cap_storage_calls()
@@ -86,10 +88,6 @@ defmodule Ezagent.Invariants.CapVerifyLoadBoundariesTest do
 
     assert definition_source(@outbound_grant, :normalize_attrs, 1) =~
              "Ezagent.Cap.storable_for?"
-
-    git_authorizer = definition_source(@git_task_access, :authorize_receiver, 3)
-    assert git_authorizer =~ "signed_for?"
-    assert git_authorizer =~ "Cap.storable_for?"
 
     assert definition_source(@snapshot, :load_with_fallback, 3) =~
              "verify_snapshot_caps(receiver_uri)"

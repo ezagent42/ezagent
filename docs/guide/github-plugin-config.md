@@ -9,7 +9,7 @@
 | Variable | Purpose | Example |
 |---|---|---|
 | `GITHUB_CLIENT_ID` | GitHub OAuth App client ID | `Iv1.abcdef1234567890` |
-| `GITHUB_CLIENT_SECRET` | GitHub OAuth App client secret | `abc123def456...` |
+| `GITHUB_CLIENT_SECRET` | GitHub OAuth App client secret | `<your-github-oauth-client-secret>` |
 | `GITHUB_TOKEN_ENCRYPTION_KEY` | 32-byte AES-256-GCM key, base64-encoded | `uV0Jc1//tGxYs2Rf4Q==` (truncated) |
 
 ### GITHUB_TOKEN_ENCRYPTION_KEY
@@ -73,7 +73,7 @@ For local development, you can set the variables in a `.envrc` or shell profile:
 
 ```bash
 export GITHUB_CLIENT_ID="Iv1.abcdef1234567890"
-export GITHUB_CLIENT_SECRET="abc123def456..."
+export GITHUB_CLIENT_SECRET="<your-github-oauth-client-secret>"
 export GITHUB_TOKEN_ENCRYPTION_KEY="$(openssl rand -base64 32)"
 ```
 

@@ -23,6 +23,14 @@ defmodule EzagentPluginGithub.GitHubCredentialBackendTest do
     end
   end
 
+  defp store_probe do
+    @backend.store(%{
+      credential_material: {:write_only_handoff, "gho-probe-token"},
+      backend_pair_id: "pair-github-v1",
+      correlation_id: "encryption-key-probe"
+    })
+  end
+
   describe "TokenStore encrypt/decrypt" do
     test "encrypt/decrypt round trip" do
       key = :crypto.strong_rand_bytes(32)
@@ -176,6 +184,45 @@ defmodule EzagentPluginGithub.GitHubCredentialBackendTest do
   describe "consume_refresh_exchange" do
     test "returns backend_unavailable" do
       assert {:error, :backend_unavailable} = @backend.consume_refresh_exchange(%{})
+    end
+  end
+
+  describe "encryption key fail-loud (configured-but-invalid)" do
+    setup do
+      prev = Application.fetch_env(:ezagent_plugin_github, :token_encryption_key)
+
+      on_exit(fn ->
+        case prev do
+          {:ok, value} ->
+            Application.put_env(:ezagent_plugin_github, :token_encryption_key, value)
+
+          :error ->
+            Application.delete_env(:ezagent_plugin_github, :token_encryption_key)
+        end
+      end)
+
+      :ok
+    end
+
+    test "raises on a malformed (non-base64) configured key instead of silent fallback" do
+      Application.put_env(:ezagent_plugin_github, :token_encryption_key, "not-valid-base64!!!")
+
+      assert_raise RuntimeError, ~r/Invalid GITHUB_TOKEN_ENCRYPTION_KEY/, fn -> store_probe() end
+    end
+
+    test "raises on a valid-base64 but wrong-length configured key" do
+      wrong_length = Base.encode64(:crypto.strong_rand_bytes(16))
+      Application.put_env(:ezagent_plugin_github, :token_encryption_key, wrong_length)
+
+      assert_raise RuntimeError, ~r/Invalid GITHUB_TOKEN_ENCRYPTION_KEY/, fn -> store_probe() end
+    end
+
+    test "accepts a valid base64-encoded 32-byte configured key" do
+      valid = Base.encode64(:crypto.strong_rand_bytes(32))
+      Application.put_env(:ezagent_plugin_github, :token_encryption_key, valid)
+
+      assert {:ok, %{credential_ref: ref, credential_version: 1}} = store_probe()
+      assert is_binary(ref)
     end
   end
 end

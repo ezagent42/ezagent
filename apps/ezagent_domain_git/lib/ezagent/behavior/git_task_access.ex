@@ -20,8 +20,6 @@ defmodule Ezagent.ActionSet.GitTaskAccess do
   }
 
   alias Ezagent.Entity.GitTaskAccess
-  alias Ezagent.Cap
-  alias Ezagent.Capability.Authorization
 
   @actions [
     :resolve_repository,
@@ -284,24 +282,21 @@ defmodule Ezagent.ActionSet.GitTaskAccess do
     })
   end
 
+  # Runtime dispatch step 5.5 (`Cap.Verifier.authorize/5`) already strictly
+  # crypto-verifies the presented cap for every cap-gated action here — signature
+  # valid under the target Kind's current authority, bound to the authenticated
+  # presenter (caller), and matching the required shape — before this handler
+  # runs. The one authorization fact the in-handler adds beyond step 5.5 is
+  # binding the presenter to THIS policy's grantee. A redundant in-handler cap
+  # re-scan would only duplicate 5.5 with a forgeable presence-only check — the
+  # `AuthorizeChokepointRatchetTest` :bare_match_authorization_authorizes offender.
   defp authorize_receiver(policy, action, ctx) do
     caller = Map.get(ctx, :caller)
 
-    needed = %{
-      kind: :git_task_access,
-      behavior: __MODULE__,
-      action: action,
-      instance: Map.get(ctx, :self_uri),
-      workspace_uri: policy.workspace_uri
-    }
-
-    with true <- authorized_receiver?(action, caller, policy),
-         {:ok, cap} <- Authorization.authorizing_cap(Map.get(ctx, :caps), needed),
-         true <- signed_for?(cap, caller),
-         true <- Cap.storable_for?(cap, caller) do
+    if authorized_receiver?(action, caller, policy) do
       :ok
     else
-      _ -> {:error, :unauthorized}
+      {:error, :unauthorized}
     end
   end
 
@@ -312,20 +307,6 @@ defmodule Ezagent.ActionSet.GitTaskAccess do
     do: caller == policy.grantee_uri
 
   defp authorized_receiver?(_action, caller, policy), do: caller == policy.grantee_uri
-
-  defp signed_for?(
-         %{
-           signature: signature,
-           key_id: key_id,
-           grantee_uri: grantee_uri
-         },
-         receiver
-       )
-       when is_binary(signature) and byte_size(signature) > 0 and is_binary(key_id) and
-              byte_size(key_id) > 0,
-       do: grantee_uri == receiver
-
-  defp signed_for?(_cap, _receiver), do: false
 
   defp lookup_adapter(provider_adapter) do
     case AdapterRegistry.lookup_for_action_set(Atom.to_string(provider_adapter)) do
