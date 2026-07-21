@@ -164,7 +164,7 @@ defmodule Ezagent.ProviderConnection.LocalAuthorizationBackend.Exchange do
              snapshot,
              :credential_handoff,
              envelope,
-             Support.handoff_aad(row, attempt.correlation_id, operation.handoff_ref)
+             Support.handoff_aad(row, attempt.correlation_id, operation.handoff_ref, operation.operation_class)
            ),
          {:ok, result} <-
            apply_credential_effect(
@@ -210,7 +210,7 @@ defmodule Ezagent.ProviderConnection.LocalAuthorizationBackend.Exchange do
              snapshot,
              :credential_handoff,
              envelope,
-             Support.handoff_aad(row, attempt.correlation_id, operation.handoff_ref)
+             Support.handoff_aad(row, attempt.correlation_id, operation.handoff_ref, operation.operation_class)
            ),
          {:ok, result} <-
            apply_credential_effect(
@@ -496,7 +496,7 @@ defmodule Ezagent.ProviderConnection.LocalAuthorizationBackend.Exchange do
              :active,
              :credential_handoff,
              normalized.credential_material,
-             Support.handoff_aad(row, command.correlation_id, handoff_ref)
+             Support.handoff_aad(row, command.correlation_id, handoff_ref, operation.operation_class)
            ) do
       safe_result =
         Map.put(normalized, :credential_material, {:write_only_handoff, handoff_ref})
