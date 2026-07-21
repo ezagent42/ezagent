@@ -25,7 +25,7 @@ defmodule Ezagent.ProviderConnection.SelectorTest do
     assert {:error, :invalid_subject} = Selector.select(Map.delete(scope, :owner_uri))
   end
 
-  test "fails closed when the authoritative scope has more than one active connection" do
+  test "fails closed when the authoritative scope has more than one selectable connection" do
     first = Task8Fixtures.connection()
     _second = Task8Fixtures.connection(%{external_account_id: "second-account"})
 
@@ -36,6 +36,51 @@ defmodule Ezagent.ProviderConnection.SelectorTest do
                provider_id: first.provider_id,
                governed_host: first.governed_host,
                execution_identity: first.execution_identity
+             })
+  end
+
+  for status <- ~w(refresh_required refreshing degraded) do
+    test "#{status} connection is selectable" do
+      connection = Task8Fixtures.connection(%{status: unquote(status)})
+
+      scope = %{
+        owner_uri: connection.owner_uri,
+        workspace_uri: connection.workspace_uri,
+        provider_id: connection.provider_id,
+        governed_host: connection.governed_host,
+        execution_identity: connection.execution_identity
+      }
+
+      assert {:ok, _} = Selector.select(scope)
+    end
+  end
+
+  for status <- ~w(expired revoking revoked disconnecting disconnected) do
+    test "#{status} connection is NOT selectable" do
+      connection = Task8Fixtures.connection(%{status: unquote(status)})
+
+      scope = %{
+        owner_uri: connection.owner_uri,
+        workspace_uri: connection.workspace_uri,
+        provider_id: connection.provider_id,
+        governed_host: connection.governed_host,
+        execution_identity: connection.execution_identity
+      }
+
+      assert {:error, :connection_not_found} = Selector.select(scope)
+    end
+  end
+
+  test "pending_authorization connection is not selectable (no bound execution identity)" do
+    connection = Task8Fixtures.connection(%{status: "pending_authorization"})
+
+    assert {:error, :invalid_subject} =
+             Selector.select(%{
+               owner_uri: connection.owner_uri,
+               workspace_uri: connection.workspace_uri,
+               provider_id: connection.provider_id,
+               governed_host: connection.governed_host,
+               execution_identity: nil
              })
   end
 end

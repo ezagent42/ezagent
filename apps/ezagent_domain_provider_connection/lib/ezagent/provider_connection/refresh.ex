@@ -25,12 +25,26 @@ defmodule Ezagent.ProviderConnection.Refresh do
     end
   end
 
+  # A prepared refresh that has exhausted retries while the connection stays
+  # in `refreshing` is a wedge: the provider effect never succeeded, the
+  # connection's credential pointer may be stale or absent, recovery retries
+  # forever at capped backoff, the active-binding unique index blocks
+  # re-binding the same external account, and D1 revoke/disconnect is
+  # Decision-B-fail-closed.  Escape: expire the connection (the pointer is
+  # no longer trusted) and fence the operation out of the retry loop so the
+  # owner can reauthorize.
+  @max_refresh_attempts 12
+
   @doc false
   def recover(%Operation{} = operation, now \\ DateTime.utc_now()) do
     operation = Repo.get!(Operation, operation.id)
     connection = Repo.get!(Connection, operation.connection_id)
 
     cond do
+      operation.status == "prepared" and connection.status == "refreshing" and
+          operation.recovery_attempts >= @max_refresh_attempts ->
+        expire_exhausted_refresh(connection, operation)
+
       operation.status == "prepared" and not provider_owned?(operation) ->
         connection
         |> execute(
@@ -130,6 +144,34 @@ defmodule Ezagent.ProviderConnection.Refresh do
   end
 
   defp reclaim_expired(operation, _connection, _now), do: {:ok, operation}
+
+  defp expire_exhausted_refresh(connection, operation) do
+    Transition.mutate(
+      connection.connection_id,
+      connection.connection_version,
+      :expired,
+      fn _locked -> {:ok, %{status: "expired", last_error_code: "backend_unavailable"}} end
+    )
+    |> case do
+      {:ok, _conn} ->
+        # The durable ownership CHECK requires fenced rows to keep
+        # next_recovery_at; recovery never re-selects fenced rows by
+        # status (its phase queries only match prepared / backend_committed
+        # / connection_committed / cleanup_pending), so the row leaves the
+        # retry loop by status alone.
+        operation
+        |> Ecto.Changeset.change(
+          status: "fenced",
+          safe_error_code: "backend_unavailable"
+        )
+        |> Repo.update!()
+
+        :ok
+
+      {:error, reason} ->
+        {:error, reason}
+    end
+  end
 
   # A prepared refresh whose fenced generation is provably behind the
   # connection can never win the pointer CAS again: a successor refresh has
