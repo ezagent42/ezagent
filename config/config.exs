@@ -184,7 +184,8 @@ config :ezagent_core, Ezagent.Cap.DeliveryOutbox,
 # In dev/test the env vars must be set (or the value overridden per-environment).
 config :ezagent_plugin_github,
   oauth_client_id: {:system, "GITHUB_CLIENT_ID"},
-  oauth_client_secret: {:system, "GITHUB_CLIENT_SECRET"}
+  oauth_client_secret: {:system, "GITHUB_CLIENT_SECRET"},
+  token_encryption_key: {:system, "GITHUB_TOKEN_ENCRYPTION_KEY"}
 
 # D2 — register the GitHub credential backend module so the provider-connection
 # domain resolves it at runtime (via RuntimeBindings / Exchange).

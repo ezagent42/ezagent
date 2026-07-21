@@ -38,7 +38,7 @@ defmodule EzagentPluginGithub.Application do
   end
 
   @impl Ezagent.Plugin
-  def children, do: []
+  def children, do: [EzagentPluginGithub.GitHubCredentialBackend]
 
   @impl Ezagent.Plugin
   def after_boot do

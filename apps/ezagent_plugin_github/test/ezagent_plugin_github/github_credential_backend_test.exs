@@ -1,9 +1,27 @@
 defmodule EzagentPluginGithub.GitHubCredentialBackendTest do
-  use ExUnit.Case, async: true
+  use ExUnit.Case, async: false
 
   alias EzagentPluginGithub.{GitHubCredentialBackend, GitHubTokenStore}
 
   @backend GitHubCredentialBackend
+
+  setup do
+    # Ensure the ETS table exists and is clean for each test.
+    # The table is created once by start_link but may not be started in test.
+    ensure_table()
+    :ets.delete_all_objects(:github_credential_tokens)
+    :ok
+  end
+
+  defp ensure_table do
+    case :ets.whereis(:github_credential_tokens) do
+      :undefined ->
+        :ets.new(:github_credential_tokens, [:set, :public, :named_table])
+
+      _tid ->
+        :ok
+    end
+  end
 
   describe "TokenStore encrypt/decrypt" do
     test "encrypt/decrypt round trip" do
@@ -120,8 +138,26 @@ defmodule EzagentPluginGithub.GitHubCredentialBackendTest do
   end
 
   describe "lease_for_operation" do
-    test "returns backend_unavailable" do
-      assert {:error, :backend_unavailable} = @backend.lease_for_operation(%{})
+    test "returns decrypted token and stashes it in process dictionary" do
+      token_value = "gho_live_token_abc123"
+
+      {:ok, %{credential_ref: ref}} =
+        @backend.store(%{
+          credential_material: {:write_only_handoff, token_value},
+          backend_pair_id: "pair-github-v1",
+          correlation_id: "store-lease"
+        })
+
+      assert {:ok, %{credential: ^token_value, credential_ref: ^ref, expires_at: nil}} =
+               @backend.lease_for_operation(%{credential_ref: ref})
+
+      # Verify the token was stashed in the process dictionary
+      assert GitHubCredentialBackend.current_token() == token_value
+    end
+
+    test "returns credential_conflict for unknown ref" do
+      assert {:error, :credential_conflict} =
+               @backend.lease_for_operation(%{credential_ref: "nonexistent-ref"})
     end
   end
 
