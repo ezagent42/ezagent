@@ -489,51 +489,22 @@ defmodule Ezagent.Socialware.SessionReads do
   without this cap (the row-policy the historical read already enforces).
   """
   @spec read_unfiltered?(URI.t() | term(), URI.t()) :: boolean()
-  def read_unfiltered?(caller, %URI{} = session_uri) do
-    workspace_uri = Ezagent.Capability.workspace_of(session_uri)
+  def read_unfiltered?(%URI{} = caller, %URI{} = session_uri) do
+    caps = Ezagent.EntityCaps.load(caller)
 
-    caller
-    |> Ezagent.EntityCaps.load()
-    |> Enum.any?(&read_unfiltered_cap?(&1, session_uri, workspace_uri))
+    match?(
+      {:ok, %Ezagent.Capability{}},
+      Ezagent.Cap.authorize(caller, caps, %{
+        kind: :session,
+        behavior: Ezagent.ActionSet.Session,
+        action: :read_unfiltered,
+        instance: session_uri,
+        workspace_uri: Ezagent.Capability.workspace_of(session_uri)
+      })
+    )
   rescue
     _ -> false
   end
 
-  defp read_unfiltered_cap?(
-         %Ezagent.Capability{} = cap,
-         %URI{} = session_uri,
-         %URI{} = workspace_uri
-       ) do
-    cap_field?(cap.kind, :session) and
-      cap_field?(cap.behavior, Ezagent.ActionSet.Session) and
-      cap_field?(Map.get(cap, :action, :any), :read_unfiltered) and
-      cap_instance?(cap.instance, session_uri, workspace_uri) and
-      cap_workspace?(cap.workspace_uri, workspace_uri)
-  end
-
-  defp read_unfiltered_cap?(_, _, _), do: false
-
-  defp cap_field?(:any, _needed), do: true
-  defp cap_field?(same, same), do: true
-  defp cap_field?(_, _), do: false
-
-  defp cap_instance?(:any, _session_uri, _workspace_uri), do: true
-
-  defp cap_instance?({:within_session, %URI{} = held}, %URI{} = session_uri, _workspace_uri),
-    do: same_uri?(held, session_uri)
-
-  defp cap_instance?({:within_workspace, %URI{} = held}, _session_uri, %URI{} = workspace_uri),
-    do: same_uri?(held, workspace_uri)
-
-  defp cap_instance?(%URI{} = held, %URI{} = session_uri, _workspace_uri),
-    do: same_uri?(held, session_uri)
-
-  defp cap_instance?(_, _, _), do: false
-
-  defp cap_workspace?(:any, _workspace_uri), do: true
-  defp cap_workspace?(%URI{} = held, %URI{} = workspace_uri), do: same_uri?(held, workspace_uri)
-  defp cap_workspace?(_, _), do: false
-
-  defp same_uri?(%URI{} = left, %URI{} = right), do: URI.to_string(left) == URI.to_string(right)
-  defp same_uri?(_, _), do: false
+  def read_unfiltered?(_caller, _session_uri), do: false
 end

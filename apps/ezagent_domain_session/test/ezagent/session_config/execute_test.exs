@@ -296,7 +296,7 @@ defmodule Ezagent.Session.Config.ExecuteTest do
   defp member_cap?(principal, session_uri) do
     principal
     |> Ezagent.Identity.read_entity_caps()
-    |> Ezagent.Session.MemberReceive.holds_member_cap_over?(session_uri)
+    |> then(&Ezagent.Session.MemberReceive.holds_member_cap_over?(principal, &1, session_uri))
   end
 
   defp grant_template_cap(principal, kind, workspace_uri) do

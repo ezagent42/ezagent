@@ -80,6 +80,8 @@ defmodule Ezagent.ActionSet.Session.Legends do
   """
   @spec system_set_legends(URI.t(), Legend.registry()) :: {:ok, map()} | {:error, term()}
   def system_set_legends(%URI{} = session_uri, legends) when is_map(legends) do
+    admin = Ezagent.URI.user(:system, :admin)
+
     with {:ok, caps} <- ConfigActions.session_self_cap(session_uri, :set_legends) do
       case Ezagent.Router.dispatch(%Cmd{
              target: session_uri,
@@ -87,7 +89,7 @@ defmodule Ezagent.ActionSet.Session.Legends do
              args: %{legends: legends},
              ctx: %{
                caller: session_uri,
-               authenticated_principal: session_uri,
+               authenticated_principal: admin,
                caps: caps,
                reply: {:caller_inbox, self()}
              },

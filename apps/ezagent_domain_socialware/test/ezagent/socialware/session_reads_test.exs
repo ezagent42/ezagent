@@ -82,7 +82,12 @@ defmodule Ezagent.Socialware.SessionReadsTest do
       target: target,
       mode: :call,
       args: %{member: member_uri},
-      ctx: %{caller: caller, caps: MapSet.new([cap]), reply: :ignore}
+      ctx: %{
+        caller: caller,
+        authenticated_principal: caller,
+        caps: MapSet.new([cap]),
+        reply: :ignore
+      }
     })
   end
 
@@ -321,6 +326,15 @@ defmodule Ezagent.Socialware.SessionReadsTest do
       cap = CapHelper.signed_cap!(session, reader, read_unfiltered_cap(session))
       :ok = spawn_user(reader, [cap])
       assert SessionReads.read_unfiltered?(reader, session)
+
+      assert {:ok, _new_authority} =
+               Ezagent.Cap.Authority.regenesis(
+                 session,
+                 :session,
+                 Ezagent.Entity.User.admin_uri()
+               )
+
+      refute SessionReads.read_unfiltered?(reader, session)
     end
   end
 

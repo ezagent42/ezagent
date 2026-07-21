@@ -81,6 +81,7 @@ defmodule Ezagent.ActionSet.SocialwarePublisherReadTest do
     %{
       self_uri: @self_uri,
       caller: caller,
+      authenticated_principal: caller,
       reply: :none,
       read: fn key, default -> Map.get(state, key, default) end,
       transients: %{},

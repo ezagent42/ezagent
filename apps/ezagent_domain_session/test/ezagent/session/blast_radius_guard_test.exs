@@ -46,6 +46,7 @@ defmodule Ezagent.Session.BlastRadiusGuardTest do
 
     # The socialware read predicate is still callable over a roster-shaped slice.
     chat = %{owner_uri: nil, members: %{}}
-    assert {:error, :unauthorized} = Ezagent.Session.Membership.authorize(chat, nil)
+    assert {:error, :unauthorized} =
+             Ezagent.Session.Membership.authorize(chat, nil, nil, nil)
   end
 end
