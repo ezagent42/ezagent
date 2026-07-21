@@ -143,6 +143,7 @@ defmodule Ezagent.World.UiSurfaceProvider do
         :actions_module,
         exports?(Map.get(page, :actions_module), :handle_dispatch, 3)
       )
+      |> validate_session_view(Map.get(page, :session_view))
       |> validate_renderer(Map.get(page, :renderer))
       |> Enum.reverse()
 
@@ -190,6 +191,16 @@ defmodule Ezagent.World.UiSurfaceProvider do
   end
 
   defp exports?(_, _, _), do: false
+
+  defp validate_session_view(errors, nil), do: errors
+
+  defp validate_session_view(errors, %{id: id, state_builder: builder}) do
+    errors
+    |> invalid_unless(:session_view_id, valid_key?(id))
+    |> invalid_unless(:session_view_state_builder, exports?(builder, :session_state_for, 2))
+  end
+
+  defp validate_session_view(errors, _), do: [:session_view | errors]
 
   defp validate_renderer(errors, %{source: source, export: export, full_bleed: full_bleed}) do
     errors

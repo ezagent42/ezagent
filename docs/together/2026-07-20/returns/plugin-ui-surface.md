@@ -2,7 +2,7 @@
 > **Branch:** `codex/plugin-ui-self-declaration-1472`
 > **PR:** https://github.com/ezagent42/ezagent/pull/1476
 > **Dev:** codex / zyli line
-> **returned_at:** 2026-07-20 16:05 +0800
+> **returned_at:** 2026-07-21 20:10 +0800
 > **deadline:** 2026-07-20 23:59 +0800
 > **deadline_status:** deferred
 
@@ -30,7 +30,23 @@
   removing the duplicate legacy shortcut from both the session tools menu and the
   sessions detail actions. The underlying actions and compatibility route remain.
 
-## DoD reconciliation
+## 2026-07-21 rebase reconciliation
+
+Rebased this branch onto `origin/main` (`0a44d7b5e`). Main had introduced a
+Kanban-specific `view_switch_updates/3` clause in World, while this PR replaces
+World's page registry with plugin declarations. The resulting direct
+`World -> EzagentPluginKanban` compile edge and WorldLive's compile-time ETS
+lookup both made `mix compile --warnings-as-errors` fail.
+
+- Kanban now declares its `kanban_board` session view and provides
+  `session_state_for/2`; World validates that callback and resolves it through
+  `PluginPageRegistry.by_session_view/1`.
+- World provides caller/workspace/cap context only, dynamically invokes the
+  validated builder, and falls back fail-closed to built-in views.
+- WorldLive resolves plugin page state at runtime rather than generating clauses
+  from an ETS-backed registry during compilation.
+- Added declaration and registry regression coverage for valid, malformed, and
+  undeclared session views.
 
 | # | DoD line | status | proof / open decision |
 |---|----------|--------|-----------------------|

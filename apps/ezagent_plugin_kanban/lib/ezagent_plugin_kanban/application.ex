@@ -180,6 +180,10 @@ defmodule EzagentPluginKanban.Application do
         nav: %{label: "看板", path: "/plugins/kanban"},
         data_builder: EzagentPluginKanban.WorldData,
         renderer_families: [{"kanban", "看板"}],
+        session_view: %{
+          id: "kanban_board",
+          state_builder: EzagentPluginKanban.WorldData
+        },
         actions:
           ~w(kanban.add_node kanban.rename_node kanban.move_node kanban.remove_node kanban.set_stage kanban.claim_node kanban.unclaim_node kanban.set_status kanban.attach_artifact kanban.detach_artifact kanban.set_metric kanban.create kanban.sync_miro kanban.save_miro_creds kanban.select_board kanban.drop_subtree kanban.set_board_config kanban.attach_upload kanban.register_pr kanban.attach_code_file kanban.share_board),
         actions_module: EzagentPluginKanban.WorldActions,

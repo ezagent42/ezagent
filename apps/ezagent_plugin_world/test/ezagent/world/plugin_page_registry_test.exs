@@ -46,11 +46,20 @@ defmodule Ezagent.World.PluginPageRegistryTest do
       assert page.data_builder == EzagentPluginKanban.WorldData
       assert page.renderer_families == [{"kanban", "看板"}]
       assert page.actions_module == EzagentPluginKanban.WorldActions
+
       assert page.renderer == %{
                source: "assets/src/world_page.tsx",
                export: "KanbanWorldPage",
                full_bleed: true
              }
+    end
+
+    test "session views resolve only through a plugin declaration" do
+      assert %{key: "kanban", session_view: %{state_builder: EzagentPluginKanban.WorldData}} =
+               PluginPageRegistry.by_session_view("kanban_board")
+
+      assert PluginPageRegistry.by_session_view("undeclared_view") == nil
+      assert PluginPageRegistry.by_session_view(nil) == nil
     end
   end
 

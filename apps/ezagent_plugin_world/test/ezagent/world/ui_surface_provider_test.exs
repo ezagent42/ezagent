@@ -66,6 +66,24 @@ defmodule Ezagent.World.UiSurfaceProviderTest do
       assert UiSurfaceProvider.valid_page?(valid_page())
     end
 
+    test "accepts a declared session view with a state builder" do
+      page =
+        Map.put(valid_page(), :session_view, %{
+          id: "demo_view",
+          state_builder: EzagentPluginKanban.WorldData
+        })
+
+      assert :ok = UiSurfaceProvider.validate_page(page)
+    end
+
+    test "rejects malformed session view declarations" do
+      page = Map.put(valid_page(), :session_view, %{id: "Bad View", state_builder: String})
+
+      assert {:error, errors} = UiSurfaceProvider.validate_page(page)
+      assert :session_view_id in errors
+      assert :session_view_state_builder in errors
+    end
+
     test "reports every invalid required field and fails closed" do
       invalid =
         valid_page()

@@ -89,6 +89,28 @@ defmodule EzagentPluginKanban.WorldData do
   defp board_row(%URI{} = uri),
     do: %{"uri" => encode_uri(uri), "name" => uri_name(uri), "path" => detail_path(uri)}
 
+  @doc "Build session-tab state for the plugin-declared kanban view."
+  @spec session_state_for(URI.t(), map()) :: map()
+  def session_state_for(%URI{} = session_uri, ctx) do
+    boards = session_boards(session_uri, ctx)
+    base = %{"instances" => boards}
+
+    with [%{"uri" => uri} | _] when is_binary(uri) <- boards,
+         {:ok, %URI{} = board_uri} <- Ezagent.URI.parse(uri) do
+      base
+      |> Map.merge(board_state(board_uri, ctx))
+      |> Map.put("instances", boards)
+    else
+      _ -> base
+    end
+  rescue
+    _ -> %{}
+  catch
+    _, _ -> %{}
+  end
+
+  def session_state_for(_, _), do: %{}
+
   @doc """
   某个 session 所属 workspace 的 kanban-manager boards，按 CBAC 权属对 caller 收敛。
 

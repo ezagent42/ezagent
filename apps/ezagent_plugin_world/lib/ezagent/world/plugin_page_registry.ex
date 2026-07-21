@@ -23,6 +23,7 @@ defmodule Ezagent.World.PluginPageRegistry do
   """
 
   @type page :: %{
+          optional(:session_view) => %{id: String.t(), state_builder: module()},
           key: String.t(),
           route: {String.t(), :index},
           detail_route: {String.t(), :detail},
@@ -102,6 +103,14 @@ defmodule Ezagent.World.PluginPageRegistry do
 
   def by_route(_), do: nil
 
+  @doc "Find the page that declares a session view id; unregistered ids return `nil`."
+  @spec by_session_view(String.t() | any()) :: page() | nil
+  def by_session_view(view_id) when is_binary(view_id) do
+    Enum.find(pages(), fn page -> get_in(page, [:session_view, :id]) == view_id end)
+  end
+
+  def by_session_view(_), do: nil
+
   @doc """
   dispatch 准入：action 命中某页面的 `action_prefixes` **且**在其 `actions`
   细白名单内才返回该页面；否则 `nil`（fail-closed，前缀不是放行面）。
@@ -140,6 +149,8 @@ defmodule Ezagent.World.PluginPageRegistry do
       {:key, fn page -> [page.key] end},
       {:route, fn page -> [elem(page.route, 0), elem(page.detail_route, 0)] end},
       {:renderer_family, fn page -> Enum.map(page.renderer_families, &elem(&1, 0)) end},
+      {:session_view,
+       fn page -> page |> Map.get(:session_view) |> then(&if(&1, do: [&1.id], else: [])) end},
       {:action, fn page -> page.actions end}
     ]
     |> Enum.flat_map(fn {field, values} ->

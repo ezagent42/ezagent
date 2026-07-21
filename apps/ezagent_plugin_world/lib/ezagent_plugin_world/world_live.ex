@@ -840,6 +840,9 @@ defmodule EzagentPluginWorld.WorldLive do
     end
   end
 
+  defp state_for_route(route, socket, layout),
+    do: state_for_plugin_or_fallback(route, socket, layout)
+
   # The same operator predicate the `:require_admin` on_mount enforces
   # (bootstrap admin OR a member of the system workspace) — kept as one
   # small check so the route gate and this data-layer gate cannot drift
@@ -866,24 +869,35 @@ defmodule EzagentPluginWorld.WorldLive do
     |> put_command_palette(socket)
   end
 
-  # 插件页面（`Ezagent.World.PluginPageRegistry`）：每个注册页面编译期生成一个
-  # 子句，用条目的 data_builder 读模型（kanban 曾是写死的 `component: "kanban"`
-  # 特例）。必须排在通用 `:workspace_plugins` 子句之前——页面 route 同属该 group。
-  for %{key: key, data_builder: data_builder} <- Ezagent.World.PluginPageRegistry.pages() do
-    defp state_for_route(%{component: unquote(key)} = route, socket, layout) do
-      route
-      |> unquote(data_builder).state_for(%{
-        workspace_uri: socket.assigns.current_workspace_uri,
-        caller_uri: socket.assigns.current_entity_uri,
-        caller_caps: Ezagent.World.PresenterCaps.load(socket)
-      })
-      |> Map.put("layout", layout)
-      |> Map.put("can_manage_layout", false)
-      |> put_command_palette(socket)
+  # 插件页面经 `PluginPageRegistry` 在运行时查找已验证的 data builder；这避免了
+  # 编译期读取 ETS 插件 catalog，也让新增插件页面无需重编译 World。
+  defp state_for_plugin_or_fallback(%{component: component} = route, socket, layout) do
+    case Ezagent.World.PluginPageRegistry.by_key(component) do
+      %{data_builder: data_builder} ->
+        state =
+          apply(data_builder, :state_for, [
+            route,
+            %{
+              workspace_uri: socket.assigns.current_workspace_uri,
+              caller_uri: socket.assigns.current_entity_uri,
+              caller_caps: Ezagent.World.PresenterCaps.load(socket)
+            }
+          ])
+
+        state
+        |> Map.put("layout", layout)
+        |> Map.put("can_manage_layout", false)
+        |> put_command_palette(socket)
+
+      nil ->
+        state_for_non_plugin_route(route, socket, layout)
     end
   end
 
-  defp state_for_route(%{group: :workspace_plugins} = route, socket, layout) do
+  defp state_for_plugin_or_fallback(route, socket, layout),
+    do: state_for_non_plugin_route(route, socket, layout)
+
+  defp state_for_non_plugin_route(%{group: :workspace_plugins} = route, socket, layout) do
     route
     |> Ezagent.World.WorkspacePluginData.state_for(%{
       workspace_uri: socket.assigns.current_workspace_uri,
@@ -895,7 +909,7 @@ defmodule EzagentPluginWorld.WorldLive do
     |> put_command_palette(socket)
   end
 
-  defp state_for_route(route, socket, layout) do
+  defp state_for_non_plugin_route(route, socket, layout) do
     route
     |> Ezagent.World.IdentityData.state_for(%{
       workspace_uri: socket.assigns.current_workspace_uri,
