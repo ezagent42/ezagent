@@ -2,7 +2,7 @@
 > **Branch:** `codex/plugin-ui-self-declaration-1472`
 > **PR:** https://github.com/ezagent42/ezagent/pull/1476
 > **Dev:** codex / zyli line
-> **returned_at:** 2026-07-21 20:10 +0800
+> **returned_at:** 2026-07-21 20:45 +0800
 > **deadline:** 2026-07-20 23:59 +0800
 > **deadline_status:** deferred
 
@@ -48,6 +48,21 @@ lookup both made `mix compile --warnings-as-errors` fail.
 - Added declaration and registry regression coverage for valid, malformed, and
   undeclared session views.
 
+## 2026-07-21 must-fix closure and remaining scope
+
+The two merge-blocking regressions identified after the rebase are closed.
+
+- **Slots manifest:** the task starts only plugins that declare `pages/0`; ETS registry lookup is now available without booting World.
+- **Family parity:** the gate reads the generated `plugin-page-renderers.tsx` map, and the stale Kanban data-source path was regenerated.
+- **Validation:** strict compile, both manifest checks, and the full World suite pass (`272/272`).
+
+**Remaining, intentionally deferred scope:**
+
+1. Move the remaining Kanban/Hello renderer and session special cases out of World.
+2. Add the zero-allowlist World plugin-name drift gate.
+3. Remove Kanban's undeclared reverse use of `Ezagent.World.PresenterCaps`.
+4. Complete `mix precommit` in CI or a longer-lived runner; it exceeds the local command limit.
+
 | # | DoD line | status | proof / open decision |
 |---|----------|--------|-----------------------|
 | 1 | UI declaration protocol covers page, action, nav, tab, and renderer metadata with fail-closed validation | deferred | Page/action/renderer validation is implemented and tested; nav/tab still use the earlier loose enumeration and need integration into the strict declaration diagnostic path. |
@@ -56,13 +71,13 @@ lookup both made `mix compile --warnings-as-errors` fail.
 | 4 | Board and Hello implementation/special cases live in their plugins | deferred | Board files moved; `Conversation.tsx` and `ConversationActions` still contain session-specific branches, and Hello migration remains open. |
 | 5 | Mix generates static renderer imports/manifest and React contains no plugin-specific renderer map | met | `Mix.Tasks.World.Renderers.Manifest`, checked-in generated manifest, and manifest tests. |
 | 6 | Drift gate fails on an injected plugin name and finishes with an empty allowlist | not-met | Gate has not yet been implemented; lead decision: continue on this Draft PR before review. |
-| 7 | Formatting, focused tests, frontend checks, and `mix precommit` are green | deferred | Focused backend tests: 26/26 architecture tests plus 8/8 template-form tests. Frontend lint, typecheck, build, and 29/29 unit tests pass using the repository-compatible pnpm 10.20.0. Browser canary passes. `mix precommit` was run and fails at warnings-as-errors on the already-deferred World session-specific Kanban references and `state_for_route/3` clause grouping. |
+| 7 | Formatting, focused tests, frontend checks, and `mix precommit` are green | deferred | Strict compile, both manifest checks, and the full World suite (272/272) pass. The earlier warnings-as-errors failure is fixed; full `mix precommit` still exceeds the local command limit. |
 
 **Method friction:** The handoff split World read-side and concrete plugin migration across two developer lines, but the implementation arrived as one branch. Session-tab data loading and rendering cross both ownership areas, so its declaration shape needed to be designed before either half could independently reach the machine return gate.
 
 ## Branch and gate status
 
-- Implementation head: `5f5a968d1` (duplicate External Mirror links removed)
+- Implementation head before this return update: `81bb94939` (must-fix closure)
 - Rebase base: `fe290643133cf3f8e9de932236c5d64623748122` (`origin/main`)
 - GitHub CI: frontend regression gate, return advisory, skill ownership gate, and
   gitleaks are green; deterministic gate is pending at update time:
@@ -82,9 +97,8 @@ lookup both made `mix compile --warnings-as-errors` fail.
 - Browser canary: the sessions detail actions contain only Open, and the session
   tools menu contains Restart agent runner and Debug info with no External Mirror
   shortcut. Bindings still renders the form in place. Frontend tests pass 33/33.
-- Local `mix precommit`: failed at compile warnings-as-errors on the deferred
-  session-specific World/Kanban references and existing `state_for_route/3`
-  grouping warning.
+- Local `mix precommit`: strict compile is now green; the full alias still exceeds
+  the local command limit and requires CI or a longer-lived runner.
 - This return is a deferred checkpoint and is **not READY TO MERGE**.
 
 ## Open decisions / deferred follow-ups
@@ -92,7 +106,7 @@ lookup both made `mix compile --warnings-as-errors` fail.
 1. Finish generic session-tab renderer/data-builder declarations and remove World session plugin branches.
 2. Move the remaining Hello renderer/session behavior into the Hello plugin.
 3. Add and prove the zero-allowlist World drift gate.
-4. Regenerate slot manifests, remove compile warnings, run frontend checks under supported Node, then run `mix precommit` and invariant gates.
+4. Run the full `mix precommit` and invariant gates in CI or a longer-lived runner.
 
 ## Merge request
 
