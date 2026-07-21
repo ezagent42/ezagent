@@ -36,6 +36,27 @@ defmodule EzagentPluginGithub.Config do
         "https://ezagent.example/github/callback"
       )
 
+  @doc """
+  Returns the token encryption key for AES-256-GCM credential storage.
+
+  Must be 32 bytes decoded from a base64-encoded string in config or env var
+  `GITHUB_TOKEN_ENCRYPTION_KEY`. Returns `nil` when not configured — the caller
+  should fall back to a module-load-time random key for development.
+  """
+  @spec token_encryption_key :: String.t() | nil
+  def token_encryption_key do
+    case Application.get_env(:ezagent_plugin_github, :token_encryption_key) do
+      {:system, env_var} ->
+        System.get_env(env_var)
+
+      value when is_binary(value) ->
+        value
+
+      nil ->
+        nil
+    end
+  end
+
   defp fetch_env!(key) do
     case Application.get_env(:ezagent_plugin_github, key) do
       {:system, env_var} ->
