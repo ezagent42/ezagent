@@ -48,6 +48,7 @@ defmodule EzagentCore.Umbrella.MixProject do
           ezagent_plugin_email: :permanent,
           ezagent_plugin_py: :permanent,
           ezagent_plugin_feishu: :permanent,
+          ezagent_plugin_github: :permanent,
           ezagent_plugin_world: :permanent,
           ezagent_plugin_hello: :permanent,
           ezagent_plugin_protocol_api: :permanent,
