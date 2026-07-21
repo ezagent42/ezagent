@@ -16,18 +16,22 @@ COMPOSE := $(DOCKER_COMPOSE) -f docker/docker-compose.ci.yml
 DOCKER_BUILD_PROXY ?= http://host.docker.internal:7896
 export DOCKER_BUILD_PROXY
 
-.PHONY: ci.docker ci.docker.build ci.gate ci.repro ci.repro.amplify ci.shell ci.down
+.PHONY: ci.docker ci.docker.build ci.gate ci.full ci.repro ci.repro.amplify ci.shell ci.down
 
-## ci.docker — build the image then run the EXACT CI gate (mirror CI once).
+## ci.docker — build the image then run the lightweight deterministic gate (mirror the ci.yml gate job).
 ci.docker: ci.docker.build ci.gate
 
-## ci.docker.build — build the local-ubuntu-CI image.
+## ci.docker.build — build the local-ubuntu-CI image (base on lock change + thin source layer).
 ci.docker.build:
-	$(COMPOSE) build
+	docker/build-ci-image.sh
 
-## ci.gate — run `mix ci.local` (the exact CI chain) inside the linux container.
+## ci.gate — run the LIGHTWEIGHT deterministic gate (the ci.yml `gate` chain) inside the linux container.
 ci.gate:
-	$(COMPOSE) run --rm ci gate
+	$(COMPOSE) run --build --rm ci gate
+
+## ci.full — run the FULL `mix ci.local` (the ci.yml `full-suite` chain) inside the linux container.
+ci.full:
+	$(COMPOSE) run --build --rm ci full-suite
 
 ## ci.repro — hunt the ubuntu-only flake (seed sweep, cpuset=0-3 ~ CI's ~4 vCPU).
 ci.repro:

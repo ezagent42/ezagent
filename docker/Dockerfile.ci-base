@@ -1,0 +1,107 @@
+# syntax=docker/dockerfile:1
+# ezagent CI BASE image — everything EXPENSIVE and source-INDEPENDENT:
+# OS deps + Node 25 + pnpm 10.33.0 + hex/rebar + mix deps.get + pnpm install
+# + mix deps.compile. The deps/pnpm layers are keyed on LOCKFILES (mix.lock,
+# apps/*/assets/pnpm-lock.yaml) — NOT on source — so a per-PR source-only change
+# never invalidates them. docker/Dockerfile.ci is a thin `FROM ezagent-ci-base`
+# + `COPY . .` on top; docker/build-ci-image.sh rebuilds this base only when a
+# lockfile hash changes. See docs/superpowers/plans/2026-07-20-dockerize-ci.md.
+#
+# Version pins are IDENTICAL to docker/Dockerfile.ci / CI (`.github/workflows/ci.yml`):
+#   - Elixir 1.19.5 / OTP 28.4.2 (hexpm/elixir pinned image)
+#   - Node 25                     (setup-node: node-version "25")
+#   - pnpm 10.33.0                (corepack prepare pnpm@10.33.0)
+FROM hexpm/elixir:1.19.5-erlang-28.4.2-debian-bookworm-20260518
+
+# --- proxy (host behind clash). Build args reach hex/apt/npm via host.docker.internal. ---
+ARG HTTP_PROXY=""
+ARG HTTPS_PROXY=""
+ARG NO_PROXY="localhost,127.0.0.1,::1"
+ENV HTTP_PROXY=${HTTP_PROXY} HTTPS_PROXY=${HTTPS_PROXY} \
+    http_proxy=${HTTP_PROXY} https_proxy=${HTTPS_PROXY} \
+    NO_PROXY=${NO_PROXY} no_proxy=${NO_PROXY}
+
+ENV LANG=C.UTF-8 LC_ALL=C.UTF-8 MIX_ENV=test DEBIAN_FRONTEND=noninteractive
+
+# --- OS deps + Node 25 (CI uses node-version "25"; the agent CLIs / assets need node) +
+#     postgresql-client (the `ecto.create`/`migrate` waits + pg_isready) +
+#     build-essential/pkg-config (native deps: erlexec C port, exqlite/sqlite). ---
+RUN apt-get update && apt-get install -y --no-install-recommends \
+      git tar ca-certificates curl xz-utils procps locales \
+      build-essential pkg-config postgresql-client \
+    && curl -fsSL https://deb.nodesource.com/setup_25.x | bash - \
+    && apt-get install -y --no-install-recommends nodejs \
+    && rm -rf /var/lib/apt/lists/*
+
+# --- pnpm 10.33.0 (CI's pinned version: `corepack prepare pnpm@10.33.0`). We install it
+#     DIRECTLY via npm rather than corepack: on Node 25 the npm-installed corepack shim
+#     resolved to pnpm 11.x — whose `strictDepBuilds=true` default ERRORS on ignored build
+#     scripts (es5-ext) — which would NOT mirror CI's 10.33.0 (where the un-flagged
+#     `pnpm install` in `mix ci.local` is green). A direct pin is deterministic + verified. ---
+RUN npm install -g pnpm@10.33.0 \
+    && { [ "$(pnpm --version)" = "10.33.0" ] || { echo "pnpm pin FAILED: $(pnpm --version) != 10.33.0"; exit 1; }; }
+
+# Create the NON-ROOT runtime user EARLY + set HOME, BEFORE any compile-time `~`
+# expansion bakes a path (same reason as Dockerfile.dev). erlexec's exec-port REFUSES
+# to run as root, so the test boot (which starts the erlexec/sidecar tree) must run as
+# this user — running the suite as root dies with "Not allowed to run as root".
+RUN useradd -m -u 1000 ezagent
+ENV HOME=/home/ezagent
+
+WORKDIR /app
+# Hex/rebar into MIX_HOME under /app so the build (and the non-root runner) can run mix.
+ENV MIX_HOME=/app/.mix
+RUN mix local.hex --force && mix local.rebar --force
+
+# --- Manifests ONLY — the deps layer is keyed on mix.lock, not source. `COPY --parents`
+#     (BuildKit, enabled by the syntax header above) preserves the apps/<app>/ layout
+#     that the umbrella's mix.exs expects. ---
+COPY mix.exs mix.lock ./
+COPY --parents apps/*/mix.exs ./
+# Resilient deps fetch: the proxy to hex.pm is flaky under concurrency.
+# Unset SET-BUT-EMPTY proxy vars first (same fix as Dockerfile.dev #1061): the ARG/ENV
+# above bake HTTP_PROXY="" when no proxy build-arg is passed (host has direct egress via
+# clash TUN). Mix download tasks treat "" as a truthy proxy and crash in URI.parse("")
+# -> String.to_charlist(nil) (FunctionClauseError). Guard EACH var independently so a real
+# build-arg proxy in any casing is preserved. RUN-local unset doesn't persist across layers,
+# so it is repeated on the `mix deps.compile` RUN below (which builds the elixir_make NIFs).
+RUN for v in HTTP_PROXY HTTPS_PROXY http_proxy https_proxy; do \
+      eval "val=\${$v:-}"; [ -z "$val" ] && unset "$v" || true; \
+    done; \
+    ok=0; for i in 1 2 3 4 5; do \
+      HEX_HTTP_CONCURRENCY=1 HEX_HTTP_TIMEOUT=180 mix deps.get && { ok=1; break; } || { echo "deps.get retry $i"; sleep 8; }; \
+    done; \
+    [ "$ok" = 1 ] || { echo "deps.get failed after 5 retries"; exit 1; }
+
+# --- Asset manifests ONLY — the pnpm layer is keyed on package.json/lockfiles, not source. ---
+COPY --parents apps/ezagent_web/assets/package.json apps/ezagent_web/assets/pnpm-lock.yaml ./
+COPY --parents apps/ezagent_plugin_world/assets/package.json apps/ezagent_plugin_world/assets/pnpm-lock.yaml ./
+COPY --parents apps/ezagent_plugin_hello/assets/package.json apps/ezagent_plugin_hello/assets/pnpm-lock.yaml ./
+# pnpm install BEFORE deps.compile — esbuild must resolve react/zod (same ordering as CI/ci.local).
+# `--config.strictDepBuilds=false`: pnpm 10/11 default-DENY dep build scripts and then EXIT 1
+# (ERR_PNPM_IGNORED_BUILDS) for any ignored build (e.g. es5-ext). The goal here (as in CI) is
+# to populate node_modules so esbuild can resolve react/zod — NOT to gate build scripts — so we
+# downgrade that hard error to a warning (CI tolerates it; the assets build is not the flake).
+RUN pnpm --dir apps/ezagent_web/assets install --no-frozen-lockfile --config.strictDepBuilds=false \
+    && pnpm --dir apps/ezagent_plugin_world/assets install --no-frozen-lockfile --config.strictDepBuilds=false \
+    && pnpm --dir apps/ezagent_plugin_hello/assets install --no-frozen-lockfile --config.strictDepBuilds=false
+
+# Compile DEPS only (project source is NOT present in this base image) so the deps `_build`
+# is warm. `--skip-local-deps` is REQUIRED: the umbrella's apps depend on each other via
+# `in_umbrella: true` path deps, and a root `mix deps.compile` would try to compile those
+# sibling apps — whose `lib/` source is deliberately absent from this base (it changes per
+# PR and must not key this layer). The per-PR thin image's run-time `mix ci.local`
+# force-recompiles the project against this warm deps `_build`. This RUN is also where the
+# elixir_make precompiled NIFs (exqlite/bcrypt_elixir/lazy_html) build, so the empty-proxy
+# crash site lives here. Repeat the per-variable unset guard (RUN-local, doesn't carry over).
+RUN for v in HTTP_PROXY HTTPS_PROXY http_proxy https_proxy; do \
+      eval "val=\${$v:-}"; [ -z "$val" ] && unset "$v" || true; \
+    done; \
+    mix deps.compile --skip-local-deps
+
+# Clear the build-time proxy from the FINAL image — postgres/localhost go direct.
+ENV HTTP_PROXY="" HTTPS_PROXY="" http_proxy="" https_proxy="" NO_PROXY="" no_proxy=""
+
+# erlexec's exec-port refuses to start without $SHELL ("SHELL environment variable not
+# set!"). Set it here (late, cheap ENV → keeps the deps/compile layers cached).
+ENV SHELL=/bin/bash

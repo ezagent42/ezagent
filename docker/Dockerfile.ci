@@ -1,111 +1,39 @@
 # syntax=docker/dockerfile:1
-# ezagent LOCAL UBUNTU CI image — mirrors the GitHub `ubuntu-latest` runner
-# (`.github/workflows/ci.yml`) so the recurring CI flakes that ONLY manifest on the
-# ubuntu runner (timing races: PluginIsolationWorkspaceTest, AgentReadTest,
-# DefaultSessionTemplateSeedTest, PresenceReadReceiptsE2ETest — green on darwin,
-# red on linux) can be reproduced + fixed LOCALLY, which macOS cannot do.
-#
-# Versions are pinned to EXACTLY what CI uses (read `.github/workflows/ci.yml`):
-#   - Elixir 1.19 / OTP 28        (setup-beam: otp-version "28", elixir-version "1.19")
-#   - Node 25                     (setup-node: node-version "25")
-#   - pnpm 10.33.0                (corepack prepare pnpm@10.33.0)
-#   - postgres 16                 (services.postgres image — supplied by compose, not here)
+# ezagent LOCAL UBUNTU CI image — THIN per-PR layer on top of `ezagent-ci-base`
+# (docker/Dockerfile.ci-base: OS deps + Node 25 + pnpm 10.33.0 + hex/rebar +
+# mix deps.get + pnpm install + mix deps.compile, all keyed on lockfiles).
+# This file adds ONLY the source — the single layer that changes per PR — so a
+# source-only change rebuilds in seconds. Build via docker/build-ci-image.sh,
+# which rebuilds the base only when mix.lock / an asset lockfile changes.
 #
 # The image runs `mix ci.local` (the alias that mirrors the CI step chain end-to-end:
-# deps.get -> pnpm install -> ecto.create/migrate -> precommit -> check_invariants).
-# Source lives in a NAMED VOLUME copy inside the container (NOT a mac bind-mount) so
-# virtiofs latency never perturbs the very scheduler/owner timing we are reproducing.
+# deps.get -> pnpm install -> ecto.create/migrate -> precommit -> check_invariants);
+# its `precommit` force-recompiles the project against the base's warm deps `_build`,
+# so no project-compile bake is needed here. Source lives in the image at /app (NOT
+# a mac bind-mount) so virtiofs latency never perturbs scheduler/owner timing.
 #
-# This same base could double as a deploy-parity base (linux/debian, same OTP) — see
-# docs/guide/ci-docker-local.md "deploy parity".
-FROM hexpm/elixir:1.19.5-erlang-28.4.2-debian-bookworm-20260518
-
-# --- proxy (host behind clash). Build args reach hex/apt/npm via host.docker.internal. ---
-ARG HTTP_PROXY=""
-ARG HTTPS_PROXY=""
-ARG NO_PROXY="localhost,127.0.0.1,::1"
-ENV HTTP_PROXY=${HTTP_PROXY} HTTPS_PROXY=${HTTPS_PROXY} \
-    http_proxy=${HTTP_PROXY} https_proxy=${HTTPS_PROXY} \
-    NO_PROXY=${NO_PROXY} no_proxy=${NO_PROXY}
-
-ENV LANG=C.UTF-8 LC_ALL=C.UTF-8 MIX_ENV=test DEBIAN_FRONTEND=noninteractive
-
-# --- OS deps + Node 25 (CI uses node-version "25"; the agent CLIs / assets need node) +
-#     postgresql-client (the `ecto.create`/`migrate` waits + pg_isready) +
-#     build-essential/pkg-config (native deps: erlexec C port, exqlite/sqlite). ---
-RUN apt-get update && apt-get install -y --no-install-recommends \
-      git tar ca-certificates curl xz-utils procps locales \
-      build-essential pkg-config postgresql-client \
-    && curl -fsSL https://deb.nodesource.com/setup_25.x | bash - \
-    && apt-get install -y --no-install-recommends nodejs \
-    && rm -rf /var/lib/apt/lists/*
-
-# --- pnpm 10.33.0 (CI's pinned version: `corepack prepare pnpm@10.33.0`). We install it
-#     DIRECTLY via npm rather than corepack: on Node 25 the npm-installed corepack shim
-#     resolved to pnpm 11.x — whose `strictDepBuilds=true` default ERRORS on ignored build
-#     scripts (es5-ext) — which would NOT mirror CI's 10.33.0 (where the un-flagged
-#     `pnpm install` in `mix ci.local` is green). A direct pin is deterministic + verified. ---
-RUN npm install -g pnpm@10.33.0 \
-    && { [ "$(pnpm --version)" = "10.33.0" ] || { echo "pnpm pin FAILED: $(pnpm --version) != 10.33.0"; exit 1; }; }
-
-# Create the NON-ROOT runtime user EARLY + set HOME, BEFORE any compile-time `~`
-# expansion bakes a path (same reason as Dockerfile.dev). erlexec's exec-port REFUSES
-# to run as root, so the test boot (which starts the erlexec/sidecar tree) must run as
-# this user — running the suite as root dies with "Not allowed to run as root".
-RUN useradd -m -u 1000 ezagent
-ENV HOME=/home/ezagent
+# Version pins live in docker/Dockerfile.ci-base — do not drift them.
+ARG CI_BASE=ezagent-ci-base:latest
+FROM ${CI_BASE}
 
 WORKDIR /app
-# Hex/rebar into MIX_HOME under /app so the build (and the non-root runner) can run mix.
-ENV MIX_HOME=/app/.mix
-RUN mix local.hex --force && mix local.rebar --force
-
-# --- pre-warm deps so the inner-loop repro runs don't re-fetch every iteration. We COPY
-#     the source into the image (.dockerignore strips _build/deps/node_modules/.git) and
-#     fetch+compile once; the runtime then re-uses a NAMED-VOLUME /app for repeated runs. ---
+# Source now — this is the ONLY layer that changes per PR.
 COPY . .
-# Resilient deps fetch: the proxy to hex.pm is flaky under concurrency.
-# Unset SET-BUT-EMPTY proxy vars first (same fix as Dockerfile.dev #1061): the ARG/ENV
-# above bake HTTP_PROXY="" when no proxy build-arg is passed (host has direct egress via
-# clash TUN). Mix download tasks treat "" as a truthy proxy and crash in URI.parse("")
-# -> String.to_charlist(nil) (FunctionClauseError). Guard EACH var independently so a real
-# build-arg proxy in any casing is preserved. RUN-local unset doesn't persist across layers,
-# so it is repeated on the `mix compile` RUN below (which builds the elixir_make NIFs).
-RUN for v in HTTP_PROXY HTTPS_PROXY http_proxy https_proxy; do \
-      eval "val=\${$v:-}"; [ -z "$val" ] && unset "$v" || true; \
-    done; \
-    ok=0; for i in 1 2 3 4 5; do \
-      HEX_HTTP_CONCURRENCY=1 HEX_HTTP_TIMEOUT=180 mix deps.get && { ok=1; break; } || { echo "deps.get retry $i"; sleep 8; }; \
-    done; \
-    [ "$ok" = 1 ] || { echo "deps.get failed after 5 retries"; exit 1; }
-# pnpm install BEFORE compile — esbuild must resolve react/zod (same ordering as CI/ci.local).
-# `--config.strictDepBuilds=false`: pnpm 10/11 default-DENY dep build scripts and then EXIT 1
-# (ERR_PNPM_IGNORED_BUILDS) for any ignored build (e.g. es5-ext). The goal here (as in CI) is
-# to populate node_modules so esbuild can resolve react/zod — NOT to gate build scripts — so we
-# downgrade that hard error to a warning (CI tolerates it; the assets build is not the flake).
-RUN pnpm --dir apps/ezagent_web/assets install --no-frozen-lockfile --config.strictDepBuilds=false \
-    && pnpm --dir apps/ezagent_plugin_world/assets install --no-frozen-lockfile --config.strictDepBuilds=false \
-    && pnpm --dir apps/ezagent_plugin_hello/assets install --no-frozen-lockfile --config.strictDepBuilds=false
-# CI compiles deps + project in one `mix compile` (no separate deps.compile); this is where
-# the elixir_make precompiled NIFs (exqlite/bcrypt_elixir/lazy_html) build, so the empty-proxy
-# crash site lives here. Repeat the per-variable unset guard (RUN-local, doesn't carry over).
-RUN for v in HTTP_PROXY HTTPS_PROXY http_proxy https_proxy; do \
-      eval "val=\${$v:-}"; [ -z "$val" ] && unset "$v" || true; \
-    done; \
-    mix compile
+# The arch/invariant ExUnit suite locates the repo root via
+# `git rev-parse --show-toplevel` and then enumerates source with `Path.wildcard`
+# (see e.g. apps/ezagent_core/test/invariants/*_test.exs `repo_root/0`). The image
+# carries the SOURCE but NOT `.git` (.dockerignore strips it → smaller, cache-stable
+# image), so without a repo those tests crash `MatchError {"", 128}`. A minimal
+# `git init` makes `rev-parse --show-toplevel` return /app; no history is needed —
+# source is globbed from disk, and the one `git show origin/main:` drift-baseline
+# lookup (architecture_case.exs) degrades to :ok exactly as on a shallow CI checkout
+# that lacks the origin/main ref. Runs before chown so `.git` is owned by ezagent.
+RUN git init -q . \
+    && chmod +x docker/ci-runner.sh \
+    && chown -R ezagent:ezagent /app /home/ezagent
 
-# Clear the build-time proxy from the FINAL image — postgres/localhost go direct.
-ENV HTTP_PROXY="" HTTPS_PROXY="" http_proxy="" https_proxy="" NO_PROXY="" no_proxy=""
-
-RUN chmod +x docker/ci-runner.sh
-
-# erlexec's exec-port refuses to start without $SHELL ("SHELL environment variable not
-# set!"). Set it here (late, cheap ENV → keeps the deps/compile layers cached).
-ENV SHELL=/bin/bash
-
-# Run the suite as NON-ROOT (erlexec refuses root). Own /app (incl. _build / .mix so the
-# runtime user can recompile + run mix) and /home/ezagent.
-RUN chown -R ezagent:ezagent /app /home/ezagent
+# Run the suite as NON-ROOT (erlexec refuses root). /app (incl. _build / .mix) and
+# /home/ezagent are owned by ezagent so the runtime user can recompile + run mix.
 USER ezagent
 
 ENTRYPOINT ["/app/docker/ci-runner.sh"]
