@@ -15,6 +15,8 @@ defmodule Ezagent.ProviderConnection.Termination do
     Transition
   }
 
+  alias Ezagent.ProviderConnection.EffectBoundary
+
   alias EzagentCore.Repo
 
   @doc false
@@ -110,13 +112,18 @@ defmodule Ezagent.ProviderConnection.Termination do
   defp run_provider(operation, connection, driver) do
     result =
       with :ok <- pre_effect_fence(operation, connection) do
-        driver.revoke(%{
-          connection_id: connection.connection_id,
-          provider_id: connection.provider_id,
-          governed_host: connection.governed_host,
-          execution_identity: connection.execution_identity,
-          correlation_id: operation.correlation_id
-        })
+        EffectBoundary.invoke(
+          fn ->
+            driver.revoke(%{
+              connection_id: connection.connection_id,
+              provider_id: connection.provider_id,
+              governed_host: connection.governed_host,
+              execution_identity: connection.execution_identity,
+              correlation_id: operation.correlation_id
+            })
+          end,
+          :backend_unavailable
+        )
       end
 
     journal_obligation(operation, result)
@@ -125,12 +132,17 @@ defmodule Ezagent.ProviderConnection.Termination do
   defp run_credential(operation, connection, backend) do
     result =
       with :ok <- pre_effect_fence(operation, connection) do
-        backend.revoke(%{
-          credential_ref: operation.handoff_ref,
-          expected_credential_version: operation.expected_credential_version,
-          correlation_id: operation.correlation_id,
-          idempotency_key: operation.correlation_id
-        })
+        EffectBoundary.invoke(
+          fn ->
+            backend.revoke(%{
+              credential_ref: operation.handoff_ref,
+              expected_credential_version: operation.expected_credential_version,
+              correlation_id: operation.correlation_id,
+              idempotency_key: operation.correlation_id
+            })
+          end,
+          :backend_unavailable
+        )
       end
 
     journal_obligation(operation, result)

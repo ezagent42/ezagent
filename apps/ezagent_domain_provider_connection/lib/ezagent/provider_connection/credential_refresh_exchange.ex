@@ -9,6 +9,7 @@ defmodule Ezagent.ProviderConnection.CredentialRefreshExchange do
 
   alias Ezagent.ProviderConnection.{CredentialBackend.RefreshUse, Driver, RuntimeBindings}
   alias Ezagent.ProviderConnection.CredentialRefreshExchange.ScopeAuthority
+  alias Ezagent.ProviderConnection.EffectBoundary
 
   @scope_key {__MODULE__, :scope}
   @context_keys MapSet.new(
@@ -63,7 +64,11 @@ defmodule Ezagent.ProviderConnection.CredentialRefreshExchange do
              expected_refresh_lease_version: invocation_claim.version,
              expected_refresh_lease_deadline: invocation_claim.deadline
            }),
-         {:ok, %RefreshUse{} = refresh_use} <- backend.begin_refresh_exchange(begin_request),
+         {:ok, %RefreshUse{} = refresh_use} <-
+           EffectBoundary.invoke(
+             fn -> backend.begin_refresh_exchange(begin_request) end,
+             :authorization_backend_unavailable
+           ),
          :ok <- validate_use(refresh_use, authority, token, binding_digest, backend) do
       context = driver_context(command, refresh_use)
 
@@ -74,7 +79,11 @@ defmodule Ezagent.ProviderConnection.CredentialRefreshExchange do
         sealed_result: :not_consumed
       })
 
-      driver_result = apply(driver.implementation, selection, [context])
+      driver_result =
+        EffectBoundary.invoke(
+          fn -> apply(driver.implementation, selection, [context]) end,
+          :provider_protocol_failed
+        )
 
       with :ok <- validate_backend_sealed_result(driver_result) do
         validate_result(driver_result, driver)
@@ -95,7 +104,11 @@ defmodule Ezagent.ProviderConnection.CredentialRefreshExchange do
          {:ok, proof} <-
            ScopeAuthority.claim(RefreshUse.authority(use), RefreshUse.token(use), digest),
          claimed_use <- RefreshUse.claimed(use, proof),
-         result <- backend.consume_refresh_exchange(%{request | refresh_use: claimed_use}) do
+         result <-
+           EffectBoundary.invoke(
+             fn -> backend.consume_refresh_exchange(%{request | refresh_use: claimed_use}) end,
+             :authorization_backend_unavailable
+           ) do
       Process.put(@scope_key, %{
         use: use,
         backend: backend,

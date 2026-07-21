@@ -23,6 +23,7 @@ defmodule Ezagent.ProviderConnection.LocalAuthorizationBackend.Exchange do
   alias Ezagent.ProviderConnection.DriverRegistry
   alias Ezagent.ProviderConnection.ProviderAuthorizationCommand
   alias Ezagent.ProviderConnection.Operation
+  alias Ezagent.ProviderConnection.EffectBoundary
   alias EzagentCore.Repo
 
   @tag_bytes 16
@@ -554,13 +555,10 @@ defmodule Ezagent.ProviderConnection.LocalAuthorizationBackend.Exchange do
         driver_identity
       )
 
-    try do
-      apply(driver.implementation, operation, [context])
-    rescue
-      _error -> {:error, :provider_protocol_error}
-    catch
-      _kind, _reason -> {:error, :provider_protocol_error}
-    end
+    EffectBoundary.invoke(
+      fn -> apply(driver.implementation, operation, [context]) end,
+      :provider_protocol_error
+    )
     |> normalize_driver_reply()
   end
 
@@ -580,9 +578,20 @@ defmodule Ezagent.ProviderConnection.LocalAuthorizationBackend.Exchange do
       |> Map.put(:credential_material, credential_material)
 
     case operation.operation_class do
-      "store" -> backend.store(command)
-      "replace" -> backend.replace(command)
-      _other -> {:error, :credential_conflict}
+      "store" ->
+        EffectBoundary.invoke(
+          fn -> backend.store(command) end,
+          :authorization_backend_unavailable
+        )
+
+      "replace" ->
+        EffectBoundary.invoke(
+          fn -> backend.replace(command) end,
+          :authorization_backend_unavailable
+        )
+
+      _other ->
+        {:error, :credential_conflict}
     end
   end
 

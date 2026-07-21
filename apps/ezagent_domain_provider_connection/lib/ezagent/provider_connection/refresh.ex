@@ -10,6 +10,8 @@ defmodule Ezagent.ProviderConnection.Refresh do
     Transition
   }
 
+  alias Ezagent.ProviderConnection.EffectBoundary
+
   alias EzagentCore.Repo
 
   @lease_seconds 30
@@ -296,14 +298,19 @@ defmodule Ezagent.ProviderConnection.Refresh do
   defp replace_and_journal(operation, backend, now) do
     with :ok <- pre_effect_fence(operation, now),
          {:ok, credential_result} <-
-           backend.replace(%{
-             credential_material: {:write_only_handoff, operation.handoff_ref},
-             backend_pair_id: operation.backend_pair_id,
-             operation_class: operation.operation_class,
-             correlation_id: operation.correlation_id,
-             bound_input_digest: operation.bound_input_digest,
-             expected_credential_version: operation.expected_credential_version
-           }),
+           EffectBoundary.invoke(
+             fn ->
+               backend.replace(%{
+                 credential_material: {:write_only_handoff, operation.handoff_ref},
+                 backend_pair_id: operation.backend_pair_id,
+                 operation_class: operation.operation_class,
+                 correlation_id: operation.correlation_id,
+                 bound_input_digest: operation.bound_input_digest,
+                 expected_credential_version: operation.expected_credential_version
+               })
+             end,
+             :authorization_backend_unavailable
+           ),
          :ok <- validate_credential_result(credential_result),
          {:ok, committed} <- journal_credential_ownership(operation.id, credential_result, now),
          :ok <-
@@ -419,12 +426,17 @@ defmodule Ezagent.ProviderConnection.Refresh do
   defp revoke_prior_and_finalize(operation, backend) do
     idempotency_key = operation.correlation_id <> ":old"
 
-    case backend.revoke(%{
-           credential_ref: operation.prior_credential_ref,
-           expected_credential_version: operation.prior_credential_version,
-           correlation_id: idempotency_key,
-           idempotency_key: idempotency_key
-         }) do
+    case EffectBoundary.invoke(
+           fn ->
+             backend.revoke(%{
+               credential_ref: operation.prior_credential_ref,
+               expected_credential_version: operation.prior_credential_version,
+               correlation_id: idempotency_key,
+               idempotency_key: idempotency_key
+             })
+           end,
+           :authorization_backend_unavailable
+         ) do
       :ok -> finalize(operation)
       {:ok, _receipt} -> finalize(operation)
       _ -> {:error, :authorization_backend_unavailable}
@@ -539,7 +551,10 @@ defmodule Ezagent.ProviderConnection.Refresh do
     }
 
     status =
-      case driver.discard_refresh_result(context) do
+      case EffectBoundary.invoke(
+             fn -> driver.discard_refresh_result(context) end,
+             :backend_unavailable
+           ) do
         :ok -> {"confirmed", nil}
         {:error, reason} -> {"pending", normalize_cleanup_error(reason)}
       end
@@ -555,12 +570,17 @@ defmodule Ezagent.ProviderConnection.Refresh do
     key = operation.correlation_id <> ":credential-revoke"
 
     status =
-      case backend.revoke(%{
-             credential_ref: operation.result_ref,
-             expected_credential_version: operation.result_credential_version,
-             correlation_id: key,
-             idempotency_key: key
-           }) do
+      case EffectBoundary.invoke(
+             fn ->
+               backend.revoke(%{
+                 credential_ref: operation.result_ref,
+                 expected_credential_version: operation.result_credential_version,
+                 correlation_id: key,
+                 idempotency_key: key
+               })
+             end,
+             :backend_unavailable
+           ) do
         :ok -> {"confirmed", nil}
         {:ok, _receipt} -> {"confirmed", nil}
         {:error, reason} -> {"pending", normalize_cleanup_error(reason)}

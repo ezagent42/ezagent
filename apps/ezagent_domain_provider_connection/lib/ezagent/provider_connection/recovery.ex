@@ -14,6 +14,8 @@ defmodule Ezagent.ProviderConnection.Recovery do
     Types
   }
 
+  alias Ezagent.ProviderConnection.EffectBoundary
+
   alias EzagentCore.Repo
 
   @batch_size 50
@@ -279,11 +281,10 @@ defmodule Ezagent.ProviderConnection.Recovery do
   defp next_phase(:refresh), do: :done
 
   defp safely_recover(recoverer, operation, now, observer) do
-    apply(recoverer, :recover, [operation, now, observer])
-  rescue
-    _error -> {:error, :recovery_failed}
-  catch
-    _kind, _reason -> {:error, :recovery_failed}
+    EffectBoundary.invoke(
+      fn -> apply(recoverer, :recover, [operation, now, observer]) end,
+      :recovery_failed
+    )
   end
 
   defp successful_recovery?(:ok), do: true
