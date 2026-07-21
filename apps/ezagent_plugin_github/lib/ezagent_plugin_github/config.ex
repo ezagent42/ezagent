@@ -23,6 +23,19 @@ defmodule EzagentPluginGithub.Config do
   @spec oauth_client_secret :: String.t()
   def oauth_client_secret, do: fetch_env!(:oauth_client_secret)
 
+  @doc """
+  Returns the OAuth redirect URI for the GitHub OAuth App callback.
+  Reads from Application env with a development-friendly default.
+  """
+  @spec redirect_uri :: String.t()
+  def redirect_uri,
+    do:
+      Application.get_env(
+        :ezagent_plugin_github,
+        :redirect_uri,
+        "https://ezagent.example/github/callback"
+      )
+
   defp fetch_env!(key) do
     case Application.get_env(:ezagent_plugin_github, key) do
       {:system, env_var} ->

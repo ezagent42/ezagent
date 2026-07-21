@@ -76,6 +76,32 @@ defmodule EzagentPluginGithub.GitHubClient do
     |> handle_response()
   end
 
+  @doc """
+  Issues a PATCH request against the GitHub REST API with a JSON body.
+
+  ## Examples
+
+      GitHubClient.patch("/repos/owner/repo/git/refs/heads/feature", "ghp_token", %{sha: "abc123"})
+      # => {:ok, %{"ref" => "refs/heads/feature", ...}}
+  """
+  @spec patch(path :: String.t(), token :: String.t(), body :: map(), opts :: Keyword.t()) ::
+          {:ok, map()} | {:error, atom()}
+  def patch(path, token, body, opts \\ [])
+      when is_binary(path) and is_binary(token) and is_map(body) do
+    base_opts = [
+      json: body,
+      headers: [
+        {"authorization", "Bearer #{token}"},
+        {"accept", "application/vnd.github+json"},
+        {"user-agent", "ezagent-github-plugin"}
+      ]
+    ]
+
+    (@base_url <> path)
+    |> Req.patch(Keyword.merge(base_opts, opts))
+    |> handle_response()
+  end
+
   # ── error mapping ────────────────────────────────────────────────────
 
   defp handle_response({:ok, %{status: status, body: body}}) when status in 200..299,

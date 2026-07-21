@@ -202,6 +202,15 @@ config :ezagent_domain_provider_connection,
     Map.merge(
       Application.get_env(:ezagent_domain_provider_connection, :callback_redirect_pairs, %{}),
       %{"github-oauth" => "pair-github-v1"}
+    ),
+  local_authorization_backend_pairs:
+    Map.merge(
+      Application.get_env(
+        :ezagent_domain_provider_connection,
+        :local_authorization_backend_pairs,
+        %{}
+      ),
+      %{{"github", "oauth_user"} => "pair-github-v1"}
     )
 
 # Import environment specific config. This must remain at the bottom

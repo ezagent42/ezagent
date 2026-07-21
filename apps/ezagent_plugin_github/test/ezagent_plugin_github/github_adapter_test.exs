@@ -19,9 +19,11 @@ defmodule EzagentPluginGithub.GitHubAdapterTest do
 
   setup do
     Application.put_env(:ezagent_plugin_github, :adapter_req_opts, plug: {Req.Test, @stub_name})
+    Application.put_env(:ezagent_plugin_github, :adapter_token, "")
 
     on_exit(fn ->
       Application.delete_env(:ezagent_plugin_github, :adapter_req_opts)
+      Application.delete_env(:ezagent_plugin_github, :adapter_token)
     end)
 
     :ok
@@ -74,7 +76,39 @@ defmodule EzagentPluginGithub.GitHubAdapterTest do
   test "create_change_request returns ChangeRequest on 201" do
     sha = String.duplicate("a", 40)
 
-    Req.Test.stub(@stub_name, fn conn ->
+    # Step 1: GET base ref
+    Req.Test.expect(@stub_name, fn conn ->
+      Req.Test.json(conn, %{"object" => %{"sha" => sha}})
+    end)
+
+    # Step 2: POST blob
+    Req.Test.expect(@stub_name, fn conn ->
+      conn
+      |> Plug.Conn.put_status(201)
+      |> Req.Test.json(%{"sha" => "blob_sha_1"})
+    end)
+
+    # Step 3: POST tree
+    Req.Test.expect(@stub_name, fn conn ->
+      conn
+      |> Plug.Conn.put_status(201)
+      |> Req.Test.json(%{"sha" => "tree_sha_1"})
+    end)
+
+    # Step 4: POST commit
+    Req.Test.expect(@stub_name, fn conn ->
+      conn
+      |> Plug.Conn.put_status(201)
+      |> Req.Test.json(%{"sha" => "commit_sha_1"})
+    end)
+
+    # Step 5: PATCH ref
+    Req.Test.expect(@stub_name, fn conn ->
+      Req.Test.json(conn, %{"ref" => "refs/heads/feature-branch"})
+    end)
+
+    # Step 6: POST pulls
+    Req.Test.expect(@stub_name, fn conn ->
       conn
       |> Plug.Conn.put_status(201)
       |> Req.Test.json(%{
@@ -91,8 +125,82 @@ defmodule EzagentPluginGithub.GitHubAdapterTest do
              GitHubAdapter.create_change_request(ctx(), repo(), [file_change()], create_request())
   end
 
+  test "create_change_request with empty file_changes skips git data" do
+    sha = String.duplicate("a", 40)
+
+    # Step 1: GET base ref
+    Req.Test.expect(@stub_name, fn conn ->
+      Req.Test.json(conn, %{"object" => %{"sha" => sha}})
+    end)
+
+    # Step 2: POST pulls (skips git data steps 2-5 since file_changes is empty)
+    Req.Test.expect(@stub_name, fn conn ->
+      conn
+      |> Plug.Conn.put_status(201)
+      |> Req.Test.json(%{
+        "number" => 42,
+        "html_url" => "https://github.com/owner/repo/pull/42",
+        "state" => "open",
+        "head" => %{"ref" => "feature-branch", "sha" => sha},
+        "base" => %{"ref" => "main"},
+        "merged" => false
+      })
+    end)
+
+    assert {:ok, %ChangeRequest{external_id: "42", state: :open}} =
+             GitHubAdapter.create_change_request(ctx(), repo(), [], create_request())
+  end
+
+  test "create_change_request returns base_sha_mismatch when SHA doesn't match" do
+    Req.Test.expect(@stub_name, fn conn ->
+      Req.Test.json(conn, %{"object" => %{"sha" => String.duplicate("b", 40)}})
+    end)
+
+    assert {:error, :base_sha_mismatch} =
+             GitHubAdapter.create_change_request(ctx(), repo(), [file_change()], create_request())
+  end
+
+  test "create_change_request maps 404 on ref to base_ref_not_found" do
+    Req.Test.expect(@stub_name, fn conn ->
+      Plug.Conn.resp(conn, 404, ~s({"message": "Not Found"}))
+    end)
+
+    assert {:error, :base_ref_not_found} =
+             GitHubAdapter.create_change_request(ctx(), repo(), [file_change()], create_request())
+  end
+
   test "create_change_request maps 422 to change_request_conflict" do
-    Req.Test.stub(@stub_name, fn conn ->
+    sha = String.duplicate("a", 40)
+
+    # Steps 1-5 succeed
+    Req.Test.expect(@stub_name, fn conn ->
+      Req.Test.json(conn, %{"object" => %{"sha" => sha}})
+    end)
+
+    Req.Test.expect(@stub_name, fn conn ->
+      conn
+      |> Plug.Conn.put_status(201)
+      |> Req.Test.json(%{"sha" => "blob_sha_1"})
+    end)
+
+    Req.Test.expect(@stub_name, fn conn ->
+      conn
+      |> Plug.Conn.put_status(201)
+      |> Req.Test.json(%{"sha" => "tree_sha_1"})
+    end)
+
+    Req.Test.expect(@stub_name, fn conn ->
+      conn
+      |> Plug.Conn.put_status(201)
+      |> Req.Test.json(%{"sha" => "commit_sha_1"})
+    end)
+
+    Req.Test.expect(@stub_name, fn conn ->
+      Req.Test.json(conn, %{"ref" => "refs/heads/feature-branch"})
+    end)
+
+    # Step 6: POST pulls fails with 422
+    Req.Test.expect(@stub_name, fn conn ->
       Plug.Conn.resp(conn, 422, ~s({"message": "Validation error"}))
     end)
 
@@ -101,7 +209,37 @@ defmodule EzagentPluginGithub.GitHubAdapterTest do
   end
 
   test "create_change_request maps 403 to repository_write_denied" do
-    Req.Test.stub(@stub_name, fn conn ->
+    sha = String.duplicate("a", 40)
+
+    # Steps 1-5 succeed
+    Req.Test.expect(@stub_name, fn conn ->
+      Req.Test.json(conn, %{"object" => %{"sha" => sha}})
+    end)
+
+    Req.Test.expect(@stub_name, fn conn ->
+      conn
+      |> Plug.Conn.put_status(201)
+      |> Req.Test.json(%{"sha" => "blob_sha_1"})
+    end)
+
+    Req.Test.expect(@stub_name, fn conn ->
+      conn
+      |> Plug.Conn.put_status(201)
+      |> Req.Test.json(%{"sha" => "tree_sha_1"})
+    end)
+
+    Req.Test.expect(@stub_name, fn conn ->
+      conn
+      |> Plug.Conn.put_status(201)
+      |> Req.Test.json(%{"sha" => "commit_sha_1"})
+    end)
+
+    Req.Test.expect(@stub_name, fn conn ->
+      Req.Test.json(conn, %{"ref" => "refs/heads/feature-branch"})
+    end)
+
+    # Step 6: POST pulls fails with 403
+    Req.Test.expect(@stub_name, fn conn ->
       Plug.Conn.resp(conn, 403, ~s({"message": "Forbidden"}))
     end)
 
