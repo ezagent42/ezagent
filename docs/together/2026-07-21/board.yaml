@@ -79,6 +79,20 @@ done_prev:
     acceptance:
       - {text: "F2 cascade 自调 + F3 provider lane(堵无-sidecar 僵尸 agent+跳校验) + F4 nil config home", done: true}
       - {text: "双后端 live proof(deepseek+kimi+表单+杀sidecar重生), grep 零密钥; 顺手开 #1482 冷启动崩溃 issue", done: true}
+  - owner: "ruihua"
+    title: "G5 通用错误机制(#1451)"
+    goal: "结构化错误：ErrorCode/ErrorMatcher/ErrorRenderer + 三层渲染"
+    status: "done"
+    who: "ruihua 轨道 · #1451 入 main"
+    acceptance:
+      - {text: "G5 通用错误机制主体:ErrorCode + ErrorMatcher + ErrorRenderer, Layer 1/2/3 分层错误渲染(错误不再是散文, 变结构化)", done: true}
+  - owner: "zyli"
+    title: "G5 错误机制前端切片(#1450)"
+    goal: "把 G5 结构化错误接进 world 前端"
+    status: "done"
+    who: "zyli 轨道 · #1450 入 main"
+    acceptance:
+      - {text: "G5 error mechanism 前端切片:结构化错误在 world 前端按视角渲染落地(配合 #1451 主体 + gaga #1456 source-2 async 错误卡)", done: true}
 cards:
   # ---------- 进行中 (WIP · 今日推进) ----------
   - owner: "allen"
