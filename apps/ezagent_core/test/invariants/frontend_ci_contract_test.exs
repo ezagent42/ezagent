@@ -4,13 +4,21 @@ defmodule EzagentCore.FrontendCIContractTest do
   @repo_root Path.expand("../../../..", __DIR__)
   @main_ci_path Path.join(@repo_root, ".github/workflows/ci.yml")
   @frontend_ci_path Path.join(@repo_root, ".github/workflows/frontend-ci.yml")
+  @ci_runner_path Path.join(@repo_root, "docker/ci-runner.sh")
 
   test "deterministic gate calls and waits for the reusable frontend workflow" do
     source = File.read!(@main_ci_path)
 
     assert source =~ "uses: ./.github/workflows/frontend-ci.yml"
     assert source =~ ~r/gate:\s+name: gate \(deterministic\)\s+needs: \[frontend\]/
-    assert source =~ "mix world.e2e.fixtures --check"
+    # 2026-07-21: the deterministic gate now runs DOCKERIZED (OrbStack) via
+    # `docker/ci-runner.sh` `gate` mode instead of native ci.yml steps, so the
+    # World Tier-1 fixture-drift check lives in the runner script (where the gate
+    # actually executes it), not as an inline ci.yml step. The gate still runs it.
+    # Pin BOTH sides of the wiring: ci.yml must invoke the dockerized `ci gate`,
+    # and the `gate` runner must contain the fixture-drift check.
+    assert source =~ "run --build --rm ci gate"
+    assert File.read!(@ci_runner_path) =~ "mix world.e2e.fixtures --check"
     refute source =~ "pnpm --dir apps/ezagent_plugin_world/assets test:e2e"
   end
 

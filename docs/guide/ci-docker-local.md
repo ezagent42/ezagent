@@ -48,8 +48,8 @@ shared-mode-revert race.
 |---|---|
 | `docker/Dockerfile.ci` | the linux CI image (pinned Elixir/OTP/Node/pnpm; deps + `_build` baked in) |
 | `docker/docker-compose.ci.yml` | `postgres:16` service + the `ci` runner (cpuset constraint) |
-| `docker/ci-runner.sh` | entrypoint: `gate` (mirror CI once) / `repro` (flake hunt) / `shell` |
-| `Makefile` | `make ci.docker` / `ci.gate` / `ci.repro` / `ci.repro.amplify` / `ci.down` |
+| `docker/ci-runner.sh` | entrypoint: `gate` (lightweight deterministic gate — the ci.yml `gate` job) / `full-suite` (`mix ci.local`) / `repro` (flake hunt) / `shell` |
+| `Makefile` | `make ci.docker` / `ci.gate` / `ci.full` / `ci.repro` / `ci.repro.amplify` / `ci.down` |
 
 ## Usage
 
@@ -62,8 +62,9 @@ make ci.docker
 Individual targets:
 
 ```bash
-make ci.docker.build      # build the image
-make ci.gate              # run `mix ci.local` (exact CI chain) inside linux
+make ci.docker.build      # build the image (base on lock change + thin source layer)
+make ci.gate              # run the LIGHTWEIGHT deterministic gate (the ci.yml `gate` job chain) inside linux
+make ci.full              # run the FULL `mix ci.local` (the ci.yml `full-suite` chain) inside linux
 make ci.repro             # hunt the flake: seed sweep at cpuset=0-3 (~CI's ~4 vCPU)
 make ci.repro.amplify     # MORE race pressure: cpuset=0-1, 2 schedulers, max_cases=8
 make ci.shell             # drop into the container

@@ -3,11 +3,15 @@
 # ubuntu runner's owner-teardown churn). See docs/guide/ci-docker-local.md.
 #
 # Usage (or just `make ci.docker` / `make ci.repro` from the repo root):
-#   docker/build-ci-image.sh                                            # build base (on lock change) + thin image
-#   docker compose -f docker/docker-compose.ci.yml build
-#   docker compose -f docker/docker-compose.ci.yml run --rm ci gate     # mirror CI once
-#   docker compose -f docker/docker-compose.ci.yml run --rm ci repro    # hunt the flake
-#   docker compose -f docker/docker-compose.ci.yml down -v              # teardown
+#   docker/build-ci-image.sh                                                     # build base (on lock change)
+#   docker compose -p ci-<id> -f docker/docker-compose.ci.yml run --build --rm ci gate        # PR gate (lightweight)
+#   docker compose -p ci-<id> -f docker/docker-compose.ci.yml run --build --rm ci full-suite  # full mix ci.local
+#   docker compose -p ci-<id> -f docker/docker-compose.ci.yml run --build --rm ci repro        # hunt the flake
+#   docker compose -p ci-<id> -f docker/docker-compose.ci.yml down -v                          # teardown
+#
+# `.github/workflows/ci.yml`'s `gate` job runs the `gate` mode dockerized on the
+# self-hosted mac via exactly this compose file + a per-run `-p ci-gate-<run_id>`
+# project (isolated postgres + thin image), so concurrent runners never collide.
 #
 # Two-step image build (docs/superpowers/plans/2026-07-20-dockerize-ci.md Task 1):
 # the `base` service builds ezagent-ci-base:latest (deps + node_modules, keyed on
@@ -54,7 +58,12 @@ services:
         #   DOCKER_BUILD_PROXY=http://host.docker.internal:7897 docker compose ... build)
         HTTP_PROXY: "${DOCKER_BUILD_PROXY:-}"
         HTTPS_PROXY: "${DOCKER_BUILD_PROXY:-}"
-    image: ezagent-ci-local:latest
+    # NO explicit `image:` tag → compose names the built image `<project>-ci`, unique per
+    # `-p` project. This is what makes concurrent per-PR CI runs race-free at BUILD time:
+    # each `docker compose -p ci-<run_id> run --build ci gate` builds its OWN thin image
+    # (a cheap COPY-only layer on the shared, cached ezagent-ci-base) instead of racing on
+    # one shared tag. Run-time isolation (separate postgres per project) comes from `-p`
+    # too. (docs/superpowers/plans/2026-07-20-dockerize-ci.md Task 3.)
     depends_on:
       postgres:
         condition: service_healthy
@@ -65,6 +74,11 @@ services:
       POSTGRES_PASSWORD: ezagent_pg_compat
       MIX_ENV: test
       # NO MIX_TEST_PARTITION — mirror CI (one shared DB across all umbrella child BEAMs).
+      # Dummy orchestrator creds for the `full-suite` mode (mix ci.local materializes the
+      # cc-custom orchestrator). config/test.exs sets the same fallbacks, so these are a
+      # belt for parity with the native full-suite job; the `gate` mode never needs them.
+      DEEPSEEK_API_KEY: "${DEEPSEEK_API_KEY:-sk-test-dummy-deepseek-not-a-real-key}"
+      MOONSHOT_API_KEY: "${MOONSHOT_API_KEY:-sk-test-dummy-moonshot-not-a-real-key}"
       # repro-hunt knobs (override on the CLI):
       SCHEDULERS: "${SCHEDULERS:-4}"
       MAX_CASES: "${MAX_CASES:-8}"

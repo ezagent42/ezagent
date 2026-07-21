@@ -19,7 +19,17 @@ FROM ${CI_BASE}
 WORKDIR /app
 # Source now — this is the ONLY layer that changes per PR.
 COPY . .
-RUN chmod +x docker/ci-runner.sh \
+# The arch/invariant ExUnit suite locates the repo root via
+# `git rev-parse --show-toplevel` and then enumerates source with `Path.wildcard`
+# (see e.g. apps/ezagent_core/test/invariants/*_test.exs `repo_root/0`). The image
+# carries the SOURCE but NOT `.git` (.dockerignore strips it → smaller, cache-stable
+# image), so without a repo those tests crash `MatchError {"", 128}`. A minimal
+# `git init` makes `rev-parse --show-toplevel` return /app; no history is needed —
+# source is globbed from disk, and the one `git show origin/main:` drift-baseline
+# lookup (architecture_case.exs) degrades to :ok exactly as on a shallow CI checkout
+# that lacks the origin/main ref. Runs before chown so `.git` is owned by ezagent.
+RUN git init -q . \
+    && chmod +x docker/ci-runner.sh \
     && chown -R ezagent:ezagent /app /home/ezagent
 
 # Run the suite as NON-ROOT (erlexec refuses root). /app (incl. _build / .mix) and

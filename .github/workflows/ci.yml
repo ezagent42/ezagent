@@ -1,32 +1,39 @@
 name: CI
 
-# LAYERED merge gate (design C1). Frontend and backend run cheap-first:
+# LAYERED merge gate (design C1). ALL jobs run on the self-hosted macOS runner —
+# ZERO GitHub-hosted (ubuntu) dependency (billing exhausted 2026-07-20). The
+# backend jobs (`gate`, `gitleaks`) run DOCKERIZED via OrbStack; `full-suite`
+# stays native mix (see its own note); `frontend` stays native (setup-node — it
+# needs a different Node/pnpm/Playwright pin than the backend image). Cheap-first:
 #
-#   job `frontend`   runs lint, TypeScript, unit tests and Tier-1 Chromium in
-#                    the reusable, Ubuntu-only frontend workflow.
+#   job `frontend`   runs lint, TypeScript, unit tests and Tier-1 Chromium via
+#                    the reusable frontend workflow (native setup-node on the mac).
 #
-#   job `gate`       — ubuntu-latest, ~3-5 min. The DETERMINISTIC required
-#                      backend gate: generated-fixture drift, compile
-#                      after the reusable frontend gate passes,
-#                      --warnings-as-errors, format, the two static invariant
-#                      tasks, and the arch/invariant ExUnit subset (never-flake
-#                      tests that catch real regressions fast — e.g.
-#                      NoBehaviorModuleReferenceTest caught a retired-module
-#                      ref that flake noise had hidden). Does NOT run the full
-#                      suite, so it is fast and stable.
+#   job `gate`       — DOCKERIZED on the self-hosted mac, ~3-5 min. The
+#                      DETERMINISTIC required backend gate: generated-fixture
+#                      drift, compile --warnings-as-errors, format, the two static
+#                      invariant tasks, and the arch/invariant ExUnit subset
+#                      (never-flake tests that catch real regressions fast — e.g.
+#                      NoBehaviorModuleReferenceTest caught a retired-module ref
+#                      that flake noise had hidden). Runs the SAME chain as before,
+#                      now inside a pinned linux container (docker/Dockerfile.ci)
+#                      against a postgres:16 service on a per-run compose network.
+#                      Does NOT run the full suite, so it is fast and stable.
 #
-#   job `full-suite` — self-hosted macOS (the lead's dev machine), needs:
-#                      [gate]. The EXACT `mix ci.local` end-to-end flow (pnpm
-#                      + ecto + `precommit` full ~1856-test suite +
+#   job `full-suite` — self-hosted macOS (the lead's dev machine), NATIVE mix,
+#                      needs: [gate]. The EXACT `mix ci.local` end-to-end flow
+#                      (pnpm + ecto + `precommit` full ~1856-test suite +
 #                      check_invariants + socialware.check). Runs ONLY after
 #                      `gate` passes, so a broken branch never burns the
 #                      expensive dev-machine run. NOT on pull_request (job-level
 #                      `if`): the ~500-580s run happens only on push-to-main
 #                      (pre-deploy, BLOCKING via dispatch-canary) and the
 #                      nightly `schedule` cron — every PR still gets the cheap
-#                      ubuntu `gate` (a 100% subset). Darwin is the green-
-#                      reliable OS for the concurrent suite (ubuntu is the
-#                      flake-prone loaded runner — see #108).
+#                      `gate` (a 100% subset). Kept NATIVE deliberately: it does
+#                      not run on pull_request, so a dockerized rewrite could not
+#                      be validated by this PR's own CI before merge — the proven
+#                      native run guards the deploy path (see #108 for why darwin
+#                      is the green-reliable OS for the concurrent suite).
 
 on:
   pull_request:
@@ -54,117 +61,52 @@ jobs:
   gate:
     name: gate (deterministic)
     needs: [frontend]
-    # Moved off ubuntu-latest to the self-hosted macOS runner (GitHub Actions
-    # billing exhausted 2026-07-20 → GitHub-hosted runners refuse to start).
-    # Same single dev-box runner as full-suite, so ALL jobs SERIALIZE (accepted).
-    # `erlef/setup-beam` dropped: the runner's native Elixir 1.19.5 / OTP 28
-    # already match the versions it requested and are proven green by full-suite's
-    # native `mix ci.local`; setup-beam is unreliable on macOS ARM. The postgres
-    # `services:` container is replaced by a native ephemeral Postgres (no
-    # reliable container daemon on the mac — see full-suite) on a CI-dedicated,
-    # gate-EXCLUSIVE port DISTINCT from full-suite's 55440, so a concurrent
-    # full-suite never collides.
+    # DOCKERIZED on the self-hosted macOS runner (OrbStack). GitHub-hosted ubuntu
+    # billing is exhausted (2026-07-20), so no GitHub-hosted runner is available.
+    # NOTE on mechanism: GitHub Actions job-level `container:` / `services:` YAML is
+    # LINUX-runner ONLY — it is NOT honored on a macOS runner even with Docker
+    # present. So this job dockerizes by having its `run:` steps shell out to
+    # `docker compose` explicitly: a pinned linux image (Elixir 1.19.5 / OTP
+    # 28.4.2 / Node 25 / pnpm 10.33.0 — docker/Dockerfile.ci{,-base}) runs the
+    # exact gate chain against a `postgres:16` service on an isolated per-run
+    # compose network. The expensive `ezagent-ci-base` (deps + node_modules, keyed
+    # on lockfiles) is rebuilt ONLY when a lockfile changes, so per-PR builds are a
+    # fast COPY-only source layer. Each run uses a UNIQUE `-p ci-gate-<run_id>`
+    # compose project (own postgres + own thin image) → a 2nd/3rd self-hosted
+    # runner is safe to add (no shared-port / shared-DB contention). The step chain
+    # is byte-identical to the previous native gate (docker/ci-runner.sh `gate`).
+    # Rollback: revert this commit → the native-mix gate in git history is restored.
     runs-on: [self-hosted, macOS, ARM64]
-    env:
-      MIX_ENV: test
-      POSTGRES_USER: ezagent_pg_compat
-      POSTGRES_PASSWORD: ezagent_pg_compat
-      POSTGRES_HOST: 127.0.0.1
-      # Gate-exclusive port (full-suite: 55440; dev/dogfood: 55432). Verified
-      # free + non-dev on the runner.
-      POSTGRES_PORT: "55441"
     steps:
       - uses: actions/checkout@v4
 
-      # Ephemeral native Postgres for the gate — mirrors full-suite (no container
-      # runtime dependency), on the gate-exclusive port 55441. Fresh per-run
-      # cluster under the job-scoped RUNNER_TEMP; torn down always (final step).
-      - name: Start ephemeral Postgres (native, 55441)
+      # Fail fast with a clear message if OrbStack/Docker is down (the native-mix
+      # gate remains the documented fallback — revert this commit).
+      - name: Preflight — Docker/OrbStack up
+        run: docker version >/dev/null || { echo "::error::OrbStack/Docker is not running on the self-hosted runner"; exit 1; }
+
+      # Builds ezagent-ci-base:latest ONLY when mix.lock / an asset pnpm-lock.yaml
+      # changed (lock-hash tag); otherwise a no-op. The thin per-PR source image is
+      # built by the `run --build` below (COPY-only on the cached base → seconds).
+      - name: Build CI base image (cached on lock change)
+        run: docker/build-ci-image.sh
+
+      # Run the deterministic gate INSIDE the linux container against a postgres:16
+      # service, in a per-run compose project so concurrent runs never collide. The
+      # `trap … EXIT` tears the project down (containers, network, tmpfs volumes)
+      # even on cancel/failure. `run --build` builds this run's thin source image;
+      # `--rm` removes the one-shot container; the container exit code propagates,
+      # so a red gate step fails the job. CPUSET/SCHEDULERS widen the flake-repro
+      # default (0-3) for CI speed on the 28-core runner while leaving headroom.
+      - name: Gate (dockerized — mix chain + postgres:16)
+        env:
+          CPUSET: "0-9"
+          SCHEDULERS: "10"
         run: |
           set -euo pipefail
-          PG_BIN="$(brew --prefix postgresql@18)/bin"
-          PGDATA_CI="$RUNNER_TEMP/ezagent-ci-gate-pg"
-          lsof -ti tcp:"$POSTGRES_PORT" | xargs -r kill -9 2>/dev/null || true
-          rm -rf "$PGDATA_CI"
-          "$PG_BIN/initdb" -D "$PGDATA_CI" -U "$POSTGRES_USER" \
-            --auth-local=trust --auth-host=trust -E UTF8 >/dev/null
-          "$PG_BIN/pg_ctl" -D "$PGDATA_CI" \
-            -o "-p $POSTGRES_PORT -k /tmp -c listen_addresses=127.0.0.1" \
-            -w -l "$PGDATA_CI/server.log" start
-          "$PG_BIN/psql" -h 127.0.0.1 -p "$POSTGRES_PORT" -U "$POSTGRES_USER" \
-            -d postgres -c "ALTER ROLE $POSTGRES_USER WITH PASSWORD '$POSTGRES_PASSWORD' SUPERUSER LOGIN;"
-
-      - name: Cache deps + _build
-        uses: actions/cache@v4
-        with:
-          path: |
-            deps
-            _build
-          key: ${{ runner.os }}-mix-test-${{ hashFiles('**/mix.lock') }}
-          restore-keys: |
-            ${{ runner.os }}-mix-test-
-
-      - name: Fetch Elixir deps
-        run: mix deps.get
-
-      - name: Compile (warnings-as-errors)
-        run: mix compile --warnings-as-errors --force
-
-      - name: Check World Tier-1 fixture drift
-        run: mix world.e2e.fixtures --check
-
-      - name: Check formatting
-        run: mix format --check-formatted
-
-      # DB before the app-booting steps below (check_invariants /
-      # socialware.check / some invariant tests boot the app).
-      - name: Create + migrate test DB
-        run: |
-          mix ecto.create --quiet
-          mix ecto.migrate --quiet
-
-      - name: check_invariants
-        run: mix ezagent.check_invariants
-
-      - name: socialware.check
-        run: mix ezagent.socialware.check
-
-      # Deterministic arch/invariant ExUnit subset only (NOT the full suite).
-      # Path-scoped from the umbrella root: each child app runs `mix test` with
-      # these paths and silently skips the dirs it does not own, so this runs
-      # exactly the arch/invariant tests across all apps (locally: 439 tests,
-      # 0 failures, exit 0). Includes NoBehaviorModuleReferenceTest,
-      # OversizedModules, the view-authorize / predicate-A gate tests, etc.
-      - name: Arch/invariant ExUnit subset
-        run: >-
-          mix test
-          apps/ezagent_core/test/architecture
-          apps/ezagent_core/test/invariants
-          apps/ezagent_domain_external_mirror/test/invariants
-          apps/ezagent_domain_identity/test/invariants
-          apps/ezagent_domain_session/test/invariants
-
-      # Reflow-rehearsal gate: seed definitions/recipes with SIMULATED OLD bodies
-      # (what a reflow-carried DB holds), then boot the CURRENT seed paths and
-      # assert zero raises + the third-state UPGRADE applied. Deterministic (no
-      # docker / external services), so it belongs in the ubuntu gate. Catches the
-      # #1235/#1240 third-state seed regression class the three deploys hit.
-      - name: Reflow-rehearsal (third-state seed contract)
-        run: >-
-          mix test --include reflow_rehearsal
-          apps/ezagent_domain_identity/test/ezagent/socialware/config_store_seed_upsert_test.exs
-          apps/ezagent_domain_session/test/integration/reflow_rehearsal_test.exs
-
-      # Always stop + delete the gate's ephemeral cluster, even on failure/cancel,
-      # so nothing lingers on port 55441 or on disk between runs.
-      - name: Stop + remove ephemeral Postgres
-        if: always()
-        run: |
-          PG_BIN="$(brew --prefix postgresql@18)/bin"
-          PGDATA_CI="$RUNNER_TEMP/ezagent-ci-gate-pg"
-          "$PG_BIN/pg_ctl" -D "$PGDATA_CI" -m immediate stop 2>/dev/null || true
-          lsof -ti tcp:"$POSTGRES_PORT" | xargs -r kill -9 2>/dev/null || true
-          rm -rf "$PGDATA_CI"
+          P="ci-gate-${{ github.run_id }}-${{ github.run_attempt }}"
+          trap 'docker compose -p "$P" -f docker/docker-compose.ci.yml down -v --remove-orphans || true' EXIT
+          docker compose -p "$P" -f docker/docker-compose.ci.yml run --build --rm ci gate
 
   full-suite:
     name: full-suite (self-hosted macOS)
@@ -257,24 +199,28 @@ jobs:
 
   gitleaks:
     name: gitleaks secret scan
-    # Moved off ubuntu-latest to the self-hosted macOS runner (Actions billing
-    # exhausted 2026-07-20). The mac has no reliable container daemon (see
-    # full-suite), so the previous `docker run ghcr.io/gitleaks/gitleaks` is
-    # replaced by the native gitleaks CLI (installed via Homebrew on demand).
+    # DOCKERIZED on the self-hosted macOS runner (OrbStack) — no GitHub-hosted
+    # runner (ubuntu billing exhausted 2026-07-20). The gitleaks binary runs from
+    # the official ghcr.io/gitleaks/gitleaks image with the working tree bind-
+    # mounted read-only-in-effect at /repo, keeping ZERO host toolchain
+    # dependency (no `brew install`). Semantics are IDENTICAL to the native
+    # `gitleaks dir . --config .gitleaks.toml --redact --no-banner`.
     runs-on: [self-hosted, macOS, ARM64]
     permissions: { contents: read }
     steps:
       - uses: actions/checkout@v4
+      - name: Preflight — Docker/OrbStack up
+        run: docker version >/dev/null || { echo "::error::OrbStack/Docker is not running on the self-hosted runner"; exit 1; }
       # Bare gitleaks CLI (MIT), not gitleaks-action: the action demands a paid
       # license for org repos. Directory (no-git) scan by design — this gate
       # guards NEW additions; history is handled separately (rewrite + rotation).
-      # Allowlist rationale lives in .gitleaks.toml. `gitleaks dir` is the modern
-      # equivalent of the retired `detect --source . --no-git`; it exits non-zero
+      # Allowlist rationale lives in .gitleaks.toml. `gitleaks dir` exits non-zero
       # when a leak is found, failing the gate.
-      - name: Scan working tree for secrets
+      - name: Scan working tree for secrets (dockerized gitleaks)
         run: |
-          command -v gitleaks >/dev/null 2>&1 || brew install gitleaks
-          gitleaks dir . --config .gitleaks.toml --redact --no-banner
+          docker run --rm -v "$PWD:/repo" -w /repo \
+            ghcr.io/gitleaks/gitleaks:latest \
+            dir /repo --config /repo/.gitleaks.toml --redact --no-banner
 
   # main-merge → nightly 自动部署(2026-07-08 plan, allenwoods)。
   # 需要 secret DEPLOY_DISPATCH_TOKEN:fine-grained PAT,Hyprial/ezagent-deploy
