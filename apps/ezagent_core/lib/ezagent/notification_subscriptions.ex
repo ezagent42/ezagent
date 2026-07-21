@@ -494,7 +494,10 @@ defmodule Ezagent.NotificationSubscriptions do
   # check by message-tag, not by trusting caller-supplied ctx.
   # Public callers ALWAYS hit a real cap check now.
 
-  defp check_subscribe_cap(%URI{} = stream_uri, %{caps: caps}) do
+  defp check_subscribe_cap(
+         %URI{} = stream_uri,
+         %{authenticated_principal: %URI{} = holder, caps: caps}
+       ) do
     needed = %{
       kind: :user,
       behavior: Ezagent.ActionSet.Notifications,
@@ -505,10 +508,9 @@ defmodule Ezagent.NotificationSubscriptions do
       workspace_uri: Capability.workspace_of(stream_uri)
     }
 
-    if caps |> normalize_caps() |> Enum.any?(&Capability.matches?(&1, needed)) do
-      :ok
-    else
-      {:error, :unauthorized}
+    case Ezagent.Cap.authorize(holder, normalize_caps(caps), needed) do
+      {:ok, %Capability{}} -> :ok
+      {:error, _reason} -> {:error, :unauthorized}
     end
   end
 

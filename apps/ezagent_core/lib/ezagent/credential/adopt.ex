@@ -13,6 +13,7 @@ defmodule Ezagent.Credential.Adopt do
           {:ok, String.t()} | {:error, term()}
   def adopt(owner, ws, flavor, candidates, opts) do
     operator = Keyword.fetch!(opts, :caller)
+    authenticated_principal = Keyword.fetch!(opts, :authenticated_principal)
     caps = Keyword.fetch!(opts, :caps)
 
     case candidates do
@@ -20,7 +21,11 @@ defmodule Ezagent.Credential.Adopt do
         case UserDefaultSource.set_via_dispatch(
                owner,
                %{flavor: flavor, source_uri: single, workspace: ws},
-               %{caller: operator, caps: caps}
+               %{
+                 caller: operator,
+                 authenticated_principal: authenticated_principal,
+                 caps: caps
+               }
              ) do
           {:ok, _} -> {:ok, single}
           err -> err

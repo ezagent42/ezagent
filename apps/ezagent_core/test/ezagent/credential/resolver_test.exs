@@ -184,14 +184,14 @@ defmodule Ezagent.Credential.ResolverTest do
 
   # ── grant cap-check (pure half) ────────────────────────────────────────────
 
-  test "source_read_authorized? accepts a matching sandbox.read cap, rejects insufficient caps" do
+  test "source_read_authorized? rejects unsigned legacy caps and insufficient caps" do
     good = Ezagent.Credential.GrantCap.read_cap_for(@explicit)
     # a cap for a DIFFERENT source must not authorize reading @explicit
     wrong = Ezagent.Credential.GrantCap.read_cap_for(@user_src)
 
-    assert Resolver.source_read_authorized?(@explicit, [good])
-    refute Resolver.source_read_authorized?(@explicit, [wrong])
-    refute Resolver.source_read_authorized?(@explicit, [])
+    refute Resolver.source_read_authorized?(@owner, @explicit, [good])
+    refute Resolver.source_read_authorized?(@owner, @explicit, [wrong])
+    refute Resolver.source_read_authorized?(@owner, @explicit, [])
   end
 
   # codex H1 (PR-1 re-review): a workspace-shared resolver ERROR must FAIL LOUD, never be

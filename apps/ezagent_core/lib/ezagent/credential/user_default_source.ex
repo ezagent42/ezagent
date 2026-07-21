@@ -102,8 +102,9 @@ defmodule Ezagent.Credential.UserDefaultSource do
   command and hands it to `Ezagent.Router.dispatch/1`.
 
   `owner_uri` is the User Kind being targeted; `args` carries `%{flavor, source_uri,
-  workspace}`; `ctx` carries `%{caller, caps}` (the principal whose authority is
-  checked).
+  workspace}`; `ctx` carries `%{caller, authenticated_principal, caps}`. The
+  authenticated principal is forwarded explicitly and is never inferred from the
+  machinery caller.
   """
   @spec set_via_dispatch(URI.t() | String.t(), map(), map()) :: {:ok, map()} | {:error, term()}
   def set_via_dispatch(owner_uri, args, ctx) when is_map(args) and is_map(ctx) do
@@ -121,6 +122,7 @@ defmodule Ezagent.Credential.UserDefaultSource do
       )
 
     caller = Map.fetch!(ctx, :caller)
+    authenticated_principal = Map.fetch!(ctx, :authenticated_principal)
     caps = Map.fetch!(ctx, :caps)
     owner_uri_string = URI.to_string(owner)
 
@@ -129,7 +131,13 @@ defmodule Ezagent.Credential.UserDefaultSource do
         target,
         :set_default_credential_source,
         Map.put(args, :owner_uri, owner_uri_string),
-        %{mode: :call, caller: caller, caps: caps, reply: {:caller_inbox, self()}}
+        %{
+          mode: :call,
+          caller: caller,
+          authenticated_principal: authenticated_principal,
+          caps: caps,
+          reply: {:caller_inbox, self()}
+        }
       )
 
     Ezagent.Router.dispatch(cmd)
