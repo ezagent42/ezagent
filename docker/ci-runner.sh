@@ -98,12 +98,10 @@ case "$MODE" in
     step mix ecto.migrate --quiet
     step mix ezagent.check_invariants
     step mix ezagent.socialware.check
-    step mix test \
-      apps/ezagent_core/test/architecture \
-      apps/ezagent_core/test/invariants \
-      apps/ezagent_domain_external_mirror/test/invariants \
-      apps/ezagent_domain_identity/test/invariants \
-      apps/ezagent_domain_session/test/invariants
+    # Arch/invariant ExUnit subset (5 paths). SINGLE SOURCE: `mix gate.arch` reads
+    # `@arch_invariant_test_paths` in `mix.exs`, the SAME list `mix ci.fast` (the
+    # local fast gate) runs — so this CI step and the dev alias can never drift.
+    step mix gate.arch
     step mix test --include reflow_rehearsal \
       apps/ezagent_domain_identity/test/ezagent/socialware/config_store_seed_upsert_test.exs \
       apps/ezagent_domain_session/test/integration/reflow_rehearsal_test.exs

@@ -62,7 +62,11 @@ defmodule EzagentCore.Umbrella.MixProject do
 
   def cli do
     [
-      preferred_envs: [precommit: :test]
+      # `ci.fast` / `gate.arch` boot the app + hit the test DB (check_invariants,
+      # socialware.check, the arch/invariant ExUnit subset), so they MUST run in
+      # `:test` — auto-select it so a dev/agent can just `mix ci.fast` without
+      # remembering `MIX_ENV=test` (the CI `gate` job sets `MIX_ENV=test` itself).
+      preferred_envs: [precommit: :test, "ci.fast": :test, "gate.arch": :test]
     ]
   end
 
@@ -112,6 +116,24 @@ defmodule EzagentCore.Umbrella.MixProject do
   #
   #     $ mix setup
   #
+  # #1476-followup — the deterministic arch/invariant ExUnit subset the CI `gate`
+  # job runs (via `docker/ci-runner.sh` `gate)`, which the `.github/workflows/ci.yml`
+  # `gate` job invokes in a container). SINGLE SOURCE OF TRUTH: both the `gate.arch`
+  # alias below AND that `docker/ci-runner.sh` step invoke `mix gate.arch`, so this
+  # path list can never drift between the local fast gate and CI.
+  # Path-scoped from the umbrella root: `mix test <paths>` RECURSES into every
+  # umbrella child, and each child silently skips the dirs it does not own — so
+  # this runs exactly the arch/invariant tests across all apps. These are the
+  # deterministic, never-flaky gates (arch scans, invariant tests) that catch the
+  # class of red-test-slipped-to-review a killed 120s full-suite run misses.
+  @arch_invariant_test_paths [
+    "apps/ezagent_core/test/architecture",
+    "apps/ezagent_core/test/invariants",
+    "apps/ezagent_domain_external_mirror/test/invariants",
+    "apps/ezagent_domain_identity/test/invariants",
+    "apps/ezagent_domain_session/test/invariants"
+  ]
+
   # See the documentation for `Mix` for more info on aliases.
   #
   # Aliases listed here are available only for this project
@@ -203,6 +225,37 @@ defmodule EzagentCore.Umbrella.MixProject do
         # the CHECK RESULTS, not shutdown timing, so we halt(0) explicitly. New
         # gates MUST be added ABOVE this step — anything after halt/0 never runs.
         &finalize_ci_local/1
+      ],
+      # #1476-followup — `mix gate.arch` runs ONLY the deterministic arch/invariant
+      # ExUnit subset (`@arch_invariant_test_paths`). It is the SINGLE source the CI
+      # gate (`docker/ci-runner.sh` `gate)`) invokes as `mix gate.arch`, so the path
+      # list lives in exactly one place and CI + the alias can never drift. Not for
+      # direct dev use — use `mix ci.fast`.
+      "gate.arch": ["test " <> Enum.join(@arch_invariant_test_paths, " ")],
+      # #1476-followup — `mix ci.fast` is the FAST local gate: the exact
+      # deterministic subset the CI `gate` job runs (check_invariants +
+      # socialware.check + the arch/invariant ExUnit subset), and NOTHING else. It
+      # finishes in ~1-2 min (vs the SLOW full `ci.local`/full-suite's 500s+), so an
+      # agent can ALWAYS run it locally before pushing instead of leaning on CI —
+      # closing the gap where a red arch test slipped to review because the full
+      # suite was killed at the default ~120s bash-tool timeout before the
+      # arch/invariant tests ran. It catches THAT class of failure (never-flaky arch
+      # scans + invariant gates); the SLOW full `ci.local`/`precommit` stays the
+      # pre-push / push-to-main gate. Run it as:
+      #
+      #     mix ci.fast                              # auto MIX_ENV=test (cli/0)
+      #     MIX_TEST_PARTITION=$USER mix ci.fast     # private DB, concurrent-safe
+      #
+      # ecto.create/migrate up front make it self-contained from a cold test DB;
+      # socialware.check runs in a FRESH `mix` process (`run_socialware_check/1`)
+      # for the same SQL-Sandbox reason as `ci.local`. check_invariants + socialware
+      # run BEFORE the ~90s test subset so a violation fails fast.
+      "ci.fast": [
+        "ecto.create --quiet",
+        "ecto.migrate --quiet",
+        "ezagent.check_invariants",
+        &run_socialware_check/1,
+        "gate.arch"
       ]
     ]
   end
