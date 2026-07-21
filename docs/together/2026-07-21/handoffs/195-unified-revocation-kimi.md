@@ -10,6 +10,16 @@ You are implementing a **security-critical, multi-phase cap-model program** in t
 1. The **`ezagent-developer` skill** + its `references/capbac.md` (the cap-model bible), and the `elixir-phoenix-helper` skill if present.
 2. **THE PLAN — read it in full, it is the spec:** `docs/superpowers/plans/2026-07-20-unified-generation-revocation-and-authorize.md` (on `main`, ~830 lines, v4 — 4 rounds of adversarial review folded in). It has the paradigm, the ground-truth anchor table (real file:line on main), the decisions, the v2/v3/v4 must-fix resolutions, and **every task F-2…Z-1 with code blocks + acceptance criteria**. Implement the tasks EXACTLY as written; the code blocks are the design.
 
+## PHASE 0 — one-time grounding & clarification pass (do this FIRST, before ANY implementation)
+Read the ENTIRE plan. Then `git grep` every symbol the plan's anchor table + task blocks cite, against CURRENT `main` (main has moved since the plan's `fe2906431`/`6f54f1f9e` anchors — read-plane + #1477 landed). Produce ONE consolidated report covering ALL phases at once:
+- **Moved/missing symbols**: every cited `file:line`/function that has moved or no longer exists on current main, with where it went.
+- **Genuinely ambiguous designs**: any task whose design is under-specified or self-contradictory after grounding.
+- **Unresolved plan decisions**: e.g. DECISION #5 (supervisor moderation model) gates S-2 — flag if unresolved; any other `DECISION FOR ALLEN` still open.
+
+Post this report and WAIT for the coordinator's confirmation. **Do NOT implement anything in Phase 0.** This is the ONLY interruption point — we resolve everything here, up front.
+
+**AFTER confirmation: run fully self-driven to completion — do NOT stop again.** Implement ALL phases F-2…Z-1 in the plan's sequence, end to end. For any MINOR ambiguity you hit mid-implementation, use best judgment per the plan's paradigm + the capbac invariants, implement it (do not defer, do not halt), and record the decision in your final report. The ONLY thing that halts you after Phase 0 is a hard contradiction that makes a task literally impossible to implement correctly — and even then, skip that one task, keep going on the rest, and report it. Nothing gets silently deferred: everything is either implemented or explicitly listed as blocked-with-reason at the end.
+
 ## SCOPE — implement everything EXCEPT F-1 (already merged as #1493)
 Follow the plan's **"Sequencing (load-bearing)"** section (line ~371) as your order:
 
@@ -20,7 +30,7 @@ Follow the plan's **"Sequencing (load-bearing)"** section (line ~371) as your or
 - **Phase Z** (Z-1, LANDS LAST): the unified enumerator gate — ONE source-scan proving every authority-use site routes through `authorize/3` (both axes + membership + explicit holder) + the recredential worklist + the scope-tuple denial proof. Build it empty-allowlist, run it, and let it produce the worklist — it is the shared completeness proof for F/G/D/M.
 
 ## Non-negotiables
-- **Ground every symbol against real main.** The plan's anchor table was verified at `fe2906431`/`6f54f1f9e`; main has moved (read-plane + #1477). Before implementing a task, `git grep` the cited symbols; if a cited file:line or function has moved or no longer exists, **STOP and report the specific gap** rather than guessing — this is core cap code and a wrong guess is a security hole.
+- **Symbols are grounded in Phase 0** (above) — all moved/missing symbols get reported ONCE upfront and resolved before you implement, so you never grind against a stale anchor. During implementation you do NOT re-halt on symbols; if something genuinely undecidable slips past Phase 0, use the plan's paradigm + the capbac invariants as the tie-breaker, implement it, and record the call in the final report (a wrong silent guess on cap-core is a security hole — so document, don't guess silently, but also don't stop).
 - **The enumerator gates (G-3 Step 5c, Z-1) are GATES, not assertions** — empty-allowlist, mirror `CapCheckOnlyAtChokepointTest`. They must fail-before / pass-after.
 - **TDD**: failing test first for each task's acceptance criterion.
 - **Tests**: `export MIX_TEST_PARTITION=p195` first. Per phase, verify: your new tests + `apps/ezagent_core` suite + `mix compile --warnings-as-errors` clean. A full `mix ci.local` per phase is ideal but slow — at minimum compile-clean + the phase's own suites + the arch/invariant gates.
@@ -28,6 +38,6 @@ Follow the plan's **"Sequencing (load-bearing)"** section (line ~371) as your or
 ## Deliverable & reporting
 - Commit per task; push to `feat/195-unified-revocation`; DRAFT PR.
 - **Final message**: a per-phase table — for each of F/G/D/M/Z: tasks done, tests (fail-before/pass-after for the security-critical ones: revoke denies old-gen, self-license un-re-mintable, marker-preservation gate, membership-as-truth, Z-1 enumerator empty-allowlist result), any plan ambiguity / missing-symbol you STOPPED on, and the PR URL.
-- If any single phase's design in the plan is ambiguous or a cited symbol is gone, STOP that phase and report — do not force a resolution on cap-core.
+- Nothing gets silently deferred: after Phase 0 you run to completion, and every task is either implemented or (only on a hard post-Phase-0 contradiction) listed as blocked-with-reason while you keep going on the rest. Phase 0 was the single clarification gate; there are no mid-phase halts for questions.
 
 This whole program is budgeted as a long multi-hour run — read the plan fully first, then grind phase by phase. The coordinator (cc) + codex will run the adversarial review + pre-merge gate on your hand-back.
