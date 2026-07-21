@@ -142,11 +142,12 @@ cards:
   - owner: "ruihua"
     title: "★ G5 错误机制 E2E 实证(报告)"
     goal: "G5 全链路 E2E 截图实证 + 环境/权限坑清理"
-    status: "wip"
-    who: "ruihua 轨道 · feat/g5-error-mechanism · Return: docs/together/2026-07-17/returns/ruihua-g5-implementation.md"
+    status: "blocked"
+    who: "ruihua 轨道 · feat/g5-error-mechanism(落后 main 38) · Return: docs/together/2026-07-17/returns/ruihua-g5-implementation.md"
+    deps: ["#1476"]
     acceptance:
       - {text: "D5/D6 已由 #1456 解决(ErrorCode/Matcher/Renderer 零改动 + 双轨 hook); 今日修 7 个环境/权限 infra 坑(entity_profiles/email_verified/membership/create_session cap/send cap/TOCTOU)", done: true}
-      - {text: "★ 卡点: 消息发不出——session 后端建成但 LiveView push_patch 未到浏览器(卡\"创建中\"); send cap 在独立 mix-run BEAM issue、bin/dev BEAM 不感知; 疑 Vite 5173 端口冲突。求助: 跨 BEAM cap 下发标准做法 / 或改 Playwright E2E(lead 跟进)", done: false}
+      - {text: "★ 卡点根因=旧 World 导航+Vite(非 cap): 'session 建成但 push_patch 未到/卡创建中' 正是 zyli #1476 重写的 Conversation.nav+vite.config。解: #1476 评审合 → ruihua rebase 到 main 重跑 → 改 Playwright E2E(跑真实 server, 绕过 mix-run 跨BEAM cap 搭法)", done: false}
   - owner: "jjkysy"
     title: "挂载-撤销 infra + 协作白板二轮"
     goal: "宿主退场清理 + 冷建 deadline + kanban"
