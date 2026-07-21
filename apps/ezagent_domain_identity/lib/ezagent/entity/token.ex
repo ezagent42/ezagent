@@ -109,6 +109,7 @@ defmodule Ezagent.Entity.Token do
          true <- row.digest_version == version,
          false <- expired?(row, DateTime.utc_now()),
          {:ok, principal} <- enabled_principal(row),
+         false <- Ezagent.Identity.Offboarding.RevocationFence.fenced?(principal),
          :ok <- Ezagent.Entity.spawn_principal(principal) do
       bump_last_used(row, DateTime.utc_now())
       {:ok, principal}

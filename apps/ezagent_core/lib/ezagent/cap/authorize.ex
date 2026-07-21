@@ -43,11 +43,14 @@ defmodule Ezagent.Cap.Authorize do
   """
   @spec authorize(URI.t(), Enumerable.t(), map()) :: {:ok, Capability.t()} | denial()
   def authorize(%URI{} = holder, candidate_caps, needed) when is_map(needed) do
-    case holder_caps(holder) do
-      [] ->
+    case {principal_fenced?(holder), holder_caps(holder)} do
+      {true, _caps} ->
         {:error, :holder_revoked}
 
-      _licensed ->
+      {false, []} ->
+        {:error, :holder_revoked}
+
+      {false, _licensed} ->
         candidate_caps
         |> Enum.filter(&verified_candidate?(&1, holder))
         |> Enum.find(&Capability.matches?(&1, needed))
@@ -75,6 +78,17 @@ defmodule Ezagent.Cap.Authorize do
     holder |> loader().read_held_caps() |> Enum.to_list()
   rescue
     _ -> []
+  end
+
+  # The domain-backed fence read is fail-closed. Only an explicit `false`
+  # admits the holder; a missing callback, exception, or malformed return is a
+  # deny so configuration drift cannot silently disable an offboarding fence.
+  defp principal_fenced?(holder) do
+    loader().principal_fenced?(holder) != false
+  rescue
+    _ -> true
+  catch
+    _, _ -> true
   end
 
   defp loader do

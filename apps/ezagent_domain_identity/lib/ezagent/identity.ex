@@ -208,11 +208,17 @@ defmodule Ezagent.Identity do
   spoofable (the DB row was written under the §5.2 grant gate).
   """
   @spec read_held_caps(URI.t() | String.t()) :: MapSet.t(Ezagent.Capability.t())
+  @impl Ezagent.Cap.AuthorityLoader
   def read_held_caps(actor_uri) do
     actor_uri
     |> parse_uri()
     |> Ezagent.EntityCaps.load()
     |> MapSet.new()
+  end
+
+  @impl Ezagent.Cap.AuthorityLoader
+  def principal_fenced?(actor_uri) do
+    Ezagent.Identity.Offboarding.RevocationFence.fenced?(actor_uri)
   end
 
   @doc """

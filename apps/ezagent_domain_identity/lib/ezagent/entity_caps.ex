@@ -45,6 +45,10 @@ defmodule Ezagent.EntityCaps do
   def load(uri) do
     uri = parse_uri(uri)
 
+    if fenced?(uri), do: [], else: do_load(uri)
+  end
+
+  defp do_load(uri) do
     case KindRegistry.lookup(uri) do
       {:ok, pid} when pid == self() ->
         # `Cap.authorize/3` runs inside the target Kind. When the target is also
@@ -69,6 +73,10 @@ defmodule Ezagent.EntityCaps do
   def load_persisted(uri) do
     uri = parse_uri(uri)
 
+    if fenced?(uri), do: [], else: do_load_persisted(uri)
+  end
+
+  defp do_load_persisted(uri) do
     caps =
       if user_uri?(uri) do
         UserStore.load(uri)
@@ -78,6 +86,8 @@ defmodule Ezagent.EntityCaps do
 
     verified(caps, uri)
   end
+
+  defp fenced?(uri), do: Ezagent.Identity.Offboarding.RevocationFence.fenced?(uri)
 
   @doc "Replace the entity's complete cap set in its selected physical store and live slice."
   @spec persist(URI.t() | String.t(), caps()) :: :ok | {:error, term()}

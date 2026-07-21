@@ -11,4 +11,7 @@ defmodule EzagentCore.Test.CapAuthorityLoaderStub do
         caps
     end
   end
+
+  @impl true
+  def principal_fenced?(_actor), do: false
 end

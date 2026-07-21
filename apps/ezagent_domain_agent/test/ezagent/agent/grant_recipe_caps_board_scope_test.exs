@@ -41,6 +41,9 @@ defmodule Mix.Tasks.Ezagent.Agent.GrantRecipeCapsBoardScopeTest do
 
     @impl true
     def read_held_caps(_actor), do: Process.get({__MODULE__, :caps}, MapSet.new())
+
+    @impl true
+    def principal_fenced?(_actor), do: false
   end
 
   @telemetry_prefix [:ezagent, :test, :t7g, :grant]

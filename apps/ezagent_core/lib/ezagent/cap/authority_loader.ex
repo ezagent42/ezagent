@@ -8,4 +8,5 @@ defmodule Ezagent.Cap.AuthorityLoader do
   """
 
   @callback read_held_caps(URI.t()) :: MapSet.t(Ezagent.Capability.t())
+  @callback principal_fenced?(URI.t()) :: boolean()
 end
