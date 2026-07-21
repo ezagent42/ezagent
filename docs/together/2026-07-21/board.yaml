@@ -121,10 +121,17 @@ cards:
     title: "插件 UI 分层 + presenter caps"
     goal: "world 读侧去硬编 + 缓存 caps 新鲜度"
     status: "wip"
-    who: "zyli 轨道 · #1476 #1473 #1477 #1447 #1327"
+    who: "zyli 轨道 · #1473 #1477 #1447 #1327"
     acceptance:
-      - {text: "#1477 reconcile stale presenter caps(缓存新鲜度轴)", done: false}
-      - {text: "#1476/#1473 plugin-owned UI / UiSurfaceProvider(去 world 硬编) / #1447 self-service / #1327 uninstall proof", done: false}
+      - {text: "#1477 reconcile stale presenter caps(缓存新鲜度轴) / #1473 UiSurfaceProvider / #1447 self-service / #1327 uninstall proof", done: false}
+  - owner: "zyli"
+    title: "插件 UI 自声明 / World 分层(#1476)"
+    goal: "World 页面+action 从插件声明动态枚举, fail-closed"
+    status: "review"
+    who: "zyli 轨道 · #1476 Draft — 代码完成待评审"
+    acceptance:
+      - {text: "World 页面/action registry 改为从插件声明动态枚举 + 严格校验 fail-closed; Kanban 迁入 Kanban 插件自声明; Mix 构建期 renderer manifest(React 不再维护 map); 会话内局部 bindings 视图", done: true}
+      - {text: "前端 33/33 + typecheck/lint/生产构建/浏览器验证过; Draft 待评审(deferred: Hello 迁移 / 严格 nav-tab 校验 / 零 allowlist drift gate / 完整 mix precommit)", done: false}
   - owner: "ruihua"
     title: "企业自助开通产品化 + demo socialware"
     goal: "自助开 workspace 旅程 + Profile/DealScout"
@@ -132,6 +139,14 @@ cards:
     who: "ruihua 轨道 · #1436 #1419 #1388"
     acceptance:
       - {text: "#1436 企业自助开通 workspace 产品化(旅程+验收) / #1419 Profile / #1388 DealScout demo", done: false}
+  - owner: "ruihua"
+    title: "★ G5 错误机制 E2E 实证(报告)"
+    goal: "G5 全链路 E2E 截图实证 + 环境/权限坑清理"
+    status: "wip"
+    who: "ruihua 轨道 · feat/g5-error-mechanism · Return: docs/together/2026-07-17/returns/ruihua-g5-implementation.md"
+    acceptance:
+      - {text: "D5/D6 已由 #1456 解决(ErrorCode/Matcher/Renderer 零改动 + 双轨 hook); 今日修 7 个环境/权限 infra 坑(entity_profiles/email_verified/membership/create_session cap/send cap/TOCTOU)", done: true}
+      - {text: "★ 卡点: 消息发不出——session 后端建成但 LiveView push_patch 未到浏览器(卡\"创建中\"); send cap 在独立 mix-run BEAM issue、bin/dev BEAM 不感知; 疑 Vite 5173 端口冲突。求助: 跨 BEAM cap 下发标准做法 / 或改 Playwright E2E(lead 跟进)", done: false}
   - owner: "jjkysy"
     title: "挂载-撤销 infra + 协作白板二轮"
     goal: "宿主退场清理 + 冷建 deadline + kanban"
