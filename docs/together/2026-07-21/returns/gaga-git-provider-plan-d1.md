@@ -139,6 +139,40 @@ plan under `docs/superpowers/plans/2026-07-18-git-provider-v1-d1-connection-subs
 
 ## 9. Next
 
-1. Push `feat/git-domain-spine` (fast-forward after rebase; 54+ commits) and refresh PR #1445's body/checklist with §3–§6.
-2. Allen adjudication on the §6 list (event writers, selector semantics, refreshing wedge, config seams).
-3. D2: provider plugin OAuth endpoints + `Selector`-based active-connection consumption (per the downstream roadmap amendment).
+### 9a. D1 剩余决策
+
+Allen 确认 §6c：event audit writer 是现在加还是等 D2。
+
+### 9b. Git 开发线后续：D2 — GitHub 插件 + API 适配器
+
+**D2 是一个独立的 GitHub provider plugin，做到"能独立运行、能被 agent 调用"即可交付。**
+
+具体要做的事：
+
+1. **GitHub OAuth driver**：实现 `Driver` behaviour，用户授权→回调→token 进 `CredentialBackend`
+2. **CredentialBackend 实现**：真实加密存储 + access/refresh token 轮换
+3. **Git 适配器**：用 Req 实现 `DomainGit.Adapter` 的 5 个回调（建 PR、读 PR、列 CI、读 review），调 GitHub REST API
+4. **暴露给 agent**：通过已有的 agent action + skill 机制暴露"创建 PR""查看 CI 状态"等操作——agent 能调就行
+
+**D2 不需要考虑的**（Allen 在 socialware manifest + agent skill 层做，不属 git plugin 代码）：
+- Kanban 卡片怎么驱动 Git 操作
+- socialware manifest 怎么注册 git plugin
+- agent skill 怎么编排 Git 流程（"建 PR → 等 CI → review → merge"）
+
+### 9c. 集成和验收（Allen 层）
+
+git plugin 交付后，Allen 在 socialware 注册层和 agent skill 层做整合：
+- socialware manifest 注册 git plugin 为可用能力
+- agent skill 编排 Git 工作流
+- Kanban 事实投影（卡片上的 Git 状态来自 git plugin 返回值，但不属 git plugin 代码）
+- Canary 闭环验收（agent→建 PR→CI→review→merge，截图+transcript）
+
+这些是集成面的工作，git 开发线不负责实现。整体进度：
+
+```
+A(安全前置) → B(domain spine) → C(task workspace) → D1(连接管理←当前) → D2(GitHub插件+API)
+                                                                        ↓
+                                                               git 开发线到此交付
+                                                                        ↓
+                                                    Allen: socialware + skill + Kanban + 验收
+```
