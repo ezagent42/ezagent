@@ -215,20 +215,26 @@ defmodule Ezagent.ProviderConnection.CredentialRefreshExchangeTest do
     # consume_refresh_exchange may also be called from Driver refresh callbacks —
     # the Driver behaviour contract requires the refresh callback to produce its
     # result through the facade.
+    # Driver refresh AND reconcile_refresh callbacks both legitimately call
+    # consume_refresh_exchange through the facade — the Driver behaviour
+    # contract requires both to produce their results through the sealed
+    # refresh exchange.
     Enum.each(scan.direct_sites, fn site ->
       assert site.module == facade_module or
                (site.callback == :consume_refresh_exchange and
-                  site.function == :refresh and
+                  site.function in [:refresh, :reconcile_refresh] and
                   site.visibility == :def and
                   site.kind == :remote_call),
              "private refresh callback escaped the facade: #{inspect(site)}"
     end)
 
-    # Driver refresh callbacks that call consume_refresh_exchange appear in
-    # reachable_functions — that is the designed entry point into the facade.
+    # Driver refresh / reconcile_refresh callbacks that call
+    # consume_refresh_exchange appear in reachable_functions — that is the
+    # designed entry point into the facade.
     assert Enum.all?(scan.reachable_functions, fn rf ->
              rf.module == facade_module or
                (rf.callback == :consume_refresh_exchange and
+                  rf.function in [:refresh, :reconcile_refresh] and
                   rf.visibility == :def and
                   rf.kind == :reachable_wrapper)
            end),
