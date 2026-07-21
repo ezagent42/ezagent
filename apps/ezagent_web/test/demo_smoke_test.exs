@@ -153,43 +153,62 @@ defmodule EzagentCore.Invariants.DemoSmokeTest do
       assert "entity://system/user/admin" in uris
     end
 
-    test "list_instances(:session) finds the seeded default session" do
-      # The `session://system/default/main` seed is a DynamicSupervisor
-      # child spawned ONCE at chat-app boot — NOT a permanent static
-      # child. Under the full concurrent umbrella run another test can
-      # terminate it (or it is mid-respawn) when this assertion reads the
-      # global registry, so the seed is not guaranteed live here. Ensure
-      # it via the idempotent create_session facade (returns the existing
-      # Session via the `:adopted` path if already alive) before asserting.
-      # Seed name was renamed from "main" → "default" (#408/#410 era).
-      # Accept either to stay robust across the rename.
-      seeded = ["session://system/default/default", "session://system/default/main"]
+    test "list_instances(:session) is non-empty and returns well-formed session URIs" do
+      # Bug-3 invariant: AutoDerive.list_instances(:session) must return a
+      # NON-EMPTY, correctly-parsed list. The original bug read the wrong state
+      # fields (`:kind` vs `:kind_module`, `:state` vs `:slices`) and didn't
+      # parse the stored string URI → [] for EVERY Kind.
+      #
+      # What this test must NOT do is assert against SHARED MUTABLE STATE.
+      # Two prior "fixes" asserted the system SEED session appears in the
+      # registry, but list_instances(:session) does an UN-SCOPED
+      # `Registry.select` across ALL tenants (see AutoDerive), and the seed is
+      # an ephemeral DynSup child that sibling async suites terminate/respawn
+      # concurrently — so asserting that specific seed raced no matter how long
+      # the retry ran (the #184/#189 flake that survived both fixes precisely
+      # because each was only ever validated in isolation, which by
+      # construction cannot reproduce a concurrent-umbrella race). Creating a
+      # session THIS test owns instead is blocked here: the bare genesis cap
+      # only ADOPTS the pre-seeded session — CREATING a new one needs signed
+      # workspace-grant caps under Path A cap-signing (out of scope for a smoke
+      # test; a create attempt returns `{:error, :invalid_cap_signature}`).
+      #
+      # Regression-catching invariant that does NOT depend on any one session
+      # surviving: the list is NON-EMPTY and every element is a well-formed
+      # session `%URI{}`. Under the concurrent umbrella dozens of sibling
+      # sessions keep it non-empty (robust to any single one being reaped); in
+      # isolation the boot seed does. It can only be empty if the field-accessor
+      # regression returns [] — exactly the bug we guard. Best-effort adopt the
+      # seed first so the isolation (single-run) case is guaranteed ≥1, then
+      # bounded-retry so a freak all-down instant can't flake it — only a
+      # persistently-empty result (the real regression) fails.
+      #
+      # NOTE: `list_instances(:user)` (deterministic — admin is a permanent
+      # static entity) already pins the same field-accessor code path against
+      # a specific expected URI; this test adds the SESSION-scheme coverage
+      # without the ephemeral-session raciness.
+      _ =
+        create_session_via_workspace("default", Ezagent.Entity.User.admin_uri(),
+          template_name: "default"
+        )
 
-      # #184-class isolation flake (confirmed: passes in isolation, races only
-      # under the full concurrent umbrella): the seed is an ephemeral DynSup
-      # child a sibling test can terminate — OR mutate the shared system-tenant
-      # session — between the idempotent ensure and the global-registry read. A
-      # single ensure+read is not enough. Retry ensure+read a bounded number of
-      # times so a concurrent termination cannot flake this; each pass re-adopts
-      # (or re-spawns) the seed via the idempotent create facade.
-      uris =
+      instances =
         Enum.reduce_while(1..40, [], fn _i, _acc ->
-          _ =
-            create_session_via_workspace("main", Ezagent.Entity.User.admin_uri(),
-              template_name: "default"
-            )
-
-          uris =
-            EzagentDomainUi.AutoDerive.list_instances(:session)
-            |> Enum.map(&URI.to_string(&1.uri))
-
-          if Enum.any?(seeded, &(&1 in uris)),
-            do: {:halt, uris},
-            else: Process.sleep(25) && {:cont, uris}
+          got = EzagentDomainUi.AutoDerive.list_instances(:session)
+          if got != [], do: {:halt, got}, else: Process.sleep(25) && {:cont, got}
         end)
 
-      assert Enum.any?(seeded, &(&1 in uris)),
-             "expected a seeded system session after bounded ensure-retry; got: #{inspect(uris)}"
+      assert instances != [],
+             "list_instances(:session) returned [] after bounded retry — the Bug-3 " <>
+               "field-accessor regression (wrong :kind/:state fields, or unparsed " <>
+               "string URI) is back."
+
+      # Second half of Bug-3: every element must be a well-formed session URI,
+      # i.e. the stored string URI was parsed (not left mangled).
+      for inst <- instances do
+        assert %URI{scheme: "session"} = inst.uri,
+               "list_instances(:session) yielded a non-session/mangled URI: #{inspect(inst.uri)}"
+      end
     end
 
     test "instance_detail/1 returns a populated map for entity://system/user/admin" do
