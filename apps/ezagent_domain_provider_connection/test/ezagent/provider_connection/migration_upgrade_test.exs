@@ -50,6 +50,11 @@ defmodule Ezagent.ProviderConnection.MigrationUpgradeTest do
      EzagentCore.Repo.Migrations.CompensateSupersededRefreshResults}
   ]
 
+  @binding [
+    {20_260_721_001_000, "20260721001000_close_provider_binding_cas_replace.exs",
+     EzagentCore.Repo.Migrations.CloseProviderBindingCasReplace}
+  ]
+
   test "non-empty D1 rows upgrade through the explicit expand backfill validate sequence" do
     database = "provider_migration_#{System.unique_integer([:positive])}"
     admin_opts = connection_options("postgres")
@@ -86,133 +91,6 @@ defmodule Ezagent.ProviderConnection.MigrationUpgradeTest do
     seed_pre_supplement_rows!()
     migrate(@supplement)
     migrate(@closure)
-    migrate(@compensation)
-
-    # The compensation migration admits exactly two new refresh-only shapes:
-    # a provider-owned cleanup obligation without a credential result, and its
-    # compensated finalized terminal. Probe both, and prove that the adjacent
-    # previously-illegal shapes still violate.
-    #
-    # Pin the probed connection's generation so the refresh expected-
-    # authorization binding trigger sees the expected coordinates.
-    query!(
-      """
-      UPDATE provider_connections
-         SET connection_version = 10
-       WHERE connection_id = '00000000-0000-0000-0000-000000000009'::uuid
-      """,
-      []
-    )
-
-    legal_cleanup_id = Ecto.UUID.generate()
-
-    query!(
-      """
-      INSERT INTO provider_connection_operations
-        (id, workspace_uri, connection_id, backend_pair_id, operation_class,
-         correlation_id, bound_input_digest, expected_connection_version,
-         expected_credential_version, result_ref, result_credential_version,
-         provider_result_ref, handoff_ref, result_external_account_id,
-         result_display_login, result_execution_identity, result_authorization_ref,
-         result_authorization_version, result_permission_digest, attempt_ref,
-         attempt_version, attempt_claim_token, prior_credential_ref,
-         prior_credential_version, status, provider_cleanup_status,
-         credential_cleanup_status, expected_authorization_ref,
-         expected_authorization_version, next_recovery_at, inserted_at, updated_at)
-      VALUES ($1, 'workspace://acme', '00000000-0000-0000-0000-000000000009',
-              'pair-a', 'refresh', 'op-superseded-cleanup', 'digest', 10, 1,
-              NULL, NULL, 'provider-result-superseded', 'handoff-superseded',
-              NULL, NULL, NULL, NULL, NULL, 'perm', NULL, 1, 'claim', NULL, NULL,
-              'cleanup_pending', 'pending', 'not_required',
-              'auth-active-refresh', 1, now(), now(), now())
-      """,
-      [Ecto.UUID.dump!(legal_cleanup_id)]
-    )
-
-    assert scalar!("""
-           SELECT count(*) FROM provider_connection_operations
-            WHERE id = '#{legal_cleanup_id}'::uuid
-              AND status = 'cleanup_pending'
-              AND provider_cleanup_status = 'pending'
-           """) == 1
-
-    query!(
-      """
-      UPDATE provider_connection_operations
-         SET status = 'finalized',
-             safe_error_code = NULL,
-             provider_cleanup_status = 'confirmed',
-             next_recovery_at = NULL
-       WHERE id = '#{legal_cleanup_id}'::uuid
-      """,
-      []
-    )
-
-    assert scalar!("""
-           SELECT count(*) FROM provider_connection_operations
-            WHERE id = '#{legal_cleanup_id}'::uuid
-              AND status = 'finalized'
-              AND provider_cleanup_status = 'confirmed'
-              AND next_recovery_at IS NULL
-           """) == 1
-
-    unconfirmed_final =
-      assert_raise Postgrex.Error, fn ->
-        query!(
-          """
-          INSERT INTO provider_connection_operations
-            (id, workspace_uri, connection_id, backend_pair_id, operation_class,
-             correlation_id, bound_input_digest, expected_connection_version,
-             expected_credential_version, result_ref, result_credential_version,
-             provider_result_ref, handoff_ref, result_external_account_id,
-             result_display_login, result_execution_identity, result_authorization_ref,
-             result_authorization_version, result_permission_digest, attempt_ref,
-             attempt_version, attempt_claim_token, prior_credential_ref,
-             prior_credential_version, status, provider_cleanup_status,
-             credential_cleanup_status, expected_authorization_ref,
-             expected_authorization_version, next_recovery_at, inserted_at, updated_at)
-          VALUES ('#{Ecto.UUID.generate()}', 'workspace://acme',
-                  '00000000-0000-0000-0000-000000000009',
-                  'pair-a', 'refresh', 'op-unconfirmed-final', 'digest', 10, 1,
-                  NULL, NULL, 'provider-result-unconfirmed', 'handoff-unconfirmed',
-                  NULL, NULL, NULL, NULL, NULL, 'perm', NULL, 1, 'claim', NULL, NULL,
-                  'finalized', 'pending', 'not_required',
-                  'auth-active-refresh', 1, NULL, now(), now())
-          """,
-          []
-        )
-      end
-
-    assert unconfirmed_final.postgres.code == :check_violation
-
-    store_shaped =
-      assert_raise Postgrex.Error, fn ->
-        query!(
-          """
-          INSERT INTO provider_connection_operations
-            (id, workspace_uri, connection_id, backend_pair_id, operation_class,
-             correlation_id, bound_input_digest, expected_connection_version,
-             expected_credential_version, result_ref, result_credential_version,
-             provider_result_ref, handoff_ref, result_external_account_id,
-             result_display_login, result_execution_identity, result_authorization_ref,
-             result_authorization_version, result_permission_digest, attempt_ref,
-             attempt_version, attempt_claim_token, prior_credential_ref,
-             prior_credential_version, status, provider_cleanup_status,
-             credential_cleanup_status, expected_authorization_ref,
-             expected_authorization_version, next_recovery_at, inserted_at, updated_at)
-          VALUES ('#{Ecto.UUID.generate()}', 'workspace://acme',
-                  '00000000-0000-0000-0000-000000000009',
-                  'pair-a', 'store', 'op-store-escape', 'digest', 10, 1,
-                  NULL, NULL, 'provider-result-store', 'handoff-store',
-                  NULL, NULL, NULL, NULL, NULL, 'perm', NULL, 1, 'claim', NULL, NULL,
-                  'cleanup_pending', 'pending', 'not_required',
-                  'auth-active-refresh', 1, now(), now(), now())
-          """,
-          []
-        )
-      end
-
-    assert store_shaped.postgres.code == :check_violation
 
     assert scalar!("""
            WITH expected(connection_id, status) AS (
@@ -442,6 +320,315 @@ defmodule Ezagent.ProviderConnection.MigrationUpgradeTest do
               'provider_connection_operations_ownership_stage_check'
             ) AND convalidated
            """) == 2
+
+    migrate(@compensation)
+
+    # The compensation migration admits exactly two new refresh-only shapes:
+    # a provider-owned cleanup obligation without a credential result, and its
+    # compensated finalized terminal. Probe both, and prove that the adjacent
+    # previously-illegal shapes still violate.
+    #
+    # Pin the probed connection's generation so the refresh expected-
+    # authorization binding trigger sees the expected coordinates.
+    query!(
+      """
+      UPDATE provider_connections
+         SET connection_version = 10
+       WHERE connection_id = '00000000-0000-0000-0000-000000000009'::uuid
+      """,
+      []
+    )
+
+    legal_cleanup_id = Ecto.UUID.generate()
+
+    query!(
+      """
+      INSERT INTO provider_connection_operations
+        (id, workspace_uri, connection_id, backend_pair_id, operation_class,
+         correlation_id, bound_input_digest, expected_connection_version,
+         expected_credential_version, result_ref, result_credential_version,
+         provider_result_ref, handoff_ref, result_external_account_id,
+         result_display_login, result_execution_identity, result_authorization_ref,
+         result_authorization_version, result_permission_digest, attempt_ref,
+         attempt_version, attempt_claim_token, prior_credential_ref,
+         prior_credential_version, status, provider_cleanup_status,
+         credential_cleanup_status, expected_authorization_ref,
+         expected_authorization_version, next_recovery_at, inserted_at, updated_at)
+      VALUES ($1, 'workspace://acme', '00000000-0000-0000-0000-000000000009',
+              'pair-a', 'refresh', 'op-superseded-cleanup', 'digest', 10, 1,
+              NULL, NULL, 'provider-result-superseded', 'handoff-superseded',
+              NULL, NULL, NULL, NULL, NULL, 'perm', NULL, 1, 'claim', NULL, NULL,
+              'cleanup_pending', 'pending', 'not_required',
+              'auth-active-refresh', 1, now(), now(), now())
+      """,
+      [Ecto.UUID.dump!(legal_cleanup_id)]
+    )
+
+    assert scalar!("""
+           SELECT count(*) FROM provider_connection_operations
+            WHERE id = '#{legal_cleanup_id}'::uuid
+              AND status = 'cleanup_pending'
+              AND provider_cleanup_status = 'pending'
+           """) == 1
+
+    query!(
+      """
+      UPDATE provider_connection_operations
+         SET status = 'finalized',
+             safe_error_code = NULL,
+             provider_cleanup_status = 'confirmed',
+             next_recovery_at = NULL
+       WHERE id = '#{legal_cleanup_id}'::uuid
+      """,
+      []
+    )
+
+    assert scalar!("""
+           SELECT count(*) FROM provider_connection_operations
+            WHERE id = '#{legal_cleanup_id}'::uuid
+              AND status = 'finalized'
+              AND provider_cleanup_status = 'confirmed'
+              AND next_recovery_at IS NULL
+           """) == 1
+
+    unconfirmed_final =
+      assert_raise Postgrex.Error, fn ->
+        query!(
+          """
+          INSERT INTO provider_connection_operations
+            (id, workspace_uri, connection_id, backend_pair_id, operation_class,
+             correlation_id, bound_input_digest, expected_connection_version,
+             expected_credential_version, result_ref, result_credential_version,
+             provider_result_ref, handoff_ref, result_external_account_id,
+             result_display_login, result_execution_identity, result_authorization_ref,
+             result_authorization_version, result_permission_digest, attempt_ref,
+             attempt_version, attempt_claim_token, prior_credential_ref,
+             prior_credential_version, status, provider_cleanup_status,
+             credential_cleanup_status, expected_authorization_ref,
+             expected_authorization_version, next_recovery_at, inserted_at, updated_at)
+          VALUES ('#{Ecto.UUID.generate()}', 'workspace://acme',
+                  '00000000-0000-0000-0000-000000000009',
+                  'pair-a', 'refresh', 'op-unconfirmed-final', 'digest', 10, 1,
+                  NULL, NULL, 'provider-result-unconfirmed', 'handoff-unconfirmed',
+                  NULL, NULL, NULL, NULL, NULL, 'perm', NULL, 1, 'claim', NULL, NULL,
+                  'finalized', 'pending', 'not_required',
+                  'auth-active-refresh', 1, NULL, now(), now())
+          """,
+          []
+        )
+      end
+
+    assert unconfirmed_final.postgres.code == :check_violation
+
+    store_shaped =
+      assert_raise Postgrex.Error, fn ->
+        query!(
+          """
+          INSERT INTO provider_connection_operations
+            (id, workspace_uri, connection_id, backend_pair_id, operation_class,
+             correlation_id, bound_input_digest, expected_connection_version,
+             expected_credential_version, result_ref, result_credential_version,
+             provider_result_ref, handoff_ref, result_external_account_id,
+             result_display_login, result_execution_identity, result_authorization_ref,
+             result_authorization_version, result_permission_digest, attempt_ref,
+             attempt_version, attempt_claim_token, prior_credential_ref,
+             prior_credential_version, status, provider_cleanup_status,
+             credential_cleanup_status, expected_authorization_ref,
+             expected_authorization_version, next_recovery_at, inserted_at, updated_at)
+          VALUES ('#{Ecto.UUID.generate()}', 'workspace://acme',
+                  '00000000-0000-0000-0000-000000000009',
+                  'pair-a', 'store', 'op-store-escape', 'digest', 10, 1,
+                  NULL, NULL, 'provider-result-store', 'handoff-store',
+                  NULL, NULL, NULL, NULL, NULL, 'perm', NULL, 1, 'claim', NULL, NULL,
+                  'cleanup_pending', 'pending', 'not_required',
+                  'auth-active-refresh', 1, now(), now(), now())
+          """,
+          []
+        )
+      end
+
+    assert store_shaped.postgres.code == :check_violation
+
+    migrate(@binding)
+
+    # The binding-CAS replacement trigger now validates 'replace' operations
+    # at the database: NULL prior coordinates or coordinates that do not match
+    # the connection's current credential pointer are rejected; an exact match
+    # is admitted.
+    reauth_attempt_ref = Ecto.UUID.generate()
+
+    insert_pre_supplement_attempt!(
+      reauth_attempt_ref,
+      "00000000-0000-0000-0000-000000000009",
+      "auth-reauth-binding",
+      10
+    )
+
+    prior_ref =
+      scalar!("""
+      SELECT credential_backend_ref FROM provider_connections
+       WHERE connection_id = '00000000-0000-0000-0000-000000000009'::uuid
+      """)
+
+    query!(
+      """
+      INSERT INTO provider_connection_operations
+        (id, workspace_uri, connection_id, backend_pair_id, operation_class,
+         correlation_id, bound_input_digest, expected_connection_version,
+         expected_credential_version, result_ref, result_credential_version,
+         provider_result_ref, handoff_ref, result_external_account_id,
+         result_display_login, result_execution_identity, result_authorization_ref,
+         result_authorization_version, result_permission_digest, attempt_ref,
+         attempt_version, attempt_claim_token, prior_credential_ref,
+         prior_credential_version, status, expected_authorization_ref,
+         expected_authorization_version, next_recovery_at, inserted_at, updated_at)
+      VALUES ('#{Ecto.UUID.generate()}', 'workspace://acme',
+              '00000000-0000-0000-0000-000000000009',
+              'pair-a', 'replace', 'op-replace-valid', 'digest', 10, 1,
+              NULL, NULL, NULL, NULL,
+              NULL, NULL, NULL, NULL, NULL, NULL, '#{reauth_attempt_ref}'::uuid,
+              1, 'claim', '#{prior_ref}', 1,
+              'prepared', 'auth-reauth-binding', 1, now(), now(), now())
+      """,
+      []
+    )
+
+    assert scalar!("""
+           SELECT count(*) FROM provider_connection_operations
+            WHERE correlation_id = 'op-replace-valid' AND status = 'prepared'
+           """) == 1
+
+    null_prior =
+      assert_raise Postgrex.Error, fn ->
+        query!(
+          """
+          INSERT INTO provider_connection_operations
+            (id, workspace_uri, connection_id, backend_pair_id, operation_class,
+             correlation_id, bound_input_digest, expected_connection_version,
+             expected_credential_version, result_ref, result_credential_version,
+             provider_result_ref, handoff_ref, result_external_account_id,
+             result_display_login, result_execution_identity, result_authorization_ref,
+             result_authorization_version, result_permission_digest, attempt_ref,
+             attempt_version, attempt_claim_token, prior_credential_ref,
+             prior_credential_version, status, expected_authorization_ref,
+             expected_authorization_version, next_recovery_at, inserted_at, updated_at)
+          VALUES ('#{Ecto.UUID.generate()}', 'workspace://acme',
+                  '00000000-0000-0000-0000-000000000009',
+                  'pair-a', 'replace', 'op-replace-null-prior', 'digest', 10, 1,
+                  NULL, NULL, NULL, NULL,
+                  NULL, NULL, NULL, NULL, NULL, NULL, '#{reauth_attempt_ref}'::uuid,
+                  1, 'claim', NULL, NULL,
+                  'prepared', 'auth-reauth-binding', 1, now(), now(), now())
+          """,
+          []
+        )
+      end
+
+    assert null_prior.postgres.code == :check_violation
+
+    mismatched_prior =
+      assert_raise Postgrex.Error, fn ->
+        query!(
+          """
+          INSERT INTO provider_connection_operations
+            (id, workspace_uri, connection_id, backend_pair_id, operation_class,
+             correlation_id, bound_input_digest, expected_connection_version,
+             expected_credential_version, result_ref, result_credential_version,
+             provider_result_ref, handoff_ref, result_external_account_id,
+             result_display_login, result_execution_identity, result_authorization_ref,
+             result_authorization_version, result_permission_digest, attempt_ref,
+             attempt_version, attempt_claim_token, prior_credential_ref,
+             prior_credential_version, status, expected_authorization_ref,
+             expected_authorization_version, next_recovery_at, inserted_at, updated_at)
+          VALUES ('#{Ecto.UUID.generate()}', 'workspace://acme',
+                  '00000000-0000-0000-0000-000000000009',
+                  'pair-a', 'replace', 'op-replace-mismatched-prior', 'digest', 10, 1,
+                  NULL, NULL, NULL, NULL,
+                  NULL, NULL, NULL, NULL, NULL, NULL, '#{reauth_attempt_ref}'::uuid,
+                  1, 'claim', 'not-the-current-credential', 99,
+                  'prepared', 'auth-reauth-binding', 1, now(), now(), now())
+          """,
+          []
+        )
+      end
+
+    assert mismatched_prior.postgres.code == :check_violation
+
+    # A reauthorization operation may bind the CURRENT-OR-PAST connection
+    # generation (the terminal-callback-proof race), never a future one.
+    lag_attempt_ref = Ecto.UUID.generate()
+
+    insert_pre_supplement_attempt!(
+      lag_attempt_ref,
+      "00000000-0000-0000-0000-000000000009",
+      "auth-reauth-lag",
+      9
+    )
+
+    query!(
+      """
+      INSERT INTO provider_connection_operations
+        (id, workspace_uri, connection_id, backend_pair_id, operation_class,
+         correlation_id, bound_input_digest, expected_connection_version,
+         expected_credential_version, result_ref, result_credential_version,
+         provider_result_ref, handoff_ref, result_external_account_id,
+         result_display_login, result_execution_identity, result_authorization_ref,
+         result_authorization_version, result_permission_digest, attempt_ref,
+         attempt_version, attempt_claim_token, prior_credential_ref,
+         prior_credential_version, status, expected_authorization_ref,
+         expected_authorization_version, next_recovery_at, inserted_at, updated_at)
+      VALUES ('#{Ecto.UUID.generate()}', 'workspace://acme',
+              '00000000-0000-0000-0000-000000000009',
+              'pair-a', 'replace', 'op-replace-lagged', 'digest', 9, 1,
+              NULL, NULL, NULL, NULL,
+              NULL, NULL, NULL, NULL, NULL, NULL, '#{lag_attempt_ref}'::uuid,
+              1, 'claim', '#{prior_ref}', 1,
+              'prepared', 'auth-reauth-lag', 1, now(), now(), now())
+      """,
+      []
+    )
+
+    assert scalar!("""
+           SELECT count(*) FROM provider_connection_operations
+            WHERE correlation_id = 'op-replace-lagged' AND status = 'prepared'
+           """) == 1
+
+    future_attempt_ref = Ecto.UUID.generate()
+
+    insert_pre_supplement_attempt!(
+      future_attempt_ref,
+      "00000000-0000-0000-0000-000000000009",
+      "auth-reauth-future",
+      11
+    )
+
+    future_prior =
+      assert_raise Postgrex.Error, fn ->
+        query!(
+          """
+          INSERT INTO provider_connection_operations
+            (id, workspace_uri, connection_id, backend_pair_id, operation_class,
+             correlation_id, bound_input_digest, expected_connection_version,
+             expected_credential_version, result_ref, result_credential_version,
+             provider_result_ref, handoff_ref, result_external_account_id,
+             result_display_login, result_execution_identity, result_authorization_ref,
+             result_authorization_version, result_permission_digest, attempt_ref,
+             attempt_version, attempt_claim_token, prior_credential_ref,
+             prior_credential_version, status, expected_authorization_ref,
+             expected_authorization_version, next_recovery_at, inserted_at, updated_at)
+          VALUES ('#{Ecto.UUID.generate()}', 'workspace://acme',
+                  '00000000-0000-0000-0000-000000000009',
+                  'pair-a', 'replace', 'op-replace-future', 'digest', 11, 1,
+                  NULL, NULL, NULL, NULL,
+                  NULL, NULL, NULL, NULL, NULL, NULL, '#{future_attempt_ref}'::uuid,
+                  1, 'claim', '#{prior_ref}', 1,
+                  'prepared', 'auth-reauth-future', 1, now(), now(), now())
+          """,
+          []
+        )
+      end
+
+    assert future_prior.postgres.code == :check_violation
   end
 
   test "supplement fails loud when a terminal-advanced refresh cannot prove its reservation authorization" do

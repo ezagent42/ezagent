@@ -98,6 +98,39 @@ defmodule Ezagent.ProviderConnection.SchemaTest do
     assert compensation =~ "provider_connection_operations_ownership_stage_check"
     assert compensation =~ "provider_cleanup_status IN ('pending','confirmed')"
     assert compensation =~ "provider_cleanup_status = 'confirmed'"
+
+    binding_replace =
+      File.read!(
+        Path.join(
+          migration_dir,
+          "20260721001000_close_provider_binding_cas_replace.exs"
+        )
+      )
+
+    refute binding_replace =~ "IF NOT EXISTS"
+    refute binding_replace =~ "if_not_exists"
+    assert binding_replace =~ "IF NEW.operation_class NOT IN ('store', 'replace') THEN"
+    assert binding_replace =~ "attempt.purpose = 'reauthorize'"
+  end
+
+  test "immutable amendment migrations are pinned by exact content checksum" do
+    migration_dir = Application.app_dir(:ezagent_core, "priv/repo_pg/migrations")
+
+    pins = %{
+      "20260720002000_close_provider_binding_cas.exs" =>
+        "3b1a2450e3506e39653a429971310738a0ec08d1c2fcd5227d977aca7aca19ba",
+      "20260720004000_add_refresh_compensation_obligations.exs" =>
+        "8b9d76a96f387f0a4f8d7d5cf7011ba53746d18dc3e89609ad8db7b71a1ae06b"
+    }
+
+    for {name, expected_sha256} <- pins do
+      actual =
+        :crypto.hash(:sha256, File.read!(Path.join(migration_dir, name)))
+        |> Base.encode16(case: :lower)
+
+      assert actual == expected_sha256,
+             "#{name} is frozen; any correction must arrive as a new forward migration"
+    end
   end
 
   test "active binding uniqueness is a named PostgreSQL constraint" do

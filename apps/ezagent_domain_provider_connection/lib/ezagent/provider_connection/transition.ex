@@ -51,6 +51,12 @@ defmodule Ezagent.ProviderConnection.Transition do
         |> Repo.update!()
       else
         nil -> Repo.rollback(:connection_not_found)
+        # A terminal source (revoked/disconnected/failed) has no outgoing
+        # edge, so Map.fetch fails with a bare :error — report the closed
+        # code instead of crashing the transaction with WithClauseError.
+        # (An edge-disallowed non-terminal mutation still reports
+        # :stale_version; callers classify on it, so it is kept.)
+        :error -> Repo.rollback(:connection_terminal)
         false -> Repo.rollback(:stale_version)
         {:error, reason} -> Repo.rollback(reason)
       end

@@ -140,26 +140,32 @@ defmodule Ezagent.ProviderConnection.LocalAuthorizationBackend.Support do
   end
 
   @doc false
-  def handoff_aad(row, correlation, handoff_ref),
-    do: %{
-      authorization_ref: row.authorization_ref,
-      bound_input_digest: row.bound_input_digest,
-      begin_correlation_id: row.begin_correlation_id,
-      owner_uri: row.owner_uri,
-      workspace_uri: row.workspace_uri,
-      connection_id: row.connection_id,
-      connection_version: row.connection_version,
-      backend_pair_id: row.backend_pair_id,
-      provider_id: row.provider_id,
-      governed_host: row.governed_host,
-      acquisition_method: row.acquisition_method,
-      execution_identity: row.execution_identity,
-      requested_permissions_digest: row.requested_permissions_digest,
-      redirect_uri_id: row.redirect_uri_id,
-      correlation_id: correlation,
-      credential_correlation_id: "store:#{correlation}",
-      handoff_ref: handoff_ref
-    }
+  # The credential-command correlation bound into the AEAD AAD must name the
+  # REAL operation class (`store:` for initial bind, `replace:` for
+  # reauthorization) — the fence amendment's "stable logical command" binding.
+  # Both seal and open derive it from the owning operation, so tag
+  # verification stays symmetric while the AAD authentically names the class.
+  def handoff_aad(row, correlation, handoff_ref, operation_class)
+      when operation_class in ["store", "replace"],
+      do: %{
+        authorization_ref: row.authorization_ref,
+        bound_input_digest: row.bound_input_digest,
+        begin_correlation_id: row.begin_correlation_id,
+        owner_uri: row.owner_uri,
+        workspace_uri: row.workspace_uri,
+        connection_id: row.connection_id,
+        connection_version: row.connection_version,
+        backend_pair_id: row.backend_pair_id,
+        provider_id: row.provider_id,
+        governed_host: row.governed_host,
+        acquisition_method: row.acquisition_method,
+        execution_identity: row.execution_identity,
+        requested_permissions_digest: row.requested_permissions_digest,
+        redirect_uri_id: row.redirect_uri_id,
+        correlation_id: correlation,
+        credential_correlation_id: "#{operation_class}:#{correlation}",
+        handoff_ref: handoff_ref
+      }
 
   @doc false
   def validate_handoff(row, operation, attempt, connection) do
