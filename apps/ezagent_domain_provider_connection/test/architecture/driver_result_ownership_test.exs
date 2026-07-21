@@ -110,7 +110,7 @@ defmodule Ezagent.ProviderConnection.DriverResultOwnershipTest do
     root = Path.expand("../..", __DIR__)
 
     cases = [
-      {"lib/ezagent/provider_connection/local_authorization_backend/exchange.ex",
+      {"lib/ezagent/provider_connection/local_authorization_backend/callback_operation.ex",
        :driver_identity, "operation.expected_authorization_ref",
        "operation.expected_authorization_version"},
       {"lib/ezagent/provider_connection/local_authorization_backend/reconciliation.ex",
@@ -141,6 +141,25 @@ defmodule Ezagent.ProviderConnection.DriverResultOwnershipTest do
                value =~ "connection.authorization" or value =~ "result_authorization"
              end)
     end)
+  end
+
+  test "callback consume resolves one server-owned operation snapshot for Driver identity and validation" do
+    root = Path.expand("../..", __DIR__)
+
+    exchange =
+      File.read!(
+        Path.join(root, "lib/ezagent/provider_connection/local_authorization_backend/exchange.ex")
+      )
+
+    assert length(Regex.scan(~r/CallbackOperation\.resolve\(row, command\)/, exchange)) == 1
+    assert exchange =~ "{:ok, {attempt, operation}} <- CallbackOperation.resolve(row, command)"
+
+    assert exchange =~
+             "CallbackOperation.driver_identity(row, command, attempt, operation)"
+
+    assert exchange =~ "operation.expected_authorization_ref"
+    assert exchange =~ "operation.expected_authorization_version"
+    refute exchange =~ "Repo.get_by(AuthorizationAttempt"
   end
 
   test "callback credential effects are purpose-fixed and cleanup uses a claimed snapshot" do

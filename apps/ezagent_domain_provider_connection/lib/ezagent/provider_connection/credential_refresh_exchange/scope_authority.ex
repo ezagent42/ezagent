@@ -3,28 +3,33 @@ defmodule Ezagent.ProviderConnection.CredentialRefreshExchange.ScopeAuthority do
 
   use GenServer
 
+  @doc false
   def start(owner, binding_digest) when is_pid(owner) and is_binary(binding_digest) do
     GenServer.start(__MODULE__, {owner, binding_digest})
   end
 
+  @doc false
   def claim(authority, token, binding_digest) when is_pid(authority) do
     GenServer.call(authority, {:claim, token, binding_digest})
   catch
     :exit, _reason -> {:error, :correlation_conflict}
   end
 
+  @doc false
   def consume_claim(authority, token, binding_digest, proof) when is_pid(authority) do
     GenServer.call(authority, {:consume_claim, token, binding_digest, proof})
   catch
     :exit, _reason -> {:error, :correlation_conflict}
   end
 
+  @doc false
   def validate_claim(authority, token, binding_digest, proof) when is_pid(authority) do
     GenServer.call(authority, {:validate_claim, token, binding_digest, proof})
   catch
     :exit, _reason -> {:error, :correlation_conflict}
   end
 
+  @doc false
   def invalidate(authority) when is_pid(authority) do
     GenServer.cast(authority, :invalidate)
   end
