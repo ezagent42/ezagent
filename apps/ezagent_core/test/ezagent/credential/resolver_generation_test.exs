@@ -38,9 +38,7 @@ defmodule Ezagent.Credential.ResolverGenerationTest do
     })
 
     assert Resolver.source_read_authorized?(holder, source, [cap])
-    assert {:ok, _} = Authority.regenesis(source, :agent, admin())
+    assert {:ok, _} = Authority.regenesis(source, :agent)
     refute Resolver.source_read_authorized?(holder, source, [cap])
   end
-
-  defp admin, do: Ezagent.URI.user(:system, :admin)
 end

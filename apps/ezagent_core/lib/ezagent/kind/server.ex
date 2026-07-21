@@ -649,6 +649,20 @@ defmodule Ezagent.Kind.Server do
     {:reply, valid?, state}
   end
 
+  # Unified-revocation G-1 — serialize a target-wide generation bump in the
+  # target's own mailbox. Authorization is cap-based inside `regenesis/3`; a
+  # successful reply is published only after the durable active-row flip and
+  # the private live authority swap have both completed.
+  def handle_call({:ezagent_revoke_all_to, %{} = ctx}, _from, state) do
+    case Ezagent.Cap.Authority.regenesis(state.uri, state.kind.type_name(), ctx) do
+      {:ok, authority} ->
+        {:reply, {:ok, authority.generation}, %{state | authority: authority}}
+
+      {:error, _reason} = error ->
+        {:reply, error, state}
+    end
+  end
+
   def handle_call({:ezagent_dispatch, %Ezagent.Invocation{} = inv}, _from, state) do
     dispatch_result =
       Ezagent.Cap.Authority.with_current(state.authority, fn ->

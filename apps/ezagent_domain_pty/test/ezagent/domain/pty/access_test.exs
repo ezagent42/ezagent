@@ -39,7 +39,7 @@ defmodule Ezagent.Domain.Pty.AccessTest do
     license(holder, [cap])
 
     assert PtyAccess.may_read?(holder, agent, [cap])
-    assert {:ok, _} = Authority.regenesis(agent, :agent, admin())
+    assert {:ok, _} = Authority.regenesis(agent, :agent)
     refute PtyAccess.may_read?(holder, agent, [cap])
   end
 
@@ -126,5 +126,4 @@ defmodule Ezagent.Domain.Pty.AccessTest do
     )
   end
 
-  defp admin, do: Ezagent.URI.user(:system, :admin)
 end

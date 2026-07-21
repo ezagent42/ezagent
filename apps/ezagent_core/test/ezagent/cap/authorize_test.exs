@@ -70,7 +70,7 @@ defmodule Ezagent.Cap.AuthorizeTest do
 
     assert {:ok, _} = Ezagent.Cap.authorize(holder, [cap], needed_for(uri))
 
-    {:ok, _bumped} = Authority.regenesis(uri, :test, admin())
+    {:ok, _bumped} = Authority.regenesis(uri, :test)
 
     assert {:error, :no_matching_cap} =
              Ezagent.Cap.authorize(holder, [cap], needed_for(uri))

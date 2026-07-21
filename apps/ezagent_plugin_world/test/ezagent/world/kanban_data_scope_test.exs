@@ -184,7 +184,7 @@ defmodule Ezagent.World.KanbanDataScopeTest do
       assert URI.to_string(b) in seen, "carol 持 board-b 的 cap 应看到它"
       refute URI.to_string(a) in seen, "carol 无 board-a 的权，不应看到"
 
-      assert {:ok, _} = Ezagent.Cap.Authority.regenesis(b, :agent, admin())
+      assert {:ok, _} = Ezagent.Cap.Authority.regenesis(b, :agent)
       seen_after_bump = uris(KanbanData.list_instances(ctx_c))
       refute URI.to_string(b) in seen_after_bump, "board-b 代际 bump 后旧 cap 必须立即失效"
     end)
@@ -239,8 +239,6 @@ defmodule Ezagent.World.KanbanDataScopeTest do
              "admin 应看到该 workspace 全部板"
     end)
   end
-
-  defp admin, do: Ezagent.Entity.User.admin_uri()
 
   test "session_boards/2：无权 caller 看不到（no-perm-branch）",
        %{ws_name: ws_name, workspace_uri: ws, alice_caps: alice_caps, alice: alice} do

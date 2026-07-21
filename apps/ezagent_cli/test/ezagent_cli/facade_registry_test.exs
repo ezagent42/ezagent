@@ -22,6 +22,13 @@ defmodule EzagentCli.FacadeRegistryTest do
              FacadeRegistry.lookup(:test_kind, :"never-#{System.unique_integer([:positive])}")
   end
 
+  test "G-1 registers the cap revoke-all operator verb" do
+    assert {:ok, fun, %{args: [target: :uri]}} =
+             FacadeRegistry.lookup(:cap, :revoke_all_to)
+
+    assert is_function(fun, 1)
+  end
+
   test "list/1 returns ops for one kind" do
     kind = :"list-#{System.unique_integer([:positive])}"
     FacadeRegistry.register(kind, :alpha, fn _ -> :ok end, %{about: "a"})

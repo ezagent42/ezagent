@@ -94,8 +94,7 @@ defmodule Ezagent.Architecture.CapVerifierDominanceTest do
                {:ezagent_dispatch, invocation(context, MapSet.new([signed]))}
              )
 
-    assert {:ok, _bumped} =
-             Authority.regenesis(context.uri, :test, Ezagent.URI.user(:system, :admin))
+    assert {:ok, _bumped} = Authority.regenesis(context.uri, :test)
 
     assert {:error, :missing_cap} =
              GenServer.call(

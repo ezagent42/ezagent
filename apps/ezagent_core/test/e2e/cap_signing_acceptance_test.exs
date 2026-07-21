@@ -179,10 +179,11 @@ defmodule Ezagent.E2E.CapSigningAcceptanceTest do
     assert :ok = Authority.retire(uri)
     assert {:error, :regenesis_required} = Authority.open(uri, :test)
 
-    assert {:error, :admin_required} =
+    assert {:error, :cap_context_required} =
              Authority.regenesis(uri, :test, unique_user("not-admin"))
 
-    assert {:ok, second} = Authority.regenesis(uri, :test, admin)
+    assert {:error, :cap_context_required} = Authority.regenesis(uri, :test, admin)
+    assert {:ok, second} = Authority.regenesis(uri, :test)
     assert second.generation == first.generation + 1
     refute second.key_id == first.key_id
     refute Authority.verify(second, anchor, admin)

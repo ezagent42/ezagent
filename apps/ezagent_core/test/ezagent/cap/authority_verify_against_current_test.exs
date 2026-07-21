@@ -28,7 +28,7 @@ defmodule Ezagent.Cap.AuthorityVerifyAgainstCurrentTest do
 
     assert Authority.verify_against_current(cap, grantee, uri)
 
-    {:ok, bumped} = Authority.regenesis(uri, :test, admin())
+    {:ok, bumped} = Authority.regenesis(uri, :test)
     assert bumped.generation == 2
 
     # The LIVE target still caches the stale gen-1 authority in `state.authority`

@@ -60,6 +60,17 @@ defmodule EzagentCli.Exec do
     end
   end
 
+  @doc false
+  @spec authenticated_context() ::
+          {:ok, URI.t(), MapSet.t(Ezagent.Capability.t())}
+          | {:error, :no_authenticated_principal}
+  def authenticated_context do
+    case Process.get(:ezagent_cli_caller_override) do
+      {%URI{} = principal, %MapSet{} = caps} -> {:ok, principal, caps}
+      _ -> {:error, :no_authenticated_principal}
+    end
+  end
+
   # Argv that don't need authentication — help / version / no-args
   # commands surface usage info without dispatching anything.
   defp help_only_argv?([]), do: true

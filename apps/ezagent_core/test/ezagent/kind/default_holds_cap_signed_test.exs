@@ -30,7 +30,7 @@ defmodule Ezagent.Kind.DefaultHoldsCapSignedTest do
     needed = needed_for(target)
     assert Ezagent.Kind.default_holds_cap?(holder, needed)
 
-    assert {:ok, _bumped} = Authority.regenesis(target, :test, admin())
+    assert {:ok, _bumped} = Authority.regenesis(target, :test)
 
     refute Ezagent.Kind.default_holds_cap?(holder, needed)
   end

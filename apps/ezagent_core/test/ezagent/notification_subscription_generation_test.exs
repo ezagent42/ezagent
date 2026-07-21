@@ -48,9 +48,7 @@ defmodule Ezagent.NotificationSubscriptionGenerationTest do
     }
 
     assert :ok = Subs.register_subscription(holder, stream, ctx)
-    assert {:ok, _} = Authority.regenesis(stream, :user, admin())
+    assert {:ok, _} = Authority.regenesis(stream, :user)
     assert {:error, :unauthorized} = Subs.register_subscription(holder, stream, ctx)
   end
-
-  defp admin, do: Ezagent.URI.user(:system, :admin)
 end

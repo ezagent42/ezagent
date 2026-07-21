@@ -108,8 +108,7 @@ defmodule Ezagent.Session.SocialwareReadHeldCapTest do
     assert {:ok, _new_authority} =
              Ezagent.Cap.Authority.regenesis(
                session,
-               :session,
-               Ezagent.Entity.User.admin_uri()
+               :session
              )
 
     assert {:error, :unauthorized} =

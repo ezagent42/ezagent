@@ -180,6 +180,44 @@ defmodule Ezagent.Cap do
   defdelegate authorize(holder_uri, candidate_caps, needed), to: Ezagent.Cap.Authorize
 
   @doc """
+  Revoke every capability targeting `target` by atomically advancing its
+  authority generation.
+
+  The target Kind performs the bump in its own mailbox. The authenticated
+  holder in `ctx` must present the target's current grant/manage capability;
+  `ctx.caller` may be machinery and is never used as the holder.
+  """
+  @spec revoke_all_to(URI.t(), map()) :: {:ok, pos_integer()} | {:error, term()}
+  def revoke_all_to(%URI{} = target, %{} = ctx) do
+    target = Ezagent.URI.instance(target)
+
+    with %URI{} = holder <- Map.get(ctx, :authenticated_principal),
+         {:ok, pid} <- Ezagent.LocalRuntime.ensure_started(target),
+         false <- pid == self() do
+      result =
+        GenServer.call(
+          pid,
+          {:ezagent_revoke_all_to, ctx},
+          Ezagent.Invocation.activate_budget_ms()
+        )
+
+      case result do
+        {:ok, generation} = ok ->
+          emit_revoke_all_audit(target, holder, generation, ctx)
+          ok
+
+        {:error, _reason} = error ->
+          error
+      end
+    else
+      nil -> {:error, :authenticated_principal_required}
+      true -> {:error, :cannot_revoke_all_from_target_process}
+      {:error, _reason} = error -> error
+      _ -> {:error, :authenticated_principal_required}
+    end
+  end
+
+  @doc """
   Return born-signed, receiver-bound artifacts that may enter a cap store.
 
   This is deliberately a structural storage filter, not an authorization
@@ -322,4 +360,36 @@ defmodule Ezagent.Cap do
   end
 
   defp authority_caps(_authorization, _target, caps), do: {:ok, caps}
+
+  defp emit_revoke_all_audit(target, holder, generation, ctx) do
+    workspace_uri =
+      case Capability.workspace_of(target) do
+        %URI{} = workspace -> workspace
+        _ -> Ezagent.URI.workspace(:system)
+      end
+
+    event_ctx = %{
+      caller: holder,
+      workspace_uri: workspace_uri,
+      trace_id: Map.get(ctx, :trace_id)
+    }
+
+    case Ezagent.EventLog.append(
+           target,
+           :cap_revoked_all,
+           %{new_generation: generation},
+           event_ctx
+         ) do
+      {:ok, _event_id} ->
+        :ok
+
+      {:error, reason} ->
+        require Logger
+        Logger.warning("Ezagent.Cap.revoke_all_to audit append failed: #{inspect(reason)}")
+    end
+  rescue
+    error ->
+      require Logger
+      Logger.warning("Ezagent.Cap.revoke_all_to audit append raised: #{Exception.message(error)}")
+  end
 end

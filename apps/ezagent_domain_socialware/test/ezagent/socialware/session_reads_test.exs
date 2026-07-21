@@ -330,8 +330,7 @@ defmodule Ezagent.Socialware.SessionReadsTest do
       assert {:ok, _new_authority} =
                Ezagent.Cap.Authority.regenesis(
                  session,
-                 :session,
-                 Ezagent.Entity.User.admin_uri()
+                 :session
                )
 
       refute SessionReads.read_unfiltered?(reader, session)
