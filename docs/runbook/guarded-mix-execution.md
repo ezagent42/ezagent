@@ -29,7 +29,7 @@ Run from the umbrella root:
 ```bash
 scripts/guarded_mix.sh \
   --timeout 900 \
-  --partition d1_provider_full \
+  --partition provider_full \
   test apps/ezagent_domain_provider_connection/test
 ```
 
@@ -61,7 +61,7 @@ These are one contract. Do not selectively omit a setting.
 ## 6. Partition and timeout selection
 
 Give every run a unique, descriptive partition containing the work or closure
-name, for example `d1_provider_full`; never reuse one across concurrent jobs.
+name, for example `provider_full`; never reuse one across concurrent jobs.
 Choose the smallest defensible timeout from prior evidence and record it in the
 handoff. The default is 900 seconds. A longer timeout requires a reason; it does
 not authorize a larger memory envelope.

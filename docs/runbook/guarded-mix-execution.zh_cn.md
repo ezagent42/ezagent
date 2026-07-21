@@ -26,7 +26,7 @@ runner。dev-together handoff 需要 Mix/BEAM 时也必须使用。机械或非 
 ```bash
 scripts/guarded_mix.sh \
   --timeout 900 \
-  --partition d1_provider_full \
+  --partition provider_full \
   test apps/ezagent_domain_provider_connection/test
 ```
 
@@ -57,7 +57,7 @@ runner option 后传入 Mix 参数。runner 把它们保留为 argv，绝不求�
 ## 6. Partition 和 timeout 选择
 
 每次运行都使用包含工作或 Closure 名称的唯一、可描述 partition，例如
-`d1_provider_full`；可能并发的作业不得复用。根据既有证据选择最小合理超时，
+`provider_full`；可能并发的作业不得复用。根据既有证据选择最小合理超时，
 并记录在 handoff 中。默认值为 900 秒。延长超时必须给出理由，且不授权扩大
 内存边界。
 

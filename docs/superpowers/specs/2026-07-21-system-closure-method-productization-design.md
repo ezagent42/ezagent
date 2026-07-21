@@ -1,4 +1,4 @@
-# D1 System-Closure Method Productization Design
+# System-Closure Method Productization Design
 
 > **Date:** 2026-07-21
 >
@@ -10,7 +10,7 @@
 
 ## 1. Goal
 
-Turn the Git Provider D1 lessons into durable team mechanisms so that future
+Turn lessons collected from the Git Provider incident into durable team mechanisms so that future
 work does not depend on someone remembering this session. The result must make
 the lessons searchable, put the safe execution path behind one command, require
 Plan-level closure reasoning in dev-together artifacts, and automatically reject
@@ -130,8 +130,8 @@ text without CI can silently disappear.
 
 Create:
 
-- `docs/notes/2026-07-21-git-provider-d1-system-closure-retrospective.md`
-- `docs/notes/2026-07-21-git-provider-d1-system-closure-retrospective.zh_cn.md`
+- `docs/notes/2026-07-21-git-provider-system-closure-retrospective.md`
+- `docs/notes/2026-07-21-git-provider-system-closure-retrospective.zh_cn.md`
 
 Both files have parallel headings and cover:
 
@@ -183,7 +183,7 @@ The intended CLI is:
 ```bash
 scripts/guarded_mix.sh \
   --timeout 900 \
-  --partition d1_provider_full \
+  --partition provider_full \
   test apps/ezagent_domain_provider_connection/test
 ```
 
@@ -394,7 +394,7 @@ return captures friction
 The work ships as a separate method-productization PR with three logical
 commits:
 
-1. `docs: record D1 X/Y system-closure lessons`
+1. `docs: record X/Y system-closure lessons`
 2. `build: add guarded Mix execution runner`
 3. `docs(dev-together): require X/Y plan-level closure`
 

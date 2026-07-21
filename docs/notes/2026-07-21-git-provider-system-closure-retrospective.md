@@ -1,4 +1,4 @@
-# Git Provider D1 system-closure retrospective
+# Git Provider system-closure retrospective
 
 > Date: 2026-07-21
 > Source: Git Provider V1 Plan D1 / PR #1445 working session

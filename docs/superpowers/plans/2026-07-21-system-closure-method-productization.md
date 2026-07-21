@@ -1,8 +1,8 @@
-# D1 System-Closure Method Productization Implementation Plan
+# System-Closure Method Productization Implementation Plan
 
 > **For agentic workers:** REQUIRED SUB-SKILL: Use superpowers:subagent-driven-development (recommended) or superpowers:executing-plans to implement this plan task-by-task. Steps use checkbox (`- [ ]`) syntax for tracking.
 
-**Goal:** Productize the Git Provider D1 lessons as bilingual forensic/runbook documentation, a bounded single-channel Mix/BEAM runner, and mandatory dev-together Plan-level closure contracts.
+**Goal:** Productize lessons collected from the Git Provider incident as bilingual forensic/runbook documentation, a bounded single-channel Mix/BEAM runner, and mandatory dev-together Plan-level closure contracts.
 
 **Architecture:** Four layers carry the learning: a forensic record explains why, a runbook defines operator behavior, `scripts/guarded_mix.sh` makes the safe behavior executable, and dev-together templates plus CI contract tests make future Plans inherit it. This is a method-only branch; it never modifies Git Provider runtime code or its frozen D1 spec/plan.
 
@@ -10,8 +10,8 @@
 
 ## Global Constraints
 
-- Before implementation, fetch and rebase `docs/d1-system-closure-lessons` onto current `origin/main`. The branch began at local snapshot `5afe9aa31` because Git transport could not fetch remote main `0a44d7b5` during design.
-- Read `docs/superpowers/specs/2026-07-21-d1-system-closure-method-productization-design.md` completely before editing.
+- Before final integration, fetch and rebase `docs/system-closure-method-productization` onto current `origin/main`. The branch began at local snapshot `5afe9aa31` because Git transport could not fetch remote main `0a44d7b5` during design.
+- Read `docs/superpowers/specs/2026-07-21-system-closure-method-productization-design.md` completely before editing.
 - Use these terms exactly: **X problem = fundamental problem**, **Y problem = engineering problem**, **X-level correction**, **Y-level correction**, **recurrence-prevention proof**. Never substitute “Y engineering trigger.”
 - English and `.zh_cn.md` peers have parallel sections and identical commands, limits, paths, SHAs, and evidence claims.
 - Do not modify Git Provider production code, its frozen D1 spec/plan, unrelated reports/handoffs, or any `board.html`.
@@ -23,12 +23,12 @@
 
 ---
 
-### Task 1: Preserve the D1 lessons and operating contract
+### Task 1: Preserve the source-incident lessons and operating contract
 
 **Files:**
 
-- Create: `docs/notes/2026-07-21-git-provider-d1-system-closure-retrospective.md`
-- Create: `docs/notes/2026-07-21-git-provider-d1-system-closure-retrospective.zh_cn.md`
+- Create: `docs/notes/2026-07-21-git-provider-system-closure-retrospective.md`
+- Create: `docs/notes/2026-07-21-git-provider-system-closure-retrospective.zh_cn.md`
 - Create: `docs/runbook/guarded-mix-execution.md`
 - Create: `docs/runbook/guarded-mix-execution.zh_cn.md`
 
@@ -42,7 +42,7 @@
 Use this exact top-level structure:
 
 ```markdown
-# Git Provider D1 system-closure retrospective
+# Git Provider system-closure retrospective
 
 > Date: 2026-07-21
 > Source: Git Provider V1 Plan D1 / PR #1445 working session
@@ -133,8 +133,8 @@ Use the same 13 sections, command, limits, paths, and classifications.
 - [ ] **Step 5: Verify bilingual structure and factual parity**
 
 ```bash
-test "$(rg -c '^## ' docs/notes/2026-07-21-git-provider-d1-system-closure-retrospective.md)" \
-  -eq "$(rg -c '^## ' docs/notes/2026-07-21-git-provider-d1-system-closure-retrospective.zh_cn.md)"
+test "$(rg -c '^## ' docs/notes/2026-07-21-git-provider-system-closure-retrospective.md)" \
+  -eq "$(rg -c '^## ' docs/notes/2026-07-21-git-provider-system-closure-retrospective.zh_cn.md)"
 test "$(rg -c '^## ' docs/runbook/guarded-mix-execution.md)" \
   -eq "$(rg -c '^## ' docs/runbook/guarded-mix-execution.zh_cn.md)"
 for token in 'MemoryHigh=4G' 'MemoryMax=5G' 'MemorySwapMax=0' \
@@ -143,7 +143,7 @@ for token in 'MemoryHigh=4G' 'MemoryMax=5G' 'MemorySwapMax=0' \
   rg -F "$token" docs/runbook/guarded-mix-execution.zh_cn.md
 done
 ! rg -n 'TBD|TODO|Y engineering trigger|工程诱因' \
-  docs/notes/2026-07-21-git-provider-d1-system-closure-retrospective* \
+  docs/notes/2026-07-21-git-provider-system-closure-retrospective* \
   docs/runbook/guarded-mix-execution*
 git diff --check
 ```
@@ -153,11 +153,11 @@ Expected: all commands exit `0`; the negative search produces no matches.
 - [ ] **Step 6: Commit Task 1**
 
 ```bash
-git add docs/notes/2026-07-21-git-provider-d1-system-closure-retrospective* \
+git add docs/notes/2026-07-21-git-provider-system-closure-retrospective* \
   docs/runbook/guarded-mix-execution*
 git diff --cached --check
 git diff --cached --stat
-git commit -m "docs: record D1 X/Y system-closure lessons"
+git commit -m "docs: record X/Y system-closure lessons"
 ```
 
 ---
@@ -640,7 +640,7 @@ git commit -m "docs(dev-together): require X/Y plan-level closure"
 **Files:**
 
 - Verify: all Task 1–3 files.
-- Create via dev-together return: `docs/together/2026-07-21/returns/d1-system-closure-method-productization.md`.
+- Create via dev-together return: `docs/together/2026-07-21/returns/system-closure-method-productization.md`.
 
 **Interfaces:**
 

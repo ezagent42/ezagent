@@ -1,4 +1,4 @@
-# Git Provider D1 系统闭环复盘
+# Git Provider 系统闭环复盘
 
 > 日期：2026-07-21
 > 来源：Git Provider V1 Plan D1 / PR #1445 工作会话
