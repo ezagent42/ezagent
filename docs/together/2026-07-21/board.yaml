@@ -103,7 +103,7 @@ cards:
     status: "wip"
     who: "jjkysy 轨道 · #1470 / #1474 / #1376"
     acceptance:
-      - {text: "#1470 unmount_all_for_target + 冷建 provisioning deadline", done: false}
+      - {text: "#1470 unmount_all_for_target + 冷建 provisioning deadline — ★ lead 已替你 rebase 到最新 main(ffcdd7c1e, 零冲突, force-pushed), 现 0 落后/CI 重跑中。HANDOFF: docs/together/2026-07-21/handoffs/1470-jjkysy-rebase.md — 请确认 CI 绿 + 语义 sanity(读平面/member-cap/mount 今天动了) → 评审门 → 自己合", done: false}
       - {text: "#1474 kanban 协作二轮(人本位分享/tab恒显), 权宜溶解对齐读面正路", done: false}
   - owner: "ruihua"
     title: "自助开通产品化 + demo socialware"
