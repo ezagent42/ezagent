@@ -233,15 +233,16 @@ defmodule Ezagent.ProviderConnection.Recovery do
              (operation.status == "prepared" and
                 ((connection.status in ["revoking", "disconnecting"] and
                     attempt.status in ["cancelled", "expired"]) or
-                   (connection.status in [
-                      "pending_authorization",
-                      "active",
-                      "refresh_required",
-                      "degraded",
-                      "revoking",
-                      "disconnecting"
-                    ] and
-                      attempt.status == "consuming" and attempt.claim_until <= ^now)))),
+                   (attempt.status == "consuming" and attempt.claim_until <= ^now and
+                      ((attempt.purpose == "initial_bind" and
+                          connection.status in [
+                            "pending_authorization",
+                            "active",
+                            "degraded",
+                            "expired"
+                          ]) or
+                         (attempt.purpose == "reauthorize" and
+                            connection.status in ["active", "degraded", "expired"])))))),
       select: operation
     )
   end

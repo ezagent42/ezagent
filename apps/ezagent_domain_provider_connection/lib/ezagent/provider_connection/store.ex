@@ -82,7 +82,7 @@ defmodule Ezagent.ProviderConnection.Store do
          true <- attempt.correlation_id == args.correlation_id,
          %Connection{} = connection <- owned_connection(attempt.connection_id, owner),
          :ok <- callback_terminal_result(connection),
-         :ok <- callback_source_status(connection.status),
+         :ok <- callback_source_status(attempt.purpose, connection.status),
          result <- dispatch_callback_phase(attempt, connection, owner, now) do
       result
     else
@@ -99,12 +99,32 @@ defmodule Ezagent.ProviderConnection.Store do
         {:error, :account_conflict}
 
       %Operation{status: "backend_committed"} = operation ->
-        if Repo.get_by(AuthorizationBackendRecord, authorization_ref: attempt.authorization_ref) do
-          if final_operation_scope?(operation, attempt, connection),
-            do: finish_callback(operation),
-            else: {:error, :stale_attempt_claim}
+        # The fast path performs the same full stable-scope and digest
+        # verification as the prepared path (fence amendment §Receipts and
+        # lookup), then either drives the idempotent commit while the
+        # operation fence still matches the current generation (the
+        # post-credential-journal/pre-CAS window), or returns the same public
+        # receipt once the pointer CAS has already landed.
+        with %AuthorizationBackendRecord{} = backend_record <-
+               Repo.get_by(AuthorizationBackendRecord,
+                 authorization_ref: attempt.authorization_ref
+               ),
+             :ok <- stable_scope(backend_record, attempt, connection),
+             true <-
+               operation.bound_input_digest ==
+                 Operation.callback_digest(backend_record, attempt, connection) do
+          cond do
+            final_operation_scope?(operation, attempt, connection) ->
+              finish_callback(operation)
+
+            operation_fence_matches?(operation, attempt, connection) ->
+              finish_callback(operation)
+
+            true ->
+              {:error, :stale_attempt_claim}
+          end
         else
-          {:error, :credential_conflict}
+          _other -> {:error, :credential_conflict}
         end
 
       %Operation{status: status} = operation
@@ -211,7 +231,7 @@ defmodule Ezagent.ProviderConnection.Store do
       with %Connection{} <- locked_connection,
            %AuthorizationAttempt{} <- locked_attempt,
            %AuthorizationBackendRecord{} <- backend_record,
-           :ok <- callback_source_status(locked_connection.status),
+           :ok <- callback_source_status(locked_attempt.purpose, locked_connection.status),
            true <- locked_attempt.claim_token == attempt.claim_token,
            true <- locked_attempt.attempt_version == attempt.attempt_version,
            :ok <- stable_scope(backend_record, locked_attempt, locked_connection) do
@@ -441,11 +461,12 @@ defmodule Ezagent.ProviderConnection.Store do
       version: connection.connection_version
     }
 
-  defp callback_source_status(status)
-       when status in ["pending_authorization", "active", "refresh_required", "degraded"],
-       do: :ok
-
-  defp callback_source_status(_status), do: {:error, :connection_terminal}
+  # Spec §4 callback source matrix — owned by
+  # `Ezagent.ProviderConnection.AuthorizationAttempt.callback_source_status/2`
+  # (single owner; do not re-implement here, the duplicate ratchet counts
+  # copies).
+  defp callback_source_status(purpose, status),
+    do: AuthorizationAttempt.callback_source_status(purpose, status)
 
   defp callback_terminal_result(%Connection{
          status: "failed",
@@ -538,7 +559,7 @@ defmodule Ezagent.ProviderConnection.Store do
            true <-
              locked_operation.bound_input_digest ==
                Operation.callback_digest(backend_record, locked_attempt, locked_connection),
-           :ok <- callback_source_status(locked_connection.status),
+           :ok <- callback_source_status(locked_attempt.purpose, locked_connection.status),
            :ok <- recoverable_attempt(locked_attempt, now) do
         renew_prepared_claim(locked_operation, locked_attempt, locked_connection, now)
       else
