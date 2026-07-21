@@ -70,14 +70,14 @@ defmodule EzagentPluginGithub.GitHubOAuthTest do
                )
     end
 
-    test "returns provider_unavailable on 5xx response" do
+    test "returns backend_unavailable on 5xx response" do
       Req.Test.stub(@stub_name, fn conn ->
         conn
         |> Plug.Conn.put_status(503)
         |> Req.Test.json(%{"error" => "unavailable"})
       end)
 
-      assert {:error, :provider_unavailable} =
+      assert {:error, :backend_unavailable} =
                GitHubOAuth.exchange_code("code", "https://example.com/callback",
                  plug: {Req.Test, @stub_name}
                )
