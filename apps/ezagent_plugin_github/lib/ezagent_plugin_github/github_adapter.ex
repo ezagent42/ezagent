@@ -18,7 +18,7 @@ defmodule EzagentPluginGithub.GitHubAdapter do
     Review
   }
 
-  alias EzagentPluginGithub.GitHubClient
+  alias EzagentPluginGithub.{GitHubClient, GitHubCredentialBackend}
 
   @github_host "github.com"
 
@@ -335,12 +335,11 @@ defmodule EzagentPluginGithub.GitHubAdapter do
   # ── Token resolution ───────────────────────────────────────────────────
 
   @doc false
-  # Credential leasing via CredentialBackend.lease_for_operation will wire the
-  # real token when implemented. Until then, the adapter reads a placeholder
-  # from Application env (empty string in TDD / dev) — this is a deliberate
-  # stub that will be replaced when credential leasing lands.
+  # Reads the decrypted token stashed in the process dictionary by
+  # `GitHubCredentialBackend.lease_for_operation/1`. Returns an empty string
+  # when no token is available (boot / test without a lease in progress).
   defp token do
-    Application.get_env(:ezagent_plugin_github, :adapter_token, "")
+    GitHubCredentialBackend.current_token() || ""
   end
 
   # ── Request opts (test injection point) ─────────────────────────────────
