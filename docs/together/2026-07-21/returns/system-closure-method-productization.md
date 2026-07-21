@@ -1,9 +1,10 @@
 # Return: system-closure method productization
 
-- returned_at: 2026-07-21T15:20:00+08:00
+- returned_at: 2026-07-21T15:32:48+08:00
 - branch: `docs/system-closure-method-productization`
 - base: `origin/main` at `0a44d7b5ea9245b1828143f997e8ca7884b01b8f`
-- head: `5dafb0132`
+- implementation_head: `5dafb0132`
+- return_artifact_commit: `7d735be80`
 - status: `blocked_on_upstream_precommit`
 - protected_owner_path: lead review required for `.claude/skills/dev-together/**`
 
